@@ -14,7 +14,6 @@
         <router-link to="/" class="nav-item" exact-active-class="nav-active"><span class="nav-icon">◫</span><span>概览</span></router-link>
         <router-link to="/servers" class="nav-item" active-class="nav-active"><span class="nav-icon">⬡</span><span>服务器</span></router-link>
         <router-link to="/sites" class="nav-item" active-class="nav-active"><span class="nav-icon">⊞</span><span>站点</span></router-link>
-        <router-link to="/import" class="nav-item" active-class="nav-active"><span class="nav-icon">↗</span><span>导入</span></router-link>
         <router-link to="/audit" class="nav-item" active-class="nav-active"><span class="nav-icon">☰</span><span>审计</span></router-link>
         <router-link to="/db-admin" class="nav-item" active-class="nav-active"><span class="nav-icon">⊡</span><span>数据管理</span></router-link>
       </nav>
@@ -29,7 +28,6 @@
       <router-link to="/" class="nav-item" exact-active-class="nav-active" @click="closeMobileNav"><span class="nav-icon">◫</span><span>概览</span></router-link>
       <router-link to="/servers" class="nav-item" active-class="nav-active" @click="closeMobileNav"><span class="nav-icon">⬡</span><span>服务器</span></router-link>
       <router-link to="/sites" class="nav-item" active-class="nav-active" @click="closeMobileNav"><span class="nav-icon">⊞</span><span>站点</span></router-link>
-      <router-link to="/import" class="nav-item" active-class="nav-active" @click="closeMobileNav"><span class="nav-icon">↗</span><span>导入</span></router-link>
       <router-link to="/audit" class="nav-item" active-class="nav-active" @click="closeMobileNav"><span class="nav-icon">☰</span><span>审计</span></router-link>
       <router-link to="/db-admin" class="nav-item" active-class="nav-active" @click="closeMobileNav"><span class="nav-icon">⊡</span><span>数据管理</span></router-link>
     </nav>

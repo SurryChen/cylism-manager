@@ -30,6 +30,7 @@
               <td>
                 <div class="btn-group" style="justify-content: flex-end;">
                   <button class="btn btn-sm" @click="testSSH(srv.id)" :disabled="sshStatus[srv.id]==='testing'">测试</button>
+                  <button class="btn btn-sm" @click="syncStatus(srv.id)" :disabled="syncing[srv.id]">{{ syncing[srv.id] ? '同步中...' : '状态同步' }}</button>
                   <button class="btn btn-sm" @click="deployAgent(srv.id)" :disabled="srv.status==='deploying' || deployLoading[srv.id]">{{ deployLoading[srv.id] ? '探测中...' : '部署' }}</button>
                   <button class="btn btn-sm btn-danger" @click="confirmDelete(srv)">删除</button>
                 </div>
@@ -44,9 +45,28 @@
     <!-- 服务器详情面板 -->
     <div v-if="selectedServer" class="card" style="margin-top:16px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
-        <h3 style="margin:0;font-size:16px">{{ selectedServer.name }} 操作日志</h3>
+        <h3 style="margin:0;font-size:16px">{{ selectedServer.name }}</h3>
         <button class="btn btn-sm" @click="selectedServer=null;stopPolling()">关闭</button>
       </div>
+
+      <!-- Agent 信息卡片 -->
+      <div style="background:var(--bg-deep);border:1px solid var(--border);border-radius:var(--radius-md);padding:var(--space-16);margin-bottom:16px">
+        <h4 style="margin:0 0 8px 0;font-size:14px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em">Agent 信息</h4>
+        <div style="display:grid;grid-template-columns:auto 1fr;gap:6px 12px;font-size:13px">
+          <span style="color:var(--text-muted)">状态：</span>
+          <span><span class="badge" :class="statusBadge(selectedServer.status)"><span class="badge-dot"></span> {{ statusLabel(selectedServer.status) }}</span></span>
+          <span style="color:var(--text-muted)">Agent 版本：</span>
+          <span>{{ selectedServer.agent_version || '未部署' }}</span>
+          <span style="color:var(--text-muted)">部署路径：</span>
+          <span>{{ selectedServer.agent_deploy_path || '未部署' }}</span>
+          <span style="color:var(--text-muted)">最后部署：</span>
+          <span>{{ formatTime(selectedServer.agent_deployed_at) }}</span>
+          <span style="color:var(--text-muted)">最后在线：</span>
+          <span>{{ formatTime(selectedServer.last_seen) }}</span>
+        </div>
+      </div>
+
+      <h3 style="margin:0 0 12px 0;font-size:14px">操作日志</h3>
       <div v-if="logs.length === 0" class="empty-state"><span class="empty-text">暂无操作日志</span></div>
       <div v-else class="log-list">
         <div v-for="log in logs" :key="log.id" class="log-item">
@@ -123,6 +143,7 @@ let pollTimer = null
 const showAdd = ref(false)
 const deleteTarget = ref(null)
 const sshStatus = reactive({})
+const syncing = reactive({})
 const deployLoading = reactive({})
 const deployProbe = reactive({})
 const showDeployConfirm = ref(false)
@@ -171,6 +192,22 @@ async function testSSH(id) {
     sshStatus[id] = 'fail'
     sshError.value = 'SSH 测试失败，请检查凭据和网络'
   }
+}
+
+async function syncStatus(id) {
+  syncing[id] = true
+  try {
+    const r = await api.post(`/servers/${id}/deploy/probe`)
+    if (r.ok) {
+      await fetchServers()
+      // 刷新详情面板
+      if (selectedServer.value?.id === id) {
+        const updated = servers.value.find(s => s.id === id)
+        if (updated) selectedServer.value = updated
+      }
+    }
+  } catch (e) { console.error(e) }
+  syncing[id] = false
 }
 
 async function deployAgent(id) {

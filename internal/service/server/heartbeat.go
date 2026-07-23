@@ -7,6 +7,7 @@ import (
 
 	"github.com/cylism/cylism-manager/internal/agent"
 	"github.com/cylism/cylism-manager/internal/store"
+	"google.golang.org/grpc/connectivity"
 )
 
 // HeartbeatMonitor 后台心跳监控
@@ -74,7 +75,24 @@ func (m *HeartbeatMonitor) checkAll(failCount map[uint]int) {
 			cancel()
 
 			if err != nil {
-				failCount[srv.ID]++
+				state := ac.Conn.GetState()
+				if state == connectivity.TransientFailure || state == connectivity.Shutdown {
+					log.Printf("heartbeat: server %d connection %s, reconnecting...", srv.ID, state)
+					newAC, dialErr := m.pool.Reconnect(&srv)
+					if dialErr != nil {
+						log.Printf("heartbeat: reconnect server %d failed: %v", srv.ID, dialErr)
+						failCount[srv.ID]++
+					} else {
+						_ = newAC
+						failCount[srv.ID] = 0
+						now := time.Now()
+						srv.LastSeen = &now
+						m.store.UpdateServer(&srv)
+						continue
+					}
+				} else {
+					failCount[srv.ID]++
+				}
 			} else {
 				failCount[srv.ID] = 0
 				now := time.Now()
@@ -82,10 +100,8 @@ func (m *HeartbeatMonitor) checkAll(failCount map[uint]int) {
 				m.store.UpdateServer(&srv)
 			}
 		}
-		_ = ac
 
-		// 连续 3 次失败标记为 offline
-		if failCount[srv.ID] >= 3 {
+		if failCount[srv.ID] >= 10 {
 			srv.Status = "offline"
 			m.store.UpdateServer(&srv)
 			m.pool.Close(srv.ID)

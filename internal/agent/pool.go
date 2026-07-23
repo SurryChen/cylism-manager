@@ -2,14 +2,21 @@ package agent
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
+	"log"
+	"os"
 	"sync"
 	"time"
 
 	pb "github.com/cylism/cylism-manager/api/proto/agent"
 	"github.com/cylism/cylism-manager/internal/model"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/backoff"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/keepalive"
 )
 
 // Pool gRPC 连接池，管理与多台服务器 Agent 的连接
@@ -37,6 +44,11 @@ func NewPool(timeout time.Duration) *Pool {
 
 // Connect 建立到指定服务器的 gRPC 连接
 func (p *Pool) Connect(server *model.Server) (*AgentConn, error) {
+	return p.ConnectWithTLS(server, nil, nil, nil)
+}
+
+// ConnectWithTLS 建立到指定服务器的 mTLS gRPC 连接
+func (p *Pool) ConnectWithTLS(server *model.Server, caCertPEM []byte, certPEM, keyPEM []byte) (*AgentConn, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -46,22 +58,83 @@ func (p *Pool) Connect(server *model.Server) (*AgentConn, error) {
 	}
 
 	addr := fmt.Sprintf("%s:%d", server.Host, server.Port)
-	conn, err := grpc.Dial(addr,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		grpc.WithTimeout(p.timeout),
+
+	var creds credentials.TransportCredentials
+	if len(certPEM) > 0 && len(keyPEM) > 0 && len(caCertPEM) > 0 {
+		cert, err := tls.X509KeyPair(certPEM, keyPEM)
+		if err != nil {
+			return nil, fmt.Errorf("load client cert: %w", err)
+		}
+		caPool := x509.NewCertPool()
+		caPool.AppendCertsFromPEM(caCertPEM)
+		tlsCfg := &tls.Config{
+			Certificates: []tls.Certificate{cert},
+			RootCAs:      caPool,
+			// 自签 CA 环境，证书 CN=agent-{id}，不匹配目标 IP，跳过主机名校验
+			InsecureSkipVerify: true,
+		}
+		creds = credentials.NewTLS(tlsCfg)
+	} else {
+		creds = insecure.NewCredentials()
+	}
+
+	// 阻塞 Dial，等待 TCP 连接真正建立
+	log.Printf("connect: dialing %s (timeout=%v, tls=%v)", addr, p.timeout, len(certPEM) > 0)
+	dialStart := time.Now()
+	ctx, cancel := context.WithTimeout(context.Background(), p.timeout)
+	defer cancel()
+
+	conn, err := grpc.DialContext(ctx, addr,
+		grpc.WithTransportCredentials(creds),
+		grpc.WithBlock(),
+		grpc.WithKeepaliveParams(keepalive.ClientParameters{
+			Time:                10 * time.Second,
+			Timeout:             3 * time.Second,
+			PermitWithoutStream: true,
+		}),
+		grpc.WithConnectParams(grpc.ConnectParams{
+			Backoff:           backoff.DefaultConfig,
+			MinConnectTimeout: 5 * time.Second,
+		}),
 	)
+	dialElapsed := time.Since(dialStart)
 	if err != nil {
+		log.Printf("connect: dial %s failed after %v: %v", addr, dialElapsed, err)
 		return nil, fmt.Errorf("dial agent: %w", err)
 	}
+	log.Printf("connect: dial %s OK (%v), now pinging...", addr, dialElapsed)
 
 	ac := &AgentConn{
 		ServerID: server.ID,
 		Conn:     conn,
 		Client:   pb.NewAgentServiceClient(conn),
-		LastSeen: time.Now(),
 	}
+
+	// Ping 验活：确认 Agent 真的在线，防止假连接
+	pingCtx, pingCancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer pingCancel()
+	pingStart := time.Now()
+	_, pingErr := ac.Client.Ping(pingCtx, &pb.PingRequest{})
+	pingElapsed := time.Since(pingStart)
+	if pingErr != nil {
+		log.Printf("connect: ping %s failed after %v: %v", addr, pingElapsed, pingErr)
+		conn.Close()
+		return nil, fmt.Errorf("agent unreachable after connect: %w", pingErr)
+	}
+	log.Printf("connect: ping %s OK (%v)", addr, pingElapsed)
+	ac.LastSeen = time.Now()
+
 	p.clients[server.ID] = ac
 	return ac, nil
+}
+
+// Reconnect 尝试重新连接指定服务器，自动加载 mTLS 证书
+func (p *Pool) Reconnect(server *model.Server) (*AgentConn, error) {
+	certDir := fmt.Sprintf("data/tls/servers")
+	certPEM, _ := os.ReadFile(fmt.Sprintf("%s/%d-cert.pem", certDir, server.ID))
+	keyPEM, _ := os.ReadFile(fmt.Sprintf("%s/%d-key.pem", certDir, server.ID))
+	caPEM, _ := os.ReadFile("data/tls/ca-cert.pem")
+	return p.ConnectWithTLS(server, caPEM, certPEM, keyPEM)
 }
 
 // Get 获取指定服务器的 Agent 客户端

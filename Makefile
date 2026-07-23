@@ -4,20 +4,22 @@
 all: proto build
 
 # 构建
-build: build-platform build-agent
+build: build-platform build-agent-linux
 
 build-platform:
 	cd cmd/platform && go build -o ../../bin/platform .
 
 build-agent:
-	cd cmd/agent && go build -o ../../bin/agent .
+	CGO_ENABLED=0 go build -o ../../bin/agent ./cmd/agent/
 
-# 交叉编译 Agent（用于部署到不同架构的服务器）
+# 交叉编译 Agent（静态链接，兼容旧 glibc）
+build-agent-linux: build-agent-linux-amd64 build-agent-linux-arm64
+
 build-agent-linux-amd64:
-	GOOS=linux GOARCH=amd64 cd cmd/agent && go build -o ../../bin/agent-linux-amd64 .
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o ../../bin/agent-linux-amd64 ./cmd/agent/
 
 build-agent-linux-arm64:
-	GOOS=linux GOARCH=arm64 cd cmd/agent && go build -o ../../bin/agent-linux-arm64 .
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o ../../bin/agent-linux-arm64 ./cmd/agent/
 
 # 生成 protobuf 代码
 proto:
