@@ -1,0 +1,36 @@
+# Binaries
+bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Database
+data/
+*.db
+*.db-shm
+*.db-wal
+
+# Frontend dependencies
+web/node_modules/
+web/dist/
+
+# Agent skills (generated from npm packages)
+skills/
+.agents/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local

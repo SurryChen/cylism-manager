@@ -1,0 +1,149 @@
+syntax = "proto3";
+
+package agent;
+
+option go_package = "github.com/cylism/cylism-manager/api/proto/agent";
+
+// AgentService 定义 Agent 暴露给 Platform 的 RPC 接口
+service AgentService {
+  // 心跳
+  rpc Ping(PingRequest) returns (PingResponse);
+
+  // NGINX 操作
+  rpc NginxTest(NginxTestRequest) returns (NginxTestResponse);
+  rpc NginxReload(NginxReloadRequest) returns (NginxReloadResponse);
+  rpc NginxGetConfig(NginxGetConfigRequest) returns (NginxGetConfigResponse);
+
+  // 文件操作
+  rpc WriteConfigFile(WriteConfigFileRequest) returns (WriteConfigFileResponse);
+  rpc DeleteConfigFile(DeleteConfigFileRequest) returns (DeleteConfigFileResponse);
+  rpc FileRead(FileReadRequest) returns (FileReadResponse);
+  rpc FileStat(FileStatRequest) returns (FileStatResponse);
+
+  // acme.sh 操作
+  rpc AcmeIssue(AcmeIssueRequest) returns (AcmeIssueResponse);
+  rpc AcmeRenew(AcmeRenewRequest) returns (AcmeRenewResponse);
+  rpc AcmeRevoke(AcmeRevokeRequest) returns (AcmeRevokeResponse);
+  rpc AcmeDetect(AcmeDetectRequest) returns (AcmeDetectResponse);
+
+  // 系统信息
+  rpc SystemInfo(SystemInfoRequest) returns (SystemInfoResponse);
+}
+
+// --- 心跳 ---
+
+message PingRequest {}
+message PingResponse {
+  bool ok = 1;
+  string version = 2;
+}
+
+// --- NGINX ---
+
+message NginxTestRequest {}
+message NginxTestResponse {
+  bool ok = 1;
+  string output = 2;
+  string error = 3;
+}
+
+message NginxReloadRequest {}
+message NginxReloadResponse {
+  bool ok = 1;
+  string output = 2;
+  string error = 3;
+}
+
+message NginxGetConfigRequest {}
+message NginxGetConfigResponse {
+  string config = 1;
+  string error = 2;
+}
+
+// --- 文件操作 ---
+
+message WriteConfigFileRequest {
+  string path = 1;
+  string content = 2;
+}
+message WriteConfigFileResponse {
+  bool ok = 1;
+  string error = 2;
+}
+
+message DeleteConfigFileRequest {
+  string path = 1;
+}
+message DeleteConfigFileResponse {
+  bool ok = 1;
+  string error = 2;
+}
+
+message FileReadRequest {
+  string path = 1;
+}
+message FileReadResponse {
+  bytes content = 1;
+  string error = 2;
+}
+
+message FileStatRequest {
+  string path = 1;
+}
+message FileStatResponse {
+  bool exists = 1;
+  int64 size = 2;
+  int64 mode = 3;
+  string error = 4;
+}
+
+// --- acme.sh ---
+
+message AcmeIssueRequest {
+  string domain = 1;
+  string challenge = 2;       // http / dns
+  string webroot = 3;        // HTTP challenge 时的 webroot
+  string dns_provider = 4;   // DNS challenge 时的 dns 插件
+}
+message AcmeIssueResponse {
+  bool ok = 1;
+  string cert_path = 2;
+  string key_path = 3;
+  string fullchain_path = 4;
+  string output = 5;
+  string error = 6;
+}
+
+message AcmeRenewRequest {
+  string domain = 1;
+}
+message AcmeRenewResponse {
+  bool ok = 1;
+  string output = 2;
+  string error = 3;
+}
+
+message AcmeRevokeRequest {
+  string domain = 1;
+}
+message AcmeRevokeResponse {
+  bool ok = 1;
+  string output = 2;
+  string error = 3;
+}
+
+message AcmeDetectRequest {}
+message AcmeDetectResponse {
+  bool installed = 1;
+  string path = 2;
+  string version = 3;
+}
+
+// --- 系统信息 ---
+
+message SystemInfoRequest {}
+message SystemInfoResponse {
+  string os = 1;
+  string arch = 2;
+  string hostname = 3;
+}
