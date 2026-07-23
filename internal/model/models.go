@@ -20,6 +20,9 @@ type Server struct {
 	SSHKey           string         `gorm:"type:text" json:"-"`           // 加密存储
 	SSHKeyPassphrase string         `gorm:"type:text" json:"-"`           // 加密存储
 	Status           string         `gorm:"size:32;default:offline" json:"status"` // online / offline / deploying
+	AgentVersion     string         `gorm:"size:64" json:"agent_version"`
+	AgentDeployPath  string         `gorm:"size:256" json:"agent_deploy_path"`
+	AgentDeployedAt  *time.Time     `json:"agent_deployed_at"`
 	LastSeen         *time.Time     `json:"last_seen"`
 	CreatedAt        time.Time      `json:"created_at"`
 	UpdatedAt        time.Time      `json:"updated_at"`

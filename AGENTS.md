@@ -41,10 +41,22 @@
 | 步骤 | 工具 | 说明 |
 |------|------|------|
 | 3 | openspec-apply-change | 按 tasks.md 逐项实现 |
-| 4 | test-driven-development | 每个 task 先写测试再实现（横切） |
+| 4 | test-driven-development | 每个 task 先写测试再实现（横切 + 影响范围分析） |
 | 5 | verification-before-completion | 每个 task 完成后验证（横切） |
 | 6 | systematic-debugging | 遇到 bug 时使用（按需） |
 | - | **⛔ 审查门禁：** | 每个 task 完成后 `go test` 验证，结果呈报用户 |
+
+### TDD 影响范围分析规则
+
+实现时若修改了已有接口（函数签名变更、废弃旧方法、新增替代 API），必须：
+
+1. `rg` 全量搜索旧 API/旧调用方式，列出所有调用点
+2. 逐一检查是否遗漏替换（如 `pool.Connect` → `pool.ConnectWithTLS`）
+3. 优先将旧方法标记为 deprecated 或移除，让编译器帮你发现遗漏
+
+测试不仅覆盖新增代码，还必须验证：
+- 旧调用点是否已全部更新
+- 回归测试：全量 `go test ./...` 通过
 
 **阶段三：收尾**
 

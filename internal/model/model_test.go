@@ -179,3 +179,28 @@ func TestOperationLogStatusTransitions(t *testing.T) {
 		t.Errorf("expected Detail after failure, got '%s'", ol.Detail)
 	}
 }
+
+func TestServerAgentFields(t *testing.T) {
+	now := time.Now()
+	s := Server{
+		Name:            "web-01",
+		Host:            "10.0.0.1",
+		AgentVersion:    "1.0.0",
+		AgentDeployPath: "/opt/cylism-manager/agent",
+	}
+
+	if s.AgentVersion != "1.0.0" {
+		t.Errorf("expected AgentVersion '1.0.0', got '%s'", s.AgentVersion)
+	}
+	if s.AgentDeployPath != "/opt/cylism-manager/agent" {
+		t.Errorf("expected AgentDeployPath, got '%s'", s.AgentDeployPath)
+	}
+	if s.AgentDeployedAt != nil {
+		t.Error("expected AgentDeployedAt to be nil by default")
+	}
+
+	s.AgentDeployedAt = &now
+	if s.AgentDeployedAt == nil {
+		t.Error("expected AgentDeployedAt to be set")
+	}
+}

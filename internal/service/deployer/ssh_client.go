@@ -193,35 +193,38 @@ func (c *SSHClient) ProbeAgent() *AgentProbeResult {
 }
 
 // DeployAgent 部署 Agent 到远程服务器
-// agentBinPath 是本地编译好的 Agent 二进制路径
 func (c *SSHClient) DeployAgent(agentBinPath string) error {
 	remotePath := "/opt/cylism-manager/agent"
+	logPath := "/opt/cylism-manager/agent.log"
+	tlsOpts := "--tls-cert=/opt/cylism-manager/cert.pem --tls-key=/opt/cylism-manager/key.pem --tls-ca=/opt/cylism-manager/ca.pem"
 
 	// 上传 Agent 二进制
 	if err := c.UploadFile(agentBinPath, remotePath); err != nil {
 		return fmt.Errorf("upload agent: %w", err)
 	}
 
-	// 创建 systemd service 文件
+	// 通过 sudo tee 写入 systemd service 文件
 	serviceContent := fmt.Sprintf(`[Unit]
 Description=Cylism Manager Agent
 After=network.target
 
 [Service]
 Type=simple
-ExecStart=%s --port=%d
+ExecStart=%s --port=%d %s
 Restart=always
 RestartSec=5
 
 [Install]
-WantedBy=multi-user.target
-`, remotePath, c.server.Port)
+WantedBy=multi-user.target`, remotePath, c.server.Port, tlsOpts)
 
-	if err := c.WriteFile("/etc/systemd/system/cylism-agent.service", []byte(serviceContent), 0644); err != nil {
-		// systemd 失败时回退到 nohup 方式
-		// 杀掉旧进程，启动新的
-		c.RunCmd(fmt.Sprintf("pkill -f '%s' || true", remotePath))
-		_, err := c.RunCmd(fmt.Sprintf("nohup %s --port=%d > /var/log/cylism-agent.log 2>&1 &", remotePath, c.server.Port))
+	// 用 sudo tee 写入（SSH 用户有 sudo 免密）
+	writeCmd := fmt.Sprintf("sudo tee /etc/systemd/system/cylism-agent.service > /dev/null << 'SYSTEMD_EOF'\n%s\nSYSTEMD_EOF", serviceContent)
+	_, writeErr := c.RunCmd(writeCmd)
+	if writeErr != nil {
+		// systemd 写入失败，回退到 nohup 方式
+		c.RunCmd("sudo pkill -f '/opt/cylism-manager/agent' || true")
+		nohupCmd := fmt.Sprintf("nohup %s --port=%d %s > %s 2>&1 &", remotePath, c.server.Port, tlsOpts, logPath)
+		_, err := c.RunCmd(nohupCmd)
 		if err != nil {
 			return fmt.Errorf("start agent (nohup): %w", err)
 		}
@@ -229,16 +232,16 @@ WantedBy=multi-user.target
 	}
 
 	// 启用并启动 systemd service
-	c.RunCmd("systemctl daemon-reload")
-	output, err := c.RunCmd("systemctl enable --now cylism-agent")
+	c.RunCmd("sudo systemctl daemon-reload")
+	_, err := c.RunCmd("sudo systemctl enable --now cylism-agent")
 	if err != nil {
 		// systemd enable 失败，回退到 nohup
-		c.RunCmd(fmt.Sprintf("pkill -f '%s' || true", remotePath))
-		_, err = c.RunCmd(fmt.Sprintf("nohup %s --port=%d > /var/log/cylism-agent.log 2>&1 &", remotePath, c.server.Port))
+		c.RunCmd("sudo pkill -f '/opt/cylism-manager/agent' || true")
+		nohupCmd := fmt.Sprintf("nohup %s --port=%d %s > %s 2>&1 &", remotePath, c.server.Port, tlsOpts, logPath)
+		_, err = c.RunCmd(nohupCmd)
 		if err != nil {
 			return fmt.Errorf("start agent (fallback): %w", err)
 		}
 	}
-	_ = output
 	return nil
 }

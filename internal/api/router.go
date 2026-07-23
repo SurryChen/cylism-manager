@@ -11,6 +11,7 @@ import (
 	"github.com/cylism/cylism-manager/internal/service/deployer"
 	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/gin-gonic/gin"
+	"github.com/spf13/viper"
 )
 
 // AuthConfig 认证相关配置
@@ -55,7 +56,7 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, pool *agent.Po
 		servers.POST("/:id/ssh-test", serverHandler.TestSSH)
 	}
 
-	siteHandler := NewSiteHandler(s)
+	siteHandler := NewSiteHandler(s, pool)
 	sites := apiGroup.Group("/sites")
 	{
 		sites.POST("", siteHandler.Create)
@@ -70,7 +71,7 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, pool *agent.Po
 		sites.POST("/:id/nginx/reload", siteHandler.ReloadNginx)
 	}
 
-	nginxHandler := NewNginxHandler(s)
+	nginxHandler := NewNginxHandler(s, pool)
 	apiGroup.POST("/nginx/import", nginxHandler.Import)
 
 	operationHandler := NewOperationHandler(s)
@@ -148,9 +149,9 @@ func (d *deployServiceImpl) DeployAgent(server *model.Server, force bool) error 
 	addLog("正在检测操作系统", "success", fmt.Sprintf("OS=%s Arch=%s", osName, arch))
 	log.Printf("Server %s: OS=%s Arch=%s", server.Name, osName, arch)
 
-	// 选择对应的 Agent 二进制
-	agentBin := fmt.Sprintf("bin/agent-%s-%s", osName, arch)
-	if osName == "linux" && arch == "amd64" {
+	// 选择对应的 Agent 二进制（优先用交叉编译的静态链接版本）
+	var agentBin string
+	if osName == "linux" && (arch == "amd64" || arch == "x86_64" || arch == "") {
 		agentBin = "bin/agent-linux-amd64"
 	} else if osName == "linux" && arch == "arm64" {
 		agentBin = "bin/agent-linux-arm64"
@@ -158,13 +159,45 @@ func (d *deployServiceImpl) DeployAgent(server *model.Server, force bool) error 
 		agentBin = "bin/agent"
 	}
 
+	// 签发证书
+	addLog("正在签发证书", "running", "")
+	var caCertPEM, agentCertPEM, agentKeyPEM []byte
+	caCertPEM, caKeyPEM, errCert := crypto.LoadOrGenerateCA(
+		viper.GetString("tls.ca_cert"),
+		viper.GetString("tls.ca_key"),
+	)
+	if errCert != nil {
+		addLog("正在签发证书", "failed", errCert.Error())
+		return fmt.Errorf("加载 CA 失败: %w", errCert)
+	}
+
+	agentCertPEM, agentKeyPEM, errCert = crypto.IssueCert(caCertPEM, caKeyPEM, fmt.Sprintf("agent-%d", server.ID))
+	if errCert != nil {
+		addLog("正在签发证书", "failed", errCert.Error())
+		return fmt.Errorf("签发证书失败: %w", errCert)
+	}
+	addLog("正在签发证书", "success", "证书签发成功")
+
+	// 上传证书到远端
+	addLog("正在上传证书", "running", "")
+	if err := client.WriteFile("/opt/cylism-manager/ca.pem", caCertPEM, 0644); err != nil {
+		addLog("正在上传证书", "failed", err.Error())
+	}
+	if err := client.WriteFile("/opt/cylism-manager/cert.pem", agentCertPEM, 0644); err != nil {
+		addLog("正在上传证书", "failed", err.Error())
+	}
+	if err := client.WriteFile("/opt/cylism-manager/key.pem", agentKeyPEM, 0600); err != nil {
+		addLog("正在上传证书", "failed", err.Error())
+	}
+	addLog("正在上传证书", "success", "证书已上传")
+
 	// 部署 Agent（上传 + 启动）
 	addLog("正在部署 Agent", "running", "")
 	// Force 模式：先停止旧的 Agent
 	if force {
 		addLog("正在停止旧 Agent", "running", "")
-		client.RunCmd("systemctl stop cylism-agent 2>/dev/null || true")
-		client.RunCmd("pkill -f 'cylism-agent' 2>/dev/null || true")
+		client.RunCmd("sudo systemctl stop cylism-agent 2>/dev/null || true")
+		client.RunCmd("sudo pkill -f 'cylism-agent' 2>/dev/null || true")
 		addLog("正在停止旧 Agent", "success", "旧 Agent 已停止")
 	}
 
@@ -176,12 +209,14 @@ func (d *deployServiceImpl) DeployAgent(server *model.Server, force bool) error 
 
 	// 建立 gRPC 连接
 	addLog("正在建立 gRPC 连接", "running", "")
-	if _, err := d.pool.Connect(server); err != nil {
+	log.Printf("deploy: connecting to agent at %s:%d", server.Host, server.Port)
+	if _, err := d.pool.ConnectWithTLS(server, caCertPEM, agentCertPEM, agentKeyPEM); err != nil {
 		addLog("正在建立 gRPC 连接", "failed", err.Error())
+		log.Printf("deploy: gRPC connect failed: %v", err)
 		return fmt.Errorf("gRPC 连接失败: %w", err)
 	}
 	addLog("正在建立 gRPC 连接", "success", "gRPC 连接成功")
-
+	log.Printf("deploy: gRPC connect OK")
 	return nil
 }
 

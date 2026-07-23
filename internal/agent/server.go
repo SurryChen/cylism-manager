@@ -51,11 +51,30 @@ func (s *Server) NginxReload(ctx context.Context, req *pb.NginxReloadRequest) (*
 }
 
 func (s *Server) NginxGetConfig(ctx context.Context, req *pb.NginxGetConfigRequest) (*pb.NginxGetConfigResponse, error) {
+	// 先尝试主机 nginx
 	output, err := exec.Command("nginx", "-T").CombinedOutput()
-	if err != nil {
-		return &pb.NginxGetConfigResponse{Error: err.Error()}, nil
+	if err == nil {
+		return &pb.NginxGetConfigResponse{Config: string(output)}, nil
 	}
-	return &pb.NginxGetConfigResponse{Config: string(output)}, nil
+
+	// Docker fallback
+	dockerOut, dockerErr := exec.Command("docker", "ps", "--filter", "ancestor=nginx", "--format", "{{.Names}}").CombinedOutput()
+	if dockerErr != nil || len(strings.TrimSpace(string(dockerOut))) == 0 {
+		// 再尝试通用 nginx 镜像
+		dockerOut, dockerErr = exec.Command("docker", "ps", "--filter", "name=nginx", "--format", "{{.Names}}").CombinedOutput()
+	}
+	if dockerErr == nil {
+		containerName := strings.TrimSpace(strings.Split(string(dockerOut), "\n")[0])
+		if containerName != "" {
+			output, err := exec.Command("docker", "exec", containerName, "nginx", "-T").CombinedOutput()
+			if err == nil {
+				return &pb.NginxGetConfigResponse{Config: string(output)}, nil
+			}
+			return &pb.NginxGetConfigResponse{Error: fmt.Sprintf("docker exec nginx -T: %v", err)}, nil
+		}
+	}
+
+	return &pb.NginxGetConfigResponse{Error: fmt.Sprintf("host nginx: %v; docker: %v", err, dockerErr)}, nil
 }
 
 // -- Config Files --

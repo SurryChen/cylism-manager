@@ -12,6 +12,7 @@ import (
 	"github.com/cylism/cylism-manager/internal/agent"
 	"github.com/cylism/cylism-manager/internal/api"
 	"github.com/cylism/cylism-manager/internal/auth"
+	"github.com/cylism/cylism-manager/internal/crypto"
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/service/server"
 	"github.com/cylism/cylism-manager/internal/store"
@@ -50,6 +51,18 @@ func main() {
 	if len(encKey) != 32 {
 		log.Fatalf("Encryption key must be exactly 32 bytes (got %d)", len(encKey))
 	}
+
+	// 加载或生成 TLS CA
+	caCertPath := viper.GetString("tls.ca_cert")
+	caKeyPath := viper.GetString("tls.ca_key")
+	if caCertPath == "" { caCertPath = "data/tls/ca-cert.pem" }
+	if caKeyPath == "" { caKeyPath = "data/tls/ca-key.pem" }
+	os.MkdirAll("data/tls/servers", 0700)
+	_, _, errCa := crypto.LoadOrGenerateCA(caCertPath, caKeyPath)
+	if errCa != nil {
+		log.Fatalf("Failed to init TLS CA: %v", errCa)
+	}
+	log.Println("TLS CA initialized")
 
 	// JWT 配置
 	jwtSecret := []byte(viper.GetString("auth.jwt_secret"))

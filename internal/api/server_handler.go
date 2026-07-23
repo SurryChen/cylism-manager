@@ -3,6 +3,7 @@ package api
 import (
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/cylism/cylism-manager/internal/crypto"
 	"github.com/cylism/cylism-manager/internal/model"
@@ -134,7 +135,11 @@ func (h *ServerHandler) Deploy(c *gin.Context) {
 		return
 	}
 
+	nowDeploy := time.Now()
 	server.Status = "online"
+	server.AgentVersion = "1.0.0"
+	server.AgentDeployPath = "/opt/cylism-manager/agent"
+	server.AgentDeployedAt = &nowDeploy
 	h.store.UpdateServer(server)
 	c.JSON(http.StatusOK, gin.H{"ok": true, "status": "online"})
 }
@@ -150,6 +155,16 @@ func (h *ServerHandler) ProbeDeploy(c *gin.Context) {
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 		return
 	}
+
+	// 状态同步：探测到 Agent 运行中则更新状态和版本
+	if result.ProcessRunning {
+		server.Status = "online"
+		server.AgentVersion = result.AgentVersion
+		now := time.Now()
+		server.LastSeen = &now
+		h.store.UpdateServer(server)
+	}
+
 	c.JSON(http.StatusOK, result)
 }
 
