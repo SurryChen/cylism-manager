@@ -14,6 +14,17 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
+// AgentProbeResult Agent 状态探测结果
+type AgentProbeResult struct {
+	Installed      bool   `json:"installed"`
+	BinaryExists   bool   `json:"binary_exists"`
+	ProcessRunning bool   `json:"process_running"`
+	SystemdExists  bool   `json:"systemd_exists"`
+	SystemdActive  bool   `json:"systemd_active"`
+	AgentVersion   string `json:"agent_version"`
+	ListeningPort  int    `json:"listening_port"`
+}
+
 // SSHClient SSH 客户端封装
 type SSHClient struct {
 	server *model.Server
@@ -143,6 +154,42 @@ func (c *SSHClient) WriteFile(remotePath string, content []byte, mode os.FileMod
 	}()
 
 	return session.Run(fmt.Sprintf("cat > %s && chmod %o %s", remotePath, mode, remotePath))
+}
+
+// ProbeAgent 探测远端服务器的 Agent 状态
+func (c *SSHClient) ProbeAgent() *AgentProbeResult {
+	result := &AgentProbeResult{}
+
+	// 检测二进制文件
+	output, err := c.RunCmd("test -f /opt/cylism-manager/agent && echo 'exists' || echo 'missing'")
+	if err == nil && strings.TrimSpace(output) == "exists" {
+		result.BinaryExists = true
+	}
+
+	// 检测进程
+	output, err = c.RunCmd("ps aux | grep 'cylism-agent' | grep -v grep | wc -l")
+	if err == nil && strings.TrimSpace(output) != "0" {
+		result.ProcessRunning = true
+	}
+
+	// 检测 systemd service 是否存在
+	output, err = c.RunCmd("systemctl is-active cylism-agent 2>/dev/null || echo 'inactive'")
+	if err == nil {
+		status := strings.TrimSpace(output)
+		result.SystemdExists = status != "inactive"
+		result.SystemdActive = status == "active"
+	}
+
+	// 获取版本号
+	if result.BinaryExists {
+		output, err = c.RunCmd("/opt/cylism-manager/agent --version 2>/dev/null")
+		if err == nil {
+			result.AgentVersion = strings.TrimSpace(output)
+		}
+	}
+
+	result.Installed = result.BinaryExists || result.ProcessRunning || result.SystemdExists
+	return result
 }
 
 // DeployAgent 部署 Agent 到远程服务器

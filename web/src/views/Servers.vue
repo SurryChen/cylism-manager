@@ -15,7 +15,7 @@
             <tr><th>名称</th><th>主机</th><th>状态</th><th>端口</th><th>SSH</th><th>最近在线</th><th></th></tr>
           </thead>
           <tbody>
-            <tr v-for="srv in servers" :key="srv.id">
+            <tr v-for="srv in servers" :key="srv.id" @click="selectServer(srv)" :class="{ 'row-selected': selectedServer?.id === srv.id }" style="cursor:pointer">
               <td style="font-weight:600">{{ srv.name }}</td>
               <td>{{ srv.host }}</td>
               <td><span class="badge" :class="statusBadge(srv.status)"><span class="badge-dot"></span> {{ statusLabel(srv.status) }}</span></td>
@@ -30,7 +30,7 @@
               <td>
                 <div class="btn-group" style="justify-content: flex-end;">
                   <button class="btn btn-sm" @click="testSSH(srv.id)" :disabled="sshStatus[srv.id]==='testing'">测试</button>
-                  <button class="btn btn-sm" @click="deployAgent(srv.id)" :disabled="srv.status==='deploying'">部署</button>
+                  <button class="btn btn-sm" @click="deployAgent(srv.id)" :disabled="srv.status==='deploying' || deployLoading[srv.id]">{{ deployLoading[srv.id] ? '探测中...' : '部署' }}</button>
                   <button class="btn btn-sm btn-danger" @click="confirmDelete(srv)">删除</button>
                 </div>
               </td>
@@ -39,6 +39,27 @@
         </table>
       </div>
       <div v-if="sshError" style="margin-top:var(--space-12);color:var(--danger);font-size:13px;">{{ sshError }}</div>
+    </div>
+
+    <!-- 服务器详情面板 -->
+    <div v-if="selectedServer" class="card" style="margin-top:16px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+        <h3 style="margin:0;font-size:16px">{{ selectedServer.name }} 操作日志</h3>
+        <button class="btn btn-sm" @click="selectedServer=null;stopPolling()">关闭</button>
+      </div>
+      <div v-if="logs.length === 0" class="empty-state"><span class="empty-text">暂无操作日志</span></div>
+      <div v-else class="log-list">
+        <div v-for="log in logs" :key="log.id" class="log-item">
+          <span class="log-status" :class="'log-' + log.status">
+            {{ log.status === 'running' ? '⏳' : log.status === 'success' ? '✅' : '❌' }}
+          </span>
+          <div class="log-content">
+            <div class="log-step">{{ log.step }}</div>
+            <div v-if="log.detail" class="log-detail">{{ log.detail }}</div>
+            <div class="log-time">{{ formatTime(log.created_at) }}</div>
+          </div>
+        </div>
+      </div>
     </div>
 
     <div v-if="showAdd" class="overlay" @click.self="showAdd = false">
@@ -62,6 +83,29 @@
       </div>
     </div>
 
+    <!-- 部署确认弹窗 -->
+    <div v-if="showDeployConfirm && deployTarget" class="overlay" @click.self="cancelDeploy">
+      <div class="modal">
+        <h2 class="modal-title">确认部署</h2>
+        <div v-if="deployProbe[deployTarget.id]?.installed" style="margin-bottom:var(--space-16)">
+          <p style="color:var(--warn);font-size:14px;margin-bottom:var(--space-12);">检测到远端已有 Agent：</p>
+          <div style="background:var(--bg-deep);border:1px solid var(--border);border-radius:var(--radius-md);padding:var(--space-12);font-size:13px;">
+            <div v-if="deployProbe[deployTarget.id].agent_version"><span style="color:var(--text-muted)">版本：</span>{{ deployProbe[deployTarget.id].agent_version }}</div>
+            <div v-if="deployProbe[deployTarget.id].process_running"><span class="badge badge-online" style="margin-top:4px">进程运行中</span></div>
+            <div v-if="deployProbe[deployTarget.id].systemd_active"><span class="badge badge-online" style="margin-top:4px">systemd 运行中</span></div>
+          </div>
+          <p style="color:var(--text-secondary);font-size:13px;margin-top:var(--space-12);">覆盖部署将先停止旧 Agent，再安装新版本。是否继续？</p>
+        </div>
+        <div v-else style="margin-bottom:var(--space-16)">
+          <p style="color:var(--text-secondary);font-size:14px;">未检测到远端 Agent，将在服务器 <strong>{{ deployTarget.name }}</strong> ({{ deployTarget.host }}) 上全新部署。是否继续？</p>
+        </div>
+        <div class="modal-actions">
+          <button class="btn" @click="cancelDeploy">取消</button>
+          <button class="btn btn-primary" @click="confirmDeploy">确认部署</button>
+        </div>
+      </div>
+    </div>
+
     <div v-if="deleteTarget" class="overlay" @click.self="deleteTarget=null">
       <div class="modal"><h2 class="modal-title">删除服务器</h2><p style="color:var(--text-secondary);margin-bottom:var(--space-16);">确定删除 <strong>{{ deleteTarget.name }}</strong> 吗？</p><div class="modal-actions"><button class="btn" @click="deleteTarget=null">取消</button><button class="btn btn-danger" @click="deleteServer">确认删除</button></div></div>
     </div>
@@ -73,13 +117,47 @@ import { ref, onMounted, reactive } from 'vue'
 import { api } from '../api/index.js'
 
 const servers = ref([])
+const selectedServer = ref(null)
+const logs = ref([])
+let pollTimer = null
 const showAdd = ref(false)
 const deleteTarget = ref(null)
 const sshStatus = reactive({})
+const deployLoading = reactive({})
+const deployProbe = reactive({})
+const showDeployConfirm = ref(false)
+const deployTarget = ref(null)
 const sshError = ref('')
 const form = ref({ name:'',host:'',port:9527,ssh_port:22,ssh_user:'root',ssh_auth_type:'password',ssh_password:'',ssh_key:'' })
 
 onMounted(fetchServers)
+function selectServer(srv) {
+  if (selectedServer.value?.id === srv.id) {
+    selectedServer.value = null
+    stopPolling()
+    return
+  }
+  selectedServer.value = srv
+  logs.value = []
+  fetchLogs()
+  startPolling()
+}
+
+async function fetchLogs() {
+  if (!selectedServer.value) return
+  try {
+    const r = await api.get(`/operations?resource_type=server&resource_id=${selectedServer.value.id}`)
+    const data = await r.json()
+    logs.value = data.operations || []
+    // Check if any log is still running
+    const hasRunning = logs.value.some(l => l.status === 'running')
+    if (!hasRunning) stopPolling()
+  } catch (e) { console.error(e) }
+}
+
+function startPolling() { stopPolling(); pollTimer = setInterval(fetchLogs, 2000) }
+function stopPolling() { if (pollTimer) { clearInterval(pollTimer); pollTimer = null } }
+
 async function fetchServers() { try { const r = await api.get('/servers'); servers.value = await r.json() } catch(e){console.error(e)} }
 async function addServer() { try { await api.post('/servers', form.value); showAdd.value=false; resetForm(); fetchServers() } catch(e){console.error(e)} }
 
@@ -96,7 +174,47 @@ async function testSSH(id) {
 }
 
 async function deployAgent(id) {
-  try { await api.post(`/servers/${id}/deploy`); fetchServers() } catch(e){console.error(e)}
+  deployLoading[id] = true
+  try {
+    const r = await api.post(`/servers/${id}/deploy/probe`)
+    if (!r.ok) {
+      const err = await r.json()
+      alert('探测失败: ' + (err.error || '未知错误'))
+      deployLoading[id] = false
+      return
+    }
+    const probe = await r.json()
+    deployProbe[id] = probe
+    deployTarget.value = servers.value.find(s => s.id === id)
+    showDeployConfirm.value = true
+  } catch (e) {
+    console.error(e)
+    alert('探测失败: 网络异常')
+  }
+  deployLoading[id] = false
+}
+
+async function confirmDeploy() {
+  if (!deployTarget.value) return
+  const id = deployTarget.value.id
+  deployLoading[id] = true
+  showDeployConfirm.value = false
+  try {
+    const force = deployProbe[id]?.installed ? '?force=true' : ''
+    await api.post(`/servers/${id}/deploy${force}`)
+    fetchServers()
+  } catch (e) {
+    console.error(e)
+    alert('部署失败')
+  }
+  deployLoading[id] = false
+  deployProbe[id] = null
+  deployTarget.value = null
+}
+
+function cancelDeploy() {
+  showDeployConfirm.value = false
+  deployTarget.value = null
 }
 function confirmDelete(srv) { deleteTarget.value = srv }
 async function deleteServer() { try { await api.delete(`/servers/${deleteTarget.value.id}`); deleteTarget.value=null; fetchServers() } catch(e){console.error(e)} }

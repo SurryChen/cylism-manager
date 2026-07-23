@@ -16,6 +16,7 @@
         <router-link to="/sites" class="nav-item" active-class="nav-active"><span class="nav-icon">⊞</span><span>站点</span></router-link>
         <router-link to="/import" class="nav-item" active-class="nav-active"><span class="nav-icon">↗</span><span>导入</span></router-link>
         <router-link to="/audit" class="nav-item" active-class="nav-active"><span class="nav-icon">☰</span><span>审计</span></router-link>
+        <router-link to="/db-admin" class="nav-item" active-class="nav-active"><span class="nav-icon">⊡</span><span>数据管理</span></router-link>
       </nav>
       <div class="header-right">
         <span class="status-dot" title="Platform running"></span>
@@ -30,6 +31,7 @@
       <router-link to="/sites" class="nav-item" active-class="nav-active" @click="closeMobileNav"><span class="nav-icon">⊞</span><span>站点</span></router-link>
       <router-link to="/import" class="nav-item" active-class="nav-active" @click="closeMobileNav"><span class="nav-icon">↗</span><span>导入</span></router-link>
       <router-link to="/audit" class="nav-item" active-class="nav-active" @click="closeMobileNav"><span class="nav-icon">☰</span><span>审计</span></router-link>
+      <router-link to="/db-admin" class="nav-item" active-class="nav-active" @click="closeMobileNav"><span class="nav-icon">⊡</span><span>数据管理</span></router-link>
     </nav>
 
     <main class="app-main"><router-view /></main>
@@ -131,4 +133,19 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-seri
 .table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
 @media (max-width:768px){.desktop-nav{display:none}.menu-toggle{display:flex}.mobile-nav{display:flex}.app-header{padding:0 var(--space-16);gap:var(--space-16)}.app-main{padding:var(--space-24) var(--space-16)}.metric-grid{grid-template-columns:repeat(2,1fr);gap:var(--space-12)}.metric-value{font-size:24px}.form-row{grid-template-columns:1fr;gap:0}.page-header{flex-direction:column;align-items:flex-start}.modal{padding:var(--space-24)}}
 @media (max-width:480px){.metric-grid{grid-template-columns:1fr 1fr;gap:var(--space-8)}.metric{padding:var(--space-12) var(--space-16)}.metric-value{font-size:20px}.card{padding:var(--space-16)}.data-table th,.data-table td{padding:var(--space-8);font-size:13px}.brand-name{display:none}}
+
+/* 操作日志 */
+.log-list { display: flex; flex-direction: column; }
+.log-item { display: flex; gap: var(--space-12); padding: var(--space-8) 0; border-bottom: 1px solid var(--border-muted); align-items: flex-start; }
+.log-item:last-child { border-bottom: none; }
+.log-status { font-size: 16px; min-width: 24px; text-align: center; line-height: 1.4; }
+.log-content { flex: 1; min-width: 0; }
+.log-step { font-size: 14px; font-weight: 500; }
+.log-detail { font-size: 12px; color: var(--text-secondary); margin-top: 2px; word-break: break-all; }
+.log-time { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+.log-success { color: var(--success); }
+.log-failed { color: var(--danger); }
+.log-running { color: var(--warn); }
+.row-selected td { background: var(--accent-glow) !important; }
+
 </style>

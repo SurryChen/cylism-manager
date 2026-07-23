@@ -131,3 +131,51 @@ func TestAuditLogModel(t *testing.T) {
 		t.Error("detail JSON roundtrip failed")
 	}
 }
+
+func TestOperationLogModel(t *testing.T) {
+	ol := OperationLog{
+		ResourceType: "server",
+		ResourceID:   1,
+		Step:         "正在连接 SSH",
+		Status:       "running",
+		Detail:       "连接中...",
+	}
+
+	if ol.ResourceType != "server" {
+		t.Errorf("expected ResourceType 'server', got '%s'", ol.ResourceType)
+	}
+	if ol.ResourceID != 1 {
+		t.Errorf("expected ResourceID 1, got %d", ol.ResourceID)
+	}
+	if ol.Step != "正在连接 SSH" {
+		t.Errorf("expected Step '正在连接 SSH', got '%s'", ol.Step)
+	}
+	if ol.Status != "running" {
+		t.Errorf("expected Status 'running', got '%s'", ol.Status)
+	}
+}
+
+func TestOperationLogStatusTransitions(t *testing.T) {
+	ol := OperationLog{
+		ResourceType: "server",
+		ResourceID:   1,
+		Step:         "正在上传 Agent",
+		Status:       "running",
+	}
+
+	// 模拟状态变迁：running -> success
+	ol.Status = "success"
+	if ol.Status != "success" {
+		t.Errorf("expected Status 'success', got '%s'", ol.Status)
+	}
+
+	// 模拟状态变迁：running -> failed
+	ol.Status = "failed"
+	ol.Detail = "磁盘空间不足"
+	if ol.Status != "failed" {
+		t.Errorf("expected Status 'failed', got '%s'", ol.Status)
+	}
+	if ol.Detail != "磁盘空间不足" {
+		t.Errorf("expected Detail after failure, got '%s'", ol.Detail)
+	}
+}
