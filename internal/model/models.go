@@ -105,3 +105,14 @@ type User struct {
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
 }
+
+// OperationLog 操作日志模型（通用，适用于所有长流程操作）
+type OperationLog struct {
+	ID           uint      `gorm:"primaryKey" json:"id"`
+	ResourceType string    `gorm:"size:64;index:idx_resource;not null" json:"resource_type"`
+	ResourceID   uint      `gorm:"index:idx_resource;not null" json:"resource_id"`
+	Step         string    `gorm:"size:128;not null" json:"step"`
+	Status       string    `gorm:"size:16;default:running" json:"status"` // running / success / failed
+	Detail       string    `gorm:"type:text" json:"detail"`
+	CreatedAt    time.Time `gorm:"index" json:"created_at"`
+}

@@ -6,6 +6,7 @@ import Sites from '../views/Sites.vue'
 import AuditLogs from '../views/AuditLogs.vue'
 import NginxImport from '../views/NginxImport.vue'
 import Login from '../views/Login.vue'
+import DBAdmin from '../views/DBAdmin.vue'
 
 const routes = [
   { path: '/login', component: Login, meta: { public: true } },
@@ -14,6 +15,7 @@ const routes = [
   { path: '/sites', component: Sites },
   { path: '/audit', component: AuditLogs },
   { path: '/import', component: NginxImport },
+  { path: '/db-admin', component: DBAdmin },
 ]
 
 const router = createRouter({

@@ -1,7 +1,10 @@
-## 新增需求
+## Purpose
+用户认证、JWT Token 管理和管理员初始化。
+
+## Requirements
 
 ### Requirement: 管理员登录
-系统应当提供登录接口，验证用户名和密码后返回 JWT access token 和 refresh token。
+系统 SHALL提供登录接口，验证用户名和密码后返回 JWT access token 和 refresh token。
 
 #### Scenario: 登录成功
 - **WHEN** 用户以正确的管理员用户名和密码调用 POST /api/auth/login
@@ -16,7 +19,7 @@
 - **THEN** 系统返回认证失败错误，HTTP 401
 
 ### Requirement: Token 刷新
-系统应当提供 token 刷新接口，使用有效的 refresh token 换取新的 access token。
+系统 SHALL提供 token 刷新接口，使用有效的 refresh token 换取新的 access token。
 
 #### Scenario: 刷新成功
 - **WHEN** 用户以有效的 refresh token 调用 POST /api/auth/refresh
@@ -27,7 +30,7 @@
 - **THEN** 系统返回认证失败错误，HTTP 401
 
 ### Requirement: 认证中间件保护 API
-系统应当对所有非 `/api/auth/*` 的 API 端点进行 JWT 认证校验。
+系统 SHALL对所有非 `/api/auth/*` 的 API 端点进行 JWT 认证校验。
 
 #### Scenario: 有效 token 访问业务 API
 - **WHEN** 用户在请求头中携带有效的 Bearer token 访问 /api/servers
@@ -42,7 +45,7 @@
 - **THEN** 系统返回未授权错误，HTTP 401
 
 ### Requirement: 首次启动管理员初始化
-系统应当在首次启动（User 表为空）时自动从配置文件创建管理员账号。
+系统 SHALL在首次启动（User 表为空）时自动从配置文件创建管理员账号。
 
 #### Scenario: 首次启动创建管理员
 - **WHEN** 平台启动且 User 表为空

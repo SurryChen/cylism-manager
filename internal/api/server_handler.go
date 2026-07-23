@@ -6,6 +6,7 @@ import (
 
 	"github.com/cylism/cylism-manager/internal/crypto"
 	"github.com/cylism/cylism-manager/internal/model"
+	"github.com/cylism/cylism-manager/internal/service/deployer"
 	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/gin-gonic/gin"
 )
@@ -17,7 +18,8 @@ type ServerHandler struct {
 }
 
 type DeployService interface {
-	DeployAgent(server *model.Server) error
+	ProbeAgent(server *model.Server) (*deployer.AgentProbeResult, error)
+	DeployAgent(server *model.Server, force bool) error
 	TestSSH(server *model.Server) (string, error)
 }
 
@@ -120,10 +122,12 @@ func (h *ServerHandler) Deploy(c *gin.Context) {
 	server, err := h.store.GetServer(uint(id))
 	if err != nil { c.JSON(http.StatusNotFound, gin.H{"error": "server not found"}); return }
 
+	force := c.Query("force") == "true"
+
 	server.Status = "deploying"
 	h.store.UpdateServer(server)
 
-	if err := h.deploySvc.DeployAgent(server); err != nil {
+	if err := h.deploySvc.DeployAgent(server, force); err != nil {
 		server.Status = "offline"
 		h.store.UpdateServer(server)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -133,6 +137,20 @@ func (h *ServerHandler) Deploy(c *gin.Context) {
 	server.Status = "online"
 	h.store.UpdateServer(server)
 	c.JSON(http.StatusOK, gin.H{"ok": true, "status": "online"})
+}
+
+// ProbeDeploy 部署前探测远端 Agent 状态
+func (h *ServerHandler) ProbeDeploy(c *gin.Context) {
+	id, _ := strconv.ParseUint(c.Param("id"), 10, 64)
+	server, err := h.store.GetServer(uint(id))
+	if err != nil { c.JSON(http.StatusNotFound, gin.H{"error": "server not found"}); return }
+
+	result, err := h.deploySvc.ProbeAgent(server)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, result)
 }
 
 func (h *ServerHandler) TestSSH(c *gin.Context) {

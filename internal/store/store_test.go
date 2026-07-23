@@ -238,3 +238,125 @@ func TestAuditLogCRUD(t *testing.T) {
 	}
 	_ = logs2
 }
+
+func TestOperationLogCRUD(t *testing.T) {
+	st := setupTestDB(t)
+
+	// Create logs
+	log1 := &model.OperationLog{
+		ResourceType: "server",
+		ResourceID:   1,
+		Step:         "正在连接 SSH",
+		Status:       "success",
+		Detail:       "连接成功",
+	}
+	if err := st.CreateOperationLog(log1); err != nil {
+		t.Fatalf("CreateOperationLog: %v", err)
+	}
+	if log1.ID == 0 {
+		t.Error("expected non-zero ID")
+	}
+
+	log2 := &model.OperationLog{
+		ResourceType: "server",
+		ResourceID:   1,
+		Step:         "正在上传 Agent",
+		Status:       "running",
+	}
+	if err := st.CreateOperationLog(log2); err != nil {
+		t.Fatalf("CreateOperationLog: %v", err)
+	}
+
+	// List by resource
+	logs, err := st.ListOperationsByResource("server", 1)
+	if err != nil {
+		t.Fatalf("ListOperationsByResource: %v", err)
+	}
+	if len(logs) != 2 {
+		t.Errorf("expected 2 logs, got %d", len(logs))
+	}
+	// Logs should be ordered by created_at desc
+	if logs[0].Step != "正在上传 Agent" {
+		t.Errorf("expected first log step '正在上传 Agent', got '%s'", logs[0].Step)
+	}
+
+	// List for non-existing resource
+	empty, err := st.ListOperationsByResource("server", 999)
+	if err != nil {
+		t.Fatalf("ListOperationsByResource (empty): %v", err)
+	}
+	if len(empty) != 0 {
+		t.Errorf("expected 0 logs for non-existing resource, got %d", len(empty))
+	}
+
+	// Update log status
+	log2.Status = "success"
+	log2.Detail = "上传完毕"
+	if err := st.UpdateOperationLog(log2); err != nil {
+		t.Fatalf("UpdateOperationLog: %v", err)
+	}
+
+	// Verify update
+	logs, _ = st.ListOperationsByResource("server", 1)
+	if logs[0].Status != "success" {
+		t.Errorf("expected status 'success', got '%s'", logs[0].Status)
+	}
+	if logs[0].Detail != "上传完毕" {
+		t.Errorf("expected detail '上传完毕', got '%s'", logs[0].Detail)
+	}
+}
+
+func TestDeleteExpiredOperationLogs(t *testing.T) {
+	st := setupTestDB(t)
+
+	// Direct insert with old timestamp using raw SQL
+	err := st.db.Exec("INSERT INTO operation_logs (resource_type, resource_id, step, status, created_at) VALUES (?, ?, ?, ?, ?)",
+		"server", 1, "old step", "success", time.Now().Add(-40*24*time.Hour)).Error
+	if err != nil {
+		t.Fatalf("insert old log: %v", err)
+	}
+
+	// Insert a recent log
+	err = st.db.Exec("INSERT INTO operation_logs (resource_type, resource_id, step, status, created_at) VALUES (?, ?, ?, ?, ?)",
+		"server", 1, "recent step", "success", time.Now()).Error
+	if err != nil {
+		t.Fatalf("insert recent log: %v", err)
+	}
+
+	// Delete logs older than 30 days
+	if err := st.DeleteExpiredOperationLogs(30); err != nil {
+		t.Fatalf("DeleteExpiredOperationLogs: %v", err)
+	}
+
+	// Only the recent log should remain
+	logs, err := st.ListOperationsByResource("server", 1)
+	if err != nil {
+		t.Fatalf("ListOperationsByResource: %v", err)
+	}
+	if len(logs) != 1 {
+		t.Errorf("expected 1 log after cleanup, got %d", len(logs))
+	}
+	if len(logs) > 0 && logs[0].Step != "recent step" {
+		t.Errorf("expected 'recent step', got '%s'", logs[0].Step)
+	}
+}
+
+func TestDeleteExpiredZeroRetention(t *testing.T) {
+	st := setupTestDB(t)
+
+	err := st.db.Exec("INSERT INTO operation_logs (resource_type, resource_id, step, status, created_at) VALUES (?, ?, ?, ?, ?)",
+		"server", 1, "test", "success", time.Now().Add(-100*24*time.Hour)).Error
+	if err != nil {
+		t.Fatalf("insert log: %v", err)
+	}
+
+	// retention_days=0 means never delete
+	if err := st.DeleteExpiredOperationLogs(0); err != nil {
+		t.Fatalf("DeleteExpiredOperationLogs: %v", err)
+	}
+
+	logs, _ := st.ListOperationsByResource("server", 1)
+	if len(logs) != 1 {
+		t.Errorf("expected 1 log (never expire), got %d", len(logs))
+	}
+}

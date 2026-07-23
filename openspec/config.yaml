@@ -1,20 +1,32 @@
 schema: spec-driven
 
-# Project context (optional)
-# This is shown to AI when creating artifacts.
-# Add your tech stack, conventions, style guides, domain knowledge, etc.
-# Example:
-#   context: |
-#     Tech stack: TypeScript, React, Node.js
-#     We use conventional commits
-#     Domain: e-commerce platform
+context: |
+  ## 技术栈
+  - 后端: Go 1.22, Gin, GORM, SQLite (github.com/glebarez/sqlite 纯 Go 驱动)
+  - 前端: Vue 3 + Vite, Composition API
+  - 通信: gRPC (Agent 管理), REST (Web UI)
+  - 认证: JWT HMAC-SHA256 (标准库手写, 无第三方依赖), bcrypt
 
-# Per-artifact rules (optional)
-# Add custom rules for specific artifacts.
-# Example:
-#   rules:
-#     proposal:
-#       - Keep proposals under 500 words
-#       - Always include a "Non-goals" section
-#     tasks:
-#       - Break tasks into chunks of max 2 hours
+  ## 开发流程
+  所有变更必须遵循: brainstorming → openspec-propose → openspec-apply + TDD → verification → archive
+
+  ## 代码约定
+  - Go 代码用 gofmt 格式化
+  - 测试文件 *_test.go 与源文件同目录
+  - 中文 UI 文案，英文代码标识符
+  - CSS Design Tokens 管理样式
+
+rules:
+  proposal:
+    - 必须列出新增和修改的 Capability
+    - 非目标（Non-goals）需要明确列出
+  design:
+    - 必须包含技术决策和备选方案
+    - 必须列出风险与缓解措施
+  specs:
+    - 每个 Requirement 至少一个 Scenario
+    - Scenario 使用 WHEN/THEN 格式
+  tasks:
+    - 每个 task 必须可独立验证
+    - 按依赖关系排序
+    - 实现阶段遵守 TDD 纪律

@@ -25,7 +25,8 @@ func New(dsn string) (*Store, error) {
 		&model.Server{},
 		&model.Site{},
 		&model.Cert{},
-		&model.AuditLog{},model.AuditLog{},
+		&model.AuditLog{},
+		&model.OperationLog{},
 		&model.User{},
 	); err != nil {
 		return nil, err
@@ -215,4 +216,34 @@ func (s *Store) CountUsers() (int64, error) {
 	var count int64
 	err := s.db.Model(&model.User{}).Count(&count).Error
 	return count, err
+}
+
+// --- OperationLog ---
+
+// CreateOperationLog 创建操作日志
+func (s *Store) CreateOperationLog(log *model.OperationLog) error {
+	return s.db.Create(log).Error
+}
+
+// UpdateOperationLog 更新操作日志状态
+func (s *Store) UpdateOperationLog(log *model.OperationLog) error {
+	return s.db.Save(log).Error
+}
+
+// ListOperationsByResource 按资源类型和 ID 查询操作日志
+func (s *Store) ListOperationsByResource(resourceType string, resourceID uint) ([]model.OperationLog, error) {
+	var logs []model.OperationLog
+	err := s.db.Where("resource_type = ? AND resource_id = ?", resourceType, resourceID).
+		Order("created_at desc").
+		Find(&logs).Error
+	return logs, err
+}
+
+// DeleteExpiredOperationLogs 删除过期操作日志
+func (s *Store) DeleteExpiredOperationLogs(retentionDays int) error {
+	if retentionDays <= 0 {
+		return nil
+	}
+	threshold := time.Now().Add(-time.Duration(retentionDays) * 24 * time.Hour)
+	return s.db.Where("created_at < ?", threshold).Delete(&model.OperationLog{}).Error
 }

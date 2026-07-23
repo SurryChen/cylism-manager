@@ -15,7 +15,13 @@ var version = "1.0.0"
 
 func main() {
 	port := flag.Int("port", 9527, "gRPC listen port")
+	showVersion := flag.Bool("version", false, "print version and exit")
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Printf("cylism-agent version %s\n", version)
+		return
+	}
 
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", *port))
 	if err != nil {

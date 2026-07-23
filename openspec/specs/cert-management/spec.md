@@ -1,7 +1,10 @@
-## 新增需求
+## Purpose
+证书生命周期管理，包括签发、续期和吊销 SSL/TLS 证书。
+
+## Requirements
 
 ### Requirement: 证书签发
-系统应当通过 acme.sh 为指定站点签发 SSL 证书，支持 HTTP（webroot）和 DNS 两种验证方式。
+系统 SHALL通过 acme.sh 为指定站点签发 SSL 证书，支持 HTTP（webroot）和 DNS 两种验证方式。
 
 #### Scenario: 通过 HTTP 验证签发证书
 - **WHEN** 用户对验证方式为 "http" 且具备有效 root_path 的站点触发证书签发
@@ -16,7 +19,7 @@
 - **THEN** 系统返回 acme.sh 输出的错误详情，不创建 Cert 记录
 
 ### Requirement: 证书续期
-系统应当支持手动证书续期，以及自动定时续期将在 30 天内到期的证书。
+系统 SHALL支持手动证书续期，以及自动定时续期将在 30 天内到期的证书。
 
 #### Scenario: 手动续期
 - **WHEN** 用户对已有证书触发续期
@@ -31,14 +34,14 @@
 - **THEN** 系统跳过续期，不修改证书
 
 ### Requirement: 证书吊销
-系统应当允许用户通过 acme.sh 吊销证书并清理关联配置。
+系统 SHALL允许用户通过 acme.sh 吊销证书并清理关联配置。
 
 #### Scenario: 吊销证书
 - **WHEN** 用户对已签发的证书触发吊销
 - **THEN** 系统通过 Agent 调用 acme.sh --revoke，将证书状态设为 "revoked"，并从关联的 NGINX 配置中移除 SSL 引用
 
 ### Requirement: 证书到期仪表盘
-系统应当在仪表盘中包含证书到期信息，高亮显示将在 30 天内到期的证书。
+系统 SHALL在仪表盘中包含证书到期信息，高亮显示将在 30 天内到期的证书。
 
 #### Scenario: 仪表盘显示即将到期的证书
 - **WHEN** 用户查看仪表盘
