@@ -34,3 +34,10 @@ Thumbs.db
 # Environment
 .env
 .env.local
+
+# Root-level compiled binaries
+agent
+platform
+agent-linux-amd64
+*.service
+openspec/changes/
