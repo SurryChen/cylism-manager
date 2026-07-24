@@ -2,8 +2,8 @@
   <div class="login-page">
     <div class="login-card">
       <div class="login-header">
-        <span class="brand-mark">◆</span>
-        <h1>Cylism Manager</h1>
+        <span class="login-mark">◇</span>
+        <div><h1>Cylism</h1><p>Operations Manager</p></div>
       </div>
       <form @submit.prevent="login">
         <div class="form-group">
@@ -61,44 +61,69 @@ async function login() {
 
 <style scoped>
 .login-page {
+  position: relative;
+  overflow: hidden;
   display: flex;
   align-items: center;
   justify-content: center;
   min-height: 100vh;
-  background: var(--bg-deep);
+  padding: 24px;
+  background: var(--canvas);
 }
 
+.login-page::before,
+.login-page::after {
+  position: fixed;
+  z-index: 0;
+  width: 72vw;
+  height: 55vh;
+  content: '';
+  opacity: .72;
+  pointer-events: none;
+  transform: skewY(-16deg);
+}
+
+.login-page::before { top: -28vh; right: -18vw; background: var(--band-a); }
+.login-page::after { bottom: -28vh; left: -18vw; background: var(--band-b); }
+
 .login-card {
-  width: 380px;
-  max-width: 90vw;
-  background: var(--bg-surface);
+  position: relative;
+  z-index: 1;
+  width: 390px;
+  max-width: 100%;
+  padding: 30px;
   border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  padding: var(--space-32);
+  border-radius: 18px;
+  background: var(--surface-raised);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(24px) saturate(125%);
 }
 
 .login-header {
   display: flex;
   align-items: center;
-  gap: var(--space-12);
-  margin-bottom: var(--space-32);
-  justify-content: center;
+  gap: 12px;
+  margin-bottom: 28px;
 }
 
+.login-mark { display: grid; width: 35px; height: 35px; place-items: center; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-subtle); color: var(--action-primary); font-size: 20px; }
 .login-header h1 {
+  margin: 0;
+  color: var(--text-primary);
   font-size: 18px;
   font-weight: 700;
-  letter-spacing: -0.02em;
+  letter-spacing: 0;
 }
+.login-header p { margin: 2px 0 0; color: var(--text-muted); font: 10px/1 var(--font-mono); letter-spacing: .08em; text-transform: uppercase; }
 
 .login-error {
-  background: rgba(248, 113, 113, 0.08);
-  border: 1px solid var(--danger);
-  border-radius: var(--radius-md);
-  padding: var(--space-8) var(--space-12);
-  font-size: 13px;
-  color: var(--danger);
   margin-bottom: var(--space-16);
+  padding: var(--space-8) var(--space-12);
+  border: 1px solid var(--danger);
+  border-radius: var(--radius-control);
+  background: var(--danger-surface);
+  color: var(--danger);
+  font-size: 12px;
 }
 
 .login-btn {

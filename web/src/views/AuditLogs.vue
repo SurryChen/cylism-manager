@@ -2,9 +2,9 @@
   <div>
     <div class="page-header">
       <h1 class="page-title">审计日志</h1>
-      <div class="btn-group">
-        <select v-model="filterType" class="form-select" style="width:auto;min-width:140px;"><option value="">全部资源</option><option value="server">服务器</option><option value="site">站点</option><option value="cert">证书</option><option value="nginx">NGINX</option></select>
-        <select v-model="filterAction" class="form-select" style="width:auto;min-width:120px;"><option value="">全部操作</option><option value="create">创建</option><option value="update">更新</option><option value="delete">删除</option><option value="deploy">部署</option><option value="issue">签发</option><option value="renew">续期</option><option value="revoke">吊销</option></select>
+      <div class="btn-group filter-bar">
+        <select v-model="filterType" class="form-select"><option value="">全部资源</option><option value="server">服务器</option><option value="site">站点</option><option value="cert">证书</option><option value="nginx">NGINX</option></select>
+        <select v-model="filterAction" class="form-select"><option value="">全部操作</option><option value="create">创建</option><option value="update">更新</option><option value="delete">删除</option><option value="deploy">部署</option><option value="issue">签发</option><option value="renew">续期</option><option value="revoke">吊销</option></select>
         <button class="btn btn-sm" @click="fetchLogs">筛选</button>
       </div>
     </div>
@@ -19,14 +19,14 @@
               <td>{{ formatTime(log.created_at) }}</td>
               <td><span class="badge" :class="actionBadge(log.action)">{{ actionLabel(log.action) }}</span></td>
               <td>{{ resourceLabel(log.resource_type) }}</td><td>#{{ log.resource_id }}</td>
-              <td style="font-size:12px;color:var(--text-muted);max-width:280px;">{{ truncateDetail(log.detail) }}</td>
+              <td class="cell-secondary">{{ truncateDetail(log.detail) }}</td>
             </tr>
           </tbody>
         </table>
       </div>
-      <div v-if="total>20" style="display:flex;justify-content:center;gap:var(--space-8);margin-top:var(--space-16);">
+      <div v-if="total>20" class="pagination">
         <button class="btn btn-sm" :disabled="offset===0" @click="prevPage">上一页</button>
-        <span style="font-size:13px;color:var(--text-muted);padding:var(--space-8) var(--space-12);">{{ Math.floor(offset/20)+1 }} / {{ Math.ceil(total/20) }}</span>
+        <span class="pagination-status">{{ Math.floor(offset/20)+1 }} / {{ Math.ceil(total/20) }}</span>
         <button class="btn btn-sm" :disabled="offset+20>=total" @click="nextPage">下一页</button>
       </div>
     </div>

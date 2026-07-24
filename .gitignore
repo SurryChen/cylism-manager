@@ -40,5 +40,4 @@ agent
 platform
 agent-linux-amd64
 *.service
-openspec/changes/
 agent

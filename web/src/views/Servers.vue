@@ -6,7 +6,7 @@
     </div>
 
     <!-- Tab switcher -->
-    <div class="card" style="margin-bottom:16px">
+    <div class="card section-gap">
       <div class="table-tabs">
         <button :class="['tab-btn', { 'tab-active': activeTab === 'servers' }]" @click="activeTab = 'servers'">服务器列表</button>
         <button :class="['tab-btn', { 'tab-active': activeTab === 'nodes' }]" @click="activeTab = 'nodes'">集群节点</button>
@@ -27,7 +27,7 @@
           </thead>
           <tbody>
             <tr v-for="srv in servers" :key="srv.id">
-              <td style="font-weight:600">{{ srv.name }}</td>
+              <td class="cell-primary">{{ srv.name }}</td>
               <td>{{ srv.host }}</td>
               <td>{{ srv.ssh_port }}</td>
               <td>
@@ -37,7 +37,7 @@
               </td>
               <td>{{ srv.k8s_node_name || '-' }}</td>
               <td>
-                <div class="btn-group" style="justify-content:flex-end;">
+                <div class="btn-group action-cell">
                   <button v-if="!srv.cluster_role" class="btn btn-sm" @click="addToCluster(srv.id)">加入集群</button>
                   <button v-if="srv.cluster_role" class="btn btn-sm" @click="drainNode(srv.id)">驱逐</button>
                   <button v-if="srv.cluster_role" class="btn btn-sm btn-danger" @click="confirmRemoveNode(srv)">移出</button>
@@ -64,7 +64,7 @@
           </thead>
           <tbody>
             <tr v-for="node in nodes" :key="node.name">
-              <td style="font-weight:600">{{ node.name }}</td>
+              <td class="cell-primary">{{ node.name }}</td>
               <td>
                 <span class="badge" :class="node.ready ? 'badge-online' : 'badge-offline'">
                   <span class="badge-dot"></span> {{ node.ready ? '就绪' : '未就绪' }}
@@ -73,9 +73,9 @@
               <td>{{ node.roles || '-' }}</td>
               <td>{{ node.version || '-' }}</td>
               <td>{{ node.internal_ip || '-' }}</td>
-              <td style="font-size:12px;color:var(--text-secondary);">{{ node.os || '-' }}</td>
+              <td class="cell-secondary">{{ node.os || '-' }}</td>
               <td>
-                <div class="btn-group" style="justify-content:flex-end;">
+                <div class="btn-group action-cell">
                   <button class="btn btn-sm" @click="drainNode(node.name)">驱逐</button>
                   <button class="btn btn-sm btn-danger" @click="confirmRemoveNode({ name: node.name, k8s_node_name: node.name })">移出</button>
                 </div>
@@ -124,7 +124,7 @@
           </div>
           <div class="form-group" v-if="form.ssh_auth_type === 'key'">
             <label class="form-label">SSH 密钥</label>
-            <textarea v-model="form.ssh_key" class="form-input" style="min-height:100px;font-family:monospace;" placeholder="粘贴私钥内容" />
+            <textarea v-model="form.ssh_key" class="form-input textarea-input" placeholder="粘贴私钥内容" />
           </div>
           <div class="modal-actions">
             <button type="button" class="btn" @click="showAdd = false">取消</button>
@@ -138,7 +138,7 @@
     <div v-if="addTarget" class="overlay" @click.self="addTarget = null">
       <div class="modal">
         <h2 class="modal-title">加入集群</h2>
-        <p style="color:var(--text-secondary);margin-bottom:16px;">
+        <p class="modal-copy">
           确定将 <strong>{{ addTarget.name }}</strong> 加入 K3s 集群吗？
         </p>
         <div class="modal-actions">
@@ -152,7 +152,7 @@
     <div v-if="drainTarget" class="overlay" @click.self="drainTarget = null">
       <div class="modal">
         <h2 class="modal-title">驱逐节点</h2>
-        <p style="color:var(--text-secondary);margin-bottom:16px;">
+        <p class="modal-copy">
           确定驱逐 <strong>{{ drainTarget.name || drainTarget.k8s_node_name }}</strong> 吗？Pod 会迁移到其他节点。
         </p>
         <div class="modal-actions">
@@ -166,7 +166,7 @@
     <div v-if="removeTarget" class="overlay" @click.self="removeTarget = null">
       <div class="modal">
         <h2 class="modal-title">移出集群</h2>
-        <p style="color:var(--text-secondary);margin-bottom:16px;">
+        <p class="modal-copy">
           确定将 <strong>{{ removeTarget.name }}</strong> 从集群中移出吗？
         </p>
         <div class="modal-actions">
@@ -180,7 +180,7 @@
     <div v-if="deleteTarget" class="overlay" @click.self="deleteTarget = null">
       <div class="modal">
         <h2 class="modal-title">删除服务器</h2>
-        <p style="color:var(--text-secondary);margin-bottom:16px;">
+        <p class="modal-copy">
           确定删除 <strong>{{ deleteTarget.name }}</strong> 吗？
         </p>
         <div class="modal-actions">
@@ -269,10 +269,3 @@ function resetForm() {
   form.value = { name: '', host: '', ssh_port: 22, ssh_user: 'root', ssh_auth_type: 'password', ssh_password: '', ssh_key: '' }
 }
 </script>
-
-<style scoped>
-.table-tabs { display: flex; gap: 4px; }
-.tab-btn { padding: 6px 16px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--bg-deep); color: var(--text-secondary); font-size: 13px; cursor: pointer; transition: all 0.15s; font-family: inherit; }
-.tab-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
-.tab-active { background: var(--accent); border-color: var(--accent); color: var(--bg-deep); font-weight: 600; }
-</style>
