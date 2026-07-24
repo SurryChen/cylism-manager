@@ -4,6 +4,29 @@
       <h1 class="page-title">概览</h1>
     </div>
 
+    <!-- K3s 集群状态卡片 -->
+    <div v-if="k8sStats" class="metric-grid" style="margin-bottom:var(--space-24);">
+      <div class="metric">
+        <div class="metric-value metric-accent">{{ k8sStats.nodes_total || 0 }}</div>
+        <div class="metric-label">K3s 节点</div>
+      </div>
+      <div class="metric">
+        <div class="metric-value">{{ k8sStats.namespaces || 0 }}</div>
+        <div class="metric-label">命名空间</div>
+      </div>
+      <div class="metric">
+        <div class="metric-value metric-success">{{ k8sStats.pods_ready || 0 }}/{{ k8sStats.pods_total || 0 }}</div>
+        <div class="metric-label">Pods 就绪</div>
+      </div>
+      <div class="metric">
+        <div class="metric-value" style="font-size:14px;">{{ k8sStats.version || '-' }}</div>
+        <div class="metric-label">K3s 版本</div>
+      </div>
+    </div>
+    <div v-else-if="k8sError" class="k8s-banner k8s-banner-warn" style="margin-bottom:var(--space-24);">
+      ⚠ K8s 集群未连接，集群信息不可用
+    </div>
+
     <div class="metric-grid">
       <div class="metric">
         <div class="metric-value">{{ stats.total_servers || 0 }}</div>
@@ -25,7 +48,7 @@
 
     <section class="card" style="margin-bottom: var(--space-24);">
       <div class="card-header">
-        <h2 class="card-title">即将到期的证书</h2>
+        <h2 class="card-title" style="font-size:14px;font-weight:600;color:var(--text-primary);">即将到期的证书</h2>
       </div>
       <div v-if="expiringCerts.length === 0" class="empty-state">
         <span class="empty-icon">✓</span>
@@ -33,9 +56,7 @@
       </div>
       <div v-else class="table-wrap">
         <table class="data-table">
-          <thead>
-            <tr><th>域名</th><th>到期时间</th><th>状态</th></tr>
-          </thead>
+          <thead><tr><th>域名</th><th>到期时间</th><th>状态</th></tr></thead>
           <tbody>
             <tr v-for="cert in expiringCerts" :key="cert.id">
               <td>{{ cert.domains }}</td>
@@ -48,15 +69,13 @@
     </section>
 
     <section class="card">
-      <div class="card-header"><h2 class="card-title">最近操作</h2></div>
+      <div class="card-header"><h2 class="card-title" style="font-size:14px;font-weight:600;color:var(--text-primary);">最近操作</h2></div>
       <div v-if="recentLogs.length === 0" class="empty-state">
         <span class="empty-icon">⊙</span><span class="empty-text">暂无操作记录</span>
       </div>
       <div v-else class="table-wrap">
         <table class="data-table">
-          <thead>
-            <tr><th>操作</th><th>资源</th><th>时间</th></tr>
-          </thead>
+          <thead><tr><th>操作</th><th>资源</th><th>时间</th></tr></thead>
           <tbody>
             <tr v-for="log in recentLogs" :key="log.id">
               <td><span class="badge" :class="actionBadge(log.action)">{{ actionLabel(log.action) }}</span></td>
@@ -77,6 +96,8 @@ import { api } from '../api/index.js'
 const stats = ref({})
 const expiringCerts = ref([])
 const recentLogs = ref([])
+const k8sStats = ref(null)
+const k8sError = ref('')
 
 onMounted(async () => {
   try {
@@ -86,6 +107,14 @@ onMounted(async () => {
     expiringCerts.value = data.expiring_certs || []
     recentLogs.value = data.recent_logs || []
   } catch (e) { console.error(e) }
+
+  // 获取 K8s 集群状态
+  try {
+    const r = await api.get('/k8s/dashboard')
+    const d = await r.json()
+    if (d.error) { k8sError.value = d.error }
+    else { k8sStats.value = d }
+  } catch(e) { /* silent */ }
 })
 
 function formatDate(d) { if (!d) return '-'; return new Date(d).toLocaleDateString('zh-CN', { month:'short', day:'numeric', year:'numeric' }) }

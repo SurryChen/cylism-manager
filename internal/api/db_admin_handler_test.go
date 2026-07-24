@@ -51,7 +51,7 @@ func TestDBAdmin_ListRecords(t *testing.T) {
 	r, s := setupDBAdminRouter()
 
 	// Seed a server
-	s.DB().Exec("INSERT INTO servers (name, host, port, status, ssh_auth_type, ssh_user, ssh_host, ssh_port) VALUES ('test', '1.1.1.1', 9527, 'offline', 'password', 'root', '1.1.1.1', 22)")
+	s.DB().Exec("INSERT INTO servers (name, host, status, ssh_auth_type, ssh_user, ssh_host, ssh_port) VALUES ('test', '1.1.1.1', 'offline', 'password', 'root', '1.1.1.1', 22)")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/admin/tables/servers?page=1&size=10", nil)
 	w := httptest.NewRecorder()
@@ -90,7 +90,7 @@ func TestDBAdmin_CreateAndUpdateAndDelete(t *testing.T) {
 	r, s := setupDBAdminRouter()
 
 	// Create
-	body := `{"name":"new-srv","host":"10.0.0.99","port":9527,"status":"offline","ssh_auth_type":"password","ssh_user":"root","ssh_host":"10.0.0.99","ssh_port":22}`
+	body := `{"name":"new-srv","host":"10.0.0.99","status":"offline","ssh_auth_type":"password","ssh_user":"root","ssh_host":"10.0.0.99","ssh_port":22}`
 	req := httptest.NewRequest(http.MethodPost, "/api/admin/tables/servers", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -147,27 +147,3 @@ func TestDBAdmin_SensitiveFieldsHidden(t *testing.T) {
 	}
 }
 
-func TestProbeDeploy_SyncStatus(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	s, _ := store.New(":memory:")
-
-	// seed a server with offline status
-	s.DB().Exec("INSERT INTO servers (name, host, port, status, ssh_auth_type, ssh_user, ssh_host, ssh_port) VALUES ('test', '1.1.1.1', 9527, 'offline', 'password', 'root', '1.1.1.1', 22)")
-
-	// Mock doesn't do real SSH - just verify the endpoint exists and works
-	// The real SSH probe will fail in test, that's expected - we cover the API contract
-	r := gin.New()
-	// We can't fully test ProbeDeploy without real SSH, but we test the handler path
-	handler := &ServerHandler{store: s}
-
-	// Just verify handler struct is valid
-	req, _ := http.NewRequest(http.MethodGet, "/api/servers/1/deploy/probe", nil)
-	w := httptest.NewRecorder()
-	r.POST("/api/servers/:id/deploy/probe", handler.ProbeDeploy)
-	r.ServeHTTP(w, req)
-
-	// SSH will fail in test env, expect 502
-	if w.Code != http.StatusMethodNotAllowed {
-		// GET on POST route = 405, that's fine - just checking route exists
-	}
-}

@@ -10,7 +10,6 @@ func TestServerModel(t *testing.T) {
 	s := Server{
 		Name:       "web-01",
 		Host:       "10.0.0.1",
-		Port:       9527,
 		SSHHost:    "10.0.0.1",
 		SSHPort:    22,
 		SSHUser:    "root",
@@ -23,9 +22,6 @@ func TestServerModel(t *testing.T) {
 	}
 	if s.Status != "offline" {
 		t.Errorf("expected Status 'offline', got '%s'", s.Status)
-	}
-	if s.Port != 9527 {
-		t.Errorf("expected Port 9527, got %d", s.Port)
 	}
 }
 
@@ -180,27 +176,19 @@ func TestOperationLogStatusTransitions(t *testing.T) {
 	}
 }
 
-func TestServerAgentFields(t *testing.T) {
-	now := time.Now()
+func TestServerClusterFields(t *testing.T) {
 	s := Server{
-		Name:            "web-01",
-		Host:            "10.0.0.1",
-		AgentVersion:    "1.0.0",
-		AgentDeployPath: "/opt/cylism-manager/agent",
+		Name:        "web-01",
+		Host:        "10.0.0.1",
+		ClusterRole: "worker",
+		K8sNodeName: "web-01-node",
 	}
 
-	if s.AgentVersion != "1.0.0" {
-		t.Errorf("expected AgentVersion '1.0.0', got '%s'", s.AgentVersion)
+	if s.ClusterRole != "worker" {
+		t.Errorf("expected ClusterRole 'worker', got '%s'", s.ClusterRole)
 	}
-	if s.AgentDeployPath != "/opt/cylism-manager/agent" {
-		t.Errorf("expected AgentDeployPath, got '%s'", s.AgentDeployPath)
-	}
-	if s.AgentDeployedAt != nil {
-		t.Error("expected AgentDeployedAt to be nil by default")
-	}
-
-	s.AgentDeployedAt = &now
-	if s.AgentDeployedAt == nil {
-		t.Error("expected AgentDeployedAt to be set")
+	if s.K8sNodeName != "web-01-node" {
+		t.Errorf("expected K8sNodeName, got '%s'", s.K8sNodeName)
 	}
 }
+

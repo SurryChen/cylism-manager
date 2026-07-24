@@ -11,7 +11,6 @@ type Server struct {
 	ID               uint           `gorm:"primaryKey" json:"id"`
 	Name             string         `gorm:"size:128;not null" json:"name"`
 	Host             string         `gorm:"size:256;uniqueIndex;not null" json:"host"`
-	Port             int            `gorm:"default:9527" json:"port"`
 	SSHHost          string         `gorm:"size:256" json:"ssh_host"`
 	SSHPort          int            `gorm:"default:22" json:"ssh_port"`
 	SSHUser          string         `gorm:"size:128" json:"ssh_user"`
@@ -19,11 +18,10 @@ type Server struct {
 	SSHPassword      string         `gorm:"type:text" json:"-"`           // 加密存储，JSON 序列化时隐藏
 	SSHKey           string         `gorm:"type:text" json:"-"`           // 加密存储
 	SSHKeyPassphrase string         `gorm:"type:text" json:"-"`           // 加密存储
-	Status           string         `gorm:"size:32;default:offline" json:"status"` // online / offline / deploying
-	AgentVersion     string         `gorm:"size:64" json:"agent_version"`
-	AgentDeployPath  string         `gorm:"size:256" json:"agent_deploy_path"`
-	AgentDeployedAt  *time.Time     `json:"agent_deployed_at"`
+	Status           string         `gorm:"size:32;default:offline" json:"status"` // online / offline
 	LastSeen         *time.Time     `json:"last_seen"`
+	ClusterRole      string         `gorm:"size:32" json:"cluster_role"`   // "" | "control-plane" | "worker"
+	K8sNodeName      string         `gorm:"size:256" json:"k8s_node_name"`
 	CreatedAt        time.Time      `json:"created_at"`
 	UpdatedAt        time.Time      `json:"updated_at"`
 	DeletedAt        gorm.DeletedAt `gorm:"index" json:"-"`

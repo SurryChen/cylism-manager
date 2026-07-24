@@ -3,35 +3,26 @@ package api
 import (
 	"net/http"
 	"strconv"
-	"time"
+	
 
 	"github.com/cylism/cylism-manager/internal/crypto"
 	"github.com/cylism/cylism-manager/internal/model"
-	"github.com/cylism/cylism-manager/internal/service/deployer"
 	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/gin-gonic/gin"
 )
 
 type ServerHandler struct {
-	store     *store.Store
-	encKey    []byte
-	deploySvc DeployService
+	store  *store.Store
+	encKey []byte
 }
 
-type DeployService interface {
-	ProbeAgent(server *model.Server) (*deployer.AgentProbeResult, error)
-	DeployAgent(server *model.Server, force bool) error
-	TestSSH(server *model.Server) (string, error)
-}
-
-func NewServerHandler(s *store.Store, encKey []byte, deploySvc DeployService) *ServerHandler {
-	return &ServerHandler{store: s, encKey: encKey, deploySvc: deploySvc}
+func NewServerHandler(s *store.Store, encKey []byte) *ServerHandler {
+	return &ServerHandler{store: s, encKey: encKey}
 }
 
 type createServerReq struct {
 	Name             string `json:"name" binding:"required"`
 	Host             string `json:"host" binding:"required"`
-	Port             int    `json:"port"`
 	SSHHost          string `json:"ssh_host"`
 	SSHPort          int    `json:"ssh_port"`
 	SSHUser          string `json:"ssh_user"`
@@ -47,7 +38,6 @@ func (h *ServerHandler) Create(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if req.Port == 0 { req.Port = 9527 }
 	if req.SSHPort == 0 { req.SSHPort = 22 }
 	if req.SSHAuthType == "" { req.SSHAuthType = "password" }
 
@@ -56,7 +46,7 @@ func (h *ServerHandler) Create(c *gin.Context) {
 	encPassphrase, _ := crypto.Encrypt(h.encKey, req.SSHKeyPassphrase)
 
 	server := &model.Server{
-		Name: req.Name, Host: req.Host, Port: req.Port,
+		Name: req.Name, Host: req.Host,
 		SSHHost: req.SSHHost, SSHPort: req.SSHPort, SSHUser: req.SSHUser,
 		SSHAuthType: req.SSHAuthType, SSHPassword: encPassword,
 		SSHKey: encKey, SSHKeyPassphrase: encPassphrase, Status: "offline",
@@ -96,7 +86,6 @@ func (h *ServerHandler) Update(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()}); return
 	}
 	if v, ok := updates["name"]; ok { server.Name = v.(string) }
-	if v, ok := updates["port"]; ok { server.Port = int(v.(float64)) }
 	if v, ok := updates["ssh_password"]; ok { enc, _ := crypto.Encrypt(h.encKey, v.(string)); server.SSHPassword = enc }
 	if v, ok := updates["ssh_key"]; ok { enc, _ := crypto.Encrypt(h.encKey, v.(string)); server.SSHKey = enc }
 	if v, ok := updates["ssh_host"]; ok { server.SSHHost = v.(string) }
@@ -118,65 +107,3 @@ func (h *ServerHandler) Delete(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
-func (h *ServerHandler) Deploy(c *gin.Context) {
-	id, _ := strconv.ParseUint(c.Param("id"), 10, 64)
-	server, err := h.store.GetServer(uint(id))
-	if err != nil { c.JSON(http.StatusNotFound, gin.H{"error": "server not found"}); return }
-
-	force := c.Query("force") == "true"
-
-	server.Status = "deploying"
-	h.store.UpdateServer(server)
-
-	if err := h.deploySvc.DeployAgent(server, force); err != nil {
-		server.Status = "offline"
-		h.store.UpdateServer(server)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	nowDeploy := time.Now()
-	server.Status = "online"
-	server.AgentVersion = "1.0.0"
-	server.AgentDeployPath = "/opt/cylism-manager/agent"
-	server.AgentDeployedAt = &nowDeploy
-	h.store.UpdateServer(server)
-	c.JSON(http.StatusOK, gin.H{"ok": true, "status": "online"})
-}
-
-// ProbeDeploy 部署前探测远端 Agent 状态
-func (h *ServerHandler) ProbeDeploy(c *gin.Context) {
-	id, _ := strconv.ParseUint(c.Param("id"), 10, 64)
-	server, err := h.store.GetServer(uint(id))
-	if err != nil { c.JSON(http.StatusNotFound, gin.H{"error": "server not found"}); return }
-
-	result, err := h.deploySvc.ProbeAgent(server)
-	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
-		return
-	}
-
-	// 状态同步：探测到 Agent 运行中则更新状态和版本
-	if result.ProcessRunning {
-		server.Status = "online"
-		server.AgentVersion = result.AgentVersion
-		now := time.Now()
-		server.LastSeen = &now
-		h.store.UpdateServer(server)
-	}
-
-	c.JSON(http.StatusOK, result)
-}
-
-func (h *ServerHandler) TestSSH(c *gin.Context) {
-	id, _ := strconv.ParseUint(c.Param("id"), 10, 64)
-	server, err := h.store.GetServer(uint(id))
-	if err != nil { c.JSON(http.StatusNotFound, gin.H{"error": "server not found"}); return }
-
-	msg, err := h.deploySvc.TestSSH(server)
-	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"ok": true, "message": msg})
-}

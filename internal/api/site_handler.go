@@ -5,25 +5,17 @@ import (
 	"strconv"
 
 	"github.com/cylism/cylism-manager/internal/model"
-	"encoding/json"
-	"context"
-	"fmt"
-	"time"
 
-	agent2 "github.com/cylism/cylism-manager/internal/agent"
-	nginx2 "github.com/cylism/cylism-manager/internal/nginx"
 	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/gin-gonic/gin"
-	pb2 "github.com/cylism/cylism-manager/api/proto/agent"
 )
 
 type SiteHandler struct {
 	store *store.Store
-	pool  *agent2.Pool
 }
 
-func NewSiteHandler(s *store.Store, pool *agent2.Pool) *SiteHandler {
-	return &SiteHandler{store: s, pool: pool}
+func NewSiteHandler(s *store.Store) *SiteHandler {
+	return &SiteHandler{store: s}
 }
 
 type createSiteReq struct {
@@ -161,116 +153,9 @@ func (h *SiteHandler) RevokeCert(c *gin.Context) {
 // -- NGINX stubs --
 
 func (h *SiteHandler) GenerateNginx(c *gin.Context) {
-	id, _ := strconv.ParseUint(c.Param("id"), 10, 64)
-	site, err := h.store.GetSite(uint(id))
-	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "site not found"})
-		return
-	}
-
-	server, err := h.store.GetServer(site.ServerID)
-	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "server not found"})
-		return
-	}
-
-	ac, ok := h.pool.Get(server.ID)
-	if !ok {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "agent not connected"})
-		return
-	}
-
-	// Render config
-	data := &nginx2.TemplateData{
-		Domain:   site.Domain,
-		Port:     site.Port,
-		RootPath: site.RootPath,
-	}
-	if site.Upstream != "" {
-		var uc model.UpstreamConfig
-		json.Unmarshal([]byte(site.Upstream), &uc)
-		if len(uc.Servers) > 0 {
-			data.Upstream = fmt.Sprintf("http://%s:%d", uc.Servers[0].Host, uc.Servers[0].Port)
-		}
-	}
-	if site.Locations != "" {
-		json.Unmarshal([]byte(site.Locations), &data.ExtraLocations)
-	}
-
-	var conf string
-	var renderErr error
-	if site.SSLEnabled && site.Cert != nil {
-		data.CertPath = site.Cert.FullchainPath
-		data.KeyPath = site.Cert.KeyPath
-		conf, renderErr = nginx2.RenderHTTPS(data)
-	} else {
-		conf, renderErr = nginx2.RenderHTTP(data)
-	}
-	if renderErr != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": renderErr.Error()})
-		return
-	}
-
-	// Write config via Agent
-	confPath := nginx2.ConfPath(site.Domain)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	_, writeErr := ac.Client.WriteConfigFile(ctx, &pb2.WriteConfigFileRequest{
-		Path:    confPath,
-		Content: conf,
-	})
-	if writeErr != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("write config: %v", writeErr)})
-		return
-	}
-
-	// nginx -t
-	testResp, testErr := ac.Client.NginxTest(ctx, &pb2.NginxTestRequest{})
-	if testErr != nil || (testResp != nil && !testResp.Ok) {
-		msg := "nginx test failed"
-		if testResp != nil { msg = testResp.Output }
-		c.JSON(http.StatusInternalServerError, gin.H{"error": msg})
-		return
-	}
-
-	// nginx -s reload
-	_, reloadErr := ac.Client.NginxReload(ctx, &pb2.NginxReloadRequest{})
-	if reloadErr != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("nginx reload: %v", reloadErr)})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{"ok": true, "path": confPath})
+	c.JSON(http.StatusOK, gin.H{"message": "generate nginx - K3s implementation pending"})
 }
 
 func (h *SiteHandler) ReloadNginx(c *gin.Context) {
-	id, _ := strconv.ParseUint(c.Param("id"), 10, 64)
-	site, err := h.store.GetSite(uint(id))
-	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "site not found"})
-		return
-	}
-
-	server, _ := h.store.GetServer(site.ServerID)
-	ac, ok := h.pool.Get(server.ID)
-	if !ok {
-		c.JSON(http.StatusBadGateway, gin.H{"error": "agent not connected"})
-		return
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	resp, err := ac.Client.NginxReload(ctx, &pb2.NginxReloadRequest{})
-	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("reload: %v", err)})
-		return
-	}
-	if !resp.Ok {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": resp.Output})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{"ok": true})
+	c.JSON(http.StatusOK, gin.H{"message": "reload nginx - K3s implementation pending"})
 }
