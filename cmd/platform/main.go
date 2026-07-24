@@ -9,12 +9,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/cylism/cylism-manager/internal/agent"
 	"github.com/cylism/cylism-manager/internal/api"
 	"github.com/cylism/cylism-manager/internal/auth"
-	"github.com/cylism/cylism-manager/internal/crypto"
+	"github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
-	"github.com/cylism/cylism-manager/internal/service/server"
 	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/gin-gonic/gin"
 	"github.com/spf13/viper"
@@ -52,18 +50,6 @@ func main() {
 		log.Fatalf("Encryption key must be exactly 32 bytes (got %d)", len(encKey))
 	}
 
-	// 加载或生成 TLS CA
-	caCertPath := viper.GetString("tls.ca_cert")
-	caKeyPath := viper.GetString("tls.ca_key")
-	if caCertPath == "" { caCertPath = "data/tls/ca-cert.pem" }
-	if caKeyPath == "" { caKeyPath = "data/tls/ca-key.pem" }
-	os.MkdirAll("data/tls/servers", 0700)
-	_, _, errCa := crypto.LoadOrGenerateCA(caCertPath, caKeyPath)
-	if errCa != nil {
-		log.Fatalf("Failed to init TLS CA: %v", errCa)
-	}
-	log.Println("TLS CA initialized")
-
 	// JWT 配置
 	jwtSecret := []byte(viper.GetString("auth.jwt_secret"))
 	accessTTL := time.Duration(viper.GetInt("auth.access_token_ttl")) * time.Second
@@ -75,24 +61,25 @@ func main() {
 		RefreshTokenTTL: refreshTTL,
 	}
 
-	// Agent 连接池
-	pool := agent.NewPool(10 * time.Second)
-
-	// 心跳监控
-	heartbeat := server.NewHeartbeatMonitor(db, pool, 30*time.Second)
-	heartbeat.Start()
-	defer heartbeat.Stop()
-
 	// 操作日志清理任务
 	opLogRetention := viper.GetInt("operation_log.retention_days")
 	go startOperationLogCleaner(db, time.Duration(opLogRetention))
+
+	// K8s 客户端初始化（非阻塞）
+	k8sClient, err := k8s.NewClient()
+	if err != nil {
+		log.Printf("WARNING: K8s 客户端不可用: %v（集群相关功能将降级）", err)
+	} else {
+		api.K8s = k8sClient
+		log.Println("K8s 客户端已就绪")
+	}
 
 	// 配置 Gin
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.Default()
 
-	// 注册路由（认证中间件在 router 内部应用）
-	api.RegisterRoutes(r, db, encKey, pool, authCfg)
+	// 注册路由
+	api.RegisterRoutes(r, db, encKey, authCfg)
 
 	// 静态文件
 	r.Static("/assets", "./web/dist/assets")
@@ -115,7 +102,6 @@ func main() {
 		signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 		<-quit
 		log.Println("Shutting down...")
-		pool.CloseAll()
 		srv.Close()
 	}()
 

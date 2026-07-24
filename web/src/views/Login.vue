@@ -92,7 +92,7 @@ async function login() {
 }
 
 .login-error {
-  background: rgba(248, 81, 73, 0.1);
+  background: rgba(248, 113, 113, 0.08);
   border: 1px solid var(--danger);
   border-radius: var(--radius-md);
   padding: var(--space-8) var(--space-12);
