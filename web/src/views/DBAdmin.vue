@@ -5,7 +5,7 @@
       <button class="btn btn-primary" @click="showAdd = true" :disabled="!currentTable">+ 新增记录</button>
     </div>
 
-    <div class="card" style="margin-bottom:16px">
+    <div class="card section-gap">
       <div class="table-tabs">
         <button
           v-for="t in tables"
@@ -24,10 +24,10 @@
           <table class="data-table">
             <thead>
               <tr>
-                <th v-for="col in columns" :key="col" style="cursor:pointer" @click="setSort(col)">
+                <th v-for="col in columns" :key="col" class="sortable-header" @click="setSort(col)">
                   {{ col }} {{ sort === col ? (order === 'asc' ? '↑' : '↓') : '' }}
                 </th>
-                <th style="width:120px">操作</th>
+                <th>操作</th>
               </tr>
             </thead>
             <tbody>
@@ -43,9 +43,9 @@
             </tbody>
           </table>
         </div>
-        <div style="display:flex;justify-content:center;align-items:center;gap:12px;margin-top:16px;">
+        <div class="pagination">
           <button class="btn btn-sm" :disabled="page <= 1" @click="page--; fetchData()">上一页</button>
-          <span style="font-size:13px;color:var(--text-secondary)">{{ page }} / {{ totalPages }}</span>
+          <span class="pagination-status">{{ page }} / {{ totalPages }}</span>
           <button class="btn btn-sm" :disabled="page >= totalPages" @click="page++; fetchData()">下一页</button>
         </div>
       </div>
@@ -72,7 +72,7 @@
     <div v-if="deleteTarget" class="overlay" @click.self="deleteTarget=null">
       <div class="modal">
         <h2 class="modal-title">确认删除</h2>
-        <p style="color:var(--text-secondary);margin-bottom:var(--space-16);">
+        <p class="modal-copy">
           确定删除 <strong>{{ currentTable }}</strong> 表中 ID 为 <strong>{{ deleteTarget.id }}</strong> 的记录吗？此操作不可撤销。
         </p>
         <div class="modal-actions">
@@ -190,10 +190,3 @@ async function doDelete() {
   } catch (e) { console.error(e) }
 }
 </script>
-
-<style scoped>
-.table-tabs { display: flex; gap: 4px; flex-wrap: wrap; }
-.tab-btn { padding: 6px 16px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--bg-deep); color: var(--text-secondary); font-size: 13px; cursor: pointer; transition: all 0.15s; font-family: inherit; }
-.tab-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
-.tab-active { background: var(--accent); border-color: var(--accent); color: var(--bg-deep); font-weight: 600; }
-</style>

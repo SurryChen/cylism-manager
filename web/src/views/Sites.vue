@@ -6,13 +6,13 @@
     </div>
 
     <!-- Server filter -->
-    <div class="card" style="margin-bottom:16px">
-      <div style="display:flex;align-items:center;gap:12px;">
-        <label class="form-label" style="margin-bottom:0;white-space:nowrap">命名空间：</label>
-        <select v-model="filterNs" class="form-select" style="width:auto;min-width:160px">
+    <div class="card section-gap">
+      <div class="filter-bar">
+        <div class="filter-control"><label class="form-label">命名空间：</label>
+        <select v-model="filterNs" class="form-select">
           <option value="">全部</option>
           <option v-for="ns in namespaces" :key="ns" :value="ns">{{ ns }}</option>
-        </select>
+        </select></div>
       </div>
     </div>
 
@@ -28,7 +28,7 @@
           </thead>
           <tbody>
             <tr v-for="route in filteredRoutes" :key="route.namespace + '/' + route.name">
-              <td style="font-weight:600">{{ route.name }}</td>
+              <td class="cell-primary">{{ route.name }}</td>
               <td>{{ route.namespace }}</td>
               <td>{{ route.host || '-' }}</td>
               <td>{{ route.service_name }}</td>
@@ -39,7 +39,7 @@
                 </span>
               </td>
               <td>
-                <div class="btn-group" style="justify-content:flex-end;">
+                <div class="btn-group action-cell">
                   <button class="btn btn-sm btn-danger" @click="confirmDelete(route)">删除</button>
                 </div>
               </td>
@@ -80,8 +80,8 @@
               <input v-model.number="form.service_port" class="form-input" type="number" placeholder="80" required />
             </div>
             <div class="form-group">
-              <label class="form-label" style="display:flex;align-items:center;text-transform:none;letter-spacing:0;font-size:14px;color:var(--text-primary);">
-                <input type="checkbox" v-model="form.tls_enabled" style="margin-right:8px;" />
+              <label class="checkbox-label">
+                <input type="checkbox" v-model="form.tls_enabled" />
                 TLS
               </label>
             </div>
@@ -102,7 +102,7 @@
     <div v-if="deleteTarget" class="overlay" @click.self="deleteTarget = null">
       <div class="modal">
         <h2 class="modal-title">删除路由</h2>
-        <p style="color:var(--text-secondary);margin-bottom:16px;">
+        <p class="modal-copy">
           确定删除 <strong>{{ deleteTarget.name }}</strong>（{{ deleteTarget.namespace }}）？
         </p>
         <div class="modal-actions">
