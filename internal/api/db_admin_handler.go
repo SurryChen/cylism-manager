@@ -60,9 +60,15 @@ func (h *DBAdminHandler) ListRecords(c *gin.Context) {
 	sort := c.DefaultQuery("sort", "id")
 	order := c.DefaultQuery("order", "desc")
 
-	if page < 1 { page = 1 }
-	if size < 1 { size = 20 }
-	if size > 100 { size = 100 }
+	if page < 1 {
+		page = 1
+	}
+	if size < 1 {
+		size = 20
+	}
+	if size > 100 {
+		size = 100
+	}
 
 	// 校验排序字段
 	if !h.columnExists(tableName, sort) {
@@ -128,11 +134,11 @@ func (h *DBAdminHandler) ListRecords(c *gin.Context) {
 	}
 
 	model.Success(c, gin.H{
-		"rows":      results,
-		"columns":   h.visibleColumns(tableName, tableModel),
-		"total":     total,
-		"page":      page,
-		"size":      size,
+		"rows":    results,
+		"columns": h.visibleColumns(tableName, tableModel),
+		"total":   total,
+		"page":    page,
+		"size":    size,
 	})
 }
 
@@ -154,7 +160,7 @@ func (h *DBAdminHandler) CreateRecord(c *gin.Context) {
 	// 排除自动字段
 	filtered := make(map[string]interface{})
 	for k, v := range body {
-		if !autoColumns[k] {
+		if !autoColumns[k] && h.columnExists(tableName, k) {
 			filtered[k] = v
 		}
 	}
@@ -197,7 +203,7 @@ func (h *DBAdminHandler) UpdateRecord(c *gin.Context) {
 	// 排除自动字段
 	filtered := make(map[string]interface{})
 	for k, v := range body {
-		if !autoColumns[k] {
+		if !autoColumns[k] && h.columnExists(tableName, k) {
 			filtered[k] = v
 		}
 	}
@@ -293,4 +299,3 @@ func (h *DBAdminHandler) visibleColumns(tableName string, model interface{}) []s
 	}
 	return result
 }
-

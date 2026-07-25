@@ -37,10 +37,10 @@ describe('Glass UI application shell', () => {
 
     expect(primaryNavigation.text()).toContain('概览')
     expect(primaryNavigation.text()).toContain('基础设施')
-    expect(primaryNavigation.text()).toContain('记录')
+    expect(primaryNavigation.text()).toContain('记录与系统')
     expect(navigation.text()).toContain('概览')
     expect(navigation.text()).not.toContain('服务器')
-    expect(navigation.text()).not.toContain('导入')
+    expect(navigation.text()).not.toContain('数据管理')
   })
 
   it('shows infrastructure secondary navigation for infrastructure routes while preserving all mobile destinations', async () => {
@@ -50,12 +50,16 @@ describe('Glass UI application shell', () => {
 
     expect(wrapper.get('[data-testid="primary-navigation"]').get('[aria-current="page"]').text()).toContain('基础设施')
     expect(navigation.text()).toContain('服务器')
+    expect(navigation.text()).toContain('集群节点')
     expect(navigation.text()).toContain('路由')
     expect(navigation.text()).toContain('证书')
-    expect(navigation.text()).toContain('资源')
+    expect(navigation.text()).toContain('工作负载')
+    expect(navigation.text()).toContain('服务')
+    expect(navigation.text()).toContain('配置')
     expect(navigation.text()).not.toContain('审计')
     expect(mobileNavigation.text()).toContain('概览')
-    expect(mobileNavigation.text()).toContain('数据管理')
+    expect(mobileNavigation.text()).toContain('系统设置')
+    expect(mobileNavigation.text()).not.toContain('数据管理')
   })
 
   it('renders the palette menu at the document root and applies a selected swatch', async () => {

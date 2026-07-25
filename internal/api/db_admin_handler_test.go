@@ -39,7 +39,7 @@ func TestDBAdmin_ListTables(t *testing.T) {
 	}
 
 	var apiResp struct {
-		Code int      `json:"code"`
+		Code int `json:"code"`
 		Data struct {
 			Tables []string `json:"tables"`
 		} `json:"data"`
@@ -54,7 +54,7 @@ func TestDBAdmin_ListRecords(t *testing.T) {
 	r, s := setupDBAdminRouter()
 
 	// Seed a server
-	s.DB().Exec("INSERT INTO servers (name, host, status, ssh_auth_type, ssh_user, ssh_host, ssh_port) VALUES ('test', '1.1.1.1', 'offline', 'password', 'root', '1.1.1.1', 22)")
+	s.DB().Exec("INSERT INTO servers (name, host, ssh_auth_type, ssh_user, ssh_host, ssh_port) VALUES ('test', '1.1.1.1', 'password', 'root', '1.1.1.1', 22)")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/admin/tables/servers?page=1&size=10", nil)
 	w := httptest.NewRecorder()
@@ -96,7 +96,7 @@ func TestDBAdmin_CreateAndUpdateAndDelete(t *testing.T) {
 	r, s := setupDBAdminRouter()
 
 	// Create
-	body := `{"name":"new-srv","host":"10.0.0.99","status":"offline","ssh_auth_type":"password","ssh_user":"root","ssh_host":"10.0.0.99","ssh_port":22}`
+	body := `{"name":"new-srv","host":"10.0.0.99","ssh_auth_type":"password","ssh_user":"root","ssh_host":"10.0.0.99","ssh_port":22}`
 	req := httptest.NewRequest(http.MethodPost, "/api/admin/tables/servers", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -157,4 +157,3 @@ func TestDBAdmin_SensitiveFieldsHidden(t *testing.T) {
 		}
 	}
 }
-

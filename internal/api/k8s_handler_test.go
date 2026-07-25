@@ -18,6 +18,10 @@ func setupK8sTestRouter() *gin.Engine {
 	g := r.Group("/api/k8s")
 	{
 		g.GET("/dashboard", h.Dashboard)
+		g.GET("/namespaces", h.ListNamespaces)
+		g.POST("/namespaces", h.CreateNamespace)
+		g.PATCH("/namespaces/:name", h.UpdateNamespace)
+		g.DELETE("/namespaces/:name", h.DeleteNamespace)
 		g.GET("/deployments", h.ListDeployments)
 		g.GET("/deployments/:namespace/:name", h.GetDeployment)
 		g.GET("/deployments/:namespace/:name/pods", h.ListDeploymentPods)
@@ -78,6 +82,10 @@ func doNoK8s(t *testing.T, method, path string, body io.Reader) {
 func TestNoK8s_AllEndpoints(t *testing.T) {
 	withNoK8s(t, func() {
 		doNoK8s(t, "GET", "/api/k8s/dashboard", nil)
+		doNoK8s(t, "GET", "/api/k8s/namespaces", nil)
+		doNoK8s(t, "POST", "/api/k8s/namespaces", jsonBody(map[string]any{"name": "demo"}))
+		doNoK8s(t, "PATCH", "/api/k8s/namespaces/demo", jsonBody(map[string]any{"labels": map[string]string{"team": "ops"}}))
+		doNoK8s(t, "DELETE", "/api/k8s/namespaces/demo", nil)
 		doNoK8s(t, "GET", "/api/k8s/deployments", nil)
 		doNoK8s(t, "GET", "/api/k8s/deployments/default/web", nil)
 		doNoK8s(t, "GET", "/api/k8s/deployments/default/web/pods", nil)

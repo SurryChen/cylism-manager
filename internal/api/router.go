@@ -4,9 +4,9 @@ import (
 	"time"
 
 	"github.com/cylism/cylism-manager/internal/k8s"
+	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/gin-gonic/gin"
-	"github.com/cylism/cylism-manager/internal/model"
 )
 
 // K8s K8s 客户端全局单例，main.go 初始化
@@ -117,6 +117,10 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 	k8sGroup := apiGroup.Group("/k8s")
 	{
 		k8sGroup.GET("/dashboard", k8sHandler.Dashboard)
+		k8sGroup.GET("/namespaces", k8sHandler.ListNamespaces)
+		k8sGroup.POST("/namespaces", k8sHandler.CreateNamespace)
+		k8sGroup.PATCH("/namespaces/:name", k8sHandler.UpdateNamespace)
+		k8sGroup.DELETE("/namespaces/:name", k8sHandler.DeleteNamespace)
 		k8sGroup.GET("/pods", k8sHandler.ListPods)
 
 		// 工作负载
@@ -156,14 +160,14 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 		k8sGroup.GET("/ingress-controller", k8sHandler.GetIngressController)
 	}
 
-		// Tailscale 管理
-		tailscaleHandler := NewTailscaleHandler(s, encKey)
-		tailscale := apiGroup.Group("/tailscale")
-		{
-			tailscale.POST("/init", tailscaleHandler.Init)
-			tailscale.GET("/status", tailscaleHandler.Status)
-			tailscale.GET("/install-script", tailscaleHandler.InstallScript)
-		}
+	// Tailscale 管理
+	tailscaleHandler := NewTailscaleHandler(s, encKey)
+	tailscale := apiGroup.Group("/tailscale")
+	{
+		tailscale.POST("/init", tailscaleHandler.Init)
+		tailscale.GET("/status", tailscaleHandler.Status)
+		tailscale.GET("/install-script", tailscaleHandler.InstallScript)
+	}
 
 	// 系统状态
 	crdHandler := NewCRDHandler()
