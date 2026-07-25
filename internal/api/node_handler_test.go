@@ -36,7 +36,7 @@ func TestNodeHandler_ListNode(t *testing.T) {
 
 func TestNodeHandler_AddNode(t *testing.T) {
 	r, s := setupNodeRouter()
-	s.DB().Exec("INSERT INTO servers (name, host, status, ssh_auth_type, ssh_user, ssh_host, ssh_port) VALUES ('test', '1.1.1.1', 'offline', 'password', 'root', '1.1.1.1', 22)")
+	s.DB().Exec("INSERT INTO servers (name, host, ssh_auth_type, ssh_user, ssh_host, ssh_port) VALUES ('test', '1.1.1.1', 'password', 'root', '1.1.1.1', 22)")
 
 	req := httptest.NewRequest(http.MethodPost, "/api/nodes/1/add", nil)
 	w := httptest.NewRecorder()

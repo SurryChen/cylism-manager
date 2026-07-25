@@ -92,7 +92,7 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Boxes, Check, Database, FileText, Globe, LayoutDashboard, LogOut, Menu, Network, Orbit, Palette, Route, Server, Settings, ShieldCheck, X } from 'lucide-vue-next'
+import { Boxes, Check, FileText, Globe, LayoutDashboard, Layers3, LogOut, Menu, Orbit, Palette, Route, Server, Settings, ShieldCheck, Waypoints, X } from 'lucide-vue-next'
 import { clearTokens } from './api/index.js'
 import { usePalette } from './composables/usePalette.js'
 
@@ -116,11 +116,37 @@ const palettes = [
 
 const navGroups = computed(() => [
   { id: 'overview', label: '概览', to: '/', items: [{ label: '概览', to: '/', icon: LayoutDashboard }] },
-  { id: 'infrastructure', label: '基础设施', to: '/servers', items: [{ label: '组网配置', to: '/network', icon: Network }, { label: '服务器', to: '/servers', icon: Server }, { label: '工作负载', to: '/workloads', icon: Globe }, { label: '服务发现', to: '/services', icon: Network }, { label: '配置', to: '/configs', icon: Settings }, { label: '路由', to: '/routes', icon: Route }, { label: '证书', to: '/certs', icon: ShieldCheck }, { label: '资源', to: '/resources', icon: Boxes }] },
-  { id: 'records', label: '记录', to: '/audit', items: [{ label: '审计', to: '/audit', icon: FileText }, { label: '数据管理', to: '/db-admin', icon: Database }] },
+  {
+    id: 'infrastructure',
+    label: '基础设施',
+    to: '/servers',
+    items: [
+      { label: '服务器', to: '/servers', icon: Server },
+      { label: '集群节点', to: '/cluster', icon: Waypoints },
+      { label: '工作负载', to: '/workloads', icon: Globe },
+      { label: '服务', to: '/services', icon: Boxes },
+      { label: '配置', to: '/configs', icon: Settings },
+      { label: '路由', to: '/routes', icon: Route },
+      { label: '证书', to: '/certs', icon: ShieldCheck },
+    ],
+  },
+  {
+    id: 'records',
+    label: '记录与系统',
+    to: '/audit',
+    items: [
+      { label: '审计', to: '/audit', icon: FileText },
+      { label: '系统设置', to: '/settings/system', icon: Layers3 },
+    ],
+  },
 ])
 
-const activeNavGroup = computed(() => navGroups.value.find((group) => group.items.some((item) => item.to === route.path)) || navGroups.value[0])
+const activeNavGroup = computed(() => {
+  if (route.path.startsWith('/db-admin')) {
+    return navGroups.value.find(group => group.id === 'records') || navGroups.value[0]
+  }
+  return navGroups.value.find(group => group.items.some(item => item.to === route.path)) || navGroups.value[0]
+})
 
 function choosePalette(palette) {
   selectPalette(palette)

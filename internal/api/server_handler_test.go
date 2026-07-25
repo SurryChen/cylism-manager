@@ -1,6 +1,10 @@
 package api
 
 import (
+	"bytes"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/cylism/cylism-manager/internal/store"
@@ -24,6 +28,25 @@ func setupServerRouter() (*gin.Engine, *store.Store) {
 		servers.POST("/:id/precheck", h.Precheck)
 	}
 	return r, s
+}
+
+func newJSONRequest(method, path string, body interface{}) *http.Request {
+	var reader *bytes.Reader
+	if body == nil {
+		reader = bytes.NewReader(nil)
+	} else {
+		payload, _ := json.Marshal(body)
+		reader = bytes.NewReader(payload)
+	}
+	req := httptest.NewRequest(method, path, reader)
+	req.Header.Set("Content-Type", "application/json")
+	return req
+}
+
+func serve(r *gin.Engine, req *http.Request) *httptest.ResponseRecorder {
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	return w
 }
 
 func TestServerHandler_ProbeNotFound(t *testing.T) {

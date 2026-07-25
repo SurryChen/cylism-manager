@@ -3,13 +3,13 @@ package api
 import (
 	"fmt"
 	"log"
-	"time"
 	"net/http"
+	"time"
 
 	k8sclient "github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-
 
 	"github.com/gin-gonic/gin"
 )
@@ -24,6 +24,21 @@ func NewK8sHandler() *K8sHandler {
 
 func k8sUnavailable(c *gin.Context) {
 	model.Error(c, http.StatusOK, model.CodeK8sUnavailable, "K8s 集群未连接")
+}
+
+type NamespaceSummary struct {
+	Name             string            `json:"name"`
+	Status           string            `json:"status"`
+	Labels           map[string]string `json:"labels"`
+	Annotations      map[string]string `json:"annotations"`
+	LabelsCount      int               `json:"labels_count"`
+	AnnotationsCount int               `json:"annotations_count"`
+	Deployments      int               `json:"deployments"`
+	StatefulSets     int               `json:"statefulsets"`
+	DaemonSets       int               `json:"daemonsets"`
+	Services         int               `json:"services"`
+	ConfigMaps       int               `json:"configmaps"`
+	Secrets          int               `json:"secrets"`
 }
 
 // Dashboard 集群摘要（扩展 Deployment/Service 统计）
@@ -77,15 +92,171 @@ func (h *K8sHandler) Dashboard(c *gin.Context) {
 	}
 
 	model.Success(c, map[string]interface{}{
-		"nodes_total":        nodeTotal,
-		"pods_total":         podTotal,
-		"pods_ready":         podReady,
-		"deployments_total":  deployTotal,
-		"deployments_ready":  deployReady,
-		"services_total":     svcTotal,
-		"namespaces":         nsCount,
-		"version":            version,
+		"nodes_total":       nodeTotal,
+		"pods_total":        podTotal,
+		"pods_ready":        podReady,
+		"deployments_total": deployTotal,
+		"deployments_ready": deployReady,
+		"services_total":    svcTotal,
+		"namespaces":        nsCount,
+		"version":           version,
 	})
+}
+
+// ==================== Namespace ====================
+
+// ListNamespaces 列出 Namespace 与资源摘要
+func (h *K8sHandler) ListNamespaces(c *gin.Context) {
+	if K8s == nil {
+		k8sUnavailable(c)
+		return
+	}
+
+	nsList, err := K8s.Clientset.CoreV1().Namespaces().List(K8s.Ctx(), metav1.ListOptions{})
+	if err != nil {
+		model.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
+		return
+	}
+
+	result := make([]NamespaceSummary, 0, len(nsList.Items))
+	for _, ns := range nsList.Items {
+		name := ns.Name
+		summary := NamespaceSummary{
+			Name:             name,
+			Status:           string(ns.Status.Phase),
+			Labels:           ns.Labels,
+			Annotations:      ns.Annotations,
+			LabelsCount:      len(ns.Labels),
+			AnnotationsCount: len(ns.Annotations),
+		}
+
+		if list, listErr := K8s.Clientset.AppsV1().Deployments(name).List(K8s.Ctx(), metav1.ListOptions{}); listErr == nil {
+			summary.Deployments = len(list.Items)
+		}
+		if list, listErr := K8s.Clientset.AppsV1().StatefulSets(name).List(K8s.Ctx(), metav1.ListOptions{}); listErr == nil {
+			summary.StatefulSets = len(list.Items)
+		}
+		if list, listErr := K8s.Clientset.AppsV1().DaemonSets(name).List(K8s.Ctx(), metav1.ListOptions{}); listErr == nil {
+			summary.DaemonSets = len(list.Items)
+		}
+		if list, listErr := K8s.Clientset.CoreV1().Services(name).List(K8s.Ctx(), metav1.ListOptions{}); listErr == nil {
+			summary.Services = len(list.Items)
+		}
+		if list, listErr := K8s.Clientset.CoreV1().ConfigMaps(name).List(K8s.Ctx(), metav1.ListOptions{}); listErr == nil {
+			summary.ConfigMaps = len(list.Items)
+		}
+		if list, listErr := K8s.Clientset.CoreV1().Secrets(name).List(K8s.Ctx(), metav1.ListOptions{}); listErr == nil {
+			summary.Secrets = len(list.Items)
+		}
+
+		result = append(result, summary)
+	}
+
+	model.Success(c, result)
+}
+
+// CreateNamespace 创建 Namespace
+func (h *K8sHandler) CreateNamespace(c *gin.Context) {
+	if K8s == nil {
+		k8sUnavailable(c)
+		return
+	}
+
+	var req struct {
+		Name        string            `json:"name"`
+		Labels      map[string]string `json:"labels"`
+		Annotations map[string]string `json:"annotations"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.Name == "" {
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "name 必填")
+		return
+	}
+
+	ns := &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        req.Name,
+			Labels:      req.Labels,
+			Annotations: req.Annotations,
+		},
+	}
+
+	created, err := K8s.Clientset.CoreV1().Namespaces().Create(K8s.Ctx(), ns, metav1.CreateOptions{})
+	if err != nil {
+		model.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
+		return
+	}
+
+	model.SuccessWithMessage(c, gin.H{
+		"name": created.Name,
+	}, "命名空间创建成功")
+}
+
+// UpdateNamespace 更新 Namespace 元数据
+func (h *K8sHandler) UpdateNamespace(c *gin.Context) {
+	if K8s == nil {
+		k8sUnavailable(c)
+		return
+	}
+
+	name := c.Param("name")
+	var req struct {
+		Labels      map[string]string `json:"labels"`
+		Annotations map[string]string `json:"annotations"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "invalid namespace payload")
+		return
+	}
+
+	ns, err := K8s.Clientset.CoreV1().Namespaces().Get(K8s.Ctx(), name, metav1.GetOptions{})
+	if err != nil {
+		model.Error(c, http.StatusNotFound, model.CodeNotFound, err.Error())
+		return
+	}
+
+	ns.Labels = req.Labels
+	ns.Annotations = req.Annotations
+	updated, err := K8s.Clientset.CoreV1().Namespaces().Update(K8s.Ctx(), ns, metav1.UpdateOptions{})
+	if err != nil {
+		model.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
+		return
+	}
+
+	model.SuccessWithMessage(c, gin.H{
+		"name":        updated.Name,
+		"labels":      updated.Labels,
+		"annotations": updated.Annotations,
+	}, "命名空间更新成功")
+}
+
+// DeleteNamespace 删除 Namespace
+func (h *K8sHandler) DeleteNamespace(c *gin.Context) {
+	if K8s == nil {
+		k8sUnavailable(c)
+		return
+	}
+
+	name := c.Param("name")
+	if isProtectedNamespace(name) {
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "系统命名空间不允许删除")
+		return
+	}
+
+	if err := K8s.Clientset.CoreV1().Namespaces().Delete(K8s.Ctx(), name, metav1.DeleteOptions{}); err != nil {
+		model.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
+		return
+	}
+
+	model.SuccessWithMessage(c, nil, "命名空间删除成功")
+}
+
+func isProtectedNamespace(name string) bool {
+	switch name {
+	case "default", "kube-system", "kube-public", "kube-node-lease":
+		return true
+	default:
+		return false
+	}
 }
 
 // ListPods Pod 列表

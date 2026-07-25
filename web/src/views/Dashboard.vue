@@ -20,7 +20,7 @@
     </div>
 
     <div v-if="tailscaleNeedsInit" class="k8s-banner k8s-banner-warn section-gap">
-      ⚠ Tailscale 网络未初始化 — <router-link to="/network" style="color:var(--color-accent);text-decoration:underline">前往配置</router-link>
+      ⚠ Tailscale 网络未初始化 — <router-link to="/settings/system" style="color:var(--color-accent);text-decoration:underline">前往系统设置</router-link>
     </div>
 
     <div class="metric-grid dashboard-metrics">

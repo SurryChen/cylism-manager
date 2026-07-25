@@ -7,7 +7,6 @@ vi.mock('../api/index.js', () => ({
   api: {
     get: vi.fn().mockImplementation(url => {
       if (url.startsWith('/servers')) return Promise.resolve([{ id: 1, name: 'test-srv', host: '10.0.0.1', ssh_user: 'root', ssh_auth_type: 'password', ssh_port: 22, tailscale_ip: '', tailscale_online: false, cluster_role: '', k8s_node_name: '' }])
-      if (url.startsWith('/nodes')) return Promise.resolve([])
       return Promise.resolve({})
     }),
     post: vi.fn().mockResolvedValue({}),
@@ -18,12 +17,11 @@ vi.mock('../api/index.js', () => ({
 beforeEach(() => { document.body.innerHTML = '' })
 
 describe('Servers view', () => {
-  it('renders two tabs: 服务器列表 and 集群节点', () => {
+  it('renders a server registry page without node tabs', () => {
     const wrapper = mount(Servers, { global: { stubs: { RouterLink: true } } })
-    const tabs = wrapper.findAll('.tab-btn')
-    expect(tabs).toHaveLength(2)
-    expect(tabs[0].text()).toBe('服务器列表')
-    expect(tabs[1].text()).toBe('集群节点')
+    expect(wrapper.text()).toContain('服务器')
+    expect(wrapper.text()).toContain('集群节点已经拆分到“集群节点”页面')
+    expect(wrapper.findAll('.tab-btn')).toHaveLength(0)
   })
 
   it('shows server table with new columns', async () => {
@@ -35,6 +33,7 @@ describe('Servers view', () => {
     expect(text).toContain('10.0.0.1')
     expect(text).toContain('root')
     expect(text).toContain('密码')
+    expect(text).toContain('未加入')
   })
 
   it('shows add server modal on button click', async () => {
@@ -45,14 +44,5 @@ describe('Servers view', () => {
     await btn.trigger('click')
     await nextTick()
     expect(wrapper.find('.modal').exists()).toBe(true)
-  })
-
-  it('shows empty nodes tab', async () => {
-    const wrapper = mount(Servers, { global: { stubs: { RouterLink: true } } })
-    await nextTick()
-    const tabs = wrapper.findAll('.tab-btn')
-    await tabs[1].trigger('click')
-    await nextTick()
-    expect(wrapper.text()).toContain('暂无 K8s 节点')
   })
 })

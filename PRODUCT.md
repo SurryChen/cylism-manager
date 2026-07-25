@@ -8,60 +8,72 @@ web
 
 ## Users
 
-小团队运维/DevOps 工程师。日常通过 Web UI 管理多台服务器的 NGINX 站点配置和 SSL 证书生命周期，替代手工 SSH + 编辑配置文件 + 手动 acme.sh 的工作流。
-<!-- 推断自讨论，待用户确认 -->
+小团队运维 / DevOps 工程师。用户先用 Tailscale 把多台 Linux 机器组到同一个 tailnet，再选择其中一台部署单节点 K3s 和本平台，通过 Web UI 统一完成服务器纳管、工作节点加入、Kubernetes 资源管理与运维审计。
 
 ## Product Purpose
 
-Cylism Manager 是一个 NGINX + acme.sh 一体化管理平台。它让运维人员通过 Web UI 集中管理多台服务器上的站点和证书，消除手工配置带来的漂移、遗忘和误操作。
+Cylism Manager 是一个面向 Tailscale 场景的 K3s 基础设施控制台。它把“服务器台账 + SSH 纳管 + K3s 集群操作 + Kubernetes 资源可视化与变更”收敛到同一个界面，降低多机器混合网络环境下的运维复杂度。
 
 ## Positioning
 
-元数据驱动 + Agent 架构的 NGINX/SSL 管理面板：站点配置是元数据的产物而非手工编辑结果，Agent 通过 gRPC 执行实际操作，所有变更可审计。
-<!-- 推断自讨论 -->
+Tailscale-aware 的单集群 K3s 运维面板：
+- Tailscale 负责组网与节点寻址
+- SSH 负责远程安装与主机级探测
+- Kubernetes API 负责集群内资源的实时事实来源
+- 平台数据库仅保存元数据、凭据、审计和缓存
 
 ## Operating Context
 
-- 部署在单台服务器上，通过 SSH 远程管理多台被管服务器
-- 被管服务器需安装 NGINX 和 acme.sh
-- Agent 通过 gRPC 与 Platform 保持长连接
-- 单用户/小团队场景，操作频率：日常站点上下线、证书续期
+- 所有候选机器均为 Linux，并加入同一个 Tailscale tailnet
+- 用户先选定一台机器作为单控制面节点，部署单节点 K3s
+- 平台以单副本方式部署在该 K3s 集群中，并固定运行在控制面宿主机
+- 平台通过宿主机 `tailscaled` socket 发现 tailnet 设备
+- 平台通过 SSH 或 `sudo` 权限远程管理其他服务器
+- 集群节点、工作负载、Service、ConfigMap、Secret、Ingress 等状态直接来自 K8s API，不以数据库为权威
 
 ## Capabilities and Constraints
 
 **能力：**
-- NGINX 配置双向同步（元数据生成 + 反向导入）
-- acme.sh 证书完整生命周期（签发/续期/吊销）
-- SSH 远程部署 Agent
-- 仪表盘概览 + 操作审计日志
+- 基于 Tailscale 发现并导入服务器
+- 维护服务器记录、SSH 凭据、激活状态和主机事实信息
+- 从已激活服务器中选择节点，自动加入当前 K3s 集群
+- 管理工作负载、服务、配置、路由和证书等 Kubernetes 运维对象
+- 在证书页内感知扩展状态，而不是为扩展单独提供一级基础设施页面
+- 将命名空间作为工作负载、服务、配置与路由的统一筛选维度
+- 记录关键变更的审计日志
 
 **约束：**
-- 后端 Go + SQLite，前端 Vue 3 SPA
-- 单用户优先，架构预留多用户
-- 一期不支持非 NGINX Web Server
-
-**未决定：** 多用户权限模型、Agent 自动升级、DNS 托管集成
-<!-- 以上均来自 openspec/changes/nginx-acme-manager/ -->
+- 后端 Go + Gin + GORM + SQLite，前端 Vue 3 + Vite
+- V1 仅支持一个 K3s 集群、一个控制面节点、多个 worker 节点
+- V1 不支持多集群管理，不支持通过 UI 新建第二个 control-plane
+- V1 不再以宿主机 NGINX 站点管理为核心能力，路由管理统一基于 Kubernetes Ingress 模型
+- V1 仅支持 Linux 服务器，不支持 Windows 节点
+- 由于使用 SQLite 和宿主机 socket，平台运行模式为单副本
 
 ## Brand Commitments
 
-产品名称：Cylism Manager。无现有品牌资产或视觉约束。
-<!-- 推断：新项目，无既有品牌 -->
+产品名称仍为 Cylism Manager。产品表达从“NGINX/证书管理面板”调整为“Tailscale + K3s 基础设施控制台”。
 
 ## Evidence on Hand
 
-- OpenSpec 设计文档：`openspec/changes/nginx-acme-manager/`
-- Spec 场景覆盖：server-management, site-management, cert-management, nginx-config-sync, dashboard-audit
-- 无真实用户数据、案例或证言。一期为 MVP，所有内容均为功能描述而非市场声明。
+- 当前代码仓库的 K3s、Ingress、Config、Workload、Service、Server 相关实现
+- 设计文档：[docs/design/cylism-manager-k3s-infra-console.md](/Users/dxm/MyApp/cylism-manager/docs/design/cylism-manager-k3s-infra-console.md)
+- 历史 OpenSpec 变更可作为实现参考，但不再代表最新产品定位
 
 ## Product Principles
 
-1. **元数据是权威来源** — 配置由元数据生成，不逆向编辑产物
-2. **操作可审计** — 所有变更留下记录，可追溯可回滚
-3. **降低门槛而非隐藏复杂度** — 封装 acme.sh/NGINX 操作但不黑盒化
-4. **先单机再扩展** — 一期单服务器部署，架构为多服务器预留
-<!-- 推断自设计讨论 -->
+1. **Tailscale 只负责连通，不负责承载业务模型**  
+   大多数业务对象不依附于 Tailscale 存在；Tailscale 主要承担节点发现、地址统一和控制面到节点的通信前提。
+
+2. **平台元数据与集群实时状态分治**  
+   服务器凭据、导入记录、审计日志进数据库；节点、工作负载、服务、配置等运行态数据直接来自 K8s API。
+
+3. **先把单控制面场景做扎实**  
+   V1 只解决真实可跑通的单控制面 + 多 worker 运维闭环，不为了“未来 HA”提前引入高复杂度。
+
+4. **所有高风险操作都可审计**  
+   包括凭据变更、节点加入、节点移除、Secret 明文查看和路由变更。
 
 ## Accessibility & Inclusion
 
-无特定无障碍需求已确认。默认遵循 Web 标准可访问性。
+无额外无障碍要求已确认。默认遵循 Web 标准可访问性，并优先保证桌面端与移动端都能完成基础运维操作。
