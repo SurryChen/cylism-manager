@@ -86,13 +86,13 @@ describe('Glass UI application shell', () => {
     expect(wrapper.get('[data-testid="mobile-navigation"]').classes()).not.toContain('is-open')
   })
 
-  it('uses the Direction 05 Reference Glass palette and an unframed desktop top bar', async () => {
+  it('uses the Direction 05 薄荷玻璃 palette and an unframed desktop top bar', async () => {
     const wrapper = await mountApp()
 
     await wrapper.get('[aria-label="选择配色"]').trigger('click')
     await flushPromises()
 
-    expect(document.body.querySelector('[data-testid="palette-menu"]').textContent).toContain('Reference Glass')
+    expect(document.body.querySelector('[data-testid="palette-menu"]').textContent).toContain('薄荷玻璃')
     expect(themeCss).toContain('--canvas: #eaf1f0')
     expect(themeCss).toContain('--band-a: #c2e4db')
     expect(themeCss).toContain('--band-b: #d8e4f7')

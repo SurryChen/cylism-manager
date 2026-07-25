@@ -114,11 +114,42 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 	{
 		k8sGroup.GET("/dashboard", k8sHandler.Dashboard)
 		k8sGroup.GET("/pods", k8sHandler.ListPods)
-		k8sGroup.GET("/services", k8sHandler.ListServices)
+
+		// 工作负载
 		k8sGroup.GET("/deployments", k8sHandler.ListDeployments)
+		k8sGroup.GET("/deployments/:namespace/:name", k8sHandler.GetDeployment)
+		k8sGroup.GET("/deployments/:namespace/:name/pods", k8sHandler.ListDeploymentPods)
+		k8sGroup.GET("/deployments/:namespace/:name/revisions", k8sHandler.ListDeploymentRevisions)
+		k8sGroup.PATCH("/deployments/:namespace/:name/scale", k8sHandler.ScaleDeployment)
+		k8sGroup.PATCH("/deployments/:namespace/:name/image", k8sHandler.UpdateDeploymentImage)
+		k8sGroup.POST("/deployments/:namespace/:name/rollback", k8sHandler.RollbackDeployment)
+
+		k8sGroup.GET("/statefulsets", k8sHandler.ListStatefulSets)
+		k8sGroup.GET("/statefulsets/:namespace/:name", k8sHandler.GetStatefulSet)
+		k8sGroup.PATCH("/statefulsets/:namespace/:name/scale", k8sHandler.ScaleStatefulSet)
+
+		k8sGroup.GET("/daemonsets", k8sHandler.ListDaemonSets)
+		k8sGroup.GET("/daemonsets/:namespace/:name", k8sHandler.GetDaemonSet)
+
+		// 服务发现
+		k8sGroup.GET("/services", k8sHandler.ListServicesV2)
 		k8sGroup.GET("/services/:namespace/:name", k8sHandler.GetService)
+		k8sGroup.GET("/services/:namespace/:name/endpoints", k8sHandler.GetServiceEndpoints)
 		k8sGroup.PUT("/services/:namespace/:name", k8sHandler.UpdateService)
 		k8sGroup.DELETE("/services/:namespace/:name", k8sHandler.DeleteService)
+
+		// 配置管理
+		k8sGroup.GET("/configmaps", k8sHandler.ListConfigMaps)
+		k8sGroup.GET("/configmaps/:namespace/:name", k8sHandler.GetConfigMap)
+		k8sGroup.GET("/secrets", k8sHandler.ListSecrets)
+		k8sGroup.GET("/secrets/:namespace/:name", k8sHandler.GetSecret)
+
+		// 标准 Ingress
+		k8sGroup.GET("/ingresses", k8sHandler.ListIngresses)
+		k8sGroup.GET("/ingresses/:namespace/:name", k8sHandler.GetIngress)
+		k8sGroup.POST("/ingresses", k8sHandler.CreateIngress)
+		k8sGroup.DELETE("/ingresses/:namespace/:name", k8sHandler.DeleteIngress)
+		k8sGroup.GET("/ingress-controller", k8sHandler.GetIngressController)
 	}
 
 	// 系统状态

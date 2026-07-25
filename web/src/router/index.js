@@ -8,13 +8,19 @@ import Resources from '../views/Resources.vue'
 import AuditLogs from '../views/AuditLogs.vue'
 import Login from '../views/Login.vue'
 import DBAdmin from '../views/DBAdmin.vue'
+import Workloads from '../views/Workloads.vue'
+import Services from '../views/Services.vue'
+import Configs from '../views/Configs.vue'
 
 const routes = [
   { path: '/login', component: Login, meta: { public: true } },
   { path: '/', component: Dashboard },
   { path: '/servers', component: Servers },
+  { path: '/workloads', component: Workloads },
+  { path: '/services', component: Services },
   { path: '/routes', component: Sites },
   { path: '/certs', component: Certificates },
+  { path: '/configs', component: Configs },
   { path: '/resources', component: Resources },
   { path: '/audit', component: AuditLogs },
   { path: '/db-admin', component: DBAdmin },
