@@ -38,12 +38,15 @@ func TestDBAdmin_ListTables(t *testing.T) {
 		t.Fatalf("expected 200, got %d", w.Code)
 	}
 
-	var resp struct {
-		Tables []string `json:"tables"`
+	var apiResp struct {
+		Code int      `json:"code"`
+		Data struct {
+			Tables []string `json:"tables"`
+		} `json:"data"`
 	}
-	json.Unmarshal(w.Body.Bytes(), &resp)
-	if len(resp.Tables) < 4 {
-		t.Errorf("expected at least 4 tables, got %d: %v", len(resp.Tables), resp.Tables)
+	json.Unmarshal(w.Body.Bytes(), &apiResp)
+	if len(apiResp.Data.Tables) < 4 {
+		t.Errorf("expected at least 4 tables, got %d: %v", len(apiResp.Data.Tables), apiResp.Data.Tables)
 	}
 }
 
@@ -61,15 +64,18 @@ func TestDBAdmin_ListRecords(t *testing.T) {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 
-	var resp struct {
-		Rows  []map[string]interface{} `json:"rows"`
-		Total int64                    `json:"total"`
+	var apiResp struct {
+		Code int `json:"code"`
+		Data struct {
+			Rows  []map[string]interface{} `json:"rows"`
+			Total int64                    `json:"total"`
+		} `json:"data"`
 	}
-	json.Unmarshal(w.Body.Bytes(), &resp)
-	if resp.Total == 0 {
+	json.Unmarshal(w.Body.Bytes(), &apiResp)
+	if apiResp.Data.Total == 0 {
 		t.Error("expected at least 1 row")
 	}
-	if len(resp.Rows) == 0 {
+	if len(apiResp.Data.Rows) == 0 {
 		t.Error("expected rows non-empty")
 	}
 }
@@ -96,14 +102,16 @@ func TestDBAdmin_CreateAndUpdateAndDelete(t *testing.T) {
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
-	if w.Code != http.StatusCreated {
-		t.Fatalf("create: expected 201, got %d: %s", w.Code, w.Body.String())
+	if w.Code != http.StatusOK {
+		t.Fatalf("create: expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 
-	// Get the id
+	// Get the id from wrapped response
 	var idResp struct {
-		Ok bool `json:"ok"`
-		ID  int  `json:"id"`
+		Code int `json:"code"`
+		Data struct {
+			ID interface{} `json:"id"`
+		} `json:"data"`
 	}
 	json.Unmarshal(w.Body.Bytes(), &idResp)
 
@@ -135,13 +143,16 @@ func TestDBAdmin_SensitiveFieldsHidden(t *testing.T) {
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
-	var resp struct {
-		Rows []map[string]interface{} `json:"rows"`
+	var apiResp struct {
+		Code int `json:"code"`
+		Data struct {
+			Rows []map[string]interface{} `json:"rows"`
+		} `json:"data"`
 	}
-	json.Unmarshal(w.Body.Bytes(), &resp)
+	json.Unmarshal(w.Body.Bytes(), &apiResp)
 
-	if len(resp.Rows) > 0 {
-		if _, ok := resp.Rows[0]["password_hash"]; ok {
+	if len(apiResp.Data.Rows) > 0 {
+		if _, ok := apiResp.Data.Rows[0]["password_hash"]; ok {
 			t.Error("password_hash should be hidden")
 		}
 	}

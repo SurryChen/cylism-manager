@@ -116,7 +116,7 @@ const palettes = [
 
 const navGroups = computed(() => [
   { id: 'overview', label: '概览', to: '/', items: [{ label: '概览', to: '/', icon: LayoutDashboard }] },
-  { id: 'infrastructure', label: '基础设施', to: '/servers', items: [{ label: '服务器', to: '/servers', icon: Server }, { label: '工作负载', to: '/workloads', icon: Globe }, { label: '服务发现', to: '/services', icon: Network }, { label: '配置', to: '/configs', icon: Settings }, { label: '路由', to: '/routes', icon: Route }, { label: '证书', to: '/certs', icon: ShieldCheck }, { label: '资源', to: '/resources', icon: Boxes }] },
+  { id: 'infrastructure', label: '基础设施', to: '/servers', items: [{ label: '组网配置', to: '/network', icon: Network }, { label: '服务器', to: '/servers', icon: Server }, { label: '工作负载', to: '/workloads', icon: Globe }, { label: '服务发现', to: '/services', icon: Network }, { label: '配置', to: '/configs', icon: Settings }, { label: '路由', to: '/routes', icon: Route }, { label: '证书', to: '/certs', icon: ShieldCheck }, { label: '资源', to: '/resources', icon: Boxes }] },
   { id: 'records', label: '记录', to: '/audit', items: [{ label: '审计', to: '/audit', icon: FileText }, { label: '数据管理', to: '/db-admin', icon: Database }] },
 ])
 

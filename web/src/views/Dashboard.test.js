@@ -8,18 +8,14 @@ vi.mock('../api/index.js', () => ({
     get: vi.fn().mockImplementation(url => {
       if (url.includes('/k8s/dashboard')) {
         return Promise.resolve({
-          json: async () => ({
-            nodes_total: 3, pods_total: 12, pods_ready: 10,
-            deployments_total: 5, deployments_ready: 4,
-            services_total: 8, namespaces: 3, version: 'v1.28.4+k3s1'
-          })
+          nodes_total: 3, pods_total: 12, pods_ready: 10,
+          deployments_total: 5, deployments_ready: 4,
+          services_total: 8, namespaces: 3, version: 'v1.28.4+k3s1'
         })
       }
       return Promise.resolve({
-        json: async () => ({
-          stats: { total_servers: 2, online_servers: 1, total_sites: 5, expiring_certs: 1 },
-          expiring_certs: [], recent_logs: []
-        })
+        stats: { total_servers: 2, total_sites: 5, expiring_certs: 1 },
+        expiring_certs: [], recent_logs: []
       })
     })
   }
@@ -81,6 +77,6 @@ describe('Dashboard view with K8s stats', () => {
     await nextTick()
 
     const metrics = wrapper.findAll('.metric')
-    expect(metrics.length).toBeGreaterThanOrEqual(4)
+    expect(metrics.length).toBeGreaterThanOrEqual(3)
   })
 })

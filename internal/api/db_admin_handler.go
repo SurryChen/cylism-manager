@@ -43,15 +43,15 @@ func (h *DBAdminHandler) ListTables(c *gin.Context) {
 	for name := range tableRegistry {
 		names = append(names, name)
 	}
-	c.JSON(http.StatusOK, gin.H{"tables": names})
+	model.Success(c, gin.H{"tables": names})
 }
 
 // ListRecords 分页查询指定表的数据
 func (h *DBAdminHandler) ListRecords(c *gin.Context) {
 	tableName := c.Param("table")
-	model, ok := tableRegistry[tableName]
+	tableModel, ok := tableRegistry[tableName]
 	if !ok {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid table"})
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "invalid table")
 		return
 	}
 
@@ -82,7 +82,7 @@ func (h *DBAdminHandler) ListRecords(c *gin.Context) {
 	offset := (page - 1) * size
 	rows, err := db.Table(tableName).Select("*").Order(sort + " " + order).Limit(size).Offset(offset).Rows()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("query failed: %v", err)})
+		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, fmt.Sprintf("query failed: %v", err))
 		return
 	}
 	defer rows.Close()
@@ -90,12 +90,12 @@ func (h *DBAdminHandler) ListRecords(c *gin.Context) {
 	// 读取列名
 	columns, err := rows.Columns()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get columns"})
+		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, "failed to get columns")
 		return
 	}
 
 	// 收集敏感字段（json:"-"）
-	sensitive := h.sensitiveColumns(model)
+	sensitive := h.sensitiveColumns(tableModel)
 
 	var results []map[string]interface{}
 	for rows.Next() {
@@ -127,9 +127,9 @@ func (h *DBAdminHandler) ListRecords(c *gin.Context) {
 		results = []map[string]interface{}{}
 	}
 
-	c.JSON(http.StatusOK, gin.H{
+	model.Success(c, gin.H{
 		"rows":      results,
-		"columns":   h.visibleColumns(tableName, model),
+		"columns":   h.visibleColumns(tableName, tableModel),
 		"total":     total,
 		"page":      page,
 		"size":      size,
@@ -141,13 +141,13 @@ func (h *DBAdminHandler) CreateRecord(c *gin.Context) {
 	tableName := c.Param("table")
 	_, ok := tableRegistry[tableName]
 	if !ok {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid table"})
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "invalid table")
 		return
 	}
 
 	var body map[string]interface{}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, err.Error())
 		return
 	}
 
@@ -160,17 +160,17 @@ func (h *DBAdminHandler) CreateRecord(c *gin.Context) {
 	}
 
 	if len(filtered) == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "no valid fields"})
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "no valid fields")
 		return
 	}
 
 	result := h.store.DB().Table(tableName).Create(filtered)
 	if result.Error != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": result.Error.Error()})
+		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, result.Error.Error())
 		return
 	}
 
-	c.JSON(http.StatusCreated, gin.H{"ok": true, "id": filtered["id"]})
+	model.SuccessWithMessage(c, gin.H{"id": filtered["id"]}, "创建成功")
 }
 
 // UpdateRecord 按主键更新记录
@@ -178,19 +178,19 @@ func (h *DBAdminHandler) UpdateRecord(c *gin.Context) {
 	tableName := c.Param("table")
 	_, ok := tableRegistry[tableName]
 	if !ok {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid table"})
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "invalid table")
 		return
 	}
 
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "invalid id")
 		return
 	}
 
 	var body map[string]interface{}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, err.Error())
 		return
 	}
 
@@ -203,21 +203,21 @@ func (h *DBAdminHandler) UpdateRecord(c *gin.Context) {
 	}
 
 	if len(filtered) == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "no valid fields"})
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "no valid fields")
 		return
 	}
 
 	result := h.store.DB().Table(tableName).Where("id = ?", id).Updates(filtered)
 	if result.Error != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": result.Error.Error()})
+		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, result.Error.Error())
 		return
 	}
 	if result.RowsAffected == 0 {
-		c.JSON(http.StatusNotFound, gin.H{"error": "record not found"})
+		model.Error(c, http.StatusNotFound, model.CodeNotFound, "record not found")
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"ok": true})
+	model.SuccessWithMessage(c, nil, "操作成功")
 }
 
 // DeleteRecord 按主键删除记录
@@ -225,27 +225,27 @@ func (h *DBAdminHandler) DeleteRecord(c *gin.Context) {
 	tableName := c.Param("table")
 	_, ok := tableRegistry[tableName]
 	if !ok {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid table"})
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "invalid table")
 		return
 	}
 
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "invalid id")
 		return
 	}
 
 	result := h.store.DB().Table(tableName).Where("id = ?", id).Delete(nil)
 	if result.Error != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": result.Error.Error()})
+		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, result.Error.Error())
 		return
 	}
 	if result.RowsAffected == 0 {
-		c.JSON(http.StatusNotFound, gin.H{"error": "record not found"})
+		model.Error(c, http.StatusNotFound, model.CodeNotFound, "record not found")
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"ok": true})
+	model.SuccessWithMessage(c, nil, "操作成功")
 }
 
 // columnExists 检查表中是否存在指定列（缓存到 map 中）

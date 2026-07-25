@@ -6,6 +6,7 @@ import (
 	"github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/gin-gonic/gin"
+	"github.com/cylism/cylism-manager/internal/model"
 )
 
 // K8s K8s 客户端全局单例，main.go 初始化
@@ -24,7 +25,7 @@ type AuthConfig struct {
 func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthConfig) {
 	// 健康检查（无认证，用于 k8s 探活）
 	r.GET("/health", func(c *gin.Context) {
-		c.JSON(200, gin.H{"status": "ok"})
+		model.Success(c, gin.H{"status": "ok"})
 	})
 
 	// 认证路由
@@ -52,6 +53,8 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 		servers.GET("/:id", serverHandler.Get)
 		servers.PUT("/:id", serverHandler.Update)
 		servers.DELETE("/:id", serverHandler.Delete)
+		servers.POST("/:id/probe", serverHandler.Probe)
+		servers.POST("/:id/precheck", serverHandler.Precheck)
 	}
 
 	siteHandler := NewSiteHandler(s)
@@ -82,6 +85,7 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 	nodes := apiGroup.Group("/nodes")
 	{
 		nodes.GET("", nodeHandler.ListNode)
+		nodes.GET("/:id/join-progress", nodeHandler.JoinProgress)
 		nodes.POST("/:id/add", nodeHandler.AddNode)
 		nodes.POST("/:id/drain", nodeHandler.DrainNode)
 		nodes.DELETE("/:id", nodeHandler.RemoveNode)
@@ -151,6 +155,15 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 		k8sGroup.DELETE("/ingresses/:namespace/:name", k8sHandler.DeleteIngress)
 		k8sGroup.GET("/ingress-controller", k8sHandler.GetIngressController)
 	}
+
+		// Tailscale 管理
+		tailscaleHandler := NewTailscaleHandler(s, encKey)
+		tailscale := apiGroup.Group("/tailscale")
+		{
+			tailscale.POST("/init", tailscaleHandler.Init)
+			tailscale.GET("/status", tailscaleHandler.Status)
+			tailscale.GET("/install-script", tailscaleHandler.InstallScript)
+		}
 
 	// 系统状态
 	crdHandler := NewCRDHandler()

@@ -19,14 +19,14 @@
       ⚠ K8s 集群未连接，集群信息不可用
     </div>
 
+    <div v-if="tailscaleNeedsInit" class="k8s-banner k8s-banner-warn section-gap">
+      ⚠ Tailscale 网络未初始化 — <router-link to="/network" style="color:var(--color-accent);text-decoration:underline">前往配置</router-link>
+    </div>
+
     <div class="metric-grid dashboard-metrics">
       <div class="metric">
         <div class="metric-value">{{ stats.total_servers || 0 }}</div>
         <div class="metric-label">服务器</div>
-      </div>
-      <div class="metric">
-        <div class="metric-value metric-accent">{{ stats.online_servers || 0 }}</div>
-        <div class="metric-label">在线</div>
       </div>
       <div class="metric">
         <div class="metric-value">{{ stats.total_sites || 0 }}</div>
@@ -93,11 +93,11 @@ const expiringCerts = ref([])
 const recentLogs = ref([])
 const k8sStats = ref(null)
 const k8sError = ref('')
+const tailscaleNeedsInit = ref(false)
 
 onMounted(async () => {
   try {
-    const res = await api.get('/dashboard')
-    const data = await res.json()
+    const data = await api.get('/dashboard')
     stats.value = data.stats || {}
     expiringCerts.value = data.expiring_certs || []
     recentLogs.value = data.recent_logs || []
@@ -105,10 +105,14 @@ onMounted(async () => {
 
   // 获取 K8s 集群状态
   try {
-    const r = await api.get('/k8s/dashboard')
-    const d = await r.json()
-    if (d.error) { k8sError.value = d.error }
+    const d = await api.get('/k8s/dashboard')
+    if (!d) { k8sError.value = '' }
     else { k8sStats.value = d }
+  } catch(e) { /* silent */ }
+
+  try {
+    const ts = await api.get('/tailscale/status')
+    tailscaleNeedsInit.value = !ts || !ts.initialized
   } catch(e) { /* silent */ }
 })
 

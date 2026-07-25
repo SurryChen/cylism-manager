@@ -31,7 +31,7 @@ type createSiteReq struct {
 func (h *SiteHandler) Create(c *gin.Context) {
 	var req createSiteReq
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, err.Error())
 		return
 	}
 	if req.Port == 0 {
@@ -49,10 +49,10 @@ func (h *SiteHandler) Create(c *gin.Context) {
 		Locations:  req.Locations,
 	}
 	if err := h.store.CreateSite(site); err != nil {
-		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		model.Error(c, http.StatusConflict, model.CodeConflict, err.Error())
 		return
 	}
-	c.JSON(http.StatusCreated, site)
+	model.Success(c, site)
 }
 
 func (h *SiteHandler) List(c *gin.Context) {
@@ -60,45 +60,45 @@ func (h *SiteHandler) List(c *gin.Context) {
 	if serverIDStr != "" {
 		id, err := strconv.ParseUint(serverIDStr, 10, 64)
 		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid server_id"})
+			model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "invalid server_id")
 			return
 		}
 		sites, err := h.store.ListSitesByServer(uint(id))
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			model.Error(c, http.StatusInternalServerError, model.CodeInternalError, err.Error())
 			return
 		}
-		c.JSON(http.StatusOK, sites)
+		model.Success(c, sites)
 		return
 	}
 	sites, err := h.store.ListSites()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, err.Error())
 		return
 	}
-	c.JSON(http.StatusOK, sites)
+	model.Success(c, sites)
 }
 
 func (h *SiteHandler) Get(c *gin.Context) {
 	id, _ := strconv.ParseUint(c.Param("id"), 10, 64)
 	site, err := h.store.GetSite(uint(id))
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "site not found"})
+		model.Error(c, http.StatusNotFound, model.CodeNotFound, "site not found")
 		return
 	}
-	c.JSON(http.StatusOK, site)
+	model.Success(c, site)
 }
 
 func (h *SiteHandler) Update(c *gin.Context) {
 	id, _ := strconv.ParseUint(c.Param("id"), 10, 64)
 	site, err := h.store.GetSite(uint(id))
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "site not found"})
+		model.Error(c, http.StatusNotFound, model.CodeNotFound, "site not found")
 		return
 	}
 	var updates map[string]interface{}
 	if err := c.ShouldBindJSON(&updates); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, err.Error())
 		return
 	}
 	if v, ok := updates["root_path"]; ok {
@@ -120,42 +120,42 @@ func (h *SiteHandler) Update(c *gin.Context) {
 		site.Locations = v.(string)
 	}
 	if err := h.store.UpdateSite(site); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, err.Error())
 		return
 	}
-	c.JSON(http.StatusOK, site)
+	model.Success(c, site)
 }
 
 func (h *SiteHandler) Delete(c *gin.Context) {
 	id, _ := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err := h.store.DeleteSite(uint(id)); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, err.Error())
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"ok": true})
+	model.SuccessWithMessage(c, nil, "操作成功")
 }
 
 // -- Certificate stubs --
 
 func (h *SiteHandler) IssueCert(c *gin.Context) {
 	// TODO: acme.sh 集成
-	c.JSON(http.StatusOK, gin.H{"message": "issue cert - not implemented yet"})
+	model.SuccessWithMessage(c, nil, "issue cert - not implemented yet")
 }
 
 func (h *SiteHandler) RenewCert(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{"message": "renew cert - not implemented yet"})
+	model.SuccessWithMessage(c, nil, "renew cert - not implemented yet")
 }
 
 func (h *SiteHandler) RevokeCert(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{"message": "revoke cert - not implemented yet"})
+	model.SuccessWithMessage(c, nil, "revoke cert - not implemented yet")
 }
 
 // -- NGINX stubs --
 
 func (h *SiteHandler) GenerateNginx(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{"message": "generate nginx - K3s implementation pending"})
+	model.SuccessWithMessage(c, nil, "generate nginx - K3s implementation pending")
 }
 
 func (h *SiteHandler) ReloadNginx(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{"message": "reload nginx - K3s implementation pending"})
+	model.SuccessWithMessage(c, nil, "reload nginx - K3s implementation pending")
 }

@@ -35,6 +35,10 @@ spec:
           hostPath:
             path: /data/cylism-manager
             type: DirectoryOrCreate
+        - name: tailscale-socket
+          hostPath:
+            path: /run/tailscale
+            type: DirectoryOrCreate
       containers:
         - name: platform
           image: crpi-c5u9bb8i5qxw1m72.cn-guangzhou.personal.cr.aliyuncs.com/surrychen/cylism-manager:latest
@@ -43,6 +47,8 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /data
+            - name: tailscale-socket
+              mountPath: /run/tailscale
           resources:
             requests:
               memory: "256Mi"
@@ -63,6 +69,12 @@ spec:
             initialDelaySeconds: 5
             periodSeconds: 10
           env:
+            - name: ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: cylism-secret
+                  key: encryption-key
+                  optional: true
             - name: DATABASE_PATH
               value: /data/cylism.db
 ---

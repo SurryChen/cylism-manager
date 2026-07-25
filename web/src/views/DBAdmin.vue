@@ -111,8 +111,7 @@ function tableLabel(t) { return tableLabels[t] || t }
 
 onMounted(async () => {
   try {
-    const r = await api.get('/admin/tables')
-    const data = await r.json()
+    const data = await api.get('/admin/tables')
     tables.value = data.tables || []
   } catch (e) { console.error(e) }
 })
@@ -129,10 +128,9 @@ async function fetchData() {
   if (!currentTable.value) return
   loading.value = true
   try {
-    const r = await api.get(`/admin/tables/${currentTable.value}?page=${page.value}&size=${size}&sort=${sort.value}&order=${order.value}`)
-    const data = await r.json()
-    rows.value = data.rows || []
+    const data = await api.get(`/admin/tables/${currentTable.value}?page=${page.value}&size=${size}&sort=${sort.value}&order=${order.value}`)
     columns.value = data.columns || []
+    rows.value = data.rows || []
     total.value = data.total || 0
   } catch (e) { console.error(e) }
   loading.value = false

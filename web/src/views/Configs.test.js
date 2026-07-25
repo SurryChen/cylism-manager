@@ -6,21 +6,24 @@ import Configs from './Configs.vue'
 vi.mock('../api/index.js', () => ({
   api: {
     get: vi.fn().mockImplementation(url => {
-      if (url.includes('/configmaps')) {
-        return Promise.resolve({
-          json: async () => ({ data: [
-            { name: 'app-config', namespace: 'default', keys_count: 3, used_by: [], age: '7d' }
-          ]})
-        })
+      if (url.includes('/configmaps') && !url.includes('default/app-config')) {
+        return Promise.resolve([
+          { name: 'app-config', namespace: 'default', keys_count: 3, used_by: [], age: '7d' }
+        ])
       }
-      if (url.includes('/secrets')) {
-        return Promise.resolve({
-          json: async () => ({ data: [
-            { name: 'db-pass', namespace: 'default', type: 'Opaque', keys_count: 1, used_by: [], age: '3d' }
-          ]})
-        })
+      if (url.includes('/secrets') && !url.includes('default/db-pass')) {
+        return Promise.resolve([
+          { name: 'db-pass', namespace: 'default', type: 'Opaque', keys_count: 1, used_by: [], age: '3d' }
+        ])
       }
-      return Promise.resolve({ json: async () => ({ data: {} }) })
+      // Detail lookups
+      if (url.includes('configmaps/default/app-config')) {
+        return Promise.resolve({ data: { key1: 'val1' } })
+      }
+      if (url.includes('secrets/default/db-pass')) {
+        return Promise.resolve({ data: { password: '***' } })
+      }
+      return Promise.resolve([])
     })
   }
 }))

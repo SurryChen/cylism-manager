@@ -133,17 +133,16 @@ onMounted(() => {
 
 async function fetchControllerStatus() {
   try {
-    const r = await api.get('/k8s/ingress-controller')
-    controllerStatus.value = await r.json()
+    controllerStatus.value = await api.get('/k8s/ingress-controller')
   } catch(e) {}
 }
 
 async function fetchRoutes() {
-  try { const r = await api.get('/routes'); routes.value = await r.json() } catch(e) {}
+  try { routes.value = await api.get('/routes') || [] } catch(e) {}
 }
 
 async function fetchIngresses() {
-  try { const r = await api.get('/k8s/ingresses'); const d = await r.json(); ingresses.value = d.data || [] } catch(e) {}
+  try { ingresses.value = await api.get('/k8s/ingresses') || [] } catch(e) {}
 }
 
 function confirmDeleteRoute(route) { deleteRouteTarget.value = route }

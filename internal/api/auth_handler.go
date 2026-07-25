@@ -2,6 +2,8 @@ package api
 
 import (
 	"net/http"
+
+	"github.com/cylism/cylism-manager/internal/model"
 	"time"
 
 	"github.com/cylism/cylism-manager/internal/auth"
@@ -34,28 +36,28 @@ type loginReq struct {
 func (h *AuthHandler) Login(c *gin.Context) {
 	var req loginReq
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "请提供用户名和密码"})
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "请提供用户名和密码")
 		return
 	}
 
 	user, err := h.store.GetUserByUsername(req.Username)
 	if err != nil || !auth.CheckPassword(req.Password, user.PasswordHash) {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "用户名或密码错误"})
+		model.Error(c, http.StatusUnauthorized, model.CodeUnauthorized, "用户名或密码错误")
 		return
 	}
 
 	accessToken, err := auth.GenerateAccessToken(h.jwtSecret, user.ID, user.Username, h.accessTokenTTL)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "生成 token 失败"})
+		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, "生成 token 失败")
 		return
 	}
 	refreshToken, err := auth.GenerateRefreshToken(h.jwtSecret, user.ID, h.refreshTokenTTL)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "生成 token 失败"})
+		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, "生成 token 失败")
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
+	model.Success(c, gin.H{
 		"access_token":  accessToken,
 		"refresh_token": refreshToken,
 		"user": gin.H{
@@ -73,29 +75,29 @@ type refreshReq struct {
 func (h *AuthHandler) Refresh(c *gin.Context) {
 	var req refreshReq
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "请提供 refresh_token"})
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "请提供 refresh_token")
 		return
 	}
 
 	// 验证 refresh token
 	claims, err := auth.ParseToken(h.jwtSecret, req.RefreshToken)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "refresh token 无效或已过期"})
+		model.Error(c, http.StatusUnauthorized, model.CodeUnauthorized, "refresh token 无效或已过期")
 		return
 	}
 
 	accessToken, err := auth.GenerateAccessToken(h.jwtSecret, claims.UserID, claims.Username, h.accessTokenTTL)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "生成 token 失败"})
+		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, "生成 token 失败")
 		return
 	}
 	refreshToken, err := auth.GenerateRefreshToken(h.jwtSecret, claims.UserID, h.refreshTokenTTL)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "生成 token 失败"})
+		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, "生成 token 失败")
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
+	model.Success(c, gin.H{
 		"access_token":  accessToken,
 		"refresh_token": refreshToken,
 	})
@@ -105,11 +107,11 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 func (h *AuthHandler) Me(c *gin.Context) {
 	userID, exists := c.Get("user_id")
 	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "未认证"})
+		model.Error(c, http.StatusUnauthorized, model.CodeUnauthorized, "未认证")
 		return
 	}
 	username, _ := c.Get("username")
-	c.JSON(http.StatusOK, gin.H{
+	model.Success(c, gin.H{
 		"id":       userID,
 		"username": username,
 	})

@@ -1,8 +1,6 @@
 ## Purpose
 证书生命周期管理，包括签发、续期和吊销 SSL/TLS 证书。
-
 ## Requirements
-
 ### Requirement: 证书签发
 系统 SHALL通过 acme.sh 为指定站点签发 SSL 证书，支持 HTTP（webroot）和 DNS 两种验证方式。
 
@@ -46,3 +44,11 @@
 #### Scenario: 仪表盘显示即将到期的证书
 - **WHEN** 用户查看仪表盘
 - **THEN** 系统返回按到期时间排序的证书列表，即将在 30 天内到期的标记为警告状态
+
+### Requirement: API 响应格式
+该 capability 的所有 API 响应 SHALL 使用统一的 APIResponse 格式，包含 code/message/data 字段，替代原有裸 gin.H 或裸对象返回。
+
+#### Scenario: 响应使用统一格式
+- **WHEN** 调用该 capability 的任意 API
+- **THEN** 响应 body 必须是 `{"code": 0, "message": "ok", "data": ...}` 格式
+

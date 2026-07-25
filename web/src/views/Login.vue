@@ -26,7 +26,7 @@
 <script setup>
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { setTokens } from '../api/index.js'
+import { setTokens, api } from '../api/index.js'
 
 const router = useRouter()
 const username = ref('')
@@ -38,22 +38,11 @@ async function login() {
   error.value = ''
   loading.value = true
   try {
-    const res = await fetch('/api/auth/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username: username.value, password: password.value })
-    })
-    if (!res.ok) {
-      const data = await res.json()
-      error.value = data.error || '登录失败'
-      loading.value = false
-      return
-    }
-    const data = await res.json()
+    const data = await api.post('/auth/login', { username: username.value, password: password.value })
     setTokens(data.access_token, data.refresh_token)
     router.push('/')
   } catch (e) {
-    error.value = '网络错误，请重试'
+    error.value = e.message || '网络错误，请重试'
     loading.value = false
   }
 }

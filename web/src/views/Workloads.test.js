@@ -4,17 +4,16 @@ import { nextTick } from 'vue'
 import Workloads from './Workloads.vue'
 
 vi.mock('../api/index.js', () => {
-  const makeGet = (data) => Promise.resolve({ json: async () => ({ data }) })
   return {
     api: {
       get: vi.fn().mockImplementation((url) => {
-        if (url.includes('/deployments')) return makeGet([])
-        if (url.includes('/statefulsets')) return makeGet([])
-        if (url.includes('/daemonsets')) return makeGet([])
-        return makeGet([])
+        if (url.includes('/deployments')) return Promise.resolve([])
+        if (url.includes('/statefulsets')) return Promise.resolve([])
+        if (url.includes('/daemonsets')) return Promise.resolve([])
+        return Promise.resolve([])
       }),
-      patch: vi.fn().mockResolvedValue({ json: async () => ({ message: 'ok' }) }),
-      post: vi.fn().mockResolvedValue({ json: async () => ({ message: 'ok' }) }),
+      patch: vi.fn().mockResolvedValue({ message: 'ok' }),
+      post: vi.fn().mockResolvedValue({ message: 'ok' }),
     }
   }
 })

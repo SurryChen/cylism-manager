@@ -14,18 +14,17 @@ type Server struct {
 	SSHHost          string         `gorm:"size:256" json:"ssh_host"`
 	SSHPort          int            `gorm:"default:22" json:"ssh_port"`
 	SSHUser          string         `gorm:"size:128" json:"ssh_user"`
-	SSHAuthType      string         `gorm:"size:32" json:"ssh_auth_type"` // password / key
-	SSHPassword      string         `gorm:"type:text" json:"-"`           // 加密存储，JSON 序列化时隐藏
-	SSHKey           string         `gorm:"type:text" json:"-"`           // 加密存储
-	SSHKeyPassphrase string         `gorm:"type:text" json:"-"`           // 加密存储
-	Status           string         `gorm:"size:32;default:offline" json:"status"` // online / offline
-	LastSeen         *time.Time     `json:"last_seen"`
-	ClusterRole      string         `gorm:"size:32" json:"cluster_role"`   // "" | "control-plane" | "worker"
+	SSHAuthType      string         `gorm:"size:32" json:"ssh_auth_type"`  // password / key
+	SSHPassword      string         `gorm:"type:text" json:"-"`            // 加密存储
+	SSHKey           string         `gorm:"type:text" json:"-"`            // 加密存储
+	SSHKeyPassphrase string         `gorm:"type:text" json:"-"`            // 加密存储
+	ClusterRole      string         `gorm:"size:32" json:"cluster_role"`   // "" | control-plane | worker
 	K8sNodeName      string         `gorm:"size:256" json:"k8s_node_name"`
+	TailscaleIP      string         `gorm:"size:64" json:"tailscale_ip"`
+	TailscaleOnline  bool           `gorm:"default:false" json:"tailscale_online"`
 	CreatedAt        time.Time      `json:"created_at"`
 	UpdatedAt        time.Time      `json:"updated_at"`
 	DeletedAt        gorm.DeletedAt `gorm:"index" json:"-"`
-	Sites            []Site         `gorm:"foreignKey:ServerID" json:"sites,omitempty"`
 }
 
 // Site 站点模型
@@ -116,4 +115,11 @@ type OperationLog struct {
 	Status       string    `gorm:"size:16;default:running" json:"status"` // running / success / failed
 	Detail       string    `gorm:"type:text" json:"detail"`
 	CreatedAt    time.Time `gorm:"index" json:"created_at"`
+}
+
+// SystemConfig 系统配置（加密存储敏感信息如 Tailscale Auth Key）
+type SystemConfig struct {
+	ID    uint   `gorm:"primaryKey" json:"-"`
+	Key   string `gorm:"size:128;uniqueIndex" json:"key"`
+	Value string `gorm:"type:text" json:"-"` // AES-256 加密
 }

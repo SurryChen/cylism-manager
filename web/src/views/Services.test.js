@@ -5,11 +5,9 @@ import Services from './Services.vue'
 
 vi.mock('../api/index.js', () => ({
   api: {
-    get: vi.fn().mockResolvedValue({
-      json: async () => ({ data: [
-        { name: 'web-svc', namespace: 'default', type: 'ClusterIP', cluster_ip: '10.43.1.1', ports: ['TCP:80'], endpoint_count: 2, selector: { app: 'web' }, age: '5d' }
-      ]})
-    })
+    get: vi.fn().mockResolvedValue([
+      { name: 'web-svc', namespace: 'default', type: 'ClusterIP', cluster_ip: '10.43.1.1', ports: ['TCP:80'], endpoint_count: 2, selector: { app: 'web' }, age: '5d' }
+    ])
   }
 }))
 
