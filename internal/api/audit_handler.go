@@ -2,6 +2,8 @@ package api
 
 import (
 	"net/http"
+
+	"github.com/cylism/cylism-manager/internal/model"
 	"strconv"
 
 	"github.com/cylism/cylism-manager/internal/store"
@@ -25,10 +27,10 @@ func (h *AuditHandler) List(c *gin.Context) {
 
 	logs, total, err := h.store.ListAuditLogs(resourceType, action, limit, offset)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, err.Error())
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{
+	model.Success(c, gin.H{
 		"data":  logs,
 		"total": total,
 	})

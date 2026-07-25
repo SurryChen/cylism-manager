@@ -28,10 +28,13 @@ func main() {
 		log.Fatalf("Failed to read config: %v", err)
 	}
 
-	// 初始化数据库
-	dbPath := viper.GetString("database.path")
+	// 初始化数据库（优先环境变量，兼容 k8s）
+	dbPath := os.Getenv("DATABASE_PATH")
 	if dbPath == "" {
-		dbPath = "./data/cylism.db"
+		dbPath = viper.GetString("database.path")
+	}
+	if dbPath == "" {
+		dbPath = "/data/cylism.db"
 	}
 	os.MkdirAll("data", 0755)
 

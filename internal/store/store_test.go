@@ -27,7 +27,6 @@ func TestServerCRUD(t *testing.T) {
 		SSHPort:     22,
 		SSHUser:     "root",
 		SSHAuthType: "password",
-		Status:      "offline",
 	}
 	if err := s.CreateServer(server); err != nil {
 		t.Fatalf("CreateServer: %v", err)
@@ -55,13 +54,13 @@ func TestServerCRUD(t *testing.T) {
 	}
 
 	// Update
-	got.Status = "online"
+	got.ClusterRole = "worker"
 	if err := s.UpdateServer(got); err != nil {
 		t.Fatalf("UpdateServer: %v", err)
 	}
 	got2, _ := s.GetServer(server.ID)
-	if got2.Status != "online" {
-		t.Errorf("expected Status 'online', got '%s'", got2.Status)
+	if got2.ClusterRole != "worker" {
+		t.Errorf("expected ClusterRole 'worker', got '%s'", got2.ClusterRole)
 	}
 
 	// Delete

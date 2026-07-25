@@ -114,8 +114,7 @@ onMounted(fetchCerts)
 
 async function fetchCerts() {
   try {
-    const r = await api.get('/certs')
-    certs.value = await r.json()
+    certs.value = await api.get('/certs') || []
   } catch (e) { console.error(e) }
 }
 

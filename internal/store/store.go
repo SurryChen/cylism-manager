@@ -28,6 +28,7 @@ func New(dsn string) (*Store, error) {
 		&model.AuditLog{},
 		&model.OperationLog{},
 		&model.User{},
+		&model.SystemConfig{},
 	); err != nil {
 		return nil, err
 	}
@@ -179,17 +180,15 @@ func (s *Store) ListAuditLogs(resourceType, action string, limit, offset int) ([
 
 // DashboardStats 仪表盘统计数据
 type DashboardStats struct {
-	TotalServers    int64 `json:"total_servers"`
-	OnlineServers   int64 `json:"online_servers"`
-	TotalSites      int64 `json:"total_sites"`
-	ExpiringCerts   int64 `json:"expiring_certs"`
+	TotalServers  int64 `json:"total_servers"`
+	TotalSites    int64 `json:"total_sites"`
+	ExpiringCerts int64 `json:"expiring_certs"`
 }
 
 func (s *Store) GetDashboardStats(daysBefore int) (*DashboardStats, error) {
 	stats := &DashboardStats{}
 
 	s.db.Model(&model.Server{}).Count(&stats.TotalServers)
-	s.db.Model(&model.Server{}).Where("status = ?", "online").Count(&stats.OnlineServers)
 	s.db.Model(&model.Site{}).Count(&stats.TotalSites)
 
 	threshold := time.Now().Add(time.Duration(daysBefore) * 24 * time.Hour)
@@ -246,4 +245,25 @@ func (s *Store) DeleteExpiredOperationLogs(retentionDays int) error {
 	}
 	threshold := time.Now().Add(-time.Duration(retentionDays) * 24 * time.Hour)
 	return s.db.Where("created_at < ?", threshold).Delete(&model.OperationLog{}).Error
+}
+
+
+// --- SystemConfig ---
+
+func (s *Store) GetSystemConfig(key string) (string, error) {
+	var cfg model.SystemConfig
+	err := s.db.Where("key = ?", key).First(&cfg).Error
+	if err != nil {
+		return "", err
+	}
+	return cfg.Value, nil
+}
+
+func (s *Store) SetSystemConfig(key, value string) error {
+	var cfg model.SystemConfig
+	err := s.db.Where("key = ?", key).First(&cfg).Error
+	if err != nil {
+		return s.db.Create(&model.SystemConfig{Key: key, Value: value}).Error
+	}
+	return s.db.Model(&cfg).Update("value", value).Error
 }

@@ -1,8 +1,6 @@
 ## Purpose
 站点（域名）的创建、配置和 NGINX 重载管理。
-
 ## Requirements
-
 ### Requirement: 站点增删改查
 系统 SHALL提供 API 端点以创建、查看、更新和删除 NGINX 站点配置，元数据包括域名、端口、SSL 状态、根路径、上游代理和自定义 location。
 
@@ -43,3 +41,11 @@
 #### Scenario: 查看无证书的站点
 - **WHEN** 用户请求没有证书的站点详情
 - **THEN** 系统返回站点信息，cert_id 为空
+
+### Requirement: API 响应格式
+该 capability 的所有 API 响应 SHALL 使用统一的 APIResponse 格式，包含 code/message/data 字段，替代原有裸 gin.H 或裸对象返回。
+
+#### Scenario: 响应使用统一格式
+- **WHEN** 调用该 capability 的任意 API
+- **THEN** 响应 body 必须是 `{"code": 0, "message": "ok", "data": ...}` 格式
+

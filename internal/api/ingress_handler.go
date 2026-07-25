@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/cylism/cylism-manager/internal/model"
 )
 
 // IngressHandler IngressRoute 管理的 HTTP handler
@@ -22,10 +23,10 @@ func (h *IngressHandler) ListRoutes(c *gin.Context) {
 	}
 	routes, err := K8s.ListIngressRoutes()
 	if err != nil {
-		c.JSON(http.StatusOK, gin.H{"error": err.Error(), "routes": []interface{}{}})
+		model.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
 		return
 	}
-	c.JSON(http.StatusOK, routes)
+	model.Success(c, routes)
 }
 
 // CreateRoute 创建 IngressRoute
@@ -34,7 +35,7 @@ func (h *IngressHandler) CreateRoute(c *gin.Context) {
 		k8sUnavailable(c)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"message": "创建 IngressRoute - 待实现"})
+	model.SuccessWithMessage(c, nil, "创建 IngressRoute - 待实现")
 }
 
 // UpdateRoute 更新 IngressRoute
@@ -43,7 +44,7 @@ func (h *IngressHandler) UpdateRoute(c *gin.Context) {
 		k8sUnavailable(c)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"message": "更新 IngressRoute - 待实现"})
+	model.SuccessWithMessage(c, nil, "更新 IngressRoute - 待实现")
 }
 
 // DeleteRoute 删除 IngressRoute
@@ -55,10 +56,10 @@ func (h *IngressHandler) DeleteRoute(c *gin.Context) {
 	ns := c.Param("namespace")
 	name := c.Param("name")
 	if err := K8s.DeleteIngressRoute(ns, name); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, err.Error())
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"message": "删除成功"})
+	model.SuccessWithMessage(c, nil, "删除成功")
 }
 
 // ListMiddlewares 列出 Middleware
@@ -67,7 +68,7 @@ func (h *IngressHandler) ListMiddlewares(c *gin.Context) {
 		k8sUnavailable(c)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"message": "Middleware - 待实现", "data": []interface{}{}})
+	model.SuccessWithMessage(c, nil, "Middleware - 待实现")
 }
 
 // ListTLSStores 列出 TLS Store
@@ -76,5 +77,5 @@ func (h *IngressHandler) ListTLSStores(c *gin.Context) {
 		k8sUnavailable(c)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"message": "TLS Store - 待实现", "data": []interface{}{}})
+	model.SuccessWithMessage(c, nil, "TLS Store - 待实现")
 }

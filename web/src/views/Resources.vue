@@ -30,7 +30,7 @@
       </div>
       <div v-else class="table-wrap">
         <table class="data-table">
-          <thead><tr><th>名称</th><th>命名空间</th><th>状态</th><th>节点</th><th>IP</th><th>重启</th></tr></thead>
+          <thead><tr><th>名称</th><th>命名空间</th><th>状态</th><th>节点</th><th>IP</th><th>重启</th><th>年龄</th></tr></thead>
           <tbody>
             <tr v-for="p in pods" :key="p.namespace+'/'+p.name">
               <td class="cell-primary">{{ p.name }}</td>
@@ -39,6 +39,7 @@
               <td>{{ p.node || '-' }}</td>
               <td>{{ p.ip || '-' }}</td>
               <td>{{ p.restarts }}</td>
+              <td>{{ p.age || '-' }}</td>
             </tr>
           </tbody>
         </table>
@@ -139,38 +140,27 @@ async function fetchAll() {
 async function fetchPods() {
   try {
     const ns = filterNs.value ? '?namespace=' + filterNs.value : ''
-    const r = await api.get('/k8s/pods' + ns)
-    const json = await r.json()
-    if (json.error) { k8sError.value = json.error; pods.value = [] }
-    else { pods.value = json.data || [] }
-  } catch(e) { console.error(e) }
+    pods.value = await api.get('/k8s/pods' + ns) || []
+  } catch(e) { k8sError.value = 'K8s 集群未连接，资源数据不可用'; console.error(e) }
 }
 
 async function fetchServices() {
   try {
     const ns = filterNs.value ? '?namespace=' + filterNs.value : ''
-    const r = await api.get('/k8s/services' + ns)
-    const json = await r.json()
-    if (json.error) { k8sError.value = json.error; services.value = [] }
-    else { services.value = json.data || [] }
-  } catch(e) { console.error(e) }
+    services.value = await api.get('/k8s/services' + ns) || []
+  } catch(e) { k8sError.value = 'K8s 集群未连接，资源数据不可用'; console.error(e) }
 }
 
 async function fetchDeployments() {
   try {
     const ns = filterNs.value ? '?namespace=' + filterNs.value : ''
-    const r = await api.get('/k8s/deployments' + ns)
-    const json = await r.json()
-    if (json.error) { k8sError.value = json.error; deployments.value = [] }
-    else { deployments.value = json.data || [] }
-  } catch(e) { console.error(e) }
+    deployments.value = await api.get('/k8s/deployments' + ns) || []
+  } catch(e) { k8sError.value = 'K8s 集群未连接，资源数据不可用'; console.error(e) }
 }
 
 async function viewService(svc) {
   try {
-    const r = await api.get(`/k8s/services/${svc.namespace}/${svc.name}`)
-    const json = await r.json()
-    if (json.error) { alert(json.error); return }
+    const json = await api.get(`/k8s/services/${svc.namespace}/${svc.name}`)
     serviceDetail.value = {
       ...json,
       selectors: json.selector ? Object.entries(json.selector).map(([k,v])=>k+'='+v) : [],

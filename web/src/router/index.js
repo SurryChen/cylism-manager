@@ -11,6 +11,7 @@ import DBAdmin from '../views/DBAdmin.vue'
 import Workloads from '../views/Workloads.vue'
 import Services from '../views/Services.vue'
 import Configs from '../views/Configs.vue'
+import NetworkConfig from '../views/NetworkConfig.vue'
 
 const routes = [
   { path: '/login', component: Login, meta: { public: true } },
@@ -21,6 +22,7 @@ const routes = [
   { path: '/routes', component: Sites },
   { path: '/certs', component: Certificates },
   { path: '/configs', component: Configs },
+  { path: '/network', component: NetworkConfig },
   { path: '/resources', component: Resources },
   { path: '/audit', component: AuditLogs },
   { path: '/db-admin', component: DBAdmin },

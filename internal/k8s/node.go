@@ -10,13 +10,15 @@ import (
 
 // NodeInfo 节点展示信息
 type NodeInfo struct {
-	Name      string `json:"name"`
-	Status    string `json:"status"`   // Ready / NotReady
-	Role      string `json:"role"`     // control-plane / worker
-	Version   string `json:"version"`
-	CPUCores  int64  `json:"cpu_cores"`
-	MemoryMB  int64  `json:"memory_mb"`
-	CreatedAt string `json:"created_at"`
+	Name       string `json:"name"`
+	Ready      bool   `json:"ready"`       // 前端用 bool 判断
+	Roles      string `json:"roles"`       // control-plane / worker（前端用复数名）
+	Version    string `json:"version"`
+	InternalIP string `json:"internal_ip"` // 节点内网 IP
+	OS         string `json:"os"`          // 操作系统镜像
+	CPUCores   int64  `json:"cpu_cores"`
+	MemoryMB   int64  `json:"memory_mb"`
+	CreatedAt  string `json:"created_at"`
 }
 
 // ListNodeInfos 列出所有节点
@@ -93,23 +95,32 @@ func nodeToInfo(node *corev1.Node) NodeInfo {
 		Name:      node.Name,
 		Version:   node.Status.NodeInfo.KubeletVersion,
 		CreatedAt: node.CreationTimestamp.Format(time.RFC3339),
+		Ready:     false,
+		OS:        node.Status.NodeInfo.OSImage,
 	}
 
 	// 状态
-	info.Status = "NotReady"
 	for _, cond := range node.Status.Conditions {
 		if cond.Type == corev1.NodeReady && cond.Status == corev1.ConditionTrue {
-			info.Status = "Ready"
+			info.Ready = true
 		}
 	}
 
 	// 角色
 	if _, ok := node.Labels["node-role.kubernetes.io/control-plane"]; ok {
-		info.Role = "control-plane"
+		info.Roles = "control-plane"
 	} else if _, ok := node.Labels["node-role.kubernetes.io/master"]; ok {
-		info.Role = "control-plane"
+		info.Roles = "control-plane"
 	} else {
-		info.Role = "worker"
+		info.Roles = "worker"
+	}
+
+	// IP
+	for _, addr := range node.Status.Addresses {
+		if addr.Type == corev1.NodeInternalIP {
+			info.InternalIP = addr.Address
+			break
+		}
 	}
 
 	// 资源

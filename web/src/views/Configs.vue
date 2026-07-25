@@ -100,10 +100,8 @@ onMounted(async () => {
   loading.value = true
   error.value = ''
   try {
-    const r = await api.get('/k8s/configmaps')
-    configmaps.value = ((await r.json()).data || [])
-    const r2 = await api.get('/k8s/secrets')
-    secrets.value = ((await r2.json()).data || [])
+    configmaps.value = await api.get('/k8s/configmaps') || []
+    secrets.value = await api.get('/k8s/secrets') || []
   } catch(e) { error.value = '加载失败，请检查集群连接' }
   finally { loading.value = false }
 })
@@ -113,10 +111,10 @@ async function toggleCmExpand(cm) {
   if (expandedCm.value === key) { expandedCm.value = ''; return }
   expandedCm.value = key
   try {
-    const r = await api.get(`/k8s/configmaps/${cm.namespace}/${cm.name}`)
-    cmDetail.value = await r.json()
-  } catch(e) { console.error(e); expandedCm.value = '' }
+    cmDetail.value = await api.get(`/k8s/configmaps/${cm.namespace}/${cm.name}`)
+  } catch(e) { console.error(e) }
 }
+
 
 async function toggleSecretExpand(sec) {
   const key = sec.namespace + '/' + sec.name
@@ -124,11 +122,9 @@ async function toggleSecretExpand(sec) {
   expandedSecret.value = key
   Object.keys(revealedKeys).forEach(k => delete revealedKeys[k])
   try {
-    const r = await api.get(`/k8s/secrets/${sec.namespace}/${sec.name}`)
-    secretDetail.value = await r.json()
-  } catch(e) {}
+    secretDetail.value = await api.get(`/k8s/secrets/${sec.namespace}/${sec.name}`)
+  } catch(e) { console.error(e) }
 }
-
 function toggleReveal(key) {
   revealedKeys[key] = !revealedKeys[key]
 }

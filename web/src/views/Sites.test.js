@@ -7,26 +7,20 @@ vi.mock('../api/index.js', () => ({
   api: {
     get: vi.fn().mockImplementation(url => {
       if (url.includes('ingress-controller')) {
-        return Promise.resolve({
-          json: async () => ({ type: 'Traefik', version: '2.10.7', running: true, crd: true, namespace: 'kube-system' })
-        })
+        return Promise.resolve({ type: 'Traefik', version: '2.10.7', running: true, crd: true, namespace: 'kube-system' })
       }
       if (url.includes('/k8s/ingresses')) {
-        return Promise.resolve({
-          json: async () => ({ data: [
-            { name: 'web-ingress', namespace: 'default', hosts: ['example.com'], paths: ['/ -> web-svc:80'], tls: ['tls-cert'], controller: 'traefik', age: '2d' }
-          ]})
-        })
+        return Promise.resolve([
+          { name: 'web-ingress', namespace: 'default', hosts: ['example.com'], paths: ['/ -> web-svc:80'], tls: ['tls-cert'], controller: 'traefik', age: '2d' }
+        ])
       }
       // /routes
-      return Promise.resolve({
-        json: async () => [
-          { name: 'my-route', namespace: 'default', domain: 'Host(`example.com`)', tls: 'true', created_at: '2024-01-01 00:00' }
-        ]
-      })
+      return Promise.resolve([
+        { name: 'my-route', namespace: 'default', domain: 'Host(`example.com`)', tls: 'true', created_at: '2024-01-01 00:00' }
+      ])
     }),
-    post: vi.fn().mockResolvedValue({ json: async () => ({ message: 'ok' }) }),
-    delete: vi.fn().mockResolvedValue({ json: async () => ({ message: 'ok' }) }),
+    post: vi.fn().mockResolvedValue({ message: 'ok' }),
+    delete: vi.fn().mockResolvedValue({ message: 'ok' }),
   }
 }))
 

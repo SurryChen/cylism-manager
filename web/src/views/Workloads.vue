@@ -139,9 +139,9 @@ async function fetchData() {
   loading.value = true
   error.value = ''
   try {
-    try { const r = await api.get('/k8s/deployments'); const d = await r.json(); deployments.value = d.data || [] } catch(e) { console.error(e) }
-    try { const r = await api.get('/k8s/statefulsets'); const d = await r.json(); statefulsets.value = d.data || [] } catch(e) { console.error(e) }
-    try { const r = await api.get('/k8s/daemonsets'); const d = await r.json(); daemonsets.value = d.data || [] } catch(e) { console.error(e) }
+    try { deployments.value = await api.get('/k8s/deployments') || [] } catch(e) { console.error(e) }
+    try { statefulsets.value = await api.get('/k8s/statefulsets') || [] } catch(e) { console.error(e) }
+    try { daemonsets.value = await api.get('/k8s/daemonsets') || [] } catch(e) { console.error(e) }
   } catch(e) { error.value = '加载失败，请检查集群连接' }
   finally { loading.value = false }
 }
@@ -153,9 +153,7 @@ async function toggleDeployExpand(d) {
   expandedDeploy.value = key
   if (!deployPods.value[key]) {
     try {
-      const r = await api.get(`/k8s/deployments/${d.namespace}/${d.name}/pods`)
-      const result = await r.json()
-      deployPods.value[key] = result.data || []
+      deployPods.value[key] = await api.get(`/k8s/deployments/${d.namespace}/${d.name}/pods`) || []
     } catch(e) { deployPods.value[key] = [] }
   }
 }
@@ -193,13 +191,8 @@ function doUpdateImage() {
 }
 
 async function openRollbackDialog(d) {
-  const r = await api.get(`/k8s/deployments/${d.namespace}/${d.name}/revisions`)
-  const result = await r.json()
-  rollbackDialog.value = { namespace: d.namespace, name: d.name, revisions: result.data || [] }
-}
-function doRollback(revision) {
-  const d = rollbackDialog.value
-  api.post(`/k8s/deployments/${d.namespace}/${d.name}/rollback`, { revision }).then(() => { rollbackDialog.value = null; fetchData() })
+  const result = await api.get(`/k8s/deployments/${d.namespace}/${d.name}/revisions`)
+  rollbackDialog.value = { namespace: d.namespace, name: d.name, revisions: result || [] }
 }
 
 function openStsScaleDialog(s) {

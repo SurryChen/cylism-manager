@@ -64,8 +64,7 @@ onMounted(async () => {
   loading.value = true
   error.value = ''
   try {
-    const r = await api.get('/k8s/services')
-    services.value = (await r.json()).data || []
+    services.value = await api.get('/k8s/services') || []
   } catch(e) { error.value = '加载失败，请检查集群连接' }
   finally { loading.value = false }
 })
@@ -76,10 +75,8 @@ async function toggleExpand(s) {
   expandedSvc.value = key
   if (!endpointSlices.value[key]) {
     try {
-      const r = await api.get(`/k8s/services/${s.namespace}/${s.name}/endpoints`)
-      const d = await r.json()
-      endpointSlices.value[key] = d.data || []
-    } catch(e) { endpointSlices.value[key] = [] }
+      endpointSlices.value[key] = await api.get(`/k8s/services/${s.namespace}/${s.name}/endpoints`) || []
+    } catch(e) { console.error(e) }
   }
 }
 

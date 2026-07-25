@@ -50,7 +50,7 @@ async function fetchLogs() {
   const params = new URLSearchParams({ limit:'20', offset:'0' })
   if(filterType.value) params.set('resource_type',filterType.value)
   if(filterAction.value) params.set('action',filterAction.value)
-  try { const r = await api.get(`/audit-logs?${params}`); const d=await r.json(); logs.value=d.data||[]; total.value=d.total||0 } catch(e){console.error(e)}
+  try { const d = await api.get(`/audit-logs?${params}`); logs.value = (d && d.data) || []; total.value = (d && d.total) || 0 } catch(e){console.error(e)}
 }
 async function prevPage() { offset.value=Math.max(0,offset.value-20); await loadPage() }
 async function nextPage() { offset.value=offset.value+20; await loadPage() }
@@ -58,7 +58,7 @@ async function loadPage() {
   const params = new URLSearchParams({ limit:'20', offset:String(offset.value) })
   if(filterType.value) params.set('resource_type',filterType.value)
   if(filterAction.value) params.set('action',filterAction.value)
-  const r = await api.get(`/audit-logs?${params}`); const d=await r.json(); logs.value=d.data||[]
+  const d = await api.get(`/audit-logs?${params}`); logs.value = (d && d.data) || []
 }
 function formatTime(d) { if(!d)return'-'; return new Date(d).toLocaleString('zh-CN',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}) }
 function actionLabel(a) { const m={create:'创建',update:'更新',delete:'删除',deploy:'部署',issue:'签发',renew:'续期',revoke:'吊销',reload:'重载',generate:'生成'}; return m[a]||a }

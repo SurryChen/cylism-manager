@@ -47,14 +47,17 @@ func TestOperationHandler_ListOperations(t *testing.T) {
 		t.Fatalf("expected status 200, got %d", w.Code)
 	}
 
-	var resp struct {
-		Operations []model.OperationLog `json:"operations"`
+	var apiResp struct {
+		Code int `json:"code"`
+		Data struct {
+			Operations []model.OperationLog `json:"operations"`
+		} `json:"data"`
 	}
-	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+	if err := json.Unmarshal(w.Body.Bytes(), &apiResp); err != nil {
 		t.Fatalf("json unmarshal: %v", err)
 	}
-	if len(resp.Operations) != 2 {
-		t.Errorf("expected 2 operations, got %d", len(resp.Operations))
+	if len(apiResp.Data.Operations) != 2 {
+		t.Errorf("expected 2 operations, got %d", len(apiResp.Data.Operations))
 	}
 }
 
@@ -72,12 +75,15 @@ func TestOperationHandler_ListOperationsEmpty(t *testing.T) {
 		t.Fatalf("expected status 200, got %d", w.Code)
 	}
 
-	var resp struct {
-		Operations []model.OperationLog `json:"operations"`
+	var apiResp struct {
+		Code int `json:"code"`
+		Data struct {
+			Operations []model.OperationLog `json:"operations"`
+		} `json:"data"`
 	}
-	json.Unmarshal(w.Body.Bytes(), &resp)
-	if len(resp.Operations) != 0 {
-		t.Errorf("expected 0 operations, got %d", len(resp.Operations))
+	json.Unmarshal(w.Body.Bytes(), &apiResp)
+	if len(apiResp.Data.Operations) != 0 {
+		t.Errorf("expected 0 operations, got %d", len(apiResp.Data.Operations))
 	}
 }
 
