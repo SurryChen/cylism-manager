@@ -33,6 +33,26 @@ echo "✅ Push done"
 echo ""
 echo "[3/3] Deploying to k3s..."
 
+# 创建 SSH key secret（本机生成 YAML 传远端 apply）
+echo "📎 Creating SSH key secret..."
+SSH_KEY_B64=$(base64 -w0 "$HOME/.ssh/id_ed25519_claw")
+SECRET_YAML="/tmp/cylism-ssh-secret.yaml"
+cat > "$SECRET_YAML" <<EOF
+apiVersion: v1
+kind: Secret
+metadata:
+  name: cylism-ssh-key
+type: Opaque
+data:
+  id_ed25519: $SSH_KEY_B64
+EOF
+scp -i "$SSH_KEY" -o StrictHostKeyChecking=no -o ConnectTimeout=10 \
+  "$SECRET_YAML" "$SSH_USER@$SSH_HOST:/tmp/cylism-ssh-secret.yaml"
+ssh -i "$SSH_KEY" -o StrictHostKeyChecking=no -o ConnectTimeout=10 \
+  "$SSH_USER@$SSH_HOST" "sudo /usr/local/bin/k3s kubectl apply -f /tmp/cylism-ssh-secret.yaml && rm -f /tmp/cylism-ssh-secret.yaml" 2>&1
+rm -f "$SECRET_YAML"
+echo "✅ SSH secret created/updated"
+
 # 上传 yaml 到服务器用户目录，再 sudo 移到 /root
 TMP_DST="/home/$SSH_USER/platform-deployment.yaml"
 scp -i "$SSH_KEY" -o StrictHostKeyChecking=no -o ConnectTimeout=10 \

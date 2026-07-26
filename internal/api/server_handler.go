@@ -2,8 +2,8 @@ package api
 
 import (
 	"context"
-	"crypto/rand"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
@@ -184,6 +184,7 @@ func sshExec(timeout time.Duration, args []string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "ssh", args...)
+	log.Printf("[sshExec] running: ssh %v", args)
 	return cmd.CombinedOutput()
 }
 
@@ -204,12 +205,21 @@ func buildSSHArgs(server *model.Server, encKey []byte, host string) []string {
 	if server.SSHAuthType == "key" && server.SSHKey != "" {
 		decKey, err := crypto.Decrypt(encKey, server.SSHKey)
 		if err == nil {
-			keyPath := filepath.Join(os.TempDir(), fmt.Sprintf("cylism-ssh-%d-%d-%s", server.ID, time.Now().UnixNano(),
-		func() string { b := make([]byte, 8); _, _ = rand.Read(b); return fmt.Sprintf("%x", b) }()))
-			os.WriteFile(keyPath, []byte(decKey), 0600)
+			log.Printf("[buildSSHArgs] key decrypt success for server=%d, user=%s, host=%s", server.ID, server.SSHUser, host)
+			// 写入固定路径（/data/tmp/ 持久卷可写，避免 Alpine /tmp 问题）
+			keyDir := filepath.Join("/data", "tmp")
+			os.MkdirAll(keyDir, 0700)
+			keyPath := filepath.Join(keyDir, fmt.Sprintf("cylism-ssh-%d", server.ID))
+			if err := os.WriteFile(keyPath, []byte(decKey), 0600); err != nil {
+				log.Printf("[buildSSHArgs] write key file FAILED: %v", err)
+			} else {
+				if fi, statErr := os.Stat(keyPath); statErr == nil {
+					log.Printf("[buildSSHArgs] key file written: size=%d", fi.Size())
+				}
+			}
 			args = append(args, "-i", keyPath)
-			// Clean up after 60s
-			go func() { time.Sleep(60 * time.Second); os.Remove(keyPath) }()
+		} else {
+			log.Printf("[buildSSHArgs] key decrypt FAILED for server=%d, user=%s, host=%s: %v", server.ID, server.SSHUser, host, err)
 		}
 	}
 	// Password auth: sshpass is not reliably available. Require key auth for automation.
@@ -227,9 +237,12 @@ func probeSSH(server *model.Server, encKey []byte) (bool, string) {
 	args = append(args, "echo ok")
 	out, err := sshExec(sshTimeout, args)
 	if err != nil {
-		return false, fmt.Sprintf("%s: %s", err.Error(), strings.TrimSpace(string(out)))
+		errMsg := fmt.Sprintf("%s: %s", err.Error(), strings.TrimSpace(string(out)))
+		log.Printf("[probe] SSH probe failed (server=%s): %s", host, errMsg)
+		return false, errMsg
 	}
-	return strings.TrimSpace(string(out)) == "ok", ""
+	// 使用 Contains 兼容 CombinedOutput 混入 stderr 警告（如 known_hosts 无法写入）
+	return strings.Contains(string(out), "\nok") || strings.TrimSpace(string(out)) == "ok", ""
 }
 
 func runPrechecks(server *model.Server, encKey []byte) []gin.H {
@@ -243,7 +256,7 @@ func runPrechecks(server *model.Server, encKey []byte) []gin.H {
 
 	// 1. SSH connect
 	out, err := sshExec(sshTimeout, append(args, "echo ok"))
-	sshOK := err == nil && strings.TrimSpace(string(out)) == "ok"
+	sshOK := err == nil && (strings.Contains(string(out), "\nok") || strings.TrimSpace(string(out)) == "ok")
 	checks = append(checks, gin.H{
 		"name": "ssh_connect", "label": "SSH 连接",
 		"pass": sshOK,
@@ -270,12 +283,23 @@ func runPrechecks(server *model.Server, encKey []byte) []gin.H {
 		return checks
 	}
 
-	// 2. root privilege
+	// 2. root privilege: check uid==0 first, then sudo capability
 	out, err = sshExec(sshTimeout, append(args, "id -u"))
 	rootOK := err == nil && strings.TrimSpace(string(out)) == "0"
+	rootDetail := strings.TrimSpace(string(out))
+	if !rootOK {
+		// Not root user; check sudo permission
+		sudoOut, sudoErr := sshExec(sshTimeout, append(args, "sudo -n true 2>&1"))
+		if sudoErr == nil || strings.Contains(string(sudoOut), "password") {
+			rootOK = true
+			rootDetail = "有 sudo 权限（非 root 用户）"
+		} else {
+			rootDetail = fmt.Sprintf("无 root 权限且无 sudo: %s", strings.TrimSpace(string(sudoOut)))
+		}
+	}
 	checks = append(checks, gin.H{
 		"name": "root_privilege", "label": "Root 权限",
-		"pass": rootOK, "detail": strings.TrimSpace(string(out)),
+		"pass": rootOK, "detail": rootDetail,
 	})
 
 	// 3. swap

@@ -47,6 +47,7 @@
               <td>
                 <div class="btn-group action-cell">
                   <button v-if="!srv.cluster_role" class="btn btn-sm" @click="startJoin(srv.id)">加入集群</button>
+                  <button v-if="!srv.cluster_role" class="btn btn-sm" @click="startEdit(srv)">编辑</button>
                   <button v-if="!srv.cluster_role" class="btn btn-sm btn-danger" @click="confirmDelete(srv)">删除</button>
                 </div>
               </td>
@@ -59,7 +60,7 @@
     <!-- Add Server modal -->
     <div v-if="showAdd" class="overlay" @click.self="showAdd = false">
       <div class="modal">
-        <h2 class="modal-title">添加服务器</h2>
+        <h2 class="modal-title">{{ editingId ? '编辑服务器' : '添加服务器' }}</h2>
         <form @submit.prevent="addServer">
           <div class="form-row">
             <div class="form-group"><label class="form-label">名称</label><input v-model="form.name" class="form-input" placeholder="我的服务器" required /></div>
@@ -72,7 +73,7 @@
           <div class="form-group"><label class="form-label">认证方式</label><select v-model="form.ssh_auth_type" class="form-select"><option value="password">密码</option><option value="key">密钥</option></select></div>
           <div class="form-group" v-if="form.ssh_auth_type === 'password'"><label class="form-label">SSH 密码</label><input v-model="form.ssh_password" class="form-input" type="password" placeholder="输入密码" /></div>
           <div class="form-group" v-if="form.ssh_auth_type === 'key'"><label class="form-label">SSH 密钥</label><textarea v-model="form.ssh_key" class="form-input textarea-input" placeholder="粘贴私钥内容" /></div>
-          <div class="modal-actions"><button type="button" class="btn" @click="showAdd = false">取消</button><button type="submit" class="btn btn-primary">确认添加</button></div>
+          <div class="modal-actions"><button type="button" class="btn" @click="closeForm">取消</button><button type="submit" class="btn btn-primary">{{ editingId ? '保存修改' : '确认添加' }}</button></div>
         </form>
       </div>
     </div>
@@ -101,16 +102,21 @@
         <h2 class="modal-title">加入集群 - {{ joinServer?.name }}</h2>
         <!-- Precheck phase -->
         <div v-if="joinState.phase === 'precheck'">
-          <p style="margin-bottom:12px;color:var(--text-secondary)">正在执行前置检测...</p>
-          <div v-for="c in joinState.checks" :key="c.name" style="margin-bottom:6px">
-            <span v-if="c.pass" class="badge badge-online">✅</span>
-            <span v-else class="badge badge-danger">✗</span>
-            {{ c.label }}：{{ c.detail }}
-          </div>
-          <div v-if="joinState.checks?.length" class="modal-actions" style="margin-top:16px">
-            <button class="btn" @click="joinState = null">取消</button>
-            <button v-if="joinState.allPass" class="btn btn-primary" @click="startJoinProgress">开始加入</button>
-          </div>
+          <p v-if="!joinState.checks?.length" style="margin-bottom:12px;color:var(--text-secondary)">正在执行前置检测...</p>
+          <template v-else>
+            <p style="margin-bottom:12px;color:var(--text-secondary)">
+              {{ joinState.allPass ? '前置检测全部通过' : '前置检测未通过' }}
+            </p>
+            <div v-for="c in joinState.checks" :key="c.name" style="margin-bottom:6px">
+              <span v-if="c.pass" class="badge badge-online">✅</span>
+              <span v-else class="badge badge-danger">✗</span>
+              {{ c.label }}：{{ c.detail }}
+            </div>
+            <div class="modal-actions" style="margin-top:16px">
+              <button class="btn" @click="joinState = null">取消</button>
+              <button v-if="joinState.allPass" class="btn btn-primary" @click="startJoinProgress">开始加入</button>
+            </div>
+          </template>
         </div>
         <!-- Progress phase -->
         <div v-if="joinState.phase === 'progress' || joinState.phase === 'done'">
@@ -144,6 +150,7 @@ import { api } from '../api/index.js'
 
 const servers = ref([])
 const showAdd = ref(false)
+const editingId = ref(null)
 const deleteTarget = ref(null)
 const probingId = ref(null)
 const probeResult = ref(null)
@@ -155,7 +162,38 @@ onMounted(() => { fetchServers() })
 
 async function fetchServers() { try { servers.value = await api.get('/servers') || [] } catch (e) { console.error(e) } }
 
-async function addServer() { try { await api.post('/servers', form.value); showAdd.value = false; resetForm(); fetchServers() } catch (e) { console.error(e) } }
+async function addServer() {
+  try {
+    if (editingId.value) {
+      await api.put('/servers/' + editingId.value, form.value)
+    } else {
+      await api.post('/servers', form.value)
+    }
+    closeForm()
+    fetchServers()
+  } catch (e) { console.error(e) }
+}
+
+function startEdit(srv) {
+  editingId.value = srv.id
+  form.value = {
+    name: srv.name,
+    host: srv.host,
+    ssh_host: srv.ssh_host || srv.host,
+    ssh_port: srv.ssh_port || 22,
+    ssh_user: srv.ssh_user || 'root',
+    ssh_auth_type: srv.ssh_auth_type || 'password',
+    ssh_password: '',
+    ssh_key: '',
+  }
+  showAdd.value = true
+}
+
+function closeForm() {
+  showAdd.value = false
+  editingId.value = null
+  resetForm()
+}
 
 async function probeServer(id) {
   probingId.value = id
