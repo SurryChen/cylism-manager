@@ -39,6 +39,10 @@ spec:
           hostPath:
             path: /run/tailscale
             type: DirectoryOrCreate
+        - name: ssh-key
+          secret:
+            secretName: cylism-ssh-key
+            defaultMode: 0600
       containers:
         - name: platform
           image: crpi-c5u9bb8i5qxw1m72.cn-guangzhou.personal.cr.aliyuncs.com/surrychen/cylism-manager:latest
@@ -49,6 +53,9 @@ spec:
               mountPath: /data
             - name: tailscale-socket
               mountPath: /run/tailscale
+            - name: ssh-key
+              mountPath: /root/.ssh
+              readOnly: true
           resources:
             requests:
               memory: "256Mi"

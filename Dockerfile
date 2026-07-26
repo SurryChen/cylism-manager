@@ -15,7 +15,7 @@ COPY web/ ./
 RUN npm run build
 
 FROM alpine:3.20
-RUN apk --no-cache add ca-certificates curl
+RUN apk --no-cache add ca-certificates curl openssh
 
 # Install tailscale CLI (talks to host tailscaled via mounted socket)
 RUN curl -fsSL https://pkgs.tailscale.com/stable/tailscale_1.98.9_amd64.tgz -o /tmp/ts.tgz && \
