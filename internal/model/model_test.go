@@ -10,7 +10,6 @@ func TestServerModel(t *testing.T) {
 	s := Server{
 		Name:       "web-01",
 		Host:       "10.0.0.1",
-		SSHHost:    "10.0.0.1",
 		SSHPort:    22,
 		SSHUser:    "root",
 		SSHAuthType: "password",

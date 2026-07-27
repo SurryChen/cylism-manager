@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"crypto/md5"
+	"encoding/hex"
 	"net/http"
 	"os"
 	"os/exec"
@@ -30,7 +32,6 @@ func NewServerHandler(s *store.Store, encKey []byte) *ServerHandler {
 type createServerReq struct {
 	Name             string `json:"name" binding:"required"`
 	Host             string `json:"host" binding:"required"`
-	SSHHost          string `json:"ssh_host"`
 	SSHPort          int    `json:"ssh_port"`
 	SSHUser          string `json:"ssh_user"`
 	SSHAuthType      string `json:"ssh_auth_type"`
@@ -41,6 +42,7 @@ type createServerReq struct {
 
 func (h *ServerHandler) Create(c *gin.Context) {
 	var req createServerReq
+	log.Printf("[CreateServer] request: name=%q host=%q", req.Name, req.Host)
 	if err := c.ShouldBindJSON(&req); err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, err.Error())
 		return
@@ -48,17 +50,22 @@ func (h *ServerHandler) Create(c *gin.Context) {
 	if req.SSHPort == 0 { req.SSHPort = 22 }
 	if req.SSHAuthType == "" { req.SSHAuthType = "password" }
 
+	sshKeyHash := ""
+	if req.SSHKey != "" {
+		h := md5.Sum([]byte(req.SSHKey))
+		sshKeyHash = hex.EncodeToString(h[:])
+	}
 	encPassword, _ := crypto.Encrypt(h.encKey, req.SSHPassword)
 	encKey, _ := crypto.Encrypt(h.encKey, req.SSHKey)
 	encPassphrase, _ := crypto.Encrypt(h.encKey, req.SSHKeyPassphrase)
 
 	server := &model.Server{
 		Name: req.Name, Host: req.Host,
-		SSHHost: req.SSHHost, SSHPort: req.SSHPort, SSHUser: req.SSHUser,
+		SSHPort: req.SSHPort, SSHUser: req.SSHUser,
 		SSHAuthType: req.SSHAuthType, SSHPassword: encPassword,
 		SSHKey: encKey, SSHKeyPassphrase: encPassphrase,
+		SSHKeyHash: sshKeyHash,
 	}
-	if req.SSHHost == "" { server.SSHHost = req.Host }
 
 	if err := h.store.CreateServer(server); err != nil {
 		model.Error(c, http.StatusConflict, model.CodeConflict, err.Error())
@@ -71,6 +78,7 @@ func (h *ServerHandler) List(c *gin.Context) {
 	servers, err := h.store.ListServers()
 	if err != nil {
 		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, err.Error())
+	log.Printf("[ListServers] returned %d servers", len(servers))
 		return
 	}
 	model.Success(c, servers)
@@ -87,15 +95,26 @@ func (h *ServerHandler) Update(c *gin.Context) {
 	id, _ := strconv.ParseUint(c.Param("id"), 10, 64)
 	server, err := h.store.GetServer(uint(id))
 	if err != nil { model.Error(c, http.StatusNotFound, model.CodeNotFound, "server not found"); return }
+	log.Printf("[UpdateServer] id=%d, old host=%q", id, server.Host)
 
 	var updates map[string]interface{}
 	if err := c.ShouldBindJSON(&updates); err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, err.Error()); return
 	}
+	log.Printf("[UpdateServer] request body: %+v", updates)
 	if v, ok := updates["name"]; ok { server.Name = v.(string) }
+	if v, ok := updates["host"]; ok { server.Host = v.(string) }
 	if v, ok := updates["ssh_password"]; ok { enc, _ := crypto.Encrypt(h.encKey, v.(string)); server.SSHPassword = enc }
-	if v, ok := updates["ssh_key"]; ok { enc, _ := crypto.Encrypt(h.encKey, v.(string)); server.SSHKey = enc }
-	if v, ok := updates["ssh_host"]; ok { server.SSHHost = v.(string) }
+	if v, ok := updates["ssh_key"]; ok {
+		keyStr := v.(string)
+		enc, _ := crypto.Encrypt(h.encKey, keyStr); server.SSHKey = enc
+		if keyStr != "" {
+			hh := md5.Sum([]byte(keyStr))
+			server.SSHKeyHash = hex.EncodeToString(hh[:])
+		} else {
+			server.SSHKeyHash = ""
+		}
+	}
 	if v, ok := updates["ssh_port"]; ok { server.SSHPort = int(v.(float64)) }
 	if v, ok := updates["ssh_user"]; ok { server.SSHUser = v.(string) }
 	if v, ok := updates["ssh_auth_type"]; ok { server.SSHAuthType = v.(string) }
@@ -103,6 +122,7 @@ func (h *ServerHandler) Update(c *gin.Context) {
 	if err := h.store.UpdateServer(server); err != nil {
 		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, err.Error()); return
 	}
+	log.Printf("[UpdateServer] after update: %+v", server)
 	model.Success(c, server)
 }
 
@@ -197,6 +217,8 @@ func buildSSHArgs(server *model.Server, encKey []byte, host string) []string {
 	}
 	args := []string{
 		"-o", "StrictHostKeyChecking=no",
+		"-o", "UserKnownHostsFile=/dev/null",
+		"-o", "GlobalKnownHostsFile=/dev/null",
 		"-o", "ConnectTimeout=5",
 		"-o", "BatchMode=yes",
 		"-p", fmt.Sprintf("%d", port),
@@ -206,15 +228,41 @@ func buildSSHArgs(server *model.Server, encKey []byte, host string) []string {
 		decKey, err := crypto.Decrypt(encKey, server.SSHKey)
 		if err == nil {
 			log.Printf("[buildSSHArgs] key decrypt success for server=%d, user=%s, host=%s", server.ID, server.SSHUser, host)
+			// 校验解密后的密钥内容是否完整（对比 MD5）
+			if server.SSHKeyHash != "" {
+				got := md5.Sum([]byte(decKey))
+				gotHex := hex.EncodeToString(got[:])
+				if gotHex != server.SSHKeyHash {
+					log.Printf("[buildSSHArgs] KEY HASH MISMATCH for server=%d: expected=%s got=%s (decKey len=%d, first 32 bytes=%q)",
+						server.ID, server.SSHKeyHash, gotHex, len(decKey), safePrefix(decKey, 32))
+				} else {
+					log.Printf("[buildSSHArgs] key hash verified OK for server=%d", server.ID)
+				}
+			}
 			// 写入固定路径（/data/tmp/ 持久卷可写，避免 Alpine /tmp 问题）
 			keyDir := filepath.Join("/data", "tmp")
 			os.MkdirAll(keyDir, 0700)
 			keyPath := filepath.Join(keyDir, fmt.Sprintf("cylism-ssh-%d", server.ID))
-			if err := os.WriteFile(keyPath, []byte(decKey), 0600); err != nil {
+			// 确保 PEM 密钥以换行符结尾（缺少会导致 libcrypto 错误）
+			keyContent := decKey
+			if len(keyContent) > 0 && keyContent[len(keyContent)-1] != '\n' {
+				keyContent = keyContent + "\n"
+				log.Printf("[buildSSHArgs] added trailing newline to key for server=%d", server.ID)
+			}
+			if err := os.WriteFile(keyPath, []byte(keyContent), 0600); err != nil {
 				log.Printf("[buildSSHArgs] write key file FAILED: %v", err)
 			} else {
 				if fi, statErr := os.Stat(keyPath); statErr == nil {
 					log.Printf("[buildSSHArgs] key file written: size=%d", fi.Size())
+				}
+				// 打印密钥文件首尾字节，用于诊断截断/损坏
+				if len(decKey) > 0 {
+					log.Printf("[buildSSHArgs] key HEAD: %q", safePrefix(decKey, 64))
+					tailStart := len(decKey) - 80
+					if tailStart < 0 {
+						tailStart = 0
+					}
+					log.Printf("[buildSSHArgs] key TAIL: %q", decKey[tailStart:])
 				}
 			}
 			args = append(args, "-i", keyPath)
@@ -228,11 +276,16 @@ func buildSSHArgs(server *model.Server, encKey []byte, host string) []string {
 	return args
 }
 
-func probeSSH(server *model.Server, encKey []byte) (bool, string) {
-	host := server.SSHHost
-	if host == "" {
-		host = server.Host
+// safePrefix 返回字符串前 n 个字符，避免日志泄露完整密钥
+func safePrefix(s string, n int) string {
+	if len(s) <= n {
+		return s
 	}
+	return s[:n]
+}
+
+func probeSSH(server *model.Server, encKey []byte) (bool, string) {
+	host := server.Host
 	args := buildSSHArgs(server, encKey, host)
 	args = append(args, "echo ok")
 	out, err := sshExec(sshTimeout, args)
@@ -246,10 +299,7 @@ func probeSSH(server *model.Server, encKey []byte) (bool, string) {
 }
 
 func runPrechecks(server *model.Server, encKey []byte) []gin.H {
-	host := server.SSHHost
-	if host == "" {
-		host = server.Host
-	}
+	host := server.Host
 	args := buildSSHArgs(server, encKey, host)
 
 	checks := make([]gin.H, 0, 5)
