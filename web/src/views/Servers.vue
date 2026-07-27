@@ -179,7 +179,6 @@ function startEdit(srv) {
   form.value = {
     name: srv.name,
     host: srv.host,
-    ssh_host: srv.ssh_host || srv.host,
     ssh_port: srv.ssh_port || 22,
     ssh_user: srv.ssh_user || 'root',
     ssh_auth_type: srv.ssh_auth_type || 'password',

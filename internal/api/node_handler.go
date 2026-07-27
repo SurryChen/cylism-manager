@@ -100,10 +100,7 @@ func (h *NodeHandler) JoinProgress(c *gin.Context) {
 	go func() {
 		defer conn.Close()
 
-		host := server.SSHHost
-		if host == "" {
-			host = server.Host
-		}
+			host := server.Host
 
 		total := 12
 		idx := 0

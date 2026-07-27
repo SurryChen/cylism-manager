@@ -11,13 +11,13 @@ type Server struct {
 	ID               uint           `gorm:"primaryKey" json:"id"`
 	Name             string         `gorm:"size:128;not null" json:"name"`
 	Host             string         `gorm:"size:256;uniqueIndex;not null" json:"host"`
-	SSHHost          string         `gorm:"size:256" json:"ssh_host"`
 	SSHPort          int            `gorm:"default:22" json:"ssh_port"`
 	SSHUser          string         `gorm:"size:128" json:"ssh_user"`
 	SSHAuthType      string         `gorm:"size:32" json:"ssh_auth_type"`  // password / key
 	SSHPassword      string         `gorm:"type:text" json:"-"`            // 加密存储
 	SSHKey           string         `gorm:"type:text" json:"-"`            // 加密存储
 	SSHKeyPassphrase string         `gorm:"type:text" json:"-"`            // 加密存储
+	SSHKeyHash       string         `gorm:"size:64" json:"-"`              // 原始明文密钥的 MD5（加密前），用于解密后校验
 	ClusterRole      string         `gorm:"size:32" json:"cluster_role"`   // "" | control-plane | worker
 	K8sNodeName      string         `gorm:"size:256" json:"k8s_node_name"`
 	TailscaleIP      string         `gorm:"size:64" json:"tailscale_ip"`

@@ -54,7 +54,7 @@ func TestDBAdmin_ListRecords(t *testing.T) {
 	r, s := setupDBAdminRouter()
 
 	// Seed a server
-	s.DB().Exec("INSERT INTO servers (name, host, ssh_auth_type, ssh_user, ssh_host, ssh_port) VALUES ('test', '1.1.1.1', 'password', 'root', '1.1.1.1', 22)")
+	s.DB().Exec("INSERT INTO servers (name, host, ssh_auth_type, ssh_user, ssh_port) VALUES ('test', '1.1.1.1', 'password', 'root', 22)")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/admin/tables/servers?page=1&size=10", nil)
 	w := httptest.NewRecorder()
