@@ -6,6 +6,7 @@ import (
 	"log"
 	"crypto/md5"
 	"encoding/hex"
+	"encoding/json"
 	"net/http"
 	"os"
 	"os/exec"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/cylism/cylism-manager/internal/crypto"
 	"github.com/cylism/cylism-manager/internal/model"
+	"golang.org/x/crypto/ssh"
 	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/gin-gonic/gin"
 )
@@ -386,4 +388,212 @@ func runPrechecks(server *model.Server, encKey []byte) []gin.H {
 	})
 
 	return checks
+}
+
+// Stats 服务器资源使用情况 GET /api/servers/:id/stats
+func (h *ServerHandler) Stats(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "invalid id")
+		return
+	}
+	server, err := h.store.GetServer(uint(id))
+	if err != nil {
+		model.Error(c, http.StatusNotFound, model.CodeNotFound, "server not found")
+		return
+	}
+
+	host := server.Host
+	args := buildSSHArgs(server, h.encKey, host)
+
+	result := gin.H{}
+
+	// 一个 SSH 调用拿所有数据（避免多次连接开销）
+	out, err := sshExec(sshTimeout, append(args,
+		"echo 'CPU:' $(top -bn1 | awk '/^%Cpu|^CPU:/{print 100-$8}');"+
+			"echo 'MEM:' $(free -m | awk '/^Mem:/{print $2,$3,$7}');"+
+			"echo 'DISK:' $(df -BG / | awk 'NR==2{print $2,$3,$4,$5}' | sed 's/G//g');"+
+			"echo 'LOAD:' $(cat /proc/loadavg | awk '{print $1,$2,$3}');"+
+			"echo 'UP:' $(uptime -p | sed 's/up //')"))
+
+	if err == nil {
+		raw := string(out)
+		for _, line := range strings.Split(raw, "\n") {
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(line, "CPU:") {
+				parts := strings.Fields(line)
+				if len(parts) >= 2 {
+					cpuVal := 0.0
+					fmt.Sscanf(parts[1], "%f", &cpuVal)
+					result["cpu_percent"] = cpuVal
+				}
+			} else if strings.HasPrefix(line, "MEM:") {
+				parts := strings.Fields(line)
+				if len(parts) >= 4 {
+					total, _ := strconv.Atoi(parts[1])
+					used, _ := strconv.Atoi(parts[2])
+					avail, _ := strconv.Atoi(parts[3])
+					result["memory_total_mb"] = total
+					result["memory_used_mb"] = used
+					result["memory_available_mb"] = avail
+				}
+			} else if strings.HasPrefix(line, "DISK:") {
+				parts := strings.Fields(line)
+				if len(parts) >= 3 {
+					dTotal, _ := strconv.Atoi(parts[1])
+					dUsed, _ := strconv.Atoi(parts[2])
+					dAvail, _ := strconv.Atoi(parts[3])
+					result["disk_total_gb"] = dTotal
+					result["disk_used_gb"] = dUsed
+					result["disk_available_gb"] = dAvail
+					if len(parts) >= 4 {
+						result["disk_percent"] = parts[4]
+					}
+				}
+			} else if strings.HasPrefix(line, "LOAD:") {
+				parts := strings.Fields(line)
+				if len(parts) >= 4 {
+					l1, _ := strconv.ParseFloat(parts[1], 64)
+					l5, _ := strconv.ParseFloat(parts[2], 64)
+					l15, _ := strconv.ParseFloat(parts[3], 64)
+					result["load_1m"] = l1
+					result["load_5m"] = l5
+					result["load_15m"] = l15
+				}
+			} else if strings.HasPrefix(line, "UP:") {
+				result["uptime"] = strings.TrimPrefix(line, "UP: ")
+			}
+		}
+	}
+
+	model.Success(c, result)
+}
+
+// Terminal WebSocket 在线终端 GET /api/servers/:id/terminal
+func (h *ServerHandler) Terminal(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		return
+	}
+	server, err := h.store.GetServer(uint(id))
+	if err != nil {
+		return
+	}
+
+	conn, err := wsUpgrade(c.Writer, c.Request)
+	if err != nil {
+		return
+	}
+	defer conn.Close()
+
+	// 构建 SSH 客户端配置
+	port := server.SSHPort
+	if port == 0 {
+		port = 22
+	}
+	sshConfig := &ssh.ClientConfig{
+		User:            server.SSHUser,
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		Timeout:         10 * time.Second,
+	}
+
+	if server.SSHAuthType == "key" && server.SSHKey != "" {
+		decKey, err := crypto.Decrypt(h.encKey, server.SSHKey)
+		if err == nil {
+			signer, signErr := ssh.ParsePrivateKey([]byte(decKey))
+			if signErr == nil {
+				sshConfig.Auth = []ssh.AuthMethod{ssh.PublicKeys(signer)}
+			} else {
+				log.Printf("[terminal] key parse failed for server=%d: %v", server.ID, signErr)
+				return
+			}
+		} else {
+			log.Printf("[terminal] key decrypt failed for server=%d: %v", server.ID, err)
+			return
+		}
+	} else if server.SSHAuthType == "password" && server.SSHPassword != "" {
+		decPwd, err := crypto.Decrypt(h.encKey, server.SSHPassword)
+		if err == nil {
+			sshConfig.Auth = []ssh.AuthMethod{ssh.Password(decPwd)}
+		} else {
+			log.Printf("[terminal] password decrypt failed for server=%d: %v", server.ID, err)
+			return
+		}
+	} else {
+		log.Printf("[terminal] no auth method for server=%d", server.ID)
+		return
+	}
+
+	addr := fmt.Sprintf("%s:%d", server.Host, port)
+	client, err := ssh.Dial("tcp", addr, sshConfig)
+	if err != nil {
+		log.Printf("[terminal] dial failed for %s: %v", addr, err)
+		return
+	}
+	defer client.Close()
+
+	session, err := client.NewSession()
+	if err != nil {
+		log.Printf("[terminal] session failed: %v", err)
+		return
+	}
+	defer session.Close()
+
+	// 申请 PTY
+	modes := ssh.TerminalModes{
+		ssh.ECHO:          1,
+		ssh.TTY_OP_ISPEED: 14400,
+		ssh.TTY_OP_OSPEED: 14400,
+	}
+	if err := session.RequestPty("xterm-256color", 40, 80, modes); err != nil {
+		log.Printf("[terminal] pty failed: %v", err)
+		return
+	}
+
+	sessionIn, _ := session.StdinPipe()
+	sessionOut, _ := session.StdoutPipe()
+
+	if err := session.Shell(); err != nil {
+		log.Printf("[terminal] shell failed: %v", err)
+		return
+	}
+
+	// WebSocket → SSH stdin（支持 resize 和普通输入）
+	go func() {
+		for {
+			data, err := conn.ReadFrame()
+			if err != nil {
+				session.Close()
+				return
+			}
+			if len(data) == 0 {
+				continue
+			}
+			// 尝试解析 JSON resize 消息
+			var resizeMsg struct {
+				Type string `json:"type"`
+				Cols int    `json:"cols"`
+				Rows int    `json:"rows"`
+			}
+			if json.Unmarshal(data, &resizeMsg) == nil && resizeMsg.Type == "resize" && resizeMsg.Cols > 0 && resizeMsg.Rows > 0 {
+				session.WindowChange(resizeMsg.Rows, resizeMsg.Cols)
+				continue
+			}
+			sessionIn.Write(data)
+		}
+	}()
+
+	// SSH stdout → WebSocket
+	buf := make([]byte, 4096)
+	for {
+		n, err := sessionOut.Read(buf)
+		if err != nil {
+			break
+		}
+		if n > 0 {
+			conn.WriteFrame(buf[:n])
+		}
+	}
+
+	session.Close()
 }

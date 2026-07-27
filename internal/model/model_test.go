@@ -13,14 +13,10 @@ func TestServerModel(t *testing.T) {
 		SSHPort:    22,
 		SSHUser:    "root",
 		SSHAuthType: "password",
-		TailscaleIP: "100.82.33.41",
 	}
 
 	if s.Name != "web-01" {
 		t.Errorf("expected Name 'web-01', got '%s'", s.Name)
-	}
-	if s.TailscaleIP != "100.82.33.41" {
-		t.Errorf("expected TailscaleIP, got '%s'", s.TailscaleIP)
 	}
 }
 

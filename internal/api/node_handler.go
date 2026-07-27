@@ -9,17 +9,19 @@ import (
 
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/store"
+	"github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/gin-gonic/gin"
 )
 
 // NodeHandler K8s 节点管理的 HTTP handler
 type NodeHandler struct {
-	store *store.Store
+	store  *store.Store
+	encKey []byte
 }
 
 // NewNodeHandler 创建 NodeHandler
-func NewNodeHandler(s *store.Store) *NodeHandler {
-	return &NodeHandler{store: s}
+func NewNodeHandler(s *store.Store, encKey []byte) *NodeHandler {
+	return &NodeHandler{store: s, encKey: encKey}
 }
 
 // ListNode 列出所有集群节点
@@ -125,7 +127,7 @@ func (h *NodeHandler) JoinProgress(c *gin.Context) {
 			send(step, label, wsStatusFailed, detail)
 		}
 
-		sshArgs := buildSSHArgs(server, nil, host)
+		sshArgs := buildSSHArgs(server, h.encKey, host)
 
 		type checkStep struct{ name, label, sshCmd, okKeyword string }
 		preSteps := []checkStep{
@@ -195,36 +197,28 @@ func (h *NodeHandler) JoinProgress(c *gin.Context) {
 		}
 		send("register_tailscale", "注册 Tailscale", wsStatusSuccess, "已注册")
 
-		idx++
-		send("get_tailscale_ip", "获取 Tailscale IP", wsStatusRunning, "获取中...")
-		ipOut, err := sshExec(10*time.Second, append(sshArgs, "tailscale ip -4"))
-		tsIP := ""
-		if err == nil {
-			tsIP = strings.TrimSpace(string(ipOut))
-		}
-		send("get_tailscale_ip", "获取 Tailscale IP", wsStatusSuccess, tsIP)
 
 		// Phase 3: k3s agent
 		encToken, _ := h.store.GetSystemConfig("k3s_join_token")
 		var controlTSIP string
 		servers, _ := h.store.ListServers()
 		for _, srv := range servers {
-			if srv.ClusterRole == "control-plane" && srv.TailscaleIP != "" {
-				controlTSIP = srv.TailscaleIP
+			if srv.ClusterRole == "control-plane" && srv.Host != "" {
+				controlTSIP = srv.Host
 				break
 			}
 		}
 
 		idx++
 		send("install_k3s_agent", "安装 k3s-agent", wsStatusRunning, "正在安装...")
-		if encToken == "" || controlTSIP == "" || tsIP == "" {
+		if encToken == "" || controlTSIP == "" {
 			fail("install_k3s_agent", "安装 k3s-agent", "Token/IP 不可用")
 			return
 		}
 		// Build install command — use positional args via heredoc-safe approach
 		installCmd := fmt.Sprintf(
-			`curl -sfL https://get.k3s.io | K3S_URL='https://%s:6443' K3S_TOKEN='%s' INSTALL_K3S_EXEC='--node-ip=%s' sh -`,
-			shellEscape(controlTSIP), shellEscape(encToken), shellEscape(tsIP))
+			`curl -sfL https://get.k3s.io | K3S_URL='https://%s:6443' K3S_TOKEN='%s' sh -`,
+			shellEscape(controlTSIP), shellEscape(encToken))
 		out3, err := sshExec(180*time.Second, append(sshArgs, installCmd))
 		if err != nil {
 			fail("install_k3s_agent", "安装 k3s-agent", fmt.Sprintf("失败: %v — %s", err, out3))
@@ -267,8 +261,6 @@ func (h *NodeHandler) JoinProgress(c *gin.Context) {
 		server.ClusterRole = "worker"
 		hostnameOut, _ := sshExec(10*time.Second, append(sshArgs, "hostname"))
 		server.K8sNodeName = strings.TrimSpace(string(hostnameOut))
-		server.TailscaleIP = tsIP
-		server.TailscaleOnline = true
 		h.store.UpdateServer(server)
 
 		idx++
@@ -279,4 +271,127 @@ func (h *NodeHandler) JoinProgress(c *gin.Context) {
 // shellEscape wraps a string in single quotes for safe shell usage.
 func shellEscape(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
+}
+// cleanHostname extracts the first non-empty line from SSH combined output,
+// stripping stderr noise like known_hosts warnings.
+func cleanHostname(raw string) string {
+	for _, line := range strings.Split(strings.TrimSpace(raw), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.Contains(trimmed, "Warning:") || strings.Contains(trimmed, "Permanently") {
+			continue
+		}
+		return trimmed
+	}
+	return ""
+}
+
+// PreImport 导入预检（不写DB） POST /api/nodes/:id/preimport
+func (h *NodeHandler) PreImport(c *gin.Context) {
+	id, _ := strconv.ParseUint(c.Param("id"), 10, 64)
+	server, err := h.store.GetServer(uint(id))
+	if err != nil {
+		model.Error(c, http.StatusNotFound, model.CodeNotFound, "server not found")
+		return
+	}
+
+	host := server.Host
+	sshArgs := buildSSHArgs(server, h.encKey, host)
+
+	// 1. SSH 连接
+	out, err := sshExec(sshTimeout, append(sshArgs, "echo ok"))
+	if err != nil {
+		model.Error(c, http.StatusOK, model.CodeInternalError,
+			fmt.Sprintf("SSH 连接失败: %v — %s", err, strings.TrimSpace(string(out))))
+		return
+	}
+
+	// 2. 获取主机名（ssh combined output 可能混入 stderr 如 known_hosts warning）
+	hostnameOut, err2 := sshExec(sshTimeout, append(sshArgs, "hostname"))
+	if err2 != nil {
+		model.Error(c, http.StatusOK, model.CodeInternalError,
+			fmt.Sprintf("获取主机名失败: %v", err2))
+		return
+	}
+	hostname := cleanHostname(string(hostnameOut))
+	if hostname == "" {
+		model.Error(c, http.StatusOK, model.CodeInternalError, "主机名为空")
+		return
+	}
+
+	// 3. 匹配 k8s 节点（优先用 Host IP 匹配 InternalIP，fallback 用 hostname）
+	if K8s == nil {
+		model.Error(c, http.StatusOK, model.CodeK8sAPIError, "K8s 客户端未初始化")
+		return
+	}
+	var nodeInfo *k8s.NodeInfo
+	allNodes, listErr := K8s.ListNodeInfos()
+	if listErr != nil {
+		model.Error(c, http.StatusOK, model.CodeK8sAPIError, "获取集群节点列表失败")
+		return
+	}
+	// 策略1: 用服务器 Host IP 匹配 InternalIP
+	for i := range allNodes {
+		if allNodes[i].InternalIP == server.Host {
+			nodeInfo = &allNodes[i]
+			break
+		}
+	}
+	// 策略2: fallback 用 hostname 匹配（大小写不敏感）
+	if nodeInfo == nil {
+		for i := range allNodes {
+			if strings.EqualFold(allNodes[i].Name, hostname) {
+				nodeInfo = &allNodes[i]
+				break
+			}
+		}
+	}
+	if nodeInfo == nil {
+		model.Error(c, http.StatusOK, model.CodeK8sAPIError,
+			fmt.Sprintf("集群中未找到匹配节点 (IP=%s, hostname=%s)", server.Host, hostname))
+		return
+	}
+	if !nodeInfo.Ready {
+		model.Error(c, http.StatusOK, model.CodeK8sAPIError,
+			fmt.Sprintf("节点 %s 状态异常 (NotReady)", nodeInfo.Name))
+		return
+	}
+
+	model.Success(c, gin.H{
+		"server_name": server.Name,
+		"hostname":    hostname,
+		"node_name":   nodeInfo.Name,
+		"role":        nodeInfo.Roles,
+		"version":     nodeInfo.Version,
+		"internal_ip": nodeInfo.InternalIP,
+		"os":          nodeInfo.OS,
+	})
+}
+
+// ConfirmImport 确认导入 POST /api/nodes/:id/import
+func (h *NodeHandler) ConfirmImport(c *gin.Context) {
+	id, _ := strconv.ParseUint(c.Param("id"), 10, 64)
+	server, err := h.store.GetServer(uint(id))
+	if err != nil {
+		model.Error(c, http.StatusNotFound, model.CodeNotFound, "server not found")
+		return
+	}
+
+	var req struct {
+		Hostname string `json:"hostname" binding:"required"`
+		Role     string `json:"role" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, err.Error())
+		return
+	}
+
+	server.K8sNodeName = req.Hostname
+	server.ClusterRole = req.Role
+	h.store.UpdateServer(server)
+
+	model.SuccessWithMessage(c, gin.H{
+		"server_name": server.Name,
+		"node_name":   req.Hostname,
+		"role":        req.Role,
+	}, "导入成功")
 }

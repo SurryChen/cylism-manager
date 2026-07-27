@@ -7,7 +7,7 @@ vi.mock('../api/index.js', () => ({
   api: {
     get: vi.fn().mockImplementation(url => {
       if (url === '/nodes') return Promise.resolve([{ name: 'worker-a', ready: true, roles: 'worker', version: 'v1.31.0+k3s1', internal_ip: '100.101.1.10', cpu_cores: 4, memory_mb: 8192 }])
-      if (url === '/servers') return Promise.resolve([{ id: 1, name: 'srv-a', tailscale_ip: '100.101.1.10', k8s_node_name: 'worker-a' }])
+      if (url === '/servers') return Promise.resolve([{ id: 1, name: 'srv-a', k8s_node_name: 'worker-a' }])
       return Promise.resolve({})
     }),
     post: vi.fn().mockResolvedValue({}),

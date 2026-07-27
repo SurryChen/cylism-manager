@@ -10,7 +10,7 @@ RUN CGO_ENABLED=0 go build -o /cylism-manager ./cmd/platform/
 FROM node:22-alpine AS web-builder
 WORKDIR /web
 COPY web/package*.json ./
-RUN npm ci
+RUN npm install
 COPY web/ ./
 RUN npm run build
 
