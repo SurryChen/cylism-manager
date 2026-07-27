@@ -104,6 +104,52 @@ func (c *wsConn) Close() error {
 	return c.conn.Close()
 }
 
+// ReadFrame reads a complete WebSocket binary/text frame payload (unmasked from client).
+func (c *wsConn) ReadFrame() ([]byte, error) {
+	for {
+		hdr := make([]byte, 2)
+		if _, err := c.reader.Read(hdr); err != nil {
+			return nil, err
+		}
+		opcode := hdr[0] & 0x0f
+		length := int64(hdr[1] & 0x7f)
+		if length == 126 {
+			ext := make([]byte, 2)
+			c.reader.Read(ext)
+			length = int64(ext[0])<<8 | int64(ext[1])
+		} else if length == 127 {
+			ext := make([]byte, 8)
+			c.reader.Read(ext)
+			length = int64(ext[0])<<56 | int64(ext[1])<<48 | int64(ext[2])<<40 | int64(ext[3])<<32 |
+				int64(ext[4])<<24 | int64(ext[5])<<16 | int64(ext[6])<<8 | int64(ext[7])
+		}
+		// Read mask + payload
+		mask := make([]byte, 4)
+		c.reader.Read(mask)
+		payload := make([]byte, length)
+		c.reader.Read(payload)
+		for i := range payload {
+			payload[i] ^= mask[i%4]
+		}
+		if opcode == 0x8 { // close
+			return nil, errors.New("client closed")
+		}
+		if opcode == 0x2 || opcode == 0x1 { // binary or text
+			return payload, nil
+		}
+		// ping (0x9) — respond with pong, continue
+		if opcode == 0x9 {
+			c.writeFrame(0xA, payload) // pong
+			continue
+		}
+	}
+}
+
+// WriteFrame sends a binary frame to the client.
+func (c *wsConn) WriteFrame(data []byte) error {
+	return c.writeFrame(0x2, data) // binary frame
+}
+
 // readClose waits for close frame from client.
 func (c *wsConn) readClose() error {
 	for {

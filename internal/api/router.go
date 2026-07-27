@@ -55,6 +55,8 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 		servers.DELETE("/:id", serverHandler.Delete)
 		servers.POST("/:id/probe", serverHandler.Probe)
 		servers.POST("/:id/precheck", serverHandler.Precheck)
+		servers.GET("/:id/stats", serverHandler.Stats)
+		servers.GET("/:id/terminal", serverHandler.Terminal)
 	}
 
 	siteHandler := NewSiteHandler(s)
@@ -81,11 +83,13 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 	}
 
 	// K8s 节点管理
-	nodeHandler := NewNodeHandler(s)
+	nodeHandler := NewNodeHandler(s, encKey)
 	nodes := apiGroup.Group("/nodes")
 	{
 		nodes.GET("", nodeHandler.ListNode)
 		nodes.GET("/:id/join-progress", nodeHandler.JoinProgress)
+		nodes.POST("/:id/preimport", nodeHandler.PreImport)
+		nodes.POST("/:id/import", nodeHandler.ConfirmImport)
 		nodes.POST("/:id/add", nodeHandler.AddNode)
 		nodes.POST("/:id/drain", nodeHandler.DrainNode)
 		nodes.DELETE("/:id", nodeHandler.RemoveNode)

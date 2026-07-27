@@ -107,10 +107,13 @@ async function fetchData() {
 }
 
 function mappedServer(node) {
-  return serverLookup.value.find(server =>
-    (server.k8s_node_name && server.k8s_node_name === node.name) ||
-    (server.tailscale_ip && server.tailscale_ip === node.internal_ip),
-  )
+  return serverLookup.value.find(server => {
+    // 优先用 IP 匹配（server.host === node.internal_ip）
+    if (server.host && server.host === node.internal_ip) return true
+    // fallback 用 k8s_node_name（忽略大小写）
+    if (server.k8s_node_name && server.k8s_node_name.toLowerCase() === node.name.toLowerCase()) return true
+    return false
+  })
 }
 
 function drainNode(name) {

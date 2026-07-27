@@ -6,7 +6,7 @@ import Servers from './Servers.vue'
 vi.mock('../api/index.js', () => ({
   api: {
     get: vi.fn().mockImplementation(url => {
-      if (url.startsWith('/servers')) return Promise.resolve([{ id: 1, name: 'test-srv', host: '10.0.0.1', ssh_user: 'root', ssh_auth_type: 'password', ssh_port: 22, tailscale_ip: '', tailscale_online: false, cluster_role: '', k8s_node_name: '' }])
+      if (url.startsWith('/servers')) return Promise.resolve([{ id: 1, name: 'test-srv', host: '10.0.0.1', ssh_user: 'root', ssh_auth_type: 'password', ssh_port: 22, cluster_role: '', k8s_node_name: '' }])
       return Promise.resolve({})
     }),
     post: vi.fn().mockResolvedValue({}),

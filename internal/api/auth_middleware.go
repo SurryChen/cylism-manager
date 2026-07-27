@@ -10,24 +10,32 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// JWTAuthMiddleware JWT 认证中间件
+// JWTAuthMiddleware JWT 认证中间件（支持 Header Bearer 和 Query ?token=）
 func JWTAuthMiddleware(secret []byte) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		tokenStr := ""
+
+		// 优先从 Authorization header 读取
 		authHeader := c.GetHeader("Authorization")
-		if authHeader == "" {
+		if authHeader != "" {
+			parts := strings.SplitN(authHeader, " ", 2)
+			if len(parts) == 2 && parts[0] == "Bearer" {
+				tokenStr = parts[1]
+			}
+		}
+
+		// fallback: query string ?token=（WebSocket 握手用）
+		if tokenStr == "" {
+			tokenStr = c.Query("token")
+		}
+
+		if tokenStr == "" {
 			model.Error(c, http.StatusUnauthorized, model.CodeUnauthorized, "未提供认证 token")
 			c.Abort()
 			return
 		}
 
-		parts := strings.SplitN(authHeader, " ", 2)
-		if len(parts) != 2 || parts[0] != "Bearer" {
-			model.Error(c, http.StatusUnauthorized, model.CodeUnauthorized, "认证格式错误")
-			c.Abort()
-			return
-		}
-
-		claims, err := auth.ParseToken(secret, parts[1])
+		claims, err := auth.ParseToken(secret, tokenStr)
 		if err != nil {
 			model.Error(c, http.StatusUnauthorized, model.CodeUnauthorized, "token 无效或已过期")
 			c.Abort()

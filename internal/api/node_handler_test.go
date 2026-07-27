@@ -13,7 +13,7 @@ func setupNodeRouter() (*gin.Engine, *store.Store) {
 	gin.SetMode(gin.TestMode)
 	s, _ := store.New(":memory:")
 	r := gin.New()
-	h := NewNodeHandler(s)
+	h := NewNodeHandler(s, nil)
 	nodes := r.Group("/api/nodes")
 	{
 		nodes.GET("", h.ListNode)

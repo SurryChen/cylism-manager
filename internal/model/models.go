@@ -20,8 +20,6 @@ type Server struct {
 	SSHKeyHash       string         `gorm:"size:64" json:"-"`              // 原始明文密钥的 MD5（加密前），用于解密后校验
 	ClusterRole      string         `gorm:"size:32" json:"cluster_role"`   // "" | control-plane | worker
 	K8sNodeName      string         `gorm:"size:256" json:"k8s_node_name"`
-	TailscaleIP      string         `gorm:"size:64" json:"tailscale_ip"`
-	TailscaleOnline  bool           `gorm:"default:false" json:"tailscale_online"`
 	CreatedAt        time.Time      `json:"created_at"`
 	UpdatedAt        time.Time      `json:"updated_at"`
 	DeletedAt        gorm.DeletedAt `gorm:"index" json:"-"`
