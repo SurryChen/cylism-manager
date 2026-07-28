@@ -99,6 +99,7 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 		projects.GET("/:projectID/environments", applicationHandler.ListEnvironments)
 		projects.POST("/:projectID/environments", applicationHandler.CreateEnvironment)
 		projects.PUT("/:projectID/environments/:environmentID", applicationHandler.UpdateEnvironment)
+		projects.POST("/:projectID/environments/:environmentID/sync-namespace", applicationHandler.SyncEnvironmentNamespace)
 		projects.DELETE("/:projectID/environments/:environmentID", applicationHandler.DeleteEnvironment)
 	}
 	applications := apiGroup.Group("/applications")

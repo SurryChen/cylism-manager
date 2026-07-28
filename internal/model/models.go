@@ -153,12 +153,13 @@ type Project struct {
 
 // Environment 将应用部署目标映射到当前集群中的 Namespace。
 type Environment struct {
-	ID        uint      `gorm:"primaryKey" json:"id"`
-	ProjectID uint      `gorm:"uniqueIndex:idx_project_environment;not null" json:"project_id"`
-	Name      string    `gorm:"size:64;uniqueIndex:idx_project_environment;not null" json:"name"`
-	Namespace string    `gorm:"size:128;not null" json:"namespace"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID              uint      `gorm:"primaryKey" json:"id"`
+	ProjectID       uint      `gorm:"uniqueIndex:idx_project_environment;not null" json:"project_id"`
+	Name            string    `gorm:"size:64;uniqueIndex:idx_project_environment;not null" json:"name"`
+	Namespace       string    `gorm:"size:128;not null" json:"namespace"`
+	NamespaceStatus string    `gorm:"-" json:"namespace_status,omitempty"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
 }
 
 // Application 是平台托管的单个无状态服务。
