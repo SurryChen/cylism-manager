@@ -6,6 +6,7 @@ import (
 	"io"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/cylism/cylism-manager/internal/model"
@@ -39,7 +40,7 @@ func AuditMiddleware(s *store.Store) gin.HandlerFunc {
 				Action:       inferAction(c.Request.Method, c.FullPath()),
 				ResourceType: inferResourceType(c.FullPath()),
 				ResourceID:   extractResourceID(c.Param("id")),
-		UserID:       getUserID(c),
+				UserID:       getUserID(c),
 				Detail:       buildDetail(c.Request.Method, c.FullPath(), bodyBytes, writer.body.Bytes()),
 				CreatedAt:    start,
 			}
@@ -69,13 +70,13 @@ func isMutatingMethod(method string) bool {
 
 func inferAction(method, path string) string {
 	pathActions := map[string]string{
-		"deploy":  "deploy",
-		"issue":   "issue",
-		"renew":   "renew",
-		"revoke":  "revoke",
-		"reload":  "reload",
+		"deploy":   "deploy",
+		"issue":    "issue",
+		"renew":    "renew",
+		"revoke":   "revoke",
+		"reload":   "reload",
 		"generate": "generate",
-		"import":  "import",
+		"import":   "import",
 	}
 	// 检查路径中的特殊操作
 	for keyword, action := range pathActions {
@@ -107,6 +108,12 @@ func inferResourceType(path string) string {
 	if matched, _ := regexp.MatchString("/nginx", path); matched {
 		return "nginx"
 	}
+	if matched, _ := regexp.MatchString("/applications", path); matched {
+		return "application"
+	}
+	if matched, _ := regexp.MatchString("/projects", path); matched {
+		return "project"
+	}
 	return "unknown"
 }
 
@@ -126,11 +133,39 @@ func buildDetail(method, path string, reqBody, respBody []byte) string {
 	if len(reqBody) > 0 {
 		var body map[string]interface{}
 		if json.Unmarshal(reqBody, &body) == nil {
-			detail["request"] = body
+			detail["request"] = redactAuditValue(body)
 		}
 	}
 	data, _ := json.Marshal(detail)
 	return string(data)
+}
+
+func redactAuditValue(value interface{}) interface{} {
+	switch typed := value.(type) {
+	case map[string]interface{}:
+		redacted := make(map[string]interface{}, len(typed))
+		for key, item := range typed {
+			if isSensitiveAuditKey(key) {
+				redacted[key] = "[REDACTED]"
+				continue
+			}
+			redacted[key] = redactAuditValue(item)
+		}
+		return redacted
+	case []interface{}:
+		redacted := make([]interface{}, len(typed))
+		for index, item := range typed {
+			redacted[index] = redactAuditValue(item)
+		}
+		return redacted
+	default:
+		return value
+	}
+}
+
+func isSensitiveAuditKey(key string) bool {
+	key = strings.ToLower(key)
+	return strings.Contains(key, "secret") || strings.Contains(key, "password") || strings.Contains(key, "token") || strings.Contains(key, "private_key")
 }
 
 func getUserID(c *gin.Context) uint {

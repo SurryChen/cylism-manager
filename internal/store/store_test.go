@@ -81,11 +81,11 @@ func TestSiteCRUD(t *testing.T) {
 
 	// Create
 	site := &model.Site{
-		ServerID:   server.ID,
-		Domain:     "example.com",
-		Port:       80,
-		RootPath:   "/var/www/example",
-		Managed:    true,
+		ServerID: server.ID,
+		Domain:   "example.com",
+		Port:     80,
+		RootPath: "/var/www/example",
+		Managed:  true,
 	}
 	if err := st.CreateSite(site); err != nil {
 		t.Fatalf("CreateSite: %v", err)
@@ -355,5 +355,56 @@ func TestDeleteExpiredZeroRetention(t *testing.T) {
 	logs, _ := st.ListOperationsByResource("server", 1)
 	if len(logs) != 1 {
 		t.Errorf("expected 1 log (never expire), got %d", len(logs))
+	}
+}
+
+func TestApplicationReleaseCRUD(t *testing.T) {
+	st := setupTestDB(t)
+	project := &model.Project{Name: "commerce", OwnerID: 1}
+	if err := st.CreateProject(project); err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	environment := &model.Environment{ProjectID: project.ID, Name: "production", Namespace: "commerce-prod"}
+	if err := st.CreateEnvironment(environment); err != nil {
+		t.Fatalf("CreateEnvironment: %v", err)
+	}
+	application := &model.Application{
+		ProjectID: project.ID, EnvironmentID: environment.ID, Name: "order-api", WorkloadKind: "deployment", CreatedBy: 1,
+	}
+	if err := st.CreateApplication(application); err != nil {
+		t.Fatalf("CreateApplication: %v", err)
+	}
+	if err := st.CreateApplicationEndpoint(&model.ApplicationEndpoint{
+		ApplicationID: application.ID, Exposure: "public", Domain: "api.example.com", Path: "/", ServicePort: 80, TLSEnabled: true,
+	}); err != nil {
+		t.Fatalf("CreateApplicationEndpoint: %v", err)
+	}
+
+	release := &model.Release{
+		ApplicationID: application.ID, Sequence: 1, Image: "registry.example.com/order-api:1.0.0",
+		DesiredSpec: `{"replicas":2}`, Status: model.ReleaseStatusDraft, CreatedBy: 1,
+	}
+	if err := st.CreateRelease(release); err != nil {
+		t.Fatalf("CreateRelease: %v", err)
+	}
+	operation := &model.ReleaseOperation{ReleaseID: release.ID, Step: "preflight", Status: model.ReleaseOperationRunning}
+	if err := st.CreateReleaseOperation(operation); err != nil {
+		t.Fatalf("CreateReleaseOperation: %v", err)
+	}
+
+	got, err := st.GetApplication(application.ID)
+	if err != nil {
+		t.Fatalf("GetApplication: %v", err)
+	}
+	if got.Environment.Namespace != "commerce-prod" || len(got.Endpoints) != 1 {
+		t.Fatalf("expected loaded environment and endpoint, got %+v", got)
+	}
+	releases, err := st.ListReleases(application.ID)
+	if err != nil || len(releases) != 1 || releases[0].Sequence != 1 {
+		t.Fatalf("expected one release, got %+v, err=%v", releases, err)
+	}
+	operations, err := st.ListReleaseOperations(release.ID)
+	if err != nil || len(operations) != 1 || operations[0].Step != "preflight" {
+		t.Fatalf("expected preflight operation, got %+v, err=%v", operations, err)
 	}
 }

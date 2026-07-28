@@ -72,6 +72,25 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 	operationHandler := NewOperationHandler(s)
 	apiGroup.GET("/operations", operationHandler.ListOperations)
 
+	applicationHandler := NewApplicationHandler(s)
+	projects := apiGroup.Group("/projects")
+	{
+		projects.GET("", applicationHandler.ListProjects)
+		projects.POST("", applicationHandler.CreateProject)
+		projects.GET("/:projectID/environments", applicationHandler.ListEnvironments)
+		projects.POST("/:projectID/environments", applicationHandler.CreateEnvironment)
+	}
+	applications := apiGroup.Group("/applications")
+	{
+		applications.GET("", applicationHandler.ListApplications)
+		applications.POST("", applicationHandler.CreateApplication)
+		applications.GET("/:id", applicationHandler.GetApplication)
+		applications.POST("/:id/releases", applicationHandler.CreateRelease)
+		applications.GET("/:id/releases/:releaseID", applicationHandler.GetRelease)
+		applications.POST("/:id/releases/:releaseID/retry", applicationHandler.RetryRelease)
+		applications.POST("/:id/releases/:releaseID/rollback", applicationHandler.RollbackRelease)
+	}
+
 	dbAdminHandler := NewDBAdminHandler(s)
 	adminGroup := apiGroup.Group("/admin/tables")
 	{

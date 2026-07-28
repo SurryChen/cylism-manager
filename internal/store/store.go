@@ -29,6 +29,12 @@ func New(dsn string) (*Store, error) {
 		&model.OperationLog{},
 		&model.User{},
 		&model.SystemConfig{},
+		&model.Project{},
+		&model.Environment{},
+		&model.Application{},
+		&model.ApplicationEndpoint{},
+		&model.Release{},
+		&model.ReleaseOperation{},
 	); err != nil {
 		return nil, err
 	}
@@ -197,8 +203,6 @@ func (s *Store) GetDashboardStats(daysBefore int) (*DashboardStats, error) {
 	return stats, nil
 }
 
-
-
 // --- User ---
 
 func (s *Store) CreateUser(user *model.User) error {
@@ -247,7 +251,6 @@ func (s *Store) DeleteExpiredOperationLogs(retentionDays int) error {
 	return s.db.Where("created_at < ?", threshold).Delete(&model.OperationLog{}).Error
 }
 
-
 // --- SystemConfig ---
 
 func (s *Store) GetSystemConfig(key string) (string, error) {
@@ -266,4 +269,87 @@ func (s *Store) SetSystemConfig(key, value string) error {
 		return s.db.Create(&model.SystemConfig{Key: key, Value: value}).Error
 	}
 	return s.db.Model(&cfg).Update("value", value).Error
+}
+
+// --- Application release center ---
+
+func (s *Store) CreateProject(project *model.Project) error {
+	return s.db.Create(project).Error
+}
+
+func (s *Store) ListProjects() ([]model.Project, error) {
+	var projects []model.Project
+	err := s.db.Order("created_at desc").Find(&projects).Error
+	return projects, err
+}
+
+func (s *Store) CreateEnvironment(environment *model.Environment) error {
+	return s.db.Create(environment).Error
+}
+
+func (s *Store) ListEnvironments(projectID uint) ([]model.Environment, error) {
+	var environments []model.Environment
+	err := s.db.Where("project_id = ?", projectID).Order("created_at asc").Find(&environments).Error
+	return environments, err
+}
+
+func (s *Store) CreateApplication(application *model.Application) error {
+	return s.db.Create(application).Error
+}
+
+func (s *Store) CreateApplicationEndpoint(endpoint *model.ApplicationEndpoint) error {
+	return s.db.Create(endpoint).Error
+}
+
+func (s *Store) GetApplication(id uint) (*model.Application, error) {
+	var application model.Application
+	err := s.db.Preload("Project").Preload("Environment").Preload("Endpoints").First(&application, id).Error
+	return &application, err
+}
+
+func (s *Store) ListApplications() ([]model.Application, error) {
+	var applications []model.Application
+	err := s.db.Preload("Project").Preload("Environment").Preload("Endpoints").Order("created_at desc").Find(&applications).Error
+	return applications, err
+}
+
+func (s *Store) CreateRelease(release *model.Release) error {
+	return s.db.Create(release).Error
+}
+
+func (s *Store) GetRelease(id uint) (*model.Release, error) {
+	var release model.Release
+	err := s.db.Preload("Operations").First(&release, id).Error
+	return &release, err
+}
+
+func (s *Store) ListReleases(applicationID uint) ([]model.Release, error) {
+	var releases []model.Release
+	err := s.db.Where("application_id = ?", applicationID).Order("sequence desc").Find(&releases).Error
+	return releases, err
+}
+
+func (s *Store) UpdateRelease(release *model.Release) error {
+	return s.db.Save(release).Error
+}
+
+func (s *Store) GetLatestSuccessfulRelease(applicationID uint) (*model.Release, error) {
+	var release model.Release
+	err := s.db.Where("application_id = ? AND status = ?", applicationID, model.ReleaseStatusSucceeded).
+		Order("sequence desc").First(&release).Error
+	return &release, err
+}
+
+func (s *Store) CreateReleaseOperation(operation *model.ReleaseOperation) error {
+	return s.db.Create(operation).Error
+}
+
+func (s *Store) UpdateReleaseOperation(operation *model.ReleaseOperation) error {
+	return s.db.Save(operation).Error
+}
+
+func (s *Store) ListReleaseOperations(releaseID uint) ([]model.ReleaseOperation, error) {
+	var operations []model.ReleaseOperation
+	err := s.db.Where("release_id = ?", releaseID).Order("created_at asc").Find(&operations).Error
+	return operations, err
 }

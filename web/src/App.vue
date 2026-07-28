@@ -92,7 +92,7 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Boxes, Check, FileText, Globe, LayoutDashboard, Layers3, LogOut, Menu, Orbit, Palette, Route, Server, Settings, ShieldCheck, Waypoints, X } from 'lucide-vue-next'
+import { Boxes, Check, FileText, Globe, LayoutDashboard, Layers3, LogOut, Menu, Orbit, PackagePlus, Palette, Route, Server, Settings, ShieldCheck, Waypoints, X } from 'lucide-vue-next'
 import { clearTokens } from './api/index.js'
 import { usePalette } from './composables/usePalette.js'
 
@@ -116,6 +116,7 @@ const palettes = [
 
 const navGroups = computed(() => [
   { id: 'overview', label: '概览', to: '/', items: [{ label: '概览', to: '/', icon: LayoutDashboard }] },
+  { id: 'applications', label: '应用', to: '/applications', items: [{ label: '应用发布', to: '/applications', icon: PackagePlus }] },
   {
     id: 'infrastructure',
     label: '基础设施',
