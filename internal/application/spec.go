@@ -1,6 +1,8 @@
 package application
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -28,15 +30,21 @@ const (
 )
 
 type ReleaseSpec struct {
-	Image         string            `json:"image"`
-	ContainerPort int32             `json:"container_port"`
-	Replicas      int32             `json:"replicas"`
-	Resources     ResourceSpec      `json:"resources"`
-	Health        HealthSpec        `json:"health"`
-	Config        map[string]string `json:"config,omitempty"`
-	Secrets       map[string]string `json:"secrets,omitempty"`
-	Service       ServiceSpec       `json:"service"`
-	Endpoint      EndpointSpec      `json:"endpoint"`
+	Image      string `json:"image"`
+	RegistryID uint   `json:"registry_id,omitempty"`
+	// 以下字段只在发布执行期存在，禁止写入 API 响应或发布快照。
+	RegistryEndpoint   string            `json:"-"`
+	RegistryAuthType   string            `json:"-"`
+	RegistryUsername   string            `json:"-"`
+	RegistryCredential string            `json:"-"`
+	ContainerPort      int32             `json:"container_port"`
+	Replicas           int32             `json:"replicas"`
+	Resources          ResourceSpec      `json:"resources"`
+	Health             HealthSpec        `json:"health"`
+	Config             map[string]string `json:"config,omitempty"`
+	Secrets            map[string]string `json:"secrets,omitempty"`
+	Service            ServiceSpec       `json:"service"`
+	Endpoint           EndpointSpec      `json:"endpoint"`
 }
 
 type ResourceSpec struct {
@@ -78,13 +86,14 @@ type ApplicationContext struct {
 }
 
 type RenderedResources struct {
-	ConfigMap     *corev1.ConfigMap
-	Secret        *corev1.Secret
-	Deployment    *appsv1.Deployment
-	Service       *corev1.Service
-	Certificate   *unstructured.Unstructured
-	Ingress       *networkingv1.Ingress
-	SanitizedSpec ReleaseSpec
+	ConfigMap       *corev1.ConfigMap
+	Secret          *corev1.Secret
+	ImagePullSecret *corev1.Secret
+	Deployment      *appsv1.Deployment
+	Service         *corev1.Service
+	Certificate     *unstructured.Unstructured
+	Ingress         *networkingv1.Ingress
+	SanitizedSpec   ReleaseSpec
 }
 
 func ValidateReleaseSpec(spec ReleaseSpec) []ValidationIssue {
@@ -154,6 +163,13 @@ func RenderResources(context ApplicationContext, spec ReleaseSpec) (*RenderedRes
 			result.Secret = &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: secretName, Namespace: context.Namespace, Labels: labels}, Type: corev1.SecretTypeOpaque, StringData: cloneStringMap(spec.Secrets)}
 		}
 	}
+	if spec.RegistryID != 0 && spec.RegistryAuthType != "" && spec.RegistryAuthType != "anonymous" {
+		pullSecret, err := imagePullSecret(context, labels, spec)
+		if err != nil {
+			return nil, err
+		}
+		result.ImagePullSecret = pullSecret
+	}
 
 	container := corev1.Container{
 		Name:  context.ApplicationName,
@@ -173,12 +189,16 @@ func RenderResources(context ApplicationContext, spec ReleaseSpec) (*RenderedRes
 		container.EnvFrom = append(container.EnvFrom, corev1.EnvFromSource{SecretRef: &corev1.SecretEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: secretName}}})
 	}
 	replicas := spec.Replicas
+	podSpec := corev1.PodSpec{Containers: []corev1.Container{container}}
+	if result.ImagePullSecret != nil {
+		podSpec.ImagePullSecrets = []corev1.LocalObjectReference{{Name: result.ImagePullSecret.Name}}
+	}
 	result.Deployment = &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{Name: context.ApplicationName, Namespace: context.Namespace, Labels: labels},
 		Spec: appsv1.DeploymentSpec{
 			Replicas: &replicas,
 			Selector: &metav1.LabelSelector{MatchLabels: workloadSelector(context.ApplicationName)},
-			Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: mergeLabels(labels, workloadSelector(context.ApplicationName))}, Spec: corev1.PodSpec{Containers: []corev1.Container{container}}},
+			Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: mergeLabels(labels, workloadSelector(context.ApplicationName))}, Spec: podSpec},
 		},
 	}
 	result.Service = &corev1.Service{
@@ -218,6 +238,23 @@ func RenderResources(context ApplicationContext, spec ReleaseSpec) (*RenderedRes
 	return result, nil
 }
 
+func imagePullSecret(context ApplicationContext, labels map[string]string, spec ReleaseSpec) (*corev1.Secret, error) {
+	if strings.TrimSpace(spec.RegistryEndpoint) == "" || strings.TrimSpace(spec.RegistryUsername) == "" || strings.TrimSpace(spec.RegistryCredential) == "" {
+		return nil, fmt.Errorf("镜像仓库凭据不完整")
+	}
+	config, err := json.Marshal(map[string]map[string]map[string]string{"auths": {
+		spec.RegistryEndpoint: {"username": spec.RegistryUsername, "password": spec.RegistryCredential, "auth": base64.StdEncoding.EncodeToString([]byte(spec.RegistryUsername + ":" + spec.RegistryCredential))},
+	}})
+	if err != nil {
+		return nil, fmt.Errorf("生成镜像仓库凭据: %w", err)
+	}
+	return &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: fmt.Sprintf("cylism-regcred-%d", spec.RegistryID), Namespace: context.Namespace, Labels: labels},
+		Type:       corev1.SecretTypeDockerConfigJson,
+		Data:       map[string][]byte{corev1.DockerConfigJsonKey: config},
+	}, nil
+}
+
 func managedLabels(context ApplicationContext) map[string]string {
 	return map[string]string{
 		ManagedByLabel: ManagedByValue, ProjectLabel: context.ProjectName, ApplicationNameLabel: context.ApplicationName,
@@ -242,6 +279,10 @@ func certificateResource(context ApplicationContext, domain, secretName, issuerR
 }
 
 func sanitizeReleaseSpec(spec ReleaseSpec) ReleaseSpec {
+	spec.RegistryEndpoint = ""
+	spec.RegistryAuthType = ""
+	spec.RegistryUsername = ""
+	spec.RegistryCredential = ""
 	sanitized := spec
 	sanitized.Config = cloneStringMap(spec.Config)
 	sanitized.Secrets = make(map[string]string, len(spec.Secrets))

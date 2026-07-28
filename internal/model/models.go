@@ -140,13 +140,15 @@ const (
 
 // Project 应用所属的业务与授权边界。
 type Project struct {
-	ID           uint          `gorm:"primaryKey" json:"id"`
-	Name         string        `gorm:"size:128;uniqueIndex;not null" json:"name"`
-	Description  string        `gorm:"size:512" json:"description"`
-	OwnerID      uint          `gorm:"index;not null" json:"owner_id"`
-	CreatedAt    time.Time     `json:"created_at"`
-	UpdatedAt    time.Time     `json:"updated_at"`
-	Environments []Environment `gorm:"foreignKey:ProjectID" json:"environments,omitempty"`
+	ID                     uint           `gorm:"primaryKey" json:"id"`
+	Name                   string         `gorm:"size:128;uniqueIndex;not null" json:"name"`
+	Description            string         `gorm:"size:512" json:"description"`
+	DefaultImageRegistryID *uint          `gorm:"index" json:"default_image_registry_id,omitempty"`
+	OwnerID                uint           `gorm:"index;not null" json:"owner_id"`
+	CreatedAt              time.Time      `json:"created_at"`
+	UpdatedAt              time.Time      `json:"updated_at"`
+	Environments           []Environment  `gorm:"foreignKey:ProjectID" json:"environments,omitempty"`
+	DefaultImageRegistry   *ImageRegistry `gorm:"foreignKey:DefaultImageRegistryID" json:"default_image_registry,omitempty"`
 }
 
 // Environment 将应用部署目标映射到当前集群中的 Namespace。
@@ -174,6 +176,23 @@ type Application struct {
 	Endpoints     []ApplicationEndpoint `gorm:"foreignKey:ApplicationID" json:"endpoints,omitempty"`
 }
 
+// ImageRegistry 是可由项目授权使用的外部 OCI/Docker 镜像仓库。
+// Credential 仅保存加密后的值，绝不能通过 API 返回。
+type ImageRegistry struct {
+	ID                   uint      `gorm:"primaryKey" json:"id"`
+	Name                 string    `gorm:"size:128;uniqueIndex;not null" json:"name"`
+	Endpoint             string    `gorm:"size:256;uniqueIndex;not null" json:"endpoint"`
+	AuthType             string    `gorm:"size:32;not null" json:"auth_type"`
+	Username             string    `gorm:"size:256" json:"username"`
+	Credential           string    `gorm:"type:text" json:"-"`
+	Enabled              bool      `gorm:"default:true;not null" json:"enabled"`
+	CreatedBy            uint      `gorm:"index" json:"created_by"`
+	CreatedAt            time.Time `json:"created_at"`
+	UpdatedAt            time.Time `json:"updated_at"`
+	Projects             []Project `gorm:"many2many:image_registry_projects;" json:"projects,omitempty"`
+	CredentialConfigured bool      `gorm:"-" json:"credential_configured"`
+}
+
 // ApplicationEndpoint 描述一个应用的 Service 暴露方式与可选 TLS 配置。
 type ApplicationEndpoint struct {
 	ID            uint      `gorm:"primaryKey" json:"id"`
@@ -195,6 +214,7 @@ type Release struct {
 	Sequence        uint               `gorm:"uniqueIndex:idx_application_sequence;not null" json:"sequence"`
 	Image           string             `gorm:"size:512;not null" json:"image"`
 	ImageDigest     string             `gorm:"size:512" json:"image_digest"`
+	ImageRegistryID *uint              `gorm:"index" json:"image_registry_id,omitempty"`
 	DesiredSpec     string             `gorm:"type:text;not null" json:"desired_spec"`
 	Status          string             `gorm:"size:32;index;not null" json:"status"`
 	SourceReleaseID *uint              `gorm:"index" json:"source_release_id,omitempty"`

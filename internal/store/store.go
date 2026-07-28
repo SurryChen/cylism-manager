@@ -33,6 +33,7 @@ func New(dsn string) (*Store, error) {
 		&model.Environment{},
 		&model.Application{},
 		&model.ApplicationEndpoint{},
+		&model.ImageRegistry{},
 		&model.Release{},
 		&model.ReleaseOperation{},
 	); err != nil {
@@ -279,13 +280,13 @@ func (s *Store) CreateProject(project *model.Project) error {
 
 func (s *Store) ListProjects() ([]model.Project, error) {
 	var projects []model.Project
-	err := s.db.Preload("Environments").Order("created_at desc").Find(&projects).Error
+	err := s.db.Preload("Environments").Preload("DefaultImageRegistry").Order("created_at desc").Find(&projects).Error
 	return projects, err
 }
 
 func (s *Store) GetProject(id uint) (*model.Project, error) {
 	var project model.Project
-	err := s.db.Preload("Environments").First(&project, id).Error
+	err := s.db.Preload("Environments").Preload("DefaultImageRegistry").First(&project, id).Error
 	return &project, err
 }
 
@@ -349,14 +350,106 @@ func (s *Store) CreateApplicationEndpoint(endpoint *model.ApplicationEndpoint) e
 
 func (s *Store) GetApplication(id uint) (*model.Application, error) {
 	var application model.Application
-	err := s.db.Preload("Project").Preload("Environment").Preload("Endpoints").First(&application, id).Error
+	err := s.db.Preload("Project.DefaultImageRegistry").Preload("Environment").Preload("Endpoints").First(&application, id).Error
 	return &application, err
 }
 
 func (s *Store) ListApplications() ([]model.Application, error) {
 	var applications []model.Application
-	err := s.db.Preload("Project").Preload("Environment").Preload("Endpoints").Order("created_at desc").Find(&applications).Error
+	err := s.db.Preload("Project.DefaultImageRegistry").Preload("Environment").Preload("Endpoints").Order("created_at desc").Find(&applications).Error
 	return applications, err
+}
+
+func (s *Store) CreateImageRegistry(registry *model.ImageRegistry, projectIDs []uint) error {
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		projects, err := imageRegistryProjects(tx, projectIDs)
+		if err != nil {
+			return err
+		}
+		if err := tx.Create(registry).Error; err != nil {
+			return err
+		}
+		return tx.Model(registry).Association("Projects").Replace(projects)
+	})
+}
+
+func (s *Store) ListImageRegistries(projectID uint) ([]model.ImageRegistry, error) {
+	var registries []model.ImageRegistry
+	query := s.db.Preload("Projects").Order("created_at desc")
+	if projectID != 0 {
+		query = query.Joins("JOIN image_registry_projects ON image_registry_projects.image_registry_id = image_registries.id").Where("image_registry_projects.project_id = ?", projectID)
+	}
+	if err := query.Find(&registries).Error; err != nil {
+		return nil, err
+	}
+	for index := range registries {
+		registries[index].CredentialConfigured = registries[index].Credential != ""
+	}
+	return registries, nil
+}
+
+func (s *Store) GetImageRegistry(id uint) (*model.ImageRegistry, error) {
+	var registry model.ImageRegistry
+	err := s.db.Preload("Projects").First(&registry, id).Error
+	if err == nil {
+		registry.CredentialConfigured = registry.Credential != ""
+	}
+	return &registry, err
+}
+
+func (s *Store) GetImageRegistryForProject(id, projectID uint) (*model.ImageRegistry, error) {
+	var registry model.ImageRegistry
+	err := s.db.Preload("Projects").Joins("JOIN image_registry_projects ON image_registry_projects.image_registry_id = image_registries.id").Where("image_registries.id = ? AND image_registry_projects.project_id = ?", id, projectID).First(&registry).Error
+	if err == nil {
+		registry.CredentialConfigured = registry.Credential != ""
+	}
+	return &registry, err
+}
+
+func (s *Store) UpdateImageRegistry(registry *model.ImageRegistry, projectIDs []uint) error {
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		projects, err := imageRegistryProjects(tx, projectIDs)
+		if err != nil {
+			return err
+		}
+		if err := tx.Omit("Projects").Save(registry).Error; err != nil {
+			return err
+		}
+		return tx.Model(registry).Association("Projects").Replace(projects)
+	})
+}
+
+func (s *Store) CountImageRegistryReleases(id uint) (int64, error) {
+	var count int64
+	err := s.db.Model(&model.Release{}).Where("image_registry_id = ?", id).Count(&count).Error
+	return count, err
+}
+
+func (s *Store) DeleteImageRegistry(id uint) error {
+	return s.db.Delete(&model.ImageRegistry{}, id).Error
+}
+
+func imageRegistryProjects(tx *gorm.DB, projectIDs []uint) ([]model.Project, error) {
+	projects := make([]model.Project, 0, len(projectIDs))
+	seen := make(map[uint]struct{}, len(projectIDs))
+	for _, projectID := range projectIDs {
+		if projectID == 0 {
+			return nil, errors.New("项目 ID 无效")
+		}
+		if _, exists := seen[projectID]; exists {
+			continue
+		}
+		seen[projectID] = struct{}{}
+		var project model.Project
+		if err := tx.First(&project, projectID).Error; err != nil {
+			return nil, err
+		}
+		projects = append(projects, project)
+	}
+	if len(projects) == 0 {
+		return nil, errors.New("至少授权一个项目")
+	}
+	return projects, nil
 }
 
 func (s *Store) CreateRelease(release *model.Release) error {

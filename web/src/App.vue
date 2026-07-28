@@ -82,7 +82,7 @@
       <nav class="navigation-groups" aria-label="移动主导航">
         <section v-for="group in navGroups" :key="group.label" class="navigation-group">
           <h2>{{ group.label }}</h2>
-          <router-link v-for="item in group.items" :key="item.to" :to="item.to" class="sidebar-link" active-class="is-active" @click="closeMobileNav"><component :is="item.icon" :size="17" /><span>{{ item.label }}</span></router-link>
+          <router-link v-for="item in group.items" :key="item.to" :to="item.to" class="sidebar-link" active-class="is-active" :class="{ 'is-active': isNavItemActive(item) }" @click="closeMobileNav"><component :is="item.icon" :size="17" /><span>{{ item.label }}</span></router-link>
         </section>
       </nav>
       <div class="drawer-palette"><span>界面配色</span><div class="palette-swatches"><button v-for="palette in palettes" :key="palette.id" :data-palette-option="palette.id" :class="['palette-swatch', `swatch-${palette.id}`, { 'is-selected': activePalette === palette.id }]" :aria-label="palette.name" @click="choosePalette(palette.id)"></button></div></div>
@@ -125,6 +125,7 @@ const navGroups = computed(() => [
       { label: '应用', to: '/applications', icon: PackagePlus },
       { label: '项目与环境', to: '/applications/projects', icon: FolderKanban },
       { label: '发布记录', to: '/applications/releases', icon: History },
+      { label: '镜像仓库', to: '/applications/registries', icon: Boxes },
     ],
   },
   {
@@ -160,7 +161,10 @@ const activeNavGroup = computed(() => {
 })
 
 function isNavItemActive(item) {
-  return route.path === item.to || (item.to !== '/applications' && route.path.startsWith(`${item.to}/`))
+  if (item.to === '/applications') {
+    return route.path === item.to || /^\/applications\/\d+(?:\/releases\/\d+)?$/.test(route.path)
+  }
+  return route.path === item.to || route.path.startsWith(`${item.to}/`)
 }
 
 function choosePalette(palette) {

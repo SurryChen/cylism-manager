@@ -52,5 +52,25 @@ describe('Applications view', () => {
     expect(wrapper.text()).toContain('commerce-prod')
     expect(wrapper.text()).toContain('编辑')
     expect(wrapper.text()).toContain('删除')
+    expect(wrapper.find('.btn-danger').attributes('disabled')).toBeUndefined()
+  })
+
+  it('shows the application project and preselects its default image registry for a release', async () => {
+    const { api } = await import('../api/index.js')
+    api.get.mockImplementation((path) => {
+      if (path === '/applications') return Promise.resolve([{ id: 3, project_id: 1, name: 'order-api', project: { id: 1, name: 'commerce', default_image_registry_id: 12 }, environment: { name: 'production', namespace: 'commerce-prod' } }])
+      if (path === '/image-registries?project_id=1') return Promise.resolve([{ id: 12, name: 'commerce-harbor', endpoint: 'harbor.example.com', enabled: true }])
+      return Promise.resolve([])
+    })
+    const wrapper = mount(Applications)
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    expect(wrapper.text()).toContain('commerce')
+    await wrapper.get('.btn-sm').trigger('click')
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    expect(wrapper.text()).toContain('镜像仓库')
+    expect(wrapper.find('select').element.value).toBe('12')
+    expect(wrapper.text()).toContain('commerce-harbor')
   })
 })

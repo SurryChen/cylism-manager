@@ -2,20 +2,30 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/cylism/cylism-manager/internal/application"
+	"github.com/cylism/cylism-manager/internal/crypto"
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/gin-gonic/gin"
 )
 
-type ApplicationHandler struct{ store *store.Store }
+type ApplicationHandler struct {
+	store  *store.Store
+	encKey []byte
+}
 
-func NewApplicationHandler(store *store.Store) *ApplicationHandler {
-	return &ApplicationHandler{store: store}
+func NewApplicationHandler(store *store.Store, encKey ...[]byte) *ApplicationHandler {
+	handler := &ApplicationHandler{store: store}
+	if len(encKey) > 0 {
+		handler.encKey = encKey[0]
+	}
+	return handler
 }
 
 func (h *ApplicationHandler) ListProjects(c *gin.Context) {
@@ -31,6 +41,10 @@ func (h *ApplicationHandler) CreateProject(c *gin.Context) {
 	var req projectRequest
 	if err := c.ShouldBindJSON(&req); err != nil || req.Name == "" {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "项目名称必填")
+		return
+	}
+	if req.DefaultImageRegistryID != nil && *req.DefaultImageRegistryID != 0 {
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "请在项目创建后设置默认镜像仓库")
 		return
 	}
 	project := &model.Project{Name: req.Name, Description: req.Description, OwnerID: getUserID(c)}
@@ -70,6 +84,18 @@ func (h *ApplicationHandler) UpdateProject(c *gin.Context) {
 	}
 	project.Name = req.Name
 	project.Description = req.Description
+	if req.DefaultImageRegistryID != nil {
+		if *req.DefaultImageRegistryID == 0 {
+			project.DefaultImageRegistryID = nil
+		} else {
+			registry, err := h.store.GetImageRegistryForProject(*req.DefaultImageRegistryID, projectID)
+			if err != nil || !registry.Enabled {
+				model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "默认镜像仓库未授权当前项目或已停用")
+				return
+			}
+			project.DefaultImageRegistryID = &registry.ID
+		}
+	}
 	if err := h.store.UpdateProject(project); err != nil {
 		model.Error(c, http.StatusConflict, model.CodeConflict, "项目名称已存在")
 		return
@@ -206,8 +232,9 @@ func (h *ApplicationHandler) DeleteEnvironment(c *gin.Context) {
 }
 
 type projectRequest struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
+	Name                   string `json:"name"`
+	Description            string `json:"description"`
+	DefaultImageRegistryID *uint  `json:"default_image_registry_id"`
 }
 
 type environmentRequest struct {
@@ -286,13 +313,21 @@ func (h *ApplicationHandler) CreateRelease(c *gin.Context) {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "发布定义无效")
 		return
 	}
+	app, err := h.store.GetApplication(applicationID)
+	if err != nil {
+		model.Error(c, http.StatusNotFound, model.CodeNotFound, "应用不存在")
+		return
+	}
+	if err := h.prepareRegistryReleaseSpec(app, &spec); err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		return
+	}
 	service := application.NewService(h.store, application.NewKubernetesApplier(K8s))
 	release, err := service.CreateRelease(c.Request.Context(), applicationID, getUserID(c), spec)
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
 		return
 	}
-	app, _ := h.store.GetApplication(applicationID)
 	h.executeAsync(service, release.ID, app, spec)
 	model.SuccessWithMessage(c, release, "发布已创建")
 }
@@ -324,6 +359,10 @@ func (h *ApplicationHandler) RetryRelease(c *gin.Context) {
 		return
 	}
 	app, _ := h.store.GetApplication(applicationID)
+	if err := h.prepareRegistryReleaseSpec(app, &spec); err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		return
+	}
 	h.executeAsync(service, release.ID, app, spec)
 	model.SuccessWithMessage(c, release, "重试已创建")
 }
@@ -355,8 +394,57 @@ func (h *ApplicationHandler) RollbackRelease(c *gin.Context) {
 		return
 	}
 	app, _ := h.store.GetApplication(applicationID)
+	if err := h.prepareRegistryReleaseSpec(app, &spec); err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		return
+	}
 	h.executeAsync(service, release.ID, app, spec)
 	model.SuccessWithMessage(c, release, "回滚已创建")
+}
+
+func (h *ApplicationHandler) prepareRegistryReleaseSpec(app *model.Application, spec *application.ReleaseSpec) error {
+	if spec.RegistryID == 0 {
+		return nil
+	}
+	if app == nil {
+		return fmt.Errorf("应用不存在")
+	}
+	registry, err := h.store.GetImageRegistryForProject(spec.RegistryID, app.ProjectID)
+	if err != nil || !registry.Enabled {
+		return fmt.Errorf("镜像仓库不存在、未授权当前项目或已禁用")
+	}
+	image, err := registryImageReference(registry.Endpoint, spec.Image)
+	if err != nil {
+		return err
+	}
+	spec.Image = image
+	spec.RegistryEndpoint = registry.Endpoint
+	spec.RegistryAuthType = registry.AuthType
+	if registry.AuthType == registryAuthAnonymous {
+		return nil
+	}
+	credential, err := crypto.Decrypt(h.encKey, registry.Credential)
+	if err != nil {
+		return fmt.Errorf("读取镜像仓库凭据失败")
+	}
+	spec.RegistryUsername = registry.Username
+	if registry.AuthType == registryAuthToken && spec.RegistryUsername == "" {
+		spec.RegistryUsername = "token"
+	}
+	spec.RegistryCredential = credential
+	return nil
+}
+
+func registryImageReference(endpoint, image string) (string, error) {
+	image = strings.Trim(strings.TrimSpace(image), "/")
+	if image == "" || strings.ContainsAny(image, " \t\r\n") {
+		return "", fmt.Errorf("镜像路径不能为空且不能包含空格")
+	}
+	prefix := endpoint + "/"
+	if strings.HasPrefix(image, prefix) {
+		return image, nil
+	}
+	return prefix + image, nil
 }
 
 func (h *ApplicationHandler) GetRelease(c *gin.Context) {
