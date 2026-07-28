@@ -11,6 +11,9 @@ import (
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/gin-gonic/gin"
+	"github.com/google/go-containerregistry/pkg/authn"
+	"github.com/google/go-containerregistry/pkg/name"
+	"github.com/google/go-containerregistry/pkg/v1/remote"
 )
 
 const (
@@ -28,13 +31,14 @@ type ImageRegistryHandler struct {
 type registryConnectionVerifier func(context.Context, *model.ImageRegistry, []byte) error
 
 type imageRegistryRequest struct {
-	Name       string  `json:"name"`
-	Endpoint   string  `json:"endpoint"`
-	AuthType   string  `json:"auth_type"`
-	Username   string  `json:"username"`
-	Credential *string `json:"credential"`
-	Enabled    *bool   `json:"enabled"`
-	ProjectIDs []uint  `json:"project_ids"`
+	Name              string  `json:"name"`
+	Endpoint          string  `json:"endpoint"`
+	VerificationImage string  `json:"verification_image"`
+	AuthType          string  `json:"auth_type"`
+	Username          string  `json:"username"`
+	Credential        *string `json:"credential"`
+	Enabled           *bool   `json:"enabled"`
+	ProjectIDs        []uint  `json:"project_ids"`
 }
 
 func NewImageRegistryHandler(s *store.Store, encKey []byte) *ImageRegistryHandler {
@@ -160,41 +164,34 @@ func (h *ImageRegistryHandler) Verify(c *gin.Context) {
 }
 
 func verifyRegistryConnection(ctx context.Context, registry *model.ImageRegistry, encKey []byte) error {
-	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
-	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://"+registry.Endpoint+"/v2/", nil)
+	ref, err := verificationImageReference(registry.VerificationImage, registry.Endpoint)
 	if err != nil {
-		return fmt.Errorf("仓库地址无效")
+		return err
 	}
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	options := []remote.Option{remote.WithContext(ctx)}
 	if registry.AuthType != registryAuthAnonymous {
 		credential, err := crypto.Decrypt(encKey, registry.Credential)
 		if err != nil {
 			return fmt.Errorf("读取镜像仓库凭据失败")
 		}
+		authConfig := authn.AuthConfig{}
 		if registry.AuthType == registryAuthToken {
-			req.Header.Set("Authorization", "Bearer "+credential)
+			authConfig.RegistryToken = credential
 		} else {
-			req.SetBasicAuth(registry.Username, credential)
+			authConfig.Username = registry.Username
+			authConfig.Password = credential
 		}
+		options = append(options, remote.WithAuth(authn.FromConfig(authConfig)))
+	} else {
+		options = append(options, remote.WithAuth(authn.Anonymous))
 	}
-	client := &http.Client{Timeout: 8 * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
-	response, err := client.Do(req)
+	_, err = remote.Head(ref, options...)
 	if err != nil {
-		return fmt.Errorf("无法连接镜像仓库: %w", err)
+		return fmt.Errorf("无法访问验证镜像: %w", err)
 	}
-	defer response.Body.Close()
-	if response.StatusCode >= http.StatusOK && response.StatusCode < http.StatusMultipleChoices {
-		return nil
-	}
-	if registry.AuthType == registryAuthAnonymous && response.StatusCode == http.StatusUnauthorized && strings.HasPrefix(strings.ToLower(response.Header.Get("WWW-Authenticate")), "bearer ") {
-		// Public registries such as Docker Hub advertise the Bearer token flow at /v2/.
-		// The specific repository and tag are checked later during release preflight.
-		return nil
-	}
-	if response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden {
-		return fmt.Errorf("认证失败 (HTTP %d)", response.StatusCode)
-	}
-	return fmt.Errorf("镜像仓库返回 HTTP %d", response.StatusCode)
+	return nil
 }
 
 func verificationDetail(err error) string {
@@ -217,7 +214,11 @@ func (h *ImageRegistryHandler) registryFromRequest(req imageRegistryRequest, cur
 	if authType != registryAuthAnonymous && authType != registryAuthBasic && authType != registryAuthToken {
 		return nil, errInvalid("认证方式仅支持匿名、账号密码或 Token")
 	}
-	registry := &model.ImageRegistry{Name: strings.TrimSpace(req.Name), Endpoint: endpoint, AuthType: authType, Username: strings.TrimSpace(req.Username), Enabled: true}
+	verificationImage := strings.TrimSpace(req.VerificationImage)
+	if _, err := verificationImageReference(verificationImage, endpoint); err != nil {
+		return nil, err
+	}
+	registry := &model.ImageRegistry{Name: strings.TrimSpace(req.Name), Endpoint: endpoint, VerificationImage: verificationImage, AuthType: authType, Username: strings.TrimSpace(req.Username), Enabled: true}
 	if registry.Name == "" {
 		return nil, errInvalid("镜像仓库名称必填")
 	}
@@ -272,6 +273,20 @@ func normalizeRegistryEndpoint(value string) (string, error) {
 		return "", errInvalid("镜像仓库地址格式无效")
 	}
 	return endpoint, nil
+}
+
+func verificationImageReference(value, endpoint string) (name.Reference, error) {
+	if value == "" {
+		return nil, errInvalid("验证镜像必填")
+	}
+	ref, err := name.ParseReference(value)
+	if err != nil {
+		return nil, errInvalid("验证镜像格式无效，请填写完整镜像地址和标签")
+	}
+	if !strings.EqualFold(ref.Context().RegistryStr(), endpoint) {
+		return nil, errInvalid("验证镜像必须属于当前镜像仓库地址")
+	}
+	return ref, nil
 }
 
 func optionalID(value string) (uint, error) {

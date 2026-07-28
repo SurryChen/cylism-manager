@@ -182,6 +182,7 @@ type ImageRegistry struct {
 	ID                   uint       `gorm:"primaryKey" json:"id"`
 	Name                 string     `gorm:"size:128;uniqueIndex;not null" json:"name"`
 	Endpoint             string     `gorm:"size:256;uniqueIndex;not null" json:"endpoint"`
+	VerificationImage    string     `gorm:"size:512" json:"verification_image"`
 	AuthType             string     `gorm:"size:32;not null" json:"auth_type"`
 	Username             string     `gorm:"size:256" json:"username"`
 	Credential           string     `gorm:"type:text" json:"-"`
