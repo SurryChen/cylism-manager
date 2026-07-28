@@ -322,6 +322,10 @@ func (h *ApplicationHandler) CreateRelease(c *gin.Context) {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
 		return
 	}
+	if err := h.prepareManagedDomain(&spec); err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		return
+	}
 	service := application.NewService(h.store, application.NewKubernetesApplier(K8s))
 	release, err := service.CreateRelease(c.Request.Context(), applicationID, getUserID(c), spec)
 	if err != nil {
@@ -432,6 +436,21 @@ func (h *ApplicationHandler) prepareRegistryReleaseSpec(app *model.Application, 
 		spec.RegistryUsername = "token"
 	}
 	spec.RegistryCredential = credential
+	return nil
+}
+
+func (h *ApplicationHandler) prepareManagedDomain(spec *application.ReleaseSpec) error {
+	if spec.Endpoint.DomainID == 0 {
+		return nil
+	}
+	domain, err := h.store.GetManagedDomain(spec.Endpoint.DomainID)
+	if err != nil || !domain.Enabled {
+		return fmt.Errorf("域名不存在或已停用")
+	}
+	spec.Endpoint.Domain = domain.Hostname
+	if spec.Endpoint.IssuerRef == "" {
+		spec.Endpoint.IssuerRef = domain.IssuerRef
+	}
 	return nil
 }
 

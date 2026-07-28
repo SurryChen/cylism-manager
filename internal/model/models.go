@@ -179,18 +179,32 @@ type Application struct {
 // ImageRegistry 是可由项目授权使用的外部 OCI/Docker 镜像仓库。
 // Credential 仅保存加密后的值，绝不能通过 API 返回。
 type ImageRegistry struct {
-	ID                   uint      `gorm:"primaryKey" json:"id"`
-	Name                 string    `gorm:"size:128;uniqueIndex;not null" json:"name"`
-	Endpoint             string    `gorm:"size:256;uniqueIndex;not null" json:"endpoint"`
-	AuthType             string    `gorm:"size:32;not null" json:"auth_type"`
-	Username             string    `gorm:"size:256" json:"username"`
-	Credential           string    `gorm:"type:text" json:"-"`
-	Enabled              bool      `gorm:"default:true;not null" json:"enabled"`
-	CreatedBy            uint      `gorm:"index" json:"created_by"`
-	CreatedAt            time.Time `json:"created_at"`
-	UpdatedAt            time.Time `json:"updated_at"`
-	Projects             []Project `gorm:"many2many:image_registry_projects;" json:"projects,omitempty"`
-	CredentialConfigured bool      `gorm:"-" json:"credential_configured"`
+	ID                   uint       `gorm:"primaryKey" json:"id"`
+	Name                 string     `gorm:"size:128;uniqueIndex;not null" json:"name"`
+	Endpoint             string     `gorm:"size:256;uniqueIndex;not null" json:"endpoint"`
+	AuthType             string     `gorm:"size:32;not null" json:"auth_type"`
+	Username             string     `gorm:"size:256" json:"username"`
+	Credential           string     `gorm:"type:text" json:"-"`
+	Enabled              bool       `gorm:"default:true;not null" json:"enabled"`
+	LastVerifiedAt       *time.Time `json:"last_verified_at,omitempty"`
+	LastVerifyStatus     string     `gorm:"size:32" json:"last_verify_status"`
+	LastVerifyError      string     `gorm:"size:512" json:"last_verify_error,omitempty"`
+	CreatedBy            uint       `gorm:"index" json:"created_by"`
+	CreatedAt            time.Time  `json:"created_at"`
+	UpdatedAt            time.Time  `json:"updated_at"`
+	Projects             []Project  `gorm:"many2many:image_registry_projects;" json:"projects,omitempty"`
+	CredentialConfigured bool       `gorm:"-" json:"credential_configured"`
+}
+
+// ManagedDomain 是可供应用发布选择的域名资产。
+type ManagedDomain struct {
+	ID          uint      `gorm:"primaryKey" json:"id"`
+	Hostname    string    `gorm:"size:253;uniqueIndex;not null" json:"hostname"`
+	IssuerRef   string    `gorm:"size:128" json:"issuer_ref"`
+	Description string    `gorm:"size:512" json:"description"`
+	Enabled     bool      `gorm:"default:true;not null" json:"enabled"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 // ApplicationEndpoint 描述一个应用的 Service 暴露方式与可选 TLS 配置。

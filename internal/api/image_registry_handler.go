@@ -1,8 +1,11 @@
 package api
 
 import (
+	"context"
+	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/cylism/cylism-manager/internal/crypto"
 	"github.com/cylism/cylism-manager/internal/model"
@@ -17,9 +20,12 @@ const (
 )
 
 type ImageRegistryHandler struct {
-	store  *store.Store
-	encKey []byte
+	store            *store.Store
+	encKey           []byte
+	verifyConnection registryConnectionVerifier
 }
+
+type registryConnectionVerifier func(context.Context, *model.ImageRegistry, []byte) error
 
 type imageRegistryRequest struct {
 	Name       string  `json:"name"`
@@ -32,7 +38,7 @@ type imageRegistryRequest struct {
 }
 
 func NewImageRegistryHandler(s *store.Store, encKey []byte) *ImageRegistryHandler {
-	return &ImageRegistryHandler{store: s, encKey: encKey}
+	return &ImageRegistryHandler{store: s, encKey: encKey, verifyConnection: verifyRegistryConnection}
 }
 
 func (h *ImageRegistryHandler) List(c *gin.Context) {
@@ -122,6 +128,81 @@ func (h *ImageRegistryHandler) Delete(c *gin.Context) {
 		return
 	}
 	model.Success(c, gin.H{"id": id})
+}
+
+func (h *ImageRegistryHandler) Verify(c *gin.Context) {
+	id, err := parseID(c.Param("id"))
+	if err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "镜像仓库 ID 无效")
+		return
+	}
+	registry, err := h.store.GetImageRegistry(id)
+	if err != nil {
+		model.Error(c, http.StatusNotFound, model.CodeNotFound, "镜像仓库不存在")
+		return
+	}
+	status, detail := "succeeded", ""
+	if !registry.Enabled {
+		status, detail = "failed", "镜像仓库已停用"
+	} else if err := h.verifyConnection(c.Request.Context(), registry, h.encKey); err != nil {
+		status, detail = "failed", verificationDetail(err)
+	}
+	if err := h.store.UpdateImageRegistryVerification(registry.ID, status, detail, time.Now()); err != nil {
+		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "保存检测结果失败")
+		return
+	}
+	registry, err = h.store.GetImageRegistry(id)
+	if err != nil {
+		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "读取检测结果失败")
+		return
+	}
+	model.Success(c, registry)
+}
+
+func verifyRegistryConnection(ctx context.Context, registry *model.ImageRegistry, encKey []byte) error {
+	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://"+registry.Endpoint+"/v2/", nil)
+	if err != nil {
+		return fmt.Errorf("仓库地址无效")
+	}
+	if registry.AuthType != registryAuthAnonymous {
+		credential, err := crypto.Decrypt(encKey, registry.Credential)
+		if err != nil {
+			return fmt.Errorf("读取镜像仓库凭据失败")
+		}
+		if registry.AuthType == registryAuthToken {
+			req.Header.Set("Authorization", "Bearer "+credential)
+		} else {
+			req.SetBasicAuth(registry.Username, credential)
+		}
+	}
+	client := &http.Client{Timeout: 8 * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
+	response, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("无法连接镜像仓库: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode >= http.StatusOK && response.StatusCode < http.StatusMultipleChoices {
+		return nil
+	}
+	if registry.AuthType == registryAuthAnonymous && response.StatusCode == http.StatusUnauthorized && strings.HasPrefix(strings.ToLower(response.Header.Get("WWW-Authenticate")), "bearer ") {
+		// Public registries such as Docker Hub advertise the Bearer token flow at /v2/.
+		// The specific repository and tag are checked later during release preflight.
+		return nil
+	}
+	if response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden {
+		return fmt.Errorf("认证失败 (HTTP %d)", response.StatusCode)
+	}
+	return fmt.Errorf("镜像仓库返回 HTTP %d", response.StatusCode)
+}
+
+func verificationDetail(err error) string {
+	detail := strings.TrimSpace(err.Error())
+	if len(detail) > 480 {
+		return detail[:480]
+	}
+	return detail
 }
 
 func (h *ImageRegistryHandler) registryFromRequest(req imageRegistryRequest, current *model.ImageRegistry) (*model.ImageRegistry, error) {

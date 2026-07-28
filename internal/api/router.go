@@ -78,8 +78,17 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 	{
 		imageRegistries.GET("", imageRegistryHandler.List)
 		imageRegistries.POST("", imageRegistryHandler.Create)
+		imageRegistries.POST("/:id/verify", imageRegistryHandler.Verify)
 		imageRegistries.PUT("/:id", imageRegistryHandler.Update)
 		imageRegistries.DELETE("/:id", imageRegistryHandler.Delete)
+	}
+	domainHandler := NewDomainHandler(s)
+	domains := apiGroup.Group("/domains")
+	{
+		domains.GET("", domainHandler.List)
+		domains.POST("", domainHandler.Create)
+		domains.PUT("/:id", domainHandler.Update)
+		domains.DELETE("/:id", domainHandler.Delete)
 	}
 	projects := apiGroup.Group("/projects")
 	{

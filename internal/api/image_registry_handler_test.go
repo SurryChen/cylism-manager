@@ -1,6 +1,8 @@
 package api
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"strings"
 	"testing"
@@ -10,7 +12,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func setupImageRegistryRouter() (*gin.Engine, *store.Store) {
+func setupImageRegistryRouter() (*gin.Engine, *store.Store, *ImageRegistryHandler) {
 	gin.SetMode(gin.TestMode)
 	s, _ := store.New(":memory:")
 	r := gin.New()
@@ -19,14 +21,15 @@ func setupImageRegistryRouter() (*gin.Engine, *store.Store) {
 	{
 		registries.GET("", h.List)
 		registries.POST("", h.Create)
+		registries.POST("/:id/verify", h.Verify)
 		registries.PUT("/:id", h.Update)
 		registries.DELETE("/:id", h.Delete)
 	}
-	return r, s
+	return r, s, h
 }
 
 func TestImageRegistryHandlerCRUDKeepsCredentialSecret(t *testing.T) {
-	r, s := setupImageRegistryRouter()
+	r, s, _ := setupImageRegistryRouter()
 	if err := s.CreateProject(&model.Project{Name: "commerce", OwnerID: 1}); err != nil {
 		t.Fatalf("create project: %v", err)
 	}
@@ -73,7 +76,7 @@ func TestImageRegistryHandlerCRUDKeepsCredentialSecret(t *testing.T) {
 }
 
 func TestImageRegistryHandlerRejectsDeleteWhileReleasesReferenceRegistry(t *testing.T) {
-	r, s := setupImageRegistryRouter()
+	r, s, _ := setupImageRegistryRouter()
 	if err := s.CreateProject(&model.Project{Name: "commerce", OwnerID: 1}); err != nil {
 		t.Fatal(err)
 	}
@@ -88,5 +91,30 @@ func TestImageRegistryHandlerRejectsDeleteWhileReleasesReferenceRegistry(t *test
 	deleteResponse := serve(r, newJSONRequest(http.MethodDelete, "/api/image-registries/1", nil))
 	if deleteResponse.Code != http.StatusConflict {
 		t.Fatalf("delete referenced registry status = %d: %s", deleteResponse.Code, deleteResponse.Body.String())
+	}
+}
+
+func TestImageRegistryHandlerVerifyPersistsConnectionResult(t *testing.T) {
+	r, s, h := setupImageRegistryRouter()
+	if err := s.CreateProject(&model.Project{Name: "commerce", OwnerID: 1}); err != nil {
+		t.Fatal(err)
+	}
+	registry := &model.ImageRegistry{Name: "commerce-harbor", Endpoint: "harbor.example.com", AuthType: "basic", Username: "robot$commerce", Credential: "encrypted", Enabled: true}
+	if err := s.CreateImageRegistry(registry, []uint{1}); err != nil {
+		t.Fatal(err)
+	}
+	h.verifyConnection = func(_ context.Context, _ *model.ImageRegistry, _ []byte) error { return nil }
+
+	success := serve(r, newJSONRequest(http.MethodPost, "/api/image-registries/1/verify", nil))
+	if success.Code != http.StatusOK || !strings.Contains(success.Body.String(), "\"last_verify_status\":\"succeeded\"") || strings.Contains(success.Body.String(), "encrypted") {
+		t.Fatalf("unexpected successful verification: %s", success.Body.String())
+	}
+
+	h.verifyConnection = func(_ context.Context, _ *model.ImageRegistry, _ []byte) error {
+		return errors.New("认证失败 (HTTP 401)")
+	}
+	failure := serve(r, newJSONRequest(http.MethodPost, "/api/image-registries/1/verify", nil))
+	if failure.Code != http.StatusOK || !strings.Contains(failure.Body.String(), "\"last_verify_status\":\"failed\"") || !strings.Contains(failure.Body.String(), "认证失败") {
+		t.Fatalf("unexpected failed verification: %s", failure.Body.String())
 	}
 }
