@@ -1,7 +1,6 @@
 <template>
   <div>
     <div class="page-header"><h1 class="page-title">配置</h1></div>
-    <div v-if="loading" class="k8s-banner" style="margin-bottom:var(--space-16)">加载中...</div>
     <div v-if="error" class="k8s-banner k8s-banner-warn" style="margin-bottom:var(--space-16)">⚠ {{ error }}</div>
 
     <div class="card section-gap">
@@ -20,7 +19,7 @@
         <table class="data-table">
           <thead><tr><th>名称</th><th>命名空间</th><th>键数量</th><th>被引用</th><th>年龄</th></tr></thead>
           <tbody>
-            <template v-for="cm in configmaps" :key="cm.namespace + '/' + cm.name">
+            <template v-for="cm in safeConfigMaps" :key="cm.namespace + '/' + cm.name">
               <tr class="clickable" @click="toggleCmExpand(cm)">
                 <td class="cell-primary">{{ cm.name }}</td><td>{{ cm.namespace }}</td>
                 <td>{{ cm.keys_count }}</td>
@@ -51,7 +50,7 @@
         <table class="data-table">
           <thead><tr><th>名称</th><th>命名空间</th><th>类型</th><th>键数量</th><th>被引用</th><th>年龄</th></tr></thead>
           <tbody>
-            <template v-for="sec in secrets" :key="sec.namespace + '/' + sec.name">
+            <template v-for="sec in safeSecrets" :key="sec.namespace + '/' + sec.name">
               <tr class="clickable" @click="toggleSecretExpand(sec)">
                 <td class="cell-primary">{{ sec.name }}</td><td>{{ sec.namespace }}</td>
                 <td><span class="badge badge-deploying">{{ sec.type }}</span></td>
@@ -82,7 +81,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, reactive } from 'vue'
+import { computed, ref, onMounted, reactive } from 'vue'
 import { api } from '../api/index.js'
 
 const activeTab = ref('configmaps')
@@ -96,12 +95,23 @@ const cmDetail = ref({})
 const secretDetail = ref({})
 const revealedKeys = reactive({})
 
+const safeConfigMaps = computed(() => (configmaps.value || []).filter(cm => cm != null))
+const safeSecrets = computed(() => (secrets.value || []).filter(s => s != null))
+
 onMounted(async () => {
   loading.value = true
   error.value = ''
   try {
-    configmaps.value = await api.get('/k8s/configmaps') || []
-    secrets.value = await api.get('/k8s/secrets') || []
+    const [cms, secs] = await Promise.allSettled([
+      api.get('/k8s/configmaps'),
+      api.get('/k8s/secrets'),
+    ])
+    configmaps.value = cms.status === 'fulfilled' ? (cms.value || []) : []
+    secrets.value = secs.status === 'fulfilled' ? (secs.value || []) : []
+    const failed = [cms, secs].filter(r => r.status === 'rejected')
+    if (failed.length > 0) {
+      error.value = failed.map(r => r.reason?.message || '未知错误').join('; ')
+    }
   } catch(e) { error.value = '加载失败，请检查集群连接' }
   finally { loading.value = false }
 })
