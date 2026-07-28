@@ -17,6 +17,7 @@ import ProjectEnvironments from '../views/ProjectEnvironments.vue'
 import ApplicationDetails from '../views/ApplicationDetails.vue'
 import ReleaseDetails from '../views/ReleaseDetails.vue'
 import ImageRegistries from '../views/ImageRegistries.vue'
+import Domains from '../views/Domains.vue'
 
 const routes = [
   { path: '/login', component: Login, meta: { public: true } },
@@ -26,6 +27,7 @@ const routes = [
   { path: '/applications/projects/:projectID', component: ProjectEnvironments, props: true },
   { path: '/applications/releases', component: Applications, props: { section: 'releases' } },
   { path: '/applications/registries', component: ImageRegistries },
+  { path: '/applications/domains', component: Domains },
   { path: '/applications/:applicationID/releases/:releaseID', component: ReleaseDetails, props: true },
   { path: '/applications/:applicationID', component: ApplicationDetails, props: true },
   { path: '/servers', component: Servers },

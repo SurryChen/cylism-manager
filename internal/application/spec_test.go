@@ -78,6 +78,29 @@ func TestRenderResourcesUsesSecretReferenceWhenSnapshotIsRedacted(t *testing.T) 
 	}
 }
 
+func TestValidateReleaseSpecRejectsRequestsAboveLimits(t *testing.T) {
+	spec := validTestReleaseSpec()
+	spec.Resources.RequestsCPU = "600m"
+	spec.Resources.LimitsCPU = "500m"
+	issues := ValidateReleaseSpec(spec)
+	if len(issues) == 0 || issues[0].Field != "resources.requests_cpu" {
+		t.Fatalf("expected CPU request limit validation, got %+v", issues)
+	}
+}
+
+func TestRenderResourcesSupportsOptionalAndTCPHealthChecks(t *testing.T) {
+	spec := validTestReleaseSpec()
+	spec.Health = HealthSpec{ReadinessEnabled: true, ReadinessType: "tcp", LivenessEnabled: false}
+	resources, err := RenderResources(ApplicationContext{ProjectName: "commerce", EnvironmentName: "production", ApplicationName: "order-api", Namespace: "commerce-prod", ReleaseSequence: 4}, spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	container := resources.Deployment.Spec.Template.Spec.Containers[0]
+	if container.ReadinessProbe == nil || container.ReadinessProbe.TCPSocket == nil || container.LivenessProbe != nil {
+		t.Fatalf("unexpected health probes: %+v", container)
+	}
+}
+
 func TestRenderResourcesAddsImagePullSecretForPrivateRegistry(t *testing.T) {
 	spec := validTestReleaseSpec()
 	spec.Image = "harbor.example.com/commerce/order-api:1.0.0"

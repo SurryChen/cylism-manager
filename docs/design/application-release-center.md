@@ -293,5 +293,5 @@ POST   /api/releases/:id/rollback
 - 公网入口的部署形态：单台带公网 IP 的 Traefik 节点、云负载均衡器，还是 Tailscale Funnel。
 - 域名 DNS 托管商范围：V1 仅手工校验，还是优先支持 Cloudflare DNS-01。
 - 生产环境是否要求发布审批，以及审批由平台内置还是对接现有系统。
-- 已实现外部镜像仓库的项目授权、加密凭据存储与 `imagePullSecret` 下发；后续补充连接验证、digest 解析和私有 CA 的节点级配置。
+- 已实现外部镜像仓库的项目授权、加密凭据存储与 `imagePullSecret` 下发，并支持通过 Registry V2 `/v2/` 检测 HTTPS 连通性和认证状态；后续补充镜像 manifest/digest 解析和私有 CA 的节点级配置。
 - 多集群是否在近期范围内；若是，Environment 需绑定明确的 `cluster_id` 并扩展权限模型。

@@ -55,8 +55,12 @@ type ResourceSpec struct {
 }
 
 type HealthSpec struct {
-	ReadinessPath string `json:"readiness_path"`
-	LivenessPath  string `json:"liveness_path"`
+	ReadinessEnabled bool   `json:"readiness_enabled"`
+	ReadinessType    string `json:"readiness_type,omitempty"`
+	ReadinessPath    string `json:"readiness_path,omitempty"`
+	LivenessEnabled  bool   `json:"liveness_enabled"`
+	LivenessType     string `json:"liveness_type,omitempty"`
+	LivenessPath     string `json:"liveness_path,omitempty"`
 }
 
 type ServiceSpec struct {
@@ -66,6 +70,7 @@ type ServiceSpec struct {
 
 type EndpointSpec struct {
 	Exposure   string `json:"exposure"`
+	DomainID   uint   `json:"domain_id,omitempty"`
 	Domain     string `json:"domain,omitempty"`
 	Path       string `json:"path,omitempty"`
 	TLSEnabled bool   `json:"tls_enabled"`
@@ -107,20 +112,35 @@ func ValidateReleaseSpec(spec ReleaseSpec) []ValidationIssue {
 	if spec.Replicas < 1 {
 		issues = append(issues, ValidationIssue{Field: "replicas", Message: "副本数至少为 1"})
 	}
-	validateQuantity := func(field, value string) {
-		if _, err := resource.ParseQuantity(value); err != nil || strings.TrimSpace(value) == "" {
+	parseQuantity := func(field, value string) *resource.Quantity {
+		quantity, err := resource.ParseQuantity(value)
+		if err != nil || strings.TrimSpace(value) == "" {
 			issues = append(issues, ValidationIssue{Field: field, Message: "资源数量格式无效"})
+			return nil
 		}
+		return &quantity
 	}
-	validateQuantity("resources.requests_cpu", spec.Resources.RequestsCPU)
-	validateQuantity("resources.requests_memory", spec.Resources.RequestsMemory)
-	validateQuantity("resources.limits_cpu", spec.Resources.LimitsCPU)
-	validateQuantity("resources.limits_memory", spec.Resources.LimitsMemory)
-	if !strings.HasPrefix(spec.Health.ReadinessPath, "/") {
-		issues = append(issues, ValidationIssue{Field: "health.readiness_path", Message: "就绪探针路径必须以 / 开头"})
+	requestCPU := parseQuantity("resources.requests_cpu", spec.Resources.RequestsCPU)
+	requestMemory := parseQuantity("resources.requests_memory", spec.Resources.RequestsMemory)
+	limitCPU := parseQuantity("resources.limits_cpu", spec.Resources.LimitsCPU)
+	limitMemory := parseQuantity("resources.limits_memory", spec.Resources.LimitsMemory)
+	if requestCPU != nil && limitCPU != nil && requestCPU.Cmp(*limitCPU) > 0 {
+		issues = append(issues, ValidationIssue{Field: "resources.requests_cpu", Message: "CPU 请求不能大于限制"})
 	}
-	if !strings.HasPrefix(spec.Health.LivenessPath, "/") {
-		issues = append(issues, ValidationIssue{Field: "health.liveness_path", Message: "存活探针路径必须以 / 开头"})
+	if requestMemory != nil && limitMemory != nil && requestMemory.Cmp(*limitMemory) > 0 {
+		issues = append(issues, ValidationIssue{Field: "resources.requests_memory", Message: "内存请求不能大于限制"})
+	}
+	if enabled, probeType := healthProbeEnabled(spec.Health.ReadinessEnabled, spec.Health.ReadinessType, spec.Health.ReadinessPath); enabled && probeType == "http" && !strings.HasPrefix(spec.Health.ReadinessPath, "/") {
+		issues = append(issues, ValidationIssue{Field: "health.readiness_path", Message: "HTTP 就绪检查路径必须以 / 开头"})
+	}
+	if enabled, probeType := healthProbeEnabled(spec.Health.LivenessEnabled, spec.Health.LivenessType, spec.Health.LivenessPath); enabled && probeType == "http" && !strings.HasPrefix(spec.Health.LivenessPath, "/") {
+		issues = append(issues, ValidationIssue{Field: "health.liveness_path", Message: "HTTP 存活检查路径必须以 / 开头"})
+	}
+	if _, probeType := healthProbeEnabled(spec.Health.ReadinessEnabled, spec.Health.ReadinessType, spec.Health.ReadinessPath); probeType != "http" && probeType != "tcp" {
+		issues = append(issues, ValidationIssue{Field: "health.readiness_type", Message: "就绪检查仅支持 HTTP 或 TCP"})
+	}
+	if _, probeType := healthProbeEnabled(spec.Health.LivenessEnabled, spec.Health.LivenessType, spec.Health.LivenessPath); probeType != "http" && probeType != "tcp" {
+		issues = append(issues, ValidationIssue{Field: "health.liveness_type", Message: "存活检查仅支持 HTTP 或 TCP"})
 	}
 	if spec.Service.Port < 1 || spec.Service.Port > 65535 || spec.Service.TargetPort < 1 || spec.Service.TargetPort > 65535 {
 		issues = append(issues, ValidationIssue{Field: "service", Message: "Service 端口必须在 1 到 65535 之间"})
@@ -179,8 +199,12 @@ func RenderResources(context ApplicationContext, spec ReleaseSpec) (*RenderedRes
 			Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse(spec.Resources.RequestsCPU), corev1.ResourceMemory: resource.MustParse(spec.Resources.RequestsMemory)},
 			Limits:   corev1.ResourceList{corev1.ResourceCPU: resource.MustParse(spec.Resources.LimitsCPU), corev1.ResourceMemory: resource.MustParse(spec.Resources.LimitsMemory)},
 		},
-		ReadinessProbe: httpProbe(spec.Health.ReadinessPath, spec.ContainerPort),
-		LivenessProbe:  httpProbe(spec.Health.LivenessPath, spec.ContainerPort),
+	}
+	if enabled, probeType := healthProbeEnabled(spec.Health.ReadinessEnabled, spec.Health.ReadinessType, spec.Health.ReadinessPath); enabled {
+		container.ReadinessProbe = healthProbe(probeType, spec.Health.ReadinessPath, spec.ContainerPort)
+	}
+	if enabled, probeType := healthProbeEnabled(spec.Health.LivenessEnabled, spec.Health.LivenessType, spec.Health.LivenessPath); enabled {
+		container.LivenessProbe = healthProbe(probeType, spec.Health.LivenessPath, spec.ContainerPort)
 	}
 	if result.ConfigMap != nil {
 		container.EnvFrom = append(container.EnvFrom, corev1.EnvFromSource{ConfigMapRef: &corev1.ConfigMapEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: configName}}})
@@ -268,6 +292,20 @@ func workloadSelector(applicationName string) map[string]string {
 
 func httpProbe(path string, port int32) *corev1.Probe {
 	return &corev1.Probe{ProbeHandler: corev1.ProbeHandler{HTTPGet: &corev1.HTTPGetAction{Path: path, Port: intstr.FromInt32(port)}}, InitialDelaySeconds: 5, PeriodSeconds: 10}
+}
+
+func healthProbeEnabled(enabled bool, probeType, path string) (bool, string) {
+	if probeType == "" {
+		probeType = "http"
+	}
+	return enabled || path != "", probeType
+}
+
+func healthProbe(probeType, path string, port int32) *corev1.Probe {
+	if probeType == "tcp" {
+		return &corev1.Probe{ProbeHandler: corev1.ProbeHandler{TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt32(port)}}, InitialDelaySeconds: 5, PeriodSeconds: 10}
+	}
+	return httpProbe(path, port)
 }
 
 func certificateResource(context ApplicationContext, domain, secretName, issuerRef string, labels map[string]string) *unstructured.Unstructured {

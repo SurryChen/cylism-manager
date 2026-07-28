@@ -34,6 +34,7 @@ func New(dsn string) (*Store, error) {
 		&model.Application{},
 		&model.ApplicationEndpoint{},
 		&model.ImageRegistry{},
+		&model.ManagedDomain{},
 		&model.Release{},
 		&model.ReleaseOperation{},
 	); err != nil {
@@ -419,6 +420,14 @@ func (s *Store) UpdateImageRegistry(registry *model.ImageRegistry, projectIDs []
 	})
 }
 
+func (s *Store) UpdateImageRegistryVerification(id uint, status, detail string, verifiedAt time.Time) error {
+	return s.db.Model(&model.ImageRegistry{}).Where("id = ?", id).Updates(map[string]interface{}{
+		"last_verified_at":   verifiedAt,
+		"last_verify_status": status,
+		"last_verify_error":  detail,
+	}).Error
+}
+
 func (s *Store) CountImageRegistryReleases(id uint) (int64, error) {
 	var count int64
 	err := s.db.Model(&model.Release{}).Where("image_registry_id = ?", id).Count(&count).Error
@@ -427,6 +436,26 @@ func (s *Store) CountImageRegistryReleases(id uint) (int64, error) {
 
 func (s *Store) DeleteImageRegistry(id uint) error {
 	return s.db.Delete(&model.ImageRegistry{}, id).Error
+}
+
+func (s *Store) CreateManagedDomain(domain *model.ManagedDomain) error {
+	return s.db.Create(domain).Error
+}
+func (s *Store) ListManagedDomains() ([]model.ManagedDomain, error) {
+	var domains []model.ManagedDomain
+	err := s.db.Order("hostname asc").Find(&domains).Error
+	return domains, err
+}
+func (s *Store) GetManagedDomain(id uint) (*model.ManagedDomain, error) {
+	var domain model.ManagedDomain
+	err := s.db.First(&domain, id).Error
+	return &domain, err
+}
+func (s *Store) UpdateManagedDomain(domain *model.ManagedDomain) error {
+	return s.db.Save(domain).Error
+}
+func (s *Store) DeleteManagedDomain(id uint) error {
+	return s.db.Delete(&model.ManagedDomain{}, id).Error
 }
 
 func imageRegistryProjects(tx *gorm.DB, projectIDs []uint) ([]model.Project, error) {

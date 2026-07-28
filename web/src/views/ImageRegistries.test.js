@@ -42,4 +42,21 @@ describe('ImageRegistries view', () => {
     expect(wrapper.text()).toContain('凭据已配置')
     expect(wrapper.text()).not.toContain('registry-password')
   })
+
+  it('runs a connection check and shows the saved verification result', async () => {
+    const { api } = await import('../api/index.js')
+    api.get.mockImplementation(path => {
+      if (path === '/projects') return Promise.resolve([{ id: 1, name: 'commerce' }])
+      return Promise.resolve([{ id: 12, name: 'commerce-harbor', endpoint: 'harbor.example.com', auth_type: 'basic', enabled: true, projects: [{ id: 1, name: 'commerce' }] }])
+    })
+    api.post.mockResolvedValue({ id: 12, name: 'commerce-harbor', endpoint: 'harbor.example.com', auth_type: 'basic', enabled: true, projects: [{ id: 1, name: 'commerce' }], last_verify_status: 'succeeded', last_verified_at: '2026-07-28T11:30:00Z' })
+    const wrapper = mount(ImageRegistries)
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    await wrapper.get('[title="检测镜像仓库"]').trigger('click')
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    expect(api.post).toHaveBeenCalledWith('/image-registries/12/verify')
+    expect(wrapper.text()).toContain('连通')
+  })
 })
