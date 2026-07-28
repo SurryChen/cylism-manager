@@ -298,7 +298,7 @@ func healthProbeEnabled(enabled bool, probeType, path string) (bool, string) {
 	if probeType == "" {
 		probeType = "http"
 	}
-	return enabled || path != "", probeType
+	return enabled, probeType
 }
 
 func healthProbe(probeType, path string, port int32) *corev1.Probe {

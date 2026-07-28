@@ -101,6 +101,26 @@ func TestRenderResourcesSupportsOptionalAndTCPHealthChecks(t *testing.T) {
 	}
 }
 
+func TestRenderResourcesDoesNotCreateDisabledHealthChecks(t *testing.T) {
+	spec := validTestReleaseSpec()
+	spec.Health = HealthSpec{
+		ReadinessEnabled: false,
+		ReadinessType:    "http",
+		ReadinessPath:    "/healthz",
+		LivenessEnabled:  false,
+		LivenessType:     "http",
+		LivenessPath:     "/healthz",
+	}
+	resources, err := RenderResources(ApplicationContext{ProjectName: "commerce", EnvironmentName: "production", ApplicationName: "order-api", Namespace: "commerce-prod", ReleaseSequence: 4}, spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	container := resources.Deployment.Spec.Template.Spec.Containers[0]
+	if container.ReadinessProbe != nil || container.LivenessProbe != nil {
+		t.Fatalf("disabled health checks must not render probes: %+v", container)
+	}
+}
+
 func TestRenderResourcesAddsImagePullSecretForPrivateRegistry(t *testing.T) {
 	spec := validTestReleaseSpec()
 	spec.Image = "harbor.example.com/commerce/order-api:1.0.0"
