@@ -279,8 +279,34 @@ func (s *Store) CreateProject(project *model.Project) error {
 
 func (s *Store) ListProjects() ([]model.Project, error) {
 	var projects []model.Project
-	err := s.db.Order("created_at desc").Find(&projects).Error
+	err := s.db.Preload("Environments").Order("created_at desc").Find(&projects).Error
 	return projects, err
+}
+
+func (s *Store) GetProject(id uint) (*model.Project, error) {
+	var project model.Project
+	err := s.db.Preload("Environments").First(&project, id).Error
+	return &project, err
+}
+
+func (s *Store) UpdateProject(project *model.Project) error {
+	return s.db.Save(project).Error
+}
+
+func (s *Store) DeleteProject(id uint) error {
+	return s.db.Delete(&model.Project{}, id).Error
+}
+
+func (s *Store) CountProjectEnvironments(projectID uint) (int64, error) {
+	var count int64
+	err := s.db.Model(&model.Environment{}).Where("project_id = ?", projectID).Count(&count).Error
+	return count, err
+}
+
+func (s *Store) CountProjectApplications(projectID uint) (int64, error) {
+	var count int64
+	err := s.db.Model(&model.Application{}).Where("project_id = ?", projectID).Count(&count).Error
+	return count, err
 }
 
 func (s *Store) CreateEnvironment(environment *model.Environment) error {
@@ -291,6 +317,26 @@ func (s *Store) ListEnvironments(projectID uint) ([]model.Environment, error) {
 	var environments []model.Environment
 	err := s.db.Where("project_id = ?", projectID).Order("created_at asc").Find(&environments).Error
 	return environments, err
+}
+
+func (s *Store) GetEnvironment(projectID, environmentID uint) (*model.Environment, error) {
+	var environment model.Environment
+	err := s.db.Where("project_id = ?", projectID).First(&environment, environmentID).Error
+	return &environment, err
+}
+
+func (s *Store) UpdateEnvironment(environment *model.Environment) error {
+	return s.db.Save(environment).Error
+}
+
+func (s *Store) DeleteEnvironment(id uint) error {
+	return s.db.Delete(&model.Environment{}, id).Error
+}
+
+func (s *Store) CountEnvironmentApplications(environmentID uint) (int64, error) {
+	var count int64
+	err := s.db.Model(&model.Application{}).Where("environment_id = ?", environmentID).Count(&count).Error
+	return count, err
 }
 
 func (s *Store) CreateApplication(application *model.Application) error {

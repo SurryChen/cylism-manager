@@ -408,3 +408,36 @@ func TestApplicationReleaseCRUD(t *testing.T) {
 		t.Fatalf("expected preflight operation, got %+v, err=%v", operations, err)
 	}
 }
+
+func TestProjectAndEnvironmentCRUD(t *testing.T) {
+	st := setupTestDB(t)
+	project := &model.Project{Name: "commerce", Description: "订单服务", OwnerID: 1}
+	if err := st.CreateProject(project); err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	environment := &model.Environment{ProjectID: project.ID, Name: "staging", Namespace: "commerce-staging"}
+	if err := st.CreateEnvironment(environment); err != nil {
+		t.Fatalf("CreateEnvironment: %v", err)
+	}
+
+	projects, err := st.ListProjects()
+	if err != nil || len(projects) != 1 || len(projects[0].Environments) != 1 {
+		t.Fatalf("ListProjects should preload environments, got %+v, err=%v", projects, err)
+	}
+
+	project.Description = "订单服务与部署环境"
+	if err := st.UpdateProject(project); err != nil {
+		t.Fatalf("UpdateProject: %v", err)
+	}
+	environment.Namespace = "commerce-preview"
+	if err := st.UpdateEnvironment(environment); err != nil {
+		t.Fatalf("UpdateEnvironment: %v", err)
+	}
+
+	if err := st.DeleteEnvironment(environment.ID); err != nil {
+		t.Fatalf("DeleteEnvironment: %v", err)
+	}
+	if err := st.DeleteProject(project.ID); err != nil {
+		t.Fatalf("DeleteProject: %v", err)
+	}
+}

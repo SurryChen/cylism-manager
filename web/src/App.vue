@@ -61,6 +61,7 @@
             :to="item.to"
             class="sidebar-link"
             active-class="is-active"
+            :class="{ 'is-active': isNavItemActive(item) }"
           >
             <component :is="item.icon" :size="17" stroke-width="1.8" />
             <span>{{ item.label }}</span>
@@ -92,7 +93,7 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Boxes, Check, FileText, Globe, LayoutDashboard, Layers3, LogOut, Menu, Orbit, PackagePlus, Palette, Route, Server, Settings, ShieldCheck, Waypoints, X } from 'lucide-vue-next'
+import { Boxes, Check, FileText, FolderKanban, Globe, History, LayoutDashboard, Layers3, LogOut, Menu, Orbit, PackagePlus, Palette, Route, Server, Settings, ShieldCheck, Waypoints, X } from 'lucide-vue-next'
 import { clearTokens } from './api/index.js'
 import { usePalette } from './composables/usePalette.js'
 
@@ -116,7 +117,16 @@ const palettes = [
 
 const navGroups = computed(() => [
   { id: 'overview', label: '概览', to: '/', items: [{ label: '概览', to: '/', icon: LayoutDashboard }] },
-  { id: 'applications', label: '应用', to: '/applications', items: [{ label: '应用发布', to: '/applications', icon: PackagePlus }] },
+  {
+    id: 'applications',
+    label: '应用',
+    to: '/applications',
+    items: [
+      { label: '应用', to: '/applications', icon: PackagePlus },
+      { label: '项目与环境', to: '/applications/projects', icon: FolderKanban },
+      { label: '发布记录', to: '/applications/releases', icon: History },
+    ],
+  },
   {
     id: 'infrastructure',
     label: '基础设施',
@@ -146,8 +156,12 @@ const activeNavGroup = computed(() => {
   if (route.path.startsWith('/db-admin')) {
     return navGroups.value.find(group => group.id === 'records') || navGroups.value[0]
   }
-  return navGroups.value.find(group => group.items.some(item => item.to === route.path)) || navGroups.value[0]
+  return navGroups.value.find(group => group.items.some(item => isNavItemActive(item))) || navGroups.value[0]
 })
+
+function isNavItemActive(item) {
+  return route.path === item.to || (item.to !== '/applications' && route.path.startsWith(`${item.to}/`))
+}
 
 function choosePalette(palette) {
   selectPalette(palette)

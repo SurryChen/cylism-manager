@@ -179,6 +179,12 @@ Deployment 的 Kubernetes revision 仅作为诊断信息，不单独作为平台
 
 ## 9. 页面规划
 
+“应用”一级模块下设置以下二级导航，资源级排障仍使用“基础设施”模块：
+
+- `应用`：应用列表、创建应用、发布版本、单应用发布历史和回滚。
+- `项目与环境`：Project 列表展示每个 Project 下的 Environment、Namespace 与应用数量，支持 Project 的创建、说明编辑和无关联记录时删除；点击项目后进入 `/applications/projects/:id` 管理该项目的 Environment。Environment 支持创建、编辑和无关联应用时删除，详情页左上提供返回项目列表的入口。后续在此扩展成员授权。
+- `发布记录`：跨应用汇总 Release，作为查看异步发布进度和失败详情的统一入口。
+
 ### 9.1 应用列表 `/applications`
 
 - 按 Project、环境、Namespace、状态筛选。
@@ -215,6 +221,12 @@ Deployment 的 Kubernetes revision 仅作为诊断信息，不单独作为平台
 ```text
 GET    /api/projects
 POST   /api/projects
+PUT    /api/projects/:id
+DELETE /api/projects/:id
+GET    /api/projects/:id/environments
+POST   /api/projects/:id/environments
+PUT    /api/projects/:id/environments/:environmentId
+DELETE /api/projects/:id/environments/:environmentId
 GET    /api/applications
 POST   /api/applications
 GET    /api/applications/:id

@@ -62,6 +62,17 @@ describe('Glass UI application shell', () => {
     expect(mobileNavigation.text()).not.toContain('数据管理')
   })
 
+  it('shows the application secondary navigation for application routes', async () => {
+    const wrapper = await mountApp('/applications/projects/1')
+    const navigation = wrapper.get('[data-testid="desktop-navigation"]')
+
+    expect(wrapper.get('[data-testid="primary-navigation"]').get('[aria-current="page"]').text()).toContain('应用')
+    expect(navigation.text()).toContain('应用')
+    expect(navigation.text()).toContain('项目与环境')
+    expect(navigation.text()).toContain('发布记录')
+    expect(navigation.get('.sidebar-link.is-active').text()).toContain('项目与环境')
+  })
+
   it('renders the palette menu at the document root and applies a selected swatch', async () => {
     const wrapper = await mountApp()
 
