@@ -3,7 +3,6 @@
     <div class="page-header">
       <h1 class="page-title">路由</h1>
     </div>
-    <div v-if="loading" class="k8s-banner" style="margin-bottom:var(--space-16)">加载中...</div>
     <div v-if="error" class="k8s-banner k8s-banner-warn" style="margin-bottom:var(--space-16)">⚠ {{ error }}</div>
 
     <!-- Traefik Controller Banner -->
@@ -30,7 +29,10 @@
           <option v-for="ns in namespaces" :key="ns" :value="ns">{{ ns }}</option>
         </select></div>
       </div>
-      <div v-if="filteredRoutes.length === 0" class="empty-state">
+      <div v-if="routesLoading" class="empty-state">
+        <span class="empty-text">加载 IngressRoute 中...</span>
+      </div>
+      <div v-else-if="filteredRoutes.length === 0" class="empty-state">
         <span class="empty-icon">⊞</span><span class="empty-text">暂无 IngressRoute</span>
       </div>
       <div v-else class="table-wrap">
@@ -52,7 +54,10 @@
     <!-- 标准 Ingress Tab -->
     <div v-if="activeTab === 'ingress'" class="card">
       <div class="filter-bar" style="margin-bottom:var(--space-12)"><button class="btn btn-primary" @click="showAddIngress = true">+ 添加 Ingress</button></div>
-      <div v-if="ingresses.length === 0" class="empty-state">
+      <div v-if="ingressesLoading" class="empty-state">
+        <span class="empty-text">加载 Ingress 中...</span>
+      </div>
+      <div v-else-if="ingresses.length === 0" class="empty-state">
         <span class="empty-icon">⊞</span><span class="empty-text">暂无标准 Ingress</span>
       </div>
       <div v-else class="table-wrap">
@@ -106,12 +111,16 @@
 import { ref, onMounted, computed } from 'vue'
 import { api } from '../api/index.js'
 
+const controllerStatusCacheKey = 'cylism.ingress-controller.status'
+const controllerStatusCacheTtl = 60 * 1000
+
 const activeTab = ref('ingressroute')
-const controllerStatus = ref(null)
+const controllerStatus = ref(getCachedControllerStatus()?.status || null)
 const routes = ref([])
 const filterNs = ref('')
 const ingresses = ref([])
-const loading = ref(true)
+const routesLoading = ref(true)
+const ingressesLoading = ref(true)
 const error = ref('')
 const deleteRouteTarget = ref(null)
 const deleteIngressTarget = ref(null)
@@ -124,25 +133,51 @@ const filteredRoutes = computed(() =>
 )
 
 onMounted(() => {
-  loading.value = true
   error.value = ''
   fetchControllerStatus()
   fetchRoutes()
-  fetchIngresses().finally(() => loading.value = false)
+  fetchIngresses()
 })
 
 async function fetchControllerStatus() {
+  const cached = getCachedControllerStatus()
+  if (cached?.status) controllerStatus.value = cached.status
+  if (cached && cached.expiresAt > Date.now()) return
   try {
-    controllerStatus.value = await api.get('/k8s/ingress-controller')
+    const status = await api.get('/k8s/ingress-controller')
+    controllerStatus.value = status
+    cacheControllerStatus(status)
   } catch(e) {}
 }
 
 async function fetchRoutes() {
+  routesLoading.value = true
   try { routes.value = await api.get('/routes') || [] } catch(e) {}
+  finally { routesLoading.value = false }
 }
 
 async function fetchIngresses() {
+  ingressesLoading.value = true
   try { ingresses.value = await api.get('/k8s/ingresses') || [] } catch(e) {}
+  finally { ingressesLoading.value = false }
+}
+
+function getCachedControllerStatus() {
+  try {
+    const cached = JSON.parse(sessionStorage.getItem(controllerStatusCacheKey) || 'null')
+    return cached?.status ? cached : null
+  } catch(e) {
+    return null
+  }
+}
+
+function cacheControllerStatus(status) {
+  try {
+    sessionStorage.setItem(controllerStatusCacheKey, JSON.stringify({
+      status,
+      expiresAt: Date.now() + controllerStatusCacheTtl,
+    }))
+  } catch(e) {}
 }
 
 function confirmDeleteRoute(route) { deleteRouteTarget.value = route }

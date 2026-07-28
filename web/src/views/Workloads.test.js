@@ -27,6 +27,23 @@ beforeEach(() => {
 })
 
 describe('Workloads view', () => {
+  it('shows an inline error banner without opening an alert when loading fails', async () => {
+    const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => {})
+    const { api } = await import('../api/index.js')
+    api.get.mockImplementation((url) => {
+      if (url.includes('/deployments')) return Promise.reject(new Error('集群连接失败'))
+      return Promise.resolve([])
+    })
+
+    const wrapper = mount(Workloads)
+    await flush()
+
+    expect(wrapper.find('.k8s-banner').text()).toContain('集群连接失败')
+    expect(wrapper.find('.page-header .k8s-banner').exists()).toBe(false)
+    expect(wrapper.find('.page-header + .k8s-banner').exists()).toBe(true)
+    expect(alertSpy).not.toHaveBeenCalled()
+  })
+
   it('renders three tab buttons', async () => {
     const wrapper = mount(Workloads, {
       global: { stubs: { RouterLink: true } }
@@ -69,5 +86,23 @@ describe('Workloads view', () => {
     await nextTick()
     await flush()
     expect(wrapper.text()).toContain('暂无 DaemonSet')
+  })
+
+  it('renders deployments without accessing a loop variable outside its scope', async () => {
+    const { api } = await import('../api/index.js')
+    api.get.mockImplementation((url) => {
+      if (url.includes('/deployments')) {
+        return Promise.resolve([{
+          name: 'demo-api', namespace: 'default', ready: 1, replicas: 1,
+          images: ['nginx:1.27'], age: '1h'
+        }])
+      }
+      return Promise.resolve([])
+    })
+
+    const wrapper = mount(Workloads)
+    await flush()
+
+    expect(wrapper.text()).toContain('demo-api')
   })
 })

@@ -6,7 +6,10 @@ export default defineConfig({
   plugins: [vue(), lintCssTokensPlugin()],
   server: {
     proxy: {
-      '/api': 'http://localhost:8080'
+      '/api': {
+        target: 'https://cylism.crazycoding.top/',
+        changeOrigin: true
+      }
     }
   },
   build: {
