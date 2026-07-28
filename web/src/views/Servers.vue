@@ -166,6 +166,7 @@
     </div>
 
     <!-- Terminal modal -->
+    <Teleport to="body">
     <div v-if="terminalServer" class="overlay terminal-overlay" @click.self="closeTerminal">
       <div class="terminal-modal">
         <div class="terminal-modal-header">
@@ -192,14 +193,16 @@
         </div>
       </div>
     </div>
-<div v-if="deleteTarget" class="overlay" @click.self="deleteTarget = null">
+    </Teleport>
+
+    <div v-if="deleteTarget" class="overlay" @click.self="deleteTarget = null">
       <div class="modal"><h2 class="modal-title">删除服务器</h2><p class="modal-copy">确定删除 <strong>{{ deleteTarget.name }}</strong> 吗？</p><div class="modal-actions"><button class="btn" @click="deleteTarget = null">取消</button><button class="btn btn-danger" @click="deleteServer">确认删除</button></div></div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { computed, ref, onMounted } from 'vue'
+import { computed, ref, onMounted, Teleport } from 'vue'
 import { api } from '../api/index.js'
 import { Doughnut } from 'vue-chartjs'
 import { Chart as ChartJS, ArcElement, Tooltip } from 'chart.js'
@@ -481,7 +484,7 @@ function resetForm() { form.value = { name: '', host: '', ssh_port: 22, ssh_user
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 1000;
+  z-index: 9999;
   backdrop-filter: blur(6px);
 }
 .terminal-modal {

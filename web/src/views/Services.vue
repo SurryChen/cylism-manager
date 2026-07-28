@@ -1,7 +1,6 @@
 <template>
   <div>
     <div class="page-header"><h1 class="page-title">服务发现</h1></div>
-    <div v-if="loading" class="k8s-banner" style="margin-bottom:var(--space-16)">加载中...</div>
     <div v-if="error" class="k8s-banner k8s-banner-warn" style="margin-bottom:var(--space-16)">⚠ {{ error }}</div>
 
     <div class="card">
@@ -12,7 +11,7 @@
         <table class="data-table">
           <thead><tr><th>名称</th><th>命名空间</th><th>类型</th><th>Cluster IP</th><th>端口</th><th>端点</th><th>年龄</th></tr></thead>
           <tbody>
-            <template v-for="s in services" :key="s.namespace + '/' + s.name">
+            <template v-for="s in safeServices" :key="s.namespace + '/' + s.name">
               <tr class="clickable" @click="toggleExpand(s)">
                 <td class="cell-primary">{{ s.name }}</td><td>{{ s.namespace }}</td>
                 <td><span class="badge badge-online">{{ s.type }}</span></td>
@@ -51,7 +50,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { computed, ref, onMounted } from 'vue'
 import { api } from '../api/index.js'
 
 const services = ref([])
@@ -60,12 +59,16 @@ const error = ref('')
 const expandedSvc = ref('')
 const endpointSlices = ref({})
 
+const safeServices = computed(() => (services.value || []).filter(s => s != null))
+
 onMounted(async () => {
   loading.value = true
   error.value = ''
   try {
     services.value = await api.get('/k8s/services') || []
-  } catch(e) { error.value = '加载失败，请检查集群连接' }
+  } catch(e) {
+    error.value = e.message || '加载失败，请检查集群连接'
+  }
   finally { loading.value = false }
 })
 
