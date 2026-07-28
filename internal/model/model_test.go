@@ -8,10 +8,10 @@ import (
 
 func TestServerModel(t *testing.T) {
 	s := Server{
-		Name:       "web-01",
-		Host:       "10.0.0.1",
-		SSHPort:    22,
-		SSHUser:    "root",
+		Name:        "web-01",
+		Host:        "10.0.0.1",
+		SSHPort:     22,
+		SSHUser:     "root",
 		SSHAuthType: "password",
 	}
 
@@ -62,16 +62,16 @@ func TestSiteUpstreamJSON(t *testing.T) {
 func TestCertModel(t *testing.T) {
 	now := time.Now()
 	c := Cert{
-		SiteID:       1,
-		Domains:      `["example.com","www.example.com"]`,
-		Provider:     "acme.sh",
-		CertPath:     "/etc/ssl/example.com/cert.pem",
-		KeyPath:      "/etc/ssl/example.com/key.pem",
+		SiteID:        1,
+		Domains:       `["example.com","www.example.com"]`,
+		Provider:      "acme.sh",
+		CertPath:      "/etc/ssl/example.com/cert.pem",
+		KeyPath:       "/etc/ssl/example.com/key.pem",
 		FullchainPath: "/etc/ssl/example.com/fullchain.pem",
-		ValidFrom:    now,
-		ValidTo:      now.Add(90 * 24 * time.Hour),
-		Status:       "issued",
-		Challenge:    "http",
+		ValidFrom:     now,
+		ValidTo:       now.Add(90 * 24 * time.Hour),
+		Status:        "issued",
+		Challenge:     "http",
 	}
 
 	if c.Status != "issued" {
@@ -187,3 +187,18 @@ func TestServerClusterFields(t *testing.T) {
 	}
 }
 
+func TestApplicationReleaseModel(t *testing.T) {
+	release := Release{
+		ApplicationID: 1,
+		Sequence:      2,
+		Image:         "registry.example.com/order-api@sha256:abc",
+		Status:        ReleaseStatusSucceeded,
+		DesiredSpec:   `{"service":{"port":80}}`,
+	}
+	if release.Status != "succeeded" || release.Sequence != 2 {
+		t.Fatalf("unexpected release: %+v", release)
+	}
+	if !IsReleaseStatusValid(ReleaseStatusRollingBack) || IsReleaseStatusValid("unknown") {
+		t.Fatal("release status validation is incorrect")
+	}
+}

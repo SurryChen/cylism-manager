@@ -12,10 +12,12 @@ import Workloads from '../views/Workloads.vue'
 import Services from '../views/Services.vue'
 import Configs from '../views/Configs.vue'
 import SystemSettings from '../views/SystemSettings.vue'
+import Applications from '../views/Applications.vue'
 
 const routes = [
   { path: '/login', component: Login, meta: { public: true } },
   { path: '/', component: Dashboard },
+  { path: '/applications', component: Applications },
   { path: '/servers', component: Servers },
   { path: '/cluster', component: Cluster },
   { path: '/workloads', component: Workloads },
