@@ -152,6 +152,7 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 	certs := apiGroup.Group("/certs")
 	{
 		certs.GET("", certHandler.ListCerts)
+		certs.GET("/issuers", certHandler.ListIssuers)
 		certs.POST("", certHandler.CreateCert)
 		certs.DELETE("/:namespace/:name", certHandler.DeleteCert)
 	}
