@@ -36,7 +36,7 @@ func TestImageRegistryHandlerCRUDKeepsCredentialSecret(t *testing.T) {
 
 	create := serve(r, newJSONRequest(http.MethodPost, "/api/image-registries", gin.H{
 		"name": "commerce-harbor", "endpoint": "harbor.example.com", "auth_type": "basic",
-		"username": "robot$commerce", "credential": "registry-password", "project_ids": []uint{1},
+		"verification_image": "harbor.example.com/commerce/order-api:latest", "username": "robot$commerce", "credential": "registry-password", "project_ids": []uint{1},
 	}))
 	if create.Code != http.StatusOK {
 		t.Fatalf("create status = %d: %s", create.Code, create.Body.String())
@@ -49,7 +49,7 @@ func TestImageRegistryHandlerCRUDKeepsCredentialSecret(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get registry: %v", err)
 	}
-	if registry.Credential == "registry-password" || registry.Credential == "" {
+	if registry.Credential == "registry-password" || registry.Credential == "" || registry.VerificationImage != "harbor.example.com/commerce/order-api:latest" {
 		t.Fatalf("credential should be encrypted at rest, got %q", registry.Credential)
 	}
 
@@ -64,7 +64,7 @@ func TestImageRegistryHandlerCRUDKeepsCredentialSecret(t *testing.T) {
 
 	update := serve(r, newJSONRequest(http.MethodPut, "/api/image-registries/1", gin.H{
 		"name": "commerce-harbor", "endpoint": "harbor.example.com", "auth_type": "basic",
-		"username": "robot$release", "project_ids": []uint{1},
+		"verification_image": "harbor.example.com/commerce/order-api:latest", "username": "robot$release", "project_ids": []uint{1},
 	}))
 	if update.Code != http.StatusOK {
 		t.Fatalf("update status = %d: %s", update.Code, update.Body.String())
@@ -72,6 +72,23 @@ func TestImageRegistryHandlerCRUDKeepsCredentialSecret(t *testing.T) {
 	registry, _ = s.GetImageRegistry(registryID)
 	if registry.Credential == "" || !registry.CredentialConfigured || len(registry.Projects) != 1 {
 		t.Fatalf("update must retain credential and project authorization: %+v", registry)
+	}
+}
+
+func TestImageRegistryHandlerRequiresMatchingVerificationImage(t *testing.T) {
+	r, s, _ := setupImageRegistryRouter()
+	if err := s.CreateProject(&model.Project{Name: "commerce", OwnerID: 1}); err != nil {
+		t.Fatal(err)
+	}
+	base := gin.H{"name": "commerce-harbor", "endpoint": "harbor.example.com", "auth_type": "anonymous", "project_ids": []uint{1}}
+	missing := serve(r, newJSONRequest(http.MethodPost, "/api/image-registries", base))
+	if missing.Code != http.StatusBadRequest || !strings.Contains(missing.Body.String(), "验证镜像必填") {
+		t.Fatalf("expected required verification image error: %s", missing.Body.String())
+	}
+	base["verification_image"] = "other.example.com/commerce/order-api:latest"
+	mismatch := serve(r, newJSONRequest(http.MethodPost, "/api/image-registries", base))
+	if mismatch.Code != http.StatusBadRequest || !strings.Contains(mismatch.Body.String(), "必须属于当前镜像仓库地址") {
+		t.Fatalf("expected endpoint mismatch error: %s", mismatch.Body.String())
 	}
 }
 
@@ -99,7 +116,7 @@ func TestImageRegistryHandlerVerifyPersistsConnectionResult(t *testing.T) {
 	if err := s.CreateProject(&model.Project{Name: "commerce", OwnerID: 1}); err != nil {
 		t.Fatal(err)
 	}
-	registry := &model.ImageRegistry{Name: "commerce-harbor", Endpoint: "harbor.example.com", AuthType: "basic", Username: "robot$commerce", Credential: "encrypted", Enabled: true}
+	registry := &model.ImageRegistry{Name: "commerce-harbor", Endpoint: "harbor.example.com", VerificationImage: "harbor.example.com/commerce/order-api:latest", AuthType: "basic", Username: "robot$commerce", Credential: "encrypted", Enabled: true}
 	if err := s.CreateImageRegistry(registry, []uint{1}); err != nil {
 		t.Fatal(err)
 	}
