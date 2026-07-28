@@ -140,12 +140,13 @@ const (
 
 // Project 应用所属的业务与授权边界。
 type Project struct {
-	ID          uint      `gorm:"primaryKey" json:"id"`
-	Name        string    `gorm:"size:128;uniqueIndex;not null" json:"name"`
-	Description string    `gorm:"size:512" json:"description"`
-	OwnerID     uint      `gorm:"index;not null" json:"owner_id"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID           uint          `gorm:"primaryKey" json:"id"`
+	Name         string        `gorm:"size:128;uniqueIndex;not null" json:"name"`
+	Description  string        `gorm:"size:512" json:"description"`
+	OwnerID      uint          `gorm:"index;not null" json:"owner_id"`
+	CreatedAt    time.Time     `json:"created_at"`
+	UpdatedAt    time.Time     `json:"updated_at"`
+	Environments []Environment `gorm:"foreignKey:ProjectID" json:"environments,omitempty"`
 }
 
 // Environment 将应用部署目标映射到当前集群中的 Namespace。

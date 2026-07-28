@@ -28,10 +28,7 @@ func (h *ApplicationHandler) ListProjects(c *gin.Context) {
 }
 
 func (h *ApplicationHandler) CreateProject(c *gin.Context) {
-	var req struct {
-		Name        string `json:"name"`
-		Description string `json:"description"`
-	}
+	var req projectRequest
 	if err := c.ShouldBindJSON(&req); err != nil || req.Name == "" {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "项目名称必填")
 		return
@@ -42,6 +39,73 @@ func (h *ApplicationHandler) CreateProject(c *gin.Context) {
 		return
 	}
 	model.Success(c, project)
+}
+
+func (h *ApplicationHandler) UpdateProject(c *gin.Context) {
+	projectID, err := parseID(c.Param("projectID"))
+	if err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "项目 ID 无效")
+		return
+	}
+	var req projectRequest
+	if err := c.ShouldBindJSON(&req); err != nil || req.Name == "" {
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "项目名称必填")
+		return
+	}
+	project, err := h.store.GetProject(projectID)
+	if err != nil {
+		model.Error(c, http.StatusNotFound, model.CodeNotFound, "项目不存在")
+		return
+	}
+	if project.Name != req.Name {
+		applicationCount, err := h.store.CountProjectApplications(projectID)
+		if err != nil {
+			model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+			return
+		}
+		if applicationCount > 0 {
+			model.Error(c, http.StatusConflict, model.CodeConflict, "项目已有应用，不能修改项目名称")
+			return
+		}
+	}
+	project.Name = req.Name
+	project.Description = req.Description
+	if err := h.store.UpdateProject(project); err != nil {
+		model.Error(c, http.StatusConflict, model.CodeConflict, "项目名称已存在")
+		return
+	}
+	model.Success(c, project)
+}
+
+func (h *ApplicationHandler) DeleteProject(c *gin.Context) {
+	projectID, err := parseID(c.Param("projectID"))
+	if err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "项目 ID 无效")
+		return
+	}
+	if _, err := h.store.GetProject(projectID); err != nil {
+		model.Error(c, http.StatusNotFound, model.CodeNotFound, "项目不存在")
+		return
+	}
+	environmentCount, err := h.store.CountProjectEnvironments(projectID)
+	if err != nil {
+		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		return
+	}
+	applicationCount, err := h.store.CountProjectApplications(projectID)
+	if err != nil {
+		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		return
+	}
+	if environmentCount > 0 || applicationCount > 0 {
+		model.Error(c, http.StatusConflict, model.CodeConflict, "项目仍关联环境或应用，无法删除")
+		return
+	}
+	if err := h.store.DeleteProject(projectID); err != nil {
+		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		return
+	}
+	model.Success(c, gin.H{"id": projectID})
 }
 
 func (h *ApplicationHandler) ListEnvironments(c *gin.Context) {
@@ -64,10 +128,11 @@ func (h *ApplicationHandler) CreateEnvironment(c *gin.Context) {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "项目 ID 无效")
 		return
 	}
-	var req struct {
-		Name      string `json:"name"`
-		Namespace string `json:"namespace"`
+	if _, err := h.store.GetProject(projectID); err != nil {
+		model.Error(c, http.StatusNotFound, model.CodeNotFound, "项目不存在")
+		return
 	}
+	var req environmentRequest
 	if err := c.ShouldBindJSON(&req); err != nil || req.Name == "" || req.Namespace == "" {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "环境名称和命名空间必填")
 		return
@@ -78,6 +143,90 @@ func (h *ApplicationHandler) CreateEnvironment(c *gin.Context) {
 		return
 	}
 	model.Success(c, environment)
+}
+
+func (h *ApplicationHandler) UpdateEnvironment(c *gin.Context) {
+	projectID, environmentID, ok := h.environmentRouteIDs(c)
+	if !ok {
+		return
+	}
+	var req environmentRequest
+	if err := c.ShouldBindJSON(&req); err != nil || req.Name == "" || req.Namespace == "" {
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "环境名称和命名空间必填")
+		return
+	}
+	environment, err := h.store.GetEnvironment(projectID, environmentID)
+	if err != nil {
+		model.Error(c, http.StatusNotFound, model.CodeNotFound, "环境不存在")
+		return
+	}
+	if environment.Name != req.Name || environment.Namespace != req.Namespace {
+		applicationCount, err := h.store.CountEnvironmentApplications(environmentID)
+		if err != nil {
+			model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+			return
+		}
+		if applicationCount > 0 {
+			model.Error(c, http.StatusConflict, model.CodeConflict, "环境已有应用，不能修改名称或命名空间")
+			return
+		}
+	}
+	environment.Name = req.Name
+	environment.Namespace = req.Namespace
+	if err := h.store.UpdateEnvironment(environment); err != nil {
+		model.Error(c, http.StatusConflict, model.CodeConflict, "环境名称已存在")
+		return
+	}
+	model.Success(c, environment)
+}
+
+func (h *ApplicationHandler) DeleteEnvironment(c *gin.Context) {
+	projectID, environmentID, ok := h.environmentRouteIDs(c)
+	if !ok {
+		return
+	}
+	if _, err := h.store.GetEnvironment(projectID, environmentID); err != nil {
+		model.Error(c, http.StatusNotFound, model.CodeNotFound, "环境不存在")
+		return
+	}
+	applicationCount, err := h.store.CountEnvironmentApplications(environmentID)
+	if err != nil {
+		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		return
+	}
+	if applicationCount > 0 {
+		model.Error(c, http.StatusConflict, model.CodeConflict, "环境仍关联应用，无法删除")
+		return
+	}
+	if err := h.store.DeleteEnvironment(environmentID); err != nil {
+		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		return
+	}
+	model.Success(c, gin.H{"id": environmentID})
+}
+
+type projectRequest struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+}
+
+type environmentRequest struct {
+	Name      string `json:"name"`
+	Namespace string `json:"namespace"`
+}
+
+func (h *ApplicationHandler) environmentRouteIDs(c *gin.Context) (uint, uint, bool) {
+	projectID, err := parseID(c.Param("projectID"))
+	if err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "项目 ID 无效")
+		return 0, 0, false
+	}
+	environmentID, err := parseID(c.Param("environmentID"))
+	if err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "环境 ID 无效")
+		return 0, 0, false
+	}
+	return projectID, environmentID, true
 }
 
 func (h *ApplicationHandler) ListApplications(c *gin.Context) {
