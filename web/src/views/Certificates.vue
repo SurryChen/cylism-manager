@@ -1,41 +1,42 @@
 <template>
   <div>
     <div class="page-header">
-      <h1 class="page-title">证书</h1>
+      <div><h1 class="page-title">证书</h1><p class="page-subtitle">查看 cert-manager 证书、签发者与 TLS Secret 状态</p></div>
       <button class="btn btn-primary" @click="showAdd = true">+ 添加证书</button>
     </div>
 
-    <div class="card section-gap">
-      <div class="filter-bar">
-        <div class="filter-control"><label class="form-label">命名空间：</label>
-        <select v-model="filterNs" class="form-select">
+    <div v-if="loaded && (certs.length || issuers.length)" class="filter-bar section-gap">
+      <div class="filter-control">
+        <label class="form-label" for="certificate-namespace">命名空间</label>
+        <select id="certificate-namespace" v-model="filterNs" class="form-select">
           <option value="">全部</option>
           <option v-for="ns in namespaces" :key="ns" :value="ns">{{ ns }}</option>
-        </select></div>
+        </select>
       </div>
     </div>
 
-    <div class="card">
-      <div v-if="filteredCerts.length === 0" class="empty-state">
-        <span class="empty-icon">🔒</span>
-        <span class="empty-text">暂无证书</span>
-      </div>
-      <div v-else class="table-wrap">
+    <div v-if="error" class="k8s-banner k8s-banner-warn section-gap">{{ error }}</div>
+
+    <section v-if="loaded && filteredCerts.length" class="card section-gap">
+      <div class="card-header"><h2 class="card-title">证书</h2><span class="section-count">{{ filteredCerts.length }} 项</span></div>
+      <div class="table-wrap">
         <table class="data-table">
           <thead>
-            <tr><th>名称</th><th>命名空间</th><th>域名</th><th>签发者</th><th>到期</th><th>状态</th><th></th></tr>
+            <tr><th>名称</th><th>命名空间</th><th>域名</th><th>签发者</th><th>TLS Secret</th><th>到期</th><th>状态</th><th></th></tr>
           </thead>
           <tbody>
             <tr v-for="cert in filteredCerts" :key="cert.namespace + '/' + cert.name">
               <td class="cell-primary">{{ cert.name }}</td>
               <td>{{ cert.namespace }}</td>
               <td>{{ cert.domains || '-' }}</td>
-              <td>{{ cert.issuer }}</td>
-              <td>{{ formatDate(cert.not_after) }}</td>
+              <td><span>{{ cert.issuer || '-' }}</span><small v-if="cert.issuer_kind" class="cell-secondary">{{ cert.issuer_kind }}</small></td>
+              <td>{{ cert.secret_name || '-' }}</td>
+              <td>{{ formatDate(cert.expiry_date) }}</td>
               <td>
                 <span class="badge" :class="certStatusClass(cert.status)">
                   {{ certStatusLabel(cert.status) }}
                 </span>
+                <small v-if="cert.reason" class="cert-reason">{{ cert.reason }}</small>
               </td>
               <td>
                 <div class="btn-group action-cell">
@@ -46,6 +47,18 @@
           </tbody>
         </table>
       </div>
+    </section>
+
+    <section v-if="loaded && visibleIssuers.length" class="card section-gap">
+      <div class="card-header"><h2 class="card-title">签发者</h2><span class="section-count">{{ visibleIssuers.length }} 项</span></div>
+      <div class="table-wrap"><table class="data-table"><thead><tr><th>名称</th><th>类型</th><th>命名空间</th><th>状态</th><th>原因</th></tr></thead><tbody>
+        <tr v-for="issuer in visibleIssuers" :key="issuerKey(issuer)"><td class="cell-primary">{{ issuer.name }}</td><td>{{ issuer.kind }}</td><td>{{ issuer.namespace || '集群级' }}</td><td><span class="badge" :class="issuer.ready ? 'badge-online' : 'badge-danger'">{{ issuer.ready ? '就绪' : '不可用' }}</span></td><td>{{ issuer.reason || '-' }}</td></tr>
+      </tbody></table></div>
+    </section>
+
+    <div v-if="loaded && !certs.length && !issuers.length && !error" class="empty-state certificate-empty">
+      <span class="empty-icon">🔒</span>
+      <span class="empty-text">尚未发现 cert-manager 证书或签发者</span>
     </div>
 
     <!-- Add Cert modal -->
@@ -69,11 +82,12 @@
           </div>
           <div class="form-group">
             <label class="form-label">签发者</label>
-            <input v-model="form.issuer" class="form-input" placeholder="letsencrypt-prod" required />
+            <select v-model="form.issuer" class="form-select" required :disabled="availableIssuers.length === 0"><option value="" disabled>{{ availableIssuers.length ? '选择可用 Issuer' : '当前命名空间没有可用签发者' }}</option><option v-for="issuer in availableIssuers" :key="issuerKey(issuer)" :value="issuerKey(issuer)">{{ issuer.kind }} · {{ issuer.name }}{{ issuer.namespace ? ` (${issuer.namespace})` : '' }}</option></select>
+            <p class="form-hint">仅显示状态为就绪的签发者；命名空间级 Issuer 必须与证书位于同一命名空间。</p>
           </div>
           <div class="modal-actions">
             <button type="button" class="btn" @click="showAdd = false">取消</button>
-            <button type="submit" class="btn btn-primary">确认添加</button>
+            <button type="submit" class="btn btn-primary" :disabled="submitting || availableIssuers.length === 0">{{ submitting ? '创建中...' : '确认添加' }}</button>
           </div>
         </form>
       </div>
@@ -96,47 +110,72 @@
 </template>
 
 <script setup>
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, computed, watch } from 'vue'
 import { api } from '../api/index.js'
 
 const certs = ref([])
+const issuers = ref([])
 const filterNs = ref('')
+const loaded = ref(false)
+const error = ref('')
+const submitting = ref(false)
 const showAdd = ref(false)
 const deleteTarget = ref(null)
-const form = ref({ name: '', namespace: 'default', domains: '', issuer: 'letsencrypt-prod' })
+const form = ref(newCertificateForm())
 
-const namespaces = computed(() => [...new Set(certs.value.map(c => c.namespace))].sort())
+const namespaces = computed(() => [...new Set([...certs.value.map(c => c.namespace), ...issuers.value.map(i => i.namespace).filter(Boolean)])].sort())
 const filteredCerts = computed(() =>
   filterNs.value ? certs.value.filter(c => c.namespace === filterNs.value) : certs.value
 )
+const visibleIssuers = computed(() => filterNs.value ? issuers.value.filter(i => !i.namespace || i.namespace === filterNs.value) : issuers.value)
+const availableIssuers = computed(() => issuers.value.filter(issuer => issuer.ready && (issuer.kind === 'ClusterIssuer' || issuer.namespace === form.value.namespace)))
 
 onMounted(fetchCerts)
+watch(() => form.value.namespace, ensureSelectedIssuer)
 
 async function fetchCerts() {
+  error.value = ''
   try {
-    certs.value = await api.get('/certs') || []
-  } catch (e) { console.error(e) }
+    const [certResult, issuerResult] = await Promise.all([api.get('/certs'), api.get('/certs/issuers')])
+    certs.value = certResult || []
+    issuers.value = issuerResult || []
+    ensureSelectedIssuer()
+  } catch (e) { error.value = e.message || '加载 cert-manager 资源失败' } finally { loaded.value = true }
 }
 
 async function createCert() {
+  const selectedIssuer = availableIssuers.value.find(issuer => issuerKey(issuer) === form.value.issuer)
+  if (!selectedIssuer) { error.value = '请选择与命名空间匹配的可用签发者'; return }
+  submitting.value = true
+  error.value = ''
   try {
     const body = { ...form.value }
     body.domains = body.domains.split(',').map(d => d.trim()).filter(Boolean)
+    body.issuer_ref = selectedIssuer.name
+    body.issuer_kind = selectedIssuer.kind
+    delete body.issuer
     await api.post('/certs', body)
     showAdd.value = false
-    form.value = { name: '', namespace: 'default', domains: '', issuer: 'letsencrypt-prod' }
-    fetchCerts()
-  } catch (e) { console.error(e) }
+    form.value = newCertificateForm()
+    await fetchCerts()
+  } catch (e) { error.value = e.message || '创建证书失败' } finally { submitting.value = false }
 }
 
 function confirmDelete(cert) { deleteTarget.value = cert }
 
 async function removeCert() {
+  error.value = ''
   try {
     await api.delete(`/certs/${deleteTarget.value.namespace}/${deleteTarget.value.name}`)
     deleteTarget.value = null
-    fetchCerts()
-  } catch (e) { console.error(e) }
+    await fetchCerts()
+  } catch (e) { error.value = e.message || '删除证书失败' }
+}
+
+function newCertificateForm() { return { name: '', namespace: 'default', domains: '', issuer: '' } }
+function issuerKey(issuer) { return `${issuer.kind}/${issuer.namespace || '_'}/${issuer.name}` }
+function ensureSelectedIssuer() {
+  if (!availableIssuers.value.some(issuer => issuerKey(issuer) === form.value.issuer)) form.value.issuer = availableIssuers.value[0] ? issuerKey(availableIssuers.value[0]) : ''
 }
 
 function formatDate(d) {
@@ -145,12 +184,18 @@ function formatDate(d) {
 }
 
 function certStatusLabel(s) {
+  s = String(s || '').toLowerCase()
   const m = { ready: '就绪', pending: '签发中', failed: '失败', expired: '已过期' }
   return m[s] || s || '-'
 }
 
 function certStatusClass(s) {
+  s = String(s || '').toLowerCase()
   const m = { ready: 'badge-online', pending: 'badge-deploying', failed: 'badge-danger', expired: 'badge-danger' }
   return m[s] || 'badge-offline'
 }
 </script>
+
+<style scoped>
+.section-count { color:var(--text-muted); font:10px/1 var(--font-mono); }.cell-secondary { display:block; margin-top:3px; color:var(--text-muted); font-size:10px; }.cert-reason { display:block; max-width:180px; margin-top:4px; color:var(--danger); font-size:10px; overflow-wrap:anywhere; }.form-hint { margin:6px 0 0; color:var(--text-muted); font-size:11px; line-height:1.5; }.certificate-empty { min-height:150px; }
+</style>
