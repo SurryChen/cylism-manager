@@ -1,7 +1,6 @@
 <template>
   <div>
     <div class="page-header">
-    <div v-if="loading" class="k8s-banner" style="margin-bottom:var(--space-16)">加载中...</div>
     <div v-if="error" class="k8s-banner k8s-banner-warn" style="margin-bottom:var(--space-16)">⚠ {{ error }}</div>
       <h1 class="page-title">工作负载</h1>
     </div>
@@ -23,7 +22,7 @@
         <table class="data-table">
           <thead><tr><th>名称</th><th>命名空间</th><th>副本</th><th>镜像</th><th>CPU</th><th>内存</th><th>年龄</th><th></th></tr></thead>
           <tbody>
-            <tr v-for="d in deployments" :key="d.namespace + '/' + d.name" @click="toggleDeployExpand(d)" class="clickable">
+            <tr v-for="d in safeDeployments" :key="d.namespace + '/' + d.name" @click="toggleDeployExpand(d)" class="clickable">
               <td class="cell-primary">{{ d.name }}</td><td>{{ d.namespace }}</td>
               <td><span :class="d.ready === d.replicas ? 'status-success' : 'status-warning'">{{ d.ready }}/{{ d.replicas }}</span></td>
               <td>{{ d.images?.[0] || '-' }}</td><td>{{ d.cpu || '-' }}</td><td>{{ d.memory || '-' }}</td><td>{{ d.age }}</td>
@@ -36,11 +35,13 @@
               </td>
             </tr>
             <!-- expanded pods -->
-            <tr v-if="expandedDeploy === d.namespace + '/' + d.name" v-for="pod in deployPods[d.namespace + '/' + d.name]" :key="pod.name" class="pod-row">
-              <td colspan="8">
-                <div class="pod-subrow">↳ {{ pod.name }} <span :class="pod.status === 'Running' ? 'badge badge-online' : 'badge badge-offline'">{{ pod.status }}</span> {{ pod.node }} · 重启 {{ pod.restarts }} · {{ pod.ip }}</div>
-              </td>
-            </tr>
+            <template v-if="expandedDeploy === d.namespace + '/' + d.name">
+              <tr v-for="pod in (deployPods[d.namespace + '/' + d.name] || [])" :key="pod.name" class="pod-row">
+                <td colspan="8">
+                  <div class="pod-subrow">↳ {{ pod.name }} <span :class="pod.status === 'Running' ? 'badge badge-online' : 'badge badge-offline'">{{ pod.status }}</span> {{ pod.node }} · 重启 {{ pod.restarts }} · {{ pod.ip }}</div>
+                </td>
+              </tr>
+            </template>
           </tbody>
         </table>
       </div>
@@ -55,7 +56,7 @@
         <table class="data-table">
           <thead><tr><th>名称</th><th>命名空间</th><th>副本</th><th>镜像</th><th>年龄</th><th></th></tr></thead>
           <tbody>
-            <tr v-for="s in statefulsets" :key="s.namespace + '/' + s.name">
+            <tr v-for="s in safeStatefulsets" :key="s.namespace + '/' + s.name">
               <td class="cell-primary">{{ s.name }}</td><td>{{ s.namespace }}</td>
               <td><span :class="s.ready === s.replicas ? 'status-success' : 'status-warning'">{{ s.ready }}/{{ s.replicas }}</span></td>
               <td>{{ s.images?.[0] || '-' }}</td><td>{{ s.age }}</td>
@@ -75,7 +76,7 @@
         <table class="data-table">
           <thead><tr><th>名称</th><th>命名空间</th><th>就绪/期望</th><th>镜像</th><th>节点选择器</th><th>年龄</th></tr></thead>
           <tbody>
-            <tr v-for="d in daemonsets" :key="d.namespace + '/' + d.name">
+            <tr v-for="d in safeDaemonsets" :key="d.namespace + '/' + d.name">
               <td class="cell-primary">{{ d.name }}</td><td>{{ d.namespace }}</td>
               <td><span :class="d.ready === d.desired ? 'status-success' : 'status-warning'">{{ d.ready }}/{{ d.desired }}</span></td>
               <td>{{ d.images?.[0] || '-' }}</td><td>{{ Object.entries(d.node_selector || {}).map(([k,v]) => `${k}=${v}`).join(', ') || '-' }}</td><td>{{ d.age }}</td>
@@ -119,7 +120,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { computed, ref, onMounted, onErrorCaptured } from 'vue'
 import { api } from '../api/index.js'
 
 const activeTab = ref('deployments')
@@ -135,13 +136,35 @@ const scaleDialog = ref(null)
 const imageDialog = ref(null)
 const rollbackDialog = ref(null)
 
+const safeDeployments = computed(() => (deployments.value || []).filter(d => d != null))
+const safeStatefulsets = computed(() => (statefulsets.value || []).filter(s => s != null))
+const safeDaemonsets = computed(() => (daemonsets.value || []).filter(d => d != null))
+
+// 组件级错误边界：捕获渲染异常，避免白屏
+onErrorCaptured((err, instance, info) => {
+  console.error('[Workloads] 渲染异常:', err, info)
+  error.value = `页面渲染异常: ${err.message || err}`
+  return false // 阻止向上冒泡
+})
+
 async function fetchData() {
   loading.value = true
   error.value = ''
   try {
-    try { deployments.value = await api.get('/k8s/deployments') || [] } catch(e) { console.error(e) }
-    try { statefulsets.value = await api.get('/k8s/statefulsets') || [] } catch(e) { console.error(e) }
-    try { daemonsets.value = await api.get('/k8s/daemonsets') || [] } catch(e) { console.error(e) }
+    const [deps, sts, ds] = await Promise.allSettled([
+      api.get('/k8s/deployments'),
+      api.get('/k8s/statefulsets'),
+      api.get('/k8s/daemonsets'),
+    ])
+    deployments.value = deps.status === 'fulfilled' ? (deps.value || []) : []
+    statefulsets.value = sts.status === 'fulfilled' ? (sts.value || []) : []
+    daemonsets.value = ds.status === 'fulfilled' ? (ds.value || []) : []
+    const failed = [deps, sts, ds].filter(r => r.status === 'rejected')
+    if (failed.length > 0) {
+      const msg = failed.map(r => r.reason?.message || '未知错误').join('\n')
+      error.value = msg
+      alert('⚠ 工作负载加载失败:\n' + msg)
+    }
   } catch(e) { error.value = '加载失败，请检查集群连接' }
   finally { loading.value = false }
 }
@@ -193,6 +216,15 @@ function doUpdateImage() {
 async function openRollbackDialog(d) {
   const result = await api.get(`/k8s/deployments/${d.namespace}/${d.name}/revisions`)
   rollbackDialog.value = { namespace: d.namespace, name: d.name, revisions: result || [] }
+}
+
+async function doRollback(revision) {
+  const d = rollbackDialog.value
+  try {
+    await api.post(`/k8s/deployments/${d.namespace}/${d.name}/rollback`, { revision })
+    rollbackDialog.value = null
+    fetchData()
+  } catch(e) { console.error(e) }
 }
 
 function openStsScaleDialog(s) {
