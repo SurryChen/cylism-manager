@@ -26,6 +26,7 @@ vi.mock('../api/index.js', () => ({
 
 beforeEach(() => {
   document.body.innerHTML = ''
+  sessionStorage.clear()
 })
 
 describe('Sites view with dual tabs', () => {
@@ -75,5 +76,22 @@ describe('Sites view with dual tabs', () => {
     await nextTick()
 
     expect(wrapper.text()).toContain('my-route')
+  })
+
+  it('renders the cached controller status while a refresh is pending', async () => {
+    const { api } = await import('../api/index.js')
+    sessionStorage.setItem('cylism.ingress-controller.status', JSON.stringify({
+      status: { type: 'Traefik', version: '3.7.4', running: true, crd: true, namespace: 'kube-system' },
+      expiresAt: Date.now() - 1
+    }))
+    api.get.mockImplementation(url => {
+      if (url.includes('ingress-controller')) return new Promise(() => {})
+      return Promise.resolve([])
+    })
+
+    const wrapper = mount(Sites)
+    await nextTick()
+
+    expect(wrapper.find('.controller-banner').text()).toContain('Traefik 3.7.4')
   })
 })

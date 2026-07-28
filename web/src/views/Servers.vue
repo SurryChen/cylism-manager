@@ -108,13 +108,15 @@
         <!-- Step 2: 确认 -->
         <div v-if="importState.phase === 'confirm'">
           <table style="width:100%;margin-bottom:16px;font-size:13px">
-            <tr><td style="color:var(--text-secondary);padding:6px 0">服务器</td><td>{{ importServer?.name }}</td></tr>
-            <tr><td style="color:var(--text-secondary);padding:6px 0">主机名</td><td>{{ importState.info?.hostname }}</td></tr>
-            <tr><td style="color:var(--text-secondary);padding:6px 0">集群节点</td><td>{{ importState.info?.node_name }}</td></tr>
-            <tr><td style="color:var(--text-secondary);padding:6px 0">角色</td><td><span class="badge" :class="importState.info?.role === 'control-plane' ? 'badge-online' : 'badge-offline'">{{ importState.info?.role }}</span></td></tr>
-            <tr><td style="color:var(--text-secondary);padding:6px 0">版本</td><td>{{ importState.info?.version }}</td></tr>
-            <tr><td style="color:var(--text-secondary);padding:6px 0">内网 IP</td><td>{{ importState.info?.internal_ip }}</td></tr>
-            <tr><td style="color:var(--text-secondary);padding:6px 0">操作系统</td><td>{{ importState.info?.os }}</td></tr>
+            <tbody>
+              <tr><td style="color:var(--text-secondary);padding:6px 0">服务器</td><td>{{ importServer?.name }}</td></tr>
+              <tr><td style="color:var(--text-secondary);padding:6px 0">主机名</td><td>{{ importState.info?.hostname }}</td></tr>
+              <tr><td style="color:var(--text-secondary);padding:6px 0">集群节点</td><td>{{ importState.info?.node_name }}</td></tr>
+              <tr><td style="color:var(--text-secondary);padding:6px 0">角色</td><td><span class="badge" :class="importState.info?.role === 'control-plane' ? 'badge-online' : 'badge-offline'">{{ importState.info?.role }}</span></td></tr>
+              <tr><td style="color:var(--text-secondary);padding:6px 0">版本</td><td>{{ importState.info?.version }}</td></tr>
+              <tr><td style="color:var(--text-secondary);padding:6px 0">内网 IP</td><td>{{ importState.info?.internal_ip }}</td></tr>
+              <tr><td style="color:var(--text-secondary);padding:6px 0">操作系统</td><td>{{ importState.info?.os }}</td></tr>
+            </tbody>
           </table>
           <div class="modal-actions">
             <button class="btn" @click="importState = null">取消</button>
@@ -208,9 +210,9 @@ import { Doughnut } from 'vue-chartjs'
 import { Chart as ChartJS, ArcElement, Tooltip } from 'chart.js'
 
 ChartJS.register(ArcElement, Tooltip)
-import { Terminal } from 'xterm'
-import { FitAddon } from 'xterm-addon-fit'
-import 'xterm/css/xterm.css'
+import { Terminal } from '@xterm/xterm'
+import { FitAddon } from '@xterm/addon-fit'
+import '@xterm/xterm/css/xterm.css'
 
 const servers = ref([])
 const showAdd = ref(false)
@@ -622,4 +624,3 @@ function resetForm() { form.value = { name: '', host: '', ssh_port: 22, ssh_user
 }
 
 </style>
-

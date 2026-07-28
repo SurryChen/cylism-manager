@@ -5,7 +5,10 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"sync"
+	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
@@ -18,6 +21,10 @@ type Client struct {
 	Clientset *kubernetes.Clientset
 	Config    *rest.Config
 	ctx       context.Context
+
+	ingressControllerMu          sync.Mutex
+	ingressControllerCache       *IngressControllerStatus
+	ingressControllerCacheExpiry time.Time
 }
 
 // NewClient 创建 K8s 客户端，支持 InCluster（生产）和 kubeconfig（开发）双模式
@@ -106,16 +113,14 @@ func (c *Client) CheckCRD(name string) (bool, error) {
 		Version:  "v1",
 		Resource: "customresourcedefinitions",
 	}
-	crds, err := dynamicClient.Resource(crdGVR).List(c.ctx, metav1.ListOptions{})
+	_, err = dynamicClient.Resource(crdGVR).Get(c.ctx, name, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return false, nil
+	}
 	if err != nil {
 		return false, err
 	}
-	for _, crd := range crds.Items {
-		if crd.GetName() == name {
-			return true, nil
-		}
-	}
-	return false, nil
+	return true, nil
 }
 
 // CheckRequiredCRDs 检测所有必需的 CRD

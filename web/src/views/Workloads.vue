@@ -1,9 +1,9 @@
 <template>
   <div>
     <div class="page-header">
-    <div v-if="error" class="k8s-banner k8s-banner-warn" style="margin-bottom:var(--space-16)">⚠ {{ error }}</div>
       <h1 class="page-title">工作负载</h1>
     </div>
+    <div v-if="error" class="k8s-banner k8s-banner-warn" style="margin-bottom:var(--space-16)">⚠ {{ error }}</div>
 
     <div class="card section-gap">
       <div class="table-tabs">
@@ -22,25 +22,27 @@
         <table class="data-table">
           <thead><tr><th>名称</th><th>命名空间</th><th>副本</th><th>镜像</th><th>CPU</th><th>内存</th><th>年龄</th><th></th></tr></thead>
           <tbody>
-            <tr v-for="d in safeDeployments" :key="d.namespace + '/' + d.name" @click="toggleDeployExpand(d)" class="clickable">
-              <td class="cell-primary">{{ d.name }}</td><td>{{ d.namespace }}</td>
-              <td><span :class="d.ready === d.replicas ? 'status-success' : 'status-warning'">{{ d.ready }}/{{ d.replicas }}</span></td>
-              <td>{{ d.images?.[0] || '-' }}</td><td>{{ d.cpu || '-' }}</td><td>{{ d.memory || '-' }}</td><td>{{ d.age }}</td>
-              <td>
-                <div class="btn-group action-cell" @click.stop>
-                  <button class="btn btn-sm" @click="openScaleDialog(d)">扩缩</button>
-                  <button class="btn btn-sm" @click="openImageDialog(d)">镜像</button>
-                  <button class="btn btn-sm" @click="openRollbackDialog(d)">回滚</button>
-                </div>
-              </td>
-            </tr>
-            <!-- expanded pods -->
-            <template v-if="expandedDeploy === d.namespace + '/' + d.name">
-              <tr v-for="pod in (deployPods[d.namespace + '/' + d.name] || [])" :key="pod.name" class="pod-row">
-                <td colspan="8">
-                  <div class="pod-subrow">↳ {{ pod.name }} <span :class="pod.status === 'Running' ? 'badge badge-online' : 'badge badge-offline'">{{ pod.status }}</span> {{ pod.node }} · 重启 {{ pod.restarts }} · {{ pod.ip }}</div>
+            <template v-for="d in safeDeployments" :key="d.namespace + '/' + d.name">
+              <tr @click="toggleDeployExpand(d)" class="clickable">
+                <td class="cell-primary">{{ d.name }}</td><td>{{ d.namespace }}</td>
+                <td><span :class="d.ready === d.replicas ? 'status-success' : 'status-warning'">{{ d.ready }}/{{ d.replicas }}</span></td>
+                <td>{{ d.images?.[0] || '-' }}</td><td>{{ d.cpu || '-' }}</td><td>{{ d.memory || '-' }}</td><td>{{ d.age }}</td>
+                <td>
+                  <div class="btn-group action-cell" @click.stop>
+                    <button class="btn btn-sm" @click="openScaleDialog(d)">扩缩</button>
+                    <button class="btn btn-sm" @click="openImageDialog(d)">镜像</button>
+                    <button class="btn btn-sm" @click="openRollbackDialog(d)">回滚</button>
+                  </div>
                 </td>
               </tr>
+              <!-- expanded pods -->
+              <template v-if="expandedDeploy === d.namespace + '/' + d.name">
+                <tr v-for="pod in (deployPods[d.namespace + '/' + d.name] || [])" :key="pod.name" class="pod-row">
+                  <td colspan="8">
+                    <div class="pod-subrow">↳ {{ pod.name }} <span :class="pod.status === 'Running' ? 'badge badge-online' : 'badge badge-offline'">{{ pod.status }}</span> {{ pod.node }} · 重启 {{ pod.restarts }} · {{ pod.ip }}</div>
+                  </td>
+                </tr>
+              </template>
             </template>
           </tbody>
         </table>
@@ -163,7 +165,6 @@ async function fetchData() {
     if (failed.length > 0) {
       const msg = failed.map(r => r.reason?.message || '未知错误').join('\n')
       error.value = msg
-      alert('⚠ 工作负载加载失败:\n' + msg)
     }
   } catch(e) { error.value = '加载失败，请检查集群连接' }
   finally { loading.value = false }

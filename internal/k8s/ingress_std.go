@@ -4,10 +4,15 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
 	networkingv1 "k8s.io/api/networking/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
+
+const ingressControllerCacheTTL = time.Minute
 
 // IngressStdInfo 标准 Ingress 展示信息
 type IngressStdInfo struct {
@@ -136,6 +141,22 @@ func (c *Client) DeleteIngress(namespace, name string) error {
 
 // DetectIngressController 检测 Ingress Controller
 func (c *Client) DetectIngressController() (*IngressControllerStatus, error) {
+	c.ingressControllerMu.Lock()
+	defer c.ingressControllerMu.Unlock()
+
+	if cached := cachedIngressControllerStatus(c.ingressControllerCache, c.ingressControllerCacheExpiry, time.Now()); cached != nil {
+		return cached, nil
+	}
+
+	status, err := c.detectIngressController()
+	if err == nil {
+		c.ingressControllerCache = cloneIngressControllerStatus(status)
+		c.ingressControllerCacheExpiry = time.Now().Add(ingressControllerCacheTTL)
+	}
+	return status, err
+}
+
+func (c *Client) detectIngressController() (*IngressControllerStatus, error) {
 	// 1. Check Traefik CRD
 	traefikCRD, _ := c.CheckCRD("ingressroutes.traefik.io")
 
@@ -144,42 +165,71 @@ func (c *Client) DetectIngressController() (*IngressControllerStatus, error) {
 		CRD:  traefikCRD,
 	}
 
+	// K3s installs Traefik as kube-system/traefik. Prefer the direct read
+	// over scanning every deployment in the cluster.
+	traefik, err := c.Clientset.AppsV1().Deployments("kube-system").Get(c.ctx, "traefik", metav1.GetOptions{})
+	if err == nil {
+		return ingressControllerStatusFromDeployment(traefik, traefikCRD), nil
+	}
+	if !apierrors.IsNotFound(err) {
+		return status, fmt.Errorf("get kube-system/traefik deployment: %w", err)
+	}
+
+	// Compatibility fallback for non-K3s controller installations.
 	deployList, err := c.Clientset.AppsV1().Deployments("").List(c.ctx, metav1.ListOptions{})
 	if err != nil {
-		// Can't query deployments — return what we have with the CRD error
 		return status, fmt.Errorf("list deployments: %w", err)
 	}
 
-	// Try Traefik
 	for _, d := range deployList.Items {
 		if strings.Contains(d.Name, "traefik") {
-			status.Type = "Traefik"
-			status.Namespace = d.Namespace
-			status.Running = d.Status.ReadyReplicas > 0
-			for _, c := range d.Spec.Template.Spec.Containers {
-				if strings.Contains(c.Image, "traefik") {
-					parts := strings.SplitN(c.Image, ":", 2)
-					if len(parts) == 2 {
-						status.Version = parts[1]
-					}
-				}
-			}
+			return ingressControllerStatusFromDeployment(&d, traefikCRD), nil
 		}
 	}
 
-	// Fallback: NGINX Ingress
-	if status.Type == "Unknown" {
-		for _, d := range deployList.Items {
-			if strings.Contains(d.Name, "nginx-ingress") || strings.Contains(d.Name, "ingress-nginx") {
-				status.Type = "NGINX Ingress"
-				status.Namespace = d.Namespace
-				status.Running = d.Status.ReadyReplicas > 0
-				break
-			}
+	for _, d := range deployList.Items {
+		if strings.Contains(d.Name, "nginx-ingress") || strings.Contains(d.Name, "ingress-nginx") {
+			status.Type = "NGINX Ingress"
+			status.Namespace = d.Namespace
+			status.Running = d.Status.ReadyReplicas > 0
+			break
 		}
 	}
 
 	return status, nil
+}
+
+func ingressControllerStatusFromDeployment(deployment *appsv1.Deployment, crd bool) *IngressControllerStatus {
+	status := &IngressControllerStatus{
+		Type:      "Traefik",
+		CRD:       crd,
+		Namespace: deployment.Namespace,
+		Running:   deployment.Status.ReadyReplicas > 0,
+	}
+	for _, container := range deployment.Spec.Template.Spec.Containers {
+		if strings.Contains(container.Image, "traefik") {
+			if tagIndex := strings.LastIndex(container.Image, ":"); tagIndex > strings.LastIndex(container.Image, "/") {
+				status.Version = container.Image[tagIndex+1:]
+			}
+			break
+		}
+	}
+	return status
+}
+
+func cachedIngressControllerStatus(status *IngressControllerStatus, expiresAt, now time.Time) *IngressControllerStatus {
+	if status == nil || !expiresAt.After(now) {
+		return nil
+	}
+	return cloneIngressControllerStatus(status)
+}
+
+func cloneIngressControllerStatus(status *IngressControllerStatus) *IngressControllerStatus {
+	if status == nil {
+		return nil
+	}
+	copy := *status
+	return &copy
 }
 
 func ingressStdToInfo(ing *networkingv1.Ingress) IngressStdInfo {
