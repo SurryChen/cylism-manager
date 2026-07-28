@@ -70,6 +70,18 @@ func TestExecuteReleaseMarksFailure(t *testing.T) {
 	}
 }
 
+func TestCreateReleasePersistsRegistryReference(t *testing.T) {
+	st, _ := store.New(":memory:")
+	app := createTestApplication(t, st)
+	service := NewService(st, &fakeApplier{})
+	spec := validTestReleaseSpec()
+	spec.RegistryID = 12
+	release, err := service.CreateRelease(context.Background(), app.ID, 1, spec)
+	if err != nil || release.ImageRegistryID == nil || *release.ImageRegistryID != 12 {
+		t.Fatalf("expected registry reference to be persisted, got %+v err=%v", release, err)
+	}
+}
+
 func TestRetryAndRollbackUseSanitizedSnapshot(t *testing.T) {
 	st, _ := store.New(":memory:")
 	app := createTestApplication(t, st)

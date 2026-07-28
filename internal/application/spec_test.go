@@ -1,6 +1,9 @@
 package application
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
+)
 
 func TestValidateReleaseSpec(t *testing.T) {
 	spec := ReleaseSpec{
@@ -72,5 +75,39 @@ func TestRenderResourcesUsesSecretReferenceWhenSnapshotIsRedacted(t *testing.T) 
 	}
 	if len(resources.Deployment.Spec.Template.Spec.Containers[0].EnvFrom) != 1 {
 		t.Fatal("expected the existing Secret to remain referenced")
+	}
+}
+
+func TestRenderResourcesAddsImagePullSecretForPrivateRegistry(t *testing.T) {
+	spec := validTestReleaseSpec()
+	spec.Image = "harbor.example.com/commerce/order-api:1.0.0"
+	spec.RegistryID = 12
+	spec.RegistryEndpoint = "harbor.example.com"
+	spec.RegistryAuthType = "basic"
+	spec.RegistryUsername = "robot$commerce"
+	spec.RegistryCredential = "registry-password"
+
+	resources, err := RenderResources(ApplicationContext{ProjectName: "commerce", EnvironmentName: "production", ApplicationName: "order-api", Namespace: "commerce-prod", ReleaseSequence: 5}, spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resources.ImagePullSecret == nil || resources.ImagePullSecret.Name != "cylism-regcred-12" {
+		t.Fatalf("expected registry pull secret, got %+v", resources.ImagePullSecret)
+	}
+	if resources.ImagePullSecret.Type != "kubernetes.io/dockerconfigjson" {
+		t.Fatalf("unexpected pull secret type: %s", resources.ImagePullSecret.Type)
+	}
+	var dockerConfig map[string]map[string]map[string]string
+	if err := json.Unmarshal(resources.ImagePullSecret.Data[".dockerconfigjson"], &dockerConfig); err != nil {
+		t.Fatalf("decode docker config: %v", err)
+	}
+	if dockerConfig["auths"]["harbor.example.com"]["username"] != "robot$commerce" {
+		t.Fatalf("unexpected docker config: %+v", dockerConfig)
+	}
+	if got := resources.Deployment.Spec.Template.Spec.ImagePullSecrets; len(got) != 1 || got[0].Name != "cylism-regcred-12" {
+		t.Fatalf("expected deployment image pull secret, got %+v", got)
+	}
+	if resources.SanitizedSpec.RegistryCredential != "" || resources.SanitizedSpec.RegistryUsername != "" || resources.SanitizedSpec.RegistryEndpoint != "" {
+		t.Fatalf("registry credentials must not be stored in the snapshot: %+v", resources.SanitizedSpec)
 	}
 }

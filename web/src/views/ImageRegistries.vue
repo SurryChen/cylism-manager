@@ -1,0 +1,52 @@
+<template>
+  <div>
+    <div class="page-header"><div><h1 class="page-title">镜像仓库</h1><p class="page-subtitle">配置应用发布可使用的外部 OCI 镜像仓库与项目授权</p></div><button class="btn btn-primary" @click="openCreate">+ 新建镜像仓库</button></div>
+    <div v-if="error" class="k8s-banner k8s-banner-warn section-gap">⚠ {{ error }}</div>
+
+    <div v-if="loaded && registries.length > 0" class="card section-gap"><div class="table-wrap"><table class="data-table"><thead><tr><th>名称</th><th>地址</th><th>认证</th><th>项目授权</th><th>状态</th><th>操作</th></tr></thead><tbody>
+      <tr v-for="registry in registries" :key="registry.id"><td class="cell-primary">{{ registry.name }}</td><td>{{ registry.endpoint }}</td><td><span>{{ authLabel(registry.auth_type) }}</span><small v-if="registry.credential_configured" class="credential-state">凭据已配置</small></td><td><span v-if="registry.projects?.length">{{ registry.projects.map(project => project.name).join('、') }}</span><span v-else>-</span></td><td><span class="badge" :class="registry.enabled ? 'badge-online' : 'badge-offline'">{{ registry.enabled ? '已启用' : '已停用' }}</span></td><td class="action-cell"><div class="btn-group"><button class="btn btn-sm" @click="openEdit(registry)">编辑</button><button class="btn btn-sm btn-danger" title="删除镜像仓库" @click="deleteTarget = registry">删除</button></div></td></tr>
+    </tbody></table></div></div>
+
+    <div v-if="showModal" class="overlay" @click.self="closeModal"><div class="modal registry-modal"><h2 class="modal-title">{{ editingRegistry ? '编辑镜像仓库' : '新建镜像仓库' }}</h2><form @submit.prevent="saveRegistry">
+      <div class="form-group"><label class="form-label">名称</label><input v-model.trim="form.name" class="form-input" required placeholder="commerce-harbor" /></div>
+      <div class="form-group"><label class="form-label">仓库地址</label><input v-model.trim="form.endpoint" class="form-input" required placeholder="harbor.example.com" /></div>
+      <div class="form-row"><div class="form-group"><label class="form-label">认证方式</label><select v-model="form.auth_type" class="form-select"><option value="anonymous">匿名访问</option><option value="basic">账号密码</option><option value="token">Token</option></select></div><div v-if="form.auth_type !== 'anonymous'" class="form-group"><label class="form-label">账号</label><input v-model.trim="form.username" class="form-input" :required="form.auth_type === 'basic'" placeholder="robot$commerce" /></div></div>
+      <div v-if="form.auth_type !== 'anonymous'" class="form-group"><label class="form-label">{{ editingRegistry ? '新凭据（留空则不修改）' : '密码或 Token' }}</label><input v-model="form.credential" type="password" class="form-input" :required="!editingRegistry" autocomplete="new-password" /></div>
+      <label class="check-row"><input v-model="form.enabled" type="checkbox" /> 启用此仓库</label>
+      <div class="form-group"><label class="form-label">授权项目</label><div class="project-options"><label v-for="project in projects" :key="project.id" class="project-option"><input v-model="form.project_ids" type="checkbox" :value="project.id" /> {{ project.name }}</label><span v-if="projects.length === 0" class="form-hint">请先创建项目</span></div></div>
+      <div class="modal-actions"><button type="button" class="btn" @click="closeModal">取消</button><button class="btn btn-primary" :disabled="submitting || form.project_ids.length === 0">{{ submitting ? '保存中...' : '保存' }}</button></div>
+    </form></div></div>
+
+    <div v-if="deleteTarget" class="overlay" @click.self="deleteTarget = null"><div class="modal"><h2 class="modal-title">删除镜像仓库</h2><p class="confirm-copy">确认删除“{{ deleteTarget.name }}”吗？已有发布记录引用时无法删除。</p><div class="modal-actions"><button class="btn" @click="deleteTarget = null">取消</button><button class="btn btn-danger" :disabled="submitting" @click="deleteRegistry">删除</button></div></div></div>
+  </div>
+</template>
+
+<script setup>
+import { onMounted, ref } from 'vue'
+import { api } from '../api/index.js'
+
+const registries = ref([])
+const projects = ref([])
+const loaded = ref(false)
+const error = ref('')
+const submitting = ref(false)
+const showModal = ref(false)
+const editingRegistry = ref(null)
+const deleteTarget = ref(null)
+const form = ref(newRegistryForm())
+
+function newRegistryForm() { return { name: '', endpoint: '', auth_type: 'anonymous', username: '', credential: '', enabled: true, project_ids: [] } }
+function authLabel(type) { return type === 'basic' ? '账号密码' : type === 'token' ? 'Token' : '匿名访问' }
+async function fetchData() { error.value = ''; try { const [registryResult, projectResult] = await Promise.all([api.get('/image-registries'), api.get('/projects')]); registries.value = registryResult || []; projects.value = projectResult || [] } catch (e) { error.value = e.message || '加载镜像仓库失败' } finally { loaded.value = true } }
+function openCreate() { editingRegistry.value = null; form.value = newRegistryForm(); showModal.value = true }
+function openEdit(registry) { editingRegistry.value = registry; form.value = { name: registry.name, endpoint: registry.endpoint, auth_type: registry.auth_type, username: registry.username || '', credential: '', enabled: registry.enabled, project_ids: (registry.projects || []).map(project => project.id) }; showModal.value = true }
+function closeModal() { showModal.value = false; editingRegistry.value = null; form.value = newRegistryForm() }
+async function saveRegistry() { submitting.value = true; error.value = ''; try { const payload = { ...form.value, project_ids: [...form.value.project_ids] }; if (editingRegistry.value && !payload.credential) delete payload.credential; if (editingRegistry.value) await api.put(`/image-registries/${editingRegistry.value.id}`, payload); else await api.post('/image-registries', payload); closeModal(); await fetchData() } catch (e) { error.value = e.message || '保存镜像仓库失败' } finally { submitting.value = false } }
+async function deleteRegistry() { if (!deleteTarget.value) return; submitting.value = true; error.value = ''; try { await api.delete(`/image-registries/${deleteTarget.value.id}`); deleteTarget.value = null; await fetchData() } catch (e) { error.value = e.message || '删除镜像仓库失败' } finally { submitting.value = false } }
+
+onMounted(fetchData)
+</script>
+
+<style scoped>
+.page-header { display:flex; align-items:flex-start; justify-content:space-between; gap:var(--space-16); }.page-subtitle { margin:var(--space-4) 0 0; color:var(--text-secondary); font-size:13px; }.registry-modal { width:min(560px, calc(100vw - 32px)); }.credential-state { display:block; margin-top:3px; color:var(--text-muted); font-size:11px; }.check-row { display:flex; align-items:center; gap:8px; margin:var(--space-12) 0; color:var(--text-secondary); font-size:13px; }.project-options { display:flex; flex-wrap:wrap; gap:8px; }.project-option { display:inline-flex; align-items:center; gap:6px; padding:6px 8px; border:1px solid var(--border-muted); border-radius:var(--radius-control); color:var(--text-secondary); font-size:12px; }.form-hint { color:var(--text-muted); font-size:12px; }.confirm-copy { margin:0; color:var(--text-secondary); font-size:13px; }@media (max-width:640px) { .page-header { align-items:stretch; flex-direction:column; }.page-header .btn { width:100%; } }
+</style>

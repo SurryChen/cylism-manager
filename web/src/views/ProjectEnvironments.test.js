@@ -32,6 +32,7 @@ describe('ProjectEnvironments view', () => {
     expect(wrapper.text()).toContain('新建环境')
     expect(wrapper.text()).toContain('编辑')
     expect(wrapper.text()).toContain('删除')
+    expect(wrapper.find('.btn-danger').attributes('disabled')).toBeUndefined()
   })
 
   it('does not render an empty list frame when a project has no environments', async () => {

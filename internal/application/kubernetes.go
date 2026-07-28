@@ -48,6 +48,11 @@ func (a *KubernetesApplier) Preflight(ctx context.Context, endpoint EndpointSpec
 }
 
 func (a *KubernetesApplier) Apply(ctx context.Context, resources *RenderedResources) error {
+	if resources.ImagePullSecret != nil {
+		if err := a.applySecret(ctx, resources.ImagePullSecret); err != nil {
+			return err
+		}
+	}
 	if resources.ConfigMap != nil {
 		if err := a.applyConfigMap(ctx, resources.ConfigMap); err != nil {
 			return err

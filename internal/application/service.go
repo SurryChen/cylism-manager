@@ -49,13 +49,18 @@ func (s *Service) CreateRelease(ctx context.Context, applicationID, userID uint,
 	if err != nil {
 		return nil, fmt.Errorf("编码发布快照: %w", err)
 	}
+	var registryID *uint
+	if spec.RegistryID != 0 {
+		registryID = &spec.RegistryID
+	}
 	release := &model.Release{
-		ApplicationID: applicationID,
-		Sequence:      sequence,
-		Image:         spec.Image,
-		DesiredSpec:   string(snapshot),
-		Status:        model.ReleaseStatusDraft,
-		CreatedBy:     userID,
+		ApplicationID:   applicationID,
+		Sequence:        sequence,
+		Image:           spec.Image,
+		ImageRegistryID: registryID,
+		DesiredSpec:     string(snapshot),
+		Status:          model.ReleaseStatusDraft,
+		CreatedBy:       userID,
 	}
 	if err := s.store.CreateRelease(release); err != nil {
 		return nil, fmt.Errorf("创建发布记录: %w", err)

@@ -14,6 +14,9 @@ import Configs from '../views/Configs.vue'
 import SystemSettings from '../views/SystemSettings.vue'
 import Applications from '../views/Applications.vue'
 import ProjectEnvironments from '../views/ProjectEnvironments.vue'
+import ApplicationDetails from '../views/ApplicationDetails.vue'
+import ReleaseDetails from '../views/ReleaseDetails.vue'
+import ImageRegistries from '../views/ImageRegistries.vue'
 
 const routes = [
   { path: '/login', component: Login, meta: { public: true } },
@@ -22,6 +25,9 @@ const routes = [
   { path: '/applications/projects', component: Applications, props: { section: 'projects' } },
   { path: '/applications/projects/:projectID', component: ProjectEnvironments, props: true },
   { path: '/applications/releases', component: Applications, props: { section: 'releases' } },
+  { path: '/applications/registries', component: ImageRegistries },
+  { path: '/applications/:applicationID/releases/:releaseID', component: ReleaseDetails, props: true },
+  { path: '/applications/:applicationID', component: ApplicationDetails, props: true },
   { path: '/servers', component: Servers },
   { path: '/cluster', component: Cluster },
   { path: '/workloads', component: Workloads },
