@@ -11,7 +11,7 @@ import (
 )
 
 type ResourceApplier interface {
-	Preflight(ctx context.Context, endpoint EndpointSpec) error
+	Preflight(ctx context.Context, application ApplicationContext, endpoint EndpointSpec) error
 	Apply(ctx context.Context, resources *RenderedResources) error
 	WaitReady(ctx context.Context, application ApplicationContext, spec ReleaseSpec) error
 }
@@ -76,15 +76,15 @@ func (s *Service) ExecuteRelease(ctx context.Context, releaseID uint, applicatio
 	if err != nil {
 		return err
 	}
-	context := applicationContext(application, release.Sequence)
-	resources, err := RenderResources(context, spec)
+	applicationContext := applicationContext(application, release.Sequence)
+	resources, err := RenderResources(applicationContext, spec)
 	if err != nil {
 		return s.failRelease(releaseID, "preflight", err)
 	}
 	if err := s.transition(release, model.ReleaseStatusValidating); err != nil {
 		return err
 	}
-	if err := s.runStep(releaseID, "preflight", func() error { return s.applier.Preflight(ctx, spec.Endpoint) }); err != nil {
+	if err := s.runStep(releaseID, "preflight", func() error { return s.applier.Preflight(ctx, applicationContext, spec.Endpoint) }); err != nil {
 		return s.failRelease(releaseID, "preflight", err)
 	}
 	if err := s.transition(release, model.ReleaseStatusApplying); err != nil {
@@ -96,7 +96,7 @@ func (s *Service) ExecuteRelease(ctx context.Context, releaseID uint, applicatio
 	if err := s.transition(release, model.ReleaseStatusWaitingReady); err != nil {
 		return err
 	}
-	if err := s.runStep(releaseID, "wait_ready", func() error { return s.applier.WaitReady(ctx, context, spec) }); err != nil {
+	if err := s.runStep(releaseID, "wait_ready", func() error { return s.applier.WaitReady(ctx, applicationContext, spec) }); err != nil {
 		return s.failRelease(releaseID, "wait_ready", err)
 	}
 	return s.transition(release, model.ReleaseStatusSucceeded)

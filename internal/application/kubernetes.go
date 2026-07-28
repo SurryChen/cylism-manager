@@ -27,9 +27,19 @@ func NewKubernetesApplier(client *k8sclient.Client) *KubernetesApplier {
 	return &KubernetesApplier{Client: client, ReadinessTimeout: 2 * time.Minute}
 }
 
-func (a *KubernetesApplier) Preflight(ctx context.Context, endpoint EndpointSpec) error {
+func (a *KubernetesApplier) Preflight(ctx context.Context, application ApplicationContext, endpoint EndpointSpec) error {
 	if a.Client == nil || a.Client.Clientset == nil {
 		return fmt.Errorf("Kubernetes 客户端未初始化")
+	}
+	namespace, err := a.Client.Clientset.CoreV1().Namespaces().Get(ctx, application.Namespace, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return fmt.Errorf("环境命名空间 %q 不存在，请在环境页面创建或同步命名空间", application.Namespace)
+	}
+	if err != nil {
+		return fmt.Errorf("检查环境命名空间: %w", err)
+	}
+	if namespace.Status.Phase != corev1.NamespaceActive {
+		return fmt.Errorf("环境命名空间 %q 未就绪", application.Namespace)
 	}
 	if endpoint.Exposure != ExposurePublic {
 		return nil

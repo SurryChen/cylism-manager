@@ -18,7 +18,7 @@ import (
 
 // Client K8s 客户端封装
 type Client struct {
-	Clientset *kubernetes.Clientset
+	Clientset kubernetes.Interface
 	Config    *rest.Config
 	ctx       context.Context
 
@@ -99,6 +99,9 @@ func newClientFromRestConfig(config *rest.Config) (*Client, error) {
 
 // Ctx 返回客户端上下文
 func (c *Client) Ctx() context.Context {
+	if c.ctx == nil {
+		return context.Background()
+	}
 	return c.ctx
 }
 
