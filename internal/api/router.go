@@ -89,6 +89,7 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 		nodeRegistryMirrors.POST("", h.Create)
 		nodeRegistryMirrors.PUT("/:id", h.Update)
 		nodeRegistryMirrors.DELETE("/:id", h.Delete)
+		nodeRegistryMirrors.POST("/:id/verify", h.Verify)
 		nodeRegistryMirrors.POST("/:id/apply", h.Apply)
 	}
 	chartRepositories := apiGroup.Group("/chart-repositories")
@@ -167,14 +168,24 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 	}
 
 	// Certificate 管理
-	certHandler := NewCertHandler(s)
+	certHandler := NewCertHandlerWithEncryption(s, encKey)
 	certs := apiGroup.Group("/certs")
 	{
 		certs.GET("/status", certHandler.Status)
 		certs.POST("/install", certHandler.Install)
 		certs.GET("", certHandler.ListCerts)
 		certs.GET("/issuers", certHandler.ListIssuers)
+		certs.POST("/issuers", certHandler.CreateIssuer)
+		certs.PUT("/issuers/:kind/:namespace/:name", certHandler.UpdateIssuer)
+		certs.DELETE("/issuers/:kind/:namespace/:name", certHandler.DeleteIssuer)
+		certs.GET("/dns-credentials", certHandler.ListDNSCredentials)
+		certs.POST("/dns-credentials", certHandler.CreateDNSCredential)
+		certs.PUT("/dns-credentials/:id", certHandler.UpdateDNSCredential)
+		certs.DELETE("/dns-credentials/:id", certHandler.DeleteDNSCredential)
+		certs.GET("/alidns-webhook/status", certHandler.AliDNSWebhookStatus)
+		certs.POST("/alidns-webhook/install", certHandler.InstallAliDNSWebhook)
 		certs.POST("", certHandler.CreateCert)
+		certs.GET("/:namespace/:name/operations", certHandler.ListOperations)
 		certs.DELETE("/:namespace/:name", certHandler.DeleteCert)
 	}
 

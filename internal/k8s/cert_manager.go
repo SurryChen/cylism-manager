@@ -17,8 +17,12 @@ const (
 	CertManagerStateUnauthorized = "unauthorized"
 	CertManagerStateUnavailable  = "unavailable"
 
-	certManagerNamespace = "cert-manager"
-	certManagerHelmName  = "cylism-cert-manager"
+	certManagerNamespace  = "cert-manager"
+	certManagerHelmName   = "cylism-cert-manager"
+	aliDNSWebhookHelmName = "cylism-alidns-webhook"
+	aliDNSWebhookRepo     = "https://wjiec.github.io/alidns-webhook"
+	aliDNSWebhookChart    = "alidns-webhook"
+	aliDNSWebhookVersion  = "1.0.3"
 )
 
 var helmChartGVR = schema.GroupVersionResource{Group: "helm.cattle.io", Version: "v1", Resource: "helmcharts"}
@@ -35,6 +39,66 @@ type CertManagerStatus struct {
 	CAInjectorReady    bool   `json:"ca_injector_ready"`
 	InstallerAvailable bool   `json:"installer_available"`
 	InstallationName   string `json:"installation_name,omitempty"`
+}
+
+// AliDNSWebhookStatus describes the fixed cert-manager DNS-01 solver prerequisite.
+type AliDNSWebhookStatus struct {
+	State            string `json:"state"`
+	Message          string `json:"message"`
+	Ready            bool   `json:"ready"`
+	InstallationName string `json:"installation_name,omitempty"`
+}
+
+func (c *Client) AliDNSWebhookStatus() *AliDNSWebhookStatus {
+	status := &AliDNSWebhookStatus{State: CertManagerStateUnavailable, Message: "Kubernetes 客户端未初始化", InstallationName: aliDNSWebhookHelmName}
+	if c == nil || c.Clientset == nil {
+		return status
+	}
+	base := c.CertManagerStatus()
+	if base.State != CertManagerStateReady {
+		status.State, status.Message = base.State, "cert-manager 未就绪: "+base.Message
+		return status
+	}
+	if !c.helmChartInstallerAvailable() {
+		status.State, status.Message = CertManagerStateUnavailable, "当前集群未提供 K3s HelmChart 安装器"
+		return status
+	}
+	exists, failed, detail := c.helmChartState(aliDNSWebhookHelmName)
+	if !exists {
+		status.State, status.Message = CertManagerStateNotInstalled, "AliDNS Webhook 尚未安装"
+		return status
+	}
+	if failed {
+		status.State, status.Message = CertManagerStateDegraded, "AliDNS Webhook 安装失败: "+detail
+		return status
+	}
+	if deploymentReady(c, aliDNSWebhookHelmName) {
+		status.State, status.Message, status.Ready = CertManagerStateReady, "AliDNS Webhook 已就绪", true
+		return status
+	}
+	status.State, status.Message = CertManagerStateInstalling, "AliDNS Webhook 正在安装，等待控制组件就绪"
+	return status
+}
+
+func (c *Client) InstallAliDNSWebhook() (*AliDNSWebhookStatus, error) {
+	status := c.AliDNSWebhookStatus()
+	if status.Ready || status.State == CertManagerStateInstalling {
+		return status, nil
+	}
+	if status.State != CertManagerStateNotInstalled {
+		return status, fmt.Errorf("%s", status.Message)
+	}
+	dynamicClient, err := c.dynamicClient()
+	if err != nil {
+		return status, err
+	}
+	chart := &unstructured.Unstructured{Object: map[string]interface{}{"apiVersion": "helm.cattle.io/v1", "kind": "HelmChart", "metadata": map[string]interface{}{"name": aliDNSWebhookHelmName, "namespace": "kube-system", "labels": map[string]interface{}{"app.kubernetes.io/managed-by": "cylism-manager"}}, "spec": map[string]interface{}{"chart": aliDNSWebhookChart, "repo": aliDNSWebhookRepo, "version": aliDNSWebhookVersion, "targetNamespace": certManagerNamespace, "createNamespace": true, "valuesContent": "groupName: acme.cylism.io\n"}}}
+	_, err = dynamicClient.Resource(helmChartGVR).Namespace("kube-system").Create(c.Ctx(), chart, metav1.CreateOptions{})
+	if err != nil && !apierrors.IsAlreadyExists(err) {
+		return status, fmt.Errorf("创建 AliDNS Webhook HelmChart: %w", err)
+	}
+	status.State, status.Message = CertManagerStateInstalling, "AliDNS Webhook 安装任务已创建，等待 Helm 控制器完成安装"
+	return status, nil
 }
 
 func (c *Client) CertManagerStatus() *CertManagerStatus {
@@ -167,7 +231,7 @@ func (c *Client) checkCertManagerAccess() error {
 	for _, resource := range []struct {
 		gvr        schema.GroupVersionResource
 		namespaced bool
-	}{{certGVR, true}, {issuerGVR, true}, {clusterIssuerGVR, false}} {
+	}{{certGVR, true}, {issuerGVR, true}, {clusterIssuerGVR, false}, {certificateRequestGVR, true}, {orderGVR, true}, {challengeGVR, true}} {
 		if resource.namespaced {
 			_, err = dynamicClient.Resource(resource.gvr).Namespace("").List(c.Ctx(), metav1.ListOptions{Limit: 1})
 		} else {
@@ -191,11 +255,15 @@ func (c *Client) helmChartInstallerAvailable() bool {
 }
 
 func (c *Client) certManagerHelmChartState() (exists, failed bool, detail string) {
+	return c.helmChartState(certManagerHelmName)
+}
+
+func (c *Client) helmChartState(name string) (exists, failed bool, detail string) {
 	dynamicClient, err := c.dynamicClient()
 	if err != nil {
 		return false, false, ""
 	}
-	chart, err := dynamicClient.Resource(helmChartGVR).Namespace("kube-system").Get(c.Ctx(), certManagerHelmName, metav1.GetOptions{})
+	chart, err := dynamicClient.Resource(helmChartGVR).Namespace("kube-system").Get(c.Ctx(), name, metav1.GetOptions{})
 	if err != nil {
 		return false, false, ""
 	}

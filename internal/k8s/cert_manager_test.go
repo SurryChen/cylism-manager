@@ -63,14 +63,38 @@ func TestCertManagerStatusReportsFailedHelmChart(t *testing.T) {
 	}
 }
 
+func TestInstallAliDNSWebhookCreatesFixedHelmChart(t *testing.T) {
+	client := certManagerTestClient(t, []runtime.Object{
+		customResourceDefinition("certificates.cert-manager.io"), customResourceDefinition("issuers.cert-manager.io"), customResourceDefinition("clusterissuers.cert-manager.io"), customResourceDefinition("helmcharts.helm.cattle.io"),
+	}, true)
+	status, err := client.InstallAliDNSWebhook()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.State != CertManagerStateInstalling {
+		t.Fatalf("unexpected status: %#v", status)
+	}
+	chart, err := client.DynamicClient.Resource(helmChartGVR).Namespace("kube-system").Get(t.Context(), aliDNSWebhookHelmName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec := chart.Object["spec"].(map[string]interface{})
+	if spec["repo"] != aliDNSWebhookRepo || spec["chart"] != aliDNSWebhookChart || spec["version"] != aliDNSWebhookVersion {
+		t.Fatalf("unexpected AliDNS chart: %#v", spec)
+	}
+}
+
 func certManagerTestClient(t *testing.T, objects []runtime.Object, ready bool) *Client {
 	t.Helper()
 	listKinds := map[schema.GroupVersionResource]string{
-		crdGVR:           "CustomResourceDefinitionList",
-		certGVR:          "CertificateList",
-		issuerGVR:        "IssuerList",
-		clusterIssuerGVR: "ClusterIssuerList",
-		helmChartGVR:     "HelmChartList",
+		crdGVR:                "CustomResourceDefinitionList",
+		certGVR:               "CertificateList",
+		issuerGVR:             "IssuerList",
+		clusterIssuerGVR:      "ClusterIssuerList",
+		certificateRequestGVR: "CertificateRequestList",
+		orderGVR:              "OrderList",
+		challengeGVR:          "ChallengeList",
+		helmChartGVR:          "HelmChartList",
 	}
 	deployments := []runtime.Object{}
 	if ready {

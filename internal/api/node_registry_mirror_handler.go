@@ -1,6 +1,8 @@
 package api
 
 import (
+	"context"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -13,17 +15,23 @@ import (
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/gin-gonic/gin"
+	"github.com/google/go-containerregistry/pkg/authn"
+	"github.com/google/go-containerregistry/pkg/name"
+	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"sigs.k8s.io/yaml"
 )
 
 type NodeRegistryMirrorHandler struct {
-	store  *store.Store
-	encKey []byte
+	store            *store.Store
+	encKey           []byte
+	verifyConnection nodeRegistryMirrorVerifier
 }
+type nodeRegistryMirrorVerifier func(context.Context, *model.NodeRegistryMirror, []byte) error
 type nodeRegistryMirrorRequest struct {
 	Name               string   `json:"name"`
 	Registry           string   `json:"registry"`
 	Endpoints          []string `json:"endpoints"`
+	VerificationImage  string   `json:"verification_image"`
 	Username           string   `json:"username"`
 	Credential         string   `json:"credential"`
 	InsecureSkipVerify bool     `json:"insecure_skip_verify"`
@@ -31,7 +39,7 @@ type nodeRegistryMirrorRequest struct {
 }
 
 func NewNodeRegistryMirrorHandler(s *store.Store, encKey []byte) *NodeRegistryMirrorHandler {
-	return &NodeRegistryMirrorHandler{store: s, encKey: encKey}
+	return &NodeRegistryMirrorHandler{store: s, encKey: encKey, verifyConnection: verifyNodeRegistryMirrorConnection}
 }
 func (h *NodeRegistryMirrorHandler) List(c *gin.Context) {
 	mirrors, err := h.store.ListNodeRegistryMirrors()
@@ -99,6 +107,36 @@ func (h *NodeRegistryMirrorHandler) Delete(c *gin.Context) {
 		return
 	}
 	model.Success(c, gin.H{"id": id})
+}
+
+func (h *NodeRegistryMirrorHandler) Verify(c *gin.Context) {
+	id, err := parseID(c.Param("id"))
+	if err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "镜像源 ID 无效")
+		return
+	}
+	mirror, err := h.store.GetNodeRegistryMirror(id)
+	if err != nil {
+		model.Error(c, http.StatusNotFound, model.CodeNotFound, "镜像源不存在")
+		return
+	}
+
+	status, detail := "succeeded", ""
+	if !mirror.Enabled {
+		status, detail = "failed", "节点镜像源已停用"
+	} else if err := h.verifyConnection(c.Request.Context(), mirror, h.encKey); err != nil {
+		status, detail = "failed", verificationDetail(err)
+	}
+	if err := h.store.UpdateNodeRegistryMirrorVerification(mirror.ID, status, detail, time.Now()); err != nil {
+		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "保存检测结果失败")
+		return
+	}
+	mirror, err = h.store.GetNodeRegistryMirror(id)
+	if err != nil {
+		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "读取检测结果失败")
+		return
+	}
+	model.Success(c, mirror)
 }
 
 func (h *NodeRegistryMirrorHandler) Apply(c *gin.Context) {
@@ -170,8 +208,15 @@ func (h *NodeRegistryMirrorHandler) fromRequest(req nodeRegistryMirrorRequest, c
 	if len(endpoints) == 0 {
 		return nil, fmt.Errorf("至少配置一个镜像地址")
 	}
+	verificationImage := strings.TrimSpace(req.VerificationImage)
+	if verificationImage == "" && current != nil {
+		verificationImage = current.VerificationImage
+	}
+	if err := validateNodeRegistryMirrorVerificationImage(registry, verificationImage); err != nil {
+		return nil, err
+	}
 	encoded, _ := json.Marshal(endpoints)
-	mirror := &model.NodeRegistryMirror{Name: name, Registry: registry, Endpoints: string(encoded), Username: strings.TrimSpace(req.Username), InsecureSkipVerify: req.InsecureSkipVerify, Enabled: true}
+	mirror := &model.NodeRegistryMirror{Name: name, Registry: registry, Endpoints: string(encoded), VerificationImage: verificationImage, Username: strings.TrimSpace(req.Username), InsecureSkipVerify: req.InsecureSkipVerify, Enabled: true}
 	if current != nil {
 		mirror.ID = current.ID
 		mirror.CreatedAt = current.CreatedAt
@@ -192,6 +237,106 @@ func (h *NodeRegistryMirrorHandler) fromRequest(req nodeRegistryMirrorRequest, c
 		mirror.Credential = credential
 	}
 	return mirror, nil
+}
+
+func validateNodeRegistryMirrorVerificationImage(registry, image string) error {
+	if image == "" {
+		return nil
+	}
+	ref, err := name.ParseReference(image)
+	if err != nil {
+		return fmt.Errorf("验证镜像格式无效，请填写完整镜像地址和标签")
+	}
+	configuredRegistry, err := name.NewRegistry(registry)
+	if err != nil {
+		return fmt.Errorf("Registry 地址无效")
+	}
+	if !strings.EqualFold(ref.Context().RegistryStr(), configuredRegistry.RegistryStr()) {
+		return fmt.Errorf("验证镜像必须属于当前 Registry")
+	}
+	return nil
+}
+
+func verifyNodeRegistryMirrorConnection(ctx context.Context, mirror *model.NodeRegistryMirror, encKey []byte) error {
+	if mirror.VerificationImage == "" {
+		return fmt.Errorf("请先配置验证镜像")
+	}
+	var endpoints []string
+	if err := json.Unmarshal([]byte(mirror.Endpoints), &endpoints); err != nil {
+		return fmt.Errorf("镜像地址配置损坏")
+	}
+	var failures []string
+	for _, endpoint := range endpoints {
+		ref, err := nodeRegistryMirrorVerificationReference(mirror, endpoint)
+		if err == nil {
+			err = verifyNodeRegistryMirrorEndpoint(ctx, mirror, ref, encKey)
+		}
+		if err != nil {
+			failures = append(failures, fmt.Sprintf("%s: %v", endpoint, err))
+		}
+	}
+	if len(failures) > 0 {
+		return fmt.Errorf("%s", strings.Join(failures, "; "))
+	}
+	return nil
+}
+
+func nodeRegistryMirrorVerificationReference(mirror *model.NodeRegistryMirror, endpoint string) (name.Reference, error) {
+	if err := validateNodeRegistryMirrorVerificationImage(mirror.Registry, mirror.VerificationImage); err != nil {
+		return nil, err
+	}
+	source, err := name.ParseReference(mirror.VerificationImage)
+	if err != nil {
+		return nil, err
+	}
+	target, err := url.ParseRequestURI(endpoint)
+	if err != nil || target.Host == "" || (target.Scheme != "https" && target.Scheme != "http") {
+		return nil, fmt.Errorf("镜像地址无效")
+	}
+	if target.Path != "" && target.Path != "/" {
+		return nil, fmt.Errorf("镜像地址不支持路径")
+	}
+	options := []name.Option{}
+	if target.Scheme == "http" {
+		options = append(options, name.Insecure)
+	}
+	repository, err := name.NewRepository(target.Host+"/"+source.Context().RepositoryStr(), options...)
+	if err != nil {
+		return nil, fmt.Errorf("镜像地址无效")
+	}
+	switch source := source.(type) {
+	case name.Tag:
+		return repository.Tag(source.TagStr()), nil
+	case name.Digest:
+		return repository.Digest(source.DigestStr()), nil
+	default:
+		return nil, fmt.Errorf("验证镜像格式无效")
+	}
+}
+
+func verifyNodeRegistryMirrorEndpoint(ctx context.Context, mirror *model.NodeRegistryMirror, ref name.Reference, encKey []byte) error {
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	options := []remote.Option{remote.WithContext(ctx), remote.WithAuth(authn.Anonymous)}
+	if mirror.Username != "" {
+		if mirror.Credential == "" {
+			return fmt.Errorf("已配置账号但缺少密码或 Token")
+		}
+		credential, err := crypto.Decrypt(encKey, mirror.Credential)
+		if err != nil {
+			return fmt.Errorf("读取镜像源凭据失败")
+		}
+		options[1] = remote.WithAuth(authn.FromConfig(authn.AuthConfig{Username: mirror.Username, Password: credential}))
+	}
+	if mirror.InsecureSkipVerify {
+		transport := http.DefaultTransport.(*http.Transport).Clone()
+		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+		options = append(options, remote.WithTransport(transport))
+	}
+	if _, err := remote.Head(ref, options...); err != nil {
+		return fmt.Errorf("无法访问验证镜像: %w", err)
+	}
+	return nil
 }
 func (h *NodeRegistryMirrorHandler) renderK3sRegistries() ([]byte, error) {
 	mirrors, err := h.store.ListNodeRegistryMirrors()

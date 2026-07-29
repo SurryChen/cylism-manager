@@ -37,6 +37,7 @@ func New(dsn string) (*Store, error) {
 		&model.NodeRegistryMirror{},
 		&model.NodeRegistryMirrorNode{},
 		&model.ChartRepository{},
+		&model.DNSCredential{},
 		&model.ManagedDomain{},
 		&model.Release{},
 		&model.ReleaseOperation{},
@@ -420,6 +421,14 @@ func (s *Store) UpdateNodeRegistryMirror(mirror *model.NodeRegistryMirror) error
 	return s.db.Save(mirror).Error
 }
 
+func (s *Store) UpdateNodeRegistryMirrorVerification(id uint, status, detail string, verifiedAt time.Time) error {
+	return s.db.Model(&model.NodeRegistryMirror{}).Where("id = ?", id).Updates(map[string]interface{}{
+		"last_verified_at":   verifiedAt,
+		"last_verify_status": status,
+		"last_verify_error":  detail,
+	}).Error
+}
+
 func (s *Store) DeleteNodeRegistryMirror(id uint) error {
 	return s.db.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Where("mirror_id = ?", id).Delete(&model.NodeRegistryMirrorNode{}).Error; err != nil {
@@ -456,6 +465,38 @@ func (s *Store) GetVerifiedCertManagerChartRepository() (*model.ChartRepository,
 	var repository model.ChartRepository
 	err := s.db.Where("enabled = ? AND chart_name = ? AND last_verify_status = ?", true, "cert-manager", "succeeded").Order("updated_at desc").First(&repository).Error
 	return &repository, err
+}
+
+// --- DNS credentials ---
+
+func (s *Store) CreateDNSCredential(credential *model.DNSCredential) error {
+	return s.db.Create(credential).Error
+}
+
+func (s *Store) ListDNSCredentials() ([]model.DNSCredential, error) {
+	var credentials []model.DNSCredential
+	err := s.db.Order("created_at desc").Find(&credentials).Error
+	for index := range credentials {
+		credentials[index].SecretConfigured = credentials[index].AccessKeySecret != ""
+	}
+	return credentials, err
+}
+
+func (s *Store) GetDNSCredential(id uint) (*model.DNSCredential, error) {
+	var credential model.DNSCredential
+	err := s.db.First(&credential, id).Error
+	if err == nil {
+		credential.SecretConfigured = credential.AccessKeySecret != ""
+	}
+	return &credential, err
+}
+
+func (s *Store) UpdateDNSCredential(credential *model.DNSCredential) error {
+	return s.db.Save(credential).Error
+}
+
+func (s *Store) DeleteDNSCredential(id uint) error {
+	return s.db.Delete(&model.DNSCredential{}, id).Error
 }
 
 func (s *Store) GetImageRegistry(id uint) (*model.ImageRegistry, error) {

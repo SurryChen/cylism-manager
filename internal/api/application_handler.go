@@ -574,6 +574,9 @@ func (h *ApplicationHandler) prepareManagedDomain(spec *application.ReleaseSpec)
 	if spec.Endpoint.IssuerRef == "" {
 		spec.Endpoint.IssuerRef = domain.IssuerRef
 	}
+	if spec.Endpoint.IssuerKind == "" {
+		spec.Endpoint.IssuerKind = domain.IssuerKind
+	}
 	return nil
 }
 

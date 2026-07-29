@@ -13,6 +13,7 @@ type DomainHandler struct{ store *store.Store }
 type domainRequest struct {
 	Hostname    string `json:"hostname"`
 	IssuerRef   string `json:"issuer_ref"`
+	IssuerKind  string `json:"issuer_kind"`
 	Description string `json:"description"`
 	Enabled     bool   `json:"enabled"`
 }
@@ -87,7 +88,14 @@ func domainFromRequest(req domainRequest, current *model.ManagedDomain) (*model.
 	if hostname == "" || strings.ContainsAny(hostname, " /:@") {
 		return nil, errInvalid("域名格式无效")
 	}
-	domain := &model.ManagedDomain{Hostname: hostname, IssuerRef: strings.TrimSpace(req.IssuerRef), Description: strings.TrimSpace(req.Description), Enabled: req.Enabled}
+	issuerKind := strings.TrimSpace(req.IssuerKind)
+	if issuerKind == "" {
+		issuerKind = "ClusterIssuer"
+	}
+	if issuerKind != "Issuer" && issuerKind != "ClusterIssuer" {
+		return nil, errInvalid("Issuer 类型必须为 Issuer 或 ClusterIssuer")
+	}
+	domain := &model.ManagedDomain{Hostname: hostname, IssuerRef: strings.TrimSpace(req.IssuerRef), IssuerKind: issuerKind, Description: strings.TrimSpace(req.Description), Enabled: req.Enabled}
 	if current != nil {
 		domain.ID = current.ID
 		domain.CreatedAt = current.CreatedAt

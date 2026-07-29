@@ -6,6 +6,7 @@ import { api } from '../api/index.js'
 vi.mock('../api/index.js', () => ({
   api: { get: vi.fn(), post: vi.fn(), delete: vi.fn() },
 }))
+vi.mock('vue-router', () => ({ useRouter: () => ({ push: vi.fn() }) }))
 
 const issuers = [
   { name: 'letsencrypt-dns', kind: 'ClusterIssuer', ready: true },
@@ -23,17 +24,18 @@ describe('Certificates view', () => {
     api.get.mockImplementation(path => {
       if (path === '/certs/status') return Promise.resolve({ state: 'ready', message: 'cert-manager 已就绪' })
       if (path === '/certs/issuers') return Promise.resolve(issuers)
+      if (path === '/certs/dns-credentials') return Promise.resolve([])
+      if (path === '/certs/alidns-webhook/status') return Promise.resolve({ state: 'not_installed', ready: false, message: 'AliDNS Webhook 尚未安装' })
       return Promise.resolve([{ name: 'api-example', namespace: 'production', domains: ['api.example.com'], issuer: 'letsencrypt-dns', issuer_kind: 'ClusterIssuer', secret_name: 'api-example-tls', expiry_date: '2026-10-01T12:00:00Z', status: 'Ready' }])
     })
     api.post.mockResolvedValue({})
     api.delete.mockResolvedValue({})
   })
 
-  it('shows compact filtering and issuer operations status', async () => {
+  it('shows issuer operations and DNS webhook status', async () => {
     const wrapper = mount(Certificates)
     await settle()
 
-    expect(wrapper.find('.filter-bar .form-select').exists()).toBe(true)
     expect(wrapper.text()).toContain('api-example-tls')
     expect(wrapper.text()).toContain('letsencrypt-dns')
     expect(wrapper.text()).toContain('不可用')
@@ -72,5 +74,17 @@ describe('Certificates view', () => {
     expect(wrapper.text()).toContain('安装 cert-manager')
     expect(api.get).not.toHaveBeenCalledWith('/certs')
     expect(api.get).not.toHaveBeenCalledWith('/certs/issuers')
+  })
+
+  it('uses the certificate system icon for an empty ready state', async () => {
+    api.get.mockImplementation(path => {
+      if (path === '/certs/status') return Promise.resolve({ state: 'ready', message: 'cert-manager 已就绪' })
+      return Promise.resolve([])
+    })
+    const wrapper = mount(Certificates)
+    await settle()
+
+    expect(wrapper.get('[data-testid="certificate-empty-icon"]').element.tagName).toBe('svg')
+    expect(wrapper.text()).not.toContain('🔒')
   })
 })
