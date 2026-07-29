@@ -77,9 +77,9 @@ func (c *Client) CertManagerStatus() *CertManagerStatus {
 	if err := c.checkCertManagerAccess(); err != nil {
 		return certManagerStatusForError(status, "验证 cert-manager 访问权限", err)
 	}
-	status.ControllerReady = deploymentReady(c, "cert-manager")
-	status.WebhookReady = deploymentReady(c, "cert-manager-webhook")
-	status.CAInjectorReady = deploymentReady(c, "cert-manager-cainjector")
+	status.ControllerReady = deploymentReady(c, certManagerHelmName)
+	status.WebhookReady = deploymentReady(c, certManagerHelmName+"-webhook")
+	status.CAInjectorReady = deploymentReady(c, certManagerHelmName+"-cainjector")
 	if !status.ControllerReady || !status.WebhookReady || !status.CAInjectorReady {
 		if exists, failed, detail := c.certManagerHelmChartState(); exists && !failed {
 			status.State = CertManagerStateInstalling

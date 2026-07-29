@@ -62,6 +62,16 @@ describe('Glass UI application shell', () => {
     expect(mobileNavigation.text()).not.toContain('数据管理')
   })
 
+  it('activates only the most specific infrastructure navigation item', async () => {
+    const wrapper = await mountApp('/cluster/registry-mirrors')
+    const links = wrapper.get('[data-testid="desktop-navigation"]').findAll('.sidebar-link')
+    const clusterNodes = links.find(link => link.text() === '集群节点')
+    const registryMirrors = links.find(link => link.text() === '节点镜像源')
+
+    expect(clusterNodes.classes()).not.toContain('is-active')
+    expect(registryMirrors.classes()).toContain('is-active')
+  })
+
   it('shows the application secondary navigation for application routes', async () => {
     const wrapper = await mountApp('/applications/1')
     const navigation = wrapper.get('[data-testid="desktop-navigation"]')
