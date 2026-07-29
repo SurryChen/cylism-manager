@@ -17,12 +17,8 @@ const (
 	CertManagerStateUnauthorized = "unauthorized"
 	CertManagerStateUnavailable  = "unavailable"
 
-	certManagerNamespace  = "cert-manager"
-	certManagerHelmName   = "cylism-cert-manager"
-	aliDNSWebhookHelmName = "cylism-alidns-webhook"
-	aliDNSWebhookRepo     = "https://wjiec.github.io/alidns-webhook"
-	aliDNSWebhookChart    = "alidns-webhook"
-	aliDNSWebhookVersion  = "1.0.3"
+	certManagerNamespace = "cert-manager"
+	certManagerHelmName  = "cylism-cert-manager"
 )
 
 var helmChartGVR = schema.GroupVersionResource{Group: "helm.cattle.io", Version: "v1", Resource: "helmcharts"}
@@ -41,16 +37,28 @@ type CertManagerStatus struct {
 	InstallationName   string `json:"installation_name,omitempty"`
 }
 
-// AliDNSWebhookStatus describes the fixed cert-manager DNS-01 solver prerequisite.
-type AliDNSWebhookStatus struct {
+// DNSProviderStatus describes the installation prerequisite for a DNS-01 provider.
+type DNSProviderStatus struct {
+	Provider         string `json:"provider"`
 	State            string `json:"state"`
 	Message          string `json:"message"`
 	Ready            bool   `json:"ready"`
 	InstallationName string `json:"installation_name,omitempty"`
 }
 
-func (c *Client) AliDNSWebhookStatus() *AliDNSWebhookStatus {
-	status := &AliDNSWebhookStatus{State: CertManagerStateUnavailable, Message: "Kubernetes 客户端未初始化", InstallationName: aliDNSWebhookHelmName}
+func (c *Client) DNSProviderStatus(providerID string) *DNSProviderStatus {
+	status := &DNSProviderStatus{Provider: providerID, State: CertManagerStateUnavailable, Message: "Kubernetes 客户端未初始化"}
+	provider, ok := GetDNSProvider(providerID)
+	if !ok {
+		status.Message = "不支持的 DNS Provider: " + providerID
+		return status
+	}
+	chart := provider.WebhookChart()
+	if chart == nil {
+		status.State, status.Message, status.Ready = CertManagerStateReady, "Provider 使用 cert-manager 内置 DNS-01 solver", true
+		return status
+	}
+	status.InstallationName = chart.ReleaseName
 	if c == nil || c.Clientset == nil {
 		return status
 	}
@@ -60,29 +68,34 @@ func (c *Client) AliDNSWebhookStatus() *AliDNSWebhookStatus {
 		return status
 	}
 	if !c.helmChartInstallerAvailable() {
-		status.State, status.Message = CertManagerStateUnavailable, "当前集群未提供 K3s HelmChart 安装器"
+		status.Message = "当前集群未提供 K3s HelmChart 安装器"
 		return status
 	}
-	exists, failed, detail := c.helmChartState(aliDNSWebhookHelmName)
+	exists, failed, detail := c.helmChartState(chart.ReleaseName)
 	if !exists {
-		status.State, status.Message = CertManagerStateNotInstalled, "AliDNS Webhook 尚未安装"
+		status.State, status.Message = CertManagerStateNotInstalled, provider.Info().Name+" Webhook 尚未安装"
 		return status
 	}
 	if failed {
-		status.State, status.Message = CertManagerStateDegraded, "AliDNS Webhook 安装失败: "+detail
+		status.State, status.Message = CertManagerStateDegraded, provider.Info().Name+" Webhook 安装失败: "+detail
 		return status
 	}
-	if deploymentReady(c, aliDNSWebhookHelmName) {
-		status.State, status.Message, status.Ready = CertManagerStateReady, "AliDNS Webhook 已就绪", true
+	if deploymentReady(c, chart.ReleaseName) {
+		status.State, status.Message, status.Ready = CertManagerStateReady, provider.Info().Name+" Webhook 已就绪", true
 		return status
 	}
-	status.State, status.Message = CertManagerStateInstalling, "AliDNS Webhook 正在安装，等待控制组件就绪"
+	status.State, status.Message = CertManagerStateInstalling, provider.Info().Name+" Webhook 正在安装，等待控制组件就绪"
 	return status
 }
 
-func (c *Client) InstallAliDNSWebhook() (*AliDNSWebhookStatus, error) {
-	status := c.AliDNSWebhookStatus()
-	if status.Ready || status.State == CertManagerStateInstalling {
+func (c *Client) InstallDNSProvider(providerID string) (*DNSProviderStatus, error) {
+	status := c.DNSProviderStatus(providerID)
+	provider, ok := GetDNSProvider(providerID)
+	if !ok {
+		return status, fmt.Errorf("%s", status.Message)
+	}
+	chart := provider.WebhookChart()
+	if chart == nil || status.Ready || status.State == CertManagerStateInstalling {
 		return status, nil
 	}
 	if status.State != CertManagerStateNotInstalled {
@@ -92,12 +105,12 @@ func (c *Client) InstallAliDNSWebhook() (*AliDNSWebhookStatus, error) {
 	if err != nil {
 		return status, err
 	}
-	chart := &unstructured.Unstructured{Object: map[string]interface{}{"apiVersion": "helm.cattle.io/v1", "kind": "HelmChart", "metadata": map[string]interface{}{"name": aliDNSWebhookHelmName, "namespace": "kube-system", "labels": map[string]interface{}{"app.kubernetes.io/managed-by": "cylism-manager"}}, "spec": map[string]interface{}{"chart": aliDNSWebhookChart, "repo": aliDNSWebhookRepo, "version": aliDNSWebhookVersion, "targetNamespace": certManagerNamespace, "createNamespace": true, "valuesContent": "groupName: acme.cylism.io\n"}}}
-	_, err = dynamicClient.Resource(helmChartGVR).Namespace("kube-system").Create(c.Ctx(), chart, metav1.CreateOptions{})
+	object := &unstructured.Unstructured{Object: map[string]interface{}{"apiVersion": "helm.cattle.io/v1", "kind": "HelmChart", "metadata": map[string]interface{}{"name": chart.ReleaseName, "namespace": "kube-system", "labels": map[string]interface{}{"app.kubernetes.io/managed-by": "cylism-manager", "cylism.io/dns-provider": providerID}}, "spec": map[string]interface{}{"chart": chart.Chart, "repo": chart.Repository, "version": chart.Version, "targetNamespace": certManagerNamespace, "createNamespace": true, "valuesContent": chart.Values}}}
+	_, err = dynamicClient.Resource(helmChartGVR).Namespace("kube-system").Create(c.Ctx(), object, metav1.CreateOptions{})
 	if err != nil && !apierrors.IsAlreadyExists(err) {
-		return status, fmt.Errorf("创建 AliDNS Webhook HelmChart: %w", err)
+		return status, fmt.Errorf("创建 %s Webhook HelmChart: %w", provider.Info().Name, err)
 	}
-	status.State, status.Message = CertManagerStateInstalling, "AliDNS Webhook 安装任务已创建，等待 Helm 控制器完成安装"
+	status.State, status.Message = CertManagerStateInstalling, provider.Info().Name+" Webhook 安装任务已创建，等待 Helm 控制器完成安装"
 	return status, nil
 }
 

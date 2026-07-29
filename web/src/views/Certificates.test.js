@@ -25,20 +25,21 @@ describe('Certificates view', () => {
       if (path === '/certs/status') return Promise.resolve({ state: 'ready', message: 'cert-manager 已就绪' })
       if (path === '/certs/issuers') return Promise.resolve(issuers)
       if (path === '/certs/dns-credentials') return Promise.resolve([])
-      if (path === '/certs/alidns-webhook/status') return Promise.resolve({ state: 'not_installed', ready: false, message: 'AliDNS Webhook 尚未安装' })
+      if (path === '/certs/dns-providers') return Promise.resolve([{ id: 'alidns', name: '阿里云 DNS', fields: [], webhook: true, status: { state: 'not_installed', ready: false, message: 'AliDNS Webhook 尚未安装' } }])
       return Promise.resolve([{ name: 'api-example', namespace: 'production', domains: ['api.example.com'], issuer: 'letsencrypt-dns', issuer_kind: 'ClusterIssuer', secret_name: 'api-example-tls', expiry_date: '2026-10-01T12:00:00Z', status: 'Ready' }])
     })
     api.post.mockResolvedValue({})
     api.delete.mockResolvedValue({})
   })
 
-  it('shows issuer operations and DNS webhook status', async () => {
+  it('shows issuer operations and DNS provider status', async () => {
     const wrapper = mount(Certificates)
     await settle()
 
     expect(wrapper.text()).toContain('api-example-tls')
     expect(wrapper.text()).toContain('letsencrypt-dns')
     expect(wrapper.text()).toContain('不可用')
+    expect(wrapper.text()).toContain('阿里云 DNS')
   })
 
   it('creates a certificate with the selected issuer reference and kind', async () => {

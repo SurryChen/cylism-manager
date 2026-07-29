@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -131,6 +132,7 @@ type issuerRequest struct {
 	Server       string `json:"server"`
 	IngressClass string `json:"ingress_class"`
 	CredentialID uint   `json:"credential_id"`
+	DNSProvider  string `json:"dns_provider"`
 }
 
 func (h *CertHandler) saveIssuer(c *gin.Context, update bool) {
@@ -145,24 +147,32 @@ func (h *CertHandler) saveIssuer(c *gin.Context, update bool) {
 	if update {
 		req.Name, req.Namespace, req.Kind = c.Param("name"), c.Param("namespace"), c.Param("kind")
 	}
-	request := k8s.IssuerRequest{Name: req.Name, Namespace: req.Namespace, Kind: req.Kind, Mode: req.Mode, Email: req.Email, Server: req.Server, IngressClass: req.IngressClass}
-	if req.Mode == "acme_alidns" {
+	request := k8s.IssuerRequest{Name: req.Name, Namespace: req.Namespace, Kind: req.Kind, Mode: req.Mode, Email: req.Email, Server: req.Server, IngressClass: req.IngressClass, DNSProvider: req.DNSProvider}
+	if req.Mode == "acme_dns01" {
 		if h.store == nil {
 			model.Error(c, http.StatusInternalServerError, model.CodeInternalError, "DNS 凭据存储未初始化")
 			return
 		}
 		credential, err := h.store.GetDNSCredential(req.CredentialID)
-		if err != nil || !credential.Enabled || credential.Provider != "alidns" {
-			model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "请选择已启用的 AliDNS 凭据")
+		if err != nil || !credential.Enabled {
+			model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "请选择已启用的 DNS 凭据")
 			return
 		}
-		webhook := K8s.AliDNSWebhookStatus()
+		if req.DNSProvider == "" {
+			req.DNSProvider = credential.Provider
+		}
+		if credential.Provider != req.DNSProvider {
+			model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "DNS Provider 与凭据不匹配")
+			return
+		}
+		request.DNSProvider = credential.Provider
+		webhook := K8s.DNSProviderStatus(credential.Provider)
 		if !webhook.Ready {
-			model.ErrorWithData(c, http.StatusBadRequest, model.CodeK8sAPIError, "AliDNS Webhook 未就绪: "+webhook.Message, webhook)
+			model.ErrorWithData(c, http.StatusBadRequest, model.CodeK8sAPIError, "DNS Provider 未就绪: "+webhook.Message, webhook)
 			return
 		}
 		if request.Kind == "Issuer" && credential.Namespace != request.Namespace {
-			model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "命名空间级 Issuer 必须使用同命名空间的 AliDNS 凭据")
+			model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "命名空间级 Issuer 必须使用同命名空间的 DNS 凭据")
 			return
 		}
 		request.CredentialSecretName = credential.SecretName
@@ -204,32 +214,51 @@ func (h *CertHandler) ListOperations(c *gin.Context) {
 	model.Success(c, operations)
 }
 
-func (h *CertHandler) AliDNSWebhookStatus(c *gin.Context) {
-	if K8s == nil {
-		k8sUnavailable(c)
-		return
-	}
-	model.Success(c, K8s.AliDNSWebhookStatus())
+type dnsCredentialRequest struct {
+	Name      string             `json:"name"`
+	Namespace string             `json:"namespace"`
+	Provider  string             `json:"provider"`
+	Values    map[string]*string `json:"values"`
+	Enabled   *bool              `json:"enabled"`
 }
-func (h *CertHandler) InstallAliDNSWebhook(c *gin.Context) {
+
+type dnsProviderView struct {
+	k8s.DNSProviderInfo
+	Status *k8s.DNSProviderStatus `json:"status"`
+}
+
+func (h *CertHandler) ListDNSProviders(c *gin.Context) {
+	providers := k8s.ListDNSProviders()
+	result := make([]dnsProviderView, 0, len(providers))
+	for _, provider := range providers {
+		view := dnsProviderView{DNSProviderInfo: provider}
+		if K8s != nil {
+			view.Status = K8s.DNSProviderStatus(provider.ID)
+		}
+		result = append(result, view)
+	}
+	model.Success(c, result)
+}
+
+func (h *CertHandler) DNSProviderStatus(c *gin.Context) {
 	if K8s == nil {
 		k8sUnavailable(c)
 		return
 	}
-	status, err := K8s.InstallAliDNSWebhook()
+	model.Success(c, K8s.DNSProviderStatus(c.Param("provider")))
+}
+
+func (h *CertHandler) InstallDNSProvider(c *gin.Context) {
+	if K8s == nil {
+		k8sUnavailable(c)
+		return
+	}
+	status, err := K8s.InstallDNSProvider(c.Param("provider"))
 	if err != nil {
 		model.ErrorWithData(c, http.StatusBadRequest, model.CodeK8sAPIError, err.Error(), status)
 		return
 	}
 	model.SuccessWithMessage(c, status, status.Message)
-}
-
-type dnsCredentialRequest struct {
-	Name            string  `json:"name"`
-	Namespace       string  `json:"namespace"`
-	AccessKeyID     string  `json:"access_key_id"`
-	AccessKeySecret *string `json:"access_key_secret"`
-	Enabled         *bool   `json:"enabled"`
 }
 
 func (h *CertHandler) ListDNSCredentials(c *gin.Context) {
@@ -241,6 +270,9 @@ func (h *CertHandler) ListDNSCredentials(c *gin.Context) {
 	if err != nil {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
 		return
+	}
+	for index := range credentials {
+		h.populateCredentialView(&credentials[index])
 	}
 	model.Success(c, credentials)
 }
@@ -254,28 +286,28 @@ func (h *CertHandler) CreateDNSCredential(c *gin.Context) {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "DNS 凭据定义无效")
 		return
 	}
-	credential, secret, err := h.dnsCredentialFromRequest(req, nil)
+	credential, values, err := h.dnsCredentialFromRequest(req, nil)
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
 		return
 	}
 	credential.CreatedBy = getUserID(c)
-	credential.SecretName = fmt.Sprintf("cylism-alidns-pending-%d", time.Now().UnixNano())
+	credential.SecretName = fmt.Sprintf("cylism-dns-pending-%d", time.Now().UnixNano())
 	if err := h.store.CreateDNSCredential(credential); err != nil {
 		model.Error(c, http.StatusConflict, model.CodeConflict, "DNS 凭据名称无效或已存在")
 		return
 	}
-	credential.SecretName = fmt.Sprintf("cylism-alidns-%d", credential.ID)
+	credential.SecretName = fmt.Sprintf("cylism-dns-%s-%d", credential.Provider, credential.ID)
 	if err := h.store.UpdateDNSCredential(credential); err != nil {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "保存 DNS Secret 名称失败")
 		return
 	}
-	if err := K8s.UpsertAliDNSCredentialSecret(credential.Namespace, credential.SecretName, credential.AccessKeyID, secret); err != nil {
+	if err := K8s.UpsertDNSCredentialSecret(credential.Provider, credential.Namespace, credential.SecretName, values); err != nil {
 		_ = h.store.DeleteDNSCredential(credential.ID)
-		model.Error(c, http.StatusBadRequest, model.CodeK8sAPIError, "创建 AliDNS Secret: "+err.Error())
+		model.Error(c, http.StatusBadRequest, model.CodeK8sAPIError, "创建 DNS Secret: "+err.Error())
 		return
 	}
-	credential.SecretConfigured = true
+	h.populateCredentialView(credential)
 	model.Success(c, credential)
 }
 
@@ -298,7 +330,7 @@ func (h *CertHandler) UpdateDNSCredential(c *gin.Context) {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "DNS 凭据定义无效")
 		return
 	}
-	credential, secret, err := h.dnsCredentialFromRequest(req, current)
+	credential, values, err := h.dnsCredentialFromRequest(req, current)
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
 		return
@@ -307,17 +339,17 @@ func (h *CertHandler) UpdateDNSCredential(c *gin.Context) {
 		model.Error(c, http.StatusConflict, model.CodeConflict, "DNS 凭据名称无效或已存在")
 		return
 	}
-	if err := K8s.UpsertAliDNSCredentialSecret(credential.Namespace, credential.SecretName, credential.AccessKeyID, secret); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeK8sAPIError, "更新 AliDNS Secret: "+err.Error())
+	if err := K8s.UpsertDNSCredentialSecret(credential.Provider, credential.Namespace, credential.SecretName, values); err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeK8sAPIError, "更新 DNS Secret: "+err.Error())
 		return
 	}
 	if current.Namespace != credential.Namespace {
-		if err := K8s.DeleteAliDNSCredentialSecret(current.Namespace, current.SecretName); err != nil {
-			model.Error(c, http.StatusBadRequest, model.CodeK8sAPIError, "清理旧 AliDNS Secret: "+err.Error())
+		if err := K8s.DeleteDNSCredentialSecret(current.Namespace, current.SecretName); err != nil {
+			model.Error(c, http.StatusBadRequest, model.CodeK8sAPIError, "清理旧 DNS Secret: "+err.Error())
 			return
 		}
 	}
-	credential.SecretConfigured = true
+	h.populateCredentialView(credential)
 	model.Success(c, credential)
 }
 
@@ -335,8 +367,19 @@ func (h *CertHandler) DeleteDNSCredential(c *gin.Context) {
 		model.Error(c, http.StatusNotFound, model.CodeNotFound, "DNS 凭据不存在")
 		return
 	}
-	if err := K8s.DeleteAliDNSCredentialSecret(credential.Namespace, credential.SecretName); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeK8sAPIError, "删除 AliDNS Secret: "+err.Error())
+	issuers, listErr := K8s.ListIssuers()
+	if listErr != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeK8sAPIError, "检查签发者引用: "+listErr.Error())
+		return
+	}
+	for _, issuer := range issuers {
+		if issuer.CredentialSecretName == credential.SecretName {
+			model.Error(c, http.StatusConflict, model.CodeConflict, "DNS 凭据仍被签发者引用: "+issuer.Name)
+			return
+		}
+	}
+	if err := K8s.DeleteDNSCredentialSecret(credential.Namespace, credential.SecretName); err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeK8sAPIError, "删除 DNS Secret: "+err.Error())
 		return
 	}
 	if err := h.store.DeleteDNSCredential(id); err != nil {
@@ -346,40 +389,98 @@ func (h *CertHandler) DeleteDNSCredential(c *gin.Context) {
 	model.Success(c, gin.H{"id": id})
 }
 
-func (h *CertHandler) dnsCredentialFromRequest(req dnsCredentialRequest, current *model.DNSCredential) (*model.DNSCredential, string, error) {
+func (h *CertHandler) dnsCredentialFromRequest(req dnsCredentialRequest, current *model.DNSCredential) (*model.DNSCredential, map[string]string, error) {
 	if h.store == nil || len(h.encKey) == 0 {
-		return nil, "", fmt.Errorf("DNS 凭据加密未初始化")
+		return nil, nil, fmt.Errorf("DNS 凭据加密未初始化")
 	}
-	name, namespace, accessKeyID := strings.TrimSpace(req.Name), strings.TrimSpace(req.Namespace), strings.TrimSpace(req.AccessKeyID)
-	if name == "" || namespace == "" || accessKeyID == "" {
-		return nil, "", fmt.Errorf("名称、命名空间和 AccessKey ID 必填")
+	name, namespace := strings.TrimSpace(req.Name), strings.TrimSpace(req.Namespace)
+	providerID := strings.TrimSpace(req.Provider)
+	if providerID == "" && current != nil {
+		providerID = current.Provider
 	}
-	credential := &model.DNSCredential{Name: name, Provider: "alidns", Namespace: namespace, AccessKeyID: accessKeyID, Enabled: true}
-	var secret string
+	if providerID == "" {
+		return nil, nil, fmt.Errorf("DNS Provider 必填")
+	}
+	provider, ok := k8s.GetDNSProvider(providerID)
+	if !ok {
+		return nil, nil, fmt.Errorf("不支持的 DNS Provider: %s", providerID)
+	}
+	if name == "" || namespace == "" {
+		return nil, nil, fmt.Errorf("名称和命名空间必填")
+	}
+	values := map[string]string{}
 	if current != nil {
-		credential.ID, credential.CreatedBy, credential.CreatedAt, credential.SecretName, credential.AccessKeySecret = current.ID, current.CreatedBy, current.CreatedAt, current.SecretName, current.AccessKeySecret
+		var err error
+		values, err = h.decryptedCredentialValues(current)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	allowedFields := map[string]bool{}
+	for _, field := range provider.Info().Fields {
+		allowedFields[field.Key] = true
+	}
+	for key, value := range req.Values {
+		if !allowedFields[key] {
+			return nil, nil, fmt.Errorf("DNS Provider 不支持凭据字段: %s", key)
+		}
+		if value != nil && strings.TrimSpace(*value) != "" {
+			values[key] = strings.TrimSpace(*value)
+		}
+	}
+	if err := provider.ValidateValues(values); err != nil {
+		return nil, nil, err
+	}
+	payload, err := json.Marshal(values)
+	if err != nil {
+		return nil, nil, fmt.Errorf("编码 DNS 凭据失败")
+	}
+	encrypted, err := crypto.Encrypt(h.encKey, string(payload))
+	if err != nil {
+		return nil, nil, fmt.Errorf("DNS 凭据加密失败")
+	}
+	credential := &model.DNSCredential{Name: name, Provider: providerID, Namespace: namespace, Enabled: true, EncryptedValues: encrypted}
+	if current != nil {
+		credential.ID, credential.CreatedBy, credential.CreatedAt, credential.SecretName = current.ID, current.CreatedBy, current.CreatedAt, current.SecretName
 		credential.Enabled = current.Enabled
 		if req.Enabled != nil {
 			credential.Enabled = *req.Enabled
 		}
-		var err error
-		secret, err = crypto.Decrypt(h.encKey, current.AccessKeySecret)
+	}
+	return credential, values, nil
+}
+
+func (h *CertHandler) decryptedCredentialValues(credential *model.DNSCredential) (map[string]string, error) {
+	if credential.EncryptedValues != "" {
+		plain, err := crypto.Decrypt(h.encKey, credential.EncryptedValues)
 		if err != nil {
-			return nil, "", fmt.Errorf("读取 DNS 凭据失败")
+			return nil, fmt.Errorf("读取 DNS 凭据失败")
+		}
+		values := map[string]string{}
+		if err := json.Unmarshal([]byte(plain), &values); err != nil {
+			return nil, fmt.Errorf("读取 DNS 凭据失败")
+		}
+		return values, nil
+	}
+	return nil, fmt.Errorf("DNS 凭据数据不完整")
+}
+
+func (h *CertHandler) populateCredentialView(credential *model.DNSCredential) {
+	credential.SecretConfigured = credential.EncryptedValues != ""
+	provider, ok := k8s.GetDNSProvider(credential.Provider)
+	if !ok {
+		return
+	}
+	values, err := h.decryptedCredentialValues(credential)
+	if err != nil {
+		return
+	}
+	credential.ConfiguredFields = credential.ConfiguredFields[:0]
+	for _, field := range provider.Info().Fields {
+		if values[field.Key] != "" {
+			credential.ConfiguredFields = append(credential.ConfiguredFields, field.Key)
 		}
 	}
-	if req.AccessKeySecret != nil && strings.TrimSpace(*req.AccessKeySecret) != "" {
-		secret = strings.TrimSpace(*req.AccessKeySecret)
-		encrypted, err := crypto.Encrypt(h.encKey, secret)
-		if err != nil {
-			return nil, "", fmt.Errorf("DNS 凭据加密失败")
-		}
-		credential.AccessKeySecret = encrypted
-	}
-	if secret == "" || credential.AccessKeySecret == "" {
-		return nil, "", fmt.Errorf("AccessKey Secret 必填")
-	}
-	return credential, secret, nil
 }
 
 // DeleteCert 删除 Certificate

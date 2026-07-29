@@ -63,24 +63,26 @@ func TestCertManagerStatusReportsFailedHelmChart(t *testing.T) {
 	}
 }
 
-func TestInstallAliDNSWebhookCreatesFixedHelmChart(t *testing.T) {
+func TestInstallDNSProviderCreatesFixedHelmChart(t *testing.T) {
 	client := certManagerTestClient(t, []runtime.Object{
 		customResourceDefinition("certificates.cert-manager.io"), customResourceDefinition("issuers.cert-manager.io"), customResourceDefinition("clusterissuers.cert-manager.io"), customResourceDefinition("helmcharts.helm.cattle.io"),
 	}, true)
-	status, err := client.InstallAliDNSWebhook()
+	status, err := client.InstallDNSProvider("alidns")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if status.State != CertManagerStateInstalling {
 		t.Fatalf("unexpected status: %#v", status)
 	}
-	chart, err := client.DynamicClient.Resource(helmChartGVR).Namespace("kube-system").Get(t.Context(), aliDNSWebhookHelmName, metav1.GetOptions{})
+	provider, _ := GetDNSProvider("alidns")
+	definition := provider.WebhookChart()
+	chart, err := client.DynamicClient.Resource(helmChartGVR).Namespace("kube-system").Get(t.Context(), definition.ReleaseName, metav1.GetOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	spec := chart.Object["spec"].(map[string]interface{})
-	if spec["repo"] != aliDNSWebhookRepo || spec["chart"] != aliDNSWebhookChart || spec["version"] != aliDNSWebhookVersion {
-		t.Fatalf("unexpected AliDNS chart: %#v", spec)
+	if spec["repo"] != definition.Repository || spec["chart"] != definition.Chart || spec["version"] != definition.Version {
+		t.Fatalf("unexpected provider chart: %#v", spec)
 	}
 }
 
