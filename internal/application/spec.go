@@ -76,6 +76,7 @@ type EndpointSpec struct {
 	Path       string `json:"path,omitempty"`
 	TLSEnabled bool   `json:"tls_enabled"`
 	IssuerRef  string `json:"issuer_ref,omitempty"`
+	IssuerKind string `json:"issuer_kind,omitempty"`
 }
 
 type ValidationIssue struct {
@@ -159,6 +160,9 @@ func ValidateReleaseSpec(spec ReleaseSpec) []ValidationIssue {
 		}
 		if spec.Endpoint.TLSEnabled && strings.TrimSpace(spec.Endpoint.IssuerRef) == "" {
 			issues = append(issues, ValidationIssue{Field: "endpoint.issuer_ref", Message: "启用 TLS 时必须指定 Issuer"})
+		}
+		if spec.Endpoint.TLSEnabled && spec.Endpoint.IssuerKind != "" && spec.Endpoint.IssuerKind != "Issuer" && spec.Endpoint.IssuerKind != "ClusterIssuer" {
+			issues = append(issues, ValidationIssue{Field: "endpoint.issuer_kind", Message: "Issuer 类型必须为 Issuer 或 ClusterIssuer"})
 		}
 	default:
 		issues = append(issues, ValidationIssue{Field: "endpoint.exposure", Message: "暴露模式必须为 cluster、tailnet 或 public"})
@@ -261,7 +265,7 @@ func RenderResources(context ApplicationContext, spec ReleaseSpec) (*RenderedRes
 		if spec.Endpoint.TLSEnabled {
 			tlsName := context.ApplicationName + "-tls"
 			ingress.Spec.TLS = []networkingv1.IngressTLS{{Hosts: []string{spec.Endpoint.Domain}, SecretName: tlsName}}
-			result.Certificate = certificateResource(context, spec.Endpoint.Domain, tlsName, spec.Endpoint.IssuerRef, labels)
+			result.Certificate = certificateResource(context, spec.Endpoint.Domain, tlsName, spec.Endpoint.IssuerRef, spec.Endpoint.IssuerKind, labels)
 		}
 		result.Ingress = ingress
 	}
@@ -322,11 +326,14 @@ func healthProbe(probeType, path string, port int32) *corev1.Probe {
 	return httpProbe(path, port)
 }
 
-func certificateResource(context ApplicationContext, domain, secretName, issuerRef string, labels map[string]string) *unstructured.Unstructured {
+func certificateResource(context ApplicationContext, domain, secretName, issuerRef, issuerKind string, labels map[string]string) *unstructured.Unstructured {
+	if issuerKind == "" {
+		issuerKind = "ClusterIssuer"
+	}
 	return &unstructured.Unstructured{Object: map[string]interface{}{
 		"apiVersion": "cert-manager.io/v1", "kind": "Certificate",
 		"metadata": map[string]interface{}{"name": context.ApplicationName + "-tls", "namespace": context.Namespace, "labels": labels},
-		"spec":     map[string]interface{}{"secretName": secretName, "dnsNames": []interface{}{domain}, "issuerRef": map[string]interface{}{"name": issuerRef, "kind": "ClusterIssuer"}},
+		"spec":     map[string]interface{}{"secretName": secretName, "dnsNames": []interface{}{domain}, "issuerRef": map[string]interface{}{"name": issuerRef, "kind": issuerKind}},
 	}}
 }
 

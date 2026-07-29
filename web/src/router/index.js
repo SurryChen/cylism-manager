@@ -5,6 +5,7 @@ import Servers from '../views/Servers.vue'
 import Cluster from '../views/Cluster.vue'
 import Sites from '../views/Sites.vue'
 import Certificates from '../views/Certificates.vue'
+import CertificateOperations from '../views/CertificateOperations.vue'
 import AuditLogs from '../views/AuditLogs.vue'
 import Login from '../views/Login.vue'
 import DBAdmin from '../views/DBAdmin.vue'
@@ -40,6 +41,7 @@ const routes = [
   { path: '/services', component: Services },
   { path: '/routes', component: Sites },
   { path: '/certs', component: Certificates },
+  { path: '/certs/:namespace/:name', component: CertificateOperations, props: true },
   { path: '/configs', component: Configs },
   { path: '/settings/system', component: SystemSettings },
   { path: '/audit', component: AuditLogs },

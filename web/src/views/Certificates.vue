@@ -1,242 +1,85 @@
 <template>
   <div>
     <div class="page-header">
-      <div><h1 class="page-title">证书</h1><p class="page-subtitle">查看 cert-manager 证书、签发者与 TLS Secret 状态</p></div>
-      <button v-if="certManagerReady" class="btn btn-primary" @click="showAdd = true">+ 添加证书</button>
+      <div><h1 class="page-title">证书</h1><p class="page-subtitle">管理 cert-manager 签发者、DNS 凭据和证书续期状态</p></div>
+      <div v-if="certManagerReady" class="btn-group"><button class="btn" @click="openCredential">DNS 凭据</button><button class="btn" @click="openIssuer">新增签发者</button><button class="btn btn-primary" @click="showCertificate = true">+ 添加证书</button></div>
     </div>
 
     <section v-if="loaded && !certManagerReady" class="card cert-manager-status section-gap">
       <div class="card-header"><div><h2 class="card-title">cert-manager {{ statusTitle }}</h2><p class="status-copy">{{ certManagerStatus?.message }}</p></div><span class="badge" :class="statusBadgeClass">{{ statusTitle }}</span></div>
-      <div class="status-grid">
-        <span :class="{ 'status-ok': certManagerStatus?.certificate_crd }">Certificate CRD</span>
-        <span :class="{ 'status-ok': certManagerStatus?.issuer_crd }">Issuer CRD</span>
-        <span :class="{ 'status-ok': certManagerStatus?.cluster_issuer_crd }">ClusterIssuer CRD</span>
-        <span :class="{ 'status-ok': certManagerStatus?.controller_ready }">Controller</span>
-        <span :class="{ 'status-ok': certManagerStatus?.webhook_ready }">Webhook</span>
-        <span :class="{ 'status-ok': certManagerStatus?.ca_injector_ready }">CA Injector</span>
-      </div>
-      <div class="modal-actions status-actions">
-        <button v-if="certManagerStatus?.state === 'not_installed' && certManagerStatus?.installer_available" class="btn btn-primary" :disabled="installing" @click="installCertManager">{{ installing ? '正在创建安装任务...' : '安装 cert-manager' }}</button>
-        <button class="btn" :disabled="installing" @click="refreshCertManager">重新检测</button>
-      </div>
+      <div class="status-grid"><span :class="{ 'status-ok': certManagerStatus?.certificate_crd }">Certificate CRD</span><span :class="{ 'status-ok': certManagerStatus?.issuer_crd }">Issuer CRD</span><span :class="{ 'status-ok': certManagerStatus?.cluster_issuer_crd }">ClusterIssuer CRD</span><span :class="{ 'status-ok': certManagerStatus?.controller_ready }">Controller</span><span :class="{ 'status-ok': certManagerStatus?.webhook_ready }">Webhook</span><span :class="{ 'status-ok': certManagerStatus?.ca_injector_ready }">CA Injector</span></div>
+      <div class="modal-actions status-actions"><button v-if="certManagerStatus?.state === 'not_installed' && certManagerStatus?.installer_available" class="btn btn-primary" :disabled="installing" @click="installCertManager">{{ installing ? '正在创建安装任务...' : '安装 cert-manager' }}</button><button class="btn" :disabled="installing" @click="refresh">重新检测</button></div>
     </section>
 
-    <div v-if="loaded && certManagerReady && (certs.length || issuers.length)" class="filter-bar section-gap">
-      <div class="filter-control">
-        <label class="form-label" for="certificate-namespace">命名空间</label>
-        <select id="certificate-namespace" v-model="filterNs" class="form-select">
-          <option value="">全部</option>
-          <option v-for="ns in namespaces" :key="ns" :value="ns">{{ ns }}</option>
-        </select>
-      </div>
-    </div>
+    <template v-if="loaded && certManagerReady">
+      <div v-if="error" class="k8s-banner k8s-banner-warn section-gap">{{ error }}</div>
+      <section class="card section-gap webhook-card">
+        <div class="card-header"><div><h2 class="card-title">AliDNS DNS-01 Webhook</h2><p class="status-copy">为 AliDNS DNS-01 签发提供受控的 cert-manager solver</p></div><span class="badge" :class="webhookReady ? 'badge-online' : webhookStatus?.state === 'installing' ? 'badge-deploying' : 'badge-offline'">{{ webhookLabel }}</span></div>
+        <div class="webhook-actions"><span class="cell-secondary">{{ webhookStatus?.message || '正在检测 webhook 状态' }}</span><button v-if="webhookStatus?.state === 'not_installed'" class="btn" :disabled="installingWebhook" @click="installWebhook">{{ installingWebhook ? '安装中...' : '安装 AliDNS Webhook' }}</button><button v-else class="btn btn-sm" @click="refresh">刷新状态</button></div>
+      </section>
 
-    <div v-if="error" class="k8s-banner k8s-banner-warn section-gap">{{ error }}</div>
+      <section v-if="issuers.length" class="card section-gap"><div class="card-header"><h2 class="card-title">签发者</h2><span class="section-count">{{ issuers.length }} 项</span></div><div class="table-wrap"><table class="data-table"><thead><tr><th>名称</th><th>模式</th><th>类型</th><th>命名空间</th><th>状态</th><th>原因</th><th></th></tr></thead><tbody><tr v-for="issuer in issuers" :key="issuerKey(issuer)"><td class="cell-primary">{{ issuer.name }}</td><td>{{ issuerModeLabel(issuer.mode) }}</td><td>{{ issuer.kind }}</td><td>{{ issuer.namespace || '集群级' }}</td><td><span class="badge" :class="issuer.ready ? 'badge-online' : 'badge-danger'">{{ issuer.ready ? '就绪' : '不可用' }}</span></td><td>{{ issuer.reason || '-' }}</td><td><div class="btn-group action-cell"><button class="btn btn-sm" @click="openIssuer(issuer)">编辑</button><button class="btn btn-sm btn-danger" @click="deleteIssuer(issuer)">删除</button></div></td></tr></tbody></table></div></section>
 
-    <section v-if="loaded && certManagerReady && filteredCerts.length" class="card section-gap">
-      <div class="card-header"><h2 class="card-title">证书</h2><span class="section-count">{{ filteredCerts.length }} 项</span></div>
-      <div class="table-wrap">
-        <table class="data-table">
-          <thead>
-            <tr><th>名称</th><th>命名空间</th><th>域名</th><th>签发者</th><th>TLS Secret</th><th>到期</th><th>状态</th><th></th></tr>
-          </thead>
-          <tbody>
-            <tr v-for="cert in filteredCerts" :key="cert.namespace + '/' + cert.name">
-              <td class="cell-primary">{{ cert.name }}</td>
-              <td>{{ cert.namespace }}</td>
-              <td>{{ cert.domains || '-' }}</td>
-              <td><span>{{ cert.issuer || '-' }}</span><small v-if="cert.issuer_kind" class="cell-secondary">{{ cert.issuer_kind }}</small></td>
-              <td>{{ cert.secret_name || '-' }}</td>
-              <td>{{ formatDate(cert.expiry_date) }}</td>
-              <td>
-                <span class="badge" :class="certStatusClass(cert.status)">
-                  {{ certStatusLabel(cert.status) }}
-                </span>
-                <small v-if="cert.reason" class="cert-reason">{{ cert.reason }}</small>
-              </td>
-              <td>
-                <div class="btn-group action-cell">
-                  <button class="btn btn-sm btn-danger" @click="confirmDelete(cert)">删除</button>
-                </div>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </section>
+      <section v-if="credentials.length" class="card section-gap"><div class="card-header"><h2 class="card-title">AliDNS 凭据</h2><span class="section-count">{{ credentials.length }} 项</span></div><div class="table-wrap"><table class="data-table"><thead><tr><th>名称</th><th>命名空间</th><th>AccessKey ID</th><th>Secret</th><th>状态</th><th></th></tr></thead><tbody><tr v-for="credential in credentials" :key="credential.id"><td class="cell-primary">{{ credential.name }}</td><td>{{ credential.namespace }}</td><td>{{ credential.access_key_id }}</td><td>{{ credential.secret_configured ? '已配置' : '未配置' }}</td><td><span class="badge" :class="credential.enabled ? 'badge-online' : 'badge-offline'">{{ credential.enabled ? '启用' : '停用' }}</span></td><td><div class="btn-group action-cell"><button class="btn btn-sm" @click="openCredential(credential)">编辑</button><button class="btn btn-sm btn-danger" @click="deleteCredential(credential)">删除</button></div></td></tr></tbody></table></div></section>
 
-    <section v-if="loaded && certManagerReady && visibleIssuers.length" class="card section-gap">
-      <div class="card-header"><h2 class="card-title">签发者</h2><span class="section-count">{{ visibleIssuers.length }} 项</span></div>
-      <div class="table-wrap"><table class="data-table"><thead><tr><th>名称</th><th>类型</th><th>命名空间</th><th>状态</th><th>原因</th></tr></thead><tbody>
-        <tr v-for="issuer in visibleIssuers" :key="issuerKey(issuer)"><td class="cell-primary">{{ issuer.name }}</td><td>{{ issuer.kind }}</td><td>{{ issuer.namespace || '集群级' }}</td><td><span class="badge" :class="issuer.ready ? 'badge-online' : 'badge-danger'">{{ issuer.ready ? '就绪' : '不可用' }}</span></td><td>{{ issuer.reason || '-' }}</td></tr>
-      </tbody></table></div>
-    </section>
+      <section v-if="certs.length" class="card section-gap"><div class="card-header"><h2 class="card-title">证书</h2><span class="section-count">{{ certs.length }} 项</span></div><div class="table-wrap"><table class="data-table"><thead><tr><th>名称</th><th>命名空间</th><th>域名</th><th>签发者</th><th>TLS Secret</th><th>续期时间</th><th>到期</th><th>状态</th><th></th></tr></thead><tbody><tr v-for="cert in certs" :key="cert.namespace + '/' + cert.name"><td class="cell-primary">{{ cert.name }}</td><td>{{ cert.namespace }}</td><td>{{ cert.domains?.join(', ') || '-' }}</td><td>{{ cert.issuer || '-' }}<small class="cell-secondary">{{ cert.issuer_kind }}</small></td><td>{{ cert.secret_name || '-' }}</td><td>{{ formatDate(cert.renewal_time) }}</td><td>{{ formatDate(cert.expiry_date) }}</td><td><span class="badge" :class="certStatusClass(cert.status)">{{ certStatusLabel(cert.status) }}</span><small v-if="cert.reason" class="cert-reason">{{ cert.reason }}</small></td><td><div class="btn-group action-cell"><button class="btn btn-sm" @click="openOperations(cert)">签发过程</button><button class="btn btn-sm btn-danger" @click="confirmDelete(cert)">删除</button></div></td></tr></tbody></table></div></section>
+      <div v-if="!certs.length && !issuers.length && !credentials.length && !error" class="empty-state certificate-empty"><FileCheck2 class="certificate-empty-icon" :size="30" :stroke-width="1.5" aria-hidden="true" data-testid="certificate-empty-icon" /><span class="empty-text">尚未发现证书、签发者或 DNS 凭据</span></div>
+    </template>
 
-    <div v-if="loaded && certManagerReady && !certs.length && !issuers.length && !error" class="empty-state certificate-empty">
-      <span class="empty-icon">🔒</span>
-      <span class="empty-text">尚未发现 cert-manager 证书或签发者</span>
-    </div>
+    <div v-if="showCertificate" class="overlay" @click.self="showCertificate = false"><div class="modal"><h2 class="modal-title">添加证书</h2><form @submit.prevent="createCertificate"><div class="form-row"><div class="form-group"><label class="form-label">名称</label><input v-model.trim="certificateForm.name" class="form-input" placeholder="my-cert" required /></div><div class="form-group"><label class="form-label">命名空间</label><input v-model.trim="certificateForm.namespace" class="form-input" placeholder="default" required /></div></div><div class="form-group"><label class="form-label">域名</label><input v-model="certificateForm.domains" class="form-input" placeholder="example.com,*.example.com" required /></div><div class="form-group"><label class="form-label">签发者</label><select v-model="certificateForm.issuer" class="form-select" required><option value="" disabled>选择可用签发者</option><option v-for="issuer in availableIssuers" :key="issuerKey(issuer)" :value="issuerKey(issuer)">{{ issuer.kind }} · {{ issuer.name }}{{ issuer.namespace ? ` (${issuer.namespace})` : '' }}</option></select></div><div class="modal-actions"><button type="button" class="btn" @click="showCertificate = false">取消</button><button class="btn btn-primary" :disabled="submitting || !availableIssuers.length">创建证书</button></div></form></div></div>
 
-    <!-- Add Cert modal -->
-    <div v-if="showAdd" class="overlay" @click.self="showAdd = false">
-      <div class="modal">
-        <h2 class="modal-title">添加证书</h2>
-        <form @submit.prevent="createCert">
-          <div class="form-row">
-            <div class="form-group">
-              <label class="form-label">名称</label>
-              <input v-model="form.name" class="form-input" placeholder="my-cert" required />
-            </div>
-            <div class="form-group">
-              <label class="form-label">命名空间</label>
-              <input v-model="form.namespace" class="form-input" placeholder="default" required />
-            </div>
-          </div>
-          <div class="form-group">
-            <label class="form-label">域名（多个用逗号分隔）</label>
-            <input v-model="form.domains" class="form-input" placeholder="example.com,*.example.com" required />
-          </div>
-          <div class="form-group">
-            <label class="form-label">签发者</label>
-            <select v-model="form.issuer" class="form-select" required :disabled="availableIssuers.length === 0"><option value="" disabled>{{ availableIssuers.length ? '选择可用 Issuer' : '当前命名空间没有可用签发者' }}</option><option v-for="issuer in availableIssuers" :key="issuerKey(issuer)" :value="issuerKey(issuer)">{{ issuer.kind }} · {{ issuer.name }}{{ issuer.namespace ? ` (${issuer.namespace})` : '' }}</option></select>
-            <p class="form-hint">仅显示状态为就绪的签发者；命名空间级 Issuer 必须与证书位于同一命名空间。</p>
-          </div>
-          <div class="modal-actions">
-            <button type="button" class="btn" @click="showAdd = false">取消</button>
-            <button type="submit" class="btn btn-primary" :disabled="submitting || availableIssuers.length === 0">{{ submitting ? '创建中...' : '确认添加' }}</button>
-          </div>
-        </form>
-      </div>
-    </div>
+    <div v-if="showIssuer" class="overlay" @click.self="showIssuer = false"><div class="modal"><h2 class="modal-title">{{ editingIssuer ? '编辑签发者' : '新增签发者' }}</h2><form @submit.prevent="saveIssuer"><div class="form-row"><div class="form-group"><label class="form-label">名称</label><input v-model.trim="issuerForm.name" class="form-input" required :disabled="!!editingIssuer" placeholder="letsencrypt-prod" /></div><div class="form-group"><label class="form-label">类型</label><select v-model="issuerForm.kind" class="form-select" :disabled="!!editingIssuer"><option value="ClusterIssuer">ClusterIssuer</option><option value="Issuer">Issuer</option></select></div></div><div v-if="issuerForm.kind === 'Issuer'" class="form-group"><label class="form-label">命名空间</label><input v-model.trim="issuerForm.namespace" class="form-input" required placeholder="production" :disabled="!!editingIssuer" /></div><div class="form-group"><label class="form-label">签发模式</label><select v-model="issuerForm.mode" class="form-select"><option value="acme_http01">ACME HTTP-01</option><option value="acme_alidns" :disabled="!webhookReady">AliDNS DNS-01</option><option value="self_signed">自签名</option></select></div><template v-if="issuerForm.mode !== 'self_signed'"><div class="form-group"><label class="form-label">ACME 邮箱</label><input v-model.trim="issuerForm.email" type="email" class="form-input" required placeholder="ops@example.com" /></div><div v-if="issuerForm.mode === 'acme_http01'" class="form-group"><label class="form-label">Ingress Class</label><input v-model.trim="issuerForm.ingress_class" class="form-input" placeholder="traefik" /></div><div v-else class="form-group"><label class="form-label">AliDNS 凭据</label><select v-model.number="issuerForm.credential_id" class="form-select" required><option :value="0" disabled>选择同命名空间或集群凭据</option><option v-for="credential in enabledCredentials" :key="credential.id" :value="credential.id">{{ credential.name }} · {{ credential.namespace }}</option></select></div></template><div class="modal-actions"><button type="button" class="btn" @click="showIssuer = false">取消</button><button class="btn btn-primary" :disabled="submitting">保存</button></div></form></div></div>
 
-    <!-- Delete confirm modal -->
-    <div v-if="deleteTarget" class="overlay" @click.self="deleteTarget = null">
-      <div class="modal">
-        <h2 class="modal-title">删除证书</h2>
-        <p class="modal-copy">
-          确定删除 <strong>{{ deleteTarget.name }}</strong>（{{ deleteTarget.namespace }}）？
-        </p>
-        <div class="modal-actions">
-          <button class="btn" @click="deleteTarget = null">取消</button>
-          <button class="btn btn-danger" @click="removeCert">确认删除</button>
-        </div>
-      </div>
-    </div>
+    <div v-if="showCredential" class="overlay" @click.self="showCredential = false"><div class="modal"><h2 class="modal-title">{{ editingCredential ? '编辑 AliDNS 凭据' : '新增 AliDNS 凭据' }}</h2><form @submit.prevent="saveCredential"><div class="form-row"><div class="form-group"><label class="form-label">名称</label><input v-model.trim="credentialForm.name" class="form-input" required placeholder="aliyun-production" /></div><div class="form-group"><label class="form-label">命名空间</label><input v-model.trim="credentialForm.namespace" class="form-input" required placeholder="cert-manager" /></div></div><div class="form-group"><label class="form-label">AccessKey ID</label><input v-model.trim="credentialForm.access_key_id" class="form-input" required /></div><div class="form-group"><label class="form-label">AccessKey Secret</label><input v-model="credentialForm.access_key_secret" type="password" class="form-input" :required="!editingCredential" :placeholder="editingCredential ? '留空则保留现有 Secret' : ''" /></div><label class="check-row"><input v-model="credentialForm.enabled" type="checkbox" /> 启用此凭据</label><div class="modal-actions"><button type="button" class="btn" @click="showCredential = false">取消</button><button class="btn btn-primary" :disabled="submitting">保存</button></div></form></div></div>
+
+    <div v-if="deleteTarget" class="overlay" @click.self="deleteTarget = null"><div class="modal"><h2 class="modal-title">删除证书</h2><p class="modal-copy">确定删除 {{ deleteTarget.name }}（{{ deleteTarget.namespace }}）？</p><div class="modal-actions"><button class="btn" @click="deleteTarget = null">取消</button><button class="btn btn-danger" @click="removeCertificate">确认删除</button></div></div></div>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted, computed, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
+import { FileCheck2 } from 'lucide-vue-next'
 import { api } from '../api/index.js'
 
-const certs = ref([])
-const issuers = ref([])
-const filterNs = ref('')
-const loaded = ref(false)
-const error = ref('')
-const submitting = ref(false)
-const installing = ref(false)
-const showAdd = ref(false)
-const deleteTarget = ref(null)
-const form = ref(newCertificateForm())
-const certManagerStatus = ref(null)
-
+const router = useRouter()
+const certs = ref([]), issuers = ref([]), credentials = ref([]), certManagerStatus = ref(null), webhookStatus = ref(null)
+const loaded = ref(false), error = ref(''), installing = ref(false), installingWebhook = ref(false), submitting = ref(false)
+const showCertificate = ref(false), showIssuer = ref(false), showCredential = ref(false), deleteTarget = ref(null), editingIssuer = ref(null), editingCredential = ref(null)
+const certificateForm = ref(newCertificateForm()), issuerForm = ref(newIssuerForm()), credentialForm = ref(newCredentialForm())
 const certManagerReady = computed(() => certManagerStatus.value?.state === 'ready')
+const webhookReady = computed(() => webhookStatus.value?.ready === true)
 const statusTitle = computed(() => ({ ready: '已就绪', not_installed: '未安装', installing: '安装中', degraded: '异常', unauthorized: '未授权', unavailable: '不可用' }[certManagerStatus.value?.state] || '状态未知'))
 const statusBadgeClass = computed(() => certManagerReady.value ? 'badge-online' : certManagerStatus.value?.state === 'installing' ? 'badge-deploying' : 'badge-danger')
-const namespaces = computed(() => [...new Set([...certs.value.map(c => c.namespace), ...issuers.value.map(i => i.namespace).filter(Boolean)])].sort())
-const filteredCerts = computed(() =>
-  filterNs.value ? certs.value.filter(c => c.namespace === filterNs.value) : certs.value
-)
-const visibleIssuers = computed(() => filterNs.value ? issuers.value.filter(i => !i.namespace || i.namespace === filterNs.value) : issuers.value)
-const availableIssuers = computed(() => issuers.value.filter(issuer => issuer.ready && (issuer.kind === 'ClusterIssuer' || issuer.namespace === form.value.namespace)))
+const webhookLabel = computed(() => webhookReady.value ? '已就绪' : ({ not_installed: '未安装', installing: '安装中' }[webhookStatus.value?.state] || '不可用'))
+const availableIssuers = computed(() => issuers.value.filter(item => item.ready && (item.kind === 'ClusterIssuer' || item.namespace === certificateForm.value.namespace)))
+const enabledCredentials = computed(() => credentials.value.filter(item => item.enabled && (issuerForm.value.kind === 'ClusterIssuer' || item.namespace === issuerForm.value.namespace)))
 
-onMounted(refreshCertManager)
-watch(() => form.value.namespace, ensureSelectedIssuer)
-
-async function refreshCertManager() {
-  error.value = ''
-  try {
-    certManagerStatus.value = await api.get('/certs/status')
-    if (!certManagerReady.value) {
-      certs.value = []
-      issuers.value = []
-      return
-    }
-    await fetchCertResources()
-  } catch (e) { error.value = e.message || '检测 cert-manager 状态失败' } finally { loaded.value = true }
-}
-
-async function fetchCertResources() {
-  try {
-    const [certResult, issuerResult] = await Promise.all([api.get('/certs'), api.get('/certs/issuers')])
-    certs.value = certResult || []
-    issuers.value = issuerResult || []
-    ensureSelectedIssuer()
-  } catch (e) { error.value = e.message || '加载 cert-manager 资源失败' }
-}
-
-async function installCertManager() {
-  installing.value = true
-  error.value = ''
-  try {
-    certManagerStatus.value = await api.post('/certs/install')
-  } catch (e) { error.value = e.message || '创建 cert-manager 安装任务失败' } finally { installing.value = false }
-}
-
-async function createCert() {
-  const selectedIssuer = availableIssuers.value.find(issuer => issuerKey(issuer) === form.value.issuer)
-  if (!selectedIssuer) { error.value = '请选择与命名空间匹配的可用签发者'; return }
-  submitting.value = true
-  error.value = ''
-  try {
-    const body = { ...form.value }
-    body.domains = body.domains.split(',').map(d => d.trim()).filter(Boolean)
-    body.issuer_ref = selectedIssuer.name
-    body.issuer_kind = selectedIssuer.kind
-    delete body.issuer
-    await api.post('/certs', body)
-    showAdd.value = false
-    form.value = newCertificateForm()
-    await refreshCertManager()
-  } catch (e) { error.value = e.message || '创建证书失败' } finally { submitting.value = false }
-}
-
+onMounted(refresh)
+watch(() => certificateForm.value.namespace, () => { if (!availableIssuers.value.some(item => issuerKey(item) === certificateForm.value.issuer)) certificateForm.value.issuer = availableIssuers.value[0] ? issuerKey(availableIssuers.value[0]) : '' })
+async function refresh() { error.value = ''; try { certManagerStatus.value = await api.get('/certs/status'); if (!certManagerReady.value) return; const [certResult, issuerResult, credentialResult, webhookResult] = await Promise.all([api.get('/certs'), api.get('/certs/issuers'), api.get('/certs/dns-credentials'), api.get('/certs/alidns-webhook/status')]); certs.value = certResult || []; issuers.value = issuerResult || []; credentials.value = credentialResult || []; webhookStatus.value = webhookResult } catch (e) { error.value = e.message || '加载证书管理资源失败' } finally { loaded.value = true } }
+async function installCertManager() { installing.value = true; try { await api.post('/certs/install'); await refresh() } catch (e) { error.value = e.message || '创建 cert-manager 安装任务失败' } finally { installing.value = false } }
+async function installWebhook() { installingWebhook.value = true; try { webhookStatus.value = await api.post('/certs/alidns-webhook/install') } catch (e) { error.value = e.message || '创建 AliDNS Webhook 安装任务失败' } finally { installingWebhook.value = false } }
+async function createCertificate() { const issuer = availableIssuers.value.find(item => issuerKey(item) === certificateForm.value.issuer); if (!issuer) { error.value = '请选择可用的签发者'; return }; submitting.value = true; try { await api.post('/certs', { name: certificateForm.value.name, namespace: certificateForm.value.namespace, domains: certificateForm.value.domains.split(',').map(item => item.trim()).filter(Boolean), issuer_ref: issuer.name, issuer_kind: issuer.kind }); showCertificate.value = false; certificateForm.value = newCertificateForm(); await refresh() } catch (e) { error.value = e.message || '创建证书失败' } finally { submitting.value = false } }
+function openIssuer(issuer = null) { editingIssuer.value = issuer; issuerForm.value = issuer ? { name: issuer.name, namespace: issuer.namespace || '', kind: issuer.kind, mode: issuer.mode || 'acme_http01', email: issuer.email || '', ingress_class: 'traefik', credential_id: 0 } : newIssuerForm(); showIssuer.value = true }
+async function saveIssuer() { submitting.value = true; try { if (editingIssuer.value) await api.put(`/certs/issuers/${issuerForm.value.kind}/${issuerForm.value.namespace || '_'}/${issuerForm.value.name}`, issuerForm.value); else await api.post('/certs/issuers', issuerForm.value); showIssuer.value = false; await refresh() } catch (e) { error.value = e.message || '保存签发者失败' } finally { submitting.value = false } }
+async function deleteIssuer(issuer) { if (!window.confirm(`删除签发者 ${issuer.name}？已有证书不会自动删除。`)) return; try { await api.delete(`/certs/issuers/${issuer.kind}/${issuer.namespace || '_'}/${issuer.name}`); await refresh() } catch (e) { error.value = e.message || '删除签发者失败' } }
+function openCredential(credential = null) { editingCredential.value = credential; credentialForm.value = credential ? { name: credential.name, namespace: credential.namespace, access_key_id: credential.access_key_id, access_key_secret: '', enabled: credential.enabled } : newCredentialForm(); showCredential.value = true }
+async function saveCredential() { submitting.value = true; try { const body = { ...credentialForm.value }; if (!body.access_key_secret) delete body.access_key_secret; if (editingCredential.value) await api.put(`/certs/dns-credentials/${editingCredential.value.id}`, body); else await api.post('/certs/dns-credentials', body); showCredential.value = false; await refresh() } catch (e) { error.value = e.message || '保存 AliDNS 凭据失败' } finally { submitting.value = false } }
+async function deleteCredential(credential) { if (!window.confirm(`删除 DNS 凭据 ${credential.name}？使用它的 Issuer 将不能继续签发。`)) return; try { await api.delete(`/certs/dns-credentials/${credential.id}`); await refresh() } catch (e) { error.value = e.message || '删除 DNS 凭据失败' } }
 function confirmDelete(cert) { deleteTarget.value = cert }
-
-async function removeCert() {
-  error.value = ''
-  try {
-    await api.delete(`/certs/${deleteTarget.value.namespace}/${deleteTarget.value.name}`)
-    deleteTarget.value = null
-    await refreshCertManager()
-  } catch (e) { error.value = e.message || '删除证书失败' }
-}
-
+async function removeCertificate() { try { await api.delete(`/certs/${deleteTarget.value.namespace}/${deleteTarget.value.name}`); deleteTarget.value = null; await refresh() } catch (e) { error.value = e.message || '删除证书失败' } }
+function openOperations(cert) { router.push(`/certs/${cert.namespace}/${cert.name}`) }
+function issuerKey(item) { return `${item.kind}/${item.namespace || '_'}/${item.name}` }
+function issuerModeLabel(mode) { return ({ self_signed: '自签名', acme_http01: 'ACME HTTP-01', acme_alidns: 'AliDNS DNS-01' }[mode] || '-') }
+function certStatusLabel(status) { return ({ Ready: '就绪', Issuing: '签发中', Failed: '失败' }[status] || status || '-') }
+function certStatusClass(status) { return status === 'Ready' ? 'badge-online' : status === 'Failed' ? 'badge-danger' : 'badge-deploying' }
+function formatDate(value) { return value ? new Date(value).toLocaleString('zh-CN') : '-' }
 function newCertificateForm() { return { name: '', namespace: 'default', domains: '', issuer: '' } }
-function issuerKey(issuer) { return `${issuer.kind}/${issuer.namespace || '_'}/${issuer.name}` }
-function ensureSelectedIssuer() {
-  if (!availableIssuers.value.some(issuer => issuerKey(issuer) === form.value.issuer)) form.value.issuer = availableIssuers.value[0] ? issuerKey(availableIssuers.value[0]) : ''
-}
-
-function formatDate(d) {
-  if (!d) return '-'
-  return new Date(d).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric', year: 'numeric' })
-}
-
-function certStatusLabel(s) {
-  s = String(s || '').toLowerCase()
-  const m = { ready: '就绪', pending: '签发中', failed: '失败', expired: '已过期' }
-  return m[s] || s || '-'
-}
-
-function certStatusClass(s) {
-  s = String(s || '').toLowerCase()
-  const m = { ready: 'badge-online', pending: 'badge-deploying', failed: 'badge-danger', expired: 'badge-danger' }
-  return m[s] || 'badge-offline'
-}
+function newIssuerForm() { return { name: '', namespace: '', kind: 'ClusterIssuer', mode: 'acme_http01', email: '', ingress_class: 'traefik', credential_id: 0 } }
+function newCredentialForm() { return { name: '', namespace: 'cert-manager', access_key_id: '', access_key_secret: '', enabled: true } }
 </script>
 
 <style scoped>
-.section-count { color:var(--text-muted); font:10px/1 var(--font-mono); }.cell-secondary { display:block; margin-top:3px; color:var(--text-muted); font-size:10px; }.cert-reason { display:block; max-width:180px; margin-top:4px; color:var(--danger); font-size:10px; overflow-wrap:anywhere; }.form-hint { margin:6px 0 0; color:var(--text-muted); font-size:11px; line-height:1.5; }.certificate-empty { min-height:150px; }.status-copy { margin:4px 0 0; color:var(--text-secondary); font-size:12px; }.status-grid { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:8px; margin-top:16px; }.status-grid span { padding:7px 8px; border:1px solid var(--border-muted); color:var(--text-muted); font-size:11px; }.status-grid .status-ok { border-color:var(--success-border); color:var(--success); background:var(--success-subtle); }.status-actions { justify-content:flex-start; margin-top:16px; } @media (max-width:640px) { .status-grid { grid-template-columns:repeat(2, minmax(0, 1fr)); } }
+.page-header{display:flex;justify-content:space-between;gap:var(--space-16)}.status-copy,.cell-secondary{margin:4px 0 0;color:var(--text-secondary);font-size:11px}.status-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:16px}.status-grid span{padding:7px 8px;border:1px solid var(--border-muted);color:var(--text-muted);font-size:11px}.status-grid .status-ok{border-color:var(--success-border);color:var(--success);background:var(--success-subtle)}.status-actions,.webhook-actions{justify-content:flex-start;margin-top:16px}.webhook-actions{display:flex;align-items:center;justify-content:space-between;gap:12px}.certificate-empty{min-height:150px}.certificate-empty-icon{color:var(--text-muted);opacity:.72}.cert-reason{display:block;max-width:180px;margin-top:4px;color:var(--danger);font-size:10px;overflow-wrap:anywhere}.check-row{display:flex;gap:8px;align-items:center;color:var(--text-secondary);font-size:13px}@media(max-width:640px){.page-header{flex-direction:column}.status-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.page-header .btn-group{display:grid;grid-template-columns:1fr 1fr}.page-header .btn-primary{grid-column:span 2}.webhook-actions{align-items:flex-start;flex-direction:column}}
 </style>

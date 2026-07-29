@@ -204,11 +204,15 @@ type NodeRegistryMirror struct {
 	Name                 string                   `gorm:"size:128;uniqueIndex;not null" json:"name"`
 	Registry             string                   `gorm:"size:256;uniqueIndex;not null" json:"registry"`
 	Endpoints            string                   `gorm:"type:text;not null" json:"endpoints"`
+	VerificationImage    string                   `gorm:"size:512" json:"verification_image"`
 	Username             string                   `gorm:"size:256" json:"username"`
 	Credential           string                   `gorm:"type:text" json:"-"`
 	InsecureSkipVerify   bool                     `gorm:"default:false" json:"insecure_skip_verify"`
 	Enabled              bool                     `gorm:"default:true;not null" json:"enabled"`
 	CreatedBy            uint                     `gorm:"index" json:"created_by"`
+	LastVerifiedAt       *time.Time               `json:"last_verified_at,omitempty"`
+	LastVerifyStatus     string                   `gorm:"size:32" json:"last_verify_status"`
+	LastVerifyError      string                   `gorm:"size:512" json:"last_verify_error,omitempty"`
 	LastAppliedAt        *time.Time               `json:"last_applied_at,omitempty"`
 	LastApplyStatus      string                   `gorm:"size:32" json:"last_apply_status"`
 	LastApplyError       string                   `gorm:"size:512" json:"last_apply_error,omitempty"`
@@ -245,11 +249,28 @@ type ChartRepository struct {
 	UpdatedAt        time.Time  `json:"updated_at"`
 }
 
+// DNSCredential stores an encrypted DNS provider credential. Secret values are never exposed by APIs.
+type DNSCredential struct {
+	ID               uint      `gorm:"primaryKey" json:"id"`
+	Name             string    `gorm:"size:128;uniqueIndex;not null" json:"name"`
+	Provider         string    `gorm:"size:32;not null" json:"provider"`
+	Namespace        string    `gorm:"size:128;not null" json:"namespace"`
+	AccessKeyID      string    `gorm:"size:256;not null" json:"access_key_id"`
+	AccessKeySecret  string    `gorm:"type:text" json:"-"`
+	SecretName       string    `gorm:"size:253;uniqueIndex;not null" json:"secret_name"`
+	Enabled          bool      `gorm:"default:true;not null" json:"enabled"`
+	CreatedBy        uint      `gorm:"index;not null" json:"created_by"`
+	CreatedAt        time.Time `json:"created_at"`
+	UpdatedAt        time.Time `json:"updated_at"`
+	SecretConfigured bool      `gorm:"-" json:"secret_configured"`
+}
+
 // ManagedDomain 是可供应用发布选择的域名资产。
 type ManagedDomain struct {
 	ID          uint      `gorm:"primaryKey" json:"id"`
 	Hostname    string    `gorm:"size:253;uniqueIndex;not null" json:"hostname"`
 	IssuerRef   string    `gorm:"size:128" json:"issuer_ref"`
+	IssuerKind  string    `gorm:"size:32;default:ClusterIssuer" json:"issuer_kind"`
 	Description string    `gorm:"size:512" json:"description"`
 	Enabled     bool      `gorm:"default:true;not null" json:"enabled"`
 	CreatedAt   time.Time `json:"created_at"`

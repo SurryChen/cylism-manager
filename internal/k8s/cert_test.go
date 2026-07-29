@@ -4,6 +4,9 @@ import (
 	"testing"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/dynamic/fake"
 )
 
 func TestCertToInfoIncludesIssuerSecretAndFailure(t *testing.T) {
@@ -15,8 +18,9 @@ func TestCertToInfoIncludesIssuerSecretAndFailure(t *testing.T) {
 			"issuerRef":  map[string]interface{}{"name": "letsencrypt-dns", "kind": "ClusterIssuer"},
 		},
 		"status": map[string]interface{}{
-			"notAfter":   "2026-10-01T12:00:00Z",
-			"conditions": []interface{}{map[string]interface{}{"type": "Ready", "status": "False", "reason": "Pending"}},
+			"notAfter":    "2026-10-01T12:00:00Z",
+			"renewalTime": "2026-09-01T12:00:00Z",
+			"conditions":  []interface{}{map[string]interface{}{"type": "Ready", "status": "False", "reason": "Pending"}},
 		},
 	}}
 
@@ -27,12 +31,62 @@ func TestCertToInfoIncludesIssuerSecretAndFailure(t *testing.T) {
 	if info.Issuer != "letsencrypt-dns" || info.IssuerKind != "ClusterIssuer" || info.SecretName != "api-example-tls" {
 		t.Fatalf("issuer or secret was not extracted: %#v", info)
 	}
-	if info.Status != "Failed" || info.Reason != "Pending" || info.ExpiryDate != "2026-10-01T12:00:00Z" {
+	if info.Status != "Failed" || info.Reason != "Pending" || info.ExpiryDate != "2026-10-01T12:00:00Z" || info.RenewalTime != "2026-09-01T12:00:00Z" {
 		t.Fatalf("unexpected status: %#v", info)
 	}
 	if len(info.Domains) != 2 || info.Domains[0] != "api.example.com" {
 		t.Fatalf("unexpected domains: %#v", info.Domains)
 	}
+}
+
+func TestIssuerObjectRendersHTTP01AndAliDNS(t *testing.T) {
+	httpIssuer, err := issuerObject(IssuerRequest{Name: "letsencrypt", Kind: "ClusterIssuer", Mode: "acme_http01", Email: "ops@example.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Assert the actual solver map because unstructured paths cannot index a list.
+	solvers, ok, _ := unstructured.NestedSlice(httpIssuer.Object, "spec", "acme", "solvers")
+	if !ok || solvers[0].(map[string]interface{})["http01"] == nil {
+		t.Fatalf("missing HTTP-01 solver: %#v", httpIssuer.Object)
+	}
+
+	dnsIssuer, err := issuerObject(IssuerRequest{Name: "alidns", Kind: "Issuer", Namespace: "prod", Mode: "acme_alidns", Email: "ops@example.com", CredentialSecretName: "cylism-alidns-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	solvers, ok, _ = unstructured.NestedSlice(dnsIssuer.Object, "spec", "acme", "solvers")
+	if !ok || solvers[0].(map[string]interface{})["dns01"] == nil {
+		t.Fatalf("missing DNS-01 solver: %#v", dnsIssuer.Object)
+	}
+}
+
+func TestListCertificateOperationsFollowsOwnerReferences(t *testing.T) {
+	objects := []runtime.Object{
+		operationObject("certificaterequests", "request-1", "production", "Certificate", "api-cert", nil),
+		operationObject("orders", "order-1", "production", "CertificateRequest", "request-1", nil),
+		operationObject("challenges", "challenge-1", "production", "Order", "order-1", map[string]interface{}{"dnsName": "api.example.com", "type": "DNS-01"}),
+	}
+	listKinds := map[schema.GroupVersionResource]string{certificateRequestGVR: "CertificateRequestList", orderGVR: "OrderList", challengeGVR: "ChallengeList"}
+	client := &Client{DynamicClient: fake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), listKinds, objects...)}
+	operations, err := client.ListCertificateOperations("production", "api-cert")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(operations) != 3 || operations[2].Kind != "Challenge" || operations[2].Domain != "api.example.com" {
+		t.Fatalf("unexpected operations: %#v", operations)
+	}
+}
+
+func operationObject(resource, name, namespace, ownerKind, ownerName string, spec map[string]interface{}) *unstructured.Unstructured {
+	group := "cert-manager.io/v1"
+	kind := "CertificateRequest"
+	if resource == "orders" {
+		group, kind = "acme.cert-manager.io/v1", "Order"
+	}
+	if resource == "challenges" {
+		group, kind = "acme.cert-manager.io/v1", "Challenge"
+	}
+	return &unstructured.Unstructured{Object: map[string]interface{}{"apiVersion": group, "kind": kind, "metadata": map[string]interface{}{"name": name, "namespace": namespace, "ownerReferences": []interface{}{map[string]interface{}{"apiVersion": "cert-manager.io/v1", "kind": ownerKind, "name": ownerName, "uid": "owner"}}}, "spec": spec, "status": map[string]interface{}{"state": "pending"}}}
 }
 
 func TestIssuerToInfoReadsReadyCondition(t *testing.T) {
