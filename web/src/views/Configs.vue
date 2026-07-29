@@ -5,14 +5,14 @@
 
     <div class="card section-gap">
       <div class="table-tabs">
-        <button :class="['tab-btn', { 'tab-active': activeTab === 'configmaps' }]" @click="activeTab = 'configmaps'">ConfigMaps</button>
-        <button :class="['tab-btn', { 'tab-active': activeTab === 'secrets' }]" @click="activeTab = 'secrets'">Secrets</button>
+        <button :class="['tab-btn', { 'tab-active': activeTab === 'configmaps' }]" @click="selectTab('configmaps')">ConfigMaps</button>
+        <button :class="['tab-btn', { 'tab-active': activeTab === 'secrets' }]" @click="selectTab('secrets')">Secrets</button>
       </div>
     </div>
 
     <!-- ConfigMaps -->
     <div v-if="activeTab === 'configmaps'" class="card">
-      <div v-if="configmaps.length === 0" class="empty-state">
+      <div v-if="loadedTabs.configmaps && configmaps.length === 0" class="empty-state">
         <span class="empty-icon">⬡</span><span class="empty-text">暂无 ConfigMap</span>
       </div>
       <div v-else class="table-wrap">
@@ -43,7 +43,7 @@
 
     <!-- Secrets -->
     <div v-if="activeTab === 'secrets'" class="card">
-      <div v-if="secrets.length === 0" class="empty-state">
+      <div v-if="loadedTabs.secrets && secrets.length === 0" class="empty-state">
         <span class="empty-icon">⬡</span><span class="empty-text">暂无 Secret</span>
       </div>
       <div v-else class="table-wrap">
@@ -87,34 +87,38 @@ import { api } from '../api/index.js'
 const activeTab = ref('configmaps')
 const configmaps = ref([])
 const secrets = ref([])
-const loading = ref(true)
+const loadingTab = ref('')
 const error = ref('')
 const expandedCm = ref('')
 const expandedSecret = ref('')
 const cmDetail = ref({})
 const secretDetail = ref({})
 const revealedKeys = reactive({})
+const loadedTabs = reactive({ configmaps: false, secrets: false })
 
 const safeConfigMaps = computed(() => (configmaps.value || []).filter(cm => cm != null))
 const safeSecrets = computed(() => (secrets.value || []).filter(s => s != null))
 
-onMounted(async () => {
-  loading.value = true
+onMounted(() => selectTab('configmaps'))
+
+async function selectTab(tab) {
+  activeTab.value = tab
+  expandedCm.value = ''
+  expandedSecret.value = ''
+  if (loadingTab.value === tab) return
+
+  loadingTab.value = tab
   error.value = ''
   try {
-    const [cms, secs] = await Promise.allSettled([
-      api.get('/k8s/configmaps'),
-      api.get('/k8s/secrets'),
-    ])
-    configmaps.value = cms.status === 'fulfilled' ? (cms.value || []) : []
-    secrets.value = secs.status === 'fulfilled' ? (secs.value || []) : []
-    const failed = [cms, secs].filter(r => r.status === 'rejected')
-    if (failed.length > 0) {
-      error.value = failed.map(r => r.reason?.message || '未知错误').join('; ')
-    }
-  } catch(e) { error.value = '加载失败，请检查集群连接' }
-  finally { loading.value = false }
-})
+    if (tab === 'configmaps') configmaps.value = await api.get('/k8s/configmaps') || []
+    else secrets.value = await api.get('/k8s/secrets') || []
+    loadedTabs[tab] = true
+  } catch (e) {
+    error.value = e.message || '加载失败，请检查集群连接'
+  } finally {
+    loadingTab.value = ''
+  }
+}
 
 async function toggleCmExpand(cm) {
   const key = cm.namespace + '/' + cm.name

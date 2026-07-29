@@ -441,3 +441,21 @@ func TestProjectAndEnvironmentCRUD(t *testing.T) {
 		t.Fatalf("DeleteProject: %v", err)
 	}
 }
+
+func TestCountApplicationEndpointRouteExcludesCurrentApplication(t *testing.T) {
+	st := setupTestDB(t)
+	if err := st.CreateApplicationEndpoint(&model.ApplicationEndpoint{ApplicationID: 1, DomainID: 7, Exposure: "public", Domain: "api.example.com", Path: "/", ServicePort: 80}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateApplicationEndpoint(&model.ApplicationEndpoint{ApplicationID: 2, DomainID: 7, Exposure: "public", Domain: "api.example.com", Path: "/health", ServicePort: 80}); err != nil {
+		t.Fatal(err)
+	}
+	count, err := st.CountApplicationEndpointRoute(7, "/", 1)
+	if err != nil || count != 0 {
+		t.Fatalf("expected current application route to be excluded, count=%d err=%v", count, err)
+	}
+	count, err = st.CountApplicationEndpointRoute(7, "/health", 1)
+	if err != nil || count != 1 {
+		t.Fatalf("expected conflicting route, count=%d err=%v", count, err)
+	}
+}

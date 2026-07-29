@@ -99,6 +99,19 @@ func (s *Service) ExecuteRelease(ctx context.Context, releaseID uint, applicatio
 	if err := s.runStep(releaseID, "wait_ready", func() error { return s.applier.WaitReady(ctx, applicationContext, spec) }); err != nil {
 		return s.failRelease(releaseID, "wait_ready", err)
 	}
+	if err := s.store.ReplaceApplicationEndpoint(&model.ApplicationEndpoint{
+		ApplicationID: application.ID,
+		DomainID:      spec.Endpoint.DomainID,
+		Exposure:      spec.Endpoint.Exposure,
+		Domain:        spec.Endpoint.Domain,
+		Path:          spec.Endpoint.Path,
+		ServicePort:   spec.Service.Port,
+		TLSEnabled:    spec.Endpoint.TLSEnabled,
+		TLSSecretName: spec.Endpoint.ManagedTLSSecretName,
+		IssuerRef:     spec.Endpoint.IssuerRef,
+	}); err != nil {
+		return s.failRelease(releaseID, "record_endpoint", fmt.Errorf("记录应用入口: %w", err))
+	}
 	return s.transition(release, model.ReleaseStatusSucceeded)
 }
 

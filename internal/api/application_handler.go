@@ -445,7 +445,7 @@ func (h *ApplicationHandler) CreateRelease(c *gin.Context) {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
 		return
 	}
-	if err := h.prepareManagedDomain(&spec); err != nil {
+	if err := h.prepareManagedDomain(app, &spec); err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
 		return
 	}
@@ -562,21 +562,54 @@ func (h *ApplicationHandler) prepareRegistryReleaseSpec(app *model.Application, 
 	return nil
 }
 
-func (h *ApplicationHandler) prepareManagedDomain(spec *application.ReleaseSpec) error {
+func (h *ApplicationHandler) prepareManagedDomain(app *model.Application, spec *application.ReleaseSpec) error {
 	if spec.Endpoint.DomainID == 0 {
+		if spec.Endpoint.ManagedCertificateName != "" || spec.Endpoint.ManagedTLSSecretName != "" {
+			return fmt.Errorf("受管证书只能通过受管域名选择")
+		}
 		return nil
 	}
 	domain, err := h.store.GetManagedDomain(spec.Endpoint.DomainID)
 	if err != nil || !domain.Enabled {
 		return fmt.Errorf("域名不存在或已停用")
 	}
+	if domain.Namespace == "" || domain.Namespace != app.Environment.Namespace {
+		return fmt.Errorf("域名仅可用于命名空间 %q", domain.Namespace)
+	}
+	path := spec.Endpoint.Path
+	if path == "" {
+		path = "/"
+		spec.Endpoint.Path = path
+	}
+	conflicts, err := h.store.CountApplicationEndpointRoute(domain.ID, path, app.ID)
+	if err != nil {
+		return fmt.Errorf("检查域名路由冲突: %w", err)
+	}
+	if conflicts > 0 {
+		return fmt.Errorf("域名 %q 的路径 %q 已被其他应用入口使用", domain.Hostname, path)
+	}
 	spec.Endpoint.Domain = domain.Hostname
-	if spec.Endpoint.IssuerRef == "" {
-		spec.Endpoint.IssuerRef = domain.IssuerRef
+	spec.Endpoint.IssuerRef = domain.IssuerRef
+	spec.Endpoint.IssuerKind = domain.IssuerKind
+	if !spec.Endpoint.TLSEnabled {
+		return nil
 	}
-	if spec.Endpoint.IssuerKind == "" {
-		spec.Endpoint.IssuerKind = domain.IssuerKind
+	if domain.CertificateName == "" || domain.TLSSecretName == "" {
+		return fmt.Errorf("域名尚未申请证书")
 	}
+	certificate, err := K8s.GetCertificate(domain.Namespace, domain.CertificateName)
+	if err != nil {
+		return fmt.Errorf("读取域名证书: %w", err)
+	}
+	if certificate.Status != "Ready" {
+		detail := certificate.Reason
+		if detail == "" {
+			detail = "等待 cert-manager 签发"
+		}
+		return fmt.Errorf("域名证书尚未就绪: %s", detail)
+	}
+	spec.Endpoint.ManagedCertificateName = domain.CertificateName
+	spec.Endpoint.ManagedTLSSecretName = domain.TLSSecretName
 	return nil
 }
 

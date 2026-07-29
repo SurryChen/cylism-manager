@@ -77,6 +77,26 @@ func TestListCertificateOperationsFollowsOwnerReferences(t *testing.T) {
 	}
 }
 
+func TestEnsureCertificateUsesManagedSecretAndIsIdempotent(t *testing.T) {
+	listKinds := map[schema.GroupVersionResource]string{certGVR: "CertificateList"}
+	client := &Client{DynamicClient: fake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), listKinds)}
+	request := CreateCertificateRequest{Name: "cylism-domain-7", Namespace: "production", Domains: []string{"api.example.com"}, IssuerRef: "letsencrypt-prod", IssuerKind: "ClusterIssuer", SecretName: "cylism-domain-7-tls"}
+	if _, err := client.EnsureCertificate(request); err != nil {
+		t.Fatal(err)
+	}
+	request.IssuerRef = "letsencrypt-new"
+	if _, err := client.EnsureCertificate(request); err != nil {
+		t.Fatal(err)
+	}
+	certificate, err := client.GetCertificate("production", "cylism-domain-7")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if certificate.SecretName != "cylism-domain-7-tls" || certificate.Issuer != "letsencrypt-new" {
+		t.Fatalf("unexpected managed certificate: %#v", certificate)
+	}
+}
+
 func operationObject(resource, name, namespace, ownerKind, ownerName string, spec map[string]interface{}) *unstructured.Unstructured {
 	group := "cert-manager.io/v1"
 	kind := "CertificateRequest"

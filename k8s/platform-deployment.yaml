@@ -139,3 +139,32 @@ roleRef:
   kind: ClusterRole
   name: cylism-manager
   apiGroup: rbac.authorization.k8s.io
+---
+# cert-manager invokes this cluster-scoped API while processing AliDNS DNS-01 challenges.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: cylism-alidns-webhook-solver
+  labels:
+    app.kubernetes.io/managed-by: cylism-manager
+    cylism.io/dns-provider: alidns
+rules:
+  - apiGroups: ["acme.cylism.io"]
+    resources: ["alidns"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: cylism-alidns-webhook-solver
+  labels:
+    app.kubernetes.io/managed-by: cylism-manager
+    cylism.io/dns-provider: alidns
+subjects:
+  - kind: ServiceAccount
+    name: cylism-cert-manager
+    namespace: cert-manager
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cylism-alidns-webhook-solver
