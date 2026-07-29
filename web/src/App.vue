@@ -164,6 +164,14 @@ const activeNavGroup = computed(() => {
 })
 
 function isNavItemActive(item) {
+  if (!matchesNavItem(item)) return false
+
+  return !navGroups.value
+    .flatMap(group => group.items)
+    .some(candidate => candidate.to.length > item.to.length && matchesNavItem(candidate))
+}
+
+function matchesNavItem(item) {
   if (item.to === '/applications') {
     return route.path === item.to || /^\/applications\/\d+(?:\/releases\/\d+)?$/.test(route.path)
   }

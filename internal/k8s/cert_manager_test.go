@@ -74,7 +74,7 @@ func certManagerTestClient(t *testing.T, objects []runtime.Object, ready bool) *
 	}
 	deployments := []runtime.Object{}
 	if ready {
-		for _, name := range []string{"cert-manager", "cert-manager-webhook", "cert-manager-cainjector"} {
+		for _, name := range []string{certManagerHelmName, certManagerHelmName + "-webhook", certManagerHelmName + "-cainjector"} {
 			deployments = append(deployments, &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: certManagerNamespace}, Status: appsv1.DeploymentStatus{AvailableReplicas: 1}})
 		}
 	}
