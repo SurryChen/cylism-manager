@@ -360,6 +360,31 @@ func (s *Store) CreateApplicationEndpoint(endpoint *model.ApplicationEndpoint) e
 	return s.db.Create(endpoint).Error
 }
 
+func (s *Store) ReplaceApplicationEndpoint(endpoint *model.ApplicationEndpoint) error {
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("application_id = ?", endpoint.ApplicationID).Delete(&model.ApplicationEndpoint{}).Error; err != nil {
+			return err
+		}
+		return tx.Create(endpoint).Error
+	})
+}
+
+func (s *Store) CountApplicationEndpointsByDomain(domainID uint) (int64, error) {
+	var count int64
+	err := s.db.Model(&model.ApplicationEndpoint{}).Where("domain_id = ?", domainID).Count(&count).Error
+	return count, err
+}
+
+func (s *Store) CountApplicationEndpointRoute(domainID uint, path string, exceptApplicationID uint) (int64, error) {
+	var count int64
+	query := s.db.Model(&model.ApplicationEndpoint{}).Where("domain_id = ? AND path = ?", domainID, path)
+	if exceptApplicationID != 0 {
+		query = query.Where("application_id <> ?", exceptApplicationID)
+	}
+	err := query.Count(&count).Error
+	return count, err
+}
+
 func (s *Store) GetApplication(id uint) (*model.Application, error) {
 	var application model.Application
 	err := s.db.Preload("Project.DefaultImageRegistry").Preload("Environment").Preload("Endpoints").First(&application, id).Error

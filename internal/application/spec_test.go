@@ -66,6 +66,21 @@ func TestRenderResourcesUsesManagedLabelsAndRedactsSecret(t *testing.T) {
 	}
 }
 
+func TestRenderResourcesReusesManagedDomainCertificate(t *testing.T) {
+	spec := validTestReleaseSpec()
+	spec.Endpoint = EndpointSpec{Exposure: ExposurePublic, DomainID: 7, Domain: "api.example.com", TLSEnabled: true, IssuerRef: "letsencrypt-prod", IssuerKind: "ClusterIssuer", ManagedCertificateName: "cylism-domain-7", ManagedTLSSecretName: "cylism-domain-7-tls"}
+	resources, err := RenderResources(ApplicationContext{ProjectName: "commerce", EnvironmentName: "production", ApplicationName: "order-api", Namespace: "commerce-prod", ReleaseSequence: 4}, spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resources.Certificate != nil {
+		t.Fatal("managed domain must not render another Certificate")
+	}
+	if resources.Ingress == nil || len(resources.Ingress.Spec.TLS) != 1 || resources.Ingress.Spec.TLS[0].SecretName != "cylism-domain-7-tls" {
+		t.Fatalf("expected Ingress to reuse managed TLS Secret: %#v", resources.Ingress)
+	}
+}
+
 func TestRenderResourcesRejectsInvalidApplicationName(t *testing.T) {
 	_, err := RenderResources(ApplicationContext{ProjectName: "commerce", EnvironmentName: "production", ApplicationName: "订单服务", Namespace: "commerce-prod", ReleaseSequence: 1}, validTestReleaseSpec())
 	if err == nil || err.Error() != "应用名称必须为 1-63 位小写字母、数字或连字符，且以字母或数字开头和结尾" {

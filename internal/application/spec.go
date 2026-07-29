@@ -70,13 +70,15 @@ type ServiceSpec struct {
 }
 
 type EndpointSpec struct {
-	Exposure   string `json:"exposure"`
-	DomainID   uint   `json:"domain_id,omitempty"`
-	Domain     string `json:"domain,omitempty"`
-	Path       string `json:"path,omitempty"`
-	TLSEnabled bool   `json:"tls_enabled"`
-	IssuerRef  string `json:"issuer_ref,omitempty"`
-	IssuerKind string `json:"issuer_kind,omitempty"`
+	Exposure               string `json:"exposure"`
+	DomainID               uint   `json:"domain_id,omitempty"`
+	Domain                 string `json:"domain,omitempty"`
+	Path                   string `json:"path,omitempty"`
+	TLSEnabled             bool   `json:"tls_enabled"`
+	IssuerRef              string `json:"issuer_ref,omitempty"`
+	IssuerKind             string `json:"issuer_kind,omitempty"`
+	ManagedCertificateName string `json:"managed_certificate_name,omitempty"`
+	ManagedTLSSecretName   string `json:"managed_tls_secret_name,omitempty"`
 }
 
 type ValidationIssue struct {
@@ -158,8 +160,11 @@ func ValidateReleaseSpec(spec ReleaseSpec) []ValidationIssue {
 		if strings.TrimSpace(spec.Endpoint.Domain) == "" {
 			issues = append(issues, ValidationIssue{Field: "endpoint.domain", Message: "公网入口必须提供域名"})
 		}
-		if spec.Endpoint.TLSEnabled && strings.TrimSpace(spec.Endpoint.IssuerRef) == "" {
+		if spec.Endpoint.TLSEnabled && strings.TrimSpace(spec.Endpoint.IssuerRef) == "" && strings.TrimSpace(spec.Endpoint.ManagedCertificateName) == "" {
 			issues = append(issues, ValidationIssue{Field: "endpoint.issuer_ref", Message: "启用 TLS 时必须指定 Issuer"})
+		}
+		if spec.Endpoint.TLSEnabled && (strings.TrimSpace(spec.Endpoint.ManagedCertificateName) == "") != (strings.TrimSpace(spec.Endpoint.ManagedTLSSecretName) == "") {
+			issues = append(issues, ValidationIssue{Field: "endpoint", Message: "受管域名证书信息不完整"})
 		}
 		if spec.Endpoint.TLSEnabled && spec.Endpoint.IssuerKind != "" && spec.Endpoint.IssuerKind != "Issuer" && spec.Endpoint.IssuerKind != "ClusterIssuer" {
 			issues = append(issues, ValidationIssue{Field: "endpoint.issuer_kind", Message: "Issuer 类型必须为 Issuer 或 ClusterIssuer"})
@@ -264,8 +269,13 @@ func RenderResources(context ApplicationContext, spec ReleaseSpec) (*RenderedRes
 		}
 		if spec.Endpoint.TLSEnabled {
 			tlsName := context.ApplicationName + "-tls"
+			if spec.Endpoint.ManagedTLSSecretName != "" {
+				tlsName = spec.Endpoint.ManagedTLSSecretName
+			}
 			ingress.Spec.TLS = []networkingv1.IngressTLS{{Hosts: []string{spec.Endpoint.Domain}, SecretName: tlsName}}
-			result.Certificate = certificateResource(context, spec.Endpoint.Domain, tlsName, spec.Endpoint.IssuerRef, spec.Endpoint.IssuerKind, labels)
+			if spec.Endpoint.ManagedCertificateName == "" {
+				result.Certificate = certificateResource(context, spec.Endpoint.Domain, tlsName, spec.Endpoint.IssuerRef, spec.Endpoint.IssuerKind, labels)
+			}
 		}
 		result.Ingress = ingress
 	}

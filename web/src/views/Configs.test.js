@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { nextTick } from 'vue'
 import { mount } from '@vue/test-utils'
 import Configs from './Configs.vue'
+import { api } from '../api/index.js'
 
 vi.mock('../api/index.js', () => ({
   api: {
@@ -29,6 +30,7 @@ vi.mock('../api/index.js', () => ({
 }))
 
 beforeEach(() => {
+  vi.clearAllMocks()
   document.body.innerHTML = ''
 })
 
@@ -43,16 +45,18 @@ describe('Configs view', () => {
     expect(tabs[1].text()).toBe('Secrets')
   })
 
-  it('renders configmap list', async () => {
+  it('loads and renders ConfigMaps when entering the page', async () => {
     const wrapper = mount(Configs, {
       global: { stubs: { RouterLink: true } }
     })
     await new Promise(r => setTimeout(r, 100))
     await nextTick()
-    expect(wrapper.text()).toContain('ConfigMaps')
+    expect(api.get).toHaveBeenCalledWith('/k8s/configmaps')
+    expect(api.get).not.toHaveBeenCalledWith('/k8s/secrets')
+    expect(wrapper.text()).toContain('app-config')
   })
 
-  it('switches to secrets tab and renders correctly', async () => {
+  it('loads and renders Secrets when switching tabs', async () => {
     const wrapper = mount(Configs, {
       global: { stubs: { RouterLink: true } }
     })
@@ -64,6 +68,8 @@ describe('Configs view', () => {
     await nextTick()
     await new Promise(r => setTimeout(r, 100))
 
+    expect(api.get).toHaveBeenCalledWith('/k8s/secrets')
+    expect(wrapper.text()).toContain('db-pass')
     expect(wrapper.text()).toContain('Opaque')
   })
 

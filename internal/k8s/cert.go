@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -78,6 +79,7 @@ type CreateCertificateRequest struct {
 	Domains    []string `json:"domains"`
 	IssuerRef  string   `json:"issuer_ref"`
 	IssuerKind string   `json:"issuer_kind"`
+	SecretName string   `json:"secret_name,omitempty"`
 }
 
 // ListCertificates 列出所有 Certificate
@@ -359,17 +361,67 @@ func (c *Client) CreateCertificate(request CreateCertificateRequest) (*CertInfo,
 	if err != nil {
 		return nil, err
 	}
-	issuerKind := request.IssuerKind
-	if issuerKind == "" {
-		issuerKind = "ClusterIssuer"
-	}
-	object := &unstructured.Unstructured{Object: map[string]interface{}{"apiVersion": "cert-manager.io/v1", "kind": "Certificate", "metadata": map[string]interface{}{"name": request.Name, "namespace": request.Namespace}, "spec": map[string]interface{}{"secretName": request.Name + "-tls", "dnsNames": stringSlice(request.Domains), "issuerRef": map[string]interface{}{"name": request.IssuerRef, "kind": issuerKind}}}}
+	object := certificateObject(request)
 	created, err := dynamicClient.Resource(certGVR).Namespace(request.Namespace).Create(c.Ctx(), object, metav1.CreateOptions{})
 	if err != nil {
 		return nil, err
 	}
 	info := certToInfo(created)
 	return &info, nil
+}
+
+// EnsureCertificate applies the controlled Certificate shape used by a managed domain.
+func (c *Client) EnsureCertificate(request CreateCertificateRequest) (*CertInfo, error) {
+	dynamicClient, err := c.dynamicClient()
+	if err != nil {
+		return nil, err
+	}
+	object := certificateObject(request)
+	resource := dynamicClient.Resource(certGVR).Namespace(request.Namespace)
+	existing, err := resource.Get(c.Ctx(), request.Name, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		created, createErr := resource.Create(c.Ctx(), object, metav1.CreateOptions{})
+		if createErr != nil {
+			return nil, createErr
+		}
+		info := certToInfo(created)
+		return &info, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	object.SetResourceVersion(existing.GetResourceVersion())
+	updated, err := resource.Update(c.Ctx(), object, metav1.UpdateOptions{})
+	if err != nil {
+		return nil, err
+	}
+	info := certToInfo(updated)
+	return &info, nil
+}
+
+func (c *Client) GetCertificate(namespace, name string) (*CertInfo, error) {
+	dynamicClient, err := c.dynamicClient()
+	if err != nil {
+		return nil, err
+	}
+	certificate, err := dynamicClient.Resource(certGVR).Namespace(namespace).Get(c.Ctx(), name, metav1.GetOptions{})
+	if err != nil {
+		return nil, err
+	}
+	info := certToInfo(certificate)
+	return &info, nil
+}
+
+func certificateObject(request CreateCertificateRequest) *unstructured.Unstructured {
+	issuerKind := request.IssuerKind
+	if issuerKind == "" {
+		issuerKind = "ClusterIssuer"
+	}
+	secretName := request.SecretName
+	if secretName == "" {
+		secretName = request.Name + "-tls"
+	}
+	return &unstructured.Unstructured{Object: map[string]interface{}{"apiVersion": "cert-manager.io/v1", "kind": "Certificate", "metadata": map[string]interface{}{"name": request.Name, "namespace": request.Namespace}, "spec": map[string]interface{}{"secretName": secretName, "dnsNames": stringSlice(request.Domains), "issuerRef": map[string]interface{}{"name": request.IssuerRef, "kind": issuerKind}}}}
 }
 
 func stringSlice(values []string) []interface{} {

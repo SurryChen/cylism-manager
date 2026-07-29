@@ -110,7 +110,7 @@ func (a *KubernetesApplier) WaitReady(ctx context.Context, application Applicati
 			if !spec.Endpoint.TLSEnabled {
 				return nil
 			}
-			ready, err := a.certificateReady(deadline, application)
+			ready, err := a.certificateReady(deadline, application, spec.Endpoint)
 			if err != nil {
 				return err
 			}
@@ -234,12 +234,16 @@ func (a *KubernetesApplier) applyCertificate(ctx context.Context, desired *unstr
 	return err
 }
 
-func (a *KubernetesApplier) certificateReady(ctx context.Context, application ApplicationContext) (bool, error) {
+func (a *KubernetesApplier) certificateReady(ctx context.Context, application ApplicationContext, endpoint EndpointSpec) (bool, error) {
 	dynamicClient, err := dynamic.NewForConfig(a.Client.Config)
 	if err != nil {
 		return false, err
 	}
-	certificate, err := dynamicClient.Resource(certificateGVR).Namespace(application.Namespace).Get(ctx, application.ApplicationName+"-tls", metav1.GetOptions{})
+	certificateName := application.ApplicationName + "-tls"
+	if endpoint.ManagedCertificateName != "" {
+		certificateName = endpoint.ManagedCertificateName
+	}
+	certificate, err := dynamicClient.Resource(certificateGVR).Namespace(application.Namespace).Get(ctx, certificateName, metav1.GetOptions{})
 	if err != nil {
 		return false, fmt.Errorf("读取 Certificate 状态: %w", err)
 	}
