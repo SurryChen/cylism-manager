@@ -76,4 +76,26 @@ describe('Applications view', () => {
     expect(releaseModal.textContent).toContain('commerce-harbor')
     wrapper.unmount()
   })
+
+  it('requires a ready managed domain for public releases', async () => {
+    const { api } = await import('../api/index.js')
+    api.get.mockImplementation((path) => {
+      if (path === '/applications') return Promise.resolve([{ id: 3, project_id: 1, name: 'order-api', project: { id: 1, name: 'commerce' }, environment: { name: 'production', namespace: 'commerce-prod' } }])
+      if (path === '/domains') return Promise.resolve([{ id: 7, hostname: 'api.example.com', namespace: 'commerce-prod', enabled: true, certificate: { status: 'Ready' } }])
+      return Promise.resolve([])
+    })
+    const wrapper = mount(Applications)
+    await new Promise(resolve => setTimeout(resolve, 0))
+    await wrapper.get('.btn-sm').trigger('click')
+    await new Promise(resolve => setTimeout(resolve, 0))
+    const exposure = [...document.body.querySelectorAll('.release-modal select')].find(select => select.value === 'cluster')
+    exposure.value = 'public'
+    exposure.dispatchEvent(new Event('change'))
+    await new Promise(resolve => setTimeout(resolve, 0))
+    const modalText = document.body.querySelector('.release-modal').textContent
+    expect(modalText).toContain('api.example.com')
+    expect(modalText).not.toContain('手动填写新域名')
+    expect(modalText).not.toContain('Issuer')
+    wrapper.unmount()
+  })
 })
