@@ -82,6 +82,24 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 		imageRegistries.PUT("/:id", imageRegistryHandler.Update)
 		imageRegistries.DELETE("/:id", imageRegistryHandler.Delete)
 	}
+	nodeRegistryMirrors := apiGroup.Group("/node-registry-mirrors")
+	{
+		h := NewNodeRegistryMirrorHandler(s, encKey)
+		nodeRegistryMirrors.GET("", h.List)
+		nodeRegistryMirrors.POST("", h.Create)
+		nodeRegistryMirrors.PUT("/:id", h.Update)
+		nodeRegistryMirrors.DELETE("/:id", h.Delete)
+		nodeRegistryMirrors.POST("/:id/apply", h.Apply)
+	}
+	chartRepositories := apiGroup.Group("/chart-repositories")
+	{
+		h := NewChartRepositoryHandler(s)
+		chartRepositories.GET("", h.List)
+		chartRepositories.POST("", h.Create)
+		chartRepositories.PUT("/:id", h.Update)
+		chartRepositories.DELETE("/:id", h.Delete)
+		chartRepositories.POST("/:id/verify", h.Verify)
+	}
 	domainHandler := NewDomainHandler(s)
 	domains := apiGroup.Group("/domains")
 	{
@@ -149,9 +167,11 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 	}
 
 	// Certificate 管理
-	certHandler := NewCertHandler()
+	certHandler := NewCertHandler(s)
 	certs := apiGroup.Group("/certs")
 	{
+		certs.GET("/status", certHandler.Status)
+		certs.POST("/install", certHandler.Install)
 		certs.GET("", certHandler.ListCerts)
 		certs.GET("/issuers", certHandler.ListIssuers)
 		certs.POST("", certHandler.CreateCert)

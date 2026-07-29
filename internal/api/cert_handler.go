@@ -6,22 +6,58 @@ import (
 
 	"github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
+	"github.com/cylism/cylism-manager/internal/store"
 
 	"github.com/gin-gonic/gin"
 )
 
 // CertHandler Certificate 管理的 HTTP handler
-type CertHandler struct{}
+type CertHandler struct{ store *store.Store }
 
 // NewCertHandler 创建 CertHandler
-func NewCertHandler() *CertHandler {
-	return &CertHandler{}
+func NewCertHandler(st ...*store.Store) *CertHandler {
+	h := &CertHandler{}
+	if len(st) > 0 {
+		h.store = st[0]
+	}
+	return h
+}
+
+// Status reports cert-manager prerequisites before certificate resources are queried.
+func (h *CertHandler) Status(c *gin.Context) {
+	if K8s == nil {
+		model.Success(c, &k8s.CertManagerStatus{State: k8s.CertManagerStateUnavailable, Message: "Kubernetes 客户端未初始化"})
+		return
+	}
+	model.Success(c, K8s.CertManagerStatus())
+}
+
+// Install starts the fixed cert-manager HelmChart installation supported by K3s.
+func (h *CertHandler) Install(c *gin.Context) {
+	if K8s == nil {
+		k8sUnavailable(c)
+		return
+	}
+	if h.store == nil {
+		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, "Chart 仓库存储未初始化")
+		return
+	}
+	repository, err := h.store.GetVerifiedCertManagerChartRepository()
+	if err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "请先配置并验证可用的 cert-manager Chart 仓库")
+		return
+	}
+	status, err := K8s.InstallCertManager(repository.Endpoint, repository.ChartName, repository.ChartVersion)
+	if err != nil {
+		model.ErrorWithData(c, http.StatusBadRequest, model.CodeK8sAPIError, err.Error(), status)
+		return
+	}
+	model.SuccessWithMessage(c, status, status.Message)
 }
 
 // ListCerts 列出所有 Certificate
 func (h *CertHandler) ListCerts(c *gin.Context) {
-	if K8s == nil {
-		k8sUnavailable(c)
+	if !h.requireReady(c) {
 		return
 	}
 	certs, err := K8s.ListCertificates()
@@ -34,8 +70,7 @@ func (h *CertHandler) ListCerts(c *gin.Context) {
 
 // CreateCert 创建 Certificate
 func (h *CertHandler) CreateCert(c *gin.Context) {
-	if K8s == nil {
-		k8sUnavailable(c)
+	if !h.requireReady(c) {
 		return
 	}
 	var request k8s.CreateCertificateRequest
@@ -62,8 +97,7 @@ func (h *CertHandler) CreateCert(c *gin.Context) {
 }
 
 func (h *CertHandler) ListIssuers(c *gin.Context) {
-	if K8s == nil {
-		k8sUnavailable(c)
+	if !h.requireReady(c) {
 		return
 	}
 	issuers, err := K8s.ListIssuers()
@@ -76,8 +110,7 @@ func (h *CertHandler) ListIssuers(c *gin.Context) {
 
 // DeleteCert 删除 Certificate
 func (h *CertHandler) DeleteCert(c *gin.Context) {
-	if K8s == nil {
-		k8sUnavailable(c)
+	if !h.requireReady(c) {
 		return
 	}
 	ns := c.Param("namespace")
@@ -87,4 +120,17 @@ func (h *CertHandler) DeleteCert(c *gin.Context) {
 		return
 	}
 	model.SuccessWithMessage(c, nil, "删除成功")
+}
+
+func (h *CertHandler) requireReady(c *gin.Context) bool {
+	if K8s == nil {
+		k8sUnavailable(c)
+		return false
+	}
+	status := K8s.CertManagerStatus()
+	if status.State == k8s.CertManagerStateReady {
+		return true
+	}
+	model.ErrorWithData(c, http.StatusOK, model.CodeK8sAPIError, status.Message, status)
+	return false
 }

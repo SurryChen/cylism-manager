@@ -32,6 +32,10 @@ func setupApplicationRouter() (*gin.Engine, *store.Store) {
 		projects.POST("/:projectID/environments/:environmentID/sync-namespace", h.SyncEnvironmentNamespace)
 		projects.DELETE("/:projectID/environments/:environmentID", h.DeleteEnvironment)
 	}
+	applications := r.Group("/api/applications")
+	{
+		applications.POST("", h.CreateApplication)
+	}
 	return r, s
 }
 
@@ -120,6 +124,20 @@ func TestApplicationHandlerEnvironmentNamespaceBindAndSync(t *testing.T) {
 	}
 	if _, err := clientset.CoreV1().Namespaces().Get(t.Context(), "dev", metav1.GetOptions{}); err != nil {
 		t.Fatalf("expected sync to create namespace: %v", err)
+	}
+}
+
+func TestApplicationHandlerRejectsInvalidKubernetesApplicationName(t *testing.T) {
+	r, s := setupApplicationRouter()
+	if err := s.CreateProject(&model.Project{Name: "前端", OwnerID: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CreateEnvironment(&model.Environment{ProjectID: 1, Name: "生产环境", Namespace: "frontend-prod"}); err != nil {
+		t.Fatal(err)
+	}
+	response := serve(r, newJSONRequest(http.MethodPost, "/api/applications", gin.H{"project_id": 1, "environment_id": 1, "name": "订单服务"}))
+	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "应用名称必须") {
+		t.Fatalf("expected invalid application name error, got %d: %s", response.Code, response.Body.String())
 	}
 }
 

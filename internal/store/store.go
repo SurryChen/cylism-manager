@@ -34,6 +34,9 @@ func New(dsn string) (*Store, error) {
 		&model.Application{},
 		&model.ApplicationEndpoint{},
 		&model.ImageRegistry{},
+		&model.NodeRegistryMirror{},
+		&model.NodeRegistryMirrorNode{},
+		&model.ChartRepository{},
 		&model.ManagedDomain{},
 		&model.Release{},
 		&model.ReleaseOperation{},
@@ -387,6 +390,72 @@ func (s *Store) ListImageRegistries(projectID uint) ([]model.ImageRegistry, erro
 		registries[index].CredentialConfigured = registries[index].Credential != ""
 	}
 	return registries, nil
+}
+
+// --- Node registry mirrors ---
+
+func (s *Store) CreateNodeRegistryMirror(mirror *model.NodeRegistryMirror) error {
+	return s.db.Create(mirror).Error
+}
+
+func (s *Store) GetNodeRegistryMirror(id uint) (*model.NodeRegistryMirror, error) {
+	var mirror model.NodeRegistryMirror
+	err := s.db.Preload("NodeStatuses.Server").First(&mirror, id).Error
+	if err == nil {
+		mirror.CredentialConfigured = mirror.Credential != ""
+	}
+	return &mirror, err
+}
+
+func (s *Store) ListNodeRegistryMirrors() ([]model.NodeRegistryMirror, error) {
+	var mirrors []model.NodeRegistryMirror
+	err := s.db.Preload("NodeStatuses.Server").Order("created_at desc").Find(&mirrors).Error
+	for index := range mirrors {
+		mirrors[index].CredentialConfigured = mirrors[index].Credential != ""
+	}
+	return mirrors, err
+}
+
+func (s *Store) UpdateNodeRegistryMirror(mirror *model.NodeRegistryMirror) error {
+	return s.db.Save(mirror).Error
+}
+
+func (s *Store) DeleteNodeRegistryMirror(id uint) error {
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("mirror_id = ?", id).Delete(&model.NodeRegistryMirrorNode{}).Error; err != nil {
+			return err
+		}
+		return tx.Delete(&model.NodeRegistryMirror{}, id).Error
+	})
+}
+
+func (s *Store) UpsertNodeRegistryMirrorStatus(status *model.NodeRegistryMirrorNode) error {
+	return s.db.Where("mirror_id = ? AND server_id = ?", status.MirrorID, status.ServerID).Assign(status).FirstOrCreate(&model.NodeRegistryMirrorNode{}).Error
+}
+
+func (s *Store) CreateChartRepository(repository *model.ChartRepository) error {
+	return s.db.Create(repository).Error
+}
+func (s *Store) ListChartRepositories() ([]model.ChartRepository, error) {
+	var repositories []model.ChartRepository
+	err := s.db.Order("created_at desc").Find(&repositories).Error
+	return repositories, err
+}
+func (s *Store) GetChartRepository(id uint) (*model.ChartRepository, error) {
+	var repository model.ChartRepository
+	err := s.db.First(&repository, id).Error
+	return &repository, err
+}
+func (s *Store) UpdateChartRepository(repository *model.ChartRepository) error {
+	return s.db.Save(repository).Error
+}
+func (s *Store) DeleteChartRepository(id uint) error {
+	return s.db.Delete(&model.ChartRepository{}, id).Error
+}
+func (s *Store) GetVerifiedCertManagerChartRepository() (*model.ChartRepository, error) {
+	var repository model.ChartRepository
+	err := s.db.Where("enabled = ? AND chart_name = ? AND last_verify_status = ?", true, "cert-manager", "succeeded").Order("updated_at desc").First(&repository).Error
+	return &repository, err
 }
 
 func (s *Store) GetImageRegistry(id uint) (*model.ImageRegistry, error) {

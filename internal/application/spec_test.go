@@ -41,13 +41,16 @@ func TestRenderResourcesUsesManagedLabelsAndRedactsSecret(t *testing.T) {
 		Endpoint:      EndpointSpec{Exposure: ExposureCluster},
 	}
 	resources, err := RenderResources(ApplicationContext{
-		ProjectName: "commerce", EnvironmentName: "production", ApplicationName: "order-api", Namespace: "commerce-prod", ReleaseSequence: 3,
+		ProjectID: 7, EnvironmentID: 11, ProjectName: "前端", EnvironmentName: "生产环境", ApplicationName: "order-api", Namespace: "commerce-prod", ReleaseSequence: 3,
 	}, spec)
 	if err != nil {
 		t.Fatalf("RenderResources: %v", err)
 	}
 	if resources.Deployment.Labels[ManagedByLabel] != ManagedByValue {
 		t.Fatalf("expected managed label, got %+v", resources.Deployment.Labels)
+	}
+	if resources.Deployment.Labels[ProjectLabel] != "project-7" || resources.Deployment.Labels[EnvironmentLabel] != "environment-11" {
+		t.Fatalf("expected ID-based project and environment labels, got %+v", resources.Deployment.Labels)
 	}
 	if resources.Service.Spec.Selector[ApplicationNameLabel] != "order-api" {
 		t.Fatalf("unexpected selector: %+v", resources.Service.Spec.Selector)
@@ -60,6 +63,13 @@ func TestRenderResourcesUsesManagedLabelsAndRedactsSecret(t *testing.T) {
 	}
 	if len(resources.Deployment.Spec.Template.Spec.Containers[0].EnvFrom) != 2 {
 		t.Fatal("expected config and secret env references")
+	}
+}
+
+func TestRenderResourcesRejectsInvalidApplicationName(t *testing.T) {
+	_, err := RenderResources(ApplicationContext{ProjectName: "commerce", EnvironmentName: "production", ApplicationName: "订单服务", Namespace: "commerce-prod", ReleaseSequence: 1}, validTestReleaseSpec())
+	if err == nil || err.Error() != "应用名称必须为 1-63 位小写字母、数字或连字符，且以字母或数字开头和结尾" {
+		t.Fatalf("expected Kubernetes application name validation error, got %v", err)
 	}
 }
 

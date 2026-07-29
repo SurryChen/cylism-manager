@@ -18,6 +18,8 @@ import ApplicationDetails from '../views/ApplicationDetails.vue'
 import ReleaseDetails from '../views/ReleaseDetails.vue'
 import ImageRegistries from '../views/ImageRegistries.vue'
 import Domains from '../views/Domains.vue'
+import NodeRegistryMirrors from '../views/NodeRegistryMirrors.vue'
+import ChartRepositories from '../views/ChartRepositories.vue'
 
 const routes = [
   { path: '/login', component: Login, meta: { public: true } },
@@ -32,6 +34,8 @@ const routes = [
   { path: '/applications/:applicationID', component: ApplicationDetails, props: true },
   { path: '/servers', component: Servers },
   { path: '/cluster', component: Cluster },
+  { path: '/cluster/registry-mirrors', component: NodeRegistryMirrors },
+  { path: '/cluster/chart-repositories', component: ChartRepositories },
   { path: '/workloads', component: Workloads },
   { path: '/services', component: Services },
   { path: '/routes', component: Sites },

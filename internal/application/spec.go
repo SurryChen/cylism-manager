@@ -14,6 +14,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/apimachinery/pkg/util/validation"
 )
 
 const (
@@ -83,6 +84,8 @@ type ValidationIssue struct {
 }
 
 type ApplicationContext struct {
+	ProjectID       uint
+	EnvironmentID   uint
 	ProjectName     string
 	EnvironmentName string
 	ApplicationName string
@@ -169,6 +172,9 @@ func RenderResources(context ApplicationContext, spec ReleaseSpec) (*RenderedRes
 	}
 	if context.ApplicationName == "" || context.Namespace == "" || context.ProjectName == "" || context.EnvironmentName == "" {
 		return nil, fmt.Errorf("应用上下文不完整")
+	}
+	if err := ValidateApplicationName(context.ApplicationName); err != nil {
+		return nil, err
 	}
 	labels := managedLabels(context)
 	result := &RenderedResources{SanitizedSpec: sanitizeReleaseSpec(spec)}
@@ -281,9 +287,17 @@ func imagePullSecret(context ApplicationContext, labels map[string]string, spec 
 
 func managedLabels(context ApplicationContext) map[string]string {
 	return map[string]string{
-		ManagedByLabel: ManagedByValue, ProjectLabel: context.ProjectName, ApplicationNameLabel: context.ApplicationName,
-		EnvironmentLabel: context.EnvironmentName, ReleaseLabel: fmt.Sprintf("%d", context.ReleaseSequence),
+		ManagedByLabel: ManagedByValue, ProjectLabel: fmt.Sprintf("project-%d", context.ProjectID), ApplicationNameLabel: context.ApplicationName,
+		EnvironmentLabel: fmt.Sprintf("environment-%d", context.EnvironmentID), ReleaseLabel: fmt.Sprintf("%d", context.ReleaseSequence),
 	}
+}
+
+// ValidateApplicationName ensures the application can be used as a Kubernetes resource name and label value.
+func ValidateApplicationName(name string) error {
+	if validationErrors := validation.IsDNS1123Label(name); len(validationErrors) > 0 {
+		return fmt.Errorf("应用名称必须为 1-63 位小写字母、数字或连字符，且以字母或数字开头和结尾")
+	}
+	return nil
 }
 
 func workloadSelector(applicationName string) map[string]string {

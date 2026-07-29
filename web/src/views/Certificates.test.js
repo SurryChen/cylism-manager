@@ -19,7 +19,9 @@ async function settle() {
 
 describe('Certificates view', () => {
   beforeEach(() => {
+	vi.clearAllMocks()
     api.get.mockImplementation(path => {
+      if (path === '/certs/status') return Promise.resolve({ state: 'ready', message: 'cert-manager 已就绪' })
       if (path === '/certs/issuers') return Promise.resolve(issuers)
       return Promise.resolve([{ name: 'api-example', namespace: 'production', domains: ['api.example.com'], issuer: 'letsencrypt-dns', issuer_kind: 'ClusterIssuer', secret_name: 'api-example-tls', expiry_date: '2026-10-01T12:00:00Z', status: 'Ready' }])
     })
@@ -56,5 +58,19 @@ describe('Certificates view', () => {
       issuer_ref: 'namespace-issuer',
       issuer_kind: 'Issuer',
     })
+  })
+
+  it('shows setup status without loading certificate resources when cert-manager is absent', async () => {
+    api.get.mockImplementation(path => {
+      if (path === '/certs/status') return Promise.resolve({ state: 'not_installed', message: '未检测到完整的 cert-manager CRD', installer_available: true })
+      return Promise.reject(new Error(`unexpected request: ${path}`))
+    })
+    const wrapper = mount(Certificates)
+    await settle()
+
+    expect(wrapper.text()).toContain('cert-manager 未安装')
+    expect(wrapper.text()).toContain('安装 cert-manager')
+    expect(api.get).not.toHaveBeenCalledWith('/certs')
+    expect(api.get).not.toHaveBeenCalledWith('/certs/issuers')
   })
 })

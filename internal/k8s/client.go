@@ -18,9 +18,10 @@ import (
 
 // Client K8s 客户端封装
 type Client struct {
-	Clientset kubernetes.Interface
-	Config    *rest.Config
-	ctx       context.Context
+	Clientset     kubernetes.Interface
+	DynamicClient dynamic.Interface
+	Config        *rest.Config
+	ctx           context.Context
 
 	ingressControllerMu          sync.Mutex
 	ingressControllerCache       *IngressControllerStatus
@@ -105,9 +106,19 @@ func (c *Client) Ctx() context.Context {
 	return c.ctx
 }
 
+func (c *Client) dynamicClient() (dynamic.Interface, error) {
+	if c.DynamicClient != nil {
+		return c.DynamicClient, nil
+	}
+	if c.Config == nil {
+		return nil, fmt.Errorf("Kubernetes dynamic client 未初始化")
+	}
+	return dynamic.NewForConfig(c.Config)
+}
+
 // CheckCRD 检测指定 CRD 是否存在
 func (c *Client) CheckCRD(name string) (bool, error) {
-	dynamicClient, err := dynamic.NewForConfig(c.Config)
+	dynamicClient, err := c.dynamicClient()
 	if err != nil {
 		return false, err
 	}
@@ -116,7 +127,7 @@ func (c *Client) CheckCRD(name string) (bool, error) {
 		Version:  "v1",
 		Resource: "customresourcedefinitions",
 	}
-	_, err = dynamicClient.Resource(crdGVR).Get(c.ctx, name, metav1.GetOptions{})
+	_, err = dynamicClient.Resource(crdGVR).Get(c.Ctx(), name, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
 		return false, nil
 	}
