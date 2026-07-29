@@ -35,7 +35,7 @@
     <div v-if="showCreate" class="overlay" @click.self="showCreate = false"><div class="modal"><h2 class="modal-title">创建应用</h2><form @submit.prevent="createApplication">
       <div class="form-group"><label class="form-label">项目</label><select v-model.number="createForm.projectID" class="form-select" required @change="loadCreateEnvironments"><option :value="0" disabled>选择项目</option><option v-for="project in projects" :key="project.id" :value="project.id">{{ project.name }}</option></select></div>
       <div class="form-group"><label class="form-label">环境</label><select v-model.number="createForm.environmentID" class="form-select" required :disabled="createEnvironments.length === 0"><option :value="0" disabled>{{ createEnvironments.length ? '选择环境' : '请先创建环境' }}</option><option v-for="environment in createEnvironments" :key="environment.id" :value="environment.id">{{ environment.name }} · {{ environment.namespace }}</option></select></div>
-      <div class="form-group"><label class="form-label">应用名</label><input v-model="createForm.applicationName" class="form-input" required placeholder="order-api" /></div>
+      <div class="form-group"><label class="form-label">应用名</label><input v-model.trim="createForm.applicationName" class="form-input" required pattern="[a-z0-9]([-a-z0-9]*[a-z0-9])?" maxlength="63" title="仅支持小写字母、数字和连字符，且以字母或数字开头和结尾" placeholder="order-api" /><p class="form-hint">仅支持小写字母、数字和连字符，最长 63 位。</p></div>
       <div class="modal-actions"><button type="button" class="btn" @click="showCreate = false">取消</button><button class="btn btn-primary" :disabled="submitting">{{ submitting ? '创建中...' : '创建' }}</button></div>
     </form></div></div>
 

@@ -209,6 +209,7 @@ func (s *Service) failRelease(releaseID uint, step string, cause error) error {
 
 func applicationContext(application *model.Application, sequence uint) ApplicationContext {
 	return ApplicationContext{
+		ProjectID: application.Project.ID, EnvironmentID: application.Environment.ID,
 		ProjectName: application.Project.Name, EnvironmentName: application.Environment.Name,
 		ApplicationName: application.Name, Namespace: application.Environment.Namespace, ReleaseSequence: sequence,
 	}

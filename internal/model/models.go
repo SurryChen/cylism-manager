@@ -198,6 +198,53 @@ type ImageRegistry struct {
 	CredentialConfigured bool       `gorm:"-" json:"credential_configured"`
 }
 
+// NodeRegistryMirror defines one registry entry written to K3s registries.yaml on cluster nodes.
+type NodeRegistryMirror struct {
+	ID                   uint                     `gorm:"primaryKey" json:"id"`
+	Name                 string                   `gorm:"size:128;uniqueIndex;not null" json:"name"`
+	Registry             string                   `gorm:"size:256;uniqueIndex;not null" json:"registry"`
+	Endpoints            string                   `gorm:"type:text;not null" json:"endpoints"`
+	Username             string                   `gorm:"size:256" json:"username"`
+	Credential           string                   `gorm:"type:text" json:"-"`
+	InsecureSkipVerify   bool                     `gorm:"default:false" json:"insecure_skip_verify"`
+	Enabled              bool                     `gorm:"default:true;not null" json:"enabled"`
+	CreatedBy            uint                     `gorm:"index" json:"created_by"`
+	LastAppliedAt        *time.Time               `json:"last_applied_at,omitempty"`
+	LastApplyStatus      string                   `gorm:"size:32" json:"last_apply_status"`
+	LastApplyError       string                   `gorm:"size:512" json:"last_apply_error,omitempty"`
+	CreatedAt            time.Time                `json:"created_at"`
+	UpdatedAt            time.Time                `json:"updated_at"`
+	CredentialConfigured bool                     `gorm:"-" json:"credential_configured"`
+	NodeStatuses         []NodeRegistryMirrorNode `gorm:"foreignKey:MirrorID" json:"node_statuses,omitempty"`
+}
+
+// NodeRegistryMirrorNode records the last deployment result for one cluster node.
+type NodeRegistryMirrorNode struct {
+	ID        uint       `gorm:"primaryKey" json:"id"`
+	MirrorID  uint       `gorm:"uniqueIndex:idx_mirror_node;not null" json:"mirror_id"`
+	ServerID  uint       `gorm:"uniqueIndex:idx_mirror_node;not null" json:"server_id"`
+	Status    string     `gorm:"size:32;not null" json:"status"`
+	Detail    string     `gorm:"size:512" json:"detail,omitempty"`
+	AppliedAt *time.Time `json:"applied_at,omitempty"`
+	Server    Server     `gorm:"foreignKey:ServerID" json:"server,omitempty"`
+}
+
+// ChartRepository is a vetted Helm chart source for platform-managed extensions.
+type ChartRepository struct {
+	ID               uint       `gorm:"primaryKey" json:"id"`
+	Name             string     `gorm:"size:128;uniqueIndex;not null" json:"name"`
+	Endpoint         string     `gorm:"size:512;uniqueIndex;not null" json:"endpoint"`
+	ChartName        string     `gorm:"size:256;not null" json:"chart_name"`
+	ChartVersion     string     `gorm:"size:128;not null" json:"chart_version"`
+	Enabled          bool       `gorm:"default:true;not null" json:"enabled"`
+	LastVerifiedAt   *time.Time `json:"last_verified_at,omitempty"`
+	LastVerifyStatus string     `gorm:"size:32" json:"last_verify_status"`
+	LastVerifyError  string     `gorm:"size:512" json:"last_verify_error,omitempty"`
+	CreatedBy        uint       `gorm:"index" json:"created_by"`
+	CreatedAt        time.Time  `json:"created_at"`
+	UpdatedAt        time.Time  `json:"updated_at"`
+}
+
 // ManagedDomain 是可供应用发布选择的域名资产。
 type ManagedDomain struct {
 	ID          uint      `gorm:"primaryKey" json:"id"`

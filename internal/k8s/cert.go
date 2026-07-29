@@ -6,7 +6,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/client-go/dynamic"
 )
 
 var certGVR = schema.GroupVersionResource{
@@ -49,12 +48,12 @@ type CreateCertificateRequest struct {
 
 // ListCertificates 列出所有 Certificate
 func (c *Client) ListCertificates() ([]CertInfo, error) {
-	dynamicClient, err := dynamic.NewForConfig(c.Config)
+	dynamicClient, err := c.dynamicClient()
 	if err != nil {
 		return nil, err
 	}
 
-	list, err := dynamicClient.Resource(certGVR).Namespace("").List(c.ctx, metav1.ListOptions{})
+	list, err := dynamicClient.Resource(certGVR).Namespace("").List(c.Ctx(), metav1.ListOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("list certificates: %w", err)
 	}
@@ -68,7 +67,7 @@ func (c *Client) ListCertificates() ([]CertInfo, error) {
 }
 
 func (c *Client) ListIssuers() ([]IssuerInfo, error) {
-	dynamicClient, err := dynamic.NewForConfig(c.Config)
+	dynamicClient, err := c.dynamicClient()
 	if err != nil {
 		return nil, err
 	}
@@ -81,9 +80,9 @@ func (c *Client) ListIssuers() ([]IssuerInfo, error) {
 		resource := dynamicClient.Resource(source.gvr)
 		var list *unstructured.UnstructuredList
 		if source.namespaced {
-			list, err = resource.Namespace("").List(c.ctx, metav1.ListOptions{})
+			list, err = resource.Namespace("").List(c.Ctx(), metav1.ListOptions{})
 		} else {
-			list, err = resource.List(c.ctx, metav1.ListOptions{})
+			list, err = resource.List(c.Ctx(), metav1.ListOptions{})
 		}
 		if err != nil {
 			return nil, fmt.Errorf("list %s: %w", source.kind, err)
@@ -109,7 +108,7 @@ func issuerToInfo(item *unstructured.Unstructured, kind string) IssuerInfo {
 }
 
 func (c *Client) CreateCertificate(request CreateCertificateRequest) (*CertInfo, error) {
-	dynamicClient, err := dynamic.NewForConfig(c.Config)
+	dynamicClient, err := c.dynamicClient()
 	if err != nil {
 		return nil, err
 	}
@@ -118,7 +117,7 @@ func (c *Client) CreateCertificate(request CreateCertificateRequest) (*CertInfo,
 		issuerKind = "ClusterIssuer"
 	}
 	object := &unstructured.Unstructured{Object: map[string]interface{}{"apiVersion": "cert-manager.io/v1", "kind": "Certificate", "metadata": map[string]interface{}{"name": request.Name, "namespace": request.Namespace}, "spec": map[string]interface{}{"secretName": request.Name + "-tls", "dnsNames": stringSlice(request.Domains), "issuerRef": map[string]interface{}{"name": request.IssuerRef, "kind": issuerKind}}}}
-	created, err := dynamicClient.Resource(certGVR).Namespace(request.Namespace).Create(c.ctx, object, metav1.CreateOptions{})
+	created, err := dynamicClient.Resource(certGVR).Namespace(request.Namespace).Create(c.Ctx(), object, metav1.CreateOptions{})
 	if err != nil {
 		return nil, err
 	}
@@ -136,11 +135,11 @@ func stringSlice(values []string) []interface{} {
 
 // DeleteCertificate 删除 Certificate
 func (c *Client) DeleteCertificate(namespace, name string) error {
-	dynamicClient, err := dynamic.NewForConfig(c.Config)
+	dynamicClient, err := c.dynamicClient()
 	if err != nil {
 		return err
 	}
-	return dynamicClient.Resource(certGVR).Namespace(namespace).Delete(c.ctx, name, metav1.DeleteOptions{})
+	return dynamicClient.Resource(certGVR).Namespace(namespace).Delete(c.Ctx(), name, metav1.DeleteOptions{})
 }
 
 func certToInfo(item *unstructured.Unstructured) CertInfo {

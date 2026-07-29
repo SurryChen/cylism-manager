@@ -404,8 +404,13 @@ func (h *ApplicationHandler) CreateApplication(c *gin.Context) {
 		EnvironmentID uint   `json:"environment_id"`
 		Name          string `json:"name"`
 	}
-	if err := c.ShouldBindJSON(&req); err != nil || req.ProjectID == 0 || req.EnvironmentID == 0 || req.Name == "" {
+	if err := c.ShouldBindJSON(&req); err != nil || req.ProjectID == 0 || req.EnvironmentID == 0 || strings.TrimSpace(req.Name) == "" {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "项目、环境和应用名称必填")
+		return
+	}
+	req.Name = strings.TrimSpace(req.Name)
+	if err := application.ValidateApplicationName(req.Name); err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
 		return
 	}
 	app := &model.Application{ProjectID: req.ProjectID, EnvironmentID: req.EnvironmentID, Name: req.Name, WorkloadKind: "deployment", CreatedBy: getUserID(c)}

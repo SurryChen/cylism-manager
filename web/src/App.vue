@@ -136,6 +136,8 @@ const navGroups = computed(() => [
     items: [
       { label: '服务器', to: '/servers', icon: Server },
       { label: '集群节点', to: '/cluster', icon: Waypoints },
+      { label: '节点镜像源', to: '/cluster/registry-mirrors', icon: Boxes },
+      { label: 'Chart 仓库', to: '/cluster/chart-repositories', icon: Layers3 },
       { label: '工作负载', to: '/workloads', icon: Globe },
       { label: '服务', to: '/services', icon: Boxes },
       { label: '配置', to: '/configs', icon: Settings },
