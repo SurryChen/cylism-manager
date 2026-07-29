@@ -44,6 +44,13 @@ func New(dsn string) (*Store, error) {
 	); err != nil {
 		return nil, err
 	}
+	for _, column := range []string{"access_key_id", "access_key_secret"} {
+		if db.Migrator().HasColumn(&model.DNSCredential{}, column) {
+			if err := db.Migrator().DropColumn(&model.DNSCredential{}, column); err != nil {
+				return nil, err
+			}
+		}
+	}
 
 	return &Store{db: db}, nil
 }
@@ -477,7 +484,7 @@ func (s *Store) ListDNSCredentials() ([]model.DNSCredential, error) {
 	var credentials []model.DNSCredential
 	err := s.db.Order("created_at desc").Find(&credentials).Error
 	for index := range credentials {
-		credentials[index].SecretConfigured = credentials[index].AccessKeySecret != ""
+		credentials[index].SecretConfigured = credentials[index].EncryptedValues != ""
 	}
 	return credentials, err
 }
@@ -486,7 +493,7 @@ func (s *Store) GetDNSCredential(id uint) (*model.DNSCredential, error) {
 	var credential model.DNSCredential
 	err := s.db.First(&credential, id).Error
 	if err == nil {
-		credential.SecretConfigured = credential.AccessKeySecret != ""
+		credential.SecretConfigured = credential.EncryptedValues != ""
 	}
 	return &credential, err
 }

@@ -37,13 +37,15 @@ type CertInfo struct {
 }
 
 type IssuerInfo struct {
-	Name      string `json:"name"`
-	Namespace string `json:"namespace,omitempty"`
-	Kind      string `json:"kind"`
-	Ready     bool   `json:"ready"`
-	Reason    string `json:"reason,omitempty"`
-	Mode      string `json:"mode,omitempty"`
-	Email     string `json:"email,omitempty"`
+	Name                 string `json:"name"`
+	Namespace            string `json:"namespace,omitempty"`
+	Kind                 string `json:"kind"`
+	Ready                bool   `json:"ready"`
+	Reason               string `json:"reason,omitempty"`
+	Mode                 string `json:"mode,omitempty"`
+	Email                string `json:"email,omitempty"`
+	DNSProvider          string `json:"dns_provider,omitempty"`
+	CredentialSecretName string `json:"credential_secret_name,omitempty"`
 }
 
 // IssuerRequest describes one intentionally supported cert-manager issuer mode.
@@ -55,6 +57,7 @@ type IssuerRequest struct {
 	Email                string `json:"email"`
 	Server               string `json:"server"`
 	IngressClass         string `json:"ingress_class"`
+	DNSProvider          string `json:"dns_provider"`
 	CredentialSecretName string `json:"-"`
 }
 
@@ -133,8 +136,16 @@ func issuerToInfo(item *unstructured.Unstructured, kind string) IssuerInfo {
 		info.Mode = "acme_http01"
 		for _, solver := range solvers {
 			if value, ok := solver.(map[string]interface{}); ok {
-				if _, exists := value["dns01"]; exists {
-					info.Mode = "acme_alidns"
+				if dns01, exists := value["dns01"].(map[string]interface{}); exists {
+					info.Mode = "acme_dns01"
+					solverName, _, _ := nestedStringMap(dns01, "webhook", "solverName")
+					for providerID, provider := range dnsProviders {
+						if solverName == provider.Info().ID || (solverName == "alidns" && providerID == "alidns") {
+							info.DNSProvider = providerID
+							info.CredentialSecretName = provider.CredentialSecretName(value)
+							break
+						}
+					}
 					break
 				}
 			}
@@ -213,7 +224,7 @@ func issuerObject(request IssuerRequest) (*unstructured.Unstructured, error) {
 	switch request.Mode {
 	case "self_signed":
 		spec["selfSigned"] = map[string]interface{}{}
-	case "acme_http01", "acme_alidns":
+	case "acme_http01", "acme_dns01":
 		if strings.TrimSpace(request.Email) == "" {
 			return nil, fmt.Errorf("ACME 签发者必须填写联系邮箱")
 		}
@@ -229,14 +240,18 @@ func issuerObject(request IssuerRequest) (*unstructured.Unstructured, error) {
 			}
 			acme["solvers"] = []interface{}{map[string]interface{}{"http01": map[string]interface{}{"ingress": map[string]interface{}{"ingressClassName": ingressClass}}}}
 		} else {
-			if strings.TrimSpace(request.CredentialSecretName) == "" {
-				return nil, fmt.Errorf("AliDNS DNS-01 签发者必须选择凭据")
+			provider, ok := GetDNSProvider(request.DNSProvider)
+			if !ok {
+				return nil, fmt.Errorf("不支持的 DNS Provider: %s", request.DNSProvider)
 			}
-			acme["solvers"] = []interface{}{map[string]interface{}{"dns01": map[string]interface{}{"webhook": map[string]interface{}{"groupName": "acme.cylism.io", "solverName": "alidns", "config": map[string]interface{}{"region": "cn-hangzhou", "accessKeyIdRef": map[string]interface{}{"name": request.CredentialSecretName, "key": "access-key-id"}, "accessKeySecretRef": map[string]interface{}{"name": request.CredentialSecretName, "key": "access-key-secret"}}}}}}
+			if strings.TrimSpace(request.CredentialSecretName) == "" {
+				return nil, fmt.Errorf("DNS-01 签发者必须选择凭据")
+			}
+			acme["solvers"] = []interface{}{provider.Solver(request.CredentialSecretName)}
 		}
 		spec["acme"] = acme
 	default:
-		return nil, fmt.Errorf("签发模式仅支持自签名、ACME HTTP-01 或 AliDNS DNS-01")
+		return nil, fmt.Errorf("签发模式仅支持自签名、ACME HTTP-01 或 DNS-01")
 	}
 	return &unstructured.Unstructured{Object: map[string]interface{}{"apiVersion": "cert-manager.io/v1", "kind": request.Kind, "metadata": metadata, "spec": spec}}, nil
 }

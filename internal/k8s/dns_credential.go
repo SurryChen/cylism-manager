@@ -8,31 +8,39 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// UpsertAliDNSCredentialSecret writes the only Secret shape accepted by the managed AliDNS solver.
-func (c *Client) UpsertAliDNSCredentialSecret(namespace, name, accessKeyID, accessKeySecret string) error {
+// UpsertDNSCredentialSecret writes one controlled provider Secret. Values must already pass adapter validation.
+func (c *Client) UpsertDNSCredentialSecret(providerID, namespace, name string, values map[string]string) error {
 	if c == nil || c.Clientset == nil {
 		return fmt.Errorf("Kubernetes 客户端未初始化")
 	}
+	provider, ok := GetDNSProvider(providerID)
+	if !ok {
+		return fmt.Errorf("不支持的 DNS Provider: %s", providerID)
+	}
+	if err := provider.ValidateValues(values); err != nil {
+		return err
+	}
+	data := provider.SecretData(values)
 	secrets := c.Clientset.CoreV1().Secrets(namespace)
 	current, err := secrets.Get(c.Ctx(), name, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
-		_, err = secrets.Create(c.Ctx(), &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace, Labels: map[string]string{"app.kubernetes.io/managed-by": "cylism-manager", "cylism.io/dns-provider": "alidns"}}, Type: corev1.SecretTypeOpaque, StringData: map[string]string{"access-key-id": accessKeyID, "access-key-secret": accessKeySecret}}, metav1.CreateOptions{})
+		_, err = secrets.Create(c.Ctx(), &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace, Labels: map[string]string{"app.kubernetes.io/managed-by": "cylism-manager", "cylism.io/dns-provider": providerID}}, Type: corev1.SecretTypeOpaque, StringData: data}, metav1.CreateOptions{})
 		return err
 	}
 	if err != nil {
 		return err
 	}
-	current.StringData = map[string]string{"access-key-id": accessKeyID, "access-key-secret": accessKeySecret}
+	current.StringData = data
 	if current.Labels == nil {
 		current.Labels = map[string]string{}
 	}
 	current.Labels["app.kubernetes.io/managed-by"] = "cylism-manager"
-	current.Labels["cylism.io/dns-provider"] = "alidns"
+	current.Labels["cylism.io/dns-provider"] = providerID
 	_, err = secrets.Update(c.Ctx(), current, metav1.UpdateOptions{})
 	return err
 }
 
-func (c *Client) DeleteAliDNSCredentialSecret(namespace, name string) error {
+func (c *Client) DeleteDNSCredentialSecret(namespace, name string) error {
 	if c == nil || c.Clientset == nil {
 		return fmt.Errorf("Kubernetes 客户端未初始化")
 	}

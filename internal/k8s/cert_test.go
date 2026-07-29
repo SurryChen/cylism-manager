@@ -50,7 +50,7 @@ func TestIssuerObjectRendersHTTP01AndAliDNS(t *testing.T) {
 		t.Fatalf("missing HTTP-01 solver: %#v", httpIssuer.Object)
 	}
 
-	dnsIssuer, err := issuerObject(IssuerRequest{Name: "alidns", Kind: "Issuer", Namespace: "prod", Mode: "acme_alidns", Email: "ops@example.com", CredentialSecretName: "cylism-alidns-1"})
+	dnsIssuer, err := issuerObject(IssuerRequest{Name: "alidns", Kind: "Issuer", Namespace: "prod", Mode: "acme_dns01", DNSProvider: "alidns", Email: "ops@example.com", CredentialSecretName: "cylism-dns-alidns-1"})
 	if err != nil {
 		t.Fatal(err)
 	}
