@@ -12,6 +12,7 @@
 - [x] 2.2 更新受管域名创建、列表和发布校验，全部以 EnvironmentID 导出 Namespace。
 - [x] 2.3 增加应用、发布和资源列表的 project/environment 过滤与摘要 API。
 - [x] 2.4 支持将当前环境中的既有单域名 Certificate 导入为非破坏性受管域名资产，并支持关联同命名空间的未归属历史域名记录。
+- [x] 2.5 区分 cert-manager 临时 Ready=False 与终态失败，并在签发中时轮询受管域名状态。
 
 ## 3. Workspace console
 

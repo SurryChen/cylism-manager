@@ -2,16 +2,16 @@
   <div>
     <div class="page-header">
       <h1 class="page-title">工作负载</h1>
+      <button class="icon-button" title="刷新工作负载" aria-label="刷新工作负载" :disabled="loading" @click="fetchData"><RefreshCw :size="16" :class="{ 'is-spinning': loading }" /></button>
     </div>
     <div v-if="error" class="k8s-banner k8s-banner-warn" style="margin-bottom:var(--space-16)">⚠ {{ error }}</div>
 
-    <div class="card section-gap">
-      <div class="table-tabs">
-        <button :class="['tab-btn', { 'tab-active': activeTab === 'deployments' }]" @click="activeTab = 'deployments'">Deployments</button>
-        <button :class="['tab-btn', { 'tab-active': activeTab === 'statefulsets' }]" @click="activeTab = 'statefulsets'">StatefulSets</button>
-        <button :class="['tab-btn', { 'tab-active': activeTab === 'daemonsets' }]" @click="activeTab = 'daemonsets'">DaemonSets</button>
-      </div>
-    </div>
+    <nav class="resource-switcher section-gap" aria-label="工作负载资源类型">
+      <button :class="['resource-tab', { 'resource-tab-active': activeTab === 'pods' }]" :aria-selected="activeTab === 'pods'" @click="selectTab('pods')"><Box :size="16" /><span>Pods<small>实例</small></span><strong>{{ pods.length }}</strong></button>
+      <button :class="['resource-tab', { 'resource-tab-active': activeTab === 'deployments' }]" :aria-selected="activeTab === 'deployments'" @click="selectTab('deployments')"><Layers3 :size="16" /><span>Deployments<small>无状态服务</small></span><strong>{{ deployments.length }}</strong></button>
+      <button :class="['resource-tab', { 'resource-tab-active': activeTab === 'statefulsets' }]" :aria-selected="activeTab === 'statefulsets'" @click="selectTab('statefulsets')"><Database :size="16" /><span>StatefulSets<small>有状态服务</small></span><strong>{{ statefulsets.length }}</strong></button>
+      <button :class="['resource-tab', { 'resource-tab-active': activeTab === 'daemonsets' }]" :aria-selected="activeTab === 'daemonsets'" @click="selectTab('daemonsets')"><Network :size="16" /><span>DaemonSets<small>节点服务</small></span><strong>{{ daemonsets.length }}</strong></button>
+    </nav>
 
     <!-- Deployments -->
     <div v-if="activeTab === 'deployments'" class="card">
@@ -39,7 +39,7 @@
               <template v-if="expandedDeploy === d.namespace + '/' + d.name">
                 <tr v-for="pod in (deployPods[d.namespace + '/' + d.name] || [])" :key="pod.name" class="pod-row">
                   <td colspan="8">
-                    <div class="pod-subrow">↳ {{ pod.name }} <span :class="pod.status === 'Running' ? 'badge badge-online' : 'badge badge-offline'">{{ pod.status }}</span> {{ pod.node }} · 重启 {{ pod.restarts }} · {{ pod.ip }}</div>
+                    <div class="pod-subrow">↳ {{ pod.name }} <span :class="pod.status === 'Running' ? 'badge badge-online' : 'badge badge-offline'">{{ pod.status }}</span> {{ displayServerName(pod.node) }} · 重启 {{ pod.restarts }} · {{ pod.ip }}</div>
                   </td>
                 </tr>
               </template>
@@ -48,6 +48,69 @@
         </table>
       </div>
     </div>
+
+    <!-- Pods -->
+    <div v-if="activeTab === 'pods'" class="card">
+      <div class="pod-list-header">
+        <div><h2>Pod 实例</h2><p>查看实例运行状态、所在服务器与重启情况</p></div>
+        <div class="pod-list-tools">
+          <label class="pod-search"><Search :size="16" /><span class="sr-only">搜索 Pod 名称</span><input v-model.trim="podNameFilter" placeholder="搜索 Pod 名称" aria-label="搜索 Pod 名称" /></label>
+          <button :class="['btn btn-sm pod-filter-trigger', { 'is-active': podFiltersOpen || hasPodFilters }]" :aria-expanded="podFiltersOpen" @click="podFiltersOpen = !podFiltersOpen"><Filter :size="15" />筛选<span v-if="activePodFilterCount" class="filter-count">{{ activePodFilterCount }}</span></button>
+          <button v-if="hasPodFilters" class="icon-button" title="重置 Pod 筛选" aria-label="重置 Pod 筛选" @click="resetPodFilters"><RotateCcw :size="15" /></button>
+        </div>
+      </div>
+      <div v-if="podFiltersOpen" class="pod-filter-panel">
+        <div class="filter-control">
+          <label class="form-label" for="pod-filter-namespace">命名空间</label>
+          <select id="pod-filter-namespace" v-model="podNamespaceFilter" class="form-select pod-filter-namespace"><option value="">全部命名空间</option><option v-for="namespace in podNamespaces" :key="namespace" :value="namespace">{{ namespace }}</option></select>
+        </div>
+        <div class="filter-control">
+          <label class="form-label" for="pod-filter-node">所在服务器</label>
+          <select id="pod-filter-node" v-model="podNodeFilter" class="form-select pod-filter-node"><option value="">全部服务器</option><option value="__unscheduled__">未调度</option><option v-for="node in podNodes" :key="node.value" :value="node.value">{{ node.label }}</option></select>
+        </div>
+        <div class="filter-control">
+          <label class="form-label" for="pod-filter-status">状态</label>
+          <select id="pod-filter-status" v-model="podStatusFilter" class="form-select pod-filter-status"><option value="">全部状态</option><option v-for="status in podStatuses" :key="status" :value="status">{{ status }}</option></select>
+        </div>
+        <label class="checkbox-label pod-restarts-filter"><input v-model="podRestartsOnly" type="checkbox" /> 仅显示已重启</label>
+      </div>
+      <div v-if="hasPodFilters" class="active-filters">
+        <span>已筛选</span>
+        <button v-if="podNamespaceFilter" class="filter-chip" @click="clearPodFilter('namespace')">命名空间: {{ podNamespaceFilter }}<X :size="13" /></button>
+        <button v-if="podNodeFilter" class="filter-chip" @click="clearPodFilter('node')">服务器: {{ podNodeFilter === '__unscheduled__' ? '未调度' : displayServerName(podNodeFilter) }}<X :size="13" /></button>
+        <button v-if="podStatusFilter" class="filter-chip" @click="clearPodFilter('status')">状态: {{ podStatusFilter }}<X :size="13" /></button>
+        <button v-if="podNameFilter" class="filter-chip" @click="clearPodFilter('name')">名称: {{ podNameFilter }}<X :size="13" /></button>
+        <button v-if="podRestartsOnly" class="filter-chip" @click="clearPodFilter('restarts')">已重启<X :size="13" /></button>
+      </div>
+      <div v-if="pods.length > 0" class="pod-result-summary">显示 <strong>{{ safePods.length }}</strong> / {{ pods.length }} 个 Pod</div>
+      <div v-if="pods.length === 0" class="empty-state">
+        <span class="empty-icon">⬡</span><span class="empty-text">暂无 Pod</span>
+      </div>
+      <div v-else-if="safePods.length === 0" class="empty-state pod-filter-empty">
+        <span class="empty-icon">⌕</span><span class="empty-text">没有匹配筛选条件的 Pod</span>
+      </div>
+      <div v-else class="table-wrap">
+        <table class="data-table">
+          <thead><tr><th>实例</th><th>命名空间</th><th>状态</th><th>所在服务器</th><th>重启</th><th>年龄</th><th></th></tr></thead>
+          <tbody>
+            <tr v-for="pod in safePods" :key="pod.namespace + '/' + pod.name" class="pod-list-row">
+              <td class="cell-primary">{{ pod.name }}<small>{{ pod.ip || '未分配 Pod IP' }}</small></td>
+              <td>{{ pod.namespace }}</td>
+              <td><span :class="['badge', podStatusClass(pod.status)]">{{ pod.status }}</span></td>
+              <td>
+                <span class="server-name">{{ displayServerName(pod.node) }}</span>
+                <small v-if="hasMappedServer(pod.node)" class="node-name">{{ pod.node }}</small>
+              </td>
+              <td><span :class="Number(pod.restarts || 0) > 0 ? 'restart-warning' : ''">{{ pod.restarts }}</span></td>
+              <td>{{ pod.age || '-' }}</td>
+              <td class="action-cell"><button class="icon-button pod-terminal-action" :disabled="!canOpenPodTerminal(pod)" :title="canOpenPodTerminal(pod) ? '打开容器终端' : '仅运行中且包含普通容器的 Pod 可打开终端'" :aria-label="`打开 ${pod.name} 的容器终端`" @click="openPodTerminal(pod)"><SquareTerminal :size="16" /></button></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <PodTerminal v-if="terminalPod" :pod="terminalPod" @close="terminalPod = null" />
 
     <!-- StatefulSets -->
     <div v-if="activeTab === 'statefulsets'" class="card">
@@ -123,16 +186,27 @@
 
 <script setup>
 import { computed, ref, onMounted, onErrorCaptured } from 'vue'
+import { Box, Database, Filter, Layers3, Network, RefreshCw, RotateCcw, Search, SquareTerminal, X } from 'lucide-vue-next'
 import { api } from '../api/index.js'
+import PodTerminal from '../components/PodTerminal.vue'
 
 const activeTab = ref('deployments')
 const deployments = ref([])
 const statefulsets = ref([])
 const daemonsets = ref([])
+const pods = ref([])
+const servers = ref([])
 const loading = ref(true)
 const error = ref('')
 const expandedDeploy = ref('')
 const deployPods = ref({})
+const podNamespaceFilter = ref('')
+const podNodeFilter = ref('')
+const podStatusFilter = ref('')
+const podNameFilter = ref('')
+const podRestartsOnly = ref(false)
+const podFiltersOpen = ref(false)
+const terminalPod = ref(null)
 
 const scaleDialog = ref(null)
 const imageDialog = ref(null)
@@ -141,6 +215,37 @@ const rollbackDialog = ref(null)
 const safeDeployments = computed(() => (deployments.value || []).filter(d => d != null))
 const safeStatefulsets = computed(() => (statefulsets.value || []).filter(s => s != null))
 const safeDaemonsets = computed(() => (daemonsets.value || []).filter(d => d != null))
+const serverNamesByNode = computed(() => new Map(
+  (servers.value || [])
+    .filter(server => server?.k8s_node_name && server?.name)
+    .map(server => [server.k8s_node_name.toLowerCase(), server.name]),
+))
+const podNamespaces = computed(() => [...new Set(
+  (pods.value || []).map(pod => pod?.namespace).filter(Boolean),
+)].sort())
+const podNodes = computed(() => [...new Set(
+  (pods.value || []).map(pod => pod?.node).filter(Boolean),
+)].map(node => ({ value: node, label: displayServerName(node) }))
+  .sort((a, b) => a.label.localeCompare(b.label, 'zh-CN')))
+const podStatuses = computed(() => [...new Set(
+  (pods.value || []).map(pod => pod?.status).filter(Boolean),
+)].sort())
+const safePods = computed(() => {
+  const query = podNameFilter.value.toLowerCase()
+  return (pods.value || []).filter(pod => {
+    if (!pod) return false
+    if (podNamespaceFilter.value && pod.namespace !== podNamespaceFilter.value) return false
+    if (podNodeFilter.value === '__unscheduled__' && pod.node) return false
+    if (podNodeFilter.value && podNodeFilter.value !== '__unscheduled__' && pod.node !== podNodeFilter.value) return false
+    if (podStatusFilter.value && pod.status !== podStatusFilter.value) return false
+    if (podRestartsOnly.value && Number(pod.restarts || 0) === 0) return false
+    return !query || pod.name?.toLowerCase().includes(query)
+  })
+})
+const hasPodFilters = computed(() => Boolean(
+  podNamespaceFilter.value || podNodeFilter.value || podStatusFilter.value || podNameFilter.value || podRestartsOnly.value,
+))
+const activePodFilterCount = computed(() => [podNamespaceFilter.value, podNodeFilter.value, podStatusFilter.value, podNameFilter.value, podRestartsOnly.value].filter(Boolean).length)
 
 // 组件级错误边界：捕获渲染异常，避免白屏
 onErrorCaptured((err, instance, info) => {
@@ -153,15 +258,19 @@ async function fetchData() {
   loading.value = true
   error.value = ''
   try {
-    const [deps, sts, ds] = await Promise.allSettled([
+    const [deps, sts, ds, podList, serverList] = await Promise.allSettled([
       api.get('/k8s/deployments'),
       api.get('/k8s/statefulsets'),
       api.get('/k8s/daemonsets'),
+      api.get('/k8s/pods'),
+      api.get('/servers'),
     ])
     deployments.value = deps.status === 'fulfilled' ? (deps.value || []) : []
     statefulsets.value = sts.status === 'fulfilled' ? (sts.value || []) : []
     daemonsets.value = ds.status === 'fulfilled' ? (ds.value || []) : []
-    const failed = [deps, sts, ds].filter(r => r.status === 'rejected')
+    pods.value = podList.status === 'fulfilled' ? (podList.value || []) : []
+    servers.value = serverList.status === 'fulfilled' ? (serverList.value || []) : []
+    const failed = [deps, sts, ds, podList, serverList].filter(r => r.status === 'rejected')
     if (failed.length > 0) {
       const msg = failed.map(r => r.reason?.message || '未知错误').join('\n')
       error.value = msg
@@ -170,6 +279,51 @@ async function fetchData() {
   finally { loading.value = false }
 }
 onMounted(fetchData)
+
+function displayServerName(nodeName) {
+  if (!nodeName) return '-'
+  return serverNamesByNode.value.get(nodeName.toLowerCase()) || nodeName
+}
+
+function hasMappedServer(nodeName) {
+  return Boolean(nodeName && serverNamesByNode.value.has(nodeName.toLowerCase()))
+}
+
+function podStatusClass(status) {
+  if (status === 'Running') return 'badge-online'
+  if (status === 'Pending') return 'badge-warn'
+  if (status === 'Failed' || status === 'Unknown') return 'badge-danger'
+  return 'badge-offline'
+}
+
+function selectTab(tab) {
+  activeTab.value = tab
+  if (tab !== 'pods') podFiltersOpen.value = false
+}
+
+function resetPodFilters() {
+  podNamespaceFilter.value = ''
+  podNodeFilter.value = ''
+  podStatusFilter.value = ''
+  podNameFilter.value = ''
+  podRestartsOnly.value = false
+}
+
+function clearPodFilter(filter) {
+  if (filter === 'namespace') podNamespaceFilter.value = ''
+  if (filter === 'node') podNodeFilter.value = ''
+  if (filter === 'status') podStatusFilter.value = ''
+  if (filter === 'name') podNameFilter.value = ''
+  if (filter === 'restarts') podRestartsOnly.value = false
+}
+
+function canOpenPodTerminal(pod) {
+  return pod.status === 'Running' && Array.isArray(pod.containers) && pod.containers.length > 0
+}
+
+function openPodTerminal(pod) {
+  if (canOpenPodTerminal(pod)) terminalPod.value = pod
+}
 
 async function toggleDeployExpand(d) {
   const key = d.namespace + '/' + d.name
@@ -238,11 +392,22 @@ function openStsScaleDialog(s) {
 </script>
 
 <style scoped>
+.page-header { align-items: center; }
+.resource-switcher { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; padding-bottom: var(--space-16); border-bottom: 1px solid var(--border-muted); }
+.resource-tab { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; min-height: 64px; padding: 10px 12px; border: 1px solid transparent; border-radius: var(--radius-control); background: transparent; color: var(--text-secondary); text-align: left; cursor: pointer; transition: background .18s ease, border-color .18s ease, color .18s ease; }
+.resource-tab:hover { background: var(--surface-subtle); color: var(--text-primary); }.resource-tab-active { border-color: var(--border); background: var(--surface-raised); color: var(--action-primary); box-shadow: var(--shadow-soft); }.resource-tab span { display: grid; gap: 3px; min-width: 0; font-size: 12px; font-weight: 700; }.resource-tab small { overflow: hidden; color: var(--text-muted); font-size: 10px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }.resource-tab strong { display: grid; min-width: 24px; min-height: 24px; place-items: center; border-radius: 50%; background: var(--surface-subtle); color: var(--text-secondary); font: 11px/1 var(--font-mono); }.resource-tab-active strong { background: var(--action-primary); color: var(--action-contrast); }
 .clickable { cursor: pointer; }
 .pod-row td { padding: 4px 12px; border-bottom: 0; background: var(--surface-subtle); }
 .pod-subrow { display: flex; align-items: center; gap: 8px; padding: 6px 0; font-size: 11px; color: var(--text-secondary); }
 .pod-subrow .badge { font-size: 9px; }
+.node-name { display: block; margin-top: 3px; color: var(--text-muted); font-size: 10px; font-family: var(--font-mono); }
+.pod-list-header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-16); margin-bottom: var(--space-16); }.pod-list-header h2 { margin: 0; color: var(--text-primary); font-size: 15px; }.pod-list-header p { margin: 5px 0 0; color: var(--text-secondary); font-size: 12px; }.pod-list-tools { display: flex; align-items: center; gap: 8px; }.pod-search { display: flex; width: min(260px, 28vw); min-width: 180px; align-items: center; gap: 8px; min-height: 34px; padding: 0 10px; border: 1px solid var(--border-muted); border-radius: var(--radius-control); background: var(--surface-input); color: var(--text-muted); }.pod-search:focus-within { border-color: var(--focus); outline: 2px solid var(--focus); outline-offset: 2px; }.pod-search input { width: 100%; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--text-primary); font: inherit; font-size: 12px; }.pod-search input::placeholder { color: var(--text-muted); }.pod-filter-trigger { gap: 5px; }.pod-filter-trigger.is-active { border-color: var(--action-primary); color: var(--action-primary); }.filter-count { display: grid; min-width: 16px; height: 16px; place-items: center; border-radius: 50%; background: var(--action-primary); color: var(--action-contrast); font: 9px/1 var(--font-mono); }
+.pod-filter-panel { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) auto; align-items: end; gap: var(--space-12); margin-bottom: var(--space-12); padding: var(--space-16); border: 1px solid var(--border-muted); border-radius: var(--radius-control); background: var(--surface-subtle); }.pod-filter-panel .form-label { margin-bottom: 6px; }.pod-restarts-filter { min-height: 38px; white-space: nowrap; }.active-filters { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-bottom: var(--space-12); color: var(--text-muted); font-size: 11px; }.filter-chip { display: inline-flex; align-items: center; gap: 4px; padding: 4px 6px 4px 8px; border: 1px solid var(--border-muted); border-radius: var(--radius-control); background: var(--surface-subtle); color: var(--text-secondary); font-size: 11px; cursor: pointer; }.filter-chip:hover { border-color: var(--action-primary); color: var(--action-primary); }.pod-result-summary { margin-bottom: var(--space-8); color: var(--text-muted); font-size: 11px; }.pod-result-summary strong { color: var(--text-secondary); font-family: var(--font-mono); }
+.pod-filter-empty { min-height: 150px; }
+.pod-list-row .cell-primary small { display: block; margin-top: 3px; color: var(--text-muted); font: 10px/1 var(--font-mono); }.server-name { color: var(--text-primary); font-weight: 600; }.restart-warning { color: var(--warning); font-weight: 700; }.pod-terminal-action { width: 30px; height: 30px; }.is-spinning { animation: spin .8s linear infinite; }@keyframes spin { to { transform: rotate(360deg); } }.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
 .modal-overlay { position: fixed; z-index: 200; inset: 0; display: flex; align-items: center; justify-content: center; background: var(--overlay); backdrop-filter: blur(3px); }
 .modal { min-width: 380px; max-width: 520px; padding: var(--space-20); border: 1px solid var(--border); border-radius: var(--radius-panel); background: var(--surface-raised); box-shadow: var(--shadow); }
 .modal-body h3 { margin: 0 0 var(--space-12); color: var(--text-primary); font-size: 15px; }
+@media (max-width: 780px) { .resource-switcher { grid-template-columns: repeat(2, minmax(0, 1fr)); }.pod-list-header { align-items: stretch; flex-direction: column; }.pod-list-tools { flex-wrap: wrap; }.pod-search { width: 100%; max-width: none; }.pod-filter-panel { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 640px) { .resource-tab { min-height: 54px; gap: 7px; padding: 8px; }.resource-tab small { display: none; }.pod-filter-panel { grid-template-columns: 1fr; }.pod-restarts-filter { min-height: auto; } }
 </style>

@@ -39,4 +39,23 @@ describe('Domains view', () => {
     expect(wrapper.text()).toContain('申请 HTTPS 域名')
     expect(wrapper.text()).toContain('letsencrypt-prod')
   })
+
+  it('shows transient certificate states as issuing and refreshes them', async () => {
+    vi.useFakeTimers()
+    api.get.mockImplementation(path => {
+      if (path === '/domains?environment_id=2') return Promise.resolve([{ id: 1, environment_id: 2, hostname: 'api.example.com', namespace: 'production', certificate_ownership: 'managed', certificate: { status: 'Issuing', reason: 'DoesNotExist' } }])
+      if (path === '/projects') return Promise.resolve([{ id: 1, environments: [{ id: 2, name: 'production', namespace: 'production' }] }])
+      return Promise.resolve([])
+    })
+    const wrapper = mount(Domains)
+    await vi.runAllTicks()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(wrapper.text()).toContain('签发中')
+    expect(wrapper.text()).toContain('DoesNotExist')
+    const initialRequests = api.get.mock.calls.filter(([path]) => path === '/domains?environment_id=2').length
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(api.get.mock.calls.filter(([path]) => path === '/domains?environment_id=2')).toHaveLength(initialRequests + 1)
+    wrapper.unmount()
+    vi.useRealTimers()
+  })
 })

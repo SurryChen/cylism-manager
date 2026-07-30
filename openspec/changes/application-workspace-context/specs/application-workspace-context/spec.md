@@ -62,6 +62,10 @@
 - **WHEN** 用户尝试关联已归属其他 Environment，或 Namespace 与当前 Environment 不一致的历史域名
 - **THEN** 系统拒绝关联，且不修改原有记录
 
+#### Scenario: 证书签发中状态
+- **WHEN** cert-manager 的 Certificate `Ready=False` 且原因为 `DoesNotExist`、`Pending` 或其他非终态原因
+- **THEN** 系统将其展示为签发中而非签发失败，并在受管域名页定时刷新状态直到终态
+
 #### Scenario: 发布选择域名
 - **WHEN** 用户在工作上下文发布公网 HTTPS 应用
 - **THEN** 系统仅允许选择同一 Environment 且 Certificate Ready 的受管域名

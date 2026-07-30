@@ -8,6 +8,7 @@ import (
 
 	k8sclient "github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
+	"github.com/cylism/cylism-manager/internal/store"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
@@ -15,11 +16,17 @@ import (
 )
 
 // K8sHandler K8s 资源管理的 HTTP handler
-type K8sHandler struct{}
+type K8sHandler struct {
+	store *store.Store
+}
 
 // NewK8sHandler 创建 K8sHandler
-func NewK8sHandler() *K8sHandler {
-	return &K8sHandler{}
+func NewK8sHandler(stores ...*store.Store) *K8sHandler {
+	h := &K8sHandler{}
+	if len(stores) > 0 {
+		h.store = stores[0]
+	}
+	return h
 }
 
 func k8sUnavailable(c *gin.Context) {
@@ -273,13 +280,14 @@ func (h *K8sHandler) ListPods(c *gin.Context) {
 	}
 
 	type PodInfo struct {
-		Name      string `json:"name"`
-		Namespace string `json:"namespace"`
-		Status    string `json:"status"`
-		Node      string `json:"node"`
-		IP        string `json:"ip"`
-		Restarts  int32  `json:"restarts"`
-		Age       string `json:"age"`
+		Name       string   `json:"name"`
+		Namespace  string   `json:"namespace"`
+		Status     string   `json:"status"`
+		Node       string   `json:"node"`
+		IP         string   `json:"ip"`
+		Restarts   int32    `json:"restarts"`
+		Age        string   `json:"age"`
+		Containers []string `json:"containers"`
 	}
 	var result []PodInfo
 	for _, p := range pods.Items {
@@ -287,15 +295,20 @@ func (h *K8sHandler) ListPods(c *gin.Context) {
 		for _, cs := range p.Status.ContainerStatuses {
 			restarts += cs.RestartCount
 		}
+		containers := make([]string, 0, len(p.Spec.Containers))
+		for _, container := range p.Spec.Containers {
+			containers = append(containers, container.Name)
+		}
 		dur := metav1.Now().Sub(p.CreationTimestamp.Time)
 		result = append(result, PodInfo{
-			Name:      p.Name,
-			Namespace: p.Namespace,
-			Status:    string(p.Status.Phase),
-			Node:      p.Spec.NodeName,
-			IP:        p.Status.PodIP,
-			Restarts:  restarts,
-			Age:       ageStr(dur),
+			Name:       p.Name,
+			Namespace:  p.Namespace,
+			Status:     string(p.Status.Phase),
+			Node:       p.Spec.NodeName,
+			IP:         p.Status.PodIP,
+			Restarts:   restarts,
+			Age:        ageStr(dur),
+			Containers: containers,
 		})
 	}
 	model.Success(c, result)

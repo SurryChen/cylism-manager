@@ -9,7 +9,7 @@ import (
 	"k8s.io/client-go/dynamic/fake"
 )
 
-func TestCertToInfoIncludesIssuerSecretAndFailure(t *testing.T) {
+func TestCertToInfoKeepsTransientReadyFalseConditionsIssuing(t *testing.T) {
 	certificate := &unstructured.Unstructured{Object: map[string]interface{}{
 		"metadata": map[string]interface{}{"name": "api-example", "namespace": "production"},
 		"spec": map[string]interface{}{
@@ -31,11 +31,22 @@ func TestCertToInfoIncludesIssuerSecretAndFailure(t *testing.T) {
 	if info.Issuer != "letsencrypt-dns" || info.IssuerKind != "ClusterIssuer" || info.SecretName != "api-example-tls" {
 		t.Fatalf("issuer or secret was not extracted: %#v", info)
 	}
-	if info.Status != "Failed" || info.Reason != "Pending" || info.ExpiryDate != "2026-10-01T12:00:00Z" || info.RenewalTime != "2026-09-01T12:00:00Z" {
+	if info.Status != "Issuing" || info.Reason != "Pending" || info.ExpiryDate != "2026-10-01T12:00:00Z" || info.RenewalTime != "2026-09-01T12:00:00Z" {
 		t.Fatalf("unexpected status: %#v", info)
 	}
 	if len(info.Domains) != 2 || info.Domains[0] != "api.example.com" {
 		t.Fatalf("unexpected domains: %#v", info.Domains)
+	}
+}
+
+func TestCertToInfoMarksTerminalReadyFalseConditionFailed(t *testing.T) {
+	certificate := &unstructured.Unstructured{Object: map[string]interface{}{
+		"metadata": map[string]interface{}{"name": "invalid-cert", "namespace": "production"},
+		"status":   map[string]interface{}{"conditions": []interface{}{map[string]interface{}{"type": "Ready", "status": "False", "reason": "Failed"}}},
+	}}
+	info := certToInfo(certificate)
+	if info.Status != "Failed" || info.Reason != "Failed" {
+		t.Fatalf("expected terminal certificate failure, got %#v", info)
 	}
 }
 
