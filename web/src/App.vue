@@ -171,7 +171,7 @@ function isNavItemActive(item) {
 
 function matchesNavItem(item) {
   if (item.to === '/applications') {
-    return route.path === item.to || /^\/applications\/\d+(?:\/releases\/\d+)?$/.test(route.path)
+    return route.path === item.to || route.path.startsWith('/applications/')
   }
   return route.path === item.to || route.path.startsWith(`${item.to}/`)
 }

@@ -84,6 +84,13 @@ describe('Glass UI application shell', () => {
     expect(navigation.get('.sidebar-link.is-active').text()).toContain('工作台')
   })
 
+  it('keeps domain drill-down routes in the application navigation group', async () => {
+    const wrapper = await mountApp('/applications/domains?project_id=1&environment_id=1')
+
+    expect(wrapper.get('[data-testid="primary-navigation"]').get('[aria-current="page"]').text()).toContain('应用')
+    expect(wrapper.get('[data-testid="desktop-navigation"]').get('.sidebar-link.is-active').text()).toContain('工作台')
+  })
+
   it('renders the palette menu at the document root and applies a selected swatch', async () => {
     const wrapper = await mountApp()
 

@@ -40,6 +40,8 @@ Workspace = Project + Environment + Namespace(derived)
 
 Application 发布使用 `EnvironmentID` 验证域名归属，Ingress、Certificate 与 TLS Secret 仍在该环境 Namespace 中运行。
 
+已有 Certificate 可由用户在对应环境显式接管。接管只创建 `ManagedDomain` 记录并标记 `certificate_ownership=imported`，不修改、重新签发或删除原 Certificate 与 TLS Secret；只支持含一个精确 DNS 名称、Issuer 和 TLS Secret 的 Certificate。
+
 ## APIs
 
 - `GET /api/projects/environments/namespace-conflicts`：返回重复 Namespace 与关联环境。
