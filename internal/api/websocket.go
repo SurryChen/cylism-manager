@@ -8,14 +8,16 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"sync"
 )
 
 var wsMagicGUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 
 // wsConn wraps a raw net.Conn as a minimal WebSocket connection.
 type wsConn struct {
-	conn   net.Conn
-	reader *bufio.Reader
+	conn    net.Conn
+	reader  *bufio.Reader
+	writeMu sync.Mutex
 }
 
 type wsMsg struct {
@@ -78,6 +80,8 @@ func (c *wsConn) writeJSON(v interface{}) error {
 
 // writeFrame sends a WebSocket frame.
 func (c *wsConn) writeFrame(opcode byte, payload []byte) error {
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
 	length := len(payload)
 	buf := make([]byte, 0, 2+length)
 	buf = append(buf, 0x80|opcode) // FIN + opcode
@@ -158,7 +162,7 @@ func (c *wsConn) readClose() error {
 		if _, err := c.reader.Read(hdr); err != nil {
 			return err
 		}
-		if (hdr[0]>>4) == 8 { // close frame
+		if (hdr[0] >> 4) == 8 { // close frame
 			return nil
 		}
 		length := int64(hdr[1] & 0x7f)

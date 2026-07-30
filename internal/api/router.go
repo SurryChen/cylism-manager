@@ -211,7 +211,7 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 	}
 
 	// K8s 资源管理
-	k8sHandler := NewK8sHandler()
+	k8sHandler := NewK8sHandler(s)
 	k8sGroup := apiGroup.Group("/k8s")
 	{
 		k8sGroup.GET("/dashboard", k8sHandler.Dashboard)
@@ -220,6 +220,7 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 		k8sGroup.PATCH("/namespaces/:name", k8sHandler.UpdateNamespace)
 		k8sGroup.DELETE("/namespaces/:name", k8sHandler.DeleteNamespace)
 		k8sGroup.GET("/pods", k8sHandler.ListPods)
+		k8sGroup.GET("/pods/:namespace/:name/terminal", k8sHandler.PodTerminal)
 
 		// 工作负载
 		k8sGroup.GET("/deployments", k8sHandler.ListDeployments)

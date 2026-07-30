@@ -50,7 +50,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ArrowLeft } from 'lucide-vue-next'
 import { api } from '../api/index.js'
@@ -68,10 +68,11 @@ const claimForm = ref(blankClaim())
 const issuers = computed(() => allIssuers.value.filter(issuer => issuer.kind === 'ClusterIssuer' && issuer.ready))
 const selectedImportCertificate = computed(() => importCandidates.value.find(certificate => certificate.name === importForm.value.certificate_name) || null)
 const selectedClaimDomain = computed(() => claimCandidates.value.find(domain => domain.id === claimForm.value.domain_id) || null)
+let statusPoller = null
 function blank(){ return { hostname: '', environment_id: environmentID.value, issuer_ref: '', description: '', enabled: true } }
 function blankImport(){ return { environment_id: environmentID.value, certificate_name: '', description: '', enabled: true } }
 function blankClaim(){ return { environment_id: environmentID.value, domain_id: 0 } }
-async function load(){ try { const unassigned = route.query.unassigned === 'true'; const [domainResult, projectResult] = await Promise.all([unassigned ? api.get('/domains?unassigned=true') : environmentID.value ? api.get(`/domains?environment_id=${environmentID.value}`) : api.get('/domains'), api.get('/projects')]); domains.value = domainResult || []; projects.value = projectResult || [] } catch(e) { error.value = e.message || '加载受管域名失败' } finally { loaded.value = true } }
+async function load(){ try { const unassigned = route.query.unassigned === 'true'; const [domainResult, projectResult] = await Promise.all([unassigned ? api.get('/domains?unassigned=true') : environmentID.value ? api.get(`/domains?environment_id=${environmentID.value}`) : api.get('/domains'), api.get('/projects')]); domains.value = domainResult || []; projects.value = projectResult || [] } catch(e) { error.value = e.message || '加载受管域名失败' } finally { loaded.value = true; syncStatusPolling() } }
 async function loadOptions(){ allIssuers.value = await api.get('/certs/issuers') || [] }
 async function openCreate(){ error.value = ''; editing.value = null; if (!currentEnvironment.value) { error.value = '请先在顶部选择项目与环境'; return } form.value = blank(); try { await loadOptions(); form.value.issuer_ref = issuers.value[0]?.name || ''; modal.value = true } catch(e) { error.value = e.message || '加载签发前置条件失败' } }
 async function openImport(){ error.value = ''; if (!currentEnvironment.value) { error.value = '请先从工作台进入对应项目与环境'; return } try { importCandidates.value = await api.get(`/domains/importable-certificates?environment_id=${environmentID.value}`) || []; importForm.value = blankImport(); importModal.value = true } catch(e) { error.value = e.message || '加载可接管证书失败' } }
@@ -91,7 +92,10 @@ function certificateLabel(domain){ if(!domain.namespace) return '未绑定'; ret
 function certificateClass(domain){ return certificateLabel(domain) === '已就绪' ? 'badge-online' : certificateLabel(domain) === '签发失败' ? 'badge-danger' : 'badge-deploying' }
 function certificateReason(domain){ return domain.certificate?.reason || domain.certificate_error || '' }
 function formatDate(value){ return value ? new Date(value).toLocaleString('zh-CN') : '-' }
+function shouldPollStatus(domain){ return domain.namespace && domain.certificate_ownership !== 'imported' && (domain.certificate?.status === 'Issuing' || domain.certificate_error === '证书尚未创建') }
+function syncStatusPolling(){ const pending = route.query.unassigned !== 'true' && domains.value.some(shouldPollStatus); if (pending && statusPoller === null) statusPoller = window.setInterval(load, 5000); if (!pending && statusPoller !== null) { window.clearInterval(statusPoller); statusPoller = null } }
 onMounted(load)
+onBeforeUnmount(() => { if (statusPoller !== null) window.clearInterval(statusPoller) })
 watch(() => [route.query.project_id, route.query.environment_id, route.query.unassigned], load)
 </script>
 

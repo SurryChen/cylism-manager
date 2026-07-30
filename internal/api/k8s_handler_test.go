@@ -8,7 +8,11 @@ import (
 	"strings"
 	"testing"
 
+	k8sclient "github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/gin-gonic/gin"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	k8sfake "k8s.io/client-go/kubernetes/fake"
 )
 
 func setupK8sTestRouter() *gin.Engine {
@@ -22,6 +26,8 @@ func setupK8sTestRouter() *gin.Engine {
 		g.POST("/namespaces", h.CreateNamespace)
 		g.PATCH("/namespaces/:name", h.UpdateNamespace)
 		g.DELETE("/namespaces/:name", h.DeleteNamespace)
+		g.GET("/pods", h.ListPods)
+		g.GET("/pods/:namespace/:name/terminal", h.PodTerminal)
 		g.GET("/deployments", h.ListDeployments)
 		g.GET("/deployments/:namespace/:name", h.GetDeployment)
 		g.GET("/deployments/:namespace/:name/pods", h.ListDeploymentPods)
@@ -86,6 +92,8 @@ func TestNoK8s_AllEndpoints(t *testing.T) {
 		doNoK8s(t, "POST", "/api/k8s/namespaces", jsonBody(map[string]any{"name": "demo"}))
 		doNoK8s(t, "PATCH", "/api/k8s/namespaces/demo", jsonBody(map[string]any{"labels": map[string]string{"team": "ops"}}))
 		doNoK8s(t, "DELETE", "/api/k8s/namespaces/demo", nil)
+		doNoK8s(t, "GET", "/api/k8s/pods", nil)
+		doNoK8s(t, "GET", "/api/k8s/pods/default/web/terminal", nil)
 		doNoK8s(t, "GET", "/api/k8s/deployments", nil)
 		doNoK8s(t, "GET", "/api/k8s/deployments/default/web", nil)
 		doNoK8s(t, "GET", "/api/k8s/deployments/default/web/pods", nil)
@@ -111,4 +119,36 @@ func TestNoK8s_AllEndpoints(t *testing.T) {
 		doNoK8s(t, "DELETE", "/api/k8s/ingresses/default/web", nil)
 		doNoK8s(t, "GET", "/api/k8s/ingress-controller", nil)
 	})
+}
+
+func TestListPodsIncludesContainers(t *testing.T) {
+	original := K8s
+	K8s = &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(&corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "api-0", Namespace: "default"},
+		Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "app"}, {Name: "metrics"}}},
+		Status:     corev1.PodStatus{Phase: corev1.PodRunning},
+	})}
+	defer func() { K8s = original }()
+
+	r := setupK8sTestRouter()
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/k8s/pods", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var response struct {
+		Data []struct {
+			Name       string   `json:"name"`
+			Containers []string `json:"containers"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Data) != 1 || response.Data[0].Name != "api-0" {
+		t.Fatalf("unexpected Pod response: %#v", response.Data)
+	}
+	if got := response.Data[0].Containers; len(got) != 2 || got[0] != "app" || got[1] != "metrics" {
+		t.Fatalf("expected Pod containers, got %#v", got)
+	}
 }
