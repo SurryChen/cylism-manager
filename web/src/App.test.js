@@ -79,6 +79,7 @@ describe('Glass UI application shell', () => {
     expect(wrapper.get('[data-testid="primary-navigation"]').get('[aria-current="page"]').text()).toContain('应用')
     expect(navigation.text()).toContain('应用')
     expect(navigation.text()).toContain('项目与环境')
+    expect(navigation.text()).toContain('镜像仓库')
     expect(navigation.text()).toContain('工作台')
     expect(navigation.text()).toContain('全局概览')
     expect(navigation.get('.sidebar-link.is-active').text()).toContain('工作台')
