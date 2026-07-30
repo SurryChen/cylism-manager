@@ -268,18 +268,19 @@ type DNSCredential struct {
 
 // ManagedDomain 是可供应用发布选择的域名资产。
 type ManagedDomain struct {
-	ID              uint      `gorm:"primaryKey" json:"id"`
-	Hostname        string    `gorm:"size:253;uniqueIndex;not null" json:"hostname"`
-	EnvironmentID   uint      `gorm:"index" json:"environment_id,omitempty"`
-	Namespace       string    `gorm:"size:128" json:"namespace"`
-	CertificateName string    `gorm:"size:253" json:"certificate_name"`
-	TLSSecretName   string    `gorm:"size:253" json:"tls_secret_name"`
-	IssuerRef       string    `gorm:"size:128" json:"issuer_ref"`
-	IssuerKind      string    `gorm:"size:32;default:ClusterIssuer" json:"issuer_kind"`
-	Description     string    `gorm:"size:512" json:"description"`
-	Enabled         bool      `gorm:"default:true;not null" json:"enabled"`
-	CreatedAt       time.Time `json:"created_at"`
-	UpdatedAt       time.Time `json:"updated_at"`
+	ID                   uint      `gorm:"primaryKey" json:"id"`
+	Hostname             string    `gorm:"size:253;uniqueIndex;not null" json:"hostname"`
+	EnvironmentID        uint      `gorm:"index" json:"environment_id,omitempty"`
+	Namespace            string    `gorm:"size:128" json:"namespace"`
+	CertificateName      string    `gorm:"size:253" json:"certificate_name"`
+	TLSSecretName        string    `gorm:"size:253" json:"tls_secret_name"`
+	IssuerRef            string    `gorm:"size:128" json:"issuer_ref"`
+	IssuerKind           string    `gorm:"size:32;default:ClusterIssuer" json:"issuer_kind"`
+	CertificateOwnership string    `gorm:"size:16;default:managed;not null" json:"certificate_ownership"`
+	Description          string    `gorm:"size:512" json:"description"`
+	Enabled              bool      `gorm:"default:true;not null" json:"enabled"`
+	CreatedAt            time.Time `json:"created_at"`
+	UpdatedAt            time.Time `json:"updated_at"`
 }
 
 // ApplicationEndpoint 描述一个应用的 Service 暴露方式与可选 TLS 配置。

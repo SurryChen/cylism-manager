@@ -24,6 +24,13 @@ type domainRequest struct {
 	Enabled       bool   `json:"enabled"`
 }
 
+type importCertificateRequest struct {
+	EnvironmentID   uint   `json:"environment_id"`
+	CertificateName string `json:"certificate_name"`
+	Description     string `json:"description"`
+	Enabled         bool   `json:"enabled"`
+}
+
 type managedDomainInfo struct {
 	model.ManagedDomain
 	Certificate      *k8s.CertInfo `json:"certificate,omitempty"`
@@ -112,6 +119,76 @@ func (h *DomainHandler) Create(c *gin.Context) {
 	model.SuccessWithMessage(c, info, "受管 HTTPS 域名已创建，正在申请证书")
 }
 
+func (h *DomainHandler) ListImportableCertificates(c *gin.Context) {
+	environmentID, err := optionalQueryID(c, "environment_id")
+	if err != nil || environmentID == 0 {
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "环境 ID 必填且必须有效")
+		return
+	}
+	environment, err := h.domainEnvironment(environmentID)
+	if err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		return
+	}
+	if K8s == nil {
+		k8sUnavailable(c)
+		return
+	}
+	certificates, err := K8s.ListCertificates()
+	if err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeK8sAPIError, err.Error())
+		return
+	}
+	candidates := make([]k8s.CertInfo, 0)
+	for _, certificate := range certificates {
+		if certificate.Namespace != environment.Namespace || !importableCertificate(certificate) {
+			continue
+		}
+		candidates = append(candidates, certificate)
+	}
+	model.Success(c, candidates)
+}
+
+func (h *DomainHandler) ImportCertificate(c *gin.Context) {
+	var req importCertificateRequest
+	if err := c.ShouldBindJSON(&req); err != nil || strings.TrimSpace(req.CertificateName) == "" {
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "环境和 Certificate 名称必填")
+		return
+	}
+	environment, err := h.domainEnvironment(req.EnvironmentID)
+	if err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		return
+	}
+	if K8s == nil {
+		k8sUnavailable(c)
+		return
+	}
+	certificate, err := K8s.GetCertificate(environment.Namespace, strings.TrimSpace(req.CertificateName))
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			model.Error(c, http.StatusNotFound, model.CodeNotFound, "Certificate 不存在")
+			return
+		}
+		model.Error(c, http.StatusBadRequest, model.CodeK8sAPIError, err.Error())
+		return
+	}
+	if !importableCertificate(*certificate) {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "Certificate 必须包含一个精确域名、签发者和 TLS Secret")
+		return
+	}
+	issuerKind := certificate.IssuerKind
+	if issuerKind == "" {
+		issuerKind = "ClusterIssuer"
+	}
+	domain := &model.ManagedDomain{Hostname: strings.ToLower(certificate.Domains[0]), EnvironmentID: environment.ID, Namespace: environment.Namespace, CertificateName: certificate.Name, TLSSecretName: certificate.SecretName, IssuerRef: certificate.Issuer, IssuerKind: issuerKind, CertificateOwnership: "imported", Description: strings.TrimSpace(req.Description), Enabled: req.Enabled}
+	if err := h.store.CreateManagedDomain(domain); err != nil {
+		model.Error(c, http.StatusConflict, model.CodeConflict, "域名已被平台管理")
+		return
+	}
+	model.SuccessWithMessage(c, h.domainInfo(domain), "已接管现有证书，Certificate 与 TLS Secret 保持原样")
+}
+
 func (h *DomainHandler) Update(c *gin.Context) {
 	id, err := parseID(c.Param("id"))
 	if err != nil {
@@ -138,9 +215,11 @@ func (h *DomainHandler) Update(c *gin.Context) {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
 		return
 	}
-	if err := validateManagedDomainPrerequisites(domain); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
-		return
+	if !isImportedDomain(domain) {
+		if err := validateManagedDomainPrerequisites(domain); err != nil {
+			model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+			return
+		}
 	}
 	assignManagedCertificateNames(domain)
 	if err := h.store.UpdateManagedDomain(domain); err != nil {
@@ -148,6 +227,10 @@ func (h *DomainHandler) Update(c *gin.Context) {
 		return
 	}
 	info := h.domainInfo(domain)
+	if isImportedDomain(domain) {
+		model.SuccessWithMessage(c, info, "导入域名已更新，Certificate 保持原样")
+		return
+	}
 	if err := ensureManagedDomainCertificate(domain); err != nil {
 		info.CertificateError = err.Error()
 		model.SuccessWithMessage(c, info, "域名已更新，但证书申请尚未成功，可重试")
@@ -159,6 +242,10 @@ func (h *DomainHandler) Update(c *gin.Context) {
 func (h *DomainHandler) RetryCertificate(c *gin.Context) {
 	domain, ok := h.managedDomain(c)
 	if !ok {
+		return
+	}
+	if isImportedDomain(domain) {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "导入证书由原有 cert-manager 配置维护，不能从平台重新签发")
 		return
 	}
 	if err := validateManagedDomainPrerequisites(domain); err != nil {
@@ -203,7 +290,7 @@ func (h *DomainHandler) Delete(c *gin.Context) {
 		model.Error(c, http.StatusConflict, model.CodeConflict, "域名仍被应用入口引用，请先发布不使用该域名的新版本")
 		return
 	}
-	if K8s != nil && domain.Namespace != "" && domain.CertificateName != "" {
+	if !isImportedDomain(domain) && K8s != nil && domain.Namespace != "" && domain.CertificateName != "" {
 		if err := K8s.DeleteCertificate(domain.Namespace, domain.CertificateName); err != nil && !apierrors.IsNotFound(err) {
 			model.Error(c, http.StatusBadRequest, model.CodeK8sAPIError, "删除域名证书: "+err.Error())
 			return
@@ -299,12 +386,25 @@ func domainFromRequest(req domainRequest, current *model.ManagedDomain, environm
 	if current != nil && current.EnvironmentID != 0 && current.EnvironmentID != environment.ID {
 		return nil, errInvalid("域名已绑定环境，不能直接修改")
 	}
-	domain := &model.ManagedDomain{Hostname: hostname, EnvironmentID: environment.ID, Namespace: environment.Namespace, CertificateName: currentCertificateName(current), TLSSecretName: currentTLSSecretName(current), IssuerRef: issuerRef, IssuerKind: "ClusterIssuer", Description: strings.TrimSpace(req.Description), Enabled: req.Enabled}
+	domain := &model.ManagedDomain{Hostname: hostname, EnvironmentID: environment.ID, Namespace: environment.Namespace, CertificateName: currentCertificateName(current), TLSSecretName: currentTLSSecretName(current), IssuerRef: issuerRef, IssuerKind: "ClusterIssuer", CertificateOwnership: "managed", Description: strings.TrimSpace(req.Description), Enabled: req.Enabled}
 	if current != nil {
 		domain.ID = current.ID
 		domain.CreatedAt = current.CreatedAt
+		domain.CertificateOwnership = current.CertificateOwnership
+		if isImportedDomain(current) {
+			domain.IssuerRef = current.IssuerRef
+			domain.IssuerKind = current.IssuerKind
+		}
 	}
 	return domain, nil
+}
+
+func importableCertificate(certificate k8s.CertInfo) bool {
+	return len(certificate.Domains) == 1 && validManagedHostname(strings.ToLower(certificate.Domains[0])) && certificate.Issuer != "" && certificate.SecretName != ""
+}
+
+func isImportedDomain(domain *model.ManagedDomain) bool {
+	return domain != nil && domain.CertificateOwnership == "imported"
 }
 
 func validManagedHostname(hostname string) bool {
