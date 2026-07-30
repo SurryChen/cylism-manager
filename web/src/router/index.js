@@ -25,10 +25,11 @@ import ChartRepositories from '../views/ChartRepositories.vue'
 const routes = [
   { path: '/login', component: Login, meta: { public: true } },
   { path: '/', component: Dashboard },
-  { path: '/applications', component: Applications, props: { section: 'applications' } },
+  { path: '/applications', component: Applications, props: { section: 'workspace' } },
   { path: '/applications/projects', component: Applications, props: { section: 'projects' } },
   { path: '/applications/projects/:projectID', component: ProjectEnvironments, props: true },
-  { path: '/applications/releases', component: Applications, props: { section: 'releases' } },
+  { path: '/applications/overview', component: Applications, props: { section: 'overview' } },
+  { path: '/applications/releases', redirect: '/applications/overview' },
   { path: '/applications/registries', component: ImageRegistries },
   { path: '/applications/domains', component: Domains },
   { path: '/applications/:applicationID/releases/:releaseID', component: ReleaseDetails, props: true },

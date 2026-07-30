@@ -1,6 +1,7 @@
 package store
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -439,6 +440,68 @@ func TestProjectAndEnvironmentCRUD(t *testing.T) {
 	}
 	if err := st.DeleteProject(project.ID); err != nil {
 		t.Fatalf("DeleteProject: %v", err)
+	}
+}
+
+func TestEnvironmentNamespaceIsGloballyUnique(t *testing.T) {
+	st := setupTestDB(t)
+	first := &model.Environment{ProjectID: 1, Name: "production", Namespace: "commerce"}
+	if err := st.CreateEnvironment(first); err != nil {
+		t.Fatalf("create first environment: %v", err)
+	}
+	second := &model.Environment{ProjectID: 2, Name: "production", Namespace: "commerce"}
+	err := st.CreateEnvironment(second)
+	var conflict *NamespaceConflictError
+	if !errors.As(err, &conflict) {
+		t.Fatalf("expected NamespaceConflictError, got %v", err)
+	}
+	if conflict.EnvironmentID != first.ID || conflict.ProjectID != first.ProjectID {
+		t.Fatalf("unexpected conflict: %#v", conflict)
+	}
+}
+
+func TestReconcileEnvironmentNamespaceUniquenessWaitsForLegacyConflicts(t *testing.T) {
+	st := setupTestDB(t)
+	if err := st.db.Exec("DROP INDEX IF EXISTS idx_environments_namespace_unique").Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := st.db.Exec("INSERT INTO environments (project_id, name, namespace, created_at, updated_at) VALUES (1, 'one', 'shared', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP), (2, 'two', 'shared', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)").Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := st.ReconcileEnvironmentNamespaceUniqueness(); err != nil {
+		t.Fatalf("reconcile with legacy conflicts: %v", err)
+	}
+	conflicts, err := st.ListEnvironmentNamespaceConflicts()
+	if err != nil || len(conflicts) != 1 || conflicts[0].Namespace != "shared" || len(conflicts[0].Environments) != 2 {
+		t.Fatalf("unexpected conflicts: %#v, err=%v", conflicts, err)
+	}
+	if err := st.db.Where("project_id = ?", 2).Delete(&model.Environment{}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := st.ReconcileEnvironmentNamespaceUniqueness(); err != nil {
+		t.Fatalf("reconcile resolved conflicts: %v", err)
+	}
+	if err := st.db.Exec("INSERT INTO environments (project_id, name, namespace, created_at, updated_at) VALUES (3, 'three', 'shared', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)").Error; err == nil {
+		t.Fatal("expected unique index to reject duplicate namespace")
+	}
+}
+
+func TestBackfillManagedDomainEnvironmentWhenNamespaceHasSingleOwner(t *testing.T) {
+	st := setupTestDB(t)
+	environment := &model.Environment{ProjectID: 1, Name: "production", Namespace: "commerce-prod"}
+	if err := st.CreateEnvironment(environment); err != nil {
+		t.Fatal(err)
+	}
+	domain := &model.ManagedDomain{Hostname: "api.example.com", Namespace: environment.Namespace}
+	if err := st.CreateManagedDomain(domain); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.backfillManagedDomainEnvironments(); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := st.GetManagedDomain(domain.ID)
+	if err != nil || updated.EnvironmentID != environment.ID {
+		t.Fatalf("expected domain to bind environment %d, got %#v err=%v", environment.ID, updated, err)
 	}
 }
 

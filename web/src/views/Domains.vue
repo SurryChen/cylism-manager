@@ -21,29 +21,34 @@
 
     <div v-if="modal" class="overlay" @click.self="close"><div class="modal"><h2 class="modal-title">{{ editing ? '编辑受管域名' : '申请 HTTPS 域名' }}</h2><form @submit.prevent="save">
       <div class="form-group"><label class="form-label">域名</label><input v-model.trim="form.hostname" class="form-input" placeholder="api.example.com" required :disabled="!!editing" /></div>
-      <div class="form-group"><label class="form-label">证书命名空间</label><select v-model="form.namespace" class="form-select" required :disabled="!!editing && !!editing.namespace"><option value="" disabled>选择命名空间</option><option v-for="namespace in namespaces" :key="namespace.name" :value="namespace.name">{{ namespace.name }}</option></select></div>
+      <div class="form-group"><label class="form-label">所属环境</label><input class="form-input" :value="currentEnvironment ? `${currentEnvironment.name} · ${currentEnvironment.namespace}` : '请先在顶部选择项目与环境'" disabled /></div>
       <div class="form-group"><label class="form-label">ClusterIssuer</label><select v-model="form.issuer_ref" class="form-select" required><option value="" disabled>选择已就绪签发者</option><option v-for="issuer in issuers" :key="issuer.name" :value="issuer.name">{{ issuer.name }}</option></select></div>
       <div class="form-group"><label class="form-label">说明</label><input v-model.trim="form.description" class="form-input" placeholder="生产 API" /></div>
       <label class="check-row"><input v-model="form.enabled" type="checkbox" /> 启用此域名</label>
-      <div class="modal-actions"><button type="button" class="btn" @click="close">取消</button><button class="btn btn-primary" :disabled="saving || !namespaces.length || !issuers.length">{{ saving ? '提交中...' : '提交申请' }}</button></div>
+      <div class="modal-actions"><button type="button" class="btn" @click="close">取消</button><button class="btn btn-primary" :disabled="saving || !currentEnvironment || !issuers.length">{{ saving ? '提交中...' : '提交申请' }}</button></div>
     </form></div></div>
   </div>
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, onMounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { api } from '../api/index.js'
 
 const router = useRouter()
-const domains = ref([]), namespaces = ref([]), allIssuers = ref([]), loaded = ref(false), error = ref(''), modal = ref(false), editing = ref(null), saving = ref(false)
+const route = useRoute()
+const domains = ref([]), projects = ref([]), allIssuers = ref([]), loaded = ref(false), error = ref(''), modal = ref(false), editing = ref(null), saving = ref(false)
+const projectID = computed(() => Number(route.query.project_id) || 0)
+const environmentID = computed(() => Number(route.query.environment_id) || 0)
+const currentProject = computed(() => projects.value.find(project => project.id === projectID.value) || null)
+const currentEnvironment = computed(() => currentProject.value?.environments?.find(environment => environment.id === environmentID.value) || null)
 const form = ref(blank())
 const issuers = computed(() => allIssuers.value.filter(issuer => issuer.kind === 'ClusterIssuer' && issuer.ready))
-function blank(){ return { hostname: '', namespace: '', issuer_ref: '', description: '', enabled: true } }
-async function load(){ try { domains.value = await api.get('/domains') || [] } catch(e) { error.value = e.message || '加载受管域名失败' } finally { loaded.value = true } }
-async function loadOptions(){ const [namespaceResult, issuerResult] = await Promise.all([api.get('/k8s/namespaces'), api.get('/certs/issuers')]); namespaces.value = (namespaceResult || []).filter(namespace => namespace.status === 'Active'); allIssuers.value = issuerResult || [] }
-async function openCreate(){ error.value = ''; editing.value = null; form.value = blank(); try { await loadOptions(); form.value.namespace = namespaces.value[0]?.name || ''; form.value.issuer_ref = issuers.value[0]?.name || ''; modal.value = true } catch(e) { error.value = e.message || '加载签发前置条件失败' } }
-async function openEdit(domain){ error.value = ''; editing.value = domain; form.value = { hostname: domain.hostname, namespace: domain.namespace || '', issuer_ref: domain.issuer_ref || '', description: domain.description || '', enabled: domain.enabled }; try { await loadOptions(); modal.value = true } catch(e) { error.value = e.message || '加载签发前置条件失败' } }
+function blank(){ return { hostname: '', environment_id: environmentID.value, issuer_ref: '', description: '', enabled: true } }
+async function load(){ try { const unassigned = route.query.unassigned === 'true'; const [domainResult, projectResult] = await Promise.all([unassigned ? api.get('/domains?unassigned=true') : environmentID.value ? api.get(`/domains?environment_id=${environmentID.value}`) : api.get('/domains'), api.get('/projects')]); domains.value = domainResult || []; projects.value = projectResult || [] } catch(e) { error.value = e.message || '加载受管域名失败' } finally { loaded.value = true } }
+async function loadOptions(){ allIssuers.value = await api.get('/certs/issuers') || [] }
+async function openCreate(){ error.value = ''; editing.value = null; if (!currentEnvironment.value) { error.value = '请先在顶部选择项目与环境'; return } form.value = blank(); try { await loadOptions(); form.value.issuer_ref = issuers.value[0]?.name || ''; modal.value = true } catch(e) { error.value = e.message || '加载签发前置条件失败' } }
+async function openEdit(domain){ error.value = ''; if (!domain.environment_id && !currentEnvironment.value) { error.value = '请先在顶部选择要重新绑定的项目与环境'; return } editing.value = domain; form.value = { hostname: domain.hostname, environment_id: domain.environment_id || environmentID.value, issuer_ref: domain.issuer_ref || '', description: domain.description || '', enabled: domain.enabled }; try { await loadOptions(); modal.value = true } catch(e) { error.value = e.message || '加载签发前置条件失败' } }
 function close(){ modal.value = false; editing.value = null }
 async function save(){ saving.value = true; error.value = ''; try { if(editing.value) await api.put(`/domains/${editing.value.id}`, form.value); else await api.post('/domains', form.value); close(); await load() } catch(e) { error.value = e.message || '提交域名申请失败' } finally { saving.value = false } }
 async function retry(domain){ error.value = ''; try { await api.post(`/domains/${domain.id}/certificate`); await load() } catch(e) { error.value = e.message || '重新申请证书失败' } }
@@ -54,6 +59,7 @@ function certificateClass(domain){ return certificateLabel(domain) === '已就�
 function certificateReason(domain){ return domain.certificate?.reason || domain.certificate_error || '' }
 function formatDate(value){ return value ? new Date(value).toLocaleString('zh-CN') : '-' }
 onMounted(load)
+watch(() => [route.query.project_id, route.query.environment_id, route.query.unassigned], load)
 </script>
 
 <style scoped>

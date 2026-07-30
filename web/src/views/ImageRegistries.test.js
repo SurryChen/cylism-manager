@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
+import { reactive } from 'vue'
 import ImageRegistries from './ImageRegistries.vue'
+
+const route = reactive({ query: { project_id: '1', environment_id: '2' } })
+vi.mock('vue-router', () => ({ useRoute: () => route }))
 
 vi.mock('../api/index.js', () => ({
   api: {
@@ -19,7 +23,7 @@ describe('ImageRegistries view', () => {
     const wrapper = mount(ImageRegistries)
     await new Promise(resolve => setTimeout(resolve, 0))
 
-    expect(wrapper.find('.page-title').text()).toBe('镜像仓库')
+    expect(wrapper.find('.page-title').text()).toBe('镜像仓库授权')
     expect(wrapper.text()).toContain('新建镜像仓库')
     expect(wrapper.text()).not.toContain('暂无镜像仓库')
     expect(wrapper.find('.card').exists()).toBe(false)

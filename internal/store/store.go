@@ -2,6 +2,7 @@ package store
 
 import (
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/cylism/cylism-manager/internal/model"
@@ -12,6 +13,23 @@ import (
 // Store 数据存储层
 type Store struct {
 	db *gorm.DB
+}
+
+// NamespaceConflictError indicates that another environment already owns a Namespace.
+type NamespaceConflictError struct {
+	Namespace     string
+	EnvironmentID uint
+	ProjectID     uint
+}
+
+func (e *NamespaceConflictError) Error() string {
+	return fmt.Sprintf("命名空间 %q 已被项目 %d 的环境 %d 绑定", e.Namespace, e.ProjectID, e.EnvironmentID)
+}
+
+// NamespaceConflict groups legacy duplicate bindings for an operator-directed migration.
+type NamespaceConflict struct {
+	Namespace    string              `json:"namespace"`
+	Environments []model.Environment `json:"environments"`
 }
 
 // New 创建新的 Store 实例，自动迁移所有模型
@@ -52,7 +70,14 @@ func New(dsn string) (*Store, error) {
 		}
 	}
 
-	return &Store{db: db}, nil
+	store := &Store{db: db}
+	if err := store.backfillManagedDomainEnvironments(); err != nil {
+		return nil, err
+	}
+	if err := store.ReconcileEnvironmentNamespaceUniqueness(); err != nil {
+		return nil, err
+	}
+	return store, nil
 }
 
 // DB 返回底层 GORM DB 实例（供中间件等使用）
@@ -323,7 +348,15 @@ func (s *Store) CountProjectApplications(projectID uint) (int64, error) {
 }
 
 func (s *Store) CreateEnvironment(environment *model.Environment) error {
-	return s.db.Create(environment).Error
+	if environment == nil {
+		return errors.New("environment is required")
+	}
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		if err := ensureNamespaceAvailable(tx, environment.Namespace, 0); err != nil {
+			return err
+		}
+		return tx.Create(environment).Error
+	})
 }
 
 func (s *Store) ListEnvironments(projectID uint) ([]model.Environment, error) {
@@ -338,12 +371,115 @@ func (s *Store) GetEnvironment(projectID, environmentID uint) (*model.Environmen
 	return &environment, err
 }
 
+func (s *Store) GetEnvironmentByID(environmentID uint) (*model.Environment, error) {
+	var environment model.Environment
+	err := s.db.First(&environment, environmentID).Error
+	return &environment, err
+}
+
 func (s *Store) UpdateEnvironment(environment *model.Environment) error {
-	return s.db.Save(environment).Error
+	if environment == nil {
+		return errors.New("environment is required")
+	}
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		if err := ensureNamespaceAvailable(tx, environment.Namespace, environment.ID); err != nil {
+			return err
+		}
+		return tx.Save(environment).Error
+	})
+	if err != nil {
+		return err
+	}
+	return s.ReconcileEnvironmentNamespaceUniqueness()
 }
 
 func (s *Store) DeleteEnvironment(id uint) error {
-	return s.db.Delete(&model.Environment{}, id).Error
+	if err := s.db.Delete(&model.Environment{}, id).Error; err != nil {
+		return err
+	}
+	return s.ReconcileEnvironmentNamespaceUniqueness()
+}
+
+// EnsureNamespaceAvailable validates an intended namespace binding before Kubernetes is mutated.
+func (s *Store) EnsureNamespaceAvailable(namespace string, excludeEnvironmentID uint) error {
+	return ensureNamespaceAvailable(s.db, namespace, excludeEnvironmentID)
+}
+
+func ensureNamespaceAvailable(db *gorm.DB, namespace string, excludeEnvironmentID uint) error {
+	var existing model.Environment
+	query := db.Where("namespace = ?", namespace)
+	if excludeEnvironmentID != 0 {
+		query = query.Where("id <> ?", excludeEnvironmentID)
+	}
+	if err := query.Order("id asc").First(&existing).Error; err == nil {
+		return &NamespaceConflictError{Namespace: namespace, EnvironmentID: existing.ID, ProjectID: existing.ProjectID}
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return err
+	}
+	return nil
+}
+
+// ListEnvironmentNamespaceConflicts returns duplicate legacy namespace bindings.
+func (s *Store) ListEnvironmentNamespaceConflicts() ([]NamespaceConflict, error) {
+	type duplicate struct{ Namespace string }
+	var duplicates []duplicate
+	if err := s.db.Model(&model.Environment{}).
+		Select("namespace").
+		Where("namespace <> ''").
+		Group("namespace").
+		Having("COUNT(*) > 1").
+		Order("namespace asc").
+		Find(&duplicates).Error; err != nil {
+		return nil, err
+	}
+	conflicts := make([]NamespaceConflict, 0, len(duplicates))
+	for _, duplicate := range duplicates {
+		var environments []model.Environment
+		if err := s.db.Where("namespace = ?", duplicate.Namespace).Order("project_id asc, id asc").Find(&environments).Error; err != nil {
+			return nil, err
+		}
+		for index := range environments {
+			environments[index].NamespaceConflict = true
+		}
+		conflicts = append(conflicts, NamespaceConflict{Namespace: duplicate.Namespace, Environments: environments})
+	}
+	return conflicts, nil
+}
+
+func (s *Store) IsEnvironmentNamespaceConflicted(namespace string) (bool, error) {
+	var count int64
+	if err := s.db.Model(&model.Environment{}).Where("namespace = ?", namespace).Count(&count).Error; err != nil {
+		return false, err
+	}
+	return count > 1, nil
+}
+
+// ReconcileEnvironmentNamespaceUniqueness creates the database backstop only after legacy duplicates are resolved.
+func (s *Store) ReconcileEnvironmentNamespaceUniqueness() error {
+	conflicts, err := s.ListEnvironmentNamespaceConflicts()
+	if err != nil || len(conflicts) > 0 {
+		return err
+	}
+	return s.db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_environments_namespace_unique ON environments(namespace)").Error
+}
+
+func (s *Store) backfillManagedDomainEnvironments() error {
+	var domains []model.ManagedDomain
+	if err := s.db.Where("environment_id = 0 AND namespace <> ''").Find(&domains).Error; err != nil {
+		return err
+	}
+	for index := range domains {
+		var environments []model.Environment
+		if err := s.db.Where("namespace = ?", domains[index].Namespace).Find(&environments).Error; err != nil {
+			return err
+		}
+		if len(environments) == 1 {
+			if err := s.db.Model(&domains[index]).Update("environment_id", environments[0].ID).Error; err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func (s *Store) CountEnvironmentApplications(environmentID uint) (int64, error) {
@@ -391,9 +527,16 @@ func (s *Store) GetApplication(id uint) (*model.Application, error) {
 	return &application, err
 }
 
-func (s *Store) ListApplications() ([]model.Application, error) {
+func (s *Store) ListApplications(scope ...uint) ([]model.Application, error) {
 	var applications []model.Application
-	err := s.db.Preload("Project.DefaultImageRegistry").Preload("Environment").Preload("Endpoints").Order("created_at desc").Find(&applications).Error
+	query := s.db.Preload("Project.DefaultImageRegistry").Preload("Environment").Preload("Endpoints").Order("created_at desc")
+	if len(scope) > 0 && scope[0] != 0 {
+		query = query.Where("project_id = ?", scope[0])
+	}
+	if len(scope) > 1 && scope[1] != 0 {
+		query = query.Where("environment_id = ?", scope[1])
+	}
+	err := query.Find(&applications).Error
 	return applications, err
 }
 
@@ -583,9 +726,19 @@ func (s *Store) DeleteImageRegistry(id uint) error {
 func (s *Store) CreateManagedDomain(domain *model.ManagedDomain) error {
 	return s.db.Create(domain).Error
 }
-func (s *Store) ListManagedDomains() ([]model.ManagedDomain, error) {
+func (s *Store) ListManagedDomains(environmentID ...uint) ([]model.ManagedDomain, error) {
 	var domains []model.ManagedDomain
-	err := s.db.Order("hostname asc").Find(&domains).Error
+	query := s.db.Order("hostname asc")
+	if len(environmentID) > 0 && environmentID[0] != 0 {
+		query = query.Where("environment_id = ?", environmentID[0])
+	}
+	err := query.Find(&domains).Error
+	return domains, err
+}
+
+func (s *Store) ListUnassignedManagedDomains() ([]model.ManagedDomain, error) {
+	var domains []model.ManagedDomain
+	err := s.db.Where("environment_id = 0").Order("hostname asc").Find(&domains).Error
 	return domains, err
 }
 func (s *Store) GetManagedDomain(id uint) (*model.ManagedDomain, error) {

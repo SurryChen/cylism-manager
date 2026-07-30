@@ -1,17 +1,20 @@
 import { describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
+import { reactive } from 'vue'
 import Applications from './Applications.vue'
 
 vi.mock('../api/index.js', () => ({
   api: { get: vi.fn().mockResolvedValue([]), post: vi.fn().mockResolvedValue({ id: 1 }) }
 }))
+const route = reactive({ query: { project_id: '1', environment_id: '2' } })
+vi.mock('vue-router', () => ({ useRouter: () => ({ push: vi.fn() }), useRoute: () => route }))
 
 describe('Applications view', () => {
   it('keeps the application entry free of a list frame when there is no data', async () => {
     const wrapper = mount(Applications)
     await new Promise(resolve => setTimeout(resolve, 0))
 
-    expect(wrapper.find('.page-title').text()).toBe('应用')
+    expect(wrapper.find('.page-title').text()).toBe('工作台')
     expect(wrapper.text()).not.toContain('暂无应用')
     expect(wrapper.text()).toContain('创建应用')
     expect(wrapper.find('.card').exists()).toBe(false)
@@ -28,11 +31,11 @@ describe('Applications view', () => {
     expect(wrapper.find('.card').exists()).toBe(false)
   })
 
-  it('shows a cross-application release history section', async () => {
-    const wrapper = mount(Applications, { props: { section: 'releases' } })
+  it('shows a cross-project global overview section', async () => {
+    const wrapper = mount(Applications, { props: { section: 'overview' } })
     await new Promise(resolve => setTimeout(resolve, 0))
 
-    expect(wrapper.find('.page-title').text()).toBe('发布记录')
+    expect(wrapper.find('.page-title').text()).toBe('全局概览')
     expect(wrapper.text()).not.toContain('暂无发布记录')
     expect(wrapper.find('.card').exists()).toBe(false)
   })
@@ -58,7 +61,8 @@ describe('Applications view', () => {
   it('shows the application project and preselects its default image registry for a release', async () => {
     const { api } = await import('../api/index.js')
     api.get.mockImplementation((path) => {
-      if (path === '/applications') return Promise.resolve([{ id: 3, project_id: 1, name: 'order-api', project: { id: 1, name: 'commerce', default_image_registry_id: 12 }, environment: { name: 'production', namespace: 'commerce-prod' } }])
+      if (path === '/projects') return Promise.resolve([{ id: 1, name: 'commerce', environments: [{ id: 2, name: 'production', namespace: 'commerce-prod' }] }])
+      if (path === '/workspace/overview?project_id=1&environment_id=2') return Promise.resolve({ applications: [{ id: 3, project_id: 1, environment_id: 2, name: 'order-api', project: { id: 1, name: 'commerce', default_image_registry_id: 12 }, environment: { name: 'production', namespace: 'commerce-prod' } }], domains: [], recent_releases: [], failed_releases: [] })
       if (path === '/image-registries?project_id=1') return Promise.resolve([{ id: 12, name: 'commerce-harbor', endpoint: 'harbor.example.com', enabled: true }])
       return Promise.resolve([])
     })
@@ -66,7 +70,7 @@ describe('Applications view', () => {
     await new Promise(resolve => setTimeout(resolve, 0))
 
     expect(wrapper.text()).toContain('commerce')
-    await wrapper.get('.btn-sm').trigger('click')
+    await wrapper.findAll('button').find(button => button.text() === '发布版本').trigger('click')
     await new Promise(resolve => setTimeout(resolve, 0))
 
     const releaseModal = document.body.querySelector('.release-modal')
@@ -80,13 +84,14 @@ describe('Applications view', () => {
   it('requires a ready managed domain for public releases', async () => {
     const { api } = await import('../api/index.js')
     api.get.mockImplementation((path) => {
-      if (path === '/applications') return Promise.resolve([{ id: 3, project_id: 1, name: 'order-api', project: { id: 1, name: 'commerce' }, environment: { name: 'production', namespace: 'commerce-prod' } }])
-      if (path === '/domains') return Promise.resolve([{ id: 7, hostname: 'api.example.com', namespace: 'commerce-prod', enabled: true, certificate: { status: 'Ready' } }])
+      if (path === '/projects') return Promise.resolve([{ id: 1, name: 'commerce', environments: [{ id: 2, name: 'production', namespace: 'commerce-prod' }] }])
+      if (path === '/workspace/overview?project_id=1&environment_id=2') return Promise.resolve({ applications: [{ id: 3, project_id: 1, environment_id: 2, name: 'order-api', project: { id: 1, name: 'commerce' }, environment: { name: 'production', namespace: 'commerce-prod' } }], domains: [], recent_releases: [], failed_releases: [] })
+      if (path === '/domains?environment_id=2') return Promise.resolve([{ id: 7, environment_id: 2, hostname: 'api.example.com', namespace: 'commerce-prod', enabled: true, certificate: { status: 'Ready' } }])
       return Promise.resolve([])
     })
     const wrapper = mount(Applications)
     await new Promise(resolve => setTimeout(resolve, 0))
-    await wrapper.get('.btn-sm').trigger('click')
+    await wrapper.findAll('button').find(button => button.text() === '发布版本').trigger('click')
     await new Promise(resolve => setTimeout(resolve, 0))
     const exposure = [...document.body.querySelectorAll('.release-modal select')].find(select => select.value === 'cluster')
     exposure.value = 'public'

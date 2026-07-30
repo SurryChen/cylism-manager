@@ -27,6 +27,7 @@ func setupApplicationRouter() (*gin.Engine, *store.Store) {
 		projects.PUT("/:projectID", h.UpdateProject)
 		projects.DELETE("/:projectID", h.DeleteProject)
 		projects.GET("/:projectID/environments", h.ListEnvironments)
+		projects.GET("/environments/namespace-conflicts", h.ListEnvironmentNamespaceConflicts)
 		projects.POST("/:projectID/environments", h.CreateEnvironment)
 		projects.PUT("/:projectID/environments/:environmentID", h.UpdateEnvironment)
 		projects.POST("/:projectID/environments/:environmentID/sync-namespace", h.SyncEnvironmentNamespace)
@@ -34,8 +35,11 @@ func setupApplicationRouter() (*gin.Engine, *store.Store) {
 	}
 	applications := r.Group("/api/applications")
 	{
+		applications.GET("", h.ListApplications)
 		applications.POST("", h.CreateApplication)
 	}
+	workspace := r.Group("/api/workspace")
+	workspace.GET("/overview", h.WorkspaceOverview)
 	return r, s
 }
 
@@ -124,6 +128,62 @@ func TestApplicationHandlerEnvironmentNamespaceBindAndSync(t *testing.T) {
 	}
 	if _, err := clientset.CoreV1().Namespaces().Get(t.Context(), "dev", metav1.GetOptions{}); err != nil {
 		t.Fatalf("expected sync to create namespace: %v", err)
+	}
+}
+
+func TestApplicationHandlerRejectsDuplicateSystemAndForeignNamespaceBindings(t *testing.T) {
+	r, s := setupApplicationRouter()
+	originalK8s := K8s
+	clientset := k8sfake.NewSimpleClientset(
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "shared", Labels: map[string]string{"cylism.io/project-id": "1"}}, Status: corev1.NamespaceStatus{Phase: corev1.NamespaceActive}},
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "foreign", Labels: map[string]string{"cylism.io/project-id": "2"}}, Status: corev1.NamespaceStatus{Phase: corev1.NamespaceActive}},
+	)
+	K8s = &k8sclient.Client{Clientset: clientset}
+	defer func() { K8s = originalK8s }()
+	if err := s.CreateProject(&model.Project{Name: "commerce", OwnerID: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CreateProject(&model.Project{Name: "payments", OwnerID: 1}); err != nil {
+		t.Fatal(err)
+	}
+
+	first := serve(r, newJSONRequest(http.MethodPost, "/api/projects/1/environments", gin.H{"name": "production", "namespace": "shared", "namespace_mode": "bind"}))
+	if first.Code != http.StatusOK {
+		t.Fatalf("first bind: %d %s", first.Code, first.Body.String())
+	}
+	duplicate := serve(r, newJSONRequest(http.MethodPost, "/api/projects/2/environments", gin.H{"name": "production", "namespace": "shared", "namespace_mode": "bind"}))
+	if duplicate.Code != http.StatusConflict || !strings.Contains(duplicate.Body.String(), "已被项目") {
+		t.Fatalf("duplicate bind: %d %s", duplicate.Code, duplicate.Body.String())
+	}
+	system := serve(r, newJSONRequest(http.MethodPost, "/api/projects/1/environments", gin.H{"name": "system", "namespace": "kube-system", "namespace_mode": "bind"}))
+	if system.Code != http.StatusBadRequest || !strings.Contains(system.Body.String(), "系统命名空间") {
+		t.Fatalf("system bind: %d %s", system.Code, system.Body.String())
+	}
+	foreign := serve(r, newJSONRequest(http.MethodPost, "/api/projects/1/environments", gin.H{"name": "foreign", "namespace": "foreign", "namespace_mode": "bind"}))
+	if foreign.Code != http.StatusBadRequest || !strings.Contains(foreign.Body.String(), "已属于项目 2") {
+		t.Fatalf("foreign bind: %d %s", foreign.Code, foreign.Body.String())
+	}
+}
+
+func TestApplicationHandlerScopesWorkspaceApplicationsAndOverview(t *testing.T) {
+	r, s := setupApplicationRouter()
+	if err := s.CreateProject(&model.Project{Name: "commerce", OwnerID: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CreateEnvironment(&model.Environment{ProjectID: 1, Name: "production", Namespace: "commerce-prod"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CreateApplication(&model.Application{ProjectID: 1, EnvironmentID: 1, Name: "order-api", WorkloadKind: "deployment", CreatedBy: 1}); err != nil {
+		t.Fatal(err)
+	}
+
+	applications := serve(r, newJSONRequest(http.MethodGet, "/api/applications?project_id=1&environment_id=1", nil))
+	if applications.Code != http.StatusOK || !strings.Contains(applications.Body.String(), "order-api") {
+		t.Fatalf("scoped applications: %d %s", applications.Code, applications.Body.String())
+	}
+	overview := serve(r, newJSONRequest(http.MethodGet, "/api/workspace/overview?project_id=1&environment_id=1", nil))
+	if overview.Code != http.StatusOK || !strings.Contains(overview.Body.String(), "order-api") {
+		t.Fatalf("workspace overview: %d %s", overview.Code, overview.Body.String())
 	}
 }
 

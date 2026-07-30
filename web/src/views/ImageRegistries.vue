@@ -1,6 +1,6 @@
 <template>
   <div>
-    <div class="page-header"><div><h1 class="page-title">镜像仓库</h1><p class="page-subtitle">配置应用发布可使用的外部 OCI 镜像仓库与项目授权</p></div><button class="btn btn-primary" @click="openCreate">+ 新建镜像仓库</button></div>
+    <div class="page-header"><div><h1 class="page-title">镜像仓库授权</h1><p class="page-subtitle">{{ currentProject ? `配置 ${currentProject.name} 可用于发布的镜像仓库` : '请先在顶部选择项目，再配置可用镜像仓库' }}</p></div><button class="btn btn-primary" :disabled="!projectID" @click="openCreate">+ 新建镜像仓库</button></div>
     <div v-if="error" class="k8s-banner k8s-banner-warn section-gap">⚠ {{ error }}</div>
 
     <div v-if="loaded && registries.length > 0" class="card section-gap"><div class="table-wrap"><table class="data-table"><thead><tr><th>名称</th><th>地址</th><th>验证镜像</th><th>认证</th><th>项目授权</th><th>状态</th><th>检测结果</th><th>操作</th></tr></thead><tbody>
@@ -23,12 +23,14 @@
 </template>
 
 <script setup>
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { RefreshCw } from 'lucide-vue-next'
+import { useRoute } from 'vue-router'
 import { api } from '../api/index.js'
 
 const registries = ref([])
 const projects = ref([])
+const route = useRoute()
 const loaded = ref(false)
 const error = ref('')
 const submitting = ref(false)
@@ -37,14 +39,16 @@ const editingRegistry = ref(null)
 const deleteTarget = ref(null)
 const verifyingID = ref(null)
 const form = ref(newRegistryForm())
+const projectID = computed(() => Number(route.query.project_id) || 0)
+const currentProject = computed(() => projects.value.find(project => project.id === projectID.value) || null)
 
 function newRegistryForm() { return { name: '', endpoint: '', verification_image: '', auth_type: 'anonymous', username: '', credential: '', enabled: true, project_ids: [] } }
 function authLabel(type) { return type === 'basic' ? '账号密码' : type === 'token' ? 'Token' : '匿名访问' }
 function verificationLabel(status) { return status === 'succeeded' ? '连通' : status === 'failed' ? '检测失败' : '未检测' }
 function verificationBadge(status) { return status === 'succeeded' ? 'badge-online' : status === 'failed' ? 'badge-danger' : 'badge-offline' }
 function formatTime(value) { return value ? new Date(value).toLocaleString() : '-' }
-async function fetchData() { error.value = ''; try { const [registryResult, projectResult] = await Promise.all([api.get('/image-registries'), api.get('/projects')]); registries.value = registryResult || []; projects.value = projectResult || [] } catch (e) { error.value = e.message || '加载镜像仓库失败' } finally { loaded.value = true } }
-function openCreate() { editingRegistry.value = null; form.value = newRegistryForm(); showModal.value = true }
+async function fetchData() { error.value = ''; try { const [registryResult, projectResult] = await Promise.all([api.get(projectID.value ? `/image-registries?project_id=${projectID.value}` : '/image-registries'), api.get('/projects')]); registries.value = registryResult || []; projects.value = projectResult || [] } catch (e) { error.value = e.message || '加载镜像仓库失败' } finally { loaded.value = true } }
+function openCreate() { if (!projectID.value) return; editingRegistry.value = null; form.value = { ...newRegistryForm(), project_ids: [projectID.value] }; showModal.value = true }
 function openEdit(registry) { editingRegistry.value = registry; form.value = { name: registry.name, endpoint: registry.endpoint, verification_image: registry.verification_image || '', auth_type: registry.auth_type, username: registry.username || '', credential: '', enabled: registry.enabled, project_ids: (registry.projects || []).map(project => project.id) }; showModal.value = true }
 function closeModal() { showModal.value = false; editingRegistry.value = null; form.value = newRegistryForm() }
 async function saveRegistry() { submitting.value = true; error.value = ''; try { const payload = { ...form.value, project_ids: [...form.value.project_ids] }; if (editingRegistry.value && !payload.credential) delete payload.credential; if (editingRegistry.value) await api.put(`/image-registries/${editingRegistry.value.id}`, payload); else await api.post('/image-registries', payload); closeModal(); await fetchData() } catch (e) { error.value = e.message || '保存镜像仓库失败' } finally { submitting.value = false } }
@@ -52,6 +56,7 @@ async function deleteRegistry() { if (!deleteTarget.value) return; submitting.va
 async function verifyRegistry(registry) { verifyingID.value = registry.id; error.value = ''; try { const updated = await api.post(`/image-registries/${registry.id}/verify`); const index = registries.value.findIndex(item => item.id === registry.id); if (index >= 0) registries.value[index] = updated } catch (e) { error.value = e.message || '检测镜像仓库失败' } finally { verifyingID.value = null } }
 
 onMounted(fetchData)
+watch(() => route.query.project_id, fetchData)
 </script>
 
 <style scoped>

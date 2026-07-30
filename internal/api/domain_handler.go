@@ -3,6 +3,7 @@ package api
 import (
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/cylism/cylism-manager/internal/k8s"
@@ -16,11 +17,11 @@ import (
 type DomainHandler struct{ store *store.Store }
 
 type domainRequest struct {
-	Hostname    string `json:"hostname"`
-	Namespace   string `json:"namespace"`
-	IssuerRef   string `json:"issuer_ref"`
-	Description string `json:"description"`
-	Enabled     bool   `json:"enabled"`
+	Hostname      string `json:"hostname"`
+	EnvironmentID uint   `json:"environment_id"`
+	IssuerRef     string `json:"issuer_ref"`
+	Description   string `json:"description"`
+	Enabled       bool   `json:"enabled"`
 }
 
 type managedDomainInfo struct {
@@ -32,8 +33,35 @@ type managedDomainInfo struct {
 
 func NewDomainHandler(s *store.Store) *DomainHandler { return &DomainHandler{store: s} }
 
+func optionalQueryID(c *gin.Context, key string) (uint, error) {
+	raw := strings.TrimSpace(c.Query(key))
+	if raw == "" {
+		return 0, nil
+	}
+	value, err := strconv.ParseUint(raw, 10, 0)
+	return uint(value), err
+}
+
 func (h *DomainHandler) List(c *gin.Context) {
-	domains, err := h.store.ListManagedDomains()
+	if c.Query("unassigned") == "true" {
+		domains, err := h.store.ListUnassignedManagedDomains()
+		if err != nil {
+			model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+			return
+		}
+		result := make([]managedDomainInfo, 0, len(domains))
+		for index := range domains {
+			result = append(result, h.domainInfo(&domains[index]))
+		}
+		model.Success(c, result)
+		return
+	}
+	environmentID, err := optionalQueryID(c, "environment_id")
+	if err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "环境 ID 无效")
+		return
+	}
+	domains, err := h.store.ListManagedDomains(environmentID)
 	if err != nil {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
 		return
@@ -51,7 +79,12 @@ func (h *DomainHandler) Create(c *gin.Context) {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "域名定义无效")
 		return
 	}
-	domain, err := domainFromRequest(req, nil)
+	environment, err := h.domainEnvironment(req.EnvironmentID)
+	if err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		return
+	}
+	domain, err := domainFromRequest(req, nil, environment)
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
 		return
@@ -95,7 +128,12 @@ func (h *DomainHandler) Update(c *gin.Context) {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "域名定义无效")
 		return
 	}
-	domain, err := domainFromRequest(req, current)
+	environment, err := h.domainEnvironment(req.EnvironmentID)
+	if err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		return
+	}
+	domain, err := domainFromRequest(req, current, environment)
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
 		return
@@ -198,6 +236,29 @@ func (h *DomainHandler) managedDomain(c *gin.Context) (*model.ManagedDomain, boo
 	return domain, true
 }
 
+func (h *DomainHandler) domainEnvironment(environmentID uint) (*model.Environment, error) {
+	if environmentID == 0 {
+		return nil, errInvalid("请选择域名所属环境")
+	}
+	environment, err := h.store.GetEnvironmentByID(environmentID)
+	if err != nil {
+		return nil, errInvalid("环境不存在")
+	}
+	if environment.NamespaceConflict {
+		return nil, errInvalid("环境命名空间存在冲突，请先完成迁移")
+	}
+	conflicts, err := h.store.ListEnvironmentNamespaceConflicts()
+	if err != nil {
+		return nil, fmt.Errorf("检查命名空间归属: %w", err)
+	}
+	for _, conflict := range conflicts {
+		if conflict.Namespace == environment.Namespace {
+			return nil, errInvalid("环境命名空间存在冲突，请先完成迁移")
+		}
+	}
+	return environment, nil
+}
+
 func (h *DomainHandler) domainInfo(domain *model.ManagedDomain) managedDomainInfo {
 	info := managedDomainInfo{ManagedDomain: *domain}
 	count, err := h.store.CountApplicationEndpointsByDomain(domain.ID)
@@ -223,23 +284,22 @@ func (h *DomainHandler) domainInfo(domain *model.ManagedDomain) managedDomainInf
 	return info
 }
 
-func domainFromRequest(req domainRequest, current *model.ManagedDomain) (*model.ManagedDomain, error) {
+func domainFromRequest(req domainRequest, current *model.ManagedDomain, environment *model.Environment) (*model.ManagedDomain, error) {
 	hostname := strings.ToLower(strings.TrimSpace(req.Hostname))
 	if !validManagedHostname(hostname) {
 		return nil, errInvalid("域名必须是合法的精确 DNS 名称，且不支持泛域名")
 	}
-	namespace := strings.TrimSpace(req.Namespace)
-	if namespace == "" {
-		return nil, errInvalid("请选择证书所在命名空间")
+	if environment == nil || environment.ID == 0 || strings.TrimSpace(environment.Namespace) == "" {
+		return nil, errInvalid("请选择域名所属环境")
 	}
 	issuerRef := strings.TrimSpace(req.IssuerRef)
 	if issuerRef == "" {
 		return nil, errInvalid("请选择已就绪的 ClusterIssuer")
 	}
-	if current != nil && current.Namespace != "" && current.Namespace != namespace {
-		return nil, errInvalid("域名已绑定命名空间，不能直接修改")
+	if current != nil && current.EnvironmentID != 0 && current.EnvironmentID != environment.ID {
+		return nil, errInvalid("域名已绑定环境，不能直接修改")
 	}
-	domain := &model.ManagedDomain{Hostname: hostname, Namespace: namespace, CertificateName: currentCertificateName(current), TLSSecretName: currentTLSSecretName(current), IssuerRef: issuerRef, IssuerKind: "ClusterIssuer", Description: strings.TrimSpace(req.Description), Enabled: req.Enabled}
+	domain := &model.ManagedDomain{Hostname: hostname, EnvironmentID: environment.ID, Namespace: environment.Namespace, CertificateName: currentCertificateName(current), TLSSecretName: currentTLSSecretName(current), IssuerRef: issuerRef, IssuerKind: "ClusterIssuer", Description: strings.TrimSpace(req.Description), Enabled: req.Enabled}
 	if current != nil {
 		domain.ID = current.ID
 		domain.CreatedAt = current.CreatedAt
