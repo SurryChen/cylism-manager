@@ -122,11 +122,9 @@ const navGroups = computed(() => [
     label: '应用',
     to: '/applications',
     items: [
-      { label: '应用', to: '/applications', icon: PackagePlus },
+      { label: '工作台', to: '/applications', icon: PackagePlus },
       { label: '项目与环境', to: '/applications/projects', icon: FolderKanban },
-      { label: '发布记录', to: '/applications/releases', icon: History },
-      { label: '镜像仓库', to: '/applications/registries', icon: Boxes },
-      { label: '域名', to: '/applications/domains', icon: Globe },
+      { label: '全局概览', to: '/applications/overview', icon: History },
     ],
   },
   {

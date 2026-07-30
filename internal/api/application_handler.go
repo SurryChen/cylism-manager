@@ -2,8 +2,10 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -148,8 +150,18 @@ func (h *ApplicationHandler) ListEnvironments(c *gin.Context) {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
 		return
 	}
+	conflicts, err := h.store.ListEnvironmentNamespaceConflicts()
+	if err != nil {
+		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		return
+	}
+	conflictNamespaces := make(map[string]struct{}, len(conflicts))
+	for _, conflict := range conflicts {
+		conflictNamespaces[conflict.Namespace] = struct{}{}
+	}
 	for index := range environments {
 		environments[index].NamespaceStatus = environmentNamespaceStatus(c.Request.Context(), environments[index].Namespace)
+		_, environments[index].NamespaceConflict = conflictNamespaces[environments[index].Namespace]
 	}
 	model.Success(c, environments)
 }
@@ -179,12 +191,19 @@ func (h *ApplicationHandler) CreateEnvironment(c *gin.Context) {
 		return
 	}
 	name, namespace := strings.TrimSpace(req.Name), strings.TrimSpace(req.Namespace)
+	if err := h.store.EnsureNamespaceAvailable(namespace, 0); err != nil {
+		handleEnvironmentNamespaceError(c, err)
+		return
+	}
 	if err := ensureEnvironmentNamespace(c.Request.Context(), projectID, namespace, mode, false); err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
 		return
 	}
 	environment := &model.Environment{ProjectID: projectID, Name: name, Namespace: namespace, NamespaceStatus: "active"}
 	if err := h.store.CreateEnvironment(environment); err != nil {
+		if handleEnvironmentNamespaceError(c, err) {
+			return
+		}
 		model.Error(c, http.StatusConflict, model.CodeConflict, "环境名称已存在")
 		return
 	}
@@ -213,7 +232,12 @@ func (h *ApplicationHandler) UpdateEnvironment(c *gin.Context) {
 			model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
 			return
 		}
-		if applicationCount > 0 {
+		namespaceConflict, err := h.store.IsEnvironmentNamespaceConflicted(environment.Namespace)
+		if err != nil {
+			model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+			return
+		}
+		if applicationCount > 0 && !namespaceConflict {
 			model.Error(c, http.StatusConflict, model.CodeConflict, "环境已有应用，不能修改名称或命名空间")
 			return
 		}
@@ -227,6 +251,10 @@ func (h *ApplicationHandler) UpdateEnvironment(c *gin.Context) {
 				k8sUnavailable(c)
 				return
 			}
+			if err := h.store.EnsureNamespaceAvailable(namespace, environment.ID); err != nil {
+				handleEnvironmentNamespaceError(c, err)
+				return
+			}
 			if err := ensureEnvironmentNamespace(c.Request.Context(), projectID, namespace, mode, false); err != nil {
 				model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
 				return
@@ -237,6 +265,9 @@ func (h *ApplicationHandler) UpdateEnvironment(c *gin.Context) {
 	environment.Namespace = namespace
 	environment.NamespaceStatus = environmentNamespaceStatus(c.Request.Context(), namespace)
 	if err := h.store.UpdateEnvironment(environment); err != nil {
+		if handleEnvironmentNamespaceError(c, err) {
+			return
+		}
 		model.Error(c, http.StatusConflict, model.CodeConflict, "环境名称已存在")
 		return
 	}
@@ -257,12 +288,25 @@ func (h *ApplicationHandler) SyncEnvironmentNamespace(c *gin.Context) {
 		k8sUnavailable(c)
 		return
 	}
+	if err := h.store.EnsureNamespaceAvailable(environment.Namespace, environment.ID); err != nil {
+		handleEnvironmentNamespaceError(c, err)
+		return
+	}
 	if err := ensureEnvironmentNamespace(c.Request.Context(), projectID, environment.Namespace, "create", true); err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
 		return
 	}
 	environment.NamespaceStatus = environmentNamespaceStatus(c.Request.Context(), environment.Namespace)
 	model.SuccessWithMessage(c, environment, "命名空间已同步")
+}
+
+func (h *ApplicationHandler) ListEnvironmentNamespaceConflicts(c *gin.Context) {
+	conflicts, err := h.store.ListEnvironmentNamespaceConflicts()
+	if err != nil {
+		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		return
+	}
+	model.Success(c, conflicts)
 }
 
 func (h *ApplicationHandler) DeleteEnvironment(c *gin.Context) {
@@ -314,6 +358,9 @@ func normalizeEnvironmentNamespaceMode(value string) (string, error) {
 }
 
 func ensureEnvironmentNamespace(ctx context.Context, projectID uint, namespace, mode string, allowExisting bool) error {
+	if isSystemNamespace(namespace) {
+		return fmt.Errorf("系统命名空间 %q 不能绑定为应用环境", namespace)
+	}
 	existing, err := K8s.Clientset.CoreV1().Namespaces().Get(ctx, namespace, metav1.GetOptions{})
 	if err == nil {
 		if existing.Status.Phase != "" && existing.Status.Phase != corev1.NamespaceActive {
@@ -321,6 +368,23 @@ func ensureEnvironmentNamespace(ctx context.Context, projectID uint, namespace, 
 		}
 		if mode == "create" && !allowExisting {
 			return fmt.Errorf("命名空间 %q 已存在，请选择绑定已有命名空间", namespace)
+		}
+		labels := existing.GetLabels()
+		owner := strings.TrimSpace(labels["cylism.io/project-id"])
+		project := strconv.FormatUint(uint64(projectID), 10)
+		if owner != "" && owner != project {
+			return fmt.Errorf("命名空间 %q 已属于项目 %s，不能绑定到当前项目", namespace, owner)
+		}
+		if owner == "" {
+			if labels == nil {
+				labels = map[string]string{}
+			}
+			labels["cylism.io/project-id"] = project
+			labels["app.kubernetes.io/managed-by"] = "cylism-manager"
+			existing.Labels = labels
+			if _, err := K8s.Clientset.CoreV1().Namespaces().Update(ctx, existing, metav1.UpdateOptions{}); err != nil {
+				return fmt.Errorf("认领命名空间 %q: %w", namespace, err)
+			}
 		}
 		return nil
 	}
@@ -338,6 +402,24 @@ func ensureEnvironmentNamespace(ctx context.Context, projectID uint, namespace, 
 		return fmt.Errorf("创建命名空间 %q: %w", namespace, err)
 	}
 	return nil
+}
+
+func isSystemNamespace(namespace string) bool {
+	switch namespace {
+	case "default", "kube-system", "kube-public", "kube-node-lease":
+		return true
+	default:
+		return false
+	}
+}
+
+func handleEnvironmentNamespaceError(c *gin.Context, err error) bool {
+	var conflict *store.NamespaceConflictError
+	if errors.As(err, &conflict) {
+		model.Error(c, http.StatusConflict, model.CodeConflict, conflict.Error())
+		return true
+	}
+	return false
 }
 
 func environmentNamespaceStatus(ctx context.Context, namespace string) string {
@@ -375,7 +457,17 @@ func (h *ApplicationHandler) environmentRouteIDs(c *gin.Context) (uint, uint, bo
 }
 
 func (h *ApplicationHandler) ListApplications(c *gin.Context) {
-	applications, err := h.store.ListApplications()
+	projectID, err := optionalQueryID(c, "project_id")
+	if err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "项目 ID 无效")
+		return
+	}
+	environmentID, err := optionalQueryID(c, "environment_id")
+	if err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "环境 ID 无效")
+		return
+	}
+	applications, err := h.store.ListApplications(projectID, environmentID)
 	if err != nil {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
 		return
@@ -413,12 +505,82 @@ func (h *ApplicationHandler) CreateApplication(c *gin.Context) {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
 		return
 	}
+	environment, err := h.store.GetEnvironment(req.ProjectID, req.EnvironmentID)
+	if err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "环境不属于所选项目")
+		return
+	}
+	if err := h.store.EnsureNamespaceAvailable(environment.Namespace, environment.ID); err != nil {
+		model.Error(c, http.StatusConflict, model.CodeConflict, "环境命名空间存在冲突，请先完成迁移")
+		return
+	}
 	app := &model.Application{ProjectID: req.ProjectID, EnvironmentID: req.EnvironmentID, Name: req.Name, WorkloadKind: "deployment", CreatedBy: getUserID(c)}
 	if err := h.store.CreateApplication(app); err != nil {
 		model.Error(c, http.StatusConflict, model.CodeConflict, "该环境内应用名称已存在")
 		return
 	}
 	model.Success(c, app)
+}
+
+func (h *ApplicationHandler) WorkspaceOverview(c *gin.Context) {
+	projectID, err := optionalQueryID(c, "project_id")
+	if err != nil || projectID == 0 {
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "项目 ID 必填且必须有效")
+		return
+	}
+	environmentID, err := optionalQueryID(c, "environment_id")
+	if err != nil || environmentID == 0 {
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "环境 ID 必填且必须有效")
+		return
+	}
+	project, err := h.store.GetProject(projectID)
+	if err != nil {
+		model.Error(c, http.StatusNotFound, model.CodeNotFound, "项目不存在")
+		return
+	}
+	environment, err := h.store.GetEnvironment(projectID, environmentID)
+	if err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "环境不属于所选项目")
+		return
+	}
+	applications, err := h.store.ListApplications(projectID, environmentID)
+	if err != nil {
+		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		return
+	}
+	domains, err := h.store.ListManagedDomains(environmentID)
+	if err != nil {
+		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		return
+	}
+	type workspaceRelease struct {
+		model.Release
+		ApplicationName string `json:"application_name"`
+	}
+	failedReleases := make([]workspaceRelease, 0)
+	recentReleases := make([]workspaceRelease, 0)
+	for _, app := range applications {
+		releases, releaseErr := h.store.ListReleases(app.ID)
+		if releaseErr != nil {
+			continue
+		}
+		for _, release := range releases {
+			item := workspaceRelease{Release: release, ApplicationName: app.Name}
+			recentReleases = append(recentReleases, item)
+			if release.Status == model.ReleaseStatusFailed {
+				failedReleases = append(failedReleases, item)
+			}
+		}
+	}
+	sort.Slice(recentReleases, func(i, j int) bool { return recentReleases[i].CreatedAt.After(recentReleases[j].CreatedAt) })
+	if len(recentReleases) > 8 {
+		recentReleases = recentReleases[:8]
+	}
+	domainInfos := make([]managedDomainInfo, 0, len(domains))
+	for index := range domains {
+		domainInfos = append(domainInfos, NewDomainHandler(h.store).domainInfo(&domains[index]))
+	}
+	model.Success(c, gin.H{"project": project, "environment": environment, "applications": applications, "domains": domainInfos, "failed_releases": failedReleases, "recent_releases": recentReleases})
 }
 
 func (h *ApplicationHandler) CreateRelease(c *gin.Context) {
@@ -573,8 +735,8 @@ func (h *ApplicationHandler) prepareManagedDomain(app *model.Application, spec *
 	if err != nil || !domain.Enabled {
 		return fmt.Errorf("域名不存在或已停用")
 	}
-	if domain.Namespace == "" || domain.Namespace != app.Environment.Namespace {
-		return fmt.Errorf("域名仅可用于命名空间 %q", domain.Namespace)
+	if domain.EnvironmentID == 0 || domain.EnvironmentID != app.EnvironmentID {
+		return fmt.Errorf("域名仅可用于当前应用环境")
 	}
 	path := spec.Endpoint.Path
 	if path == "" {

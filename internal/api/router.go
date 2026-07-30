@@ -118,6 +118,7 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 		projects.PUT("/:projectID", applicationHandler.UpdateProject)
 		projects.DELETE("/:projectID", applicationHandler.DeleteProject)
 		projects.GET("/:projectID/environments", applicationHandler.ListEnvironments)
+		projects.GET("/environments/namespace-conflicts", applicationHandler.ListEnvironmentNamespaceConflicts)
 		projects.POST("/:projectID/environments", applicationHandler.CreateEnvironment)
 		projects.PUT("/:projectID/environments/:environmentID", applicationHandler.UpdateEnvironment)
 		projects.POST("/:projectID/environments/:environmentID/sync-namespace", applicationHandler.SyncEnvironmentNamespace)
@@ -132,6 +133,10 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 		applications.GET("/:id/releases/:releaseID", applicationHandler.GetRelease)
 		applications.POST("/:id/releases/:releaseID/retry", applicationHandler.RetryRelease)
 		applications.POST("/:id/releases/:releaseID/rollback", applicationHandler.RollbackRelease)
+	}
+	workspace := apiGroup.Group("/workspace")
+	{
+		workspace.GET("/overview", applicationHandler.WorkspaceOverview)
 	}
 
 	dbAdminHandler := NewDBAdminHandler(s)
