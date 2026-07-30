@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -10,6 +11,7 @@ import (
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -29,6 +31,10 @@ type importCertificateRequest struct {
 	CertificateName string `json:"certificate_name"`
 	Description     string `json:"description"`
 	Enabled         bool   `json:"enabled"`
+}
+
+type claimDomainRequest struct {
+	EnvironmentID uint `json:"environment_id"`
 }
 
 type managedDomainInfo struct {
@@ -149,6 +155,29 @@ func (h *DomainHandler) ListImportableCertificates(c *gin.Context) {
 	model.Success(c, candidates)
 }
 
+func (h *DomainHandler) ListClaimable(c *gin.Context) {
+	environmentID, err := optionalQueryID(c, "environment_id")
+	if err != nil || environmentID == 0 {
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "环境 ID 必填且必须有效")
+		return
+	}
+	environment, err := h.domainEnvironment(environmentID)
+	if err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		return
+	}
+	domains, err := h.store.ListClaimableManagedDomains(environment.Namespace)
+	if err != nil {
+		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		return
+	}
+	result := make([]managedDomainInfo, 0, len(domains))
+	for index := range domains {
+		result = append(result, h.domainInfo(&domains[index]))
+	}
+	model.Success(c, result)
+}
+
 func (h *DomainHandler) ImportCertificate(c *gin.Context) {
 	var req importCertificateRequest
 	if err := c.ShouldBindJSON(&req); err != nil || strings.TrimSpace(req.CertificateName) == "" {
@@ -181,12 +210,55 @@ func (h *DomainHandler) ImportCertificate(c *gin.Context) {
 	if issuerKind == "" {
 		issuerKind = "ClusterIssuer"
 	}
-	domain := &model.ManagedDomain{Hostname: strings.ToLower(certificate.Domains[0]), EnvironmentID: environment.ID, Namespace: environment.Namespace, CertificateName: certificate.Name, TLSSecretName: certificate.SecretName, IssuerRef: certificate.Issuer, IssuerKind: issuerKind, CertificateOwnership: "imported", Description: strings.TrimSpace(req.Description), Enabled: req.Enabled}
+	hostname := strings.ToLower(certificate.Domains[0])
+	if existing, err := h.store.GetManagedDomainByHostname(hostname); err == nil {
+		if existing.EnvironmentID == 0 && existing.Namespace == environment.Namespace {
+			model.Error(c, http.StatusConflict, model.CodeConflict, "域名存在未关联的历史记录，请使用“关联历史域名”")
+			return
+		}
+		model.Error(c, http.StatusConflict, model.CodeConflict, "域名已被平台管理")
+		return
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		return
+	}
+	domain := &model.ManagedDomain{Hostname: hostname, EnvironmentID: environment.ID, Namespace: environment.Namespace, CertificateName: certificate.Name, TLSSecretName: certificate.SecretName, IssuerRef: certificate.Issuer, IssuerKind: issuerKind, CertificateOwnership: "imported", Description: strings.TrimSpace(req.Description), Enabled: req.Enabled}
 	if err := h.store.CreateManagedDomain(domain); err != nil {
 		model.Error(c, http.StatusConflict, model.CodeConflict, "域名已被平台管理")
 		return
 	}
 	model.SuccessWithMessage(c, h.domainInfo(domain), "已接管现有证书，Certificate 与 TLS Secret 保持原样")
+}
+
+func (h *DomainHandler) Claim(c *gin.Context) {
+	domain, ok := h.managedDomain(c)
+	if !ok {
+		return
+	}
+	var req claimDomainRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "域名关联定义无效")
+		return
+	}
+	environment, err := h.domainEnvironment(req.EnvironmentID)
+	if err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		return
+	}
+	if domain.EnvironmentID != 0 {
+		model.Error(c, http.StatusConflict, model.CodeConflict, "域名已关联环境")
+		return
+	}
+	if domain.Namespace == "" || domain.Namespace != environment.Namespace {
+		model.Error(c, http.StatusConflict, model.CodeConflict, "历史域名命名空间与目标环境不一致，不能关联")
+		return
+	}
+	domain.EnvironmentID = environment.ID
+	if err := h.store.UpdateManagedDomain(domain); err != nil {
+		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		return
+	}
+	model.SuccessWithMessage(c, h.domainInfo(domain), "已关联历史域名，Certificate 与 TLS Secret 保持原样")
 }
 
 func (h *DomainHandler) Update(c *gin.Context) {

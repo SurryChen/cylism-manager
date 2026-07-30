@@ -67,3 +67,37 @@ func TestDomainHandlerImportsExistingCertificateWithoutTakingOwnership(t *testin
 		t.Fatalf("unexpected imported domain: %#v, err=%v", domain, err)
 	}
 }
+
+func TestDomainHandlerClaimBindsMatchingLegacyDomainToEnvironment(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	s, err := store.New(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CreateEnvironment(&model.Environment{ProjectID: 1, Name: "production", Namespace: "commerce-prod"}); err != nil {
+		t.Fatal(err)
+	}
+	legacy := &model.ManagedDomain{
+		Hostname:        "api.example.com",
+		Namespace:       "commerce-prod",
+		CertificateName: "legacy-api",
+		TLSSecretName:   "legacy-api-tls",
+		IssuerRef:       "legacy-dns",
+		IssuerKind:      "ClusterIssuer",
+		Enabled:         true,
+	}
+	if err := s.CreateManagedDomain(legacy); err != nil {
+		t.Fatal(err)
+	}
+	router := gin.New()
+	handler := NewDomainHandler(s)
+	router.POST("/api/domains/:id/claim", handler.Claim)
+	response := serve(router, newJSONRequest(http.MethodPost, "/api/domains/1/claim", gin.H{"environment_id": 1}))
+	if response.Code != http.StatusOK {
+		t.Fatalf("claim status = %d: %s", response.Code, response.Body.String())
+	}
+	domain, err := s.GetManagedDomain(legacy.ID)
+	if err != nil || domain.EnvironmentID != 1 || domain.CertificateOwnership != "managed" {
+		t.Fatalf("unexpected recovered domain: %#v, err=%v", domain, err)
+	}
+}

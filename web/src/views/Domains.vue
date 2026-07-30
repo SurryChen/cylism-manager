@@ -2,8 +2,8 @@
   <div>
     <button class="back-link" @click="backToWorkspace"><ArrowLeft :size="16" />返回工作台</button>
     <div class="page-header">
-      <div><h1 class="page-title">受管域名</h1><p class="page-subtitle">申请和复用命名空间内的 HTTPS 证书</p></div>
-      <div class="page-actions"><button class="btn" @click="openImport">接管已有证书</button><button class="btn btn-primary" @click="openCreate">+ 申请 HTTPS 域名</button></div>
+      <div><h1 class="page-title">受管域名</h1><p class="page-subtitle">申请、导入和关联命名空间内的 HTTPS 域名</p></div>
+      <div class="page-actions"><button class="btn" @click="openClaim">关联历史域名</button><button class="btn" @click="openImport">导入已有证书</button><button class="btn btn-primary" @click="openCreate">+ 申请 HTTPS 域名</button></div>
     </div>
     <div v-if="error" class="k8s-banner k8s-banner-warn section-gap">{{ error }}</div>
     <section v-if="loaded && domains.length" class="card section-gap">
@@ -29,14 +29,22 @@
       <div class="modal-actions"><button type="button" class="btn" @click="close">取消</button><button class="btn btn-primary" :disabled="saving || !currentEnvironment || !issuers.length">{{ saving ? '提交中...' : '提交申请' }}</button></div>
     </form></div></div>
 
-    <div v-if="importModal" class="overlay" @click.self="closeImport"><div class="modal"><h2 class="modal-title">接管已有证书</h2><form @submit.prevent="importCertificate">
+    <div v-if="importModal" class="overlay" @click.self="closeImport"><div class="modal"><h2 class="modal-title">导入已有证书</h2><form @submit.prevent="importCertificate">
       <div class="form-group"><label class="form-label">所属环境</label><input class="form-input" :value="currentEnvironment ? `${currentEnvironment.name} · ${currentEnvironment.namespace}` : ''" disabled /></div>
-      <div class="form-group"><label class="form-label">Certificate</label><select v-model="importForm.certificate_name" class="form-select" required><option value="" disabled>{{ importCandidates.length ? '选择已有 Certificate' : '当前环境没有可接管证书' }}</option><option v-for="certificate in importCandidates" :key="certificate.name" :value="certificate.name">{{ certificate.name }} · {{ certificate.domains[0] }}</option></select></div>
+      <div class="form-group"><label class="form-label">Certificate</label><select v-model="importForm.certificate_name" class="form-select" required><option value="" disabled>{{ importCandidates.length ? '选择已有 Certificate' : '当前环境没有可导入证书' }}</option><option v-for="certificate in importCandidates" :key="certificate.name" :value="certificate.name">{{ certificate.name }} · {{ certificate.domains[0] }}</option></select></div>
       <div v-if="selectedImportCertificate" class="certificate-preview"><span>{{ selectedImportCertificate.domains[0] }}</span><small>{{ selectedImportCertificate.issuer_kind || 'ClusterIssuer' }} · {{ selectedImportCertificate.issuer }}</small><small>TLS Secret: {{ selectedImportCertificate.secret_name }}</small></div>
-      <div class="form-group"><label class="form-label">说明</label><input v-model.trim="importForm.description" class="form-input" placeholder="接管已有证书" /></div>
+      <div class="form-group"><label class="form-label">说明</label><input v-model.trim="importForm.description" class="form-input" placeholder="导入已有证书" /></div>
       <label class="check-row"><input v-model="importForm.enabled" type="checkbox" /> 启用此域名</label>
-      <p class="form-hint">接管只创建平台域名记录，不会修改、重新签发或删除原 Certificate 和 TLS Secret。</p>
-      <div class="modal-actions"><button type="button" class="btn" @click="closeImport">取消</button><button class="btn btn-primary" :disabled="saving || !importForm.certificate_name">{{ saving ? '接管中...' : '确认接管' }}</button></div>
+      <p class="form-hint">导入只创建平台域名记录，不会修改、重新签发或删除原 Certificate 和 TLS Secret。</p>
+      <div class="modal-actions"><button type="button" class="btn" @click="closeImport">取消</button><button class="btn btn-primary" :disabled="saving || !importForm.certificate_name">{{ saving ? '导入中...' : '确认导入' }}</button></div>
+    </form></div></div>
+
+    <div v-if="claimModal" class="overlay" @click.self="closeClaim"><div class="modal"><h2 class="modal-title">关联历史域名</h2><form @submit.prevent="claimDomain">
+      <div class="form-group"><label class="form-label">所属环境</label><input class="form-input" :value="currentEnvironment ? `${currentEnvironment.name} · ${currentEnvironment.namespace}` : ''" disabled /></div>
+      <div class="form-group"><label class="form-label">历史域名</label><select v-model.number="claimForm.domain_id" class="form-select" required><option :value="0" disabled>{{ claimCandidates.length ? '选择未关联环境的历史域名' : '当前环境没有可关联的历史域名' }}</option><option v-for="domain in claimCandidates" :key="domain.id" :value="domain.id">{{ domain.hostname }}</option></select></div>
+      <div v-if="selectedClaimDomain" class="certificate-preview"><span>{{ selectedClaimDomain.hostname }}</span><small>Certificate: {{ selectedClaimDomain.certificate_name || '-' }}</small><small>TLS Secret: {{ selectedClaimDomain.tls_secret_name || '-' }}</small></div>
+      <p class="form-hint">仅关联同命名空间且尚未绑定环境的历史记录，不会修改 Certificate、TLS Secret 或重新签发。</p>
+      <div class="modal-actions"><button type="button" class="btn" @click="closeClaim">取消</button><button class="btn btn-primary" :disabled="saving || !claimForm.domain_id">{{ saving ? '关联中...' : '确认关联' }}</button></div>
     </form></div></div>
   </div>
 </template>
@@ -49,27 +57,33 @@ import { api } from '../api/index.js'
 
 const router = useRouter()
 const route = useRoute()
-const domains = ref([]), projects = ref([]), allIssuers = ref([]), importCandidates = ref([]), loaded = ref(false), error = ref(''), modal = ref(false), importModal = ref(false), editing = ref(null), saving = ref(false)
+const domains = ref([]), projects = ref([]), allIssuers = ref([]), importCandidates = ref([]), claimCandidates = ref([]), loaded = ref(false), error = ref(''), modal = ref(false), importModal = ref(false), claimModal = ref(false), editing = ref(null), saving = ref(false)
 const projectID = computed(() => Number(route.query.project_id) || 0)
 const environmentID = computed(() => Number(route.query.environment_id) || 0)
 const currentProject = computed(() => projects.value.find(project => project.id === projectID.value) || null)
 const currentEnvironment = computed(() => currentProject.value?.environments?.find(environment => environment.id === environmentID.value) || null)
 const form = ref(blank())
 const importForm = ref(blankImport())
+const claimForm = ref(blankClaim())
 const issuers = computed(() => allIssuers.value.filter(issuer => issuer.kind === 'ClusterIssuer' && issuer.ready))
 const selectedImportCertificate = computed(() => importCandidates.value.find(certificate => certificate.name === importForm.value.certificate_name) || null)
+const selectedClaimDomain = computed(() => claimCandidates.value.find(domain => domain.id === claimForm.value.domain_id) || null)
 function blank(){ return { hostname: '', environment_id: environmentID.value, issuer_ref: '', description: '', enabled: true } }
 function blankImport(){ return { environment_id: environmentID.value, certificate_name: '', description: '', enabled: true } }
+function blankClaim(){ return { environment_id: environmentID.value, domain_id: 0 } }
 async function load(){ try { const unassigned = route.query.unassigned === 'true'; const [domainResult, projectResult] = await Promise.all([unassigned ? api.get('/domains?unassigned=true') : environmentID.value ? api.get(`/domains?environment_id=${environmentID.value}`) : api.get('/domains'), api.get('/projects')]); domains.value = domainResult || []; projects.value = projectResult || [] } catch(e) { error.value = e.message || '加载受管域名失败' } finally { loaded.value = true } }
 async function loadOptions(){ allIssuers.value = await api.get('/certs/issuers') || [] }
 async function openCreate(){ error.value = ''; editing.value = null; if (!currentEnvironment.value) { error.value = '请先在顶部选择项目与环境'; return } form.value = blank(); try { await loadOptions(); form.value.issuer_ref = issuers.value[0]?.name || ''; modal.value = true } catch(e) { error.value = e.message || '加载签发前置条件失败' } }
 async function openImport(){ error.value = ''; if (!currentEnvironment.value) { error.value = '请先从工作台进入对应项目与环境'; return } try { importCandidates.value = await api.get(`/domains/importable-certificates?environment_id=${environmentID.value}`) || []; importForm.value = blankImport(); importModal.value = true } catch(e) { error.value = e.message || '加载可接管证书失败' } }
+async function openClaim(){ error.value = ''; if (!currentEnvironment.value) { error.value = '请先从工作台进入对应项目与环境'; return } try { claimCandidates.value = await api.get(`/domains/claimable?environment_id=${environmentID.value}`) || []; claimForm.value = blankClaim(); claimModal.value = true } catch(e) { error.value = e.message || '加载可关联历史域名失败' } }
 async function openEdit(domain){ error.value = ''; if (!domain.environment_id && !currentEnvironment.value) { error.value = '请先在顶部选择要重新绑定的项目与环境'; return } editing.value = domain; form.value = { hostname: domain.hostname, environment_id: domain.environment_id || environmentID.value, issuer_ref: domain.issuer_ref || '', description: domain.description || '', enabled: domain.enabled }; try { await loadOptions(); modal.value = true } catch(e) { error.value = e.message || '加载签发前置条件失败' } }
 function close(){ modal.value = false; editing.value = null }
 function closeImport(){ importModal.value = false; importCandidates.value = [] }
+function closeClaim(){ claimModal.value = false; claimCandidates.value = [] }
 async function backToWorkspace(){ await router.push({ path: '/applications', query: { project_id: route.query.project_id, environment_id: route.query.environment_id } }) }
 async function save(){ saving.value = true; error.value = ''; try { if(editing.value) await api.put(`/domains/${editing.value.id}`, form.value); else await api.post('/domains', form.value); close(); await load() } catch(e) { error.value = e.message || '提交域名申请失败' } finally { saving.value = false } }
-async function importCertificate(){ saving.value = true; error.value = ''; try { await api.post('/domains/import', importForm.value); closeImport(); await load() } catch(e) { error.value = e.message || '接管已有证书失败' } finally { saving.value = false } }
+async function importCertificate(){ saving.value = true; error.value = ''; try { await api.post('/domains/import', importForm.value); closeImport(); await load() } catch(e) { error.value = e.message || '导入已有证书失败' } finally { saving.value = false } }
+async function claimDomain(){ saving.value = true; error.value = ''; try { await api.post(`/domains/${claimForm.value.domain_id}/claim`, { environment_id: environmentID.value }); closeClaim(); await load() } catch(e) { error.value = e.message || '关联历史域名失败' } finally { saving.value = false } }
 async function retry(domain){ error.value = ''; try { await api.post(`/domains/${domain.id}/certificate`); await load() } catch(e) { error.value = e.message || '重新申请证书失败' } }
 function openOperations(domain){ router.push(`/certs/${domain.namespace}/${domain.certificate_name}`) }
 async function remove(domain){ if(domain.application_count > 0) return; const suffix = domain.certificate_ownership === 'imported' ? '平台域名记录？原 Certificate 和 TLS Secret 会保留。' : '及其 Certificate？'; if(!window.confirm(`删除受管域名 ${domain.hostname} ${suffix}`)) return; try { await api.delete(`/domains/${domain.id}`); await load() } catch(e) { error.value = e.message || '删除受管域名失败' } }

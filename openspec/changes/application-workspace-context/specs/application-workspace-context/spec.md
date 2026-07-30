@@ -50,6 +50,18 @@
 - **WHEN** 用户在当前 Environment 创建受管域名
 - **THEN** 系统从该 Environment 写入 Certificate Namespace，并保存 Environment 关联
 
+#### Scenario: 导入既有 Certificate
+- **WHEN** 用户从当前 Environment 选择一个尚未被平台记录的单域名 Certificate
+- **THEN** 系统创建 `imported` 域名资产，并且不修改、重新签发或删除原 Certificate 和 TLS Secret
+
+#### Scenario: 关联历史域名
+- **WHEN** 当前 Environment 的 Namespace 中存在未关联 Environment 的历史域名记录
+- **THEN** 用户可以将该记录关联至当前 Environment，系统仅更新 Environment 归属并保留原有域名、Certificate 与生命周期配置
+
+#### Scenario: 拒绝跨环境关联
+- **WHEN** 用户尝试关联已归属其他 Environment，或 Namespace 与当前 Environment 不一致的历史域名
+- **THEN** 系统拒绝关联，且不修改原有记录
+
 #### Scenario: 发布选择域名
 - **WHEN** 用户在工作上下文发布公网 HTTPS 应用
 - **THEN** 系统仅允许选择同一 Environment 且 Certificate Ready 的受管域名
