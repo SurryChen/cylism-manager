@@ -108,6 +108,8 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 		domains.POST("", domainHandler.Create)
 		domains.GET("/importable-certificates", domainHandler.ListImportableCertificates)
 		domains.POST("/import", domainHandler.ImportCertificate)
+		domains.GET("/claimable", domainHandler.ListClaimable)
+		domains.POST("/:id/claim", domainHandler.Claim)
 		domains.PUT("/:id", domainHandler.Update)
 		domains.POST("/:id/certificate", domainHandler.RetryCertificate)
 		domains.GET("/:id/operations", domainHandler.ListOperations)
