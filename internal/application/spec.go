@@ -32,6 +32,7 @@ const (
 
 type ReleaseSpec struct {
 	Image      string `json:"image"`
+	Version    string `json:"version,omitempty"`
 	RegistryID uint   `json:"registry_id,omitempty"`
 	// 以下字段只在发布执行期存在，禁止写入 API 响应或发布快照。
 	RegistryEndpoint   string            `json:"-"`
@@ -186,7 +187,7 @@ func RenderResources(context ApplicationContext, spec ReleaseSpec) (*RenderedRes
 		return nil, err
 	}
 	labels := managedLabels(context)
-	result := &RenderedResources{SanitizedSpec: sanitizeReleaseSpec(spec)}
+	result := &RenderedResources{SanitizedSpec: SanitizeReleaseSpec(spec)}
 	configName := context.ApplicationName + "-config"
 	secretName := context.ApplicationName + "-secret"
 
@@ -233,7 +234,7 @@ func RenderResources(context ApplicationContext, spec ReleaseSpec) (*RenderedRes
 		podSpec.ImagePullSecrets = []corev1.LocalObjectReference{{Name: result.ImagePullSecret.Name}}
 	}
 	result.Deployment = &appsv1.Deployment{
-		ObjectMeta: metav1.ObjectMeta{Name: context.ApplicationName, Namespace: context.Namespace, Labels: labels},
+		ObjectMeta: metav1.ObjectMeta{Name: context.ApplicationName, Namespace: context.Namespace, Labels: labels, Annotations: map[string]string{ReleaseLabel: fmt.Sprintf("%d", context.ReleaseSequence)}},
 		Spec: appsv1.DeploymentSpec{
 			Replicas: &replicas,
 			Selector: &metav1.LabelSelector{MatchLabels: workloadSelector(context.ApplicationName)},
@@ -246,40 +247,35 @@ func RenderResources(context ApplicationContext, spec ReleaseSpec) (*RenderedRes
 	}
 
 	if spec.Endpoint.Exposure == ExposurePublic {
-		pathType := networkingv1.PathTypePrefix
-		path := spec.Endpoint.Path
-		if path == "" {
-			path = "/"
-		}
-		ingress := &networkingv1.Ingress{
-			ObjectMeta: metav1.ObjectMeta{Name: context.ApplicationName, Namespace: context.Namespace, Labels: labels},
-			Spec: networkingv1.IngressSpec{
-				Rules: []networkingv1.IngressRule{{
-					Host: spec.Endpoint.Domain,
-					IngressRuleValue: networkingv1.IngressRuleValue{
-						HTTP: &networkingv1.HTTPIngressRuleValue{Paths: []networkingv1.HTTPIngressPath{{
-							Path: path, PathType: &pathType,
-							Backend: networkingv1.IngressBackend{Service: &networkingv1.IngressServiceBackend{
-								Name: context.ApplicationName, Port: networkingv1.ServiceBackendPort{Number: spec.Service.Port},
-							}},
-						}}},
-					},
-				}},
-			},
-		}
-		if spec.Endpoint.TLSEnabled {
-			tlsName := context.ApplicationName + "-tls"
-			if spec.Endpoint.ManagedTLSSecretName != "" {
-				tlsName = spec.Endpoint.ManagedTLSSecretName
-			}
-			ingress.Spec.TLS = []networkingv1.IngressTLS{{Hosts: []string{spec.Endpoint.Domain}, SecretName: tlsName}}
-			if spec.Endpoint.ManagedCertificateName == "" {
-				result.Certificate = certificateResource(context, spec.Endpoint.Domain, tlsName, spec.Endpoint.IssuerRef, spec.Endpoint.IssuerKind, labels)
-			}
-		}
-		result.Ingress = ingress
+		result.Ingress = endpointIngress(context, spec.Endpoint, spec.Service.Port)
 	}
 	return result, nil
+}
+
+func endpointIngress(context ApplicationContext, endpoint EndpointSpec, servicePort int32) *networkingv1.Ingress {
+	pathType := networkingv1.PathTypePrefix
+	path := endpoint.Path
+	if path == "" {
+		path = "/"
+	}
+	ingress := &networkingv1.Ingress{
+		ObjectMeta: metav1.ObjectMeta{Name: context.ApplicationName, Namespace: context.Namespace, Labels: managedLabels(context)},
+		Spec: networkingv1.IngressSpec{Rules: []networkingv1.IngressRule{{
+			Host: endpoint.Domain,
+			IngressRuleValue: networkingv1.IngressRuleValue{HTTP: &networkingv1.HTTPIngressRuleValue{Paths: []networkingv1.HTTPIngressPath{{
+				Path: path, PathType: &pathType,
+				Backend: networkingv1.IngressBackend{Service: &networkingv1.IngressServiceBackend{Name: context.ApplicationName, Port: networkingv1.ServiceBackendPort{Number: servicePort}}},
+			}}}},
+		}}},
+	}
+	if endpoint.TLSEnabled {
+		tlsName := context.ApplicationName + "-tls"
+		if endpoint.ManagedTLSSecretName != "" {
+			tlsName = endpoint.ManagedTLSSecretName
+		}
+		ingress.Spec.TLS = []networkingv1.IngressTLS{{Hosts: []string{endpoint.Domain}, SecretName: tlsName}}
+	}
+	return ingress
 }
 
 func imagePullSecret(context ApplicationContext, labels map[string]string, spec ReleaseSpec) (*corev1.Secret, error) {
@@ -302,7 +298,7 @@ func imagePullSecret(context ApplicationContext, labels map[string]string, spec 
 func managedLabels(context ApplicationContext) map[string]string {
 	return map[string]string{
 		ManagedByLabel: ManagedByValue, ProjectLabel: fmt.Sprintf("project-%d", context.ProjectID), ApplicationNameLabel: context.ApplicationName,
-		EnvironmentLabel: fmt.Sprintf("environment-%d", context.EnvironmentID), ReleaseLabel: fmt.Sprintf("%d", context.ReleaseSequence),
+		EnvironmentLabel: fmt.Sprintf("environment-%d", context.EnvironmentID),
 	}
 }
 
@@ -347,7 +343,7 @@ func certificateResource(context ApplicationContext, domain, secretName, issuerR
 	}}
 }
 
-func sanitizeReleaseSpec(spec ReleaseSpec) ReleaseSpec {
+func SanitizeReleaseSpec(spec ReleaseSpec) ReleaseSpec {
 	spec.RegistryEndpoint = ""
 	spec.RegistryAuthType = ""
 	spec.RegistryUsername = ""

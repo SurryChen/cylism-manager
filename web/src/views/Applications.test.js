@@ -58,12 +58,12 @@ describe('Applications view', () => {
     expect(wrapper.find('.btn-danger').attributes('disabled')).toBeUndefined()
   })
 
-  it('shows the application project and preselects its default image registry for a release', async () => {
+  it('loads selectable application templates for a release', async () => {
     const { api } = await import('../api/index.js')
     api.get.mockImplementation((path) => {
       if (path === '/projects') return Promise.resolve([{ id: 1, name: 'commerce', environments: [{ id: 2, name: 'production', namespace: 'commerce-prod' }] }])
       if (path === '/workspace/overview?project_id=1&environment_id=2') return Promise.resolve({ applications: [{ id: 3, project_id: 1, environment_id: 2, name: 'order-api', project: { id: 1, name: 'commerce', default_image_registry_id: 12 }, environment: { name: 'production', namespace: 'commerce-prod' } }], domains: [], recent_releases: [], failed_releases: [] })
-      if (path === '/image-registries?project_id=1') return Promise.resolve([{ id: 12, name: 'commerce-harbor', endpoint: 'harbor.example.com', enabled: true }])
+      if (path === '/applications/3/deployment-templates') return Promise.resolve([{ id: 8, name: '标准生产配置', enabled: true, is_default: true, revision: 1, spec: { image: 'harbor.example.com/commerce/order-api', replicas: 2, container_port: 8080, service: { port: 80 } } }])
       return Promise.resolve([])
     })
     const wrapper = mount(Applications)
@@ -75,32 +75,54 @@ describe('Applications view', () => {
 
     const releaseModal = document.body.querySelector('.release-modal')
     expect(releaseModal).not.toBeNull()
-    expect(releaseModal.textContent).toContain('镜像仓库')
-    expect(releaseModal.querySelector('select').value).toBe('12')
-    expect(releaseModal.textContent).toContain('commerce-harbor')
+    expect(releaseModal.textContent).toContain('标准生产配置')
+    expect(releaseModal.querySelector('select').value).toBe('8')
     wrapper.unmount()
   })
 
-  it('requires a ready managed domain for public releases', async () => {
+  it('publishes an application with an existing template by version only', async () => {
     const { api } = await import('../api/index.js')
     api.get.mockImplementation((path) => {
       if (path === '/projects') return Promise.resolve([{ id: 1, name: 'commerce', environments: [{ id: 2, name: 'production', namespace: 'commerce-prod' }] }])
       if (path === '/workspace/overview?project_id=1&environment_id=2') return Promise.resolve({ applications: [{ id: 3, project_id: 1, environment_id: 2, name: 'order-api', project: { id: 1, name: 'commerce' }, environment: { name: 'production', namespace: 'commerce-prod' } }], domains: [], recent_releases: [], failed_releases: [] })
-      if (path === '/domains?environment_id=2') return Promise.resolve([{ id: 7, environment_id: 2, hostname: 'api.example.com', namespace: 'commerce-prod', enabled: true, certificate: { status: 'Ready' } }])
+      if (path === '/applications/3/deployment-templates') return Promise.resolve([{ id: 8, name: '标准生产配置', enabled: true, is_default: true, revision: 2, spec: { image: 'harbor.example.com/commerce/order-api', replicas: 2, container_port: 8080, service: { port: 80 } } }])
+      return Promise.resolve([])
+    })
+    api.post.mockResolvedValue({ id: 9 })
+    const wrapper = mount(Applications)
+    await new Promise(resolve => setTimeout(resolve, 0))
+    await wrapper.findAll('button').find(button => button.text() === '发布版本').trigger('click')
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    const releaseModal = document.body.querySelector('.release-modal')
+    expect(releaseModal.textContent).toContain('模板 v2')
+    expect(releaseModal.querySelector('input[type="number"]')).toBeNull()
+    const version = releaseModal.querySelector('input[placeholder="1.4.2"]')
+    version.value = '1.2.3'
+    version.dispatchEvent(new Event('input'))
+    await releaseModal.querySelector('form').dispatchEvent(new Event('submit'))
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    expect(api.post).toHaveBeenCalledWith('/applications/3/releases', { template_id: 8, version: '1.2.3' })
+    wrapper.unmount()
+  })
+
+  it('keeps domain binding out of the version release dialog', async () => {
+    const { api } = await import('../api/index.js')
+    api.get.mockImplementation((path) => {
+      if (path === '/projects') return Promise.resolve([{ id: 1, name: 'commerce', environments: [{ id: 2, name: 'production', namespace: 'commerce-prod' }] }])
+      if (path === '/workspace/overview?project_id=1&environment_id=2') return Promise.resolve({ applications: [{ id: 3, project_id: 1, environment_id: 2, name: 'order-api', project: { id: 1, name: 'commerce' }, environment: { name: 'production', namespace: 'commerce-prod' } }], domains: [], recent_releases: [], failed_releases: [] })
+      if (path === '/applications/3/deployment-templates') return Promise.resolve([{ id: 8, name: '标准生产配置', enabled: true, is_default: true, revision: 1, spec: { image: 'harbor.example.com/commerce/order-api', replicas: 1, container_port: 8080, service: { port: 80 } } }])
       return Promise.resolve([])
     })
     const wrapper = mount(Applications)
     await new Promise(resolve => setTimeout(resolve, 0))
     await wrapper.findAll('button').find(button => button.text() === '发布版本').trigger('click')
     await new Promise(resolve => setTimeout(resolve, 0))
-    const exposure = [...document.body.querySelectorAll('.release-modal select')].find(select => select.value === 'cluster')
-    exposure.value = 'public'
-    exposure.dispatchEvent(new Event('change'))
-    await new Promise(resolve => setTimeout(resolve, 0))
     const modalText = document.body.querySelector('.release-modal').textContent
-    expect(modalText).toContain('api.example.com')
-    expect(modalText).not.toContain('手动填写新域名')
-    expect(modalText).not.toContain('Issuer')
+    expect(modalText).not.toContain('公网域名')
+    expect(modalText).not.toContain('受管域名')
+    expect(modalText).not.toContain('HTTPS')
     wrapper.unmount()
   })
 })

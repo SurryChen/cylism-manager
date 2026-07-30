@@ -254,9 +254,6 @@ func (h *ImageRegistryHandler) registryFromRequest(req imageRegistryRequest, cur
 	} else if authType == registryAuthBasic && registry.Username == "" {
 		return nil, errInvalid("账号密码认证需要填写账号")
 	}
-	if len(req.ProjectIDs) == 0 {
-		return nil, errInvalid("至少授权一个项目")
-	}
 	return registry, nil
 }
 

@@ -57,6 +57,7 @@ func (s *Service) CreateRelease(ctx context.Context, applicationID, userID uint,
 		ApplicationID:   applicationID,
 		Sequence:        sequence,
 		Image:           spec.Image,
+		Version:         spec.Version,
 		ImageRegistryID: registryID,
 		DesiredSpec:     string(snapshot),
 		Status:          model.ReleaseStatusDraft,
@@ -99,19 +100,6 @@ func (s *Service) ExecuteRelease(ctx context.Context, releaseID uint, applicatio
 	if err := s.runStep(releaseID, "wait_ready", func() error { return s.applier.WaitReady(ctx, applicationContext, spec) }); err != nil {
 		return s.failRelease(releaseID, "wait_ready", err)
 	}
-	if err := s.store.ReplaceApplicationEndpoint(&model.ApplicationEndpoint{
-		ApplicationID: application.ID,
-		DomainID:      spec.Endpoint.DomainID,
-		Exposure:      spec.Endpoint.Exposure,
-		Domain:        spec.Endpoint.Domain,
-		Path:          spec.Endpoint.Path,
-		ServicePort:   spec.Service.Port,
-		TLSEnabled:    spec.Endpoint.TLSEnabled,
-		TLSSecretName: spec.Endpoint.ManagedTLSSecretName,
-		IssuerRef:     spec.Endpoint.IssuerRef,
-	}); err != nil {
-		return s.failRelease(releaseID, "record_endpoint", fmt.Errorf("记录应用入口: %w", err))
-	}
 	return s.transition(release, model.ReleaseStatusSucceeded)
 }
 
@@ -126,6 +114,11 @@ func (s *Service) RetryRelease(releaseID, userID uint) (*model.Release, ReleaseS
 		return nil, ReleaseSpec{}, err
 	}
 	retry, err := s.CreateRelease(context.Background(), release.ApplicationID, userID, spec)
+	if err == nil {
+		retry.TemplateID = release.TemplateID
+		retry.TemplateRevision = release.TemplateRevision
+		err = s.store.UpdateRelease(retry)
+	}
 	return retry, spec, err
 }
 
@@ -158,6 +151,8 @@ func (s *Service) RollbackRelease(releaseID, userID uint) (*model.Release, Relea
 		return nil, ReleaseSpec{}, err
 	}
 	rollback.SourceReleaseID = &source.ID
+	rollback.TemplateID = source.TemplateID
+	rollback.TemplateRevision = source.TemplateRevision
 	if err := s.store.UpdateRelease(rollback); err != nil {
 		return nil, ReleaseSpec{}, err
 	}

@@ -51,6 +51,7 @@ func New(dsn string) (*Store, error) {
 		&model.Environment{},
 		&model.Application{},
 		&model.ApplicationEndpoint{},
+		&model.ApplicationDeploymentTemplate{},
 		&model.ImageRegistry{},
 		&model.NodeRegistryMirror{},
 		&model.NodeRegistryMirrorNode{},
@@ -61,6 +62,13 @@ func New(dsn string) (*Store, error) {
 		&model.ReleaseOperation{},
 	); err != nil {
 		return nil, err
+	}
+	// Older builds used a one-template-per-application unique index. Drop that
+	// database constraint before allowing multiple named templates.
+	if db.Migrator().HasIndex(&model.ApplicationDeploymentTemplate{}, "idx_application_deployment_templates_application_id") {
+		if err := db.Migrator().DropIndex(&model.ApplicationDeploymentTemplate{}, "idx_application_deployment_templates_application_id"); err != nil {
+			return nil, err
+		}
 	}
 	for _, column := range []string{"access_key_id", "access_key_secret"} {
 		if db.Migrator().HasColumn(&model.DNSCredential{}, column) {
@@ -74,10 +82,48 @@ func New(dsn string) (*Store, error) {
 	if err := store.backfillManagedDomainEnvironments(); err != nil {
 		return nil, err
 	}
+	if err := store.backfillApplicationDeploymentTemplates(); err != nil {
+		return nil, err
+	}
 	if err := store.ReconcileEnvironmentNamespaceUniqueness(); err != nil {
 		return nil, err
 	}
 	return store, nil
+}
+
+func (s *Store) backfillApplicationDeploymentTemplates() error {
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		var templates []model.ApplicationDeploymentTemplate
+		if err := tx.Where("name = ''").Find(&templates).Error; err != nil {
+			return err
+		}
+		for index := range templates {
+			template := &templates[index]
+			template.Name = "默认模板"
+			template.Enabled = true
+			if err := tx.Save(template).Error; err != nil {
+				return err
+			}
+		}
+		var applications []model.Application
+		if err := tx.Where("default_deployment_template_id IS NULL").Find(&applications).Error; err != nil {
+			return err
+		}
+		for index := range applications {
+			var template model.ApplicationDeploymentTemplate
+			err := tx.Where("application_id = ?", applications[index].ID).Order("id asc").First(&template).Error
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			if err := tx.Model(&applications[index]).Update("default_deployment_template_id", template.ID).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 // DB 返回底层 GORM DB 实例（供中间件等使用）
@@ -505,6 +551,90 @@ func (s *Store) ReplaceApplicationEndpoint(endpoint *model.ApplicationEndpoint) 
 	})
 }
 
+func (s *Store) GetApplicationEndpoint(applicationID uint) (*model.ApplicationEndpoint, error) {
+	var endpoint model.ApplicationEndpoint
+	err := s.db.Where("application_id = ?", applicationID).Order("id asc").First(&endpoint).Error
+	return &endpoint, err
+}
+
+func (s *Store) DeleteApplicationEndpoint(applicationID uint) error {
+	return s.db.Where("application_id = ?", applicationID).Delete(&model.ApplicationEndpoint{}).Error
+}
+
+func (s *Store) GetApplicationDeploymentTemplate(applicationID, templateID uint) (*model.ApplicationDeploymentTemplate, error) {
+	var template model.ApplicationDeploymentTemplate
+	err := s.db.Where("application_id = ? AND id = ?", applicationID, templateID).First(&template).Error
+	return &template, err
+}
+
+func (s *Store) GetDefaultApplicationDeploymentTemplate(applicationID uint) (*model.ApplicationDeploymentTemplate, error) {
+	var application model.Application
+	if err := s.db.First(&application, applicationID).Error; err != nil {
+		return nil, err
+	}
+	if application.DefaultDeploymentTemplateID == nil {
+		return nil, gorm.ErrRecordNotFound
+	}
+	return s.GetApplicationDeploymentTemplate(applicationID, *application.DefaultDeploymentTemplateID)
+}
+
+func (s *Store) ListApplicationDeploymentTemplates(applicationID uint) ([]model.ApplicationDeploymentTemplate, error) {
+	var templates []model.ApplicationDeploymentTemplate
+	err := s.db.Where("application_id = ?", applicationID).Order("created_at asc").Find(&templates).Error
+	return templates, err
+}
+
+func (s *Store) CreateApplicationDeploymentTemplate(template *model.ApplicationDeploymentTemplate, makeDefault bool) error {
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		template.Revision = 1
+		if err := tx.Create(template).Error; err != nil {
+			return err
+		}
+		if makeDefault {
+			return tx.Model(&model.Application{}).Where("id = ?", template.ApplicationID).Update("default_deployment_template_id", template.ID).Error
+		}
+		return nil
+	})
+}
+
+func (s *Store) UpdateApplicationDeploymentTemplate(template *model.ApplicationDeploymentTemplate) error {
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		var current model.ApplicationDeploymentTemplate
+		if err := tx.Where("id = ? AND application_id = ?", template.ID, template.ApplicationID).First(&current).Error; err != nil {
+			return err
+		}
+		template.CreatedAt = current.CreatedAt
+		template.Revision = current.Revision + 1
+		return tx.Save(template).Error
+	})
+}
+
+func (s *Store) SetDefaultApplicationDeploymentTemplate(applicationID, templateID uint) error {
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		var template model.ApplicationDeploymentTemplate
+		if err := tx.Where("id = ? AND application_id = ? AND enabled = ?", templateID, applicationID, true).First(&template).Error; err != nil {
+			return err
+		}
+		return tx.Model(&model.Application{}).Where("id = ?", applicationID).Update("default_deployment_template_id", templateID).Error
+	})
+}
+
+func (s *Store) DeleteApplicationDeploymentTemplate(applicationID, templateID uint) error {
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		var releases int64
+		if err := tx.Model(&model.Release{}).Where("template_id = ?", templateID).Count(&releases).Error; err != nil {
+			return err
+		}
+		if releases > 0 {
+			return fmt.Errorf("该模板已有关联发布记录，无法删除")
+		}
+		if err := tx.Where("id = ? AND application_id = ?", templateID, applicationID).Delete(&model.ApplicationDeploymentTemplate{}).Error; err != nil {
+			return err
+		}
+		return tx.Model(&model.Application{}).Where("id = ? AND default_deployment_template_id = ?", applicationID, templateID).Update("default_deployment_template_id", nil).Error
+	})
+}
+
 func (s *Store) CountApplicationEndpointsByDomain(domainID uint) (int64, error) {
 	var count int64
 	err := s.db.Model(&model.ApplicationEndpoint{}).Where("domain_id = ?", domainID).Count(&count).Error
@@ -701,7 +831,14 @@ func (s *Store) UpdateImageRegistry(registry *model.ImageRegistry, projectIDs []
 		if err := tx.Omit("Projects").Save(registry).Error; err != nil {
 			return err
 		}
-		return tx.Model(registry).Association("Projects").Replace(projects)
+		if err := tx.Model(registry).Association("Projects").Replace(projects); err != nil {
+			return err
+		}
+		defaults := tx.Model(&model.Project{}).Where("default_image_registry_id = ?", registry.ID)
+		if registry.Enabled && len(projectIDs) > 0 {
+			defaults = defaults.Where("id NOT IN ?", projectIDs)
+		}
+		return defaults.Update("default_image_registry_id", nil).Error
 	})
 }
 
@@ -781,9 +918,6 @@ func imageRegistryProjects(tx *gorm.DB, projectIDs []uint) ([]model.Project, err
 			return nil, err
 		}
 		projects = append(projects, project)
-	}
-	if len(projects) == 0 {
-		return nil, errors.New("至少授权一个项目")
 	}
 	return projects, nil
 }

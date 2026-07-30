@@ -2,9 +2,11 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -15,6 +17,7 @@ import (
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -23,6 +26,38 @@ import (
 type ApplicationHandler struct {
 	store  *store.Store
 	encKey []byte
+}
+
+var imageTagPattern = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$`)
+
+type deploymentTemplateInfo struct {
+	ID            uint                    `json:"id"`
+	ApplicationID uint                    `json:"application_id"`
+	Name          string                  `json:"name"`
+	Description   string                  `json:"description"`
+	Enabled       bool                    `json:"enabled"`
+	IsDefault     bool                    `json:"is_default"`
+	Revision      uint                    `json:"revision"`
+	Spec          application.ReleaseSpec `json:"spec"`
+	UpdatedAt     time.Time               `json:"updated_at"`
+}
+
+type deploymentTemplateRequest struct {
+	Name        string                  `json:"name"`
+	Description string                  `json:"description"`
+	Enabled     bool                    `json:"enabled"`
+	Spec        application.ReleaseSpec `json:"spec"`
+}
+
+type releaseRequest struct {
+	TemplateID uint   `json:"template_id"`
+	Version    string `json:"version"`
+}
+
+type applicationEndpointRequest struct {
+	DomainID   uint   `json:"domain_id"`
+	Path       string `json:"path"`
+	TLSEnabled bool   `json:"tls_enabled"`
 }
 
 func NewApplicationHandler(store *store.Store, encKey ...[]byte) *ApplicationHandler {
@@ -593,9 +628,14 @@ func (h *ApplicationHandler) CreateRelease(c *gin.Context) {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "应用 ID 无效")
 		return
 	}
-	var spec application.ReleaseSpec
-	if err := c.ShouldBindJSON(&spec); err != nil {
+	var req releaseRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "发布定义无效")
+		return
+	}
+	version := strings.TrimSpace(req.Version)
+	if req.TemplateID == 0 || version == "" {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "请选择上线模板并填写版本号")
 		return
 	}
 	app, err := h.store.GetApplication(applicationID)
@@ -603,11 +643,32 @@ func (h *ApplicationHandler) CreateRelease(c *gin.Context) {
 		model.Error(c, http.StatusNotFound, model.CodeNotFound, "应用不存在")
 		return
 	}
+	template, err := h.store.GetApplicationDeploymentTemplate(applicationID, req.TemplateID)
+	if errors.Is(err, gorm.ErrRecordNotFound) || !template.Enabled {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "上线模板不存在或已停用")
+		return
+	}
+	if err != nil {
+		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		return
+	}
+	var spec application.ReleaseSpec
+	if err := json.Unmarshal([]byte(template.Spec), &spec); err != nil {
+		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "读取应用上线模板失败")
+		return
+	}
+	spec.Version = version
+	image, err := imageWithVersion(spec.Image, version)
+	if err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		return
+	}
+	spec.Image = image
 	if err := h.prepareRegistryReleaseSpec(app, &spec); err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
 		return
 	}
-	if err := h.prepareManagedDomain(app, &spec); err != nil {
+	if err := h.applyApplicationEndpointSpec(app, &spec); err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
 		return
 	}
@@ -617,8 +678,394 @@ func (h *ApplicationHandler) CreateRelease(c *gin.Context) {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
 		return
 	}
+	templateID := template.ID
+	release.TemplateID = &templateID
+	release.TemplateRevision = template.Revision
+	if err := h.store.UpdateRelease(release); err != nil {
+		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		return
+	}
 	h.executeAsync(service, release.ID, app, spec)
 	model.SuccessWithMessage(c, release, "发布已创建")
+}
+
+func (h *ApplicationHandler) ListDeploymentTemplates(c *gin.Context) {
+	applicationID, err := parseID(c.Param("id"))
+	if err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "应用 ID 无效")
+		return
+	}
+	app, err := h.store.GetApplication(applicationID)
+	if err != nil {
+		model.Error(c, http.StatusNotFound, model.CodeNotFound, "应用不存在")
+		return
+	}
+	templates, err := h.store.ListApplicationDeploymentTemplates(applicationID)
+	if err != nil {
+		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		return
+	}
+	infos := make([]deploymentTemplateInfo, 0, len(templates))
+	for index := range templates {
+		info, err := deploymentTemplateFromModel(&templates[index], app.DefaultDeploymentTemplateID)
+		if err != nil {
+			model.Error(c, http.StatusInternalServerError, model.CodeDBError, "读取应用上线模板失败")
+			return
+		}
+		infos = append(infos, *info)
+	}
+	model.Success(c, infos)
+}
+
+func (h *ApplicationHandler) GetDeploymentTemplate(c *gin.Context) {
+	applicationID, err := parseID(c.Param("id"))
+	if err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "应用 ID 无效")
+		return
+	}
+	templateID, err := parseID(c.Param("templateID"))
+	if err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "上线模板 ID 无效")
+		return
+	}
+	app, err := h.store.GetApplication(applicationID)
+	if err != nil {
+		model.Error(c, http.StatusNotFound, model.CodeNotFound, "应用不存在")
+		return
+	}
+	template, err := h.store.GetApplicationDeploymentTemplate(applicationID, templateID)
+	if err != nil {
+		model.Error(c, http.StatusNotFound, model.CodeNotFound, "上线模板不存在")
+		return
+	}
+	info, err := deploymentTemplateFromModel(template, app.DefaultDeploymentTemplateID)
+	if err != nil {
+		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "读取应用上线模板失败")
+		return
+	}
+	model.Success(c, info)
+}
+
+func (h *ApplicationHandler) CreateDeploymentTemplate(c *gin.Context) {
+	applicationID, err := parseID(c.Param("id"))
+	if err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "应用 ID 无效")
+		return
+	}
+	app, err := h.store.GetApplication(applicationID)
+	if err != nil {
+		model.Error(c, http.StatusNotFound, model.CodeNotFound, "应用不存在")
+		return
+	}
+	var req deploymentTemplateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "上线模板定义无效")
+		return
+	}
+	template, err := h.templateFromRequest(app, &req, 0)
+	if err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		return
+	}
+	template.UpdatedBy = getUserID(c)
+	if err := h.store.CreateApplicationDeploymentTemplate(template, app.DefaultDeploymentTemplateID == nil); err != nil {
+		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		return
+	}
+	if app.DefaultDeploymentTemplateID == nil {
+		app.DefaultDeploymentTemplateID = &template.ID
+	}
+	info, err := deploymentTemplateFromModel(template, app.DefaultDeploymentTemplateID)
+	if err != nil {
+		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "读取上线模板失败")
+		return
+	}
+	model.Success(c, info)
+}
+
+func (h *ApplicationHandler) UpdateDeploymentTemplate(c *gin.Context) {
+	applicationID, err := parseID(c.Param("id"))
+	if err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "应用 ID 无效")
+		return
+	}
+	templateID, err := parseID(c.Param("templateID"))
+	if err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "上线模板 ID 无效")
+		return
+	}
+	app, err := h.store.GetApplication(applicationID)
+	if err != nil {
+		model.Error(c, http.StatusNotFound, model.CodeNotFound, "应用不存在")
+		return
+	}
+	var req deploymentTemplateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "上线模板定义无效")
+		return
+	}
+	if app.DefaultDeploymentTemplateID != nil && *app.DefaultDeploymentTemplateID == templateID && !req.Enabled {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "默认模板不能停用，请先设置其他启用模板为默认")
+		return
+	}
+	template, err := h.templateFromRequest(app, &req, templateID)
+	if err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		return
+	}
+	template.UpdatedBy = getUserID(c)
+	if err := h.store.UpdateApplicationDeploymentTemplate(template); err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			model.Error(c, http.StatusNotFound, model.CodeNotFound, "上线模板不存在")
+			return
+		}
+		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		return
+	}
+	info, err := deploymentTemplateFromModel(template, app.DefaultDeploymentTemplateID)
+	if err != nil {
+		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "读取上线模板失败")
+		return
+	}
+	model.Success(c, info)
+}
+
+func (h *ApplicationHandler) DeleteDeploymentTemplate(c *gin.Context) {
+	applicationID, err := parseID(c.Param("id"))
+	if err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "应用 ID 无效")
+		return
+	}
+	templateID, err := parseID(c.Param("templateID"))
+	if err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "上线模板 ID 无效")
+		return
+	}
+	if err := h.store.DeleteApplicationDeploymentTemplate(applicationID, templateID); err != nil {
+		if strings.Contains(err.Error(), "关联发布") {
+			model.Error(c, http.StatusConflict, model.CodeConflict, err.Error())
+			return
+		}
+		model.Error(c, http.StatusNotFound, model.CodeNotFound, "上线模板不存在")
+		return
+	}
+	model.Success(c, gin.H{"id": templateID})
+}
+
+func (h *ApplicationHandler) SetDefaultDeploymentTemplate(c *gin.Context) {
+	applicationID, err := parseID(c.Param("id"))
+	if err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "应用 ID 无效")
+		return
+	}
+	templateID, err := parseID(c.Param("templateID"))
+	if err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "上线模板 ID 无效")
+		return
+	}
+	if err := h.store.SetDefaultApplicationDeploymentTemplate(applicationID, templateID); err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "上线模板不存在或已停用")
+		return
+	}
+	model.Success(c, gin.H{"id": templateID})
+}
+
+func (h *ApplicationHandler) templateFromRequest(app *model.Application, req *deploymentTemplateRequest, templateID uint) (*model.ApplicationDeploymentTemplate, error) {
+	if strings.TrimSpace(req.Name) == "" {
+		return nil, fmt.Errorf("模板名称必填")
+	}
+	if len([]rune(req.Name)) > 128 {
+		return nil, fmt.Errorf("模板名称不能超过 128 个字符")
+	}
+	spec := req.Spec
+	if strings.TrimSpace(spec.Version) != "" {
+		return nil, fmt.Errorf("上线模板不应包含版本号")
+	}
+	if err := validateImageRepository(spec.Image); err != nil {
+		return nil, err
+	}
+	if err := h.prepareRegistryReleaseSpec(app, &spec); err != nil {
+		return nil, err
+	}
+	// Domain binding belongs to the application endpoint, never to a rollout template.
+	spec.Endpoint = application.EndpointSpec{Exposure: application.ExposureCluster}
+	if issues := application.ValidateReleaseSpec(spec); len(issues) > 0 {
+		return nil, fmt.Errorf("%s", issues[0].Message)
+	}
+	snapshot, err := json.Marshal(application.SanitizeReleaseSpec(spec))
+	if err != nil {
+		return nil, fmt.Errorf("保存上线模板失败: %w", err)
+	}
+	return &model.ApplicationDeploymentTemplate{ID: templateID, ApplicationID: app.ID, Name: strings.TrimSpace(req.Name), Description: strings.TrimSpace(req.Description), Enabled: req.Enabled, Spec: string(snapshot)}, nil
+}
+
+func deploymentTemplateFromModel(template *model.ApplicationDeploymentTemplate, defaultTemplateID *uint) (*deploymentTemplateInfo, error) {
+	var spec application.ReleaseSpec
+	if err := json.Unmarshal([]byte(template.Spec), &spec); err != nil {
+		return nil, err
+	}
+	return &deploymentTemplateInfo{ID: template.ID, ApplicationID: template.ApplicationID, Name: template.Name, Description: template.Description, Enabled: template.Enabled, IsDefault: defaultTemplateID != nil && *defaultTemplateID == template.ID, Revision: template.Revision, Spec: spec, UpdatedAt: template.UpdatedAt}, nil
+}
+
+func (h *ApplicationHandler) GetApplicationEndpoint(c *gin.Context) {
+	applicationID, err := parseID(c.Param("id"))
+	if err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "应用 ID 无效")
+		return
+	}
+	if _, err := h.store.GetApplication(applicationID); err != nil {
+		model.Error(c, http.StatusNotFound, model.CodeNotFound, "应用不存在")
+		return
+	}
+	endpoint, err := h.store.GetApplicationEndpoint(applicationID)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		model.Success(c, nil)
+		return
+	}
+	if err != nil {
+		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		return
+	}
+	model.Success(c, endpoint)
+}
+
+func (h *ApplicationHandler) UpdateApplicationEndpoint(c *gin.Context) {
+	if K8s == nil {
+		k8sUnavailable(c)
+		return
+	}
+	applicationID, err := parseID(c.Param("id"))
+	if err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "应用 ID 无效")
+		return
+	}
+	app, err := h.store.GetApplication(applicationID)
+	if err != nil {
+		model.Error(c, http.StatusNotFound, model.CodeNotFound, "应用不存在")
+		return
+	}
+	var req applicationEndpointRequest
+	if err := c.ShouldBindJSON(&req); err != nil || req.DomainID == 0 {
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "请选择受管域名")
+		return
+	}
+	servicePort, err := h.applicationServicePort(app)
+	if err != nil {
+		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		return
+	}
+	spec := application.ReleaseSpec{Endpoint: application.EndpointSpec{Exposure: application.ExposurePublic, DomainID: req.DomainID, Path: strings.TrimSpace(req.Path), TLSEnabled: req.TLSEnabled}}
+	if err := h.prepareManagedDomain(app, &spec); err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		return
+	}
+	context := applicationContextFor(app)
+	if err := application.NewKubernetesApplier(K8s).SyncEndpoint(c.Request.Context(), context, spec.Endpoint, servicePort); err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, fmt.Sprintf("同步应用入口: %v", err))
+		return
+	}
+	endpoint := &model.ApplicationEndpoint{ApplicationID: app.ID, DomainID: spec.Endpoint.DomainID, Exposure: spec.Endpoint.Exposure, Domain: spec.Endpoint.Domain, Path: spec.Endpoint.Path, ServicePort: servicePort, TLSEnabled: spec.Endpoint.TLSEnabled, TLSSecretName: spec.Endpoint.ManagedTLSSecretName, IssuerRef: spec.Endpoint.IssuerRef}
+	if err := h.store.ReplaceApplicationEndpoint(endpoint); err != nil {
+		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		return
+	}
+	model.Success(c, endpoint)
+}
+
+func (h *ApplicationHandler) DeleteApplicationEndpoint(c *gin.Context) {
+	if K8s == nil {
+		k8sUnavailable(c)
+		return
+	}
+	applicationID, err := parseID(c.Param("id"))
+	if err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "应用 ID 无效")
+		return
+	}
+	app, err := h.store.GetApplication(applicationID)
+	if err != nil {
+		model.Error(c, http.StatusNotFound, model.CodeNotFound, "应用不存在")
+		return
+	}
+	if err := application.NewKubernetesApplier(K8s).RemoveEndpoint(c.Request.Context(), applicationContextFor(app)); err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, fmt.Sprintf("移除应用入口: %v", err))
+		return
+	}
+	if err := h.store.DeleteApplicationEndpoint(applicationID); err != nil {
+		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		return
+	}
+	model.Success(c, gin.H{"id": applicationID})
+}
+
+func (h *ApplicationHandler) applicationServicePort(app *model.Application) (int32, error) {
+	if release, err := h.store.GetLatestSuccessfulRelease(app.ID); err == nil {
+		var spec application.ReleaseSpec
+		if err := json.Unmarshal([]byte(release.DesiredSpec), &spec); err != nil {
+			return 0, err
+		}
+		return spec.Service.Port, nil
+	} else if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return 0, err
+	}
+	if template, err := h.store.GetDefaultApplicationDeploymentTemplate(app.ID); err == nil {
+		var spec application.ReleaseSpec
+		if err := json.Unmarshal([]byte(template.Spec), &spec); err != nil {
+			return 0, err
+		}
+		return spec.Service.Port, nil
+	} else if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return 0, err
+	}
+	if endpoint, err := h.store.GetApplicationEndpoint(app.ID); err == nil && endpoint.ServicePort > 0 {
+		return endpoint.ServicePort, nil
+	} else if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return 0, err
+	}
+	return 80, nil
+}
+
+func (h *ApplicationHandler) applyApplicationEndpointSpec(app *model.Application, spec *application.ReleaseSpec) error {
+	endpoint, err := h.store.GetApplicationEndpoint(app.ID)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		spec.Endpoint = application.EndpointSpec{Exposure: application.ExposureCluster}
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	spec.Endpoint = application.EndpointSpec{Exposure: endpoint.Exposure, DomainID: endpoint.DomainID, Domain: endpoint.Domain, Path: endpoint.Path, TLSEnabled: endpoint.TLSEnabled, IssuerRef: endpoint.IssuerRef, ManagedTLSSecretName: endpoint.TLSSecretName}
+	if spec.Endpoint.Exposure != application.ExposurePublic {
+		return nil
+	}
+	return h.prepareManagedDomain(app, spec)
+}
+
+func applicationContextFor(app *model.Application) application.ApplicationContext {
+	return application.ApplicationContext{ProjectID: app.ProjectID, EnvironmentID: app.EnvironmentID, ProjectName: app.Project.Name, EnvironmentName: app.Environment.Name, ApplicationName: app.Name, Namespace: app.Environment.Namespace}
+}
+
+func validateImageRepository(image string) error {
+	image = strings.Trim(strings.TrimSpace(image), "/")
+	if image == "" || strings.ContainsAny(image, " \t\r\n") || strings.Contains(image, "@") {
+		return fmt.Errorf("镜像路径无效")
+	}
+	lastSegment := image[strings.LastIndex(image, "/")+1:]
+	if strings.Contains(lastSegment, ":") {
+		return fmt.Errorf("上线模板镜像路径不应包含 Tag，请在发布时填写版本号")
+	}
+	return nil
+}
+
+func imageWithVersion(repository, version string) (string, error) {
+	if err := validateImageRepository(repository); err != nil {
+		return "", err
+	}
+	version = strings.TrimSpace(version)
+	if !imageTagPattern.MatchString(version) {
+		return "", fmt.Errorf("版本号必须是合法的镜像 Tag")
+	}
+	return strings.Trim(strings.TrimSpace(repository), "/") + ":" + version, nil
 }
 
 func (h *ApplicationHandler) RetryRelease(c *gin.Context) {
@@ -649,6 +1096,10 @@ func (h *ApplicationHandler) RetryRelease(c *gin.Context) {
 	}
 	app, _ := h.store.GetApplication(applicationID)
 	if err := h.prepareRegistryReleaseSpec(app, &spec); err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		return
+	}
+	if err := h.applyApplicationEndpointSpec(app, &spec); err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
 		return
 	}
@@ -684,6 +1135,10 @@ func (h *ApplicationHandler) RollbackRelease(c *gin.Context) {
 	}
 	app, _ := h.store.GetApplication(applicationID)
 	if err := h.prepareRegistryReleaseSpec(app, &spec); err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		return
+	}
+	if err := h.applyApplicationEndpointSpec(app, &spec); err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
 		return
 	}

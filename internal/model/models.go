@@ -165,17 +165,18 @@ type Environment struct {
 
 // Application 是平台托管的单个无状态服务。
 type Application struct {
-	ID            uint                  `gorm:"primaryKey" json:"id"`
-	ProjectID     uint                  `gorm:"index;not null" json:"project_id"`
-	EnvironmentID uint                  `gorm:"uniqueIndex:idx_environment_application;not null" json:"environment_id"`
-	Name          string                `gorm:"size:128;uniqueIndex:idx_environment_application;not null" json:"name"`
-	WorkloadKind  string                `gorm:"size:32;default:deployment;not null" json:"workload_kind"`
-	CreatedBy     uint                  `gorm:"index;not null" json:"created_by"`
-	CreatedAt     time.Time             `json:"created_at"`
-	UpdatedAt     time.Time             `json:"updated_at"`
-	Project       Project               `gorm:"foreignKey:ProjectID" json:"project,omitempty"`
-	Environment   Environment           `gorm:"foreignKey:EnvironmentID" json:"environment,omitempty"`
-	Endpoints     []ApplicationEndpoint `gorm:"foreignKey:ApplicationID" json:"endpoints,omitempty"`
+	ID                          uint                  `gorm:"primaryKey" json:"id"`
+	ProjectID                   uint                  `gorm:"index;not null" json:"project_id"`
+	EnvironmentID               uint                  `gorm:"uniqueIndex:idx_environment_application;not null" json:"environment_id"`
+	Name                        string                `gorm:"size:128;uniqueIndex:idx_environment_application;not null" json:"name"`
+	WorkloadKind                string                `gorm:"size:32;default:deployment;not null" json:"workload_kind"`
+	DefaultDeploymentTemplateID *uint                 `gorm:"index" json:"default_deployment_template_id,omitempty"`
+	CreatedBy                   uint                  `gorm:"index;not null" json:"created_by"`
+	CreatedAt                   time.Time             `json:"created_at"`
+	UpdatedAt                   time.Time             `json:"updated_at"`
+	Project                     Project               `gorm:"foreignKey:ProjectID" json:"project,omitempty"`
+	Environment                 Environment           `gorm:"foreignKey:EnvironmentID" json:"environment,omitempty"`
+	Endpoints                   []ApplicationEndpoint `gorm:"foreignKey:ApplicationID" json:"endpoints,omitempty"`
 }
 
 // ImageRegistry 是可由项目授权使用的外部 OCI/Docker 镜像仓库。
@@ -299,23 +300,41 @@ type ApplicationEndpoint struct {
 	UpdatedAt     time.Time `json:"updated_at"`
 }
 
+// ApplicationDeploymentTemplate stores one selectable rollout profile for an application.
+// Each release keeps its own immutable resolved snapshot separately.
+type ApplicationDeploymentTemplate struct {
+	ID            uint      `gorm:"primaryKey" json:"id"`
+	ApplicationID uint      `gorm:"uniqueIndex:idx_application_deployment_template_name;not null" json:"application_id"`
+	Name          string    `gorm:"size:128;uniqueIndex:idx_application_deployment_template_name;not null" json:"name"`
+	Description   string    `gorm:"size:512" json:"description"`
+	Enabled       bool      `gorm:"default:true;not null" json:"enabled"`
+	Spec          string    `gorm:"type:text;not null" json:"spec"`
+	Revision      uint      `gorm:"not null" json:"revision"`
+	UpdatedBy     uint      `gorm:"index" json:"updated_by"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
+}
+
 // Release 是应用一次不可变的期望状态快照；DesiredSpec 不得包含 Secret 明文。
 type Release struct {
-	ID              uint               `gorm:"primaryKey" json:"id"`
-	ApplicationID   uint               `gorm:"uniqueIndex:idx_application_sequence;not null" json:"application_id"`
-	Sequence        uint               `gorm:"uniqueIndex:idx_application_sequence;not null" json:"sequence"`
-	Image           string             `gorm:"size:512;not null" json:"image"`
-	ImageDigest     string             `gorm:"size:512" json:"image_digest"`
-	ImageRegistryID *uint              `gorm:"index" json:"image_registry_id,omitempty"`
-	DesiredSpec     string             `gorm:"type:text;not null" json:"desired_spec"`
-	Status          string             `gorm:"size:32;index;not null" json:"status"`
-	SourceReleaseID *uint              `gorm:"index" json:"source_release_id,omitempty"`
-	CreatedBy       uint               `gorm:"index;not null" json:"created_by"`
-	StartedAt       *time.Time         `json:"started_at,omitempty"`
-	CompletedAt     *time.Time         `json:"completed_at,omitempty"`
-	CreatedAt       time.Time          `json:"created_at"`
-	UpdatedAt       time.Time          `json:"updated_at"`
-	Operations      []ReleaseOperation `gorm:"foreignKey:ReleaseID" json:"operations,omitempty"`
+	ID               uint               `gorm:"primaryKey" json:"id"`
+	ApplicationID    uint               `gorm:"uniqueIndex:idx_application_sequence;not null" json:"application_id"`
+	Sequence         uint               `gorm:"uniqueIndex:idx_application_sequence;not null" json:"sequence"`
+	Image            string             `gorm:"size:512;not null" json:"image"`
+	Version          string             `gorm:"size:128" json:"version,omitempty"`
+	TemplateID       *uint              `gorm:"index" json:"template_id,omitempty"`
+	TemplateRevision uint               `json:"template_revision,omitempty"`
+	ImageDigest      string             `gorm:"size:512" json:"image_digest"`
+	ImageRegistryID  *uint              `gorm:"index" json:"image_registry_id,omitempty"`
+	DesiredSpec      string             `gorm:"type:text;not null" json:"desired_spec"`
+	Status           string             `gorm:"size:32;index;not null" json:"status"`
+	SourceReleaseID  *uint              `gorm:"index" json:"source_release_id,omitempty"`
+	CreatedBy        uint               `gorm:"index;not null" json:"created_by"`
+	StartedAt        *time.Time         `json:"started_at,omitempty"`
+	CompletedAt      *time.Time         `json:"completed_at,omitempty"`
+	CreatedAt        time.Time          `json:"created_at"`
+	UpdatedAt        time.Time          `json:"updated_at"`
+	Operations       []ReleaseOperation `gorm:"foreignKey:ReleaseID" json:"operations,omitempty"`
 }
 
 // ReleaseOperation 记录单次发布的步骤级进度，Detail 仅允许保存脱敏诊断信息。

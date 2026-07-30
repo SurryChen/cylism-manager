@@ -1,32 +1,104 @@
 <template>
   <div>
-    <router-link class="back-link" to="/applications"><ArrowLeft :size="16" />返回应用列表</router-link>
-    <div class="page-header"><div><h1 class="page-title">{{ application?.name || '应用详情' }}</h1><p class="page-subtitle">{{ application?.project?.name || '-' }} · {{ application?.environment?.name || '-' }} · {{ application?.environment?.namespace || '-' }}</p></div></div>
-    <div v-if="error" class="k8s-banner k8s-banner-warn section-gap">⚠ {{ error }}</div>
-    <div v-if="application && releases.length > 0" class="card"><div class="table-wrap"><table class="data-table"><thead><tr><th>版本</th><th>镜像</th><th>状态</th><th>时间</th></tr></thead><tbody><tr v-for="release in releases" :key="release.id" class="clickable" @click="openRelease(release)"><td class="cell-primary">Release #{{ release.sequence }}</td><td>{{ release.image }}</td><td><span class="badge" :class="releaseBadge(release.status)">{{ release.status }}</span></td><td>{{ formatTime(release.created_at) }}</td></tr></tbody></table></div></div>
+    <router-link class="back-link" to="/applications"><ArrowLeft :size="16" />返回工作台</router-link>
+    <div class="page-header">
+      <div><h1 class="page-title">{{ application?.name || '应用详情' }}</h1><p class="page-subtitle">{{ application?.project?.name || '-' }} · {{ application?.environment?.name || '-' }} · {{ application?.environment?.namespace || '-' }}</p></div>
+      <button class="btn btn-primary" @click="openTemplateEditor()">新建上线模板</button>
+    </div>
+    <div v-if="error" class="k8s-banner k8s-banner-warn section-gap">{{ error }}</div>
+
+    <section v-if="application" class="detail-section">
+      <div class="section-heading"><div><h2>对外域名</h2><p>域名绑定独立于发布版本，变更时会同步应用 Ingress。</p></div><button class="btn btn-sm" @click="openEndpointEditor">{{ endpoint?.domain ? '修改绑定' : '绑定域名' }}</button></div>
+      <div v-if="endpoint?.domain" class="endpoint-row"><div><strong>{{ endpoint.domain }}</strong><small>{{ endpoint.path || '/' }} · Service {{ endpoint.service_port }} · {{ endpoint.tls_enabled ? 'HTTPS' : 'HTTP' }}</small></div><button class="btn btn-sm btn-danger" @click="removeEndpoint">解绑</button></div>
+      <div v-else class="empty-inline">当前应用仅限集群内访问</div>
+    </section>
+
+    <section v-if="application" class="detail-section">
+      <div class="section-heading"><div><h2>上线模板</h2><p>模板定义镜像、运行资源、健康检查与 Service；发布时选择模板并填写版本号。</p></div><button class="btn btn-sm" @click="openTemplateEditor()">新建模板</button></div>
+      <div v-if="templates.length" class="card"><div class="table-wrap"><table class="data-table"><thead><tr><th>模板</th><th>镜像路径</th><th>运行配置</th><th>状态</th><th>操作</th></tr></thead><tbody><tr v-for="template in templates" :key="template.id"><td class="cell-primary">{{ template.name }}<small v-if="template.description">{{ template.description }}</small></td><td>{{ template.spec.image }}</td><td>{{ template.spec.replicas }} 副本 · {{ template.spec.container_port }} 端口 · Service {{ template.spec.service?.port }}</td><td><span class="badge" :class="template.enabled ? 'badge-online' : 'badge-offline'">{{ template.enabled ? template.is_default ? '默认' : '启用' : '停用' }}</span></td><td><div class="btn-group"><button v-if="template.enabled && !template.is_default" class="btn btn-sm" @click="setDefaultTemplate(template)">设为默认</button><button class="btn btn-sm" @click="openTemplateEditor(template)">编辑</button><button class="btn btn-sm btn-danger" @click="deleteTemplate(template)">删除</button></div></td></tr></tbody></table></div></div>
+      <div v-else class="empty-inline">尚未配置上线模板</div>
+    </section>
+
+    <section v-if="application && releases.length" class="detail-section"><div class="section-heading"><div><h2>发布记录</h2><p>每次发布保存独立快照，不会因后续模板或域名变更而改写。</p></div></div><div class="card"><div class="table-wrap"><table class="data-table"><thead><tr><th>版本</th><th>镜像</th><th>模板</th><th>状态</th><th>时间</th></tr></thead><tbody><tr v-for="release in releases" :key="release.id" class="clickable" @click="openRelease(release)"><td class="cell-primary">{{ release.version || `Release #${release.sequence}` }}</td><td>{{ release.image }}</td><td>{{ templateName(release.template_id) || '-' }}</td><td><span class="badge" :class="releaseBadge(release.status)">{{ release.status }}</span></td><td>{{ formatTime(release.created_at) }}</td></tr></tbody></table></div></div></section>
+
+    <Teleport to="body"><div v-if="showTemplateEditor" class="overlay" @click.self="closeTemplateEditor"><div class="modal editor-modal"><h2 class="modal-title">{{ editingTemplate ? '编辑上线模板' : '新建上线模板' }}</h2><form @submit.prevent="saveTemplate">
+      <div class="form-row"><div class="form-group"><label class="form-label">模板名称</label><input v-model.trim="templateForm.name" class="form-input" required placeholder="标准生产配置" /></div><div class="form-group"><label class="form-label">说明</label><input v-model.trim="templateForm.description" class="form-input" placeholder="2 副本、HTTP 就绪检查" /></div></div>
+      <label class="check-row"><input v-model="templateForm.enabled" type="checkbox" /> 启用此模板</label>
+      <div class="form-group"><label class="form-label">镜像仓库</label><select v-model.number="templateForm.registry_id" class="form-select"><option :value="0">自定义完整镜像地址</option><option v-for="registry in registries" :key="registry.id" :value="registry.id">{{ registry.name }} · {{ registry.endpoint }}</option></select></div>
+      <div class="form-group"><label class="form-label">镜像路径</label><input v-model.trim="templateForm.image" class="form-input" required :placeholder="templateForm.registry_id ? 'commerce/order-api' : 'registry.example.com/order-api'" /><p class="form-hint">模板不包含 Tag，发布时填写版本号。</p></div>
+      <div class="form-row"><div class="form-group"><label class="form-label">容器端口</label><input v-model.number="templateForm.container_port" type="number" min="1" class="form-input" required /></div><div class="form-group"><label class="form-label">副本数</label><input v-model.number="templateForm.replicas" type="number" min="1" class="form-input" required /></div></div>
+      <div class="form-row"><QuantityInput label="CPU 请求" v-model:value="templateForm.resources.requests_cpu" v-model:unit="templateForm.resources.requests_cpu_unit" :units="['m', '']" /><QuantityInput label="CPU 限制" v-model:value="templateForm.resources.limits_cpu" v-model:unit="templateForm.resources.limits_cpu_unit" :units="['m', '']" /></div>
+      <div class="form-row"><QuantityInput label="内存请求" v-model:value="templateForm.resources.requests_memory" v-model:unit="templateForm.resources.requests_memory_unit" :units="['Mi', 'Gi']" /><QuantityInput label="内存限制" v-model:value="templateForm.resources.limits_memory" v-model:unit="templateForm.resources.limits_memory_unit" :units="['Mi', 'Gi']" /></div>
+      <div class="form-row"><div class="form-group"><label class="check-row"><input v-model="templateForm.health.readiness_enabled" type="checkbox" /> 启用就绪检查</label><div v-if="templateForm.health.readiness_enabled" class="form-row"><select v-model="templateForm.health.readiness_type" class="form-select"><option value="http">HTTP</option><option value="tcp">TCP</option></select><input v-if="templateForm.health.readiness_type === 'http'" v-model="templateForm.health.readiness_path" class="form-input" /></div></div><div class="form-group"><label class="check-row"><input v-model="templateForm.health.liveness_enabled" type="checkbox" /> 启用存活检查</label><div v-if="templateForm.health.liveness_enabled" class="form-row"><select v-model="templateForm.health.liveness_type" class="form-select"><option value="http">HTTP</option><option value="tcp">TCP</option></select><input v-if="templateForm.health.liveness_type === 'http'" v-model="templateForm.health.liveness_path" class="form-input" /></div></div></div>
+      <div class="form-row"><div class="form-group"><label class="form-label">Service 端口</label><input v-model.number="templateForm.service.port" type="number" min="1" class="form-input" required /></div><div class="form-group"><label class="form-label">Target Port</label><input v-model.number="templateForm.service.target_port" type="number" min="1" class="form-input" :disabled="templateForm.service.target_port_auto" required /><label class="check-row"><input v-model="templateForm.service.target_port_auto" type="checkbox" /> 与容器端口同步</label></div></div>
+      <div class="modal-actions"><button type="button" class="btn" @click="closeTemplateEditor">取消</button><button class="btn btn-primary" :disabled="saving">{{ saving ? '保存中...' : '保存模板' }}</button></div>
+    </form></div></div></Teleport>
+
+    <Teleport to="body"><div v-if="showEndpointEditor" class="overlay" @click.self="showEndpointEditor = false"><div class="modal"><h2 class="modal-title">绑定对外域名</h2><form @submit.prevent="saveEndpoint"><div class="form-group"><label class="form-label">受管域名</label><select v-model.number="endpointForm.domain_id" class="form-select" required><option :value="0" disabled>选择当前环境的已就绪域名</option><option v-for="domain in readyDomains" :key="domain.id" :value="domain.id">{{ domain.hostname }}</option></select></div><div class="form-group"><label class="form-label">访问路径</label><input v-model.trim="endpointForm.path" class="form-input" required placeholder="/" /></div><label class="check-row"><input v-model="endpointForm.tls_enabled" type="checkbox" /> 启用 HTTPS</label><div class="modal-actions"><button type="button" class="btn" @click="showEndpointEditor = false">取消</button><button class="btn btn-primary" :disabled="saving">保存绑定</button></div></form></div></div></Teleport>
   </div>
 </template>
 
 <script setup>
-import { ref, watch } from 'vue'
+import { computed, defineComponent, h, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ArrowLeft } from 'lucide-vue-next'
 import { api } from '../api/index.js'
+
+const QuantityInput = defineComponent({
+  props: { label: String, value: Number, unit: String, units: Array }, emits: ['update:value', 'update:unit'],
+  setup(props, { emit }) {
+    return () => h('div', { class: 'form-group' }, [
+      h('label', { class: 'form-label' }, props.label),
+      h('div', { class: 'unit-input' }, [
+        h('input', { class: 'form-input', type: 'number', min: 1, value: props.value, onInput: event => emit('update:value', Number(event.target.value)) }),
+        h('select', { class: 'form-select', value: props.unit, onChange: event => emit('update:unit', event.target.value) }, props.units.map(unit => h('option', { value: unit }, unit || '核'))),
+      ]),
+    ])
+  },
+})
 
 const props = defineProps({ applicationID: { type: String, required: true } })
 const router = useRouter()
 const application = ref(null)
 const releases = ref([])
+const templates = ref([])
+const endpoint = ref(null)
+const domains = ref([])
+const registries = ref([])
 const error = ref('')
+const saving = ref(false)
+const showTemplateEditor = ref(false)
+const editingTemplate = ref(null)
+const showEndpointEditor = ref(false)
+const templateForm = ref(newTemplateForm())
+const endpointForm = ref(newEndpointForm())
 
+const readyDomains = computed(() => domains.value.filter(domain => domain.enabled && domain.certificate?.status === 'Ready'))
+
+function newTemplateForm() { return { name: '', description: '', enabled: true, registry_id: 0, image: '', container_port: 8080, replicas: 1, resources: { requests_cpu: 100, requests_cpu_unit: 'm', requests_memory: 128, requests_memory_unit: 'Mi', limits_cpu: 500, limits_cpu_unit: 'm', limits_memory: 512, limits_memory_unit: 'Mi' }, health: { readiness_enabled: true, readiness_type: 'http', readiness_path: '/healthz', liveness_enabled: false, liveness_type: 'http', liveness_path: '/healthz' }, service: { port: 80, target_port: 8080, target_port_auto: true } } }
+function newEndpointForm() { return { domain_id: 0, path: '/', tls_enabled: true } }
 function releaseBadge(status) { return status === 'succeeded' ? 'badge-online' : status === 'failed' ? 'badge-danger' : 'badge-offline' }
 function formatTime(value) { return value ? new Date(value).toLocaleString() : '-' }
-async function loadApplication() { error.value = ''; try { const result = await api.get(`/applications/${props.applicationID}`); application.value = result.application; releases.value = result.releases || [] } catch (e) { error.value = e.message || '加载应用详情失败' } }
+function templateName(id) { return templates.value.find(template => template.id === id)?.name }
+function quantityInput(value, unit) { const match = String(value || '').match(/^(\d+)(m|Mi|Gi)?$/); return { value: match ? Number(match[1]) : 1, unit: match?.[2] ?? unit } }
+function formFromTemplate(template) { const spec = template.spec; const requestCPU = quantityInput(spec.resources?.requests_cpu, 'm'), requestMemory = quantityInput(spec.resources?.requests_memory, 'Mi'), limitCPU = quantityInput(spec.resources?.limits_cpu, 'm'), limitMemory = quantityInput(spec.resources?.limits_memory, 'Mi'); return { ...newTemplateForm(), name: template.name, description: template.description || '', enabled: template.enabled, registry_id: spec.registry_id || 0, image: spec.image, container_port: spec.container_port, replicas: spec.replicas, resources: { requests_cpu: requestCPU.value, requests_cpu_unit: requestCPU.unit, requests_memory: requestMemory.value, requests_memory_unit: requestMemory.unit, limits_cpu: limitCPU.value, limits_cpu_unit: limitCPU.unit, limits_memory: limitMemory.value, limits_memory_unit: limitMemory.unit }, health: { ...newTemplateForm().health, ...spec.health }, service: { ...newTemplateForm().service, ...spec.service, target_port_auto: spec.service?.target_port === spec.container_port } } }
+function templatePayload() { const form = templateForm.value; return { name: form.name, description: form.description, enabled: form.enabled, spec: { image: form.image, registry_id: form.registry_id, container_port: form.container_port, replicas: form.replicas, resources: { requests_cpu: `${form.resources.requests_cpu}${form.resources.requests_cpu_unit}`, requests_memory: `${form.resources.requests_memory}${form.resources.requests_memory_unit}`, limits_cpu: `${form.resources.limits_cpu}${form.resources.limits_cpu_unit}`, limits_memory: `${form.resources.limits_memory}${form.resources.limits_memory_unit}` }, health: form.health, service: { port: form.service.port, target_port: form.service.target_port } } } }
+
+async function loadApplication() { error.value = ''; try { const result = await api.get(`/applications/${props.applicationID}`); application.value = result.application; releases.value = result.releases || []; const [loadedTemplates, loadedEndpoint, loadedDomains, loadedRegistries] = await Promise.all([api.get(`/applications/${props.applicationID}/deployment-templates`), api.get(`/applications/${props.applicationID}/endpoint`), api.get(`/domains?environment_id=${result.application.environment_id}`), api.get(`/image-registries?project_id=${result.application.project_id}`)]); templates.value = loadedTemplates || []; endpoint.value = loadedEndpoint; domains.value = loadedDomains || []; registries.value = loadedRegistries || [] } catch (e) { error.value = e.message || '加载应用详情失败' } }
 async function openRelease(release) { await router.push(`/applications/${props.applicationID}/releases/${release.id}`) }
+function openTemplateEditor(template = null) { editingTemplate.value = template; templateForm.value = template ? formFromTemplate(template) : newTemplateForm(); showTemplateEditor.value = true }
+function closeTemplateEditor() { showTemplateEditor.value = false; editingTemplate.value = null }
+async function saveTemplate() { saving.value = true; error.value = ''; try { const path = `/applications/${props.applicationID}/deployment-templates`; if (editingTemplate.value) await api.put(`${path}/${editingTemplate.value.id}`, templatePayload()); else await api.post(path, templatePayload()); closeTemplateEditor(); await loadApplication() } catch (e) { error.value = e.message || '保存上线模板失败' } finally { saving.value = false } }
+async function setDefaultTemplate(template) { try { await api.post(`/applications/${props.applicationID}/deployment-templates/${template.id}/default`); await loadApplication() } catch (e) { error.value = e.message || '设置默认模板失败' } }
+async function deleteTemplate(template) { try { await api.delete(`/applications/${props.applicationID}/deployment-templates/${template.id}`); await loadApplication() } catch (e) { error.value = e.message || '删除上线模板失败' } }
+function openEndpointEditor() { endpointForm.value = endpoint.value ? { domain_id: endpoint.value.domain_id, path: endpoint.value.path || '/', tls_enabled: endpoint.value.tls_enabled } : newEndpointForm(); showEndpointEditor.value = true }
+async function saveEndpoint() { saving.value = true; error.value = ''; try { endpoint.value = await api.put(`/applications/${props.applicationID}/endpoint`, endpointForm.value); showEndpointEditor.value = false } catch (e) { error.value = e.message || '绑定域名失败' } finally { saving.value = false } }
+async function removeEndpoint() { try { await api.delete(`/applications/${props.applicationID}/endpoint`); endpoint.value = null } catch (e) { error.value = e.message || '解绑域名失败' } }
 
 watch(() => props.applicationID, loadApplication, { immediate: true })
+watch(() => templateForm.value.container_port, port => { if (templateForm.value.service.target_port_auto) templateForm.value.service.target_port = port })
 </script>
 
 <style scoped>
-.back-link { display:inline-flex; align-items:center; gap:6px; margin-bottom:var(--space-16); color:var(--text-secondary); font-size:13px; font-weight:600; text-decoration:none; }.back-link:hover { color:var(--action-primary); }.back-link:focus-visible { outline:2px solid var(--focus); outline-offset:3px; }.page-header { margin-bottom:var(--space-24); }.page-subtitle { margin:var(--space-4) 0 0; color:var(--text-secondary); font-size:13px; }
+.back-link{display:inline-flex;align-items:center;gap:6px;margin-bottom:var(--space-16);color:var(--text-secondary);font-size:13px;font-weight:600;text-decoration:none}.back-link:hover{color:var(--action-primary)}.page-header,.section-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:var(--space-16)}.page-header{margin-bottom:var(--space-24)}.page-subtitle,.section-heading p,.cell-primary small,.endpoint-row small,.empty-inline{margin:4px 0 0;color:var(--text-secondary);font-size:13px}.detail-section{padding:var(--space-20) 0;border-top:1px solid var(--border-muted)}.section-heading{margin-bottom:var(--space-12)}.section-heading h2{margin:0;font-size:16px}.section-heading p{font-size:12px}.cell-primary small,.endpoint-row small{display:block;font-size:11px}.endpoint-row{display:flex;align-items:center;justify-content:space-between;gap:var(--space-12);padding:12px;border:1px solid var(--border-muted);border-radius:var(--radius-control);background:var(--surface-subtle)}.empty-inline{padding:12px 0}.editor-modal{width:min(760px,calc(100vw - 32px))}.check-row{display:flex;align-items:center;gap:8px;margin:var(--space-12) 0;color:var(--text-secondary);font-size:13px}.unit-input{display:grid;grid-template-columns:minmax(0,1fr) 76px;gap:6px}@media(max-width:640px){.page-header,.section-heading,.endpoint-row{align-items:stretch;flex-direction:column}.page-header>.btn{width:100%}}
 </style>

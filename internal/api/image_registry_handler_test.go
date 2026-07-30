@@ -92,6 +92,51 @@ func TestImageRegistryHandlerRequiresMatchingVerificationImage(t *testing.T) {
 	}
 }
 
+func TestImageRegistryHandlerAllowsUnassignedGlobalRegistry(t *testing.T) {
+	r, s, _ := setupImageRegistryRouter()
+	create := serve(r, newJSONRequest(http.MethodPost, "/api/image-registries", gin.H{
+		"name": "shared-harbor", "endpoint": "harbor.example.com", "auth_type": "anonymous",
+		"verification_image": "harbor.example.com/library/busybox:1.36",
+	}))
+	if create.Code != http.StatusOK {
+		t.Fatalf("create unassigned registry status = %d: %s", create.Code, create.Body.String())
+	}
+	registry, err := s.GetImageRegistry(responseID(t, create.Body.Bytes()))
+	if err != nil || len(registry.Projects) != 0 {
+		t.Fatalf("expected global registry without project authorization, got %+v err=%v", registry, err)
+	}
+}
+
+func TestImageRegistryHandlerClearsDefaultWhenProjectAuthorizationIsRevoked(t *testing.T) {
+	r, s, _ := setupImageRegistryRouter()
+	if err := s.CreateProject(&model.Project{Name: "commerce", OwnerID: 1}); err != nil {
+		t.Fatal(err)
+	}
+	registry := &model.ImageRegistry{Name: "commerce-harbor", Endpoint: "harbor.example.com", VerificationImage: "harbor.example.com/library/busybox:1.36", AuthType: "anonymous", Enabled: true}
+	if err := s.CreateImageRegistry(registry, []uint{1}); err != nil {
+		t.Fatal(err)
+	}
+	project, err := s.GetProject(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project.DefaultImageRegistryID = &registry.ID
+	if err := s.UpdateProject(project); err != nil {
+		t.Fatal(err)
+	}
+
+	update := serve(r, newJSONRequest(http.MethodPut, "/api/image-registries/1", gin.H{
+		"name": "commerce-harbor", "endpoint": "harbor.example.com", "verification_image": "harbor.example.com/library/busybox:1.36", "auth_type": "anonymous", "enabled": true, "project_ids": []uint{},
+	}))
+	if update.Code != http.StatusOK {
+		t.Fatalf("revoke authorization status = %d: %s", update.Code, update.Body.String())
+	}
+	project, err = s.GetProject(1)
+	if err != nil || project.DefaultImageRegistryID != nil {
+		t.Fatalf("expected revoked default to be cleared, got %+v err=%v", project, err)
+	}
+}
+
 func TestImageRegistryHandlerRejectsDeleteWhileReleasesReferenceRegistry(t *testing.T) {
 	r, s, _ := setupImageRegistryRouter()
 	if err := s.CreateProject(&model.Project{Name: "commerce", OwnerID: 1}); err != nil {

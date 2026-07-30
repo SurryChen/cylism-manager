@@ -4,7 +4,8 @@ import { reactive } from 'vue'
 import ImageRegistries from './ImageRegistries.vue'
 
 const route = reactive({ query: { project_id: '1', environment_id: '2' } })
-vi.mock('vue-router', () => ({ useRoute: () => route }))
+const router = { push: vi.fn() }
+vi.mock('vue-router', () => ({ useRoute: () => route, useRouter: () => router }))
 
 vi.mock('../api/index.js', () => ({
   api: {
@@ -19,11 +20,19 @@ vi.mock('../api/index.js', () => ({
 }))
 
 describe('ImageRegistries view', () => {
+	it('returns to the workspace with the current project and environment', async () => {
+		router.push.mockClear()
+		const wrapper = mount(ImageRegistries)
+		await wrapper.get('.back-link').trigger('click')
+
+		expect(router.push).toHaveBeenCalledWith({ path: '/applications', query: { project_id: '1', environment_id: '2' } })
+	})
+
   it('keeps the registry list unframed before any registry is configured', async () => {
     const wrapper = mount(ImageRegistries)
     await new Promise(resolve => setTimeout(resolve, 0))
 
-    expect(wrapper.find('.page-title').text()).toBe('镜像仓库授权')
+    expect(wrapper.find('.page-title').text()).toBe('镜像仓库')
     expect(wrapper.text()).toContain('新建镜像仓库')
     expect(wrapper.text()).not.toContain('暂无镜像仓库')
     expect(wrapper.find('.card').exists()).toBe(false)
@@ -76,12 +85,22 @@ describe('ImageRegistries view', () => {
     await wrapper.get('input[placeholder="commerce-harbor"]').setValue('commerce-harbor')
     await wrapper.get('input[placeholder="harbor.example.com"]').setValue('harbor.example.com')
     await wrapper.get('input[placeholder="harbor.example.com/commerce/order-api:latest"]').setValue('harbor.example.com/commerce/order-api:latest')
-    await wrapper.get('.project-option input').setValue(true)
     await wrapper.get('form').trigger('submit')
     await new Promise(resolve => setTimeout(resolve, 0))
 
     expect(api.post).toHaveBeenLastCalledWith('/image-registries', {
-      name: 'commerce-harbor', endpoint: 'harbor.example.com', verification_image: 'harbor.example.com/commerce/order-api:latest', auth_type: 'anonymous', username: '', credential: '', enabled: true, project_ids: [1],
+      name: 'commerce-harbor', endpoint: 'harbor.example.com', verification_image: 'harbor.example.com/commerce/order-api:latest', auth_type: 'anonymous', username: '', credential: '', enabled: true, project_ids: [],
     })
+  })
+
+  it('always loads global registries instead of filtering by the workspace project', async () => {
+    const { api } = await import('../api/index.js')
+    api.get.mockClear()
+    const wrapper = mount(ImageRegistries)
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    expect(api.get).toHaveBeenCalledWith('/image-registries')
+    expect(api.get).not.toHaveBeenCalledWith('/image-registries?project_id=1')
+    wrapper.unmount()
   })
 })

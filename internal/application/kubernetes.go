@@ -92,6 +92,35 @@ func (a *KubernetesApplier) Apply(ctx context.Context, resources *RenderedResour
 	return nil
 }
 
+// SyncEndpoint updates only the application Ingress. Domain ownership is
+// application-level state, so it must not wait for a version release.
+func (a *KubernetesApplier) SyncEndpoint(ctx context.Context, application ApplicationContext, endpoint EndpointSpec, servicePort int32) error {
+	if a.Client == nil || a.Client.Clientset == nil {
+		return fmt.Errorf("Kubernetes 客户端未初始化")
+	}
+	if endpoint.Exposure != ExposurePublic {
+		return a.RemoveEndpoint(ctx, application)
+	}
+	return a.applyIngress(ctx, endpointIngress(application, endpoint, servicePort))
+}
+
+func (a *KubernetesApplier) RemoveEndpoint(ctx context.Context, application ApplicationContext) error {
+	if a.Client == nil || a.Client.Clientset == nil {
+		return fmt.Errorf("Kubernetes 客户端未初始化")
+	}
+	ingress, err := a.Client.Clientset.NetworkingV1().Ingresses(application.Namespace).Get(ctx, application.ApplicationName, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if err := ensureManaged(ingress.Labels); err != nil {
+		return err
+	}
+	return a.Client.Clientset.NetworkingV1().Ingresses(application.Namespace).Delete(ctx, application.ApplicationName, metav1.DeleteOptions{})
+}
+
 func (a *KubernetesApplier) WaitReady(ctx context.Context, application ApplicationContext, spec ReleaseSpec) error {
 	timeout := a.ReadinessTimeout
 	if timeout <= 0 {
@@ -106,7 +135,7 @@ func (a *KubernetesApplier) WaitReady(ctx context.Context, application Applicati
 		if err != nil {
 			return fmt.Errorf("读取 Deployment 就绪状态: %w", err)
 		}
-		if deployment.Status.ReadyReplicas >= spec.Replicas {
+		if deployment.Status.ObservedGeneration >= deployment.Generation && deployment.Status.UpdatedReplicas >= spec.Replicas && deployment.Status.AvailableReplicas >= spec.Replicas && deployment.Status.UnavailableReplicas == 0 {
 			if !spec.Endpoint.TLSEnabled {
 				return nil
 			}

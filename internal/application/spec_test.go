@@ -49,6 +49,9 @@ func TestRenderResourcesUsesManagedLabelsAndRedactsSecret(t *testing.T) {
 	if resources.Deployment.Labels[ManagedByLabel] != ManagedByValue {
 		t.Fatalf("expected managed label, got %+v", resources.Deployment.Labels)
 	}
+	if resources.Deployment.Spec.Template.Labels[ReleaseLabel] != "" || resources.Deployment.Annotations[ReleaseLabel] != "3" {
+		t.Fatalf("release sequence must not mutate the Pod template: %#v", resources.Deployment)
+	}
 	if resources.Deployment.Labels[ProjectLabel] != "project-7" || resources.Deployment.Labels[EnvironmentLabel] != "environment-11" {
 		t.Fatalf("expected ID-based project and environment labels, got %+v", resources.Deployment.Labels)
 	}

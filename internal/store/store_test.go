@@ -2,6 +2,7 @@ package store
 
 import (
 	"errors"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -15,6 +16,40 @@ func setupTestDB(t *testing.T) *Store {
 		t.Fatalf("failed to create store: %v", err)
 	}
 	return s
+}
+
+func TestApplicationDeploymentTemplateMigrationRemovesLegacySingleTemplateIndex(t *testing.T) {
+	dsn := filepath.Join(t.TempDir(), "store.db")
+	st, err := New(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app := &model.Application{ProjectID: 1, EnvironmentID: 1, Name: "order-api", WorkloadKind: "deployment", CreatedBy: 1}
+	if err := st.CreateApplication(app); err != nil {
+		t.Fatal(err)
+	}
+	legacy := &model.ApplicationDeploymentTemplate{ApplicationID: app.ID, Name: "legacy", Enabled: true, Spec: "{}", Revision: 1}
+	if err := st.DB().Create(legacy).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := st.DB().Model(legacy).Updates(map[string]interface{}{"name": "", "enabled": false}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := st.DB().Exec("CREATE UNIQUE INDEX idx_application_deployment_templates_application_id ON application_deployment_templates(application_id)").Error; err != nil {
+		t.Fatal(err)
+	}
+
+	migrated, err := New(dsn)
+	if err != nil {
+		t.Fatalf("migrate legacy template database: %v", err)
+	}
+	templates, err := migrated.ListApplicationDeploymentTemplates(app.ID)
+	if err != nil || len(templates) != 1 || templates[0].Name != "默认模板" || !templates[0].Enabled {
+		t.Fatalf("legacy template was not backfilled: %#v err=%v", templates, err)
+	}
+	if err := migrated.CreateApplicationDeploymentTemplate(&model.ApplicationDeploymentTemplate{ApplicationID: app.ID, Name: "灰度模板", Enabled: true, Spec: "{}"}, false); err != nil {
+		t.Fatalf("legacy single-template index should have been removed: %v", err)
+	}
 }
 
 func TestServerCRUD(t *testing.T) {
