@@ -102,6 +102,10 @@ rules:
   - apiGroups: [""]
     resources: ["pods/exec"]
     verbs: ["create"]
+  # Required to create the least-privilege VictoriaMetrics scraper role.
+  - apiGroups: [""]
+    resources: ["nodes/proxy"]
+    verbs: ["get"]
   - apiGroups: ["apps"]
     resources: ["deployments", "statefulsets", "daemonsets", "replicasets"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]

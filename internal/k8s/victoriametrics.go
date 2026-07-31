@@ -236,9 +236,10 @@ func ensureVictoriaMetricsAccess(c *Client) error {
 	if _, err := c.Clientset.CoreV1().ServiceAccounts(victoriaMetricsNamespace).Create(c.Ctx(), serviceAccount, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
 		return fmt.Errorf("创建 VictoriaMetrics 服务账号失败: %w", err)
 	}
-	role := &rbacv1.ClusterRole{ObjectMeta: metav1.ObjectMeta{Name: victoriaMetricsName, Labels: victoriaMetricsLabels()}, Rules: []rbacv1.PolicyRule{{
-		APIGroups: []string{""}, Resources: []string{"nodes", "nodes/proxy", "pods", "services", "endpoints"}, Verbs: []string{"get", "list", "watch"},
-	}}}
+	role := &rbacv1.ClusterRole{ObjectMeta: metav1.ObjectMeta{Name: victoriaMetricsName, Labels: victoriaMetricsLabels()}, Rules: []rbacv1.PolicyRule{
+		{APIGroups: []string{""}, Resources: []string{"nodes", "pods"}, Verbs: []string{"get", "list", "watch"}},
+		{APIGroups: []string{""}, Resources: []string{"nodes/proxy"}, Verbs: []string{"get"}},
+	}}
 	if err := createOrUpdateClusterRole(c, role); err != nil {
 		return err
 	}
