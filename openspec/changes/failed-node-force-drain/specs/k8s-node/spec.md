@@ -51,3 +51,21 @@
 - **WHEN** 故障节点上存在 DaemonSet 或 static/mirror Pod
 - **THEN** 系统不删除该 Pod，在结果中标记为 skipped
 
+### Requirement: 服务器与集群节点绑定
+系统 SHALL 仅在 Kubernetes Node 仍存在时保留服务器的集群角色与节点名绑定。
+
+#### Scenario: 平台移出节点后解绑服务器
+- **WHEN** 平台成功移除一个 Kubernetes Node
+- **THEN** 系统清空所有绑定该节点的服务器的 `cluster_role` 和 `k8s_node_name`
+
+#### Scenario: 集群外部移出节点后自愈解绑
+- **WHEN** 查询服务器列表时成功读取到 Kubernetes Node 列表，且某服务器绑定的 Node 已不存在
+- **THEN** 系统清空该服务器的 `cluster_role` 和 `k8s_node_name` 并持久化更新
+
+#### Scenario: 集群不可用时保留绑定
+- **WHEN** 查询服务器列表时无法读取 Kubernetes Node 列表
+- **THEN** 系统不修改服务器的现有集群绑定
+
+#### Scenario: 手动解绑服务器
+- **WHEN** 用户确认解除一个服务器的集群绑定
+- **THEN** 系统仅清空该服务器的 `cluster_role` 和 `k8s_node_name`，不得删除 Kubernetes Node 或影响 Pod

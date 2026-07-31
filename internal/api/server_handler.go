@@ -83,6 +83,43 @@ func (h *ServerHandler) List(c *gin.Context) {
 	log.Printf("[ListServers] returned %d servers", len(servers))
 		return
 	}
+	if K8s != nil {
+		nodes, err := K8s.ListNodeInfos()
+		if err != nil {
+			// Preserve bindings when the cluster cannot be queried; a transient API
+			// outage must not make registered servers appear to have left the cluster.
+			log.Printf("[ListServers] skip cluster binding reconciliation: %v", err)
+		} else {
+			existingNodes := make(map[string]struct{}, len(nodes))
+			for _, node := range nodes {
+				existingNodes[node.Name] = struct{}{}
+			}
+			for index := range servers {
+				server := &servers[index]
+				if server.ClusterRole == "" && server.K8sNodeName == "" {
+					continue
+				}
+				if server.K8sNodeName != "" {
+					if _, exists := existingNodes[server.K8sNodeName]; exists {
+						continue
+					}
+				}
+				if server.K8sNodeName == "" {
+					server.ClusterRole = ""
+					if err := h.store.UpdateServer(server); err != nil {
+						log.Printf("[ListServers] clear incomplete cluster binding on server %d failed: %v", server.ID, err)
+					}
+					continue
+				}
+				if err := h.store.UnbindServersFromClusterNode(server.K8sNodeName); err != nil {
+					log.Printf("[ListServers] unbind server %d from removed node %q failed: %v", server.ID, server.K8sNodeName, err)
+					continue
+				}
+				server.ClusterRole = ""
+				server.K8sNodeName = ""
+			}
+		}
+	}
 	model.Success(c, servers)
 }
 
@@ -134,6 +171,28 @@ func (h *ServerHandler) Delete(c *gin.Context) {
 		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, err.Error()); return
 	}
 	model.SuccessWithMessage(c, nil, "操作成功")
+}
+
+// Unbind removes only the platform's association between a server and a
+// Kubernetes Node. It deliberately does not modify the Node or its workloads.
+func (h *ServerHandler) Unbind(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil || id == 0 {
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "invalid server id")
+		return
+	}
+	server, err := h.store.GetServer(uint(id))
+	if err != nil {
+		model.Error(c, http.StatusNotFound, model.CodeNotFound, "server not found")
+		return
+	}
+	server.ClusterRole = ""
+	server.K8sNodeName = ""
+	if err := h.store.UpdateServer(server); err != nil {
+		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, err.Error())
+		return
+	}
+	model.SuccessWithMessage(c, server, "已解除集群绑定")
 }
 
 

@@ -162,6 +162,17 @@ func (s *Store) UpdateServer(server *model.Server) error {
 	return s.db.Save(server).Error
 }
 
+// UnbindServersFromClusterNode clears the cluster mapping for every server
+// associated with a Kubernetes Node that no longer exists in the cluster.
+func (s *Store) UnbindServersFromClusterNode(nodeName string) error {
+	return s.db.Model(&model.Server{}).
+		Where("k8s_node_name = ?", nodeName).
+		Updates(map[string]interface{}{
+			"cluster_role":  "",
+			"k8s_node_name": "",
+		}).Error
+}
+
 func (s *Store) DeleteServer(id uint) error {
 	return s.db.Delete(&model.Server{}, id).Error
 }

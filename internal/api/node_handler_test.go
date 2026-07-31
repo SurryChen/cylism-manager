@@ -8,6 +8,7 @@ import (
 	"time"
 
 	k8sclient "github.com/cylism/cylism-manager/internal/k8s"
+	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/gin-gonic/gin"
 	corev1 "k8s.io/api/core/v1"
@@ -114,11 +115,29 @@ func TestNodeHandler_ForceDrainRequiresConfirmationAndRejectsHealthyNode(t *test
 }
 
 func TestNodeHandler_RemoveNode(t *testing.T) {
-	r, _ := setupNodeRouter()
-	req := httptest.NewRequest(http.MethodDelete, "/api/nodes/web-01", nil)
+	original := K8s
+	defer func() { K8s = original }()
+	K8s = &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(&corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{Name: "worker-a"},
+		Spec:       corev1.NodeSpec{Unschedulable: true},
+	})}
+	r, s := setupNodeRouter()
+	server := &model.Server{Name: "worker", Host: "10.0.0.2", ClusterRole: "worker", K8sNodeName: "worker-a"}
+	if err := s.CreateServer(server); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/nodes/worker-a", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
-		t.Errorf("expected 200, got %d", w.Code)
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	updated, err := s.GetServer(server.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.ClusterRole != "" || updated.K8sNodeName != "" {
+		t.Fatalf("expected persisted server unbinding, got %#v", updated)
 	}
 }
