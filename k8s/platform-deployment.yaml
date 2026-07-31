@@ -102,6 +102,9 @@ rules:
   - apiGroups: [""]
     resources: ["pods/exec"]
     verbs: ["create"]
+  - apiGroups: [""]
+    resources: ["pods/eviction"]
+    verbs: ["create"]
   # Required to create the least-privilege VictoriaMetrics scraper role.
   - apiGroups: [""]
     resources: ["nodes/proxy"]
