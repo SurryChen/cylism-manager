@@ -45,6 +45,7 @@
                   <button v-if="!srv.cluster_role" class="btn btn-sm" @click="startImport(srv.id)">导入集群</button>
                   <button v-if="!srv.cluster_role" class="btn btn-sm" @click="startEdit(srv)">编辑</button>
                   <button v-if="!srv.cluster_role" class="btn btn-sm btn-danger" @click="confirmDelete(srv)">删除</button>
+                  <button v-if="srv.cluster_role || srv.k8s_node_name" class="btn btn-sm btn-danger" :disabled="unbindingId === srv.id" @click="unbindServer(srv)">{{ unbindingId === srv.id ? '解绑中...' : '解除绑定' }}</button>
                   <button class="btn btn-sm" @click="openStats(srv.id)">📊</button>
                   <button class="btn btn-sm" @click="openTerminal(srv.id)">💻</button>
                 </div>
@@ -219,6 +220,7 @@ const showAdd = ref(false)
 const editingId = ref(null)
 const deleteTarget = ref(null)
 const probingId = ref(null)
+const unbindingId = ref(null)
 const probeResult = ref(null)
 const importState = ref(null)
 const importServer = ref(null)
@@ -343,6 +345,14 @@ async function doConfirmImport() {
 
 function confirmDelete(srv) { deleteTarget.value = srv }
 async function deleteServer() { try { await api.delete(`/servers/${deleteTarget.value.id}`); deleteTarget.value = null; fetchServers() } catch (e) { console.error(e) } }
+async function unbindServer(srv) {
+  if (!window.confirm(`解除 ${srv.name} 与集群节点 ${srv.k8s_node_name || '-'} 的绑定？此操作不会删除节点或影响 Pod。`)) return
+  unbindingId.value = srv.id
+  try {
+    await api.post(`/servers/${srv.id}/unbind`)
+    fetchServers()
+  } catch (e) { console.error(e) } finally { unbindingId.value = null }
+}
 async function openStats(id) {
   const srv = servers.value.find(s => s.id === id)
   if (!srv) return

@@ -147,6 +147,10 @@ func (h *NodeHandler) RemoveNode(c *gin.Context) {
 		model.Error(c, http.StatusConflict, model.CodeConflict, err.Error())
 		return
 	}
+	if err := h.store.UnbindServersFromClusterNode(c.Param("id")); err != nil {
+		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, "节点已从集群移除，但解除服务器绑定失败: "+err.Error())
+		return
+	}
 	model.SuccessWithMessage(c, nil, "移除成功")
 }
 

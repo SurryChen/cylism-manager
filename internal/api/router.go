@@ -53,6 +53,7 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 		servers.GET("/:id", serverHandler.Get)
 		servers.PUT("/:id", serverHandler.Update)
 		servers.DELETE("/:id", serverHandler.Delete)
+		servers.POST("/:id/unbind", serverHandler.Unbind)
 		servers.POST("/:id/probe", serverHandler.Probe)
 		servers.POST("/:id/precheck", serverHandler.Precheck)
 		servers.GET("/:id/stats", serverHandler.Stats)

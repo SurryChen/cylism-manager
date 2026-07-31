@@ -24,7 +24,17 @@
 
 ## 3. Verification
 
-- [ ] 3.1 执行 `go test ./...`、`go build ./...`、`npm test -- --run`、`npm run build`。
-- [ ] 3.2 执行 `openspec validate failed-node-force-drain --strict`。
-- [ ] 3.3 在真实集群使用已失联的 worker 验证：安全驱逐保留 PDB、强制驱逐只删除受控 Pod、Node 移出仍需人工确认。
+## 3. Server binding reconciliation
 
+- [x] 3.1 平台成功移出 Kubernetes Node 后，自动清空绑定服务器的角色和节点名。
+  - 验证：`go test ./internal/api -run TestNodeHandler_RemoveNode`
+- [x] 3.2 查询服务器时，对成功读取的节点列表执行对账并清理已在集群外删除节点的绑定；K8s API 失败时保留原绑定。
+  - 验证：`go test ./internal/api -run TestServerHandlerListUnbinds`
+- [x] 3.3 支持手动解除服务器与集群节点绑定，不删除 Kubernetes Node 或工作负载。
+  - 验证：`go test ./internal/api -run TestServerHandlerUnbind`、`npm test -- --run Servers.test.js`
+
+## 4. Verification
+
+- [x] 4.1 执行 `go test ./...`、`go build ./...`、`npm test -- --run`、`npm run build`。
+- [x] 4.2 执行 `openspec validate failed-node-force-drain --strict`。
+- [ ] 4.3 在真实集群使用已失联的 worker 验证：安全驱逐保留 PDB、强制驱逐只删除受控 Pod、Node 移出仍需人工确认，服务器卡片恢复为未加入集群。
