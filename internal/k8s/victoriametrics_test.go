@@ -56,6 +56,13 @@ func TestInstallVictoriaMetricsCreatesPinnedHostPathDeployment(t *testing.T) {
 	if !nodeExporter.Spec.Template.Spec.HostNetwork || nodeExporter.Spec.Template.Spec.Containers[0].VolumeMounts[0].MountPath != "/host" {
 		t.Fatalf("expected node-exporter host metrics configuration: %#v", nodeExporter.Spec.Template.Spec)
 	}
+	role, err := client.Clientset.RbacV1().ClusterRoles().Get(t.Context(), victoriaMetricsName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("expected VictoriaMetrics ClusterRole: %v", err)
+	}
+	if len(role.Rules) != 2 || len(role.Rules[1].Verbs) != 1 || role.Rules[1].Verbs[0] != "get" {
+		t.Fatalf("expected nodes/proxy to be read-only: %#v", role.Rules)
+	}
 }
 
 func TestVictoriaMetricsStatusReportsReadyConfiguration(t *testing.T) {
