@@ -69,3 +69,18 @@
 #### Scenario: 手动解绑服务器
 - **WHEN** 用户确认解除一个服务器的集群绑定
 - **THEN** 系统仅清空该服务器的 `cluster_role` 和 `k8s_node_name`，不得删除 Kubernetes Node 或影响 Pod
+
+### Requirement: 交互式终端可靠性
+系统 SHALL 为 SSH 和 Pod 终端提供可靠的大文本粘贴、文本选择与可读的浅色终端画布。
+
+#### Scenario: 粘贴长命令
+- **WHEN** 用户向 SSH 或 Pod 终端粘贴不超过 1 MiB 的文本
+- **THEN** 系统完整转发文本，不因 WebSocket 分片或部分读取关闭会话
+
+#### Scenario: 选择终端输出
+- **WHEN** 用户跨方向拖选终端输出以复制
+- **THEN** 终端不因遮罩点击而关闭，只能通过明确的关闭操作结束
+
+#### Scenario: 浅色终端画布
+- **WHEN** 用户打开 SSH 或 Pod 终端
+- **THEN** 终端以不透明白色背景、深色文本和可见选区展示，不随平台夜间配色变为灰色透底

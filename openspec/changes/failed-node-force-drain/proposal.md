@@ -12,6 +12,7 @@
 - 强制操作要求调用方确认风险并精确提交目标节点名；前端要求勾选风险确认并输入节点名。
 - 普通驱逐保留 Eviction API 与 PDB 保护；页面展示每个 pending Pod 的真实错误，而非统一宣称为 PDB。
 - 强制驱逐完成后保留现有“移出节点”流程，不在强制驱逐中自动删除 Node 对象。
+- 终端连接改用成熟 WebSocket 实现，支持长文本粘贴；终端选择文本不会关闭窗口，并统一使用不透明白色画布。
 
 ## Non-goals
 
@@ -23,7 +24,7 @@
 ## Impact
 
 - `internal/k8s/node.go`: 节点故障状态、强制删除和驱逐结果分类。
+- `internal/api/websocket.go`、终端组件：可靠 WebSocket 帧处理与终端交互修复。
 - `internal/api/node_handler.go`、`router.go`: 强制驱逐 API 与请求校验。
 - `web/src/views/Cluster.vue`: 故障状态展示、普通驱逐结果、强制驱逐确认对话框。
 - `internal/k8s/node_test.go`、`internal/api/node_handler_test.go`、前端页面测试：覆盖安全边界和结果展示。
-

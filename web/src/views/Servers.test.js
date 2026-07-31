@@ -63,4 +63,20 @@ describe('Servers view', () => {
     expect(api.post).toHaveBeenCalledWith('/servers/2/unbind')
     confirm.mockRestore()
   })
+
+  it('keeps the SSH terminal open when the overlay is clicked during text selection', async () => {
+    const wrapper = mount(Servers, { global: { stubs: { RouterLink: true } } })
+    await new Promise(r => setTimeout(r, 200))
+    await nextTick()
+
+    const terminal = wrapper.findAll('button').find(button => button.text() === '💻')
+    await terminal.trigger('click')
+    await nextTick()
+    const overlay = document.querySelector('.terminal-overlay')
+    overlay.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await nextTick()
+
+    expect(document.querySelector('.terminal-overlay')).not.toBeNull()
+    wrapper.unmount()
+  })
 })

@@ -33,8 +33,15 @@
 - [x] 3.3 支持手动解除服务器与集群节点绑定，不删除 Kubernetes Node 或工作负载。
   - 验证：`go test ./internal/api -run TestServerHandlerUnbind`、`npm test -- --run Servers.test.js`
 
-## 4. Verification
+## 4. Interactive terminal reliability
 
-- [x] 4.1 执行 `go test ./...`、`go build ./...`、`npm test -- --run`、`npm run build`。
-- [x] 4.2 执行 `openspec validate failed-node-force-drain --strict`。
-- [ ] 4.3 在真实集群使用已失联的 worker 验证：安全驱逐保留 PDB、强制驱逐只删除受控 Pod、Node 移出仍需人工确认，服务器卡片恢复为未加入集群。
+- [x] 4.1 用成熟 WebSocket 库替换手写帧解析，并为大文本粘贴添加回归测试。
+  - 验证：`go test ./internal/api -run TestWSConnReadFrameHandlesLargeTerminalPaste`
+- [x] 4.2 修复 SSH 和 Pod 终端的遮罩关闭、剪贴板粘贴和白色终端画布。
+  - 验证：`npm test -- --run`、`npm run build`
+
+## 5. Verification
+
+- [x] 5.1 执行 `go test ./...`、`go build ./...`、`npm test -- --run`、`npm run build`。
+- [x] 5.2 执行 `openspec validate failed-node-force-drain --strict`。
+- [ ] 5.3 在真实集群使用已失联的 worker 验证：安全驱逐保留 PDB、强制驱逐只删除受控 Pod、Node 移出仍需人工确认，服务器卡片恢复为未加入集群。
