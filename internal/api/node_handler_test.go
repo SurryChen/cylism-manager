@@ -3,6 +3,7 @@ package api
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/cylism/cylism-manager/internal/store"
@@ -17,6 +18,8 @@ func setupNodeRouter() (*gin.Engine, *store.Store) {
 	nodes := r.Group("/api/nodes")
 	{
 		nodes.GET("", h.ListNode)
+		nodes.GET("/:id/drain-plan", h.DrainPlan)
+		nodes.GET("/:id/removal-check", h.RemovalCheck)
 		nodes.POST("/:id/add", h.AddNode)
 		nodes.POST("/:id/drain", h.DrainNode)
 		nodes.DELETE("/:id", h.RemoveNode)
@@ -58,7 +61,18 @@ func TestNodeHandler_AddNodeNotFound(t *testing.T) {
 
 func TestNodeHandler_DrainNode(t *testing.T) {
 	r, _ := setupNodeRouter()
-	req := httptest.NewRequest(http.MethodPost, "/api/nodes/web-01/drain", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/nodes/web-01/drain", strings.NewReader(`{"delete_empty_dir_data":false}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+}
+
+func TestNodeHandler_DrainPlan(t *testing.T) {
+	r, _ := setupNodeRouter()
+	req := httptest.NewRequest(http.MethodGet, "/api/nodes/web-01/drain-plan", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {

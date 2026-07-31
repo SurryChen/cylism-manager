@@ -177,6 +177,8 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 	{
 		nodes.GET("", nodeHandler.ListNode)
 		nodes.GET("/:id/join-progress", nodeHandler.JoinProgress)
+		nodes.GET("/:id/drain-plan", nodeHandler.DrainPlan)
+		nodes.GET("/:id/removal-check", nodeHandler.RemovalCheck)
 		nodes.POST("/:id/preimport", nodeHandler.PreImport)
 		nodes.POST("/:id/import", nodeHandler.ConfirmImport)
 		nodes.POST("/:id/add", nodeHandler.AddNode)

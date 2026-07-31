@@ -42,8 +42,8 @@
               <td>{{ node.memory_mb ? (node.memory_mb / 1024).toFixed(1) + 'G' : '-' }}</td>
               <td>
                 <div class="btn-group action-cell">
-                  <button class="btn btn-sm" @click="drainNode(node.name)">驱逐</button>
-                  <button class="btn btn-sm btn-danger" @click="confirmRemoveNode(node)">移出</button>
+                  <button class="btn btn-sm" :disabled="checkingNode === node.name" @click="openDrain(node)">{{ checkingNode === node.name ? '检查中...' : '驱逐' }}</button>
+                  <button class="btn btn-sm btn-danger" :disabled="checkingNode === node.name" @click="openRemove(node)">移出</button>
                 </div>
               </td>
             </tr>
@@ -55,10 +55,15 @@
     <div v-if="drainTarget" class="overlay" @click.self="drainTarget = null">
       <div class="modal">
         <h2 class="modal-title">驱逐节点</h2>
-        <p class="modal-copy">确定驱逐 <strong>{{ drainTarget.name }}</strong> 吗？</p>
+        <p class="modal-copy">节点会先停止接收新 Pod，再通过 Kubernetes Eviction API 迁移可安全中断的工作负载。</p>
+        <div class="drain-summary"><span>将迁移 {{ drainTarget.plan?.evictable?.length || 0 }} 个 Pod</span><span>跳过 {{ drainTarget.plan?.skipped?.length || 0 }} 个 Pod</span></div>
+        <div v-if="drainTarget.plan?.evictable?.length" class="drain-pods"><strong>将请求迁移</strong><small v-for="pod in drainTarget.plan.evictable" :key="pod.namespace + pod.name">{{ pod.namespace }}/{{ pod.name }}<template v-if="pod.owner_kind"> · {{ pod.owner_kind }}</template></small></div>
+        <div v-if="drainTarget.plan?.skipped?.length" class="drain-pods"><strong>不会迁移</strong><small v-for="pod in drainTarget.plan.skipped" :key="pod.namespace + pod.name">{{ pod.namespace }}/{{ pod.name }}: {{ pod.reason }}</small></div>
+        <div v-if="drainTarget.plan?.requires_empty_dir_confirmation?.length" class="drain-warning"><strong>本地临时数据</strong><small v-for="pod in drainTarget.plan.requires_empty_dir_confirmation" :key="pod.namespace + pod.name">{{ pod.namespace }}/{{ pod.name }}</small><label class="check-row"><input v-model="deleteEmptyDirData" type="checkbox" /> 允许删除 emptyDir 临时数据</label></div>
+        <div v-if="drainTarget.plan?.blocked?.length" class="drain-blockers"><strong>当前不能自动驱逐</strong><small v-for="pod in drainTarget.plan.blocked" :key="pod.namespace + pod.name">{{ pod.namespace }}/{{ pod.name }}: {{ pod.reason }}</small></div>
         <div class="modal-actions">
           <button class="btn" @click="drainTarget = null">取消</button>
-          <button class="btn btn-danger" @click="doDrain">确认驱逐</button>
+          <button class="btn btn-danger" :disabled="draining || hasDrainBlocker || needsEmptyDirConfirmation" @click="doDrain">{{ draining ? '驱逐中...' : '确认驱逐' }}</button>
         </div>
       </div>
     </div>
@@ -66,10 +71,11 @@
     <div v-if="removeTarget" class="overlay" @click.self="removeTarget = null">
       <div class="modal">
         <h2 class="modal-title">移出集群</h2>
-        <p class="modal-copy">确定将 <strong>{{ removeTarget.name }}</strong> 从集群中移出吗？</p>
+        <p class="modal-copy">移出仅删除 Kubernetes Node 记录。请先在宿主机停止 k3s 或 k3s-agent，并完成驱逐。</p>
+        <div v-if="removeTarget.check?.blockers?.length" class="drain-blockers"><strong>尚不能移出</strong><small v-for="(blocker, index) in removeTarget.check.blockers" :key="index">{{ blocker.namespace ? `${blocker.namespace}/${blocker.name}: ` : '' }}{{ blocker.reason }}</small></div>
         <div class="modal-actions">
           <button class="btn" @click="removeTarget = null">取消</button>
-          <button class="btn btn-danger" @click="doRemoveNode">确认移出</button>
+          <button class="btn btn-danger" :disabled="removing || !removeTarget.check?.can_remove" @click="doRemoveNode">{{ removing ? '移出中...' : '确认移出' }}</button>
         </div>
       </div>
     </div>
@@ -85,6 +91,10 @@ const servers = ref([])
 const error = ref('')
 const drainTarget = ref(null)
 const removeTarget = ref(null)
+const checkingNode = ref('')
+const deleteEmptyDirData = ref(false)
+const draining = ref(false)
+const removing = ref(false)
 
 const serverLookup = computed(() => servers.value)
 
@@ -116,34 +126,47 @@ function mappedServer(node) {
   })
 }
 
-function drainNode(name) {
-  drainTarget.value = nodes.value.find(node => node.name === name) || { name }
+const hasDrainBlocker = computed(() => (drainTarget.value?.plan?.blocked?.length || 0) > 0)
+const needsEmptyDirConfirmation = computed(() => (drainTarget.value?.plan?.requires_empty_dir_confirmation?.length || 0) > 0 && !deleteEmptyDirData.value)
+
+async function openDrain(node) {
+  checkingNode.value = node.name
+  error.value = ''
+  try {
+    const plan = await api.get(`/nodes/${node.name}/drain-plan`)
+    deleteEmptyDirData.value = false
+    drainTarget.value = { ...node, plan }
+  } catch (e) { error.value = e.message || '检查驱逐条件失败' } finally { checkingNode.value = '' }
 }
 
 async function doDrain() {
   if (!drainTarget.value) return
+  draining.value = true
   try {
-    await api.post(`/nodes/${drainTarget.value.name}/drain`)
+    const result = await api.post(`/nodes/${drainTarget.value.name}/drain`, { delete_empty_dir_data: deleteEmptyDirData.value })
     drainTarget.value = null
-    fetchData()
-  } catch (e) {
-    error.value = e.message || '驱逐失败'
-  }
+    await fetchData()
+    if (result.pending?.length) error.value = `有 ${result.pending.length} 个 Pod 受 PodDisruptionBudget 保护，稍后可再次执行驱逐`
+  } catch (e) { error.value = e.message || '驱逐失败' } finally { draining.value = false }
 }
 
-function confirmRemoveNode(node) {
-  removeTarget.value = node
+async function openRemove(node) {
+  checkingNode.value = node.name
+  error.value = ''
+  try {
+    const check = await api.get(`/nodes/${node.name}/removal-check`)
+    removeTarget.value = { ...node, check }
+  } catch (e) { error.value = e.message || '检查移出条件失败' } finally { checkingNode.value = '' }
 }
 
 async function doRemoveNode() {
   if (!removeTarget.value) return
+  removing.value = true
   try {
     await api.delete(`/nodes/${removeTarget.value.name}`)
     removeTarget.value = null
-    fetchData()
-  } catch (e) {
-    error.value = e.message || '移出失败'
-  }
+    await fetchData()
+  } catch (e) { error.value = e.message || '移出失败' } finally { removing.value = false }
 }
 </script>
 
@@ -154,4 +177,5 @@ async function doRemoveNode() {
   font-size: 13px;
   line-height: 1.6;
 }
+.modal-copy{margin:0;color:var(--text-secondary);font-size:13px;line-height:1.6}.drain-summary{display:flex;gap:8px;flex-wrap:wrap;margin-top:16px}.drain-summary span{padding:5px 7px;border-radius:var(--radius-control);background:var(--surface-subtle);color:var(--text-secondary);font-size:11px}.drain-pods,.drain-warning,.drain-blockers{display:grid;gap:6px;margin-top:16px;padding:10px;border-radius:var(--radius-control);font-size:12px}.drain-pods{max-height:132px;overflow:auto;background:var(--surface-subtle);color:var(--text-secondary)}.drain-warning{background:var(--warning-surface);color:var(--warning)}.drain-blockers{background:var(--danger-surface);color:var(--danger)}.drain-pods small,.drain-warning small,.drain-blockers small{overflow-wrap:anywhere}.check-row{display:flex;align-items:center;gap:8px;margin-top:4px;color:var(--text-primary);font-size:12px}
 </style>

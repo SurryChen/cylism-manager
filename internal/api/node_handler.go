@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/store"
-	"github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/gin-gonic/gin"
 )
 
@@ -17,6 +17,10 @@ import (
 type NodeHandler struct {
 	store  *store.Store
 	encKey []byte
+}
+
+type drainNodeRequest struct {
+	DeleteEmptyDirData bool `json:"delete_empty_dir_data"`
 }
 
 // NewNodeHandler 创建 NodeHandler
@@ -49,18 +53,54 @@ func (h *NodeHandler) AddNode(c *gin.Context) {
 	model.SuccessWithMessage(c, gin.H{"server": server.Name}, "加入集群 - SSH 集成待实现")
 }
 
-// DrainNode 驱逐节点
+// DrainPlan previews affected Pods before an operator cordons a node.
+func (h *NodeHandler) DrainPlan(c *gin.Context) {
+	if K8s == nil {
+		k8sUnavailable(c)
+		return
+	}
+	plan, err := K8s.DrainPlan(c.Param("id"))
+	if err != nil {
+		model.Error(c, http.StatusInternalServerError, model.CodeK8sAPIError, err.Error())
+		return
+	}
+	model.Success(c, plan)
+}
+
+// DrainNode cordons the node and sends PDB-aware eviction requests.
 func (h *NodeHandler) DrainNode(c *gin.Context) {
 	if K8s == nil {
 		k8sUnavailable(c)
 		return
 	}
-	id := c.Param("id")
-	if err := K8s.DrainNode(id); err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, err.Error())
+	var request drainNodeRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "驱逐选项无效")
 		return
 	}
-	model.SuccessWithMessage(c, nil, "驱逐成功")
+	result, err := K8s.DrainNode(c.Param("id"), k8s.DrainOptions{DeleteEmptyDirData: request.DeleteEmptyDirData})
+	if err != nil {
+		model.ErrorWithData(c, http.StatusConflict, model.CodeConflict, err.Error(), result)
+		return
+	}
+	message := "驱逐请求已提交"
+	if len(result.Pending) > 0 {
+		message = "部分 Pod 暂未迁移，请等待 PodDisruptionBudget 放行后重试"
+	}
+	model.SuccessWithMessage(c, result, message)
+}
+
+func (h *NodeHandler) RemovalCheck(c *gin.Context) {
+	if K8s == nil {
+		k8sUnavailable(c)
+		return
+	}
+	check, err := K8s.NodeRemovalCheck(c.Param("id"))
+	if err != nil {
+		model.Error(c, http.StatusInternalServerError, model.CodeK8sAPIError, err.Error())
+		return
+	}
+	model.Success(c, check)
 }
 
 // RemoveNode 从集群移除节点
@@ -69,14 +109,12 @@ func (h *NodeHandler) RemoveNode(c *gin.Context) {
 		k8sUnavailable(c)
 		return
 	}
-	id := c.Param("id")
-	if err := K8s.DeleteNode(id); err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, err.Error())
+	if err := K8s.DeleteNode(c.Param("id")); err != nil {
+		model.Error(c, http.StatusConflict, model.CodeConflict, err.Error())
 		return
 	}
 	model.SuccessWithMessage(c, nil, "移除成功")
 }
-
 
 // JoinProgress WebSocket 加入集群进度 /api/nodes/:id/join-progress
 func (h *NodeHandler) JoinProgress(c *gin.Context) {
@@ -102,7 +140,7 @@ func (h *NodeHandler) JoinProgress(c *gin.Context) {
 	go func() {
 		defer conn.Close()
 
-			host := server.Host
+		host := server.Host
 
 		total := 12
 		idx := 0
@@ -197,7 +235,6 @@ func (h *NodeHandler) JoinProgress(c *gin.Context) {
 		}
 		send("register_tailscale", "注册 Tailscale", wsStatusSuccess, "已注册")
 
-
 		// Phase 3: k3s agent
 		encToken, _ := h.store.GetSystemConfig("k3s_join_token")
 		var controlTSIP string
@@ -272,6 +309,7 @@ func (h *NodeHandler) JoinProgress(c *gin.Context) {
 func shellEscape(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }
+
 // cleanHostname extracts the first non-empty line from SSH combined output,
 // stripping stderr noise like known_hosts warnings.
 func cleanHostname(raw string) string {
