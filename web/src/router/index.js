@@ -21,6 +21,7 @@ import ImageRegistries from '../views/ImageRegistries.vue'
 import Domains from '../views/Domains.vue'
 import NodeRegistryMirrors from '../views/NodeRegistryMirrors.vue'
 import ChartRepositories from '../views/ChartRepositories.vue'
+import Monitoring from '../views/Monitoring.vue'
 
 const routes = [
   { path: '/login', component: Login, meta: { public: true } },
@@ -38,6 +39,7 @@ const routes = [
   { path: '/cluster', component: Cluster },
   { path: '/cluster/registry-mirrors', component: NodeRegistryMirrors },
   { path: '/cluster/chart-repositories', component: ChartRepositories },
+  { path: '/monitoring', component: Monitoring },
   { path: '/workloads', component: Workloads },
   { path: '/services', component: Services },
   { path: '/routes', component: Sites },

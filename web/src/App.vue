@@ -93,7 +93,7 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Boxes, Check, FileText, FolderKanban, Globe, History, LayoutDashboard, Layers3, LogOut, Menu, Orbit, PackagePlus, Palette, Route, Server, Settings, ShieldCheck, Waypoints, X } from 'lucide-vue-next'
+import { Activity, Boxes, Check, FileText, FolderKanban, Globe, History, LayoutDashboard, Layers3, LogOut, Menu, Orbit, PackagePlus, Palette, Route, Server, Settings, ShieldCheck, Waypoints, X } from 'lucide-vue-next'
 import { clearTokens } from './api/index.js'
 import { usePalette } from './composables/usePalette.js'
 
@@ -137,6 +137,7 @@ const navGroups = computed(() => [
       { label: '集群节点', to: '/cluster', icon: Waypoints },
       { label: '节点镜像源', to: '/cluster/registry-mirrors', icon: Boxes },
       { label: 'Chart 仓库', to: '/cluster/chart-repositories', icon: Layers3 },
+      { label: '监控', to: '/monitoring', icon: Activity },
       { label: '工作负载', to: '/workloads', icon: Globe },
       { label: '服务', to: '/services', icon: Boxes },
       { label: '配置', to: '/configs', icon: Settings },

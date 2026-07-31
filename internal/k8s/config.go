@@ -10,7 +10,7 @@ import (
 
 // WorkloadRef 工作负载引用
 type WorkloadRef struct {
-	Kind    string `json:"kind"`     // Deployment / StatefulSet / DaemonSet
+	Kind    string `json:"kind"` // Deployment / StatefulSet / DaemonSet
 	Name    string `json:"name"`
 	RefType string `json:"ref_type"` // volume / env / envFrom
 }
@@ -69,6 +69,7 @@ func (c *Client) ListConfigMaps(ns string) ([]ConfigMapInfo, error) {
 	}
 
 	result := make([]ConfigMapInfo, 0, len(list.Items))
+	refsByResource := c.buildConfigReferenceIndex(referenceNamespacesFromConfigMaps(list.Items), "ConfigMap")
 	for _, cm := range list.Items {
 		keys := make([]string, 0, len(cm.Data))
 		for k := range cm.Data {
@@ -79,7 +80,7 @@ func (c *Client) ListConfigMaps(ns string) ([]ConfigMapInfo, error) {
 			Namespace: cm.Namespace,
 			Keys:      keys,
 			KeysCount: len(cm.Data),
-			UsedBy:    c.findConfigRefs(cm.Namespace, cm.Name, "ConfigMap"),
+			UsedBy:    refsByResource[configReferenceKey{Namespace: cm.Namespace, Name: cm.Name}],
 			Age:       timeAgo(cm.CreationTimestamp.Time),
 		})
 	}
@@ -115,6 +116,7 @@ func (c *Client) ListSecrets(ns string) ([]SecretInfo, error) {
 	}
 
 	result := make([]SecretInfo, 0, len(list.Items))
+	refsByResource := c.buildConfigReferenceIndex(referenceNamespacesFromSecrets(list.Items), "Secret")
 	for _, s := range list.Items {
 		keys := make([]string, 0, len(s.Data))
 		for k := range s.Data {
@@ -126,11 +128,104 @@ func (c *Client) ListSecrets(ns string) ([]SecretInfo, error) {
 			Type:      string(s.Type),
 			Keys:      keys,
 			KeysCount: len(s.Data),
-			UsedBy:    c.findConfigRefs(s.Namespace, s.Name, "Secret"),
+			UsedBy:    refsByResource[configReferenceKey{Namespace: s.Namespace, Name: s.Name}],
 			Age:       timeAgo(s.CreationTimestamp.Time),
 		})
 	}
 	return result, nil
+}
+
+type configReferenceKey struct {
+	Namespace string
+	Name      string
+}
+
+func referenceNamespacesFromConfigMaps(items []corev1.ConfigMap) []string {
+	namespaces := make([]string, 0, len(items))
+	seen := make(map[string]struct{}, len(items))
+	for _, item := range items {
+		if _, exists := seen[item.Namespace]; exists {
+			continue
+		}
+		seen[item.Namespace] = struct{}{}
+		namespaces = append(namespaces, item.Namespace)
+	}
+	return namespaces
+}
+
+func referenceNamespacesFromSecrets(items []corev1.Secret) []string {
+	namespaces := make([]string, 0, len(items))
+	seen := make(map[string]struct{}, len(items))
+	for _, item := range items {
+		if _, exists := seen[item.Namespace]; exists {
+			continue
+		}
+		seen[item.Namespace] = struct{}{}
+		namespaces = append(namespaces, item.Namespace)
+	}
+	return namespaces
+}
+
+// buildConfigReferenceIndex scans each workload type once per namespace instead of once per resource.
+func (c *Client) buildConfigReferenceIndex(namespaces []string, kind string) map[configReferenceKey][]WorkloadRef {
+	refsByResource := make(map[configReferenceKey][]WorkloadRef)
+	for _, namespace := range namespaces {
+		if deploys, err := c.Clientset.AppsV1().Deployments(namespace).List(c.ctx, metav1.ListOptions{}); err == nil {
+			for _, deployment := range deploys.Items {
+				indexWorkloadConfigRefs(deployment.Namespace, deployment.Name, "Deployment", deployment.Spec.Template.Spec, kind, refsByResource)
+			}
+		}
+		if statefulSets, err := c.Clientset.AppsV1().StatefulSets(namespace).List(c.ctx, metav1.ListOptions{}); err == nil {
+			for _, statefulSet := range statefulSets.Items {
+				indexWorkloadConfigRefs(statefulSet.Namespace, statefulSet.Name, "StatefulSet", statefulSet.Spec.Template.Spec, kind, refsByResource)
+			}
+		}
+		if daemonSets, err := c.Clientset.AppsV1().DaemonSets(namespace).List(c.ctx, metav1.ListOptions{}); err == nil {
+			for _, daemonSet := range daemonSets.Items {
+				indexWorkloadConfigRefs(daemonSet.Namespace, daemonSet.Name, "DaemonSet", daemonSet.Spec.Template.Spec, kind, refsByResource)
+			}
+		}
+	}
+	return refsByResource
+}
+
+func indexWorkloadConfigRefs(namespace, workloadName, workloadKind string, spec corev1.PodSpec, kind string, refsByResource map[configReferenceKey][]WorkloadRef) {
+	appendRef := func(name, refType string) {
+		if name == "" {
+			return
+		}
+		key := configReferenceKey{Namespace: namespace, Name: name}
+		refsByResource[key] = append(refsByResource[key], WorkloadRef{Kind: workloadKind, Name: workloadName, RefType: refType})
+	}
+	for _, container := range spec.Containers {
+		for _, envFrom := range container.EnvFrom {
+			if kind == "ConfigMap" && envFrom.ConfigMapRef != nil {
+				appendRef(envFrom.ConfigMapRef.Name, "envFrom")
+			}
+			if kind == "Secret" && envFrom.SecretRef != nil {
+				appendRef(envFrom.SecretRef.Name, "envFrom")
+			}
+		}
+		for _, env := range container.Env {
+			if env.ValueFrom == nil {
+				continue
+			}
+			if kind == "ConfigMap" && env.ValueFrom.ConfigMapKeyRef != nil {
+				appendRef(env.ValueFrom.ConfigMapKeyRef.Name, "env")
+			}
+			if kind == "Secret" && env.ValueFrom.SecretKeyRef != nil {
+				appendRef(env.ValueFrom.SecretKeyRef.Name, "env")
+			}
+		}
+	}
+	for _, volume := range spec.Volumes {
+		if kind == "ConfigMap" && volume.ConfigMap != nil {
+			appendRef(volume.ConfigMap.Name, "volume")
+		}
+		if kind == "Secret" && volume.Secret != nil {
+			appendRef(volume.Secret.SecretName, "volume")
+		}
+	}
 }
 
 // GetSecret 获取 Secret 详情（含 base64 value）
