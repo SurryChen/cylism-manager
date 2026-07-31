@@ -101,6 +101,15 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 		chartRepositories.DELETE("/:id", h.Delete)
 		chartRepositories.POST("/:id/verify", h.Verify)
 	}
+	monitoring := apiGroup.Group("/monitoring")
+	{
+		h := NewMonitoringHandler()
+		monitoring.GET("/status", h.Status)
+		monitoring.POST("/install", h.Install)
+		monitoring.DELETE("", h.Uninstall)
+		monitoring.GET("/query", h.Query)
+		monitoring.GET("/targets", h.Targets)
+	}
 	domainHandler := NewDomainHandler(s)
 	domains := apiGroup.Group("/domains")
 	{
