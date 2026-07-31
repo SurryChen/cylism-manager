@@ -13,17 +13,28 @@ import (
 
 const mirrorPodAnnotation = "kubernetes.io/config.mirror"
 
+const (
+	nodeFailureThreshold = 5 * time.Minute
+
+	NodeHealthReady    = "ready"
+	NodeHealthNotReady = "not_ready"
+	NodeHealthFailed   = "failed"
+)
+
 // NodeInfo is the node summary shown in the cluster console.
 type NodeInfo struct {
-	Name       string `json:"name"`
-	Ready      bool   `json:"ready"`
-	Roles      string `json:"roles"`
-	Version    string `json:"version"`
-	InternalIP string `json:"internal_ip"`
-	OS         string `json:"os"`
-	CPUCores   int64  `json:"cpu_cores"`
-	MemoryMB   int64  `json:"memory_mb"`
-	CreatedAt  string `json:"created_at"`
+	Name            string `json:"name"`
+	Ready           bool   `json:"ready"`
+	Roles           string `json:"roles"`
+	Version         string `json:"version"`
+	InternalIP      string `json:"internal_ip"`
+	OS              string `json:"os"`
+	CPUCores        int64  `json:"cpu_cores"`
+	MemoryMB        int64  `json:"memory_mb"`
+	CreatedAt       string `json:"created_at"`
+	HealthState     string `json:"health_state"`
+	HealthReason    string `json:"health_reason,omitempty"`
+	LastHeartbeatAt string `json:"last_heartbeat_at,omitempty"`
 }
 
 // DrainPod describes a Pod affected by a drain preflight or execution.
@@ -49,12 +60,25 @@ type DrainOptions struct {
 	DeleteEmptyDirData bool `json:"delete_empty_dir_data"`
 }
 
+// ForceDrainOptions requires explicit acknowledgement before bypassing PDBs on
+// a worker that Kubernetes has already classified as failed.
+type ForceDrainOptions struct {
+	DeleteEmptyDirData bool   `json:"delete_empty_dir_data"`
+	AcknowledgeRisk    bool   `json:"acknowledge_risk"`
+	ConfirmNodeName    string `json:"confirm_node_name"`
+}
+
 // DrainResult reports each eviction request. Pending entries were protected by a PDB
 // or failed to be submitted and are deliberately left running on the source node.
 type DrainResult struct {
 	Plan    *DrainPlan `json:"plan"`
 	Evicted []DrainPod `json:"evicted"`
 	Pending []DrainPod `json:"pending"`
+	Forced  bool       `json:"forced,omitempty"`
+	Deleted []DrainPod `json:"deleted,omitempty"`
+	Failed  []DrainPod `json:"failed,omitempty"`
+	Blocked []DrainPod `json:"blocked,omitempty"`
+	Skipped []DrainPod `json:"skipped,omitempty"`
 }
 
 // NodeRemovalCheck explains whether deleting the Kubernetes Node object is safe.
@@ -157,12 +181,59 @@ func (c *Client) DrainNode(name string, options DrainOptions) (*DrainResult, err
 			result.Evicted = append(result.Evicted, item)
 			continue
 		}
-		if apierrors.IsTooManyRequests(err) {
+		if isPDBViolation(err) {
 			item.Reason = "PodDisruptionBudget 暂不允许驱逐: " + strings.TrimSpace(err.Error())
 		} else {
 			item.Reason = "提交驱逐请求失败: " + strings.TrimSpace(err.Error())
 		}
 		result.Pending = append(result.Pending, item)
+	}
+	return result, nil
+}
+
+// ForceDrainNode performs failure recovery for a confirmed failed worker. It
+// directly deletes only controller-managed Pods, so Kubernetes recreates them
+// on healthy nodes without waiting for a PDB that cannot be satisfied by a
+// permanently unavailable source node.
+func (c *Client) ForceDrainNode(name string, options ForceDrainOptions) (*DrainResult, error) {
+	if !options.AcknowledgeRisk || options.ConfirmNodeName != name {
+		return nil, fmt.Errorf("必须确认绕过 PodDisruptionBudget 并输入目标节点名")
+	}
+	node, err := c.Clientset.CoreV1().Nodes().Get(c.Ctx(), name, metav1.GetOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("读取节点失败: %w", err)
+	}
+	if isControlPlaneNode(node) {
+		return nil, fmt.Errorf("control-plane 节点不支持强制驱逐")
+	}
+	if nodeHealth(node, time.Now()).State != NodeHealthFailed {
+		return nil, fmt.Errorf("节点尚未被判定为故障，不能绕过 PodDisruptionBudget")
+	}
+	plan, err := c.DrainPlan(name)
+	if err != nil {
+		return nil, err
+	}
+	result := &DrainResult{Plan: plan, Forced: true, Blocked: plan.Blocked, Skipped: plan.Skipped}
+	if len(plan.RequiresEmptyDirConfirmation) > 0 && !options.DeleteEmptyDirData {
+		return result, fmt.Errorf("存在包含 emptyDir 的 Pod，需要确认允许丢弃本地临时数据")
+	}
+	if !node.Spec.Unschedulable {
+		node.Spec.Unschedulable = true
+		if _, err := c.Clientset.CoreV1().Nodes().Update(c.Ctx(), node, metav1.UpdateOptions{}); err != nil {
+			return result, fmt.Errorf("标记节点不可调度失败: %w", err)
+		}
+	}
+
+	gracePeriodSeconds := int64(0)
+	candidates := append(append([]DrainPod{}, plan.Evictable...), plan.RequiresEmptyDirConfirmation...)
+	for _, item := range candidates {
+		if err := c.Clientset.CoreV1().Pods(item.Namespace).Delete(c.Ctx(), item.Name, metav1.DeleteOptions{GracePeriodSeconds: &gracePeriodSeconds}); err != nil {
+			item.Reason = "强制删除请求失败: " + strings.TrimSpace(err.Error())
+			result.Failed = append(result.Failed, item)
+			continue
+		}
+		item.Reason = "已提交强制删除，控制器将在健康节点重建"
+		result.Deleted = append(result.Deleted, item)
 	}
 	return result, nil
 }
@@ -223,6 +294,20 @@ func isDaemonSetPod(pod *corev1.Pod) bool {
 	return false
 }
 
+func isControlPlaneNode(node *corev1.Node) bool {
+	_, controlPlane := node.Labels["node-role.kubernetes.io/control-plane"]
+	_, master := node.Labels["node-role.kubernetes.io/master"]
+	return controlPlane || master
+}
+
+func isPDBViolation(err error) bool {
+	if !apierrors.IsTooManyRequests(err) {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "disruption budget") || strings.Contains(message, "poddisruptionbudget")
+}
+
 func podUsesEmptyDir(pod *corev1.Pod) bool {
 	for _, volume := range pod.Spec.Volumes {
 		if volume.EmptyDir != nil {
@@ -234,14 +319,12 @@ func podUsesEmptyDir(pod *corev1.Pod) bool {
 
 func nodeToInfo(node *corev1.Node) NodeInfo {
 	info := NodeInfo{Name: node.Name, Version: node.Status.NodeInfo.KubeletVersion, CreatedAt: node.CreationTimestamp.Format(time.RFC3339), OS: node.Status.NodeInfo.OSImage}
-	for _, cond := range node.Status.Conditions {
-		if cond.Type == corev1.NodeReady && cond.Status == corev1.ConditionTrue {
-			info.Ready = true
-		}
-	}
-	if _, ok := node.Labels["node-role.kubernetes.io/control-plane"]; ok {
-		info.Roles = "control-plane"
-	} else if _, ok := node.Labels["node-role.kubernetes.io/master"]; ok {
+	health := nodeHealth(node, time.Now())
+	info.Ready = health.State == NodeHealthReady
+	info.HealthState = health.State
+	info.HealthReason = health.Reason
+	info.LastHeartbeatAt = health.LastHeartbeatAt
+	if isControlPlaneNode(node) {
 		info.Roles = "control-plane"
 	} else {
 		info.Roles = "worker"
@@ -255,4 +338,41 @@ func nodeToInfo(node *corev1.Node) NodeInfo {
 	info.CPUCores = node.Status.Capacity.Cpu().Value()
 	info.MemoryMB = node.Status.Capacity.Memory().Value() / (1024 * 1024)
 	return info
+}
+
+type nodeHealthInfo struct {
+	State           string
+	Reason          string
+	LastHeartbeatAt string
+}
+
+func nodeHealth(node *corev1.Node, now time.Time) nodeHealthInfo {
+	for index := range node.Status.Conditions {
+		condition := &node.Status.Conditions[index]
+		if condition.Type != corev1.NodeReady {
+			continue
+		}
+		result := nodeHealthInfo{Reason: condition.Reason}
+		heartbeat := condition.LastHeartbeatTime
+		if heartbeat.IsZero() {
+			heartbeat = condition.LastTransitionTime
+		}
+		if !heartbeat.IsZero() {
+			result.LastHeartbeatAt = heartbeat.UTC().Format(time.RFC3339)
+		}
+		switch condition.Status {
+		case corev1.ConditionTrue:
+			result.State = NodeHealthReady
+		case corev1.ConditionUnknown:
+			if !heartbeat.IsZero() && now.Sub(heartbeat.Time) > nodeFailureThreshold {
+				result.State = NodeHealthFailed
+			} else {
+				result.State = NodeHealthNotReady
+			}
+		default:
+			result.State = NodeHealthNotReady
+		}
+		return result
+	}
+	return nodeHealthInfo{State: NodeHealthNotReady, Reason: "未报告 Ready 状态"}
 }

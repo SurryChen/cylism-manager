@@ -23,6 +23,12 @@ type drainNodeRequest struct {
 	DeleteEmptyDirData bool `json:"delete_empty_dir_data"`
 }
 
+type forceDrainNodeRequest struct {
+	DeleteEmptyDirData bool   `json:"delete_empty_dir_data"`
+	AcknowledgeRisk    bool   `json:"acknowledge_risk"`
+	ConfirmNodeName    string `json:"confirm_node_name"`
+}
+
 // NewNodeHandler 创建 NodeHandler
 func NewNodeHandler(s *store.Store, encKey []byte) *NodeHandler {
 	return &NodeHandler{store: s, encKey: encKey}
@@ -85,9 +91,37 @@ func (h *NodeHandler) DrainNode(c *gin.Context) {
 	}
 	message := "驱逐请求已提交"
 	if len(result.Pending) > 0 {
-		message = "部分 Pod 暂未迁移，请等待 PodDisruptionBudget 放行后重试"
+		message = "部分 Pod 暂未迁移，请查看逐 Pod 原因后重试"
 	}
 	model.SuccessWithMessage(c, result, message)
+}
+
+// ForceDrainNode handles confirmed failure recovery. The K8s layer permits it
+// only for failed worker nodes and never deletes unmanaged Pods.
+func (h *NodeHandler) ForceDrainNode(c *gin.Context) {
+	if K8s == nil {
+		k8sUnavailable(c)
+		return
+	}
+	var request forceDrainNodeRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "强制驱逐选项无效")
+		return
+	}
+	if !request.AcknowledgeRisk || strings.TrimSpace(request.ConfirmNodeName) != c.Param("id") {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "请确认风险并输入目标节点名")
+		return
+	}
+	result, err := K8s.ForceDrainNode(c.Param("id"), k8s.ForceDrainOptions{
+		DeleteEmptyDirData: request.DeleteEmptyDirData,
+		AcknowledgeRisk:    request.AcknowledgeRisk,
+		ConfirmNodeName:    strings.TrimSpace(request.ConfirmNodeName),
+	})
+	if err != nil {
+		model.ErrorWithData(c, http.StatusConflict, model.CodeConflict, err.Error(), result)
+		return
+	}
+	model.SuccessWithMessage(c, result, "故障节点强制驱逐请求已提交")
 }
 
 func (h *NodeHandler) RemovalCheck(c *gin.Context) {

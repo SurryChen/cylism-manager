@@ -27,8 +27,8 @@
             <tr v-for="node in nodes" :key="node.name">
               <td class="cell-primary">{{ node.name }}</td>
               <td>
-                <span class="badge" :class="node.ready ? 'badge-online' : 'badge-offline'">
-                  {{ node.ready ? '就绪' : '未就绪' }}
+                <span class="badge" :class="nodeHealthClass(node)">
+                  {{ nodeHealthLabel(node) }}
                 </span>
               </td>
               <td>{{ node.roles || '-' }}</td>
@@ -43,6 +43,7 @@
               <td>
                 <div class="btn-group action-cell">
                   <button class="btn btn-sm" :disabled="checkingNode === node.name" @click="openDrain(node)">{{ checkingNode === node.name ? '检查中...' : '驱逐' }}</button>
+                  <button v-if="canForceDrain(node)" class="btn btn-sm btn-danger" :data-testid="`force-drain-${node.name}`" :disabled="checkingNode === node.name" @click="openForceDrain(node)">强制驱逐</button>
                   <button class="btn btn-sm btn-danger" :disabled="checkingNode === node.name" @click="openRemove(node)">移出</button>
                 </div>
               </td>
@@ -65,6 +66,34 @@
           <button class="btn" @click="drainTarget = null">取消</button>
           <button class="btn btn-danger" :disabled="draining || hasDrainBlocker || needsEmptyDirConfirmation" @click="doDrain">{{ draining ? '驱逐中...' : '确认驱逐' }}</button>
         </div>
+      </div>
+    </div>
+
+    <div v-if="forceDrainTarget" class="overlay" @click.self="closeForceDrain">
+      <div class="modal force-drain-modal">
+        <h2 class="modal-title">故障节点强制驱逐</h2>
+        <p class="modal-copy">此节点已超过 5 分钟未上报状态。强制驱逐会绕过 PodDisruptionBudget，直接删除可由控制器重建的 Pod。</p>
+        <div v-if="forceDrainTarget.plan?.evictable?.length" class="drain-pods"><strong>将强制删除并重建</strong><small v-for="pod in forceDrainTarget.plan.evictable" :key="pod.namespace + pod.name">{{ pod.namespace }}/{{ pod.name }}<template v-if="pod.owner_kind"> · {{ pod.owner_kind }}</template></small></div>
+        <div v-if="forceDrainTarget.plan?.skipped?.length" class="drain-pods"><strong>不会处理</strong><small v-for="pod in forceDrainTarget.plan.skipped" :key="pod.namespace + pod.name">{{ pod.namespace }}/{{ pod.name }}: {{ pod.reason }}</small></div>
+        <div v-if="forceDrainTarget.plan?.blocked?.length" class="drain-blockers"><strong>不会删除无控制器 Pod</strong><small v-for="pod in forceDrainTarget.plan.blocked" :key="pod.namespace + pod.name">{{ pod.namespace }}/{{ pod.name }}: {{ pod.reason }}</small></div>
+        <div v-if="forceDrainTarget.plan?.requires_empty_dir_confirmation?.length" class="drain-warning"><strong>本地临时数据</strong><small v-for="pod in forceDrainTarget.plan.requires_empty_dir_confirmation" :key="pod.namespace + pod.name">{{ pod.namespace }}/{{ pod.name }}</small><label class="check-row"><input v-model="forceDeleteEmptyDirData" type="checkbox" /> 允许删除 emptyDir 临时数据</label></div>
+        <label class="check-row force-ack"><input v-model="forceAcknowledged" data-testid="force-drain-acknowledge" type="checkbox" /> 我理解此操作会绕过 PodDisruptionBudget</label>
+        <div class="form-group compact-field"><label class="form-label">输入节点名确认</label><input v-model.trim="forceConfirmNodeName" class="form-input" data-testid="force-drain-node-name" :placeholder="forceDrainTarget.name" /></div>
+        <div class="modal-actions"><button class="btn" :disabled="forceDraining" @click="closeForceDrain">取消</button><button class="btn btn-danger" data-testid="submit-force-drain" :disabled="!canSubmitForceDrain" @click="doForceDrain">{{ forceDraining ? '强制驱逐中...' : '确认强制驱逐' }}</button></div>
+      </div>
+    </div>
+
+    <div v-if="drainResult" class="overlay" @click.self="drainResult = null">
+      <div class="modal result-modal">
+        <h2 class="modal-title">{{ drainResult.forced ? '强制驱逐结果' : '驱逐结果' }}</h2>
+        <p class="modal-copy">{{ drainResult.forced ? '已提交的删除请求会由控制器在健康节点重建 Pod。' : '已提交的迁移请求会由 Kubernetes 按工作负载策略处理。' }}</p>
+        <div v-if="drainResult.evicted?.length" class="drain-pods"><strong>已提交迁移</strong><small v-for="pod in drainResult.evicted" :key="pod.namespace + pod.name">{{ pod.namespace }}/{{ pod.name }}</small></div>
+        <div v-if="drainResult.deleted?.length" class="drain-pods"><strong>已提交强制删除</strong><small v-for="pod in drainResult.deleted" :key="pod.namespace + pod.name">{{ pod.namespace }}/{{ pod.name }}: {{ pod.reason }}</small></div>
+        <div v-if="drainResult.pending?.length" class="drain-blockers"><strong>尚未迁移</strong><small v-for="pod in drainResult.pending" :key="pod.namespace + pod.name">{{ pod.namespace }}/{{ pod.name }}: {{ pod.reason }}</small></div>
+        <div v-if="drainResult.failed?.length" class="drain-blockers"><strong>删除失败</strong><small v-for="pod in drainResult.failed" :key="pod.namespace + pod.name">{{ pod.namespace }}/{{ pod.name }}: {{ pod.reason }}</small></div>
+        <div v-if="drainResult.blocked?.length" class="drain-blockers"><strong>未删除</strong><small v-for="pod in drainResult.blocked" :key="pod.namespace + pod.name">{{ pod.namespace }}/{{ pod.name }}: {{ pod.reason }}</small></div>
+        <div v-if="drainResult.skipped?.length" class="drain-pods"><strong>已跳过</strong><small v-for="pod in drainResult.skipped" :key="pod.namespace + pod.name">{{ pod.namespace }}/{{ pod.name }}: {{ pod.reason }}</small></div>
+        <div class="modal-actions"><button class="btn btn-primary" @click="drainResult = null">完成</button></div>
       </div>
     </div>
 
@@ -95,6 +124,12 @@ const checkingNode = ref('')
 const deleteEmptyDirData = ref(false)
 const draining = ref(false)
 const removing = ref(false)
+const forceDrainTarget = ref(null)
+const forceAcknowledged = ref(false)
+const forceConfirmNodeName = ref('')
+const forceDeleteEmptyDirData = ref(false)
+const forceDraining = ref(false)
+const drainResult = ref(null)
 
 const serverLookup = computed(() => servers.value)
 
@@ -126,8 +161,23 @@ function mappedServer(node) {
   })
 }
 
+function nodeHealthLabel(node) {
+  return { ready: '就绪', not_ready: '未就绪', failed: '故障' }[node.health_state] || (node.ready ? '就绪' : '未就绪')
+}
+
+function nodeHealthClass(node) {
+  if (node.health_state === 'failed') return 'badge-danger'
+  return node.ready ? 'badge-online' : 'badge-offline'
+}
+
+function canForceDrain(node) {
+  return node.health_state === 'failed' && node.roles === 'worker'
+}
+
 const hasDrainBlocker = computed(() => (drainTarget.value?.plan?.blocked?.length || 0) > 0)
 const needsEmptyDirConfirmation = computed(() => (drainTarget.value?.plan?.requires_empty_dir_confirmation?.length || 0) > 0 && !deleteEmptyDirData.value)
+const needsForceEmptyDirConfirmation = computed(() => (forceDrainTarget.value?.plan?.requires_empty_dir_confirmation?.length || 0) > 0 && !forceDeleteEmptyDirData.value)
+const canSubmitForceDrain = computed(() => Boolean(forceDrainTarget.value) && forceAcknowledged.value && forceConfirmNodeName.value === forceDrainTarget.value.name && !needsForceEmptyDirConfirmation.value && !forceDraining.value)
 
 async function openDrain(node) {
   checkingNode.value = node.name
@@ -145,9 +195,42 @@ async function doDrain() {
   try {
     const result = await api.post(`/nodes/${drainTarget.value.name}/drain`, { delete_empty_dir_data: deleteEmptyDirData.value })
     drainTarget.value = null
+    drainResult.value = result
     await fetchData()
-    if (result.pending?.length) error.value = `有 ${result.pending.length} 个 Pod 受 PodDisruptionBudget 保护，稍后可再次执行驱逐`
   } catch (e) { error.value = e.message || '驱逐失败' } finally { draining.value = false }
+}
+
+async function openForceDrain(node) {
+  checkingNode.value = node.name
+  error.value = ''
+  try {
+    const plan = await api.get(`/nodes/${node.name}/drain-plan`)
+    forceAcknowledged.value = false
+    forceConfirmNodeName.value = ''
+    forceDeleteEmptyDirData.value = false
+    forceDrainTarget.value = { ...node, plan }
+  } catch (e) { error.value = e.message || '检查故障节点驱逐条件失败' } finally { checkingNode.value = '' }
+}
+
+function closeForceDrain() {
+  if (forceDraining.value) return
+  forceDrainTarget.value = null
+}
+
+async function doForceDrain() {
+  if (!canSubmitForceDrain.value || !forceDrainTarget.value) return
+  forceDraining.value = true
+  error.value = ''
+  try {
+    const result = await api.post(`/nodes/${forceDrainTarget.value.name}/force-drain`, {
+      acknowledge_risk: true,
+      confirm_node_name: forceConfirmNodeName.value,
+      delete_empty_dir_data: forceDeleteEmptyDirData.value,
+    })
+    forceDrainTarget.value = null
+    drainResult.value = result
+    await fetchData()
+  } catch (e) { error.value = e.message || '故障节点强制驱逐失败' } finally { forceDraining.value = false }
 }
 
 async function openRemove(node) {
@@ -177,5 +260,5 @@ async function doRemoveNode() {
   font-size: 13px;
   line-height: 1.6;
 }
-.modal-copy{margin:0;color:var(--text-secondary);font-size:13px;line-height:1.6}.drain-summary{display:flex;gap:8px;flex-wrap:wrap;margin-top:16px}.drain-summary span{padding:5px 7px;border-radius:var(--radius-control);background:var(--surface-subtle);color:var(--text-secondary);font-size:11px}.drain-pods,.drain-warning,.drain-blockers{display:grid;gap:6px;margin-top:16px;padding:10px;border-radius:var(--radius-control);font-size:12px}.drain-pods{max-height:132px;overflow:auto;background:var(--surface-subtle);color:var(--text-secondary)}.drain-warning{background:var(--warning-surface);color:var(--warning)}.drain-blockers{background:var(--danger-surface);color:var(--danger)}.drain-pods small,.drain-warning small,.drain-blockers small{overflow-wrap:anywhere}.check-row{display:flex;align-items:center;gap:8px;margin-top:4px;color:var(--text-primary);font-size:12px}
+.modal-copy{margin:0;color:var(--text-secondary);font-size:13px;line-height:1.6}.drain-summary{display:flex;gap:8px;flex-wrap:wrap;margin-top:16px}.drain-summary span{padding:5px 7px;border-radius:var(--radius-control);background:var(--surface-subtle);color:var(--text-secondary);font-size:11px}.drain-pods,.drain-warning,.drain-blockers{display:grid;gap:6px;margin-top:16px;padding:10px;border-radius:var(--radius-control);font-size:12px}.drain-pods{max-height:132px;overflow:auto;background:var(--surface-subtle);color:var(--text-secondary)}.drain-warning{background:var(--warning-surface);color:var(--warning)}.drain-blockers{background:var(--danger-surface);color:var(--danger)}.drain-pods small,.drain-warning small,.drain-blockers small{overflow-wrap:anywhere}.check-row{display:flex;align-items:center;gap:8px;margin-top:4px;color:var(--text-primary);font-size:12px}.force-drain-modal,.result-modal{width:min(580px,calc(100vw - 32px))}.force-ack{margin-top:16px}.compact-field{margin-top:16px}
 </style>
