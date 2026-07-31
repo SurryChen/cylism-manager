@@ -91,6 +91,7 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 		nodeRegistryMirrors.DELETE("/:id", h.Delete)
 		nodeRegistryMirrors.POST("/:id/verify", h.Verify)
 		nodeRegistryMirrors.POST("/:id/apply", h.Apply)
+		nodeRegistryMirrors.GET("/:id/apply-status", h.ApplyStatus)
 	}
 	chartRepositories := apiGroup.Group("/chart-repositories")
 	{

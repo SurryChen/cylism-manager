@@ -30,8 +30,8 @@
               </td>
               <td>
                 <div v-if="mirror.node_statuses?.length" class="node-statuses">
-                  <small v-for="status in mirror.node_statuses" :key="status.server_id" :class="status.status === 'success' ? 'success' : 'failed'">
-                    {{ status.server?.name || status.server_id }}: {{ nodeStatusLabel(status.status) }}
+                  <small v-for="status in mirror.node_statuses" :key="status.server_id" :class="nodeStatusClass(status.status)">
+                    {{ status.server?.name || status.server_id }}: {{ nodeStatusLabel(status.status) }}<span v-if="status.detail"> - {{ status.detail }}</span>
                   </small>
                 </div>
                 <span v-else>-</span>
@@ -41,8 +41,8 @@
                   <button class="btn btn-sm" :data-testid="`verify-node-registry-mirror-${mirror.id}`" :disabled="verifyingID === mirror.id" @click="verifyMirror(mirror)">
                     {{ verifyingID === mirror.id ? '检测中...' : '检测' }}
                   </button>
-                  <button class="btn btn-sm" :disabled="applyingID === mirror.id" @click="applyMirror(mirror)">
-                    {{ applyingID === mirror.id ? '应用中...' : '应用到节点' }}
+                  <button class="btn btn-sm" :data-testid="`apply-node-registry-mirror-${mirror.id}`" :disabled="isApplying(mirror.id)" @click="openApply(mirror)">
+                    {{ isApplying(mirror.id) ? '应用中...' : '选择节点应用' }}
                   </button>
                   <button class="btn btn-sm" @click="openEdit(mirror)">编辑</button>
                   <button class="btn btn-sm btn-danger" @click="deleteTarget = mirror">删除</button>
@@ -51,6 +51,21 @@
             </tr>
           </tbody>
         </table>
+      </div>
+    </div>
+
+    <div v-if="applyTarget" class="overlay" @click.self="closeApply">
+      <div class="modal apply-modal">
+        <h2 class="modal-title">选择应用节点</h2>
+        <p class="confirm-copy">只会修改选中的节点，并在每个节点上备份旧的 registries.yaml 后重启 K3s。</p>
+        <div class="node-selection">
+          <label v-for="server in clusterServers" :key="server.id" class="node-option">
+            <input v-model="selectedServerIDs" type="checkbox" :value="server.id" />
+            <span><strong>{{ server.name }}</strong><small>{{ server.k8s_node_name || server.host }} · {{ server.cluster_role }}</small></span>
+          </label>
+        </div>
+        <p v-if="!clusterServers.length" class="empty-inline">没有找到已加入集群的服务器</p>
+        <div class="modal-actions"><button class="btn" @click="closeApply">取消</button><button class="btn btn-primary" data-testid="submit-node-registry-apply" :disabled="applying || !selectedServerIDs.length" @click="applyMirror">{{ applying ? '提交中...' : `应用到 ${selectedServerIDs.length} 个节点` }}</button></div>
       </div>
     </div>
 
@@ -101,7 +116,7 @@
 </template>
 
 <script setup>
-import { onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { api } from '../api/index.js'
 
 const mirrors = ref([])
@@ -111,9 +126,16 @@ const showModal = ref(false)
 const editing = ref(null)
 const deleteTarget = ref(null)
 const submitting = ref(false)
-const applyingID = ref(null)
+const applying = ref(false)
+const activeApplyIDs = ref([])
 const verifyingID = ref(null)
+const servers = ref([])
+const applyTarget = ref(null)
+const selectedServerIDs = ref([])
 const form = ref(blank())
+let applyPollTimer = null
+
+const clusterServers = computed(() => servers.value.filter(server => server.cluster_role))
 
 function blank() {
   return { name: '', registry: '', verification_image: '', endpoints: '', username: '', credential: '', insecure_skip_verify: false, enabled: true }
@@ -132,12 +154,28 @@ function verificationClass(status) {
 }
 
 function nodeStatusLabel(status) {
-  return { success: '成功', skipped: '跳过', failed: '失败' }[status] || status
+  return { pending: '等待中', applying: '应用中', success: '成功', skipped: '跳过', failed: '失败' }[status] || status
+}
+
+function nodeStatusClass(status) {
+  return status === 'success' ? 'success' : status === 'failed' ? 'failed' : 'pending'
+}
+
+function isApplying(mirrorID) {
+  return activeApplyIDs.value.includes(mirrorID)
 }
 
 async function load() {
   error.value = ''
-  try { mirrors.value = await api.get('/node-registry-mirrors') || [] } catch (e) { error.value = e.message || '加载节点镜像源失败' } finally { loaded.value = true }
+  try {
+    mirrors.value = await api.get('/node-registry-mirrors') || []
+    const pendingIDs = mirrors.value.filter(mirror => mirror.last_apply_status === 'applying').map(mirror => mirror.id)
+    if (pendingIDs.length) startApplyPolling(pendingIDs)
+  } catch (e) { error.value = e.message || '加载节点镜像源失败' } finally { loaded.value = true }
+}
+
+async function loadServers() {
+  try { servers.value = await api.get('/servers') || [] } catch (e) { error.value = e.message || '加载集群节点失败' }
 }
 
 function openCreate() {
@@ -189,13 +227,52 @@ async function verifyMirror(mirror) {
   } catch (e) { error.value = e.message || '检测节点镜像源失败' } finally { verifyingID.value = null }
 }
 
-async function applyMirror(mirror) {
-  applyingID.value = mirror.id
+function openApply(mirror) {
+  applyTarget.value = mirror
+  selectedServerIDs.value = []
+}
+
+function closeApply() {
+  if (applying.value) return
+  applyTarget.value = null
+  selectedServerIDs.value = []
+}
+
+async function applyMirror() {
+  if (!applyTarget.value || !selectedServerIDs.value.length) return
+  applying.value = true
   error.value = ''
   try {
-    await api.post(`/node-registry-mirrors/${mirror.id}/apply`)
-    await load()
-  } catch (e) { error.value = e.message || '下发节点镜像源失败' } finally { applyingID.value = null }
+    const mirrorID = applyTarget.value.id
+    const updated = await api.post(`/node-registry-mirrors/${mirrorID}/apply`, { server_ids: selectedServerIDs.value })
+    applyTarget.value = null
+    selectedServerIDs.value = []
+    const index = mirrors.value.findIndex(mirror => mirror.id === mirrorID)
+    if (index >= 0 && updated?.id === mirrorID) mirrors.value[index] = updated
+    startApplyPolling([mirrorID])
+  } catch (e) { error.value = e.message || '下发节点镜像源失败' } finally { applying.value = false }
+}
+
+function startApplyPolling(mirrorIDs) {
+  activeApplyIDs.value = [...new Set([...activeApplyIDs.value, ...mirrorIDs])]
+  window.clearInterval(applyPollTimer)
+  applyPollTimer = window.setInterval(async () => {
+    try {
+      const updates = await Promise.all(activeApplyIDs.value.map(mirrorID => api.get(`/node-registry-mirrors/${mirrorID}/apply-status`)))
+      const completedIDs = []
+      for (const mirror of updates) {
+        const index = mirrors.value.findIndex(item => item.id === mirror.id)
+        if (index >= 0) mirrors.value[index] = mirror
+        if (mirror.last_apply_status !== 'applying') completedIDs.push(mirror.id)
+      }
+      activeApplyIDs.value = activeApplyIDs.value.filter(mirrorID => !completedIDs.includes(mirrorID))
+      if (!activeApplyIDs.value.length) {
+        window.clearInterval(applyPollTimer)
+      }
+    } catch (e) {
+      error.value = e.message || '读取节点应用进度失败'
+    }
+  }, 2000)
 }
 
 async function remove() {
@@ -206,7 +283,8 @@ async function remove() {
   } catch (e) { error.value = e.message || '删除节点镜像源失败' }
 }
 
-onMounted(load)
+onMounted(() => { load(); loadServers() })
+onBeforeUnmount(() => window.clearInterval(applyPollTimer))
 </script>
 
 <style scoped>
@@ -215,8 +293,13 @@ onMounted(load)
 .node-statuses { display:grid; gap:3px; }
 .node-statuses small, .verification-error { font-size:11px; }
 .success { color:var(--success); }
+.pending { color:var(--warning); }
 .failed, .verification-error { color:var(--danger); }
 .mirror-modal { width:min(580px,calc(100vw - 32px)); }
+.apply-modal { width:min(520px,calc(100vw - 32px)); }
+.node-selection { display:grid; gap:8px; max-height:300px; overflow:auto; margin-top:16px; }
+.node-option { display:flex; align-items:flex-start; gap:10px; padding:10px; border:1px solid var(--border-muted); border-radius:var(--radius-control); background:var(--surface-subtle); cursor:pointer; }
+.node-option span { display:grid; gap:3px; min-width:0; }.node-option small { color:var(--text-secondary); font-size:11px; overflow-wrap:anywhere; }
 .form-hint, .confirm-copy { color:var(--text-muted); font-size:12px; }
 .check-row { display:flex; gap:8px; margin:12px 0; color:var(--text-secondary); font-size:13px; }
 @media (max-width:640px) { .page-header { flex-direction:column; } .page-header .btn { width:100%; } }

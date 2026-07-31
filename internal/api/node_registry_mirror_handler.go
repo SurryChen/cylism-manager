@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cylism/cylism-manager/internal/crypto"
@@ -25,8 +26,15 @@ type NodeRegistryMirrorHandler struct {
 	store            *store.Store
 	encKey           []byte
 	verifyConnection nodeRegistryMirrorVerifier
+	applyNode        nodeRegistryMirrorApplier
+	applyMu          sync.Mutex
+	runningApplies   map[uint]bool
 }
 type nodeRegistryMirrorVerifier func(context.Context, *model.NodeRegistryMirror, []byte) error
+type nodeRegistryMirrorApplier func(*model.Server, []byte) (string, string)
+type nodeRegistryMirrorApplyRequest struct {
+	ServerIDs []uint `json:"server_ids"`
+}
 type nodeRegistryMirrorRequest struct {
 	Name               string   `json:"name"`
 	Registry           string   `json:"registry"`
@@ -39,7 +47,7 @@ type nodeRegistryMirrorRequest struct {
 }
 
 func NewNodeRegistryMirrorHandler(s *store.Store, encKey []byte) *NodeRegistryMirrorHandler {
-	return &NodeRegistryMirrorHandler{store: s, encKey: encKey, verifyConnection: verifyNodeRegistryMirrorConnection}
+	return &NodeRegistryMirrorHandler{store: s, encKey: encKey, verifyConnection: verifyNodeRegistryMirrorConnection, applyNode: nil, runningApplies: make(map[uint]bool)}
 }
 func (h *NodeRegistryMirrorHandler) List(c *gin.Context) {
 	mirrors, err := h.store.ListNodeRegistryMirrors()
@@ -150,6 +158,15 @@ func (h *NodeRegistryMirrorHandler) Apply(c *gin.Context) {
 		model.Error(c, http.StatusNotFound, model.CodeNotFound, "镜像源不存在")
 		return
 	}
+	if !selected.Enabled {
+		model.Error(c, http.StatusConflict, model.CodeConflict, "镜像源已停用，不能应用")
+		return
+	}
+	var request nodeRegistryMirrorApplyRequest
+	if err := c.ShouldBindJSON(&request); err != nil || len(request.ServerIDs) == 0 {
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "至少选择一个集群节点")
+		return
+	}
 	content, err := h.renderK3sRegistries()
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
@@ -160,32 +177,107 @@ func (h *NodeRegistryMirrorHandler) Apply(c *gin.Context) {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "读取集群节点失败")
 		return
 	}
-	results := make([]gin.H, 0)
-	now := time.Now()
-	successCount := 0
+	byID := make(map[uint]model.Server, len(servers))
 	for index := range servers {
-		server := &servers[index]
-		if server.ClusterRole == "" {
+		if servers[index].ClusterRole != "" {
+			byID[servers[index].ID] = servers[index]
+		}
+	}
+	selectedServers := make([]model.Server, 0, len(request.ServerIDs))
+	seen := make(map[uint]struct{}, len(request.ServerIDs))
+	for _, serverID := range request.ServerIDs {
+		if _, ok := seen[serverID]; ok {
 			continue
 		}
-		status, detail := h.applyToNode(server, content)
+		server, ok := byID[serverID]
+		if !ok {
+			model.Error(c, http.StatusBadRequest, model.CodeValidationFail, fmt.Sprintf("节点 %d 不是可应用的集群节点", serverID))
+			return
+		}
+		seen[serverID] = struct{}{}
+		selectedServers = append(selectedServers, server)
+	}
+	h.applyMu.Lock()
+	if h.runningApplies[id] {
+		h.applyMu.Unlock()
+		model.Error(c, http.StatusConflict, model.CodeConflict, "该镜像源已有应用任务正在执行")
+		return
+	}
+	h.runningApplies[id] = true
+	h.applyMu.Unlock()
+
+	for _, server := range selectedServers {
+		if err := h.store.UpsertNodeRegistryMirrorStatus(&model.NodeRegistryMirrorNode{MirrorID: id, ServerID: server.ID, Status: "pending", Detail: "等待应用", AppliedAt: nil}); err != nil {
+			h.finishApply(id)
+			model.Error(c, http.StatusInternalServerError, model.CodeDBError, "初始化节点应用状态失败")
+			return
+		}
+	}
+	selected.LastAppliedAt = nil
+	selected.LastApplyStatus = "applying"
+	selected.LastApplyError = ""
+	if err := h.store.UpdateNodeRegistryMirror(selected); err != nil {
+		h.finishApply(id)
+		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "保存应用任务状态失败")
+		return
+	}
+	go h.runApply(id, selectedServers, content)
+	updated, _ := h.store.GetNodeRegistryMirror(id)
+	model.SuccessWithMessage(c, updated, "应用任务已提交")
+}
+
+func (h *NodeRegistryMirrorHandler) ApplyStatus(c *gin.Context) {
+	id, err := parseID(c.Param("id"))
+	if err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "镜像源 ID 无效")
+		return
+	}
+	mirror, err := h.store.GetNodeRegistryMirror(id)
+	if err != nil {
+		model.Error(c, http.StatusNotFound, model.CodeNotFound, "镜像源不存在")
+		return
+	}
+	model.Success(c, mirror)
+}
+
+func (h *NodeRegistryMirrorHandler) runApply(mirrorID uint, servers []model.Server, content []byte) {
+	successCount := 0
+	failedCount := 0
+	for index := range servers {
+		server := &servers[index]
+		_ = h.store.UpsertNodeRegistryMirrorStatus(&model.NodeRegistryMirrorNode{MirrorID: mirrorID, ServerID: server.ID, Status: "applying", Detail: "正在写入配置并重启 K3s", AppliedAt: nil})
+		apply := h.applyNode
+		if apply == nil {
+			apply = h.applyToNode
+		}
+		status, detail := apply(server, content)
 		if status == "success" {
 			successCount++
+		} else if status == "failed" {
+			failedCount++
 		}
-		appliedAt := now
-		_ = h.store.UpsertNodeRegistryMirrorStatus(&model.NodeRegistryMirrorNode{MirrorID: id, ServerID: server.ID, Status: status, Detail: detail, AppliedAt: &appliedAt})
-		results = append(results, gin.H{"server_id": server.ID, "server_name": server.Name, "status": status, "detail": detail})
+		now := time.Now()
+		_ = h.store.UpsertNodeRegistryMirrorStatus(&model.NodeRegistryMirrorNode{MirrorID: mirrorID, ServerID: server.ID, Status: status, Detail: detail, AppliedAt: &now})
 	}
-	selected.LastAppliedAt = &now
-	if successCount == len(results) && len(results) > 0 {
-		selected.LastApplyStatus = "succeeded"
-		selected.LastApplyError = ""
-	} else {
-		selected.LastApplyStatus = "failed"
-		selected.LastApplyError = "部分节点下发失败"
+	now := time.Now()
+	if mirror, err := h.store.GetNodeRegistryMirror(mirrorID); err == nil {
+		mirror.LastAppliedAt = &now
+		if failedCount == 0 && successCount == len(servers) {
+			mirror.LastApplyStatus = "succeeded"
+			mirror.LastApplyError = ""
+		} else {
+			mirror.LastApplyStatus = "failed"
+			mirror.LastApplyError = fmt.Sprintf("%d 个节点成功，%d 个节点失败或跳过", successCount, len(servers)-successCount)
+		}
+		_ = h.store.UpdateNodeRegistryMirror(mirror)
 	}
-	_ = h.store.UpdateNodeRegistryMirror(selected)
-	model.Success(c, gin.H{"results": results})
+	h.finishApply(mirrorID)
+}
+
+func (h *NodeRegistryMirrorHandler) finishApply(mirrorID uint) {
+	h.applyMu.Lock()
+	delete(h.runningApplies, mirrorID)
+	h.applyMu.Unlock()
 }
 
 func (h *NodeRegistryMirrorHandler) fromRequest(req nodeRegistryMirrorRequest, current *model.NodeRegistryMirror) (*model.NodeRegistryMirror, error) {
