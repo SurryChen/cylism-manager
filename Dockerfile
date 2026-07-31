@@ -2,7 +2,8 @@ FROM golang:1.26-alpine AS builder
 
 WORKDIR /app
 COPY go.mod go.sum ./
-ENV GOPROXY=https://goproxy.cn,direct
+ARG GOPROXY=https://goproxy.cn,direct
+ENV GOPROXY=${GOPROXY}
 RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 go build -o /cylism-manager ./cmd/platform/
