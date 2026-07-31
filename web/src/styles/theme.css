@@ -3,6 +3,7 @@
   --font-mono: "SFMono-Regular", Menlo, Monaco, Consolas, monospace;
   --space-4: 4px; --space-8: 8px; --space-12: 12px; --space-16: 16px; --space-20: 20px; --space-24: 24px; --space-32: 32px; --space-40: 40px;
   --radius-control: 8px; --radius-panel: 14px; --sidebar-width: 244px; --shell-gap: 18px; --shell-padding: 16px; --topbar-height: 62px;
+  --terminal-background: #ffffff; --terminal-foreground: #17212b; --terminal-cursor: #1769aa; --terminal-selection: #cfe4f8;
 }
 
 :root, [data-palette="mint"] { --canvas: #eaf1f0; --band-a: #c2e4db; --band-b: #d8e4f7; --surface-glass: rgba(255,255,255,.42); --surface-raised: rgba(255,255,255,.62); --surface-subtle: rgba(255,255,255,.34); --surface-input: rgba(255,255,255,.76); --surface-hover: rgba(255,255,255,.58); --text-primary: #132a35; --text-secondary: #50646b; --text-muted: #73838a; --border: rgba(255,255,255,.8); --border-muted: rgba(35,83,89,.16); --action-primary: #22736b; --action-primary-hover: #0d5955; --action-contrast: #ffffff; --focus: #22736b; --success: #16835d; --success-surface: #dcefe6; --warning: #b86412; --warning-surface: #f5e8cf; --danger: #d84a3e; --danger-surface: #f6dfdc; --neutral-surface: #e3ebec; --shadow: 0 18px 44px rgba(35,83,89,.14); --shadow-soft: 0 12px 35px rgba(35,83,89,.10); --overlay: rgba(19,42,53,.28); }

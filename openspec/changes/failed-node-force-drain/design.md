@@ -58,6 +58,10 @@ StatefulSet 仍属于可删除的受控 Pod，但结果文案提示其替代副�
 
 未采用。删除 Node 会影响排障与存储恢复。强制驱逐仅执行故障转移，运维人员需在结果确认后显式选择现有“移出”操作。
 
+## Decision: Terminal Transport And Interaction
+
+终端 WebSocket 使用 `github.com/gorilla/websocket` 取代手写帧解析，保留 1 MiB 的单消息上限。该库负责 RFC 6455 的掩码、分片、控制帧和完整读取，避免长粘贴因部分网络读取造成协议错位。SSH 和 Pod 终端统一在捕获阶段接收剪贴板事件并调用 xterm 的 `paste` API；遮罩不再承担关闭职责，关闭只能通过明确按钮。终端画布固定使用白色背景、深色文本和浅蓝选区，避免半透明平台表面造成灰色透底。
+
 ## Risks And Mitigations
 
 | 风险 | 缓解措施 |
@@ -67,4 +71,3 @@ StatefulSet 仍属于可删除的受控 Pod，但结果文案提示其替代副�
 | StatefulSet 数据不可立即可用 | 保留 Pod/卷类型与删除结果提示，不宣称已迁移完成 |
 | control-plane 丢失影响仲裁 | 拒绝 control-plane 强制驱逐 |
 | 普通驱逐排障信息不足 | 展示 pending Pod 的原始 API 错误 |
-

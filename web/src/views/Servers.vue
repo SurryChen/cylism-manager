@@ -170,7 +170,7 @@
 
     <!-- Terminal modal -->
     <Teleport to="body">
-    <div v-if="terminalServer" class="overlay terminal-overlay" @click.self="closeTerminal">
+    <div v-if="terminalServer" class="overlay terminal-overlay">
       <div class="terminal-modal">
         <div class="terminal-modal-header">
           <span>💻 SSH 终端 — {{ terminalServer?.name }} ({{ terminalServer?.host }})</span>
@@ -379,10 +379,6 @@ function openTerminal(id) {
     if (!el) { termStatus.value = 'error'; termError.value = '终端容器未就绪'; return }
 
     const rootStyle = getComputedStyle(document.documentElement)
-    const bg = rootStyle.getPropertyValue('--surface-raised').trim() || '#1e1e2e'
-    const fg = rootStyle.getPropertyValue('--text-primary').trim() || '#cdd6f4'
-    const cursorColor = rootStyle.getPropertyValue('--action-primary').trim() || '#89b4fa'
-    const selBg = rootStyle.getPropertyValue('--surface-hover').trim() || '#45475a'
     const term = new Terminal({
       cursorBlink: true,
       cursorStyle: 'bar',
@@ -390,18 +386,23 @@ function openTerminal(id) {
       fontFamily: '"JetBrains Mono", "Cascadia Code", "Fira Code", monospace',
       letterSpacing: 0,
       lineHeight: 1.2,
-      allowTransparency: true,
-      allowProposedApi: true,
       theme: {
-        background: bg,
-        foreground: fg,
-        cursor: cursorColor,
-        selectionBackground: selBg,
+        background: rootStyle.getPropertyValue('--terminal-background').trim(),
+        foreground: rootStyle.getPropertyValue('--terminal-foreground').trim(),
+        cursor: rootStyle.getPropertyValue('--terminal-cursor').trim(),
+        selectionBackground: rootStyle.getPropertyValue('--terminal-selection').trim(),
       },
     })
     const fitAddon = new FitAddon()
     term.loadAddon(fitAddon)
     term.open(el)
+    const pasteTerminalText = event => {
+      const text = event.clipboardData?.getData('text/plain')
+      if (text == null) return
+      event.preventDefault()
+      term.paste(text)
+    }
+    el.addEventListener('paste', pasteTerminalText, true)
 
     // 给 xterm 内部容器加圆角样式
     const xtermScreen = el.querySelector('.xterm-screen')
@@ -435,6 +436,7 @@ function openTerminal(id) {
     }
 
     termInstance = term
+    termInstance._pasteHandler = pasteTerminalText
     termWs = ws
 
     // resize 自适应：fit + PTY resize 通知后端
@@ -454,6 +456,9 @@ function openTerminal(id) {
 }
 
 function closeTerminal() {
+  if (termInstance && termInstance._pasteHandler && terminalEl.value) {
+    terminalEl.value.removeEventListener('paste', termInstance._pasteHandler, true)
+  }
   if (termInstance && termInstance._resizeObserver) {
     termInstance._resizeObserver.disconnect()
   }
@@ -563,6 +568,7 @@ function resetForm() { form.value = { name: '', host: '', ssh_port: 22, ssh_user
   width: 100%;
   height: 100%;
   overflow: hidden;
+  background: var(--terminal-background);
 }
 .terminal-container :deep(.xterm) {
   height: 100%;

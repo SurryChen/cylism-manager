@@ -622,6 +622,7 @@ func (h *ServerHandler) Terminal(c *gin.Context) {
 		for {
 			data, err := conn.ReadFrame()
 			if err != nil {
+				log.Printf("[terminal] websocket input closed for server=%d: %v", server.ID, err)
 				session.Close()
 				return
 			}
@@ -638,7 +639,11 @@ func (h *ServerHandler) Terminal(c *gin.Context) {
 				session.WindowChange(resizeMsg.Rows, resizeMsg.Cols)
 				continue
 			}
-			sessionIn.Write(data)
+			if _, err := sessionIn.Write(data); err != nil {
+				log.Printf("[terminal] SSH input write failed for server=%d: %v", server.ID, err)
+				session.Close()
+				return
+			}
 		}
 	}()
 
@@ -650,7 +655,10 @@ func (h *ServerHandler) Terminal(c *gin.Context) {
 			break
 		}
 		if n > 0 {
-			conn.WriteFrame(buf[:n])
+			if err := conn.WriteFrame(buf[:n]); err != nil {
+				log.Printf("[terminal] websocket output failed for server=%d: %v", server.ID, err)
+				break
+			}
 		}
 	}
 

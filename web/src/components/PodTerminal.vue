@@ -1,6 +1,6 @@
 <template>
   <Teleport to="body">
-    <div class="overlay pod-terminal-overlay" @click.self="close">
+    <div class="overlay pod-terminal-overlay">
       <div class="pod-terminal-modal" role="dialog" aria-modal="true" aria-label="容器终端">
         <header class="pod-terminal-header">
           <div><h2>容器终端</h2><p>{{ pod.namespace }} / {{ pod.name }}</p></div>
@@ -84,15 +84,22 @@ function openTerminal() {
     letterSpacing: 0,
     lineHeight: 1.2,
     theme: {
-      background: rootStyle.getPropertyValue('--surface-raised').trim() || '#1e1e2e',
-      foreground: rootStyle.getPropertyValue('--text-primary').trim() || '#cdd6f4',
-      cursor: rootStyle.getPropertyValue('--action-primary').trim() || '#89b4fa',
-      selectionBackground: rootStyle.getPropertyValue('--surface-hover').trim() || '#45475a',
+      background: rootStyle.getPropertyValue('--terminal-background').trim(),
+      foreground: rootStyle.getPropertyValue('--terminal-foreground').trim(),
+      cursor: rootStyle.getPropertyValue('--terminal-cursor').trim(),
+      selectionBackground: rootStyle.getPropertyValue('--terminal-selection').trim(),
     },
   })
   const fitAddon = new FitAddon()
   term.loadAddon(fitAddon)
   term.open(element)
+  const pasteTerminalText = event => {
+    const text = event.clipboardData?.getData('text/plain')
+    if (text == null) return
+    event.preventDefault()
+    term.paste(text)
+  }
+  element.addEventListener('paste', pasteTerminalText, true)
   fitAddon.fit()
 
   const token = localStorage.getItem('access_token') || ''
@@ -140,10 +147,14 @@ function openTerminal() {
   resizeObserver = new ResizeObserver(sendResize)
   resizeObserver.observe(element)
   terminal = term
+  terminal._pasteHandler = pasteTerminalText
   websocket = ws
 }
 
 function disposeTerminal() {
+  if (terminal && terminal._pasteHandler && terminalEl.value) {
+    terminalEl.value.removeEventListener('paste', terminal._pasteHandler, true)
+  }
   if (resizeObserver) resizeObserver.disconnect()
   if (websocket) websocket.close()
   if (terminal) terminal.dispose()
@@ -160,5 +171,23 @@ function close() {
 </script>
 
 <style scoped>
-.pod-terminal-overlay { z-index: 1300; }.pod-terminal-modal { display: grid; width: min(980px, calc(100vw - 32px)); height: min(680px, calc(100dvh - 32px)); grid-template-rows: auto minmax(0, 1fr) auto; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-panel); background: var(--surface-raised); box-shadow: var(--shadow); }.pod-terminal-header, .pod-terminal-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 16px; border-bottom: 1px solid var(--border-muted); }.pod-terminal-header h2 { margin: 0; color: var(--text-primary); font-size: 15px; }.pod-terminal-header p { margin: 4px 0 0; color: var(--text-muted); font: 11px/1.2 var(--font-mono); }.pod-terminal-footer { min-height: 42px; border-top: 1px solid var(--border-muted); border-bottom: 0; color: var(--text-muted); font: 11px/1 var(--font-mono); }.terminal-state-connected { color: var(--success); }.terminal-state-connecting { color: var(--warning); }.terminal-state-error { color: var(--danger); }.terminal-state-closed { color: var(--text-muted); }.pod-terminal-body { position: relative; min-height: 0; }.terminal-container { position: absolute; inset: 0; padding: 12px; background: var(--surface-raised); }.terminal-container :deep(.xterm), .terminal-container :deep(.xterm-viewport) { height: 100%; }.terminal-container :deep(.xterm-viewport) { overflow-y: auto; }.terminal-placeholder { display: flex; height: 100%; align-items: center; justify-content: center; gap: 12px; padding: 24px; color: var(--text-secondary); font-size: 13px; }.terminal-error { color: var(--danger); }.container-picker { display: grid; align-content: center; gap: 16px; max-width: 420px; width: 100%; margin: auto; padding: 32px; }.container-picker p { margin: 0; color: var(--text-secondary); font-size: 13px; line-height: 1.6; }@media (max-width:640px) { .pod-terminal-modal { width: 100vw; height: 100dvh; border: 0; border-radius: 0; }.pod-terminal-header, .pod-terminal-footer { padding-right: 12px; padding-left: 12px; } }
+.pod-terminal-overlay { z-index: 1300; }
+.pod-terminal-modal { display: grid; width: min(980px, calc(100vw - 32px)); height: min(680px, calc(100dvh - 32px)); grid-template-rows: auto minmax(0, 1fr) auto; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-panel); background: var(--surface-raised); box-shadow: var(--shadow); }
+.pod-terminal-header, .pod-terminal-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 16px; border-bottom: 1px solid var(--border-muted); }
+.pod-terminal-header h2 { margin: 0; color: var(--text-primary); font-size: 15px; }
+.pod-terminal-header p { margin: 4px 0 0; color: var(--text-muted); font: 11px/1.2 var(--font-mono); }
+.pod-terminal-footer { min-height: 42px; border-top: 1px solid var(--border-muted); border-bottom: 0; color: var(--text-muted); font: 11px/1 var(--font-mono); }
+.terminal-state-connected { color: var(--success); }
+.terminal-state-connecting { color: var(--warning); }
+.terminal-state-error { color: var(--danger); }
+.terminal-state-closed { color: var(--text-muted); }
+.pod-terminal-body { position: relative; min-height: 0; }
+.terminal-container { position: absolute; inset: 0; padding: 12px; background: var(--terminal-background); }
+.terminal-container :deep(.xterm), .terminal-container :deep(.xterm-viewport) { height: 100%; }
+.terminal-container :deep(.xterm-viewport) { overflow-y: auto; }
+.terminal-placeholder { display: flex; height: 100%; align-items: center; justify-content: center; gap: 12px; padding: 24px; color: var(--text-secondary); font-size: 13px; }
+.terminal-error { color: var(--danger); }
+.container-picker { display: grid; align-content: center; gap: 16px; max-width: 420px; width: 100%; margin: auto; padding: 32px; }
+.container-picker p { margin: 0; color: var(--text-secondary); font-size: 13px; line-height: 1.6; }
+@media (max-width:640px) { .pod-terminal-modal { width: 100vw; height: 100dvh; border: 0; border-radius: 0; }.pod-terminal-header, .pod-terminal-footer { padding-right: 12px; padding-left: 12px; } }
 </style>
