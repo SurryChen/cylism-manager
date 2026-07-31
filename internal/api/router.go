@@ -184,6 +184,7 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 		nodes.POST("/:id/import", nodeHandler.ConfirmImport)
 		nodes.POST("/:id/add", nodeHandler.AddNode)
 		nodes.POST("/:id/drain", nodeHandler.DrainNode)
+		nodes.POST("/:id/force-drain", nodeHandler.ForceDrainNode)
 		nodes.DELETE("/:id", nodeHandler.RemoveNode)
 	}
 

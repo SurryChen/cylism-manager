@@ -57,7 +57,7 @@
     <div v-if="applyTarget" class="overlay" @click.self="closeApply">
       <div class="modal apply-modal">
         <h2 class="modal-title">选择应用节点</h2>
-        <p class="confirm-copy">只会修改选中的节点，并在每个节点上备份旧的 registries.yaml 后重启 K3s。</p>
+        <p class="confirm-copy">只会修改选中的节点，并在每个节点上备份旧的 registries.yaml 后安排重启 K3s。</p>
         <div class="node-selection">
           <label v-for="server in clusterServers" :key="server.id" class="node-option">
             <input v-model="selectedServerIDs" type="checkbox" :value="server.id" />
