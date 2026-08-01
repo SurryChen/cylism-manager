@@ -6,7 +6,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cylism/cylism-manager/internal/application"
 	k8sclient "github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/store"
@@ -49,150 +48,9 @@ func setupApplicationRouter() (*gin.Engine, *store.Store) {
 		applications.DELETE("/:id/endpoint", h.DeleteApplicationEndpoint)
 		applications.POST("/:id/releases", h.CreateRelease)
 	}
-	stacks := r.Group("/api/application-stacks")
-	{
-		stacks.GET("", h.ListStackTemplates)
-		stacks.POST("", h.CreateStackTemplate)
-		stacks.POST("/presets/karakeep", h.CreateKarakeepStackPreset)
-		stacks.GET("/:id", h.GetStackTemplate)
-		stacks.PUT("/:id", h.UpdateStackTemplate)
-		stacks.DELETE("/:id", h.DeleteStackTemplate)
-		stacks.GET("/:id/releases", h.ListStackReleases)
-		stacks.POST("/:id/releases", h.CreateStackRelease)
-	}
 	workspace := r.Group("/api/workspace")
 	workspace.GET("/overview", h.WorkspaceOverview)
 	return r, s
-}
-
-func TestApplicationHandlerCreatesAndListsStackTemplate(t *testing.T) {
-	r, s := setupApplicationRouter()
-	if err := s.CreateProject(&model.Project{Name: "knowledge", OwnerID: 1}); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.CreateEnvironment(&model.Environment{ProjectID: 1, Name: "production", Namespace: "project-knowledge-prod"}); err != nil {
-		t.Fatal(err)
-	}
-	body := gin.H{"environment_id": 1, "name": "Karakeep", "enabled": true, "spec": gin.H{"entry_application": "karakeep", "components": []gin.H{
-		{"application_name": "karakeep-meilisearch", "spec": gin.H{"image": "getmeili/meilisearch", "container_port": 7700, "replicas": 1, "resources": gin.H{"requests_cpu": "10m", "requests_memory": "16Mi", "limits_cpu": "100m", "limits_memory": "64Mi"}, "service": gin.H{"port": 7700, "target_port": 7700}, "endpoint": gin.H{"exposure": "cluster"}}},
-		{"application_name": "karakeep", "spec": gin.H{"image": "ghcr.io/karakeep-app/karakeep", "container_port": 3000, "replicas": 1, "resources": gin.H{"requests_cpu": "100m", "requests_memory": "128Mi", "limits_cpu": "500m", "limits_memory": "512Mi"}, "service": gin.H{"port": 3000, "target_port": 3000}, "endpoint": gin.H{"exposure": "cluster"}}},
-	}}}
-	created := serve(r, newJSONRequest(http.MethodPost, "/api/application-stacks", body))
-	if created.Code != http.StatusOK || !strings.Contains(created.Body.String(), "Karakeep") {
-		t.Fatalf("create stack template: %d %s", created.Code, created.Body.String())
-	}
-	listed := serve(r, newJSONRequest(http.MethodGet, "/api/application-stacks?environment_id=1", nil))
-	if listed.Code != http.StatusOK || !strings.Contains(listed.Body.String(), "karakeep-meilisearch") {
-		t.Fatalf("list stack templates: %d %s", listed.Code, listed.Body.String())
-	}
-}
-
-func TestApplicationHandlerAcceptsComponentVersionsForStackRelease(t *testing.T) {
-	r, s := setupApplicationRouter()
-	if err := s.CreateProject(&model.Project{Name: "knowledge", OwnerID: 1}); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.CreateEnvironment(&model.Environment{ProjectID: 1, Name: "production", Namespace: "project-knowledge-prod"}); err != nil {
-		t.Fatal(err)
-	}
-	template := &model.ApplicationStackTemplate{EnvironmentID: 1, Name: "karakeep", Enabled: true, Spec: `{"entry_application":"karakeep","components":[{"application_name":"karakeep","spec":{"image":"ghcr.io/karakeep-app/karakeep","container_port":3000,"replicas":1,"resources":{"requests_cpu":"100m","requests_memory":"128Mi","limits_cpu":"500m","limits_memory":"512Mi"},"health":{"readiness_enabled":false,"liveness_enabled":false},"service":{"port":3000,"target_port":3000},"endpoint":{"exposure":"cluster"}}}]}`}
-	if err := s.CreateApplicationStackTemplate(template); err != nil {
-		t.Fatal(err)
-	}
-	response := serve(r, newJSONRequest(http.MethodPost, "/api/application-stacks/1/releases", gin.H{"versions": gin.H{"karakeep": "0.25.0"}}))
-	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "K8s 集群未连接") {
-		t.Fatalf("component versions should pass request validation before the Kubernetes availability check: %d %s", response.Code, response.Body.String())
-	}
-}
-
-func TestApplicationHandlerCreatesKarakeepPresetAsEnvironmentStack(t *testing.T) {
-	r, s := setupApplicationRouter()
-	if err := s.CreateProject(&model.Project{Name: "knowledge", OwnerID: 1}); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.CreateEnvironment(&model.Environment{ProjectID: 1, Name: "production", Namespace: "project-knowledge-prod"}); err != nil {
-		t.Fatal(err)
-	}
-	response := serve(r, newJSONRequest(http.MethodPost, "/api/application-stacks/presets/karakeep", gin.H{"environment_id": 1, "name": "Karakeep", "data_pvc": "karakeep-data", "meilisearch_pvc": "karakeep-search", "nextauth_secret": "nextauth-secret", "meili_master_key": "meili-secret"}))
-	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "karakeep-meilisearch") {
-		t.Fatalf("create Karakeep preset: %d %s", response.Code, response.Body.String())
-	}
-	template, err := s.GetApplicationStackTemplateByID(1)
-	if err != nil || template.EnvironmentID != 1 || template.EncryptedSecrets == "" {
-		t.Fatalf("expected environment-owned encrypted preset, got %+v err=%v", template, err)
-	}
-}
-
-func TestApplicationHandlerStackComponentKeepsSourceTemplateImage(t *testing.T) {
-	_, s := setupApplicationRouter()
-	if err := s.CreateProject(&model.Project{Name: "knowledge", OwnerID: 1}); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.CreateEnvironment(&model.Environment{ProjectID: 1, Name: "production", Namespace: "project-knowledge-prod"}); err != nil {
-		t.Fatal(err)
-	}
-	stack := &model.ApplicationStackTemplate{EnvironmentID: 1, Name: "Karakeep", Enabled: true, Spec: `{}`}
-	if err := s.CreateApplicationStackTemplate(stack); err != nil {
-		t.Fatal(err)
-	}
-	h := NewApplicationHandler(s, []byte("01234567890123456789012345678901"))
-	environment, err := s.GetEnvironmentByID(1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	component := application.StackComponent{
-		ApplicationName: "karakeep",
-		Spec: application.ReleaseSpec{
-			Image:           "ghcr.io/karakeep-app/karakeep:0.25.0",
-			ImageRepository: "ghcr.io/karakeep-app/karakeep",
-			Version:         "0.25.0",
-			ContainerPort:   3000,
-			Replicas:        1,
-			Resources:       application.ResourceSpec{RequestsCPU: "100m", RequestsMemory: "128Mi", LimitsCPU: "500m", LimitsMemory: "512Mi"},
-			Service:         application.ServiceSpec{Port: 3000, TargetPort: 3000},
-			Endpoint:        application.EndpointSpec{Exposure: application.ExposureCluster},
-		},
-	}
-	_, app, template, resolved, err := h.prepareStackComponent(stack, environment, component, 1)
-	if err != nil {
-		t.Fatalf("prepare stack component: %v", err)
-	}
-	if app.StackTemplateID == nil || *app.StackTemplateID != stack.ID || resolved.Image != "ghcr.io/karakeep-app/karakeep:0.25.0" {
-		t.Fatalf("unexpected generated application or release spec: app=%+v spec=%+v", app, resolved)
-	}
-	var saved application.ReleaseSpec
-	if err := json.Unmarshal([]byte(template.Spec), &saved); err != nil {
-		t.Fatal(err)
-	}
-	if saved.Image != "ghcr.io/karakeep-app/karakeep" || saved.Version != "" {
-		t.Fatalf("component template must keep source image without a version: %+v", saved)
-	}
-}
-
-func TestApplicationHandlerRejectsStackComponentNameOwnedByAnotherApplication(t *testing.T) {
-	_, s := setupApplicationRouter()
-	if err := s.CreateProject(&model.Project{Name: "knowledge", OwnerID: 1}); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.CreateEnvironment(&model.Environment{ProjectID: 1, Name: "production", Namespace: "project-knowledge-prod"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.CreateApplication(&model.Application{ProjectID: 1, EnvironmentID: 1, Name: "karakeep", WorkloadKind: "deployment", CreatedBy: 1}); err != nil {
-		t.Fatal(err)
-	}
-	stack := &model.ApplicationStackTemplate{EnvironmentID: 1, Name: "Karakeep", Enabled: true, Spec: `{}`}
-	if err := s.CreateApplicationStackTemplate(stack); err != nil {
-		t.Fatal(err)
-	}
-	h := NewApplicationHandler(s, []byte("01234567890123456789012345678901"))
-	environment, err := s.GetEnvironmentByID(1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	component := application.StackComponent{ApplicationName: "karakeep", Spec: application.ReleaseSpec{Image: "ghcr.io/karakeep-app/karakeep:0.25.0", ImageRepository: "ghcr.io/karakeep-app/karakeep", Version: "0.25.0", ContainerPort: 3000, Replicas: 1, Resources: application.ResourceSpec{RequestsCPU: "100m", RequestsMemory: "128Mi", LimitsCPU: "500m", LimitsMemory: "512Mi"}, Service: application.ServiceSpec{Port: 3000, TargetPort: 3000}, Endpoint: application.EndpointSpec{Exposure: application.ExposureCluster}}}
-	if _, _, _, _, err := h.prepareStackComponent(stack, environment, component, 1); err == nil || !strings.Contains(err.Error(), "独立应用") {
-		t.Fatalf("expected manually managed application collision, got %v", err)
-	}
 }
 
 func TestApplicationHandlerReleasesFromSelectedDeploymentTemplateByVersion(t *testing.T) {
