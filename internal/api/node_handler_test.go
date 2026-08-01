@@ -29,6 +29,7 @@ func setupNodeRouter() (*gin.Engine, *store.Store) {
 		nodes.POST("/:id/add", h.AddNode)
 		nodes.POST("/:id/drain", h.DrainNode)
 		nodes.POST("/:id/force-drain", h.ForceDrainNode)
+		nodes.POST("/:id/rejoin", h.RejoinNode)
 		nodes.DELETE("/:id", h.RemoveNode)
 	}
 	return r, s
@@ -84,6 +85,23 @@ func TestNodeHandler_DrainPlan(t *testing.T) {
 	r.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
 		t.Errorf("expected 200, got %d", w.Code)
+	}
+}
+
+func TestNodeHandler_RejoinNode(t *testing.T) {
+	original := K8s
+	defer func() { K8s = original }()
+	K8s = &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(&corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{Name: "worker-a"},
+		Spec:       corev1.NodeSpec{Unschedulable: true},
+	})}
+	r, _ := setupNodeRouter()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/nodes/worker-a/rejoin", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"evicted":false`) {
+		t.Fatalf("expected rejoin success, got %d: %s", w.Code, w.Body.String())
 	}
 }
 

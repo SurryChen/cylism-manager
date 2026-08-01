@@ -396,13 +396,6 @@ function openTerminal(id) {
     const fitAddon = new FitAddon()
     term.loadAddon(fitAddon)
     term.open(el)
-    const pasteTerminalText = event => {
-      const text = event.clipboardData?.getData('text/plain')
-      if (text == null) return
-      event.preventDefault()
-      term.paste(text)
-    }
-    el.addEventListener('paste', pasteTerminalText, true)
 
     // 给 xterm 内部容器加圆角样式
     const xtermScreen = el.querySelector('.xterm-screen')
@@ -436,7 +429,6 @@ function openTerminal(id) {
     }
 
     termInstance = term
-    termInstance._pasteHandler = pasteTerminalText
     termWs = ws
 
     // resize 自适应：fit + PTY resize 通知后端
@@ -456,9 +448,6 @@ function openTerminal(id) {
 }
 
 function closeTerminal() {
-  if (termInstance && termInstance._pasteHandler && terminalEl.value) {
-    terminalEl.value.removeEventListener('paste', termInstance._pasteHandler, true)
-  }
   if (termInstance && termInstance._resizeObserver) {
     termInstance._resizeObserver.disconnect()
   }

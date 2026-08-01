@@ -21,7 +21,9 @@ describe('Monitoring view', () => {
     const wrapper = mount(Monitoring)
     await flushPromises()
 
-    expect(wrapper.text()).toContain('安装 VictoriaMetrics')
+    expect(wrapper.text()).toContain('VictoriaMetrics 未安装')
+    expect(wrapper.find('.monitoring-install-card').exists()).toBe(true)
+    expect(wrapper.text()).toContain('重新检测')
     expect(wrapper.find('select').text()).toContain('node-a')
     expect(wrapper.find('input[placeholder="/data/victoria-metrics"]').element.value).toBe('/data/victoria-metrics')
   })
