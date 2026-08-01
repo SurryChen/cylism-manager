@@ -37,6 +37,11 @@ describe('SystemSettings view', () => {
     expect(wrapper.text()).toContain('平台自更新')
     expect(wrapper.text()).toContain('registry.example.com/cylism-manager@sha256:abc')
 
+    const imageInput = wrapper.get('[data-testid="platform-manual-image"]')
+    await imageInput.setValue('registry.example.com/cylism-manager@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb')
+    await wrapper.get('[data-testid="platform-manual-update"]').trigger('click')
+    expect(wrapper.text()).toContain('平台更新已提交')
+
     await wrapper.get('[data-testid="generate-platform-webhook-secret"]').trigger('click')
     await nextTick()
     expect(wrapper.text()).toContain('generated-secret')

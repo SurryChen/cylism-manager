@@ -51,7 +51,7 @@ func TestPlatformWebhookAcceptsSignedDigestAndRejectsReplay(t *testing.T) {
 	request := signedPlatformWebhookRequest(body, timestamp, nonce, "webhook-secret")
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, request)
-	if response.Code != http.StatusAccepted || !strings.Contains(response.Body.String(), `"status":"waiting_ready"`) {
+	if response.Code != http.StatusAccepted || !strings.Contains(response.Body.String(), `"status":"accepted"`) {
 		t.Fatalf("expected accepted release, got %d: %s", response.Code, response.Body.String())
 	}
 
@@ -75,6 +75,51 @@ func TestPlatformWebhookRejectsInvalidSignature(t *testing.T) {
 	router.ServeHTTP(response, request)
 	if response.Code != http.StatusUnauthorized {
 		t.Fatalf("expected unauthorized signature, got %d: %s", response.Code, response.Body.String())
+	}
+}
+
+func TestPlatformManualUpdateAcceptsAuthenticatedDigest(t *testing.T) {
+	original := K8s
+	defer func() { K8s = original }()
+	K8s = &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "cylism-manager", Namespace: "default"}, Spec: appsv1.DeploymentSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "platform", Image: "registry.example.com/cylism-manager@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}}}}})}
+	secretKey := []byte("01234567890123456789012345678901")
+	s, err := store.New(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetSystemConfig(platformImagePrefixConfigKey, "registry.example.com/cylism-manager"); err != nil {
+		t.Fatal(err)
+	}
+	handler := NewPlatformHandler(s, secretKey)
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.POST("/api/platform/releases", handler.ManualUpdate)
+
+	request := httptest.NewRequest(http.MethodPost, "/api/platform/releases", strings.NewReader(`{"image":"registry.example.com/cylism-manager@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}`))
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusAccepted || !strings.Contains(response.Body.String(), `"source":"manual"`) {
+		t.Fatalf("expected accepted manual release, got %d: %s", response.Code, response.Body.String())
+	}
+}
+
+func TestPlatformManualUpdateRejectsTag(t *testing.T) {
+	s, err := store.New(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetSystemConfig(platformImagePrefixConfigKey, "registry.example.com/cylism-manager"); err != nil {
+		t.Fatal(err)
+	}
+	handler := NewPlatformHandler(s, []byte("01234567890123456789012345678901"))
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.POST("/api/platform/releases", handler.ManualUpdate)
+	request := httptest.NewRequest(http.MethodPost, "/api/platform/releases", strings.NewReader(`{"image":"registry.example.com/cylism-manager:latest"}`))
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("expected tag rejection, got %d: %s", response.Code, response.Body.String())
 	}
 }
 
