@@ -61,6 +61,9 @@ func TestApplicationStackSchemaIsRemoved(t *testing.T) {
 	if err := st.DB().Exec("ALTER TABLE applications ADD COLUMN stack_template_id integer").Error; err != nil {
 		t.Fatal(err)
 	}
+	if err := st.DB().Exec("CREATE INDEX idx_applications_stack_template_id ON applications(stack_template_id)").Error; err != nil {
+		t.Fatal(err)
+	}
 	if err := st.DB().Exec("CREATE TABLE application_stack_templates (id integer primary key, environment_id integer not null)").Error; err != nil {
 		t.Fatal(err)
 	}

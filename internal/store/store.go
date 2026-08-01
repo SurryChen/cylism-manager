@@ -109,6 +109,9 @@ func removeObsoleteApplicationStackSchema(db *gorm.DB) error {
 		}
 	}
 	if db.Migrator().HasColumn("applications", "stack_template_id") {
+		if err := db.Exec("DROP INDEX IF EXISTS idx_applications_stack_template_id").Error; err != nil {
+			return err
+		}
 		return db.Exec("ALTER TABLE applications DROP COLUMN stack_template_id").Error
 	}
 	return nil
