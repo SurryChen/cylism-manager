@@ -50,6 +50,17 @@ func TestCertToInfoMarksTerminalReadyFalseConditionFailed(t *testing.T) {
 	}
 }
 
+func TestCertToInfoMarksReadyTrueConditionReady(t *testing.T) {
+	certificate := &unstructured.Unstructured{Object: map[string]interface{}{
+		"metadata": map[string]interface{}{"name": "ready-cert", "namespace": "production"},
+		"status":   map[string]interface{}{"conditions": []interface{}{map[string]interface{}{"type": "Ready", "status": "True", "reason": "Issued"}}},
+	}}
+	info := certToInfo(certificate)
+	if info.Status != "Ready" || info.Reason != "Issued" {
+		t.Fatalf("expected ready certificate, got %#v", info)
+	}
+}
+
 func TestIssuerObjectRendersHTTP01AndAliDNS(t *testing.T) {
 	httpIssuer, err := issuerObject(IssuerRequest{Name: "letsencrypt", Kind: "ClusterIssuer", Mode: "acme_http01", Email: "ops@example.com"})
 	if err != nil {
