@@ -106,6 +106,42 @@ func TestNodeInfoMarksCordonedNodeAsEvicted(t *testing.T) {
 	}
 }
 
+func TestUpdateNodeLabelsOnlyChangesValidCustomLabels(t *testing.T) {
+	clientset := k8sfake.NewSimpleClientset(&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "worker-a", Labels: map[string]string{
+		corev1.LabelHostname:                    "worker-a",
+		"node-role.kubernetes.io/control-plane": "true",
+		"cylism.io/zone":                        "old",
+	}}})
+	client := &Client{Clientset: clientset}
+
+	labels, err := client.UpdateNodeLabels("worker-a", map[string]string{"cylism.io/zone": "shanghai", "team": "platform"}, []string{"cylism.io/unused"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if labels.Labels["cylism.io/zone"] != "shanghai" || labels.Labels["team"] != "platform" || labels.Labels[corev1.LabelHostname] != "worker-a" {
+		t.Fatalf("unexpected labels: %#v", labels)
+	}
+}
+
+func TestUpdateNodeLabelsRejectsProtectedAndInvalidLabels(t *testing.T) {
+	client := &Client{Clientset: k8sfake.NewSimpleClientset(&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "worker-a", Labels: map[string]string{corev1.LabelHostname: "worker-a"}}})}
+	for name, update := range map[string]struct {
+		set    map[string]string
+		remove []string
+	}{
+		"protected set":     {set: map[string]string{"k3s.io/internal-ip": "10.0.0.1"}},
+		"protected removal": {remove: []string{corev1.LabelHostname}},
+		"invalid key":       {set: map[string]string{"not valid": "value"}},
+		"invalid value":     {set: map[string]string{"team": "not valid"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := client.UpdateNodeLabels("worker-a", update.set, update.remove); err == nil {
+				t.Fatal("expected label update to be rejected")
+			}
+		})
+	}
+}
+
 func TestRejoinNodeUncordonsNodeAndClearsDrainMarker(t *testing.T) {
 	node := readyNode("worker-a", true)
 	node.Annotations = map[string]string{nodeDrainAnnotation: "2026-08-01T00:00:00Z"}

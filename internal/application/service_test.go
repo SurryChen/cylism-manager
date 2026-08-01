@@ -15,7 +15,7 @@ type fakeApplier struct {
 	applied      bool
 }
 
-func (a *fakeApplier) Preflight(context.Context, ApplicationContext, EndpointSpec) error {
+func (a *fakeApplier) Preflight(context.Context, ApplicationContext, ReleaseSpec) error {
 	return a.preflightErr
 }
 func (a *fakeApplier) Apply(context.Context, *RenderedResources) error {

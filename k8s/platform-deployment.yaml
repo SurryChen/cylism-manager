@@ -24,7 +24,8 @@ spec:
       labels:
         app: cylism-manager
     spec:
-      nodeName: iz7xvf5nfpb7zibg0fq3zfz
+      nodeSelector:
+        kubernetes.io/hostname: iz7xvf5nfpb7zibg0fq3zfz
       tolerations:
         - key: "node-role.kubernetes.io/control-plane"
           operator: "Exists"
@@ -97,7 +98,7 @@ metadata:
   name: cylism-manager
 rules:
   - apiGroups: [""]
-    resources: ["nodes", "pods", "services", "configmaps", "secrets", "namespaces", "endpoints"]
+    resources: ["nodes", "pods", "services", "configmaps", "secrets", "namespaces", "endpoints", "persistentvolumeclaims"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   - apiGroups: [""]
     resources: ["pods/exec"]
@@ -112,6 +113,12 @@ rules:
   - apiGroups: ["apps"]
     resources: ["deployments", "statefulsets", "daemonsets", "replicasets"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["persistentvolumes"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["storageclasses"]
+    verbs: ["get", "list", "watch"]
   - apiGroups: [""]
     resources: ["serviceaccounts"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]

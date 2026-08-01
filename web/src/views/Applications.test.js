@@ -58,6 +58,26 @@ describe('Applications view', () => {
     expect(wrapper.find('.btn-danger').attributes('disabled')).toBeUndefined()
   })
 
+  it('uses styled project and environment menus for the workspace context', async () => {
+    const { api } = await import('../api/index.js')
+    api.get.mockImplementation((path) => {
+      if (path === '/projects') return Promise.resolve([{ id: 1, name: 'commerce', environments: [{ id: 2, name: 'production', namespace: 'project-commerce-prod' }] }])
+      if (path === '/workspace/overview?project_id=1&environment_id=2') return Promise.resolve({ applications: [], domains: [], recent_releases: [], failed_releases: [] })
+      return Promise.resolve([])
+    })
+    const wrapper = mount(Applications)
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    expect(wrapper.findAll('.context-select')).toHaveLength(0)
+    expect(wrapper.findAll('.workspace-picker')).toHaveLength(2)
+    expect(wrapper.get('[data-testid="workspace-project-trigger"]').text()).toContain('commerce')
+    expect(wrapper.get('[data-testid="workspace-environment-trigger"]').text()).toContain('production')
+
+    await wrapper.get('[data-testid="workspace-project-trigger"]').trigger('click')
+    expect(wrapper.get('[data-testid="workspace-project-menu"]').text()).toContain('commerce')
+    expect(wrapper.get('[data-testid="workspace-project-menu"] .is-selected').text()).toContain('commerce')
+  })
+
   it('loads selectable application templates for a release', async () => {
     const { api } = await import('../api/index.js')
     api.get.mockImplementation((path) => {

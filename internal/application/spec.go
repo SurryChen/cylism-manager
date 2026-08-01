@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"path"
 	"sort"
 	"strings"
 
@@ -45,8 +46,18 @@ type ReleaseSpec struct {
 	Health             HealthSpec        `json:"health"`
 	Config             map[string]string `json:"config,omitempty"`
 	Secrets            map[string]string `json:"secrets,omitempty"`
+	NodeName           string            `json:"node_name,omitempty"`
+	Volumes            []VolumeMountSpec `json:"volumes,omitempty"`
 	Service            ServiceSpec       `json:"service"`
 	Endpoint           EndpointSpec      `json:"endpoint"`
+}
+
+// VolumeMountSpec describes a platform-managed PVC mounted into the main
+// application container. PVC lifecycle remains independent from releases.
+type VolumeMountSpec struct {
+	ClaimName string `json:"claim_name"`
+	MountPath string `json:"mount_path"`
+	ReadOnly  bool   `json:"read_only"`
 }
 
 type ResourceSpec struct {
@@ -118,6 +129,33 @@ func ValidateReleaseSpec(spec ReleaseSpec) []ValidationIssue {
 	}
 	if spec.Replicas < 1 {
 		issues = append(issues, ValidationIssue{Field: "replicas", Message: "副本数至少为 1"})
+	}
+	if strings.TrimSpace(spec.NodeName) != "" && len(validation.IsDNS1123Subdomain(spec.NodeName)) > 0 {
+		issues = append(issues, ValidationIssue{Field: "node_name", Message: "部署节点名称无效"})
+	}
+	claimNames := make(map[string]struct{}, len(spec.Volumes))
+	mountPaths := make(map[string]struct{}, len(spec.Volumes))
+	for index, volume := range spec.Volumes {
+		field := fmt.Sprintf("volumes[%d]", index)
+		claimName := strings.TrimSpace(volume.ClaimName)
+		mountPath := strings.TrimSpace(volume.MountPath)
+		if len(validation.IsDNS1123Label(claimName)) > 0 {
+			issues = append(issues, ValidationIssue{Field: field + ".claim_name", Message: "PVC 名称无效"})
+		}
+		if !strings.HasPrefix(mountPath, "/") || path.Clean(mountPath) != mountPath {
+			issues = append(issues, ValidationIssue{Field: field + ".mount_path", Message: "挂载路径必须是规范的绝对路径"})
+		}
+		if _, exists := claimNames[claimName]; exists {
+			issues = append(issues, ValidationIssue{Field: field + ".claim_name", Message: "同一 PVC 不能重复挂载"})
+		}
+		if _, exists := mountPaths[mountPath]; exists {
+			issues = append(issues, ValidationIssue{Field: field + ".mount_path", Message: "同一挂载路径不能重复使用"})
+		}
+		claimNames[claimName] = struct{}{}
+		mountPaths[mountPath] = struct{}{}
+	}
+	if len(spec.Volumes) > 0 && spec.Replicas > 1 {
+		issues = append(issues, ValidationIssue{Field: "volumes", Message: "ReadWriteOnce PVC 仅支持单副本应用"})
 	}
 	parseQuantity := func(field, value string) *resource.Quantity {
 		quantity, err := resource.ParseQuantity(value)
@@ -228,8 +266,17 @@ func RenderResources(context ApplicationContext, spec ReleaseSpec) (*RenderedRes
 	if len(spec.Secrets) > 0 {
 		container.EnvFrom = append(container.EnvFrom, corev1.EnvFromSource{SecretRef: &corev1.SecretEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: secretName}}})
 	}
+	volumes := make([]corev1.Volume, 0, len(spec.Volumes))
+	for index, volume := range spec.Volumes {
+		name := fmt.Sprintf("pvc-%d", index)
+		volumes = append(volumes, corev1.Volume{Name: name, VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: volume.ClaimName, ReadOnly: volume.ReadOnly}}})
+		container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{Name: name, MountPath: volume.MountPath, ReadOnly: volume.ReadOnly})
+	}
 	replicas := spec.Replicas
-	podSpec := corev1.PodSpec{Containers: []corev1.Container{container}}
+	podSpec := corev1.PodSpec{Containers: []corev1.Container{container}, Volumes: volumes}
+	if spec.NodeName != "" {
+		podSpec.NodeSelector = map[string]string{corev1.LabelHostname: spec.NodeName}
+	}
 	if result.ImagePullSecret != nil {
 		podSpec.ImagePullSecrets = []corev1.LocalObjectReference{{Name: result.ImagePullSecret.Name}}
 	}
@@ -240,6 +287,9 @@ func RenderResources(context ApplicationContext, spec ReleaseSpec) (*RenderedRes
 			Selector: &metav1.LabelSelector{MatchLabels: workloadSelector(context.ApplicationName)},
 			Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: mergeLabels(labels, workloadSelector(context.ApplicationName))}, Spec: podSpec},
 		},
+	}
+	if len(spec.Volumes) > 0 {
+		result.Deployment.Spec.Strategy = appsv1.DeploymentStrategy{Type: appsv1.RecreateDeploymentStrategyType}
 	}
 	result.Service = &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{Name: context.ApplicationName, Namespace: context.Namespace, Labels: labels},

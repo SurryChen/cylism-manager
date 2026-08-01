@@ -2,6 +2,7 @@ package k8s
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -9,6 +10,7 @@ import (
 	policyv1 "k8s.io/api/policy/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/validation"
 )
 
 const mirrorPodAnnotation = "kubernetes.io/config.mirror"
@@ -37,6 +39,13 @@ type NodeInfo struct {
 	HealthState     string `json:"health_state"`
 	HealthReason    string `json:"health_reason,omitempty"`
 	LastHeartbeatAt string `json:"last_heartbeat_at,omitempty"`
+}
+
+// NodeLabels is the label state exposed by the cluster node management API.
+type NodeLabels struct {
+	Name          string            `json:"name"`
+	Labels        map[string]string `json:"labels"`
+	ProtectedKeys []string          `json:"protected_keys"`
 }
 
 // DrainPod describes a Pod affected by a drain preflight or execution.
@@ -109,6 +118,87 @@ func (c *Client) GetNodeInfo(name string) (*NodeInfo, error) {
 	}
 	info := nodeToInfo(node)
 	return &info, nil
+}
+
+func (c *Client) GetNodeLabels(name string) (*NodeLabels, error) {
+	node, err := c.Clientset.CoreV1().Nodes().Get(c.Ctx(), name, metav1.GetOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("get node %s labels: %w", name, err)
+	}
+	return nodeLabels(node), nil
+}
+
+// UpdateNodeLabels applies only validated custom labels. Kubernetes and K3s
+// managed label prefixes are deliberately read-only in this control plane.
+func (c *Client) UpdateNodeLabels(name string, set map[string]string, remove []string) (*NodeLabels, error) {
+	if err := validateNodeLabelUpdate(set, remove); err != nil {
+		return nil, err
+	}
+	node, err := c.Clientset.CoreV1().Nodes().Get(c.Ctx(), name, metav1.GetOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("get node %s labels: %w", name, err)
+	}
+	if node.Labels == nil {
+		node.Labels = make(map[string]string)
+	}
+	for key, value := range set {
+		node.Labels[key] = value
+	}
+	for _, key := range remove {
+		delete(node.Labels, key)
+	}
+	updated, err := c.Clientset.CoreV1().Nodes().Update(c.Ctx(), node, metav1.UpdateOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("update node %s labels: %w", name, err)
+	}
+	return nodeLabels(updated), nil
+}
+
+func nodeLabels(node *corev1.Node) *NodeLabels {
+	labels := make(map[string]string, len(node.Labels))
+	protected := make([]string, 0)
+	for key, value := range node.Labels {
+		labels[key] = value
+		if isProtectedNodeLabel(key) {
+			protected = append(protected, key)
+		}
+	}
+	sort.Strings(protected)
+	return &NodeLabels{Name: node.Name, Labels: labels, ProtectedKeys: protected}
+}
+
+func validateNodeLabelUpdate(set map[string]string, remove []string) error {
+	for key, value := range set {
+		if err := validateMutableNodeLabel(key, value); err != nil {
+			return err
+		}
+	}
+	for _, key := range remove {
+		if err := validateMutableNodeLabel(key, ""); err != nil {
+			return err
+		}
+		if _, alsoSet := set[key]; alsoSet {
+			return fmt.Errorf("标签 %q 不能同时设置和删除", key)
+		}
+	}
+	return nil
+}
+
+func validateMutableNodeLabel(key, value string) error {
+	if isProtectedNodeLabel(key) {
+		return fmt.Errorf("系统标签 %q 由 Kubernetes 或 K3s 管理，不能修改", key)
+	}
+	if issues := validation.IsQualifiedName(key); len(issues) > 0 {
+		return fmt.Errorf("标签键 %q 无效: %s", key, strings.Join(issues, "; "))
+	}
+	if issues := validation.IsValidLabelValue(value); len(issues) > 0 {
+		return fmt.Errorf("标签 %q 的值无效: %s", key, strings.Join(issues, "; "))
+	}
+	return nil
+}
+
+func isProtectedNodeLabel(key string) bool {
+	return key == corev1.LabelHostname || strings.HasPrefix(key, "kubernetes.io/") || strings.HasPrefix(key, "node.kubernetes.io/") || strings.HasPrefix(key, "k3s.io/") || strings.HasPrefix(key, "node-role.kubernetes.io/") || strings.HasPrefix(key, "beta.kubernetes.io/")
 }
 
 // DrainPlan checks the node without modifying Pods. It never treats DaemonSet,

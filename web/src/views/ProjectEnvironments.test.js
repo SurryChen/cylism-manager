@@ -70,4 +70,26 @@ describe('ProjectEnvironments view', () => {
     expect(api.post).toHaveBeenCalledWith('/projects/1/environments/2/sync-namespace')
     expect(wrapper.text()).toContain('就绪')
   })
+
+  it('uses a fixed project prefix while the operator enters the namespace suffix', async () => {
+    const { api } = await import('../api/index.js')
+    api.get.mockImplementation((path) => {
+      if (path === '/projects') return Promise.resolve([{ id: 1, name: 'commerce' }])
+      if (path === '/projects/1/environments') return Promise.resolve([])
+      return Promise.resolve([])
+    })
+    const wrapper = mount(ProjectEnvironments, { props: { projectID: '1' }, global: { stubs: { RouterLink: { template: '<a><slot /></a>' } } } })
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    await wrapper.get('.page-header .btn-primary').trigger('click')
+    const namespace = wrapper.get('input[placeholder="frontend-dev"]')
+    expect(wrapper.find('.namespace-prefix').text()).toBe('project-')
+    expect(namespace.element.value).toBe('')
+
+    await namespace.setValue('frontend-dev')
+    await wrapper.get('form').trigger('submit')
+    expect(api.post).toHaveBeenCalledWith('/projects/1/environments', {
+      name: 'production', namespace: 'project-frontend-dev', namespace_mode: 'create',
+    })
+  })
 })

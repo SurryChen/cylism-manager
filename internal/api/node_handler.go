@@ -29,6 +29,11 @@ type forceDrainNodeRequest struct {
 	ConfirmNodeName    string `json:"confirm_node_name"`
 }
 
+type updateNodeLabelsRequest struct {
+	Set    map[string]string `json:"set"`
+	Remove []string          `json:"remove"`
+}
+
 // NewNodeHandler 创建 NodeHandler
 func NewNodeHandler(s *store.Store, encKey []byte) *NodeHandler {
 	return &NodeHandler{store: s, encKey: encKey}
@@ -46,6 +51,37 @@ func (h *NodeHandler) ListNode(c *gin.Context) {
 		return
 	}
 	model.Success(c, nodes)
+}
+
+func (h *NodeHandler) GetLabels(c *gin.Context) {
+	if K8s == nil {
+		k8sUnavailable(c)
+		return
+	}
+	labels, err := K8s.GetNodeLabels(c.Param("id"))
+	if err != nil {
+		model.Error(c, http.StatusNotFound, model.CodeNotFound, err.Error())
+		return
+	}
+	model.Success(c, labels)
+}
+
+func (h *NodeHandler) UpdateLabels(c *gin.Context) {
+	if K8s == nil {
+		k8sUnavailable(c)
+		return
+	}
+	var request updateNodeLabelsRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "节点标签请求无效")
+		return
+	}
+	labels, err := K8s.UpdateNodeLabels(c.Param("id"), request.Set, request.Remove)
+	if err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		return
+	}
+	model.Success(c, labels)
 }
 
 // AddNode 将已注册的服务器加入 K3s 集群
