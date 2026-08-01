@@ -160,7 +160,51 @@ const (
 	ReleaseOperationRunning = "running"
 	ReleaseOperationSuccess = "success"
 	ReleaseOperationFailed  = "failed"
+
+	PVCMigrationStatusPending            = "pending"
+	PVCMigrationStatusPreflight          = "preflight"
+	PVCMigrationStatusProvisioningTarget = "provisioning_target"
+	PVCMigrationStatusStoppingSource     = "stopping_source"
+	PVCMigrationStatusCopying            = "copying"
+	PVCMigrationStatusCutover            = "cutover"
+	PVCMigrationStatusWaitingReady       = "waiting_ready"
+	PVCMigrationStatusSucceeded          = "succeeded"
+	PVCMigrationStatusFailed             = "failed"
+	PVCMigrationStatusRollingBack        = "rolling_back"
+	PVCMigrationStatusRolledBack         = "rolled_back"
+	PVCMigrationStatusCleanupPending     = "cleanup_pending"
+	PVCMigrationStatusCleaned            = "cleaned"
 )
+
+// PersistentVolumeMigration records a local PVC move independently from release snapshots.
+type PersistentVolumeMigration struct {
+	ID                 uint       `gorm:"primaryKey" json:"id"`
+	EnvironmentID      uint       `gorm:"index;not null" json:"environment_id"`
+	ApplicationID      uint       `gorm:"index;not null" json:"application_id"`
+	SourcePVCName      string     `gorm:"size:253;index;not null" json:"source_pvc_name"`
+	TargetPVCName      string     `gorm:"size:253;not null" json:"target_pvc_name"`
+	SourceNodeName     string     `gorm:"size:253;not null" json:"source_node_name"`
+	TargetNodeName     string     `gorm:"size:253;not null" json:"target_node_name"`
+	SourceDeployment   string     `gorm:"size:253;not null" json:"source_deployment"`
+	SourceReplicas     int32      `json:"source_replicas"`
+	Status             string     `gorm:"size:32;index;not null" json:"status"`
+	Detail             string     `gorm:"type:text" json:"detail"`
+	BytesCopied        int64      `json:"bytes_copied"`
+	SourceTemplateSpec string     `gorm:"type:text" json:"-"`
+	StartedAt          *time.Time `json:"started_at,omitempty"`
+	CompletedAt        *time.Time `json:"completed_at,omitempty"`
+	CreatedAt          time.Time  `json:"created_at"`
+	UpdatedAt          time.Time  `json:"updated_at"`
+}
+
+func IsPVCMigrationTerminal(status string) bool {
+	switch status {
+	case PVCMigrationStatusSucceeded, PVCMigrationStatusFailed, PVCMigrationStatusRolledBack, PVCMigrationStatusCleaned:
+		return true
+	default:
+		return false
+	}
+}
 
 // Project 应用所属的业务与授权边界。
 type Project struct {

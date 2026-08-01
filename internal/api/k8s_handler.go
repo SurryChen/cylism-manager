@@ -17,7 +17,8 @@ import (
 
 // K8sHandler K8s 资源管理的 HTTP handler
 type K8sHandler struct {
-	store *store.Store
+	store  *store.Store
+	encKey []byte
 }
 
 // NewK8sHandler 创建 K8sHandler
@@ -26,6 +27,12 @@ func NewK8sHandler(stores ...*store.Store) *K8sHandler {
 	if len(stores) > 0 {
 		h.store = stores[0]
 	}
+	return h
+}
+
+func NewK8sHandlerWithEncryption(st *store.Store, encKey []byte) *K8sHandler {
+	h := NewK8sHandler(st)
+	h.encKey = encKey
 	return h
 }
 

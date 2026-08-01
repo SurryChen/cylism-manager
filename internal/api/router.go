@@ -240,7 +240,7 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 	}
 
 	// K8s 资源管理
-	k8sHandler := NewK8sHandler(s)
+	k8sHandler := NewK8sHandlerWithEncryption(s, encKey)
 	k8sGroup := apiGroup.Group("/k8s")
 	{
 		k8sGroup.GET("/dashboard", k8sHandler.Dashboard)
@@ -282,6 +282,10 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 		k8sGroup.GET("/storage-classes", k8sHandler.ListStorageClasses)
 		k8sGroup.GET("/persistent-volume-claims", k8sHandler.ListPersistentVolumeClaims)
 		k8sGroup.POST("/persistent-volume-claims", k8sHandler.CreatePersistentVolumeClaim)
+		k8sGroup.GET("/persistent-volume-migrations", k8sHandler.ListPersistentVolumeMigrations)
+		k8sGroup.GET("/persistent-volume-migrations/:id", k8sHandler.GetPersistentVolumeMigration)
+		k8sGroup.POST("/persistent-volume-migrations/:id/cleanup", k8sHandler.CleanupPersistentVolumeMigration)
+		k8sGroup.POST("/persistent-volume-claims/:name/migrations", k8sHandler.CreatePersistentVolumeMigration)
 		k8sGroup.DELETE("/persistent-volume-claims/:name", k8sHandler.DeletePersistentVolumeClaim)
 
 		// 标准 Ingress
