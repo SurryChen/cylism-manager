@@ -892,6 +892,15 @@ func (h *ApplicationHandler) templateFromRequest(app *model.Application, req *de
 	if issues := application.ValidateReleaseSpec(spec); len(issues) > 0 {
 		return nil, fmt.Errorf("%s", issues[0].Message)
 	}
+	if len(spec.Volumes) > 0 {
+		if K8s == nil {
+			return nil, fmt.Errorf("K8s 集群未连接，无法验证 PVC")
+		}
+		context := application.ApplicationContext{EnvironmentID: app.Environment.ID, Namespace: app.Environment.Namespace}
+		if err := application.NewKubernetesApplier(K8s).ValidatePersistentVolumeClaims(context, spec); err != nil {
+			return nil, err
+		}
+	}
 	snapshot, err := json.Marshal(application.SanitizeReleaseSpec(spec))
 	if err != nil {
 		return nil, fmt.Errorf("保存上线模板失败: %w", err)

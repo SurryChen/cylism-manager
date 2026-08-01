@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	k8sclient "github.com/cylism/cylism-manager/internal/k8s"
+	"github.com/cylism/cylism-manager/internal/model"
+	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/gin-gonic/gin"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -150,5 +152,36 @@ func TestListPodsIncludesContainers(t *testing.T) {
 	}
 	if got := response.Data[0].Containers; len(got) != 2 || got[0] != "app" || got[1] != "metrics" {
 		t.Fatalf("expected Pod containers, got %#v", got)
+	}
+}
+
+func TestPersistentVolumeClaimsAreScopedToEnvironment(t *testing.T) {
+	st, err := store.New(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateProject(&model.Project{Name: "knowledge", OwnerID: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateEnvironment(&model.Environment{ProjectID: 1, Name: "production", Namespace: "project-knowledge-prod"}); err != nil {
+		t.Fatal(err)
+	}
+	original := K8s
+	K8s = &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "project-knowledge-prod"}})}
+	defer func() { K8s = original }()
+
+	r := gin.New()
+	h := NewK8sHandler(st)
+	g := r.Group("/api/k8s")
+	g.POST("/persistent-volume-claims", h.CreatePersistentVolumeClaim)
+	g.GET("/persistent-volume-claims", h.ListPersistentVolumeClaims)
+
+	create := serve(r, newJSONRequest(http.MethodPost, "/api/k8s/persistent-volume-claims", map[string]any{"environment_id": 1, "name": "karakeep-data", "storage": "5Gi"}))
+	if create.Code != http.StatusOK || !strings.Contains(create.Body.String(), "karakeep-data") {
+		t.Fatalf("unexpected create response: %d %s", create.Code, create.Body.String())
+	}
+	listed := serve(r, httptest.NewRequest(http.MethodGet, "/api/k8s/persistent-volume-claims?environment_id=1", nil))
+	if listed.Code != http.StatusOK || !strings.Contains(listed.Body.String(), "karakeep-data") {
+		t.Fatalf("unexpected list response: %d %s", listed.Code, listed.Body.String())
 	}
 }

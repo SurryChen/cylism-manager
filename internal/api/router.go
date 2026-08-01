@@ -178,6 +178,8 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 	nodes := apiGroup.Group("/nodes")
 	{
 		nodes.GET("", nodeHandler.ListNode)
+		nodes.GET("/:id/labels", nodeHandler.GetLabels)
+		nodes.PATCH("/:id/labels", nodeHandler.UpdateLabels)
 		nodes.GET("/:id/join-progress", nodeHandler.JoinProgress)
 		nodes.GET("/:id/drain-plan", nodeHandler.DrainPlan)
 		nodes.GET("/:id/removal-check", nodeHandler.RemovalCheck)
@@ -265,6 +267,10 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 		k8sGroup.GET("/configmaps/:namespace/:name", k8sHandler.GetConfigMap)
 		k8sGroup.GET("/secrets", k8sHandler.ListSecrets)
 		k8sGroup.GET("/secrets/:namespace/:name", k8sHandler.GetSecret)
+		k8sGroup.GET("/storage-classes", k8sHandler.ListStorageClasses)
+		k8sGroup.GET("/persistent-volume-claims", k8sHandler.ListPersistentVolumeClaims)
+		k8sGroup.POST("/persistent-volume-claims", k8sHandler.CreatePersistentVolumeClaim)
+		k8sGroup.DELETE("/persistent-volume-claims/:name", k8sHandler.DeletePersistentVolumeClaim)
 
 		// 标准 Ingress
 		k8sGroup.GET("/ingresses", k8sHandler.ListIngresses)

@@ -3,6 +3,8 @@ package application
 import (
 	"encoding/json"
 	"testing"
+
+	appsv1 "k8s.io/api/apps/v1"
 )
 
 func TestValidateReleaseSpec(t *testing.T) {
@@ -146,6 +148,38 @@ func TestRenderResourcesDoesNotCreateDisabledHealthChecks(t *testing.T) {
 	container := resources.Deployment.Spec.Template.Spec.Containers[0]
 	if container.ReadinessProbe != nil || container.LivenessProbe != nil {
 		t.Fatalf("disabled health checks must not render probes: %+v", container)
+	}
+}
+
+func TestRenderResourcesMountsPersistentVolumeClaimsOnSelectedNode(t *testing.T) {
+	spec := validTestReleaseSpec()
+	spec.Replicas = 1
+	spec.NodeName = "storage-node-a"
+	spec.Volumes = []VolumeMountSpec{{ClaimName: "karakeep-data", MountPath: "/data"}}
+	resources, err := RenderResources(ApplicationContext{ProjectName: "knowledge", EnvironmentName: "production", ApplicationName: "karakeep", Namespace: "project-knowledge-prod", ReleaseSequence: 4}, spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	podSpec := resources.Deployment.Spec.Template.Spec
+	if podSpec.NodeName != "" || podSpec.NodeSelector["kubernetes.io/hostname"] != "storage-node-a" || len(podSpec.Volumes) != 1 || podSpec.Volumes[0].PersistentVolumeClaim == nil || podSpec.Volumes[0].PersistentVolumeClaim.ClaimName != "karakeep-data" {
+		t.Fatalf("expected PVC volume and node placement, got %#v", podSpec)
+	}
+	container := podSpec.Containers[0]
+	if len(container.VolumeMounts) != 1 || container.VolumeMounts[0].MountPath != "/data" || container.VolumeMounts[0].ReadOnly {
+		t.Fatalf("expected writable /data mount, got %#v", container.VolumeMounts)
+	}
+	if resources.Deployment.Spec.Strategy.Type != appsv1.RecreateDeploymentStrategyType {
+		t.Fatalf("expected Recreate strategy for PVC deployment, got %#v", resources.Deployment.Spec.Strategy)
+	}
+}
+
+func TestValidateReleaseSpecRejectsReplicatedPersistentVolumeClaims(t *testing.T) {
+	spec := validTestReleaseSpec()
+	spec.Replicas = 2
+	spec.Volumes = []VolumeMountSpec{{ClaimName: "karakeep-data", MountPath: "/data"}}
+	issues := ValidateReleaseSpec(spec)
+	if len(issues) == 0 || issues[len(issues)-1].Field != "volumes" {
+		t.Fatalf("expected PVC replica validation issue, got %#v", issues)
 	}
 }
 

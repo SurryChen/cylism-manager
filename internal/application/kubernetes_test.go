@@ -15,13 +15,13 @@ func TestKubernetesApplierPreflightRequiresActiveNamespace(t *testing.T) {
 	clientset := k8sfake.NewSimpleClientset()
 	applier := NewKubernetesApplier(&k8sclient.Client{Clientset: clientset})
 	application := ApplicationContext{Namespace: "dev"}
-	if err := applier.Preflight(context.Background(), application, EndpointSpec{Exposure: ExposureCluster}); err == nil || !strings.Contains(err.Error(), "命名空间") {
+	if err := applier.Preflight(context.Background(), application, ReleaseSpec{Endpoint: EndpointSpec{Exposure: ExposureCluster}}); err == nil || !strings.Contains(err.Error(), "命名空间") {
 		t.Fatalf("expected missing namespace preflight failure, got %v", err)
 	}
 	if _, err := clientset.CoreV1().Namespaces().Create(context.Background(), &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "dev"}, Status: corev1.NamespaceStatus{Phase: corev1.NamespaceActive}}, metav1.CreateOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := applier.Preflight(context.Background(), application, EndpointSpec{Exposure: ExposureCluster}); err != nil {
+	if err := applier.Preflight(context.Background(), application, ReleaseSpec{Endpoint: EndpointSpec{Exposure: ExposureCluster}}); err != nil {
 		t.Fatalf("expected active namespace preflight to pass: %v", err)
 	}
 }

@@ -10,7 +10,7 @@ import (
 	k8sfake "k8s.io/client-go/kubernetes/fake"
 )
 
-func TestInstallVictoriaMetricsCreatesPinnedHostPathDeployment(t *testing.T) {
+func TestInstallVictoriaMetricsCreatesHostnameSelectedHostPathDeployment(t *testing.T) {
 	client := &Client{Clientset: k8sfake.NewSimpleClientset(&corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{Name: "node-a"},
 		Status:     corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}}},
@@ -32,8 +32,8 @@ func TestInstallVictoriaMetricsCreatesPinnedHostPathDeployment(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected deployment: %v", err)
 	}
-	if deployment.Spec.Template.Spec.NodeName != "node-a" {
-		t.Fatalf("expected node pinning, got %q", deployment.Spec.Template.Spec.NodeName)
+	if deployment.Spec.Template.Spec.NodeName != "" || deployment.Spec.Template.Spec.NodeSelector[corev1.LabelHostname] != "node-a" {
+		t.Fatalf("expected hostname node selector, got %#v", deployment.Spec.Template.Spec)
 	}
 	volume := deployment.Spec.Template.Spec.Volumes[0]
 	if volume.HostPath == nil || volume.HostPath.Path != "/data/victoria-metrics" {
@@ -72,9 +72,9 @@ func TestVictoriaMetricsStatusReportsReadyConfiguration(t *testing.T) {
 		Spec: appsv1.DeploymentSpec{
 			Replicas: int32Ptr(1),
 			Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{
-				NodeName:   "node-a",
-				Volumes:    []corev1.Volume{{Name: "storage", VolumeSource: corev1.VolumeSource{HostPath: &corev1.HostPathVolumeSource{Path: "/data/victoria-metrics", Type: &dataPathType}}}},
-				Containers: []corev1.Container{{Name: "victoria-metrics", Args: []string{"-retentionPeriod=7d"}}},
+				NodeSelector: map[string]string{corev1.LabelHostname: "node-a"},
+				Volumes:      []corev1.Volume{{Name: "storage", VolumeSource: corev1.VolumeSource{HostPath: &corev1.HostPathVolumeSource{Path: "/data/victoria-metrics", Type: &dataPathType}}}},
+				Containers:   []corev1.Container{{Name: "victoria-metrics", Args: []string{"-retentionPeriod=7d"}}},
 			}},
 		},
 		Status: appsv1.DeploymentStatus{AvailableReplicas: 1},
@@ -91,8 +91,8 @@ func TestInstallVictoriaMetricsRejectsRelocation(t *testing.T) {
 	existing := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{Name: victoriaMetricsName, Namespace: victoriaMetricsNamespace},
 		Spec: appsv1.DeploymentSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{
-			NodeName: "node-a",
-			Volumes:  []corev1.Volume{{Name: "storage", VolumeSource: corev1.VolumeSource{HostPath: &corev1.HostPathVolumeSource{Path: "/data/old", Type: &dataPathType}}}},
+			NodeSelector: map[string]string{corev1.LabelHostname: "node-a"},
+			Volumes:      []corev1.Volume{{Name: "storage", VolumeSource: corev1.VolumeSource{HostPath: &corev1.HostPathVolumeSource{Path: "/data/old", Type: &dataPathType}}}},
 		}}},
 	}
 	client := &Client{Clientset: k8sfake.NewSimpleClientset(

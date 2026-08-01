@@ -24,6 +24,8 @@ func setupNodeRouter() (*gin.Engine, *store.Store) {
 	nodes := r.Group("/api/nodes")
 	{
 		nodes.GET("", h.ListNode)
+		nodes.GET("/:id/labels", h.GetLabels)
+		nodes.PATCH("/:id/labels", h.UpdateLabels)
 		nodes.GET("/:id/drain-plan", h.DrainPlan)
 		nodes.GET("/:id/removal-check", h.RemovalCheck)
 		nodes.POST("/:id/add", h.AddNode)
@@ -102,6 +104,29 @@ func TestNodeHandler_RejoinNode(t *testing.T) {
 	r.ServeHTTP(w, req)
 	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"evicted":false`) {
 		t.Fatalf("expected rejoin success, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestNodeHandler_UpdatesCustomLabelsAndRejectsProtectedLabels(t *testing.T) {
+	original := K8s
+	defer func() { K8s = original }()
+	K8s = &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "worker-a", Labels: map[string]string{corev1.LabelHostname: "worker-a"}}})}
+	r, _ := setupNodeRouter()
+
+	request := httptest.NewRequest(http.MethodPatch, "/api/nodes/worker-a/labels", strings.NewReader(`{"set":{"team":"platform"},"remove":[]}`))
+	request.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, request)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"team":"platform"`) {
+		t.Fatalf("expected custom label update, got %d: %s", w.Code, w.Body.String())
+	}
+
+	request = httptest.NewRequest(http.MethodPatch, "/api/nodes/worker-a/labels", strings.NewReader(`{"set":{"k3s.io/internal-ip":"10.0.0.1"}}`))
+	request.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, request)
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "系统标签") {
+		t.Fatalf("expected protected label rejection, got %d: %s", w.Code, w.Body.String())
 	}
 }
 

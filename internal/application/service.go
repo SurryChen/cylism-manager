@@ -11,7 +11,7 @@ import (
 )
 
 type ResourceApplier interface {
-	Preflight(ctx context.Context, application ApplicationContext, endpoint EndpointSpec) error
+	Preflight(ctx context.Context, application ApplicationContext, spec ReleaseSpec) error
 	Apply(ctx context.Context, resources *RenderedResources) error
 	WaitReady(ctx context.Context, application ApplicationContext, spec ReleaseSpec) error
 }
@@ -85,7 +85,7 @@ func (s *Service) ExecuteRelease(ctx context.Context, releaseID uint, applicatio
 	if err := s.transition(release, model.ReleaseStatusValidating); err != nil {
 		return err
 	}
-	if err := s.runStep(releaseID, "preflight", func() error { return s.applier.Preflight(ctx, applicationContext, spec.Endpoint) }); err != nil {
+	if err := s.runStep(releaseID, "preflight", func() error { return s.applier.Preflight(ctx, applicationContext, spec) }); err != nil {
 		return s.failRelease(releaseID, "preflight", err)
 	}
 	if err := s.transition(release, model.ReleaseStatusApplying); err != nil {

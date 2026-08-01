@@ -42,6 +42,7 @@
               <td>{{ node.memory_mb ? (node.memory_mb / 1024).toFixed(1) + 'G' : '-' }}</td>
               <td>
                 <div class="btn-group action-cell">
+                  <button class="btn btn-sm" :data-testid="`manage-labels-${node.name}`" :disabled="checkingNode === node.name" @click="openLabels(node)">标签</button>
                   <button v-if="node.evicted" class="btn btn-sm btn-primary" :data-testid="`rejoin-${node.name}`" :disabled="rejoiningNode === node.name" @click="rejoinNode(node)">{{ rejoiningNode === node.name ? '加入中...' : '重新加入' }}</button>
                   <template v-else>
                     <button class="btn btn-sm" :disabled="checkingNode === node.name" @click="openDrain(node)">{{ checkingNode === node.name ? '检查中...' : '驱逐' }}</button>
@@ -111,6 +112,24 @@
         </div>
       </div>
     </div>
+
+    <div v-if="labelsTarget" class="overlay" @click.self="closeLabels">
+      <div class="modal labels-modal">
+        <h2 class="modal-title">管理节点标签</h2>
+        <p class="modal-copy">{{ labelsTarget.displayName }} · {{ labelsTarget.name }}。工作负载选择节点时使用 <code>kubernetes.io/hostname</code> 标签；Kubernetes 和 K3s 系统标签只读。</p>
+        <div class="labels-section">
+          <strong>系统标签</strong>
+          <div v-if="systemLabelEntries.length" class="labels-readonly"><div v-for="([key, value]) in systemLabelEntries" :key="key"><code>{{ key }}</code><span>{{ value || '(空)' }}</span></div></div>
+          <p v-else class="empty-inline">无系统标签</p>
+        </div>
+        <div class="labels-section">
+          <div class="labels-heading"><strong>自定义标签</strong><button class="btn btn-sm" type="button" @click="addLabel">添加标签</button></div>
+          <div v-if="labelDraft.length" class="label-editor-list"><div v-for="(label, index) in labelDraft" :key="label.id" class="label-editor-row"><input v-model.trim="label.key" class="form-input" placeholder="team" /><input v-model.trim="label.value" class="form-input" placeholder="platform" /><button class="btn btn-sm btn-danger" type="button" title="删除标签" @click="removeLabel(index)">删除</button></div></div>
+          <p v-else class="empty-inline">尚未设置自定义标签</p>
+        </div>
+        <div class="modal-actions"><button class="btn" :disabled="savingLabels" @click="closeLabels">取消</button><button class="btn btn-primary" :disabled="savingLabels" @click="saveLabels">{{ savingLabels ? '保存中...' : '保存标签' }}</button></div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -134,8 +153,16 @@ const forceDeleteEmptyDirData = ref(false)
 const forceDraining = ref(false)
 const drainResult = ref(null)
 const rejoiningNode = ref('')
+const labelsTarget = ref(null)
+const labelDraft = ref([])
+const savingLabels = ref(false)
 
 const serverLookup = computed(() => servers.value)
+const systemLabelEntries = computed(() => {
+  if (!labelsTarget.value) return []
+  const protectedKeys = new Set(labelsTarget.value.protectedKeys || [])
+  return Object.entries(labelsTarget.value.labels || {}).filter(([key]) => protectedKeys.has(key)).sort(([left], [right]) => left.localeCompare(right))
+})
 
 onMounted(() => {
   fetchData()
@@ -163,6 +190,10 @@ function mappedServer(node) {
     if (server.k8s_node_name && server.k8s_node_name.toLowerCase() === node.name.toLowerCase()) return true
     return false
   })
+}
+
+function displayNode(node) {
+  return mappedServer(node)?.name || node.name
 }
 
 function nodeHealthLabel(node) {
@@ -248,6 +279,53 @@ async function rejoinNode(node) {
   } catch (e) { error.value = e.message || '节点重新加入失败' } finally { rejoiningNode.value = '' }
 }
 
+async function openLabels(node) {
+  checkingNode.value = node.name
+  error.value = ''
+  try {
+    const result = await api.get(`/nodes/${node.name}/labels`)
+    const protectedKeys = new Set(result.protected_keys || [])
+    labelsTarget.value = { name: node.name, displayName: displayNode(node), labels: result.labels || {}, protectedKeys: result.protected_keys || [] }
+    labelDraft.value = Object.entries(result.labels || {}).filter(([key]) => !protectedKeys.has(key)).sort(([left], [right]) => left.localeCompare(right)).map(([key, value], index) => ({ id: `${key}-${index}`, key, value }))
+  } catch (e) { error.value = e.message || '读取节点标签失败' } finally { checkingNode.value = '' }
+}
+
+function closeLabels(force = false) {
+  if (savingLabels.value && !force) return
+  labelsTarget.value = null
+  labelDraft.value = []
+}
+
+function addLabel() {
+  labelDraft.value.push({ id: `new-${Date.now()}-${labelDraft.value.length}`, key: '', value: '' })
+}
+
+function removeLabel(index) {
+  labelDraft.value.splice(index, 1)
+}
+
+async function saveLabels() {
+  if (!labelsTarget.value) return
+  const original = Object.entries(labelsTarget.value.labels || {}).filter(([key]) => !(labelsTarget.value.protectedKeys || []).includes(key)).reduce((result, [key, value]) => ({ ...result, [key]: value }), {})
+  const next = {}
+  for (const label of labelDraft.value) {
+    if (!label.key || Object.prototype.hasOwnProperty.call(next, label.key)) {
+      error.value = '自定义标签键不能为空且不能重复'
+      return
+    }
+    next[label.key] = label.value
+  }
+  const set = Object.fromEntries(Object.entries(next).filter(([key, value]) => original[key] !== value))
+  const remove = Object.keys(original).filter(key => !Object.prototype.hasOwnProperty.call(next, key))
+  savingLabels.value = true
+  error.value = ''
+  try {
+    await api.patch(`/nodes/${labelsTarget.value.name}/labels`, { set, remove })
+    closeLabels(true)
+    await fetchData()
+  } catch (e) { error.value = e.message || '保存节点标签失败' } finally { savingLabels.value = false }
+}
+
 async function openRemove(node) {
   checkingNode.value = node.name
   error.value = ''
@@ -275,5 +353,5 @@ async function doRemoveNode() {
   font-size: 13px;
   line-height: 1.6;
 }
-.modal-copy{margin:0;color:var(--text-secondary);font-size:13px;line-height:1.6}.drain-summary{display:flex;gap:8px;flex-wrap:wrap;margin-top:16px}.drain-summary span{padding:5px 7px;border-radius:var(--radius-control);background:var(--surface-subtle);color:var(--text-secondary);font-size:11px}.drain-pods,.drain-warning,.drain-blockers{display:grid;gap:6px;margin-top:16px;padding:10px;border-radius:var(--radius-control);font-size:12px}.drain-pods{max-height:132px;overflow:auto;background:var(--surface-subtle);color:var(--text-secondary)}.drain-warning{background:var(--warning-surface);color:var(--warning)}.drain-blockers{background:var(--danger-surface);color:var(--danger)}.drain-pods small,.drain-warning small,.drain-blockers small{overflow-wrap:anywhere}.check-row{display:flex;align-items:center;gap:8px;margin-top:4px;color:var(--text-primary);font-size:12px}.force-drain-modal,.result-modal{width:min(580px,calc(100vw - 32px))}.force-ack{margin-top:16px}.compact-field{margin-top:16px}
+.modal-copy{margin:0;color:var(--text-secondary);font-size:13px;line-height:1.6}.drain-summary{display:flex;gap:8px;flex-wrap:wrap;margin-top:16px}.drain-summary span{padding:5px 7px;border-radius:var(--radius-control);background:var(--surface-subtle);color:var(--text-secondary);font-size:11px}.drain-pods,.drain-warning,.drain-blockers{display:grid;gap:6px;margin-top:16px;padding:10px;border-radius:var(--radius-control);font-size:12px}.drain-pods{max-height:132px;overflow:auto;background:var(--surface-subtle);color:var(--text-secondary)}.drain-warning{background:var(--warning-surface);color:var(--warning)}.drain-blockers{background:var(--danger-surface);color:var(--danger)}.drain-pods small,.drain-warning small,.drain-blockers small{overflow-wrap:anywhere}.check-row{display:flex;align-items:center;gap:8px;margin-top:4px;color:var(--text-primary);font-size:12px}.force-drain-modal,.result-modal,.labels-modal{width:min(580px,calc(100vw - 32px))}.force-ack{margin-top:16px}.compact-field{margin-top:16px}.labels-section{display:grid;gap:8px;margin-top:18px}.labels-heading{display:flex;align-items:center;justify-content:space-between;gap:12px}.labels-readonly,.label-editor-list{display:grid;gap:6px}.labels-readonly{max-height:180px;overflow:auto;padding:10px;border:1px solid var(--border-muted);border-radius:var(--radius-control);background:var(--surface-subtle)}.labels-readonly>div{display:grid;grid-template-columns:minmax(0,1fr) minmax(100px,1fr);gap:12px;font-size:12px}.labels-readonly code,.labels-readonly span{overflow-wrap:anywhere}.labels-readonly span{color:var(--text-secondary)}.label-editor-row{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) auto;gap:8px}.empty-inline{margin:0;color:var(--text-muted);font-size:12px}@media(max-width:600px){.label-editor-row,.labels-readonly>div{grid-template-columns:1fr}.label-editor-row .btn{width:100%}}
 </style>

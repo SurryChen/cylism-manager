@@ -27,7 +27,7 @@ func NewKubernetesApplier(client *k8sclient.Client) *KubernetesApplier {
 	return &KubernetesApplier{Client: client, ReadinessTimeout: 2 * time.Minute}
 }
 
-func (a *KubernetesApplier) Preflight(ctx context.Context, application ApplicationContext, endpoint EndpointSpec) error {
+func (a *KubernetesApplier) Preflight(ctx context.Context, application ApplicationContext, spec ReleaseSpec) error {
 	if a.Client == nil || a.Client.Clientset == nil {
 		return fmt.Errorf("Kubernetes 客户端未初始化")
 	}
@@ -41,17 +41,57 @@ func (a *KubernetesApplier) Preflight(ctx context.Context, application Applicati
 	if namespace.Status.Phase != corev1.NamespaceActive {
 		return fmt.Errorf("环境命名空间 %q 未就绪", application.Namespace)
 	}
-	if endpoint.Exposure != ExposurePublic {
+	if err := a.ValidatePersistentVolumeClaims(application, spec); err != nil {
+		return err
+	}
+	if spec.Endpoint.Exposure != ExposurePublic {
 		return nil
 	}
 	status, err := a.Client.DetectIngressController()
 	if err != nil || status == nil || !status.Running {
 		return fmt.Errorf("Ingress Controller 未就绪")
 	}
-	if endpoint.TLSEnabled {
+	if spec.Endpoint.TLSEnabled {
 		ok, err := a.Client.CheckCRD("certificates.cert-manager.io")
 		if err != nil || !ok {
 			return fmt.Errorf("cert-manager Certificate CRD 不可用")
+		}
+	}
+	return nil
+}
+
+// ValidatePersistentVolumeClaims validates platform-owned claims before a
+// template is saved or a release is applied. WFFC claims are allowed to remain
+// Pending when an explicit node is selected because the first Pod performs the
+// binding.
+func (a *KubernetesApplier) ValidatePersistentVolumeClaims(application ApplicationContext, spec ReleaseSpec) error {
+	if len(spec.Volumes) == 0 {
+		return nil
+	}
+	if spec.Replicas != 1 {
+		return fmt.Errorf("ReadWriteOnce PVC 仅支持单副本应用")
+	}
+	if spec.NodeName != "" {
+		if _, err := a.Client.Clientset.CoreV1().Nodes().Get(a.Client.Ctx(), spec.NodeName, metav1.GetOptions{}); err != nil {
+			return fmt.Errorf("检查部署节点 %q: %w", spec.NodeName, err)
+		}
+	}
+	for _, volume := range spec.Volumes {
+		claim, err := a.Client.GetManagedPVC(application.Namespace, volume.ClaimName, application.EnvironmentID)
+		if err != nil {
+			return err
+		}
+		switch claim.Phase {
+		case string(corev1.ClaimBound):
+			if claim.BoundNode != "" && claim.BoundNode != spec.NodeName {
+				return fmt.Errorf("PVC %q 已绑定节点 %q，部署节点必须保持一致", volume.ClaimName, claim.BoundNode)
+			}
+		case string(corev1.ClaimPending):
+			if !claim.WaitForFirstConsumer || spec.NodeName == "" {
+				return fmt.Errorf("PVC %q 尚未就绪；本地卷首次挂载前请选择部署节点", volume.ClaimName)
+			}
+		default:
+			return fmt.Errorf("PVC %q 当前状态为 %s，不能挂载", volume.ClaimName, claim.Phase)
 		}
 	}
 	return nil

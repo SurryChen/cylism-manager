@@ -281,7 +281,7 @@ func upsertVictoriaMetricsDeployment(c *Client, config VictoriaMetricsConfig) er
 		Replicas: &replicas,
 		Selector: &metav1.LabelSelector{MatchLabels: victoriaMetricsLabels()},
 		Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: victoriaMetricsLabels()}, Spec: corev1.PodSpec{
-			NodeName:           config.NodeName,
+			NodeSelector:       map[string]string{corev1.LabelHostname: config.NodeName},
 			ServiceAccountName: victoriaMetricsName,
 			Volumes: []corev1.Volume{
 				{Name: "storage", VolumeSource: corev1.VolumeSource{HostPath: &corev1.HostPathVolumeSource{Path: config.DataPath, Type: &hostPathType}}},
@@ -386,7 +386,7 @@ func createOrUpdateClusterRoleBinding(c *Client, resource *rbacv1.ClusterRoleBin
 }
 
 func victoriaMetricsConfigFromDeployment(deployment *appsv1.Deployment) (VictoriaMetricsConfig, bool) {
-	config := VictoriaMetricsConfig{NodeName: deployment.Spec.Template.Spec.NodeName}
+	config := VictoriaMetricsConfig{NodeName: deployment.Spec.Template.Spec.NodeSelector[corev1.LabelHostname]}
 	for _, volume := range deployment.Spec.Template.Spec.Volumes {
 		if volume.Name == "storage" && volume.HostPath != nil {
 			config.DataPath = volume.HostPath.Path
