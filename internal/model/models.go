@@ -122,6 +122,30 @@ type SystemConfig struct {
 	Value string `gorm:"type:text" json:"-"` // AES-256 加密
 }
 
+// PlatformRelease records a self-update request independently from application releases.
+type PlatformRelease struct {
+	ID            uint       `gorm:"primaryKey" json:"id"`
+	Source        string     `gorm:"size:32;not null" json:"source"`
+	Image         string     `gorm:"size:512;not null" json:"image"`
+	PreviousImage string     `gorm:"size:512" json:"previous_image"`
+	Status        string     `gorm:"size:32;index;not null" json:"status"`
+	Detail        string     `gorm:"type:text" json:"detail"`
+	CommitSHA     string     `gorm:"size:64" json:"commit_sha,omitempty"`
+	RunID         string     `gorm:"size:64" json:"run_id,omitempty"`
+	StartedAt     *time.Time `json:"started_at,omitempty"`
+	CompletedAt   *time.Time `json:"completed_at,omitempty"`
+	CreatedAt     time.Time  `json:"created_at"`
+	UpdatedAt     time.Time  `json:"updated_at"`
+}
+
+// PlatformWebhookNonce prevents replay of accepted public deployment webhooks.
+type PlatformWebhookNonce struct {
+	ID        uint      `gorm:"primaryKey" json:"-"`
+	Nonce     string    `gorm:"size:256;uniqueIndex;not null" json:"-"`
+	ExpiresAt time.Time `gorm:"index;not null" json:"-"`
+	CreatedAt time.Time `json:"-"`
+}
+
 const (
 	ReleaseStatusDraft        = "draft"
 	ReleaseStatusValidating   = "validating"

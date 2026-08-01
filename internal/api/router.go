@@ -41,6 +41,11 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 	apiGroup := r.Group("/api")
 	apiGroup.Use(JWTAuthMiddleware(authCfg.JWTSecret))
 	apiGroup.Use(AuditMiddleware(s))
+	platformHandler := NewPlatformHandler(s, encKey)
+	go platformHandler.Reconcile()
+
+	// GitHub Actions calls this signed endpoint after pushing a platform image.
+	r.POST("/api/platform/deployments", platformHandler.Webhook)
 
 	dashHandler := NewDashboardHandler(s)
 	apiGroup.GET("/dashboard", dashHandler.Get)
@@ -111,6 +116,13 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 		monitoring.DELETE("", h.Uninstall)
 		monitoring.GET("/query", h.Query)
 		monitoring.GET("/targets", h.Targets)
+	}
+	platform := apiGroup.Group("/platform")
+	{
+		platform.GET("/status", platformHandler.Status)
+		platform.POST("/webhook-secret", platformHandler.GenerateWebhookSecret)
+		platform.PUT("/image-prefix", platformHandler.UpdateImagePrefix)
+		platform.POST("/releases/:id/rollback", platformHandler.Rollback)
 	}
 	domainHandler := NewDomainHandler(s)
 	domains := apiGroup.Group("/domains")
