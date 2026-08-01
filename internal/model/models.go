@@ -260,7 +260,6 @@ type Application struct {
 	EnvironmentID               uint                  `gorm:"uniqueIndex:idx_environment_application;not null" json:"environment_id"`
 	Name                        string                `gorm:"size:128;uniqueIndex:idx_environment_application;not null" json:"name"`
 	WorkloadKind                string                `gorm:"size:32;default:deployment;not null" json:"workload_kind"`
-	StackTemplateID             *uint                 `gorm:"index" json:"stack_template_id,omitempty"`
 	DefaultDeploymentTemplateID *uint                 `gorm:"index" json:"default_deployment_template_id,omitempty"`
 	CreatedBy                   uint                  `gorm:"index;not null" json:"created_by"`
 	CreatedAt                   time.Time             `json:"created_at"`
@@ -405,38 +404,6 @@ type ApplicationDeploymentTemplate struct {
 	UpdatedBy        uint      `gorm:"index" json:"updated_by"`
 	CreatedAt        time.Time `json:"created_at"`
 	UpdatedAt        time.Time `json:"updated_at"`
-}
-
-// ApplicationStackTemplate stores an Environment-level composition of
-// independently deployed applications.
-type ApplicationStackTemplate struct {
-	ID               uint      `gorm:"primaryKey" json:"id"`
-	EnvironmentID    uint      `gorm:"uniqueIndex:idx_environment_stack_template_name;not null" json:"environment_id"`
-	Name             string    `gorm:"size:128;uniqueIndex:idx_environment_stack_template_name;not null" json:"name"`
-	Description      string    `gorm:"size:512" json:"description"`
-	Enabled          bool      `gorm:"default:true;not null" json:"enabled"`
-	Spec             string    `gorm:"type:text;not null" json:"spec"`
-	EncryptedSecrets string    `gorm:"type:text" json:"-"`
-	Revision         uint      `gorm:"not null" json:"revision"`
-	UpdatedBy        uint      `gorm:"index" json:"updated_by"`
-	CreatedAt        time.Time `json:"created_at"`
-	UpdatedAt        time.Time `json:"updated_at"`
-}
-
-// ApplicationStackRelease records a coordinated release of independent applications.
-type ApplicationStackRelease struct {
-	ID            uint       `gorm:"primaryKey" json:"id"`
-	EnvironmentID uint       `gorm:"index;not null" json:"environment_id"`
-	TemplateID    uint       `gorm:"index;not null" json:"template_id"`
-	DesiredSpec   string     `gorm:"type:text;not null" json:"desired_spec"`
-	ComponentRuns string     `gorm:"type:text" json:"component_runs"`
-	Status        string     `gorm:"size:32;index;not null" json:"status"`
-	Detail        string     `gorm:"type:text" json:"detail"`
-	CreatedBy     uint       `gorm:"index;not null" json:"created_by"`
-	StartedAt     *time.Time `json:"started_at,omitempty"`
-	CompletedAt   *time.Time `json:"completed_at,omitempty"`
-	CreatedAt     time.Time  `json:"created_at"`
-	UpdatedAt     time.Time  `json:"updated_at"`
 }
 
 // Release 是应用一次不可变的期望状态快照；DesiredSpec 不得包含 Secret 明文。

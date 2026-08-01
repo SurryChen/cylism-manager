@@ -54,8 +54,6 @@ func New(dsn string) (*Store, error) {
 		&model.Application{},
 		&model.ApplicationEndpoint{},
 		&model.ApplicationDeploymentTemplate{},
-		&model.ApplicationStackTemplate{},
-		&model.ApplicationStackRelease{},
 		&model.ImageRegistry{},
 		&model.NodeRegistryMirror{},
 		&model.NodeRegistryMirrorNode{},
@@ -83,6 +81,9 @@ func New(dsn string) (*Store, error) {
 			}
 		}
 	}
+	if err := removeObsoleteApplicationStackSchema(db); err != nil {
+		return nil, err
+	}
 
 	store := &Store{db: db}
 	if err := store.backfillManagedDomainEnvironments(); err != nil {
@@ -95,6 +96,22 @@ func New(dsn string) (*Store, error) {
 		return nil, err
 	}
 	return store, nil
+}
+
+// removeObsoleteApplicationStackSchema permanently retires the removed
+// application-stack feature. Stack data was never supported for migration.
+func removeObsoleteApplicationStackSchema(db *gorm.DB) error {
+	for _, table := range []string{"application_stack_releases", "application_stack_templates"} {
+		if db.Migrator().HasTable(table) {
+			if err := db.Migrator().DropTable(table); err != nil {
+				return err
+			}
+		}
+	}
+	if db.Migrator().HasColumn("applications", "stack_template_id") {
+		return db.Exec("ALTER TABLE applications DROP COLUMN stack_template_id").Error
+	}
+	return nil
 }
 
 func (s *Store) backfillApplicationDeploymentTemplates() error {
@@ -694,89 +711,6 @@ func (s *Store) DeleteApplicationDeploymentTemplate(applicationID, templateID ui
 		}
 		return tx.Model(&model.Application{}).Where("id = ? AND default_deployment_template_id = ?", applicationID, templateID).Update("default_deployment_template_id", nil).Error
 	})
-}
-
-func (s *Store) ListApplicationStackTemplates(environmentID uint) ([]model.ApplicationStackTemplate, error) {
-	var templates []model.ApplicationStackTemplate
-	err := s.db.Where("environment_id = ?", environmentID).Order("created_at asc").Find(&templates).Error
-	return templates, err
-}
-
-func (s *Store) GetApplicationStackTemplate(environmentID, templateID uint) (*model.ApplicationStackTemplate, error) {
-	var template model.ApplicationStackTemplate
-	err := s.db.Where("environment_id = ? AND id = ?", environmentID, templateID).First(&template).Error
-	return &template, err
-}
-
-func (s *Store) GetApplicationStackTemplateByID(templateID uint) (*model.ApplicationStackTemplate, error) {
-	var template model.ApplicationStackTemplate
-	err := s.db.First(&template, templateID).Error
-	return &template, err
-}
-
-func (s *Store) CreateApplicationStackTemplate(template *model.ApplicationStackTemplate) error {
-	if template.Revision == 0 {
-		template.Revision = 1
-	}
-	return s.db.Create(template).Error
-}
-
-func (s *Store) UpdateApplicationStackTemplate(template *model.ApplicationStackTemplate) error {
-	return s.db.Transaction(func(tx *gorm.DB) error {
-		var current model.ApplicationStackTemplate
-		if err := tx.Where("id = ? AND environment_id = ?", template.ID, template.EnvironmentID).First(&current).Error; err != nil {
-			return err
-		}
-		template.CreatedAt = current.CreatedAt
-		template.Revision = current.Revision + 1
-		return tx.Save(template).Error
-	})
-}
-
-func (s *Store) DeleteApplicationStackTemplate(environmentID, templateID uint) error {
-	return s.db.Transaction(func(tx *gorm.DB) error {
-		var releases int64
-		if err := tx.Model(&model.ApplicationStackRelease{}).Where("template_id = ?", templateID).Count(&releases).Error; err != nil {
-			return err
-		}
-		if releases > 0 {
-			return fmt.Errorf("该应用栈模板已有关联发布记录，无法删除")
-		}
-		result := tx.Where("id = ? AND environment_id = ?", templateID, environmentID).Delete(&model.ApplicationStackTemplate{})
-		if result.Error != nil {
-			return result.Error
-		}
-		if result.RowsAffected == 0 {
-			return gorm.ErrRecordNotFound
-		}
-		return tx.Model(&model.Application{}).Where("stack_template_id = ?", templateID).Update("stack_template_id", nil).Error
-	})
-}
-
-func (s *Store) CreateApplicationStackRelease(release *model.ApplicationStackRelease) error {
-	return s.db.Create(release).Error
-}
-
-func (s *Store) GetApplicationStackRelease(environmentID, releaseID uint) (*model.ApplicationStackRelease, error) {
-	var release model.ApplicationStackRelease
-	err := s.db.Where("environment_id = ? AND id = ?", environmentID, releaseID).First(&release).Error
-	return &release, err
-}
-
-func (s *Store) ListApplicationStackReleases(environmentID uint) ([]model.ApplicationStackRelease, error) {
-	var releases []model.ApplicationStackRelease
-	err := s.db.Where("environment_id = ?", environmentID).Order("id desc").Find(&releases).Error
-	return releases, err
-}
-
-func (s *Store) ListApplicationStackReleasesByTemplate(templateID uint) ([]model.ApplicationStackRelease, error) {
-	var releases []model.ApplicationStackRelease
-	err := s.db.Where("template_id = ?", templateID).Order("id desc").Find(&releases).Error
-	return releases, err
-}
-
-func (s *Store) UpdateApplicationStackRelease(release *model.ApplicationStackRelease) error {
-	return s.db.Save(release).Error
 }
 
 func (s *Store) CountApplicationEndpointsByDomain(domainID uint) (int64, error) {

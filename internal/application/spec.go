@@ -32,14 +32,11 @@ const (
 )
 
 type ReleaseSpec struct {
-	Image   string `json:"image"`
-	Version string `json:"version,omitempty"`
-	// ImageRepository only exists while a stack release resolves its image. It
-	// preserves the editable template path after registry expansion adds a tag.
-	ImageRepository string   `json:"-"`
-	Command         []string `json:"command,omitempty"`
-	Args            []string `json:"args,omitempty"`
-	RegistryID      uint     `json:"registry_id,omitempty"`
+	Image      string   `json:"image"`
+	Version    string   `json:"version,omitempty"`
+	Command    []string `json:"command,omitempty"`
+	Args       []string `json:"args,omitempty"`
+	RegistryID uint     `json:"registry_id,omitempty"`
 	// 以下字段只在发布执行期存在，禁止写入 API 响应或发布快照。
 	RegistryEndpoint   string            `json:"-"`
 	RegistryAuthType   string            `json:"-"`

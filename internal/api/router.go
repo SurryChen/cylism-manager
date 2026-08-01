@@ -171,17 +171,6 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 		applications.POST("/:id/releases/:releaseID/retry", applicationHandler.RetryRelease)
 		applications.POST("/:id/releases/:releaseID/rollback", applicationHandler.RollbackRelease)
 	}
-	applicationStacks := apiGroup.Group("/application-stacks")
-	{
-		applicationStacks.GET("", applicationHandler.ListStackTemplates)
-		applicationStacks.POST("", applicationHandler.CreateStackTemplate)
-		applicationStacks.POST("/presets/karakeep", applicationHandler.CreateKarakeepStackPreset)
-		applicationStacks.GET("/:id", applicationHandler.GetStackTemplate)
-		applicationStacks.PUT("/:id", applicationHandler.UpdateStackTemplate)
-		applicationStacks.DELETE("/:id", applicationHandler.DeleteStackTemplate)
-		applicationStacks.GET("/:id/releases", applicationHandler.ListStackReleases)
-		applicationStacks.POST("/:id/releases", applicationHandler.CreateStackRelease)
-	}
 	workspace := apiGroup.Group("/workspace")
 	{
 		workspace.GET("/overview", applicationHandler.WorkspaceOverview)

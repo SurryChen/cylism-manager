@@ -52,33 +52,31 @@ func TestApplicationDeploymentTemplateMigrationRemovesLegacySingleTemplateIndex(
 	}
 }
 
-func TestApplicationStackTemplatesAreEnvironmentScopedAndProtectReleaseHistory(t *testing.T) {
-	s := setupTestDB(t)
-	first := &model.ApplicationStackTemplate{EnvironmentID: 1, Name: "karakeep", Enabled: true, Spec: `{}`, Revision: 1}
-	second := &model.ApplicationStackTemplate{EnvironmentID: 2, Name: "karakeep", Enabled: true, Spec: `{}`, Revision: 1}
-	if err := s.CreateApplicationStackTemplate(first); err != nil {
+func TestApplicationStackSchemaIsRemoved(t *testing.T) {
+	dsn := filepath.Join(t.TempDir(), "store.db")
+	st, err := New(dsn)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.CreateApplicationStackTemplate(second); err != nil {
-		t.Fatalf("the same stack name must be allowed in another environment: %v", err)
-	}
-	templates, err := s.ListApplicationStackTemplates(1)
-	if err != nil || len(templates) != 1 || templates[0].ID != first.ID {
-		t.Fatalf("environment-scoped templates = %#v, err=%v", templates, err)
-	}
-	stackID := first.ID
-	app := &model.Application{ProjectID: 1, EnvironmentID: 1, Name: "karakeep", WorkloadKind: "deployment", StackTemplateID: &stackID, CreatedBy: 1}
-	if err := s.CreateApplication(app); err != nil {
+	if err := st.DB().Exec("ALTER TABLE applications ADD COLUMN stack_template_id integer").Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := s.CreateApplicationStackRelease(&model.ApplicationStackRelease{EnvironmentID: 1, TemplateID: first.ID, DesiredSpec: `{}`, Status: "succeeded", CreatedBy: 1}); err != nil {
+	if err := st.DB().Exec("CREATE TABLE application_stack_templates (id integer primary key, environment_id integer not null)").Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := s.DeleteApplicationStackTemplate(1, first.ID); err == nil {
-		t.Fatal("expected template deletion to preserve stack release history")
+	if err := st.DB().Exec("CREATE TABLE application_stack_releases (id integer primary key, template_id integer not null)").Error; err != nil {
+		t.Fatal(err)
 	}
-	if err := s.DeleteApplicationStackTemplate(2, second.ID); err != nil {
-		t.Fatalf("delete stack without history: %v", err)
+
+	migrated, err := New(dsn)
+	if err != nil {
+		t.Fatalf("remove obsolete application stack schema: %v", err)
+	}
+	if migrated.DB().Migrator().HasTable("application_stack_templates") || migrated.DB().Migrator().HasTable("application_stack_releases") {
+		t.Fatal("application stack tables must be removed")
+	}
+	if migrated.DB().Migrator().HasColumn("applications", "stack_template_id") {
+		t.Fatal("applications.stack_template_id must be removed")
 	}
 }
 
