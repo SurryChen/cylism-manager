@@ -49,6 +49,7 @@ jobs:
         if: github.event_name == 'push'
         env:
           CYLISM_DEPLOY_WEBHOOK_SECRET: ${{ secrets.CYLISM_DEPLOY_WEBHOOK_SECRET }}
+          CYLISM_DEPLOY_IP: ${{ secrets.CYLISM_DEPLOY_IP }}
           IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.image.outputs.digest }}
         run: |
           test -n "$CYLISM_DEPLOY_WEBHOOK_SECRET"
@@ -56,10 +57,15 @@ jobs:
           nonce="$(openssl rand -hex 16)"
           body="$(printf '{\"image\":\"%s\",\"commit_sha\":\"%s\",\"run_id\":\"%s\"}' "$IMAGE" "$GITHUB_SHA" "$GITHUB_RUN_ID")"
           signature="$(printf '%s.%s.%s' "$timestamp" "$nonce" "$body" | openssl dgst -sha256 -hmac "$CYLISM_DEPLOY_WEBHOOK_SECRET" -hex | sed 's/^.* //')"
-          curl --fail-with-body --retry 3 --retry-all-errors \
-            -X POST https://cylism.crazycoding.top/api/platform/deployments \
-            -H 'Content-Type: application/json' \
-            -H "X-Cylism-Timestamp: $timestamp" \
-            -H "X-Cylism-Nonce: $nonce" \
-            -H "X-Cylism-Signature: $signature" \
-            --data "$body"
+          curl_args=(--fail-with-body --retry 3 --retry-all-errors
+            -X POST
+            -H 'Content-Type: application/json'
+            -H "X-Cylism-Timestamp: $timestamp"
+            -H "X-Cylism-Nonce: $nonce"
+            -H "X-Cylism-Signature: $signature"
+            --data "$body")
+          if test -n "$CYLISM_DEPLOY_IP"; then
+            curl_args+=(--resolve "cylism.crazycoding.top:443:$CYLISM_DEPLOY_IP")
+          fi
+          curl "${curl_args[@]}" \
+            https://cylism.crazycoding.top/api/platform/deployments

@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cylism/cylism-manager/internal/crypto"
@@ -32,14 +33,19 @@ const (
 var digestImagePattern = regexp.MustCompile(`^[^\s@]+@sha256:[a-f0-9]{64}$`)
 
 type PlatformHandler struct {
-	store  *store.Store
-	encKey []byte
+	store    *store.Store
+	encKey   []byte
+	updateMu sync.Mutex
 }
 
 type platformDeployRequest struct {
 	Image     string `json:"image"`
 	CommitSHA string `json:"commit_sha"`
 	RunID     string `json:"run_id"`
+}
+
+type platformManualReleaseRequest struct {
+	Image string `json:"image"`
 }
 
 func NewPlatformHandler(s *store.Store, encKey []byte) *PlatformHandler {
@@ -85,6 +91,29 @@ func (h *PlatformHandler) Webhook(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusAccepted, model.APIResponse{Code: model.CodeSuccess, Message: "平台发布已接受", Data: release})
+	c.Writer.Flush()
+	h.schedulePlatformRelease(release.ID)
+}
+
+// ManualUpdate lets an authenticated administrator submit an immutable platform image.
+func (h *PlatformHandler) ManualUpdate(c *gin.Context) {
+	var request platformManualReleaseRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "平台镜像请求无效")
+		return
+	}
+	if err := h.validatePlatformImage(request.Image); err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		return
+	}
+	release, err := h.createPlatformRelease(request.Image, "manual", "", "")
+	if err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeK8sAPIError, err.Error())
+		return
+	}
+	c.JSON(http.StatusAccepted, model.APIResponse{Code: model.CodeSuccess, Message: "平台更新已提交", Data: release})
+	c.Writer.Flush()
+	h.schedulePlatformRelease(release.ID)
 }
 
 func (h *PlatformHandler) Status(c *gin.Context) {
@@ -162,6 +191,8 @@ func (h *PlatformHandler) Rollback(c *gin.Context) {
 		return
 	}
 	model.SuccessWithMessage(c, release, "平台回滚已提交")
+	c.Writer.Flush()
+	h.schedulePlatformRelease(release.ID)
 }
 
 // Reconcile resumes a pending self-update after this service has restarted.
@@ -219,28 +250,44 @@ func (h *PlatformHandler) createPlatformRelease(image, source, commitSHA, runID 
 	if err != nil {
 		return nil, err
 	}
-	now := time.Now().UTC()
 	release := &model.PlatformRelease{Source: source, Image: image, PreviousImage: status.Image, Status: "accepted", CommitSHA: strings.TrimSpace(commitSHA), RunID: strings.TrimSpace(runID)}
 	if err := h.store.CreatePlatformRelease(release); err != nil {
 		return nil, fmt.Errorf("创建平台发布记录: %w", err)
 	}
-	release.Status = "applying"
-	release.StartedAt = &now
-	if err := h.store.UpdatePlatformRelease(release); err != nil {
-		return nil, err
+	return release, nil
+}
+
+func (h *PlatformHandler) schedulePlatformRelease(id uint) {
+	// Flush the accepted response before applying the Deployment. The update can
+	// terminate the Pod that is currently serving the request.
+	h.applyPlatformRelease(id)
+}
+
+func (h *PlatformHandler) applyPlatformRelease(id uint) {
+	h.updateMu.Lock()
+	defer h.updateMu.Unlock()
+
+	release, err := h.store.GetPlatformRelease(id)
+	if err != nil || (release.Status != "accepted" && release.Status != "applying") {
+		return
 	}
-	if _, err := K8s.UpdatePlatformDeployment(image, release.ID); err != nil {
+	now := time.Now().UTC()
+	if release.StartedAt == nil {
+		release.StartedAt = &now
+	}
+	release.Status = "applying"
+	if err := h.store.UpdatePlatformRelease(release); err != nil {
+		return
+	}
+	if _, err := K8s.UpdatePlatformDeployment(release.Image, release.ID); err != nil {
 		release.Status = "failed"
 		release.Detail = err.Error()
 		release.CompletedAt = &now
 		_ = h.store.UpdatePlatformRelease(release)
-		return nil, err
+		return
 	}
 	release.Status = "waiting_ready"
-	if err := h.store.UpdatePlatformRelease(release); err != nil {
-		return nil, err
-	}
-	return release, nil
+	_ = h.store.UpdatePlatformRelease(release)
 }
 
 func (h *PlatformHandler) reconcileLatestRelease() {
@@ -250,6 +297,10 @@ func (h *PlatformHandler) reconcileLatestRelease() {
 	}
 	status, err := K8s.PlatformDeploymentStatus()
 	if err != nil {
+		return
+	}
+	if (release.Status == "accepted" || release.Status == "applying") && (status.ReleaseID != release.ID || status.Image != release.Image) {
+		h.applyPlatformRelease(release.ID)
 		return
 	}
 	now := time.Now().UTC()
