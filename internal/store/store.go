@@ -47,6 +47,8 @@ func New(dsn string) (*Store, error) {
 		&model.OperationLog{},
 		&model.User{},
 		&model.SystemConfig{},
+		&model.PlatformRelease{},
+		&model.PlatformWebhookNonce{},
 		&model.Project{},
 		&model.Environment{},
 		&model.Application{},
@@ -364,6 +366,50 @@ func (s *Store) SetSystemConfig(key, value string) error {
 		return s.db.Create(&model.SystemConfig{Key: key, Value: value}).Error
 	}
 	return s.db.Model(&cfg).Update("value", value).Error
+}
+
+// --- Platform self-update ---
+
+func (s *Store) CreatePlatformRelease(release *model.PlatformRelease) error {
+	return s.db.Create(release).Error
+}
+
+func (s *Store) GetPlatformRelease(id uint) (*model.PlatformRelease, error) {
+	var release model.PlatformRelease
+	if err := s.db.First(&release, id).Error; err != nil {
+		return nil, err
+	}
+	return &release, nil
+}
+
+func (s *Store) ListPlatformReleases(limit int) ([]model.PlatformRelease, error) {
+	var releases []model.PlatformRelease
+	query := s.db.Order("id desc")
+	if limit > 0 {
+		query = query.Limit(limit)
+	}
+	return releases, query.Find(&releases).Error
+}
+
+func (s *Store) LatestIncompletePlatformRelease() (*model.PlatformRelease, error) {
+	var release model.PlatformRelease
+	err := s.db.Where("status IN ?", []string{"accepted", "applying", "waiting_ready"}).Order("id desc").First(&release).Error
+	if err != nil {
+		return nil, err
+	}
+	return &release, nil
+}
+
+func (s *Store) UpdatePlatformRelease(release *model.PlatformRelease) error {
+	return s.db.Save(release).Error
+}
+
+func (s *Store) CreatePlatformWebhookNonce(nonce string, expiresAt time.Time) error {
+	return s.db.Create(&model.PlatformWebhookNonce{Nonce: nonce, ExpiresAt: expiresAt}).Error
+}
+
+func (s *Store) DeleteExpiredPlatformWebhookNonces(now time.Time) error {
+	return s.db.Where("expires_at <= ?", now).Delete(&model.PlatformWebhookNonce{}).Error
 }
 
 // --- Application release center ---
