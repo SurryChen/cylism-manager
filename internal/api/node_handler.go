@@ -124,6 +124,20 @@ func (h *NodeHandler) ForceDrainNode(c *gin.Context) {
 	model.SuccessWithMessage(c, result, "故障节点强制驱逐请求已提交")
 }
 
+// RejoinNode makes a drained node schedulable again without reinstalling K3s.
+func (h *NodeHandler) RejoinNode(c *gin.Context) {
+	if K8s == nil {
+		k8sUnavailable(c)
+		return
+	}
+	info, err := K8s.RejoinNode(c.Param("id"))
+	if err != nil {
+		model.Error(c, http.StatusConflict, model.CodeConflict, err.Error())
+		return
+	}
+	model.SuccessWithMessage(c, info, "节点已重新加入调度")
+}
+
 func (h *NodeHandler) RemovalCheck(c *gin.Context) {
 	if K8s == nil {
 		k8sUnavailable(c)

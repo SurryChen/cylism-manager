@@ -77,4 +77,22 @@ describe('Cluster view', () => {
     expect(wrapper.text()).toContain('强制驱逐结果')
     expect(wrapper.text()).toContain('default/web')
   })
+
+  it('shows evicted nodes and allows them to rejoin the cluster', async () => {
+    vi.clearAllMocks()
+    api.get.mockImplementation(url => {
+      if (url === '/nodes') return Promise.resolve([{ name: 'worker-drained', ready: true, evicted: true, roles: 'worker', version: 'v1.31.0+k3s1' }])
+      if (url === '/servers') return Promise.resolve([])
+      return Promise.resolve({})
+    })
+    api.post.mockResolvedValue({ name: 'worker-drained', evicted: false })
+    const wrapper = mount(Cluster, { global: { stubs: { RouterLink: true } } })
+    await new Promise(r => setTimeout(r, 50))
+    await nextTick()
+
+    expect(wrapper.text()).toContain('已驱逐')
+    expect(wrapper.get('[data-testid="rejoin-worker-drained"]').exists()).toBe(true)
+    await wrapper.get('[data-testid="rejoin-worker-drained"]').trigger('click')
+    expect(api.post).toHaveBeenCalledWith('/nodes/worker-drained/rejoin')
+  })
 })

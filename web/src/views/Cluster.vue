@@ -42,8 +42,11 @@
               <td>{{ node.memory_mb ? (node.memory_mb / 1024).toFixed(1) + 'G' : '-' }}</td>
               <td>
                 <div class="btn-group action-cell">
-                  <button class="btn btn-sm" :disabled="checkingNode === node.name" @click="openDrain(node)">{{ checkingNode === node.name ? '检查中...' : '驱逐' }}</button>
-                  <button v-if="canForceDrain(node)" class="btn btn-sm btn-danger" :data-testid="`force-drain-${node.name}`" :disabled="checkingNode === node.name" @click="openForceDrain(node)">强制驱逐</button>
+                  <button v-if="node.evicted" class="btn btn-sm btn-primary" :data-testid="`rejoin-${node.name}`" :disabled="rejoiningNode === node.name" @click="rejoinNode(node)">{{ rejoiningNode === node.name ? '加入中...' : '重新加入' }}</button>
+                  <template v-else>
+                    <button class="btn btn-sm" :disabled="checkingNode === node.name" @click="openDrain(node)">{{ checkingNode === node.name ? '检查中...' : '驱逐' }}</button>
+                    <button v-if="canForceDrain(node)" class="btn btn-sm btn-danger" :data-testid="`force-drain-${node.name}`" :disabled="checkingNode === node.name" @click="openForceDrain(node)">强制驱逐</button>
+                  </template>
                   <button class="btn btn-sm btn-danger" :disabled="checkingNode === node.name" @click="openRemove(node)">移出</button>
                 </div>
               </td>
@@ -130,6 +133,7 @@ const forceConfirmNodeName = ref('')
 const forceDeleteEmptyDirData = ref(false)
 const forceDraining = ref(false)
 const drainResult = ref(null)
+const rejoiningNode = ref('')
 
 const serverLookup = computed(() => servers.value)
 
@@ -162,10 +166,12 @@ function mappedServer(node) {
 }
 
 function nodeHealthLabel(node) {
+  if (node.evicted) return '已驱逐'
   return { ready: '就绪', not_ready: '未就绪', failed: '故障' }[node.health_state] || (node.ready ? '就绪' : '未就绪')
 }
 
 function nodeHealthClass(node) {
+  if (node.evicted) return 'badge-warn'
   if (node.health_state === 'failed') return 'badge-danger'
   return node.ready ? 'badge-online' : 'badge-offline'
 }
@@ -231,6 +237,15 @@ async function doForceDrain() {
     drainResult.value = result
     await fetchData()
   } catch (e) { error.value = e.message || '故障节点强制驱逐失败' } finally { forceDraining.value = false }
+}
+
+async function rejoinNode(node) {
+  rejoiningNode.value = node.name
+  error.value = ''
+  try {
+    await api.post(`/nodes/${node.name}/rejoin`)
+    await fetchData()
+  } catch (e) { error.value = e.message || '节点重新加入失败' } finally { rejoiningNode.value = '' }
 }
 
 async function openRemove(node) {

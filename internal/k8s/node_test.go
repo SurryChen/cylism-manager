@@ -99,6 +99,35 @@ func TestNodeHealthStateDistinguishesTransientNotReadyFromFailed(t *testing.T) {
 	}
 }
 
+func TestNodeInfoMarksCordonedNodeAsEvicted(t *testing.T) {
+	info := nodeToInfo(readyNode("worker-a", true))
+	if !info.Evicted {
+		t.Fatalf("expected cordoned node to be marked evicted, got %#v", info)
+	}
+}
+
+func TestRejoinNodeUncordonsNodeAndClearsDrainMarker(t *testing.T) {
+	node := readyNode("worker-a", true)
+	node.Annotations = map[string]string{nodeDrainAnnotation: "2026-08-01T00:00:00Z"}
+	clientset := k8sfake.NewSimpleClientset(node)
+	client := &Client{Clientset: clientset}
+
+	info, err := client.RejoinNode("worker-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Evicted {
+		t.Fatalf("expected rejoined node to be schedulable, got %#v", info)
+	}
+	updated, err := clientset.CoreV1().Nodes().Get(client.Ctx(), "worker-a", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Spec.Unschedulable || updated.Annotations[nodeDrainAnnotation] != "" {
+		t.Fatalf("expected node to be uncordoned and marker cleared, got %#v", updated)
+	}
+}
+
 func TestForceDrainDeletesOnlyControlledPodsOnFailedWorker(t *testing.T) {
 	controller := true
 	failed := failedWorkerNode("worker-a")

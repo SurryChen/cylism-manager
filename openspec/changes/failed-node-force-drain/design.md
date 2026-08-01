@@ -44,6 +44,10 @@ StatefulSet 仍属于可删除的受控 Pod，但结果文案提示其替代副�
 
 前端在普通驱逐完成后显示结果对话框，而不是关闭后只显示数量横幅。强制驱逐对话框展示受影响 Pod 和固定风险说明，只有状态为 `failed` 的 worker 才显示入口。
 
+## Decision: Rejoin A Drained Node
+
+节点被 cordon 后，Node 列表返回 `evicted=true`，集群页面显示“已驱逐”状态和“重新加入”按钮。`POST /api/nodes/:name/rejoin` 只将 Node 恢复为可调度并清理平台驱逐标记，不重装 K3s、不删除 Node 对象，也不直接迁移已有 Pod。历史上已被 cordon 但没有平台标记的节点同样按已驱逐状态展示。
+
 ## Alternatives Considered
 
 ### Allow force drain for every NotReady node
@@ -60,7 +64,7 @@ StatefulSet 仍属于可删除的受控 Pod，但结果文案提示其替代副�
 
 ## Decision: Terminal Transport And Interaction
 
-终端 WebSocket 使用 `github.com/gorilla/websocket` 取代手写帧解析，保留 1 MiB 的单消息上限。该库负责 RFC 6455 的掩码、分片、控制帧和完整读取，避免长粘贴因部分网络读取造成协议错位。SSH 和 Pod 终端统一在捕获阶段接收剪贴板事件并调用 xterm 的 `paste` API；遮罩不再承担关闭职责，关闭只能通过明确按钮。终端画布固定使用白色背景、深色文本和浅蓝选区，避免半透明平台表面造成灰色透底。
+终端 WebSocket 使用 `github.com/gorilla/websocket` 取代手写帧解析，保留 1 MiB 的单消息上限。该库负责 RFC 6455 的掩码、分片、控制帧和完整读取，避免长粘贴因部分网络读取造成协议错位。SSH 和 Pod 终端使用 xterm 原生粘贴处理，确保一段剪贴板文本只经 `onData` 转发一次；遮罩不再承担关闭职责，关闭只能通过明确按钮。终端画布固定使用白色背景、深色文本和浅蓝选区，避免半透明平台表面造成灰色透底。
 
 ## Risks And Mitigations
 

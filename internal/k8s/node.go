@@ -12,6 +12,7 @@ import (
 )
 
 const mirrorPodAnnotation = "kubernetes.io/config.mirror"
+const nodeDrainAnnotation = "cylism.io/drained-at"
 
 const (
 	nodeFailureThreshold = 5 * time.Minute
@@ -25,6 +26,7 @@ const (
 type NodeInfo struct {
 	Name            string `json:"name"`
 	Ready           bool   `json:"ready"`
+	Evicted         bool   `json:"evicted"`
 	Roles           string `json:"roles"`
 	Version         string `json:"version"`
 	InternalIP      string `json:"internal_ip"`
@@ -168,9 +170,10 @@ func (c *Client) DrainNode(name string, options DrainOptions) (*DrainResult, err
 	}
 	if !node.Spec.Unschedulable {
 		node.Spec.Unschedulable = true
-		if _, err := c.Clientset.CoreV1().Nodes().Update(c.Ctx(), node, metav1.UpdateOptions{}); err != nil {
-			return nil, fmt.Errorf("标记节点不可调度失败: %w", err)
-		}
+	}
+	markNodeDrained(node)
+	if _, err := c.Clientset.CoreV1().Nodes().Update(c.Ctx(), node, metav1.UpdateOptions{}); err != nil {
+		return nil, fmt.Errorf("标记节点不可调度失败: %w", err)
 	}
 
 	candidates := append(append([]DrainPod{}, plan.Evictable...), plan.RequiresEmptyDirConfirmation...)
@@ -219,9 +222,10 @@ func (c *Client) ForceDrainNode(name string, options ForceDrainOptions) (*DrainR
 	}
 	if !node.Spec.Unschedulable {
 		node.Spec.Unschedulable = true
-		if _, err := c.Clientset.CoreV1().Nodes().Update(c.Ctx(), node, metav1.UpdateOptions{}); err != nil {
-			return result, fmt.Errorf("标记节点不可调度失败: %w", err)
-		}
+	}
+	markNodeDrained(node)
+	if _, err := c.Clientset.CoreV1().Nodes().Update(c.Ctx(), node, metav1.UpdateOptions{}); err != nil {
+		return result, fmt.Errorf("标记节点不可调度失败: %w", err)
 	}
 
 	gracePeriodSeconds := int64(0)
@@ -274,6 +278,37 @@ func (c *Client) DeleteNode(name string) error {
 	return c.Clientset.CoreV1().Nodes().Delete(c.Ctx(), name, metav1.DeleteOptions{})
 }
 
+// RejoinNode makes a previously drained node schedulable again. It only
+// changes the Node object; K3s installation and Node registration are kept
+// outside this reversible operation.
+func (c *Client) RejoinNode(name string) (*NodeInfo, error) {
+	node, err := c.Clientset.CoreV1().Nodes().Get(c.Ctx(), name, metav1.GetOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("读取节点失败: %w", err)
+	}
+	if !node.Spec.Unschedulable && node.Annotations[nodeDrainAnnotation] == "" {
+		info := nodeToInfo(node)
+		return &info, nil
+	}
+	node.Spec.Unschedulable = false
+	if node.Annotations != nil {
+		delete(node.Annotations, nodeDrainAnnotation)
+	}
+	updated, err := c.Clientset.CoreV1().Nodes().Update(c.Ctx(), node, metav1.UpdateOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("恢复节点调度失败: %w", err)
+	}
+	info := nodeToInfo(updated)
+	return &info, nil
+}
+
+func markNodeDrained(node *corev1.Node) {
+	if node.Annotations == nil {
+		node.Annotations = make(map[string]string)
+	}
+	node.Annotations[nodeDrainAnnotation] = time.Now().UTC().Format(time.RFC3339)
+}
+
 func drainPod(pod *corev1.Pod) DrainPod {
 	item := DrainPod{Namespace: pod.Namespace, Name: pod.Name}
 	for _, owner := range pod.OwnerReferences {
@@ -321,6 +356,7 @@ func nodeToInfo(node *corev1.Node) NodeInfo {
 	info := NodeInfo{Name: node.Name, Version: node.Status.NodeInfo.KubeletVersion, CreatedAt: node.CreationTimestamp.Format(time.RFC3339), OS: node.Status.NodeInfo.OSImage}
 	health := nodeHealth(node, time.Now())
 	info.Ready = health.State == NodeHealthReady
+	info.Evicted = node.Spec.Unschedulable
 	info.HealthState = health.State
 	info.HealthReason = health.Reason
 	info.LastHeartbeatAt = health.LastHeartbeatAt

@@ -8,7 +8,11 @@ export default defineConfig({
     proxy: {
       '/api': {
         target: 'https://cylism.crazycoding.top/',
-        changeOrigin: true
+        changeOrigin: true,
+        ws: true,
+        // The upstream terminal endpoint enforces same-origin WebSocket upgrades.
+        // This proxy is only exposed by Vite's local development server.
+        rewriteWsOrigin: true
       }
     }
   },

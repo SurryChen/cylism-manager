@@ -93,13 +93,6 @@ function openTerminal() {
   const fitAddon = new FitAddon()
   term.loadAddon(fitAddon)
   term.open(element)
-  const pasteTerminalText = event => {
-    const text = event.clipboardData?.getData('text/plain')
-    if (text == null) return
-    event.preventDefault()
-    term.paste(text)
-  }
-  element.addEventListener('paste', pasteTerminalText, true)
   fitAddon.fit()
 
   const token = localStorage.getItem('access_token') || ''
@@ -147,14 +140,10 @@ function openTerminal() {
   resizeObserver = new ResizeObserver(sendResize)
   resizeObserver.observe(element)
   terminal = term
-  terminal._pasteHandler = pasteTerminalText
   websocket = ws
 }
 
 function disposeTerminal() {
-  if (terminal && terminal._pasteHandler && terminalEl.value) {
-    terminalEl.value.removeEventListener('paste', terminal._pasteHandler, true)
-  }
   if (resizeObserver) resizeObserver.disconnect()
   if (websocket) websocket.close()
   if (terminal) terminal.dispose()
