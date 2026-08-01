@@ -23,6 +23,7 @@ import NodeRegistryMirrors from '../views/NodeRegistryMirrors.vue'
 import ChartRepositories from '../views/ChartRepositories.vue'
 import Monitoring from '../views/Monitoring.vue'
 import PersistentVolumes from '../views/PersistentVolumes.vue'
+import ApplicationStacks from '../views/ApplicationStacks.vue'
 
 const routes = [
   { path: '/login', component: Login, meta: { public: true } },
@@ -34,6 +35,7 @@ const routes = [
   { path: '/applications/releases', redirect: '/applications/overview' },
   { path: '/applications/registries', component: ImageRegistries },
   { path: '/applications/domains', component: Domains },
+  { path: '/applications/stacks', component: ApplicationStacks },
   { path: '/applications/:applicationID/releases/:releaseID', component: ReleaseDetails, props: true },
   { path: '/applications/:applicationID', component: ApplicationDetails, props: true },
   { path: '/servers', component: Servers },
