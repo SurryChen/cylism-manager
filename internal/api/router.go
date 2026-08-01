@@ -171,6 +171,17 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 		applications.POST("/:id/releases/:releaseID/retry", applicationHandler.RetryRelease)
 		applications.POST("/:id/releases/:releaseID/rollback", applicationHandler.RollbackRelease)
 	}
+	applicationStacks := apiGroup.Group("/application-stacks")
+	{
+		applicationStacks.GET("", applicationHandler.ListStackTemplates)
+		applicationStacks.POST("", applicationHandler.CreateStackTemplate)
+		applicationStacks.POST("/presets/karakeep", applicationHandler.CreateKarakeepStackPreset)
+		applicationStacks.GET("/:id", applicationHandler.GetStackTemplate)
+		applicationStacks.PUT("/:id", applicationHandler.UpdateStackTemplate)
+		applicationStacks.DELETE("/:id", applicationHandler.DeleteStackTemplate)
+		applicationStacks.GET("/:id/releases", applicationHandler.ListStackReleases)
+		applicationStacks.POST("/:id/releases", applicationHandler.CreateStackRelease)
+	}
 	workspace := apiGroup.Group("/workspace")
 	{
 		workspace.GET("/overview", applicationHandler.WorkspaceOverview)
@@ -287,6 +298,9 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 		k8sGroup.GET("/persistent-volume-migrations/:id", k8sHandler.GetPersistentVolumeMigration)
 		k8sGroup.POST("/persistent-volume-migrations/:id/cleanup", k8sHandler.CleanupPersistentVolumeMigration)
 		k8sGroup.POST("/persistent-volume-claims/:name/migrations", k8sHandler.CreatePersistentVolumeMigration)
+		k8sGroup.GET("/persistent-volume-claims/:name/backups", k8sHandler.ListPersistentVolumeBackups)
+		k8sGroup.POST("/persistent-volume-claims/:name/backups", k8sHandler.CreatePersistentVolumeBackup)
+		k8sGroup.POST("/persistent-volume-claims/:name/backups/:backupID/restore", k8sHandler.RestorePersistentVolumeBackup)
 		k8sGroup.DELETE("/persistent-volume-claims/:name", k8sHandler.DeletePersistentVolumeClaim)
 
 		// 标准 Ingress

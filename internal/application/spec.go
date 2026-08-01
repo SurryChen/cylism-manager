@@ -32,9 +32,14 @@ const (
 )
 
 type ReleaseSpec struct {
-	Image      string `json:"image"`
-	Version    string `json:"version,omitempty"`
-	RegistryID uint   `json:"registry_id,omitempty"`
+	Image   string `json:"image"`
+	Version string `json:"version,omitempty"`
+	// ImageRepository only exists while a stack release resolves its image. It
+	// preserves the editable template path after registry expansion adds a tag.
+	ImageRepository string   `json:"-"`
+	Command         []string `json:"command,omitempty"`
+	Args            []string `json:"args,omitempty"`
+	RegistryID      uint     `json:"registry_id,omitempty"`
 	// 以下字段只在发布执行期存在，禁止写入 API 响应或发布快照。
 	RegistryEndpoint   string            `json:"-"`
 	RegistryAuthType   string            `json:"-"`
@@ -246,9 +251,11 @@ func RenderResources(context ApplicationContext, spec ReleaseSpec) (*RenderedRes
 	}
 
 	container := corev1.Container{
-		Name:  context.ApplicationName,
-		Image: spec.Image,
-		Ports: []corev1.ContainerPort{{Name: "http", ContainerPort: spec.ContainerPort}},
+		Name:    context.ApplicationName,
+		Image:   spec.Image,
+		Command: append([]string(nil), spec.Command...),
+		Args:    append([]string(nil), spec.Args...),
+		Ports:   []corev1.ContainerPort{{Name: "http", ContainerPort: spec.ContainerPort}},
 		Resources: corev1.ResourceRequirements{
 			Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse(spec.Resources.RequestsCPU), corev1.ResourceMemory: resource.MustParse(spec.Resources.RequestsMemory)},
 			Limits:   corev1.ResourceList{corev1.ResourceCPU: resource.MustParse(spec.Resources.LimitsCPU), corev1.ResourceMemory: resource.MustParse(spec.Resources.LimitsMemory)},

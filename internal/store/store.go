@@ -54,6 +54,8 @@ func New(dsn string) (*Store, error) {
 		&model.Application{},
 		&model.ApplicationEndpoint{},
 		&model.ApplicationDeploymentTemplate{},
+		&model.ApplicationStackTemplate{},
+		&model.ApplicationStackRelease{},
 		&model.ImageRegistry{},
 		&model.NodeRegistryMirror{},
 		&model.NodeRegistryMirrorNode{},
@@ -63,6 +65,7 @@ func New(dsn string) (*Store, error) {
 		&model.Release{},
 		&model.ReleaseOperation{},
 		&model.PersistentVolumeMigration{},
+		&model.PersistentVolumeBackup{},
 	); err != nil {
 		return nil, err
 	}
@@ -693,6 +696,89 @@ func (s *Store) DeleteApplicationDeploymentTemplate(applicationID, templateID ui
 	})
 }
 
+func (s *Store) ListApplicationStackTemplates(environmentID uint) ([]model.ApplicationStackTemplate, error) {
+	var templates []model.ApplicationStackTemplate
+	err := s.db.Where("environment_id = ?", environmentID).Order("created_at asc").Find(&templates).Error
+	return templates, err
+}
+
+func (s *Store) GetApplicationStackTemplate(environmentID, templateID uint) (*model.ApplicationStackTemplate, error) {
+	var template model.ApplicationStackTemplate
+	err := s.db.Where("environment_id = ? AND id = ?", environmentID, templateID).First(&template).Error
+	return &template, err
+}
+
+func (s *Store) GetApplicationStackTemplateByID(templateID uint) (*model.ApplicationStackTemplate, error) {
+	var template model.ApplicationStackTemplate
+	err := s.db.First(&template, templateID).Error
+	return &template, err
+}
+
+func (s *Store) CreateApplicationStackTemplate(template *model.ApplicationStackTemplate) error {
+	if template.Revision == 0 {
+		template.Revision = 1
+	}
+	return s.db.Create(template).Error
+}
+
+func (s *Store) UpdateApplicationStackTemplate(template *model.ApplicationStackTemplate) error {
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		var current model.ApplicationStackTemplate
+		if err := tx.Where("id = ? AND environment_id = ?", template.ID, template.EnvironmentID).First(&current).Error; err != nil {
+			return err
+		}
+		template.CreatedAt = current.CreatedAt
+		template.Revision = current.Revision + 1
+		return tx.Save(template).Error
+	})
+}
+
+func (s *Store) DeleteApplicationStackTemplate(environmentID, templateID uint) error {
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		var releases int64
+		if err := tx.Model(&model.ApplicationStackRelease{}).Where("template_id = ?", templateID).Count(&releases).Error; err != nil {
+			return err
+		}
+		if releases > 0 {
+			return fmt.Errorf("该应用栈模板已有关联发布记录，无法删除")
+		}
+		result := tx.Where("id = ? AND environment_id = ?", templateID, environmentID).Delete(&model.ApplicationStackTemplate{})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return gorm.ErrRecordNotFound
+		}
+		return tx.Model(&model.Application{}).Where("stack_template_id = ?", templateID).Update("stack_template_id", nil).Error
+	})
+}
+
+func (s *Store) CreateApplicationStackRelease(release *model.ApplicationStackRelease) error {
+	return s.db.Create(release).Error
+}
+
+func (s *Store) GetApplicationStackRelease(environmentID, releaseID uint) (*model.ApplicationStackRelease, error) {
+	var release model.ApplicationStackRelease
+	err := s.db.Where("environment_id = ? AND id = ?", environmentID, releaseID).First(&release).Error
+	return &release, err
+}
+
+func (s *Store) ListApplicationStackReleases(environmentID uint) ([]model.ApplicationStackRelease, error) {
+	var releases []model.ApplicationStackRelease
+	err := s.db.Where("environment_id = ?", environmentID).Order("id desc").Find(&releases).Error
+	return releases, err
+}
+
+func (s *Store) ListApplicationStackReleasesByTemplate(templateID uint) ([]model.ApplicationStackRelease, error) {
+	var releases []model.ApplicationStackRelease
+	err := s.db.Where("template_id = ?", templateID).Order("id desc").Find(&releases).Error
+	return releases, err
+}
+
+func (s *Store) UpdateApplicationStackRelease(release *model.ApplicationStackRelease) error {
+	return s.db.Save(release).Error
+}
+
 func (s *Store) CountApplicationEndpointsByDomain(domainID uint) (int64, error) {
 	var count int64
 	err := s.db.Model(&model.ApplicationEndpoint{}).Where("domain_id = ?", domainID).Count(&count).Error
@@ -712,6 +798,12 @@ func (s *Store) CountApplicationEndpointRoute(domainID uint, path string, except
 func (s *Store) GetApplication(id uint) (*model.Application, error) {
 	var application model.Application
 	err := s.db.Preload("Project.DefaultImageRegistry").Preload("Environment").Preload("Endpoints").First(&application, id).Error
+	return &application, err
+}
+
+func (s *Store) GetApplicationByEnvironmentName(environmentID uint, name string) (*model.Application, error) {
+	var application model.Application
+	err := s.db.Preload("Project.DefaultImageRegistry").Preload("Environment").Where("environment_id = ? AND name = ?", environmentID, name).First(&application).Error
 	return &application, err
 }
 
@@ -1052,4 +1144,24 @@ func (s *Store) UpdatePersistentVolumeMigration(migration *model.PersistentVolum
 		migration.CompletedAt = &now
 	}
 	return s.db.Save(migration).Error
+}
+
+func (s *Store) CreatePersistentVolumeBackup(backup *model.PersistentVolumeBackup) error {
+	return s.db.Create(backup).Error
+}
+
+func (s *Store) GetPersistentVolumeBackup(id uint) (*model.PersistentVolumeBackup, error) {
+	var backup model.PersistentVolumeBackup
+	err := s.db.First(&backup, id).Error
+	return &backup, err
+}
+
+func (s *Store) ListPersistentVolumeBackups(environmentID uint, pvcName string) ([]model.PersistentVolumeBackup, error) {
+	var backups []model.PersistentVolumeBackup
+	err := s.db.Where("environment_id = ? AND pvc_name = ?", environmentID, pvcName).Order("created_at desc").Find(&backups).Error
+	return backups, err
+}
+
+func (s *Store) UpdatePersistentVolumeBackup(backup *model.PersistentVolumeBackup) error {
+	return s.db.Save(backup).Error
 }

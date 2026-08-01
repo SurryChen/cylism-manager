@@ -657,6 +657,16 @@ func (h *ApplicationHandler) CreateRelease(c *gin.Context) {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "读取应用上线模板失败")
 		return
 	}
+	secrets, err := h.decryptTemplateSecrets(template)
+	if err != nil {
+		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "读取模板 Secret 失败")
+		return
+	}
+	if len(spec.Secrets) > 0 && len(secrets) == 0 {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "模板中的 Secret 尚未配置明文值")
+		return
+	}
+	spec.Secrets = secrets
 	spec.Version = version
 	image, err := imageWithVersion(spec.Image, version)
 	if err != nil {
@@ -887,6 +897,39 @@ func (h *ApplicationHandler) templateFromRequest(app *model.Application, req *de
 	if err := h.prepareRegistryReleaseSpec(app, &spec); err != nil {
 		return nil, err
 	}
+	encryptedSecrets := ""
+	if templateID != 0 {
+		current, err := h.store.GetApplicationDeploymentTemplate(app.ID, templateID)
+		if err != nil {
+			return nil, fmt.Errorf("读取旧模板 Secret: %w", err)
+		}
+		encryptedSecrets = current.EncryptedSecrets
+	}
+	if len(spec.Secrets) > 0 {
+		currentSecrets, err := h.decryptTemplateSecretsByValue(encryptedSecrets)
+		if err != nil {
+			return nil, fmt.Errorf("读取旧模板 Secret: %w", err)
+		}
+		for key, value := range spec.Secrets {
+			if strings.TrimSpace(value) != "" {
+				currentSecrets[key] = value
+			}
+		}
+		if len(currentSecrets) == 0 {
+			return nil, fmt.Errorf("Secret 必须至少配置一个非空值")
+		}
+		payload, err := json.Marshal(currentSecrets)
+		if err != nil {
+			return nil, fmt.Errorf("编码模板 Secret: %w", err)
+		}
+		if len(h.encKey) == 0 {
+			return nil, fmt.Errorf("平台加密密钥未配置，无法保存 Secret")
+		}
+		encryptedSecrets, err = crypto.Encrypt(h.encKey, string(payload))
+		if err != nil {
+			return nil, fmt.Errorf("加密模板 Secret: %w", err)
+		}
+	}
 	// Domain binding belongs to the application endpoint, never to a rollout template.
 	spec.Endpoint = application.EndpointSpec{Exposure: application.ExposureCluster}
 	if issues := application.ValidateReleaseSpec(spec); len(issues) > 0 {
@@ -905,7 +948,29 @@ func (h *ApplicationHandler) templateFromRequest(app *model.Application, req *de
 	if err != nil {
 		return nil, fmt.Errorf("保存上线模板失败: %w", err)
 	}
-	return &model.ApplicationDeploymentTemplate{ID: templateID, ApplicationID: app.ID, Name: strings.TrimSpace(req.Name), Description: strings.TrimSpace(req.Description), Enabled: req.Enabled, Spec: string(snapshot)}, nil
+	return &model.ApplicationDeploymentTemplate{ID: templateID, ApplicationID: app.ID, Name: strings.TrimSpace(req.Name), Description: strings.TrimSpace(req.Description), Enabled: req.Enabled, Spec: string(snapshot), EncryptedSecrets: encryptedSecrets}, nil
+}
+
+func (h *ApplicationHandler) decryptTemplateSecrets(template *model.ApplicationDeploymentTemplate) (map[string]string, error) {
+	return h.decryptTemplateSecretsByValue(template.EncryptedSecrets)
+}
+
+func (h *ApplicationHandler) decryptTemplateSecretsByValue(encrypted string) (map[string]string, error) {
+	if strings.TrimSpace(encrypted) == "" {
+		return map[string]string{}, nil
+	}
+	if len(h.encKey) == 0 {
+		return nil, fmt.Errorf("平台加密密钥未配置")
+	}
+	plaintext, err := crypto.Decrypt(h.encKey, encrypted)
+	if err != nil {
+		return nil, err
+	}
+	values := make(map[string]string)
+	if err := json.Unmarshal([]byte(plaintext), &values); err != nil {
+		return nil, err
+	}
+	return values, nil
 }
 
 func deploymentTemplateFromModel(template *model.ApplicationDeploymentTemplate, defaultTemplateID *uint) (*deploymentTemplateInfo, error) {
