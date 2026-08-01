@@ -1,10 +1,13 @@
 package k8s
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -38,6 +41,8 @@ type PersistentVolumeClaimInfo struct {
 	VolumeName           string   `json:"volume_name,omitempty"`
 	AccessModes          []string `json:"access_modes"`
 	BoundNode            string   `json:"bound_node,omitempty"`
+	LocalPath            string   `json:"-"`
+	IsLocal              bool     `json:"is_local"`
 	ReclaimPolicy        string   `json:"reclaim_policy,omitempty"`
 	WaitForFirstConsumer bool     `json:"wait_for_first_consumer"`
 	CreationTimestamp    string   `json:"created_at,omitempty"`
@@ -111,6 +116,109 @@ func (c *Client) CreateManagedPVC(namespace string, environmentID uint, request 
 		return nil, fmt.Errorf("create persistentvolumeclaim: %w", err)
 	}
 	return created, nil
+}
+
+// CreatePVCBindingPod schedules a temporary holder so WaitForFirstConsumer can
+// provision a local PVC on the requested node before data is copied.
+func (c *Client) CreatePVCBindingPod(namespace, migrationID, claimName, nodeName, image string) (*corev1.Pod, error) {
+	if strings.TrimSpace(migrationID) == "" || strings.TrimSpace(claimName) == "" || strings.TrimSpace(nodeName) == "" || strings.TrimSpace(image) == "" {
+		return nil, fmt.Errorf("迁移绑定 Pod 参数不完整")
+	}
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "cylism-pvc-migrate-" + migrationID, Namespace: namespace, Labels: map[string]string{ManagedByLabel: ManagedByValue, "cylism.io/pvc-migration": migrationID}},
+		Spec: corev1.PodSpec{
+			RestartPolicy: corev1.RestartPolicyNever,
+			NodeSelector:  map[string]string{corev1.LabelHostname: nodeName},
+			Containers:    []corev1.Container{{Name: "holder", Image: image, VolumeMounts: []corev1.VolumeMount{{Name: "data", MountPath: "/data"}}}},
+			Volumes:       []corev1.Volume{{Name: "data", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: claimName}}}},
+		},
+	}
+	created, err := c.Clientset.CoreV1().Pods(namespace).Create(c.Ctx(), pod, metav1.CreateOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("create PVC binding pod: %w", err)
+	}
+	return created, nil
+}
+
+func (c *Client) DeletePVCBindingPod(namespace, migrationID string) error {
+	name := "cylism-pvc-migrate-" + migrationID
+	err := c.Clientset.CoreV1().Pods(namespace).Delete(c.Ctx(), name, metav1.DeleteOptions{})
+	if apierrors.IsNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("delete PVC binding pod: %w", err)
+	}
+	return nil
+}
+
+func (c *Client) WaitForManagedPVCBound(ctx context.Context, namespace, name string, environmentID uint) (*PersistentVolumeClaimInfo, error) {
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	for {
+		claim, err := c.GetManagedPVC(namespace, name, environmentID)
+		if err != nil {
+			return nil, err
+		}
+		if claim.Phase == string(corev1.ClaimBound) {
+			return claim, nil
+		}
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("等待目标 PVC 绑定: %w", ctx.Err())
+		case <-ticker.C:
+		}
+	}
+}
+
+func (c *Client) ReplaceDeploymentPVCNode(namespace, name, sourceClaim, targetClaim, targetNode string) (int32, error) {
+	deployment, err := c.Clientset.AppsV1().Deployments(namespace).Get(c.Ctx(), name, metav1.GetOptions{})
+	if err != nil {
+		return 0, fmt.Errorf("get deployment: %w", err)
+	}
+	if deployment.Labels[ManagedByLabel] != ManagedByValue {
+		return 0, fmt.Errorf("Deployment %q 未由平台管理", name)
+	}
+	updated := false
+	for index := range deployment.Spec.Template.Spec.Volumes {
+		volume := &deployment.Spec.Template.Spec.Volumes[index]
+		if volume.PersistentVolumeClaim != nil && volume.PersistentVolumeClaim.ClaimName == sourceClaim {
+			volume.PersistentVolumeClaim.ClaimName = targetClaim
+			updated = true
+		}
+	}
+	if !updated {
+		return 0, fmt.Errorf("Deployment %q 未引用 PVC %q", name, sourceClaim)
+	}
+	if deployment.Spec.Template.Spec.NodeSelector == nil {
+		deployment.Spec.Template.Spec.NodeSelector = map[string]string{}
+	}
+	deployment.Spec.Template.Spec.NodeSelector[corev1.LabelHostname] = targetNode
+	replicas := int32(1)
+	if deployment.Spec.Replicas != nil {
+		replicas = *deployment.Spec.Replicas
+	}
+	if _, err := c.Clientset.AppsV1().Deployments(namespace).Update(c.Ctx(), deployment, metav1.UpdateOptions{}); err != nil {
+		return 0, fmt.Errorf("update deployment PVC: %w", err)
+	}
+	return replicas, nil
+}
+
+func (c *Client) DeploymentUsingPVC(namespace, claimName string) ([]appsv1.Deployment, error) {
+	deployments, err := c.Clientset.AppsV1().Deployments(namespace).List(c.Ctx(), metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("list deployments: %w", err)
+	}
+	result := make([]appsv1.Deployment, 0)
+	for index := range deployments.Items {
+		for _, volume := range deployments.Items[index].Spec.Template.Spec.Volumes {
+			if volume.PersistentVolumeClaim != nil && volume.PersistentVolumeClaim.ClaimName == claimName {
+				result = append(result, deployments.Items[index])
+				break
+			}
+		}
+	}
+	return result, nil
 }
 
 func (c *Client) DeleteManagedPVC(namespace, name string, environmentID uint) error {
@@ -190,6 +298,7 @@ func (c *Client) pvcInfo(claim *corev1.PersistentVolumeClaim) (PersistentVolumeC
 	}
 	info.ReclaimPolicy = string(pv.Spec.PersistentVolumeReclaimPolicy)
 	info.BoundNode = persistentVolumeNodeName(pv)
+	info.LocalPath, info.IsLocal = persistentVolumeLocalPath(pv)
 	return info, nil
 }
 
@@ -210,6 +319,16 @@ func persistentVolumeNodeName(volume *corev1.PersistentVolume) string {
 		}
 	}
 	return ""
+}
+
+func persistentVolumeLocalPath(volume *corev1.PersistentVolume) (string, bool) {
+	if volume.Spec.HostPath != nil && strings.TrimSpace(volume.Spec.HostPath.Path) != "" {
+		return volume.Spec.HostPath.Path, true
+	}
+	if volume.Spec.Local != nil && strings.TrimSpace(volume.Spec.Local.Path) != "" {
+		return volume.Spec.Local.Path, true
+	}
+	return "", false
 }
 
 func valueOrEmpty(value *string) string {

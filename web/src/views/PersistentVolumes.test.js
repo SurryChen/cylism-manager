@@ -19,16 +19,41 @@ describe('PersistentVolumes view', () => {
     const wrapper = mount(PersistentVolumes)
     await new Promise(resolve => setTimeout(resolve, 0))
 
-    await wrapper.get('select').setValue('1')
+    await wrapper.get('[data-testid="storage-project-trigger"]').trigger('click')
+    await wrapper.get('[data-testid="storage-project-menu"] button').trigger('click')
     await new Promise(resolve => setTimeout(resolve, 0))
     expect(wrapper.text()).toContain('当前环境还没有平台托管存储卷')
 
     await wrapper.get('.btn-primary').trigger('click')
     await wrapper.get('input[placeholder="karakeep-data"]').setValue('karakeep-data')
+    await wrapper.get('[data-testid="storage-capacity-value"]').setValue('8')
+    await wrapper.get('[data-testid="storage-capacity-unit"]').setValue('Gi')
     await wrapper.get('form').trigger('submit')
 
     expect(api.post).toHaveBeenCalledWith('/k8s/persistent-volume-claims', {
-      environment_id: 2, name: 'karakeep-data', storage: '5Gi', storage_class_name: '',
+      environment_id: 2, name: 'karakeep-data', storage: '8Gi', storage_class_name: '',
     })
+  })
+
+  it('uses workspace-style project and environment pickers', async () => {
+    const { api } = await import('../api/index.js')
+    api.get.mockImplementation(path => {
+      if (path === '/projects') return Promise.resolve([{ id: 1, name: 'knowledge', description: '知识库服务', environments: [{ id: 2, name: 'production', namespace: 'project-knowledge-prod' }, { id: 3, name: 'staging', namespace: 'project-knowledge-staging' }] }])
+      return Promise.resolve([])
+    })
+    const wrapper = mount(PersistentVolumes)
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    const environmentTrigger = wrapper.get('[data-testid="storage-environment-trigger"]')
+    expect(environmentTrigger.attributes('disabled')).toBeDefined()
+
+    await wrapper.get('[data-testid="storage-project-trigger"]').trigger('click')
+    expect(wrapper.get('[data-testid="storage-project-menu"]').text()).toContain('知识库服务')
+    await wrapper.get('[data-testid="storage-project-menu"] button').trigger('click')
+    await wrapper.get('[data-testid="storage-environment-trigger"]').trigger('click')
+
+    expect(wrapper.get('[data-testid="storage-environment-menu"]').text()).toContain('project-knowledge-prod')
+    await wrapper.get('[data-testid="storage-environment-menu"] button').trigger('click')
+    expect(wrapper.get('[data-testid="storage-environment-trigger"]').text()).toContain('production')
   })
 })

@@ -18,7 +18,7 @@ func TestListManagedPVCsIncludesBoundNodeAndReclaimPolicy(t *testing.T) {
 			Spec:       corev1.PersistentVolumeClaimSpec{StorageClassName: stringPtr("local-path"), VolumeName: "pvc-001", AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce}, Resources: corev1.VolumeResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceStorage: resource.MustParse("5Gi")}}},
 			Status:     corev1.PersistentVolumeClaimStatus{Phase: corev1.ClaimBound, Capacity: corev1.ResourceList{corev1.ResourceStorage: resource.MustParse("5Gi")}},
 		},
-		&corev1.PersistentVolume{ObjectMeta: metav1.ObjectMeta{Name: "pvc-001"}, Spec: corev1.PersistentVolumeSpec{PersistentVolumeReclaimPolicy: reclaimPolicy, NodeAffinity: &corev1.VolumeNodeAffinity{Required: &corev1.NodeSelector{NodeSelectorTerms: []corev1.NodeSelectorTerm{{MatchExpressions: []corev1.NodeSelectorRequirement{{Key: corev1.LabelHostname, Operator: corev1.NodeSelectorOpIn, Values: []string{"storage-node-a"}}}}}}}}},
+		&corev1.PersistentVolume{ObjectMeta: metav1.ObjectMeta{Name: "pvc-001"}, Spec: corev1.PersistentVolumeSpec{PersistentVolumeReclaimPolicy: reclaimPolicy, PersistentVolumeSource: corev1.PersistentVolumeSource{HostPath: &corev1.HostPathVolumeSource{Path: "/var/lib/rancher/k3s/storage/pvc-001"}}, NodeAffinity: &corev1.VolumeNodeAffinity{Required: &corev1.NodeSelector{NodeSelectorTerms: []corev1.NodeSelectorTerm{{MatchExpressions: []corev1.NodeSelectorRequirement{{Key: corev1.LabelHostname, Operator: corev1.NodeSelectorOpIn, Values: []string{"storage-node-a"}}}}}}}}},
 		&storagev1.StorageClass{ObjectMeta: metav1.ObjectMeta{Name: "local-path"}, VolumeBindingMode: volumeBindingModePtr(storagev1.VolumeBindingWaitForFirstConsumer)},
 	)}
 
@@ -33,8 +33,22 @@ func TestListManagedPVCsIncludesBoundNodeAndReclaimPolicy(t *testing.T) {
 	if info.Name != "karakeep-data" || info.Phase != string(corev1.ClaimBound) || info.Storage != "5Gi" || info.StorageClassName != "local-path" {
 		t.Fatalf("unexpected PVC info: %#v", info)
 	}
-	if info.BoundNode != "storage-node-a" || info.ReclaimPolicy != string(corev1.PersistentVolumeReclaimDelete) || !info.WaitForFirstConsumer {
+	if info.BoundNode != "storage-node-a" || info.LocalPath != "/var/lib/rancher/k3s/storage/pvc-001" || !info.IsLocal || info.ReclaimPolicy != string(corev1.PersistentVolumeReclaimDelete) || !info.WaitForFirstConsumer {
 		t.Fatalf("expected node, reclaim policy and binding mode, got %#v", info)
+	}
+}
+
+func TestCreatePVCBindingPodPinsClaimToTargetNode(t *testing.T) {
+	client := &Client{Clientset: k8sfake.NewSimpleClientset()}
+	pod, err := client.CreatePVCBindingPod("project-knowledge", "migration-1", "karakeep-data-migration-1", "storage-node-b", "registry.example.com/pause:3.10")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pod.Labels[ManagedByLabel] != ManagedByValue || pod.Spec.NodeSelector[corev1.LabelHostname] != "storage-node-b" || len(pod.Spec.Volumes) != 1 || pod.Spec.Volumes[0].PersistentVolumeClaim == nil || pod.Spec.Volumes[0].PersistentVolumeClaim.ClaimName != "karakeep-data-migration-1" {
+		t.Fatalf("unexpected binding pod: %#v", pod)
+	}
+	if len(pod.Spec.Containers) != 1 || pod.Spec.Containers[0].Image != "registry.example.com/pause:3.10" {
+		t.Fatalf("unexpected helper container: %#v", pod.Spec.Containers)
 	}
 }
 

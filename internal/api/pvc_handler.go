@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 
@@ -9,6 +10,7 @@ import (
 	k8sclient "github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 	appsv1 "k8s.io/api/apps/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -99,6 +101,13 @@ func (h *K8sHandler) DeletePersistentVolumeClaim(c *gin.Context) {
 	claim, err := K8s.GetManagedPVC(environment.Namespace, name, environment.ID)
 	if err != nil {
 		model.Error(c, http.StatusNotFound, model.CodeNotFound, err.Error())
+		return
+	}
+	if migration, migrationErr := h.store.FindActivePVCMigration(environment.ID, name); migrationErr == nil {
+		model.ErrorWithData(c, http.StatusConflict, model.CodeConflict, "存储卷正在迁移，不能删除", migration)
+		return
+	} else if !errors.Is(migrationErr, gorm.ErrRecordNotFound) {
+		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "检查存储卷迁移状态失败")
 		return
 	}
 	references := h.pvcReferences(environment.ID, environment.Namespace, name)

@@ -62,6 +62,7 @@ func New(dsn string) (*Store, error) {
 		&model.ManagedDomain{},
 		&model.Release{},
 		&model.ReleaseOperation{},
+		&model.PersistentVolumeMigration{},
 	); err != nil {
 		return nil, err
 	}
@@ -1018,4 +1019,37 @@ func (s *Store) ListReleaseOperations(releaseID uint) ([]model.ReleaseOperation,
 	var operations []model.ReleaseOperation
 	err := s.db.Where("release_id = ?", releaseID).Order("created_at asc").Find(&operations).Error
 	return operations, err
+}
+
+func (s *Store) CreatePersistentVolumeMigration(migration *model.PersistentVolumeMigration) error {
+	return s.db.Create(migration).Error
+}
+
+func (s *Store) GetPersistentVolumeMigration(id uint) (*model.PersistentVolumeMigration, error) {
+	var migration model.PersistentVolumeMigration
+	err := s.db.First(&migration, id).Error
+	return &migration, err
+}
+
+func (s *Store) ListPersistentVolumeMigrations(environmentID uint) ([]model.PersistentVolumeMigration, error) {
+	var migrations []model.PersistentVolumeMigration
+	err := s.db.Where("environment_id = ?", environmentID).Order("created_at desc").Find(&migrations).Error
+	return migrations, err
+}
+
+func (s *Store) FindActivePVCMigration(environmentID uint, sourcePVCName string) (*model.PersistentVolumeMigration, error) {
+	var migration model.PersistentVolumeMigration
+	terminal := []string{model.PVCMigrationStatusSucceeded, model.PVCMigrationStatusFailed, model.PVCMigrationStatusRolledBack, model.PVCMigrationStatusCleaned}
+	err := s.db.Where("environment_id = ? AND source_pvc_name = ? AND status NOT IN ?", environmentID, sourcePVCName, terminal).Order("created_at desc").First(&migration).Error
+	return &migration, err
+}
+
+func (s *Store) UpdatePersistentVolumeMigration(migration *model.PersistentVolumeMigration, status, detail string) error {
+	migration.Status = status
+	migration.Detail = detail
+	if model.IsPVCMigrationTerminal(status) {
+		now := time.Now()
+		migration.CompletedAt = &now
+	}
+	return s.db.Save(migration).Error
 }
