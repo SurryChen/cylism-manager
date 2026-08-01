@@ -16,7 +16,8 @@ describe('Applications view', () => {
 
     expect(wrapper.find('.page-title').text()).toBe('工作台')
     expect(wrapper.text()).not.toContain('暂无应用')
-    expect(wrapper.text()).toContain('创建应用')
+    expect(wrapper.text()).not.toContain('创建应用')
+    expect(wrapper.findAll('.page-actions > .btn')).toHaveLength(0)
     expect(wrapper.find('.card').exists()).toBe(false)
   })
 

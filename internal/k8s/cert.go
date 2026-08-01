@@ -463,15 +463,6 @@ func certToInfo(item *unstructured.Unstructured) CertInfo {
 	// A Ready=False condition is not necessarily a terminal failure. cert-manager
 	// reports transient reasons such as DoesNotExist while it creates the Secret.
 	if status, ok := item.Object["status"].(map[string]interface{}); ok {
-		if conditions, ok := status["conditions"].([]interface{}); ok {
-			for _, c := range conditions {
-				if cond, ok := c.(map[string]interface{}); ok {
-					if cond["type"] == "Ready" && cond["status"] == "True" {
-						info.Status = "Ready"
-					}
-				}
-			}
-		}
 		info.Status = "Issuing"
 		if conditions, ok := status["conditions"].([]interface{}); ok {
 			for _, raw := range conditions {
@@ -479,8 +470,13 @@ func certToInfo(item *unstructured.Unstructured) CertInfo {
 					if reason, ok := cond["reason"].(string); ok {
 						info.Reason = reason
 					}
-					if cond["status"] == "False" && certificateFailureReason(info.Reason) {
-						info.Status = "Failed"
+					switch cond["status"] {
+					case "True":
+						info.Status = "Ready"
+					case "False":
+						if certificateFailureReason(info.Reason) {
+							info.Status = "Failed"
+						}
 					}
 				}
 			}
