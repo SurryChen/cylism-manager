@@ -33,7 +33,6 @@ jobs:
           password: ${{ secrets.ACR_PASSWORD }}
 
       - name: Build and push image
-        id: image
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -45,12 +44,33 @@ jobs:
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
 
+      - name: Resolve and verify pushed image manifest
+        id: pushed-image
+        if: github.event_name == 'push'
+        env:
+          REPOSITORY: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          IMAGE_TAG: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+        run: |
+          for attempt in {1..12}; do
+            digest="$(docker buildx imagetools inspect "$IMAGE_TAG" --format '{{.Digest}}' 2>/dev/null || true)"
+            if [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]; then
+              image="$REPOSITORY@$digest"
+              if docker buildx imagetools inspect "$image" >/dev/null 2>&1; then
+                printf 'image=%s\n' "$image" >> "$GITHUB_OUTPUT"
+                exit 0
+              fi
+            fi
+            sleep 10
+          done
+          echo "The pushed image manifest is unavailable from the registry: $IMAGE_TAG" >&2
+          exit 1
+
       - name: Notify Cylism platform deployment
         if: github.event_name == 'push'
         env:
           CYLISM_DEPLOY_WEBHOOK_SECRET: ${{ secrets.CYLISM_DEPLOY_WEBHOOK_SECRET }}
           CYLISM_DEPLOY_IP: ${{ secrets.CYLISM_DEPLOY_IP }}
-          IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.image.outputs.digest }}
+          IMAGE: ${{ steps.pushed-image.outputs.image }}
         run: |
           test -n "$CYLISM_DEPLOY_WEBHOOK_SECRET"
           timestamp="$(date +%s)"
