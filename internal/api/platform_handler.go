@@ -30,7 +30,7 @@ const (
 	platformWebhookMaxSkew         = 5 * time.Minute
 )
 
-var digestImagePattern = regexp.MustCompile(`^[^\s@]+@sha256:[a-f0-9]{64}$`)
+var platformImageTagPattern = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$`)
 
 type PlatformHandler struct {
 	store    *store.Store
@@ -52,7 +52,7 @@ func NewPlatformHandler(s *store.Store, encKey []byte) *PlatformHandler {
 	return &PlatformHandler{store: s, encKey: encKey}
 }
 
-// Webhook accepts only authenticated immutable image deployment requests.
+// Webhook accepts authenticated platform image deployment requests.
 func (h *PlatformHandler) Webhook(c *gin.Context) {
 	if h.store == nil || !h.validWebhook(c) {
 		model.Error(c, http.StatusUnauthorized, model.CodeUnauthorized, "部署签名无效或已过期")
@@ -95,7 +95,7 @@ func (h *PlatformHandler) Webhook(c *gin.Context) {
 	h.schedulePlatformRelease(release.ID)
 }
 
-// ManualUpdate lets an authenticated administrator submit an immutable platform image.
+// ManualUpdate lets an authenticated administrator submit a tagged platform image.
 func (h *PlatformHandler) ManualUpdate(c *gin.Context) {
 	var request platformManualReleaseRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
@@ -229,15 +229,17 @@ func (h *PlatformHandler) verifyWebhookSignature(c *gin.Context, body []byte) bo
 
 func (h *PlatformHandler) validatePlatformImage(image string) error {
 	image = strings.TrimSpace(image)
-	if !digestImagePattern.MatchString(image) {
-		return fmt.Errorf("平台镜像必须使用 sha256 digest")
-	}
 	prefix, err := h.store.GetSystemConfig(platformImagePrefixConfigKey)
 	if err != nil || prefix == "" {
 		prefix = platformDefaultImagePrefix
 	}
-	if !strings.HasPrefix(image, strings.TrimSuffix(prefix, "/")+"@") {
+	prefix = strings.TrimSuffix(prefix, "/")
+	if !strings.HasPrefix(image, prefix+":") {
 		return fmt.Errorf("平台镜像不属于允许的仓库前缀")
+	}
+	tag := strings.TrimPrefix(image, prefix+":")
+	if !platformImageTagPattern.MatchString(tag) {
+		return fmt.Errorf("平台镜像 Tag 无效")
 	}
 	return nil
 }

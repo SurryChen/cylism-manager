@@ -21,10 +21,10 @@ import (
 	k8sfake "k8s.io/client-go/kubernetes/fake"
 )
 
-func TestPlatformWebhookAcceptsSignedDigestAndRejectsReplay(t *testing.T) {
+func TestPlatformWebhookAcceptsSignedTagAndRejectsReplay(t *testing.T) {
 	original := K8s
 	defer func() { K8s = original }()
-	K8s = &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "cylism-manager", Namespace: "default"}, Spec: appsv1.DeploymentSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "platform", Image: "registry.example.com/cylism-manager@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}}}}})}
+	K8s = &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "cylism-manager", Namespace: "default"}, Spec: appsv1.DeploymentSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "platform", Image: "registry.example.com/cylism-manager:latest"}}}}}})}
 	secretKey := []byte("01234567890123456789012345678901")
 	s, err := store.New(":memory:")
 	if err != nil {
@@ -45,7 +45,7 @@ func TestPlatformWebhookAcceptsSignedDigestAndRejectsReplay(t *testing.T) {
 	router := gin.New()
 	router.POST("/api/platform/deployments", handler.Webhook)
 
-	body := `{"image":"registry.example.com/cylism-manager@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","commit_sha":"abc"}`
+	body := `{"image":"registry.example.com/cylism-manager:latest","commit_sha":"abc"}`
 	timestamp := time.Now().Unix()
 	nonce := "1234567890abcdef"
 	request := signedPlatformWebhookRequest(body, timestamp, nonce, "webhook-secret")
@@ -67,7 +67,7 @@ func TestPlatformWebhookRejectsInvalidSignature(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	router.POST("/api/platform/deployments", handler.Webhook)
-	request := httptest.NewRequest(http.MethodPost, "/api/platform/deployments", strings.NewReader(`{"image":"registry.example.com/cylism-manager@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}`))
+	request := httptest.NewRequest(http.MethodPost, "/api/platform/deployments", strings.NewReader(`{"image":"registry.example.com/cylism-manager:latest"}`))
 	request.Header.Set("X-Cylism-Timestamp", "1")
 	request.Header.Set("X-Cylism-Nonce", "1234567890abcdef")
 	request.Header.Set("X-Cylism-Signature", "invalid")
@@ -78,10 +78,10 @@ func TestPlatformWebhookRejectsInvalidSignature(t *testing.T) {
 	}
 }
 
-func TestPlatformManualUpdateAcceptsAuthenticatedDigest(t *testing.T) {
+func TestPlatformManualUpdateAcceptsAuthenticatedTag(t *testing.T) {
 	original := K8s
 	defer func() { K8s = original }()
-	K8s = &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "cylism-manager", Namespace: "default"}, Spec: appsv1.DeploymentSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "platform", Image: "registry.example.com/cylism-manager@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}}}}})}
+	K8s = &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "cylism-manager", Namespace: "default"}, Spec: appsv1.DeploymentSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "platform", Image: "registry.example.com/cylism-manager:latest"}}}}}})}
 	secretKey := []byte("01234567890123456789012345678901")
 	s, err := store.New(":memory:")
 	if err != nil {
@@ -95,7 +95,7 @@ func TestPlatformManualUpdateAcceptsAuthenticatedDigest(t *testing.T) {
 	router := gin.New()
 	router.POST("/api/platform/releases", handler.ManualUpdate)
 
-	request := httptest.NewRequest(http.MethodPost, "/api/platform/releases", strings.NewReader(`{"image":"registry.example.com/cylism-manager@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}`))
+	request := httptest.NewRequest(http.MethodPost, "/api/platform/releases", strings.NewReader(`{"image":"registry.example.com/cylism-manager:latest"}`))
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, request)
 	if response.Code != http.StatusAccepted || !strings.Contains(response.Body.String(), `"source":"manual"`) {
@@ -103,7 +103,7 @@ func TestPlatformManualUpdateAcceptsAuthenticatedDigest(t *testing.T) {
 	}
 }
 
-func TestPlatformManualUpdateRejectsTag(t *testing.T) {
+func TestPlatformManualUpdateRejectsUntaggedImage(t *testing.T) {
 	s, err := store.New(":memory:")
 	if err != nil {
 		t.Fatal(err)
@@ -115,7 +115,7 @@ func TestPlatformManualUpdateRejectsTag(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	router.POST("/api/platform/releases", handler.ManualUpdate)
-	request := httptest.NewRequest(http.MethodPost, "/api/platform/releases", strings.NewReader(`{"image":"registry.example.com/cylism-manager:latest"}`))
+	request := httptest.NewRequest(http.MethodPost, "/api/platform/releases", strings.NewReader(`{"image":"registry.example.com/cylism-manager"}`))
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, request)
 	if response.Code != http.StatusBadRequest {
