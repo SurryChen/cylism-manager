@@ -99,6 +99,14 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 		nodeRegistryMirrors.POST("/:id/apply", h.Apply)
 		nodeRegistryMirrors.GET("/:id/apply-status", h.ApplyStatus)
 	}
+	registryProxyHandler := NewRegistryProxyHandler(s)
+	go registryProxyHandler.Reconcile()
+	registryProxy := apiGroup.Group("/registry-proxy")
+	{
+		registryProxy.GET("", registryProxyHandler.Get)
+		registryProxy.POST("/deploy", registryProxyHandler.Deploy)
+		registryProxy.POST("/cleanup", registryProxyHandler.Cleanup)
+	}
 	chartRepositories := apiGroup.Group("/chart-repositories")
 	{
 		h := NewChartRepositoryHandler(s)

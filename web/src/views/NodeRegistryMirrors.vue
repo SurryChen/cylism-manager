@@ -10,6 +10,8 @@
 
     <div v-if="error" class="k8s-banner k8s-banner-warn section-gap">{{ error }}</div>
 
+    <section class="proxy-panel section-gap"><div class="section-heading"><div><h2>自建 Docker Hub 代理</h2><p>临时缓存部署在指定节点；缓存到期后通过重建 Pod 安全清空，不使用 PVC。</p></div><div class="btn-group"><button class="btn btn-sm" @click="openProxy">{{ proxy ? '配置代理' : '部署代理' }}</button><button v-if="proxy" class="btn btn-sm btn-danger" :disabled="proxyCleaning" @click="cleanupProxy">{{ proxyCleaning ? '清理中...' : '立即清理缓存' }}</button></div></div><div v-if="proxy" class="proxy-status"><span class="badge" :class="proxy.status === 'ready' ? 'badge-online' : proxy.status === 'failed' ? 'badge-danger' : 'badge-offline'">{{ proxy.status === 'ready' ? '就绪' : proxy.status === 'deploying' ? '部署中' : proxy.status || '未知' }}</span><span>{{ proxy.endpoint_host }}:{{ proxy.node_port }}</span><span>节点 {{ proxy.node_name }}</span><span>临时缓存上限 {{ proxy.cache_limit_gi }} Gi</span><span>每 {{ proxy.cleanup_interval_hours }} 小时清理</span><small v-if="proxy.last_error">{{ proxy.last_error }}</small></div><div v-else class="empty-inline">尚未部署。代理就绪后，使用上方地址新建或更新 `docker.io` 节点镜像源，再选择节点应用。</div></section>
+
     <div v-if="loaded && mirrors.length" class="card section-gap">
       <div class="table-wrap">
         <table class="data-table">
@@ -68,6 +70,8 @@
         <div class="modal-actions"><button class="btn" @click="closeApply">取消</button><button class="btn btn-primary" data-testid="submit-node-registry-apply" :disabled="applying || !selectedServerIDs.length" @click="applyMirror">{{ applying ? '提交中...' : `应用到 ${selectedServerIDs.length} 个节点` }}</button></div>
       </div>
     </div>
+
+    <div v-if="showProxyModal" class="overlay" @click.self="showProxyModal = false"><div class="modal proxy-modal"><h2 class="modal-title">部署 Docker Hub 代理</h2><form @submit.prevent="deployProxy"><div class="form-group"><label class="form-label">部署节点</label><select v-model="proxyForm.node_name" class="form-select" required><option value="" disabled>选择可访问 Docker Hub 的节点</option><option v-for="server in clusterServers" :key="server.id" :value="server.k8s_node_name">{{ server.name }} · {{ server.k8s_node_name }}</option></select></div><div class="form-group"><label class="form-label">节点可访问 IP</label><input v-model.trim="proxyForm.endpoint_host" class="form-input" required placeholder="100.81.x.x 或 10.x.x.x" /><p class="form-hint">仅支持私网或 Tailscale IP。此地址将用于 K3s 节点镜像源。</p></div><div class="form-row"><div class="form-group"><label class="form-label">NodePort</label><input v-model.number="proxyForm.node_port" type="number" min="30000" max="32767" class="form-input" required /></div><div class="form-group"><label class="form-label">临时缓存上限 (Gi)</label><input v-model.number="proxyForm.cache_limit_gi" type="number" min="1" max="100" class="form-input" required /></div></div><div class="form-group"><label class="form-label">定期清理 (小时)</label><input v-model.number="proxyForm.cleanup_interval_hours" type="number" min="1" max="168" class="form-input" required /></div><div class="modal-actions"><button type="button" class="btn" @click="showProxyModal = false">取消</button><button class="btn btn-primary" :disabled="proxyDeploying">{{ proxyDeploying ? '部署中...' : '部署代理' }}</button></div></form></div></div>
 
     <div v-if="showModal" class="overlay" @click.self="closeModal">
       <div class="modal mirror-modal">
@@ -132,6 +136,11 @@ const verifyingID = ref(null)
 const servers = ref([])
 const applyTarget = ref(null)
 const selectedServerIDs = ref([])
+const proxy = ref(null)
+const showProxyModal = ref(false)
+const proxyDeploying = ref(false)
+const proxyCleaning = ref(false)
+const proxyForm = ref(proxyBlank())
 const form = ref(blank())
 let applyPollTimer = null
 
@@ -140,6 +149,7 @@ const clusterServers = computed(() => servers.value.filter(server => server.clus
 function blank() {
   return { name: '', registry: '', verification_image: '', endpoints: '', username: '', credential: '', insecure_skip_verify: false, enabled: true }
 }
+function proxyBlank() { return { node_name: '', endpoint_host: '', node_port: 30500, cache_limit_gi: 10, cleanup_interval_hours: 24 } }
 
 function endpointText(mirror) {
   try { return JSON.parse(mirror.endpoints).join(', ') } catch { return mirror.endpoints }
@@ -177,6 +187,11 @@ async function load() {
 async function loadServers() {
   try { servers.value = await api.get('/servers') || [] } catch (e) { error.value = e.message || '加载集群节点失败' }
 }
+
+async function loadProxy() { try { proxy.value = await api.get('/registry-proxy') } catch (e) { error.value = e.message || '加载自建镜像代理失败' } }
+function openProxy() { proxyForm.value = proxy.value ? { node_name: proxy.value.node_name, endpoint_host: proxy.value.endpoint_host, node_port: proxy.value.node_port, cache_limit_gi: proxy.value.cache_limit_gi, cleanup_interval_hours: proxy.value.cleanup_interval_hours } : proxyBlank(); showProxyModal.value = true }
+async function deployProxy() { proxyDeploying.value = true; error.value = ''; try { proxy.value = await api.post('/registry-proxy/deploy', proxyForm.value); showProxyModal.value = false } catch (e) { error.value = e.message || '部署自建镜像代理失败' } finally { proxyDeploying.value = false } }
+async function cleanupProxy() { proxyCleaning.value = true; error.value = ''; try { proxy.value = await api.post('/registry-proxy/cleanup'); await loadProxy() } catch (e) { error.value = e.message || '清理代理缓存失败' } finally { proxyCleaning.value = false } }
 
 function openCreate() {
   editing.value = null
@@ -283,7 +298,7 @@ async function remove() {
   } catch (e) { error.value = e.message || '删除节点镜像源失败' }
 }
 
-onMounted(() => { load(); loadServers() })
+onMounted(() => { load(); loadServers(); loadProxy() })
 onBeforeUnmount(() => window.clearInterval(applyPollTimer))
 </script>
 
@@ -296,11 +311,13 @@ onBeforeUnmount(() => window.clearInterval(applyPollTimer))
 .pending { color:var(--warning); }
 .failed, .verification-error { color:var(--danger); }
 .mirror-modal { width:min(580px,calc(100vw - 32px)); }
+.proxy-panel { padding:var(--space-16) 0; border-bottom:1px solid var(--border-muted); }.section-heading { display:flex; justify-content:space-between; gap:var(--space-16); align-items:flex-start; }.section-heading h2 { margin:0; font-size:16px; }.section-heading p,.proxy-status small { margin:4px 0 0; color:var(--text-secondary); font-size:12px; }.proxy-status { display:flex; flex-wrap:wrap; gap:8px 14px; align-items:center; margin-top:12px; color:var(--text-secondary); font-size:13px; }.proxy-status small { width:100%; color:var(--danger); }
+.proxy-modal { width:min(520px,calc(100vw - 32px)); }
 .apply-modal { width:min(520px,calc(100vw - 32px)); }
 .node-selection { display:grid; gap:8px; max-height:300px; overflow:auto; margin-top:16px; }
 .node-option { display:flex; align-items:flex-start; gap:10px; padding:10px; border:1px solid var(--border-muted); border-radius:var(--radius-control); background:var(--surface-subtle); cursor:pointer; }
 .node-option span { display:grid; gap:3px; min-width:0; }.node-option small { color:var(--text-secondary); font-size:11px; overflow-wrap:anywhere; }
 .form-hint, .confirm-copy { color:var(--text-muted); font-size:12px; }
 .check-row { display:flex; gap:8px; margin:12px 0; color:var(--text-secondary); font-size:13px; }
-@media (max-width:640px) { .page-header { flex-direction:column; } .page-header .btn { width:100%; } }
+@media (max-width:640px) { .page-header,.section-heading { flex-direction:column; } .page-header .btn { width:100%; } }
 </style>
