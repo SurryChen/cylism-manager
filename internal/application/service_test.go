@@ -106,7 +106,7 @@ func TestCreateReleasePersistsRegistryReference(t *testing.T) {
 	spec := validTestReleaseSpec()
 	spec.RegistryID = 12
 	release, err := service.CreateRelease(context.Background(), app.ID, 1, spec)
-	if err != nil || release.ImageRegistryID == nil || *release.ImageRegistryID != 12 {
+	if err != nil || release.ImageRegistryID == nil || *release.ImageRegistryID != 12 || !release.PodTrackingEnabled {
 		t.Fatalf("expected registry reference to be persisted, got %+v err=%v", release, err)
 	}
 }

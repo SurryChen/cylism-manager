@@ -29,4 +29,27 @@ describe('ApplicationDetails view', () => {
     expect(wrapper.text()).toContain('标准生产配置')
     expect(wrapper.text()).toContain('api.example.com')
   })
+
+  it('serializes line-based startup command and arguments into the template spec', async () => {
+    const { api } = await import('../api/index.js')
+    api.post.mockClear()
+    const wrapper = mount(ApplicationDetails, {
+      props: { applicationID: '1' },
+      global: { stubs: { RouterLink: { template: '<a><slot /></a>' }, Teleport: true } },
+    })
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    await wrapper.find('.page-header .btn-primary').trigger('click')
+    const textareas = wrapper.findAll('textarea')
+    await textareas[0].setValue('/usr/bin/chromium-browser')
+    await textareas[1].setValue('--no-sandbox\n--remote-debugging-port=9222')
+    await wrapper.find('form').trigger('submit.prevent')
+
+    expect(api.post).toHaveBeenCalledWith('/applications/1/deployment-templates', expect.objectContaining({
+      spec: expect.objectContaining({
+        command: ['/usr/bin/chromium-browser'],
+        args: ['--no-sandbox', '--remote-debugging-port=9222'],
+      }),
+    }))
+  })
 })

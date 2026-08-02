@@ -55,14 +55,15 @@ func (s *Service) CreateRelease(ctx context.Context, applicationID, userID uint,
 		registryID = &spec.RegistryID
 	}
 	release := &model.Release{
-		ApplicationID:   applicationID,
-		Sequence:        sequence,
-		Image:           spec.Image,
-		Version:         spec.Version,
-		ImageRegistryID: registryID,
-		DesiredSpec:     string(snapshot),
-		Status:          model.ReleaseStatusDraft,
-		CreatedBy:       userID,
+		ApplicationID:      applicationID,
+		Sequence:           sequence,
+		Image:              spec.Image,
+		Version:            spec.Version,
+		ImageRegistryID:    registryID,
+		PodTrackingEnabled: true,
+		DesiredSpec:        string(snapshot),
+		Status:             model.ReleaseStatusDraft,
+		CreatedBy:          userID,
 	}
 	if err := s.store.CreateRelease(release); err != nil {
 		return nil, fmt.Errorf("创建发布记录: %w", err)

@@ -48,10 +48,69 @@ func setupApplicationRouter() (*gin.Engine, *store.Store) {
 		applications.PUT("/:id/endpoint", h.UpdateApplicationEndpoint)
 		applications.DELETE("/:id/endpoint", h.DeleteApplicationEndpoint)
 		applications.POST("/:id/releases", h.CreateRelease)
+		applications.GET("/:id/releases/:releaseID", h.GetRelease)
 	}
 	workspace := r.Group("/api/workspace")
 	workspace.GET("/overview", h.WorkspaceOverview)
 	return r, s
+}
+
+func TestApplicationHandlerGetReleaseIncludesLivePodRuntime(t *testing.T) {
+	r, s := setupApplicationRouter()
+	app := createApplicationForReleaseRuntimeTest(t, s)
+	release := &model.Release{ApplicationID: app.ID, Sequence: 6, Image: "gcr.io/zenika-hub/alpine-chrome:124", DesiredSpec: "{}", Status: model.ReleaseStatusSucceeded, CreatedBy: 1, PodTrackingEnabled: true}
+	if err := s.CreateRelease(release); err != nil {
+		t.Fatal(err)
+	}
+	originalK8s := K8s
+	K8s = &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(&corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "browser-abc", Namespace: app.Environment.Namespace, Labels: map[string]string{application.ApplicationNameLabel: app.Name, application.ReleaseLabel: "6"}},
+		Spec:       corev1.PodSpec{NodeName: "worker-a"},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning, ContainerStatuses: []corev1.ContainerStatus{{
+			Name: "browser", RestartCount: 4, State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "CrashLoopBackOff"}},
+			LastTerminationState: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{Reason: "Completed", ExitCode: 0}},
+		}}},
+	})}
+	defer func() { K8s = originalK8s }()
+
+	response := serve(r, newJSONRequest(http.MethodGet, "/api/applications/1/releases/1", nil))
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "\"tracking\":\"exact\"") || !strings.Contains(response.Body.String(), "CrashLoopBackOff") || !strings.Contains(response.Body.String(), "正常退出") {
+		t.Fatalf("unexpected release runtime response: %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestApplicationHandlerGetReleaseMarksLegacyReleaseAsUntracked(t *testing.T) {
+	r, s := setupApplicationRouter()
+	app := createApplicationForReleaseRuntimeTest(t, s)
+	release := &model.Release{ApplicationID: app.ID, Sequence: 1, Image: "nginx:1.27", DesiredSpec: "{}", Status: model.ReleaseStatusSucceeded, CreatedBy: 1}
+	if err := s.CreateRelease(release); err != nil {
+		t.Fatal(err)
+	}
+	response := serve(r, newJSONRequest(http.MethodGet, "/api/applications/1/releases/1", nil))
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "legacy_untracked") {
+		t.Fatalf("unexpected legacy release response: %d %s", response.Code, response.Body.String())
+	}
+}
+
+func createApplicationForReleaseRuntimeTest(t *testing.T, s *store.Store) *model.Application {
+	t.Helper()
+	project := &model.Project{Name: "runtime-project", OwnerID: 1}
+	if err := s.CreateProject(project); err != nil {
+		t.Fatal(err)
+	}
+	environment := &model.Environment{ProjectID: project.ID, Name: "dev", Namespace: "runtime-dev"}
+	if err := s.CreateEnvironment(environment); err != nil {
+		t.Fatal(err)
+	}
+	app := &model.Application{ProjectID: project.ID, EnvironmentID: environment.ID, Name: "browser", WorkloadKind: "deployment", CreatedBy: 1}
+	if err := s.CreateApplication(app); err != nil {
+		t.Fatal(err)
+	}
+	app, err := s.GetApplication(app.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return app
 }
 
 func TestApplicationHandlerReleasesFromSelectedDeploymentTemplateByVersion(t *testing.T) {
