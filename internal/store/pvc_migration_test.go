@@ -23,3 +23,21 @@ func TestPersistentVolumeMigrationStoreFindsActiveSourceClaim(t *testing.T) {
 		t.Fatal("terminal migration must not lock source claim")
 	}
 }
+
+func TestHostDirectoryPVCImportStoreLocksClaimUntilTerminal(t *testing.T) {
+	st := setupTestDB(t)
+	task := &model.HostDirectoryPVCImport{EnvironmentID: 1, PVCName: "karakeep-data", SourceServerID: 2, SourcePath: "/srv/legacy", TargetNodeName: "node-a", TargetPath: "/var/lib/k3s/storage/pvc", BackupPath: "/srv/legacy/.cylism-import-backups/1.tar.gz", Status: model.PVCImportStatusCopying}
+	if err := st.CreateHostDirectoryPVCImport(task); err != nil {
+		t.Fatal(err)
+	}
+	active, err := st.FindActiveHostDirectoryPVCImport(1, "karakeep-data")
+	if err != nil || active.ID != task.ID {
+		t.Fatalf("expected active import, got %#v, %v", active, err)
+	}
+	if err := st.UpdateHostDirectoryPVCImport(task, model.PVCImportStatusSucceeded, "verified"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.FindActiveHostDirectoryPVCImport(1, "karakeep-data"); err == nil {
+		t.Fatal("terminal import must not lock source claim")
+	}
+}

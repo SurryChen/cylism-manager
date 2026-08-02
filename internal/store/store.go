@@ -65,6 +65,7 @@ func New(dsn string) (*Store, error) {
 		&model.ReleaseOperation{},
 		&model.PersistentVolumeMigration{},
 		&model.PersistentVolumeBackup{},
+		&model.HostDirectoryPVCImport{},
 	); err != nil {
 		return nil, err
 	}
@@ -1112,4 +1113,36 @@ func (s *Store) ListPersistentVolumeBackups(environmentID uint, pvcName string) 
 
 func (s *Store) UpdatePersistentVolumeBackup(backup *model.PersistentVolumeBackup) error {
 	return s.db.Save(backup).Error
+}
+
+func (s *Store) CreateHostDirectoryPVCImport(task *model.HostDirectoryPVCImport) error {
+	return s.db.Create(task).Error
+}
+
+func (s *Store) GetHostDirectoryPVCImport(id uint) (*model.HostDirectoryPVCImport, error) {
+	var task model.HostDirectoryPVCImport
+	err := s.db.First(&task, id).Error
+	return &task, err
+}
+
+func (s *Store) ListHostDirectoryPVCImports(environmentID uint, pvcName string) ([]model.HostDirectoryPVCImport, error) {
+	var tasks []model.HostDirectoryPVCImport
+	err := s.db.Where("environment_id = ? AND pvc_name = ?", environmentID, pvcName).Order("created_at desc").Find(&tasks).Error
+	return tasks, err
+}
+
+func (s *Store) FindActiveHostDirectoryPVCImport(environmentID uint, pvcName string) (*model.HostDirectoryPVCImport, error) {
+	var task model.HostDirectoryPVCImport
+	err := s.db.Where("environment_id = ? AND pvc_name = ? AND status NOT IN ?", environmentID, pvcName, []string{model.PVCImportStatusSucceeded, model.PVCImportStatusFailed}).Order("created_at desc").First(&task).Error
+	return &task, err
+}
+
+func (s *Store) UpdateHostDirectoryPVCImport(task *model.HostDirectoryPVCImport, status, detail string) error {
+	task.Status = status
+	task.Detail = detail
+	if model.IsPVCImportTerminal(status) && task.CompletedAt == nil {
+		now := time.Now()
+		task.CompletedAt = &now
+	}
+	return s.db.Save(task).Error
 }
