@@ -17,6 +17,7 @@ import (
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/gin-gonic/gin"
+	"github.com/google/go-containerregistry/pkg/name"
 	"gorm.io/gorm"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -678,6 +679,10 @@ func (h *ApplicationHandler) CreateRelease(c *gin.Context) {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
 		return
 	}
+	if err := h.prepareReleaseImageVerification(&spec); err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		return
+	}
 	if err := h.applyApplicationEndpointSpec(app, &spec); err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
 		return
@@ -1173,6 +1178,10 @@ func (h *ApplicationHandler) RetryRelease(c *gin.Context) {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
 		return
 	}
+	if err := h.prepareReleaseImageVerification(&spec); err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		return
+	}
 	if err := h.applyApplicationEndpointSpec(app, &spec); err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
 		return
@@ -1209,6 +1218,10 @@ func (h *ApplicationHandler) RollbackRelease(c *gin.Context) {
 	}
 	app, _ := h.store.GetApplication(applicationID)
 	if err := h.prepareRegistryReleaseSpec(app, &spec); err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		return
+	}
+	if err := h.prepareReleaseImageVerification(&spec); err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
 		return
 	}
@@ -1251,6 +1264,71 @@ func (h *ApplicationHandler) prepareRegistryReleaseSpec(app *model.Application, 
 	}
 	spec.RegistryCredential = credential
 	return nil
+}
+
+func (h *ApplicationHandler) prepareReleaseImageVerification(spec *application.ReleaseSpec) error {
+	spec.ImageVerificationEndpoint = ""
+	spec.ImageVerificationUsername = ""
+	spec.ImageVerificationCredential = ""
+	spec.ImageVerificationInsecureSkipVerify = false
+	if spec.NodeName == "" {
+		return nil
+	}
+	ref, err := name.ParseReference(spec.Image)
+	if err != nil {
+		return fmt.Errorf("镜像地址无效: %w", err)
+	}
+	mirrors, err := h.store.ListNodeRegistryMirrors()
+	if err != nil {
+		return fmt.Errorf("读取节点镜像源失败: %w", err)
+	}
+	for _, mirror := range mirrors {
+		if !mirror.Enabled || !sameRegistry(mirror.Registry, ref.Context().RegistryStr()) || !mirrorAppliedToNode(mirror, spec.NodeName) {
+			continue
+		}
+		var endpoints []string
+		if err := json.Unmarshal([]byte(mirror.Endpoints), &endpoints); err != nil || len(endpoints) == 0 {
+			return fmt.Errorf("节点镜像源 %q 配置损坏", mirror.Name)
+		}
+		endpoint := strings.TrimSpace(endpoints[0])
+		if endpoint == "" {
+			return fmt.Errorf("节点镜像源 %q 未配置可用地址", mirror.Name)
+		}
+		spec.ImageVerificationEndpoint = endpoint
+		spec.ImageVerificationUsername = mirror.Username
+		spec.ImageVerificationInsecureSkipVerify = mirror.InsecureSkipVerify
+		if mirror.Username != "" {
+			credential, err := crypto.Decrypt(h.encKey, mirror.Credential)
+			if err != nil {
+				return fmt.Errorf("读取节点镜像源 %q 凭据失败", mirror.Name)
+			}
+			spec.ImageVerificationCredential = credential
+		}
+		return nil
+	}
+	return nil
+}
+
+func sameRegistry(left, right string) bool {
+	normalize := func(value string) string {
+		value = strings.ToLower(strings.TrimSpace(value))
+		switch value {
+		case "index.docker.io", "registry-1.docker.io":
+			return "docker.io"
+		default:
+			return value
+		}
+	}
+	return normalize(left) == normalize(right)
+}
+
+func mirrorAppliedToNode(mirror model.NodeRegistryMirror, nodeName string) bool {
+	for _, status := range mirror.NodeStatuses {
+		if status.Status == "success" && status.Server.K8sNodeName == nodeName {
+			return true
+		}
+	}
+	return false
 }
 
 func (h *ApplicationHandler) prepareManagedDomain(app *model.Application, spec *application.ReleaseSpec) error {

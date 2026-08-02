@@ -2,7 +2,10 @@ package application
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
+	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -35,24 +38,62 @@ func NewKubernetesApplier(client *k8sclient.Client) *KubernetesApplier {
 // before Kubernetes resources are changed. Node-level pulling is validated by
 // WaitReady after the Deployment is applied.
 func (a *KubernetesApplier) VerifyImage(ctx context.Context, spec ReleaseSpec) error {
-	ref, err := name.ParseReference(strings.TrimSpace(spec.Image))
+	ref, err := imageVerificationReference(spec)
 	if err != nil {
 		return fmt.Errorf("镜像地址无效: %w", err)
 	}
 	verifyCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	options := []remote.Option{remote.WithContext(verifyCtx), remote.WithAuth(authn.Anonymous)}
-	switch strings.TrimSpace(spec.RegistryAuthType) {
-	case "", "anonymous":
-	case "token":
-		options[1] = remote.WithAuth(authn.FromConfig(authn.AuthConfig{RegistryToken: spec.RegistryCredential}))
-	default:
-		options[1] = remote.WithAuth(authn.FromConfig(authn.AuthConfig{Username: spec.RegistryUsername, Password: spec.RegistryCredential}))
+	if spec.ImageVerificationEndpoint != "" {
+		if spec.ImageVerificationUsername != "" {
+			options[1] = remote.WithAuth(authn.FromConfig(authn.AuthConfig{Username: spec.ImageVerificationUsername, Password: spec.ImageVerificationCredential}))
+		}
+		if spec.ImageVerificationInsecureSkipVerify {
+			transport := http.DefaultTransport.(*http.Transport).Clone()
+			transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+			options = append(options, remote.WithTransport(transport))
+		}
+	} else {
+		switch strings.TrimSpace(spec.RegistryAuthType) {
+		case "", "anonymous":
+		case "token":
+			options[1] = remote.WithAuth(authn.FromConfig(authn.AuthConfig{RegistryToken: spec.RegistryCredential}))
+		default:
+			options[1] = remote.WithAuth(authn.FromConfig(authn.AuthConfig{Username: spec.RegistryUsername, Password: spec.RegistryCredential}))
+		}
 	}
 	if _, err := remote.Head(ref, options...); err != nil {
 		return fmt.Errorf("镜像版本 %q 不存在或不可访问: %s", spec.Image, redactReleaseDiagnostic(err.Error(), spec))
 	}
 	return nil
+}
+
+func imageVerificationReference(spec ReleaseSpec) (name.Reference, error) {
+	source, err := name.ParseReference(strings.TrimSpace(spec.Image))
+	if err != nil || strings.TrimSpace(spec.ImageVerificationEndpoint) == "" {
+		return source, err
+	}
+	target, err := url.ParseRequestURI(spec.ImageVerificationEndpoint)
+	if err != nil || target.Host == "" || (target.Scheme != "https" && target.Scheme != "http") || (target.Path != "" && target.Path != "/") {
+		return nil, fmt.Errorf("镜像代理地址无效")
+	}
+	options := []name.Option{}
+	if target.Scheme == "http" {
+		options = append(options, name.Insecure)
+	}
+	repository, err := name.NewRepository(target.Host+"/"+source.Context().RepositoryStr(), options...)
+	if err != nil {
+		return nil, err
+	}
+	switch reference := source.(type) {
+	case name.Tag:
+		return repository.Tag(reference.TagStr()), nil
+	case name.Digest:
+		return repository.Digest(reference.DigestStr()), nil
+	default:
+		return nil, fmt.Errorf("镜像引用格式无效")
+	}
 }
 
 func (a *KubernetesApplier) Preflight(ctx context.Context, application ApplicationContext, spec ReleaseSpec) error {
@@ -291,8 +332,10 @@ func terminalContainerWaitingReason(reason string) bool {
 
 func redactReleaseDiagnostic(detail string, spec ReleaseSpec) string {
 	detail = strings.TrimSpace(detail)
-	if credential := strings.TrimSpace(spec.RegistryCredential); credential != "" {
-		detail = strings.ReplaceAll(detail, credential, "[REDACTED]")
+	for _, credential := range []string{spec.RegistryCredential, spec.ImageVerificationCredential} {
+		if credential = strings.TrimSpace(credential); credential != "" {
+			detail = strings.ReplaceAll(detail, credential, "[REDACTED]")
+		}
 	}
 	if len(detail) > 1000 {
 		return detail[:1000]

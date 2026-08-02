@@ -38,20 +38,24 @@ type ReleaseSpec struct {
 	Args       []string `json:"args,omitempty"`
 	RegistryID uint     `json:"registry_id,omitempty"`
 	// 以下字段只在发布执行期存在，禁止写入 API 响应或发布快照。
-	RegistryEndpoint   string            `json:"-"`
-	RegistryAuthType   string            `json:"-"`
-	RegistryUsername   string            `json:"-"`
-	RegistryCredential string            `json:"-"`
-	ContainerPort      int32             `json:"container_port"`
-	Replicas           int32             `json:"replicas"`
-	Resources          ResourceSpec      `json:"resources"`
-	Health             HealthSpec        `json:"health"`
-	Config             map[string]string `json:"config,omitempty"`
-	Secrets            map[string]string `json:"secrets,omitempty"`
-	NodeName           string            `json:"node_name,omitempty"`
-	Volumes            []VolumeMountSpec `json:"volumes,omitempty"`
-	Service            ServiceSpec       `json:"service"`
-	Endpoint           EndpointSpec      `json:"endpoint"`
+	RegistryEndpoint                    string            `json:"-"`
+	RegistryAuthType                    string            `json:"-"`
+	RegistryUsername                    string            `json:"-"`
+	RegistryCredential                  string            `json:"-"`
+	ImageVerificationEndpoint           string            `json:"-"`
+	ImageVerificationUsername           string            `json:"-"`
+	ImageVerificationCredential         string            `json:"-"`
+	ImageVerificationInsecureSkipVerify bool              `json:"-"`
+	ContainerPort                       int32             `json:"container_port"`
+	Replicas                            int32             `json:"replicas"`
+	Resources                           ResourceSpec      `json:"resources"`
+	Health                              HealthSpec        `json:"health"`
+	Config                              map[string]string `json:"config,omitempty"`
+	Secrets                             map[string]string `json:"secrets,omitempty"`
+	NodeName                            string            `json:"node_name,omitempty"`
+	Volumes                             []VolumeMountSpec `json:"volumes,omitempty"`
+	Service                             ServiceSpec       `json:"service"`
+	Endpoint                            EndpointSpec      `json:"endpoint"`
 }
 
 // VolumeMountSpec describes a platform-managed PVC mounted into the main
@@ -402,6 +406,10 @@ func SanitizeReleaseSpec(spec ReleaseSpec) ReleaseSpec {
 	spec.RegistryAuthType = ""
 	spec.RegistryUsername = ""
 	spec.RegistryCredential = ""
+	spec.ImageVerificationEndpoint = ""
+	spec.ImageVerificationUsername = ""
+	spec.ImageVerificationCredential = ""
+	spec.ImageVerificationInsecureSkipVerify = false
 	sanitized := spec
 	sanitized.Config = cloneStringMap(spec.Config)
 	sanitized.Secrets = make(map[string]string, len(spec.Secrets))
