@@ -56,4 +56,31 @@ describe('PersistentVolumes view', () => {
     await wrapper.get('[data-testid="storage-environment-menu"] button').trigger('click')
     expect(wrapper.get('[data-testid="storage-environment-trigger"]').text()).toContain('production')
   })
+
+  it('creates a host directory import task for a bound local PVC', async () => {
+    const { api } = await import('../api/index.js')
+    api.get.mockImplementation(path => {
+      if (path === '/projects') return Promise.resolve([{ id: 1, name: 'knowledge', environments: [{ id: 2, name: 'production', namespace: 'project-knowledge-prod' }] }])
+      if (path.includes('/imports?')) return Promise.resolve([])
+      if (path.startsWith('/k8s/persistent-volume-claims?')) return Promise.resolve([{ name: 'karakeep-data', phase: 'Bound', is_local: true, bound_node: 'node-a', bound_node_display_name: '节点 A' }])
+      if (path === '/servers') return Promise.resolve([{ id: 8, name: '历史数据服务器', host: '100.64.0.8', ssh_auth_type: 'key' }])
+      return Promise.resolve([])
+    })
+    api.post.mockResolvedValue({})
+    const wrapper = mount(PersistentVolumes)
+    await new Promise(resolve => setTimeout(resolve, 0))
+    await wrapper.get('[data-testid="storage-project-trigger"]').trigger('click')
+    await wrapper.get('[data-testid="storage-project-menu"] button').trigger('click')
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    await wrapper.get('[data-testid="open-directory-import"]').trigger('click')
+    await wrapper.get('[data-testid="import-source-server"]').setValue('8')
+    await wrapper.get('[data-testid="import-source-path"]').setValue('/data/legacy/karakeep')
+    await wrapper.get('[data-testid="import-confirm-replace"]').setValue(true)
+    await wrapper.get('.import-form').trigger('submit')
+
+    expect(api.post).toHaveBeenCalledWith('/k8s/persistent-volume-claims/karakeep-data/imports', {
+      environment_id: 2, source_server_id: 8, source_path: '/data/legacy/karakeep', confirm_data_replace: true,
+    })
+  })
 })

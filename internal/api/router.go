@@ -298,6 +298,9 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 		k8sGroup.GET("/persistent-volume-claims/:name/backups", k8sHandler.ListPersistentVolumeBackups)
 		k8sGroup.POST("/persistent-volume-claims/:name/backups", k8sHandler.CreatePersistentVolumeBackup)
 		k8sGroup.POST("/persistent-volume-claims/:name/backups/:backupID/restore", k8sHandler.RestorePersistentVolumeBackup)
+		k8sGroup.GET("/persistent-volume-claims/:name/imports", k8sHandler.ListHostDirectoryPVCImports)
+		k8sGroup.POST("/persistent-volume-claims/:name/imports", k8sHandler.CreateHostDirectoryPVCImport)
+		k8sGroup.DELETE("/persistent-volume-claims/:name/imports/:id/backup", k8sHandler.DeleteHostDirectoryPVCImportBackup)
 		k8sGroup.DELETE("/persistent-volume-claims/:name", k8sHandler.DeletePersistentVolumeClaim)
 
 		// 标准 Ingress

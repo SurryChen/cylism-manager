@@ -403,7 +403,11 @@ func releaseRuntimeDiagnostic(diagnostics []string) string {
 }
 
 func (a *KubernetesApplier) deploymentFailureDiagnostic(ctx context.Context, application ApplicationContext, spec ReleaseSpec) (string, bool) {
-	pods, err := a.Client.Clientset.CoreV1().Pods(application.Namespace).List(ctx, metav1.ListOptions{LabelSelector: ApplicationNameLabel + "=" + application.ApplicationName})
+	selector := ApplicationNameLabel + "=" + application.ApplicationName
+	if application.ReleaseSequence > 0 {
+		selector += "," + ReleaseLabel + "=" + strconv.FormatUint(uint64(application.ReleaseSequence), 10)
+	}
+	pods, err := a.Client.Clientset.CoreV1().Pods(application.Namespace).List(ctx, metav1.ListOptions{LabelSelector: selector})
 	if err != nil {
 		return "", false
 	}

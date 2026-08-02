@@ -94,7 +94,7 @@ func TestKubernetesApplierPreflightRequiresActiveNamespace(t *testing.T) {
 }
 
 func TestKubernetesApplierWaitReadyReportsImagePullFailure(t *testing.T) {
-	labels := map[string]string{ApplicationNameLabel: "order-api"}
+	labels := map[string]string{ApplicationNameLabel: "order-api", ReleaseLabel: "2"}
 	clientset := k8sfake.NewSimpleClientset(
 		&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "order-api", Namespace: "dev"}, Spec: appsv1.DeploymentSpec{Selector: &metav1.LabelSelector{MatchLabels: labels}}},
 		&corev1.Pod{
@@ -106,9 +106,23 @@ func TestKubernetesApplierWaitReadyReportsImagePullFailure(t *testing.T) {
 		},
 	)
 	applier := NewKubernetesApplier(&k8sclient.Client{Clientset: clientset})
-	err := applier.WaitReady(context.Background(), ApplicationContext{Namespace: "dev", ApplicationName: "order-api"}, ReleaseSpec{Replicas: 1})
+	err := applier.WaitReady(context.Background(), ApplicationContext{Namespace: "dev", ApplicationName: "order-api", ReleaseSequence: 2}, ReleaseSpec{Replicas: 1})
 	if err == nil || !strings.Contains(err.Error(), "ImagePullBackOff") || !strings.Contains(err.Error(), "order-api-abc") {
 		t.Fatalf("expected image pull diagnostic, got %v", err)
+	}
+}
+
+func TestKubernetesApplierWaitReadyIgnoresFailedPodFromOlderRelease(t *testing.T) {
+	oldLabels := map[string]string{ApplicationNameLabel: "order-api", ReleaseLabel: "1"}
+	currentLabels := map[string]string{ApplicationNameLabel: "order-api", ReleaseLabel: "2"}
+	clientset := k8sfake.NewSimpleClientset(
+		&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "order-api", Namespace: "dev", Generation: 2}, Status: appsv1.DeploymentStatus{ObservedGeneration: 2, UpdatedReplicas: 1, AvailableReplicas: 1, UnavailableReplicas: 0}},
+		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "order-api-old", Namespace: "dev", Labels: oldLabels}, Status: corev1.PodStatus{Phase: corev1.PodFailed, Message: "old image pull failure"}},
+		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "order-api-current", Namespace: "dev", Labels: currentLabels}, Status: corev1.PodStatus{Phase: corev1.PodRunning, ContainerStatuses: []corev1.ContainerStatus{{Name: "order-api", Ready: true}}}},
+	)
+	applier := NewKubernetesApplier(&k8sclient.Client{Clientset: clientset})
+	if err := applier.WaitReady(context.Background(), ApplicationContext{Namespace: "dev", ApplicationName: "order-api", ReleaseSequence: 2}, ReleaseSpec{Replicas: 1}); err != nil {
+		t.Fatalf("current release must not fail because of an old Pod: %v", err)
 	}
 }
 
