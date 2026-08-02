@@ -363,12 +363,44 @@ func (h *K8sHandler) streamPVCData(source, target *model.Server, sourcePath, tar
 		_ = targetCommand.Process.Kill()
 		return 0, err
 	}
-	sourceRunErr := sourceCommand.Wait()
+	// Wait for the target first: it owns the reader side of source stdout. Calling
+	// source Wait first closes StdoutPipe and can truncate a large tar stream.
 	targetRunErr := targetCommand.Wait()
+	if targetRunErr != nil && sourceCommand.Process != nil {
+		_ = sourceCommand.Process.Kill()
+	}
+	sourceRunErr := sourceCommand.Wait()
 	if sourceRunErr != nil || targetRunErr != nil {
-		return copied.Load(), fmt.Errorf("存储卷数据复制失败: 源=%s 目标=%s", strings.TrimSpace(sourceErr.String()), strings.TrimSpace(targetErr.String()))
+		return copied.Load(), fmt.Errorf("存储卷数据复制失败（已传输 %d bytes）: 源=%s；目标=%s", copied.Load(), streamCommandFailure(sourceRunErr, sourceErr.String()), streamCommandFailure(targetRunErr, targetErr.String()))
 	}
 	return copied.Load(), nil
+}
+
+func streamCommandFailure(runErr error, output string) string {
+	diagnostic := streamCommandDiagnostic(output)
+	if diagnostic == "" && runErr == nil {
+		return "无错误"
+	}
+	if diagnostic == "" {
+		return runErr.Error()
+	}
+	if runErr == nil {
+		return diagnostic
+	}
+	return runErr.Error() + ": " + diagnostic
+}
+
+func streamCommandDiagnostic(output string) string {
+	lines := strings.Split(output, "\n")
+	filtered := make([]string, 0, len(lines))
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "Warning: Permanently added ") {
+			continue
+		}
+		filtered = append(filtered, line)
+	}
+	return strings.Join(filtered, " ")
 }
 
 type countWriter struct{ count *atomic.Int64 }
