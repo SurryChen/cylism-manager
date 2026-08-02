@@ -36,3 +36,14 @@ func TestHostDirectoryImportPathsOverlap(t *testing.T) {
 		t.Fatal("distinct sibling directories must be allowed")
 	}
 }
+
+func TestHostDirectoryImportChecksumFromSSHOutput(t *testing.T) {
+	checksum := "2f3f5d1a9af59a4e93a6efb1f7c82dfb77c0b3c80f08d2c9ea3294df7c6a3b41"
+	output := "Warning: Permanently added '100.64.0.8' (ED25519) to the list of known hosts.\n" + checksum + "\n"
+	if got := hostDirectoryImportChecksumFromSSHOutput(output); got != checksum {
+		t.Fatalf("expected checksum %q, got %q", checksum, got)
+	}
+	if got := hostDirectoryImportChecksumFromSSHOutput("warning only"); got != "" {
+		t.Fatalf("expected no checksum, got %q", got)
+	}
+}
