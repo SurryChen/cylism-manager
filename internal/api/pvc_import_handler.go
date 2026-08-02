@@ -359,8 +359,8 @@ func (h *K8sHandler) createHostDirectoryImportArchive(server *model.Server, sour
 	if err != nil {
 		return "", fmt.Errorf("创建本地备份失败: %s", strings.TrimSpace(string(out)))
 	}
-	checksum := strings.TrimSpace(string(out))
-	if len(checksum) != 64 {
+	checksum := hostDirectoryImportChecksumFromSSHOutput(string(out))
+	if checksum == "" {
 		return "", fmt.Errorf("创建本地备份失败：未得到有效校验摘要")
 	}
 	return checksum, nil
@@ -372,8 +372,8 @@ func (h *K8sHandler) hostDirectoryContentChecksum(server *model.Server, director
 	if err != nil {
 		return "", fmt.Errorf("计算目录校验摘要失败: %s", strings.TrimSpace(string(out)))
 	}
-	checksum := strings.TrimSpace(string(out))
-	if len(checksum) != 64 {
+	checksum := hostDirectoryImportChecksumFromSSHOutput(string(out))
+	if checksum == "" {
 		return "", fmt.Errorf("计算目录校验摘要失败：未得到有效摘要")
 	}
 	return checksum, nil
@@ -441,4 +441,27 @@ func hostDirectoryImportBackupPath(pvcName string, id uint, target bool) string 
 func hostDirectoryImportPathsOverlap(left, right string) bool {
 	left, right = path.Clean(left), path.Clean(right)
 	return left == right || strings.HasPrefix(left, right+"/") || strings.HasPrefix(right, left+"/")
+}
+
+// sshExec combines stderr with stdout so SSH host-key warnings can precede a
+// successful command result. Keep the final valid digest and ignore warnings.
+func hostDirectoryImportChecksumFromSSHOutput(output string) string {
+	fields := strings.Fields(output)
+	for index := len(fields) - 1; index >= 0; index-- {
+		candidate := fields[index]
+		if len(candidate) != 64 {
+			continue
+		}
+		valid := true
+		for _, char := range candidate {
+			if !(char >= '0' && char <= '9') && !(char >= 'a' && char <= 'f') {
+				valid = false
+				break
+			}
+		}
+		if valid {
+			return candidate
+		}
+	}
+	return ""
 }
