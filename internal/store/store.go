@@ -57,6 +57,7 @@ func New(dsn string) (*Store, error) {
 		&model.ImageRegistry{},
 		&model.NodeRegistryMirror{},
 		&model.NodeRegistryMirrorNode{},
+		&model.RegistryProxy{},
 		&model.ChartRepository{},
 		&model.DNSCredential{},
 		&model.ManagedDomain{},
@@ -832,6 +833,16 @@ func (s *Store) DeleteNodeRegistryMirror(id uint) error {
 
 func (s *Store) UpsertNodeRegistryMirrorStatus(status *model.NodeRegistryMirrorNode) error {
 	return s.db.Where("mirror_id = ? AND server_id = ?", status.MirrorID, status.ServerID).Assign(status).FirstOrCreate(&model.NodeRegistryMirrorNode{}).Error
+}
+
+func (s *Store) GetRegistryProxy() (*model.RegistryProxy, error) {
+	var proxy model.RegistryProxy
+	err := s.db.Order("id asc").First(&proxy).Error
+	return &proxy, err
+}
+
+func (s *Store) SaveRegistryProxy(proxy *model.RegistryProxy) error {
+	return s.db.Save(proxy).Error
 }
 
 func (s *Store) CreateChartRepository(repository *model.ChartRepository) error {

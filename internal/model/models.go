@@ -325,6 +325,23 @@ type NodeRegistryMirrorNode struct {
 	Server    Server     `gorm:"foreignKey:ServerID" json:"server,omitempty"`
 }
 
+// RegistryProxy defines the platform-managed, non-persistent Docker Hub proxy.
+type RegistryProxy struct {
+	ID                   uint       `gorm:"primaryKey" json:"id"`
+	NodeName             string     `gorm:"size:256;not null" json:"node_name"`
+	EndpointHost         string     `gorm:"size:256;not null" json:"endpoint_host"`
+	NodePort             int32      `gorm:"not null" json:"node_port"`
+	CacheLimitGi         int32      `gorm:"not null" json:"cache_limit_gi"`
+	CleanupIntervalHours int32      `gorm:"not null" json:"cleanup_interval_hours"`
+	LastCleanupAt        *time.Time `json:"last_cleanup_at,omitempty"`
+	LastCheckedAt        *time.Time `json:"last_checked_at,omitempty"`
+	Status               string     `gorm:"size:32;not null" json:"status"`
+	LastError            string     `gorm:"size:512" json:"last_error,omitempty"`
+	CreatedBy            uint       `gorm:"index;not null" json:"created_by"`
+	CreatedAt            time.Time  `json:"created_at"`
+	UpdatedAt            time.Time  `json:"updated_at"`
+}
+
 // ChartRepository is a vetted Helm chart source for platform-managed extensions.
 type ChartRepository struct {
 	ID               uint       `gorm:"primaryKey" json:"id"`
