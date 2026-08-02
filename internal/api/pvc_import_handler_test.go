@@ -47,3 +47,10 @@ func TestHostDirectoryImportChecksumFromSSHOutput(t *testing.T) {
 		t.Fatalf("expected no checksum, got %q", got)
 	}
 }
+
+func TestStreamCommandDiagnosticRemovesSSHHostKeyWarning(t *testing.T) {
+	output := "Warning: Permanently added '100.64.0.8' (ED25519) to the list of known hosts.\ntar: permission denied\n"
+	if got := streamCommandDiagnostic(output); got != "tar: permission denied" {
+		t.Fatalf("unexpected diagnostic %q", got)
+	}
+}
