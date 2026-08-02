@@ -33,6 +33,8 @@ func TestValidateReleaseSpec(t *testing.T) {
 func TestRenderResourcesUsesManagedLabelsAndRedactsSecret(t *testing.T) {
 	spec := ReleaseSpec{
 		Image:         "nginx:1.27",
+		Command:       []string{"/docker-entrypoint.sh"},
+		Args:          []string{"nginx", "-g", "daemon off;"},
 		ContainerPort: 8080,
 		Replicas:      2,
 		Resources:     ResourceSpec{RequestsCPU: "100m", RequestsMemory: "128Mi", LimitsCPU: "500m", LimitsMemory: "512Mi"},
@@ -51,8 +53,18 @@ func TestRenderResourcesUsesManagedLabelsAndRedactsSecret(t *testing.T) {
 	if resources.Deployment.Labels[ManagedByLabel] != ManagedByValue {
 		t.Fatalf("expected managed label, got %+v", resources.Deployment.Labels)
 	}
-	if resources.Deployment.Spec.Template.Labels[ReleaseLabel] != "" || resources.Deployment.Annotations[ReleaseLabel] != "3" {
-		t.Fatalf("release sequence must not mutate the Pod template: %#v", resources.Deployment)
+	if resources.Deployment.Spec.Template.Labels[ReleaseLabel] != "3" || resources.Deployment.Annotations[ReleaseLabel] != "3" {
+		t.Fatalf("release sequence must label the Pod template: %#v", resources.Deployment)
+	}
+	if resources.Deployment.Spec.Selector.MatchLabels[ReleaseLabel] != "" {
+		t.Fatalf("release sequence must not mutate the Deployment selector: %#v", resources.Deployment.Spec.Selector)
+	}
+	container := resources.Deployment.Spec.Template.Spec.Containers[0]
+	if got := container.Command; len(got) != 1 || got[0] != "/docker-entrypoint.sh" {
+		t.Fatalf("expected command to reach the container, got %#v", got)
+	}
+	if got := container.Args; len(got) != 3 || got[2] != "daemon off;" {
+		t.Fatalf("expected args to reach the container, got %#v", got)
 	}
 	if resources.Deployment.Labels[ProjectLabel] != "project-7" || resources.Deployment.Labels[EnvironmentLabel] != "environment-11" {
 		t.Fatalf("expected ID-based project and environment labels, got %+v", resources.Deployment.Labels)

@@ -6,10 +6,13 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
 	k8sclient "github.com/cylism/cylism-manager/internal/k8s"
+	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
@@ -272,6 +275,131 @@ func (a *KubernetesApplier) WaitReady(ctx context.Context, application Applicati
 		case <-ticker.C:
 		}
 	}
+}
+
+// InspectReleasePods returns live runtime state for Pods created by a Release.
+// Release labels are placed on the Pod template so rollouts stay traceable.
+func (a *KubernetesApplier) InspectReleasePods(ctx context.Context, application ApplicationContext) (*model.ReleaseRuntime, error) {
+	if a.Client == nil || a.Client.Clientset == nil {
+		return nil, fmt.Errorf("Kubernetes 客户端未初始化")
+	}
+	selector := ApplicationNameLabel + "=" + application.ApplicationName + "," + ReleaseLabel + "=" + strconv.FormatUint(uint64(application.ReleaseSequence), 10)
+	pods, err := a.Client.Clientset.CoreV1().Pods(application.Namespace).List(ctx, metav1.ListOptions{LabelSelector: selector})
+	if err != nil {
+		return nil, fmt.Errorf("读取关联 Pod: %w", err)
+	}
+	runtime := &model.ReleaseRuntime{Tracking: "exact", Pods: make([]model.ReleasePodRuntime, 0, len(pods.Items))}
+	podNames := make(map[string]struct{}, len(pods.Items))
+	diagnostics := make([]string, 0)
+	for _, pod := range pods.Items {
+		podNames[pod.Name] = struct{}{}
+		status, diagnostic := releasePodRuntime(pod)
+		runtime.Pods = append(runtime.Pods, status)
+		if diagnostic != "" {
+			diagnostics = append(diagnostics, diagnostic)
+		}
+	}
+	sort.Slice(runtime.Pods, func(i, j int) bool { return runtime.Pods[i].Name < runtime.Pods[j].Name })
+	if len(podNames) > 0 {
+		if events, err := a.Client.Clientset.CoreV1().Events(application.Namespace).List(ctx, metav1.ListOptions{}); err == nil {
+			for _, event := range events.Items {
+				if event.Type != corev1.EventTypeWarning || event.InvolvedObject.Kind != "Pod" || event.Message == "" {
+					continue
+				}
+				if _, exists := podNames[event.InvolvedObject.Name]; exists {
+					diagnostics = append(diagnostics, fmt.Sprintf("Pod %s: %s: %s", event.InvolvedObject.Name, event.Reason, event.Message))
+				}
+			}
+		}
+	}
+	runtime.Diagnostic = releaseRuntimeDiagnostic(diagnostics)
+	return runtime, nil
+}
+
+func releasePodRuntime(pod corev1.Pod) (model.ReleasePodRuntime, string) {
+	result := model.ReleasePodRuntime{Name: pod.Name, NodeName: pod.Spec.NodeName, Phase: string(pod.Status.Phase), CreatedAt: pod.CreationTimestamp.Time, Containers: make([]model.ReleaseContainerRuntime, 0, len(pod.Status.ContainerStatuses))}
+	diagnostics := make([]string, 0)
+	if pod.Status.Phase == corev1.PodFailed {
+		diagnostics = append(diagnostics, fmt.Sprintf("Pod %s 已失败: %s", pod.Name, strings.TrimSpace(pod.Status.Message)))
+	}
+	for _, condition := range pod.Status.Conditions {
+		if condition.Type == corev1.PodScheduled && condition.Status == corev1.ConditionFalse && condition.Message != "" {
+			diagnostics = append(diagnostics, fmt.Sprintf("Pod %s 调度失败: %s", pod.Name, condition.Message))
+		}
+	}
+	for _, status := range pod.Status.ContainerStatuses {
+		container, diagnostic := releaseContainerRuntime(pod.Name, status)
+		result.Containers = append(result.Containers, container)
+		result.Restarts += status.RestartCount
+		if diagnostic != "" {
+			diagnostics = append(diagnostics, diagnostic)
+		}
+	}
+	result.Ready = len(result.Containers) > 0 && pod.Status.Phase == corev1.PodRunning
+	for _, container := range result.Containers {
+		if !container.Ready {
+			result.Ready = false
+			break
+		}
+	}
+	result.Diagnostic = releaseRuntimeDiagnostic(diagnostics)
+	return result, result.Diagnostic
+}
+
+func releaseContainerRuntime(podName string, status corev1.ContainerStatus) (model.ReleaseContainerRuntime, string) {
+	result := model.ReleaseContainerRuntime{Name: status.Name, Image: status.Image, Ready: status.Ready, RestartCount: status.RestartCount}
+	diagnostic := ""
+	if waiting := status.State.Waiting; waiting != nil {
+		result.State, result.Reason, result.Message = "waiting", waiting.Reason, waiting.Message
+		diagnostic = fmt.Sprintf("Pod %s 的容器 %s: %s", podName, status.Name, waiting.Reason)
+		if waiting.Message != "" {
+			diagnostic += ": " + waiting.Message
+		}
+	} else if terminated := status.State.Terminated; terminated != nil {
+		result.State, result.Reason, result.Message = "terminated", terminated.Reason, terminated.Message
+		result.ExitCode = int32Pointer(terminated.ExitCode)
+		diagnostic = fmt.Sprintf("Pod %s 的容器 %s 已退出: %s (退出码 %d)", podName, status.Name, terminated.Reason, terminated.ExitCode)
+	} else if status.State.Running != nil {
+		result.State = "running"
+	}
+	if terminated := status.LastTerminationState.Terminated; terminated != nil {
+		result.LastState, result.LastReason, result.LastExitCode = "terminated", terminated.Reason, int32Pointer(terminated.ExitCode)
+		if status.RestartCount > 0 && terminated.ExitCode == 0 {
+			lastExit := fmt.Sprintf("Pod %s 的容器 %s 曾正常退出 (退出码 0)，但已重启 %d 次", podName, status.Name, status.RestartCount)
+			if diagnostic == "" {
+				diagnostic = lastExit
+			} else {
+				diagnostic += "；" + lastExit
+			}
+		} else if diagnostic == "" && status.RestartCount > 0 {
+			diagnostic = fmt.Sprintf("Pod %s 的容器 %s 上次退出: %s (退出码 %d)，已重启 %d 次", podName, status.Name, terminated.Reason, terminated.ExitCode, status.RestartCount)
+		}
+	}
+	if diagnostic == "" && !status.Ready {
+		diagnostic = fmt.Sprintf("Pod %s 的容器 %s 尚未就绪", podName, status.Name)
+	}
+	return result, diagnostic
+}
+
+func int32Pointer(value int32) *int32 {
+	return &value
+}
+
+func releaseRuntimeDiagnostic(diagnostics []string) string {
+	seen := make(map[string]struct{}, len(diagnostics))
+	values := make([]string, 0, len(diagnostics))
+	for _, diagnostic := range diagnostics {
+		diagnostic = strings.TrimSpace(diagnostic)
+		if diagnostic == "" {
+			continue
+		}
+		if _, exists := seen[diagnostic]; exists {
+			continue
+		}
+		seen[diagnostic] = struct{}{}
+		values = append(values, diagnostic)
+	}
+	return redactReleaseDiagnostic(strings.Join(values, "；"), ReleaseSpec{})
 }
 
 func (a *KubernetesApplier) deploymentFailureDiagnostic(ctx context.Context, application ApplicationContext, spec ReleaseSpec) (string, bool) {

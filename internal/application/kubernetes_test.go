@@ -6,11 +6,77 @@ import (
 	"testing"
 
 	k8sclient "github.com/cylism/cylism-manager/internal/k8s"
+	"github.com/cylism/cylism-manager/internal/model"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
 )
+
+func TestKubernetesApplierInspectReleasePodsReportsCrashLoopAfterNormalExit(t *testing.T) {
+	labels := map[string]string{ApplicationNameLabel: "browser", ReleaseLabel: "6"}
+	clientset := k8sfake.NewSimpleClientset(&corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "browser-abc", Namespace: "dev", Labels: labels},
+		Spec:       corev1.PodSpec{NodeName: "worker-a"},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning, ContainerStatuses: []corev1.ContainerStatus{{
+			Name: "browser", Ready: false, RestartCount: 4,
+			State:                corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "CrashLoopBackOff", Message: "back-off 5m0s restarting failed container"}},
+			LastTerminationState: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{Reason: "Completed", ExitCode: 0}},
+		}}},
+	})
+	applier := NewKubernetesApplier(&k8sclient.Client{Clientset: clientset})
+	runtime, err := applier.InspectReleasePods(context.Background(), ApplicationContext{Namespace: "dev", ApplicationName: "browser", ReleaseSequence: 6})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runtime.Pods) != 1 || runtime.Pods[0].Ready || runtime.Pods[0].Restarts != 4 {
+		t.Fatalf("unexpected Pod runtime: %+v", runtime)
+	}
+	if !strings.Contains(runtime.Diagnostic, "CrashLoopBackOff") || !strings.Contains(runtime.Diagnostic, "正常退出") {
+		t.Fatalf("expected normal-exit crash loop diagnostic, got %q", runtime.Diagnostic)
+	}
+	container := runtime.Pods[0].Containers[0]
+	if container.State != "waiting" || container.Reason != "CrashLoopBackOff" || container.LastExitCode == nil || *container.LastExitCode != 0 {
+		t.Fatalf("unexpected container runtime: %+v", container)
+	}
+}
+
+func TestKubernetesApplierInspectReleasePodsReportsReadyPod(t *testing.T) {
+	labels := map[string]string{ApplicationNameLabel: "api", ReleaseLabel: "2"}
+	clientset := k8sfake.NewSimpleClientset(&corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "api-abc", Namespace: "dev", Labels: labels},
+		Spec:       corev1.PodSpec{NodeName: "worker-a"},
+		Status:     corev1.PodStatus{Phase: corev1.PodRunning, ContainerStatuses: []corev1.ContainerStatus{{Name: "api", Ready: true}}},
+	})
+	applier := NewKubernetesApplier(&k8sclient.Client{Clientset: clientset})
+	runtime, err := applier.InspectReleasePods(context.Background(), ApplicationContext{Namespace: "dev", ApplicationName: "api", ReleaseSequence: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runtime.Pods) != 1 || !runtime.Pods[0].Ready || runtime.Diagnostic != "" {
+		t.Fatalf("expected ready Pod runtime, got %+v", runtime)
+	}
+}
+
+func TestKubernetesApplierInspectReleasePodsReportsSchedulingFailure(t *testing.T) {
+	labels := map[string]string{ApplicationNameLabel: "api", ReleaseLabel: "3"}
+	clientset := k8sfake.NewSimpleClientset(&corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "api-pending", Namespace: "dev", Labels: labels},
+		Status: corev1.PodStatus{Phase: corev1.PodPending, Conditions: []corev1.PodCondition{{
+			Type: corev1.PodScheduled, Status: corev1.ConditionFalse, Reason: "Unschedulable", Message: "0/2 nodes are available: insufficient memory.",
+		}}},
+	})
+	applier := NewKubernetesApplier(&k8sclient.Client{Clientset: clientset})
+	runtime, err := applier.InspectReleasePods(context.Background(), ApplicationContext{Namespace: "dev", ApplicationName: "api", ReleaseSequence: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runtime.Pods) != 1 || runtime.Pods[0].Ready || !strings.Contains(runtime.Diagnostic, "调度失败") || !strings.Contains(runtime.Diagnostic, "insufficient memory") {
+		t.Fatalf("expected scheduling diagnostic, got %+v", runtime)
+	}
+}
+
+var _ = model.ReleaseRuntime{}
 
 func TestKubernetesApplierPreflightRequiresActiveNamespace(t *testing.T) {
 	clientset := k8sfake.NewSimpleClientset()

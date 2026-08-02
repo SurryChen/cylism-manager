@@ -1395,6 +1395,11 @@ func registryImageReference(endpoint, image string) (string, error) {
 }
 
 func (h *ApplicationHandler) GetRelease(c *gin.Context) {
+	applicationID, err := parseID(c.Param("id"))
+	if err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "应用 ID 无效")
+		return
+	}
 	id, err := parseID(c.Param("releaseID"))
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "发布 ID 无效")
@@ -1404,6 +1409,31 @@ func (h *ApplicationHandler) GetRelease(c *gin.Context) {
 	if err != nil {
 		model.Error(c, http.StatusNotFound, model.CodeNotFound, "发布不存在")
 		return
+	}
+	if release.ApplicationID != applicationID {
+		model.Error(c, http.StatusNotFound, model.CodeNotFound, "发布不存在")
+		return
+	}
+	if !release.PodTrackingEnabled {
+		release.Runtime = &model.ReleaseRuntime{Tracking: "legacy_untracked", Pods: []model.ReleasePodRuntime{}, Diagnostic: "该历史发布未记录 Pod 关联标签，无法精确查询当前运行态"}
+		model.Success(c, release)
+		return
+	}
+	if K8s == nil {
+		release.Runtime = &model.ReleaseRuntime{Tracking: "unavailable", Pods: []model.ReleasePodRuntime{}, Diagnostic: "Kubernetes 集群未连接，无法读取 Pod 运行态"}
+		model.Success(c, release)
+		return
+	}
+	applicationModel, err := h.store.GetApplication(applicationID)
+	if err != nil {
+		model.Error(c, http.StatusNotFound, model.CodeNotFound, "应用不存在")
+		return
+	}
+	runtime, err := application.NewKubernetesApplier(K8s).InspectReleasePods(c.Request.Context(), application.ApplicationContext{Namespace: applicationModel.Environment.Namespace, ApplicationName: applicationModel.Name, ReleaseSequence: release.Sequence})
+	if err != nil {
+		release.Runtime = &model.ReleaseRuntime{Tracking: "unavailable", Pods: []model.ReleasePodRuntime{}, Diagnostic: "读取 Pod 运行态失败: " + err.Error()}
+	} else {
+		release.Runtime = runtime
 	}
 	model.Success(c, release)
 }

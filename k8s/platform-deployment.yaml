@@ -98,7 +98,7 @@ metadata:
   name: cylism-manager
 rules:
   - apiGroups: [""]
-    resources: ["nodes", "pods", "services", "configmaps", "secrets", "namespaces", "endpoints", "persistentvolumeclaims"]
+    resources: ["nodes", "pods", "services", "configmaps", "secrets", "namespaces", "endpoints", "events", "persistentvolumeclaims"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   - apiGroups: [""]
     resources: ["pods/exec"]

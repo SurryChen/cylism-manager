@@ -136,6 +136,8 @@ func ValidateReleaseSpec(spec ReleaseSpec) []ValidationIssue {
 	if spec.Replicas < 1 {
 		issues = append(issues, ValidationIssue{Field: "replicas", Message: "副本数至少为 1"})
 	}
+	issues = append(issues, validateContainerArguments("command", spec.Command)...)
+	issues = append(issues, validateContainerArguments("args", spec.Args)...)
 	if strings.TrimSpace(spec.NodeName) != "" && len(validation.IsDNS1123Subdomain(spec.NodeName)) > 0 {
 		issues = append(issues, ValidationIssue{Field: "node_name", Message: "部署节点名称无效"})
 	}
@@ -220,6 +222,23 @@ func ValidateReleaseSpec(spec ReleaseSpec) []ValidationIssue {
 	return issues
 }
 
+func validateContainerArguments(field string, values []string) []ValidationIssue {
+	issues := make([]ValidationIssue, 0)
+	if len(values) > 64 {
+		return append(issues, ValidationIssue{Field: field, Message: "启动命令和参数最多各 64 项"})
+	}
+	for index, value := range values {
+		if value == "" {
+			issues = append(issues, ValidationIssue{Field: fmt.Sprintf("%s[%d]", field, index), Message: "启动命令和参数不能包含空项"})
+			continue
+		}
+		if len(value) > 4096 || strings.ContainsAny(value, "\x00\r\n") {
+			issues = append(issues, ValidationIssue{Field: fmt.Sprintf("%s[%d]", field, index), Message: "启动命令和参数格式无效"})
+		}
+	}
+	return issues
+}
+
 func RenderResources(context ApplicationContext, spec ReleaseSpec) (*RenderedResources, error) {
 	if issues := ValidateReleaseSpec(spec); len(issues) > 0 {
 		return nil, fmt.Errorf("发布定义无效: %s", issues[0].Message)
@@ -288,12 +307,14 @@ func RenderResources(context ApplicationContext, spec ReleaseSpec) (*RenderedRes
 	if result.ImagePullSecret != nil {
 		podSpec.ImagePullSecrets = []corev1.LocalObjectReference{{Name: result.ImagePullSecret.Name}}
 	}
+	podLabels := mergeLabels(labels, workloadSelector(context.ApplicationName))
+	podLabels[ReleaseLabel] = fmt.Sprintf("%d", context.ReleaseSequence)
 	result.Deployment = &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{Name: context.ApplicationName, Namespace: context.Namespace, Labels: labels, Annotations: map[string]string{ReleaseLabel: fmt.Sprintf("%d", context.ReleaseSequence)}},
 		Spec: appsv1.DeploymentSpec{
 			Replicas: &replicas,
 			Selector: &metav1.LabelSelector{MatchLabels: workloadSelector(context.ApplicationName)},
-			Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: mergeLabels(labels, workloadSelector(context.ApplicationName))}, Spec: podSpec},
+			Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: podLabels}, Spec: podSpec},
 		},
 	}
 	if len(spec.Volumes) > 0 {
