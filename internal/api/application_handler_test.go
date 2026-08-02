@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cylism/cylism-manager/internal/application"
 	k8sclient "github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/store"
@@ -95,6 +96,32 @@ func TestApplicationHandlerReleasesFromSelectedDeploymentTemplateByVersion(t *te
 	release := serve(r, newJSONRequest(http.MethodPost, "/api/applications/1/releases", gin.H{"template_id": canaryID, "version": "1.2.3"}))
 	if release.Code != http.StatusOK || !strings.Contains(release.Body.String(), "order-api:1.2.3") || !strings.Contains(release.Body.String(), "\"template_id\":2") {
 		t.Fatalf("unexpected version release: %d %s", release.Code, release.Body.String())
+	}
+}
+
+func TestPrepareReleaseImageVerificationUsesAppliedNodeMirror(t *testing.T) {
+	s, err := store.New(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &model.Server{Name: "worker-a", Host: "10.0.0.11", ClusterRole: "worker", K8sNodeName: "worker-a"}
+	if err := s.CreateServer(server); err != nil {
+		t.Fatal(err)
+	}
+	mirror := &model.NodeRegistryMirror{Name: "docker-hub", Registry: "docker.io", Endpoints: `["https://docker.1panel.live"]`, Enabled: true}
+	if err := s.CreateNodeRegistryMirror(mirror); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertNodeRegistryMirrorStatus(&model.NodeRegistryMirrorNode{MirrorID: mirror.ID, ServerID: server.ID, Status: "success"}); err != nil {
+		t.Fatal(err)
+	}
+	handler := NewApplicationHandler(s, []byte("01234567890123456789012345678901"))
+	spec := application.ReleaseSpec{Image: "zenika/alpine-chrome:124", NodeName: "worker-a"}
+	if err := handler.prepareReleaseImageVerification(&spec); err != nil {
+		t.Fatal(err)
+	}
+	if spec.ImageVerificationEndpoint != "https://docker.1panel.live" {
+		t.Fatalf("expected applied node mirror endpoint, got %+v", spec)
 	}
 }
 

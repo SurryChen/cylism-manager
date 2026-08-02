@@ -53,3 +53,16 @@ func TestKubernetesApplierVerifyImageRejectsInvalidReference(t *testing.T) {
 		t.Fatalf("expected invalid image reference failure, got %v", err)
 	}
 }
+
+func TestImageVerificationReferenceUsesNodeMirror(t *testing.T) {
+	ref, err := imageVerificationReference(ReleaseSpec{
+		Image:                     "zenika/alpine-chrome:124",
+		ImageVerificationEndpoint: "https://docker.1panel.live",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ref.Name() != "docker.1panel.live/zenika/alpine-chrome:124" {
+		t.Fatalf("expected node mirror reference, got %q", ref.Name())
+	}
+}
