@@ -11,6 +11,7 @@ import (
 )
 
 type ResourceApplier interface {
+	VerifyImage(ctx context.Context, spec ReleaseSpec) error
 	Preflight(ctx context.Context, application ApplicationContext, spec ReleaseSpec) error
 	Apply(ctx context.Context, resources *RenderedResources) error
 	WaitReady(ctx context.Context, application ApplicationContext, spec ReleaseSpec) error
@@ -84,6 +85,9 @@ func (s *Service) ExecuteRelease(ctx context.Context, releaseID uint, applicatio
 	}
 	if err := s.transition(release, model.ReleaseStatusValidating); err != nil {
 		return err
+	}
+	if err := s.runStep(releaseID, "verify_image", func() error { return s.applier.VerifyImage(ctx, spec) }); err != nil {
+		return s.failRelease(releaseID, "verify_image", err)
 	}
 	if err := s.runStep(releaseID, "preflight", func() error { return s.applier.Preflight(ctx, applicationContext, spec) }); err != nil {
 		return s.failRelease(releaseID, "preflight", err)

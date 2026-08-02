@@ -3,9 +3,13 @@ package application
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	k8sclient "github.com/cylism/cylism-manager/internal/k8s"
+	"github.com/google/go-containerregistry/pkg/authn"
+	"github.com/google/go-containerregistry/pkg/name"
+	"github.com/google/go-containerregistry/pkg/v1/remote"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
@@ -25,6 +29,30 @@ type KubernetesApplier struct {
 
 func NewKubernetesApplier(client *k8sclient.Client) *KubernetesApplier {
 	return &KubernetesApplier{Client: client, ReadinessTimeout: 2 * time.Minute}
+}
+
+// VerifyImage confirms that the selected repository and tag can be resolved
+// before Kubernetes resources are changed. Node-level pulling is validated by
+// WaitReady after the Deployment is applied.
+func (a *KubernetesApplier) VerifyImage(ctx context.Context, spec ReleaseSpec) error {
+	ref, err := name.ParseReference(strings.TrimSpace(spec.Image))
+	if err != nil {
+		return fmt.Errorf("镜像地址无效: %w", err)
+	}
+	verifyCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	options := []remote.Option{remote.WithContext(verifyCtx), remote.WithAuth(authn.Anonymous)}
+	switch strings.TrimSpace(spec.RegistryAuthType) {
+	case "", "anonymous":
+	case "token":
+		options[1] = remote.WithAuth(authn.FromConfig(authn.AuthConfig{RegistryToken: spec.RegistryCredential}))
+	default:
+		options[1] = remote.WithAuth(authn.FromConfig(authn.AuthConfig{Username: spec.RegistryUsername, Password: spec.RegistryCredential}))
+	}
+	if _, err := remote.Head(ref, options...); err != nil {
+		return fmt.Errorf("镜像版本 %q 不存在或不可访问: %s", spec.Image, redactReleaseDiagnostic(err.Error(), spec))
+	}
+	return nil
 }
 
 func (a *KubernetesApplier) Preflight(ctx context.Context, application ApplicationContext, spec ReleaseSpec) error {
@@ -170,10 +198,17 @@ func (a *KubernetesApplier) WaitReady(ctx context.Context, application Applicati
 	defer cancel()
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
+	lastDiagnostic := ""
 	for {
 		deployment, err := a.Client.Clientset.AppsV1().Deployments(application.Namespace).Get(deadline, application.ApplicationName, metav1.GetOptions{})
 		if err != nil {
 			return fmt.Errorf("读取 Deployment 就绪状态: %w", err)
+		}
+		if diagnostic, terminal := a.deploymentFailureDiagnostic(deadline, application, spec); diagnostic != "" {
+			if terminal {
+				return fmt.Errorf("工作负载启动失败: %s", diagnostic)
+			}
+			lastDiagnostic = diagnostic
 		}
 		if deployment.Status.ObservedGeneration >= deployment.Generation && deployment.Status.UpdatedReplicas >= spec.Replicas && deployment.Status.AvailableReplicas >= spec.Replicas && deployment.Status.UnavailableReplicas == 0 {
 			if !spec.Endpoint.TLSEnabled {
@@ -189,10 +224,80 @@ func (a *KubernetesApplier) WaitReady(ctx context.Context, application Applicati
 		}
 		select {
 		case <-deadline.Done():
+			if lastDiagnostic != "" {
+				return fmt.Errorf("等待工作负载就绪超时: %s", lastDiagnostic)
+			}
 			return fmt.Errorf("等待工作负载就绪超时")
 		case <-ticker.C:
 		}
 	}
+}
+
+func (a *KubernetesApplier) deploymentFailureDiagnostic(ctx context.Context, application ApplicationContext, spec ReleaseSpec) (string, bool) {
+	pods, err := a.Client.Clientset.CoreV1().Pods(application.Namespace).List(ctx, metav1.ListOptions{LabelSelector: ApplicationNameLabel + "=" + application.ApplicationName})
+	if err != nil {
+		return "", false
+	}
+	podNames := make(map[string]struct{}, len(pods.Items))
+	lastDiagnostic := ""
+	for _, pod := range pods.Items {
+		podNames[pod.Name] = struct{}{}
+		if pod.Status.Phase == corev1.PodFailed {
+			return redactReleaseDiagnostic(fmt.Sprintf("Pod %s 已失败: %s", pod.Name, pod.Status.Message), spec), true
+		}
+		for _, status := range pod.Status.ContainerStatuses {
+			if waiting := status.State.Waiting; waiting != nil && waiting.Reason != "" {
+				diagnostic := fmt.Sprintf("Pod %s 的容器 %s: %s", pod.Name, status.Name, waiting.Reason)
+				if waiting.Message != "" {
+					diagnostic += ": " + waiting.Message
+				}
+				diagnostic = redactReleaseDiagnostic(diagnostic, spec)
+				if terminalContainerWaitingReason(waiting.Reason) {
+					return diagnostic, true
+				}
+				lastDiagnostic = diagnostic
+			}
+		}
+		for _, condition := range pod.Status.Conditions {
+			if condition.Type == corev1.PodScheduled && condition.Status == corev1.ConditionFalse && condition.Message != "" {
+				lastDiagnostic = redactReleaseDiagnostic(fmt.Sprintf("Pod %s 调度失败: %s", pod.Name, condition.Message), spec)
+			}
+		}
+	}
+	events, err := a.Client.Clientset.CoreV1().Events(application.Namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return lastDiagnostic, false
+	}
+	for _, event := range events.Items {
+		if event.Type != corev1.EventTypeWarning || event.InvolvedObject.Kind != "Pod" {
+			continue
+		}
+		if _, exists := podNames[event.InvolvedObject.Name]; !exists || event.Message == "" {
+			continue
+		}
+		lastDiagnostic = redactReleaseDiagnostic(fmt.Sprintf("Pod %s: %s: %s", event.InvolvedObject.Name, event.Reason, event.Message), spec)
+	}
+	return lastDiagnostic, false
+}
+
+func terminalContainerWaitingReason(reason string) bool {
+	switch reason {
+	case "ErrImagePull", "ImagePullBackOff", "InvalidImageName", "CreateContainerConfigError", "CreateContainerError", "RunContainerError":
+		return true
+	default:
+		return false
+	}
+}
+
+func redactReleaseDiagnostic(detail string, spec ReleaseSpec) string {
+	detail = strings.TrimSpace(detail)
+	if credential := strings.TrimSpace(spec.RegistryCredential); credential != "" {
+		detail = strings.ReplaceAll(detail, credential, "[REDACTED]")
+	}
+	if len(detail) > 1000 {
+		return detail[:1000]
+	}
+	return detail
 }
 
 func (a *KubernetesApplier) applyConfigMap(ctx context.Context, desired *corev1.ConfigMap) error {
