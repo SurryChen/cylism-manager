@@ -65,6 +65,37 @@ func TestListManagedPVCsExcludesOtherEnvironment(t *testing.T) {
 	}
 }
 
+func TestListManagedPVCsIncludesIndependentClaimInSameNamespace(t *testing.T) {
+	client := &Client{Clientset: k8sfake.NewSimpleClientset(
+		&corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: "shared", Namespace: "project-knowledge", Labels: map[string]string{ManagedByLabel: ManagedByValue}}},
+	)}
+	pvcs, err := client.ListManagedPVCs("project-knowledge", 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pvcs) != 1 || pvcs[0].EnvironmentID != 0 || !pvcs[0].Managed {
+		t.Fatalf("expected independent managed PVC, got %#v", pvcs)
+	}
+}
+
+func TestListPVCsIncludesExternalAndManagedClaimsAcrossNamespaces(t *testing.T) {
+	client := &Client{Clientset: k8sfake.NewSimpleClientset(
+		&corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: "external-data", Namespace: "default"}},
+		&corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: "managed-data", Namespace: "project-knowledge", Labels: map[string]string{ManagedByLabel: ManagedByValue, EnvironmentLabel: EnvironmentLabelValue(3)}}},
+	)}
+
+	pvcs, err := client.ListPVCs("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pvcs) != 2 {
+		t.Fatalf("expected all PVCs, got %#v", pvcs)
+	}
+	if pvcs[0].Name != "external-data" || pvcs[0].Managed || pvcs[1].Name != "managed-data" || !pvcs[1].Managed || pvcs[1].EnvironmentID != 3 {
+		t.Fatalf("unexpected PVC inventory: %#v", pvcs)
+	}
+}
+
 func TestCreateManagedPVCUsesEnvironmentLabelsAndReadWriteOnce(t *testing.T) {
 	client := &Client{Clientset: k8sfake.NewSimpleClientset()}
 	created, err := client.CreateManagedPVC("project-knowledge", 3, PersistentVolumeClaimRequest{Name: "karakeep-data", Storage: "5Gi", StorageClassName: "local-path"})

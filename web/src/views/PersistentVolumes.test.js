@@ -6,6 +6,22 @@ vi.mock('../api/index.js', () => ({
   api: { get: vi.fn(), post: vi.fn(), delete: vi.fn() },
 }))
 
+function mockInventory(overrides = {}) {
+  return path => {
+    if (path === '/projects') return Promise.resolve([{ id: 1, name: 'knowledge', environments: [{ id: 2, name: 'production', namespace: 'project-knowledge-prod' }] }])
+    if (path === '/k8s/namespaces') return Promise.resolve([{ name: 'default' }, { name: 'project-knowledge-prod' }])
+    if (path === '/k8s/persistent-volume-claims') return Promise.resolve(overrides.claims || [])
+    if (path === '/k8s/storage-classes') return Promise.resolve([{ name: 'local-path', is_default: true, volume_binding_mode: 'WaitForFirstConsumer' }])
+    if (path === '/k8s/persistent-volume-migrations') return Promise.resolve([])
+    if (path === '/nodes') return Promise.resolve([])
+    if (path === '/servers') return Promise.resolve(overrides.servers || [])
+    if (path.includes('/imports?')) return Promise.resolve([])
+    return Promise.resolve([])
+  }
+}
+
+async function settle() { await new Promise(resolve => setTimeout(resolve, 0)) }
+
 describe('PersistentVolumes view', () => {
   it('uses the shared section title bar', () => {
     const wrapper = mount(PersistentVolumes)
@@ -13,71 +29,64 @@ describe('PersistentVolumes view', () => {
     expect(wrapper.find('.section-page-header .page-subtitle').exists()).toBe(false)
   })
 
-  it('creates a ReadWriteOnce PVC in the selected environment', async () => {
+  it('loads the cluster PVC inventory without requiring an application environment', async () => {
     const { api } = await import('../api/index.js')
-    api.get.mockImplementation(path => {
-      if (path === '/projects') return Promise.resolve([{ id: 1, name: 'knowledge', environments: [{ id: 2, name: 'production', namespace: 'project-knowledge-prod' }] }])
-      if (path.startsWith('/k8s/persistent-volume-claims')) return Promise.resolve([])
-      if (path === '/k8s/storage-classes') return Promise.resolve([{ name: 'local-path', is_default: true, volume_binding_mode: 'WaitForFirstConsumer' }])
-      return Promise.resolve([])
-    })
+    api.get.mockImplementation(mockInventory({ claims: [{ name: 'manual-data', namespace: 'default', managed: false, phase: 'Bound' }] }))
+    const wrapper = mount(PersistentVolumes)
+    await settle()
+
+    expect(api.get).toHaveBeenCalledWith('/k8s/persistent-volume-claims')
+    expect(wrapper.text()).toContain('manual-data')
+    expect(wrapper.text()).toContain('外部创建')
+  })
+
+  it('creates a PVC directly in the selected namespace', async () => {
+    const { api } = await import('../api/index.js')
+    api.get.mockImplementation(mockInventory())
     api.post.mockResolvedValue({})
     const wrapper = mount(PersistentVolumes)
-    await new Promise(resolve => setTimeout(resolve, 0))
-
-    await wrapper.get('[data-testid="storage-project-trigger"]').trigger('click')
-    await wrapper.get('[data-testid="storage-project-menu"] button').trigger('click')
-    await new Promise(resolve => setTimeout(resolve, 0))
-    expect(wrapper.text()).toContain('当前环境还没有平台托管存储卷')
+    await settle()
 
     await wrapper.get('.btn-primary').trigger('click')
+    await wrapper.get('[data-testid="storage-create-namespace"]').setValue('default')
     await wrapper.get('input[placeholder="karakeep-data"]').setValue('karakeep-data')
     await wrapper.get('[data-testid="storage-capacity-value"]').setValue('8')
     await wrapper.get('[data-testid="storage-capacity-unit"]').setValue('Gi')
     await wrapper.get('form').trigger('submit')
 
     expect(api.post).toHaveBeenCalledWith('/k8s/persistent-volume-claims', {
-      environment_id: 2, name: 'karakeep-data', storage: '8Gi', storage_class_name: '',
+      namespace: 'default', name: 'karakeep-data', storage: '8Gi', storage_class_name: '',
     })
   })
 
-  it('uses workspace-style project and environment pickers', async () => {
+  it('uses project and environment as optional filters', async () => {
     const { api } = await import('../api/index.js')
-    api.get.mockImplementation(path => {
-      if (path === '/projects') return Promise.resolve([{ id: 1, name: 'knowledge', description: '知识库服务', environments: [{ id: 2, name: 'production', namespace: 'project-knowledge-prod' }, { id: 3, name: 'staging', namespace: 'project-knowledge-staging' }] }])
-      return Promise.resolve([])
-    })
+    api.get.mockImplementation(mockInventory({ claims: [
+      { name: 'manual-data', namespace: 'default', managed: false, phase: 'Bound' },
+      { name: 'app-data', namespace: 'project-knowledge-prod', managed: true, environment_id: 2, project_id: 1, project_name: 'knowledge', environment_name: 'production', phase: 'Bound' },
+    ] }))
     const wrapper = mount(PersistentVolumes)
-    await new Promise(resolve => setTimeout(resolve, 0))
+    await settle()
 
-    const environmentTrigger = wrapper.get('[data-testid="storage-environment-trigger"]')
-    expect(environmentTrigger.attributes('disabled')).toBeDefined()
-
-    await wrapper.get('[data-testid="storage-project-trigger"]').trigger('click')
-    expect(wrapper.get('[data-testid="storage-project-menu"]').text()).toContain('知识库服务')
-    await wrapper.get('[data-testid="storage-project-menu"] button').trigger('click')
-    await wrapper.get('[data-testid="storage-environment-trigger"]').trigger('click')
-
-    expect(wrapper.get('[data-testid="storage-environment-menu"]').text()).toContain('project-knowledge-prod')
-    await wrapper.get('[data-testid="storage-environment-menu"] button').trigger('click')
-    expect(wrapper.get('[data-testid="storage-environment-trigger"]').text()).toContain('production')
+    expect(wrapper.text()).toContain('manual-data')
+    await wrapper.get('[data-testid="storage-project-filter"]').setValue('1')
+    await settle()
+    expect(wrapper.text()).not.toContain('manual-data')
+    expect(wrapper.text()).toContain('app-data')
+    await wrapper.get('[data-testid="storage-environment-filter"]').setValue('2')
+    await settle()
+    expect(wrapper.text()).toContain('production')
   })
 
-  it('creates a host directory import task for a bound local PVC', async () => {
+  it('keeps host-directory import limited to a managed environment claim', async () => {
     const { api } = await import('../api/index.js')
-    api.get.mockImplementation(path => {
-      if (path === '/projects') return Promise.resolve([{ id: 1, name: 'knowledge', environments: [{ id: 2, name: 'production', namespace: 'project-knowledge-prod' }] }])
-      if (path.includes('/imports?')) return Promise.resolve([])
-      if (path.startsWith('/k8s/persistent-volume-claims?')) return Promise.resolve([{ name: 'karakeep-data', phase: 'Bound', is_local: true, bound_node: 'node-a', bound_node_display_name: '节点 A' }])
-      if (path === '/servers') return Promise.resolve([{ id: 8, name: '历史数据服务器', host: '100.64.0.8', ssh_auth_type: 'key' }])
-      return Promise.resolve([])
-    })
+    api.get.mockImplementation(mockInventory({
+      claims: [{ name: 'karakeep-data', namespace: 'project-knowledge-prod', managed: true, environment_id: 2, phase: 'Bound', is_local: true, bound_node: 'node-a', bound_node_display_name: '节点 A' }],
+      servers: [{ id: 8, name: '历史数据服务器', host: '100.64.0.8', ssh_auth_type: 'key' }],
+    }))
     api.post.mockResolvedValue({})
     const wrapper = mount(PersistentVolumes)
-    await new Promise(resolve => setTimeout(resolve, 0))
-    await wrapper.get('[data-testid="storage-project-trigger"]').trigger('click')
-    await wrapper.get('[data-testid="storage-project-menu"] button').trigger('click')
-    await new Promise(resolve => setTimeout(resolve, 0))
+    await settle()
 
     await wrapper.get('[data-testid="open-directory-import"]').trigger('click')
     await wrapper.get('[data-testid="import-source-server"]').setValue('8')

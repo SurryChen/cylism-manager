@@ -28,3 +28,19 @@
 
 - **WHEN** 用户访问 `/services`
 - **THEN** 系统跳转到 `/resources?tab=services`
+
+### Requirement: 存储卷以集群资源方式查看
+
+系统 SHALL 默认展示集群内所有 PersistentVolumeClaim，且不要求用户先选择项目、环境或应用。
+
+#### Scenario: 用户进入存储卷页面
+
+- **WHEN** 用户打开 `/storage`
+- **THEN** 系统展示所有命名空间中的 PVC
+- **AND** 每个 PVC 展示命名空间、托管来源和工作负载引用
+
+#### Scenario: 用户按应用归属筛选存储卷
+
+- **WHEN** 用户选择项目或环境筛选条件
+- **THEN** 系统仅展示归属于该项目或环境的托管 PVC
+- **AND** 用户清除筛选后重新看到集群全部 PVC

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -35,6 +36,8 @@ type PersistentVolumeClaimRequest struct {
 type PersistentVolumeClaimInfo struct {
 	Name                 string   `json:"name"`
 	Namespace            string   `json:"namespace"`
+	Managed              bool     `json:"managed"`
+	EnvironmentID        uint     `json:"environment_id,omitempty"`
 	Phase                string   `json:"phase"`
 	Storage              string   `json:"storage"`
 	StorageClassName     string   `json:"storage_class_name,omitempty"`
@@ -61,7 +64,30 @@ func EnvironmentLabelValue(environmentID uint) string {
 }
 
 func (c *Client) ListManagedPVCs(namespace string, environmentID uint) ([]PersistentVolumeClaimInfo, error) {
-	claims, err := c.Clientset.CoreV1().PersistentVolumeClaims(namespace).List(c.Ctx(), metav1.ListOptions{LabelSelector: fmt.Sprintf("%s=%s,%s=%s", ManagedByLabel, ManagedByValue, EnvironmentLabel, EnvironmentLabelValue(environmentID))})
+	claims, err := c.Clientset.CoreV1().PersistentVolumeClaims(namespace).List(c.Ctx(), metav1.ListOptions{LabelSelector: fmt.Sprintf("%s=%s", ManagedByLabel, ManagedByValue)})
+	if err != nil {
+		return nil, fmt.Errorf("list persistentvolumeclaims: %w", err)
+	}
+	result := make([]PersistentVolumeClaimInfo, 0, len(claims.Items))
+	for index := range claims.Items {
+		if !isManagedPVC(&claims.Items[index], environmentID) {
+			continue
+		}
+		info, err := c.pvcInfo(&claims.Items[index])
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, info)
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].Name < result[j].Name })
+	return result, nil
+}
+
+// ListPVCs returns every claim in the requested namespace, or cluster-wide
+// when namespace is empty. It intentionally includes externally created
+// claims so the infrastructure inventory is not limited to applications.
+func (c *Client) ListPVCs(namespace string) ([]PersistentVolumeClaimInfo, error) {
+	claims, err := c.Clientset.CoreV1().PersistentVolumeClaims(namespace).List(c.Ctx(), metav1.ListOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("list persistentvolumeclaims: %w", err)
 	}
@@ -73,7 +99,12 @@ func (c *Client) ListManagedPVCs(namespace string, environmentID uint) ([]Persis
 		}
 		result = append(result, info)
 	}
-	sort.Slice(result, func(i, j int) bool { return result[i].Name < result[j].Name })
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].Namespace != result[j].Namespace {
+			return result[i].Namespace < result[j].Namespace
+		}
+		return result[i].Name < result[j].Name
+	})
 	return result, nil
 }
 
@@ -101,8 +132,12 @@ func (c *Client) CreateManagedPVC(namespace string, environmentID uint, request 
 	if err != nil || storage.Sign() <= 0 {
 		return nil, fmt.Errorf("存储容量格式无效")
 	}
+	labels := map[string]string{ManagedByLabel: ManagedByValue}
+	if environmentID != 0 {
+		labels[EnvironmentLabel] = EnvironmentLabelValue(environmentID)
+	}
 	claim := &corev1.PersistentVolumeClaim{
-		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace, Labels: map[string]string{ManagedByLabel: ManagedByValue, EnvironmentLabel: EnvironmentLabelValue(environmentID)}},
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace, Labels: labels},
 		Spec: corev1.PersistentVolumeClaimSpec{
 			AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
 			Resources:   corev1.VolumeResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceStorage: storage}},
@@ -269,6 +304,7 @@ func (c *Client) pvcInfo(claim *corev1.PersistentVolumeClaim) (PersistentVolumeC
 		VolumeName:        claim.Spec.VolumeName,
 		CreationTimestamp: claim.CreationTimestamp.UTC().Format("2006-01-02T15:04:05Z"),
 	}
+	info.Managed, info.EnvironmentID = managedPVCEnvironmentID(claim)
 	if storage := claim.Status.Capacity.Storage(); storage != nil {
 		info.Storage = storage.String()
 	} else if storage := claim.Spec.Resources.Requests.Storage(); storage != nil {
@@ -303,7 +339,23 @@ func (c *Client) pvcInfo(claim *corev1.PersistentVolumeClaim) (PersistentVolumeC
 }
 
 func isManagedPVC(claim *corev1.PersistentVolumeClaim, environmentID uint) bool {
-	return claim.Labels[ManagedByLabel] == ManagedByValue && claim.Labels[EnvironmentLabel] == EnvironmentLabelValue(environmentID)
+	managed, claimEnvironmentID := managedPVCEnvironmentID(claim)
+	return managed && (claimEnvironmentID == environmentID || claimEnvironmentID == 0)
+}
+
+func managedPVCEnvironmentID(claim *corev1.PersistentVolumeClaim) (bool, uint) {
+	if claim.Labels[ManagedByLabel] != ManagedByValue {
+		return false, 0
+	}
+	value := strings.TrimPrefix(claim.Labels[EnvironmentLabel], "environment-")
+	if value == "" || value == claim.Labels[EnvironmentLabel] {
+		return true, 0
+	}
+	environmentID, err := strconv.ParseUint(value, 10, 64)
+	if err != nil {
+		return true, 0
+	}
+	return true, uint(environmentID)
 }
 
 func persistentVolumeNodeName(volume *corev1.PersistentVolume) string {

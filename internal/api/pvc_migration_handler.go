@@ -34,11 +34,12 @@ func (h *K8sHandler) ListPersistentVolumeMigrations(c *gin.Context) {
 		model.Error(c, 500, model.CodeInternalError, "数据存储未初始化")
 		return
 	}
-	environment, ok := h.pvcEnvironment(c)
-	if !ok {
+	environmentID, err := optionalQueryID(c, "environment_id")
+	if err != nil {
+		model.Error(c, 400, model.CodeBadRequest, "环境 ID 无效")
 		return
 	}
-	migrations, err := h.store.ListPersistentVolumeMigrations(environment.ID)
+	migrations, err := h.store.ListPersistentVolumeMigrations(environmentID)
 	if err != nil {
 		model.Error(c, 500, model.CodeDBError, "读取存储卷迁移失败")
 		return
