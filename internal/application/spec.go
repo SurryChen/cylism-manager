@@ -29,6 +29,9 @@ const (
 	ExposureCluster = "cluster"
 	ExposureTailnet = "tailnet"
 	ExposurePublic  = "public"
+
+	WorkloadKindDeployment  = "deployment"
+	WorkloadKindStatefulSet = "statefulset"
 )
 
 type ReleaseSpec struct {
@@ -112,6 +115,7 @@ type ApplicationContext struct {
 	ApplicationName string
 	Namespace       string
 	ReleaseSequence uint
+	WorkloadKind    string
 }
 
 type RenderedResources struct {
@@ -119,6 +123,7 @@ type RenderedResources struct {
 	Secret          *corev1.Secret
 	ImagePullSecret *corev1.Secret
 	Deployment      *appsv1.Deployment
+	StatefulSet     *appsv1.StatefulSet
 	Service         *corev1.Service
 	Certificate     *unstructured.Unstructured
 	Ingress         *networkingv1.Ingress
@@ -249,6 +254,13 @@ func RenderResources(context ApplicationContext, spec ReleaseSpec) (*RenderedRes
 	if err := ValidateApplicationName(context.ApplicationName); err != nil {
 		return nil, err
 	}
+	workloadKind := context.WorkloadKind
+	if workloadKind == "" {
+		workloadKind = WorkloadKindDeployment
+	}
+	if workloadKind != WorkloadKindDeployment && workloadKind != WorkloadKindStatefulSet {
+		return nil, fmt.Errorf("工作负载类型必须为 deployment 或 statefulset")
+	}
 	labels := managedLabels(context)
 	result := &RenderedResources{SanitizedSpec: SanitizeReleaseSpec(spec)}
 	configName := context.ApplicationName + "-config"
@@ -309,16 +321,30 @@ func RenderResources(context ApplicationContext, spec ReleaseSpec) (*RenderedRes
 	}
 	podLabels := mergeLabels(labels, workloadSelector(context.ApplicationName))
 	podLabels[ReleaseLabel] = fmt.Sprintf("%d", context.ReleaseSequence)
-	result.Deployment = &appsv1.Deployment{
-		ObjectMeta: metav1.ObjectMeta{Name: context.ApplicationName, Namespace: context.Namespace, Labels: labels, Annotations: map[string]string{ReleaseLabel: fmt.Sprintf("%d", context.ReleaseSequence)}},
-		Spec: appsv1.DeploymentSpec{
-			Replicas: &replicas,
-			Selector: &metav1.LabelSelector{MatchLabels: workloadSelector(context.ApplicationName)},
-			Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: podLabels}, Spec: podSpec},
-		},
-	}
-	if len(spec.Volumes) > 0 {
-		result.Deployment.Spec.Strategy = appsv1.DeploymentStrategy{Type: appsv1.RecreateDeploymentStrategyType}
+	podTemplate := corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: podLabels}, Spec: podSpec}
+	workloadMetadata := metav1.ObjectMeta{Name: context.ApplicationName, Namespace: context.Namespace, Labels: labels, Annotations: map[string]string{ReleaseLabel: fmt.Sprintf("%d", context.ReleaseSequence)}}
+	if workloadKind == WorkloadKindStatefulSet {
+		result.StatefulSet = &appsv1.StatefulSet{
+			ObjectMeta: workloadMetadata,
+			Spec: appsv1.StatefulSetSpec{
+				ServiceName: context.ApplicationName,
+				Replicas:    &replicas,
+				Selector:    &metav1.LabelSelector{MatchLabels: workloadSelector(context.ApplicationName)},
+				Template:    podTemplate,
+			},
+		}
+	} else {
+		result.Deployment = &appsv1.Deployment{
+			ObjectMeta: workloadMetadata,
+			Spec: appsv1.DeploymentSpec{
+				Replicas: &replicas,
+				Selector: &metav1.LabelSelector{MatchLabels: workloadSelector(context.ApplicationName)},
+				Template: podTemplate,
+			},
+		}
+		if len(spec.Volumes) > 0 {
+			result.Deployment.Spec.Strategy = appsv1.DeploymentStrategy{Type: appsv1.RecreateDeploymentStrategyType}
+		}
 	}
 	result.Service = &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{Name: context.ApplicationName, Namespace: context.Namespace, Labels: labels},

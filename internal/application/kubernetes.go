@@ -185,8 +185,15 @@ func (a *KubernetesApplier) Apply(ctx context.Context, resources *RenderedResour
 			return err
 		}
 	}
-	if err := a.applyDeployment(ctx, resources.Deployment); err != nil {
-		return err
+	if resources.Deployment != nil {
+		if err := a.applyDeployment(ctx, resources.Deployment); err != nil {
+			return err
+		}
+	}
+	if resources.StatefulSet != nil {
+		if err := a.applyStatefulSet(ctx, resources.StatefulSet); err != nil {
+			return err
+		}
 	}
 	if err := a.applyService(ctx, resources.Service); err != nil {
 		return err
@@ -244,9 +251,9 @@ func (a *KubernetesApplier) WaitReady(ctx context.Context, application Applicati
 	defer ticker.Stop()
 	lastDiagnostic := ""
 	for {
-		deployment, err := a.Client.Clientset.AppsV1().Deployments(application.Namespace).Get(deadline, application.ApplicationName, metav1.GetOptions{})
+		ready, err := a.workloadReady(deadline, application, spec.Replicas)
 		if err != nil {
-			return fmt.Errorf("读取 Deployment 就绪状态: %w", err)
+			return err
 		}
 		if diagnostic, terminal := a.deploymentFailureDiagnostic(deadline, application, spec); diagnostic != "" {
 			if terminal {
@@ -254,7 +261,7 @@ func (a *KubernetesApplier) WaitReady(ctx context.Context, application Applicati
 			}
 			lastDiagnostic = diagnostic
 		}
-		if deployment.Status.ObservedGeneration >= deployment.Generation && deployment.Status.UpdatedReplicas >= spec.Replicas && deployment.Status.AvailableReplicas >= spec.Replicas && deployment.Status.UnavailableReplicas == 0 {
+		if ready {
 			if !spec.Endpoint.TLSEnabled {
 				return nil
 			}
@@ -272,6 +279,169 @@ func (a *KubernetesApplier) WaitReady(ctx context.Context, application Applicati
 				return fmt.Errorf("等待工作负载就绪超时: %s", lastDiagnostic)
 			}
 			return fmt.Errorf("等待工作负载就绪超时")
+		case <-ticker.C:
+		}
+	}
+}
+
+func (a *KubernetesApplier) workloadReady(ctx context.Context, application ApplicationContext, replicas int32) (bool, error) {
+	if application.WorkloadKind == WorkloadKindStatefulSet {
+		statefulSet, err := a.Client.Clientset.AppsV1().StatefulSets(application.Namespace).Get(ctx, application.ApplicationName, metav1.GetOptions{})
+		if err != nil {
+			return false, fmt.Errorf("读取 StatefulSet 就绪状态: %w", err)
+		}
+		return statefulSet.Status.ObservedGeneration >= statefulSet.Generation && statefulSet.Status.ReadyReplicas >= replicas && statefulSet.Status.CurrentReplicas >= replicas, nil
+	}
+	deployment, err := a.Client.Clientset.AppsV1().Deployments(application.Namespace).Get(ctx, application.ApplicationName, metav1.GetOptions{})
+	if err != nil {
+		return false, fmt.Errorf("读取 Deployment 就绪状态: %w", err)
+	}
+	return deployment.Status.ObservedGeneration >= deployment.Generation && deployment.Status.UpdatedReplicas >= replicas && deployment.Status.AvailableReplicas >= replicas && deployment.Status.UnavailableReplicas == 0, nil
+}
+
+// MigrateWorkloadKind replaces one managed controller with the other while
+// retaining the application name, Service and directly referenced PVCs.
+func (a *KubernetesApplier) MigrateWorkloadKind(ctx context.Context, application ApplicationContext, spec ReleaseSpec, targetKind string) error {
+	if a.Client == nil || a.Client.Clientset == nil {
+		return fmt.Errorf("Kubernetes 客户端未初始化")
+	}
+	currentKind := application.WorkloadKind
+	if currentKind == "" {
+		currentKind = WorkloadKindDeployment
+	}
+	if currentKind == targetKind {
+		return nil
+	}
+	if targetKind != WorkloadKindDeployment && targetKind != WorkloadKindStatefulSet {
+		return fmt.Errorf("工作负载类型必须为 deployment 或 statefulset")
+	}
+	replicas, err := a.scaleManagedWorkload(ctx, application.Namespace, application.ApplicationName, currentKind, 0)
+	if err != nil {
+		return err
+	}
+	targetApplied := false
+	restore := func(cause error) error {
+		if targetApplied {
+			if err := a.stopManagedWorkloadIfExists(ctx, application.Namespace, application.ApplicationName, targetKind); err != nil {
+				return fmt.Errorf("%w；停止新工作负载失败: %v", cause, err)
+			}
+		}
+		if restoreErr := a.restoreManagedWorkload(ctx, application.Namespace, application.ApplicationName, currentKind, replicas); restoreErr != nil {
+			return fmt.Errorf("%w；恢复原工作负载失败: %v", cause, restoreErr)
+		}
+		return cause
+	}
+	if err := a.waitForWorkloadPodsStopped(ctx, application.Namespace, application.ApplicationName); err != nil {
+		return restore(err)
+	}
+	target := application
+	target.WorkloadKind = targetKind
+	resources, err := RenderResources(target, spec)
+	if err != nil {
+		return restore(err)
+	}
+	if err := a.Apply(ctx, resources); err != nil {
+		return restore(fmt.Errorf("创建新工作负载: %w", err))
+	}
+	targetApplied = true
+	if err := a.WaitReady(ctx, target, spec); err != nil {
+		return restore(fmt.Errorf("新工作负载未就绪: %w", err))
+	}
+	return nil
+}
+
+func (a *KubernetesApplier) scaleManagedWorkload(ctx context.Context, namespace, name, kind string, replicas int32) (int32, error) {
+	if kind == WorkloadKindStatefulSet {
+		statefulSet, err := a.Client.Clientset.AppsV1().StatefulSets(namespace).Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			return 0, fmt.Errorf("读取 StatefulSet: %w", err)
+		}
+		if err := ensureManaged(statefulSet.Labels); err != nil {
+			return 0, err
+		}
+		previous := int32(1)
+		if statefulSet.Spec.Replicas != nil {
+			previous = *statefulSet.Spec.Replicas
+		}
+		statefulSet.Spec.Replicas = &replicas
+		if _, err := a.Client.Clientset.AppsV1().StatefulSets(namespace).Update(ctx, statefulSet, metav1.UpdateOptions{}); err != nil {
+			return 0, fmt.Errorf("缩容 StatefulSet: %w", err)
+		}
+		return previous, nil
+	}
+	deployment, err := a.Client.Clientset.AppsV1().Deployments(namespace).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return 0, fmt.Errorf("读取 Deployment: %w", err)
+	}
+	if err := ensureManaged(deployment.Labels); err != nil {
+		return 0, err
+	}
+	previous := int32(1)
+	if deployment.Spec.Replicas != nil {
+		previous = *deployment.Spec.Replicas
+	}
+	deployment.Spec.Replicas = &replicas
+	if _, err := a.Client.Clientset.AppsV1().Deployments(namespace).Update(ctx, deployment, metav1.UpdateOptions{}); err != nil {
+		return 0, fmt.Errorf("缩容 Deployment: %w", err)
+	}
+	return previous, nil
+}
+
+func (a *KubernetesApplier) restoreManagedWorkload(ctx context.Context, namespace, name, kind string, replicas int32) error {
+	_, err := a.scaleManagedWorkload(ctx, namespace, name, kind, replicas)
+	return err
+}
+
+func (a *KubernetesApplier) stopManagedWorkloadIfExists(ctx context.Context, namespace, name, kind string) error {
+	if kind == WorkloadKindStatefulSet {
+		statefulSet, err := a.Client.Clientset.AppsV1().StatefulSets(namespace).Get(ctx, name, metav1.GetOptions{})
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if err := ensureManaged(statefulSet.Labels); err != nil {
+			return err
+		}
+		zero := int32(0)
+		statefulSet.Spec.Replicas = &zero
+		_, err = a.Client.Clientset.AppsV1().StatefulSets(namespace).Update(ctx, statefulSet, metav1.UpdateOptions{})
+		return err
+	}
+	deployment, err := a.Client.Clientset.AppsV1().Deployments(namespace).Get(ctx, name, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if err := ensureManaged(deployment.Labels); err != nil {
+		return err
+	}
+	zero := int32(0)
+	deployment.Spec.Replicas = &zero
+	_, err = a.Client.Clientset.AppsV1().Deployments(namespace).Update(ctx, deployment, metav1.UpdateOptions{})
+	return err
+}
+
+func (a *KubernetesApplier) waitForWorkloadPodsStopped(ctx context.Context, namespace, name string) error {
+	deadline, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	selector := ApplicationNameLabel + "=" + name
+	for {
+		pods, err := a.Client.Clientset.CoreV1().Pods(namespace).List(deadline, metav1.ListOptions{LabelSelector: selector})
+		if err != nil {
+			return fmt.Errorf("检查旧 Pod: %w", err)
+		}
+		if len(pods.Items) == 0 {
+			return nil
+		}
+		select {
+		case <-deadline.Done():
+			return fmt.Errorf("等待旧 Pod 停止超时")
 		case <-ticker.C:
 		}
 	}
@@ -523,6 +693,23 @@ func (a *KubernetesApplier) applyDeployment(ctx context.Context, desired *appsv1
 	}
 	desired.ResourceVersion = existing.ResourceVersion
 	_, err = a.Client.Clientset.AppsV1().Deployments(desired.Namespace).Update(ctx, desired, metav1.UpdateOptions{})
+	return err
+}
+
+func (a *KubernetesApplier) applyStatefulSet(ctx context.Context, desired *appsv1.StatefulSet) error {
+	existing, err := a.Client.Clientset.AppsV1().StatefulSets(desired.Namespace).Get(ctx, desired.Name, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		_, err = a.Client.Clientset.AppsV1().StatefulSets(desired.Namespace).Create(ctx, desired, metav1.CreateOptions{})
+		return err
+	}
+	if err != nil {
+		return err
+	}
+	if err := ensureManaged(existing.Labels); err != nil {
+		return err
+	}
+	desired.ResourceVersion = existing.ResourceVersion
+	_, err = a.Client.Clientset.AppsV1().StatefulSets(desired.Namespace).Update(ctx, desired, metav1.UpdateOptions{})
 	return err
 }
 

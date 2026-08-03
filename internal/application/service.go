@@ -224,7 +224,7 @@ func applicationContext(application *model.Application, sequence uint) Applicati
 	return ApplicationContext{
 		ProjectID: application.Project.ID, EnvironmentID: application.Environment.ID,
 		ProjectName: application.Project.Name, EnvironmentName: application.Environment.Name,
-		ApplicationName: application.Name, Namespace: application.Environment.Namespace, ReleaseSequence: sequence,
+		ApplicationName: application.Name, Namespace: application.Environment.Namespace, ReleaseSequence: sequence, WorkloadKind: application.WorkloadKind,
 	}
 }
 

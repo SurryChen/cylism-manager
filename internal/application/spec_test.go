@@ -185,6 +185,26 @@ func TestRenderResourcesMountsPersistentVolumeClaimsOnSelectedNode(t *testing.T)
 	}
 }
 
+func TestRenderResourcesCreatesStatefulSetForStatefulApplication(t *testing.T) {
+	spec := validTestReleaseSpec()
+	spec.Replicas = 1
+	spec.Volumes = []VolumeMountSpec{{ClaimName: "meilisearch-data", MountPath: "/meili_data"}}
+	resources, err := RenderResources(ApplicationContext{ProjectName: "knowledge", EnvironmentName: "production", ApplicationName: "meilisearch", Namespace: "project-knowledge", ReleaseSequence: 8, WorkloadKind: WorkloadKindStatefulSet}, spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resources.Deployment != nil || resources.StatefulSet == nil {
+		t.Fatalf("expected only a StatefulSet, got deployment=%#v statefulset=%#v", resources.Deployment, resources.StatefulSet)
+	}
+	if resources.StatefulSet.Spec.ServiceName != "meilisearch" || resources.StatefulSet.Spec.Template.Labels[ReleaseLabel] != "8" {
+		t.Fatalf("unexpected StatefulSet identity: %#v", resources.StatefulSet)
+	}
+	podSpec := resources.StatefulSet.Spec.Template.Spec
+	if len(podSpec.Volumes) != 1 || podSpec.Volumes[0].PersistentVolumeClaim == nil || podSpec.Volumes[0].PersistentVolumeClaim.ClaimName != "meilisearch-data" {
+		t.Fatalf("expected StatefulSet to reuse PVC, got %#v", podSpec.Volumes)
+	}
+}
+
 func TestValidateReleaseSpecRejectsReplicatedPersistentVolumeClaims(t *testing.T) {
 	spec := validTestReleaseSpec()
 	spec.Replicas = 2

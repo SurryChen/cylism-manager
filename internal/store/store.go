@@ -1025,6 +1025,10 @@ func (s *Store) CreateRelease(release *model.Release) error {
 	return s.db.Create(release).Error
 }
 
+func (s *Store) UpdateApplication(application *model.Application) error {
+	return s.db.Save(application).Error
+}
+
 func (s *Store) GetRelease(id uint) (*model.Release, error) {
 	var release model.Release
 	err := s.db.Preload("Operations").First(&release, id).Error

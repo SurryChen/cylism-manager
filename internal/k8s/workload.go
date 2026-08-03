@@ -5,33 +5,43 @@ import (
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	corev1 "k8s.io/api/core/v1"
 )
 
 // --- Info types ---
 
 // DeploymentInfo Deployment 展示信息
 type DeploymentInfo struct {
-	Name      string   `json:"name"`
-	Namespace string   `json:"namespace"`
-	Replicas  int32    `json:"replicas"`
-	Ready     int32    `json:"ready"`
-	Images    []string `json:"images"`
-	CPU       string   `json:"cpu"`
-	Memory    string   `json:"memory"`
-	Age       string   `json:"age"`
+	Name         string            `json:"name"`
+	Namespace    string            `json:"namespace"`
+	Replicas     int32             `json:"replicas"`
+	Ready        int32             `json:"ready"`
+	Images       []string          `json:"images"`
+	VolumeMounts []VolumeMountInfo `json:"volume_mounts"`
+	CPU          string            `json:"cpu"`
+	Memory       string            `json:"memory"`
+	Age          string            `json:"age"`
 }
 
 // StatefulSetInfo StatefulSet 展示信息
 type StatefulSetInfo struct {
-	Name      string   `json:"name"`
-	Namespace string   `json:"namespace"`
-	Replicas  int32    `json:"replicas"`
-	Ready     int32    `json:"ready"`
-	Images    []string `json:"images"`
-	Age       string   `json:"age"`
+	Name         string            `json:"name"`
+	Namespace    string            `json:"namespace"`
+	Replicas     int32             `json:"replicas"`
+	Ready        int32             `json:"ready"`
+	Images       []string          `json:"images"`
+	VolumeMounts []VolumeMountInfo `json:"volume_mounts"`
+	Age          string            `json:"age"`
+}
+
+// VolumeMountInfo describes a PVC mount declared by a workload template.
+type VolumeMountInfo struct {
+	ClaimName string `json:"claim_name"`
+	MountPath string `json:"mount_path"`
+	ReadOnly  bool   `json:"read_only"`
+	Type      string `json:"type"`
 }
 
 // DaemonSetInfo DaemonSet 展示信息
@@ -314,14 +324,15 @@ func deploymentToInfo(d *appsv1.Deployment) DeploymentInfo {
 		}
 	}
 	return DeploymentInfo{
-		Name:      d.Name,
-		Namespace: d.Namespace,
-		Replicas:  safeDerefInt32(d.Spec.Replicas),
-		Ready:     d.Status.ReadyReplicas,
-		Images:    images,
-		CPU:       cpu,
-		Memory:    memory,
-		Age:       timeAgo(d.CreationTimestamp.Time),
+		Name:         d.Name,
+		Namespace:    d.Namespace,
+		Replicas:     safeDerefInt32(d.Spec.Replicas),
+		Ready:        d.Status.ReadyReplicas,
+		Images:       images,
+		VolumeMounts: pvcVolumeMounts(d.Spec.Template.Spec.Volumes, d.Spec.Template.Spec.Containers, nil),
+		CPU:          cpu,
+		Memory:       memory,
+		Age:          timeAgo(d.CreationTimestamp.Time),
 	}
 }
 
@@ -331,13 +342,53 @@ func statefulSetToInfo(s *appsv1.StatefulSet) StatefulSetInfo {
 		images = append(images, c.Image)
 	}
 	return StatefulSetInfo{
-		Name:      s.Name,
-		Namespace: s.Namespace,
-		Replicas:  safeDerefInt32(s.Spec.Replicas),
-		Ready:     s.Status.ReadyReplicas,
-		Images:    images,
-		Age:       timeAgo(s.CreationTimestamp.Time),
+		Name:         s.Name,
+		Namespace:    s.Namespace,
+		Replicas:     safeDerefInt32(s.Spec.Replicas),
+		Ready:        s.Status.ReadyReplicas,
+		Images:       images,
+		VolumeMounts: pvcVolumeMounts(s.Spec.Template.Spec.Volumes, s.Spec.Template.Spec.Containers, s.Spec.VolumeClaimTemplates),
+		Age:          timeAgo(s.CreationTimestamp.Time),
 	}
+}
+
+func pvcVolumeMounts(volumes []corev1.Volume, containers []corev1.Container, templates []corev1.PersistentVolumeClaim) []VolumeMountInfo {
+	claims := make(map[string]VolumeMountInfo, len(volumes)+len(templates))
+	for _, template := range templates {
+		claims[template.Name] = VolumeMountInfo{
+			ClaimName: template.Name,
+			Type:      "volume_claim_template",
+		}
+	}
+	for _, volume := range volumes {
+		if volume.PersistentVolumeClaim == nil {
+			continue
+		}
+		claims[volume.Name] = VolumeMountInfo{
+			ClaimName: volume.PersistentVolumeClaim.ClaimName,
+			Type:      "pvc",
+		}
+	}
+
+	mounts := make([]VolumeMountInfo, 0, len(claims))
+	seen := make(map[string]struct{})
+	for _, container := range containers {
+		for _, mount := range container.VolumeMounts {
+			claim, ok := claims[mount.Name]
+			if !ok {
+				continue
+			}
+			claim.MountPath = mount.MountPath
+			claim.ReadOnly = mount.ReadOnly
+			key := claim.Type + "\x00" + claim.ClaimName + "\x00" + claim.MountPath
+			if _, exists := seen[key]; exists {
+				continue
+			}
+			seen[key] = struct{}{}
+			mounts = append(mounts, claim)
+		}
+	}
+	return mounts
 }
 
 func daemonSetToInfo(d *appsv1.DaemonSet) DaemonSetInfo {

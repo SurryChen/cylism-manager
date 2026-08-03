@@ -64,12 +64,13 @@ describe('Workloads view', () => {
     expect(tabs[3].text()).toContain('DaemonSets')
   })
 
-  it('shows empty state for deployments when no data', async () => {
+  it('opens Pods by default when entering the page', async () => {
     const wrapper = mount(Workloads, {
       global: { stubs: { RouterLink: true } }
     })
     await flush()
-    expect(wrapper.text()).toContain('暂无 Deployment')
+    expect(wrapper.findAll('.resource-tab')[0].classes()).toContain('resource-tab-active')
+    expect(wrapper.text()).toContain('暂无 Pod')
   })
 
   it('switches to StatefulSets tab', async () => {
@@ -186,7 +187,7 @@ describe('Workloads view', () => {
       if (url.includes('/deployments')) {
         return Promise.resolve([{
           name: 'demo-api', namespace: 'default', ready: 1, replicas: 1,
-          images: ['nginx:1.27'], age: '1h'
+          images: ['nginx:1.27'], age: '1h', volume_mounts: [{ claim_name: 'karakeep-data', mount_path: '/data' }]
         }])
       }
       return Promise.resolve([])
@@ -194,7 +195,34 @@ describe('Workloads view', () => {
 
     const wrapper = mount(Workloads)
     await flush()
+    await wrapper.findAll('.resource-tab')[1].trigger('click')
+    await nextTick()
 
     expect(wrapper.text()).toContain('demo-api')
+    expect(wrapper.text()).toContain('karakeep-data -> /data')
+  })
+
+  it('renders StatefulSet PVC mounts', async () => {
+    api.get.mockImplementation(url => {
+      if (url === '/k8s/statefulsets') {
+        return Promise.resolve([{
+          name: 'meilisearch', namespace: 'project-demo', ready: 1, replicas: 1,
+          images: ['getmeili/meilisearch:v1.41.0'], age: '1h',
+          volume_mounts: [
+            { claim_name: 'meilisearch-data', mount_path: '/meili_data', type: 'pvc' },
+            { claim_name: 'logs', mount_path: '/var/log/app', type: 'volume_claim_template' },
+          ],
+        }])
+      }
+      return Promise.resolve([])
+    })
+
+    const wrapper = mount(Workloads)
+    await flush()
+    await wrapper.findAll('.resource-tab')[2].trigger('click')
+    await nextTick()
+
+    expect(wrapper.text()).toContain('meilisearch-data -> /meili_data')
+    expect(wrapper.text()).toContain('logs (卷声明模板) -> /var/log/app')
   })
 })

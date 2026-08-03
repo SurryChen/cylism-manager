@@ -5,7 +5,7 @@ import ApplicationDetails from './ApplicationDetails.vue'
 vi.mock('../api/index.js', () => ({
   api: {
     get: vi.fn(path => {
-      if (path === '/applications/1') return Promise.resolve({ application: { id: 1, project_id: 2, environment_id: 3, name: 'order-api', project: { name: 'commerce' }, environment: { name: 'production', namespace: 'commerce-prod' } }, releases: [{ id: 3, sequence: 2, image: 'registry.example.com/order-api:2.0.0', status: 'succeeded' }] })
+      if (path === '/applications/1') return Promise.resolve({ application: { id: 1, project_id: 2, environment_id: 3, name: 'order-api', workload_kind: 'deployment', project: { name: 'commerce' }, environment: { name: 'production', namespace: 'commerce-prod' } }, releases: [{ id: 3, sequence: 2, image: 'registry.example.com/order-api:2.0.0', status: 'succeeded' }] })
       if (path === '/applications/1/deployment-templates') return Promise.resolve([{ id: 4, name: '标准生产配置', enabled: true, is_default: true, revision: 2, spec: { image: 'registry.example.com/order-api', replicas: 2, container_port: 8080, service: { port: 80 } } }])
       if (path === '/applications/1/endpoint') return Promise.resolve({ domain: 'api.example.com', path: '/', service_port: 80, tls_enabled: true })
       return Promise.resolve([])
@@ -28,6 +28,7 @@ describe('ApplicationDetails view', () => {
     expect(wrapper.text()).toContain('registry.example.com/order-api:2.0.0')
     expect(wrapper.text()).toContain('标准生产配置')
     expect(wrapper.text()).toContain('api.example.com')
+    expect(wrapper.find('[aria-label="工作负载类型"]').element.value).toBe('deployment')
   })
 
   it('serializes line-based startup command and arguments into the template spec', async () => {

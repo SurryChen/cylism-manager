@@ -112,6 +112,24 @@ func TestKubernetesApplierWaitReadyReportsImagePullFailure(t *testing.T) {
 	}
 }
 
+func TestKubernetesApplierApplyCreatesStatefulSet(t *testing.T) {
+	resources, err := RenderResources(ApplicationContext{ProjectName: "knowledge", EnvironmentName: "production", ApplicationName: "meilisearch", Namespace: "dev", ReleaseSequence: 1, WorkloadKind: WorkloadKindStatefulSet}, validTestReleaseSpec())
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientset := k8sfake.NewSimpleClientset()
+	applier := NewKubernetesApplier(&k8sclient.Client{Clientset: clientset})
+	if err := applier.Apply(context.Background(), resources); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := clientset.AppsV1().StatefulSets("dev").Get(context.Background(), "meilisearch", metav1.GetOptions{}); err != nil {
+		t.Fatalf("expected StatefulSet: %v", err)
+	}
+	if _, err := clientset.AppsV1().Deployments("dev").Get(context.Background(), "meilisearch", metav1.GetOptions{}); err == nil {
+		t.Fatal("StatefulSet release must not create a Deployment")
+	}
+}
+
 func TestKubernetesApplierWaitReadyIgnoresFailedPodFromOlderRelease(t *testing.T) {
 	oldLabels := map[string]string{ApplicationNameLabel: "order-api", ReleaseLabel: "1"}
 	currentLabels := map[string]string{ApplicationNameLabel: "order-api", ReleaseLabel: "2"}

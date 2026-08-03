@@ -165,6 +165,7 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 		applications.GET("", applicationHandler.ListApplications)
 		applications.POST("", applicationHandler.CreateApplication)
 		applications.GET("/:id", applicationHandler.GetApplication)
+		applications.PUT("/:id/workload-kind", applicationHandler.UpdateWorkloadKind)
 		applications.GET("/:id/deployment-templates", applicationHandler.ListDeploymentTemplates)
 		applications.POST("/:id/deployment-templates", applicationHandler.CreateDeploymentTemplate)
 		applications.GET("/:id/deployment-templates/:templateID", applicationHandler.GetDeploymentTemplate)
