@@ -73,6 +73,33 @@ func TestApplicationHandlerSetsWorkloadKindBeforeFirstRelease(t *testing.T) {
 	}
 }
 
+func TestWorkspaceOverviewIncludesApplicationRuntimeSummary(t *testing.T) {
+	r, s := setupApplicationRouter()
+	app := createApplicationForReleaseRuntimeTest(t, s)
+	active := &model.Release{ApplicationID: app.ID, Sequence: 2, Version: "1.4.0", Image: "registry.example.com/browser:1.4.0", DesiredSpec: "{}", Status: model.ReleaseStatusSucceeded, CreatedBy: 1}
+	failed := &model.Release{ApplicationID: app.ID, Sequence: 3, Version: "1.5.0", Image: "registry.example.com/browser:1.5.0", DesiredSpec: "{}", Status: model.ReleaseStatusFailed, CreatedBy: 1}
+	if err := s.CreateRelease(active); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CreateRelease(failed); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReplaceApplicationEndpoint(&model.ApplicationEndpoint{ApplicationID: app.ID, Exposure: application.ExposurePublic, Domain: "browser.example.com", TLSEnabled: true, ServicePort: 80}); err != nil {
+		t.Fatal(err)
+	}
+	originalK8s := K8s
+	K8s = &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(&corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "browser-2", Namespace: app.Environment.Namespace, Labels: map[string]string{application.ManagedByLabel: application.ManagedByValue, application.ApplicationNameLabel: app.Name, application.ReleaseLabel: "2"}},
+		Status:     corev1.PodStatus{Phase: corev1.PodRunning, ContainerStatuses: []corev1.ContainerStatus{{Name: "browser", Ready: true}}},
+	})}
+	defer func() { K8s = originalK8s }()
+
+	response := serve(r, newJSONRequest(http.MethodGet, "/api/workspace/overview?project_id=1&environment_id=1", nil))
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "\"status\":\"running\"") || !strings.Contains(response.Body.String(), "\"version\":\"1.4.0\"") || !strings.Contains(response.Body.String(), "https://browser.example.com") {
+		t.Fatalf("unexpected workspace response: %d %s", response.Code, response.Body.String())
+	}
+}
+
 func TestApplicationHandlerGetReleaseIncludesLivePodRuntime(t *testing.T) {
 	r, s := setupApplicationRouter()
 	app := createApplicationForReleaseRuntimeTest(t, s)

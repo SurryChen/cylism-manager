@@ -61,6 +61,20 @@ type applicationEndpointRequest struct {
 	TLSEnabled bool   `json:"tls_enabled"`
 }
 
+type workspaceRuntimeSummary struct {
+	Status    string `json:"status"`
+	ReadyPods int32  `json:"ready_pods"`
+	TotalPods int32  `json:"total_pods"`
+}
+
+type workspaceApplicationInfo struct {
+	model.Application
+	ActiveRelease *model.Release          `json:"active_release,omitempty"`
+	LatestRelease *model.Release          `json:"latest_release,omitempty"`
+	Runtime       workspaceRuntimeSummary `json:"runtime"`
+	EndpointURL   string                  `json:"endpoint_url,omitempty"`
+}
+
 type workloadKindRequest struct {
 	WorkloadKind string `json:"workload_kind"`
 }
@@ -665,11 +679,13 @@ func (h *ApplicationHandler) WorkspaceOverview(c *gin.Context) {
 	}
 	failedReleases := make([]workspaceRelease, 0)
 	recentReleases := make([]workspaceRelease, 0)
+	allReleases := make(map[uint][]model.Release, len(applications))
 	for _, app := range applications {
 		releases, releaseErr := h.store.ListReleases(app.ID)
 		if releaseErr != nil {
 			continue
 		}
+		allReleases[app.ID] = releases
 		for _, release := range releases {
 			item := workspaceRelease{Release: release, ApplicationName: app.Name}
 			recentReleases = append(recentReleases, item)
@@ -682,11 +698,117 @@ func (h *ApplicationHandler) WorkspaceOverview(c *gin.Context) {
 	if len(recentReleases) > 8 {
 		recentReleases = recentReleases[:8]
 	}
+	workspaceApplications := h.workspaceApplicationInfos(c.Request.Context(), environment.Namespace, applications, allReleases)
 	domainInfos := make([]managedDomainInfo, 0, len(domains))
 	for index := range domains {
 		domainInfos = append(domainInfos, NewDomainHandler(h.store).domainInfo(&domains[index]))
 	}
-	model.Success(c, gin.H{"project": project, "environment": environment, "applications": applications, "domains": domainInfos, "failed_releases": failedReleases, "recent_releases": recentReleases})
+	model.Success(c, gin.H{"project": project, "environment": environment, "applications": workspaceApplications, "domains": domainInfos, "failed_releases": failedReleases, "recent_releases": recentReleases})
+}
+
+func (h *ApplicationHandler) workspaceApplicationInfos(ctx context.Context, namespace string, applications []model.Application, allReleases map[uint][]model.Release) []workspaceApplicationInfo {
+	podStates, runtimeAvailable := h.workspacePodStates(ctx, namespace)
+	infos := make([]workspaceApplicationInfo, 0, len(applications))
+	for _, app := range applications {
+		var latest, active *model.Release
+		for index := range allReleases[app.ID] {
+			release := &allReleases[app.ID][index]
+			if latest == nil {
+				latest = release
+			}
+			if active == nil && release.Status == model.ReleaseStatusSucceeded {
+				active = release
+			}
+		}
+		runtime := workspaceRuntimeSummary{Status: "not_released"}
+		if latest != nil && releaseInProgress(latest.Status) {
+			runtime.Status = "deploying"
+		} else if active != nil {
+			if !runtimeAvailable {
+				runtime.Status = "unknown"
+			} else {
+				runtime = podStates[workspacePodKey(app.Name, active.Sequence)]
+				if runtime.Status == "" {
+					runtime.Status = "unavailable"
+				}
+			}
+		} else if latest != nil {
+			runtime.Status = "unavailable"
+		}
+		infos = append(infos, workspaceApplicationInfo{Application: app, ActiveRelease: active, LatestRelease: latest, Runtime: runtime, EndpointURL: applicationEndpointURL(app)})
+	}
+	return infos
+}
+
+func (h *ApplicationHandler) workspacePodStates(ctx context.Context, namespace string) (map[string]workspaceRuntimeSummary, bool) {
+	states := make(map[string]workspaceRuntimeSummary)
+	if K8s == nil || K8s.Clientset == nil {
+		return states, false
+	}
+	pods, err := K8s.Clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{LabelSelector: application.ManagedByLabel + "=" + application.ManagedByValue})
+	if err != nil {
+		return states, false
+	}
+	for _, pod := range pods.Items {
+		applicationName, release := pod.Labels[application.ApplicationNameLabel], pod.Labels[application.ReleaseLabel]
+		sequence, err := strconv.ParseUint(release, 10, 64)
+		if applicationName == "" || err != nil {
+			continue
+		}
+		key := workspacePodKey(applicationName, uint(sequence))
+		state := states[key]
+		state.TotalPods++
+		if podReady(pod) {
+			state.ReadyPods++
+		}
+		states[key] = state
+	}
+	for key, state := range states {
+		if state.TotalPods > 0 && state.ReadyPods == state.TotalPods {
+			state.Status = "running"
+		} else {
+			state.Status = "degraded"
+		}
+		states[key] = state
+	}
+	return states, true
+}
+
+func workspacePodKey(applicationName string, sequence uint) string {
+	return applicationName + "\x00" + strconv.FormatUint(uint64(sequence), 10)
+}
+
+func podReady(pod corev1.Pod) bool {
+	if pod.Status.Phase != corev1.PodRunning || len(pod.Status.ContainerStatuses) == 0 {
+		return false
+	}
+	for _, status := range pod.Status.ContainerStatuses {
+		if !status.Ready {
+			return false
+		}
+	}
+	return true
+}
+
+func releaseInProgress(status string) bool {
+	switch status {
+	case model.ReleaseStatusDraft, model.ReleaseStatusValidating, model.ReleaseStatusApplying, model.ReleaseStatusWaitingReady, model.ReleaseStatusVerifying, model.ReleaseStatusRollingBack:
+		return true
+	default:
+		return false
+	}
+}
+
+func applicationEndpointURL(app model.Application) string {
+	if len(app.Endpoints) == 0 || strings.TrimSpace(app.Endpoints[0].Domain) == "" {
+		return ""
+	}
+	endpoint := app.Endpoints[0]
+	scheme := "http"
+	if endpoint.TLSEnabled {
+		scheme = "https"
+	}
+	return scheme + "://" + endpoint.Domain + strings.TrimSpace(endpoint.Path)
 }
 
 func (h *ApplicationHandler) CreateRelease(c *gin.Context) {
