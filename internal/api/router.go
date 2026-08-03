@@ -125,6 +125,7 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 		monitoring.DELETE("", h.Uninstall)
 		monitoring.GET("/query", h.Query)
 		monitoring.GET("/query-range", h.QueryRange)
+		monitoring.GET("/dashboard", h.Dashboard)
 		monitoring.GET("/targets", h.Targets)
 	}
 	platform := apiGroup.Group("/platform")

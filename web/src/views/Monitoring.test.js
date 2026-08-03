@@ -38,9 +38,9 @@ describe('Monitoring view', () => {
   it('shows historical node trends and switches to the node view', async () => {
     apiMocks.get.mockImplementation(path => {
       if (path === '/monitoring/status') return Promise.resolve({ state: 'ready', message: '指标采集正常', node_name: 'node-a', data_path: '/data/victoria-metrics', retention_days: 14, node_exporter_ready: 1, node_exporter_desired: 1 })
-      if (path === '/nodes') return Promise.resolve([{ name: 'node-a', ready: true }])
+      if (path === '/nodes') return Promise.resolve([{ name: 'node-a', internal_ip: '10.0.0.1', ready: true }])
       if (path === '/monitoring/targets') return Promise.resolve({ activeTargets: [{ health: 'up' }] })
-      if (path.startsWith('/monitoring/query-range')) return Promise.resolve({ resultType: 'matrix', result: [{ metric: { node: 'node-a' }, values: [[1785000000, '42.5']] }] })
+      if (path.startsWith('/monitoring/dashboard')) return Promise.resolve({ trends: { cpu: { result: [{ metric: { instance: '10.0.0.1:9100' }, values: [[1785000000, '42.5']] }] }, memory: { result: [{ metric: { instance: '10.0.0.1:9100' }, values: [[1785000000, '51.2']] }] }, disk: { result: [{ metric: { instance: '10.0.0.1:9100' }, values: [[1785000000, '32.1']] }] }, network: { result: [{ metric: { instance: '10.0.0.1:9100' }, values: [[1785000000, '1.2']] }] } } })
       return Promise.resolve({ result: [] })
     })
 
@@ -49,6 +49,12 @@ describe('Monitoring view', () => {
 
     expect(wrapper.findAll('.metric-trend-chart')).toHaveLength(4)
     expect(wrapper.text()).toContain('最高 CPU')
+    expect(wrapper.text()).toContain('42.5%')
+    expect(apiMocks.get).toHaveBeenCalledWith('/monitoring/dashboard?range=6h')
+    expect(apiMocks.get).not.toHaveBeenCalledWith('/monitoring/targets')
+    await wrapper.get('.trend-range-select').setValue('24h')
+    await flushPromises()
+    expect(apiMocks.get).toHaveBeenCalledWith('/monitoring/dashboard?range=24h')
     await wrapper.get('.section-tab:nth-child(2)').trigger('click')
     await flushPromises()
     expect(wrapper.find('.node-table').exists()).toBe(true)
