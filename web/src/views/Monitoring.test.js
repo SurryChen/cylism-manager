@@ -17,6 +17,12 @@ beforeEach(() => {
 })
 
 describe('Monitoring view', () => {
+  it('uses the shared section title bar', () => {
+    const wrapper = mount(Monitoring)
+    expect(wrapper.get('.section-page-header').find('h1').text()).toBe('集群监控')
+    expect(wrapper.find('.section-page-header .page-subtitle').exists()).toBe(false)
+  })
+
   it('offers an installation form with a ready node and hostPath data directory', async () => {
     const wrapper = mount(Monitoring)
     await flushPromises()

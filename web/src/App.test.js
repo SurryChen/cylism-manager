@@ -6,6 +6,7 @@ import App from './App.vue'
 import router from './router'
 
 const themeCss = readFileSync(resolve(process.cwd(), 'src/styles/theme.css'), 'utf8')
+const componentsCss = readFileSync(resolve(process.cwd(), 'src/styles/components.css'), 'utf8')
 
 async function mountApp(path = '/') {
   localStorage.setItem('access_token', 'test-token')
@@ -41,6 +42,7 @@ describe('Glass UI application shell', () => {
     expect(navigation.text()).toContain('概览')
     expect(navigation.text()).not.toContain('服务器')
     expect(navigation.text()).not.toContain('数据管理')
+    expect(navigation.find('.sidebar-context').exists()).toBe(false)
   })
 
   it('shows infrastructure secondary navigation for infrastructure routes while preserving all mobile destinations', async () => {
@@ -49,27 +51,29 @@ describe('Glass UI application shell', () => {
     const mobileNavigation = wrapper.get('[data-testid="mobile-navigation"]')
 
     expect(wrapper.get('[data-testid="primary-navigation"]').get('[aria-current="page"]').text()).toContain('基础设施')
+    expect(navigation.find('.sidebar-context').exists()).toBe(false)
     expect(navigation.text()).toContain('服务器')
-    expect(navigation.text()).toContain('集群节点')
-    expect(navigation.text()).toContain('路由')
-    expect(navigation.text()).toContain('证书')
-    expect(navigation.text()).toContain('工作负载')
-    expect(navigation.text()).toContain('服务')
-    expect(navigation.text()).toContain('配置')
+    expect(navigation.text()).toContain('集群')
+    expect(navigation.text()).toContain('Kubernetes 资源')
+    expect(navigation.text()).toContain('网络访问')
+    expect(navigation.text()).toContain('存储')
+    expect(navigation.text()).toContain('监控')
+    expect(navigation.text()).not.toContain('节点镜像源')
+    expect(navigation.text()).not.toContain('Chart 仓库')
+    expect(navigation.text()).not.toContain('工作负载')
+    expect(navigation.text()).not.toContain('配置')
     expect(navigation.text()).not.toContain('审计')
     expect(mobileNavigation.text()).toContain('概览')
     expect(mobileNavigation.text()).toContain('系统设置')
     expect(mobileNavigation.text()).not.toContain('数据管理')
   })
 
-  it('activates only the most specific infrastructure navigation item', async () => {
+  it('activates the cluster aggregation entry for a cluster configuration route', async () => {
     const wrapper = await mountApp('/cluster/registry-mirrors')
     const links = wrapper.get('[data-testid="desktop-navigation"]').findAll('.sidebar-link')
-    const clusterNodes = links.find(link => link.text() === '集群节点')
-    const registryMirrors = links.find(link => link.text() === '节点镜像源')
+    const cluster = links.find(link => link.text() === '集群')
 
-    expect(clusterNodes.classes()).not.toContain('is-active')
-    expect(registryMirrors.classes()).toContain('is-active')
+    expect(cluster.classes()).toContain('is-active')
   })
 
   it('shows the application secondary navigation for application routes', async () => {
@@ -77,7 +81,6 @@ describe('Glass UI application shell', () => {
     const navigation = wrapper.get('[data-testid="desktop-navigation"]')
 
     expect(wrapper.get('[data-testid="primary-navigation"]').get('[aria-current="page"]').text()).toContain('应用')
-    expect(navigation.text()).toContain('应用')
     expect(navigation.text()).toContain('项目与环境')
     expect(navigation.text()).toContain('镜像仓库')
     expect(navigation.text()).toContain('工作台')
@@ -135,6 +138,8 @@ describe('Glass UI application shell', () => {
     expect(themeCss).toMatch(/\.app-topbar\s*\{[^}]*border:\s*0[^}]*border-bottom:\s*1px solid var\(--border-muted\)[^}]*border-radius:\s*0/)
     expect(themeCss).toContain('width: 85vw')
     expect(themeCss).toContain('height: 58vh')
+    expect(componentsCss).not.toContain('当前工作区')
+    expect(componentsCss).toContain('height: 52px')
   })
 
   it('renders active navigation as floating glass controls and keeps the mobile workspace shrinkable', async () => {
