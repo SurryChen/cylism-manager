@@ -7,6 +7,10 @@ import { api } from '../api/index.js'
 vi.mock('../api/index.js', () => ({
   api: {
     get: vi.fn().mockImplementation(url => {
+      if (url === '/servers/resource-stats') return Promise.resolve([
+        { server_id: 1, status: 'ready', cpu_percent: 42.5, cpu_cores: 2, memory_used_mb: 512, memory_total_mb: 1024, disk_used_gb: 8, disk_total_gb: 40, load_1m: 0.4, uptime: '2 days', sampled_at: '2026-08-03T09:00:00Z' },
+        { server_id: 2, status: 'unreachable', error: 'SSH connection timed out', sampled_at: '2026-08-03T09:00:00Z' },
+      ])
       if (url.startsWith('/servers')) return Promise.resolve([
         { id: 1, name: 'test-srv', host: '10.0.0.1', ssh_user: 'root', ssh_auth_type: 'password', ssh_port: 22, cluster_role: '', k8s_node_name: '' },
         { id: 2, name: 'cluster-srv', host: '10.0.0.2', ssh_user: 'root', ssh_auth_type: 'password', ssh_port: 22, cluster_role: 'worker', k8s_node_name: 'worker-a' },
@@ -26,7 +30,9 @@ describe('Servers view', () => {
     expect(wrapper.text()).toContain('服务器')
     expect(wrapper.text()).toContain('集群节点已经拆分到“集群节点”页面')
     expect(wrapper.findAll('.tab-btn')).toHaveLength(0)
-    expect(wrapper.get('.section-page-header').find('h1').text()).toBe('服务器')
+    expect(wrapper.get('.section-tabs-header').find('h1').text()).toBe('服务器')
+    expect(wrapper.findAll('.section-tab')).toHaveLength(2)
+    expect(wrapper.find('.server-content').exists()).toBe(true)
   })
 
   it('shows server table with new columns', async () => {
@@ -49,6 +55,20 @@ describe('Servers view', () => {
     await btn.trigger('click')
     await nextTick()
     expect(wrapper.find('.modal').exists()).toBe(true)
+  })
+
+  it('shows a batch-refreshed resource monitoring view', async () => {
+    const wrapper = mount(Servers, { global: { stubs: { RouterLink: true } } })
+    await new Promise(r => setTimeout(r, 200))
+    await wrapper.findAll('button').find(button => button.text().includes('资源监控')).trigger('click')
+    await new Promise(r => setTimeout(r, 0))
+    await nextTick()
+
+    expect(api.get).toHaveBeenCalledWith('/servers/resource-stats')
+    expect(wrapper.text()).toContain('资源概览')
+    expect(wrapper.text()).toContain('42.5%')
+    expect(wrapper.text()).toContain('不可达')
+    wrapper.unmount()
   })
 
   it('manually unbinds a server without deleting its Kubernetes node', async () => {
