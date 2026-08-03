@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cylism/cylism-manager/internal/k8s"
@@ -28,6 +29,18 @@ var monitoringRanges = map[string]struct {
 }
 
 type monitoringQueryFunc func(context.Context, string, url.Values) (interface{}, error)
+
+type monitoringDashboardQuery struct {
+	key   string
+	query string
+}
+
+var monitoringDashboardQueries = []monitoringDashboardQuery{
+	{key: "cpu", query: `100 - (avg by (node, instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100)`},
+	{key: "memory", query: `100 * (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)`},
+	{key: "disk", query: `max by (node, instance) (100 * (1 - node_filesystem_avail_bytes{mountpoint="/",fstype!~"tmpfs|overlay"} / node_filesystem_size_bytes{mountpoint="/",fstype!~"tmpfs|overlay"}))`},
+	{key: "network", query: `sum by (node, instance) (rate(node_network_receive_bytes_total{device!~"lo|veth.*"}[5m])) / 1024 / 1024`},
+}
 
 // MonitoringHandler manages the platform-owned VictoriaMetrics instance.
 type MonitoringHandler struct {
@@ -132,6 +145,71 @@ func (h *MonitoringHandler) QueryRange(c *gin.Context) {
 		return
 	}
 	model.Success(c, result)
+}
+
+// Dashboard batches the four default node trend queries into one browser
+// request while preserving concurrent reads against VictoriaMetrics.
+func (h *MonitoringHandler) Dashboard(c *gin.Context) {
+	if K8s == nil {
+		k8sUnavailable(c)
+		return
+	}
+	rangeName := c.DefaultQuery("range", "6h")
+	rangeSpec, ok := monitoringRanges[rangeName]
+	if !ok {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "时间范围仅支持 1h、6h、24h 或 7d")
+		return
+	}
+	if status := K8s.VictoriaMetricsStatus(); status.State != k8s.VictoriaMetricsStateReady {
+		model.Error(c, http.StatusConflict, model.CodeConflict, "VictoriaMetrics 尚未就绪")
+		return
+	}
+
+	end := time.Now().UTC()
+	ctx, cancel := context.WithCancel(c.Request.Context())
+	defer cancel()
+	type dashboardResult struct {
+		key  string
+		data interface{}
+		err  error
+	}
+	results := make(chan dashboardResult, len(monitoringDashboardQueries))
+	var group sync.WaitGroup
+	for _, dashboardQuery := range monitoringDashboardQueries {
+		group.Add(1)
+		go func(item monitoringDashboardQuery) {
+			defer group.Done()
+			data, err := h.query(ctx, "/api/v1/query_range", monitoringRangeValues(item.query, rangeSpec, end))
+			results <- dashboardResult{key: item.key, data: data, err: err}
+		}(dashboardQuery)
+	}
+	go func() {
+		group.Wait()
+		close(results)
+	}()
+
+	trends := make(map[string]interface{}, len(monitoringDashboardQueries))
+	for result := range results {
+		if result.err != nil {
+			cancel()
+			model.Error(c, http.StatusBadGateway, model.CodeK8sAPIError, "查询 VictoriaMetrics 趋势指标失败: "+result.err.Error())
+			return
+		}
+		trends[result.key] = result.data
+	}
+	model.Success(c, gin.H{"range": rangeName, "trends": trends})
+}
+
+func monitoringRangeValues(query string, rangeSpec struct {
+	window time.Duration
+	step   time.Duration
+}, end time.Time) url.Values {
+	return url.Values{
+		"query": []string{query},
+		"start": []string{strconv.FormatInt(end.Add(-rangeSpec.window).Unix(), 10)},
+		"end":   []string{strconv.FormatInt(end.Unix(), 10)},
+		"step":  []string{strconv.FormatInt(int64(rangeSpec.step.Seconds()), 10)},
+	}
 }
 
 func (h *MonitoringHandler) Targets(c *gin.Context) {

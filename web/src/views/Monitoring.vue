@@ -28,7 +28,7 @@
         <template v-else-if="activeTab === 'overview'">
           <section class="metric-grid monitoring-summary section-gap">
             <article class="metric"><span>监控状态</span><strong><span class="badge" :class="statusClass">{{ statusLabel }}</span></strong><small>{{ status.message }}</small></article>
-            <article class="metric"><span>可用节点</span><strong>{{ readyNodes.length }} / {{ nodes.length }}</strong><small>{{ targetSummary.active }} 个采集目标在线</small></article>
+            <article class="metric"><span>可用节点</span><strong>{{ readyNodes.length }} / {{ nodes.length }}</strong><small>{{ status.node_exporter_ready || 0 }} / {{ status.node_exporter_desired || 0 }} node-exporter 就绪</small></article>
             <article class="metric"><span>最高 CPU</span><strong>{{ formatPercent(highestCPU?.cpu) }}</strong><small>{{ highestCPU?.name || '等待指标采集' }}</small></article>
             <article class="metric"><span>最高内存</span><strong>{{ formatPercent(highestMemory?.memory) }}</strong><small>{{ highestMemory?.name || '等待指标采集' }}</small></article>
             <article class="metric"><span>最高磁盘</span><strong>{{ formatPercent(highestDisk?.disk) }}</strong><small>{{ highestDisk?.name || '等待指标采集' }}</small></article>
@@ -68,7 +68,7 @@
 </template>
 
 <script setup>
-import { computed, defineComponent, h, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, defineComponent, h, onMounted, ref, watch } from 'vue'
 import { RefreshCw } from 'lucide-vue-next'
 import { api } from '../api/index.js'
 import MetricTrendChart from '../components/MetricTrendChart.vue'
@@ -102,7 +102,6 @@ const selectedNode = ref('')
 const nodeTrends = ref({ cpu: [], memory: [], disk: [], network: [] })
 const workloads = ref({ cpu: [], memory: [] })
 const form = ref({ node_name: '', data_path: '/data/victoria-metrics', retention_days: 14 })
-let refreshTimer
 
 const presets = [
   { label: '全部目标', query: 'up{job=~"kubernetes-(nodes|cadvisor)"}' },
@@ -137,7 +136,10 @@ const RangePicker = defineComponent({
   props: { range: { type: String, required: true } },
   emits: ['select'],
   setup(props, { emit }) {
-    return () => h('div', { class: 'range-picker', 'aria-label': '趋势时间范围' }, trendRanges.map(range => h('button', { class: ['range-button', { 'is-active': props.range === range }], type: 'button', onClick: () => emit('select', range) }, range)))
+    return () => h('label', { class: 'range-select' }, [
+      h('span', '时间范围'),
+      h('select', { class: 'form-select trend-range-select', value: props.range, onChange: event => emit('select', event.target.value) }, trendRanges.map(range => h('option', { value: range }, rangeLabel(range)))),
+    ])
   },
 })
 const WorkloadTable = defineComponent({
@@ -149,9 +151,7 @@ const WorkloadTable = defineComponent({
 
 onMounted(async () => {
   await refresh()
-  refreshTimer = window.setInterval(refresh, 30000)
 })
-onBeforeUnmount(() => window.clearInterval(refreshTimer))
 watch([activeTab, trendRange], async () => {
   if (status.value?.state === 'ready') await loadActiveData()
 })
@@ -163,10 +163,7 @@ async function refresh() {
     status.value = nextStatus
     nodes.value = nodeList || []
     if (!form.value.node_name) form.value.node_name = readyNodes.value[0]?.name || ''
-    if (status.value?.state === 'ready') {
-      await loadTargets()
-      await loadActiveData()
-    }
+    if (status.value?.state === 'ready') await loadActiveData()
   } catch (e) { error.value = e.message || '加载监控状态失败' } finally { loaded.value = true }
 }
 
@@ -202,19 +199,14 @@ async function loadTargets() {
 async function loadActiveData() {
   if (activeTab.value === 'overview' || activeTab.value === 'nodes') await loadNodeTrends()
   if (activeTab.value === 'workloads') await loadWorkloads()
+  if (activeTab.value === 'diagnostics') await loadTargets()
 }
 
 async function loadNodeTrends() {
   trendsLoading.value = true
   try {
-    const queries = {
-      cpu: '100 - (avg by (node) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100)',
-      memory: '100 * (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)',
-      disk: 'max by (node) (100 * (1 - node_filesystem_avail_bytes{mountpoint="/",fstype!~"tmpfs|overlay"} / node_filesystem_size_bytes{mountpoint="/",fstype!~"tmpfs|overlay"}))',
-      network: 'sum by (node) (rate(node_network_receive_bytes_total{device!~"lo|veth.*"}[5m])) / 1024 / 1024',
-    }
-    const results = await Promise.all(Object.values(queries).map(queryText => api.get(`/monitoring/query-range?range=${trendRange.value}&query=${encodeURIComponent(queryText)}`)))
-    nodeTrends.value = Object.fromEntries(Object.keys(queries).map((key, index) => [key, matrixToSeries(results[index])]))
+    const dashboard = await api.get(`/monitoring/dashboard?range=${trendRange.value}`)
+    nodeTrends.value = Object.fromEntries(Object.entries(dashboard?.trends || {}).map(([key, result]) => [key, matrixToSeries(result)]))
     if (!selectedNode.value || !nodeRows.value.some(node => node.name === selectedNode.value)) selectedNode.value = nodeRows.value[0]?.name || ''
   } catch (e) { error.value = e.message || '读取节点趋势失败' } finally { trendsLoading.value = false }
 }
@@ -231,7 +223,12 @@ async function loadWorkloads() {
 }
 
 function matrixToSeries(result) {
-  return (result?.result || []).map((item, index) => ({ label: item.metric?.node || item.metric?.instance || `序列 ${index + 1}`, values: (item.values || []).map(([timestamp, value]) => ({ timestamp: Number(timestamp), value: Number(value) })) }))
+  return (result?.result || []).map((item, index) => ({ label: metricNodeName(item.metric, index), values: (item.values || []).map(([timestamp, value]) => ({ timestamp: Number(timestamp), value: Number(value) })) }))
+}
+function metricNodeName(metric, index) {
+  if (metric?.node) return metric.node
+  const host = (metric?.instance || '').replace(/:\d+$/, '')
+  return nodes.value.find(node => node.internal_ip === host)?.name || metric?.instance || `序列 ${index + 1}`
 }
 function vectorToWorkloads(result) {
   return (result?.result || []).map(item => ({ namespace: item.metric?.namespace || '-', pod: item.metric?.pod || '-', value: Number(item.value?.[1]) || 0 }))
@@ -246,6 +243,7 @@ function highestNode(metric) {
 function selectedSeries(series) { return series.filter(item => item.label === selectedNode.value) }
 function formatPercent(value) { return Number.isFinite(value) ? `${value.toFixed(1)}%` : '-' }
 function formatRate(value) { return Number.isFinite(value) ? `${value.toFixed(2)} MB/s` : '-' }
+function rangeLabel(range) { return ({ '1h': '最近 1 小时', '6h': '最近 6 小时', '24h': '最近 24 小时', '7d': '最近 7 天' }[range] || range) }
 
 async function runQuery(queryText) {
   querying.value = true
@@ -255,5 +253,5 @@ async function runQuery(queryText) {
 </script>
 
 <style scoped>
-.monitoring-content { margin-top: var(--space-20); }.status-copy,.metric small,.form-hint,.confirm-copy,.monitoring-section-heading p{margin:5px 0 0;color:var(--text-secondary);font-size:12px}.install-form{margin-top:var(--space-20)}.status-actions{justify-content:flex-start;margin-top:var(--space-16)}.monitoring-summary{grid-template-columns:repeat(5,minmax(0,1fr))}.metric{display:grid;min-width:0;gap:5px;padding:14px;border:1px solid var(--border-muted);border-radius:var(--radius-control);background:var(--surface-subtle)}.metric>span{color:var(--text-secondary);font-size:11px}.metric strong{min-width:0;font-size:18px}.metric small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.metric-code{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--font-mono);font-size:13px!important}.monitoring-section-heading{display:flex;align-items:center;justify-content:space-between;gap:var(--space-16)}.monitoring-section-heading h2{margin:0;color:var(--text-primary);font-size:16px}.range-picker{display:flex;align-items:center;gap:4px;padding:3px;border:1px solid var(--border-muted);border-radius:var(--radius-control);background:var(--surface-subtle)}.range-button{min-width:36px;padding:5px 7px;border:0;border-radius:4px;background:transparent;color:var(--text-secondary);font:11px/1 var(--font-mono);cursor:pointer}.range-button.is-active{background:var(--surface-raised);color:var(--text-primary);box-shadow:var(--shadow-soft)}.monitoring-trend-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--space-16)}.monitoring-workload-grid,.monitoring-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--space-16)}.node-table tbody tr{cursor:pointer}.node-table tbody tr.is-selected{background:var(--success-surface)}.targets-card,.quick-card,.query-card{margin:0}.target-list{display:grid;gap:7px;margin-top:var(--space-16)}.target-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid var(--border-muted)}.target-row:last-child{border-bottom:0}.target-row span:first-child{display:grid;min-width:0;gap:2px}.target-row strong,.target-row small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.target-row small{color:var(--text-secondary);font:11px/1.3 var(--font-mono)}.diagnostic-copy{margin:0 0 var(--space-16);color:var(--text-secondary);font-size:12px;line-height:1.6}.query-presets{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:6px}.query-form{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;margin-top:var(--space-16)}.query-result{max-height:360px;overflow:auto;margin:var(--space-16) 0 0;padding:12px;border:1px solid var(--border-muted);border-radius:var(--radius-control);background:var(--surface-subtle);color:var(--text-primary);font:11px/1.5 var(--font-mono)}.empty-inline{padding:16px 0;color:var(--text-muted);font-size:12px}.wait-card .empty-state{min-height:140px}@media(max-width:960px){.monitoring-summary{grid-template-columns:repeat(3,minmax(0,1fr))}}@media(max-width:760px){.monitoring-trend-grid,.monitoring-workload-grid,.monitoring-grid{grid-template-columns:1fr}.monitoring-summary{grid-template-columns:repeat(2,minmax(0,1fr))}.query-form{grid-template-columns:1fr}.query-form .btn{width:100%}}@media(max-width:440px){.monitoring-summary{grid-template-columns:1fr}.monitoring-section-heading{align-items:flex-start;flex-direction:column}.range-picker{width:100%;justify-content:space-between}}
+.monitoring-content { margin-top: var(--space-20); }.status-copy,.metric small,.form-hint,.confirm-copy,.monitoring-section-heading p{margin:5px 0 0;color:var(--text-secondary);font-size:12px}.install-form{margin-top:var(--space-20)}.status-actions{justify-content:flex-start;margin-top:var(--space-16)}.monitoring-summary{grid-template-columns:repeat(5,minmax(0,1fr))}.metric{display:grid;min-width:0;gap:5px;padding:14px;border:1px solid var(--border-muted);border-radius:var(--radius-control);background:var(--surface-subtle)}.metric>span{color:var(--text-secondary);font-size:11px}.metric strong{min-width:0;font-size:18px}.metric small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.metric-code{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--font-mono);font-size:13px!important}.monitoring-section-heading{display:flex;align-items:center;justify-content:space-between;gap:var(--space-16)}.monitoring-section-heading h2{margin:0;color:var(--text-primary);font-size:16px}.range-select{display:flex;align-items:center;gap:8px;color:var(--text-secondary);font-size:11px;font-weight:700;white-space:nowrap}.trend-range-select{width:148px;min-height:34px;padding:6px 28px 6px 9px;font-size:11px}.monitoring-trend-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--space-16)}.monitoring-workload-grid,.monitoring-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--space-16)}.node-table tbody tr{cursor:pointer}.node-table tbody tr.is-selected{background:var(--success-surface)}.targets-card,.quick-card,.query-card{margin:0}.target-list{display:grid;gap:7px;margin-top:var(--space-16)}.target-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid var(--border-muted)}.target-row:last-child{border-bottom:0}.target-row span:first-child{display:grid;min-width:0;gap:2px}.target-row strong,.target-row small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.target-row small{color:var(--text-secondary);font:11px/1.3 var(--font-mono)}.diagnostic-copy{margin:0 0 var(--space-16);color:var(--text-secondary);font-size:12px;line-height:1.6}.query-presets{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:6px}.query-form{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;margin-top:var(--space-16)}.query-result{max-height:360px;overflow:auto;margin:var(--space-16) 0 0;padding:12px;border:1px solid var(--border-muted);border-radius:var(--radius-control);background:var(--surface-subtle);color:var(--text-primary);font:11px/1.5 var(--font-mono)}.empty-inline{padding:16px 0;color:var(--text-muted);font-size:12px}.wait-card .empty-state{min-height:140px}@media(max-width:960px){.monitoring-summary{grid-template-columns:repeat(3,minmax(0,1fr))}}@media(max-width:760px){.monitoring-trend-grid,.monitoring-workload-grid,.monitoring-grid{grid-template-columns:1fr}.monitoring-summary{grid-template-columns:repeat(2,minmax(0,1fr))}.query-form{grid-template-columns:1fr}.query-form .btn{width:100%}}@media(max-width:440px){.monitoring-summary{grid-template-columns:1fr}.monitoring-section-heading{align-items:flex-start;flex-direction:column}.range-select{align-items:flex-start;flex-direction:column}.trend-range-select{width:100%}}
 </style>

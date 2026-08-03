@@ -25,6 +25,7 @@ func setupMonitoringRouter(handler *MonitoringHandler) *gin.Engine {
 	group.DELETE("", handler.Uninstall)
 	group.GET("/query", handler.Query)
 	group.GET("/query-range", handler.QueryRange)
+	group.GET("/dashboard", handler.Dashboard)
 	group.GET("/targets", handler.Targets)
 	return router
 }
@@ -64,6 +65,30 @@ func TestMonitoringRangeQueryRejectsUnknownRange(t *testing.T) {
 	response := serve(setupMonitoringRouter(NewMonitoringHandler()), newJSONRequest(http.MethodGet, "/api/monitoring/query-range?query=up&range=30d", nil))
 	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "时间范围") {
 		t.Fatalf("unexpected range validation response: %s", response.Body.String())
+	}
+}
+
+func TestMonitoringDashboardReturnsAllTrendSeries(t *testing.T) {
+	original := K8s
+	K8s = &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(
+		&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "cylism-victoria-metrics", Namespace: "monitoring"}, Status: appsv1.DeploymentStatus{AvailableReplicas: 1}},
+		&appsv1.DaemonSet{ObjectMeta: metav1.ObjectMeta{Name: "cylism-node-exporter", Namespace: "monitoring"}, Status: appsv1.DaemonSetStatus{DesiredNumberScheduled: 1, NumberAvailable: 1}},
+	)}
+	defer func() { K8s = original }()
+
+	handler := NewMonitoringHandler()
+	handler.query = func(_ context.Context, path string, values url.Values) (interface{}, error) {
+		if path != "/api/v1/query_range" || values.Get("query") == "" || values.Get("step") != "120" {
+			t.Fatalf("unexpected dashboard query: %s %#v", path, values)
+		}
+		return map[string]interface{}{"resultType": "matrix", "result": []interface{}{}}, nil
+	}
+
+	response := serve(setupMonitoringRouter(handler), newJSONRequest(http.MethodGet, "/api/monitoring/dashboard?range=6h", nil))
+	for _, key := range []string{"cpu", "memory", "disk", "network"} {
+		if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"`+key+`"`) {
+			t.Fatalf("unexpected dashboard response: %s", response.Body.String())
+		}
 	}
 }
 
