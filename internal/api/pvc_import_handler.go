@@ -131,8 +131,24 @@ func (h *K8sHandler) DeleteHostDirectoryPVCImportBackup(c *gin.Context) {
 		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, "数据存储未初始化")
 		return
 	}
-	environment, ok := h.pvcEnvironment(c)
-	if !ok {
+	environmentID, err := optionalQueryID(c, "environment_id")
+	if err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "环境 ID 无效")
+		return
+	}
+	if environmentID == 0 {
+		var request struct {
+			EnvironmentID uint `json:"environment_id"`
+		}
+		if err := c.ShouldBindJSON(&request); err != nil || request.EnvironmentID == 0 {
+			model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "环境 ID 无效")
+			return
+		}
+		environmentID = request.EnvironmentID
+	}
+	environment, err := h.store.GetEnvironmentByID(environmentID)
+	if err != nil {
+		model.Error(c, http.StatusNotFound, model.CodeNotFound, "环境不存在")
 		return
 	}
 	id, err := parseID(c.Param("id"))

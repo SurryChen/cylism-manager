@@ -1078,7 +1078,11 @@ func (s *Store) GetPersistentVolumeMigration(id uint) (*model.PersistentVolumeMi
 
 func (s *Store) ListPersistentVolumeMigrations(environmentID uint) ([]model.PersistentVolumeMigration, error) {
 	var migrations []model.PersistentVolumeMigration
-	err := s.db.Where("environment_id = ?", environmentID).Order("created_at desc").Find(&migrations).Error
+	query := s.db.Order("created_at desc")
+	if environmentID != 0 {
+		query = query.Where("environment_id = ?", environmentID)
+	}
+	err := query.Find(&migrations).Error
 	return migrations, err
 }
 

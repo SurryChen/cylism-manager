@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/cylism/cylism-manager/internal/application"
 	k8sclient "github.com/cylism/cylism-manager/internal/k8s"
@@ -17,6 +18,7 @@ import (
 
 type persistentVolumeClaimRequest struct {
 	EnvironmentID     uint   `json:"environment_id"`
+	Namespace         string `json:"namespace"`
 	Name              string `json:"name"`
 	Storage           string `json:"storage"`
 	StorageClassName  string `json:"storage_class_name"`
@@ -27,21 +29,48 @@ type persistentVolumeClaimResponse struct {
 	k8sclient.PersistentVolumeClaimInfo
 	BoundNodeDisplayName string   `json:"bound_node_display_name,omitempty"`
 	References           []string `json:"references,omitempty"`
+	ProjectID            uint     `json:"project_id,omitempty"`
+	ProjectName          string   `json:"project_name,omitempty"`
+	EnvironmentName      string   `json:"environment_name,omitempty"`
 }
 
 func (h *K8sHandler) ListPersistentVolumeClaims(c *gin.Context) {
-	environment, ok := h.pvcEnvironment(c)
-	if !ok {
+	if K8s == nil {
+		k8sUnavailable(c)
 		return
 	}
-	claims, err := K8s.ListManagedPVCs(environment.Namespace, environment.ID)
+	environmentID, err := optionalQueryID(c, "environment_id")
+	if err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "环境 ID 无效")
+		return
+	}
+	namespace := strings.TrimSpace(c.Query("namespace"))
+	var claims []k8sclient.PersistentVolumeClaimInfo
+	if environmentID != 0 {
+		if h.store == nil {
+			model.Error(c, http.StatusInternalServerError, model.CodeInternalError, "数据存储未初始化")
+			return
+		}
+		environment, err := h.store.GetEnvironmentByID(environmentID)
+		if err != nil {
+			model.Error(c, http.StatusNotFound, model.CodeNotFound, "环境不存在")
+			return
+		}
+		if namespace != "" && namespace != environment.Namespace {
+			model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "命名空间与环境不匹配")
+			return
+		}
+		claims, err = K8s.ListManagedPVCs(environment.Namespace, environment.ID)
+	} else {
+		claims, err = K8s.ListPVCs(namespace)
+	}
 	if err != nil {
 		model.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
 		return
 	}
 	responses := make([]persistentVolumeClaimResponse, 0, len(claims))
 	for index := range claims {
-		responses = append(responses, h.pvcResponse(&claims[index], environment.ID))
+		responses = append(responses, h.pvcResponse(&claims[index]))
 	}
 	model.Success(c, responses)
 }
@@ -56,26 +85,26 @@ func (h *K8sHandler) CreatePersistentVolumeClaim(c *gin.Context) {
 		return
 	}
 	var request persistentVolumeClaimRequest
-	if err := c.ShouldBindJSON(&request); err != nil || request.EnvironmentID == 0 {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "环境、名称和容量必填")
+	if err := c.ShouldBindJSON(&request); err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "名称和容量必填")
 		return
 	}
-	environment, err := h.store.GetEnvironmentByID(request.EnvironmentID)
+	namespace, err := h.pvcRequestNamespace(request)
 	if err != nil {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, "环境不存在")
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, err.Error())
 		return
 	}
-	claim, err := K8s.CreateManagedPVC(environment.Namespace, environment.ID, k8sclient.PersistentVolumeClaimRequest{Name: request.Name, Storage: request.Storage, StorageClassName: request.StorageClassName})
+	claim, err := K8s.CreateManagedPVC(namespace, request.EnvironmentID, k8sclient.PersistentVolumeClaimRequest{Name: request.Name, Storage: request.Storage, StorageClassName: request.StorageClassName})
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
 		return
 	}
-	info, err := K8s.GetManagedPVC(environment.Namespace, claim.Name, environment.ID)
+	info, err := K8s.GetManagedPVC(namespace, claim.Name, request.EnvironmentID)
 	if err != nil {
 		model.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
 		return
 	}
-	model.Success(c, h.pvcResponse(info, environment.ID))
+	model.Success(c, h.pvcResponse(info))
 }
 
 func (h *K8sHandler) DeletePersistentVolumeClaim(c *gin.Context) {
@@ -88,29 +117,31 @@ func (h *K8sHandler) DeletePersistentVolumeClaim(c *gin.Context) {
 		return
 	}
 	var request persistentVolumeClaimRequest
-	if err := c.ShouldBindJSON(&request); err != nil || request.EnvironmentID == 0 {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "环境不能为空")
+	if err := c.ShouldBindJSON(&request); err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "删除请求无效")
 		return
 	}
-	environment, err := h.store.GetEnvironmentByID(request.EnvironmentID)
+	namespace, err := h.pvcRequestNamespace(request)
 	if err != nil {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, "环境不存在")
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, err.Error())
 		return
 	}
 	name := c.Param("name")
-	claim, err := K8s.GetManagedPVC(environment.Namespace, name, environment.ID)
+	claim, err := K8s.GetManagedPVC(namespace, name, request.EnvironmentID)
 	if err != nil {
 		model.Error(c, http.StatusNotFound, model.CodeNotFound, err.Error())
 		return
 	}
-	if migration, migrationErr := h.store.FindActivePVCMigration(environment.ID, name); migrationErr == nil {
-		model.ErrorWithData(c, http.StatusConflict, model.CodeConflict, "存储卷正在迁移，不能删除", migration)
-		return
-	} else if !errors.Is(migrationErr, gorm.ErrRecordNotFound) {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "检查存储卷迁移状态失败")
-		return
+	if request.EnvironmentID != 0 {
+		if migration, migrationErr := h.store.FindActivePVCMigration(request.EnvironmentID, name); migrationErr == nil {
+			model.ErrorWithData(c, http.StatusConflict, model.CodeConflict, "存储卷正在迁移，不能删除", migration)
+			return
+		} else if !errors.Is(migrationErr, gorm.ErrRecordNotFound) {
+			model.Error(c, http.StatusInternalServerError, model.CodeDBError, "检查存储卷迁移状态失败")
+			return
+		}
 	}
-	references := h.pvcReferences(environment.ID, environment.Namespace, name)
+	references := h.pvcReferences(request.EnvironmentID, namespace, name)
 	if len(references) > 0 {
 		model.ErrorWithData(c, http.StatusConflict, model.CodeConflict, "PVC 仍被应用模板或工作负载引用，不能删除", gin.H{"references": references})
 		return
@@ -120,10 +151,10 @@ func (h *K8sHandler) DeletePersistentVolumeClaim(c *gin.Context) {
 		if policy == "" {
 			policy = "未知"
 		}
-		model.ErrorWithData(c, http.StatusConflict, model.CodeConflict, fmt.Sprintf("删除 PVC 可能影响底层数据（PV 回收策略：%s），请确认后重试", policy), h.pvcResponse(claim, environment.ID))
+		model.ErrorWithData(c, http.StatusConflict, model.CodeConflict, fmt.Sprintf("删除 PVC 可能影响底层数据（PV 回收策略：%s），请确认后重试", policy), h.pvcResponse(claim))
 		return
 	}
-	if err := K8s.DeleteManagedPVC(environment.Namespace, name, environment.ID); err != nil {
+	if err := K8s.DeleteManagedPVC(namespace, name, request.EnvironmentID); err != nil {
 		model.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
 		return
 	}
@@ -165,7 +196,28 @@ func (h *K8sHandler) pvcEnvironment(c *gin.Context) (*model.Environment, bool) {
 	return environment, true
 }
 
-func (h *K8sHandler) pvcResponse(claim *k8sclient.PersistentVolumeClaimInfo, environmentID uint) persistentVolumeClaimResponse {
+func (h *K8sHandler) pvcRequestNamespace(request persistentVolumeClaimRequest) (string, error) {
+	if request.EnvironmentID != 0 {
+		environment, err := h.store.GetEnvironmentByID(request.EnvironmentID)
+		if err != nil {
+			return "", errors.New("环境不存在")
+		}
+		if namespace := strings.TrimSpace(request.Namespace); namespace != "" && namespace != environment.Namespace {
+			return "", errors.New("命名空间与环境不匹配")
+		}
+		return environment.Namespace, nil
+	}
+	namespace := strings.TrimSpace(request.Namespace)
+	if namespace == "" {
+		return "", errors.New("请选择命名空间")
+	}
+	if _, err := K8s.Clientset.CoreV1().Namespaces().Get(K8s.Ctx(), namespace, metav1.GetOptions{}); err != nil {
+		return "", errors.New("命名空间不存在或不可访问")
+	}
+	return namespace, nil
+}
+
+func (h *K8sHandler) pvcResponse(claim *k8sclient.PersistentVolumeClaimInfo) persistentVolumeClaimResponse {
 	response := persistentVolumeClaimResponse{PersistentVolumeClaimInfo: *claim}
 	if h.store != nil && claim.BoundNode != "" {
 		if servers, err := h.store.ListServers(); err == nil {
@@ -177,7 +229,16 @@ func (h *K8sHandler) pvcResponse(claim *k8sclient.PersistentVolumeClaimInfo, env
 			}
 		}
 	}
-	response.References = h.pvcReferences(environmentID, claim.Namespace, claim.Name)
+	if h.store != nil && claim.EnvironmentID != 0 {
+		if environment, err := h.store.GetEnvironmentByID(claim.EnvironmentID); err == nil {
+			response.ProjectID = environment.ProjectID
+			response.EnvironmentName = environment.Name
+			if project, err := h.store.GetProject(environment.ProjectID); err == nil {
+				response.ProjectName = project.Name
+			}
+		}
+	}
+	response.References = h.pvcReferences(claim.EnvironmentID, claim.Namespace, claim.Name)
 	return response
 }
 
@@ -205,6 +266,13 @@ func (h *K8sHandler) pvcReferences(environmentID uint, namespace, claimName stri
 				}
 			}
 		}
+		if statefulSets, err := K8s.Clientset.AppsV1().StatefulSets(namespace).List(K8s.Ctx(), metav1.ListOptions{}); err == nil {
+			for index := range statefulSets.Items {
+				if statefulSetClaimReferenced(&statefulSets.Items[index], claimName) {
+					references = append(references, "工作负载："+statefulSets.Items[index].Name)
+				}
+			}
+		}
 	}
 	return references
 }
@@ -220,6 +288,15 @@ func volumeClaimReferenced(volumes []application.VolumeMountSpec, claimName stri
 
 func deploymentClaimReferenced(deployment *appsv1.Deployment, claimName string) bool {
 	for _, volume := range deployment.Spec.Template.Spec.Volumes {
+		if volume.PersistentVolumeClaim != nil && volume.PersistentVolumeClaim.ClaimName == claimName {
+			return true
+		}
+	}
+	return false
+}
+
+func statefulSetClaimReferenced(statefulSet *appsv1.StatefulSet, claimName string) bool {
+	for _, volume := range statefulSet.Spec.Template.Spec.Volumes {
 		if volume.PersistentVolumeClaim != nil && volume.PersistentVolumeClaim.ClaimName == claimName {
 			return true
 		}
