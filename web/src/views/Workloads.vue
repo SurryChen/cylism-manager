@@ -20,13 +20,15 @@
       </div>
       <div v-else class="table-wrap">
         <table class="data-table">
-          <thead><tr><th>名称</th><th>命名空间</th><th>副本</th><th>镜像</th><th>CPU</th><th>内存</th><th>年龄</th><th></th></tr></thead>
+          <thead><tr><th>名称</th><th>命名空间</th><th>副本</th><th>镜像</th><th>挂载</th><th>CPU</th><th>内存</th><th>年龄</th><th></th></tr></thead>
           <tbody>
             <template v-for="d in safeDeployments" :key="d.namespace + '/' + d.name">
               <tr @click="toggleDeployExpand(d)" class="clickable">
                 <td class="cell-primary">{{ d.name }}</td><td>{{ d.namespace }}</td>
                 <td><span :class="d.ready === d.replicas ? 'status-success' : 'status-warning'">{{ d.ready }}/{{ d.replicas }}</span></td>
-                <td>{{ d.images?.[0] || '-' }}</td><td>{{ d.cpu || '-' }}</td><td>{{ d.memory || '-' }}</td><td>{{ d.age }}</td>
+                <td>{{ d.images?.[0] || '-' }}</td>
+                <td><div v-if="d.volume_mounts?.length" class="volume-mount-list"><span v-for="mount in d.volume_mounts" :key="`${mount.claim_name}-${mount.mount_path}`" class="volume-mount">{{ mount.claim_name }} -> {{ mount.mount_path }}</span></div><span v-else>-</span></td>
+                <td>{{ d.cpu || '-' }}</td><td>{{ d.memory || '-' }}</td><td>{{ d.age }}</td>
                 <td>
                   <div class="btn-group action-cell" @click.stop>
                     <button class="btn btn-sm" @click="openScaleDialog(d)">扩缩</button>
@@ -38,7 +40,7 @@
               <!-- expanded pods -->
               <template v-if="expandedDeploy === d.namespace + '/' + d.name">
                 <tr v-for="pod in (deployPods[d.namespace + '/' + d.name] || [])" :key="pod.name" class="pod-row">
-                  <td colspan="8">
+                  <td colspan="9">
                     <div class="pod-subrow">↳ {{ pod.name }} <span :class="pod.status === 'Running' ? 'badge badge-online' : 'badge badge-offline'">{{ pod.status }}</span> {{ displayServerName(pod.node) }} · 重启 {{ pod.restarts }} · {{ pod.ip }}</div>
                   </td>
                 </tr>
@@ -119,12 +121,21 @@
       </div>
       <div v-else class="table-wrap">
         <table class="data-table">
-          <thead><tr><th>名称</th><th>命名空间</th><th>副本</th><th>镜像</th><th>年龄</th><th></th></tr></thead>
+          <thead><tr><th>名称</th><th>命名空间</th><th>副本</th><th>镜像</th><th>挂载</th><th>年龄</th><th></th></tr></thead>
           <tbody>
             <tr v-for="s in safeStatefulsets" :key="s.namespace + '/' + s.name">
               <td class="cell-primary">{{ s.name }}</td><td>{{ s.namespace }}</td>
               <td><span :class="s.ready === s.replicas ? 'status-success' : 'status-warning'">{{ s.ready }}/{{ s.replicas }}</span></td>
-              <td>{{ s.images?.[0] || '-' }}</td><td>{{ s.age }}</td>
+              <td>{{ s.images?.[0] || '-' }}</td>
+              <td>
+                <div v-if="s.volume_mounts?.length" class="volume-mount-list">
+                  <span v-for="mount in s.volume_mounts" :key="`${mount.type}-${mount.claim_name}-${mount.mount_path}`" class="volume-mount">
+                    {{ mount.claim_name }}<template v-if="mount.type === 'volume_claim_template'"> (卷声明模板)</template> -> {{ mount.mount_path }}
+                  </span>
+                </div>
+                <span v-else>-</span>
+              </td>
+              <td>{{ s.age }}</td>
               <td><div class="btn-group action-cell"><button class="btn btn-sm" @click="openStsScaleDialog(s)">扩缩</button></div></td>
             </tr>
           </tbody>
@@ -190,7 +201,7 @@ import { Box, Database, Filter, Layers3, Network, RefreshCw, RotateCcw, Search, 
 import { api } from '../api/index.js'
 import PodTerminal from '../components/PodTerminal.vue'
 
-const activeTab = ref('deployments')
+const activeTab = ref('pods')
 const deployments = ref([])
 const statefulsets = ref([])
 const daemonsets = ref([])
@@ -405,6 +416,7 @@ function openStsScaleDialog(s) {
 .pod-filter-panel { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) auto; align-items: end; gap: var(--space-12); margin-bottom: var(--space-12); padding: var(--space-16); border: 1px solid var(--border-muted); border-radius: var(--radius-control); background: var(--surface-subtle); }.pod-filter-panel .form-label { margin-bottom: 6px; }.pod-restarts-filter { min-height: 38px; white-space: nowrap; }.active-filters { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-bottom: var(--space-12); color: var(--text-muted); font-size: 11px; }.filter-chip { display: inline-flex; align-items: center; gap: 4px; padding: 4px 6px 4px 8px; border: 1px solid var(--border-muted); border-radius: var(--radius-control); background: var(--surface-subtle); color: var(--text-secondary); font-size: 11px; cursor: pointer; }.filter-chip:hover { border-color: var(--action-primary); color: var(--action-primary); }.pod-result-summary { margin-bottom: var(--space-8); color: var(--text-muted); font-size: 11px; }.pod-result-summary strong { color: var(--text-secondary); font-family: var(--font-mono); }
 .pod-filter-empty { min-height: 150px; }
 .pod-list-row .cell-primary small { display: block; margin-top: 3px; color: var(--text-muted); font: 10px/1 var(--font-mono); }.server-name { color: var(--text-primary); font-weight: 600; }.restart-warning { color: var(--warning); font-weight: 700; }.pod-terminal-action { width: 30px; height: 30px; }.is-spinning { animation: spin .8s linear infinite; }@keyframes spin { to { transform: rotate(360deg); } }.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
+.volume-mount-list { display: grid; gap: 4px; min-width: 180px; max-width: 300px; }.volume-mount { overflow-wrap: anywhere; color: var(--text-secondary); font: 11px/1.45 var(--font-mono); }
 .modal-overlay { position: fixed; z-index: 200; inset: 0; display: flex; align-items: center; justify-content: center; background: var(--overlay); backdrop-filter: blur(3px); }
 .modal { min-width: 380px; max-width: 520px; padding: var(--space-20); border: 1px solid var(--border); border-radius: var(--radius-panel); background: var(--surface-raised); box-shadow: var(--shadow); }
 .modal-body h3 { margin: 0 0 var(--space-12); color: var(--text-primary); font-size: 15px; }

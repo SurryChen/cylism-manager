@@ -38,6 +38,7 @@ func setupApplicationRouter() (*gin.Engine, *store.Store) {
 	{
 		applications.GET("", h.ListApplications)
 		applications.POST("", h.CreateApplication)
+		applications.PUT("/:id/workload-kind", h.UpdateWorkloadKind)
 		applications.GET("/:id/deployment-templates", h.ListDeploymentTemplates)
 		applications.POST("/:id/deployment-templates", h.CreateDeploymentTemplate)
 		applications.GET("/:id/deployment-templates/:templateID", h.GetDeploymentTemplate)
@@ -53,6 +54,23 @@ func setupApplicationRouter() (*gin.Engine, *store.Store) {
 	workspace := r.Group("/api/workspace")
 	workspace.GET("/overview", h.WorkspaceOverview)
 	return r, s
+}
+
+func TestApplicationHandlerSetsWorkloadKindBeforeFirstRelease(t *testing.T) {
+	r, s := setupApplicationRouter()
+	app := createApplicationForReleaseRuntimeTest(t, s)
+	originalK8s := K8s
+	K8s = &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset()}
+	defer func() { K8s = originalK8s }()
+
+	response := serve(r, newJSONRequest(http.MethodPut, "/api/applications/1/workload-kind", gin.H{"workload_kind": "statefulset"}))
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "statefulset") {
+		t.Fatalf("unexpected workload kind response: %d %s", response.Code, response.Body.String())
+	}
+	stored, err := s.GetApplication(app.ID)
+	if err != nil || stored.WorkloadKind != application.WorkloadKindStatefulSet {
+		t.Fatalf("expected StatefulSet application kind, got %+v err=%v", stored, err)
+	}
 }
 
 func TestApplicationHandlerGetReleaseIncludesLivePodRuntime(t *testing.T) {

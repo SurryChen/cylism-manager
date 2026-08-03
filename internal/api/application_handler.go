@@ -61,6 +61,10 @@ type applicationEndpointRequest struct {
 	TLSEnabled bool   `json:"tls_enabled"`
 }
 
+type workloadKindRequest struct {
+	WorkloadKind string `json:"workload_kind"`
+}
+
 func NewApplicationHandler(store *store.Store, encKey ...[]byte) *ApplicationHandler {
 	handler := &ApplicationHandler{store: store}
 	if len(encKey) > 0 {
@@ -524,6 +528,72 @@ func (h *ApplicationHandler) GetApplication(c *gin.Context) {
 	}
 	releases, _ := h.store.ListReleases(id)
 	model.Success(c, gin.H{"application": app, "releases": releases})
+}
+
+func (h *ApplicationHandler) UpdateWorkloadKind(c *gin.Context) {
+	if K8s == nil {
+		k8sUnavailable(c)
+		return
+	}
+	applicationID, err := parseID(c.Param("id"))
+	if err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "应用 ID 无效")
+		return
+	}
+	var req workloadKindRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "工作负载类型无效")
+		return
+	}
+	req.WorkloadKind = strings.ToLower(strings.TrimSpace(req.WorkloadKind))
+	if req.WorkloadKind != application.WorkloadKindDeployment && req.WorkloadKind != application.WorkloadKindStatefulSet {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "工作负载类型必须为 Deployment 或 StatefulSet")
+		return
+	}
+	app, err := h.store.GetApplication(applicationID)
+	if err != nil {
+		model.Error(c, http.StatusNotFound, model.CodeNotFound, "应用不存在")
+		return
+	}
+	if app.WorkloadKind == req.WorkloadKind {
+		model.Success(c, app)
+		return
+	}
+	release, err := h.store.GetLatestSuccessfulRelease(app.ID)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		app.WorkloadKind = req.WorkloadKind
+		if err := h.store.UpdateApplication(app); err != nil {
+			model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+			return
+		}
+		model.Success(c, app)
+		return
+	}
+	if err != nil {
+		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		return
+	}
+	var spec application.ReleaseSpec
+	if err := json.Unmarshal([]byte(release.DesiredSpec), &spec); err != nil {
+		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "读取成功发布快照失败")
+		return
+	}
+	context := applicationContextFor(app)
+	context.ReleaseSequence = release.Sequence
+	if err := application.NewKubernetesApplier(K8s).Preflight(c.Request.Context(), context, spec); err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		return
+	}
+	if err := application.NewKubernetesApplier(K8s).MigrateWorkloadKind(c.Request.Context(), context, spec, req.WorkloadKind); err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		return
+	}
+	app.WorkloadKind = req.WorkloadKind
+	if err := h.store.UpdateApplication(app); err != nil {
+		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		return
+	}
+	model.Success(c, app)
 }
 
 func (h *ApplicationHandler) CreateApplication(c *gin.Context) {
@@ -1121,7 +1191,7 @@ func (h *ApplicationHandler) applyApplicationEndpointSpec(app *model.Application
 }
 
 func applicationContextFor(app *model.Application) application.ApplicationContext {
-	return application.ApplicationContext{ProjectID: app.ProjectID, EnvironmentID: app.EnvironmentID, ProjectName: app.Project.Name, EnvironmentName: app.Environment.Name, ApplicationName: app.Name, Namespace: app.Environment.Namespace}
+	return application.ApplicationContext{ProjectID: app.ProjectID, EnvironmentID: app.EnvironmentID, ProjectName: app.Project.Name, EnvironmentName: app.Environment.Name, ApplicationName: app.Name, Namespace: app.Environment.Namespace, WorkloadKind: app.WorkloadKind}
 }
 
 func validateImageRepository(image string) error {
