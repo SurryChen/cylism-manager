@@ -7,6 +7,12 @@ vi.mock('../api/index.js', () => ({
 }))
 
 describe('PersistentVolumes view', () => {
+  it('uses the shared section title bar', () => {
+    const wrapper = mount(PersistentVolumes)
+    expect(wrapper.get('.section-page-header').find('h1').text()).toBe('存储卷')
+    expect(wrapper.find('.section-page-header .page-subtitle').exists()).toBe(false)
+  })
+
   it('creates a ReadWriteOnce PVC in the selected environment', async () => {
     const { api } = await import('../api/index.js')
     api.get.mockImplementation(path => {

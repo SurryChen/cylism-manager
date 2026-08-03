@@ -1,6 +1,6 @@
 <template>
   <div>
-    <div class="page-header">
+    <div class="page-header section-page-header">
       <h1 class="page-title">服务器</h1>
       <button class="btn btn-primary" @click="showAdd = true">+ 添加服务器</button>
     </div>

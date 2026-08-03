@@ -26,6 +26,7 @@ describe('Servers view', () => {
     expect(wrapper.text()).toContain('服务器')
     expect(wrapper.text()).toContain('集群节点已经拆分到“集群节点”页面')
     expect(wrapper.findAll('.tab-btn')).toHaveLength(0)
+    expect(wrapper.get('.section-page-header').find('h1').text()).toBe('服务器')
   })
 
   it('shows server table with new columns', async () => {

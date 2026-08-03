@@ -51,10 +51,8 @@
     </header>
 
     <aside class="app-sidebar" data-testid="desktop-navigation">
-      <div class="sidebar-context"><span>当前模块</span><strong>{{ activeNavGroup.label }}</strong></div>
       <nav class="navigation-groups" aria-label="主导航">
         <section class="navigation-group">
-          <h2>{{ activeNavGroup.label }}</h2>
           <router-link
             v-for="item in activeNavGroup.items"
             :key="item.to"
@@ -93,7 +91,7 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Activity, Boxes, Check, FileText, FolderKanban, Globe, HardDrive, History, LayoutDashboard, Layers3, LogOut, Menu, Orbit, PackagePlus, Palette, Route, Server, Settings, ShieldCheck, Waypoints, X } from 'lucide-vue-next'
+import { Activity, Boxes, Check, FileText, FolderKanban, HardDrive, History, LayoutDashboard, Layers3, LogOut, Menu, Orbit, PackagePlus, Palette, Route, Server, Settings, Waypoints, X } from 'lucide-vue-next'
 import { clearTokens } from './api/index.js'
 import { usePalette } from './composables/usePalette.js'
 
@@ -134,16 +132,11 @@ const navGroups = computed(() => [
     to: '/servers',
     items: [
       { label: '服务器', to: '/servers', icon: Server },
-      { label: '集群节点', to: '/cluster', icon: Waypoints },
-      { label: '节点镜像源', to: '/cluster/registry-mirrors', icon: Boxes },
-      { label: 'Chart 仓库', to: '/cluster/chart-repositories', icon: Layers3 },
-      { label: '存储卷', to: '/cluster/storage', icon: HardDrive },
+      { label: '集群', to: '/cluster', icon: Waypoints },
+      { label: 'Kubernetes 资源', to: '/resources', icon: Boxes },
+      { label: '网络访问', to: '/network', icon: Route },
+      { label: '存储', to: '/storage', icon: HardDrive },
       { label: '监控', to: '/monitoring', icon: Activity },
-      { label: '工作负载', to: '/workloads', icon: Globe },
-      { label: '服务', to: '/services', icon: Boxes },
-      { label: '配置', to: '/configs', icon: Settings },
-      { label: '路由', to: '/routes', icon: Route },
-      { label: '证书', to: '/certs', icon: ShieldCheck },
     ],
   },
   {
