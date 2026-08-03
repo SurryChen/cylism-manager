@@ -2,33 +2,37 @@ package api
 
 import (
 	"context"
-	"fmt"
-	"log"
 	"crypto/md5"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cylism/cylism-manager/internal/crypto"
 	"github.com/cylism/cylism-manager/internal/model"
-	"golang.org/x/crypto/ssh"
 	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/gin-gonic/gin"
+	"golang.org/x/crypto/ssh"
 )
 
 type ServerHandler struct {
-	store  *store.Store
-	encKey []byte
+	store          *store.Store
+	encKey         []byte
+	statsCollector func(*model.Server) (gin.H, error)
 }
 
 func NewServerHandler(s *store.Store, encKey []byte) *ServerHandler {
-	return &ServerHandler{store: s, encKey: encKey}
+	h := &ServerHandler{store: s, encKey: encKey}
+	h.statsCollector = h.collectResourceStats
+	return h
 }
 
 type createServerReq struct {
@@ -49,8 +53,12 @@ func (h *ServerHandler) Create(c *gin.Context) {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, err.Error())
 		return
 	}
-	if req.SSHPort == 0 { req.SSHPort = 22 }
-	if req.SSHAuthType == "" { req.SSHAuthType = "password" }
+	if req.SSHPort == 0 {
+		req.SSHPort = 22
+	}
+	if req.SSHAuthType == "" {
+		req.SSHAuthType = "password"
+	}
 
 	sshKeyHash := ""
 	if req.SSHKey != "" {
@@ -80,7 +88,7 @@ func (h *ServerHandler) List(c *gin.Context) {
 	servers, err := h.store.ListServers()
 	if err != nil {
 		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, err.Error())
-	log.Printf("[ListServers] returned %d servers", len(servers))
+		log.Printf("[ListServers] returned %d servers", len(servers))
 		return
 	}
 	if K8s != nil {
@@ -126,27 +134,42 @@ func (h *ServerHandler) List(c *gin.Context) {
 func (h *ServerHandler) Get(c *gin.Context) {
 	id, _ := strconv.ParseUint(c.Param("id"), 10, 64)
 	server, err := h.store.GetServer(uint(id))
-	if err != nil { model.Error(c, http.StatusNotFound, model.CodeNotFound, "server not found"); return }
+	if err != nil {
+		model.Error(c, http.StatusNotFound, model.CodeNotFound, "server not found")
+		return
+	}
 	model.Success(c, server)
 }
 
 func (h *ServerHandler) Update(c *gin.Context) {
 	id, _ := strconv.ParseUint(c.Param("id"), 10, 64)
 	server, err := h.store.GetServer(uint(id))
-	if err != nil { model.Error(c, http.StatusNotFound, model.CodeNotFound, "server not found"); return }
+	if err != nil {
+		model.Error(c, http.StatusNotFound, model.CodeNotFound, "server not found")
+		return
+	}
 	log.Printf("[UpdateServer] id=%d, old host=%q", id, server.Host)
 
 	var updates map[string]interface{}
 	if err := c.ShouldBindJSON(&updates); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, err.Error()); return
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, err.Error())
+		return
 	}
 	log.Printf("[UpdateServer] request body: %+v", updates)
-	if v, ok := updates["name"]; ok { server.Name = v.(string) }
-	if v, ok := updates["host"]; ok { server.Host = v.(string) }
-	if v, ok := updates["ssh_password"]; ok { enc, _ := crypto.Encrypt(h.encKey, v.(string)); server.SSHPassword = enc }
+	if v, ok := updates["name"]; ok {
+		server.Name = v.(string)
+	}
+	if v, ok := updates["host"]; ok {
+		server.Host = v.(string)
+	}
+	if v, ok := updates["ssh_password"]; ok {
+		enc, _ := crypto.Encrypt(h.encKey, v.(string))
+		server.SSHPassword = enc
+	}
 	if v, ok := updates["ssh_key"]; ok {
 		keyStr := v.(string)
-		enc, _ := crypto.Encrypt(h.encKey, keyStr); server.SSHKey = enc
+		enc, _ := crypto.Encrypt(h.encKey, keyStr)
+		server.SSHKey = enc
 		if keyStr != "" {
 			hh := md5.Sum([]byte(keyStr))
 			server.SSHKeyHash = hex.EncodeToString(hh[:])
@@ -154,12 +177,19 @@ func (h *ServerHandler) Update(c *gin.Context) {
 			server.SSHKeyHash = ""
 		}
 	}
-	if v, ok := updates["ssh_port"]; ok { server.SSHPort = int(v.(float64)) }
-	if v, ok := updates["ssh_user"]; ok { server.SSHUser = v.(string) }
-	if v, ok := updates["ssh_auth_type"]; ok { server.SSHAuthType = v.(string) }
+	if v, ok := updates["ssh_port"]; ok {
+		server.SSHPort = int(v.(float64))
+	}
+	if v, ok := updates["ssh_user"]; ok {
+		server.SSHUser = v.(string)
+	}
+	if v, ok := updates["ssh_auth_type"]; ok {
+		server.SSHAuthType = v.(string)
+	}
 
 	if err := h.store.UpdateServer(server); err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, err.Error()); return
+		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, err.Error())
+		return
 	}
 	log.Printf("[UpdateServer] after update: %+v", server)
 	model.Success(c, server)
@@ -168,7 +198,8 @@ func (h *ServerHandler) Update(c *gin.Context) {
 func (h *ServerHandler) Delete(c *gin.Context) {
 	id, _ := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err := h.store.DeleteServer(uint(id)); err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, err.Error()); return
+		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, err.Error())
+		return
 	}
 	model.SuccessWithMessage(c, nil, "操作成功")
 }
@@ -195,7 +226,6 @@ func (h *ServerHandler) Unbind(c *gin.Context) {
 	model.SuccessWithMessage(c, server, "已解除集群绑定")
 }
 
-
 // Probe SSH 连通性检测 POST /api/servers/:id/probe
 func (h *ServerHandler) Probe(c *gin.Context) {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
@@ -215,12 +245,12 @@ func (h *ServerHandler) Probe(c *gin.Context) {
 
 	if reachable {
 		model.Success(c, gin.H{
-			"reachable":   true,
+			"reachable":  true,
 			"latency_ms": latency,
 		})
 	} else {
 		model.Success(c, gin.H{
-			"reachable":   false,
+			"reachable":  false,
 			"error":      errMsg,
 			"latency_ms": latency,
 		})
@@ -254,7 +284,6 @@ func (h *ServerHandler) Precheck(c *gin.Context) {
 		"all_pass": allPass,
 	})
 }
-
 
 // --- SSH helper functions ---
 
@@ -526,6 +555,119 @@ func (h *ServerHandler) Stats(c *gin.Context) {
 	}
 
 	model.Success(c, result)
+}
+
+// ResourceStats samples every registered server with bounded concurrency. It
+// is used by the server overview so opening the monitoring view cannot create
+// one browser request and one SSH handshake per table row.
+func (h *ServerHandler) ResourceStats(c *gin.Context) {
+	servers, err := h.store.ListServers()
+	if err != nil {
+		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, err.Error())
+		return
+	}
+	results := make([]gin.H, len(servers))
+	semaphore := make(chan struct{}, 3)
+	var group sync.WaitGroup
+	for index := range servers {
+		group.Add(1)
+		go func(index int) {
+			defer group.Done()
+			semaphore <- struct{}{}
+			defer func() { <-semaphore }()
+			started := time.Now()
+			stats, statsErr := h.statsCollector(&servers[index])
+			if stats == nil {
+				stats = gin.H{}
+			}
+			stats["server_id"] = servers[index].ID
+			stats["server_name"] = servers[index].Name
+			stats["sampled_at"] = started.UTC().Format(time.RFC3339)
+			stats["duration_ms"] = time.Since(started).Milliseconds()
+			if statsErr != nil {
+				stats["status"] = "unreachable"
+				stats["error"] = statsErr.Error()
+			} else if stats["status"] == nil {
+				stats["status"] = "ready"
+			}
+			results[index] = stats
+		}(index)
+	}
+	group.Wait()
+	model.Success(c, results)
+}
+
+func (h *ServerHandler) collectResourceStats(server *model.Server) (gin.H, error) {
+	host := server.Host
+	args := buildSSHArgs(server, h.encKey, host)
+	out, err := sshExec(5*time.Second, append(args,
+		"echo 'CPU:' $(top -bn1 | awk '/^%Cpu|^CPU:/{print 100-$8}');"+
+			"echo 'CPU_CORES:' $(nproc);"+
+			"echo 'MEM:' $(free -m | awk '/^Mem:/{print $2,$3,$7}');"+
+			"echo 'DISK:' $(df -BG / | awk 'NR==2{print $2,$3,$4,$5}' | sed 's/G//g');"+
+			"echo 'LOAD:' $(cat /proc/loadavg | awk '{print $1,$2,$3}');"+
+			"echo 'UP:' $(uptime -p | sed 's/up //')"))
+	if err != nil {
+		return gin.H{}, err
+	}
+	return parseServerStats(string(out)), nil
+}
+
+func parseServerStats(raw string) gin.H {
+	result := gin.H{}
+	for _, line := range strings.Split(raw, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "CPU:") {
+			parts := strings.Fields(line)
+			if len(parts) >= 2 {
+				cpuVal := 0.0
+				fmt.Sscanf(parts[1], "%f", &cpuVal)
+				result["cpu_percent"] = cpuVal
+			}
+		} else if strings.HasPrefix(line, "CPU_CORES:") {
+			parts := strings.Fields(line)
+			if len(parts) >= 2 {
+				cores, _ := strconv.Atoi(parts[1])
+				result["cpu_cores"] = cores
+			}
+		} else if strings.HasPrefix(line, "MEM:") {
+			parts := strings.Fields(line)
+			if len(parts) >= 4 {
+				total, _ := strconv.Atoi(parts[1])
+				used, _ := strconv.Atoi(parts[2])
+				avail, _ := strconv.Atoi(parts[3])
+				result["memory_total_mb"] = total
+				result["memory_used_mb"] = used
+				result["memory_available_mb"] = avail
+			}
+		} else if strings.HasPrefix(line, "DISK:") {
+			parts := strings.Fields(line)
+			if len(parts) >= 3 {
+				dTotal, _ := strconv.Atoi(parts[1])
+				dUsed, _ := strconv.Atoi(parts[2])
+				dAvail, _ := strconv.Atoi(parts[3])
+				result["disk_total_gb"] = dTotal
+				result["disk_used_gb"] = dUsed
+				result["disk_available_gb"] = dAvail
+				if len(parts) >= 4 {
+					result["disk_percent"] = parts[4]
+				}
+			}
+		} else if strings.HasPrefix(line, "LOAD:") {
+			parts := strings.Fields(line)
+			if len(parts) >= 4 {
+				l1, _ := strconv.ParseFloat(parts[1], 64)
+				l5, _ := strconv.ParseFloat(parts[2], 64)
+				l15, _ := strconv.ParseFloat(parts[3], 64)
+				result["load_1m"] = l1
+				result["load_5m"] = l5
+				result["load_15m"] = l15
+			}
+		} else if strings.HasPrefix(line, "UP:") {
+			result["uptime"] = strings.TrimPrefix(line, "UP: ")
+		}
+	}
+	return result
 }
 
 // Terminal WebSocket 在线终端 GET /api/servers/:id/terminal

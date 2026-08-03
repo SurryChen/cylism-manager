@@ -1,10 +1,11 @@
 <template>
   <div>
-    <div class="page-header section-page-header">
-      <h1 class="page-title">服务器</h1>
-      <button class="btn btn-primary" @click="showAdd = true">+ 添加服务器</button>
-    </div>
+    <SectionTabsHeader title="服务器" :tabs="sections" :active-tab="activeSection" @select="activeSection = $event">
+      <template #actions><button class="btn btn-primary" @click="showAdd = true">+ 添加服务器</button></template>
+    </SectionTabsHeader>
 
+    <main class="server-content">
+    <template v-if="activeSection === 'configuration'">
     <div class="card section-gap">
       <p class="section-copy">
         这里维护服务器台账、SSH 凭据与连通性。集群节点已经拆分到“集群节点”页面统一查看与操作。
@@ -46,7 +47,6 @@
                   <button v-if="!srv.cluster_role" class="btn btn-sm" @click="startEdit(srv)">编辑</button>
                   <button v-if="!srv.cluster_role" class="btn btn-sm btn-danger" @click="confirmDelete(srv)">删除</button>
                   <button v-if="srv.cluster_role || srv.k8s_node_name" class="btn btn-sm btn-danger" :disabled="unbindingId === srv.id" @click="unbindServer(srv)">{{ unbindingId === srv.id ? '解绑中...' : '解除绑定' }}</button>
-                  <button class="btn btn-sm" @click="openStats(srv.id)">📊</button>
                   <button class="btn btn-sm" @click="openTerminal(srv.id)">💻</button>
                 </div>
               </td>
@@ -55,6 +55,20 @@
         </table>
       </div>
     </div>
+    </template>
+
+    <template v-else>
+      <section class="resource-overview section-gap">
+        <div><h2 class="resource-overview-title">资源概览</h2><p class="resource-overview-meta">{{ resourceSamplingLabel }}</p></div>
+        <div class="btn-group"><button class="icon-button" title="刷新资源数据" aria-label="刷新资源数据" :disabled="resourceStatsLoading" @click="refreshResourceStats"><RefreshCw :size="16" :class="{ 'is-spinning': resourceStatsLoading }" /></button></div>
+      </section>
+      <div v-if="servers.length === 0" class="empty-state"><span class="empty-icon">⬡</span><span class="empty-text">暂无服务器</span></div>
+      <div v-else class="card resource-card">
+        <div v-if="resourceStatsLoading && !resourceStats.length" class="empty-state"><span class="empty-text">正在采集服务器资源...</span></div>
+        <div v-else class="table-wrap"><table class="data-table resource-table"><thead><tr><th>服务器</th><th>采集状态</th><th>CPU</th><th>内存</th><th>磁盘 /</th><th>负载</th><th>运行时间</th><th>采样时间</th></tr></thead><tbody><tr v-for="srv in servers" :key="srv.id" class="resource-row" @click="openStats(srv.id)"><td class="cell-primary">{{ srv.name }}<small class="cell-secondary">{{ srv.host }}</small></td><td><span class="badge" :class="resourceStatusClass(resourceFor(srv.id))">{{ resourceStatusLabel(resourceFor(srv.id)) }}</span><small v-if="resourceFor(srv.id)?.error" class="resource-error">{{ resourceFor(srv.id).error }}</small></td><td><div class="resource-metric"><strong>{{ formatPercent(resourceFor(srv.id)?.cpu_percent) }}</strong><span class="resource-meter"><i :class="resourceLevelClass(resourceFor(srv.id)?.cpu_percent)" :style="{ width: `${metricPercent(resourceFor(srv.id)?.cpu_percent)}%` }" /></span></div></td><td><div class="resource-metric"><strong>{{ formatMB(resourceFor(srv.id)?.memory_used_mb) }} / {{ formatMB(resourceFor(srv.id)?.memory_total_mb) }}</strong><span class="resource-meter"><i :class="resourceLevelClass(memPercent(resourceFor(srv.id)))" :style="{ width: `${metricPercent(memPercent(resourceFor(srv.id)))}%` }" /></span></div></td><td><div class="resource-metric"><strong>{{ resourceFor(srv.id)?.disk_used_gb ?? '-' }} / {{ resourceFor(srv.id)?.disk_total_gb ?? '-' }} GB</strong><span class="resource-meter"><i :class="resourceLevelClass(diskPercent(resourceFor(srv.id)))" :style="{ width: `${metricPercent(diskPercent(resourceFor(srv.id)))}%` }" /></span></div></td><td>{{ formatLoad(resourceFor(srv.id)) }}</td><td>{{ resourceFor(srv.id)?.uptime || '-' }}</td><td>{{ formatSampleTime(resourceFor(srv.id)?.sampled_at) }}</td></tr></tbody></table></div>
+      </div>
+    </template>
+    </main>
 
     <!-- Add Server modal -->
     <div v-if="showAdd" class="overlay" @click.self="showAdd = false">
@@ -205,8 +219,10 @@
 </template>
 
 <script setup>
-import { computed, ref, onMounted, Teleport } from 'vue'
+import { computed, ref, onMounted, onUnmounted, Teleport, watch } from 'vue'
 import { api } from '../api/index.js'
+import { RefreshCw } from 'lucide-vue-next'
+import SectionTabsHeader from '../components/SectionTabsHeader.vue'
 import { Doughnut } from 'vue-chartjs'
 import { Chart as ChartJS, ArcElement, Tooltip } from 'chart.js'
 
@@ -216,6 +232,14 @@ import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
 
 const servers = ref([])
+const activeSection = ref('configuration')
+const sections = [
+  { id: 'configuration', label: '基本配置' },
+  { id: 'monitoring', label: '资源监控' },
+]
+const resourceStats = ref([])
+const resourceStatsLoading = ref(false)
+const resourceStatsUpdatedAt = ref('')
 const showAdd = ref(false)
 const editingId = ref(null)
 const deleteTarget = ref(null)
@@ -231,6 +255,7 @@ const terminalServer = ref(null)
 const terminalEl = ref(null)
 const termStatus = ref(null)
 const termError = ref('')
+let resourcePollTimer
 
 // Chart.js computed ring data
 function chartRingData(percent, label) {
@@ -250,6 +275,12 @@ function chartRingData(percent, label) {
 const cpuChartData = computed(() => chartRingData(statsData.value.cpu_percent, 'CPU'))
 const memChartData = computed(() => chartRingData(memPercent(statsData.value), 'Mem'))
 const diskChartData = computed(() => chartRingData(diskPercent(statsData.value), 'Disk'))
+const resourceStatsByServerID = computed(() => new Map(resourceStats.value.map(stats => [Number(stats.server_id), stats])))
+const resourceSamplingLabel = computed(() => {
+  if (resourceStatsLoading.value) return '正在采集资源数据...'
+  if (!resourceStatsUpdatedAt.value) return '进入此视图后开始采集'
+  return `上次采集 ${formatSampleTime(resourceStatsUpdatedAt.value)} · 每 10 秒自动刷新`
+})
 
 const chartOptions = {
   responsive: true,
@@ -266,9 +297,53 @@ let termInstance = null
 let termWs = null
 const form = ref({ name: '', host: '', ssh_port: 22, ssh_user: 'root', ssh_auth_type: 'password', ssh_password: '', ssh_key: '' })
 
-onMounted(() => { fetchServers() })
+onMounted(() => {
+  fetchServers()
+  document.addEventListener('visibilitychange', syncResourcePolling)
+})
+onUnmounted(() => {
+  stopResourcePolling()
+  document.removeEventListener('visibilitychange', syncResourcePolling)
+  closeTerminal()
+})
+
+watch(activeSection, syncResourcePolling)
 
 async function fetchServers() { try { servers.value = await api.get('/servers') || [] } catch (e) { console.error(e) } }
+
+function resourceFor(serverID) { return resourceStatsByServerID.value.get(Number(serverID)) || null }
+function metricPercent(value) { return Math.min(100, Math.max(0, Number(value) || 0)) }
+function formatPercent(value) { return value == null ? '-' : `${metricPercent(value).toFixed(1)}%` }
+function resourceLevelClass(value) { const percent = metricPercent(value); return percent >= 90 ? 'is-danger' : percent >= 70 ? 'is-warning' : 'is-ok' }
+function resourceStatusClass(stats) { return stats?.status === 'ready' ? 'badge-online' : stats?.status === 'unreachable' ? 'badge-danger' : 'badge-deploying' }
+function resourceStatusLabel(stats) { return stats?.status === 'ready' ? '已采集' : stats?.status === 'unreachable' ? '不可达' : '等待采集' }
+function formatLoad(stats) { if (!stats?.load_1m && stats?.load_1m !== 0) return '-'; const cores = Number(stats.cpu_cores) || 0; return cores ? `${Number(stats.load_1m).toFixed(2)} / ${cores} 核` : Number(stats.load_1m).toFixed(2) }
+function formatSampleTime(value) { if (!value) return '-'; const date = new Date(value); return Number.isNaN(date.getTime()) ? '-' : date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) }
+
+async function refreshResourceStats() {
+  if (resourceStatsLoading.value) return
+  resourceStatsLoading.value = true
+  try {
+    resourceStats.value = await api.get('/servers/resource-stats') || []
+    resourceStatsUpdatedAt.value = new Date().toISOString()
+  } catch (e) {
+    console.error(e)
+  } finally {
+    resourceStatsLoading.value = false
+  }
+}
+
+function stopResourcePolling() {
+  if (resourcePollTimer) window.clearInterval(resourcePollTimer)
+  resourcePollTimer = undefined
+}
+
+function syncResourcePolling() {
+  stopResourcePolling()
+  if (activeSection.value !== 'monitoring' || document.hidden) return
+  refreshResourceStats()
+  resourcePollTimer = window.setInterval(refreshResourceStats, 10000)
+}
 
 async function addServer() {
   try {
@@ -626,6 +701,24 @@ function resetForm() { form.value = { name: '', host: '', ssh_port: 22, ssh_user
   text-align: center;
   font-size: 12px;
   color: var(--text-secondary);
+}
+.server-content { margin-top: var(--space-20); }
+.resource-overview { display: flex; align-items: center; justify-content: space-between; gap: var(--space-16); }
+.resource-overview-title { margin: 0; color: var(--text-primary); font-size: 16px; }
+.resource-overview-meta { margin: 4px 0 0; color: var(--text-muted); font-size: 11px; }
+.resource-card { padding: 0; }
+.resource-row { cursor: pointer; }
+.resource-row:hover { background: var(--surface-hover); }
+.resource-metric { display: grid; min-width: 130px; gap: 6px; }
+.resource-metric strong { color: var(--text-secondary); font-size: 11px; font-weight: 600; white-space: nowrap; }
+.resource-meter { display: block; width: 100%; height: 4px; overflow: hidden; border-radius: 2px; background: var(--surface-subtle); }
+.resource-meter i { display: block; height: 100%; border-radius: inherit; background: var(--success); }
+.resource-meter i.is-warning { background: var(--warning); }
+.resource-meter i.is-danger { background: var(--danger); }
+.resource-error { display: block; max-width: 170px; margin-top: 3px; overflow: hidden; color: var(--danger); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 640px) {
+  .resource-overview { align-items: flex-start; }
+  .resource-metric { min-width: 116px; }
 }
 
 </style>

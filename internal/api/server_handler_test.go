@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -24,6 +25,7 @@ func setupServerRouter() (*gin.Engine, *store.Store) {
 	{
 		servers.POST("", h.Create)
 		servers.GET("", h.List)
+		servers.GET("/resource-stats", h.ResourceStats)
 		servers.GET("/:id", h.Get)
 		servers.PUT("/:id", h.Update)
 		servers.DELETE("/:id", h.Delete)
@@ -32,6 +34,37 @@ func setupServerRouter() (*gin.Engine, *store.Store) {
 		servers.POST("/:id/precheck", h.Precheck)
 	}
 	return r, s
+}
+
+func TestServerHandlerResourceStatsReturnsPerServerSuccessAndFailure(t *testing.T) {
+	r, s := setupServerRouter()
+	if err := s.CreateServer(&model.Server{Name: "ready", Host: "10.0.0.1"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CreateServer(&model.Server{Name: "offline", Host: "10.0.0.2"}); err != nil {
+		t.Fatal(err)
+	}
+	h := NewServerHandler(s, make([]byte, 32))
+	h.statsCollector = func(server *model.Server) (gin.H, error) {
+		if server.Name == "offline" {
+			return nil, fmt.Errorf("SSH connection timed out")
+		}
+		return gin.H{"cpu_percent": 42.5, "memory_total_mb": 1024}, nil
+	}
+	r = gin.New()
+	r.GET("/api/servers/resource-stats", h.ResourceStats)
+
+	w := serve(r, newJSONRequest(http.MethodGet, "/api/servers/resource-stats", nil))
+	if w.Code != http.StatusOK || !bytes.Contains(w.Body.Bytes(), []byte(`"status":"ready"`)) || !bytes.Contains(w.Body.Bytes(), []byte(`"status":"unreachable"`)) || !bytes.Contains(w.Body.Bytes(), []byte(`"server_id"`)) {
+		t.Fatalf("unexpected resource stats response: %d %s", w.Code, w.Body.String())
+	}
+}
+
+func TestParseServerStats(t *testing.T) {
+	stats := parseServerStats("CPU: 42.5\nCPU_CORES: 4\nMEM: 8192 4096 3072\nDISK: 40 12 28 30%\nLOAD: 1.25 0.75 0.50\nUP: 3 days")
+	if stats["cpu_percent"] != 42.5 || stats["cpu_cores"] != 4 || stats["memory_total_mb"] != 8192 || stats["disk_used_gb"] != 12 || stats["load_1m"] != 1.25 || stats["uptime"] != "3 days" {
+		t.Fatalf("unexpected parsed stats: %#v", stats)
+	}
 }
 
 func newJSONRequest(method, path string, body interface{}) *http.Request {
