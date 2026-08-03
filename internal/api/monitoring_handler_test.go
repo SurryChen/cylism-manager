@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -23,8 +24,47 @@ func setupMonitoringRouter(handler *MonitoringHandler) *gin.Engine {
 	group.POST("/install", handler.Install)
 	group.DELETE("", handler.Uninstall)
 	group.GET("/query", handler.Query)
+	group.GET("/query-range", handler.QueryRange)
 	group.GET("/targets", handler.Targets)
 	return router
+}
+
+func TestMonitoringRangeQueryUsesBoundedRange(t *testing.T) {
+	original := K8s
+	K8s = &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(
+		&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "cylism-victoria-metrics", Namespace: "monitoring"}, Status: appsv1.DeploymentStatus{AvailableReplicas: 1}},
+		&appsv1.DaemonSet{ObjectMeta: metav1.ObjectMeta{Name: "cylism-node-exporter", Namespace: "monitoring"}, Status: appsv1.DaemonSetStatus{DesiredNumberScheduled: 1, NumberAvailable: 1}},
+	)}
+	defer func() { K8s = original }()
+
+	handler := NewMonitoringHandler()
+	handler.query = func(_ context.Context, path string, values url.Values) (interface{}, error) {
+		if path != "/api/v1/query_range" || values.Get("query") != "up" || values.Get("step") != "30" {
+			t.Fatalf("unexpected range query: %s %#v", path, values)
+		}
+		start, _ := strconv.ParseInt(values.Get("start"), 10, 64)
+		end, _ := strconv.ParseInt(values.Get("end"), 10, 64)
+		if end-start != 3600 {
+			t.Fatalf("expected one hour range, got %d seconds", end-start)
+		}
+		return map[string]interface{}{"resultType": "matrix", "result": []interface{}{}}, nil
+	}
+
+	response := serve(setupMonitoringRouter(handler), newJSONRequest(http.MethodGet, "/api/monitoring/query-range?query=up&range=1h", nil))
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "matrix") {
+		t.Fatalf("unexpected range response: %s", response.Body.String())
+	}
+}
+
+func TestMonitoringRangeQueryRejectsUnknownRange(t *testing.T) {
+	original := K8s
+	K8s = &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset()}
+	defer func() { K8s = original }()
+
+	response := serve(setupMonitoringRouter(NewMonitoringHandler()), newJSONRequest(http.MethodGet, "/api/monitoring/query-range?query=up&range=30d", nil))
+	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "时间范围") {
+		t.Fatalf("unexpected range validation response: %s", response.Body.String())
+	}
 }
 
 func TestMonitoringInstallCreatesHostPathInstance(t *testing.T) {

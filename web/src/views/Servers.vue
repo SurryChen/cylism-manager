@@ -58,12 +58,12 @@
     </template>
 
     <template v-else>
-      <section class="resource-overview section-gap">
+      <section class="card resource-overview section-gap">
         <div><h2 class="resource-overview-title">资源概览</h2><p class="resource-overview-meta">{{ resourceSamplingLabel }}</p></div>
         <div class="btn-group"><button class="icon-button" title="刷新资源数据" aria-label="刷新资源数据" :disabled="resourceStatsLoading" @click="refreshResourceStats"><RefreshCw :size="16" :class="{ 'is-spinning': resourceStatsLoading }" /></button></div>
       </section>
       <div v-if="servers.length === 0" class="empty-state"><span class="empty-icon">⬡</span><span class="empty-text">暂无服务器</span></div>
-      <div v-else class="card resource-card">
+      <div v-else class="card">
         <div v-if="resourceStatsLoading && !resourceStats.length" class="empty-state"><span class="empty-text">正在采集服务器资源...</span></div>
         <div v-else class="table-wrap"><table class="data-table resource-table"><thead><tr><th>服务器</th><th>采集状态</th><th>CPU</th><th>内存</th><th>磁盘 /</th><th>负载</th><th>运行时间</th><th>采样时间</th></tr></thead><tbody><tr v-for="srv in servers" :key="srv.id" class="resource-row" @click="openStats(srv.id)"><td class="cell-primary">{{ srv.name }}<small class="cell-secondary">{{ srv.host }}</small></td><td><span class="badge" :class="resourceStatusClass(resourceFor(srv.id))">{{ resourceStatusLabel(resourceFor(srv.id)) }}</span><small v-if="resourceFor(srv.id)?.error" class="resource-error">{{ resourceFor(srv.id).error }}</small></td><td><div class="resource-metric"><strong>{{ formatPercent(resourceFor(srv.id)?.cpu_percent) }}</strong><span class="resource-meter"><i :class="resourceLevelClass(resourceFor(srv.id)?.cpu_percent)" :style="{ width: `${metricPercent(resourceFor(srv.id)?.cpu_percent)}%` }" /></span></div></td><td><div class="resource-metric"><strong>{{ formatMB(resourceFor(srv.id)?.memory_used_mb) }} / {{ formatMB(resourceFor(srv.id)?.memory_total_mb) }}</strong><span class="resource-meter"><i :class="resourceLevelClass(memPercent(resourceFor(srv.id)))" :style="{ width: `${metricPercent(memPercent(resourceFor(srv.id)))}%` }" /></span></div></td><td><div class="resource-metric"><strong>{{ resourceFor(srv.id)?.disk_used_gb ?? '-' }} / {{ resourceFor(srv.id)?.disk_total_gb ?? '-' }} GB</strong><span class="resource-meter"><i :class="resourceLevelClass(diskPercent(resourceFor(srv.id)))" :style="{ width: `${metricPercent(diskPercent(resourceFor(srv.id)))}%` }" /></span></div></td><td>{{ formatLoad(resourceFor(srv.id)) }}</td><td>{{ resourceFor(srv.id)?.uptime || '-' }}</td><td>{{ formatSampleTime(resourceFor(srv.id)?.sampled_at) }}</td></tr></tbody></table></div>
       </div>
@@ -706,7 +706,6 @@ function resetForm() { form.value = { name: '', host: '', ssh_port: 22, ssh_user
 .resource-overview { display: flex; align-items: center; justify-content: space-between; gap: var(--space-16); }
 .resource-overview-title { margin: 0; color: var(--text-primary); font-size: 16px; }
 .resource-overview-meta { margin: 4px 0 0; color: var(--text-muted); font-size: 11px; }
-.resource-card { padding: 0; }
 .resource-row { cursor: pointer; }
 .resource-row:hover { background: var(--surface-hover); }
 .resource-metric { display: grid; min-width: 130px; gap: 6px; }

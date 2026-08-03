@@ -68,6 +68,7 @@ describe('Servers view', () => {
     expect(wrapper.text()).toContain('资源概览')
     expect(wrapper.text()).toContain('42.5%')
     expect(wrapper.text()).toContain('不可达')
+    expect(wrapper.find('.resource-overview').classes()).toContain('card')
     wrapper.unmount()
   })
 

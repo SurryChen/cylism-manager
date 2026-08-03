@@ -17,10 +17,11 @@ beforeEach(() => {
 })
 
 describe('Monitoring view', () => {
-  it('uses the shared section title bar', () => {
+  it('uses the shared monitoring workspace header', () => {
     const wrapper = mount(Monitoring)
-    expect(wrapper.get('.section-page-header').find('h1').text()).toBe('集群监控')
-    expect(wrapper.find('.section-page-header .page-subtitle').exists()).toBe(false)
+    expect(wrapper.get('.section-tabs-header').find('h1').text()).toBe('集群监控')
+    expect(wrapper.findAll('.section-tab')).toHaveLength(4)
+    expect(wrapper.get('.section-tab.is-active').text()).toBe('概览')
   })
 
   it('offers an installation form with a ready node and hostPath data directory', async () => {
@@ -32,5 +33,26 @@ describe('Monitoring view', () => {
     expect(wrapper.text()).toContain('重新检测')
     expect(wrapper.find('select').text()).toContain('node-a')
     expect(wrapper.find('input[placeholder="/data/victoria-metrics"]').element.value).toBe('/data/victoria-metrics')
+  })
+
+  it('shows historical node trends and switches to the node view', async () => {
+    apiMocks.get.mockImplementation(path => {
+      if (path === '/monitoring/status') return Promise.resolve({ state: 'ready', message: '指标采集正常', node_name: 'node-a', data_path: '/data/victoria-metrics', retention_days: 14, node_exporter_ready: 1, node_exporter_desired: 1 })
+      if (path === '/nodes') return Promise.resolve([{ name: 'node-a', ready: true }])
+      if (path === '/monitoring/targets') return Promise.resolve({ activeTargets: [{ health: 'up' }] })
+      if (path.startsWith('/monitoring/query-range')) return Promise.resolve({ resultType: 'matrix', result: [{ metric: { node: 'node-a' }, values: [[1785000000, '42.5']] }] })
+      return Promise.resolve({ result: [] })
+    })
+
+    const wrapper = mount(Monitoring)
+    await flushPromises()
+
+    expect(wrapper.findAll('.metric-trend-chart')).toHaveLength(4)
+    expect(wrapper.text()).toContain('最高 CPU')
+    await wrapper.get('.section-tab:nth-child(2)').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.node-table').exists()).toBe(true)
+    expect(wrapper.text()).toContain('node-a')
+    wrapper.unmount()
   })
 })
