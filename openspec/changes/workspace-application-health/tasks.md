@@ -1,0 +1,3 @@
+- [x] Add workspace application summaries and runtime aggregation.
+- [x] Update workspace table, metrics and recent-release time display.
+- [x] Add tests and verify builds.
