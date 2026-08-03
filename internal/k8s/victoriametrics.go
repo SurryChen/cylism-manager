@@ -1,6 +1,7 @@
 package k8s
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"path/filepath"
 	"strconv"
@@ -280,7 +281,7 @@ func upsertVictoriaMetricsDeployment(c *Client, config VictoriaMetricsConfig) er
 	deployment := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: victoriaMetricsName, Namespace: victoriaMetricsNamespace, Labels: victoriaMetricsLabels()}, Spec: appsv1.DeploymentSpec{
 		Replicas: &replicas,
 		Selector: &metav1.LabelSelector{MatchLabels: victoriaMetricsLabels()},
-		Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: victoriaMetricsLabels()}, Spec: corev1.PodSpec{
+		Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: victoriaMetricsLabels(), Annotations: map[string]string{"cylism.io/scrape-config-hash": victoriaMetricsScrapeConfigHash()}}, Spec: corev1.PodSpec{
 			NodeSelector:       map[string]string{corev1.LabelHostname: config.NodeName},
 			ServiceAccountName: victoriaMetricsName,
 			Volumes: []corev1.Volume{
@@ -441,6 +442,8 @@ scrape_configs:
       - source_labels: [__meta_kubernetes_node_name]
         target_label: __metrics_path__
         replacement: /api/v1/nodes/${1}/proxy/metrics
+      - source_labels: [__meta_kubernetes_node_name]
+        target_label: node
   - job_name: kubernetes-cadvisor
     scheme: https
     kubernetes_sd_configs:
@@ -454,6 +457,8 @@ scrape_configs:
       - source_labels: [__meta_kubernetes_node_name]
         target_label: __metrics_path__
         replacement: /api/v1/nodes/${1}/proxy/metrics/cadvisor
+      - source_labels: [__meta_kubernetes_node_name]
+        target_label: node
   - job_name: node-exporter
     kubernetes_sd_configs:
       - role: pod
@@ -464,7 +469,14 @@ scrape_configs:
       - source_labels: [__meta_kubernetes_pod_host_ip]
         target_label: __address__
         replacement: ${1}:9100
+      - source_labels: [__meta_kubernetes_pod_node_name]
+        target_label: node
 `
+}
+
+func victoriaMetricsScrapeConfigHash() string {
+	checksum := sha256.Sum256([]byte(victoriaMetricsScrapeConfig()))
+	return fmt.Sprintf("%x", checksum[:])
 }
 
 func deploymentStatusMessage(deployment *appsv1.Deployment) string {

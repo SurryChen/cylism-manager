@@ -35,6 +35,9 @@ func TestInstallVictoriaMetricsCreatesHostnameSelectedHostPathDeployment(t *test
 	if deployment.Spec.Template.Spec.NodeName != "" || deployment.Spec.Template.Spec.NodeSelector[corev1.LabelHostname] != "node-a" {
 		t.Fatalf("expected hostname node selector, got %#v", deployment.Spec.Template.Spec)
 	}
+	if deployment.Spec.Template.Annotations["cylism.io/scrape-config-hash"] == "" {
+		t.Fatalf("expected scrape configuration checksum annotation: %#v", deployment.Spec.Template.Annotations)
+	}
 	volume := deployment.Spec.Template.Spec.Volumes[0]
 	if volume.HostPath == nil || volume.HostPath.Path != "/data/victoria-metrics" {
 		t.Fatalf("expected hostPath volume, got %#v", volume)
@@ -46,8 +49,12 @@ func TestInstallVictoriaMetricsCreatesHostnameSelectedHostPathDeployment(t *test
 	if _, err := client.Clientset.CoreV1().Services(victoriaMetricsNamespace).Get(t.Context(), victoriaMetricsName, metav1.GetOptions{}); err != nil {
 		t.Fatalf("expected service: %v", err)
 	}
-	if _, err := client.Clientset.CoreV1().ConfigMaps(victoriaMetricsNamespace).Get(t.Context(), victoriaMetricsName+"-scrape", metav1.GetOptions{}); err != nil {
+	scrapeConfig, err := client.Clientset.CoreV1().ConfigMaps(victoriaMetricsNamespace).Get(t.Context(), victoriaMetricsName+"-scrape", metav1.GetOptions{})
+	if err != nil {
 		t.Fatalf("expected scrape config: %v", err)
+	}
+	if !strings.Contains(scrapeConfig.Data["scrape.yml"], "target_label: node") {
+		t.Fatalf("expected scrape config to retain Kubernetes node labels: %s", scrapeConfig.Data["scrape.yml"])
 	}
 	nodeExporter, err := client.Clientset.AppsV1().DaemonSets(victoriaMetricsNamespace).Get(t.Context(), nodeExporterName, metav1.GetOptions{})
 	if err != nil {

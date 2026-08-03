@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -15,6 +16,16 @@ import (
 )
 
 const maxPromQLLength = 2048
+
+var monitoringRanges = map[string]struct {
+	window time.Duration
+	step   time.Duration
+}{
+	"1h":  {window: time.Hour, step: 30 * time.Second},
+	"6h":  {window: 6 * time.Hour, step: 2 * time.Minute},
+	"24h": {window: 24 * time.Hour, step: 5 * time.Minute},
+	"7d":  {window: 7 * 24 * time.Hour, step: 30 * time.Minute},
+}
 
 type monitoringQueryFunc func(context.Context, string, url.Values) (interface{}, error)
 
@@ -83,6 +94,41 @@ func (h *MonitoringHandler) Query(c *gin.Context) {
 	result, err := h.query(c.Request.Context(), "/api/v1/query", url.Values{"query": []string{query}})
 	if err != nil {
 		model.Error(c, http.StatusBadGateway, model.CodeK8sAPIError, "查询 VictoriaMetrics 失败: "+err.Error())
+		return
+	}
+	model.Success(c, result)
+}
+
+// QueryRange exposes a bounded set of history windows for dashboard charts.
+func (h *MonitoringHandler) QueryRange(c *gin.Context) {
+	if K8s == nil {
+		k8sUnavailable(c)
+		return
+	}
+	query := strings.TrimSpace(c.Query("query"))
+	if query == "" || len(query) > maxPromQLLength {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "PromQL 查询不能为空且不能超过 2048 个字符")
+		return
+	}
+	rangeSpec, ok := monitoringRanges[c.DefaultQuery("range", "6h")]
+	if !ok {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "时间范围仅支持 1h、6h、24h 或 7d")
+		return
+	}
+	status := K8s.VictoriaMetricsStatus()
+	if status.State != k8s.VictoriaMetricsStateReady {
+		model.Error(c, http.StatusConflict, model.CodeConflict, "VictoriaMetrics 尚未就绪")
+		return
+	}
+	end := time.Now().UTC()
+	result, err := h.query(c.Request.Context(), "/api/v1/query_range", url.Values{
+		"query": []string{query},
+		"start": []string{strconv.FormatInt(end.Add(-rangeSpec.window).Unix(), 10)},
+		"end":   []string{strconv.FormatInt(end.Unix(), 10)},
+		"step":  []string{strconv.FormatInt(int64(rangeSpec.step.Seconds()), 10)},
+	})
+	if err != nil {
+		model.Error(c, http.StatusBadGateway, model.CodeK8sAPIError, "查询 VictoriaMetrics 历史指标失败: "+err.Error())
 		return
 	}
 	model.Success(c, result)
