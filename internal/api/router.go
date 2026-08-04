@@ -108,6 +108,14 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 		registryProxy.POST("/deploy", registryProxyHandler.Deploy)
 		registryProxy.POST("/cleanup", registryProxyHandler.Cleanup)
 	}
+	registryProxies := apiGroup.Group("/registry-proxies")
+	{
+		registryProxies.GET("", registryProxyHandler.List)
+		registryProxies.POST("", registryProxyHandler.Deploy)
+		registryProxies.PUT("/:id", registryProxyHandler.Deploy)
+		registryProxies.POST("/:id/cleanup", registryProxyHandler.Cleanup)
+		registryProxies.POST("/:id/migrate-resource-name", registryProxyHandler.MigrateResourceName)
+	}
 	chartRepositories := apiGroup.Group("/chart-repositories")
 	{
 		h := NewChartRepositoryHandler(s)
@@ -276,6 +284,7 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 	{
 		k8sGroup.GET("/dashboard", k8sHandler.Dashboard)
 		k8sGroup.GET("/namespaces", k8sHandler.ListNamespaces)
+		k8sGroup.GET("/namespace-names", k8sHandler.ListNamespaceNames)
 		k8sGroup.POST("/namespaces", k8sHandler.CreateNamespace)
 		k8sGroup.PATCH("/namespaces/:name", k8sHandler.UpdateNamespace)
 		k8sGroup.DELETE("/namespaces/:name", k8sHandler.DeleteNamespace)
@@ -312,6 +321,7 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 		k8sGroup.GET("/secrets/:namespace/:name", k8sHandler.GetSecret)
 		k8sGroup.GET("/storage-classes", k8sHandler.ListStorageClasses)
 		k8sGroup.GET("/persistent-volume-claims", k8sHandler.ListPersistentVolumeClaims)
+		k8sGroup.GET("/persistent-volume-claims/usage", k8sHandler.ListPersistentVolumeClaimUsage)
 		k8sGroup.POST("/persistent-volume-claims", k8sHandler.CreatePersistentVolumeClaim)
 		k8sGroup.GET("/persistent-volume-migrations", k8sHandler.ListPersistentVolumeMigrations)
 		k8sGroup.GET("/persistent-volume-migrations/:id", k8sHandler.GetPersistentVolumeMigration)

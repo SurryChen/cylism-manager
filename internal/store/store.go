@@ -843,6 +843,18 @@ func (s *Store) GetRegistryProxy() (*model.RegistryProxy, error) {
 	return &proxy, err
 }
 
+func (s *Store) GetRegistryProxyByID(id uint) (*model.RegistryProxy, error) {
+	var proxy model.RegistryProxy
+	err := s.db.First(&proxy, id).Error
+	return &proxy, err
+}
+
+func (s *Store) ListRegistryProxies() ([]model.RegistryProxy, error) {
+	var proxies []model.RegistryProxy
+	err := s.db.Order("created_at asc").Find(&proxies).Error
+	return proxies, err
+}
+
 func (s *Store) SaveRegistryProxy(proxy *model.RegistryProxy) error {
 	return s.db.Save(proxy).Error
 }

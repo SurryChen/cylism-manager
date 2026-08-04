@@ -51,6 +51,12 @@ The system SHALL classify platform-owned Alertmanager and VictoriaMetrics PVCs a
 - **AND** the UI provides an owner-specific navigation action to monitoring or alerting settings
 - **AND** the UI does not render generic create, edit, resize, delete, backup, import, restore or migration controls for those claims
 
+#### Scenario: Observe local PVC data usage
+- **WHEN** an administrator opens or refreshes cluster storage inventory
+- **THEN** the system asynchronously reports directory usage for each Bound local-path or hostPath PVC whose node has a registered SSH server
+- **AND** the inventory remains usable when a node is unavailable, a PVC is not local, or usage collection fails
+- **AND** the UI shows collected usage against the PVC requested capacity and renders the infrastructure monitoring link without an underline
+
 #### Scenario: Reject generic operation for infrastructure PVC
 - **WHEN** a caller invokes a generic PVC create, update, resize, delete, backup, import, restore or migration API for an Alertmanager or VictoriaMetrics infrastructure PVC
 - **THEN** the API rejects the operation with an error explaining that the PVC is managed by the corresponding infrastructure component

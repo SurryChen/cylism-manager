@@ -1,25 +1,25 @@
 ## 1. Persistent configuration and validation
 
-- [ ] 1.1 Add failing Store/model tests for one managed proxy configuration and maintenance status persistence.
-- [ ] 1.2 Implement configuration validation for cluster node, private/Tailscale endpoint, NodePort, volume limit, cleanup threshold and interval.
+- [x] 1.1 Extend the proxy model and store with identity, Registry, upstream URL and resource name fields.
+- [x] 1.2 Validate Registry/upstream pairing, private/Tailscale endpoint, NodePort, cache limit and cleanup interval.
+- [x] 1.3 Reject NodePort conflicts with another managed proxy instance.
 
 ## 2. Kubernetes proxy lifecycle
 
-- [ ] 2.1 Add failing renderer tests for the Registry Deployment, `emptyDir` limit, NodePort Service, labels and Docker Hub upstream configuration.
-- [ ] 2.2 Implement apply, readiness inspection, deletion and status collection for managed proxy resources.
-- [ ] 2.3 Add failing maintenance tests for cache measurement, threshold cleanup, periodic cleanup and inspection failure.
-- [ ] 2.4 Implement background maintenance with pod exec measurement and safe Pod replacement.
+- [x] 2.1 Render independent Deployment and NodePort Service resources for each proxy instance.
+- [x] 2.2 Set each Deployment's pull-through upstream from the configured Registry.
+- [x] 2.3 Preserve legacy Docker Hub resource naming and clear cache by replacing only the selected proxy Pod.
+- [x] 2.4 Add an explicit, interruptible migration from the legacy Docker Hub resource name to the per-instance naming scheme.
 
-## 3. API, mirror application and UI
+## 3. API and UI
 
-- [ ] 3.1 Add REST handler tests for configuration CRUD, status, deploy, cleanup and selected-node mirror application.
-- [ ] 3.2 Implement handlers and integrate the ready proxy endpoint with node registry mirror rendering.
-- [ ] 3.3 Add registry mirror UI controls for proxy configuration, maintenance settings, lifecycle progress and status.
-- [ ] 3.4 Add frontend tests for configuration validation and maintenance status presentation.
+- [x] 3.1 Add list, create, update and per-instance cleanup REST endpoints while retaining the legacy Docker Hub endpoints.
+- [x] 3.2 Replace the single Docker Hub panel with multiple Registry Proxy entries and per-instance configuration.
+- [x] 3.3 Add handler and UI coverage for independent `registry.k8s.io` proxy creation.
 
 ## 4. Verification
 
-- [ ] 4.1 Run focused Go tests and frontend tests after each task.
-- [ ] 4.2 Run `go test ./...`, `go build ./...`, `npm --prefix web test -- --run`, and `npm --prefix web run build`.
-- [ ] 4.3 Update RBAC only for required missing permissions and verify `git diff --check`.
-- [ ] 4.4 Submit sec-code security scans for every modified business code file.
+- [x] 4.1 Run focused Go and frontend tests.
+- [x] 4.2 Run full Go tests, build, frontend tests and frontend build.
+- [x] 4.3 Run strict OpenSpec validation and `git diff --check`.
+- [ ] 4.4 Submit sec-code security scans for modified business code files.

@@ -1,43 +1,39 @@
 ## Context
 
-`registry:2` 的 pull-through cache 代理 Docker Hub 时必须使用本地 storage 保存运行期 manifest 与 blob。完全无状态的 HTTP 反向代理会遇到 Docker Hub token、重定向与 CDN 链路，无法可靠作为 K3s 的镜像源。
+`registry:2` pull-through cache 的一个实例只能可靠代理一个上游 Registry。Docker Hub 还使用特殊的认证端点，因此其上游应为 `https://registry-1.docker.io`，不能被 `registry.k8s.io` 的请求复用。
 
-平台已能通过 SSH 向节点写入 `registries.yaml`，并具有 `pods/exec`、Deployment 和 Pod 的管理权限。K3s 节点需要一个主机侧可访问的稳定端点，Kubernetes ClusterIP 域名不能作为宿主机镜像拉取端点。
+K3s 节点需要从主机侧访问稳定端点，因此使用指定节点的私网/Tailscale IP 与 NodePort，而不是 ClusterIP Service 地址。
 
 ## Decisions
 
-### 1. Registry Distribution 临时缓存代理
+### 1. 每个 Registry 使用独立代理实例
 
-平台在指定节点部署 `registry:2`，配置 `REGISTRY_PROXY_REMOTEURL=https://registry-1.docker.io`。缓存存储在 `emptyDir`，不绑定 PVC 或 hostPath；Pod 被替换后全部缓存自动删除。
+每个数据库记录拥有独立的 Kubernetes 资源名 `cylism-registry-proxy-<id>`。Deployment 的 `REGISTRY_PROXY_REMOTEURL` 来自该实例的上游配置，Service 使用该实例的 NodePort。这样 `docker.io` 与 `registry.k8s.io` 不会共享上游或缓存。
 
-该选择保留完整 Docker Registry v2 协议与 Docker Hub 鉴权流程，避免节点直接依赖不稳定的第三方镜像站。
+升级前的单例记录缺少 Registry、上游和资源名时，平台补齐为 Docker Hub 并识别其旧资源名 `cylism-registry-proxy`。用户可显式迁移：先删除旧 Service 释放 NodePort，再删除旧 Deployment，最后以 `cylism-registry-proxy-<id>` 重建同配置资源。入口地址和端口保持不变，但代理会短暂中断。
 
-### 2. 受控 NodePort 私网暴露
+### 2. 受限的上游和入口配置
 
-代理使用固定范围内的 NodePort 并要求用户提供节点间可访问的内网或 Tailscale 地址。平台将该地址写入 `docker.io` 镜像源配置。UI 明确提示必须使用私网地址，并拒绝公网地址、环回地址和空地址。
+Registry 必须是仓库域名，入口必须是可路由的私网或 Tailscale IP。上游必须是无路径、无认证信息的 HTTPS 地址；除 Docker Hub 外，上游域名必须等于 Registry 域名，避免将一个代理误用到不兼容的上游。
 
-NodePort 允许目标节点外的 K3s 节点访问代理。网络隔离由宿主机防火墙或 Tailnet ACL 负责；平台不将它配置为 Ingress 或公网域名。
+创建或更新时，平台会拒绝已被另一 Registry Proxy 使用的 NodePort。
 
-### 3. 安全的缓存清理采用 Pod 重建
+### 3. 临时缓存和安全清理
 
-平台按配置的检查间隔通过 `pods/exec` 在代理容器内执行只读的 `du -sb /var/lib/registry`。当缓存达到阈值，或距上次清理超过周期，平台删除代理 Pod，由 Deployment 重建。`emptyDir` 随旧 Pod 删除，避免并发删除 Registry 内部文件。
+每个实例使用带大小上限的 `emptyDir`。用户触发清理或定期清理到期时，平台删除该实例标签选择的 Pod，由 Deployment 重建，以清空临时缓存。不会删除运行中 Registry 的缓存文件。
 
-硬性 `emptyDir.sizeLimit` 作为最后保护；检查阈值必须小于该上限。清理期间节点可能短暂回源 Docker Hub，K3s 默认镜像源回退保持可用。
+### 4. 节点镜像源独立配置
 
-### 4. 先部署代理，再应用节点镜像源
+代理 Ready 后，用户在“节点镜像源”创建或更新相同 Registry 的规则，例如：
 
-创建流程先应用 Deployment/Service 并等待代理 Ready，然后写入节点 `registries.yaml`。这样代理镜像首次拉取不会形成对自身的镜像源循环。若代理不可用，K3s 保留 Docker Hub 默认端点作为回退。
+- Registry: `registry.k8s.io`
+- 验证镜像: `registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.15.0`
+- Endpoint: `http://<代理入口 IP>:<NodePort>`
+
+再将该规则应用到目标节点。代理管理不会自动重写节点的 `registries.yaml`。
 
 ## Alternatives Considered
 
-- Nginx 透明转发：无缓存但无法可靠处理 Docker Hub 认证和 blob CDN 重定向，未采用。
-- PVC/hostPath 缓存：可提高命中率，但不符合无持久数据目标。
-- 直接删除 Registry cache 文件：可能破坏正在读取或写入的 Registry 索引，未采用。
-- Harbor Proxy Cache：功能更完整，但资源开销明显高于当前需求。
-
-## Risks and Mitigations
-
-- 清理产生短暂不可用：仅删除单副本 Pod，K3s 回退原始 Docker Hub；UI 记录清理原因与时间。
-- NodePort 被公网访问：限制为私网/Tailscale 地址并在 UI 提示防火墙要求。
-- 上游不可达：代理状态展示 Docker Hub 连通性；不将“代理已部署”误报为可拉取。
-- exec 查询失败：保留运行状态并记录检查失败，不执行盲目清理。
+- 单个 Docker Hub 代理：无法代理 `registry.k8s.io`，未采用。
+- Nginx 透明转发：无法可靠处理 Docker Registry 鉴权和 blob 重定向，未采用。
+- PVC/hostPath 缓存：不符合无持久缓存目标，未采用。

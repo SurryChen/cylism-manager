@@ -15,6 +15,7 @@
 - [x] 3.1 Add Monitoring view tests for PVC capacity/StorageClass configuration, legacy hostPath migration confirmation/progress, success and recovery states.
 - [x] 3.2 Implement VictoriaMetrics PVC installation/settings controls, migration workflow and actionable status messaging.
 - [x] 3.3 Add PersistentVolumes view tests and implement infrastructure ownership display, filtering and owner-specific navigation without generic mutation actions.
+- [x] 3.4 Add asynchronous local PVC usage collection and show used space with a lightweight refresh action in the storage inventory.
 
 ## 4. Verification
 
