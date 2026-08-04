@@ -306,8 +306,9 @@ func (c *Client) upsertAlertingSecret(webhookURL string) error {
 	if err != nil && !apierrors.IsNotFound(err) {
 		return fmt.Errorf("读取告警通知 Secret 失败: %w", err)
 	}
+	exists := err == nil
 	data := map[string][]byte{}
-	if current != nil {
+	if exists {
 		for key, value := range current.Data {
 			data[key] = value
 		}
@@ -323,11 +324,11 @@ func (c *Client) upsertAlertingSecret(webhookURL string) error {
 		data["relay-token"] = []byte(base64.RawURLEncoding.EncodeToString(token))
 	}
 	resource := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: alertingSecretName, Namespace: victoriaMetricsNamespace, Labels: alertingLabels("alerting")}, Type: corev1.SecretTypeOpaque, Data: data}
-	if current == nil {
-		_, err = secretClient.Create(c.Ctx(), resource, metav1.CreateOptions{})
-	} else {
+	if exists {
 		resource.ResourceVersion = current.ResourceVersion
 		_, err = secretClient.Update(c.Ctx(), resource, metav1.UpdateOptions{})
+	} else {
+		_, err = secretClient.Create(c.Ctx(), resource, metav1.CreateOptions{})
 	}
 	if err != nil {
 		return fmt.Errorf("保存告警通知 Secret 失败: %w", err)

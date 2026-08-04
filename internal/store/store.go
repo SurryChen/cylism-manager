@@ -625,23 +625,24 @@ func (s *Store) CreateApplicationEndpoint(endpoint *model.ApplicationEndpoint) e
 	return s.db.Create(endpoint).Error
 }
 
-func (s *Store) ReplaceApplicationEndpoint(endpoint *model.ApplicationEndpoint) error {
-	return s.db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Where("application_id = ?", endpoint.ApplicationID).Delete(&model.ApplicationEndpoint{}).Error; err != nil {
-			return err
-		}
-		return tx.Create(endpoint).Error
-	})
+func (s *Store) ListApplicationEndpoints(applicationID uint) ([]model.ApplicationEndpoint, error) {
+	var endpoints []model.ApplicationEndpoint
+	err := s.db.Where("application_id = ?", applicationID).Order("id asc").Find(&endpoints).Error
+	return endpoints, err
 }
 
-func (s *Store) GetApplicationEndpoint(applicationID uint) (*model.ApplicationEndpoint, error) {
+func (s *Store) GetApplicationEndpoint(applicationID, endpointID uint) (*model.ApplicationEndpoint, error) {
 	var endpoint model.ApplicationEndpoint
-	err := s.db.Where("application_id = ?", applicationID).Order("id asc").First(&endpoint).Error
+	err := s.db.Where("application_id = ? AND id = ?", applicationID, endpointID).First(&endpoint).Error
 	return &endpoint, err
 }
 
-func (s *Store) DeleteApplicationEndpoint(applicationID uint) error {
-	return s.db.Where("application_id = ?", applicationID).Delete(&model.ApplicationEndpoint{}).Error
+func (s *Store) UpdateApplicationEndpoint(endpoint *model.ApplicationEndpoint) error {
+	return s.db.Save(endpoint).Error
+}
+
+func (s *Store) DeleteApplicationEndpoint(applicationID, endpointID uint) error {
+	return s.db.Where("application_id = ? AND id = ?", applicationID, endpointID).Delete(&model.ApplicationEndpoint{}).Error
 }
 
 func (s *Store) GetApplicationDeploymentTemplate(applicationID, templateID uint) (*model.ApplicationDeploymentTemplate, error) {
@@ -724,11 +725,11 @@ func (s *Store) CountApplicationEndpointsByDomain(domainID uint) (int64, error) 
 	return count, err
 }
 
-func (s *Store) CountApplicationEndpointRoute(domainID uint, path string, exceptApplicationID uint) (int64, error) {
+func (s *Store) CountApplicationEndpointRoute(domainID uint, path string, exceptEndpointID uint) (int64, error) {
 	var count int64
 	query := s.db.Model(&model.ApplicationEndpoint{}).Where("domain_id = ? AND path = ?", domainID, path)
-	if exceptApplicationID != 0 {
-		query = query.Where("application_id <> ?", exceptApplicationID)
+	if exceptEndpointID != 0 {
+		query = query.Where("id <> ?", exceptEndpointID)
 	}
 	err := query.Count(&count).Error
 	return count, err
@@ -736,7 +737,7 @@ func (s *Store) CountApplicationEndpointRoute(domainID uint, path string, except
 
 func (s *Store) GetApplication(id uint) (*model.Application, error) {
 	var application model.Application
-	err := s.db.Preload("Project.DefaultImageRegistry").Preload("Environment").Preload("Endpoints").First(&application, id).Error
+	err := s.db.Preload("Project.DefaultImageRegistry").Preload("Environment").Preload("Endpoints", func(db *gorm.DB) *gorm.DB { return db.Order("id asc") }).First(&application, id).Error
 	return &application, err
 }
 
@@ -748,7 +749,7 @@ func (s *Store) GetApplicationByEnvironmentName(environmentID uint, name string)
 
 func (s *Store) ListApplications(scope ...uint) ([]model.Application, error) {
 	var applications []model.Application
-	query := s.db.Preload("Project.DefaultImageRegistry").Preload("Environment").Preload("Endpoints").Order("created_at desc")
+	query := s.db.Preload("Project.DefaultImageRegistry").Preload("Environment").Preload("Endpoints", func(db *gorm.DB) *gorm.DB { return db.Order("id asc") }).Order("created_at desc")
 	if len(scope) > 0 && scope[0] != 0 {
 		query = query.Where("project_id = ?", scope[0])
 	}

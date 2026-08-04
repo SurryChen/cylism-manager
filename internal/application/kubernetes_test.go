@@ -9,6 +9,7 @@ import (
 	"github.com/cylism/cylism-manager/internal/model"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
 )
@@ -127,6 +128,54 @@ func TestKubernetesApplierApplyCreatesStatefulSet(t *testing.T) {
 	}
 	if _, err := clientset.AppsV1().Deployments("dev").Get(context.Background(), "meilisearch", metav1.GetOptions{}); err == nil {
 		t.Fatal("StatefulSet release must not create a Deployment")
+	}
+}
+
+func TestKubernetesApplierSyncApplicationEndpointsMergesHostsAndTLSSecrets(t *testing.T) {
+	clientset := k8sfake.NewSimpleClientset()
+	applier := NewKubernetesApplier(&k8sclient.Client{Clientset: clientset})
+	applicationContext := ApplicationContext{ProjectID: 1, EnvironmentID: 2, Namespace: "dev", ApplicationName: "order-api"}
+	endpoints := []model.ApplicationEndpoint{
+		{Domain: "api.example.com", Path: "/", TLSEnabled: true, TLSSecretName: "api-tls"},
+		{Domain: "admin.example.com", Path: "/console", TLSEnabled: true, TLSSecretName: "admin-tls"},
+		{Domain: "docs.example.com", Path: "/", TLSEnabled: true, TLSSecretName: "api-tls"},
+		{Domain: "plain.example.com", Path: "/", TLSEnabled: false},
+	}
+	if err := applier.SyncApplicationEndpoints(context.Background(), applicationContext, endpoints, 8080); err != nil {
+		t.Fatal(err)
+	}
+	ingress, err := clientset.NetworkingV1().Ingresses("dev").Get(context.Background(), "order-api", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ingress.Spec.Rules) != 4 || ingress.Spec.Rules[1].Host != "admin.example.com" || ingress.Spec.Rules[1].HTTP.Paths[0].Path != "/console" {
+		t.Fatalf("unexpected ingress rules: %#v", ingress.Spec.Rules)
+	}
+	if len(ingress.Spec.TLS) != 2 || ingress.Spec.TLS[0].SecretName != "api-tls" || len(ingress.Spec.TLS[0].Hosts) != 2 || ingress.Spec.TLS[1].SecretName != "admin-tls" {
+		t.Fatalf("expected grouped TLS entries, got %#v", ingress.Spec.TLS)
+	}
+	if ingress.Spec.Rules[0].HTTP.Paths[0].Backend.Service.Port.Number != 8080 {
+		t.Fatalf("unexpected service port: %#v", ingress.Spec.Rules[0])
+	}
+}
+
+func TestKubernetesApplierSyncApplicationEndpointsDeletesOnlyManagedIngress(t *testing.T) {
+	applicationContext := ApplicationContext{ProjectID: 1, EnvironmentID: 2, Namespace: "dev", ApplicationName: "order-api"}
+	managed := applicationEndpointsIngress(applicationContext, []model.ApplicationEndpoint{{Domain: "api.example.com", Path: "/"}}, 80)
+	clientset := k8sfake.NewSimpleClientset(managed)
+	applier := NewKubernetesApplier(&k8sclient.Client{Clientset: clientset})
+	if err := applier.SyncApplicationEndpoints(context.Background(), applicationContext, nil, 80); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := clientset.NetworkingV1().Ingresses("dev").Get(context.Background(), "order-api", metav1.GetOptions{}); err == nil {
+		t.Fatal("expected managed ingress to be removed after last endpoint deletion")
+	}
+
+	unmanaged := &networkingv1.Ingress{ObjectMeta: metav1.ObjectMeta{Name: "order-api", Namespace: "dev"}}
+	clientset = k8sfake.NewSimpleClientset(unmanaged)
+	applier = NewKubernetesApplier(&k8sclient.Client{Clientset: clientset})
+	if err := applier.SyncApplicationEndpoints(context.Background(), applicationContext, nil, 80); err == nil || !strings.Contains(err.Error(), "不受 Cylism Manager 管理") {
+		t.Fatalf("expected unmanaged ingress protection, got %v", err)
 	}
 }
 

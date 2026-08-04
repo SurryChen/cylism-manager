@@ -6,8 +6,12 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
+	k8stesting "k8s.io/client-go/testing"
 )
 
 func TestInstallAlertingCreatesSelectedNodeResources(t *testing.T) {
@@ -67,6 +71,27 @@ func TestInstallAlertingRequiresReadyVictoriaMetrics(t *testing.T) {
 	_, err := client.InstallAlerting(AlertingConfig{NodeName: "node-a"})
 	if err == nil || !strings.Contains(err.Error(), "VictoriaMetrics") {
 		t.Fatalf("expected VictoriaMetrics readiness error, got %v", err)
+	}
+}
+
+func TestUpsertAlertingSecretCreatesWhenGetReturnsNotFoundWithEmptyObject(t *testing.T) {
+	clientset := k8sfake.NewSimpleClientset()
+	clientset.PrependReactor("get", "secrets", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, &corev1.Secret{}, apierrors.NewNotFound(schema.GroupResource{Resource: "secrets"}, alertingSecretName)
+	})
+	client := &Client{Clientset: clientset}
+
+	if err := client.upsertAlertingSecret(""); err != nil {
+		t.Fatalf("expected Secret creation after NotFound, got %v", err)
+	}
+
+	actions := clientset.Actions()
+	if len(actions) != 2 || actions[1].GetVerb() != "create" {
+		t.Fatalf("expected Get followed by Create, got %#v", actions)
+	}
+	created := actions[1].(k8stesting.CreateAction).GetObject().(*corev1.Secret)
+	if len(created.Data["relay-token"]) < 24 {
+		t.Fatalf("expected generated relay token, got %#v", created.Data)
 	}
 }
 

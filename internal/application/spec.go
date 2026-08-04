@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/cylism/cylism-manager/internal/model"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
@@ -358,27 +359,49 @@ func RenderResources(context ApplicationContext, spec ReleaseSpec) (*RenderedRes
 }
 
 func endpointIngress(context ApplicationContext, endpoint EndpointSpec, servicePort int32) *networkingv1.Ingress {
+	return applicationEndpointsIngress(context, []model.ApplicationEndpoint{{
+		Domain:        endpoint.Domain,
+		Path:          endpoint.Path,
+		TLSEnabled:    endpoint.TLSEnabled,
+		TLSSecretName: endpoint.ManagedTLSSecretName,
+	}}, servicePort)
+}
+
+func applicationEndpointsIngress(context ApplicationContext, endpoints []model.ApplicationEndpoint, servicePort int32) *networkingv1.Ingress {
 	pathType := networkingv1.PathTypePrefix
-	path := endpoint.Path
-	if path == "" {
-		path = "/"
-	}
 	ingress := &networkingv1.Ingress{
 		ObjectMeta: metav1.ObjectMeta{Name: context.ApplicationName, Namespace: context.Namespace, Labels: managedLabels(context)},
-		Spec: networkingv1.IngressSpec{Rules: []networkingv1.IngressRule{{
+		Spec:       networkingv1.IngressSpec{},
+	}
+	tlsEntries := make(map[string]int)
+	for _, endpoint := range endpoints {
+		if strings.TrimSpace(endpoint.Domain) == "" {
+			continue
+		}
+		path := endpoint.Path
+		if path == "" {
+			path = "/"
+		}
+		ingress.Spec.Rules = append(ingress.Spec.Rules, networkingv1.IngressRule{
 			Host: endpoint.Domain,
 			IngressRuleValue: networkingv1.IngressRuleValue{HTTP: &networkingv1.HTTPIngressRuleValue{Paths: []networkingv1.HTTPIngressPath{{
 				Path: path, PathType: &pathType,
 				Backend: networkingv1.IngressBackend{Service: &networkingv1.IngressServiceBackend{Name: context.ApplicationName, Port: networkingv1.ServiceBackendPort{Number: servicePort}}},
 			}}}},
-		}}},
-	}
-	if endpoint.TLSEnabled {
-		tlsName := context.ApplicationName + "-tls"
-		if endpoint.ManagedTLSSecretName != "" {
-			tlsName = endpoint.ManagedTLSSecretName
+		})
+		if !endpoint.TLSEnabled {
+			continue
 		}
-		ingress.Spec.TLS = []networkingv1.IngressTLS{{Hosts: []string{endpoint.Domain}, SecretName: tlsName}}
+		tlsName := endpoint.TLSSecretName
+		if tlsName == "" {
+			tlsName = context.ApplicationName + "-tls"
+		}
+		if index, ok := tlsEntries[tlsName]; ok {
+			ingress.Spec.TLS[index].Hosts = append(ingress.Spec.TLS[index].Hosts, endpoint.Domain)
+			continue
+		}
+		tlsEntries[tlsName] = len(ingress.Spec.TLS)
+		ingress.Spec.TLS = append(ingress.Spec.TLS, networkingv1.IngressTLS{Hosts: []string{endpoint.Domain}, SecretName: tlsName})
 	}
 	return ingress
 }

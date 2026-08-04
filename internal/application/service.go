@@ -72,6 +72,16 @@ func (s *Service) CreateRelease(ctx context.Context, applicationID, userID uint,
 }
 
 func (s *Service) ExecuteRelease(ctx context.Context, releaseID uint, application *model.Application, spec ReleaseSpec) error {
+	return s.executeRelease(ctx, releaseID, application, spec, nil)
+}
+
+// ExecuteReleaseWithPostApply runs application-owned reconciliation after the
+// workload Service is updated and before readiness is reported.
+func (s *Service) ExecuteReleaseWithPostApply(ctx context.Context, releaseID uint, application *model.Application, spec ReleaseSpec, postApply func() error) error {
+	return s.executeRelease(ctx, releaseID, application, spec, postApply)
+}
+
+func (s *Service) executeRelease(ctx context.Context, releaseID uint, application *model.Application, spec ReleaseSpec, postApply func() error) error {
 	if s.applier == nil {
 		return s.failRelease(releaseID, "preflight", fmt.Errorf("Kubernetes 发布器未初始化"))
 	}
@@ -99,6 +109,11 @@ func (s *Service) ExecuteRelease(ctx context.Context, releaseID uint, applicatio
 	if err := s.runStep(releaseID, "apply_resources", func() error { return s.applier.Apply(ctx, resources) }); err != nil {
 		return s.failRelease(releaseID, "apply_resources", err)
 	}
+	if postApply != nil {
+		if err := s.runStep(releaseID, "sync_endpoints", postApply); err != nil {
+			return s.failRelease(releaseID, "sync_endpoints", err)
+		}
+	}
 	if err := s.transition(release, model.ReleaseStatusWaitingReady); err != nil {
 		return err
 	}
@@ -118,6 +133,8 @@ func (s *Service) RetryRelease(releaseID, userID uint) (*model.Release, ReleaseS
 	if err != nil {
 		return nil, ReleaseSpec{}, err
 	}
+	// Endpoints are current application state, not historical release state.
+	spec.Endpoint = EndpointSpec{Exposure: ExposureCluster}
 	retry, err := s.CreateRelease(context.Background(), release.ApplicationID, userID, spec)
 	if err == nil {
 		retry.TemplateID = release.TemplateID
@@ -151,6 +168,8 @@ func (s *Service) RollbackRelease(releaseID, userID uint) (*model.Release, Relea
 	if err != nil {
 		return nil, ReleaseSpec{}, err
 	}
+	// Rolling back a workload must preserve domain bindings created later.
+	spec.Endpoint = EndpointSpec{Exposure: ExposureCluster}
 	rollback, err := s.CreateRelease(context.Background(), current.ApplicationID, userID, spec)
 	if err != nil {
 		return nil, ReleaseSpec{}, err

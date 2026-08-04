@@ -571,20 +571,51 @@ func TestBackfillManagedDomainEnvironmentWhenNamespaceHasSingleOwner(t *testing.
 	}
 }
 
-func TestCountApplicationEndpointRouteExcludesCurrentApplication(t *testing.T) {
+func TestApplicationEndpointsSupportIndependentUpdatesAndExactRouteExclusion(t *testing.T) {
 	st := setupTestDB(t)
-	if err := st.CreateApplicationEndpoint(&model.ApplicationEndpoint{ApplicationID: 1, DomainID: 7, Exposure: "public", Domain: "api.example.com", Path: "/", ServicePort: 80}); err != nil {
+	first := &model.ApplicationEndpoint{ApplicationID: 1, DomainID: 7, Exposure: "public", Domain: "api.example.com", Path: "/", ServicePort: 80}
+	if err := st.CreateApplicationEndpoint(first); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.CreateApplicationEndpoint(&model.ApplicationEndpoint{ApplicationID: 2, DomainID: 7, Exposure: "public", Domain: "api.example.com", Path: "/health", ServicePort: 80}); err != nil {
+	second := &model.ApplicationEndpoint{ApplicationID: 1, DomainID: 8, Exposure: "public", Domain: "admin.example.com", Path: "/", ServicePort: 80}
+	if err := st.CreateApplicationEndpoint(second); err != nil {
 		t.Fatal(err)
 	}
-	count, err := st.CountApplicationEndpointRoute(7, "/", 1)
+	third := &model.ApplicationEndpoint{ApplicationID: 2, DomainID: 7, Exposure: "public", Domain: "api.example.com", Path: "/health", ServicePort: 80}
+	if err := st.CreateApplicationEndpoint(third); err != nil {
+		t.Fatal(err)
+	}
+
+	endpoints, err := st.ListApplicationEndpoints(1)
+	if err != nil || len(endpoints) != 2 || endpoints[0].ID != first.ID || endpoints[1].ID != second.ID {
+		t.Fatalf("expected two ordered endpoints, got %#v err=%v", endpoints, err)
+	}
+	second.Path = "/admin"
+	if err := st.UpdateApplicationEndpoint(second); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := st.GetApplicationEndpoint(1, second.ID)
+	if err != nil || updated.Path != "/admin" {
+		t.Fatalf("expected independently updated endpoint, got %#v err=%v", updated, err)
+	}
+
+	count, err := st.CountApplicationEndpointRoute(7, "/", first.ID)
 	if err != nil || count != 0 {
-		t.Fatalf("expected current application route to be excluded, count=%d err=%v", count, err)
+		t.Fatalf("expected current endpoint route to be excluded, count=%d err=%v", count, err)
 	}
-	count, err = st.CountApplicationEndpointRoute(7, "/health", 1)
+	count, err = st.CountApplicationEndpointRoute(7, "/", second.ID)
+	if err != nil || count != 1 {
+		t.Fatalf("expected another endpoint in same application to conflict, count=%d err=%v", count, err)
+	}
+	count, err = st.CountApplicationEndpointRoute(7, "/health", first.ID)
 	if err != nil || count != 1 {
 		t.Fatalf("expected conflicting route, count=%d err=%v", count, err)
+	}
+	if err := st.DeleteApplicationEndpoint(1, first.ID); err != nil {
+		t.Fatal(err)
+	}
+	endpoints, err = st.ListApplicationEndpoints(1)
+	if err != nil || len(endpoints) != 1 || endpoints[0].ID != second.ID {
+		t.Fatalf("expected only second endpoint after delete, got %#v err=%v", endpoints, err)
 	}
 }

@@ -117,6 +117,7 @@ func TestRetryAndRollbackUseSanitizedSnapshot(t *testing.T) {
 	service := NewService(st, &fakeApplier{})
 	spec := validTestReleaseSpec()
 	spec.Secrets = map[string]string{"DATABASE_PASSWORD": "secret"}
+	spec.Endpoint = EndpointSpec{Exposure: ExposurePublic, Domain: "api.example.com", Path: "/", TLSEnabled: true, IssuerRef: "letsencrypt-prod"}
 	first, err := service.CreateRelease(context.Background(), app.ID, 1, spec)
 	if err != nil {
 		t.Fatal(err)
@@ -124,20 +125,22 @@ func TestRetryAndRollbackUseSanitizedSnapshot(t *testing.T) {
 	if err := service.ExecuteRelease(context.Background(), first.ID, app, spec); err != nil {
 		t.Fatal(err)
 	}
-	failed, err := service.CreateRelease(context.Background(), app.ID, 1, validTestReleaseSpec())
+	legacySpec := validTestReleaseSpec()
+	legacySpec.Endpoint = EndpointSpec{Exposure: ExposurePublic, Domain: "legacy.example.com", Path: "/", TLSEnabled: true, IssuerRef: "letsencrypt-prod"}
+	failed, err := service.CreateRelease(context.Background(), app.ID, 1, legacySpec)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := service.ExecuteRelease(context.Background(), failed.ID, app, validTestReleaseSpec()); err != nil {
+	if err := service.ExecuteRelease(context.Background(), failed.ID, app, legacySpec); err != nil {
 		t.Fatal(err)
 	}
 
 	retry, retrySpec, err := service.RetryRelease(failed.ID, 1)
-	if err != nil || retry.Sequence != 3 || retrySpec.Secrets["DATABASE_PASSWORD"] != "" {
+	if err != nil || retry.Sequence != 3 || retrySpec.Secrets["DATABASE_PASSWORD"] != "" || retrySpec.Endpoint.Exposure != ExposureCluster {
 		t.Fatalf("unexpected retry: %+v %+v err=%v", retry, retrySpec, err)
 	}
 	rollback, rollbackSpec, err := service.RollbackRelease(failed.ID, 1)
-	if err != nil || rollback.SourceReleaseID == nil || *rollback.SourceReleaseID != first.ID || rollbackSpec.Image != spec.Image {
+	if err != nil || rollback.SourceReleaseID == nil || *rollback.SourceReleaseID != first.ID || rollbackSpec.Image != spec.Image || rollbackSpec.Endpoint.Exposure != ExposureCluster {
 		t.Fatalf("unexpected rollback: %+v %+v err=%v", rollback, rollbackSpec, err)
 	}
 }

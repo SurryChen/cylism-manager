@@ -83,7 +83,7 @@ describe('Applications view', () => {
     const { api } = await import('../api/index.js')
     api.get.mockImplementation(path => {
       if (path === '/projects') return Promise.resolve([{ id: 1, name: 'commerce', environments: [{ id: 2, name: 'production', namespace: 'commerce-prod' }] }])
-      if (path === '/workspace/overview?project_id=1&environment_id=2') return Promise.resolve({ applications: [{ id: 3, name: 'order-api', workload_kind: 'deployment', endpoint_url: 'https://api.example.com', runtime: { status: 'running', ready_pods: 1, total_pods: 1 }, active_release: { version: '1.4.0' }, latest_release: { status: 'succeeded', created_at: '2026-08-03T10:00:00Z' } }], domains: [], recent_releases: [{ id: 9, application_id: 3, application_name: 'order-api', sequence: 4, image: 'order-api:1.4.0', status: 'succeeded', created_at: '2026-08-03T10:00:00Z' }] })
+      if (path === '/workspace/overview?project_id=1&environment_id=2') return Promise.resolve({ applications: [{ id: 3, name: 'order-api', workload_kind: 'deployment', endpoint_url: 'https://api.example.com', endpoint_count: 2, runtime: { status: 'running', ready_pods: 1, total_pods: 1 }, active_release: { version: '1.4.0' }, latest_release: { status: 'succeeded', created_at: '2026-08-03T10:00:00Z' } }], domains: [], recent_releases: [{ id: 9, application_id: 3, application_name: 'order-api', sequence: 4, image: 'order-api:1.4.0', status: 'succeeded', created_at: '2026-08-03T10:00:00Z' }] })
       return Promise.resolve([])
     })
     const wrapper = mount(Applications)
@@ -94,6 +94,7 @@ describe('Applications view', () => {
     const endpoint = wrapper.find('.endpoint-link')
     expect(endpoint.attributes('href')).toBe('https://api.example.com')
     expect(endpoint.attributes('target')).toBe('_blank')
+    expect(wrapper.text()).toContain('另有 1 个地址')
     expect(wrapper.text()).toContain('2026')
   })
 
