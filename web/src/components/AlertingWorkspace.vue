@@ -1,0 +1,133 @@
+<template>
+  <section v-if="!monitoringReady" class="card alerting-empty">
+    <div class="empty-state"><span class="empty-icon">◌</span><span class="empty-text">等待 VictoriaMetrics 就绪后再启用告警</span></div>
+  </section>
+
+  <section v-else-if="loading && !status" class="card alerting-empty">
+    <div class="empty-state"><span class="empty-icon">◌</span><span class="empty-text">正在读取告警状态...</span></div>
+  </section>
+
+  <section v-else-if="status?.state === 'not_installed'" class="card alerting-install-card">
+    <div class="card-header"><div><h2 class="card-title">告警尚未启用</h2><p class="status-copy">规则将在集群内每分钟评估，并通过 Alertmanager 汇总和通知。</p></div><span class="badge badge-offline">未安装</span></div>
+    <form class="alerting-form" @submit.prevent="install">
+      <div class="form-group"><label class="form-label">告警节点</label><select v-model="installForm.node_name" class="form-select" required><option value="" disabled>选择就绪节点</option><option v-for="node in readyNodes" :key="node.name" :value="node.name">{{ displayNode(node) }}</option></select><p class="form-hint">Alertmanager 的 1Gi 本地 PVC 会绑定到该节点。默认优先选择与指标数据节点不同的节点。</p></div>
+      <div class="form-group"><label class="form-label">飞书机器人地址</label><input v-model.trim="installForm.feishu_webhook_url" class="form-input" type="url" placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/..." /><p class="form-hint">可稍后在告警设置中填写。地址仅写入 Kubernetes Secret，不会再次展示。</p></div>
+      <div class="modal-actions status-actions"><button class="btn btn-primary" :disabled="installing || !installForm.node_name">{{ installing ? '正在提交...' : '启用告警' }}</button><button class="btn" type="button" :disabled="installing" @click="refresh">重新检测</button></div>
+    </form>
+  </section>
+
+  <template v-else-if="status">
+    <section v-if="status.state !== 'ready'" class="card alerting-empty"><div class="empty-state"><span class="empty-icon">◌</span><span class="empty-text">{{ status.message || '等待告警组件就绪' }}</span></div></section>
+
+    <template v-else>
+      <section class="alert-summary metric-grid section-gap">
+        <article class="metric"><span>正在告警</span><strong :class="overview.firing ? 'is-danger' : ''">{{ overview.firing || 0 }}</strong><small>{{ overview.firing ? '需要优先处理' : '当前无触发告警' }}</small></article>
+        <article class="metric"><span>活跃告警</span><strong>{{ overview.active.length }}</strong><small>包含已静默告警</small></article>
+        <article class="metric"><span>已静默</span><strong>{{ overview.silenced || 0 }}</strong><small>不会重复发送通知</small></article>
+        <article class="metric"><span>通知渠道</span><strong><span class="badge" :class="status.notification_configured ? 'badge-online' : 'badge-offline'">{{ status.notification_configured ? '已配置' : '未配置' }}</span></strong><small>{{ status.node_name || '-' }}</small></article>
+      </section>
+
+      <section class="alert-section-heading section-gap"><div><h2>正在告警</h2><p>按严重程度排序，优先处理影响服务可用性的异常</p></div><div class="icon-actions"><button class="icon-button" title="刷新告警" aria-label="刷新告警" :disabled="loading" @click="refresh"><RefreshCw :size="16" :class="{ 'is-spinning': loading }" /></button><button class="icon-button" title="告警设置" aria-label="告警设置" @click="openSettings"><Settings2 :size="16" /></button></div></section>
+
+      <section v-if="overview.active.length" class="alert-list section-gap">
+        <article v-for="alert in sortedAlerts" :key="alert.fingerprint || alertKey(alert)" class="alert-row" :class="severityClass(alert)">
+          <div class="alert-severity"><BellRing :size="17" /><span class="badge" :class="severityBadge(alert)">{{ severityLabel(alert) }}</span></div>
+          <div class="alert-copy"><strong>{{ alert.annotations?.summary || alert.labels?.alertname || '集群告警' }}</strong><small>{{ alertDescription(alert) }}</small><small>开始于 {{ formatTime(alert.startsAt) }}</small></div>
+          <div class="alert-actions"><button v-if="alertTarget(alert)" class="icon-button" title="查看关联资源" aria-label="查看关联资源" @click="navigate(alert)"><ArrowUpRight :size="16" /></button><button class="icon-button" title="静默告警" aria-label="静默告警" @click="openSilence(alert)"><VolumeX :size="16" /></button></div>
+        </article>
+      </section>
+      <section v-else class="alerting-healthy section-gap"><CheckCircle2 :size="20" /><div><strong>所有告警均已恢复</strong><small>当前 {{ status.rules?.filter(rule => rule.enabled).length || 0 }} 条规则正在评估。</small></div></section>
+
+      <section v-if="overview.resolved.length" class="alert-section-heading section-gap"><div><h2>最近恢复</h2><p>仅保留 Alertmanager 当前可见的恢复事件</p></div></section>
+      <section v-if="overview.resolved.length" class="table-wrap alert-resolved"><table class="data-table"><thead><tr><th>告警</th><th>对象</th><th>恢复时间</th></tr></thead><tbody><tr v-for="alert in overview.resolved" :key="alert.fingerprint || alertKey(alert)"><td class="cell-primary">{{ alert.annotations?.summary || alert.labels?.alertname || '-' }}</td><td>{{ alertTarget(alert) || '-' }}</td><td>{{ formatTime(alert.endsAt) }}</td></tr></tbody></table></section>
+    </template>
+  </template>
+
+  <div v-if="silencingAlert" class="overlay" @click.self="silencingAlert = null"><form class="modal alert-silence-modal" @submit.prevent="createSilence"><div class="card-header"><div><h2 class="modal-title">静默告警</h2><p class="status-copy">{{ silencingAlert.annotations?.summary || silencingAlert.labels?.alertname }}</p></div><button class="icon-button" type="button" title="关闭" aria-label="关闭" @click="silencingAlert = null"><X :size="16" /></button></div><div class="form-group"><label class="form-label">静默时长</label><select v-model.number="silenceForm.duration_minutes" class="form-select"><option :value="60">1 小时</option><option :value="240">4 小时</option><option :value="1440">24 小时</option></select></div><div class="form-group"><label class="form-label">说明</label><input v-model.trim="silenceForm.comment" class="form-input" maxlength="120" placeholder="计划维护" /></div><div class="modal-actions"><button class="btn" type="button" @click="silencingAlert = null">取消</button><button class="btn btn-danger" :disabled="silencing" type="submit">{{ silencing ? '正在静默...' : '确认静默' }}</button></div></form></div>
+
+  <div v-if="settingsOpen" class="overlay alert-settings-overlay" @click.self="settingsOpen = false"><aside class="alert-settings-drawer"><header class="drawer-header"><div><h2>告警设置</h2><p>规则与通知渠道</p></div><button class="icon-button" title="关闭" aria-label="关闭" @click="settingsOpen = false"><X :size="17" /></button></header><section class="drawer-section"><div class="drawer-section-heading"><div><h3>通知渠道</h3><p>飞书机器人</p></div><span class="badge" :class="status?.notification_configured ? 'badge-online' : 'badge-offline'">{{ status?.notification_configured ? '已配置' : '未配置' }}</span></div><input v-model.trim="settingsForm.feishu_webhook_url" class="form-input" type="url" placeholder="填写新的飞书机器人地址以更新" /><div class="drawer-actions"><button class="btn" :disabled="testing" @click="testNotification">{{ testing ? '发送中...' : '测试通知' }}</button></div></section><section class="drawer-section"><div class="drawer-section-heading"><div><h3>告警规则</h3><p>修改后将重载规则评估</p></div></div><div class="rule-list"><div v-for="rule in settingsForm.rules" :key="rule.id" class="rule-row"><label class="rule-title"><input v-model="rule.enabled" type="checkbox" /><span>{{ rule.name }}</span></label><div class="rule-fields"><label v-if="rule.threshold > 0"><span>阈值</span><input v-model.number="rule.threshold" class="form-input" type="number" min="0" max="100000" /></label><label><span>持续</span><input v-model.number="rule.duration_minutes" class="form-input" type="number" min="1" max="1440" /></label><small>分钟</small></div></div></div></section><footer class="drawer-footer"><button class="btn" :disabled="saving" @click="settingsOpen = false">取消</button><button class="btn btn-primary" :disabled="saving" @click="saveSettings">{{ saving ? '保存中...' : '保存设置' }}</button></footer></aside></div>
+</template>
+
+<script setup>
+import { computed, onMounted, ref } from 'vue'
+import { ArrowUpRight, BellRing, CheckCircle2, RefreshCw, Settings2, VolumeX, X } from 'lucide-vue-next'
+import { api } from '../api/index.js'
+
+const props = defineProps({ nodes: { type: Array, default: () => [] }, monitoringReady: Boolean, metricsNodeName: { type: String, default: '' } })
+const emit = defineEmits(['navigate'])
+
+const status = ref(null)
+const overview = ref({ active: [], resolved: [], firing: 0, silenced: 0 })
+const loading = ref(false)
+const installing = ref(false)
+const testing = ref(false)
+const saving = ref(false)
+const silencing = ref(false)
+const settingsOpen = ref(false)
+const silencingAlert = ref(null)
+const installForm = ref({ node_name: '', feishu_webhook_url: '' })
+const settingsForm = ref({ feishu_webhook_url: '', rules: [] })
+const silenceForm = ref({ duration_minutes: 240, comment: '' })
+
+const readyNodes = computed(() => props.nodes.filter(node => node.ready))
+const sortedAlerts = computed(() => [...overview.value.active].sort((left, right) => severityWeight(left) - severityWeight(right)))
+
+onMounted(() => { refresh() })
+
+async function refresh() {
+  if (!props.monitoringReady) return
+  loading.value = true
+  try {
+    status.value = await api.get('/monitoring/alerts/status')
+    if (!installForm.value.node_name) installForm.value.node_name = defaultNodeName()
+    if (status.value.state === 'ready') overview.value = await api.get('/monitoring/alerts/overview')
+  } finally { loading.value = false }
+}
+
+function defaultNodeName() {
+  return readyNodes.value.find(node => node.name !== props.metricsNodeName)?.name || readyNodes.value[0]?.name || ''
+}
+function displayNode(node) { return node.display_name || node.name }
+function severityWeight(alert) { return alert.labels?.severity === 'critical' ? 0 : 1 }
+function severityClass(alert) { return alert.labels?.severity === 'critical' ? 'is-critical' : 'is-warning' }
+function severityBadge(alert) { return alert.labels?.severity === 'critical' ? 'badge-danger' : 'badge-deploying' }
+function severityLabel(alert) { return alert.labels?.severity === 'critical' ? '严重' : '警告' }
+function alertDescription(alert) { return alert.annotations?.description || alert.labels?.node || alert.labels?.pod || '请查看关联资源状态' }
+function alertTarget(alert) { return alert.labels?.node || (alert.labels?.namespace && alert.labels?.pod ? `${alert.labels.namespace}/${alert.labels.pod}` : '') }
+function alertKey(alert) { return `${alert.labels?.alertname || ''}-${alertTarget(alert)}-${alert.startsAt || ''}` }
+function formatTime(value) { return value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '-' }
+
+async function install() {
+  installing.value = true
+  try { await api.post('/monitoring/alerts/install', installForm.value); await refresh() } finally { installing.value = false }
+}
+function navigate(alert) { emit('navigate', { tab: alert.labels?.node ? 'nodes' : 'workloads', node: alert.labels?.node || '' }) }
+function openSilence(alert) { silencingAlert.value = alert; silenceForm.value = { duration_minutes: 240, comment: '' } }
+function alertMatchers(alert) {
+  const labels = alert.labels || {}
+  return ['alertname', 'node', 'namespace', 'pod', 'deployment', 'statefulset'].filter(key => labels[key]).map(key => ({ name: key, value: labels[key], isRegex: false, isEqual: true }))
+}
+async function createSilence() {
+  silencing.value = true
+  try { await api.post('/monitoring/alerts/silences', { ...silenceForm.value, matchers: alertMatchers(silencingAlert.value) }); silencingAlert.value = null; await refresh() } finally { silencing.value = false }
+}
+async function openSettings() {
+  settingsForm.value = { feishu_webhook_url: '', rules: (status.value?.rules || []).map(rule => ({ ...rule })) }
+  settingsOpen.value = true
+  try { await api.get('/monitoring/alerts/silences') } catch { /* The active-alert view remains usable when only silence history is unavailable. */ }
+}
+async function testNotification() {
+  testing.value = true
+  try { await api.post('/monitoring/alerts/test-notification', {}) } finally { testing.value = false }
+}
+async function saveSettings() {
+  saving.value = true
+  try { await api.put('/monitoring/alerts/config', settingsForm.value); settingsOpen.value = false; await refresh() } finally { saving.value = false }
+}
+
+defineExpose({ refresh })
+</script>
+
+<style scoped>
+.status-copy,.form-hint,.metric small,.alert-section-heading p,.drawer-header p,.drawer-section-heading p{margin:5px 0 0;color:var(--text-secondary);font-size:12px}.alerting-empty .empty-state{min-height:160px}.alerting-form{margin-top:var(--space-20)}.status-actions{justify-content:flex-start;margin-top:var(--space-16)}.alert-summary{grid-template-columns:repeat(4,minmax(0,1fr))}.metric{display:grid;min-width:0;gap:5px;padding:14px;border:1px solid var(--border-muted);border-radius:var(--radius-control);background:var(--surface-subtle)}.metric>span{color:var(--text-secondary);font-size:11px}.metric strong{min-width:0;font-size:18px}.metric small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.metric .is-danger{color:var(--danger)}.alert-section-heading{display:flex;align-items:center;justify-content:space-between;gap:var(--space-16)}.alert-section-heading h2{margin:0;color:var(--text-primary);font-size:16px}.icon-actions,.alert-actions{display:flex;align-items:center;gap:6px}.alert-list{border:1px solid var(--border-muted);border-radius:var(--radius-control);background:var(--surface-subtle)}.alert-row{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:12px;align-items:center;padding:13px 14px;border-bottom:1px solid var(--border-muted)}.alert-row:last-child{border-bottom:0}.alert-row.is-critical{box-shadow:inset 3px 0 0 var(--danger)}.alert-row.is-warning{box-shadow:inset 3px 0 0 var(--warning)}.alert-severity{display:grid;justify-items:center;gap:5px;color:var(--text-secondary)}.alert-copy{display:grid;min-width:0;gap:3px}.alert-copy strong,.alert-copy small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.alert-copy small{color:var(--text-secondary);font-size:12px}.alerting-healthy{display:flex;align-items:center;gap:10px;padding:18px;border:1px solid var(--success-border);border-radius:var(--radius-control);background:var(--success-surface);color:var(--success)}.alerting-healthy div{display:grid;gap:3px}.alerting-healthy small{color:var(--text-secondary);font-size:12px}.alert-resolved{border:1px solid var(--border-muted);border-radius:var(--radius-control)}.alert-settings-overlay{justify-content:flex-end}.alert-settings-drawer{display:flex;flex-direction:column;width:min(480px,100vw);height:100%;padding:var(--space-20);background:var(--surface);box-shadow:var(--shadow);overflow:auto}.drawer-header,.drawer-section-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}.drawer-header h2,.drawer-section-heading h3{margin:0;color:var(--text-primary);font-size:16px}.drawer-section{padding:var(--space-20) 0;border-bottom:1px solid var(--border-muted)}.drawer-section .form-input{margin-top:var(--space-16)}.drawer-actions{margin-top:10px}.rule-list{display:grid;gap:0;margin-top:var(--space-12);border-top:1px solid var(--border-muted)}.rule-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:center;padding:11px 0;border-bottom:1px solid var(--border-muted)}.rule-title{display:flex;align-items:center;gap:8px;min-width:0;color:var(--text-primary);font-size:13px}.rule-title input{margin:0}.rule-fields{display:flex;align-items:flex-end;gap:6px}.rule-fields label{display:grid;gap:3px;color:var(--text-secondary);font-size:10px}.rule-fields .form-input{width:58px;min-height:30px;margin:0;padding:4px 6px;font-size:11px}.rule-fields small{padding-bottom:7px;color:var(--text-secondary);font-size:10px}.drawer-footer{display:flex;justify-content:flex-end;gap:8px;padding-top:var(--space-20)}.alert-silence-modal{width:min(420px,calc(100vw - 32px))}.alert-silence-modal .form-group{margin-top:var(--space-16)}@media(max-width:760px){.alert-summary{grid-template-columns:repeat(2,minmax(0,1fr))}.alert-section-heading{align-items:flex-start;flex-direction:column}.alert-row{grid-template-columns:auto minmax(0,1fr)}.alert-actions{grid-column:2;justify-content:flex-start}.alert-settings-drawer{width:100%}.rule-row{grid-template-columns:1fr}.rule-fields{justify-content:flex-start}}@media(max-width:440px){.alert-summary{grid-template-columns:1fr}}
+</style>
