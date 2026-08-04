@@ -86,7 +86,25 @@ func (h *MonitoringHandler) Uninstall(c *gin.Context) {
 		model.Error(c, http.StatusInternalServerError, model.CodeK8sAPIError, err.Error())
 		return
 	}
-	model.SuccessWithMessage(c, gin.H{"data_retained": true}, "VictoriaMetrics 已卸载，本地数据目录未删除")
+	model.SuccessWithMessage(c, gin.H{"data_retained": true}, "VictoriaMetrics 已卸载，系统管理的存储卷已保留")
+}
+
+func (h *MonitoringHandler) MigrateLegacyStorage(c *gin.Context) {
+	if K8s == nil {
+		k8sUnavailable(c)
+		return
+	}
+	var request k8s.VictoriaMetricsMigrationRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "迁移存储配置无效")
+		return
+	}
+	status, err := K8s.StartVictoriaMetricsHostPathMigration(request)
+	if err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		return
+	}
+	model.SuccessWithMessage(c, status, "已停止 VictoriaMetrics，正在复制并校验历史数据")
 }
 
 func (h *MonitoringHandler) Query(c *gin.Context) {

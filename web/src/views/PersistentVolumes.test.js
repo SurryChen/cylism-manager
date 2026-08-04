@@ -98,4 +98,16 @@ describe('PersistentVolumes view', () => {
       environment_id: 2, source_server_id: 8, source_path: '/data/legacy/karakeep', confirm_data_replace: true,
     })
   })
+
+  it('renders infrastructure PVCs as read-only monitoring resources', async () => {
+    const { api } = await import('../api/index.js')
+    api.get.mockImplementation(mockInventory({ claims: [{ name: 'cylism-victoria-metrics-data', namespace: 'monitoring', managed: true, owner_type: 'infrastructure', owner_name: 'VictoriaMetrics', read_only: true, phase: 'Bound' }] }))
+    const wrapper = mount(PersistentVolumes)
+    await settle()
+
+    expect(wrapper.text()).toContain('基础设施')
+    expect(wrapper.text()).toContain('VictoriaMetrics')
+    expect(wrapper.text()).toContain('查看监控')
+    expect(wrapper.find('[title="删除存储卷"]').exists()).toBe(false)
+  })
 })

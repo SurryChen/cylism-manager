@@ -1,13 +1,16 @@
 package k8s
 
 import (
+	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
+	k8stesting "k8s.io/client-go/testing"
 )
 
 func TestListManagedPVCsIncludesBoundNodeAndReclaimPolicy(t *testing.T) {
@@ -93,6 +96,49 @@ func TestListPVCsIncludesExternalAndManagedClaimsAcrossNamespaces(t *testing.T) 
 	}
 	if pvcs[0].Name != "external-data" || pvcs[0].Managed || pvcs[1].Name != "managed-data" || !pvcs[1].Managed || pvcs[1].EnvironmentID != 3 {
 		t.Fatalf("unexpected PVC inventory: %#v", pvcs)
+	}
+}
+
+func TestListPVCsBatchesPersistentVolumeAndStorageClassLookups(t *testing.T) {
+	clientset := k8sfake.NewSimpleClientset(
+		&corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: "one", Namespace: "default"}, Spec: corev1.PersistentVolumeClaimSpec{StorageClassName: stringPtr("local-path"), VolumeName: "pv-one"}},
+		&corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: "two", Namespace: "default"}, Spec: corev1.PersistentVolumeClaimSpec{StorageClassName: stringPtr("local-path"), VolumeName: "pv-two"}},
+		&corev1.PersistentVolume{ObjectMeta: metav1.ObjectMeta{Name: "pv-one"}},
+		&corev1.PersistentVolume{ObjectMeta: metav1.ObjectMeta{Name: "pv-two"}},
+		&storagev1.StorageClass{ObjectMeta: metav1.ObjectMeta{Name: "local-path"}},
+	)
+	getCalls := 0
+	clientset.PrependReactor("get", "persistentvolumes", func(k8stesting.Action) (bool, runtime.Object, error) {
+		getCalls++
+		return false, nil, nil
+	})
+	clientset.PrependReactor("get", "storageclasses", func(k8stesting.Action) (bool, runtime.Object, error) {
+		getCalls++
+		return false, nil, nil
+	})
+
+	claims, err := (&Client{Clientset: clientset}).ListPVCs("")
+	if err != nil || len(claims) != 2 {
+		t.Fatalf("expected two claims, got %#v err=%v", claims, err)
+	}
+	if getCalls != 0 {
+		t.Fatalf("expected inventory to use list calls rather than per-PVC gets, got %d gets", getCalls)
+	}
+}
+
+func TestInfrastructurePVCIsClassifiedAndProtectedFromGenericDelete(t *testing.T) {
+	client := &Client{Clientset: k8sfake.NewSimpleClientset(&corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{Name: "cylism-victoria-metrics-data", Namespace: "monitoring", Labels: infrastructurePVCLabels(InfrastructureVictoriaMetrics)},
+	})}
+	claims, err := client.ListPVCs("monitoring")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(claims) != 1 || claims[0].OwnerType != "infrastructure" || claims[0].OwnerName != "VictoriaMetrics" || !claims[0].ReadOnly {
+		t.Fatalf("expected read-only infrastructure PVC, got %#v", claims)
+	}
+	if err := client.DeleteManagedPVC("monitoring", "cylism-victoria-metrics-data", 0); err == nil || !strings.Contains(err.Error(), "基础设施组件") {
+		t.Fatalf("expected protected PVC delete error, got %v", err)
 	}
 }
 

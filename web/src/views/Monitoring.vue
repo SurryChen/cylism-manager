@@ -14,11 +14,11 @@
       <div v-if="error" class="k8s-banner k8s-banner-warn section-gap">{{ error }}</div>
 
       <section v-if="loaded && status?.state === 'not_installed'" class="card monitoring-install-card">
-        <div class="card-header"><div><h2 class="card-title">VictoriaMetrics 未安装</h2><p class="status-copy">选择数据节点并配置本地目录后，平台将部署指标存储和节点采集组件。</p></div><span class="badge badge-offline">未安装</span></div>
+        <div class="card-header"><div><h2 class="card-title">VictoriaMetrics 未安装</h2><p class="status-copy">选择数据节点和容量后，平台将创建并管理专用存储卷及节点采集组件。</p></div><span class="badge badge-offline">未安装</span></div>
         <form class="install-form" @submit.prevent="install">
           <div class="form-group"><label class="form-label">数据节点</label><select v-model="form.node_name" class="form-select" required><option value="" disabled>选择就绪节点</option><option v-for="node in readyNodes" :key="node.name" :value="node.name">{{ displayNode(node) }}</option></select><p class="form-hint">将使用 kubernetes.io/hostname 标签约束 VictoriaMetrics 到所选节点。</p></div>
-          <div class="form-row"><div class="form-group"><label class="form-label">本地数据目录</label><input v-model.trim="form.data_path" class="form-input" required placeholder="/data/victoria-metrics" /></div><div class="form-group"><label class="form-label">指标保留天数</label><input v-model.number="form.retention_days" class="form-input" type="number" min="1" max="365" required /></div></div>
-          <p class="form-hint">目录必须位于 <code>/data/</code>。安装后不能直接变更节点或目录，卸载也不会删除已有指标数据。</p>
+          <div class="form-row"><div class="form-group"><label class="form-label">存储容量</label><input v-model.trim="form.storage" class="form-input" required placeholder="10Gi" /></div><div class="form-group"><label class="form-label">StorageClass</label><select v-model="form.storage_class_name" class="form-select"><option value="">使用集群默认 StorageClass</option><option v-for="item in storageClasses" :key="item.name" :value="item.name">{{ item.name }}{{ item.is_default ? '（默认）' : '' }}</option></select></div><div class="form-group"><label class="form-label">指标保留天数</label><input v-model.number="form.retention_days" class="form-input" type="number" min="1" max="365" required /></div></div>
+          <p class="form-hint">平台会自动创建名为 <code>cylism-victoria-metrics-data</code> 的 PVC。安装后存储卷仅由监控组件管理，卸载不会删除数据。</p>
           <div class="modal-actions status-actions"><button class="btn btn-primary" :disabled="installing || !form.node_name">{{ installing ? '正在提交...' : '安装监控' }}</button><button type="button" class="btn" :disabled="installing" @click="refresh">重新检测</button></div>
         </form>
       </section>
@@ -57,7 +57,7 @@
       <div v-if="monitoringSettingsOpen" class="overlay monitoring-settings-overlay" @click.self="monitoringSettingsOpen = false">
         <aside class="monitoring-settings-drawer" aria-label="监控设置">
           <header class="drawer-header"><div><h2>监控设置</h2><p>更新指标保留策略与检查采集状态</p></div><button class="icon-button" title="关闭监控设置" aria-label="关闭监控设置" @click="monitoringSettingsOpen = false"><X :size="16" /></button></header>
-          <section class="drawer-section"><div class="drawer-section-heading"><div><h3>运行配置</h3><p>数据节点与目录为本地 hostPath，在线修改会造成数据分散，因此仅支持更新保留周期。</p></div></div><div class="settings-field"><span>数据节点</span><strong>{{ nodeDisplayName(status?.node_name) || '-' }}</strong><small>{{ status?.node_name || '-' }}</small></div><div class="settings-field"><span>数据目录</span><strong class="metric-code">{{ status?.data_path || '-' }}</strong></div><label class="form-group settings-retention"><span class="form-label">指标保留天数</span><input v-model.number="settingsForm.retention_days" class="form-input" type="number" min="1" max="365" required /><span class="form-hint">修改后 VictoriaMetrics 会滚动更新，超出新保留周期的数据将被自动清理。</span></label><div class="drawer-actions"><button class="btn btn-primary" data-testid="save-monitoring-config" :disabled="monitoringSettingsSaving || !validRetentionDays" @click="saveMonitoringConfig">{{ monitoringSettingsSaving ? '保存中...' : '保存运行配置' }}</button></div></section>
+          <section class="drawer-section"><div class="drawer-section-heading"><div><h3>运行配置</h3><p>{{ status?.storage_mode === 'host_path' ? '当前为旧宿主机目录存储。迁移会短暂停止监控并保留原目录。' : '平台自动管理监控 PVC，通用存储页面只读展示。' }}</p></div></div><div class="settings-field"><span>数据节点</span><strong>{{ nodeDisplayName(status?.node_name) || '-' }}</strong><small>{{ status?.node_name || '-' }}</small></div><div v-if="status?.storage_mode === 'host_path'" class="settings-field"><span>旧数据目录</span><strong class="metric-code">{{ status?.data_path || '-' }}</strong></div><div v-else class="settings-field"><span>系统存储卷</span><strong class="metric-code">{{ status?.pvc_name || '-' }}</strong><small>{{ status?.storage || '-' }}{{ status?.storage_class_name ? ` · ${status.storage_class_name}` : '' }}</small></div><label class="form-group settings-retention"><span class="form-label">指标保留天数</span><input v-model.number="settingsForm.retention_days" class="form-input" type="number" min="1" max="365" required /><span class="form-hint">修改后 VictoriaMetrics 会滚动更新，超出新保留周期的数据将被自动清理。</span></label><div v-if="status?.storage_mode === 'host_path'" class="migration-settings"><p v-if="status?.storage_migration" class="form-hint">{{ status.storage_migration.message }}</p><div v-else class="form-row"><label class="form-group"><span class="form-label">迁移 PVC 容量</span><input v-model.trim="migrationForm.storage" class="form-input" placeholder="10Gi" /></label><label class="form-group"><span class="form-label">StorageClass</span><select v-model="migrationForm.storage_class_name" class="form-select"><option value="">使用集群默认 StorageClass</option><option v-for="item in storageClasses" :key="item.name" :value="item.name">{{ item.name }}{{ item.is_default ? '（默认）' : '' }}</option></select></label></div><button v-if="!status?.storage_migration" class="btn btn-danger" :disabled="migrating || !migrationForm.storage" @click="migrateLegacyStorage">{{ migrating ? '迁移中...' : '迁移到系统 PVC' }}</button></div><div class="drawer-actions"><button class="btn btn-primary" data-testid="save-monitoring-config" :disabled="monitoringSettingsSaving || !validRetentionDays" @click="saveMonitoringConfig">{{ monitoringSettingsSaving ? '保存中...' : '保存运行配置' }}</button></div></section>
           <section class="drawer-section"><div class="drawer-section-heading"><div><h3>采集目标</h3><p>节点、容器与 node-exporter</p></div><span class="badge" :class="targetSummary.failed ? 'badge-danger' : 'badge-online'">{{ targetSummary.active }} 个在线</span></div><div v-if="targetsLoading" class="empty-inline">正在读取采集状态...</div><div v-else-if="targetRows.length" class="target-list"><div v-for="target in targetRows" :key="target.key" class="target-row"><span><strong>{{ target.job }}</strong><small>{{ target.instance }}</small></span><span class="badge" :class="target.health === 'up' ? 'badge-online' : 'badge-danger'">{{ target.health === 'up' ? '正常' : '异常' }}</span></div></div><div v-else class="empty-inline">等待首次指标采集</div></section>
           <section class="drawer-section"><div class="drawer-section-heading"><div><h3>采集配置</h3><p>趋势图需要按节点标签采集</p></div></div><p class="diagnostic-copy">同步后约 1 分钟开始出现按节点拆分的趋势数据。</p><button class="btn" :disabled="syncing" @click="syncConfiguration">{{ syncing ? '同步中...' : '同步采集配置' }}</button></section>
           <section class="drawer-section"><div class="drawer-section-heading"><div><h3>高级查询</h3><p>PromQL</p></div></div><div class="query-presets"><button v-for="preset in presets" :key="preset.query" class="btn btn-sm" @click="runQuery(preset.query)">{{ preset.label }}</button></div><form class="query-form" @submit.prevent="runQuery(query)"><input v-model.trim="query" class="form-input" placeholder="up" maxlength="2048" /><button class="btn btn-primary" :disabled="querying || !query">{{ querying ? '查询中...' : '查询' }}</button></form><pre v-if="queryResult" class="query-result">{{ queryResult }}</pre><div v-else class="empty-inline">输入 PromQL 查询监控原始指标</div></section>
@@ -65,12 +65,12 @@
       </div>
     </Teleport>
 
-    <div v-if="confirmUninstall" class="overlay" @click.self="confirmUninstall = false"><div class="modal"><h2 class="modal-title">卸载 VictoriaMetrics</h2><p class="confirm-copy">将删除监控工作负载和采集配置，但不会删除 {{ status?.node_name }} 上的 {{ status?.data_path }} 数据目录。</p><div class="modal-actions"><button class="btn" @click="confirmUninstall = false">取消</button><button class="btn btn-danger" :disabled="uninstalling" @click="uninstall">{{ uninstalling ? '卸载中...' : '确认卸载' }}</button></div></div></div>
+    <div v-if="confirmUninstall" class="overlay" @click.self="confirmUninstall = false"><div class="modal"><h2 class="modal-title">卸载 VictoriaMetrics</h2><p class="confirm-copy">将删除监控工作负载和采集配置，但不会删除{{ status?.storage_mode === 'host_path' ? '旧数据目录' : '系统管理 PVC' }}。</p><div class="modal-actions"><button class="btn" @click="confirmUninstall = false">取消</button><button class="btn btn-danger" :disabled="uninstalling" @click="uninstall">{{ uninstalling ? '卸载中...' : '确认卸载' }}</button></div></div></div>
   </div>
 </template>
 
 <script setup>
-import { computed, defineComponent, h, onMounted, ref, watch } from 'vue'
+import { computed, defineComponent, h, onMounted, onUnmounted, ref, watch } from 'vue'
 import { ChevronDown, RefreshCw, Settings2, X } from 'lucide-vue-next'
 import { api } from '../api/index.js'
 import AlertingWorkspace from '../components/AlertingWorkspace.vue'
@@ -85,6 +85,7 @@ const tabs = [
 const trendRanges = ['1h', '6h', '24h', '7d']
 const status = ref(null)
 const nodes = ref([])
+const storageClasses = ref([])
 const activeTab = ref('overview')
 const loaded = ref(false)
 const error = ref('')
@@ -99,6 +100,7 @@ const workloadsLoading = ref(false)
 const querying = ref(false)
 const monitoringSettingsOpen = ref(false)
 const monitoringSettingsSaving = ref(false)
+const migrating = ref(false)
 const nodeFilterOpen = ref(false)
 const query = ref('')
 const queryResult = ref('')
@@ -107,8 +109,10 @@ const selectedTrendNodes = ref([])
 const trendSelectionInitialized = ref(false)
 const nodeTrends = ref({ cpu: [], memory: [], disk: [], network: [] })
 const workloads = ref({ cpu: [], memory: [] })
-const form = ref({ node_name: '', data_path: '/data/victoria-metrics', retention_days: 14 })
+const form = ref({ node_name: '', storage: '10Gi', storage_class_name: '', retention_days: 14 })
 const settingsForm = ref({ retention_days: 14 })
+const migrationForm = ref({ storage: '10Gi', storage_class_name: '' })
+let migrationPollTimer
 
 const presets = [
   { label: '全部目标', query: 'up{job=~"kubernetes-(nodes|cadvisor)"}' },
@@ -165,6 +169,7 @@ const WorkloadTable = defineComponent({
 onMounted(async () => {
   await refresh()
 })
+onUnmounted(() => { if (migrationPollTimer) window.clearInterval(migrationPollTimer) })
 watch([activeTab, trendRange], async () => {
   if (status.value?.state === 'ready') await loadActiveData()
 })
@@ -172,12 +177,19 @@ watch([activeTab, trendRange], async () => {
 async function refresh() {
   error.value = ''
   try {
-    const [nextStatus, nodeList] = await Promise.all([api.get('/monitoring/status'), api.get('/nodes')])
+    const [nextStatus, nodeList, classes] = await Promise.all([api.get('/monitoring/status'), api.get('/nodes'), api.get('/k8s/storage-classes')])
     status.value = nextStatus
     nodes.value = nodeList || []
+    storageClasses.value = classes || []
     if (!form.value.node_name) form.value.node_name = readyNodes.value[0]?.name || ''
     if (status.value?.state === 'ready') await loadActiveData()
+    syncMigrationPolling()
   } catch (e) { error.value = e.message || '加载监控状态失败' } finally { loaded.value = true }
+}
+
+function syncMigrationPolling() {
+  if (status.value?.storage_migration?.stage === 'copying' && !migrationPollTimer) migrationPollTimer = window.setInterval(refresh, 2500)
+  if (status.value?.storage_migration?.stage !== 'copying' && migrationPollTimer) { window.clearInterval(migrationPollTimer); migrationPollTimer = undefined }
 }
 
 function displayNode(node) { return nodeDisplayName(node.name) }
@@ -199,13 +211,14 @@ async function syncConfiguration() {
   syncing.value = true
   error.value = ''
   try {
-    await api.post('/monitoring/install', { node_name: status.value.node_name, data_path: status.value.data_path, retention_days: status.value.retention_days })
+    await api.post('/monitoring/install', { node_name: status.value.node_name, retention_days: status.value.retention_days })
     await refresh()
   } catch (e) { error.value = e.message || '同步采集配置失败' } finally { syncing.value = false }
 }
 
 function openMonitoringSettings() {
   settingsForm.value.retention_days = status.value?.retention_days || 14
+  migrationForm.value = { storage: status.value?.storage || '10Gi', storage_class_name: status.value?.storage_class_name || '' }
   monitoringSettingsOpen.value = true
   loadTargets()
 }
@@ -217,12 +230,22 @@ async function saveMonitoringConfig() {
   try {
     await api.post('/monitoring/install', {
       node_name: status.value.node_name,
-      data_path: status.value.data_path,
       retention_days: settingsForm.value.retention_days,
     })
     monitoringSettingsOpen.value = false
     await refresh()
   } catch (e) { error.value = e.message || '更新监控运行配置失败' } finally { monitoringSettingsSaving.value = false }
+}
+
+async function migrateLegacyStorage() {
+  if (!status.value || status.value.storage_mode !== 'host_path' || !migrationForm.value.storage) return
+  if (!window.confirm('迁移会停止 VictoriaMetrics，复制并校验历史数据后切换到系统 PVC。旧数据目录将保留，确定继续吗？')) return
+  migrating.value = true
+  error.value = ''
+  try {
+    status.value = await api.post('/monitoring/storage-migration', migrationForm.value)
+    await refresh()
+  } catch (e) { error.value = e.message || '迁移 VictoriaMetrics 存储失败' } finally { migrating.value = false }
 }
 
 async function loadTargets() {

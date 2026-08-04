@@ -387,15 +387,29 @@ func ensureKubeStateMetricsAccess(c *Client) error {
 
 func upsertAlertmanagerPVC(c *Client) error {
 	claims := c.Clientset.CoreV1().PersistentVolumeClaims(victoriaMetricsNamespace)
-	_, err := claims.Get(c.Ctx(), alertmanagerName+"-data", metav1.GetOptions{})
+	existing, err := claims.Get(c.Ctx(), alertmanagerName+"-data", metav1.GetOptions{})
 	if err == nil {
+		labels := existing.Labels
+		if labels == nil {
+			labels = map[string]string{}
+		}
+		changed := labels[ManagedByLabel] != ManagedByValue || labels[InfrastructureLabel] != InfrastructureAlertmanager
+		labels[ManagedByLabel] = ManagedByValue
+		labels[InfrastructureLabel] = InfrastructureAlertmanager
+		if !changed {
+			return nil
+		}
+		existing.Labels = labels
+		if _, err := claims.Update(c.Ctx(), existing, metav1.UpdateOptions{}); err != nil {
+			return fmt.Errorf("更新 Alertmanager 存储卷归属失败: %w", err)
+		}
 		return nil
 	}
 	if !apierrors.IsNotFound(err) {
 		return fmt.Errorf("读取 Alertmanager 存储卷失败: %w", err)
 	}
 	storage := resource.MustParse("1Gi")
-	claim := &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: alertmanagerName + "-data", Namespace: victoriaMetricsNamespace, Labels: alertingLabels("alertmanager")}, Spec: corev1.PersistentVolumeClaimSpec{AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce}, Resources: corev1.VolumeResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceStorage: storage}}}}
+	claim := &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: alertmanagerName + "-data", Namespace: victoriaMetricsNamespace, Labels: infrastructurePVCLabels(InfrastructureAlertmanager)}, Spec: corev1.PersistentVolumeClaimSpec{AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce}, Resources: corev1.VolumeResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceStorage: storage}}}}
 	if _, err := claims.Create(c.Ctx(), claim, metav1.CreateOptions{}); err != nil {
 		return fmt.Errorf("创建 Alertmanager 存储卷失败: %w", err)
 	}
