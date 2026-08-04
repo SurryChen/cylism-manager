@@ -88,6 +88,38 @@ func TestAlertingTestNotificationDoesNotExposeWebhook(t *testing.T) {
 	}
 }
 
+func TestAlertingTestNotificationSendsSMTPEmail(t *testing.T) {
+	original := K8s
+	K8s = alertingReadyK8s("relay-token")
+	defer func() { K8s = original }()
+	secret, err := K8s.Clientset.CoreV1().Secrets("monitoring").Get(t.Context(), "cylism-alerting-secret", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret.Data["email-smtp-host"] = []byte("smtp.example.com")
+	secret.Data["email-smtp-port"] = []byte("587")
+	secret.Data["email-username"] = []byte("alerts")
+	secret.Data["email-password"] = []byte("smtp-password")
+	secret.Data["email-from"] = []byte("alerts@example.com")
+	secret.Data["email-to"] = []byte("ops@example.com")
+	secret.Data["email-tls-mode"] = []byte("starttls")
+	if _, err := K8s.Clientset.CoreV1().Secrets("monitoring").Update(t.Context(), secret, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	handler := NewAlertingHandler()
+	handler.notify = func(context.Context, string, alertmanagerNotification) error { return nil }
+	handler.emailNotify = func(_ context.Context, config k8sclient.EmailConfig, payload alertmanagerNotification) error {
+		if config.SMTPHost != "smtp.example.com" || config.Password != "smtp-password" || len(payload.Alerts) != 1 {
+			t.Fatalf("unexpected email notification: %#v %#v", config, payload)
+		}
+		return nil
+	}
+	response := serve(setupAlertingRouter(handler), newJSONRequest(http.MethodPost, "/api/monitoring/alerts/test-notification", nil))
+	if response.Code != http.StatusOK || strings.Contains(response.Body.String(), "smtp-password") {
+		t.Fatalf("expected redacted successful SMTP test: %s", response.Body.String())
+	}
+}
+
 func TestAlertingOverviewSurfacesAlertmanagerFailure(t *testing.T) {
 	original := K8s
 	K8s = alertingReadyK8s("relay-token")

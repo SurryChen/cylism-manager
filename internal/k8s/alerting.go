@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"strconv"
 	"strings"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -41,7 +42,20 @@ const (
 type AlertingConfig struct {
 	NodeName         string            `json:"node_name"`
 	FeishuWebhookURL string            `json:"feishu_webhook_url,omitempty"`
+	Email            EmailConfig       `json:"email,omitempty"`
 	Rules            []AlertRuleConfig `json:"rules,omitempty"`
+}
+
+// EmailConfig contains write-only SMTP settings for alert notifications.
+type EmailConfig struct {
+	Enabled  bool   `json:"enabled"`
+	SMTPHost string `json:"smtp_host,omitempty"`
+	SMTPPort int    `json:"smtp_port,omitempty"`
+	Username string `json:"username,omitempty"`
+	Password string `json:"password,omitempty"`
+	From     string `json:"from,omitempty"`
+	To       string `json:"to,omitempty"`
+	TLSMode  string `json:"tls_mode,omitempty"`
 }
 
 type AlertRuleConfig struct {
@@ -61,6 +75,7 @@ type AlertingStatus struct {
 	VMAlertReady           int32             `json:"vmalert_ready"`
 	KubeStateMetricsReady  int32             `json:"kube_state_metrics_ready"`
 	NotificationConfigured bool              `json:"notification_configured"`
+	EmailConfigured        bool              `json:"email_configured"`
 	Rules                  []AlertRuleConfig `json:"rules,omitempty"`
 }
 
@@ -112,7 +127,8 @@ func (c *Client) AlertingStatus() *AlertingStatus {
 		status.Rules = settings.Rules
 	}
 	if secret, getErr := c.Clientset.CoreV1().Secrets(victoriaMetricsNamespace).Get(c.Ctx(), alertingSecretName, metav1.GetOptions{}); getErr == nil {
-		status.NotificationConfigured = strings.TrimSpace(string(secret.Data["feishu-webhook-url"])) != ""
+		status.EmailConfigured = strings.TrimSpace(string(secret.Data["email-to"])) != ""
+		status.NotificationConfigured = strings.TrimSpace(string(secret.Data["feishu-webhook-url"])) != "" || status.EmailConfigured
 	}
 	if status.AlertmanagerReady > 0 && status.VMAlertReady > 0 && status.KubeStateMetricsReady > 0 {
 		status.State = AlertingStateReady
@@ -149,13 +165,17 @@ func (c *Client) InstallAlerting(config AlertingConfig) (*AlertingStatus, error)
 	if err := ensureKubeStateMetricsAccess(c); err != nil {
 		return c.AlertingStatus(), err
 	}
-	if err := c.upsertAlertingSecret(config.FeishuWebhookURL); err != nil {
+	if err := c.upsertAlertingSecret(config.FeishuWebhookURL, config.Email); err != nil {
 		return c.AlertingStatus(), err
 	}
 	if err := c.upsertAlertingSettings(settings); err != nil {
 		return c.AlertingStatus(), err
 	}
-	if err := c.upsertAlertingResources(settings); err != nil {
+	notificationsEnabled, err := c.notificationsEnabled()
+	if err != nil {
+		return c.AlertingStatus(), err
+	}
+	if err := c.upsertAlertingResources(settings, notificationsEnabled); err != nil {
 		return c.AlertingStatus(), err
 	}
 	if err := refreshVictoriaMetricsScrapeConfig(c); err != nil {
@@ -255,6 +275,22 @@ func normalizeAlertingConfig(config AlertingConfig) (alertingSettings, error) {
 			return settings, fmt.Errorf("飞书机器人地址必须使用 open.feishu.cn 的 HTTPS URL")
 		}
 	}
+	config.Email.SMTPHost = strings.TrimSpace(config.Email.SMTPHost)
+	config.Email.Username = strings.TrimSpace(config.Email.Username)
+	config.Email.From = strings.TrimSpace(config.Email.From)
+	config.Email.To = strings.TrimSpace(config.Email.To)
+	config.Email.TLSMode = strings.ToLower(strings.TrimSpace(config.Email.TLSMode))
+	if config.Email.Enabled {
+		if config.Email.SMTPHost == "" || strings.Contains(config.Email.SMTPHost, "://") || config.Email.SMTPPort < 1 || config.Email.SMTPPort > 65535 || config.Email.From == "" || config.Email.To == "" {
+			return settings, fmt.Errorf("启用邮件通知时必须填写 SMTP 主机、端口、发件人与收件人")
+		}
+		if (config.Email.Username == "") != (strings.TrimSpace(config.Email.Password) == "") {
+			return settings, fmt.Errorf("SMTP 用户名和密码必须同时填写")
+		}
+		if config.Email.TLSMode != "starttls" && config.Email.TLSMode != "tls" {
+			return settings, fmt.Errorf("SMTP TLS 模式必须为 starttls 或 tls")
+		}
+	}
 	for _, rule := range settings.Rules {
 		if rule.DurationMinutes < 1 || rule.DurationMinutes > 1440 {
 			return settings, fmt.Errorf("规则 %s 的持续时间应在 1 到 1440 分钟之间", rule.Name)
@@ -300,7 +336,7 @@ func (c *Client) alertingSettings() (alertingSettings, error) {
 	return settings, nil
 }
 
-func (c *Client) upsertAlertingSecret(webhookURL string) error {
+func (c *Client) upsertAlertingSecret(webhookURL string, email EmailConfig) error {
 	secretClient := c.Clientset.CoreV1().Secrets(victoriaMetricsNamespace)
 	current, err := secretClient.Get(c.Ctx(), alertingSecretName, metav1.GetOptions{})
 	if err != nil && !apierrors.IsNotFound(err) {
@@ -315,6 +351,18 @@ func (c *Client) upsertAlertingSecret(webhookURL string) error {
 	}
 	if strings.TrimSpace(webhookURL) != "" {
 		data["feishu-webhook-url"] = []byte(strings.TrimSpace(webhookURL))
+	}
+	if email.Enabled {
+		for _, key := range []string{"email-smtp-host", "email-smtp-port", "email-username", "email-password", "email-from", "email-to", "email-tls-mode"} {
+			delete(data, key)
+		}
+		data["email-smtp-host"] = []byte(strings.TrimSpace(email.SMTPHost))
+		data["email-smtp-port"] = []byte(strconv.Itoa(email.SMTPPort))
+		data["email-username"] = []byte(strings.TrimSpace(email.Username))
+		data["email-password"] = []byte(email.Password)
+		data["email-from"] = []byte(strings.TrimSpace(email.From))
+		data["email-to"] = []byte(strings.TrimSpace(email.To))
+		data["email-tls-mode"] = []byte(strings.ToLower(strings.TrimSpace(email.TLSMode)))
 	}
 	if len(data["relay-token"]) < 24 {
 		token := make([]byte, 32)
@@ -336,6 +384,14 @@ func (c *Client) upsertAlertingSecret(webhookURL string) error {
 	return nil
 }
 
+func (c *Client) notificationsEnabled() (bool, error) {
+	secret, err := c.Clientset.CoreV1().Secrets(victoriaMetricsNamespace).Get(c.Ctx(), alertingSecretName, metav1.GetOptions{})
+	if err != nil {
+		return false, fmt.Errorf("读取告警通知 Secret 失败: %w", err)
+	}
+	return strings.TrimSpace(string(secret.Data["feishu-webhook-url"])) != "" || strings.TrimSpace(string(secret.Data["email-to"])) != "", nil
+}
+
 func (c *Client) upsertAlertingSettings(settings alertingSettings) error {
 	payload, err := json.Marshal(settings)
 	if err != nil {
@@ -344,11 +400,11 @@ func (c *Client) upsertAlertingSettings(settings alertingSettings) error {
 	return upsertNamedConfigMap(c, &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: alertingConfigName, Namespace: victoriaMetricsNamespace, Labels: alertingLabels("alerting")}, Data: map[string]string{"settings.json": string(payload)}})
 }
 
-func (c *Client) upsertAlertingResources(settings alertingSettings) error {
+func (c *Client) upsertAlertingResources(settings alertingSettings, notificationsEnabled bool) error {
 	if err := upsertNamedConfigMap(c, &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: alertingRulesConfigName, Namespace: victoriaMetricsNamespace, Labels: alertingLabels("vmalert")}, Data: map[string]string{"alerts.yml": renderAlertRules(settings.Rules)}}); err != nil {
 		return err
 	}
-	if err := upsertNamedConfigMap(c, &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: alertmanagerConfigName, Namespace: victoriaMetricsNamespace, Labels: alertingLabels("alertmanager")}, Data: map[string]string{"alertmanager.yml": renderAlertmanagerConfig()}}); err != nil {
+	if err := upsertNamedConfigMap(c, &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: alertmanagerConfigName, Namespace: victoriaMetricsNamespace, Labels: alertingLabels("alertmanager")}, Data: map[string]string{"alertmanager.yml": renderAlertmanagerConfig(notificationsEnabled)}}); err != nil {
 		return err
 	}
 	if err := upsertAlertmanagerPVC(c); err != nil {
@@ -509,7 +565,7 @@ func AlertmanagerServiceURL() string {
 	return alertmanagerServiceURL()
 }
 
-func renderAlertmanagerConfig() string {
+func renderAlertmanagerConfig(_ bool) string {
 	return `global:
   resolve_timeout: 5m
 route:

@@ -4,11 +4,16 @@ import (
 	"bytes"
 	"context"
 	"crypto/subtle"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/mail"
+	"net/smtp"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -27,10 +32,12 @@ const (
 
 type alertmanagerRequestFunc func(context.Context, string, string, interface{}, interface{}) error
 type alertNotifyFunc func(context.Context, string, alertmanagerNotification) error
+type alertEmailNotifyFunc func(context.Context, k8s.EmailConfig, alertmanagerNotification) error
 
 type AlertingHandler struct {
 	alertmanager alertmanagerRequestFunc
 	notify       alertNotifyFunc
+	emailNotify  alertEmailNotifyFunc
 	resolvedMu   sync.Mutex
 	resolved     []alertmanagerAlert
 }
@@ -109,7 +116,7 @@ type alertmanagerSilence struct {
 }
 
 func NewAlertingHandler() *AlertingHandler {
-	return &AlertingHandler{alertmanager: alertmanagerRequest, notify: sendFeishuNotification}
+	return &AlertingHandler{alertmanager: alertmanagerRequest, notify: sendFeishuNotification, emailNotify: sendEmailNotification}
 }
 
 func (h *AlertingHandler) Status(c *gin.Context) {
@@ -271,14 +278,14 @@ func (h *AlertingHandler) TestNotification(c *gin.Context) {
 		k8sUnavailable(c)
 		return
 	}
-	webhookURL, _, err := alertingSecrets()
+	notifications, err := alertingSecrets()
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
 		return
 	}
-	payload := alertmanagerNotification{Status: "firing", Alerts: []alertmanagerAlert{{Status: alertStatus{State: "firing"}, Labels: map[string]string{"alertname": "CylismAlertingTest", "severity": "info"}, Annotations: map[string]string{"summary": "Cylism 告警通知测试", "description": "飞书通知通道已连通"}, StartsAt: time.Now().UTC()}}}
-	if err := h.notify(c.Request.Context(), webhookURL, payload); err != nil {
-		model.Error(c, http.StatusBadGateway, model.CodeK8sAPIError, "发送飞书测试通知失败: "+err.Error())
+	payload := alertmanagerNotification{Status: "firing", Alerts: []alertmanagerAlert{{Status: alertStatus{State: "firing"}, Labels: map[string]string{"alertname": "CylismAlertingTest", "severity": "info"}, Annotations: map[string]string{"summary": "Cylism 告警通知测试", "description": "通知通道已连通"}, StartsAt: time.Now().UTC()}}}
+	if err := h.sendNotifications(c.Request.Context(), notifications, payload); err != nil {
+		model.Error(c, http.StatusBadGateway, model.CodeK8sAPIError, "发送测试通知失败: "+err.Error())
 		return
 	}
 	model.SuccessWithMessage(c, gin.H{"configured": true}, "测试通知已发送")
@@ -292,13 +299,13 @@ func (h *AlertingHandler) Notify(c *gin.Context) {
 		model.Error(c, http.StatusServiceUnavailable, model.CodeK8sAPIError, "Kubernetes 客户端未初始化")
 		return
 	}
-	webhookURL, relayToken, err := alertingSecrets()
-	if err != nil || !validAlertRelayToken(c.GetHeader("Authorization"), relayToken) {
+	notifications, err := alertingSecrets()
+	if err != nil || !validAlertRelayToken(c.GetHeader("Authorization"), notifications.RelayToken) {
 		model.Error(c, http.StatusUnauthorized, model.CodeUnauthorized, "告警回调未授权")
 		return
 	}
-	if webhookURL == "" {
-		model.Error(c, http.StatusConflict, model.CodeConflict, "飞书通知渠道尚未配置")
+	if !notifications.configured() {
+		model.Error(c, http.StatusConflict, model.CodeConflict, "告警通知渠道尚未配置")
 		return
 	}
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxAlertPayload)
@@ -307,8 +314,8 @@ func (h *AlertingHandler) Notify(c *gin.Context) {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "告警回调载荷无效")
 		return
 	}
-	if err := h.notify(c.Request.Context(), webhookURL, payload); err != nil {
-		model.Error(c, http.StatusBadGateway, model.CodeK8sAPIError, "转发飞书通知失败: "+err.Error())
+	if err := h.sendNotifications(c.Request.Context(), notifications, payload); err != nil {
+		model.Error(c, http.StatusBadGateway, model.CodeK8sAPIError, "转发告警通知失败: "+err.Error())
 		return
 	}
 	h.recordResolved(payload)
@@ -360,20 +367,54 @@ func (h *AlertingHandler) readyForAlertmanager(c *gin.Context) bool {
 	return true
 }
 
-func alertingSecrets() (string, string, error) {
+type alertingNotificationSecrets struct {
+	FeishuWebhookURL string
+	RelayToken       string
+	Email            k8s.EmailConfig
+}
+
+func (s alertingNotificationSecrets) configured() bool {
+	return s.FeishuWebhookURL != "" || s.Email.Enabled
+}
+
+func alertingSecrets() (alertingNotificationSecrets, error) {
 	secret, err := K8s.Clientset.CoreV1().Secrets(alertingNamespace).Get(K8s.Ctx(), alertingSecretName, metav1.GetOptions{})
 	if err != nil {
-		return "", "", fmt.Errorf("读取告警通知配置失败")
+		return alertingNotificationSecrets{}, fmt.Errorf("读取告警通知配置失败")
 	}
-	webhookURL := strings.TrimSpace(string(secret.Data["feishu-webhook-url"]))
-	token := strings.TrimSpace(string(secret.Data["relay-token"]))
-	if token == "" {
-		return "", "", fmt.Errorf("告警回调令牌尚未配置")
+	settings := alertingNotificationSecrets{FeishuWebhookURL: strings.TrimSpace(string(secret.Data["feishu-webhook-url"])), RelayToken: strings.TrimSpace(string(secret.Data["relay-token"]))}
+	if settings.RelayToken == "" {
+		return alertingNotificationSecrets{}, fmt.Errorf("告警回调令牌尚未配置")
 	}
-	if webhookURL != "" && !validFeishuWebhookURL(webhookURL) {
-		return "", "", fmt.Errorf("飞书通知地址无效")
+	if settings.FeishuWebhookURL != "" && !validFeishuWebhookURL(settings.FeishuWebhookURL) {
+		return alertingNotificationSecrets{}, fmt.Errorf("飞书通知地址无效")
 	}
-	return webhookURL, token, nil
+	if to := strings.TrimSpace(string(secret.Data["email-to"])); to != "" {
+		port, parseErr := strconv.Atoi(strings.TrimSpace(string(secret.Data["email-smtp-port"])))
+		settings.Email = k8s.EmailConfig{Enabled: true, SMTPHost: strings.TrimSpace(string(secret.Data["email-smtp-host"])), SMTPPort: port, Username: strings.TrimSpace(string(secret.Data["email-username"])), Password: string(secret.Data["email-password"]), From: strings.TrimSpace(string(secret.Data["email-from"])), To: to, TLSMode: strings.TrimSpace(string(secret.Data["email-tls-mode"]))}
+		if parseErr != nil || settings.Email.SMTPHost == "" || settings.Email.SMTPPort < 1 || settings.Email.From == "" || settings.Email.TLSMode == "" {
+			return alertingNotificationSecrets{}, fmt.Errorf("邮件通知配置无效")
+		}
+	}
+	return settings, nil
+}
+
+func (h *AlertingHandler) sendNotifications(ctx context.Context, settings alertingNotificationSecrets, payload alertmanagerNotification) error {
+	var failures []string
+	if settings.FeishuWebhookURL != "" {
+		if err := h.notify(ctx, settings.FeishuWebhookURL, payload); err != nil {
+			failures = append(failures, "飞书: "+err.Error())
+		}
+	}
+	if settings.Email.Enabled {
+		if err := h.emailNotify(ctx, settings.Email, payload); err != nil {
+			failures = append(failures, "邮件: "+err.Error())
+		}
+	}
+	if len(failures) > 0 {
+		return fmt.Errorf("%s", strings.Join(failures, "; "))
+	}
+	return nil
 }
 
 func validFeishuWebhookURL(raw string) bool {
@@ -453,6 +494,94 @@ func sendFeishuNotification(ctx context.Context, webhookURL string, payload aler
 		return fmt.Errorf("飞书返回 %d: %s", result.Code, result.Msg)
 	}
 	return nil
+}
+
+func sendEmailNotification(ctx context.Context, config k8s.EmailConfig, payload alertmanagerNotification) error {
+	from, err := mail.ParseAddress(config.From)
+	if err != nil {
+		return fmt.Errorf("发件人地址无效: %w", err)
+	}
+	recipients, err := mail.ParseAddressList(config.To)
+	if err != nil || len(recipients) == 0 {
+		return fmt.Errorf("收件人地址无效")
+	}
+	addresses := make([]string, 0, len(recipients))
+	for _, recipient := range recipients {
+		addresses = append(addresses, recipient.Address)
+	}
+	endpoint := net.JoinHostPort(config.SMTPHost, strconv.Itoa(config.SMTPPort))
+	tlsConfig := &tls.Config{ServerName: config.SMTPHost, MinVersion: tls.VersionTLS12}
+	dialer := &net.Dialer{Timeout: 10 * time.Second}
+	var connection net.Conn
+	if config.TLSMode == "tls" {
+		connection, err = tls.DialWithDialer(dialer, "tcp", endpoint, tlsConfig)
+	} else {
+		connection, err = dialer.DialContext(ctx, "tcp", endpoint)
+	}
+	if err != nil {
+		return fmt.Errorf("连接 SMTP 服务失败: %w", err)
+	}
+	client, err := smtp.NewClient(connection, config.SMTPHost)
+	if err != nil {
+		connection.Close()
+		return fmt.Errorf("初始化 SMTP 会话失败: %w", err)
+	}
+	defer client.Quit()
+	if config.TLSMode == "starttls" {
+		if ok, _ := client.Extension("STARTTLS"); !ok {
+			return fmt.Errorf("SMTP 服务不支持 STARTTLS")
+		}
+		if err := client.StartTLS(tlsConfig); err != nil {
+			return fmt.Errorf("启动 SMTP TLS 失败: %w", err)
+		}
+	}
+	if config.Username != "" {
+		if err := client.Auth(smtp.PlainAuth("", config.Username, config.Password, config.SMTPHost)); err != nil {
+			return fmt.Errorf("SMTP 认证失败: %w", err)
+		}
+	}
+	if err := client.Mail(from.Address); err != nil {
+		return fmt.Errorf("SMTP 发件人被拒绝: %w", err)
+	}
+	for _, address := range addresses {
+		if err := client.Rcpt(address); err != nil {
+			return fmt.Errorf("SMTP 收件人被拒绝: %w", err)
+		}
+	}
+	body := emailMessage(payload)
+	writer, err := client.Data()
+	if err != nil {
+		return fmt.Errorf("开始 SMTP 邮件内容失败: %w", err)
+	}
+	_, writeErr := io.WriteString(writer, "From: "+from.String()+"\r\nTo: "+strings.Join(addresses, ", ")+"\r\nSubject: Cylism alert notification\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\n"+body)
+	closeErr := writer.Close()
+	if writeErr != nil {
+		return fmt.Errorf("写入 SMTP 邮件内容失败: %w", writeErr)
+	}
+	if closeErr != nil {
+		return fmt.Errorf("提交 SMTP 邮件失败: %w", closeErr)
+	}
+	return nil
+}
+
+func emailMessage(payload alertmanagerNotification) string {
+	state := "告警恢复"
+	if payload.Status == "firing" {
+		state = "告警触发"
+	}
+	lines := []string{state, ""}
+	for _, alert := range payload.Alerts {
+		name := alert.Labels["alertname"]
+		if name == "" {
+			name = "集群告警"
+		}
+		summary := alert.Annotations["summary"]
+		if summary == "" {
+			summary = alert.Annotations["description"]
+		}
+		lines = append(lines, name, summary, "")
+	}
+	return strings.Join(lines, "\n")
 }
 
 func feishuMessage(payload alertmanagerNotification) gin.H {
