@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -45,9 +46,10 @@ func setupApplicationRouter() (*gin.Engine, *store.Store) {
 		applications.PUT("/:id/deployment-templates/:templateID", h.UpdateDeploymentTemplate)
 		applications.DELETE("/:id/deployment-templates/:templateID", h.DeleteDeploymentTemplate)
 		applications.POST("/:id/deployment-templates/:templateID/default", h.SetDefaultDeploymentTemplate)
-		applications.GET("/:id/endpoint", h.GetApplicationEndpoint)
-		applications.PUT("/:id/endpoint", h.UpdateApplicationEndpoint)
-		applications.DELETE("/:id/endpoint", h.DeleteApplicationEndpoint)
+		applications.GET("/:id/endpoints", h.ListApplicationEndpoints)
+		applications.POST("/:id/endpoints", h.CreateApplicationEndpoint)
+		applications.PUT("/:id/endpoints/:endpointID", h.UpdateApplicationEndpoint)
+		applications.DELETE("/:id/endpoints/:endpointID", h.DeleteApplicationEndpoint)
 		applications.POST("/:id/releases", h.CreateRelease)
 		applications.GET("/:id/releases/:releaseID", h.GetRelease)
 	}
@@ -84,7 +86,7 @@ func TestWorkspaceOverviewIncludesApplicationRuntimeSummary(t *testing.T) {
 	if err := s.CreateRelease(failed); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.ReplaceApplicationEndpoint(&model.ApplicationEndpoint{ApplicationID: app.ID, Exposure: application.ExposurePublic, Domain: "browser.example.com", TLSEnabled: true, ServicePort: 80}); err != nil {
+	if err := s.CreateApplicationEndpoint(&model.ApplicationEndpoint{ApplicationID: app.ID, Exposure: application.ExposurePublic, Domain: "browser.example.com", TLSEnabled: true, ServicePort: 80}); err != nil {
 		t.Fatal(err)
 	}
 	originalK8s := K8s
@@ -243,17 +245,33 @@ func TestApplicationHandlerBindsDomainIndependentlyFromReleaseTemplate(t *testin
 	if err := s.CreateManagedDomain(&model.ManagedDomain{Hostname: "api.example.com", EnvironmentID: 1, Namespace: "commerce-prod", CertificateName: "api-cert", TLSSecretName: "api-tls", Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
+	if err := s.CreateManagedDomain(&model.ManagedDomain{Hostname: "admin.example.com", EnvironmentID: 1, Namespace: "commerce-prod", CertificateName: "admin-cert", TLSSecretName: "admin-tls", Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
 	originalK8s := K8s
 	K8s = &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "commerce-prod"}})}
 	defer func() { K8s = originalK8s }()
 
-	bind := serve(r, newJSONRequest(http.MethodPut, "/api/applications/1/endpoint", gin.H{"domain_id": 1, "path": "/", "tls_enabled": false}))
+	bind := serve(r, newJSONRequest(http.MethodPost, "/api/applications/1/endpoints", gin.H{"domain_id": 1, "path": "/", "tls_enabled": false}))
 	if bind.Code != http.StatusOK || !strings.Contains(bind.Body.String(), "api.example.com") {
 		t.Fatalf("bind endpoint: %d %s", bind.Code, bind.Body.String())
 	}
-	endpoint := serve(r, newJSONRequest(http.MethodGet, "/api/applications/1/endpoint", nil))
-	if endpoint.Code != http.StatusOK || !strings.Contains(endpoint.Body.String(), "api.example.com") {
-		t.Fatalf("get endpoint: %d %s", endpoint.Code, endpoint.Body.String())
+	firstID := responseID(t, bind.Body.Bytes())
+	second := serve(r, newJSONRequest(http.MethodPost, "/api/applications/1/endpoints", gin.H{"domain_id": 2, "path": "/console", "tls_enabled": false}))
+	if second.Code != http.StatusOK || !strings.Contains(second.Body.String(), "admin.example.com") {
+		t.Fatalf("bind second endpoint: %d %s", second.Code, second.Body.String())
+	}
+	endpoints := serve(r, newJSONRequest(http.MethodGet, "/api/applications/1/endpoints", nil))
+	if endpoints.Code != http.StatusOK || !strings.Contains(endpoints.Body.String(), "api.example.com") || !strings.Contains(endpoints.Body.String(), "admin.example.com") {
+		t.Fatalf("list endpoints: %d %s", endpoints.Code, endpoints.Body.String())
+	}
+	updated := serve(r, newJSONRequest(http.MethodPut, "/api/applications/1/endpoints/"+strconv.Itoa(int(firstID)), gin.H{"domain_id": 1, "path": "/v2", "tls_enabled": false}))
+	if updated.Code != http.StatusOK || !strings.Contains(updated.Body.String(), "/v2") {
+		t.Fatalf("update endpoint: %d %s", updated.Code, updated.Body.String())
+	}
+	remove := serve(r, newJSONRequest(http.MethodDelete, "/api/applications/1/endpoints/"+strconv.Itoa(int(firstID)), nil))
+	if remove.Code != http.StatusOK {
+		t.Fatalf("delete endpoint: %d %s", remove.Code, remove.Body.String())
 	}
 }
 

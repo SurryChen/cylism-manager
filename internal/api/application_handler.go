@@ -73,6 +73,7 @@ type workspaceApplicationInfo struct {
 	LatestRelease *model.Release          `json:"latest_release,omitempty"`
 	Runtime       workspaceRuntimeSummary `json:"runtime"`
 	EndpointURL   string                  `json:"endpoint_url,omitempty"`
+	EndpointCount int                     `json:"endpoint_count"`
 }
 
 type workloadKindRequest struct {
@@ -735,7 +736,7 @@ func (h *ApplicationHandler) workspaceApplicationInfos(ctx context.Context, name
 		} else if latest != nil {
 			runtime.Status = "unavailable"
 		}
-		infos = append(infos, workspaceApplicationInfo{Application: app, ActiveRelease: active, LatestRelease: latest, Runtime: runtime, EndpointURL: applicationEndpointURL(app)})
+		infos = append(infos, workspaceApplicationInfo{Application: app, ActiveRelease: active, LatestRelease: latest, Runtime: runtime, EndpointURL: applicationEndpointURL(app), EndpointCount: len(app.Endpoints)})
 	}
 	return infos
 }
@@ -1178,7 +1179,7 @@ func deploymentTemplateFromModel(template *model.ApplicationDeploymentTemplate, 
 	return &deploymentTemplateInfo{ID: template.ID, ApplicationID: template.ApplicationID, Name: template.Name, Description: template.Description, Enabled: template.Enabled, IsDefault: defaultTemplateID != nil && *defaultTemplateID == template.ID, Revision: template.Revision, Spec: spec, UpdatedAt: template.UpdatedAt}, nil
 }
 
-func (h *ApplicationHandler) GetApplicationEndpoint(c *gin.Context) {
+func (h *ApplicationHandler) ListApplicationEndpoints(c *gin.Context) {
 	applicationID, err := parseID(c.Param("id"))
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "应用 ID 无效")
@@ -1188,19 +1189,15 @@ func (h *ApplicationHandler) GetApplicationEndpoint(c *gin.Context) {
 		model.Error(c, http.StatusNotFound, model.CodeNotFound, "应用不存在")
 		return
 	}
-	endpoint, err := h.store.GetApplicationEndpoint(applicationID)
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		model.Success(c, nil)
-		return
-	}
+	endpoints, err := h.store.ListApplicationEndpoints(applicationID)
 	if err != nil {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
 		return
 	}
-	model.Success(c, endpoint)
+	model.Success(c, endpoints)
 }
 
-func (h *ApplicationHandler) UpdateApplicationEndpoint(c *gin.Context) {
+func (h *ApplicationHandler) CreateApplicationEndpoint(c *gin.Context) {
 	if K8s == nil {
 		k8sUnavailable(c)
 		return
@@ -1220,27 +1217,100 @@ func (h *ApplicationHandler) UpdateApplicationEndpoint(c *gin.Context) {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "请选择受管域名")
 		return
 	}
+	endpoint, err := h.prepareApplicationEndpoint(app, 0, req)
+	if err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		return
+	}
 	servicePort, err := h.applicationServicePort(app)
 	if err != nil {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
 		return
 	}
-	spec := application.ReleaseSpec{Endpoint: application.EndpointSpec{Exposure: application.ExposurePublic, DomainID: req.DomainID, Path: strings.TrimSpace(req.Path), TLSEnabled: req.TLSEnabled}}
-	if err := h.prepareManagedDomain(app, &spec); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+	endpoint.ServicePort = servicePort
+	endpoints, err := h.store.ListApplicationEndpoints(app.ID)
+	if err != nil {
+		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
 		return
 	}
-	context := applicationContextFor(app)
-	if err := application.NewKubernetesApplier(K8s).SyncEndpoint(c.Request.Context(), context, spec.Endpoint, servicePort); err != nil {
+	endpoints = append(endpoints, *endpoint)
+	if err := application.NewKubernetesApplier(K8s).SyncApplicationEndpoints(c.Request.Context(), applicationContextFor(app), endpoints, servicePort); err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, fmt.Sprintf("同步应用入口: %v", err))
 		return
 	}
-	endpoint := &model.ApplicationEndpoint{ApplicationID: app.ID, DomainID: spec.Endpoint.DomainID, Exposure: spec.Endpoint.Exposure, Domain: spec.Endpoint.Domain, Path: spec.Endpoint.Path, ServicePort: servicePort, TLSEnabled: spec.Endpoint.TLSEnabled, TLSSecretName: spec.Endpoint.ManagedTLSSecretName, IssuerRef: spec.Endpoint.IssuerRef}
-	if err := h.store.ReplaceApplicationEndpoint(endpoint); err != nil {
+	if err := h.store.CreateApplicationEndpoint(endpoint); err != nil {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
 		return
 	}
 	model.Success(c, endpoint)
+}
+
+func (h *ApplicationHandler) UpdateApplicationEndpoint(c *gin.Context) {
+	if K8s == nil {
+		k8sUnavailable(c)
+		return
+	}
+	applicationID, err := parseID(c.Param("id"))
+	if err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "应用 ID 无效")
+		return
+	}
+	endpointID, err := parseID(c.Param("endpointID"))
+	if err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "入口 ID 无效")
+		return
+	}
+	app, err := h.store.GetApplication(applicationID)
+	if err != nil {
+		model.Error(c, http.StatusNotFound, model.CodeNotFound, "应用不存在")
+		return
+	}
+	var req applicationEndpointRequest
+	if err := c.ShouldBindJSON(&req); err != nil || req.DomainID == 0 {
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "请选择受管域名")
+		return
+	}
+	endpoint, err := h.store.GetApplicationEndpoint(applicationID, endpointID)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		model.Error(c, http.StatusNotFound, model.CodeNotFound, "应用入口不存在")
+		return
+	}
+	if err != nil {
+		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		return
+	}
+	updated, err := h.prepareApplicationEndpoint(app, endpoint.ID, req)
+	if err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		return
+	}
+	servicePort, err := h.applicationServicePort(app)
+	if err != nil {
+		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		return
+	}
+	updated.ID = endpoint.ID
+	updated.CreatedAt = endpoint.CreatedAt
+	updated.ServicePort = servicePort
+	endpoints, err := h.store.ListApplicationEndpoints(app.ID)
+	if err != nil {
+		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		return
+	}
+	for index := range endpoints {
+		if endpoints[index].ID == endpoint.ID {
+			endpoints[index] = *updated
+		}
+	}
+	if err := application.NewKubernetesApplier(K8s).SyncApplicationEndpoints(c.Request.Context(), applicationContextFor(app), endpoints, servicePort); err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, fmt.Sprintf("同步应用入口: %v", err))
+		return
+	}
+	if err := h.store.UpdateApplicationEndpoint(updated); err != nil {
+		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		return
+	}
+	model.Success(c, updated)
 }
 
 func (h *ApplicationHandler) DeleteApplicationEndpoint(c *gin.Context) {
@@ -1253,20 +1323,48 @@ func (h *ApplicationHandler) DeleteApplicationEndpoint(c *gin.Context) {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "应用 ID 无效")
 		return
 	}
+	endpointID, err := parseID(c.Param("endpointID"))
+	if err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "入口 ID 无效")
+		return
+	}
 	app, err := h.store.GetApplication(applicationID)
 	if err != nil {
 		model.Error(c, http.StatusNotFound, model.CodeNotFound, "应用不存在")
 		return
 	}
-	if err := application.NewKubernetesApplier(K8s).RemoveEndpoint(c.Request.Context(), applicationContextFor(app)); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, fmt.Sprintf("移除应用入口: %v", err))
+	if _, err := h.store.GetApplicationEndpoint(applicationID, endpointID); errors.Is(err, gorm.ErrRecordNotFound) {
+		model.Error(c, http.StatusNotFound, model.CodeNotFound, "应用入口不存在")
 		return
-	}
-	if err := h.store.DeleteApplicationEndpoint(applicationID); err != nil {
+	} else if err != nil {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
 		return
 	}
-	model.Success(c, gin.H{"id": applicationID})
+	servicePort, err := h.applicationServicePort(app)
+	if err != nil {
+		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		return
+	}
+	endpoints, err := h.store.ListApplicationEndpoints(app.ID)
+	if err != nil {
+		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		return
+	}
+	remaining := make([]model.ApplicationEndpoint, 0, len(endpoints)-1)
+	for _, endpoint := range endpoints {
+		if endpoint.ID != endpointID {
+			remaining = append(remaining, endpoint)
+		}
+	}
+	if err := application.NewKubernetesApplier(K8s).SyncApplicationEndpoints(c.Request.Context(), applicationContextFor(app), remaining, servicePort); err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, fmt.Sprintf("移除应用入口: %v", err))
+		return
+	}
+	if err := h.store.DeleteApplicationEndpoint(applicationID, endpointID); err != nil {
+		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		return
+	}
+	model.Success(c, gin.H{"id": endpointID})
 }
 
 func (h *ApplicationHandler) applicationServicePort(app *model.Application) (int32, error) {
@@ -1288,28 +1386,19 @@ func (h *ApplicationHandler) applicationServicePort(app *model.Application) (int
 	} else if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 		return 0, err
 	}
-	if endpoint, err := h.store.GetApplicationEndpoint(app.ID); err == nil && endpoint.ServicePort > 0 {
-		return endpoint.ServicePort, nil
-	} else if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+	if endpoints, err := h.store.ListApplicationEndpoints(app.ID); err == nil && len(endpoints) > 0 && endpoints[0].ServicePort > 0 {
+		return endpoints[0].ServicePort, nil
+	} else if err != nil {
 		return 0, err
 	}
 	return 80, nil
 }
 
 func (h *ApplicationHandler) applyApplicationEndpointSpec(app *model.Application, spec *application.ReleaseSpec) error {
-	endpoint, err := h.store.GetApplicationEndpoint(app.ID)
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		spec.Endpoint = application.EndpointSpec{Exposure: application.ExposureCluster}
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	spec.Endpoint = application.EndpointSpec{Exposure: endpoint.Exposure, DomainID: endpoint.DomainID, Domain: endpoint.Domain, Path: endpoint.Path, TLSEnabled: endpoint.TLSEnabled, IssuerRef: endpoint.IssuerRef, ManagedTLSSecretName: endpoint.TLSSecretName}
-	if spec.Endpoint.Exposure != application.ExposurePublic {
-		return nil
-	}
-	return h.prepareManagedDomain(app, spec)
+	// Domain bindings are application-level state. Release snapshots must not
+	// reapply historical endpoint data over newer bindings.
+	spec.Endpoint = application.EndpointSpec{Exposure: application.ExposureCluster}
+	return nil
 }
 
 func applicationContextFor(app *model.Application) application.ApplicationContext {
@@ -1523,55 +1612,45 @@ func mirrorAppliedToNode(mirror model.NodeRegistryMirror, nodeName string) bool 
 	return false
 }
 
-func (h *ApplicationHandler) prepareManagedDomain(app *model.Application, spec *application.ReleaseSpec) error {
-	if spec.Endpoint.DomainID == 0 {
-		if spec.Endpoint.ManagedCertificateName != "" || spec.Endpoint.ManagedTLSSecretName != "" {
-			return fmt.Errorf("受管证书只能通过受管域名选择")
-		}
-		return nil
-	}
-	domain, err := h.store.GetManagedDomain(spec.Endpoint.DomainID)
+func (h *ApplicationHandler) prepareApplicationEndpoint(app *model.Application, endpointID uint, req applicationEndpointRequest) (*model.ApplicationEndpoint, error) {
+	domain, err := h.store.GetManagedDomain(req.DomainID)
 	if err != nil || !domain.Enabled {
-		return fmt.Errorf("域名不存在或已停用")
+		return nil, fmt.Errorf("域名不存在或已停用")
 	}
 	if domain.EnvironmentID == 0 || domain.EnvironmentID != app.EnvironmentID {
-		return fmt.Errorf("域名仅可用于当前应用环境")
+		return nil, fmt.Errorf("域名仅可用于当前应用环境")
 	}
-	path := spec.Endpoint.Path
+	path := strings.TrimSpace(req.Path)
 	if path == "" {
 		path = "/"
-		spec.Endpoint.Path = path
 	}
-	conflicts, err := h.store.CountApplicationEndpointRoute(domain.ID, path, app.ID)
+	conflicts, err := h.store.CountApplicationEndpointRoute(domain.ID, path, endpointID)
 	if err != nil {
-		return fmt.Errorf("检查域名路由冲突: %w", err)
+		return nil, fmt.Errorf("检查域名路由冲突: %w", err)
 	}
 	if conflicts > 0 {
-		return fmt.Errorf("域名 %q 的路径 %q 已被其他应用入口使用", domain.Hostname, path)
+		return nil, fmt.Errorf("域名 %q 的路径 %q 已被其他应用入口使用", domain.Hostname, path)
 	}
-	spec.Endpoint.Domain = domain.Hostname
-	spec.Endpoint.IssuerRef = domain.IssuerRef
-	spec.Endpoint.IssuerKind = domain.IssuerKind
-	if !spec.Endpoint.TLSEnabled {
-		return nil
+	endpoint := &model.ApplicationEndpoint{ApplicationID: app.ID, DomainID: domain.ID, Exposure: application.ExposurePublic, Domain: domain.Hostname, Path: path, TLSEnabled: req.TLSEnabled, IssuerRef: domain.IssuerRef}
+	if !endpoint.TLSEnabled {
+		return endpoint, nil
 	}
 	if domain.CertificateName == "" || domain.TLSSecretName == "" {
-		return fmt.Errorf("域名尚未申请证书")
+		return nil, fmt.Errorf("域名尚未申请证书")
 	}
 	certificate, err := K8s.GetCertificate(domain.Namespace, domain.CertificateName)
 	if err != nil {
-		return fmt.Errorf("读取域名证书: %w", err)
+		return nil, fmt.Errorf("读取域名证书: %w", err)
 	}
 	if certificate.Status != "Ready" {
 		detail := certificate.Reason
 		if detail == "" {
 			detail = "等待 cert-manager 签发"
 		}
-		return fmt.Errorf("域名证书尚未就绪: %s", detail)
+		return nil, fmt.Errorf("域名证书尚未就绪: %s", detail)
 	}
-	spec.Endpoint.ManagedCertificateName = domain.CertificateName
-	spec.Endpoint.ManagedTLSSecretName = domain.TLSSecretName
-	return nil
+	endpoint.TLSSecretName = domain.TLSSecretName
+	return endpoint, nil
 }
 
 func registryImageReference(endpoint, image string) (string, error) {
@@ -1634,8 +1713,30 @@ func (h *ApplicationHandler) executeAsync(service *application.Service, releaseI
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 		defer cancel()
-		_ = service.ExecuteRelease(ctx, releaseID, app, spec)
+		_ = service.ExecuteReleaseWithPostApply(ctx, releaseID, app, spec, func() error {
+			return h.syncApplicationEndpoints(ctx, app, spec.Service.Port)
+		})
 	}()
+}
+
+func (h *ApplicationHandler) syncApplicationEndpoints(ctx context.Context, app *model.Application, servicePort int32) error {
+	endpoints, err := h.store.ListApplicationEndpoints(app.ID)
+	if err != nil {
+		return fmt.Errorf("读取应用入口: %w", err)
+	}
+	if err := application.NewKubernetesApplier(K8s).SyncApplicationEndpoints(ctx, applicationContextFor(app), endpoints, servicePort); err != nil {
+		return fmt.Errorf("同步应用入口: %w", err)
+	}
+	for index := range endpoints {
+		if endpoints[index].ServicePort == servicePort {
+			continue
+		}
+		endpoints[index].ServicePort = servicePort
+		if err := h.store.UpdateApplicationEndpoint(&endpoints[index]); err != nil {
+			return fmt.Errorf("更新应用入口端口: %w", err)
+		}
+	}
+	return nil
 }
 
 func parseID(value string) (uint, error) {

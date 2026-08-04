@@ -214,13 +214,30 @@ func (a *KubernetesApplier) Apply(ctx context.Context, resources *RenderedResour
 // SyncEndpoint updates only the application Ingress. Domain ownership is
 // application-level state, so it must not wait for a version release.
 func (a *KubernetesApplier) SyncEndpoint(ctx context.Context, application ApplicationContext, endpoint EndpointSpec, servicePort int32) error {
+	return a.SyncApplicationEndpoints(ctx, application, []model.ApplicationEndpoint{{
+		Domain:        endpoint.Domain,
+		Path:          endpoint.Path,
+		Exposure:      endpoint.Exposure,
+		TLSEnabled:    endpoint.TLSEnabled,
+		TLSSecretName: endpoint.ManagedTLSSecretName,
+	}}, servicePort)
+}
+
+// SyncApplicationEndpoints reconciles all public application endpoints into one managed Ingress.
+func (a *KubernetesApplier) SyncApplicationEndpoints(ctx context.Context, application ApplicationContext, endpoints []model.ApplicationEndpoint, servicePort int32) error {
 	if a.Client == nil || a.Client.Clientset == nil {
 		return fmt.Errorf("Kubernetes 客户端未初始化")
 	}
-	if endpoint.Exposure != ExposurePublic {
+	publicEndpoints := make([]model.ApplicationEndpoint, 0, len(endpoints))
+	for _, endpoint := range endpoints {
+		if endpoint.Exposure == "" || endpoint.Exposure == ExposurePublic {
+			publicEndpoints = append(publicEndpoints, endpoint)
+		}
+	}
+	if len(publicEndpoints) == 0 {
 		return a.RemoveEndpoint(ctx, application)
 	}
-	return a.applyIngress(ctx, endpointIngress(application, endpoint, servicePort))
+	return a.applyIngress(ctx, applicationEndpointsIngress(application, publicEndpoints, servicePort))
 }
 
 func (a *KubernetesApplier) RemoveEndpoint(ctx context.Context, application ApplicationContext) error {
