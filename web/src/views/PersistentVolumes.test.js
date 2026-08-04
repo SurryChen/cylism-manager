@@ -9,8 +9,9 @@ vi.mock('../api/index.js', () => ({
 function mockInventory(overrides = {}) {
   return path => {
     if (path === '/projects') return Promise.resolve([{ id: 1, name: 'knowledge', environments: [{ id: 2, name: 'production', namespace: 'project-knowledge-prod' }] }])
-    if (path === '/k8s/namespaces') return Promise.resolve([{ name: 'default' }, { name: 'project-knowledge-prod' }])
+    if (path === '/k8s/namespace-names') return Promise.resolve([{ name: 'default' }, { name: 'project-knowledge-prod' }])
     if (path === '/k8s/persistent-volume-claims') return Promise.resolve(overrides.claims || [])
+    if (path === '/k8s/persistent-volume-claims/usage') return Promise.resolve(overrides.usage || [])
     if (path === '/k8s/storage-classes') return Promise.resolve([{ name: 'local-path', is_default: true, volume_binding_mode: 'WaitForFirstConsumer' }])
     if (path === '/k8s/persistent-volume-migrations') return Promise.resolve([])
     if (path === '/nodes') return Promise.resolve([])
@@ -109,5 +110,21 @@ describe('PersistentVolumes view', () => {
     expect(wrapper.text()).toContain('VictoriaMetrics')
     expect(wrapper.text()).toContain('查看监控')
     expect(wrapper.find('[title="删除存储卷"]').exists()).toBe(false)
+    expect(wrapper.get('.monitoring-link').classes()).toContain('monitoring-link')
+  })
+
+  it('loads local PVC usage without blocking the inventory', async () => {
+    const { api } = await import('../api/index.js')
+    api.get.mockImplementation(mockInventory({
+      claims: [{ name: 'karakeep-data', namespace: 'project-knowledge-prod', phase: 'Bound', storage: '5Gi' }],
+      usage: [{ namespace: 'project-knowledge-prod', name: 'karakeep-data', status: 'available', used_bytes: 1073741824, capacity_bytes: 5368709120 }],
+    }))
+    const wrapper = mount(PersistentVolumes)
+    await settle()
+    await settle()
+
+    expect(api.get).toHaveBeenCalledWith('/k8s/persistent-volume-claims/usage')
+    expect(wrapper.text()).toContain('1.0 GiB')
+    expect(wrapper.text()).toContain('20% / 请求容量')
   })
 })

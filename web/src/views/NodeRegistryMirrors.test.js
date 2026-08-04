@@ -15,15 +15,36 @@ async function settle() {
 describe('Node registry mirrors view', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    api.get.mockResolvedValue([{
-      id: 1,
-      name: 'docker-hub-mirror',
-      registry: 'docker.io',
-      endpoints: '["https://docker.1panel.live"]',
-      verification_image: 'docker.io/library/busybox:1.36',
-      enabled: true,
-      last_verify_status: 'succeeded',
-    }])
+    api.get.mockImplementation(path => {
+      if (path === '/servers') return Promise.resolve([{
+        id: 11,
+        name: 'node-a',
+        host: '100.64.0.8',
+        k8s_node_name: 'node-a',
+        cluster_role: 'worker',
+      }])
+      if (path === '/registry-proxies') return Promise.resolve([{
+        id: 2,
+        name: 'Kubernetes Registry',
+        registry: 'registry.k8s.io',
+        upstream_url: 'https://registry.k8s.io',
+        endpoint_host: '100.64.0.8',
+        node_port: 30501,
+        node_name: 'node-a',
+        cache_limit_gi: 2,
+        cleanup_interval_hours: 24,
+        status: 'ready',
+      }])
+      return Promise.resolve([{
+        id: 1,
+        name: 'docker-hub-mirror',
+        registry: 'docker.io',
+        endpoints: '["https://docker.1panel.live"]',
+        verification_image: 'docker.io/library/busybox:1.36',
+        enabled: true,
+        last_verify_status: 'succeeded',
+      }])
+    })
     api.post.mockResolvedValue({})
   })
 
@@ -35,12 +56,61 @@ describe('Node registry mirrors view', () => {
 
     expect(wrapper.text()).toContain('docker.io/library/busybox:1.36')
     expect(wrapper.text()).toContain('可用')
+    expect(wrapper.text()).toContain('registry.k8s.io')
+    expect(wrapper.text()).toContain('https://registry.k8s.io')
 
     await wrapper.get('[data-testid="verify-node-registry-mirror-1"]').trigger('click')
     expect(api.post).toHaveBeenCalledWith('/node-registry-mirrors/1/verify')
 
     await wrapper.get('.page-header .btn-primary').trigger('click')
     expect(wrapper.get('input[placeholder="docker.io/library/busybox:1.36"]').exists()).toBe(true)
+  })
+
+  it('creates an independent Registry Proxy instance', async () => {
+    const wrapper = mount(NodeRegistryMirrors)
+    await settle()
+
+    await wrapper.get('[data-testid="create-registry-proxy"]').trigger('click')
+    const inputs = wrapper.findAll('.proxy-modal input')
+    await inputs[0].setValue('Kubernetes Registry')
+    await inputs[1].setValue('registry.k8s.io')
+    await inputs[3].setValue('100.64.0.8')
+    const select = wrapper.get('.proxy-modal select')
+    await select.setValue('node-a')
+    await wrapper.get('.proxy-modal form').trigger('submit')
+
+    expect(api.post).toHaveBeenCalledWith('/registry-proxies', expect.objectContaining({
+      name: 'Kubernetes Registry',
+      registry: 'registry.k8s.io',
+      node_name: 'node-a',
+    }))
+  })
+
+  it('migrates a legacy Docker Hub proxy after confirmation', async () => {
+    api.get.mockImplementation(path => {
+      if (path === '/servers') return Promise.resolve([])
+      if (path === '/registry-proxies') return Promise.resolve([{
+        id: 1,
+        name: 'Docker Hub 代理',
+        registry: 'docker.io',
+        upstream_url: 'https://registry-1.docker.io',
+        resource_name: 'cylism-registry-proxy',
+        endpoint_host: '100.64.0.8',
+        node_port: 30500,
+        node_name: 'node-a',
+        cache_limit_gi: 2,
+        cleanup_interval_hours: 24,
+        status: 'ready',
+      }])
+      return Promise.resolve([])
+    })
+    const wrapper = mount(NodeRegistryMirrors)
+    await settle()
+
+    await wrapper.get('[data-testid="migrate-registry-proxy-1"]').trigger('click')
+    expect(wrapper.text()).toContain('代理会短暂中断')
+    await wrapper.get('[data-testid="confirm-registry-proxy-migration"]').trigger('click')
+    expect(api.post).toHaveBeenCalledWith('/registry-proxies/1/migrate-resource-name')
   })
 
   it('submits only selected cluster nodes and refreshes their apply status', async () => {

@@ -371,9 +371,13 @@ type NodeRegistryMirrorNode struct {
 	Server    Server     `gorm:"foreignKey:ServerID" json:"server,omitempty"`
 }
 
-// RegistryProxy defines the platform-managed, non-persistent Docker Hub proxy.
+// RegistryProxy defines one platform-managed, non-persistent registry proxy.
 type RegistryProxy struct {
 	ID                   uint       `gorm:"primaryKey" json:"id"`
+	Name                 string     `gorm:"size:128" json:"name"`
+	Registry             string     `gorm:"size:256" json:"registry"`
+	UpstreamURL          string     `gorm:"size:512" json:"upstream_url"`
+	ResourceName         string     `gorm:"size:128" json:"resource_name"`
 	NodeName             string     `gorm:"size:256;not null" json:"node_name"`
 	EndpointHost         string     `gorm:"size:256;not null" json:"endpoint_host"`
 	NodePort             int32      `gorm:"not null" json:"node_port"`

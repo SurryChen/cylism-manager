@@ -26,6 +26,7 @@ func setupK8sTestRouter() *gin.Engine {
 	{
 		g.GET("/dashboard", h.Dashboard)
 		g.GET("/namespaces", h.ListNamespaces)
+		g.GET("/namespace-names", h.ListNamespaceNames)
 		g.POST("/namespaces", h.CreateNamespace)
 		g.PATCH("/namespaces/:name", h.UpdateNamespace)
 		g.DELETE("/namespaces/:name", h.DeleteNamespace)
@@ -92,6 +93,7 @@ func TestNoK8s_AllEndpoints(t *testing.T) {
 	withNoK8s(t, func() {
 		doNoK8s(t, "GET", "/api/k8s/dashboard", nil)
 		doNoK8s(t, "GET", "/api/k8s/namespaces", nil)
+		doNoK8s(t, "GET", "/api/k8s/namespace-names", nil)
 		doNoK8s(t, "POST", "/api/k8s/namespaces", jsonBody(map[string]any{"name": "demo"}))
 		doNoK8s(t, "PATCH", "/api/k8s/namespaces/demo", jsonBody(map[string]any{"labels": map[string]string{"team": "ops"}}))
 		doNoK8s(t, "DELETE", "/api/k8s/namespaces/demo", nil)
@@ -122,6 +124,25 @@ func TestNoK8s_AllEndpoints(t *testing.T) {
 		doNoK8s(t, "DELETE", "/api/k8s/ingresses/default/web", nil)
 		doNoK8s(t, "GET", "/api/k8s/ingress-controller", nil)
 	})
+}
+
+func TestListNamespaceNamesDoesNotLoadResourceSummaries(t *testing.T) {
+	original := K8s
+	K8s = &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "default"}, Status: corev1.NamespaceStatus{Phase: corev1.NamespaceActive}},
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "monitoring"}, Status: corev1.NamespaceStatus{Phase: corev1.NamespaceActive}},
+	)}
+	defer func() { K8s = original }()
+
+	response := serve(setupK8sTestRouter(), httptest.NewRequest(http.MethodGet, "/api/k8s/namespace-names", nil))
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"name":"monitoring"`) {
+		t.Fatalf("unexpected namespace name response: %s", response.Body.String())
+	}
+	for _, action := range K8s.Clientset.(*k8sfake.Clientset).Actions() {
+		if action.GetResource().Resource != "namespaces" {
+			t.Fatalf("unexpected resource lookup: %#v", action)
+		}
+	}
 }
 
 func TestListPodsIncludesContainers(t *testing.T) {

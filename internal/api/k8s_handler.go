@@ -55,6 +55,11 @@ type NamespaceSummary struct {
 	Secrets          int               `json:"secrets"`
 }
 
+type NamespaceNameSummary struct {
+	Name   string `json:"name"`
+	Status string `json:"status"`
+}
+
 // Dashboard 集群摘要（扩展 Deployment/Service 统计）
 func (h *K8sHandler) Dashboard(c *gin.Context) {
 	if K8s == nil {
@@ -118,6 +123,26 @@ func (h *K8sHandler) Dashboard(c *gin.Context) {
 }
 
 // ==================== Namespace ====================
+
+// ListNamespaceNames returns only the fields needed by lightweight selectors.
+// Keep resource counts in ListNamespaces because they require one list request
+// per resource type and namespace.
+func (h *K8sHandler) ListNamespaceNames(c *gin.Context) {
+	if K8s == nil {
+		k8sUnavailable(c)
+		return
+	}
+	nsList, err := K8s.Clientset.CoreV1().Namespaces().List(K8s.Ctx(), metav1.ListOptions{})
+	if err != nil {
+		model.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
+		return
+	}
+	result := make([]NamespaceNameSummary, 0, len(nsList.Items))
+	for _, namespace := range nsList.Items {
+		result = append(result, NamespaceNameSummary{Name: namespace.Name, Status: string(namespace.Status.Phase)})
+	}
+	model.Success(c, result)
+}
 
 // ListNamespaces 列出 Namespace 与资源摘要
 func (h *K8sHandler) ListNamespaces(c *gin.Context) {

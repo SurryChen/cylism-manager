@@ -1,56 +1,53 @@
 ## ADDED Requirements
 
-### Requirement: Deploy a non-persistent Docker Hub proxy
+### Requirement: Manage independent Registry Proxy instances
 
-The platform SHALL deploy one managed `registry:2` pull-through proxy for Docker Hub on a selected cluster node without a PVC or hostPath cache volume.
+The platform SHALL manage multiple non-persistent `registry:2` pull-through proxy instances. Each instance SHALL bind one Registry domain to one HTTPS upstream and SHALL have independent Kubernetes resources and temporary cache storage.
 
-#### Scenario: Create a proxy on an eligible node
+#### Scenario: Create a Kubernetes Registry proxy
 
-- **WHEN** a user selects a connected cluster node and a private reachable address
-- **THEN** the platform SHALL create a Node-selected Deployment, temporary `emptyDir` cache volume, and NodePort Service
-- **AND THEN** it SHALL wait for the proxy Pod to become Ready before applying any node mirror mapping
+- **WHEN** a user creates an instance for `registry.k8s.io` with a connected node, reachable private or Tailscale address, and unused NodePort
+- **THEN** the platform SHALL create a node-selected Deployment and NodePort Service unique to that instance
+- **AND THEN** it SHALL set `REGISTRY_PROXY_REMOTEURL` to `https://registry.k8s.io`
 
-#### Scenario: Reject unsafe endpoint addresses
+#### Scenario: Preserve Docker Hub defaults
 
-- **WHEN** a user provides an empty, loopback, or public endpoint address
-- **THEN** the platform SHALL reject the configuration and explain that the proxy endpoint must be reachable only through private network or Tailscale
+- **WHEN** a user creates a Docker Hub instance without an explicit upstream URL
+- **THEN** the platform SHALL configure `https://registry-1.docker.io` as its upstream
 
-### Requirement: Apply the proxy as a Docker Hub mirror
+#### Scenario: Reject an incompatible upstream
 
-The platform SHALL apply a ready managed proxy endpoint only to user-selected cluster nodes as the `docker.io` registry mirror.
+- **WHEN** a user configures a non-Docker Hub Registry with a different upstream domain
+- **THEN** the platform SHALL reject the configuration before creating Kubernetes resources
 
-#### Scenario: Apply to selected nodes
+#### Scenario: Reject duplicate NodePort usage
 
-- **WHEN** the proxy is Ready and the user applies it to selected nodes
-- **THEN** the platform SHALL render the proxy NodePort endpoint under `mirrors.docker.io` in each selected node's `registries.yaml`
-- **AND THEN** it SHALL report node-by-node apply results
+- **WHEN** a user selects a NodePort already assigned to another managed proxy instance
+- **THEN** the platform SHALL reject the request and identify the conflicting proxy
 
-### Requirement: Safely clean temporary proxy cache
+#### Scenario: Migrate a legacy Docker Hub resource name
 
-The platform SHALL clear temporary proxy cache by replacing the proxy Pod, never by deleting cache files from a running Registry process.
+- **WHEN** a user explicitly migrates the legacy Docker Hub proxy using `cylism-registry-proxy`
+- **THEN** the platform SHALL delete its legacy Service and Deployment
+- **AND THEN** it SHALL recreate the same proxy configuration as `cylism-registry-proxy-<id>` using the existing NodePort
+- **AND THEN** it SHALL report that a short proxy interruption occurs during migration
 
-#### Scenario: Cache threshold reached
+### Requirement: Retain non-persistent cache lifecycle
 
-- **WHEN** a cache check observes usage at or above the configured cleanup threshold
-- **THEN** the platform SHALL record the observed size and delete the proxy Pod
-- **AND THEN** the Deployment replacement Pod SHALL start with an empty cache volume
+The platform SHALL use a size-limited `emptyDir` cache for every managed proxy and SHALL clear it by replacing only that proxy's Pod.
 
-#### Scenario: Scheduled cleanup is due
+#### Scenario: Manually clear one proxy cache
 
-- **WHEN** the configured cleanup interval has elapsed since the last successful cleanup
-- **THEN** the platform SHALL replace the proxy Pod even when current cache usage is below the threshold
+- **WHEN** a user requests cache cleanup for an instance
+- **THEN** the platform SHALL delete only Pods selected by that instance's labels
+- **AND THEN** the replacement Pod SHALL receive an empty cache volume
 
-#### Scenario: Cache inspection fails
+### Requirement: Observe and configure proxies independently
 
-- **WHEN** the platform cannot inspect temporary cache usage
-- **THEN** it SHALL record the inspection failure
-- **AND THEN** it SHALL not delete the proxy Pod solely because the cache size is unknown
+The platform SHALL list each proxy's Registry, upstream, endpoint, node, cache configuration, readiness and latest error, and SHALL allow configuring or clearing an individual instance.
 
-### Requirement: Proxy status remains observable
+#### Scenario: View multiple proxies
 
-The platform SHALL expose deployment readiness, cache usage, last inspection, last cleanup and the latest error without exposing upstream proxy credentials.
-
-#### Scenario: View proxy status
-
-- **WHEN** a user opens the registry proxy management page
-- **THEN** the platform SHALL show the configured node, endpoint, cache limit, cleanup schedule, current readiness and maintenance status
+- **WHEN** a user opens the node registry mirrors page
+- **THEN** the platform SHALL show Docker Hub and Kubernetes Registry proxy instances as separate entries
+- **AND THEN** it SHALL not imply that one endpoint can proxy both Registries
