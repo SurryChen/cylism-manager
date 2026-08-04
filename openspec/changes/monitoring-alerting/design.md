@@ -48,6 +48,8 @@ Alertmanager 的 generic webhook 载荷不兼容飞书机器人格式。因此 A
 
 ## Risks / Trade-offs
 
+- [SMTP 凭据泄露] → SMTP 主机、账号、密码、发件人与收件人只保存在 Kubernetes Secret，配置 API 仅返回邮件渠道是否已配置；平台使用 TLS/STARTTLS 连接 SMTP 服务。
+
 - [Alertmanager 所在节点故障] → 首次安装默认优先选择与 VictoriaMetrics 不同的就绪节点，并在页面展示部署节点；单副本仍无法覆盖该节点自身失效。
 - [整个集群或平台服务不可用] → 明确标注集群内告警边界；部署外部探测属于后续独立能力。
 - [飞书 Webhook 泄露] → URL 仅写入 Secret，API 响应脱敏；内部回调要求随机 bearer token 并使用常量时间校验。

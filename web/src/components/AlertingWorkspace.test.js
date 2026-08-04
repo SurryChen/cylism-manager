@@ -24,7 +24,7 @@ describe('AlertingWorkspace', () => {
     expect(wrapper.text()).toContain('飞书机器人地址')
   })
 
-  it('prioritizes firing alerts and opens the settings drawer', async () => {
+  it('prioritizes firing alerts and opens the centered settings modal', async () => {
     apiMocks.get.mockImplementation(path => {
       if (path === '/monitoring/alerts/status') return Promise.resolve({ state: 'ready', message: '告警规则正在评估', node_name: 'node-a', notification_configured: true, rules: [{ id: 'node-cpu-high', name: '节点 CPU 过高', severity: 'warning', enabled: true, threshold: 85, duration_minutes: 15 }] })
       if (path === '/monitoring/alerts/overview') return Promise.resolve({ firing: 1, silenced: 0, active: [{ status: { state: 'firing' }, labels: { alertname: 'NodeCPUHigh', node: 'node-a', severity: 'warning' }, annotations: { summary: '节点 CPU 使用率过高' }, startsAt: '2026-08-04T10:00:00Z' }], resolved: [] })
@@ -38,7 +38,9 @@ describe('AlertingWorkspace', () => {
     expect(wrapper.text()).toContain('节点 CPU 使用率过高')
     await wrapper.get('[title="告警设置"]').trigger('click')
     await flushPromises()
-    expect(wrapper.find('.alert-settings-drawer').exists()).toBe(true)
-    expect(wrapper.text()).toContain('通知渠道')
+    expect(wrapper.find('.alert-settings-modal').exists()).toBe(true)
+    expect(wrapper.text()).toContain('邮件通知')
+    await wrapper.get('.check-row input').setValue(true)
+    expect(wrapper.text()).toContain('SMTP 主机')
   })
 })

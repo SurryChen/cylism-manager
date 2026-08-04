@@ -7,8 +7,8 @@
 - 在监控模块中托管 `vmalert`、Alertmanager 和按需启用的 kube-state-metrics，复用现有 VictoriaMetrics 与 `monitoring` 命名空间。
 - 提供节点离线、CPU、内存、根磁盘、Pod 重启/Pending、工作负载副本不足和核心监控组件不可用的默认规则，并允许调整启用状态、阈值与持续时间。
 - 将 Alertmanager 的告警分组、静默和活跃告警状态接入平台 API。
-- 首期支持飞书机器人通知：通知 URL 和内部回调令牌仅保存在 Kubernetes Secret，平台内置受令牌保护的中继将 Alertmanager 事件转换为飞书消息。
-- 在集群监控页面新增告警视图，优先呈现活跃告警、恢复记录、静默操作和跳转到节点或工作负载的处置入口；规则与通知渠道放入设置抽屉。
+- 支持飞书机器人与 SMTP 邮件通知：通知地址、SMTP 凭据和内部回调令牌仅保存在 Kubernetes Secret，平台内置受令牌保护的中继将 Alertmanager 事件分发到已启用的渠道。
+- 在集群监控页面新增告警视图，优先呈现活跃告警、恢复记录、静默操作和跳转到节点或工作负载的处置入口；规则与通知渠道放入居中高层级设置弹窗。
 
 ## Capabilities
 

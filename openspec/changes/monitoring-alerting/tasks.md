@@ -15,6 +15,7 @@
 - [x] 3.1 Add the monitoring Alerting view, loading states, counters, active/recovered alert lists and node/workload navigation with component tests.
 - [x] 3.2 Implement silence confirmation and settings drawer for rule configuration and Feishu channel management with request/error-state tests.
 - [x] 3.3 Add the alerting installation card and explicit unavailable/healthy states, preserving the shared monitoring page layout.
+- [x] 3.4 Replace the settings drawer with a centered high-layer modal and add SMTP email notification configuration.
 
 ## 4. Verification
 

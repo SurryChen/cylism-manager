@@ -48,9 +48,25 @@ The system SHALL expose managed alerting status, active alerts, recent resolved 
 - **WHEN** Alertmanager cannot be reached
 - **THEN** the system returns a service error explaining that alerting is unavailable rather than reporting an empty alert list
 
+### Requirement: Secure SMTP email notification channel
+
+The system SHALL support SMTP email notifications through the authenticated Alertmanager-to-platform callback. SMTP credentials SHALL be stored only in a Kubernetes Secret and never returned by the configuration API.
+
+#### Scenario: Send an SMTP test notification
+- **WHEN** an administrator configures a valid SMTP endpoint, TLS mode, sender, recipient, and optional credentials then requests a test
+- **THEN** the platform SHALL send a recognizable email test notification without exposing SMTP credentials
+
+### Requirement: Centered alert settings modal
+
+The alerting workspace SHALL present notification and rule configuration in a centered modal above the global application navigation.
+
+#### Scenario: Open alert settings
+- **WHEN** an administrator opens alert settings
+- **THEN** the platform SHALL render a centered modal above the application navigation
+
 ### Requirement: Alerting workspace
 
-The monitoring page SHALL provide an Alerting view that prioritizes active alerts by severity, displays alert summary counters, recent resolved alerts, and provides actions to silence or navigate to the affected node or workload. Rule and notification configuration SHALL be presented in a settings drawer rather than a second-level page navigation.
+The monitoring page SHALL provide an Alerting view that prioritizes active alerts by severity, displays alert summary counters, recent resolved alerts, and provides actions to silence or navigate to the affected node or workload. Rule and notification configuration SHALL be presented in a centered modal rather than a second-level page navigation.
 
 #### Scenario: Render active node alert
 - **WHEN** Alertmanager reports an active alert with a node label

@@ -78,6 +78,22 @@ func TestInstallAlertingRequiresReadyVictoriaMetrics(t *testing.T) {
 	}
 }
 
+func TestInstallAlertingStoresSMTPSettingsOnlyInSecret(t *testing.T) {
+	client := alertingReadyClient()
+	_, err := client.InstallAlerting(AlertingConfig{NodeName: "node-b", Email: EmailConfig{Enabled: true, SMTPHost: "smtp.example.com", SMTPPort: 587, Username: "alerts", Password: "smtp-password", From: "alerts@example.com", To: "ops@example.com", TLSMode: "starttls"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret, err := client.Clientset.CoreV1().Secrets(victoriaMetricsNamespace).Get(t.Context(), alertingSecretName, metav1.GetOptions{})
+	if err != nil || string(secret.Data["email-password"]) != "smtp-password" || string(secret.Data["email-to"]) != "ops@example.com" {
+		t.Fatalf("expected SMTP settings in Secret: %#v, %v", secret, err)
+	}
+	settings, err := client.Clientset.CoreV1().ConfigMaps(victoriaMetricsNamespace).Get(t.Context(), alertingConfigName, metav1.GetOptions{})
+	if err != nil || strings.Contains(settings.Data["settings.json"], "smtp-password") {
+		t.Fatalf("SMTP password must not be stored in ConfigMap: %#v, %v", settings, err)
+	}
+}
+
 func TestUpsertAlertingSecretCreatesWhenGetReturnsNotFoundWithEmptyObject(t *testing.T) {
 	clientset := k8sfake.NewSimpleClientset()
 	clientset.PrependReactor("get", "secrets", func(k8stesting.Action) (bool, runtime.Object, error) {
@@ -85,7 +101,7 @@ func TestUpsertAlertingSecretCreatesWhenGetReturnsNotFoundWithEmptyObject(t *tes
 	})
 	client := &Client{Clientset: clientset}
 
-	if err := client.upsertAlertingSecret(""); err != nil {
+	if err := client.upsertAlertingSecret("", EmailConfig{}); err != nil {
 		t.Fatalf("expected Secret creation after NotFound, got %v", err)
 	}
 
