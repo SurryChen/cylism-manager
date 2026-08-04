@@ -1,0 +1,44 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { flushPromises, mount } from '@vue/test-utils'
+import AlertingWorkspace from './AlertingWorkspace.vue'
+
+const apiMocks = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), put: vi.fn(), delete: vi.fn() }))
+
+vi.mock('../api/index.js', () => ({ api: apiMocks }))
+
+beforeEach(() => {
+  apiMocks.get.mockReset()
+  apiMocks.post.mockReset()
+  apiMocks.put.mockReset()
+  apiMocks.delete.mockReset()
+})
+
+describe('AlertingWorkspace', () => {
+  it('guides the user to install alerting when it is not installed', async () => {
+    apiMocks.get.mockResolvedValue({ state: 'not_installed', message: '尚未启用集群告警' })
+    const wrapper = mount(AlertingWorkspace, { props: { nodes: [{ name: 'node-a', ready: true }], monitoringReady: true, metricsNodeName: 'node-b' } })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('告警尚未启用')
+    expect(wrapper.find('select').element.value).toBe('node-a')
+    expect(wrapper.text()).toContain('飞书机器人地址')
+  })
+
+  it('prioritizes firing alerts and opens the settings drawer', async () => {
+    apiMocks.get.mockImplementation(path => {
+      if (path === '/monitoring/alerts/status') return Promise.resolve({ state: 'ready', message: '告警规则正在评估', node_name: 'node-a', notification_configured: true, rules: [{ id: 'node-cpu-high', name: '节点 CPU 过高', severity: 'warning', enabled: true, threshold: 85, duration_minutes: 15 }] })
+      if (path === '/monitoring/alerts/overview') return Promise.resolve({ firing: 1, silenced: 0, active: [{ status: { state: 'firing' }, labels: { alertname: 'NodeCPUHigh', node: 'node-a', severity: 'warning' }, annotations: { summary: '节点 CPU 使用率过高' }, startsAt: '2026-08-04T10:00:00Z' }], resolved: [] })
+      if (path === '/monitoring/alerts/silences') return Promise.resolve([])
+      return Promise.resolve({})
+    })
+    const wrapper = mount(AlertingWorkspace, { props: { nodes: [{ name: 'node-a', ready: true }], monitoringReady: true } })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('正在告警')
+    expect(wrapper.text()).toContain('节点 CPU 使用率过高')
+    await wrapper.get('[title="告警设置"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.alert-settings-drawer').exists()).toBe(true)
+    expect(wrapper.text()).toContain('通知渠道')
+  })
+})

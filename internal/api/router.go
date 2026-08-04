@@ -128,6 +128,22 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 		monitoring.GET("/dashboard", h.Dashboard)
 		monitoring.GET("/targets", h.Targets)
 	}
+	alertingHandler := NewAlertingHandler()
+	alerts := apiGroup.Group("/monitoring/alerts")
+	{
+		alerts.GET("/status", alertingHandler.Status)
+		alerts.POST("/install", alertingHandler.Install)
+		alerts.PUT("/config", alertingHandler.Update)
+		alerts.DELETE("", alertingHandler.Uninstall)
+		alerts.GET("/overview", alertingHandler.Overview)
+		alerts.GET("/silences", alertingHandler.ListSilences)
+		alerts.POST("/silences", alertingHandler.CreateSilence)
+		alerts.DELETE("/silences/:id", alertingHandler.DeleteSilence)
+		alerts.POST("/test-notification", alertingHandler.TestNotification)
+	}
+	// Alertmanager is an in-cluster client rather than a browser client. Its
+	// dedicated endpoint validates a per-install bearer token in the handler.
+	r.POST("/api/monitoring/alerts/notify", alertingHandler.Notify)
 	platform := apiGroup.Group("/platform")
 	{
 		platform.GET("/status", platformHandler.Status)

@@ -3,6 +3,7 @@
     <SectionTabsHeader title="集群监控" :tabs="tabs" :active-tab="activeTab" @select="activeTab = $event">
       <template #actions>
         <div v-if="status?.state !== 'not_installed'" class="btn-group">
+          <button class="icon-button" title="监控设置" aria-label="监控设置" @click="openMonitoringSettings"><Settings2 :size="16" /></button>
           <button class="btn" @click="refresh">刷新</button>
           <button class="btn btn-danger" @click="confirmUninstall = true">卸载</button>
         </div>
@@ -34,20 +35,13 @@
             <article class="metric"><span>最高磁盘</span><strong>{{ formatPercent(highestDisk?.disk) }}</strong><small>{{ highestDisk?.name || '等待指标采集' }}</small></article>
           </section>
 
-          <section class="monitoring-section-heading section-gap"><div><h2>资源趋势</h2><p>按节点对比持续资源压力</p></div><RangePicker :range="trendRange" @select="trendRange = $event" /></section>
+          <section class="monitoring-section-heading section-gap"><div><h2>资源趋势</h2><p>按节点对比持续资源压力</p></div><div class="trend-controls"><RangePicker :range="trendRange" @select="trendRange = $event" /><div class="trend-node-picker"><button class="trend-node-trigger" type="button" :aria-expanded="nodeFilterOpen" @click="nodeFilterOpen = !nodeFilterOpen"><span>节点: {{ trendNodeSelectionLabel }}</span><ChevronDown :size="14" /></button><div v-if="nodeFilterOpen" class="trend-node-menu"><div class="trend-node-menu-actions"><button type="button" @click="selectAllTrendNodes">全选</button><button type="button" @click="clearTrendNodes">清空</button></div><label v-for="node in trendNodes" :key="node.name" class="trend-node-option"><input v-model="selectedTrendNodes" type="checkbox" :value="node.name" /><span>{{ displayNode(node) }}</span></label><p v-if="!trendNodes.length" class="empty-inline">暂无就绪节点</p></div></div></div></section>
           <section class="monitoring-trend-grid">
-            <MetricTrendChart title="CPU 使用率" subtitle="5 分钟平均" unit="%" :threshold="85" :loading="trendsLoading" :series="nodeTrends.cpu" />
-            <MetricTrendChart title="内存使用率" subtitle="可用内存占比" unit="%" :threshold="90" :loading="trendsLoading" :series="nodeTrends.memory" />
-            <MetricTrendChart title="根磁盘使用率" subtitle="仅统计 / 挂载点" unit="%" :threshold="85" :loading="trendsLoading" :series="nodeTrends.disk" />
-            <MetricTrendChart title="网络入站速率" subtitle="不含 lo 与 veth" unit=" MB/s" :loading="trendsLoading" :series="nodeTrends.network" />
+            <MetricTrendChart title="CPU 使用率" subtitle="5 分钟平均" unit="%" :threshold="85" :loading="trendsLoading" :series="filteredTrendSeries(nodeTrends.cpu)" />
+            <MetricTrendChart title="内存使用率" subtitle="可用内存占比" unit="%" :threshold="90" :loading="trendsLoading" :series="filteredTrendSeries(nodeTrends.memory)" />
+            <MetricTrendChart title="根磁盘使用率" subtitle="仅统计 / 挂载点" unit="%" :threshold="85" :loading="trendsLoading" :series="filteredTrendSeries(nodeTrends.disk)" />
+            <MetricTrendChart title="网络入站速率" subtitle="不含 lo 与 veth" unit=" MB/s" :loading="trendsLoading" :series="filteredTrendSeries(nodeTrends.network)" />
           </section>
-        </template>
-
-        <template v-else-if="activeTab === 'nodes'">
-          <section class="monitoring-section-heading section-gap"><div><h2>节点资源</h2><p>选择节点查看当前资源与历史趋势</p></div><RangePicker :range="trendRange" @select="trendRange = $event" /></section>
-          <section class="card section-gap"><div class="table-wrap"><table class="data-table node-table"><thead><tr><th>节点</th><th>状态</th><th>CPU</th><th>内存</th><th>根磁盘</th><th>网络入站</th></tr></thead><tbody><tr v-for="node in nodeRows" :key="node.name" :class="{ 'is-selected': selectedNode === node.name }" @click="selectedNode = node.name"><td class="cell-primary">{{ displayNode(node) }}<small class="cell-secondary">{{ node.name }}</small></td><td><span class="badge" :class="node.ready ? 'badge-online' : 'badge-danger'">{{ node.ready ? '就绪' : '不可用' }}</span></td><td>{{ formatPercent(node.cpu) }}</td><td>{{ formatPercent(node.memory) }}</td><td>{{ formatPercent(node.disk) }}</td><td>{{ formatRate(node.network) }}</td></tr></tbody></table></div></section>
-          <section v-if="selectedNode" class="monitoring-section-heading section-gap"><div><h2>{{ displayNode({ name: selectedNode }) }} 趋势</h2><p>仅展示当前选择的节点</p></div></section>
-          <section v-if="selectedNode" class="monitoring-trend-grid"><MetricTrendChart title="CPU 使用率" unit="%" :threshold="85" :loading="trendsLoading" :series="selectedSeries(nodeTrends.cpu)" /><MetricTrendChart title="内存使用率" unit="%" :threshold="90" :loading="trendsLoading" :series="selectedSeries(nodeTrends.memory)" /><MetricTrendChart title="根磁盘使用率" unit="%" :threshold="85" :loading="trendsLoading" :series="selectedSeries(nodeTrends.disk)" /><MetricTrendChart title="网络入站速率" unit=" MB/s" :loading="trendsLoading" :series="selectedSeries(nodeTrends.network)" /></section>
         </template>
 
         <template v-else-if="activeTab === 'workloads'">
@@ -55,13 +49,21 @@
           <section class="monitoring-workload-grid"><article class="card"><div class="card-header"><div><h2 class="card-title">CPU 使用最高</h2><p class="status-copy">最近 5 分钟平均</p></div></div><WorkloadTable :rows="workloads.cpu" unit="m" :loading="workloadsLoading" /></article><article class="card"><div class="card-header"><div><h2 class="card-title">内存使用最高</h2><p class="status-copy">工作集内存</p></div></div><WorkloadTable :rows="workloads.memory" unit="MiB" :loading="workloadsLoading" /></article></section>
         </template>
 
-        <template v-else>
-          <section class="monitoring-summary metric-grid section-gap"><article class="metric"><span>数据节点</span><strong class="metric-code">{{ nodeDisplayName(status.node_name) || '-' }}</strong><small>{{ status.node_name || '-' }}</small></article><article class="metric"><span>数据目录</span><strong class="metric-code">{{ status.data_path || '-' }}</strong><small>保留 {{ status.retention_days || '-' }} 天</small></article><article class="metric"><span>采集节点</span><strong>{{ status.node_exporter_ready || 0 }} / {{ status.node_exporter_desired || 0 }}</strong><small>node-exporter 已就绪</small></article></section>
-          <section class="monitoring-grid section-gap"><article class="card targets-card"><div class="card-header"><div><h2 class="card-title">采集目标</h2><p class="status-copy">节点、容器与 node-exporter</p></div><span class="badge" :class="targetSummary.failed ? 'badge-danger' : 'badge-online'">{{ targetSummary.active }} 个在线</span></div><div v-if="targetsLoading" class="empty-inline">正在读取采集状态...</div><div v-else-if="targetRows.length" class="target-list"><div v-for="target in targetRows" :key="target.key" class="target-row"><span><strong>{{ target.job }}</strong><small>{{ target.instance }}</small></span><span class="badge" :class="target.health === 'up' ? 'badge-online' : 'badge-danger'">{{ target.health === 'up' ? '正常' : '异常' }}</span></div></div><div v-else class="empty-inline">等待首次指标采集</div></article><article class="card quick-card"><div class="card-header"><div><h2 class="card-title">采集配置</h2><p class="status-copy">趋势图需要按节点标签采集</p></div></div><p class="diagnostic-copy">同步后约 1 分钟开始出现按节点拆分的趋势数据。</p><button class="btn" :disabled="syncing" @click="syncConfiguration">{{ syncing ? '同步中...' : '同步采集配置' }}</button></article></section>
-          <section class="card query-card"><div class="card-header"><div><h2 class="card-title">高级查询</h2><p class="status-copy">PromQL</p></div><div class="query-presets"><button v-for="preset in presets" :key="preset.query" class="btn btn-sm" @click="runQuery(preset.query)">{{ preset.label }}</button></div></div><form class="query-form" @submit.prevent="runQuery(query)"><input v-model.trim="query" class="form-input" placeholder="up" maxlength="2048" /><button class="btn btn-primary" :disabled="querying || !query">{{ querying ? '查询中...' : '查询' }}</button></form><pre v-if="queryResult" class="query-result">{{ queryResult }}</pre><div v-else class="empty-inline">输入 PromQL 查询监控原始指标</div></section>
-        </template>
+        <AlertingWorkspace v-else-if="activeTab === 'alerts'" :nodes="nodes" :monitoring-ready="status.state === 'ready'" :metrics-node-name="status.node_name" @navigate="navigateFromAlert" />
       </template>
     </main>
+
+    <Teleport to="body">
+      <div v-if="monitoringSettingsOpen" class="overlay monitoring-settings-overlay" @click.self="monitoringSettingsOpen = false">
+        <aside class="monitoring-settings-drawer" aria-label="监控设置">
+          <header class="drawer-header"><div><h2>监控设置</h2><p>更新指标保留策略与检查采集状态</p></div><button class="icon-button" title="关闭监控设置" aria-label="关闭监控设置" @click="monitoringSettingsOpen = false"><X :size="16" /></button></header>
+          <section class="drawer-section"><div class="drawer-section-heading"><div><h3>运行配置</h3><p>数据节点与目录为本地 hostPath，在线修改会造成数据分散，因此仅支持更新保留周期。</p></div></div><div class="settings-field"><span>数据节点</span><strong>{{ nodeDisplayName(status?.node_name) || '-' }}</strong><small>{{ status?.node_name || '-' }}</small></div><div class="settings-field"><span>数据目录</span><strong class="metric-code">{{ status?.data_path || '-' }}</strong></div><label class="form-group settings-retention"><span class="form-label">指标保留天数</span><input v-model.number="settingsForm.retention_days" class="form-input" type="number" min="1" max="365" required /><span class="form-hint">修改后 VictoriaMetrics 会滚动更新，超出新保留周期的数据将被自动清理。</span></label><div class="drawer-actions"><button class="btn btn-primary" data-testid="save-monitoring-config" :disabled="monitoringSettingsSaving || !validRetentionDays" @click="saveMonitoringConfig">{{ monitoringSettingsSaving ? '保存中...' : '保存运行配置' }}</button></div></section>
+          <section class="drawer-section"><div class="drawer-section-heading"><div><h3>采集目标</h3><p>节点、容器与 node-exporter</p></div><span class="badge" :class="targetSummary.failed ? 'badge-danger' : 'badge-online'">{{ targetSummary.active }} 个在线</span></div><div v-if="targetsLoading" class="empty-inline">正在读取采集状态...</div><div v-else-if="targetRows.length" class="target-list"><div v-for="target in targetRows" :key="target.key" class="target-row"><span><strong>{{ target.job }}</strong><small>{{ target.instance }}</small></span><span class="badge" :class="target.health === 'up' ? 'badge-online' : 'badge-danger'">{{ target.health === 'up' ? '正常' : '异常' }}</span></div></div><div v-else class="empty-inline">等待首次指标采集</div></section>
+          <section class="drawer-section"><div class="drawer-section-heading"><div><h3>采集配置</h3><p>趋势图需要按节点标签采集</p></div></div><p class="diagnostic-copy">同步后约 1 分钟开始出现按节点拆分的趋势数据。</p><button class="btn" :disabled="syncing" @click="syncConfiguration">{{ syncing ? '同步中...' : '同步采集配置' }}</button></section>
+          <section class="drawer-section"><div class="drawer-section-heading"><div><h3>高级查询</h3><p>PromQL</p></div></div><div class="query-presets"><button v-for="preset in presets" :key="preset.query" class="btn btn-sm" @click="runQuery(preset.query)">{{ preset.label }}</button></div><form class="query-form" @submit.prevent="runQuery(query)"><input v-model.trim="query" class="form-input" placeholder="up" maxlength="2048" /><button class="btn btn-primary" :disabled="querying || !query">{{ querying ? '查询中...' : '查询' }}</button></form><pre v-if="queryResult" class="query-result">{{ queryResult }}</pre><div v-else class="empty-inline">输入 PromQL 查询监控原始指标</div></section>
+        </aside>
+      </div>
+    </Teleport>
 
     <div v-if="confirmUninstall" class="overlay" @click.self="confirmUninstall = false"><div class="modal"><h2 class="modal-title">卸载 VictoriaMetrics</h2><p class="confirm-copy">将删除监控工作负载和采集配置，但不会删除 {{ status?.node_name }} 上的 {{ status?.data_path }} 数据目录。</p><div class="modal-actions"><button class="btn" @click="confirmUninstall = false">取消</button><button class="btn btn-danger" :disabled="uninstalling" @click="uninstall">{{ uninstalling ? '卸载中...' : '确认卸载' }}</button></div></div></div>
   </div>
@@ -69,16 +71,16 @@
 
 <script setup>
 import { computed, defineComponent, h, onMounted, ref, watch } from 'vue'
-import { RefreshCw } from 'lucide-vue-next'
+import { ChevronDown, RefreshCw, Settings2, X } from 'lucide-vue-next'
 import { api } from '../api/index.js'
+import AlertingWorkspace from '../components/AlertingWorkspace.vue'
 import MetricTrendChart from '../components/MetricTrendChart.vue'
 import SectionTabsHeader from '../components/SectionTabsHeader.vue'
 
 const tabs = [
   { id: 'overview', label: '概览' },
-  { id: 'nodes', label: '节点' },
   { id: 'workloads', label: '工作负载' },
-  { id: 'diagnostics', label: '诊断' },
+  { id: 'alerts', label: '告警' },
 ]
 const trendRanges = ['1h', '6h', '24h', '7d']
 const status = ref(null)
@@ -95,13 +97,18 @@ const targetsLoading = ref(false)
 const trendsLoading = ref(false)
 const workloadsLoading = ref(false)
 const querying = ref(false)
+const monitoringSettingsOpen = ref(false)
+const monitoringSettingsSaving = ref(false)
+const nodeFilterOpen = ref(false)
 const query = ref('')
 const queryResult = ref('')
 const trendRange = ref('6h')
-const selectedNode = ref('')
+const selectedTrendNodes = ref([])
+const trendSelectionInitialized = ref(false)
 const nodeTrends = ref({ cpu: [], memory: [], disk: [], network: [] })
 const workloads = ref({ cpu: [], memory: [] })
 const form = ref({ node_name: '', data_path: '/data/victoria-metrics', retention_days: 14 })
+const settingsForm = ref({ retention_days: 14 })
 
 const presets = [
   { label: '全部目标', query: 'up{job=~"kubernetes-(nodes|cadvisor)"}' },
@@ -128,6 +135,12 @@ const nodeRows = computed(() => nodes.value.map(node => ({
   disk: latestSeriesValue(nodeTrends.value.disk, node.name),
   network: latestSeriesValue(nodeTrends.value.network, node.name),
 })))
+const trendNodes = computed(() => nodeRows.value.filter(node => node.ready))
+const trendNodeSelectionLabel = computed(() => {
+  if (!trendNodes.value.length || !selectedTrendNodes.value.length) return '未选择节点'
+  return selectedTrendNodes.value.length === trendNodes.value.length ? '全部节点' : `已选 ${selectedTrendNodes.value.length} 个节点`
+})
+const validRetentionDays = computed(() => Number.isInteger(settingsForm.value.retention_days) && settingsForm.value.retention_days >= 1 && settingsForm.value.retention_days <= 365)
 const highestCPU = computed(() => highestNode('cpu'))
 const highestMemory = computed(() => highestNode('memory'))
 const highestDisk = computed(() => highestNode('disk'))
@@ -191,23 +204,49 @@ async function syncConfiguration() {
   } catch (e) { error.value = e.message || '同步采集配置失败' } finally { syncing.value = false }
 }
 
+function openMonitoringSettings() {
+  settingsForm.value.retention_days = status.value?.retention_days || 14
+  monitoringSettingsOpen.value = true
+  loadTargets()
+}
+
+async function saveMonitoringConfig() {
+  if (!status.value || !validRetentionDays.value) return
+  monitoringSettingsSaving.value = true
+  error.value = ''
+  try {
+    await api.post('/monitoring/install', {
+      node_name: status.value.node_name,
+      data_path: status.value.data_path,
+      retention_days: settingsForm.value.retention_days,
+    })
+    monitoringSettingsOpen.value = false
+    await refresh()
+  } catch (e) { error.value = e.message || '更新监控运行配置失败' } finally { monitoringSettingsSaving.value = false }
+}
+
 async function loadTargets() {
   targetsLoading.value = true
   try { targets.value = await api.get('/monitoring/targets') } catch (e) { error.value = e.message || '读取采集状态失败' } finally { targetsLoading.value = false }
 }
 
 async function loadActiveData() {
-  if (activeTab.value === 'overview' || activeTab.value === 'nodes') await loadNodeTrends()
+  if (activeTab.value === 'overview') await loadNodeTrends()
   if (activeTab.value === 'workloads') await loadWorkloads()
-  if (activeTab.value === 'diagnostics') await loadTargets()
 }
 
 async function loadNodeTrends() {
   trendsLoading.value = true
   try {
     const dashboard = await api.get(`/monitoring/dashboard?range=${trendRange.value}`)
-    nodeTrends.value = Object.fromEntries(Object.entries(dashboard?.trends || {}).map(([key, result]) => [key, matrixToSeries(result)]))
-    if (!selectedNode.value || !nodeRows.value.some(node => node.name === selectedNode.value)) selectedNode.value = nodeRows.value[0]?.name || ''
+    nodeTrends.value = { cpu: [], memory: [], disk: [], network: [], ...Object.fromEntries(Object.entries(dashboard?.trends || {}).map(([key, result]) => [key, matrixToSeries(result)])) }
+    const available = trendNodes.value.map(node => node.name)
+    if (!trendSelectionInitialized.value) {
+      selectedTrendNodes.value = available
+      trendSelectionInitialized.value = true
+    } else {
+      selectedTrendNodes.value = selectedTrendNodes.value.filter(name => available.includes(name))
+    }
   } catch (e) { error.value = e.message || '读取节点趋势失败' } finally { trendsLoading.value = false }
 }
 
@@ -233,14 +272,23 @@ function metricNodeName(metric, index) {
 function vectorToWorkloads(result) {
   return (result?.result || []).map(item => ({ namespace: item.metric?.namespace || '-', pod: item.metric?.pod || '-', value: Number(item.value?.[1]) || 0 }))
 }
-function latestSeriesValue(series, name) {
+function latestSeriesValue(series = [], name) {
   const values = series.find(item => item.label === name)?.values || []
   return values.at(-1)?.value ?? null
 }
 function highestNode(metric) {
   return nodeRows.value.filter(node => Number.isFinite(node[metric])).sort((left, right) => right[metric] - left[metric])[0] || null
 }
-function selectedSeries(series) { return series.filter(item => item.label === selectedNode.value) }
+function filteredTrendSeries(series = []) { return series.filter(item => selectedTrendNodes.value.includes(item.label)) }
+function selectAllTrendNodes() { selectedTrendNodes.value = trendNodes.value.map(node => node.name) }
+function clearTrendNodes() { selectedTrendNodes.value = [] }
+function navigateFromAlert(target) {
+  if (target.node) {
+    selectedTrendNodes.value = [target.node]
+    trendSelectionInitialized.value = true
+  }
+  activeTab.value = target.tab === 'nodes' ? 'overview' : target.tab
+}
 function formatPercent(value) { return Number.isFinite(value) ? `${value.toFixed(1)}%` : '-' }
 function formatRate(value) { return Number.isFinite(value) ? `${value.toFixed(2)} MB/s` : '-' }
 function rangeLabel(range) { return ({ '1h': '最近 1 小时', '6h': '最近 6 小时', '24h': '最近 24 小时', '7d': '最近 7 天' }[range] || range) }
@@ -253,5 +301,5 @@ async function runQuery(queryText) {
 </script>
 
 <style scoped>
-.monitoring-content { margin-top: var(--space-20); }.status-copy,.metric small,.form-hint,.confirm-copy,.monitoring-section-heading p{margin:5px 0 0;color:var(--text-secondary);font-size:12px}.install-form{margin-top:var(--space-20)}.status-actions{justify-content:flex-start;margin-top:var(--space-16)}.monitoring-summary{grid-template-columns:repeat(5,minmax(0,1fr))}.metric{display:grid;min-width:0;gap:5px;padding:14px;border:1px solid var(--border-muted);border-radius:var(--radius-control);background:var(--surface-subtle)}.metric>span{color:var(--text-secondary);font-size:11px}.metric strong{min-width:0;font-size:18px}.metric small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.metric-code{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--font-mono);font-size:13px!important}.monitoring-section-heading{display:flex;align-items:center;justify-content:space-between;gap:var(--space-16)}.monitoring-section-heading h2{margin:0;color:var(--text-primary);font-size:16px}.range-select{display:flex;align-items:center;gap:8px;color:var(--text-secondary);font-size:11px;font-weight:700;white-space:nowrap}.trend-range-select{width:148px;min-height:34px;padding:6px 28px 6px 9px;font-size:11px}.monitoring-trend-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--space-16)}.monitoring-workload-grid,.monitoring-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--space-16)}.node-table tbody tr{cursor:pointer}.node-table tbody tr.is-selected{background:var(--success-surface)}.targets-card,.quick-card,.query-card{margin:0}.target-list{display:grid;gap:7px;margin-top:var(--space-16)}.target-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid var(--border-muted)}.target-row:last-child{border-bottom:0}.target-row span:first-child{display:grid;min-width:0;gap:2px}.target-row strong,.target-row small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.target-row small{color:var(--text-secondary);font:11px/1.3 var(--font-mono)}.diagnostic-copy{margin:0 0 var(--space-16);color:var(--text-secondary);font-size:12px;line-height:1.6}.query-presets{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:6px}.query-form{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;margin-top:var(--space-16)}.query-result{max-height:360px;overflow:auto;margin:var(--space-16) 0 0;padding:12px;border:1px solid var(--border-muted);border-radius:var(--radius-control);background:var(--surface-subtle);color:var(--text-primary);font:11px/1.5 var(--font-mono)}.empty-inline{padding:16px 0;color:var(--text-muted);font-size:12px}.wait-card .empty-state{min-height:140px}@media(max-width:960px){.monitoring-summary{grid-template-columns:repeat(3,minmax(0,1fr))}}@media(max-width:760px){.monitoring-trend-grid,.monitoring-workload-grid,.monitoring-grid{grid-template-columns:1fr}.monitoring-summary{grid-template-columns:repeat(2,minmax(0,1fr))}.query-form{grid-template-columns:1fr}.query-form .btn{width:100%}}@media(max-width:440px){.monitoring-summary{grid-template-columns:1fr}.monitoring-section-heading{align-items:flex-start;flex-direction:column}.range-select{align-items:flex-start;flex-direction:column}.trend-range-select{width:100%}}
+.monitoring-content { margin-top: var(--space-20); }.status-copy,.metric small,.form-hint,.confirm-copy,.monitoring-section-heading p,.drawer-header p,.drawer-section-heading p{margin:5px 0 0;color:var(--text-secondary);font-size:12px}.install-form{margin-top:var(--space-20)}.status-actions{justify-content:flex-start;margin-top:var(--space-16)}.monitoring-summary{grid-template-columns:repeat(5,minmax(0,1fr))}.metric{display:grid;min-width:0;gap:5px;padding:14px;border:1px solid var(--border-muted);border-radius:var(--radius-control);background:var(--surface-subtle)}.metric>span{color:var(--text-secondary);font-size:11px}.metric strong{min-width:0;font-size:18px}.metric small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.metric-code{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--font-mono);font-size:13px!important}.monitoring-section-heading{display:flex;align-items:center;justify-content:space-between;gap:var(--space-16)}.monitoring-section-heading h2{margin:0;color:var(--text-primary);font-size:16px}.range-select{display:flex;align-items:center;gap:8px;color:var(--text-secondary);font-size:11px;font-weight:700;white-space:nowrap}.trend-range-select{width:148px;min-height:34px;padding:6px 28px 6px 9px;font-size:11px}.monitoring-trend-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--space-16)}.monitoring-workload-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--space-16)}.target-list{display:grid;gap:7px;margin-top:var(--space-16)}.target-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid var(--border-muted)}.target-row:last-child{border-bottom:0}.target-row span:first-child{display:grid;min-width:0;gap:2px}.target-row strong,.target-row small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.target-row small{color:var(--text-secondary);font:11px/1.3 var(--font-mono)}.diagnostic-copy{margin:0 0 var(--space-16);color:var(--text-secondary);font-size:12px;line-height:1.6}.query-presets{display:flex;flex-wrap:wrap;gap:6px;margin-top:var(--space-16)}.query-form{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;margin-top:var(--space-16)}.query-result{max-height:360px;overflow:auto;margin:var(--space-16) 0 0;padding:12px;border:1px solid var(--border-muted);border-radius:var(--radius-control);background:var(--surface-subtle);color:var(--text-primary);font:11px/1.5 var(--font-mono)}.empty-inline{padding:16px 0;color:var(--text-muted);font-size:12px}.wait-card .empty-state{min-height:140px}.trend-controls{display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:8px}.trend-node-picker{position:relative}.trend-node-trigger{display:inline-flex;min-height:34px;align-items:center;gap:6px;padding:0 9px;border:1px solid var(--border-muted);border-radius:var(--radius-control);background:var(--surface-raised);color:var(--text-secondary);font-size:11px;font-weight:700;cursor:pointer}.trend-node-trigger:hover{background:var(--surface-hover);color:var(--text-primary)}.trend-node-menu{position:absolute;z-index:30;top:calc(100% + 6px);right:0;display:grid;min-width:210px;max-height:280px;overflow:auto;padding:7px;border:1px solid var(--border);border-radius:var(--radius-control);background:var(--surface-raised);box-shadow:var(--shadow)}.trend-node-menu-actions{display:flex;justify-content:flex-end;gap:10px;padding:5px 5px 8px;border-bottom:1px solid var(--border-muted)}.trend-node-menu-actions button{padding:0;border:0;background:transparent;color:var(--action-primary);font-size:11px;font-weight:700;cursor:pointer}.trend-node-option{display:flex;min-height:32px;align-items:center;gap:7px;padding:0 6px;color:var(--text-secondary);font-size:11px;cursor:pointer}.trend-node-option:hover{background:var(--surface-hover);color:var(--text-primary)}.trend-node-option input{margin:0}.monitoring-settings-overlay{z-index:1300;align-items:center;justify-content:center;padding:var(--space-16)}.monitoring-settings-drawer{display:flex;width:min(720px,100%);max-height:calc(100dvh - 32px);padding:var(--space-20);flex-direction:column;overflow:auto;overscroll-behavior:contain;border-radius:var(--radius-panel);background:var(--surface-raised);box-shadow:var(--shadow)}.drawer-header,.drawer-section-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}.drawer-header h2,.drawer-section-heading h3{margin:0;color:var(--text-primary);font-size:16px}.drawer-section{padding:var(--space-20) 0;border-bottom:1px solid var(--border-muted)}.drawer-section:last-child{border-bottom:0}.settings-field{display:grid;gap:3px;padding:var(--space-16) 0 0}.settings-field>span{color:var(--text-secondary);font-size:11px}.settings-field strong{font-size:13px}.settings-field small{color:var(--text-muted);font:10px/1.4 var(--font-mono)}.settings-retention{display:grid;gap:6px;margin-top:var(--space-16)}.drawer-actions{margin-top:var(--space-16)}@media(max-width:960px){.monitoring-summary{grid-template-columns:repeat(3,minmax(0,1fr))}}@media(max-width:760px){.monitoring-trend-grid,.monitoring-workload-grid{grid-template-columns:1fr}.monitoring-summary{grid-template-columns:repeat(2,minmax(0,1fr))}.query-form{grid-template-columns:1fr}.query-form .btn{width:100%}.trend-controls{justify-content:flex-start}}@media(max-width:440px){.monitoring-summary{grid-template-columns:1fr}.monitoring-section-heading{align-items:flex-start;flex-direction:column}.range-select{align-items:flex-start;flex-direction:column}.trend-range-select{width:100%}.trend-node-menu{right:auto;left:0;min-width:min(240px,calc(100vw - 32px))}}
 </style>

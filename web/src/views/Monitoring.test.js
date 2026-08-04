@@ -5,6 +5,13 @@ import Monitoring from './Monitoring.vue'
 const apiMocks = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), delete: vi.fn() }))
 
 vi.mock('../api/index.js', () => ({ api: apiMocks }))
+vi.mock('../components/MetricTrendChart.vue', () => ({
+  default: {
+    name: 'MetricTrendChart',
+    props: ['series'],
+    template: '<div class="metric-trend-chart" />',
+  },
+}))
 
 beforeEach(() => {
   apiMocks.get.mockReset()
@@ -20,7 +27,7 @@ describe('Monitoring view', () => {
   it('uses the shared monitoring workspace header', () => {
     const wrapper = mount(Monitoring)
     expect(wrapper.get('.section-tabs-header').find('h1').text()).toBe('集群监控')
-    expect(wrapper.findAll('.section-tab')).toHaveLength(4)
+    expect(wrapper.findAll('.section-tab')).toHaveLength(3)
     expect(wrapper.get('.section-tab.is-active').text()).toBe('概览')
   })
 
@@ -35,7 +42,7 @@ describe('Monitoring view', () => {
     expect(wrapper.find('input[placeholder="/data/victoria-metrics"]').element.value).toBe('/data/victoria-metrics')
   })
 
-  it('shows historical node trends and switches to the node view', async () => {
+  it('shows historical node trends in the overview and filters selected nodes', async () => {
     apiMocks.get.mockImplementation(path => {
       if (path === '/monitoring/status') return Promise.resolve({ state: 'ready', message: '指标采集正常', node_name: 'node-a', data_path: '/data/victoria-metrics', retention_days: 14, node_exporter_ready: 1, node_exporter_desired: 1 })
       if (path === '/nodes') return Promise.resolve([{ name: 'node-a', internal_ip: '10.0.0.1', ready: true }])
@@ -52,13 +59,44 @@ describe('Monitoring view', () => {
     expect(wrapper.text()).toContain('42.5%')
     expect(apiMocks.get).toHaveBeenCalledWith('/monitoring/dashboard?range=6h')
     expect(apiMocks.get).not.toHaveBeenCalledWith('/monitoring/targets')
+    expect(wrapper.get('.trend-node-trigger').text()).toContain('全部节点')
+    await wrapper.get('.trend-node-trigger').trigger('click')
+    expect(wrapper.findAll('.trend-node-option')).toHaveLength(1)
+    expect(wrapper.get('.trend-node-option input').element.checked).toBe(true)
+    await wrapper.get('.trend-node-option input').setValue(false)
+    expect(wrapper.get('.trend-node-option input').element.checked).toBe(false)
     await wrapper.get('.trend-range-select').setValue('24h')
     await flushPromises()
     expect(apiMocks.get).toHaveBeenCalledWith('/monitoring/dashboard?range=24h')
     await wrapper.get('.section-tab:nth-child(2)').trigger('click')
     await flushPromises()
-    expect(wrapper.find('.node-table').exists()).toBe(true)
-    expect(wrapper.text()).toContain('node-a')
+    expect(apiMocks.get).toHaveBeenCalledWith(expect.stringContaining('/monitoring/query?query='))
+    expect(apiMocks.get).not.toHaveBeenCalledWith('/monitoring/targets')
+    wrapper.unmount()
+  })
+
+  it('moves monitoring configuration into a settings drawer and updates retention', async () => {
+    apiMocks.get.mockImplementation(path => {
+      if (path === '/monitoring/status') return Promise.resolve({ state: 'ready', message: '指标采集正常', node_name: 'node-a', data_path: '/data/victoria-metrics', retention_days: 14, node_exporter_ready: 1, node_exporter_desired: 1 })
+      if (path === '/nodes') return Promise.resolve([{ name: 'node-a', internal_ip: '10.0.0.1', ready: true }])
+      if (path.startsWith('/monitoring/dashboard')) return Promise.resolve({ trends: {} })
+      if (path === '/monitoring/targets') return Promise.resolve({ activeTargets: [] })
+      return Promise.resolve({})
+    })
+    apiMocks.post.mockResolvedValue({ state: 'ready' })
+    const wrapper = mount(Monitoring)
+    await flushPromises()
+
+    await wrapper.get('[title="监控设置"]').trigger('click')
+    const drawer = document.body.querySelector('.monitoring-settings-drawer')
+    expect(drawer).not.toBeNull()
+    const input = drawer.querySelector('input[type="number"]')
+    expect(input?.value).toBe('14')
+    input.value = 30
+    input.dispatchEvent(new Event('input'))
+    await flushPromises()
+    drawer.querySelector('[data-testid="save-monitoring-config"]').click()
+    expect(apiMocks.post).toHaveBeenCalledWith('/monitoring/install', { node_name: 'node-a', data_path: '/data/victoria-metrics', retention_days: 30 })
     wrapper.unmount()
   })
 })

@@ -252,7 +252,7 @@ func ensureVictoriaMetricsAccess(c *Client) error {
 }
 
 func upsertVictoriaMetricsConfig(c *Client, config VictoriaMetricsConfig) error {
-	resource := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: victoriaMetricsName + "-scrape", Namespace: victoriaMetricsNamespace, Labels: victoriaMetricsLabels()}, Data: map[string]string{"scrape.yml": victoriaMetricsScrapeConfig()}}
+	resource := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: victoriaMetricsName + "-scrape", Namespace: victoriaMetricsNamespace, Labels: victoriaMetricsLabels()}, Data: map[string]string{"scrape.yml": victoriaMetricsScrapeConfig(kubeStateMetricsInstalled(c))}}
 	return createOrUpdateConfigMap(c, resource)
 }
 
@@ -281,7 +281,7 @@ func upsertVictoriaMetricsDeployment(c *Client, config VictoriaMetricsConfig) er
 	deployment := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: victoriaMetricsName, Namespace: victoriaMetricsNamespace, Labels: victoriaMetricsLabels()}, Spec: appsv1.DeploymentSpec{
 		Replicas: &replicas,
 		Selector: &metav1.LabelSelector{MatchLabels: victoriaMetricsLabels()},
-		Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: victoriaMetricsLabels(), Annotations: map[string]string{"cylism.io/scrape-config-hash": victoriaMetricsScrapeConfigHash()}}, Spec: corev1.PodSpec{
+		Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: victoriaMetricsLabels(), Annotations: map[string]string{"cylism.io/scrape-config-hash": victoriaMetricsScrapeConfigHash(kubeStateMetricsInstalled(c))}}, Spec: corev1.PodSpec{
 			NodeSelector:       map[string]string{corev1.LabelHostname: config.NodeName},
 			ServiceAccountName: victoriaMetricsName,
 			Volumes: []corev1.Volume{
@@ -421,8 +421,8 @@ func VictoriaMetricsServiceURL() string {
 	return "http://" + victoriaMetricsName + "." + victoriaMetricsNamespace + ".svc:8428"
 }
 
-func victoriaMetricsScrapeConfig() string {
-	return `global:
+func victoriaMetricsScrapeConfig(includeKubeStateMetrics bool) string {
+	config := `global:
   scrape_interval: 30s
   scrape_timeout: 10s
 scrape_configs:
@@ -472,11 +472,26 @@ scrape_configs:
       - source_labels: [__meta_kubernetes_pod_node_name]
         target_label: node
 `
+	if includeKubeStateMetrics {
+		config += `  - job_name: kube-state-metrics
+    static_configs:
+      - targets: [cylism-kube-state-metrics.monitoring.svc:8080]
+`
+	}
+	return config
 }
 
-func victoriaMetricsScrapeConfigHash() string {
-	checksum := sha256.Sum256([]byte(victoriaMetricsScrapeConfig()))
+func victoriaMetricsScrapeConfigHash(includeKubeStateMetrics bool) string {
+	checksum := sha256.Sum256([]byte(victoriaMetricsScrapeConfig(includeKubeStateMetrics)))
 	return fmt.Sprintf("%x", checksum[:])
+}
+
+func kubeStateMetricsInstalled(c *Client) bool {
+	if c == nil || c.Clientset == nil {
+		return false
+	}
+	_, err := c.Clientset.AppsV1().Deployments(victoriaMetricsNamespace).Get(c.Ctx(), kubeStateMetricsName, metav1.GetOptions{})
+	return err == nil
 }
 
 func deploymentStatusMessage(deployment *appsv1.Deployment) string {
