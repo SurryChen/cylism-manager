@@ -18,9 +18,12 @@ import (
 )
 
 const (
-	ManagedByLabel   = "app.kubernetes.io/managed-by"
-	ManagedByValue   = "cylism-manager"
-	EnvironmentLabel = "cylism.io/environment"
+	ManagedByLabel                = "app.kubernetes.io/managed-by"
+	ManagedByValue                = "cylism-manager"
+	EnvironmentLabel              = "cylism.io/environment"
+	InfrastructureLabel           = "cylism.io/infrastructure"
+	InfrastructureAlertmanager    = "alertmanager"
+	InfrastructureVictoriaMetrics = "victoria-metrics"
 )
 
 // PersistentVolumeClaimRequest contains the user-controlled fields supported
@@ -38,6 +41,9 @@ type PersistentVolumeClaimInfo struct {
 	Namespace            string   `json:"namespace"`
 	Managed              bool     `json:"managed"`
 	EnvironmentID        uint     `json:"environment_id,omitempty"`
+	OwnerType            string   `json:"owner_type"`
+	OwnerName            string   `json:"owner_name,omitempty"`
+	ReadOnly             bool     `json:"read_only"`
 	Phase                string   `json:"phase"`
 	Storage              string   `json:"storage"`
 	StorageClassName     string   `json:"storage_class_name,omitempty"`
@@ -68,16 +74,16 @@ func (c *Client) ListManagedPVCs(namespace string, environmentID uint) ([]Persis
 	if err != nil {
 		return nil, fmt.Errorf("list persistentvolumeclaims: %w", err)
 	}
-	result := make([]PersistentVolumeClaimInfo, 0, len(claims.Items))
+	managedClaims := make([]corev1.PersistentVolumeClaim, 0, len(claims.Items))
 	for index := range claims.Items {
 		if !isManagedPVC(&claims.Items[index], environmentID) {
 			continue
 		}
-		info, err := c.pvcInfo(&claims.Items[index])
-		if err != nil {
-			return nil, err
-		}
-		result = append(result, info)
+		managedClaims = append(managedClaims, claims.Items[index])
+	}
+	result, err := c.pvcInfos(managedClaims)
+	if err != nil {
+		return nil, err
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].Name < result[j].Name })
 	return result, nil
@@ -91,13 +97,9 @@ func (c *Client) ListPVCs(namespace string) ([]PersistentVolumeClaimInfo, error)
 	if err != nil {
 		return nil, fmt.Errorf("list persistentvolumeclaims: %w", err)
 	}
-	result := make([]PersistentVolumeClaimInfo, 0, len(claims.Items))
-	for index := range claims.Items {
-		info, err := c.pvcInfo(&claims.Items[index])
-		if err != nil {
-			return nil, err
-		}
-		result = append(result, info)
+	result, err := c.pvcInfos(claims.Items)
+	if err != nil {
+		return nil, err
 	}
 	sort.Slice(result, func(i, j int) bool {
 		if result[i].Namespace != result[j].Namespace {
@@ -115,6 +117,9 @@ func (c *Client) GetManagedPVC(namespace, name string, environmentID uint) (*Per
 	}
 	if !isManagedPVC(claim, environmentID) {
 		return nil, fmt.Errorf("PVC %q 不属于当前环境或未由平台管理", name)
+	}
+	if infrastructurePVCOwner(claim) != "" {
+		return nil, fmt.Errorf("PVC %q 由基础设施组件 %s 管理，不能通过通用存储接口修改", name, infrastructurePVCOwnerName(infrastructurePVCOwner(claim)))
 	}
 	info, err := c.pvcInfo(claim)
 	if err != nil {
@@ -264,6 +269,9 @@ func (c *Client) DeleteManagedPVC(namespace, name string, environmentID uint) er
 	if !isManagedPVC(claim, environmentID) {
 		return fmt.Errorf("PVC %q 不属于当前环境或未由平台管理", name)
 	}
+	if owner := infrastructurePVCOwner(claim); owner != "" {
+		return fmt.Errorf("PVC %q 由基础设施组件 %s 管理，不能通过通用存储接口删除", name, infrastructurePVCOwnerName(owner))
+	}
 	if err := c.Clientset.CoreV1().PersistentVolumeClaims(namespace).Delete(c.Ctx(), name, metav1.DeleteOptions{}); err != nil {
 		return fmt.Errorf("delete persistentvolumeclaim: %w", err)
 	}
@@ -296,6 +304,53 @@ func (c *Client) ListStorageClasses() ([]StorageClassInfo, error) {
 }
 
 func (c *Client) pvcInfo(claim *corev1.PersistentVolumeClaim) (PersistentVolumeClaimInfo, error) {
+	var storageClass *storagev1.StorageClass
+	if name := valueOrEmpty(claim.Spec.StorageClassName); name != "" {
+		current, err := c.Clientset.StorageV1().StorageClasses().Get(c.Ctx(), name, metav1.GetOptions{})
+		if err != nil && !apierrors.IsNotFound(err) {
+			return PersistentVolumeClaimInfo{}, fmt.Errorf("get storageclass %s: %w", name, err)
+		}
+		storageClass = current
+	}
+	var volume *corev1.PersistentVolume
+	if claim.Spec.VolumeName != "" {
+		current, err := c.Clientset.CoreV1().PersistentVolumes().Get(c.Ctx(), claim.Spec.VolumeName, metav1.GetOptions{})
+		if err != nil && !apierrors.IsNotFound(err) {
+			return PersistentVolumeClaimInfo{}, fmt.Errorf("get persistentvolume %s: %w", claim.Spec.VolumeName, err)
+		}
+		volume = current
+	}
+	return pvcInfoFromResources(claim, storageClass, volume), nil
+}
+
+func (c *Client) pvcInfos(claims []corev1.PersistentVolumeClaim) ([]PersistentVolumeClaimInfo, error) {
+	if len(claims) == 0 {
+		return []PersistentVolumeClaimInfo{}, nil
+	}
+	storageClasses, err := c.Clientset.StorageV1().StorageClasses().List(c.Ctx(), metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("list storageclasses: %w", err)
+	}
+	classesByName := make(map[string]*storagev1.StorageClass, len(storageClasses.Items))
+	for index := range storageClasses.Items {
+		classesByName[storageClasses.Items[index].Name] = &storageClasses.Items[index]
+	}
+	volumes, err := c.Clientset.CoreV1().PersistentVolumes().List(c.Ctx(), metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("list persistentvolumes: %w", err)
+	}
+	volumesByName := make(map[string]*corev1.PersistentVolume, len(volumes.Items))
+	for index := range volumes.Items {
+		volumesByName[volumes.Items[index].Name] = &volumes.Items[index]
+	}
+	result := make([]PersistentVolumeClaimInfo, 0, len(claims))
+	for index := range claims {
+		result = append(result, pvcInfoFromResources(&claims[index], classesByName[valueOrEmpty(claims[index].Spec.StorageClassName)], volumesByName[claims[index].Spec.VolumeName]))
+	}
+	return result, nil
+}
+
+func pvcInfoFromResources(claim *corev1.PersistentVolumeClaim, storageClass *storagev1.StorageClass, volume *corev1.PersistentVolume) PersistentVolumeClaimInfo {
 	info := PersistentVolumeClaimInfo{
 		Name:              claim.Name,
 		Namespace:         claim.Namespace,
@@ -305,6 +360,15 @@ func (c *Client) pvcInfo(claim *corev1.PersistentVolumeClaim) (PersistentVolumeC
 		CreationTimestamp: claim.CreationTimestamp.UTC().Format("2006-01-02T15:04:05Z"),
 	}
 	info.Managed, info.EnvironmentID = managedPVCEnvironmentID(claim)
+	if owner := infrastructurePVCOwner(claim); owner != "" {
+		info.OwnerType = "infrastructure"
+		info.OwnerName = infrastructurePVCOwnerName(owner)
+		info.ReadOnly = true
+	} else if info.Managed {
+		info.OwnerType = "application"
+	} else {
+		info.OwnerType = "external"
+	}
 	if storage := claim.Status.Capacity.Storage(); storage != nil {
 		info.Storage = storage.String()
 	} else if storage := claim.Spec.Resources.Requests.Storage(); storage != nil {
@@ -313,29 +377,15 @@ func (c *Client) pvcInfo(claim *corev1.PersistentVolumeClaim) (PersistentVolumeC
 	for _, mode := range claim.Spec.AccessModes {
 		info.AccessModes = append(info.AccessModes, string(mode))
 	}
-	if info.StorageClassName != "" {
-		storageClass, err := c.Clientset.StorageV1().StorageClasses().Get(c.Ctx(), info.StorageClassName, metav1.GetOptions{})
-		if err != nil && !apierrors.IsNotFound(err) {
-			return PersistentVolumeClaimInfo{}, fmt.Errorf("get storageclass %s: %w", info.StorageClassName, err)
-		}
-		if storageClass != nil && storageClass.VolumeBindingMode != nil {
-			info.WaitForFirstConsumer = *storageClass.VolumeBindingMode == storagev1.VolumeBindingWaitForFirstConsumer
-		}
+	if storageClass != nil && storageClass.VolumeBindingMode != nil {
+		info.WaitForFirstConsumer = *storageClass.VolumeBindingMode == storagev1.VolumeBindingWaitForFirstConsumer
 	}
-	if info.VolumeName == "" {
-		return info, nil
+	if volume != nil {
+		info.ReclaimPolicy = string(volume.Spec.PersistentVolumeReclaimPolicy)
+		info.BoundNode = persistentVolumeNodeName(volume)
+		info.LocalPath, info.IsLocal = persistentVolumeLocalPath(volume)
 	}
-	pv, err := c.Clientset.CoreV1().PersistentVolumes().Get(c.Ctx(), info.VolumeName, metav1.GetOptions{})
-	if err != nil {
-		if apierrors.IsNotFound(err) {
-			return info, nil
-		}
-		return PersistentVolumeClaimInfo{}, fmt.Errorf("get persistentvolume %s: %w", info.VolumeName, err)
-	}
-	info.ReclaimPolicy = string(pv.Spec.PersistentVolumeReclaimPolicy)
-	info.BoundNode = persistentVolumeNodeName(pv)
-	info.LocalPath, info.IsLocal = persistentVolumeLocalPath(pv)
-	return info, nil
+	return info
 }
 
 func isManagedPVC(claim *corev1.PersistentVolumeClaim, environmentID uint) bool {
@@ -356,6 +406,37 @@ func managedPVCEnvironmentID(claim *corev1.PersistentVolumeClaim) (bool, uint) {
 		return true, 0
 	}
 	return true, uint(environmentID)
+}
+
+func infrastructurePVCOwner(claim *corev1.PersistentVolumeClaim) string {
+	if claim == nil || claim.Labels[ManagedByLabel] != ManagedByValue {
+		return ""
+	}
+	switch claim.Labels[InfrastructureLabel] {
+	case InfrastructureAlertmanager, InfrastructureVictoriaMetrics:
+		return claim.Labels[InfrastructureLabel]
+	default:
+		return ""
+	}
+}
+
+func infrastructurePVCOwnerName(owner string) string {
+	switch owner {
+	case InfrastructureAlertmanager:
+		return "Alertmanager"
+	case InfrastructureVictoriaMetrics:
+		return "VictoriaMetrics"
+	default:
+		return owner
+	}
+}
+
+func infrastructurePVCLabels(owner string) map[string]string {
+	return map[string]string{
+		ManagedByLabel:        ManagedByValue,
+		InfrastructureLabel:   owner,
+		"cylism.io/component": "monitoring",
+	}
 }
 
 func persistentVolumeNodeName(volume *corev1.PersistentVolume) string {

@@ -22,6 +22,7 @@ func setupMonitoringRouter(handler *MonitoringHandler) *gin.Engine {
 	group := router.Group("/api/monitoring")
 	group.GET("/status", handler.Status)
 	group.POST("/install", handler.Install)
+	group.POST("/storage-migration", handler.MigrateLegacyStorage)
 	group.DELETE("", handler.Uninstall)
 	group.GET("/query", handler.Query)
 	group.GET("/query-range", handler.QueryRange)
@@ -92,12 +93,12 @@ func TestMonitoringDashboardReturnsAllTrendSeries(t *testing.T) {
 	}
 }
 
-func TestMonitoringInstallCreatesHostPathInstance(t *testing.T) {
+func TestMonitoringInstallCreatesPVCInstance(t *testing.T) {
 	original := K8s
 	K8s = &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node-a"}, Status: corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}}}})}
 	defer func() { K8s = original }()
 
-	response := serve(setupMonitoringRouter(NewMonitoringHandler()), newJSONRequest(http.MethodPost, "/api/monitoring/install", gin.H{"node_name": "node-a", "data_path": "/data/victoria-metrics", "retention_days": 14}))
+	response := serve(setupMonitoringRouter(NewMonitoringHandler()), newJSONRequest(http.MethodPost, "/api/monitoring/install", gin.H{"node_name": "node-a", "storage": "10Gi", "retention_days": 14}))
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"node_name":"node-a"`) {
 		t.Fatalf("unexpected install response: %s", response.Body.String())
 	}

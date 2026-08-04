@@ -38,8 +38,12 @@ func TestInstallAlertingCreatesSelectedNodeResources(t *testing.T) {
 	if len(alertmanager.Spec.Template.Spec.Volumes) == 0 || alertmanager.Spec.Template.Spec.Volumes[0].PersistentVolumeClaim == nil {
 		t.Fatalf("expected alertmanager PVC volume: %#v", alertmanager.Spec.Template.Spec.Volumes)
 	}
-	if _, err := client.Clientset.CoreV1().PersistentVolumeClaims(victoriaMetricsNamespace).Get(t.Context(), alertmanagerName+"-data", metav1.GetOptions{}); err != nil {
+	alertmanagerPVC, err := client.Clientset.CoreV1().PersistentVolumeClaims(victoriaMetricsNamespace).Get(t.Context(), alertmanagerName+"-data", metav1.GetOptions{})
+	if err != nil {
 		t.Fatalf("expected alertmanager PVC: %v", err)
+	}
+	if alertmanagerPVC.Labels[InfrastructureLabel] != InfrastructureAlertmanager || alertmanagerPVC.Labels[ManagedByLabel] != ManagedByValue {
+		t.Fatalf("expected alertmanager infrastructure labels: %#v", alertmanagerPVC.Labels)
 	}
 	vmalert, err := client.Clientset.AppsV1().Deployments(victoriaMetricsNamespace).Get(t.Context(), vmalertName, metav1.GetOptions{})
 	if err != nil {

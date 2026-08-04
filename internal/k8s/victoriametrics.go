@@ -3,7 +3,6 @@ package k8s
 import (
 	"crypto/sha256"
 	"fmt"
-	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -23,31 +22,60 @@ const (
 	VictoriaMetricsStateDegraded     = "degraded"
 	VictoriaMetricsStateUnavailable  = "unavailable"
 
-	victoriaMetricsNamespace = "monitoring"
-	victoriaMetricsName      = "cylism-victoria-metrics"
-	victoriaMetricsImage     = "victoriametrics/victoria-metrics:v1.115.0"
-	nodeExporterName         = "cylism-node-exporter"
-	nodeExporterImage        = "quay.io/prometheus/node-exporter:v1.8.2"
+	victoriaMetricsNamespace        = "monitoring"
+	victoriaMetricsName             = "cylism-victoria-metrics"
+	victoriaMetricsPVCName          = "cylism-victoria-metrics-data"
+	victoriaMetricsMigrationJobName = "cylism-victoria-metrics-storage-migration"
+	victoriaMetricsImage            = "victoriametrics/victoria-metrics:v1.115.0"
+	nodeExporterName                = "cylism-node-exporter"
+	nodeExporterImage               = "quay.io/prometheus/node-exporter:v1.8.2"
 )
 
-// VictoriaMetricsConfig controls the single-node, hostPath-backed metrics store.
+const (
+	VictoriaMetricsStoragePVC      = "pvc"
+	VictoriaMetricsStorageHostPath = "host_path"
+
+	VictoriaMetricsMigrationCopying   = "copying"
+	VictoriaMetricsMigrationSucceeded = "succeeded"
+	VictoriaMetricsMigrationFailed    = "failed"
+)
+
+// VictoriaMetricsConfig controls the platform-owned metrics store. DataPath is
+// populated only when reading a legacy hostPath deployment.
 type VictoriaMetricsConfig struct {
-	NodeName      string `json:"node_name"`
-	DataPath      string `json:"data_path"`
-	RetentionDays int    `json:"retention_days"`
+	NodeName         string `json:"node_name"`
+	Storage          string `json:"storage,omitempty"`
+	StorageClassName string `json:"storage_class_name,omitempty"`
+	DataPath         string `json:"data_path,omitempty"`
+	RetentionDays    int    `json:"retention_days"`
+}
+
+type VictoriaMetricsMigrationRequest struct {
+	Storage          string `json:"storage"`
+	StorageClassName string `json:"storage_class_name,omitempty"`
+}
+
+type VictoriaMetricsStorageMigration struct {
+	Stage   string `json:"stage"`
+	Message string `json:"message"`
 }
 
 // VictoriaMetricsStatus describes the managed instance and its current Kubernetes state.
 type VictoriaMetricsStatus struct {
-	State               string `json:"state"`
-	Message             string `json:"message"`
-	NodeName            string `json:"node_name,omitempty"`
-	DataPath            string `json:"data_path,omitempty"`
-	RetentionDays       int    `json:"retention_days,omitempty"`
-	ReadyReplicas       int32  `json:"ready_replicas"`
-	NodeExporterReady   int32  `json:"node_exporter_ready"`
-	NodeExporterDesired int32  `json:"node_exporter_desired"`
-	Endpoint            string `json:"endpoint,omitempty"`
+	State               string                           `json:"state"`
+	Message             string                           `json:"message"`
+	NodeName            string                           `json:"node_name,omitempty"`
+	StorageMode         string                           `json:"storage_mode,omitempty"`
+	PVCName             string                           `json:"pvc_name,omitempty"`
+	Storage             string                           `json:"storage,omitempty"`
+	StorageClassName    string                           `json:"storage_class_name,omitempty"`
+	DataPath            string                           `json:"data_path,omitempty"`
+	RetentionDays       int                              `json:"retention_days,omitempty"`
+	ReadyReplicas       int32                            `json:"ready_replicas"`
+	NodeExporterReady   int32                            `json:"node_exporter_ready"`
+	NodeExporterDesired int32                            `json:"node_exporter_desired"`
+	Endpoint            string                           `json:"endpoint,omitempty"`
+	StorageMigration    *VictoriaMetricsStorageMigration `json:"storage_migration,omitempty"`
 }
 
 func (c *Client) VictoriaMetricsStatus() *VictoriaMetricsStatus {
@@ -67,11 +95,29 @@ func (c *Client) VictoriaMetricsStatus() *VictoriaMetricsStatus {
 		status.Message = fmt.Sprintf("读取 VictoriaMetrics 状态失败: %v", err)
 		return status
 	}
+	if reconcileErr := c.reconcileVictoriaMetricsMigration(); reconcileErr == nil {
+		if updated, getErr := c.Clientset.AppsV1().Deployments(victoriaMetricsNamespace).Get(c.Ctx(), victoriaMetricsName, metav1.GetOptions{}); getErr == nil {
+			deployment = updated
+		}
+	}
 
 	config, _ := victoriaMetricsConfigFromDeployment(deployment)
 	status.NodeName = config.NodeName
 	status.DataPath = config.DataPath
 	status.RetentionDays = config.RetentionDays
+	if config.DataPath != "" {
+		status.StorageMode = VictoriaMetricsStorageHostPath
+	} else {
+		status.StorageMode = VictoriaMetricsStoragePVC
+		status.PVCName = victoriaMetricsPVCName
+		if claim, claimErr := c.Clientset.CoreV1().PersistentVolumeClaims(victoriaMetricsNamespace).Get(c.Ctx(), victoriaMetricsPVCName, metav1.GetOptions{}); claimErr == nil {
+			status.StorageClassName = valueOrEmpty(claim.Spec.StorageClassName)
+			if storage := claim.Spec.Resources.Requests.Storage(); storage != nil {
+				status.Storage = storage.String()
+			}
+		}
+	}
+	status.StorageMigration = c.victoriaMetricsMigrationStatus()
 	status.ReadyReplicas = deployment.Status.AvailableReplicas
 	status.Endpoint = VictoriaMetricsServiceURL()
 	if deployment.Status.AvailableReplicas == 0 {
@@ -110,13 +156,38 @@ func (c *Client) VictoriaMetricsStatus() *VictoriaMetricsStatus {
 	return status
 }
 
-// InstallVictoriaMetrics creates or updates the managed metrics store. Data location
-// is immutable after the first install because hostPath is local to one Kubernetes node.
+// InstallVictoriaMetrics creates or updates the managed metrics store. New
+// installations always use the platform-owned PVC; legacy hostPath deployments
+// retain their existing volume until explicitly migrated.
 func (c *Client) InstallVictoriaMetrics(config VictoriaMetricsConfig) (*VictoriaMetricsStatus, error) {
 	if c == nil || c.Clientset == nil {
 		return c.VictoriaMetricsStatus(), fmt.Errorf("Kubernetes 客户端未初始化")
 	}
-	if err := validateVictoriaMetricsConfig(config); err != nil {
+
+	existing, err := c.Clientset.AppsV1().Deployments(victoriaMetricsNamespace).Get(c.Ctx(), victoriaMetricsName, metav1.GetOptions{})
+	if err != nil && !apierrors.IsNotFound(err) {
+		return c.VictoriaMetricsStatus(), fmt.Errorf("读取现有 VictoriaMetrics 配置失败: %w", err)
+	}
+	if err == nil {
+		old, _ := victoriaMetricsConfigFromDeployment(existing)
+		if old.NodeName != "" && old.NodeName != strings.TrimSpace(config.NodeName) {
+			return c.VictoriaMetricsStatus(), fmt.Errorf("已安装实例的数据节点不能直接修改；当前数据仍绑定在 %s", old.NodeName)
+		}
+		if old.DataPath != "" {
+			if strings.TrimSpace(config.Storage) != "" || strings.TrimSpace(config.StorageClassName) != "" {
+				return c.VictoriaMetricsStatus(), fmt.Errorf("旧 hostPath 数据请使用迁移到 PVC 功能，不能通过运行配置直接切换")
+			}
+			config.NodeName = old.NodeName
+			config.DataPath = old.DataPath
+		} else {
+			config.NodeName = old.NodeName
+			config.Storage = old.Storage
+			config.StorageClassName = old.StorageClassName
+		}
+	} else if err := validateVictoriaMetricsPVCConfig(config); err != nil {
+		return c.VictoriaMetricsStatus(), err
+	}
+	if err := validateVictoriaMetricsRetention(config.RetentionDays); err != nil {
 		return c.VictoriaMetricsStatus(), err
 	}
 	node, err := c.Clientset.CoreV1().Nodes().Get(c.Ctx(), config.NodeName, metav1.GetOptions{})
@@ -127,22 +198,16 @@ func (c *Client) InstallVictoriaMetrics(config VictoriaMetricsConfig) (*Victoria
 		return c.VictoriaMetricsStatus(), fmt.Errorf("数据节点 %s 未就绪", config.NodeName)
 	}
 
-	existing, err := c.Clientset.AppsV1().Deployments(victoriaMetricsNamespace).Get(c.Ctx(), victoriaMetricsName, metav1.GetOptions{})
-	if err != nil && !apierrors.IsNotFound(err) {
-		return c.VictoriaMetricsStatus(), fmt.Errorf("读取现有 VictoriaMetrics 配置失败: %w", err)
-	}
-	if err == nil {
-		old, _ := victoriaMetricsConfigFromDeployment(existing)
-		if old.NodeName != "" && (old.NodeName != config.NodeName || old.DataPath != config.DataPath) {
-			return c.VictoriaMetricsStatus(), fmt.Errorf("已安装实例的数据节点或目录不能修改；hostPath 数据仍保留在 %s:%s", old.NodeName, old.DataPath)
-		}
-	}
-
 	if err := ensureMonitoringNamespace(c); err != nil {
 		return c.VictoriaMetricsStatus(), err
 	}
 	if err := ensureVictoriaMetricsAccess(c); err != nil {
 		return c.VictoriaMetricsStatus(), err
+	}
+	if config.DataPath == "" {
+		if err := upsertVictoriaMetricsPVC(c, config); err != nil {
+			return c.VictoriaMetricsStatus(), err
+		}
 	}
 	if err := upsertVictoriaMetricsConfig(c, config); err != nil {
 		return c.VictoriaMetricsStatus(), err
@@ -200,18 +265,20 @@ func (c *Client) UninstallVictoriaMetrics() error {
 	return nil
 }
 
-func validateVictoriaMetricsConfig(config VictoriaMetricsConfig) error {
+func validateVictoriaMetricsPVCConfig(config VictoriaMetricsConfig) error {
 	config.NodeName = strings.TrimSpace(config.NodeName)
 	if config.NodeName == "" {
 		return fmt.Errorf("请选择 VictoriaMetrics 数据节点")
 	}
-	if config.DataPath == "" || !filepath.IsAbs(config.DataPath) || filepath.Clean(config.DataPath) != config.DataPath {
-		return fmt.Errorf("数据目录必须是规范的绝对路径")
+	storage, err := resource.ParseQuantity(strings.TrimSpace(config.Storage))
+	if err != nil || storage.Sign() <= 0 {
+		return fmt.Errorf("存储容量格式无效")
 	}
-	if config.DataPath == "/" || !strings.HasPrefix(config.DataPath, "/data/") {
-		return fmt.Errorf("数据目录仅允许使用 /data/ 下的独立目录")
-	}
-	if config.RetentionDays < 1 || config.RetentionDays > 365 {
+	return nil
+}
+
+func validateVictoriaMetricsRetention(retentionDays int) error {
+	if retentionDays < 1 || retentionDays > 365 {
 		return fmt.Errorf("指标保留天数应在 1 到 365 天之间")
 	}
 	return nil
@@ -275,9 +342,64 @@ func upsertVictoriaMetricsService(c *Client) error {
 	return nil
 }
 
+func upsertVictoriaMetricsPVC(c *Client, config VictoriaMetricsConfig) error {
+	claims := c.Clientset.CoreV1().PersistentVolumeClaims(victoriaMetricsNamespace)
+	existing, err := claims.Get(c.Ctx(), victoriaMetricsPVCName, metav1.GetOptions{})
+	if err == nil {
+		labels := infrastructurePVCLabels(InfrastructureVictoriaMetrics)
+		changed := false
+		if existing.Labels == nil {
+			existing.Labels = map[string]string{}
+		}
+		for key, value := range labels {
+			if existing.Labels[key] != value {
+				existing.Labels[key] = value
+				changed = true
+			}
+		}
+		if changed {
+			if _, err := claims.Update(c.Ctx(), existing, metav1.UpdateOptions{}); err != nil {
+				return fmt.Errorf("更新 VictoriaMetrics 存储卷归属失败: %w", err)
+			}
+		}
+		return nil
+	}
+	if !apierrors.IsNotFound(err) {
+		return fmt.Errorf("读取 VictoriaMetrics 存储卷失败: %w", err)
+	}
+	storage, parseErr := resource.ParseQuantity(strings.TrimSpace(config.Storage))
+	if parseErr != nil || storage.Sign() <= 0 {
+		return fmt.Errorf("VictoriaMetrics 存储容量格式无效")
+	}
+	claim := &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{Name: victoriaMetricsPVCName, Namespace: victoriaMetricsNamespace, Labels: infrastructurePVCLabels(InfrastructureVictoriaMetrics)},
+		Spec: corev1.PersistentVolumeClaimSpec{
+			AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
+			Resources:   corev1.VolumeResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceStorage: storage}},
+		},
+	}
+	if storageClassName := strings.TrimSpace(config.StorageClassName); storageClassName != "" {
+		if _, err := c.Clientset.StorageV1().StorageClasses().Get(c.Ctx(), storageClassName, metav1.GetOptions{}); err != nil {
+			if apierrors.IsNotFound(err) {
+				return fmt.Errorf("StorageClass %q 不存在", storageClassName)
+			}
+			return fmt.Errorf("读取 StorageClass 失败: %w", err)
+		}
+		claim.Spec.StorageClassName = &storageClassName
+	}
+	if _, err := claims.Create(c.Ctx(), claim, metav1.CreateOptions{}); err != nil {
+		return fmt.Errorf("创建 VictoriaMetrics 存储卷失败: %w", err)
+	}
+	return nil
+}
+
 func upsertVictoriaMetricsDeployment(c *Client, config VictoriaMetricsConfig) error {
 	replicas := int32(1)
-	hostPathType := corev1.HostPathDirectoryOrCreate
+	storageVolume := corev1.Volume{Name: "storage", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: victoriaMetricsPVCName}}}
+	if config.DataPath != "" {
+		hostPathType := corev1.HostPathDirectoryOrCreate
+		storageVolume = corev1.Volume{Name: "storage", VolumeSource: corev1.VolumeSource{HostPath: &corev1.HostPathVolumeSource{Path: config.DataPath, Type: &hostPathType}}}
+	}
 	deployment := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: victoriaMetricsName, Namespace: victoriaMetricsNamespace, Labels: victoriaMetricsLabels()}, Spec: appsv1.DeploymentSpec{
 		Replicas: &replicas,
 		Selector: &metav1.LabelSelector{MatchLabels: victoriaMetricsLabels()},
@@ -285,7 +407,7 @@ func upsertVictoriaMetricsDeployment(c *Client, config VictoriaMetricsConfig) er
 			NodeSelector:       map[string]string{corev1.LabelHostname: config.NodeName},
 			ServiceAccountName: victoriaMetricsName,
 			Volumes: []corev1.Volume{
-				{Name: "storage", VolumeSource: corev1.VolumeSource{HostPath: &corev1.HostPathVolumeSource{Path: config.DataPath, Type: &hostPathType}}},
+				storageVolume,
 				{Name: "scrape-config", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: victoriaMetricsName + "-scrape"}}}},
 			},
 			Containers: []corev1.Container{{
@@ -393,6 +515,10 @@ func victoriaMetricsConfigFromDeployment(deployment *appsv1.Deployment) (Victori
 			config.DataPath = volume.HostPath.Path
 			break
 		}
+		if volume.Name == "storage" && volume.PersistentVolumeClaim != nil {
+			config.Storage = "managed"
+			break
+		}
 	}
 	for _, container := range deployment.Spec.Template.Spec.Containers {
 		if container.Name != "victoria-metrics" {
@@ -405,7 +531,7 @@ func victoriaMetricsConfigFromDeployment(deployment *appsv1.Deployment) (Victori
 			}
 		}
 	}
-	return config, config.NodeName != "" && config.DataPath != ""
+	return config, config.NodeName != "" && (config.DataPath != "" || config.Storage != "")
 }
 
 func victoriaMetricsLabels() map[string]string {

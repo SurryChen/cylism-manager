@@ -31,7 +31,7 @@ describe('Monitoring view', () => {
     expect(wrapper.get('.section-tab.is-active').text()).toBe('概览')
   })
 
-  it('offers an installation form with a ready node and hostPath data directory', async () => {
+  it('offers an installation form with a ready node and managed PVC capacity', async () => {
     const wrapper = mount(Monitoring)
     await flushPromises()
 
@@ -39,7 +39,7 @@ describe('Monitoring view', () => {
     expect(wrapper.find('.monitoring-install-card').exists()).toBe(true)
     expect(wrapper.text()).toContain('重新检测')
     expect(wrapper.find('select').text()).toContain('node-a')
-    expect(wrapper.find('input[placeholder="/data/victoria-metrics"]').element.value).toBe('/data/victoria-metrics')
+    expect(wrapper.find('input[placeholder="10Gi"]').element.value).toBe('10Gi')
   })
 
   it('shows historical node trends in the overview and filters selected nodes', async () => {
@@ -96,7 +96,7 @@ describe('Monitoring view', () => {
     input.dispatchEvent(new Event('input'))
     await flushPromises()
     drawer.querySelector('[data-testid="save-monitoring-config"]').click()
-    expect(apiMocks.post).toHaveBeenCalledWith('/monitoring/install', { node_name: 'node-a', data_path: '/data/victoria-metrics', retention_days: 30 })
+    expect(apiMocks.post).toHaveBeenCalledWith('/monitoring/install', { node_name: 'node-a', retention_days: 30 })
     wrapper.unmount()
   })
 })

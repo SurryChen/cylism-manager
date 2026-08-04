@@ -122,6 +122,7 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 		h := NewMonitoringHandler()
 		monitoring.GET("/status", h.Status)
 		monitoring.POST("/install", h.Install)
+		monitoring.POST("/storage-migration", h.MigrateLegacyStorage)
 		monitoring.DELETE("", h.Uninstall)
 		monitoring.GET("/query", h.Query)
 		monitoring.GET("/query-range", h.QueryRange)
