@@ -49,6 +49,7 @@
           <section class="monitoring-workload-grid"><article class="card"><div class="card-header"><div><h2 class="card-title">CPU 使用最高</h2><p class="status-copy">最近 5 分钟平均</p></div></div><WorkloadTable :rows="workloads.cpu" unit="m" :loading="workloadsLoading" /></article><article class="card"><div class="card-header"><div><h2 class="card-title">内存使用最高</h2><p class="status-copy">工作集内存</p></div></div><WorkloadTable :rows="workloads.memory" unit="MiB" :loading="workloadsLoading" /></article></section>
         </template>
 
+        <LoggingWorkspace v-else-if="activeTab === 'logs'" :nodes="nodes" :storage-classes="storageClasses" />
         <AlertingWorkspace v-else-if="activeTab === 'alerts'" :nodes="nodes" :monitoring-ready="status.state === 'ready'" :metrics-node-name="status.node_name" @navigate="navigateFromAlert" />
       </template>
     </main>
@@ -74,12 +75,14 @@ import { computed, defineComponent, h, onMounted, onUnmounted, ref, watch } from
 import { ChevronDown, RefreshCw, Settings2, X } from 'lucide-vue-next'
 import { api } from '../api/index.js'
 import AlertingWorkspace from '../components/AlertingWorkspace.vue'
+import LoggingWorkspace from '../components/LoggingWorkspace.vue'
 import MetricTrendChart from '../components/MetricTrendChart.vue'
 import SectionTabsHeader from '../components/SectionTabsHeader.vue'
 
 const tabs = [
   { id: 'overview', label: '概览' },
   { id: 'workloads', label: '工作负载' },
+  { id: 'logs', label: '日志' },
   { id: 'alerts', label: '告警' },
 ]
 const trendRanges = ['1h', '6h', '24h', '7d']

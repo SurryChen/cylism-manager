@@ -24,6 +24,7 @@ const (
 	InfrastructureLabel           = "cylism.io/infrastructure"
 	InfrastructureAlertmanager    = "alertmanager"
 	InfrastructureVictoriaMetrics = "victoria-metrics"
+	InfrastructureLoki            = "loki"
 )
 
 // PersistentVolumeClaimRequest contains the user-controlled fields supported
@@ -413,7 +414,7 @@ func infrastructurePVCOwner(claim *corev1.PersistentVolumeClaim) string {
 		return ""
 	}
 	switch claim.Labels[InfrastructureLabel] {
-	case InfrastructureAlertmanager, InfrastructureVictoriaMetrics:
+	case InfrastructureAlertmanager, InfrastructureVictoriaMetrics, InfrastructureLoki:
 		return claim.Labels[InfrastructureLabel]
 	default:
 		return ""
@@ -426,6 +427,8 @@ func infrastructurePVCOwnerName(owner string) string {
 		return "Alertmanager"
 	case InfrastructureVictoriaMetrics:
 		return "VictoriaMetrics"
+	case InfrastructureLoki:
+		return "Loki 日志存储"
 	default:
 		return owner
 	}
