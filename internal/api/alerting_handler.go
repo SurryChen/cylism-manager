@@ -603,17 +603,22 @@ func sendEmailNotification(ctx context.Context, config k8s.EmailConfig, payload 
 	}
 	plainBody := emailMessage(payload)
 	htmlBody := emailHTMLMessage(payload)
+	message := alertEmailMIME(from.String(), strings.Join(addresses, ", "), payload, plainBody, htmlBody)
+	maximumLineLength := maximumSMTPLineLength(message)
+	if maximumLineLength > 998 {
+		return fmt.Errorf("邮件内容存在超过 SMTP 限制的行（%d 字节）", maximumLineLength)
+	}
 	writer, err := client.Data()
 	if err != nil {
 		return fmt.Errorf("开始 SMTP 邮件内容失败: %w", err)
 	}
-	_, writeErr := io.WriteString(writer, alertEmailMIME(from.String(), strings.Join(addresses, ", "), payload, plainBody, htmlBody))
+	_, writeErr := io.WriteString(writer, message)
 	closeErr := writer.Close()
 	if writeErr != nil {
 		return fmt.Errorf("写入 SMTP 邮件内容失败: %w", writeErr)
 	}
 	if closeErr != nil {
-		return fmt.Errorf("提交 SMTP 邮件失败: %w", closeErr)
+		return fmt.Errorf("提交 SMTP 邮件失败（本地最长行 %d 字节）: %w", maximumLineLength, closeErr)
 	}
 	return nil
 }
@@ -749,6 +754,16 @@ func quotedPrintableEncode(body string) string {
 	_, _ = writer.Write([]byte(body))
 	_ = writer.Close()
 	return encoded.String()
+}
+
+func maximumSMTPLineLength(message string) int {
+	maximum := 0
+	for _, line := range strings.Split(message, "\r\n") {
+		if length := len([]byte(line)); length > maximum {
+			maximum = length
+		}
+	}
+	return maximum
 }
 
 func escapeLarkMarkdown(value string) string {
