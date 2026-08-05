@@ -56,6 +56,57 @@ func TestLoggingQueryBuildsBoundedStructuredSelector(t *testing.T) {
 	}
 }
 
+func TestLoggingQuerySupportsExactTimeAndBooleanKeywordBranches(t *testing.T) {
+	original := K8s
+	K8s = loggingReadyK8s()
+	defer func() { K8s = original }()
+
+	handler := NewLoggingHandler()
+	queries := make([]string, 0, 2)
+	handler.query = func(_ context.Context, _ string, values url.Values) (*lokiQueryResponse, error) {
+		queries = append(queries, values.Get("query"))
+		if values.Get("start") != "1700000000000000000" || values.Get("end") != "1700000005000000000" {
+			t.Fatalf("expected exact UTC bounds, got %#v", values)
+		}
+		return &lokiQueryResponse{Status: "success", Data: lokiQueryData{ResultType: "streams", Result: []lokiStream{{Stream: map[string]string{"namespace": "project-demo"}, Values: [][]string{{"1700000003000000000", "matched log"}}}}}}, nil
+	}
+
+	response := serve(setupLoggingRouter(handler), newJSONRequest(http.MethodPost, "/api/monitoring/logs/query", gin.H{
+		"namespace":  "project-demo",
+		"start_time": "2023-11-14T22:13:20Z",
+		"end_time":   "2023-11-14T22:13:25Z",
+		"keyword":    `"fetch failed" AND timeout OR "connection refused"`,
+		"limit":      100,
+	}))
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "matched log") {
+		t.Fatalf("unexpected log query response: %d %s", response.Code, response.Body.String())
+	}
+	want := []string{
+		`{namespace="project-demo"} |= "fetch failed" |= "timeout"`,
+		`{namespace="project-demo"} |= "connection refused"`,
+	}
+	if strings.Join(queries, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("unexpected query branches: %#v", queries)
+	}
+}
+
+func TestBuildLogQLQueriesSupportsQuotedEscapesAndRejectsInvalidExpression(t *testing.T) {
+	queries, err := buildLogQLQueries(logQueryRequest{Namespace: "default", Keyword: `"api\/v1" AND "said \"ready\"" OR health`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		`{namespace="default"} |= "api/v1" |= "said \"ready\""`,
+		`{namespace="default"} |= "health"`,
+	}
+	if strings.Join(queries, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("unexpected parsed expression: %#v", queries)
+	}
+	if _, err := buildLogQLQueries(logQueryRequest{Keyword: `health AND`}); err == nil || !strings.Contains(err.Error(), "表达式") {
+		t.Fatalf("expected expression validation error, got %v", err)
+	}
+}
+
 func TestLoggingQueryRejectsRawLogQLAndOversizedRange(t *testing.T) {
 	original := K8s
 	K8s = loggingReadyK8s()

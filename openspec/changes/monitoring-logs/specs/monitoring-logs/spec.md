@@ -46,7 +46,7 @@ The system SHALL classify `monitoring/cylism-loki-data` as infrastructure storag
 
 ### Requirement: Bounded log query API
 
-The system SHALL expose authenticated log status, installation, configuration, filter-option and query APIs through the Cylism backend. The backend SHALL build the Loki query from structured filters and MUST NOT accept raw LogQL from browsers. A query SHALL enforce a maximum 24-hour range, 500 returned lines, 256-character keyword and 10-second upstream timeout.
+The system SHALL expose authenticated log status, installation, configuration, filter-option and query APIs through the Cylism backend. The backend SHALL build the Loki query from structured filters and MUST NOT accept raw LogQL from browsers. A query SHALL enforce a maximum 24-hour range, 500 returned lines, 256-character keyword and 10-second upstream timeout. The API SHALL accept either a preset time range or an exact UTC start/end range. Keyword expressions MAY use quoted strings with `\"`, `\\` and `\/` escapes plus bounded `AND` and `OR` operators; the backend SHALL parse them into a limited number of safe Loki line-filter branches and merge duplicate results.
 
 #### Scenario: Search recent logs by application and keyword
 - **WHEN** an administrator submits a valid time range, application scope and keyword
@@ -56,6 +56,11 @@ The system SHALL expose authenticated log status, installation, configuration, f
 - **WHEN** a caller requests more than 24 hours of logs, more than 500 lines, or a keyword longer than 256 characters
 - **THEN** the API rejects the request with an actionable validation error
 - **AND** it does not send the query to Loki
+
+#### Scenario: Search an exact time range with a boolean expression
+- **WHEN** an administrator submits a valid start/end range shorter than 24 hours and a valid expression such as `"fetch failed" AND timeout OR "connection refused"`
+- **THEN** the backend sends only the bounded AND branches to Loki using the exact UTC range
+- **AND** it merges, deduplicates and reverse-sorts matching lines before applying the returned-line limit
 
 #### Scenario: Report unavailable logging infrastructure
 - **WHEN** Loki or required collection resources are unavailable during a query
