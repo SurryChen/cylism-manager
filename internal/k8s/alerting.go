@@ -75,6 +75,7 @@ type AlertingStatus struct {
 	VMAlertReady           int32             `json:"vmalert_ready"`
 	KubeStateMetricsReady  int32             `json:"kube_state_metrics_ready"`
 	NotificationConfigured bool              `json:"notification_configured"`
+	FeishuConfigured       bool              `json:"feishu_configured"`
 	EmailConfigured        bool              `json:"email_configured"`
 	Rules                  []AlertRuleConfig `json:"rules,omitempty"`
 }
@@ -127,8 +128,9 @@ func (c *Client) AlertingStatus() *AlertingStatus {
 		status.Rules = settings.Rules
 	}
 	if secret, getErr := c.Clientset.CoreV1().Secrets(victoriaMetricsNamespace).Get(c.Ctx(), alertingSecretName, metav1.GetOptions{}); getErr == nil {
+		status.FeishuConfigured = strings.TrimSpace(string(secret.Data["feishu-webhook-url"])) != ""
 		status.EmailConfigured = strings.TrimSpace(string(secret.Data["email-to"])) != ""
-		status.NotificationConfigured = strings.TrimSpace(string(secret.Data["feishu-webhook-url"])) != "" || status.EmailConfigured
+		status.NotificationConfigured = status.FeishuConfigured || status.EmailConfigured
 	}
 	if status.AlertmanagerReady > 0 && status.VMAlertReady > 0 && status.KubeStateMetricsReady > 0 {
 		status.State = AlertingStateReady

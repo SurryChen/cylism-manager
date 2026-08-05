@@ -56,6 +56,10 @@ The system SHALL support SMTP email notifications through the authenticated Aler
 - **WHEN** an administrator configures a valid SMTP endpoint, TLS mode, sender, recipient, and optional credentials then requests a test
 - **THEN** the platform SHALL send a recognizable email test notification without exposing SMTP credentials
 
+#### Scenario: Test one configured notification channel
+- **WHEN** an administrator requests a Feishu or SMTP test from that channel's configuration section
+- **THEN** the platform SHALL send only through the selected configured channel and return a channel-specific result
+
 ### Requirement: Centered alert settings modal
 
 The alerting workspace SHALL present notification and rule configuration in a centered modal above the global application navigation.
@@ -63,6 +67,10 @@ The alerting workspace SHALL present notification and rule configuration in a ce
 #### Scenario: Open alert settings
 - **WHEN** an administrator opens alert settings
 - **THEN** the platform SHALL render a centered modal above the application navigation
+
+#### Scenario: Display independent notification configuration states
+- **WHEN** an administrator opens alert settings after configuring Feishu, SMTP, or both
+- **THEN** the workspace SHALL display the configured state independently for each notification channel
 
 ### Requirement: Alerting workspace
 

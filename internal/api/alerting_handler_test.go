@@ -82,7 +82,7 @@ func TestAlertingTestNotificationDoesNotExposeWebhook(t *testing.T) {
 		}
 		return nil
 	}
-	response := serve(setupAlertingRouter(handler), newJSONRequest(http.MethodPost, "/api/monitoring/alerts/test-notification", nil))
+	response := serve(setupAlertingRouter(handler), newJSONRequest(http.MethodPost, "/api/monitoring/alerts/test-notification?channel=feishu", nil))
 	if response.Code != http.StatusOK || strings.Contains(response.Body.String(), "open.feishu.cn") {
 		t.Fatalf("test response must be successful and redacted: %s", response.Body.String())
 	}
@@ -107,14 +107,17 @@ func TestAlertingTestNotificationSendsSMTPEmail(t *testing.T) {
 		t.Fatal(err)
 	}
 	handler := NewAlertingHandler()
-	handler.notify = func(context.Context, string, alertmanagerNotification) error { return nil }
+	handler.notify = func(context.Context, string, alertmanagerNotification) error {
+		t.Fatal("email-only test must not send a Feishu notification")
+		return nil
+	}
 	handler.emailNotify = func(_ context.Context, config k8sclient.EmailConfig, payload alertmanagerNotification) error {
 		if config.SMTPHost != "smtp.example.com" || config.Password != "smtp-password" || len(payload.Alerts) != 1 {
 			t.Fatalf("unexpected email notification: %#v %#v", config, payload)
 		}
 		return nil
 	}
-	response := serve(setupAlertingRouter(handler), newJSONRequest(http.MethodPost, "/api/monitoring/alerts/test-notification", nil))
+	response := serve(setupAlertingRouter(handler), newJSONRequest(http.MethodPost, "/api/monitoring/alerts/test-notification?channel=email", nil))
 	if response.Code != http.StatusOK || strings.Contains(response.Body.String(), "smtp-password") {
 		t.Fatalf("expected redacted successful SMTP test: %s", response.Body.String())
 	}

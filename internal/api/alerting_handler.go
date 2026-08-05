@@ -278,17 +278,28 @@ func (h *AlertingHandler) TestNotification(c *gin.Context) {
 		k8sUnavailable(c)
 		return
 	}
+	channel := strings.ToLower(strings.TrimSpace(c.Query("channel")))
+	if channel != "" && channel != "feishu" && channel != "email" {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "测试通知渠道必须为 feishu 或 email")
+		return
+	}
 	notifications, err := alertingSecrets()
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
 		return
 	}
 	payload := alertmanagerNotification{Status: "firing", Alerts: []alertmanagerAlert{{Status: alertStatus{State: "firing"}, Labels: map[string]string{"alertname": "CylismAlertingTest", "severity": "info"}, Annotations: map[string]string{"summary": "Cylism 告警通知测试", "description": "通知通道已连通"}, StartsAt: time.Now().UTC()}}}
-	if err := h.sendNotifications(c.Request.Context(), notifications, payload); err != nil {
+	if err := h.sendTestNotification(c.Request.Context(), notifications, payload, channel); err != nil {
 		model.Error(c, http.StatusBadGateway, model.CodeK8sAPIError, "发送测试通知失败: "+err.Error())
 		return
 	}
-	model.SuccessWithMessage(c, gin.H{"configured": true}, "测试通知已发送")
+	message := "测试通知已发送"
+	if channel == "feishu" {
+		message = "飞书测试通知已发送"
+	} else if channel == "email" {
+		message = "邮件测试通知已发送"
+	}
+	model.SuccessWithMessage(c, gin.H{"configured": true}, message)
 }
 
 // Notify receives Alertmanager's cluster-internal webhook. It deliberately does
@@ -415,6 +426,29 @@ func (h *AlertingHandler) sendNotifications(ctx context.Context, settings alerti
 		return fmt.Errorf("%s", strings.Join(failures, "; "))
 	}
 	return nil
+}
+
+func (h *AlertingHandler) sendTestNotification(ctx context.Context, settings alertingNotificationSecrets, payload alertmanagerNotification, channel string) error {
+	switch channel {
+	case "feishu":
+		if settings.FeishuWebhookURL == "" {
+			return fmt.Errorf("飞书通知渠道尚未配置")
+		}
+		if err := h.notify(ctx, settings.FeishuWebhookURL, payload); err != nil {
+			return fmt.Errorf("飞书: %w", err)
+		}
+		return nil
+	case "email":
+		if !settings.Email.Enabled {
+			return fmt.Errorf("邮件通知渠道尚未配置")
+		}
+		if err := h.emailNotify(ctx, settings.Email, payload); err != nil {
+			return fmt.Errorf("邮件: %w", err)
+		}
+		return nil
+	default:
+		return h.sendNotifications(ctx, settings, payload)
+	}
 }
 
 func validFeishuWebhookURL(raw string) bool {
