@@ -24,7 +24,7 @@ func TestInstallAlertingCreatesSelectedNodeResources(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if status.State != AlertingStateInstalling || status.NodeName != "node-b" || !status.NotificationConfigured {
+	if status.State != AlertingStateInstalling || status.NodeName != "node-b" || !status.NotificationConfigured || !status.FeishuConfigured {
 		t.Fatalf("unexpected alerting status: %#v", status)
 	}
 
