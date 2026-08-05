@@ -44,7 +44,7 @@ func TestLoggingQueryBuildsBoundedStructuredSelector(t *testing.T) {
 		if got := values.Get("query"); got != `{namespace="project-demo",pod="api-123",container="api"} |= "error"` {
 			t.Fatalf("unexpected LogQL selector: %q", got)
 		}
-		if start, _ := strconv.ParseInt(values.Get("start"), 10, 64); start != 1_699_996_400 || values.Get("end") != "1700000000" || values.Get("limit") != "100" || values.Get("direction") != "BACKWARD" {
+		if start, _ := strconv.ParseInt(values.Get("start"), 10, 64); start != 1_699_996_400_000_000_000 || values.Get("end") != "1700000000000000000" || values.Get("limit") != "100" || values.Get("direction") != "BACKWARD" {
 			t.Fatalf("unexpected bounds: %#v", values)
 		}
 		return &lokiQueryResponse{Status: "success", Data: lokiQueryData{ResultType: "streams", Result: []lokiStream{{Stream: map[string]string{"namespace": "project-demo", "pod": "api-123", "container": "api"}, Values: [][]string{{"1700000000000000000", "error happened"}}}}}}, nil
@@ -64,6 +64,16 @@ func TestLoggingQueryRejectsRawLogQLAndOversizedRange(t *testing.T) {
 	response := serve(setupLoggingRouter(NewLoggingHandler()), newJSONRequest(http.MethodPost, "/api/monitoring/logs/query", gin.H{"range": "7d", "logql": "{job=~\".*\"}"}))
 	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "24 小时") {
 		t.Fatalf("expected bounded range error, got %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestBuildLogQLAddsNamespaceMatcherForUnfilteredQuery(t *testing.T) {
+	query, err := buildLogQL(logQueryRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if query != `{namespace=~".+"}` {
+		t.Fatalf("expected non-empty namespace matcher for all-log query, got %q", query)
 	}
 }
 

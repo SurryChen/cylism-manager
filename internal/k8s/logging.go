@@ -471,8 +471,12 @@ discovery.relabel "container_logs" {
   }
 }
 
+local.file_match "container_logs" {
+  path_targets = discovery.relabel.container_logs.output
+}
+
 loki.source.file "container_logs" {
-  targets    = discovery.relabel.container_logs.output
+  targets    = local.file_match.container_logs.targets
   forward_to = [loki.process.container_logs.receiver]
 }
 
