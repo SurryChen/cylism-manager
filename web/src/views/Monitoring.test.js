@@ -27,7 +27,7 @@ describe('Monitoring view', () => {
   it('uses the shared monitoring workspace header', () => {
     const wrapper = mount(Monitoring)
     expect(wrapper.get('.section-tabs-header').find('h1').text()).toBe('集群监控')
-    expect(wrapper.findAll('.section-tab')).toHaveLength(3)
+    expect(wrapper.findAll('.section-tab')).toHaveLength(4)
     expect(wrapper.get('.section-tab.is-active').text()).toBe('概览')
   })
 
