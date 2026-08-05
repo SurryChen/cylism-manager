@@ -111,3 +111,11 @@ The monitoring page SHALL provide an Alerting view that prioritizes active alert
 #### Scenario: Render a healthy alerting state
 - **WHEN** alerting is ready and Alertmanager returns no active alerts
 - **THEN** the workspace displays a compact healthy state instead of an empty alert table
+
+#### Scenario: Render an active metric alert
+- **WHEN** Alertmanager reports an active alert with `current_value` and `threshold` annotations
+- **THEN** the workspace displays both values with their rendered units beside the alert summary
+
+#### Scenario: Render recent recoveries
+- **WHEN** Alertmanager reports one or more resolved alerts
+- **THEN** the workspace displays the recovery table in the shared glass card surface

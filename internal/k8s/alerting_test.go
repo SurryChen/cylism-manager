@@ -107,7 +107,7 @@ func TestRenderAlertmanagerConfigUsesNotificationPolicy(t *testing.T) {
 func TestRenderAlertRulesIncludesNotificationContext(t *testing.T) {
 	rules := defaultAlertRules()
 	config := renderAlertRules(rules)
-	for _, expected := range []string{"rule_name:", "current_value:", "threshold: \"85.00%\"", "threshold: \"3 次/10分钟\""} {
+	for _, expected := range []string{"rule_name:", "current_value: \"{{ $value }}%\"", "current_value: \"{{ $value }} 次/10分钟\"", "threshold: \"85.00%\"", "threshold: \"3 次/10分钟\""} {
 		if !strings.Contains(config, expected) {
 			t.Fatalf("expected %q in alert rules: %s", expected, config)
 		}

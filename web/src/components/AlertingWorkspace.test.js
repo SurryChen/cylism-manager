@@ -27,7 +27,7 @@ describe('AlertingWorkspace', () => {
   it('prioritizes firing alerts and opens the centered settings modal', async () => {
     apiMocks.get.mockImplementation(path => {
       if (path === '/monitoring/alerts/status') return Promise.resolve({ state: 'ready', message: '告警规则正在评估', node_name: 'node-a', notification_configured: true, feishu_configured: true, notification_policy: { group_wait_seconds: 30, group_interval_minutes: 5, repeat_interval_minutes: 240 }, rules: [{ id: 'node-cpu-high', name: '节点 CPU 过高', severity: 'warning', enabled: true, threshold: 0, duration_minutes: 15 }] })
-      if (path === '/monitoring/alerts/overview') return Promise.resolve({ firing: 1, silenced: 0, active: [{ status: { state: 'firing' }, labels: { alertname: 'NodeCPUHigh', node: 'node-a', severity: 'warning' }, annotations: { summary: '节点 CPU 使用率过高' }, startsAt: '2026-08-04T10:00:00Z' }], resolved: [] })
+      if (path === '/monitoring/alerts/overview') return Promise.resolve({ firing: 1, silenced: 0, active: [{ status: { state: 'firing' }, labels: { alertname: 'NodeCPUHigh', node: 'node-a', severity: 'warning' }, annotations: { summary: '节点 CPU 使用率过高', current_value: '77.23%', threshold: '75%' }, startsAt: '2026-08-04T10:00:00Z' }], resolved: [{ status: { state: 'resolved' }, labels: { alertname: 'NodeMemoryHigh', node: 'node-a' }, annotations: { summary: '节点内存使用率已恢复' }, endsAt: '2026-08-04T10:10:00Z' }] })
       if (path === '/monitoring/alerts/silences') return Promise.resolve([])
       return Promise.resolve({})
     })
@@ -36,6 +36,9 @@ describe('AlertingWorkspace', () => {
 
     expect(wrapper.text()).toContain('正在告警')
     expect(wrapper.text()).toContain('节点 CPU 使用率过高')
+    expect(wrapper.text()).toContain('77.23%')
+    expect(wrapper.text()).toContain('75%')
+    expect(wrapper.get('.alert-resolved').classes()).toContain('card')
     await wrapper.get('[title="告警设置"]').trigger('click')
     await flushPromises()
     const modal = document.body.querySelector('.alert-settings-modal')

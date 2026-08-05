@@ -640,25 +640,25 @@ func renderAlertRules(rules []AlertRuleConfig) string {
 		byID[rule.ID] = rule
 	}
 	var lines []string
-	appendRule := func(id, alert, expr, summary, threshold string) {
+	appendRule := func(id, alert, expr, summary, threshold, valueUnit string) {
 		rule := byID[id]
 		if !rule.Enabled {
 			return
 		}
-		annotations := fmt.Sprintf("        summary: %s\n        description: %s\n        rule_name: %s\n        duration: %s\n        current_value: \"{{ $value }}\"", quoteYAML(summary), quoteYAML(summary), quoteYAML(rule.Name), quoteYAML(fmt.Sprintf("%d 分钟", rule.DurationMinutes)))
+		annotations := fmt.Sprintf("        summary: %s\n        description: %s\n        rule_name: %s\n        duration: %s\n        current_value: %s", quoteYAML(summary), quoteYAML(summary), quoteYAML(rule.Name), quoteYAML(fmt.Sprintf("%d 分钟", rule.DurationMinutes)), quoteYAML("{{ $value }}"+valueUnit))
 		if threshold != "" {
 			annotations += "\n        threshold: " + quoteYAML(threshold)
 		}
 		lines = append(lines, fmt.Sprintf("    - alert: %s\n      expr: %s\n      for: %dm\n      labels:\n        severity: %s\n      annotations:\n%s", alert, expr, rule.DurationMinutes, rule.Severity, annotations))
 	}
-	appendRule("node-down", "NodeDown", `up{job="node-exporter"} == 0`, "节点 {{ $labels.node }} 的 node-exporter 不可达", "不可达")
-	appendRule("node-cpu-high", "NodeCPUHigh", fmt.Sprintf(`100 - (avg by (node) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > %.2f`, byID["node-cpu-high"].Threshold), "节点 {{ $labels.node }} CPU 使用率过高", fmt.Sprintf("%.2f%%", byID["node-cpu-high"].Threshold))
-	appendRule("node-memory-high", "NodeMemoryHigh", fmt.Sprintf(`100 * (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) > %.2f`, byID["node-memory-high"].Threshold), "节点 {{ $labels.node }} 内存使用率过高", fmt.Sprintf("%.2f%%", byID["node-memory-high"].Threshold))
-	appendRule("node-disk-high", "NodeDiskHigh", fmt.Sprintf(`max by (node) (100 * (1 - node_filesystem_avail_bytes{mountpoint="/",fstype!~"tmpfs|overlay"} / node_filesystem_size_bytes{mountpoint="/",fstype!~"tmpfs|overlay"})) > %.2f`, byID["node-disk-high"].Threshold), "节点 {{ $labels.node }} 根磁盘空间不足", fmt.Sprintf("%.2f%%", byID["node-disk-high"].Threshold))
-	appendRule("pod-restarts", "PodFrequentRestarts", fmt.Sprintf(`increase(kube_pod_container_status_restarts_total[10m]) > %.2f`, byID["pod-restarts"].Threshold), "Pod {{ $labels.namespace }}/{{ $labels.pod }} 正在频繁重启", fmt.Sprintf("%.0f 次/10分钟", byID["pod-restarts"].Threshold))
-	appendRule("pod-pending", "PodPending", `kube_pod_status_phase{phase="Pending"} == 1`, "Pod {{ $labels.namespace }}/{{ $labels.pod }} 持续处于 Pending", "Pending")
-	appendRule("workload-replicas", "WorkloadReplicasUnavailable", `(kube_deployment_spec_replicas > kube_deployment_status_replicas_available) or (kube_statefulset_replicas > kube_statefulset_status_replicas_ready)`, "工作负载 {{ $labels.namespace }} 可用副本不足", "期望副本数")
-	appendRule("monitoring-target-down", "MonitoringTargetDown", `up{job=~"kubernetes-nodes|kubernetes-cadvisor|kube-state-metrics"} == 0`, "监控采集目标 {{ $labels.job }} 不可用", "可访问")
+	appendRule("node-down", "NodeDown", `up{job="node-exporter"} == 0`, "节点 {{ $labels.node }} 的 node-exporter 不可达", "不可达", "")
+	appendRule("node-cpu-high", "NodeCPUHigh", fmt.Sprintf(`100 - (avg by (node) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > %.2f`, byID["node-cpu-high"].Threshold), "节点 {{ $labels.node }} CPU 使用率过高", fmt.Sprintf("%.2f%%", byID["node-cpu-high"].Threshold), "%")
+	appendRule("node-memory-high", "NodeMemoryHigh", fmt.Sprintf(`100 * (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) > %.2f`, byID["node-memory-high"].Threshold), "节点 {{ $labels.node }} 内存使用率过高", fmt.Sprintf("%.2f%%", byID["node-memory-high"].Threshold), "%")
+	appendRule("node-disk-high", "NodeDiskHigh", fmt.Sprintf(`max by (node) (100 * (1 - node_filesystem_avail_bytes{mountpoint="/",fstype!~"tmpfs|overlay"} / node_filesystem_size_bytes{mountpoint="/",fstype!~"tmpfs|overlay"})) > %.2f`, byID["node-disk-high"].Threshold), "节点 {{ $labels.node }} 根磁盘空间不足", fmt.Sprintf("%.2f%%", byID["node-disk-high"].Threshold), "%")
+	appendRule("pod-restarts", "PodFrequentRestarts", fmt.Sprintf(`increase(kube_pod_container_status_restarts_total[10m]) > %.2f`, byID["pod-restarts"].Threshold), "Pod {{ $labels.namespace }}/{{ $labels.pod }} 正在频繁重启", fmt.Sprintf("%.0f 次/10分钟", byID["pod-restarts"].Threshold), " 次/10分钟")
+	appendRule("pod-pending", "PodPending", `kube_pod_status_phase{phase="Pending"} == 1`, "Pod {{ $labels.namespace }}/{{ $labels.pod }} 持续处于 Pending", "Pending", "")
+	appendRule("workload-replicas", "WorkloadReplicasUnavailable", `(kube_deployment_spec_replicas > kube_deployment_status_replicas_available) or (kube_statefulset_replicas > kube_statefulset_status_replicas_ready)`, "工作负载 {{ $labels.namespace }} 可用副本不足", "期望副本数", "")
+	appendRule("monitoring-target-down", "MonitoringTargetDown", `up{job=~"kubernetes-nodes|kubernetes-cadvisor|kube-state-metrics"} == 0`, "监控采集目标 {{ $labels.job }} 不可用", "可访问", "")
 	if len(lines) == 0 {
 		lines = append(lines, "    - alert: AlertingRulesDisabled\n      expr: vector(0) > 1\n      for: 1m\n      labels:\n        severity: warning\n      annotations:\n        summary: \"全部告警规则已禁用\"")
 	}
