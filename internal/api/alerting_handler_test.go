@@ -164,10 +164,8 @@ func TestAlertEmailMIMEWrapsLongBodyLines(t *testing.T) {
 	if !strings.Contains(message, "Content-Transfer-Encoding: quoted-printable") {
 		t.Fatalf("expected quoted-printable body encoding: %s", message)
 	}
-	for _, line := range strings.Split(message, "\r\n") {
-		if len([]byte(line)) > 998 {
-			t.Fatalf("SMTP line exceeds 998 bytes: %d", len([]byte(line)))
-		}
+	if maximumSMTPLineLength(message) > 998 {
+		t.Fatalf("SMTP line exceeds 998 bytes: %d", maximumSMTPLineLength(message))
 	}
 }
 
