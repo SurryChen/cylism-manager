@@ -62,6 +62,7 @@ func main() {
 		JWTSecret:       jwtSecret,
 		AccessTokenTTL:  accessTTL,
 		RefreshTokenTTL: refreshTTL,
+		PlatformURL:     viper.GetString("server.public_url"),
 	}
 
 	// 操作日志清理任务

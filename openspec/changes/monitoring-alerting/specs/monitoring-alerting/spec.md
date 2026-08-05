@@ -24,6 +24,18 @@ The system SHALL render and evaluate platform-managed rules for node reachabilit
 - **WHEN** an administrator disables a managed rule
 - **THEN** the system omits that rule from the rendered rule file and no longer emits new alerts for it
 
+### Requirement: Configurable notification timing
+
+The system SHALL allow administrators to configure Alertmanager's initial notification wait, interval for new alerts in an existing group, and repeat interval for unresolved alerts. The system SHALL keep `group_by` labels platform-managed and SHALL reject timing values outside supported ranges. Existing configurations without these values SHALL use defaults of 30 seconds, 5 minutes, and 240 minutes respectively.
+
+#### Scenario: Update notification timing
+- **WHEN** an administrator saves notification timing values within the supported ranges
+- **THEN** the system renders the selected durations into the managed Alertmanager configuration while retaining the platform-managed grouping labels
+
+#### Scenario: Reject an invalid notification interval
+- **WHEN** an administrator submits a notification timing value outside the supported range
+- **THEN** the system rejects the configuration with an actionable validation message and preserves the previously applied Alertmanager configuration
+
 ### Requirement: Secure Feishu notification channel
 
 The system SHALL store the Feishu robot Webhook URL and Alertmanager-to-platform callback token only in a Kubernetes Secret. The configuration API SHALL report only whether the channel is configured, and Alertmanager notifications SHALL be accepted by the platform only with the configured bearer token.
@@ -59,6 +71,22 @@ The system SHALL support SMTP email notifications through the authenticated Aler
 #### Scenario: Test one configured notification channel
 - **WHEN** an administrator requests a Feishu or SMTP test from that channel's configuration section
 - **THEN** the platform SHALL send only through the selected configured channel and return a channel-specific result
+
+### Requirement: Contextual notification rendering
+
+The system SHALL render managed alert notifications with the alert rule, affected target, summary, current value when supplied by the rule, threshold when applicable, sustained duration, and start time. Feishu notifications SHALL use an interactive card, and SMTP notifications SHALL use an HTML card with a plain-text alternative. The system SHALL include a platform alert link generated from the server-side platform public URL configuration.
+
+#### Scenario: Send a high disk usage notification
+- **WHEN** a managed node disk rule fires with a current metric value and configured threshold
+- **THEN** the Feishu card and email display the node, current value, threshold, rule duration, and a link to the platform alert workspace
+
+#### Scenario: Send a contextual test notification
+- **WHEN** an administrator tests a configured Feishu or SMTP channel
+- **THEN** the system sends a marked test alert using the same contextual card layout and simulated metric fields as a node disk usage alert
+
+#### Scenario: Normalize an invalid platform public URL
+- **WHEN** the configured platform public URL is missing or invalid
+- **THEN** the system uses the platform default public URL for notification links
 
 ### Requirement: Centered alert settings modal
 

@@ -7,7 +7,9 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"html"
 	"io"
+	"mime"
 	"net"
 	"net/http"
 	"net/mail"
@@ -25,9 +27,10 @@ import (
 )
 
 const (
-	alertingNamespace  = "monitoring"
-	alertingSecretName = "cylism-alerting-secret"
-	maxAlertPayload    = 512 << 10
+	alertingNamespace          = "monitoring"
+	alertingSecretName         = "cylism-alerting-secret"
+	maxAlertPayload            = 512 << 10
+	defaultAlertingPlatformURL = "https://cylism.crazycoding.top"
 )
 
 type alertmanagerRequestFunc func(context.Context, string, string, interface{}, interface{}) error
@@ -38,6 +41,7 @@ type AlertingHandler struct {
 	alertmanager alertmanagerRequestFunc
 	notify       alertNotifyFunc
 	emailNotify  alertEmailNotifyFunc
+	platformURL  string
 	resolvedMu   sync.Mutex
 	resolved     []alertmanagerAlert
 }
@@ -51,6 +55,7 @@ type alertmanagerNotification struct {
 	CommonAnnotations map[string]string   `json:"commonAnnotations,omitempty"`
 	ExternalURL       string              `json:"externalURL,omitempty"`
 	Alerts            []alertmanagerAlert `json:"alerts"`
+	PlatformURL       string              `json:"-"`
 }
 
 type alertmanagerAlert struct {
@@ -115,8 +120,12 @@ type alertmanagerSilence struct {
 	Status    alertStatus    `json:"status"`
 }
 
-func NewAlertingHandler() *AlertingHandler {
-	return &AlertingHandler{alertmanager: alertmanagerRequest, notify: sendFeishuNotification, emailNotify: sendEmailNotification}
+func NewAlertingHandler(platformURLs ...string) *AlertingHandler {
+	platformURL := defaultAlertingPlatformURL
+	if len(platformURLs) > 0 {
+		platformURL = platformURLs[0]
+	}
+	return &AlertingHandler{alertmanager: alertmanagerRequest, notify: sendFeishuNotification, emailNotify: sendEmailNotification, platformURL: normalizeAlertingPlatformURL(platformURL)}
 }
 
 func (h *AlertingHandler) Status(c *gin.Context) {
@@ -288,7 +297,7 @@ func (h *AlertingHandler) TestNotification(c *gin.Context) {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
 		return
 	}
-	payload := alertmanagerNotification{Status: "firing", Alerts: []alertmanagerAlert{{Status: alertStatus{State: "firing"}, Labels: map[string]string{"alertname": "CylismAlertingTest", "severity": "info"}, Annotations: map[string]string{"summary": "Cylism 告警通知测试", "description": "通知通道已连通"}, StartsAt: time.Now().UTC()}}}
+	payload := alertmanagerNotification{Status: "firing", PlatformURL: h.platformURL, Alerts: []alertmanagerAlert{{Status: alertStatus{State: "firing"}, Labels: map[string]string{"alertname": "CylismAlertingTest", "node": "示例节点", "severity": "warning"}, Annotations: map[string]string{"summary": "测试消息使用真实告警的完整卡片布局", "description": "模拟节点根磁盘使用率超过阈值", "rule_name": "节点根磁盘使用率过高（测试）", "current_value": "92.4%", "threshold": "85%", "duration": "10 分钟"}, StartsAt: time.Now().UTC()}}}
 	if err := h.sendTestNotification(c.Request.Context(), notifications, payload, channel); err != nil {
 		model.Error(c, http.StatusBadGateway, model.CodeK8sAPIError, "发送测试通知失败: "+err.Error())
 		return
@@ -325,6 +334,7 @@ func (h *AlertingHandler) Notify(c *gin.Context) {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "告警回调载荷无效")
 		return
 	}
+	payload.PlatformURL = h.platformURL
 	if err := h.sendNotifications(c.Request.Context(), notifications, payload); err != nil {
 		model.Error(c, http.StatusBadGateway, model.CodeK8sAPIError, "转发告警通知失败: "+err.Error())
 		return
@@ -456,6 +466,14 @@ func validFeishuWebhookURL(raw string) bool {
 	return err == nil && parsed.Scheme == "https" && parsed.Hostname() == "open.feishu.cn"
 }
 
+func normalizeAlertingPlatformURL(raw string) string {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || (parsed.Scheme != "https" && parsed.Scheme != "http") || parsed.Host == "" || parsed.User != nil {
+		return defaultAlertingPlatformURL + "/#/monitoring?tab=alerts"
+	}
+	return strings.TrimRight(parsed.Scheme+"://"+parsed.Host, "/") + "/#/monitoring?tab=alerts"
+}
+
 func validAlertRelayToken(header, expected string) bool {
 	const prefix = "Bearer "
 	if !strings.HasPrefix(header, prefix) || expected == "" {
@@ -582,12 +600,13 @@ func sendEmailNotification(ctx context.Context, config k8s.EmailConfig, payload 
 			return fmt.Errorf("SMTP 收件人被拒绝: %w", err)
 		}
 	}
-	body := emailMessage(payload)
+	plainBody := emailMessage(payload)
+	htmlBody := emailHTMLMessage(payload)
 	writer, err := client.Data()
 	if err != nil {
 		return fmt.Errorf("开始 SMTP 邮件内容失败: %w", err)
 	}
-	_, writeErr := io.WriteString(writer, "From: "+from.String()+"\r\nTo: "+strings.Join(addresses, ", ")+"\r\nSubject: Cylism alert notification\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\n"+body)
+	_, writeErr := io.WriteString(writer, alertEmailMIME(from.String(), strings.Join(addresses, ", "), payload, plainBody, htmlBody))
 	closeErr := writer.Close()
 	if writeErr != nil {
 		return fmt.Errorf("写入 SMTP 邮件内容失败: %w", writeErr)
@@ -605,15 +624,13 @@ func emailMessage(payload alertmanagerNotification) string {
 	}
 	lines := []string{state, ""}
 	for _, alert := range payload.Alerts {
-		name := alert.Labels["alertname"]
-		if name == "" {
-			name = "集群告警"
+		for _, field := range alertNotificationFields(alert) {
+			lines = append(lines, field.Label+": "+field.Value)
 		}
-		summary := alert.Annotations["summary"]
-		if summary == "" {
-			summary = alert.Annotations["description"]
-		}
-		lines = append(lines, name, summary, "")
+		lines = append(lines, "")
+	}
+	if payload.PlatformURL != "" {
+		lines = append(lines, "查看平台告警: "+payload.PlatformURL)
 	}
 	return strings.Join(lines, "\n")
 }
@@ -623,17 +640,109 @@ func feishuMessage(payload alertmanagerNotification) gin.H {
 	if payload.Status == "firing" {
 		state = "告警触发"
 	}
-	lines := make([]string, 0, len(payload.Alerts))
+	elements := make([]gin.H, 0, len(payload.Alerts)*2+2)
 	for _, alert := range payload.Alerts {
-		name := alert.Labels["alertname"]
-		if name == "" {
-			name = "集群告警"
+		fields := make([]gin.H, 0, 6)
+		for _, field := range alertNotificationFields(alert) {
+			fields = append(fields, gin.H{"is_short": field.Label != "告警说明", "text": gin.H{"tag": "lark_md", "content": "**" + escapeLarkMarkdown(field.Label) + "**\n" + escapeLarkMarkdown(field.Value)}})
 		}
-		summary := alert.Annotations["summary"]
-		if summary == "" {
-			summary = alert.Annotations["description"]
-		}
-		lines = append(lines, name+"\n"+summary)
+		elements = append(elements, gin.H{"tag": "div", "fields": fields}, gin.H{"tag": "hr"})
 	}
-	return gin.H{"msg_type": "interactive", "card": gin.H{"header": gin.H{"title": gin.H{"tag": "plain_text", "content": state}, "template": map[bool]string{true: "red", false: "green"}[payload.Status == "firing"]}, "elements": []gin.H{{"tag": "div", "text": gin.H{"tag": "lark_md", "content": strings.Join(lines, "\n\n")}}}}}
+	if len(elements) > 0 {
+		elements = elements[:len(elements)-1]
+	}
+	if payload.PlatformURL != "" {
+		elements = append(elements, gin.H{"tag": "action", "actions": []gin.H{{"tag": "button", "text": gin.H{"tag": "plain_text", "content": "查看平台告警"}, "type": "primary", "url": payload.PlatformURL}}})
+	}
+	return gin.H{"msg_type": "interactive", "card": gin.H{"config": gin.H{"wide_screen_mode": true, "enable_forward": true}, "header": gin.H{"title": gin.H{"tag": "plain_text", "content": fmt.Sprintf("%s · %d 条", state, len(payload.Alerts))}, "template": map[bool]string{true: "red", false: "green"}[payload.Status == "firing"]}, "elements": elements}}
+}
+
+type alertNotificationField struct {
+	Label string
+	Value string
+}
+
+func alertNotificationFields(alert alertmanagerAlert) []alertNotificationField {
+	name := alert.Labels["alertname"]
+	if name == "" {
+		name = "集群告警"
+	}
+	rule := alert.Annotations["rule_name"]
+	if rule == "" {
+		rule = name
+	}
+	summary := alert.Annotations["summary"]
+	if summary == "" {
+		summary = alert.Annotations["description"]
+	}
+	fields := []alertNotificationField{{Label: "告警规则", Value: rule}, {Label: "告警对象", Value: alertNotificationTarget(alert)}, {Label: "告警说明", Value: summary}}
+	if value := strings.TrimSpace(alert.Annotations["current_value"]); value != "" {
+		fields = append(fields, alertNotificationField{Label: "当前值", Value: value})
+	}
+	if threshold := strings.TrimSpace(alert.Annotations["threshold"]); threshold != "" {
+		fields = append(fields, alertNotificationField{Label: "阈值", Value: threshold})
+	}
+	if duration := strings.TrimSpace(alert.Annotations["duration"]); duration != "" {
+		fields = append(fields, alertNotificationField{Label: "触发条件", Value: "持续 " + duration})
+	}
+	if !alert.StartsAt.IsZero() {
+		fields = append(fields, alertNotificationField{Label: "开始时间", Value: alert.StartsAt.Local().Format("2006-01-02 15:04:05 MST")})
+	}
+	return fields
+}
+
+func alertNotificationTarget(alert alertmanagerAlert) string {
+	if node := strings.TrimSpace(alert.Labels["node"]); node != "" {
+		return "节点 " + node
+	}
+	namespace := strings.TrimSpace(alert.Labels["namespace"])
+	for _, key := range []string{"pod", "deployment", "statefulset", "daemonset", "job"} {
+		if value := strings.TrimSpace(alert.Labels[key]); value != "" {
+			if namespace != "" {
+				return namespace + "/" + value
+			}
+			return value
+		}
+	}
+	if namespace != "" {
+		return "命名空间 " + namespace
+	}
+	return "集群"
+}
+
+func emailHTMLMessage(payload alertmanagerNotification) string {
+	state := "告警恢复"
+	accent := "#198754"
+	if payload.Status == "firing" {
+		state = "告警触发"
+		accent = "#d92d20"
+	}
+	var body strings.Builder
+	body.WriteString(`<!doctype html><html><body style="margin:0;background:#f5f7fa;color:#1f2937;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"><div style="max-width:680px;margin:24px auto;background:#ffffff;border:1px solid #e5e7eb;border-radius:8px;overflow:hidden;"><div style="padding:18px 22px;background:` + accent + `;color:#ffffff;font-size:18px;font-weight:700;">` + html.EscapeString(state) + ` · ` + strconv.Itoa(len(payload.Alerts)) + ` 条</div><div style="padding:20px 22px;">`)
+	for _, alert := range payload.Alerts {
+		body.WriteString(`<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin:0 0 16px;border:1px solid #e5e7eb;border-radius:6px;border-collapse:separate;overflow:hidden;">`)
+		for _, field := range alertNotificationFields(alert) {
+			body.WriteString(`<tr><td style="width:112px;padding:10px 12px;background:#f9fafb;color:#6b7280;font-size:12px;border-bottom:1px solid #e5e7eb;vertical-align:top;">` + html.EscapeString(field.Label) + `</td><td style="padding:10px 12px;font-size:14px;border-bottom:1px solid #e5e7eb;word-break:break-word;">` + html.EscapeString(field.Value) + `</td></tr>`)
+		}
+		body.WriteString(`</table>`)
+	}
+	if payload.PlatformURL != "" {
+		body.WriteString(`<a href="` + html.EscapeString(payload.PlatformURL) + `" style="display:inline-block;padding:10px 15px;background:#2563eb;color:#ffffff;text-decoration:none;border-radius:6px;font-weight:600;">查看平台告警</a>`)
+	}
+	body.WriteString(`</div></div></body></html>`)
+	return body.String()
+}
+
+func alertEmailMIME(from, to string, payload alertmanagerNotification, plainBody, htmlBody string) string {
+	const boundary = "cylism-alert-message"
+	subject := "Cylism 告警恢复"
+	if payload.Status == "firing" {
+		subject = "Cylism 告警触发"
+	}
+	return "From: " + from + "\r\nTo: " + to + "\r\nSubject: " + mime.QEncoding.Encode("UTF-8", subject) + "\r\nMIME-Version: 1.0\r\nContent-Type: multipart/alternative; boundary=\"" + boundary + "\"\r\n\r\n--" + boundary + "\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\n" + plainBody + "\r\n--" + boundary + "\r\nContent-Type: text/html; charset=UTF-8\r\n\r\n" + htmlBody + "\r\n--" + boundary + "--\r\n"
+}
+
+func escapeLarkMarkdown(value string) string {
+	replacer := strings.NewReplacer("\\", "\\\\", "`", "\\`", "*", "\\*", "_", "\\_", "[", "\\[", "]", "\\]", "(", "\\(", ")", "\\)")
+	return replacer.Replace(value)
 }
