@@ -19,6 +19,7 @@ type AuthConfig struct {
 	RefreshTokenTTL time.Duration
 	AdminUser       string
 	AdminPassword   string
+	PlatformURL     string
 }
 
 // RegisterRoutes 注册所有 API 路由
@@ -137,7 +138,7 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 		monitoring.GET("/dashboard", h.Dashboard)
 		monitoring.GET("/targets", h.Targets)
 	}
-	alertingHandler := NewAlertingHandler()
+	alertingHandler := NewAlertingHandler(authCfg.PlatformURL)
 	alerts := apiGroup.Group("/monitoring/alerts")
 	{
 		alerts.GET("/status", alertingHandler.Status)

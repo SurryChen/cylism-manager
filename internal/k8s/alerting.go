@@ -40,10 +40,11 @@ const (
 // AlertingConfig contains the installation node, optional notification channel and managed rules.
 // The webhook URL is accepted on write only and is never returned from the API.
 type AlertingConfig struct {
-	NodeName         string            `json:"node_name"`
-	FeishuWebhookURL string            `json:"feishu_webhook_url,omitempty"`
-	Email            EmailConfig       `json:"email,omitempty"`
-	Rules            []AlertRuleConfig `json:"rules,omitempty"`
+	NodeName           string                  `json:"node_name"`
+	FeishuWebhookURL   string                  `json:"feishu_webhook_url,omitempty"`
+	Email              EmailConfig             `json:"email,omitempty"`
+	NotificationPolicy AlertNotificationPolicy `json:"notification_policy,omitempty"`
+	Rules              []AlertRuleConfig       `json:"rules,omitempty"`
 }
 
 // EmailConfig contains write-only SMTP settings for alert notifications.
@@ -67,22 +68,31 @@ type AlertRuleConfig struct {
 	DurationMinutes int     `json:"duration_minutes"`
 }
 
+// AlertNotificationPolicy controls Alertmanager aggregation without allowing callers to change label grouping.
+type AlertNotificationPolicy struct {
+	GroupWaitSeconds      int `json:"group_wait_seconds"`
+	GroupIntervalMinutes  int `json:"group_interval_minutes"`
+	RepeatIntervalMinutes int `json:"repeat_interval_minutes"`
+}
+
 type AlertingStatus struct {
-	State                  string            `json:"state"`
-	Message                string            `json:"message"`
-	NodeName               string            `json:"node_name,omitempty"`
-	AlertmanagerReady      int32             `json:"alertmanager_ready"`
-	VMAlertReady           int32             `json:"vmalert_ready"`
-	KubeStateMetricsReady  int32             `json:"kube_state_metrics_ready"`
-	NotificationConfigured bool              `json:"notification_configured"`
-	FeishuConfigured       bool              `json:"feishu_configured"`
-	EmailConfigured        bool              `json:"email_configured"`
-	Rules                  []AlertRuleConfig `json:"rules,omitempty"`
+	State                  string                  `json:"state"`
+	Message                string                  `json:"message"`
+	NodeName               string                  `json:"node_name,omitempty"`
+	AlertmanagerReady      int32                   `json:"alertmanager_ready"`
+	VMAlertReady           int32                   `json:"vmalert_ready"`
+	KubeStateMetricsReady  int32                   `json:"kube_state_metrics_ready"`
+	NotificationConfigured bool                    `json:"notification_configured"`
+	FeishuConfigured       bool                    `json:"feishu_configured"`
+	EmailConfigured        bool                    `json:"email_configured"`
+	NotificationPolicy     AlertNotificationPolicy `json:"notification_policy"`
+	Rules                  []AlertRuleConfig       `json:"rules,omitempty"`
 }
 
 type alertingSettings struct {
-	NodeName string            `json:"node_name"`
-	Rules    []AlertRuleConfig `json:"rules"`
+	NodeName           string                  `json:"node_name"`
+	NotificationPolicy AlertNotificationPolicy `json:"notification_policy"`
+	Rules              []AlertRuleConfig       `json:"rules"`
 }
 
 func defaultAlertRules() []AlertRuleConfig {
@@ -98,8 +108,12 @@ func defaultAlertRules() []AlertRuleConfig {
 	}
 }
 
+func defaultAlertNotificationPolicy() AlertNotificationPolicy {
+	return AlertNotificationPolicy{GroupWaitSeconds: 30, GroupIntervalMinutes: 5, RepeatIntervalMinutes: 240}
+}
+
 func (c *Client) AlertingStatus() *AlertingStatus {
-	status := &AlertingStatus{State: AlertingStateNotInstalled, Message: "尚未启用集群告警", Rules: defaultAlertRules()}
+	status := &AlertingStatus{State: AlertingStateNotInstalled, Message: "尚未启用集群告警", NotificationPolicy: defaultAlertNotificationPolicy(), Rules: defaultAlertRules()}
 	if c == nil || c.Clientset == nil {
 		status.State = AlertingStateDegraded
 		status.Message = "Kubernetes 客户端未初始化"
@@ -125,6 +139,7 @@ func (c *Client) AlertingStatus() *AlertingStatus {
 		status.KubeStateMetricsReady = deployment.Status.AvailableReplicas
 	}
 	if settings, getErr := c.alertingSettings(); getErr == nil {
+		status.NotificationPolicy = settings.NotificationPolicy
 		status.Rules = settings.Rules
 	}
 	if secret, getErr := c.Clientset.CoreV1().Secrets(victoriaMetricsNamespace).Get(c.Ctx(), alertingSecretName, metav1.GetOptions{}); getErr == nil {
@@ -158,8 +173,10 @@ func (c *Client) InstallAlerting(config AlertingConfig) (*AlertingStatus, error)
 	if !nodeReady(node) {
 		return c.AlertingStatus(), fmt.Errorf("告警节点 %s 未就绪", settings.NodeName)
 	}
-	if existing, getErr := c.alertingSettings(); getErr == nil && existing.NodeName != "" && existing.NodeName != settings.NodeName {
-		return c.AlertingStatus(), fmt.Errorf("已安装告警的节点不能直接修改；Alertmanager PVC 仍绑定在 %s", existing.NodeName)
+	if existing, getErr := c.alertingSettings(); getErr == nil {
+		if existing.NodeName != "" && existing.NodeName != settings.NodeName {
+			return c.AlertingStatus(), fmt.Errorf("已安装告警的节点不能直接修改；Alertmanager PVC 仍绑定在 %s", existing.NodeName)
+		}
 	}
 	if err := ensureMonitoringNamespace(c); err != nil {
 		return c.AlertingStatus(), err
@@ -173,11 +190,7 @@ func (c *Client) InstallAlerting(config AlertingConfig) (*AlertingStatus, error)
 	if err := c.upsertAlertingSettings(settings); err != nil {
 		return c.AlertingStatus(), err
 	}
-	notificationsEnabled, err := c.notificationsEnabled()
-	if err != nil {
-		return c.AlertingStatus(), err
-	}
-	if err := c.upsertAlertingResources(settings, notificationsEnabled); err != nil {
+	if err := c.upsertAlertingResources(settings); err != nil {
 		return c.AlertingStatus(), err
 	}
 	if err := refreshVictoriaMetricsScrapeConfig(c); err != nil {
@@ -267,7 +280,11 @@ func refreshVictoriaMetricsScrapeConfig(c *Client) error {
 }
 
 func normalizeAlertingConfig(config AlertingConfig) (alertingSettings, error) {
-	settings := alertingSettings{NodeName: strings.TrimSpace(config.NodeName), Rules: mergeAlertRules(config.Rules)}
+	notificationPolicy, err := normalizeAlertNotificationPolicy(config.NotificationPolicy)
+	if err != nil {
+		return alertingSettings{}, err
+	}
+	settings := alertingSettings{NodeName: strings.TrimSpace(config.NodeName), NotificationPolicy: notificationPolicy, Rules: mergeAlertRules(config.Rules)}
 	if settings.NodeName == "" {
 		return settings, fmt.Errorf("请选择告警节点")
 	}
@@ -297,11 +314,34 @@ func normalizeAlertingConfig(config AlertingConfig) (alertingSettings, error) {
 		if rule.DurationMinutes < 1 || rule.DurationMinutes > 1440 {
 			return settings, fmt.Errorf("规则 %s 的持续时间应在 1 到 1440 分钟之间", rule.Name)
 		}
-		if rule.Threshold < 0 || rule.Threshold > 100000 {
-			return settings, fmt.Errorf("规则 %s 的阈值无效", rule.Name)
+		if alertRuleSupportsThreshold(rule.ID) && (rule.Threshold <= 0 || rule.Threshold > 100000) {
+			return settings, fmt.Errorf("规则 %s 的阈值必须大于 0 且不超过 100000", rule.Name)
 		}
 	}
 	return settings, nil
+}
+
+func normalizeAlertNotificationPolicy(input AlertNotificationPolicy) (AlertNotificationPolicy, error) {
+	policy := defaultAlertNotificationPolicy()
+	if input.GroupWaitSeconds != 0 {
+		policy.GroupWaitSeconds = input.GroupWaitSeconds
+	}
+	if input.GroupIntervalMinutes != 0 {
+		policy.GroupIntervalMinutes = input.GroupIntervalMinutes
+	}
+	if input.RepeatIntervalMinutes != 0 {
+		policy.RepeatIntervalMinutes = input.RepeatIntervalMinutes
+	}
+	if policy.GroupWaitSeconds < 5 || policy.GroupWaitSeconds > 3600 {
+		return policy, fmt.Errorf("首次通知等待时间应在 5 到 3600 秒之间")
+	}
+	if policy.GroupIntervalMinutes < 1 || policy.GroupIntervalMinutes > 1440 {
+		return policy, fmt.Errorf("同组新增告警间隔应在 1 到 1440 分钟之间")
+	}
+	if policy.RepeatIntervalMinutes < 5 || policy.RepeatIntervalMinutes > 10080 {
+		return policy, fmt.Errorf("重复提醒间隔应在 5 到 10080 分钟之间")
+	}
+	return policy, nil
 }
 
 func mergeAlertRules(input []AlertRuleConfig) []AlertRuleConfig {
@@ -313,7 +353,7 @@ func mergeAlertRules(input []AlertRuleConfig) []AlertRuleConfig {
 	for index, rule := range defaults {
 		if override, ok := provided[rule.ID]; ok {
 			rule.Enabled = override.Enabled
-			if override.Threshold > 0 || rule.Threshold == 0 {
+			if alertRuleSupportsThreshold(rule.ID) {
 				rule.Threshold = override.Threshold
 			}
 			if override.DurationMinutes > 0 {
@@ -325,6 +365,15 @@ func mergeAlertRules(input []AlertRuleConfig) []AlertRuleConfig {
 	return defaults
 }
 
+func alertRuleSupportsThreshold(id string) bool {
+	switch id {
+	case "node-cpu-high", "node-memory-high", "node-disk-high", "pod-restarts":
+		return true
+	default:
+		return false
+	}
+}
+
 func (c *Client) alertingSettings() (alertingSettings, error) {
 	configMap, err := c.Clientset.CoreV1().ConfigMaps(victoriaMetricsNamespace).Get(c.Ctx(), alertingConfigName, metav1.GetOptions{})
 	if err != nil {
@@ -334,6 +383,11 @@ func (c *Client) alertingSettings() (alertingSettings, error) {
 	if err := json.Unmarshal([]byte(configMap.Data["settings.json"]), &settings); err != nil {
 		return settings, fmt.Errorf("解析告警配置失败: %w", err)
 	}
+	notificationPolicy, err := normalizeAlertNotificationPolicy(settings.NotificationPolicy)
+	if err != nil {
+		return settings, err
+	}
+	settings.NotificationPolicy = notificationPolicy
 	settings.Rules = mergeAlertRules(settings.Rules)
 	return settings, nil
 }
@@ -386,14 +440,6 @@ func (c *Client) upsertAlertingSecret(webhookURL string, email EmailConfig) erro
 	return nil
 }
 
-func (c *Client) notificationsEnabled() (bool, error) {
-	secret, err := c.Clientset.CoreV1().Secrets(victoriaMetricsNamespace).Get(c.Ctx(), alertingSecretName, metav1.GetOptions{})
-	if err != nil {
-		return false, fmt.Errorf("读取告警通知 Secret 失败: %w", err)
-	}
-	return strings.TrimSpace(string(secret.Data["feishu-webhook-url"])) != "" || strings.TrimSpace(string(secret.Data["email-to"])) != "", nil
-}
-
 func (c *Client) upsertAlertingSettings(settings alertingSettings) error {
 	payload, err := json.Marshal(settings)
 	if err != nil {
@@ -402,11 +448,11 @@ func (c *Client) upsertAlertingSettings(settings alertingSettings) error {
 	return upsertNamedConfigMap(c, &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: alertingConfigName, Namespace: victoriaMetricsNamespace, Labels: alertingLabels("alerting")}, Data: map[string]string{"settings.json": string(payload)}})
 }
 
-func (c *Client) upsertAlertingResources(settings alertingSettings, notificationsEnabled bool) error {
+func (c *Client) upsertAlertingResources(settings alertingSettings) error {
 	if err := upsertNamedConfigMap(c, &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: alertingRulesConfigName, Namespace: victoriaMetricsNamespace, Labels: alertingLabels("vmalert")}, Data: map[string]string{"alerts.yml": renderAlertRules(settings.Rules)}}); err != nil {
 		return err
 	}
-	if err := upsertNamedConfigMap(c, &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: alertmanagerConfigName, Namespace: victoriaMetricsNamespace, Labels: alertingLabels("alertmanager")}, Data: map[string]string{"alertmanager.yml": renderAlertmanagerConfig(notificationsEnabled)}}); err != nil {
+	if err := upsertNamedConfigMap(c, &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: alertmanagerConfigName, Namespace: victoriaMetricsNamespace, Labels: alertingLabels("alertmanager")}, Data: map[string]string{"alertmanager.yml": renderAlertmanagerConfig(settings.NotificationPolicy)}}); err != nil {
 		return err
 	}
 	if err := upsertAlertmanagerPVC(c); err != nil {
@@ -567,15 +613,15 @@ func AlertmanagerServiceURL() string {
 	return alertmanagerServiceURL()
 }
 
-func renderAlertmanagerConfig(_ bool) string {
-	return `global:
+func renderAlertmanagerConfig(policy AlertNotificationPolicy) string {
+	return fmt.Sprintf(`global:
   resolve_timeout: 5m
 route:
   receiver: cylism-feishu
   group_by: [alertname, node, namespace, pod, deployment, statefulset]
-  group_wait: 30s
-  group_interval: 5m
-  repeat_interval: 4h
+  group_wait: %ds
+  group_interval: %dm
+  repeat_interval: %dm
 receivers:
   - name: cylism-feishu
     webhook_configs:
@@ -585,7 +631,7 @@ receivers:
           authorization:
             type: Bearer
             credentials_file: /etc/alertmanager/secrets/relay-token
-`
+`, policy.GroupWaitSeconds, policy.GroupIntervalMinutes, policy.RepeatIntervalMinutes)
 }
 
 func renderAlertRules(rules []AlertRuleConfig) string {
@@ -594,21 +640,25 @@ func renderAlertRules(rules []AlertRuleConfig) string {
 		byID[rule.ID] = rule
 	}
 	var lines []string
-	appendRule := func(id, alert, expr, summary string) {
+	appendRule := func(id, alert, expr, summary, threshold string) {
 		rule := byID[id]
 		if !rule.Enabled {
 			return
 		}
-		lines = append(lines, fmt.Sprintf("    - alert: %s\n      expr: %s\n      for: %dm\n      labels:\n        severity: %s\n      annotations:\n        summary: %s\n        description: %s", alert, expr, rule.DurationMinutes, rule.Severity, quoteYAML(summary), quoteYAML(summary)))
+		annotations := fmt.Sprintf("        summary: %s\n        description: %s\n        rule_name: %s\n        duration: %s\n        current_value: \"{{ $value }}\"", quoteYAML(summary), quoteYAML(summary), quoteYAML(rule.Name), quoteYAML(fmt.Sprintf("%d 分钟", rule.DurationMinutes)))
+		if threshold != "" {
+			annotations += "\n        threshold: " + quoteYAML(threshold)
+		}
+		lines = append(lines, fmt.Sprintf("    - alert: %s\n      expr: %s\n      for: %dm\n      labels:\n        severity: %s\n      annotations:\n%s", alert, expr, rule.DurationMinutes, rule.Severity, annotations))
 	}
-	appendRule("node-down", "NodeDown", `up{job="node-exporter"} == 0`, "节点 {{ $labels.node }} 的 node-exporter 不可达")
-	appendRule("node-cpu-high", "NodeCPUHigh", fmt.Sprintf(`100 - (avg by (node) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > %.2f`, byID["node-cpu-high"].Threshold), "节点 {{ $labels.node }} CPU 使用率过高")
-	appendRule("node-memory-high", "NodeMemoryHigh", fmt.Sprintf(`100 * (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) > %.2f`, byID["node-memory-high"].Threshold), "节点 {{ $labels.node }} 内存使用率过高")
-	appendRule("node-disk-high", "NodeDiskHigh", fmt.Sprintf(`max by (node) (100 * (1 - node_filesystem_avail_bytes{mountpoint="/",fstype!~"tmpfs|overlay"} / node_filesystem_size_bytes{mountpoint="/",fstype!~"tmpfs|overlay"})) > %.2f`, byID["node-disk-high"].Threshold), "节点 {{ $labels.node }} 根磁盘空间不足")
-	appendRule("pod-restarts", "PodFrequentRestarts", fmt.Sprintf(`increase(kube_pod_container_status_restarts_total[10m]) > %.2f`, byID["pod-restarts"].Threshold), "Pod {{ $labels.namespace }}/{{ $labels.pod }} 正在频繁重启")
-	appendRule("pod-pending", "PodPending", `kube_pod_status_phase{phase="Pending"} == 1`, "Pod {{ $labels.namespace }}/{{ $labels.pod }} 持续处于 Pending")
-	appendRule("workload-replicas", "WorkloadReplicasUnavailable", `(kube_deployment_spec_replicas > kube_deployment_status_replicas_available) or (kube_statefulset_replicas > kube_statefulset_status_replicas_ready)`, "工作负载 {{ $labels.namespace }} 可用副本不足")
-	appendRule("monitoring-target-down", "MonitoringTargetDown", `up{job=~"kubernetes-nodes|kubernetes-cadvisor|kube-state-metrics"} == 0`, "监控采集目标 {{ $labels.job }} 不可用")
+	appendRule("node-down", "NodeDown", `up{job="node-exporter"} == 0`, "节点 {{ $labels.node }} 的 node-exporter 不可达", "不可达")
+	appendRule("node-cpu-high", "NodeCPUHigh", fmt.Sprintf(`100 - (avg by (node) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > %.2f`, byID["node-cpu-high"].Threshold), "节点 {{ $labels.node }} CPU 使用率过高", fmt.Sprintf("%.2f%%", byID["node-cpu-high"].Threshold))
+	appendRule("node-memory-high", "NodeMemoryHigh", fmt.Sprintf(`100 * (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) > %.2f`, byID["node-memory-high"].Threshold), "节点 {{ $labels.node }} 内存使用率过高", fmt.Sprintf("%.2f%%", byID["node-memory-high"].Threshold))
+	appendRule("node-disk-high", "NodeDiskHigh", fmt.Sprintf(`max by (node) (100 * (1 - node_filesystem_avail_bytes{mountpoint="/",fstype!~"tmpfs|overlay"} / node_filesystem_size_bytes{mountpoint="/",fstype!~"tmpfs|overlay"})) > %.2f`, byID["node-disk-high"].Threshold), "节点 {{ $labels.node }} 根磁盘空间不足", fmt.Sprintf("%.2f%%", byID["node-disk-high"].Threshold))
+	appendRule("pod-restarts", "PodFrequentRestarts", fmt.Sprintf(`increase(kube_pod_container_status_restarts_total[10m]) > %.2f`, byID["pod-restarts"].Threshold), "Pod {{ $labels.namespace }}/{{ $labels.pod }} 正在频繁重启", fmt.Sprintf("%.0f 次/10分钟", byID["pod-restarts"].Threshold))
+	appendRule("pod-pending", "PodPending", `kube_pod_status_phase{phase="Pending"} == 1`, "Pod {{ $labels.namespace }}/{{ $labels.pod }} 持续处于 Pending", "Pending")
+	appendRule("workload-replicas", "WorkloadReplicasUnavailable", `(kube_deployment_spec_replicas > kube_deployment_status_replicas_available) or (kube_statefulset_replicas > kube_statefulset_status_replicas_ready)`, "工作负载 {{ $labels.namespace }} 可用副本不足", "期望副本数")
+	appendRule("monitoring-target-down", "MonitoringTargetDown", `up{job=~"kubernetes-nodes|kubernetes-cadvisor|kube-state-metrics"} == 0`, "监控采集目标 {{ $labels.job }} 不可用", "可访问")
 	if len(lines) == 0 {
 		lines = append(lines, "    - alert: AlertingRulesDisabled\n      expr: vector(0) > 1\n      for: 1m\n      labels:\n        severity: warning\n      annotations:\n        summary: \"全部告警规则已禁用\"")
 	}

@@ -2,10 +2,12 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	k8sclient "github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/gin-gonic/gin"
@@ -77,7 +79,7 @@ func TestAlertingTestNotificationDoesNotExposeWebhook(t *testing.T) {
 
 	handler := NewAlertingHandler()
 	handler.notify = func(_ context.Context, url string, payload alertmanagerNotification) error {
-		if url != "https://open.feishu.cn/open-apis/bot/v2/hook/example" || len(payload.Alerts) != 1 {
+		if url != "https://open.feishu.cn/open-apis/bot/v2/hook/example" || len(payload.Alerts) != 1 || payload.PlatformURL != "https://cylism.crazycoding.top/#/monitoring?tab=alerts" || payload.Alerts[0].Labels["node"] != "示例节点" || payload.Alerts[0].Annotations["current_value"] != "92.4%" || payload.Alerts[0].Annotations["threshold"] != "85%" || payload.Alerts[0].Annotations["duration"] != "10 分钟" {
 			t.Fatalf("unexpected test notification: %q %#v", url, payload)
 		}
 		return nil
@@ -85,6 +87,13 @@ func TestAlertingTestNotificationDoesNotExposeWebhook(t *testing.T) {
 	response := serve(setupAlertingRouter(handler), newJSONRequest(http.MethodPost, "/api/monitoring/alerts/test-notification?channel=feishu", nil))
 	if response.Code != http.StatusOK || strings.Contains(response.Body.String(), "open.feishu.cn") {
 		t.Fatalf("test response must be successful and redacted: %s", response.Body.String())
+	}
+}
+
+func TestNewAlertingHandlerUsesConfiguredPlatformURL(t *testing.T) {
+	handler := NewAlertingHandler("https://alerts.example.com/platform")
+	if handler.platformURL != "https://alerts.example.com/#/monitoring?tab=alerts" {
+		t.Fatalf("unexpected configured platform URL: %q", handler.platformURL)
 	}
 }
 
@@ -120,6 +129,33 @@ func TestAlertingTestNotificationSendsSMTPEmail(t *testing.T) {
 	response := serve(setupAlertingRouter(handler), newJSONRequest(http.MethodPost, "/api/monitoring/alerts/test-notification?channel=email", nil))
 	if response.Code != http.StatusOK || strings.Contains(response.Body.String(), "smtp-password") {
 		t.Fatalf("expected redacted successful SMTP test: %s", response.Body.String())
+	}
+}
+
+func TestAlertNotificationMessagesIncludeContextAndPlatformLink(t *testing.T) {
+	payload := alertmanagerNotification{
+		Status:      "firing",
+		PlatformURL: "https://cylism.example.com/#/monitoring?tab=alerts",
+		Alerts: []alertmanagerAlert{{
+			Status:      alertStatus{State: "firing"},
+			Labels:      map[string]string{"alertname": "NodeDiskHigh", "node": "node-a", "severity": "warning"},
+			Annotations: map[string]string{"summary": "节点根磁盘空间不足", "rule_name": "节点根磁盘使用率过高", "current_value": "92.4%", "threshold": "85%", "duration": "15 分钟"},
+			StartsAt:    time.Date(2026, time.August, 5, 10, 30, 0, 0, time.UTC),
+		}},
+	}
+	feishu, err := json.Marshal(feishuMessage(payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{"告警规则", "当前值", "92.4%", "85%", "查看平台告警", "https://cylism.example.com/#/monitoring?tab=alerts"} {
+		if !strings.Contains(string(feishu), expected) {
+			t.Fatalf("expected %q in Feishu card: %s", expected, feishu)
+		}
+	}
+	for _, expected := range []string{"告警规则", "当前值", "92.4%", "查看平台告警", "https://cylism.example.com/#/monitoring?tab=alerts"} {
+		if !strings.Contains(emailHTMLMessage(payload), expected) {
+			t.Fatalf("expected %q in HTML email", expected)
+		}
 	}
 }
 

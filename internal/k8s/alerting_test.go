@@ -18,8 +18,9 @@ func TestInstallAlertingCreatesSelectedNodeResources(t *testing.T) {
 	client := alertingReadyClient()
 
 	status, err := client.InstallAlerting(AlertingConfig{
-		NodeName:         "node-b",
-		FeishuWebhookURL: "https://open.feishu.cn/open-apis/bot/v2/hook/example",
+		NodeName:           "node-b",
+		FeishuWebhookURL:   "https://open.feishu.cn/open-apis/bot/v2/hook/example",
+		NotificationPolicy: AlertNotificationPolicy{GroupWaitSeconds: 45, GroupIntervalMinutes: 8, RepeatIntervalMinutes: 360},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -91,6 +92,43 @@ func TestInstallAlertingStoresSMTPSettingsOnlyInSecret(t *testing.T) {
 	settings, err := client.Clientset.CoreV1().ConfigMaps(victoriaMetricsNamespace).Get(t.Context(), alertingConfigName, metav1.GetOptions{})
 	if err != nil || strings.Contains(settings.Data["settings.json"], "smtp-password") {
 		t.Fatalf("SMTP password must not be stored in ConfigMap: %#v, %v", settings, err)
+	}
+}
+
+func TestRenderAlertmanagerConfigUsesNotificationPolicy(t *testing.T) {
+	config := renderAlertmanagerConfig(AlertNotificationPolicy{GroupWaitSeconds: 45, GroupIntervalMinutes: 8, RepeatIntervalMinutes: 360})
+	for _, expected := range []string{"group_wait: 45s", "group_interval: 8m", "repeat_interval: 360m"} {
+		if !strings.Contains(config, expected) {
+			t.Fatalf("expected %q in Alertmanager config: %s", expected, config)
+		}
+	}
+}
+
+func TestRenderAlertRulesIncludesNotificationContext(t *testing.T) {
+	rules := defaultAlertRules()
+	config := renderAlertRules(rules)
+	for _, expected := range []string{"rule_name:", "current_value:", "threshold: \"85.00%\"", "threshold: \"3 次/10分钟\""} {
+		if !strings.Contains(config, expected) {
+			t.Fatalf("expected %q in alert rules: %s", expected, config)
+		}
+	}
+}
+
+func TestNormalizeAlertNotificationPolicyUsesLegacyDefaultsAndRejectsInvalidRange(t *testing.T) {
+	policy, err := normalizeAlertNotificationPolicy(AlertNotificationPolicy{})
+	if err != nil || policy != defaultAlertNotificationPolicy() {
+		t.Fatalf("expected legacy defaults, got %#v, %v", policy, err)
+	}
+	_, err = normalizeAlertNotificationPolicy(AlertNotificationPolicy{GroupWaitSeconds: 1})
+	if err == nil || !strings.Contains(err.Error(), "首次通知等待时间") {
+		t.Fatalf("expected group wait validation error, got %v", err)
+	}
+}
+
+func TestNormalizeAlertingConfigRejectsZeroThreshold(t *testing.T) {
+	_, err := normalizeAlertingConfig(AlertingConfig{NodeName: "node-a", Rules: []AlertRuleConfig{{ID: "node-cpu-high", Enabled: true, Threshold: 0, DurationMinutes: 15}}})
+	if err == nil || !strings.Contains(err.Error(), "阈值必须大于 0") {
+		t.Fatalf("expected zero threshold validation error, got %v", err)
 	}
 }
 

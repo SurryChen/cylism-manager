@@ -9,6 +9,7 @@
 - [x] 2.1 Add authenticated alerting installation, status, settings, active-alert, silence and test-notification APIs with handler tests.
 - [x] 2.2 Add a bearer-token-protected internal Alertmanager callback that renders and forwards Feishu messages without exposing secrets, with authorization and payload tests.
 - [x] 2.3 Register routes and verify unauthenticated callback isolation from user API authentication.
+- [x] 2.4 Render contextual Feishu cards and HTML email notifications with a platform alert link.
 
 ## 3. Alerting Workspace
 
@@ -16,6 +17,7 @@
 - [x] 3.2 Implement silence confirmation and settings drawer for rule configuration and Feishu channel management with request/error-state tests.
 - [x] 3.3 Add the alerting installation card and explicit unavailable/healthy states, preserving the shared monitoring page layout.
 - [x] 3.4 Replace the settings drawer with a centered high-layer modal and add SMTP email notification configuration.
+- [x] 3.5 Add bounded Alertmanager notification timing controls while keeping platform-managed grouping labels fixed.
 
 ## 4. Verification
 

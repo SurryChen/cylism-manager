@@ -8,7 +8,7 @@
 
 - 使用 `vmalert` 每分钟从现有 VictoriaMetrics 评估平台托管规则，并将事件发往 Alertmanager。
 - 按需运行最小化 kube-state-metrics，以提供 Pod 状态和 Deployment/StatefulSet 副本规则所需指标。
-- 由单副本 Alertmanager 完成分组、去重、重试、静默和告警状态保存。
+- 由单副本 Alertmanager 完成分组、去重、重试、静默和告警状态保存；管理员可在平台内配置首次等待、同组新增告警间隔和未恢复告警重复提醒间隔。`group_by` 保持为平台固定标签集，避免误改分组维度导致通知风暴。三项时长均在后端按合理范围校验，并为旧配置补充默认值 `30s`、`5m` 和 `240m`。
 - 在监控页以活跃告警为主视图，提供静默、恢复记录、告警设置与关联资源跳转。
 - 首期可靠地投递飞书机器人消息，且不向浏览器或数据库暴露 Webhook URL 明文。
 - 让 Alertmanager 可选择与 VictoriaMetrics 不同的就绪节点，并为其状态数据申请 1Gi `ReadWriteOnce` PVC。
@@ -39,6 +39,8 @@
 Alertmanager 的 generic webhook 载荷不兼容飞书机器人格式。因此 Alertmanager 将批量事件提交至平台内部 Service 的 `/api/monitoring/alerts/notify`。该路由不经过 JWT，但必须携带 Secret 中保存的 bearer token；平台用常量时间比较校验后，将事件渲染为飞书交互卡片并投递到 Secret 中的 Webhook URL。
 
 此方案比新增独立转换镜像更少消耗资源并可复用平台审计、错误处理和 HTTP 客户端。中继地址仅使用集群内 Service DNS，不暴露到 Ingress。通知失败将向 Alertmanager 返回非 2xx，使其按自身退避策略重试。
+
+通知中继按规则 annotations 与 Alertmanager labels 生成结构化上下文。平台托管规则会在触发时附加规则名称、当前值、阈值与持续时间；中继再从 node、namespace、pod 或工作负载标签生成告警对象。飞书使用 interactive card 的字段布局和平台跳转按钮，SMTP 使用 `multipart/alternative`，包含 HTML 卡片与纯文本降级内容。平台地址从服务端 `server.public_url` 配置读取并规范化为告警工作区链接，默认值为 `https://cylism.crazycoding.top`，不接受请求头或告警载荷提供的跳转地址。
 
 ### 规则与告警工作区
 
