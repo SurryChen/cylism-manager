@@ -159,6 +159,18 @@ func TestAlertNotificationMessagesIncludeContextAndPlatformLink(t *testing.T) {
 	}
 }
 
+func TestAlertEmailMIMEWrapsLongBodyLines(t *testing.T) {
+	message := alertEmailMIME("alerts@example.com", "ops@example.com", alertmanagerNotification{Status: "firing"}, strings.Repeat("alert content ", 300), "<div>"+strings.Repeat("alert content ", 300)+"</div>")
+	if !strings.Contains(message, "Content-Transfer-Encoding: quoted-printable") {
+		t.Fatalf("expected quoted-printable body encoding: %s", message)
+	}
+	for _, line := range strings.Split(message, "\r\n") {
+		if len([]byte(line)) > 998 {
+			t.Fatalf("SMTP line exceeds 998 bytes: %d", len([]byte(line)))
+		}
+	}
+}
+
 func TestAlertingOverviewSurfacesAlertmanagerFailure(t *testing.T) {
 	original := K8s
 	K8s = alertingReadyK8s("relay-token")

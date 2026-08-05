@@ -10,6 +10,7 @@ import (
 	"html"
 	"io"
 	"mime"
+	"mime/quotedprintable"
 	"net"
 	"net/http"
 	"net/mail"
@@ -739,7 +740,15 @@ func alertEmailMIME(from, to string, payload alertmanagerNotification, plainBody
 	if payload.Status == "firing" {
 		subject = "Cylism 告警触发"
 	}
-	return "From: " + from + "\r\nTo: " + to + "\r\nSubject: " + mime.QEncoding.Encode("UTF-8", subject) + "\r\nMIME-Version: 1.0\r\nContent-Type: multipart/alternative; boundary=\"" + boundary + "\"\r\n\r\n--" + boundary + "\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\n" + plainBody + "\r\n--" + boundary + "\r\nContent-Type: text/html; charset=UTF-8\r\n\r\n" + htmlBody + "\r\n--" + boundary + "--\r\n"
+	return "From: " + from + "\r\nTo: " + to + "\r\nSubject: " + mime.QEncoding.Encode("UTF-8", subject) + "\r\nMIME-Version: 1.0\r\nContent-Type: multipart/alternative; boundary=\"" + boundary + "\"\r\n\r\n--" + boundary + "\r\nContent-Type: text/plain; charset=UTF-8\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\n" + quotedPrintableEncode(plainBody) + "\r\n--" + boundary + "\r\nContent-Type: text/html; charset=UTF-8\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\n" + quotedPrintableEncode(htmlBody) + "\r\n--" + boundary + "--\r\n"
+}
+
+func quotedPrintableEncode(body string) string {
+	var encoded bytes.Buffer
+	writer := quotedprintable.NewWriter(&encoded)
+	_, _ = writer.Write([]byte(body))
+	_ = writer.Close()
+	return encoded.String()
 }
 
 func escapeLarkMarkdown(value string) string {
