@@ -42,10 +42,36 @@ describe('LoggingWorkspace', () => {
 
     expect(wrapper.text()).toContain('日志检索')
     expect(apiMocks.post).not.toHaveBeenCalledWith('/monitoring/logs/query', expect.anything())
+    await wrapper.get('[data-testid="log-result-limit"]').setValue('500')
     await wrapper.get('form.logging-query').trigger('submit')
     await flushPromises()
-    expect(apiMocks.post).toHaveBeenCalledWith('/monitoring/logs/query', expect.objectContaining({ range: '1h', limit: 200 }))
+    expect(apiMocks.post).toHaveBeenCalledWith('/monitoring/logs/query', expect.objectContaining({ range: '1h', limit: 500 }))
     expect(wrapper.text()).toContain('request failed')
+  })
+
+  it('sends an exact local time range as UTC values', async () => {
+    apiMocks.get.mockImplementation(path => {
+      if (path === '/monitoring/logs/status') return Promise.resolve({ state: 'ready', message: '日志采集中', node_name: 'node-a', loki_ready: 1, alloy_ready: 1, alloy_desired: 1, retention_days: 14 })
+      if (path === '/monitoring/logs/filters') return Promise.resolve({ namespaces: [], nodes: [], pods: [] })
+      if (path === '/applications' || path === '/projects') return Promise.resolve([])
+      return Promise.resolve({})
+    })
+    apiMocks.post.mockResolvedValue({ lines: [], has_more: false })
+
+    const wrapper = mount(LoggingWorkspace, { props: { nodes: [{ name: 'node-a', ready: true }], storageClasses: [] } })
+    await flushPromises()
+
+    await wrapper.get('[data-testid="log-time-range"]').setValue('custom')
+    await wrapper.get('[data-testid="log-start-time"]').setValue('2026-08-05T09:54:40')
+    await wrapper.get('[data-testid="log-end-time"]').setValue('2026-08-05T09:55:00')
+    await wrapper.get('form.logging-query').trigger('submit')
+    await flushPromises()
+
+    expect(apiMocks.post).toHaveBeenCalledWith('/monitoring/logs/query', expect.objectContaining({
+      range: 'custom',
+      start_time: new Date('2026-08-05T09:54:40').toISOString(),
+      end_time: new Date('2026-08-05T09:55:00').toISOString(),
+    }))
   })
 
   it('allows retention settings to be saved while logging is starting', async () => {

@@ -23,6 +23,8 @@ const (
 	maxLogLimit       = 500
 	defaultLogLimit   = 200
 	maxLogKeywordSize = 256
+	maxLogQueryTerms  = 16
+	maxLogQueryGroups = 8
 )
 
 var loggingRanges = map[string]time.Duration{
@@ -49,6 +51,8 @@ type logQueryRequest struct {
 	Container     string `json:"container"`
 	Node          string `json:"node"`
 	Workload      string `json:"workload"`
+	StartTime     string `json:"start_time"`
+	EndTime       string `json:"end_time"`
 	ProjectID     uint   `json:"project_id"`
 	EnvironmentID uint   `json:"environment_id"`
 	ApplicationID uint   `json:"application_id"`
@@ -199,8 +203,7 @@ func (h *LoggingHandler) Query(c *gin.Context) {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "日志查询参数无效")
 		return
 	}
-	rangeDuration, err := validateLogQuery(&request)
-	if err != nil {
+	if err := validateLogQuery(&request); err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
 		return
 	}
@@ -208,58 +211,98 @@ func (h *LoggingHandler) Query(c *gin.Context) {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
 		return
 	}
-	query, err := buildLogQL(request)
+	queries, err := buildLogQLQueries(request)
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
 		return
 	}
 	end := h.now().UTC()
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
-	defer cancel()
-	result, err := h.query(ctx, "/loki/api/v1/query_range", url.Values{
-		"query":     []string{query},
-		"start":     []string{strconv.FormatInt(end.Add(-rangeDuration).UnixNano(), 10)},
-		"end":       []string{strconv.FormatInt(end.UnixNano(), 10)},
-		"limit":     []string{strconv.Itoa(request.Limit)},
-		"direction": []string{"BACKWARD"},
-	})
+	start, end, err := resolveLogQueryBounds(request, end)
 	if err != nil {
-		model.Error(c, http.StatusBadGateway, model.CodeK8sAPIError, "查询 Loki 日志失败: "+err.Error())
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
 		return
 	}
-	lines := normalizeLogLines(result, request.Limit)
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
+	defer cancel()
+	results := make([]*lokiQueryResponse, 0, len(queries))
+	for _, query := range queries {
+		result, queryErr := h.query(ctx, "/loki/api/v1/query_range", url.Values{
+			"query":     []string{query},
+			"start":     []string{strconv.FormatInt(start.UnixNano(), 10)},
+			"end":       []string{strconv.FormatInt(end.UnixNano(), 10)},
+			"limit":     []string{strconv.Itoa(request.Limit)},
+			"direction": []string{"BACKWARD"},
+		})
+		if queryErr != nil {
+			model.Error(c, http.StatusBadGateway, model.CodeK8sAPIError, "查询 Loki 日志失败: "+queryErr.Error())
+			return
+		}
+		results = append(results, result)
+	}
+	lines := normalizeLogLines(results, request.Limit)
 	model.Success(c, gin.H{"range": request.Range, "lines": lines, "has_more": len(lines) >= request.Limit})
 }
 
-func validateLogQuery(request *logQueryRequest) (time.Duration, error) {
+func validateLogQuery(request *logQueryRequest) error {
 	request.Range = strings.TrimSpace(request.Range)
 	if request.Range == "" {
 		request.Range = "1h"
 	}
-	rangeDuration, ok := loggingRanges[request.Range]
-	if !ok || rangeDuration > maxLogRange {
-		return 0, fmt.Errorf("日志时间范围最多支持 24 小时")
+	if request.Range != "custom" {
+		rangeDuration, ok := loggingRanges[request.Range]
+		if !ok || rangeDuration > maxLogRange {
+			return fmt.Errorf("日志时间范围最多支持 24 小时")
+		}
 	}
 	if strings.TrimSpace(request.RawLogQL) != "" {
-		return 0, fmt.Errorf("日志查询仅支持平台提供的筛选条件，不能提交原始 LogQL")
+		return fmt.Errorf("日志查询仅支持平台提供的筛选条件，不能提交原始 LogQL")
 	}
 	request.Keyword = strings.TrimSpace(request.Keyword)
 	if len(request.Keyword) > maxLogKeywordSize || strings.ContainsAny(request.Keyword, "\r\n") {
-		return 0, fmt.Errorf("日志关键字不能超过 256 个字符且不能包含换行")
+		return fmt.Errorf("日志关键字不能超过 256 个字符且不能包含换行")
 	}
 	if request.Limit == 0 {
 		request.Limit = defaultLogLimit
 	}
 	if request.Limit < 1 || request.Limit > maxLogLimit {
-		return 0, fmt.Errorf("单次日志查询最多返回 500 行")
+		return fmt.Errorf("单次日志查询最多返回 500 行")
 	}
 	for _, value := range []*string{&request.Namespace, &request.Pod, &request.Container, &request.Node, &request.Workload} {
 		*value = strings.TrimSpace(*value)
 		if len(*value) > 253 || strings.ContainsAny(*value, "\r\n") {
-			return 0, fmt.Errorf("日志筛选值格式无效")
+			return fmt.Errorf("日志筛选值格式无效")
 		}
 	}
-	return rangeDuration, nil
+	request.StartTime = strings.TrimSpace(request.StartTime)
+	request.EndTime = strings.TrimSpace(request.EndTime)
+	return nil
+}
+
+func resolveLogQueryBounds(request logQueryRequest, now time.Time) (time.Time, time.Time, error) {
+	if request.StartTime != "" || request.EndTime != "" {
+		if request.StartTime == "" || request.EndTime == "" {
+			return time.Time{}, time.Time{}, fmt.Errorf("精确时间范围必须同时填写开始和结束时间")
+		}
+		start, err := time.Parse(time.RFC3339Nano, request.StartTime)
+		if err != nil {
+			return time.Time{}, time.Time{}, fmt.Errorf("开始时间格式无效")
+		}
+		end, err := time.Parse(time.RFC3339Nano, request.EndTime)
+		if err != nil {
+			return time.Time{}, time.Time{}, fmt.Errorf("结束时间格式无效")
+		}
+		if !end.After(start) {
+			return time.Time{}, time.Time{}, fmt.Errorf("结束时间必须晚于开始时间")
+		}
+		if end.Sub(start) > maxLogRange {
+			return time.Time{}, time.Time{}, fmt.Errorf("日志时间范围最多支持 24 小时")
+		}
+		return start.UTC(), end.UTC(), nil
+	}
+	if request.Range == "custom" {
+		return time.Time{}, time.Time{}, fmt.Errorf("精确时间范围必须同时填写开始和结束时间")
+	}
+	return now.Add(-loggingRanges[request.Range]), now, nil
 }
 
 func (h *LoggingHandler) applyApplicationScope(request *logQueryRequest) error {
@@ -314,6 +357,17 @@ func (h *LoggingHandler) applyApplicationScope(request *logQueryRequest) error {
 }
 
 func buildLogQL(request logQueryRequest) (string, error) {
+	queries, err := buildLogQLQueries(request)
+	if err != nil {
+		return "", err
+	}
+	if len(queries) != 1 {
+		return "", fmt.Errorf("日志表达式包含多个 OR 分支")
+	}
+	return queries[0], nil
+}
+
+func buildLogQLQueries(request logQueryRequest) ([]string, error) {
 	filters := []struct{ label, value string }{
 		{"namespace", request.Namespace},
 		{"pod", request.Pod},
@@ -333,10 +387,19 @@ func buildLogQL(request logQueryRequest) (string, error) {
 		labels = append(labels, `namespace=~".+"`)
 	}
 	selector := "{" + strings.Join(labels, ",") + "}"
-	if request.Keyword != "" {
-		selector += ` |= "` + escapeLogQL(request.Keyword) + `"`
+	branches, err := parseLogKeywordExpression(request.Keyword)
+	if err != nil {
+		return nil, err
 	}
-	return selector, nil
+	queries := make([]string, 0, len(branches))
+	for _, branch := range branches {
+		query := selector
+		for _, term := range branch {
+			query += ` |= "` + escapeLogQL(term) + `"`
+		}
+		queries = append(queries, query)
+	}
+	return queries, nil
 }
 
 func escapeLogQL(value string) string {
@@ -344,21 +407,169 @@ func escapeLogQL(value string) string {
 	return replacer.Replace(value)
 }
 
-func normalizeLogLines(response *lokiQueryResponse, limit int) []logLine {
-	if response == nil {
-		return []logLine{}
+type logExpressionTokenType int
+
+const (
+	logExpressionTerm logExpressionTokenType = iota
+	logExpressionAnd
+	logExpressionOr
+)
+
+type logExpressionToken struct {
+	kind   logExpressionTokenType
+	value  string
+	quoted bool
+}
+
+// parseLogKeywordExpression accepts only a bounded OR-of-ANDs expression.
+func parseLogKeywordExpression(raw string) ([][]string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return [][]string{{}}, nil
 	}
+	tokens, hasOperator, err := tokenizeLogExpression(raw)
+	if err != nil {
+		return nil, err
+	}
+	if !hasOperator {
+		if len(tokens) == 1 && tokens[0].quoted {
+			return [][]string{{tokens[0].value}}, nil
+		}
+		return [][]string{{raw}}, nil
+	}
+
+	branches := make([][]string, 1)
+	expectingTerm := true
+	termCount := 0
+	for _, token := range tokens {
+		if expectingTerm {
+			if token.kind != logExpressionTerm {
+				return nil, fmt.Errorf("日志表达式缺少关键字")
+			}
+			if strings.ContainsAny(token.value, "()") {
+				return nil, fmt.Errorf("日志表达式暂不支持括号")
+			}
+			termCount++
+			if termCount > maxLogQueryTerms {
+				return nil, fmt.Errorf("日志表达式最多支持 %d 个关键词", maxLogQueryTerms)
+			}
+			branches[len(branches)-1] = append(branches[len(branches)-1], token.value)
+			expectingTerm = false
+			continue
+		}
+		switch token.kind {
+		case logExpressionAnd:
+			expectingTerm = true
+		case logExpressionOr:
+			if len(branches) >= maxLogQueryGroups {
+				return nil, fmt.Errorf("日志表达式最多支持 %d 个 OR 分支", maxLogQueryGroups)
+			}
+			branches = append(branches, nil)
+			expectingTerm = true
+		default:
+			return nil, fmt.Errorf("日志表达式中的关键词之间需要使用 AND 或 OR")
+		}
+	}
+	if expectingTerm {
+		return nil, fmt.Errorf("日志表达式不能以 AND 或 OR 结束")
+	}
+	return branches, nil
+}
+
+func tokenizeLogExpression(raw string) ([]logExpressionToken, bool, error) {
+	tokens := make([]logExpressionToken, 0)
+	hasOperator := false
+	for offset := 0; offset < len(raw); {
+		for offset < len(raw) && (raw[offset] == ' ' || raw[offset] == '\t') {
+			offset++
+		}
+		if offset == len(raw) {
+			break
+		}
+		if raw[offset] == '"' {
+			value, next, err := readQuotedLogTerm(raw, offset)
+			if err != nil {
+				return nil, false, err
+			}
+			tokens = append(tokens, logExpressionToken{kind: logExpressionTerm, value: value, quoted: true})
+			offset = next
+			continue
+		}
+		start := offset
+		for offset < len(raw) && raw[offset] != ' ' && raw[offset] != '\t' {
+			if raw[offset] == '"' {
+				return nil, false, fmt.Errorf("日志表达式中的引号必须独立包裹字符串")
+			}
+			offset++
+		}
+		value := raw[start:offset]
+		switch {
+		case strings.EqualFold(value, "AND"):
+			tokens = append(tokens, logExpressionToken{kind: logExpressionAnd})
+			hasOperator = true
+		case strings.EqualFold(value, "OR"):
+			tokens = append(tokens, logExpressionToken{kind: logExpressionOr})
+			hasOperator = true
+		default:
+			tokens = append(tokens, logExpressionToken{kind: logExpressionTerm, value: value})
+		}
+	}
+	return tokens, hasOperator, nil
+}
+
+func readQuotedLogTerm(raw string, offset int) (string, int, error) {
+	var value strings.Builder
+	for offset++; offset < len(raw); offset++ {
+		current := raw[offset]
+		if current == '"' {
+			next := offset + 1
+			if next < len(raw) && raw[next] != ' ' && raw[next] != '\t' {
+				return "", 0, fmt.Errorf("日志表达式中的引号必须独立包裹字符串")
+			}
+			return value.String(), next, nil
+		}
+		if current != '\\' {
+			value.WriteByte(current)
+			continue
+		}
+		offset++
+		if offset == len(raw) {
+			return "", 0, fmt.Errorf("日志表达式包含未完成的转义字符")
+		}
+		escaped := raw[offset]
+		if escaped != '"' && escaped != '\\' && escaped != '/' {
+			return "", 0, fmt.Errorf(`日志表达式仅支持 \"、\\ 和 \/ 转义`)
+		}
+		value.WriteByte(escaped)
+	}
+	return "", 0, fmt.Errorf("日志表达式中的字符串缺少结束引号")
+}
+
+func normalizeLogLines(responses []*lokiQueryResponse, limit int) []logLine {
 	lines := make([]logLine, 0)
-	for _, stream := range response.Data.Result {
-		for _, value := range stream.Values {
-			if len(value) < 2 {
-				continue
+	seen := make(map[string]struct{})
+	for _, response := range responses {
+		if response == nil {
+			continue
+		}
+		for _, stream := range response.Data.Result {
+			for _, value := range stream.Values {
+				if len(value) < 2 {
+					continue
+				}
+				labels := make(map[string]string, len(stream.Stream))
+				for key, item := range stream.Stream {
+					labels[key] = item
+				}
+				timestamp := formatLokiTimestamp(value[0])
+				serializedLabels, _ := json.Marshal(labels)
+				key := timestamp + "\x00" + string(serializedLabels) + "\x00" + value[1]
+				if _, exists := seen[key]; exists {
+					continue
+				}
+				seen[key] = struct{}{}
+				lines = append(lines, logLine{Timestamp: timestamp, Line: value[1], Labels: labels})
 			}
-			labels := make(map[string]string, len(stream.Stream))
-			for key, item := range stream.Stream {
-				labels[key] = item
-			}
-			lines = append(lines, logLine{Timestamp: formatLokiTimestamp(value[0]), Line: value[1], Labels: labels})
 		}
 	}
 	sort.SliceStable(lines, func(i, j int) bool { return lines[i].Timestamp > lines[j].Timestamp })

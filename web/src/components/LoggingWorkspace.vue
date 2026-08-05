@@ -26,9 +26,12 @@
     <template v-else>
       <section class="logging-section-heading section-gap"><div><h2>日志检索</h2><p>按容器标准输出检索。日志不会在打开页面时自动加载。</p></div><div class="icon-actions"><button class="icon-button" data-testid="logging-settings" title="日志设置" aria-label="日志设置" @click="openSettings"><Settings2 :size="16" /></button><button class="icon-button" title="刷新日志状态与筛选项" aria-label="刷新日志状态与筛选项" :disabled="loading" @click="refresh"><RefreshCw :size="16" :class="{ 'is-spinning': loading }" /></button></div></section>
 
-      <form class="card logging-query" @submit.prevent="queryLogs">
+      <form class="card logging-query section-gap" @submit.prevent="queryLogs">
         <div class="logging-filter-grid">
-          <label class="form-group"><span class="form-label">时间范围</span><select v-model="queryForm.range" class="form-select"><option value="1h">最近 1 小时</option><option value="6h">最近 6 小时</option><option value="24h">最近 24 小时</option></select></label>
+          <label class="form-group"><span class="form-label">时间范围</span><select v-model="queryForm.range" class="form-select" data-testid="log-time-range"><option value="1h">最近 1 小时</option><option value="6h">最近 6 小时</option><option value="24h">最近 24 小时</option><option value="custom">精确范围</option></select></label>
+          <label v-if="queryForm.range === 'custom'" class="form-group"><span class="form-label">开始时间</span><input v-model="queryForm.start_time" class="form-input" data-testid="log-start-time" type="datetime-local" step="1" required /></label>
+          <label v-if="queryForm.range === 'custom'" class="form-group"><span class="form-label">结束时间</span><input v-model="queryForm.end_time" class="form-input" data-testid="log-end-time" type="datetime-local" step="1" required /></label>
+          <label class="form-group"><span class="form-label">返回条数</span><select v-model.number="queryForm.limit" class="form-select" data-testid="log-result-limit"><option :value="50">50 条</option><option :value="100">100 条</option><option :value="200">200 条</option><option :value="500">500 条</option></select></label>
           <label class="form-group"><span class="form-label">项目</span><select v-model.number="queryForm.project_id" class="form-select"><option :value="0">全部项目</option><option v-for="project in projects" :key="project.id" :value="project.id">{{ project.name }}</option></select></label>
           <label class="form-group"><span class="form-label">环境</span><select v-model.number="queryForm.environment_id" class="form-select"><option :value="0">全部环境</option><option v-for="environment in scopedEnvironments" :key="environment.id" :value="environment.id">{{ environment.name }}</option></select></label>
           <label class="form-group"><span class="form-label">应用</span><select v-model.number="queryForm.application_id" class="form-select"><option :value="0">全部应用</option><option v-for="application in scopedApplications" :key="application.id" :value="application.id">{{ application.name }}</option></select></label>
@@ -77,7 +80,7 @@ const applications = ref([])
 const projects = ref([])
 const installForm = ref({ node_name: '', storage: '10Gi', storage_class_name: '', retention_days: 14 })
 const settingsForm = ref({ retention_days: 14 })
-const queryForm = ref({ range: '1h', limit: 200, keyword: '', project_id: 0, environment_id: 0, application_id: 0, namespace: '', pod: '', container: '', node: '' })
+const queryForm = ref({ range: '1h', start_time: '', end_time: '', limit: 200, keyword: '', project_id: 0, environment_id: 0, application_id: 0, namespace: '', pod: '', container: '', node: '' })
 
 const readyNodes = computed(() => props.nodes.filter(node => node.ready))
 const statusLabel = computed(() => ({ ready: '已就绪', installing: '启动中', degraded: '异常' }[status.value?.state] || '未安装'))
@@ -142,11 +145,31 @@ async function queryLogs() {
   querying.value = true
   error.value = ''
   try {
-    const result = await api.post('/monitoring/logs/query', { ...queryForm.value })
+    const payload = buildLogQueryPayload()
+    if (!payload) return
+    const result = await api.post('/monitoring/logs/query', payload)
     lines.value = result?.lines || []
     hasMore.value = Boolean(result?.has_more)
     queried.value = true
   } catch (e) { error.value = e.message || '查询日志失败' } finally { querying.value = false }
+}
+
+function buildLogQueryPayload() {
+  const payload = { ...queryForm.value }
+  if (payload.range !== 'custom') {
+    payload.start_time = ''
+    payload.end_time = ''
+    return payload
+  }
+  const start = new Date(payload.start_time)
+  const end = new Date(payload.end_time)
+  if (Number.isNaN(start.valueOf()) || Number.isNaN(end.valueOf())) {
+    error.value = '请选择有效的开始和结束时间'
+    return null
+  }
+  payload.start_time = start.toISOString()
+  payload.end_time = end.toISOString()
+  return payload
 }
 
 function openSettings() { settingsForm.value = { retention_days: status.value?.retention_days || 14 }; settingsOpen.value = true }
