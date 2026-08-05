@@ -47,4 +47,26 @@ describe('LoggingWorkspace', () => {
     expect(apiMocks.post).toHaveBeenCalledWith('/monitoring/logs/query', expect.objectContaining({ range: '1h', limit: 200 }))
     expect(wrapper.text()).toContain('request failed')
   })
+
+  it('allows retention settings to be saved while logging is starting', async () => {
+    apiMocks.get.mockImplementation(path => {
+      if (path === '/monitoring/logs/status') return Promise.resolve({ state: 'installing', message: 'Loki 正在启动', node_name: 'node-a', loki_ready: 0, alloy_ready: 2, alloy_desired: 4, pvc_name: 'cylism-loki-data', storage: '5Gi', retention_days: 14 })
+      return Promise.resolve({})
+    })
+    apiMocks.put.mockResolvedValue({ state: 'installing' })
+
+    const wrapper = mount(LoggingWorkspace, { props: { nodes: [{ name: 'node-a', ready: true }], storageClasses: [] } })
+    await flushPromises()
+
+    await wrapper.get('[data-testid="logging-settings"]').trigger('click')
+    const modal = document.body.querySelector('.logging-settings-modal')
+    const retentionInput = modal.querySelector('.settings-retention input')
+    retentionInput.value = '21'
+    retentionInput.dispatchEvent(new Event('input', { bubbles: true }))
+    await flushPromises()
+    modal.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    await flushPromises()
+
+    expect(apiMocks.put).toHaveBeenCalledWith('/monitoring/logs/config', { node_name: 'node-a', retention_days: 21 })
+  })
 })

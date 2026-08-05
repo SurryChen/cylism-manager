@@ -65,7 +65,7 @@ func TestInstallLoggingCreatesManagedLokiAndAlloy(t *testing.T) {
 		}
 	}
 	config, err := client.Clientset.CoreV1().ConfigMaps(victoriaMetricsNamespace).Get(t.Context(), loggingConfigName, metav1.GetOptions{})
-	if err != nil || !strings.Contains(config.Data["config.alloy"], "stage.cri") || !strings.Contains(config.Data["loki.yaml"], "retention_period: 336h") || !strings.Contains(config.Data["loki.yaml"], "delete_request_store: filesystem") {
+	if err != nil || !strings.Contains(config.Data["config.alloy"], "local.file_match \"container_logs\"") || !strings.Contains(config.Data["config.alloy"], "targets    = local.file_match.container_logs.targets") || !strings.Contains(config.Data["config.alloy"], "stage.cri") || !strings.Contains(config.Data["loki.yaml"], "retention_period: 336h") || !strings.Contains(config.Data["loki.yaml"], "delete_request_store: filesystem") {
 		t.Fatalf("expected logging configuration, config=%#v err=%v", config, err)
 	}
 	role, err := client.Clientset.RbacV1().ClusterRoles().Get(t.Context(), alloyName, metav1.GetOptions{})

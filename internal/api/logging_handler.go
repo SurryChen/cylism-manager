@@ -218,8 +218,8 @@ func (h *LoggingHandler) Query(c *gin.Context) {
 	defer cancel()
 	result, err := h.query(ctx, "/loki/api/v1/query_range", url.Values{
 		"query":     []string{query},
-		"start":     []string{strconv.FormatInt(end.Add(-rangeDuration).Unix(), 10)},
-		"end":       []string{strconv.FormatInt(end.Unix(), 10)},
+		"start":     []string{strconv.FormatInt(end.Add(-rangeDuration).UnixNano(), 10)},
+		"end":       []string{strconv.FormatInt(end.UnixNano(), 10)},
 		"limit":     []string{strconv.Itoa(request.Limit)},
 		"direction": []string{"BACKWARD"},
 	})
@@ -327,6 +327,10 @@ func buildLogQL(request logQueryRequest) (string, error) {
 			continue
 		}
 		labels = append(labels, filter.label+`="`+escapeLogQL(filter.value)+`"`)
+	}
+	if len(labels) == 0 {
+		// Loki rejects an empty selector; every Kubernetes Pod log has a namespace label.
+		labels = append(labels, `namespace=~".+"`)
 	}
 	selector := "{" + strings.Join(labels, ",") + "}"
 	if request.Keyword != "" {
