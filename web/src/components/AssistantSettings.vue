@@ -27,7 +27,7 @@
         <label class="form-group"><span class="form-label">API Key</span><input v-model.trim="provider.api_key" class="form-input" type="password" :required="!editingProviderID" :placeholder="editingProviderID ? '留空保留现有密钥' : '仅保存密文'" /></label>
         <label class="check-row"><input v-model="provider.enabled" type="checkbox" />启用此模型提供商</label>
         <label class="check-row"><input v-model="provider.is_default" type="checkbox" />设为当前 Runtime 模型</label>
-        <button class="btn btn-primary" :disabled="savingProvider">{{ savingProvider ? "保存中..." : editingProviderID ? "保存并同步 Runtime" : "保存模型提供商" }}</button>
+        <div class="assistant-provider-commands"><button class="btn btn-secondary assistant-provider-probe" type="button" :disabled="probingProvider" @click="probeProvider">{{ probingProvider ? "探测中..." : "测试模型连接" }}</button><button class="btn btn-primary" :disabled="savingProvider">{{ savingProvider ? "保存中..." : editingProviderID ? "保存并同步 Runtime" : "保存模型提供商" }}</button></div>
       </form>
 
       <form class="assistant-install" @submit.prevent="install">
@@ -70,6 +70,7 @@ const editingProviderID = ref(null)
 const deletingProviderID = ref(null)
 const message = ref("")
 const savingProvider = ref(false)
+const probingProvider = ref(false)
 const installing = ref(false)
 const migrating = ref(false)
 const refreshing = ref(false)
@@ -142,6 +143,20 @@ async function saveProvider() {
   }
 }
 
+async function probeProvider() {
+  probingProvider.value = true
+  message.value = ""
+  try {
+    const path = editingProviderID.value === null ? "/assistant/providers/test" : `/assistant/providers/${editingProviderID.value}/test`
+    await api.post(path, provider.value)
+    message.value = "模型 API 连接成功"
+  } catch (error) {
+    message.value = error.message || "模型 API 连接失败"
+  } finally {
+    probingProvider.value = false
+  }
+}
+
 async function deleteProvider(item) {
   if (!window.confirm(`确认删除模型提供商“${item.name}”吗？`)) return
   deletingProviderID.value = item.id
@@ -195,5 +210,5 @@ onBeforeUnmount(() => window.clearInterval(refreshTimer))
 </script>
 
 <style scoped>
-.assistant-settings{grid-column:1/-1}.assistant-runtime{margin-top:var(--space-16);padding:14px;border:1px solid var(--border-muted);border-radius:var(--radius-control);background:var(--surface-subtle)}.assistant-runtime-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}.assistant-runtime-heading h3{margin:0;font-size:14px}.assistant-runtime-heading p{margin:4px 0 0;color:var(--text-secondary);font-size:12px;line-height:1.5}.assistant-runtime-actions{display:flex;align-items:center;gap:6px;flex:0 0 auto}.assistant-runtime-actions .icon-button{width:30px;height:30px}.assistant-runtime-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-top:var(--space-16)}.assistant-runtime-grid div{display:grid;min-width:0;gap:4px}.assistant-runtime-grid span{color:var(--text-secondary);font-size:11px}.assistant-runtime-grid strong{overflow:hidden;font-size:13px;text-overflow:ellipsis;white-space:nowrap}.assistant-migration{margin:var(--space-12) 0 0;color:var(--text-secondary);font-size:12px}.assistant-legacy-runtime{display:grid;gap:3px;margin:var(--space-12) 0 0;padding:10px;border-left:3px solid var(--warning);background:var(--surface-raised);color:var(--text-secondary);font-size:12px}.assistant-legacy-runtime strong{color:var(--text-primary)}.assistant-settings-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--space-20);margin-top:var(--space-16)}.assistant-settings-grid form{display:grid;align-content:start;gap:10px;padding:14px;border:1px solid var(--border-muted);border-radius:var(--radius-control);background:var(--surface-subtle)}.assistant-runtime-migration .settings-copy{margin:0;font-size:12px}.assistant-provider-heading{display:flex;align-items:center;justify-content:space-between;gap:10px}.assistant-provider-heading .icon-button{width:30px;height:30px}h3{margin:0 0 2px;font-size:14px}.check-row{display:flex;align-items:center;gap:8px;color:var(--text-secondary);font-size:12px}.assistant-provider-list{display:grid;gap:6px;margin-top:var(--space-16);border-top:1px solid var(--border-muted);padding-top:var(--space-12)}.assistant-provider-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 0}.assistant-provider-copy{display:grid;min-width:0;gap:3px}.assistant-provider-copy small{overflow-wrap:anywhere;color:var(--text-muted);font:10px/1.3 var(--font-mono)}.assistant-provider-actions{display:flex;align-items:center;gap:6px;flex:0 0 auto}.assistant-provider-actions .icon-button{width:30px;height:30px}.assistant-result{margin-top:var(--space-16)}.is-spinning{animation:spin .8s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}@media(max-width:700px){.assistant-runtime-heading,.assistant-provider-row{align-items:flex-start;flex-direction:column}.assistant-runtime-actions{width:100%;justify-content:flex-end}.assistant-runtime-grid,.assistant-settings-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:460px){.assistant-runtime-grid,.assistant-settings-grid{grid-template-columns:1fr}}
+.assistant-settings{grid-column:1/-1}.assistant-runtime{margin-top:var(--space-16);padding:14px;border:1px solid var(--border-muted);border-radius:var(--radius-control);background:var(--surface-subtle)}.assistant-runtime-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}.assistant-runtime-heading h3{margin:0;font-size:14px}.assistant-runtime-heading p{margin:4px 0 0;color:var(--text-secondary);font-size:12px;line-height:1.5}.assistant-runtime-actions{display:flex;align-items:center;gap:6px;flex:0 0 auto}.assistant-runtime-actions .icon-button{width:30px;height:30px}.assistant-runtime-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-top:var(--space-16)}.assistant-runtime-grid div{display:grid;min-width:0;gap:4px}.assistant-runtime-grid span{color:var(--text-secondary);font-size:11px}.assistant-runtime-grid strong{overflow:hidden;font-size:13px;text-overflow:ellipsis;white-space:nowrap}.assistant-migration{margin:var(--space-12) 0 0;color:var(--text-secondary);font-size:12px}.assistant-legacy-runtime{display:grid;gap:3px;margin:var(--space-12) 0 0;padding:10px;border-left:3px solid var(--warning);background:var(--surface-raised);color:var(--text-secondary);font-size:12px}.assistant-legacy-runtime strong{color:var(--text-primary)}.assistant-settings-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--space-20);margin-top:var(--space-16)}.assistant-settings-grid form{display:grid;align-content:start;gap:10px;padding:14px;border:1px solid var(--border-muted);border-radius:var(--radius-control);background:var(--surface-subtle)}.assistant-runtime-migration .settings-copy{margin:0;font-size:12px}.assistant-provider-heading{display:flex;align-items:center;justify-content:space-between;gap:10px}.assistant-provider-heading .icon-button{width:30px;height:30px}.assistant-provider-commands{display:flex;gap:8px}.assistant-provider-commands .btn{flex:1}h3{margin:0 0 2px;font-size:14px}.check-row{display:flex;align-items:center;gap:8px;color:var(--text-secondary);font-size:12px}.assistant-provider-list{display:grid;gap:6px;margin-top:var(--space-16);border-top:1px solid var(--border-muted);padding-top:var(--space-12)}.assistant-provider-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 0}.assistant-provider-copy{display:grid;min-width:0;gap:3px}.assistant-provider-copy small{overflow-wrap:anywhere;color:var(--text-muted);font:10px/1.3 var(--font-mono)}.assistant-provider-actions{display:flex;align-items:center;gap:6px;flex:0 0 auto}.assistant-provider-actions .icon-button{width:30px;height:30px}.assistant-result{margin-top:var(--space-16)}.is-spinning{animation:spin .8s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}@media(max-width:700px){.assistant-runtime-heading,.assistant-provider-row{align-items:flex-start;flex-direction:column}.assistant-runtime-actions{width:100%;justify-content:flex-end}.assistant-runtime-grid,.assistant-settings-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:460px){.assistant-runtime-grid,.assistant-settings-grid{grid-template-columns:1fr}.assistant-provider-commands{flex-direction:column}}
 </style>

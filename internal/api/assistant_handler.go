@@ -2,8 +2,10 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"strconv"
@@ -196,6 +198,39 @@ func (h *AssistantHandler) UpdateProvider(c *gin.Context) {
 	model.SuccessWithMessage(c, provider, "模型提供商已更新")
 }
 
+// ProbeProvider verifies a Responses-compatible endpoint using a minimal
+// stateless request before a provider is used for Runtime diagnosis.
+func (h *AssistantHandler) ProbeProvider(c *gin.Context) {
+	var request assistantProviderRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "模型提供商配置无效")
+		return
+	}
+	var existing *model.AssistantProvider
+	if rawID := strings.TrimSpace(c.Param("id")); rawID != "" {
+		id, err := strconv.ParseUint(rawID, 10, 64)
+		if err != nil {
+			model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "模型提供商 ID 无效")
+			return
+		}
+		existing, err = h.store.GetAssistantProvider(uint(id))
+		if err != nil {
+			model.Error(c, http.StatusNotFound, model.CodeNotFound, "模型提供商不存在")
+			return
+		}
+	}
+	provider, err := h.providerFromRequest(request, existing)
+	if err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		return
+	}
+	if err := h.probeProvider(c.Request.Context(), provider); err != nil {
+		model.Error(c, http.StatusBadGateway, model.CodeK8sAPIError, err.Error())
+		return
+	}
+	model.SuccessWithMessage(c, gin.H{}, "模型 API 连接成功")
+}
+
 func (h *AssistantHandler) DeleteProvider(c *gin.Context) {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil {
@@ -309,6 +344,34 @@ func (h *AssistantHandler) providerFromRequest(request assistantProviderRequest,
 		return nil, fmt.Errorf("模型 API Key 不能为空")
 	}
 	return provider, nil
+}
+
+func (h *AssistantHandler) probeProvider(ctx context.Context, provider *model.AssistantProvider) error {
+	apiKey, err := crypto.Decrypt(h.encKey, provider.APIKeyEncrypted)
+	if err != nil {
+		return fmt.Errorf("读取模型密钥失败")
+	}
+	baseURL := strings.TrimRight(provider.BaseURL, "/")
+	if baseURL == "" {
+		baseURL = "https://api.openai.com/v1"
+	}
+	body, _ := json.Marshal(gin.H{"model": provider.Model, "input": "Reply with OK.", "max_output_tokens": 1, "store": false})
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/responses", bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("模型 API 地址无效")
+	}
+	request.Header.Set("Authorization", "Bearer "+apiKey)
+	request.Header.Set("Content-Type", "application/json")
+	response, err := h.client.Do(request)
+	if err != nil {
+		return fmt.Errorf("无法连接模型 API，请检查 Base URL、网络和代理配置")
+	}
+	defer response.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 64<<10))
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		return fmt.Errorf("模型 API 返回 HTTP %d", response.StatusCode)
+	}
+	return nil
 }
 
 func (h *AssistantHandler) conversation(c *gin.Context) (*model.AssistantConversation, bool) {

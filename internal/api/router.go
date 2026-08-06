@@ -173,6 +173,8 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 		assistant.POST("/runtime/migrations", h.MigrateRuntimeNode)
 		assistant.DELETE("", h.Uninstall)
 		assistant.GET("/providers", h.ListProviders)
+		assistant.POST("/providers/test", h.ProbeProvider)
+		assistant.POST("/providers/:id/test", h.ProbeProvider)
 		assistant.POST("/providers", h.CreateProvider)
 		assistant.PUT("/providers/:id", h.UpdateProvider)
 		assistant.DELETE("/providers/:id", h.DeleteProvider)

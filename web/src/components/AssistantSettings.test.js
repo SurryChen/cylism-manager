@@ -54,4 +54,18 @@ describe('AssistantSettings', () => {
     expect(wrapper.text()).toContain('迁移并部署 Runtime')
     wrapper.unmount()
   })
+
+  it('probes the Responses API without saving the provider', async () => {
+    api.post.mockResolvedValue({ message: '模型 API 连接成功' })
+    const wrapper = mount(AssistantSettings)
+    await new Promise(resolve => setTimeout(resolve, 0))
+    await nextTick()
+
+    await wrapper.get('.assistant-provider-probe').trigger('click')
+    await nextTick()
+
+    expect(api.post).toHaveBeenCalledWith('/assistant/providers/test', expect.objectContaining({ provider_type: 'openai_responses', model: '' }))
+    expect(wrapper.text()).toContain('模型 API 连接成功')
+    wrapper.unmount()
+  })
 })
