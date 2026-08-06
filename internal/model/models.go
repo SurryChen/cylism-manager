@@ -122,6 +122,41 @@ type SystemConfig struct {
 	Value string `gorm:"type:text" json:"-"` // AES-256 加密
 }
 
+// AssistantProvider is a platform-managed LLM connection. APIKeyEncrypted is
+// intentionally excluded from every API response and is only materialized into
+// the selected runtime's Kubernetes Secret.
+type AssistantProvider struct {
+	ID              uint      `gorm:"primaryKey" json:"id"`
+	Name            string    `gorm:"size:128;uniqueIndex;not null" json:"name"`
+	ProviderType    string    `gorm:"size:32;not null" json:"provider_type"`
+	BaseURL         string    `gorm:"size:512" json:"base_url,omitempty"`
+	Model           string    `gorm:"size:256;not null" json:"model"`
+	APIKeyEncrypted string    `gorm:"type:text;not null" json:"-"`
+	Enabled         bool      `gorm:"default:true;not null" json:"enabled"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
+}
+
+// AssistantConversation belongs to one Cylism user and remains independent
+// from a concrete agent runtime so the runtime can be replaced later.
+type AssistantConversation struct {
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	UserID    uint      `gorm:"index;not null" json:"user_id"`
+	Runtime   string    `gorm:"size:64;default:pydanticai;not null" json:"runtime"`
+	Title     string    `gorm:"size:256" json:"title"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+type AssistantMessage struct {
+	ID             uint      `gorm:"primaryKey" json:"id"`
+	ConversationID uint      `gorm:"index;not null" json:"conversation_id"`
+	Role           string    `gorm:"size:16;not null" json:"role"`
+	Content        string    `gorm:"type:text;not null" json:"content"`
+	Metadata       string    `gorm:"type:text" json:"metadata,omitempty"`
+	CreatedAt      time.Time `json:"created_at"`
+}
+
 // PlatformRelease records a self-update request independently from application releases.
 type PlatformRelease struct {
 	ID            uint       `gorm:"primaryKey" json:"id"`
