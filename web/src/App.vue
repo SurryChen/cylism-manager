@@ -93,7 +93,7 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Activity, Boxes, Check, FileText, FolderKanban, HardDrive, History, LayoutDashboard, Layers3, LogOut, Menu, Orbit, PackagePlus, Palette, Route, Server, Settings, Waypoints, X } from 'lucide-vue-next'
+import { Activity, Boxes, Bot, Check, FileText, FolderKanban, HardDrive, History, LayoutDashboard, Layers3, LogOut, Menu, Orbit, PackagePlus, Palette, Route, Server, Settings, Waypoints, X } from 'lucide-vue-next'
 import { clearTokens } from './api/index.js'
 import { usePalette } from './composables/usePalette.js'
 import AssistantWidget from './components/AssistantWidget.vue'
@@ -149,6 +149,7 @@ const navGroups = computed(() => [
     items: [
       { label: '审计', to: '/audit', icon: FileText },
       { label: '系统设置', to: '/settings/system', icon: Layers3 },
+      { label: '模型配置', to: '/settings/models', icon: Bot },
     ],
   },
 ])

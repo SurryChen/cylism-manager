@@ -81,6 +81,40 @@ func TestAssistantInstallRejectsPersistedLegacyProvider(t *testing.T) {
 	}
 }
 
+func TestAssistantStatusSeparatesModelConfigurationFromRuntimeReadiness(t *testing.T) {
+	st, err := store.New(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider := &model.AssistantProvider{Name: "Responses", ProviderType: assistantProviderTypeResponses, Model: "gpt-4o-mini", APIKeyEncrypted: "encrypted", Enabled: true}
+	if err := st.CreateAssistantProvider(provider); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetSystemConfig(assistantDefaultProviderConfigKey, strconv.FormatUint(uint64(provider.ID), 10)); err != nil {
+		t.Fatal(err)
+	}
+
+	originalK8s := K8s
+	K8s = &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(&appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: "cylism-ops-agent", Namespace: "default"},
+		Status:     appsv1.DeploymentStatus{UpdatedReplicas: 1, AvailableReplicas: 1},
+	})}
+	defer func() { K8s = originalK8s }()
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.GET("/api/assistant/status", NewAssistantHandler(st, []byte("01234567890123456789012345678901")).Status)
+	response := serve(router, newJSONRequest(http.MethodGet, "/api/assistant/status", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("assistant status response: %d %s", response.Code, response.Body.String())
+	}
+	for _, expected := range []string{`"configured":true`, `"state":"ready"`, `"ready_replicas":1`} {
+		if !strings.Contains(response.Body.String(), expected) {
+			t.Fatalf("assistant status missing %s: %s", expected, response.Body.String())
+		}
+	}
+}
+
 func TestAssistantUpdateDefaultProviderReconcilesRuntime(t *testing.T) {
 	st, err := store.New(":memory:")
 	if err != nil {
