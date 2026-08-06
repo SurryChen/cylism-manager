@@ -163,7 +163,7 @@ func (c *Client) UninstallOpsAgent() error {
 func (c *Client) upsertOpsAgentPVC(config OpsAgentConfig) error {
 	name := opsAgentName + "-audit"
 	claims := c.Clientset.CoreV1().PersistentVolumeClaims(opsAgentNamespace)
-	claim := &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: name, Labels: opsAgentLabels()}, Spec: corev1.PersistentVolumeClaimSpec{AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce}, Resources: corev1.VolumeResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceStorage: resource.MustParse(config.Storage)}}}}
+	claim := &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: name, Labels: infrastructurePVCLabels(InfrastructureOpsAgent)}, Spec: corev1.PersistentVolumeClaimSpec{AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce}, Resources: corev1.VolumeResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceStorage: resource.MustParse(config.Storage)}}}}
 	if config.StorageClassName != "" {
 		claim.Spec.StorageClassName = &config.StorageClassName
 	}
@@ -178,7 +178,21 @@ func (c *Client) upsertOpsAgentPVC(config OpsAgentConfig) error {
 	if existing.Spec.Resources.Requests.Storage().Cmp(resource.MustParse(config.Storage)) > 0 {
 		return fmt.Errorf("不能缩小现有助手审计 PVC")
 	}
-	return nil
+	if existing.Labels == nil {
+		existing.Labels = map[string]string{}
+	}
+	changed := false
+	for key, value := range claim.Labels {
+		if existing.Labels[key] != value {
+			existing.Labels[key] = value
+			changed = true
+		}
+	}
+	if !changed {
+		return nil
+	}
+	_, err = claims.Update(c.Ctx(), existing, metav1.UpdateOptions{})
+	return err
 }
 
 func (c *Client) upsertOpsAgentSecret(apiKey string) error {

@@ -25,6 +25,7 @@ const (
 	InfrastructureAlertmanager    = "alertmanager"
 	InfrastructureVictoriaMetrics = "victoria-metrics"
 	InfrastructureLoki            = "loki"
+	InfrastructureOpsAgent        = "ops-agent"
 )
 
 // PersistentVolumeClaimRequest contains the user-controlled fields supported
@@ -43,6 +44,7 @@ type PersistentVolumeClaimInfo struct {
 	Managed              bool     `json:"managed"`
 	EnvironmentID        uint     `json:"environment_id,omitempty"`
 	OwnerType            string   `json:"owner_type"`
+	Owner                string   `json:"owner,omitempty"`
 	OwnerName            string   `json:"owner_name,omitempty"`
 	ReadOnly             bool     `json:"read_only"`
 	Phase                string   `json:"phase"`
@@ -363,6 +365,7 @@ func pvcInfoFromResources(claim *corev1.PersistentVolumeClaim, storageClass *sto
 	info.Managed, info.EnvironmentID = managedPVCEnvironmentID(claim)
 	if owner := infrastructurePVCOwner(claim); owner != "" {
 		info.OwnerType = "infrastructure"
+		info.Owner = owner
 		info.OwnerName = infrastructurePVCOwnerName(owner)
 		info.ReadOnly = true
 	} else if info.Managed {
@@ -414,7 +417,7 @@ func infrastructurePVCOwner(claim *corev1.PersistentVolumeClaim) string {
 		return ""
 	}
 	switch claim.Labels[InfrastructureLabel] {
-	case InfrastructureAlertmanager, InfrastructureVictoriaMetrics, InfrastructureLoki:
+	case InfrastructureAlertmanager, InfrastructureVictoriaMetrics, InfrastructureLoki, InfrastructureOpsAgent:
 		return claim.Labels[InfrastructureLabel]
 	default:
 		return ""
@@ -429,16 +432,22 @@ func infrastructurePVCOwnerName(owner string) string {
 		return "VictoriaMetrics"
 	case InfrastructureLoki:
 		return "Loki 日志存储"
+	case InfrastructureOpsAgent:
+		return "智能助手 Runtime"
 	default:
 		return owner
 	}
 }
 
 func infrastructurePVCLabels(owner string) map[string]string {
+	component := "monitoring"
+	if owner == InfrastructureOpsAgent {
+		component = "assistant"
+	}
 	return map[string]string{
 		ManagedByLabel:        ManagedByValue,
 		InfrastructureLabel:   owner,
-		"cylism.io/component": "monitoring",
+		"cylism.io/component": component,
 	}
 }
 
