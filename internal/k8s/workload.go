@@ -179,15 +179,14 @@ func (c *Client) ListDeploymentRevisions(namespace, name string) ([]RevisionInfo
 
 // ScaleDeployment 扩缩容 Deployment
 func (c *Client) ScaleDeployment(namespace, name string, replicas int32) error {
-	scale, err := c.Clientset.AppsV1().Deployments(namespace).GetScale(c.ctx, name, metav1.GetOptions{})
+	deployment, err := c.Clientset.AppsV1().Deployments(namespace).Get(c.ctx, name, metav1.GetOptions{})
 	if err != nil {
-		return fmt.Errorf("get scale: %w", err)
+		return fmt.Errorf("get deployment scale: %w", err)
 	}
-	scale.Spec.Replicas = replicas
-
-	_, err = c.Clientset.AppsV1().Deployments(namespace).UpdateScale(c.ctx, name, scale, metav1.UpdateOptions{})
+	deployment.Spec.Replicas = &replicas
+	_, err = c.Clientset.AppsV1().Deployments(namespace).Update(c.ctx, deployment, metav1.UpdateOptions{})
 	if err != nil {
-		return fmt.Errorf("update scale: %w", err)
+		return fmt.Errorf("update deployment scale: %w", err)
 	}
 	return nil
 }

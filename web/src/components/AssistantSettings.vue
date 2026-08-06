@@ -11,6 +11,7 @@
     <section class="assistant-runtime" aria-live="polite">
       <div class="assistant-runtime-heading"><div><h3>Runtime 部署状态</h3><p>{{ runtimeStatus.message || '正在读取 Kubernetes Runtime 状态' }}</p></div><div class="assistant-runtime-actions"><span class="badge" :class="runtimeBadgeClass">{{ runtimeLabel }}</span><button class="icon-button" type="button" title="刷新 Runtime 状态" aria-label="刷新 Runtime 状态" :disabled="refreshing" @click="refresh"><RefreshCw :size="16" :class="{ 'is-spinning': refreshing }" /></button></div></div>
       <div class="assistant-runtime-grid"><div><span>就绪副本</span><strong>{{ runtimeStatus.ready_replicas || 0 }} / {{ runtimeStatus.desired_replicas || 1 }}</strong></div><div><span>目标节点</span><strong>{{ runtimeStatus.node_name || '-' }}</strong></div><div><span>审计存储</span><strong>{{ runtimeStatus.storage || '-' }}</strong></div><div><span>运行模型</span><strong>{{ runtimeStatus.model || '-' }}</strong></div></div>
+      <p v-if="migration" class="assistant-migration">{{ migrationLabel }}</p>
     </section>
 
     <div class="assistant-settings-grid">
@@ -34,6 +35,13 @@
         <label class="form-group"><span class="form-label">目标节点</span><select v-model="installForm.node_name" class="form-select" required><option value="" disabled>选择就绪节点</option><option v-for="node in readyNodes" :key="node.name" :value="node.name">{{ node.display_name || node.name }}</option></select></label>
         <label class="form-group"><span class="form-label">审计 PVC 容量</span><input v-model.trim="installForm.storage" class="form-input" required placeholder="1Gi" /></label>
         <button class="btn btn-primary" :disabled="installing || !providers.length">{{ installing ? "部署中..." : "部署或更新 Runtime" }}</button>
+      </form>
+
+      <form class="assistant-runtime-migration" @submit.prevent="migrateRuntime">
+        <h3>Runtime 存储迁移</h3>
+        <p class="settings-copy">迁移审计数据并将 Runtime 切换到另一台就绪节点。</p>
+        <label class="form-group"><span class="form-label">目标节点</span><select v-model="migrationForm.target_node_name" class="form-select" required :disabled="runtimeStatus.state !== 'ready' || !!migration"><option value="" disabled>选择不同的就绪节点</option><option v-for="node in migrationNodes" :key="node.name" :value="node.name">{{ node.display_name || node.name }}</option></select></label>
+        <button class="btn btn-primary" :disabled="migrating || runtimeStatus.state !== 'ready' || !!migration || !migrationForm.target_node_name">{{ migrating ? "迁移提交中..." : "迁移 Runtime 存储" }}</button>
       </form>
     </div>
 
@@ -62,13 +70,18 @@ const deletingProviderID = ref(null)
 const message = ref("")
 const savingProvider = ref(false)
 const installing = ref(false)
+const migrating = ref(false)
 const refreshing = ref(false)
 const provider = ref(newProvider())
 const installForm = ref({ provider_id: 0, node_name: "", storage: "1Gi" })
+const migrationForm = ref({ target_node_name: "" })
 const readyNodes = computed(() => nodes.value.filter(node => node.ready !== false))
 const runtimeStatus = computed(() => status.value.runtime_status || {})
+const migration = computed(() => status.value.migration || null)
+const migrationNodes = computed(() => readyNodes.value.filter(node => node.name !== runtimeStatus.value.node_name))
 const runtimeLabel = computed(() => ({ ready: 'Runtime 已就绪', installing: 'Runtime 部署中', not_installed: 'Runtime 未部署', degraded: 'Runtime 状态异常', unavailable: 'Runtime 状态不可用' }[runtimeStatus.value.state] || 'Runtime 状态未知'))
 const runtimeBadgeClass = computed(() => ({ ready: 'badge-online', installing: 'badge-deploying', not_installed: 'badge-offline', degraded: 'badge-danger', unavailable: 'badge-offline' }[runtimeStatus.value.state] || 'badge-offline'))
+const migrationLabel = computed(() => ({ pending: '正在准备审计存储迁移', provisioning_target: '正在创建目标审计存储', stopping_source: '正在停止源 Runtime', copying: '正在复制审计数据', verifying: '正在校验审计 SQLite 文件', starting_target: '正在启动新的 Runtime', cleaning_legacy: '正在清理源 Runtime 资源' }[migration.value?.status] || migration.value?.detail || 'Runtime 存储迁移中'))
 let refreshTimer
 
 function newProvider() {
@@ -150,6 +163,21 @@ async function install() {
   }
 }
 
+async function migrateRuntime() {
+  migrating.value = true
+  message.value = ""
+  try {
+    const result = await api.post("/assistant/runtime/migrations", migrationForm.value)
+    message.value = result.message || "Runtime 存储迁移已开始"
+    migrationForm.value.target_node_name = ""
+    await refresh()
+  } catch (error) {
+    message.value = error.message || "迁移失败"
+  } finally {
+    migrating.value = false
+  }
+}
+
 onMounted(() => {
   refresh()
   refreshTimer = window.setInterval(refresh, 10000)
@@ -158,5 +186,5 @@ onBeforeUnmount(() => window.clearInterval(refreshTimer))
 </script>
 
 <style scoped>
-.assistant-settings{grid-column:1/-1}.assistant-runtime{margin-top:var(--space-16);padding:14px;border:1px solid var(--border-muted);border-radius:var(--radius-control);background:var(--surface-subtle)}.assistant-runtime-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}.assistant-runtime-heading h3{margin:0;font-size:14px}.assistant-runtime-heading p{margin:4px 0 0;color:var(--text-secondary);font-size:12px;line-height:1.5}.assistant-runtime-actions{display:flex;align-items:center;gap:6px;flex:0 0 auto}.assistant-runtime-actions .icon-button{width:30px;height:30px}.assistant-runtime-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-top:var(--space-16)}.assistant-runtime-grid div{display:grid;min-width:0;gap:4px}.assistant-runtime-grid span{color:var(--text-secondary);font-size:11px}.assistant-runtime-grid strong{overflow:hidden;font-size:13px;text-overflow:ellipsis;white-space:nowrap}.assistant-settings-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--space-20);margin-top:var(--space-16)}.assistant-settings-grid form{display:grid;align-content:start;gap:10px;padding:14px;border:1px solid var(--border-muted);border-radius:var(--radius-control);background:var(--surface-subtle)}.assistant-provider-heading{display:flex;align-items:center;justify-content:space-between;gap:10px}.assistant-provider-heading .icon-button{width:30px;height:30px}h3{margin:0 0 2px;font-size:14px}.check-row{display:flex;align-items:center;gap:8px;color:var(--text-secondary);font-size:12px}.assistant-provider-list{display:grid;gap:6px;margin-top:var(--space-16);border-top:1px solid var(--border-muted);padding-top:var(--space-12)}.assistant-provider-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 0}.assistant-provider-copy{display:grid;min-width:0;gap:3px}.assistant-provider-copy small{overflow-wrap:anywhere;color:var(--text-muted);font:10px/1.3 var(--font-mono)}.assistant-provider-actions{display:flex;align-items:center;gap:6px;flex:0 0 auto}.assistant-provider-actions .icon-button{width:30px;height:30px}.assistant-result{margin-top:var(--space-16)}.is-spinning{animation:spin .8s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}@media(max-width:700px){.assistant-runtime-heading,.assistant-provider-row{align-items:flex-start;flex-direction:column}.assistant-runtime-actions{width:100%;justify-content:flex-end}.assistant-runtime-grid,.assistant-settings-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:460px){.assistant-runtime-grid,.assistant-settings-grid{grid-template-columns:1fr}}
+.assistant-settings{grid-column:1/-1}.assistant-runtime{margin-top:var(--space-16);padding:14px;border:1px solid var(--border-muted);border-radius:var(--radius-control);background:var(--surface-subtle)}.assistant-runtime-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}.assistant-runtime-heading h3{margin:0;font-size:14px}.assistant-runtime-heading p{margin:4px 0 0;color:var(--text-secondary);font-size:12px;line-height:1.5}.assistant-runtime-actions{display:flex;align-items:center;gap:6px;flex:0 0 auto}.assistant-runtime-actions .icon-button{width:30px;height:30px}.assistant-runtime-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-top:var(--space-16)}.assistant-runtime-grid div{display:grid;min-width:0;gap:4px}.assistant-runtime-grid span{color:var(--text-secondary);font-size:11px}.assistant-runtime-grid strong{overflow:hidden;font-size:13px;text-overflow:ellipsis;white-space:nowrap}.assistant-migration{margin:var(--space-12) 0 0;color:var(--text-secondary);font-size:12px}.assistant-settings-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--space-20);margin-top:var(--space-16)}.assistant-settings-grid form{display:grid;align-content:start;gap:10px;padding:14px;border:1px solid var(--border-muted);border-radius:var(--radius-control);background:var(--surface-subtle)}.assistant-runtime-migration .settings-copy{margin:0;font-size:12px}.assistant-provider-heading{display:flex;align-items:center;justify-content:space-between;gap:10px}.assistant-provider-heading .icon-button{width:30px;height:30px}h3{margin:0 0 2px;font-size:14px}.check-row{display:flex;align-items:center;gap:8px;color:var(--text-secondary);font-size:12px}.assistant-provider-list{display:grid;gap:6px;margin-top:var(--space-16);border-top:1px solid var(--border-muted);padding-top:var(--space-12)}.assistant-provider-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 0}.assistant-provider-copy{display:grid;min-width:0;gap:3px}.assistant-provider-copy small{overflow-wrap:anywhere;color:var(--text-muted);font:10px/1.3 var(--font-mono)}.assistant-provider-actions{display:flex;align-items:center;gap:6px;flex:0 0 auto}.assistant-provider-actions .icon-button{width:30px;height:30px}.assistant-result{margin-top:var(--space-16)}.is-spinning{animation:spin .8s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}@media(max-width:700px){.assistant-runtime-heading,.assistant-provider-row{align-items:flex-start;flex-direction:column}.assistant-runtime-actions{width:100%;justify-content:flex-end}.assistant-runtime-grid,.assistant-settings-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:460px){.assistant-runtime-grid,.assistant-settings-grid{grid-template-columns:1fr}}
 </style>

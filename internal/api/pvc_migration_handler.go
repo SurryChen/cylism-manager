@@ -248,7 +248,7 @@ func (h *K8sHandler) runPersistentVolumeMigration(id uint, helperImage string) {
 		h.failMigration(migration, err, false)
 		return
 	}
-	if err := h.waitForDeploymentPods(environment.Namespace, migration.SourceDeployment, false, 90*time.Second); err != nil {
+	if err := waitForDeploymentPods(environment.Namespace, migration.SourceDeployment, false, 90*time.Second); err != nil {
 		h.cleanupMigrationTarget(environment, migration)
 		h.failMigration(migration, err, true)
 		return
@@ -256,7 +256,7 @@ func (h *K8sHandler) runPersistentVolumeMigration(id uint, helperImage string) {
 	if err := h.store.UpdatePersistentVolumeMigration(migration, model.PVCMigrationStatusCopying, "正在复制本地卷数据"); err != nil {
 		return
 	}
-	bytesCopied, err := h.streamPVCData(source, target, claim.LocalPath, targetClaim.LocalPath)
+	bytesCopied, err := streamPVCData(source, target, claim.LocalPath, targetClaim.LocalPath, h.encKey)
 	migration.BytesCopied = bytesCopied
 	if err != nil {
 		h.cleanupMigrationTarget(environment, migration)
@@ -285,7 +285,7 @@ func (h *K8sHandler) runPersistentVolumeMigration(id uint, helperImage string) {
 	if err := h.store.UpdatePersistentVolumeMigration(migration, model.PVCMigrationStatusWaitingReady, "正在等待目标工作负载就绪"); err != nil {
 		return
 	}
-	if err := h.waitForDeploymentPods(environment.Namespace, migration.SourceDeployment, true, 2*time.Minute); err != nil {
+	if err := waitForDeploymentPods(environment.Namespace, migration.SourceDeployment, true, 2*time.Minute); err != nil {
 		h.failMigration(migration, err, true)
 		return
 	}
@@ -341,11 +341,11 @@ func (h *K8sHandler) checkMigrationTargetPath(server *model.Server, path string)
 	return nil
 }
 
-func (h *K8sHandler) streamPVCData(source, target *model.Server, sourcePath, targetPath string) (int64, error) {
+func streamPVCData(source, target *model.Server, sourcePath, targetPath string, encKey []byte) (int64, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
-	sourceArgs := append(buildSSHArgs(source, h.encKey, source.Host), "sudo -n tar --numeric-owner -C "+shellQuote(sourcePath)+" -cpf - .")
-	targetArgs := append(buildSSHArgs(target, h.encKey, target.Host), "sudo -n mkdir -p "+shellQuote(targetPath)+" && sudo -n tar --numeric-owner -C "+shellQuote(targetPath)+" -xpf -")
+	sourceArgs := append(buildSSHArgs(source, encKey, source.Host), "sudo -n tar --numeric-owner -C "+shellQuote(sourcePath)+" -cpf - .")
+	targetArgs := append(buildSSHArgs(target, encKey, target.Host), "sudo -n mkdir -p "+shellQuote(targetPath)+" && sudo -n tar --numeric-owner -C "+shellQuote(targetPath)+" -xpf -")
 	sourceCommand := exec.CommandContext(ctx, "ssh", sourceArgs...)
 	targetCommand := exec.CommandContext(ctx, "ssh", targetArgs...)
 	var sourceErr, targetErr bytes.Buffer
@@ -411,7 +411,7 @@ func (w countWriter) Write(value []byte) (int, error) {
 	return len(value), nil
 }
 
-func (h *K8sHandler) waitForDeploymentPods(namespace, name string, ready bool, timeout time.Duration) error {
+func waitForDeploymentPods(namespace, name string, ready bool, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		deployment, err := K8s.Clientset.AppsV1().Deployments(namespace).Get(K8s.Ctx(), name, metav1.GetOptions{})

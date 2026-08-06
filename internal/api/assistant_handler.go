@@ -8,6 +8,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cylism/cylism-manager/internal/crypto"
@@ -16,6 +17,7 @@ import (
 	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 )
 
 const (
@@ -24,10 +26,14 @@ const (
 )
 
 type AssistantHandler struct {
-	store      *store.Store
-	encKey     []byte
-	runtimeURL string
-	client     *http.Client
+	store                 *store.Store
+	encKey                []byte
+	runtimeURL            string
+	runtimeURLSet         bool
+	client                *http.Client
+	migrationMu           sync.Mutex
+	migrationRunning      map[uint]bool
+	runtimeMigrationHooks *assistantRuntimeMigrationHooks
 }
 
 type assistantProviderRequest struct {
@@ -67,10 +73,11 @@ type pydanticResponse struct {
 
 func NewAssistantHandler(s *store.Store, encKey []byte) *AssistantHandler {
 	runtimeURL := strings.TrimRight(os.Getenv("CYLISM_ASSISTANT_RUNTIME_URL"), "/")
+	runtimeURLSet := runtimeURL != ""
 	if runtimeURL == "" {
-		runtimeURL = "http://cylism-ops-agent.default.svc:8080"
+		runtimeURL = "http://cylism-ops-agent.cylism-assistant.svc:8080"
 	}
-	return &AssistantHandler{store: s, encKey: encKey, runtimeURL: runtimeURL, client: &http.Client{Timeout: 75 * time.Second}}
+	return &AssistantHandler{store: s, encKey: encKey, runtimeURL: runtimeURL, runtimeURLSet: runtimeURLSet, client: &http.Client{Timeout: 75 * time.Second}, migrationRunning: make(map[uint]bool)}
 }
 
 func (h *AssistantHandler) Status(c *gin.Context) {
@@ -91,7 +98,11 @@ func (h *AssistantHandler) Status(c *gin.Context) {
 	if K8s != nil {
 		runtimeStatus = K8s.OpsAgentStatus()
 	}
-	model.Success(c, gin.H{"runtime": "pydanticai", "configured": configured, "provider_count": len(providers), "default_provider_id": defaultID, "runtime_status": runtimeStatus})
+	result := gin.H{"runtime": "pydanticai", "configured": configured, "provider_count": len(providers), "default_provider_id": defaultID, "runtime_status": runtimeStatus}
+	if migration, migrationErr := h.store.FindActiveAssistantRuntimeMigration(); migrationErr == nil {
+		result["migration"] = migration
+	}
+	model.Success(c, result)
 }
 
 func (h *AssistantHandler) ListProviders(c *gin.Context) {
@@ -340,7 +351,7 @@ func (h *AssistantHandler) callRuntime(c *gin.Context, conversationID uint, mess
 		message = "当前 Cylism 页面上下文（仅供定位资源）：" + string(encoded) + "\n\n用户问题：" + message
 	}
 	payload, _ := json.Marshal(gin.H{"message": message, "conversation_id": strconv.FormatUint(uint64(conversationID), 10)})
-	request, err := http.NewRequestWithContext(c.Request.Context(), http.MethodPost, h.runtimeURL+"/v1/diagnose", bytes.NewReader(payload))
+	request, err := http.NewRequestWithContext(c.Request.Context(), http.MethodPost, h.runtimeURLForRequest()+"/v1/diagnose", bytes.NewReader(payload))
 	if err != nil {
 		return nil, err
 	}
@@ -364,6 +375,17 @@ func (h *AssistantHandler) callRuntime(c *gin.Context, conversationID uint, mess
 	return &result.Diagnosis, nil
 }
 
+func (h *AssistantHandler) runtimeURLForRequest() string {
+	if h.runtimeURLSet || h.store == nil {
+		return h.runtimeURL
+	}
+	migration, err := h.store.FindActiveAssistantRuntimeMigration()
+	if err == nil && migration.SourceNamespace == k8s.LegacyOpsAgentRuntimeNamespace && migration.Status != model.AssistantRuntimeMigrationCleaning {
+		return "http://cylism-ops-agent.default.svc:8080"
+	}
+	return h.runtimeURL
+}
+
 func assistantUserID(c *gin.Context) uint {
 	userID, _ := c.Get("user_id")
 	value, _ := userID.(uint)
@@ -383,6 +405,91 @@ type assistantInstallRequest struct {
 	Storage          string `json:"storage"`
 	StorageClassName string `json:"storage_class_name"`
 	Image            string `json:"image"`
+}
+
+type assistantRuntimeMigrationRequest struct {
+	TargetNodeName string `json:"target_node_name"`
+}
+
+func (h *AssistantHandler) MigrateRuntimeNode(c *gin.Context) {
+	if K8s == nil {
+		k8sUnavailable(c)
+		return
+	}
+	var request assistantRuntimeMigrationRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "Runtime 迁移配置无效")
+		return
+	}
+	request.TargetNodeName = strings.TrimSpace(request.TargetNodeName)
+	if request.TargetNodeName == "" {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "请选择目标节点")
+		return
+	}
+	if migration, err := h.store.FindActiveAssistantRuntimeMigration(); err == nil {
+		model.Error(c, http.StatusConflict, model.CodeConflict, "已有 Runtime 存储迁移正在执行: "+migration.Detail)
+		return
+	} else if err != gorm.ErrRecordNotFound {
+		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "读取 Runtime 迁移状态失败")
+		return
+	}
+	status := K8s.OpsAgentStatus()
+	if status.State != "ready" || status.PVCName == "" || status.NodeName == "" {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "仅已就绪且使用审计 PVC 的 Runtime 可以迁移")
+		return
+	}
+	if status.NodeName == request.TargetNodeName {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "目标节点与当前 Runtime 节点相同")
+		return
+	}
+	if err := K8s.ValidateOpsAgentNode(request.TargetNodeName); err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeK8sAPIError, err.Error())
+		return
+	}
+	sourcePVC, err := K8s.OpsAgentPVCInfoByName(k8s.OpsAgentRuntimeNamespace, status.PVCName)
+	if err != nil || !sourcePVC.IsLocal || sourcePVC.LocalPath == "" || sourcePVC.BoundNode == "" {
+		if err == nil {
+			err = fmt.Errorf("当前审计 PVC 不是可迁移的 local-path/hostPath 卷")
+		}
+		model.Error(c, http.StatusBadRequest, model.CodeK8sAPIError, err.Error())
+		return
+	}
+	if sourcePVC.BoundNode == request.TargetNodeName {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "目标节点与当前审计 PVC 节点相同")
+		return
+	}
+	defaultID, _ := h.store.GetSystemConfig(assistantDefaultProviderConfigKey)
+	providerID, _ := strconv.ParseUint(defaultID, 10, 64)
+	provider, err := h.store.GetAssistantProvider(uint(providerID))
+	if err != nil || !provider.Enabled || provider.ProviderType != assistantProviderTypeResponses {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "当前 Runtime 没有可用的模型提供商")
+		return
+	}
+	replicas := status.DesiredReplicas
+	if replicas < 1 {
+		replicas = 1
+	}
+	targetPVCName := fmt.Sprintf("cylism-ops-agent-audit-migrate-%d", time.Now().UnixNano())
+	migration := &model.AssistantRuntimeMigration{
+		ProviderID:       provider.ID,
+		SourceNamespace:  k8s.OpsAgentRuntimeNamespace,
+		SourcePVCName:    sourcePVC.Name,
+		SourceNodeName:   sourcePVC.BoundNode,
+		SourceReplicas:   replicas,
+		TargetNamespace:  k8s.OpsAgentRuntimeNamespace,
+		TargetPVCName:    targetPVCName,
+		TargetNodeName:   request.TargetNodeName,
+		Storage:          sourcePVC.Storage,
+		StorageClassName: sourcePVC.StorageClassName,
+		Image:            status.Image,
+		Status:           model.AssistantRuntimeMigrationPending,
+	}
+	if err := h.store.CreateAssistantRuntimeMigration(migration); err != nil {
+		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "创建 Runtime 迁移任务失败")
+		return
+	}
+	h.startAssistantRuntimeMigration(migration.ID)
+	model.SuccessWithMessage(c, gin.H{"migration": migration, "runtime_status": status}, "Runtime 存储迁移已开始")
 }
 
 func (h *AssistantHandler) Install(c *gin.Context) {
@@ -410,7 +517,48 @@ func (h *AssistantHandler) Install(c *gin.Context) {
 		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, "读取模型密钥失败")
 		return
 	}
-	status, err := K8s.InstallOpsAgent(k8s.OpsAgentConfig{NodeName: request.NodeName, Storage: request.Storage, StorageClassName: request.StorageClassName, Image: request.Image, Model: provider.Model, BaseURL: provider.BaseURL}, apiKey)
+	config := k8s.OpsAgentConfig{NodeName: request.NodeName, Storage: request.Storage, StorageClassName: request.StorageClassName, Image: request.Image, Model: provider.Model, BaseURL: provider.BaseURL}
+	if migration, migrationErr := h.store.FindActiveAssistantRuntimeMigration(); migrationErr == nil {
+		h.startAssistantRuntimeMigration(migration.ID)
+		_ = h.store.SetSystemConfig(assistantDefaultProviderConfigKey, strconv.FormatUint(uint64(provider.ID), 10))
+		model.SuccessWithMessage(c, gin.H{"migration": migration, "runtime_status": K8s.OpsAgentStatus()}, "智能助手 Runtime 存储迁移正在继续")
+		return
+	} else if migrationErr != gorm.ErrRecordNotFound {
+		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "读取 Runtime 迁移状态失败")
+		return
+	}
+	if legacyPVC, legacyErr := K8s.OpsAgentPVCInfo(k8s.LegacyOpsAgentRuntimeNamespace); legacyErr == nil {
+		legacyStatus := K8s.LegacyOpsAgentStatus()
+		migration := &model.AssistantRuntimeMigration{
+			ProviderID:       provider.ID,
+			SourceNamespace:  k8s.LegacyOpsAgentRuntimeNamespace,
+			SourcePVCName:    legacyPVC.Name,
+			SourceNodeName:   legacyPVC.BoundNode,
+			SourceReplicas:   legacyStatus.DesiredReplicas,
+			TargetNamespace:  k8s.OpsAgentRuntimeNamespace,
+			TargetPVCName:    "cylism-ops-agent-audit",
+			TargetNodeName:   request.NodeName,
+			Storage:          request.Storage,
+			StorageClassName: request.StorageClassName,
+			Image:            request.Image,
+			Status:           model.AssistantRuntimeMigrationPending,
+		}
+		if migration.SourceReplicas == 0 {
+			migration.SourceReplicas = 1
+		}
+		if err := h.store.CreateAssistantRuntimeMigration(migration); err != nil {
+			model.Error(c, http.StatusInternalServerError, model.CodeDBError, "创建 Runtime 迁移任务失败")
+			return
+		}
+		h.startAssistantRuntimeMigration(migration.ID)
+		_ = h.store.SetSystemConfig(assistantDefaultProviderConfigKey, strconv.FormatUint(uint64(provider.ID), 10))
+		model.SuccessWithMessage(c, gin.H{"migration": migration, "runtime_status": K8s.OpsAgentStatus()}, "智能助手 Runtime 存储迁移已开始")
+		return
+	} else if !apierrors.IsNotFound(legacyErr) {
+		model.Error(c, http.StatusBadRequest, model.CodeK8sAPIError, "读取旧 Runtime 审计 PVC 失败: "+legacyErr.Error())
+		return
+	}
+	status, err := K8s.InstallOpsAgent(config, apiKey)
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeK8sAPIError, err.Error())
 		return
