@@ -33,6 +33,7 @@ describe('AssistantSettings', () => {
     expect(wrapper.text()).toContain('gpt-4.1-mini')
     expect(wrapper.text()).toContain('正在复制审计数据')
     expect(wrapper.text()).toContain('Runtime 存储迁移')
+    expect(wrapper.findAll('.assistant-install select')[1].element.value).toBe('worker-a')
     wrapper.unmount()
   })
 
