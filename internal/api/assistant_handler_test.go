@@ -117,6 +117,54 @@ func TestAssistantStatusSeparatesModelConfigurationFromRuntimeReadiness(t *testi
 	}
 }
 
+func TestAssistantStatusReportsLegacyAuditPVCForMigration(t *testing.T) {
+	legacyClaim := &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{Name: "cylism-ops-agent-audit", Namespace: "default"},
+		Spec: corev1.PersistentVolumeClaimSpec{
+			VolumeName: "legacy-audit-pv",
+			Resources: corev1.VolumeResourceRequirements{Requests: corev1.ResourceList{
+				corev1.ResourceStorage: resource.MustParse("1Gi"),
+			}},
+		},
+		Status: corev1.PersistentVolumeClaimStatus{Phase: corev1.ClaimBound},
+	}
+	legacyVolume := &corev1.PersistentVolume{
+		ObjectMeta: metav1.ObjectMeta{Name: "legacy-audit-pv"},
+		Spec: corev1.PersistentVolumeSpec{
+			PersistentVolumeSource: corev1.PersistentVolumeSource{HostPath: &corev1.HostPathVolumeSource{Path: "/var/lib/rancher/k3s/storage/legacy"}},
+			NodeAffinity: &corev1.VolumeNodeAffinity{Required: &corev1.NodeSelector{NodeSelectorTerms: []corev1.NodeSelectorTerm{{MatchExpressions: []corev1.NodeSelectorRequirement{{
+				Key: corev1.LabelHostname, Operator: corev1.NodeSelectorOpIn, Values: []string{"worker-a"},
+			}}}}}},
+		},
+	}
+	originalK8s := K8s
+	K8s = &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(legacyClaim, legacyVolume)}
+	defer func() { K8s = originalK8s }()
+
+	st, err := store.New(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.GET("/api/assistant/status", NewAssistantHandler(st, nil).Status)
+	response := serve(router, newJSONRequest(http.MethodGet, "/api/assistant/status", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("assistant status response: %d %s", response.Code, response.Body.String())
+	}
+	for _, expected := range []string{
+		`"runtime_status":{"state":"not_installed"`,
+		`"legacy_runtime_status":{"state":"not_installed"`,
+		`"pvc_name":"cylism-ops-agent-audit"`,
+		`"node_name":"worker-a"`,
+		`"storage":"1Gi"`,
+	} {
+		if !strings.Contains(response.Body.String(), expected) {
+			t.Fatalf("assistant status missing %s: %s", expected, response.Body.String())
+		}
+	}
+}
+
 func TestAssistantUpdateDefaultProviderReconcilesRuntime(t *testing.T) {
 	st, err := store.New(":memory:")
 	if err != nil {

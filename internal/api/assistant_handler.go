@@ -99,6 +99,20 @@ func (h *AssistantHandler) Status(c *gin.Context) {
 		runtimeStatus = K8s.OpsAgentStatus()
 	}
 	result := gin.H{"runtime": "pydanticai", "configured": configured, "provider_count": len(providers), "default_provider_id": defaultID, "runtime_status": runtimeStatus}
+	if K8s != nil && runtimeStatus.State == "not_installed" {
+		if legacyPVC, err := K8s.OpsAgentPVCInfo(k8s.LegacyOpsAgentRuntimeNamespace); err == nil {
+			legacyStatus := K8s.LegacyOpsAgentStatus()
+			legacyStatus.Namespace = k8s.LegacyOpsAgentRuntimeNamespace
+			legacyStatus.PVCName = legacyPVC.Name
+			legacyStatus.Storage = legacyPVC.Storage
+			legacyStatus.StorageClassName = legacyPVC.StorageClassName
+			legacyStatus.NodeName = legacyPVC.BoundNode
+			if legacyStatus.State == "not_installed" {
+				legacyStatus.Message = "发现旧版 Runtime 审计 PVC，等待迁移"
+			}
+			result["legacy_runtime_status"] = legacyStatus
+		}
+	}
 	if migration, migrationErr := h.store.FindActiveAssistantRuntimeMigration(); migrationErr == nil {
 		result["migration"] = migration
 	}
