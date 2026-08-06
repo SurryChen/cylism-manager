@@ -39,6 +39,7 @@ type OpsAgentConfig struct {
 type OpsAgentStatus struct {
 	State            string `json:"state"`
 	Message          string `json:"message"`
+	Namespace        string `json:"namespace,omitempty"`
 	NodeName         string `json:"node_name,omitempty"`
 	Image            string `json:"image,omitempty"`
 	Model            string `json:"model,omitempty"`

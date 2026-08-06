@@ -412,7 +412,7 @@ func pvcInfoFromResources(claim *corev1.PersistentVolumeClaim, storageClass *sto
 	} else {
 		info.OwnerType = "external"
 	}
-	if storage := claim.Status.Capacity.Storage(); storage != nil {
+	if storage := claim.Status.Capacity.Storage(); storage != nil && !storage.IsZero() {
 		info.Storage = storage.String()
 	} else if storage := claim.Spec.Resources.Requests.Storage(); storage != nil {
 		info.Storage = storage.String()
