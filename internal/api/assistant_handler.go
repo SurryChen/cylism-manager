@@ -18,7 +18,10 @@ import (
 	"gorm.io/gorm"
 )
 
-const assistantDefaultProviderConfigKey = "assistant_default_provider_id"
+const (
+	assistantDefaultProviderConfigKey = "assistant_default_provider_id"
+	assistantProviderTypeResponses    = "openai_responses"
+)
 
 type AssistantHandler struct {
 	store      *store.Store
@@ -107,6 +110,10 @@ func (h *AssistantHandler) CreateProvider(c *gin.Context) {
 	}
 	if request.IsDefault {
 		_ = h.store.SetSystemConfig(assistantDefaultProviderConfigKey, strconv.FormatUint(uint64(provider.ID), 10))
+		if err := h.reconcileRuntimeProvider(provider); err != nil {
+			model.Error(c, http.StatusBadGateway, model.CodeK8sAPIError, "模型提供商已保存，但 Runtime 更新失败: "+err.Error())
+			return
+		}
 	}
 	model.SuccessWithMessage(c, provider, "模型提供商已保存")
 }
@@ -132,12 +139,23 @@ func (h *AssistantHandler) UpdateProvider(c *gin.Context) {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
 		return
 	}
+	wasDefault := h.isDefaultProvider(provider.ID)
+	if !provider.Enabled && (wasDefault || request.IsDefault) {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "默认模型提供商不能停用")
+		return
+	}
 	if err := h.store.SaveAssistantProvider(provider); err != nil {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "更新模型提供商失败")
 		return
 	}
 	if request.IsDefault {
 		_ = h.store.SetSystemConfig(assistantDefaultProviderConfigKey, strconv.FormatUint(uint64(provider.ID), 10))
+	}
+	if wasDefault || request.IsDefault {
+		if err := h.reconcileRuntimeProvider(provider); err != nil {
+			model.Error(c, http.StatusBadGateway, model.CodeK8sAPIError, "模型提供商已更新，但 Runtime 更新失败: "+err.Error())
+			return
+		}
 	}
 	model.SuccessWithMessage(c, provider, "模型提供商已更新")
 }
@@ -148,13 +166,13 @@ func (h *AssistantHandler) DeleteProvider(c *gin.Context) {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "模型提供商 ID 无效")
 		return
 	}
+	if h.isDefaultProvider(uint(id)) {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "默认模型提供商正在被 Runtime 使用，请先切换默认模型或卸载 Runtime")
+		return
+	}
 	if err := h.store.DeleteAssistantProvider(uint(id)); err != nil {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "删除模型提供商失败")
 		return
-	}
-	defaultID, _ := h.store.GetSystemConfig(assistantDefaultProviderConfigKey)
-	if defaultID == strconv.FormatUint(id, 10) {
-		_ = h.store.SetSystemConfig(assistantDefaultProviderConfigKey, "")
 	}
 	model.Success(c, nil)
 }
@@ -237,11 +255,8 @@ func (h *AssistantHandler) providerFromRequest(request assistantProviderRequest,
 	if name == "" || modelName == "" {
 		return nil, fmt.Errorf("名称和模型不能为空")
 	}
-	if kind == "" {
-		kind = "openai_compatible"
-	}
-	if kind != "openai" && kind != "openai_compatible" {
-		return nil, fmt.Errorf("一期仅支持 OpenAI 或 OpenAI-compatible 提供商")
+	if kind != assistantProviderTypeResponses {
+		return nil, fmt.Errorf("当前仅支持 OpenAI Responses API 模型提供商")
 	}
 	provider := &model.AssistantProvider{Name: name, ProviderType: kind, BaseURL: strings.TrimRight(strings.TrimSpace(request.BaseURL), "/"), Model: modelName, Enabled: request.Enabled}
 	if existing != nil {
@@ -276,6 +291,36 @@ func (h *AssistantHandler) conversation(c *gin.Context) (*model.AssistantConvers
 		return nil, false
 	}
 	return conversation, true
+}
+
+func (h *AssistantHandler) isDefaultProvider(providerID uint) bool {
+	defaultID, _ := h.store.GetSystemConfig(assistantDefaultProviderConfigKey)
+	return defaultID == strconv.FormatUint(uint64(providerID), 10)
+}
+
+func (h *AssistantHandler) reconcileRuntimeProvider(provider *model.AssistantProvider) error {
+	if K8s == nil {
+		return nil
+	}
+	status := K8s.OpsAgentStatus()
+	if status.State == "not_installed" {
+		return nil
+	}
+	if status.State == "unavailable" || status.NodeName == "" || status.Storage == "" {
+		return fmt.Errorf("无法读取已部署 Runtime 的节点和存储配置: %s", status.Message)
+	}
+	apiKey, err := crypto.Decrypt(h.encKey, provider.APIKeyEncrypted)
+	if err != nil {
+		return fmt.Errorf("读取模型密钥失败: %w", err)
+	}
+	_, err = K8s.InstallOpsAgent(k8s.OpsAgentConfig{
+		NodeName: status.NodeName,
+		Storage:  status.Storage,
+		Image:    status.Image,
+		Model:    provider.Model,
+		BaseURL:  provider.BaseURL,
+	}, apiKey)
+	return err
 }
 
 func (h *AssistantHandler) callRuntime(c *gin.Context, conversationID uint, message string, pageContext map[string]string) (*pydanticDiagnosis, error) {
@@ -345,7 +390,7 @@ func (h *AssistantHandler) Install(c *gin.Context) {
 		request.ProviderID = uint(value)
 	}
 	provider, err := h.store.GetAssistantProvider(request.ProviderID)
-	if err != nil || !provider.Enabled {
+	if err != nil || !provider.Enabled || provider.ProviderType != assistantProviderTypeResponses {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "请选择已启用的模型提供商")
 		return
 	}
