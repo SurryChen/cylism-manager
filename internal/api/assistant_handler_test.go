@@ -1,8 +1,10 @@
 package api
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"strconv"
 	"strings"
 	"testing"
@@ -57,6 +59,43 @@ func TestAssistantProviderRequiresOpenAIResponsesAPI(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "OpenAI Responses API") {
 			t.Fatalf("provider type %q error = %v, want Responses API validation error", providerType, err)
 		}
+	}
+}
+
+func TestAssistantProviderProbeUsesResponsesAPI(t *testing.T) {
+	var received struct {
+		Model           string `json:"model"`
+		Input           string `json:"input"`
+		MaxOutputTokens int    `json:"max_output_tokens"`
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/v1/responses" {
+			t.Fatalf("probe path = %q", request.URL.Path)
+		}
+		if request.Header.Get("Authorization") != "Bearer sk-test" {
+			t.Fatalf("authorization = %q", request.Header.Get("Authorization"))
+		}
+		if err := json.NewDecoder(request.Body).Decode(&received); err != nil {
+			t.Fatal(err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"resp_probe"}`))
+	}))
+	defer server.Close()
+
+	handler := NewAssistantHandler(nil, []byte("01234567890123456789012345678901"))
+	handler.client = server.Client()
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.POST("/api/assistant/providers/test", handler.ProbeProvider)
+	response := serve(router, newJSONRequest(http.MethodPost, "/api/assistant/providers/test", gin.H{
+		"name": "Responses", "provider_type": assistantProviderTypeResponses, "base_url": server.URL + "/v1", "model": "gpt-4.1-mini", "api_key": "sk-test", "enabled": true,
+	}))
+	if response.Code != http.StatusOK {
+		t.Fatalf("provider probe response: %d %s", response.Code, response.Body.String())
+	}
+	if received.Model != "gpt-4.1-mini" || received.Input != "Reply with OK." || received.MaxOutputTokens != 1 {
+		t.Fatalf("unexpected probe request: %#v", received)
 	}
 }
 
