@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -14,6 +15,8 @@ import (
 	"github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/gin-gonic/gin"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/validation"
 )
 
 const maxPromQLLength = 2048
@@ -33,6 +36,22 @@ type monitoringQueryFunc func(context.Context, string, url.Values) (interface{},
 type monitoringDashboardQuery struct {
 	key   string
 	query string
+}
+
+type diskGrowthQuery struct {
+	key   string
+	query string
+}
+
+type diskGrowthItem struct {
+	Node        string   `json:"node,omitempty"`
+	MountPoint  string   `json:"mount_point,omitempty"`
+	Namespace   string   `json:"namespace,omitempty"`
+	PVC         string   `json:"pvc,omitempty"`
+	Pod         string   `json:"pod,omitempty"`
+	Container   string   `json:"container,omitempty"`
+	GrowthBytes float64  `json:"growth_bytes"`
+	Consumers   []string `json:"consumers,omitempty"`
 }
 
 var monitoringDashboardQueries = []monitoringDashboardQuery{
@@ -216,6 +235,202 @@ func (h *MonitoringHandler) Dashboard(c *gin.Context) {
 		trends[result.key] = result.data
 	}
 	model.Success(c, gin.H{"range": rangeName, "trends": trends})
+}
+
+// DiskGrowth ranks positive filesystem growth from the metrics already
+// collected by the managed VictoriaMetrics instance. The browser selects only
+// a bounded window and optional node; all PromQL is controlled here.
+func (h *MonitoringHandler) DiskGrowth(c *gin.Context) {
+	if K8s == nil {
+		k8sUnavailable(c)
+		return
+	}
+	rangeName := c.DefaultQuery("range", "6h")
+	rangeSpec, ok := monitoringRanges[rangeName]
+	if !ok {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "时间范围仅支持 1h、6h、24h 或 7d")
+		return
+	}
+	node := strings.TrimSpace(c.Query("node"))
+	if node != "" && len(validation.IsDNS1123Subdomain(node)) > 0 {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "节点名称无效")
+		return
+	}
+	if status := K8s.VictoriaMetricsStatus(); status.State != k8s.VictoriaMetricsStateReady {
+		model.Error(c, http.StatusConflict, model.CodeConflict, "VictoriaMetrics 尚未就绪")
+		return
+	}
+
+	queries := diskGrowthQueries(monitoringPromQLWindow(rangeSpec.window), node)
+	ctx, cancel := context.WithCancel(c.Request.Context())
+	defer cancel()
+	type diskGrowthResult struct {
+		key  string
+		data interface{}
+		err  error
+	}
+	results := make(chan diskGrowthResult, len(queries))
+	var group sync.WaitGroup
+	for _, item := range queries {
+		group.Add(1)
+		go func(item diskGrowthQuery) {
+			defer group.Done()
+			data, err := h.query(ctx, "/api/v1/query", url.Values{"query": []string{item.query}})
+			results <- diskGrowthResult{key: item.key, data: data, err: err}
+		}(item)
+	}
+	go func() {
+		group.Wait()
+		close(results)
+	}()
+
+	raw := make(map[string]interface{}, len(queries))
+	for result := range results {
+		if result.err != nil {
+			cancel()
+			model.Error(c, http.StatusBadGateway, model.CodeK8sAPIError, "查询 VictoriaMetrics 磁盘增长指标失败: "+result.err.Error())
+			return
+		}
+		raw[result.key] = result.data
+	}
+	consumers, err := pvcConsumers(c.Request.Context())
+	if err != nil {
+		model.Error(c, http.StatusBadGateway, model.CodeK8sAPIError, "读取 PVC 当前使用者失败: "+err.Error())
+		return
+	}
+	model.Success(c, gin.H{
+		"range":      rangeName,
+		"node":       node,
+		"mounts":     normalizeMountGrowth(raw["mounts"]),
+		"pvcs":       normalizePVCGrowth(raw["pvcs"], consumers),
+		"containers": normalizeContainerGrowth(raw["containers"]),
+	})
+}
+
+func monitoringPromQLWindow(window time.Duration) string {
+	switch window {
+	case time.Hour:
+		return "1h"
+	case 6 * time.Hour:
+		return "6h"
+	case 24 * time.Hour:
+		return "24h"
+	case 7 * 24 * time.Hour:
+		return "7d"
+	default:
+		return "6h"
+	}
+}
+
+func diskGrowthQueries(window, node string) []diskGrowthQuery {
+	nodeMatcher := ""
+	if node != "" {
+		nodeMatcher = ",node=" + strconv.Quote(node)
+	}
+	return []diskGrowthQuery{
+		{key: "mounts", query: fmt.Sprintf(`topk(12, sum by (node, mountpoint) (clamp_min(-delta(node_filesystem_avail_bytes{fstype!~"tmpfs|overlay",mountpoint!=""%s}[%s]), 0)))`, nodeMatcher, window)},
+		{key: "pvcs", query: fmt.Sprintf(`topk(12, max by (node, namespace, persistentvolumeclaim) (clamp_min(delta(kubelet_volume_stats_used_bytes{%s}[%s]), 0)))`, strings.TrimPrefix(nodeMatcher, ","), window)},
+		{key: "containers", query: fmt.Sprintf(`topk(12, max by (node, namespace, pod, container) (clamp_min(delta(container_fs_usage_bytes{container!="",pod!="",image!=""%s}[%s]), 0)))`, nodeMatcher, window)},
+	}
+}
+
+func pvcConsumers(ctx context.Context) (map[string][]string, error) {
+	pods, err := K8s.Clientset.CoreV1().Pods("").List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+	consumers := make(map[string][]string)
+	for _, pod := range pods.Items {
+		for _, volume := range pod.Spec.Volumes {
+			if volume.PersistentVolumeClaim == nil || volume.PersistentVolumeClaim.ClaimName == "" {
+				continue
+			}
+			key := pod.Namespace + "/" + volume.PersistentVolumeClaim.ClaimName
+			consumers[key] = append(consumers[key], pod.Name)
+		}
+	}
+	for key, names := range consumers {
+		sort.Strings(names)
+		consumers[key] = names
+	}
+	return consumers, nil
+}
+
+func normalizeMountGrowth(data interface{}) []diskGrowthItem {
+	items := make([]diskGrowthItem, 0)
+	for _, sample := range monitoringVectorSamples(data) {
+		if sample.value <= 0 {
+			continue
+		}
+		items = append(items, diskGrowthItem{Node: sample.label("node"), MountPoint: sample.label("mountpoint"), GrowthBytes: sample.value})
+	}
+	return items
+}
+
+func normalizePVCGrowth(data interface{}, consumers map[string][]string) []diskGrowthItem {
+	items := make([]diskGrowthItem, 0)
+	for _, sample := range monitoringVectorSamples(data) {
+		if sample.value <= 0 {
+			continue
+		}
+		namespace := sample.label("namespace")
+		claim := sample.label("persistentvolumeclaim")
+		items = append(items, diskGrowthItem{Node: sample.label("node"), Namespace: namespace, PVC: claim, GrowthBytes: sample.value, Consumers: consumers[namespace+"/"+claim]})
+	}
+	return items
+}
+
+func normalizeContainerGrowth(data interface{}) []diskGrowthItem {
+	items := make([]diskGrowthItem, 0)
+	for _, sample := range monitoringVectorSamples(data) {
+		if sample.value <= 0 {
+			continue
+		}
+		items = append(items, diskGrowthItem{Node: sample.label("node"), Namespace: sample.label("namespace"), Pod: sample.label("pod"), Container: sample.label("container"), GrowthBytes: sample.value})
+	}
+	return items
+}
+
+type monitoringVectorSample struct {
+	metric map[string]interface{}
+	value  float64
+}
+
+func (sample monitoringVectorSample) label(name string) string {
+	value, _ := sample.metric[name].(string)
+	return value
+}
+
+func monitoringVectorSamples(data interface{}) []monitoringVectorSample {
+	payload, ok := data.(map[string]interface{})
+	if !ok {
+		return nil
+	}
+	results, ok := payload["result"].([]interface{})
+	if !ok {
+		return nil
+	}
+	samples := make([]monitoringVectorSample, 0, len(results))
+	for _, raw := range results {
+		item, ok := raw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		metric, ok := item["metric"].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		value, ok := item["value"].([]interface{})
+		if !ok || len(value) < 2 {
+			continue
+		}
+		growth, err := strconv.ParseFloat(fmt.Sprint(value[1]), 64)
+		if err != nil {
+			continue
+		}
+		samples = append(samples, monitoringVectorSample{metric: metric, value: growth})
+	}
+	return samples
 }
 
 func monitoringRangeValues(query string, rangeSpec struct {
