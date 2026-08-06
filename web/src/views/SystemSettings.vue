@@ -31,6 +31,8 @@
         <span class="badge badge-offline">本轮先提供入口与状态展示</span>
       </section>
 
+      <AssistantSettings />
+
       <section class="card platform-update-card">
         <div class="card-header"><div><h2 class="card-title">平台自更新</h2><p class="settings-copy">GitHub Action 推送 latest 镜像后通知平台滚动更新自身工作负载。</p></div><span class="badge" :class="platform.webhook_configured ? 'badge-online' : 'badge-offline'">{{ platform.webhook_configured ? 'Webhook 已配置' : '待配置' }}</span></div>
         <div v-if="platform.deployment" class="detail-grid"><span class="detail-label">当前镜像</span><code>{{ platform.deployment.image || '-' }}</code><span class="detail-label">就绪副本</span><span>{{ platform.deployment.ready_replicas || 0 }} / {{ platform.deployment.desired_replicas || 1 }}</span></div>
@@ -50,6 +52,7 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { api } from '../api/index.js'
+import AssistantSettings from '../components/AssistantSettings.vue'
 
 const tailscale = ref({ initialized: false, ip: '', online: false })
 const platform = ref({ webhook_configured: false, image_prefix: '', deployment: null, releases: [] })

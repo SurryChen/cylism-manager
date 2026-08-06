@@ -165,6 +165,21 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 	// Alertmanager is an in-cluster client rather than a browser client. Its
 	// dedicated endpoint validates a per-install bearer token in the handler.
 	r.POST("/api/monitoring/alerts/notify", alertingHandler.Notify)
+	assistant := apiGroup.Group("/assistant")
+	{
+		h := NewAssistantHandler(s, encKey)
+		assistant.GET("/status", h.Status)
+		assistant.POST("/install", h.Install)
+		assistant.DELETE("", h.Uninstall)
+		assistant.GET("/providers", h.ListProviders)
+		assistant.POST("/providers", h.CreateProvider)
+		assistant.PUT("/providers/:id", h.UpdateProvider)
+		assistant.DELETE("/providers/:id", h.DeleteProvider)
+		assistant.GET("/conversations", h.ListConversations)
+		assistant.POST("/conversations", h.CreateConversation)
+		assistant.GET("/conversations/:id/messages", h.ListMessages)
+		assistant.POST("/conversations/:id/messages", h.SendMessage)
+	}
 	platform := apiGroup.Group("/platform")
 	{
 		platform.GET("/status", platformHandler.Status)
