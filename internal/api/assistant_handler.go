@@ -80,7 +80,18 @@ func (h *AssistantHandler) Status(c *gin.Context) {
 		return
 	}
 	defaultID, _ := h.store.GetSystemConfig(assistantDefaultProviderConfigKey)
-	model.Success(c, gin.H{"runtime": "pydanticai", "configured": len(providers) > 0, "provider_count": len(providers), "default_provider_id": defaultID})
+	configured := false
+	for _, provider := range providers {
+		if defaultID == strconv.FormatUint(uint64(provider.ID), 10) && provider.Enabled && provider.ProviderType == assistantProviderTypeResponses {
+			configured = true
+			break
+		}
+	}
+	runtimeStatus := &k8s.OpsAgentStatus{State: "unavailable", Message: "Kubernetes 集群未连接，无法读取 Runtime 状态"}
+	if K8s != nil {
+		runtimeStatus = K8s.OpsAgentStatus()
+	}
+	model.Success(c, gin.H{"runtime": "pydanticai", "configured": configured, "provider_count": len(providers), "default_provider_id": defaultID, "runtime_status": runtimeStatus})
 }
 
 func (h *AssistantHandler) ListProviders(c *gin.Context) {

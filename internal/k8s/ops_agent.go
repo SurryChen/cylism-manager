@@ -30,14 +30,16 @@ type OpsAgentConfig struct {
 }
 
 type OpsAgentStatus struct {
-	State         string `json:"state"`
-	Message       string `json:"message"`
-	NodeName      string `json:"node_name,omitempty"`
-	Image         string `json:"image,omitempty"`
-	Model         string `json:"model,omitempty"`
-	PVCName       string `json:"pvc_name,omitempty"`
-	Storage       string `json:"storage,omitempty"`
-	ReadyReplicas int32  `json:"ready_replicas"`
+	State           string `json:"state"`
+	Message         string `json:"message"`
+	NodeName        string `json:"node_name,omitempty"`
+	Image           string `json:"image,omitempty"`
+	Model           string `json:"model,omitempty"`
+	PVCName         string `json:"pvc_name,omitempty"`
+	Storage         string `json:"storage,omitempty"`
+	DesiredReplicas int32  `json:"desired_replicas"`
+	UpdatedReplicas int32  `json:"updated_replicas"`
+	ReadyReplicas   int32  `json:"ready_replicas"`
 }
 
 func (c *Client) OpsAgentStatus() *OpsAgentStatus {
@@ -56,6 +58,11 @@ func (c *Client) OpsAgentStatus() *OpsAgentStatus {
 		status.Message = fmt.Sprintf("读取智能助手状态失败: %v", err)
 		return status
 	}
+	status.DesiredReplicas = 1
+	if deployment.Spec.Replicas != nil {
+		status.DesiredReplicas = *deployment.Spec.Replicas
+	}
+	status.UpdatedReplicas = deployment.Status.UpdatedReplicas
 	status.ReadyReplicas = deployment.Status.AvailableReplicas
 	status.NodeName = deployment.Spec.Template.Spec.NodeSelector["kubernetes.io/hostname"]
 	for _, container := range deployment.Spec.Template.Spec.Containers {
@@ -75,12 +82,16 @@ func (c *Client) OpsAgentStatus() *OpsAgentStatus {
 			status.Storage = size.String()
 		}
 	}
-	if status.ReadyReplicas > 0 {
+	if deployment.Status.ObservedGeneration >= deployment.Generation && status.UpdatedReplicas >= status.DesiredReplicas && status.ReadyReplicas >= status.DesiredReplicas {
 		status.State = "ready"
 		status.Message = "智能助手 Runtime 已就绪"
 	} else {
 		status.State = "installing"
-		status.Message = deploymentStatusMessage(deployment)
+		if deployment.Status.ObservedGeneration < deployment.Generation || status.UpdatedReplicas < status.DesiredReplicas {
+			status.Message = "智能助手 Runtime 正在应用新配置"
+		} else {
+			status.Message = "智能助手 Runtime 正在启动，等待工作负载就绪"
+		}
 	}
 	return status
 }

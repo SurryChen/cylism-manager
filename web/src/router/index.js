@@ -7,6 +7,7 @@ import AuditLogs from '../views/AuditLogs.vue'
 import Login from '../views/Login.vue'
 import DBAdmin from '../views/DBAdmin.vue'
 import SystemSettings from '../views/SystemSettings.vue'
+import ModelSettings from '../views/ModelSettings.vue'
 import Applications from '../views/Applications.vue'
 import ProjectEnvironments from '../views/ProjectEnvironments.vue'
 import ApplicationDetails from '../views/ApplicationDetails.vue'
@@ -48,6 +49,7 @@ const routes = [
   { path: '/certs/:namespace/:name', redirect: to => `/network/certificates/${to.params.namespace}/${to.params.name}` },
   { path: '/network/certificates/:namespace/:name', component: CertificateOperations, props: true },
   { path: '/settings/system', component: SystemSettings },
+  { path: '/settings/models', component: ModelSettings },
   { path: '/audit', component: AuditLogs },
   { path: '/db-admin', component: DBAdmin },
 ]

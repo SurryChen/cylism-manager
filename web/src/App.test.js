@@ -65,6 +65,7 @@ describe('Glass UI application shell', () => {
     expect(navigation.text()).not.toContain('审计')
     expect(mobileNavigation.text()).toContain('概览')
     expect(mobileNavigation.text()).toContain('系统设置')
+    expect(mobileNavigation.text()).toContain('模型配置')
     expect(mobileNavigation.text()).not.toContain('数据管理')
   })
 
