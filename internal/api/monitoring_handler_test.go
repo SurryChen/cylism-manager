@@ -186,6 +186,16 @@ func TestMonitoringDiskGrowthRejectsUnsupportedRangeAndUnreadyInstance(t *testin
 	}
 }
 
+func TestNormalizeMountGrowthSortsLargestFirst(t *testing.T) {
+	items := normalizeMountGrowth(map[string]interface{}{"result": []interface{}{
+		map[string]interface{}{"metric": map[string]interface{}{"node": "node-a", "mountpoint": "/small"}, "value": []interface{}{float64(1), "7340032"}},
+		map[string]interface{}{"metric": map[string]interface{}{"node": "node-a", "mountpoint": "/large"}, "value": []interface{}{float64(1), "775946240"}},
+	}})
+	if len(items) != 2 || items[0].MountPoint != "/large" || items[0].GrowthBytes != 775946240 {
+		t.Fatalf("expected largest growth first, got %#v", items)
+	}
+}
+
 func slicesEqual(left, right []string) bool {
 	if len(left) != len(right) {
 		return false

@@ -328,7 +328,7 @@ func diskGrowthQueries(window, node string) []diskGrowthQuery {
 		nodeMatcher = ",node=" + strconv.Quote(node)
 	}
 	return []diskGrowthQuery{
-		{key: "mounts", query: fmt.Sprintf(`topk(12, sum by (node, mountpoint) (clamp_min(-delta(node_filesystem_avail_bytes{fstype!~"tmpfs|overlay",mountpoint!=""%s}[%s]), 0)))`, nodeMatcher, window)},
+		{key: "mounts", query: fmt.Sprintf(`topk(12, max by (node, mountpoint) (clamp_min(-delta(node_filesystem_avail_bytes{fstype!~"tmpfs|overlay",mountpoint!~"/etc/(hosts|hostname|resolv\.conf)"%s}[%s]), 0)))`, nodeMatcher, window)},
 		{key: "pvcs", query: fmt.Sprintf(`topk(12, max by (node, namespace, persistentvolumeclaim) (clamp_min(delta(kubelet_volume_stats_used_bytes{%s}[%s]), 0)))`, strings.TrimPrefix(nodeMatcher, ","), window)},
 		{key: "containers", query: fmt.Sprintf(`topk(12, max by (node, namespace, pod, container) (clamp_min(delta(container_fs_usage_bytes{container!="",pod!="",image!=""%s}[%s]), 0)))`, nodeMatcher, window)},
 	}
@@ -364,7 +364,7 @@ func normalizeMountGrowth(data interface{}) []diskGrowthItem {
 		}
 		items = append(items, diskGrowthItem{Node: sample.label("node"), MountPoint: sample.label("mountpoint"), GrowthBytes: sample.value})
 	}
-	return items
+	return sortDiskGrowthItems(items)
 }
 
 func normalizePVCGrowth(data interface{}, consumers map[string][]string) []diskGrowthItem {
@@ -377,7 +377,7 @@ func normalizePVCGrowth(data interface{}, consumers map[string][]string) []diskG
 		claim := sample.label("persistentvolumeclaim")
 		items = append(items, diskGrowthItem{Node: sample.label("node"), Namespace: namespace, PVC: claim, GrowthBytes: sample.value, Consumers: consumers[namespace+"/"+claim]})
 	}
-	return items
+	return sortDiskGrowthItems(items)
 }
 
 func normalizeContainerGrowth(data interface{}) []diskGrowthItem {
@@ -388,7 +388,21 @@ func normalizeContainerGrowth(data interface{}) []diskGrowthItem {
 		}
 		items = append(items, diskGrowthItem{Node: sample.label("node"), Namespace: sample.label("namespace"), Pod: sample.label("pod"), Container: sample.label("container"), GrowthBytes: sample.value})
 	}
+	return sortDiskGrowthItems(items)
+}
+
+func sortDiskGrowthItems(items []diskGrowthItem) []diskGrowthItem {
+	sort.SliceStable(items, func(left, right int) bool {
+		if items[left].GrowthBytes != items[right].GrowthBytes {
+			return items[left].GrowthBytes > items[right].GrowthBytes
+		}
+		return diskGrowthItemKey(items[left]) < diskGrowthItemKey(items[right])
+	})
 	return items
+}
+
+func diskGrowthItemKey(item diskGrowthItem) string {
+	return strings.Join([]string{item.Node, item.MountPoint, item.Namespace, item.PVC, item.Pod, item.Container}, "\x00")
 }
 
 type monitoringVectorSample struct {
