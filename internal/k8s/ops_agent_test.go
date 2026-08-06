@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 )
@@ -52,5 +53,21 @@ func TestOpsAgentStatusWaitsForTheUpdatedDeploymentTemplate(t *testing.T) {
 	}
 	if status = client.OpsAgentStatus(); status.State != "ready" {
 		t.Fatalf("state = %q, want ready after the updated template is available", status.State)
+	}
+}
+
+func TestOpsAgentPVCMigratesToInfrastructureLabels(t *testing.T) {
+	client := &Client{Clientset: fake.NewSimpleClientset(&corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{Name: opsAgentName + "-audit", Namespace: opsAgentNamespace, Labels: opsAgentLabels()},
+	})}
+	if err := client.upsertOpsAgentPVC(OpsAgentConfig{Storage: "1Gi"}); err != nil {
+		t.Fatal(err)
+	}
+	claim, err := client.Clientset.CoreV1().PersistentVolumeClaims(opsAgentNamespace).Get(client.Ctx(), opsAgentName+"-audit", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claim.Labels[InfrastructureLabel] != InfrastructureOpsAgent || claim.Labels["cylism.io/component"] != "assistant" {
+		t.Fatalf("assistant audit PVC was not migrated to infrastructure labels: %#v", claim.Labels)
 	}
 }

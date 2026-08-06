@@ -113,6 +113,18 @@ describe('PersistentVolumes view', () => {
     expect(wrapper.get('.monitoring-link').classes()).toContain('monitoring-link')
   })
 
+  it('links the assistant infrastructure PVC to model configuration', async () => {
+    const { api } = await import('../api/index.js')
+    api.get.mockImplementation(mockInventory({ claims: [{ name: 'cylism-ops-agent-audit', namespace: 'default', managed: true, owner_type: 'infrastructure', owner: 'ops-agent', owner_name: '智能助手 Runtime', read_only: true, phase: 'Bound' }] }))
+    const wrapper = mount(PersistentVolumes)
+    await settle()
+
+    expect(wrapper.text()).toContain('基础设施')
+    expect(wrapper.text()).toContain('智能助手 Runtime')
+    expect(wrapper.get('.monitoring-link').text()).toBe('查看模型配置')
+    expect(wrapper.get('.monitoring-link').attributes('href')).toBe('#/settings/models')
+  })
+
   it('loads local PVC usage without blocking the inventory', async () => {
     const { api } = await import('../api/index.js')
     api.get.mockImplementation(mockInventory({
