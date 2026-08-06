@@ -81,6 +81,10 @@ const readyNodes = computed(() => nodes.value.filter(node => node.ready !== fals
 const runtimeStatus = computed(() => status.value.runtime_status || {})
 const legacyRuntimeStatus = computed(() => status.value.legacy_runtime_status || null)
 const hasLegacyRuntime = computed(() => runtimeStatus.value.state === 'not_installed' && !!legacyRuntimeStatus.value?.pvc_name)
+const installDefaults = computed(() => {
+  if (hasLegacyRuntime.value) return legacyRuntimeStatus.value
+  return runtimeStatus.value.state === 'ready' ? runtimeStatus.value : null
+})
 const migration = computed(() => status.value.migration || null)
 const migrationNodes = computed(() => readyNodes.value.filter(node => node.name !== runtimeStatus.value.node_name))
 const runtimeLabel = computed(() => ({ ready: 'Runtime 已就绪', installing: 'Runtime 部署中', not_installed: 'Runtime 未部署', degraded: 'Runtime 状态异常', unavailable: 'Runtime 状态不可用' }[runtimeStatus.value.state] || 'Runtime 状态未知'))
@@ -117,11 +121,11 @@ async function refresh() {
     installForm.value.provider_id = defaultProviderID.value || providers.value[0]?.id || 0
   }
   if (nodeResult.status === "fulfilled") nodes.value = nodeResult.value || []
-  if (!installForm.value.node_name && hasLegacyRuntime.value && readyNodes.value.some(node => node.name === legacyRuntimeStatus.value.node_name)) {
-    installForm.value.node_name = legacyRuntimeStatus.value.node_name
+  if (!installForm.value.node_name && installDefaults.value?.node_name && readyNodes.value.some(node => node.name === installDefaults.value.node_name)) {
+    installForm.value.node_name = installDefaults.value.node_name
   }
-  if (hasLegacyRuntime.value && installForm.value.storage === '1Gi' && legacyRuntimeStatus.value.storage) {
-    installForm.value.storage = legacyRuntimeStatus.value.storage
+  if (installDefaults.value && installForm.value.storage === '1Gi' && installDefaults.value.storage) {
+    installForm.value.storage = installDefaults.value.storage
   }
   refreshing.value = false
 }
