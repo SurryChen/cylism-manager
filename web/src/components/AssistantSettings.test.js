@@ -6,7 +6,7 @@ import AssistantSettings from './AssistantSettings.vue'
 vi.mock('../api/index.js', () => ({
   api: {
     get: vi.fn(path => {
-      if (path === '/assistant/status') return Promise.resolve({ configured: true, default_provider_id: '1', runtime_status: { state: 'ready', message: '智能助手 Runtime 已就绪', ready_replicas: 1, node_name: 'worker-a', storage: '1Gi', model: 'gpt-4.1-mini' } })
+      if (path === '/assistant/status') return Promise.resolve({ configured: true, default_provider_id: '1', runtime_status: { state: 'ready', message: '智能助手 Runtime 已就绪', ready_replicas: 1, node_name: 'worker-a', storage: '1Gi', model: 'gpt-4.1-mini' }, migration: { status: 'copying', bytes_copied: 1024 } })
       if (path === '/assistant/providers') return Promise.resolve({ providers: [{ id: 1, name: 'Responses', model: 'gpt-4.1-mini', enabled: true }], default_provider_id: '1' })
       if (path === '/nodes') return Promise.resolve([{ name: 'worker-a', ready: true }])
       return Promise.resolve({})
@@ -30,6 +30,8 @@ describe('AssistantSettings', () => {
     expect(wrapper.text()).toContain('1 / 1')
     expect(wrapper.text()).toContain('worker-a')
     expect(wrapper.text()).toContain('gpt-4.1-mini')
+    expect(wrapper.text()).toContain('正在复制审计数据')
+    expect(wrapper.text()).toContain('Runtime 存储迁移')
     wrapper.unmount()
   })
 })

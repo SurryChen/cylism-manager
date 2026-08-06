@@ -250,7 +250,7 @@ func (h *K8sHandler) runHostDirectoryPVCImport(id uint, replaceTarget bool) {
 	if err := h.store.UpdateHostDirectoryPVCImport(task, model.PVCImportStatusCopying, "正在将宿主机目录复制到 PVC"); err != nil {
 		return
 	}
-	bytesCopied, err := h.streamPVCData(source, target, task.SourcePath, task.TargetPath)
+	bytesCopied, err := streamPVCData(source, target, task.SourcePath, task.TargetPath, h.encKey)
 	task.BytesCopied = bytesCopied
 	if err != nil {
 		h.rollbackHostDirectoryImportTarget(task, target)
@@ -348,7 +348,7 @@ func (h *K8sHandler) stopPVCImportWorkloads(namespace, claimName string) (map[st
 			return replicas, err
 		}
 		replicas[deployment.Name] = count
-		if err := h.waitForDeploymentPods(namespace, deployment.Name, false, 90*time.Second); err != nil {
+		if err := waitForDeploymentPods(namespace, deployment.Name, false, 90*time.Second); err != nil {
 			return replicas, err
 		}
 	}
@@ -361,7 +361,7 @@ func (h *K8sHandler) restorePVCImportWorkloads(namespace string, replicas map[st
 			return err
 		}
 		if count > 0 {
-			if err := h.waitForDeploymentPods(namespace, name, true, 2*time.Minute); err != nil {
+			if err := waitForDeploymentPods(namespace, name, true, 2*time.Minute); err != nil {
 				return err
 			}
 		}

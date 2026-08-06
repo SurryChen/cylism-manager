@@ -50,6 +50,7 @@ func New(dsn string) (*Store, error) {
 		&model.AssistantProvider{},
 		&model.AssistantConversation{},
 		&model.AssistantMessage{},
+		&model.AssistantRuntimeMigration{},
 		&model.PlatformRelease{},
 		&model.PlatformWebhookNonce{},
 		&model.Project{},

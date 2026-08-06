@@ -170,6 +170,7 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 		h := NewAssistantHandler(s, encKey)
 		assistant.GET("/status", h.Status)
 		assistant.POST("/install", h.Install)
+		assistant.POST("/runtime/migrations", h.MigrateRuntimeNode)
 		assistant.DELETE("", h.Uninstall)
 		assistant.GET("/providers", h.ListProviders)
 		assistant.POST("/providers", h.CreateProvider)

@@ -1,6 +1,10 @@
 package store
 
-import "github.com/cylism/cylism-manager/internal/model"
+import (
+	"time"
+
+	"github.com/cylism/cylism-manager/internal/model"
+)
 
 func (s *Store) CreateAssistantProvider(provider *model.AssistantProvider) error {
 	return s.db.Create(provider).Error
@@ -55,4 +59,38 @@ func (s *Store) CreateAssistantMessage(message *model.AssistantMessage) error {
 func (s *Store) ListAssistantMessages(conversationID uint) ([]model.AssistantMessage, error) {
 	var messages []model.AssistantMessage
 	return messages, s.db.Where("conversation_id = ?", conversationID).Order("id asc").Find(&messages).Error
+}
+
+func (s *Store) CreateAssistantRuntimeMigration(migration *model.AssistantRuntimeMigration) error {
+	if migration.StartedAt == nil {
+		now := time.Now()
+		migration.StartedAt = &now
+	}
+	return s.db.Create(migration).Error
+}
+
+func (s *Store) GetAssistantRuntimeMigration(id uint) (*model.AssistantRuntimeMigration, error) {
+	var migration model.AssistantRuntimeMigration
+	if err := s.db.First(&migration, id).Error; err != nil {
+		return nil, err
+	}
+	return &migration, nil
+}
+
+func (s *Store) FindActiveAssistantRuntimeMigration() (*model.AssistantRuntimeMigration, error) {
+	var migration model.AssistantRuntimeMigration
+	err := s.db.Where("status NOT IN ?", []string{model.AssistantRuntimeMigrationSucceeded, model.AssistantRuntimeMigrationFailed}).Order("created_at desc").First(&migration).Error
+	if err != nil {
+		return nil, err
+	}
+	return &migration, nil
+}
+
+func (s *Store) UpdateAssistantRuntimeMigration(migration *model.AssistantRuntimeMigration, status, detail string) error {
+	migration.Status, migration.Detail = status, detail
+	if model.IsAssistantRuntimeMigrationTerminal(status) {
+		now := time.Now()
+		migration.CompletedAt = &now
+	}
+	return s.db.Save(migration).Error
 }

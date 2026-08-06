@@ -131,6 +131,20 @@ func (c *Client) GetManagedPVC(namespace, name string, environmentID uint) (*Per
 	return &info, nil
 }
 
+// GetPVCInfo resolves local-path metadata for a known PVC. Callers remain
+// responsible for applying their own platform ownership boundary.
+func (c *Client) GetPVCInfo(namespace, name string) (*PersistentVolumeClaimInfo, error) {
+	claim, err := c.Clientset.CoreV1().PersistentVolumeClaims(namespace).Get(c.Ctx(), name, metav1.GetOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("get persistentvolumeclaim %s/%s: %w", namespace, name, err)
+	}
+	info, err := c.pvcInfo(claim)
+	if err != nil {
+		return nil, err
+	}
+	return &info, nil
+}
+
 func (c *Client) CreateManagedPVC(namespace string, environmentID uint, request PersistentVolumeClaimRequest) (*corev1.PersistentVolumeClaim, error) {
 	name := strings.TrimSpace(request.Name)
 	if name == "" || len(validation.IsDNS1123Label(name)) > 0 {
@@ -177,10 +191,35 @@ func (c *Client) CreatePVCBindingPod(namespace, migrationID, claimName, nodeName
 		},
 	}
 	created, err := c.Clientset.CoreV1().Pods(namespace).Create(c.Ctx(), pod, metav1.CreateOptions{})
+	if apierrors.IsAlreadyExists(err) {
+		return c.Clientset.CoreV1().Pods(namespace).Get(c.Ctx(), pod.Name, metav1.GetOptions{})
+	}
 	if err != nil {
 		return nil, fmt.Errorf("create PVC binding pod: %w", err)
 	}
 	return created, nil
+}
+
+// WaitForPVCBound waits for a specifically named claim without assuming it is
+// application-owned. Infrastructure migrations use this alongside their own
+// fixed-resource ownership checks.
+func (c *Client) WaitForPVCBound(ctx context.Context, namespace, name string) (*PersistentVolumeClaimInfo, error) {
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	for {
+		claim, err := c.GetPVCInfo(namespace, name)
+		if err != nil {
+			return nil, err
+		}
+		if claim.Phase == string(corev1.ClaimBound) {
+			return claim, nil
+		}
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("等待目标 PVC 绑定: %w", ctx.Err())
+		case <-ticker.C:
+		}
+	}
 }
 
 func (c *Client) DeletePVCBindingPod(namespace, migrationID string) error {

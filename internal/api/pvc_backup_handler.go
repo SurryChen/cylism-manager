@@ -143,7 +143,7 @@ func (h *K8sHandler) executePersistentVolumeBackup(backupID uint) {
 		h.failPersistentVolumeBackup(backup, err)
 		return
 	}
-	bytesCopied, err := h.streamPVCData(source, target, claim.LocalPath, backup.BackupPath)
+	bytesCopied, err := streamPVCData(source, target, claim.LocalPath, backup.BackupPath, h.encKey)
 	if err != nil {
 		h.failPersistentVolumeBackup(backup, err)
 		return
@@ -199,7 +199,7 @@ func (h *K8sHandler) executePersistentVolumeRestore(backupID uint) {
 			return
 		}
 		replicas[deployment.Name] = count
-		if err := h.waitForDeploymentPods(environment.Namespace, deployment.Name, false, 90*time.Second); err != nil {
+		if err := waitForDeploymentPods(environment.Namespace, deployment.Name, false, 90*time.Second); err != nil {
 			h.failPersistentVolumeRestore(backup, err)
 			return
 		}
@@ -210,7 +210,7 @@ func (h *K8sHandler) executePersistentVolumeRestore(backupID uint) {
 		h.failPersistentVolumeRestore(backup, fmt.Errorf("清空目标 PVC 失败: %s", strings.TrimSpace(string(out))))
 		return
 	}
-	if _, err := h.streamPVCData(archive, source, backup.BackupPath, claim.LocalPath); err != nil {
+	if _, err := streamPVCData(archive, source, backup.BackupPath, claim.LocalPath, h.encKey); err != nil {
 		h.restoreBackupReplicas(environment.Namespace, replicas)
 		h.failPersistentVolumeRestore(backup, err)
 		return
