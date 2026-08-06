@@ -136,6 +136,7 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 		monitoring.GET("/query", h.Query)
 		monitoring.GET("/query-range", h.QueryRange)
 		monitoring.GET("/dashboard", h.Dashboard)
+		monitoring.GET("/disk-growth", h.DiskGrowth)
 		monitoring.GET("/targets", h.Targets)
 	}
 	alertingHandler := NewAlertingHandler(authCfg.PlatformURL)

@@ -2,10 +2,12 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	k8sclient "github.com/cylism/cylism-manager/internal/k8s"
@@ -27,6 +29,7 @@ func setupMonitoringRouter(handler *MonitoringHandler) *gin.Engine {
 	group.GET("/query", handler.Query)
 	group.GET("/query-range", handler.QueryRange)
 	group.GET("/dashboard", handler.Dashboard)
+	group.GET("/disk-growth", handler.DiskGrowth)
 	group.GET("/targets", handler.Targets)
 	return router
 }
@@ -91,6 +94,108 @@ func TestMonitoringDashboardReturnsAllTrendSeries(t *testing.T) {
 			t.Fatalf("unexpected dashboard response: %s", response.Body.String())
 		}
 	}
+}
+
+func TestMonitoringDiskGrowthReturnsRankingsAndPVCConsumers(t *testing.T) {
+	original := K8s
+	K8s = &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(
+		&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "cylism-victoria-metrics", Namespace: "monitoring"}, Status: appsv1.DeploymentStatus{AvailableReplicas: 1}},
+		&appsv1.DaemonSet{ObjectMeta: metav1.ObjectMeta{Name: "cylism-node-exporter", Namespace: "monitoring"}, Status: appsv1.DaemonSetStatus{DesiredNumberScheduled: 1, NumberAvailable: 1}},
+		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "app-1", Namespace: "project-demo"}, Spec: corev1.PodSpec{Volumes: []corev1.Volume{{Name: "data", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: "data"}}}}}},
+	)}
+	defer func() { K8s = original }()
+
+	var mu sync.Mutex
+	queries := make([]string, 0, 3)
+	handler := NewMonitoringHandler()
+	handler.query = func(_ context.Context, path string, values url.Values) (interface{}, error) {
+		if path != "/api/v1/query" {
+			t.Fatalf("unexpected metric endpoint: %s", path)
+		}
+		query := values.Get("query")
+		mu.Lock()
+		queries = append(queries, query)
+		mu.Unlock()
+		switch {
+		case strings.Contains(query, "node_filesystem_avail_bytes"):
+			return map[string]interface{}{"resultType": "vector", "result": []interface{}{map[string]interface{}{"metric": map[string]interface{}{"node": "node-a", "mountpoint": "/var/lib"}, "value": []interface{}{float64(1), "1048576"}}}}, nil
+		case strings.Contains(query, "kubelet_volume_stats_used_bytes"):
+			return map[string]interface{}{"resultType": "vector", "result": []interface{}{map[string]interface{}{"metric": map[string]interface{}{"node": "node-a", "namespace": "project-demo", "persistentvolumeclaim": "data"}, "value": []interface{}{float64(1), "2097152"}}}}, nil
+		case strings.Contains(query, "container_fs_usage_bytes"):
+			return map[string]interface{}{"resultType": "vector", "result": []interface{}{map[string]interface{}{"metric": map[string]interface{}{"node": "node-a", "namespace": "project-demo", "pod": "app-1", "container": "api"}, "value": []interface{}{float64(1), "3145728"}}}}, nil
+		default:
+			t.Fatalf("unexpected disk growth query: %s", query)
+			return nil, nil
+		}
+	}
+
+	response := serve(setupMonitoringRouter(handler), newJSONRequest(http.MethodGet, "/api/monitoring/disk-growth?range=6h&node=node-a", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("unexpected disk growth response: %s", response.Body.String())
+	}
+	var payload struct {
+		Data struct {
+			Range  string `json:"range"`
+			Node   string `json:"node"`
+			Mounts []struct {
+				GrowthBytes float64 `json:"growth_bytes"`
+			} `json:"mounts"`
+			PVCs []struct {
+				Consumers []string `json:"consumers"`
+			} `json:"pvcs"`
+			Containers []struct {
+				Container string `json:"container"`
+			} `json:"containers"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Data.Range != "6h" || payload.Data.Node != "node-a" || len(payload.Data.Mounts) != 1 || payload.Data.Mounts[0].GrowthBytes != 1048576 || len(payload.Data.PVCs) != 1 || !slicesEqual(payload.Data.PVCs[0].Consumers, []string{"app-1"}) || len(payload.Data.Containers) != 1 || payload.Data.Containers[0].Container != "api" {
+		t.Fatalf("unexpected disk growth payload: %s", response.Body.String())
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(queries) != 3 {
+		t.Fatalf("expected three fixed queries, got %#v", queries)
+	}
+	for _, query := range queries {
+		if !strings.Contains(query, `node="node-a"`) {
+			t.Fatalf("node filter missing from query: %s", query)
+		}
+	}
+}
+
+func TestMonitoringDiskGrowthRejectsUnsupportedRangeAndUnreadyInstance(t *testing.T) {
+	original := K8s
+	K8s = &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset()}
+	defer func() { K8s = original }()
+
+	handler := NewMonitoringHandler()
+	handler.query = func(_ context.Context, _ string, _ url.Values) (interface{}, error) {
+		t.Fatal("metric query must not run when validation or readiness fails")
+		return nil, nil
+	}
+	response := serve(setupMonitoringRouter(handler), newJSONRequest(http.MethodGet, "/api/monitoring/disk-growth?range=30d", nil))
+	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "时间范围") {
+		t.Fatalf("unexpected range validation response: %s", response.Body.String())
+	}
+	response = serve(setupMonitoringRouter(handler), newJSONRequest(http.MethodGet, "/api/monitoring/disk-growth?range=1h", nil))
+	if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), "尚未就绪") {
+		t.Fatalf("unexpected readiness response: %s", response.Body.String())
+	}
+}
+
+func slicesEqual(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
 }
 
 func TestMonitoringInstallCreatesPVCInstance(t *testing.T) {

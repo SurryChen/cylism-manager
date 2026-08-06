@@ -27,7 +27,7 @@ describe('Monitoring view', () => {
   it('uses the shared monitoring workspace header', () => {
     const wrapper = mount(Monitoring)
     expect(wrapper.get('.section-tabs-header').find('h1').text()).toBe('集群监控')
-    expect(wrapper.findAll('.section-tab')).toHaveLength(4)
+    expect(wrapper.findAll('.section-tab')).toHaveLength(5)
     expect(wrapper.get('.section-tab.is-active').text()).toBe('概览')
   })
 
@@ -59,6 +59,7 @@ describe('Monitoring view', () => {
     expect(wrapper.text()).toContain('42.5%')
     expect(apiMocks.get).toHaveBeenCalledWith('/monitoring/dashboard?range=6h')
     expect(apiMocks.get).not.toHaveBeenCalledWith('/monitoring/targets')
+    expect(apiMocks.get).not.toHaveBeenCalledWith(expect.stringContaining('/monitoring/disk-growth'))
     expect(wrapper.get('.trend-node-trigger').text()).toContain('全部节点')
     await wrapper.get('.trend-node-trigger').trigger('click')
     expect(wrapper.findAll('.trend-node-option')).toHaveLength(1)
@@ -72,6 +73,10 @@ describe('Monitoring view', () => {
     await flushPromises()
     expect(apiMocks.get).toHaveBeenCalledWith(expect.stringContaining('/monitoring/query?query='))
     expect(apiMocks.get).not.toHaveBeenCalledWith('/monitoring/targets')
+    expect(apiMocks.get).not.toHaveBeenCalledWith(expect.stringContaining('/monitoring/disk-growth'))
+    await wrapper.findAll('.section-tab').find(tab => tab.text() === '磁盘').trigger('click')
+    await flushPromises()
+    expect(apiMocks.get).toHaveBeenCalledWith('/monitoring/disk-growth?range=6h')
     wrapper.unmount()
   })
 
