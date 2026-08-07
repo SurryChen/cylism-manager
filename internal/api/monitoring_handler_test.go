@@ -122,8 +122,6 @@ func TestMonitoringDiskGrowthReturnsRankingsAndPVCConsumers(t *testing.T) {
 			return map[string]interface{}{"resultType": "vector", "result": []interface{}{map[string]interface{}{"metric": map[string]interface{}{"node": "node-a", "mountpoint": "/var/lib"}, "value": []interface{}{float64(1), "1048576"}}}}, nil
 		case strings.Contains(query, "kubelet_volume_stats_used_bytes"):
 			return map[string]interface{}{"resultType": "vector", "result": []interface{}{map[string]interface{}{"metric": map[string]interface{}{"node": "node-a", "namespace": "project-demo", "persistentvolumeclaim": "data"}, "value": []interface{}{float64(1), "2097152"}}}}, nil
-		case strings.Contains(query, "container_fs_usage_bytes"):
-			return map[string]interface{}{"resultType": "vector", "result": []interface{}{map[string]interface{}{"metric": map[string]interface{}{"node": "node-a", "namespace": "project-demo", "pod": "app-1", "container": "api"}, "value": []interface{}{float64(1), "3145728"}}}}, nil
 		default:
 			t.Fatalf("unexpected disk growth query: %s", query)
 			return nil, nil
@@ -144,23 +142,23 @@ func TestMonitoringDiskGrowthReturnsRankingsAndPVCConsumers(t *testing.T) {
 			PVCs []struct {
 				Consumers []string `json:"consumers"`
 			} `json:"pvcs"`
-			Containers []struct {
-				Container string `json:"container"`
-			} `json:"containers"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
 		t.Fatal(err)
 	}
-	if payload.Data.Range != "6h" || payload.Data.Node != "node-a" || len(payload.Data.Mounts) != 1 || payload.Data.Mounts[0].GrowthBytes != 1048576 || len(payload.Data.PVCs) != 1 || !slicesEqual(payload.Data.PVCs[0].Consumers, []string{"app-1"}) || len(payload.Data.Containers) != 1 || payload.Data.Containers[0].Container != "api" {
+	if payload.Data.Range != "6h" || payload.Data.Node != "node-a" || len(payload.Data.Mounts) != 1 || payload.Data.Mounts[0].GrowthBytes != 1048576 || len(payload.Data.PVCs) != 1 || !slicesEqual(payload.Data.PVCs[0].Consumers, []string{"app-1"}) || strings.Contains(response.Body.String(), `"containers"`) {
 		t.Fatalf("unexpected disk growth payload: %s", response.Body.String())
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	if len(queries) != 3 {
-		t.Fatalf("expected three fixed queries, got %#v", queries)
+	if len(queries) != 2 {
+		t.Fatalf("expected two fixed queries, got %#v", queries)
 	}
 	for _, query := range queries {
+		if strings.Contains(query, "container_fs_usage_bytes") {
+			t.Fatalf("container writable-layer query must not run: %s", query)
+		}
 		if !strings.Contains(query, `node="node-a"`) {
 			t.Fatalf("node filter missing from query: %s", query)
 		}
@@ -174,10 +172,15 @@ func TestDiskGrowthMountQueryAvoidsInvalidPromQLStringEscapes(t *testing.T) {
 	}
 }
 
-func TestDiskGrowthContainerQueryDoesNotRequireOptionalImageLabel(t *testing.T) {
+func TestDiskGrowthDoesNotQueryUnsupportedContainerWritableLayerMetrics(t *testing.T) {
 	queries := diskGrowthQueries("6h", "")
-	if len(queries) != 3 || strings.Contains(queries[2].query, `image!=""`) || !strings.Contains(queries[2].query, `container!="",pod!=""`) {
-		t.Fatalf("unexpected container query: %#v", queries)
+	if len(queries) != 2 {
+		t.Fatalf("unexpected disk growth queries: %#v", queries)
+	}
+	for _, query := range queries {
+		if strings.Contains(query.query, "container_fs_usage_bytes") {
+			t.Fatalf("container writable-layer query must not be configured: %#v", queries)
+		}
 	}
 }
 

@@ -48,8 +48,6 @@ type diskGrowthItem struct {
 	MountPoint  string   `json:"mount_point,omitempty"`
 	Namespace   string   `json:"namespace,omitempty"`
 	PVC         string   `json:"pvc,omitempty"`
-	Pod         string   `json:"pod,omitempty"`
-	Container   string   `json:"container,omitempty"`
 	GrowthBytes float64  `json:"growth_bytes"`
 	Consumers   []string `json:"consumers,omitempty"`
 }
@@ -303,11 +301,10 @@ func (h *MonitoringHandler) DiskGrowth(c *gin.Context) {
 		consumers = map[string][]string{}
 	}
 	data := gin.H{
-		"range":      rangeName,
-		"node":       node,
-		"mounts":     normalizeMountGrowth(raw["mounts"]),
-		"pvcs":       normalizePVCGrowth(raw["pvcs"], consumers),
-		"containers": normalizeContainerGrowth(raw["containers"]),
+		"range":  rangeName,
+		"node":   node,
+		"mounts": normalizeMountGrowth(raw["mounts"]),
+		"pvcs":   normalizePVCGrowth(raw["pvcs"], consumers),
 	}
 	if len(warnings) > 0 {
 		data["warnings"] = warnings
@@ -338,7 +335,6 @@ func diskGrowthQueries(window, node string) []diskGrowthQuery {
 	return []diskGrowthQuery{
 		{key: "mounts", query: fmt.Sprintf(`topk(12, max by (node, mountpoint) (clamp_min(-delta(node_filesystem_avail_bytes{fstype!~"tmpfs|overlay",mountpoint!~"/etc/(hosts|hostname|resolv[.]conf)"%s}[%s]), 0)) and on (node, mountpoint) node_filesystem_avail_bytes{fstype!~"tmpfs|overlay",mountpoint!~"/etc/(hosts|hostname|resolv[.]conf)"%s})`, nodeMatcher, window, nodeMatcher)},
 		{key: "pvcs", query: fmt.Sprintf(`topk(12, max by (node, namespace, persistentvolumeclaim) (clamp_min(delta(kubelet_volume_stats_used_bytes{%s}[%s]), 0)))`, strings.TrimPrefix(nodeMatcher, ","), window)},
-		{key: "containers", query: fmt.Sprintf(`topk(12, max by (node, namespace, pod, container) (clamp_min(delta(container_fs_usage_bytes{container!="",pod!=""%s}[%s]), 0)))`, nodeMatcher, window)},
 	}
 }
 
@@ -388,17 +384,6 @@ func normalizePVCGrowth(data interface{}, consumers map[string][]string) []diskG
 	return sortDiskGrowthItems(items)
 }
 
-func normalizeContainerGrowth(data interface{}) []diskGrowthItem {
-	items := make([]diskGrowthItem, 0)
-	for _, sample := range monitoringVectorSamples(data) {
-		if sample.value <= 0 {
-			continue
-		}
-		items = append(items, diskGrowthItem{Node: sample.label("node"), Namespace: sample.label("namespace"), Pod: sample.label("pod"), Container: sample.label("container"), GrowthBytes: sample.value})
-	}
-	return sortDiskGrowthItems(items)
-}
-
 func sortDiskGrowthItems(items []diskGrowthItem) []diskGrowthItem {
 	sort.SliceStable(items, func(left, right int) bool {
 		if items[left].GrowthBytes != items[right].GrowthBytes {
@@ -410,7 +395,7 @@ func sortDiskGrowthItems(items []diskGrowthItem) []diskGrowthItem {
 }
 
 func diskGrowthItemKey(item diskGrowthItem) string {
-	return strings.Join([]string{item.Node, item.MountPoint, item.Namespace, item.PVC, item.Pod, item.Container}, "\x00")
+	return strings.Join([]string{item.Node, item.MountPoint, item.Namespace, item.PVC}, "\x00")
 }
 
 type monitoringVectorSample struct {
