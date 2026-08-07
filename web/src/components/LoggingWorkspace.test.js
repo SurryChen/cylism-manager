@@ -49,6 +49,22 @@ describe('LoggingWorkspace', () => {
     expect(wrapper.text()).toContain('request failed')
   })
 
+  it('keeps log search available when only part of Alloy is ready', async () => {
+    apiMocks.get.mockImplementation(path => {
+      if (path === '/monitoring/logs/status') return Promise.resolve({ state: 'degraded', message: 'Loki 已就绪，但 Alloy 仅 1/2 个节点就绪；部分节点日志不可用', node_name: 'node-a', loki_ready: 1, alloy_ready: 1, alloy_desired: 2 })
+      if (path === '/monitoring/logs/filters') return Promise.resolve({ namespaces: [], nodes: ['node-a'], pods: [] })
+      if (path === '/applications' || path === '/projects') return Promise.resolve([])
+      return Promise.resolve({})
+    })
+
+    const wrapper = mount(LoggingWorkspace, { props: { nodes: [{ name: 'node-a', ready: true }], storageClasses: [] } })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('部分节点日志不可用')
+    expect(wrapper.text()).toContain('日志检索')
+    expect(apiMocks.get).toHaveBeenCalledWith('/monitoring/logs/filters')
+  })
+
   it('sends an exact local time range as UTC values', async () => {
     apiMocks.get.mockImplementation(path => {
       if (path === '/monitoring/logs/status') return Promise.resolve({ state: 'ready', message: '日志采集中', node_name: 'node-a', loki_ready: 1, alloy_ready: 1, alloy_desired: 1, retention_days: 14 })

@@ -21,9 +21,10 @@
       <article class="metric"><span>日志保留</span><strong>{{ status.retention_days || '-' }} 天</strong><small>{{ status.storage || '-' }}{{ status.storage_class_name ? ` · ${status.storage_class_name}` : '' }}</small></article>
     </section>
 
-    <section v-if="status.state !== 'ready'" class="card logging-wait section-gap"><div class="empty-state"><span class="empty-icon">◌</span><span class="empty-text">{{ status.message || '等待 Loki 与 Alloy 工作负载就绪' }}</span></div><div class="modal-actions status-actions"><button class="icon-button" data-testid="logging-settings" title="日志设置" aria-label="日志设置" @click="openSettings"><Settings2 :size="16" /></button><button class="btn" :disabled="loading" @click="refresh">重新检测</button></div></section>
+    <section v-if="!logsAvailable" class="card logging-wait section-gap"><div class="empty-state"><span class="empty-icon">◌</span><span class="empty-text">{{ status.message || '等待 Loki 存储实例就绪' }}</span></div><div class="modal-actions status-actions"><button class="icon-button" data-testid="logging-settings" title="日志设置" aria-label="日志设置" @click="openSettings"><Settings2 :size="16" /></button><button class="btn" :disabled="loading" @click="refresh">重新检测</button></div></section>
 
     <template v-else>
+      <div v-if="status.state === 'degraded'" class="k8s-banner k8s-banner-warn section-gap">{{ status.message }}</div>
       <section class="logging-section-heading section-gap"><div><h2>日志检索</h2><p>按容器标准输出检索。日志不会在打开页面时自动加载。</p></div><div class="icon-actions"><button class="icon-button" data-testid="logging-settings" title="日志设置" aria-label="日志设置" @click="openSettings"><Settings2 :size="16" /></button><button class="icon-button" title="刷新日志状态与筛选项" aria-label="刷新日志状态与筛选项" :disabled="loading" @click="refresh"><RefreshCw :size="16" :class="{ 'is-spinning': loading }" /></button></div></section>
 
       <form class="card logging-query section-gap" @submit.prevent="queryLogs">
@@ -83,8 +84,9 @@ const settingsForm = ref({ retention_days: 14 })
 const queryForm = ref({ range: '1h', start_time: '', end_time: '', limit: 200, keyword: '', project_id: 0, environment_id: 0, application_id: 0, namespace: '', pod: '', container: '', node: '' })
 
 const readyNodes = computed(() => props.nodes.filter(node => node.ready))
-const statusLabel = computed(() => ({ ready: '已就绪', installing: '启动中', degraded: '异常' }[status.value?.state] || '未安装'))
-const statusBadge = computed(() => ({ ready: 'badge-online', installing: 'badge-deploying', degraded: 'badge-danger' }[status.value?.state] || 'badge-offline'))
+const logsAvailable = computed(() => Number(status.value?.loki_ready) > 0)
+const statusLabel = computed(() => ({ ready: '已就绪', installing: '启动中', degraded: '部分降级' }[status.value?.state] || '未安装'))
+const statusBadge = computed(() => ({ ready: 'badge-online', installing: 'badge-deploying', degraded: 'badge-warn' }[status.value?.state] || 'badge-offline'))
 const scopedApplications = computed(() => applications.value.filter(application => (!queryForm.value.project_id || application.project_id === queryForm.value.project_id) && (!queryForm.value.environment_id || application.environment_id === queryForm.value.environment_id)))
 const scopedEnvironments = computed(() => {
   const environments = new Map()
@@ -124,7 +126,7 @@ async function refresh() {
   try {
     status.value = await api.get('/monitoring/logs/status')
     if (!installForm.value.node_name) installForm.value.node_name = readyNodes.value[0]?.name || ''
-    if (status.value.state === 'ready') await loadFilters()
+    if (logsAvailable.value) await loadFilters()
   } catch (e) { error.value = e.message || '读取日志采集状态失败' } finally { loading.value = false }
 }
 

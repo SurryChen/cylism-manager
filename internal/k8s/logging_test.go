@@ -94,6 +94,18 @@ func TestLoggingStatusReportsReadyResources(t *testing.T) {
 	}
 }
 
+func TestLoggingStatusKeepsLokiAvailableDuringPartialAlloyCoverage(t *testing.T) {
+	client := &Client{Clientset: k8sfake.NewSimpleClientset(
+		&appsv1.StatefulSet{ObjectMeta: metav1.ObjectMeta{Name: lokiName, Namespace: victoriaMetricsNamespace}, Status: appsv1.StatefulSetStatus{ReadyReplicas: 1}},
+		&appsv1.DaemonSet{ObjectMeta: metav1.ObjectMeta{Name: alloyName, Namespace: victoriaMetricsNamespace}, Status: appsv1.DaemonSetStatus{DesiredNumberScheduled: 2, NumberAvailable: 1}},
+	)}
+
+	status := client.LoggingStatus()
+	if status.State != LoggingStateDegraded || status.LokiReady != 1 || status.AlloyReady != 1 || status.AlloyDesired != 2 || !strings.Contains(status.Message, "部分节点日志不可用") {
+		t.Fatalf("unexpected partial Alloy status: %#v", status)
+	}
+}
+
 func TestInstallLoggingRejectsRelocationAndUninstallRetainsPVC(t *testing.T) {
 	client := &Client{Clientset: k8sfake.NewSimpleClientset(
 		&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node-b"}, Status: corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}}}},

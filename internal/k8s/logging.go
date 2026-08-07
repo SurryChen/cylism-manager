@@ -70,7 +70,7 @@ func (c *Client) LoggingStatus() *LoggingStatus {
 		return status
 	}
 	status.State = LoggingStateInstalling
-	status.Message = "Loki 正在启动，等待日志采集器就绪"
+	status.Message = "Loki 正在启动"
 	status.NodeName = loki.Spec.Template.Spec.NodeSelector[corev1.LabelHostname]
 	status.LokiReady = loki.Status.ReadyReplicas
 	if raw := strings.TrimSpace(loki.Annotations[loggingRetentionAnnotation]); raw != "" {
@@ -86,8 +86,13 @@ func (c *Client) LoggingStatus() *LoggingStatus {
 
 	alloy, alloyErr := c.Clientset.AppsV1().DaemonSets(victoriaMetricsNamespace).Get(c.Ctx(), alloyName, metav1.GetOptions{})
 	if apierrors.IsNotFound(alloyErr) {
-		status.State = LoggingStateDegraded
-		status.Message = "Loki 已创建，但 Alloy 日志采集器未安装"
+		if status.LokiReady > 0 {
+			status.State = LoggingStateDegraded
+			status.Message = "Loki 已就绪，但 Alloy 日志采集器未安装；仅可查询已采集日志"
+		} else {
+			status.State = LoggingStateDegraded
+			status.Message = "Loki 与 Alloy 日志采集器均未就绪"
+		}
 		return status
 	}
 	if alloyErr != nil {
@@ -97,9 +102,14 @@ func (c *Client) LoggingStatus() *LoggingStatus {
 	}
 	status.AlloyDesired = alloy.Status.DesiredNumberScheduled
 	status.AlloyReady = alloy.Status.NumberAvailable
-	if status.LokiReady > 0 && status.AlloyDesired > 0 && status.AlloyReady == status.AlloyDesired {
-		status.State = LoggingStateReady
-		status.Message = "Loki 与 Alloy 已就绪，正在采集容器标准输出日志"
+	if status.LokiReady > 0 {
+		if status.AlloyDesired > 0 && status.AlloyReady == status.AlloyDesired {
+			status.State = LoggingStateReady
+			status.Message = "Loki 与 Alloy 已就绪，正在采集容器标准输出日志"
+		} else {
+			status.State = LoggingStateDegraded
+			status.Message = fmt.Sprintf("Loki 已就绪，但 Alloy 仅 %d/%d 个节点就绪；部分节点日志不可用", status.AlloyReady, status.AlloyDesired)
+		}
 	}
 	return status
 }
