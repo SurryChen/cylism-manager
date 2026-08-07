@@ -74,8 +74,6 @@
       <main class="app-content"><router-view /></main>
     </div>
 
-    <AssistantWidget />
-
     <div v-if="mobileNavOpen" class="drawer-scrim" @click="closeMobileNav"></div>
     <aside class="mobile-drawer" :class="{ 'is-open': mobileNavOpen }" data-testid="mobile-navigation" aria-label="移动导航">
       <div class="drawer-header"><span class="app-brand"><span class="brand-symbol"><Orbit /></span><strong>Cylism</strong></span><button class="icon-button" aria-label="关闭导航菜单" @click="closeMobileNav"><X :size="19" /></button></div>
@@ -93,10 +91,9 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Activity, Boxes, Bot, Check, FileText, FolderKanban, HardDrive, History, LayoutDashboard, Layers3, LogOut, Menu, Orbit, PackagePlus, Palette, Route, Server, Settings, Waypoints, X } from 'lucide-vue-next'
+import { Activity, Boxes, Check, FileText, FolderKanban, HardDrive, History, LayoutDashboard, Layers3, LogOut, Menu, Orbit, PackagePlus, Palette, Route, Server, Settings, Waypoints, X } from 'lucide-vue-next'
 import { clearTokens } from './api/index.js'
 import { usePalette } from './composables/usePalette.js'
-import AssistantWidget from './components/AssistantWidget.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -149,7 +146,6 @@ const navGroups = computed(() => [
     items: [
       { label: '审计', to: '/audit', icon: FileText },
       { label: '系统设置', to: '/settings/system', icon: Layers3 },
-      { label: '模型配置', to: '/settings/models', icon: Bot },
     ],
   },
 ])

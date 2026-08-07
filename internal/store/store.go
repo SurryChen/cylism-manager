@@ -47,10 +47,6 @@ func New(dsn string) (*Store, error) {
 		&model.OperationLog{},
 		&model.User{},
 		&model.SystemConfig{},
-		&model.AssistantProvider{},
-		&model.AssistantConversation{},
-		&model.AssistantMessage{},
-		&model.AssistantRuntimeMigration{},
 		&model.PlatformRelease{},
 		&model.PlatformWebhookNonce{},
 		&model.Project{},
@@ -90,6 +86,9 @@ func New(dsn string) (*Store, error) {
 	if err := removeObsoleteApplicationStackSchema(db); err != nil {
 		return nil, err
 	}
+	if err := removeObsoleteAssistantSchema(db); err != nil {
+		return nil, err
+	}
 
 	store := &Store{db: db}
 	if err := store.backfillManagedDomainEnvironments(); err != nil {
@@ -119,6 +118,24 @@ func removeObsoleteApplicationStackSchema(db *gorm.DB) error {
 			return err
 		}
 		return db.Exec("ALTER TABLE applications DROP COLUMN stack_template_id").Error
+	}
+	return nil
+}
+
+// removeObsoleteAssistantSchema permanently retires the former PydanticAI
+// Runtime data. New agent runtimes own their sessions and memory themselves.
+func removeObsoleteAssistantSchema(db *gorm.DB) error {
+	if db.Migrator().HasTable("system_configs") {
+		if err := db.Where("key = ?", "assistant_default_provider_id").Delete(&model.SystemConfig{}).Error; err != nil {
+			return err
+		}
+	}
+	for _, table := range []string{"assistant_messages", "assistant_conversations", "assistant_runtime_migrations", "assistant_providers"} {
+		if db.Migrator().HasTable(table) {
+			if err := db.Migrator().DropTable(table); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }

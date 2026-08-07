@@ -142,22 +142,6 @@ func TestInfrastructurePVCIsClassifiedAndProtectedFromGenericDelete(t *testing.T
 	}
 }
 
-func TestOpsAgentAuditPVCIsClassifiedAsInfrastructure(t *testing.T) {
-	client := &Client{Clientset: k8sfake.NewSimpleClientset(&corev1.PersistentVolumeClaim{
-		ObjectMeta: metav1.ObjectMeta{Name: "cylism-ops-agent-audit", Namespace: "default", Labels: infrastructurePVCLabels(InfrastructureOpsAgent)},
-	})}
-	claims, err := client.ListPVCs("default")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(claims) != 1 || claims[0].OwnerType != "infrastructure" || claims[0].Owner != InfrastructureOpsAgent || claims[0].OwnerName != "智能助手 Runtime" || !claims[0].ReadOnly {
-		t.Fatalf("expected read-only assistant infrastructure PVC, got %#v", claims)
-	}
-	if err := client.DeleteManagedPVC("default", "cylism-ops-agent-audit", 0); err == nil || !strings.Contains(err.Error(), "智能助手 Runtime") {
-		t.Fatalf("expected protected assistant PVC delete error, got %v", err)
-	}
-}
-
 func TestCreateManagedPVCUsesEnvironmentLabelsAndReadWriteOnce(t *testing.T) {
 	client := &Client{Clientset: k8sfake.NewSimpleClientset()}
 	created, err := client.CreateManagedPVC("project-knowledge", 3, PersistentVolumeClaimRequest{Name: "karakeep-data", Storage: "5Gi", StorageClassName: "local-path"})

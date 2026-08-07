@@ -18,8 +18,4 @@ describe('infrastructure route migration', () => {
     expect(router.currentRoute.value.fullPath).toBe(expectedPath)
   })
 
-  it('registers the model configuration page', async () => {
-    await router.push('/settings/models')
-    expect(router.currentRoute.value.fullPath).toBe('/settings/models')
-  })
 })
