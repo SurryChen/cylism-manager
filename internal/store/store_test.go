@@ -83,6 +83,49 @@ func TestApplicationStackSchemaIsRemoved(t *testing.T) {
 	}
 }
 
+func TestObsoleteAssistantSchemaIsRemoved(t *testing.T) {
+	dsn := filepath.Join(t.TempDir(), "store.db")
+	st, err := New(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, table := range []string{
+		"assistant_providers",
+		"assistant_conversations",
+		"assistant_messages",
+		"assistant_runtime_migrations",
+	} {
+		if err := st.DB().Exec("CREATE TABLE " + table + " (id integer primary key)").Error; err != nil {
+			t.Fatalf("create legacy table %s: %v", table, err)
+		}
+	}
+	if err := st.DB().Exec("INSERT INTO system_configs (key, value) VALUES (?, ?)", "assistant_default_provider_id", "1").Error; err != nil {
+		t.Fatal(err)
+	}
+
+	migrated, err := New(dsn)
+	if err != nil {
+		t.Fatalf("remove obsolete assistant schema: %v", err)
+	}
+	for _, table := range []string{
+		"assistant_providers",
+		"assistant_conversations",
+		"assistant_messages",
+		"assistant_runtime_migrations",
+	} {
+		if migrated.DB().Migrator().HasTable(table) {
+			t.Fatalf("legacy assistant table %s must be removed", table)
+		}
+	}
+	var count int64
+	if err := migrated.DB().Table("system_configs").Where("key = ?", "assistant_default_provider_id").Count(&count).Error; err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatal("legacy assistant default provider config must be removed")
+	}
+}
+
 func TestServerCRUD(t *testing.T) {
 	s := setupTestDB(t)
 
