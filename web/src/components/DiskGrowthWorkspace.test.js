@@ -33,4 +33,18 @@ describe('DiskGrowthWorkspace', () => {
     await flushPromises()
     expect(apiMocks.get).toHaveBeenCalledWith('/monitoring/disk-growth?range=24h&node=node-a')
   })
+
+  it('shows a warning while retaining available diagnostic groups', async () => {
+    apiMocks.get.mockResolvedValue({
+      mounts: [{ node: 'node-a', mount_point: '/var/lib', growth_bytes: 1048576 }],
+      pvcs: [],
+      containers: [],
+      warnings: { pvcs: 'VictoriaMetrics 返回 422 Unprocessable Entity' },
+    })
+    const wrapper = mount(DiskGrowthWorkspace)
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('PVC 查询失败：VictoriaMetrics 返回 422 Unprocessable Entity')
+    expect(wrapper.text()).toContain('/var/lib')
+  })
 })

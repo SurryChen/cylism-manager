@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -163,6 +164,28 @@ func TestMonitoringDiskGrowthReturnsRankingsAndPVCConsumers(t *testing.T) {
 		if !strings.Contains(query, `node="node-a"`) {
 			t.Fatalf("node filter missing from query: %s", query)
 		}
+	}
+}
+
+func TestMonitoringDiskGrowthReturnsPartialResultsWhenOneQueryFails(t *testing.T) {
+	original := K8s
+	K8s = &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(
+		&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "cylism-victoria-metrics", Namespace: "monitoring"}, Status: appsv1.DeploymentStatus{AvailableReplicas: 1}},
+		&appsv1.DaemonSet{ObjectMeta: metav1.ObjectMeta{Name: "cylism-node-exporter", Namespace: "monitoring"}, Status: appsv1.DaemonSetStatus{DesiredNumberScheduled: 1, NumberAvailable: 1}},
+	)}
+	defer func() { K8s = original }()
+
+	handler := NewMonitoringHandler()
+	handler.query = func(_ context.Context, _ string, values url.Values) (interface{}, error) {
+		if strings.Contains(values.Get("query"), "kubelet_volume_stats_used_bytes") {
+			return nil, errors.New("VictoriaMetrics 返回 422 Unprocessable Entity")
+		}
+		return map[string]interface{}{"resultType": "vector", "result": []interface{}{}}, nil
+	}
+
+	response := serve(setupMonitoringRouter(handler), newJSONRequest(http.MethodGet, "/api/monitoring/disk-growth?range=6h", nil))
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"warnings":{"pvcs":"VictoriaMetrics 返回 422 Unprocessable Entity"}`) {
+		t.Fatalf("expected partial disk diagnostics response, got %s", response.Body.String())
 	}
 }
 
