@@ -289,26 +289,30 @@ func (h *MonitoringHandler) DiskGrowth(c *gin.Context) {
 	}()
 
 	raw := make(map[string]interface{}, len(queries))
+	warnings := make(map[string]string)
 	for result := range results {
 		if result.err != nil {
-			cancel()
-			model.Error(c, http.StatusBadGateway, model.CodeK8sAPIError, "查询 VictoriaMetrics 磁盘增长指标失败: "+result.err.Error())
-			return
+			warnings[result.key] = result.err.Error()
+			continue
 		}
 		raw[result.key] = result.data
 	}
 	consumers, err := pvcConsumers(c.Request.Context())
 	if err != nil {
-		model.Error(c, http.StatusBadGateway, model.CodeK8sAPIError, "读取 PVC 当前使用者失败: "+err.Error())
-		return
+		warnings["pvcs"] = "读取 PVC 当前使用者失败: " + err.Error()
+		consumers = map[string][]string{}
 	}
-	model.Success(c, gin.H{
+	data := gin.H{
 		"range":      rangeName,
 		"node":       node,
 		"mounts":     normalizeMountGrowth(raw["mounts"]),
 		"pvcs":       normalizePVCGrowth(raw["pvcs"], consumers),
 		"containers": normalizeContainerGrowth(raw["containers"]),
-	})
+	}
+	if len(warnings) > 0 {
+		data["warnings"] = warnings
+	}
+	model.Success(c, data)
 }
 
 func monitoringPromQLWindow(window time.Duration) string {

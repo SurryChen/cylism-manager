@@ -10,6 +10,7 @@
     </header>
 
     <div v-if="error" class="k8s-banner k8s-banner-warn section-gap">{{ error }}</div>
+    <div v-if="warning" class="k8s-banner k8s-banner-warn section-gap">{{ warning }}</div>
     <section class="disk-growth-grid section-gap" :aria-busy="loading">
       <article class="card"><div class="card-header"><div><h2 class="card-title">节点挂载点</h2><p>可用空间减少最多的挂载点</p></div><span class="badge badge-offline">{{ rows.mounts.length }} 项</span></div><GrowthTable :rows="rows.mounts" empty="所选时间内没有可识别的节点磁盘增长" /></article>
       <article class="card"><div class="card-header"><div><h2 class="card-title">存储卷</h2><p>PVC 增长量及当前挂载 Pod</p></div><span class="badge badge-offline">{{ rows.pvcs.length }} 项</span></div><GrowthTable :rows="rows.pvcs" kind="pvc" empty="所选时间内没有 PVC 使用量增长" /></article>
@@ -35,6 +36,7 @@ const range = ref('6h')
 const node = ref('')
 const loading = ref(false)
 const error = ref('')
+const warning = ref('')
 const rows = ref({ mounts: [], pvcs: [], containers: [] })
 const readyNodes = computed(() => props.nodes.filter(item => item.ready))
 
@@ -60,6 +62,10 @@ onMounted(load)
 watch([range, node], load)
 
 function nodeLabel(item) { return item.display_name || item.name }
+function warningText(warnings) {
+  const labels = { mounts: '节点挂载点', pvcs: 'PVC', containers: '容器可写层' }
+  return Object.entries(warnings || {}).map(([key, message]) => `${labels[key] || key} 查询失败：${message}`).join('；')
+}
 function formatBytes(value) {
   const bytes = Number(value) || 0
   if (bytes < 1024) return `${bytes.toFixed(0)} B`
@@ -72,11 +78,13 @@ function formatBytes(value) {
 async function load() {
   loading.value = true
   error.value = ''
+  warning.value = ''
   try {
     const params = new URLSearchParams({ range: range.value })
     if (node.value) params.set('node', node.value)
     const result = await api.get(`/monitoring/disk-growth?${params.toString()}`)
     rows.value = { mounts: result?.mounts || [], pvcs: result?.pvcs || [], containers: result?.containers || [] }
+    warning.value = warningText(result?.warnings)
   } catch (cause) { error.value = cause.message || '读取磁盘增长诊断失败' } finally { loading.value = false }
 }
 </script>
