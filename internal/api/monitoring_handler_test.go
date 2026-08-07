@@ -167,6 +167,13 @@ func TestMonitoringDiskGrowthReturnsRankingsAndPVCConsumers(t *testing.T) {
 	}
 }
 
+func TestDiskGrowthMountQueryAvoidsInvalidPromQLStringEscapes(t *testing.T) {
+	queries := diskGrowthQueries("6h", "")
+	if len(queries) == 0 || strings.Contains(queries[0].query, `\.`) || !strings.Contains(queries[0].query, "resolv[.]conf") {
+		t.Fatalf("unexpected mount query: %#v", queries)
+	}
+}
+
 func TestMonitoringDiskGrowthReturnsPartialResultsWhenOneQueryFails(t *testing.T) {
 	original := K8s
 	K8s = &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(
