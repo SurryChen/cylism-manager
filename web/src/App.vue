@@ -137,7 +137,7 @@ const navGroups = computed(() => [
       { label: '网络访问', to: '/network', icon: Route },
       { label: '存储', to: '/storage', icon: HardDrive },
       { label: '监控', to: '/monitoring', icon: Activity },
-      { label: 'Agent Runtime', to: '/runtimes', icon: Bot },
+      { label: 'Agent 助手', to: '/runtimes', icon: Bot },
     ],
   },
   {

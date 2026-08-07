@@ -136,7 +136,7 @@ func (c *Client) VictoriaMetricsStatus() *VictoriaMetricsStatus {
 	nodeExporter, err := c.Clientset.AppsV1().DaemonSets(victoriaMetricsNamespace).Get(c.Ctx(), nodeExporterName, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
 		status.State = VictoriaMetricsStateDegraded
-		status.Message = "VictoriaMetrics 已启动，但 node-exporter 未安装"
+		status.Message = "VictoriaMetrics 已就绪，但 node-exporter 未安装；节点指标不可用"
 		return status
 	}
 	if err != nil {
@@ -147,8 +147,8 @@ func (c *Client) VictoriaMetricsStatus() *VictoriaMetricsStatus {
 	status.NodeExporterReady = nodeExporter.Status.NumberAvailable
 	status.NodeExporterDesired = nodeExporter.Status.DesiredNumberScheduled
 	if status.NodeExporterDesired == 0 || status.NodeExporterReady < status.NodeExporterDesired {
-		status.State = VictoriaMetricsStateInstalling
-		status.Message = "VictoriaMetrics 已启动，等待 node-exporter 在全部节点就绪"
+		status.State = VictoriaMetricsStateDegraded
+		status.Message = fmt.Sprintf("VictoriaMetrics 已就绪，但 node-exporter 仅 %d/%d 个节点就绪；部分节点指标不可用", status.NodeExporterReady, status.NodeExporterDesired)
 		return status
 	}
 	status.State = VictoriaMetricsStateReady

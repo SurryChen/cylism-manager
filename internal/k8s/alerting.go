@@ -159,8 +159,8 @@ func (c *Client) InstallAlerting(config AlertingConfig) (*AlertingStatus, error)
 	if c == nil || c.Clientset == nil {
 		return c.AlertingStatus(), fmt.Errorf("Kubernetes 客户端未初始化")
 	}
-	if c.VictoriaMetricsStatus().State != VictoriaMetricsStateReady {
-		return c.AlertingStatus(), fmt.Errorf("VictoriaMetrics 尚未就绪，请先完成指标存储和 node-exporter 安装")
+	if c.VictoriaMetricsStatus().ReadyReplicas == 0 {
+		return c.AlertingStatus(), fmt.Errorf("VictoriaMetrics 存储实例尚未就绪")
 	}
 	settings, err := normalizeAlertingConfig(config)
 	if err != nil {

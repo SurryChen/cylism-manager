@@ -79,6 +79,23 @@ func TestInstallAlertingRequiresReadyVictoriaMetrics(t *testing.T) {
 	}
 }
 
+func TestInstallAlertingAllowsPartialNodeExporterCoverage(t *testing.T) {
+	client := alertingReadyClient()
+	nodeExporter, err := client.Clientset.AppsV1().DaemonSets(victoriaMetricsNamespace).Get(t.Context(), nodeExporterName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	nodeExporter.Status.DesiredNumberScheduled = 2
+	nodeExporter.Status.NumberAvailable = 1
+	if _, err := client.Clientset.AppsV1().DaemonSets(victoriaMetricsNamespace).UpdateStatus(t.Context(), nodeExporter, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := client.InstallAlerting(AlertingConfig{NodeName: "node-b"}); err != nil {
+		t.Fatalf("expected alerting installation with partial node-exporter coverage, got %v", err)
+	}
+}
+
 func TestInstallAlertingStoresSMTPSettingsOnlyInSecret(t *testing.T) {
 	client := alertingReadyClient()
 	_, err := client.InstallAlerting(AlertingConfig{NodeName: "node-b", Email: EmailConfig{Enabled: true, SMTPHost: "smtp.example.com", SMTPPort: 587, Username: "alerts", Password: "smtp-password", From: "alerts@example.com", To: "ops@example.com", TLSMode: "starttls"}})

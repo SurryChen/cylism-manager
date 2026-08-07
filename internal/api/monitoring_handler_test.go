@@ -250,3 +250,22 @@ func TestMonitoringQueryReturnsMetricData(t *testing.T) {
 		t.Fatalf("unexpected query response: %s", response.Body.String())
 	}
 }
+
+func TestMonitoringQueryAllowsPartialNodeExporterCoverage(t *testing.T) {
+	original := K8s
+	K8s = &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(
+		&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "cylism-victoria-metrics", Namespace: "monitoring"}, Status: appsv1.DeploymentStatus{AvailableReplicas: 1}},
+		&appsv1.DaemonSet{ObjectMeta: metav1.ObjectMeta{Name: "cylism-node-exporter", Namespace: "monitoring"}, Status: appsv1.DaemonSetStatus{DesiredNumberScheduled: 2, NumberAvailable: 1}},
+	)}
+	defer func() { K8s = original }()
+
+	handler := NewMonitoringHandler()
+	handler.query = func(_ context.Context, _ string, _ url.Values) (interface{}, error) {
+		return map[string]interface{}{"resultType": "vector", "result": []interface{}{}}, nil
+	}
+
+	response := serve(setupMonitoringRouter(handler), newJSONRequest(http.MethodGet, "/api/monitoring/query?query=up", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected query to remain available with partial exporter coverage, got %s", response.Body.String())
+	}
+}

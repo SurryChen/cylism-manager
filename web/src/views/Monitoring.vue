@@ -24,7 +24,7 @@
       </section>
 
       <template v-else-if="loaded && status">
-        <section v-if="status.state !== 'ready'" class="card wait-card"><div class="empty-state"><span class="empty-icon">◌</span><span class="empty-text">等待 VictoriaMetrics 工作负载就绪</span></div></section>
+        <section v-if="!metricsAvailable" class="card wait-card"><div class="empty-state"><span class="empty-icon">◌</span><span class="empty-text">{{ status.message || '等待 VictoriaMetrics 存储实例就绪' }}</span></div></section>
 
         <template v-else-if="activeTab === 'overview'">
           <section class="metric-grid monitoring-summary section-gap">
@@ -51,7 +51,7 @@
 
         <DiskGrowthWorkspace v-else-if="activeTab === 'disk'" :nodes="nodes" />
         <LoggingWorkspace v-else-if="activeTab === 'logs'" :nodes="nodes" :storage-classes="storageClasses" />
-        <AlertingWorkspace v-else-if="activeTab === 'alerts'" :nodes="nodes" :monitoring-ready="status.state === 'ready'" :metrics-node-name="status.node_name" @navigate="navigateFromAlert" />
+        <AlertingWorkspace v-else-if="activeTab === 'alerts'" :nodes="nodes" :monitoring-ready="metricsAvailable" :metrics-node-name="status.node_name" @navigate="navigateFromAlert" />
       </template>
     </main>
 
@@ -127,6 +127,7 @@ const presets = [
   { label: '节点磁盘', query: 'max by (node) (100 * (1 - node_filesystem_avail_bytes{mountpoint="/",fstype!~"tmpfs|overlay"} / node_filesystem_size_bytes{mountpoint="/",fstype!~"tmpfs|overlay"}))' },
 ]
 const readyNodes = computed(() => nodes.value.filter(node => node.ready))
+const metricsAvailable = computed(() => status.value?.state === 'ready' || Number(status.value?.ready_replicas) > 0)
 const statusLabel = computed(() => ({ ready: '已就绪', installing: '安装中', degraded: '异常', unavailable: '不可用' }[status.value?.state] || '状态未知'))
 const statusClass = computed(() => ({ ready: 'badge-online', installing: 'badge-deploying', degraded: 'badge-danger' }[status.value?.state] || 'badge-offline'))
 const targetRows = computed(() => {
@@ -177,7 +178,7 @@ onMounted(async () => {
 })
 onUnmounted(() => { if (migrationPollTimer) window.clearInterval(migrationPollTimer) })
 watch([activeTab, trendRange], async () => {
-  if (status.value?.state === 'ready') await loadActiveData()
+  if (metricsAvailable.value) await loadActiveData()
 })
 
 async function refresh() {
@@ -188,7 +189,7 @@ async function refresh() {
     nodes.value = nodeList || []
     storageClasses.value = classes || []
     if (!form.value.node_name) form.value.node_name = readyNodes.value[0]?.name || ''
-    if (status.value?.state === 'ready') await loadActiveData()
+    if (metricsAvailable.value) await loadActiveData()
     syncMigrationPolling()
   } catch (e) { error.value = e.message || '加载监控状态失败' } finally { loaded.value = true }
 }

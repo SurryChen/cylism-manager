@@ -1,22 +1,25 @@
 <template>
-  <section class="page-shell runtime-page">
-    <div class="page-heading">
-      <div>
-        <p class="eyebrow">基础设施 / Runtime</p>
-        <h1>Agent Runtime</h1>
-        <p class="page-subtitle">管理外部 Agent 的部署、连接状态和持久化数据。</p>
-      </div>
-      <button class="button button-primary" data-testid="runtime-create" @click="openCreate">新建 Runtime</button>
-    </div>
+  <section class="runtime-page">
+    <SectionTabsHeader title="Agent 助手" :tabs="tabs" active-tab="instances">
+      <template #actions>
+        <div class="btn-group">
+          <button class="icon-button" title="刷新助手列表" aria-label="刷新助手列表" :disabled="loading" @click="load">
+            <RefreshCw :size="16" :class="{ 'is-spinning': loading }" />
+          </button>
+          <button class="btn btn-primary" data-testid="runtime-create" @click="openCreate"><Plus :size="15" />新建助手</button>
+        </div>
+      </template>
+    </SectionTabsHeader>
 
-    <div v-if="error" class="notice notice-error">{{ error }}</div>
-    <div v-if="message" class="notice notice-success">{{ message }}</div>
+    <main class="runtime-content">
+      <div v-if="error" class="notice notice-error">{{ error }}</div>
+      <div v-if="message" class="notice notice-success">{{ message }}</div>
 
-    <div class="runtime-layout">
+      <div class="runtime-layout">
       <article class="card runtime-list-card">
-        <div class="card-header"><div><h2 class="card-title">Runtime 实例</h2><p>默认部署到 cylism-assistant 命名空间</p></div><span class="badge badge-offline">{{ runtimes.length }} 个</span></div>
-        <div v-if="loading" class="empty-state">正在读取 Runtime...</div>
-        <div v-else-if="!runtimes.length" class="empty-state">还没有 Runtime</div>
+        <div class="card-header"><div><h2 class="card-title">助手实例</h2><p>默认部署到 cylism-assistant 命名空间</p></div><span class="badge badge-offline">{{ runtimes.length }} 个</span></div>
+        <div v-if="loading" class="empty-state">正在读取助手实例...</div>
+        <div v-else-if="!runtimes.length" class="empty-state"><Bot :size="26" class="empty-icon" /><span class="empty-text">还没有 Agent 助手</span></div>
         <button v-for="item in runtimes" :key="item.id" class="runtime-item" :class="{ 'is-selected': selected?.id === item.id }" @click="select(item)">
           <span class="runtime-dot" :class="`status-${item.status}`"></span>
           <span class="runtime-item-main"><strong>{{ item.name }}</strong><small>{{ item.runtime_type }} · {{ item.namespace }}</small></span>
@@ -25,8 +28,26 @@
       </article>
 
       <article class="card runtime-detail-card">
-        <div class="card-header"><div><h2 class="card-title">{{ editing ? (form.id ? 'Runtime 配置' : '新建 Runtime') : 'Runtime 详情' }}</h2><p v-if="selected && !editing">{{ selected.image }}</p></div></div>
-        <form v-if="editing" class="runtime-form" @submit.prevent="save">
+        <div class="card-header"><div><h2 class="card-title">助手详情</h2><p v-if="selected">{{ selected.image }}</p></div></div>
+        <div v-if="selected" class="runtime-detail">
+          <div class="runtime-status-banner"><span class="runtime-dot" :class="`status-${selected.status}`"></span><strong>{{ statusLabel(selected.status) }}</strong><span>{{ selected.health_detail || '尚未执行健康检查' }}</span></div>
+          <dl class="runtime-facts"><div><dt>类型</dt><dd>{{ selected.runtime_type }}</dd></div><div><dt>部署方式</dt><dd>{{ selected.deployment_mode === 'external' ? '外部连接' : '平台托管' }}</dd></div><div><dt>命名空间</dt><dd>{{ selected.namespace }}</dd></div><div><dt>版本</dt><dd>{{ selected.runtime_version || '-' }}</dd></div><div><dt>连接地址</dt><dd>{{ selected.endpoint_url || '-' }}</dd></div><div v-if="selected.deployment_mode !== 'external'"><dt>PVC</dt><dd>{{ selected.pvc_name }} · {{ selected.storage }}</dd></div><div><dt>模型</dt><dd>{{ selected.model_name || '-' }} · {{ selected.api_style }}</dd></div></dl>
+          <div v-if="selected.deployment_mode !== 'external'" class="runtime-delete-control"><label><input v-model="deleteData" type="checkbox" data-testid="runtime-delete-data" />同时删除 PVC 和记忆数据</label><p v-if="deleteData">将永久删除 Runtime 的会话、长期记忆、工作区和 PVC，无法恢复。</p></div>
+          <div class="form-actions"><button class="btn" @click="editSelected">编辑配置</button><button class="btn" :disabled="working" @click="deploy(selected)">部署或更新</button><button class="btn" :disabled="working" @click="health(selected)">健康检查</button><button class="btn btn-danger" :disabled="working" @click="uninstall(selected)">{{ deleteData ? '卸载并删除数据' : '卸载（保留 PVC）' }}</button></div>
+        </div>
+        <div v-else class="empty-state"><Bot :size="26" class="empty-icon" /><span class="empty-text">选择一个助手实例查看详情</span></div>
+      </article>
+    </div>
+    </main>
+
+    <Teleport to="body">
+      <div v-if="editing" class="overlay runtime-editor-overlay" @click.self="cancelEdit">
+        <section class="modal runtime-create-modal" role="dialog" aria-modal="true" :aria-label="form.id ? '助手配置' : '新建助手'">
+          <div class="runtime-modal-header">
+            <h2 class="modal-title">{{ form.id ? '助手配置' : '新建助手' }}</h2>
+            <button type="button" class="icon-button" title="关闭" aria-label="关闭" @click="cancelEdit"><X :size="18" /></button>
+          </div>
+          <form class="runtime-form" @submit.prevent="save">
           <label>名称<input v-model.trim="form.name" required pattern="[a-z0-9]([-a-z0-9]*[a-z0-9])?" placeholder="nanobot-main" /></label>
           <label>Runtime 类型<select v-model="form.runtime_type" @change="onRuntimeTypeChange"><option v-for="definition in catalog" :key="definition.runtime_type" :value="definition.runtime_type">{{ definition.display_name || definition.runtime_type }}</option></select></label>
           <label>部署方式<select v-model="form.deployment_mode"><option value="managed">平台托管（当前集群）</option><option value="external">外部连接（其他机器）</option></select></label>
@@ -44,23 +65,19 @@
           <label>模型 API Key <input v-model="form.api_key" type="password" :placeholder="form.api_key_configured ? '已配置，留空保持不变' : '填写后保存到 Kubernetes Secret'" autocomplete="new-password" /></label>
           <div class="form-grid"><label>PVC 名称<input v-model.trim="form.pvc_name" placeholder="留空自动创建" /></label><label>PVC 容量<input v-model.trim="form.storage" placeholder="10Gi" /></label></div>
           <label>部署节点<input v-model.trim="form.node_name" placeholder="可选，使用节点名" /></label>
-          <div class="form-actions"><button type="button" class="button" @click="cancelEdit">取消</button><button type="submit" class="button button-primary" :disabled="saving">{{ saving ? '保存中...' : '保存' }}</button></div>
-        </form>
-        <div v-else-if="selected" class="runtime-detail">
-          <div class="runtime-status-banner"><span class="runtime-dot" :class="`status-${selected.status}`"></span><strong>{{ statusLabel(selected.status) }}</strong><span>{{ selected.health_detail || '尚未执行健康检查' }}</span></div>
-          <dl class="runtime-facts"><div><dt>类型</dt><dd>{{ selected.runtime_type }}</dd></div><div><dt>部署方式</dt><dd>{{ selected.deployment_mode === 'external' ? '外部连接' : '平台托管' }}</dd></div><div><dt>命名空间</dt><dd>{{ selected.namespace }}</dd></div><div><dt>版本</dt><dd>{{ selected.runtime_version || '-' }}</dd></div><div><dt>连接地址</dt><dd>{{ selected.endpoint_url || '-' }}</dd></div><div v-if="selected.deployment_mode !== 'external'"><dt>PVC</dt><dd>{{ selected.pvc_name }} · {{ selected.storage }}</dd></div><div><dt>模型</dt><dd>{{ selected.model_name || '-' }} · {{ selected.api_style }}</dd></div></dl>
-          <div v-if="selected.deployment_mode !== 'external'" class="runtime-delete-control"><label><input v-model="deleteData" type="checkbox" data-testid="runtime-delete-data" />同时删除 PVC 和记忆数据</label><p v-if="deleteData">将永久删除 Runtime 的会话、长期记忆、工作区和 PVC，无法恢复。</p></div>
-          <div class="form-actions"><button class="button" @click="editSelected">编辑配置</button><button class="button" :disabled="working" @click="deploy(selected)">部署或更新</button><button class="button" :disabled="working" @click="health(selected)">健康检查</button><button class="button button-danger" :disabled="working" @click="uninstall(selected)">{{ deleteData ? '卸载并删除数据' : '卸载（保留 PVC）' }}</button></div>
-        </div>
-        <div v-else class="empty-state">选择一个 Runtime 查看详情</div>
-      </article>
-    </div>
+            <div class="form-actions"><button type="button" class="btn" @click="cancelEdit">取消</button><button type="submit" class="btn btn-primary" :disabled="saving">{{ saving ? '保存中...' : '保存' }}</button></div>
+          </form>
+        </section>
+      </div>
+    </Teleport>
   </section>
 </template>
 
 <script setup>
 import { computed, onMounted, ref } from 'vue'
+import { Bot, Plus, RefreshCw, X } from 'lucide-vue-next'
 import { api } from '../api/index.js'
+import SectionTabsHeader from '../components/SectionTabsHeader.vue'
 
 const runtimes = ref([])
 const catalog = ref([])
@@ -72,6 +89,7 @@ const working = ref(false)
 const deleteData = ref(false)
 const error = ref('')
 const message = ref('')
+const tabs = [{ id: 'instances', label: '实例' }]
 
 const emptyForm = () => ({ name: '', runtime_type: 'nanobot', deployment_mode: 'managed', runtime_version: '', image: '', namespace: 'cylism-assistant', port: 8080, health_path: '/health', endpoint_url: '', pvc_name: '', storage: '10Gi', storage_class_name: '', node_name: '', model_name: '', model_base_url: '', api_style: 'responses', api_key: '', api_key_configured: false, config: {} })
 const form = ref(emptyForm())
@@ -103,11 +121,14 @@ onMounted(async () => { await loadCatalog(); if (!catalog.value.length) catalog.
 </script>
 
 <style scoped>
-.runtime-layout { display: grid; grid-template-columns: minmax(260px, 0.8fr) minmax(420px, 1.4fr); gap: 16px; }
+.runtime-content { margin-top: var(--space-20); }
+.runtime-layout { display: grid; grid-template-columns: minmax(280px, 0.8fr) minmax(420px, 1.4fr); gap: var(--space-16); }
+.card-header { align-items: flex-start; }.card-header p { margin: 5px 0 0; color: var(--text-secondary); font-size: 12px; }
+.runtime-editor-overlay { z-index: 1300; }.runtime-create-modal { width: min(720px, calc(100vw - 32px)); }.runtime-modal-header { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-16); }.runtime-modal-header .modal-title { margin-bottom: 5px; }
 .runtime-item { width: 100%; border: 0; border-bottom: 1px solid var(--border-muted); background: transparent; color: var(--text-primary); padding: 14px 12px; display: flex; align-items: center; gap: 10px; text-align: left; cursor: pointer; }
 .runtime-item:hover, .runtime-item.is-selected { background: var(--surface-subtle); }
 .runtime-item-main { display: flex; flex: 1; flex-direction: column; gap: 3px; min-width: 0; }.runtime-item-main small { color: var(--text-muted); }.runtime-item-status { font-size: 12px; color: var(--text-muted); }.runtime-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--text-muted); flex: 0 0 auto; }.status-ready { background: var(--success); }.status-deploying { background: var(--warning); }.status-failed, .status-degraded { background: var(--danger); }
-.runtime-form, .runtime-detail { padding: 16px 0; }.runtime-form label { display: flex; flex-direction: column; gap: 7px; margin-bottom: 14px; color: var(--text-muted); font-size: 13px; }.runtime-form input, .runtime-form select { width: 100%; border: 1px solid var(--border-muted); border-radius: 5px; padding: 9px 10px; background: var(--surface-input); color: var(--text-primary); }.form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }.form-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 18px; }.button-danger { color: var(--danger); }.runtime-status-banner { display: flex; align-items: center; gap: 9px; padding: 12px; background: var(--surface-subtle); border-left: 3px solid var(--success); }.runtime-status-banner span:last-child { color: var(--text-muted); font-size: 13px; }.runtime-facts { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 22px 0; }.runtime-facts div { min-width: 0; }.runtime-facts dt { color: var(--text-muted); font-size: 12px; margin-bottom: 4px; }.runtime-facts dd { margin: 0; overflow-wrap: anywhere; }.notice { margin: 12px 0; padding: 10px 12px; border-radius: 5px; }.notice-error { color: var(--danger); background: var(--danger-surface); }.notice-success { color: var(--success); background: var(--success-surface); }
+.runtime-form, .runtime-detail { padding: 16px 0; }.runtime-form label { display: flex; flex-direction: column; gap: 7px; margin-bottom: 14px; color: var(--text-muted); font-size: 13px; }.runtime-form input, .runtime-form select { width: 100%; border: 1px solid var(--border-muted); border-radius: var(--radius-control); padding: 9px 10px; background: var(--surface-input); color: var(--text-primary); }.form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }.form-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 18px; }.runtime-status-banner { display: flex; align-items: center; gap: 9px; padding: 12px; background: var(--surface-subtle); border-left: 3px solid var(--success); }.runtime-status-banner span:last-child { color: var(--text-muted); font-size: 13px; }.runtime-facts { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 22px 0; }.runtime-facts div { min-width: 0; }.runtime-facts dt { color: var(--text-muted); font-size: 12px; margin-bottom: 4px; }.runtime-facts dd { margin: 0; overflow-wrap: anywhere; }.notice { margin: 0 0 var(--space-16); padding: 10px 12px; border-radius: var(--radius-control); }.notice-error { color: var(--danger); background: var(--danger-surface); }.notice-success { color: var(--success); background: var(--success-surface); }
 .runtime-delete-control { margin-top: 18px; padding: 11px 12px; border: 1px solid var(--danger); border-radius: 5px; color: var(--danger); background: var(--danger-surface); }.runtime-delete-control label { display: inline-flex; align-items: center; gap: 8px; font-weight: 700; }.runtime-delete-control p { margin: 6px 0 0 24px; font-size: 12px; }
 @media (max-width: 850px) { .runtime-layout { grid-template-columns: 1fr; }.runtime-facts, .form-grid { grid-template-columns: 1fr; } }
 </style>

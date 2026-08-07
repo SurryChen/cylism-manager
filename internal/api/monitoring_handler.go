@@ -66,6 +66,10 @@ type MonitoringHandler struct {
 	query monitoringQueryFunc
 }
 
+func monitoringDataStoreAvailable(status *k8s.VictoriaMetricsStatus) bool {
+	return status != nil && status.ReadyReplicas > 0
+}
+
 func NewMonitoringHandler() *MonitoringHandler {
 	return &MonitoringHandler{query: queryVictoriaMetrics}
 }
@@ -137,8 +141,8 @@ func (h *MonitoringHandler) Query(c *gin.Context) {
 		return
 	}
 	status := K8s.VictoriaMetricsStatus()
-	if status.State != k8s.VictoriaMetricsStateReady {
-		model.Error(c, http.StatusConflict, model.CodeConflict, "VictoriaMetrics 尚未就绪")
+	if !monitoringDataStoreAvailable(status) {
+		model.Error(c, http.StatusConflict, model.CodeConflict, "VictoriaMetrics 存储实例尚未就绪")
 		return
 	}
 	result, err := h.query(c.Request.Context(), "/api/v1/query", url.Values{"query": []string{query}})
@@ -166,8 +170,8 @@ func (h *MonitoringHandler) QueryRange(c *gin.Context) {
 		return
 	}
 	status := K8s.VictoriaMetricsStatus()
-	if status.State != k8s.VictoriaMetricsStateReady {
-		model.Error(c, http.StatusConflict, model.CodeConflict, "VictoriaMetrics 尚未就绪")
+	if !monitoringDataStoreAvailable(status) {
+		model.Error(c, http.StatusConflict, model.CodeConflict, "VictoriaMetrics 存储实例尚未就绪")
 		return
 	}
 	end := time.Now().UTC()
@@ -197,8 +201,8 @@ func (h *MonitoringHandler) Dashboard(c *gin.Context) {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "时间范围仅支持 1h、6h、24h 或 7d")
 		return
 	}
-	if status := K8s.VictoriaMetricsStatus(); status.State != k8s.VictoriaMetricsStateReady {
-		model.Error(c, http.StatusConflict, model.CodeConflict, "VictoriaMetrics 尚未就绪")
+	if status := K8s.VictoriaMetricsStatus(); !monitoringDataStoreAvailable(status) {
+		model.Error(c, http.StatusConflict, model.CodeConflict, "VictoriaMetrics 存储实例尚未就绪")
 		return
 	}
 
@@ -256,8 +260,8 @@ func (h *MonitoringHandler) DiskGrowth(c *gin.Context) {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "节点名称无效")
 		return
 	}
-	if status := K8s.VictoriaMetricsStatus(); status.State != k8s.VictoriaMetricsStateReady {
-		model.Error(c, http.StatusConflict, model.CodeConflict, "VictoriaMetrics 尚未就绪")
+	if status := K8s.VictoriaMetricsStatus(); !monitoringDataStoreAvailable(status) {
+		model.Error(c, http.StatusConflict, model.CodeConflict, "VictoriaMetrics 存储实例尚未就绪")
 		return
 	}
 
@@ -465,8 +469,8 @@ func (h *MonitoringHandler) Targets(c *gin.Context) {
 		return
 	}
 	status := K8s.VictoriaMetricsStatus()
-	if status.State != k8s.VictoriaMetricsStateReady {
-		model.Error(c, http.StatusConflict, model.CodeConflict, "VictoriaMetrics 尚未就绪")
+	if !monitoringDataStoreAvailable(status) {
+		model.Error(c, http.StatusConflict, model.CodeConflict, "VictoriaMetrics 存储实例尚未就绪")
 		return
 	}
 	result, err := h.query(c.Request.Context(), "/api/v1/targets", nil)

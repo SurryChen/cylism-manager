@@ -104,6 +104,21 @@ func TestVictoriaMetricsStatusReportsReadyConfiguration(t *testing.T) {
 	}
 }
 
+func TestVictoriaMetricsStatusReportsPartialNodeExporterCoverageAsDegraded(t *testing.T) {
+	client := &Client{Clientset: k8sfake.NewSimpleClientset(
+		&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: victoriaMetricsName, Namespace: victoriaMetricsNamespace}, Status: appsv1.DeploymentStatus{AvailableReplicas: 1}},
+		&appsv1.DaemonSet{ObjectMeta: metav1.ObjectMeta{Name: nodeExporterName, Namespace: victoriaMetricsNamespace}, Status: appsv1.DaemonSetStatus{DesiredNumberScheduled: 2, NumberAvailable: 1}},
+	)}
+
+	status := client.VictoriaMetricsStatus()
+	if status.State != VictoriaMetricsStateDegraded || status.ReadyReplicas != 1 || status.NodeExporterReady != 1 || status.NodeExporterDesired != 2 {
+		t.Fatalf("unexpected partial coverage status: %#v", status)
+	}
+	if !strings.Contains(status.Message, "1/2") {
+		t.Fatalf("expected coverage in status message, got %q", status.Message)
+	}
+}
+
 func TestInstallVictoriaMetricsRejectsRelocation(t *testing.T) {
 	dataPathType := corev1.HostPathDirectoryOrCreate
 	existing := &appsv1.Deployment{
