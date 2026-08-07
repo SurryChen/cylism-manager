@@ -56,6 +56,27 @@ describe('AssistantSettings', () => {
     wrapper.unmount()
   })
 
+  it('uninstalls the Runtime and its PVC', async () => {
+    api.delete.mockResolvedValue({ message: '智能助手 Runtime 和审计 PVC 已卸载' })
+    api.get.mockImplementation(path => {
+      if (path === '/assistant/status') return Promise.resolve({ configured: true, default_provider_id: '1', runtime_status: { state: 'ready', message: '智能助手 Runtime 已就绪', ready_replicas: 1 } })
+      if (path === '/assistant/providers') return Promise.resolve({ providers: [{ id: 1, name: 'Responses', model: 'gpt-4.1-mini', enabled: true }], default_provider_id: '1' })
+      if (path === '/nodes') return Promise.resolve([{ name: 'worker-a', ready: true }])
+      return Promise.resolve({})
+    })
+    const wrapper = mount(AssistantSettings)
+    await new Promise(resolve => setTimeout(resolve, 0))
+    await nextTick()
+
+    window.confirm = vi.fn(() => true)
+    await wrapper.get('button[aria-label="卸载 Runtime 和 PVC"]').trigger('click')
+    await nextTick()
+
+    expect(api.delete).toHaveBeenCalledWith('/assistant')
+    expect(wrapper.text()).toContain('智能助手 Runtime 和审计 PVC 已卸载')
+    wrapper.unmount()
+  })
+
   it('probes the Responses API without saving the provider', async () => {
     api.post.mockResolvedValue({ message: '模型 API 连接成功' })
     const wrapper = mount(AssistantSettings)

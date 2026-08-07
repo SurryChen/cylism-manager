@@ -282,22 +282,52 @@ func (c *Client) UninstallOpsAgent() error {
 	if c == nil || c.Clientset == nil {
 		return fmt.Errorf("Kubernetes 客户端未初始化")
 	}
-	for _, remove := range []func() error{
-		func() error {
-			return c.Clientset.AppsV1().Deployments(opsAgentNamespace).Delete(c.Ctx(), opsAgentName, metav1.DeleteOptions{})
-		},
-		func() error {
-			return c.Clientset.CoreV1().Services(opsAgentNamespace).Delete(c.Ctx(), opsAgentName, metav1.DeleteOptions{})
-		},
-		func() error {
-			return c.Clientset.CoreV1().ConfigMaps(opsAgentNamespace).Delete(c.Ctx(), opsAgentName, metav1.DeleteOptions{})
-		},
-		func() error {
-			return c.Clientset.CoreV1().Secrets(opsAgentNamespace).Delete(c.Ctx(), opsAgentName+"-model", metav1.DeleteOptions{})
-		},
-	} {
-		if err := remove(); err != nil && !apierrors.IsNotFound(err) {
+	// Uninstall both the current dedicated-namespace Runtime and any legacy
+	// default-namespace Runtime. PVCs and namespaces are intentionally kept.
+	for _, namespace := range []string{opsAgentNamespace, legacyOpsAgentNamespace} {
+		if err := c.uninstallOpsAgentResources(namespace); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+func (c *Client) uninstallOpsAgentResources(namespace string) error {
+	pvcNames := map[string]struct{}{opsAgentName + "-audit": {}}
+	if deployment, err := c.Clientset.AppsV1().Deployments(namespace).Get(c.Ctx(), opsAgentName, metav1.GetOptions{}); err == nil {
+		pvcNames[opsAgentAuditPVCName(deployment)] = struct{}{}
+	} else if !apierrors.IsNotFound(err) {
+		return fmt.Errorf("读取 %s 命名空间 Runtime 失败: %w", namespace, err)
+	}
+	claims, err := c.Clientset.CoreV1().PersistentVolumeClaims(namespace).List(c.Ctx(), metav1.ListOptions{LabelSelector: fmt.Sprintf("%s=%s,%s=%s,%s=assistant", ManagedByLabel, ManagedByValue, InfrastructureLabel, InfrastructureOpsAgent, "cylism.io/component")})
+	if err != nil {
+		return fmt.Errorf("读取 %s 命名空间 Runtime PVC 失败: %w", namespace, err)
+	}
+	for _, claim := range claims.Items {
+		pvcNames[claim.Name] = struct{}{}
+	}
+	removals := []func() error{
+		func() error {
+			return c.Clientset.AppsV1().Deployments(namespace).Delete(c.Ctx(), opsAgentName, metav1.DeleteOptions{})
+		},
+		func() error {
+			return c.Clientset.CoreV1().Services(namespace).Delete(c.Ctx(), opsAgentName, metav1.DeleteOptions{})
+		},
+		func() error {
+			return c.Clientset.CoreV1().ConfigMaps(namespace).Delete(c.Ctx(), opsAgentName, metav1.DeleteOptions{})
+		},
+		func() error {
+			return c.Clientset.CoreV1().Secrets(namespace).Delete(c.Ctx(), opsAgentName+"-model", metav1.DeleteOptions{})
+		},
+	}
+	for _, remove := range removals {
+		if err := remove(); err != nil && !apierrors.IsNotFound(err) {
+			return fmt.Errorf("卸载 %s 命名空间 Runtime 资源失败: %w", namespace, err)
+		}
+	}
+	for name := range pvcNames {
+		if err := c.Clientset.CoreV1().PersistentVolumeClaims(namespace).Delete(c.Ctx(), name, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+			return fmt.Errorf("删除 %s 命名空间 Runtime PVC %s 失败: %w", namespace, name, err)
 		}
 	}
 	return nil

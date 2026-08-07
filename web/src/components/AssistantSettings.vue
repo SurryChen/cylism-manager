@@ -9,7 +9,7 @@
     </div>
 
     <section class="assistant-runtime" aria-live="polite">
-      <div class="assistant-runtime-heading"><div><h3>Runtime 部署状态</h3><p>{{ runtimeStatus.message || '正在读取 Kubernetes Runtime 状态' }}</p></div><div class="assistant-runtime-actions"><span class="badge" :class="runtimeBadgeClass">{{ runtimeLabel }}</span><button class="icon-button" type="button" title="刷新 Runtime 状态" aria-label="刷新 Runtime 状态" :disabled="refreshing" @click="refresh"><RefreshCw :size="16" :class="{ 'is-spinning': refreshing }" /></button></div></div>
+      <div class="assistant-runtime-heading"><div><h3>Runtime 部署状态</h3><p>{{ runtimeStatus.message || '正在读取 Kubernetes Runtime 状态' }}</p></div><div class="assistant-runtime-actions"><span class="badge" :class="runtimeBadgeClass">{{ runtimeLabel }}</span><button v-if="canUninstall" class="icon-button danger-action" type="button" title="卸载 Runtime 和 PVC" aria-label="卸载 Runtime 和 PVC" :disabled="uninstalling" @click="uninstall"><Trash2 :size="16" /></button><button class="icon-button" type="button" title="刷新 Runtime 状态" aria-label="刷新 Runtime 状态" :disabled="refreshing" @click="refresh"><RefreshCw :size="16" :class="{ 'is-spinning': refreshing }" /></button></div></div>
       <div class="assistant-runtime-grid"><div><span>就绪副本</span><strong>{{ runtimeStatus.ready_replicas || 0 }} / {{ runtimeStatus.desired_replicas || 1 }}</strong></div><div><span>目标节点</span><strong>{{ runtimeStatus.node_name || '-' }}</strong></div><div><span>审计存储</span><strong>{{ runtimeStatus.storage || '-' }}</strong></div><div><span>运行模型</span><strong>{{ runtimeStatus.model || '-' }}</strong></div></div>
       <p v-if="migration" class="assistant-migration">{{ migrationLabel }}</p>
       <p v-if="hasLegacyRuntime" class="assistant-legacy-runtime"><strong>发现待迁移的旧 Runtime 审计存储</strong><span>{{ legacyRuntimeStatus.namespace || 'default' }} / {{ legacyRuntimeStatus.pvc_name }}</span><span v-if="legacyRuntimeStatus.node_name || legacyRuntimeStatus.storage">原节点 {{ legacyRuntimeStatus.node_name || '-' }} · {{ legacyRuntimeStatus.storage || '-' }}</span></p>
@@ -72,6 +72,7 @@ const message = ref("")
 const savingProvider = ref(false)
 const probingProvider = ref(false)
 const installing = ref(false)
+const uninstalling = ref(false)
 const migrating = ref(false)
 const refreshing = ref(false)
 const provider = ref(newProvider())
@@ -81,6 +82,7 @@ const readyNodes = computed(() => nodes.value.filter(node => node.ready !== fals
 const runtimeStatus = computed(() => status.value.runtime_status || {})
 const legacyRuntimeStatus = computed(() => status.value.legacy_runtime_status || null)
 const hasLegacyRuntime = computed(() => runtimeStatus.value.state === 'not_installed' && !!legacyRuntimeStatus.value?.pvc_name)
+const canUninstall = computed(() => ['ready', 'installing', 'degraded'].includes(runtimeStatus.value.state) || !!legacyRuntimeStatus.value?.state && legacyRuntimeStatus.value.state !== 'not_installed')
 const installDefaults = computed(() => {
   if (hasLegacyRuntime.value) return legacyRuntimeStatus.value
   return runtimeStatus.value.state === 'ready' ? runtimeStatus.value : null
@@ -188,6 +190,21 @@ async function install() {
     message.value = error.message || "部署失败"
   } finally {
     installing.value = false
+  }
+}
+
+async function uninstall() {
+  if (!window.confirm('确认卸载智能助手 Runtime 吗？将删除运行资源和审计 PVC，但保留命名空间。')) return
+  uninstalling.value = true
+  message.value = ''
+  try {
+    const result = await api.delete('/assistant')
+    message.value = result.message || '智能助手 Runtime 已卸载'
+    await refresh()
+  } catch (error) {
+    message.value = error.message || '卸载失败'
+  } finally {
+    uninstalling.value = false
   }
 }
 
