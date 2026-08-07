@@ -194,7 +194,7 @@ func (h *LoggingHandler) Query(c *gin.Context) {
 		k8sUnavailable(c)
 		return
 	}
-	if K8s.LoggingStatus().State != k8s.LoggingStateReady {
+	if status := K8s.LoggingStatus(); status.LokiReady < 1 {
 		model.Error(c, http.StatusConflict, model.CodeConflict, "日志采集尚未就绪")
 		return
 	}

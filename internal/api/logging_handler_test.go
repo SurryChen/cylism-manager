@@ -56,6 +56,25 @@ func TestLoggingQueryBuildsBoundedStructuredSelector(t *testing.T) {
 	}
 }
 
+func TestLoggingQueryAllowsPartialAlloyCoverageWhenLokiIsReady(t *testing.T) {
+	original := K8s
+	K8s = &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(
+		&appsv1.StatefulSet{ObjectMeta: metav1.ObjectMeta{Name: "cylism-loki", Namespace: "monitoring"}, Status: appsv1.StatefulSetStatus{ReadyReplicas: 1}},
+		&appsv1.DaemonSet{ObjectMeta: metav1.ObjectMeta{Name: "cylism-alloy", Namespace: "monitoring"}, Status: appsv1.DaemonSetStatus{DesiredNumberScheduled: 2, NumberAvailable: 1}},
+	)}
+	defer func() { K8s = original }()
+
+	handler := NewLoggingHandler()
+	handler.query = func(_ context.Context, _ string, _ url.Values) (*lokiQueryResponse, error) {
+		return &lokiQueryResponse{Status: "success", Data: lokiQueryData{ResultType: "streams"}}, nil
+	}
+
+	response := serve(setupLoggingRouter(handler), newJSONRequest(http.MethodPost, "/api/monitoring/logs/query", gin.H{"range": "1h"}))
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected query to remain available with partial Alloy coverage: %d %s", response.Code, response.Body.String())
+	}
+}
+
 func TestLoggingQuerySupportsExactTimeAndBooleanKeywordBranches(t *testing.T) {
 	original := K8s
 	K8s = loggingReadyK8s()
