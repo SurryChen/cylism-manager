@@ -1,0 +1,113 @@
+<template>
+  <section class="page-shell runtime-page">
+    <div class="page-heading">
+      <div>
+        <p class="eyebrow">基础设施 / Runtime</p>
+        <h1>Agent Runtime</h1>
+        <p class="page-subtitle">管理外部 Agent 的部署、连接状态和持久化数据。</p>
+      </div>
+      <button class="button button-primary" data-testid="runtime-create" @click="openCreate">新建 Runtime</button>
+    </div>
+
+    <div v-if="error" class="notice notice-error">{{ error }}</div>
+    <div v-if="message" class="notice notice-success">{{ message }}</div>
+
+    <div class="runtime-layout">
+      <article class="card runtime-list-card">
+        <div class="card-header"><div><h2 class="card-title">Runtime 实例</h2><p>默认部署到 cylism-assistant 命名空间</p></div><span class="badge badge-offline">{{ runtimes.length }} 个</span></div>
+        <div v-if="loading" class="empty-state">正在读取 Runtime...</div>
+        <div v-else-if="!runtimes.length" class="empty-state">还没有 Runtime</div>
+        <button v-for="item in runtimes" :key="item.id" class="runtime-item" :class="{ 'is-selected': selected?.id === item.id }" @click="select(item)">
+          <span class="runtime-dot" :class="`status-${item.status}`"></span>
+          <span class="runtime-item-main"><strong>{{ item.name }}</strong><small>{{ item.runtime_type }} · {{ item.namespace }}</small></span>
+          <span class="runtime-item-status">{{ statusLabel(item.status) }}</span>
+        </button>
+      </article>
+
+      <article class="card runtime-detail-card">
+        <div class="card-header"><div><h2 class="card-title">{{ editing ? (form.id ? 'Runtime 配置' : '新建 Runtime') : 'Runtime 详情' }}</h2><p v-if="selected && !editing">{{ selected.image }}</p></div></div>
+        <form v-if="editing" class="runtime-form" @submit.prevent="save">
+          <label>名称<input v-model.trim="form.name" required pattern="[a-z0-9]([-a-z0-9]*[a-z0-9])?" placeholder="nanobot-main" /></label>
+          <label>Runtime 类型<select v-model="form.runtime_type" @change="onRuntimeTypeChange"><option v-for="definition in catalog" :key="definition.runtime_type" :value="definition.runtime_type">{{ definition.display_name || definition.runtime_type }}</option></select></label>
+          <label>部署方式<select v-model="form.deployment_mode"><option value="managed">平台托管（当前集群）</option><option value="external">外部连接（其他机器）</option></select></label>
+          <label>镜像<input v-model.trim="form.image" :required="form.deployment_mode === 'managed'" placeholder="托管模式填写镜像地址" /></label>
+          <label v-if="form.deployment_mode === 'external'">Runtime 连接地址<input v-model.trim="form.endpoint_url" required placeholder="https://agent.example.com" /></label>
+          <div class="form-grid">
+            <label>端口<input v-model.number="form.port" type="number" min="1" max="65535" /></label>
+            <label>健康路径<input v-model.trim="form.health_path" placeholder="/health" /></label>
+          </div>
+          <div class="form-grid">
+            <label>模型名称<input v-model.trim="form.model_name" placeholder="模型名称" /></label>
+            <label>模型协议<select v-model="form.api_style"><option v-for="protocol in supportedProtocols" :key="protocol" :value="protocol">{{ protocolLabel(protocol) }}</option></select></label>
+          </div>
+          <label>模型 API 地址<input v-model.trim="form.model_base_url" placeholder="https://provider.example.com/v1" /></label>
+          <label>模型 API Key <input v-model="form.api_key" type="password" :placeholder="form.api_key_configured ? '已配置，留空保持不变' : '填写后保存到 Kubernetes Secret'" autocomplete="new-password" /></label>
+          <div class="form-grid"><label>PVC 名称<input v-model.trim="form.pvc_name" placeholder="留空自动创建" /></label><label>PVC 容量<input v-model.trim="form.storage" placeholder="10Gi" /></label></div>
+          <label>部署节点<input v-model.trim="form.node_name" placeholder="可选，使用节点名" /></label>
+          <div class="form-actions"><button type="button" class="button" @click="cancelEdit">取消</button><button type="submit" class="button button-primary" :disabled="saving">{{ saving ? '保存中...' : '保存' }}</button></div>
+        </form>
+        <div v-else-if="selected" class="runtime-detail">
+          <div class="runtime-status-banner"><span class="runtime-dot" :class="`status-${selected.status}`"></span><strong>{{ statusLabel(selected.status) }}</strong><span>{{ selected.health_detail || '尚未执行健康检查' }}</span></div>
+          <dl class="runtime-facts"><div><dt>类型</dt><dd>{{ selected.runtime_type }}</dd></div><div><dt>部署方式</dt><dd>{{ selected.deployment_mode === 'external' ? '外部连接' : '平台托管' }}</dd></div><div><dt>命名空间</dt><dd>{{ selected.namespace }}</dd></div><div><dt>版本</dt><dd>{{ selected.runtime_version || '-' }}</dd></div><div><dt>连接地址</dt><dd>{{ selected.endpoint_url || '-' }}</dd></div><div v-if="selected.deployment_mode !== 'external'"><dt>PVC</dt><dd>{{ selected.pvc_name }} · {{ selected.storage }}</dd></div><div><dt>模型</dt><dd>{{ selected.model_name || '-' }} · {{ selected.api_style }}</dd></div></dl>
+          <div v-if="selected.deployment_mode !== 'external'" class="runtime-delete-control"><label><input v-model="deleteData" type="checkbox" data-testid="runtime-delete-data" />同时删除 PVC 和记忆数据</label><p v-if="deleteData">将永久删除 Runtime 的会话、长期记忆、工作区和 PVC，无法恢复。</p></div>
+          <div class="form-actions"><button class="button" @click="editSelected">编辑配置</button><button class="button" :disabled="working" @click="deploy(selected)">部署或更新</button><button class="button" :disabled="working" @click="health(selected)">健康检查</button><button class="button button-danger" :disabled="working" @click="uninstall(selected)">{{ deleteData ? '卸载并删除数据' : '卸载（保留 PVC）' }}</button></div>
+        </div>
+        <div v-else class="empty-state">选择一个 Runtime 查看详情</div>
+      </article>
+    </div>
+  </section>
+</template>
+
+<script setup>
+import { computed, onMounted, ref } from 'vue'
+import { api } from '../api/index.js'
+
+const runtimes = ref([])
+const catalog = ref([])
+const selected = ref(null)
+const editing = ref(false)
+const loading = ref(false)
+const saving = ref(false)
+const working = ref(false)
+const deleteData = ref(false)
+const error = ref('')
+const message = ref('')
+
+const emptyForm = () => ({ name: '', runtime_type: 'nanobot', deployment_mode: 'managed', runtime_version: '', image: '', namespace: 'cylism-assistant', port: 8080, health_path: '/health', endpoint_url: '', pvc_name: '', storage: '10Gi', storage_class_name: '', node_name: '', model_name: '', model_base_url: '', api_style: 'responses', api_key: '', api_key_configured: false, config: {} })
+const form = ref(emptyForm())
+const supportedProtocols = computed(() => catalog.value.find(item => item.runtime_type === form.value.runtime_type)?.supported_model_protocols || ['responses'])
+
+function statusLabel(status) { return ({ draft: '未部署', deploying: '部署中', ready: '就绪', degraded: '异常', failed: '失败', uninstalled: '已卸载' })[status] || status || '未知' }
+function protocolLabel(protocol) { return ({ responses: 'Responses API', anthropic: 'Anthropic API' })[protocol] || protocol }
+function onRuntimeTypeChange() { if (!supportedProtocols.value.includes(form.value.api_style)) form.value.api_style = supportedProtocols.value[0] || 'responses' }
+function select(item) { selected.value = item; editing.value = false; deleteData.value = false; clearNotice() }
+function openCreate() { selected.value = null; form.value = emptyForm(); if (catalog.value[0]) { form.value.runtime_type = catalog.value[0].runtime_type; form.value.api_style = catalog.value[0].supported_model_protocols?.[0] || 'responses' }; editing.value = true; deleteData.value = false; clearNotice() }
+function editSelected() { form.value = { ...emptyForm(), ...selected.value, api_key: '' }; editing.value = true; deleteData.value = false; clearNotice() }
+function cancelEdit() { editing.value = false; if (!selected.value && runtimes.value.length) selected.value = runtimes.value[0] }
+function clearNotice() { error.value = ''; message.value = '' }
+function formBody() { const body = { ...form.value }; delete body.id; delete body.status; delete body.api_key_configured; if (!body.api_key) delete body.api_key; return body }
+async function loadCatalog() { try { const definitions = await api.get('/runtimes/catalog'); if (Array.isArray(definitions) && definitions.every(item => item.runtime_type && Array.isArray(item.supported_model_protocols))) catalog.value = definitions } catch (err) { error.value = err.message } }
+async function load() { loading.value = true; try { runtimes.value = await api.get('/runtimes'); if (selected.value) selected.value = runtimes.value.find(item => item.id === selected.value.id) || null } catch (err) { error.value = err.message } finally { loading.value = false } }
+async function save() { saving.value = true; clearNotice(); try { const result = form.value.id ? await api.put(`/runtimes/${form.value.id}`, formBody()) : await api.post('/runtimes', formBody()); message.value = result.message || 'Runtime 已保存'; await load(); selected.value = runtimes.value.find(item => item.id === result.id) || runtimes.value[0] || null; editing.value = false } catch (err) { error.value = err.message } finally { saving.value = false } }
+async function deploy(item) { await runAction(`/runtimes/${item.id}/deploy`, 'Runtime 已部署或更新') }
+async function health(item) { await runAction(`/runtimes/${item.id}/health-check`, '健康检查已完成') }
+async function uninstall(item) {
+  if (!deleteData.value && !window.confirm(`确定卸载 Runtime ${item.name} 吗？PVC 将保留。`)) return
+  if (deleteData.value && !window.confirm(`确定卸载 Runtime ${item.name} 并删除 PVC 和记忆数据吗？此操作不可恢复。`)) return
+  if (deleteData.value && !window.confirm('最后确认：会话、长期记忆、工作区和 PVC 都会被永久删除。继续吗？')) return
+  await runAction(`/runtimes/${item.id}/uninstall${deleteData.value ? '?delete_data=true' : ''}`, 'Runtime 已卸载')
+  deleteData.value = false
+}
+async function runAction(path, success) { working.value = true; clearNotice(); try { const result = await api.post(path); message.value = result.message || success; await load() } catch (err) { error.value = err.message } finally { working.value = false } }
+onMounted(async () => { await loadCatalog(); if (!catalog.value.length) catalog.value = [{ runtime_type: 'nanobot', display_name: 'nanobot', supported_model_protocols: ['responses', 'anthropic'] }]; await load() })
+</script>
+
+<style scoped>
+.runtime-layout { display: grid; grid-template-columns: minmax(260px, 0.8fr) minmax(420px, 1.4fr); gap: 16px; }
+.runtime-item { width: 100%; border: 0; border-bottom: 1px solid var(--border-muted); background: transparent; color: var(--text-primary); padding: 14px 12px; display: flex; align-items: center; gap: 10px; text-align: left; cursor: pointer; }
+.runtime-item:hover, .runtime-item.is-selected { background: var(--surface-subtle); }
+.runtime-item-main { display: flex; flex: 1; flex-direction: column; gap: 3px; min-width: 0; }.runtime-item-main small { color: var(--text-muted); }.runtime-item-status { font-size: 12px; color: var(--text-muted); }.runtime-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--text-muted); flex: 0 0 auto; }.status-ready { background: var(--success); }.status-deploying { background: var(--warning); }.status-failed, .status-degraded { background: var(--danger); }
+.runtime-form, .runtime-detail { padding: 16px 0; }.runtime-form label { display: flex; flex-direction: column; gap: 7px; margin-bottom: 14px; color: var(--text-muted); font-size: 13px; }.runtime-form input, .runtime-form select { width: 100%; border: 1px solid var(--border-muted); border-radius: 5px; padding: 9px 10px; background: var(--surface-input); color: var(--text-primary); }.form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }.form-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 18px; }.button-danger { color: var(--danger); }.runtime-status-banner { display: flex; align-items: center; gap: 9px; padding: 12px; background: var(--surface-subtle); border-left: 3px solid var(--success); }.runtime-status-banner span:last-child { color: var(--text-muted); font-size: 13px; }.runtime-facts { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 22px 0; }.runtime-facts div { min-width: 0; }.runtime-facts dt { color: var(--text-muted); font-size: 12px; margin-bottom: 4px; }.runtime-facts dd { margin: 0; overflow-wrap: anywhere; }.notice { margin: 12px 0; padding: 10px 12px; border-radius: 5px; }.notice-error { color: var(--danger); background: var(--danger-surface); }.notice-success { color: var(--success); background: var(--success-surface); }
+.runtime-delete-control { margin-top: 18px; padding: 11px 12px; border: 1px solid var(--danger); border-radius: 5px; color: var(--danger); background: var(--danger-surface); }.runtime-delete-control label { display: inline-flex; align-items: center; gap: 8px; font-weight: 700; }.runtime-delete-control p { margin: 6px 0 0 24px; font-size: 12px; }
+@media (max-width: 850px) { .runtime-layout { grid-template-columns: 1fr; }.runtime-facts, .form-grid { grid-template-columns: 1fr; } }
+</style>

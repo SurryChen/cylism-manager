@@ -5,6 +5,7 @@ import (
 
 	"github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
+	runtimepkg "github.com/cylism/cylism-manager/internal/runtime"
 	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/gin-gonic/gin"
 )
@@ -42,6 +43,19 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 	apiGroup := r.Group("/api")
 	apiGroup.Use(JWTAuthMiddleware(authCfg.JWTSecret))
 	apiGroup.Use(AuditMiddleware(s))
+	runtimeRegistry := runtimepkg.BuiltinRegistry()
+	runtimeHandler := NewRuntimeHandler(s, encKey, runtimepkg.NewKubernetesManager(K8s, runtimeRegistry), runtimeRegistry)
+	runtimes := apiGroup.Group("/runtimes")
+	{
+		runtimes.GET("/catalog", runtimeHandler.Catalog)
+		runtimes.GET("", runtimeHandler.List)
+		runtimes.POST("", runtimeHandler.Create)
+		runtimes.GET("/:id", runtimeHandler.Get)
+		runtimes.PUT("/:id", runtimeHandler.Update)
+		runtimes.POST("/:id/deploy", runtimeHandler.Deploy)
+		runtimes.POST("/:id/health-check", runtimeHandler.Health)
+		runtimes.POST("/:id/uninstall", runtimeHandler.Uninstall)
+	}
 	platformHandler := NewPlatformHandler(s, encKey)
 	go platformHandler.Reconcile()
 

@@ -91,7 +91,7 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Activity, Boxes, Check, FileText, FolderKanban, HardDrive, History, LayoutDashboard, Layers3, LogOut, Menu, Orbit, PackagePlus, Palette, Route, Server, Settings, Waypoints, X } from 'lucide-vue-next'
+import { Activity, Bot, Boxes, Check, FileText, FolderKanban, HardDrive, History, LayoutDashboard, Layers3, LogOut, Menu, Orbit, PackagePlus, Palette, Route, Server, Settings, Waypoints, X } from 'lucide-vue-next'
 import { clearTokens } from './api/index.js'
 import { usePalette } from './composables/usePalette.js'
 
@@ -137,6 +137,7 @@ const navGroups = computed(() => [
       { label: '网络访问', to: '/network', icon: Route },
       { label: '存储', to: '/storage', icon: HardDrive },
       { label: '监控', to: '/monitoring', icon: Activity },
+      { label: 'Agent Runtime', to: '/runtimes', icon: Bot },
     ],
   },
   {

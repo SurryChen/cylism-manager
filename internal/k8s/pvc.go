@@ -25,6 +25,7 @@ const (
 	InfrastructureAlertmanager    = "alertmanager"
 	InfrastructureVictoriaMetrics = "victoria-metrics"
 	InfrastructureLoki            = "loki"
+	InfrastructureRuntime         = "agent-runtime"
 )
 
 // PersistentVolumeClaimRequest contains the user-controlled fields supported
@@ -455,7 +456,7 @@ func infrastructurePVCOwner(claim *corev1.PersistentVolumeClaim) string {
 		return ""
 	}
 	switch claim.Labels[InfrastructureLabel] {
-	case InfrastructureAlertmanager, InfrastructureVictoriaMetrics, InfrastructureLoki:
+	case InfrastructureAlertmanager, InfrastructureVictoriaMetrics, InfrastructureLoki, InfrastructureRuntime:
 		return claim.Labels[InfrastructureLabel]
 	default:
 		return ""
@@ -470,6 +471,8 @@ func infrastructurePVCOwnerName(owner string) string {
 		return "VictoriaMetrics"
 	case InfrastructureLoki:
 		return "Loki 日志存储"
+	case InfrastructureRuntime:
+		return "Agent Runtime"
 	default:
 		return owner
 	}
