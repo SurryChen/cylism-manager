@@ -169,8 +169,15 @@ func TestMonitoringDiskGrowthReturnsRankingsAndPVCConsumers(t *testing.T) {
 
 func TestDiskGrowthMountQueryAvoidsInvalidPromQLStringEscapes(t *testing.T) {
 	queries := diskGrowthQueries("6h", "")
-	if len(queries) == 0 || strings.Contains(queries[0].query, `\.`) || !strings.Contains(queries[0].query, "resolv[.]conf") {
+	if len(queries) == 0 || strings.Contains(queries[0].query, `\.`) || !strings.Contains(queries[0].query, "resolv[.]conf") || !strings.Contains(queries[0].query, "and on (node, mountpoint) node_filesystem_avail_bytes") {
 		t.Fatalf("unexpected mount query: %#v", queries)
+	}
+}
+
+func TestDiskGrowthContainerQueryDoesNotRequireOptionalImageLabel(t *testing.T) {
+	queries := diskGrowthQueries("6h", "")
+	if len(queries) != 3 || strings.Contains(queries[2].query, `image!=""`) || !strings.Contains(queries[2].query, `container!="",pod!=""`) {
+		t.Fatalf("unexpected container query: %#v", queries)
 	}
 }
 

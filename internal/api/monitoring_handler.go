@@ -336,9 +336,9 @@ func diskGrowthQueries(window, node string) []diskGrowthQuery {
 		nodeMatcher = ",node=" + strconv.Quote(node)
 	}
 	return []diskGrowthQuery{
-		{key: "mounts", query: fmt.Sprintf(`topk(12, max by (node, mountpoint) (clamp_min(-delta(node_filesystem_avail_bytes{fstype!~"tmpfs|overlay",mountpoint!~"/etc/(hosts|hostname|resolv[.]conf)"%s}[%s]), 0)))`, nodeMatcher, window)},
+		{key: "mounts", query: fmt.Sprintf(`topk(12, max by (node, mountpoint) (clamp_min(-delta(node_filesystem_avail_bytes{fstype!~"tmpfs|overlay",mountpoint!~"/etc/(hosts|hostname|resolv[.]conf)"%s}[%s]), 0)) and on (node, mountpoint) node_filesystem_avail_bytes{fstype!~"tmpfs|overlay",mountpoint!~"/etc/(hosts|hostname|resolv[.]conf)"%s})`, nodeMatcher, window, nodeMatcher)},
 		{key: "pvcs", query: fmt.Sprintf(`topk(12, max by (node, namespace, persistentvolumeclaim) (clamp_min(delta(kubelet_volume_stats_used_bytes{%s}[%s]), 0)))`, strings.TrimPrefix(nodeMatcher, ","), window)},
-		{key: "containers", query: fmt.Sprintf(`topk(12, max by (node, namespace, pod, container) (clamp_min(delta(container_fs_usage_bytes{container!="",pod!="",image!=""%s}[%s]), 0)))`, nodeMatcher, window)},
+		{key: "containers", query: fmt.Sprintf(`topk(12, max by (node, namespace, pod, container) (clamp_min(delta(container_fs_usage_bytes{container!="",pod!=""%s}[%s]), 0)))`, nodeMatcher, window)},
 	}
 }
 
