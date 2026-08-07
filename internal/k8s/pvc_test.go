@@ -142,6 +142,22 @@ func TestInfrastructurePVCIsClassifiedAndProtectedFromGenericDelete(t *testing.T
 	}
 }
 
+func TestRuntimePVCIsClassifiedAndProtectedFromGenericDelete(t *testing.T) {
+	client := &Client{Clientset: k8sfake.NewSimpleClientset(&corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{Name: "nanobot-data", Namespace: "cylism-assistant", Labels: map[string]string{ManagedByLabel: ManagedByValue, InfrastructureLabel: InfrastructureRuntime}},
+	})}
+	claims, err := client.ListPVCs("cylism-assistant")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(claims) != 1 || claims[0].OwnerType != "infrastructure" || claims[0].OwnerName != "Agent Runtime" || !claims[0].ReadOnly {
+		t.Fatalf("expected runtime PVC to be read-only infrastructure, got %#v", claims)
+	}
+	if err := client.DeleteManagedPVC("cylism-assistant", "nanobot-data", 0); err == nil || !strings.Contains(err.Error(), "基础设施组件") {
+		t.Fatalf("expected protected runtime PVC delete error, got %v", err)
+	}
+}
+
 func TestCreateManagedPVCUsesEnvironmentLabelsAndReadWriteOnce(t *testing.T) {
 	client := &Client{Clientset: k8sfake.NewSimpleClientset()}
 	created, err := client.CreateManagedPVC("project-knowledge", 3, PersistentVolumeClaimRequest{Name: "karakeep-data", Storage: "5Gi", StorageClassName: "local-path"})

@@ -47,6 +47,7 @@ func New(dsn string) (*Store, error) {
 		&model.OperationLog{},
 		&model.User{},
 		&model.SystemConfig{},
+		&model.RuntimeInstance{},
 		&model.PlatformRelease{},
 		&model.PlatformWebhookNonce{},
 		&model.Project{},
@@ -101,6 +102,38 @@ func New(dsn string) (*Store, error) {
 		return nil, err
 	}
 	return store, nil
+}
+
+func (s *Store) CreateRuntime(runtime *model.RuntimeInstance) error {
+	return s.db.Create(runtime).Error
+}
+
+func (s *Store) GetRuntime(id uint) (*model.RuntimeInstance, error) {
+	var runtime model.RuntimeInstance
+	err := s.db.First(&runtime, id).Error
+	return &runtime, err
+}
+
+func (s *Store) ListRuntimes() ([]model.RuntimeInstance, error) {
+	var runtimes []model.RuntimeInstance
+	err := s.db.Order("created_at desc").Find(&runtimes).Error
+	return runtimes, err
+}
+
+func (s *Store) UpdateRuntime(runtime *model.RuntimeInstance) error {
+	return s.db.Save(runtime).Error
+}
+
+func (s *Store) UpdateRuntimeHealth(id uint, status, detail string, checkedAt time.Time) error {
+	return s.db.Model(&model.RuntimeInstance{}).Where("id = ?", id).Updates(map[string]interface{}{
+		"health_status":  status,
+		"health_detail":  detail,
+		"last_health_at": checkedAt,
+	}).Error
+}
+
+func (s *Store) DeleteRuntime(id uint) error {
+	return s.db.Delete(&model.RuntimeInstance{}, id).Error
 }
 
 // removeObsoleteApplicationStackSchema permanently retires the removed

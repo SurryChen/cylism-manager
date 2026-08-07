@@ -58,6 +58,7 @@ describe('Glass UI application shell', () => {
     expect(navigation.text()).toContain('网络访问')
     expect(navigation.text()).toContain('存储')
     expect(navigation.text()).toContain('监控')
+    expect(navigation.text()).toContain('Agent Runtime')
     expect(navigation.text()).not.toContain('节点镜像源')
     expect(navigation.text()).not.toContain('Chart 仓库')
     expect(navigation.text()).not.toContain('工作负载')
