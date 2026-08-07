@@ -80,6 +80,22 @@ describe('Monitoring view', () => {
     wrapper.unmount()
   })
 
+  it('keeps metrics available when node exporter coverage is partial', async () => {
+    apiMocks.get.mockImplementation(path => {
+      if (path === '/monitoring/status') return Promise.resolve({ state: 'degraded', message: 'VictoriaMetrics 已就绪，但 node-exporter 仅 1/2 个节点就绪', ready_replicas: 1, node_name: 'node-a', retention_days: 14, node_exporter_ready: 1, node_exporter_desired: 2 })
+      if (path === '/nodes') return Promise.resolve([{ name: 'node-a', internal_ip: '10.0.0.1', ready: true }, { name: 'node-b', internal_ip: '10.0.0.2', ready: true }])
+      if (path.startsWith('/monitoring/dashboard')) return Promise.resolve({ trends: {} })
+      return Promise.resolve({ result: [] })
+    })
+
+    const wrapper = mount(Monitoring)
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('node-exporter 仅 1/2 个节点就绪')
+    expect(wrapper.findAll('.metric-trend-chart')).toHaveLength(4)
+    expect(apiMocks.get).toHaveBeenCalledWith('/monitoring/dashboard?range=6h')
+  })
+
   it('moves monitoring configuration into a settings drawer and updates retention', async () => {
     apiMocks.get.mockImplementation(path => {
       if (path === '/monitoring/status') return Promise.resolve({ state: 'ready', message: '指标采集正常', node_name: 'node-a', data_path: '/data/victoria-metrics', retention_days: 14, node_exporter_ready: 1, node_exporter_desired: 1 })
