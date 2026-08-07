@@ -6,8 +6,10 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
 )
 
@@ -72,6 +74,41 @@ func TestCleanupLegacyOpsAgentDeletesOnlyLegacyResources(t *testing.T) {
 	}
 	if _, err := client.Clientset.CoreV1().PersistentVolumeClaims(opsAgentNamespace).Get(client.Ctx(), opsAgentName+"-audit", metav1.GetOptions{}); err != nil {
 		t.Fatalf("active audit PVC must be retained: %v", err)
+	}
+}
+
+func TestUninstallOpsAgentRemovesCurrentAndLegacyWorkloadsAndPVCs(t *testing.T) {
+	resources := make([]runtime.Object, 0, 10)
+	for _, namespace := range []string{opsAgentNamespace, legacyOpsAgentNamespace} {
+		resources = append(resources,
+			&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: opsAgentName, Namespace: namespace}},
+			&corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: opsAgentName, Namespace: namespace}},
+			&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: opsAgentName, Namespace: namespace}},
+			&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: opsAgentName + "-model", Namespace: namespace}},
+			&corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: opsAgentName + "-audit", Namespace: namespace}},
+		)
+	}
+	client := &Client{Clientset: fake.NewSimpleClientset(resources...)}
+
+	if err := client.UninstallOpsAgent(); err != nil {
+		t.Fatal(err)
+	}
+	for _, namespace := range []string{opsAgentNamespace, legacyOpsAgentNamespace} {
+		if _, err := client.Clientset.AppsV1().Deployments(namespace).Get(client.Ctx(), opsAgentName, metav1.GetOptions{}); !apierrors.IsNotFound(err) {
+			t.Fatalf("deployment in %s was not removed: %v", namespace, err)
+		}
+		if _, err := client.Clientset.CoreV1().Services(namespace).Get(client.Ctx(), opsAgentName, metav1.GetOptions{}); !apierrors.IsNotFound(err) {
+			t.Fatalf("service in %s was not removed: %v", namespace, err)
+		}
+		if _, err := client.Clientset.CoreV1().ConfigMaps(namespace).Get(client.Ctx(), opsAgentName, metav1.GetOptions{}); !apierrors.IsNotFound(err) {
+			t.Fatalf("config map in %s was not removed: %v", namespace, err)
+		}
+		if _, err := client.Clientset.CoreV1().Secrets(namespace).Get(client.Ctx(), opsAgentName+"-model", metav1.GetOptions{}); !apierrors.IsNotFound(err) {
+			t.Fatalf("secret in %s was not removed: %v", namespace, err)
+		}
+		if _, err := client.Clientset.CoreV1().PersistentVolumeClaims(namespace).Get(client.Ctx(), opsAgentName+"-audit", metav1.GetOptions{}); !apierrors.IsNotFound(err) {
+			t.Fatalf("PVC in %s was not removed: %v", namespace, err)
+		}
 	}
 }
 

@@ -653,5 +653,5 @@ func (h *AssistantHandler) Uninstall(c *gin.Context) {
 		model.Error(c, http.StatusInternalServerError, model.CodeK8sAPIError, "卸载智能助手失败: "+err.Error())
 		return
 	}
-	model.SuccessWithMessage(c, gin.H{"pvc_retained": true}, "智能助手 Runtime 已卸载，审计 PVC 已保留")
+	model.SuccessWithMessage(c, gin.H{"pvc_deleted": true}, "智能助手 Runtime 和审计 PVC 已卸载")
 }
