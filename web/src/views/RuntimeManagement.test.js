@@ -37,7 +37,8 @@ describe('RuntimeManagement', () => {
     await wrapper.get('input[placeholder="托管模式填写镜像地址"]').setValue('example/nanobot:v1')
     await wrapper.get('input[placeholder="模型名称"]').setValue('qwen-max')
     await wrapper.get('form').trigger('submit')
-    expect(apiMocks.post).toHaveBeenCalledWith('/runtimes', expect.objectContaining({ name: 'nanobot-prod', image: 'example/nanobot:v1', model_name: 'qwen-max' }))
+    expect(wrapper.find('input[type="number"]').exists()).toBe(false)
+    expect(apiMocks.post).toHaveBeenCalledWith('/runtimes', expect.objectContaining({ name: 'nanobot-prod', image: 'example/nanobot:v1', model_name: 'qwen-max', port: 8900, health_path: '/health' }))
   })
 
   it('requires two confirmations before deleting runtime data', async () => {

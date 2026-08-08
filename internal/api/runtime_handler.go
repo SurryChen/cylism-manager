@@ -1,6 +1,8 @@
 package api
 
 import (
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -183,12 +185,21 @@ func (h *RuntimeHandler) Deploy(c *gin.Context) {
 			return
 		}
 	}
+	if strings.TrimSpace(apiKey) == "" {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "托管 Runtime 必须配置模型 API 密钥")
+		return
+	}
 	instance.Status = model.RuntimeStatusDeploying
 	if err := h.store.UpdateRuntime(instance); err != nil {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "保存 Runtime 状态失败")
 		return
 	}
-	if err := h.k8s.Apply(c.Request.Context(), instance, apiKey); err != nil {
+	runtimeAPIKey, err := h.runtimeAPIKey(instance)
+	if err != nil {
+		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, "读取 Runtime API 凭据失败")
+		return
+	}
+	if err := h.k8s.Apply(c.Request.Context(), instance, apiKey, runtimeAPIKey); err != nil {
 		instance.Status = model.RuntimeStatusFailed
 		instance.HealthDetail = err.Error()
 		_ = h.store.UpdateRuntime(instance)
@@ -296,7 +307,8 @@ func (h *RuntimeHandler) instanceFromRequest(req runtimeRequest, current *model.
 	if current != nil && runtimeType == "" {
 		runtimeType = current.RuntimeType
 	}
-	if _, ok := h.registry.Get(runtimeType); !ok {
+	adapter, ok := h.registry.Get(runtimeType)
+	if !ok {
 		return nil, fmt.Errorf("不支持的 Runtime 类型: %s", runtimeType)
 	}
 	image := strings.TrimSpace(req.Image)
@@ -384,6 +396,11 @@ func (h *RuntimeHandler) instanceFromRequest(req runtimeRequest, current *model.
 	if deploymentMode == model.RuntimeDeploymentExternal && endpointURL == "" {
 		return nil, fmt.Errorf("外部 Runtime 必须提供连接地址")
 	}
+	if deploymentMode == model.RuntimeDeploymentManaged {
+		definition := adapter.Definition()
+		port = definition.DefaultPort
+		healthPath = definition.DefaultHealthPath
+	}
 	if req.Config == nil && current != nil && current.Config != "" {
 		if err := json.Unmarshal([]byte(current.Config), &req.Config); err != nil {
 			return nil, fmt.Errorf("读取已有 Runtime 配置失败")
@@ -406,6 +423,7 @@ func (h *RuntimeHandler) instanceFromRequest(req runtimeRequest, current *model.
 		}
 		instance.SecretName = current.SecretName
 		instance.EncryptedAPIKey = current.EncryptedAPIKey
+		instance.EncryptedRuntimeAPIKey = current.EncryptedRuntimeAPIKey
 	}
 	if req.APIKey != nil {
 		if strings.TrimSpace(*req.APIKey) == "" {
@@ -433,6 +451,26 @@ func (r runtimeRequest) ConfigOrEmpty() map[string]interface{} {
 func (h *RuntimeHandler) sanitize(instance *model.RuntimeInstance) {
 	instance.APIKeyConfigured = instance.EncryptedAPIKey != ""
 	instance.EncryptedAPIKey = ""
+}
+
+func (h *RuntimeHandler) runtimeAPIKey(instance *model.RuntimeInstance) (string, error) {
+	if instance.EncryptedRuntimeAPIKey != "" {
+		return crypto.Decrypt(h.encKey, instance.EncryptedRuntimeAPIKey)
+	}
+	value := make([]byte, 32)
+	if _, err := rand.Read(value); err != nil {
+		return "", err
+	}
+	plain := base64.RawURLEncoding.EncodeToString(value)
+	encrypted, err := crypto.Encrypt(h.encKey, plain)
+	if err != nil {
+		return "", err
+	}
+	instance.EncryptedRuntimeAPIKey = encrypted
+	if err := h.store.UpdateRuntime(instance); err != nil {
+		return "", err
+	}
+	return plain, nil
 }
 
 func ptrTime(t time.Time) *time.Time { return &t }

@@ -50,10 +50,10 @@
           <form class="runtime-form" @submit.prevent="save">
           <label>名称<input v-model.trim="form.name" required pattern="[a-z0-9]([-a-z0-9]*[a-z0-9])?" placeholder="nanobot-main" /></label>
           <label>Runtime 类型<select v-model="form.runtime_type" @change="onRuntimeTypeChange"><option v-for="definition in catalog" :key="definition.runtime_type" :value="definition.runtime_type">{{ definition.display_name || definition.runtime_type }}</option></select></label>
-          <label>部署方式<select v-model="form.deployment_mode"><option value="managed">平台托管（当前集群）</option><option value="external">外部连接（其他机器）</option></select></label>
+          <label>部署方式<select v-model="form.deployment_mode" @change="onDeploymentModeChange"><option value="managed">平台托管（当前集群）</option><option value="external">外部连接（其他机器）</option></select></label>
           <label>镜像<input v-model.trim="form.image" :required="form.deployment_mode === 'managed'" placeholder="托管模式填写镜像地址" /></label>
           <label v-if="form.deployment_mode === 'external'">Runtime 连接地址<input v-model.trim="form.endpoint_url" required placeholder="https://agent.example.com" /></label>
-          <div class="form-grid">
+          <div v-if="form.deployment_mode === 'external'" class="form-grid">
             <label>端口<input v-model.number="form.port" type="number" min="1" max="65535" /></label>
             <label>健康路径<input v-model.trim="form.health_path" placeholder="/health" /></label>
           </div>
@@ -91,15 +91,17 @@ const error = ref('')
 const message = ref('')
 const tabs = [{ id: 'instances', label: '实例' }]
 
-const emptyForm = () => ({ name: '', runtime_type: 'nanobot', deployment_mode: 'managed', runtime_version: '', image: '', namespace: 'cylism-assistant', port: 8080, health_path: '/health', endpoint_url: '', pvc_name: '', storage: '10Gi', storage_class_name: '', node_name: '', model_name: '', model_base_url: '', api_style: 'responses', api_key: '', api_key_configured: false, config: {} })
+const emptyForm = () => ({ name: '', runtime_type: 'nanobot', deployment_mode: 'managed', runtime_version: '', image: '', namespace: 'cylism-assistant', port: 8900, health_path: '/health', endpoint_url: '', pvc_name: '', storage: '10Gi', storage_class_name: '', node_name: '', model_name: '', model_base_url: '', api_style: 'responses', api_key: '', api_key_configured: false, config: {} })
 const form = ref(emptyForm())
 const supportedProtocols = computed(() => catalog.value.find(item => item.runtime_type === form.value.runtime_type)?.supported_model_protocols || ['responses'])
 
 function statusLabel(status) { return ({ draft: '未部署', deploying: '部署中', ready: '就绪', degraded: '异常', failed: '失败', uninstalled: '已卸载' })[status] || status || '未知' }
 function protocolLabel(protocol) { return ({ responses: 'Responses API', anthropic: 'Anthropic API' })[protocol] || protocol }
-function onRuntimeTypeChange() { if (!supportedProtocols.value.includes(form.value.api_style)) form.value.api_style = supportedProtocols.value[0] || 'responses' }
+function applyManagedEndpointDefaults() { if (form.value.deployment_mode !== 'managed') return; const definition = catalog.value.find(item => item.runtime_type === form.value.runtime_type); form.value.port = definition?.default_port || 8900; form.value.health_path = definition?.default_health_path || '/health' }
+function onRuntimeTypeChange() { if (!supportedProtocols.value.includes(form.value.api_style)) form.value.api_style = supportedProtocols.value[0] || 'responses'; applyManagedEndpointDefaults() }
+function onDeploymentModeChange() { applyManagedEndpointDefaults() }
 function select(item) { selected.value = item; editing.value = false; deleteData.value = false; clearNotice() }
-function openCreate() { selected.value = null; form.value = emptyForm(); if (catalog.value[0]) { form.value.runtime_type = catalog.value[0].runtime_type; form.value.api_style = catalog.value[0].supported_model_protocols?.[0] || 'responses' }; editing.value = true; deleteData.value = false; clearNotice() }
+function openCreate() { selected.value = null; form.value = emptyForm(); if (catalog.value[0]) { form.value.runtime_type = catalog.value[0].runtime_type; form.value.api_style = catalog.value[0].supported_model_protocols?.[0] || 'responses' }; onRuntimeTypeChange(); editing.value = true; deleteData.value = false; clearNotice() }
 function editSelected() { form.value = { ...emptyForm(), ...selected.value, api_key: '' }; editing.value = true; deleteData.value = false; clearNotice() }
 function cancelEdit() { editing.value = false; if (!selected.value && runtimes.value.length) selected.value = runtimes.value[0] }
 function clearNotice() { error.value = ''; message.value = '' }
