@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"github.com/cylism/cylism-manager/internal/model"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
 const (
@@ -30,6 +32,18 @@ type Adapter interface {
 	Definition() Definition
 	Validate(instance *model.RuntimeInstance) error
 	Config(instance *model.RuntimeInstance) (string, error)
+	Workload(instance *model.RuntimeInstance) (WorkloadSpec, error)
+}
+
+// WorkloadSpec is a platform-owned Kubernetes workload description. Adapter
+// inputs never become arbitrary Pod fields, keeping runtime configuration and
+// Kubernetes execution privileges separate.
+type WorkloadSpec struct {
+	InitContainers []corev1.Container
+	Containers     []corev1.Container
+	ServicePort    int32
+	HealthPort     int32
+	HealthPath     string
 }
 
 type Registry struct {
@@ -98,7 +112,7 @@ func (NanobotAdapter) Definition() Definition {
 		RuntimeType:             model.RuntimeTypeNanobot,
 		DisplayName:             "nanobot",
 		Description:             "拥有会话、长期记忆和 Gateway 的外部 Agent Runtime",
-		DefaultPort:             RuntimeDefaultPort,
+		DefaultPort:             NanobotAPIPort,
 		DefaultHealthPath:       "/health",
 		SupportedModelProtocols: []string{ModelProtocolResponses, ModelProtocolAnthropic},
 	}
@@ -110,31 +124,107 @@ func (a NanobotAdapter) Validate(instance *model.RuntimeInstance) error {
 	}
 	for _, protocol := range a.Definition().SupportedModelProtocols {
 		if instance.APIStyle == protocol {
-			return nil
+			_, err := a.Config(instance)
+			return err
 		}
 	}
 	return fmt.Errorf("Runtime %q 不支持模型协议 %q", instance.RuntimeType, instance.APIStyle)
 }
 
 func (NanobotAdapter) Config(instance *model.RuntimeInstance) (string, error) {
-	raw := map[string]interface{}{}
-	if strings.TrimSpace(instance.Config) != "" {
-		if err := json.Unmarshal([]byte(instance.Config), &raw); err != nil {
+	if strings.TrimSpace(instance.Config) != "" && strings.TrimSpace(instance.Config) != "{}" {
+		var configured map[string]interface{}
+		if err := json.Unmarshal([]byte(instance.Config), &configured); err != nil {
 			return "", fmt.Errorf("Runtime 配置不是合法 JSON: %w", err)
 		}
+		if len(configured) > 0 {
+			return "", fmt.Errorf("Nanobot Runtime 暂不支持覆盖平台管理的原生配置")
+		}
 	}
-	if instance.ModelName != "" {
-		raw["model"] = instance.ModelName
+	provider := "openai"
+	providers := map[string]interface{}{}
+	if instance.APIStyle == ModelProtocolAnthropic {
+		provider = "anthropic"
+		providers[provider] = map[string]interface{}{
+			"apiKey":  "${CYLISM_MODEL_API_KEY}",
+			"apiBase": instance.ModelBaseURL,
+		}
+	} else {
+		providers[provider] = map[string]interface{}{
+			"apiKey":  "${CYLISM_MODEL_API_KEY}",
+			"apiBase": instance.ModelBaseURL,
+			"apiType": ModelProtocolResponses,
+		}
 	}
-	if instance.ModelBaseURL != "" {
-		raw["base_url"] = instance.ModelBaseURL
-	}
-	if instance.APIStyle != "" {
-		raw["model_protocol"] = instance.APIStyle
+	raw := map[string]interface{}{
+		"agents": map[string]interface{}{
+			"defaults": map[string]interface{}{
+				"workspace": "/data/workspace",
+				"model":     instance.ModelName,
+				"provider":  provider,
+			},
+		},
+		"providers": providers,
+		"gateway": map[string]interface{}{
+			"host": "0.0.0.0",
+			"port": NanobotGatewayPort,
+		},
+		"api": map[string]interface{}{
+			"host":   "0.0.0.0",
+			"port":   NanobotAPIPort,
+			"apiKey": "${CYLISM_RUNTIME_API_KEY}",
+		},
+		"tools": map[string]interface{}{
+			"exec":                           map[string]interface{}{"enable": false},
+			"restrictToWorkspace":            true,
+			"webuiAllowRemotePackageInstall": false,
+		},
 	}
 	encoded, err := json.Marshal(raw)
 	if err != nil {
 		return "", fmt.Errorf("编码 Runtime 配置: %w", err)
 	}
 	return string(encoded), nil
+}
+
+func (NanobotAdapter) Workload(instance *model.RuntimeInstance) (WorkloadSpec, error) {
+	if strings.TrimSpace(instance.Image) == "" {
+		return WorkloadSpec{}, fmt.Errorf("Nanobot Runtime 镜像不能为空")
+	}
+	probe := func(port int32) *corev1.Probe {
+		return &corev1.Probe{
+			ProbeHandler:        corev1.ProbeHandler{HTTPGet: &corev1.HTTPGetAction{Path: "/health", Port: intstr.FromInt32(port)}},
+			InitialDelaySeconds: 5,
+			PeriodSeconds:       10,
+			TimeoutSeconds:      3,
+			FailureThreshold:    6,
+		}
+	}
+	gateway := corev1.Container{
+		Name:           "gateway",
+		Image:          instance.Image,
+		Command:        []string{"nanobot", "gateway", "--foreground", "--config", NanobotConfigPath},
+		Ports:          []corev1.ContainerPort{{Name: "gateway", ContainerPort: NanobotGatewayPort}},
+		ReadinessProbe: probe(NanobotGatewayPort),
+		LivenessProbe:  probe(NanobotGatewayPort),
+	}
+	api := corev1.Container{
+		Name:           "api",
+		Image:          instance.Image,
+		Command:        []string{"nanobot", "serve", "--host", "0.0.0.0", "--port", fmt.Sprintf("%d", NanobotAPIPort), "--config", NanobotConfigPath},
+		Ports:          []corev1.ContainerPort{{Name: "api", ContainerPort: NanobotAPIPort}},
+		ReadinessProbe: probe(NanobotAPIPort),
+		LivenessProbe:  probe(NanobotAPIPort),
+	}
+	return WorkloadSpec{
+		InitContainers: []corev1.Container{{
+			Name:    "render-config",
+			Image:   instance.Image,
+			Command: []string{"cylism-render-nanobot-config", "--source", "/etc/cylism/runtime.json", "--destination", NanobotConfigPath},
+		}},
+		Containers:  []corev1.Container{gateway, api},
+		ServicePort: NanobotAPIPort,
+		HealthPort:  NanobotAPIPort,
+		HealthPath:  "/health",
+	}, nil
 }

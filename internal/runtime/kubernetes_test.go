@@ -14,8 +14,8 @@ import (
 func TestApplyCreatesRuntimeResourcesAndReusesPVC(t *testing.T) {
 	client := &k8s.Client{Clientset: fake.NewSimpleClientset()}
 	manager := NewKubernetesManager(client)
-	instance := &model.RuntimeInstance{ID: 7, Name: "nanobot-main", RuntimeType: model.RuntimeTypeNanobot, Image: "example/nanobot:latest", Namespace: DefaultNamespace, Port: 8080, HealthPath: "/health", PVCName: "nanobot-main-data", Storage: "10Gi", Config: `{"gateway":"enabled"}`}
-	if err := manager.Apply(context.Background(), instance, "secret"); err != nil {
+	instance := &model.RuntimeInstance{ID: 7, Name: "nanobot-main", RuntimeType: model.RuntimeTypeNanobot, Image: "example/nanobot:latest", Namespace: DefaultNamespace, PVCName: "nanobot-main-data", Storage: "10Gi", ModelName: "gpt-test", ModelBaseURL: "https://provider.example/v1", APIStyle: ModelProtocolResponses}
+	if err := manager.Apply(context.Background(), instance, "model-secret", "runtime-secret"); err != nil {
 		t.Fatalf("apply runtime: %v", err)
 	}
 	if instance.EndpointURL == "" || instance.SecretName == "" {
@@ -24,13 +24,32 @@ func TestApplyCreatesRuntimeResourcesAndReusesPVC(t *testing.T) {
 	if _, err := client.Clientset.CoreV1().Namespaces().Get(context.Background(), DefaultNamespace, metav1.GetOptions{}); err != nil {
 		t.Fatalf("namespace not created: %v", err)
 	}
-	if _, err := client.Clientset.AppsV1().Deployments(DefaultNamespace).Get(context.Background(), instance.Name, metav1.GetOptions{}); err != nil {
+	deployment, err := client.Clientset.AppsV1().Deployments(DefaultNamespace).Get(context.Background(), instance.Name, metav1.GetOptions{})
+	if err != nil {
 		t.Fatalf("deployment not created: %v", err)
+	}
+	pod := deployment.Spec.Template.Spec
+	if len(pod.InitContainers) != 1 || len(pod.Containers) != 2 || pod.InitContainers[0].Name != "render-config" || pod.Containers[0].Name != "gateway" || pod.Containers[1].Name != "api" {
+		t.Fatalf("unexpected Nanobot pod: %#v", pod)
+	}
+	if pod.AutomountServiceAccountToken == nil || *pod.AutomountServiceAccountToken || pod.SecurityContext == nil || pod.SecurityContext.RunAsNonRoot == nil || !*pod.SecurityContext.RunAsNonRoot {
+		t.Fatalf("expected restrictive pod security context: %#v", pod)
+	}
+	if pod.Containers[1].ReadinessProbe == nil || pod.Containers[1].ReadinessProbe.HTTPGet.Port.IntVal != 8900 {
+		t.Fatalf("API readiness probe must use port 8900: %#v", pod.Containers[1].ReadinessProbe)
+	}
+	service, err := client.Clientset.CoreV1().Services(DefaultNamespace).Get(context.Background(), instance.Name, metav1.GetOptions{})
+	if err != nil || len(service.Spec.Ports) != 1 || service.Spec.Ports[0].Port != 8900 || service.Spec.Ports[0].TargetPort.IntVal != 8900 {
+		t.Fatalf("unexpected Runtime service: %v %#v", err, service)
+	}
+	secret, err := client.Clientset.CoreV1().Secrets(DefaultNamespace).Get(context.Background(), instance.SecretName, metav1.GetOptions{})
+	if err != nil || secret.StringData[RuntimeSecretKey] != "model-secret" || secret.StringData[RuntimeAPISecretKey] != "runtime-secret" {
+		t.Fatalf("expected both credential keys in secret: %v %#v", err, secret)
 	}
 	if _, err := client.Clientset.CoreV1().PersistentVolumeClaims(DefaultNamespace).Get(context.Background(), instance.PVCName, metav1.GetOptions{}); err != nil {
 		t.Fatalf("pvc not created: %v", err)
 	}
-	if err := manager.Apply(context.Background(), instance, "secret-2"); err != nil {
+	if err := manager.Apply(context.Background(), instance, "model-secret-2", "runtime-secret-2"); err != nil {
 		t.Fatalf("reapply runtime: %v", err)
 	}
 	claim, err := client.Clientset.CoreV1().PersistentVolumeClaims(DefaultNamespace).Get(context.Background(), instance.PVCName, metav1.GetOptions{})
@@ -43,7 +62,7 @@ func TestApplyRejectsForeignPVC(t *testing.T) {
 	client := &k8s.Client{Clientset: fake.NewSimpleClientset(&corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: "data", Namespace: DefaultNamespace}})}
 	manager := NewKubernetesManager(client)
 	instance := &model.RuntimeInstance{ID: 1, Name: "nanobot", RuntimeType: model.RuntimeTypeNanobot, Image: "example/nanobot", Namespace: DefaultNamespace, PVCName: "data", Storage: "1Gi"}
-	if err := manager.Apply(context.Background(), instance, ""); err == nil {
+	if err := manager.Apply(context.Background(), instance, "", ""); err == nil {
 		t.Fatal("expected foreign PVC to be rejected")
 	}
 }

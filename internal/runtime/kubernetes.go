@@ -21,11 +21,15 @@ import (
 const DefaultNamespace = "cylism-assistant"
 
 const (
-	RuntimeLabel       = "cylism.io/runtime"
-	RuntimeIDLabel     = "cylism.io/runtime-id"
-	RuntimeConfigKey   = "runtime.json"
-	RuntimeSecretKey   = "api-key"
-	RuntimeDefaultPort = 8080
+	RuntimeLabel        = "cylism.io/runtime"
+	RuntimeIDLabel      = "cylism.io/runtime-id"
+	RuntimeConfigKey    = "runtime.json"
+	RuntimeSecretKey    = "api-key"
+	RuntimeAPISecretKey = "runtime-api-key"
+	NanobotGatewayPort  = 18790
+	NanobotAPIPort      = 8900
+	NanobotConfigPath   = "/data/.nanobot/config.json"
+	RuntimeDefaultPort  = NanobotAPIPort
 )
 
 type KubernetesManager struct {
@@ -67,12 +71,18 @@ func (m *KubernetesManager) EnsureNamespace(ctx context.Context, namespace strin
 	return nil
 }
 
-func (m *KubernetesManager) Apply(ctx context.Context, instance *model.RuntimeInstance, apiKey string) error {
+func (m *KubernetesManager) Apply(ctx context.Context, instance *model.RuntimeInstance, apiKey, runtimeAPIKey string) error {
 	if m == nil || m.Client == nil || m.Client.Clientset == nil {
 		return fmt.Errorf("Kubernetes 客户端未初始化")
 	}
 	if !RuntimeNameValid(instance.Name) {
 		return fmt.Errorf("Runtime 名称无效")
+	}
+	if strings.TrimSpace(apiKey) == "" {
+		return fmt.Errorf("Runtime 缺少模型 API 密钥")
+	}
+	if strings.TrimSpace(runtimeAPIKey) == "" {
+		return fmt.Errorf("Runtime 缺少 Agent API 密钥")
 	}
 	registry := m.Registry
 	if registry == nil {
@@ -89,10 +99,10 @@ func (m *KubernetesManager) Apply(ctx context.Context, instance *model.RuntimeIn
 		instance.Namespace = DefaultNamespace
 	}
 	if instance.Port == 0 {
-		instance.Port = RuntimeDefaultPort
+		instance.Port = adapter.Definition().DefaultPort
 	}
 	if instance.HealthPath == "" {
-		instance.HealthPath = "/health"
+		instance.HealthPath = adapter.Definition().DefaultHealthPath
 	}
 	if instance.PVCName == "" {
 		instance.PVCName = instance.Name + "-data"
@@ -130,15 +140,19 @@ func (m *KubernetesManager) Apply(ctx context.Context, instance *model.RuntimeIn
 			return fmt.Errorf("更新 Runtime ConfigMap: %w", err)
 		}
 	}
-	if apiKey != "" {
-		if err := m.applySecret(ctx, instance, labels, apiKey); err != nil {
-			return err
-		}
-	}
-	if err := m.applyService(ctx, instance, labels); err != nil {
+	if err := m.applySecret(ctx, instance, labels, apiKey, runtimeAPIKey); err != nil {
 		return err
 	}
-	if err := m.applyDeployment(ctx, instance, labels, apiKey != "" || instance.SecretName != ""); err != nil {
+	workload, err := adapter.Workload(instance)
+	if err != nil {
+		return err
+	}
+	instance.Port = workload.ServicePort
+	instance.HealthPath = workload.HealthPath
+	if err := m.applyService(ctx, instance, labels, workload); err != nil {
+		return err
+	}
+	if err := m.applyDeployment(ctx, instance, labels, workload); err != nil {
 		return err
 	}
 	instance.EndpointURL = fmt.Sprintf("http://%s.%s.svc.cluster.local:%d", instance.Name, instance.Namespace, instance.Port)
@@ -246,14 +260,21 @@ func (m *KubernetesManager) applyPVC(ctx context.Context, instance *model.Runtim
 	return nil
 }
 
-func (m *KubernetesManager) applySecret(ctx context.Context, instance *model.RuntimeInstance, labels map[string]string, apiKey string) error {
+func (m *KubernetesManager) applySecret(ctx context.Context, instance *model.RuntimeInstance, labels map[string]string, apiKey, runtimeAPIKey string) error {
 	name := instance.SecretName
 	if name == "" {
 		name = instance.Name + "-model"
 		instance.SecretName = name
 	}
 	secrets := m.Client.Clientset.CoreV1().Secrets(instance.Namespace)
-	secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: instance.Namespace, Labels: labels}, Type: corev1.SecretTypeOpaque, StringData: map[string]string{RuntimeSecretKey: apiKey}}
+	values := map[string]string{}
+	if apiKey != "" {
+		values[RuntimeSecretKey] = apiKey
+	}
+	if runtimeAPIKey != "" {
+		values[RuntimeAPISecretKey] = runtimeAPIKey
+	}
+	secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: instance.Namespace, Labels: labels}, Type: corev1.SecretTypeOpaque, StringData: values}
 	current, err := secrets.Get(ctx, name, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
 		_, err = secrets.Create(ctx, secret, metav1.CreateOptions{})
@@ -269,9 +290,9 @@ func (m *KubernetesManager) applySecret(ctx context.Context, instance *model.Run
 	return nil
 }
 
-func (m *KubernetesManager) applyService(ctx context.Context, instance *model.RuntimeInstance, labels map[string]string) error {
+func (m *KubernetesManager) applyService(ctx context.Context, instance *model.RuntimeInstance, labels map[string]string, workload WorkloadSpec) error {
 	services := m.Client.Clientset.CoreV1().Services(instance.Namespace)
-	service := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: instance.Name, Namespace: instance.Namespace, Labels: labels}, Spec: corev1.ServiceSpec{Selector: labels, Ports: []corev1.ServicePort{{Name: "http", Port: instance.Port, TargetPort: intstr.FromInt(int(instance.Port))}}}}
+	service := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: instance.Name, Namespace: instance.Namespace, Labels: labels}, Spec: corev1.ServiceSpec{Selector: labels, Ports: []corev1.ServicePort{{Name: "api", Port: workload.ServicePort, TargetPort: intstr.FromInt32(workload.ServicePort)}}}}
 	current, err := services.Get(ctx, instance.Name, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
 		_, err = services.Create(ctx, service, metav1.CreateOptions{})
@@ -286,20 +307,41 @@ func (m *KubernetesManager) applyService(ctx context.Context, instance *model.Ru
 	return nil
 }
 
-func (m *KubernetesManager) applyDeployment(ctx context.Context, instance *model.RuntimeInstance, labels map[string]string, hasSecret bool) error {
+func (m *KubernetesManager) applyDeployment(ctx context.Context, instance *model.RuntimeInstance, labels map[string]string, workload WorkloadSpec) error {
 	replicas := int32(1)
-	container := corev1.Container{Name: "runtime", Image: instance.Image, Ports: []corev1.ContainerPort{{Name: "http", ContainerPort: instance.Port}}, Env: []corev1.EnvVar{{Name: "CYLISM_RUNTIME_NAME", Value: instance.Name}, {Name: "CYLISM_RUNTIME_TYPE", Value: instance.RuntimeType}, {Name: "CYLISM_RUNTIME_CONFIG", Value: "/etc/cylism/runtime.json"}}, VolumeMounts: []corev1.VolumeMount{{Name: "data", MountPath: "/data"}, {Name: "config", MountPath: "/etc/cylism", ReadOnly: true}}}
-	if hasSecret {
-		container.Env = append(container.Env, corev1.EnvVar{Name: "CYLISM_MODEL_API_KEY", ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: instance.SecretName}, Key: RuntimeSecretKey}}})
+	commonEnv := []corev1.EnvVar{
+		{Name: "HOME", Value: "/data"},
+		{Name: "CYLISM_RUNTIME_NAME", Value: instance.Name},
+		{Name: "CYLISM_RUNTIME_TYPE", Value: instance.RuntimeType},
+		{Name: "CYLISM_MODEL_API_KEY", ValueFrom: secretKeyRef(instance.SecretName, RuntimeSecretKey)},
+		{Name: "CYLISM_RUNTIME_API_KEY", ValueFrom: secretKeyRef(instance.SecretName, RuntimeAPISecretKey)},
 	}
-	probe := &corev1.Probe{ProbeHandler: corev1.ProbeHandler{HTTPGet: &corev1.HTTPGetAction{Path: instance.HealthPath, Port: intstr.FromInt(int(instance.Port))}}, InitialDelaySeconds: 5, PeriodSeconds: 10, TimeoutSeconds: 3, FailureThreshold: 6}
-	container.ReadinessProbe = probe
-	container.LivenessProbe = probe.DeepCopy()
+	containerSecurity := &corev1.SecurityContext{AllowPrivilegeEscalation: boolPtr(false), ReadOnlyRootFilesystem: boolPtr(true), Capabilities: &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}}}
+	initContainers := make([]corev1.Container, len(workload.InitContainers))
+	for index := range workload.InitContainers {
+		initContainers[index] = *workload.InitContainers[index].DeepCopy()
+		initContainers[index].Env = append(initContainers[index].Env, commonEnv...)
+		initContainers[index].VolumeMounts = append(initContainers[index].VolumeMounts, corev1.VolumeMount{Name: "data", MountPath: "/data"}, corev1.VolumeMount{Name: "config", MountPath: "/etc/cylism", ReadOnly: true}, corev1.VolumeMount{Name: "tmp", MountPath: "/tmp"})
+		initContainers[index].SecurityContext = containerSecurity.DeepCopy()
+	}
+	containers := make([]corev1.Container, len(workload.Containers))
+	for index := range workload.Containers {
+		containers[index] = *workload.Containers[index].DeepCopy()
+		containers[index].Env = append(containers[index].Env, commonEnv...)
+		containers[index].VolumeMounts = append(containers[index].VolumeMounts, corev1.VolumeMount{Name: "data", MountPath: "/data"}, corev1.VolumeMount{Name: "tmp", MountPath: "/tmp"})
+		containers[index].SecurityContext = containerSecurity.DeepCopy()
+	}
+	automountServiceAccountToken := false
+	uid := int64(1000)
 	podSpec := corev1.PodSpec{
-		Containers: []corev1.Container{container},
+		AutomountServiceAccountToken: &automountServiceAccountToken,
+		SecurityContext:              &corev1.PodSecurityContext{RunAsNonRoot: boolPtr(true), RunAsUser: &uid, RunAsGroup: &uid, FSGroup: &uid},
+		InitContainers:               initContainers,
+		Containers:                   containers,
 		Volumes: []corev1.Volume{
 			{Name: "data", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: instance.PVCName}}},
 			{Name: "config", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: instance.Name + "-config"}}}},
+			{Name: "tmp", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
 		},
 	}
 	if instance.NodeName != "" {
@@ -322,3 +364,9 @@ func (m *KubernetesManager) applyDeployment(ctx context.Context, instance *model
 	}
 	return nil
 }
+
+func secretKeyRef(name, key string) *corev1.EnvVarSource {
+	return &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: name}, Key: key}}
+}
+
+func boolPtr(value bool) *bool { return &value }
