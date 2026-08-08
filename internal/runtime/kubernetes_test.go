@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/cylism/cylism-manager/internal/k8s"
@@ -29,8 +30,21 @@ func TestApplyCreatesRuntimeResourcesAndReusesPVC(t *testing.T) {
 		t.Fatalf("deployment not created: %v", err)
 	}
 	pod := deployment.Spec.Template.Spec
-	if len(pod.InitContainers) != 1 || len(pod.Containers) != 2 || pod.InitContainers[0].Name != "render-config" || pod.Containers[0].Name != "gateway" || pod.Containers[1].Name != "api" {
+	if len(pod.InitContainers) != 2 || len(pod.Containers) != 2 || pod.InitContainers[0].Name != PermissionFixInit || pod.InitContainers[1].Name != "render-config" || pod.Containers[0].Name != "gateway" || pod.Containers[1].Name != "api" {
 		t.Fatalf("unexpected Nanobot pod: %#v", pod)
+	}
+	fixPerms := pod.InitContainers[0]
+	if fixPerms.SecurityContext == nil || fixPerms.SecurityContext.RunAsUser == nil || *fixPerms.SecurityContext.RunAsUser != 0 || fixPerms.SecurityContext.RunAsNonRoot == nil || *fixPerms.SecurityContext.RunAsNonRoot {
+		t.Fatalf("fix-perms init must run as root only: %#v", fixPerms.SecurityContext)
+	}
+	if fixPerms.SecurityContext.Capabilities == nil || len(fixPerms.SecurityContext.Capabilities.Add) != 1 || fixPerms.SecurityContext.Capabilities.Add[0] != "CHOWN" {
+		t.Fatalf("fix-perms init must only add CAP_CHOWN: %#v", fixPerms.SecurityContext.Capabilities)
+	}
+	if len(fixPerms.Args) != 1 || !strings.Contains(fixPerms.Args[0], "chown -R 1000:1000 /data") {
+		t.Fatalf("fix-perms init must chown the workspace to uid 1000: %#v", fixPerms)
+	}
+	if len(fixPerms.VolumeMounts) != 1 || fixPerms.VolumeMounts[0].Name != "data" || fixPerms.VolumeMounts[0].MountPath != "/data" {
+		t.Fatalf("fix-perms init must mount the runtime PVC at /data: %#v", fixPerms.VolumeMounts)
 	}
 	if pod.AutomountServiceAccountToken == nil || *pod.AutomountServiceAccountToken || pod.SecurityContext == nil || pod.SecurityContext.RunAsNonRoot == nil || !*pod.SecurityContext.RunAsNonRoot {
 		t.Fatalf("expected restrictive pod security context: %#v", pod)

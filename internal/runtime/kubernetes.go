@@ -30,6 +30,7 @@ const (
 	NanobotAPIPort      = 8900
 	NanobotConfigPath   = "/data/.nanobot/config.json"
 	RuntimeDefaultPort  = NanobotAPIPort
+	PermissionFixInit   = "fix-perms"
 )
 
 type KubernetesManager struct {
@@ -317,12 +318,34 @@ func (m *KubernetesManager) applyDeployment(ctx context.Context, instance *model
 		{Name: "CYLISM_RUNTIME_API_KEY", ValueFrom: secretKeyRef(instance.SecretName, RuntimeAPISecretKey)},
 	}
 	containerSecurity := &corev1.SecurityContext{AllowPrivilegeEscalation: boolPtr(false), ReadOnlyRootFilesystem: boolPtr(true), Capabilities: &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}}}
-	initContainers := make([]corev1.Container, len(workload.InitContainers))
+	// Kubernetes does not apply fsGroup ownership to hostPath/local-path
+	// volumes, so a workspace created by an earlier root-run deployment stays
+	// root-owned and blocks the non-root runtime. The first init container
+	// restores ownership before the config renderer and main containers start;
+	// it is the only root container in the Pod and only needs CAP_CHOWN.
+	fixPermsInit := corev1.Container{
+		Name:    PermissionFixInit,
+		Image:   instance.Image,
+		Command: []string{"sh", "-c"},
+		Args:    []string{"mkdir -p /data/.nanobot /data/workspace && chown -R 1000:1000 /data"},
+		SecurityContext: &corev1.SecurityContext{
+			RunAsUser:                int64Ptr(0),
+			RunAsGroup:               int64Ptr(0),
+			RunAsNonRoot:             boolPtr(false),
+			AllowPrivilegeEscalation: boolPtr(false),
+			ReadOnlyRootFilesystem:   boolPtr(true),
+			Capabilities:             &corev1.Capabilities{Add: []corev1.Capability{"CHOWN"}, Drop: []corev1.Capability{"ALL"}},
+		},
+		VolumeMounts: []corev1.VolumeMount{{Name: "data", MountPath: "/data"}},
+	}
+	initContainers := make([]corev1.Container, 0, len(workload.InitContainers)+1)
+	initContainers = append(initContainers, fixPermsInit)
 	for index := range workload.InitContainers {
-		initContainers[index] = *workload.InitContainers[index].DeepCopy()
-		initContainers[index].Env = append(initContainers[index].Env, commonEnv...)
-		initContainers[index].VolumeMounts = append(initContainers[index].VolumeMounts, corev1.VolumeMount{Name: "data", MountPath: "/data"}, corev1.VolumeMount{Name: "config", MountPath: "/etc/cylism", ReadOnly: true}, corev1.VolumeMount{Name: "tmp", MountPath: "/tmp"})
-		initContainers[index].SecurityContext = containerSecurity.DeepCopy()
+		init := workload.InitContainers[index].DeepCopy()
+		init.Env = append(init.Env, commonEnv...)
+		init.VolumeMounts = append(init.VolumeMounts, corev1.VolumeMount{Name: "data", MountPath: "/data"}, corev1.VolumeMount{Name: "config", MountPath: "/etc/cylism", ReadOnly: true}, corev1.VolumeMount{Name: "tmp", MountPath: "/tmp"})
+		init.SecurityContext = containerSecurity.DeepCopy()
+		initContainers = append(initContainers, *init)
 	}
 	containers := make([]corev1.Container, len(workload.Containers))
 	for index := range workload.Containers {
@@ -370,3 +393,5 @@ func secretKeyRef(name, key string) *corev1.EnvVarSource {
 }
 
 func boolPtr(value bool) *bool { return &value }
+
+func int64Ptr(value int64) *int64 { return &value }
