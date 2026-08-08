@@ -72,6 +72,27 @@ func TestRuntimeHandlerUsesAdapterEndpointForManagedRuntime(t *testing.T) {
 	}
 }
 
+func TestRuntimeHandlerDerivesVersionFromImageTag(t *testing.T) {
+	r, s := setupRuntimeRouter()
+	create := serve(r, newJSONRequest(http.MethodPost, "/api/runtimes", gin.H{"name": "nanobot-main", "runtime_type": "nanobot", "image": "cylism-nanobot-runtime:0.3.0"}))
+	if create.Code != http.StatusOK {
+		t.Fatalf("create status = %d: %s", create.Code, create.Body.String())
+	}
+	instance, err := s.GetRuntime(responseID(t, create.Body.Bytes()))
+	if err != nil || instance.RuntimeVersion != "0.3.0" {
+		t.Fatalf("expected image-derived version, got %+v err=%v", instance, err)
+	}
+
+	create = serve(r, newJSONRequest(http.MethodPost, "/api/runtimes", gin.H{"name": "nanobot-explicit", "runtime_type": "nanobot", "image": "cylism-nanobot-runtime:0.3.0", "runtime_version": "1.2.3"}))
+	if create.Code != http.StatusOK {
+		t.Fatalf("create status = %d: %s", create.Code, create.Body.String())
+	}
+	instance, err = s.GetRuntime(responseID(t, create.Body.Bytes()))
+	if err != nil || instance.RuntimeVersion != "1.2.3" {
+		t.Fatalf("expected explicit version to win, got %+v err=%v", instance, err)
+	}
+}
+
 func TestRuntimeHandlerGeneratesAndHidesRuntimeAPICredentialOnDeploy(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	s, _ := store.New(":memory:")

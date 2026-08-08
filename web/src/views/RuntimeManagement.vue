@@ -59,8 +59,8 @@
           </div>
           <label>模型 API 地址<input v-model.trim="form.model_base_url" placeholder="https://provider.example.com/v1" /></label>
           <label>模型 API Key <input v-model="form.api_key" type="password" :placeholder="form.api_key_configured ? '已配置，留空保持不变' : '填写后保存到 Kubernetes Secret'" autocomplete="new-password" /></label>
-          <div class="form-grid"><label>PVC 名称<input v-model.trim="form.pvc_name" placeholder="留空自动创建" /></label><label>PVC 容量<input v-model.trim="form.storage" placeholder="10Gi" /></label></div>
-          <label>部署节点<input v-model.trim="form.node_name" placeholder="可选，使用节点名" /></label>
+          <div class="form-grid"><label v-if="form.id">PVC 名称<input :value="form.pvc_name" readonly /></label><label>PVC 容量（Gi）<input v-model.number="form.storage" type="number" min="1" step="1" placeholder="10" /></label></div>
+          <label v-if="form.deployment_mode === 'managed'">部署节点<select v-model="form.node_name"><option value="">不限制（由调度器选择）</option><option v-for="node in nodes" :key="node" :value="node">{{ node }}</option></select></label>
             <div class="form-actions"><button type="button" class="btn" @click="cancelEdit">取消</button><button type="submit" class="btn btn-primary" :disabled="saving">{{ saving ? '保存中...' : '保存' }}</button></div>
           </form>
         </section>
@@ -111,6 +111,7 @@ import SectionTabsHeader from '../components/SectionTabsHeader.vue'
 
 const runtimes = ref([])
 const catalog = ref([])
+const nodes = ref([])
 const selected = ref(null)
 const editing = ref(false)
 const loading = ref(false)
@@ -121,22 +122,24 @@ const uninstallTarget = ref(null)
 const notice = ref(null)
 const tabs = [{ id: 'instances', label: '实例' }]
 
-const emptyForm = () => ({ name: '', runtime_type: 'nanobot', deployment_mode: 'managed', runtime_version: '', image: '', namespace: 'cylism-assistant', port: 8900, health_path: '/health', endpoint_url: '', pvc_name: '', storage: '10Gi', storage_class_name: '', node_name: '', model_name: '', model_base_url: '', api_style: 'responses', api_key: '', api_key_configured: false, config: {} })
+const emptyForm = () => ({ name: '', runtime_type: 'nanobot', deployment_mode: 'managed', runtime_version: '', image: '', namespace: 'cylism-assistant', port: 8900, health_path: '/health', endpoint_url: '', pvc_name: '', storage: 10, storage_class_name: '', node_name: '', model_name: '', model_base_url: '', api_style: 'responses', api_key: '', api_key_configured: false, config: {} })
 const form = ref(emptyForm())
 const supportedProtocols = computed(() => catalog.value.find(item => item.runtime_type === form.value.runtime_type)?.supported_model_protocols || ['responses'])
 
 function statusLabel(status) { return ({ draft: '未部署', deploying: '部署中', ready: '就绪', degraded: '异常', failed: '失败', uninstalled: '已卸载' })[status] || status || '未知' }
 function protocolLabel(protocol) { return ({ responses: 'Responses API', anthropic: 'Anthropic API' })[protocol] || protocol }
+function storageGi(value) { const parsed = Number.parseInt(String(value || ''), 10); return Number.isFinite(parsed) && parsed > 0 ? parsed : 10 }
 function applyManagedEndpointDefaults() { if (form.value.deployment_mode !== 'managed') return; const definition = catalog.value.find(item => item.runtime_type === form.value.runtime_type); form.value.port = definition?.default_port || 8900; form.value.health_path = definition?.default_health_path || '/health' }
 function onRuntimeTypeChange() { if (!supportedProtocols.value.includes(form.value.api_style)) form.value.api_style = supportedProtocols.value[0] || 'responses'; applyManagedEndpointDefaults() }
 function onDeploymentModeChange() { applyManagedEndpointDefaults() }
 function select(item) { selected.value = item; editing.value = false; deleteData.value = false; clearNotice() }
 function openCreate() { selected.value = null; form.value = emptyForm(); if (catalog.value[0]) { form.value.runtime_type = catalog.value[0].runtime_type; form.value.api_style = catalog.value[0].supported_model_protocols?.[0] || 'responses' }; onRuntimeTypeChange(); editing.value = true; deleteData.value = false; clearNotice() }
-function editSelected() { form.value = { ...emptyForm(), ...selected.value, api_key: '' }; editing.value = true; deleteData.value = false; clearNotice() }
+function editSelected() { form.value = { ...emptyForm(), ...selected.value, api_key: '' }; form.value.storage = storageGi(selected.value.storage); editing.value = true; deleteData.value = false; clearNotice() }
 function cancelEdit() { editing.value = false; if (!selected.value && runtimes.value.length) selected.value = runtimes.value[0] }
 function clearNotice() { notice.value = null }
 function showNotice(type, text) { notice.value = { type, text } }
-function formBody() { const body = { ...form.value }; delete body.id; delete body.status; delete body.api_key_configured; if (!body.api_key) delete body.api_key; return body }
+function formBody() { const body = { ...form.value }; delete body.id; delete body.status; delete body.api_key_configured; if (!body.api_key) delete body.api_key; body.storage = `${storageGi(body.storage)}Gi`; return body }
+async function loadNodes() { try { const list = await api.get('/nodes'); nodes.value = Array.isArray(list) ? list.filter(node => node && node.name).map(node => node.name) : [] } catch { nodes.value = [] } }
 async function loadCatalog() { try { const definitions = await api.get('/runtimes/catalog'); if (Array.isArray(definitions) && definitions.every(item => item.runtime_type && Array.isArray(item.supported_model_protocols))) catalog.value = definitions } catch (err) { showNotice('error', err.message) } }
 async function load() { loading.value = true; try { runtimes.value = await api.get('/runtimes'); if (selected.value) selected.value = runtimes.value.find(item => item.id === selected.value.id) || null } catch (err) { showNotice('error', err.message) } finally { loading.value = false } }
 async function save() { saving.value = true; clearNotice(); try { const result = form.value.id ? await api.put(`/runtimes/${form.value.id}`, formBody()) : await api.post('/runtimes', formBody()); showNotice('success', result.message || 'Runtime 已保存'); await load(); selected.value = runtimes.value.find(item => item.id === result.id) || runtimes.value[0] || null; editing.value = false } catch (err) { showNotice('error', err.message) } finally { saving.value = false } }
@@ -151,7 +154,7 @@ async function confirmUninstall() {
   deleteData.value = false
 }
 async function runAction(path, success) { working.value = true; clearNotice(); try { const result = await api.post(path); showNotice('success', result.message || success); await load() } catch (err) { showNotice('error', err.message) } finally { working.value = false } }
-onMounted(async () => { await loadCatalog(); if (!catalog.value.length) catalog.value = [{ runtime_type: 'nanobot', display_name: 'nanobot', supported_model_protocols: ['responses', 'anthropic'] }]; await load() })
+onMounted(async () => { await loadCatalog(); if (!catalog.value.length) catalog.value = [{ runtime_type: 'nanobot', display_name: 'nanobot', supported_model_protocols: ['responses', 'anthropic'] }]; await load(); loadNodes() })
 </script>
 
 <style scoped>
@@ -164,5 +167,6 @@ onMounted(async () => { await loadCatalog(); if (!catalog.value.length) catalog.
 .runtime-item-main { display: flex; flex: 1; flex-direction: column; gap: 3px; min-width: 0; }.runtime-item-main small { color: var(--text-muted); }.runtime-item-status { font-size: 12px; color: var(--text-muted); }.runtime-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--text-muted); flex: 0 0 auto; }.status-ready { background: var(--success); }.status-deploying { background: var(--warning); }.status-failed, .status-degraded { background: var(--danger); }
 .runtime-form, .runtime-detail { padding: 16px 0; }.runtime-form label { display: flex; flex-direction: column; gap: 7px; margin-bottom: 14px; color: var(--text-muted); font-size: 13px; }.runtime-form input, .runtime-form select { width: 100%; border: 1px solid var(--border-muted); border-radius: var(--radius-control); padding: 9px 10px; background: var(--surface-input); color: var(--text-primary); }.form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }.form-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 18px; }.runtime-status-banner { display: flex; align-items: center; gap: 9px; padding: 12px; background: var(--surface-subtle); border-left: 3px solid var(--success); }.runtime-status-banner span:last-child { color: var(--text-muted); font-size: 13px; }.runtime-facts { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 22px 0; }.runtime-facts div { min-width: 0; }.runtime-facts dt { color: var(--text-muted); font-size: 12px; margin-bottom: 4px; }.runtime-facts dd { margin: 0; overflow-wrap: anywhere; }.runtime-notice-modal { width: min(420px, calc(100vw - 32px)); }.runtime-notice-modal .modal-title { margin-bottom: 0; }.runtime-notice-icon { display: grid; width: 46px; height: 46px; margin-bottom: 14px; place-items: center; border-radius: 50%; }.runtime-notice-icon.is-success { background: var(--success-surface); color: var(--success); }.runtime-notice-icon.is-error { background: var(--danger-surface); color: var(--danger); }.runtime-notice-text { margin: 10px 0 0; color: var(--text-secondary); font-size: 13px; line-height: 1.7; overflow-wrap: anywhere; }
 .runtime-uninstall-modal { width: min(460px, calc(100vw - 32px)); }.uninstall-delete-option { margin-top: 14px; padding: 12px; border: 1px solid var(--border-muted); border-radius: var(--radius-control); background: var(--surface-subtle); cursor: pointer; transition: border-color .18s ease, background .18s ease; }.uninstall-delete-option:has(input:checked) { border-color: var(--danger); background: var(--danger-surface); }.uninstall-delete-option input { accent-color: var(--danger); }.uninstall-warning { margin: 8px 0 0; padding: 10px 12px; border-radius: var(--radius-control); background: var(--danger-surface); color: var(--danger); font-size: 12px; line-height: 1.6; }
+.form-grid > :only-child { grid-column: 1 / -1; }.runtime-form input[readonly] { color: var(--text-muted); cursor: not-allowed; }
 @media (max-width: 850px) { .runtime-layout { grid-template-columns: 1fr; }.runtime-facts, .form-grid { grid-template-columns: 1fr; } }
 </style>
