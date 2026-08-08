@@ -41,14 +41,25 @@ describe('RuntimeManagement', () => {
     expect(apiMocks.post).toHaveBeenCalledWith('/runtimes', expect.objectContaining({ name: 'nanobot-prod', image: 'example/nanobot:v1', model_name: 'qwen-max', port: 8900, health_path: '/health' }))
   })
 
-  it('requires two confirmations before deleting runtime data', async () => {
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
-    const wrapper = mount(RuntimeManagement)
+  it('uninstalls a runtime and keeps PVC by default', async () => {
+    const wrapper = mount(RuntimeManagement, { global: { stubs: { Teleport: true } } })
     await flushPromises()
     await wrapper.get('.runtime-item').trigger('click')
-    await wrapper.get('[data-testid="runtime-delete-data"]').setValue(true)
-    await wrapper.findAll('.runtime-detail .btn').find(button => button.text() === '卸载并删除数据').trigger('click')
-    expect(confirm).toHaveBeenCalledTimes(2)
+    await wrapper.findAll('.runtime-detail .btn').find(button => button.text() === '卸载').trigger('click')
+    expect(wrapper.find('.runtime-uninstall-modal').exists()).toBe(true)
+    expect(wrapper.find('.runtime-uninstall-modal [data-testid="runtime-delete-data"]').exists()).toBe(true)
+    await wrapper.findAll('.runtime-uninstall-modal .modal-actions .btn').find(button => button.text() === '确认卸载').trigger('click')
+    expect(apiMocks.post).toHaveBeenCalledWith('/runtimes/1/uninstall')
+  })
+
+  it('deletes PVC and memory data only when the uninstall option is checked', async () => {
+    const wrapper = mount(RuntimeManagement, { global: { stubs: { Teleport: true } } })
+    await flushPromises()
+    await wrapper.get('.runtime-item').trigger('click')
+    await wrapper.findAll('.runtime-detail .btn').find(button => button.text() === '卸载').trigger('click')
+    await wrapper.get('.runtime-uninstall-modal [data-testid="runtime-delete-data"]').setValue(true)
+    expect(wrapper.text()).toContain('将永久删除 Runtime 的会话')
+    await wrapper.findAll('.runtime-uninstall-modal .modal-actions .btn').find(button => button.text() === '确认卸载').trigger('click')
     expect(apiMocks.post).toHaveBeenCalledWith('/runtimes/1/uninstall?delete_data=true')
   })
 })
