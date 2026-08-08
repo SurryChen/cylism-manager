@@ -322,7 +322,8 @@ func (m *KubernetesManager) applyDeployment(ctx context.Context, instance *model
 	// volumes, so a workspace created by an earlier root-run deployment stays
 	// root-owned and blocks the non-root runtime. The first init container
 	// restores ownership before the config renderer and main containers start;
-	// it is the only root container in the Pod and only needs CAP_CHOWN.
+	// it is the only root container in the Pod and only needs CAP_CHOWN plus
+	// CAP_DAC_READ_SEARCH to recurse into the private 0700 runtime directory.
 	fixPermsInit := corev1.Container{
 		Name:    PermissionFixInit,
 		Image:   instance.Image,
@@ -334,7 +335,7 @@ func (m *KubernetesManager) applyDeployment(ctx context.Context, instance *model
 			RunAsNonRoot:             boolPtr(false),
 			AllowPrivilegeEscalation: boolPtr(false),
 			ReadOnlyRootFilesystem:   boolPtr(true),
-			Capabilities:             &corev1.Capabilities{Add: []corev1.Capability{"CHOWN"}, Drop: []corev1.Capability{"ALL"}},
+			Capabilities:             &corev1.Capabilities{Add: []corev1.Capability{"CHOWN", "DAC_READ_SEARCH"}, Drop: []corev1.Capability{"ALL"}},
 		},
 		VolumeMounts: []corev1.VolumeMount{{Name: "data", MountPath: "/data"}},
 	}
