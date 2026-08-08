@@ -11,7 +11,11 @@ describe('RuntimeManagement', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.restoreAllMocks()
-    apiMocks.get.mockResolvedValue([runtime()])
+    apiMocks.get.mockImplementation((path) => {
+      if (path === '/runtimes/catalog') return Promise.resolve([{ runtime_type: 'nanobot', display_name: 'nanobot', supported_model_protocols: ['responses', 'anthropic'] }])
+      if (path === '/nodes') return Promise.resolve([{ name: 'vm-0-16-ubuntu', ready: true }, { name: 'vm-0-17-ubuntu', ready: true }])
+      return Promise.resolve([runtime()])
+    })
     apiMocks.post.mockResolvedValue(runtime())
     apiMocks.put.mockResolvedValue(runtime())
   })
@@ -36,9 +40,23 @@ describe('RuntimeManagement', () => {
     await wrapper.get('input[placeholder="nanobot-main"]').setValue('nanobot-prod')
     await wrapper.get('input[placeholder="托管模式填写镜像地址"]').setValue('example/nanobot:v1')
     await wrapper.get('input[placeholder="模型名称"]').setValue('qwen-max')
+    expect(wrapper.get('.runtime-create-modal input[type="number"]').exists()).toBe(true)
+    expect(wrapper.find('.runtime-create-modal input[readonly]').exists()).toBe(false)
+    const nodeOptions = wrapper.findAll('.runtime-create-modal select option').map(option => option.text())
+    expect(nodeOptions).toContain('vm-0-16-ubuntu')
     await wrapper.get('form').trigger('submit')
-    expect(wrapper.find('input[type="number"]').exists()).toBe(false)
-    expect(apiMocks.post).toHaveBeenCalledWith('/runtimes', expect.objectContaining({ name: 'nanobot-prod', image: 'example/nanobot:v1', model_name: 'qwen-max', port: 8900, health_path: '/health' }))
+    expect(apiMocks.post).toHaveBeenCalledWith('/runtimes', expect.objectContaining({ name: 'nanobot-prod', image: 'example/nanobot:v1', model_name: 'qwen-max', port: 8900, health_path: '/health', storage: '10Gi' }))
+  })
+
+  it('shows PVC name read-only and numeric storage when editing', async () => {
+    const wrapper = mount(RuntimeManagement, { global: { stubs: { Teleport: true } } })
+    await flushPromises()
+    await wrapper.get('.runtime-item').trigger('click')
+    await wrapper.findAll('.runtime-detail .btn').find(button => button.text() === '编辑配置').trigger('click')
+    const pvcInput = wrapper.find('.runtime-create-modal input[readonly]')
+    expect(pvcInput.exists()).toBe(true)
+    expect(pvcInput.element.value).toBe('nanobot-main-data')
+    expect(wrapper.get('.runtime-create-modal input[type="number"]').element.value).toBe('10')
   })
 
   it('uninstalls a runtime and keeps PVC by default', async () => {

@@ -410,7 +410,11 @@ func (h *RuntimeHandler) instanceFromRequest(req runtimeRequest, current *model.
 	if err != nil {
 		return nil, fmt.Errorf("Runtime 配置无效")
 	}
-	instance := &model.RuntimeInstance{Name: name, RuntimeType: runtimeType, DeploymentMode: deploymentMode, RuntimeVersion: strings.TrimSpace(req.RuntimeVersion), Image: image, Namespace: namespace, Port: port, HealthPath: healthPath, PVCName: strings.TrimSpace(req.PVCName), Storage: storage, StorageClassName: strings.TrimSpace(req.StorageClassName), NodeName: strings.TrimSpace(req.NodeName), EndpointURL: endpointURL, ModelName: modelName, ModelBaseURL: modelBaseURL, APIStyle: apiStyle, Config: string(configBytes), Status: model.RuntimeStatusDraft}
+	runtimeVersion := strings.TrimSpace(req.RuntimeVersion)
+	if runtimeVersion == "" {
+		runtimeVersion = runtime.ImageVersion(image)
+	}
+	instance := &model.RuntimeInstance{Name: name, RuntimeType: runtimeType, DeploymentMode: deploymentMode, RuntimeVersion: runtimeVersion, Image: image, Namespace: namespace, Port: port, HealthPath: healthPath, PVCName: strings.TrimSpace(req.PVCName), Storage: storage, StorageClassName: strings.TrimSpace(req.StorageClassName), NodeName: strings.TrimSpace(req.NodeName), EndpointURL: endpointURL, ModelName: modelName, ModelBaseURL: modelBaseURL, APIStyle: apiStyle, Config: string(configBytes), Status: model.RuntimeStatusDraft}
 	if current != nil {
 		if instance.PVCName == "" {
 			instance.PVCName = current.PVCName

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/cylism/cylism-manager/internal/model"
+	"github.com/cylism/cylism-manager/internal/runtime"
 	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
 )
@@ -98,10 +99,33 @@ func New(dsn string) (*Store, error) {
 	if err := store.backfillApplicationDeploymentTemplates(); err != nil {
 		return nil, err
 	}
+	if err := store.backfillRuntimeVersions(); err != nil {
+		return nil, err
+	}
 	if err := store.ReconcileEnvironmentNamespaceUniqueness(); err != nil {
 		return nil, err
 	}
 	return store, nil
+}
+
+// backfillRuntimeVersions derives runtime versions from image tags for records
+// created before image-tag version detection. Idempotent: only empty versions
+// are touched, so reruns are safe.
+func (s *Store) backfillRuntimeVersions() error {
+	var runtimes []model.RuntimeInstance
+	if err := s.db.Where("runtime_version = ?", "").Find(&runtimes).Error; err != nil {
+		return fmt.Errorf("查询待回填的 Runtime 版本: %w", err)
+	}
+	for index := range runtimes {
+		version := runtime.ImageVersion(runtimes[index].Image)
+		if version == "" {
+			continue
+		}
+		if err := s.db.Model(&runtimes[index]).Update("runtime_version", version).Error; err != nil {
+			return fmt.Errorf("回填 Runtime %s 版本: %w", runtimes[index].Name, err)
+		}
+	}
+	return nil
 }
 
 func (s *Store) CreateRuntime(runtime *model.RuntimeInstance) error {
