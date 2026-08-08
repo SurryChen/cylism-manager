@@ -5,7 +5,7 @@ import RuntimeManagement from './RuntimeManagement.vue'
 const apiMocks = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), put: vi.fn() }))
 vi.mock('../api/index.js', () => ({ api: apiMocks }))
 
-const runtime = () => ({ id: 1, name: 'nanobot-main', runtime_type: 'nanobot', image: 'example/nanobot:latest', namespace: 'cylism-assistant', status: 'ready', health_status: 'ready', health_detail: 'Runtime 健康检查通过', port: 8080, health_path: '/health', pvc_name: 'nanobot-main-data', storage: '10Gi', model_name: 'qwen-max', api_style: 'responses', api_key_configured: true })
+const runtime = () => ({ id: 1, name: 'nanobot-main', runtime_type: 'nanobot', image: 'cylism-nanobot-runtime:0.3.0', namespace: 'cylism-assistant', status: 'ready', health_status: 'ready', health_detail: 'Runtime 健康检查通过', port: 8080, health_path: '/health', pvc_name: 'nanobot-main-data', storage: '10Gi', model_name: 'qwen-max', api_style: 'responses', api_key_configured: true })
 
 describe('RuntimeManagement', () => {
   beforeEach(() => {
@@ -27,6 +27,7 @@ describe('RuntimeManagement', () => {
     expect(wrapper.text()).toContain('cylism-assistant')
     await wrapper.get('.runtime-item').trigger('click')
     expect(wrapper.text()).toContain('部署或更新')
+    expect(wrapper.text()).toContain('0.3.0')
     await wrapper.findAll('.runtime-detail .btn').find(button => button.text() === '健康检查').trigger('click')
     expect(apiMocks.post).toHaveBeenCalledWith('/runtimes/1/health-check')
   })
@@ -53,10 +54,28 @@ describe('RuntimeManagement', () => {
     await flushPromises()
     await wrapper.get('.runtime-item').trigger('click')
     await wrapper.findAll('.runtime-detail .btn').find(button => button.text() === '编辑配置').trigger('click')
-    const pvcInput = wrapper.find('.runtime-create-modal input[readonly]')
+    const pvcInput = wrapper.find('.runtime-create-modal input[readonly]:not([placeholder])')
     expect(pvcInput.exists()).toBe(true)
     expect(pvcInput.element.value).toBe('nanobot-main-data')
     expect(wrapper.get('.runtime-create-modal input[type="number"]').element.value).toBe('10')
+    await wrapper.get('.runtime-create-modal form').trigger('submit')
+    expect(apiMocks.put).toHaveBeenCalledWith('/runtimes/1', expect.not.objectContaining({ config: expect.anything() }))
+  })
+
+  it('locks immutable fields when editing an existing runtime', async () => {
+    const wrapper = mount(RuntimeManagement, { global: { stubs: { Teleport: true } } })
+    await flushPromises()
+    await wrapper.get('.runtime-item').trigger('click')
+    await wrapper.findAll('.runtime-detail .btn').find(button => button.text() === '编辑配置').trigger('click')
+    expect(wrapper.get('.runtime-create-modal input[placeholder="nanobot-main"]').element.readOnly).toBe(true)
+    expect(wrapper.get('.runtime-create-modal input[type="number"]').element.readOnly).toBe(true)
+    const selects = wrapper.findAll('.runtime-create-modal select')
+    const disabledByOptions = Object.fromEntries(selects.map(select => [select.findAll('option').map(option => option.text()).join('/'), select.element.disabled]))
+    expect(disabledByOptions['nanobot']).toBe(true)
+    expect(disabledByOptions['平台托管（当前集群）/外部连接（其他机器）']).toBe(true)
+    expect(disabledByOptions['Responses API/Anthropic API']).toBe(false)
+    const nodeSelect = selects.find(select => select.findAll('option')[0].text().includes('不限制'))
+    expect(nodeSelect.element.disabled).toBe(true)
   })
 
   it('uninstalls a runtime and keeps PVC by default', async () => {

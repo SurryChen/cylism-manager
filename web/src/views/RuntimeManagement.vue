@@ -28,7 +28,7 @@
         <div class="card-header"><div><h2 class="card-title">助手详情</h2><p v-if="selected">{{ selected.image }}</p></div></div>
         <div v-if="selected" class="runtime-detail">
           <div class="runtime-status-banner"><span class="runtime-dot" :class="`status-${selected.status}`"></span><strong>{{ statusLabel(selected.status) }}</strong><span>{{ selected.health_detail || '尚未执行健康检查' }}</span></div>
-          <dl class="runtime-facts"><div><dt>类型</dt><dd>{{ selected.runtime_type }}</dd></div><div><dt>部署方式</dt><dd>{{ selected.deployment_mode === 'external' ? '外部连接' : '平台托管' }}</dd></div><div><dt>命名空间</dt><dd>{{ selected.namespace }}</dd></div><div><dt>版本</dt><dd>{{ selected.runtime_version || '-' }}</dd></div><div><dt>连接地址</dt><dd>{{ selected.endpoint_url || '-' }}</dd></div><div v-if="selected.deployment_mode !== 'external'"><dt>PVC</dt><dd>{{ selected.pvc_name }} · {{ selected.storage }}</dd></div><div><dt>模型</dt><dd>{{ selected.model_name || '-' }} · {{ selected.api_style }}</dd></div></dl>
+          <dl class="runtime-facts"><div><dt>类型</dt><dd>{{ selected.runtime_type }}</dd></div><div><dt>部署方式</dt><dd>{{ selected.deployment_mode === 'external' ? '外部连接' : '平台托管' }}</dd></div><div><dt>命名空间</dt><dd>{{ selected.namespace }}</dd></div><div><dt>版本</dt><dd>{{ displayVersion(selected) }}</dd></div><div><dt>连接地址</dt><dd>{{ selected.endpoint_url || '-' }}</dd></div><div v-if="selected.deployment_mode !== 'external'"><dt>PVC</dt><dd>{{ selected.pvc_name }} · {{ selected.storage }}</dd></div><div><dt>模型</dt><dd>{{ selected.model_name || '-' }} · {{ selected.api_style }}</dd></div></dl>
           <div class="form-actions"><button class="btn" @click="editSelected">编辑配置</button><button class="btn" :disabled="working" @click="deploy(selected)">部署或更新</button><button class="btn" :disabled="working" @click="health(selected)">健康检查</button><button class="btn btn-danger" :disabled="working" @click="openUninstall(selected)">卸载</button></div>
         </div>
         <div v-else class="empty-state"><Bot :size="26" class="empty-icon" /><span class="empty-text">选择一个助手实例查看详情</span></div>
@@ -44,9 +44,9 @@
             <button type="button" class="icon-button" title="关闭" aria-label="关闭" @click="cancelEdit"><X :size="18" /></button>
           </div>
           <form class="runtime-form" @submit.prevent="save">
-          <label>名称<input v-model.trim="form.name" required pattern="[a-z0-9]([-a-z0-9]*[a-z0-9])?" placeholder="nanobot-main" /></label>
-          <label>Runtime 类型<select v-model="form.runtime_type" @change="onRuntimeTypeChange"><option v-for="definition in catalog" :key="definition.runtime_type" :value="definition.runtime_type">{{ definition.display_name || definition.runtime_type }}</option></select></label>
-          <label>部署方式<select v-model="form.deployment_mode" @change="onDeploymentModeChange"><option value="managed">平台托管（当前集群）</option><option value="external">外部连接（其他机器）</option></select></label>
+          <label>名称<input v-model.trim="form.name" required pattern="[a-z0-9]([-a-z0-9]*[a-z0-9])?" placeholder="nanobot-main" :readonly="!!form.id" /></label>
+          <label>Runtime 类型<select v-model="form.runtime_type" :disabled="!!form.id" @change="onRuntimeTypeChange"><option v-for="definition in catalog" :key="definition.runtime_type" :value="definition.runtime_type">{{ definition.display_name || definition.runtime_type }}</option></select></label>
+          <label>部署方式<select v-model="form.deployment_mode" :disabled="!!form.id" @change="onDeploymentModeChange"><option value="managed">平台托管（当前集群）</option><option value="external">外部连接（其他机器）</option></select></label>
           <label>镜像<input v-model.trim="form.image" :required="form.deployment_mode === 'managed'" placeholder="托管模式填写镜像地址" /></label>
           <label v-if="form.deployment_mode === 'external'">Runtime 连接地址<input v-model.trim="form.endpoint_url" required placeholder="https://agent.example.com" /></label>
           <div v-if="form.deployment_mode === 'external'" class="form-grid">
@@ -59,8 +59,8 @@
           </div>
           <label>模型 API 地址<input v-model.trim="form.model_base_url" placeholder="https://provider.example.com/v1" /></label>
           <label>模型 API Key <input v-model="form.api_key" type="password" :placeholder="form.api_key_configured ? '已配置，留空保持不变' : '填写后保存到 Kubernetes Secret'" autocomplete="new-password" /></label>
-          <div class="form-grid"><label v-if="form.id">PVC 名称<input :value="form.pvc_name" readonly /></label><label>PVC 容量（Gi）<input v-model.number="form.storage" type="number" min="1" step="1" placeholder="10" /></label></div>
-          <label v-if="form.deployment_mode === 'managed'">部署节点<select v-model="form.node_name"><option value="">不限制（由调度器选择）</option><option v-for="node in nodes" :key="node" :value="node">{{ node }}</option></select></label>
+          <div class="form-grid"><label v-if="form.id">PVC 名称<input :value="form.pvc_name" readonly /></label><label>PVC 容量（Gi）<input v-model.number="form.storage" type="number" min="1" step="1" placeholder="10" :readonly="!!form.id" /></label></div>
+          <label v-if="form.deployment_mode === 'managed'">部署节点<select v-model="form.node_name" :disabled="!!form.id"><option value="">不限制（由调度器选择）</option><option v-for="node in nodes" :key="node" :value="node">{{ node }}</option></select></label>
             <div class="form-actions"><button type="button" class="btn" @click="cancelEdit">取消</button><button type="submit" class="btn btn-primary" :disabled="saving">{{ saving ? '保存中...' : '保存' }}</button></div>
           </form>
         </section>
@@ -129,6 +129,8 @@ const supportedProtocols = computed(() => catalog.value.find(item => item.runtim
 function statusLabel(status) { return ({ draft: '未部署', deploying: '部署中', ready: '就绪', degraded: '异常', failed: '失败', uninstalled: '已卸载' })[status] || status || '未知' }
 function protocolLabel(protocol) { return ({ responses: 'Responses API', anthropic: 'Anthropic API' })[protocol] || protocol }
 function storageGi(value) { const parsed = Number.parseInt(String(value || ''), 10); return Number.isFinite(parsed) && parsed > 0 ? parsed : 10 }
+function tagVersion(image) { const match = String(image || '').match(/:([^/@]+)$/); return match && match[1] && match[1] !== 'latest' ? match[1] : '' }
+function displayVersion(item) { return item?.runtime_version || tagVersion(item?.image) || '-' }
 function applyManagedEndpointDefaults() { if (form.value.deployment_mode !== 'managed') return; const definition = catalog.value.find(item => item.runtime_type === form.value.runtime_type); form.value.port = definition?.default_port || 8900; form.value.health_path = definition?.default_health_path || '/health' }
 function onRuntimeTypeChange() { if (!supportedProtocols.value.includes(form.value.api_style)) form.value.api_style = supportedProtocols.value[0] || 'responses'; applyManagedEndpointDefaults() }
 function onDeploymentModeChange() { applyManagedEndpointDefaults() }
@@ -138,7 +140,7 @@ function editSelected() { form.value = { ...emptyForm(), ...selected.value, api_
 function cancelEdit() { editing.value = false; if (!selected.value && runtimes.value.length) selected.value = runtimes.value[0] }
 function clearNotice() { notice.value = null }
 function showNotice(type, text) { notice.value = { type, text } }
-function formBody() { const body = { ...form.value }; delete body.id; delete body.status; delete body.api_key_configured; if (!body.api_key) delete body.api_key; body.storage = `${storageGi(body.storage)}Gi`; return body }
+function formBody() { const body = { ...form.value }; delete body.id; delete body.status; delete body.api_key_configured; delete body.config; if (!body.api_key) delete body.api_key; body.storage = `${storageGi(body.storage)}Gi`; return body }
 async function loadNodes() { try { const list = await api.get('/nodes'); nodes.value = Array.isArray(list) ? list.filter(node => node && node.name).map(node => node.name) : [] } catch { nodes.value = [] } }
 async function loadCatalog() { try { const definitions = await api.get('/runtimes/catalog'); if (Array.isArray(definitions) && definitions.every(item => item.runtime_type && Array.isArray(item.supported_model_protocols))) catalog.value = definitions } catch (err) { showNotice('error', err.message) } }
 async function load() { loading.value = true; try { runtimes.value = await api.get('/runtimes'); if (selected.value) selected.value = runtimes.value.find(item => item.id === selected.value.id) || null } catch (err) { showNotice('error', err.message) } finally { loading.value = false } }
