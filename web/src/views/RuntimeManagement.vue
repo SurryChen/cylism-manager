@@ -32,8 +32,7 @@
         <div v-if="selected" class="runtime-detail">
           <div class="runtime-status-banner"><span class="runtime-dot" :class="`status-${selected.status}`"></span><strong>{{ statusLabel(selected.status) }}</strong><span>{{ selected.health_detail || '尚未执行健康检查' }}</span></div>
           <dl class="runtime-facts"><div><dt>类型</dt><dd>{{ selected.runtime_type }}</dd></div><div><dt>部署方式</dt><dd>{{ selected.deployment_mode === 'external' ? '外部连接' : '平台托管' }}</dd></div><div><dt>命名空间</dt><dd>{{ selected.namespace }}</dd></div><div><dt>版本</dt><dd>{{ selected.runtime_version || '-' }}</dd></div><div><dt>连接地址</dt><dd>{{ selected.endpoint_url || '-' }}</dd></div><div v-if="selected.deployment_mode !== 'external'"><dt>PVC</dt><dd>{{ selected.pvc_name }} · {{ selected.storage }}</dd></div><div><dt>模型</dt><dd>{{ selected.model_name || '-' }} · {{ selected.api_style }}</dd></div></dl>
-          <div v-if="selected.deployment_mode !== 'external'" class="runtime-delete-control"><label><input v-model="deleteData" type="checkbox" data-testid="runtime-delete-data" />同时删除 PVC 和记忆数据</label><p v-if="deleteData">将永久删除 Runtime 的会话、长期记忆、工作区和 PVC，无法恢复。</p></div>
-          <div class="form-actions"><button class="btn" @click="editSelected">编辑配置</button><button class="btn" :disabled="working" @click="deploy(selected)">部署或更新</button><button class="btn" :disabled="working" @click="health(selected)">健康检查</button><button class="btn btn-danger" :disabled="working" @click="uninstall(selected)">{{ deleteData ? '卸载并删除数据' : '卸载（保留 PVC）' }}</button></div>
+          <div class="form-actions"><button class="btn" @click="editSelected">编辑配置</button><button class="btn" :disabled="working" @click="deploy(selected)">部署或更新</button><button class="btn" :disabled="working" @click="health(selected)">健康检查</button><button class="btn btn-danger" :disabled="working" @click="openUninstall(selected)">卸载</button></div>
         </div>
         <div v-else class="empty-state"><Bot :size="26" class="empty-icon" /><span class="empty-text">选择一个助手实例查看详情</span></div>
       </article>
@@ -70,6 +69,24 @@
         </section>
       </div>
     </Teleport>
+
+    <Teleport to="body">
+      <div v-if="uninstallTarget" class="overlay" @click.self="uninstallTarget = null">
+        <section class="modal runtime-uninstall-modal" role="dialog" aria-modal="true" aria-label="卸载助手">
+          <h2 class="modal-title">卸载助手</h2>
+          <p class="confirm-copy">将卸载 Runtime <strong>{{ uninstallTarget.name }}</strong>。默认保留 PVC 与已有数据。</p>
+          <label v-if="uninstallTarget.deployment_mode !== 'external'" class="checkbox-label uninstall-delete-option">
+            <input v-model="deleteData" type="checkbox" data-testid="runtime-delete-data" />
+            <span>同时删除 PVC 和记忆数据</span>
+          </label>
+          <p v-if="deleteData" class="uninstall-warning">将永久删除 Runtime 的会话、长期记忆、工作区和 PVC，无法恢复。</p>
+          <div class="modal-actions">
+            <button class="btn" :disabled="working" @click="uninstallTarget = null">取消</button>
+            <button class="btn btn-danger" :disabled="working" @click="confirmUninstall">{{ working ? '卸载中...' : '确认卸载' }}</button>
+          </div>
+        </section>
+      </div>
+    </Teleport>
   </section>
 </template>
 
@@ -87,6 +104,7 @@ const loading = ref(false)
 const saving = ref(false)
 const working = ref(false)
 const deleteData = ref(false)
+const uninstallTarget = ref(null)
 const error = ref('')
 const message = ref('')
 const tabs = [{ id: 'instances', label: '实例' }]
@@ -111,11 +129,12 @@ async function load() { loading.value = true; try { runtimes.value = await api.g
 async function save() { saving.value = true; clearNotice(); try { const result = form.value.id ? await api.put(`/runtimes/${form.value.id}`, formBody()) : await api.post('/runtimes', formBody()); message.value = result.message || 'Runtime 已保存'; await load(); selected.value = runtimes.value.find(item => item.id === result.id) || runtimes.value[0] || null; editing.value = false } catch (err) { error.value = err.message } finally { saving.value = false } }
 async function deploy(item) { await runAction(`/runtimes/${item.id}/deploy`, 'Runtime 已部署或更新') }
 async function health(item) { await runAction(`/runtimes/${item.id}/health-check`, '健康检查已完成') }
-async function uninstall(item) {
-  if (!deleteData.value && !window.confirm(`确定卸载 Runtime ${item.name} 吗？PVC 将保留。`)) return
-  if (deleteData.value && !window.confirm(`确定卸载 Runtime ${item.name} 并删除 PVC 和记忆数据吗？此操作不可恢复。`)) return
-  if (deleteData.value && !window.confirm('最后确认：会话、长期记忆、工作区和 PVC 都会被永久删除。继续吗？')) return
+function openUninstall(item) { uninstallTarget.value = item; deleteData.value = false; clearNotice() }
+async function confirmUninstall() {
+  const item = uninstallTarget.value
+  if (!item) return
   await runAction(`/runtimes/${item.id}/uninstall${deleteData.value ? '?delete_data=true' : ''}`, 'Runtime 已卸载')
+  uninstallTarget.value = null
   deleteData.value = false
 }
 async function runAction(path, success) { working.value = true; clearNotice(); try { const result = await api.post(path); message.value = result.message || success; await load() } catch (err) { error.value = err.message } finally { working.value = false } }
@@ -131,6 +150,6 @@ onMounted(async () => { await loadCatalog(); if (!catalog.value.length) catalog.
 .runtime-item:hover, .runtime-item.is-selected { background: var(--surface-subtle); }
 .runtime-item-main { display: flex; flex: 1; flex-direction: column; gap: 3px; min-width: 0; }.runtime-item-main small { color: var(--text-muted); }.runtime-item-status { font-size: 12px; color: var(--text-muted); }.runtime-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--text-muted); flex: 0 0 auto; }.status-ready { background: var(--success); }.status-deploying { background: var(--warning); }.status-failed, .status-degraded { background: var(--danger); }
 .runtime-form, .runtime-detail { padding: 16px 0; }.runtime-form label { display: flex; flex-direction: column; gap: 7px; margin-bottom: 14px; color: var(--text-muted); font-size: 13px; }.runtime-form input, .runtime-form select { width: 100%; border: 1px solid var(--border-muted); border-radius: var(--radius-control); padding: 9px 10px; background: var(--surface-input); color: var(--text-primary); }.form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }.form-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 18px; }.runtime-status-banner { display: flex; align-items: center; gap: 9px; padding: 12px; background: var(--surface-subtle); border-left: 3px solid var(--success); }.runtime-status-banner span:last-child { color: var(--text-muted); font-size: 13px; }.runtime-facts { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 22px 0; }.runtime-facts div { min-width: 0; }.runtime-facts dt { color: var(--text-muted); font-size: 12px; margin-bottom: 4px; }.runtime-facts dd { margin: 0; overflow-wrap: anywhere; }.notice { margin: 0 0 var(--space-16); padding: 10px 12px; border-radius: var(--radius-control); }.notice-error { color: var(--danger); background: var(--danger-surface); }.notice-success { color: var(--success); background: var(--success-surface); }
-.runtime-delete-control { margin-top: 18px; padding: 11px 12px; border: 1px solid var(--danger); border-radius: 5px; color: var(--danger); background: var(--danger-surface); }.runtime-delete-control label { display: inline-flex; align-items: center; gap: 8px; font-weight: 700; }.runtime-delete-control p { margin: 6px 0 0 24px; font-size: 12px; }
+.runtime-uninstall-modal { width: min(460px, calc(100vw - 32px)); }.uninstall-delete-option { margin-top: 14px; padding: 12px; border: 1px solid var(--border-muted); border-radius: var(--radius-control); background: var(--surface-subtle); cursor: pointer; transition: border-color .18s ease, background .18s ease; }.uninstall-delete-option:has(input:checked) { border-color: var(--danger); background: var(--danger-surface); }.uninstall-delete-option input { accent-color: var(--danger); }.uninstall-warning { margin: 8px 0 0; padding: 10px 12px; border-radius: var(--radius-control); background: var(--danger-surface); color: var(--danger); font-size: 12px; line-height: 1.6; }
 @media (max-width: 850px) { .runtime-layout { grid-template-columns: 1fr; }.runtime-facts, .form-grid { grid-template-columns: 1fr; } }
 </style>
