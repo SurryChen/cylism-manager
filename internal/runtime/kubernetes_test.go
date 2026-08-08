@@ -37,8 +37,8 @@ func TestApplyCreatesRuntimeResourcesAndReusesPVC(t *testing.T) {
 	if fixPerms.SecurityContext == nil || fixPerms.SecurityContext.RunAsUser == nil || *fixPerms.SecurityContext.RunAsUser != 0 || fixPerms.SecurityContext.RunAsNonRoot == nil || *fixPerms.SecurityContext.RunAsNonRoot {
 		t.Fatalf("fix-perms init must run as root only: %#v", fixPerms.SecurityContext)
 	}
-	if fixPerms.SecurityContext.Capabilities == nil || len(fixPerms.SecurityContext.Capabilities.Add) != 1 || fixPerms.SecurityContext.Capabilities.Add[0] != "CHOWN" {
-		t.Fatalf("fix-perms init must only add CAP_CHOWN: %#v", fixPerms.SecurityContext.Capabilities)
+	if fixPerms.SecurityContext.Capabilities == nil || len(fixPerms.SecurityContext.Capabilities.Add) != 2 || fixPerms.SecurityContext.Capabilities.Add[0] != "CHOWN" || fixPerms.SecurityContext.Capabilities.Add[1] != "DAC_READ_SEARCH" {
+		t.Fatalf("fix-perms init must only add CAP_CHOWN and CAP_DAC_READ_SEARCH: %#v", fixPerms.SecurityContext.Capabilities)
 	}
 	if len(fixPerms.Args) != 1 || !strings.Contains(fixPerms.Args[0], "chown -R 1000:1000 /data") {
 		t.Fatalf("fix-perms init must chown the workspace to uid 1000: %#v", fixPerms)
