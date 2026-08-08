@@ -62,4 +62,27 @@ describe('RuntimeManagement', () => {
     await wrapper.findAll('.runtime-uninstall-modal .modal-actions .btn').find(button => button.text() === '确认卸载').trigger('click')
     expect(apiMocks.post).toHaveBeenCalledWith('/runtimes/1/uninstall?delete_data=true')
   })
+
+  it('shows a modal after a successful action', async () => {
+    const wrapper = mount(RuntimeManagement, { global: { stubs: { Teleport: true } } })
+    await flushPromises()
+    await wrapper.get('.runtime-item').trigger('click')
+    await wrapper.findAll('.runtime-detail .btn').find(button => button.text() === '健康检查').trigger('click')
+    expect(wrapper.find('.runtime-notice-modal').exists()).toBe(true)
+    expect(wrapper.text()).toContain('操作成功')
+    expect(wrapper.text()).toContain('健康检查已完成')
+    await wrapper.get('.runtime-notice-modal .modal-actions .btn').trigger('click')
+    expect(wrapper.find('.runtime-notice-modal').exists()).toBe(false)
+  })
+
+  it('shows an error modal when an action fails', async () => {
+    apiMocks.post.mockRejectedValueOnce(new Error('部署失败：权限修复超时'))
+    const wrapper = mount(RuntimeManagement, { global: { stubs: { Teleport: true } } })
+    await flushPromises()
+    await wrapper.get('.runtime-item').trigger('click')
+    await wrapper.findAll('.runtime-detail .btn').find(button => button.text() === '部署或更新').trigger('click')
+    expect(wrapper.find('.runtime-notice-modal').exists()).toBe(true)
+    expect(wrapper.text()).toContain('操作失败')
+    expect(wrapper.text()).toContain('部署失败：权限修复超时')
+  })
 })

@@ -12,9 +12,6 @@
     </SectionTabsHeader>
 
     <main class="runtime-content">
-      <div v-if="error" class="notice notice-error">{{ error }}</div>
-      <div v-if="message" class="notice notice-success">{{ message }}</div>
-
       <div class="runtime-layout">
       <article class="card runtime-list-card">
         <div class="card-header"><div><h2 class="card-title">助手实例</h2><p>默认部署到 cylism-assistant 命名空间</p></div><span class="badge badge-offline">{{ runtimes.length }} 个</span></div>
@@ -87,12 +84,28 @@
         </section>
       </div>
     </Teleport>
+
+    <Teleport to="body">
+      <div v-if="notice" class="overlay" @click.self="notice = null">
+        <section class="modal runtime-notice-modal" role="alertdialog" aria-modal="true" :aria-label="notice.type === 'error' ? '操作失败' : '操作成功'">
+          <div class="runtime-notice-icon" :class="`is-${notice.type}`">
+            <CheckCircle2 v-if="notice.type === 'success'" :size="22" />
+            <AlertCircle v-else :size="22" />
+          </div>
+          <h2 class="modal-title">{{ notice.type === 'error' ? '操作失败' : '操作成功' }}</h2>
+          <p class="runtime-notice-text">{{ notice.text }}</p>
+          <div class="modal-actions">
+            <button class="btn" :class="notice.type === 'error' ? 'btn-danger' : 'btn-primary'" @click="notice = null">确定</button>
+          </div>
+        </section>
+      </div>
+    </Teleport>
   </section>
 </template>
 
 <script setup>
 import { computed, onMounted, ref } from 'vue'
-import { Bot, Plus, RefreshCw, X } from 'lucide-vue-next'
+import { AlertCircle, Bot, CheckCircle2, Plus, RefreshCw, X } from 'lucide-vue-next'
 import { api } from '../api/index.js'
 import SectionTabsHeader from '../components/SectionTabsHeader.vue'
 
@@ -105,8 +118,7 @@ const saving = ref(false)
 const working = ref(false)
 const deleteData = ref(false)
 const uninstallTarget = ref(null)
-const error = ref('')
-const message = ref('')
+const notice = ref(null)
 const tabs = [{ id: 'instances', label: '实例' }]
 
 const emptyForm = () => ({ name: '', runtime_type: 'nanobot', deployment_mode: 'managed', runtime_version: '', image: '', namespace: 'cylism-assistant', port: 8900, health_path: '/health', endpoint_url: '', pvc_name: '', storage: '10Gi', storage_class_name: '', node_name: '', model_name: '', model_base_url: '', api_style: 'responses', api_key: '', api_key_configured: false, config: {} })
@@ -122,11 +134,12 @@ function select(item) { selected.value = item; editing.value = false; deleteData
 function openCreate() { selected.value = null; form.value = emptyForm(); if (catalog.value[0]) { form.value.runtime_type = catalog.value[0].runtime_type; form.value.api_style = catalog.value[0].supported_model_protocols?.[0] || 'responses' }; onRuntimeTypeChange(); editing.value = true; deleteData.value = false; clearNotice() }
 function editSelected() { form.value = { ...emptyForm(), ...selected.value, api_key: '' }; editing.value = true; deleteData.value = false; clearNotice() }
 function cancelEdit() { editing.value = false; if (!selected.value && runtimes.value.length) selected.value = runtimes.value[0] }
-function clearNotice() { error.value = ''; message.value = '' }
+function clearNotice() { notice.value = null }
+function showNotice(type, text) { notice.value = { type, text } }
 function formBody() { const body = { ...form.value }; delete body.id; delete body.status; delete body.api_key_configured; if (!body.api_key) delete body.api_key; return body }
-async function loadCatalog() { try { const definitions = await api.get('/runtimes/catalog'); if (Array.isArray(definitions) && definitions.every(item => item.runtime_type && Array.isArray(item.supported_model_protocols))) catalog.value = definitions } catch (err) { error.value = err.message } }
-async function load() { loading.value = true; try { runtimes.value = await api.get('/runtimes'); if (selected.value) selected.value = runtimes.value.find(item => item.id === selected.value.id) || null } catch (err) { error.value = err.message } finally { loading.value = false } }
-async function save() { saving.value = true; clearNotice(); try { const result = form.value.id ? await api.put(`/runtimes/${form.value.id}`, formBody()) : await api.post('/runtimes', formBody()); message.value = result.message || 'Runtime 已保存'; await load(); selected.value = runtimes.value.find(item => item.id === result.id) || runtimes.value[0] || null; editing.value = false } catch (err) { error.value = err.message } finally { saving.value = false } }
+async function loadCatalog() { try { const definitions = await api.get('/runtimes/catalog'); if (Array.isArray(definitions) && definitions.every(item => item.runtime_type && Array.isArray(item.supported_model_protocols))) catalog.value = definitions } catch (err) { showNotice('error', err.message) } }
+async function load() { loading.value = true; try { runtimes.value = await api.get('/runtimes'); if (selected.value) selected.value = runtimes.value.find(item => item.id === selected.value.id) || null } catch (err) { showNotice('error', err.message) } finally { loading.value = false } }
+async function save() { saving.value = true; clearNotice(); try { const result = form.value.id ? await api.put(`/runtimes/${form.value.id}`, formBody()) : await api.post('/runtimes', formBody()); showNotice('success', result.message || 'Runtime 已保存'); await load(); selected.value = runtimes.value.find(item => item.id === result.id) || runtimes.value[0] || null; editing.value = false } catch (err) { showNotice('error', err.message) } finally { saving.value = false } }
 async function deploy(item) { await runAction(`/runtimes/${item.id}/deploy`, 'Runtime 已部署或更新') }
 async function health(item) { await runAction(`/runtimes/${item.id}/health-check`, '健康检查已完成') }
 function openUninstall(item) { uninstallTarget.value = item; deleteData.value = false; clearNotice() }
@@ -137,7 +150,7 @@ async function confirmUninstall() {
   uninstallTarget.value = null
   deleteData.value = false
 }
-async function runAction(path, success) { working.value = true; clearNotice(); try { const result = await api.post(path); message.value = result.message || success; await load() } catch (err) { error.value = err.message } finally { working.value = false } }
+async function runAction(path, success) { working.value = true; clearNotice(); try { const result = await api.post(path); showNotice('success', result.message || success); await load() } catch (err) { showNotice('error', err.message) } finally { working.value = false } }
 onMounted(async () => { await loadCatalog(); if (!catalog.value.length) catalog.value = [{ runtime_type: 'nanobot', display_name: 'nanobot', supported_model_protocols: ['responses', 'anthropic'] }]; await load() })
 </script>
 
@@ -149,7 +162,7 @@ onMounted(async () => { await loadCatalog(); if (!catalog.value.length) catalog.
 .runtime-item { width: 100%; border: 0; border-bottom: 1px solid var(--border-muted); background: transparent; color: var(--text-primary); padding: 14px 12px; display: flex; align-items: center; gap: 10px; text-align: left; cursor: pointer; }
 .runtime-item:hover, .runtime-item.is-selected { background: var(--surface-subtle); }
 .runtime-item-main { display: flex; flex: 1; flex-direction: column; gap: 3px; min-width: 0; }.runtime-item-main small { color: var(--text-muted); }.runtime-item-status { font-size: 12px; color: var(--text-muted); }.runtime-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--text-muted); flex: 0 0 auto; }.status-ready { background: var(--success); }.status-deploying { background: var(--warning); }.status-failed, .status-degraded { background: var(--danger); }
-.runtime-form, .runtime-detail { padding: 16px 0; }.runtime-form label { display: flex; flex-direction: column; gap: 7px; margin-bottom: 14px; color: var(--text-muted); font-size: 13px; }.runtime-form input, .runtime-form select { width: 100%; border: 1px solid var(--border-muted); border-radius: var(--radius-control); padding: 9px 10px; background: var(--surface-input); color: var(--text-primary); }.form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }.form-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 18px; }.runtime-status-banner { display: flex; align-items: center; gap: 9px; padding: 12px; background: var(--surface-subtle); border-left: 3px solid var(--success); }.runtime-status-banner span:last-child { color: var(--text-muted); font-size: 13px; }.runtime-facts { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 22px 0; }.runtime-facts div { min-width: 0; }.runtime-facts dt { color: var(--text-muted); font-size: 12px; margin-bottom: 4px; }.runtime-facts dd { margin: 0; overflow-wrap: anywhere; }.notice { margin: 0 0 var(--space-16); padding: 10px 12px; border-radius: var(--radius-control); }.notice-error { color: var(--danger); background: var(--danger-surface); }.notice-success { color: var(--success); background: var(--success-surface); }
+.runtime-form, .runtime-detail { padding: 16px 0; }.runtime-form label { display: flex; flex-direction: column; gap: 7px; margin-bottom: 14px; color: var(--text-muted); font-size: 13px; }.runtime-form input, .runtime-form select { width: 100%; border: 1px solid var(--border-muted); border-radius: var(--radius-control); padding: 9px 10px; background: var(--surface-input); color: var(--text-primary); }.form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }.form-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 18px; }.runtime-status-banner { display: flex; align-items: center; gap: 9px; padding: 12px; background: var(--surface-subtle); border-left: 3px solid var(--success); }.runtime-status-banner span:last-child { color: var(--text-muted); font-size: 13px; }.runtime-facts { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 22px 0; }.runtime-facts div { min-width: 0; }.runtime-facts dt { color: var(--text-muted); font-size: 12px; margin-bottom: 4px; }.runtime-facts dd { margin: 0; overflow-wrap: anywhere; }.runtime-notice-modal { width: min(420px, calc(100vw - 32px)); }.runtime-notice-modal .modal-title { margin-bottom: 0; }.runtime-notice-icon { display: grid; width: 46px; height: 46px; margin-bottom: 14px; place-items: center; border-radius: 50%; }.runtime-notice-icon.is-success { background: var(--success-surface); color: var(--success); }.runtime-notice-icon.is-error { background: var(--danger-surface); color: var(--danger); }.runtime-notice-text { margin: 10px 0 0; color: var(--text-secondary); font-size: 13px; line-height: 1.7; overflow-wrap: anywhere; }
 .runtime-uninstall-modal { width: min(460px, calc(100vw - 32px)); }.uninstall-delete-option { margin-top: 14px; padding: 12px; border: 1px solid var(--border-muted); border-radius: var(--radius-control); background: var(--surface-subtle); cursor: pointer; transition: border-color .18s ease, background .18s ease; }.uninstall-delete-option:has(input:checked) { border-color: var(--danger); background: var(--danger-surface); }.uninstall-delete-option input { accent-color: var(--danger); }.uninstall-warning { margin: 8px 0 0; padding: 10px 12px; border-radius: var(--radius-control); background: var(--danger-surface); color: var(--danger); font-size: 12px; line-height: 1.6; }
 @media (max-width: 850px) { .runtime-layout { grid-template-columns: 1fr; }.runtime-facts, .form-grid { grid-template-columns: 1fr; } }
 </style>
