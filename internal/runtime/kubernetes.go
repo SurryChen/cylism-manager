@@ -28,6 +28,7 @@ const (
 	RuntimeAPISecretKey = "runtime-api-key"
 	NanobotGatewayPort  = 18790
 	NanobotAPIPort      = 8900
+	NanobotSessionPort  = 18800
 	NanobotConfigPath   = "/data/.nanobot/config.json"
 	RuntimeDefaultPort  = NanobotAPIPort
 	PermissionFixInit   = "fix-perms"
@@ -293,7 +294,11 @@ func (m *KubernetesManager) applySecret(ctx context.Context, instance *model.Run
 
 func (m *KubernetesManager) applyService(ctx context.Context, instance *model.RuntimeInstance, labels map[string]string, workload WorkloadSpec) error {
 	services := m.Client.Clientset.CoreV1().Services(instance.Namespace)
-	service := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: instance.Name, Namespace: instance.Namespace, Labels: labels}, Spec: corev1.ServiceSpec{Selector: labels, Ports: []corev1.ServicePort{{Name: "api", Port: workload.ServicePort, TargetPort: intstr.FromInt32(workload.ServicePort)}}}}
+	ports := []corev1.ServicePort{{Name: "api", Port: workload.ServicePort, TargetPort: intstr.FromInt32(workload.ServicePort)}}
+	if workload.SessionPort > 0 {
+		ports = append(ports, corev1.ServicePort{Name: "session-api", Port: workload.SessionPort, TargetPort: intstr.FromInt32(workload.SessionPort)})
+	}
+	service := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: instance.Name, Namespace: instance.Namespace, Labels: labels}, Spec: corev1.ServiceSpec{Selector: labels, Ports: ports}}
 	current, err := services.Get(ctx, instance.Name, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
 		_, err = services.Create(ctx, service, metav1.CreateOptions{})

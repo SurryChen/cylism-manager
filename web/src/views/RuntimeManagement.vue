@@ -29,7 +29,7 @@
         <div v-if="selected" class="runtime-detail">
           <div class="runtime-status-banner"><span class="runtime-dot" :class="`status-${selected.status}`"></span><strong>{{ statusLabel(selected.status) }}</strong><span>{{ selected.health_detail || '尚未执行健康检查' }}</span></div>
           <dl class="runtime-facts"><div><dt>类型</dt><dd>{{ selected.runtime_type }}</dd></div><div><dt>部署方式</dt><dd>{{ selected.deployment_mode === 'external' ? '外部连接' : '平台托管' }}</dd></div><div><dt>命名空间</dt><dd>{{ selected.namespace }}</dd></div><div><dt>版本</dt><dd>{{ displayVersion(selected) }}</dd></div><div><dt>连接地址</dt><dd>{{ selected.endpoint_url || '-' }}</dd></div><div v-if="selected.deployment_mode !== 'external'"><dt>PVC</dt><dd>{{ selected.pvc_name }} · {{ selected.storage }}</dd></div><div><dt>模型</dt><dd>{{ selected.model_name || '-' }} · {{ selected.api_style }}</dd></div></dl>
-          <div class="form-actions"><button class="btn" @click="editSelected">编辑配置</button><button class="btn" :disabled="working" @click="deploy(selected)">部署或更新</button><button class="btn" :disabled="working" @click="health(selected)">健康检查</button><button class="btn btn-danger" :disabled="working" @click="openUninstall(selected)">卸载</button></div>
+          <div class="form-actions"><button class="btn" @click="editSelected">编辑配置</button><button class="btn" :disabled="working" @click="deploy(selected)">部署或更新</button><button class="btn" :disabled="working" @click="health(selected)">健康检查</button><button class="btn" @click="chatOpen = true" :disabled="!selected">聊天</button><button class="btn btn-danger" :disabled="working" @click="openUninstall(selected)">卸载</button></div>
         </div>
         <div v-else class="empty-state"><Bot :size="26" class="empty-icon" /><span class="empty-text">选择一个助手实例查看详情</span></div>
       </article>
@@ -100,6 +100,8 @@
         </section>
       </div>
     </Teleport>
+
+    <ChatDrawer v-model="chatOpen" :runtime="selected" />
   </section>
 </template>
 
@@ -107,6 +109,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { AlertCircle, Bot, CheckCircle2, Plus, RefreshCw, X } from 'lucide-vue-next'
 import { api } from '../api/index.js'
+import ChatDrawer from '../components/ChatDrawer.vue'
 import SectionTabsHeader from '../components/SectionTabsHeader.vue'
 
 const runtimes = ref([])
@@ -120,6 +123,7 @@ const working = ref(false)
 const deleteData = ref(false)
 const uninstallTarget = ref(null)
 const notice = ref(null)
+const chatOpen = ref(false)
 const tabs = [{ id: 'instances', label: '实例' }]
 
 const emptyForm = () => ({ name: '', runtime_type: 'nanobot', deployment_mode: 'managed', runtime_version: '', image: '', namespace: 'cylism-assistant', port: 8900, health_path: '/health', endpoint_url: '', pvc_name: '', storage: 10, storage_class_name: '', node_name: '', model_name: '', model_base_url: '', api_style: 'responses', api_key: '', api_key_configured: false, config: {} })

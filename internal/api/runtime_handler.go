@@ -21,6 +21,8 @@ type RuntimeHandler struct {
 	encKey   []byte
 	k8s      *runtime.KubernetesManager
 	registry *runtime.Registry
+	// newChatClient overrides the runtime chat client factory in tests.
+	newChatClient chatClientFactory
 }
 
 type runtimeRequest struct {

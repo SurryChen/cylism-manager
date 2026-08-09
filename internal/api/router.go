@@ -55,6 +55,9 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 		runtimes.POST("/:id/deploy", runtimeHandler.Deploy)
 		runtimes.POST("/:id/health-check", runtimeHandler.Health)
 		runtimes.POST("/:id/uninstall", runtimeHandler.Uninstall)
+		runtimes.POST("/:id/chat", runtimeHandler.Chat)
+		runtimes.GET("/:id/chat/sessions", runtimeHandler.ChatSessions)
+		runtimes.GET("/:id/chat/sessions/:sid/messages", runtimeHandler.ChatSessionMessages)
 	}
 	platformHandler := NewPlatformHandler(s, encKey)
 	go platformHandler.Reconcile()
