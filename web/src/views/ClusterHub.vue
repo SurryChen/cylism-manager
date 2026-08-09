@@ -11,6 +11,7 @@ import { useRoute, useRouter } from 'vue-router'
 import Cluster from './Cluster.vue'
 import NodeRegistryMirrors from './NodeRegistryMirrors.vue'
 import ChartRepositories from './ChartRepositories.vue'
+import SystemComponents from './SystemComponents.vue'
 import SectionTabsHeader from '../components/SectionTabsHeader.vue'
 
 const route = useRoute()
@@ -19,6 +20,7 @@ const tabs = [
   { id: 'nodes', label: '节点', component: Cluster },
   { id: 'registry-mirrors', label: '节点镜像源', component: NodeRegistryMirrors },
   { id: 'chart-repositories', label: 'Chart 仓库', component: ChartRepositories },
+  { id: 'system-components', label: '系统组件', component: SystemComponents },
 ]
 const activeTab = computed(() => tabs.some(item => item.id === route.query.tab) ? route.query.tab : 'nodes')
 const activeComponent = computed(() => tabs.find(item => item.id === activeTab.value)?.component || Cluster)

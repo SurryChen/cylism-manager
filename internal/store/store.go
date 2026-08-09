@@ -68,6 +68,7 @@ func New(dsn string) (*Store, error) {
 		&model.PersistentVolumeMigration{},
 		&model.PersistentVolumeBackup{},
 		&model.HostDirectoryPVCImport{},
+		&model.SystemComponentConfig{},
 	); err != nil {
 		return nil, err
 	}
@@ -450,6 +451,43 @@ func (s *Store) DeleteExpiredOperationLogs(retentionDays int) error {
 	}
 	threshold := time.Now().Add(-time.Duration(retentionDays) * 24 * time.Hour)
 	return s.db.Where("created_at < ?", threshold).Delete(&model.OperationLog{}).Error
+}
+
+// ListSystemComponentConfigs 返回全部系统组件持久化配置。
+func (s *Store) ListSystemComponentConfigs() ([]model.SystemComponentConfig, error) {
+	var configs []model.SystemComponentConfig
+	err := s.db.Order("chart_name asc").Find(&configs).Error
+	return configs, err
+}
+
+// GetSystemComponentConfig 按 chart 名查询持久化配置。
+func (s *Store) GetSystemComponentConfig(chartName string) (*model.SystemComponentConfig, error) {
+	var config model.SystemComponentConfig
+	err := s.db.Where("chart_name = ?", chartName).First(&config).Error
+	if err != nil {
+		return nil, err
+	}
+	return &config, nil
+}
+
+// UpsertSystemComponentConfig 创建或更新系统组件配置。
+func (s *Store) UpsertSystemComponentConfig(config *model.SystemComponentConfig) error {
+	var existing model.SystemComponentConfig
+	err := s.db.Where("chart_name = ?", config.ChartName).First(&existing).Error
+	if err == nil {
+		config.ID = existing.ID
+		config.CreatedAt = existing.CreatedAt
+		return s.db.Save(config).Error
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return err
+	}
+	return s.db.Create(config).Error
+}
+
+// DeleteSystemComponentConfig 删除系统组件配置。
+func (s *Store) DeleteSystemComponentConfig(chartName string) error {
+	return s.db.Where("chart_name = ?", chartName).Delete(&model.SystemComponentConfig{}).Error
 }
 
 // --- SystemConfig ---

@@ -45,6 +45,7 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 	apiGroup.Use(AuditMiddleware(s))
 	runtimeRegistry := runtimepkg.BuiltinRegistry()
 	runtimeHandler := NewRuntimeHandler(s, encKey, runtimepkg.NewKubernetesManager(K8s, runtimeRegistry), runtimeRegistry)
+	systemComponentHandler := NewSystemComponentHandler(s)
 	runtimes := apiGroup.Group("/runtimes")
 	{
 		runtimes.GET("/catalog", runtimeHandler.Catalog)
@@ -58,6 +59,12 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 		runtimes.POST("/:id/chat", runtimeHandler.Chat)
 		runtimes.GET("/:id/chat/sessions", runtimeHandler.ChatSessions)
 		runtimes.GET("/:id/chat/sessions/:sid/messages", runtimeHandler.ChatSessionMessages)
+	}
+	systemComponents := apiGroup.Group("/system-components")
+	{
+		systemComponents.GET("", systemComponentHandler.List)
+		systemComponents.PUT("/:chart", systemComponentHandler.Update)
+		systemComponents.POST("/:chart/revert", systemComponentHandler.Revert)
 	}
 	platformHandler := NewPlatformHandler(s, encKey)
 	go platformHandler.Reconcile()
