@@ -2,11 +2,14 @@ package runtime
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
@@ -87,5 +90,68 @@ func TestDeleteRejectsForeignPVCWhenDataDeletionIsRequested(t *testing.T) {
 	instance := &model.RuntimeInstance{ID: 1, Name: "nanobot", Namespace: DefaultNamespace, PVCName: "data"}
 	if err := manager.Delete(context.Background(), instance, true); err == nil {
 		t.Fatal("expected foreign PVC deletion to be rejected")
+	}
+}
+
+func TestHealthReturnsDeployingBeforePodReady(t *testing.T) {
+	client := &k8s.Client{Clientset: fake.NewSimpleClientset()}
+	replicas := int32(1)
+	if _, err := client.Clientset.AppsV1().Deployments(DefaultNamespace).Create(context.Background(), &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: "nanobot-main", Namespace: DefaultNamespace},
+		Spec:       appsv1.DeploymentSpec{Replicas: &replicas},
+		Status:     appsv1.DeploymentStatus{AvailableReplicas: 0},
+	}, metav1.CreateOptions{}); err != nil {
+		t.Fatalf("create deployment: %v", err)
+	}
+	hits := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		hits++
+		_, _ = writer.Write([]byte("ok"))
+	}))
+	defer server.Close()
+	manager := NewKubernetesManager(client)
+	instance := &model.RuntimeInstance{Name: "nanobot-main", Namespace: DefaultNamespace, DeploymentMode: model.RuntimeDeploymentManaged, EndpointURL: server.URL, HealthPath: "/health"}
+	status, detail := manager.Health(context.Background(), instance)
+	if status != model.RuntimeStatusDeploying || !strings.Contains(detail, "尚未就绪") {
+		t.Fatalf("expected deploying before readiness, got %s %q", status, detail)
+	}
+	if hits != 0 {
+		t.Fatalf("HTTP probe must not run before readiness, got %d hits", hits)
+	}
+}
+
+func TestHealthProbesHTTPWhenPodReady(t *testing.T) {
+	client := &k8s.Client{Clientset: fake.NewSimpleClientset()}
+	replicas := int32(1)
+	if _, err := client.Clientset.AppsV1().Deployments(DefaultNamespace).Create(context.Background(), &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: "nanobot-main", Namespace: DefaultNamespace},
+		Spec:       appsv1.DeploymentSpec{Replicas: &replicas},
+		Status:     appsv1.DeploymentStatus{AvailableReplicas: 1},
+	}, metav1.CreateOptions{}); err != nil {
+		t.Fatalf("create deployment: %v", err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		_, _ = writer.Write([]byte("ok"))
+	}))
+	defer server.Close()
+	manager := NewKubernetesManager(client)
+	instance := &model.RuntimeInstance{Name: "nanobot-main", Namespace: DefaultNamespace, DeploymentMode: model.RuntimeDeploymentManaged, EndpointURL: server.URL, HealthPath: "/health"}
+	status, detail := manager.Health(context.Background(), instance)
+	if status != model.RuntimeStatusReady || detail != "Runtime 健康检查通过" {
+		t.Fatalf("expected ready after probe, got %s %q", status, detail)
+	}
+}
+
+func TestHealthSkipsReadinessCheckForExternalRuntime(t *testing.T) {
+	client := &k8s.Client{Clientset: fake.NewSimpleClientset()}
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		_, _ = writer.Write([]byte("ok"))
+	}))
+	defer server.Close()
+	manager := NewKubernetesManager(client)
+	instance := &model.RuntimeInstance{Name: "nanobot-remote", Namespace: DefaultNamespace, DeploymentMode: model.RuntimeDeploymentExternal, EndpointURL: server.URL, HealthPath: "/health"}
+	status, _ := manager.Health(context.Background(), instance)
+	if status != model.RuntimeStatusReady {
+		t.Fatalf("expected external runtime to probe directly, got %s", status)
 	}
 }
