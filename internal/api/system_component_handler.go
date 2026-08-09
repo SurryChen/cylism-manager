@@ -1,6 +1,7 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -8,6 +9,7 @@ import (
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/gin-gonic/gin"
+	appsv1 "k8s.io/api/apps/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/yaml"
 )
@@ -97,10 +99,69 @@ func (h *SystemComponentHandler) List(c *gin.Context) {
 				"strategy":           deployment.Spec.Strategy,
 				"image":              image,
 			}
+			item["effective"] = true
+			item["effective_detail"] = ""
+			if config := configs[chart]; config != nil && config.ValuesContent != "" {
+				item["effective"], item["effective_detail"] = systemComponentEffective(config.ValuesContent, deployment)
+			}
 		}
 		result = append(result, item)
 	}
 	model.Success(c, result)
+}
+
+// systemComponentEffective 对比平台保存的期望值与 Deployment 实际生效值，
+// 返回配置是否真正生效。Helm 只渲染 chart 模板支持的 value，不支持的会被静默忽略。
+func systemComponentEffective(valuesContent string, deployment *appsv1.Deployment) (bool, string) {
+	var values map[string]any
+	if err := yaml.Unmarshal([]byte(valuesContent), &values); err != nil {
+		return false, "values 配置解析失败"
+	}
+	var issues []string
+	if raw, ok := values["replicas"]; ok {
+		if expected, ok := intValue(raw); ok && expected > 0 {
+			actual := int32(0)
+			if deployment.Spec.Replicas != nil {
+				actual = *deployment.Spec.Replicas
+			}
+			if int32(expected) != actual {
+				issues = append(issues, "replicas")
+			}
+		}
+	}
+	rolling := deployment.Spec.Strategy.Type == appsv1.RollingUpdateDeploymentStrategyType && deployment.Spec.Strategy.RollingUpdate != nil
+	actualUnavailable := ""
+	actualSurge := ""
+	if rolling {
+		actualUnavailable = deployment.Spec.Strategy.RollingUpdate.MaxUnavailable.String()
+		actualSurge = deployment.Spec.Strategy.RollingUpdate.MaxSurge.String()
+	}
+	if raw, ok := values["maxUnavailable"]; ok {
+		if fmt.Sprint(raw) != actualUnavailable {
+			issues = append(issues, "maxUnavailable")
+		}
+	}
+	if raw, ok := values["maxSurge"]; ok {
+		if fmt.Sprint(raw) != actualSurge {
+			issues = append(issues, "maxSurge")
+		}
+	}
+	if len(issues) == 0 {
+		return true, ""
+	}
+	return false, strings.Join(issues, "、") + " 未生效（chart 未渲染该值）"
+}
+
+func intValue(raw any) (int, bool) {
+	switch value := raw.(type) {
+	case int:
+		return value, true
+	case int64:
+		return int(value), true
+	case float64:
+		return int(value), true
+	}
+	return 0, false
 }
 
 func (h *SystemComponentHandler) Update(c *gin.Context) {

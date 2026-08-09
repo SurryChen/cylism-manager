@@ -70,4 +70,14 @@ describe('SystemComponents', () => {
     expect(wrapper.text()).toContain('由 K3s 进程内提供')
     expect(wrapper.text()).not.toContain('编辑配置')
   })
+
+  it('shows a warning when saved values did not take effect', async () => {
+    apiMocks.get.mockResolvedValue([
+      item({ has_config: true, apply_status: 'succeeded', effective: false, effective_detail: 'maxUnavailable、maxSurge 未生效（chart 未渲染该值）' }),
+    ])
+    const wrapper = mount(SystemComponents)
+    await flushPromises()
+    expect(wrapper.text()).toContain('已保存未生效')
+    expect(wrapper.text()).toContain('maxUnavailable、maxSurge 未生效')
+  })
 })

@@ -14,6 +14,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
 )
@@ -113,5 +114,39 @@ func TestSystemComponentRevertRestoresDefaults(t *testing.T) {
 	}
 	if _, err := s.GetSystemComponentConfig("coredns"); err == nil {
 		t.Fatal("store config should be removed after revert")
+	}
+}
+
+func TestSystemComponentEffectiveComparesSavedValuesWithDeployment(t *testing.T) {
+	replicas := int32(1)
+	unavailable := intstr.FromInt(1)
+	surge := intstr.FromString("25%")
+	deployment := &appsv1.Deployment{
+		Spec: appsv1.DeploymentSpec{
+			Replicas: &replicas,
+			Strategy: appsv1.DeploymentStrategy{
+				Type: appsv1.RollingUpdateDeploymentStrategyType,
+				RollingUpdate: &appsv1.RollingUpdateDeployment{
+					MaxUnavailable: &unavailable,
+					MaxSurge:       &surge,
+				},
+			},
+		},
+	}
+	effective, detail := systemComponentEffective("maxUnavailable: 1\nmaxSurge: 25%\nreplicas: 1\n", deployment)
+	if !effective || detail != "" {
+		t.Fatalf("matching values must be effective, got %v %q", effective, detail)
+	}
+	effective, detail = systemComponentEffective("maxUnavailable: 0\nmaxSurge: 1\n", deployment)
+	if effective || !strings.Contains(detail, "maxUnavailable") || !strings.Contains(detail, "maxSurge") {
+		t.Fatalf("expected both strategy values ineffective, got %v %q", effective, detail)
+	}
+	effective, detail = systemComponentEffective("replicas: 2\n", deployment)
+	if effective || !strings.Contains(detail, "replicas") {
+		t.Fatalf("expected replicas ineffective, got %v %q", effective, detail)
+	}
+	effective, _ = systemComponentEffective("maxUnavailable: 0\n", &appsv1.Deployment{})
+	if effective {
+		t.Fatal("non-rolling strategy must report ineffective")
 	}
 }

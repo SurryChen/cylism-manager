@@ -40,6 +40,7 @@
               <td>
                 <span class="badge" :class="configBadgeClass(item)">{{ configBadgeText(item) }}</span>
                 <small v-if="item.apply_error" class="detail">{{ item.apply_error }}</small>
+                <small v-if="item.effective === false && item.effective_detail" class="detail">{{ item.effective_detail }}</small>
                 <small v-if="item.last_applied_at" class="cell-secondary">应用于 {{ formatTime(item.last_applied_at) }}</small>
               </td>
               <td>
@@ -132,12 +133,16 @@ function strategyText(strategy) {
 
 function configBadgeClass(item) {
   if (!item.has_config) return 'badge-offline'
-  return item.apply_status === 'succeeded' ? 'badge-online' : 'badge-danger'
+  if (item.apply_status === 'failed') return 'badge-danger'
+  if (item.apply_status === 'succeeded' && item.effective === false) return 'badge-danger'
+  return 'badge-online'
 }
 
 function configBadgeText(item) {
   if (!item.has_config) return '默认配置'
-  return item.apply_status === 'succeeded' ? '已应用' : item.apply_status || '待应用'
+  if (item.apply_status === 'failed') return '失败'
+  if (item.apply_status === 'succeeded' && item.effective === false) return '已保存未生效'
+  return '已应用'
 }
 
 function isMissing(item) {
