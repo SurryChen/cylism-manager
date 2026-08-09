@@ -32,6 +32,7 @@ import { X } from 'lucide-vue-next'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
+import { installTerminalClipboard } from '../utils/terminalClipboard.js'
 
 const props = defineProps({
   pod: { type: Object, required: true },
@@ -93,6 +94,7 @@ function openTerminal() {
   const fitAddon = new FitAddon()
   term.loadAddon(fitAddon)
   term.open(element)
+  installTerminalClipboard(term)
   fitAddon.fit()
 
   const token = localStorage.getItem('access_token') || ''
