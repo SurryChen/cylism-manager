@@ -210,6 +210,17 @@ func (m *KubernetesManager) DeploymentReady(ctx context.Context, instance *model
 }
 
 func (m *KubernetesManager) Health(ctx context.Context, instance *model.RuntimeInstance) (string, string) {
+	// 托管 Runtime 在 Pod 就绪前不做 HTTP 探测：此时 Service 端点尚未
+	// 包含新 Pod，直接请求只会得到连接超时，语义误导为“故障”。
+	if instance != nil && instance.DeploymentMode == model.RuntimeDeploymentManaged && m != nil && m.Client != nil && m.Client.Clientset != nil {
+		deployment, err := m.Client.Clientset.AppsV1().Deployments(instance.Namespace).Get(ctx, instance.Name, metav1.GetOptions{})
+		if err != nil {
+			return model.RuntimeStatusFailed, fmt.Sprintf("读取 Runtime Deployment: %v", err)
+		}
+		if deployment.Status.AvailableReplicas < 1 {
+			return model.RuntimeStatusDeploying, "Runtime Pod 尚未就绪，请稍后重试"
+		}
+	}
 	base := strings.TrimRight(instance.EndpointURL, "/")
 	if base == "" {
 		base = fmt.Sprintf("http://%s.%s.svc.cluster.local:%d", instance.Name, instance.Namespace, instance.Port)
