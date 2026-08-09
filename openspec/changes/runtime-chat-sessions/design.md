@@ -54,9 +54,9 @@ SessionEndpoint(instance) (string, error)
 
 选型：aiohttp（nanobot 的 `api/server.py` 已依赖，零新增）；同镜像第三容器，共享 `/data`；鉴权与 chat 一致（`CYLISM_RUNTIME_API_KEY`）。
 
-实现原则：**不重写会话逻辑**。sidecar 直接复用 nanobot 内部读取能力（如 `nanobot.webui` 的 `list_webui_sessions`），只包一层只读 HTTP。会话存储格式的耦合被隔离在镜像内部，Manager 只见稳定契约。
+实现原则：**不重写会话逻辑**。sidecar 直接复用 `nanobot.session.manager.SessionManager` 的 `list_sessions()` 与 `read_session_file()`（0.3.0 pip 包自带），只包一层只读 HTTP。会话存储格式的耦合被隔离在镜像内部，Manager 只见稳定契约。
 
-实施第一项任务：读取 pin 的上游提交 `bd8d3ad5`，确认会话列表/消息读取函数、`api:xxx` session_key 与列表会话的对应关系，再决定 sidecar 是直接 import 还是做少量适配。
+已确认：`api:xxx` session_key 与 chat 接口的 `session_id` 对应（`api:default` 为默认会话），sidecar 只暴露 `api:` 前缀会话。
 
 ## Manager Chat Handler
 
