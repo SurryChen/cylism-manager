@@ -49,15 +49,17 @@ func (h *SystemComponentHandler) List(c *gin.Context) {
 	result := make([]gin.H, 0, len(systemChartWhitelist))
 	for chart, namespace := range systemChartWhitelist {
 		item := gin.H{
-			"chart_name":      chart,
-			"namespace":       namespace,
-			"values_content":  "",
-			"enabled":         false,
-			"apply_status":    "",
-			"apply_error":     "",
-			"last_applied_at": nil,
-			"has_config":      false,
-			"deployment":      nil,
+			"chart_name":       chart,
+			"namespace":        namespace,
+			"values_content":   "",
+			"enabled":          false,
+			"apply_status":     "",
+			"apply_error":      "",
+			"last_applied_at":  nil,
+			"has_config":       false,
+			"deployment":       nil,
+			"deployment_error": "",
+			"lb_active":        false,
 		}
 		if config := configs[chart]; config != nil {
 			item["values_content"] = config.ValuesContent
@@ -68,7 +70,22 @@ func (h *SystemComponentHandler) List(c *gin.Context) {
 			item["has_config"] = true
 		}
 		deployment, getErr := K8s.Clientset.AppsV1().Deployments(namespace).Get(ctx, chart, metav1.GetOptions{})
-		if getErr == nil && deployment != nil {
+		if getErr != nil {
+			item["deployment_error"] = getErr.Error()
+			// K3s 新版本把 servicelb 控制器内嵌进 server 进程，不再有同名
+			// Deployment，但会为 LoadBalancer Service 生成 svclb-* DaemonSet。
+			if chart == "servicelb" {
+				daemonsets, listErr := K8s.Clientset.AppsV1().DaemonSets(namespace).List(ctx, metav1.ListOptions{})
+				if listErr == nil {
+					for _, daemonSet := range daemonsets.Items {
+						if strings.HasPrefix(daemonSet.Name, "svclb-") {
+							item["lb_active"] = true
+							break
+						}
+					}
+				}
+			}
+		} else if deployment != nil {
 			image := ""
 			if len(deployment.Spec.Template.Spec.Containers) > 0 {
 				image = deployment.Spec.Template.Spec.Containers[0].Image

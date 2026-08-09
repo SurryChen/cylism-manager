@@ -230,6 +230,7 @@ ChartJS.register(ArcElement, Tooltip)
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
+import { installTerminalClipboard } from '../utils/terminalClipboard.js'
 
 const servers = ref([])
 const activeSection = ref('configuration')
@@ -471,6 +472,7 @@ function openTerminal(id) {
     const fitAddon = new FitAddon()
     term.loadAddon(fitAddon)
     term.open(el)
+    installTerminalClipboard(term)
 
     // 给 xterm 内部容器加圆角样式
     const xtermScreen = el.querySelector('.xterm-screen')

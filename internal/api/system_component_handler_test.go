@@ -9,6 +9,8 @@ import (
 	"github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/gin-gonic/gin"
+	appsv1 "k8s.io/api/apps/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -35,6 +37,12 @@ func setupSystemComponentRouter(t *testing.T) (*gin.Engine, *store.Store) {
 		DynamicClient: dynamicfake.NewSimpleDynamicClient(systemComponentScheme()),
 	}
 	t.Cleanup(func() { K8s = nil })
+	_, err = K8s.Clientset.AppsV1().DaemonSets("kube-system").Create(context.Background(), &appsv1.DaemonSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "svclb-traefik-abc", Namespace: "kube-system"},
+	}, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatalf("create daemonset: %v", err)
+	}
 	handler := NewSystemComponentHandler(s)
 	router := gin.New()
 	group := router.Group("/api/system-components")
@@ -54,6 +62,9 @@ func TestSystemComponentListReturnsWhitelist(t *testing.T) {
 		if !strings.Contains(response.Body.String(), chart) {
 			t.Fatalf("whitelist chart %s missing: %s", chart, response.Body.String())
 		}
+	}
+	if !strings.Contains(response.Body.String(), `"lb_active":true`) {
+		t.Fatalf("servicelb must be marked active when svclb DaemonSet exists: %s", response.Body.String())
 	}
 }
 

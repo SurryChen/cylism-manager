@@ -43,9 +43,12 @@ describe('SystemComponents', () => {
     await flushPromises()
     await wrapper.findAll('button').find(button => button.text() === '编辑配置').trigger('click')
     await wrapper.findAll('.modal-actions button').find(button => button.text() === '安全滚动基线').trigger('click')
-    expect(wrapper.get('textarea').element.value).toContain('replicas: 2')
+    expect(wrapper.get('input[type="number"]').element.value).toBe('2')
+    expect(wrapper.findAll('.form-select')[0].element.value).toBe('0')
+    expect(wrapper.findAll('.form-select')[1].element.value).toBe('1')
     await wrapper.get('form').trigger('submit')
     expect(apiMocks.put).toHaveBeenCalledWith('/system-components/coredns', { values_content: expect.stringContaining('maxUnavailable: 0') })
+    expect(apiMocks.put).toHaveBeenCalledWith('/system-components/coredns', { values_content: expect.stringContaining('replicas: 2') })
   })
 
   it('reverts a configured component after confirmation', async () => {
@@ -55,5 +58,16 @@ describe('SystemComponents', () => {
     await flushPromises()
     await wrapper.findAll('button').find(button => button.text() === '恢复默认').trigger('click')
     expect(apiMocks.post).toHaveBeenCalledWith('/system-components/coredns/revert')
+  })
+
+  it('marks embedded servicelb as running and hides configuration', async () => {
+    apiMocks.get.mockResolvedValue([
+      item({ chart_name: 'servicelb', deployment: null, deployment_error: 'deployments.apps "servicelb" not found', lb_active: true }),
+    ])
+    const wrapper = mount(SystemComponents)
+    await flushPromises()
+    expect(wrapper.text()).toContain('内置运行中')
+    expect(wrapper.text()).toContain('由 K3s 进程内提供')
+    expect(wrapper.text()).not.toContain('编辑配置')
   })
 })
