@@ -90,11 +90,16 @@ func newClientFromRestConfig(config *rest.Config) (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create clientset: %w", err)
 	}
+	dynamicClient, err := dynamic.NewForConfig(config)
+	if err != nil {
+		return nil, fmt.Errorf("create dynamic client: %w", err)
+	}
 
 	return &Client{
-		Clientset: clientset,
-		Config:    config,
-		ctx:       context.Background(),
+		Clientset:     clientset,
+		DynamicClient: dynamicClient,
+		Config:        config,
+		ctx:           context.Background(),
 	}, nil
 }
 
