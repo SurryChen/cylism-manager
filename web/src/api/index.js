@@ -63,4 +63,64 @@ export const api = {
   delete: (path, body) => request(path, { method: 'DELETE', ...(body === undefined ? {} : { body: JSON.stringify(body) }) }),
 }
 
+export function chatSessions(runtimeID) {
+  return api.get(`/runtimes/${runtimeID}/chat/sessions`)
+}
+
+export function chatMessages(runtimeID, sessionID) {
+  return api.get(`/runtimes/${runtimeID}/chat/sessions/${encodeURIComponent(sessionID)}/messages`)
+}
+
+// chatStream 发送聊天消息并解析 SSE 流。onEvent 收到 {type:'delta'|'done'|'error'}。
+// 返回 abort 函数；点击停止或组件卸载时调用。
+export function chatStream(runtimeID, body, { onEvent, signal } = {}) {
+  const controller = new AbortController()
+  const abort = () => controller.abort()
+  const promise = (async () => {
+    const headers = { 'Content-Type': 'application/json' }
+    const token = getAccessToken()
+    if (token) headers['Authorization'] = `Bearer ${token}`
+    const res = await fetch(API_BASE + `/runtimes/${runtimeID}/chat`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body),
+      signal: signal || controller.signal,
+    })
+    if (!res.ok || !res.body) {
+      let message = `HTTP ${res.status}`
+      try {
+        const data = await res.json()
+        message = data.message || message
+      } catch { /* keep default */ }
+      throw new Error(message)
+    }
+    const reader = res.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    const dispatch = () => {
+      let index
+      while ((index = buffer.indexOf('\n\n')) !== -1) {
+        const rawEvent = buffer.slice(0, index)
+        buffer = buffer.slice(index + 2)
+        for (const line of rawEvent.split('\n')) {
+          if (!line.startsWith('data:')) continue
+          const payload = line.slice(5).trim()
+          if (!payload) continue
+          try { onEvent(JSON.parse(payload)) } catch { /* ignore malformed event */ }
+        }
+      }
+    }
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      dispatch()
+    }
+    buffer += decoder.decode()
+    dispatch()
+  })()
+  promise.abort = abort
+  return promise
+}
+
 export { getAccessToken, getRefreshToken, setTokens, clearTokens }

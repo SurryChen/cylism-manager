@@ -26,6 +26,7 @@ type Definition struct {
 	DefaultPort             int32    `json:"default_port"`
 	DefaultHealthPath       string   `json:"default_health_path"`
 	SupportedModelProtocols []string `json:"supported_model_protocols"`
+	Capabilities            []string `json:"capabilities,omitempty"`
 }
 
 type Adapter interface {
@@ -33,6 +34,8 @@ type Adapter interface {
 	Validate(instance *model.RuntimeInstance) error
 	Config(instance *model.RuntimeInstance) (string, error)
 	Workload(instance *model.RuntimeInstance) (WorkloadSpec, error)
+	ChatEndpoint(instance *model.RuntimeInstance) (string, error)
+	SessionEndpoint(instance *model.RuntimeInstance) (string, error)
 }
 
 // WorkloadSpec is a platform-owned Kubernetes workload description. Adapter
@@ -44,6 +47,7 @@ type WorkloadSpec struct {
 	ServicePort    int32
 	HealthPort     int32
 	HealthPath     string
+	SessionPort    int32
 }
 
 type Registry struct {
@@ -115,6 +119,7 @@ func (NanobotAdapter) Definition() Definition {
 		DefaultPort:             NanobotAPIPort,
 		DefaultHealthPath:       "/health",
 		SupportedModelProtocols: []string{ModelProtocolResponses, ModelProtocolAnthropic},
+		Capabilities:            []string{"chat", "sessions"},
 	}
 }
 
@@ -187,6 +192,22 @@ func (NanobotAdapter) Config(instance *model.RuntimeInstance) (string, error) {
 	return string(encoded), nil
 }
 
+// ChatEndpoint returns the runtime's OpenAI-compatible chat URL.
+func (NanobotAdapter) ChatEndpoint(instance *model.RuntimeInstance) (string, error) {
+	if instance == nil || strings.TrimSpace(instance.Name) == "" || strings.TrimSpace(instance.Namespace) == "" {
+		return "", fmt.Errorf("Runtime 缺少名称或命名空间")
+	}
+	return fmt.Sprintf("http://%s.%s.svc.cluster.local:%d/v1/chat/completions", instance.Name, instance.Namespace, NanobotAPIPort), nil
+}
+
+// SessionEndpoint returns the runtime's read-only session API URL.
+func (NanobotAdapter) SessionEndpoint(instance *model.RuntimeInstance) (string, error) {
+	if instance == nil || strings.TrimSpace(instance.Name) == "" || strings.TrimSpace(instance.Namespace) == "" {
+		return "", fmt.Errorf("Runtime 缺少名称或命名空间")
+	}
+	return fmt.Sprintf("http://%s.%s.svc.cluster.local:%d", instance.Name, instance.Namespace, NanobotSessionPort), nil
+}
+
 func (NanobotAdapter) Workload(instance *model.RuntimeInstance) (WorkloadSpec, error) {
 	if strings.TrimSpace(instance.Image) == "" {
 		return WorkloadSpec{}, fmt.Errorf("Nanobot Runtime 镜像不能为空")
@@ -216,15 +237,24 @@ func (NanobotAdapter) Workload(instance *model.RuntimeInstance) (WorkloadSpec, e
 		ReadinessProbe: probe(NanobotAPIPort),
 		LivenessProbe:  probe(NanobotAPIPort),
 	}
+	sessionAPI := corev1.Container{
+		Name:           "session-api",
+		Image:          instance.Image,
+		Command:        []string{"cylism-session-api"},
+		Ports:          []corev1.ContainerPort{{Name: "session", ContainerPort: NanobotSessionPort}},
+		ReadinessProbe: probe(NanobotSessionPort),
+		LivenessProbe:  probe(NanobotSessionPort),
+	}
 	return WorkloadSpec{
 		InitContainers: []corev1.Container{{
 			Name:    "render-config",
 			Image:   instance.Image,
 			Command: []string{"cylism-render-nanobot-config", "--source", "/etc/cylism/runtime.json", "--destination", NanobotConfigPath},
 		}},
-		Containers:  []corev1.Container{gateway, api},
+		Containers:  []corev1.Container{gateway, api, sessionAPI},
 		ServicePort: NanobotAPIPort,
 		HealthPort:  NanobotAPIPort,
 		HealthPath:  "/health",
+		SessionPort: NanobotSessionPort,
 	}, nil
 }

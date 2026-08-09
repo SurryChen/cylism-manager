@@ -22,6 +22,14 @@ func (testAdapter) Workload(instance *model.RuntimeInstance) (WorkloadSpec, erro
 	return WorkloadSpec{}, nil
 }
 
+func (testAdapter) ChatEndpoint(instance *model.RuntimeInstance) (string, error) {
+	return "http://test-agent:8900/v1/chat/completions", nil
+}
+
+func (testAdapter) SessionEndpoint(instance *model.RuntimeInstance) (string, error) {
+	return "http://test-agent:18800", nil
+}
+
 func TestRegistryListsAndValidatesRegisteredAdapters(t *testing.T) {
 	registry := NewRegistry(NanobotAdapter{})
 	if err := registry.Register(testAdapter{}); err != nil {
@@ -67,11 +75,14 @@ func TestNanobotAdapterDeclaresAndValidatesModelProtocols(t *testing.T) {
 	if err != nil {
 		t.Fatalf("generate workload: %v", err)
 	}
-	if len(workload.InitContainers) != 1 || len(workload.Containers) != 2 || workload.ServicePort != 8900 || workload.HealthPort != 8900 {
+	if len(workload.InitContainers) != 1 || len(workload.Containers) != 3 || workload.ServicePort != 8900 || workload.HealthPort != 8900 || workload.SessionPort != 18800 {
 		t.Fatalf("unexpected nanobot workload: %#v", workload)
 	}
-	if workload.Containers[0].Name != "gateway" || workload.Containers[1].Name != "api" {
+	if workload.Containers[0].Name != "gateway" || workload.Containers[1].Name != "api" || workload.Containers[2].Name != "session-api" {
 		t.Fatalf("unexpected nanobot container names: %#v", workload.Containers)
+	}
+	if workload.Containers[2].Command[0] != "cylism-session-api" || workload.Containers[2].Ports[0].ContainerPort != 18800 {
+		t.Fatalf("unexpected session-api container: %#v", workload.Containers[2])
 	}
 
 	instance.APIStyle = ModelProtocolAnthropic

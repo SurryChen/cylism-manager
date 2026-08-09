@@ -30,7 +30,7 @@ func TestApplyCreatesRuntimeResourcesAndReusesPVC(t *testing.T) {
 		t.Fatalf("deployment not created: %v", err)
 	}
 	pod := deployment.Spec.Template.Spec
-	if len(pod.InitContainers) != 2 || len(pod.Containers) != 2 || pod.InitContainers[0].Name != PermissionFixInit || pod.InitContainers[1].Name != "render-config" || pod.Containers[0].Name != "gateway" || pod.Containers[1].Name != "api" {
+	if len(pod.InitContainers) != 2 || len(pod.Containers) != 3 || pod.InitContainers[0].Name != PermissionFixInit || pod.InitContainers[1].Name != "render-config" || pod.Containers[0].Name != "gateway" || pod.Containers[1].Name != "api" || pod.Containers[2].Name != "session-api" {
 		t.Fatalf("unexpected Nanobot pod: %#v", pod)
 	}
 	fixPerms := pod.InitContainers[0]
@@ -53,7 +53,7 @@ func TestApplyCreatesRuntimeResourcesAndReusesPVC(t *testing.T) {
 		t.Fatalf("API readiness probe must use port 8900: %#v", pod.Containers[1].ReadinessProbe)
 	}
 	service, err := client.Clientset.CoreV1().Services(DefaultNamespace).Get(context.Background(), instance.Name, metav1.GetOptions{})
-	if err != nil || len(service.Spec.Ports) != 1 || service.Spec.Ports[0].Port != 8900 || service.Spec.Ports[0].TargetPort.IntVal != 8900 {
+	if err != nil || len(service.Spec.Ports) != 2 || service.Spec.Ports[0].Port != 8900 || service.Spec.Ports[0].TargetPort.IntVal != 8900 || service.Spec.Ports[1].Port != 18800 || service.Spec.Ports[1].TargetPort.IntVal != 18800 {
 		t.Fatalf("unexpected Runtime service: %v %#v", err, service)
 	}
 	secret, err := client.Clientset.CoreV1().Secrets(DefaultNamespace).Get(context.Background(), instance.SecretName, metav1.GetOptions{})

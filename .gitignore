@@ -36,8 +36,7 @@ Thumbs.db
 .env.local
 
 # Root-level compiled binaries
-agent
-platform
-agent-linux-amd64
+/agent
+/platform
+/agent-linux-amd64
 *.service
-agent
