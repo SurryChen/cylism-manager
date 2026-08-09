@@ -36,6 +36,7 @@ const routes = [
   { path: '/cluster', component: ClusterHub },
   { path: '/cluster/registry-mirrors', redirect: { path: '/cluster', query: { tab: 'registry-mirrors' } } },
   { path: '/cluster/chart-repositories', redirect: { path: '/cluster', query: { tab: 'chart-repositories' } } },
+  { path: '/cluster/system-components', redirect: { path: '/cluster', query: { tab: 'system-components' } } },
   { path: '/cluster/storage', redirect: '/storage' },
   { path: '/storage', component: PersistentVolumes },
   { path: '/monitoring', component: Monitoring },
