@@ -67,8 +67,12 @@ export function chatSessions(runtimeID) {
   return api.get(`/runtimes/${runtimeID}/chat/sessions`)
 }
 
-export function chatMessages(runtimeID, sessionID) {
-  return api.get(`/runtimes/${runtimeID}/chat/sessions/${encodeURIComponent(sessionID)}/messages`)
+export function chatMessages(runtimeID, sessionID, { limit, before } = {}) {
+  const params = new URLSearchParams()
+  if (Number.isInteger(limit) && limit > 0) params.set('limit', String(limit))
+  if (before) params.set('before', before)
+  const query = params.toString()
+  return api.get(`/runtimes/${runtimeID}/chat/sessions/${encodeURIComponent(sessionID)}/messages${query ? `?${query}` : ''}`)
 }
 
 // chatStream 发送聊天消息并解析 SSE 流。onEvent 收到 {type:'delta'|'done'|'error'}。

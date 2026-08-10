@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/cylism/cylism-manager/internal/agent"
@@ -172,7 +173,12 @@ func (h *RuntimeHandler) ChatSessionMessages(c *gin.Context) {
 		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, err.Error())
 		return
 	}
-	detail, err := client.ReadSession(c.Request.Context(), sessionID)
+	options, err := sessionHistoryOptions(c)
+	if err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		return
+	}
+	detail, err := client.ReadSession(c.Request.Context(), sessionID, options)
 	if err != nil {
 		model.Error(c, http.StatusBadGateway, model.CodeK8sAPIError, "读取 Runtime 会话失败: "+err.Error())
 		return
@@ -182,4 +188,16 @@ func (h *RuntimeHandler) ChatSessionMessages(c *gin.Context) {
 		return
 	}
 	model.Success(c, detail)
+}
+
+func sessionHistoryOptions(c *gin.Context) (agent.SessionHistoryOptions, error) {
+	options := agent.SessionHistoryOptions{Limit: 50, Before: strings.TrimSpace(c.Query("before"))}
+	if raw, ok := c.GetQuery("limit"); ok {
+		limit, err := strconv.Atoi(raw)
+		if err != nil || limit < 1 || limit > 200 {
+			return agent.SessionHistoryOptions{}, fmt.Errorf("limit 必须为 1 到 200 之间的整数")
+		}
+		options.Limit = limit
+	}
+	return options, nil
 }
