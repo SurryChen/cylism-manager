@@ -27,3 +27,10 @@
 - [x] 5.1 Run affected frontend and Python tests after each task.
 - [x] 5.2 Run `npm --prefix web test`, `npm --prefix web run build`, `python3 -m unittest discover -s tests -v`.
 - [x] 5.3 Run `go test ./...`, `go build ./...`, and `git diff --check`.
+
+## 6. Markdown Output
+
+- [x] 6.1 Add failing tests for safe Markdown rendering.
+- [x] 6.2 Add Markdown parsing and sanitization dependencies.
+- [x] 6.3 Render assistant messages as sanitized Markdown without changing the composer.
+- [x] 6.4 Run focused and full frontend verification.

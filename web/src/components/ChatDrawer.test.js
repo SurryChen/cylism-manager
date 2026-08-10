@@ -35,6 +35,19 @@ describe('ChatDrawer', () => {
     expect(wrapper.text()).toContain('hello')
   })
 
+  it('renders assistant Markdown safely', async () => {
+    apiMocks.chatMessages.mockResolvedValue({
+      id: 'abc',
+      title: 'Hello',
+      messages: [{ role: 'assistant', content: '**bold**\n\n- item\n\n<img src=x onerror=alert(1)>' }],
+    })
+    const wrapper = mountDrawer()
+    await flushPromises()
+    expect(wrapper.find('.chat-markdown strong').text()).toBe('bold')
+    expect(wrapper.find('.chat-markdown li').text()).toBe('item')
+    expect(wrapper.find('.chat-markdown img').exists()).toBe(false)
+  })
+
   it('streams deltas into the assistant message', async () => {
     let onEvent
     apiMocks.chatStream.mockImplementation((_id, _body, handlers) => {
