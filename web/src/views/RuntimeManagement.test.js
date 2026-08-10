@@ -78,12 +78,12 @@ describe('RuntimeManagement', () => {
     expect(nodeSelect.element.disabled).toBe(true)
   })
 
-  it('opens the chat drawer from the detail actions', async () => {
+  it('opens the chat modal from the detail actions', async () => {
     const wrapper = mount(RuntimeManagement, { global: { stubs: { Teleport: true } } })
     await flushPromises()
     await wrapper.get('.runtime-item').trigger('click')
     await wrapper.findAll('.runtime-detail .btn').find(button => button.text() === '聊天').trigger('click')
-    expect(wrapper.find('.chat-drawer').exists()).toBe(true)
+    expect(wrapper.find('.chat-modal').exists()).toBe(true)
   })
 
   it('uninstalls a runtime and keeps PVC by default', async () => {

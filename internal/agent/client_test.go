@@ -66,7 +66,7 @@ func TestReadSessionMapsNotFoundToNil(t *testing.T) {
 	defer server.Close()
 
 	client := NewRuntimeChatClient(server.URL, server.URL, "gpt-test", "secret")
-	detail, err := client.ReadSession(context.Background(), "missing")
+	detail, err := client.ReadSession(context.Background(), "missing", SessionHistoryOptions{Limit: 50})
 	if err != nil {
 		t.Fatalf("read session: %v", err)
 	}
@@ -80,12 +80,15 @@ func TestReadSessionDecodesMessages(t *testing.T) {
 		if !strings.HasSuffix(request.URL.Path, "/v1/sessions/abc/messages") {
 			t.Errorf("unexpected path: %s", request.URL.Path)
 		}
+		if request.URL.Query().Get("limit") != "50" || request.URL.Query().Get("before") != "cursor" {
+			t.Errorf("unexpected query: %s", request.URL.RawQuery)
+		}
 		_, _ = io.WriteString(writer, `{"id":"abc","title":"Hello","messages":[{"role":"user","content":"hi","created_at":"2026-01-01T00:00:00Z"}]}`)
 	}))
 	defer server.Close()
 
 	client := NewRuntimeChatClient(server.URL, server.URL, "gpt-test", "secret")
-	detail, err := client.ReadSession(context.Background(), "abc")
+	detail, err := client.ReadSession(context.Background(), "abc", SessionHistoryOptions{Limit: 50, Before: "cursor"})
 	if err != nil {
 		t.Fatalf("read session: %v", err)
 	}

@@ -22,6 +22,7 @@ type fakeChatClient struct {
 	readErr      error
 	streamErr    error
 	streamStatus int
+	readOptions  agent.SessionHistoryOptions
 }
 
 func (f *fakeChatClient) StreamChat(_ context.Context, _ string, _ string) (*http.Response, error) {
@@ -39,7 +40,8 @@ func (f *fakeChatClient) ListSessions(_ context.Context) ([]agent.Session, error
 	return f.sessions, f.listErr
 }
 
-func (f *fakeChatClient) ReadSession(_ context.Context, _ string) (*agent.SessionDetail, error) {
+func (f *fakeChatClient) ReadSession(_ context.Context, _ string, options agent.SessionHistoryOptions) (*agent.SessionDetail, error) {
+	f.readOptions = options
 	return f.detail, f.readErr
 }
 
@@ -147,6 +149,31 @@ func TestChatSessionMessagesReturnsHistory(t *testing.T) {
 	}
 	if !strings.Contains(response.Body.String(), `"content":"hi"`) {
 		t.Fatalf("unexpected messages body: %s", response.Body.String())
+	}
+	if client.readOptions != (agent.SessionHistoryOptions{Limit: 50}) {
+		t.Fatalf("unexpected default options: %#v", client.readOptions)
+	}
+}
+
+func TestChatSessionMessagesPassesPageOptions(t *testing.T) {
+	client := &fakeChatClient{detail: &agent.SessionDetail{ID: "abc"}}
+	router, s, encKey := setupChatRouter(t, client, nil)
+	id := createChatRuntime(t, s, encKey)
+	response := serve(router, newJSONRequest(http.MethodGet, "/api/runtimes/"+itoa(id)+"/chat/sessions/abc/messages?limit=20&before=30", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("messages status = %d: %s", response.Code, response.Body.String())
+	}
+	if client.readOptions != (agent.SessionHistoryOptions{Limit: 20, Before: "30"}) {
+		t.Fatalf("unexpected options: %#v", client.readOptions)
+	}
+}
+
+func TestChatSessionMessagesRejectsInvalidLimit(t *testing.T) {
+	router, s, encKey := setupChatRouter(t, &fakeChatClient{}, nil)
+	id := createChatRuntime(t, s, encKey)
+	response := serve(router, newJSONRequest(http.MethodGet, "/api/runtimes/"+itoa(id)+"/chat/sessions/abc/messages?limit=0", nil))
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("expected validation failure, got %d: %s", response.Code, response.Body.String())
 	}
 }
 

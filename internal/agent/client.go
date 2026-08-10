@@ -14,7 +14,7 @@ import (
 type ChatClient interface {
 	StreamChat(ctx context.Context, sessionID, message string) (*http.Response, error)
 	ListSessions(ctx context.Context) ([]Session, error)
-	ReadSession(ctx context.Context, sessionID string) (*SessionDetail, error)
+	ReadSession(ctx context.Context, sessionID string, options SessionHistoryOptions) (*SessionDetail, error)
 }
 
 // RuntimeChatClient talks to one runtime's chat and session endpoints with the
@@ -82,8 +82,18 @@ func (c *RuntimeChatClient) ListSessions(ctx context.Context) ([]Session, error)
 	return payload.Sessions, nil
 }
 
-func (c *RuntimeChatClient) ReadSession(ctx context.Context, sessionID string) (*SessionDetail, error) {
+func (c *RuntimeChatClient) ReadSession(ctx context.Context, sessionID string, options SessionHistoryOptions) (*SessionDetail, error) {
 	endpoint := c.SessionURL + "/v1/sessions/" + url.PathEscape(sessionID) + "/messages"
+	query := url.Values{}
+	if options.Limit > 0 {
+		query.Set("limit", fmt.Sprintf("%d", options.Limit))
+	}
+	if options.Before != "" {
+		query.Set("before", options.Before)
+	}
+	if encoded := query.Encode(); encoded != "" {
+		endpoint += "?" + encoded
+	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, fmt.Errorf("构建会话消息请求: %w", err)

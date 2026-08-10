@@ -19,10 +19,19 @@ type Message struct {
 
 // SessionDetail is a session together with its message history.
 type SessionDetail struct {
-	ID        string    `json:"id"`
-	Title     string    `json:"title"`
-	UpdatedAt string    `json:"updated_at,omitempty"`
-	Messages  []Message `json:"messages"`
+	ID         string    `json:"id"`
+	Title      string    `json:"title"`
+	UpdatedAt  string    `json:"updated_at,omitempty"`
+	Messages   []Message `json:"messages"`
+	HasMore    bool      `json:"has_more"`
+	NextCursor string    `json:"next_cursor,omitempty"`
+}
+
+// SessionHistoryOptions bounds a history page and identifies the end of the
+// preceding page through the opaque cursor returned by the runtime.
+type SessionHistoryOptions struct {
+	Limit  int
+	Before string
 }
 
 // Event types emitted on the Manager chat SSE stream.
