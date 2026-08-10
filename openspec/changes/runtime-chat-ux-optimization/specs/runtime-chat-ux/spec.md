@@ -66,3 +66,13 @@ The UI SHALL keep a locally created session visible until its first request succ
 - **WHEN** the first request of a new session fails
 - **THEN** the local session and failed message remain available for retry
 - **AND THEN** the failed session is not presented as persisted Runtime history after a full reload
+
+### Requirement: Chat output supports safe Markdown
+
+The chat UI SHALL retain raw Markdown message content and render supported GFM formatting only after sanitization. The composer remains a plain multiline text input.
+
+#### Scenario: Markdown response
+
+- **WHEN** an assistant response contains Markdown formatting
+- **THEN** the UI renders supported formatting including emphasis, lists, links, and code blocks
+- **AND THEN** unsafe HTML is not inserted into the DOM
