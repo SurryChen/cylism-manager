@@ -29,12 +29,14 @@ func TestDetectSystemComponentUsesRuntimeControlSource(t *testing.T) {
 	client := &Client{
 		Clientset: k8sfake.NewSimpleClientset(
 			&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "coredns", Namespace: "kube-system"}, Spec: appsv1.DeploymentSpec{Replicas: &replicas}},
+			&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "traefik-proxy", Namespace: "kube-system", Labels: map[string]string{"app.kubernetes.io/name": "traefik"}}, Spec: appsv1.DeploymentSpec{Replicas: &replicas}},
 			&appsv1.DaemonSet{ObjectMeta: metav1.ObjectMeta{Name: "svclb-traefik", Namespace: "kube-system"}},
 		),
 		DynamicClient: dynamicfake.NewSimpleDynamicClient(helmChartConfigScheme(), &unstructured.Unstructured{Object: map[string]any{
 			"apiVersion": "helm.cattle.io/v1",
 			"kind":       "HelmChart",
 			"metadata":   map[string]any{"name": "traefik", "namespace": "kube-system"},
+			"status":     map[string]any{"conditions": []any{map[string]any{"type": "Ready", "status": "True", "message": "deployed"}}},
 		}}),
 	}
 
@@ -55,6 +57,11 @@ func TestDetectSystemComponentUsesRuntimeControlSource(t *testing.T) {
 			}
 			if result.Mode != tc.want {
 				t.Fatalf("mode = %q, want %q; evidence=%v", result.Mode, tc.want, result.Evidence)
+			}
+			if tc.name == "traefik" {
+				if !result.ChartReady || result.Workload == nil || result.Workload.Name != "traefik-proxy" {
+					t.Fatalf("helm workload status = %#v, want ready traefik-proxy", result)
+				}
 			}
 		})
 	}

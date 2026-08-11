@@ -38,13 +38,15 @@ describe('SystemComponents', () => {
     expect(wrapper.text()).toContain('coredns')
     expect(wrapper.text()).toContain('traefik')
     expect(wrapper.text()).toContain('1/1 就绪')
-    expect(wrapper.text()).toContain('RollingUpdate U:1 S:25%')
+    expect(wrapper.text()).toContain('自动调度')
+    expect(wrapper.text()).not.toContain('发现同名 Deployment')
+    expect(wrapper.text()).not.toContain('rancher/mirrored-coredns')
   })
 
   it('applies safe rollout baseline for coredns and saves', async () => {
     const wrapper = mount(SystemComponents)
     await flushPromises()
-    await wrapper.findAll('button').find(button => button.text() === '编辑配置').trigger('click')
+    await wrapper.findAll('button').find(button => button.text() === '配置').trigger('click')
     await wrapper.findAll('.modal-actions button').find(button => button.text() === '安全滚动基线').trigger('click')
     expect(wrapper.get('input[type="number"]').element.value).toBe('2')
     expect(wrapper.findAll('.form-select')[0].element.value).toBe('0')
@@ -62,7 +64,7 @@ describe('SystemComponents', () => {
     })
     const wrapper = mount(SystemComponents)
     await flushPromises()
-    await wrapper.findAll('button').find(button => button.text() === '编辑配置').trigger('click')
+    await wrapper.findAll('button').find(button => button.text() === '配置').trigger('click')
     await wrapper.get('[data-testid="coredns-node-selector"]').setValue('worker-b')
     await wrapper.get('form').trigger('submit')
 
@@ -86,9 +88,9 @@ describe('SystemComponents', () => {
     ])
     const wrapper = mount(SystemComponents)
     await flushPromises()
-    expect(wrapper.text()).toContain('内置运行中')
-    expect(wrapper.text()).toContain('由 K3s 进程内提供')
-    expect(wrapper.text()).not.toContain('编辑配置')
+    expect(wrapper.text()).toContain('运行中')
+    expect(wrapper.text()).toContain('由 K3s 内置控制器提供')
+    expect(wrapper.findAll('button').some(button => button.text() === '配置')).toBe(false)
   })
 
   it('shows a warning when saved values did not take effect', async () => {
@@ -98,7 +100,7 @@ describe('SystemComponents', () => {
     const wrapper = mount(SystemComponents)
     await flushPromises()
     expect(wrapper.text()).toContain('已保存未生效')
-    expect(wrapper.text()).toContain('maxUnavailable、maxSurge 与实际 Deployment 不一致')
+    expect(wrapper.text()).toContain('配置与实际状态不一致，请重新保存')
   })
 
   it('uses the detected static deployment capability instead of a component-name special case', async () => {
@@ -107,9 +109,9 @@ describe('SystemComponents', () => {
     ])
     const wrapper = mount(SystemComponents)
     await flushPromises()
-    expect(wrapper.text()).toContain('控制方式：K3s 静态 Deployment')
-    expect(wrapper.text()).toContain('迁移')
-    await wrapper.findAll('button').find(button => button.text() === '编辑配置').trigger('click')
+    expect(wrapper.text()).toContain('K3s 静态组件')
+    expect(wrapper.text()).not.toContain('迁移')
+    await wrapper.findAll('button').find(button => button.text() === '配置').trigger('click')
     expect(wrapper.find('[data-testid="coredns-node-selector"]').exists()).toBe(true)
   })
 
@@ -119,8 +121,18 @@ describe('SystemComponents', () => {
     ])
     const wrapper = mount(SystemComponents)
     await flushPromises()
-    expect(wrapper.text()).toContain('控制方式：未识别')
+    expect(wrapper.text()).toContain('待确认')
     expect(wrapper.text()).toContain('控制源未识别')
-    expect(wrapper.text()).not.toContain('编辑配置')
+    expect(wrapper.findAll('button').some(button => button.text() === '配置')).toBe(false)
+  })
+
+  it('does not call a HelmChart component uninstalled when its chart exists without an exact Deployment name', async () => {
+    apiMocks.get.mockResolvedValue([
+      item({ chart_name: 'traefik', controller_mode: 'helm_chart', deployment: null, workload: null, chart_ready: true, capabilities: { configure: true, node_placement: false, rollout: false, restore: true } }),
+    ])
+    const wrapper = mount(SystemComponents)
+    await flushPromises()
+    expect(wrapper.text()).toContain('已安装')
+    expect(wrapper.text()).not.toContain('未安装')
   })
 })

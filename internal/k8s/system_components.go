@@ -3,6 +3,7 @@ package k8s
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -33,9 +34,23 @@ const (
 
 // SystemComponentDetection records the evidence that selected an adapter.
 type SystemComponentDetection struct {
-	Mode       ControllerMode
-	Evidence   []string
-	Deployment *appsv1.Deployment
+	Mode        ControllerMode
+	Evidence    []string
+	Deployment  *appsv1.Deployment
+	Workload    *ComponentWorkload
+	ChartReady  bool
+	ChartFailed bool
+	ChartStatus string
+}
+
+// ComponentWorkload is the common status shape used for Helm Deployments and
+// DaemonSets. Helm charts are allowed to choose either workload kind.
+type ComponentWorkload struct {
+	Kind      string
+	Name      string
+	Desired   int32
+	Ready     int32
+	Available int32
 }
 
 // StaticDeploymentConfig is the narrow set of workload fields owned by the
@@ -68,6 +83,29 @@ func (c *Client) DetectSystemComponent(ctx context.Context, namespace, name stri
 		if chart != nil {
 			result.Mode = HelmChartMode
 			result.Evidence = []string{"发现匹配的 HelmChart " + namespace + "/" + name}
+			result.ChartReady, result.ChartFailed, result.ChartStatus = helmChartCondition(chart)
+			workloadNamespace, _, targetErr := unstructured.NestedString(chart.Object, "spec", "targetNamespace")
+			if targetErr != nil || workloadNamespace == "" {
+				workloadNamespace = namespace
+			}
+			workload, workloadErr := c.findHelmWorkload(ctx, workloadNamespace, name)
+			if workloadErr != nil {
+				return result, workloadErr
+			}
+			if workload != nil {
+				result.Workload = workload
+				result.Evidence = append(result.Evidence, "发现 Helm 工作负载 "+workloadNamespace+"/"+workload.Kind+"/"+workload.Name)
+				if workload.Kind == "Deployment" {
+					deployment, getErr := c.Clientset.AppsV1().Deployments(workloadNamespace).Get(ctx, workload.Name, metav1.GetOptions{})
+					if getErr == nil {
+						result.Deployment = deployment
+					}
+				}
+			} else if result.ChartReady {
+				result.Evidence = append(result.Evidence, "HelmChart 已就绪但未匹配到 Deployment 或 DaemonSet")
+			} else if result.ChartFailed {
+				result.Evidence = append(result.Evidence, "HelmChart 报告安装失败")
+			}
 			return result, nil
 		}
 		result.Evidence = append(result.Evidence, "未发现匹配的 HelmChart")
@@ -103,6 +141,85 @@ func (c *Client) DetectSystemComponent(ctx context.Context, namespace, name stri
 	}
 	result.Evidence = append(result.Evidence, "无法确认组件控制源")
 	return result, nil
+}
+
+func (c *Client) findHelmWorkload(ctx context.Context, namespace, name string) (*ComponentWorkload, error) {
+	deployments, err := c.Clientset.AppsV1().Deployments(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("读取 Helm Deployment: %w", err)
+	}
+	for _, deployment := range deployments.Items {
+		if !matchesHelmWorkload(&deployment, name, namespace) {
+			continue
+		}
+		return &ComponentWorkload{
+			Kind:      "Deployment",
+			Name:      deployment.Name,
+			Desired:   desiredReplicas(deployment.Spec.Replicas),
+			Ready:     deployment.Status.ReadyReplicas,
+			Available: deployment.Status.AvailableReplicas,
+		}, nil
+	}
+	daemonsets, err := c.Clientset.AppsV1().DaemonSets(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("读取 Helm DaemonSet: %w", err)
+	}
+	for _, daemonset := range daemonsets.Items {
+		if !matchesHelmWorkload(&daemonset, name, namespace) {
+			continue
+		}
+		return &ComponentWorkload{
+			Kind:      "DaemonSet",
+			Name:      daemonset.Name,
+			Desired:   daemonset.Status.DesiredNumberScheduled,
+			Ready:     daemonset.Status.NumberReady,
+			Available: daemonset.Status.NumberAvailable,
+		}, nil
+	}
+	return nil, nil
+}
+
+func matchesHelmWorkload(object metav1.Object, name, namespace string) bool {
+	if object.GetName() == name || strings.HasPrefix(object.GetName(), name+"-") {
+		return true
+	}
+	labels := object.GetLabels()
+	for _, key := range []string{"app.kubernetes.io/instance", "app.kubernetes.io/name", "k8s-app"} {
+		value := labels[key]
+		if value == name || value == name+"-"+namespace {
+			return true
+		}
+	}
+	return false
+}
+
+func desiredReplicas(replicas *int32) int32 {
+	if replicas == nil {
+		return 0
+	}
+	return *replicas
+}
+
+func helmChartCondition(chart *unstructured.Unstructured) (ready, failed bool, status string) {
+	conditions, found, err := unstructured.NestedSlice(chart.Object, "status", "conditions")
+	if !found || err != nil {
+		return false, false, ""
+	}
+	for _, raw := range conditions {
+		condition, ok := raw.(map[string]interface{})
+		if !ok || condition["type"] != "Ready" {
+			continue
+		}
+		conditionStatus := fmt.Sprint(condition["status"])
+		status = fmt.Sprint(condition["message"])
+		if conditionStatus == "True" {
+			return true, false, status
+		}
+		if conditionStatus == "False" {
+			return false, true, status
+		}
+	}
+	return false, false, status
 }
 
 // ApplyCoreDNSConfig updates only the CoreDNS settings managed by the
