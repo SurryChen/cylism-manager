@@ -158,6 +158,35 @@ describe('ChatDrawer', () => {
     expect(body.session_id).not.toBe('default')
   })
 
+  it('does not send when Enter is used to commit an IME composition', async () => {
+    const wrapper = mountDrawer()
+    await flushPromises()
+    const input = wrapper.get('.chat-input')
+    await input.setValue('english')
+
+    await input.trigger('keydown', { key: 'Enter', isComposing: true })
+
+    expect(apiMocks.chatStream).not.toHaveBeenCalled()
+    expect(input.element.value).toBe('english')
+  })
+
+  it('sends only after the IME composition has ended', async () => {
+    const wrapper = mountDrawer()
+    await flushPromises()
+    const input = wrapper.get('.chat-input')
+    await input.setValue('英文')
+
+    await input.trigger('compositionstart')
+    await input.trigger('keydown', { key: 'Enter' })
+    expect(apiMocks.chatStream).not.toHaveBeenCalled()
+
+    await input.trigger('compositionend')
+    await input.trigger('keydown', { key: 'Enter' })
+
+    expect(apiMocks.chatStream).toHaveBeenCalledOnce()
+    expect(apiMocks.chatStream).toHaveBeenCalledWith(1, expect.objectContaining({ message: '英文' }), expect.any(Object))
+  })
+
   it('stops streaming via the stop button', async () => {
     const abort = vi.fn()
     apiMocks.chatStream.mockReturnValue(Object.assign(new Promise(() => {}), { abort }))

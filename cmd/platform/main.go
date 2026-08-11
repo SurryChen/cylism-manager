@@ -84,6 +84,7 @@ func main() {
 
 	// 注册路由
 	api.RegisterRoutes(r, db, encKey, authCfg)
+	go api.NewSystemComponentHandler(db).Reconcile()
 
 	// 静态文件
 	r.Static("/assets", "./web/dist/assets")

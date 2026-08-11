@@ -41,7 +41,17 @@
         </div>
 
         <footer class="chat-input-bar">
-          <textarea :value="currentView?.draft || ''" rows="1" class="chat-input" placeholder="输入消息，Enter 发送" :disabled="!currentView || currentView.loadingHistory || currentView.stream.status === 'pending' || currentView.stream.status === 'streaming'" @input="setDraft" @keydown.enter.exact.prevent="send" />
+          <textarea
+            :value="currentView?.draft || ''"
+            rows="1"
+            class="chat-input"
+            placeholder="输入消息，Enter 发送"
+            :disabled="!currentView || currentView.loadingHistory || currentView.stream.status === 'pending' || currentView.stream.status === 'streaming'"
+            @input="setDraft"
+            @compositionstart="isComposing = true"
+            @compositionend="isComposing = false"
+            @keydown="onInputKeydown"
+          />
           <button v-if="currentView?.stream.status === 'pending' || currentView?.stream.status === 'streaming'" type="button" class="btn" @click="stopCurrent">停止</button>
           <button v-else type="button" class="btn btn-primary" :disabled="!currentView?.draft?.trim() || currentView?.loadingHistory" @click="send">发送</button>
         </footer>
@@ -69,6 +79,7 @@ const sessionViews = ref(new Map())
 const currentSession = ref('')
 const messageList = ref(null)
 const stickToBottom = ref(true)
+const isComposing = ref(false)
 const sessionsError = ref('')
 let sessionsRequestVersion = 0
 let messageSequence = 0
@@ -215,6 +226,13 @@ function createSessionID() {
 
 function setDraft(event) {
   if (currentView.value) currentView.value.draft = event.target.value
+}
+
+function onInputKeydown(event) {
+  if (event.key !== 'Enter' || event.shiftKey || event.altKey || event.ctrlKey || event.metaKey) return
+  if (isComposing.value || event.isComposing || event.keyCode === 229) return
+  event.preventDefault()
+  send()
 }
 
 function createMessageID(sessionID) {
