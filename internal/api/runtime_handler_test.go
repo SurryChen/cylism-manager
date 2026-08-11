@@ -11,6 +11,7 @@ import (
 	"github.com/cylism/cylism-manager/internal/runtime"
 	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/gin-gonic/gin"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 )
 
@@ -118,6 +119,56 @@ func TestRuntimeHandlerGeneratesAndHidesRuntimeAPICredentialOnDeploy(t *testing.
 	}
 	if strings.Contains(deploy.Body.String(), "model-key") || strings.Contains(deploy.Body.String(), stored.EncryptedRuntimeAPIKey) {
 		t.Fatalf("credentials leaked from deploy response: %s", deploy.Body.String())
+	}
+}
+
+func TestRuntimeHandlerInstallsAndUninstallsAgentToolsByRollingDeployment(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	s, _ := store.New(":memory:")
+	client := &k8s.Client{Clientset: fake.NewSimpleClientset()}
+	manager := runtime.NewKubernetesManager(client)
+	r := gin.New()
+	h := NewRuntimeHandler(s, []byte("01234567890123456789012345678901"), manager)
+	r.POST("/api/runtimes", h.Create)
+	r.POST("/api/runtimes/:id/deploy", h.Deploy)
+	r.POST("/api/runtimes/:id/agent-tools/install", h.InstallAgentTools)
+	r.POST("/api/runtimes/:id/agent-tools/uninstall", h.UninstallAgentTools)
+
+	create := serve(r, newJSONRequest(http.MethodPost, "/api/runtimes", gin.H{"name": "nanobot-main", "runtime_type": "nanobot", "image": "example/nanobot:latest", "api_key": "model-key", "model_name": "gpt-test", "model_base_url": "https://provider.example/v1"}))
+	if create.Code != http.StatusOK {
+		t.Fatalf("create status = %d: %s", create.Code, create.Body.String())
+	}
+	id := responseID(t, create.Body.Bytes())
+	if deploy := serve(r, newJSONRequest(http.MethodPost, "/api/runtimes/"+itoa(id)+"/deploy", nil)); deploy.Code != http.StatusOK {
+		t.Fatalf("deploy status = %d: %s", deploy.Code, deploy.Body.String())
+	}
+	install := serve(r, newJSONRequest(http.MethodPost, "/api/runtimes/"+itoa(id)+"/agent-tools/install", nil))
+	if install.Code != http.StatusOK {
+		t.Fatalf("install status = %d: %s", install.Code, install.Body.String())
+	}
+	instance, err := s.GetRuntime(id)
+	if err != nil || !instance.AgentToolEnabled {
+		t.Fatalf("expected stored enabled state: %+v err=%v", instance, err)
+	}
+	if _, err := client.Clientset.CoreV1().ServiceAccounts(instance.Namespace).Get(t.Context(), runtime.RuntimeAgentServiceAccountName(instance), metav1.GetOptions{}); err != nil {
+		t.Fatalf("expected installed agent service account: %v", err)
+	}
+	if err := s.ReplaceAgentCapabilityGrants(instance.ID, []model.AgentCapabilityGrant{{RuntimeID: instance.ID, Capability: model.AgentCapabilityClusterRead, Namespace: "*", Enabled: true}}); err != nil {
+		t.Fatalf("grant runtime capability: %v", err)
+	}
+	uninstall := serve(r, newJSONRequest(http.MethodPost, "/api/runtimes/"+itoa(id)+"/agent-tools/uninstall", nil))
+	if uninstall.Code != http.StatusOK {
+		t.Fatalf("uninstall status = %d: %s", uninstall.Code, uninstall.Body.String())
+	}
+	instance, _ = s.GetRuntime(id)
+	if instance.AgentToolEnabled {
+		t.Fatalf("expected stored disabled state: %+v", instance)
+	}
+	if _, err := client.Clientset.CoreV1().ServiceAccounts(instance.Namespace).Get(t.Context(), runtime.RuntimeAgentServiceAccountName(instance), metav1.GetOptions{}); err == nil {
+		t.Fatal("expected Runtime agent service account to be removed")
+	}
+	if grants, err := s.ListAgentCapabilityGrants(instance.ID); err != nil || len(grants) != 0 {
+		t.Fatalf("expected grants to be revoked before rollout: %+v err=%v", grants, err)
 	}
 }
 

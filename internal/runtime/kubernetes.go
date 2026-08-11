@@ -32,6 +32,20 @@ const (
 	NanobotConfigPath   = "/data/.nanobot/config.json"
 	RuntimeDefaultPort  = NanobotAPIPort
 	PermissionFixInit   = "fix-perms"
+
+	RuntimeAgentServiceAccountSuffix = "-agent"
+	RuntimeInstallerTokenAudience    = "cylism-manager-tool-installer"
+	RuntimeAgentTokenAudience        = "cylism-manager-agent"
+	RuntimeCLIVolumeName             = "cylism-cli"
+	RuntimeInstallerTokenVolumeName  = "cylism-installer-token"
+	RuntimeAgentTokenVolumeName      = "cylism-agent-token"
+	RuntimeCLIInstallerName          = "install-cylism-cli"
+	RuntimeCLIMountPath              = "/opt/cylism/bin"
+	RuntimeInstallerTokenMountPath   = "/var/run/secrets/cylism-manager-installer"
+	RuntimeAgentTokenMountPath       = "/var/run/secrets/cylism-manager-agent"
+	RuntimeInstallerTokenFile        = RuntimeInstallerTokenMountPath + "/token"
+	RuntimeAgentTokenFile            = RuntimeAgentTokenMountPath + "/token"
+	RuntimeAgentAPIURL               = "http://cylism-manager.default.svc.cluster.local:8080"
 )
 
 type KubernetesManager struct {
@@ -124,6 +138,9 @@ func (m *KubernetesManager) Apply(ctx context.Context, instance *model.RuntimeIn
 	if err := m.applyPVC(ctx, instance, labels); err != nil {
 		return err
 	}
+	if err := m.applyAgentServiceAccount(ctx, instance, labels); err != nil {
+		return err
+	}
 	config, err := adapter.Config(instance)
 	if err != nil {
 		return err
@@ -181,6 +198,15 @@ func (m *KubernetesManager) Delete(ctx context.Context, instance *model.RuntimeI
 		}
 		if err := m.Client.Clientset.CoreV1().Secrets(instance.Namespace).Delete(ctx, name, options); err != nil && !apierrors.IsNotFound(err) {
 			return fmt.Errorf("删除 Runtime Secret: %w", err)
+		}
+	}
+	agentServiceAccounts := m.Client.Clientset.CoreV1().ServiceAccounts(instance.Namespace)
+	agentServiceAccountName := RuntimeAgentServiceAccountName(instance)
+	if existing, err := agentServiceAccounts.Get(ctx, agentServiceAccountName, metav1.GetOptions{}); err == nil {
+		if existing.Labels[k8s.ManagedByLabel] == k8s.ManagedByValue && existing.Labels[RuntimeIDLabel] == fmt.Sprintf("%d", instance.ID) {
+			if err := agentServiceAccounts.Delete(ctx, agentServiceAccountName, options); err != nil && !apierrors.IsNotFound(err) {
+				return fmt.Errorf("删除 Runtime Agent ServiceAccount: %w", err)
+			}
 		}
 	}
 	if deletePVC && instance.PVCName != "" {
@@ -324,6 +350,41 @@ func (m *KubernetesManager) applyService(ctx context.Context, instance *model.Ru
 	return nil
 }
 
+func RuntimeAgentServiceAccountName(instance *model.RuntimeInstance) string {
+	return instance.Name + RuntimeAgentServiceAccountSuffix
+}
+
+func (m *KubernetesManager) applyAgentServiceAccount(ctx context.Context, instance *model.RuntimeInstance, labels map[string]string) error {
+	serviceAccounts := m.Client.Clientset.CoreV1().ServiceAccounts(instance.Namespace)
+	name := RuntimeAgentServiceAccountName(instance)
+	current, err := serviceAccounts.Get(ctx, name, metav1.GetOptions{})
+	if !instance.AgentToolEnabled {
+		if err == nil && current.Labels[k8s.ManagedByLabel] == k8s.ManagedByValue && current.Labels[RuntimeIDLabel] == fmt.Sprintf("%d", instance.ID) {
+			if err := serviceAccounts.Delete(ctx, name, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+				return fmt.Errorf("删除 Runtime Agent ServiceAccount: %w", err)
+			}
+		}
+		return nil
+	}
+	if instance.RuntimeType != model.RuntimeTypeNanobot {
+		return fmt.Errorf("Runtime 类型 %q 不支持 Cylism Agent 工具", instance.RuntimeType)
+	}
+	serviceAccount := &corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: instance.Namespace, Labels: labels}, AutomountServiceAccountToken: boolPtr(false)}
+	if apierrors.IsNotFound(err) {
+		_, err = serviceAccounts.Create(ctx, serviceAccount, metav1.CreateOptions{})
+	} else if err == nil {
+		if current.Labels[k8s.ManagedByLabel] != k8s.ManagedByValue || current.Labels[RuntimeIDLabel] != fmt.Sprintf("%d", instance.ID) {
+			return fmt.Errorf("Runtime Agent ServiceAccount %s/%s 已存在且不属于该 Runtime", instance.Namespace, name)
+		}
+		serviceAccount.ResourceVersion = current.ResourceVersion
+		_, err = serviceAccounts.Update(ctx, serviceAccount, metav1.UpdateOptions{})
+	}
+	if err != nil {
+		return fmt.Errorf("写入 Runtime Agent ServiceAccount: %w", err)
+	}
+	return nil
+}
+
 func (m *KubernetesManager) applyDeployment(ctx context.Context, instance *model.RuntimeInstance, labels map[string]string, workload WorkloadSpec) error {
 	replicas := int32(1)
 	commonEnv := []corev1.EnvVar{
@@ -364,11 +425,39 @@ func (m *KubernetesManager) applyDeployment(ctx context.Context, instance *model
 		init.SecurityContext = containerSecurity.DeepCopy()
 		initContainers = append(initContainers, *init)
 	}
+	agentToolEnabled := instance.AgentToolEnabled && instance.RuntimeType == model.RuntimeTypeNanobot
+	if agentToolEnabled {
+		installerSecurity := containerSecurity.DeepCopy()
+		installerSecurity.RunAsNonRoot = boolPtr(true)
+		initContainers = append(initContainers, corev1.Container{
+			Name:            RuntimeCLIInstallerName,
+			Image:           instance.Image,
+			Command:         []string{"cylism-install-cli"},
+			Args:            []string{"--token-file", RuntimeInstallerTokenFile, "--destination", RuntimeCLIMountPath},
+			SecurityContext: installerSecurity,
+			VolumeMounts: []corev1.VolumeMount{
+				{Name: RuntimeCLIVolumeName, MountPath: RuntimeCLIMountPath},
+				{Name: RuntimeInstallerTokenVolumeName, MountPath: RuntimeInstallerTokenMountPath, ReadOnly: true},
+			},
+		})
+	}
 	containers := make([]corev1.Container, len(workload.Containers))
 	for index := range workload.Containers {
 		containers[index] = *workload.Containers[index].DeepCopy()
 		containers[index].Env = append(containers[index].Env, commonEnv...)
 		containers[index].VolumeMounts = append(containers[index].VolumeMounts, corev1.VolumeMount{Name: "data", MountPath: "/data"}, corev1.VolumeMount{Name: "tmp", MountPath: "/tmp"})
+		if agentToolEnabled && (containers[index].Name == "gateway" || containers[index].Name == "api") {
+			containers[index].Env = append(containers[index].Env,
+				corev1.EnvVar{Name: "CYLISM_PLATFORM_TOOL_ENABLED", Value: "true"},
+				corev1.EnvVar{Name: "CYLISM_CLI_PATH", Value: RuntimeCLIMountPath + "/cylism-cli"},
+				corev1.EnvVar{Name: "CYLISM_AGENT_API_URL", Value: RuntimeAgentAPIURL},
+				corev1.EnvVar{Name: "CYLISM_AGENT_TOKEN_FILE", Value: RuntimeAgentTokenFile},
+			)
+			containers[index].VolumeMounts = append(containers[index].VolumeMounts,
+				corev1.VolumeMount{Name: RuntimeCLIVolumeName, MountPath: RuntimeCLIMountPath, ReadOnly: true},
+				corev1.VolumeMount{Name: RuntimeAgentTokenVolumeName, MountPath: RuntimeAgentTokenMountPath, ReadOnly: true},
+			)
+		}
 		containers[index].SecurityContext = containerSecurity.DeepCopy()
 	}
 	automountServiceAccountToken := false
@@ -383,6 +472,15 @@ func (m *KubernetesManager) applyDeployment(ctx context.Context, instance *model
 			{Name: "config", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: instance.Name + "-config"}}}},
 			{Name: "tmp", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
 		},
+	}
+	if agentToolEnabled {
+		tokenLifetime := int64(600)
+		podSpec.ServiceAccountName = RuntimeAgentServiceAccountName(instance)
+		podSpec.Volumes = append(podSpec.Volumes,
+			corev1.Volume{Name: RuntimeCLIVolumeName, VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+			corev1.Volume{Name: RuntimeInstallerTokenVolumeName, VolumeSource: corev1.VolumeSource{Projected: &corev1.ProjectedVolumeSource{Sources: []corev1.VolumeProjection{{ServiceAccountToken: &corev1.ServiceAccountTokenProjection{Path: "token", Audience: RuntimeInstallerTokenAudience, ExpirationSeconds: &tokenLifetime}}}}}},
+			corev1.Volume{Name: RuntimeAgentTokenVolumeName, VolumeSource: corev1.VolumeSource{Projected: &corev1.ProjectedVolumeSource{Sources: []corev1.VolumeProjection{{ServiceAccountToken: &corev1.ServiceAccountTokenProjection{Path: "token", Audience: RuntimeAgentTokenAudience, ExpirationSeconds: &tokenLifetime}}}}}},
+		)
 	}
 	if instance.NodeName != "" {
 		podSpec.NodeSelector = map[string]string{corev1.LabelHostname: instance.NodeName}

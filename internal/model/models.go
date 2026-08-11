@@ -154,6 +154,7 @@ type RuntimeInstance struct {
 	HealthStatus           string     `gorm:"size:32" json:"health_status,omitempty"`
 	HealthDetail           string     `gorm:"size:512" json:"health_detail,omitempty"`
 	LastHealthAt           *time.Time `json:"last_health_at,omitempty"`
+	AgentToolEnabled       bool       `gorm:"not null;default:false" json:"agent_tool_enabled"`
 	CreatedBy              uint       `gorm:"index;not null" json:"created_by"`
 	CreatedAt              time.Time  `json:"created_at"`
 	UpdatedAt              time.Time  `json:"updated_at"`
@@ -172,6 +173,80 @@ const (
 	RuntimeStatusFailed      = "failed"
 	RuntimeStatusUninstalled = "uninstalled"
 )
+
+const (
+	AgentCapabilityClusterRead     = "cluster.read"
+	AgentCapabilityWorkloadRead    = "workload.read"
+	AgentCapabilityWorkloadLogs    = "workload.logs"
+	AgentCapabilityDeploymentScale = "deployment.scale"
+)
+
+var AgentCapabilities = map[string]struct{}{
+	AgentCapabilityClusterRead:     {},
+	AgentCapabilityWorkloadRead:    {},
+	AgentCapabilityWorkloadLogs:    {},
+	AgentCapabilityDeploymentScale: {},
+}
+
+func ValidAgentCapability(capability string) bool {
+	_, ok := AgentCapabilities[capability]
+	return ok
+}
+
+// AgentCapabilityGrant is an administrator-managed permission for a Runtime.
+// A namespace of "*" is an explicit cluster-wide scope.
+type AgentCapabilityGrant struct {
+	ID         uint      `gorm:"primaryKey" json:"id"`
+	RuntimeID  uint      `gorm:"not null;uniqueIndex:idx_agent_capability_scope" json:"runtime_id"`
+	Capability string    `gorm:"size:64;not null;uniqueIndex:idx_agent_capability_scope" json:"capability"`
+	Namespace  string    `gorm:"size:253;not null;uniqueIndex:idx_agent_capability_scope" json:"namespace"`
+	Enabled    bool      `gorm:"not null;default:false" json:"enabled"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
+}
+
+const (
+	AgentOperationPendingApproval = "pending_approval"
+	AgentOperationApproved        = "approved"
+	AgentOperationRejected        = "rejected"
+	AgentOperationSucceeded       = "succeeded"
+	AgentOperationFailed          = "failed"
+	AgentOperationStale           = "stale"
+	AgentOperationExpired         = "expired"
+)
+
+// AgentOperation is the immutable request snapshot for a Runtime-issued
+// platform action. Parameters are stored as a normalized, non-secret JSON
+// document so approval always applies to the exact requested operation.
+type AgentOperation struct {
+	ID              uint       `gorm:"primaryKey" json:"id"`
+	OperationID     string     `gorm:"size:64;uniqueIndex;not null" json:"operation_id"`
+	RuntimeID       uint       `gorm:"not null;uniqueIndex:idx_agent_operation_request" json:"runtime_id"`
+	Capability      string     `gorm:"size:64;not null" json:"capability"`
+	RequestID       string     `gorm:"size:128;not null;uniqueIndex:idx_agent_operation_request" json:"request_id"`
+	ChatSessionID   string     `gorm:"size:128" json:"chat_session_id,omitempty"`
+	Parameters      string     `gorm:"type:text;not null" json:"parameters"`
+	ParametersHash  string     `gorm:"size:64;not null" json:"parameters_hash"`
+	ResourceVersion string     `gorm:"size:256" json:"resource_version,omitempty"`
+	Status          string     `gorm:"size:32;index;not null" json:"status"`
+	Summary         string     `gorm:"size:512;not null" json:"summary"`
+	ErrorSummary    string     `gorm:"size:512" json:"error_summary,omitempty"`
+	ApprovedBy      *uint      `gorm:"index" json:"approved_by,omitempty"`
+	ApprovedAt      *time.Time `json:"approved_at,omitempty"`
+	ExpiresAt       time.Time  `gorm:"index;not null" json:"expires_at"`
+	CompletedAt     *time.Time `json:"completed_at,omitempty"`
+	CreatedAt       time.Time  `gorm:"index" json:"created_at"`
+	UpdatedAt       time.Time  `json:"updated_at"`
+}
+
+func AgentOperationTerminal(status string) bool {
+	switch status {
+	case AgentOperationRejected, AgentOperationSucceeded, AgentOperationFailed, AgentOperationStale, AgentOperationExpired:
+		return true
+	default:
+		return false
+	}
+}
 
 // PlatformRelease records a self-update request independently from application releases.
 type PlatformRelease struct {

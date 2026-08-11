@@ -30,6 +30,27 @@
           <div class="runtime-status-banner"><span class="runtime-dot" :class="`status-${selected.status}`"></span><strong>{{ statusLabel(selected.status) }}</strong><span>{{ selected.health_detail || '尚未执行健康检查' }}</span></div>
           <dl class="runtime-facts"><div><dt>类型</dt><dd>{{ selected.runtime_type }}</dd></div><div><dt>部署方式</dt><dd>{{ selected.deployment_mode === 'external' ? '外部连接' : '平台托管' }}</dd></div><div><dt>命名空间</dt><dd>{{ selected.namespace }}</dd></div><div><dt>版本</dt><dd>{{ displayVersion(selected) }}</dd></div><div><dt>连接地址</dt><dd>{{ selected.endpoint_url || '-' }}</dd></div><div v-if="selected.deployment_mode !== 'external'"><dt>PVC</dt><dd>{{ selected.pvc_name }} · {{ selected.storage }}</dd></div><div><dt>模型</dt><dd>{{ selected.model_name || '-' }} · {{ selected.api_style }}</dd></div></dl>
           <div class="form-actions"><button class="btn" @click="editSelected">编辑配置</button><button class="btn" :disabled="working" @click="deploy(selected)">部署或更新</button><button class="btn" :disabled="working" @click="health(selected)">健康检查</button><button class="btn" @click="chatOpen = true" :disabled="!selected">聊天</button><button class="btn btn-danger" :disabled="working" @click="openUninstall(selected)">卸载</button></div>
+          <section v-if="selected.deployment_mode === 'managed' && selected.runtime_type === 'nanobot'" class="agent-tools-panel" aria-label="Agent 平台能力">
+            <div class="agent-tools-header"><div><h3>Agent 平台能力</h3><p>{{ selected.agent_tool_enabled ? '已安装受控 Cylism CLI' : '尚未安装受控 Cylism CLI' }}</p></div><button v-if="selected.agent_tool_enabled" class="btn btn-danger" :disabled="working" @click="uninstallAgentTools">卸载工具</button><button v-else class="btn btn-primary" :disabled="working" @click="installAgentTools">安装工具</button></div>
+            <p class="agent-tools-notice">安装或卸载会滚动重建 Runtime，进行中的聊天连接将断开。</p>
+            <div class="agent-grants">
+              <div class="agent-grants-header"><h4>能力授权</h4><button class="btn" :disabled="working || !selected.agent_tool_enabled" @click="saveAgentGrants">保存授权</button></div>
+              <label v-for="capability in agentCapabilities" :key="capability.id" class="agent-grant-row">
+                <input v-model="agentGrantState[capability.id].enabled" type="checkbox" :disabled="!selected.agent_tool_enabled" />
+                <span><strong>{{ capability.label }}</strong><small>{{ capability.description }}</small></span>
+                <input v-model.trim="agentGrantState[capability.id].namespace" :disabled="!selected.agent_tool_enabled || !agentGrantState[capability.id].enabled" :placeholder="selected.namespace" aria-label="授权命名空间" />
+              </label>
+            </div>
+            <div class="agent-operations">
+              <div class="agent-grants-header"><h4>最近操作</h4><button class="icon-button" title="刷新 Agent 操作" aria-label="刷新 Agent 操作" :disabled="agentLoading" @click="loadAgentState"><RefreshCw :size="15" :class="{ 'is-spinning': agentLoading }" /></button></div>
+              <div v-if="agentLoading" class="agent-empty">正在读取 Agent 操作...</div>
+              <div v-else-if="!agentOperations.length" class="agent-empty">暂无 Agent 操作</div>
+              <div v-for="operation in agentOperations" :key="operation.operation_id" class="agent-operation-row">
+                <span><strong>{{ operation.summary }}</strong><small>{{ operation.status }} · {{ operation.created_at }}</small></span>
+                <span v-if="operation.status === 'pending_approval'" class="operation-actions"><button class="btn btn-primary" :disabled="working" @click="resolveAgentOperation(operation, true)">批准</button><button class="btn btn-danger" :disabled="working" @click="resolveAgentOperation(operation, false)">拒绝</button></span>
+              </div>
+            </div>
+          </section>
         </div>
         <div v-else class="empty-state"><Bot :size="26" class="empty-icon" /><span class="empty-text">选择一个助手实例查看详情</span></div>
       </article>
@@ -124,6 +145,16 @@ const deleteData = ref(false)
 const uninstallTarget = ref(null)
 const notice = ref(null)
 const chatOpen = ref(false)
+const agentLoading = ref(false)
+const agentOperations = ref([])
+const agentCapabilities = [
+  { id: 'cluster.read', label: '集群摘要', description: '读取节点数量和集群摘要' },
+  { id: 'workload.read', label: '工作负载查询', description: '读取 Deployment、StatefulSet 与 DaemonSet 摘要' },
+  { id: 'workload.logs', label: '工作负载日志', description: '读取受限行数和大小的容器日志' },
+  { id: 'deployment.scale', label: 'Deployment 扩缩容', description: '始终需要管理员审批' },
+]
+const emptyAgentGrantState = () => Object.fromEntries(agentCapabilities.map(capability => [capability.id, { enabled: false, namespace: '' }]))
+const agentGrantState = ref(emptyAgentGrantState())
 const tabs = [{ id: 'instances', label: '实例' }]
 
 const emptyForm = () => ({ name: '', runtime_type: 'nanobot', deployment_mode: 'managed', runtime_version: '', image: '', namespace: 'cylism-assistant', port: 8900, health_path: '/health', endpoint_url: '', pvc_name: '', storage: 10, storage_class_name: '', node_name: '', model_name: '', model_base_url: '', api_style: 'responses', api_key: '', api_key_configured: false, config: {} })
@@ -138,7 +169,7 @@ function displayVersion(item) { return item?.runtime_version || tagVersion(item?
 function applyManagedEndpointDefaults() { if (form.value.deployment_mode !== 'managed') return; const definition = catalog.value.find(item => item.runtime_type === form.value.runtime_type); form.value.port = definition?.default_port || 8900; form.value.health_path = definition?.default_health_path || '/health' }
 function onRuntimeTypeChange() { if (!supportedProtocols.value.includes(form.value.api_style)) form.value.api_style = supportedProtocols.value[0] || 'responses'; applyManagedEndpointDefaults() }
 function onDeploymentModeChange() { applyManagedEndpointDefaults() }
-function select(item) { selected.value = item; editing.value = false; deleteData.value = false; clearNotice() }
+function select(item) { selected.value = item; editing.value = false; deleteData.value = false; clearNotice(); loadAgentState() }
 function openCreate() { selected.value = null; form.value = emptyForm(); if (catalog.value[0]) { form.value.runtime_type = catalog.value[0].runtime_type; form.value.api_style = catalog.value[0].supported_model_protocols?.[0] || 'responses' }; onRuntimeTypeChange(); editing.value = true; deleteData.value = false; clearNotice() }
 function editSelected() { form.value = { ...emptyForm(), ...selected.value, api_key: '' }; form.value.storage = storageGi(selected.value.storage); editing.value = true; deleteData.value = false; clearNotice() }
 function cancelEdit() { editing.value = false; if (!selected.value && runtimes.value.length) selected.value = runtimes.value[0] }
@@ -147,7 +178,7 @@ function showNotice(type, text) { notice.value = { type, text } }
 function formBody() { const body = { ...form.value }; delete body.id; delete body.status; delete body.api_key_configured; delete body.config; if (!body.api_key) delete body.api_key; body.storage = `${storageGi(body.storage)}Gi`; return body }
 async function loadNodes() { try { const list = await api.get('/nodes'); nodes.value = Array.isArray(list) ? list.filter(node => node && node.name).map(node => node.name) : [] } catch { nodes.value = [] } }
 async function loadCatalog() { try { const definitions = await api.get('/runtimes/catalog'); if (Array.isArray(definitions) && definitions.every(item => item.runtime_type && Array.isArray(item.supported_model_protocols))) catalog.value = definitions } catch (err) { showNotice('error', err.message) } }
-async function load() { loading.value = true; try { runtimes.value = await api.get('/runtimes'); if (selected.value) selected.value = runtimes.value.find(item => item.id === selected.value.id) || null } catch (err) { showNotice('error', err.message) } finally { loading.value = false } }
+async function load() { loading.value = true; try { runtimes.value = await api.get('/runtimes'); if (selected.value) { selected.value = runtimes.value.find(item => item.id === selected.value.id) || null; if (selected.value) loadAgentState() } } catch (err) { showNotice('error', err.message) } finally { loading.value = false } }
 async function save() { saving.value = true; clearNotice(); try { const result = form.value.id ? await api.put(`/runtimes/${form.value.id}`, formBody()) : await api.post('/runtimes', formBody()); showNotice('success', result.message || 'Runtime 已保存'); await load(); selected.value = runtimes.value.find(item => item.id === result.id) || runtimes.value[0] || null; editing.value = false } catch (err) { showNotice('error', err.message) } finally { saving.value = false } }
 async function deploy(item) { await runAction(`/runtimes/${item.id}/deploy`, 'Runtime 已部署或更新') }
 async function health(item) { await runAction(`/runtimes/${item.id}/health-check`, '健康检查已完成') }
@@ -160,6 +191,33 @@ async function confirmUninstall() {
   deleteData.value = false
 }
 async function runAction(path, success) { working.value = true; clearNotice(); try { const result = await api.post(path); showNotice('success', result.message || success); await load() } catch (err) { showNotice('error', err.message) } finally { working.value = false } }
+function resetAgentGrants(grants = []) {
+  const next = emptyAgentGrantState()
+  for (const grant of grants) if (next[grant.capability]) next[grant.capability] = { enabled: !!grant.enabled, namespace: grant.namespace || '' }
+  agentGrantState.value = next
+}
+async function loadAgentState() {
+  if (!selected.value || selected.value.deployment_mode !== 'managed' || selected.value.runtime_type !== 'nanobot') return
+  agentLoading.value = true
+  try {
+    const [grants, operations] = await Promise.all([api.get(`/runtimes/${selected.value.id}/agent-capability-grants`), api.get(`/runtimes/${selected.value.id}/agent-operations`)])
+    resetAgentGrants(Array.isArray(grants) ? grants : [])
+    agentOperations.value = Array.isArray(operations) ? operations : []
+  } catch (err) { showNotice('error', err.message) } finally { agentLoading.value = false }
+}
+async function installAgentTools() { await runAction(`/runtimes/${selected.value.id}/agent-tools/install`, 'Agent 工具已开始安装，Runtime 正在滚动重建') }
+async function uninstallAgentTools() { await runAction(`/runtimes/${selected.value.id}/agent-tools/uninstall`, 'Agent 工具已卸载，Runtime 正在滚动重建') }
+async function saveAgentGrants() {
+  const grants = agentCapabilities.map(capability => ({ capability: capability.id, namespace: agentGrantState.value[capability.id].namespace || selected.value.namespace, enabled: !!agentGrantState.value[capability.id].enabled }))
+  working.value = true
+  clearNotice()
+  try { const result = await api.put(`/runtimes/${selected.value.id}/agent-capability-grants`, { grants }); showNotice('success', result.message || 'Agent 能力授权已更新'); await loadAgentState() } catch (err) { showNotice('error', err.message) } finally { working.value = false }
+}
+async function resolveAgentOperation(operation, approve) {
+  working.value = true
+  clearNotice()
+  try { const result = await api.post(`/agent-operations/${operation.operation_id}/${approve ? 'approve' : 'reject'}`); showNotice('success', result.message || (approve ? 'Agent 操作已批准' : 'Agent 操作已拒绝')); await loadAgentState() } catch (err) { showNotice('error', err.message) } finally { working.value = false }
+}
 onMounted(async () => { await loadCatalog(); if (!catalog.value.length) catalog.value = [{ runtime_type: 'nanobot', display_name: 'nanobot', supported_model_protocols: ['responses', 'anthropic'] }]; await load(); loadNodes() })
 </script>
 
@@ -172,7 +230,8 @@ onMounted(async () => { await loadCatalog(); if (!catalog.value.length) catalog.
 .runtime-item:hover, .runtime-item.is-selected { background: var(--surface-subtle); }
 .runtime-item-main { display: flex; flex: 1; flex-direction: column; gap: 3px; min-width: 0; }.runtime-item-main small { color: var(--text-muted); }.runtime-item-status { font-size: 12px; color: var(--text-muted); }.runtime-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--text-muted); flex: 0 0 auto; }.status-ready { background: var(--success); }.status-deploying { background: var(--warning); }.status-failed, .status-degraded { background: var(--danger); }
 .runtime-form, .runtime-detail { padding: 16px 0; }.runtime-form label { display: flex; flex-direction: column; gap: 7px; margin-bottom: 14px; color: var(--text-muted); font-size: 13px; }.runtime-form input, .runtime-form select { width: 100%; border: 1px solid var(--border-muted); border-radius: var(--radius-control); padding: 9px 10px; background: var(--surface-input); color: var(--text-primary); }.form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }.form-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 18px; }.runtime-status-banner { display: flex; align-items: center; gap: 9px; padding: 12px; background: var(--surface-subtle); border-left: 3px solid var(--success); }.runtime-status-banner span:last-child { color: var(--text-muted); font-size: 13px; }.runtime-facts { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 22px 0; }.runtime-facts div { min-width: 0; }.runtime-facts dt { color: var(--text-muted); font-size: 12px; margin-bottom: 4px; }.runtime-facts dd { margin: 0; overflow-wrap: anywhere; }.runtime-notice-modal { width: min(420px, calc(100vw - 32px)); }.runtime-notice-modal .modal-title { margin-bottom: 0; }.runtime-notice-icon { display: grid; width: 46px; height: 46px; margin-bottom: 14px; place-items: center; border-radius: 50%; }.runtime-notice-icon.is-success { background: var(--success-surface); color: var(--success); }.runtime-notice-icon.is-error { background: var(--danger-surface); color: var(--danger); }.runtime-notice-text { margin: 10px 0 0; color: var(--text-secondary); font-size: 13px; line-height: 1.7; overflow-wrap: anywhere; }
+.agent-tools-panel { margin-top: 28px; padding-top: 20px; border-top: 1px solid var(--border-muted); }.agent-tools-header, .agent-grants-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }.agent-tools-header h3, .agent-grants-header h4 { margin: 0; font-size: 15px; }.agent-tools-header p { margin: 5px 0 0; color: var(--text-secondary); font-size: 12px; }.agent-tools-notice { margin: 12px 0; color: var(--warning); font-size: 12px; line-height: 1.6; }.agent-grants, .agent-operations { margin-top: 18px; }.agent-grant-row { display: grid; grid-template-columns: auto minmax(150px, 1fr) minmax(120px, .7fr); align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--border-muted); }.agent-grant-row input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent); }.agent-grant-row span { display: flex; min-width: 0; flex-direction: column; gap: 3px; }.agent-grant-row small, .agent-operation-row small { color: var(--text-muted); font-size: 12px; }.agent-grant-row input:not([type="checkbox"]) { min-width: 0; border: 1px solid var(--border-muted); border-radius: var(--radius-control); padding: 7px 8px; background: var(--surface-input); color: var(--text-primary); }.agent-empty { padding: 14px 0; color: var(--text-muted); font-size: 13px; }.agent-operation-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 11px 0; border-bottom: 1px solid var(--border-muted); }.agent-operation-row > span:first-child { display: flex; min-width: 0; flex-direction: column; gap: 4px; }.operation-actions { display: flex; gap: 7px; flex: 0 0 auto; }
 .runtime-uninstall-modal { width: min(460px, calc(100vw - 32px)); }.uninstall-delete-option { margin-top: 14px; padding: 12px; border: 1px solid var(--border-muted); border-radius: var(--radius-control); background: var(--surface-subtle); cursor: pointer; transition: border-color .18s ease, background .18s ease; }.uninstall-delete-option:has(input:checked) { border-color: var(--danger); background: var(--danger-surface); }.uninstall-delete-option input { accent-color: var(--danger); }.uninstall-warning { margin: 8px 0 0; padding: 10px 12px; border-radius: var(--radius-control); background: var(--danger-surface); color: var(--danger); font-size: 12px; line-height: 1.6; }
 .form-grid > :only-child { grid-column: 1 / -1; }.runtime-form input[readonly] { color: var(--text-muted); cursor: not-allowed; }
-@media (max-width: 850px) { .runtime-layout { grid-template-columns: 1fr; }.runtime-facts, .form-grid { grid-template-columns: 1fr; } }
+@media (max-width: 850px) { .runtime-layout { grid-template-columns: 1fr; }.runtime-facts, .form-grid, .agent-grant-row { grid-template-columns: 1fr; }.agent-grant-row input[type="checkbox"] { justify-self: start; }.agent-tools-header, .agent-operation-row { align-items: flex-start; flex-direction: column; } }
 </style>

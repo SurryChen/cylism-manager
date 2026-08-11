@@ -84,6 +84,90 @@ func TestApplyRejectsForeignPVC(t *testing.T) {
 	}
 }
 
+func TestApplyInjectsRestrictedCLIInstallerOnlyWhenAgentToolIsEnabled(t *testing.T) {
+	client := &k8s.Client{Clientset: fake.NewSimpleClientset()}
+	manager := NewKubernetesManager(client)
+	instance := &model.RuntimeInstance{ID: 8, Name: "nanobot-agent", RuntimeType: model.RuntimeTypeNanobot, Image: "example/nanobot:latest", Namespace: DefaultNamespace, PVCName: "nanobot-agent-data", Storage: "1Gi", ModelName: "gpt-test", ModelBaseURL: "https://provider.example/v1", APIStyle: ModelProtocolResponses, AgentToolEnabled: true}
+	if err := manager.Apply(context.Background(), instance, "model-secret", "runtime-secret"); err != nil {
+		t.Fatalf("apply runtime: %v", err)
+	}
+	serviceAccount, err := client.Clientset.CoreV1().ServiceAccounts(DefaultNamespace).Get(context.Background(), RuntimeAgentServiceAccountName(instance), metav1.GetOptions{})
+	if err != nil || serviceAccount.Labels[RuntimeIDLabel] != "8" {
+		t.Fatalf("expected Runtime-specific service account: %v %#v", err, serviceAccount)
+	}
+	deployment, err := client.Clientset.AppsV1().Deployments(DefaultNamespace).Get(context.Background(), instance.Name, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get deployment: %v", err)
+	}
+	pod := deployment.Spec.Template.Spec
+	if pod.ServiceAccountName != RuntimeAgentServiceAccountName(instance) || pod.AutomountServiceAccountToken == nil || *pod.AutomountServiceAccountToken {
+		t.Fatalf("expected explicit non-automounted service account: %#v", pod)
+	}
+	if volumeByName(pod.Volumes, RuntimeCLIVolumeName) == nil || projectedAudience(volumeByName(pod.Volumes, RuntimeInstallerTokenVolumeName)) != RuntimeInstallerTokenAudience || projectedAudience(volumeByName(pod.Volumes, RuntimeAgentTokenVolumeName)) != RuntimeAgentTokenAudience {
+		t.Fatalf("expected CLI emptyDir and separated projected identities: %#v", pod.Volumes)
+	}
+	installer := containerByName(pod.InitContainers, RuntimeCLIInstallerName)
+	if installer == nil || len(installer.Command) != 1 || installer.Command[0] != "cylism-install-cli" || installer.SecurityContext == nil || installer.SecurityContext.RunAsNonRoot == nil || !*installer.SecurityContext.RunAsNonRoot {
+		t.Fatalf("expected non-root CLI installer: %#v", installer)
+	}
+	if !hasMount(installer.VolumeMounts, RuntimeCLIVolumeName, RuntimeCLIMountPath, false) || !hasMount(installer.VolumeMounts, RuntimeInstallerTokenVolumeName, RuntimeInstallerTokenMountPath, true) {
+		t.Fatalf("installer must receive only CLI target and installer token: %#v", installer.VolumeMounts)
+	}
+	for _, name := range []string{"gateway", "api"} {
+		container := containerByName(pod.Containers, name)
+		if container == nil || !hasMount(container.VolumeMounts, RuntimeCLIVolumeName, RuntimeCLIMountPath, true) || !hasMount(container.VolumeMounts, RuntimeAgentTokenVolumeName, RuntimeAgentTokenMountPath, true) || !hasEnv(container.Env, "CYLISM_PLATFORM_TOOL_ENABLED", "true") || !hasEnv(container.Env, "CYLISM_AGENT_TOKEN_FILE", RuntimeAgentTokenFile) {
+			t.Fatalf("expected platform capability wiring on %s: %#v", name, container)
+		}
+	}
+	sessionAPI := containerByName(pod.Containers, "session-api")
+	if sessionAPI == nil || hasMount(sessionAPI.VolumeMounts, RuntimeCLIVolumeName, RuntimeCLIMountPath, true) || hasMount(sessionAPI.VolumeMounts, RuntimeAgentTokenVolumeName, RuntimeAgentTokenMountPath, true) {
+		t.Fatalf("session API must not receive platform CLI or agent token: %#v", sessionAPI)
+	}
+}
+
+func volumeByName(volumes []corev1.Volume, name string) *corev1.Volume {
+	for index := range volumes {
+		if volumes[index].Name == name {
+			return &volumes[index]
+		}
+	}
+	return nil
+}
+
+func projectedAudience(volume *corev1.Volume) string {
+	if volume == nil || volume.Projected == nil || len(volume.Projected.Sources) != 1 || volume.Projected.Sources[0].ServiceAccountToken == nil {
+		return ""
+	}
+	return volume.Projected.Sources[0].ServiceAccountToken.Audience
+}
+
+func containerByName(containers []corev1.Container, name string) *corev1.Container {
+	for index := range containers {
+		if containers[index].Name == name {
+			return &containers[index]
+		}
+	}
+	return nil
+}
+
+func hasMount(mounts []corev1.VolumeMount, name, path string, readOnly bool) bool {
+	for _, mount := range mounts {
+		if mount.Name == name && mount.MountPath == path && mount.ReadOnly == readOnly {
+			return true
+		}
+	}
+	return false
+}
+
+func hasEnv(environment []corev1.EnvVar, name, value string) bool {
+	for _, item := range environment {
+		if item.Name == name && item.Value == value {
+			return true
+		}
+	}
+	return false
+}
+
 func TestDeleteRejectsForeignPVCWhenDataDeletionIsRequested(t *testing.T) {
 	client := &k8s.Client{Clientset: fake.NewSimpleClientset(&corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: "data", Namespace: DefaultNamespace, Labels: map[string]string{k8s.ManagedByLabel: k8s.ManagedByValue, RuntimeIDLabel: "99"}}})}
 	manager := NewKubernetesManager(client)

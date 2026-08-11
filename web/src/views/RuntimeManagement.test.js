@@ -5,7 +5,7 @@ import RuntimeManagement from './RuntimeManagement.vue'
 const apiMocks = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), put: vi.fn() }))
 vi.mock('../api/index.js', () => ({ api: apiMocks }))
 
-const runtime = () => ({ id: 1, name: 'nanobot-main', runtime_type: 'nanobot', image: 'cylism-nanobot-runtime:0.3.0', namespace: 'cylism-assistant', status: 'ready', health_status: 'ready', health_detail: 'Runtime 健康检查通过', port: 8080, health_path: '/health', pvc_name: 'nanobot-main-data', storage: '10Gi', model_name: 'qwen-max', api_style: 'responses', api_key_configured: true })
+const runtime = () => ({ id: 1, name: 'nanobot-main', runtime_type: 'nanobot', deployment_mode: 'managed', image: 'cylism-nanobot-runtime:0.3.0', namespace: 'cylism-assistant', status: 'ready', health_status: 'ready', health_detail: 'Runtime 健康检查通过', port: 8080, health_path: '/health', pvc_name: 'nanobot-main-data', storage: '10Gi', model_name: 'qwen-max', api_style: 'responses', api_key_configured: true })
 
 describe('RuntimeManagement', () => {
   beforeEach(() => {
@@ -129,5 +129,27 @@ describe('RuntimeManagement', () => {
     expect(wrapper.find('.runtime-notice-modal').exists()).toBe(true)
     expect(wrapper.text()).toContain('操作失败')
     expect(wrapper.text()).toContain('部署失败：权限修复超时')
+  })
+
+  it('installs the controlled CLI and saves namespace-scoped Agent grants', async () => {
+    const enabledRuntime = { ...runtime(), agent_tool_enabled: true }
+    apiMocks.get.mockImplementation((path) => {
+      if (path === '/runtimes/catalog') return Promise.resolve([{ runtime_type: 'nanobot', display_name: 'nanobot', supported_model_protocols: ['responses', 'anthropic'] }])
+      if (path === '/nodes') return Promise.resolve([])
+      if (path === '/runtimes/1/agent-capability-grants') return Promise.resolve([{ capability: 'workload.read', namespace: 'operations', enabled: true }])
+      if (path === '/runtimes/1/agent-operations') return Promise.resolve([])
+      return Promise.resolve([enabledRuntime])
+    })
+    const wrapper = mount(RuntimeManagement)
+    await flushPromises()
+    await wrapper.get('.runtime-item').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('Agent 平台能力')
+    const workLoadGrant = wrapper.findAll('.agent-grant-row').find(row => row.text().includes('工作负载查询'))
+    expect(workLoadGrant.get('input[type="checkbox"]').element.checked).toBe(true)
+    expect(workLoadGrant.get('input[aria-label="授权命名空间"]').element.value).toBe('operations')
+    await wrapper.findAll('.agent-grant-row').find(row => row.text().includes('集群摘要')).get('input[type="checkbox"]').setValue(true)
+    await wrapper.findAll('.agent-grants .btn').find(button => button.text() === '保存授权').trigger('click')
+    expect(apiMocks.put).toHaveBeenCalledWith('/runtimes/1/agent-capability-grants', expect.objectContaining({ grants: expect.arrayContaining([expect.objectContaining({ capability: 'cluster.read', namespace: 'cylism-assistant', enabled: true })]) }))
   })
 })

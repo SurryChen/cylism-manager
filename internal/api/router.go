@@ -3,6 +3,7 @@ package api
 import (
 	"time"
 
+	"github.com/cylism/cylism-manager/internal/agentauth"
 	"github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
 	runtimepkg "github.com/cylism/cylism-manager/internal/runtime"
@@ -29,6 +30,17 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 	r.GET("/health", func(c *gin.Context) {
 		model.Success(c, gin.H{"status": "ok"})
 	})
+	// This endpoint is authenticated with a projected Runtime installer token,
+	// never with a browser JWT or the Runtime chat credential.
+	artifactHandler := NewAgentArtifactHandler("/usr/local/lib/cylism/runtime-tools", agentauth.NewRuntimeTokenAuthorizer(K8s, s, nil))
+	r.GET(cliArtifactPath, gin.WrapH(artifactHandler))
+	r.GET(cliArtifactManifestPath, gin.WrapH(artifactHandler))
+	agentHandler := NewAgentHandler(s, K8s, agentauth.NewRuntimeTokenAuthorizer(K8s, s, nil))
+	r.GET("/api/agent/v1/cluster/status", gin.WrapF(agentHandler.ClusterStatus))
+	r.GET("/api/agent/v1/workloads/get", gin.WrapF(agentHandler.WorkloadGet))
+	r.GET("/api/agent/v1/workloads/logs", gin.WrapF(agentHandler.WorkloadLogs))
+	r.POST("/api/agent/v1/deployments/scale", gin.WrapF(agentHandler.DeploymentScale))
+	r.GET("/api/agent/v1/approvals/:operationID", gin.WrapF(agentHandler.ApprovalGet))
 
 	// 认证路由
 	authHandler := NewAuthHandler(s, authCfg.JWTSecret, authCfg.AccessTokenTTL, authCfg.RefreshTokenTTL)
@@ -45,6 +57,7 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 	apiGroup.Use(AuditMiddleware(s))
 	runtimeRegistry := runtimepkg.BuiltinRegistry()
 	runtimeHandler := NewRuntimeHandler(s, encKey, runtimepkg.NewKubernetesManager(K8s, runtimeRegistry), runtimeRegistry)
+	agentOperationHandler := NewAgentOperationHandler(s, K8s)
 	systemComponentHandler := NewSystemComponentHandler(s)
 	runtimes := apiGroup.Group("/runtimes")
 	{
@@ -54,12 +67,19 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 		runtimes.GET("/:id", runtimeHandler.Get)
 		runtimes.PUT("/:id", runtimeHandler.Update)
 		runtimes.POST("/:id/deploy", runtimeHandler.Deploy)
+		runtimes.POST("/:id/agent-tools/install", runtimeHandler.InstallAgentTools)
+		runtimes.POST("/:id/agent-tools/uninstall", runtimeHandler.UninstallAgentTools)
+		runtimes.GET("/:id/agent-capability-grants", agentOperationHandler.ListGrants)
+		runtimes.PUT("/:id/agent-capability-grants", agentOperationHandler.ReplaceGrants)
+		runtimes.GET("/:id/agent-operations", agentOperationHandler.ListOperations)
 		runtimes.POST("/:id/health-check", runtimeHandler.Health)
 		runtimes.POST("/:id/uninstall", runtimeHandler.Uninstall)
 		runtimes.POST("/:id/chat", runtimeHandler.Chat)
 		runtimes.GET("/:id/chat/sessions", runtimeHandler.ChatSessions)
 		runtimes.GET("/:id/chat/sessions/:sid/messages", runtimeHandler.ChatSessionMessages)
 	}
+	apiGroup.POST("/agent-operations/:operationID/approve", agentOperationHandler.Approve)
+	apiGroup.POST("/agent-operations/:operationID/reject", agentOperationHandler.Reject)
 	systemComponents := apiGroup.Group("/system-components")
 	{
 		systemComponents.GET("", systemComponentHandler.List)
