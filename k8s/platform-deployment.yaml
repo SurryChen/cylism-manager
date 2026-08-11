@@ -97,6 +97,12 @@ kind: ClusterRole
 metadata:
   name: cylism-manager
 rules:
+  # Validates audience-bound projected Runtime tokens before serving the
+  # Manager-internal CLI artifact and Agent API. This grants no Kubernetes
+  # workload access to the Runtime ServiceAccount itself.
+  - apiGroups: ["authentication.k8s.io"]
+    resources: ["tokenreviews"]
+    verbs: ["create"]
   - apiGroups: [""]
     resources: ["nodes", "pods", "services", "configmaps", "secrets", "namespaces", "endpoints", "events", "persistentvolumeclaims"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
