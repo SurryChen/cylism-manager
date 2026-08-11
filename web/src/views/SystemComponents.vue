@@ -12,45 +12,54 @@
 
     <div v-if="loaded" class="card section-gap">
       <div class="table-wrap">
-        <table class="data-table">
+        <table class="data-table system-component-table">
           <thead>
-            <tr><th>组件</th><th>命名空间</th><th>实际状态</th><th>配置状态</th><th>操作</th></tr>
+            <tr><th>组件</th><th>控制方式</th><th>运行状态</th><th>配置</th><th>操作</th></tr>
           </thead>
           <tbody>
             <tr v-for="item in items" :key="item.chart_name">
-              <td class="cell-primary">{{ item.chart_name }}</td>
-              <td>{{ item.namespace }}</td>
+              <td>
+                <strong class="cell-primary">{{ item.chart_name }}</strong>
+                <small class="cell-secondary">{{ item.namespace }}</small>
+              </td>
+              <td>
+                <span class="mode-label" :class="`mode-${item.controller_mode || 'unknown'}`">{{ controllerModeText(item.controller_mode) }}</span>
+                <small v-if="isEmbedded(item)" class="cell-secondary">由 K3s 内置控制器提供</small>
+              </td>
               <td>
                 <template v-if="item.deployment">
-                  <span class="badge" :class="Number(item.deployment.ready_replicas) >= Number(item.deployment.replicas) && Number(item.deployment.replicas) > 0 ? 'badge-online' : 'badge-offline'">
+                  <span class="badge" :class="deploymentReady(item) ? 'badge-online' : 'badge-offline'">
                     {{ item.deployment.ready_replicas }}/{{ item.deployment.replicas }} 就绪
                   </span>
-                  <small class="cell-secondary">{{ strategyText(item.deployment.strategy) }}</small>
-                  <small class="cell-secondary">{{ item.deployment.image }}</small>
                   <small v-if="item.deployment.fixed_node" class="cell-secondary">固定节点：{{ item.deployment.fixed_node }}</small>
-                  <small v-else-if="isStatic(item)" class="cell-secondary">由 Kubernetes 调度</small>
+                  <small v-else-if="isStatic(item)" class="cell-secondary">自动调度</small>
+                </template>
+                <template v-else-if="item.workload">
+                  <span class="badge" :class="workloadReady(item) ? 'badge-online' : 'badge-offline'">
+                    {{ item.workload.ready }}/{{ item.workload.desired }} 就绪
+                  </span>
+                  <small class="cell-secondary">{{ item.workload.kind }}：{{ item.workload.name }}</small>
+                </template>
+                <template v-else-if="item.controller_mode === 'helm_chart'">
+                  <span class="badge" :class="item.chart_failed ? 'badge-danger' : item.chart_ready ? 'badge-online' : 'badge-warn'">
+                    {{ item.chart_failed ? '安装失败' : item.chart_ready ? '已安装' : '安装中' }}
+                  </span>
+                  <small class="cell-secondary">由 Helm 控制器管理</small>
                 </template>
                 <template v-else>
                   <span class="badge" :class="isEmbedded(item) ? 'badge-online' : isMissing(item) ? 'badge-offline' : 'badge-danger'">
-                    {{ isEmbedded(item) ? '内置运行中' : isMissing(item) ? '未安装' : '读取失败' }}
+                    {{ isEmbedded(item) ? '运行中' : isMissing(item) ? '未安装' : '待确认' }}
                   </span>
-                  <small v-if="isEmbedded(item)" class="cell-secondary">由 K3s 进程内提供（无独立组件）</small>
-                  <small v-else-if="item.deployment_error && !isMissing(item)" class="detail">{{ item.deployment_error }}</small>
-                  <small v-else class="cell-secondary">{{ isMissing(item) ? '集群中无同名 Deployment' : '未部署' }}</small>
                 </template>
               </td>
               <td>
-                <small class="cell-secondary">{{ controllerModeText(item.controller_mode) }}</small>
-                <small v-if="item.detection_evidence?.length" class="cell-secondary">{{ item.detection_evidence.join('；') }}</small>
                 <span class="badge" :class="configBadgeClass(item)">{{ configBadgeText(item) }}</span>
-                <small v-if="item.apply_error" class="detail">{{ item.apply_error }}</small>
-                <small v-if="item.effective === false && item.effective_detail" class="detail">{{ item.effective_detail }}</small>
+                <small v-if="configNeedsAttention(item)" class="detail">{{ configIssueText(item) }}</small>
                 <small v-if="item.last_applied_at" class="cell-secondary">应用于 {{ formatTime(item.last_applied_at) }}</small>
               </td>
               <td>
                 <div class="btn-group">
-                  <button v-if="canConfigure(item)" class="btn btn-sm" @click="edit(item)">编辑配置</button>
-                  <button v-if="canPlace(item)" class="btn btn-sm" @click="migrate(item)">迁移</button>
+                  <button v-if="canConfigure(item)" class="btn btn-sm" @click="edit(item)">配置</button>
                   <button v-if="item.has_config && canRestore(item)" class="btn btn-sm btn-danger" @click="revert(item)">恢复默认</button>
                 </div>
               </td>
@@ -62,46 +71,47 @@
 
     <div v-if="modal" class="overlay" @click.self="close">
       <div class="modal">
-        <h2 class="modal-title">{{ modalMode === 'migration' ? `迁移 ${editing?.chart_name}` : `配置 ${editing?.chart_name}` }}</h2>
+        <h2 class="modal-title">配置 {{ editing?.chart_name }}</h2>
         <p class="modal-copy">{{ modalDescription(editing) }}</p>
         <form @submit.prevent="save">
+          <div class="config-section-title">运行容量</div>
           <div class="form-row">
             <div class="form-group">
               <label class="form-label">副本数</label>
               <input v-model.number="form.replicas" type="number" min="1" class="form-input" placeholder="默认 1" />
             </div>
             <div class="form-group">
-              <label class="form-label">最大不可用（maxUnavailable）</label>
+              <label class="form-label">更新时最大不可用</label>
               <select v-model="form.maxUnavailable" class="form-select">
-                <option value="0">0（滚动更新期间服务不掉线）</option>
-                <option value="1">1（允许一个旧副本先下线）</option>
+                <option value="0">0（保持服务）</option>
+                <option value="1">1（允许短暂减少）</option>
               </select>
             </div>
           </div>
           <div class="form-group">
-            <label class="form-label">最大额外副本（maxSurge）</label>
+            <label class="form-label">更新时最大额外副本</label>
             <select v-model="form.maxSurge" class="form-select">
-              <option value="1">1（先起一个新副本再缩旧副本）</option>
-              <option value="0">0（必须先下线旧副本）</option>
-              <option value="25%">25%（Kubernetes 默认值）</option>
+              <option value="1">1（先启动新副本）</option>
+              <option value="0">0（不额外扩容）</option>
+              <option value="25%">25%（Kubernetes 默认）</option>
             </select>
           </div>
           <div v-if="canPlace(editing)" class="form-group">
-            <label class="form-label">固定部署节点</label>
+            <div class="config-section-title">节点调度</div>
+            <label class="form-label">部署节点</label>
             <select v-model="form.nodeName" class="form-select" data-testid="coredns-node-selector">
               <option value="">不固定，由 Kubernetes 调度</option>
               <option v-for="node in schedulableNodes" :key="node.name" :value="node.name">{{ node.display_name || node.name }}</option>
             </select>
-            <span class="form-hint">选择其他节点并保存后，CoreDNS 会按滚动策略迁移；固定后所有副本只会在该节点调度。</span>
+            <span class="form-hint">固定后所有副本都会调度到该节点，节点故障时可能影响服务。</span>
           </div>
           <p v-if="isStatic(editing)" class="baseline-hint">
-            安全滚动基线：推荐 <strong>maxUnavailable 0 + maxSurge 1</strong>，保证新 Pod Ready 后才下线旧 Pod，
-            滚动更新期间服务不空窗；CoreDNS 还建议 2 副本。点“安全滚动基线”自动填入推荐值，点“保存并应用”才真正写入生效。
+            推荐基线：2 副本、更新时保持可用（最大不可用 0、最大额外副本 1）。
           </p>
           <div class="modal-actions">
             <button type="button" class="btn" @click="close">取消</button>
             <button v-if="isStatic(editing)" type="button" class="btn" @click="applyBaseline">安全滚动基线</button>
-            <button type="submit" class="btn btn-primary" :disabled="saving">{{ saving ? '保存中...' : (modalMode === 'migration' ? '保存并迁移' : '保存并应用') }}</button>
+            <button type="submit" class="btn btn-primary" :disabled="saving">{{ saving ? '保存中...' : '保存配置' }}</button>
           </div>
         </form>
       </div>
@@ -122,7 +132,6 @@ const saving = ref(false)
 const error = ref('')
 const form = ref(blankForm())
 const nodes = ref([])
-const modalMode = ref('config')
 const schedulableNodes = computed(() => nodes.value.filter(node => node.ready && !node.evicted))
 
 function blankForm() {
@@ -147,12 +156,6 @@ async function load() {
   }
 }
 
-function strategyText(strategy) {
-  if (!strategy) return ''
-  if (strategy.type !== 'RollingUpdate' || !strategy.rollingUpdate) return strategy.type || ''
-  return `RollingUpdate U:${strategy.rollingUpdate.maxUnavailable} S:${strategy.rollingUpdate.maxSurge}`
-}
-
 function configBadgeClass(item) {
   if (!item.has_config) return 'badge-offline'
   if (item.apply_status === 'failed') return 'badge-danger'
@@ -167,6 +170,23 @@ function configBadgeText(item) {
   if (item.apply_status === 'failed') return '失败'
   if (item.apply_status === 'succeeded' && item.effective === false) return '已保存未生效'
   return '已应用'
+}
+
+function configNeedsAttention(item) {
+  return item.apply_status === 'failed' || item.effective === false
+}
+
+function configIssueText(item) {
+  if (item.effective === false) return '配置与实际状态不一致，请重新保存'
+  return '配置未应用，请打开配置重试'
+}
+
+function deploymentReady(item) {
+  return Number(item?.deployment?.ready_replicas) >= Number(item?.deployment?.replicas) && Number(item?.deployment?.replicas) > 0
+}
+
+function workloadReady(item) {
+  return Number(item?.workload?.ready) >= Number(item?.workload?.desired) && Number(item?.workload?.desired) > 0
 }
 
 function isMissing(item) {
@@ -195,17 +215,17 @@ function canRestore(item) {
 
 function controllerModeText(mode) {
   const labels = {
-    helm_chart: '控制方式：Helm Chart',
-    static_deployment: '控制方式：K3s 静态 Deployment',
-    embedded: '控制方式：K3s 内置控制器',
-    unknown: '控制方式：未识别',
+    helm_chart: 'Helm 管理',
+    static_deployment: 'K3s 静态组件',
+    embedded: 'K3s 内置',
+    unknown: '待确认',
   }
   return labels[mode] || labels.unknown
 }
 
 function modalDescription(item) {
-  if (isStatic(item)) return '平台仅保存并更新副本、滚动策略和节点选择器；K3s 重应用静态清单后，平台会按期望配置重放这些受控字段。'
-  return '写入 HelmChartConfig CRD，由 helm-controller 渲染；实际生效字段取决于该 Chart 支持的 values。'
+  if (isStatic(item)) return '设置副本、滚动更新和节点调度。平台会在 K3s 重启后自动恢复这些设置。'
+  return '设置会写入 HelmChartConfig，并由 Helm 控制器负责生效。'
 }
 
 function formatTime(value) {
@@ -267,15 +287,6 @@ function renderValues(form) {
 function edit(item) {
   editing.value = item
   form.value = parseValues(item.values_content, item)
-  modalMode.value = 'config'
-  modal.value = true
-}
-
-function migrate(item) {
-  editing.value = item
-  form.value = parseValues(item.values_content, item)
-  applyBaseline()
-  modalMode.value = 'migration'
   modal.value = true
 }
 
@@ -288,7 +299,6 @@ function applyBaseline() {
 function close() {
   modal.value = false
   editing.value = null
-  modalMode.value = 'config'
 }
 
 async function save() {
@@ -322,12 +332,25 @@ onMounted(load)
 
 <style scoped>
 .page-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.system-component-table th, .system-component-table td { vertical-align: middle; }
+.system-component-table th:nth-child(1) { width: 20%; }
+.system-component-table th:nth-child(2) { width: 18%; }
+.system-component-table th:nth-child(3) { width: 20%; }
+.system-component-table th:nth-child(4) { width: 25%; }
+.system-component-table th:nth-child(5) { width: 17%; }
+.mode-label { display: inline-block; padding: 4px 8px; border-radius: 999px; background: var(--surface-subtle); color: var(--text-secondary); font-size: 12px; line-height: 1.2; white-space: nowrap; }
+.mode-static_deployment { color: var(--text-primary); background: color-mix(in srgb, var(--action-primary) 12%, var(--surface-subtle)); }
+.mode-helm_chart { color: var(--text-primary); background: color-mix(in srgb, var(--focus) 12%, var(--surface-subtle)); }
+.mode-embedded { color: var(--text-secondary); background: var(--surface-subtle); }
+.mode-unknown { color: var(--warning); background: color-mix(in srgb, var(--warning) 14%, var(--surface-subtle)); }
 .detail { display: block; max-width: 220px; color: var(--danger); overflow-wrap: anywhere; }
 .cell-secondary { display: block; }
-.baseline-hint { margin: 12px 0 0; padding: 10px 12px; border-radius: var(--radius-control); background: var(--surface-subtle); color: var(--text-secondary); font-size: 12px; line-height: 1.7; }
-.baseline-hint strong { color: var(--text-primary); }
+.config-section-title { margin: 20px 0 10px; color: var(--text-primary); font-size: 13px; font-weight: 600; }
+.config-section-title:first-child { margin-top: 0; }
+.baseline-hint { margin: 12px 0 0; padding: 9px 11px; border-radius: var(--radius-control); background: var(--surface-subtle); color: var(--text-secondary); font-size: 12px; line-height: 1.5; }
 @media (max-width: 640px) {
   .page-header { flex-direction: column; }
   .page-header .btn { width: 100%; }
+  .system-component-table th:nth-child(2), .system-component-table td:nth-child(2) { display: none; }
 }
 </style>

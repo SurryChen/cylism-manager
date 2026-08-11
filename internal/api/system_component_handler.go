@@ -90,6 +90,10 @@ func (h *SystemComponentHandler) List(c *gin.Context) {
 			"has_config":         false,
 			"deployment":         nil,
 			"deployment_error":   "",
+			"workload":           nil,
+			"chart_ready":        false,
+			"chart_failed":       false,
+			"chart_status":       "",
 			"lb_active":          false,
 			"controller_mode":    string(k8s.UnknownMode),
 			"detection_evidence": []string{},
@@ -112,14 +116,18 @@ func (h *SystemComponentHandler) List(c *gin.Context) {
 			item["controller_mode"] = string(detection.Mode)
 			item["detection_evidence"] = detection.Evidence
 			item["capabilities"] = componentCapabilities(detection.Mode)
+			item["workload"] = workloadPayload(detection.Workload)
+			item["chart_ready"] = detection.ChartReady
+			item["chart_failed"] = detection.ChartFailed
+			item["chart_status"] = detection.ChartStatus
 			if detection.Mode == k8s.EmbeddedMode {
 				item["lb_active"] = true
 			}
 		}
 		deployment := detection.Deployment
-		if deployment == nil && item["deployment_error"] == "" {
+		if deployment == nil && detection.Workload == nil && detection.Mode != k8s.HelmChartMode && item["deployment_error"] == "" {
 			item["deployment_error"] = fmt.Sprintf("deployments.apps %q/%q not found", namespace, chart)
-		} else {
+		} else if deployment != nil {
 			image := ""
 			if len(deployment.Spec.Template.Spec.Containers) > 0 {
 				image = deployment.Spec.Template.Spec.Containers[0].Image
@@ -142,6 +150,19 @@ func (h *SystemComponentHandler) List(c *gin.Context) {
 		result = append(result, item)
 	}
 	model.Success(c, result)
+}
+
+func workloadPayload(workload *k8s.ComponentWorkload) any {
+	if workload == nil {
+		return nil
+	}
+	return gin.H{
+		"kind":      workload.Kind,
+		"name":      workload.Name,
+		"desired":   workload.Desired,
+		"ready":     workload.Ready,
+		"available": workload.Available,
+	}
 }
 
 func parseStaticDeploymentConfig(valuesContent, component string) (k8s.StaticDeploymentConfig, error) {
