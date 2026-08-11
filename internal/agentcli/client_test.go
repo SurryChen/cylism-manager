@@ -83,6 +83,57 @@ func TestRunDeploymentScaleHasIdempotencyKeyAndExactBody(t *testing.T) {
 	}
 }
 
+func TestRunPreservesManagerErrorEnvelopeForHTTPFailures(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"status":"error","summary":"capability not granted","retryable":false}`))
+	}))
+	defer server.Close()
+
+	output := &bytes.Buffer{}
+	code := Run(context.Background(), []string{"cluster", "status", "--output", "json"}, Config{
+		BaseURL:    server.URL,
+		TokenFile:  writeToken(t, "runtime-token"),
+		HTTPClient: &http.Client{Timeout: time.Second},
+	}, output)
+	if code == 0 {
+		t.Fatalf("expected failure, got %d: %s", code, output.String())
+	}
+	var envelope Envelope
+	if err := json.Unmarshal(output.Bytes(), &envelope); err != nil {
+		t.Fatalf("decode output: %v", err)
+	}
+	if envelope.Status != StatusError || envelope.Summary != "capability not granted" || envelope.Retryable || envelope.RequestID == "" {
+		t.Fatalf("unexpected envelope: %#v", envelope)
+	}
+}
+
+func TestRunUsesHTTPStatusWhenManagerErrorBodyIsNotJSON(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = w.Write([]byte("upstream unavailable"))
+	}))
+	defer server.Close()
+
+	output := &bytes.Buffer{}
+	code := Run(context.Background(), []string{"cluster", "status", "--output", "json"}, Config{
+		BaseURL:    server.URL,
+		TokenFile:  writeToken(t, "runtime-token"),
+		HTTPClient: &http.Client{Timeout: time.Second},
+	}, output)
+	if code == 0 {
+		t.Fatalf("expected failure, got %d: %s", code, output.String())
+	}
+	var envelope Envelope
+	if err := json.Unmarshal(output.Bytes(), &envelope); err != nil {
+		t.Fatalf("decode output: %v", err)
+	}
+	if envelope.Summary != "agent API rejected the request (HTTP 502)" || !envelope.Retryable {
+		t.Fatalf("unexpected envelope: %#v", envelope)
+	}
+}
+
 func TestRunRejectsUnknownOrFreeformCommandsBeforeNetworkRequest(t *testing.T) {
 	for _, arguments := range [][]string{
 		{"request", "GET", "https://example.invalid", "--output", "json"},

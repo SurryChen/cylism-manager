@@ -202,7 +202,7 @@ func execute(ctx context.Context, spec requestSpec, baseURL *url.URL, token, req
 		return Envelope{}, errors.New("response limit exceeded")
 	}
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-		return errorEnvelope(requestID, "agent API rejected the request", response.StatusCode >= 500), nil
+		return managerHTTPError(requestID, response.StatusCode, encoded), nil
 	}
 	var payload agentResponse
 	if err := json.Unmarshal(encoded, &payload); err != nil {
@@ -215,6 +215,21 @@ func execute(ctx context.Context, spec requestSpec, baseURL *url.URL, token, req
 		payload.Summary = "request completed"
 	}
 	return Envelope{Status: payload.Status, RequestID: requestID, OperationID: payload.OperationID, Data: payload.Data, Summary: payload.Summary, Retryable: payload.Retryable}, nil
+}
+
+func managerHTTPError(requestID string, statusCode int, encoded []byte) Envelope {
+	var payload agentResponse
+	if err := json.Unmarshal(encoded, &payload); err == nil && strings.TrimSpace(payload.Summary) != "" {
+		return Envelope{
+			Status:      StatusError,
+			RequestID:   requestID,
+			OperationID: payload.OperationID,
+			Data:        payload.Data,
+			Summary:     payload.Summary,
+			Retryable:   payload.Retryable,
+		}
+	}
+	return errorEnvelope(requestID, fmt.Sprintf("agent API rejected the request (HTTP %d)", statusCode), statusCode >= 500)
 }
 
 func parseBaseURL(raw string) (*url.URL, error) {
