@@ -11,10 +11,10 @@
     <div v-if="error" class="k8s-banner k8s-banner-warn section-gap">{{ error }}</div>
 
     <template v-if="loaded">
-      <section class="dns-summary section-gap">
-        <div class="summary-item"><span>当前转发</span><strong>{{ forwardingText }}</strong></div>
-        <div class="summary-item"><span>平台策略</span><strong>{{ data.active_policy?.resolvers?.length ? `版本 ${data.active_policy.revision}` : '继承宿主机 DNS' }}</strong></div>
-        <div class="summary-item"><span>CoreDNS</span><strong>{{ readyPods }}/{{ data.pods?.length || 0 }} 就绪</strong></div>
+      <section class="dns-summary metric-grid section-gap" aria-label="集群 DNS 状态">
+        <article class="metric dns-summary-item"><span>当前转发</span><strong>{{ forwardingText }}</strong></article>
+        <article class="metric dns-summary-item"><span>平台策略</span><strong>{{ data.active_policy?.resolvers?.length ? `版本 ${data.active_policy.revision}` : '继承宿主机 DNS' }}</strong></article>
+        <article class="metric dns-summary-item"><span>CoreDNS</span><strong>{{ readyPods }}/{{ data.pods?.length || 0 }} 就绪</strong></article>
       </section>
 
       <section class="card section-gap">
@@ -163,12 +163,11 @@ onMounted(load)
 
 <style scoped>
 .page-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
-.dns-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border: 1px solid var(--border); background: var(--surface); }
-.summary-item { min-width: 0; padding: 14px 16px; border-right: 1px solid var(--border); }
-.summary-item:last-child { border-right: 0; }
-.summary-item span, .summary-item strong, .history-row small { display: block; }
-.summary-item span, .history-row small { color: var(--text-secondary); font-size: 12px; }
-.summary-item strong { overflow-wrap: anywhere; margin-top: 4px; }
+.dns-summary { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.dns-summary-item { min-height: 96px; gap: 6px; padding: 16px 18px; }
+.dns-summary-item span, .dns-summary-item strong, .history-row small { display: block; }
+.dns-summary-item span, .history-row small { color: var(--text-secondary); font-size: 12px; }
+.dns-summary-item strong { overflow-wrap: anywhere; font-size: 17px; line-height: 1.35; }
 .section-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
 .section-heading h2 { margin: 0; font-size: 15px; }
 .section-heading p { margin: 5px 0 0; color: var(--text-secondary); font-size: 13px; line-height: 1.5; }
@@ -185,5 +184,5 @@ onMounted(load)
 .history-row { grid-template-columns: 1fr auto; }
 .pod-row span { color: var(--text-secondary); overflow-wrap: anywhere; }
 .history-row small { margin-top: 3px; }
-@media (max-width: 640px) { .page-header { flex-direction: column; } .page-header .btn { width: 100%; } .dns-summary { grid-template-columns: 1fr; } .summary-item { border-right: 0; border-bottom: 1px solid var(--border); } .summary-item:last-child { border-bottom: 0; } .pod-row { grid-template-columns: 1fr auto; } .pod-row span { display: none; } }
+@media (max-width: 640px) { .page-header { flex-direction: column; } .page-header .btn { width: 100%; } .dns-summary { grid-template-columns: 1fr; } .pod-row { grid-template-columns: 1fr auto; } .pod-row span { display: none; } }
 </style>
