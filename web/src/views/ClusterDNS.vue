@@ -13,13 +13,14 @@
     <template v-if="loaded">
       <section class="dns-summary section-gap">
         <div class="summary-item"><span>当前转发</span><strong>{{ forwardingText }}</strong></div>
-        <div class="summary-item"><span>平台策略</span><strong>{{ data.active_policy ? `版本 ${data.active_policy.revision}` : '继承 K3s 配置' }}</strong></div>
+        <div class="summary-item"><span>平台策略</span><strong>{{ data.active_policy?.resolvers?.length ? `版本 ${data.active_policy.revision}` : '继承宿主机 DNS' }}</strong></div>
         <div class="summary-item"><span>CoreDNS</span><strong>{{ readyPods }}/{{ data.pods?.length || 0 }} 就绪</strong></div>
       </section>
 
       <section class="card section-gap">
         <div class="section-heading">
           <div><h2>外部 DNS 上游</h2><p>仅接受 IP 地址。保存时只替换 CoreDNS 根域的 forward 指令，其余 Corefile 保持不变。</p></div>
+          <button class="btn btn-sm" :disabled="saving || inheritedDNS" @click="openResetConfirm">恢复宿主机 DNS</button>
         </div>
         <form class="dns-form" @submit.prevent="openConfirm">
           <div v-for="(_, index) in resolvers" :key="index" class="resolver-row">
@@ -27,6 +28,7 @@
             <input v-model.trim="resolvers[index]" class="form-input" inputmode="decimal" placeholder="例如 223.5.5.5" :aria-label="`DNS 上游 ${index + 1}`" />
             <button v-if="resolvers.length > 1" type="button" class="icon-btn" :aria-label="`移除 DNS 上游 ${index + 1}`" @click="resolvers.splice(index, 1)">×</button>
           </div>
+          <p v-if="inheritedDNS" class="form-hint inherited-hint">当前未配置外部 DNS，CoreDNS 使用各节点宿主机的 DNS 配置。</p>
           <div class="dns-actions">
             <button v-if="resolvers.length < 3" type="button" class="btn btn-sm" @click="resolvers.push('')">添加备用上游</button>
             <button class="btn btn-primary" :disabled="saving">{{ saving ? '应用中...' : '验证并应用' }}</button>
@@ -57,6 +59,13 @@
         <div class="modal-actions"><button class="btn" @click="confirming = false">取消</button><button class="btn btn-primary" @click="apply">确认应用</button></div>
       </div>
     </div>
+    <div v-if="resetConfirming" class="overlay" @click.self="resetConfirming = false">
+      <div class="modal">
+        <h2 class="modal-title">恢复宿主机 DNS</h2>
+        <p class="confirm-copy">CoreDNS 将恢复为 <code>/etc/resolv.conf</code>，由各节点宿主机决定外部 DNS。此操作影响所有通过集群 DNS 解析的工作负载。</p>
+        <div class="modal-actions"><button class="btn" @click="resetConfirming = false">取消</button><button class="btn btn-primary" :disabled="saving" @click="reset">确认恢复</button></div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -71,17 +80,20 @@ const saving = ref(false)
 const loaded = ref(false)
 const error = ref('')
 const confirming = ref(false)
+const resetConfirming = ref(false)
 
 const normalizedResolvers = computed(() => resolvers.value.map(value => value.trim()).filter(Boolean))
 const forwardingText = computed(() => data.value.forwarding?.join('，') || '未识别')
 const readyPods = computed(() => (data.value.pods || []).filter(pod => pod.ready).length)
+const inheritedDNS = computed(() => !(data.value.active_policy?.resolvers?.length) && data.value.forwarding?.length === 1 && data.value.forwarding[0] === '/etc/resolv.conf')
 
 async function load() {
   loading.value = true
   error.value = ''
   try {
     data.value = await api.get('/cluster-dns') || { forwarding: [], pods: [], history: [], active_policy: null }
-    resolvers.value = data.value.active_policy?.resolvers?.length ? [...data.value.active_policy.resolvers] : [...(data.value.forwarding || [])]
+    const inherited = data.value.forwarding?.length === 1 && data.value.forwarding[0] === '/etc/resolv.conf'
+    resolvers.value = data.value.active_policy?.resolvers?.length ? [...data.value.active_policy.resolvers] : inherited ? [''] : [...(data.value.forwarding || [])]
     if (!resolvers.value.length) resolvers.value = ['']
   } catch (err) {
     error.value = err.message || '加载集群 DNS 状态失败'
@@ -100,6 +112,10 @@ function openConfirm() {
   confirming.value = true
 }
 
+function openResetConfirm() {
+  resetConfirming.value = true
+}
+
 async function apply() {
   saving.value = true
   error.value = ''
@@ -109,6 +125,20 @@ async function apply() {
     await load()
   } catch (err) {
     error.value = err.message || '应用集群 DNS 策略失败'
+  } finally {
+    saving.value = false
+  }
+}
+
+async function reset() {
+  saving.value = true
+  error.value = ''
+  try {
+    await api.delete('/cluster-dns')
+    resetConfirming.value = false
+    await load()
+  } catch (err) {
+    error.value = err.message || '恢复宿主机 DNS 失败'
   } finally {
     saving.value = false
   }
@@ -148,6 +178,7 @@ onMounted(load)
 .resolver-row .form-input { flex: 1; }
 .icon-btn { width: 32px; height: 32px; border: 0; background: transparent; color: var(--text-secondary); font-size: 22px; cursor: pointer; }
 .dns-actions { display: flex; gap: 8px; margin-top: 14px; }
+.inherited-hint { margin: 10px 0 0; }
 .pod-list, .history-list { border-top: 1px solid var(--border); }
 .pod-row, .history-row { display: grid; align-items: center; gap: 12px; padding: 11px 0; border-bottom: 1px solid var(--border); }
 .pod-row { grid-template-columns: minmax(0, 2fr) minmax(0, 1.5fr) minmax(0, 1fr) auto; }

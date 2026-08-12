@@ -104,6 +104,7 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 	{
 		clusterDNS.GET("", clusterDNSHandler.Status)
 		clusterDNS.POST("", clusterDNSHandler.Apply)
+		clusterDNS.DELETE("", clusterDNSHandler.Reset)
 		clusterDNS.POST("/history/:revision/rollback", clusterDNSHandler.Rollback)
 	}
 	platformHandler := NewPlatformHandler(s, encKey)

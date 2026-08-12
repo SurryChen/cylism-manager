@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -31,6 +32,7 @@ func setupClusterDNSRouter(t *testing.T) (*gin.Engine, *store.Store) {
 	group := router.Group("/api/cluster-dns")
 	group.GET("", h.Status)
 	group.POST("", h.Apply)
+	group.DELETE("", h.Reset)
 	group.POST("/history/:revision/rollback", h.Rollback)
 	return router, s
 }
@@ -60,5 +62,25 @@ func TestClusterDNSRejectsNonIPResolversWithoutMutation(t *testing.T) {
 	configMap, _ := K8s.Clientset.CoreV1().ConfigMaps(coreDNSNamespace).Get(context.Background(), coreDNSConfigMap, metav1.GetOptions{})
 	if !strings.Contains(configMap.Data["Corefile"], "/etc/resolv.conf") {
 		t.Fatalf("Corefile changed after invalid request: %s", configMap.Data["Corefile"])
+	}
+}
+
+func TestClusterDNSResetRestoresHostResolver(t *testing.T) {
+	router, s := setupClusterDNSRouter(t)
+	response := serve(router, newJSONRequest(http.MethodPost, "/api/cluster-dns", gin.H{"resolvers": []string{"1.1.1.1"}}))
+	if response.Code != http.StatusOK {
+		t.Fatalf("apply status = %d: %s", response.Code, response.Body.String())
+	}
+	response = serve(router, httptest.NewRequest(http.MethodDelete, "/api/cluster-dns", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("reset status = %d: %s", response.Code, response.Body.String())
+	}
+	configMap, err := K8s.Clientset.CoreV1().ConfigMaps(coreDNSNamespace).Get(context.Background(), coreDNSConfigMap, metav1.GetOptions{})
+	if err != nil || !strings.Contains(configMap.Data["Corefile"], "forward . /etc/resolv.conf") {
+		t.Fatalf("expected host resolver forwarding: %v %#v", err, configMap)
+	}
+	policy, err := s.GetActiveClusterDNSPolicy()
+	if err != nil || policy.Resolvers != "[]" {
+		t.Fatalf("expected inherited policy marker: %#v err=%v", policy, err)
 	}
 }
