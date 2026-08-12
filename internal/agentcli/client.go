@@ -106,6 +106,14 @@ func parseCommand(args []string) (requestSpec, error) {
 		return requestSpec{}, errors.New("unsupported command")
 	}
 	switch args[0] + " " + args[1] {
+	case "capability status":
+		flags := flag.NewFlagSet("capability status", flag.ContinueOnError)
+		flags.SetOutput(io.Discard)
+		output := flags.String("output", "", "")
+		if err := flags.Parse(args[2:]); err != nil || flags.NArg() != 0 || *output != "json" {
+			return requestSpec{}, errors.New("capability status requires --output json")
+		}
+		return requestSpec{method: http.MethodGet, path: "/api/agent/v1/capabilities/status"}, nil
 	case "cluster status":
 		flags := flag.NewFlagSet("cluster status", flag.ContinueOnError)
 		flags.SetOutput(io.Discard)

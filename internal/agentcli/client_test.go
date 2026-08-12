@@ -44,6 +44,25 @@ func TestRunClusterStatusUsesFixedAgentEndpointAndJSONEnvelope(t *testing.T) {
 	}
 }
 
+func TestRunCapabilityStatusUsesFixedAgentEndpoint(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/agent/v1/capabilities/status" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
+		}
+		_, _ = w.Write([]byte(`{"data":{"cluster.read":{"enabled":true}},"summary":"capability status retrieved"}`))
+	}))
+	defer server.Close()
+	output := &bytes.Buffer{}
+	code := Run(context.Background(), []string{"capability", "status", "--output", "json"}, Config{BaseURL: server.URL, TokenFile: writeToken(t, "runtime-token")}, output)
+	if code != 0 {
+		t.Fatalf("expected success, got %d: %s", code, output.String())
+	}
+	var envelope Envelope
+	if err := json.Unmarshal(output.Bytes(), &envelope); err != nil || envelope.Status != StatusOK {
+		t.Fatalf("unexpected envelope: %#v err=%v", envelope, err)
+	}
+}
+
 func TestRunDeploymentScaleHasIdempotencyKeyAndExactBody(t *testing.T) {
 	var idempotencyKey string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

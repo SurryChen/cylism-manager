@@ -7,7 +7,7 @@
             <h2 class="chat-modal-title">与 {{ runtime?.name || 'Agent' }} 对话</h2>
             <p class="chat-modal-sub">{{ displayVersion(runtime) }}</p>
           </div>
-          <button type="button" class="icon-button" title="关闭" aria-label="关闭" @click="$emit('update:modelValue', false)"><X :size="18" /></button>
+          <div class="chat-header-actions"><button type="button" class="icon-button" title="Agent 权限" aria-label="Agent 权限" @click="emit('manage-permissions')"><Shield :size="17" /></button><button type="button" class="icon-button" title="待审批操作" aria-label="待审批操作" @click="approvalOpen = true; loadApprovals()"><ClipboardCheck :size="17" /><span v-if="pendingApprovals.length" class="chat-action-count">{{ pendingApprovals.length }}</span></button><button type="button" class="icon-button" title="关闭" aria-label="关闭" @click="$emit('update:modelValue', false)"><X :size="18" /></button></div>
         </header>
 
         <div class="chat-sessions">
@@ -58,6 +58,14 @@
       </section>
     </div>
   </Teleport>
+  <Teleport to="body">
+    <div v-if="approvalOpen" class="chat-overlay chat-approval-overlay" @click.self="approvalOpen = false">
+      <section class="chat-approval-modal" role="dialog" aria-modal="true" aria-label="待审批操作">
+        <header class="chat-modal-header"><div><h2 class="chat-modal-title">待审批操作</h2><p class="chat-modal-sub">仅管理员可以批准或拒绝 Runtime 发起的变更</p></div><button type="button" class="icon-button" title="关闭" aria-label="关闭" @click="approvalOpen = false"><X :size="18" /></button></header>
+        <div class="chat-approval-list"><div v-if="approvalLoading" class="chat-empty">正在读取审批...</div><div v-else-if="!pendingApprovals.length" class="chat-empty">暂无待审批操作</div><article v-for="operation in pendingApprovals" :key="operation.operation_id" class="chat-approval-item"><div><strong>{{ operation.summary }}</strong><small>{{ operation.created_at || '-' }} · 15 分钟内有效</small></div><div class="chat-approval-actions"><button type="button" class="btn btn-primary" :disabled="approvalWorking" @click="resolveApproval(operation, true)">批准</button><button type="button" class="btn btn-danger" :disabled="approvalWorking" @click="resolveApproval(operation, false)">拒绝</button></div></article></div>
+      </section>
+    </div>
+  </Teleport>
 </template>
 
 <script setup>
@@ -65,8 +73,8 @@ import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import DOMPurify from 'dompurify'
 import MarkdownIt from 'markdown-it'
 import taskLists from 'markdown-it-task-lists'
-import { X } from 'lucide-vue-next'
-import { chatMessages, chatSessions, chatStream } from '../api/index.js'
+import { ClipboardCheck, Shield, X } from 'lucide-vue-next'
+import { agentOperations, chatMessages, chatSessions, chatStream, resolveAgentOperation } from '../api/index.js'
 
 const props = defineProps({
   runtime: { type: Object, default: null },
@@ -80,6 +88,10 @@ const currentSession = ref('')
 const messageList = ref(null)
 const stickToBottom = ref(true)
 const isComposing = ref(false)
+const approvalOpen = ref(false)
+const approvalLoading = ref(false)
+const approvalWorking = ref(false)
+const pendingApprovals = ref([])
 const sessionsError = ref('')
 let sessionsRequestVersion = 0
 let messageSequence = 0
@@ -165,6 +177,29 @@ async function refreshSessions() {
     }
   } catch (err) {
     if (requestVersion === sessionsRequestVersion) sessionsError.value = err.message || '读取会话失败'
+  }
+}
+
+async function loadApprovals() {
+  if (!props.runtime?.id) return
+  approvalLoading.value = true
+  try {
+    const operations = (await agentOperations(props.runtime.id)) || []
+    pendingApprovals.value = operations.filter(operation => operation.status === 'pending_approval')
+  } catch {
+    pendingApprovals.value = []
+  } finally {
+    approvalLoading.value = false
+  }
+}
+
+async function resolveApproval(operation, approve) {
+  approvalWorking.value = true
+  try {
+    await resolveAgentOperation(operation.operation_id, approve)
+    await loadApprovals()
+  } finally {
+    approvalWorking.value = false
   }
 }
 
@@ -327,7 +362,10 @@ async function loadOlderHistory() {
 }
 
 watch(() => props.modelValue, (open) => {
-  if (open) loadSessions()
+  if (open) {
+    loadSessions()
+    loadApprovals()
+  }
 }, { immediate: true })
 
 onBeforeUnmount(() => {
@@ -339,6 +377,9 @@ onBeforeUnmount(() => {
 .chat-overlay { position: fixed; z-index: 1500; inset: 0; display: flex; align-items: center; justify-content: center; padding: 24px; background: var(--overlay); backdrop-filter: blur(8px); }
 .chat-modal { display: flex; width: min(760px, 100%); height: min(720px, calc(100dvh - 48px)); min-height: 420px; flex-direction: column; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-panel); background: var(--surface-glass); box-shadow: var(--shadow); backdrop-filter: blur(30px) saturate(145%); }
 .chat-modal-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 18px 22px 12px; border-bottom: 1px solid var(--border-muted); }
+.chat-header-actions { display: flex; align-items: center; gap: 6px; }
+.chat-header-actions .icon-button { position: relative; }
+.chat-action-count { position: absolute; top: -4px; right: -4px; display: grid; min-width: 15px; height: 15px; place-items: center; border-radius: 50%; background: var(--danger); color: var(--action-contrast); font-size: 9px; }
 .chat-modal-heading { min-width: 0; }
 .chat-modal-title { margin: 0; color: var(--text-primary); font-size: 16px; }
 .chat-modal-sub { margin: 4px 0 0; color: var(--text-muted); font-size: 11px; }
@@ -380,10 +421,21 @@ onBeforeUnmount(() => {
 .chat-input { flex: 1; resize: none; max-height: 120px; border: 1px solid var(--border-muted); border-radius: var(--radius-control); padding: 9px 10px; background: var(--surface-input); color: var(--text-primary); font: inherit; font-size: 13px; }
 .chat-input:focus { outline: 2px solid var(--focus); outline-offset: -1px; }
 .chat-input:disabled { opacity: .6; cursor: not-allowed; }
+.chat-approval-overlay { z-index: 1600; }
+.chat-approval-modal { width: min(560px, 100%); max-height: min(620px, calc(100dvh - 48px)); overflow: auto; border: 1px solid var(--border); border-radius: var(--radius-panel); background: var(--surface-glass); box-shadow: var(--shadow); backdrop-filter: blur(30px) saturate(145%); }
+.chat-approval-list { padding: 10px 22px 22px; }
+.chat-approval-item { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 13px 0; border-bottom: 1px solid var(--border-muted); }
+.chat-approval-item > div:first-child { display: grid; min-width: 0; gap: 4px; }
+.chat-approval-item strong { overflow-wrap: anywhere; font-size: 13px; }
+.chat-approval-item small { color: var(--text-secondary); font-size: 11px; }
+.chat-approval-actions { display: flex; flex: 0 0 auto; gap: 6px; }
 @media (max-width: 640px) {
   .chat-overlay { padding: 12px; }
   .chat-modal { width: 100%; height: calc(100dvh - 24px); min-height: 0; }
   .chat-modal-header, .chat-sessions, .chat-input-bar { padding-left: 16px; padding-right: 16px; }
   .chat-messages { padding: 14px 16px; }
+  .chat-approval-modal { width: 100%; max-height: calc(100dvh - 24px); }
+  .chat-approval-list { padding-left: 16px; padding-right: 16px; }
+  .chat-approval-item { align-items: flex-start; flex-direction: column; }
 }
 </style>

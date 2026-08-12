@@ -33,6 +33,22 @@ func TestAgentCapabilityGrantsAreDenyByDefaultAndNamespaceScoped(t *testing.T) {
 	}
 }
 
+func TestAgentCapabilityGrantsRejectNamespaceScopeForClusterRead(t *testing.T) {
+	s, err := New(":memory:")
+	if err != nil {
+		t.Fatalf("create store: %v", err)
+	}
+	err = s.ReplaceAgentCapabilityGrants(3, []model.AgentCapabilityGrant{{
+		RuntimeID:  3,
+		Capability: model.AgentCapabilityClusterRead,
+		Namespace:  "cylism-assistant",
+		Enabled:    true,
+	}})
+	if err == nil {
+		t.Fatal("expected cluster.read namespace scope to be rejected")
+	}
+}
+
 func TestAgentOperationIsIdempotentAndTerminalStatusCannotBeRewritten(t *testing.T) {
 	s, err := New(":memory:")
 	if err != nil {

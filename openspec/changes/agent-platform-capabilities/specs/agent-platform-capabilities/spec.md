@@ -37,6 +37,22 @@ The system SHALL authorize Agent requests only when an enabled capability grant 
 - **WHEN** an administrator disables a Runtime capability grant
 - **THEN** subsequent Agent API requests using that Runtime identity SHALL be denied without requiring a Runtime redeploy
 
+### Requirement: Runtime can inspect effective capability status
+
+The system SHALL expose the authenticated Runtime's effective capability state through a fixed Agent API and CLI command. The response SHALL include every registered capability, whether it is enabled, its effective namespace scope, and whether a human approval is required.
+
+#### Scenario: Capability status query
+
+- **WHEN** an authenticated Runtime invokes `cylism-cli capability status --output json`
+- **THEN** the Manager SHALL return the effective grants for that Runtime only
+- **AND THEN** a cluster-scoped grant SHALL be represented by namespace `*`
+- **AND THEN** the response SHALL not include tokens, grant editor credentials, or data from another Runtime
+
+#### Scenario: Capability status after revocation
+
+- **WHEN** an administrator revokes or changes a capability grant
+- **THEN** the next capability status query SHALL reflect the new effective state without requiring a Runtime restart
+
 ### Requirement: The CLI exposes only registered platform operations
 
 The system SHALL provide `cylism-cli` as a JSON-oriented client with a fixed command and parameter schema for registered Agent platform operations.

@@ -32,7 +32,10 @@
 ## 4. Manager UI
 
 - [ ] 4.1 Add Runtime detail CLI install/update/uninstall state and Agent capability controls with structured scope selection, approval policy, grant revocation, rollout-impact notice, and last-use status; add Vue tests.
+  - [x] 4.1.a Move capability editing into a modal and support explicit namespace selection, including mutually exclusive `*` scope.
+  - [x] 4.1.b Add a Runtime capability status endpoint and fixed CLI/tool query so Nanobot can inspect effective permissions.
 - [ ] 4.2 Add an approval queue with exact impact summary, expiry, approve/reject actions, stale state, and operation result; add Vue and API tests.
+  - [x] 4.2.a Add a chat-window entry point for pending approvals and permission management; approval remains Manager/JWT-only.
 - [ ] 4.3 Extend the audit view to distinguish Agent action, denial, approval, and execution without displaying sensitive values.
 
 ## 5. Verification And Rollout
