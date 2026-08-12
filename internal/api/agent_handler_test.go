@@ -171,6 +171,72 @@ func TestAgentHandlerCapabilityStatusReturnsEffectiveScopes(t *testing.T) {
 	}
 }
 
+func TestAgentDNSAndRegistryProxyDiagnosticsAreClusterScopedAndRedacted(t *testing.T) {
+	s, err := store.New(":memory:")
+	if err != nil {
+		t.Fatalf("store: %v", err)
+	}
+	instance := &model.RuntimeInstance{Name: "nanobot-main", RuntimeType: model.RuntimeTypeNanobot, DeploymentMode: model.RuntimeDeploymentManaged, Namespace: "cylism-assistant", Image: "example/nanobot", Status: model.RuntimeStatusReady, AgentToolEnabled: true}
+	if err := s.CreateRuntime(instance); err != nil {
+		t.Fatalf("create runtime: %v", err)
+	}
+	proxy := &model.RegistryProxy{Name: "Docker Hub", Registry: "docker.io", UpstreamURL: "https://registry-1.docker.io", NodeName: "node-1", EndpointHost: "10.0.0.5", NodePort: 30500, CacheLimitGi: 5, CleanupIntervalHours: 24, Status: "ready", LastDiagnosticStatus: "upstream_connect_timeout", LastDiagnosticError: "token=secret upstream connection timed out"}
+	if err := s.SaveRegistryProxy(proxy); err != nil {
+		t.Fatalf("create proxy: %v", err)
+	}
+	client := &k8s.Client{Clientset: fake.NewSimpleClientset(
+		&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: coreDNSConfigMap, Namespace: coreDNSNamespace}, Data: map[string]string{"Corefile": ".:53 {\n  forward . 1.1.1.1\n}\n"}},
+		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "coredns-a", Namespace: coreDNSNamespace, Labels: map[string]string{"k8s-app": "kube-dns"}}, Status: corev1.PodStatus{Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}}},
+	)}
+	handler := NewAgentHandler(s, client, agentAuthenticatorStub{instance: instance})
+	for _, test := range []struct {
+		path    string
+		handler http.HandlerFunc
+	}{
+		{"/api/agent/v1/dns/status", handler.DNSStatus},
+		{"/api/agent/v1/dns/resolve?name=registry-1.docker.io", handler.DNSResolve},
+		{"/api/agent/v1/registries/proxy-diagnose?registry=docker.io", handler.RegistryProxyDiagnose},
+	} {
+		request := httptest.NewRequest(http.MethodGet, test.path, nil)
+		request.Header.Set("Authorization", "Bearer agent-token")
+		recorder := httptest.NewRecorder()
+		test.handler(recorder, request)
+		if recorder.Code != http.StatusForbidden {
+			t.Fatalf("expected denied %s, got %d: %s", test.path, recorder.Code, recorder.Body.String())
+		}
+	}
+	if err := s.ReplaceAgentCapabilityGrants(instance.ID, []model.AgentCapabilityGrant{
+		{RuntimeID: instance.ID, Capability: model.AgentCapabilityDNSRead, Namespace: "*", Enabled: true},
+		{RuntimeID: instance.ID, Capability: model.AgentCapabilityRegistryProxyDiagnose, Namespace: "*", Enabled: true},
+	}); err != nil {
+		t.Fatalf("grant: %v", err)
+	}
+	for _, test := range []struct {
+		path    string
+		handler http.HandlerFunc
+		expect  string
+	}{
+		{"/api/agent/v1/dns/status", handler.DNSStatus, "1.1.1.1"},
+		{"/api/agent/v1/dns/resolve?name=registry-1.docker.io", handler.DNSResolve, "upstream_connect_timeout"},
+		{"/api/agent/v1/registries/proxy-diagnose?registry=docker.io", handler.RegistryProxyDiagnose, "upstream_connect_timeout"},
+	} {
+		request := httptest.NewRequest(http.MethodGet, test.path, nil)
+		request.Header.Set("Authorization", "Bearer agent-token")
+		recorder := httptest.NewRecorder()
+		test.handler(recorder, request)
+		if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), test.expect) || strings.Contains(recorder.Body.String(), "secret") {
+			t.Fatalf("unexpected diagnostic %s: %d %s", test.path, recorder.Code, recorder.Body.String())
+		}
+	}
+	request := httptest.NewRequest(http.MethodGet, "/api/agent/v1/dns/resolve?name=example.com", nil)
+	request.Header.Set("Authorization", "Bearer agent-token")
+	recorder := httptest.NewRecorder()
+	handler.DNSResolve(recorder, request)
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("allowlist bypass must fail: %d %s", recorder.Code, recorder.Body.String())
+	}
+}
+
 func TestAgentHandlerProvidesScopedPendingPodDiagnostics(t *testing.T) {
 	s, err := store.New(":memory:")
 	if err != nil {

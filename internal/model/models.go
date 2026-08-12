@@ -175,27 +175,31 @@ const (
 )
 
 const (
-	AgentCapabilityClusterRead       = "cluster.read"
-	AgentCapabilityWorkloadRead      = "workload.read"
-	AgentCapabilityWorkloadLogs      = "workload.logs"
-	AgentCapabilityEventsRead        = "events.read"
-	AgentCapabilityStorageRead       = "storage.read"
-	AgentCapabilityDeploymentScale   = "deployment.scale"
-	AgentCapabilityRegistryRead      = "registry.read"
-	AgentCapabilityRegistryVerify    = "registry.verify"
-	AgentCapabilityRegistryPullCheck = "registry.pull_check"
+	AgentCapabilityClusterRead           = "cluster.read"
+	AgentCapabilityWorkloadRead          = "workload.read"
+	AgentCapabilityWorkloadLogs          = "workload.logs"
+	AgentCapabilityEventsRead            = "events.read"
+	AgentCapabilityStorageRead           = "storage.read"
+	AgentCapabilityDeploymentScale       = "deployment.scale"
+	AgentCapabilityRegistryRead          = "registry.read"
+	AgentCapabilityRegistryVerify        = "registry.verify"
+	AgentCapabilityRegistryPullCheck     = "registry.pull_check"
+	AgentCapabilityDNSRead               = "dns.read"
+	AgentCapabilityRegistryProxyDiagnose = "registry.proxy_diagnose"
 )
 
 var AgentCapabilities = map[string]struct{}{
-	AgentCapabilityClusterRead:       {},
-	AgentCapabilityWorkloadRead:      {},
-	AgentCapabilityWorkloadLogs:      {},
-	AgentCapabilityEventsRead:        {},
-	AgentCapabilityStorageRead:       {},
-	AgentCapabilityDeploymentScale:   {},
-	AgentCapabilityRegistryRead:      {},
-	AgentCapabilityRegistryVerify:    {},
-	AgentCapabilityRegistryPullCheck: {},
+	AgentCapabilityClusterRead:           {},
+	AgentCapabilityWorkloadRead:          {},
+	AgentCapabilityWorkloadLogs:          {},
+	AgentCapabilityEventsRead:            {},
+	AgentCapabilityStorageRead:           {},
+	AgentCapabilityDeploymentScale:       {},
+	AgentCapabilityRegistryRead:          {},
+	AgentCapabilityRegistryVerify:        {},
+	AgentCapabilityRegistryPullCheck:     {},
+	AgentCapabilityDNSRead:               {},
+	AgentCapabilityRegistryProxyDiagnose: {},
 }
 
 func ValidAgentCapability(capability string) bool {
@@ -509,23 +513,41 @@ type NodeRegistryMirrorNode struct {
 
 // RegistryProxy defines one platform-managed, non-persistent registry proxy.
 type RegistryProxy struct {
-	ID                   uint       `gorm:"primaryKey" json:"id"`
-	Name                 string     `gorm:"size:128" json:"name"`
-	Registry             string     `gorm:"size:256" json:"registry"`
-	UpstreamURL          string     `gorm:"size:512" json:"upstream_url"`
-	ResourceName         string     `gorm:"size:128" json:"resource_name"`
-	NodeName             string     `gorm:"size:256;not null" json:"node_name"`
-	EndpointHost         string     `gorm:"size:256;not null" json:"endpoint_host"`
-	NodePort             int32      `gorm:"not null" json:"node_port"`
-	CacheLimitGi         int32      `gorm:"not null" json:"cache_limit_gi"`
-	CleanupIntervalHours int32      `gorm:"not null" json:"cleanup_interval_hours"`
-	LastCleanupAt        *time.Time `json:"last_cleanup_at,omitempty"`
-	LastCheckedAt        *time.Time `json:"last_checked_at,omitempty"`
-	Status               string     `gorm:"size:32;not null" json:"status"`
-	LastError            string     `gorm:"size:512" json:"last_error,omitempty"`
-	CreatedBy            uint       `gorm:"index;not null" json:"created_by"`
-	CreatedAt            time.Time  `json:"created_at"`
-	UpdatedAt            time.Time  `json:"updated_at"`
+	ID                      uint       `gorm:"primaryKey" json:"id"`
+	Name                    string     `gorm:"size:128" json:"name"`
+	Registry                string     `gorm:"size:256" json:"registry"`
+	UpstreamURL             string     `gorm:"size:512" json:"upstream_url"`
+	ResourceName            string     `gorm:"size:128" json:"resource_name"`
+	NodeName                string     `gorm:"size:256;not null" json:"node_name"`
+	EndpointHost            string     `gorm:"size:256;not null" json:"endpoint_host"`
+	NodePort                int32      `gorm:"not null" json:"node_port"`
+	CacheLimitGi            int32      `gorm:"not null" json:"cache_limit_gi"`
+	CleanupIntervalHours    int32      `gorm:"not null" json:"cleanup_interval_hours"`
+	LastCleanupAt           *time.Time `json:"last_cleanup_at,omitempty"`
+	LastCheckedAt           *time.Time `json:"last_checked_at,omitempty"`
+	Status                  string     `gorm:"size:32;not null" json:"status"`
+	LastError               string     `gorm:"size:512" json:"last_error,omitempty"`
+	EncryptedHTTPProxy      string     `gorm:"type:text" json:"-"`
+	EncryptedHTTPSProxy     string     `gorm:"type:text" json:"-"`
+	NoProxy                 string     `gorm:"size:1024" json:"no_proxy,omitempty"`
+	LastDiagnosticStatus    string     `gorm:"size:64" json:"last_diagnostic_status,omitempty"`
+	LastDiagnosticError     string     `gorm:"size:512" json:"last_diagnostic_error,omitempty"`
+	LastDiagnosticAt        *time.Time `json:"last_diagnostic_at,omitempty"`
+	OutboundProxyConfigured bool       `gorm:"-" json:"outbound_proxy_configured"`
+	CreatedBy               uint       `gorm:"index;not null" json:"created_by"`
+	CreatedAt               time.Time  `json:"created_at"`
+	UpdatedAt               time.Time  `json:"updated_at"`
+}
+
+// ClusterDNSPolicy stores the platform-managed external CoreDNS forward
+// targets. CoreDNS's remaining Corefile stays K3s-owned.
+type ClusterDNSPolicy struct {
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	Resolvers string    `gorm:"type:text;not null" json:"resolvers"`
+	Revision  uint      `gorm:"uniqueIndex;not null" json:"revision"`
+	Active    bool      `gorm:"not null;default:true" json:"active"`
+	CreatedBy uint      `json:"created_by"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // SystemComponentConfig 记录 K3s 内置系统组件的持久化期望配置，以及保存时

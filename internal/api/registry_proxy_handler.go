@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"net"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cylism/cylism-manager/internal/crypto"
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/gin-gonic/gin"
@@ -19,12 +21,18 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/tools/remotecommand"
 )
 
 const registryProxyNamespace = "kube-system"
 const registryProxyName = "cylism-registry-proxy"
 
-type RegistryProxyHandler struct{ store *store.Store }
+type RegistryProxyHandler struct {
+	store     *store.Store
+	encKey    []byte
+	diagnoser registryProxyDiagnoser
+}
 
 type registryProxyRequest struct {
 	Name                 string `json:"name"`
@@ -35,10 +43,34 @@ type registryProxyRequest struct {
 	NodePort             int32  `json:"node_port"`
 	CacheLimitGi         int32  `json:"cache_limit_gi"`
 	CleanupIntervalHours int32  `json:"cleanup_interval_hours"`
+	HTTPProxy            string `json:"http_proxy"`
+	HTTPSProxy           string `json:"https_proxy"`
+	NoProxy              string `json:"no_proxy"`
+	ClearOutboundProxy   bool   `json:"clear_outbound_proxy"`
 }
 
-func NewRegistryProxyHandler(s *store.Store) *RegistryProxyHandler {
-	return &RegistryProxyHandler{store: s}
+type registryProxyDiagnostic struct {
+	Status      string   `json:"status"`
+	ResolvedIPs []string `json:"resolved_ips"`
+	HTTPStatus  string   `json:"http_status,omitempty"`
+	ElapsedMS   int64    `json:"elapsed_ms"`
+	Summary     string   `json:"summary"`
+}
+
+type registryProxyDiagnoser func(context.Context, *model.RegistryProxy) (registryProxyDiagnostic, error)
+
+func NewRegistryProxyHandler(s *store.Store, encKey ...[]byte) *RegistryProxyHandler {
+	h := &RegistryProxyHandler{store: s}
+	if len(encKey) > 0 {
+		h.encKey = encKey[0]
+	}
+	h.diagnoser = h.diagnoseFromProxyPod
+	return h
+}
+
+func (h *RegistryProxyHandler) WithDiagnoser(diagnoser registryProxyDiagnoser) *RegistryProxyHandler {
+	h.diagnoser = diagnoser
+	return h
 }
 
 func (h *RegistryProxyHandler) Get(c *gin.Context) {
@@ -55,6 +87,7 @@ func (h *RegistryProxyHandler) Get(c *gin.Context) {
 		_ = h.store.SaveRegistryProxy(proxy)
 	}
 	h.refreshStatus(c.Request.Context(), proxy)
+	h.redactProxy(proxy)
 	model.Success(c, proxy)
 }
 
@@ -69,6 +102,7 @@ func (h *RegistryProxyHandler) List(c *gin.Context) {
 			_ = h.store.SaveRegistryProxy(&proxies[index])
 		}
 		h.refreshStatus(c.Request.Context(), &proxies[index])
+		h.redactProxy(&proxies[index])
 	}
 	model.Success(c, proxies)
 }
@@ -111,6 +145,10 @@ func (h *RegistryProxyHandler) Deploy(c *gin.Context) {
 	proxy.Name, proxy.Registry, proxy.UpstreamURL = strings.TrimSpace(req.Name), normalizeRegistry(req.Registry), normalizedRegistryProxyUpstream(req)
 	proxy.NodeName, proxy.EndpointHost, proxy.NodePort = req.NodeName, req.EndpointHost, req.NodePort
 	proxy.CacheLimitGi, proxy.CleanupIntervalHours = req.CacheLimitGi, req.CleanupIntervalHours
+	if err := h.setOutboundProxy(proxy, req); err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		return
+	}
 	proxy.Status, proxy.LastError = "deploying", ""
 	if err := h.store.SaveRegistryProxy(proxy); err != nil {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "保存代理配置失败")
@@ -129,6 +167,7 @@ func (h *RegistryProxyHandler) Deploy(c *gin.Context) {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "部署镜像代理失败: "+err.Error())
 		return
 	}
+	h.redactProxy(proxy)
 	model.SuccessWithMessage(c, proxy, "镜像代理已提交部署，稍后可在节点镜像源中使用该地址")
 }
 
@@ -156,6 +195,36 @@ func (h *RegistryProxyHandler) Cleanup(c *gin.Context) {
 		return
 	}
 	model.SuccessWithMessage(c, proxy, "代理 Pod 已重建，临时缓存正在清理")
+}
+
+// Diagnose probes only the configured upstream from a Ready Pod belonging to
+// this managed proxy. It accepts no caller-controlled network target or argv.
+func (h *RegistryProxyHandler) Diagnose(c *gin.Context) {
+	proxy, err := h.proxyForRequest(c)
+	if err != nil || K8s == nil || K8s.Clientset == nil {
+		model.Error(c, http.StatusNotFound, model.CodeNotFound, "镜像代理不存在或集群未连接")
+		return
+	}
+	h.normalize(proxy)
+	diagnostic, err := h.diagnoser(c.Request.Context(), proxy)
+	if err != nil {
+		proxy.LastDiagnosticStatus = "diagnostic_failed"
+		proxy.LastDiagnosticError = "代理出网诊断失败"
+		now := time.Now()
+		proxy.LastDiagnosticAt = &now
+		_ = h.store.SaveRegistryProxy(proxy)
+		model.Error(c, http.StatusBadGateway, model.CodeK8sAPIError, "代理出网诊断失败")
+		return
+	}
+	proxy.LastDiagnosticStatus = diagnostic.Status
+	proxy.LastDiagnosticError = truncateProxyDiagnosticText(diagnostic.Summary)
+	now := time.Now()
+	proxy.LastDiagnosticAt = &now
+	if err := h.store.SaveRegistryProxy(proxy); err != nil {
+		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "保存代理诊断结果失败")
+		return
+	}
+	model.Success(c, diagnostic)
 }
 
 // MigrateResourceName recreates the legacy Docker Hub resources using the per-instance naming scheme.
@@ -246,6 +315,63 @@ func (h *RegistryProxyHandler) refreshStatus(ctx context.Context, proxy *model.R
 	_ = h.store.SaveRegistryProxy(proxy)
 }
 
+func (h *RegistryProxyHandler) redactProxy(proxy *model.RegistryProxy) {
+	proxy.OutboundProxyConfigured = proxy.EncryptedHTTPProxy != "" || proxy.EncryptedHTTPSProxy != ""
+	proxy.EncryptedHTTPProxy = ""
+	proxy.EncryptedHTTPSProxy = ""
+}
+
+func (h *RegistryProxyHandler) setOutboundProxy(proxy *model.RegistryProxy, req registryProxyRequest) error {
+	if req.ClearOutboundProxy {
+		proxy.EncryptedHTTPProxy, proxy.EncryptedHTTPSProxy, proxy.NoProxy = "", "", ""
+		return nil
+	}
+	if strings.TrimSpace(req.HTTPProxy) != "" {
+		if err := validateOutboundProxyURL(req.HTTPProxy); err != nil {
+			return err
+		}
+		if len(h.encKey) != 32 {
+			return fmt.Errorf("平台加密密钥不可用，无法保存出网代理")
+		}
+		encoded, err := crypto.Encrypt(h.encKey, strings.TrimSpace(req.HTTPProxy))
+		if err != nil {
+			return fmt.Errorf("加密 HTTP 出网代理失败")
+		}
+		proxy.EncryptedHTTPProxy = encoded
+	}
+	if strings.TrimSpace(req.HTTPSProxy) != "" {
+		if err := validateOutboundProxyURL(req.HTTPSProxy); err != nil {
+			return err
+		}
+		if len(h.encKey) != 32 {
+			return fmt.Errorf("平台加密密钥不可用，无法保存出网代理")
+		}
+		encoded, err := crypto.Encrypt(h.encKey, strings.TrimSpace(req.HTTPSProxy))
+		if err != nil {
+			return fmt.Errorf("加密 HTTPS 出网代理失败")
+		}
+		proxy.EncryptedHTTPSProxy = encoded
+	}
+	if req.HTTPProxy == "" && req.HTTPSProxy == "" && proxy.ID == 0 {
+		proxy.EncryptedHTTPProxy, proxy.EncryptedHTTPSProxy = "", ""
+	}
+	if len(req.NoProxy) > 1024 || strings.ContainsAny(req.NoProxy, "\r\n") {
+		return fmt.Errorf("NO_PROXY 配置无效")
+	}
+	if req.NoProxy != "" || proxy.ID == 0 {
+		proxy.NoProxy = strings.TrimSpace(req.NoProxy)
+	}
+	return nil
+}
+
+func validateOutboundProxyURL(raw string) error {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Hostname() == "" || parsed.RawQuery != "" || parsed.Fragment != "" || len(raw) > 512 {
+		return fmt.Errorf("出网代理必须是无查询参数的 HTTP 或 HTTPS 地址")
+	}
+	return nil
+}
+
 func (h *RegistryProxyHandler) clearCache(ctx context.Context, proxy *model.RegistryProxy, reason string) error {
 	if err := K8s.Clientset.CoreV1().Pods(registryProxyNamespace).DeleteCollection(ctx, metav1.DeleteOptions{}, metav1.ListOptions{LabelSelector: "app.kubernetes.io/name=" + proxyResourceName(proxy)}); err != nil {
 		return fmt.Errorf("%s失败: %w", reason, err)
@@ -273,7 +399,11 @@ func (h *RegistryProxyHandler) apply(ctx context.Context, proxy *model.RegistryP
 	labels := map[string]string{"app.kubernetes.io/managed-by": "cylism-manager", "app.kubernetes.io/name": resourceName, "cylism.io/registry": proxy.Registry}
 	cacheLimit := resource.MustParse(strconv.Itoa(int(proxy.CacheLimitGi)) + "Gi")
 	replicas := int32(1)
-	deployment := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: registryProxyNamespace, Labels: labels}, Spec: appsv1.DeploymentSpec{Replicas: &replicas, Selector: &metav1.LabelSelector{MatchLabels: labels}, Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: labels}, Spec: corev1.PodSpec{NodeSelector: map[string]string{corev1.LabelHostname: proxy.NodeName}, Volumes: []corev1.Volume{{Name: "cache", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{SizeLimit: &cacheLimit}}}}, Containers: []corev1.Container{{Name: "registry", Image: "registry:2.8", Ports: []corev1.ContainerPort{{ContainerPort: 5000}}, Env: []corev1.EnvVar{{Name: "REGISTRY_PROXY_REMOTEURL", Value: proxy.UpstreamURL}, {Name: "REGISTRY_STORAGE_FILESYSTEM_ROOTDIRECTORY", Value: "/var/lib/registry"}}, VolumeMounts: []corev1.VolumeMount{{Name: "cache", MountPath: "/var/lib/registry"}}, Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("100m"), corev1.ResourceMemory: resource.MustParse("128Mi")}, Limits: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("500m"), corev1.ResourceMemory: resource.MustParse("512Mi")}}, ReadinessProbe: &corev1.Probe{ProbeHandler: corev1.ProbeHandler{HTTPGet: &corev1.HTTPGetAction{Path: "/v2/", Port: intstr.FromInt(5000)}}, InitialDelaySeconds: 3, PeriodSeconds: 5}}}}}}}
+	env, err := h.proxyEnvironment(proxy)
+	if err != nil {
+		return err
+	}
+	deployment := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: registryProxyNamespace, Labels: labels}, Spec: appsv1.DeploymentSpec{Replicas: &replicas, Selector: &metav1.LabelSelector{MatchLabels: labels}, Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: labels}, Spec: corev1.PodSpec{NodeSelector: map[string]string{corev1.LabelHostname: proxy.NodeName}, Volumes: []corev1.Volume{{Name: "cache", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{SizeLimit: &cacheLimit}}}}, Containers: []corev1.Container{{Name: "registry", Image: "registry:2.8", Ports: []corev1.ContainerPort{{ContainerPort: 5000}}, Env: env, VolumeMounts: []corev1.VolumeMount{{Name: "cache", MountPath: "/var/lib/registry"}}, Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("100m"), corev1.ResourceMemory: resource.MustParse("128Mi")}, Limits: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("500m"), corev1.ResourceMemory: resource.MustParse("512Mi")}}, ReadinessProbe: &corev1.Probe{ProbeHandler: corev1.ProbeHandler{HTTPGet: &corev1.HTTPGetAction{Path: "/v2/", Port: intstr.FromInt(5000)}}, InitialDelaySeconds: 3, PeriodSeconds: 5}}}}}}}
 	service := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: registryProxyNamespace, Labels: labels}, Spec: corev1.ServiceSpec{Type: corev1.ServiceTypeNodePort, Selector: labels, Ports: []corev1.ServicePort{{Name: "registry", Port: 5000, TargetPort: intstr.FromInt(5000), NodePort: proxy.NodePort}}}}
 	if current, err := K8s.Clientset.AppsV1().Deployments(registryProxyNamespace).Get(ctx, resourceName, metav1.GetOptions{}); err == nil {
 		deployment.ResourceVersion = current.ResourceVersion
@@ -293,8 +423,114 @@ func (h *RegistryProxyHandler) apply(ctx context.Context, proxy *model.RegistryP
 	} else if !apierrors.IsNotFound(err) {
 		return err
 	}
-	_, err := K8s.Clientset.CoreV1().Services(registryProxyNamespace).Create(ctx, service, metav1.CreateOptions{})
+	_, err = K8s.Clientset.CoreV1().Services(registryProxyNamespace).Create(ctx, service, metav1.CreateOptions{})
 	return err
+}
+
+func (h *RegistryProxyHandler) proxyEnvironment(proxy *model.RegistryProxy) ([]corev1.EnvVar, error) {
+	env := []corev1.EnvVar{{Name: "REGISTRY_PROXY_REMOTEURL", Value: proxy.UpstreamURL}, {Name: "REGISTRY_STORAGE_FILESYSTEM_ROOTDIRECTORY", Value: "/var/lib/registry"}}
+	for _, configured := range []struct {
+		name, value string
+	}{{"HTTP_PROXY", proxy.EncryptedHTTPProxy}, {"HTTPS_PROXY", proxy.EncryptedHTTPSProxy}} {
+		if configured.value == "" {
+			continue
+		}
+		if len(h.encKey) != 32 {
+			return nil, fmt.Errorf("平台加密密钥不可用，无法读取出网代理")
+		}
+		value, err := crypto.Decrypt(h.encKey, configured.value)
+		if err != nil {
+			return nil, fmt.Errorf("读取出网代理失败")
+		}
+		env = append(env, corev1.EnvVar{Name: configured.name, Value: value})
+	}
+	if proxy.NoProxy != "" {
+		env = append(env, corev1.EnvVar{Name: "NO_PROXY", Value: proxy.NoProxy})
+	}
+	return env, nil
+}
+
+func (h *RegistryProxyHandler) diagnoseFromProxyPod(ctx context.Context, proxy *model.RegistryProxy) (registryProxyDiagnostic, error) {
+	if K8s == nil || K8s.Clientset == nil || K8s.Config == nil {
+		return registryProxyDiagnostic{}, fmt.Errorf("Kubernetes exec unavailable")
+	}
+	pods, err := K8s.Clientset.CoreV1().Pods(registryProxyNamespace).List(ctx, metav1.ListOptions{LabelSelector: "app.kubernetes.io/name=" + proxyResourceName(proxy)})
+	if err != nil {
+		return registryProxyDiagnostic{}, err
+	}
+	for index := range pods.Items {
+		pod := &pods.Items[index]
+		if !podReady(*pod) {
+			continue
+		}
+		return h.execProxyDiagnostic(ctx, pod.Name, proxy.UpstreamURL)
+	}
+	return registryProxyDiagnostic{Status: "proxy_not_ready", Summary: "镜像代理没有就绪的 Pod"}, nil
+}
+
+func (h *RegistryProxyHandler) execProxyDiagnostic(ctx context.Context, podName, upstream string) (registryProxyDiagnostic, error) {
+	parsed, err := url.Parse(upstream)
+	if err != nil || parsed.Hostname() == "" {
+		return registryProxyDiagnostic{}, fmt.Errorf("invalid upstream")
+	}
+	// upstream is validated when the managed proxy is created. The command itself
+	// is fixed; the only dynamic argument is passed as quoted data to the helper.
+	command := []string{"sh", "-c", "host=$1; started=$(date +%s%3N); ips=$(getent ahostsv4 \"$host\" 2>/dev/null | awk '{print $1}' | sort -u | head -8 | tr '\\n' ','); code=$(curl -ksS -o /dev/null -w '%{http_code}' --connect-timeout 5 --max-time 10 \"https://$host/v2/\" 2>/dev/null || true); elapsed=$(( $(date +%s%3N) - started )); printf 'ips=%s;http=%s;elapsed=%s\\n' \"$ips\" \"$code\" \"$elapsed\"", "diagnose", parsed.Hostname()}
+	req := K8s.Clientset.CoreV1().RESTClient().Post().Resource("pods").Namespace(registryProxyNamespace).Name(podName).SubResource("exec").VersionedParams(&corev1.PodExecOptions{Container: "registry", Command: command, Stdout: true, Stderr: true}, scheme.ParameterCodec)
+	executor, err := remotecommand.NewSPDYExecutor(K8s.Config, http.MethodPost, req.URL())
+	if err != nil {
+		return registryProxyDiagnostic{}, err
+	}
+	var stdout, stderr bytes.Buffer
+	started := time.Now()
+	if err := executor.StreamWithContext(ctx, remotecommand.StreamOptions{Stdout: &stdout, Stderr: &stderr}); err != nil {
+		return registryProxyDiagnostic{Status: "diagnostic_failed", ElapsedMS: time.Since(started).Milliseconds(), Summary: "代理 Pod 内探测命令失败"}, nil
+	}
+	return parseProxyDiagnostic(stdout.String(), time.Since(started).Milliseconds()), nil
+}
+
+func parseProxyDiagnostic(output string, fallbackElapsed int64) registryProxyDiagnostic {
+	result := registryProxyDiagnostic{Status: "dns_resolution_failed", ElapsedMS: fallbackElapsed, Summary: "代理 Pod 未能解析上游 Registry"}
+	for _, field := range strings.Split(strings.TrimSpace(output), ";") {
+		parts := strings.SplitN(field, "=", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		switch parts[0] {
+		case "ips":
+			for _, ip := range strings.Split(strings.TrimSuffix(parts[1], ","), ",") {
+				if net.ParseIP(ip) != nil {
+					result.ResolvedIPs = append(result.ResolvedIPs, ip)
+				}
+			}
+		case "http":
+			result.HTTPStatus = strings.TrimSpace(parts[1])
+		case "elapsed":
+			if value, err := strconv.ParseInt(strings.TrimSpace(parts[1]), 10, 64); err == nil && value >= 0 {
+				result.ElapsedMS = value
+			}
+		}
+	}
+	if len(result.ResolvedIPs) == 0 {
+		return result
+	}
+	switch result.HTTPStatus {
+	case "200", "401":
+		result.Status, result.Summary = "healthy", "代理 Pod 可访问上游 Registry"
+	case "":
+		result.Status, result.Summary = "upstream_connect_timeout", "上游 Registry 连接超时或不可达"
+	default:
+		result.Status, result.Summary = "upstream_http_error", "上游 Registry 返回异常 HTTP 状态"
+	}
+	return result
+}
+
+func truncateProxyDiagnosticText(value string) string {
+	value = strings.TrimSpace(value)
+	if len(value) > 512 {
+		return value[:512]
+	}
+	return value
 }
 
 func validateRegistryProxyRequest(req registryProxyRequest) error {

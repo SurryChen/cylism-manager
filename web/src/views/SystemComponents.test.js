@@ -14,7 +14,8 @@ const item = (overrides = {}) => ({
   apply_error: '',
   controller_mode: 'static_deployment',
   detection_evidence: ['发现同名 Deployment kube-system/coredns'],
-  capabilities: { configure: true, node_placement: true, rollout: true, restore: true },
+  capabilities: { configure: true, node_placement: true, rollout: true, replica_scaling: true, safe_baseline: true, restore: true },
+  availability: { default_replicas: 1, high_availability: true, node_placement: true, description: '支持高可用；启用前需要至少两个可调度节点。' },
   deployment: {
     replicas: 1,
     ready_replicas: 1,
@@ -47,7 +48,7 @@ describe('SystemComponents', () => {
     const wrapper = mount(SystemComponents)
     await flushPromises()
     await wrapper.findAll('button').find(button => button.text() === '配置').trigger('click')
-    await wrapper.findAll('.modal-actions button').find(button => button.text() === '安全滚动基线').trigger('click')
+    await wrapper.findAll('.modal-actions button').find(button => button.text() === '高可用滚动基线').trigger('click')
     expect(wrapper.get('input[type="number"]').element.value).toBe('2')
     expect(wrapper.findAll('.form-select')[0].element.value).toBe('0')
     expect(wrapper.findAll('.form-select')[1].element.value).toBe('1')
@@ -103,16 +104,17 @@ describe('SystemComponents', () => {
     expect(wrapper.text()).toContain('配置与实际状态不一致，请重新保存')
   })
 
-  it('uses the detected static deployment capability instead of a component-name special case', async () => {
+  it('does not offer a generic double-replica baseline for an unsupported static component', async () => {
     apiMocks.get.mockResolvedValue([
-      item({ chart_name: 'metrics-server', controller_mode: 'static_deployment', capabilities: { configure: true, node_placement: true, rollout: true, restore: true } }),
+      item({ chart_name: 'metrics-server', controller_mode: 'static_deployment', capabilities: { configure: true, node_placement: false, rollout: true, restore: true, replica_scaling: false, safe_baseline: false }, availability: { default_replicas: 1, high_availability: false, node_placement: false, description: '副本由 K3s 管理，平台不提供通用双副本基线。' } }),
     ])
     const wrapper = mount(SystemComponents)
     await flushPromises()
     expect(wrapper.text()).toContain('K3s 静态组件')
-    expect(wrapper.text()).not.toContain('迁移')
+    expect(wrapper.text()).toContain('副本由 K3s 管理')
     await wrapper.findAll('button').find(button => button.text() === '配置').trigger('click')
-    expect(wrapper.find('[data-testid="coredns-node-selector"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="coredns-node-selector"]').exists()).toBe(false)
+    expect(wrapper.findAll('.modal-actions button').some(button => button.text() === '高可用滚动基线')).toBe(false)
   })
 
   it('keeps an unknown control source read-only', async () => {

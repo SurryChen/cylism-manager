@@ -45,7 +45,10 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 	r.GET("/api/agent/v1/pvcs/get", gin.WrapF(agentHandler.PVCGet))
 	r.GET("/api/agent/v1/nodes/get", gin.WrapF(agentHandler.NodeGet))
 	r.GET("/api/agent/v1/registries/status", gin.WrapF(agentHandler.RegistryStatus))
+	r.GET("/api/agent/v1/registries/proxy-diagnose", gin.WrapF(agentHandler.RegistryProxyDiagnose))
 	r.GET("/api/agent/v1/images/diagnose", gin.WrapF(agentHandler.ImageDiagnose))
+	r.GET("/api/agent/v1/dns/status", gin.WrapF(agentHandler.DNSStatus))
+	r.GET("/api/agent/v1/dns/resolve", gin.WrapF(agentHandler.DNSResolve))
 	r.GET("/api/agent/v1/registries/node-verify", gin.WrapF(agentHandler.RegistryNodeVerify))
 	r.POST("/api/agent/v1/registries/node-pull-check", gin.WrapF(agentHandler.RegistryNodePullCheck))
 	r.POST("/api/agent/v1/deployments/scale", gin.WrapF(agentHandler.DeploymentScale))
@@ -68,6 +71,7 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 	runtimeHandler := NewRuntimeHandler(s, encKey, runtimepkg.NewKubernetesManager(K8s, runtimeRegistry), runtimeRegistry)
 	agentOperationHandler := NewAgentOperationHandler(s, K8s).WithRegistryPullExecutor(defaultAgentRegistryPullExecutor(encKey))
 	systemComponentHandler := NewSystemComponentHandler(s)
+	clusterDNSHandler := NewClusterDNSHandler(s)
 	runtimes := apiGroup.Group("/runtimes")
 	{
 		runtimes.GET("/catalog", runtimeHandler.Catalog)
@@ -95,6 +99,12 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 		systemComponents.GET("", systemComponentHandler.List)
 		systemComponents.PUT("/:chart", systemComponentHandler.Update)
 		systemComponents.POST("/:chart/revert", systemComponentHandler.Revert)
+	}
+	clusterDNS := apiGroup.Group("/cluster-dns")
+	{
+		clusterDNS.GET("", clusterDNSHandler.Status)
+		clusterDNS.POST("", clusterDNSHandler.Apply)
+		clusterDNS.POST("/history/:revision/rollback", clusterDNSHandler.Rollback)
 	}
 	platformHandler := NewPlatformHandler(s, encKey)
 	go platformHandler.Reconcile()
@@ -155,7 +165,7 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 		nodeRegistryMirrors.POST("/:id/apply", h.Apply)
 		nodeRegistryMirrors.GET("/:id/apply-status", h.ApplyStatus)
 	}
-	registryProxyHandler := NewRegistryProxyHandler(s)
+	registryProxyHandler := NewRegistryProxyHandler(s, encKey)
 	go registryProxyHandler.Reconcile()
 	registryProxy := apiGroup.Group("/registry-proxy")
 	{
@@ -169,6 +179,7 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 		registryProxies.POST("", registryProxyHandler.Deploy)
 		registryProxies.PUT("/:id", registryProxyHandler.Deploy)
 		registryProxies.POST("/:id/cleanup", registryProxyHandler.Cleanup)
+		registryProxies.POST("/:id/diagnose", registryProxyHandler.Diagnose)
 		registryProxies.POST("/:id/migrate-resource-name", registryProxyHandler.MigrateResourceName)
 	}
 	chartRepositories := apiGroup.Group("/chart-repositories")
