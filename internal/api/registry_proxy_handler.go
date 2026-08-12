@@ -527,7 +527,7 @@ func (h *RegistryProxyHandler) execProxyDiagnostic(ctx context.Context, podName,
 	}
 	// The registry image includes BusyBox wget but not curl. Keep the command
 	// fixed and pass the validated upstream host only as a positional argument.
-	command := []string{"sh", "-c", `host=$1; started=$(date +%s%3N); ips=$(getent ahostsv4 "$host" 2>/dev/null | awk '{print $1}' | sort -u | head -8 | tr '\n' ','); tool=missing; output=; http=; if command -v curl >/dev/null 2>&1; then tool=curl; output=$(curl -ksS -o /dev/null -w '%{http_code}' --connect-timeout 5 --max-time 10 "https://$host/v2/" 2>&1); elif command -v wget >/dev/null 2>&1; then tool=wget; output=$(wget -S --no-check-certificate -T 10 -t 1 -O /dev/null "https://$host/v2/" 2>&1); http=$(printf '%s\n' "$output" | awk '/^  HTTP\// {code=$2} /^HTTP\// {code=$2} END {print code}'); fi; status=upstream_http_error; if [ "$tool" = missing ]; then status=command_missing; elif [ -z "$ips" ]; then status=dns_resolution_failed; elif [ "$http" = 200 ] || [ "$http" = 401 ]; then status=healthy; elif printf '%s' "$output" | grep -qiE 'timed out|connection timed out'; then status=upstream_connect_timeout; elif printf '%s' "$output" | grep -qiE 'certificate|tls|ssl'; then status=upstream_tls_failed; fi; elapsed=$(( $(date +%s%3N) - started )); printf 'status=%s;tool=%s;ips=%s;http=%s;elapsed=%s\n' "$status" "$tool" "$ips" "$http" "$elapsed"`, "diagnose", parsed.Hostname()}
+	command := registryProxyDiagnosticCommand(parsed.Hostname())
 	req := K8s.Clientset.CoreV1().RESTClient().Post().Resource("pods").Namespace(registryProxyNamespace).Name(podName).SubResource("exec").VersionedParams(&corev1.PodExecOptions{Container: "registry", Command: command, Stdout: true, Stderr: true}, scheme.ParameterCodec)
 	executor, err := remotecommand.NewSPDYExecutor(K8s.Config, http.MethodPost, req.URL())
 	if err != nil {
@@ -539,6 +539,10 @@ func (h *RegistryProxyHandler) execProxyDiagnostic(ctx context.Context, podName,
 		return registryProxyDiagnostic{Status: "diagnostic_failed", ElapsedMS: time.Since(started).Milliseconds(), Summary: "代理 Pod 内探测命令失败"}, nil
 	}
 	return parseProxyDiagnostic(stdout.String(), time.Since(started).Milliseconds()), nil
+}
+
+func registryProxyDiagnosticCommand(host string) []string {
+	return []string{"sh", "-c", `host=$1; started=$(date +%s%3N); ips=$(getent ahostsv4 "$host" 2>/dev/null | awk '{print $1}' | sort -u | head -8 | tr '\n' ','); tool=missing; output=; http=; if command -v curl >/dev/null 2>&1; then tool=curl; output=$(curl -ksS -o /dev/null -w '%{http_code}' --connect-timeout 5 --max-time 10 "https://$host/v2/" 2>&1); http=$output; elif command -v wget >/dev/null 2>&1; then tool=wget; output=$(wget -S --no-check-certificate -T 10 -t 1 -O /dev/null "https://$host/v2/" 2>&1); http=$(printf '%s\n' "$output" | awk '/^  HTTP\// {code=$2} /^HTTP\// {code=$2} END {print code}'); fi; status=upstream_http_error; if [ "$tool" = missing ]; then status=command_missing; elif [ -z "$ips" ]; then status=dns_resolution_failed; elif [ "$http" = 200 ] || [ "$http" = 401 ]; then status=healthy; elif printf '%s' "$output" | grep -qiE 'timed out|connection timed out'; then status=upstream_connect_timeout; elif printf '%s' "$output" | grep -qiE 'certificate|tls|ssl'; then status=upstream_tls_failed; fi; elapsed=$(( $(date +%s%3N) - started )); printf 'status=%s;tool=%s;ips=%s;http=%s;elapsed=%s\n' "$status" "$tool" "$ips" "$http" "$elapsed"`, "diagnose", host}
 }
 
 func parseProxyDiagnostic(output string, fallbackElapsed int64) registryProxyDiagnostic {
