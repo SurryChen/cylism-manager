@@ -158,6 +158,27 @@ describe('RuntimeManagement', () => {
     expect(apiMocks.put).toHaveBeenCalledWith('/runtimes/1/agent-capability-grants', expect.objectContaining({ grants: expect.arrayContaining([expect.objectContaining({ capability: 'cluster.read', namespace: '*', enabled: true })]) }))
   })
 
+  it('exposes namespace-scoped event and storage diagnostic grants', async () => {
+    const enabledRuntime = { ...runtime(), agent_tool_enabled: true }
+    apiMocks.get.mockImplementation((path) => {
+      if (path === '/runtimes/catalog') return Promise.resolve([{ runtime_type: 'nanobot', display_name: 'nanobot', supported_model_protocols: ['responses', 'anthropic'] }])
+      if (path === '/nodes') return Promise.resolve([])
+      if (path === '/runtimes/1/agent-capability-grants' || path === '/runtimes/1/agent-operations') return Promise.resolve([])
+      if (path === '/k8s/namespace-names') return Promise.resolve([{ name: 'kube-system' }])
+      return Promise.resolve([enabledRuntime])
+    })
+    const wrapper = mount(RuntimeManagement, { global: { stubs: { Teleport: true } } })
+    await flushPromises()
+    await wrapper.get('.runtime-item').trigger('click')
+    await flushPromises()
+    await wrapper.get('.agent-permission-summary .btn').trigger('click')
+    for (const label of ['关联事件查询', '存储状态查询']) {
+      const row = wrapper.findAll('.agent-grant-modal-row').find(item => item.text().includes(label))
+      expect(row.exists()).toBe(true)
+      expect(row.find('input[value="kube-system"]').exists()).toBe(true)
+    }
+  })
+
   it('updates an installed controlled CLI through its dedicated action', async () => {
     const enabledRuntime = { ...runtime(), agent_tool_enabled: true }
     apiMocks.get.mockImplementation((path) => {

@@ -178,6 +178,8 @@ const (
 	AgentCapabilityClusterRead     = "cluster.read"
 	AgentCapabilityWorkloadRead    = "workload.read"
 	AgentCapabilityWorkloadLogs    = "workload.logs"
+	AgentCapabilityEventsRead      = "events.read"
+	AgentCapabilityStorageRead     = "storage.read"
 	AgentCapabilityDeploymentScale = "deployment.scale"
 )
 
@@ -185,6 +187,8 @@ var AgentCapabilities = map[string]struct{}{
 	AgentCapabilityClusterRead:     {},
 	AgentCapabilityWorkloadRead:    {},
 	AgentCapabilityWorkloadLogs:    {},
+	AgentCapabilityEventsRead:      {},
+	AgentCapabilityStorageRead:     {},
 	AgentCapabilityDeploymentScale: {},
 }
 

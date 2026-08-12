@@ -53,6 +53,26 @@ The system SHALL expose the authenticated Runtime's effective capability state t
 - **WHEN** an administrator revokes or changes a capability grant
 - **THEN** the next capability status query SHALL reflect the new effective state without requiring a Runtime restart
 
+### Requirement: Agent supports bounded Pending Pod diagnostics
+
+The system SHALL provide fixed, read-only CLI operations for Pod status, related Events, PVC status, and node status without exposing generic Kubernetes access. Pod status SHALL require `workload.read`; related Events SHALL require `events.read`; PVC status SHALL require `storage.read`; node status SHALL require cluster-scoped `cluster.read`.
+
+#### Scenario: Diagnose a Pending Pod
+
+- **WHEN** a Runtime with `workload.read` and `events.read` for `kube-system` requests a named Pod and its related Events
+- **THEN** the Manager SHALL return the Pod phase, bounded scheduling/container status fields, and at most 30 redacted Events for that Pod
+- **AND THEN** the Runtime SHALL not receive Pod environment variables, Secret values, kubeconfig, or arbitrary resource content
+
+#### Scenario: Out-of-scope diagnostic query
+
+- **WHEN** a Runtime requests a Pod, Event, or PVC outside the namespace granted for its corresponding capability
+- **THEN** the Manager SHALL deny the request before reading the resource
+
+#### Scenario: Node diagnosis
+
+- **WHEN** a Runtime with cluster-scoped `cluster.read` requests a named node
+- **THEN** the Manager SHALL return only Ready conditions, taints, schedulability, and allocatable resource summaries
+
 ### Requirement: The CLI exposes only registered platform operations
 
 The system SHALL provide `cylism-cli` as a JSON-oriented client with a fixed command and parameter schema for registered Agent platform operations.

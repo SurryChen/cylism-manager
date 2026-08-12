@@ -63,6 +63,34 @@ func TestRunCapabilityStatusUsesFixedAgentEndpoint(t *testing.T) {
 	}
 }
 
+func TestRunPendingPodDiagnosticCommandsUseFixedEndpoints(t *testing.T) {
+	tests := []struct {
+		args  []string
+		path  string
+		query string
+	}{
+		{[]string{"pod", "get", "--namespace", "kube-system", "--name", "local-path-provisioner", "--output", "json"}, "/api/agent/v1/pods/get", "name=local-path-provisioner&namespace=kube-system"},
+		{[]string{"event", "list", "--namespace", "kube-system", "--involved-kind", "pod", "--involved-name", "local-path-provisioner", "--limit", "20", "--output", "json"}, "/api/agent/v1/events/list", "involved_kind=pod&involved_name=local-path-provisioner&limit=20&namespace=kube-system"},
+		{[]string{"pvc", "get", "--namespace", "kube-system", "--name", "data", "--output", "json"}, "/api/agent/v1/pvcs/get", "name=data&namespace=kube-system"},
+		{[]string{"node", "get", "--name", "node-1", "--output", "json"}, "/api/agent/v1/nodes/get", "name=node-1"},
+	}
+	for _, test := range tests {
+		t.Run(test.args[0]+" "+test.args[1], func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodGet || r.URL.Path != test.path || r.URL.RawQuery != test.query {
+					t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
+				}
+				_, _ = w.Write([]byte(`{"status":"ok","summary":"diagnostic retrieved"}`))
+			}))
+			defer server.Close()
+			output := &bytes.Buffer{}
+			if code := Run(context.Background(), test.args, Config{BaseURL: server.URL, TokenFile: writeToken(t, "runtime-token")}, output); code != 0 {
+				t.Fatalf("expected success, got %d: %s", code, output.String())
+			}
+		})
+	}
+}
+
 func TestRunDeploymentScaleHasIdempotencyKeyAndExactBody(t *testing.T) {
 	var idempotencyKey string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

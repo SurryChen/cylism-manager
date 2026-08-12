@@ -17,6 +17,7 @@ func TestAgentCapabilityGrantsAreDenyByDefaultAndNamespaceScoped(t *testing.T) {
 	}
 	grants := []model.AgentCapabilityGrant{
 		{RuntimeID: 3, Capability: model.AgentCapabilityWorkloadRead, Namespace: "operations", Enabled: true},
+		{RuntimeID: 3, Capability: model.AgentCapabilityEventsRead, Namespace: "operations", Enabled: true},
 		{RuntimeID: 3, Capability: model.AgentCapabilityClusterRead, Namespace: "*", Enabled: true},
 	}
 	if err := s.ReplaceAgentCapabilityGrants(3, grants); err != nil {
@@ -27,6 +28,9 @@ func TestAgentCapabilityGrantsAreDenyByDefaultAndNamespaceScoped(t *testing.T) {
 	}
 	if granted, _ := s.HasAgentCapability(3, model.AgentCapabilityWorkloadRead, "other"); granted {
 		t.Fatal("unexpected grant outside namespace")
+	}
+	if granted, _ := s.HasAgentCapability(3, model.AgentCapabilityEventsRead, "operations"); !granted {
+		t.Fatal("expected namespace-scoped events grant")
 	}
 	if granted, _ := s.HasAgentCapability(3, model.AgentCapabilityClusterRead, ""); !granted {
 		t.Fatal("expected cluster-wide grant")

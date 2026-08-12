@@ -91,7 +91,7 @@ Manager 通过 Kubernetes TokenReview 校验 audience、namespace、ServiceAccou
 
 | 类别 | 首期操作 | 策略 |
 |---|---|---|
-| 诊断 | 集群摘要、应用/发布、工作负载、Pod、事件、Service/Endpoint、指标、限量日志、Secret 元数据 | 允许后同步返回 |
+| 诊断 | 集群摘要、工作负载、Pod 状态、关联事件、PVC 摘要、节点摘要、限量日志 | 允许后同步返回 |
 | 处置 | Deployment/StatefulSet 扩缩容、应用发布重试、应用或 Deployment 回滚 | 始终人工审批 |
 | 排除 | Secret 值、删除、节点操作、终端、任意配置修改 | 拒绝 |
 
@@ -113,6 +113,8 @@ Manager 通过 Kubernetes TokenReview 校验 audience、namespace、ServiceAccou
 不得将 Agent 请求转发到既有 Gin Handler。将 Handler 中的业务验证和 K8s 调用下沉到共享服务，浏览器 API 与 Agent API 分别做各自认证、输入 DTO 和审计。
 
 Runtime 详情页增加“Agent 能力”面板：能力开关、可选 namespace/application 范围、审批策略、最近调用和撤销。能力配置通过弹窗完成，避免在 Runtime 列表中展开大量权限细节。`cluster.read` 固定为集群范围；工作负载、日志和扩缩容允许选择一个或多个 namespace，也可选择 `*` 表示全部 namespace，`*` 与具体 namespace 互斥。保存时按 capability/scope 替换该 Runtime 的完整授权集合，撤销旧范围立即生效。
+
+Pending/启动失败诊断使用固定只读操作：`pod get` 在 `workload.read` 范围内返回 phase、调度 conditions、容器 waiting/terminated reason 和 PVC 引用；`event list` 在 `events.read` 范围内只允许查询 Pod 或 PVC 的关联事件，最多返回 30 条；`pvc get` 在 `storage.read` 范围内返回绑定状态和容量摘要；`node get` 使用集群范围 `cluster.read` 返回 Ready、taint、可调度状态与 allocatable 摘要。事件和状态消息被视为不可信文本，须脱敏并截断；这些操作不返回 Secret、完整 annotation、Pod env、kubeconfig 或任意资源内容。
 
 Agent API 提供 `GET /api/agent/v1/capabilities/status`，返回每个已注册 capability 的 `enabled`、有效 namespace 范围和 `approval_required`。Nanobot 通过固定 CLI 命令 `cylism-cli capability status --output json` 查询该状态，不读取 Manager 数据库或 Kubernetes 凭据。
 
