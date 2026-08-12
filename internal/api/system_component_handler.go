@@ -12,6 +12,7 @@ import (
 	"github.com/gin-gonic/gin"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"sigs.k8s.io/yaml"
 )
@@ -55,12 +56,60 @@ type staticDeploymentRollingUpdate struct {
 	MaxSurge       *intstr.IntOrString `json:"maxSurge"`
 }
 
-func componentCapabilities(mode k8s.ControllerMode) gin.H {
+// componentAvailabilityProfile describes the deliberately narrow set of
+// platform-owned availability actions. A static Deployment is not inherently
+// horizontally scalable, so controller mode must not decide this by itself.
+type componentAvailabilityProfile struct {
+	DefaultReplicas       int32
+	SupportsHA            bool
+	SupportsNodePlacement bool
+	Description           string
+}
+
+var systemComponentAvailabilityProfiles = map[string]componentAvailabilityProfile{
+	"coredns": {
+		DefaultReplicas:       1,
+		SupportsHA:            true,
+		SupportsNodePlacement: true,
+		Description:           "支持高可用；启用前需要至少两个可调度节点。",
+	},
+	"metrics-server": {
+		DefaultReplicas: 1,
+		Description:     "副本由 K3s 管理，平台不提供通用双副本基线。",
+	},
+	"local-path-provisioner": {
+		DefaultReplicas: 1,
+		Description:     "保持单个活动 provisioner，平台不提供通用双副本基线。",
+	},
+}
+
+func componentAvailability(chart string) componentAvailabilityProfile {
+	if profile, ok := systemComponentAvailabilityProfiles[chart]; ok {
+		return profile
+	}
+	return componentAvailabilityProfile{Description: "未定义高可用 profile，副本策略由组件自身管理。"}
+}
+
+func componentCapabilities(chart string, mode k8s.ControllerMode) gin.H {
+	profile := componentAvailability(chart)
+	static := mode == k8s.StaticDeploymentMode
 	return gin.H{
-		"configure":      mode == k8s.HelmChartMode || mode == k8s.StaticDeploymentMode,
-		"node_placement": mode == k8s.StaticDeploymentMode,
-		"rollout":        mode == k8s.StaticDeploymentMode,
-		"restore":        mode == k8s.HelmChartMode || mode == k8s.StaticDeploymentMode,
+		"configure":       mode == k8s.HelmChartMode || mode == k8s.StaticDeploymentMode,
+		"node_placement":  static && profile.SupportsNodePlacement,
+		"rollout":         static,
+		"replica_scaling": static && profile.SupportsHA,
+		"safe_baseline":   static && profile.SupportsHA,
+		"restore":         mode == k8s.HelmChartMode || mode == k8s.StaticDeploymentMode,
+	}
+}
+
+func componentAvailabilityPayload(chart string) gin.H {
+	profile := componentAvailability(chart)
+	return gin.H{
+		"default_replicas":  profile.DefaultReplicas,
+		"high_availability": profile.SupportsHA,
+		"node_placement":    profile.SupportsNodePlacement,
+		"description":       profile.Description,
 	}
 }
 
@@ -97,7 +146,8 @@ func (h *SystemComponentHandler) List(c *gin.Context) {
 			"lb_active":          false,
 			"controller_mode":    string(k8s.UnknownMode),
 			"detection_evidence": []string{},
-			"capabilities":       componentCapabilities(k8s.UnknownMode),
+			"capabilities":       componentCapabilities(chart, k8s.UnknownMode),
+			"availability":       componentAvailabilityPayload(chart),
 		}
 		if config := configs[chart]; config != nil {
 			item["values_content"] = config.ValuesContent
@@ -115,7 +165,7 @@ func (h *SystemComponentHandler) List(c *gin.Context) {
 		} else {
 			item["controller_mode"] = string(detection.Mode)
 			item["detection_evidence"] = detection.Evidence
-			item["capabilities"] = componentCapabilities(detection.Mode)
+			item["capabilities"] = componentCapabilities(chart, detection.Mode)
 			item["workload"] = workloadPayload(detection.Workload)
 			item["chart_ready"] = detection.ChartReady
 			item["chart_failed"] = detection.ChartFailed
@@ -223,6 +273,39 @@ func (h *SystemComponentHandler) applyStaticDeployment(ctx *gin.Context, namespa
 	if err := validateStaticDeploymentNode(config.NodeName); err != nil {
 		return err
 	}
+	profile := componentAvailability(name)
+	var deployment *appsv1.Deployment
+	if profile.SupportsHA {
+		deployment, err = K8s.Clientset.AppsV1().Deployments(namespace).Get(ctx.Request.Context(), name, metav1.GetOptions{})
+		if err != nil {
+			return fmt.Errorf("读取 %s 当前副本数失败: %w", name, err)
+		}
+		current := profile.DefaultReplicas
+		if deployment.Spec.Replicas != nil {
+			current = *deployment.Spec.Replicas
+		}
+		if config.Replicas > current {
+			if err := h.preflightHAIncrease(ctx, namespace, name, deployment, config); err != nil {
+				return err
+			}
+		}
+	}
+	if !profile.SupportsHA {
+		deployment, getErr := K8s.Clientset.AppsV1().Deployments(namespace).Get(ctx.Request.Context(), name, metav1.GetOptions{})
+		if getErr != nil {
+			return fmt.Errorf("读取 %s 当前副本数失败: %w", name, getErr)
+		}
+		current := profile.DefaultReplicas
+		if deployment.Spec.Replicas != nil {
+			current = *deployment.Spec.Replicas
+		}
+		if config.Replicas != current {
+			return fmt.Errorf("%s 副本由 K3s/组件 profile 管理，平台不支持修改为 %d 副本", name, config.Replicas)
+		}
+	}
+	if config.NodeName != "" && !profile.SupportsNodePlacement {
+		return fmt.Errorf("%s 不支持通过平台固定部署节点", name)
+	}
 	// Remove stale configs created by older Manager versions. A static component
 	// is controlled by its Deployment, so retaining a HelmChartConfig would make
 	// a future control-source change ambiguous.
@@ -232,6 +315,60 @@ func (h *SystemComponentHandler) applyStaticDeployment(ctx *gin.Context, namespa
 		}
 	}
 	return K8s.ApplyStaticDeploymentConfig(ctx.Request.Context(), namespace, name, config)
+}
+
+// preflightHAIncrease keeps the narrow CoreDNS HA baseline from turning a
+// healthy singleton into two replicas that are both unschedulable, unhealthy,
+// or pinned to one node. Kubernetes remains the final scheduler authority.
+func (h *SystemComponentHandler) preflightHAIncrease(ctx *gin.Context, namespace, name string, deployment *appsv1.Deployment, config k8s.StaticDeploymentConfig) error {
+	if config.Replicas < 2 {
+		return nil
+	}
+	if config.NodeName != "" {
+		return fmt.Errorf("%s 高可用副本不能固定在单个节点，请选择自动调度", name)
+	}
+	if deployment == nil || deployment.Status.ReadyReplicas < 1 || deployment.Status.AvailableReplicas < 1 {
+		return fmt.Errorf("%s 当前未健康，不允许在故障状态下增加副本", name)
+	}
+	nodes, err := K8s.Clientset.CoreV1().Nodes().List(ctx.Request.Context(), metav1.ListOptions{})
+	if err != nil {
+		return fmt.Errorf("读取节点预检状态失败: %w", err)
+	}
+	candidates := 0
+	for index := range nodes.Items {
+		node := &nodes.Items[index]
+		if node.Spec.Unschedulable || !systemComponentNodeReady(node) || node.Status.Allocatable.Cpu().IsZero() || node.Status.Allocatable.Memory().IsZero() {
+			continue
+		}
+		candidates++
+	}
+	if candidates < 2 {
+		return fmt.Errorf("%s 高可用需要至少 2 个 Ready、可调度且具备 CPU/内存可分配的节点，当前仅 %d 个", name, candidates)
+	}
+	pods, err := K8s.Clientset.CoreV1().Pods(namespace).List(ctx.Request.Context(), metav1.ListOptions{LabelSelector: "k8s-app=" + name})
+	if err != nil {
+		return fmt.Errorf("读取 %s Pod 预检状态失败: %w", name, err)
+	}
+	for index := range pods.Items {
+		for _, status := range pods.Items[index].Status.ContainerStatuses {
+			if status.State.Waiting == nil {
+				continue
+			}
+			if status.State.Waiting.Reason == "ErrImagePull" || status.State.Waiting.Reason == "ImagePullBackOff" || status.State.Waiting.Reason == "InvalidImageName" {
+				return fmt.Errorf("%s 存在镜像拉取失败，完成镜像源诊断后再增加副本", name)
+			}
+		}
+	}
+	return nil
+}
+
+func systemComponentNodeReady(node *corev1.Node) bool {
+	for _, condition := range node.Status.Conditions {
+		if condition.Type == corev1.NodeReady {
+			return condition.Status == corev1.ConditionTrue
+		}
+	}
+	return false
 }
 
 // systemComponentEffective 对比平台保存的期望值与 Deployment 实际生效值，

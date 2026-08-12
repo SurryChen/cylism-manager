@@ -26,6 +26,7 @@ async function mountHub(Component, path) {
       stubs: {
         Cluster: { template: '<div>节点内容</div>' },
         NodeRegistryMirrors: { template: '<div>镜像源内容</div>' },
+        ClusterDNS: { template: '<div>DNS 内容</div>' },
         ChartRepositories: { template: '<div>Chart 内容</div>' },
         Workloads: { template: '<div>工作负载内容</div>' },
         Services: { template: '<div>服务内容</div>' },
@@ -52,6 +53,12 @@ describe('Infrastructure aggregation hubs', () => {
     await wrapper.get('[data-testid="cluster-tab-chart-repositories"]').trigger('click')
     await flushPromises()
     expect(wrapper.text()).toContain('Chart 内容')
+  })
+
+  it('opens the Cluster DNS policy surface from the cluster hub', async () => {
+    const wrapper = await mountHub(ClusterHub, '/cluster?tab=dns')
+    expect(wrapper.get('[data-testid="cluster-tab-dns"]').classes()).toContain('is-active')
+    expect(wrapper.text()).toContain('DNS 内容')
   })
 
   it('uses a compact title and text navigation bar instead of a framed switcher', async () => {

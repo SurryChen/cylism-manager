@@ -94,6 +94,7 @@ const approvalWorking = ref(false)
 const pendingApprovals = ref([])
 const sessionsError = ref('')
 let sessionsRequestVersion = 0
+let approvalsRequestVersion = 0
 let messageSequence = 0
 
 const currentView = computed(() => sessionViews.value.get(currentSession.value) || null)
@@ -182,14 +183,15 @@ async function refreshSessions() {
 
 async function loadApprovals() {
   if (!props.runtime?.id) return
+  const requestVersion = ++approvalsRequestVersion
   approvalLoading.value = true
   try {
     const operations = (await agentOperations(props.runtime.id)) || []
-    pendingApprovals.value = operations.filter(operation => operation.status === 'pending_approval')
+    if (requestVersion === approvalsRequestVersion) pendingApprovals.value = operations.filter(operation => operation.status === 'pending_approval')
   } catch {
-    pendingApprovals.value = []
+    if (requestVersion === approvalsRequestVersion) pendingApprovals.value = []
   } finally {
-    approvalLoading.value = false
+    if (requestVersion === approvalsRequestVersion) approvalLoading.value = false
   }
 }
 
@@ -197,7 +199,17 @@ async function resolveApproval(operation, approve) {
   approvalWorking.value = true
   try {
     await resolveAgentOperation(operation.operation_id, approve)
+    ++approvalsRequestVersion
+    pendingApprovals.value = pendingApprovals.value.filter(item => item.operation_id !== operation.operation_id)
     await loadApprovals()
+  } catch (err) {
+    // A second browser tab may resolve the same immutable operation first.
+    // It is no longer actionable in this queue even when our refresh fails.
+    if (String(err?.message || '').includes('不再等待审批')) {
+      ++approvalsRequestVersion
+      pendingApprovals.value = pendingApprovals.value.filter(item => item.operation_id !== operation.operation_id)
+      await loadApprovals()
+    }
   } finally {
     approvalWorking.value = false
   }

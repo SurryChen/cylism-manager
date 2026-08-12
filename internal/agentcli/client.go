@@ -214,6 +214,32 @@ func parseCommand(args []string) (requestSpec, error) {
 			return requestSpec{}, errors.New("registry status requires --output json")
 		}
 		return requestSpec{method: http.MethodGet, path: "/api/agent/v1/registries/status"}, nil
+	case "registry proxy-diagnose":
+		flags := flag.NewFlagSet("registry proxy-diagnose", flag.ContinueOnError)
+		flags.SetOutput(io.Discard)
+		registry := flags.String("registry", "", "")
+		output := flags.String("output", "", "")
+		if err := flags.Parse(args[2:]); err != nil || flags.NArg() != 0 || *output != "json" || !validRegistry(*registry) {
+			return requestSpec{}, errors.New("registry proxy-diagnose requires a valid --registry and --output json")
+		}
+		return requestSpec{method: http.MethodGet, path: "/api/agent/v1/registries/proxy-diagnose", query: url.Values{"registry": {*registry}}}, nil
+	case "dns status":
+		flags := flag.NewFlagSet("dns status", flag.ContinueOnError)
+		flags.SetOutput(io.Discard)
+		output := flags.String("output", "", "")
+		if err := flags.Parse(args[2:]); err != nil || flags.NArg() != 0 || *output != "json" {
+			return requestSpec{}, errors.New("dns status requires --output json")
+		}
+		return requestSpec{method: http.MethodGet, path: "/api/agent/v1/dns/status"}, nil
+	case "dns resolve":
+		flags := flag.NewFlagSet("dns resolve", flag.ContinueOnError)
+		flags.SetOutput(io.Discard)
+		name := flags.String("name", "", "")
+		output := flags.String("output", "", "")
+		if err := flags.Parse(args[2:]); err != nil || flags.NArg() != 0 || *output != "json" || !validDNSDiagnosticName(*name) {
+			return requestSpec{}, errors.New("dns resolve requires an allowlisted --name and --output json")
+		}
+		return requestSpec{method: http.MethodGet, path: "/api/agent/v1/dns/resolve", query: url.Values{"name": {*name}}}, nil
 	case "image diagnose":
 		flags := flag.NewFlagSet("image diagnose", flag.ContinueOnError)
 		flags.SetOutput(io.Discard)
@@ -363,6 +389,15 @@ func validApprovalID(value string) bool {
 func validRegistry(value string) bool {
 	value = strings.TrimSpace(value)
 	return len(value) > 0 && len(value) <= 253 && regexp.MustCompile(`^[A-Za-z0-9](?:[-A-Za-z0-9.]*[A-Za-z0-9])?(?::[0-9]{1,5})?$`).MatchString(value)
+}
+
+func validDNSDiagnosticName(value string) bool {
+	switch strings.ToLower(strings.TrimSuffix(strings.TrimSpace(value), ".")) {
+	case "registry-1.docker.io", "registry.k8s.io", "ghcr.io":
+		return true
+	default:
+		return false
+	}
 }
 
 func errorEnvelope(requestID, summary string, retryable bool) Envelope {

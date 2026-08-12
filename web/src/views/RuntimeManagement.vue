@@ -159,6 +159,8 @@ const agentCapabilities = [
   { id: 'deployment.scale', label: 'Deployment 扩缩容', description: '始终需要管理员审批' },
   { id: 'registry.read', label: '镜像源诊断', description: '读取脱敏后的镜像源状态，并关联分析 Pod 镜像拉取失败原因', clusterScoped: true },
   { id: 'registry.verify', label: '节点镜像源连通性', description: '在已纳管节点验证已配置镜像源的 DNS 与 /v2/ 连通性', clusterScoped: true },
+  { id: 'dns.read', label: '集群 DNS 状态', description: '查看平台管理的 DNS 转发策略、CoreDNS 就绪状态和允许域名的最近解析结果', clusterScoped: true },
+  { id: 'registry.proxy_diagnose', label: '镜像代理出网诊断', description: '查看管理员从受管 Registry Proxy Pod 发起的最近出网诊断结果', clusterScoped: true },
   { id: 'registry.pull_check', label: '节点镜像拉取检测', description: '拉取平台配置的验证镜像，始终需要管理员审批', clusterScoped: true },
 ]
 const emptyAgentGrantState = () => Object.fromEntries(agentCapabilities.map(capability => [capability.id, { enabled: false, namespaces: [] }]))

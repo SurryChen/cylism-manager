@@ -58,7 +58,7 @@ func TestAgentCapabilityGrantsRejectNamespaceScopeForRegistryCapabilities(t *tes
 	if err != nil {
 		t.Fatalf("store: %v", err)
 	}
-	for _, capability := range []string{model.AgentCapabilityRegistryRead, model.AgentCapabilityRegistryVerify, model.AgentCapabilityRegistryPullCheck} {
+	for _, capability := range []string{model.AgentCapabilityRegistryRead, model.AgentCapabilityRegistryVerify, model.AgentCapabilityRegistryPullCheck, model.AgentCapabilityDNSRead, model.AgentCapabilityRegistryProxyDiagnose} {
 		if err := s.ReplaceAgentCapabilityGrants(3, []model.AgentCapabilityGrant{{RuntimeID: 3, Capability: capability, Namespace: "operations", Enabled: true}}); err == nil {
 			t.Fatalf("expected cluster-only scope rejection for %s", capability)
 		}

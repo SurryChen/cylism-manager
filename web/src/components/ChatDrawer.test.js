@@ -37,14 +37,34 @@ describe('ChatDrawer', () => {
   })
 
   it('shows and resolves pending operations in the chat approval panel', async () => {
-    apiMocks.agentOperations.mockResolvedValue([{ operation_id: 'op_1', status: 'pending_approval', summary: 'scale operations/api to 3 replicas', created_at: '2026-08-12T10:00:00Z' }])
+    apiMocks.agentOperations
+      .mockResolvedValueOnce([{ operation_id: 'op_1', status: 'pending_approval', summary: 'scale operations/api to 3 replicas', created_at: '2026-08-12T10:00:00Z' }])
+      .mockResolvedValueOnce([{ operation_id: 'op_1', status: 'pending_approval', summary: 'scale operations/api to 3 replicas', created_at: '2026-08-12T10:00:00Z' }])
+      .mockResolvedValueOnce([])
     const wrapper = mountDrawer()
     await flushPromises()
     expect(wrapper.find('.chat-action-count').text()).toBe('1')
     await wrapper.get('[aria-label="待审批操作"]').trigger('click')
     expect(wrapper.text()).toContain('scale operations/api to 3 replicas')
     await wrapper.get('.chat-approval-actions .btn-primary').trigger('click')
+    await flushPromises()
     expect(apiMocks.resolveAgentOperation).toHaveBeenCalledWith('op_1', true)
+    expect(wrapper.text()).toContain('暂无待审批操作')
+    expect(wrapper.find('.chat-action-count').exists()).toBe(false)
+  })
+
+  it('removes an operation already resolved by another approval view', async () => {
+    apiMocks.agentOperations
+      .mockResolvedValueOnce([{ operation_id: 'op_1', status: 'pending_approval', summary: 'scale operations/api to 3 replicas', created_at: '2026-08-12T10:00:00Z' }])
+      .mockResolvedValueOnce([{ operation_id: 'op_1', status: 'pending_approval', summary: 'scale operations/api to 3 replicas', created_at: '2026-08-12T10:00:00Z' }])
+      .mockResolvedValueOnce([])
+    apiMocks.resolveAgentOperation.mockRejectedValue(new Error('Agent 操作不再等待审批'))
+    const wrapper = mountDrawer()
+    await flushPromises()
+    await wrapper.get('[aria-label="待审批操作"]').trigger('click')
+    await wrapper.get('.chat-approval-actions .btn-primary').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('暂无待审批操作')
   })
 
   it('exposes a permission entry point from the chat header', async () => {

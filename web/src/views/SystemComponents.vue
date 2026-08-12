@@ -55,6 +55,7 @@
               <td>
                 <span class="badge" :class="configBadgeClass(item)">{{ configBadgeText(item) }}</span>
                 <small v-if="configNeedsAttention(item)" class="detail">{{ configIssueText(item) }}</small>
+                <small v-if="item.availability?.description" class="cell-secondary">{{ item.availability.description }}</small>
                 <small v-if="item.last_applied_at" class="cell-secondary">应用于 {{ formatTime(item.last_applied_at) }}</small>
               </td>
               <td>
@@ -76,7 +77,7 @@
         <form @submit.prevent="save">
           <div class="config-section-title">运行容量</div>
           <div class="form-row">
-            <div class="form-group">
+            <div v-if="canScale(editing) || !isStatic(editing)" class="form-group">
               <label class="form-label">副本数</label>
               <input v-model.number="form.replicas" type="number" min="1" class="form-input" placeholder="默认 1" />
             </div>
@@ -106,11 +107,11 @@
             <span class="form-hint">固定后所有副本都会调度到该节点，节点故障时可能影响服务。</span>
           </div>
           <p v-if="isStatic(editing)" class="baseline-hint">
-            推荐基线：2 副本、更新时保持可用（最大不可用 0、最大额外副本 1）。
+            {{ availabilityHint(editing) }}
           </p>
           <div class="modal-actions">
             <button type="button" class="btn" @click="close">取消</button>
-            <button v-if="isStatic(editing)" type="button" class="btn" @click="applyBaseline">安全滚动基线</button>
+            <button v-if="canApplyBaseline(editing)" type="button" class="btn" @click="applyBaseline">高可用滚动基线</button>
             <button type="submit" class="btn btn-primary" :disabled="saving">{{ saving ? '保存中...' : '保存配置' }}</button>
           </div>
         </form>
@@ -209,6 +210,14 @@ function canPlace(item) {
   return Boolean(item?.capabilities?.node_placement)
 }
 
+function canScale(item) {
+  return Boolean(item?.capabilities?.replica_scaling)
+}
+
+function canApplyBaseline(item) {
+  return Boolean(item?.capabilities?.safe_baseline)
+}
+
 function canRestore(item) {
   return Boolean(item?.capabilities?.restore)
 }
@@ -224,8 +233,12 @@ function controllerModeText(mode) {
 }
 
 function modalDescription(item) {
-  if (isStatic(item)) return '设置副本、滚动更新和节点调度。平台会在 K3s 重启后自动恢复这些设置。'
+  if (isStatic(item)) return canScale(item) ? '设置高可用副本、滚动更新和节点调度。平台会在 K3s 重启后自动恢复这些设置。' : '该组件副本策略由 K3s 或组件 profile 管理；平台仅允许配置受支持的滚动更新字段。'
   return '设置会写入 HelmChartConfig，并由 Helm 控制器负责生效。'
+}
+
+function availabilityHint(item) {
+  return item?.availability?.description || '未定义高可用 profile，副本策略由组件自身管理。'
 }
 
 function formatTime(value) {
@@ -269,10 +282,10 @@ function renderValues(form) {
     lines.push('  rollingUpdate:')
     lines.push(`    maxUnavailable: ${form.maxUnavailable}`)
     lines.push(`    maxSurge: ${form.maxSurge}`)
-    if (form.nodeName) {
+    if (canPlace(editing.value) && form.nodeName) {
       lines.push('nodeSelector:')
       lines.push(`  kubernetes.io/hostname: ${form.nodeName}`)
-    } else {
+    } else if (canPlace(editing.value)) {
       lines.push('nodeSelector: {}')
     }
     return lines.join('\n') + '\n'
@@ -293,7 +306,7 @@ function edit(item) {
 function applyBaseline() {
   form.value.maxUnavailable = '0'
   form.value.maxSurge = '1'
-  if (isStatic(editing.value)) form.value.replicas = 2
+  if (canApplyBaseline(editing.value)) form.value.replicas = 2
 }
 
 function close() {

@@ -101,6 +101,9 @@ func TestRunRegistryDiagnosticCommandsUseFixedEndpoints(t *testing.T) {
 		{"image diagnose --namespace kube-system --pod pending-pod --output json", "/api/agent/v1/images/diagnose", "namespace=kube-system&pod=pending-pod", http.MethodGet},
 		{"registry node-verify --node node-1 --registry registry.k8s.io --output json", "/api/agent/v1/registries/node-verify", "node=node-1&registry=registry.k8s.io", http.MethodGet},
 		{"registry node-pull-check --node node-1 --registry registry.k8s.io --output json", "/api/agent/v1/registries/node-pull-check", "", http.MethodPost},
+		{"registry proxy-diagnose --registry docker.io --output json", "/api/agent/v1/registries/proxy-diagnose", "registry=docker.io", http.MethodGet},
+		{"dns status --output json", "/api/agent/v1/dns/status", "", http.MethodGet},
+		{"dns resolve --name registry-1.docker.io --output json", "/api/agent/v1/dns/resolve", "name=registry-1.docker.io", http.MethodGet},
 	}
 	for _, test := range tests {
 		t.Run(test.args, func(t *testing.T) {

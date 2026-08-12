@@ -59,6 +59,9 @@ describe('Node registry mirrors view', () => {
     expect(wrapper.text()).toContain('registry.k8s.io')
     expect(wrapper.text()).toContain('https://registry.k8s.io')
 
+    await wrapper.get('[data-testid="diagnose-registry-proxy-2"]').trigger('click')
+    expect(api.post).toHaveBeenCalledWith('/registry-proxies/2/diagnose')
+
     await wrapper.get('[data-testid="verify-node-registry-mirror-1"]').trigger('click')
     expect(api.post).toHaveBeenCalledWith('/node-registry-mirrors/1/verify')
 

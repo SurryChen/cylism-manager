@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -18,6 +19,54 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
 )
+
+func TestRegistryProxyOutboundProxyIsEncryptedAndDiagnosticIsBounded(t *testing.T) {
+	st, err := store.New(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxy := &model.RegistryProxy{Name: "Docker Hub", Registry: "docker.io", UpstreamURL: "https://registry-1.docker.io", ResourceName: "cylism-registry-proxy-1", NodeName: "node-a", EndpointHost: "100.64.0.8", NodePort: 30500, CacheLimitGi: 2, CleanupIntervalHours: 24, Status: "ready"}
+	if err := st.SaveRegistryProxy(proxy); err != nil {
+		t.Fatal(err)
+	}
+	original := K8s
+	K8s = &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node-a"}})}
+	defer func() { K8s = original }()
+	handler := NewRegistryProxyHandler(st, []byte("01234567890123456789012345678901")).WithDiagnoser(func(_ context.Context, _ *model.RegistryProxy) (registryProxyDiagnostic, error) {
+		return registryProxyDiagnostic{Status: "upstream_connect_timeout", ResolvedIPs: []string{"128.121.243.75"}, ElapsedMS: 5000, Summary: "upstream timed out"}, nil
+	})
+	router := gin.New()
+	router.PUT("/api/registry-proxies/:id", handler.Deploy)
+	router.POST("/api/registry-proxies/:id/diagnose", handler.Diagnose)
+	router.GET("/api/registry-proxies", handler.List)
+
+	payload := `{"name":"Docker Hub","registry":"docker.io","node_name":"node-a","endpoint_host":"100.64.0.8","node_port":30500,"cache_limit_gi":2,"cleanup_interval_hours":24,"http_proxy":"http://user:secret@proxy.internal:3128","no_proxy":".cluster.local"}`
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, rawJSONRequest(http.MethodPut, "/api/registry-proxies/1", payload))
+	if response.Code != http.StatusOK {
+		t.Fatalf("update response: %d %s", response.Code, response.Body.String())
+	}
+	stored, err := st.GetRegistryProxyByID(proxy.ID)
+	if err != nil || stored.EncryptedHTTPProxy == "" || strings.Contains(stored.EncryptedHTTPProxy, "secret") {
+		t.Fatalf("proxy must be encrypted: %#v err=%v", stored, err)
+	}
+
+	response = httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/registry-proxies/1/diagnose", nil))
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "upstream_connect_timeout") {
+		t.Fatalf("diagnostic response: %d %s", response.Code, response.Body.String())
+	}
+
+	response = httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/registry-proxies", nil))
+	if response.Code != http.StatusOK || strings.Contains(response.Body.String(), "user:secret") || !strings.Contains(response.Body.String(), `"outbound_proxy_configured":true`) {
+		t.Fatalf("unsafe proxy list: %d %s", response.Code, response.Body.String())
+	}
+	var body map[string]any
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode list response: %v", err)
+	}
+}
 
 func TestRegistryProxyHandlerDeploysIndependentUpstreamInstances(t *testing.T) {
 	st, err := store.New(":memory:")

@@ -33,6 +33,7 @@ type AgentHandler struct {
 		GetAgentOperation(operationID string) (*model.AgentOperation, error)
 		ListNodeRegistryMirrors() ([]model.NodeRegistryMirror, error)
 		ListRegistryProxies() ([]model.RegistryProxy, error)
+		GetActiveClusterDNSPolicy() (*model.ClusterDNSPolicy, error)
 		ListServers() ([]model.Server, error)
 		CreateAuditLog(entry *model.AuditLog) error
 	}
@@ -48,6 +49,7 @@ func NewAgentHandler(store interface {
 	GetAgentOperation(operationID string) (*model.AgentOperation, error)
 	ListNodeRegistryMirrors() ([]model.NodeRegistryMirror, error)
 	ListRegistryProxies() ([]model.RegistryProxy, error)
+	GetActiveClusterDNSPolicy() (*model.ClusterDNSPolicy, error)
 	ListServers() ([]model.Server, error)
 	CreateAuditLog(entry *model.AuditLog) error
 }, client *k8s.Client, authenticator AgentAuthenticator) *AgentHandler {
@@ -402,6 +404,135 @@ func (h *AgentHandler) RegistryStatus(w http.ResponseWriter, r *http.Request) {
 	writeAgentResponse(w, http.StatusOK, agentAPIResponse{Status: "ok", Data: agentRegistryStatus(mirrors, proxies), Summary: "registry status retrieved"})
 }
 
+// DNSStatus returns only the platform-managed forwarding state and CoreDNS
+// readiness. It does not expose the Corefile or permit Runtime-initiated DNS
+// or Kubernetes exec requests.
+func (h *AgentHandler) DNSStatus(w http.ResponseWriter, r *http.Request) {
+	instance, ok := h.authenticate(w, r)
+	if !ok {
+		return
+	}
+	if !h.requireCapability(w, instance, model.AgentCapabilityDNSRead, "") {
+		return
+	}
+	if h.client == nil || h.client.Clientset == nil {
+		writeAgentError(w, http.StatusServiceUnavailable, "Kubernetes client unavailable", true)
+		return
+	}
+	configMap, err := h.client.Clientset.CoreV1().ConfigMaps(coreDNSNamespace).Get(r.Context(), coreDNSConfigMap, metav1.GetOptions{})
+	if err != nil {
+		writeAgentError(w, http.StatusBadGateway, "CoreDNS configuration unavailable", true)
+		return
+	}
+	pods, err := h.client.Clientset.CoreV1().Pods(coreDNSNamespace).List(r.Context(), metav1.ListOptions{LabelSelector: "k8s-app=kube-dns"})
+	if err != nil {
+		writeAgentError(w, http.StatusBadGateway, "CoreDNS status unavailable", true)
+		return
+	}
+	ready, total := 0, len(pods.Items)
+	for index := range pods.Items {
+		if coreDNSPodReady(&pods.Items[index]) {
+			ready++
+		}
+	}
+	policy, err := h.store.GetActiveClusterDNSPolicy()
+	if err != nil && !strings.Contains(err.Error(), "record not found") {
+		writeAgentError(w, http.StatusInternalServerError, "DNS policy unavailable", true)
+		return
+	}
+	h.audit(instance, "agent.dns_status", map[string]string{"capability": model.AgentCapabilityDNSRead})
+	writeAgentResponse(w, http.StatusOK, agentAPIResponse{Status: "ok", Data: map[string]any{
+		"forwarding":    forwardTargets(configMap.Data["Corefile"]),
+		"active_policy": policyPayload(policy),
+		"coredns":       map[string]int{"ready": ready, "total": total},
+	}, Summary: "cluster DNS status retrieved"})
+}
+
+// DNSResolve reports the last controlled egress observation for a fixed image
+// registry hostname. It intentionally does not accept arbitrary DNS targets.
+func (h *AgentHandler) DNSResolve(w http.ResponseWriter, r *http.Request) {
+	instance, ok := h.authenticate(w, r)
+	if !ok {
+		return
+	}
+	name := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(r.URL.Query().Get("name")), "."))
+	registry, allowed := agentDNSRegistry(name)
+	if !allowed {
+		writeAgentError(w, http.StatusBadRequest, "DNS name is not allowlisted", false)
+		return
+	}
+	if !h.requireCapability(w, instance, model.AgentCapabilityDNSRead, "") {
+		return
+	}
+	proxies, err := h.store.ListRegistryProxies()
+	if err != nil {
+		writeAgentError(w, http.StatusInternalServerError, "registry DNS observation unavailable", true)
+		return
+	}
+	mirrors, err := h.store.ListNodeRegistryMirrors()
+	if err != nil {
+		writeAgentError(w, http.StatusInternalServerError, "registry DNS observation unavailable", true)
+		return
+	}
+	config, configured := agentResolveRegistry(registry, mirrors, proxies)
+	data := map[string]any{"name": name, "registry": registry, "configured": configured, "observation": "no managed egress observation"}
+	if configured && config.Proxy != nil {
+		data["observation"] = config.Proxy.LastDiagnosticStatus
+		data["summary"] = redactAgentText(truncateAgentText(config.Proxy.LastDiagnosticError, 256))
+		data["observed_at"] = config.Proxy.LastDiagnosticAt
+	}
+	h.audit(instance, "agent.dns_resolve", map[string]string{"capability": model.AgentCapabilityDNSRead, "name": name})
+	writeAgentResponse(w, http.StatusOK, agentAPIResponse{Status: "ok", Data: data, Summary: "managed DNS observation retrieved"})
+}
+
+// RegistryProxyDiagnose returns a redacted saved diagnostic. New egress probes
+// remain a browser-admin action against a selected managed proxy only.
+func (h *AgentHandler) RegistryProxyDiagnose(w http.ResponseWriter, r *http.Request) {
+	instance, ok := h.authenticate(w, r)
+	if !ok {
+		return
+	}
+	registry := r.URL.Query().Get("registry")
+	if !validAgentRegistry(registry) {
+		writeAgentError(w, http.StatusBadRequest, "invalid registry query", false)
+		return
+	}
+	if !h.requireCapability(w, instance, model.AgentCapabilityRegistryProxyDiagnose, "") {
+		return
+	}
+	proxies, err := h.store.ListRegistryProxies()
+	if err != nil {
+		writeAgentError(w, http.StatusInternalServerError, "registry proxy diagnostics unavailable", true)
+		return
+	}
+	registry = normalizeRegistry(registry)
+	for _, proxy := range proxies {
+		if normalizeRegistry(proxy.Registry) != registry {
+			continue
+		}
+		h.audit(instance, "agent.registry_proxy_diagnose", map[string]string{"capability": model.AgentCapabilityRegistryProxyDiagnose, "registry": registry})
+		writeAgentResponse(w, http.StatusOK, agentAPIResponse{Status: "ok", Data: map[string]any{
+			"registry": registry, "status": proxy.Status, "node": proxy.NodeName,
+			"diagnostic_status": proxy.LastDiagnosticStatus, "diagnostic_summary": redactAgentText(truncateAgentText(proxy.LastDiagnosticError, 256)), "diagnostic_at": proxy.LastDiagnosticAt,
+		}, Summary: "registry proxy diagnostic retrieved"})
+		return
+	}
+	writeAgentError(w, http.StatusNotFound, "managed registry proxy not found", false)
+}
+
+func agentDNSRegistry(name string) (string, bool) {
+	switch name {
+	case "registry-1.docker.io":
+		return "docker.io", true
+	case "registry.k8s.io":
+		return "registry.k8s.io", true
+	case "ghcr.io":
+		return "ghcr.io", true
+	default:
+		return "", false
+	}
+}
+
 // ImageDiagnose combines Pod image-pull state with Manager-owned registry state.
 func (h *AgentHandler) ImageDiagnose(w http.ResponseWriter, r *http.Request) {
 	instance, ok := h.authenticate(w, r)
@@ -450,9 +581,11 @@ func (h *AgentHandler) ImageDiagnose(w http.ResponseWriter, r *http.Request) {
 				entry["configuration_code"] = "mirror_unhealthy"
 			}
 		} else if config.Proxy != nil {
-			entry["proxy"] = map[string]any{"status": config.Proxy.Status, "node": config.Proxy.NodeName}
+			entry["proxy"] = map[string]any{"status": config.Proxy.Status, "node": config.Proxy.NodeName, "egress_status": config.Proxy.LastDiagnosticStatus}
 			if config.Proxy.Status != "ready" && config.Proxy.Status != "running" && config.Proxy.Status != "succeeded" {
 				entry["configuration_code"] = "registry_proxy_unready"
+			} else if config.Proxy.LastDiagnosticStatus == "upstream_connect_timeout" || config.Proxy.LastDiagnosticStatus == "dns_resolution_failed" {
+				entry["configuration_code"] = config.Proxy.LastDiagnosticStatus
 			}
 		}
 		diagnoses = append(diagnoses, entry)

@@ -12,6 +12,7 @@ import (
 	"github.com/gin-gonic/gin"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -40,8 +41,10 @@ func setupSystemComponentRouter(t *testing.T) (*gin.Engine, *store.Store) {
 	replicas := int32(1)
 	K8s = &k8s.Client{
 		Clientset: k8sfake.NewSimpleClientset(
-			&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "worker-b", Labels: map[string]string{corev1.LabelHostname: "worker-b"}}, Status: corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}}}},
-			&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "coredns", Namespace: "kube-system"}, Spec: appsv1.DeploymentSpec{Replicas: &replicas, Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{NodeSelector: map[string]string{"kubernetes.io/os": "linux"}}}}},
+			&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "worker-a", Labels: map[string]string{corev1.LabelHostname: "worker-a"}}, Status: corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}}, Allocatable: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("2"), corev1.ResourceMemory: resource.MustParse("4Gi")}}},
+			&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "worker-b", Labels: map[string]string{corev1.LabelHostname: "worker-b"}}, Status: corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}}, Allocatable: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("2"), corev1.ResourceMemory: resource.MustParse("4Gi")}}},
+			&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "coredns", Namespace: "kube-system"}, Spec: appsv1.DeploymentSpec{Replicas: &replicas, Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{NodeSelector: map[string]string{"kubernetes.io/os": "linux"}}}}, Status: appsv1.DeploymentStatus{ReadyReplicas: 1, AvailableReplicas: 1}},
+			&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "coredns-a", Namespace: "kube-system", Labels: map[string]string{"k8s-app": "coredns"}}, Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{{Name: "coredns", State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{}}}}}},
 		),
 		DynamicClient: dynamicfake.NewSimpleDynamicClient(systemComponentScheme(), &unstructured.Unstructured{Object: map[string]any{
 			"apiVersion": "helm.cattle.io/v1",
@@ -63,6 +66,21 @@ func setupSystemComponentRouter(t *testing.T) (*gin.Engine, *store.Store) {
 	group.PUT("/:chart", handler.Update)
 	group.POST("/:chart/revert", handler.Revert)
 	return router, s
+}
+
+func TestSystemComponentUpdateBlocksCoreDNSHAWhenPreflightFails(t *testing.T) {
+	router, _ := setupSystemComponentRouter(t)
+	if err := K8s.Clientset.CoreV1().Nodes().Delete(context.Background(), "worker-a", metav1.DeleteOptions{}); err != nil {
+		t.Fatalf("remove candidate node: %v", err)
+	}
+	response := serve(router, newJSONRequest(http.MethodPut, "/api/system-components/coredns", gin.H{"values_content": "replicas: 2\ndeploymentStrategy:\n  type: RollingUpdate\n  rollingUpdate:\n    maxUnavailable: 0\n    maxSurge: 1\n"}))
+	if response.Code != http.StatusBadGateway || !strings.Contains(response.Body.String(), "高可用需要至少 2 个") {
+		t.Fatalf("expected HA preflight rejection, got %d: %s", response.Code, response.Body.String())
+	}
+	deployment, err := K8s.Clientset.AppsV1().Deployments("kube-system").Get(context.Background(), "coredns", metav1.GetOptions{})
+	if err != nil || deployment.Spec.Replicas == nil || *deployment.Spec.Replicas != 1 {
+		t.Fatalf("preflight must not mutate deployment: %v %#v", err, deployment)
+	}
 }
 
 func TestSystemComponentListReturnsWhitelist(t *testing.T) {
@@ -89,7 +107,7 @@ func TestSystemComponentListReturnsWhitelist(t *testing.T) {
 
 func TestSystemComponentUpdatePersistsAndApplies(t *testing.T) {
 	router, s := setupSystemComponentRouter(t)
-	response := serve(router, newJSONRequest(http.MethodPut, "/api/system-components/coredns", gin.H{"values_content": "replicas: 2\ndeploymentStrategy:\n  type: RollingUpdate\n  rollingUpdate:\n    maxUnavailable: 0\n    maxSurge: 1\nnodeSelector:\n  kubernetes.io/hostname: worker-b\n"}))
+	response := serve(router, newJSONRequest(http.MethodPut, "/api/system-components/coredns", gin.H{"values_content": "replicas: 2\ndeploymentStrategy:\n  type: RollingUpdate\n  rollingUpdate:\n    maxUnavailable: 0\n    maxSurge: 1\n"}))
 	if response.Code != http.StatusOK {
 		t.Fatalf("update status = %d: %s", response.Code, response.Body.String())
 	}
@@ -101,8 +119,8 @@ func TestSystemComponentUpdatePersistsAndApplies(t *testing.T) {
 	if err != nil || deployment.Spec.Replicas == nil || *deployment.Spec.Replicas != 2 {
 		t.Fatalf("coredns deployment not updated: %v %#v", err, deployment)
 	}
-	if deployment.Spec.Template.Spec.NodeSelector[corev1.LabelHostname] != "worker-b" {
-		t.Fatalf("coredns was not pinned to worker-b: %#v", deployment.Spec.Template.Spec.NodeSelector)
+	if _, pinned := deployment.Spec.Template.Spec.NodeSelector[corev1.LabelHostname]; pinned {
+		t.Fatalf("CoreDNS HA must remain scheduler managed: %#v", deployment.Spec.Template.Spec.NodeSelector)
 	}
 	if deployment.Spec.Strategy.RollingUpdate == nil || deployment.Spec.Strategy.RollingUpdate.MaxUnavailable.IntValue() != 0 || deployment.Spec.Strategy.RollingUpdate.MaxSurge.IntValue() != 1 {
 		t.Fatalf("coredns rollout baseline missing: %#v", deployment.Spec.Strategy)
@@ -125,8 +143,8 @@ func TestSystemComponentUpdateKeepsHelmChartConfigForOtherCharts(t *testing.T) {
 	}
 }
 
-func TestSystemComponentUpdateUsesStaticDeploymentWhenNoHelmChartExists(t *testing.T) {
-	router, s := setupSystemComponentRouter(t)
+func TestSystemComponentUpdateRejectsUnsupportedStaticReplicaIncrease(t *testing.T) {
+	router, _ := setupSystemComponentRouter(t)
 	replicas := int32(1)
 	_, err := K8s.Clientset.AppsV1().Deployments("kube-system").Create(context.Background(), &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{Name: "metrics-server", Namespace: "kube-system"},
@@ -136,16 +154,26 @@ func TestSystemComponentUpdateUsesStaticDeploymentWhenNoHelmChartExists(t *testi
 		t.Fatalf("create metrics-server deployment: %v", err)
 	}
 	response := serve(router, newJSONRequest(http.MethodPut, "/api/system-components/metrics-server", gin.H{"values_content": "replicas: 2\nmaxUnavailable: 0\nmaxSurge: 1\n"}))
-	if response.Code != http.StatusOK {
-		t.Fatalf("update status = %d: %s", response.Code, response.Body.String())
+	if response.Code != http.StatusBadGateway || !strings.Contains(response.Body.String(), "副本由 K3s/组件 profile 管理") {
+		t.Fatalf("expected profile rejection, got %d: %s", response.Code, response.Body.String())
 	}
 	deployment, err := K8s.Clientset.AppsV1().Deployments("kube-system").Get(context.Background(), "metrics-server", metav1.GetOptions{})
-	if err != nil || deployment.Spec.Replicas == nil || *deployment.Spec.Replicas != 2 {
-		t.Fatalf("metrics server deployment not updated: %v %#v", err, deployment)
+	if err != nil || deployment.Spec.Replicas == nil || *deployment.Spec.Replicas != 1 {
+		t.Fatalf("metrics server replica count must remain unchanged: %v %#v", err, deployment)
 	}
-	config, err := s.GetSystemComponentConfig("metrics-server")
-	if err != nil || config.ControllerMode != string(k8s.StaticDeploymentMode) {
-		t.Fatalf("static config mode not persisted: %#v err=%v", config, err)
+}
+
+func TestSystemComponentListReportsComponentSpecificAvailability(t *testing.T) {
+	router, _ := setupSystemComponentRouter(t)
+	response := serve(router, newJSONRequest(http.MethodGet, "/api/system-components", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("list status = %d: %s", response.Code, response.Body.String())
+	}
+	if !strings.Contains(response.Body.String(), `"high_availability":true`) || !strings.Contains(response.Body.String(), `"safe_baseline":true`) {
+		t.Fatalf("coredns availability profile missing: %s", response.Body.String())
+	}
+	if !strings.Contains(response.Body.String(), `"local-path-provisioner"`) || !strings.Contains(response.Body.String(), `"high_availability":false`) {
+		t.Fatalf("singleton availability profile missing: %s", response.Body.String())
 	}
 }
 
@@ -167,7 +195,7 @@ func TestSystemComponentUpdateRejectsInvalidYAML(t *testing.T) {
 
 func TestSystemComponentRevertRestoresDefaults(t *testing.T) {
 	router, s := setupSystemComponentRouter(t)
-	_ = serve(router, newJSONRequest(http.MethodPut, "/api/system-components/coredns", gin.H{"values_content": "replicas: 2\ndeploymentStrategy:\n  type: RollingUpdate\n  rollingUpdate:\n    maxUnavailable: 0\n    maxSurge: 1\nnodeSelector:\n  kubernetes.io/hostname: worker-b\n"}))
+	_ = serve(router, newJSONRequest(http.MethodPut, "/api/system-components/coredns", gin.H{"values_content": "replicas: 1\ndeploymentStrategy:\n  type: RollingUpdate\n  rollingUpdate:\n    maxUnavailable: 0\n    maxSurge: 1\nnodeSelector:\n  kubernetes.io/hostname: worker-b\n"}))
 	response := serve(router, newJSONRequest(http.MethodPost, "/api/system-components/coredns/revert", nil))
 	if response.Code != http.StatusOK {
 		t.Fatalf("revert status = %d: %s", response.Code, response.Body.String())

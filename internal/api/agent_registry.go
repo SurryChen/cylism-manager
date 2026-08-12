@@ -46,6 +46,7 @@ func agentRegistryStatus(mirrors []model.NodeRegistryMirror, proxies []model.Reg
 		result["proxies"] = append(result["proxies"].([]map[string]any), map[string]any{
 			"registry": normalizeRegistry(proxy.Registry), "status": proxy.Status, "node": proxy.NodeName,
 			"endpoint": safeRegistryEndpoint("http://" + proxy.EndpointHost + fmt.Sprintf(":%d", proxy.NodePort)), "error": redactAgentText(truncateAgentText(proxy.LastError, 256)),
+			"egress_status": proxy.LastDiagnosticStatus, "egress_error": redactAgentText(truncateAgentText(proxy.LastDiagnosticError, 256)),
 		})
 	}
 	return result
