@@ -98,6 +98,22 @@ func (h *ClusterDNSHandler) Apply(c *gin.Context) {
 	model.SuccessWithMessage(c, policyPayload(policy), "集群 DNS 策略已应用，CoreDNS 将自动重载配置")
 }
 
+// Reset restores K3s's default resolver forwarding. The empty resolver list
+// is persisted as an inherited policy so the UI can distinguish reset from
+// an unavailable or unmanaged CoreDNS configuration.
+func (h *ClusterDNSHandler) Reset(c *gin.Context) {
+	if K8s == nil || K8s.Clientset == nil {
+		k8sUnavailable(c)
+		return
+	}
+	policy, err := h.applyResolvers(c, nil)
+	if err != nil {
+		model.Error(c, http.StatusBadGateway, model.CodeK8sAPIError, err.Error())
+		return
+	}
+	model.SuccessWithMessage(c, policyPayload(policy), "已恢复使用各节点宿主机 DNS")
+}
+
 func (h *ClusterDNSHandler) applyResolvers(c *gin.Context, resolvers []string) (*model.ClusterDNSPolicy, error) {
 	configMaps := K8s.Clientset.CoreV1().ConfigMaps(coreDNSNamespace)
 	configMap, err := configMaps.Get(c.Request.Context(), coreDNSConfigMap, metav1.GetOptions{})
@@ -113,7 +129,11 @@ func (h *ClusterDNSHandler) applyResolvers(c *gin.Context, resolvers []string) (
 	if _, err := configMaps.Update(c.Request.Context(), configMap, metav1.UpdateOptions{}); err != nil {
 		return nil, fmt.Errorf("更新 CoreDNS 配置失败")
 	}
-	encoded, _ := json.Marshal(resolvers)
+	encodedResolvers := resolvers
+	if encodedResolvers == nil {
+		encodedResolvers = []string{}
+	}
+	encoded, _ := json.Marshal(encodedResolvers)
 	policy := &model.ClusterDNSPolicy{Resolvers: string(encoded), CreatedBy: getUserID(c)}
 	if err := h.store.CreateClusterDNSPolicy(policy); err != nil {
 		configMap.Data["Corefile"] = previous
@@ -137,6 +157,15 @@ func (h *ClusterDNSHandler) Rollback(c *gin.Context) {
 		var resolvers []string
 		if json.Unmarshal([]byte(policy.Resolvers), &resolvers) != nil {
 			break
+		}
+		if len(resolvers) == 0 {
+			applied, applyErr := h.applyResolvers(c, nil)
+			if applyErr != nil {
+				model.Error(c, http.StatusBadGateway, model.CodeK8sAPIError, applyErr.Error())
+				return
+			}
+			model.SuccessWithMessage(c, policyPayload(applied), "DNS 策略已回滚为宿主机 DNS，CoreDNS 将自动重载配置")
+			return
 		}
 		resolvers, normalizeErr := normalizeDNSResolvers(resolvers)
 		if normalizeErr != nil {
@@ -179,9 +208,13 @@ func replaceCoreDNSForward(corefile string, resolvers []string) (string, error) 
 	if !coreDNSForwardPattern.MatchString(corefile) {
 		return "", fmt.Errorf("未找到可由平台管理的 CoreDNS forward . 指令")
 	}
+	targets := "/etc/resolv.conf"
+	if len(resolvers) > 0 {
+		targets = strings.Join(resolvers, " ")
+	}
 	return coreDNSForwardPattern.ReplaceAllStringFunc(corefile, func(line string) string {
 		matches := coreDNSForwardPattern.FindStringSubmatch(line)
-		return matches[1] + strings.Join(resolvers, " ") + matches[3]
+		return matches[1] + targets + matches[3]
 	}), nil
 }
 
