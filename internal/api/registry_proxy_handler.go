@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
@@ -35,18 +36,19 @@ type RegistryProxyHandler struct {
 }
 
 type registryProxyRequest struct {
-	Name                 string `json:"name"`
-	Registry             string `json:"registry"`
-	UpstreamURL          string `json:"upstream_url"`
-	NodeName             string `json:"node_name"`
-	EndpointHost         string `json:"endpoint_host"`
-	NodePort             int32  `json:"node_port"`
-	CacheLimitGi         int32  `json:"cache_limit_gi"`
-	CleanupIntervalHours int32  `json:"cleanup_interval_hours"`
-	HTTPProxy            string `json:"http_proxy"`
-	HTTPSProxy           string `json:"https_proxy"`
-	NoProxy              string `json:"no_proxy"`
-	ClearOutboundProxy   bool   `json:"clear_outbound_proxy"`
+	Name                 string   `json:"name"`
+	Registry             string   `json:"registry"`
+	UpstreamURL          string   `json:"upstream_url"`
+	NodeName             string   `json:"node_name"`
+	EndpointHost         string   `json:"endpoint_host"`
+	NodePort             int32    `json:"node_port"`
+	CacheLimitGi         int32    `json:"cache_limit_gi"`
+	CleanupIntervalHours int32    `json:"cleanup_interval_hours"`
+	HTTPProxy            string   `json:"http_proxy"`
+	HTTPSProxy           string   `json:"https_proxy"`
+	NoProxy              string   `json:"no_proxy"`
+	DNSServers           []string `json:"dns_servers"`
+	ClearOutboundProxy   bool     `json:"clear_outbound_proxy"`
 }
 
 type registryProxyDiagnostic struct {
@@ -124,6 +126,11 @@ func (h *RegistryProxyHandler) Deploy(c *gin.Context) {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
 		return
 	}
+	dnsServers, err := normalizeProxyDNSServers(req.DNSServers)
+	if err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		return
+	}
 	if _, err := K8s.Clientset.CoreV1().Nodes().Get(c.Request.Context(), req.NodeName, metav1.GetOptions{}); err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "部署节点不存在或未加入集群")
 		return
@@ -145,6 +152,12 @@ func (h *RegistryProxyHandler) Deploy(c *gin.Context) {
 	proxy.Name, proxy.Registry, proxy.UpstreamURL = strings.TrimSpace(req.Name), normalizeRegistry(req.Registry), normalizedRegistryProxyUpstream(req)
 	proxy.NodeName, proxy.EndpointHost, proxy.NodePort = req.NodeName, req.EndpointHost, req.NodePort
 	proxy.CacheLimitGi, proxy.CleanupIntervalHours = req.CacheLimitGi, req.CleanupIntervalHours
+	if len(dnsServers) == 0 {
+		proxy.DNSResolvers = ""
+	} else {
+		encoded, _ := json.Marshal(dnsServers)
+		proxy.DNSResolvers = string(encoded)
+	}
 	if err := h.setOutboundProxy(proxy, req); err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
 		return
@@ -317,8 +330,41 @@ func (h *RegistryProxyHandler) refreshStatus(ctx context.Context, proxy *model.R
 
 func (h *RegistryProxyHandler) redactProxy(proxy *model.RegistryProxy) {
 	proxy.OutboundProxyConfigured = proxy.EncryptedHTTPProxy != "" || proxy.EncryptedHTTPSProxy != ""
+	proxy.DNSServers = proxyDNSServers(proxy)
 	proxy.EncryptedHTTPProxy = ""
 	proxy.EncryptedHTTPSProxy = ""
+}
+
+func proxyDNSServers(proxy *model.RegistryProxy) []string {
+	if proxy.DNSResolvers == "" {
+		return nil
+	}
+	var servers []string
+	if json.Unmarshal([]byte(proxy.DNSResolvers), &servers) != nil {
+		return nil
+	}
+	return servers
+}
+
+func normalizeProxyDNSServers(raw []string) ([]string, error) {
+	if len(raw) > 3 {
+		return nil, fmt.Errorf("代理 DNS 最多配置 3 个地址")
+	}
+	seen := map[string]bool{}
+	result := make([]string, 0, len(raw))
+	for _, value := range raw {
+		value = strings.TrimSpace(value)
+		ip := net.ParseIP(value)
+		if ip == nil || ip.IsLoopback() || ip.IsUnspecified() {
+			return nil, fmt.Errorf("代理 DNS 必须是可路由的 IP 地址，不能使用 127.0.0.53")
+		}
+		value = ip.String()
+		if !seen[value] {
+			seen[value] = true
+			result = append(result, value)
+		}
+	}
+	return result, nil
 }
 
 func (h *RegistryProxyHandler) setOutboundProxy(proxy *model.RegistryProxy, req registryProxyRequest) error {
@@ -403,7 +449,13 @@ func (h *RegistryProxyHandler) apply(ctx context.Context, proxy *model.RegistryP
 	if err != nil {
 		return err
 	}
-	deployment := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: registryProxyNamespace, Labels: labels}, Spec: appsv1.DeploymentSpec{Replicas: &replicas, Selector: &metav1.LabelSelector{MatchLabels: labels}, Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: labels}, Spec: corev1.PodSpec{NodeSelector: map[string]string{corev1.LabelHostname: proxy.NodeName}, Volumes: []corev1.Volume{{Name: "cache", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{SizeLimit: &cacheLimit}}}}, Containers: []corev1.Container{{Name: "registry", Image: "registry:2.8", Ports: []corev1.ContainerPort{{ContainerPort: 5000}}, Env: env, VolumeMounts: []corev1.VolumeMount{{Name: "cache", MountPath: "/var/lib/registry"}}, Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("100m"), corev1.ResourceMemory: resource.MustParse("128Mi")}, Limits: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("500m"), corev1.ResourceMemory: resource.MustParse("512Mi")}}, ReadinessProbe: &corev1.Probe{ProbeHandler: corev1.ProbeHandler{HTTPGet: &corev1.HTTPGetAction{Path: "/v2/", Port: intstr.FromInt(5000)}}, InitialDelaySeconds: 3, PeriodSeconds: 5}}}}}}}
+	podSpec := corev1.PodSpec{NodeSelector: map[string]string{corev1.LabelHostname: proxy.NodeName}, Volumes: []corev1.Volume{{Name: "cache", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{SizeLimit: &cacheLimit}}}}, Containers: []corev1.Container{{Name: "registry", Image: "registry:2.8", Ports: []corev1.ContainerPort{{ContainerPort: 5000}}, Env: env, VolumeMounts: []corev1.VolumeMount{{Name: "cache", MountPath: "/var/lib/registry"}}, Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("100m"), corev1.ResourceMemory: resource.MustParse("128Mi")}, Limits: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("500m"), corev1.ResourceMemory: resource.MustParse("512Mi")}}, ReadinessProbe: &corev1.Probe{ProbeHandler: corev1.ProbeHandler{HTTPGet: &corev1.HTTPGetAction{Path: "/v2/", Port: intstr.FromInt(5000)}}, InitialDelaySeconds: 3, PeriodSeconds: 5}}}}
+	if dnsServers := proxyDNSServers(proxy); len(dnsServers) > 0 {
+		ndots := "1"
+		podSpec.DNSPolicy = corev1.DNSNone
+		podSpec.DNSConfig = &corev1.PodDNSConfig{Nameservers: dnsServers, Options: []corev1.PodDNSConfigOption{{Name: "ndots", Value: &ndots}}}
+	}
+	deployment := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: registryProxyNamespace, Labels: labels}, Spec: appsv1.DeploymentSpec{Replicas: &replicas, Selector: &metav1.LabelSelector{MatchLabels: labels}, Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: labels}, Spec: podSpec}}}
 	service := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: resourceName, Namespace: registryProxyNamespace, Labels: labels}, Spec: corev1.ServiceSpec{Type: corev1.ServiceTypeNodePort, Selector: labels, Ports: []corev1.ServicePort{{Name: "registry", Port: 5000, TargetPort: intstr.FromInt(5000), NodePort: proxy.NodePort}}}}
 	if current, err := K8s.Clientset.AppsV1().Deployments(registryProxyNamespace).Get(ctx, resourceName, metav1.GetOptions{}); err == nil {
 		deployment.ResourceVersion = current.ResourceVersion

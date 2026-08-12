@@ -123,6 +123,44 @@ func TestRegistryProxyHandlerDeploysIndependentUpstreamInstances(t *testing.T) {
 	}
 }
 
+func TestRegistryProxyHandlerUsesOnlyConfiguredPodDNS(t *testing.T) {
+	st, err := store.New(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := K8s
+	K8s = &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node-a"}})}
+	defer func() { K8s = original }()
+	handler := NewRegistryProxyHandler(st)
+	router := gin.New()
+	router.POST("/api/registry-proxies", handler.Deploy)
+
+	payload := `{"name":"Docker Hub","registry":"docker.io","node_name":"node-a","endpoint_host":"100.64.0.8","node_port":30500,"cache_limit_gi":2,"cleanup_interval_hours":24,"dns_servers":["10.0.0.2","10.0.0.3"]}`
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, rawJSONRequest(http.MethodPost, "/api/registry-proxies", payload))
+	if response.Code != http.StatusOK {
+		t.Fatalf("deploy response: %d %s", response.Code, response.Body.String())
+	}
+	proxy, err := st.GetRegistryProxy()
+	if err != nil || proxy.DNSResolvers != `["10.0.0.2","10.0.0.3"]` {
+		t.Fatalf("stored DNS: %#v err=%v", proxy, err)
+	}
+	deployment, err := K8s.Clientset.AppsV1().Deployments(registryProxyNamespace).Get(context.Background(), proxy.ResourceName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	podSpec := deployment.Spec.Template.Spec
+	if podSpec.DNSPolicy != corev1.DNSNone || podSpec.DNSConfig == nil || strings.Join(podSpec.DNSConfig.Nameservers, ",") != "10.0.0.2,10.0.0.3" {
+		t.Fatalf("expected independent DNS config: %#v", podSpec)
+	}
+}
+
+func TestNormalizeProxyDNSServersRejectsHostLoopback(t *testing.T) {
+	if _, err := normalizeProxyDNSServers([]string{"127.0.0.53"}); err == nil {
+		t.Fatal("expected loopback DNS to be rejected")
+	}
+}
+
 func TestRegistryProxyHandlerMigratesLegacyDockerHubResources(t *testing.T) {
 	st, err := store.New(":memory:")
 	if err != nil {

@@ -530,6 +530,8 @@ type RegistryProxy struct {
 	EncryptedHTTPProxy      string     `gorm:"type:text" json:"-"`
 	EncryptedHTTPSProxy     string     `gorm:"type:text" json:"-"`
 	NoProxy                 string     `gorm:"size:1024" json:"no_proxy,omitempty"`
+	DNSResolvers            string     `gorm:"type:text" json:"-"`
+	DNSServers              []string   `gorm:"-" json:"dns_servers,omitempty"`
 	LastDiagnosticStatus    string     `gorm:"size:64" json:"last_diagnostic_status,omitempty"`
 	LastDiagnosticError     string     `gorm:"size:512" json:"last_diagnostic_error,omitempty"`
 	LastDiagnosticAt        *time.Time `json:"last_diagnostic_at,omitempty"`
