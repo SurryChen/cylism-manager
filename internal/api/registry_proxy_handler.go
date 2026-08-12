@@ -525,9 +525,9 @@ func (h *RegistryProxyHandler) execProxyDiagnostic(ctx context.Context, podName,
 	if err != nil || parsed.Hostname() == "" {
 		return registryProxyDiagnostic{}, fmt.Errorf("invalid upstream")
 	}
-	// upstream is validated when the managed proxy is created. The command itself
-	// is fixed; the only dynamic argument is passed as quoted data to the helper.
-	command := []string{"sh", "-c", "host=$1; started=$(date +%s%3N); ips=$(getent ahostsv4 \"$host\" 2>/dev/null | awk '{print $1}' | sort -u | head -8 | tr '\\n' ','); code=$(curl -ksS -o /dev/null -w '%{http_code}' --connect-timeout 5 --max-time 10 \"https://$host/v2/\" 2>/dev/null || true); elapsed=$(( $(date +%s%3N) - started )); printf 'ips=%s;http=%s;elapsed=%s\\n' \"$ips\" \"$code\" \"$elapsed\"", "diagnose", parsed.Hostname()}
+	// The registry image includes BusyBox wget but not curl. Keep the command
+	// fixed and pass the validated upstream host only as a positional argument.
+	command := []string{"sh", "-c", `host=$1; started=$(date +%s%3N); ips=$(getent ahostsv4 "$host" 2>/dev/null | awk '{print $1}' | sort -u | head -8 | tr '\n' ','); tool=missing; output=; http=; if command -v curl >/dev/null 2>&1; then tool=curl; output=$(curl -ksS -o /dev/null -w '%{http_code}' --connect-timeout 5 --max-time 10 "https://$host/v2/" 2>&1); elif command -v wget >/dev/null 2>&1; then tool=wget; output=$(wget -S --no-check-certificate -T 10 -t 1 -O /dev/null "https://$host/v2/" 2>&1); http=$(printf '%s\n' "$output" | awk '/^  HTTP\// {code=$2} /^HTTP\// {code=$2} END {print code}'); fi; status=upstream_http_error; if [ "$tool" = missing ]; then status=command_missing; elif [ -z "$ips" ]; then status=dns_resolution_failed; elif [ "$http" = 200 ] || [ "$http" = 401 ]; then status=healthy; elif printf '%s' "$output" | grep -qiE 'timed out|connection timed out'; then status=upstream_connect_timeout; elif printf '%s' "$output" | grep -qiE 'certificate|tls|ssl'; then status=upstream_tls_failed; fi; elapsed=$(( $(date +%s%3N) - started )); printf 'status=%s;tool=%s;ips=%s;http=%s;elapsed=%s\n' "$status" "$tool" "$ips" "$http" "$elapsed"`, "diagnose", parsed.Hostname()}
 	req := K8s.Clientset.CoreV1().RESTClient().Post().Resource("pods").Namespace(registryProxyNamespace).Name(podName).SubResource("exec").VersionedParams(&corev1.PodExecOptions{Container: "registry", Command: command, Stdout: true, Stderr: true}, scheme.ParameterCodec)
 	executor, err := remotecommand.NewSPDYExecutor(K8s.Config, http.MethodPost, req.URL())
 	if err != nil {
@@ -542,13 +542,15 @@ func (h *RegistryProxyHandler) execProxyDiagnostic(ctx context.Context, podName,
 }
 
 func parseProxyDiagnostic(output string, fallbackElapsed int64) registryProxyDiagnostic {
-	result := registryProxyDiagnostic{Status: "dns_resolution_failed", ElapsedMS: fallbackElapsed, Summary: "代理 Pod 未能解析上游 Registry"}
+	result := registryProxyDiagnostic{Status: "diagnostic_failed", ElapsedMS: fallbackElapsed, Summary: "代理 Pod 未返回有效诊断结果"}
 	for _, field := range strings.Split(strings.TrimSpace(output), ";") {
 		parts := strings.SplitN(field, "=", 2)
 		if len(parts) != 2 {
 			continue
 		}
 		switch parts[0] {
+		case "status":
+			result.Status = strings.TrimSpace(parts[1])
 		case "ips":
 			for _, ip := range strings.Split(strings.TrimSuffix(parts[1], ","), ",") {
 				if net.ParseIP(ip) != nil {
@@ -563,16 +565,21 @@ func parseProxyDiagnostic(output string, fallbackElapsed int64) registryProxyDia
 			}
 		}
 	}
-	if len(result.ResolvedIPs) == 0 {
-		return result
-	}
-	switch result.HTTPStatus {
-	case "200", "401":
-		result.Status, result.Summary = "healthy", "代理 Pod 可访问上游 Registry"
-	case "":
-		result.Status, result.Summary = "upstream_connect_timeout", "上游 Registry 连接超时或不可达"
+	switch result.Status {
+	case "healthy":
+		result.Summary = "代理 Pod 可访问上游 Registry"
+	case "dns_resolution_failed":
+		result.Summary = "代理 Pod 未能解析上游 Registry"
+	case "upstream_connect_timeout":
+		result.Summary = "上游 Registry 连接超时或不可达"
+	case "upstream_tls_failed":
+		result.Summary = "上游 Registry TLS 握手或证书校验失败"
+	case "command_missing":
+		result.Summary = "代理镜像缺少可用的 HTTP 诊断命令"
+	case "upstream_http_error":
+		result.Summary = "上游 Registry 返回异常 HTTP 状态"
 	default:
-		result.Status, result.Summary = "upstream_http_error", "上游 Registry 返回异常 HTTP 状态"
+		result.Status, result.Summary = "diagnostic_failed", "代理 Pod 未返回有效诊断结果"
 	}
 	return result
 }

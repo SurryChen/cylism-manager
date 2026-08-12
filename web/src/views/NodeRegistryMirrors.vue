@@ -213,7 +213,7 @@ async function loadServers() {
 }
 
 function proxyStatusLabel(status) { return { ready: '就绪', deploying: '部署中', failed: '失败', missing: '缺失' }[status] || '未知' }
-function diagnosticStatusLabel(status) { return { healthy: '正常', proxy_not_ready: '未就绪', dns_resolution_failed: 'DNS 解析失败', upstream_connect_timeout: '上游连接超时', upstream_tls_failed: 'TLS 失败', upstream_http_error: '上游响应异常', diagnostic_failed: '诊断失败' }[status] || status }
+function diagnosticStatusLabel(status) { return { healthy: '正常', proxy_not_ready: '未就绪', dns_resolution_failed: 'DNS 解析失败', upstream_connect_timeout: '上游连接超时', upstream_tls_failed: 'TLS 失败', upstream_http_error: '上游响应异常', command_missing: '缺少诊断工具', diagnostic_failed: '诊断失败' }[status] || status }
 function isLegacyDockerHubProxy(item) { return item.registry === 'docker.io' && item.resource_name === 'cylism-registry-proxy' }
 async function loadProxies() { try { proxies.value = await api.get('/registry-proxies') || [] } catch (e) { error.value = e.message || '加载自建镜像代理失败' } }
 function openProxy(item = null) { editingProxy.value = item; proxyForm.value = item ? { name: item.name, registry: item.registry, upstream_url: item.upstream_url, node_name: item.node_name, endpoint_host: item.endpoint_host, node_port: item.node_port, cache_limit_gi: item.cache_limit_gi, cleanup_interval_hours: item.cleanup_interval_hours, dns_servers_text: (item.dns_servers || []).join(','), http_proxy: '', https_proxy: '', no_proxy: item.no_proxy || '', clear_outbound_proxy: false } : proxyBlank(); showProxyModal.value = true }
@@ -346,7 +346,7 @@ onBeforeUnmount(() => window.clearInterval(applyPollTimer))
 .mirror-modal { width:min(580px,calc(100vw - 32px)); }
 .proxy-panel { padding:var(--space-16) 0; border-bottom:1px solid var(--border-muted); }.section-heading { display:flex; justify-content:space-between; gap:var(--space-16); align-items:flex-start; }.section-heading h2 { margin:0; font-size:16px; }.section-heading p,.proxy-status small { margin:4px 0 0; color:var(--text-secondary); font-size:12px; }.proxy-list { display:grid; gap:10px; margin-top:12px; }.proxy-instance { padding:12px; border:1px solid var(--border-muted); border-radius:var(--radius-control); background:var(--surface-subtle); }.proxy-instance-heading { display:flex; align-items:center; gap:8px; }.proxy-status { display:flex; flex-wrap:wrap; gap:8px 14px; align-items:center; margin-top:8px; color:var(--text-secondary); font-size:13px; }.proxy-status small { width:100%; color:var(--danger); }.proxy-actions { margin-top:12px; }
 .proxy-modal { width:min(520px,calc(100vw - 32px)); }
-.egress-healthy { color:var(--success); }.egress-upstream_connect_timeout,.egress-dns_resolution_failed,.egress-diagnostic_failed { color:var(--danger); }
+.egress-healthy { color:var(--success); }.egress-upstream_connect_timeout,.egress-dns_resolution_failed,.egress-upstream_tls_failed,.egress-command_missing,.egress-diagnostic_failed { color:var(--danger); }
 .apply-modal { width:min(520px,calc(100vw - 32px)); }
 .node-selection { display:grid; gap:8px; max-height:300px; overflow:auto; margin-top:16px; }
 .node-option { display:flex; align-items:flex-start; gap:10px; padding:10px; border:1px solid var(--border-muted); border-radius:var(--radius-control); background:var(--surface-subtle); cursor:pointer; }
