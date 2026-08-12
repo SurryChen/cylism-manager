@@ -161,6 +161,25 @@ func TestNormalizeProxyDNSServersRejectsHostLoopback(t *testing.T) {
 	}
 }
 
+func TestParseProxyDiagnosticClassifiesProbeResults(t *testing.T) {
+	tests := []struct {
+		name, output, status string
+	}{
+		{"busybox wget registry response", "status=healthy;tool=wget;ips=52.4.106.100,;http=401;elapsed=35", "healthy"},
+		{"connect timeout", "status=upstream_connect_timeout;tool=wget;ips=52.4.106.100,;http=;elapsed=10020", "upstream_connect_timeout"},
+		{"missing command", "status=command_missing;tool=missing;ips=52.4.106.100,;http=;elapsed=1", "command_missing"},
+		{"invalid output", "not a diagnostic", "diagnostic_failed"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			result := parseProxyDiagnostic(test.output, 999)
+			if result.Status != test.status {
+				t.Fatalf("status = %q, want %q: %#v", result.Status, test.status, result)
+			}
+		})
+	}
+}
+
 func TestRegistryProxyHandlerMigratesLegacyDockerHubResources(t *testing.T) {
 	st, err := store.New(":memory:")
 	if err != nil {
