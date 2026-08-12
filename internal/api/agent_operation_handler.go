@@ -24,8 +24,12 @@ type AgentOperationHandler struct {
 		ListAgentOperations(runtimeID uint, limit int) ([]model.AgentOperation, error)
 		UpdateAgentOperationStatus(operationID, fromStatus, toStatus, errorSummary string, approvedBy *uint, completedAt *time.Time) (bool, error)
 		CreateAuditLog(entry *model.AuditLog) error
+		ListNodeRegistryMirrors() ([]model.NodeRegistryMirror, error)
+		ListRegistryProxies() ([]model.RegistryProxy, error)
+		ListServers() ([]model.Server, error)
 	}
-	client *k8s.Client
+	client               *k8s.Client
+	registryPullExecutor agentRegistryPullExecutor
 }
 
 func NewAgentOperationHandler(store interface {
@@ -36,8 +40,16 @@ func NewAgentOperationHandler(store interface {
 	ListAgentOperations(runtimeID uint, limit int) ([]model.AgentOperation, error)
 	UpdateAgentOperationStatus(operationID, fromStatus, toStatus, errorSummary string, approvedBy *uint, completedAt *time.Time) (bool, error)
 	CreateAuditLog(entry *model.AuditLog) error
+	ListNodeRegistryMirrors() ([]model.NodeRegistryMirror, error)
+	ListRegistryProxies() ([]model.RegistryProxy, error)
+	ListServers() ([]model.Server, error)
 }, client *k8s.Client) *AgentOperationHandler {
 	return &AgentOperationHandler{store: store, client: client}
+}
+
+func (h *AgentOperationHandler) WithRegistryPullExecutor(executor agentRegistryPullExecutor) *AgentOperationHandler {
+	h.registryPullExecutor = executor
+	return h
 }
 
 func (h *AgentOperationHandler) ListGrants(c *gin.Context) {
@@ -119,6 +131,10 @@ func (h *AgentOperationHandler) resolve(c *gin.Context, approve bool) {
 		model.SuccessWithMessage(c, gin.H{"operation_id": operation.OperationID, "status": model.AgentOperationRejected}, "Agent 操作已拒绝")
 		return
 	}
+	if operation.Capability == model.AgentCapabilityRegistryPullCheck {
+		h.resolveRegistryPullCheck(c, operation, userID)
+		return
+	}
 	if operation.Capability != model.AgentCapabilityDeploymentScale || h.client == nil || h.client.Clientset == nil {
 		model.Error(c, http.StatusServiceUnavailable, model.CodeK8sUnavailable, "Agent 操作执行器不可用")
 		return
@@ -154,6 +170,63 @@ func (h *AgentOperationHandler) resolve(c *gin.Context, approve bool) {
 	_, _ = h.store.UpdateAgentOperationStatus(operationID, model.AgentOperationApproved, model.AgentOperationSucceeded, "", nil, &now)
 	h.audit(operation.RuntimeID, userID, "agent.operation_executed", map[string]any{"operation_id": operation.OperationID})
 	model.SuccessWithMessage(c, gin.H{"operation_id": operation.OperationID, "status": model.AgentOperationSucceeded}, "Agent 操作已执行")
+}
+
+func (h *AgentOperationHandler) resolveRegistryPullCheck(c *gin.Context, operation *model.AgentOperation, userID uint) {
+	if h.registryPullExecutor == nil {
+		model.Error(c, http.StatusServiceUnavailable, model.CodeInternalError, "镜像拉取检测执行器不可用")
+		return
+	}
+	var parameters registryNodeRequest
+	if json.Unmarshal([]byte(operation.Parameters), &parameters) != nil {
+		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, "Agent 操作参数无效")
+		return
+	}
+	mirrors, err := h.store.ListNodeRegistryMirrors()
+	if err != nil {
+		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "读取镜像源配置失败")
+		return
+	}
+	proxies, err := h.store.ListRegistryProxies()
+	if err != nil {
+		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "读取镜像代理配置失败")
+		return
+	}
+	config, found := agentResolveRegistry(parameters.Registry, mirrors, proxies)
+	if !found || config.Mirror == nil || config.VerificationImage == "" || config.VerificationImage != parameters.VerificationImage {
+		h.markOperationStale(c, operation, "镜像源配置或验证镜像已变化，需要重新发起审批")
+		return
+	}
+	servers, err := h.store.ListServers()
+	if err != nil {
+		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "读取节点映射失败")
+		return
+	}
+	server, found := agentServerForNode(parameters.Node, servers)
+	if !found {
+		h.markOperationStale(c, operation, "目标节点不再由平台管理，需要重新发起审批")
+		return
+	}
+	changed, err := h.store.UpdateAgentOperationStatus(operation.OperationID, model.AgentOperationPendingApproval, model.AgentOperationApproved, "", &userID, nil)
+	if err != nil || !changed {
+		model.Error(c, http.StatusConflict, model.CodeConflict, "Agent 操作状态已变化")
+		return
+	}
+	if err := h.registryPullExecutor(server, config.VerificationImage); err != nil {
+		now := time.Now()
+		_, _ = h.store.UpdateAgentOperationStatus(operation.OperationID, model.AgentOperationApproved, model.AgentOperationFailed, "节点验证镜像拉取失败", nil, &now)
+		model.Error(c, http.StatusBadGateway, model.CodeInternalError, "节点验证镜像拉取失败")
+		return
+	}
+	now := time.Now()
+	_, _ = h.store.UpdateAgentOperationStatus(operation.OperationID, model.AgentOperationApproved, model.AgentOperationSucceeded, "", nil, &now)
+	h.audit(operation.RuntimeID, userID, "agent.operation_executed", map[string]any{"operation_id": operation.OperationID})
+	model.SuccessWithMessage(c, gin.H{"operation_id": operation.OperationID, "status": model.AgentOperationSucceeded}, "节点验证镜像已拉取")
+}
+
+func (h *AgentOperationHandler) markOperationStale(c *gin.Context, operation *model.AgentOperation, message string) {
+	_, _ = h.store.UpdateAgentOperationStatus(operation.OperationID, model.AgentOperationPendingApproval, model.AgentOperationStale, message, nil, nil)
+	model.Error(c, http.StatusConflict, model.CodeConflict, message)
 }
 
 func (h *AgentOperationHandler) runtimeExists(c *gin.Context, runtimeID uint) bool {

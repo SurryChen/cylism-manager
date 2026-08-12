@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -85,6 +86,43 @@ func TestRunPendingPodDiagnosticCommandsUseFixedEndpoints(t *testing.T) {
 			defer server.Close()
 			output := &bytes.Buffer{}
 			if code := Run(context.Background(), test.args, Config{BaseURL: server.URL, TokenFile: writeToken(t, "runtime-token")}, output); code != 0 {
+				t.Fatalf("expected success, got %d: %s", code, output.String())
+			}
+		})
+	}
+}
+
+func TestRunRegistryDiagnosticCommandsUseFixedEndpoints(t *testing.T) {
+	tests := []struct {
+		args, path, query string
+		method            string
+	}{
+		{"registry status --output json", "/api/agent/v1/registries/status", "", http.MethodGet},
+		{"image diagnose --namespace kube-system --pod pending-pod --output json", "/api/agent/v1/images/diagnose", "namespace=kube-system&pod=pending-pod", http.MethodGet},
+		{"registry node-verify --node node-1 --registry registry.k8s.io --output json", "/api/agent/v1/registries/node-verify", "node=node-1&registry=registry.k8s.io", http.MethodGet},
+		{"registry node-pull-check --node node-1 --registry registry.k8s.io --output json", "/api/agent/v1/registries/node-pull-check", "", http.MethodPost},
+	}
+	for _, test := range tests {
+		t.Run(test.args, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != test.method || r.URL.Path != test.path {
+					t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
+				}
+				if test.method == http.MethodGet && r.URL.RawQuery != test.query {
+					t.Fatalf("unexpected query: %s", r.URL.RawQuery)
+				}
+				if test.method == http.MethodPost {
+					var body map[string]string
+					_ = json.NewDecoder(r.Body).Decode(&body)
+					if body["node"] != "node-1" || body["registry"] != "registry.k8s.io" {
+						t.Fatalf("unexpected body: %#v", body)
+					}
+				}
+				_, _ = w.Write([]byte(`{"status":"ok","summary":"registry diagnostic retrieved"}`))
+			}))
+			defer server.Close()
+			output := &bytes.Buffer{}
+			if code := Run(context.Background(), strings.Fields(test.args), Config{BaseURL: server.URL, TokenFile: writeToken(t, "runtime-token")}, output); code != 0 {
 				t.Fatalf("expected success, got %d: %s", code, output.String())
 			}
 		})

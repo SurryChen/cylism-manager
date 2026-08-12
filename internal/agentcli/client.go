@@ -206,6 +206,44 @@ func parseCommand(args []string) (requestSpec, error) {
 			return requestSpec{}, errors.New("approval get requires a valid --id and --output json")
 		}
 		return requestSpec{method: http.MethodGet, path: "/api/agent/v1/approvals/" + *id}, nil
+	case "registry status":
+		flags := flag.NewFlagSet("registry status", flag.ContinueOnError)
+		flags.SetOutput(io.Discard)
+		output := flags.String("output", "", "")
+		if err := flags.Parse(args[2:]); err != nil || flags.NArg() != 0 || *output != "json" {
+			return requestSpec{}, errors.New("registry status requires --output json")
+		}
+		return requestSpec{method: http.MethodGet, path: "/api/agent/v1/registries/status"}, nil
+	case "image diagnose":
+		flags := flag.NewFlagSet("image diagnose", flag.ContinueOnError)
+		flags.SetOutput(io.Discard)
+		namespace := flags.String("namespace", "", "")
+		pod := flags.String("pod", "", "")
+		output := flags.String("output", "", "")
+		if err := flags.Parse(args[2:]); err != nil || flags.NArg() != 0 || *output != "json" || !validName(*namespace) || !validName(*pod) {
+			return requestSpec{}, errors.New("image diagnose requires a valid --namespace, --pod, and --output json")
+		}
+		return requestSpec{method: http.MethodGet, path: "/api/agent/v1/images/diagnose", query: url.Values{"namespace": {*namespace}, "pod": {*pod}}}, nil
+	case "registry node-verify", "registry node-pull-check":
+		flags := flag.NewFlagSet(args[0]+" "+args[1], flag.ContinueOnError)
+		flags.SetOutput(io.Discard)
+		node := flags.String("node", "", "")
+		registry := flags.String("registry", "", "")
+		output := flags.String("output", "", "")
+		if err := flags.Parse(args[2:]); err != nil || flags.NArg() != 0 || *output != "json" || !validName(*node) || !validRegistry(*registry) {
+			return requestSpec{}, errors.New(args[0] + " " + args[1] + " requires a valid --node, --registry, and --output json")
+		}
+		path := "/api/agent/v1/registries/node-verify"
+		mutation := false
+		if args[1] == "node-pull-check" {
+			path, mutation = "/api/agent/v1/registries/node-pull-check", true
+		}
+		return requestSpec{method: map[bool]string{true: http.MethodPost, false: http.MethodGet}[mutation], path: path, query: url.Values{"node": {*node}, "registry": {*registry}}, mutation: mutation, body: func() any {
+			if mutation {
+				return map[string]string{"node": *node, "registry": *registry}
+			}
+			return nil
+		}()}, nil
 	default:
 		return requestSpec{}, errors.New("unsupported command")
 	}
@@ -320,6 +358,11 @@ func validInvolvedKind(value string) bool { return value == "pod" || value == "p
 
 func validApprovalID(value string) bool {
 	return len(value) > 0 && len(value) <= 128 && regexp.MustCompile(`^[A-Za-z0-9_-]+$`).MatchString(value)
+}
+
+func validRegistry(value string) bool {
+	value = strings.TrimSpace(value)
+	return len(value) > 0 && len(value) <= 253 && regexp.MustCompile(`^[A-Za-z0-9](?:[-A-Za-z0-9.]*[A-Za-z0-9])?(?::[0-9]{1,5})?$`).MatchString(value)
 }
 
 func errorEnvelope(requestID, summary string, retryable bool) Envelope {

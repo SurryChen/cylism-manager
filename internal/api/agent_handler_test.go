@@ -214,3 +214,100 @@ func TestAgentHandlerProvidesScopedPendingPodDiagnostics(t *testing.T) {
 		}
 	}
 }
+
+func TestAgentRegistryDiagnosticsAreScopedAndNeverExposeCredentials(t *testing.T) {
+	s, err := store.New(":memory:")
+	if err != nil {
+		t.Fatalf("store: %v", err)
+	}
+	instance := &model.RuntimeInstance{Name: "nanobot-main", RuntimeType: model.RuntimeTypeNanobot, DeploymentMode: model.RuntimeDeploymentManaged, Namespace: "cylism-assistant", Image: "example/nanobot", Status: model.RuntimeStatusReady, AgentToolEnabled: true}
+	if err := s.CreateRuntime(instance); err != nil {
+		t.Fatalf("create runtime: %v", err)
+	}
+	mirror := &model.NodeRegistryMirror{Name: "registry-k8s", Registry: "registry.k8s.io", Endpoints: `["https://user:secret@mirror.example.com"]`, VerificationImage: "registry.k8s.io/pause:3.10", Credential: "encrypted-credential", Enabled: true, LastVerifyStatus: "succeeded"}
+	if err := s.CreateNodeRegistryMirror(mirror); err != nil {
+		t.Fatalf("create mirror: %v", err)
+	}
+	server := &model.Server{Name: "node-1", Host: "10.0.0.1", SSHUser: "root", SSHAuthType: "key", K8sNodeName: "node-1"}
+	if err := s.CreateServer(server); err != nil {
+		t.Fatalf("create server: %v", err)
+	}
+	client := &k8s.Client{Clientset: fake.NewSimpleClientset(&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "pending-pod", Namespace: "kube-system"}, Spec: corev1.PodSpec{NodeName: "node-1"}, Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{{Name: "app", Image: "registry.k8s.io/pause:3.10", State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "ImagePullBackOff", Message: "token=should-not-leak"}}}}}})}
+	handler := NewAgentHandler(s, client, agentAuthenticatorStub{instance: instance}).WithRegistryVerifier(func(_ *model.Server, endpoints []string) ([]agentRegistryEndpointResult, error) {
+		return []agentRegistryEndpointResult{{Endpoint: endpoints[0], DNS: "ok", HTTP: "200"}}, nil
+	})
+	request := httptest.NewRequest(http.MethodGet, "/api/agent/v1/registries/status", nil)
+	request.Header.Set("Authorization", "Bearer agent-token")
+	recorder := httptest.NewRecorder()
+	handler.RegistryStatus(recorder, request)
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("expected registry deny, got %d: %s", recorder.Code, recorder.Body.String())
+	}
+	if err := s.ReplaceAgentCapabilityGrants(instance.ID, []model.AgentCapabilityGrant{{RuntimeID: instance.ID, Capability: model.AgentCapabilityRegistryRead, Namespace: "*", Enabled: true}, {RuntimeID: instance.ID, Capability: model.AgentCapabilityRegistryVerify, Namespace: "*", Enabled: true}, {RuntimeID: instance.ID, Capability: model.AgentCapabilityWorkloadRead, Namespace: "kube-system", Enabled: true}}); err != nil {
+		t.Fatalf("grant: %v", err)
+	}
+	recorder = httptest.NewRecorder()
+	handler.RegistryStatus(recorder, request)
+	if recorder.Code != http.StatusOK || strings.Contains(recorder.Body.String(), "secret") || strings.Contains(recorder.Body.String(), "encrypted-credential") {
+		t.Fatalf("unsafe registry status: %d %s", recorder.Code, recorder.Body.String())
+	}
+	diagnose := httptest.NewRequest(http.MethodGet, "/api/agent/v1/images/diagnose?namespace=kube-system&pod=pending-pod", nil)
+	diagnose.Header.Set("Authorization", "Bearer agent-token")
+	recorder = httptest.NewRecorder()
+	handler.ImageDiagnose(recorder, diagnose)
+	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), "image_pull_failure_detected") || strings.Contains(recorder.Body.String(), "should-not-leak") {
+		t.Fatalf("unsafe diagnosis: %d %s", recorder.Code, recorder.Body.String())
+	}
+	verify := httptest.NewRequest(http.MethodGet, "/api/agent/v1/registries/node-verify?node=node-1&registry=registry.k8s.io", nil)
+	verify.Header.Set("Authorization", "Bearer agent-token")
+	recorder = httptest.NewRecorder()
+	handler.RegistryNodeVerify(recorder, verify)
+	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), `"dns":"ok"`) {
+		t.Fatalf("verify: %d %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestAgentRegistryPullCheckRequiresApprovalAndUsesConfiguredImage(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	s, err := store.New(":memory:")
+	if err != nil {
+		t.Fatalf("store: %v", err)
+	}
+	instance := &model.RuntimeInstance{Name: "nanobot-main", RuntimeType: model.RuntimeTypeNanobot, DeploymentMode: model.RuntimeDeploymentManaged, Namespace: "cylism-assistant", Image: "example/nanobot", Status: model.RuntimeStatusReady, AgentToolEnabled: true}
+	if err := s.CreateRuntime(instance); err != nil {
+		t.Fatalf("create runtime: %v", err)
+	}
+	if err := s.CreateNodeRegistryMirror(&model.NodeRegistryMirror{Name: "registry-k8s", Registry: "registry.k8s.io", Endpoints: `["https://mirror.example.com"]`, VerificationImage: "registry.k8s.io/pause:3.10", Enabled: true}); err != nil {
+		t.Fatalf("create mirror: %v", err)
+	}
+	if err := s.CreateServer(&model.Server{Name: "node-1", Host: "10.0.0.1", SSHUser: "root", SSHAuthType: "key", K8sNodeName: "node-1"}); err != nil {
+		t.Fatalf("create server: %v", err)
+	}
+	if err := s.ReplaceAgentCapabilityGrants(instance.ID, []model.AgentCapabilityGrant{{RuntimeID: instance.ID, Capability: model.AgentCapabilityRegistryPullCheck, Namespace: "*", Enabled: true}}); err != nil {
+		t.Fatalf("grant: %v", err)
+	}
+	agentHandler := NewAgentHandler(s, &k8s.Client{Clientset: fake.NewSimpleClientset()}, agentAuthenticatorStub{instance: instance})
+	request := httptest.NewRequest(http.MethodPost, "/api/agent/v1/registries/node-pull-check", bytes.NewBufferString(`{"node":"node-1","registry":"registry.k8s.io"}`))
+	request.Header.Set("Authorization", "Bearer agent-token")
+	request.Header.Set("X-Request-ID", "request_456")
+	request.Header.Set("Idempotency-Key", "request_456")
+	recorder := httptest.NewRecorder()
+	agentHandler.RegistryNodePullCheck(recorder, request)
+	if recorder.Code != http.StatusAccepted {
+		t.Fatalf("pull check request: %d %s", recorder.Code, recorder.Body.String())
+	}
+	var response struct {
+		OperationID string `json:"operation_id"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil || response.OperationID == "" {
+		t.Fatalf("decode operation: %v %s", err, recorder.Body.String())
+	}
+	calledImage := ""
+	approvalHandler := NewAgentOperationHandler(s, nil).WithRegistryPullExecutor(func(_ *model.Server, image string) error { calledImage = image; return nil })
+	router := gin.New()
+	router.POST("/agent-operations/:operationID/approve", func(c *gin.Context) { c.Set("user_id", uint(7)); approvalHandler.Approve(c) })
+	approval := serve(router, newJSONRequest(http.MethodPost, "/agent-operations/"+response.OperationID+"/approve", nil))
+	if approval.Code != http.StatusOK || calledImage != "registry.k8s.io/pause:3.10" {
+		t.Fatalf("pull approval: %d %s image=%q", approval.Code, approval.Body.String(), calledImage)
+	}
+}

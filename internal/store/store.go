@@ -191,7 +191,12 @@ func validAgentCapabilityGrant(grant model.AgentCapabilityGrant) bool {
 	if !model.ValidAgentCapability(grant.Capability) || (grant.Namespace != "*" && !runtime.NamespaceValid(grant.Namespace)) {
 		return false
 	}
-	return grant.Capability != model.AgentCapabilityClusterRead || grant.Namespace == "*"
+	switch grant.Capability {
+	case model.AgentCapabilityClusterRead, model.AgentCapabilityRegistryRead, model.AgentCapabilityRegistryVerify, model.AgentCapabilityRegistryPullCheck:
+		return grant.Namespace == "*"
+	default:
+		return true
+	}
 }
 
 func (s *Store) HasAgentCapability(runtimeID uint, capability, namespace string) (bool, error) {

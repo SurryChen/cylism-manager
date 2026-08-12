@@ -40,6 +40,12 @@
   - [x] 4.2.a Add a chat-window entry point for pending approvals and permission management; approval remains Manager/JWT-only.
 - [ ] 4.3 Extend the audit view to distinguish Agent action, denial, approval, and execution without displaying sensitive values.
 
+## 4.4 Registry Diagnostics
+
+- [x] 4.4.a Add cluster-scoped `registry.read`, `registry.verify`, and approval-required `registry.pull_check` grants, CLI schemas, and Nanobot fixed operations.
+- [x] 4.4.b Return only sanitized Manager-owned mirror/proxy status and correlate Pod image-pull state with configuration evidence.
+- [x] 4.4.c Verify only platform-managed node and configured endpoint pairs; request and execute fixed verification-image pulls through the existing browser approval boundary.
+
 ## 5. Verification And Rollout
 
 - [ ] 5.1 Complete focused TDD checks after every task, then run `go test ./...`, `go build ./...`, CLI tests/build, Runtime Python tests, frontend tests and production build.

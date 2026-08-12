@@ -35,7 +35,7 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 	artifactHandler := NewAgentArtifactHandler("/usr/local/lib/cylism/runtime-tools", agentauth.NewRuntimeTokenAuthorizer(K8s, s, nil))
 	r.GET(cliArtifactPath, gin.WrapH(artifactHandler))
 	r.GET(cliArtifactManifestPath, gin.WrapH(artifactHandler))
-	agentHandler := NewAgentHandler(s, K8s, agentauth.NewRuntimeTokenAuthorizer(K8s, s, nil))
+	agentHandler := NewAgentHandler(s, K8s, agentauth.NewRuntimeTokenAuthorizer(K8s, s, nil)).WithRegistryVerifier(defaultAgentRegistryNodeVerifier(encKey))
 	r.GET("/api/agent/v1/cluster/status", gin.WrapF(agentHandler.ClusterStatus))
 	r.GET("/api/agent/v1/capabilities/status", gin.WrapF(agentHandler.CapabilityStatus))
 	r.GET("/api/agent/v1/workloads/get", gin.WrapF(agentHandler.WorkloadGet))
@@ -44,6 +44,10 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 	r.GET("/api/agent/v1/events/list", gin.WrapF(agentHandler.EventList))
 	r.GET("/api/agent/v1/pvcs/get", gin.WrapF(agentHandler.PVCGet))
 	r.GET("/api/agent/v1/nodes/get", gin.WrapF(agentHandler.NodeGet))
+	r.GET("/api/agent/v1/registries/status", gin.WrapF(agentHandler.RegistryStatus))
+	r.GET("/api/agent/v1/images/diagnose", gin.WrapF(agentHandler.ImageDiagnose))
+	r.GET("/api/agent/v1/registries/node-verify", gin.WrapF(agentHandler.RegistryNodeVerify))
+	r.POST("/api/agent/v1/registries/node-pull-check", gin.WrapF(agentHandler.RegistryNodePullCheck))
 	r.POST("/api/agent/v1/deployments/scale", gin.WrapF(agentHandler.DeploymentScale))
 	r.GET("/api/agent/v1/approvals/:operationID", gin.WrapF(agentHandler.ApprovalGet))
 
@@ -62,7 +66,7 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 	apiGroup.Use(AuditMiddleware(s))
 	runtimeRegistry := runtimepkg.BuiltinRegistry()
 	runtimeHandler := NewRuntimeHandler(s, encKey, runtimepkg.NewKubernetesManager(K8s, runtimeRegistry), runtimeRegistry)
-	agentOperationHandler := NewAgentOperationHandler(s, K8s)
+	agentOperationHandler := NewAgentOperationHandler(s, K8s).WithRegistryPullExecutor(defaultAgentRegistryPullExecutor(encKey))
 	systemComponentHandler := NewSystemComponentHandler(s)
 	runtimes := apiGroup.Group("/runtimes")
 	{
