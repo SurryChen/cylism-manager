@@ -145,6 +145,47 @@ func parseCommand(args []string) (requestSpec, error) {
 			return requestSpec{}, errors.New("workload logs requires valid --namespace, --pod, --container, --tail, and --output json")
 		}
 		return requestSpec{method: http.MethodGet, path: "/api/agent/v1/workloads/logs", query: url.Values{"namespace": {*namespace}, "pod": {*pod}, "container": {*container}, "tail": {strconv.Itoa(*tail)}}}, nil
+	case "pod get":
+		flags := flag.NewFlagSet("pod get", flag.ContinueOnError)
+		flags.SetOutput(io.Discard)
+		namespace := flags.String("namespace", "", "")
+		name := flags.String("name", "", "")
+		output := flags.String("output", "", "")
+		if err := flags.Parse(args[2:]); err != nil || flags.NArg() != 0 || *output != "json" || !validName(*namespace) || !validName(*name) {
+			return requestSpec{}, errors.New("pod get requires a valid --namespace, --name, and --output json")
+		}
+		return requestSpec{method: http.MethodGet, path: "/api/agent/v1/pods/get", query: url.Values{"namespace": {*namespace}, "name": {*name}}}, nil
+	case "event list":
+		flags := flag.NewFlagSet("event list", flag.ContinueOnError)
+		flags.SetOutput(io.Discard)
+		namespace := flags.String("namespace", "", "")
+		kind := flags.String("involved-kind", "", "")
+		name := flags.String("involved-name", "", "")
+		limit := flags.Int("limit", 0, "")
+		output := flags.String("output", "", "")
+		if err := flags.Parse(args[2:]); err != nil || flags.NArg() != 0 || *output != "json" || !validName(*namespace) || !validInvolvedKind(*kind) || !validName(*name) || *limit < 1 || *limit > 30 {
+			return requestSpec{}, errors.New("event list requires valid --namespace, --involved-kind, --involved-name, --limit, and --output json")
+		}
+		return requestSpec{method: http.MethodGet, path: "/api/agent/v1/events/list", query: url.Values{"namespace": {*namespace}, "involved_kind": {*kind}, "involved_name": {*name}, "limit": {strconv.Itoa(*limit)}}}, nil
+	case "pvc get":
+		flags := flag.NewFlagSet("pvc get", flag.ContinueOnError)
+		flags.SetOutput(io.Discard)
+		namespace := flags.String("namespace", "", "")
+		name := flags.String("name", "", "")
+		output := flags.String("output", "", "")
+		if err := flags.Parse(args[2:]); err != nil || flags.NArg() != 0 || *output != "json" || !validName(*namespace) || !validName(*name) {
+			return requestSpec{}, errors.New("pvc get requires a valid --namespace, --name, and --output json")
+		}
+		return requestSpec{method: http.MethodGet, path: "/api/agent/v1/pvcs/get", query: url.Values{"namespace": {*namespace}, "name": {*name}}}, nil
+	case "node get":
+		flags := flag.NewFlagSet("node get", flag.ContinueOnError)
+		flags.SetOutput(io.Discard)
+		name := flags.String("name", "", "")
+		output := flags.String("output", "", "")
+		if err := flags.Parse(args[2:]); err != nil || flags.NArg() != 0 || *output != "json" || !validName(*name) {
+			return requestSpec{}, errors.New("node get requires a valid --name and --output json")
+		}
+		return requestSpec{method: http.MethodGet, path: "/api/agent/v1/nodes/get", query: url.Values{"name": {*name}}}, nil
 	case "deployment scale":
 		flags := flag.NewFlagSet("deployment scale", flag.ContinueOnError)
 		flags.SetOutput(io.Discard)
@@ -274,6 +315,8 @@ func validContainer(value string) bool {
 func validKind(value string) bool {
 	return value == "deployment" || value == "statefulset" || value == "daemonset"
 }
+
+func validInvolvedKind(value string) bool { return value == "pod" || value == "persistentvolumeclaim" }
 
 func validApprovalID(value string) bool {
 	return len(value) > 0 && len(value) <= 128 && regexp.MustCompile(`^[A-Za-z0-9_-]+$`).MatchString(value)

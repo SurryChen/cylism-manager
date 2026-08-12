@@ -20,6 +20,7 @@
 - [ ] 2.2 Add Runtime-specific ServiceAccount, separate projected installation and Agent audience-scoped token volumes, no RoleBinding, and TokenReview authentication middleware; test valid, invalid, revoked, and mismatched identities.
 - [ ] 2.3 Extract the initial K8s/application diagnostic and mutation operations into shared services without regressing existing browser API behavior; run impact searches for each moved interface.
 - [ ] 2.4 Implement Agent API capability/scope/rate/response-size enforcement and read-only endpoints; test in-scope, out-of-scope, redaction, and request idempotency cases.
+  - [x] 2.4.a Add fixed Pod, related Event, PVC, and node diagnostics with scoped capabilities and bounded/redacted responses.
 - [ ] 2.5 Implement immutable approval creation, approval/rejection, resource-version revalidation, asynchronous Manager execution, expiry, and terminal result lookup; test no mutation occurs before approval.
 - [ ] 2.6 Extend audit persistence and audit query responses for all Agent states, Runtime identity, approval actor and correlation/session references; test denied and failed requests are retained.
 - [ ] 2.7 Add Runtime-local action policies (`deny`, `auto`, `approval_required`), one-time approval permits bound to normalized action arguments, and tests for path/argv/environment/output restrictions.

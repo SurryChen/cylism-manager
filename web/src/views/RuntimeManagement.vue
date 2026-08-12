@@ -154,6 +154,8 @@ const agentCapabilities = [
   { id: 'cluster.read', label: '集群摘要', description: '读取节点数量和集群摘要', clusterScoped: true },
   { id: 'workload.read', label: '工作负载查询', description: '读取 Deployment、StatefulSet 与 DaemonSet 摘要' },
   { id: 'workload.logs', label: '工作负载日志', description: '读取受限行数和大小的容器日志' },
+  { id: 'events.read', label: '关联事件查询', description: '读取 Pod、PVC 的受限关联事件，用于定位调度、拉取和挂载失败' },
+  { id: 'storage.read', label: '存储状态查询', description: '读取 PVC 绑定与请求容量摘要，不返回存储凭据' },
   { id: 'deployment.scale', label: 'Deployment 扩缩容', description: '始终需要管理员审批' },
 ]
 const emptyAgentGrantState = () => Object.fromEntries(agentCapabilities.map(capability => [capability.id, { enabled: false, namespaces: [] }]))
