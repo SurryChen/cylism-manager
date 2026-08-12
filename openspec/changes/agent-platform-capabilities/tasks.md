@@ -12,6 +12,7 @@
 - [ ] 1.3 Implement approval status lookup and mutation command DTOs that can return `pending_approval`; test exact request serialization.
 - [ ] 1.4 Update the Manager Dockerfile to build and package the static CLI beside the Manager binary, generate its manifest, and test build version/checksum metadata.
 - [ ] 1.5 Implement and test the Manager-only internal CLI artifact endpoint with installation-identity authentication and fixed platform/version selection.
+  - [x] 1.5.a Add a dedicated installed-CLI update action that preserves grants and rolls the Runtime to download the current Manager artifact.
 
 ## 2. Manager Agent Control Plane
 

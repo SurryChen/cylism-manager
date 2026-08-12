@@ -132,6 +132,7 @@ func TestRuntimeHandlerInstallsAndUninstallsAgentToolsByRollingDeployment(t *tes
 	r.POST("/api/runtimes", h.Create)
 	r.POST("/api/runtimes/:id/deploy", h.Deploy)
 	r.POST("/api/runtimes/:id/agent-tools/install", h.InstallAgentTools)
+	r.POST("/api/runtimes/:id/agent-tools/update", h.UpdateAgentTools)
 	r.POST("/api/runtimes/:id/agent-tools/uninstall", h.UninstallAgentTools)
 
 	create := serve(r, newJSONRequest(http.MethodPost, "/api/runtimes", gin.H{"name": "nanobot-main", "runtime_type": "nanobot", "image": "example/nanobot:latest", "api_key": "model-key", "model_name": "gpt-test", "model_base_url": "https://provider.example/v1"}))
@@ -152,6 +153,15 @@ func TestRuntimeHandlerInstallsAndUninstallsAgentToolsByRollingDeployment(t *tes
 	}
 	if _, err := client.Clientset.CoreV1().ServiceAccounts(instance.Namespace).Get(t.Context(), runtime.RuntimeAgentServiceAccountName(instance), metav1.GetOptions{}); err != nil {
 		t.Fatalf("expected installed agent service account: %v", err)
+	}
+	installedGeneration := instance.DesiredGeneration
+	update := serve(r, newJSONRequest(http.MethodPost, "/api/runtimes/"+itoa(id)+"/agent-tools/update", nil))
+	if update.Code != http.StatusOK {
+		t.Fatalf("update status = %d: %s", update.Code, update.Body.String())
+	}
+	instance, err = s.GetRuntime(id)
+	if err != nil || !instance.AgentToolEnabled || instance.DesiredGeneration != installedGeneration+1 {
+		t.Fatalf("expected CLI update rollout without revoking tool: %+v err=%v", instance, err)
 	}
 	if err := s.ReplaceAgentCapabilityGrants(instance.ID, []model.AgentCapabilityGrant{{RuntimeID: instance.ID, Capability: model.AgentCapabilityClusterRead, Namespace: "*", Enabled: true}}); err != nil {
 		t.Fatalf("grant runtime capability: %v", err)

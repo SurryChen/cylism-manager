@@ -32,6 +32,9 @@ func TestApplyCreatesRuntimeResourcesAndReusesPVC(t *testing.T) {
 	if err != nil {
 		t.Fatalf("deployment not created: %v", err)
 	}
+	if deployment.Spec.Template.Annotations["cylism.io/runtime-generation"] != "0" {
+		t.Fatalf("expected generation annotation on Pod template: %#v", deployment.Spec.Template.Annotations)
+	}
 	pod := deployment.Spec.Template.Spec
 	if len(pod.InitContainers) != 2 || len(pod.Containers) != 3 || pod.InitContainers[0].Name != PermissionFixInit || pod.InitContainers[1].Name != "render-config" || pod.Containers[0].Name != "gateway" || pod.Containers[1].Name != "api" || pod.Containers[2].Name != "session-api" {
 		t.Fatalf("unexpected Nanobot pod: %#v", pod)
@@ -72,6 +75,23 @@ func TestApplyCreatesRuntimeResourcesAndReusesPVC(t *testing.T) {
 	claim, err := client.Clientset.CoreV1().PersistentVolumeClaims(DefaultNamespace).Get(context.Background(), instance.PVCName, metav1.GetOptions{})
 	if err != nil || claim.Spec.Resources.Requests.Storage().String() != "10Gi" {
 		t.Fatalf("unexpected pvc after reapply: %v %#v", err, claim)
+	}
+}
+
+func TestApplyUpdatesPodTemplateGeneration(t *testing.T) {
+	client := &k8s.Client{Clientset: fake.NewSimpleClientset()}
+	manager := NewKubernetesManager(client)
+	instance := &model.RuntimeInstance{ID: 9, Name: "nanobot-generation", RuntimeType: model.RuntimeTypeNanobot, Image: "example/nanobot:latest", Namespace: DefaultNamespace, PVCName: "nanobot-generation-data", Storage: "1Gi", ModelName: "gpt-test", ModelBaseURL: "https://provider.example/v1", APIStyle: ModelProtocolResponses, DesiredGeneration: 1}
+	if err := manager.Apply(context.Background(), instance, "model-secret", "runtime-secret"); err != nil {
+		t.Fatalf("first apply: %v", err)
+	}
+	instance.DesiredGeneration++
+	if err := manager.Apply(context.Background(), instance, "model-secret", "runtime-secret"); err != nil {
+		t.Fatalf("second apply: %v", err)
+	}
+	deployment, err := client.Clientset.AppsV1().Deployments(DefaultNamespace).Get(context.Background(), instance.Name, metav1.GetOptions{})
+	if err != nil || deployment.Spec.Template.Annotations["cylism.io/runtime-generation"] != "2" {
+		t.Fatalf("expected updated generation annotation: %v %#v", err, deployment)
 	}
 }
 

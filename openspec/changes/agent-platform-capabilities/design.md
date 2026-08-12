@@ -34,7 +34,7 @@ Agent API 与浏览器 API 分离为 `/api/agent/v1/*`。它不接受用户 JWT�
 
 Manager 提供仅集群内可访问的内部制品端点 `http://cylism-manager.default.svc.cluster.local:8080/internal/runtime-tools/v1/cylism-cli/linux-amd64`，并在其 `/manifest` 子路径返回 manifest。该端点使用仅安装 init container 可见的、受众为 `cylism-manager-tool-installer` 的短期 projected ServiceAccount Token 鉴权，返回当前兼容 CLI 的二进制和 manifest。它不接受用户指定的 URL、版本或文件名。
 
-平台为 Runtime 保存 `AgentToolInstallation` 期望状态：`not_installed`、`installing`、`installed`、`failed`、`uninstalling`，以及 Manager 发布的 CLI build version/checksum、安装时间和错误摘要。首期不提供用户选择历史 CLI 版本；CLI 与 Manager 的 Agent API `v1` 协议保持向后兼容，Manager 升级后由管理员显式触发已安装 Runtime 的 CLI 更新。
+平台为 Runtime 保存 `AgentToolInstallation` 期望状态：`not_installed`、`installing`、`installed`、`failed`、`uninstalling`，以及 Manager 发布的 CLI build version/checksum、安装时间和错误摘要。首期不提供用户选择历史 CLI 版本；CLI 与 Manager 的 Agent API `v1` 协议保持向后兼容，Manager 升级后由管理员通过 Runtime 详情的“更新工具”显式触发已安装 Runtime 的 CLI 更新。更新保留现有能力授权，递增 Runtime 期望代数并改变 Pod 模板 annotation，确保 Deployment 滚动重建并由 init container 下载当前 Manager 制品。
 
 安装和卸载均由 Manager 修改 Runtime Deployment 的期望状态，而不是远程进入已有 Pod：
 

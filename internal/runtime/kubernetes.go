@@ -485,7 +485,8 @@ func (m *KubernetesManager) applyDeployment(ctx context.Context, instance *model
 	if instance.NodeName != "" {
 		podSpec.NodeSelector = map[string]string{corev1.LabelHostname: instance.NodeName}
 	}
-	deployment := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: instance.Name, Namespace: instance.Namespace, Labels: labels}, Spec: appsv1.DeploymentSpec{Replicas: &replicas, Selector: &metav1.LabelSelector{MatchLabels: labels}, Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: labels}, Spec: podSpec}}}
+	podAnnotations := map[string]string{"cylism.io/runtime-generation": fmt.Sprintf("%d", instance.DesiredGeneration)}
+	deployment := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: instance.Name, Namespace: instance.Namespace, Labels: labels}, Spec: appsv1.DeploymentSpec{Replicas: &replicas, Selector: &metav1.LabelSelector{MatchLabels: labels}, Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: labels, Annotations: podAnnotations}, Spec: podSpec}}}
 	deployments := m.Client.Clientset.AppsV1().Deployments(instance.Namespace)
 	current, err := deployments.Get(ctx, instance.Name, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
