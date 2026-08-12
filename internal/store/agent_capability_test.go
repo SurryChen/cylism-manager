@@ -53,6 +53,18 @@ func TestAgentCapabilityGrantsRejectNamespaceScopeForClusterRead(t *testing.T) {
 	}
 }
 
+func TestAgentCapabilityGrantsRejectNamespaceScopeForRegistryCapabilities(t *testing.T) {
+	s, err := New(":memory:")
+	if err != nil {
+		t.Fatalf("store: %v", err)
+	}
+	for _, capability := range []string{model.AgentCapabilityRegistryRead, model.AgentCapabilityRegistryVerify, model.AgentCapabilityRegistryPullCheck} {
+		if err := s.ReplaceAgentCapabilityGrants(3, []model.AgentCapabilityGrant{{RuntimeID: 3, Capability: capability, Namespace: "operations", Enabled: true}}); err == nil {
+			t.Fatalf("expected cluster-only scope rejection for %s", capability)
+		}
+	}
+}
+
 func TestAgentOperationIsIdempotentAndTerminalStatusCannotBeRewritten(t *testing.T) {
 	s, err := New(":memory:")
 	if err != nil {

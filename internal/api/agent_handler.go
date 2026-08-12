@@ -31,10 +31,14 @@ type AgentHandler struct {
 		ListAgentCapabilityGrants(runtimeID uint) ([]model.AgentCapabilityGrant, error)
 		CreateAgentOperation(operation *model.AgentOperation) (*model.AgentOperation, bool, error)
 		GetAgentOperation(operationID string) (*model.AgentOperation, error)
+		ListNodeRegistryMirrors() ([]model.NodeRegistryMirror, error)
+		ListRegistryProxies() ([]model.RegistryProxy, error)
+		ListServers() ([]model.Server, error)
 		CreateAuditLog(entry *model.AuditLog) error
 	}
-	client        *k8s.Client
-	authenticator AgentAuthenticator
+	client           *k8s.Client
+	authenticator    AgentAuthenticator
+	registryVerifier agentRegistryNodeVerifier
 }
 
 func NewAgentHandler(store interface {
@@ -42,9 +46,17 @@ func NewAgentHandler(store interface {
 	ListAgentCapabilityGrants(runtimeID uint) ([]model.AgentCapabilityGrant, error)
 	CreateAgentOperation(operation *model.AgentOperation) (*model.AgentOperation, bool, error)
 	GetAgentOperation(operationID string) (*model.AgentOperation, error)
+	ListNodeRegistryMirrors() ([]model.NodeRegistryMirror, error)
+	ListRegistryProxies() ([]model.RegistryProxy, error)
+	ListServers() ([]model.Server, error)
 	CreateAuditLog(entry *model.AuditLog) error
 }, client *k8s.Client, authenticator AgentAuthenticator) *AgentHandler {
 	return &AgentHandler{store: store, client: client, authenticator: authenticator}
+}
+
+func (h *AgentHandler) WithRegistryVerifier(verifier agentRegistryNodeVerifier) *AgentHandler {
+	h.registryVerifier = verifier
+	return h
 }
 
 // CapabilityStatus exposes the authenticated Runtime's effective capability scopes.
@@ -60,7 +72,7 @@ func (h *AgentHandler) CapabilityStatus(w http.ResponseWriter, r *http.Request) 
 	}
 	data := make(map[string]map[string]any, len(model.AgentCapabilities))
 	for capability := range model.AgentCapabilities {
-		data[capability] = map[string]any{"enabled": false, "namespaces": []string{}, "approval_required": capability == model.AgentCapabilityDeploymentScale}
+		data[capability] = map[string]any{"enabled": false, "namespaces": []string{}, "approval_required": capability == model.AgentCapabilityDeploymentScale || capability == model.AgentCapabilityRegistryPullCheck}
 	}
 	for _, grant := range grants {
 		if !grant.Enabled {
@@ -367,6 +379,185 @@ func (h *AgentHandler) DeploymentScale(w http.ResponseWriter, r *http.Request) {
 	writeAgentResponse(w, http.StatusAccepted, agentAPIResponse{Status: "pending_approval", OperationID: stored.OperationID, Summary: "deployment scale is pending approval"})
 }
 
+// RegistryStatus reports only the safe, Manager-owned projection of registry state.
+func (h *AgentHandler) RegistryStatus(w http.ResponseWriter, r *http.Request) {
+	instance, ok := h.authenticate(w, r)
+	if !ok {
+		return
+	}
+	if !h.requireCapability(w, instance, model.AgentCapabilityRegistryRead, "") {
+		return
+	}
+	mirrors, err := h.store.ListNodeRegistryMirrors()
+	if err != nil {
+		writeAgentError(w, http.StatusInternalServerError, "registry status unavailable", true)
+		return
+	}
+	proxies, err := h.store.ListRegistryProxies()
+	if err != nil {
+		writeAgentError(w, http.StatusInternalServerError, "registry status unavailable", true)
+		return
+	}
+	h.audit(instance, "agent.registry_status", map[string]string{"capability": model.AgentCapabilityRegistryRead})
+	writeAgentResponse(w, http.StatusOK, agentAPIResponse{Status: "ok", Data: agentRegistryStatus(mirrors, proxies), Summary: "registry status retrieved"})
+}
+
+// ImageDiagnose combines Pod image-pull state with Manager-owned registry state.
+func (h *AgentHandler) ImageDiagnose(w http.ResponseWriter, r *http.Request) {
+	instance, ok := h.authenticate(w, r)
+	if !ok {
+		return
+	}
+	namespace, name := r.URL.Query().Get("namespace"), r.URL.Query().Get("pod")
+	if !validAgentNamespace(namespace) || !validAgentName(name) {
+		writeAgentError(w, http.StatusBadRequest, "invalid image diagnose query", false)
+		return
+	}
+	if !h.requireCapability(w, instance, model.AgentCapabilityWorkloadRead, namespace) || !h.requireCapability(w, instance, model.AgentCapabilityRegistryRead, "") {
+		return
+	}
+	if h.client == nil || h.client.Clientset == nil {
+		writeAgentError(w, http.StatusServiceUnavailable, "Kubernetes client unavailable", true)
+		return
+	}
+	pod, err := h.client.Clientset.CoreV1().Pods(namespace).Get(r.Context(), name, metav1.GetOptions{})
+	if err != nil {
+		writeAgentError(w, http.StatusBadGateway, "pod unavailable", true)
+		return
+	}
+	mirrors, err := h.store.ListNodeRegistryMirrors()
+	if err != nil {
+		writeAgentError(w, http.StatusInternalServerError, "registry status unavailable", true)
+		return
+	}
+	proxies, err := h.store.ListRegistryProxies()
+	if err != nil {
+		writeAgentError(w, http.StatusInternalServerError, "registry status unavailable", true)
+		return
+	}
+	summary := podDiagnosticSummary(pod)
+	containers, _ := summary["containers"].([]map[string]any)
+	failures := agentImagePullFailures(containers)
+	diagnoses := make([]map[string]any, 0, len(failures))
+	for _, failure := range failures {
+		config, configured := agentResolveRegistry(failure["registry"], mirrors, proxies)
+		entry := map[string]any{"code": "image_pull_failure_detected", "registry": failure["registry"], "reason": failure["reason"]}
+		if !configured {
+			entry["configuration_code"] = "registry_config_missing"
+		} else if config.Mirror != nil {
+			entry["mirror"] = map[string]any{"enabled": config.Mirror.Enabled, "verification_status": config.Mirror.LastVerifyStatus, "node_status": agentMirrorNodeStatus(config.Mirror, pod.Spec.NodeName)}
+			if config.Mirror.LastVerifyStatus != "" && config.Mirror.LastVerifyStatus != "succeeded" {
+				entry["configuration_code"] = "mirror_unhealthy"
+			}
+		} else if config.Proxy != nil {
+			entry["proxy"] = map[string]any{"status": config.Proxy.Status, "node": config.Proxy.NodeName}
+			if config.Proxy.Status != "ready" && config.Proxy.Status != "running" && config.Proxy.Status != "succeeded" {
+				entry["configuration_code"] = "registry_proxy_unready"
+			}
+		}
+		diagnoses = append(diagnoses, entry)
+	}
+	h.audit(instance, "agent.image_diagnose", map[string]string{"capability": model.AgentCapabilityRegistryRead, "namespace": namespace, "pod": name})
+	writeAgentResponse(w, http.StatusOK, agentAPIResponse{Status: "ok", Data: map[string]any{"pod": summary, "image_pull_failures": failures, "diagnoses": diagnoses}, Summary: "image pull diagnosis retrieved"})
+}
+
+func (h *AgentHandler) RegistryNodeVerify(w http.ResponseWriter, r *http.Request) {
+	instance, ok := h.authenticate(w, r)
+	if !ok {
+		return
+	}
+	node, registry := r.URL.Query().Get("node"), r.URL.Query().Get("registry")
+	if !validAgentName(node) || !validAgentRegistry(registry) {
+		writeAgentError(w, http.StatusBadRequest, "invalid registry verification query", false)
+		return
+	}
+	if !h.requireCapability(w, instance, model.AgentCapabilityRegistryVerify, "") {
+		return
+	}
+	config, server, err := h.registryNodeConfig(node, registry)
+	if err != nil {
+		writeAgentError(w, http.StatusBadRequest, err.Error(), false)
+		return
+	}
+	if h.registryVerifier == nil {
+		writeAgentError(w, http.StatusServiceUnavailable, "registry verification unavailable", true)
+		return
+	}
+	results, err := h.registryVerifier(server, config.Endpoints)
+	if err != nil {
+		writeAgentError(w, http.StatusBadGateway, "registry endpoint verification failed", true)
+		return
+	}
+	h.audit(instance, "agent.registry_node_verify", map[string]string{"capability": model.AgentCapabilityRegistryVerify, "node": node, "registry": config.Registry})
+	writeAgentResponse(w, http.StatusOK, agentAPIResponse{Status: "ok", Data: map[string]any{"node": node, "registry": config.Registry, "endpoints": results}, Summary: "registry endpoint verification completed"})
+}
+
+func (h *AgentHandler) RegistryNodePullCheck(w http.ResponseWriter, r *http.Request) {
+	instance, ok := h.authenticate(w, r)
+	if !ok {
+		return
+	}
+	requestID := r.Header.Get("X-Request-ID")
+	if !validAgentRequestID(requestID) || r.Header.Get("Idempotency-Key") != requestID {
+		writeAgentError(w, http.StatusBadRequest, "matching request and idempotency keys are required", false)
+		return
+	}
+	var request registryNodeRequest
+	decoder := json.NewDecoder(io.LimitReader(r.Body, 4097))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&request); err != nil || decoder.Decode(&struct{}{}) != io.EOF || !validAgentName(request.Node) || !validAgentRegistry(request.Registry) {
+		writeAgentError(w, http.StatusBadRequest, "invalid registry pull check request", false)
+		return
+	}
+	if !h.requireCapability(w, instance, model.AgentCapabilityRegistryPullCheck, "") {
+		return
+	}
+	config, _, err := h.registryNodeConfig(request.Node, request.Registry)
+	if err != nil || config.Mirror == nil || strings.TrimSpace(config.VerificationImage) == "" {
+		writeAgentError(w, http.StatusBadRequest, "registered verification image unavailable", false)
+		return
+	}
+	parameters, _ := json.Marshal(registryNodeRequest{Node: request.Node, Registry: config.Registry, VerificationImage: config.VerificationImage})
+	operation := &model.AgentOperation{OperationID: newAgentOperationID(), RuntimeID: instance.ID, Capability: model.AgentCapabilityRegistryPullCheck, RequestID: requestID, ChatSessionID: r.Header.Get("X-Chat-Session-ID"), Parameters: string(parameters), ParametersHash: fmt.Sprintf("%x", sha256.Sum256(parameters)), Status: model.AgentOperationPendingApproval, Summary: fmt.Sprintf("pull verification image %s for registry %s on node %s", config.VerificationImage, config.Registry, request.Node), ExpiresAt: time.Now().Add(15 * time.Minute)}
+	stored, _, err := h.store.CreateAgentOperation(operation)
+	if err != nil {
+		writeAgentError(w, http.StatusInternalServerError, "operation persistence failed", true)
+		return
+	}
+	h.audit(instance, "agent.registry_pull_check_requested", map[string]string{"capability": model.AgentCapabilityRegistryPullCheck, "node": request.Node, "registry": config.Registry, "operation_id": stored.OperationID})
+	writeAgentResponse(w, http.StatusAccepted, agentAPIResponse{Status: "pending_approval", OperationID: stored.OperationID, Summary: "registry verification image pull is pending approval"})
+}
+
+type registryNodeRequest struct {
+	Node              string `json:"node"`
+	Registry          string `json:"registry"`
+	VerificationImage string `json:"verification_image,omitempty"`
+}
+
+func (h *AgentHandler) registryNodeConfig(node, registry string) (agentRegistryConfig, *model.Server, error) {
+	mirrors, err := h.store.ListNodeRegistryMirrors()
+	if err != nil {
+		return agentRegistryConfig{}, nil, fmt.Errorf("registry status unavailable")
+	}
+	proxies, err := h.store.ListRegistryProxies()
+	if err != nil {
+		return agentRegistryConfig{}, nil, fmt.Errorf("registry status unavailable")
+	}
+	config, found := agentResolveRegistry(registry, mirrors, proxies)
+	if !found {
+		return agentRegistryConfig{}, nil, fmt.Errorf("registry is not platform configured")
+	}
+	servers, err := h.store.ListServers()
+	if err != nil {
+		return agentRegistryConfig{}, nil, fmt.Errorf("node mapping unavailable")
+	}
+	server, found := agentServerForNode(node, servers)
+	if !found {
+		return agentRegistryConfig{}, nil, fmt.Errorf("node is not a platform managed server")
+	}
+	return config, server, nil
+}
+
 func (h *AgentHandler) ApprovalGet(w http.ResponseWriter, r *http.Request) {
 	instance, ok := h.authenticate(w, r)
 	if !ok {
@@ -401,6 +592,7 @@ var (
 	agentResourceNamePattern = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`)
 	agentContainerPattern    = regexp.MustCompile(`^[A-Za-z0-9]([-_A-Za-z0-9.]*[A-Za-z0-9])?$`)
 	agentRequestIDPattern    = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
+	agentRegistryPattern     = regexp.MustCompile(`^[A-Za-z0-9](?:[-A-Za-z0-9.]*[A-Za-z0-9])?(?::[0-9]{1,5})?$`)
 	agentSensitiveText       = regexp.MustCompile(`(?i)((?:token|password|secret|api[_-]?key)\s*[=:]\s*)[^\s,;]+`)
 	agentAuthorizationText   = regexp.MustCompile(`(?i)(authorization\s*:\s*(?:bearer|basic)\s+)[^\s,;]+`)
 )
@@ -445,6 +637,10 @@ func validAgentInvolvedKind(value string) bool {
 func validAgentRequestID(value string) bool { return agentRequestIDPattern.MatchString(value) }
 func validAgentOperationID(value string) bool {
 	return strings.HasPrefix(value, "op_") && validAgentRequestID(value)
+}
+func validAgentRegistry(value string) bool {
+	value = strings.TrimSpace(value)
+	return len(value) > 0 && len(value) <= 253 && agentRegistryPattern.MatchString(value)
 }
 func replicas(value *int32) int32 {
 	if value == nil {

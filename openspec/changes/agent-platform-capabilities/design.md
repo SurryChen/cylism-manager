@@ -118,6 +118,16 @@ Pending/启动失败诊断使用固定只读操作：`pod get` 在 `workload.rea
 
 Agent API 提供 `GET /api/agent/v1/capabilities/status`，返回每个已注册 capability 的 `enabled`、有效 namespace 范围和 `approval_required`。Nanobot 通过固定 CLI 命令 `cylism-cli capability status --output json` 查询该状态，不读取 Manager 数据库或 Kubernetes 凭据。
 
+### 镜像源与拉取失败诊断
+
+镜像源诊断复用 Manager 已管理的节点镜像站和 Registry Proxy，而不向 Runtime 下发 `registries.yaml`、上游地址、认证信息、SSH 凭据或任意网络访问能力。新增三个集群范围 Capability：
+
+- `registry.read`：读取脱敏的镜像站、代理状态，并通过 `image diagnose --namespace N --pod P` 将 Pod 的 `ErrImagePull`/`ImagePullBackOff` 状态与已保存配置关联。
+- `registry.verify`：只允许验证已管理节点到已配置镜像站或代理端点的 DNS 与固定 `/v2/` HTTP 探测。节点和 Registry 必须匹配已有平台记录，不能传入 URL、IP 或命令。
+- `registry.pull_check`：始终需要浏览器管理员审批；审批前后都重新解析节点和镜像源，只执行镜像站预先配置的 `VerificationImage` 的 `sudo -n crictl pull`，不接受模型提供的任意镜像名。
+
+诊断结果是结构化、有限长度且脱敏的证据，不将“配置不存在”误报为网络故障。镜像地址用户名、密码、令牌、完整代理上游 URL、SSH 输出和 `crictl` 原始输出均不得返回 Runtime。`registry.*` 的授权范围固定为 `*`。
+
 审批队列同时在 Runtime 管理页和聊天窗口提供入口。聊天窗口只展示当前 Runtime 的 `pending_approval` 操作，并通过已有的 Manager 用户 JWT 审批或拒绝；Nanobot 不能批准操作。操作仍由 Manager 绑定 Runtime 身份、精确参数和资源版本后执行，聊天会话关联仅在请求显式携带 `X-Chat-Session-ID` 时记录，不能由 UI 推断。
 
 ## Risks And Mitigations

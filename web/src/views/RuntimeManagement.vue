@@ -157,6 +157,9 @@ const agentCapabilities = [
   { id: 'events.read', label: '关联事件查询', description: '读取 Pod、PVC 的受限关联事件，用于定位调度、拉取和挂载失败' },
   { id: 'storage.read', label: '存储状态查询', description: '读取 PVC 绑定与请求容量摘要，不返回存储凭据' },
   { id: 'deployment.scale', label: 'Deployment 扩缩容', description: '始终需要管理员审批' },
+  { id: 'registry.read', label: '镜像源诊断', description: '读取脱敏后的镜像源状态，并关联分析 Pod 镜像拉取失败原因', clusterScoped: true },
+  { id: 'registry.verify', label: '节点镜像源连通性', description: '在已纳管节点验证已配置镜像源的 DNS 与 /v2/ 连通性', clusterScoped: true },
+  { id: 'registry.pull_check', label: '节点镜像拉取检测', description: '拉取平台配置的验证镜像，始终需要管理员审批', clusterScoped: true },
 ]
 const emptyAgentGrantState = () => Object.fromEntries(agentCapabilities.map(capability => [capability.id, { enabled: false, namespaces: [] }]))
 const agentGrantState = ref(emptyAgentGrantState())

@@ -175,21 +175,27 @@ const (
 )
 
 const (
-	AgentCapabilityClusterRead     = "cluster.read"
-	AgentCapabilityWorkloadRead    = "workload.read"
-	AgentCapabilityWorkloadLogs    = "workload.logs"
-	AgentCapabilityEventsRead      = "events.read"
-	AgentCapabilityStorageRead     = "storage.read"
-	AgentCapabilityDeploymentScale = "deployment.scale"
+	AgentCapabilityClusterRead       = "cluster.read"
+	AgentCapabilityWorkloadRead      = "workload.read"
+	AgentCapabilityWorkloadLogs      = "workload.logs"
+	AgentCapabilityEventsRead        = "events.read"
+	AgentCapabilityStorageRead       = "storage.read"
+	AgentCapabilityDeploymentScale   = "deployment.scale"
+	AgentCapabilityRegistryRead      = "registry.read"
+	AgentCapabilityRegistryVerify    = "registry.verify"
+	AgentCapabilityRegistryPullCheck = "registry.pull_check"
 )
 
 var AgentCapabilities = map[string]struct{}{
-	AgentCapabilityClusterRead:     {},
-	AgentCapabilityWorkloadRead:    {},
-	AgentCapabilityWorkloadLogs:    {},
-	AgentCapabilityEventsRead:      {},
-	AgentCapabilityStorageRead:     {},
-	AgentCapabilityDeploymentScale: {},
+	AgentCapabilityClusterRead:       {},
+	AgentCapabilityWorkloadRead:      {},
+	AgentCapabilityWorkloadLogs:      {},
+	AgentCapabilityEventsRead:        {},
+	AgentCapabilityStorageRead:       {},
+	AgentCapabilityDeploymentScale:   {},
+	AgentCapabilityRegistryRead:      {},
+	AgentCapabilityRegistryVerify:    {},
+	AgentCapabilityRegistryPullCheck: {},
 }
 
 func ValidAgentCapability(capability string) bool {
