@@ -27,6 +27,7 @@ type AgentAuthenticator interface {
 type AgentHandler struct {
 	store interface {
 		HasAgentCapability(runtimeID uint, capability, namespace string) (bool, error)
+		ListAgentCapabilityGrants(runtimeID uint) ([]model.AgentCapabilityGrant, error)
 		CreateAgentOperation(operation *model.AgentOperation) (*model.AgentOperation, bool, error)
 		GetAgentOperation(operationID string) (*model.AgentOperation, error)
 		CreateAuditLog(entry *model.AuditLog) error
@@ -37,11 +38,50 @@ type AgentHandler struct {
 
 func NewAgentHandler(store interface {
 	HasAgentCapability(runtimeID uint, capability, namespace string) (bool, error)
+	ListAgentCapabilityGrants(runtimeID uint) ([]model.AgentCapabilityGrant, error)
 	CreateAgentOperation(operation *model.AgentOperation) (*model.AgentOperation, bool, error)
 	GetAgentOperation(operationID string) (*model.AgentOperation, error)
 	CreateAuditLog(entry *model.AuditLog) error
 }, client *k8s.Client, authenticator AgentAuthenticator) *AgentHandler {
 	return &AgentHandler{store: store, client: client, authenticator: authenticator}
+}
+
+// CapabilityStatus exposes the authenticated Runtime's effective capability scopes.
+func (h *AgentHandler) CapabilityStatus(w http.ResponseWriter, r *http.Request) {
+	instance, ok := h.authenticate(w, r)
+	if !ok {
+		return
+	}
+	grants, err := h.store.ListAgentCapabilityGrants(instance.ID)
+	if err != nil {
+		writeAgentError(w, http.StatusInternalServerError, "capability status unavailable", true)
+		return
+	}
+	data := make(map[string]map[string]any, len(model.AgentCapabilities))
+	for capability := range model.AgentCapabilities {
+		data[capability] = map[string]any{"enabled": false, "namespaces": []string{}, "approval_required": capability == model.AgentCapabilityDeploymentScale}
+	}
+	for _, grant := range grants {
+		if !grant.Enabled {
+			continue
+		}
+		status := data[grant.Capability]
+		if status == nil {
+			continue
+		}
+		status["enabled"] = true
+		if grant.Namespace == "*" {
+			status["scope"] = "cluster"
+			status["namespaces"] = []string{"*"}
+			continue
+		}
+		if status["scope"] == "cluster" {
+			continue
+		}
+		status["namespaces"] = append(status["namespaces"].([]string), grant.Namespace)
+	}
+	h.audit(instance, "agent.capability_status", map[string]string{"action": "read"})
+	writeAgentResponse(w, http.StatusOK, agentAPIResponse{Status: "ok", Data: data, Summary: "capability status retrieved"})
 }
 
 func (h *AgentHandler) ClusterStatus(w http.ResponseWriter, r *http.Request) {

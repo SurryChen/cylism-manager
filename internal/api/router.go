@@ -37,6 +37,7 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 	r.GET(cliArtifactManifestPath, gin.WrapH(artifactHandler))
 	agentHandler := NewAgentHandler(s, K8s, agentauth.NewRuntimeTokenAuthorizer(K8s, s, nil))
 	r.GET("/api/agent/v1/cluster/status", gin.WrapF(agentHandler.ClusterStatus))
+	r.GET("/api/agent/v1/capabilities/status", gin.WrapF(agentHandler.CapabilityStatus))
 	r.GET("/api/agent/v1/workloads/get", gin.WrapF(agentHandler.WorkloadGet))
 	r.GET("/api/agent/v1/workloads/logs", gin.WrapF(agentHandler.WorkloadLogs))
 	r.POST("/api/agent/v1/deployments/scale", gin.WrapF(agentHandler.DeploymentScale))

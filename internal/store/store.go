@@ -176,7 +176,7 @@ func (s *Store) ReplaceAgentCapabilityGrants(runtimeID uint, grants []model.Agen
 		}
 		for index := range grants {
 			grant := grants[index]
-			if grant.RuntimeID != runtimeID || !model.ValidAgentCapability(grant.Capability) || (grant.Namespace != "*" && !runtime.NamespaceValid(grant.Namespace)) {
+			if grant.RuntimeID != runtimeID || !validAgentCapabilityGrant(grant) {
 				return errors.New("invalid agent capability grant")
 			}
 			if err := tx.Create(&grant).Error; err != nil {
@@ -185,6 +185,13 @@ func (s *Store) ReplaceAgentCapabilityGrants(runtimeID uint, grants []model.Agen
 		}
 		return nil
 	})
+}
+
+func validAgentCapabilityGrant(grant model.AgentCapabilityGrant) bool {
+	if !model.ValidAgentCapability(grant.Capability) || (grant.Namespace != "*" && !runtime.NamespaceValid(grant.Namespace)) {
+		return false
+	}
+	return grant.Capability != model.AgentCapabilityClusterRead || grant.Namespace == "*"
 }
 
 func (s *Store) HasAgentCapability(runtimeID uint, capability, namespace string) (bool, error) {

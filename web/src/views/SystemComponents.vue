@@ -341,7 +341,7 @@ onMounted(load)
 .mode-label { display: inline-block; padding: 4px 8px; border-radius: 999px; background: var(--surface-subtle); color: var(--text-secondary); font-size: 12px; line-height: 1.2; white-space: nowrap; }
 .mode-static_deployment { color: var(--text-primary); background: color-mix(in srgb, var(--action-primary) 12%, var(--surface-subtle)); }
 .mode-helm_chart { color: var(--text-primary); background: color-mix(in srgb, var(--focus) 12%, var(--surface-subtle)); }
-.mode-embedded { color: var(--text-secondary); background: var(--surface-subtle); }
+.mode-embedded { color: var(--text-primary); background: color-mix(in srgb, var(--action-primary) 12%, var(--surface-subtle)); }
 .mode-unknown { color: var(--warning); background: color-mix(in srgb, var(--warning) 14%, var(--surface-subtle)); }
 .detail { display: block; max-width: 220px; color: var(--danger); overflow-wrap: anywhere; }
 .cell-secondary { display: block; }

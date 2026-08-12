@@ -10,6 +10,8 @@ Nanobot Runtime 已能在 Cylism 平台中聊天，但无法在不暴露 Kuberne
 - Manager 新增 Agent 控制面：Runtime 工作负载身份认证、能力授权与范围校验、只读查询、变更操作审批、异步执行和不可变调用审计。
 - Runtime 为 Nanobot 增加受控的 Cylism 工具适配层、安装器和仅面向 Manager 的短期投影 ServiceAccount Token。平台请求安装时，安装器将经验证的 CLI 写入非持久 `emptyDir`；只有平台启用工具、挂载身份并授予能力后才可调用；内置动作目录仅提供可配置选项，不构成默认授权；继续禁用 Nanobot 通用 `exec`。
 - Runtime 详情页增加 Agent 能力配置和审批队列，支持授权、撤销、范围配置与审批执行。
+- Agent 能力配置使用弹窗交互；工作负载、日志和扩缩容支持按命名空间选择，`*` 表示全部命名空间。
+- Runtime 可通过 `capability status` 查询当前生效的能力和范围；聊天窗口提供权限管理和待审批操作入口。
 - 首期开放受范围限制的诊断能力，以及扩缩容、发布重试和回滚等必须人工审批的变更能力。
 
 ## Capabilities

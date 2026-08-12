@@ -21,7 +21,7 @@ describe('RuntimeManagement', () => {
   })
 
   it('lists runtime instances and exposes deployment actions', async () => {
-    const wrapper = mount(RuntimeManagement)
+    const wrapper = mount(RuntimeManagement, { global: { stubs: { Teleport: true } } })
     await flushPromises()
     expect(wrapper.text()).toContain('nanobot-main')
     expect(wrapper.text()).toContain('cylism-assistant')
@@ -131,25 +131,30 @@ describe('RuntimeManagement', () => {
     expect(wrapper.text()).toContain('部署失败：权限修复超时')
   })
 
-  it('installs the controlled CLI and saves namespace-scoped Agent grants', async () => {
+  it('installs the controlled CLI and saves valid Agent grant scopes', async () => {
     const enabledRuntime = { ...runtime(), agent_tool_enabled: true }
     apiMocks.get.mockImplementation((path) => {
       if (path === '/runtimes/catalog') return Promise.resolve([{ runtime_type: 'nanobot', display_name: 'nanobot', supported_model_protocols: ['responses', 'anthropic'] }])
       if (path === '/nodes') return Promise.resolve([])
-      if (path === '/runtimes/1/agent-capability-grants') return Promise.resolve([{ capability: 'workload.read', namespace: 'operations', enabled: true }])
+    if (path === '/runtimes/1/agent-capability-grants') return Promise.resolve([{ capability: 'workload.read', namespace: 'operations', enabled: true }])
+    if (path === '/k8s/namespace-names') return Promise.resolve([{ name: 'operations' }, { name: 'cylism-assistant' }])
       if (path === '/runtimes/1/agent-operations') return Promise.resolve([])
       return Promise.resolve([enabledRuntime])
     })
-    const wrapper = mount(RuntimeManagement)
+    const wrapper = mount(RuntimeManagement, { global: { stubs: { Teleport: true } } })
     await flushPromises()
     await wrapper.get('.runtime-item').trigger('click')
     await flushPromises()
     expect(wrapper.text()).toContain('Agent 平台能力')
-    const workLoadGrant = wrapper.findAll('.agent-grant-row').find(row => row.text().includes('工作负载查询'))
+    await wrapper.get('.agent-permission-summary .btn').trigger('click')
+    const workLoadGrant = wrapper.findAll('.agent-grant-modal-row').find(row => row.text().includes('工作负载查询'))
     expect(workLoadGrant.get('input[type="checkbox"]').element.checked).toBe(true)
-    expect(workLoadGrant.get('input[aria-label="授权命名空间"]').element.value).toBe('operations')
-    await wrapper.findAll('.agent-grant-row').find(row => row.text().includes('集群摘要')).get('input[type="checkbox"]').setValue(true)
-    await wrapper.findAll('.agent-grants .btn').find(button => button.text() === '保存授权').trigger('click')
-    expect(apiMocks.put).toHaveBeenCalledWith('/runtimes/1/agent-capability-grants', expect.objectContaining({ grants: expect.arrayContaining([expect.objectContaining({ capability: 'cluster.read', namespace: 'cylism-assistant', enabled: true })]) }))
+    expect(workLoadGrant.find('input[value="operations"]').element.checked).toBe(true)
+    const clusterGrant = wrapper.findAll('.agent-grant-modal-row').find(row => row.text().includes('集群摘要'))
+    expect(clusterGrant.text()).toContain('所有命名空间')
+    expect(clusterGrant.find('input[aria-label="授权命名空间"]').exists()).toBe(false)
+    await clusterGrant.get('input[type="checkbox"]').setValue(true)
+    await wrapper.findAll('.agent-permission-modal .btn').find(button => button.text() === '保存授权').trigger('click')
+    expect(apiMocks.put).toHaveBeenCalledWith('/runtimes/1/agent-capability-grants', expect.objectContaining({ grants: expect.arrayContaining([expect.objectContaining({ capability: 'cluster.read', namespace: '*', enabled: true })]) }))
   })
 })

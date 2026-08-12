@@ -75,6 +75,22 @@ export function chatMessages(runtimeID, sessionID, { limit, before } = {}) {
   return api.get(`/runtimes/${runtimeID}/chat/sessions/${encodeURIComponent(sessionID)}/messages${query ? `?${query}` : ''}`)
 }
 
+export function agentCapabilityGrants(runtimeID) {
+  return api.get(`/runtimes/${runtimeID}/agent-capability-grants`)
+}
+
+export function saveAgentCapabilityGrants(runtimeID, grants) {
+  return api.put(`/runtimes/${runtimeID}/agent-capability-grants`, { grants })
+}
+
+export function agentOperations(runtimeID) {
+  return api.get(`/runtimes/${runtimeID}/agent-operations`)
+}
+
+export function resolveAgentOperation(operationID, approve) {
+  return api.post(`/agent-operations/${encodeURIComponent(operationID)}/${approve ? 'approve' : 'reject'}`)
+}
+
 // chatStream 发送聊天消息并解析 SSE 流。onEvent 收到 {type:'delta'|'done'|'error'}。
 // 返回 abort 函数；点击停止或组件卸载时调用。
 export function chatStream(runtimeID, body, { onEvent, signal } = {}) {

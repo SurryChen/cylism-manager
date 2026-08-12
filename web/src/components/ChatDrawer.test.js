@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import ChatDrawer from './ChatDrawer.vue'
 
-const apiMocks = vi.hoisted(() => ({ chatSessions: vi.fn(), chatMessages: vi.fn(), chatStream: vi.fn() }))
+const apiMocks = vi.hoisted(() => ({ chatSessions: vi.fn(), chatMessages: vi.fn(), chatStream: vi.fn(), agentOperations: vi.fn(), resolveAgentOperation: vi.fn() }))
 vi.mock('../api/index.js', () => apiMocks)
 
 const runtime = () => ({ id: 1, name: 'nanobot-main', image: 'cylism-nanobot-runtime:0.3.0', runtime_version: '0.3.0' })
@@ -24,6 +24,7 @@ describe('ChatDrawer', () => {
       ],
     })
     apiMocks.chatStream.mockReturnValue(Promise.resolve())
+    apiMocks.agentOperations.mockResolvedValue([])
   })
 
   it('loads sessions and history when opened', async () => {
@@ -33,6 +34,24 @@ describe('ChatDrawer', () => {
     expect(apiMocks.chatMessages).toHaveBeenCalledWith(1, 'abc')
     expect(wrapper.text()).toContain('hi')
     expect(wrapper.text()).toContain('hello')
+  })
+
+  it('shows and resolves pending operations in the chat approval panel', async () => {
+    apiMocks.agentOperations.mockResolvedValue([{ operation_id: 'op_1', status: 'pending_approval', summary: 'scale operations/api to 3 replicas', created_at: '2026-08-12T10:00:00Z' }])
+    const wrapper = mountDrawer()
+    await flushPromises()
+    expect(wrapper.find('.chat-action-count').text()).toBe('1')
+    await wrapper.get('[aria-label="待审批操作"]').trigger('click')
+    expect(wrapper.text()).toContain('scale operations/api to 3 replicas')
+    await wrapper.get('.chat-approval-actions .btn-primary').trigger('click')
+    expect(apiMocks.resolveAgentOperation).toHaveBeenCalledWith('op_1', true)
+  })
+
+  it('exposes a permission entry point from the chat header', async () => {
+    const wrapper = mountDrawer()
+    await flushPromises()
+    await wrapper.get('[aria-label="Agent 权限"]').trigger('click')
+    expect(wrapper.emitted('manage-permissions')).toHaveLength(1)
   })
 
   it('renders assistant Markdown safely', async () => {

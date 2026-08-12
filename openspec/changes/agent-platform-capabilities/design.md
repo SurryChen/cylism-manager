@@ -112,7 +112,11 @@ Manager 通过 Kubernetes TokenReview 校验 audience、namespace、ServiceAccou
 
 不得将 Agent 请求转发到既有 Gin Handler。将 Handler 中的业务验证和 K8s 调用下沉到共享服务，浏览器 API 与 Agent API 分别做各自认证、输入 DTO 和审计。
 
-Runtime 详情页增加“Agent 能力”面板：能力开关、可选 namespace/application 范围、审批策略、最近调用和撤销。独立审批队列显示动作、影响、资源版本、发起 Runtime/会话、过期时间与批准/拒绝按钮；不显示敏感参数。
+Runtime 详情页增加“Agent 能力”面板：能力开关、可选 namespace/application 范围、审批策略、最近调用和撤销。能力配置通过弹窗完成，避免在 Runtime 列表中展开大量权限细节。`cluster.read` 固定为集群范围；工作负载、日志和扩缩容允许选择一个或多个 namespace，也可选择 `*` 表示全部 namespace，`*` 与具体 namespace 互斥。保存时按 capability/scope 替换该 Runtime 的完整授权集合，撤销旧范围立即生效。
+
+Agent API 提供 `GET /api/agent/v1/capabilities/status`，返回每个已注册 capability 的 `enabled`、有效 namespace 范围和 `approval_required`。Nanobot 通过固定 CLI 命令 `cylism-cli capability status --output json` 查询该状态，不读取 Manager 数据库或 Kubernetes 凭据。
+
+审批队列同时在 Runtime 管理页和聊天窗口提供入口。聊天窗口只展示当前 Runtime 的 `pending_approval` 操作，并通过已有的 Manager 用户 JWT 审批或拒绝；Nanobot 不能批准操作。操作仍由 Manager 绑定 Runtime 身份、精确参数和资源版本后执行，聊天会话关联仅在请求显式携带 `X-Chat-Session-ID` 时记录，不能由 UI 推断。
 
 ## Risks And Mitigations
 
