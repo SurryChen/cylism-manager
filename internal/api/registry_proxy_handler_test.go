@@ -180,6 +180,13 @@ func TestParseProxyDiagnosticClassifiesProbeResults(t *testing.T) {
 	}
 }
 
+func TestRegistryProxyDiagnosticCommandRecordsCurlStatus(t *testing.T) {
+	command := registryProxyDiagnosticCommand("registry-1.docker.io")
+	if !strings.Contains(command[2], `http=$output;`) {
+		t.Fatalf("curl result must be recorded as HTTP status: %q", command[2])
+	}
+}
+
 func TestRegistryProxyHandlerMigratesLegacyDockerHubResources(t *testing.T) {
 	st, err := store.New(":memory:")
 	if err != nil {
