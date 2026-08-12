@@ -157,4 +157,22 @@ describe('RuntimeManagement', () => {
     await wrapper.findAll('.agent-permission-modal .btn').find(button => button.text() === '保存授权').trigger('click')
     expect(apiMocks.put).toHaveBeenCalledWith('/runtimes/1/agent-capability-grants', expect.objectContaining({ grants: expect.arrayContaining([expect.objectContaining({ capability: 'cluster.read', namespace: '*', enabled: true })]) }))
   })
+
+  it('updates an installed controlled CLI through its dedicated action', async () => {
+    const enabledRuntime = { ...runtime(), agent_tool_enabled: true }
+    apiMocks.get.mockImplementation((path) => {
+      if (path === '/runtimes/catalog') return Promise.resolve([{ runtime_type: 'nanobot', display_name: 'nanobot', supported_model_protocols: ['responses', 'anthropic'] }])
+      if (path === '/nodes' || path === '/k8s/namespace-names') return Promise.resolve([])
+      if (path.endsWith('/agent-capability-grants') || path.endsWith('/agent-operations')) return Promise.resolve([])
+      return Promise.resolve([enabledRuntime])
+    })
+    const wrapper = mount(RuntimeManagement, { global: { stubs: { Teleport: true } } })
+    await flushPromises()
+    await wrapper.get('.runtime-item').trigger('click')
+    await flushPromises()
+    const updateButton = wrapper.findAll('.agent-tools-header .btn').find(button => button.text() === '更新工具')
+    expect(updateButton.exists()).toBe(true)
+    await updateButton.trigger('click')
+    expect(apiMocks.post).toHaveBeenCalledWith('/runtimes/1/agent-tools/update')
+  })
 })

@@ -305,6 +305,59 @@ func (h *RuntimeHandler) UninstallAgentTools(c *gin.Context) {
 	h.setAgentTools(c, false)
 }
 
+// UpdateAgentTools rolls the Runtime so its installer retrieves the CLI bundled
+// with the currently deployed Manager. Existing capability grants are retained.
+func (h *RuntimeHandler) UpdateAgentTools(c *gin.Context) {
+	id, err := parseID(c.Param("id"))
+	if err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "Runtime ID 无效")
+		return
+	}
+	instance, err := h.store.GetRuntime(id)
+	if err != nil {
+		model.Error(c, http.StatusNotFound, model.CodeNotFound, "Runtime 不存在")
+		return
+	}
+	if instance.DeploymentMode != model.RuntimeDeploymentManaged || instance.RuntimeType != model.RuntimeTypeNanobot {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "只有受管 Nanobot Runtime 支持 Cylism Agent 工具")
+		return
+	}
+	if !instance.AgentToolEnabled {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "请先安装 Cylism Agent 工具")
+		return
+	}
+	if h.k8s == nil {
+		model.Error(c, http.StatusServiceUnavailable, model.CodeK8sUnavailable, "Kubernetes 集群未连接")
+		return
+	}
+	apiKey, err := crypto.Decrypt(h.encKey, instance.EncryptedAPIKey)
+	if err != nil {
+		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, "读取 Runtime 模型凭据失败")
+		return
+	}
+	runtimeAPIKey, err := h.runtimeAPIKey(instance)
+	if err != nil {
+		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, "读取 Runtime API 凭据失败")
+		return
+	}
+	instance.DesiredGeneration++
+	if err := h.k8s.Apply(c.Request.Context(), instance, apiKey, runtimeAPIKey); err != nil {
+		instance.Status = model.RuntimeStatusFailed
+		instance.HealthDetail = err.Error()
+		_ = h.store.UpdateRuntime(instance)
+		model.Error(c, http.StatusBadGateway, model.CodeK8sAPIError, err.Error())
+		return
+	}
+	instance.Status = model.RuntimeStatusDeploying
+	instance.ObservedGeneration = instance.DesiredGeneration
+	if err := h.store.UpdateRuntime(instance); err != nil {
+		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "保存 Runtime Agent 工具更新状态失败")
+		return
+	}
+	h.sanitize(instance)
+	model.SuccessWithMessage(c, instance, "Runtime Agent 工具更新已提交，Pod 将滚动重建")
+}
+
 func (h *RuntimeHandler) setAgentTools(c *gin.Context, enabled bool) {
 	id, err := parseID(c.Param("id"))
 	if err != nil {

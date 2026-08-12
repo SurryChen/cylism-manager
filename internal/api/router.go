@@ -69,6 +69,7 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 		runtimes.PUT("/:id", runtimeHandler.Update)
 		runtimes.POST("/:id/deploy", runtimeHandler.Deploy)
 		runtimes.POST("/:id/agent-tools/install", runtimeHandler.InstallAgentTools)
+		runtimes.POST("/:id/agent-tools/update", runtimeHandler.UpdateAgentTools)
 		runtimes.POST("/:id/agent-tools/uninstall", runtimeHandler.UninstallAgentTools)
 		runtimes.GET("/:id/agent-capability-grants", agentOperationHandler.ListGrants)
 		runtimes.PUT("/:id/agent-capability-grants", agentOperationHandler.ReplaceGrants)
