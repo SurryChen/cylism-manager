@@ -36,6 +36,30 @@ describe('ChatDrawer', () => {
     expect(wrapper.text()).toContain('hello')
   })
 
+  it('uses one header menu for the current session instead of controls on every tab', async () => {
+    const wrapper = mountDrawer()
+    await flushPromises()
+    expect(wrapper.findAll('[aria-label="当前会话操作"]')).toHaveLength(1)
+    expect(wrapper.findAll('[aria-label^="管理会话"]')).toHaveLength(0)
+    await wrapper.get('[aria-label="当前会话操作"]').trigger('click')
+    expect(wrapper.find('.chat-header-session-menu').exists()).toBe(true)
+  })
+
+  it('renames through the application dialog and keeps archived visibility in the session menu', async () => {
+    apiMocks.renameChatSession.mockResolvedValue({ id: 'abc', title: '镜像排查' })
+    const wrapper = mountDrawer()
+    await flushPromises()
+    await wrapper.get('[aria-label="当前会话操作"]').trigger('click')
+    expect(wrapper.find('.chat-header-session-menu').text()).toContain('显示已归档')
+    await wrapper.findAll('.chat-header-session-menu button').find(button => button.text().includes('重命名')).trigger('click')
+    expect(wrapper.find('[aria-label="重命名会话"]').exists()).toBe(true)
+    await wrapper.find('[aria-label="重命名会话"] input').setValue('镜像排查')
+    await wrapper.find('[aria-label="重命名会话"]').trigger('submit')
+    await flushPromises()
+    expect(apiMocks.renameChatSession).toHaveBeenCalledWith(1, 'abc', '镜像排查')
+    expect(wrapper.find('[aria-label="重命名会话"]').exists()).toBe(false)
+  })
+
   it('shows and resolves pending operations in the chat approval panel', async () => {
     apiMocks.agentOperations
       .mockResolvedValueOnce([{ operation_id: 'op_1', status: 'pending_approval', summary: 'scale operations/api to 3 replicas', created_at: '2026-08-12T10:00:00Z' }])
