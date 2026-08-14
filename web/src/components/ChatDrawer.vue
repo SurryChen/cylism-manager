@@ -7,29 +7,18 @@
             <h2 class="chat-modal-title">与 {{ runtime?.name || 'Agent' }} 对话</h2>
             <p class="chat-modal-sub">{{ displayVersion(runtime) }}</p>
           </div>
-          <div class="chat-header-actions"><button type="button" class="icon-button" title="Agent 权限" aria-label="Agent 权限" @click="emit('manage-permissions')"><Shield :size="17" /></button><button type="button" class="icon-button" title="待审批操作" aria-label="待审批操作" @click="approvalOpen = true; loadApprovals()"><ClipboardCheck :size="17" /><span v-if="pendingApprovals.length" class="chat-action-count">{{ pendingApprovals.length }}</span></button><button type="button" class="icon-button" title="关闭" aria-label="关闭" @click="$emit('update:modelValue', false)"><X :size="18" /></button></div>
+          <div class="chat-header-actions"><button type="button" class="icon-button" title="Agent 权限" aria-label="Agent 权限" @click="emit('manage-permissions')"><Shield :size="17" /></button><button type="button" class="icon-button" title="待审批操作" aria-label="待审批操作" @click="approvalOpen = true; loadApprovals()"><ClipboardCheck :size="17" /><span v-if="pendingApprovals.length" class="chat-action-count">{{ pendingApprovals.length }}</span></button><div class="chat-header-menu"><button type="button" class="icon-button" title="当前会话操作" aria-label="当前会话操作" @click="sessionMenuOpen = !sessionMenuOpen"><MoreHorizontal :size="17" /></button><div v-if="sessionMenuOpen" class="chat-session-menu chat-header-session-menu"><button type="button" @click="toggleArchivedSessions"><EyeOff v-if="showArchived" :size="14" /><Eye v-else :size="14" />{{ showArchived ? '隐藏已归档' : '显示已归档' }}</button><template v-if="currentSessionItem"><button v-if="!currentSessionItem.localOnly" type="button" @click="openRenameSession(currentSessionItem)"><Pencil :size="14" />重命名</button><button v-if="!currentSessionItem.localOnly && !currentSessionItem.archived" type="button" :disabled="currentSessionItem.view?.stream.status !== 'idle'" @click="archiveSession(currentSessionItem, true)"><Archive :size="14" />归档</button><button v-else-if="!currentSessionItem.localOnly && currentSessionItem.archived" type="button" @click="archiveSession(currentSessionItem, false)"><ArchiveRestore :size="14" />恢复</button><button v-if="!currentSessionItem.localOnly" type="button" @click="exportSession(currentSessionItem)"><Download :size="14" />导出</button><button type="button" class="is-danger" :disabled="currentSessionItem.view?.stream.status !== 'idle'" @click="removeSession(currentSessionItem)"><Trash2 :size="14" />删除</button></template></div></div><button type="button" class="icon-button" title="关闭" aria-label="关闭" @click="$emit('update:modelValue', false)"><X :size="18" /></button></div>
         </header>
 
         <div class="chat-sessions">
-          <div class="chat-session-tools"><label class="chat-archive-toggle"><input v-model="showArchived" type="checkbox" @change="refreshSessions" /> 显示已归档</label></div>
           <div class="chat-session-list">
-            <div v-for="session in sessionItems" :key="session.id" class="chat-session-entry">
-              <button type="button" class="chat-session" :class="{ 'is-active': session.id === currentSession, 'is-archived': session.archived }" @click="selectSession(session.id)">
-                <span>{{ session.title || session.id }}</span>
-                <small v-if="session.archived">已归档</small>
-                <small v-else-if="session.view?.stream.status === 'pending'">思考中</small>
-                <small v-else-if="session.view?.stream.status === 'streaming'">生成中</small>
-                <small v-else-if="session.view?.stream.status === 'error'">失败</small>
-              </button>
-              <button type="button" class="icon-button chat-session-menu-trigger" :title="`管理会话 ${session.title || session.id}`" :aria-label="`管理会话 ${session.title || session.id}`" @click.stop="sessionMenuID = sessionMenuID === session.id ? '' : session.id"><MoreHorizontal :size="15" /></button>
-              <div v-if="sessionMenuID === session.id" class="chat-session-menu">
-                <button v-if="!session.localOnly" type="button" @click="renameSession(session)"><Pencil :size="14" />重命名</button>
-                <button v-if="!session.localOnly && !session.archived" type="button" :disabled="session.view?.stream.status !== 'idle'" @click="archiveSession(session, true)"><Archive :size="14" />归档</button>
-                <button v-else-if="!session.localOnly && session.archived" type="button" @click="archiveSession(session, false)"><ArchiveRestore :size="14" />恢复</button>
-                <button v-if="!session.localOnly" type="button" @click="exportSession(session)"><Download :size="14" />导出</button>
-                <button type="button" class="is-danger" :disabled="session.view?.stream.status !== 'idle'" @click="removeSession(session)"><Trash2 :size="14" />删除</button>
-              </div>
-            </div>
+            <button v-for="session in sessionItems" :key="session.id" type="button" class="chat-session" :class="{ 'is-active': session.id === currentSession, 'is-archived': session.archived }" @click="selectSession(session.id)">
+              <span>{{ session.title || session.id }}</span>
+              <small v-if="session.archived">已归档</small>
+              <small v-else-if="session.view?.stream.status === 'pending'">思考中</small>
+              <small v-else-if="session.view?.stream.status === 'streaming'">生成中</small>
+              <small v-else-if="session.view?.stream.status === 'error'">失败</small>
+            </button>
             <button type="button" class="chat-session chat-session-new" @click="newSession">新建会话</button>
           </div>
         </div>
@@ -71,6 +60,15 @@
     </div>
   </Teleport>
   <Teleport to="body">
+    <div v-if="renameOpen" class="chat-overlay chat-session-dialog-overlay" @click.self="closeRenameSession">
+      <form class="chat-session-dialog" aria-label="重命名会话" @submit.prevent="confirmRenameSession">
+        <header class="chat-session-dialog-header"><h2>重命名会话</h2><button type="button" class="icon-button" title="关闭" aria-label="关闭重命名" @click="closeRenameSession"><X :size="18" /></button></header>
+        <label class="chat-session-dialog-field">会话名称<input v-model="renameTitle" class="chat-input" maxlength="160" autofocus /></label>
+        <div class="chat-session-dialog-actions"><button type="button" class="btn" @click="closeRenameSession">取消</button><button type="submit" class="btn btn-primary" :disabled="!renameTitle.trim() || renameSaving">{{ renameSaving ? '保存中' : '确定' }}</button></div>
+      </form>
+    </div>
+  </Teleport>
+  <Teleport to="body">
     <div v-if="approvalOpen" class="chat-overlay chat-approval-overlay" @click.self="approvalOpen = false">
       <section class="chat-approval-modal" role="dialog" aria-modal="true" aria-label="待审批操作">
         <header class="chat-modal-header"><div><h2 class="chat-modal-title">Agent 操作</h2><p class="chat-modal-sub">仅管理员可以批准或拒绝 Runtime 发起的变更</p></div><button type="button" class="icon-button" title="关闭" aria-label="关闭" @click="approvalOpen = false"><X :size="18" /></button></header>
@@ -86,7 +84,7 @@ import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import DOMPurify from 'dompurify'
 import MarkdownIt from 'markdown-it'
 import taskLists from 'markdown-it-task-lists'
-import { Archive, ArchiveRestore, ClipboardCheck, Download, MoreHorizontal, Pencil, Shield, Trash2, X } from 'lucide-vue-next'
+import { Archive, ArchiveRestore, ClipboardCheck, Download, Eye, EyeOff, MoreHorizontal, Pencil, Shield, Trash2, X } from 'lucide-vue-next'
 import { agentOperations, archiveChatSession, chatMessages, chatSessions, chatStream, deleteChatSession, exportChatSession, renameChatSession, resolveAgentOperation } from '../api/index.js'
 
 const props = defineProps({
@@ -109,7 +107,11 @@ const approvalHistory = ref([])
 const approvalTab = ref('pending')
 const approvalFeedback = ref('')
 const showArchived = ref(false)
-const sessionMenuID = ref('')
+const sessionMenuOpen = ref(false)
+const renameOpen = ref(false)
+const renameTarget = ref(null)
+const renameTitle = ref('')
+const renameSaving = ref(false)
 const sessionsError = ref('')
 let sessionsRequestVersion = 0
 let approvalsRequestVersion = 0
@@ -123,6 +125,7 @@ const sessionItems = computed(() => {
     .map(view => ({ ...view, view }))
   return [...local, ...sessions.value.map(session => ({ ...session, view: sessionViews.value.get(session.id) }))]
 })
+const currentSessionItem = computed(() => sessionItems.value.find(session => session.id === currentSession.value) || null)
 
 const markdown = new MarkdownIt({ breaks: true, html: false, linkify: true }).use(taskLists, { enabled: true })
 
@@ -289,6 +292,7 @@ async function loadSessions() {
 async function selectSession(sessionID) {
   const view = sessionViews.value.get(sessionID) || ensureView({ id: sessionID, title: sessionID })
   currentSession.value = sessionID
+  sessionMenuOpen.value = false
   view.error = ''
   if (!view.historyLoaded) await loadHistory(sessionID)
   await scrollToBottom()
@@ -298,26 +302,53 @@ function newSession() {
   const id = createSessionID()
   sessionViews.value.set(id, createView({ id, title: '新会话' }, true))
   currentSession.value = id
+  sessionMenuOpen.value = false
 }
 
-async function renameSession(session) {
-  const title = globalThis.prompt?.('输入会话名称', session.title || session.id)?.trim()
-  sessionMenuID.value = ''
-  if (!title || !props.runtime?.id) return
+function openRenameSession(session) {
+  sessionMenuOpen.value = false
+  renameTarget.value = session
+  renameTitle.value = session.title || session.id
+  renameOpen.value = true
+}
+
+function closeRenameSession() {
+  if (renameSaving.value) return
+  renameOpen.value = false
+  renameTarget.value = null
+  renameTitle.value = ''
+}
+
+async function confirmRenameSession() {
+  const session = renameTarget.value
+  const title = renameTitle.value.trim()
+  if (!session || !title || !props.runtime?.id) return
+  renameSaving.value = true
+  let saved = false
   try {
     const updated = await renameChatSession(props.runtime.id, session.id, title)
     session.title = updated?.title || title
     const view = sessionViews.value.get(session.id)
     if (view) view.title = session.title
     await refreshSessions()
+    saved = true
   } catch (err) {
     sessionsError.value = err.message || '重命名会话失败'
+  } finally {
+    renameSaving.value = false
+    if (saved) closeRenameSession()
   }
+}
+
+async function toggleArchivedSessions() {
+  showArchived.value = !showArchived.value
+  sessionMenuOpen.value = false
+  await refreshSessions()
 }
 
 async function archiveSession(session, archived) {
   if (!props.runtime?.id || session.view?.stream.status !== 'idle') return
-  sessionMenuID.value = ''
+  sessionMenuOpen.value = false
   try {
     await archiveChatSession(props.runtime.id, session.id, archived)
     if (archived && currentSession.value === session.id) {
@@ -332,7 +363,7 @@ async function archiveSession(session, archived) {
 
 async function exportSession(session) {
   if (!props.runtime?.id) return
-  sessionMenuID.value = ''
+  sessionMenuOpen.value = false
   try {
     const data = await exportChatSession(props.runtime.id, session.id)
     const blob = new Blob([JSON.stringify(data?.snapshot || data, null, 2)], { type: 'application/json' })
@@ -349,7 +380,7 @@ async function exportSession(session) {
 
 async function removeSession(session) {
   if (session.view?.stream.status !== 'idle') return
-  sessionMenuID.value = ''
+  sessionMenuOpen.value = false
   const confirmed = globalThis.confirm?.('永久删除此会话？这只会删除当前会话记录，不会删除 Nanobot 已提炼的记忆。')
   if (!confirmed) return
   try {
@@ -491,28 +522,33 @@ onBeforeUnmount(() => {
 <style scoped>
 .chat-overlay { position: fixed; z-index: 1500; inset: 0; display: flex; align-items: center; justify-content: center; padding: 24px; background: var(--overlay); backdrop-filter: blur(8px); }
 .chat-modal { display: flex; width: min(760px, 100%); height: min(720px, calc(100dvh - 48px)); min-height: 420px; flex-direction: column; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-panel); background: var(--surface-glass); box-shadow: var(--shadow); backdrop-filter: blur(30px) saturate(145%); }
-.chat-modal-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 18px 22px 12px; border-bottom: 1px solid var(--border-muted); }
+.chat-modal-header { position: relative; z-index: 3; display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 18px 22px 12px; border-bottom: 1px solid var(--border-muted); }
 .chat-header-actions { display: flex; align-items: center; gap: 6px; }
 .chat-header-actions .icon-button { position: relative; }
+.chat-header-menu { position: relative; }
 .chat-action-count { position: absolute; top: -4px; right: -4px; display: grid; min-width: 15px; height: 15px; place-items: center; border-radius: 50%; background: var(--danger); color: var(--action-contrast); font-size: 9px; }
 .chat-modal-heading { min-width: 0; }
 .chat-modal-title { margin: 0; color: var(--text-primary); font-size: 16px; }
 .chat-modal-sub { margin: 4px 0 0; color: var(--text-muted); font-size: 11px; }
 .chat-sessions { padding: 10px 22px 0; }
-.chat-session-tools { display: flex; justify-content: flex-end; min-height: 18px; margin-bottom: 4px; }
-.chat-archive-toggle { display: flex; align-items: center; gap: 5px; color: var(--text-muted); font-size: 11px; cursor: pointer; }
 .chat-session-list { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 10px; }
-.chat-session-entry { position: relative; display: flex; flex: 0 0 auto; min-width: 0; }
 .chat-session { flex: 0 0 auto; max-width: 160px; overflow: hidden; padding: 6px 10px; border: 1px solid var(--border-muted); border-radius: var(--radius-control); background: var(--surface-subtle); color: var(--text-secondary); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
 .chat-session:hover, .chat-session.is-active { border-color: var(--focus); background: var(--surface-hover); color: var(--action-primary); }
 .chat-session.is-archived { border-style: dashed; opacity: .8; }
-.chat-session-menu-trigger { width: 26px; height: 28px; margin-left: 2px; }
 .chat-session-menu { position: absolute; z-index: 2; top: 34px; right: 0; display: grid; min-width: 122px; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--surface-raised); box-shadow: var(--shadow); }
+.chat-header-session-menu { z-index: 20; top: calc(100% + 6px); }
 .chat-session-menu button { display: flex; align-items: center; gap: 7px; border: 0; padding: 8px 10px; background: transparent; color: var(--text-secondary); font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
 .chat-session-menu button:hover { background: var(--surface-hover); color: var(--text-primary); }
 .chat-session-menu button:disabled { opacity: .45; cursor: not-allowed; }
 .chat-session-menu .is-danger { color: var(--danger); }
 .chat-session-new { border-style: dashed; }
+.chat-session-dialog-overlay { z-index: 1700; }
+.chat-session-dialog { width: min(420px, 100%); border: 1px solid var(--border); border-radius: var(--radius-panel); background: var(--surface-glass); box-shadow: var(--shadow); backdrop-filter: blur(30px) saturate(145%); }
+.chat-session-dialog-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 16px 18px 12px; border-bottom: 1px solid var(--border-muted); }
+.chat-session-dialog-header h2 { margin: 0; color: var(--text-primary); font-size: 15px; }
+.chat-session-dialog-field { display: grid; gap: 7px; padding: 16px 18px; color: var(--text-secondary); font-size: 12px; }
+.chat-session-dialog-field .chat-input { width: 100%; box-sizing: border-box; }
+.chat-session-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; padding: 0 18px 18px; }
 .chat-messages { flex: 1; min-height: 0; overflow-y: auto; padding: 18px 22px; }
 .chat-empty { padding: 40px 0; color: var(--text-muted); font-size: 12px; text-align: center; }
 .chat-history-more { display: block; margin: 0 auto 14px; border: 0; background: transparent; color: var(--action-primary); font: inherit; font-size: 12px; cursor: pointer; }
