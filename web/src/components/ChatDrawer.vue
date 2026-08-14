@@ -11,13 +11,25 @@
         </header>
 
         <div class="chat-sessions">
+          <div class="chat-session-tools"><label class="chat-archive-toggle"><input v-model="showArchived" type="checkbox" @change="refreshSessions" /> 显示已归档</label></div>
           <div class="chat-session-list">
-            <button v-for="session in sessionItems" :key="session.id" type="button" class="chat-session" :class="{ 'is-active': session.id === currentSession }" @click="selectSession(session.id)">
-              <span>{{ session.title || session.id }}</span>
-              <small v-if="session.view?.stream.status === 'pending'">思考中</small>
-              <small v-else-if="session.view?.stream.status === 'streaming'">生成中</small>
-              <small v-else-if="session.view?.stream.status === 'error'">失败</small>
-            </button>
+            <div v-for="session in sessionItems" :key="session.id" class="chat-session-entry">
+              <button type="button" class="chat-session" :class="{ 'is-active': session.id === currentSession, 'is-archived': session.archived }" @click="selectSession(session.id)">
+                <span>{{ session.title || session.id }}</span>
+                <small v-if="session.archived">已归档</small>
+                <small v-else-if="session.view?.stream.status === 'pending'">思考中</small>
+                <small v-else-if="session.view?.stream.status === 'streaming'">生成中</small>
+                <small v-else-if="session.view?.stream.status === 'error'">失败</small>
+              </button>
+              <button type="button" class="icon-button chat-session-menu-trigger" :title="`管理会话 ${session.title || session.id}`" :aria-label="`管理会话 ${session.title || session.id}`" @click.stop="sessionMenuID = sessionMenuID === session.id ? '' : session.id"><MoreHorizontal :size="15" /></button>
+              <div v-if="sessionMenuID === session.id" class="chat-session-menu">
+                <button v-if="!session.localOnly" type="button" @click="renameSession(session)"><Pencil :size="14" />重命名</button>
+                <button v-if="!session.localOnly && !session.archived" type="button" :disabled="session.view?.stream.status !== 'idle'" @click="archiveSession(session, true)"><Archive :size="14" />归档</button>
+                <button v-else-if="!session.localOnly && session.archived" type="button" @click="archiveSession(session, false)"><ArchiveRestore :size="14" />恢复</button>
+                <button v-if="!session.localOnly" type="button" @click="exportSession(session)"><Download :size="14" />导出</button>
+                <button type="button" class="is-danger" :disabled="session.view?.stream.status !== 'idle'" @click="removeSession(session)"><Trash2 :size="14" />删除</button>
+              </div>
+            </div>
             <button type="button" class="chat-session chat-session-new" @click="newSession">新建会话</button>
           </div>
         </div>
@@ -61,8 +73,9 @@
   <Teleport to="body">
     <div v-if="approvalOpen" class="chat-overlay chat-approval-overlay" @click.self="approvalOpen = false">
       <section class="chat-approval-modal" role="dialog" aria-modal="true" aria-label="待审批操作">
-        <header class="chat-modal-header"><div><h2 class="chat-modal-title">待审批操作</h2><p class="chat-modal-sub">仅管理员可以批准或拒绝 Runtime 发起的变更</p></div><button type="button" class="icon-button" title="关闭" aria-label="关闭" @click="approvalOpen = false"><X :size="18" /></button></header>
-        <div class="chat-approval-list"><div v-if="approvalLoading" class="chat-empty">正在读取审批...</div><div v-else-if="!pendingApprovals.length" class="chat-empty">暂无待审批操作</div><article v-for="operation in pendingApprovals" :key="operation.operation_id" class="chat-approval-item"><div><strong>{{ operation.summary }}</strong><small>{{ operation.created_at || '-' }} · 15 分钟内有效</small></div><div class="chat-approval-actions"><button type="button" class="btn btn-primary" :disabled="approvalWorking" @click="resolveApproval(operation, true)">批准</button><button type="button" class="btn btn-danger" :disabled="approvalWorking" @click="resolveApproval(operation, false)">拒绝</button></div></article></div>
+        <header class="chat-modal-header"><div><h2 class="chat-modal-title">Agent 操作</h2><p class="chat-modal-sub">仅管理员可以批准或拒绝 Runtime 发起的变更</p></div><button type="button" class="icon-button" title="关闭" aria-label="关闭" @click="approvalOpen = false"><X :size="18" /></button></header>
+        <div class="chat-approval-tabs"><button type="button" :class="{ 'is-active': approvalTab === 'pending' }" @click="approvalTab = 'pending'; loadApprovals()">待审批<span v-if="pendingApprovals.length">{{ pendingApprovals.length }}</span></button><button type="button" :class="{ 'is-active': approvalTab === 'history' }" @click="approvalTab = 'history'; loadApprovalHistory()">历史</button></div>
+        <div class="chat-approval-list"><div v-if="approvalLoading" class="chat-empty">正在读取操作...</div><template v-else-if="approvalTab === 'pending'"><div v-if="!pendingApprovals.length" class="chat-empty">暂无待审批操作</div><article v-for="operation in pendingApprovals" :key="operation.operation_id" class="chat-approval-item"><div><strong>{{ operation.summary }}</strong><small>{{ operation.created_at || '-' }} · {{ operation.expires_at || '15 分钟内有效' }}</small></div><div class="chat-approval-actions"><button type="button" class="btn btn-primary" :disabled="approvalWorkingIDs.has(operation.operation_id)" @click="resolveApproval(operation, true)">批准</button><button type="button" class="btn btn-danger" :disabled="approvalWorkingIDs.has(operation.operation_id)" @click="resolveApproval(operation, false)">拒绝</button></div></article></template><template v-else><div v-if="!approvalHistory.length" class="chat-empty">暂无操作历史</div><article v-for="operation in approvalHistory" :key="operation.operation_id" class="chat-approval-item chat-approval-history"><div><strong>{{ operation.summary }}</strong><small>{{ operation.created_at || '-' }}</small><small v-if="operation.error_summary">{{ operation.error_summary }}</small></div><span class="chat-operation-status" :class="`is-${operation.status}`">{{ approvalStatusLabel(operation.status) }}</span></article></template><div v-if="approvalFeedback" class="chat-error">{{ approvalFeedback }}</div></div>
       </section>
     </div>
   </Teleport>
@@ -73,8 +86,8 @@ import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import DOMPurify from 'dompurify'
 import MarkdownIt from 'markdown-it'
 import taskLists from 'markdown-it-task-lists'
-import { ClipboardCheck, Shield, X } from 'lucide-vue-next'
-import { agentOperations, chatMessages, chatSessions, chatStream, resolveAgentOperation } from '../api/index.js'
+import { Archive, ArchiveRestore, ClipboardCheck, Download, MoreHorizontal, Pencil, Shield, Trash2, X } from 'lucide-vue-next'
+import { agentOperations, archiveChatSession, chatMessages, chatSessions, chatStream, deleteChatSession, exportChatSession, renameChatSession, resolveAgentOperation } from '../api/index.js'
 
 const props = defineProps({
   runtime: { type: Object, default: null },
@@ -90,8 +103,13 @@ const stickToBottom = ref(true)
 const isComposing = ref(false)
 const approvalOpen = ref(false)
 const approvalLoading = ref(false)
-const approvalWorking = ref(false)
+const approvalWorkingIDs = reactive(new Set())
 const pendingApprovals = ref([])
+const approvalHistory = ref([])
+const approvalTab = ref('pending')
+const approvalFeedback = ref('')
+const showArchived = ref(false)
+const sessionMenuID = ref('')
 const sessionsError = ref('')
 let sessionsRequestVersion = 0
 let approvalsRequestVersion = 0
@@ -168,7 +186,7 @@ async function refreshSessions() {
   const requestVersion = ++sessionsRequestVersion
   try {
     sessionsError.value = ''
-    const nextSessions = (await chatSessions(props.runtime.id)) || []
+    const nextSessions = (await (showArchived.value ? chatSessions(props.runtime.id, { archived: true }) : chatSessions(props.runtime.id))) || []
     if (requestVersion !== sessionsRequestVersion) return
     sessions.value = nextSessions
     nextSessions.forEach(session => ensureView(session))
@@ -186,33 +204,49 @@ async function loadApprovals() {
   const requestVersion = ++approvalsRequestVersion
   approvalLoading.value = true
   try {
-    const operations = (await agentOperations(props.runtime.id)) || []
-    if (requestVersion === approvalsRequestVersion) pendingApprovals.value = operations.filter(operation => operation.status === 'pending_approval')
-  } catch {
-    if (requestVersion === approvalsRequestVersion) pendingApprovals.value = []
+    const operations = (await agentOperations(props.runtime.id, { status: 'pending_approval' })) || []
+    if (requestVersion === approvalsRequestVersion) pendingApprovals.value = operations
+  } catch (err) {
+    if (requestVersion === approvalsRequestVersion) {
+      pendingApprovals.value = []
+      approvalFeedback.value = err.message || '读取待审批操作失败'
+    }
   } finally {
     if (requestVersion === approvalsRequestVersion) approvalLoading.value = false
   }
 }
 
-async function resolveApproval(operation, approve) {
-  approvalWorking.value = true
+async function loadApprovalHistory() {
+  if (!props.runtime?.id) return
+  approvalLoading.value = true
   try {
-    await resolveAgentOperation(operation.operation_id, approve)
-    ++approvalsRequestVersion
-    pendingApprovals.value = pendingApprovals.value.filter(item => item.operation_id !== operation.operation_id)
-    await loadApprovals()
+    approvalHistory.value = (await agentOperations(props.runtime.id)) || []
   } catch (err) {
-    // A second browser tab may resolve the same immutable operation first.
-    // It is no longer actionable in this queue even when our refresh fails.
-    if (String(err?.message || '').includes('不再等待审批')) {
-      ++approvalsRequestVersion
-      pendingApprovals.value = pendingApprovals.value.filter(item => item.operation_id !== operation.operation_id)
-      await loadApprovals()
-    }
+    approvalHistory.value = []
+    approvalFeedback.value = err.message || '读取操作历史失败'
   } finally {
-    approvalWorking.value = false
+    approvalLoading.value = false
   }
+}
+
+async function resolveApproval(operation, approve) {
+  approvalWorkingIDs.add(operation.operation_id)
+  approvalFeedback.value = ''
+  try {
+    const result = await resolveAgentOperation(operation.operation_id, approve)
+    approvalFeedback.value = result?.status ? `操作状态：${approvalStatusLabel(result.status)}` : ''
+  } catch (err) {
+    approvalFeedback.value = err.message || '审批操作失败'
+  } finally {
+    approvalWorkingIDs.delete(operation.operation_id)
+    // Resolving can atomically make the operation terminal before returning an
+    // HTTP error. Always reload the authoritative queue and history.
+    await Promise.all([loadApprovals(), loadApprovalHistory()])
+  }
+}
+
+function approvalStatusLabel(status) {
+  return ({ pending_approval: '待审批', approved: '已批准', rejected: '已拒绝', succeeded: '已完成', failed: '执行失败', stale: '已过期资源', expired: '审批过期' })[status] || status || '未知'
 }
 
 async function loadHistory(sessionID, { before = null } = {}) {
@@ -264,6 +298,75 @@ function newSession() {
   const id = createSessionID()
   sessionViews.value.set(id, createView({ id, title: '新会话' }, true))
   currentSession.value = id
+}
+
+async function renameSession(session) {
+  const title = globalThis.prompt?.('输入会话名称', session.title || session.id)?.trim()
+  sessionMenuID.value = ''
+  if (!title || !props.runtime?.id) return
+  try {
+    const updated = await renameChatSession(props.runtime.id, session.id, title)
+    session.title = updated?.title || title
+    const view = sessionViews.value.get(session.id)
+    if (view) view.title = session.title
+    await refreshSessions()
+  } catch (err) {
+    sessionsError.value = err.message || '重命名会话失败'
+  }
+}
+
+async function archiveSession(session, archived) {
+  if (!props.runtime?.id || session.view?.stream.status !== 'idle') return
+  sessionMenuID.value = ''
+  try {
+    await archiveChatSession(props.runtime.id, session.id, archived)
+    if (archived && currentSession.value === session.id) {
+      const fallback = sessionItems.value.find(item => item.id !== session.id && !item.archived)
+      currentSession.value = fallback?.id || ''
+    }
+    await refreshSessions()
+  } catch (err) {
+    sessionsError.value = err.message || '更新会话归档状态失败'
+  }
+}
+
+async function exportSession(session) {
+  if (!props.runtime?.id) return
+  sessionMenuID.value = ''
+  try {
+    const data = await exportChatSession(props.runtime.id, session.id)
+    const blob = new Blob([JSON.stringify(data?.snapshot || data, null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `nanobot-session-${session.id}.json`
+    link.click()
+    URL.revokeObjectURL(url)
+  } catch (err) {
+    sessionsError.value = err.message || '导出会话失败'
+  }
+}
+
+async function removeSession(session) {
+  if (session.view?.stream.status !== 'idle') return
+  sessionMenuID.value = ''
+  const confirmed = globalThis.confirm?.('永久删除此会话？这只会删除当前会话记录，不会删除 Nanobot 已提炼的记忆。')
+  if (!confirmed) return
+  try {
+    if (session.localOnly) {
+      sessionViews.value.delete(session.id)
+    } else if (props.runtime?.id) {
+      await deleteChatSession(props.runtime.id, session.id)
+      sessionViews.value.delete(session.id)
+      await refreshSessions()
+    }
+    if (currentSession.value === session.id) {
+      currentSession.value = sessionItems.value[0]?.id || ''
+      if (currentSession.value) await selectSession(currentSession.value)
+    }
+  } catch (err) {
+    sessionsError.value = err.message || '删除会话失败'
+  }
 }
 
 function createSessionID() {
@@ -396,9 +499,19 @@ onBeforeUnmount(() => {
 .chat-modal-title { margin: 0; color: var(--text-primary); font-size: 16px; }
 .chat-modal-sub { margin: 4px 0 0; color: var(--text-muted); font-size: 11px; }
 .chat-sessions { padding: 10px 22px 0; }
+.chat-session-tools { display: flex; justify-content: flex-end; min-height: 18px; margin-bottom: 4px; }
+.chat-archive-toggle { display: flex; align-items: center; gap: 5px; color: var(--text-muted); font-size: 11px; cursor: pointer; }
 .chat-session-list { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 10px; }
+.chat-session-entry { position: relative; display: flex; flex: 0 0 auto; min-width: 0; }
 .chat-session { flex: 0 0 auto; max-width: 160px; overflow: hidden; padding: 6px 10px; border: 1px solid var(--border-muted); border-radius: var(--radius-control); background: var(--surface-subtle); color: var(--text-secondary); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
 .chat-session:hover, .chat-session.is-active { border-color: var(--focus); background: var(--surface-hover); color: var(--action-primary); }
+.chat-session.is-archived { border-style: dashed; opacity: .8; }
+.chat-session-menu-trigger { width: 26px; height: 28px; margin-left: 2px; }
+.chat-session-menu { position: absolute; z-index: 2; top: 34px; right: 0; display: grid; min-width: 122px; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--surface-raised); box-shadow: var(--shadow); }
+.chat-session-menu button { display: flex; align-items: center; gap: 7px; border: 0; padding: 8px 10px; background: transparent; color: var(--text-secondary); font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
+.chat-session-menu button:hover { background: var(--surface-hover); color: var(--text-primary); }
+.chat-session-menu button:disabled { opacity: .45; cursor: not-allowed; }
+.chat-session-menu .is-danger { color: var(--danger); }
 .chat-session-new { border-style: dashed; }
 .chat-messages { flex: 1; min-height: 0; overflow-y: auto; padding: 18px 22px; }
 .chat-empty { padding: 40px 0; color: var(--text-muted); font-size: 12px; text-align: center; }
@@ -435,12 +548,20 @@ onBeforeUnmount(() => {
 .chat-input:disabled { opacity: .6; cursor: not-allowed; }
 .chat-approval-overlay { z-index: 1600; }
 .chat-approval-modal { width: min(560px, 100%); max-height: min(620px, calc(100dvh - 48px)); overflow: auto; border: 1px solid var(--border); border-radius: var(--radius-panel); background: var(--surface-glass); box-shadow: var(--shadow); backdrop-filter: blur(30px) saturate(145%); }
+.chat-approval-tabs { display: flex; gap: 4px; padding: 10px 22px 0; border-bottom: 1px solid var(--border-muted); }
+.chat-approval-tabs button { display: flex; align-items: center; gap: 5px; border: 0; border-bottom: 2px solid transparent; padding: 7px 9px; background: transparent; color: var(--text-muted); font: inherit; font-size: 12px; cursor: pointer; }
+.chat-approval-tabs button.is-active { border-bottom-color: var(--action-primary); color: var(--action-primary); }
+.chat-approval-tabs span { display: grid; min-width: 16px; height: 16px; place-items: center; border-radius: 8px; background: var(--danger-surface); color: var(--danger); font-size: 10px; }
 .chat-approval-list { padding: 10px 22px 22px; }
 .chat-approval-item { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 13px 0; border-bottom: 1px solid var(--border-muted); }
 .chat-approval-item > div:first-child { display: grid; min-width: 0; gap: 4px; }
 .chat-approval-item strong { overflow-wrap: anywhere; font-size: 13px; }
 .chat-approval-item small { color: var(--text-secondary); font-size: 11px; }
 .chat-approval-actions { display: flex; flex: 0 0 auto; gap: 6px; }
+.chat-approval-history { align-items: flex-start; }
+.chat-operation-status { flex: 0 0 auto; border: 1px solid var(--border-muted); border-radius: 999px; padding: 3px 7px; color: var(--text-secondary); font-size: 11px; }
+.chat-operation-status.is-succeeded { border-color: var(--success); color: var(--success); }
+.chat-operation-status.is-failed, .chat-operation-status.is-stale, .chat-operation-status.is-expired, .chat-operation-status.is-rejected { border-color: var(--danger); color: var(--danger); }
 @media (max-width: 640px) {
   .chat-overlay { padding: 12px; }
   .chat-modal { width: 100%; height: calc(100dvh - 24px); min-height: 0; }
@@ -448,6 +569,7 @@ onBeforeUnmount(() => {
   .chat-messages { padding: 14px 16px; }
   .chat-approval-modal { width: 100%; max-height: calc(100dvh - 24px); }
   .chat-approval-list { padding-left: 16px; padding-right: 16px; }
+  .chat-approval-tabs { padding-left: 16px; padding-right: 16px; }
   .chat-approval-item { align-items: flex-start; flex-direction: column; }
 }
 </style>

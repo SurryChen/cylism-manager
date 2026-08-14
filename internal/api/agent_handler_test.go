@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
@@ -103,6 +104,37 @@ func TestAgentScaleDoesNotMutateBeforeApprovalAndExecutesAfterApproval(t *testin
 	operation, err := s.GetAgentOperation(response.OperationID)
 	if err != nil || operation.Status != model.AgentOperationSucceeded {
 		t.Fatalf("unexpected operation state: %+v err=%v", operation, err)
+	}
+}
+
+func TestAgentOperationListFiltersAndDoesNotExposeExecutionParameters(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	s, err := store.New(":memory:")
+	if err != nil {
+		t.Fatalf("store: %v", err)
+	}
+	instance := &model.RuntimeInstance{Name: "nanobot-main", RuntimeType: model.RuntimeTypeNanobot, DeploymentMode: model.RuntimeDeploymentManaged, Namespace: "cylism-assistant", Image: "example/nanobot", Status: model.RuntimeStatusReady}
+	if err := s.CreateRuntime(instance); err != nil {
+		t.Fatalf("create runtime: %v", err)
+	}
+	for _, operation := range []*model.AgentOperation{
+		{OperationID: "op_pending", RuntimeID: instance.ID, Capability: model.AgentCapabilityDeploymentScale, RequestID: "request_pending", ChatSessionID: "chat-a", Parameters: `{"token":"must-not-leak"}`, ParametersHash: "hash", Status: model.AgentOperationPendingApproval, Summary: "scale api", ExpiresAt: time.Now().Add(time.Hour)},
+		{OperationID: "op_done", RuntimeID: instance.ID, Capability: model.AgentCapabilityDeploymentScale, RequestID: "request_done", ChatSessionID: "chat-b", Parameters: `{"password":"must-not-leak"}`, ParametersHash: "hash", Status: model.AgentOperationSucceeded, Summary: "scale worker", ExpiresAt: time.Now().Add(time.Hour)},
+	} {
+		if _, _, err := s.CreateAgentOperation(operation); err != nil {
+			t.Fatalf("create operation: %v", err)
+		}
+	}
+	handler := NewAgentOperationHandler(s, nil)
+	router := gin.New()
+	router.GET("/runtimes/:id/agent-operations", handler.ListOperations)
+	response := serve(router, newJSONRequest(http.MethodGet, "/runtimes/"+itoa(instance.ID)+"/agent-operations?status=pending_approval&session_id=chat-a", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("list: %d %s", response.Code, response.Body.String())
+	}
+	body := response.Body.String()
+	if !strings.Contains(body, "op_pending") || strings.Contains(body, "op_done") || strings.Contains(body, "must-not-leak") || strings.Contains(body, `"parameters"`) {
+		t.Fatalf("unexpected operation summary: %s", body)
 	}
 }
 

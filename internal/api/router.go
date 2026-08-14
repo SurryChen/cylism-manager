@@ -91,6 +91,11 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 		runtimes.POST("/:id/chat", runtimeHandler.Chat)
 		runtimes.GET("/:id/chat/sessions", runtimeHandler.ChatSessions)
 		runtimes.GET("/:id/chat/sessions/:sid/messages", runtimeHandler.ChatSessionMessages)
+		runtimes.PATCH("/:id/chat/sessions/:sid", runtimeHandler.RenameChatSession)
+		runtimes.POST("/:id/chat/sessions/:sid/archive", runtimeHandler.ArchiveChatSession)
+		runtimes.POST("/:id/chat/sessions/:sid/restore", runtimeHandler.RestoreChatSession)
+		runtimes.GET("/:id/chat/sessions/:sid/export", runtimeHandler.ExportChatSession)
+		runtimes.DELETE("/:id/chat/sessions/:sid", runtimeHandler.DeleteChatSession)
 	}
 	apiGroup.POST("/agent-operations/:operationID/approve", agentOperationHandler.Approve)
 	apiGroup.POST("/agent-operations/:operationID/reject", agentOperationHandler.Reject)

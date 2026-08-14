@@ -8,6 +8,7 @@ type Session struct {
 	ID        string `json:"id"`
 	Title     string `json:"title"`
 	UpdatedAt string `json:"updated_at,omitempty"`
+	Archived  bool   `json:"archived"`
 }
 
 // Message is one conversation turn in the platform contract.
@@ -32,6 +33,14 @@ type SessionDetail struct {
 type SessionHistoryOptions struct {
 	Limit  int
 	Before string
+}
+
+// SessionExport is the native Nanobot session snapshot returned before an
+// operator permanently deletes a conversation. It deliberately does not
+// include workspace memory files, which are outside the session lifecycle.
+type SessionExport struct {
+	ID       string         `json:"id"`
+	Snapshot map[string]any `json:"snapshot"`
 }
 
 // Event types emitted on the Manager chat SSE stream.
