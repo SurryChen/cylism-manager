@@ -23,6 +23,9 @@ type fakeChatClient struct {
 	streamErr    error
 	streamStatus int
 	readOptions  agent.SessionHistoryOptions
+	renameTitle  string
+	archived     bool
+	deleted      bool
 }
 
 func (f *fakeChatClient) StreamChat(_ context.Context, _ string, _ string) (*http.Response, error) {
@@ -36,13 +39,32 @@ func (f *fakeChatClient) StreamChat(_ context.Context, _ string, _ string) (*htt
 	return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader(f.streamBody)), Header: http.Header{}}, nil
 }
 
-func (f *fakeChatClient) ListSessions(_ context.Context) ([]agent.Session, error) {
+func (f *fakeChatClient) ListSessions(_ context.Context, _ bool) ([]agent.Session, error) {
 	return f.sessions, f.listErr
 }
 
 func (f *fakeChatClient) ReadSession(_ context.Context, _ string, options agent.SessionHistoryOptions) (*agent.SessionDetail, error) {
 	f.readOptions = options
 	return f.detail, f.readErr
+}
+
+func (f *fakeChatClient) RenameSession(_ context.Context, _ string, title string) (*agent.Session, error) {
+	f.renameTitle = title
+	return &agent.Session{ID: "abc", Title: title}, nil
+}
+
+func (f *fakeChatClient) ArchiveSession(_ context.Context, _ string, archived bool) error {
+	f.archived = archived
+	return nil
+}
+
+func (f *fakeChatClient) ExportSession(_ context.Context, _ string) (*agent.SessionExport, error) {
+	return &agent.SessionExport{ID: "abc", Snapshot: map[string]any{"messages": []any{}}}, nil
+}
+
+func (f *fakeChatClient) DeleteSession(_ context.Context, _ string) error {
+	f.deleted = true
+	return nil
 }
 
 func setupChatRouter(t *testing.T, client agent.ChatClient, seenKey *string) (*gin.Engine, *store.Store, []byte) {
@@ -65,6 +87,11 @@ func setupChatRouter(t *testing.T, client agent.ChatClient, seenKey *string) (*g
 	group.POST("/:id/chat", handler.Chat)
 	group.GET("/:id/chat/sessions", handler.ChatSessions)
 	group.GET("/:id/chat/sessions/:sid/messages", handler.ChatSessionMessages)
+	group.PATCH("/:id/chat/sessions/:sid", handler.RenameChatSession)
+	group.POST("/:id/chat/sessions/:sid/archive", handler.ArchiveChatSession)
+	group.POST("/:id/chat/sessions/:sid/restore", handler.RestoreChatSession)
+	group.GET("/:id/chat/sessions/:sid/export", handler.ExportChatSession)
+	group.DELETE("/:id/chat/sessions/:sid", handler.DeleteChatSession)
 	return router, s, encKey
 }
 
@@ -183,5 +210,45 @@ func TestChatSessionMessagesMissingSessionReturns404(t *testing.T) {
 	response := serve(router, newJSONRequest(http.MethodGet, "/api/runtimes/"+itoa(id)+"/chat/sessions/nope/messages", nil))
 	if response.Code != http.StatusNotFound {
 		t.Fatalf("expected 404, got %d: %s", response.Code, response.Body.String())
+	}
+}
+
+func TestChatSessionLifecycleProxiesNativeRuntimeActions(t *testing.T) {
+	client := &fakeChatClient{}
+	router, s, encKey := setupChatRouter(t, client, nil)
+	id := createChatRuntime(t, s, encKey)
+
+	rename := serve(router, newJSONRequest(http.MethodPatch, "/api/runtimes/"+itoa(id)+"/chat/sessions/abc", gin.H{"title": "排查镜像问题"}))
+	if rename.Code != http.StatusOK || client.renameTitle != "排查镜像问题" {
+		t.Fatalf("rename failed: status=%d title=%q body=%s", rename.Code, client.renameTitle, rename.Body.String())
+	}
+	archive := serve(router, newJSONRequest(http.MethodPost, "/api/runtimes/"+itoa(id)+"/chat/sessions/abc/archive", nil))
+	if archive.Code != http.StatusOK || !client.archived {
+		t.Fatalf("archive failed: status=%d archived=%v", archive.Code, client.archived)
+	}
+	restore := serve(router, newJSONRequest(http.MethodPost, "/api/runtimes/"+itoa(id)+"/chat/sessions/abc/restore", nil))
+	if restore.Code != http.StatusOK || client.archived {
+		t.Fatalf("restore failed: status=%d archived=%v", restore.Code, client.archived)
+	}
+	export := serve(router, newJSONRequest(http.MethodGet, "/api/runtimes/"+itoa(id)+"/chat/sessions/abc/export", nil))
+	if export.Code != http.StatusOK || !strings.Contains(export.Body.String(), `"snapshot"`) {
+		t.Fatalf("export failed: status=%d body=%s", export.Code, export.Body.String())
+	}
+	deleted := serve(router, newJSONRequest(http.MethodDelete, "/api/runtimes/"+itoa(id)+"/chat/sessions/abc", nil))
+	if deleted.Code != http.StatusOK || !client.deleted {
+		t.Fatalf("delete failed: status=%d deleted=%v", deleted.Code, client.deleted)
+	}
+}
+
+func TestChatSessionLifecycleRejectsInternalKeyAndInvalidTitle(t *testing.T) {
+	router, s, encKey := setupChatRouter(t, &fakeChatClient{}, nil)
+	id := createChatRuntime(t, s, encKey)
+	internal := serve(router, newJSONRequest(http.MethodDelete, "/api/runtimes/"+itoa(id)+"/chat/sessions/api:abc", nil))
+	if internal.Code != http.StatusBadRequest {
+		t.Fatalf("internal key status = %d: %s", internal.Code, internal.Body.String())
+	}
+	empty := serve(router, newJSONRequest(http.MethodPatch, "/api/runtimes/"+itoa(id)+"/chat/sessions/abc", gin.H{"title": " "}))
+	if empty.Code != http.StatusBadRequest {
+		t.Fatalf("empty title status = %d: %s", empty.Code, empty.Body.String())
 	}
 }

@@ -18,6 +18,10 @@ type chatRequest struct {
 	Message   string `json:"message"`
 }
 
+type chatSessionRenameRequest struct {
+	Title string `json:"title"`
+}
+
 // chatClientFactory builds a runtime chat client; tests replace it with a fake.
 type chatClientFactory func(instance *model.RuntimeInstance, apiKey string) (agent.ChatClient, error)
 
@@ -144,7 +148,8 @@ func (h *RuntimeHandler) ChatSessions(c *gin.Context) {
 		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, err.Error())
 		return
 	}
-	sessions, err := client.ListSessions(c.Request.Context())
+	includeArchived := strings.EqualFold(c.Query("archived"), "true") || c.Query("archived") == "1"
+	sessions, err := client.ListSessions(c.Request.Context(), includeArchived)
 	if err != nil {
 		model.Error(c, http.StatusBadGateway, model.CodeK8sAPIError, "读取 Runtime 会话失败: "+err.Error())
 		return
@@ -188,6 +193,99 @@ func (h *RuntimeHandler) ChatSessionMessages(c *gin.Context) {
 		return
 	}
 	model.Success(c, detail)
+}
+
+// RenameChatSession stores a Nanobot sidebar title override. It does not alter
+// session messages or Nanobot durable memory.
+func (h *RuntimeHandler) RenameChatSession(c *gin.Context) {
+	client, sessionID, ok := h.sessionClient(c)
+	if !ok {
+		return
+	}
+	var request chatSessionRenameRequest
+	if err := c.ShouldBindJSON(&request); err != nil || strings.TrimSpace(request.Title) == "" || len([]rune(strings.TrimSpace(request.Title))) > 160 {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "会话标题长度必须为 1 到 160 个字符")
+		return
+	}
+	session, err := client.RenameSession(c.Request.Context(), sessionID, strings.TrimSpace(request.Title))
+	if err != nil {
+		model.Error(c, http.StatusBadGateway, model.CodeK8sAPIError, "更新 Runtime 会话失败: "+err.Error())
+		return
+	}
+	if session == nil {
+		model.Error(c, http.StatusNotFound, model.CodeNotFound, "会话不存在")
+		return
+	}
+	model.Success(c, session)
+}
+
+func (h *RuntimeHandler) ArchiveChatSession(c *gin.Context) { h.setChatSessionArchived(c, true) }
+func (h *RuntimeHandler) RestoreChatSession(c *gin.Context) { h.setChatSessionArchived(c, false) }
+
+func (h *RuntimeHandler) setChatSessionArchived(c *gin.Context, archived bool) {
+	client, sessionID, ok := h.sessionClient(c)
+	if !ok {
+		return
+	}
+	if err := client.ArchiveSession(c.Request.Context(), sessionID, archived); err != nil {
+		model.Error(c, http.StatusBadGateway, model.CodeK8sAPIError, "更新 Runtime 会话归档状态失败: "+err.Error())
+		return
+	}
+	model.Success(c, gin.H{"id": sessionID, "archived": archived})
+}
+
+func (h *RuntimeHandler) ExportChatSession(c *gin.Context) {
+	client, sessionID, ok := h.sessionClient(c)
+	if !ok {
+		return
+	}
+	exported, err := client.ExportSession(c.Request.Context(), sessionID)
+	if err != nil {
+		model.Error(c, http.StatusBadGateway, model.CodeK8sAPIError, "导出 Runtime 会话失败: "+err.Error())
+		return
+	}
+	if exported == nil {
+		model.Error(c, http.StatusNotFound, model.CodeNotFound, "会话不存在")
+		return
+	}
+	model.Success(c, exported)
+}
+
+// DeleteChatSession permanently deletes the native Nanobot session file only.
+// Memory files are intentionally outside this lifecycle boundary.
+func (h *RuntimeHandler) DeleteChatSession(c *gin.Context) {
+	client, sessionID, ok := h.sessionClient(c)
+	if !ok {
+		return
+	}
+	if err := client.DeleteSession(c.Request.Context(), sessionID); err != nil {
+		model.Error(c, http.StatusBadGateway, model.CodeK8sAPIError, "删除 Runtime 会话失败: "+err.Error())
+		return
+	}
+	model.Success(c, gin.H{"id": sessionID, "deleted": true})
+}
+
+func (h *RuntimeHandler) sessionClient(c *gin.Context) (agent.ChatClient, string, bool) {
+	instance, ok := h.managedRuntime(c)
+	if !ok || !h.requiresCapability(c, instance, "sessions") {
+		return nil, "", false
+	}
+	sessionID := strings.TrimSpace(c.Param("sid"))
+	if sessionID == "" || strings.HasPrefix(sessionID, "api:") {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "会话 ID 无效")
+		return nil, "", false
+	}
+	apiKey, err := h.runtimeAPIKey(instance)
+	if err != nil {
+		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, "读取 Runtime API 凭据失败")
+		return nil, "", false
+	}
+	client, err := h.chatClient(instance, apiKey)
+	if err != nil {
+		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, err.Error())
+		return nil, "", false
+	}
+	return client, sessionID, true
 }
 
 func sessionHistoryOptions(c *gin.Context) (agent.SessionHistoryOptions, error) {

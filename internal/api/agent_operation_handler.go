@@ -21,7 +21,7 @@ type AgentOperationHandler struct {
 		ListAgentCapabilityGrants(runtimeID uint) ([]model.AgentCapabilityGrant, error)
 		ReplaceAgentCapabilityGrants(runtimeID uint, grants []model.AgentCapabilityGrant) error
 		GetAgentOperation(operationID string) (*model.AgentOperation, error)
-		ListAgentOperations(runtimeID uint, limit int) ([]model.AgentOperation, error)
+		ListAgentOperations(runtimeID uint, limit int, status, sessionID string) ([]model.AgentOperation, error)
 		UpdateAgentOperationStatus(operationID, fromStatus, toStatus, errorSummary string, approvedBy *uint, completedAt *time.Time) (bool, error)
 		CreateAuditLog(entry *model.AuditLog) error
 		ListNodeRegistryMirrors() ([]model.NodeRegistryMirror, error)
@@ -37,7 +37,7 @@ func NewAgentOperationHandler(store interface {
 	ListAgentCapabilityGrants(runtimeID uint) ([]model.AgentCapabilityGrant, error)
 	ReplaceAgentCapabilityGrants(runtimeID uint, grants []model.AgentCapabilityGrant) error
 	GetAgentOperation(operationID string) (*model.AgentOperation, error)
-	ListAgentOperations(runtimeID uint, limit int) ([]model.AgentOperation, error)
+	ListAgentOperations(runtimeID uint, limit int, status, sessionID string) ([]model.AgentOperation, error)
 	UpdateAgentOperationStatus(operationID, fromStatus, toStatus, errorSummary string, approvedBy *uint, completedAt *time.Time) (bool, error)
 	CreateAuditLog(entry *model.AuditLog) error
 	ListNodeRegistryMirrors() ([]model.NodeRegistryMirror, error)
@@ -93,12 +93,62 @@ func (h *AgentOperationHandler) ListOperations(c *gin.Context) {
 	if !ok || !h.runtimeExists(c, runtimeID) {
 		return
 	}
-	operations, err := h.store.ListAgentOperations(runtimeID, 50)
+	status := strings.TrimSpace(c.Query("status"))
+	if status != "" && !validAgentOperationStatus(status) {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "Agent 操作状态无效")
+		return
+	}
+	sessionID := strings.TrimSpace(c.Query("session_id"))
+	if len(sessionID) > 128 || strings.HasPrefix(sessionID, "api:") {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "会话 ID 无效")
+		return
+	}
+	operations, err := h.store.ListAgentOperations(runtimeID, 50, status, sessionID)
 	if err != nil {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "读取 Agent 操作失败")
 		return
 	}
-	model.Success(c, operations)
+	items := make([]agentOperationSummary, 0, len(operations))
+	for _, operation := range operations {
+		items = append(items, toAgentOperationSummary(operation))
+	}
+	model.Success(c, items)
+}
+
+// agentOperationSummary intentionally omits raw parameters and their hash.
+// Those values are immutable execution inputs, not browser display data.
+type agentOperationSummary struct {
+	OperationID   string     `json:"operation_id"`
+	Capability    string     `json:"capability"`
+	ChatSessionID string     `json:"chat_session_id,omitempty"`
+	Status        string     `json:"status"`
+	Summary       string     `json:"summary"`
+	ErrorSummary  string     `json:"error_summary,omitempty"`
+	ApprovedBy    *uint      `json:"approved_by,omitempty"`
+	ApprovedAt    *time.Time `json:"approved_at,omitempty"`
+	ExpiresAt     time.Time  `json:"expires_at"`
+	CompletedAt   *time.Time `json:"completed_at,omitempty"`
+	CreatedAt     time.Time  `json:"created_at"`
+}
+
+func toAgentOperationSummary(operation model.AgentOperation) agentOperationSummary {
+	return agentOperationSummary{
+		OperationID: operation.OperationID, Capability: operation.Capability,
+		ChatSessionID: operation.ChatSessionID, Status: operation.Status,
+		Summary: operation.Summary, ErrorSummary: operation.ErrorSummary,
+		ApprovedBy: operation.ApprovedBy, ApprovedAt: operation.ApprovedAt,
+		ExpiresAt: operation.ExpiresAt, CompletedAt: operation.CompletedAt,
+		CreatedAt: operation.CreatedAt,
+	}
+}
+
+func validAgentOperationStatus(status string) bool {
+	switch status {
+	case model.AgentOperationPendingApproval, model.AgentOperationApproved, model.AgentOperationRejected, model.AgentOperationSucceeded, model.AgentOperationFailed, model.AgentOperationStale, model.AgentOperationExpired:
+		return true
+	default:
+		return false
+	}
 }
 
 func (h *AgentOperationHandler) Approve(c *gin.Context) { h.resolve(c, true) }

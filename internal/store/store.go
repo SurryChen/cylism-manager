@@ -282,13 +282,19 @@ func (s *Store) GetAgentOperation(operationID string) (*model.AgentOperation, er
 	return &operation, err
 }
 
-func (s *Store) ListAgentOperations(runtimeID uint, limit int) ([]model.AgentOperation, error) {
+func (s *Store) ListAgentOperations(runtimeID uint, limit int, status, sessionID string) ([]model.AgentOperation, error) {
 	if limit < 1 || limit > 100 {
 		limit = 50
 	}
 	query := s.db.Order("created_at desc").Limit(limit)
 	if runtimeID > 0 {
 		query = query.Where("runtime_id = ?", runtimeID)
+	}
+	if status != "" {
+		query = query.Where("status = ?", status)
+	}
+	if sessionID != "" {
+		query = query.Where("chat_session_id = ?", sessionID)
 	}
 	var operations []model.AgentOperation
 	err := query.Find(&operations).Error

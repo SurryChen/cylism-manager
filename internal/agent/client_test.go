@@ -50,7 +50,7 @@ func TestListSessionsDecodesContract(t *testing.T) {
 	defer server.Close()
 
 	client := NewRuntimeChatClient(server.URL, server.URL, "gpt-test", "secret")
-	sessions, err := client.ListSessions(context.Background())
+	sessions, err := client.ListSessions(context.Background(), false)
 	if err != nil {
 		t.Fatalf("list sessions: %v", err)
 	}
@@ -94,5 +94,46 @@ func TestReadSessionDecodesMessages(t *testing.T) {
 	}
 	if detail == nil || len(detail.Messages) != 1 || detail.Messages[0].Content != "hi" {
 		t.Fatalf("unexpected detail: %#v", detail)
+	}
+}
+
+func TestSessionLifecycleRequestsUseRuntimeAuthorization(t *testing.T) {
+	var methods []string
+	var authHeader string
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		methods = append(methods, request.Method+" "+request.URL.Path)
+		authHeader = request.Header.Get("Authorization")
+		switch {
+		case request.Method == http.MethodPatch:
+			_, _ = io.WriteString(writer, `{"id":"abc","title":"Renamed"}`)
+		case request.Method == http.MethodGet && strings.HasSuffix(request.URL.Path, "/export"):
+			_, _ = io.WriteString(writer, `{"id":"abc","snapshot":{"messages":[]}}`)
+		default:
+			_, _ = io.WriteString(writer, `{}`)
+		}
+	}))
+	defer server.Close()
+	client := NewRuntimeChatClient(server.URL, server.URL, "gpt-test", "secret")
+	if _, err := client.RenameSession(context.Background(), "abc", "Renamed"); err != nil {
+		t.Fatalf("rename: %v", err)
+	}
+	if err := client.ArchiveSession(context.Background(), "abc", true); err != nil {
+		t.Fatalf("archive: %v", err)
+	}
+	if err := client.ArchiveSession(context.Background(), "abc", false); err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	if exported, err := client.ExportSession(context.Background(), "abc"); err != nil || exported == nil || exported.ID != "abc" {
+		t.Fatalf("export: exported=%#v err=%v", exported, err)
+	}
+	if err := client.DeleteSession(context.Background(), "abc"); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	if authHeader != "Bearer secret" {
+		t.Fatalf("unexpected authorization: %q", authHeader)
+	}
+	want := []string{"PATCH /v1/sessions/abc", "POST /v1/sessions/abc/archive", "POST /v1/sessions/abc/restore", "GET /v1/sessions/abc/export", "DELETE /v1/sessions/abc"}
+	if strings.Join(methods, ",") != strings.Join(want, ",") {
+		t.Fatalf("requests = %#v, want %#v", methods, want)
 	}
 }

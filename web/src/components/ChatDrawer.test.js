@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import ChatDrawer from './ChatDrawer.vue'
 
-const apiMocks = vi.hoisted(() => ({ chatSessions: vi.fn(), chatMessages: vi.fn(), chatStream: vi.fn(), agentOperations: vi.fn(), resolveAgentOperation: vi.fn() }))
+const apiMocks = vi.hoisted(() => ({ chatSessions: vi.fn(), chatMessages: vi.fn(), chatStream: vi.fn(), agentOperations: vi.fn(), resolveAgentOperation: vi.fn(), renameChatSession: vi.fn(), archiveChatSession: vi.fn(), exportChatSession: vi.fn(), deleteChatSession: vi.fn() }))
 vi.mock('../api/index.js', () => apiMocks)
 
 const runtime = () => ({ id: 1, name: 'nanobot-main', image: 'cylism-nanobot-runtime:0.3.0', runtime_version: '0.3.0' })
@@ -65,6 +65,27 @@ describe('ChatDrawer', () => {
     await wrapper.get('.chat-approval-actions .btn-primary').trigger('click')
     await flushPromises()
     expect(wrapper.text()).toContain('暂无待审批操作')
+  })
+
+  it('reloads authoritative approvals after a terminal resolve error and shows history', async () => {
+    const pending = [{ operation_id: 'op_1', status: 'pending_approval', summary: 'pull image', created_at: '2026-08-12T10:00:00Z' }]
+    apiMocks.agentOperations
+      .mockResolvedValueOnce(pending)
+      .mockResolvedValueOnce(pending)
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{ operation_id: 'op_1', status: 'failed', summary: 'pull image', error_summary: '节点验证镜像拉取失败' }])
+      .mockResolvedValueOnce([{ operation_id: 'op_1', status: 'failed', summary: 'pull image', error_summary: '节点验证镜像拉取失败' }])
+    apiMocks.resolveAgentOperation.mockRejectedValue(new Error('节点验证镜像拉取失败'))
+    const wrapper = mountDrawer()
+    await flushPromises()
+    await wrapper.get('[aria-label="待审批操作"]').trigger('click')
+    await wrapper.get('.chat-approval-actions .btn-primary').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('暂无待审批操作')
+    expect(wrapper.text()).toContain('节点验证镜像拉取失败')
+    await wrapper.findAll('.chat-approval-tabs button').find(button => button.text().includes('历史')).trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('执行失败')
   })
 
   it('exposes a permission entry point from the chat header', async () => {

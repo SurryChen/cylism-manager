@@ -63,8 +63,8 @@ export const api = {
   delete: (path, body) => request(path, { method: 'DELETE', ...(body === undefined ? {} : { body: JSON.stringify(body) }) }),
 }
 
-export function chatSessions(runtimeID) {
-  return api.get(`/runtimes/${runtimeID}/chat/sessions`)
+export function chatSessions(runtimeID, { archived = false } = {}) {
+  return api.get(`/runtimes/${runtimeID}/chat/sessions${archived ? '?archived=true' : ''}`)
 }
 
 export function chatMessages(runtimeID, sessionID, { limit, before } = {}) {
@@ -83,12 +83,32 @@ export function saveAgentCapabilityGrants(runtimeID, grants) {
   return api.put(`/runtimes/${runtimeID}/agent-capability-grants`, { grants })
 }
 
-export function agentOperations(runtimeID) {
-  return api.get(`/runtimes/${runtimeID}/agent-operations`)
+export function agentOperations(runtimeID, { status, sessionID } = {}) {
+  const params = new URLSearchParams()
+  if (status) params.set('status', status)
+  if (sessionID) params.set('session_id', sessionID)
+  const query = params.toString()
+  return api.get(`/runtimes/${runtimeID}/agent-operations${query ? `?${query}` : ''}`)
 }
 
 export function resolveAgentOperation(operationID, approve) {
   return api.post(`/agent-operations/${encodeURIComponent(operationID)}/${approve ? 'approve' : 'reject'}`)
+}
+
+export function renameChatSession(runtimeID, sessionID, title) {
+  return api.patch(`/runtimes/${runtimeID}/chat/sessions/${encodeURIComponent(sessionID)}`, { title })
+}
+
+export function archiveChatSession(runtimeID, sessionID, archived) {
+  return api.post(`/runtimes/${runtimeID}/chat/sessions/${encodeURIComponent(sessionID)}/${archived ? 'archive' : 'restore'}`)
+}
+
+export function exportChatSession(runtimeID, sessionID) {
+  return api.get(`/runtimes/${runtimeID}/chat/sessions/${encodeURIComponent(sessionID)}/export`)
+}
+
+export function deleteChatSession(runtimeID, sessionID) {
+  return api.delete(`/runtimes/${runtimeID}/chat/sessions/${encodeURIComponent(sessionID)}`)
 }
 
 // chatStream 发送聊天消息并解析 SSE 流。onEvent 收到 {type:'delta'|'done'|'error'}。
