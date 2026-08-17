@@ -176,8 +176,12 @@ func TestAgentRegistryCommandsUsePaddedBase64ForShellDecoder(t *testing.T) {
 
 	endpoints := []string{"https://a"}
 	encodedEndpoints := base64.StdEncoding.EncodeToString([]byte(`["https://a"]`))
-	if !strings.Contains(encodedEndpoints, "=") || !strings.Contains(agentRegistryVerificationCommand(endpoints), "CYLISM_ENDPOINTS_B64="+encodedEndpoints+" sh -c") {
-		t.Fatalf("verification command must use padded standard base64: %s", agentRegistryVerificationCommand(endpoints))
+	verificationCommand := agentRegistryVerificationCommand(endpoints)
+	if !strings.Contains(encodedEndpoints, "=") || !strings.Contains(verificationCommand, "CYLISM_ENDPOINTS_B64="+encodedEndpoints+" sh -c") {
+		t.Fatalf("verification command must use padded standard base64: %s", verificationCommand)
+	}
+	if !strings.Contains(verificationCommand, "read -r endpoint || [ -n \"$endpoint\" ]") {
+		t.Fatalf("verification command must probe a final endpoint without a trailing newline: %s", verificationCommand)
 	}
 }
 
