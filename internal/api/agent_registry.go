@@ -176,8 +176,13 @@ func defaultAgentRegistryPullExecutor(encKey []byte) agentRegistryPullExecutor {
 		encoded := base64.RawStdEncoding.EncodeToString([]byte(image))
 		args := buildSSHArgs(server, encKey, server.Host)
 		args = append(args, "image=$(printf %s "+encoded+" | base64 -d) && sudo -n crictl pull \"$image\"")
-		if _, err := sshExec(2*time.Minute, args); err != nil {
-			return fmt.Errorf("verification image pull failed")
+		output, err := sshExec(2*time.Minute, args)
+		if err != nil {
+			detail := strings.TrimSpace(string(output))
+			if detail == "" {
+				return fmt.Errorf("verification image pull failed: %w", err)
+			}
+			return fmt.Errorf("verification image pull failed: %w: %s", err, detail)
 		}
 		return nil
 	}

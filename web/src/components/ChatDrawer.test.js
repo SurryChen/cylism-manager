@@ -112,6 +112,25 @@ describe('ChatDrawer', () => {
     expect(wrapper.text()).toContain('执行失败')
   })
 
+  it('expands and collapses sanitized failure details in approval history', async () => {
+    apiMocks.agentOperations
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{ operation_id: 'op_failed', status: 'failed', summary: 'pull image', error_summary: '节点验证镜像拉取失败: rpc error: timed out' }])
+    const wrapper = mountDrawer()
+    await flushPromises()
+    await wrapper.get('[aria-label="待审批操作"]').trigger('click')
+    await wrapper.findAll('.chat-approval-tabs button').find(button => button.text().includes('历史')).trigger('click')
+    await flushPromises()
+    const toggle = wrapper.get('.chat-operation-error-toggle')
+    expect(toggle.text()).toBe('查看错误详情')
+    expect(wrapper.find('.chat-operation-error-detail').exists()).toBe(false)
+    await toggle.trigger('click')
+    expect(wrapper.find('.chat-operation-error-detail').text()).toContain('rpc error: timed out')
+    await wrapper.get('.chat-operation-error-toggle').trigger('click')
+    expect(wrapper.find('.chat-operation-error-detail').exists()).toBe(false)
+  })
+
   it('exposes a permission entry point from the chat header', async () => {
     const wrapper = mountDrawer()
     await flushPromises()

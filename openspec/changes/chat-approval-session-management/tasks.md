@@ -14,6 +14,7 @@
 
 - [x] 3.1 Add Vue tests covering pending-queue refresh after resolve errors and visible resolve feedback.
 - [x] 3.2 Add approval history tabs and status/result rendering.
+- [x] 3.2a Persist redacted, bounded execution failure details and render them on demand in approval history.
 - [x] 3.3 Add rename/archive/restore/export/delete session controls, confirmation, active-stream guard, and list refresh behavior.
 
 ## 4. Verification

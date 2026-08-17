@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -142,6 +143,16 @@ func TestRedactAgentTextRemovesAssignmentAndAuthorizationCredentials(t *testing.
 	value := redactAgentText("token=abc123 Authorization: Bearer secret-value password: hidden")
 	if strings.Contains(value, "abc123") || strings.Contains(value, "secret-value") || strings.Contains(value, "hidden") || !strings.Contains(value, "[REDACTED]") {
 		t.Fatalf("agent log redaction leaked a credential: %q", value)
+	}
+}
+
+func TestAgentOperationErrorSummaryRedactsAndBoundsExecutorDetails(t *testing.T) {
+	detail := agentOperationErrorSummary("节点验证镜像拉取失败", fmt.Errorf("rpc failed: token=abc123 Authorization: Bearer secret-value password: hidden %s", strings.Repeat("x", 600)))
+	if strings.Contains(detail, "abc123") || strings.Contains(detail, "secret-value") || strings.Contains(detail, "hidden") {
+		t.Fatalf("operation error summary leaked a credential: %q", detail)
+	}
+	if !strings.Contains(detail, "节点验证镜像拉取失败") || !strings.Contains(detail, "[REDACTED]") || len(detail) > agentOperationErrorSummaryLimit {
+		t.Fatalf("unexpected operation error summary: len=%d value=%q", len(detail), detail)
 	}
 }
 
@@ -407,5 +418,59 @@ func TestAgentRegistryPullCheckRequiresApprovalAndUsesConfiguredImage(t *testing
 	approval := serve(router, newJSONRequest(http.MethodPost, "/agent-operations/"+response.OperationID+"/approve", nil))
 	if approval.Code != http.StatusOK || calledImage != "registry.k8s.io/pause:3.10" {
 		t.Fatalf("pull approval: %d %s image=%q", approval.Code, approval.Body.String(), calledImage)
+	}
+}
+
+func TestAgentRegistryPullCheckPersistsSanitizedExecutionFailure(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	s, err := store.New(":memory:")
+	if err != nil {
+		t.Fatalf("store: %v", err)
+	}
+	instance := &model.RuntimeInstance{Name: "nanobot-main", RuntimeType: model.RuntimeTypeNanobot, DeploymentMode: model.RuntimeDeploymentManaged, Namespace: "cylism-assistant", Image: "example/nanobot", Status: model.RuntimeStatusReady, AgentToolEnabled: true}
+	if err := s.CreateRuntime(instance); err != nil {
+		t.Fatalf("create runtime: %v", err)
+	}
+	if err := s.CreateNodeRegistryMirror(&model.NodeRegistryMirror{Name: "registry-k8s", Registry: "registry.k8s.io", Endpoints: `["https://mirror.example.com"]`, VerificationImage: "registry.k8s.io/pause:3.10", Enabled: true}); err != nil {
+		t.Fatalf("create mirror: %v", err)
+	}
+	if err := s.CreateServer(&model.Server{Name: "node-1", Host: "10.0.0.1", SSHUser: "root", SSHAuthType: "key", K8sNodeName: "node-1"}); err != nil {
+		t.Fatalf("create server: %v", err)
+	}
+	if err := s.ReplaceAgentCapabilityGrants(instance.ID, []model.AgentCapabilityGrant{{RuntimeID: instance.ID, Capability: model.AgentCapabilityRegistryPullCheck, Namespace: "*", Enabled: true}}); err != nil {
+		t.Fatalf("grant: %v", err)
+	}
+	agentHandler := NewAgentHandler(s, &k8s.Client{Clientset: fake.NewSimpleClientset()}, agentAuthenticatorStub{instance: instance})
+	request := httptest.NewRequest(http.MethodPost, "/api/agent/v1/registries/node-pull-check", bytes.NewBufferString(`{"node":"node-1","registry":"registry.k8s.io"}`))
+	request.Header.Set("Authorization", "Bearer agent-token")
+	request.Header.Set("X-Request-ID", "request_457")
+	request.Header.Set("Idempotency-Key", "request_457")
+	recorder := httptest.NewRecorder()
+	agentHandler.RegistryNodePullCheck(recorder, request)
+	var response struct {
+		OperationID string `json:"operation_id"`
+	}
+	if recorder.Code != http.StatusAccepted || json.Unmarshal(recorder.Body.Bytes(), &response) != nil {
+		t.Fatalf("pull check request: %d %s", recorder.Code, recorder.Body.String())
+	}
+	approvalHandler := NewAgentOperationHandler(s, nil).WithRegistryPullExecutor(func(_ *model.Server, _ string) error {
+		return fmt.Errorf("rpc error: code = Unknown desc = pull timed out token=not-for-history")
+	})
+	router := gin.New()
+	router.POST("/agent-operations/:operationID/approve", func(c *gin.Context) { c.Set("user_id", uint(7)); approvalHandler.Approve(c) })
+	approval := serve(router, newJSONRequest(http.MethodPost, "/agent-operations/"+response.OperationID+"/approve", nil))
+	if approval.Code != http.StatusBadGateway {
+		t.Fatalf("approve: %d %s", approval.Code, approval.Body.String())
+	}
+	operation, err := s.GetAgentOperation(response.OperationID)
+	if err != nil || operation.Status != model.AgentOperationFailed || !strings.Contains(operation.ErrorSummary, "pull timed out") || strings.Contains(operation.ErrorSummary, "not-for-history") {
+		t.Fatalf("unexpected failed operation: %+v err=%v", operation, err)
+	}
+	listHandler := NewAgentOperationHandler(s, nil)
+	listRouter := gin.New()
+	listRouter.GET("/runtimes/:id/agent-operations", listHandler.ListOperations)
+	list := serve(listRouter, newJSONRequest(http.MethodGet, "/runtimes/"+itoa(instance.ID)+"/agent-operations", nil))
+	if list.Code != http.StatusOK || !strings.Contains(list.Body.String(), "pull timed out") || strings.Contains(list.Body.String(), "not-for-history") || strings.Contains(list.Body.String(), `"parameters"`) {
+		t.Fatalf("unexpected operation history: %d %s", list.Code, list.Body.String())
 	}
 }
