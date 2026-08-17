@@ -160,5 +160,5 @@ func alertSeverityRank(value string) int {
 func alertAutomationPrompt(event *model.AlertEvent, mode string) string {
 	return fmt.Sprintf(`你正在处理 Cylism 的持久化告警事件 #%d。只能使用 cylism_platform 工具，禁止建议或尝试 shell、SSH、kubectl、网络请求、任意文件操作。
 
-先调用 alert_get（alert_id=%d）和 monitoring_disk_growth（node=%q, range=6h），必要时调用 node_get。基于返回的事实生成简洁中文报告：影响、证据、风险、建议。若告警仍为 firing 且确实适合固定配方，在模式 %q 下只可请求 maintenance_cleanup_request，recipe 仅能为 journal-vacuum 或 container-image-prune；必须说明理由。不要声称已执行清理，任何清理都需要管理员审批。`, event.ID, event.ID, event.NodeName, mode)
+工具调用契约：cylism_platform(operation="alert_get", alert_id=%d) 读取本事件；cylism_platform(operation="alert_list") 列出最近事件；cylism_platform(operation="monitoring_disk_growth", node=%q, range="6h") 读取受控磁盘诊断。必要时才使用 operation="node_get" 并传 name。基于返回的事实生成简洁中文报告：影响、证据、风险、建议。若告警仍为 firing 且确实适合固定配方，在模式 %q 下只可调用 cylism_platform(operation="maintenance_cleanup_request", alert_id=%d, recipe="journal-vacuum" 或 "container-image-prune")；必须说明理由。不要声称已执行清理，任何清理都需要管理员审批。`, event.ID, event.ID, event.NodeName, mode, event.ID)
 }

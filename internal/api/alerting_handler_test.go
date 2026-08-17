@@ -10,6 +10,7 @@ import (
 	"time"
 
 	k8sclient "github.com/cylism/cylism-manager/internal/k8s"
+	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/gin-gonic/gin"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -30,6 +31,7 @@ func setupAlertingRouter(handler *AlertingHandler) *gin.Engine {
 	group.POST("/silences", handler.CreateSilence)
 	group.DELETE("/silences/:id", handler.DeleteSilence)
 	group.POST("/test-notification", handler.TestNotification)
+	group.PUT("/automation-policy", handler.UpdateAutomationPolicy)
 	router.POST("/api/monitoring/alerts/notify", handler.Notify)
 	return router
 }
@@ -207,6 +209,86 @@ func TestAlertingOverviewIncludesRecentResolvedWebhookAlerts(t *testing.T) {
 		t.Fatalf("expected recent resolved alert, got %s", response.Body.String())
 	}
 }
+
+func TestUpdateAutomationPolicyImmediatelySyncsCurrentFiringAlerts(t *testing.T) {
+	original := K8s
+	K8s = alertingReadyK8s("relay-token")
+	defer func() { K8s = original }()
+
+	store := &memoryAlertAutomationStore{runtime: &model.RuntimeInstance{ID: 7, RuntimeType: model.RuntimeTypeNanobot, DeploymentMode: model.RuntimeDeploymentManaged}, events: map[string]*model.AlertEvent{}}
+	dispatched := make(chan *model.AlertEvent, 1)
+	handler := NewAlertingHandler().WithAutomation(store, alertDispatcherFunc(func(_ context.Context, event *model.AlertEvent) { dispatched <- event }))
+	handler.alertmanager = func(_ context.Context, method, path string, _ interface{}, output interface{}) error {
+		if method != http.MethodGet || path != "/api/v2/alerts" {
+			t.Fatalf("unexpected Alertmanager request: %s %s", method, path)
+		}
+		*output.(*[]alertmanagerAlert) = []alertmanagerAlert{
+			{Fingerprint: "firing-1", Status: alertStatus{State: "firing"}, Labels: map[string]string{"alertname": "NodeDiskHigh", "severity": "warning", "node": "node-a"}},
+			{Fingerprint: "resolved-1", Status: alertStatus{State: "resolved"}, Labels: map[string]string{"alertname": "NodeDiskHigh", "severity": "warning"}},
+		}
+		return nil
+	}
+
+	response := serve(setupAlertingRouter(handler), newJSONRequest(http.MethodPut, "/api/monitoring/alerts/automation-policy", gin.H{
+		"runtime_id": 7, "enabled": true, "minimum_severity": "warning", "mode": "report_only", "cooldown_minutes": 30,
+	}))
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"synced":1`) {
+		t.Fatalf("expected one immediately synced alert, got %d %s", response.Code, response.Body.String())
+	}
+	select {
+	case event := <-dispatched:
+		if event.Fingerprint != "firing-1" || event.Status != model.AlertEventAnalyzing {
+			t.Fatalf("unexpected dispatched event: %#v", event)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("expected current firing alert to be dispatched")
+	}
+}
+
+type memoryAlertAutomationStore struct {
+	policy  *model.AlertAutomationPolicy
+	runtime *model.RuntimeInstance
+	events  map[string]*model.AlertEvent
+}
+
+func (s *memoryAlertAutomationStore) UpsertAlertEvent(event *model.AlertEvent) (*model.AlertEvent, error) {
+	if existing, ok := s.events[event.Fingerprint]; ok {
+		return existing, nil
+	}
+	event.ID = uint(len(s.events) + 1)
+	s.events[event.Fingerprint] = event
+	return event, nil
+}
+
+func (s *memoryAlertAutomationStore) GetAlertAutomationPolicy() (*model.AlertAutomationPolicy, error) {
+	if s.policy == nil {
+		return nil, errors.New("policy not found")
+	}
+	return s.policy, nil
+}
+
+func (s *memoryAlertAutomationStore) SaveAlertAutomationPolicy(policy *model.AlertAutomationPolicy) error {
+	copy := *policy
+	s.policy = &copy
+	return nil
+}
+
+func (s *memoryAlertAutomationStore) ListAlertEvents(int) ([]model.AlertEvent, error) {
+	return nil, nil
+}
+
+func (s *memoryAlertAutomationStore) UpdateAlertEvent(event *model.AlertEvent) error {
+	s.events[event.Fingerprint] = event
+	return nil
+}
+
+func (s *memoryAlertAutomationStore) GetRuntime(uint) (*model.RuntimeInstance, error) {
+	return s.runtime, nil
+}
+
+type alertDispatcherFunc func(context.Context, *model.AlertEvent)
+
+func (f alertDispatcherFunc) Dispatch(ctx context.Context, event *model.AlertEvent) { f(ctx, event) }
 
 func alertingReadyK8s(token string) *k8sclient.Client {
 	return &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(

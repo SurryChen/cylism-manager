@@ -355,7 +355,7 @@ func (h *AlertingHandler) Notify(c *gin.Context) {
 		return
 	}
 	payload.PlatformURL = h.platformURL
-	if err := h.persistAlertEvents(payload); err != nil {
+	if err := h.persistAlertEvents(payload, false); err != nil {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "持久化告警事件失败")
 		return
 	}
@@ -371,7 +371,7 @@ func (h *AlertingHandler) Notify(c *gin.Context) {
 	model.Success(c, gin.H{"delivered": delivered, "persisted": true})
 }
 
-func (h *AlertingHandler) persistAlertEvents(payload alertmanagerNotification) error {
+func (h *AlertingHandler) persistAlertEvents(payload alertmanagerNotification, forceDispatch bool) error {
 	if h.automationStore == nil {
 		return nil
 	}
@@ -380,7 +380,7 @@ func (h *AlertingHandler) persistAlertEvents(payload alertmanagerNotification) e
 		if err != nil {
 			return err
 		}
-		if event.Status != model.AlertEventResolved && h.dispatcher != nil && h.shouldDispatch(event) {
+		if event.Status != model.AlertEventResolved && h.dispatcher != nil && h.shouldDispatch(event, forceDispatch) {
 			event.Status = model.AlertEventAnalyzing
 			now := time.Now().UTC()
 			event.LastDispatchedAt = &now
@@ -393,10 +393,16 @@ func (h *AlertingHandler) persistAlertEvents(payload alertmanagerNotification) e
 	return nil
 }
 
-func (h *AlertingHandler) shouldDispatch(event *model.AlertEvent) bool {
+func (h *AlertingHandler) shouldDispatch(event *model.AlertEvent, force bool) bool {
 	policy, err := h.automationStore.GetAlertAutomationPolicy()
 	if err != nil || !alertPolicyMatches(policy, event) {
 		return false
+	}
+	if event.Status == model.AlertEventAwaitingApproval || event.Status == model.AlertEventRemediating {
+		return false
+	}
+	if force {
+		return true
 	}
 	if event.LastDispatchedAt == nil {
 		return true
@@ -468,7 +474,45 @@ func (h *AlertingHandler) UpdateAutomationPolicy(c *gin.Context) {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "保存告警自动化策略失败")
 		return
 	}
-	model.SuccessWithMessage(c, policy, "告警自动化策略已保存")
+	result := gin.H{"policy": policy, "synced": 0, "sync_warning": ""}
+	if policy.Enabled {
+		count, err := h.syncCurrentAlertEvents(c.Request.Context())
+		if err != nil {
+			result["sync_warning"] = "策略已保存；当前活跃告警将在下一次 Alertmanager 通知时处理：" + truncateAgentText(err.Error(), 180)
+		} else {
+			result["synced"] = count
+		}
+	}
+	model.SuccessWithMessage(c, result, "告警自动化策略已保存")
+}
+
+// syncCurrentAlertEvents imports Alertmanager's current firing set without
+// sending another external notification. Saving an enabled policy invokes this
+// once so existing alerts do not need to wait for repeat_interval.
+func (h *AlertingHandler) syncCurrentAlertEvents(ctx context.Context) (int, error) {
+	if K8s == nil {
+		return 0, fmt.Errorf("Kubernetes 客户端未初始化")
+	}
+	if status := K8s.AlertingStatus(); status.State != k8s.AlertingStateReady {
+		return 0, fmt.Errorf("Alertmanager 尚未就绪")
+	}
+	alerts := []alertmanagerAlert{}
+	if err := h.alertmanager(ctx, http.MethodGet, "/api/v2/alerts", nil, &alerts); err != nil {
+		return 0, fmt.Errorf("读取 Alertmanager 活跃告警失败: %w", err)
+	}
+	firing := make([]alertmanagerAlert, 0, len(alerts))
+	for _, alert := range alerts {
+		if alert.Status.State == "firing" {
+			firing = append(firing, alert)
+		}
+	}
+	if len(firing) == 0 {
+		return 0, nil
+	}
+	if err := h.persistAlertEvents(alertmanagerNotification{Status: "firing", Alerts: firing, PlatformURL: h.platformURL}, true); err != nil {
+		return 0, err
+	}
+	return len(firing), nil
 }
 
 func validAlertAutomationPolicy(policy *model.AlertAutomationPolicy) bool {

@@ -279,6 +279,14 @@ func parseCommand(args []string) (requestSpec, error) {
 			return requestSpec{}, errors.New("alert get requires a valid --id and --output json")
 		}
 		return requestSpec{method: http.MethodGet, path: "/api/agent/v1/alerts/get", query: url.Values{"id": {strconv.FormatUint(uint64(*id), 10)}}}, nil
+	case "alert list":
+		flags := flag.NewFlagSet("alert list", flag.ContinueOnError)
+		flags.SetOutput(io.Discard)
+		output := flags.String("output", "", "")
+		if err := flags.Parse(args[2:]); err != nil || flags.NArg() != 0 || *output != "json" {
+			return requestSpec{}, errors.New("alert list requires --output json")
+		}
+		return requestSpec{method: http.MethodGet, path: "/api/agent/v1/alerts/list"}, nil
 	case "monitoring disk-growth":
 		flags := flag.NewFlagSet("monitoring disk-growth", flag.ContinueOnError)
 		flags.SetOutput(io.Discard)
