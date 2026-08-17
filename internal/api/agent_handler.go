@@ -33,6 +33,7 @@ type AgentHandler struct {
 		CreateAgentOperation(operation *model.AgentOperation) (*model.AgentOperation, bool, error)
 		GetAgentOperation(operationID string) (*model.AgentOperation, error)
 		GetAlertEvent(id uint) (*model.AlertEvent, error)
+		ListAlertEvents(int) ([]model.AlertEvent, error)
 		UpdateAlertEvent(*model.AlertEvent) error
 		GetAlertAutomationPolicy() (*model.AlertAutomationPolicy, error)
 		ListNodeRegistryMirrors() ([]model.NodeRegistryMirror, error)
@@ -52,6 +53,7 @@ func NewAgentHandler(store interface {
 	CreateAgentOperation(operation *model.AgentOperation) (*model.AgentOperation, bool, error)
 	GetAgentOperation(operationID string) (*model.AgentOperation, error)
 	GetAlertEvent(id uint) (*model.AlertEvent, error)
+	ListAlertEvents(int) ([]model.AlertEvent, error)
 	UpdateAlertEvent(*model.AlertEvent) error
 	GetAlertAutomationPolicy() (*model.AlertAutomationPolicy, error)
 	ListNodeRegistryMirrors() ([]model.NodeRegistryMirror, error)
@@ -741,6 +743,27 @@ func (h *AgentHandler) AlertGet(w http.ResponseWriter, r *http.Request) {
 	}
 	h.audit(instance, "agent.alert_get", map[string]string{"capability": model.AgentCapabilityAlertRead, "alert_id": strconv.FormatUint(id, 10)})
 	writeAgentResponse(w, http.StatusOK, agentAPIResponse{Status: "ok", Data: map[string]any{"id": event.ID, "alert_name": event.AlertName, "severity": event.Severity, "node": event.NodeName, "mount_point": event.MountPoint, "status": event.Status, "starts_at": event.StartsAt, "labels": json.RawMessage(event.Labels), "annotations": json.RawMessage(event.Annotations), "diagnostic_summary": event.DiagnosticSummary}, Summary: "alert event retrieved"})
+}
+
+// AlertList lets an authorized Runtime discover recent persisted events before
+// selecting one with AlertGet. It is deliberately fixed to a small recent
+// window and does not permit filtering expressions or arbitrary database reads.
+func (h *AgentHandler) AlertList(w http.ResponseWriter, r *http.Request) {
+	instance, ok := h.authenticate(w, r)
+	if !ok || !h.requireCapability(w, instance, model.AgentCapabilityAlertRead, "") {
+		return
+	}
+	events, err := h.store.ListAlertEvents(20)
+	if err != nil {
+		writeAgentError(w, http.StatusInternalServerError, "alert events unavailable", true)
+		return
+	}
+	items := make([]map[string]any, 0, len(events))
+	for _, event := range events {
+		items = append(items, map[string]any{"id": event.ID, "alert_name": event.AlertName, "severity": event.Severity, "node": event.NodeName, "mount_point": event.MountPoint, "status": event.Status, "starts_at": event.StartsAt, "updated_at": event.UpdatedAt, "diagnostic_summary": event.DiagnosticSummary, "operation_id": event.OperationID})
+	}
+	h.audit(instance, "agent.alert_list", map[string]string{"capability": model.AgentCapabilityAlertRead})
+	writeAgentResponse(w, http.StatusOK, agentAPIResponse{Status: "ok", Data: map[string]any{"events": items}, Summary: "recent alert events retrieved"})
 }
 
 // MonitoringDiskGrowth makes one Manager-owned metrics query. The Runtime may

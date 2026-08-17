@@ -136,6 +136,7 @@ func TestRunAlertAutomationCommandsUseFixedEndpoints(t *testing.T) {
 	tests := []struct {
 		args, path, query, method string
 	}{
+		{"alert list --output json", "/api/agent/v1/alerts/list", "", http.MethodGet},
 		{"alert get --id 42 --output json", "/api/agent/v1/alerts/get", "id=42", http.MethodGet},
 		{"monitoring disk-growth --node node-1 --range 6h --output json", "/api/agent/v1/monitoring/disk-growth", "node=node-1&range=6h", http.MethodGet},
 		{"maintenance cleanup-request --alert 42 --recipe journal-vacuum --output json", "/api/agent/v1/maintenance/cleanup-request", "", http.MethodPost},

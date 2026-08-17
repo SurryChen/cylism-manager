@@ -54,6 +54,7 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 	r.POST("/api/agent/v1/deployments/scale", gin.WrapF(agentHandler.DeploymentScale))
 	r.GET("/api/agent/v1/approvals/:operationID", gin.WrapF(agentHandler.ApprovalGet))
 	r.GET("/api/agent/v1/alerts/get", gin.WrapF(agentHandler.AlertGet))
+	r.GET("/api/agent/v1/alerts/list", gin.WrapF(agentHandler.AlertList))
 	r.GET("/api/agent/v1/monitoring/disk-growth", gin.WrapF(agentHandler.MonitoringDiskGrowth))
 	r.POST("/api/agent/v1/maintenance/cleanup-request", gin.WrapF(agentHandler.MaintenanceCleanupRequest))
 
