@@ -156,6 +156,14 @@ func agentOperationErrorSummary(prefix string, err error) string {
 	return truncateAgentText(prefix+": "+detail, agentOperationErrorSummaryLimit-3)
 }
 
+func maintenanceCleanupFailureSummary(output string, executeErr error) string {
+	detail := strings.TrimSpace(output)
+	if detail == "" {
+		return agentOperationErrorSummary("执行固定清理配方失败", executeErr)
+	}
+	return agentOperationErrorSummary("执行固定清理配方失败", fmt.Errorf("%s: %w", detail, executeErr))
+}
+
 func toAgentOperationSummary(operation model.AgentOperation) agentOperationSummary {
 	return agentOperationSummary{
 		OperationID: operation.OperationID, Capability: operation.Capability,
@@ -286,7 +294,7 @@ func (h *AgentOperationHandler) resolveMaintenanceCleanup(c *gin.Context, operat
 	output, executeErr := h.maintenanceCleanupExecutor(server, parameters.Recipe)
 	now := time.Now()
 	if executeErr != nil {
-		message := agentOperationErrorSummary("执行固定清理配方失败", executeErr)
+		message := maintenanceCleanupFailureSummary(output, executeErr)
 		_, _ = h.store.UpdateAgentOperationStatus(operation.OperationID, model.AgentOperationApproved, model.AgentOperationFailed, message, nil, &now)
 		event.Status, event.LastError = model.AlertEventFailed, message
 		_ = h.store.UpdateAlertEvent(event)

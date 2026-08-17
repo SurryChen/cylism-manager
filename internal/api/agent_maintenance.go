@@ -23,7 +23,7 @@ func defaultAgentMaintenanceCleanupExecutor(encKey []byte) agentMaintenanceClean
 		case "journal-vacuum":
 			command = "sudo -n journalctl --disk-usage; sudo -n journalctl --vacuum-time=7d; sudo -n journalctl --disk-usage"
 		case "container-image-prune":
-			command = `set -eu; if [ -x /usr/local/bin/crictl ]; then /usr/local/bin/crictl images; /usr/local/bin/crictl rmi --prune; /usr/local/bin/crictl images; elif [ -x /var/lib/rancher/k3s/bin/crictl ]; then /var/lib/rancher/k3s/bin/crictl images; /var/lib/rancher/k3s/bin/crictl rmi --prune; /var/lib/rancher/k3s/bin/crictl images; elif [ -x /usr/local/bin/k3s ]; then /usr/local/bin/k3s crictl images; /usr/local/bin/k3s crictl rmi --prune; /usr/local/bin/k3s crictl images; else exit 127; fi`
+			command = containerImagePruneCommand()
 		}
 		args := buildSSHArgs(server, encKey, server.Host)
 		args = append(args, command)
@@ -37,6 +37,10 @@ func defaultAgentMaintenanceCleanupExecutor(encKey []byte) agentMaintenanceClean
 		}
 		return summary, nil
 	}
+}
+
+func containerImagePruneCommand() string {
+	return `set -eu; if [ -x /usr/local/bin/crictl ]; then sudo -n /usr/local/bin/crictl images; sudo -n /usr/local/bin/crictl rmi --prune; sudo -n /usr/local/bin/crictl images; elif [ -x /var/lib/rancher/k3s/bin/crictl ]; then sudo -n /var/lib/rancher/k3s/bin/crictl images; sudo -n /var/lib/rancher/k3s/bin/crictl rmi --prune; sudo -n /var/lib/rancher/k3s/bin/crictl images; elif [ -x /usr/local/bin/k3s ]; then sudo -n /usr/local/bin/k3s crictl images; sudo -n /usr/local/bin/k3s crictl rmi --prune; sudo -n /usr/local/bin/k3s crictl images; else exit 127; fi`
 }
 
 func maintenanceCompletionSummary(recipe, output string) string {

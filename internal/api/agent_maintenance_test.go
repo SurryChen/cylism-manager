@@ -53,6 +53,22 @@ func TestAgentDiskInspectionCommandIsFixedAndBounded(t *testing.T) {
 	}
 }
 
+func TestContainerImagePruneCommandUsesNonInteractiveSudo(t *testing.T) {
+	command := containerImagePruneCommand()
+	for _, expected := range []string{
+		"sudo -n /usr/local/bin/crictl images",
+		"sudo -n /usr/local/bin/crictl rmi --prune",
+		"sudo -n /var/lib/rancher/k3s/bin/crictl images",
+		"sudo -n /var/lib/rancher/k3s/bin/crictl rmi --prune",
+		"sudo -n /usr/local/bin/k3s crictl images",
+		"sudo -n /usr/local/bin/k3s crictl rmi --prune",
+	} {
+		if !strings.Contains(command, expected) {
+			t.Fatalf("image prune command must use non-interactive sudo: %s", command)
+		}
+	}
+}
+
 func TestParseAgentDiskInspectionRejectsMissingFilesystemSection(t *testing.T) {
 	if _, err := parseAgentDiskInspection("__CYLISM_JOURNAL__\nnone\n"); err == nil {
 		t.Fatal("expected malformed inspection to fail")
