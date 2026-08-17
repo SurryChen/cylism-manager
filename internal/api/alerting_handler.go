@@ -227,7 +227,7 @@ func (h *AlertingHandler) Overview(c *gin.Context) {
 			overview.Active = append(overview.Active, alert)
 		default:
 			overview.Active = append(overview.Active, alert)
-			if alert.Status.State == "firing" {
+			if alertIsFiring(alert) {
 				overview.Firing++
 			}
 		}
@@ -355,7 +355,7 @@ func (h *AlertingHandler) Notify(c *gin.Context) {
 		return
 	}
 	payload.PlatformURL = h.platformURL
-	if err := h.persistAlertEvents(payload, false); err != nil {
+	if _, err := h.persistAlertEvents(payload, false); err != nil {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "持久化告警事件失败")
 		return
 	}
@@ -371,26 +371,28 @@ func (h *AlertingHandler) Notify(c *gin.Context) {
 	model.Success(c, gin.H{"delivered": delivered, "persisted": true})
 }
 
-func (h *AlertingHandler) persistAlertEvents(payload alertmanagerNotification, forceDispatch bool) error {
+func (h *AlertingHandler) persistAlertEvents(payload alertmanagerNotification, forceDispatch bool) (int, error) {
 	if h.automationStore == nil {
-		return nil
+		return 0, nil
 	}
+	dispatched := 0
 	for _, alert := range payload.Alerts {
 		event, err := h.automationStore.UpsertAlertEvent(alertEventFromNotification(payload, alert))
 		if err != nil {
-			return err
+			return dispatched, err
 		}
 		if event.Status != model.AlertEventResolved && h.dispatcher != nil && h.shouldDispatch(event, forceDispatch) {
 			event.Status = model.AlertEventAnalyzing
 			now := time.Now().UTC()
 			event.LastDispatchedAt = &now
 			if err := h.automationStore.UpdateAlertEvent(event); err != nil {
-				return err
+				return dispatched, err
 			}
+			dispatched++
 			go h.dispatcher.Dispatch(context.Background(), event)
 		}
 	}
-	return nil
+	return dispatched, nil
 }
 
 func (h *AlertingHandler) shouldDispatch(event *model.AlertEvent, force bool) bool {
@@ -502,17 +504,26 @@ func (h *AlertingHandler) syncCurrentAlertEvents(ctx context.Context) (int, erro
 	}
 	firing := make([]alertmanagerAlert, 0, len(alerts))
 	for _, alert := range alerts {
-		if alert.Status.State == "firing" {
+		if alertIsFiring(alert) {
 			firing = append(firing, alert)
 		}
 	}
 	if len(firing) == 0 {
 		return 0, nil
 	}
-	if err := h.persistAlertEvents(alertmanagerNotification{Status: "firing", Alerts: firing, PlatformURL: h.platformURL}, true); err != nil {
-		return 0, err
+	return h.persistAlertEvents(alertmanagerNotification{Status: "firing", Alerts: firing, PlatformURL: h.platformURL}, true)
+}
+
+// Alertmanager's v2 query API calls an unsuppressed firing alert "active";
+// webhook payloads call the same condition "firing". Unprocessed alerts are
+// also still firing and should be eligible for the first automation pass.
+func alertIsFiring(alert alertmanagerAlert) bool {
+	switch strings.ToLower(strings.TrimSpace(alert.Status.State)) {
+	case "active", "firing", "unprocessed":
+		return true
+	default:
+		return false
 	}
-	return len(firing), nil
 }
 
 func validAlertAutomationPolicy(policy *model.AlertAutomationPolicy) bool {
