@@ -165,7 +165,7 @@ const agentCapabilities = [
   { id: 'alert.read', label: '告警事件读取', description: '读取已持久化的告警上下文，不包含通知凭据', clusterScoped: true },
   { id: 'monitoring.read', label: '磁盘增长诊断', description: '只读取 Manager 固定的节点磁盘增长指标，不能提交 PromQL', clusterScoped: true },
   { id: 'maintenance.inspect', label: '节点磁盘巡检', description: '只读取固定系统目录、Journal 与文件系统的占用，不能指定命令或路径', clusterScoped: true },
-  { id: 'maintenance.cleanup', label: '固定清理配方', description: '仅能请求 journal 清理或未使用镜像清理，始终需要管理员审批', clusterScoped: true },
+  { id: 'maintenance.cleanup', label: '固定清理配方', description: '仅能请求 Journal、containerd 或 Docker 未使用镜像清理，始终需要管理员审批', clusterScoped: true },
 ]
 const emptyAgentGrantState = () => Object.fromEntries(agentCapabilities.map(capability => [capability.id, { enabled: false, namespaces: [] }]))
 const agentGrantState = ref(emptyAgentGrantState())

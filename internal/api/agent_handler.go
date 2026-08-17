@@ -928,11 +928,14 @@ func (h *AgentHandler) MaintenanceCleanupRequest(w http.ResponseWriter, r *http.
 }
 
 func validMaintenanceRecipe(recipe string) bool {
-	return recipe == "journal-vacuum" || recipe == "container-image-prune"
+	return recipe == "journal-vacuum" || recipe == "container-image-prune" || recipe == "docker-image-prune"
 }
 func maintenanceCleanupSummary(node, recipe string) string {
 	if recipe == "journal-vacuum" {
 		return fmt.Sprintf("vacuum system journal older than 7 days on node %s", node)
+	}
+	if recipe == "docker-image-prune" {
+		return fmt.Sprintf("prune unused Docker images on node %s", node)
 	}
 	return fmt.Sprintf("prune unused container images on node %s", node)
 }

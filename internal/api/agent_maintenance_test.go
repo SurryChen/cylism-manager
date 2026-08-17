@@ -53,7 +53,7 @@ func TestAgentDiskInspectionCommandIsFixedAndBounded(t *testing.T) {
 	}
 }
 
-func TestContainerImagePruneCommandUsesNonInteractiveSudo(t *testing.T) {
+func TestImagePruneCommandsUseNonInteractiveSudo(t *testing.T) {
 	command := containerImagePruneCommand()
 	for _, expected := range []string{
 		"sudo -n /usr/local/bin/crictl images",
@@ -66,6 +66,20 @@ func TestContainerImagePruneCommandUsesNonInteractiveSudo(t *testing.T) {
 		if !strings.Contains(command, expected) {
 			t.Fatalf("image prune command must use non-interactive sudo: %s", command)
 		}
+	}
+	dockerCommand := dockerImagePruneCommand()
+	for _, expected := range []string{
+		"sudo -n /usr/bin/docker system df",
+		"sudo -n /usr/bin/docker image prune -af",
+		"sudo -n /usr/local/bin/docker system df",
+		"sudo -n /usr/local/bin/docker image prune -af",
+	} {
+		if !strings.Contains(dockerCommand, expected) {
+			t.Fatalf("Docker image prune command must use non-interactive sudo: %s", dockerCommand)
+		}
+	}
+	if strings.Contains(dockerCommand, "volume") || strings.Contains(dockerCommand, "container prune") {
+		t.Fatalf("Docker image prune command must not remove volumes or containers: %s", dockerCommand)
 	}
 }
 

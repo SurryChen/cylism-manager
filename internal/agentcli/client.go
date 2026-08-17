@@ -322,7 +322,7 @@ func parseCommand(args []string) (requestSpec, error) {
 }
 
 func validMaintenanceRecipeCLI(value string) bool {
-	return value == "journal-vacuum" || value == "container-image-prune"
+	return value == "journal-vacuum" || value == "container-image-prune" || value == "docker-image-prune"
 }
 
 func execute(ctx context.Context, spec requestSpec, baseURL *url.URL, token, requestID string, client *http.Client) (Envelope, error) {
