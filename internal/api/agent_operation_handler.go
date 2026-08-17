@@ -27,9 +27,12 @@ type AgentOperationHandler struct {
 		ListNodeRegistryMirrors() ([]model.NodeRegistryMirror, error)
 		ListRegistryProxies() ([]model.RegistryProxy, error)
 		ListServers() ([]model.Server, error)
+		GetAlertEvent(uint) (*model.AlertEvent, error)
+		UpdateAlertEvent(*model.AlertEvent) error
 	}
-	client               *k8s.Client
-	registryPullExecutor agentRegistryPullExecutor
+	client                     *k8s.Client
+	registryPullExecutor       agentRegistryPullExecutor
+	maintenanceCleanupExecutor agentMaintenanceCleanupExecutor
 }
 
 func NewAgentOperationHandler(store interface {
@@ -43,12 +46,19 @@ func NewAgentOperationHandler(store interface {
 	ListNodeRegistryMirrors() ([]model.NodeRegistryMirror, error)
 	ListRegistryProxies() ([]model.RegistryProxy, error)
 	ListServers() ([]model.Server, error)
+	GetAlertEvent(uint) (*model.AlertEvent, error)
+	UpdateAlertEvent(*model.AlertEvent) error
 }, client *k8s.Client) *AgentOperationHandler {
 	return &AgentOperationHandler{store: store, client: client}
 }
 
 func (h *AgentOperationHandler) WithRegistryPullExecutor(executor agentRegistryPullExecutor) *AgentOperationHandler {
 	h.registryPullExecutor = executor
+	return h
+}
+
+func (h *AgentOperationHandler) WithMaintenanceCleanupExecutor(executor agentMaintenanceCleanupExecutor) *AgentOperationHandler {
+	h.maintenanceCleanupExecutor = executor
 	return h
 }
 
@@ -200,6 +210,10 @@ func (h *AgentOperationHandler) resolve(c *gin.Context, approve bool) {
 		h.resolveRegistryPullCheck(c, operation, userID)
 		return
 	}
+	if operation.Capability == model.AgentCapabilityMaintenanceCleanup {
+		h.resolveMaintenanceCleanup(c, operation, userID)
+		return
+	}
 	if operation.Capability != model.AgentCapabilityDeploymentScale || h.client == nil || h.client.Clientset == nil {
 		model.Error(c, http.StatusServiceUnavailable, model.CodeK8sUnavailable, "Agent 操作执行器不可用")
 		return
@@ -235,6 +249,55 @@ func (h *AgentOperationHandler) resolve(c *gin.Context, approve bool) {
 	_, _ = h.store.UpdateAgentOperationStatus(operationID, model.AgentOperationApproved, model.AgentOperationSucceeded, "", nil, &now)
 	h.audit(operation.RuntimeID, userID, "agent.operation_executed", map[string]any{"operation_id": operation.OperationID})
 	model.SuccessWithMessage(c, gin.H{"operation_id": operation.OperationID, "status": model.AgentOperationSucceeded}, "Agent 操作已执行")
+}
+
+func (h *AgentOperationHandler) resolveMaintenanceCleanup(c *gin.Context, operation *model.AgentOperation, userID uint) {
+	if h.maintenanceCleanupExecutor == nil {
+		model.Error(c, http.StatusServiceUnavailable, model.CodeInternalError, "固定清理执行器不可用")
+		return
+	}
+	var parameters maintenanceCleanupParameters
+	if json.Unmarshal([]byte(operation.Parameters), &parameters) != nil || !validMaintenanceRecipe(parameters.Recipe) || parameters.AlertID == 0 || !validAgentResourceName(parameters.Node) {
+		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, "Agent 操作参数无效")
+		return
+	}
+	event, err := h.store.GetAlertEvent(parameters.AlertID)
+	if err != nil || event.NodeName != parameters.Node || event.Status == model.AlertEventResolved {
+		h.markOperationStale(c, operation, "告警已恢复或目标节点已变化，需要重新诊断")
+		return
+	}
+	servers, err := h.store.ListServers()
+	if err != nil {
+		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "读取节点映射失败")
+		return
+	}
+	server, found := agentServerForNode(parameters.Node, servers)
+	if !found {
+		h.markOperationStale(c, operation, "目标节点不再由平台管理，需要重新诊断")
+		return
+	}
+	changed, err := h.store.UpdateAgentOperationStatus(operation.OperationID, model.AgentOperationPendingApproval, model.AgentOperationApproved, "", &userID, nil)
+	if err != nil || !changed {
+		model.Error(c, http.StatusConflict, model.CodeConflict, "Agent 操作状态已变化")
+		return
+	}
+	event.Status, event.DiagnosticSummary = model.AlertEventRemediating, "管理员已批准，正在执行固定清理配方"
+	_ = h.store.UpdateAlertEvent(event)
+	output, executeErr := h.maintenanceCleanupExecutor(server, parameters.Recipe)
+	now := time.Now()
+	if executeErr != nil {
+		message := agentOperationErrorSummary("执行固定清理配方失败", executeErr)
+		_, _ = h.store.UpdateAgentOperationStatus(operation.OperationID, model.AgentOperationApproved, model.AgentOperationFailed, message, nil, &now)
+		event.Status, event.LastError = model.AlertEventFailed, message
+		_ = h.store.UpdateAlertEvent(event)
+		model.Error(c, http.StatusBadGateway, model.CodeInternalError, "执行固定清理配方失败")
+		return
+	}
+	_, _ = h.store.UpdateAgentOperationStatus(operation.OperationID, model.AgentOperationApproved, model.AgentOperationSucceeded, "", nil, &now)
+	event.Status, event.DiagnosticSummary, event.LastError = model.AlertEventFiring, maintenanceCompletionSummary(parameters.Recipe, output), ""
+	_ = h.store.UpdateAlertEvent(event)
+	h.audit(operation.RuntimeID, userID, "agent.maintenance_cleanup_executed", map[string]any{"operation_id": operation.OperationID, "recipe": parameters.Recipe, "alert_id": parameters.AlertID})
+	model.SuccessWithMessage(c, gin.H{"operation_id": operation.OperationID, "status": model.AgentOperationSucceeded}, "固定清理配方已执行，请根据后续告警与指标确认恢复")
 }
 
 func (h *AgentOperationHandler) resolveRegistryPullCheck(c *gin.Context, operation *model.AgentOperation, userID uint) {

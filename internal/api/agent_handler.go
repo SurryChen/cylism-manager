@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"regexp"
 	"sort"
 	"strconv"
@@ -31,6 +32,9 @@ type AgentHandler struct {
 		ListAgentCapabilityGrants(runtimeID uint) ([]model.AgentCapabilityGrant, error)
 		CreateAgentOperation(operation *model.AgentOperation) (*model.AgentOperation, bool, error)
 		GetAgentOperation(operationID string) (*model.AgentOperation, error)
+		GetAlertEvent(id uint) (*model.AlertEvent, error)
+		UpdateAlertEvent(*model.AlertEvent) error
+		GetAlertAutomationPolicy() (*model.AlertAutomationPolicy, error)
 		ListNodeRegistryMirrors() ([]model.NodeRegistryMirror, error)
 		ListRegistryProxies() ([]model.RegistryProxy, error)
 		GetActiveClusterDNSPolicy() (*model.ClusterDNSPolicy, error)
@@ -47,6 +51,9 @@ func NewAgentHandler(store interface {
 	ListAgentCapabilityGrants(runtimeID uint) ([]model.AgentCapabilityGrant, error)
 	CreateAgentOperation(operation *model.AgentOperation) (*model.AgentOperation, bool, error)
 	GetAgentOperation(operationID string) (*model.AgentOperation, error)
+	GetAlertEvent(id uint) (*model.AlertEvent, error)
+	UpdateAlertEvent(*model.AlertEvent) error
+	GetAlertAutomationPolicy() (*model.AlertAutomationPolicy, error)
 	ListNodeRegistryMirrors() ([]model.NodeRegistryMirror, error)
 	ListRegistryProxies() ([]model.RegistryProxy, error)
 	GetActiveClusterDNSPolicy() (*model.ClusterDNSPolicy, error)
@@ -74,7 +81,7 @@ func (h *AgentHandler) CapabilityStatus(w http.ResponseWriter, r *http.Request) 
 	}
 	data := make(map[string]map[string]any, len(model.AgentCapabilities))
 	for capability := range model.AgentCapabilities {
-		data[capability] = map[string]any{"enabled": false, "namespaces": []string{}, "approval_required": capability == model.AgentCapabilityDeploymentScale || capability == model.AgentCapabilityRegistryPullCheck}
+		data[capability] = map[string]any{"enabled": false, "namespaces": []string{}, "approval_required": capability == model.AgentCapabilityDeploymentScale || capability == model.AgentCapabilityRegistryPullCheck || capability == model.AgentCapabilityMaintenanceCleanup}
 	}
 	for _, grant := range grants {
 		if !grant.Enabled {
@@ -713,6 +720,121 @@ func (h *AgentHandler) ApprovalGet(w http.ResponseWriter, r *http.Request) {
 	}
 	writeAgentResponse(w, http.StatusOK, agentAPIResponse{Status: operation.Status, OperationID: operation.OperationID, Summary: operationSummary(operation)})
 }
+
+// AlertGet exposes a persisted alert by numeric ID. Alert payload labels are
+// diagnostic data; the endpoint intentionally does not expose any secret or
+// webhook configuration.
+func (h *AgentHandler) AlertGet(w http.ResponseWriter, r *http.Request) {
+	instance, ok := h.authenticate(w, r)
+	if !ok || !h.requireCapability(w, instance, model.AgentCapabilityAlertRead, "") {
+		return
+	}
+	id, err := strconv.ParseUint(strings.TrimSpace(r.URL.Query().Get("id")), 10, 64)
+	if err != nil || id == 0 {
+		writeAgentError(w, http.StatusBadRequest, "invalid alert id", false)
+		return
+	}
+	event, err := h.store.GetAlertEvent(uint(id))
+	if err != nil {
+		writeAgentError(w, http.StatusNotFound, "alert event not found", false)
+		return
+	}
+	h.audit(instance, "agent.alert_get", map[string]string{"capability": model.AgentCapabilityAlertRead, "alert_id": strconv.FormatUint(id, 10)})
+	writeAgentResponse(w, http.StatusOK, agentAPIResponse{Status: "ok", Data: map[string]any{"id": event.ID, "alert_name": event.AlertName, "severity": event.Severity, "node": event.NodeName, "mount_point": event.MountPoint, "status": event.Status, "starts_at": event.StartsAt, "labels": json.RawMessage(event.Labels), "annotations": json.RawMessage(event.Annotations), "diagnostic_summary": event.DiagnosticSummary}, Summary: "alert event retrieved"})
+}
+
+// MonitoringDiskGrowth makes one Manager-owned metrics query. The Runtime may
+// select only a node and a bounded range; it cannot submit PromQL.
+func (h *AgentHandler) MonitoringDiskGrowth(w http.ResponseWriter, r *http.Request) {
+	instance, ok := h.authenticate(w, r)
+	if !ok || !h.requireCapability(w, instance, model.AgentCapabilityMonitoringRead, "") {
+		return
+	}
+	if K8s == nil || !monitoringDataStoreAvailable(K8s.VictoriaMetricsStatus()) {
+		writeAgentError(w, http.StatusServiceUnavailable, "monitoring data store unavailable", true)
+		return
+	}
+	node := strings.TrimSpace(r.URL.Query().Get("node"))
+	if node == "" || !validAgentResourceName(node) {
+		writeAgentError(w, http.StatusBadRequest, "invalid node", false)
+		return
+	}
+	rangeName := strings.TrimSpace(r.URL.Query().Get("range"))
+	if rangeName != "6h" && rangeName != "24h" {
+		writeAgentError(w, http.StatusBadRequest, "range must be 6h or 24h", false)
+		return
+	}
+	rangeSpec := monitoringRanges[rangeName]
+	data, err := queryVictoriaMetrics(r.Context(), "/api/v1/query", url.Values{"query": []string{diskGrowthQueries(monitoringPromQLWindow(rangeSpec.window), node)[0].query}})
+	if err != nil {
+		writeAgentError(w, http.StatusBadGateway, "monitoring disk growth unavailable", true)
+		return
+	}
+	mounts := normalizeMountGrowth(data)
+	h.audit(instance, "agent.monitoring_disk_growth", map[string]string{"capability": model.AgentCapabilityMonitoringRead, "node": node, "range": rangeName})
+	writeAgentResponse(w, http.StatusOK, agentAPIResponse{Status: "ok", Data: map[string]any{"node": node, "range": rangeName, "mounts": mounts}, Summary: "disk growth retrieved"})
+}
+
+type maintenanceCleanupRequest struct {
+	AlertID uint   `json:"alert_id"`
+	Recipe  string `json:"recipe"`
+}
+
+type maintenanceCleanupParameters struct {
+	AlertID uint   `json:"alert_id"`
+	Node    string `json:"node"`
+	Recipe  string `json:"recipe"`
+}
+
+func (h *AgentHandler) MaintenanceCleanupRequest(w http.ResponseWriter, r *http.Request) {
+	instance, ok := h.authenticate(w, r)
+	if !ok || !h.requireCapability(w, instance, model.AgentCapabilityMaintenanceCleanup, "") {
+		return
+	}
+	var request maintenanceCleanupRequest
+	if err := json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&request); err != nil || request.AlertID == 0 || !validMaintenanceRecipe(request.Recipe) {
+		writeAgentError(w, http.StatusBadRequest, "invalid maintenance cleanup request", false)
+		return
+	}
+	event, err := h.store.GetAlertEvent(request.AlertID)
+	if err != nil || event.Status == model.AlertEventResolved || strings.TrimSpace(event.NodeName) == "" {
+		writeAgentError(w, http.StatusConflict, "alert event is not eligible for cleanup", false)
+		return
+	}
+	policy, err := h.store.GetAlertAutomationPolicy()
+	if err != nil || !policy.Enabled || policy.Mode != model.AlertAutomationApproval || policy.RuntimeID != instance.ID || event.RuntimeID == nil || *event.RuntimeID != instance.ID {
+		writeAgentError(w, http.StatusForbidden, "cleanup request is not enabled for this alert runtime", false)
+		return
+	}
+	parameters, _ := json.Marshal(maintenanceCleanupParameters{AlertID: event.ID, Node: event.NodeName, Recipe: request.Recipe})
+	requestID := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+	if requestID == "" || len(requestID) > 128 {
+		writeAgentError(w, http.StatusBadRequest, "missing idempotency key", false)
+		return
+	}
+	operation := &model.AgentOperation{OperationID: newAgentOperationID(), RuntimeID: instance.ID, Capability: model.AgentCapabilityMaintenanceCleanup, RequestID: requestID, ChatSessionID: r.Header.Get("X-Chat-Session-ID"), Parameters: string(parameters), ParametersHash: fmt.Sprintf("%x", sha256.Sum256(parameters)), Status: model.AgentOperationPendingApproval, Summary: maintenanceCleanupSummary(event.NodeName, request.Recipe), ExpiresAt: time.Now().Add(15 * time.Minute)}
+	stored, _, err := h.store.CreateAgentOperation(operation)
+	if err != nil {
+		writeAgentError(w, http.StatusInternalServerError, "unable to create cleanup approval", true)
+		return
+	}
+	event.OperationID, event.Status, event.DiagnosticSummary = stored.OperationID, model.AlertEventAwaitingApproval, "等待管理员审批固定清理配方"
+	_ = h.store.UpdateAlertEvent(event)
+	h.audit(instance, "agent.maintenance_cleanup_requested", map[string]string{"capability": model.AgentCapabilityMaintenanceCleanup, "alert_id": strconv.Itoa(int(event.ID)), "recipe": request.Recipe, "operation_id": stored.OperationID})
+	writeAgentResponse(w, http.StatusAccepted, agentAPIResponse{Status: "pending_approval", OperationID: stored.OperationID, Summary: "maintenance cleanup requires approval"})
+}
+
+func validMaintenanceRecipe(recipe string) bool {
+	return recipe == "journal-vacuum" || recipe == "container-image-prune"
+}
+func maintenanceCleanupSummary(node, recipe string) string {
+	if recipe == "journal-vacuum" {
+		return fmt.Sprintf("vacuum system journal older than 7 days on node %s", node)
+	}
+	return fmt.Sprintf("prune unused container images on node %s", node)
+}
+
+func validAgentResourceName(value string) bool { return agentResourceNamePattern.MatchString(value) }
 
 type deploymentScaleRequest struct {
 	Namespace string `json:"namespace"`

@@ -53,6 +53,9 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 	r.POST("/api/agent/v1/registries/node-pull-check", gin.WrapF(agentHandler.RegistryNodePullCheck))
 	r.POST("/api/agent/v1/deployments/scale", gin.WrapF(agentHandler.DeploymentScale))
 	r.GET("/api/agent/v1/approvals/:operationID", gin.WrapF(agentHandler.ApprovalGet))
+	r.GET("/api/agent/v1/alerts/get", gin.WrapF(agentHandler.AlertGet))
+	r.GET("/api/agent/v1/monitoring/disk-growth", gin.WrapF(agentHandler.MonitoringDiskGrowth))
+	r.POST("/api/agent/v1/maintenance/cleanup-request", gin.WrapF(agentHandler.MaintenanceCleanupRequest))
 
 	// 认证路由
 	authHandler := NewAuthHandler(s, authCfg.JWTSecret, authCfg.AccessTokenTTL, authCfg.RefreshTokenTTL)
@@ -69,7 +72,7 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 	apiGroup.Use(AuditMiddleware(s))
 	runtimeRegistry := runtimepkg.BuiltinRegistry()
 	runtimeHandler := NewRuntimeHandler(s, encKey, runtimepkg.NewKubernetesManager(K8s, runtimeRegistry), runtimeRegistry)
-	agentOperationHandler := NewAgentOperationHandler(s, K8s).WithRegistryPullExecutor(defaultAgentRegistryPullExecutor(encKey))
+	agentOperationHandler := NewAgentOperationHandler(s, K8s).WithRegistryPullExecutor(defaultAgentRegistryPullExecutor(encKey)).WithMaintenanceCleanupExecutor(defaultAgentMaintenanceCleanupExecutor(encKey))
 	systemComponentHandler := NewSystemComponentHandler(s)
 	clusterDNSHandler := NewClusterDNSHandler(s)
 	runtimes := apiGroup.Group("/runtimes")
@@ -210,7 +213,7 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 		monitoring.GET("/disk-growth", h.DiskGrowth)
 		monitoring.GET("/targets", h.Targets)
 	}
-	alertingHandler := NewAlertingHandler(authCfg.PlatformURL)
+	alertingHandler := NewAlertingHandler(authCfg.PlatformURL).WithAutomation(s, NewAlertRuntimeDispatcher(s, encKey, runtimeRegistry))
 	alerts := apiGroup.Group("/monitoring/alerts")
 	{
 		alerts.GET("/status", alertingHandler.Status)
@@ -222,6 +225,9 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 		alerts.POST("/silences", alertingHandler.CreateSilence)
 		alerts.DELETE("/silences/:id", alertingHandler.DeleteSilence)
 		alerts.POST("/test-notification", alertingHandler.TestNotification)
+		alerts.GET("/automation-policy", alertingHandler.AutomationPolicy)
+		alerts.PUT("/automation-policy", alertingHandler.UpdateAutomationPolicy)
+		alerts.GET("/automation-events", alertingHandler.ListAutomationEvents)
 	}
 	loggingHandler := NewLoggingHandler(s)
 	logs := apiGroup.Group("/monitoring/logs")

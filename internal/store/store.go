@@ -51,6 +51,8 @@ func New(dsn string) (*Store, error) {
 		&model.RuntimeInstance{},
 		&model.AgentCapabilityGrant{},
 		&model.AgentOperation{},
+		&model.AlertEvent{},
+		&model.AlertAutomationPolicy{},
 		&model.PlatformRelease{},
 		&model.PlatformWebhookNonce{},
 		&model.Project{},
@@ -222,11 +224,96 @@ func validAgentCapabilityGrant(grant model.AgentCapabilityGrant) bool {
 		return false
 	}
 	switch grant.Capability {
-	case model.AgentCapabilityClusterRead, model.AgentCapabilityRegistryRead, model.AgentCapabilityRegistryVerify, model.AgentCapabilityRegistryPullCheck, model.AgentCapabilityDNSRead, model.AgentCapabilityRegistryProxyDiagnose:
+	case model.AgentCapabilityClusterRead, model.AgentCapabilityRegistryRead, model.AgentCapabilityRegistryVerify, model.AgentCapabilityRegistryPullCheck, model.AgentCapabilityDNSRead, model.AgentCapabilityRegistryProxyDiagnose, model.AgentCapabilityAlertRead, model.AgentCapabilityMonitoringRead, model.AgentCapabilityMaintenanceCleanup:
 		return grant.Namespace == "*"
 	default:
 		return true
 	}
+}
+
+func (s *Store) UpsertAlertEvent(event *model.AlertEvent) (*model.AlertEvent, error) {
+	if event == nil || event.Fingerprint == "" || event.AlertName == "" || event.Labels == "" || event.Annotations == "" || event.Status == "" || event.StartsAt.IsZero() {
+		return nil, errors.New("invalid alert event")
+	}
+	var stored model.AlertEvent
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		err := tx.Where("fingerprint = ?", event.Fingerprint).First(&stored).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return tx.Create(event).Error
+		}
+		if err != nil {
+			return err
+		}
+		updates := map[string]interface{}{
+			"alert_name": event.AlertName, "severity": event.Severity, "node_name": event.NodeName,
+			"mount_point": event.MountPoint, "labels": event.Labels, "annotations": event.Annotations,
+			"starts_at": event.StartsAt,
+		}
+		if event.Status == model.AlertEventResolved {
+			updates["status"] = event.Status
+			updates["ends_at"] = event.EndsAt
+		} else if stored.Status == model.AlertEventResolved {
+			updates["status"] = model.AlertEventFiring
+			updates["ends_at"] = nil
+		}
+		if err := tx.Model(&stored).Updates(updates).Error; err != nil {
+			return err
+		}
+		return tx.Where("fingerprint = ?", event.Fingerprint).First(&stored).Error
+	})
+	if err != nil {
+		return nil, err
+	}
+	if event.ID != 0 {
+		return event, nil
+	}
+	return &stored, nil
+}
+
+func (s *Store) GetAlertEvent(id uint) (*model.AlertEvent, error) {
+	var event model.AlertEvent
+	err := s.db.First(&event, id).Error
+	return &event, err
+}
+
+func (s *Store) ListAlertEvents(limit int) ([]model.AlertEvent, error) {
+	if limit < 1 || limit > 100 {
+		limit = 30
+	}
+	var events []model.AlertEvent
+	err := s.db.Order("updated_at desc").Limit(limit).Find(&events).Error
+	return events, err
+}
+
+func (s *Store) UpdateAlertEvent(event *model.AlertEvent) error {
+	if event == nil || event.ID == 0 {
+		return errors.New("invalid alert event")
+	}
+	return s.db.Save(event).Error
+}
+
+func (s *Store) GetAlertAutomationPolicy() (*model.AlertAutomationPolicy, error) {
+	var policy model.AlertAutomationPolicy
+	err := s.db.Order("id asc").First(&policy).Error
+	return &policy, err
+}
+
+func (s *Store) SaveAlertAutomationPolicy(policy *model.AlertAutomationPolicy) error {
+	if policy == nil {
+		return errors.New("invalid alert automation policy")
+	}
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		var existing model.AlertAutomationPolicy
+		err := tx.Order("id asc").First(&existing).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return tx.Create(policy).Error
+		}
+		if err != nil {
+			return err
+		}
+		policy.ID, policy.CreatedAt = existing.ID, existing.CreatedAt
+		return tx.Save(policy).Error
+	})
 }
 
 func (s *Store) HasAgentCapability(runtimeID uint, capability, namespace string) (bool, error) {
