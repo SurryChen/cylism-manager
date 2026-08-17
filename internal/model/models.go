@@ -188,6 +188,7 @@ const (
 	AgentCapabilityRegistryProxyDiagnose = "registry.proxy_diagnose"
 	AgentCapabilityAlertRead             = "alert.read"
 	AgentCapabilityMonitoringRead        = "monitoring.read"
+	AgentCapabilityMaintenanceInspect    = "maintenance.inspect"
 	AgentCapabilityMaintenanceCleanup    = "maintenance.cleanup"
 )
 
@@ -205,6 +206,7 @@ var AgentCapabilities = map[string]struct{}{
 	AgentCapabilityRegistryProxyDiagnose: {},
 	AgentCapabilityAlertRead:             {},
 	AgentCapabilityMonitoringRead:        {},
+	AgentCapabilityMaintenanceInspect:    {},
 	AgentCapabilityMaintenanceCleanup:    {},
 }
 

@@ -35,7 +35,7 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 	artifactHandler := NewAgentArtifactHandler("/usr/local/lib/cylism/runtime-tools", agentauth.NewRuntimeTokenAuthorizer(K8s, s, nil))
 	r.GET(cliArtifactPath, gin.WrapH(artifactHandler))
 	r.GET(cliArtifactManifestPath, gin.WrapH(artifactHandler))
-	agentHandler := NewAgentHandler(s, K8s, agentauth.NewRuntimeTokenAuthorizer(K8s, s, nil)).WithRegistryVerifier(defaultAgentRegistryNodeVerifier(encKey))
+	agentHandler := NewAgentHandler(s, K8s, agentauth.NewRuntimeTokenAuthorizer(K8s, s, nil)).WithRegistryVerifier(defaultAgentRegistryNodeVerifier(encKey)).WithMaintenanceInspector(defaultAgentMaintenanceInspector(encKey))
 	r.GET("/api/agent/v1/cluster/status", gin.WrapF(agentHandler.ClusterStatus))
 	r.GET("/api/agent/v1/capabilities/status", gin.WrapF(agentHandler.CapabilityStatus))
 	r.GET("/api/agent/v1/workloads/get", gin.WrapF(agentHandler.WorkloadGet))
@@ -56,6 +56,7 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 	r.GET("/api/agent/v1/alerts/get", gin.WrapF(agentHandler.AlertGet))
 	r.GET("/api/agent/v1/alerts/list", gin.WrapF(agentHandler.AlertList))
 	r.GET("/api/agent/v1/monitoring/disk-growth", gin.WrapF(agentHandler.MonitoringDiskGrowth))
+	r.GET("/api/agent/v1/maintenance/disk-inspect", gin.WrapF(agentHandler.MaintenanceDiskInspect))
 	r.POST("/api/agent/v1/maintenance/cleanup-request", gin.WrapF(agentHandler.MaintenanceCleanupRequest))
 
 	// 认证路由

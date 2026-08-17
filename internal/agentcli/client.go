@@ -297,6 +297,15 @@ func parseCommand(args []string) (requestSpec, error) {
 			return requestSpec{}, errors.New("monitoring disk-growth requires a valid --node, --range (6h or 24h), and --output json")
 		}
 		return requestSpec{method: http.MethodGet, path: "/api/agent/v1/monitoring/disk-growth", query: url.Values{"node": {*node}, "range": {*rangeName}}}, nil
+	case "maintenance disk-inspect":
+		flags := flag.NewFlagSet("maintenance disk-inspect", flag.ContinueOnError)
+		flags.SetOutput(io.Discard)
+		node := flags.String("node", "", "")
+		output := flags.String("output", "", "")
+		if err := flags.Parse(args[2:]); err != nil || flags.NArg() != 0 || *output != "json" || !validName(*node) {
+			return requestSpec{}, errors.New("maintenance disk-inspect requires a valid --node and --output json")
+		}
+		return requestSpec{method: http.MethodGet, path: "/api/agent/v1/maintenance/disk-inspect", query: url.Values{"node": {*node}}}, nil
 	case "maintenance cleanup-request":
 		flags := flag.NewFlagSet("maintenance cleanup-request", flag.ContinueOnError)
 		flags.SetOutput(io.Discard)

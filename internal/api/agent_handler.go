@@ -42,9 +42,10 @@ type AgentHandler struct {
 		ListServers() ([]model.Server, error)
 		CreateAuditLog(entry *model.AuditLog) error
 	}
-	client           *k8s.Client
-	authenticator    AgentAuthenticator
-	registryVerifier agentRegistryNodeVerifier
+	client               *k8s.Client
+	authenticator        AgentAuthenticator
+	registryVerifier     agentRegistryNodeVerifier
+	maintenanceInspector agentMaintenanceInspector
 }
 
 func NewAgentHandler(store interface {
@@ -67,6 +68,11 @@ func NewAgentHandler(store interface {
 
 func (h *AgentHandler) WithRegistryVerifier(verifier agentRegistryNodeVerifier) *AgentHandler {
 	h.registryVerifier = verifier
+	return h
+}
+
+func (h *AgentHandler) WithMaintenanceInspector(inspector agentMaintenanceInspector) *AgentHandler {
+	h.maintenanceInspector = inspector
 	return h
 }
 
@@ -742,7 +748,7 @@ func (h *AgentHandler) AlertGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.audit(instance, "agent.alert_get", map[string]string{"capability": model.AgentCapabilityAlertRead, "alert_id": strconv.FormatUint(id, 10)})
-	writeAgentResponse(w, http.StatusOK, agentAPIResponse{Status: "ok", Data: map[string]any{"id": event.ID, "alert_name": event.AlertName, "severity": event.Severity, "node": event.NodeName, "mount_point": event.MountPoint, "status": event.Status, "starts_at": event.StartsAt, "labels": json.RawMessage(event.Labels), "annotations": json.RawMessage(event.Annotations), "diagnostic_summary": event.DiagnosticSummary}, Summary: "alert event retrieved"})
+	writeAgentResponse(w, http.StatusOK, agentAPIResponse{Status: "ok", Data: agentAlertEventData(event), Summary: "alert event retrieved"})
 }
 
 // AlertList lets an authorized Runtime discover recent persisted events before
@@ -760,10 +766,43 @@ func (h *AgentHandler) AlertList(w http.ResponseWriter, r *http.Request) {
 	}
 	items := make([]map[string]any, 0, len(events))
 	for _, event := range events {
-		items = append(items, map[string]any{"id": event.ID, "alert_name": event.AlertName, "severity": event.Severity, "node": event.NodeName, "mount_point": event.MountPoint, "status": event.Status, "starts_at": event.StartsAt, "updated_at": event.UpdatedAt, "diagnostic_summary": event.DiagnosticSummary, "operation_id": event.OperationID})
+		automationStatus, alertState := agentAlertEventStates(&event)
+		items = append(items, map[string]any{"id": event.ID, "alert_name": event.AlertName, "severity": event.Severity, "node": event.NodeName, "mount_point": event.MountPoint, "status": automationStatus, "automation_status": automationStatus, "alert_state": alertState, "starts_at": event.StartsAt, "updated_at": event.UpdatedAt, "diagnostic_summary": event.DiagnosticSummary, "operation_id": event.OperationID})
 	}
 	h.audit(instance, "agent.alert_list", map[string]string{"capability": model.AgentCapabilityAlertRead})
 	writeAgentResponse(w, http.StatusOK, agentAPIResponse{Status: "ok", Data: map[string]any{"events": items}, Summary: "recent alert events retrieved"})
+}
+
+// agentAlertEventData distinguishes the durable automation workflow from the
+// underlying Alertmanager condition. status remains as a compatibility alias
+// for automation_status; agents must use alert_state for remediation decisions.
+func agentAlertEventData(event *model.AlertEvent) map[string]any {
+	automationStatus, alertState := agentAlertEventStates(event)
+	return map[string]any{
+		"id":                 event.ID,
+		"alert_name":         event.AlertName,
+		"severity":           event.Severity,
+		"node":               event.NodeName,
+		"mount_point":        event.MountPoint,
+		"status":             automationStatus,
+		"automation_status":  automationStatus,
+		"alert_state":        alertState,
+		"starts_at":          event.StartsAt,
+		"updated_at":         event.UpdatedAt,
+		"labels":             json.RawMessage(event.Labels),
+		"annotations":        json.RawMessage(event.Annotations),
+		"diagnostic_summary": event.DiagnosticSummary,
+		"operation_id":       event.OperationID,
+	}
+}
+
+func agentAlertEventStates(event *model.AlertEvent) (automationStatus, alertState string) {
+	automationStatus = event.Status
+	alertState = "firing"
+	if event.EndsAt != nil || automationStatus == model.AlertEventResolved {
+		alertState = "resolved"
+	}
+	return automationStatus, alertState
 }
 
 // MonitoringDiskGrowth makes one Manager-owned metrics query. The Runtime may
@@ -796,6 +835,47 @@ func (h *AgentHandler) MonitoringDiskGrowth(w http.ResponseWriter, r *http.Reque
 	mounts := normalizeMountGrowth(data)
 	h.audit(instance, "agent.monitoring_disk_growth", map[string]string{"capability": model.AgentCapabilityMonitoringRead, "node": node, "range": rangeName})
 	writeAgentResponse(w, http.StatusOK, agentAPIResponse{Status: "ok", Data: map[string]any{"node": node, "range": rangeName, "mounts": mounts}, Summary: "disk growth retrieved"})
+}
+
+// MaintenanceDiskInspect runs a Manager-owned, fixed read-only probe on one
+// managed node. The Runtime can choose only a node name and cannot supply a
+// command, directory, or timeout.
+func (h *AgentHandler) MaintenanceDiskInspect(w http.ResponseWriter, r *http.Request) {
+	instance, ok := h.authenticate(w, r)
+	if !ok || !h.requireCapability(w, instance, model.AgentCapabilityMaintenanceInspect, "") {
+		return
+	}
+	node := strings.TrimSpace(r.URL.Query().Get("node"))
+	if node == "" || !validAgentResourceName(node) {
+		writeAgentError(w, http.StatusBadRequest, "invalid node", false)
+		return
+	}
+	servers, err := h.store.ListServers()
+	if err != nil {
+		writeAgentError(w, http.StatusInternalServerError, "managed nodes unavailable", true)
+		return
+	}
+	server, found := agentServerForNode(node, servers)
+	if !found {
+		writeAgentError(w, http.StatusNotFound, "managed node not found", false)
+		return
+	}
+	if h.maintenanceInspector == nil {
+		writeAgentError(w, http.StatusServiceUnavailable, "node disk inspection unavailable", true)
+		return
+	}
+	inspection, err := h.maintenanceInspector(server)
+	if err != nil {
+		summary := redactAgentText(truncateAgentText(strings.TrimSpace(err.Error()), 512))
+		if summary == "" {
+			summary = "node disk inspection failed"
+		}
+		writeAgentError(w, http.StatusBadGateway, summary, true)
+		return
+	}
+	inspection.Node = node
+	h.audit(instance, "agent.maintenance_disk_inspect", map[string]string{"capability": model.AgentCapabilityMaintenanceInspect, "node": node})
+	writeAgentResponse(w, http.StatusOK, agentAPIResponse{Status: "ok", Data: inspection, Summary: "disk inspection retrieved"})
 }
 
 type maintenanceCleanupRequest struct {

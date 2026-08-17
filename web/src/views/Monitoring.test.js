@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
+import { createMemoryHistory, createRouter } from 'vue-router'
 import Monitoring from './Monitoring.vue'
 
 const apiMocks = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), delete: vi.fn() }))
@@ -13,6 +14,23 @@ vi.mock('../components/MetricTrendChart.vue', () => ({
   },
 }))
 
+function monitoringRouter() {
+  return createRouter({
+    history: createMemoryHistory(),
+    routes: [{ path: '/monitoring', component: Monitoring }],
+  })
+}
+
+async function mountMonitoring(path = '/monitoring') {
+  const router = monitoringRouter()
+  await router.push(path)
+  await router.isReady()
+  return {
+    router,
+    wrapper: mount(Monitoring, { global: { plugins: [router] } }),
+  }
+}
+
 beforeEach(() => {
   apiMocks.get.mockReset()
   apiMocks.post.mockReset()
@@ -24,15 +42,16 @@ beforeEach(() => {
 })
 
 describe('Monitoring view', () => {
-  it('uses the shared monitoring workspace header', () => {
-    const wrapper = mount(Monitoring)
+  it('uses the shared monitoring workspace header', async () => {
+    const { wrapper } = await mountMonitoring()
     expect(wrapper.get('.section-tabs-header').find('h1').text()).toBe('集群监控')
     expect(wrapper.findAll('.section-tab')).toHaveLength(5)
-    expect(wrapper.get('.section-tab.is-active').text()).toBe('概览')
+    expect(wrapper.get('[data-testid="monitoring-tab-overview"]').classes()).toContain('is-active')
+    wrapper.unmount()
   })
 
   it('offers an installation form with a ready node and managed PVC capacity', async () => {
-    const wrapper = mount(Monitoring)
+    const { wrapper } = await mountMonitoring()
     await flushPromises()
 
     expect(wrapper.text()).toContain('VictoriaMetrics 未安装')
@@ -51,7 +70,7 @@ describe('Monitoring view', () => {
       return Promise.resolve({ result: [] })
     })
 
-    const wrapper = mount(Monitoring)
+    const { wrapper } = await mountMonitoring()
     await flushPromises()
 
     expect(wrapper.findAll('.metric-trend-chart')).toHaveLength(4)
@@ -88,7 +107,7 @@ describe('Monitoring view', () => {
       return Promise.resolve({ result: [] })
     })
 
-    const wrapper = mount(Monitoring)
+    const { wrapper } = await mountMonitoring()
     await flushPromises()
 
     expect(wrapper.text()).toContain('node-exporter 仅 1/2 个节点就绪')
@@ -105,7 +124,7 @@ describe('Monitoring view', () => {
       return Promise.resolve({})
     })
     apiMocks.post.mockResolvedValue({ state: 'ready' })
-    const wrapper = mount(Monitoring)
+    const { wrapper } = await mountMonitoring()
     await flushPromises()
 
     await wrapper.get('[title="监控设置"]').trigger('click')
@@ -118,6 +137,31 @@ describe('Monitoring view', () => {
     await flushPromises()
     drawer.querySelector('[data-testid="save-monitoring-config"]').click()
     expect(apiMocks.post).toHaveBeenCalledWith('/monitoring/install', { node_name: 'node-a', retention_days: 30 })
+    wrapper.unmount()
+  })
+
+  it('opens the requested monitoring tab from the route, follows route changes, and falls back for invalid tabs', async () => {
+    const { router, wrapper } = await mountMonitoring('/monitoring?tab=alerts')
+    expect(wrapper.get('[data-testid="monitoring-tab-alerts"]').classes()).toContain('is-active')
+    await router.push('/monitoring?tab=disk')
+    await flushPromises()
+    expect(wrapper.get('[data-testid="monitoring-tab-disk"]').classes()).toContain('is-active')
+    wrapper.unmount()
+
+    const invalid = await mountMonitoring('/monitoring?tab=unknown')
+    expect(invalid.wrapper.get('[data-testid="monitoring-tab-overview"]').classes()).toContain('is-active')
+    invalid.wrapper.unmount()
+  })
+
+  it('updates the route when a monitoring tab is selected', async () => {
+    const { router, wrapper } = await mountMonitoring('/monitoring?range=24h')
+
+    await wrapper.get('[data-testid="monitoring-tab-workloads"]').trigger('click')
+    await flushPromises()
+
+    expect(router.currentRoute.value.path).toBe('/monitoring')
+    expect(router.currentRoute.value.query).toEqual({ range: '24h', tab: 'workloads' })
+    expect(wrapper.get('[data-testid="monitoring-tab-workloads"]').classes()).toContain('is-active')
     wrapper.unmount()
   })
 })

@@ -224,7 +224,7 @@ func validAgentCapabilityGrant(grant model.AgentCapabilityGrant) bool {
 		return false
 	}
 	switch grant.Capability {
-	case model.AgentCapabilityClusterRead, model.AgentCapabilityRegistryRead, model.AgentCapabilityRegistryVerify, model.AgentCapabilityRegistryPullCheck, model.AgentCapabilityDNSRead, model.AgentCapabilityRegistryProxyDiagnose, model.AgentCapabilityAlertRead, model.AgentCapabilityMonitoringRead, model.AgentCapabilityMaintenanceCleanup:
+	case model.AgentCapabilityClusterRead, model.AgentCapabilityRegistryRead, model.AgentCapabilityRegistryVerify, model.AgentCapabilityRegistryPullCheck, model.AgentCapabilityDNSRead, model.AgentCapabilityRegistryProxyDiagnose, model.AgentCapabilityAlertRead, model.AgentCapabilityMonitoringRead, model.AgentCapabilityMaintenanceInspect, model.AgentCapabilityMaintenanceCleanup:
 		return grant.Namespace == "*"
 	default:
 		return true
