@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -153,6 +154,24 @@ func TestAgentOperationErrorSummaryRedactsAndBoundsExecutorDetails(t *testing.T)
 	}
 	if !strings.Contains(detail, "节点验证镜像拉取失败") || !strings.Contains(detail, "[REDACTED]") || len(detail) > agentOperationErrorSummaryLimit {
 		t.Fatalf("unexpected operation error summary: len=%d value=%q", len(detail), detail)
+	}
+}
+
+func TestAgentRegistryCommandsUsePaddedBase64ForShellDecoder(t *testing.T) {
+	image := "registry.k8s.io/pause:3.10"
+	encodedImage := base64.StdEncoding.EncodeToString([]byte(image))
+	if !strings.Contains(encodedImage, "=") || !strings.Contains(agentRegistryPullCommand(image), "printf %s "+encodedImage+" | base64 -d") {
+		t.Fatalf("pull command must use padded standard base64: %s", agentRegistryPullCommand(image))
+	}
+	decodedImage, err := base64.StdEncoding.DecodeString(encodedImage)
+	if err != nil || string(decodedImage) != image {
+		t.Fatalf("standard base64 image decode failed: %q err=%v", decodedImage, err)
+	}
+
+	endpoints := []string{"https://a"}
+	encodedEndpoints := base64.StdEncoding.EncodeToString([]byte(`["https://a"]`))
+	if !strings.Contains(encodedEndpoints, "=") || !strings.Contains(agentRegistryVerificationCommand(endpoints), "CYLISM_ENDPOINTS_B64="+encodedEndpoints+" sh -c") {
+		t.Fatalf("verification command must use padded standard base64: %s", agentRegistryVerificationCommand(endpoints))
 	}
 }
 

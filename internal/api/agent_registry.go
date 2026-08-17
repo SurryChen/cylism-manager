@@ -140,9 +140,14 @@ func agentImagePullFailures(podContainers []map[string]any) []map[string]string 
 
 func agentRegistryVerificationCommand(endpoints []string) string {
 	encoded, _ := json.Marshal(endpoints)
-	data := base64.RawStdEncoding.EncodeToString(encoded)
+	data := base64.StdEncoding.EncodeToString(encoded)
 	// The dynamic value is base64 only; endpoints are decoded as data, never shell syntax.
 	return "CYLISM_ENDPOINTS_B64=" + data + " sh -c 'printf %s \"$CYLISM_ENDPOINTS_B64\" | base64 -d | tr -d \"[]\\\" \" | tr \",\" \"\\n\" | while IFS= read -r endpoint; do host=$(printf %s \"$endpoint\" | sed -E \"s#https?://([^/:]+).*#\\1#\"); dns=failed; getent ahosts \"$host\" >/dev/null 2>&1 && dns=ok; http=$(curl -ksS -o /dev/null -w \"%{http_code}\" --connect-timeout 5 --max-time 10 \"$endpoint/v2/\" 2>/dev/null || true); [ -n \"$http\" ] || http=failed; printf \"%s|%s|%s\\n\" \"$endpoint\" \"$dns\" \"$http\"; done'"
+}
+
+func agentRegistryPullCommand(image string) string {
+	encoded := base64.StdEncoding.EncodeToString([]byte(image))
+	return "image=$(printf %s " + encoded + " | base64 -d) && sudo -n crictl pull \"$image\""
 }
 
 func defaultAgentRegistryNodeVerifier(encKey []byte) agentRegistryNodeVerifier {
@@ -173,9 +178,8 @@ func defaultAgentRegistryPullExecutor(encKey []byte) agentRegistryPullExecutor {
 		if server == nil || strings.TrimSpace(image) == "" {
 			return fmt.Errorf("node or verification image unavailable")
 		}
-		encoded := base64.RawStdEncoding.EncodeToString([]byte(image))
 		args := buildSSHArgs(server, encKey, server.Host)
-		args = append(args, "image=$(printf %s "+encoded+" | base64 -d) && sudo -n crictl pull \"$image\"")
+		args = append(args, agentRegistryPullCommand(image))
 		output, err := sshExec(2*time.Minute, args)
 		if err != nil {
 			detail := strings.TrimSpace(string(output))
