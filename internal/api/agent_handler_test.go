@@ -196,6 +196,13 @@ func TestAgentOperationErrorSummaryRedactsAndBoundsExecutorDetails(t *testing.T)
 	}
 }
 
+func TestMaintenanceCleanupFailureSummaryKeepsRedactedExecutorOutput(t *testing.T) {
+	detail := maintenanceCleanupFailureSummary("load config file: token=secret-value permission denied", fmt.Errorf("exit status 1"))
+	if !strings.Contains(detail, "load config file") || !strings.Contains(detail, "permission denied") || strings.Contains(detail, "secret-value") || !strings.Contains(detail, "[REDACTED]") {
+		t.Fatalf("unexpected cleanup failure detail: %q", detail)
+	}
+}
+
 func TestAgentRegistryCommandsUsePaddedBase64ForShellDecoder(t *testing.T) {
 	image := "registry.k8s.io/pause:3.10"
 	encodedImage := base64.StdEncoding.EncodeToString([]byte(image))
