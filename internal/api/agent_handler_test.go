@@ -160,8 +160,14 @@ func TestAgentOperationErrorSummaryRedactsAndBoundsExecutorDetails(t *testing.T)
 func TestAgentRegistryCommandsUsePaddedBase64ForShellDecoder(t *testing.T) {
 	image := "registry.k8s.io/pause:3.10"
 	encodedImage := base64.StdEncoding.EncodeToString([]byte(image))
-	if !strings.Contains(encodedImage, "=") || !strings.Contains(agentRegistryPullCommand(image), "printf %s "+encodedImage+" | base64 -d") {
-		t.Fatalf("pull command must use padded standard base64: %s", agentRegistryPullCommand(image))
+	pullCommand := agentRegistryPullCommand(image)
+	if !strings.Contains(encodedImage, "=") || !strings.Contains(pullCommand, "printf %s "+encodedImage+" | base64 -d") {
+		t.Fatalf("pull command must use padded standard base64: %s", pullCommand)
+	}
+	for _, expected := range []string{"sudo -n /usr/local/bin/crictl pull \"$image\"", "sudo -n /var/lib/rancher/k3s/bin/crictl pull \"$image\"", "sudo -n /usr/local/bin/k3s crictl pull \"$image\"", "未找到 crictl 或 k3s 命令"} {
+		if !strings.Contains(pullCommand, expected) {
+			t.Fatalf("pull command must use an explicit runtime CLI path: %s", pullCommand)
+		}
 	}
 	decodedImage, err := base64.StdEncoding.DecodeString(encodedImage)
 	if err != nil || string(decodedImage) != image {

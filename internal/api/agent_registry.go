@@ -147,7 +147,11 @@ func agentRegistryVerificationCommand(endpoints []string) string {
 
 func agentRegistryPullCommand(image string) string {
 	encoded := base64.StdEncoding.EncodeToString([]byte(image))
-	return "image=$(printf %s " + encoded + " | base64 -d) && sudo -n crictl pull \"$image\""
+	return "image=$(printf %s " + encoded + " | base64 -d); " +
+		"if [ -x /usr/local/bin/crictl ]; then sudo -n /usr/local/bin/crictl pull \"$image\"; " +
+		"elif [ -x /var/lib/rancher/k3s/bin/crictl ]; then sudo -n /var/lib/rancher/k3s/bin/crictl pull \"$image\"; " +
+		"elif [ -x /usr/local/bin/k3s ]; then sudo -n /usr/local/bin/k3s crictl pull \"$image\"; " +
+		"else echo '未找到 crictl 或 k3s 命令' >&2; exit 127; fi"
 }
 
 func defaultAgentRegistryNodeVerifier(encKey []byte) agentRegistryNodeVerifier {
