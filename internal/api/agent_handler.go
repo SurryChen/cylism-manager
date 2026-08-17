@@ -618,7 +618,8 @@ func (h *AgentHandler) RegistryNodeVerify(w http.ResponseWriter, r *http.Request
 	}
 	results, err := h.registryVerifier(server, config.Endpoints)
 	if err != nil {
-		writeAgentError(w, http.StatusBadGateway, "registry endpoint verification failed", true)
+		detail := redactAgentText(truncateAgentText(err.Error(), 512))
+		writeAgentError(w, http.StatusBadGateway, "registry endpoint verification failed: "+detail, true)
 		return
 	}
 	h.audit(instance, "agent.registry_node_verify", map[string]string{"capability": model.AgentCapabilityRegistryVerify, "node": node, "registry": config.Registry})

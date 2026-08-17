@@ -163,18 +163,33 @@ func defaultAgentRegistryNodeVerifier(encKey []byte) agentRegistryNodeVerifier {
 		args = append(args, agentRegistryVerificationCommand(endpoints))
 		output, err := sshExec(30*time.Second, args)
 		if err != nil {
-			return nil, fmt.Errorf("node verification failed")
+			return nil, fmt.Errorf("node verification command failed: %w: %s", err, agentRegistryVerificationOutputDetail(string(output)))
 		}
-		results := make([]agentRegistryEndpointResult, 0, len(endpoints))
-		for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
-			parts := strings.Split(line, "|")
-			if len(parts) == 3 && safeRegistryEndpoint(parts[0]) != "" {
-				results = append(results, agentRegistryEndpointResult{Endpoint: safeRegistryEndpoint(parts[0]), DNS: parts[1], HTTP: parts[2]})
-			}
-		}
-		sort.Slice(results, func(i, j int) bool { return results[i].Endpoint < results[j].Endpoint })
-		return results, nil
+		return parseAgentRegistryEndpointResults(string(output), len(endpoints))
 	}
+}
+
+func parseAgentRegistryEndpointResults(output string, expectedCount int) ([]agentRegistryEndpointResult, error) {
+	results := make([]agentRegistryEndpointResult, 0, expectedCount)
+	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
+		parts := strings.Split(line, "|")
+		if len(parts) == 3 && safeRegistryEndpoint(parts[0]) != "" {
+			results = append(results, agentRegistryEndpointResult{Endpoint: safeRegistryEndpoint(parts[0]), DNS: strings.TrimSpace(parts[1]), HTTP: strings.TrimSpace(parts[2])})
+		}
+	}
+	sort.Slice(results, func(i, j int) bool { return results[i].Endpoint < results[j].Endpoint })
+	if expectedCount > 0 && len(results) == 0 {
+		return nil, fmt.Errorf("node verification returned no endpoint results: %s", agentRegistryVerificationOutputDetail(output))
+	}
+	return results, nil
+}
+
+func agentRegistryVerificationOutputDetail(output string) string {
+	output = strings.TrimSpace(output)
+	if output == "" {
+		return "no remote output"
+	}
+	return truncateAgentText(output, 512)
 }
 
 func defaultAgentRegistryPullExecutor(encKey []byte) agentRegistryPullExecutor {
