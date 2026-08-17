@@ -46,6 +46,7 @@
 - [x] 4.4.b Return only sanitized Manager-owned mirror/proxy status and correlate Pod image-pull state with configuration evidence.
 - [x] 4.4.c Verify only platform-managed node and configured endpoint pairs; request and execute fixed verification-image pulls through the existing browser approval boundary.
 - [x] 4.4.d Treat a node verification with no parseable configured-endpoint result as a failure and return a redacted diagnostic detail.
+- [x] 4.4.e Probe a single configured endpoint even when the decoded endpoint list has no trailing newline.
 
 ## 5. Verification And Rollout
 

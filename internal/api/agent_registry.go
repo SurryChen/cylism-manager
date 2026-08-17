@@ -142,7 +142,7 @@ func agentRegistryVerificationCommand(endpoints []string) string {
 	encoded, _ := json.Marshal(endpoints)
 	data := base64.StdEncoding.EncodeToString(encoded)
 	// The dynamic value is base64 only; endpoints are decoded as data, never shell syntax.
-	return "CYLISM_ENDPOINTS_B64=" + data + " sh -c 'printf %s \"$CYLISM_ENDPOINTS_B64\" | base64 -d | tr -d \"[]\\\" \" | tr \",\" \"\\n\" | while IFS= read -r endpoint; do host=$(printf %s \"$endpoint\" | sed -E \"s#https?://([^/:]+).*#\\1#\"); dns=failed; getent ahosts \"$host\" >/dev/null 2>&1 && dns=ok; http=$(curl -ksS -o /dev/null -w \"%{http_code}\" --connect-timeout 5 --max-time 10 \"$endpoint/v2/\" 2>/dev/null || true); [ -n \"$http\" ] || http=failed; printf \"%s|%s|%s\\n\" \"$endpoint\" \"$dns\" \"$http\"; done'"
+	return "CYLISM_ENDPOINTS_B64=" + data + " sh -c 'printf %s \"$CYLISM_ENDPOINTS_B64\" | base64 -d | tr -d \"[]\\\" \" | tr \",\" \"\\n\" | while IFS= read -r endpoint || [ -n \"$endpoint\" ]; do host=$(printf %s \"$endpoint\" | sed -E \"s#https?://([^/:]+).*#\\1#\"); dns=failed; getent ahosts \"$host\" >/dev/null 2>&1 && dns=ok; http=$(curl -ksS -o /dev/null -w \"%{http_code}\" --connect-timeout 5 --max-time 10 \"$endpoint/v2/\" 2>/dev/null || true); [ -n \"$http\" ] || http=failed; printf \"%s|%s|%s\\n\" \"$endpoint\" \"$dns\" \"$http\"; done'"
 }
 
 func agentRegistryPullCommand(image string) string {
