@@ -181,6 +181,18 @@ func TestAgentRegistryCommandsUsePaddedBase64ForShellDecoder(t *testing.T) {
 	}
 }
 
+func TestParseAgentRegistryEndpointResultsRejectsEmptyVerificationOutput(t *testing.T) {
+	results, err := parseAgentRegistryEndpointResults("Warning: Permanently added '10.0.0.1' (ED25519) to the list of known hosts.\nhttps://mirror.example.com|ok|200\n", 1)
+	if err != nil || len(results) != 1 || results[0] != (agentRegistryEndpointResult{Endpoint: "https://mirror.example.com", DNS: "ok", HTTP: "200"}) {
+		t.Fatalf("parsed results = %#v, %v", results, err)
+	}
+
+	_, err = parseAgentRegistryEndpointResults("Warning: remote command emitted no probe rows", 1)
+	if err == nil || !strings.Contains(err.Error(), "no endpoint results") {
+		t.Fatalf("expected no-result verification error, got %v", err)
+	}
+}
+
 func (stub agentAuthenticatorStub) AuthenticateAgent(_ context.Context, _ string) (*model.RuntimeInstance, error) {
 	return stub.instance, stub.err
 }
@@ -398,6 +410,15 @@ func TestAgentRegistryDiagnosticsAreScopedAndNeverExposeCredentials(t *testing.T
 	handler.RegistryNodeVerify(recorder, verify)
 	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), `"dns":"ok"`) {
 		t.Fatalf("verify: %d %s", recorder.Code, recorder.Body.String())
+	}
+
+	failingHandler := NewAgentHandler(s, client, agentAuthenticatorStub{instance: instance}).WithRegistryVerifier(func(_ *model.Server, _ []string) ([]agentRegistryEndpointResult, error) {
+		return nil, fmt.Errorf("node verification returned no endpoint results: token=should-not-leak")
+	})
+	recorder = httptest.NewRecorder()
+	failingHandler.RegistryNodeVerify(recorder, verify)
+	if recorder.Code != http.StatusBadGateway || !strings.Contains(recorder.Body.String(), "no endpoint results") || strings.Contains(recorder.Body.String(), "should-not-leak") {
+		t.Fatalf("unsafe verification failure: %d %s", recorder.Code, recorder.Body.String())
 	}
 }
 
