@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"crypto/subtle"
 	"crypto/tls"
 	"encoding/json"
@@ -39,12 +40,21 @@ type alertNotifyFunc func(context.Context, string, alertmanagerNotification) err
 type alertEmailNotifyFunc func(context.Context, k8s.EmailConfig, alertmanagerNotification) error
 
 type AlertingHandler struct {
-	alertmanager alertmanagerRequestFunc
-	notify       alertNotifyFunc
-	emailNotify  alertEmailNotifyFunc
-	platformURL  string
-	resolvedMu   sync.Mutex
-	resolved     []alertmanagerAlert
+	alertmanager    alertmanagerRequestFunc
+	notify          alertNotifyFunc
+	emailNotify     alertEmailNotifyFunc
+	platformURL     string
+	resolvedMu      sync.Mutex
+	resolved        []alertmanagerAlert
+	automationStore interface {
+		UpsertAlertEvent(*model.AlertEvent) (*model.AlertEvent, error)
+		GetAlertAutomationPolicy() (*model.AlertAutomationPolicy, error)
+		SaveAlertAutomationPolicy(*model.AlertAutomationPolicy) error
+		ListAlertEvents(int) ([]model.AlertEvent, error)
+		UpdateAlertEvent(*model.AlertEvent) error
+		GetRuntime(uint) (*model.RuntimeInstance, error)
+	}
+	dispatcher alertRuntimeDispatcher
 }
 
 type alertmanagerNotification struct {
@@ -127,6 +137,19 @@ func NewAlertingHandler(platformURLs ...string) *AlertingHandler {
 		platformURL = platformURLs[0]
 	}
 	return &AlertingHandler{alertmanager: alertmanagerRequest, notify: sendFeishuNotification, emailNotify: sendEmailNotification, platformURL: normalizeAlertingPlatformURL(platformURL)}
+}
+
+func (h *AlertingHandler) WithAutomation(store interface {
+	UpsertAlertEvent(*model.AlertEvent) (*model.AlertEvent, error)
+	GetAlertAutomationPolicy() (*model.AlertAutomationPolicy, error)
+	SaveAlertAutomationPolicy(*model.AlertAutomationPolicy) error
+	ListAlertEvents(int) ([]model.AlertEvent, error)
+	UpdateAlertEvent(*model.AlertEvent) error
+	GetRuntime(uint) (*model.RuntimeInstance, error)
+}, dispatcher alertRuntimeDispatcher) *AlertingHandler {
+	h.automationStore = store
+	h.dispatcher = dispatcher
+	return h
 }
 
 func (h *AlertingHandler) Status(c *gin.Context) {
@@ -325,10 +348,6 @@ func (h *AlertingHandler) Notify(c *gin.Context) {
 		model.Error(c, http.StatusUnauthorized, model.CodeUnauthorized, "告警回调未授权")
 		return
 	}
-	if !notifications.configured() {
-		model.Error(c, http.StatusConflict, model.CodeConflict, "告警通知渠道尚未配置")
-		return
-	}
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxAlertPayload)
 	var payload alertmanagerNotification
 	if err := c.ShouldBindJSON(&payload); err != nil || len(payload.Alerts) == 0 || len(payload.Alerts) > 64 {
@@ -336,12 +355,143 @@ func (h *AlertingHandler) Notify(c *gin.Context) {
 		return
 	}
 	payload.PlatformURL = h.platformURL
-	if err := h.sendNotifications(c.Request.Context(), notifications, payload); err != nil {
-		model.Error(c, http.StatusBadGateway, model.CodeK8sAPIError, "转发告警通知失败: "+err.Error())
+	if err := h.persistAlertEvents(payload); err != nil {
+		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "持久化告警事件失败")
 		return
 	}
+	delivered := false
+	if notifications.configured() {
+		if err := h.sendNotifications(c.Request.Context(), notifications, payload); err != nil {
+			model.Error(c, http.StatusBadGateway, model.CodeK8sAPIError, "转发告警通知失败: "+err.Error())
+			return
+		}
+		delivered = true
+	}
 	h.recordResolved(payload)
-	model.Success(c, gin.H{"delivered": true})
+	model.Success(c, gin.H{"delivered": delivered, "persisted": true})
+}
+
+func (h *AlertingHandler) persistAlertEvents(payload alertmanagerNotification) error {
+	if h.automationStore == nil {
+		return nil
+	}
+	for _, alert := range payload.Alerts {
+		event, err := h.automationStore.UpsertAlertEvent(alertEventFromNotification(payload, alert))
+		if err != nil {
+			return err
+		}
+		if event.Status != model.AlertEventResolved && h.dispatcher != nil && h.shouldDispatch(event) {
+			event.Status = model.AlertEventAnalyzing
+			now := time.Now().UTC()
+			event.LastDispatchedAt = &now
+			if err := h.automationStore.UpdateAlertEvent(event); err != nil {
+				return err
+			}
+			go h.dispatcher.Dispatch(context.Background(), event)
+		}
+	}
+	return nil
+}
+
+func (h *AlertingHandler) shouldDispatch(event *model.AlertEvent) bool {
+	policy, err := h.automationStore.GetAlertAutomationPolicy()
+	if err != nil || !alertPolicyMatches(policy, event) {
+		return false
+	}
+	if event.LastDispatchedAt == nil {
+		return true
+	}
+	return time.Since(*event.LastDispatchedAt) >= time.Duration(policy.CooldownMinutes)*time.Minute
+}
+
+func alertEventFromNotification(payload alertmanagerNotification, alert alertmanagerAlert) *model.AlertEvent {
+	labels, _ := json.Marshal(alert.Labels)
+	annotations, _ := json.Marshal(alert.Annotations)
+	alertName := strings.TrimSpace(alert.Labels["alertname"])
+	if alertName == "" {
+		alertName = "unnamed-alert"
+	}
+	fingerprint := strings.TrimSpace(alert.Fingerprint)
+	if fingerprint == "" {
+		fingerprint = alertEventFingerprint(alertName, alert.Labels, alert.StartsAt)
+	}
+	status := model.AlertEventFiring
+	endsAt := (*time.Time)(nil)
+	if payload.Status == "resolved" || alert.Status.State == "resolved" {
+		status = model.AlertEventResolved
+		value := alert.EndsAt
+		if value.IsZero() {
+			value = time.Now().UTC()
+		}
+		endsAt = &value
+	}
+	startsAt := alert.StartsAt
+	if startsAt.IsZero() {
+		startsAt = time.Now().UTC()
+	}
+	return &model.AlertEvent{Fingerprint: fingerprint, AlertName: alertName, Severity: strings.ToLower(strings.TrimSpace(alert.Labels["severity"])), NodeName: strings.TrimSpace(alert.Labels["node"]), MountPoint: strings.TrimSpace(alert.Labels["mountpoint"]), Labels: string(labels), Annotations: string(annotations), Status: status, StartsAt: startsAt, EndsAt: endsAt}
+}
+
+func alertEventFingerprint(name string, labels map[string]string, startsAt time.Time) string {
+	return fmt.Sprintf("%x", sha256.Sum256([]byte(name+"|"+labels["node"]+"|"+labels["mountpoint"]+"|"+startsAt.UTC().Format(time.RFC3339Nano))))
+}
+
+func (h *AlertingHandler) AutomationPolicy(c *gin.Context) {
+	if h.automationStore == nil {
+		model.Error(c, http.StatusServiceUnavailable, model.CodeInternalError, "告警自动化不可用")
+		return
+	}
+	policy, err := h.automationStore.GetAlertAutomationPolicy()
+	if err != nil {
+		model.Success(c, model.AlertAutomationPolicy{Enabled: false, MinimumSeverity: "warning", Mode: model.AlertAutomationReportOnly, CooldownMinutes: 30})
+		return
+	}
+	model.Success(c, policy)
+}
+
+func (h *AlertingHandler) UpdateAutomationPolicy(c *gin.Context) {
+	if h.automationStore == nil {
+		model.Error(c, http.StatusServiceUnavailable, model.CodeInternalError, "告警自动化不可用")
+		return
+	}
+	var policy model.AlertAutomationPolicy
+	if err := c.ShouldBindJSON(&policy); err != nil || policy.RuntimeID == 0 || !validAlertAutomationPolicy(&policy) {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "告警自动化策略无效")
+		return
+	}
+	runtimeInstance, err := h.automationStore.GetRuntime(policy.RuntimeID)
+	if err != nil || runtimeInstance.RuntimeType != model.RuntimeTypeNanobot || runtimeInstance.DeploymentMode != model.RuntimeDeploymentManaged {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "必须选择已托管的 Nanobot Runtime")
+		return
+	}
+	if err := h.automationStore.SaveAlertAutomationPolicy(&policy); err != nil {
+		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "保存告警自动化策略失败")
+		return
+	}
+	model.SuccessWithMessage(c, policy, "告警自动化策略已保存")
+}
+
+func validAlertAutomationPolicy(policy *model.AlertAutomationPolicy) bool {
+	if policy == nil || len(policy.AlertName) > 128 || policy.CooldownMinutes < 5 || policy.CooldownMinutes > 24*60 {
+		return false
+	}
+	if policy.Mode != model.AlertAutomationReportOnly && policy.Mode != model.AlertAutomationApproval {
+		return false
+	}
+	return policy.MinimumSeverity == "warning" || policy.MinimumSeverity == "critical"
+}
+
+func (h *AlertingHandler) ListAutomationEvents(c *gin.Context) {
+	if h.automationStore == nil {
+		model.Error(c, http.StatusServiceUnavailable, model.CodeInternalError, "告警自动化不可用")
+		return
+	}
+	events, err := h.automationStore.ListAlertEvents(30)
+	if err != nil {
+		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "读取告警自动化事件失败")
+		return
+	}
+	model.Success(c, events)
 }
 
 func (h *AlertingHandler) recordResolved(payload alertmanagerNotification) {

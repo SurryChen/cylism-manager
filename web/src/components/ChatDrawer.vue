@@ -148,6 +148,12 @@ async function scrollToBottom() {
   if (messageList.value) messageList.value.scrollTop = messageList.value.scrollHeight
 }
 
+async function scrollToLatest() {
+  stickToBottom.value = true
+  await nextTick()
+  if (messageList.value) messageList.value.scrollTop = messageList.value.scrollHeight
+}
+
 function onScroll() {
   const element = messageList.value
   if (!element) return
@@ -286,12 +292,12 @@ async function loadHistory(sessionID, { before = null } = {}) {
 
 async function loadSessions() {
   await refreshSessions()
-  if (!currentSession.value) {
-    const first = sessions.value[0]
-    if (first) currentSession.value = first.id
-  }
-  const view = currentView.value
+  const first = sessions.value[0]
+  if (!first) return
+  currentSession.value = first.id
+  const view = sessionViews.value.get(first.id)
   if (view && !view.historyLoaded && !view.localOnly) await loadHistory(view.id)
+  await scrollToLatest()
 }
 
 async function selectSession(sessionID) {

@@ -270,9 +270,42 @@ func parseCommand(args []string) (requestSpec, error) {
 			}
 			return nil
 		}()}, nil
+	case "alert get":
+		flags := flag.NewFlagSet("alert get", flag.ContinueOnError)
+		flags.SetOutput(io.Discard)
+		id := flags.Uint("id", 0, "")
+		output := flags.String("output", "", "")
+		if err := flags.Parse(args[2:]); err != nil || flags.NArg() != 0 || *output != "json" || *id == 0 {
+			return requestSpec{}, errors.New("alert get requires a valid --id and --output json")
+		}
+		return requestSpec{method: http.MethodGet, path: "/api/agent/v1/alerts/get", query: url.Values{"id": {strconv.FormatUint(uint64(*id), 10)}}}, nil
+	case "monitoring disk-growth":
+		flags := flag.NewFlagSet("monitoring disk-growth", flag.ContinueOnError)
+		flags.SetOutput(io.Discard)
+		node := flags.String("node", "", "")
+		rangeName := flags.String("range", "", "")
+		output := flags.String("output", "", "")
+		if err := flags.Parse(args[2:]); err != nil || flags.NArg() != 0 || *output != "json" || !validName(*node) || (*rangeName != "6h" && *rangeName != "24h") {
+			return requestSpec{}, errors.New("monitoring disk-growth requires a valid --node, --range (6h or 24h), and --output json")
+		}
+		return requestSpec{method: http.MethodGet, path: "/api/agent/v1/monitoring/disk-growth", query: url.Values{"node": {*node}, "range": {*rangeName}}}, nil
+	case "maintenance cleanup-request":
+		flags := flag.NewFlagSet("maintenance cleanup-request", flag.ContinueOnError)
+		flags.SetOutput(io.Discard)
+		alertID := flags.Uint("alert", 0, "")
+		recipe := flags.String("recipe", "", "")
+		output := flags.String("output", "", "")
+		if err := flags.Parse(args[2:]); err != nil || flags.NArg() != 0 || *output != "json" || *alertID == 0 || !validMaintenanceRecipeCLI(*recipe) {
+			return requestSpec{}, errors.New("maintenance cleanup-request requires a valid --alert, --recipe, and --output json")
+		}
+		return requestSpec{method: http.MethodPost, path: "/api/agent/v1/maintenance/cleanup-request", mutation: true, body: map[string]any{"alert_id": *alertID, "recipe": *recipe}}, nil
 	default:
 		return requestSpec{}, errors.New("unsupported command")
 	}
+}
+
+func validMaintenanceRecipeCLI(value string) bool {
+	return value == "journal-vacuum" || value == "container-image-prune"
 }
 
 func execute(ctx context.Context, spec requestSpec, baseURL *url.URL, token, requestID string, client *http.Client) (Envelope, error) {

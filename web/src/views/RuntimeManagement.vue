@@ -162,6 +162,9 @@ const agentCapabilities = [
   { id: 'dns.read', label: '集群 DNS 状态', description: '查看平台管理的 DNS 转发策略、CoreDNS 就绪状态和允许域名的最近解析结果', clusterScoped: true },
   { id: 'registry.proxy_diagnose', label: '镜像代理出网诊断', description: '查看管理员从受管 Registry Proxy Pod 发起的最近出网诊断结果', clusterScoped: true },
   { id: 'registry.pull_check', label: '节点镜像拉取检测', description: '拉取平台配置的验证镜像，始终需要管理员审批', clusterScoped: true },
+  { id: 'alert.read', label: '告警事件读取', description: '读取已持久化的告警上下文，不包含通知凭据', clusterScoped: true },
+  { id: 'monitoring.read', label: '磁盘增长诊断', description: '只读取 Manager 固定的节点磁盘增长指标，不能提交 PromQL', clusterScoped: true },
+  { id: 'maintenance.cleanup', label: '固定清理配方', description: '仅能请求 journal 清理或未使用镜像清理，始终需要管理员审批', clusterScoped: true },
 ]
 const emptyAgentGrantState = () => Object.fromEntries(agentCapabilities.map(capability => [capability.id, { enabled: false, namespaces: [] }]))
 const agentGrantState = ref(emptyAgentGrantState())

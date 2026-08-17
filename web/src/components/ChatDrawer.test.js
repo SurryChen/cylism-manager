@@ -36,6 +36,30 @@ describe('ChatDrawer', () => {
     expect(wrapper.text()).toContain('hello')
   })
 
+  it('returns to the first session and its latest messages whenever chat is reopened', async () => {
+    apiMocks.chatSessions.mockResolvedValue([
+      { id: 'latest', title: 'Latest session', updated_at: '2026-01-02T00:00:00Z' },
+      { id: 'older', title: 'Older session', updated_at: '2026-01-01T00:00:00Z' },
+    ])
+    apiMocks.chatMessages.mockImplementation((_runtimeID, sessionID) => Promise.resolve({
+      id: sessionID,
+      title: sessionID,
+      messages: [{ role: 'assistant', content: sessionID === 'latest' ? '最新会话内容' : '旧会话内容' }],
+    }))
+    const wrapper = mountDrawer()
+    await flushPromises()
+
+    await wrapper.findAll('.chat-session').find(button => button.text().includes('Older session')).trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.chat-messages').text()).toContain('旧会话内容')
+
+    await wrapper.setProps({ modelValue: false })
+    await wrapper.setProps({ modelValue: true })
+    await flushPromises()
+    expect(wrapper.find('.chat-messages').text()).toContain('最新会话内容')
+    expect(wrapper.find('.chat-messages').text()).not.toContain('旧会话内容')
+  })
+
   it('uses one header menu for the current session instead of controls on every tab', async () => {
     const wrapper = mountDrawer()
     await flushPromises()

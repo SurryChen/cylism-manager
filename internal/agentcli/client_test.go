@@ -132,6 +132,36 @@ func TestRunRegistryDiagnosticCommandsUseFixedEndpoints(t *testing.T) {
 	}
 }
 
+func TestRunAlertAutomationCommandsUseFixedEndpoints(t *testing.T) {
+	tests := []struct {
+		args, path, query, method string
+	}{
+		{"alert get --id 42 --output json", "/api/agent/v1/alerts/get", "id=42", http.MethodGet},
+		{"monitoring disk-growth --node node-1 --range 6h --output json", "/api/agent/v1/monitoring/disk-growth", "node=node-1&range=6h", http.MethodGet},
+		{"maintenance cleanup-request --alert 42 --recipe journal-vacuum --output json", "/api/agent/v1/maintenance/cleanup-request", "", http.MethodPost},
+	}
+	for _, test := range tests {
+		t.Run(test.args, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != test.method || r.URL.Path != test.path || r.URL.RawQuery != test.query {
+					t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
+				}
+				if test.method == http.MethodPost {
+					var body map[string]any
+					if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body["alert_id"] != float64(42) || body["recipe"] != "journal-vacuum" {
+						t.Fatalf("unexpected cleanup request: %#v err=%v", body, err)
+					}
+				}
+				_, _ = w.Write([]byte(`{"status":"ok","summary":"request completed"}`))
+			}))
+			defer server.Close()
+			if code := Run(context.Background(), strings.Fields(test.args), Config{BaseURL: server.URL, TokenFile: writeToken(t, "runtime-token")}, &bytes.Buffer{}); code != 0 {
+				t.Fatalf("expected success, got %d", code)
+			}
+		})
+	}
+}
+
 func TestRunDeploymentScaleHasIdempotencyKeyAndExactBody(t *testing.T) {
 	var idempotencyKey string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

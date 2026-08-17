@@ -48,6 +48,13 @@
 - [x] 4.4.d Treat a node verification with no parseable configured-endpoint result as a failure and return a redacted diagnostic detail.
 - [x] 4.4.e Probe a single configured endpoint even when the decoded endpoint list has no trailing newline.
 
+## 4.5 Alert-Driven Runtime Automation
+
+- [x] 4.5.a Persist Alertmanager fingerprint events and an administrator-managed, disabled-by-default Nanobot routing policy.
+- [x] 4.5.b Add fixed alert-context and disk-growth read operations; do not expose raw PromQL, shell, SSH, kubectl, or notification credentials.
+- [x] 4.5.c Add approval-required fixed maintenance recipes for journal vacuum and unused container image pruning, with event/node revalidation before execution.
+- [x] 4.5.d Add monitoring UI controls for the route and a durable diagnostic/approval/execution event timeline.
+
 ## 5. Verification And Rollout
 
 - [ ] 5.1 Complete focused TDD checks after every task, then run `go test ./...`, `go build ./...`, CLI tests/build, Runtime Python tests, frontend tests and production build.

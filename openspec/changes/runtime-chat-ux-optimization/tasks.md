@@ -15,6 +15,7 @@
 - [x] 3.2 Implement explicit progress and retry states without disabling session switching.
 - [x] 3.3 Refresh summaries without reloading active history after completion.
 - [x] 3.4 Add older-history loading and local session merge behavior.
+- [x] 3.5 Select the first listed session and scroll to its newest history whenever the chat drawer opens.
 
 ## 4. Runtime TDD And Implementation
 
