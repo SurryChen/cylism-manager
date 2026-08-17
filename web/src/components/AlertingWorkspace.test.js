@@ -78,4 +78,24 @@ describe('AlertingWorkspace', () => {
     expect(apiMocks.put).toHaveBeenCalledWith('/monitoring/alerts/automation-policy', expect.objectContaining({ enabled: true, runtime_id: 7 }))
     expect(wrapper.text()).toContain('已同步 2 条当前告警，已按策略开始分析。')
   })
+
+  it('renders persisted Agent reports as sanitized Markdown', async () => {
+    apiMocks.get.mockImplementation(path => {
+      if (path === '/monitoring/alerts/status') return Promise.resolve({ state: 'ready' })
+      if (path === '/monitoring/alerts/overview') return Promise.resolve({ firing: 1, silenced: 0, active: [], resolved: [] })
+      if (path === '/monitoring/alerts/automation-policy') return Promise.resolve({ enabled: true, runtime_id: 7, minimum_severity: 'warning', mode: 'report_only', cooldown_minutes: 30 })
+      if (path === '/monitoring/alerts/automation-events') return Promise.resolve([{ id: 1, alert_name: 'NodeDiskHigh', node_name: 'node-a', status: 'firing', updated_at: '2026-08-17T12:00:00Z', diagnostic_summary: '诊断报告已生成', report: '**影响**\n\n- 根盘使用率超过阈值\n\n<script>window.alert(1)</script>' }])
+      if (path === '/runtimes') return Promise.resolve([])
+      return Promise.resolve({})
+    })
+
+    const wrapper = mount(AlertingWorkspace, { props: { nodes: [{ name: 'node-a', ready: true }], monitoringReady: true } })
+    await flushPromises()
+
+    expect(wrapper.get('.automation-events > .alert-section-heading + .event-list').exists()).toBe(true)
+    await wrapper.get('.event-report summary').trigger('click')
+    expect(wrapper.get('.event-report-markdown').html()).toContain('<strong>影响</strong>')
+    expect(wrapper.get('.event-report-markdown').findAll('li')).toHaveLength(1)
+    expect(wrapper.get('.event-report-markdown').html()).not.toContain('<script')
+  })
 })

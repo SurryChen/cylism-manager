@@ -245,6 +245,15 @@ func TestUpdateAutomationPolicyImmediatelySyncsCurrentFiringAlerts(t *testing.T)
 	}
 }
 
+func TestAlertAutomationPromptDistinguishesLifecycleAndAlertState(t *testing.T) {
+	prompt := alertAutomationPrompt(&model.AlertEvent{ID: 7, NodeName: "node-a"}, model.AlertAutomationApproval)
+	for _, expected := range []string{"automation_status", "alert_state", `alert_state="firing"`, "DiskPressure", "KubeletHasNoDiskPressure"} {
+		if !strings.Contains(prompt, expected) {
+			t.Fatalf("expected %q in automation prompt: %s", expected, prompt)
+		}
+	}
+}
+
 type memoryAlertAutomationStore struct {
 	policy  *model.AlertAutomationPolicy
 	runtime *model.RuntimeInstance

@@ -1,6 +1,6 @@
 <template>
   <div>
-    <SectionTabsHeader title="集群监控" :tabs="tabs" :active-tab="activeTab" @select="activeTab = $event">
+    <SectionTabsHeader title="集群监控" :tabs="tabs" :active-tab="activeTab" test-id-prefix="monitoring-tab" @select="selectTab">
       <template #actions>
         <div v-if="status?.state !== 'not_installed'" class="btn-group">
           <button class="icon-button" title="监控设置" aria-label="监控设置" @click="openMonitoringSettings"><Settings2 :size="16" /></button>
@@ -73,6 +73,7 @@
 
 <script setup>
 import { computed, defineComponent, h, onMounted, onUnmounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { ChevronDown, RefreshCw, Settings2, X } from 'lucide-vue-next'
 import { api } from '../api/index.js'
 import AlertingWorkspace from '../components/AlertingWorkspace.vue'
@@ -88,11 +89,13 @@ const tabs = [
   { id: 'logs', label: '日志' },
   { id: 'alerts', label: '告警' },
 ]
+const route = useRoute()
+const router = useRouter()
 const trendRanges = ['1h', '6h', '24h', '7d']
 const status = ref(null)
 const nodes = ref([])
 const storageClasses = ref([])
-const activeTab = ref('overview')
+const activeTab = computed(() => tabs.some(item => item.id === route.query.tab) ? route.query.tab : 'overview')
 const loaded = ref(false)
 const error = ref('')
 const installing = ref(false)
@@ -312,12 +315,15 @@ function highestNode(metric) {
 function filteredTrendSeries(series = []) { return series.filter(item => selectedTrendNodes.value.includes(item.label)) }
 function selectAllTrendNodes() { selectedTrendNodes.value = trendNodes.value.map(node => node.name) }
 function clearTrendNodes() { selectedTrendNodes.value = [] }
+function selectTab(tab) {
+  router.push({ path: '/monitoring', query: { ...route.query, tab } })
+}
 function navigateFromAlert(target) {
   if (target.node) {
     selectedTrendNodes.value = [target.node]
     trendSelectionInitialized.value = true
   }
-  activeTab.value = target.tab === 'nodes' ? 'overview' : target.tab
+  selectTab(target.tab === 'nodes' ? 'overview' : target.tab)
 }
 function formatPercent(value) { return Number.isFinite(value) ? `${value.toFixed(1)}%` : '-' }
 function formatRate(value) { return Number.isFinite(value) ? `${value.toFixed(2)} MB/s` : '-' }
