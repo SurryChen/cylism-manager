@@ -223,7 +223,7 @@ func TestUpdateAutomationPolicyImmediatelySyncsCurrentFiringAlerts(t *testing.T)
 			t.Fatalf("unexpected Alertmanager request: %s %s", method, path)
 		}
 		*output.(*[]alertmanagerAlert) = []alertmanagerAlert{
-			{Fingerprint: "firing-1", Status: alertStatus{State: "firing"}, Labels: map[string]string{"alertname": "NodeDiskHigh", "severity": "warning", "node": "node-a"}},
+			{Fingerprint: "firing-1", Status: alertStatus{State: "active"}, Labels: map[string]string{"alertname": "NodeDiskHigh", "severity": "warning", "node": "node-a"}},
 			{Fingerprint: "resolved-1", Status: alertStatus{State: "resolved"}, Labels: map[string]string{"alertname": "NodeDiskHigh", "severity": "warning"}},
 		}
 		return nil
