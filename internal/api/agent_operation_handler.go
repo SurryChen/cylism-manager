@@ -131,6 +131,21 @@ type agentOperationSummary struct {
 	CreatedAt     time.Time  `json:"created_at"`
 }
 
+const agentOperationErrorSummaryLimit = 512
+
+// agentOperationErrorSummary keeps terminal diagnostics useful without turning
+// the approval history into a channel for operation inputs or credentials.
+func agentOperationErrorSummary(prefix string, err error) string {
+	if err == nil {
+		return prefix
+	}
+	detail := strings.TrimSpace(redactAgentText(err.Error()))
+	if detail == "" {
+		return prefix
+	}
+	return truncateAgentText(prefix+": "+detail, agentOperationErrorSummaryLimit-3)
+}
+
 func toAgentOperationSummary(operation model.AgentOperation) agentOperationSummary {
 	return agentOperationSummary{
 		OperationID: operation.OperationID, Capability: operation.Capability,
@@ -212,7 +227,7 @@ func (h *AgentOperationHandler) resolve(c *gin.Context, approve bool) {
 	deployment.Spec.Replicas = &parameters.Replicas
 	if _, err := h.client.Clientset.AppsV1().Deployments(parameters.Namespace).Update(c.Request.Context(), deployment, metav1.UpdateOptions{}); err != nil {
 		now := time.Now()
-		_, _ = h.store.UpdateAgentOperationStatus(operationID, model.AgentOperationApproved, model.AgentOperationFailed, "执行 Deployment 扩缩容失败", nil, &now)
+		_, _ = h.store.UpdateAgentOperationStatus(operationID, model.AgentOperationApproved, model.AgentOperationFailed, agentOperationErrorSummary("执行 Deployment 扩缩容失败", err), nil, &now)
 		model.Error(c, http.StatusBadGateway, model.CodeK8sAPIError, "执行 Deployment 扩缩容失败")
 		return
 	}
@@ -264,7 +279,7 @@ func (h *AgentOperationHandler) resolveRegistryPullCheck(c *gin.Context, operati
 	}
 	if err := h.registryPullExecutor(server, config.VerificationImage); err != nil {
 		now := time.Now()
-		_, _ = h.store.UpdateAgentOperationStatus(operation.OperationID, model.AgentOperationApproved, model.AgentOperationFailed, "节点验证镜像拉取失败", nil, &now)
+		_, _ = h.store.UpdateAgentOperationStatus(operation.OperationID, model.AgentOperationApproved, model.AgentOperationFailed, agentOperationErrorSummary("节点验证镜像拉取失败", err), nil, &now)
 		model.Error(c, http.StatusBadGateway, model.CodeInternalError, "节点验证镜像拉取失败")
 		return
 	}

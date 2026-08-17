@@ -73,7 +73,7 @@
       <section class="chat-approval-modal" role="dialog" aria-modal="true" aria-label="待审批操作">
         <header class="chat-modal-header"><div><h2 class="chat-modal-title">Agent 操作</h2><p class="chat-modal-sub">仅管理员可以批准或拒绝 Runtime 发起的变更</p></div><button type="button" class="icon-button" title="关闭" aria-label="关闭" @click="approvalOpen = false"><X :size="18" /></button></header>
         <div class="chat-approval-tabs"><button type="button" :class="{ 'is-active': approvalTab === 'pending' }" @click="approvalTab = 'pending'; loadApprovals()">待审批<span v-if="pendingApprovals.length">{{ pendingApprovals.length }}</span></button><button type="button" :class="{ 'is-active': approvalTab === 'history' }" @click="approvalTab = 'history'; loadApprovalHistory()">历史</button></div>
-        <div class="chat-approval-list"><div v-if="approvalLoading" class="chat-empty">正在读取操作...</div><template v-else-if="approvalTab === 'pending'"><div v-if="!pendingApprovals.length" class="chat-empty">暂无待审批操作</div><article v-for="operation in pendingApprovals" :key="operation.operation_id" class="chat-approval-item"><div><strong>{{ operation.summary }}</strong><small>{{ operation.created_at || '-' }} · {{ operation.expires_at || '15 分钟内有效' }}</small></div><div class="chat-approval-actions"><button type="button" class="btn btn-primary" :disabled="approvalWorkingIDs.has(operation.operation_id)" @click="resolveApproval(operation, true)">批准</button><button type="button" class="btn btn-danger" :disabled="approvalWorkingIDs.has(operation.operation_id)" @click="resolveApproval(operation, false)">拒绝</button></div></article></template><template v-else><div v-if="!approvalHistory.length" class="chat-empty">暂无操作历史</div><article v-for="operation in approvalHistory" :key="operation.operation_id" class="chat-approval-item chat-approval-history"><div><strong>{{ operation.summary }}</strong><small>{{ operation.created_at || '-' }}</small><small v-if="operation.error_summary">{{ operation.error_summary }}</small></div><span class="chat-operation-status" :class="`is-${operation.status}`">{{ approvalStatusLabel(operation.status) }}</span></article></template><div v-if="approvalFeedback" class="chat-error">{{ approvalFeedback }}</div></div>
+        <div class="chat-approval-list"><div v-if="approvalLoading" class="chat-empty">正在读取操作...</div><template v-else-if="approvalTab === 'pending'"><div v-if="!pendingApprovals.length" class="chat-empty">暂无待审批操作</div><article v-for="operation in pendingApprovals" :key="operation.operation_id" class="chat-approval-item"><div><strong>{{ operation.summary }}</strong><small>{{ operation.created_at || '-' }} · {{ operation.expires_at || '15 分钟内有效' }}</small></div><div class="chat-approval-actions"><button type="button" class="btn btn-primary" :disabled="approvalWorkingIDs.has(operation.operation_id)" @click="resolveApproval(operation, true)">批准</button><button type="button" class="btn btn-danger" :disabled="approvalWorkingIDs.has(operation.operation_id)" @click="resolveApproval(operation, false)">拒绝</button></div></article></template><template v-else><div v-if="!approvalHistory.length" class="chat-empty">暂无操作历史</div><article v-for="operation in approvalHistory" :key="operation.operation_id" class="chat-approval-item chat-approval-history"><div><strong>{{ operation.summary }}</strong><small>{{ operation.created_at || '-' }}</small><button v-if="operation.error_summary" type="button" class="chat-operation-error-toggle" :aria-expanded="expandedOperationID === operation.operation_id" @click="toggleOperationError(operation.operation_id)">{{ expandedOperationID === operation.operation_id ? '收起错误详情' : '查看错误详情' }}</button><pre v-if="operation.error_summary && expandedOperationID === operation.operation_id" class="chat-operation-error-detail">{{ operation.error_summary }}</pre></div><span class="chat-operation-status" :class="`is-${operation.status}`">{{ approvalStatusLabel(operation.status) }}</span></article></template><div v-if="approvalFeedback" class="chat-error">{{ approvalFeedback }}</div></div>
       </section>
     </div>
   </Teleport>
@@ -106,6 +106,7 @@ const pendingApprovals = ref([])
 const approvalHistory = ref([])
 const approvalTab = ref('pending')
 const approvalFeedback = ref('')
+const expandedOperationID = ref('')
 const showArchived = ref(false)
 const sessionMenuOpen = ref(false)
 const renameOpen = ref(false)
@@ -250,6 +251,10 @@ async function resolveApproval(operation, approve) {
 
 function approvalStatusLabel(status) {
   return ({ pending_approval: '待审批', approved: '已批准', rejected: '已拒绝', succeeded: '已完成', failed: '执行失败', stale: '已过期资源', expired: '审批过期' })[status] || status || '未知'
+}
+
+function toggleOperationError(operationID) {
+  expandedOperationID.value = expandedOperationID.value === operationID ? '' : operationID
 }
 
 async function loadHistory(sessionID, { before = null } = {}) {
@@ -595,6 +600,9 @@ onBeforeUnmount(() => {
 .chat-approval-item small { color: var(--text-secondary); font-size: 11px; }
 .chat-approval-actions { display: flex; flex: 0 0 auto; gap: 6px; }
 .chat-approval-history { align-items: flex-start; }
+.chat-operation-error-toggle { justify-self: start; border: 0; padding: 0; background: transparent; color: var(--action-primary); font: inherit; font-size: 11px; cursor: pointer; }
+.chat-operation-error-toggle:hover { text-decoration: underline; }
+.chat-operation-error-detail { width: 100%; max-height: 180px; box-sizing: border-box; overflow: auto; margin: 2px 0 0; padding: 8px; border: 1px solid var(--danger); border-radius: var(--radius-control); background: var(--danger-surface); color: var(--text-primary); font-family: var(--font-mono); font-size: 11px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
 .chat-operation-status { flex: 0 0 auto; border: 1px solid var(--border-muted); border-radius: 999px; padding: 3px 7px; color: var(--text-secondary); font-size: 11px; }
 .chat-operation-status.is-succeeded { border-color: var(--success); color: var(--success); }
 .chat-operation-status.is-failed, .chat-operation-status.is-stale, .chat-operation-status.is-expired, .chat-operation-status.is-rejected { border-color: var(--danger); color: var(--danger); }
