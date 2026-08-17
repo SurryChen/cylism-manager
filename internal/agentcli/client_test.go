@@ -134,13 +134,14 @@ func TestRunRegistryDiagnosticCommandsUseFixedEndpoints(t *testing.T) {
 
 func TestRunAlertAutomationCommandsUseFixedEndpoints(t *testing.T) {
 	tests := []struct {
-		args, path, query, method string
+		args, path, query, method, recipe string
 	}{
-		{"alert list --output json", "/api/agent/v1/alerts/list", "", http.MethodGet},
-		{"alert get --id 42 --output json", "/api/agent/v1/alerts/get", "id=42", http.MethodGet},
-		{"monitoring disk-growth --node node-1 --range 6h --output json", "/api/agent/v1/monitoring/disk-growth", "node=node-1&range=6h", http.MethodGet},
-		{"maintenance disk-inspect --node node-1 --output json", "/api/agent/v1/maintenance/disk-inspect", "node=node-1", http.MethodGet},
-		{"maintenance cleanup-request --alert 42 --recipe journal-vacuum --output json", "/api/agent/v1/maintenance/cleanup-request", "", http.MethodPost},
+		{"alert list --output json", "/api/agent/v1/alerts/list", "", http.MethodGet, ""},
+		{"alert get --id 42 --output json", "/api/agent/v1/alerts/get", "id=42", http.MethodGet, ""},
+		{"monitoring disk-growth --node node-1 --range 6h --output json", "/api/agent/v1/monitoring/disk-growth", "node=node-1&range=6h", http.MethodGet, ""},
+		{"maintenance disk-inspect --node node-1 --output json", "/api/agent/v1/maintenance/disk-inspect", "node=node-1", http.MethodGet, ""},
+		{"maintenance cleanup-request --alert 42 --recipe journal-vacuum --output json", "/api/agent/v1/maintenance/cleanup-request", "", http.MethodPost, "journal-vacuum"},
+		{"maintenance cleanup-request --alert 42 --recipe docker-image-prune --output json", "/api/agent/v1/maintenance/cleanup-request", "", http.MethodPost, "docker-image-prune"},
 	}
 	for _, test := range tests {
 		t.Run(test.args, func(t *testing.T) {
@@ -150,7 +151,7 @@ func TestRunAlertAutomationCommandsUseFixedEndpoints(t *testing.T) {
 				}
 				if test.method == http.MethodPost {
 					var body map[string]any
-					if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body["alert_id"] != float64(42) || body["recipe"] != "journal-vacuum" {
+					if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body["alert_id"] != float64(42) || body["recipe"] != test.recipe {
 						t.Fatalf("unexpected cleanup request: %#v err=%v", body, err)
 					}
 				}
