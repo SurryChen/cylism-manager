@@ -94,6 +94,27 @@ func TestKubernetesApplierPreflightRequiresActiveNamespace(t *testing.T) {
 	}
 }
 
+func TestKubernetesApplierPreflightValidatesFileMountSources(t *testing.T) {
+	clientset := k8sfake.NewSimpleClientset(
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "dev"}, Status: corev1.NamespaceStatus{Phase: corev1.NamespaceActive}},
+		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "edge-tls", Namespace: "dev"}, Data: map[string][]byte{"tls.crt": []byte("cert")}},
+		&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "edge-config", Namespace: "dev"}, Data: map[string]string{"config.yaml": "port: 443"}},
+	)
+	applier := NewKubernetesApplier(&k8sclient.Client{Clientset: clientset})
+	application := ApplicationContext{Namespace: "dev"}
+	spec := ReleaseSpec{Endpoint: EndpointSpec{Exposure: ExposureCluster}, FileMounts: []FileMountSpec{
+		{SourceType: FileMountSourceSecret, SourceName: "edge-tls", Key: "tls.crt", MountPath: "/run/tls/tls.crt"},
+		{SourceType: FileMountSourceConfigMap, SourceName: "edge-config", Key: "config.yaml", MountPath: "/etc/edge/config.yaml"},
+	}}
+	if err := applier.Preflight(context.Background(), application, spec); err != nil {
+		t.Fatalf("expected file mount source preflight to pass: %v", err)
+	}
+	spec.FileMounts[0].Key = "tls.key"
+	if err := applier.Preflight(context.Background(), application, spec); err == nil || !strings.Contains(err.Error(), "tls.key") {
+		t.Fatalf("expected missing Secret key failure, got %v", err)
+	}
+}
+
 func TestKubernetesApplierWaitReadyReportsImagePullFailure(t *testing.T) {
 	labels := map[string]string{ApplicationNameLabel: "order-api", ReleaseLabel: "2"}
 	clientset := k8sfake.NewSimpleClientset(

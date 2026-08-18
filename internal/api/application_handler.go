@@ -1222,19 +1222,24 @@ func (h *ApplicationHandler) CreateApplicationEndpoint(c *gin.Context) {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
 		return
 	}
-	servicePort, err := h.applicationServicePort(app)
+	serviceSpec, err := h.applicationServiceSpec(app)
 	if err != nil {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
 		return
 	}
-	endpoint.ServicePort = servicePort
+	servicePort, ok := serviceSpec.PrimaryTCPPort()
+	if !ok {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "UDP Service 不支持 HTTP Ingress 域名绑定")
+		return
+	}
+	endpoint.ServicePort = servicePort.Port
 	endpoints, err := h.store.ListApplicationEndpoints(app.ID)
 	if err != nil {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
 		return
 	}
 	endpoints = append(endpoints, *endpoint)
-	if err := application.NewKubernetesApplier(K8s).SyncApplicationEndpoints(c.Request.Context(), applicationContextFor(app), endpoints, servicePort); err != nil {
+	if err := application.NewKubernetesApplier(K8s).SyncApplicationEndpoints(c.Request.Context(), applicationContextFor(app), endpoints, servicePort.Port); err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, fmt.Sprintf("同步应用入口: %v", err))
 		return
 	}
@@ -1284,14 +1289,19 @@ func (h *ApplicationHandler) UpdateApplicationEndpoint(c *gin.Context) {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
 		return
 	}
-	servicePort, err := h.applicationServicePort(app)
+	serviceSpec, err := h.applicationServiceSpec(app)
 	if err != nil {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
 		return
 	}
+	servicePort, ok := serviceSpec.PrimaryTCPPort()
+	if !ok {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "UDP Service 不支持 HTTP Ingress 域名绑定")
+		return
+	}
 	updated.ID = endpoint.ID
 	updated.CreatedAt = endpoint.CreatedAt
-	updated.ServicePort = servicePort
+	updated.ServicePort = servicePort.Port
 	endpoints, err := h.store.ListApplicationEndpoints(app.ID)
 	if err != nil {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
@@ -1302,7 +1312,7 @@ func (h *ApplicationHandler) UpdateApplicationEndpoint(c *gin.Context) {
 			endpoints[index] = *updated
 		}
 	}
-	if err := application.NewKubernetesApplier(K8s).SyncApplicationEndpoints(c.Request.Context(), applicationContextFor(app), endpoints, servicePort); err != nil {
+	if err := application.NewKubernetesApplier(K8s).SyncApplicationEndpoints(c.Request.Context(), applicationContextFor(app), endpoints, servicePort.Port); err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, fmt.Sprintf("同步应用入口: %v", err))
 		return
 	}
@@ -1340,10 +1350,15 @@ func (h *ApplicationHandler) DeleteApplicationEndpoint(c *gin.Context) {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
 		return
 	}
-	servicePort, err := h.applicationServicePort(app)
+	serviceSpec, err := h.applicationServiceSpec(app)
 	if err != nil {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
 		return
+	}
+	servicePort, hasTCPPort := serviceSpec.PrimaryTCPPort()
+	if !hasTCPPort {
+		servicePorts := serviceSpec.PortSpecs()
+		servicePort = servicePorts[0]
 	}
 	endpoints, err := h.store.ListApplicationEndpoints(app.ID)
 	if err != nil {
@@ -1356,7 +1371,10 @@ func (h *ApplicationHandler) DeleteApplicationEndpoint(c *gin.Context) {
 			remaining = append(remaining, endpoint)
 		}
 	}
-	if err := application.NewKubernetesApplier(K8s).SyncApplicationEndpoints(c.Request.Context(), applicationContextFor(app), remaining, servicePort); err != nil {
+	if !hasTCPPort {
+		remaining = nil
+	}
+	if err := application.NewKubernetesApplier(K8s).SyncApplicationEndpoints(c.Request.Context(), applicationContextFor(app), remaining, servicePort.Port); err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, fmt.Sprintf("移除应用入口: %v", err))
 		return
 	}
@@ -1367,31 +1385,31 @@ func (h *ApplicationHandler) DeleteApplicationEndpoint(c *gin.Context) {
 	model.Success(c, gin.H{"id": endpointID})
 }
 
-func (h *ApplicationHandler) applicationServicePort(app *model.Application) (int32, error) {
+func (h *ApplicationHandler) applicationServiceSpec(app *model.Application) (application.ServiceSpec, error) {
 	if release, err := h.store.GetLatestSuccessfulRelease(app.ID); err == nil {
 		var spec application.ReleaseSpec
 		if err := json.Unmarshal([]byte(release.DesiredSpec), &spec); err != nil {
-			return 0, err
+			return application.ServiceSpec{}, err
 		}
-		return spec.Service.Port, nil
+		return spec.Service, nil
 	} else if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-		return 0, err
+		return application.ServiceSpec{}, err
 	}
 	if template, err := h.store.GetDefaultApplicationDeploymentTemplate(app.ID); err == nil {
 		var spec application.ReleaseSpec
 		if err := json.Unmarshal([]byte(template.Spec), &spec); err != nil {
-			return 0, err
+			return application.ServiceSpec{}, err
 		}
-		return spec.Service.Port, nil
+		return spec.Service, nil
 	} else if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-		return 0, err
+		return application.ServiceSpec{}, err
 	}
 	if endpoints, err := h.store.ListApplicationEndpoints(app.ID); err == nil && len(endpoints) > 0 && endpoints[0].ServicePort > 0 {
-		return endpoints[0].ServicePort, nil
+		return application.ServiceSpec{Port: endpoints[0].ServicePort}, nil
 	} else if err != nil {
-		return 0, err
+		return application.ServiceSpec{}, err
 	}
-	return 80, nil
+	return application.ServiceSpec{Port: 80}, nil
 }
 
 func (h *ApplicationHandler) applyApplicationEndpointSpec(app *model.Application, spec *application.ReleaseSpec) error {
@@ -1714,24 +1732,32 @@ func (h *ApplicationHandler) executeAsync(service *application.Service, releaseI
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 		defer cancel()
 		_ = service.ExecuteReleaseWithPostApply(ctx, releaseID, app, spec, func() error {
-			return h.syncApplicationEndpoints(ctx, app, spec.Service.Port)
+			return h.syncApplicationEndpoints(ctx, app, spec.Service)
 		})
 	}()
 }
 
-func (h *ApplicationHandler) syncApplicationEndpoints(ctx context.Context, app *model.Application, servicePort int32) error {
+func (h *ApplicationHandler) syncApplicationEndpoints(ctx context.Context, app *model.Application, service application.ServiceSpec) error {
 	endpoints, err := h.store.ListApplicationEndpoints(app.ID)
 	if err != nil {
 		return fmt.Errorf("读取应用入口: %w", err)
 	}
-	if err := application.NewKubernetesApplier(K8s).SyncApplicationEndpoints(ctx, applicationContextFor(app), endpoints, servicePort); err != nil {
+	primaryTCPPort, hasTCPPort := service.PrimaryTCPPort()
+	if !hasTCPPort {
+		servicePorts := service.PortSpecs()
+		if err := application.NewKubernetesApplier(K8s).SyncApplicationEndpoints(ctx, applicationContextFor(app), nil, servicePorts[0].Port); err != nil {
+			return fmt.Errorf("移除 UDP Service 的 HTTP Ingress: %w", err)
+		}
+		return nil
+	}
+	if err := application.NewKubernetesApplier(K8s).SyncApplicationEndpoints(ctx, applicationContextFor(app), endpoints, primaryTCPPort.Port); err != nil {
 		return fmt.Errorf("同步应用入口: %w", err)
 	}
 	for index := range endpoints {
-		if endpoints[index].ServicePort == servicePort {
+		if endpoints[index].ServicePort == primaryTCPPort.Port {
 			continue
 		}
-		endpoints[index].ServicePort = servicePort
+		endpoints[index].ServicePort = primaryTCPPort.Port
 		if err := h.store.UpdateApplicationEndpoint(&endpoints[index]); err != nil {
 			return fmt.Errorf("更新应用入口端口: %w", err)
 		}
