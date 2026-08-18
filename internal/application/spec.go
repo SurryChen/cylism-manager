@@ -33,6 +33,16 @@ const (
 
 	WorkloadKindDeployment  = "deployment"
 	WorkloadKindStatefulSet = "statefulset"
+
+	ServiceProtocolTCP = "TCP"
+	ServiceProtocolUDP = "UDP"
+
+	ServiceTypeClusterIP    = "ClusterIP"
+	ServiceTypeNodePort     = "NodePort"
+	ServiceTypeLoadBalancer = "LoadBalancer"
+
+	FileMountSourceConfigMap = "configmap"
+	FileMountSourceSecret    = "secret"
 )
 
 type ReleaseSpec struct {
@@ -58,6 +68,7 @@ type ReleaseSpec struct {
 	Secrets                             map[string]string `json:"secrets,omitempty"`
 	NodeName                            string            `json:"node_name,omitempty"`
 	Volumes                             []VolumeMountSpec `json:"volumes,omitempty"`
+	FileMounts                          []FileMountSpec   `json:"file_mounts,omitempty"`
 	Service                             ServiceSpec       `json:"service"`
 	Endpoint                            EndpointSpec      `json:"endpoint"`
 }
@@ -68,6 +79,15 @@ type VolumeMountSpec struct {
 	ClaimName string `json:"claim_name"`
 	MountPath string `json:"mount_path"`
 	ReadOnly  bool   `json:"read_only"`
+}
+
+// FileMountSpec projects one same-namespace ConfigMap or Secret key at an
+// absolute path in the primary container. Projections are always read-only.
+type FileMountSpec struct {
+	SourceType string `json:"source_type"`
+	SourceName string `json:"source_name"`
+	Key        string `json:"key"`
+	MountPath  string `json:"mount_path"`
 }
 
 type ResourceSpec struct {
@@ -87,8 +107,42 @@ type HealthSpec struct {
 }
 
 type ServiceSpec struct {
-	Port       int32 `json:"port"`
-	TargetPort int32 `json:"target_port"`
+	Port                  int32             `json:"port"`
+	TargetPort            int32             `json:"target_port"`
+	Protocol              string            `json:"protocol,omitempty"`
+	Type                  string            `json:"type,omitempty"`
+	NodePort              int32             `json:"node_port,omitempty"`
+	ExternalTrafficPolicy string            `json:"external_traffic_policy,omitempty"`
+	Ports                 []ServicePortSpec `json:"ports,omitempty"`
+}
+
+// ServicePortSpec describes one port of a Kubernetes Service. The Service
+// type and external traffic policy remain shared by all declared ports.
+type ServicePortSpec struct {
+	Name       string `json:"name"`
+	Port       int32  `json:"port"`
+	TargetPort int32  `json:"target_port"`
+	Protocol   string `json:"protocol"`
+	NodePort   int32  `json:"node_port,omitempty"`
+}
+
+// PortSpecs converts legacy single-port Service fields to one named port.
+// Non-empty Ports always take precedence so a template has one source of
+// truth after it is migrated to the multi-port representation.
+func (spec ServiceSpec) PortSpecs() []ServicePortSpec {
+	if len(spec.Ports) > 0 {
+		return append([]ServicePortSpec(nil), spec.Ports...)
+	}
+	return []ServicePortSpec{{Name: "service", Port: spec.Port, TargetPort: spec.TargetPort, Protocol: spec.Protocol, NodePort: spec.NodePort}}
+}
+
+func (spec ServiceSpec) PrimaryTCPPort() (ServicePortSpec, bool) {
+	for _, port := range spec.PortSpecs() {
+		if normalizeServiceProtocol(port.Protocol) == ServiceProtocolTCP {
+			return port, true
+		}
+	}
+	return ServicePortSpec{}, false
 }
 
 type EndpointSpec struct {
@@ -171,6 +225,7 @@ func ValidateReleaseSpec(spec ReleaseSpec) []ValidationIssue {
 	if len(spec.Volumes) > 0 && spec.Replicas > 1 {
 		issues = append(issues, ValidationIssue{Field: "volumes", Message: "ReadWriteOnce PVC 仅支持单副本应用"})
 	}
+	issues = append(issues, validateFileMounts(spec.FileMounts)...)
 	parseQuantity := func(field, value string) *resource.Quantity {
 		quantity, err := resource.ParseQuantity(value)
 		if err != nil || strings.TrimSpace(value) == "" {
@@ -201,8 +256,29 @@ func ValidateReleaseSpec(spec ReleaseSpec) []ValidationIssue {
 	if _, probeType := healthProbeEnabled(spec.Health.LivenessEnabled, spec.Health.LivenessType, spec.Health.LivenessPath); probeType != "http" && probeType != "tcp" {
 		issues = append(issues, ValidationIssue{Field: "health.liveness_type", Message: "存活检查仅支持 HTTP 或 TCP"})
 	}
-	if spec.Service.Port < 1 || spec.Service.Port > 65535 || spec.Service.TargetPort < 1 || spec.Service.TargetPort > 65535 {
-		issues = append(issues, ValidationIssue{Field: "service", Message: "Service 端口必须在 1 到 65535 之间"})
+	servicePorts, serviceIssues := validateServicePorts(spec.Service)
+	issues = append(issues, serviceIssues...)
+	serviceType := normalizeServiceType(spec.Service.Type)
+	if serviceType == "" {
+		issues = append(issues, ValidationIssue{Field: "service.type", Message: "Service 类型必须为 ClusterIP、NodePort 或 LoadBalancer"})
+	}
+	if serviceType == ServiceTypeClusterIP {
+		for index, servicePort := range servicePorts {
+			if servicePort.NodePort == 0 {
+				continue
+			}
+			issues = append(issues, ValidationIssue{Field: serviceNodePortField(spec.Service, index), Message: "ClusterIP Service 不能指定 NodePort"})
+		}
+		if strings.TrimSpace(spec.Service.ExternalTrafficPolicy) != "" {
+			issues = append(issues, ValidationIssue{Field: "service.external_traffic_policy", Message: "ClusterIP Service 不能指定外部流量策略"})
+		}
+	} else {
+		if policy := strings.TrimSpace(spec.Service.ExternalTrafficPolicy); policy != "" && policy != string(corev1.ServiceExternalTrafficPolicyCluster) && policy != string(corev1.ServiceExternalTrafficPolicyLocal) {
+			issues = append(issues, ValidationIssue{Field: "service.external_traffic_policy", Message: "外部流量策略必须为 Cluster 或 Local"})
+		}
+	}
+	if _, hasTCPPort := spec.Service.PrimaryTCPPort(); !hasTCPPort && (spec.Health.ReadinessEnabled || spec.Health.LivenessEnabled) {
+		issues = append(issues, ValidationIssue{Field: "health", Message: "UDP Service 不支持 HTTP 或 TCP 健康检查"})
 	}
 	switch spec.Endpoint.Exposure {
 	case ExposureCluster, ExposureTailnet:
@@ -210,6 +286,9 @@ func ValidateReleaseSpec(spec ReleaseSpec) []ValidationIssue {
 			issues = append(issues, ValidationIssue{Field: "endpoint.tls_enabled", Message: "仅公网入口支持 cert-manager TLS"})
 		}
 	case ExposurePublic:
+		if _, hasTCPPort := spec.Service.PrimaryTCPPort(); !hasTCPPort {
+			issues = append(issues, ValidationIssue{Field: "endpoint.exposure", Message: "UDP Service 不支持 HTTP Ingress 公网入口"})
+		}
 		if strings.TrimSpace(spec.Endpoint.Domain) == "" {
 			issues = append(issues, ValidationIssue{Field: "endpoint.domain", Message: "公网入口必须提供域名"})
 		}
@@ -224,6 +303,106 @@ func ValidateReleaseSpec(spec ReleaseSpec) []ValidationIssue {
 		}
 	default:
 		issues = append(issues, ValidationIssue{Field: "endpoint.exposure", Message: "暴露模式必须为 cluster、tailnet 或 public"})
+	}
+	return issues
+}
+
+func normalizeServiceProtocol(protocol string) string {
+	switch strings.ToUpper(strings.TrimSpace(protocol)) {
+	case "", ServiceProtocolTCP:
+		return ServiceProtocolTCP
+	case ServiceProtocolUDP:
+		return ServiceProtocolUDP
+	default:
+		return ""
+	}
+}
+
+func normalizeServiceType(serviceType string) string {
+	switch strings.ToLower(strings.TrimSpace(serviceType)) {
+	case "", "clusterip":
+		return ServiceTypeClusterIP
+	case "nodeport":
+		return ServiceTypeNodePort
+	case "loadbalancer":
+		return ServiceTypeLoadBalancer
+	default:
+		return ""
+	}
+}
+
+func validateServicePorts(service ServiceSpec) ([]ServicePortSpec, []ValidationIssue) {
+	ports := service.PortSpecs()
+	issues := make([]ValidationIssue, 0)
+	names := make(map[string]struct{}, len(ports))
+	servicePorts := make(map[int32]struct{}, len(ports))
+	for index, port := range ports {
+		field := "service"
+		if len(service.Ports) > 0 {
+			field = fmt.Sprintf("service.ports[%d]", index)
+			name := strings.TrimSpace(port.Name)
+			if len(validation.IsValidPortName(name)) > 0 {
+				issues = append(issues, ValidationIssue{Field: field + ".name", Message: "Service 端口名称无效"})
+			} else if _, exists := names[name]; exists {
+				issues = append(issues, ValidationIssue{Field: field + ".name", Message: "Service 端口名称不能重复"})
+			} else {
+				names[name] = struct{}{}
+			}
+		}
+		if port.Port < 1 || port.Port > 65535 || port.TargetPort < 1 || port.TargetPort > 65535 {
+			issues = append(issues, ValidationIssue{Field: field, Message: "Service 端口必须在 1 到 65535 之间"})
+		}
+		if _, exists := servicePorts[port.Port]; exists {
+			issues = append(issues, ValidationIssue{Field: field + ".port", Message: "Service 端口不能重复"})
+		}
+		servicePorts[port.Port] = struct{}{}
+		if normalizeServiceProtocol(port.Protocol) == "" {
+			issues = append(issues, ValidationIssue{Field: field + ".protocol", Message: "Service 协议必须为 TCP 或 UDP"})
+		}
+		if port.NodePort < 0 || port.NodePort > 65535 {
+			issues = append(issues, ValidationIssue{Field: serviceNodePortField(service, index), Message: "NodePort 必须在 1 到 65535 之间，或留空由集群分配"})
+		}
+	}
+	return ports, issues
+}
+
+func serviceNodePortField(service ServiceSpec, index int) string {
+	if len(service.Ports) == 0 {
+		return "service.node_port"
+	}
+	return fmt.Sprintf("service.ports[%d].node_port", index)
+}
+
+func validateFileMounts(fileMounts []FileMountSpec) []ValidationIssue {
+	issues := make([]ValidationIssue, 0)
+	paths := make(map[string]struct{}, len(fileMounts))
+	directories := make(map[string]string, len(fileMounts))
+	for index, fileMount := range fileMounts {
+		field := fmt.Sprintf("file_mounts[%d]", index)
+		if fileMount.SourceType != FileMountSourceConfigMap && fileMount.SourceType != FileMountSourceSecret {
+			issues = append(issues, ValidationIssue{Field: field + ".source_type", Message: "文件来源必须为 ConfigMap 或 Secret"})
+		}
+		if len(validation.IsDNS1123Subdomain(fileMount.SourceName)) > 0 {
+			issues = append(issues, ValidationIssue{Field: field + ".source_name", Message: "文件来源名称无效"})
+		}
+		if len(validation.IsConfigMapKey(fileMount.Key)) > 0 {
+			issues = append(issues, ValidationIssue{Field: field + ".key", Message: "文件来源键名无效"})
+		}
+		mountPath := strings.TrimSpace(fileMount.MountPath)
+		if !path.IsAbs(mountPath) || path.Clean(mountPath) != mountPath || path.Base(mountPath) == "." || path.Base(mountPath) == "/" {
+			issues = append(issues, ValidationIssue{Field: field + ".mount_path", Message: "文件挂载路径必须是规范的绝对文件路径"})
+			continue
+		}
+		if _, exists := paths[mountPath]; exists {
+			issues = append(issues, ValidationIssue{Field: field + ".mount_path", Message: "同一文件挂载路径不能重复使用"})
+		}
+		paths[mountPath] = struct{}{}
+		directory := path.Dir(mountPath)
+		source := fileMount.SourceType + ":" + fileMount.SourceName
+		if existing, exists := directories[directory]; exists && existing != source {
+			issues = append(issues, ValidationIssue{Field: field + ".mount_path", Message: "同一目录只能投影同一个 ConfigMap 或 Secret"})
+		}
+		directories[directory] = source
 	}
 	return issues
 }
@@ -283,12 +462,13 @@ func RenderResources(context ApplicationContext, spec ReleaseSpec) (*RenderedRes
 		result.ImagePullSecret = pullSecret
 	}
 
+	servicePorts := spec.Service.PortSpecs()
 	container := corev1.Container{
 		Name:    context.ApplicationName,
 		Image:   spec.Image,
 		Command: append([]string(nil), spec.Command...),
 		Args:    append([]string(nil), spec.Args...),
-		Ports:   []corev1.ContainerPort{{Name: "http", ContainerPort: spec.ContainerPort}},
+		Ports:   renderContainerPorts(servicePorts),
 		Resources: corev1.ResourceRequirements{
 			Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse(spec.Resources.RequestsCPU), corev1.ResourceMemory: resource.MustParse(spec.Resources.RequestsMemory)},
 			Limits:   corev1.ResourceList{corev1.ResourceCPU: resource.MustParse(spec.Resources.LimitsCPU), corev1.ResourceMemory: resource.MustParse(spec.Resources.LimitsMemory)},
@@ -306,12 +486,15 @@ func RenderResources(context ApplicationContext, spec ReleaseSpec) (*RenderedRes
 	if len(spec.Secrets) > 0 {
 		container.EnvFrom = append(container.EnvFrom, corev1.EnvFromSource{SecretRef: &corev1.SecretEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: secretName}}})
 	}
-	volumes := make([]corev1.Volume, 0, len(spec.Volumes))
+	volumes := make([]corev1.Volume, 0, len(spec.Volumes)+len(spec.FileMounts))
 	for index, volume := range spec.Volumes {
 		name := fmt.Sprintf("pvc-%d", index)
 		volumes = append(volumes, corev1.Volume{Name: name, VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: volume.ClaimName, ReadOnly: volume.ReadOnly}}})
 		container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{Name: name, MountPath: volume.MountPath, ReadOnly: volume.ReadOnly})
 	}
+	fileVolumes, fileVolumeMounts := renderFileMounts(spec.FileMounts)
+	volumes = append(volumes, fileVolumes...)
+	container.VolumeMounts = append(container.VolumeMounts, fileVolumeMounts...)
 	replicas := spec.Replicas
 	podSpec := corev1.PodSpec{Containers: []corev1.Container{container}, Volumes: volumes}
 	if spec.NodeName != "" {
@@ -347,15 +530,85 @@ func RenderResources(context ApplicationContext, spec ReleaseSpec) (*RenderedRes
 			result.Deployment.Spec.Strategy = appsv1.DeploymentStrategy{Type: appsv1.RecreateDeploymentStrategyType}
 		}
 	}
+	serviceType := corev1.ServiceType(normalizeServiceType(spec.Service.Type))
+	serviceSpec := corev1.ServiceSpec{Type: serviceType, Selector: workloadSelector(context.ApplicationName), Ports: renderServicePorts(servicePorts)}
+	if spec.Service.ExternalTrafficPolicy != "" {
+		serviceSpec.ExternalTrafficPolicy = corev1.ServiceExternalTrafficPolicyType(spec.Service.ExternalTrafficPolicy)
+	}
 	result.Service = &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{Name: context.ApplicationName, Namespace: context.Namespace, Labels: labels},
-		Spec:       corev1.ServiceSpec{Type: corev1.ServiceTypeClusterIP, Selector: workloadSelector(context.ApplicationName), Ports: []corev1.ServicePort{{Name: "http", Port: spec.Service.Port, TargetPort: intstr.FromInt32(spec.Service.TargetPort)}}},
+		Spec:       serviceSpec,
 	}
 
 	if spec.Endpoint.Exposure == ExposurePublic {
-		result.Ingress = endpointIngress(context, spec.Endpoint, spec.Service.Port)
+		primaryTCPPort, _ := spec.Service.PrimaryTCPPort()
+		result.Ingress = endpointIngress(context, spec.Endpoint, primaryTCPPort.Port)
 	}
 	return result, nil
+}
+
+func renderContainerPorts(servicePorts []ServicePortSpec) []corev1.ContainerPort {
+	ports := make([]corev1.ContainerPort, 0, len(servicePorts))
+	seen := make(map[string]struct{}, len(servicePorts))
+	for _, servicePort := range servicePorts {
+		protocol := normalizeServiceProtocol(servicePort.Protocol)
+		key := fmt.Sprintf("%d/%s", servicePort.TargetPort, protocol)
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		ports = append(ports, corev1.ContainerPort{ContainerPort: servicePort.TargetPort, Protocol: corev1.Protocol(protocol)})
+	}
+	return ports
+}
+
+func renderServicePorts(servicePorts []ServicePortSpec) []corev1.ServicePort {
+	ports := make([]corev1.ServicePort, 0, len(servicePorts))
+	for _, servicePort := range servicePorts {
+		port := corev1.ServicePort{Name: servicePort.Name, Protocol: corev1.Protocol(normalizeServiceProtocol(servicePort.Protocol)), Port: servicePort.Port, TargetPort: intstr.FromInt32(servicePort.TargetPort)}
+		if servicePort.NodePort != 0 {
+			port.NodePort = servicePort.NodePort
+		}
+		ports = append(ports, port)
+	}
+	return ports
+}
+
+type fileMountGroup struct {
+	sourceType string
+	sourceName string
+	mountDir   string
+	items      []corev1.KeyToPath
+}
+
+func renderFileMounts(fileMounts []FileMountSpec) ([]corev1.Volume, []corev1.VolumeMount) {
+	groups := make([]fileMountGroup, 0, len(fileMounts))
+	bySourceAndDirectory := make(map[string]int, len(fileMounts))
+	for _, fileMount := range fileMounts {
+		mountDir := path.Dir(fileMount.MountPath)
+		key := fileMount.SourceType + "\x00" + fileMount.SourceName + "\x00" + mountDir
+		index, exists := bySourceAndDirectory[key]
+		if !exists {
+			index = len(groups)
+			bySourceAndDirectory[key] = index
+			groups = append(groups, fileMountGroup{sourceType: fileMount.SourceType, sourceName: fileMount.SourceName, mountDir: mountDir})
+		}
+		groups[index].items = append(groups[index].items, corev1.KeyToPath{Key: fileMount.Key, Path: path.Base(fileMount.MountPath)})
+	}
+	volumes := make([]corev1.Volume, 0, len(groups))
+	volumeMounts := make([]corev1.VolumeMount, 0, len(groups))
+	for index, group := range groups {
+		name := fmt.Sprintf("file-%d", index)
+		volume := corev1.Volume{Name: name}
+		if group.sourceType == FileMountSourceSecret {
+			volume.Secret = &corev1.SecretVolumeSource{SecretName: group.sourceName, Items: group.items}
+		} else {
+			volume.ConfigMap = &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: group.sourceName}, Items: group.items}
+		}
+		volumes = append(volumes, volume)
+		volumeMounts = append(volumeMounts, corev1.VolumeMount{Name: name, MountPath: group.mountDir, ReadOnly: true})
+	}
+	return volumes, volumeMounts
 }
 
 func endpointIngress(context ApplicationContext, endpoint EndpointSpec, servicePort int32) *networkingv1.Ingress {

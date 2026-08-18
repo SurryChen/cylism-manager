@@ -116,6 +116,9 @@ func (a *KubernetesApplier) Preflight(ctx context.Context, application Applicati
 	if err := a.ValidatePersistentVolumeClaims(application, spec); err != nil {
 		return err
 	}
+	if err := a.ValidateFileMountSources(ctx, application.Namespace, spec.FileMounts); err != nil {
+		return err
+	}
 	if spec.Endpoint.Exposure != ExposurePublic {
 		return nil
 	}
@@ -127,6 +130,43 @@ func (a *KubernetesApplier) Preflight(ctx context.Context, application Applicati
 		ok, err := a.Client.CheckCRD("certificates.cert-manager.io")
 		if err != nil || !ok {
 			return fmt.Errorf("cert-manager Certificate CRD 不可用")
+		}
+	}
+	return nil
+}
+
+// ValidateFileMountSources ensures every projected object and requested key
+// exists before the workload is applied. All references are scoped to the
+// application's namespace by construction.
+func (a *KubernetesApplier) ValidateFileMountSources(ctx context.Context, namespace string, fileMounts []FileMountSpec) error {
+	for _, fileMount := range fileMounts {
+		switch fileMount.SourceType {
+		case FileMountSourceSecret:
+			secret, err := a.Client.Clientset.CoreV1().Secrets(namespace).Get(ctx, fileMount.SourceName, metav1.GetOptions{})
+			if apierrors.IsNotFound(err) {
+				return fmt.Errorf("文件挂载 Secret %q 不存在", fileMount.SourceName)
+			}
+			if err != nil {
+				return fmt.Errorf("读取文件挂载 Secret %q: %w", fileMount.SourceName, err)
+			}
+			if _, ok := secret.Data[fileMount.Key]; !ok {
+				return fmt.Errorf("文件挂载 Secret %q 不包含键 %q", fileMount.SourceName, fileMount.Key)
+			}
+		case FileMountSourceConfigMap:
+			configMap, err := a.Client.Clientset.CoreV1().ConfigMaps(namespace).Get(ctx, fileMount.SourceName, metav1.GetOptions{})
+			if apierrors.IsNotFound(err) {
+				return fmt.Errorf("文件挂载 ConfigMap %q 不存在", fileMount.SourceName)
+			}
+			if err != nil {
+				return fmt.Errorf("读取文件挂载 ConfigMap %q: %w", fileMount.SourceName, err)
+			}
+			if _, inData := configMap.Data[fileMount.Key]; !inData {
+				if _, inBinaryData := configMap.BinaryData[fileMount.Key]; !inBinaryData {
+					return fmt.Errorf("文件挂载 ConfigMap %q 不包含键 %q", fileMount.SourceName, fileMount.Key)
+				}
+			}
+		default:
+			return fmt.Errorf("不支持的文件挂载来源类型 %q", fileMount.SourceType)
 		}
 	}
 	return nil

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 )
 
 func TestValidateReleaseSpec(t *testing.T) {
@@ -80,6 +81,120 @@ func TestRenderResourcesUsesManagedLabelsAndRedactsSecret(t *testing.T) {
 	}
 	if len(resources.Deployment.Spec.Template.Spec.Containers[0].EnvFrom) != 2 {
 		t.Fatal("expected config and secret env references")
+	}
+}
+
+func TestRenderResourcesRendersUDPServiceAndFileMounts(t *testing.T) {
+	spec := validTestReleaseSpec()
+	spec.ContainerPort = 443
+	spec.Service = ServiceSpec{
+		Port:                  443,
+		TargetPort:            443,
+		Protocol:              ServiceProtocolUDP,
+		Type:                  ServiceTypeLoadBalancer,
+		ExternalTrafficPolicy: string(corev1.ServiceExternalTrafficPolicyLocal),
+	}
+	spec.FileMounts = []FileMountSpec{
+		{SourceType: FileMountSourceSecret, SourceName: "edge-tls", Key: "tls.crt", MountPath: "/run/app/tls/tls.crt"},
+		{SourceType: FileMountSourceSecret, SourceName: "edge-tls", Key: "tls.key", MountPath: "/run/app/tls/tls.key"},
+		{SourceType: FileMountSourceConfigMap, SourceName: "edge-config", Key: "config.yaml", MountPath: "/etc/app/config.yaml"},
+	}
+	resources, err := RenderResources(ApplicationContext{ProjectName: "edge", EnvironmentName: "production", ApplicationName: "udp-server", Namespace: "edge-prod", ReleaseSequence: 1}, spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resources.Service.Spec.Type != corev1.ServiceTypeLoadBalancer || resources.Service.Spec.ExternalTrafficPolicy != corev1.ServiceExternalTrafficPolicyLocal {
+		t.Fatalf("expected UDP LoadBalancer Service, got %#v", resources.Service.Spec)
+	}
+	if port := resources.Service.Spec.Ports[0]; port.Protocol != corev1.ProtocolUDP || port.Port != 443 || port.TargetPort.IntVal != 443 {
+		t.Fatalf("expected UDP Service port, got %#v", port)
+	}
+	container := resources.Deployment.Spec.Template.Spec.Containers[0]
+	if port := container.Ports[0]; port.Protocol != corev1.ProtocolUDP || port.ContainerPort != 443 {
+		t.Fatalf("expected UDP container port, got %#v", port)
+	}
+	if len(resources.Deployment.Spec.Template.Spec.Volumes) != 2 || len(container.VolumeMounts) != 2 {
+		t.Fatalf("expected grouped projected volumes, got volumes=%#v mounts=%#v", resources.Deployment.Spec.Template.Spec.Volumes, container.VolumeMounts)
+	}
+	tlsVolume := resources.Deployment.Spec.Template.Spec.Volumes[0]
+	if tlsVolume.Secret == nil || tlsVolume.Secret.SecretName != "edge-tls" || len(tlsVolume.Secret.Items) != 2 {
+		t.Fatalf("expected projected TLS Secret, got %#v", tlsVolume)
+	}
+	if container.VolumeMounts[0].MountPath != "/run/app/tls" || !container.VolumeMounts[0].ReadOnly {
+		t.Fatalf("expected read-only TLS directory mount, got %#v", container.VolumeMounts[0])
+	}
+}
+
+func TestRenderResourcesRendersMultiProtocolServicePorts(t *testing.T) {
+	spec := validTestReleaseSpec()
+	spec.Service = ServiceSpec{
+		Type:                  ServiceTypeLoadBalancer,
+		ExternalTrafficPolicy: string(corev1.ServiceExternalTrafficPolicyLocal),
+		Ports: []ServicePortSpec{
+			{Name: "proxy", Port: 443, TargetPort: 443, Protocol: ServiceProtocolUDP, NodePort: 30443},
+			{Name: "api", Port: 8080, TargetPort: 8080, Protocol: ServiceProtocolTCP, NodePort: 30080},
+		},
+	}
+	spec.Endpoint = EndpointSpec{Exposure: ExposurePublic, Domain: "api.example.com"}
+
+	resources, err := RenderResources(ApplicationContext{ProjectName: "edge", EnvironmentName: "production", ApplicationName: "multi-port", Namespace: "edge-prod", ReleaseSequence: 1}, spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ports := resources.Service.Spec.Ports
+	if len(ports) != 2 || ports[0].Name != "proxy" || ports[0].Protocol != corev1.ProtocolUDP || ports[0].NodePort != 30443 || ports[1].Name != "api" || ports[1].Protocol != corev1.ProtocolTCP || ports[1].NodePort != 30080 {
+		t.Fatalf("expected TCP and UDP Service ports, got %#v", ports)
+	}
+	containerPorts := resources.Deployment.Spec.Template.Spec.Containers[0].Ports
+	if len(containerPorts) != 2 || containerPorts[0].ContainerPort != 443 || containerPorts[0].Protocol != corev1.ProtocolUDP || containerPorts[1].ContainerPort != 8080 || containerPorts[1].Protocol != corev1.ProtocolTCP {
+		t.Fatalf("expected matching container ports, got %#v", containerPorts)
+	}
+	if resources.Ingress == nil || resources.Ingress.Spec.Rules[0].IngressRuleValue.HTTP.Paths[0].Backend.Service.Port.Number != 8080 {
+		t.Fatalf("expected Ingress to select the first TCP Service port, got %#v", resources.Ingress)
+	}
+}
+
+func TestValidateReleaseSpecRejectsInvalidMultiPortService(t *testing.T) {
+	spec := validTestReleaseSpec()
+	spec.Service = ServiceSpec{Ports: []ServicePortSpec{
+		{Name: "proxy", Port: 443, TargetPort: 443, Protocol: ServiceProtocolUDP},
+		{Name: "proxy", Port: 8080, TargetPort: 8080, Protocol: ServiceProtocolTCP},
+	}}
+	issues := ValidateReleaseSpec(spec)
+	if len(issues) == 0 || issues[len(issues)-1].Field != "service.ports[1].name" {
+		t.Fatalf("expected duplicate Service port name error, got %#v", issues)
+	}
+
+	spec = validTestReleaseSpec()
+	spec.Service = ServiceSpec{Ports: []ServicePortSpec{{Name: "proxy", Port: 443, TargetPort: 443, Protocol: ServiceProtocolUDP}}}
+	spec.Endpoint = EndpointSpec{Exposure: ExposurePublic, Domain: "udp.example.com"}
+	issues = ValidateReleaseSpec(spec)
+	if len(issues) == 0 || issues[0].Field != "endpoint.exposure" {
+		t.Fatalf("expected UDP-only Service to reject HTTP Ingress, got %#v", issues)
+	}
+}
+
+func TestValidateReleaseSpecRejectsInvalidL4ServiceAndFileMounts(t *testing.T) {
+	spec := validTestReleaseSpec()
+	spec.Service = ServiceSpec{Port: 80, TargetPort: 8080, Type: ServiceTypeClusterIP, NodePort: 30443}
+	issues := ValidateReleaseSpec(spec)
+	if len(issues) == 0 || issues[len(issues)-1].Field != "service.node_port" {
+		t.Fatalf("expected ClusterIP node port validation error, got %#v", issues)
+	}
+
+	spec = validTestReleaseSpec()
+	spec.FileMounts = []FileMountSpec{{SourceType: FileMountSourceSecret, SourceName: "valid-name", Key: "tls.key", MountPath: "relative/key"}}
+	issues = ValidateReleaseSpec(spec)
+	if len(issues) == 0 || issues[len(issues)-1].Field != "file_mounts[0].mount_path" {
+		t.Fatalf("expected unsafe file mount validation error, got %#v", issues)
+	}
+
+	spec = validTestReleaseSpec()
+	spec.Service.Protocol = ServiceProtocolUDP
+	spec.Endpoint = EndpointSpec{Exposure: ExposurePublic, Domain: "udp.example.com"}
+	issues = ValidateReleaseSpec(spec)
+	if len(issues) == 0 || issues[0].Field != "endpoint.exposure" {
+		t.Fatalf("expected UDP HTTP Ingress validation error, got %#v", issues)
 	}
 }
 

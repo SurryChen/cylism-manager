@@ -33,7 +33,7 @@ describe('ApplicationDetails view', () => {
     expect(wrapper.find('[aria-label="工作负载类型"]').element.value).toBe('deployment')
   })
 
-  it('serializes line-based startup command and arguments into the template spec', async () => {
+  it('serializes row-based startup and environment values into the template spec', async () => {
     const { api } = await import('../api/index.js')
     api.post.mockClear()
     const wrapper = mount(ApplicationDetails, {
@@ -43,15 +43,108 @@ describe('ApplicationDetails view', () => {
     await new Promise(resolve => setTimeout(resolve, 0))
 
     await wrapper.find('.page-header .btn-primary').trigger('click')
-    const textareas = wrapper.findAll('textarea')
-    await textareas[0].setValue('/usr/bin/chromium-browser')
-    await textareas[1].setValue('--no-sandbox\n--remote-debugging-port=9222')
+    await wrapper.findAll('button').find(button => button.text().includes('添加命令')).trigger('click')
+    const addArgument = wrapper.findAll('button').find(button => button.text().includes('添加参数'))
+    await addArgument.trigger('click')
+    await addArgument.trigger('click')
+    const valueLists = wrapper.findAll('.value-list')
+    await valueLists[0].find('input').setValue('/usr/bin/chromium-browser')
+    await valueLists[1].findAll('input')[0].setValue('--no-sandbox')
+    await valueLists[1].findAll('input')[1].setValue('--remote-debugging-port=9222')
+    const addVariables = wrapper.findAll('button').filter(button => button.text().includes('添加变量'))
+    await addVariables[0].trigger('click')
+    await addVariables[1].trigger('click')
+    const keyValueLists = wrapper.findAll('.key-value-list')
+    await keyValueLists[0].findAll('input')[0].setValue('LOG_LEVEL')
+    await keyValueLists[0].findAll('input')[1].setValue('debug')
+    await keyValueLists[1].findAll('input')[0].setValue('DATABASE_PASSWORD')
+    await keyValueLists[1].findAll('input')[1].setValue('secret-value')
     await wrapper.find('form').trigger('submit.prevent')
 
     expect(api.post).toHaveBeenCalledWith('/applications/1/deployment-templates', expect.objectContaining({
       spec: expect.objectContaining({
         command: ['/usr/bin/chromium-browser'],
         args: ['--no-sandbox', '--remote-debugging-port=9222'],
+        config: { LOG_LEVEL: 'debug' },
+        secrets: { DATABASE_PASSWORD: 'secret-value' },
+      }),
+    }))
+  })
+
+  it('groups template fields into deployment sections with a fixed action bar', async () => {
+    const wrapper = mount(ApplicationDetails, {
+      props: { applicationID: '1' },
+      global: { stubs: { RouterLink: { template: '<a><slot /></a>' }, Teleport: true } },
+    })
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    await wrapper.find('.page-header .btn-primary').trigger('click')
+    expect(wrapper.findAll('.editor-section-heading h3').map(heading => heading.text())).toEqual(['基础信息', '服务部署', '配置与存储', '资源与健康', '服务网络'])
+    expect(wrapper.find('.editor-actions .btn-primary').text()).toBe('保存模板')
+    expect(wrapper.find('.editor-actions .btn-primary').attributes('form')).toBe('template-editor-form')
+    expect(wrapper.text()).toContain('仅集群内访问；HTTP 服务可通过域名入口暴露。')
+    const serviceType = wrapper.findAll('.editor-modal select').find(select => select.findAll('option').some(option => option.element.value === 'LoadBalancer'))
+    await serviceType.setValue('LoadBalancer')
+    expect(wrapper.text()).toContain('由集群负载均衡器分配外部地址，适用于 TCP 或 UDP 直出。')
+  })
+
+  it('keeps an automatic NodePort empty and explains HTTP Ingress setup for TCP ports', async () => {
+    const wrapper = mount(ApplicationDetails, {
+      props: { applicationID: '1' },
+      global: { stubs: { RouterLink: { template: '<a><slot /></a>' }, Teleport: true } },
+    })
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    await wrapper.find('.page-header .btn-primary').trigger('click')
+    const serviceType = wrapper.findAll('.editor-modal select').find(select => select.findAll('option').some(option => option.element.value === 'NodePort'))
+    await serviceType.setValue('NodePort')
+
+    expect(wrapper.find('[aria-label="NodePort"]').element.value).toBe('')
+    expect(wrapper.text()).toContain('留空由 Kubernetes 自动分配')
+    expect(wrapper.text()).toContain('保存模板并发布后，在页面顶部“对外域名”绑定已就绪域名')
+    expect(wrapper.text()).toContain('Ingress 只转发 HTTP/HTTPS')
+  })
+
+  it('serializes multi-protocol Service ports and Secret file projection settings', async () => {
+    const { api } = await import('../api/index.js')
+    api.post.mockClear()
+    const wrapper = mount(ApplicationDetails, {
+      props: { applicationID: '1' },
+      global: { stubs: { RouterLink: { template: '<a><slot /></a>' }, Teleport: true } },
+    })
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    await wrapper.find('.page-header .btn-primary').trigger('click')
+    const serviceType = wrapper.findAll('.editor-modal select').find(select => select.findAll('option').some(option => option.element.value === 'LoadBalancer'))
+    await serviceType.setValue('LoadBalancer')
+    const addPortButton = wrapper.findAll('button').find(button => button.text().includes('添加端口'))
+    await addPortButton.trigger('click')
+    const servicePorts = wrapper.findAll('.service-port-row')
+    await servicePorts[0].find('[aria-label="Service 端口名称"]').setValue('proxy')
+    await servicePorts[0].find('[aria-label="传输协议"]').setValue('UDP')
+    await servicePorts[0].find('[aria-label="Service 端口"]').setValue(443)
+    await servicePorts[0].find('[aria-label="Target Port"]').setValue(443)
+    await servicePorts[1].find('[aria-label="Service 端口名称"]').setValue('api')
+    await servicePorts[1].find('[aria-label="Service 端口"]').setValue(8080)
+    const addButtons = wrapper.findAll('button').filter(button => button.text().includes('添加挂载'))
+    const addButton = addButtons[addButtons.length - 1]
+    await addButton.trigger('click')
+    const fileRow = wrapper.find('.file-mount-row')
+    await fileRow.find('select').setValue('secret')
+    const fileInputs = fileRow.findAll('input')
+    await fileInputs[0].setValue('edge-tls')
+    await fileInputs[1].setValue('tls.crt')
+    await fileInputs[2].setValue('/run/app/tls/tls.crt')
+    await wrapper.find('form').trigger('submit.prevent')
+
+    expect(api.post).toHaveBeenCalledWith('/applications/1/deployment-templates', expect.objectContaining({
+      spec: expect.objectContaining({
+        health: expect.objectContaining({ readiness_enabled: true, liveness_enabled: false }),
+        service: expect.objectContaining({ type: 'LoadBalancer', ports: [
+          { name: 'proxy', port: 443, target_port: 443, protocol: 'UDP', node_port: 0 },
+          { name: 'api', port: 8080, target_port: 8080, protocol: 'TCP', node_port: 0 },
+        ] }),
+        file_mounts: [{ source_type: 'secret', source_name: 'edge-tls', key: 'tls.crt', mount_path: '/run/app/tls/tls.crt' }],
       }),
     }))
   })
