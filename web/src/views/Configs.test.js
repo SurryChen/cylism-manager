@@ -25,7 +25,8 @@ vi.mock('../api/index.js', () => ({
         return Promise.resolve({ data: { password: '***' } })
       }
       return Promise.resolve([])
-    })
+    }),
+    post: vi.fn(), put: vi.fn(), delete: vi.fn()
   }
 }))
 
@@ -51,7 +52,7 @@ describe('Configs view', () => {
     })
     await new Promise(r => setTimeout(r, 100))
     await nextTick()
-    expect(api.get).toHaveBeenCalledWith('/k8s/configmaps')
+    expect(api.get).toHaveBeenCalledWith('/k8s/configmaps?usage=false')
     expect(api.get).not.toHaveBeenCalledWith('/k8s/secrets')
     expect(wrapper.text()).toContain('app-config')
   })
@@ -68,7 +69,7 @@ describe('Configs view', () => {
     await nextTick()
     await new Promise(r => setTimeout(r, 100))
 
-    expect(api.get).toHaveBeenCalledWith('/k8s/secrets')
+    expect(api.get).toHaveBeenCalledWith('/k8s/secrets?usage=false')
     expect(wrapper.text()).toContain('db-pass')
     expect(wrapper.text()).toContain('Opaque')
   })
@@ -87,5 +88,23 @@ describe('Configs view', () => {
       expect(wrapper.text()).toContain("app-config")
       await nextTick()
     }
+  })
+
+  it('creates a ConfigMap from the management page', async () => {
+    api.post.mockResolvedValue({})
+    const wrapper = mount(Configs, {
+      global: { stubs: { RouterLink: true, Teleport: true } }
+    })
+    await new Promise(r => setTimeout(r, 0))
+    await wrapper.find('.page-header .btn-primary').trigger('click')
+    const inputs = wrapper.findAll('.resource-modal input')
+    await inputs[0].setValue('default')
+    await inputs[1].setValue('runtime-config')
+    await inputs[2].setValue('config.yaml')
+    await inputs[3].setValue('port: 8080')
+    await wrapper.find('.resource-modal form').trigger('submit.prevent')
+    expect(api.post).toHaveBeenCalledWith('/k8s/configmaps', {
+      namespace: 'default', name: 'runtime-config', data: { 'config.yaml': 'port: 8080' }
+    })
   })
 })

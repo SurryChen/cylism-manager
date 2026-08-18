@@ -116,7 +116,7 @@ func (a *KubernetesApplier) Preflight(ctx context.Context, application Applicati
 	if err := a.ValidatePersistentVolumeClaims(application, spec); err != nil {
 		return err
 	}
-	if err := a.ValidateFileMountSources(ctx, application.Namespace, spec.FileMounts); err != nil {
+	if err := a.ValidateFileMountSources(ctx, application, spec); err != nil {
 		return err
 	}
 	if spec.Endpoint.Exposure != ExposurePublic {
@@ -138,11 +138,15 @@ func (a *KubernetesApplier) Preflight(ctx context.Context, application Applicati
 // ValidateFileMountSources ensures every projected object and requested key
 // exists before the workload is applied. All references are scoped to the
 // application's namespace by construction.
-func (a *KubernetesApplier) ValidateFileMountSources(ctx context.Context, namespace string, fileMounts []FileMountSpec) error {
-	for _, fileMount := range fileMounts {
+func (a *KubernetesApplier) ValidateFileMountSources(ctx context.Context, application ApplicationContext, spec ReleaseSpec) error {
+	for _, fileMount := range spec.FileMounts {
 		switch fileMount.SourceType {
+		case FileMountSourceApplicationConfig:
+			if _, ok := spec.Config[fileMount.Key]; !ok {
+				return fmt.Errorf("当前应用 ConfigMap 不包含键 %q", fileMount.Key)
+			}
 		case FileMountSourceSecret:
-			secret, err := a.Client.Clientset.CoreV1().Secrets(namespace).Get(ctx, fileMount.SourceName, metav1.GetOptions{})
+			secret, err := a.Client.Clientset.CoreV1().Secrets(application.Namespace).Get(ctx, fileMount.SourceName, metav1.GetOptions{})
 			if apierrors.IsNotFound(err) {
 				return fmt.Errorf("文件挂载 Secret %q 不存在", fileMount.SourceName)
 			}
@@ -153,7 +157,7 @@ func (a *KubernetesApplier) ValidateFileMountSources(ctx context.Context, namesp
 				return fmt.Errorf("文件挂载 Secret %q 不包含键 %q", fileMount.SourceName, fileMount.Key)
 			}
 		case FileMountSourceConfigMap:
-			configMap, err := a.Client.Clientset.CoreV1().ConfigMaps(namespace).Get(ctx, fileMount.SourceName, metav1.GetOptions{})
+			configMap, err := a.Client.Clientset.CoreV1().ConfigMaps(application.Namespace).Get(ctx, fileMount.SourceName, metav1.GetOptions{})
 			if apierrors.IsNotFound(err) {
 				return fmt.Errorf("文件挂载 ConfigMap %q 不存在", fileMount.SourceName)
 			}

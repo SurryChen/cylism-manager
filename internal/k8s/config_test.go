@@ -60,6 +60,59 @@ func TestConfigMethods_Exist(t *testing.T) {
 	_ = client.GetConfigMap
 	_ = client.ListSecrets
 	_ = client.GetSecret
+	_ = client.CreateConfigMap
+	_ = client.UpdateConfigMap
+	_ = client.DeleteConfigMap
+	_ = client.CreateOpaqueSecret
+	_ = client.UpdateOpaqueSecret
+	_ = client.DeleteOpaqueSecret
+}
+
+func TestConfigMapMutationLifecycle(t *testing.T) {
+	client, _ := newClientFromRestConfig(nil)
+	client.Clientset = k8sfake.NewSimpleClientset()
+	created, err := client.CreateConfigMap(ConfigMapMutation{Namespace: "apps", Name: "app-config", Data: map[string]string{"config.yaml": "version: 1"}})
+	if err != nil || created.Data["config.yaml"] != "version: 1" {
+		t.Fatalf("create configmap: result=%#v err=%v", created, err)
+	}
+	updated, err := client.UpdateConfigMap(ConfigMapMutation{Namespace: "apps", Name: "app-config", Data: map[string]string{"config.yaml": "version: 2"}})
+	if err != nil || updated.Data["config.yaml"] != "version: 2" {
+		t.Fatalf("update configmap: result=%#v err=%v", updated, err)
+	}
+	if err := client.DeleteConfigMap("apps", "app-config"); err != nil {
+		t.Fatalf("delete configmap: %v", err)
+	}
+}
+
+func TestOpaqueSecretMutationPreservesBlankExistingValues(t *testing.T) {
+	client, _ := newClientFromRestConfig(nil)
+	client.Clientset = k8sfake.NewSimpleClientset()
+	created, err := client.CreateOpaqueSecret(OpaqueSecretMutation{Namespace: "apps", Name: "app-secret", Data: map[string]string{"token": "first"}})
+	if err != nil || created.Type != string(corev1.SecretTypeOpaque) {
+		t.Fatalf("create opaque secret: result=%#v err=%v", created, err)
+	}
+	updated, err := client.UpdateOpaqueSecret(OpaqueSecretMutation{Namespace: "apps", Name: "app-secret", Data: map[string]string{"token": "", "region": "cn"}})
+	if err != nil || updated.KeysCount != 2 {
+		t.Fatalf("update opaque secret: result=%#v err=%v", updated, err)
+	}
+	secret, err := client.Clientset.CoreV1().Secrets("apps").Get(client.Ctx(), "app-secret", metav1.GetOptions{})
+	if err != nil || string(secret.Data["token"]) != "first" || string(secret.Data["region"]) != "cn" {
+		t.Fatalf("secret values were not preserved: secret=%#v err=%v", secret, err)
+	}
+	if err := client.DeleteOpaqueSecret("apps", "app-secret"); err != nil {
+		t.Fatalf("delete opaque secret: %v", err)
+	}
+}
+
+func TestOpaqueSecretMutationRejectsManagedSecretTypes(t *testing.T) {
+	client, _ := newClientFromRestConfig(nil)
+	client.Clientset = k8sfake.NewSimpleClientset(&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "tls", Namespace: "apps"}, Type: corev1.SecretTypeTLS})
+	if _, err := client.UpdateOpaqueSecret(OpaqueSecretMutation{Namespace: "apps", Name: "tls", Data: map[string]string{"tls.crt": "new"}}); err == nil {
+		t.Fatal("expected TLS Secret update to be rejected")
+	}
+	if err := client.DeleteOpaqueSecret("apps", "tls"); err == nil {
+		t.Fatal("expected TLS Secret delete to be rejected")
+	}
 }
 
 func TestListConfigMapsBatchesWorkloadReferenceLookupsByNamespace(t *testing.T) {

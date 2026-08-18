@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
+import { nextTick } from 'vue'
 import ApplicationDetails from './ApplicationDetails.vue'
 
 vi.mock('../api/index.js', () => ({
@@ -9,6 +10,9 @@ vi.mock('../api/index.js', () => ({
       if (path === '/applications/1/deployment-templates') return Promise.resolve([{ id: 4, name: '标准生产配置', enabled: true, is_default: true, revision: 2, spec: { image: 'registry.example.com/order-api', replicas: 2, container_port: 8080, service: { port: 80 } } }])
       if (path === '/applications/1/endpoints') return Promise.resolve([{ id: 7, domain_id: 4, domain: 'api.example.com', path: '/', service_port: 80, tls_enabled: true }, { id: 8, domain_id: 5, domain: 'admin.example.com', path: '/console', service_port: 80, tls_enabled: false }])
       if (path === '/domains?environment_id=3') return Promise.resolve([{ id: 4, hostname: 'api.example.com', enabled: true, certificate: { status: 'Ready' } }, { id: 5, hostname: 'admin.example.com', enabled: true, certificate: { status: 'Ready' } }])
+      if (path === '/k8s/configmaps?namespace=commerce-prod&usage=false') return Promise.resolve([])
+      if (path === '/k8s/configmaps/commerce-prod/app-config') return Promise.resolve({ data: { 'config.yaml': 'port: 8080' } })
+      if (path === '/k8s/secrets?namespace=commerce-prod&usage=false') return Promise.resolve([{ name: 'edge-tls', keys: ['tls.crt', 'tls.key'], type: 'kubernetes.io/tls' }])
       return Promise.resolve([])
     }),
     post: vi.fn(), put: vi.fn(), delete: vi.fn(),
@@ -56,7 +60,7 @@ describe('ApplicationDetails view', () => {
     await addVariables[1].trigger('click')
     const keyValueLists = wrapper.findAll('.key-value-list')
     await keyValueLists[0].findAll('input')[0].setValue('LOG_LEVEL')
-    await keyValueLists[0].findAll('input')[1].setValue('debug')
+    await keyValueLists[0].find('textarea').setValue('debug')
     await keyValueLists[1].findAll('input')[0].setValue('DATABASE_PASSWORD')
     await keyValueLists[1].findAll('input')[1].setValue('secret-value')
     await wrapper.find('form').trigger('submit.prevent')
@@ -130,11 +134,13 @@ describe('ApplicationDetails view', () => {
     const addButton = addButtons[addButtons.length - 1]
     await addButton.trigger('click')
     const fileRow = wrapper.find('.file-mount-row')
-    await fileRow.find('select').setValue('secret')
-    const fileInputs = fileRow.findAll('input')
-    await fileInputs[0].setValue('edge-tls')
-    await fileInputs[1].setValue('tls.crt')
-    await fileInputs[2].setValue('/run/app/tls/tls.crt')
+    const fileSelects = fileRow.findAll('select')
+    await fileSelects[0].setValue('secret')
+    await nextTick()
+    wrapper.vm.templateForm.file_mounts[0].source_name = 'edge-tls'
+    wrapper.vm.templateForm.file_mounts[0].key = 'tls.crt'
+    await nextTick()
+    await wrapper.find('.file-mount-row [placeholder="/etc/app/config.yaml"]').setValue('/run/app/tls/tls.crt')
     await wrapper.find('form').trigger('submit.prevent')
 
     expect(api.post).toHaveBeenCalledWith('/applications/1/deployment-templates', expect.objectContaining({
@@ -147,6 +153,41 @@ describe('ApplicationDetails view', () => {
         file_mounts: [{ source_type: 'secret', source_name: 'edge-tls', key: 'tls.crt', mount_path: '/run/app/tls/tls.crt' }],
       }),
     }))
+  })
+
+  it('mounts a template ConfigMap key as a file without creating a separate resource', async () => {
+    const { api } = await import('../api/index.js')
+    api.post.mockClear()
+    api.post.mockResolvedValue({})
+    const wrapper = mount(ApplicationDetails, {
+      props: { applicationID: '1' },
+      global: { stubs: { RouterLink: { template: '<a><slot /></a>' }, Teleport: true } },
+    })
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    await wrapper.find('.page-header .btn-primary').trigger('click')
+    await wrapper.findAll('button').find(button => button.text().includes('添加变量')).trigger('click')
+    const configItems = wrapper.findAll('.key-value-list')[0]
+    await configItems.find('input').setValue('config.yaml')
+    await configItems.find('textarea').setValue('listen: :8080\n')
+    const addMountButtons = wrapper.findAll('button').filter(button => button.text().includes('添加挂载'))
+    await addMountButtons[addMountButtons.length - 1].trigger('click')
+    await nextTick()
+    const fileRow = wrapper.find('.file-mount-row')
+    const fileSelects = fileRow.findAll('select')
+    expect(fileSelects[0].element.value).toBe('application_config')
+    expect(fileRow.find('[aria-label="文件来源资源"]').element.value).toBe('order-api-config')
+    await fileSelects[1].setValue('config.yaml')
+    await fileRow.find('[placeholder="/etc/app/config.yaml"]').setValue('/etc/app/config.yaml')
+    await nextTick()
+    await wrapper.find('form').trigger('submit.prevent')
+    expect(api.post).toHaveBeenCalledWith('/applications/1/deployment-templates', expect.objectContaining({
+      spec: expect.objectContaining({
+        config: { 'config.yaml': 'listen: :8080\n' },
+        file_mounts: [{ source_type: 'application_config', source_name: '', key: 'config.yaml', mount_path: '/etc/app/config.yaml' }],
+      }),
+    }))
+    expect(api.post).not.toHaveBeenCalledWith('/k8s/configmaps', expect.anything())
   })
 
   it('creates, edits, and unbinds individual endpoints', async () => {
