@@ -43,6 +43,9 @@ const (
 
 	FileMountSourceConfigMap = "configmap"
 	FileMountSourceSecret    = "secret"
+	// FileMountSourceApplicationConfig projects a key from the ConfigMap
+	// generated for this application's template config.
+	FileMountSourceApplicationConfig = "application_config"
 )
 
 type ReleaseSpec struct {
@@ -81,8 +84,9 @@ type VolumeMountSpec struct {
 	ReadOnly  bool   `json:"read_only"`
 }
 
-// FileMountSpec projects one same-namespace ConfigMap or Secret key at an
-// absolute path in the primary container. Projections are always read-only.
+// FileMountSpec projects one ConfigMap or Secret key at an absolute path in
+// the primary container. Application config mounts resolve to the ConfigMap
+// generated for the current release. Projections are always read-only.
 type FileMountSpec struct {
 	SourceType string `json:"source_type"`
 	SourceName string `json:"source_name"`
@@ -225,7 +229,7 @@ func ValidateReleaseSpec(spec ReleaseSpec) []ValidationIssue {
 	if len(spec.Volumes) > 0 && spec.Replicas > 1 {
 		issues = append(issues, ValidationIssue{Field: "volumes", Message: "ReadWriteOnce PVC 仅支持单副本应用"})
 	}
-	issues = append(issues, validateFileMounts(spec.FileMounts)...)
+	issues = append(issues, validateFileMounts(spec.FileMounts, spec.Config)...)
 	parseQuantity := func(field, value string) *resource.Quantity {
 		quantity, err := resource.ParseQuantity(value)
 		if err != nil || strings.TrimSpace(value) == "" {
@@ -373,20 +377,24 @@ func serviceNodePortField(service ServiceSpec, index int) string {
 	return fmt.Sprintf("service.ports[%d].node_port", index)
 }
 
-func validateFileMounts(fileMounts []FileMountSpec) []ValidationIssue {
+func validateFileMounts(fileMounts []FileMountSpec, applicationConfig map[string]string) []ValidationIssue {
 	issues := make([]ValidationIssue, 0)
 	paths := make(map[string]struct{}, len(fileMounts))
 	directories := make(map[string]string, len(fileMounts))
 	for index, fileMount := range fileMounts {
 		field := fmt.Sprintf("file_mounts[%d]", index)
-		if fileMount.SourceType != FileMountSourceConfigMap && fileMount.SourceType != FileMountSourceSecret {
-			issues = append(issues, ValidationIssue{Field: field + ".source_type", Message: "文件来源必须为 ConfigMap 或 Secret"})
+		if fileMount.SourceType != FileMountSourceConfigMap && fileMount.SourceType != FileMountSourceSecret && fileMount.SourceType != FileMountSourceApplicationConfig {
+			issues = append(issues, ValidationIssue{Field: field + ".source_type", Message: "文件来源必须为当前应用 ConfigMap、ConfigMap 或 Secret"})
 		}
-		if len(validation.IsDNS1123Subdomain(fileMount.SourceName)) > 0 {
+		if fileMount.SourceType != FileMountSourceApplicationConfig && len(validation.IsDNS1123Subdomain(fileMount.SourceName)) > 0 {
 			issues = append(issues, ValidationIssue{Field: field + ".source_name", Message: "文件来源名称无效"})
 		}
 		if len(validation.IsConfigMapKey(fileMount.Key)) > 0 {
 			issues = append(issues, ValidationIssue{Field: field + ".key", Message: "文件来源键名无效"})
+		} else if fileMount.SourceType == FileMountSourceApplicationConfig {
+			if _, exists := applicationConfig[fileMount.Key]; !exists {
+				issues = append(issues, ValidationIssue{Field: field + ".key", Message: "当前应用 ConfigMap 不包含该键"})
+			}
 		}
 		mountPath := strings.TrimSpace(fileMount.MountPath)
 		if !path.IsAbs(mountPath) || path.Clean(mountPath) != mountPath || path.Base(mountPath) == "." || path.Base(mountPath) == "/" {
@@ -492,7 +500,7 @@ func RenderResources(context ApplicationContext, spec ReleaseSpec) (*RenderedRes
 		volumes = append(volumes, corev1.Volume{Name: name, VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: volume.ClaimName, ReadOnly: volume.ReadOnly}}})
 		container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{Name: name, MountPath: volume.MountPath, ReadOnly: volume.ReadOnly})
 	}
-	fileVolumes, fileVolumeMounts := renderFileMounts(spec.FileMounts)
+	fileVolumes, fileVolumeMounts := renderFileMounts(resolveFileMountSources(spec.FileMounts, configName))
 	volumes = append(volumes, fileVolumes...)
 	container.VolumeMounts = append(container.VolumeMounts, fileVolumeMounts...)
 	replicas := spec.Replicas
@@ -609,6 +617,18 @@ func renderFileMounts(fileMounts []FileMountSpec) ([]corev1.Volume, []corev1.Vol
 		volumeMounts = append(volumeMounts, corev1.VolumeMount{Name: name, MountPath: group.mountDir, ReadOnly: true})
 	}
 	return volumes, volumeMounts
+}
+
+func resolveFileMountSources(fileMounts []FileMountSpec, applicationConfigName string) []FileMountSpec {
+	resolved := make([]FileMountSpec, len(fileMounts))
+	copy(resolved, fileMounts)
+	for index := range resolved {
+		if resolved[index].SourceType == FileMountSourceApplicationConfig {
+			resolved[index].SourceType = FileMountSourceConfigMap
+			resolved[index].SourceName = applicationConfigName
+		}
+	}
+	return resolved
 }
 
 func endpointIngress(context ApplicationContext, endpoint EndpointSpec, servicePort int32) *networkingv1.Ingress {

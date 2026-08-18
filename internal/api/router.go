@@ -407,9 +407,15 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 
 		// 配置管理
 		k8sGroup.GET("/configmaps", k8sHandler.ListConfigMaps)
+		k8sGroup.POST("/configmaps", k8sHandler.CreateConfigMap)
 		k8sGroup.GET("/configmaps/:namespace/:name", k8sHandler.GetConfigMap)
+		k8sGroup.PUT("/configmaps/:namespace/:name", k8sHandler.UpdateConfigMap)
+		k8sGroup.DELETE("/configmaps/:namespace/:name", k8sHandler.DeleteConfigMap)
 		k8sGroup.GET("/secrets", k8sHandler.ListSecrets)
+		k8sGroup.POST("/secrets", k8sHandler.CreateOpaqueSecret)
 		k8sGroup.GET("/secrets/:namespace/:name", k8sHandler.GetSecret)
+		k8sGroup.PUT("/secrets/:namespace/:name", k8sHandler.UpdateOpaqueSecret)
+		k8sGroup.DELETE("/secrets/:namespace/:name", k8sHandler.DeleteOpaqueSecret)
 		k8sGroup.GET("/storage-classes", k8sHandler.ListStorageClasses)
 		k8sGroup.GET("/persistent-volume-claims", k8sHandler.ListPersistentVolumeClaims)
 		k8sGroup.GET("/persistent-volume-claims/usage", k8sHandler.ListPersistentVolumeClaimUsage)

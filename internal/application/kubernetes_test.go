@@ -102,7 +102,8 @@ func TestKubernetesApplierPreflightValidatesFileMountSources(t *testing.T) {
 	)
 	applier := NewKubernetesApplier(&k8sclient.Client{Clientset: clientset})
 	application := ApplicationContext{Namespace: "dev"}
-	spec := ReleaseSpec{Endpoint: EndpointSpec{Exposure: ExposureCluster}, FileMounts: []FileMountSpec{
+	spec := ReleaseSpec{Endpoint: EndpointSpec{Exposure: ExposureCluster}, Config: map[string]string{"app.yaml": "port: 8080"}, FileMounts: []FileMountSpec{
+		{SourceType: FileMountSourceApplicationConfig, Key: "app.yaml", MountPath: "/etc/app/app.yaml"},
 		{SourceType: FileMountSourceSecret, SourceName: "edge-tls", Key: "tls.crt", MountPath: "/run/tls/tls.crt"},
 		{SourceType: FileMountSourceConfigMap, SourceName: "edge-config", Key: "config.yaml", MountPath: "/etc/edge/config.yaml"},
 	}}
@@ -112,6 +113,11 @@ func TestKubernetesApplierPreflightValidatesFileMountSources(t *testing.T) {
 	spec.FileMounts[0].Key = "tls.key"
 	if err := applier.Preflight(context.Background(), application, spec); err == nil || !strings.Contains(err.Error(), "tls.key") {
 		t.Fatalf("expected missing Secret key failure, got %v", err)
+	}
+	spec.FileMounts[1].Key = "tls.crt"
+	spec.FileMounts[0].Key = "missing.yaml"
+	if err := applier.Preflight(context.Background(), application, spec); err == nil || !strings.Contains(err.Error(), "missing.yaml") {
+		t.Fatalf("expected missing application ConfigMap key failure, got %v", err)
 	}
 }
 

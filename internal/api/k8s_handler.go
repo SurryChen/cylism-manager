@@ -11,6 +11,7 @@ import (
 	"github.com/cylism/cylism-manager/internal/store"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/validation"
 
 	"github.com/gin-gonic/gin"
 )
@@ -58,6 +59,35 @@ type NamespaceSummary struct {
 type NamespaceNameSummary struct {
 	Name   string `json:"name"`
 	Status string `json:"status"`
+}
+
+type resourceDataRequest struct {
+	Namespace string            `json:"namespace"`
+	Name      string            `json:"name"`
+	Data      map[string]string `json:"data"`
+}
+
+func validateResourceDataRequest(req resourceDataRequest) string {
+	if req.Namespace == "" || req.Name == "" {
+		return "namespace 和 name 必填"
+	}
+	if messages := validation.IsDNS1123Subdomain(req.Name); len(messages) > 0 {
+		return "资源名称无效"
+	}
+	for key := range req.Data {
+		if messages := validation.IsConfigMapKey(key); len(messages) > 0 {
+			return "资源键名无效"
+		}
+	}
+	return ""
+}
+
+func (h *K8sHandler) resourceIsReferenced(namespace, sourceType, name string) (bool, error) {
+	if h.store == nil {
+		return false, nil
+	}
+	references, err := h.store.ListResourceReferences(namespace, sourceType, name)
+	return len(references) > 0, err
 }
 
 // Dashboard 集群摘要（扩展 Deployment/Service 统计）
@@ -633,7 +663,13 @@ func (h *K8sHandler) ListConfigMaps(c *gin.Context) {
 		return
 	}
 	ns := c.Query("namespace")
-	result, err := K8s.ListConfigMaps(ns)
+	var result []k8sclient.ConfigMapInfo
+	var err error
+	if c.Query("usage") == "false" {
+		result, err = K8s.ListConfigMapsMetadata(ns)
+	} else {
+		result, err = K8s.ListConfigMaps(ns)
+	}
 	if err != nil {
 		model.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
 		return
@@ -660,6 +696,83 @@ func (h *K8sHandler) GetConfigMap(c *gin.Context) {
 	model.Success(c, result)
 }
 
+func (h *K8sHandler) CreateConfigMap(c *gin.Context) {
+	if K8s == nil {
+		k8sUnavailable(c)
+		return
+	}
+	var req resourceDataRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "请求格式无效")
+		return
+	}
+	if message := validateResourceDataRequest(req); message != "" {
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, message)
+		return
+	}
+	result, err := K8s.CreateConfigMap(k8sclient.ConfigMapMutation{Namespace: req.Namespace, Name: req.Name, Data: req.Data})
+	if err != nil {
+		model.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
+		return
+	}
+	log.Printf("AUDIT: configmap created: %s/%s", req.Namespace, req.Name)
+	model.SuccessWithMessage(c, result, "ConfigMap 创建成功")
+}
+
+func (h *K8sHandler) UpdateConfigMap(c *gin.Context) {
+	if K8s == nil {
+		k8sUnavailable(c)
+		return
+	}
+	var req resourceDataRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "请求格式无效")
+		return
+	}
+	req.Namespace, req.Name = c.Param("namespace"), c.Param("name")
+	if message := validateResourceDataRequest(req); message != "" {
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, message)
+		return
+	}
+	result, err := K8s.UpdateConfigMap(k8sclient.ConfigMapMutation{Namespace: req.Namespace, Name: req.Name, Data: req.Data})
+	if err != nil {
+		model.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
+		return
+	}
+	log.Printf("AUDIT: configmap updated: %s/%s", req.Namespace, req.Name)
+	model.SuccessWithMessage(c, result, "ConfigMap 更新成功")
+}
+
+func (h *K8sHandler) DeleteConfigMap(c *gin.Context) {
+	if K8s == nil {
+		k8sUnavailable(c)
+		return
+	}
+	namespace, name := c.Param("namespace"), c.Param("name")
+	resource, err := K8s.GetConfigMap(namespace, name)
+	if err != nil {
+		model.Error(c, http.StatusNotFound, model.CodeNotFound, err.Error())
+		return
+	}
+	if len(resource.UsedBy) > 0 {
+		model.Error(c, http.StatusConflict, model.CodeBadRequest, "ConfigMap 正被工作负载引用，不能删除")
+		return
+	}
+	if referenced, err := h.resourceIsReferenced(namespace, "configmap", name); err != nil {
+		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		return
+	} else if referenced {
+		model.Error(c, http.StatusConflict, model.CodeBadRequest, "ConfigMap 仍被上线模板或发布快照引用，不能删除")
+		return
+	}
+	if err := K8s.DeleteConfigMap(namespace, name); err != nil {
+		model.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
+		return
+	}
+	log.Printf("AUDIT: configmap deleted: %s/%s", namespace, name)
+	model.SuccessWithMessage(c, nil, "ConfigMap 删除成功")
+}
+
 // ==================== Secret ====================
 
 // ListSecrets 列出 Secret
@@ -669,7 +782,13 @@ func (h *K8sHandler) ListSecrets(c *gin.Context) {
 		return
 	}
 	ns := c.Query("namespace")
-	result, err := K8s.ListSecrets(ns)
+	var result []k8sclient.SecretInfo
+	var err error
+	if c.Query("usage") == "false" {
+		result, err = K8s.ListSecretsMetadata(ns)
+	} else {
+		result, err = K8s.ListSecrets(ns)
+	}
 	if err != nil {
 		model.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
 		return
@@ -702,6 +821,87 @@ func (h *K8sHandler) GetSecret(c *gin.Context) {
 	}
 	result.Data = redacted
 	model.Success(c, result)
+}
+
+func (h *K8sHandler) CreateOpaqueSecret(c *gin.Context) {
+	if K8s == nil {
+		k8sUnavailable(c)
+		return
+	}
+	var req resourceDataRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "请求格式无效")
+		return
+	}
+	if message := validateResourceDataRequest(req); message != "" {
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, message)
+		return
+	}
+	result, err := K8s.CreateOpaqueSecret(k8sclient.OpaqueSecretMutation{Namespace: req.Namespace, Name: req.Name, Data: req.Data})
+	if err != nil {
+		model.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
+		return
+	}
+	log.Printf("AUDIT: opaque secret created: %s/%s", req.Namespace, req.Name)
+	model.SuccessWithMessage(c, result, "Secret 创建成功")
+}
+
+func (h *K8sHandler) UpdateOpaqueSecret(c *gin.Context) {
+	if K8s == nil {
+		k8sUnavailable(c)
+		return
+	}
+	var req resourceDataRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "请求格式无效")
+		return
+	}
+	req.Namespace, req.Name = c.Param("namespace"), c.Param("name")
+	if message := validateResourceDataRequest(req); message != "" {
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, message)
+		return
+	}
+	result, err := K8s.UpdateOpaqueSecret(k8sclient.OpaqueSecretMutation{Namespace: req.Namespace, Name: req.Name, Data: req.Data})
+	if err != nil {
+		model.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
+		return
+	}
+	log.Printf("AUDIT: opaque secret updated: %s/%s", req.Namespace, req.Name)
+	model.SuccessWithMessage(c, result, "Secret 更新成功")
+}
+
+func (h *K8sHandler) DeleteOpaqueSecret(c *gin.Context) {
+	if K8s == nil {
+		k8sUnavailable(c)
+		return
+	}
+	namespace, name := c.Param("namespace"), c.Param("name")
+	resource, err := K8s.GetSecret(namespace, name)
+	if err != nil {
+		model.Error(c, http.StatusNotFound, model.CodeNotFound, err.Error())
+		return
+	}
+	if resource.Type != string(corev1.SecretTypeOpaque) {
+		model.Error(c, http.StatusConflict, model.CodeBadRequest, "仅可管理 Opaque Secret")
+		return
+	}
+	if len(resource.UsedBy) > 0 {
+		model.Error(c, http.StatusConflict, model.CodeBadRequest, "Secret 正被工作负载引用，不能删除")
+		return
+	}
+	if referenced, err := h.resourceIsReferenced(namespace, "secret", name); err != nil {
+		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		return
+	} else if referenced {
+		model.Error(c, http.StatusConflict, model.CodeBadRequest, "Secret 仍被上线模板或发布快照引用，不能删除")
+		return
+	}
+	if err := K8s.DeleteOpaqueSecret(namespace, name); err != nil {
+		model.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
+		return
+	}
+	log.Printf("AUDIT: opaque secret deleted: %s/%s", namespace, name)
+	model.SuccessWithMessage(c, nil, "Secret 删除成功")
 }
 
 // ==================== Ingress (standard) ====================

@@ -125,6 +125,30 @@ func TestRenderResourcesRendersUDPServiceAndFileMounts(t *testing.T) {
 	}
 }
 
+func TestRenderResourcesMountsApplicationConfigKeyAsFile(t *testing.T) {
+	spec := validTestReleaseSpec()
+	spec.Config = map[string]string{"config.yaml": "listen: :8080"}
+	spec.FileMounts = []FileMountSpec{{
+		SourceType: FileMountSourceApplicationConfig,
+		Key:        "config.yaml",
+		MountPath:  "/etc/app/config.yaml",
+	}}
+	resources, err := RenderResources(ApplicationContext{ProjectName: "edge", EnvironmentName: "production", ApplicationName: "edge-api", Namespace: "edge-prod", ReleaseSequence: 1}, spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resources.ConfigMap == nil || resources.ConfigMap.Name != "edge-api-config" {
+		t.Fatalf("expected generated application ConfigMap, got %#v", resources.ConfigMap)
+	}
+	volume := resources.Deployment.Spec.Template.Spec.Volumes[0]
+	if volume.ConfigMap == nil || volume.ConfigMap.Name != "edge-api-config" || len(volume.ConfigMap.Items) != 1 || volume.ConfigMap.Items[0].Key != "config.yaml" {
+		t.Fatalf("expected projected application ConfigMap, got %#v", volume)
+	}
+	if mount := resources.Deployment.Spec.Template.Spec.Containers[0].VolumeMounts[0]; mount.MountPath != "/etc/app" || !mount.ReadOnly {
+		t.Fatalf("expected read-only application config mount, got %#v", mount)
+	}
+}
+
 func TestRenderResourcesRendersMultiProtocolServicePorts(t *testing.T) {
 	spec := validTestReleaseSpec()
 	spec.Service = ServiceSpec{
@@ -187,6 +211,13 @@ func TestValidateReleaseSpecRejectsInvalidL4ServiceAndFileMounts(t *testing.T) {
 	issues = ValidateReleaseSpec(spec)
 	if len(issues) == 0 || issues[len(issues)-1].Field != "file_mounts[0].mount_path" {
 		t.Fatalf("expected unsafe file mount validation error, got %#v", issues)
+	}
+
+	spec = validTestReleaseSpec()
+	spec.FileMounts = []FileMountSpec{{SourceType: FileMountSourceApplicationConfig, Key: "config.yaml", MountPath: "/etc/app/config.yaml"}}
+	issues = ValidateReleaseSpec(spec)
+	if len(issues) == 0 || issues[0].Field != "file_mounts[0].key" {
+		t.Fatalf("expected missing application ConfigMap key error, got %#v", issues)
 	}
 
 	spec = validTestReleaseSpec()

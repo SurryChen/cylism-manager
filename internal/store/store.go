@@ -1,6 +1,7 @@
 package store
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -14,6 +15,22 @@ import (
 // Store 数据存储层
 type Store struct {
 	db *gorm.DB
+}
+
+// ResourceReference identifies a persisted template or release snapshot that
+// projects a ConfigMap or Secret. It deliberately contains no resource data.
+type ResourceReference struct {
+	ApplicationID   uint   `json:"application_id"`
+	ApplicationName string `json:"application_name"`
+	Kind            string `json:"kind"`
+	Name            string `json:"name"`
+}
+
+type fileMountReferenceSpec struct {
+	FileMounts []struct {
+		SourceType string `json:"source_type"`
+		SourceName string `json:"source_name"`
+	} `json:"file_mounts"`
 }
 
 // NamespaceConflictError indicates that another environment already owns a Namespace.
@@ -1027,6 +1044,60 @@ func (s *Store) ListApplicationDeploymentTemplates(applicationID uint) ([]model.
 	return templates, err
 }
 
+// ListResourceReferences finds immutable release snapshots and editable
+// templates that would be invalidated by deleting a referenced resource.
+func (s *Store) ListResourceReferences(namespace, sourceType, sourceName string) ([]ResourceReference, error) {
+	var applications []model.Application
+	if err := s.db.Preload("Environment").Find(&applications).Error; err != nil {
+		return nil, err
+	}
+	applicationByID := make(map[uint]model.Application)
+	applicationIDs := make([]uint, 0, len(applications))
+	for _, app := range applications {
+		if app.Environment.Namespace == namespace {
+			applicationByID[app.ID] = app
+			applicationIDs = append(applicationIDs, app.ID)
+		}
+	}
+	if len(applicationIDs) == 0 {
+		return []ResourceReference{}, nil
+	}
+	var templates []model.ApplicationDeploymentTemplate
+	if err := s.db.Where("application_id IN ?", applicationIDs).Find(&templates).Error; err != nil {
+		return nil, err
+	}
+	var releases []model.Release
+	if err := s.db.Where("application_id IN ?", applicationIDs).Find(&releases).Error; err != nil {
+		return nil, err
+	}
+	result := make([]ResourceReference, 0)
+	matches := func(raw string) bool {
+		var spec fileMountReferenceSpec
+		if json.Unmarshal([]byte(raw), &spec) != nil {
+			return false
+		}
+		for _, mount := range spec.FileMounts {
+			if mount.SourceType == sourceType && mount.SourceName == sourceName {
+				return true
+			}
+		}
+		return false
+	}
+	for _, template := range templates {
+		if matches(template.Spec) {
+			app := applicationByID[template.ApplicationID]
+			result = append(result, ResourceReference{ApplicationID: app.ID, ApplicationName: app.Name, Kind: "template", Name: template.Name})
+		}
+	}
+	for _, release := range releases {
+		if matches(release.DesiredSpec) {
+			app := applicationByID[release.ApplicationID]
+			result = append(result, ResourceReference{ApplicationID: app.ID, ApplicationName: app.Name, Kind: "release", Name: fmt.Sprintf("Release #%d", release.Sequence)})
+		}
+	}
+	return result, nil
+}
+
 func (s *Store) CreateApplicationDeploymentTemplate(template *model.ApplicationDeploymentTemplate, makeDefault bool) error {
 	return s.db.Transaction(func(tx *gorm.DB) error {
 		template.Revision = 1
@@ -1411,6 +1482,23 @@ func (s *Store) ListReleases(applicationID uint) ([]model.Release, error) {
 	var releases []model.Release
 	err := s.db.Where("application_id = ?", applicationID).Order("sequence desc").Find(&releases).Error
 	return releases, err
+}
+
+// ListReleasesByApplications loads release history for a workspace in one
+// query. The workspace view otherwise turns this into one query per app.
+func (s *Store) ListReleasesByApplications(applicationIDs []uint) (map[uint][]model.Release, error) {
+	result := make(map[uint][]model.Release, len(applicationIDs))
+	if len(applicationIDs) == 0 {
+		return result, nil
+	}
+	var releases []model.Release
+	if err := s.db.Where("application_id IN ?", applicationIDs).Order("sequence desc").Find(&releases).Error; err != nil {
+		return nil, err
+	}
+	for _, release := range releases {
+		result[release.ApplicationID] = append(result[release.ApplicationID], release)
+	}
+	return result, nil
 }
 
 func (s *Store) UpdateRelease(release *model.Release) error {

@@ -680,18 +680,20 @@ func (h *ApplicationHandler) WorkspaceOverview(c *gin.Context) {
 	}
 	failedReleases := make([]workspaceRelease, 0)
 	recentReleases := make([]workspaceRelease, 0)
-	allReleases := make(map[uint][]model.Release, len(applications))
+	applicationIDs := make([]uint, 0, len(applications))
 	for _, app := range applications {
-		releases, releaseErr := h.store.ListReleases(app.ID)
-		if releaseErr != nil {
-			continue
-		}
-		allReleases[app.ID] = releases
-		for _, release := range releases {
-			item := workspaceRelease{Release: release, ApplicationName: app.Name}
-			recentReleases = append(recentReleases, item)
-			if release.Status == model.ReleaseStatusFailed {
-				failedReleases = append(failedReleases, item)
+		applicationIDs = append(applicationIDs, app.ID)
+	}
+	allReleases, releaseErr := h.store.ListReleasesByApplications(applicationIDs)
+	if releaseErr == nil {
+		for _, app := range applications {
+			releases := allReleases[app.ID]
+			for _, release := range releases {
+				item := workspaceRelease{Release: release, ApplicationName: app.Name}
+				recentReleases = append(recentReleases, item)
+				if release.Status == model.ReleaseStatusFailed {
+					failedReleases = append(failedReleases, item)
+				}
 			}
 		}
 	}

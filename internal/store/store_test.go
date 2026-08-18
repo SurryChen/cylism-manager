@@ -519,6 +519,40 @@ func TestApplicationReleaseCRUD(t *testing.T) {
 	}
 }
 
+func TestListResourceReferencesIncludesTemplatesAndReleaseSnapshots(t *testing.T) {
+	st := setupTestDB(t)
+	project := &model.Project{Name: "commerce", OwnerID: 1}
+	if err := st.CreateProject(project); err != nil {
+		t.Fatal(err)
+	}
+	environment := &model.Environment{ProjectID: project.ID, Name: "production", Namespace: "commerce-prod"}
+	if err := st.CreateEnvironment(environment); err != nil {
+		t.Fatal(err)
+	}
+	app := &model.Application{ProjectID: project.ID, EnvironmentID: environment.ID, Name: "edge", WorkloadKind: "deployment", CreatedBy: 1}
+	if err := st.CreateApplication(app); err != nil {
+		t.Fatal(err)
+	}
+	spec := `{"file_mounts":[{"source_type":"secret","source_name":"edge-tls","key":"tls.crt","mount_path":"/etc/tls/tls.crt"}]}`
+	if err := st.CreateApplicationDeploymentTemplate(&model.ApplicationDeploymentTemplate{ApplicationID: app.ID, Name: "production", Enabled: true, Spec: spec}, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateRelease(&model.Release{ApplicationID: app.ID, Sequence: 1, Image: "example.com/edge:1", DesiredSpec: spec, Status: model.ReleaseStatusSucceeded, CreatedBy: 1}); err != nil {
+		t.Fatal(err)
+	}
+	references, err := st.ListResourceReferences("commerce-prod", "secret", "edge-tls")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(references) != 2 || references[0].ApplicationName != "edge" {
+		t.Fatalf("expected template and release references, got %#v", references)
+	}
+	missing, err := st.ListResourceReferences("commerce-prod", "configmap", "edge-tls")
+	if err != nil || len(missing) != 0 {
+		t.Fatalf("expected no configmap references, got %#v err=%v", missing, err)
+	}
+}
+
 func TestProjectAndEnvironmentCRUD(t *testing.T) {
 	st := setupTestDB(t)
 	project := &model.Project{Name: "commerce", Description: "订单服务", OwnerID: 1}
