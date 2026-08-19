@@ -3,6 +3,7 @@
 - [x] 1.1 添加 `host_network` 的默认值、快照兼容性和资源渲染测试。
 - [x] 1.2 在 `ReleaseSpec` 中实现字段，并在 Kubernetes PodSpec 中渲染 `hostNetwork` 和 `ClusterFirstWithHostNet`。
 - [x] 1.3 在 `host_network=true` 的 Deployment 上渲染 `Recreate` 策略，并保持非 host-network 和 StatefulSet 行为不变。
+- [x] 1.4 已就绪 Pod 忽略已解决的 Warning Event，未就绪 Pod 保留关联诊断。
 
 ## 2. Template Editor
 

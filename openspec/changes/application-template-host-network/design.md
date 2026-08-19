@@ -29,7 +29,11 @@ host-network Pod 的监听端口直接占用节点端口。对于单节点或指
 
 未启用 `host_network` 的 Deployment 继续使用 Kubernetes 默认滚动更新行为。StatefulSet 的更新策略不在此次变更范围内。
 
-### 3. UI 使用高级网络开关
+### 3. 已解决事件不影响当前运行状态
+
+发布详情的运行状态仅将 Kubernetes Warning Event 作为未就绪 Pod 的当前诊断。已处于 `Running` 且所有容器已 `Ready` 的 Pod 可能保留历史调度或启动 Warning；这些已解决事件不得将当前运行状态标记为异常。
+
+### 4. UI 使用高级网络开关
 
 模板编辑器在既有“服务网络”区域增加一个默认关闭的复选框。保存和编辑时该值随模板 Spec 往返；不推导 hostPort，也不修改 Service 类型或端口。
 

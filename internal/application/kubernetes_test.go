@@ -59,6 +59,35 @@ func TestKubernetesApplierInspectReleasePodsReportsReadyPod(t *testing.T) {
 	}
 }
 
+func TestKubernetesApplierInspectReleasePodsIgnoresResolvedSchedulingEventForReadyPod(t *testing.T) {
+	labels := map[string]string{ApplicationNameLabel: "api", ReleaseLabel: "4"}
+	clientset := k8sfake.NewSimpleClientset(
+		&corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: "api-ready", Namespace: "dev", Labels: labels},
+			Spec:       corev1.PodSpec{NodeName: "worker-a"},
+			Status:     corev1.PodStatus{Phase: corev1.PodRunning, ContainerStatuses: []corev1.ContainerStatus{{Name: "api", Ready: true}}},
+		},
+		&corev1.Event{
+			ObjectMeta: metav1.ObjectMeta{Name: "api-ready-scheduling", Namespace: "dev"},
+			InvolvedObject: corev1.ObjectReference{
+				Kind: "Pod",
+				Name: "api-ready",
+			},
+			Type:    corev1.EventTypeWarning,
+			Reason:  "FailedScheduling",
+			Message: "0/1 nodes are available: didn't have free ports",
+		},
+	)
+	applier := NewKubernetesApplier(&k8sclient.Client{Clientset: clientset})
+	runtime, err := applier.InspectReleasePods(context.Background(), ApplicationContext{Namespace: "dev", ApplicationName: "api", ReleaseSequence: 4})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runtime.Pods) != 1 || !runtime.Pods[0].Ready || runtime.Diagnostic != "" {
+		t.Fatalf("expected resolved scheduling event to be ignored for ready Pod, got %+v", runtime)
+	}
+}
+
 func TestKubernetesApplierInspectReleasePodsReportsSchedulingFailure(t *testing.T) {
 	labels := map[string]string{ApplicationNameLabel: "api", ReleaseLabel: "3"}
 	clientset := k8sfake.NewSimpleClientset(&corev1.Pod{
