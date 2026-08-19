@@ -520,24 +520,26 @@ func (a *KubernetesApplier) InspectReleasePods(ctx context.Context, application 
 		return nil, fmt.Errorf("读取关联 Pod: %w", err)
 	}
 	runtime := &model.ReleaseRuntime{Tracking: "exact", Pods: make([]model.ReleasePodRuntime, 0, len(pods.Items))}
-	podNames := make(map[string]struct{}, len(pods.Items))
+	pendingPodNames := make(map[string]struct{}, len(pods.Items))
 	diagnostics := make([]string, 0)
 	for _, pod := range pods.Items {
-		podNames[pod.Name] = struct{}{}
 		status, diagnostic := releasePodRuntime(pod)
 		runtime.Pods = append(runtime.Pods, status)
+		if !status.Ready {
+			pendingPodNames[pod.Name] = struct{}{}
+		}
 		if diagnostic != "" {
 			diagnostics = append(diagnostics, diagnostic)
 		}
 	}
 	sort.Slice(runtime.Pods, func(i, j int) bool { return runtime.Pods[i].Name < runtime.Pods[j].Name })
-	if len(podNames) > 0 {
+	if len(pendingPodNames) > 0 {
 		if events, err := a.Client.Clientset.CoreV1().Events(application.Namespace).List(ctx, metav1.ListOptions{}); err == nil {
 			for _, event := range events.Items {
 				if event.Type != corev1.EventTypeWarning || event.InvolvedObject.Kind != "Pod" || event.Message == "" {
 					continue
 				}
-				if _, exists := podNames[event.InvolvedObject.Name]; exists {
+				if _, exists := pendingPodNames[event.InvolvedObject.Name]; exists {
 					diagnostics = append(diagnostics, fmt.Sprintf("Pod %s: %s: %s", event.InvolvedObject.Name, event.Reason, event.Message))
 				}
 			}

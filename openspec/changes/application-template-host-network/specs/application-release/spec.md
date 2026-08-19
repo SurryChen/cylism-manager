@@ -22,3 +22,9 @@ The platform SHALL preserve an optional Pod network mode in application deployme
 
 - **WHEN** an operator enables host networking in the deployment template editor and saves the template
 - **THEN** subsequent reads and releases of that template SHALL preserve `host_network=true`
+
+#### Scenario: Ignore resolved scheduling warnings
+
+- **WHEN** a release Pod is `Running` with all containers `Ready` after a transient scheduling warning
+- **THEN** the current runtime status SHALL remain healthy
+- **AND THEN** the historical warning SHALL not be presented as a current runtime diagnostic
