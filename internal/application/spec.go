@@ -70,6 +70,7 @@ type ReleaseSpec struct {
 	Config                              map[string]string `json:"config,omitempty"`
 	Secrets                             map[string]string `json:"secrets,omitempty"`
 	NodeName                            string            `json:"node_name,omitempty"`
+	HostNetwork                         bool              `json:"host_network,omitempty"`
 	Volumes                             []VolumeMountSpec `json:"volumes,omitempty"`
 	FileMounts                          []FileMountSpec   `json:"file_mounts,omitempty"`
 	Service                             ServiceSpec       `json:"service"`
@@ -505,6 +506,10 @@ func RenderResources(context ApplicationContext, spec ReleaseSpec) (*RenderedRes
 	container.VolumeMounts = append(container.VolumeMounts, fileVolumeMounts...)
 	replicas := spec.Replicas
 	podSpec := corev1.PodSpec{Containers: []corev1.Container{container}, Volumes: volumes}
+	if spec.HostNetwork {
+		podSpec.HostNetwork = true
+		podSpec.DNSPolicy = corev1.DNSClusterFirstWithHostNet
+	}
 	if spec.NodeName != "" {
 		podSpec.NodeSelector = map[string]string{corev1.LabelHostname: spec.NodeName}
 	}
