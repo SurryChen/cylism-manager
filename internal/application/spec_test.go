@@ -125,6 +125,22 @@ func TestRenderResourcesRendersUDPServiceAndFileMounts(t *testing.T) {
 	}
 }
 
+func TestRenderResourcesUsesHostNetworkWithoutChangingDeploymentStrategy(t *testing.T) {
+	spec := validTestReleaseSpec()
+	spec.HostNetwork = true
+	resources, err := RenderResources(ApplicationContext{ProjectName: "edge", EnvironmentName: "production", ApplicationName: "hysteria", Namespace: "edge-prod", ReleaseSequence: 1}, spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	podSpec := resources.Deployment.Spec.Template.Spec
+	if !podSpec.HostNetwork || podSpec.DNSPolicy != corev1.DNSClusterFirstWithHostNet {
+		t.Fatalf("expected host-network Pod with cluster DNS, got %#v", podSpec)
+	}
+	if resources.Deployment.Spec.Strategy.Type != "" || resources.Deployment.Spec.Strategy.RollingUpdate != nil {
+		t.Fatalf("host networking must not change deployment strategy, got %#v", resources.Deployment.Spec.Strategy)
+	}
+}
+
 func TestRenderResourcesMountsApplicationConfigKeyAsFile(t *testing.T) {
 	spec := validTestReleaseSpec()
 	spec.Config = map[string]string{"config.yaml": "listen: :8080"}

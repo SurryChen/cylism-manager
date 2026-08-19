@@ -155,6 +155,24 @@ describe('ApplicationDetails view', () => {
     }))
   })
 
+  it('serializes host networking from the deployment template', async () => {
+    const { api } = await import('../api/index.js')
+    api.post.mockClear()
+    const wrapper = mount(ApplicationDetails, {
+      props: { applicationID: '1' },
+      global: { stubs: { RouterLink: { template: '<a><slot /></a>' }, Teleport: true } },
+    })
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    await wrapper.find('.page-header .btn-primary').trigger('click')
+    await wrapper.find('[aria-label="使用宿主机网络"]').setValue(true)
+    await wrapper.find('form').trigger('submit.prevent')
+
+    expect(api.post).toHaveBeenCalledWith('/applications/1/deployment-templates', expect.objectContaining({
+      spec: expect.objectContaining({ host_network: true }),
+    }))
+  })
+
   it('mounts a template ConfigMap key as a file without creating a separate resource', async () => {
     const { api } = await import('../api/index.js')
     api.post.mockClear()
