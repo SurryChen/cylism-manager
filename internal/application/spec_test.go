@@ -125,8 +125,15 @@ func TestRenderResourcesRendersUDPServiceAndFileMounts(t *testing.T) {
 	}
 }
 
-func TestRenderResourcesUsesHostNetworkWithoutChangingDeploymentStrategy(t *testing.T) {
+func TestRenderResourcesUsesHostNetworkWithRecreateDeploymentStrategy(t *testing.T) {
 	spec := validTestReleaseSpec()
+	defaultResources, err := RenderResources(ApplicationContext{ProjectName: "edge", EnvironmentName: "production", ApplicationName: "default", Namespace: "edge-prod", ReleaseSequence: 1}, spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if defaultResources.Deployment.Spec.Strategy.Type != "" || defaultResources.Deployment.Spec.Strategy.RollingUpdate != nil {
+		t.Fatalf("non-host-network deployment should retain the default strategy, got %#v", defaultResources.Deployment.Spec.Strategy)
+	}
 	spec.HostNetwork = true
 	resources, err := RenderResources(ApplicationContext{ProjectName: "edge", EnvironmentName: "production", ApplicationName: "hysteria", Namespace: "edge-prod", ReleaseSequence: 1}, spec)
 	if err != nil {
@@ -136,8 +143,8 @@ func TestRenderResourcesUsesHostNetworkWithoutChangingDeploymentStrategy(t *test
 	if !podSpec.HostNetwork || podSpec.DNSPolicy != corev1.DNSClusterFirstWithHostNet {
 		t.Fatalf("expected host-network Pod with cluster DNS, got %#v", podSpec)
 	}
-	if resources.Deployment.Spec.Strategy.Type != "" || resources.Deployment.Spec.Strategy.RollingUpdate != nil {
-		t.Fatalf("host networking must not change deployment strategy, got %#v", resources.Deployment.Spec.Strategy)
+	if resources.Deployment.Spec.Strategy.Type != appsv1.RecreateDeploymentStrategyType || resources.Deployment.Spec.Strategy.RollingUpdate != nil {
+		t.Fatalf("expected Recreate strategy for host-network deployment, got %#v", resources.Deployment.Spec.Strategy)
 	}
 }
 

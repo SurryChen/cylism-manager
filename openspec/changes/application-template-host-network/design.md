@@ -25,7 +25,9 @@ dnsPolicy: ClusterFirstWithHostNet
 
 DNS 策略必须随 host networking 设置，否则 Pod 会失去预期的集群 DNS 解析行为。
 
-本变更保留现有工作负载更新策略。Deployment 的 `RollingUpdate`/`Recreate` 行为不在此次变更范围内。
+host-network Pod 的监听端口直接占用节点端口。对于单节点或指定节点上的固定端口应用，默认滚动更新会在旧 Pod 退出前创建新 Pod，并因端口冲突使新 Pod 无法调度。因此，Deployment 在 `host_network=true` 时使用 `Recreate` 策略；该策略会先停止旧 Pod，再创建替换 Pod。
+
+未启用 `host_network` 的 Deployment 继续使用 Kubernetes 默认滚动更新行为。StatefulSet 的更新策略不在此次变更范围内。
 
 ### 3. UI 使用高级网络开关
 
@@ -34,4 +36,4 @@ DNS 策略必须随 host networking 设置，否则 Pod 会失去预期的集群
 ## Risks
 
 - host-network Pod 与节点进程或同节点其他 Pod 的监听端口可能冲突，Kubernetes 调度器会拒绝冲突 Pod。本次不新增预检。
-- 使用默认滚动更新的单节点固定端口工作负载可能暂时 Pending。本次按范围不改变策略，后续可独立处理发布策略和端口冲突预检。
+- host-network Deployment 在发布期间会短暂不可用，因为 `Recreate` 必须先终止旧 Pod 才能释放节点端口。本次不新增端口冲突预检。
