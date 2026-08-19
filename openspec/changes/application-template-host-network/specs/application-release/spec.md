@@ -9,7 +9,8 @@ The platform SHALL preserve an optional Pod network mode in application deployme
 - **WHEN** an application deployment template sets `host_network=true`
 - **THEN** the rendered Pod SHALL set `hostNetwork: true`
 - **AND THEN** the rendered Pod SHALL set `dnsPolicy: ClusterFirstWithHostNet`
-- **AND THEN** the rendered Service and workload update strategy SHALL otherwise retain their existing behavior
+- **AND THEN** a rendered Deployment SHALL use the `Recreate` update strategy
+- **AND THEN** the rendered Service SHALL otherwise retain its existing behavior
 
 #### Scenario: Preserve a default Pod-network template
 

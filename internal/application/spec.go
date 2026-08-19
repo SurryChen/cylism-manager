@@ -539,7 +539,7 @@ func RenderResources(context ApplicationContext, spec ReleaseSpec) (*RenderedRes
 				Template: podTemplate,
 			},
 		}
-		if len(spec.Volumes) > 0 {
+		if spec.HostNetwork || len(spec.Volumes) > 0 {
 			result.Deployment.Spec.Strategy = appsv1.DeploymentStrategy{Type: appsv1.RecreateDeploymentStrategyType}
 		}
 	}

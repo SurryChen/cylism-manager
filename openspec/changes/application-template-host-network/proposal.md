@@ -6,11 +6,10 @@
 
 - 为应用发布模板新增可选 `host_network` 字段，默认 `false`。
 - 模板编辑器在服务网络区域提供“使用宿主机网络”复选框。
-- 发布资源渲染在字段启用时设置 Pod `hostNetwork: true` 及兼容的 DNS 策略。
+- 发布资源渲染在字段启用时设置 Pod `hostNetwork: true`、兼容的 DNS 策略和 `Recreate` 更新策略。
 
 ## Non-goals
 
-- 不修改 Deployment 或 StatefulSet 的更新策略。
 - 不增加 hostPort 配置、端口冲突预检或副本/节点限制。
 - 不改变未启用该字段的模板、发布快照和现有 Service 行为。
 
