@@ -155,7 +155,7 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 	operationHandler := NewOperationHandler(s)
 	apiGroup.GET("/operations", operationHandler.ListOperations)
 
-	applicationHandler := NewApplicationHandler(s, encKey)
+	applicationHandler := NewApplicationHandler(s, encKey).WithDelegationSecret(authCfg.JWTSecret)
 	imageRegistryHandler := NewImageRegistryHandler(s, encKey)
 	imageRegistries := apiGroup.Group("/image-registries")
 	{
@@ -282,9 +282,16 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 	applications := apiGroup.Group("/applications")
 	{
 		applications.GET("", applicationHandler.ListApplications)
+		applications.GET("/discovery", applicationHandler.DiscoverApplications)
 		applications.POST("", applicationHandler.CreateApplication)
 		applications.GET("/:id", applicationHandler.GetApplication)
+		applications.PUT("/:id/capabilities", applicationHandler.UpdateCapabilities)
+		applications.GET("/:id/managed-documents", applicationHandler.ListManagedDocuments)
+		applications.POST("/:id/managed-documents", applicationHandler.CreateManagedDocument)
+		applications.DELETE("/:id/managed-documents/:documentID", applicationHandler.DeleteManagedDocument)
+		applications.POST("/:id/delegations", applicationHandler.CreateDelegation)
 		applications.PUT("/:id/workload-kind", applicationHandler.UpdateWorkloadKind)
+		applications.GET("/:id/runtime", applicationHandler.GetApplicationRuntime)
 		applications.GET("/:id/deployment-templates", applicationHandler.ListDeploymentTemplates)
 		applications.POST("/:id/deployment-templates", applicationHandler.CreateDeploymentTemplate)
 		applications.GET("/:id/deployment-templates/:templateID", applicationHandler.GetDeploymentTemplate)
@@ -299,6 +306,20 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 		applications.GET("/:id/releases/:releaseID", applicationHandler.GetRelease)
 		applications.POST("/:id/releases/:releaseID/retry", applicationHandler.RetryRelease)
 		applications.POST("/:id/releases/:releaseID/rollback", applicationHandler.RollbackRelease)
+	}
+
+	// External management consoles use a separate, short-lived delegation
+	// instead of a browser JWT. This group must remain narrower than /api.
+	integration := r.Group("/api/integrations/applications")
+	integration.Use(DelegationAuthMiddleware(authCfg.JWTSecret))
+	integration.Use(AuditMiddleware(s))
+	{
+		integration.GET("/discovery", applicationHandler.IntegrationDiscoverApplications)
+		integration.GET("/:id/runtime", applicationHandler.IntegrationGetApplicationRuntime)
+		integration.GET("/:id/managed-documents", applicationHandler.IntegrationListManagedDocuments)
+		integration.PATCH("/:id/managed-documents/:documentID", applicationHandler.IntegrationPatchManagedDocument)
+		integration.POST("/:id/restarts", applicationHandler.IntegrationRestartApplication)
+		integration.GET("/:id/releases/:releaseID", applicationHandler.IntegrationGetRelease)
 	}
 	workspace := apiGroup.Group("/workspace")
 	{

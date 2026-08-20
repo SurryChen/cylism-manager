@@ -19,14 +19,21 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/go-containerregistry/pkg/name"
 	"gorm.io/gorm"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 type ApplicationHandler struct {
-	store  *store.Store
-	encKey []byte
+	store            *store.Store
+	encKey           []byte
+	delegationSecret []byte
+}
+
+func (h *ApplicationHandler) WithDelegationSecret(secret []byte) *ApplicationHandler {
+	h.delegationSecret = append([]byte(nil), secret...)
+	return h
 }
 
 var imageTagPattern = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$`)
@@ -78,6 +85,76 @@ type workspaceApplicationInfo struct {
 
 type workloadKindRequest struct {
 	WorkloadKind string `json:"workload_kind"`
+}
+
+type applicationCapabilitiesRequest struct {
+	Capabilities []string `json:"capabilities"`
+}
+
+// applicationDiscoveryInfo is intentionally limited to metadata needed by
+// authorized management UIs. It never embeds templates or Secret references.
+type applicationDiscoveryInfo struct {
+	ID            uint                        `json:"id"`
+	ProjectID     uint                        `json:"project_id"`
+	EnvironmentID uint                        `json:"environment_id"`
+	Name          string                      `json:"name"`
+	WorkloadKind  string                      `json:"workload_kind"`
+	Capabilities  []string                    `json:"capabilities"`
+	Environment   applicationEnvironmentInfo  `json:"environment"`
+	Endpoints     []applicationPublicEndpoint `json:"endpoints"`
+	Runtime       applicationRuntimeInfo      `json:"runtime"`
+}
+
+type applicationEnvironmentInfo struct {
+	ID        uint   `json:"id"`
+	Name      string `json:"name"`
+	Namespace string `json:"namespace"`
+}
+
+type applicationPublicEndpoint struct {
+	Domain      string `json:"domain"`
+	Path        string `json:"path"`
+	ServicePort int32  `json:"service_port"`
+	TLSEnabled  bool   `json:"tls_enabled"`
+}
+
+type applicationRuntimeInfo struct {
+	Status          string                       `json:"status"`
+	ServiceName     string                       `json:"service_name"`
+	Service         *applicationServiceRuntime   `json:"service,omitempty"`
+	LatestRelease   *applicationReleaseSummary   `json:"latest_release,omitempty"`
+	DesiredReplicas int32                        `json:"desired_replicas"`
+	ReadyReplicas   int32                        `json:"ready_replicas"`
+	AvailablePods   int32                        `json:"available_pods"`
+	ReadyPods       []applicationReadyPodRuntime `json:"ready_pods"`
+	ReadyNodes      []string                     `json:"ready_nodes"`
+}
+
+type applicationServiceRuntime struct {
+	Name                  string                          `json:"name"`
+	Type                  string                          `json:"type"`
+	Ports                 []applicationServicePortRuntime `json:"ports"`
+	LoadBalancerAddresses []string                        `json:"load_balancer_addresses"`
+}
+
+type applicationServicePortRuntime struct {
+	Name       string `json:"name"`
+	Port       int32  `json:"port"`
+	TargetPort string `json:"target_port"`
+	Protocol   string `json:"protocol"`
+	NodePort   int32  `json:"node_port,omitempty"`
+}
+
+type applicationReleaseSummary struct {
+	ID       uint   `json:"id"`
+	Sequence uint   `json:"sequence"`
+	Version  string `json:"version,omitempty"`
+	Status   string `json:"status"`
+}
+
+type applicationReadyPodRuntime struct {
+	Name     string `json:"name"`
+	NodeName string `json:"node_name"`
 }
 
 func NewApplicationHandler(store *store.Store, encKey ...[]byte) *ApplicationHandler {
@@ -528,6 +605,283 @@ func (h *ApplicationHandler) ListApplications(c *gin.Context) {
 		return
 	}
 	model.Success(c, applications)
+}
+
+// UpdateCapabilities replaces opaque application metadata. Capability values
+// are not interpreted as authorization and do not affect a release.
+func (h *ApplicationHandler) UpdateCapabilities(c *gin.Context) {
+	applicationID, err := parseID(c.Param("id"))
+	if err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "应用 ID 无效")
+		return
+	}
+	var req applicationCapabilitiesRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "能力标签定义无效")
+		return
+	}
+	app, err := h.store.ReplaceApplicationCapabilities(applicationID, req.Capabilities)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		model.Error(c, http.StatusNotFound, model.CodeNotFound, "应用不存在")
+		return
+	}
+	if err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		return
+	}
+	model.Success(c, app)
+}
+
+// DiscoverApplications provides a project-scoped, sanitized view for other
+// control-plane UIs. It deliberately excludes deployment template data and
+// all Secret references.
+func (h *ApplicationHandler) DiscoverApplications(c *gin.Context) {
+	projectID, err := optionalQueryID(c, "project_id")
+	if err != nil || projectID == 0 {
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "项目 ID 必填且必须有效")
+		return
+	}
+	if _, err := h.store.GetProject(projectID); err != nil {
+		model.Error(c, http.StatusNotFound, model.CodeNotFound, "项目不存在")
+		return
+	}
+	environmentID, err := optionalQueryID(c, "environment_id")
+	if err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "环境 ID 无效")
+		return
+	}
+	if environmentID != 0 {
+		if _, err := h.store.GetEnvironment(projectID, environmentID); err != nil {
+			model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "环境不属于所选项目")
+			return
+		}
+	}
+	capability := strings.TrimSpace(c.Query("capability"))
+	if capability != "" {
+		normalized, err := model.NormalizeApplicationCapabilities([]string{capability})
+		if err != nil {
+			model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+			return
+		}
+		capability = normalized[0]
+	}
+	applications, err := h.store.ListApplications(projectID, environmentID)
+	if err != nil {
+		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		return
+	}
+	if capability != "" {
+		filtered := applications[:0]
+		for _, app := range applications {
+			if applicationHasCapability(app, capability) {
+				filtered = append(filtered, app)
+			}
+		}
+		applications = filtered
+	}
+	releases, err := h.store.ListReleasesByApplications(applicationIDs(applications))
+	if err != nil {
+		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		return
+	}
+	runtimes := h.applicationRuntimeInfos(c.Request.Context(), applications, releases)
+	infos := make([]applicationDiscoveryInfo, 0, len(applications))
+	for _, app := range applications {
+		infos = append(infos, applicationDiscoveryInfoFromModel(app, runtimes[app.ID]))
+	}
+	model.Success(c, infos)
+}
+
+func (h *ApplicationHandler) GetApplicationRuntime(c *gin.Context) {
+	applicationID, err := parseID(c.Param("id"))
+	if err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "应用 ID 无效")
+		return
+	}
+	app, err := h.store.GetApplication(applicationID)
+	if err != nil {
+		model.Error(c, http.StatusNotFound, model.CodeNotFound, "应用不存在")
+		return
+	}
+	releases, err := h.store.ListReleases(applicationID)
+	if err != nil {
+		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		return
+	}
+	runtime := h.applicationRuntimeInfos(c.Request.Context(), []model.Application{*app}, map[uint][]model.Release{applicationID: releases})[applicationID]
+	model.Success(c, runtime)
+}
+
+func applicationIDs(applications []model.Application) []uint {
+	ids := make([]uint, 0, len(applications))
+	for _, app := range applications {
+		ids = append(ids, app.ID)
+	}
+	return ids
+}
+
+func applicationHasCapability(app model.Application, capability string) bool {
+	for _, item := range app.Capabilities {
+		if item == capability {
+			return true
+		}
+	}
+	return false
+}
+
+func applicationDiscoveryInfoFromModel(app model.Application, runtime applicationRuntimeInfo) applicationDiscoveryInfo {
+	endpoints := make([]applicationPublicEndpoint, 0, len(app.Endpoints))
+	for _, endpoint := range app.Endpoints {
+		endpoints = append(endpoints, applicationPublicEndpoint{Domain: endpoint.Domain, Path: endpoint.Path, ServicePort: endpoint.ServicePort, TLSEnabled: endpoint.TLSEnabled})
+	}
+	capabilities := append([]string{}, app.Capabilities...)
+	return applicationDiscoveryInfo{
+		ID: app.ID, ProjectID: app.ProjectID, EnvironmentID: app.EnvironmentID, Name: app.Name, WorkloadKind: app.WorkloadKind, Capabilities: capabilities,
+		Environment: applicationEnvironmentInfo{ID: app.Environment.ID, Name: app.Environment.Name, Namespace: app.Environment.Namespace}, Endpoints: endpoints, Runtime: runtime,
+	}
+}
+
+// applicationRuntimeInfos batches Kubernetes reads per Namespace so a project
+// discovery does not create one Service/Pod request per application.
+func (h *ApplicationHandler) applicationRuntimeInfos(ctx context.Context, applications []model.Application, releases map[uint][]model.Release) map[uint]applicationRuntimeInfo {
+	result := make(map[uint]applicationRuntimeInfo, len(applications))
+	byNamespace := make(map[string][]model.Application)
+	for _, app := range applications {
+		runtime := applicationRuntimeInfo{ServiceName: app.Name, ReadyPods: []applicationReadyPodRuntime{}, ReadyNodes: []string{}}
+		if latest := latestApplicationRelease(releases[app.ID]); latest != nil {
+			runtime.LatestRelease = latest
+			runtime.Status = "unavailable"
+		} else {
+			runtime.Status = "not_released"
+		}
+		result[app.ID] = runtime
+		byNamespace[app.Environment.Namespace] = append(byNamespace[app.Environment.Namespace], app)
+	}
+	if K8s == nil || K8s.Clientset == nil {
+		return result
+	}
+	for namespace, namespaceApps := range byNamespace {
+		h.collectNamespaceApplicationRuntime(ctx, namespace, namespaceApps, result)
+	}
+	return result
+}
+
+func (h *ApplicationHandler) collectNamespaceApplicationRuntime(ctx context.Context, namespace string, applications []model.Application, result map[uint]applicationRuntimeInfo) {
+	services, serviceErr := K8s.Clientset.CoreV1().Services(namespace).List(ctx, metav1.ListOptions{})
+	deployments, deploymentErr := K8s.Clientset.AppsV1().Deployments(namespace).List(ctx, metav1.ListOptions{})
+	statefulSets, statefulSetErr := K8s.Clientset.AppsV1().StatefulSets(namespace).List(ctx, metav1.ListOptions{})
+	pods, podErr := K8s.Clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{})
+	serviceByName := make(map[string]corev1.Service, len(services.Items))
+	if serviceErr == nil {
+		for _, service := range services.Items {
+			serviceByName[service.Name] = service
+		}
+	}
+	deploymentByName := make(map[string]appsv1.Deployment, len(deployments.Items))
+	if deploymentErr == nil {
+		for _, deployment := range deployments.Items {
+			deploymentByName[deployment.Name] = deployment
+		}
+	}
+	statefulSetByName := make(map[string]appsv1.StatefulSet, len(statefulSets.Items))
+	if statefulSetErr == nil {
+		for _, statefulSet := range statefulSets.Items {
+			statefulSetByName[statefulSet.Name] = statefulSet
+		}
+	}
+	podsByApplication := make(map[string][]corev1.Pod)
+	if podErr == nil {
+		for _, pod := range pods.Items {
+			if name := pod.Labels[application.ApplicationNameLabel]; name != "" {
+				podsByApplication[name] = append(podsByApplication[name], pod)
+			}
+		}
+	}
+	for _, app := range applications {
+		runtime := result[app.ID]
+		if service, ok := serviceByName[app.Name]; ok {
+			runtime.Service = applicationServiceRuntimeFromKubernetes(service)
+		}
+		if app.WorkloadKind == application.WorkloadKindStatefulSet {
+			if workload, ok := statefulSetByName[app.Name]; ok {
+				runtime.DesiredReplicas = replicasValue(workload.Spec.Replicas)
+				runtime.ReadyReplicas = workload.Status.ReadyReplicas
+				runtime.AvailablePods = workload.Status.AvailableReplicas
+			}
+		} else if workload, ok := deploymentByName[app.Name]; ok {
+			runtime.DesiredReplicas = replicasValue(workload.Spec.Replicas)
+			runtime.ReadyReplicas = workload.Status.ReadyReplicas
+			runtime.AvailablePods = workload.Status.AvailableReplicas
+		}
+		if podErr == nil {
+			nodes := make(map[string]struct{})
+			for _, pod := range podsByApplication[app.Name] {
+				if !podReady(pod) {
+					continue
+				}
+				runtime.ReadyPods = append(runtime.ReadyPods, applicationReadyPodRuntime{Name: pod.Name, NodeName: pod.Spec.NodeName})
+				if pod.Spec.NodeName != "" {
+					nodes[pod.Spec.NodeName] = struct{}{}
+				}
+			}
+			for node := range nodes {
+				runtime.ReadyNodes = append(runtime.ReadyNodes, node)
+			}
+			sort.Slice(runtime.ReadyPods, func(i, j int) bool { return runtime.ReadyPods[i].Name < runtime.ReadyPods[j].Name })
+			sort.Strings(runtime.ReadyNodes)
+		}
+		if serviceErr != nil || deploymentErr != nil || statefulSetErr != nil || podErr != nil {
+			runtime.Status = "unavailable"
+		} else if runtime.LatestRelease == nil {
+			runtime.Status = "not_released"
+		} else if runtime.DesiredReplicas > 0 && runtime.ReadyReplicas >= runtime.DesiredReplicas {
+			runtime.Status = "running"
+		} else {
+			runtime.Status = "degraded"
+		}
+		result[app.ID] = runtime
+	}
+}
+
+func latestApplicationRelease(releases []model.Release) *applicationReleaseSummary {
+	if len(releases) == 0 {
+		return nil
+	}
+	latest := releases[0]
+	for _, release := range releases[1:] {
+		if release.Sequence > latest.Sequence {
+			latest = release
+		}
+	}
+	return &applicationReleaseSummary{ID: latest.ID, Sequence: latest.Sequence, Version: latest.Version, Status: latest.Status}
+}
+
+func applicationServiceRuntimeFromKubernetes(service corev1.Service) *applicationServiceRuntime {
+	ports := make([]applicationServicePortRuntime, 0, len(service.Spec.Ports))
+	for _, port := range service.Spec.Ports {
+		targetPort := port.TargetPort.String()
+		if targetPort == "0" {
+			targetPort = strconv.Itoa(int(port.Port))
+		}
+		ports = append(ports, applicationServicePortRuntime{Name: port.Name, Port: port.Port, TargetPort: targetPort, Protocol: string(port.Protocol), NodePort: port.NodePort})
+	}
+	addresses := make([]string, 0, len(service.Status.LoadBalancer.Ingress))
+	for _, ingress := range service.Status.LoadBalancer.Ingress {
+		if ingress.IP != "" {
+			addresses = append(addresses, ingress.IP)
+		} else if ingress.Hostname != "" {
+			addresses = append(addresses, ingress.Hostname)
+		}
+	}
+	sort.Strings(addresses)
+	return &applicationServiceRuntime{Name: service.Name, Type: string(service.Spec.Type), Ports: ports, LoadBalancerAddresses: addresses}
+}
+
+func replicasValue(replicas *int32) int32 {
+	if replicas == nil {
+		return 1
+	}
+	return *replicas
 }
 
 func (h *ApplicationHandler) GetApplication(c *gin.Context) {

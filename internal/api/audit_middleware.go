@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cylism/cylism-manager/internal/auth"
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/gin-gonic/gin"
@@ -41,7 +42,7 @@ func AuditMiddleware(s *store.Store) gin.HandlerFunc {
 				ResourceType: inferResourceType(c.FullPath()),
 				ResourceID:   extractResourceID(c.Param("id")),
 				UserID:       getUserID(c),
-				Detail:       buildDetail(c.Request.Method, c.FullPath(), bodyBytes, writer.body.Bytes()),
+				Detail:       buildDetailForRequest(c, bodyBytes, writer.body.Bytes()),
 				CreatedAt:    start,
 			}
 			_ = s.CreateAuditLog(entry)
@@ -138,6 +139,38 @@ func buildDetail(method, path string, reqBody, respBody []byte) string {
 	}
 	data, _ := json.Marshal(detail)
 	return string(data)
+}
+
+func buildDetailForRequest(c *gin.Context, reqBody, respBody []byte) string {
+	var detail map[string]interface{}
+	_ = json.Unmarshal([]byte(buildDetail(c.Request.Method, c.FullPath(), reqBody, respBody)), &detail)
+	if strings.Contains(c.FullPath(), "/managed-documents/") {
+		detail["request"] = redactManagedDocumentPatch(detail["request"])
+	}
+	if delegation, exists := c.Get("delegation"); exists {
+		if claims, ok := delegation.(*auth.DelegationClaims); ok {
+			detail["delegation_jti"] = claims.JTI
+		}
+	}
+	data, _ := json.Marshal(detail)
+	return string(data)
+}
+
+func redactManagedDocumentPatch(value interface{}) interface{} {
+	root, ok := value.(map[string]interface{})
+	if !ok {
+		return value
+	}
+	operations, ok := root["operations"].([]interface{})
+	if !ok {
+		return root
+	}
+	for _, rawOperation := range operations {
+		if operation, ok := rawOperation.(map[string]interface{}); ok {
+			operation["value"] = "[REDACTED]"
+		}
+	}
+	return root
 }
 
 func redactAuditValue(value interface{}) interface{} {

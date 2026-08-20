@@ -53,13 +53,7 @@ func ParseToken(secret []byte, tokenString string) (*Claims, error) {
 		return nil, ErrTokenInvalid
 	}
 
-	// 验证签名
-	signingInput := parts[0] + "." + parts[1]
-	mac := hmac.New(sha256.New, secret)
-	mac.Write([]byte(signingInput))
-	expectedSig := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
-
-	if !hmac.Equal([]byte(parts[2]), []byte(expectedSig)) {
+	if !validSignature(secret, parts) {
 		return nil, ErrTokenInvalid
 	}
 
@@ -83,6 +77,10 @@ func ParseToken(secret []byte, tokenString string) (*Claims, error) {
 }
 
 func signToken(secret []byte, claims Claims) (string, error) {
+	return signPayload(secret, claims)
+}
+
+func signPayload(secret []byte, claims interface{}) (string, error) {
 	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"HS256","typ":"JWT"}`))
 
 	payloadBytes, err := json.Marshal(claims)
@@ -97,4 +95,12 @@ func signToken(secret []byte, claims Claims) (string, error) {
 	signature := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 
 	return signingInput + "." + signature, nil
+}
+
+func validSignature(secret []byte, parts []string) bool {
+	signingInput := parts[0] + "." + parts[1]
+	mac := hmac.New(sha256.New, secret)
+	mac.Write([]byte(signingInput))
+	expectedSig := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+	return hmac.Equal([]byte(parts[2]), []byte(expectedSig))
 }
