@@ -3,7 +3,7 @@
     <router-link class="back-link" to="/applications"><ArrowLeft :size="16" />返回工作台</router-link>
     <div class="page-header">
       <div><h1 class="page-title">{{ application?.name || '应用详情' }}</h1><p class="page-subtitle">{{ application?.project?.name || '-' }} · {{ application?.environment?.name || '-' }} · {{ application?.environment?.namespace || '-' }}</p></div>
-      <div class="btn-group"><button class="btn" :disabled="!capabilityItems.length" @click="openDelegationModal">生成管理令牌</button><button class="btn btn-primary" @click="openTemplateEditor()">新建上线模板</button></div>
+      <div class="btn-group"><button v-if="hasHysteriaCapability" class="btn" :disabled="openingManager" @click="openHysteriaManager">{{ openingManager ? '打开中...' : '打开管理台' }}</button><button class="btn btn-primary" @click="openTemplateEditor()">新建上线模板</button></div>
     </div>
     <div v-if="error" class="k8s-banner k8s-banner-warn section-gap">{{ error }}</div>
 
@@ -14,10 +14,7 @@
       <div class="section-actions"><button class="btn btn-sm" :disabled="savingCapabilities" @click="saveCapabilities">{{ savingCapabilities ? '保存中...' : '保存能力标签' }}</button></div>
     </section>
 
-    <section v-if="application" class="detail-section delegation-section">
-      <div class="section-heading"><div><h2>管理台访问令牌</h2><p>为外部管理台签发当前项目和环境范围内的短期访问令牌；令牌不会在平台保存。</p></div><button class="btn btn-sm" :disabled="!capabilityItems.length" @click="openDelegationModal">生成令牌</button></div>
-      <div v-if="!capabilityItems.length" class="empty-inline">请先保存至少一个能力标签，才能签发管理台访问令牌。</div>
-    </section>
+    <section v-if="application && hasHysteriaCapability" class="detail-section"><div class="section-heading"><div><h2>Hysteria2 管理台</h2><p>管理台会自动获得当前应用范围内的短期操作权限，平台会话可持续续期。</p></div><button class="btn btn-sm" :disabled="openingManager" @click="openHysteriaManager">打开管理台</button></div></section>
 
     <section v-if="application" class="detail-section">
       <div class="section-heading"><div><h2>对外域名</h2><p>域名绑定独立于发布版本，变更时会同步应用 Ingress。</p></div><button class="btn btn-sm" @click="openEndpointEditor()">绑定域名</button></div>
@@ -57,7 +54,6 @@
       <div class="form-group"><div class="volume-heading"><label class="form-label">Service 端口</label><button type="button" class="btn btn-sm" @click="addServicePort">+ 添加端口</button></div><div class="service-port-list" :class="{ 'with-node-port': templateForm.service.type === 'NodePort' }"><div class="service-port-headings"><span>名称</span><span>协议</span><span>Service 端口</span><span>Target Port</span><span v-if="templateForm.service.type === 'NodePort'">NodePort（可选）</span><span></span></div><div v-for="(servicePort, index) in templateForm.service.ports" :key="index" class="service-port-row"><input v-model.trim="servicePort.name" class="form-input" required aria-label="Service 端口名称" placeholder="端口名称" /><select v-model="servicePort.protocol" class="form-select" aria-label="传输协议"><option value="TCP">TCP</option><option value="UDP">UDP</option></select><input v-model.number="servicePort.port" type="number" min="1" class="form-input" required aria-label="Service 端口" placeholder="Service 端口" /><input v-model.number="servicePort.target_port" type="number" min="1" class="form-input" required aria-label="Target Port" placeholder="Target Port" /><input v-if="templateForm.service.type === 'NodePort'" v-model.number="servicePort.node_port" type="number" min="1" class="form-input" aria-label="NodePort" placeholder="自动分配" /><button type="button" class="icon-button" title="移除 Service 端口" :disabled="templateForm.service.ports.length === 1" @click="removeServicePort(index)"><Trash2 :size="16" /></button></div></div><p v-if="templateForm.service.type === 'NodePort'" class="form-hint">留空由 Kubernetes 自动分配 NodePort；发布完成后使用节点 IP 和实际分配端口访问。</p><p v-if="hasTCPServicePort" class="form-hint">HTTP 服务保存模板并发布后，在页面顶部“对外域名”绑定已就绪域名，平台会创建 HTTP Ingress 并转发到第一个 TCP Service 端口。Ingress 只转发 HTTP/HTTPS；其他 TCP 协议请使用 NodePort 或 LoadBalancer。</p><p v-else class="form-hint">仅 UDP Service 不支持 HTTP Ingress；请使用 NodePort 或 LoadBalancer 直接暴露端口。</p></div></section>
     </form><div class="modal-actions editor-actions"><button type="button" class="btn" @click="closeTemplateEditor">取消</button><button form="template-editor-form" class="btn btn-primary" :disabled="saving">{{ saving ? '保存中...' : '保存模板' }}</button></div></div></div></div></Teleport>
     <Teleport to="body"><div v-if="showEndpointEditor" class="overlay" @click.self="closeEndpointEditor"><div class="modal"><h2 class="modal-title">{{ editingEndpoint ? '编辑对外域名' : '绑定对外域名' }}</h2><form @submit.prevent="saveEndpoint"><div class="form-group"><label class="form-label">受管域名</label><select v-model.number="endpointForm.domain_id" class="form-select" required><option :value="0" disabled>选择当前环境的已就绪域名</option><option v-for="domain in readyDomains" :key="domain.id" :value="domain.id">{{ domain.hostname }}</option></select></div><div class="form-group"><label class="form-label">访问路径</label><input v-model.trim="endpointForm.path" class="form-input" required placeholder="/" /></div><label class="check-row"><input v-model="endpointForm.tls_enabled" type="checkbox" /> 启用 HTTPS</label><div class="modal-actions"><button type="button" class="btn" @click="closeEndpointEditor">取消</button><button class="btn btn-primary" :disabled="saving">{{ saving ? '保存中...' : '保存绑定' }}</button></div></form></div></div></Teleport>
-    <Teleport to="body"><div v-if="showDelegationModal" class="overlay" @click.self="closeDelegationModal"><div class="modal delegation-modal"><h2 class="modal-title">生成管理台访问令牌</h2><template v-if="!delegationToken"><p class="modal-copy">令牌仅允许访问当前应用所属项目和环境，最长有效期为 10 分钟。请在外部管理台登录页立即使用。</p><form @submit.prevent="createDelegation"><div class="form-group"><label class="form-label">能力标签</label><select v-model="delegationCapability" class="form-select" required><option v-for="capability in delegationCapabilities" :key="capability" :value="capability">{{ capability }}</option></select></div><div class="form-group"><label class="form-label">授权环境</label><input class="form-input" :value="application?.environment?.name || '当前环境'" disabled /></div><p v-if="delegationError" class="form-error">{{ delegationError }}</p><div class="modal-actions"><button type="button" class="btn" @click="closeDelegationModal">取消</button><button class="btn btn-primary" :disabled="creatingDelegation">{{ creatingDelegation ? '生成中...' : '生成令牌' }}</button></div></form></template><template v-else><p class="modal-copy">令牌已生成，将在 10 分钟后失效。关闭此窗口后不能再次查看。</p><label class="form-label">委托令牌</label><textarea class="form-input delegation-token" :value="delegationToken" readonly></textarea><p v-if="copyNotice" class="copy-notice">{{ copyNotice }}</p><div class="modal-actions"><button class="btn" @click="copyDelegation">复制令牌</button><button class="btn btn-primary" @click="closeDelegationModal">完成</button></div></template></div></div></Teleport>
   </div>
 </template>
 
@@ -103,18 +99,13 @@ const editingEndpoint = ref(null)
 const workloadKind = ref('deployment')
 const capabilityItems = ref([])
 const savingCapabilities = ref(false)
-const showDelegationModal = ref(false)
-const delegationCapability = ref('')
-const delegationToken = ref('')
-const delegationError = ref('')
-const creatingDelegation = ref(false)
-const copyNotice = ref('')
+const openingManager = ref(false)
 const templateForm = ref(newTemplateForm())
 const endpointForm = ref(newEndpointForm())
 
 const readyDomains = computed(() => domains.value.filter(domain => domain.enabled && domain.certificate?.status === 'Ready'))
 const readyTLSCertificates = computed(() => readyDomains.value.filter(domain => domain.tls_secret_name))
-const delegationCapabilities = computed(() => capabilityItems.value.map(item => item.value.trim()).filter(Boolean))
+const hasHysteriaCapability = computed(() => capabilityItems.value.some(item => item.value.trim().toLowerCase() === 'hysteria2'))
 const applicationConfigName = computed(() => application.value ? `${application.value.name}-config` : '应用配置')
 const templateDependencies = computed(() => templates.value.flatMap(template => (template.spec?.file_mounts || []).map((mount, index) => {
   if (mount.source_type === 'application_config') {
@@ -165,10 +156,15 @@ function removeArgumentItem(index) { templateForm.value.argument_items.splice(in
 function addCapability() { capabilityItems.value.push({ value: '' }) }
 function removeCapability(index) { capabilityItems.value.splice(index, 1) }
 async function saveCapabilities() { savingCapabilities.value = true; error.value = ''; try { const capabilities = capabilityItems.value.map(item => item.value.trim()).filter(Boolean); const updated = await api.put(`/applications/${props.applicationID}/capabilities`, { capabilities }); application.value = updated; capabilityItems.value = (updated.capabilities || []).map(value => ({ value })) } catch (e) { error.value = e.message || '保存能力标签失败' } finally { savingCapabilities.value = false } }
-function openDelegationModal() { delegationCapability.value = delegationCapabilities.value.includes('hysteria2') ? 'hysteria2' : delegationCapabilities.value[0] || ''; delegationToken.value = ''; delegationError.value = ''; copyNotice.value = ''; showDelegationModal.value = true }
-function closeDelegationModal() { showDelegationModal.value = false; delegationToken.value = ''; delegationError.value = ''; copyNotice.value = '' }
-async function createDelegation() { creatingDelegation.value = true; delegationError.value = ''; try { const result = await api.post(`/applications/${props.applicationID}/delegations`, { capability: delegationCapability.value }); delegationToken.value = result.token } catch (e) { delegationError.value = e.message || '生成管理令牌失败' } finally { creatingDelegation.value = false } }
-async function copyDelegation() { try { await navigator.clipboard.writeText(delegationToken.value); copyNotice.value = '令牌已复制到剪贴板。' } catch (_) { copyNotice.value = '无法访问剪贴板，请手动复制令牌。' } }
+async function openHysteriaManager() {
+  openingManager.value = true
+  error.value = ''
+  try {
+    const result = await api.post(`/applications/${props.applicationID}/console-sessions`, {})
+    if (!result.handoff_url) throw new Error('管理台地址未配置')
+    window.open(result.handoff_url, '_blank', 'noopener,noreferrer')
+  } catch (e) { error.value = e.message || '打开管理台失败' } finally { openingManager.value = false }
+}
 function addConfigItem() { templateForm.value.config_items.push({ key: '', value: '' }) }
 function removeConfigItem(index) { templateForm.value.config_items.splice(index, 1) }
 function addSecretItem() { templateForm.value.secret_items.push({ key: '', value: '' }) }

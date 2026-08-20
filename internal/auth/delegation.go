@@ -26,6 +26,7 @@ type DelegationClaims struct {
 	Username       string   `json:"username"`
 	ProjectID      uint     `json:"project_id"`
 	EnvironmentIDs []uint   `json:"environment_ids"`
+	ApplicationIDs []uint   `json:"application_ids,omitempty"`
 	Capability     string   `json:"capability"`
 	Actions        []string `json:"actions"`
 	JTI            string   `json:"jti"`
@@ -42,6 +43,7 @@ func GenerateDelegationToken(secret []byte, claims DelegationClaims, ttl time.Du
 	claims.Capability = strings.ToLower(strings.TrimSpace(claims.Capability))
 	claims.Actions = normalizedDelegationActions(claims.Actions)
 	claims.EnvironmentIDs = normalizedEnvironmentIDs(claims.EnvironmentIDs)
+	claims.ApplicationIDs = normalizedApplicationIDs(claims.ApplicationIDs)
 	if claims.JTI == "" {
 		jti, err := newDelegationID()
 		if err != nil {
@@ -97,6 +99,16 @@ func (c DelegationClaims) AllowsEnvironment(id uint) bool {
 	return index < len(c.EnvironmentIDs) && c.EnvironmentIDs[index] == id
 }
 
+// AllowsApplication narrows a delegation to explicit application IDs when the
+// issuer provides them. Empty remains compatible with older delegations.
+func (c DelegationClaims) AllowsApplication(id uint) bool {
+	if len(c.ApplicationIDs) == 0 {
+		return true
+	}
+	index := sort.Search(len(c.ApplicationIDs), func(index int) bool { return c.ApplicationIDs[index] >= id })
+	return index < len(c.ApplicationIDs) && c.ApplicationIDs[index] == id
+}
+
 func (c DelegationClaims) valid(now time.Time) bool {
 	return c.Type == DelegationTokenType && c.Audience == DelegationTokenAudience && c.UserID != 0 && c.ProjectID != 0 && c.Capability != "" && c.JTI != "" && len(c.Actions) > 0 && c.Exp > now.Unix() && c.Iat <= now.Unix() && c.Exp-c.Iat <= int64(MaxDelegationTTL/time.Second)
 }
@@ -118,6 +130,14 @@ func normalizedDelegationActions(actions []string) []string {
 }
 
 func normalizedEnvironmentIDs(ids []uint) []uint {
+	return normalizedIDs(ids)
+}
+
+func normalizedApplicationIDs(ids []uint) []uint {
+	return normalizedIDs(ids)
+}
+
+func normalizedIDs(ids []uint) []uint {
 	seen := make(map[uint]struct{}, len(ids))
 	for _, id := range ids {
 		if id != 0 {

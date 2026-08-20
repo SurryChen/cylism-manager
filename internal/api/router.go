@@ -16,12 +16,13 @@ var K8s *k8s.Client
 
 // AuthConfig 认证相关配置
 type AuthConfig struct {
-	JWTSecret       []byte
-	AccessTokenTTL  time.Duration
-	RefreshTokenTTL time.Duration
-	AdminUser       string
-	AdminPassword   string
-	PlatformURL     string
+	JWTSecret          []byte
+	AccessTokenTTL     time.Duration
+	RefreshTokenTTL    time.Duration
+	AdminUser          string
+	AdminPassword      string
+	PlatformURL        string
+	HysteriaManagerURL string
 }
 
 // RegisterRoutes 注册所有 API 路由
@@ -155,7 +156,7 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 	operationHandler := NewOperationHandler(s)
 	apiGroup.GET("/operations", operationHandler.ListOperations)
 
-	applicationHandler := NewApplicationHandler(s, encKey).WithDelegationSecret(authCfg.JWTSecret)
+	applicationHandler := NewApplicationHandler(s, encKey).WithDelegationSecret(authCfg.JWTSecret).WithHysteriaManagerURL(authCfg.HysteriaManagerURL)
 	imageRegistryHandler := NewImageRegistryHandler(s, encKey)
 	imageRegistries := apiGroup.Group("/image-registries")
 	{
@@ -290,6 +291,7 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 		applications.POST("/:id/managed-documents", applicationHandler.CreateManagedDocument)
 		applications.DELETE("/:id/managed-documents/:documentID", applicationHandler.DeleteManagedDocument)
 		applications.POST("/:id/delegations", applicationHandler.CreateDelegation)
+		applications.POST("/:id/console-sessions", applicationHandler.CreateConsoleSession)
 		applications.PUT("/:id/workload-kind", applicationHandler.UpdateWorkloadKind)
 		applications.GET("/:id/runtime", applicationHandler.GetApplicationRuntime)
 		applications.GET("/:id/deployment-templates", applicationHandler.ListDeploymentTemplates)
@@ -320,6 +322,12 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 		integration.PATCH("/:id/managed-documents/:documentID", applicationHandler.IntegrationPatchManagedDocument)
 		integration.POST("/:id/restarts", applicationHandler.IntegrationRestartApplication)
 		integration.GET("/:id/releases/:releaseID", applicationHandler.IntegrationGetRelease)
+	}
+	// Console handoff and renewal use opaque bearer credentials, not browser JWTs.
+	console := r.Group("/api/integrations/console-sessions")
+	{
+		console.POST("/exchange", applicationHandler.ExchangeConsoleSession)
+		console.POST("/delegation", applicationHandler.CreateConsoleDelegation)
 	}
 	workspace := apiGroup.Group("/workspace")
 	{

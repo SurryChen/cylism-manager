@@ -2,6 +2,9 @@ package api
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/cylism/cylism-manager/internal/application"
 	"github.com/cylism/cylism-manager/internal/auth"
@@ -61,6 +65,108 @@ type delegationRequest struct {
 	Actions        []string `json:"actions"`
 }
 
+const (
+	consoleHandoffTTL = 60 * time.Second
+	consoleSessionTTL = 8 * time.Hour
+)
+
+func randomOpaqueValue(size int) (string, error) {
+	raw := make([]byte, size)
+	if _, err := rand.Read(raw); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(raw), nil
+}
+
+func opaqueHash(value string) string {
+	sum := sha256.Sum256([]byte(value))
+	return fmt.Sprintf("%x", sum[:])
+}
+
+func (h *ApplicationHandler) CreateConsoleSession(c *gin.Context) {
+	applicationID, err := parseID(c.Param("id"))
+	if err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "应用 ID 无效")
+		return
+	}
+	app, err := h.store.GetApplication(applicationID)
+	if err != nil {
+		model.Error(c, http.StatusNotFound, model.CodeNotFound, "应用不存在")
+		return
+	}
+	capability := "hysteria2"
+	if !applicationHasCapability(*app, capability) {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "该应用不支持 Hysteria2 管理")
+		return
+	}
+	actions := []string{"application:read", "managed_document:write", "application:restart"}
+	managerURL := strings.TrimRight(h.hysteriaManagerURL, "/")
+	if managerURL == "" {
+		model.Error(c, http.StatusInternalServerError, model.CodeValidationFail, "Hysteria Manager 地址未配置")
+		return
+	}
+	now := time.Now()
+	code, err := randomOpaqueValue(32)
+	if err != nil {
+		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "创建管理会话失败")
+		return
+	}
+	session := &model.IntegrationConsoleSession{HandoffCodeHash: opaqueHash(code), UserID: getUserID(c), ProjectID: app.ProjectID, ApplicationID: app.ID, EnvironmentID: app.EnvironmentID, Capability: capability, ActionsData: strings.Join(actions, ","), HandoffExpiresAt: now.Add(consoleHandoffTTL), ExpiresAt: now.Add(consoleSessionTTL)}
+	if err := h.store.CreateIntegrationConsoleSession(session); err != nil {
+		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "创建管理会话失败")
+		return
+	}
+	model.Success(c, gin.H{"handoff_code": code, "handoff_url": managerURL + "?handoff_code=" + code, "expires_in": int(consoleHandoffTTL.Seconds())})
+}
+
+func bearerValue(c *gin.Context) string {
+	parts := strings.SplitN(c.GetHeader("Authorization"), " ", 2)
+	if len(parts) == 2 && parts[0] == "Bearer" {
+		return strings.TrimSpace(parts[1])
+	}
+	return ""
+}
+
+func (h *ApplicationHandler) ExchangeConsoleSession(c *gin.Context) {
+	code := bearerValue(c)
+	if code == "" {
+		model.Error(c, http.StatusUnauthorized, model.CodeUnauthorized, "未提供跳转码")
+		return
+	}
+	now := time.Now()
+	token, err := randomOpaqueValue(48)
+	if err != nil {
+		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "交换管理会话失败")
+		return
+	}
+	session, err := h.store.ExchangeIntegrationConsoleSession(opaqueHash(code), opaqueHash(token), now.Add(consoleSessionTTL), now)
+	if err != nil {
+		model.Error(c, http.StatusUnauthorized, model.CodeUnauthorized, "跳转码无效或已过期")
+		return
+	}
+	model.Success(c, gin.H{"session_token": token, "expires_at": session.ExpiresAt})
+}
+
+func (h *ApplicationHandler) CreateConsoleDelegation(c *gin.Context) {
+	token := bearerValue(c)
+	if token == "" {
+		model.Error(c, http.StatusUnauthorized, model.CodeUnauthorized, "未提供管理会话")
+		return
+	}
+	session, err := h.store.GetActiveIntegrationConsoleSession(opaqueHash(token), time.Now())
+	if err != nil {
+		model.Error(c, http.StatusUnauthorized, model.CodeUnauthorized, "管理会话无效或已过期")
+		return
+	}
+	actions := strings.Split(session.ActionsData, ",")
+	delegation, err := auth.GenerateDelegationToken(h.delegationSecret, auth.DelegationClaims{UserID: session.UserID, ProjectID: session.ProjectID, EnvironmentIDs: []uint{session.EnvironmentID}, ApplicationIDs: []uint{session.ApplicationID}, Capability: session.Capability, Actions: actions}, auth.MaxDelegationTTL)
+	if err != nil {
+		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "签发委托失败")
+		return
+	}
+	model.Success(c, gin.H{"token": delegation, "expires_in": int(auth.MaxDelegationTTL.Seconds())})
+}
+
 func (h *ApplicationHandler) CreateDelegation(c *gin.Context) {
 	applicationID, err := parseID(c.Param("id"))
 	if err != nil {
@@ -106,6 +212,7 @@ func (h *ApplicationHandler) CreateDelegation(c *gin.Context) {
 	token, err := auth.GenerateDelegationToken(h.delegationSecret, auth.DelegationClaims{
 		UserID: getUserID(c), Username: c.GetString("username"), ProjectID: app.ProjectID,
 		EnvironmentIDs: req.EnvironmentIDs, Capability: normalized[0], Actions: req.Actions,
+		ApplicationIDs: []uint{app.ID},
 	}, auth.MaxDelegationTTL)
 	if err != nil {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "签发委托失败")
@@ -216,7 +323,7 @@ func (h *ApplicationHandler) IntegrationDiscoverApplications(c *gin.Context) {
 	}
 	filtered := make([]model.Application, 0, len(applications))
 	for _, app := range applications {
-		if claims.AllowsEnvironment(app.EnvironmentID) && applicationHasCapability(app, claims.Capability) {
+		if claims.AllowsEnvironment(app.EnvironmentID) && claims.AllowsApplication(app.ID) && applicationHasCapability(app, claims.Capability) {
 			filtered = append(filtered, app)
 		}
 	}
@@ -394,7 +501,7 @@ func (h *ApplicationHandler) integrationApplication(c *gin.Context, action strin
 	if !ok {
 		return nil, false
 	}
-	if app.ProjectID != claims.ProjectID || !claims.AllowsEnvironment(app.EnvironmentID) || !applicationHasCapability(*app, claims.Capability) {
+	if app.ProjectID != claims.ProjectID || !claims.AllowsEnvironment(app.EnvironmentID) || !claims.AllowsApplication(app.ID) || !applicationHasCapability(*app, claims.Capability) {
 		integrationForbidden(c)
 		return nil, false
 	}

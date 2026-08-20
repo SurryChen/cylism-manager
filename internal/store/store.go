@@ -75,6 +75,7 @@ func New(dsn string) (*Store, error) {
 		&model.Project{},
 		&model.Environment{},
 		&model.Application{},
+		&model.IntegrationConsoleSession{},
 		&model.ApplicationEndpoint{},
 		&model.ApplicationDeploymentTemplate{},
 		&model.ManagedDocument{},
@@ -1176,6 +1177,37 @@ func (s *Store) GetApplication(id uint) (*model.Application, error) {
 		application.LoadCapabilities()
 	}
 	return &application, err
+}
+
+func (s *Store) CreateIntegrationConsoleSession(session *model.IntegrationConsoleSession) error {
+	return s.db.Create(session).Error
+}
+
+// ExchangeIntegrationConsoleSession consumes a one-time handoff code and
+// atomically binds a new opaque console session token to that record.
+func (s *Store) ExchangeIntegrationConsoleSession(handoffHash, sessionHash string, sessionExpiresAt, now time.Time) (*model.IntegrationConsoleSession, error) {
+	var result model.IntegrationConsoleSession
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		query := tx.Model(&model.IntegrationConsoleSession{}).Where("handoff_code_hash = ? AND handoff_used_at IS NULL AND revoked_at IS NULL AND handoff_expires_at > ?", handoffHash, now).
+			Updates(map[string]interface{}{"handoff_used_at": now, "session_token_hash": sessionHash, "expires_at": sessionExpiresAt})
+		if query.Error != nil {
+			return query.Error
+		}
+		if query.RowsAffected != 1 {
+			return gorm.ErrRecordNotFound
+		}
+		return tx.Where("handoff_code_hash = ?", handoffHash).First(&result).Error
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+func (s *Store) GetActiveIntegrationConsoleSession(tokenHash string, now time.Time) (*model.IntegrationConsoleSession, error) {
+	var session model.IntegrationConsoleSession
+	err := s.db.Where("session_token_hash = ? AND revoked_at IS NULL AND expires_at > ?", tokenHash, now).First(&session).Error
+	return &session, err
 }
 
 func (s *Store) GetApplicationByEnvironmentName(environmentID uint, name string) (*model.Application, error) {
