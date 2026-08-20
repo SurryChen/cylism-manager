@@ -196,6 +196,10 @@ func (h *AgentHandler) WorkloadLogs(w http.ResponseWriter, r *http.Request) {
 	}
 	namespace, pod, container := r.URL.Query().Get("namespace"), r.URL.Query().Get("pod"), r.URL.Query().Get("container")
 	tail, err := strconv.ParseInt(r.URL.Query().Get("tail"), 10, 64)
+	previous := false
+	if value := r.URL.Query().Get("previous"); value != "" {
+		previous, err = strconv.ParseBool(value)
+	}
 	if !validAgentNamespace(namespace) || !validAgentName(pod) || !validAgentContainer(container) || err != nil || tail < 1 || tail > 200 {
 		writeAgentError(w, http.StatusBadRequest, "invalid workload logs query", false)
 		return
@@ -207,7 +211,7 @@ func (h *AgentHandler) WorkloadLogs(w http.ResponseWriter, r *http.Request) {
 		writeAgentError(w, http.StatusServiceUnavailable, "Kubernetes client unavailable", true)
 		return
 	}
-	stream, err := h.client.Clientset.CoreV1().Pods(namespace).GetLogs(pod, &corev1.PodLogOptions{Container: container, TailLines: &tail}).Stream(r.Context())
+	stream, err := h.client.Clientset.CoreV1().Pods(namespace).GetLogs(pod, &corev1.PodLogOptions{Container: container, TailLines: &tail, Previous: previous}).Stream(r.Context())
 	if err != nil {
 		writeAgentError(w, http.StatusBadGateway, "workload logs unavailable", true)
 		return
@@ -222,8 +226,8 @@ func (h *AgentHandler) WorkloadLogs(w http.ResponseWriter, r *http.Request) {
 	if truncated {
 		content = content[:agentLogLimit]
 	}
-	h.audit(instance, "agent.workload_logs", map[string]string{"capability": model.AgentCapabilityWorkloadLogs, "namespace": namespace, "pod": pod, "container": container})
-	writeAgentResponse(w, http.StatusOK, agentAPIResponse{Status: "ok", Data: map[string]any{"logs": redactAgentText(string(content)), "truncated": truncated}, Summary: "workload logs retrieved"})
+	h.audit(instance, "agent.workload_logs", map[string]string{"capability": model.AgentCapabilityWorkloadLogs, "namespace": namespace, "pod": pod, "container": container, "previous": strconv.FormatBool(previous)})
+	writeAgentResponse(w, http.StatusOK, agentAPIResponse{Status: "ok", Data: map[string]any{"logs": redactAgentText(string(content)), "truncated": truncated, "previous": previous}, Summary: "workload logs retrieved"})
 }
 
 // PodGet returns only status fields useful for scheduling and startup diagnosis.

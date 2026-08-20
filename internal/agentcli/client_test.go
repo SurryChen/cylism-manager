@@ -64,6 +64,39 @@ func TestRunCapabilityStatusUsesFixedAgentEndpoint(t *testing.T) {
 	}
 }
 
+func TestRunWorkloadLogsSupportsPreviousContainer(t *testing.T) {
+	tests := []struct {
+		name  string
+		args  []string
+		query string
+	}{
+		{
+			name:  "current container by default",
+			args:  []string{"workload", "logs", "--namespace", "operations", "--pod", "api-1", "--container", "api", "--tail", "200", "--output", "json"},
+			query: "container=api&namespace=operations&pod=api-1&tail=200",
+		},
+		{
+			name:  "previous container",
+			args:  []string{"workload", "logs", "--namespace", "operations", "--pod", "api-1", "--container", "api", "--tail", "200", "--previous", "--output", "json"},
+			query: "container=api&namespace=operations&pod=api-1&previous=true&tail=200",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodGet || r.URL.Path != "/api/agent/v1/workloads/logs" || r.URL.RawQuery != test.query {
+					t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
+				}
+				_, _ = w.Write([]byte(`{"status":"ok","summary":"workload logs retrieved"}`))
+			}))
+			defer server.Close()
+			if code := Run(context.Background(), test.args, Config{BaseURL: server.URL, TokenFile: writeToken(t, "runtime-token")}, &bytes.Buffer{}); code != 0 {
+				t.Fatalf("expected success, got %d", code)
+			}
+		})
+	}
+}
+
 func TestRunPendingPodDiagnosticCommandsUseFixedEndpoints(t *testing.T) {
 	tests := []struct {
 		args  []string

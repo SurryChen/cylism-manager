@@ -140,11 +140,16 @@ func parseCommand(args []string) (requestSpec, error) {
 		pod := flags.String("pod", "", "")
 		container := flags.String("container", "", "")
 		tail := flags.Int("tail", 0, "")
+		previous := flags.Bool("previous", false, "")
 		output := flags.String("output", "", "")
 		if err := flags.Parse(args[2:]); err != nil || flags.NArg() != 0 || *output != "json" || !validName(*namespace) || !validName(*pod) || !validContainer(*container) || *tail < 1 || *tail > 200 {
 			return requestSpec{}, errors.New("workload logs requires valid --namespace, --pod, --container, --tail, and --output json")
 		}
-		return requestSpec{method: http.MethodGet, path: "/api/agent/v1/workloads/logs", query: url.Values{"namespace": {*namespace}, "pod": {*pod}, "container": {*container}, "tail": {strconv.Itoa(*tail)}}}, nil
+		query := url.Values{"namespace": {*namespace}, "pod": {*pod}, "container": {*container}, "tail": {strconv.Itoa(*tail)}}
+		if *previous {
+			query.Set("previous", "true")
+		}
+		return requestSpec{method: http.MethodGet, path: "/api/agent/v1/workloads/logs", query: query}, nil
 	case "pod get":
 		flags := flag.NewFlagSet("pod get", flag.ContinueOnError)
 		flags.SetOutput(io.Discard)
