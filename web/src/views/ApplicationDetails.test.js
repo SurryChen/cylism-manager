@@ -6,7 +6,7 @@ import ApplicationDetails from './ApplicationDetails.vue'
 vi.mock('../api/index.js', () => ({
   api: {
     get: vi.fn(path => {
-      if (path === '/applications/1') return Promise.resolve({ application: { id: 1, project_id: 2, environment_id: 3, name: 'order-api', workload_kind: 'deployment', project: { name: 'commerce' }, environment: { name: 'production', namespace: 'commerce-prod' } }, releases: [{ id: 3, sequence: 2, image: 'registry.example.com/order-api:2.0.0', status: 'succeeded' }] })
+      if (path === '/applications/1') return Promise.resolve({ application: { id: 1, project_id: 2, environment_id: 3, name: 'order-api', workload_kind: 'deployment', capabilities: ['hysteria2'], project: { name: 'commerce' }, environment: { name: 'production', namespace: 'commerce-prod' } }, releases: [{ id: 3, sequence: 2, image: 'registry.example.com/order-api:2.0.0', status: 'succeeded' }] })
       if (path === '/applications/1/deployment-templates') return Promise.resolve([{ id: 4, name: '标准生产配置', enabled: true, is_default: true, revision: 2, spec: { image: 'registry.example.com/order-api', replicas: 2, container_port: 8080, service: { port: 80 } } }])
       if (path === '/applications/1/endpoints') return Promise.resolve([{ id: 7, domain_id: 4, domain: 'api.example.com', path: '/', service_port: 80, tls_enabled: true }, { id: 8, domain_id: 5, domain: 'admin.example.com', path: '/console', service_port: 80, tls_enabled: false }])
       if (path === '/domains?environment_id=3') return Promise.resolve([{ id: 4, hostname: 'api.example.com', enabled: true, certificate: { status: 'Ready' } }, { id: 5, hostname: 'admin.example.com', enabled: true, certificate: { status: 'Ready' } }])
@@ -35,6 +35,43 @@ describe('ApplicationDetails view', () => {
     expect(wrapper.text()).toContain('api.example.com')
     expect(wrapper.text()).toContain('admin.example.com')
     expect(wrapper.find('[aria-label="工作负载类型"]').element.value).toBe('deployment')
+  })
+
+  it('edits generic application capability labels without modifying templates', async () => {
+    const { api } = await import('../api/index.js')
+    api.put.mockReset()
+    api.put.mockResolvedValue({ id: 1, name: 'order-api', capabilities: ['hysteria2', 'metrics'] })
+    const wrapper = mount(ApplicationDetails, {
+      props: { applicationID: '1' },
+      global: { stubs: { RouterLink: { template: '<a><slot /></a>' } } },
+    })
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    expect(wrapper.find('.capability-list input').element.value).toBe('hysteria2')
+    await wrapper.find('.capability-section .section-heading .btn').trigger('click')
+    await wrapper.findAll('[aria-label="能力标签"]')[1].setValue('metrics')
+    await wrapper.find('.section-actions .btn').trigger('click')
+
+    expect(api.put).toHaveBeenCalledWith('/applications/1/capabilities', { capabilities: ['hysteria2', 'metrics'] })
+    expect(api.put).not.toHaveBeenCalledWith(expect.stringContaining('deployment-templates'), expect.anything())
+    expect(wrapper.findAll('[aria-label="能力标签"]')).toHaveLength(2)
+  })
+
+  it('allows an empty capability list and shows capability API errors', async () => {
+    const { api } = await import('../api/index.js')
+    api.put.mockReset()
+    api.put.mockRejectedValue(new Error('能力标签格式无效'))
+    const wrapper = mount(ApplicationDetails, {
+      props: { applicationID: '1' },
+      global: { stubs: { RouterLink: { template: '<a><slot /></a>' } } },
+    })
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    await wrapper.find('.capability-row .icon-button').trigger('click')
+    await wrapper.find('.section-actions .btn').trigger('click')
+
+    expect(api.put).toHaveBeenCalledWith('/applications/1/capabilities', { capabilities: [] })
+    expect(wrapper.text()).toContain('能力标签格式无效')
   })
 
   it('serializes row-based startup and environment values into the template spec', async () => {
@@ -222,7 +259,8 @@ describe('ApplicationDetails view', () => {
     })
     await new Promise(resolve => setTimeout(resolve, 0))
 
-    await wrapper.find('.detail-section .section-heading .btn').trigger('click')
+    const endpointSection = wrapper.findAll('.detail-section').find(section => section.find('h2').text() === '对外域名')
+    await endpointSection.find('.section-heading .btn').trigger('click')
     await wrapper.find('.modal .form-select').setValue('4')
     await wrapper.find('.modal .form-input').setValue('/v2')
     await wrapper.find('.modal form').trigger('submit.prevent')

@@ -505,6 +505,8 @@ type Application struct {
 	EnvironmentID               uint                  `gorm:"uniqueIndex:idx_environment_application;not null" json:"environment_id"`
 	Name                        string                `gorm:"size:128;uniqueIndex:idx_environment_application;not null" json:"name"`
 	WorkloadKind                string                `gorm:"size:32;default:deployment;not null" json:"workload_kind"`
+	CapabilitiesData            string                `gorm:"column:capabilities;type:text;not null;default:'[]'" json:"-"`
+	Capabilities                []string              `gorm:"-" json:"capabilities"`
 	DefaultDeploymentTemplateID *uint                 `gorm:"index" json:"default_deployment_template_id,omitempty"`
 	CreatedBy                   uint                  `gorm:"index;not null" json:"created_by"`
 	CreatedAt                   time.Time             `json:"created_at"`
@@ -707,6 +709,25 @@ type ApplicationDeploymentTemplate struct {
 	UpdatedBy        uint      `gorm:"index" json:"updated_by"`
 	CreatedAt        time.Time `json:"created_at"`
 	UpdatedAt        time.Time `json:"updated_at"`
+}
+
+// ManagedDocument explicitly grants a constrained integration the ability to
+// update one structured key that an application already mounts read-only.
+// It never stores the document content itself.
+type ManagedDocument struct {
+	ID            uint      `gorm:"primaryKey" json:"id"`
+	ApplicationID uint      `gorm:"uniqueIndex:idx_managed_document_binding;not null" json:"application_id"`
+	ResourceKind  string    `gorm:"size:16;uniqueIndex:idx_managed_document_binding;not null" json:"resource_kind"`
+	ResourceName  string    `gorm:"size:253;uniqueIndex:idx_managed_document_binding;not null" json:"resource_name"`
+	Key           string    `gorm:"size:253;uniqueIndex:idx_managed_document_binding;not null" json:"key"`
+	Format        string    `gorm:"size:16;not null" json:"format"`
+	AllowedPaths  string    `gorm:"type:text;not null" json:"-"`
+	SummaryPath   string    `gorm:"size:512" json:"summary_path,omitempty"`
+	Version       uint      `gorm:"not null;default:1" json:"version"`
+	Enabled       bool      `gorm:"not null;default:true" json:"enabled"`
+	CreatedBy     uint      `gorm:"index;not null" json:"created_by"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
 }
 
 // Release 是应用一次不可变的期望状态快照；DesiredSpec 不得包含 Secret 明文。

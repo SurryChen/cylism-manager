@@ -77,6 +77,7 @@ func New(dsn string) (*Store, error) {
 		&model.Application{},
 		&model.ApplicationEndpoint{},
 		&model.ApplicationDeploymentTemplate{},
+		&model.ManagedDocument{},
 		&model.ImageRegistry{},
 		&model.NodeRegistryMirror{},
 		&model.NodeRegistryMirrorNode{},
@@ -994,6 +995,9 @@ func (s *Store) CountEnvironmentApplications(environmentID uint) (int64, error) 
 }
 
 func (s *Store) CreateApplication(application *model.Application) error {
+	if err := application.SetCapabilities(application.Capabilities); err != nil {
+		return err
+	}
 	return s.db.Create(application).Error
 }
 
@@ -1168,12 +1172,18 @@ func (s *Store) CountApplicationEndpointRoute(domainID uint, path string, except
 func (s *Store) GetApplication(id uint) (*model.Application, error) {
 	var application model.Application
 	err := s.db.Preload("Project.DefaultImageRegistry").Preload("Environment").Preload("Endpoints", func(db *gorm.DB) *gorm.DB { return db.Order("id asc") }).First(&application, id).Error
+	if err == nil {
+		application.LoadCapabilities()
+	}
 	return &application, err
 }
 
 func (s *Store) GetApplicationByEnvironmentName(environmentID uint, name string) (*model.Application, error) {
 	var application model.Application
 	err := s.db.Preload("Project.DefaultImageRegistry").Preload("Environment").Where("environment_id = ? AND name = ?", environmentID, name).First(&application).Error
+	if err == nil {
+		application.LoadCapabilities()
+	}
 	return &application, err
 }
 
@@ -1187,6 +1197,11 @@ func (s *Store) ListApplications(scope ...uint) ([]model.Application, error) {
 		query = query.Where("environment_id = ?", scope[1])
 	}
 	err := query.Find(&applications).Error
+	if err == nil {
+		for index := range applications {
+			applications[index].LoadCapabilities()
+		}
+	}
 	return applications, err
 }
 
@@ -1469,7 +1484,70 @@ func (s *Store) CreateRelease(release *model.Release) error {
 }
 
 func (s *Store) UpdateApplication(application *model.Application) error {
+	if err := application.SetCapabilities(application.Capabilities); err != nil {
+		return err
+	}
 	return s.db.Save(application).Error
+}
+
+func (s *Store) CreateManagedDocument(document *model.ManagedDocument) error {
+	if err := document.SetAllowedPaths(mustDocumentPaths(document.AllowedPaths)); err != nil {
+		return err
+	}
+	if document.Version == 0 {
+		document.Version = 1
+	}
+	return s.db.Create(document).Error
+}
+
+func (s *Store) ListManagedDocuments(applicationID uint) ([]model.ManagedDocument, error) {
+	var documents []model.ManagedDocument
+	err := s.db.Where("application_id = ?", applicationID).Order("id asc").Find(&documents).Error
+	return documents, err
+}
+
+func (s *Store) GetManagedDocument(applicationID, documentID uint) (*model.ManagedDocument, error) {
+	var document model.ManagedDocument
+	err := s.db.Where("application_id = ? AND id = ?", applicationID, documentID).First(&document).Error
+	return &document, err
+}
+
+func (s *Store) DeleteManagedDocument(applicationID, documentID uint) error {
+	return s.db.Where("application_id = ? AND id = ?", applicationID, documentID).Delete(&model.ManagedDocument{}).Error
+}
+
+// AdvanceManagedDocumentVersion is optimistic concurrency protection for a
+// resource mutation that has already succeeded in Kubernetes.
+func (s *Store) AdvanceManagedDocumentVersion(applicationID, documentID, expected uint) (uint, error) {
+	result := s.db.Model(&model.ManagedDocument{}).
+		Where("application_id = ? AND id = ? AND version = ? AND enabled = ?", applicationID, documentID, expected, true).
+		Update("version", expected+1)
+	if result.Error != nil {
+		return 0, result.Error
+	}
+	if result.RowsAffected != 1 {
+		return 0, gorm.ErrRecordNotFound
+	}
+	return expected + 1, nil
+}
+
+func mustDocumentPaths(raw string) []string {
+	var paths []string
+	_ = json.Unmarshal([]byte(raw), &paths)
+	return paths
+}
+
+// ReplaceApplicationCapabilities atomically replaces opaque application-level
+// metadata without changing its templates or release history.
+func (s *Store) ReplaceApplicationCapabilities(applicationID uint, values []string) (*model.Application, error) {
+	capabilityHolder := &model.Application{}
+	if err := capabilityHolder.SetCapabilities(values); err != nil {
+		return nil, err
+	}
+	if err := s.db.Model(&model.Application{}).Where("id = ?", applicationID).Update("capabilities", capabilityHolder.CapabilitiesData).Error; err != nil {
+		return nil, err
+	}
+	return s.GetApplication(applicationID)
 }
 
 func (s *Store) GetRelease(id uint) (*model.Release, error) {

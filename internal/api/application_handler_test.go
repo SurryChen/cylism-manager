@@ -6,14 +6,18 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cylism/cylism-manager/internal/application"
+	"github.com/cylism/cylism-manager/internal/crypto"
 	k8sclient "github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/gin-gonic/gin"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
 )
 
@@ -38,8 +42,11 @@ func setupApplicationRouter() (*gin.Engine, *store.Store) {
 	applications := r.Group("/api/applications")
 	{
 		applications.GET("", h.ListApplications)
+		applications.GET("/discovery", h.DiscoverApplications)
 		applications.POST("", h.CreateApplication)
+		applications.PUT("/:id/capabilities", h.UpdateCapabilities)
 		applications.PUT("/:id/workload-kind", h.UpdateWorkloadKind)
+		applications.GET("/:id/runtime", h.GetApplicationRuntime)
 		applications.GET("/:id/deployment-templates", h.ListDeploymentTemplates)
 		applications.POST("/:id/deployment-templates", h.CreateDeploymentTemplate)
 		applications.GET("/:id/deployment-templates/:templateID", h.GetDeploymentTemplate)
@@ -56,6 +63,85 @@ func setupApplicationRouter() (*gin.Engine, *store.Store) {
 	workspace := r.Group("/api/workspace")
 	workspace.GET("/overview", h.WorkspaceOverview)
 	return r, s
+}
+
+func TestApplicationHandlerUpdatesNormalizedCapabilities(t *testing.T) {
+	r, s := setupApplicationRouter()
+	app := createApplicationForReleaseRuntimeTest(t, s)
+
+	response := serve(r, newJSONRequest(http.MethodPut, "/api/applications/1/capabilities", gin.H{"capabilities": []string{"metrics", " hysteria2 ", "metrics"}}))
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"capabilities":["hysteria2","metrics"]`) {
+		t.Fatalf("unexpected capability update response: %d %s", response.Code, response.Body.String())
+	}
+	stored, err := s.GetApplication(app.ID)
+	if err != nil || len(stored.Capabilities) != 2 || stored.Capabilities[0] != "hysteria2" || stored.Capabilities[1] != "metrics" {
+		t.Fatalf("unexpected stored capabilities: %#v err=%v", stored.Capabilities, err)
+	}
+
+	invalid := serve(r, newJSONRequest(http.MethodPut, "/api/applications/1/capabilities", gin.H{"capabilities": []string{"not valid"}}))
+	if invalid.Code != http.StatusBadRequest {
+		t.Fatalf("invalid capability status = %d: %s", invalid.Code, invalid.Body.String())
+	}
+	stored, err = s.GetApplication(app.ID)
+	if err != nil || len(stored.Capabilities) != 2 {
+		t.Fatalf("invalid update must preserve stored capabilities: %#v err=%v", stored.Capabilities, err)
+	}
+}
+
+func TestApplicationHandlerDiscoversCapabilityAndSanitizedRuntime(t *testing.T) {
+	r, s := setupApplicationRouter()
+	app := createApplicationForReleaseRuntimeTest(t, s)
+	if _, err := s.ReplaceApplicationCapabilities(app.ID, []string{"hysteria2"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CreateRelease(&model.Release{ApplicationID: app.ID, Sequence: 4, Version: "2.12.1", Image: "ghcr.io/example/hysteria:2.12.1", DesiredSpec: `{"secrets":{"api":"private"}}`, Status: model.ReleaseStatusSucceeded, CreatedBy: 1}); err != nil {
+		t.Fatal(err)
+	}
+	originalK8s := K8s
+	replicas := int32(2)
+	K8s = &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(
+		&corev1.Service{
+			ObjectMeta: metav1.ObjectMeta{Name: app.Name, Namespace: app.Environment.Namespace},
+			Spec:       corev1.ServiceSpec{Type: corev1.ServiceTypeLoadBalancer, Ports: []corev1.ServicePort{{Name: "proxy", Port: 8443, TargetPort: intstr.FromInt32(8443), Protocol: corev1.ProtocolUDP}, {Name: "traffic-api", Port: 10001, TargetPort: intstr.FromInt32(10001), Protocol: corev1.ProtocolTCP}}},
+			Status:     corev1.ServiceStatus{LoadBalancer: corev1.LoadBalancerStatus{Ingress: []corev1.LoadBalancerIngress{{IP: "203.0.113.20"}}}},
+		},
+		&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: app.Name, Namespace: app.Environment.Namespace}, Spec: appsv1.DeploymentSpec{Replicas: &replicas}, Status: appsv1.DeploymentStatus{ReadyReplicas: 1, AvailableReplicas: 1}},
+		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "hysteria-ready", Namespace: app.Environment.Namespace, Labels: map[string]string{application.ApplicationNameLabel: app.Name}}, Spec: corev1.PodSpec{NodeName: "worker-a"}, Status: corev1.PodStatus{Phase: corev1.PodRunning, ContainerStatuses: []corev1.ContainerStatus{{Name: "hysteria", Ready: true}}}},
+		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "hysteria-pending", Namespace: app.Environment.Namespace, Labels: map[string]string{application.ApplicationNameLabel: app.Name}}, Spec: corev1.PodSpec{NodeName: "worker-b"}, Status: corev1.PodStatus{Phase: corev1.PodPending}},
+	)}
+	defer func() { K8s = originalK8s }()
+
+	response := serve(r, newJSONRequest(http.MethodGet, "/api/applications/discovery?project_id=1&environment_id=1&capability=hysteria2", nil))
+	body := response.Body.String()
+	for _, expected := range []string{`"protocol":"UDP"`, `"load_balancer_addresses":["203.0.113.20"]`, `"ready_replicas":1`, `"desired_replicas":2`, `"node_name":"worker-a"`, `"version":"2.12.1"`} {
+		if !strings.Contains(body, expected) {
+			t.Fatalf("discovery response missing %s: %s", expected, body)
+		}
+	}
+	if response.Code != http.StatusOK || strings.Contains(body, "private") || strings.Contains(body, "tls_secret_name") || strings.Contains(body, "desired_spec") {
+		t.Fatalf("unexpected discovery response: %d %s", response.Code, body)
+	}
+
+	runtime := serve(r, newJSONRequest(http.MethodGet, "/api/applications/1/runtime", nil))
+	if runtime.Code != http.StatusOK || !strings.Contains(runtime.Body.String(), `"service_name":"browser"`) || !strings.Contains(runtime.Body.String(), `"node_name":"worker-a"`) {
+		t.Fatalf("unexpected application runtime response: %d %s", runtime.Code, runtime.Body.String())
+	}
+}
+
+func TestApplicationHandlerDiscoveryRejectsEnvironmentOutsideProject(t *testing.T) {
+	r, s := setupApplicationRouter()
+	createApplicationForReleaseRuntimeTest(t, s)
+	otherProject := &model.Project{Name: "other-project", OwnerID: 1}
+	if err := s.CreateProject(otherProject); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CreateEnvironment(&model.Environment{ProjectID: otherProject.ID, Name: "dev", Namespace: "other-dev"}); err != nil {
+		t.Fatal(err)
+	}
+	response := serve(r, newJSONRequest(http.MethodGet, "/api/applications/discovery?project_id=1&environment_id=2", nil))
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("unexpected cross-project discovery response: %d %s", response.Code, response.Body.String())
+	}
 }
 
 func TestApplicationHandlerSetsWorkloadKindBeforeFirstRelease(t *testing.T) {
@@ -194,6 +280,96 @@ func TestApplicationHandlerGetReleaseMarksLegacyReleaseAsUntracked(t *testing.T)
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "legacy_untracked") {
 		t.Fatalf("unexpected legacy release response: %d %s", response.Code, response.Body.String())
 	}
+}
+
+func TestCreateRestartReleaseUsesCurrentTemplateAndSanitizesSecrets(t *testing.T) {
+	_, s := setupApplicationRouter()
+	app := createApplicationForReleaseRuntimeTest(t, s)
+	key := []byte("01234567890123456789012345678901")
+
+	currentTemplateSpec := application.ReleaseSpec{
+		Image:         "ghcr.io/example/hysteria:template",
+		Command:       []string{"hysteria", "server", "-c", "/etc/hysteria/config.yaml"},
+		ContainerPort: 8443,
+		Replicas:      1,
+		Resources: application.ResourceSpec{
+			RequestsCPU: "100m", RequestsMemory: "128Mi", LimitsCPU: "500m", LimitsMemory: "512Mi",
+		},
+		Secrets:  map[string]string{"API_TOKEN": ""},
+		Service:  application.ServiceSpec{Port: 8443, TargetPort: 8443, Protocol: application.ServiceProtocolUDP, Type: application.ServiceTypeLoadBalancer},
+		Endpoint: application.EndpointSpec{Exposure: application.ExposureCluster},
+	}
+	templateSnapshot, err := json.Marshal(application.SanitizeReleaseSpec(currentTemplateSpec))
+	if err != nil {
+		t.Fatal(err)
+	}
+	encryptedSecrets, err := crypto.Encrypt(key, `{"API_TOKEN":"template-secret"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	template := &model.ApplicationDeploymentTemplate{
+		ApplicationID: app.ID, Name: "current", Enabled: true, Spec: string(templateSnapshot), EncryptedSecrets: encryptedSecrets,
+	}
+	if err := s.CreateApplicationDeploymentTemplate(template, true); err != nil {
+		t.Fatal(err)
+	}
+	active := &model.Release{
+		ApplicationID: app.ID, Sequence: 4, Image: "not a valid image", Version: "2.12.1",
+		DesiredSpec: `{"command":["legacy-command"],"secrets":{"API_TOKEN":""}}`, Status: model.ReleaseStatusSucceeded, CreatedBy: 1,
+	}
+	if err := s.CreateRelease(active); err != nil {
+		t.Fatal(err)
+	}
+
+	originalK8s := K8s
+	K8s = &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(&corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{Name: app.Environment.Namespace},
+		Status:     corev1.NamespaceStatus{Phase: corev1.NamespaceActive},
+	})}
+	defer func() { K8s = originalK8s }()
+
+	handler := NewApplicationHandler(s, key)
+	release, err := handler.createRestartRelease(t.Context(), app, 9)
+	if err != nil {
+		t.Fatalf("create restart release: %v", err)
+	}
+	if release.Sequence != active.Sequence+1 || release.Image != active.Image || release.Version != active.Version {
+		t.Fatalf("restart did not inherit active release version: %#v", release)
+	}
+	if release.TemplateID == nil || *release.TemplateID != template.ID || release.TemplateRevision != template.Revision {
+		t.Fatalf("restart did not retain current template reference: %#v", release)
+	}
+	if strings.Contains(release.DesiredSpec, "template-secret") {
+		t.Fatalf("restart snapshot leaked plaintext Secret: %s", release.DesiredSpec)
+	}
+
+	var snapshot application.ReleaseSpec
+	if err := json.Unmarshal([]byte(release.DesiredSpec), &snapshot); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(snapshot.Command, " ") != strings.Join(currentTemplateSpec.Command, " ") || snapshot.Secrets["API_TOKEN"] != "" {
+		t.Fatalf("restart did not rebuild sanitized snapshot from current template: %#v", snapshot)
+	}
+	resources, err := application.RenderResources(application.ApplicationContext{
+		ProjectName: "runtime-project", EnvironmentName: "dev", Namespace: app.Environment.Namespace,
+		ApplicationName: app.Name, ReleaseSequence: release.Sequence, WorkloadKind: app.WorkloadKind,
+	}, snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(resources.Deployment.Spec.Template.Spec.Containers[0].Command, " "); got != strings.Join(currentTemplateSpec.Command, " ") {
+		t.Fatalf("restart pod template command = %q, want %q", got, strings.Join(currentTemplateSpec.Command, " "))
+	}
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		stored, getErr := s.GetRelease(release.ID)
+		if getErr == nil && stored.Status == model.ReleaseStatusFailed {
+			return // The invalid test image makes the asynchronous worker finish before restoring K8s.
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("restart release worker did not finish")
 }
 
 func createApplicationForReleaseRuntimeTest(t *testing.T, s *store.Store) *model.Application {
