@@ -74,10 +74,11 @@ describe('ApplicationDetails view', () => {
     expect(wrapper.text()).toContain('能力标签格式无效')
   })
 
-  it('issues an application-scoped management delegation without persisting its value', async () => {
+  it('opens an application-scoped managed console handoff', async () => {
     const { api } = await import('../api/index.js')
     api.post.mockReset()
-    api.post.mockResolvedValue({ token: 'short-lived-delegation-token', expires_in: 600 })
+    api.post.mockResolvedValue({ handoff_url: 'https://hysteria.example/?handoff_code=one-time-code' })
+    const open = vi.spyOn(window, 'open').mockImplementation(() => null)
     const wrapper = mount(ApplicationDetails, {
       props: { applicationID: '1' },
       global: { stubs: { RouterLink: { template: '<a><slot /></a>' }, Teleport: true } },
@@ -85,13 +86,9 @@ describe('ApplicationDetails view', () => {
     await new Promise(resolve => setTimeout(resolve, 0))
 
     await wrapper.find('.page-header .btn-group .btn').trigger('click')
-    expect(wrapper.find('.delegation-modal select').element.value).toBe('hysteria2')
-    await wrapper.find('.delegation-modal form').trigger('submit.prevent')
-
-    expect(api.post).toHaveBeenCalledWith('/applications/1/delegations', { capability: 'hysteria2' })
-    expect(wrapper.find('.delegation-token').element.value).toBe('short-lived-delegation-token')
-    await wrapper.find('.delegation-modal .btn-primary').trigger('click')
-    expect(wrapper.find('.delegation-modal').exists()).toBe(false)
+    expect(api.post).toHaveBeenCalledWith('/applications/1/console-sessions', {})
+    expect(open).toHaveBeenCalledWith('https://hysteria.example/?handoff_code=one-time-code', '_blank', 'noopener,noreferrer')
+    open.mockRestore()
   })
 
   it('serializes row-based startup and environment values into the template spec', async () => {
