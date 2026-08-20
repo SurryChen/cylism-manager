@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -21,6 +22,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
+	k8stesting "k8s.io/client-go/testing"
 )
 
 type agentAuthenticatorStub struct {
@@ -92,6 +94,74 @@ func TestAgentHandlerWorkloadGetRespectsNamespaceScope(t *testing.T) {
 	handler.WorkloadGet(recorder, request)
 	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), `"name":"api"`) {
 		t.Fatalf("expected scoped workload, got %d: %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestAgentHandlerWorkloadLogsSupportsPreviousContainer(t *testing.T) {
+	s, err := store.New(":memory:")
+	if err != nil {
+		t.Fatalf("store: %v", err)
+	}
+	instance := &model.RuntimeInstance{Name: "nanobot-main", RuntimeType: model.RuntimeTypeNanobot, DeploymentMode: model.RuntimeDeploymentManaged, Namespace: "cylism-assistant", Image: "example/nanobot", Status: model.RuntimeStatusReady, AgentToolEnabled: true}
+	if err := s.CreateRuntime(instance); err != nil {
+		t.Fatalf("create runtime: %v", err)
+	}
+	if err := s.ReplaceAgentCapabilityGrants(instance.ID, []model.AgentCapabilityGrant{{RuntimeID: instance.ID, Capability: model.AgentCapabilityWorkloadLogs, Namespace: "operations", Enabled: true}}); err != nil {
+		t.Fatalf("grant: %v", err)
+	}
+
+	for _, test := range []struct {
+		name     string
+		query    string
+		previous bool
+	}{
+		{name: "current container", query: "namespace=operations&pod=api-1&container=api&tail=200", previous: false},
+		{name: "previous container", query: "namespace=operations&pod=api-1&container=api&tail=200&previous=true", previous: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			clientset := fake.NewSimpleClientset()
+			handler := NewAgentHandler(s, &k8s.Client{Clientset: clientset}, agentAuthenticatorStub{instance: instance})
+			request := httptest.NewRequest(http.MethodGet, "/api/agent/v1/workloads/logs?"+test.query, nil)
+			request.Header.Set("Authorization", "Bearer agent-token")
+			recorder := httptest.NewRecorder()
+			handler.WorkloadLogs(recorder, request)
+
+			if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), `"previous":`+strconv.FormatBool(test.previous)) {
+				t.Fatalf("unexpected logs response: %d %s", recorder.Code, recorder.Body.String())
+			}
+			for _, action := range clientset.Actions() {
+				if action.GetVerb() != "get" || action.GetResource().Resource != "pods" || action.GetSubresource() != "log" {
+					continue
+				}
+				options, ok := action.(k8stesting.GenericAction).GetValue().(*corev1.PodLogOptions)
+				if !ok || options.Previous != test.previous || options.TailLines == nil || *options.TailLines != 200 {
+					t.Fatalf("unexpected log options: %#v", options)
+				}
+				return
+			}
+			t.Fatal("expected a pod log request")
+		})
+	}
+}
+
+func TestAgentHandlerWorkloadLogsRejectsInvalidPrevious(t *testing.T) {
+	s, err := store.New(":memory:")
+	if err != nil {
+		t.Fatalf("store: %v", err)
+	}
+	instance := &model.RuntimeInstance{Name: "nanobot-main", RuntimeType: model.RuntimeTypeNanobot, DeploymentMode: model.RuntimeDeploymentManaged, Namespace: "cylism-assistant", Image: "example/nanobot", Status: model.RuntimeStatusReady, AgentToolEnabled: true}
+	if err := s.CreateRuntime(instance); err != nil {
+		t.Fatalf("create runtime: %v", err)
+	}
+	clientset := fake.NewSimpleClientset()
+	handler := NewAgentHandler(s, &k8s.Client{Clientset: clientset}, agentAuthenticatorStub{instance: instance})
+	request := httptest.NewRequest(http.MethodGet, "/api/agent/v1/workloads/logs?namespace=operations&pod=api-1&container=api&tail=200&previous=invalid", nil)
+	request.Header.Set("Authorization", "Bearer agent-token")
+	recorder := httptest.NewRecorder()
+	handler.WorkloadLogs(recorder, request)
+
+	if recorder.Code != http.StatusBadRequest || len(clientset.Actions()) != 0 {
+		t.Fatalf("expected invalid previous rejection without Kubernetes request, got %d %s", recorder.Code, recorder.Body.String())
 	}
 }
 
