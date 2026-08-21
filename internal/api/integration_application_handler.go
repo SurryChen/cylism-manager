@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"sync"
@@ -83,6 +84,17 @@ func opaqueHash(value string) string {
 	return fmt.Sprintf("%x", sum[:])
 }
 
+func handoffURL(managerURL, code string) (string, error) {
+	parsed, err := url.Parse(strings.TrimSpace(managerURL))
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return "", errors.New("invalid manager URL")
+	}
+	query := parsed.Query()
+	query.Set("handoff_code", code)
+	parsed.RawQuery = query.Encode()
+	return parsed.String(), nil
+}
+
 func (h *ApplicationHandler) CreateConsoleSession(c *gin.Context) {
 	applicationID, err := parseID(c.Param("id"))
 	if err != nil {
@@ -116,7 +128,12 @@ func (h *ApplicationHandler) CreateConsoleSession(c *gin.Context) {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "创建管理会话失败")
 		return
 	}
-	model.Success(c, gin.H{"handoff_code": code, "handoff_url": managerURL + "?handoff_code=" + code, "expires_in": int(consoleHandoffTTL.Seconds())})
+	redirectURL, err := handoffURL(managerURL, code)
+	if err != nil {
+		model.Error(c, http.StatusInternalServerError, model.CodeValidationFail, "Hysteria Manager 地址无效")
+		return
+	}
+	model.Success(c, gin.H{"handoff_code": code, "handoff_url": redirectURL, "expires_in": int(consoleHandoffTTL.Seconds())})
 }
 
 func bearerValue(c *gin.Context) string {
