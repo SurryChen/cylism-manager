@@ -26,19 +26,13 @@ import (
 )
 
 type ApplicationHandler struct {
-	store              *store.Store
-	encKey             []byte
-	delegationSecret   []byte
-	hysteriaManagerURL string
+	store            *store.Store
+	encKey           []byte
+	delegationSecret []byte
 }
 
 func (h *ApplicationHandler) WithDelegationSecret(secret []byte) *ApplicationHandler {
 	h.delegationSecret = append([]byte(nil), secret...)
-	return h
-}
-
-func (h *ApplicationHandler) WithHysteriaManagerURL(value string) *ApplicationHandler {
-	h.hysteriaManagerURL = strings.TrimSpace(value)
 	return h
 }
 

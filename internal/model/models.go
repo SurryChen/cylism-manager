@@ -516,9 +516,9 @@ type Application struct {
 	Endpoints                   []ApplicationEndpoint `gorm:"foreignKey:ApplicationID" json:"endpoints,omitempty"`
 }
 
-// IntegrationConsoleSession is the server-side authority for an external
-// management console. Credential values are never stored, only SHA-256 hashes.
-type IntegrationConsoleSession struct {
+// IntegrationSession is the server-side authority for an external integration.
+// Credential values are never stored, only SHA-256 hashes.
+type IntegrationSession struct {
 	ID               uint       `gorm:"primaryKey" json:"id"`
 	HandoffCodeHash  string     `gorm:"size:64;uniqueIndex;not null" json:"-"`
 	SessionTokenHash *string    `gorm:"size:64;uniqueIndex" json:"-"`
@@ -535,6 +535,10 @@ type IntegrationConsoleSession struct {
 	CreatedAt        time.Time  `json:"created_at"`
 	UpdatedAt        time.Time  `json:"updated_at"`
 }
+
+// TableName preserves the existing schema while the API and code use generic
+// integration terminology.
+func (IntegrationSession) TableName() string { return "integration_console_sessions" }
 
 // ImageRegistry 是可由项目授权使用的外部 OCI/Docker 镜像仓库。
 // Credential 仅保存加密后的值，绝不能通过 API 返回。
