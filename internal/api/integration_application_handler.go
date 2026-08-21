@@ -67,8 +67,8 @@ type delegationRequest struct {
 }
 
 const (
-	consoleHandoffTTL = 60 * time.Second
-	consoleSessionTTL = 8 * time.Hour
+	integrationHandoffTTL = 60 * time.Second
+	integrationSessionTTL = 8 * time.Hour
 )
 
 func randomOpaqueValue(size int) (string, error) {
@@ -84,18 +84,17 @@ func opaqueHash(value string) string {
 	return fmt.Sprintf("%x", sum[:])
 }
 
-func handoffURL(managerURL, code string) (string, error) {
-	parsed, err := url.Parse(strings.TrimSpace(managerURL))
-	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-		return "", errors.New("invalid manager URL")
-	}
-	query := parsed.Query()
-	query.Set("handoff_code", code)
-	parsed.RawQuery = query.Encode()
-	return parsed.String(), nil
+func (h *ApplicationHandler) CreateIntegrationHandoff(c *gin.Context) {
+	h.createIntegrationHandoff(c)
 }
 
-func (h *ApplicationHandler) CreateConsoleSession(c *gin.Context) {
+type integrationHandoffRequest struct {
+	EndpointID uint `json:"endpoint_id"`
+}
+
+// createIntegrationHandoff creates a one-time browser handoff for a generic
+// application link. The platform does not inspect the link's purpose.
+func (h *ApplicationHandler) createIntegrationHandoff(c *gin.Context) {
 	applicationID, err := parseID(c.Param("id"))
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "应用 ID 无效")
@@ -106,34 +105,63 @@ func (h *ApplicationHandler) CreateConsoleSession(c *gin.Context) {
 		model.Error(c, http.StatusNotFound, model.CodeNotFound, "应用不存在")
 		return
 	}
-	capability := "hysteria2"
-	if !applicationHasCapability(*app, capability) {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "该应用不支持 Hysteria2 管理")
+	var req integrationHandoffRequest
+	if err := c.ShouldBindJSON(&req); err != nil || req.EndpointID == 0 {
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "应用入口必填")
 		return
 	}
+	endpoint, err := h.store.GetApplicationEndpoint(app.ID, req.EndpointID)
+	if err != nil {
+		model.Error(c, http.StatusNotFound, model.CodeNotFound, "应用入口不存在")
+		return
+	}
+	// Validate and construct the redirect before persisting the one-time session.
+	if endpoint.Domain == "" {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "应用入口尚未绑定域名")
+		return
+	}
+	scheme := "http"
+	if endpoint.TLSEnabled {
+		scheme = "https"
+	}
+	endpointURL := fmt.Sprintf("%s://%s%s", scheme, endpoint.Domain, endpoint.Path)
 	actions := []string{"application:read", "managed_document:write", "application:restart"}
-	managerURL := strings.TrimRight(h.hysteriaManagerURL, "/")
-	if managerURL == "" {
-		model.Error(c, http.StatusInternalServerError, model.CodeValidationFail, "Hysteria Manager 地址未配置")
-		return
-	}
 	now := time.Now()
 	code, err := randomOpaqueValue(32)
 	if err != nil {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "创建管理会话失败")
 		return
 	}
-	session := &model.IntegrationConsoleSession{HandoffCodeHash: opaqueHash(code), UserID: getUserID(c), ProjectID: app.ProjectID, ApplicationID: app.ID, EnvironmentID: app.EnvironmentID, Capability: capability, ActionsData: strings.Join(actions, ","), HandoffExpiresAt: now.Add(consoleHandoffTTL), ExpiresAt: now.Add(consoleSessionTTL)}
-	if err := h.store.CreateIntegrationConsoleSession(session); err != nil {
+	session := &model.IntegrationSession{HandoffCodeHash: opaqueHash(code), UserID: getUserID(c), ProjectID: app.ProjectID, ApplicationID: app.ID, EnvironmentID: app.EnvironmentID, ActionsData: strings.Join(actions, ","), HandoffExpiresAt: now.Add(integrationHandoffTTL), ExpiresAt: now.Add(integrationSessionTTL)}
+	if err := h.store.CreateIntegrationSession(session); err != nil {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "创建管理会话失败")
 		return
 	}
-	redirectURL, err := handoffURL(managerURL, code)
+	handoffURL, err := appendHandoffCode(endpointURL, code)
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeValidationFail, "Hysteria Manager 地址无效")
+		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "生成跳转地址失败")
 		return
 	}
-	model.Success(c, gin.H{"handoff_code": code, "handoff_url": redirectURL, "expires_in": int(consoleHandoffTTL.Seconds())})
+	model.Success(c, gin.H{"handoff_code": code, "handoff_url": handoffURL, "expires_in": int(integrationHandoffTTL.Seconds())})
+}
+
+func appendHandoffCode(raw, code string) (string, error) {
+	u, err := parseExternalLink(raw)
+	if err != nil {
+		return "", err
+	}
+	query := u.Query()
+	query.Set("handoff_code", code)
+	u.RawQuery = query.Encode()
+	return u.String(), nil
+}
+
+func parseExternalLink(raw string) (*url.URL, error) {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return nil, errors.New("invalid external link")
+	}
+	return u, nil
 }
 
 func bearerValue(c *gin.Context) string {
@@ -144,7 +172,7 @@ func bearerValue(c *gin.Context) string {
 	return ""
 }
 
-func (h *ApplicationHandler) ExchangeConsoleSession(c *gin.Context) {
+func (h *ApplicationHandler) ExchangeIntegrationSession(c *gin.Context) {
 	code := bearerValue(c)
 	if code == "" {
 		model.Error(c, http.StatusUnauthorized, model.CodeUnauthorized, "未提供跳转码")
@@ -156,7 +184,7 @@ func (h *ApplicationHandler) ExchangeConsoleSession(c *gin.Context) {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "交换管理会话失败")
 		return
 	}
-	session, err := h.store.ExchangeIntegrationConsoleSession(opaqueHash(code), opaqueHash(token), now.Add(consoleSessionTTL), now)
+	session, err := h.store.ExchangeIntegrationSession(opaqueHash(code), opaqueHash(token), now.Add(integrationSessionTTL), now)
 	if err != nil {
 		model.Error(c, http.StatusUnauthorized, model.CodeUnauthorized, "跳转码无效或已过期")
 		return
@@ -164,19 +192,37 @@ func (h *ApplicationHandler) ExchangeConsoleSession(c *gin.Context) {
 	model.Success(c, gin.H{"session_token": token, "expires_at": session.ExpiresAt})
 }
 
-func (h *ApplicationHandler) CreateConsoleDelegation(c *gin.Context) {
+func (h *ApplicationHandler) CreateIntegrationDelegation(c *gin.Context) {
+	h.createIntegrationDelegation(c)
+}
+
+type integrationDelegationRequest struct {
+	Capability string `json:"capability"`
+}
+
+func (h *ApplicationHandler) createIntegrationDelegation(c *gin.Context) {
 	token := bearerValue(c)
 	if token == "" {
 		model.Error(c, http.StatusUnauthorized, model.CodeUnauthorized, "未提供管理会话")
 		return
 	}
-	session, err := h.store.GetActiveIntegrationConsoleSession(opaqueHash(token), time.Now())
+	session, err := h.store.GetActiveIntegrationSession(opaqueHash(token), time.Now())
 	if err != nil {
 		model.Error(c, http.StatusUnauthorized, model.CodeUnauthorized, "管理会话无效或已过期")
 		return
 	}
 	actions := strings.Split(session.ActionsData, ",")
-	delegation, err := auth.GenerateDelegationToken(h.delegationSecret, auth.DelegationClaims{UserID: session.UserID, ProjectID: session.ProjectID, EnvironmentIDs: []uint{session.EnvironmentID}, ApplicationIDs: []uint{session.ApplicationID}, Capability: session.Capability, Actions: actions}, auth.MaxDelegationTTL)
+	var req integrationDelegationRequest
+	if err := c.ShouldBindJSON(&req); err != nil || strings.TrimSpace(req.Capability) == "" {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "capability 必填")
+		return
+	}
+	capability, err := model.NormalizeApplicationCapabilities([]string{req.Capability})
+	if err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "capability 格式无效")
+		return
+	}
+	delegation, err := auth.GenerateDelegationToken(h.delegationSecret, auth.DelegationClaims{UserID: session.UserID, ProjectID: session.ProjectID, EnvironmentIDs: []uint{session.EnvironmentID}, Capability: capability[0], Actions: actions}, auth.MaxDelegationTTL)
 	if err != nil {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "签发委托失败")
 		return

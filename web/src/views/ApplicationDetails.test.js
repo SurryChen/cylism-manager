@@ -74,10 +74,10 @@ describe('ApplicationDetails view', () => {
     expect(wrapper.text()).toContain('能力标签格式无效')
   })
 
-  it('opens an application-scoped managed console handoff', async () => {
+  it('opens a bound application endpoint through a handoff', async () => {
     const { api } = await import('../api/index.js')
     api.post.mockReset()
-    api.post.mockResolvedValue({ handoff_url: 'https://hysteria.example/?handoff_code=one-time-code' })
+    api.post.mockResolvedValue({ handoff_url: 'https://api.example.com/?handoff_code=one-time-code' })
     const open = vi.spyOn(window, 'open').mockImplementation(() => null)
     const wrapper = mount(ApplicationDetails, {
       props: { applicationID: '1' },
@@ -85,9 +85,9 @@ describe('ApplicationDetails view', () => {
     })
     await new Promise(resolve => setTimeout(resolve, 0))
 
-    await wrapper.find('.page-header .btn-group .btn').trigger('click')
-    expect(api.post).toHaveBeenCalledWith('/applications/1/console-sessions', {})
-    expect(open).toHaveBeenCalledWith('https://hysteria.example/?handoff_code=one-time-code', '_blank', 'noopener,noreferrer')
+    await wrapper.findAll('.endpoint-url')[0].trigger('click')
+    expect(api.post).toHaveBeenCalledWith('/applications/1/integration-handoffs', { endpoint_id: 7 })
+    expect(open).toHaveBeenCalledWith('https://api.example.com/?handoff_code=one-time-code', '_blank', 'noopener,noreferrer')
     open.mockRestore()
   })
 

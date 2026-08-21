@@ -63,12 +63,6 @@ func main() {
 		AccessTokenTTL:  accessTTL,
 		RefreshTokenTTL: refreshTTL,
 		PlatformURL:     viper.GetString("server.public_url"),
-		HysteriaManagerURL: func() string {
-			if value := os.Getenv("HYSTERIA_MANAGER_URL"); value != "" {
-				return value
-			}
-			return viper.GetString("integrations.hysteria_manager_url")
-		}(),
 	}
 
 	// 操作日志清理任务

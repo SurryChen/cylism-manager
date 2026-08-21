@@ -36,16 +36,3 @@ func stringify(value interface{}) string {
 	encoded, _ := json.Marshal(value)
 	return strings.TrimSpace(string(encoded))
 }
-
-func TestHandoffURLKeepsCodeOutOfFragment(t *testing.T) {
-	value, err := handoffURL("https://manager.example.com/#/", "one-time-code")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if value != "https://manager.example.com/?handoff_code=one-time-code#/" {
-		t.Fatalf("unexpected handoff URL: %s", value)
-	}
-	if _, err := handoffURL("not-a-url", "one-time-code"); err == nil {
-		t.Fatal("invalid manager URL was accepted")
-	}
-}

@@ -75,7 +75,7 @@ func New(dsn string) (*Store, error) {
 		&model.Project{},
 		&model.Environment{},
 		&model.Application{},
-		&model.IntegrationConsoleSession{},
+		&model.IntegrationSession{},
 		&model.ApplicationEndpoint{},
 		&model.ApplicationDeploymentTemplate{},
 		&model.ManagedDocument{},
@@ -1179,16 +1179,16 @@ func (s *Store) GetApplication(id uint) (*model.Application, error) {
 	return &application, err
 }
 
-func (s *Store) CreateIntegrationConsoleSession(session *model.IntegrationConsoleSession) error {
+func (s *Store) CreateIntegrationSession(session *model.IntegrationSession) error {
 	return s.db.Create(session).Error
 }
 
-// ExchangeIntegrationConsoleSession consumes a one-time handoff code and
-// atomically binds a new opaque console session token to that record.
-func (s *Store) ExchangeIntegrationConsoleSession(handoffHash, sessionHash string, sessionExpiresAt, now time.Time) (*model.IntegrationConsoleSession, error) {
-	var result model.IntegrationConsoleSession
+// ExchangeIntegrationSession consumes a one-time handoff code and atomically
+// binds a new opaque session token to that record.
+func (s *Store) ExchangeIntegrationSession(handoffHash, sessionHash string, sessionExpiresAt, now time.Time) (*model.IntegrationSession, error) {
+	var result model.IntegrationSession
 	err := s.db.Transaction(func(tx *gorm.DB) error {
-		query := tx.Model(&model.IntegrationConsoleSession{}).Where("handoff_code_hash = ? AND handoff_used_at IS NULL AND revoked_at IS NULL AND handoff_expires_at > ?", handoffHash, now).
+		query := tx.Model(&model.IntegrationSession{}).Where("handoff_code_hash = ? AND handoff_used_at IS NULL AND revoked_at IS NULL AND handoff_expires_at > ?", handoffHash, now).
 			Updates(map[string]interface{}{"handoff_used_at": now, "session_token_hash": sessionHash, "expires_at": sessionExpiresAt})
 		if query.Error != nil {
 			return query.Error
@@ -1204,8 +1204,8 @@ func (s *Store) ExchangeIntegrationConsoleSession(handoffHash, sessionHash strin
 	return &result, nil
 }
 
-func (s *Store) GetActiveIntegrationConsoleSession(tokenHash string, now time.Time) (*model.IntegrationConsoleSession, error) {
-	var session model.IntegrationConsoleSession
+func (s *Store) GetActiveIntegrationSession(tokenHash string, now time.Time) (*model.IntegrationSession, error) {
+	var session model.IntegrationSession
 	err := s.db.Where("session_token_hash = ? AND revoked_at IS NULL AND expires_at > ?", tokenHash, now).First(&session).Error
 	return &session, err
 }

@@ -3,7 +3,7 @@
     <router-link class="back-link" to="/applications"><ArrowLeft :size="16" />返回工作台</router-link>
     <div class="page-header">
       <div><h1 class="page-title">{{ application?.name || '应用详情' }}</h1><p class="page-subtitle">{{ application?.project?.name || '-' }} · {{ application?.environment?.name || '-' }} · {{ application?.environment?.namespace || '-' }}</p></div>
-      <div class="btn-group"><button v-if="hasHysteriaCapability" class="btn" :disabled="openingManager" @click="openHysteriaManager">{{ openingManager ? '打开中...' : '打开管理台' }}</button><button class="btn btn-primary" @click="openTemplateEditor()">新建上线模板</button></div>
+      <div class="btn-group"><button class="btn btn-primary" @click="openTemplateEditor()">新建上线模板</button></div>
     </div>
     <div v-if="error" class="k8s-banner k8s-banner-warn section-gap">{{ error }}</div>
 
@@ -14,11 +14,9 @@
       <div class="section-actions"><button class="btn btn-sm" :disabled="savingCapabilities" @click="saveCapabilities">{{ savingCapabilities ? '保存中...' : '保存能力标签' }}</button></div>
     </section>
 
-    <section v-if="application && hasHysteriaCapability" class="detail-section"><div class="section-heading"><div><h2>Hysteria2 管理台</h2><p>管理台会自动获得当前应用范围内的短期操作权限，平台会话可持续续期。</p></div><button class="btn btn-sm" :disabled="openingManager" @click="openHysteriaManager">打开管理台</button></div></section>
-
     <section v-if="application" class="detail-section">
-      <div class="section-heading"><div><h2>对外域名</h2><p>域名绑定独立于发布版本，变更时会同步应用 Ingress。</p></div><button class="btn btn-sm" @click="openEndpointEditor()">绑定域名</button></div>
-      <div v-if="endpoints.length" class="endpoint-list"><div v-for="endpoint in endpoints" :key="endpoint.id" class="endpoint-row"><div><a class="endpoint-url" :href="endpointURL(endpoint)" target="_blank" rel="noopener noreferrer">{{ endpoint.domain }}</a><small>{{ endpoint.path || '/' }} · Service {{ endpoint.service_port }} · {{ endpoint.tls_enabled ? 'HTTPS' : 'HTTP' }}</small></div><div class="btn-group"><button class="btn btn-sm" @click="openEndpointEditor(endpoint)"><Pencil :size="14" /> 编辑</button><button class="btn btn-sm btn-danger" @click="removeEndpoint(endpoint)">解绑</button></div></div></div>
+      <div class="section-heading"><div><h2>对外域名</h2><p>域名绑定独立于发布版本，点击域名即可打开应用；变更时会同步应用 Ingress。</p></div><button class="btn btn-sm" @click="openEndpointEditor()">绑定域名</button></div>
+      <div v-if="endpoints.length" class="endpoint-list"><div v-for="endpoint in endpoints" :key="endpoint.id" class="endpoint-row"><div><a class="endpoint-url" href="#" @click.prevent="openApplicationEndpoint(endpoint)">{{ endpoint.domain }}</a><small>{{ endpoint.path || '/' }} · Service {{ endpoint.service_port }} · {{ endpoint.tls_enabled ? 'HTTPS' : 'HTTP' }}</small></div><div class="btn-group"><button class="btn btn-sm" @click="openEndpointEditor(endpoint)"><Pencil :size="14" /> 编辑</button><button class="btn btn-sm btn-danger" @click="removeEndpoint(endpoint)">解绑</button></div></div></div>
       <div v-else class="empty-inline">当前应用仅限集群内访问</div>
     </section>
 
@@ -99,13 +97,11 @@ const editingEndpoint = ref(null)
 const workloadKind = ref('deployment')
 const capabilityItems = ref([])
 const savingCapabilities = ref(false)
-const openingManager = ref(false)
 const templateForm = ref(newTemplateForm())
 const endpointForm = ref(newEndpointForm())
 
 const readyDomains = computed(() => domains.value.filter(domain => domain.enabled && domain.certificate?.status === 'Ready'))
 const readyTLSCertificates = computed(() => readyDomains.value.filter(domain => domain.tls_secret_name))
-const hasHysteriaCapability = computed(() => capabilityItems.value.some(item => item.value.trim().toLowerCase() === 'hysteria2'))
 const applicationConfigName = computed(() => application.value ? `${application.value.name}-config` : '应用配置')
 const templateDependencies = computed(() => templates.value.flatMap(template => (template.spec?.file_mounts || []).map((mount, index) => {
   if (mount.source_type === 'application_config') {
@@ -126,7 +122,6 @@ function newServicePort(index, targetPort) { return { name: `port-${index}`, por
 function servicePortsFromSpec(service, containerPort) { const ports = service?.ports?.length ? service.ports : [{ name: 'service', port: service?.port || 80, target_port: service?.target_port || containerPort, protocol: service?.protocol || 'TCP', node_port: service?.node_port || null }]; return ports.map((port, index) => ({ name: port.name || `port-${index + 1}`, port: port.port, target_port: port.target_port, protocol: port.protocol || 'TCP', node_port: port.node_port || null })) }
 function newTemplateForm() { return { name: '', description: '', enabled: true, registry_id: 0, image: '', command_items: [], argument_items: [], container_port: 8080, replicas: 1, node_name: '', host_network: false, volumes: [], file_mounts: [], tls_secret_name: '', tls_mount_dir: '/etc/tls', config_items: [], secret_items: [], resources: { requests_cpu: 100, requests_cpu_unit: 'm', requests_memory: 128, requests_memory_unit: 'Mi', limits_cpu: 500, limits_cpu_unit: 'm', limits_memory: 512, limits_memory_unit: 'Mi' }, health: { readiness_enabled: true, readiness_type: 'http', readiness_path: '/healthz', liveness_enabled: false, liveness_type: 'http', liveness_path: '/healthz' }, service: { type: 'ClusterIP', external_traffic_policy: '', ports: [newServicePort(1, 8080)] } } }
 function newEndpointForm() { return { domain_id: 0, path: '/', tls_enabled: true } }
-function endpointURL(endpoint) { return `${endpoint.tls_enabled ? 'https' : 'http'}://${endpoint.domain}${endpoint.path || '/'}` }
 function releaseBadge(status) { return status === 'succeeded' ? 'badge-online' : status === 'failed' ? 'badge-danger' : 'badge-offline' }
 function formatTime(value) { return value ? new Date(value).toLocaleString() : '-' }
 function templateName(id) { return templates.value.find(template => template.id === id)?.name }
@@ -156,15 +151,7 @@ function removeArgumentItem(index) { templateForm.value.argument_items.splice(in
 function addCapability() { capabilityItems.value.push({ value: '' }) }
 function removeCapability(index) { capabilityItems.value.splice(index, 1) }
 async function saveCapabilities() { savingCapabilities.value = true; error.value = ''; try { const capabilities = capabilityItems.value.map(item => item.value.trim()).filter(Boolean); const updated = await api.put(`/applications/${props.applicationID}/capabilities`, { capabilities }); application.value = updated; capabilityItems.value = (updated.capabilities || []).map(value => ({ value })) } catch (e) { error.value = e.message || '保存能力标签失败' } finally { savingCapabilities.value = false } }
-async function openHysteriaManager() {
-  openingManager.value = true
-  error.value = ''
-  try {
-    const result = await api.post(`/applications/${props.applicationID}/console-sessions`, {})
-    if (!result.handoff_url) throw new Error('管理台地址未配置')
-    window.open(result.handoff_url, '_blank', 'noopener,noreferrer')
-  } catch (e) { error.value = e.message || '打开管理台失败' } finally { openingManager.value = false }
-}
+async function openApplicationEndpoint(endpoint) { error.value = ''; try { const result = await api.post(`/applications/${props.applicationID}/integration-handoffs`, { endpoint_id: endpoint.id }); if (!result.handoff_url) throw new Error('应用入口跳转创建失败'); window.open(result.handoff_url, '_blank', 'noopener,noreferrer') } catch (e) { error.value = e.message || '打开应用入口失败' } }
 function addConfigItem() { templateForm.value.config_items.push({ key: '', value: '' }) }
 function removeConfigItem(index) { templateForm.value.config_items.splice(index, 1) }
 function addSecretItem() { templateForm.value.secret_items.push({ key: '', value: '' }) }
