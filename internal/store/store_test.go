@@ -696,3 +696,15 @@ func TestApplicationEndpointsSupportIndependentUpdatesAndExactRouteExclusion(t *
 		t.Fatalf("expected only second endpoint after delete, got %#v err=%v", endpoints, err)
 	}
 }
+
+func TestApplicationEndpointRouteCountIgnoresMetadataOnlyBindings(t *testing.T) {
+	st := setupTestDB(t)
+	metadata := &model.ApplicationEndpoint{ApplicationID: 1, DomainID: 7, Exposure: "public", Domain: "proxy.example.com", Path: "/", ServicePort: 8443, IngressEnabled: false, IngressMode: "metadata"}
+	if err := st.CreateApplicationEndpoint(metadata); err != nil {
+		t.Fatal(err)
+	}
+	count, err := st.CountApplicationEndpointRoute(7, "/", 0)
+	if err != nil || count != 0 {
+		t.Fatalf("expected metadata-only binding to leave route available, count=%d err=%v", count, err)
+	}
+}

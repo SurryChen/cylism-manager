@@ -1167,7 +1167,9 @@ func (s *Store) CountApplicationEndpointsByDomain(domainID uint) (int64, error) 
 
 func (s *Store) CountApplicationEndpointRoute(domainID uint, path string, exceptEndpointID uint) (int64, error) {
 	var count int64
-	query := s.db.Model(&model.ApplicationEndpoint{}).Where("domain_id = ? AND path = ?", domainID, path)
+	// Metadata-only bindings describe an address for non-HTTP protocols and do
+	// not occupy an HTTP Ingress route.
+	query := s.db.Model(&model.ApplicationEndpoint{}).Where("domain_id = ? AND path = ? AND (ingress_mode IS NULL OR ingress_mode <> ?)", domainID, path, "metadata")
 	if exceptEndpointID != 0 {
 		query = query.Where("id <> ?", exceptEndpointID)
 	}
