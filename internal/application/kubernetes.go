@@ -278,7 +278,9 @@ func (a *KubernetesApplier) SyncApplicationEndpoints(ctx context.Context, applic
 	}
 	publicEndpoints := make([]model.ApplicationEndpoint, 0, len(endpoints))
 	for _, endpoint := range endpoints {
-		if endpoint.Exposure == "" || endpoint.Exposure == ExposurePublic {
+		// A domain binding can be metadata-only for non-HTTP protocols. Keep it
+		// visible to discovery while excluding it from the managed Ingress.
+		if endpoint.IngressMode != "metadata" && (endpoint.Exposure == "" || endpoint.Exposure == ExposurePublic) {
 			publicEndpoints = append(publicEndpoints, endpoint)
 		}
 	}

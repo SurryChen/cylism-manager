@@ -730,6 +730,15 @@ func (h *ApplicationHandler) createRestartRelease(ctx context.Context, app *mode
 	}
 	spec.Image = active.Image
 	spec.Version = active.Version
+	// Restart releases must rebuild the same registry and node-mirror runtime
+	// settings as a normal publish. The persisted release snapshot deliberately
+	// omits these transient credentials and verification endpoints.
+	if err := h.prepareRegistryReleaseSpec(app, &spec); err != nil {
+		return nil, err
+	}
+	if err := h.prepareReleaseImageVerification(&spec); err != nil {
+		return nil, err
+	}
 	if err := h.applyApplicationEndpointSpec(app, &spec); err != nil {
 		return nil, err
 	}

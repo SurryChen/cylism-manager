@@ -346,13 +346,13 @@ describe('ApplicationDetails view', () => {
     await wrapper.find('.modal .form-select').setValue('4')
     await wrapper.find('.modal .form-input').setValue('/v2')
     await wrapper.find('.modal form').trigger('submit.prevent')
-    expect(api.post).toHaveBeenCalledWith('/applications/1/endpoints', { domain_id: 4, path: '/v2', tls_enabled: true, access_mode: 'public' })
+    expect(api.post).toHaveBeenCalledWith('/applications/1/endpoints', { domain_id: 4, path: '/v2', tls_enabled: true, ingress_enabled: true, access_mode: 'public' })
 
     await wrapper.findAll('.endpoint-row .btn').find(button => button.text().includes('编辑')).trigger('click')
     await wrapper.find('.modal .form-input').setValue('/v3')
     await wrapper.find('.modal .check-row input').setValue(false)
     await wrapper.find('.modal form').trigger('submit.prevent')
-    expect(api.put).toHaveBeenCalledWith('/applications/1/endpoints/7', { domain_id: 4, path: '/v3', tls_enabled: false, access_mode: 'protected_console' })
+    expect(api.put).toHaveBeenCalledWith('/applications/1/endpoints/7', { domain_id: 4, path: '/v3', tls_enabled: false, ingress_enabled: true, access_mode: 'protected_console' })
 
     await wrapper.find('.endpoint-row .btn-danger').trigger('click')
     expect(api.delete).toHaveBeenCalledWith('/applications/1/endpoints/7')

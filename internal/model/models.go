@@ -712,19 +712,21 @@ const (
 
 // ApplicationEndpoint 描述一个应用的 Service 暴露方式与可选 TLS 配置。
 type ApplicationEndpoint struct {
-	ID            uint      `gorm:"primaryKey" json:"id"`
-	ApplicationID uint      `gorm:"index;not null" json:"application_id"`
-	DomainID      uint      `gorm:"index" json:"domain_id,omitempty"`
-	Exposure      string    `gorm:"size:32;default:cluster;not null" json:"exposure"`
-	Domain        string    `gorm:"size:256" json:"domain"`
-	Path          string    `gorm:"size:256;default:/" json:"path"`
-	ServicePort   int32     `gorm:"not null" json:"service_port"`
-	TLSEnabled    bool      `gorm:"default:false" json:"tls_enabled"`
-	TLSSecretName string    `gorm:"size:253" json:"tls_secret_name"`
-	IssuerRef     string    `gorm:"size:128" json:"issuer_ref"`
-	AccessMode    string    `gorm:"size:32;default:public;not null" json:"access_mode"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	ID             uint      `gorm:"primaryKey" json:"id"`
+	ApplicationID  uint      `gorm:"index;not null" json:"application_id"`
+	DomainID       uint      `gorm:"index" json:"domain_id,omitempty"`
+	Exposure       string    `gorm:"size:32;default:cluster;not null" json:"exposure"`
+	Domain         string    `gorm:"size:256" json:"domain"`
+	Path           string    `gorm:"size:256;default:/" json:"path"`
+	ServicePort    int32     `gorm:"not null" json:"service_port"`
+	TLSEnabled     bool      `gorm:"default:false" json:"tls_enabled"`
+	IngressEnabled bool      `gorm:"default:true;not null" json:"ingress_enabled"`
+	IngressMode    string    `gorm:"size:16;default:ingress;not null" json:"-"`
+	TLSSecretName  string    `gorm:"size:253" json:"tls_secret_name"`
+	IssuerRef      string    `gorm:"size:128" json:"issuer_ref"`
+	AccessMode     string    `gorm:"size:32;default:public;not null" json:"access_mode"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
 }
 
 // ApplicationDeploymentTemplate stores one selectable rollout profile for an application.
