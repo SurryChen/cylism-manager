@@ -66,6 +66,7 @@ type applicationEndpointRequest struct {
 	DomainID   uint   `json:"domain_id"`
 	Path       string `json:"path"`
 	TLSEnabled bool   `json:"tls_enabled"`
+	AccessMode string `json:"access_mode"`
 }
 
 type workspaceRuntimeSummary struct {
@@ -76,11 +77,12 @@ type workspaceRuntimeSummary struct {
 
 type workspaceApplicationInfo struct {
 	model.Application
-	ActiveRelease *model.Release          `json:"active_release,omitempty"`
-	LatestRelease *model.Release          `json:"latest_release,omitempty"`
-	Runtime       workspaceRuntimeSummary `json:"runtime"`
-	EndpointURL   string                  `json:"endpoint_url,omitempty"`
-	EndpointCount int                     `json:"endpoint_count"`
+	ActiveRelease      *model.Release          `json:"active_release,omitempty"`
+	LatestRelease      *model.Release          `json:"latest_release,omitempty"`
+	Runtime            workspaceRuntimeSummary `json:"runtime"`
+	EndpointURL        string                  `json:"endpoint_url,omitempty"`
+	EndpointAccessMode string                  `json:"endpoint_access_mode,omitempty"`
+	EndpointCount      int                     `json:"endpoint_count"`
 }
 
 type workloadKindRequest struct {
@@ -1092,7 +1094,7 @@ func (h *ApplicationHandler) workspaceApplicationInfos(ctx context.Context, name
 		} else if latest != nil {
 			runtime.Status = "unavailable"
 		}
-		infos = append(infos, workspaceApplicationInfo{Application: app, ActiveRelease: active, LatestRelease: latest, Runtime: runtime, EndpointURL: applicationEndpointURL(app), EndpointCount: len(app.Endpoints)})
+		infos = append(infos, workspaceApplicationInfo{Application: app, ActiveRelease: active, LatestRelease: latest, Runtime: runtime, EndpointURL: applicationEndpointURL(app), EndpointAccessMode: applicationEndpointAccessMode(app), EndpointCount: len(app.Endpoints)})
 	}
 	return infos
 }
@@ -1161,11 +1163,25 @@ func applicationEndpointURL(app model.Application) string {
 		return ""
 	}
 	endpoint := app.Endpoints[0]
+	if endpoint.AccessMode == model.ApplicationEndpointAccessProtectedConsole {
+		return ""
+	}
 	scheme := "http"
 	if endpoint.TLSEnabled {
 		scheme = "https"
 	}
 	return scheme + "://" + endpoint.Domain + strings.TrimSpace(endpoint.Path)
+}
+
+func applicationEndpointAccessMode(app model.Application) string {
+	if len(app.Endpoints) == 0 {
+		return ""
+	}
+	mode := app.Endpoints[0].AccessMode
+	if mode == "" {
+		return model.ApplicationEndpointAccessPublic
+	}
+	return mode
 }
 
 func (h *ApplicationHandler) CreateRelease(c *gin.Context) {
@@ -2013,7 +2029,14 @@ func (h *ApplicationHandler) prepareApplicationEndpoint(app *model.Application, 
 	if conflicts > 0 {
 		return nil, fmt.Errorf("域名 %q 的路径 %q 已被其他应用入口使用", domain.Hostname, path)
 	}
-	endpoint := &model.ApplicationEndpoint{ApplicationID: app.ID, DomainID: domain.ID, Exposure: application.ExposurePublic, Domain: domain.Hostname, Path: path, TLSEnabled: req.TLSEnabled, IssuerRef: domain.IssuerRef}
+	accessMode := strings.TrimSpace(req.AccessMode)
+	if accessMode == "" {
+		accessMode = model.ApplicationEndpointAccessPublic
+	}
+	if accessMode != model.ApplicationEndpointAccessPublic && accessMode != model.ApplicationEndpointAccessProtectedConsole {
+		return nil, fmt.Errorf("入口用途无效")
+	}
+	endpoint := &model.ApplicationEndpoint{ApplicationID: app.ID, DomainID: domain.ID, Exposure: application.ExposurePublic, Domain: domain.Hostname, Path: path, TLSEnabled: req.TLSEnabled, IssuerRef: domain.IssuerRef, AccessMode: accessMode}
 	if !endpoint.TLSEnabled {
 		return endpoint, nil
 	}
