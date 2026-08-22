@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/cylism/cylism-manager/internal/application"
+	"github.com/cylism/cylism-manager/internal/auth"
 	"github.com/cylism/cylism-manager/internal/crypto"
 	k8sclient "github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
@@ -391,6 +392,53 @@ func createApplicationForReleaseRuntimeTest(t *testing.T, s *store.Store) *model
 		t.Fatal(err)
 	}
 	return app
+}
+
+func TestIntegrationManagedFileReadsAndReplacesCompleteApplicationFile(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	s, err := store.New(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	app := createApplicationForReleaseRuntimeTest(t, s)
+	if err := app.SetCapabilities([]string{"config-editor"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpdateApplication(app); err != nil {
+		t.Fatal(err)
+	}
+	file := &model.ApplicationManagedFile{ApplicationID: app.ID, ResourceKind: application.FileMountSourceSecret, ResourceName: app.Name + "-secret", Key: "config.yaml", MountPath: "/etc/app/config.yaml", CreatedBy: 1, Enabled: true}
+	if err := s.CreateApplicationManagedFile(file); err != nil {
+		t.Fatal(err)
+	}
+	originalK8s := K8s
+	clientset := k8sfake.NewSimpleClientset(&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: file.ResourceName, Namespace: app.Environment.Namespace}, Data: map[string][]byte{file.Key: []byte("listen: :8443\n")}})
+	K8s = &k8sclient.Client{Clientset: clientset}
+	defer func() { K8s = originalK8s }()
+
+	h := NewApplicationHandler(s, []byte("01234567890123456789012345678901"))
+	claims := &auth.DelegationClaims{UserID: 1, ProjectID: app.ProjectID, EnvironmentIDs: []uint{app.EnvironmentID}, ApplicationIDs: []uint{app.ID}, Capability: "config-editor", Actions: []string{"managed_file:read", "managed_file:write"}}
+	r := gin.New()
+	r.Use(func(c *gin.Context) { c.Set("delegation", claims); c.Set("user_id", uint(1)); c.Next() })
+	r.GET("/api/integrations/applications/:id/files/:fileID", h.IntegrationGetManagedFile)
+	r.PUT("/api/integrations/applications/:id/files/:fileID", h.IntegrationReplaceManagedFile)
+
+	response := serve(r, newJSONRequest(http.MethodGet, "/api/integrations/applications/1/files/1", nil))
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"content":"listen: :8443\n"`) || !strings.Contains(response.Body.String(), `"version":1`) {
+		t.Fatalf("unexpected managed file read response: %d %s", response.Code, response.Body.String())
+	}
+	response = serve(r, newJSONRequest(http.MethodPut, "/api/integrations/applications/1/files/1", gin.H{"content": "listen: :9443\n", "expected_version": 1}))
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"version":2`) {
+		t.Fatalf("unexpected managed file replace response: %d %s", response.Code, response.Body.String())
+	}
+	secret, err := clientset.CoreV1().Secrets(app.Environment.Namespace).Get(t.Context(), file.ResourceName, metav1.GetOptions{})
+	if err != nil || string(secret.Data[file.Key]) != "listen: :9443\n" {
+		t.Fatalf("managed file content was not updated: secret=%#v err=%v", secret, err)
+	}
+	response = serve(r, newJSONRequest(http.MethodPut, "/api/integrations/applications/1/files/1", gin.H{"content": "stale", "expected_version": 1}))
+	if response.Code != http.StatusConflict {
+		t.Fatalf("expected stale managed file update to fail, got %d %s", response.Code, response.Body.String())
+	}
 }
 
 func TestApplicationHandlerReleasesFromSelectedDeploymentTemplateByVersion(t *testing.T) {

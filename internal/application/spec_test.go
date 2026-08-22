@@ -172,6 +172,28 @@ func TestRenderResourcesMountsApplicationConfigKeyAsFile(t *testing.T) {
 	}
 }
 
+func TestRenderResourcesMountsApplicationSecretKeyAsFile(t *testing.T) {
+	spec := validTestReleaseSpec()
+	spec.Secrets = map[string]string{"config.yaml": "listen: :8443"}
+	spec.FileMounts = []FileMountSpec{{
+		SourceType: FileMountSourceApplicationSecret,
+		Key:        "config.yaml",
+		MountPath:  "/etc/app/config.yaml",
+		Managed:    true,
+	}}
+	resources, err := RenderResources(ApplicationContext{ProjectName: "edge", EnvironmentName: "production", ApplicationName: "edge-api", Namespace: "edge-prod", ReleaseSequence: 1}, spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resources.Secret == nil || resources.Secret.Name != "edge-api-secret" {
+		t.Fatalf("expected generated application Secret, got %#v", resources.Secret)
+	}
+	volume := resources.Deployment.Spec.Template.Spec.Volumes[0]
+	if volume.Secret == nil || volume.Secret.SecretName != "edge-api-secret" || len(volume.Secret.Items) != 1 || volume.Secret.Items[0].Key != "config.yaml" {
+		t.Fatalf("expected projected application Secret, got %#v", volume)
+	}
+}
+
 func TestRenderResourcesRendersMultiProtocolServicePorts(t *testing.T) {
 	spec := validTestReleaseSpec()
 	spec.Service = ServiceSpec{
@@ -241,6 +263,13 @@ func TestValidateReleaseSpecRejectsInvalidL4ServiceAndFileMounts(t *testing.T) {
 	issues = ValidateReleaseSpec(spec)
 	if len(issues) == 0 || issues[0].Field != "file_mounts[0].key" {
 		t.Fatalf("expected missing application ConfigMap key error, got %#v", issues)
+	}
+
+	spec = validTestReleaseSpec()
+	spec.FileMounts = []FileMountSpec{{SourceType: FileMountSourceSecret, SourceName: "edge-tls", Key: "tls.crt", MountPath: "/etc/app/tls.crt", Managed: true}}
+	issues = ValidateReleaseSpec(spec)
+	if len(issues) == 0 || issues[0].Field != "file_mounts[0].managed" {
+		t.Fatalf("expected managed mount source validation error, got %#v", issues)
 	}
 
 	spec = validTestReleaseSpec()

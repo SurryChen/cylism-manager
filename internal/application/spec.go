@@ -46,6 +46,7 @@ const (
 	// FileMountSourceApplicationConfig projects a key from the ConfigMap
 	// generated for this application's template config.
 	FileMountSourceApplicationConfig = "application_config"
+	FileMountSourceApplicationSecret = "application_secret"
 )
 
 type ReleaseSpec struct {
@@ -93,6 +94,7 @@ type FileMountSpec struct {
 	SourceName string `json:"source_name"`
 	Key        string `json:"key"`
 	MountPath  string `json:"mount_path"`
+	Managed    bool   `json:"managed,omitempty"`
 }
 
 type ResourceSpec struct {
@@ -230,7 +232,7 @@ func ValidateReleaseSpec(spec ReleaseSpec) []ValidationIssue {
 	if len(spec.Volumes) > 0 && spec.Replicas > 1 {
 		issues = append(issues, ValidationIssue{Field: "volumes", Message: "ReadWriteOnce PVC 仅支持单副本应用"})
 	}
-	issues = append(issues, validateFileMounts(spec.FileMounts, spec.Config)...)
+	issues = append(issues, validateFileMounts(spec.FileMounts, spec.Config, spec.Secrets)...)
 	parseQuantity := func(field, value string) *resource.Quantity {
 		quantity, err := resource.ParseQuantity(value)
 		if err != nil || strings.TrimSpace(value) == "" {
@@ -378,16 +380,19 @@ func serviceNodePortField(service ServiceSpec, index int) string {
 	return fmt.Sprintf("service.ports[%d].node_port", index)
 }
 
-func validateFileMounts(fileMounts []FileMountSpec, applicationConfig map[string]string) []ValidationIssue {
+func validateFileMounts(fileMounts []FileMountSpec, applicationConfig, applicationSecrets map[string]string) []ValidationIssue {
 	issues := make([]ValidationIssue, 0)
 	paths := make(map[string]struct{}, len(fileMounts))
 	directories := make(map[string]string, len(fileMounts))
 	for index, fileMount := range fileMounts {
 		field := fmt.Sprintf("file_mounts[%d]", index)
-		if fileMount.SourceType != FileMountSourceConfigMap && fileMount.SourceType != FileMountSourceSecret && fileMount.SourceType != FileMountSourceApplicationConfig {
-			issues = append(issues, ValidationIssue{Field: field + ".source_type", Message: "文件来源必须为当前应用 ConfigMap、ConfigMap 或 Secret"})
+		if fileMount.SourceType != FileMountSourceConfigMap && fileMount.SourceType != FileMountSourceSecret && fileMount.SourceType != FileMountSourceApplicationConfig && fileMount.SourceType != FileMountSourceApplicationSecret {
+			issues = append(issues, ValidationIssue{Field: field + ".source_type", Message: "文件来源必须为当前应用 ConfigMap、当前应用 Secret、ConfigMap 或 Secret"})
 		}
-		if fileMount.SourceType != FileMountSourceApplicationConfig && len(validation.IsDNS1123Subdomain(fileMount.SourceName)) > 0 {
+		if fileMount.Managed && fileMount.SourceType != FileMountSourceApplicationConfig && fileMount.SourceType != FileMountSourceApplicationSecret {
+			issues = append(issues, ValidationIssue{Field: field + ".managed", Message: "仅当前应用 ConfigMap 或 Secret 文件可启用完整管理"})
+		}
+		if fileMount.SourceType != FileMountSourceApplicationConfig && fileMount.SourceType != FileMountSourceApplicationSecret && len(validation.IsDNS1123Subdomain(fileMount.SourceName)) > 0 {
 			issues = append(issues, ValidationIssue{Field: field + ".source_name", Message: "文件来源名称无效"})
 		}
 		if len(validation.IsConfigMapKey(fileMount.Key)) > 0 {
@@ -395,6 +400,10 @@ func validateFileMounts(fileMounts []FileMountSpec, applicationConfig map[string
 		} else if fileMount.SourceType == FileMountSourceApplicationConfig {
 			if _, exists := applicationConfig[fileMount.Key]; !exists {
 				issues = append(issues, ValidationIssue{Field: field + ".key", Message: "当前应用 ConfigMap 不包含该键"})
+			}
+		} else if fileMount.SourceType == FileMountSourceApplicationSecret {
+			if _, exists := applicationSecrets[fileMount.Key]; !exists {
+				issues = append(issues, ValidationIssue{Field: field + ".key", Message: "当前应用 Secret 不包含该键"})
 			}
 		}
 		mountPath := strings.TrimSpace(fileMount.MountPath)
@@ -613,7 +622,7 @@ func renderFileMounts(fileMounts []FileMountSpec) ([]corev1.Volume, []corev1.Vol
 	for index, group := range groups {
 		name := fmt.Sprintf("file-%d", index)
 		volume := corev1.Volume{Name: name}
-		if group.sourceType == FileMountSourceSecret {
+		if group.sourceType == FileMountSourceSecret || group.sourceType == FileMountSourceApplicationSecret {
 			volume.Secret = &corev1.SecretVolumeSource{SecretName: group.sourceName, Items: group.items}
 		} else {
 			volume.ConfigMap = &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: group.sourceName}, Items: group.items}
@@ -631,6 +640,10 @@ func resolveFileMountSources(fileMounts []FileMountSpec, applicationConfigName s
 		if resolved[index].SourceType == FileMountSourceApplicationConfig {
 			resolved[index].SourceType = FileMountSourceConfigMap
 			resolved[index].SourceName = applicationConfigName
+		}
+		if resolved[index].SourceType == FileMountSourceApplicationSecret {
+			resolved[index].SourceType = FileMountSourceSecret
+			resolved[index].SourceName = strings.TrimSuffix(applicationConfigName, "-config") + "-secret"
 		}
 	}
 	return resolved

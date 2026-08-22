@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -19,45 +18,142 @@ import (
 	"github.com/cylism/cylism-manager/internal/auth"
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/gin-gonic/gin"
-	"gopkg.in/yaml.v3"
 	"gorm.io/gorm"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-var managedDocumentMutationMu sync.Mutex
-
-type managedDocumentRequest struct {
-	ResourceKind string   `json:"resource_kind"`
-	ResourceName string   `json:"resource_name"`
-	Key          string   `json:"key"`
-	Format       string   `json:"format"`
-	AllowedPaths []string `json:"allowed_paths"`
-	SummaryPath  string   `json:"summary_path,omitempty"`
+type managedFileInfo struct {
+	ID           uint   `json:"id"`
+	ResourceKind string `json:"resource_kind"`
+	ResourceName string `json:"resource_name"`
+	Key          string `json:"key"`
+	MountPath    string `json:"mount_path"`
+	Format       string `json:"format"`
+	Version      uint   `json:"version"`
 }
 
-type managedDocumentInfo struct {
-	ID           uint     `json:"id"`
-	Format       string   `json:"format"`
-	AllowedPaths []string `json:"allowed_paths"`
-	Version      uint     `json:"version"`
-	Enabled      bool     `json:"enabled"`
-	ResourceKind string   `json:"resource_kind,omitempty"`
-	ResourceName string   `json:"resource_name,omitempty"`
-	Key          string   `json:"key,omitempty"`
-	SummaryPath  string   `json:"summary_path,omitempty"`
-	Keys         []string `json:"keys,omitempty"`
+type managedFileReplaceRequest struct {
+	Content         string `json:"content"`
+	ExpectedVersion uint   `json:"expected_version"`
+	Restart         bool   `json:"restart"`
 }
 
-type managedDocumentPatchRequest struct {
-	ExpectedVersion uint                     `json:"expected_version"`
-	Operations      []managedDocumentPatchOp `json:"operations"`
-	Restart         bool                     `json:"restart"`
+var managedFileMutationMu sync.Mutex
+
+func (h *ApplicationHandler) ListManagedFiles(c *gin.Context) {
+	app, ok := h.applicationForParam(c)
+	if !ok {
+		return
+	}
+	files, err := h.store.ListApplicationManagedFiles(app.ID)
+	if err != nil {
+		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		return
+	}
+	result := make([]managedFileInfo, 0, len(files))
+	for _, file := range files {
+		result = append(result, managedFileInfo{ID: file.ID, ResourceKind: file.ResourceKind, ResourceName: file.ResourceName, Key: file.Key, MountPath: file.MountPath, Format: file.Format, Version: file.Version})
+	}
+	model.Success(c, result)
 }
 
-type managedDocumentPatchOp struct {
-	Op    string      `json:"op"`
-	Path  string      `json:"path"`
-	Value interface{} `json:"value,omitempty"`
+func managedFileSource(app *model.Application, mount application.FileMountSpec) (string, string) {
+	kind, name := mount.SourceType, mount.SourceName
+	switch mount.SourceType {
+	case application.FileMountSourceApplicationConfig:
+		kind, name = application.FileMountSourceConfigMap, app.Name+"-config"
+	case application.FileMountSourceApplicationSecret:
+		kind, name = application.FileMountSourceSecret, app.Name+"-secret"
+	}
+	return kind, name
+}
+
+func (h *ApplicationHandler) syncManagedFilesForSpec(app *model.Application, spec application.ReleaseSpec, userID uint) error {
+	bindings := make(map[string]struct{})
+	for _, mount := range spec.FileMounts {
+		if !mount.Managed {
+			continue
+		}
+		if mount.SourceType != application.FileMountSourceApplicationConfig && mount.SourceType != application.FileMountSourceApplicationSecret {
+			continue
+		}
+		kind, name := managedFileSource(app, mount)
+		bindings[managedFileBinding(kind, name, mount.Key)] = struct{}{}
+		file := &model.ApplicationManagedFile{ApplicationID: app.ID, ResourceKind: kind, ResourceName: name, Key: mount.Key, MountPath: mount.MountPath, Format: "text", CreatedBy: userID, Enabled: true}
+		if err := h.store.UpsertApplicationManagedFile(file); err != nil {
+			return err
+		}
+	}
+	return h.store.DisableApplicationManagedFilesNotIn(app.ID, bindings)
+}
+
+func managedFileBinding(kind, name, key string) string {
+	return strings.Join([]string{kind, name, key}, "\x00")
+}
+
+func (h *ApplicationHandler) applyManagedFileOverrides(ctx context.Context, app *model.Application, spec *application.ReleaseSpec) error {
+	files, err := h.store.ListApplicationManagedFiles(app.ID)
+	if err != nil {
+		return err
+	}
+	managed := make(map[string]struct{})
+	for _, mount := range spec.FileMounts {
+		if !mount.Managed {
+			continue
+		}
+		kind, name := managedFileSource(app, mount)
+		managed[managedFileBinding(kind, name, mount.Key)] = struct{}{}
+	}
+	for _, file := range files {
+		if _, selected := managed[managedFileBinding(file.ResourceKind, file.ResourceName, file.Key)]; !selected {
+			continue
+		}
+		var content string
+		if file.ResourceKind == application.FileMountSourceSecret {
+			if K8s == nil || K8s.Clientset == nil {
+				return fmt.Errorf("Kubernetes 集群未连接")
+			}
+			secret, getErr := K8s.Clientset.CoreV1().Secrets(app.Environment.Namespace).Get(ctx, file.ResourceName, metav1.GetOptions{})
+			if getErr != nil {
+				return fmt.Errorf("读取受管 Secret %q: %w", file.ResourceName, getErr)
+			}
+			value, exists := secret.Data[file.Key]
+			if !exists {
+				return fmt.Errorf("受管 Secret %q 不包含键 %q", file.ResourceName, file.Key)
+			}
+			content = string(value)
+		} else {
+			if K8s == nil || K8s.Clientset == nil {
+				return fmt.Errorf("Kubernetes 集群未连接")
+			}
+			configMap, getErr := K8s.Clientset.CoreV1().ConfigMaps(app.Environment.Namespace).Get(ctx, file.ResourceName, metav1.GetOptions{})
+			if getErr != nil {
+				return fmt.Errorf("读取受管 ConfigMap %q: %w", file.ResourceName, getErr)
+			}
+			value, exists := configMap.Data[file.Key]
+			if !exists {
+				if binary, binaryExists := configMap.BinaryData[file.Key]; binaryExists {
+					content = string(binary)
+				} else {
+					return fmt.Errorf("受管 ConfigMap %q 不包含键 %q", file.ResourceName, file.Key)
+				}
+			} else {
+				content = value
+			}
+		}
+		if file.ResourceKind == application.FileMountSourceSecret {
+			if spec.Secrets == nil {
+				spec.Secrets = map[string]string{}
+			}
+			spec.Secrets[file.Key] = content
+		} else {
+			if spec.Config == nil {
+				spec.Config = map[string]string{}
+			}
+			spec.Config[file.Key] = content
+		}
+	}
+	return nil
 }
 
 type delegationRequest struct {
@@ -125,7 +221,7 @@ func (h *ApplicationHandler) createIntegrationHandoff(c *gin.Context) {
 		scheme = "https"
 	}
 	endpointURL := fmt.Sprintf("%s://%s%s", scheme, endpoint.Domain, endpoint.Path)
-	actions := []string{"application:read", "managed_document:write", "application:restart"}
+	actions := []string{"application:read", "managed_file:read", "managed_file:write", "application:restart"}
 	now := time.Now()
 	code, err := randomOpaqueValue(32)
 	if err != nil {
@@ -266,7 +362,7 @@ func (h *ApplicationHandler) CreateDelegation(c *gin.Context) {
 		}
 	}
 	if len(req.Actions) == 0 {
-		req.Actions = []string{"application:read", "managed_document:write", "application:restart"}
+		req.Actions = []string{"application:read", "managed_file:read", "managed_file:write", "application:restart"}
 	}
 	if len(h.delegationSecret) == 0 {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "委托签名未配置")
@@ -282,85 +378,6 @@ func (h *ApplicationHandler) CreateDelegation(c *gin.Context) {
 		return
 	}
 	model.Success(c, gin.H{"token": token, "expires_in": int(auth.MaxDelegationTTL.Seconds())})
-}
-
-func (h *ApplicationHandler) ListManagedDocuments(c *gin.Context) {
-	app, ok := h.applicationForParam(c)
-	if !ok {
-		return
-	}
-	documents, err := h.store.ListManagedDocuments(app.ID)
-	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
-		return
-	}
-	infos := make([]managedDocumentInfo, 0, len(documents))
-	for _, document := range documents {
-		info, infoErr := documentInfo(document, true)
-		if infoErr != nil {
-			model.Error(c, http.StatusInternalServerError, model.CodeDBError, infoErr.Error())
-			return
-		}
-		infos = append(infos, info)
-	}
-	model.Success(c, infos)
-}
-
-func (h *ApplicationHandler) CreateManagedDocument(c *gin.Context) {
-	app, ok := h.applicationForParam(c)
-	if !ok {
-		return
-	}
-	var req managedDocumentRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "受控文档参数无效")
-		return
-	}
-	if strings.TrimSpace(req.ResourceName) == "" || strings.TrimSpace(req.Key) == "" {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "资源名称和键名必填")
-		return
-	}
-	kind, format, paths, err := model.NormalizeManagedDocument(req.ResourceKind, req.Format, req.AllowedPaths)
-	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
-		return
-	}
-	if req.SummaryPath != "" && !pathsPermitRaw(paths, strings.TrimSpace(req.SummaryPath)) {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "摘要路径必须位于允许路径内")
-		return
-	}
-	if err := h.validateManagedDocumentBinding(c.Request.Context(), app, kind, req.ResourceName, req.Key); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
-		return
-	}
-	document := &model.ManagedDocument{ApplicationID: app.ID, ResourceKind: kind, ResourceName: strings.TrimSpace(req.ResourceName), Key: strings.TrimSpace(req.Key), Format: format, SummaryPath: strings.TrimSpace(req.SummaryPath), CreatedBy: getUserID(c)}
-	if err := document.SetAllowedPaths(paths); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
-		return
-	}
-	if err := h.store.CreateManagedDocument(document); err != nil {
-		model.Error(c, http.StatusConflict, model.CodeValidationFail, "该应用资源键已存在受控文档")
-		return
-	}
-	info, _ := documentInfo(*document, true)
-	model.Success(c, info)
-}
-
-func (h *ApplicationHandler) DeleteManagedDocument(c *gin.Context) {
-	app, ok := h.applicationForParam(c)
-	if !ok {
-		return
-	}
-	documentID, err := parseID(c.Param("documentID"))
-	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "受控文档 ID 无效")
-		return
-	}
-	if err := h.store.DeleteManagedDocument(app.ID, documentID); err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
-		return
-	}
-	model.Success(c, gin.H{"id": documentID})
 }
 
 func (h *ApplicationHandler) IntegrationDiscoverApplications(c *gin.Context) {
@@ -416,80 +433,95 @@ func (h *ApplicationHandler) IntegrationGetApplicationRuntime(c *gin.Context) {
 	model.Success(c, h.applicationRuntimeInfos(c.Request.Context(), []model.Application{*app}, map[uint][]model.Release{app.ID: releases})[app.ID])
 }
 
-func (h *ApplicationHandler) IntegrationListManagedDocuments(c *gin.Context) {
-	app, ok := h.integrationApplication(c, "application:read")
+func (h *ApplicationHandler) IntegrationListManagedFiles(c *gin.Context) {
+	app, ok := h.integrationApplication(c, "managed_file:read")
 	if !ok {
 		return
 	}
-	documents, err := h.store.ListManagedDocuments(app.ID)
+	files, err := h.store.ListApplicationManagedFiles(app.ID)
 	if err != nil {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
 		return
 	}
-	infos := make([]managedDocumentInfo, 0, len(documents))
-	for _, document := range documents {
-		if !document.Enabled {
-			continue
-		}
-		info, err := h.integrationDocumentInfo(c.Request.Context(), app, document)
-		if err != nil {
-			model.Error(c, http.StatusBadGateway, model.CodeK8sAPIError, "读取受控文档摘要失败")
-			return
-		}
-		infos = append(infos, info)
+	result := make([]managedFileInfo, 0, len(files))
+	for _, file := range files {
+		result = append(result, managedFileInfo{ID: file.ID, ResourceKind: file.ResourceKind, ResourceName: file.ResourceName, Key: file.Key, MountPath: file.MountPath, Format: file.Format, Version: file.Version})
 	}
-	model.Success(c, infos)
+	model.Success(c, result)
 }
 
-func (h *ApplicationHandler) IntegrationPatchManagedDocument(c *gin.Context) {
-	app, ok := h.integrationApplication(c, "managed_document:write")
+func (h *ApplicationHandler) IntegrationGetManagedFile(c *gin.Context) {
+	app, ok := h.integrationApplication(c, "managed_file:read")
 	if !ok {
 		return
 	}
-	documentID, err := parseID(c.Param("documentID"))
+	fileID, err := parseID(c.Param("fileID"))
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "受控文档 ID 无效")
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "文件 ID 无效")
 		return
 	}
-	var req managedDocumentPatchRequest
-	if err := c.ShouldBindJSON(&req); err != nil || req.ExpectedVersion == 0 || len(req.Operations) == 0 {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "受控文档 patch 参数无效")
+	file, err := h.store.GetApplicationManagedFile(app.ID, fileID)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		model.Error(c, http.StatusNotFound, model.CodeNotFound, "受管文件不存在")
+		return
+	}
+	if err != nil {
+		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		return
+	}
+	content, err := h.readManagedFile(c, app, file)
+	if err != nil {
+		model.Error(c, http.StatusBadGateway, model.CodeK8sAPIError, "读取受管文件失败")
+		return
+	}
+	model.Success(c, gin.H{"id": file.ID, "resource_kind": file.ResourceKind, "resource_name": file.ResourceName, "key": file.Key, "mount_path": file.MountPath, "format": file.Format, "version": file.Version, "content": content})
+}
+
+func (h *ApplicationHandler) IntegrationReplaceManagedFile(c *gin.Context) {
+	app, ok := h.integrationApplication(c, "managed_file:write")
+	if !ok {
+		return
+	}
+	fileID, err := parseID(c.Param("fileID"))
+	if err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "文件 ID 无效")
+		return
+	}
+	var req managedFileReplaceRequest
+	if err := c.ShouldBindJSON(&req); err != nil || req.ExpectedVersion == 0 {
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "受管文件参数无效")
+		return
+	}
+	if len(req.Content) > 4<<20 {
+		model.Error(c, http.StatusRequestEntityTooLarge, model.CodeValidationFail, "受管文件不能超过 4 MiB")
 		return
 	}
 	if req.Restart && !delegationClaims(c).Allows("application:restart") {
 		integrationForbidden(c)
 		return
 	}
-	document, err := h.store.GetManagedDocument(app.ID, documentID)
-	if errors.Is(err, gorm.ErrRecordNotFound) || !document.Enabled {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, "受控文档不存在")
+	managedFileMutationMu.Lock()
+	defer managedFileMutationMu.Unlock()
+	file, err := h.store.GetApplicationManagedFile(app.ID, fileID)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		model.Error(c, http.StatusNotFound, model.CodeNotFound, "受管文件不存在")
 		return
 	}
 	if err != nil {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
 		return
 	}
-	managedDocumentMutationMu.Lock()
-	defer managedDocumentMutationMu.Unlock()
-	// Check the version while holding the process-wide mutation lock. Otherwise
-	// a waiting request could write to Kubernetes after another request advanced
-	// the database version.
-	document, err = h.store.GetManagedDocument(app.ID, documentID)
-	if err != nil || !document.Enabled {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, "受控文档不存在")
+	if file.Version != req.ExpectedVersion {
+		model.Error(c, http.StatusConflict, model.CodeValidationFail, fmt.Sprintf("受管文件版本冲突，当前版本为 %d", file.Version))
 		return
 	}
-	if document.Version != req.ExpectedVersion {
-		model.Error(c, http.StatusConflict, model.CodeValidationFail, fmt.Sprintf("受控文档版本冲突，当前版本为 %d", document.Version))
-		return
-	}
-	if err := h.applyManagedDocumentPatch(c.Request.Context(), app, document, req.Operations); err != nil {
+	if err := h.writeManagedFile(c, app, file, []byte(req.Content)); err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
 		return
 	}
-	version, err := h.store.AdvanceManagedDocumentVersion(app.ID, document.ID, req.ExpectedVersion)
+	version, err := h.store.AdvanceApplicationManagedFileVersion(app.ID, file.ID, req.ExpectedVersion)
 	if err != nil {
-		model.Error(c, http.StatusConflict, model.CodeValidationFail, "受控文档版本冲突")
+		model.Error(c, http.StatusConflict, model.CodeValidationFail, "受管文件版本冲突")
 		return
 	}
 	response := gin.H{"version": version}
@@ -497,7 +529,7 @@ func (h *ApplicationHandler) IntegrationPatchManagedDocument(c *gin.Context) {
 		release, restartErr := h.createRestartRelease(c.Request.Context(), app, getUserID(c))
 		if restartErr != nil {
 			response["restart_pending"] = true
-			response["restart_error"] = "配置已保存，重新发布创建失败"
+			response["restart_error"] = "文件已保存，重新发布创建失败"
 		} else {
 			response["release_id"] = release.ID
 		}
@@ -581,239 +613,66 @@ func integrationForbidden(c *gin.Context) {
 	model.Error(c, http.StatusForbidden, model.CodeUnauthorized, "委托范围不允许该操作")
 }
 
-func documentInfo(document model.ManagedDocument, includeBinding bool) (managedDocumentInfo, error) {
-	paths, err := document.Paths()
+func (h *ApplicationHandler) readManagedFile(c *gin.Context, app *model.Application, file *model.ApplicationManagedFile) (string, error) {
+	if K8s == nil || K8s.Clientset == nil {
+		return "", fmt.Errorf("Kubernetes 集群未连接")
+	}
+	if file.ResourceKind == "secret" {
+		secret, err := K8s.Clientset.CoreV1().Secrets(app.Environment.Namespace).Get(c.Request.Context(), file.ResourceName, metav1.GetOptions{})
+		if err != nil {
+			return "", err
+		}
+		value, exists := secret.Data[file.Key]
+		if !exists {
+			return "", fmt.Errorf("受管 Secret %q 不包含键 %q", file.ResourceName, file.Key)
+		}
+		return string(value), nil
+	}
+	configMap, err := K8s.Clientset.CoreV1().ConfigMaps(app.Environment.Namespace).Get(c.Request.Context(), file.ResourceName, metav1.GetOptions{})
 	if err != nil {
-		return managedDocumentInfo{}, err
+		return "", err
 	}
-	info := managedDocumentInfo{ID: document.ID, Format: document.Format, AllowedPaths: paths, Version: document.Version, Enabled: document.Enabled, SummaryPath: document.SummaryPath}
-	if includeBinding {
-		info.ResourceKind, info.ResourceName, info.Key = document.ResourceKind, document.ResourceName, document.Key
+	value, exists := configMap.Data[file.Key]
+	if exists {
+		return value, nil
 	}
-	return info, nil
+	if binary, binaryExists := configMap.BinaryData[file.Key]; binaryExists {
+		return string(binary), nil
+	}
+	return "", fmt.Errorf("受管 ConfigMap %q 不包含键 %q", file.ResourceName, file.Key)
 }
 
-func (h *ApplicationHandler) validateManagedDocumentBinding(ctx context.Context, app *model.Application, kind, resourceName, key string) error {
-	template, err := h.store.GetDefaultApplicationDeploymentTemplate(app.ID)
-	if err != nil || !template.Enabled {
-		return fmt.Errorf("应用没有可用的默认上线模板")
-	}
-	var spec application.ReleaseSpec
-	if err := json.Unmarshal([]byte(template.Spec), &spec); err != nil {
-		return fmt.Errorf("读取上线模板失败")
-	}
-	found := false
-	for _, mount := range spec.FileMounts {
-		if mount.SourceType == kind && mount.SourceName == resourceName && mount.Key == key {
-			found = true
-			break
-		}
-	}
-	if !found {
-		return fmt.Errorf("受控文档必须精确对应默认模板中的只读文件挂载")
-	}
+func (h *ApplicationHandler) writeManagedFile(c *gin.Context, app *model.Application, file *model.ApplicationManagedFile, content []byte) error {
 	if K8s == nil || K8s.Clientset == nil {
 		return fmt.Errorf("Kubernetes 集群未连接")
 	}
-	if kind == model.ManagedDocumentResourceSecret {
-		secret, err := K8s.Clientset.CoreV1().Secrets(app.Environment.Namespace).Get(ctx, resourceName, metav1.GetOptions{})
-		if err != nil || secret.Data[key] == nil {
-			return fmt.Errorf("文件挂载 Secret 或键不存在")
+	if file.ResourceKind == "secret" {
+		secret, err := K8s.Clientset.CoreV1().Secrets(app.Environment.Namespace).Get(c.Request.Context(), file.ResourceName, metav1.GetOptions{})
+		if err != nil {
+			return fmt.Errorf("读取受管 Secret 失败")
 		}
-		return nil
-	}
-	configMap, err := K8s.Clientset.CoreV1().ConfigMaps(app.Environment.Namespace).Get(ctx, resourceName, metav1.GetOptions{})
-	if err != nil || configMap.Data[key] == "" {
-		return fmt.Errorf("文件挂载 ConfigMap 或键不存在")
-	}
-	return nil
-}
-
-func (h *ApplicationHandler) integrationDocumentInfo(ctx context.Context, app *model.Application, document model.ManagedDocument) (managedDocumentInfo, error) {
-	info, err := documentInfo(document, false)
-	if err != nil {
-		return managedDocumentInfo{}, err
-	}
-	if document.SummaryPath == "" || !pathsPermit(document, document.SummaryPath) || K8s == nil || K8s.Clientset == nil {
-		return info, nil
-	}
-	var raw []byte
-	if document.ResourceKind == model.ManagedDocumentResourceSecret {
-		secret, getErr := K8s.Clientset.CoreV1().Secrets(app.Environment.Namespace).Get(ctx, document.ResourceName, metav1.GetOptions{})
-		if getErr != nil {
-			return managedDocumentInfo{}, getErr
+		if _, exists := secret.Data[file.Key]; !exists {
+			return fmt.Errorf("受管 Secret %q 不包含键 %q", file.ResourceName, file.Key)
 		}
-		raw = secret.Data[document.Key]
-	} else {
-		configMap, getErr := K8s.Clientset.CoreV1().ConfigMaps(app.Environment.Namespace).Get(ctx, document.ResourceName, metav1.GetOptions{})
-		if getErr != nil {
-			return managedDocumentInfo{}, getErr
-		}
-		raw = []byte(configMap.Data[document.Key])
-	}
-	root := map[string]interface{}{}
-	if document.Format == model.ManagedDocumentFormatJSON {
-		err = json.Unmarshal(raw, &root)
-	} else {
-		err = yaml.Unmarshal(raw, &root)
-	}
-	if err != nil {
-		return managedDocumentInfo{}, err
-	}
-	value := interface{}(root)
-	for _, segment := range strings.Split(strings.TrimPrefix(document.SummaryPath, "/"), "/") {
-		object, ok := value.(map[string]interface{})
-		if !ok {
-			value = nil
-			break
-		}
-		value = object[segment]
-	}
-	if object, ok := value.(map[string]interface{}); ok {
-		for key := range object {
-			info.Keys = append(info.Keys, key)
-		}
-		sort.Strings(info.Keys)
-	}
-	return info, nil
-}
-
-func (h *ApplicationHandler) applyManagedDocumentPatch(ctx context.Context, app *model.Application, document *model.ManagedDocument, operations []managedDocumentPatchOp) error {
-	if K8s == nil || K8s.Clientset == nil {
-		return fmt.Errorf("Kubernetes 集群未连接")
-	}
-	paths, err := document.Paths()
-	if err != nil {
+		secret.Data[file.Key] = content
+		_, err = K8s.Clientset.CoreV1().Secrets(app.Environment.Namespace).Update(c.Request.Context(), secret, metav1.UpdateOptions{})
 		return err
 	}
-	var raw []byte
-	var write func([]byte) error
-	if document.ResourceKind == model.ManagedDocumentResourceSecret {
-		secret, getErr := K8s.Clientset.CoreV1().Secrets(app.Environment.Namespace).Get(ctx, document.ResourceName, metav1.GetOptions{})
-		if getErr != nil {
-			return fmt.Errorf("读取受控 Secret 失败")
-		}
-		value, exists := secret.Data[document.Key]
-		if !exists {
-			return fmt.Errorf("受控 Secret 键不存在")
-		}
-		raw = value
-		write = func(content []byte) error {
-			secret.Data[document.Key] = content
-			_, updateErr := K8s.Clientset.CoreV1().Secrets(app.Environment.Namespace).Update(ctx, secret, metav1.UpdateOptions{})
-			return updateErr
-		}
-	} else {
-		configMap, getErr := K8s.Clientset.CoreV1().ConfigMaps(app.Environment.Namespace).Get(ctx, document.ResourceName, metav1.GetOptions{})
-		if getErr != nil {
-			return fmt.Errorf("读取受控 ConfigMap 失败")
-		}
-		value, exists := configMap.Data[document.Key]
-		if !exists {
-			return fmt.Errorf("受控 ConfigMap 键不存在")
-		}
-		raw = []byte(value)
-		write = func(content []byte) error {
-			configMap.Data[document.Key] = string(content)
-			_, updateErr := K8s.Clientset.CoreV1().ConfigMaps(app.Environment.Namespace).Update(ctx, configMap, metav1.UpdateOptions{})
-			return updateErr
-		}
-	}
-	root := map[string]interface{}{}
-	if document.Format == model.ManagedDocumentFormatJSON {
-		err = json.Unmarshal(raw, &root)
-	} else {
-		err = yaml.Unmarshal(raw, &root)
-	}
-	if err != nil || root == nil {
-		return fmt.Errorf("受控文档格式无效")
-	}
-	for _, operation := range operations {
-		if !pathsPermit(*document, operation.Path) || !pathsPermitRaw(paths, operation.Path) {
-			return fmt.Errorf("patch 路径不在允许范围内")
-		}
-		if err := applyObjectPatch(root, operation); err != nil {
-			return err
-		}
-	}
-	if document.Format == model.ManagedDocumentFormatJSON {
-		raw, err = json.MarshalIndent(root, "", "  ")
-	} else {
-		raw, err = yaml.Marshal(root)
-	}
+	configMap, err := K8s.Clientset.CoreV1().ConfigMaps(app.Environment.Namespace).Get(c.Request.Context(), file.ResourceName, metav1.GetOptions{})
 	if err != nil {
-		return fmt.Errorf("编码受控文档失败")
+		return fmt.Errorf("读取受管 ConfigMap 失败")
 	}
-	if err := write(raw); err != nil {
-		return fmt.Errorf("更新受控文档失败")
-	}
-	return nil
-}
-
-func pathsPermit(document model.ManagedDocument, pointer string) bool {
-	paths, err := document.Paths()
-	return err == nil && pathsPermitRaw(paths, pointer)
-}
-
-func pathsPermitRaw(paths []string, pointer string) bool {
-	if !validPatchPointer(pointer) {
-		return false
-	}
-	for _, allowed := range paths {
-		if pointer == allowed || strings.HasPrefix(pointer, allowed+"/") {
-			return true
+	if _, exists := configMap.Data[file.Key]; !exists {
+		if _, binaryExists := configMap.BinaryData[file.Key]; !binaryExists {
+			return fmt.Errorf("受管 ConfigMap %q 不包含键 %q", file.ResourceName, file.Key)
 		}
+		configMap.BinaryData[file.Key] = content
+		_, err = K8s.Clientset.CoreV1().ConfigMaps(app.Environment.Namespace).Update(c.Request.Context(), configMap, metav1.UpdateOptions{})
+		return err
 	}
-	return false
-}
-
-func validPatchPointer(pointer string) bool {
-	return strings.HasPrefix(pointer, "/") && pointer != "/" && !strings.Contains(pointer, "//") && !strings.Contains(pointer, "..") && !strings.Contains(pointer, "~")
-}
-
-func applyObjectPatch(root map[string]interface{}, operation managedDocumentPatchOp) error {
-	if operation.Op != "add" && operation.Op != "replace" && operation.Op != "remove" {
-		return fmt.Errorf("不支持的 patch 操作")
-	}
-	segments := strings.Split(strings.TrimPrefix(operation.Path, "/"), "/")
-	current := root
-	for _, segment := range segments[:len(segments)-1] {
-		next, exists := current[segment]
-		if !exists {
-			if operation.Op == "add" {
-				child := map[string]interface{}{}
-				current[segment] = child
-				current = child
-				continue
-			}
-			return fmt.Errorf("patch 父路径不存在")
-		}
-		child, ok := next.(map[string]interface{})
-		if !ok {
-			return fmt.Errorf("patch 父路径不是对象")
-		}
-		current = child
-	}
-	leaf := segments[len(segments)-1]
-	_, exists := current[leaf]
-	switch operation.Op {
-	case "add":
-		if exists {
-			return fmt.Errorf("patch 键已存在")
-		}
-		current[leaf] = operation.Value
-	case "replace":
-		if !exists {
-			return fmt.Errorf("patch 键不存在")
-		}
-		current[leaf] = operation.Value
-	case "remove":
-		if !exists {
-			return fmt.Errorf("patch 键不存在")
-		}
-		delete(current, leaf)
-	}
-	return nil
+	configMap.Data[file.Key] = string(content)
+	_, err = K8s.Clientset.CoreV1().ConfigMaps(app.Environment.Namespace).Update(c.Request.Context(), configMap, metav1.UpdateOptions{})
+	return err
 }
 
 func (h *ApplicationHandler) createRestartRelease(ctx context.Context, app *model.Application, userID uint) (*model.Release, error) {
@@ -834,6 +693,9 @@ func (h *ApplicationHandler) createRestartRelease(ctx context.Context, app *mode
 		return nil, fmt.Errorf("读取模板 Secret 失败")
 	}
 	spec.Secrets = secrets
+	if err := h.applyManagedFileOverrides(ctx, app, &spec); err != nil {
+		return nil, fmt.Errorf("读取受管文件: %w", err)
+	}
 	spec.Image = active.Image
 	spec.Version = active.Version
 	if err := h.applyApplicationEndpointSpec(app, &spec); err != nil {

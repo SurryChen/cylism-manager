@@ -1217,6 +1217,10 @@ func (h *ApplicationHandler) CreateRelease(c *gin.Context) {
 		return
 	}
 	spec.Secrets = secrets
+	if err := h.applyManagedFileOverrides(c.Request.Context(), app, &spec); err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "读取受管文件: "+err.Error())
+		return
+	}
 	spec.Version = version
 	image, err := imageWithVersion(spec.Image, version)
 	if err != nil {
@@ -1247,6 +1251,10 @@ func (h *ApplicationHandler) CreateRelease(c *gin.Context) {
 	release.TemplateRevision = template.Revision
 	if err := h.store.UpdateRelease(release); err != nil {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		return
+	}
+	if err := h.syncManagedFilesForSpec(app, spec, getUserID(c)); err != nil {
+		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "登记受管文件失败")
 		return
 	}
 	h.executeAsync(service, release.ID, app, spec)

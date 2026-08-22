@@ -286,9 +286,7 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 		applications.POST("", applicationHandler.CreateApplication)
 		applications.GET("/:id", applicationHandler.GetApplication)
 		applications.PUT("/:id/capabilities", applicationHandler.UpdateCapabilities)
-		applications.GET("/:id/managed-documents", applicationHandler.ListManagedDocuments)
-		applications.POST("/:id/managed-documents", applicationHandler.CreateManagedDocument)
-		applications.DELETE("/:id/managed-documents/:documentID", applicationHandler.DeleteManagedDocument)
+		applications.GET("/:id/managed-files", applicationHandler.ListManagedFiles)
 		applications.POST("/:id/delegations", applicationHandler.CreateDelegation)
 		applications.POST("/:id/integration-handoffs", applicationHandler.CreateIntegrationHandoff)
 		applications.PUT("/:id/workload-kind", applicationHandler.UpdateWorkloadKind)
@@ -317,8 +315,9 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 	{
 		integration.GET("/discovery", applicationHandler.IntegrationDiscoverApplications)
 		integration.GET("/:id/runtime", applicationHandler.IntegrationGetApplicationRuntime)
-		integration.GET("/:id/managed-documents", applicationHandler.IntegrationListManagedDocuments)
-		integration.PATCH("/:id/managed-documents/:documentID", applicationHandler.IntegrationPatchManagedDocument)
+		integration.GET("/:id/files", applicationHandler.IntegrationListManagedFiles)
+		integration.GET("/:id/files/:fileID", applicationHandler.IntegrationGetManagedFile)
+		integration.PUT("/:id/files/:fileID", applicationHandler.IntegrationReplaceManagedFile)
 		integration.POST("/:id/restarts", applicationHandler.IntegrationRestartApplication)
 		integration.GET("/:id/releases/:releaseID", applicationHandler.IntegrationGetRelease)
 	}

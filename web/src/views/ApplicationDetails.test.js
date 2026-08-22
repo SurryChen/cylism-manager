@@ -116,7 +116,7 @@ describe('ApplicationDetails view', () => {
     await keyValueLists[0].findAll('input')[0].setValue('LOG_LEVEL')
     await keyValueLists[0].find('textarea').setValue('debug')
     await keyValueLists[1].findAll('input')[0].setValue('DATABASE_PASSWORD')
-    await keyValueLists[1].findAll('input')[1].setValue('secret-value')
+    await keyValueLists[1].find('textarea').setValue('secret-value')
     await wrapper.find('form').trigger('submit.prevent')
 
     expect(api.post).toHaveBeenCalledWith('/applications/1/deployment-templates', expect.objectContaining({
@@ -260,6 +260,36 @@ describe('ApplicationDetails view', () => {
       }),
     }))
     expect(api.post).not.toHaveBeenCalledWith('/k8s/configmaps', expect.anything())
+  })
+
+  it('marks a current application Secret file for complete management', async () => {
+    const { api } = await import('../api/index.js')
+    api.post.mockClear()
+    const wrapper = mount(ApplicationDetails, {
+      props: { applicationID: '1' },
+      global: { stubs: { RouterLink: { template: '<a><slot /></a>' }, Teleport: true } },
+    })
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    await wrapper.find('.page-header .btn-primary').trigger('click')
+    wrapper.vm.templateForm.secret_items.push({ key: 'config.yaml', value: 'listen: :8443\n' })
+    await nextTick()
+    const addMountButtons = wrapper.findAll('button').filter(button => button.text().includes('添加挂载'))
+    await addMountButtons[addMountButtons.length - 1].trigger('click')
+    const fileRow = wrapper.find('.file-mount-row')
+    await fileRow.findAll('select')[0].setValue('application_secret')
+    await nextTick()
+    wrapper.vm.templateForm.file_mounts[0].key = 'config.yaml'
+    await fileRow.find('[placeholder="/etc/app/config.yaml"]').setValue('/etc/app/config.yaml')
+    await fileRow.find('.managed-file-check input').setValue(true)
+    await wrapper.find('form').trigger('submit.prevent')
+
+    expect(api.post).toHaveBeenCalledWith('/applications/1/deployment-templates', expect.objectContaining({
+      spec: expect.objectContaining({
+        secrets: { 'config.yaml': 'listen: :8443\n' },
+        file_mounts: [{ source_type: 'application_secret', source_name: '', key: 'config.yaml', mount_path: '/etc/app/config.yaml', managed: true }],
+      }),
+    }))
   })
 
   it('creates, edits, and unbinds individual endpoints', async () => {
