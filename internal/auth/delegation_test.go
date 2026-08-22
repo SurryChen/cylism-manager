@@ -14,7 +14,7 @@ func TestDelegationTokenRejectsBrowserTokenAndHonorsScope(t *testing.T) {
 	if _, err := ParseDelegationToken(secret, browser); err != ErrTokenInvalid {
 		t.Fatalf("browser JWT accepted as delegation: %v", err)
 	}
-	token, err := GenerateDelegationToken(secret, DelegationClaims{UserID: 7, Username: "alice", ProjectID: 9, EnvironmentIDs: []uint{4, 2, 4}, ApplicationIDs: []uint{12}, Capability: "hysteria2", Actions: []string{"application:read", "managed_document:write"}}, time.Minute)
+	token, err := GenerateDelegationToken(secret, DelegationClaims{UserID: 7, Username: "alice", ProjectID: 9, EnvironmentIDs: []uint{4, 2, 4}, ApplicationIDs: []uint{12}, Capability: "hysteria2", Actions: []string{"application:read", "managed_file:write"}}, time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -22,7 +22,7 @@ func TestDelegationTokenRejectsBrowserTokenAndHonorsScope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !claims.Allows("managed_document:write") || claims.Allows("application:restart") || !claims.AllowsEnvironment(2) || claims.AllowsEnvironment(3) || !claims.AllowsApplication(12) || claims.AllowsApplication(13) {
+	if !claims.Allows("managed_file:write") || claims.Allows("application:restart") || !claims.AllowsEnvironment(2) || claims.AllowsEnvironment(3) || !claims.AllowsApplication(12) || claims.AllowsApplication(13) {
 		t.Fatalf("unexpected claims scope: %#v", claims)
 	}
 }

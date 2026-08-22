@@ -145,6 +145,10 @@ func (a *KubernetesApplier) ValidateFileMountSources(ctx context.Context, applic
 			if _, ok := spec.Config[fileMount.Key]; !ok {
 				return fmt.Errorf("当前应用 ConfigMap 不包含键 %q", fileMount.Key)
 			}
+		case FileMountSourceApplicationSecret:
+			if _, ok := spec.Secrets[fileMount.Key]; !ok {
+				return fmt.Errorf("当前应用 Secret 不包含键 %q", fileMount.Key)
+			}
 		case FileMountSourceSecret:
 			secret, err := a.Client.Clientset.CoreV1().Secrets(application.Namespace).Get(ctx, fileMount.SourceName, metav1.GetOptions{})
 			if apierrors.IsNotFound(err) {

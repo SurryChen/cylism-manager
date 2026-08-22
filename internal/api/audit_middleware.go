@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"net/http"
 	"regexp"
 	"strconv"
 	"strings"
@@ -144,8 +145,8 @@ func buildDetail(method, path string, reqBody, respBody []byte) string {
 func buildDetailForRequest(c *gin.Context, reqBody, respBody []byte) string {
 	var detail map[string]interface{}
 	_ = json.Unmarshal([]byte(buildDetail(c.Request.Method, c.FullPath(), reqBody, respBody)), &detail)
-	if strings.Contains(c.FullPath(), "/managed-documents/") {
-		detail["request"] = redactManagedDocumentPatch(detail["request"])
+	if strings.Contains(c.FullPath(), "/files/") && c.Request.Method == http.MethodPut {
+		detail["request"] = redactManagedFileContent(detail["request"])
 	}
 	if delegation, exists := c.Get("delegation"); exists {
 		if claims, ok := delegation.(*auth.DelegationClaims); ok {
@@ -156,19 +157,13 @@ func buildDetailForRequest(c *gin.Context, reqBody, respBody []byte) string {
 	return string(data)
 }
 
-func redactManagedDocumentPatch(value interface{}) interface{} {
+func redactManagedFileContent(value interface{}) interface{} {
 	root, ok := value.(map[string]interface{})
 	if !ok {
 		return value
 	}
-	operations, ok := root["operations"].([]interface{})
-	if !ok {
-		return root
-	}
-	for _, rawOperation := range operations {
-		if operation, ok := rawOperation.(map[string]interface{}); ok {
-			operation["value"] = "[REDACTED]"
-		}
+	if _, exists := root["content"]; exists {
+		root["content"] = "[REDACTED]"
 	}
 	return root
 }

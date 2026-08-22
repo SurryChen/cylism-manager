@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -12,5 +13,14 @@ func TestBuildDetailRedactsNestedReleaseSecrets(t *testing.T) {
 	}
 	if !strings.Contains(detail, "[REDACTED]") {
 		t.Fatalf("expected redacted marker: %s", detail)
+	}
+}
+
+func TestRedactManagedFileContent(t *testing.T) {
+	value := map[string]interface{}{"content": "private-config", "expected_version": float64(1)}
+	redacted := redactManagedFileContent(value).(map[string]interface{})
+	encoded, _ := json.Marshal(redacted)
+	if strings.Contains(string(encoded), "private-config") || !strings.Contains(string(encoded), "[REDACTED]") {
+		t.Fatalf("managed file content leaked in audit detail: %s", encoded)
 	}
 }

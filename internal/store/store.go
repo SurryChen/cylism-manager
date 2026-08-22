@@ -78,7 +78,7 @@ func New(dsn string) (*Store, error) {
 		&model.IntegrationSession{},
 		&model.ApplicationEndpoint{},
 		&model.ApplicationDeploymentTemplate{},
-		&model.ManagedDocument{},
+		&model.ApplicationManagedFile{},
 		&model.ImageRegistry{},
 		&model.NodeRegistryMirror{},
 		&model.NodeRegistryMirrorNode{},
@@ -115,6 +115,11 @@ func New(dsn string) (*Store, error) {
 	}
 	if err := removeObsoleteAssistantSchema(db); err != nil {
 		return nil, err
+	}
+	if db.Migrator().HasTable("managed_documents") {
+		if err := db.Migrator().DropTable("managed_documents"); err != nil {
+			return nil, err
+		}
 	}
 
 	store := &Store{db: db}
@@ -1522,37 +1527,68 @@ func (s *Store) UpdateApplication(application *model.Application) error {
 	return s.db.Save(application).Error
 }
 
-func (s *Store) CreateManagedDocument(document *model.ManagedDocument) error {
-	if err := document.SetAllowedPaths(mustDocumentPaths(document.AllowedPaths)); err != nil {
+func (s *Store) CreateApplicationManagedFile(file *model.ApplicationManagedFile) error {
+	if file.Version == 0 {
+		file.Version = 1
+	}
+	if file.Format == "" {
+		file.Format = "text"
+	}
+	return s.db.Create(file).Error
+}
+
+func (s *Store) ListApplicationManagedFiles(applicationID uint) ([]model.ApplicationManagedFile, error) {
+	var files []model.ApplicationManagedFile
+	err := s.db.Where("application_id = ? AND enabled = ?", applicationID, true).Order("id asc").Find(&files).Error
+	return files, err
+}
+
+func (s *Store) GetApplicationManagedFile(applicationID, fileID uint) (*model.ApplicationManagedFile, error) {
+	var file model.ApplicationManagedFile
+	err := s.db.Where("application_id = ? AND id = ? AND enabled = ?", applicationID, fileID, true).First(&file).Error
+	return &file, err
+}
+
+func (s *Store) UpsertApplicationManagedFile(file *model.ApplicationManagedFile) error {
+	var existing model.ApplicationManagedFile
+	err := s.db.Where("application_id = ? AND resource_kind = ? AND resource_name = ? AND key = ?", file.ApplicationID, file.ResourceKind, file.ResourceName, file.Key).First(&existing).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return s.CreateApplicationManagedFile(file)
+	}
+	if err != nil {
 		return err
 	}
-	if document.Version == 0 {
-		document.Version = 1
+	file.ID = existing.ID
+	file.Version = existing.Version
+	file.CreatedAt = existing.CreatedAt
+	return s.db.Model(&existing).Updates(map[string]interface{}{"mount_path": file.MountPath, "format": file.Format, "enabled": file.Enabled}).Error
+}
+
+// DisableApplicationManagedFilesNotIn disables bindings that are no longer
+// present in the published template. The row is retained so a later re-enable
+// keeps its optimistic version history.
+func (s *Store) DisableApplicationManagedFilesNotIn(applicationID uint, bindings map[string]struct{}) error {
+	files, err := s.ListApplicationManagedFiles(applicationID)
+	if err != nil {
+		return err
 	}
-	return s.db.Create(document).Error
+	for _, file := range files {
+		binding := fmt.Sprintf("%s\x00%s\x00%s", file.ResourceKind, file.ResourceName, file.Key)
+		if _, keep := bindings[binding]; keep {
+			continue
+		}
+		if err := s.db.Model(&model.ApplicationManagedFile{}).Where("id = ?", file.ID).Update("enabled", false).Error; err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
-func (s *Store) ListManagedDocuments(applicationID uint) ([]model.ManagedDocument, error) {
-	var documents []model.ManagedDocument
-	err := s.db.Where("application_id = ?", applicationID).Order("id asc").Find(&documents).Error
-	return documents, err
-}
-
-func (s *Store) GetManagedDocument(applicationID, documentID uint) (*model.ManagedDocument, error) {
-	var document model.ManagedDocument
-	err := s.db.Where("application_id = ? AND id = ?", applicationID, documentID).First(&document).Error
-	return &document, err
-}
-
-func (s *Store) DeleteManagedDocument(applicationID, documentID uint) error {
-	return s.db.Where("application_id = ? AND id = ?", applicationID, documentID).Delete(&model.ManagedDocument{}).Error
-}
-
-// AdvanceManagedDocumentVersion is optimistic concurrency protection for a
-// resource mutation that has already succeeded in Kubernetes.
-func (s *Store) AdvanceManagedDocumentVersion(applicationID, documentID, expected uint) (uint, error) {
-	result := s.db.Model(&model.ManagedDocument{}).
-		Where("application_id = ? AND id = ? AND version = ? AND enabled = ?", applicationID, documentID, expected, true).
+// AdvanceApplicationManagedFileVersion is optimistic concurrency protection
+// for a resource mutation that has already succeeded in Kubernetes.
+func (s *Store) AdvanceApplicationManagedFileVersion(applicationID, fileID, expected uint) (uint, error) {
+	result := s.db.Model(&model.ApplicationManagedFile{}).
+		Where("application_id = ? AND id = ? AND version = ? AND enabled = ?", applicationID, fileID, expected, true).
 		Update("version", expected+1)
 	if result.Error != nil {
 		return 0, result.Error
@@ -1561,12 +1597,6 @@ func (s *Store) AdvanceManagedDocumentVersion(applicationID, documentID, expecte
 		return 0, gorm.ErrRecordNotFound
 	}
 	return expected + 1, nil
-}
-
-func mustDocumentPaths(raw string) []string {
-	var paths []string
-	_ = json.Unmarshal([]byte(raw), &paths)
-	return paths
 }
 
 // ReplaceApplicationCapabilities atomically replaces opaque application-level
