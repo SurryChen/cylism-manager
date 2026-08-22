@@ -302,6 +302,7 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 		applications.PUT("/:id/endpoints/:endpointID", applicationHandler.UpdateApplicationEndpoint)
 		applications.DELETE("/:id/endpoints/:endpointID", applicationHandler.DeleteApplicationEndpoint)
 		applications.POST("/:id/releases", applicationHandler.CreateRelease)
+		applications.POST("/:id/restarts", applicationHandler.RestartApplication)
 		applications.GET("/:id/releases/:releaseID", applicationHandler.GetRelease)
 		applications.POST("/:id/releases/:releaseID/retry", applicationHandler.RetryRelease)
 		applications.POST("/:id/releases/:releaseID/rollback", applicationHandler.RollbackRelease)
@@ -315,9 +316,9 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 	{
 		integration.GET("/discovery", applicationHandler.IntegrationDiscoverApplications)
 		integration.GET("/:id/runtime", applicationHandler.IntegrationGetApplicationRuntime)
-		integration.GET("/:id/files", applicationHandler.IntegrationListManagedFiles)
-		integration.GET("/:id/files/:fileID", applicationHandler.IntegrationGetManagedFile)
-		integration.PUT("/:id/files/:fileID", applicationHandler.IntegrationReplaceManagedFile)
+		integration.GET("/:id/configmaps", applicationHandler.IntegrationListManagedConfigMaps)
+		integration.GET("/:id/configmaps/:configMapID", applicationHandler.IntegrationGetManagedConfigMap)
+		integration.PUT("/:id/configmaps/:configMapID", applicationHandler.IntegrationReplaceManagedConfigMap)
 		integration.POST("/:id/restarts", applicationHandler.IntegrationRestartApplication)
 		integration.GET("/:id/releases/:releaseID", applicationHandler.IntegrationGetRelease)
 	}

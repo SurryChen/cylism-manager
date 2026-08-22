@@ -139,14 +139,16 @@ func (a *KubernetesApplier) Preflight(ctx context.Context, application Applicati
 // exists before the workload is applied. All references are scoped to the
 // application's namespace by construction.
 func (a *KubernetesApplier) ValidateFileMountSources(ctx context.Context, application ApplicationContext, spec ReleaseSpec) error {
+	config := enabledStringMap(spec.Config, spec.ConfigDisabled)
+	secrets := enabledStringMap(spec.Secrets, spec.SecretsDisabled)
 	for _, fileMount := range spec.FileMounts {
 		switch fileMount.SourceType {
 		case FileMountSourceApplicationConfig:
-			if _, ok := spec.Config[fileMount.Key]; !ok {
+			if _, ok := config[fileMount.Key]; !ok {
 				return fmt.Errorf("当前应用 ConfigMap 不包含键 %q", fileMount.Key)
 			}
 		case FileMountSourceApplicationSecret:
-			if _, ok := spec.Secrets[fileMount.Key]; !ok {
+			if _, ok := secrets[fileMount.Key]; !ok {
 				return fmt.Errorf("当前应用 Secret 不包含键 %q", fileMount.Key)
 			}
 		case FileMountSourceSecret:

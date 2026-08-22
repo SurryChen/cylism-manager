@@ -69,13 +69,18 @@ type ReleaseSpec struct {
 	Resources                           ResourceSpec      `json:"resources"`
 	Health                              HealthSpec        `json:"health"`
 	Config                              map[string]string `json:"config,omitempty"`
-	Secrets                             map[string]string `json:"secrets,omitempty"`
-	NodeName                            string            `json:"node_name,omitempty"`
-	HostNetwork                         bool              `json:"host_network,omitempty"`
-	Volumes                             []VolumeMountSpec `json:"volumes,omitempty"`
-	FileMounts                          []FileMountSpec   `json:"file_mounts,omitempty"`
-	Service                             ServiceSpec       `json:"service"`
-	Endpoint                            EndpointSpec      `json:"endpoint"`
+	// ConfigDisabled keeps configured values in the template while preventing
+	// selected keys from being projected into the workload. Missing entries are enabled
+	// for backwards compatibility with existing templates.
+	ConfigDisabled  []string          `json:"config_disabled,omitempty"`
+	Secrets         map[string]string `json:"secrets,omitempty"`
+	SecretsDisabled []string          `json:"secrets_disabled,omitempty"`
+	NodeName        string            `json:"node_name,omitempty"`
+	HostNetwork     bool              `json:"host_network,omitempty"`
+	Volumes         []VolumeMountSpec `json:"volumes,omitempty"`
+	FileMounts      []FileMountSpec   `json:"file_mounts,omitempty"`
+	Service         ServiceSpec       `json:"service"`
+	Endpoint        EndpointSpec      `json:"endpoint"`
 }
 
 // VolumeMountSpec describes a platform-managed PVC mounted into the main
@@ -232,7 +237,7 @@ func ValidateReleaseSpec(spec ReleaseSpec) []ValidationIssue {
 	if len(spec.Volumes) > 0 && spec.Replicas > 1 {
 		issues = append(issues, ValidationIssue{Field: "volumes", Message: "ReadWriteOnce PVC 仅支持单副本应用"})
 	}
-	issues = append(issues, validateFileMounts(spec.FileMounts, spec.Config, spec.Secrets)...)
+	issues = append(issues, validateFileMounts(spec.FileMounts, enabledStringMap(spec.Config, spec.ConfigDisabled), enabledStringMap(spec.Secrets, spec.SecretsDisabled))...)
 	parseQuantity := func(field, value string) *resource.Quantity {
 		quantity, err := resource.ParseQuantity(value)
 		if err != nil || strings.TrimSpace(value) == "" {
@@ -464,12 +469,14 @@ func RenderResources(context ApplicationContext, spec ReleaseSpec) (*RenderedRes
 	configName := context.ApplicationName + "-config"
 	secretName := context.ApplicationName + "-secret"
 
-	if len(spec.Config) > 0 {
-		result.ConfigMap = &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: configName, Namespace: context.Namespace, Labels: labels}, Data: cloneStringMap(spec.Config)}
+	config := enabledStringMap(spec.Config, spec.ConfigDisabled)
+	secrets := enabledStringMap(spec.Secrets, spec.SecretsDisabled)
+	if len(config) > 0 {
+		result.ConfigMap = &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: configName, Namespace: context.Namespace, Labels: labels}, Data: config}
 	}
-	if len(spec.Secrets) > 0 {
-		if hasSecretValues(spec.Secrets) {
-			result.Secret = &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: secretName, Namespace: context.Namespace, Labels: labels}, Type: corev1.SecretTypeOpaque, StringData: cloneStringMap(spec.Secrets)}
+	if len(secrets) > 0 {
+		if hasSecretValues(secrets) {
+			result.Secret = &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: secretName, Namespace: context.Namespace, Labels: labels}, Type: corev1.SecretTypeOpaque, StringData: secrets}
 		}
 	}
 	if spec.RegistryID != 0 && spec.RegistryAuthType != "" && spec.RegistryAuthType != "anonymous" {
@@ -501,7 +508,7 @@ func RenderResources(context ApplicationContext, spec ReleaseSpec) (*RenderedRes
 	if result.ConfigMap != nil {
 		container.EnvFrom = append(container.EnvFrom, corev1.EnvFromSource{ConfigMapRef: &corev1.ConfigMapEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: configName}}})
 	}
-	if len(spec.Secrets) > 0 {
+	if len(secrets) > 0 {
 		container.EnvFrom = append(container.EnvFrom, corev1.EnvFromSource{SecretRef: &corev1.SecretEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: secretName}}})
 	}
 	volumes := make([]corev1.Volume, 0, len(spec.Volumes)+len(spec.FileMounts))
@@ -789,6 +796,25 @@ func cloneStringMap(values map[string]string) map[string]string {
 		cloned[key] = value
 	}
 	return cloned
+}
+
+func enabledStringMap(values map[string]string, disabled []string) map[string]string {
+	if len(values) == 0 {
+		return nil
+	}
+	disabledSet := make(map[string]struct{}, len(disabled))
+	for _, key := range disabled {
+		if key = strings.TrimSpace(key); key != "" {
+			disabledSet[key] = struct{}{}
+		}
+	}
+	result := make(map[string]string, len(values))
+	for key, value := range values {
+		if _, isDisabled := disabledSet[key]; !isDisabled {
+			result[key] = value
+		}
+	}
+	return result
 }
 
 func hasSecretValues(values map[string]string) bool {

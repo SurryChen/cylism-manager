@@ -37,6 +37,23 @@ describe('ApplicationDetails view', () => {
     expect(wrapper.find('[aria-label="工作负载类型"]').element.value).toBe('deployment')
   })
 
+  it('restarts the application from its latest successful release', async () => {
+    const { api } = await import('../api/index.js')
+    api.post.mockReset()
+    api.post.mockResolvedValue({ id: 9, sequence: 3, status: 'pending' })
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const wrapper = mount(ApplicationDetails, {
+      props: { applicationID: '1' },
+      global: { stubs: { RouterLink: { template: '<a><slot /></a>' } } },
+    })
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    await wrapper.find('.page-header .btn-group .btn').trigger('click')
+    expect(api.post).toHaveBeenCalledWith('/applications/1/restarts')
+    expect(confirm).toHaveBeenCalled()
+    confirm.mockRestore()
+  })
+
   it('edits generic application capability labels without modifying templates', async () => {
     const { api } = await import('../api/index.js')
     api.put.mockReset()
@@ -172,7 +189,7 @@ describe('ApplicationDetails view', () => {
     await new Promise(resolve => setTimeout(resolve, 0))
 
     await wrapper.find('.page-header .btn-primary').trigger('click')
-    expect(wrapper.findAll('.editor-section-heading h3').map(heading => heading.text())).toEqual(['基础信息', '服务部署', '配置与存储', '资源与健康', '服务网络'])
+    expect(wrapper.findAll('.editor-section-heading h3').map(heading => heading.text())).toEqual(['基础信息', '服务部署', '配置与存储', '配置启用状态', '资源与健康', '服务网络'])
     expect(wrapper.find('.editor-actions .btn-primary').text()).toBe('保存模板')
     expect(wrapper.find('.editor-actions .btn-primary').attributes('form')).toBe('template-editor-form')
     expect(wrapper.text()).toContain('仅集群内访问；HTTP 服务可通过域名入口暴露。')
