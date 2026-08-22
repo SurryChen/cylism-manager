@@ -719,6 +719,7 @@ type ApplicationEndpoint struct {
 	Domain         string    `gorm:"size:256" json:"domain"`
 	Path           string    `gorm:"size:256;default:/" json:"path"`
 	ServicePort    int32     `gorm:"not null" json:"service_port"`
+	Protocol       string    `gorm:"size:16;default:TCP;not null" json:"protocol"`
 	TLSEnabled     bool      `gorm:"default:false" json:"tls_enabled"`
 	IngressEnabled bool      `gorm:"default:true;not null" json:"ingress_enabled"`
 	IngressMode    string    `gorm:"size:16;default:ingress;not null" json:"-"`

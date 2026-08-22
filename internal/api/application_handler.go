@@ -66,6 +66,8 @@ type releaseRequest struct {
 type applicationEndpointRequest struct {
 	DomainID       uint   `json:"domain_id"`
 	Path           string `json:"path"`
+	ServicePort    int32  `json:"service_port"`
+	Protocol       string `json:"protocol"`
 	TLSEnabled     bool   `json:"tls_enabled"`
 	IngressEnabled *bool  `json:"ingress_enabled"`
 	AccessMode     string `json:"access_mode"`
@@ -119,6 +121,7 @@ type applicationPublicEndpoint struct {
 	Domain         string `json:"domain"`
 	Path           string `json:"path"`
 	ServicePort    int32  `json:"service_port"`
+	Protocol       string `json:"protocol"`
 	TLSEnabled     bool   `json:"tls_enabled"`
 	IngressEnabled bool   `json:"ingress_enabled"`
 }
@@ -737,7 +740,11 @@ func applicationHasCapability(app model.Application, capability string) bool {
 func applicationDiscoveryInfoFromModel(app model.Application, runtime applicationRuntimeInfo) applicationDiscoveryInfo {
 	endpoints := make([]applicationPublicEndpoint, 0, len(app.Endpoints))
 	for _, endpoint := range app.Endpoints {
-		endpoints = append(endpoints, applicationPublicEndpoint{Domain: endpoint.Domain, Path: endpoint.Path, ServicePort: endpoint.ServicePort, TLSEnabled: endpoint.TLSEnabled, IngressEnabled: endpointUsesIngress(endpoint)})
+		protocol := endpoint.Protocol
+		if protocol == "" {
+			protocol = application.ServiceProtocolTCP
+		}
+		endpoints = append(endpoints, applicationPublicEndpoint{Domain: endpoint.Domain, Path: endpoint.Path, ServicePort: endpoint.ServicePort, Protocol: protocol, TLSEnabled: endpoint.TLSEnabled, IngressEnabled: endpointUsesIngress(endpoint)})
 	}
 	capabilities := append([]string{}, app.Capabilities...)
 	return applicationDiscoveryInfo{
@@ -1659,6 +1666,9 @@ func (h *ApplicationHandler) ListApplicationEndpoints(c *gin.Context) {
 	}
 	for index := range endpoints {
 		endpoints[index].IngressEnabled = endpointUsesIngress(endpoints[index])
+		if endpoints[index].Protocol == "" {
+			endpoints[index].Protocol = application.ServiceProtocolTCP
+		}
 	}
 	model.Success(c, endpoints)
 }
@@ -1693,20 +1703,13 @@ func (h *ApplicationHandler) CreateApplicationEndpoint(c *gin.Context) {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
 		return
 	}
-	servicePort, ok := serviceSpec.PrimaryTCPPort()
-	if !ok && endpointUsesIngress(*endpoint) {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "UDP Service 不支持 HTTP Ingress 域名绑定")
+	servicePort, err := resolveEndpointServicePort(serviceSpec, req.ServicePort, req.Protocol, endpointUsesIngress(*endpoint))
+	if err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
 		return
 	}
-	if !ok {
-		ports := serviceSpec.PortSpecs()
-		if len(ports) == 0 {
-			model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "应用没有可绑定的 Service 端口")
-			return
-		}
-		servicePort = ports[0]
-	}
 	endpoint.ServicePort = servicePort.Port
+	endpoint.Protocol = servicePort.Protocol
 	endpoints, err := h.store.ListApplicationEndpoints(app.ID)
 	if err != nil {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
@@ -1769,22 +1772,15 @@ func (h *ApplicationHandler) UpdateApplicationEndpoint(c *gin.Context) {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
 		return
 	}
-	servicePort, ok := serviceSpec.PrimaryTCPPort()
-	if !ok && endpointUsesIngress(*updated) {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "UDP Service 不支持 HTTP Ingress 域名绑定")
+	servicePort, err := resolveEndpointServicePort(serviceSpec, req.ServicePort, req.Protocol, endpointUsesIngress(*updated))
+	if err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
 		return
-	}
-	if !ok {
-		ports := serviceSpec.PortSpecs()
-		if len(ports) == 0 {
-			model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "应用没有可绑定的 Service 端口")
-			return
-		}
-		servicePort = ports[0]
 	}
 	updated.ID = endpoint.ID
 	updated.CreatedAt = endpoint.CreatedAt
 	updated.ServicePort = servicePort.Port
+	updated.Protocol = servicePort.Protocol
 	endpoints, err := h.store.ListApplicationEndpoints(app.ID)
 	if err != nil {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
@@ -1842,6 +1838,10 @@ func (h *ApplicationHandler) DeleteApplicationEndpoint(c *gin.Context) {
 	servicePort, hasTCPPort := serviceSpec.PrimaryTCPPort()
 	if !hasTCPPort {
 		servicePorts := serviceSpec.PortSpecs()
+		if len(servicePorts) == 0 {
+			model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "应用没有可绑定的 Service 端口")
+			return
+		}
 		servicePort = servicePorts[0]
 	}
 	endpoints, err := h.store.ListApplicationEndpoints(app.ID)
@@ -1855,9 +1855,7 @@ func (h *ApplicationHandler) DeleteApplicationEndpoint(c *gin.Context) {
 			remaining = append(remaining, endpoint)
 		}
 	}
-	if !hasTCPPort {
-		remaining = nil
-	}
+	// Metadata-only UDP bindings remain discoverable and do not require an Ingress.
 	if err := application.NewKubernetesApplier(K8s).SyncApplicationEndpoints(c.Request.Context(), applicationContextFor(app), remaining, servicePort.Port); err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, fmt.Sprintf("移除应用入口: %v", err))
 		return
@@ -1894,6 +1892,48 @@ func (h *ApplicationHandler) applicationServiceSpec(app *model.Application) (app
 		return application.ServiceSpec{}, err
 	}
 	return application.ServiceSpec{Port: 80}, nil
+}
+
+// resolveEndpointServicePort validates the explicitly selected Service port.
+// Empty values are retained for older clients and resolve to the first TCP
+// port when available, matching the historical behavior.
+func resolveEndpointServicePort(spec application.ServiceSpec, requestedPort int32, requestedProtocol string, ingress bool) (application.ServicePortSpec, error) {
+	ports := spec.PortSpecs()
+	if len(ports) == 0 {
+		return application.ServicePortSpec{}, fmt.Errorf("应用没有可绑定的 Service 端口")
+	}
+	protocol := strings.ToUpper(strings.TrimSpace(requestedProtocol))
+	if protocol != "" && protocol != application.ServiceProtocolTCP && protocol != application.ServiceProtocolUDP {
+		return application.ServicePortSpec{}, fmt.Errorf("Service 协议必须为 TCP 或 UDP")
+	}
+	if requestedPort == 0 {
+		if primary, ok := spec.PrimaryTCPPort(); ok {
+			requestedPort = primary.Port
+			if protocol == "" {
+				protocol = application.ServiceProtocolTCP
+			}
+		} else {
+			requestedPort = ports[0].Port
+		}
+	}
+	for _, port := range ports {
+		if port.Port != requestedPort {
+			continue
+		}
+		actualProtocol := strings.ToUpper(strings.TrimSpace(port.Protocol))
+		if actualProtocol == "" {
+			actualProtocol = application.ServiceProtocolTCP
+		}
+		if protocol != "" && protocol != actualProtocol {
+			return application.ServicePortSpec{}, fmt.Errorf("Service 端口 %d 的协议为 %s，不是 %s", requestedPort, actualProtocol, protocol)
+		}
+		if ingress && actualProtocol != application.ServiceProtocolTCP {
+			return application.ServicePortSpec{}, fmt.Errorf("UDP Service 不支持 HTTP Ingress 域名绑定")
+		}
+		port.Protocol = actualProtocol
+		return port, nil
+	}
+	return application.ServicePortSpec{}, fmt.Errorf("Service 端口 %d 不存在，请选择模板中已声明的端口", requestedPort)
 }
 
 func endpointUsesIngress(endpoint model.ApplicationEndpoint) bool {
@@ -2252,24 +2292,55 @@ func (h *ApplicationHandler) syncApplicationEndpoints(ctx context.Context, app *
 	primaryTCPPort, hasTCPPort := service.PrimaryTCPPort()
 	if !hasTCPPort {
 		servicePorts := service.PortSpecs()
+		if len(servicePorts) == 0 {
+			return fmt.Errorf("应用没有可绑定的 Service 端口")
+		}
 		if err := application.NewKubernetesApplier(K8s).SyncApplicationEndpoints(ctx, applicationContextFor(app), nil, servicePorts[0].Port); err != nil {
 			return fmt.Errorf("移除 UDP Service 的 HTTP Ingress: %w", err)
 		}
 		return nil
 	}
+	for index := range endpoints {
+		if endpoints[index].Protocol == application.ServiceProtocolTCP && !servicePortExists(service, endpoints[index].ServicePort, application.ServiceProtocolTCP) {
+			// Migrate legacy endpoints that were created before explicit port
+			// selection and therefore carried the old implicit TCP port.
+			endpoints[index].ServicePort = primaryTCPPort.Port
+			if err := h.store.UpdateApplicationEndpoint(&endpoints[index]); err != nil {
+				return fmt.Errorf("更新应用入口端口: %w", err)
+			}
+		}
+		if endpoints[index].Protocol == "" {
+			resolved, resolveErr := resolveEndpointServicePort(service, endpoints[index].ServicePort, "", endpointUsesIngress(endpoints[index]))
+			if resolveErr != nil {
+				return fmt.Errorf("校验应用入口端口: %w", resolveErr)
+			}
+			endpoints[index].ServicePort = resolved.Port
+			endpoints[index].Protocol = resolved.Protocol
+			if err := h.store.UpdateApplicationEndpoint(&endpoints[index]); err != nil {
+				return fmt.Errorf("更新应用入口协议: %w", err)
+			}
+		}
+		if endpointUsesIngress(endpoints[index]) && strings.ToUpper(endpoints[index].Protocol) != application.ServiceProtocolTCP {
+			return fmt.Errorf("入口 %s 使用 UDP 端口但启用了 HTTP Ingress", endpoints[index].Domain)
+		}
+	}
 	if err := application.NewKubernetesApplier(K8s).SyncApplicationEndpoints(ctx, applicationContextFor(app), endpoints, primaryTCPPort.Port); err != nil {
 		return fmt.Errorf("同步应用入口: %w", err)
 	}
-	for index := range endpoints {
-		if endpoints[index].ServicePort == primaryTCPPort.Port {
-			continue
+	return nil
+}
+
+func servicePortExists(spec application.ServiceSpec, requestedPort int32, requestedProtocol string) bool {
+	for _, port := range spec.PortSpecs() {
+		protocol := strings.ToUpper(strings.TrimSpace(port.Protocol))
+		if protocol == "" {
+			protocol = application.ServiceProtocolTCP
 		}
-		endpoints[index].ServicePort = primaryTCPPort.Port
-		if err := h.store.UpdateApplicationEndpoint(&endpoints[index]); err != nil {
-			return fmt.Errorf("更新应用入口端口: %w", err)
+		if port.Port == requestedPort && protocol == requestedProtocol {
+			return true
 		}
 	}
-	return nil
+	return false
 }
 
 func parseID(value string) (uint, error) {
