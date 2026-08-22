@@ -84,6 +84,27 @@ func TestRenderResourcesUsesManagedLabelsAndRedactsSecret(t *testing.T) {
 	}
 }
 
+func TestRenderResourcesSkipsDisabledConfigAndSecretEntries(t *testing.T) {
+	spec := validTestReleaseSpec()
+	spec.Config = map[string]string{"HYSTERIA_LOG_LEVEL": "debug", "config.yaml": "listen: :8443"}
+	spec.ConfigDisabled = []string{"HYSTERIA_LOG_LEVEL"}
+	spec.Secrets = map[string]string{"ACTIVE": "yes", "DISABLED": "no"}
+	spec.SecretsDisabled = []string{"DISABLED"}
+	resources, err := RenderResources(ApplicationContext{ProjectID: 1, EnvironmentID: 1, ProjectName: "p", EnvironmentName: "e", ApplicationName: "app", Namespace: "ns", ReleaseSequence: 1}, spec)
+	if err != nil {
+		t.Fatalf("RenderResources: %v", err)
+	}
+	if resources.ConfigMap == nil || resources.ConfigMap.Data["HYSTERIA_LOG_LEVEL"] != "" {
+		t.Fatalf("disabled ConfigMap key was rendered: %#v", resources.ConfigMap)
+	}
+	if resources.ConfigMap.Data["config.yaml"] == "" {
+		t.Fatal("enabled ConfigMap key was omitted")
+	}
+	if resources.Secret == nil || resources.Secret.StringData["DISABLED"] != "" || resources.Secret.StringData["ACTIVE"] != "yes" {
+		t.Fatalf("unexpected rendered Secret: %#v", resources.Secret)
+	}
+}
+
 func TestRenderResourcesRendersUDPServiceAndFileMounts(t *testing.T) {
 	spec := validTestReleaseSpec()
 	spec.ContainerPort = 443

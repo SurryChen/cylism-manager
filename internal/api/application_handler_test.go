@@ -423,7 +423,7 @@ func createApplicationForReleaseRuntimeTest(t *testing.T, s *store.Store) *model
 	return app
 }
 
-func TestIntegrationManagedFileReadsAndReplacesCompleteApplicationFile(t *testing.T) {
+func TestIntegrationConfigMapReadsAndReplacesTemplateConfig(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	s, err := store.New(":memory:")
 	if err != nil {
@@ -436,35 +436,46 @@ func TestIntegrationManagedFileReadsAndReplacesCompleteApplicationFile(t *testin
 	if err := s.UpdateApplication(app); err != nil {
 		t.Fatal(err)
 	}
-	file := &model.ApplicationManagedFile{ApplicationID: app.ID, ResourceKind: application.FileMountSourceSecret, ResourceName: app.Name + "-secret", Key: "config.yaml", MountPath: "/etc/app/config.yaml", CreatedBy: 1, Enabled: true}
+	spec := application.ReleaseSpec{
+		Image: "docker.io/example/app", ContainerPort: 8080, Replicas: 1,
+		Resources:  application.ResourceSpec{RequestsCPU: "10m", RequestsMemory: "16Mi", LimitsCPU: "100m", LimitsMemory: "64Mi"},
+		Config:     map[string]string{"config.yaml": "listen: :8443\n"},
+		FileMounts: []application.FileMountSpec{{SourceType: application.FileMountSourceApplicationConfig, Key: "config.yaml", MountPath: "/etc/app/config.yaml", Managed: true}},
+		Service:    application.ServiceSpec{Port: 8080, TargetPort: 8080, Protocol: application.ServiceProtocolTCP, Type: application.ServiceTypeClusterIP},
+	}
+	snapshot, err := json.Marshal(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	template := &model.ApplicationDeploymentTemplate{ApplicationID: app.ID, Name: "default", Enabled: true, Spec: string(snapshot)}
+	if err := s.CreateApplicationDeploymentTemplate(template, true); err != nil {
+		t.Fatal(err)
+	}
+	file := &model.ApplicationManagedFile{ApplicationID: app.ID, ResourceKind: application.FileMountSourceConfigMap, ResourceName: app.Name + "-config", Key: "config.yaml", MountPath: "/etc/app/config.yaml", CreatedBy: 1, Enabled: true}
 	if err := s.CreateApplicationManagedFile(file); err != nil {
 		t.Fatal(err)
 	}
-	originalK8s := K8s
-	clientset := k8sfake.NewSimpleClientset(&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: file.ResourceName, Namespace: app.Environment.Namespace}, Data: map[string][]byte{file.Key: []byte("listen: :8443\n")}})
-	K8s = &k8sclient.Client{Clientset: clientset}
-	defer func() { K8s = originalK8s }()
 
 	h := NewApplicationHandler(s, []byte("01234567890123456789012345678901"))
-	claims := &auth.DelegationClaims{UserID: 1, ProjectID: app.ProjectID, EnvironmentIDs: []uint{app.EnvironmentID}, ApplicationIDs: []uint{app.ID}, Capability: "config-editor", Actions: []string{"managed_file:read", "managed_file:write"}}
+	claims := &auth.DelegationClaims{UserID: 1, ProjectID: app.ProjectID, EnvironmentIDs: []uint{app.EnvironmentID}, ApplicationIDs: []uint{app.ID}, Capability: "config-editor", Actions: []string{"configmap:read", "configmap:write"}}
 	r := gin.New()
 	r.Use(func(c *gin.Context) { c.Set("delegation", claims); c.Set("user_id", uint(1)); c.Next() })
-	r.GET("/api/integrations/applications/:id/files/:fileID", h.IntegrationGetManagedFile)
-	r.PUT("/api/integrations/applications/:id/files/:fileID", h.IntegrationReplaceManagedFile)
+	r.GET("/api/integrations/applications/:id/configmaps/:configMapID", h.IntegrationGetManagedConfigMap)
+	r.PUT("/api/integrations/applications/:id/configmaps/:configMapID", h.IntegrationReplaceManagedConfigMap)
 
-	response := serve(r, newJSONRequest(http.MethodGet, "/api/integrations/applications/1/files/1", nil))
+	response := serve(r, newJSONRequest(http.MethodGet, "/api/integrations/applications/1/configmaps/1", nil))
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"content":"listen: :8443\n"`) || !strings.Contains(response.Body.String(), `"version":1`) {
-		t.Fatalf("unexpected managed file read response: %d %s", response.Code, response.Body.String())
+		t.Fatalf("unexpected ConfigMap read response: %d %s", response.Code, response.Body.String())
 	}
-	response = serve(r, newJSONRequest(http.MethodPut, "/api/integrations/applications/1/files/1", gin.H{"content": "listen: :9443\n", "expected_version": 1}))
+	response = serve(r, newJSONRequest(http.MethodPut, "/api/integrations/applications/1/configmaps/1", gin.H{"content": "listen: :9443\n", "expected_revision": 1}))
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"version":2`) {
-		t.Fatalf("unexpected managed file replace response: %d %s", response.Code, response.Body.String())
+		t.Fatalf("unexpected ConfigMap replace response: %d %s", response.Code, response.Body.String())
 	}
-	secret, err := clientset.CoreV1().Secrets(app.Environment.Namespace).Get(t.Context(), file.ResourceName, metav1.GetOptions{})
-	if err != nil || string(secret.Data[file.Key]) != "listen: :9443\n" {
-		t.Fatalf("managed file content was not updated: secret=%#v err=%v", secret, err)
+	updatedTemplate, err := s.GetDefaultApplicationDeploymentTemplate(app.ID)
+	if err != nil || !strings.Contains(updatedTemplate.Spec, "listen: :9443") {
+		t.Fatalf("template ConfigMap content was not updated: template=%#v err=%v", updatedTemplate, err)
 	}
-	response = serve(r, newJSONRequest(http.MethodPut, "/api/integrations/applications/1/files/1", gin.H{"content": "stale", "expected_version": 1}))
+	response = serve(r, newJSONRequest(http.MethodPut, "/api/integrations/applications/1/configmaps/1", gin.H{"content": "stale", "expected_revision": 1}))
 	if response.Code != http.StatusConflict {
 		t.Fatalf("expected stale managed file update to fail, got %d %s", response.Code, response.Body.String())
 	}

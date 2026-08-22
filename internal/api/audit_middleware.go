@@ -145,8 +145,8 @@ func buildDetail(method, path string, reqBody, respBody []byte) string {
 func buildDetailForRequest(c *gin.Context, reqBody, respBody []byte) string {
 	var detail map[string]interface{}
 	_ = json.Unmarshal([]byte(buildDetail(c.Request.Method, c.FullPath(), reqBody, respBody)), &detail)
-	if strings.Contains(c.FullPath(), "/files/") && c.Request.Method == http.MethodPut {
-		detail["request"] = redactManagedFileContent(detail["request"])
+	if strings.Contains(c.FullPath(), "/configmaps/") && c.Request.Method == http.MethodPut {
+		detail["request"] = redactConfigMapContent(detail["request"])
 	}
 	if delegation, exists := c.Get("delegation"); exists {
 		if claims, ok := delegation.(*auth.DelegationClaims); ok {
@@ -157,7 +157,7 @@ func buildDetailForRequest(c *gin.Context, reqBody, respBody []byte) string {
 	return string(data)
 }
 
-func redactManagedFileContent(value interface{}) interface{} {
+func redactConfigMapContent(value interface{}) interface{} {
 	root, ok := value.(map[string]interface{})
 	if !ok {
 		return value

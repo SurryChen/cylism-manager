@@ -18,25 +18,31 @@ import (
 	"github.com/cylism/cylism-manager/internal/application"
 	"github.com/cylism/cylism-manager/internal/auth"
 	"github.com/cylism/cylism-manager/internal/model"
+	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-type managedFileInfo struct {
-	ID           uint   `json:"id"`
-	ResourceKind string `json:"resource_kind"`
-	ResourceName string `json:"resource_name"`
-	Key          string `json:"key"`
-	MountPath    string `json:"mount_path"`
-	Format       string `json:"format"`
-	Version      uint   `json:"version"`
+type configMapInfo struct {
+	ID               uint   `json:"id"`
+	ResourceKind     string `json:"resource_kind"`
+	ResourceName     string `json:"resource_name"`
+	Key              string `json:"key"`
+	MountPath        string `json:"mount_path"`
+	Format           string `json:"format"`
+	Version          uint   `json:"version"`
+	TemplateID       uint   `json:"template_id"`
+	TemplateRevision uint   `json:"template_revision"`
 }
 
-type managedFileReplaceRequest struct {
-	Content         string `json:"content"`
-	ExpectedVersion uint   `json:"expected_version"`
-	Restart         bool   `json:"restart"`
+// managedFileInfo remains an internal name for the regular application
+// resource page; integration clients use the ConfigMap-specific contract.
+type managedFileInfo = configMapInfo
+
+type configMapReplaceRequest struct {
+	Content          string `json:"content"`
+	ExpectedRevision uint   `json:"expected_revision"`
+	Restart          bool   `json:"restart"`
 }
 
 var managedFileMutationMu sync.Mutex
@@ -90,71 +96,6 @@ func (h *ApplicationHandler) syncManagedFilesForSpec(app *model.Application, spe
 
 func managedFileBinding(kind, name, key string) string {
 	return strings.Join([]string{kind, name, key}, "\x00")
-}
-
-func (h *ApplicationHandler) applyManagedFileOverrides(ctx context.Context, app *model.Application, spec *application.ReleaseSpec) error {
-	files, err := h.store.ListApplicationManagedFiles(app.ID)
-	if err != nil {
-		return err
-	}
-	managed := make(map[string]struct{})
-	for _, mount := range spec.FileMounts {
-		if !mount.Managed {
-			continue
-		}
-		kind, name := managedFileSource(app, mount)
-		managed[managedFileBinding(kind, name, mount.Key)] = struct{}{}
-	}
-	for _, file := range files {
-		if _, selected := managed[managedFileBinding(file.ResourceKind, file.ResourceName, file.Key)]; !selected {
-			continue
-		}
-		var content string
-		if file.ResourceKind == application.FileMountSourceSecret {
-			if K8s == nil || K8s.Clientset == nil {
-				return fmt.Errorf("Kubernetes 集群未连接")
-			}
-			secret, getErr := K8s.Clientset.CoreV1().Secrets(app.Environment.Namespace).Get(ctx, file.ResourceName, metav1.GetOptions{})
-			if getErr != nil {
-				return fmt.Errorf("读取受管 Secret %q: %w", file.ResourceName, getErr)
-			}
-			value, exists := secret.Data[file.Key]
-			if !exists {
-				return fmt.Errorf("受管 Secret %q 不包含键 %q", file.ResourceName, file.Key)
-			}
-			content = string(value)
-		} else {
-			if K8s == nil || K8s.Clientset == nil {
-				return fmt.Errorf("Kubernetes 集群未连接")
-			}
-			configMap, getErr := K8s.Clientset.CoreV1().ConfigMaps(app.Environment.Namespace).Get(ctx, file.ResourceName, metav1.GetOptions{})
-			if getErr != nil {
-				return fmt.Errorf("读取受管 ConfigMap %q: %w", file.ResourceName, getErr)
-			}
-			value, exists := configMap.Data[file.Key]
-			if !exists {
-				if binary, binaryExists := configMap.BinaryData[file.Key]; binaryExists {
-					content = string(binary)
-				} else {
-					return fmt.Errorf("受管 ConfigMap %q 不包含键 %q", file.ResourceName, file.Key)
-				}
-			} else {
-				content = value
-			}
-		}
-		if file.ResourceKind == application.FileMountSourceSecret {
-			if spec.Secrets == nil {
-				spec.Secrets = map[string]string{}
-			}
-			spec.Secrets[file.Key] = content
-		} else {
-			if spec.Config == nil {
-				spec.Config = map[string]string{}
-			}
-			spec.Config[file.Key] = content
-		}
-	}
-	return nil
 }
 
 type delegationRequest struct {
@@ -235,7 +176,7 @@ func (h *ApplicationHandler) createIntegrationHandoff(c *gin.Context) {
 		}
 		endpointURL = localURL.String()
 	}
-	actions := []string{"application:read", "managed_file:read", "managed_file:write", "application:restart"}
+	actions := []string{"application:read", "configmap:read", "configmap:write", "application:restart"}
 	now := time.Now()
 	code, err := randomOpaqueValue(32)
 	if err != nil {
@@ -394,7 +335,7 @@ func (h *ApplicationHandler) CreateDelegation(c *gin.Context) {
 		}
 	}
 	if len(req.Actions) == 0 {
-		req.Actions = []string{"application:read", "managed_file:read", "managed_file:write", "application:restart"}
+		req.Actions = []string{"application:read", "configmap:read", "configmap:write", "application:restart"}
 	}
 	if len(h.delegationSecret) == 0 {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "委托签名未配置")
@@ -465,9 +406,22 @@ func (h *ApplicationHandler) IntegrationGetApplicationRuntime(c *gin.Context) {
 	model.Success(c, h.applicationRuntimeInfos(c.Request.Context(), []model.Application{*app}, map[uint][]model.Release{app.ID: releases})[app.ID])
 }
 
-func (h *ApplicationHandler) IntegrationListManagedFiles(c *gin.Context) {
-	app, ok := h.integrationApplication(c, "managed_file:read")
+func (h *ApplicationHandler) IntegrationListManagedConfigMaps(c *gin.Context) {
+	app, ok := h.integrationApplication(c, "configmap:read")
 	if !ok {
+		return
+	}
+	template, err := h.store.GetDefaultApplicationDeploymentTemplate(app.ID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			model.Error(c, http.StatusNotFound, model.CodeNotFound, "应用没有可用的默认上线模板")
+			return
+		}
+		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		return
+	}
+	if !template.Enabled {
+		model.Error(c, http.StatusNotFound, model.CodeNotFound, "应用没有可用的默认上线模板")
 		return
 	}
 	files, err := h.store.ListApplicationManagedFiles(app.ID)
@@ -475,57 +429,68 @@ func (h *ApplicationHandler) IntegrationListManagedFiles(c *gin.Context) {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
 		return
 	}
-	result := make([]managedFileInfo, 0, len(files))
+	var spec application.ReleaseSpec
+	if err := json.Unmarshal([]byte(template.Spec), &spec); err != nil {
+		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "读取默认模板 ConfigMap 配置失败")
+		return
+	}
+	result := make([]configMapInfo, 0, len(files))
 	for _, file := range files {
-		result = append(result, managedFileInfo{ID: file.ID, ResourceKind: file.ResourceKind, ResourceName: file.ResourceName, Key: file.Key, MountPath: file.MountPath, Format: file.Format, Version: file.Version})
+		if !file.Enabled || file.ResourceKind != application.FileMountSourceConfigMap || file.ResourceName != app.Name+"-config" {
+			continue
+		}
+		if !configMapKeyEnabled(spec, file.Key) {
+			continue
+		}
+		result = append(result, configMapInfo{ID: file.ID, ResourceKind: file.ResourceKind, ResourceName: file.ResourceName, Key: file.Key, MountPath: file.MountPath, Format: file.Format, Version: template.Revision, TemplateID: template.ID, TemplateRevision: template.Revision})
 	}
 	model.Success(c, result)
 }
 
-func (h *ApplicationHandler) IntegrationGetManagedFile(c *gin.Context) {
-	app, ok := h.integrationApplication(c, "managed_file:read")
+func (h *ApplicationHandler) IntegrationGetManagedConfigMap(c *gin.Context) {
+	app, ok := h.integrationApplication(c, "configmap:read")
 	if !ok {
 		return
 	}
-	fileID, err := parseID(c.Param("fileID"))
+	configMapID, err := parseID(c.Param("configMapID"))
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "文件 ID 无效")
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "ConfigMap 配置 ID 无效")
 		return
 	}
-	file, err := h.store.GetApplicationManagedFile(app.ID, fileID)
+	file, err := h.store.GetApplicationManagedFile(app.ID, configMapID)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, "受管文件不存在")
+		model.Error(c, http.StatusNotFound, model.CodeNotFound, "受管 ConfigMap 配置不存在")
 		return
 	}
 	if err != nil {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
 		return
 	}
-	content, err := h.readManagedFile(c, app, file)
+	template, spec, err := h.templateConfigMap(app, file)
 	if err != nil {
-		model.Error(c, http.StatusBadGateway, model.CodeK8sAPIError, "读取受管文件失败")
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
 		return
 	}
-	model.Success(c, gin.H{"id": file.ID, "resource_kind": file.ResourceKind, "resource_name": file.ResourceName, "key": file.Key, "mount_path": file.MountPath, "format": file.Format, "version": file.Version, "content": content})
+	model.Success(c, gin.H{"id": file.ID, "resource_kind": file.ResourceKind, "resource_name": file.ResourceName, "key": file.Key, "mount_path": file.MountPath, "format": file.Format, "version": template.Revision, "template_id": template.ID, "template_revision": template.Revision, "content": spec.Config[file.Key]})
 }
 
-func (h *ApplicationHandler) IntegrationReplaceManagedFile(c *gin.Context) {
-	app, ok := h.integrationApplication(c, "managed_file:write")
+func (h *ApplicationHandler) IntegrationReplaceManagedConfigMap(c *gin.Context) {
+	app, ok := h.integrationApplication(c, "configmap:write")
 	if !ok {
 		return
 	}
-	fileID, err := parseID(c.Param("fileID"))
+	configMapID, err := parseID(c.Param("configMapID"))
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "文件 ID 无效")
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "ConfigMap 配置 ID 无效")
 		return
 	}
-	var req managedFileReplaceRequest
-	if err := c.ShouldBindJSON(&req); err != nil || req.ExpectedVersion == 0 {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "受管文件参数无效")
+	var req configMapReplaceRequest
+	if err := c.ShouldBindJSON(&req); err != nil || req.ExpectedRevision == 0 {
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "ConfigMap 配置参数无效")
 		return
 	}
 	if len(req.Content) > 4<<20 {
-		model.Error(c, http.StatusRequestEntityTooLarge, model.CodeValidationFail, "受管文件不能超过 4 MiB")
+		model.Error(c, http.StatusRequestEntityTooLarge, model.CodeValidationFail, "ConfigMap 内容不能超过 4 MiB")
 		return
 	}
 	if req.Restart && !delegationClaims(c).Allows("application:restart") {
@@ -534,34 +499,46 @@ func (h *ApplicationHandler) IntegrationReplaceManagedFile(c *gin.Context) {
 	}
 	managedFileMutationMu.Lock()
 	defer managedFileMutationMu.Unlock()
-	file, err := h.store.GetApplicationManagedFile(app.ID, fileID)
+	file, err := h.store.GetApplicationManagedFile(app.ID, configMapID)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, "受管文件不存在")
+		model.Error(c, http.StatusNotFound, model.CodeNotFound, "受管 ConfigMap 配置不存在")
 		return
 	}
 	if err != nil {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
 		return
 	}
-	if file.Version != req.ExpectedVersion {
-		model.Error(c, http.StatusConflict, model.CodeValidationFail, fmt.Sprintf("受管文件版本冲突，当前版本为 %d", file.Version))
-		return
-	}
-	if err := h.writeManagedFile(c, app, file, []byte(req.Content)); err != nil {
+	template, spec, err := h.templateConfigMap(app, file)
+	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
 		return
 	}
-	version, err := h.store.AdvanceApplicationManagedFileVersion(app.ID, file.ID, req.ExpectedVersion)
-	if err != nil {
-		model.Error(c, http.StatusConflict, model.CodeValidationFail, "受管文件版本冲突")
+	if template.Revision != req.ExpectedRevision {
+		model.Error(c, http.StatusConflict, model.CodeConflict, fmt.Sprintf("模板版本冲突，当前版本为 %d", template.Revision))
 		return
 	}
-	response := gin.H{"version": version}
+	spec.Config[file.Key] = req.Content
+	updated, err := h.templateFromRequest(app, &deploymentTemplateRequest{Name: template.Name, Description: template.Description, Enabled: template.Enabled, Spec: spec}, template.ID)
+	if err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		return
+	}
+	updated.UpdatedBy = getUserID(c)
+	if err := h.store.UpdateApplicationDeploymentTemplateIfRevision(updated, req.ExpectedRevision); err != nil {
+		var conflict *store.TemplateRevisionConflictError
+		if errors.As(err, &conflict) {
+			model.Error(c, http.StatusConflict, model.CodeConflict, conflict.Error())
+			return
+		}
+		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		return
+	}
+	response := gin.H{"version": updated.Revision, "template_id": updated.ID, "template_revision": updated.Revision}
 	if req.Restart {
 		release, restartErr := h.createRestartRelease(c.Request.Context(), app, getUserID(c))
 		if restartErr != nil {
 			response["restart_pending"] = true
-			response["restart_error"] = "文件已保存，重新发布创建失败"
+			response["restart_error"] = "ConfigMap 配置已保存，重新发布创建失败"
 		} else {
 			response["release_id"] = release.ID
 		}
@@ -645,66 +622,49 @@ func integrationForbidden(c *gin.Context) {
 	model.Error(c, http.StatusForbidden, model.CodeUnauthorized, "委托范围不允许该操作")
 }
 
-func (h *ApplicationHandler) readManagedFile(c *gin.Context, app *model.Application, file *model.ApplicationManagedFile) (string, error) {
-	if K8s == nil || K8s.Clientset == nil {
-		return "", fmt.Errorf("Kubernetes 集群未连接")
+// templateConfigMap returns the ConfigMap section from the default template.
+// The rendered Kubernetes ConfigMap is deliberately never read here: it is a
+// materialized copy of the template and may be stale until a release applies it.
+func (h *ApplicationHandler) templateConfigMap(app *model.Application, file *model.ApplicationManagedFile) (*model.ApplicationDeploymentTemplate, application.ReleaseSpec, error) {
+	if file.ResourceKind != application.FileMountSourceConfigMap || file.ResourceName != app.Name+"-config" || !file.Enabled {
+		return nil, application.ReleaseSpec{}, fmt.Errorf("受管配置不是当前应用的 ConfigMap")
 	}
-	if file.ResourceKind == "secret" {
-		secret, err := K8s.Clientset.CoreV1().Secrets(app.Environment.Namespace).Get(c.Request.Context(), file.ResourceName, metav1.GetOptions{})
-		if err != nil {
-			return "", err
-		}
-		value, exists := secret.Data[file.Key]
-		if !exists {
-			return "", fmt.Errorf("受管 Secret %q 不包含键 %q", file.ResourceName, file.Key)
-		}
-		return string(value), nil
-	}
-	configMap, err := K8s.Clientset.CoreV1().ConfigMaps(app.Environment.Namespace).Get(c.Request.Context(), file.ResourceName, metav1.GetOptions{})
+	template, err := h.store.GetDefaultApplicationDeploymentTemplate(app.ID)
 	if err != nil {
-		return "", err
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, application.ReleaseSpec{}, fmt.Errorf("应用没有可用的默认上线模板")
+		}
+		return nil, application.ReleaseSpec{}, fmt.Errorf("读取默认上线模板: %w", err)
 	}
-	value, exists := configMap.Data[file.Key]
-	if exists {
-		return value, nil
+	if !template.Enabled {
+		return nil, application.ReleaseSpec{}, fmt.Errorf("应用没有可用的默认上线模板")
 	}
-	if binary, binaryExists := configMap.BinaryData[file.Key]; binaryExists {
-		return string(binary), nil
+	var spec application.ReleaseSpec
+	if err := json.Unmarshal([]byte(template.Spec), &spec); err != nil {
+		return nil, application.ReleaseSpec{}, fmt.Errorf("读取上线模板配置: %w", err)
 	}
-	return "", fmt.Errorf("受管 ConfigMap %q 不包含键 %q", file.ResourceName, file.Key)
+	if spec.Config == nil {
+		return nil, application.ReleaseSpec{}, fmt.Errorf("模板没有 ConfigMap 配置")
+	}
+	if !configMapKeyEnabled(spec, file.Key) {
+		return nil, application.ReleaseSpec{}, fmt.Errorf("模板 ConfigMap 不包含键 %q", file.Key)
+	}
+	return template, spec, nil
 }
 
-func (h *ApplicationHandler) writeManagedFile(c *gin.Context, app *model.Application, file *model.ApplicationManagedFile, content []byte) error {
-	if K8s == nil || K8s.Clientset == nil {
-		return fmt.Errorf("Kubernetes 集群未连接")
+func configMapKeyEnabled(spec application.ReleaseSpec, key string) bool {
+	if spec.Config == nil {
+		return false
 	}
-	if file.ResourceKind == "secret" {
-		secret, err := K8s.Clientset.CoreV1().Secrets(app.Environment.Namespace).Get(c.Request.Context(), file.ResourceName, metav1.GetOptions{})
-		if err != nil {
-			return fmt.Errorf("读取受管 Secret 失败")
+	if _, exists := spec.Config[key]; !exists {
+		return false
+	}
+	for _, disabled := range spec.ConfigDisabled {
+		if disabled == key {
+			return false
 		}
-		if _, exists := secret.Data[file.Key]; !exists {
-			return fmt.Errorf("受管 Secret %q 不包含键 %q", file.ResourceName, file.Key)
-		}
-		secret.Data[file.Key] = content
-		_, err = K8s.Clientset.CoreV1().Secrets(app.Environment.Namespace).Update(c.Request.Context(), secret, metav1.UpdateOptions{})
-		return err
 	}
-	configMap, err := K8s.Clientset.CoreV1().ConfigMaps(app.Environment.Namespace).Get(c.Request.Context(), file.ResourceName, metav1.GetOptions{})
-	if err != nil {
-		return fmt.Errorf("读取受管 ConfigMap 失败")
-	}
-	if _, exists := configMap.Data[file.Key]; !exists {
-		if _, binaryExists := configMap.BinaryData[file.Key]; !binaryExists {
-			return fmt.Errorf("受管 ConfigMap %q 不包含键 %q", file.ResourceName, file.Key)
-		}
-		configMap.BinaryData[file.Key] = content
-		_, err = K8s.Clientset.CoreV1().ConfigMaps(app.Environment.Namespace).Update(c.Request.Context(), configMap, metav1.UpdateOptions{})
-		return err
-	}
-	configMap.Data[file.Key] = string(content)
-	_, err = K8s.Clientset.CoreV1().ConfigMaps(app.Environment.Namespace).Update(c.Request.Context(), configMap, metav1.UpdateOptions{})
-	return err
+	return true
 }
 
 func (h *ApplicationHandler) createRestartRelease(ctx context.Context, app *model.Application, userID uint) (*model.Release, error) {
@@ -725,9 +685,6 @@ func (h *ApplicationHandler) createRestartRelease(ctx context.Context, app *mode
 		return nil, fmt.Errorf("读取模板 Secret 失败")
 	}
 	spec.Secrets = secrets
-	if err := h.applyManagedFileOverrides(ctx, app, &spec); err != nil {
-		return nil, fmt.Errorf("读取受管文件: %w", err)
-	}
 	spec.Image = active.Image
 	spec.Version = active.Version
 	// Restart releases must rebuild the same registry and node-mirror runtime

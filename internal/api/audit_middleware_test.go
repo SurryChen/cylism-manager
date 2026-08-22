@@ -16,11 +16,11 @@ func TestBuildDetailRedactsNestedReleaseSecrets(t *testing.T) {
 	}
 }
 
-func TestRedactManagedFileContent(t *testing.T) {
-	value := map[string]interface{}{"content": "private-config", "expected_version": float64(1)}
-	redacted := redactManagedFileContent(value).(map[string]interface{})
+func TestRedactConfigMapContent(t *testing.T) {
+	value := map[string]interface{}{"content": "private-config", "expected_revision": float64(1)}
+	redacted := redactConfigMapContent(value).(map[string]interface{})
 	encoded, _ := json.Marshal(redacted)
 	if strings.Contains(string(encoded), "private-config") || !strings.Contains(string(encoded), "[REDACTED]") {
-		t.Fatalf("managed file content leaked in audit detail: %s", encoded)
+		t.Fatalf("ConfigMap content leaked in audit detail: %s", encoded)
 	}
 }

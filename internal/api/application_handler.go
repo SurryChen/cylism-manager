@@ -54,6 +54,7 @@ type deploymentTemplateRequest struct {
 	Name        string                  `json:"name"`
 	Description string                  `json:"description"`
 	Enabled     bool                    `json:"enabled"`
+	Revision    uint                    `json:"revision,omitempty"`
 	Spec        application.ReleaseSpec `json:"spec"`
 }
 
@@ -1235,10 +1236,6 @@ func (h *ApplicationHandler) CreateRelease(c *gin.Context) {
 		return
 	}
 	spec.Secrets = secrets
-	if err := h.applyManagedFileOverrides(c.Request.Context(), app, &spec); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "读取受管文件: "+err.Error())
-		return
-	}
 	spec.Version = version
 	image, err := imageWithVersion(spec.Image, version)
 	if err != nil {
@@ -1277,6 +1274,35 @@ func (h *ApplicationHandler) CreateRelease(c *gin.Context) {
 	}
 	h.executeAsync(service, release.ID, app, spec)
 	model.SuccessWithMessage(c, release, "发布已创建")
+}
+
+// RestartApplication recreates the latest successful release with the current
+// managed resources, without requiring the caller to choose a template/version.
+func (h *ApplicationHandler) RestartApplication(c *gin.Context) {
+	if K8s == nil {
+		k8sUnavailable(c)
+		return
+	}
+	applicationID, err := parseID(c.Param("id"))
+	if err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "应用 ID 无效")
+		return
+	}
+	app, err := h.store.GetApplication(applicationID)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		model.Error(c, http.StatusNotFound, model.CodeNotFound, "应用不存在")
+		return
+	}
+	if err != nil {
+		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		return
+	}
+	release, err := h.createRestartRelease(c.Request.Context(), app, getUserID(c))
+	if err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		return
+	}
+	model.SuccessWithMessage(c, release, "应用重启已创建")
 }
 
 func (h *ApplicationHandler) ListDeploymentTemplates(c *gin.Context) {
@@ -1365,6 +1391,12 @@ func (h *ApplicationHandler) CreateDeploymentTemplate(c *gin.Context) {
 	if app.DefaultDeploymentTemplateID == nil {
 		app.DefaultDeploymentTemplateID = &template.ID
 	}
+	if app.DefaultDeploymentTemplateID != nil && *app.DefaultDeploymentTemplateID == template.ID {
+		if err := h.syncManagedFilesForSpec(app, req.Spec, getUserID(c)); err != nil {
+			model.Error(c, http.StatusInternalServerError, model.CodeDBError, "登记模板 ConfigMap 配置失败")
+			return
+		}
+	}
 	info, err := deploymentTemplateFromModel(template, app.DefaultDeploymentTemplateID)
 	if err != nil {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "读取上线模板失败")
@@ -1398,19 +1430,49 @@ func (h *ApplicationHandler) UpdateDeploymentTemplate(c *gin.Context) {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "默认模板不能停用，请先设置其他启用模板为默认")
 		return
 	}
+	currentTemplate, err := h.store.GetApplicationDeploymentTemplate(applicationID, templateID)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		model.Error(c, http.StatusNotFound, model.CodeNotFound, "上线模板不存在")
+		return
+	}
+	if err != nil {
+		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		return
+	}
+	if req.Revision != 0 && currentTemplate.Revision != req.Revision {
+		model.Error(c, http.StatusConflict, model.CodeConflict, fmt.Sprintf("模板版本冲突，当前版本为 %d", currentTemplate.Revision))
+		return
+	}
 	template, err := h.templateFromRequest(app, &req, templateID)
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
 		return
 	}
 	template.UpdatedBy = getUserID(c)
-	if err := h.store.UpdateApplicationDeploymentTemplate(template); err != nil {
+	var updateErr error
+	if req.Revision != 0 {
+		updateErr = h.store.UpdateApplicationDeploymentTemplateIfRevision(template, req.Revision)
+	} else {
+		updateErr = h.store.UpdateApplicationDeploymentTemplate(template)
+	}
+	if err := updateErr; err != nil {
+		var conflict *store.TemplateRevisionConflictError
+		if errors.As(err, &conflict) {
+			model.Error(c, http.StatusConflict, model.CodeConflict, conflict.Error())
+			return
+		}
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			model.Error(c, http.StatusNotFound, model.CodeNotFound, "上线模板不存在")
 			return
 		}
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
 		return
+	}
+	if app.DefaultDeploymentTemplateID != nil && *app.DefaultDeploymentTemplateID == template.ID {
+		if err := h.syncManagedFilesForSpec(app, req.Spec, getUserID(c)); err != nil {
+			model.Error(c, http.StatusInternalServerError, model.CodeDBError, "登记模板 ConfigMap 配置失败")
+			return
+		}
 	}
 	info, err := deploymentTemplateFromModel(template, app.DefaultDeploymentTemplateID)
 	if err != nil {
@@ -1453,8 +1515,27 @@ func (h *ApplicationHandler) SetDefaultDeploymentTemplate(c *gin.Context) {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "上线模板 ID 无效")
 		return
 	}
+	app, err := h.store.GetApplication(applicationID)
+	if err != nil {
+		model.Error(c, http.StatusNotFound, model.CodeNotFound, "应用不存在")
+		return
+	}
+	template, err := h.store.GetApplicationDeploymentTemplate(applicationID, templateID)
+	if err != nil || !template.Enabled {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "上线模板不存在或已停用")
+		return
+	}
 	if err := h.store.SetDefaultApplicationDeploymentTemplate(applicationID, templateID); err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "上线模板不存在或已停用")
+		return
+	}
+	var spec application.ReleaseSpec
+	if err := json.Unmarshal([]byte(template.Spec), &spec); err != nil {
+		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "读取上线模板失败")
+		return
+	}
+	if err := h.syncManagedFilesForSpec(app, spec, getUserID(c)); err != nil {
+		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "登记模板 ConfigMap 配置失败")
 		return
 	}
 	model.Success(c, gin.H{"id": templateID})

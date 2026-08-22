@@ -50,6 +50,17 @@ type NamespaceConflict struct {
 	Environments []model.Environment `json:"environments"`
 }
 
+// TemplateRevisionConflictError indicates that a template changed after a
+// caller read it.
+type TemplateRevisionConflictError struct {
+	Current  uint
+	Expected uint
+}
+
+func (e *TemplateRevisionConflictError) Error() string {
+	return fmt.Sprintf("模板版本冲突，当前版本为 %d，期望版本为 %d", e.Current, e.Expected)
+}
+
 // New 创建新的 Store 实例，自动迁移所有模型
 func New(dsn string) (*Store, error) {
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
@@ -1126,6 +1137,24 @@ func (s *Store) UpdateApplicationDeploymentTemplate(template *model.ApplicationD
 		var current model.ApplicationDeploymentTemplate
 		if err := tx.Where("id = ? AND application_id = ?", template.ID, template.ApplicationID).First(&current).Error; err != nil {
 			return err
+		}
+		template.CreatedAt = current.CreatedAt
+		template.Revision = current.Revision + 1
+		return tx.Save(template).Error
+	})
+}
+
+// UpdateApplicationDeploymentTemplateIfRevision updates a template only when
+// the caller still has the revision it read. Template content is the
+// declarative source of truth for generated ConfigMaps.
+func (s *Store) UpdateApplicationDeploymentTemplateIfRevision(template *model.ApplicationDeploymentTemplate, expectedRevision uint) error {
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		var current model.ApplicationDeploymentTemplate
+		if err := tx.Where("id = ? AND application_id = ?", template.ID, template.ApplicationID).First(&current).Error; err != nil {
+			return err
+		}
+		if current.Revision != expectedRevision {
+			return &TemplateRevisionConflictError{Current: current.Revision, Expected: expectedRevision}
 		}
 		template.CreatedAt = current.CreatedAt
 		template.Revision = current.Revision + 1

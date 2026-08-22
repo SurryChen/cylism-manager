@@ -2,9 +2,9 @@ package model
 
 import "time"
 
-// ApplicationManagedFile grants an integration complete read/replace access
-// to one file already mounted by an application. The platform does not
-// interpret the file content or its schema.
+// ApplicationManagedFile identifies a ConfigMap key exposed to an integration
+// through the application's default deployment template. The template holds
+// the desired content; the Kubernetes ConfigMap is only its rendered copy.
 type ApplicationManagedFile struct {
 	ID            uint      `gorm:"primaryKey" json:"id"`
 	ApplicationID uint      `gorm:"uniqueIndex:idx_application_managed_file_binding;not null" json:"application_id"`
