@@ -235,6 +235,19 @@ func TestKubernetesApplierSyncApplicationEndpointsDeletesOnlyManagedIngress(t *t
 	}
 }
 
+func TestKubernetesApplierSyncApplicationEndpointsSkipsMetadataOnlyBindings(t *testing.T) {
+	applicationContext := ApplicationContext{ProjectID: 1, EnvironmentID: 2, Namespace: "dev", ApplicationName: "hysteria"}
+	clientset := k8sfake.NewSimpleClientset()
+	applier := NewKubernetesApplier(&k8sclient.Client{Clientset: clientset})
+	endpoints := []model.ApplicationEndpoint{{Domain: "proxy.example.com", ServicePort: 8443, IngressEnabled: false, IngressMode: "metadata"}}
+	if err := applier.SyncApplicationEndpoints(context.Background(), applicationContext, endpoints, 8443); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := clientset.NetworkingV1().Ingresses("dev").Get(context.Background(), "hysteria", metav1.GetOptions{}); err == nil {
+		t.Fatal("metadata-only binding must not create an Ingress")
+	}
+}
+
 func TestKubernetesApplierWaitReadyIgnoresFailedPodFromOlderRelease(t *testing.T) {
 	oldLabels := map[string]string{ApplicationNameLabel: "order-api", ReleaseLabel: "1"}
 	currentLabels := map[string]string{ApplicationNameLabel: "order-api", ReleaseLabel: "2"}

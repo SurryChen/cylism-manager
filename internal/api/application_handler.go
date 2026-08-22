@@ -63,10 +63,11 @@ type releaseRequest struct {
 }
 
 type applicationEndpointRequest struct {
-	DomainID   uint   `json:"domain_id"`
-	Path       string `json:"path"`
-	TLSEnabled bool   `json:"tls_enabled"`
-	AccessMode string `json:"access_mode"`
+	DomainID       uint   `json:"domain_id"`
+	Path           string `json:"path"`
+	TLSEnabled     bool   `json:"tls_enabled"`
+	IngressEnabled *bool  `json:"ingress_enabled"`
+	AccessMode     string `json:"access_mode"`
 }
 
 type workspaceRuntimeSummary struct {
@@ -114,10 +115,11 @@ type applicationEnvironmentInfo struct {
 }
 
 type applicationPublicEndpoint struct {
-	Domain      string `json:"domain"`
-	Path        string `json:"path"`
-	ServicePort int32  `json:"service_port"`
-	TLSEnabled  bool   `json:"tls_enabled"`
+	Domain         string `json:"domain"`
+	Path           string `json:"path"`
+	ServicePort    int32  `json:"service_port"`
+	TLSEnabled     bool   `json:"tls_enabled"`
+	IngressEnabled bool   `json:"ingress_enabled"`
 }
 
 type applicationRuntimeInfo struct {
@@ -734,7 +736,7 @@ func applicationHasCapability(app model.Application, capability string) bool {
 func applicationDiscoveryInfoFromModel(app model.Application, runtime applicationRuntimeInfo) applicationDiscoveryInfo {
 	endpoints := make([]applicationPublicEndpoint, 0, len(app.Endpoints))
 	for _, endpoint := range app.Endpoints {
-		endpoints = append(endpoints, applicationPublicEndpoint{Domain: endpoint.Domain, Path: endpoint.Path, ServicePort: endpoint.ServicePort, TLSEnabled: endpoint.TLSEnabled})
+		endpoints = append(endpoints, applicationPublicEndpoint{Domain: endpoint.Domain, Path: endpoint.Path, ServicePort: endpoint.ServicePort, TLSEnabled: endpoint.TLSEnabled, IngressEnabled: endpointUsesIngress(endpoint)})
 	}
 	capabilities := append([]string{}, app.Capabilities...)
 	return applicationDiscoveryInfo{
@@ -1574,6 +1576,9 @@ func (h *ApplicationHandler) ListApplicationEndpoints(c *gin.Context) {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
 		return
 	}
+	for index := range endpoints {
+		endpoints[index].IngressEnabled = endpointUsesIngress(endpoints[index])
+	}
 	model.Success(c, endpoints)
 }
 
@@ -1608,9 +1613,17 @@ func (h *ApplicationHandler) CreateApplicationEndpoint(c *gin.Context) {
 		return
 	}
 	servicePort, ok := serviceSpec.PrimaryTCPPort()
-	if !ok {
+	if !ok && endpointUsesIngress(*endpoint) {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "UDP Service 不支持 HTTP Ingress 域名绑定")
 		return
+	}
+	if !ok {
+		ports := serviceSpec.PortSpecs()
+		if len(ports) == 0 {
+			model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "应用没有可绑定的 Service 端口")
+			return
+		}
+		servicePort = ports[0]
 	}
 	endpoint.ServicePort = servicePort.Port
 	endpoints, err := h.store.ListApplicationEndpoints(app.ID)
@@ -1627,6 +1640,7 @@ func (h *ApplicationHandler) CreateApplicationEndpoint(c *gin.Context) {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
 		return
 	}
+	endpoint.IngressEnabled = endpointUsesIngress(*endpoint)
 	model.Success(c, endpoint)
 }
 
@@ -1675,9 +1689,17 @@ func (h *ApplicationHandler) UpdateApplicationEndpoint(c *gin.Context) {
 		return
 	}
 	servicePort, ok := serviceSpec.PrimaryTCPPort()
-	if !ok {
+	if !ok && endpointUsesIngress(*updated) {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "UDP Service 不支持 HTTP Ingress 域名绑定")
 		return
+	}
+	if !ok {
+		ports := serviceSpec.PortSpecs()
+		if len(ports) == 0 {
+			model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "应用没有可绑定的 Service 端口")
+			return
+		}
+		servicePort = ports[0]
 	}
 	updated.ID = endpoint.ID
 	updated.CreatedAt = endpoint.CreatedAt
@@ -1700,6 +1722,7 @@ func (h *ApplicationHandler) UpdateApplicationEndpoint(c *gin.Context) {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
 		return
 	}
+	updated.IngressEnabled = endpointUsesIngress(*updated)
 	model.Success(c, updated)
 }
 
@@ -1790,6 +1813,12 @@ func (h *ApplicationHandler) applicationServiceSpec(app *model.Application) (app
 		return application.ServiceSpec{}, err
 	}
 	return application.ServiceSpec{Port: 80}, nil
+}
+
+func endpointUsesIngress(endpoint model.ApplicationEndpoint) bool {
+	// Empty mode is the legacy representation and must continue to create an
+	// Ingress for endpoints written before metadata-only bindings existed.
+	return strings.ToLower(strings.TrimSpace(endpoint.IngressMode)) != "metadata"
 }
 
 func (h *ApplicationHandler) applyApplicationEndpointSpec(app *model.Application, spec *application.ReleaseSpec) error {
@@ -2022,12 +2051,18 @@ func (h *ApplicationHandler) prepareApplicationEndpoint(app *model.Application, 
 	if path == "" {
 		path = "/"
 	}
-	conflicts, err := h.store.CountApplicationEndpointRoute(domain.ID, path, endpointID)
-	if err != nil {
-		return nil, fmt.Errorf("检查域名路由冲突: %w", err)
+	ingressEnabled := true
+	if req.IngressEnabled != nil {
+		ingressEnabled = *req.IngressEnabled
 	}
-	if conflicts > 0 {
-		return nil, fmt.Errorf("域名 %q 的路径 %q 已被其他应用入口使用", domain.Hostname, path)
+	if ingressEnabled {
+		conflicts, err := h.store.CountApplicationEndpointRoute(domain.ID, path, endpointID)
+		if err != nil {
+			return nil, fmt.Errorf("检查域名路由冲突: %w", err)
+		}
+		if conflicts > 0 {
+			return nil, fmt.Errorf("域名 %q 的路径 %q 已被其他应用入口使用", domain.Hostname, path)
+		}
 	}
 	accessMode := strings.TrimSpace(req.AccessMode)
 	if accessMode == "" {
@@ -2036,7 +2071,11 @@ func (h *ApplicationHandler) prepareApplicationEndpoint(app *model.Application, 
 	if accessMode != model.ApplicationEndpointAccessPublic && accessMode != model.ApplicationEndpointAccessProtectedConsole {
 		return nil, fmt.Errorf("入口用途无效")
 	}
-	endpoint := &model.ApplicationEndpoint{ApplicationID: app.ID, DomainID: domain.ID, Exposure: application.ExposurePublic, Domain: domain.Hostname, Path: path, TLSEnabled: req.TLSEnabled, IssuerRef: domain.IssuerRef, AccessMode: accessMode}
+	ingressMode := "ingress"
+	if !ingressEnabled {
+		ingressMode = "metadata"
+	}
+	endpoint := &model.ApplicationEndpoint{ApplicationID: app.ID, DomainID: domain.ID, Exposure: application.ExposurePublic, Domain: domain.Hostname, Path: path, TLSEnabled: req.TLSEnabled, IngressEnabled: ingressEnabled, IngressMode: ingressMode, IssuerRef: domain.IssuerRef, AccessMode: accessMode}
 	if !endpoint.TLSEnabled {
 		return endpoint, nil
 	}
