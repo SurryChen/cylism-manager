@@ -680,11 +680,15 @@ func applicationEndpointsIngress(context ApplicationContext, endpoints []model.A
 		if path == "" {
 			path = "/"
 		}
+		backendPort := endpoint.ServicePort
+		if backendPort <= 0 {
+			backendPort = servicePort
+		}
 		ingress.Spec.Rules = append(ingress.Spec.Rules, networkingv1.IngressRule{
 			Host: endpoint.Domain,
 			IngressRuleValue: networkingv1.IngressRuleValue{HTTP: &networkingv1.HTTPIngressRuleValue{Paths: []networkingv1.HTTPIngressPath{{
 				Path: path, PathType: &pathType,
-				Backend: networkingv1.IngressBackend{Service: &networkingv1.IngressServiceBackend{Name: context.ApplicationName, Port: networkingv1.ServiceBackendPort{Number: servicePort}}},
+				Backend: networkingv1.IngressBackend{Service: &networkingv1.IngressServiceBackend{Name: context.ApplicationName, Port: networkingv1.ServiceBackendPort{Number: backendPort}}},
 			}}}},
 		})
 		if !endpoint.TLSEnabled {
