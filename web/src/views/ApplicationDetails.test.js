@@ -8,7 +8,7 @@ vi.mock('../api/index.js', () => ({
     get: vi.fn(path => {
       if (path === '/applications/1') return Promise.resolve({ application: { id: 1, project_id: 2, environment_id: 3, name: 'order-api', workload_kind: 'deployment', capabilities: ['hysteria2'], project: { name: 'commerce' }, environment: { name: 'production', namespace: 'commerce-prod' } }, releases: [{ id: 3, sequence: 2, image: 'registry.example.com/order-api:2.0.0', status: 'succeeded' }] })
       if (path === '/applications/1/deployment-templates') return Promise.resolve([{ id: 4, name: '标准生产配置', enabled: true, is_default: true, revision: 2, spec: { image: 'registry.example.com/order-api', replicas: 2, container_port: 8080, service: { port: 80 } } }])
-      if (path === '/applications/1/endpoints') return Promise.resolve([{ id: 7, domain_id: 4, domain: 'api.example.com', path: '/', service_port: 80, tls_enabled: true }, { id: 8, domain_id: 5, domain: 'admin.example.com', path: '/console', service_port: 80, tls_enabled: false }])
+      if (path === '/applications/1/endpoints') return Promise.resolve([{ id: 7, domain_id: 4, domain: 'api.example.com', path: '/', service_port: 80, tls_enabled: true, access_mode: 'protected_console' }, { id: 8, domain_id: 5, domain: 'admin.example.com', path: '/console', service_port: 80, tls_enabled: false, access_mode: 'public' }])
       if (path === '/domains?environment_id=3') return Promise.resolve([{ id: 4, hostname: 'api.example.com', enabled: true, certificate: { status: 'Ready' } }, { id: 5, hostname: 'admin.example.com', enabled: true, certificate: { status: 'Ready' } }])
       if (path === '/k8s/configmaps?namespace=commerce-prod&usage=false') return Promise.resolve([])
       if (path === '/k8s/configmaps/commerce-prod/app-config') return Promise.resolve({ data: { 'config.yaml': 'port: 8080' } })
@@ -88,6 +88,41 @@ describe('ApplicationDetails view', () => {
     await wrapper.findAll('.endpoint-url')[0].trigger('click')
     expect(api.post).toHaveBeenCalledWith('/applications/1/integration-handoffs', { endpoint_id: 7 })
     expect(open).toHaveBeenCalledWith('https://api.example.com/?handoff_code=one-time-code', '_blank', 'noopener,noreferrer')
+    open.mockRestore()
+  })
+
+  it('opens a public endpoint directly without requesting a handoff', async () => {
+    const { api } = await import('../api/index.js')
+    api.post.mockReset()
+    const open = vi.spyOn(window, 'open').mockImplementation(() => null)
+    const wrapper = mount(ApplicationDetails, {
+      props: { applicationID: '1' },
+      global: { stubs: { RouterLink: { template: '<a><slot /></a>' }, Teleport: true } },
+    })
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    await wrapper.findAll('.endpoint-url')[1].trigger('click')
+    expect(api.post).not.toHaveBeenCalled()
+    expect(open).toHaveBeenCalledWith('http://admin.example.com/console', '_blank', 'noopener,noreferrer')
+    open.mockRestore()
+  })
+
+  it('uses a browser-local address when opening a protected console for local debugging', async () => {
+    const { api } = await import('../api/index.js')
+    api.post.mockReset()
+    api.post.mockResolvedValue({ handoff_url: 'http://localhost:5178/?handoff_code=one-time-code' })
+    const open = vi.spyOn(window, 'open').mockImplementation(() => null)
+    const wrapper = mount(ApplicationDetails, {
+      props: { applicationID: '1' },
+      global: { stubs: { RouterLink: { template: '<a><slot /></a>' }, Teleport: true } },
+    })
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    await wrapper.find('.endpoint-row .btn').trigger('click')
+    await wrapper.find('input[placeholder="http://localhost:5178"]').setValue('http://localhost:5178/console')
+    await wrapper.find('form').trigger('submit.prevent')
+    expect(api.post).toHaveBeenCalledWith('/applications/1/integration-handoffs', { endpoint_id: 7, redirect_url: 'http://localhost:5178/console' })
+    expect(window.localStorage.getItem('cylism.protected-console.local-url:7')).toBe('http://localhost:5178/console')
     open.mockRestore()
   })
 
@@ -297,8 +332,8 @@ describe('ApplicationDetails view', () => {
     api.post.mockReset()
     api.put.mockReset()
     api.delete.mockReset()
-    api.post.mockResolvedValue({ id: 9, domain_id: 4, domain: 'api.example.com', path: '/v2', service_port: 80, tls_enabled: true })
-    api.put.mockResolvedValue({ id: 7, domain_id: 4, domain: 'api.example.com', path: '/v3', service_port: 80, tls_enabled: false })
+    api.post.mockResolvedValue({ id: 9, domain_id: 4, domain: 'api.example.com', path: '/v2', service_port: 80, tls_enabled: true, access_mode: 'public' })
+    api.put.mockResolvedValue({ id: 7, domain_id: 4, domain: 'api.example.com', path: '/v3', service_port: 80, tls_enabled: false, access_mode: 'protected_console' })
     api.delete.mockResolvedValue({ id: 7 })
     const wrapper = mount(ApplicationDetails, {
       props: { applicationID: '1' },
@@ -311,13 +346,13 @@ describe('ApplicationDetails view', () => {
     await wrapper.find('.modal .form-select').setValue('4')
     await wrapper.find('.modal .form-input').setValue('/v2')
     await wrapper.find('.modal form').trigger('submit.prevent')
-    expect(api.post).toHaveBeenCalledWith('/applications/1/endpoints', { domain_id: 4, path: '/v2', tls_enabled: true })
+    expect(api.post).toHaveBeenCalledWith('/applications/1/endpoints', { domain_id: 4, path: '/v2', tls_enabled: true, access_mode: 'public' })
 
-    await wrapper.find('.endpoint-row .btn').trigger('click')
+    await wrapper.findAll('.endpoint-row .btn').find(button => button.text().includes('编辑')).trigger('click')
     await wrapper.find('.modal .form-input').setValue('/v3')
     await wrapper.find('.modal .check-row input').setValue(false)
     await wrapper.find('.modal form').trigger('submit.prevent')
-    expect(api.put).toHaveBeenCalledWith('/applications/1/endpoints/7', { domain_id: 4, path: '/v3', tls_enabled: false })
+    expect(api.put).toHaveBeenCalledWith('/applications/1/endpoints/7', { domain_id: 4, path: '/v3', tls_enabled: false, access_mode: 'protected_console' })
 
     await wrapper.find('.endpoint-row .btn-danger').trigger('click')
     expect(api.delete).toHaveBeenCalledWith('/applications/1/endpoints/7')

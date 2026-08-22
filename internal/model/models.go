@@ -703,6 +703,13 @@ type ManagedDomain struct {
 	UpdatedAt            time.Time `json:"updated_at"`
 }
 
+const (
+	// ApplicationEndpointAccessPublic opens the bound endpoint directly.
+	ApplicationEndpointAccessPublic = "public"
+	// ApplicationEndpointAccessProtectedConsole creates a short-lived console handoff before opening.
+	ApplicationEndpointAccessProtectedConsole = "protected_console"
+)
+
 // ApplicationEndpoint 描述一个应用的 Service 暴露方式与可选 TLS 配置。
 type ApplicationEndpoint struct {
 	ID            uint      `gorm:"primaryKey" json:"id"`
@@ -715,6 +722,7 @@ type ApplicationEndpoint struct {
 	TLSEnabled    bool      `gorm:"default:false" json:"tls_enabled"`
 	TLSSecretName string    `gorm:"size:253" json:"tls_secret_name"`
 	IssuerRef     string    `gorm:"size:128" json:"issuer_ref"`
+	AccessMode    string    `gorm:"size:32;default:public;not null" json:"access_mode"`
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at"`
 }

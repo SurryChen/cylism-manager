@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -185,7 +186,8 @@ func (h *ApplicationHandler) CreateIntegrationHandoff(c *gin.Context) {
 }
 
 type integrationHandoffRequest struct {
-	EndpointID uint `json:"endpoint_id"`
+	EndpointID  uint   `json:"endpoint_id"`
+	RedirectURL string `json:"redirect_url"`
 }
 
 // createIntegrationHandoff creates a one-time browser handoff for a generic
@@ -211,6 +213,10 @@ func (h *ApplicationHandler) createIntegrationHandoff(c *gin.Context) {
 		model.Error(c, http.StatusNotFound, model.CodeNotFound, "应用入口不存在")
 		return
 	}
+	if endpoint.AccessMode != model.ApplicationEndpointAccessProtectedConsole {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "该入口不是受保护控制台")
+		return
+	}
 	// Validate and construct the redirect before persisting the one-time session.
 	if endpoint.Domain == "" {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "应用入口尚未绑定域名")
@@ -221,6 +227,14 @@ func (h *ApplicationHandler) createIntegrationHandoff(c *gin.Context) {
 		scheme = "https"
 	}
 	endpointURL := fmt.Sprintf("%s://%s%s", scheme, endpoint.Domain, endpoint.Path)
+	if strings.TrimSpace(req.RedirectURL) != "" {
+		localURL, err := parseLoopbackRedirectURL(req.RedirectURL)
+		if err != nil {
+			model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "本地联调地址无效，仅支持 http(s)://localhost、127.0.0.1 或 ::1")
+			return
+		}
+		endpointURL = localURL.String()
+	}
 	actions := []string{"application:read", "managed_file:read", "managed_file:write", "application:restart"}
 	now := time.Now()
 	code, err := randomOpaqueValue(32)
@@ -258,6 +272,24 @@ func parseExternalLink(raw string) (*url.URL, error) {
 		return nil, errors.New("invalid external link")
 	}
 	return u, nil
+}
+
+// parseLoopbackRedirectURL accepts only a browser-local HTTP(S) URL. It is used
+// for local development handoffs and prevents the handoff endpoint from acting
+// as an arbitrary external redirector.
+func parseLoopbackRedirectURL(raw string) (*url.URL, error) {
+	u, err := parseExternalLink(raw)
+	if err != nil || u.User != nil {
+		return nil, errors.New("invalid local redirect URL")
+	}
+	host := strings.TrimSuffix(strings.ToLower(u.Hostname()), ".")
+	if host == "localhost" {
+		return u, nil
+	}
+	if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+		return u, nil
+	}
+	return nil, errors.New("redirect URL must use a loopback host")
 }
 
 func bearerValue(c *gin.Context) string {
