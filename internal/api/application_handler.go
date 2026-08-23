@@ -1556,6 +1556,7 @@ func (h *ApplicationHandler) templateFromRequest(app *model.Application, req *de
 		return nil, fmt.Errorf("模板名称不能超过 128 个字符")
 	}
 	spec := req.Spec
+	application.NormalizeManagedKeys(&spec)
 	if strings.TrimSpace(spec.Version) != "" {
 		return nil, fmt.Errorf("上线模板不应包含版本号")
 	}

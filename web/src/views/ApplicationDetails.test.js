@@ -189,7 +189,7 @@ describe('ApplicationDetails view', () => {
     await new Promise(resolve => setTimeout(resolve, 0))
 
     await wrapper.find('.page-header .btn-primary').trigger('click')
-    expect(wrapper.findAll('.editor-section-heading h3').map(heading => heading.text())).toEqual(['基础信息', '服务部署', '配置与存储', '配置启用状态', '资源与健康', '服务网络'])
+    expect(wrapper.findAll('.editor-section-heading h3').map(heading => heading.text())).toEqual(['基础信息', '服务部署', '配置与存储', '资源与健康', '服务网络'])
     expect(wrapper.find('.editor-actions .btn-primary').text()).toBe('保存模板')
     expect(wrapper.find('.editor-actions .btn-primary').attributes('form')).toBe('template-editor-form')
     expect(wrapper.text()).toContain('仅集群内访问；HTTP 服务可通过域名入口暴露。')
@@ -314,7 +314,7 @@ describe('ApplicationDetails view', () => {
     expect(api.post).not.toHaveBeenCalledWith('/k8s/configmaps', expect.anything())
   })
 
-  it('marks a current application Secret file for complete management', async () => {
+  it('marks a current application Secret key for external management', async () => {
     const { api } = await import('../api/index.js')
     api.post.mockClear()
     const wrapper = mount(ApplicationDetails, {
@@ -324,7 +324,7 @@ describe('ApplicationDetails view', () => {
     await new Promise(resolve => setTimeout(resolve, 0))
 
     await wrapper.find('.page-header .btn-primary').trigger('click')
-    wrapper.vm.templateForm.secret_items.push({ key: 'config.yaml', value: 'listen: :8443\n' })
+    wrapper.vm.templateForm.secret_items.push({ key: 'config.yaml', value: 'listen: :8443\n', enabled: true, externally_managed: true })
     await nextTick()
     const addMountButtons = wrapper.findAll('button').filter(button => button.text().includes('添加挂载'))
     await addMountButtons[addMountButtons.length - 1].trigger('click')
@@ -333,13 +333,13 @@ describe('ApplicationDetails view', () => {
     await nextTick()
     wrapper.vm.templateForm.file_mounts[0].key = 'config.yaml'
     await fileRow.find('[placeholder="/etc/app/config.yaml"]').setValue('/etc/app/config.yaml')
-    await fileRow.find('.managed-file-check input').setValue(true)
     await wrapper.find('form').trigger('submit.prevent')
 
     expect(api.post).toHaveBeenCalledWith('/applications/1/deployment-templates', expect.objectContaining({
       spec: expect.objectContaining({
         secrets: { 'config.yaml': 'listen: :8443\n' },
-        file_mounts: [{ source_type: 'application_secret', source_name: '', key: 'config.yaml', mount_path: '/etc/app/config.yaml', managed: true }],
+        secret_managed_keys: ['config.yaml'],
+        file_mounts: [{ source_type: 'application_secret', source_name: '', key: 'config.yaml', mount_path: '/etc/app/config.yaml' }],
       }),
     }))
   })
@@ -363,13 +363,13 @@ describe('ApplicationDetails view', () => {
     await wrapper.find('.modal .form-select').setValue('4')
     await wrapper.find('.modal .form-input').setValue('/v2')
     await wrapper.find('.modal form').trigger('submit.prevent')
-    expect(api.post).toHaveBeenCalledWith('/applications/1/endpoints', { domain_id: 4, path: '/v2', tls_enabled: true, ingress_enabled: true, access_mode: 'public' })
+    expect(api.post).toHaveBeenCalledWith('/applications/1/endpoints', { domain_id: 4, path: '/v2', service_port: 80, protocol: 'TCP', tls_enabled: true, ingress_enabled: true, access_mode: 'public' })
 
     await wrapper.findAll('.endpoint-row .btn').find(button => button.text().includes('编辑')).trigger('click')
     await wrapper.find('.modal .form-input').setValue('/v3')
     await wrapper.find('.modal .check-row input').setValue(false)
     await wrapper.find('.modal form').trigger('submit.prevent')
-    expect(api.put).toHaveBeenCalledWith('/applications/1/endpoints/7', { domain_id: 4, path: '/v3', tls_enabled: false, ingress_enabled: true, access_mode: 'protected_console' })
+    expect(api.put).toHaveBeenCalledWith('/applications/1/endpoints/7', { domain_id: 4, path: '/v3', service_port: 80, protocol: 'TCP', tls_enabled: false, ingress_enabled: true, access_mode: 'protected_console' })
 
     await wrapper.find('.endpoint-row .btn-danger').trigger('click')
     expect(api.delete).toHaveBeenCalledWith('/applications/1/endpoints/7')

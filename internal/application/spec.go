@@ -72,15 +72,20 @@ type ReleaseSpec struct {
 	// ConfigDisabled keeps configured values in the template while preventing
 	// selected keys from being projected into the workload. Missing entries are enabled
 	// for backwards compatibility with existing templates.
-	ConfigDisabled  []string          `json:"config_disabled,omitempty"`
-	Secrets         map[string]string `json:"secrets,omitempty"`
-	SecretsDisabled []string          `json:"secrets_disabled,omitempty"`
-	NodeName        string            `json:"node_name,omitempty"`
-	HostNetwork     bool              `json:"host_network,omitempty"`
-	Volumes         []VolumeMountSpec `json:"volumes,omitempty"`
-	FileMounts      []FileMountSpec   `json:"file_mounts,omitempty"`
-	Service         ServiceSpec       `json:"service"`
-	Endpoint        EndpointSpec      `json:"endpoint"`
+	ConfigDisabled []string `json:"config_disabled,omitempty"`
+	// ConfigManagedKeys lists ConfigMap keys that an external integration may edit.
+	// An empty list only falls back to file_mounts[].managed for legacy templates.
+	ConfigManagedKeys []string          `json:"config_managed_keys,omitempty"`
+	Secrets           map[string]string `json:"secrets,omitempty"`
+	SecretsDisabled   []string          `json:"secrets_disabled,omitempty"`
+	// SecretManagedKeys lists Secret keys that an external integration may edit.
+	SecretManagedKeys []string          `json:"secret_managed_keys,omitempty"`
+	NodeName          string            `json:"node_name,omitempty"`
+	HostNetwork       bool              `json:"host_network,omitempty"`
+	Volumes           []VolumeMountSpec `json:"volumes,omitempty"`
+	FileMounts        []FileMountSpec   `json:"file_mounts,omitempty"`
+	Service           ServiceSpec       `json:"service"`
+	Endpoint          EndpointSpec      `json:"endpoint"`
 }
 
 // VolumeMountSpec describes a platform-managed PVC mounted into the main
@@ -238,6 +243,8 @@ func ValidateReleaseSpec(spec ReleaseSpec) []ValidationIssue {
 		issues = append(issues, ValidationIssue{Field: "volumes", Message: "ReadWriteOnce PVC 仅支持单副本应用"})
 	}
 	issues = append(issues, validateFileMounts(spec.FileMounts, enabledStringMap(spec.Config, spec.ConfigDisabled), enabledStringMap(spec.Secrets, spec.SecretsDisabled))...)
+	issues = append(issues, validateManagedKeys("config_managed_keys", spec.ConfigManagedKeys, spec.Config, spec.ConfigDisabled)...)
+	issues = append(issues, validateManagedKeys("secret_managed_keys", spec.SecretManagedKeys, spec.Secrets, spec.SecretsDisabled)...)
 	parseQuantity := func(field, value string) *resource.Quantity {
 		quantity, err := resource.ParseQuantity(value)
 		if err != nil || strings.TrimSpace(value) == "" {
@@ -317,6 +324,104 @@ func ValidateReleaseSpec(spec ReleaseSpec) []ValidationIssue {
 		issues = append(issues, ValidationIssue{Field: "endpoint.exposure", Message: "暴露模式必须为 cluster、tailnet 或 public"})
 	}
 	return issues
+}
+
+func validateManagedKeys(field string, managedKeys []string, values map[string]string, disabled []string) []ValidationIssue {
+	issues := make([]ValidationIssue, 0)
+	disabledSet := make(map[string]struct{}, len(disabled))
+	for _, key := range disabled {
+		disabledSet[strings.TrimSpace(key)] = struct{}{}
+	}
+	seen := make(map[string]struct{}, len(managedKeys))
+	for index, rawKey := range managedKeys {
+		key := strings.TrimSpace(rawKey)
+		itemField := fmt.Sprintf("%s[%d]", field, index)
+		if len(validation.IsConfigMapKey(key)) > 0 {
+			issues = append(issues, ValidationIssue{Field: itemField, Message: "受管配置键名无效"})
+			continue
+		}
+		if _, exists := seen[key]; exists {
+			issues = append(issues, ValidationIssue{Field: itemField, Message: "受管配置键名不能重复"})
+			continue
+		}
+		seen[key] = struct{}{}
+		if _, exists := values[key]; !exists {
+			issues = append(issues, ValidationIssue{Field: itemField, Message: fmt.Sprintf("受管配置键 %q 不存在", key)})
+		}
+		if _, disabledKey := disabledSet[key]; disabledKey {
+			issues = append(issues, ValidationIssue{Field: itemField, Message: fmt.Sprintf("受管配置键 %q 已被禁用", key)})
+		}
+	}
+	return issues
+}
+
+// NormalizeManagedKeys migrates the old per-file managed flag into the key-level
+// fields. New fields take precedence once present; legacy flags are only consulted
+// when the corresponding key list is absent.
+func NormalizeManagedKeys(spec *ReleaseSpec) {
+	if len(spec.ConfigManagedKeys) == 0 {
+		for _, mount := range spec.FileMounts {
+			if mount.Managed && mount.SourceType == FileMountSourceApplicationConfig && mount.Key != "" {
+				spec.ConfigManagedKeys = appendUniqueKey(spec.ConfigManagedKeys, mount.Key)
+			}
+		}
+	}
+	if len(spec.SecretManagedKeys) == 0 {
+		for _, mount := range spec.FileMounts {
+			if mount.Managed && mount.SourceType == FileMountSourceApplicationSecret && mount.Key != "" {
+				spec.SecretManagedKeys = appendUniqueKey(spec.SecretManagedKeys, mount.Key)
+			}
+		}
+	}
+}
+
+func appendUniqueKey(keys []string, key string) []string {
+	key = strings.TrimSpace(key)
+	for _, existing := range keys {
+		if existing == key {
+			return keys
+		}
+	}
+	return append(keys, key)
+}
+
+func IsConfigKeyManaged(spec ReleaseSpec, key string) bool {
+	if _, exists := spec.Config[key]; !exists {
+		return false
+	}
+	if len(spec.ConfigManagedKeys) > 0 {
+		return containsKey(spec.ConfigManagedKeys, key)
+	}
+	for _, mount := range spec.FileMounts {
+		if mount.Managed && mount.SourceType == FileMountSourceApplicationConfig && mount.Key == key {
+			return true
+		}
+	}
+	return false
+}
+
+func IsSecretKeyManaged(spec ReleaseSpec, key string) bool {
+	if _, exists := spec.Secrets[key]; !exists {
+		return false
+	}
+	if len(spec.SecretManagedKeys) > 0 {
+		return containsKey(spec.SecretManagedKeys, key)
+	}
+	for _, mount := range spec.FileMounts {
+		if mount.Managed && mount.SourceType == FileMountSourceApplicationSecret && mount.Key == key {
+			return true
+		}
+	}
+	return false
+}
+
+func containsKey(keys []string, key string) bool {
+	for _, candidate := range keys {
+		if strings.TrimSpace(candidate) == key {
+			return true
+		}
+	}
+	return false
 }
 
 func normalizeServiceProtocol(protocol string) string {
