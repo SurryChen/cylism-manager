@@ -23,7 +23,7 @@ describe('ApplicationDetails view', () => {
   it('shows release history on a dedicated application drill-down page', async () => {
     const wrapper = mount(ApplicationDetails, {
       props: { applicationID: '1' },
-      global: { stubs: { RouterLink: { template: '<a><slot /></a>' } } },
+      global: { stubs: { RouterLink: { template: '<a><slot /></a>' }, Teleport: true } },
     })
     await new Promise(resolve => setTimeout(resolve, 0))
 
@@ -41,17 +41,19 @@ describe('ApplicationDetails view', () => {
     const { api } = await import('../api/index.js')
     api.post.mockReset()
     api.post.mockResolvedValue({ id: 9, sequence: 3, status: 'pending' })
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
     const wrapper = mount(ApplicationDetails, {
       props: { applicationID: '1' },
-      global: { stubs: { RouterLink: { template: '<a><slot /></a>' } } },
+      global: { stubs: { RouterLink: { template: '<a><slot /></a>' }, Teleport: true } },
     })
     await new Promise(resolve => setTimeout(resolve, 0))
 
     await wrapper.find('.page-header .btn-group .btn').trigger('click')
+    await nextTick()
+    expect(wrapper.find('.restart-modal').exists()).toBe(true)
+    expect(api.post).not.toHaveBeenCalled()
+    await wrapper.find('.restart-modal .btn-primary').trigger('click')
+    await nextTick()
     expect(api.post).toHaveBeenCalledWith('/applications/1/restarts')
-    expect(confirm).toHaveBeenCalled()
-    confirm.mockRestore()
   })
 
   it('edits generic application capability labels without modifying templates', async () => {
