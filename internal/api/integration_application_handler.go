@@ -64,34 +64,46 @@ func (h *ApplicationHandler) ListManagedFiles(c *gin.Context) {
 	model.Success(c, result)
 }
 
-func managedFileSource(app *model.Application, mount application.FileMountSpec) (string, string) {
-	kind, name := mount.SourceType, mount.SourceName
-	switch mount.SourceType {
-	case application.FileMountSourceApplicationConfig:
-		kind, name = application.FileMountSourceConfigMap, app.Name+"-config"
-	case application.FileMountSourceApplicationSecret:
-		kind, name = application.FileMountSourceSecret, app.Name+"-secret"
+func (h *ApplicationHandler) syncManagedFilesForSpec(app *model.Application, spec application.ReleaseSpec, userID uint) error {
+	application.NormalizeManagedKeys(&spec)
+	bindings := make(map[string]struct{})
+	for _, managed := range []struct {
+		keys   []string
+		kind   string
+		name   string
+		secret bool
+	}{
+		{keys: spec.ConfigManagedKeys, kind: application.FileMountSourceConfigMap, name: app.Name + "-config"},
+		{keys: spec.SecretManagedKeys, kind: application.FileMountSourceSecret, name: app.Name + "-secret", secret: true},
+	} {
+		for _, key := range managed.keys {
+			key = strings.TrimSpace(key)
+			if key == "" {
+				continue
+			}
+			bindings[managedFileBinding(managed.kind, managed.name, key)] = struct{}{}
+			file := &model.ApplicationManagedFile{ApplicationID: app.ID, ResourceKind: managed.kind, ResourceName: managed.name, Key: key, MountPath: managedMountPath(spec, managed.secret, key), Format: "text", CreatedBy: userID, Enabled: true}
+			if err := h.store.UpsertApplicationManagedFile(file); err != nil {
+				return err
+			}
+		}
 	}
-	return kind, name
+	// Keep old templates working when they have not yet been saved through the
+	// new key-level editor; NormalizeManagedKeys above performs the migration.
+	return h.store.DisableApplicationManagedFilesNotIn(app.ID, bindings)
 }
 
-func (h *ApplicationHandler) syncManagedFilesForSpec(app *model.Application, spec application.ReleaseSpec, userID uint) error {
-	bindings := make(map[string]struct{})
+func managedMountPath(spec application.ReleaseSpec, secret bool, key string) string {
+	wantSource := application.FileMountSourceApplicationConfig
+	if secret {
+		wantSource = application.FileMountSourceApplicationSecret
+	}
 	for _, mount := range spec.FileMounts {
-		if !mount.Managed {
-			continue
-		}
-		if mount.SourceType != application.FileMountSourceApplicationConfig && mount.SourceType != application.FileMountSourceApplicationSecret {
-			continue
-		}
-		kind, name := managedFileSource(app, mount)
-		bindings[managedFileBinding(kind, name, mount.Key)] = struct{}{}
-		file := &model.ApplicationManagedFile{ApplicationID: app.ID, ResourceKind: kind, ResourceName: name, Key: mount.Key, MountPath: mount.MountPath, Format: "text", CreatedBy: userID, Enabled: true}
-		if err := h.store.UpsertApplicationManagedFile(file); err != nil {
-			return err
+		if mount.SourceType == wantSource && mount.Key == key {
+			return mount.MountPath
 		}
 	}
-	return h.store.DisableApplicationManagedFilesNotIn(app.ID, bindings)
+	return ""
 }
 
 func managedFileBinding(kind, name, key string) string {
@@ -439,7 +451,7 @@ func (h *ApplicationHandler) IntegrationListManagedConfigMaps(c *gin.Context) {
 		if !file.Enabled || file.ResourceKind != application.FileMountSourceConfigMap || file.ResourceName != app.Name+"-config" {
 			continue
 		}
-		if !configMapKeyEnabled(spec, file.Key) {
+		if !configMapKeyEnabled(spec, file.Key) || !application.IsConfigKeyManaged(spec, file.Key) {
 			continue
 		}
 		result = append(result, configMapInfo{ID: file.ID, ResourceKind: file.ResourceKind, ResourceName: file.ResourceName, Key: file.Key, MountPath: file.MountPath, Format: file.Format, Version: template.Revision, TemplateID: template.ID, TemplateRevision: template.Revision})
@@ -647,7 +659,10 @@ func (h *ApplicationHandler) templateConfigMap(app *model.Application, file *mod
 		return nil, application.ReleaseSpec{}, fmt.Errorf("模板没有 ConfigMap 配置")
 	}
 	if !configMapKeyEnabled(spec, file.Key) {
-		return nil, application.ReleaseSpec{}, fmt.Errorf("模板 ConfigMap 不包含键 %q", file.Key)
+		return nil, application.ReleaseSpec{}, fmt.Errorf("模板 ConfigMap 不包含已启用的键 %q", file.Key)
+	}
+	if !application.IsConfigKeyManaged(spec, file.Key) {
+		return nil, application.ReleaseSpec{}, fmt.Errorf("ConfigMap 键 %q 未开放外部应用修改", file.Key)
 	}
 	return template, spec, nil
 }
