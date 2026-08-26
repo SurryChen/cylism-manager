@@ -16,7 +16,7 @@ vi.mock('../api/index.js', () => ({
   },
 }))
 
-beforeEach(() => { document.body.innerHTML = '' })
+beforeEach(() => { document.body.innerHTML = ''; vi.useRealTimers() })
 
 describe('SystemSettings view', () => {
   it('shows tailscale summary and setup entry', async () => {
@@ -43,6 +43,7 @@ describe('SystemSettings view', () => {
     expect(wrapper.text()).toContain('平台管理入口')
     expect(wrapper.text()).toContain('https://console.example.com')
     expect(wrapper.text()).toContain('console-example-com')
+    expect(wrapper.text()).not.toContain('启用 HTTPS 管理入口')
 
     const imageInput = wrapper.get('[data-testid="platform-manual-image"]')
     await imageInput.setValue('registry.example.com/cylism-manager:latest')
@@ -52,5 +53,18 @@ describe('SystemSettings view', () => {
     await wrapper.get('[data-testid="generate-platform-webhook-secret"]').trigger('click')
     await nextTick()
     expect(wrapper.text()).toContain('generated-secret')
+  })
+
+  it('keeps unsaved endpoint fields when the status poll refreshes', async () => {
+    vi.useFakeTimers()
+    const wrapper = mount(SystemSettings)
+    await vi.advanceTimersByTimeAsync(0)
+    const hostname = wrapper.get('#platform-endpoint-hostname')
+    await hostname.setValue('draft.example.com')
+
+    await vi.advanceTimersByTimeAsync(15000)
+    await nextTick()
+
+    expect(hostname.element.value).toBe('draft.example.com')
   })
 })

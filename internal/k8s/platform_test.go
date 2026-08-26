@@ -45,7 +45,7 @@ func TestUpdatePlatformDeploymentRejectsMissingPlatformContainer(t *testing.T) {
 
 func TestEnsurePlatformIngressUsesPlatformServiceAndManagedTLSSecret(t *testing.T) {
 	client := &Client{Clientset: k8sfake.NewSimpleClientset()}
-	if err := client.ensurePlatformIngress("console.example.com", "console-example-com-tls"); err != nil {
+	if err := client.ensurePlatformIngress("console.example.com", "console-example-com-tls", ""); err != nil {
 		t.Fatal(err)
 	}
 	ingress, err := client.Clientset.NetworkingV1().Ingresses(platformDeploymentNamespace).Get(t.Context(), platformDeploymentName, metav1.GetOptions{})
@@ -73,26 +73,40 @@ func TestEnsurePlatformIngressRejectsConflictingHostname(t *testing.T) {
 		}}},
 	}
 	client := &Client{Clientset: k8sfake.NewSimpleClientset(conflicting)}
-	if err := client.ensurePlatformIngress("console.example.com", "console-example-com-tls"); err == nil {
+	if err := client.ensurePlatformIngress("console.example.com", "console-example-com-tls", ""); err == nil {
 		t.Fatal("expected hostname conflict")
 	}
 }
 
 func TestAdoptPlatformIngressPreservesControllerSettings(t *testing.T) {
-	existing := platformIngress("console.example.com", "legacy-tls")
+	existing := platformIngress("cylism-ingress", "console.example.com", "legacy-tls")
 	existing.Labels = map[string]string{"manual": "true"}
 	existing.Annotations = map[string]string{"traefik.ingress.kubernetes.io/router.middlewares": "default-auth@kubernetescrd"}
 	className := "traefik"
 	existing.Spec.IngressClassName = &className
 	client := &Client{Clientset: k8sfake.NewSimpleClientset(existing)}
-	if err := client.AdoptPlatformIngress("console.example.com", "console-example-com-tls"); err != nil {
+	ingressName, err := client.AdoptPlatformIngress("console.example.com", "console-example-com-tls")
+	if err != nil {
 		t.Fatal(err)
 	}
-	ingress, err := client.Clientset.NetworkingV1().Ingresses(platformDeploymentNamespace).Get(t.Context(), platformDeploymentName, metav1.GetOptions{})
+	if ingressName != "cylism-ingress" {
+		t.Fatalf("unexpected adopted ingress name: %q", ingressName)
+	}
+	ingress, err := client.Clientset.NetworkingV1().Ingresses(platformDeploymentNamespace).Get(t.Context(), ingressName, metav1.GetOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if ingress.Labels[platformEndpointLabel] != platformEndpointLabelValue || ingress.Annotations["traefik.ingress.kubernetes.io/router.middlewares"] == "" || ingress.Spec.IngressClassName == nil || *ingress.Spec.IngressClassName != "traefik" || ingress.Spec.TLS[0].SecretName != "console-example-com-tls" {
 		t.Fatalf("unexpected adopted ingress: %#v", ingress)
+	}
+	if err := client.EnsurePlatformEndpoint("console.example.com", "rotated-tls", ingressName); err != nil {
+		t.Fatal(err)
+	}
+	ingress, err = client.Clientset.NetworkingV1().Ingresses(platformDeploymentNamespace).Get(t.Context(), ingressName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ingress.Spec.TLS[0].SecretName != "rotated-tls" {
+		t.Fatalf("expected adopted ingress TLS secret to be updated, got %q", ingress.Spec.TLS[0].SecretName)
 	}
 }

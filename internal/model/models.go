@@ -343,6 +343,7 @@ type PlatformRelease struct {
 type PlatformEndpoint struct {
 	ID              uint      `gorm:"primaryKey" json:"id"`
 	Hostname        string    `gorm:"size:253;not null" json:"hostname"`
+	IngressName     string    `gorm:"size:253" json:"ingress_name"`
 	CertificateName string    `gorm:"size:253" json:"certificate_name"`
 	TLSSecretName   string    `gorm:"size:253" json:"tls_secret_name"`
 	Enabled         bool      `gorm:"default:false;not null" json:"enabled"`
