@@ -83,6 +83,7 @@ func New(dsn string) (*Store, error) {
 		&model.AlertAutomationPolicy{},
 		&model.PlatformRelease{},
 		&model.PlatformWebhookNonce{},
+		&model.PlatformEndpoint{},
 		&model.Project{},
 		&model.Environment{},
 		&model.Application{},
@@ -822,6 +823,31 @@ func (s *Store) LatestIncompletePlatformRelease() (*model.PlatformRelease, error
 
 func (s *Store) UpdatePlatformRelease(release *model.PlatformRelease) error {
 	return s.db.Save(release).Error
+}
+
+// GetPlatformEndpoint returns the singleton platform management endpoint.
+func (s *Store) GetPlatformEndpoint() (*model.PlatformEndpoint, error) {
+	var endpoint model.PlatformEndpoint
+	err := s.db.First(&endpoint, 1).Error
+	return &endpoint, err
+}
+
+// SavePlatformEndpoint replaces the singleton desired platform endpoint.
+func (s *Store) SavePlatformEndpoint(endpoint *model.PlatformEndpoint) error {
+	if endpoint == nil {
+		return errors.New("平台入口不能为空")
+	}
+	endpoint.ID = 1
+	var existing model.PlatformEndpoint
+	err := s.db.First(&existing, endpoint.ID).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return s.db.Create(endpoint).Error
+	}
+	if err != nil {
+		return err
+	}
+	endpoint.CreatedAt = existing.CreatedAt
+	return s.db.Save(endpoint).Error
 }
 
 func (s *Store) CreatePlatformWebhookNonce(nonce string, expiresAt time.Time) error {

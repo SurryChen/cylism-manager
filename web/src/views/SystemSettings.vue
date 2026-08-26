@@ -31,6 +31,51 @@
         <span class="badge badge-offline">本轮先提供入口与状态展示</span>
       </section>
 
+      <section class="card platform-endpoint-card">
+        <div class="card-header">
+          <div>
+            <h2 class="card-title">平台管理入口</h2>
+            <p class="settings-copy">由平台在 default 命名空间维护 HTTPS Ingress 与证书，不关联项目应用。</p>
+          </div>
+          <span class="badge" :class="endpointBadgeClass">{{ endpointStateLabel }}</span>
+        </div>
+        <form class="platform-endpoint-form" @submit.prevent="savePlatformEndpoint">
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label" for="platform-endpoint-hostname">管理域名</label>
+              <input id="platform-endpoint-hostname" v-model.trim="endpointForm.hostname" class="form-input" :disabled="savingEndpoint" :required="endpointForm.enabled" placeholder="console.example.com" />
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="platform-endpoint-issuer">ClusterIssuer</label>
+              <select id="platform-endpoint-issuer" v-model="endpointForm.issuer_ref" class="form-select" :disabled="savingEndpoint" :required="endpointForm.enabled">
+                <option value="">选择已就绪的 ClusterIssuer</option>
+                <option v-for="issuer in readyClusterIssuers" :key="issuer.name" :value="issuer.name">{{ issuer.name }}</option>
+              </select>
+            </div>
+          </div>
+          <div class="endpoint-control-row">
+            <label class="endpoint-switch">
+              <input v-model="endpointForm.enabled" type="checkbox" :disabled="savingEndpoint" />
+              <span aria-hidden="true"></span>
+              <strong>启用 HTTPS 管理入口</strong>
+            </label>
+            <div class="settings-action-row">
+              <a v-if="platformEndpoint.url && platformEndpoint.state === 'ready'" class="btn btn-sm" :href="platformEndpoint.url" target="_blank" rel="noopener">打开入口</a>
+              <button v-if="platformEndpoint.endpoint?.hostname" class="btn btn-sm" type="button" :disabled="syncingEndpoint || savingEndpoint" @click="reconcilePlatformEndpoint">{{ syncingEndpoint ? '同步中...' : '重新同步' }}</button>
+              <button class="btn btn-sm btn-primary" :disabled="savingEndpoint" type="submit">{{ savingEndpoint ? '保存中...' : '保存入口' }}</button>
+            </div>
+          </div>
+        </form>
+        <div v-if="platformEndpoint.endpoint?.hostname" class="platform-endpoint-status">
+          <span class="detail-label">HTTPS 地址</span><a v-if="platformEndpoint.url" :href="platformEndpoint.url" target="_blank" rel="noopener">{{ platformEndpoint.url }}</a><span v-else>-</span>
+          <span class="detail-label">Ingress</span><span>{{ platformEndpoint.ingress_ready ? '已创建' : '等待同步' }}</span>
+          <span class="detail-label">证书</span><span>{{ platformEndpoint.certificate?.status || '等待签发' }}<template v-if="platformEndpoint.certificate?.reason"> · {{ platformEndpoint.certificate.reason }}</template></span>
+          <template v-if="platformEndpoint.certificate_error"><span class="detail-label">协调错误</span><span class="endpoint-error-text">{{ platformEndpoint.certificate_error }}</span></template>
+        </div>
+        <p v-if="endpointMessage" class="settings-copy platform-action-message">{{ endpointMessage }}</p>
+        <p v-if="endpointError" class="settings-copy endpoint-error">{{ endpointError }}</p>
+      </section>
+
       <section class="card platform-update-card">
         <div class="card-header"><div><h2 class="card-title">平台自更新</h2><p class="settings-copy">GitHub Action 推送 latest 镜像后通知平台滚动更新自身工作负载。</p></div><span class="badge" :class="platform.webhook_configured ? 'badge-online' : 'badge-offline'">{{ platform.webhook_configured ? 'Webhook 已配置' : '待配置' }}</span></div>
         <div v-if="platform.deployment" class="detail-grid"><span class="detail-label">当前镜像</span><code>{{ platform.deployment.image || '-' }}</code><span class="detail-label">就绪副本</span><span>{{ platform.deployment.ready_replicas || 0 }} / {{ platform.deployment.desired_replicas || 1 }}</span></div>
@@ -53,6 +98,9 @@ import { api } from '../api/index.js'
 
 const tailscale = ref({ initialized: false, ip: '', online: false })
 const platform = ref({ webhook_configured: false, image_prefix: '', deployment: null, releases: [] })
+const platformEndpoint = ref({ endpoint: {}, state: 'not_configured', ingress_ready: false })
+const endpointForm = ref({ hostname: '', issuer_ref: '', enabled: false })
+const issuers = ref([])
 const platformImagePrefix = ref('')
 const manualImage = ref('')
 const platformActionMessage = ref('')
@@ -61,22 +109,63 @@ const generatingSecret = ref(false)
 const savingPrefix = ref(false)
 const updatingPlatform = ref(false)
 const rollingBack = ref(0)
+const savingEndpoint = ref(false)
+const syncingEndpoint = ref(false)
+const endpointMessage = ref('')
+const endpointError = ref('')
 const latestAutomaticRelease = computed(() => (platform.value.releases || []).find(release => release.source === 'github') || null)
+const readyClusterIssuers = computed(() => issuers.value.filter(issuer => issuer.kind === 'ClusterIssuer' && issuer.ready))
+const endpointStateLabel = computed(() => ({ not_configured: '待配置', disabled: '已停用', ready: '已就绪', issuing: '签发中', failed: '签发失败', unavailable: '不可用' }[platformEndpoint.value.state] || '未知'))
+const endpointBadgeClass = computed(() => ({ ready: 'badge-online', failed: 'badge-danger', unavailable: 'badge-danger', issuing: 'badge-deploying' }[platformEndpoint.value.state] || 'badge-offline'))
 let refreshTimer
 
 onMounted(async () => {
-  await refresh()
+  await Promise.all([refresh(), loadIssuers()])
   refreshTimer = window.setInterval(refresh, 15000)
 })
 onBeforeUnmount(() => window.clearInterval(refreshTimer))
 
 async function refresh() {
-  const [tailscaleResult, platformResult] = await Promise.allSettled([api.get('/tailscale/status'), api.get('/platform/status')])
+  const [tailscaleResult, platformResult, endpointResult] = await Promise.allSettled([api.get('/tailscale/status'), api.get('/platform/status'), api.get('/platform/endpoint')])
   tailscale.value = tailscaleResult.status === 'fulfilled' ? tailscaleResult.value : { initialized: false, ip: '', online: false }
   if (platformResult.status === 'fulfilled') {
     platform.value = platformResult.value
     platformImagePrefix.value = platform.value.image_prefix || ''
   }
+  if (endpointResult.status === 'fulfilled') syncEndpoint(endpointResult.value)
+}
+
+async function loadIssuers() {
+  try { issuers.value = await api.get('/certs/issuers') } catch { issuers.value = [] }
+}
+
+function syncEndpoint(info) {
+  platformEndpoint.value = info || { endpoint: {}, state: 'not_configured', ingress_ready: false }
+  endpointForm.value = {
+    hostname: info?.endpoint?.hostname || '',
+    issuer_ref: info?.endpoint?.issuer_ref || '',
+    enabled: Boolean(info?.endpoint?.enabled),
+  }
+}
+
+async function savePlatformEndpoint() {
+  savingEndpoint.value = true
+  endpointMessage.value = ''
+  endpointError.value = ''
+  try {
+    syncEndpoint(await api.put('/platform/endpoint', endpointForm.value))
+    endpointMessage.value = endpointForm.value.enabled ? '平台入口已保存，正在同步证书和 Ingress。' : '平台入口已停用，Ingress 已移除。'
+  } catch (e) { endpointError.value = e.message || '保存平台入口失败' } finally { savingEndpoint.value = false }
+}
+
+async function reconcilePlatformEndpoint() {
+  syncingEndpoint.value = true
+  endpointMessage.value = ''
+  endpointError.value = ''
+  try {
+    syncEndpoint(await api.post('/platform/endpoint/reconcile'))
+    endpointMessage.value = '平台入口已重新同步。'
+  } catch (e) { endpointError.value = e.message || '重新同步平台入口失败' } finally { syncingEndpoint.value = false }
 }
 
 async function generatePlatformWebhookSecret() {
@@ -124,5 +213,5 @@ function formatDateTime(value) {
   font-size: 13px;
   line-height: 1.6;
 }
-.platform-update-card{grid-column:1/-1}.platform-update-card .card-header{align-items:flex-start}.settings-action-row{display:flex;align-items:center;gap:8px}.settings-action-row .form-input{min-width:0;flex:1}.platform-auto-update{display:grid;grid-template-columns:140px minmax(0,1fr);gap:12px;margin:var(--space-16) 0;padding:14px;border:1px solid var(--border-muted);border-radius:var(--radius-control);background:var(--surface-subtle)}.platform-auto-release{min-width:0;display:grid;gap:8px}.platform-auto-release-meta{display:flex;align-items:center;flex-wrap:wrap;gap:8px}.platform-auto-update code{min-width:0;overflow-wrap:anywhere}.platform-auto-update small{color:var(--text-secondary);font-size:12px}.secret-once{display:grid;gap:6px;margin-top:12px;padding:10px;border:1px solid var(--warning);border-radius:var(--radius-control);background:var(--warning-surface);font-size:12px}.secret-once code,.platform-release-row code{overflow-wrap:anywhere}.platform-release-list{display:grid;gap:8px;margin-top:16px}.platform-release-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px;border:1px solid var(--border-muted);border-radius:var(--radius-control);background:var(--surface-subtle)}.platform-release-row div{min-width:0;display:grid;gap:4px}.platform-release-row small{color:var(--text-secondary);font-size:11px}.form-hint{margin-top:6px}@media(max-width:700px){.settings-grid{grid-template-columns:1fr}.platform-release-row,.settings-action-row{align-items:stretch;flex-direction:column}.platform-auto-update{grid-template-columns:1fr}}
+.platform-endpoint-card,.platform-update-card{grid-column:1/-1}.platform-endpoint-card .card-header,.platform-update-card .card-header{align-items:flex-start}.settings-action-row{display:flex;align-items:center;gap:8px}.settings-action-row .form-input{min-width:0;flex:1}.platform-endpoint-form{margin-top:var(--space-16)}.platform-endpoint-form .form-group{margin-bottom:0}.endpoint-control-row{display:flex;align-items:center;justify-content:space-between;gap:var(--space-16);margin-top:var(--space-16);padding-top:var(--space-16);border-top:1px solid var(--border-muted)}.endpoint-switch{display:inline-flex;align-items:center;gap:8px;color:var(--text-secondary);font-size:12px;cursor:pointer}.endpoint-switch input{position:absolute;opacity:0}.endpoint-switch>span{display:block;width:34px;height:20px;border-radius:10px;background:var(--surface-subtle);transition:background .16s ease}.endpoint-switch>span::after{display:block;width:16px;height:16px;margin:2px;border-radius:50%;background:var(--text-primary);box-shadow:0 1px 2px var(--border-muted);content:'';transition:transform .16s ease,background .16s ease}.endpoint-switch input:checked+span{background:var(--action-primary)}.endpoint-switch input:checked+span::after{background:var(--action-contrast);transform:translateX(14px)}.endpoint-switch:has(input:focus-visible){outline:2px solid var(--focus);outline-offset:2px}.endpoint-switch input:disabled+span{opacity:.5}.platform-endpoint-status{display:grid;grid-template-columns:140px minmax(0,1fr);gap:9px 12px;margin-top:var(--space-16);padding:14px;border:1px solid var(--border-muted);border-radius:var(--radius-control);background:var(--surface-subtle);font-size:12px}.platform-endpoint-status a{min-width:0;overflow-wrap:anywhere;color:var(--action-primary);font-weight:700;text-decoration:none}.endpoint-error{margin-top:8px;color:var(--danger)}.platform-auto-update{display:grid;grid-template-columns:140px minmax(0,1fr);gap:12px;margin:var(--space-16) 0;padding:14px;border:1px solid var(--border-muted);border-radius:var(--radius-control);background:var(--surface-subtle)}.platform-auto-release{min-width:0;display:grid;gap:8px}.platform-auto-release-meta{display:flex;align-items:center;flex-wrap:wrap;gap:8px}.platform-auto-update code{min-width:0;overflow-wrap:anywhere}.platform-auto-update small{color:var(--text-secondary);font-size:12px}.secret-once{display:grid;gap:6px;margin-top:12px;padding:10px;border:1px solid var(--warning);border-radius:var(--radius-control);background:var(--warning-surface);font-size:12px}.secret-once code,.platform-release-row code{overflow-wrap:anywhere}.platform-release-list{display:grid;gap:8px;margin-top:16px}.platform-release-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px;border:1px solid var(--border-muted);border-radius:var(--radius-control);background:var(--surface-subtle)}.platform-release-row div{min-width:0;display:grid;gap:4px}.platform-release-row small{color:var(--text-secondary);font-size:11px}.form-hint{margin-top:6px}@media(max-width:700px){.settings-grid{grid-template-columns:1fr}.endpoint-control-row,.platform-release-row,.settings-action-row{align-items:stretch;flex-direction:column}.platform-auto-update,.platform-endpoint-status{grid-template-columns:1fr}}
 </style>

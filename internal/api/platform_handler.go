@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/cylism/cylism-manager/internal/crypto"
+	k8sclient "github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/gin-gonic/gin"
@@ -46,6 +47,21 @@ type platformDeployRequest struct {
 
 type platformManualReleaseRequest struct {
 	Image string `json:"image"`
+}
+
+type platformEndpointRequest struct {
+	Hostname  string `json:"hostname"`
+	IssuerRef string `json:"issuer_ref"`
+	Enabled   bool   `json:"enabled"`
+}
+
+type platformEndpointInfo struct {
+	Endpoint         model.PlatformEndpoint `json:"endpoint"`
+	URL              string                 `json:"url,omitempty"`
+	State            string                 `json:"state"`
+	IngressReady     bool                   `json:"ingress_ready"`
+	Certificate      *k8sclient.CertInfo    `json:"certificate,omitempty"`
+	CertificateError string                 `json:"certificate_error,omitempty"`
 }
 
 func NewPlatformHandler(s *store.Store, encKey []byte) *PlatformHandler {
@@ -140,6 +156,84 @@ func (h *PlatformHandler) Status(c *gin.Context) {
 	model.Success(c, gin.H{"deployment": deployment, "releases": releases, "image_prefix": prefix, "webhook_configured": configured == nil})
 }
 
+func (h *PlatformHandler) EndpointStatus(c *gin.Context) {
+	model.Success(c, h.platformEndpointInfo())
+}
+
+// UpdateEndpoint stores and reconciles the public HTTPS entry for the Manager
+// itself. It intentionally does not create an application or project endpoint.
+func (h *PlatformHandler) UpdateEndpoint(c *gin.Context) {
+	var request platformEndpointRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "平台入口定义无效")
+		return
+	}
+	if h.store == nil {
+		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, "存储未初始化")
+		return
+	}
+	current, err := h.store.GetPlatformEndpoint()
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, "读取平台入口失败")
+		return
+	}
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		current = &model.PlatformEndpoint{}
+	}
+	endpoint := &model.PlatformEndpoint{
+		Hostname:        strings.ToLower(strings.TrimSpace(request.Hostname)),
+		IssuerRef:       strings.TrimSpace(request.IssuerRef),
+		IssuerKind:      "ClusterIssuer",
+		CertificateName: k8sclient.PlatformEndpointCertificateName,
+		TLSSecretName:   k8sclient.PlatformEndpointTLSSecretName,
+		Enabled:         request.Enabled,
+	}
+	if !endpoint.Enabled {
+		if endpoint.Hostname == "" {
+			endpoint.Hostname = current.Hostname
+		}
+		if endpoint.IssuerRef == "" {
+			endpoint.IssuerRef = current.IssuerRef
+		}
+	}
+	if endpoint.Enabled {
+		if !validPlatformHostname(endpoint.Hostname) {
+			model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "管理域名必须是合法的精确 DNS 名称，且不支持泛域名")
+			return
+		}
+		if err := h.validatePlatformEndpointPrerequisites(endpoint); err != nil {
+			model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+			return
+		}
+		if domain, lookupErr := h.store.GetManagedDomainByHostname(endpoint.Hostname); lookupErr == nil {
+			model.Error(c, http.StatusConflict, model.CodeConflict, fmt.Sprintf("域名 %q 已作为项目受管域名使用", domain.Hostname))
+			return
+		} else if !errors.Is(lookupErr, gorm.ErrRecordNotFound) {
+			model.Error(c, http.StatusInternalServerError, model.CodeInternalError, "检查域名归属失败")
+			return
+		}
+	}
+	if err := h.store.SavePlatformEndpoint(endpoint); err != nil {
+		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, "保存平台入口失败")
+		return
+	}
+	if err := h.reconcilePlatformEndpoint(); err != nil {
+		info := h.platformEndpointInfo()
+		info.CertificateError = err.Error()
+		model.SuccessWithMessage(c, info, "平台入口已保存，但 Kubernetes 同步尚未完成")
+		return
+	}
+	model.SuccessWithMessage(c, h.platformEndpointInfo(), "平台入口已保存，正在同步证书和 Ingress")
+}
+
+func (h *PlatformHandler) ReconcileEndpoint(c *gin.Context) {
+	if err := h.reconcilePlatformEndpoint(); err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeK8sAPIError, err.Error())
+		return
+	}
+	model.SuccessWithMessage(c, h.platformEndpointInfo(), "平台入口已重新同步")
+}
+
 func (h *PlatformHandler) GenerateWebhookSecret(c *gin.Context) {
 	if h.store == nil {
 		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, "存储未初始化")
@@ -197,7 +291,110 @@ func (h *PlatformHandler) Rollback(c *gin.Context) {
 
 // Reconcile resumes a pending self-update after this service has restarted.
 func (h *PlatformHandler) Reconcile() {
+	_ = h.reconcilePlatformEndpoint()
 	h.reconcileLatestRelease()
+}
+
+func (h *PlatformHandler) reconcilePlatformEndpoint() error {
+	if h.store == nil || K8s == nil {
+		return nil
+	}
+	endpoint, err := h.store.GetPlatformEndpoint()
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !endpoint.Enabled {
+		return K8s.RemovePlatformEndpoint()
+	}
+	return K8s.EnsurePlatformEndpoint(endpoint.Hostname, endpoint.IssuerRef)
+}
+
+func (h *PlatformHandler) platformEndpointInfo() platformEndpointInfo {
+	info := platformEndpointInfo{Endpoint: model.PlatformEndpoint{}, State: "not_configured"}
+	if h.store == nil {
+		info.CertificateError = "存储未初始化"
+		return info
+	}
+	endpoint, err := h.store.GetPlatformEndpoint()
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return info
+	}
+	if err != nil {
+		info.State, info.CertificateError = "unavailable", "读取平台入口失败"
+		return info
+	}
+	info.Endpoint = *endpoint
+	if !endpoint.Enabled {
+		info.State = "disabled"
+		return info
+	}
+	info.URL = "https://" + endpoint.Hostname
+	info.State = "issuing"
+	if K8s == nil {
+		info.State, info.CertificateError = "unavailable", "Kubernetes 客户端未初始化"
+		return info
+	}
+	if ready, ingressErr := K8s.PlatformIngressReady(); ingressErr != nil {
+		info.CertificateError = ingressErr.Error()
+	} else {
+		info.IngressReady = ready
+	}
+	certificate, certificateErr := K8s.GetCertificate("default", endpoint.CertificateName)
+	if certificateErr != nil {
+		info.CertificateError = certificateErr.Error()
+		return info
+	}
+	info.Certificate = certificate
+	if certificate.Status == "Ready" && info.IngressReady {
+		info.State = "ready"
+	} else if certificate.Status == "Failed" {
+		info.State = "failed"
+	}
+	return info
+}
+
+func (h *PlatformHandler) validatePlatformEndpointPrerequisites(endpoint *model.PlatformEndpoint) error {
+	if K8s == nil || K8s.Clientset == nil {
+		return errors.New("Kubernetes 客户端未初始化")
+	}
+	status, err := K8s.DetectIngressController()
+	if err != nil || status == nil || !status.Running {
+		return errors.New("Ingress Controller 未就绪")
+	}
+	certificateCRD, err := K8s.CheckCRD("certificates.cert-manager.io")
+	if err != nil || !certificateCRD {
+		return errors.New("cert-manager Certificate CRD 不可用")
+	}
+	issuers, err := K8s.ListIssuers()
+	if err != nil {
+		return fmt.Errorf("读取 ClusterIssuer: %w", err)
+	}
+	for _, issuer := range issuers {
+		if issuer.Kind == "ClusterIssuer" && issuer.Name == endpoint.IssuerRef && issuer.Ready {
+			return nil
+		}
+	}
+	return fmt.Errorf("ClusterIssuer %q 不存在或尚未就绪", endpoint.IssuerRef)
+}
+
+func validPlatformHostname(hostname string) bool {
+	if len(hostname) < 3 || len(hostname) > 253 || !strings.Contains(hostname, ".") || strings.HasPrefix(hostname, "*.") {
+		return false
+	}
+	for _, label := range strings.Split(hostname, ".") {
+		if len(label) == 0 || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+			return false
+		}
+		for _, char := range label {
+			if !(char >= 'a' && char <= 'z' || char >= '0' && char <= '9' || char == '-') {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func (h *PlatformHandler) validWebhook(c *gin.Context) bool {

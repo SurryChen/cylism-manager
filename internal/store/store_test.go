@@ -52,6 +52,25 @@ func TestApplicationDeploymentTemplateMigrationRemovesLegacySingleTemplateIndex(
 	}
 }
 
+func TestPlatformEndpointIsPersistedAsSingleton(t *testing.T) {
+	s := setupTestDB(t)
+	endpoint := &model.PlatformEndpoint{Hostname: "console.example.com", IssuerRef: "letsencrypt-dns", IssuerKind: "ClusterIssuer", CertificateName: "cylism-manager-tls", TLSSecretName: "cylism-manager-tls", Enabled: true}
+	if err := s.SavePlatformEndpoint(endpoint); err != nil {
+		t.Fatal(err)
+	}
+	endpoint.Hostname = "admin.example.com"
+	if err := s.SavePlatformEndpoint(endpoint); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := s.GetPlatformEndpoint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.ID != 1 || stored.Hostname != "admin.example.com" || !stored.Enabled {
+		t.Fatalf("unexpected platform endpoint: %#v", stored)
+	}
+}
+
 func TestApplicationStackSchemaIsRemoved(t *testing.T) {
 	dsn := filepath.Join(t.TempDir(), "store.db")
 	st, err := New(dsn)
