@@ -185,6 +185,9 @@ func (h *PlatformHandler) UpdateEndpoint(c *gin.Context) {
 		CertificateName: strings.TrimSpace(request.CertificateName),
 		Enabled:         request.Enabled,
 	}
+	if endpoint.Hostname == current.Hostname {
+		endpoint.IngressName = current.IngressName
+	}
 	if !endpoint.Enabled {
 		if endpoint.Hostname == "" {
 			endpoint.Hostname = current.Hostname
@@ -195,6 +198,7 @@ func (h *PlatformHandler) UpdateEndpoint(c *gin.Context) {
 		if endpoint.TLSSecretName == "" {
 			endpoint.TLSSecretName = current.TLSSecretName
 		}
+		endpoint.IngressName = current.IngressName
 	}
 	if endpoint.Enabled {
 		if !validPlatformHostname(endpoint.Hostname) {
@@ -266,8 +270,14 @@ func (h *PlatformHandler) AdoptEndpointIngress(c *gin.Context) {
 		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, "保存平台入口失败")
 		return
 	}
-	if err := K8s.AdoptPlatformIngress(endpoint.Hostname, endpoint.TLSSecretName); err != nil {
+	ingressName, err := K8s.AdoptPlatformIngress(endpoint.Hostname, endpoint.TLSSecretName)
+	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeK8sAPIError, err.Error())
+		return
+	}
+	endpoint.IngressName = ingressName
+	if err := h.store.SavePlatformEndpoint(endpoint); err != nil {
+		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, "保存平台入口失败")
 		return
 	}
 	model.SuccessWithMessage(c, h.platformEndpointInfo(), "现有 Ingress 已接管并重新同步")
@@ -346,7 +356,7 @@ func (h *PlatformHandler) reconcilePlatformEndpoint() error {
 		return err
 	}
 	if !endpoint.Enabled {
-		return K8s.RemovePlatformEndpoint()
+		return K8s.RemovePlatformEndpoint(endpoint.IngressName)
 	}
 	certificate, err := h.platformEndpointCertificate(endpoint)
 	if err != nil {
@@ -358,7 +368,7 @@ func (h *PlatformHandler) reconcilePlatformEndpoint() error {
 			return err
 		}
 	}
-	return K8s.EnsurePlatformEndpoint(endpoint.Hostname, endpoint.TLSSecretName)
+	return K8s.EnsurePlatformEndpoint(endpoint.Hostname, endpoint.TLSSecretName, endpoint.IngressName)
 }
 
 func (h *PlatformHandler) platformEndpointInfo() platformEndpointInfo {
@@ -381,12 +391,12 @@ func (h *PlatformHandler) platformEndpointInfo() platformEndpointInfo {
 		return info
 	}
 	info.URL = "https://" + endpoint.Hostname
-	info.State = "issuing"
+	info.State = "waiting_certificate"
 	if K8s == nil {
 		info.State, info.CertificateError = "unavailable", "Kubernetes 客户端未初始化"
 		return info
 	}
-	if ready, ingressErr := K8s.PlatformIngressReady(); ingressErr != nil {
+	if ready, ingressErr := K8s.PlatformIngressReady(endpoint.IngressName); ingressErr != nil {
 		info.CertificateError = ingressErr.Error()
 	} else {
 		info.IngressReady = ready
@@ -399,6 +409,8 @@ func (h *PlatformHandler) platformEndpointInfo() platformEndpointInfo {
 	info.Certificate = certificate
 	if certificate.Status == "Ready" && info.IngressReady {
 		info.State = "ready"
+	} else if certificate.Status == "Ready" {
+		info.State = "waiting_ingress"
 	} else if certificate.Status == "Failed" {
 		info.State = "failed"
 	}
