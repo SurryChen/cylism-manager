@@ -66,8 +66,16 @@
         </form>
         <div v-if="platformEndpoint.endpoint?.hostname" class="platform-endpoint-status">
           <span class="detail-label">HTTPS 地址</span><a v-if="platformEndpoint.url" :href="platformEndpoint.url" target="_blank" rel="noopener">{{ platformEndpoint.url }}</a><span v-else>-</span>
-          <span class="detail-label">Ingress</span><span>{{ platformEndpoint.ingress_ready ? '已创建' : '等待同步' }}</span>
+          <span class="detail-label">Ingress</span><span v-if="platformEndpoint.ingress">{{ platformEndpoint.ingress.namespace }}/{{ platformEndpoint.ingress.name }}<template v-if="platformEndpoint.ingress.ingress_class"> · {{ platformEndpoint.ingress.ingress_class }}</template></span><span v-else>等待同步</span>
+          <template v-if="platformEndpoint.ingress">
+            <span class="detail-label">Ingress 路由</span><code>{{ platformEndpoint.ingress.hostname || '-' }}{{ platformEndpoint.ingress.path || '/' }} -> {{ platformEndpoint.ingress.service_name || '-' }}:{{ platformEndpoint.ingress.service_port || '-' }}</code>
+            <span class="detail-label">Ingress TLS Secret</span><code>{{ platformEndpoint.ingress.tls_secret_name || '-' }}</code>
+          </template>
           <span class="detail-label">TLS 证书</span><span>{{ platformEndpoint.certificate?.name || platformEndpoint.endpoint.certificate_name }} · {{ platformEndpoint.certificate?.status || '等待读取' }}<template v-if="platformEndpoint.certificate?.reason"> · {{ platformEndpoint.certificate.reason }}</template></span>
+          <template v-if="platformEndpoint.certificate">
+            <span class="detail-label">证书到期时间</span><span>{{ formatDateTime(platformEndpoint.certificate.expiry_date) }}</span>
+            <span class="detail-label">下次续期时间</span><span>{{ formatDateTime(platformEndpoint.certificate.renewal_time) }}</span>
+          </template>
           <template v-if="platformEndpoint.certificate_error"><span class="detail-label">协调错误</span><span class="endpoint-error-text">{{ platformEndpoint.certificate_error }}</span></template>
         </div>
         <p v-if="endpointMessage" class="settings-copy platform-action-message">{{ endpointMessage }}</p>
