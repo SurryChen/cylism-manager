@@ -30,6 +30,20 @@ type PlatformDeploymentStatus struct {
 	Failure         string `json:"failure,omitempty"`
 }
 
+// PlatformIngressInfo is the constrained route information managed for the
+// platform's own public endpoint.
+type PlatformIngressInfo struct {
+	Name          string `json:"name"`
+	Namespace     string `json:"namespace"`
+	IngressClass  string `json:"ingress_class,omitempty"`
+	Hostname      string `json:"hostname"`
+	Path          string `json:"path"`
+	ServiceName   string `json:"service_name"`
+	ServicePort   string `json:"service_port"`
+	TLSSecretName string `json:"tls_secret_name,omitempty"`
+	Managed       bool   `json:"managed"`
+}
+
 func (c *Client) PlatformDeploymentStatus() (*PlatformDeploymentStatus, error) {
 	deployment, err := c.Clientset.AppsV1().Deployments(platformDeploymentNamespace).Get(c.Ctx(), platformDeploymentName, metav1.GetOptions{})
 	if err != nil {
@@ -221,6 +235,50 @@ func (c *Client) PlatformIngressReady(ingressName string) (bool, error) {
 		return false, err
 	}
 	return ingress.Labels[platformEndpointLabel] == platformEndpointLabelValue, nil
+}
+
+// PlatformIngressInfo returns the route currently used for the platform
+// endpoint. A missing Ingress is represented as nil so callers can distinguish
+// it from an unavailable Kubernetes API.
+func (c *Client) PlatformIngressInfo(ingressName string) (*PlatformIngressInfo, error) {
+	if c == nil || c.Clientset == nil {
+		return nil, fmt.Errorf("Kubernetes 客户端未初始化")
+	}
+	ingressName = platformIngressName(ingressName)
+	ingress, err := c.Clientset.NetworkingV1().Ingresses(platformDeploymentNamespace).Get(c.Ctx(), ingressName, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	info := &PlatformIngressInfo{
+		Name:      ingress.Name,
+		Namespace: ingress.Namespace,
+		Managed:   ingress.Labels[platformEndpointLabel] == platformEndpointLabelValue,
+	}
+	if ingress.Spec.IngressClassName != nil {
+		info.IngressClass = *ingress.Spec.IngressClassName
+	}
+	if len(ingress.Spec.TLS) > 0 {
+		info.TLSSecretName = ingress.Spec.TLS[0].SecretName
+	}
+	if len(ingress.Spec.Rules) == 0 || ingress.Spec.Rules[0].HTTP == nil || len(ingress.Spec.Rules[0].HTTP.Paths) == 0 {
+		return info, nil
+	}
+	rule := ingress.Spec.Rules[0]
+	path := rule.HTTP.Paths[0]
+	info.Hostname = rule.Host
+	info.Path = path.Path
+	if path.Backend.Service != nil {
+		info.ServiceName = path.Backend.Service.Name
+		if path.Backend.Service.Port.Name != "" {
+			info.ServicePort = path.Backend.Service.Port.Name
+		} else if path.Backend.Service.Port.Number != 0 {
+			info.ServicePort = strconv.Itoa(int(path.Backend.Service.Port.Number))
+		}
+	}
+	return info, nil
 }
 
 func matchesPlatformIngress(ingress *networkingv1.Ingress, hostname string) bool {

@@ -109,4 +109,11 @@ func TestAdoptPlatformIngressPreservesControllerSettings(t *testing.T) {
 	if ingress.Spec.TLS[0].SecretName != "rotated-tls" {
 		t.Fatalf("expected adopted ingress TLS secret to be updated, got %q", ingress.Spec.TLS[0].SecretName)
 	}
+	info, err := client.PlatformIngressInfo(ingressName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info == nil || !info.Managed || info.Namespace != platformDeploymentNamespace || info.Name != ingressName || info.IngressClass != "traefik" || info.Hostname != "console.example.com" || info.Path != "/" || info.ServiceName != platformDeploymentName || info.ServicePort != "8080" || info.TLSSecretName != "rotated-tls" {
+		t.Fatalf("unexpected platform ingress info: %#v", info)
+	}
 }

@@ -56,12 +56,13 @@ type platformEndpointRequest struct {
 }
 
 type platformEndpointInfo struct {
-	Endpoint         model.PlatformEndpoint `json:"endpoint"`
-	URL              string                 `json:"url,omitempty"`
-	State            string                 `json:"state"`
-	IngressReady     bool                   `json:"ingress_ready"`
-	Certificate      *k8sclient.CertInfo    `json:"certificate,omitempty"`
-	CertificateError string                 `json:"certificate_error,omitempty"`
+	Endpoint         model.PlatformEndpoint         `json:"endpoint"`
+	URL              string                         `json:"url,omitempty"`
+	State            string                         `json:"state"`
+	IngressReady     bool                           `json:"ingress_ready"`
+	Ingress          *k8sclient.PlatformIngressInfo `json:"ingress,omitempty"`
+	Certificate      *k8sclient.CertInfo            `json:"certificate,omitempty"`
+	CertificateError string                         `json:"certificate_error,omitempty"`
 }
 
 func NewPlatformHandler(s *store.Store, encKey []byte) *PlatformHandler {
@@ -396,10 +397,11 @@ func (h *PlatformHandler) platformEndpointInfo() platformEndpointInfo {
 		info.State, info.CertificateError = "unavailable", "Kubernetes 客户端未初始化"
 		return info
 	}
-	if ready, ingressErr := K8s.PlatformIngressReady(endpoint.IngressName); ingressErr != nil {
+	if ingress, ingressErr := K8s.PlatformIngressInfo(endpoint.IngressName); ingressErr != nil {
 		info.CertificateError = ingressErr.Error()
 	} else {
-		info.IngressReady = ready
+		info.Ingress = ingress
+		info.IngressReady = ingress != nil && ingress.Managed
 	}
 	certificate, certificateErr := K8s.GetCertificate("default", endpoint.CertificateName)
 	if certificateErr != nil {
