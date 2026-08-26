@@ -19,11 +19,6 @@ const (
 	platformRestartAnnotation   = "cylism.io/platform-restarted-at"
 	platformEndpointLabel       = "cylism.io/platform-endpoint"
 	platformEndpointLabelValue  = "true"
-
-	// PlatformEndpointCertificateName and PlatformEndpointTLSSecretName are
-	// fixed resources in the control-plane namespace, not application assets.
-	PlatformEndpointCertificateName = "cylism-manager-tls"
-	PlatformEndpointTLSSecretName   = "cylism-manager-tls"
 )
 
 // PlatformDeploymentStatus is the only supported self-update target state.
@@ -94,54 +89,78 @@ func (c *Client) UpdatePlatformDeployment(image string, releaseID uint) (string,
 	return previous, nil
 }
 
-// EnsurePlatformEndpoint reconciles the Certificate and Ingress used to reach
-// Cylism Manager itself. DNS and certificate ownership stay independent from
-// project environments and application releases.
-func (c *Client) EnsurePlatformEndpoint(hostname, issuerRef string) error {
+// EnsurePlatformEndpoint reconciles the Ingress used to reach Cylism Manager
+// itself. Certificate lifecycle remains in the central certificate manager.
+func (c *Client) EnsurePlatformEndpoint(hostname, tlsSecretName string) error {
 	if c == nil || c.Clientset == nil {
 		return fmt.Errorf("Kubernetes 客户端未初始化")
 	}
-	if err := c.ensurePlatformCertificate(CreateCertificateRequest{
-		Name:       PlatformEndpointCertificateName,
-		Namespace:  platformDeploymentNamespace,
-		Domains:    []string{hostname},
-		IssuerRef:  issuerRef,
-		IssuerKind: "ClusterIssuer",
-		SecretName: PlatformEndpointTLSSecretName,
-	}); err != nil {
-		return fmt.Errorf("同步平台 Certificate: %w", err)
-	}
-	if err := c.ensurePlatformIngress(hostname); err != nil {
+	if err := c.ensurePlatformIngress(hostname, tlsSecretName); err != nil {
 		return fmt.Errorf("同步平台 Ingress: %w", err)
 	}
 	return nil
 }
 
-func (c *Client) ensurePlatformCertificate(request CreateCertificateRequest) error {
-	dynamicClient, err := c.dynamicClient()
-	if err != nil {
+func (c *Client) ensurePlatformIngress(hostname, tlsSecretName string) error {
+	if err := c.ensurePlatformHostnameAvailable(hostname); err != nil {
 		return err
 	}
-	resource := dynamicClient.Resource(certGVR).Namespace(request.Namespace)
-	desired := certificateObject(request)
-	desired.SetLabels(map[string]string{platformEndpointLabel: platformEndpointLabelValue, "app.kubernetes.io/managed-by": "cylism-manager"})
-	existing, err := resource.Get(c.Ctx(), request.Name, metav1.GetOptions{})
+	resource := c.Clientset.NetworkingV1().Ingresses(platformDeploymentNamespace)
+	existing, err := resource.Get(c.Ctx(), platformDeploymentName, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
-		_, err = resource.Create(c.Ctx(), desired, metav1.CreateOptions{})
+		_, err = resource.Create(c.Ctx(), platformIngress(hostname, tlsSecretName), metav1.CreateOptions{})
 		return err
 	}
 	if err != nil {
 		return err
 	}
-	if existing.GetLabels()[platformEndpointLabel] != platformEndpointLabelValue {
-		return fmt.Errorf("目标 Certificate %s/%s 不受平台管理", request.Namespace, request.Name)
+	if existing.Labels[platformEndpointLabel] != platformEndpointLabelValue {
+		return fmt.Errorf("目标 Ingress %s/%s 不受平台管理，请先显式接管", platformDeploymentNamespace, platformDeploymentName)
 	}
-	desired.SetResourceVersion(existing.GetResourceVersion())
+	desired := platformIngress(hostname, tlsSecretName)
+	desired.ResourceVersion = existing.ResourceVersion
+	desired.Labels = copyStringMap(existing.Labels)
+	desired.Labels[platformEndpointLabel] = platformEndpointLabelValue
+	desired.Labels["app.kubernetes.io/managed-by"] = "cylism-manager"
+	desired.Annotations = copyStringMap(existing.Annotations)
+	desired.Spec.IngressClassName = existing.Spec.IngressClassName
 	_, err = resource.Update(c.Ctx(), desired, metav1.UpdateOptions{})
 	return err
 }
 
-func (c *Client) ensurePlatformIngress(hostname string) error {
+// AdoptPlatformIngress takes ownership only after verifying that the existing
+// resource already routes the requested root host to the platform Service.
+func (c *Client) AdoptPlatformIngress(hostname, tlsSecretName string) error {
+	if c == nil || c.Clientset == nil {
+		return fmt.Errorf("Kubernetes 客户端未初始化")
+	}
+	if err := c.ensurePlatformHostnameAvailable(hostname); err != nil {
+		return err
+	}
+	resource := c.Clientset.NetworkingV1().Ingresses(platformDeploymentNamespace)
+	existing, err := resource.Get(c.Ctx(), platformDeploymentName, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return fmt.Errorf("未找到可接管的 Ingress %s/%s", platformDeploymentNamespace, platformDeploymentName)
+	}
+	if err != nil {
+		return err
+	}
+	if existing.Labels[platformEndpointLabel] != platformEndpointLabelValue {
+		if !matchesPlatformIngress(existing, hostname) {
+			return fmt.Errorf("现有 Ingress 与平台入口不匹配，需使用域名 %q、路径 / 并转发到 %s:8080", hostname, platformDeploymentName)
+		}
+		updated := existing.DeepCopy()
+		updated.Labels = copyStringMap(updated.Labels)
+		updated.Labels[platformEndpointLabel] = platformEndpointLabelValue
+		updated.Labels["app.kubernetes.io/managed-by"] = "cylism-manager"
+		if _, err := resource.Update(c.Ctx(), updated, metav1.UpdateOptions{}); err != nil {
+			return err
+		}
+	}
+	return c.ensurePlatformIngress(hostname, tlsSecretName)
+}
+
+func (c *Client) ensurePlatformHostnameAvailable(hostname string) error {
 	ingresses, err := c.Clientset.NetworkingV1().Ingresses("").List(c.Ctx(), metav1.ListOptions{})
 	if err != nil {
 		return fmt.Errorf("检查现有 Ingress: %w", err)
@@ -156,27 +175,11 @@ func (c *Client) ensurePlatformIngress(hostname string) error {
 			}
 		}
 	}
-
-	desired := platformIngress(hostname)
-	resource := c.Clientset.NetworkingV1().Ingresses(platformDeploymentNamespace)
-	existing, err := resource.Get(c.Ctx(), platformDeploymentName, metav1.GetOptions{})
-	if apierrors.IsNotFound(err) {
-		_, err = resource.Create(c.Ctx(), desired, metav1.CreateOptions{})
-		return err
-	}
-	if err != nil {
-		return err
-	}
-	if existing.Labels[platformEndpointLabel] != platformEndpointLabelValue {
-		return fmt.Errorf("目标 Ingress %s/%s 不受平台管理", platformDeploymentNamespace, platformDeploymentName)
-	}
-	desired.ResourceVersion = existing.ResourceVersion
-	_, err = resource.Update(c.Ctx(), desired, metav1.UpdateOptions{})
-	return err
+	return nil
 }
 
-// RemovePlatformEndpoint stops public routing while retaining the Certificate
-// and TLS Secret for a later re-enable.
+// RemovePlatformEndpoint stops public routing without modifying certificates
+// or TLS Secrets managed by the certificate subsystem.
 func (c *Client) RemovePlatformEndpoint() error {
 	if c == nil || c.Clientset == nil {
 		return fmt.Errorf("Kubernetes 客户端未初始化")
@@ -209,12 +212,32 @@ func (c *Client) PlatformIngressReady() (bool, error) {
 	return ingress.Labels[platformEndpointLabel] == platformEndpointLabelValue, nil
 }
 
-func platformIngress(hostname string) *networkingv1.Ingress {
+func matchesPlatformIngress(ingress *networkingv1.Ingress, hostname string) bool {
+	if ingress == nil || len(ingress.Spec.Rules) != 1 || ingress.Spec.Rules[0].Host != hostname {
+		return false
+	}
+	http := ingress.Spec.Rules[0].IngressRuleValue.HTTP
+	if http == nil || len(http.Paths) != 1 {
+		return false
+	}
+	path := http.Paths[0]
+	return path.Path == "/" && path.Backend.Service != nil && path.Backend.Service.Name == platformDeploymentName && path.Backend.Service.Port.Number == 8080
+}
+
+func copyStringMap(source map[string]string) map[string]string {
+	result := make(map[string]string, len(source)+2)
+	for key, value := range source {
+		result[key] = value
+	}
+	return result
+}
+
+func platformIngress(hostname, tlsSecretName string) *networkingv1.Ingress {
 	pathType := networkingv1.PathTypePrefix
 	return &networkingv1.Ingress{
 		ObjectMeta: metav1.ObjectMeta{Name: platformDeploymentName, Namespace: platformDeploymentNamespace, Labels: map[string]string{platformEndpointLabel: platformEndpointLabelValue, "app.kubernetes.io/managed-by": "cylism-manager"}},
 		Spec: networkingv1.IngressSpec{
-			TLS:   []networkingv1.IngressTLS{{Hosts: []string{hostname}, SecretName: PlatformEndpointTLSSecretName}},
+			TLS:   []networkingv1.IngressTLS{{Hosts: []string{hostname}, SecretName: tlsSecretName}},
 			Rules: []networkingv1.IngressRule{{Host: hostname, IngressRuleValue: networkingv1.IngressRuleValue{HTTP: &networkingv1.HTTPIngressRuleValue{Paths: []networkingv1.HTTPIngressPath{{Path: "/", PathType: &pathType, Backend: networkingv1.IngressBackend{Service: &networkingv1.IngressServiceBackend{Name: platformDeploymentName, Port: networkingv1.ServiceBackendPort{Number: 8080}}}}}}}}},
 		},
 	}

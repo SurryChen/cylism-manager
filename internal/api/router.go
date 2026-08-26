@@ -250,6 +250,7 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 		platform.GET("/endpoint", platformHandler.EndpointStatus)
 		platform.PUT("/endpoint", platformHandler.UpdateEndpoint)
 		platform.POST("/endpoint/reconcile", platformHandler.ReconcileEndpoint)
+		platform.POST("/endpoint/adopt-ingress", platformHandler.AdoptEndpointIngress)
 		platform.POST("/releases", platformHandler.ManualUpdate)
 		platform.POST("/webhook-secret", platformHandler.GenerateWebhookSecret)
 		platform.PUT("/image-prefix", platformHandler.UpdateImagePrefix)

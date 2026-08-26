@@ -7,8 +7,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
-	dynamicfake "k8s.io/client-go/dynamic/fake"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
 )
 
@@ -47,14 +45,14 @@ func TestUpdatePlatformDeploymentRejectsMissingPlatformContainer(t *testing.T) {
 
 func TestEnsurePlatformIngressUsesPlatformServiceAndManagedTLSSecret(t *testing.T) {
 	client := &Client{Clientset: k8sfake.NewSimpleClientset()}
-	if err := client.ensurePlatformIngress("console.example.com"); err != nil {
+	if err := client.ensurePlatformIngress("console.example.com", "console-example-com-tls"); err != nil {
 		t.Fatal(err)
 	}
 	ingress, err := client.Clientset.NetworkingV1().Ingresses(platformDeploymentNamespace).Get(t.Context(), platformDeploymentName, metav1.GetOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ingress.Labels[platformEndpointLabel] != platformEndpointLabelValue || len(ingress.Spec.TLS) != 1 || ingress.Spec.TLS[0].SecretName != PlatformEndpointTLSSecretName {
+	if ingress.Labels[platformEndpointLabel] != platformEndpointLabelValue || len(ingress.Spec.TLS) != 1 || ingress.Spec.TLS[0].SecretName != "console-example-com-tls" {
 		t.Fatalf("unexpected platform ingress metadata: %#v", ingress)
 	}
 	path := ingress.Spec.Rules[0].IngressRuleValue.HTTP.Paths[0]
@@ -75,23 +73,26 @@ func TestEnsurePlatformIngressRejectsConflictingHostname(t *testing.T) {
 		}}},
 	}
 	client := &Client{Clientset: k8sfake.NewSimpleClientset(conflicting)}
-	if err := client.ensurePlatformIngress("console.example.com"); err == nil {
+	if err := client.ensurePlatformIngress("console.example.com", "console-example-com-tls"); err == nil {
 		t.Fatal("expected hostname conflict")
 	}
 }
 
-func TestEnsurePlatformCertificateRejectsUnmanagedResource(t *testing.T) {
-	request := CreateCertificateRequest{
-		Name:       PlatformEndpointCertificateName,
-		Namespace:  platformDeploymentNamespace,
-		Domains:    []string{"console.example.com"},
-		IssuerRef:  "letsencrypt-dns",
-		IssuerKind: "ClusterIssuer",
-		SecretName: PlatformEndpointTLSSecretName,
+func TestAdoptPlatformIngressPreservesControllerSettings(t *testing.T) {
+	existing := platformIngress("console.example.com", "legacy-tls")
+	existing.Labels = map[string]string{"manual": "true"}
+	existing.Annotations = map[string]string{"traefik.ingress.kubernetes.io/router.middlewares": "default-auth@kubernetescrd"}
+	className := "traefik"
+	existing.Spec.IngressClassName = &className
+	client := &Client{Clientset: k8sfake.NewSimpleClientset(existing)}
+	if err := client.AdoptPlatformIngress("console.example.com", "console-example-com-tls"); err != nil {
+		t.Fatal(err)
 	}
-	existing := certificateObject(request)
-	client := &Client{DynamicClient: dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), existing)}
-	if err := client.ensurePlatformCertificate(request); err == nil {
-		t.Fatal("expected unmanaged certificate rejection")
+	ingress, err := client.Clientset.NetworkingV1().Ingresses(platformDeploymentNamespace).Get(t.Context(), platformDeploymentName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ingress.Labels[platformEndpointLabel] != platformEndpointLabelValue || ingress.Annotations["traefik.ingress.kubernetes.io/router.middlewares"] == "" || ingress.Spec.IngressClassName == nil || *ingress.Spec.IngressClassName != "traefik" || ingress.Spec.TLS[0].SecretName != "console-example-com-tls" {
+		t.Fatalf("unexpected adopted ingress: %#v", ingress)
 	}
 }

@@ -153,6 +153,24 @@ func TestValidPlatformHostname(t *testing.T) {
 	}
 }
 
+func TestCertificateCoversHostname(t *testing.T) {
+	for _, test := range []struct {
+		certificate string
+		hostname    string
+		covered     bool
+	}{
+		{"console.example.com", "console.example.com", true},
+		{"*.example.com", "console.example.com", true},
+		{"*.example.com", "api.console.example.com", false},
+		{"*.example.com", "example.com", false},
+		{"console.example.com", "api.example.com", false},
+	} {
+		if actual := certificateCoversHostname(test.certificate, test.hostname); actual != test.covered {
+			t.Fatalf("certificateCoversHostname(%q, %q) = %t, want %t", test.certificate, test.hostname, actual, test.covered)
+		}
+	}
+}
+
 func signedPlatformWebhookRequest(body string, timestamp int64, nonce, secret string) *http.Request {
 	payload := strings.Join([]string{strconv.FormatInt(timestamp, 10), nonce, body}, ".")
 	mac := hmac.New(sha256.New, []byte(secret))

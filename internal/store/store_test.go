@@ -54,7 +54,7 @@ func TestApplicationDeploymentTemplateMigrationRemovesLegacySingleTemplateIndex(
 
 func TestPlatformEndpointIsPersistedAsSingleton(t *testing.T) {
 	s := setupTestDB(t)
-	endpoint := &model.PlatformEndpoint{Hostname: "console.example.com", IssuerRef: "letsencrypt-dns", IssuerKind: "ClusterIssuer", CertificateName: "cylism-manager-tls", TLSSecretName: "cylism-manager-tls", Enabled: true}
+	endpoint := &model.PlatformEndpoint{Hostname: "console.example.com", CertificateName: "console-example-com", TLSSecretName: "console-example-com-tls", Enabled: true}
 	if err := s.SavePlatformEndpoint(endpoint); err != nil {
 		t.Fatal(err)
 	}
