@@ -50,9 +50,9 @@ type platformManualReleaseRequest struct {
 }
 
 type platformEndpointRequest struct {
-	Hostname  string `json:"hostname"`
-	IssuerRef string `json:"issuer_ref"`
-	Enabled   bool   `json:"enabled"`
+	Hostname        string `json:"hostname"`
+	CertificateName string `json:"certificate_name"`
+	Enabled         bool   `json:"enabled"`
 }
 
 type platformEndpointInfo struct {
@@ -182,18 +182,18 @@ func (h *PlatformHandler) UpdateEndpoint(c *gin.Context) {
 	}
 	endpoint := &model.PlatformEndpoint{
 		Hostname:        strings.ToLower(strings.TrimSpace(request.Hostname)),
-		IssuerRef:       strings.TrimSpace(request.IssuerRef),
-		IssuerKind:      "ClusterIssuer",
-		CertificateName: k8sclient.PlatformEndpointCertificateName,
-		TLSSecretName:   k8sclient.PlatformEndpointTLSSecretName,
+		CertificateName: strings.TrimSpace(request.CertificateName),
 		Enabled:         request.Enabled,
 	}
 	if !endpoint.Enabled {
 		if endpoint.Hostname == "" {
 			endpoint.Hostname = current.Hostname
 		}
-		if endpoint.IssuerRef == "" {
-			endpoint.IssuerRef = current.IssuerRef
+		if endpoint.CertificateName == "" {
+			endpoint.CertificateName = current.CertificateName
+		}
+		if endpoint.TLSSecretName == "" {
+			endpoint.TLSSecretName = current.TLSSecretName
 		}
 	}
 	if endpoint.Enabled {
@@ -201,10 +201,16 @@ func (h *PlatformHandler) UpdateEndpoint(c *gin.Context) {
 			model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "管理域名必须是合法的精确 DNS 名称，且不支持泛域名")
 			return
 		}
-		if err := h.validatePlatformEndpointPrerequisites(endpoint); err != nil {
+		if err := h.validatePlatformEndpointPrerequisites(); err != nil {
 			model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
 			return
 		}
+		certificate, err := h.platformEndpointCertificate(endpoint)
+		if err != nil {
+			model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+			return
+		}
+		endpoint.TLSSecretName = certificate.SecretName
 		if domain, lookupErr := h.store.GetManagedDomainByHostname(endpoint.Hostname); lookupErr == nil {
 			model.Error(c, http.StatusConflict, model.CodeConflict, fmt.Sprintf("域名 %q 已作为项目受管域名使用", domain.Hostname))
 			return
@@ -232,6 +238,39 @@ func (h *PlatformHandler) ReconcileEndpoint(c *gin.Context) {
 		return
 	}
 	model.SuccessWithMessage(c, h.platformEndpointInfo(), "平台入口已重新同步")
+}
+
+// AdoptEndpointIngress explicitly transfers a matching manually created
+// platform Ingress to the platform controller.
+func (h *PlatformHandler) AdoptEndpointIngress(c *gin.Context) {
+	if h.store == nil || K8s == nil {
+		k8sUnavailable(c)
+		return
+	}
+	endpoint, err := h.store.GetPlatformEndpoint()
+	if errors.Is(err, gorm.ErrRecordNotFound) || !endpoint.Enabled {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "请先保存并启用平台 HTTPS 入口")
+		return
+	}
+	if err != nil {
+		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, "读取平台入口失败")
+		return
+	}
+	certificate, err := h.platformEndpointCertificate(endpoint)
+	if err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		return
+	}
+	endpoint.TLSSecretName = certificate.SecretName
+	if err := h.store.SavePlatformEndpoint(endpoint); err != nil {
+		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, "保存平台入口失败")
+		return
+	}
+	if err := K8s.AdoptPlatformIngress(endpoint.Hostname, endpoint.TLSSecretName); err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeK8sAPIError, err.Error())
+		return
+	}
+	model.SuccessWithMessage(c, h.platformEndpointInfo(), "现有 Ingress 已接管并重新同步")
 }
 
 func (h *PlatformHandler) GenerateWebhookSecret(c *gin.Context) {
@@ -309,7 +348,17 @@ func (h *PlatformHandler) reconcilePlatformEndpoint() error {
 	if !endpoint.Enabled {
 		return K8s.RemovePlatformEndpoint()
 	}
-	return K8s.EnsurePlatformEndpoint(endpoint.Hostname, endpoint.IssuerRef)
+	certificate, err := h.platformEndpointCertificate(endpoint)
+	if err != nil {
+		return err
+	}
+	if endpoint.TLSSecretName != certificate.SecretName {
+		endpoint.TLSSecretName = certificate.SecretName
+		if err := h.store.SavePlatformEndpoint(endpoint); err != nil {
+			return err
+		}
+	}
+	return K8s.EnsurePlatformEndpoint(endpoint.Hostname, endpoint.TLSSecretName)
 }
 
 func (h *PlatformHandler) platformEndpointInfo() platformEndpointInfo {
@@ -356,7 +405,49 @@ func (h *PlatformHandler) platformEndpointInfo() platformEndpointInfo {
 	return info
 }
 
-func (h *PlatformHandler) validatePlatformEndpointPrerequisites(endpoint *model.PlatformEndpoint) error {
+func (h *PlatformHandler) platformEndpointCertificate(endpoint *model.PlatformEndpoint) (*k8sclient.CertInfo, error) {
+	if K8s == nil {
+		return nil, errors.New("Kubernetes 客户端未初始化")
+	}
+	if strings.TrimSpace(endpoint.CertificateName) == "" {
+		return nil, errors.New("请选择 default 命名空间中已就绪的 TLS 证书")
+	}
+	certificate, err := K8s.GetCertificate("default", endpoint.CertificateName)
+	if err != nil {
+		return nil, fmt.Errorf("读取 TLS 证书: %w", err)
+	}
+	if certificate.Status != "Ready" {
+		return nil, errors.New("所选 TLS 证书尚未就绪")
+	}
+	if strings.TrimSpace(certificate.SecretName) == "" {
+		return nil, errors.New("所选 TLS 证书未生成 Secret")
+	}
+	for _, domain := range certificate.Domains {
+		if certificateCoversHostname(domain, endpoint.Hostname) {
+			return certificate, nil
+		}
+	}
+	return nil, fmt.Errorf("所选 TLS 证书不覆盖域名 %q", endpoint.Hostname)
+}
+
+func certificateCoversHostname(certificateDomain, hostname string) bool {
+	certificateDomain = strings.ToLower(strings.TrimSpace(certificateDomain))
+	hostname = strings.ToLower(strings.TrimSpace(hostname))
+	if certificateDomain == hostname {
+		return true
+	}
+	if !strings.HasPrefix(certificateDomain, "*.") {
+		return false
+	}
+	suffix := strings.TrimPrefix(certificateDomain, "*")
+	if !strings.HasSuffix(hostname, suffix) {
+		return false
+	}
+	prefix := strings.TrimSuffix(hostname, suffix)
+	return prefix != "" && !strings.Contains(prefix, ".")
+}
+
+func (h *PlatformHandler) validatePlatformEndpointPrerequisites() error {
 	if K8s == nil || K8s.Clientset == nil {
 		return errors.New("Kubernetes 客户端未初始化")
 	}
@@ -364,20 +455,7 @@ func (h *PlatformHandler) validatePlatformEndpointPrerequisites(endpoint *model.
 	if err != nil || status == nil || !status.Running {
 		return errors.New("Ingress Controller 未就绪")
 	}
-	certificateCRD, err := K8s.CheckCRD("certificates.cert-manager.io")
-	if err != nil || !certificateCRD {
-		return errors.New("cert-manager Certificate CRD 不可用")
-	}
-	issuers, err := K8s.ListIssuers()
-	if err != nil {
-		return fmt.Errorf("读取 ClusterIssuer: %w", err)
-	}
-	for _, issuer := range issuers {
-		if issuer.Kind == "ClusterIssuer" && issuer.Name == endpoint.IssuerRef && issuer.Ready {
-			return nil
-		}
-	}
-	return fmt.Errorf("ClusterIssuer %q 不存在或尚未就绪", endpoint.IssuerRef)
+	return nil
 }
 
 func validPlatformHostname(hostname string) bool {

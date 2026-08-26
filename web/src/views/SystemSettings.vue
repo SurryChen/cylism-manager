@@ -35,7 +35,7 @@
         <div class="card-header">
           <div>
             <h2 class="card-title">平台管理入口</h2>
-            <p class="settings-copy">由平台在 default 命名空间维护 HTTPS Ingress 与证书，不关联项目应用。</p>
+            <p class="settings-copy">选择网络证书页中已就绪的证书；平台只维护 default 命名空间的 HTTPS Ingress。</p>
           </div>
           <span class="badge" :class="endpointBadgeClass">{{ endpointStateLabel }}</span>
         </div>
@@ -46,10 +46,10 @@
               <input id="platform-endpoint-hostname" v-model.trim="endpointForm.hostname" class="form-input" :disabled="savingEndpoint" :required="endpointForm.enabled" placeholder="console.example.com" />
             </div>
             <div class="form-group">
-              <label class="form-label" for="platform-endpoint-issuer">ClusterIssuer</label>
-              <select id="platform-endpoint-issuer" v-model="endpointForm.issuer_ref" class="form-select" :disabled="savingEndpoint" :required="endpointForm.enabled">
-                <option value="">选择已就绪的 ClusterIssuer</option>
-                <option v-for="issuer in readyClusterIssuers" :key="issuer.name" :value="issuer.name">{{ issuer.name }}</option>
+              <label class="form-label" for="platform-endpoint-certificate">TLS 证书</label>
+              <select id="platform-endpoint-certificate" v-model="endpointForm.certificate_name" class="form-select" :disabled="savingEndpoint" :required="endpointForm.enabled">
+                <option value="">选择 default 命名空间中已就绪的证书</option>
+                <option v-for="certificate in readyPlatformCertificates" :key="certificate.name" :value="certificate.name">{{ certificate.name }} · {{ certificate.domains.join(', ') }}</option>
               </select>
             </div>
           </div>
@@ -61,6 +61,7 @@
             </label>
             <div class="settings-action-row">
               <a v-if="platformEndpoint.url && platformEndpoint.state === 'ready'" class="btn btn-sm" :href="platformEndpoint.url" target="_blank" rel="noopener">打开入口</a>
+              <button v-if="platformEndpoint.endpoint?.enabled && !platformEndpoint.ingress_ready" class="btn btn-sm" type="button" :disabled="adoptingEndpoint || syncingEndpoint || savingEndpoint" @click="adoptPlatformIngress">{{ adoptingEndpoint ? '接管中...' : '接管现有 Ingress' }}</button>
               <button v-if="platformEndpoint.endpoint?.hostname" class="btn btn-sm" type="button" :disabled="syncingEndpoint || savingEndpoint" @click="reconcilePlatformEndpoint">{{ syncingEndpoint ? '同步中...' : '重新同步' }}</button>
               <button class="btn btn-sm btn-primary" :disabled="savingEndpoint" type="submit">{{ savingEndpoint ? '保存中...' : '保存入口' }}</button>
             </div>
@@ -69,7 +70,7 @@
         <div v-if="platformEndpoint.endpoint?.hostname" class="platform-endpoint-status">
           <span class="detail-label">HTTPS 地址</span><a v-if="platformEndpoint.url" :href="platformEndpoint.url" target="_blank" rel="noopener">{{ platformEndpoint.url }}</a><span v-else>-</span>
           <span class="detail-label">Ingress</span><span>{{ platformEndpoint.ingress_ready ? '已创建' : '等待同步' }}</span>
-          <span class="detail-label">证书</span><span>{{ platformEndpoint.certificate?.status || '等待签发' }}<template v-if="platformEndpoint.certificate?.reason"> · {{ platformEndpoint.certificate.reason }}</template></span>
+          <span class="detail-label">TLS 证书</span><span>{{ platformEndpoint.certificate?.name || platformEndpoint.endpoint.certificate_name }} · {{ platformEndpoint.certificate?.status || '等待读取' }}<template v-if="platformEndpoint.certificate?.reason"> · {{ platformEndpoint.certificate.reason }}</template></span>
           <template v-if="platformEndpoint.certificate_error"><span class="detail-label">协调错误</span><span class="endpoint-error-text">{{ platformEndpoint.certificate_error }}</span></template>
         </div>
         <p v-if="endpointMessage" class="settings-copy platform-action-message">{{ endpointMessage }}</p>
@@ -99,8 +100,8 @@ import { api } from '../api/index.js'
 const tailscale = ref({ initialized: false, ip: '', online: false })
 const platform = ref({ webhook_configured: false, image_prefix: '', deployment: null, releases: [] })
 const platformEndpoint = ref({ endpoint: {}, state: 'not_configured', ingress_ready: false })
-const endpointForm = ref({ hostname: '', issuer_ref: '', enabled: false })
-const issuers = ref([])
+const endpointForm = ref({ hostname: '', certificate_name: '', enabled: false })
+const certificates = ref([])
 const platformImagePrefix = ref('')
 const manualImage = ref('')
 const platformActionMessage = ref('')
@@ -111,16 +112,17 @@ const updatingPlatform = ref(false)
 const rollingBack = ref(0)
 const savingEndpoint = ref(false)
 const syncingEndpoint = ref(false)
+const adoptingEndpoint = ref(false)
 const endpointMessage = ref('')
 const endpointError = ref('')
 const latestAutomaticRelease = computed(() => (platform.value.releases || []).find(release => release.source === 'github') || null)
-const readyClusterIssuers = computed(() => issuers.value.filter(issuer => issuer.kind === 'ClusterIssuer' && issuer.ready))
+const readyPlatformCertificates = computed(() => certificates.value.filter(certificate => certificate.namespace === 'default' && certificate.status === 'Ready' && certificate.domains?.length))
 const endpointStateLabel = computed(() => ({ not_configured: '待配置', disabled: '已停用', ready: '已就绪', issuing: '签发中', failed: '签发失败', unavailable: '不可用' }[platformEndpoint.value.state] || '未知'))
 const endpointBadgeClass = computed(() => ({ ready: 'badge-online', failed: 'badge-danger', unavailable: 'badge-danger', issuing: 'badge-deploying' }[platformEndpoint.value.state] || 'badge-offline'))
 let refreshTimer
 
 onMounted(async () => {
-  await Promise.all([refresh(), loadIssuers()])
+  await Promise.all([refresh(), loadCertificates()])
   refreshTimer = window.setInterval(refresh, 15000)
 })
 onBeforeUnmount(() => window.clearInterval(refreshTimer))
@@ -135,15 +137,15 @@ async function refresh() {
   if (endpointResult.status === 'fulfilled') syncEndpoint(endpointResult.value)
 }
 
-async function loadIssuers() {
-  try { issuers.value = await api.get('/certs/issuers') } catch { issuers.value = [] }
+async function loadCertificates() {
+  try { certificates.value = await api.get('/certs') } catch { certificates.value = [] }
 }
 
 function syncEndpoint(info) {
   platformEndpoint.value = info || { endpoint: {}, state: 'not_configured', ingress_ready: false }
   endpointForm.value = {
     hostname: info?.endpoint?.hostname || '',
-    issuer_ref: info?.endpoint?.issuer_ref || '',
+    certificate_name: info?.endpoint?.certificate_name || '',
     enabled: Boolean(info?.endpoint?.enabled),
   }
 }
@@ -154,8 +156,18 @@ async function savePlatformEndpoint() {
   endpointError.value = ''
   try {
     syncEndpoint(await api.put('/platform/endpoint', endpointForm.value))
-    endpointMessage.value = endpointForm.value.enabled ? '平台入口已保存，正在同步证书和 Ingress。' : '平台入口已停用，Ingress 已移除。'
+    endpointMessage.value = endpointForm.value.enabled ? '平台入口已保存，正在同步 Ingress。' : '平台入口已停用，Ingress 已移除。'
   } catch (e) { endpointError.value = e.message || '保存平台入口失败' } finally { savingEndpoint.value = false }
+}
+
+async function adoptPlatformIngress() {
+  adoptingEndpoint.value = true
+  endpointMessage.value = ''
+  endpointError.value = ''
+  try {
+    syncEndpoint(await api.post('/platform/endpoint/adopt-ingress'))
+    endpointMessage.value = '现有 Ingress 已接管并重新同步。'
+  } catch (e) { endpointError.value = e.message || '接管现有 Ingress 失败' } finally { adoptingEndpoint.value = false }
 }
 
 async function reconcilePlatformEndpoint() {
