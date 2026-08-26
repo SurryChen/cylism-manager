@@ -40,3 +40,7 @@ Thumbs.db
 /platform
 /agent-linux-amd64
 *.service
+
+# Other
+.k3s-offline
+v1.36.3+k3s1.zip

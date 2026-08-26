@@ -337,6 +337,21 @@ type PlatformRelease struct {
 	UpdatedAt     time.Time  `json:"updated_at"`
 }
 
+// PlatformEndpoint stores the one public management entry owned by Cylism
+// Manager itself. It is intentionally separate from project application
+// endpoints because the platform runs in the control-plane namespace.
+type PlatformEndpoint struct {
+	ID              uint      `gorm:"primaryKey" json:"id"`
+	Hostname        string    `gorm:"size:253;not null" json:"hostname"`
+	IssuerRef       string    `gorm:"size:128" json:"issuer_ref"`
+	IssuerKind      string    `gorm:"size:32;default:ClusterIssuer" json:"issuer_kind"`
+	CertificateName string    `gorm:"size:253" json:"certificate_name"`
+	TLSSecretName   string    `gorm:"size:253" json:"tls_secret_name"`
+	Enabled         bool      `gorm:"default:false;not null" json:"enabled"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
+}
+
 // PlatformWebhookNonce prevents replay of accepted public deployment webhooks.
 type PlatformWebhookNonce struct {
 	ID        uint      `gorm:"primaryKey" json:"-"`

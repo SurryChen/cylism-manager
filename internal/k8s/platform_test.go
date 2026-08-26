@@ -5,7 +5,10 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	dynamicfake "k8s.io/client-go/dynamic/fake"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
 )
 
@@ -39,5 +42,56 @@ func TestUpdatePlatformDeploymentRejectsMissingPlatformContainer(t *testing.T) {
 	client := &Client{Clientset: k8sfake.NewSimpleClientset(&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: platformDeploymentName, Namespace: platformDeploymentNamespace}, Spec: appsv1.DeploymentSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "other", Image: "example.com/other"}}}}}})}
 	if _, err := client.UpdatePlatformDeployment("registry.example.com/cylism-manager@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", 9); err == nil {
 		t.Fatal("expected missing platform container rejection")
+	}
+}
+
+func TestEnsurePlatformIngressUsesPlatformServiceAndManagedTLSSecret(t *testing.T) {
+	client := &Client{Clientset: k8sfake.NewSimpleClientset()}
+	if err := client.ensurePlatformIngress("console.example.com"); err != nil {
+		t.Fatal(err)
+	}
+	ingress, err := client.Clientset.NetworkingV1().Ingresses(platformDeploymentNamespace).Get(t.Context(), platformDeploymentName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ingress.Labels[platformEndpointLabel] != platformEndpointLabelValue || len(ingress.Spec.TLS) != 1 || ingress.Spec.TLS[0].SecretName != PlatformEndpointTLSSecretName {
+		t.Fatalf("unexpected platform ingress metadata: %#v", ingress)
+	}
+	path := ingress.Spec.Rules[0].IngressRuleValue.HTTP.Paths[0]
+	if ingress.Spec.Rules[0].Host != "console.example.com" || path.Backend.Service.Name != platformDeploymentName || path.Backend.Service.Port.Number != 8080 {
+		t.Fatalf("unexpected platform ingress route: %#v", ingress.Spec)
+	}
+}
+
+func TestEnsurePlatformIngressRejectsConflictingHostname(t *testing.T) {
+	pathType := networkingv1.PathTypePrefix
+	conflicting := &networkingv1.Ingress{
+		ObjectMeta: metav1.ObjectMeta{Name: "other", Namespace: "apps"},
+		Spec: networkingv1.IngressSpec{Rules: []networkingv1.IngressRule{{
+			Host: "console.example.com",
+			IngressRuleValue: networkingv1.IngressRuleValue{HTTP: &networkingv1.HTTPIngressRuleValue{
+				Paths: []networkingv1.HTTPIngressPath{{Path: "/", PathType: &pathType}},
+			}},
+		}}},
+	}
+	client := &Client{Clientset: k8sfake.NewSimpleClientset(conflicting)}
+	if err := client.ensurePlatformIngress("console.example.com"); err == nil {
+		t.Fatal("expected hostname conflict")
+	}
+}
+
+func TestEnsurePlatformCertificateRejectsUnmanagedResource(t *testing.T) {
+	request := CreateCertificateRequest{
+		Name:       PlatformEndpointCertificateName,
+		Namespace:  platformDeploymentNamespace,
+		Domains:    []string{"console.example.com"},
+		IssuerRef:  "letsencrypt-dns",
+		IssuerKind: "ClusterIssuer",
+		SecretName: PlatformEndpointTLSSecretName,
+	}
+	existing := certificateObject(request)
+	client := &Client{DynamicClient: dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), existing)}
+	if err := client.ensurePlatformCertificate(request); err == nil {
+		t.Fatal("expected unmanaged certificate rejection")
 	}
 }

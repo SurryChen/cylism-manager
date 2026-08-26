@@ -123,6 +123,36 @@ func TestPlatformManualUpdateRejectsUntaggedImage(t *testing.T) {
 	}
 }
 
+func TestPlatformEndpointStatusDefaultsToNotConfigured(t *testing.T) {
+	s, err := store.New(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := NewPlatformHandler(s, []byte("01234567890123456789012345678901"))
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.GET("/api/platform/endpoint", handler.EndpointStatus)
+
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/platform/endpoint", nil))
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"state":"not_configured"`) {
+		t.Fatalf("expected not configured endpoint status, got %d: %s", response.Code, response.Body.String())
+	}
+}
+
+func TestValidPlatformHostname(t *testing.T) {
+	for _, hostname := range []string{"console.example.com", "console-1.example.co.uk"} {
+		if !validPlatformHostname(hostname) {
+			t.Fatalf("expected valid hostname %q", hostname)
+		}
+	}
+	for _, hostname := range []string{"", "localhost", "*.example.com", "console_example.com", "-console.example.com", "console-.example.com"} {
+		if validPlatformHostname(hostname) {
+			t.Fatalf("expected invalid hostname %q", hostname)
+		}
+	}
+}
+
 func signedPlatformWebhookRequest(body string, timestamp int64, nonce, secret string) *http.Request {
 	payload := strings.Join([]string{strconv.FormatInt(timestamp, 10), nonce, body}, ".")
 	mac := hmac.New(sha256.New, []byte(secret))
