@@ -129,6 +129,9 @@ func New(dsn string) (*Store, error) {
 	if err := removeObsoleteAssistantSchema(db); err != nil {
 		return nil, err
 	}
+	if err := removeObsoleteManagedOCIRegistrySchema(db); err != nil {
+		return nil, err
+	}
 	if db.Migrator().HasTable("managed_documents") {
 		if err := db.Migrator().DropTable("managed_documents"); err != nil {
 			return nil, err
@@ -476,6 +479,16 @@ func removeObsoleteAssistantSchema(db *gorm.DB) error {
 		}
 	}
 	return nil
+}
+
+// removeObsoleteManagedOCIRegistrySchema retires the hostPath-only column
+// left by releases before Registry storage moved to PVCs. AutoMigrate adds
+// fields but does not remove obsolete NOT NULL columns, which blocks inserts.
+func removeObsoleteManagedOCIRegistrySchema(db *gorm.DB) error {
+	if !db.Migrator().HasColumn(&model.ManagedOCIRegistry{}, "data_path") {
+		return nil
+	}
+	return db.Migrator().DropColumn(&model.ManagedOCIRegistry{}, "data_path")
 }
 
 func (s *Store) backfillApplicationDeploymentTemplates() error {
