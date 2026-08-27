@@ -622,8 +622,15 @@ type ManagedOCIRegistry struct {
 	Endpoint             string     `gorm:"size:253;uniqueIndex;not null" json:"endpoint"`
 	RegistryImage        string     `gorm:"size:512;not null" json:"registry_image"`
 	DataNode             string     `gorm:"size:253;not null" json:"data_node"`
-	DataPath             string     `gorm:"size:1024;not null" json:"data_path"`
+	StorageClassName     string     `gorm:"size:253;not null;default:local-path" json:"storage_class_name"`
+	PVCName              string     `gorm:"size:253;not null;default:cylism-oci-registry-data" json:"pvc_name"`
+	StorageSize          string     `gorm:"size:64;not null;default:100Gi" json:"storage_size"`
+	CPURequest           string     `gorm:"size:64;not null;default:100m" json:"cpu_request"`
+	CPULimit             string     `gorm:"size:64;not null;default:500m" json:"cpu_limit"`
+	MemoryRequest        string     `gorm:"size:64;not null;default:256Mi" json:"memory_request"`
+	MemoryLimit          string     `gorm:"size:64;not null;default:1Gi" json:"memory_limit"`
 	InsecureHTTP         bool       `gorm:"not null;default:false" json:"insecure_http"`
+	CertificateName      string     `gorm:"size:253" json:"certificate_name,omitempty"`
 	TLSSecretName        string     `gorm:"size:253" json:"tls_secret_name,omitempty"`
 	PullUsername         string     `gorm:"size:256;not null" json:"pull_username"`
 	EncryptedCredential  string     `gorm:"type:text" json:"-"`
@@ -636,6 +643,7 @@ type ManagedOCIRegistry struct {
 	CreatedAt            time.Time  `json:"created_at"`
 	UpdatedAt            time.Time  `json:"updated_at"`
 	CredentialConfigured bool       `gorm:"-" json:"credential_configured"`
+	PVCPhase             string     `gorm:"-" json:"pvc_phase,omitempty"`
 }
 
 // RegistryProxy defines one platform-managed, non-persistent registry proxy.

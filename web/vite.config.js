@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite'
+import { defineConfig, loadEnv } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import dns from 'node:dns'
 import { Agent as HttpsAgent } from 'node:https'
@@ -23,23 +23,23 @@ const lookup = (hostname, options, callback) => {
 
 const fixedIpAgent = new HttpsAgent({ lookup })
 
-export default defineConfig({
-  plugins: [vue(), lintCssTokensPlugin()],
-  server: {
-    proxy: {
-      '/api': {
-        target: 'https://cylism.crazycoding.top/',
-        changeOrigin: true,
-        ws: true,
-        // The upstream terminal endpoint enforces same-origin WebSocket upgrades.
-        // This proxy is only exposed by Vite's local development server.
-        rewriteWsOrigin: true,
-        agent: fixedIpAgent
-      }
-    }
-  },
-  build: {
-    outDir: 'dist',
-    emptyOutDir: true
+export default defineConfig(({ mode }) => {
+  const env = loadEnv(mode, process.cwd(), '')
+  const proxyTarget = env.VITE_API_PROXY_TARGET || 'https://cylism.crazycoding.top'
+  const targetURL = new URL(proxyTarget)
+  const proxy = {
+    target: proxyTarget,
+    changeOrigin: true,
+    ws: true,
+    // The upstream terminal endpoint enforces same-origin WebSocket upgrades.
+    // This proxy is only exposed by Vite's local development server.
+    rewriteWsOrigin: true,
+  }
+  if (targetURL.protocol === 'https:' && targetURL.hostname === 'cylism.crazycoding.top') proxy.agent = fixedIpAgent
+
+  return {
+    plugins: [vue(), lintCssTokensPlugin()],
+    server: { proxy: { '/api': proxy } },
+    build: { outDir: 'dist', emptyOutDir: true }
   }
 })

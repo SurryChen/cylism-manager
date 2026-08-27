@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -21,7 +22,9 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
+	storagev1 "k8s.io/api/storage/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 )
@@ -40,16 +43,28 @@ type managedOCIRegistryRequest struct {
 	Endpoint            string `json:"endpoint"`
 	RegistryImage       string `json:"registry_image"`
 	DataNode            string `json:"data_node"`
-	DataPath            string `json:"data_path"`
+	StorageClassName    string `json:"storage_class_name"`
+	StorageSize         string `json:"storage_size"`
+	CPURequest          string `json:"cpu_request"`
+	CPULimit            string `json:"cpu_limit"`
+	MemoryRequest       string `json:"memory_request"`
+	MemoryLimit         string `json:"memory_limit"`
 	InsecureHTTP        bool   `json:"insecure_http"`
 	ConfirmInsecureHTTP bool   `json:"confirm_insecure_http"`
-	TLSSecretName       string `json:"tls_secret_name"`
+	CertificateName     string `json:"certificate_name"`
 	PullUsername        string `json:"pull_username"`
 	PullPassword        string `json:"pull_password"`
 	ProjectIDs          []uint `json:"project_ids"`
 }
 type managedOCIRegistryApplyRequest struct {
 	ServerIDs []uint `json:"server_ids"`
+}
+type managedOCIRegistryCertificateOption struct {
+	Name        string   `json:"name"`
+	Namespace   string   `json:"namespace"`
+	Domains     []string `json:"domains"`
+	ExpiryDate  string   `json:"expiry_date,omitempty"`
+	RenewalTime string   `json:"renewal_time,omitempty"`
 }
 
 func NewManagedOCIRegistryHandler(s *store.Store, encKey []byte) *ManagedOCIRegistryHandler {
@@ -83,6 +98,59 @@ func (h *ManagedOCIRegistryHandler) Get(c *gin.Context) {
 	model.Success(c, registry)
 }
 
+func (h *ManagedOCIRegistryHandler) StoragePreflight(c *gin.Context) {
+	if !managedRegistryK8sReady(c) {
+		return
+	}
+	registry := &model.ManagedOCIRegistry{StorageClassName: "local-path"}
+	result := gin.H{"storage_class_name": registry.StorageClassName, "storage_classes": []string{registry.StorageClassName}, "data_nodes": []string{}}
+	if err := h.ensureStorageClass(c.Request.Context(), registry); err != nil {
+		result["ready"], result["message"] = false, err.Error()
+		model.Success(c, result)
+		return
+	}
+	nodes, err := listReadyManagedRegistryNodes(c.Request.Context())
+	if err != nil {
+		result["ready"], result["message"] = false, "读取 Kubernetes 数据节点失败: "+truncateManagedRegistryError(err)
+		model.Success(c, result)
+		return
+	}
+	result["data_nodes"] = nodes
+	if len(nodes) == 0 {
+		result["ready"], result["message"] = false, "没有可用于 Registry 数据存储的 Ready Kubernetes 节点"
+		model.Success(c, result)
+		return
+	}
+	result["ready"], result["message"] = true, "local-path StorageClass 与数据节点已就绪"
+	model.Success(c, result)
+}
+
+func (h *ManagedOCIRegistryHandler) ListMatchingCertificates(c *gin.Context) {
+	if !managedRegistryK8sReady(c) {
+		return
+	}
+	namespace := strings.TrimSpace(c.Query("namespace"))
+	_, host, err := normalizeManagedRegistryEndpoint(c.Query("endpoint"))
+	if namespace == "" || err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "命名空间和有效的访问地址必填")
+		return
+	}
+	certificates, err := K8s.ListCertificates()
+	if err != nil {
+		model.Error(c, http.StatusServiceUnavailable, model.CodeK8sAPIError, "读取平台证书失败: "+truncateManagedRegistryError(err))
+		return
+	}
+	options := make([]managedOCIRegistryCertificateOption, 0)
+	for _, certificate := range certificates {
+		if certificate.Namespace != namespace || certificate.Status != "Ready" || certificate.SecretName == "" || !certificateDomainsCoverHostname(certificate.Domains, host) {
+			continue
+		}
+		options = append(options, managedOCIRegistryCertificateOption{Name: certificate.Name, Namespace: certificate.Namespace, Domains: certificate.Domains, ExpiryDate: certificate.ExpiryDate, RenewalTime: certificate.RenewalTime})
+	}
+	sort.Slice(options, func(i, j int) bool { return options[i].Name < options[j].Name })
+	model.Success(c, options)
+}
+
 func (h *ManagedOCIRegistryHandler) Create(c *gin.Context) {
 	if !managedRegistryK8sReady(c) {
 		return
@@ -108,11 +176,19 @@ func (h *ManagedOCIRegistryHandler) Create(c *gin.Context) {
 		model.Error(c, http.StatusConflict, model.CodeConflict, err.Error())
 		return
 	}
-	if err := h.ensureResourcesAvailable(c.Request.Context(), registry.Namespace, registry.ResourceName); err != nil {
+	if err := h.ensureResourcesAvailable(c.Request.Context(), registry.Namespace, registry.ResourceName, registry.PVCName); err != nil {
 		model.Error(c, http.StatusConflict, model.CodeConflict, err.Error())
 		return
 	}
-	if err := h.ensureTLSSecret(c.Request.Context(), registry); err != nil {
+	if err := h.ensureStorageClass(c.Request.Context(), registry); err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		return
+	}
+	if err := ensureManagedRegistryDataNode(c.Request.Context(), registry.DataNode); err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		return
+	}
+	if err := h.ensureTLSCertificate(c.Request.Context(), registry); err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
 		return
 	}
@@ -152,6 +228,15 @@ func (h *ManagedOCIRegistryHandler) Update(c *gin.Context) {
 		model.Error(c, http.StatusNotFound, model.CodeNotFound, "受管制品库不存在")
 		return
 	}
+	legacy, err := managedRegistryUsesLegacyHostPath(c.Request.Context(), current)
+	if err != nil {
+		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, "检查制品库存储状态失败")
+		return
+	}
+	if legacy {
+		model.Error(c, http.StatusConflict, model.CodeConflict, "现有制品库仍使用旧 hostPath 存储，请先完成 PVC 数据迁移后再更新")
+		return
+	}
 	var request managedOCIRegistryRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "制品库配置无效")
@@ -166,7 +251,11 @@ func (h *ManagedOCIRegistryHandler) Update(c *gin.Context) {
 		model.Error(c, http.StatusConflict, model.CodeConflict, "首期不支持变更制品库地址，请新建并迁移镜像")
 		return
 	}
-	if err := h.ensureTLSSecret(c.Request.Context(), registry); err != nil {
+	if err := h.ensureStorageClass(c.Request.Context(), registry); err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		return
+	}
+	if err := h.ensureTLSCertificate(c.Request.Context(), registry); err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
 		return
 	}
@@ -290,7 +379,7 @@ func (h *ManagedOCIRegistryHandler) Delete(c *gin.Context) {
 		Confirm bool `json:"confirm"`
 	}
 	if err := c.ShouldBindJSON(&request); err != nil || !request.Confirm {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "删除受管制品库必须明确确认；节点上的数据目录不会被删除")
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "删除受管制品库必须明确确认；PVC 数据不会被删除")
 		return
 	}
 	registry, err := h.store.GetManagedOCIRegistry(id)
@@ -324,7 +413,7 @@ func (h *ManagedOCIRegistryHandler) Delete(c *gin.Context) {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "删除受管制品库记录失败")
 		return
 	}
-	model.SuccessWithMessage(c, gin.H{"id": id, "data_path": registry.DataPath}, "制品库资源已删除，节点数据目录已保留")
+	model.SuccessWithMessage(c, gin.H{"id": id, "pvc_name": registry.PVCName}, "制品库资源已删除，PVC 数据已保留")
 }
 
 func managedRegistryK8sReady(c *gin.Context) bool {
@@ -341,7 +430,7 @@ func (h *ManagedOCIRegistryHandler) registryFromRequest(request managedOCIRegist
 	if err != nil {
 		return nil, "", err
 	}
-	image, node, path := strings.TrimSpace(request.RegistryImage), strings.TrimSpace(request.DataNode), strings.TrimSpace(request.DataPath)
+	image, node := strings.TrimSpace(request.RegistryImage), strings.TrimSpace(request.DataNode)
 	username, password := strings.TrimSpace(request.PullUsername), strings.TrimSpace(request.PullPassword)
 	if name == "" || len(name) > 128 || namespace == "" || len(namespace) > 253 {
 		return nil, "", errors.New("制品库名称和命名空间必填，且长度不能超过限制")
@@ -349,8 +438,8 @@ func (h *ManagedOCIRegistryHandler) registryFromRequest(request managedOCIRegist
 	if image == "" || strings.ContainsAny(image, " \t\r\n") {
 		return nil, "", errors.New("Registry 镜像地址无效")
 	}
-	if node == "" || !strings.HasPrefix(path, "/") || strings.Contains(path, "..") {
-		return nil, "", errors.New("数据节点必填，数据路径必须为不含 .. 的绝对路径")
+	if node == "" {
+		return nil, "", errors.New("数据节点必填")
 	}
 	if username == "" || strings.ContainsAny(username, ":\r\n") {
 		return nil, "", errors.New("拉取账号必填，且不能包含冒号或换行")
@@ -361,15 +450,70 @@ func (h *ManagedOCIRegistryHandler) registryFromRequest(request managedOCIRegist
 	if request.InsecureHTTP && !request.ConfirmInsecureHTTP {
 		return nil, "", errors.New("使用 HTTP 制品库必须明确确认明文镜像和凭据传输风险")
 	}
-	if !request.InsecureHTTP && strings.TrimSpace(request.TLSSecretName) == "" {
-		return nil, "", errors.New("HTTPS 制品库必须提供已存在的 TLS Secret")
+	certificateName := strings.TrimSpace(request.CertificateName)
+	if !request.InsecureHTTP && certificateName == "" {
+		return nil, "", errors.New("HTTPS 制品库必须选择已就绪的匹配证书")
 	}
-	registry := &model.ManagedOCIRegistry{Name: name, Namespace: namespace, ResourceName: managedOCIRegistryResourceName, Endpoint: endpoint, RegistryImage: image, DataNode: node, DataPath: path, InsecureHTTP: request.InsecureHTTP, TLSSecretName: strings.TrimSpace(request.TLSSecretName), PullUsername: username, Status: "pending"}
+	if request.InsecureHTTP {
+		certificateName = ""
+	}
+	storageClass := strings.TrimSpace(request.StorageClassName)
+	if storageClass == "" {
+		storageClass = "local-path"
+	}
+	storageSize := strings.TrimSpace(request.StorageSize)
+	if storageSize == "" {
+		storageSize = "100Gi"
+	}
+	cpuRequest := strings.TrimSpace(request.CPURequest)
+	if cpuRequest == "" {
+		cpuRequest = "100m"
+	}
+	cpuLimit := strings.TrimSpace(request.CPULimit)
+	if cpuLimit == "" {
+		cpuLimit = "500m"
+	}
+	memoryRequest := strings.TrimSpace(request.MemoryRequest)
+	if memoryRequest == "" {
+		memoryRequest = "256Mi"
+	}
+	memoryLimit := strings.TrimSpace(request.MemoryLimit)
+	if memoryLimit == "" {
+		memoryLimit = "1Gi"
+	}
+	if storageClass != "local-path" {
+		return nil, "", errors.New("当前仅支持 local-path StorageClass")
+	}
+	if err := validateManagedQuantities(storageSize, cpuRequest, cpuLimit, memoryRequest, memoryLimit); err != nil {
+		return nil, "", err
+	}
+	registry := &model.ManagedOCIRegistry{Name: name, Namespace: namespace, ResourceName: managedOCIRegistryResourceName, Endpoint: endpoint, RegistryImage: image, DataNode: node, StorageClassName: storageClass, PVCName: managedOCIRegistryResourceName + "-data", StorageSize: storageSize, CPURequest: cpuRequest, CPULimit: cpuLimit, MemoryRequest: memoryRequest, MemoryLimit: memoryLimit, InsecureHTTP: request.InsecureHTTP, CertificateName: certificateName, PullUsername: username, Status: "pending"}
 	if current != nil {
 		registry.ID, registry.CreatedAt, registry.CreatedBy, registry.EncryptedCredential = current.ID, current.CreatedAt, current.CreatedBy, current.EncryptedCredential
 		registry.ImageRegistryID, registry.NodeRegistryMirrorID = current.ImageRegistryID, current.NodeRegistryMirrorID
+		if registry.DataNode != current.DataNode || registry.StorageClassName != current.StorageClassName || registry.PVCName != current.PVCName || registry.StorageSize != current.StorageSize {
+			return nil, "", errors.New("数据节点、StorageClass、PVC 名称和容量创建后不可修改")
+		}
 	}
 	return registry, host, nil
+}
+
+func validateManagedQuantities(storageSize, cpuRequest, cpuLimit, memoryRequest, memoryLimit string) error {
+	values := []string{storageSize, cpuRequest, cpuLimit, memoryRequest, memoryLimit}
+	for _, value := range values {
+		quantity, err := resource.ParseQuantity(value)
+		if err != nil || quantity.Sign() <= 0 {
+			return fmt.Errorf("资源数量 %q 无效", value)
+		}
+	}
+	cr, _ := resource.ParseQuantity(cpuRequest)
+	cl, _ := resource.ParseQuantity(cpuLimit)
+	mr, _ := resource.ParseQuantity(memoryRequest)
+	ml, _ := resource.ParseQuantity(memoryLimit)
+	if cr.Cmp(cl) > 0 || mr.Cmp(ml) > 0 {
+		return errors.New("资源 request 不能大于对应 limit")
+	}
+	return nil
 }
 
 func normalizeManagedRegistryEndpoint(value string) (endpoint, host string, err error) {
@@ -422,7 +566,7 @@ func (h *ManagedOCIRegistryHandler) ensureEndpointOwnership(endpoint string) err
 	return nil
 }
 
-func (h *ManagedOCIRegistryHandler) ensureResourcesAvailable(ctx context.Context, namespace, name string) error {
+func (h *ManagedOCIRegistryHandler) ensureResourcesAvailable(ctx context.Context, namespace, name, pvcName string) error {
 	checks := []struct {
 		kind string
 		get  func() (metav1.Object, error)
@@ -435,6 +579,8 @@ func (h *ManagedOCIRegistryHandler) ensureResourcesAvailable(ctx context.Context
 			return K8s.Clientset.NetworkingV1().Ingresses(namespace).Get(ctx, name, metav1.GetOptions{})
 		}}, {"认证 Secret", func() (metav1.Object, error) {
 			return K8s.Clientset.CoreV1().Secrets(namespace).Get(ctx, name+"-auth", metav1.GetOptions{})
+		}}, {"PVC", func() (metav1.Object, error) {
+			return K8s.Clientset.CoreV1().PersistentVolumeClaims(namespace).Get(ctx, pvcName, metav1.GetOptions{})
 		}},
 	}
 	for _, check := range checks {
@@ -449,10 +595,93 @@ func (h *ManagedOCIRegistryHandler) ensureResourcesAvailable(ctx context.Context
 	return nil
 }
 
-func (h *ManagedOCIRegistryHandler) ensureTLSSecret(ctx context.Context, registry *model.ManagedOCIRegistry) error {
+func (h *ManagedOCIRegistryHandler) ensureStorageClass(ctx context.Context, registry *model.ManagedOCIRegistry) error {
+	storageClass, err := K8s.Clientset.StorageV1().StorageClasses().Get(ctx, registry.StorageClassName, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return fmt.Errorf("StorageClass %q 不存在", registry.StorageClassName)
+	}
+	if err != nil {
+		return fmt.Errorf("读取 StorageClass 失败: %w", err)
+	}
+	if storageClass.VolumeBindingMode == nil || *storageClass.VolumeBindingMode != storagev1.VolumeBindingWaitForFirstConsumer {
+		return fmt.Errorf("StorageClass %q 必须使用 WaitForFirstConsumer", registry.StorageClassName)
+	}
+	return nil
+}
+
+func listReadyManagedRegistryNodes(ctx context.Context) ([]string, error) {
+	nodes, err := K8s.Clientset.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+	ready := make([]string, 0, len(nodes.Items))
+	for _, node := range nodes.Items {
+		for _, condition := range node.Status.Conditions {
+			if condition.Type == corev1.NodeReady && condition.Status == corev1.ConditionTrue {
+				ready = append(ready, node.Name)
+				break
+			}
+		}
+	}
+	sort.Strings(ready)
+	return ready, nil
+}
+
+func ensureManagedRegistryDataNode(ctx context.Context, name string) error {
+	node, err := K8s.Clientset.CoreV1().Nodes().Get(ctx, name, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return fmt.Errorf("数据节点 %q 不存在", name)
+	}
+	if err != nil {
+		return fmt.Errorf("读取数据节点失败: %w", err)
+	}
+	for _, condition := range node.Status.Conditions {
+		if condition.Type == corev1.NodeReady && condition.Status == corev1.ConditionTrue {
+			return nil
+		}
+	}
+	return fmt.Errorf("数据节点 %q 未处于 Ready 状态", name)
+}
+
+func (h *ManagedOCIRegistryHandler) ensureTLSCertificate(ctx context.Context, registry *model.ManagedOCIRegistry) error {
 	if registry.InsecureHTTP {
+		registry.CertificateName, registry.TLSSecretName = "", ""
 		return nil
 	}
+	certificate, err := K8s.GetCertificate(registry.Namespace, registry.CertificateName)
+	if apierrors.IsNotFound(err) {
+		return fmt.Errorf("证书 %q 不存在或不属于命名空间 %q", registry.CertificateName, registry.Namespace)
+	}
+	if err != nil {
+		return fmt.Errorf("读取证书失败: %w", err)
+	}
+	if certificate.Status != "Ready" {
+		return fmt.Errorf("证书 %q 尚未就绪", registry.CertificateName)
+	}
+	_, host, err := normalizeManagedRegistryEndpoint(registry.Endpoint)
+	if err != nil {
+		return err
+	}
+	if !certificateDomainsCoverHostname(certificate.Domains, host) {
+		return fmt.Errorf("证书 %q 未覆盖访问域名 %q", registry.CertificateName, host)
+	}
+	if strings.TrimSpace(certificate.SecretName) == "" {
+		return fmt.Errorf("证书 %q 未配置 TLS Secret", registry.CertificateName)
+	}
+	registry.TLSSecretName = certificate.SecretName
+	return h.ensureTLSSecret(ctx, registry)
+}
+
+func certificateDomainsCoverHostname(domains []string, hostname string) bool {
+	for _, domain := range domains {
+		if certificateCoversHostname(domain, hostname) {
+			return true
+		}
+	}
+	return false
+}
+
+func (h *ManagedOCIRegistryHandler) ensureTLSSecret(ctx context.Context, registry *model.ManagedOCIRegistry) error {
 	secret, err := K8s.Clientset.CoreV1().Secrets(registry.Namespace).Get(ctx, registry.TLSSecretName, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
 		return fmt.Errorf("TLS Secret %q 不存在", registry.TLSSecretName)
@@ -475,6 +704,9 @@ func (h *ManagedOCIRegistryHandler) applyResources(ctx context.Context, registry
 		return errors.New("生成制品库认证凭据失败")
 	}
 	labels := managedRegistryLabels(registry)
+	if err := upsertManagedPVC(ctx, managedRegistryPVC(registry, labels)); err != nil {
+		return err
+	}
 	if err := upsertManagedSecret(ctx, managedRegistryAuthSecret(registry, labels, hash)); err != nil {
 		return err
 	}
@@ -493,10 +725,14 @@ func managedRegistryLabels(registry *model.ManagedOCIRegistry) map[string]string
 func managedRegistryAuthSecret(registry *model.ManagedOCIRegistry, labels map[string]string, hash []byte) *corev1.Secret {
 	return &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: registry.ResourceName + "-auth", Namespace: registry.Namespace, Labels: labels}, Type: corev1.SecretTypeOpaque, Data: map[string][]byte{"htpasswd": []byte(registry.PullUsername + ":" + string(hash) + "\n")}}
 }
+func managedRegistryPVC(registry *model.ManagedOCIRegistry, labels map[string]string) *corev1.PersistentVolumeClaim {
+	quantity := resource.MustParse(registry.StorageSize)
+	storageClass := registry.StorageClassName
+	return &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: registry.PVCName, Namespace: registry.Namespace, Labels: labels}, Spec: corev1.PersistentVolumeClaimSpec{StorageClassName: &storageClass, AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce}, Resources: corev1.VolumeResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceStorage: quantity}}}}
+}
 func managedRegistryDeployment(registry *model.ManagedOCIRegistry, labels map[string]string) *appsv1.Deployment {
 	replicas := int32(1)
-	hostPathType := corev1.HostPathDirectoryOrCreate
-	return &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: registry.ResourceName, Namespace: registry.Namespace, Labels: labels}, Spec: appsv1.DeploymentSpec{Replicas: &replicas, Strategy: appsv1.DeploymentStrategy{Type: appsv1.RecreateDeploymentStrategyType}, Selector: &metav1.LabelSelector{MatchLabels: labels}, Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: labels}, Spec: corev1.PodSpec{NodeSelector: map[string]string{corev1.LabelHostname: registry.DataNode}, Volumes: []corev1.Volume{{Name: "storage", VolumeSource: corev1.VolumeSource{HostPath: &corev1.HostPathVolumeSource{Path: registry.DataPath, Type: &hostPathType}}}, {Name: "auth", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: registry.ResourceName + "-auth"}}}}, Containers: []corev1.Container{{Name: "registry", Image: registry.RegistryImage, Ports: []corev1.ContainerPort{{Name: "registry", ContainerPort: 5000}}, Env: []corev1.EnvVar{{Name: "REGISTRY_STORAGE_FILESYSTEM_ROOTDIRECTORY", Value: "/var/lib/registry"}, {Name: "REGISTRY_AUTH", Value: "htpasswd"}, {Name: "REGISTRY_AUTH_HTPASSWD_REALM", Value: "Cylism Registry"}, {Name: "REGISTRY_AUTH_HTPASSWD_PATH", Value: "/auth/htpasswd"}}, VolumeMounts: []corev1.VolumeMount{{Name: "storage", MountPath: "/var/lib/registry"}, {Name: "auth", MountPath: "/auth", ReadOnly: true}}, ReadinessProbe: &corev1.Probe{ProbeHandler: corev1.ProbeHandler{HTTPGet: &corev1.HTTPGetAction{Path: "/v2/", Port: intstr.FromInt(5000)}}, InitialDelaySeconds: 3, PeriodSeconds: 5}}}}}}}
+	return &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: registry.ResourceName, Namespace: registry.Namespace, Labels: labels}, Spec: appsv1.DeploymentSpec{Replicas: &replicas, Strategy: appsv1.DeploymentStrategy{Type: appsv1.RecreateDeploymentStrategyType}, Selector: &metav1.LabelSelector{MatchLabels: labels}, Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: labels}, Spec: corev1.PodSpec{NodeSelector: map[string]string{corev1.LabelHostname: registry.DataNode}, Volumes: []corev1.Volume{{Name: "storage", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: registry.PVCName}}}, {Name: "auth", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: registry.ResourceName + "-auth"}}}}, Containers: []corev1.Container{{Name: "registry", Image: registry.RegistryImage, Ports: []corev1.ContainerPort{{Name: "registry", ContainerPort: 5000}}, Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse(registry.CPURequest), corev1.ResourceMemory: resource.MustParse(registry.MemoryRequest)}, Limits: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse(registry.CPULimit), corev1.ResourceMemory: resource.MustParse(registry.MemoryLimit)}}, Env: []corev1.EnvVar{{Name: "REGISTRY_STORAGE_FILESYSTEM_ROOTDIRECTORY", Value: "/var/lib/registry"}, {Name: "REGISTRY_AUTH", Value: "htpasswd"}, {Name: "REGISTRY_AUTH_HTPASSWD_REALM", Value: "Cylism Registry"}, {Name: "REGISTRY_AUTH_HTPASSWD_PATH", Value: "/auth/htpasswd"}}, VolumeMounts: []corev1.VolumeMount{{Name: "storage", MountPath: "/var/lib/registry"}, {Name: "auth", MountPath: "/auth", ReadOnly: true}}, ReadinessProbe: &corev1.Probe{ProbeHandler: corev1.ProbeHandler{HTTPGet: &corev1.HTTPGetAction{Path: "/v2/", Port: intstr.FromInt(5000)}}, InitialDelaySeconds: 3, PeriodSeconds: 5}}}}}}}
 }
 func managedRegistryService(registry *model.ManagedOCIRegistry, labels map[string]string) *corev1.Service {
 	return &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: registry.ResourceName, Namespace: registry.Namespace, Labels: labels}, Spec: corev1.ServiceSpec{Type: corev1.ServiceTypeClusterIP, Selector: labels, Ports: []corev1.ServicePort{{Name: "registry", Port: 5000, TargetPort: intstr.FromInt(5000)}}}}
@@ -529,6 +765,32 @@ func upsertManagedSecret(ctx context.Context, desired *corev1.Secret) error {
 	desired.ResourceVersion = current.ResourceVersion
 	_, err = resources.Update(ctx, desired, metav1.UpdateOptions{})
 	return err
+}
+func upsertManagedPVC(ctx context.Context, desired *corev1.PersistentVolumeClaim) error {
+	resources := K8s.Clientset.CoreV1().PersistentVolumeClaims(desired.Namespace)
+	current, err := resources.Get(ctx, desired.Name, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		_, err = resources.Create(ctx, desired, metav1.CreateOptions{})
+		return err
+	}
+	if err != nil {
+		return err
+	}
+	if current.Labels["cylism.io/managed-registry"] != "true" {
+		return errors.New("同名 PVC 不属于 Cylism Manager")
+	}
+	if current.Spec.StorageClassName == nil || desired.Spec.StorageClassName == nil || *current.Spec.StorageClassName != *desired.Spec.StorageClassName {
+		return errors.New("同名 PVC 的 StorageClass 与制品库配置不一致")
+	}
+	if len(current.Spec.AccessModes) != 1 || current.Spec.AccessModes[0] != corev1.ReadWriteOnce {
+		return errors.New("同名 PVC 必须使用 ReadWriteOnce")
+	}
+	requested := desired.Spec.Resources.Requests[corev1.ResourceStorage]
+	currentSize := current.Spec.Resources.Requests[corev1.ResourceStorage]
+	if currentSize.Cmp(requested) != 0 {
+		return errors.New("同名 PVC 的请求容量与制品库配置不一致")
+	}
+	return nil
 }
 func upsertManagedDeployment(ctx context.Context, desired *appsv1.Deployment) error {
 	resources := K8s.Clientset.AppsV1().Deployments(desired.Namespace)
@@ -595,7 +857,37 @@ func (h *ManagedOCIRegistryHandler) refreshStatus(ctx context.Context, registry 
 	if K8s == nil || K8s.Clientset == nil {
 		return
 	}
+	legacy, legacyErr := managedRegistryUsesLegacyHostPath(ctx, registry)
+	if legacy {
+		now := time.Now()
+		registry.PVCPhase, registry.Status, registry.LastError, registry.LastCheckedAt = "", "migration_required", "现有 Registry 仍使用旧 hostPath 存储，需要迁移到 PVC 后才能继续管理", &now
+		_ = h.store.UpdateManagedOCIRegistry(registry)
+		return
+	}
+	if legacyErr != nil {
+		now := time.Now()
+		registry.PVCPhase, registry.Status, registry.LastError, registry.LastCheckedAt = "Unknown", "degraded", truncateManagedRegistryError(legacyErr), &now
+		_ = h.store.UpdateManagedOCIRegistry(registry)
+		return
+	}
 	status, detail := "degraded", "Registry Deployment 不存在"
+	pvc, pvcErr := K8s.Clientset.CoreV1().PersistentVolumeClaims(registry.Namespace).Get(ctx, registry.PVCName, metav1.GetOptions{})
+	if apierrors.IsNotFound(pvcErr) {
+		registry.PVCPhase, status, detail = "Missing", "degraded", "Registry PVC 不存在"
+	} else if pvcErr != nil {
+		registry.PVCPhase, status, detail = "Unknown", "degraded", truncateManagedRegistryError(pvcErr)
+	} else {
+		registry.PVCPhase = string(pvc.Status.Phase)
+		if pvc.Status.Phase != corev1.ClaimBound {
+			status, detail = "pending", "Registry PVC 等待绑定到所选节点"
+		}
+	}
+	if status == "pending" || pvcErr != nil {
+		now := time.Now()
+		registry.Status, registry.LastError, registry.LastCheckedAt = status, detail, &now
+		_ = h.store.UpdateManagedOCIRegistry(registry)
+		return
+	}
 	deployment, err := K8s.Clientset.AppsV1().Deployments(registry.Namespace).Get(ctx, registry.ResourceName, metav1.GetOptions{})
 	if err == nil && deployment.Status.ReadyReplicas > 0 {
 		status, detail = "ready", ""
@@ -613,6 +905,25 @@ func (h *ManagedOCIRegistryHandler) refreshStatus(ctx context.Context, registry 
 	registry.Status, registry.LastError, registry.LastCheckedAt = status, detail, &now
 	_ = h.store.UpdateManagedOCIRegistry(registry)
 }
+
+// managedRegistryUsesLegacyHostPath detects a prior deployment before any
+// reconciliation can replace its volume and hide the existing image data.
+func managedRegistryUsesLegacyHostPath(ctx context.Context, registry *model.ManagedOCIRegistry) (bool, error) {
+	deployment, err := K8s.Clientset.AppsV1().Deployments(registry.Namespace).Get(ctx, registry.ResourceName, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	for _, volume := range deployment.Spec.Template.Spec.Volumes {
+		if volume.Name == "storage" && volume.HostPath != nil {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func managedRegistryEndpointReady(ctx context.Context, endpoint string) bool {
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimSuffix(endpoint, "/")+"/v2/", nil)
 	if err != nil {
