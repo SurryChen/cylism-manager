@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/cylism/cylism-manager/internal/crypto"
+	k8sclient "github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/gin-gonic/gin"
@@ -27,9 +28,13 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/apimachinery/pkg/util/validation"
 )
 
-const managedOCIRegistryResourceName = "cylism-oci-registry"
+const (
+	managedOCIRegistryResourceName = "cylism-oci-registry"
+	managedOCIRegistryNamespace    = "cylism-system"
+)
 
 type ManagedOCIRegistryHandler struct {
 	store     *store.Store
@@ -43,8 +48,7 @@ type managedOCIRegistryRequest struct {
 	Endpoint            string `json:"endpoint"`
 	RegistryImage       string `json:"registry_image"`
 	DataNode            string `json:"data_node"`
-	StorageClassName    string `json:"storage_class_name"`
-	StorageSize         string `json:"storage_size"`
+	PVCName             string `json:"pvc_name"`
 	CPURequest          string `json:"cpu_request"`
 	CPULimit            string `json:"cpu_limit"`
 	MemoryRequest       string `json:"memory_request"`
@@ -65,6 +69,15 @@ type managedOCIRegistryCertificateOption struct {
 	Domains     []string `json:"domains"`
 	ExpiryDate  string   `json:"expiry_date,omitempty"`
 	RenewalTime string   `json:"renewal_time,omitempty"`
+}
+type managedOCIRegistryPVCOption struct {
+	Name             string   `json:"name"`
+	Namespace        string   `json:"namespace"`
+	Storage          string   `json:"storage"`
+	StorageClassName string   `json:"storage_class_name"`
+	Phase            string   `json:"phase"`
+	AccessModes      []string `json:"access_modes"`
+	BoundNode        string   `json:"bound_node,omitempty"`
 }
 
 func NewManagedOCIRegistryHandler(s *store.Store, encKey []byte) *ManagedOCIRegistryHandler {
@@ -125,14 +138,48 @@ func (h *ManagedOCIRegistryHandler) StoragePreflight(c *gin.Context) {
 	model.Success(c, result)
 }
 
+// ListEligiblePVCs exposes only the existing local-path claims that can be
+// mounted by the single-replica Registry. The handler never creates PVCs.
+func (h *ManagedOCIRegistryHandler) ListEligiblePVCs(c *gin.Context) {
+	if !managedRegistryK8sReady(c) {
+		return
+	}
+	claims, err := K8s.ListPVCs(managedOCIRegistryNamespace)
+	if err != nil {
+		model.Error(c, http.StatusServiceUnavailable, model.CodeK8sAPIError, "读取制品库存储卷失败: "+truncateManagedRegistryError(err))
+		return
+	}
+	options := make([]managedOCIRegistryPVCOption, 0, len(claims))
+	for _, claim := range claims {
+		if registryPVCEligibilityError(claim) != nil {
+			continue
+		}
+		inUse, err := registryPVCInUse(c.Request.Context(), claim.Name)
+		if err != nil {
+			model.Error(c, http.StatusServiceUnavailable, model.CodeK8sAPIError, "读取 PVC 工作负载引用失败: "+truncateManagedRegistryError(err))
+			return
+		}
+		if inUse {
+			continue
+		}
+		options = append(options, managedOCIRegistryPVCOption{Name: claim.Name, Namespace: claim.Namespace, Storage: claim.Storage, StorageClassName: claim.StorageClassName, Phase: claim.Phase, AccessModes: claim.AccessModes, BoundNode: claim.BoundNode})
+	}
+	model.Success(c, options)
+}
+
 func (h *ManagedOCIRegistryHandler) ListMatchingCertificates(c *gin.Context) {
 	if !managedRegistryK8sReady(c) {
 		return
 	}
 	namespace := strings.TrimSpace(c.Query("namespace"))
+	if namespace != "" && namespace != managedOCIRegistryNamespace {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "制品库命名空间固定为 "+managedOCIRegistryNamespace)
+		return
+	}
+	namespace = managedOCIRegistryNamespace
 	_, host, err := normalizeManagedRegistryEndpoint(c.Query("endpoint"))
-	if namespace == "" || err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "命名空间和有效的访问地址必填")
+	if err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "有效的访问地址必填")
 		return
 	}
 	certificates, err := K8s.ListCertificates()
@@ -176,8 +223,12 @@ func (h *ManagedOCIRegistryHandler) Create(c *gin.Context) {
 		model.Error(c, http.StatusConflict, model.CodeConflict, err.Error())
 		return
 	}
-	if err := h.ensureResourcesAvailable(c.Request.Context(), registry.Namespace, registry.ResourceName, registry.PVCName); err != nil {
+	if err := h.ensureResourcesAvailable(c.Request.Context(), registry.Namespace, registry.ResourceName); err != nil {
 		model.Error(c, http.StatusConflict, model.CodeConflict, err.Error())
+		return
+	}
+	if err := h.resolveRegistryPVC(c.Request.Context(), registry); err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
 		return
 	}
 	if err := h.ensureStorageClass(c.Request.Context(), registry); err != nil {
@@ -249,6 +300,10 @@ func (h *ManagedOCIRegistryHandler) Update(c *gin.Context) {
 	}
 	if registry.Endpoint != current.Endpoint {
 		model.Error(c, http.StatusConflict, model.CodeConflict, "首期不支持变更制品库地址，请新建并迁移镜像")
+		return
+	}
+	if err := h.resolveRegistryPVC(c.Request.Context(), registry); err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
 		return
 	}
 	if err := h.ensureStorageClass(c.Request.Context(), registry); err != nil {
@@ -425,21 +480,24 @@ func managedRegistryK8sReady(c *gin.Context) bool {
 }
 
 func (h *ManagedOCIRegistryHandler) registryFromRequest(request managedOCIRegistryRequest, current *model.ManagedOCIRegistry) (*model.ManagedOCIRegistry, string, error) {
-	name, namespace := strings.TrimSpace(request.Name), strings.TrimSpace(request.Namespace)
+	name := strings.TrimSpace(request.Name)
+	if namespace := strings.TrimSpace(request.Namespace); namespace != "" && namespace != managedOCIRegistryNamespace {
+		return nil, "", fmt.Errorf("制品库命名空间固定为 %s", managedOCIRegistryNamespace)
+	}
 	endpoint, host, err := normalizeManagedRegistryEndpoint(request.Endpoint)
 	if err != nil {
 		return nil, "", err
 	}
-	image, node := strings.TrimSpace(request.RegistryImage), strings.TrimSpace(request.DataNode)
+	image, node, pvcName := strings.TrimSpace(request.RegistryImage), strings.TrimSpace(request.DataNode), strings.TrimSpace(request.PVCName)
 	username, password := strings.TrimSpace(request.PullUsername), strings.TrimSpace(request.PullPassword)
-	if name == "" || len(name) > 128 || namespace == "" || len(namespace) > 253 {
-		return nil, "", errors.New("制品库名称和命名空间必填，且长度不能超过限制")
+	if name == "" || len(name) > 128 {
+		return nil, "", errors.New("制品库名称必填，且长度不能超过限制")
 	}
 	if image == "" || strings.ContainsAny(image, " \t\r\n") {
 		return nil, "", errors.New("Registry 镜像地址无效")
 	}
-	if node == "" {
-		return nil, "", errors.New("数据节点必填")
+	if pvcName == "" || len(validation.IsDNS1123Subdomain(pvcName)) > 0 {
+		return nil, "", errors.New("请选择合法的现有 PVC")
 	}
 	if username == "" || strings.ContainsAny(username, ":\r\n") {
 		return nil, "", errors.New("拉取账号必填，且不能包含冒号或换行")
@@ -457,14 +515,6 @@ func (h *ManagedOCIRegistryHandler) registryFromRequest(request managedOCIRegist
 	if request.InsecureHTTP {
 		certificateName = ""
 	}
-	storageClass := strings.TrimSpace(request.StorageClassName)
-	if storageClass == "" {
-		storageClass = "local-path"
-	}
-	storageSize := strings.TrimSpace(request.StorageSize)
-	if storageSize == "" {
-		storageSize = "100Gi"
-	}
 	cpuRequest := strings.TrimSpace(request.CPURequest)
 	if cpuRequest == "" {
 		cpuRequest = "100m"
@@ -481,25 +531,22 @@ func (h *ManagedOCIRegistryHandler) registryFromRequest(request managedOCIRegist
 	if memoryLimit == "" {
 		memoryLimit = "1Gi"
 	}
-	if storageClass != "local-path" {
-		return nil, "", errors.New("当前仅支持 local-path StorageClass")
-	}
-	if err := validateManagedQuantities(storageSize, cpuRequest, cpuLimit, memoryRequest, memoryLimit); err != nil {
+	if err := validateManagedQuantities(cpuRequest, cpuLimit, memoryRequest, memoryLimit); err != nil {
 		return nil, "", err
 	}
-	registry := &model.ManagedOCIRegistry{Name: name, Namespace: namespace, ResourceName: managedOCIRegistryResourceName, Endpoint: endpoint, RegistryImage: image, DataNode: node, StorageClassName: storageClass, PVCName: managedOCIRegistryResourceName + "-data", StorageSize: storageSize, CPURequest: cpuRequest, CPULimit: cpuLimit, MemoryRequest: memoryRequest, MemoryLimit: memoryLimit, InsecureHTTP: request.InsecureHTTP, CertificateName: certificateName, PullUsername: username, Status: "pending"}
+	registry := &model.ManagedOCIRegistry{Name: name, Namespace: managedOCIRegistryNamespace, ResourceName: managedOCIRegistryResourceName, Endpoint: endpoint, RegistryImage: image, DataNode: node, PVCName: pvcName, CPURequest: cpuRequest, CPULimit: cpuLimit, MemoryRequest: memoryRequest, MemoryLimit: memoryLimit, InsecureHTTP: request.InsecureHTTP, CertificateName: certificateName, PullUsername: username, Status: "pending"}
 	if current != nil {
 		registry.ID, registry.CreatedAt, registry.CreatedBy, registry.EncryptedCredential = current.ID, current.CreatedAt, current.CreatedBy, current.EncryptedCredential
 		registry.ImageRegistryID, registry.NodeRegistryMirrorID = current.ImageRegistryID, current.NodeRegistryMirrorID
-		if registry.DataNode != current.DataNode || registry.StorageClassName != current.StorageClassName || registry.PVCName != current.PVCName || registry.StorageSize != current.StorageSize {
-			return nil, "", errors.New("数据节点、StorageClass、PVC 名称和容量创建后不可修改")
+		if registry.PVCName != current.PVCName || (node != "" && node != current.DataNode) {
+			return nil, "", errors.New("数据节点和 PVC 创建后不可修改")
 		}
 	}
 	return registry, host, nil
 }
 
-func validateManagedQuantities(storageSize, cpuRequest, cpuLimit, memoryRequest, memoryLimit string) error {
-	values := []string{storageSize, cpuRequest, cpuLimit, memoryRequest, memoryLimit}
+func validateManagedQuantities(cpuRequest, cpuLimit, memoryRequest, memoryLimit string) error {
+	values := []string{cpuRequest, cpuLimit, memoryRequest, memoryLimit}
 	for _, value := range values {
 		quantity, err := resource.ParseQuantity(value)
 		if err != nil || quantity.Sign() <= 0 {
@@ -566,7 +613,7 @@ func (h *ManagedOCIRegistryHandler) ensureEndpointOwnership(endpoint string) err
 	return nil
 }
 
-func (h *ManagedOCIRegistryHandler) ensureResourcesAvailable(ctx context.Context, namespace, name, pvcName string) error {
+func (h *ManagedOCIRegistryHandler) ensureResourcesAvailable(ctx context.Context, namespace, name string) error {
 	checks := []struct {
 		kind string
 		get  func() (metav1.Object, error)
@@ -579,8 +626,6 @@ func (h *ManagedOCIRegistryHandler) ensureResourcesAvailable(ctx context.Context
 			return K8s.Clientset.NetworkingV1().Ingresses(namespace).Get(ctx, name, metav1.GetOptions{})
 		}}, {"认证 Secret", func() (metav1.Object, error) {
 			return K8s.Clientset.CoreV1().Secrets(namespace).Get(ctx, name+"-auth", metav1.GetOptions{})
-		}}, {"PVC", func() (metav1.Object, error) {
-			return K8s.Clientset.CoreV1().PersistentVolumeClaims(namespace).Get(ctx, pvcName, metav1.GetOptions{})
 		}},
 	}
 	for _, check := range checks {
@@ -593,6 +638,120 @@ func (h *ManagedOCIRegistryHandler) ensureResourcesAvailable(ctx context.Context
 		}
 	}
 	return nil
+}
+
+func (h *ManagedOCIRegistryHandler) resolveRegistryPVC(ctx context.Context, registry *model.ManagedOCIRegistry) error {
+	claim, err := K8s.GetPVCInfo(managedOCIRegistryNamespace, registry.PVCName)
+	if apierrors.IsNotFound(err) {
+		return fmt.Errorf("PVC %q 不存在于命名空间 %q", registry.PVCName, managedOCIRegistryNamespace)
+	}
+	if err != nil {
+		return fmt.Errorf("读取 PVC %q 失败: %w", registry.PVCName, err)
+	}
+	if err := registryPVCEligibilityError(*claim); err != nil {
+		return fmt.Errorf("PVC %q 不可用于制品库: %w", registry.PVCName, err)
+	}
+	if err := ensureRegistryPVCUnused(ctx, registry, claim.Name); err != nil {
+		return err
+	}
+	if claim.BoundNode != "" {
+		if registry.DataNode != "" && registry.DataNode != claim.BoundNode {
+			return fmt.Errorf("PVC %q 已绑定到节点 %q，不能选择节点 %q", registry.PVCName, claim.BoundNode, registry.DataNode)
+		}
+		registry.DataNode = claim.BoundNode
+	}
+	if strings.TrimSpace(registry.DataNode) == "" {
+		return errors.New("待绑定 PVC 必须选择数据节点")
+	}
+	registry.StorageClassName, registry.StorageSize = claim.StorageClassName, claim.Storage
+	return nil
+}
+
+func registryPVCEligibilityError(claim k8sclient.PersistentVolumeClaimInfo) error {
+	if claim.Namespace != managedOCIRegistryNamespace {
+		return fmt.Errorf("必须位于命名空间 %q", managedOCIRegistryNamespace)
+	}
+	if claim.StorageClassName != "local-path" {
+		return errors.New("仅支持 local-path StorageClass")
+	}
+	if !claim.WaitForFirstConsumer {
+		return errors.New("StorageClass 必须使用 WaitForFirstConsumer")
+	}
+	if claim.Phase != string(corev1.ClaimPending) && claim.Phase != string(corev1.ClaimBound) {
+		return fmt.Errorf("PVC 状态必须为 Pending 或 Bound，当前为 %q", claim.Phase)
+	}
+	if !containsManagedRegistryAccessMode(claim.AccessModes, string(corev1.ReadWriteOnce)) {
+		return errors.New("必须支持 ReadWriteOnce 访问模式")
+	}
+	if claim.Storage == "" {
+		return errors.New("未声明有效的存储容量")
+	}
+	quantity, err := resource.ParseQuantity(claim.Storage)
+	if err != nil || quantity.Sign() <= 0 {
+		return errors.New("存储容量无效")
+	}
+	return nil
+}
+
+func containsManagedRegistryAccessMode(modes []string, expected string) bool {
+	for _, mode := range modes {
+		if mode == expected {
+			return true
+		}
+	}
+	return false
+}
+
+func ensureRegistryPVCUnused(ctx context.Context, registry *model.ManagedOCIRegistry, claimName string) error {
+	deployments, err := K8s.Clientset.AppsV1().Deployments(registry.Namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return fmt.Errorf("读取 PVC 工作负载引用失败: %w", err)
+	}
+	for index := range deployments.Items {
+		deployment := &deployments.Items[index]
+		if deployment.Name == registry.ResourceName && deployment.Labels["cylism.io/managed-registry"] == "true" {
+			continue
+		}
+		if deploymentClaimReferenced(deployment, claimName) {
+			return fmt.Errorf("PVC %q 已被 Deployment %q 引用", claimName, deployment.Name)
+		}
+	}
+	statefulSets, err := K8s.Clientset.AppsV1().StatefulSets(registry.Namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return fmt.Errorf("读取 PVC 工作负载引用失败: %w", err)
+	}
+	for index := range statefulSets.Items {
+		if statefulSetClaimReferenced(&statefulSets.Items[index], claimName) {
+			return fmt.Errorf("PVC %q 已被 StatefulSet %q 引用", claimName, statefulSets.Items[index].Name)
+		}
+	}
+	return nil
+}
+
+func registryPVCInUse(ctx context.Context, claimName string) (bool, error) {
+	deployments, err := K8s.Clientset.AppsV1().Deployments(managedOCIRegistryNamespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return false, err
+	}
+	for index := range deployments.Items {
+		deployment := &deployments.Items[index]
+		if deployment.Name == managedOCIRegistryResourceName && deployment.Labels["cylism.io/managed-registry"] == "true" {
+			continue
+		}
+		if deploymentClaimReferenced(deployment, claimName) {
+			return true, nil
+		}
+	}
+	statefulSets, err := K8s.Clientset.AppsV1().StatefulSets(managedOCIRegistryNamespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return false, err
+	}
+	for index := range statefulSets.Items {
+		if statefulSetClaimReferenced(&statefulSets.Items[index], claimName) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (h *ManagedOCIRegistryHandler) ensureStorageClass(ctx context.Context, registry *model.ManagedOCIRegistry) error {
@@ -704,9 +863,6 @@ func (h *ManagedOCIRegistryHandler) applyResources(ctx context.Context, registry
 		return errors.New("生成制品库认证凭据失败")
 	}
 	labels := managedRegistryLabels(registry)
-	if err := upsertManagedPVC(ctx, managedRegistryPVC(registry, labels)); err != nil {
-		return err
-	}
 	if err := upsertManagedSecret(ctx, managedRegistryAuthSecret(registry, labels, hash)); err != nil {
 		return err
 	}
@@ -724,11 +880,6 @@ func managedRegistryLabels(registry *model.ManagedOCIRegistry) map[string]string
 }
 func managedRegistryAuthSecret(registry *model.ManagedOCIRegistry, labels map[string]string, hash []byte) *corev1.Secret {
 	return &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: registry.ResourceName + "-auth", Namespace: registry.Namespace, Labels: labels}, Type: corev1.SecretTypeOpaque, Data: map[string][]byte{"htpasswd": []byte(registry.PullUsername + ":" + string(hash) + "\n")}}
-}
-func managedRegistryPVC(registry *model.ManagedOCIRegistry, labels map[string]string) *corev1.PersistentVolumeClaim {
-	quantity := resource.MustParse(registry.StorageSize)
-	storageClass := registry.StorageClassName
-	return &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: registry.PVCName, Namespace: registry.Namespace, Labels: labels}, Spec: corev1.PersistentVolumeClaimSpec{StorageClassName: &storageClass, AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce}, Resources: corev1.VolumeResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceStorage: quantity}}}}
 }
 func managedRegistryDeployment(registry *model.ManagedOCIRegistry, labels map[string]string) *appsv1.Deployment {
 	replicas := int32(1)

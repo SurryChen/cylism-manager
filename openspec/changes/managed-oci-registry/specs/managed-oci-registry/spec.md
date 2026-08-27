@@ -2,12 +2,12 @@
 
 ### Requirement: Create one managed persistent OCI Registry
 
-The system SHALL allow an authorized user to create one platform-managed OCI Registry with a Registry image reference, a unique endpoint authority, a data-node selector, a Kubernetes namespace, a `local-path` PVC capacity, CPU and memory requests/limits, and Basic Auth credentials. The system SHALL create only labeled, platform-owned Kubernetes resources and SHALL persist the desired configuration without storing the submitted plaintext password in an API response or operation log.
+The system SHALL allow an authorized user to create one platform-managed OCI Registry with a Registry image reference, a unique endpoint authority, a data-node selector, an existing eligible PVC, CPU and memory requests/limits, and Basic Auth credentials. The Registry namespace SHALL be fixed to `cylism-system`. The system SHALL create only labeled, platform-owned Kubernetes resources and SHALL persist the desired configuration without storing the submitted plaintext password in an API response or operation log.
 
 #### Scenario: Create a secured Registry
 
-- **WHEN** an authorized user submits a valid HTTPS endpoint, data node, PVC capacity, Registry image, CPU/memory resources and Basic Auth credentials
-- **THEN** the system SHALL create a single-replica Registry Deployment, ClusterIP Service, authentication Secret, `local-path` PVC and host-based Ingress in the selected namespace
+- **WHEN** an authorized user submits a valid HTTPS endpoint, eligible PVC, data node, Registry image, CPU/memory resources and Basic Auth credentials
+- **THEN** the system SHALL create a single-replica Registry Deployment, ClusterIP Service, authentication Secret and host-based Ingress in `cylism-system`
 - **AND THEN** the Deployment SHALL be scheduled only to the selected data node and mount the PVC at `/var/lib/registry`
 - **AND THEN** the Deployment SHALL contain the submitted CPU and memory requests and limits
 - **AND THEN** the API response SHALL report credential configuration without returning the password
@@ -19,18 +19,22 @@ The system SHALL allow an authorized user to create one platform-managed OCI Reg
 
 ### Requirement: Use a node-local PVC safely
 
-The system SHALL use only the available `local-path` StorageClass for the managed Registry PVC. It SHALL require `volumeBindingMode=WaitForFirstConsumer`, create the PVC in the Registry namespace when it does not exist, and preserve the PVC when the managed Registry is deleted.
+The system SHALL use only a user-selected existing PVC in `cylism-system` that has the `local-path` StorageClass and `ReadWriteOnce` access mode. It SHALL require `volumeBindingMode=WaitForFirstConsumer`, never create or modify the selected PVC, and preserve it when the managed Registry is deleted.
 
 #### Scenario: Provision the PVC on the selected data node
 
-- **WHEN** the selected `local-path` StorageClass has `WaitForFirstConsumer` binding and the Registry Deployment is created with its data-node selector
-- **THEN** the system SHALL create a `ReadWriteOnce` PVC requesting the configured capacity
-- **AND THEN** Kubernetes SHALL provision and bind the node-local PV only after the Registry is scheduled to the selected data node
+- **WHEN** the selected Pending `local-path` PVC has `WaitForFirstConsumer` binding and the Registry Deployment is created with its data-node selector
+- **THEN** Kubernetes SHALL provision and bind the node-local PV only after the Registry is scheduled to the selected data node
+
+#### Scenario: Reuse a bound PVC only on its bound node
+
+- **WHEN** the selected PVC is already Bound to a local node
+- **THEN** the system SHALL schedule the Registry only to that node and reject a conflicting data-node selector
 
 #### Scenario: Reject unsafe local-path provisioning
 
-- **WHEN** the `local-path` StorageClass is absent or does not use `WaitForFirstConsumer`
-- **THEN** the system SHALL reject Registry creation before creating a PVC or Registry workload
+- **WHEN** the selected PVC is absent, uses another StorageClass, lacks `ReadWriteOnce`, is referenced by another workload, or its `local-path` StorageClass does not use `WaitForFirstConsumer`
+- **THEN** the system SHALL reject Registry creation before creating a Registry workload
 
 ### Requirement: Protect the Registry transport mode
 

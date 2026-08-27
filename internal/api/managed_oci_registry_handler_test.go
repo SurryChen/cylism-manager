@@ -15,6 +15,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -52,6 +53,18 @@ func setupManagedOCIRegistryRouterWithHandler(t *testing.T) (*gin.Engine, *store
 	if err != nil {
 		t.Fatal(err)
 	}
+	_, err = K8s.Clientset.CoreV1().PersistentVolumeClaims(managedOCIRegistryNamespace).Create(context.Background(), &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{Name: "registry-data", Namespace: managedOCIRegistryNamespace},
+		Spec: corev1.PersistentVolumeClaimSpec{
+			StorageClassName: stringPointer("local-path"),
+			AccessModes:      []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
+			Resources:        corev1.VolumeResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceStorage: resource.MustParse("100Gi")}},
+		},
+		Status: corev1.PersistentVolumeClaimStatus{Phase: corev1.ClaimPending},
+	}, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
 	_, err = K8s.Clientset.CoreV1().Secrets("cylism-system").Create(context.Background(), &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: "registry-tls", Namespace: "cylism-system"},
 		Type:       corev1.SecretTypeTLS,
@@ -75,6 +88,7 @@ func setupManagedOCIRegistryRouterWithHandler(t *testing.T) (*gin.Engine, *store
 	group := r.Group("/api/managed-oci-registries")
 	group.GET("", h.List)
 	group.GET("/storage-preflight", h.StoragePreflight)
+	group.GET("/pvcs", h.ListEligiblePVCs)
 	group.GET("/certificates", h.ListMatchingCertificates)
 	group.POST("", h.Create)
 	group.GET("/:id", h.Get)
@@ -87,11 +101,13 @@ func setupManagedOCIRegistryRouterWithHandler(t *testing.T) (*gin.Engine, *store
 func managedRegistryPayload() gin.H {
 	return gin.H{
 		"name": "内网制品库", "namespace": "cylism-system", "endpoint": "registry.internal:5443",
-		"registry_image": "registry:2.8", "data_node": "node-a", "storage_class_name": "local-path", "storage_size": "100Gi",
+		"registry_image": "registry:2.8", "data_node": "node-a", "pvc_name": "registry-data",
 		"cpu_request": "100m", "cpu_limit": "500m", "memory_request": "256Mi", "memory_limit": "1Gi",
 		"certificate_name": "registry-cert", "pull_username": "cylism-pull", "pull_password": "safe-registry-password",
 	}
 }
+
+func stringPointer(value string) *string { return &value }
 
 func TestManagedOCIRegistryCreateRendersProtectedResources(t *testing.T) {
 	r, s := setupManagedOCIRegistryRouter(t)
@@ -112,8 +128,8 @@ func TestManagedOCIRegistryCreateRendersProtectedResources(t *testing.T) {
 	}
 	assertManagedRegistryDeployment(t, deployment, registry)
 	pvc, err := K8s.Clientset.CoreV1().PersistentVolumeClaims(registry.Namespace).Get(context.Background(), registry.PVCName, metav1.GetOptions{})
-	if err != nil || pvc.Spec.StorageClassName == nil || *pvc.Spec.StorageClassName != "local-path" || pvc.Spec.Resources.Requests.Storage().String() != "100Gi" {
-		t.Fatalf("expected local-path PVC: %#v err=%v", pvc, err)
+	if err != nil || pvc.Spec.StorageClassName == nil || *pvc.Spec.StorageClassName != "local-path" || pvc.Spec.Resources.Requests.Storage().String() != "100Gi" || pvc.Labels["cylism.io/managed-registry"] != "" {
+		t.Fatalf("expected unchanged selected PVC: %#v err=%v", pvc, err)
 	}
 	secret, err := K8s.Clientset.CoreV1().Secrets(registry.Namespace).Get(context.Background(), registry.ResourceName+"-auth", metav1.GetOptions{})
 	if err != nil || strings.Contains(string(secret.Data["htpasswd"]), "safe-registry-password") {
@@ -122,6 +138,22 @@ func TestManagedOCIRegistryCreateRendersProtectedResources(t *testing.T) {
 	ingress, err := K8s.Clientset.NetworkingV1().Ingresses(registry.Namespace).Get(context.Background(), registry.ResourceName, metav1.GetOptions{})
 	if err != nil || ingress.Spec.Rules[0].Host != "registry.internal" || len(ingress.Spec.TLS) != 1 {
 		t.Fatalf("expected HTTPS host ingress, ingress=%#v err=%v", ingress, err)
+	}
+}
+
+func TestManagedOCIRegistryListsOnlyEligibleExistingPVCs(t *testing.T) {
+	r, _ := setupManagedOCIRegistryRouter(t)
+	_, err := K8s.Clientset.CoreV1().PersistentVolumeClaims(managedOCIRegistryNamespace).Create(context.Background(), &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{Name: "unsupported-storage", Namespace: managedOCIRegistryNamespace},
+		Spec:       corev1.PersistentVolumeClaimSpec{StorageClassName: stringPointer("other"), AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce}, Resources: corev1.VolumeResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceStorage: resource.MustParse("10Gi")}}},
+		Status:     corev1.PersistentVolumeClaimStatus{Phase: corev1.ClaimPending},
+	}, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := serve(r, newJSONRequest(http.MethodGet, "/api/managed-oci-registries/pvcs", nil))
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"name":"registry-data"`) || strings.Contains(response.Body.String(), "unsupported-storage") {
+		t.Fatalf("expected only eligible local-path PVCs: %d %s", response.Code, response.Body.String())
 	}
 }
 

@@ -22,6 +22,8 @@
 - [x] 4.2 Update the self-hosted Registry view with editable CPU/memory configuration, selected data node, read-only `local-path` storage class, PVC capacity/state, transport risk, readiness, node application progress, create/update and deletion confirmation states.
 - [x] 4.3 Extend Vue component and routing tests for storage preflight, defaults, resource validation, PVC state, normal, loading, insecure, degraded and API error states.
 - [x] 4.4 Replace manual TLS Secret entry with matching platform Certificate selection and validate Certificate readiness, namespace and hostname coverage.
+- [x] 4.5 Fix Registry namespace to `cylism-system`, select an existing eligible `local-path` PVC, and stop creating or modifying PVC resources during Registry reconciliation.
+- [x] 4.6 Add Registry-to-certificate/PVC management entry points that open prefilled creation forms for the fixed namespace and endpoint/storage context.
 
 ## 5. Verification
 

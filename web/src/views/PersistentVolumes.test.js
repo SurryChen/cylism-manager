@@ -9,7 +9,7 @@ vi.mock('../api/index.js', () => ({
 function mockInventory(overrides = {}) {
   return path => {
     if (path === '/projects') return Promise.resolve([{ id: 1, name: 'knowledge', environments: [{ id: 2, name: 'production', namespace: 'project-knowledge-prod' }] }])
-    if (path === '/k8s/namespace-names') return Promise.resolve([{ name: 'default' }, { name: 'project-knowledge-prod' }])
+    if (path === '/k8s/namespace-names') return Promise.resolve(overrides.namespaces || [{ name: 'default' }, { name: 'project-knowledge-prod' }])
     if (path === '/k8s/persistent-volume-claims') return Promise.resolve(overrides.claims || [])
     if (path === '/k8s/persistent-volume-claims/usage') return Promise.resolve(overrides.usage || [])
     if (path === '/k8s/storage-classes') return Promise.resolve([{ name: 'local-path', is_default: true, volume_binding_mode: 'WaitForFirstConsumer' }])
@@ -43,7 +43,7 @@ describe('PersistentVolumes view', () => {
 
   it('creates a PVC directly in the selected namespace', async () => {
     const { api } = await import('../api/index.js')
-    api.get.mockImplementation(mockInventory())
+    api.get.mockImplementation(mockInventory({ namespaces: [{ name: 'cylism-system' }, { name: 'default' }] }))
     api.post.mockResolvedValue({})
     const wrapper = mount(PersistentVolumes)
     await settle()
@@ -58,6 +58,39 @@ describe('PersistentVolumes view', () => {
     expect(api.post).toHaveBeenCalledWith('/k8s/persistent-volume-claims', {
       namespace: 'default', name: 'karakeep-data', storage: '8Gi', storage_class_name: '',
     })
+  })
+
+  it('opens a prefilled PVC creation form from the Registry link', async () => {
+    const { api } = await import('../api/index.js')
+    window.location.hash = '#/storage?create=1&namespace=cylism-system&name=cylism-oci-registry-data&storage_class_name=local-path&storage=100Gi'
+    api.get.mockImplementation(mockInventory({ namespaces: [{ name: 'cylism-system' }, { name: 'default' }] }))
+    const wrapper = mount(PersistentVolumes)
+    await settle()
+
+    expect(wrapper.text()).toContain('创建存储卷')
+    expect(wrapper.get('[data-testid="storage-create-namespace"]').element.value).toBe('cylism-system')
+    expect(wrapper.get('input[placeholder="karakeep-data"]').element.value).toBe('cylism-oci-registry-data')
+    expect(wrapper.get('[data-testid="storage-capacity-value"]').element.value).toBe('100')
+    expect(wrapper.get('[data-testid="storage-capacity-unit"]').element.value).toBe('Gi')
+    expect(wrapper.get('[data-testid="storage-create-storage-class"]').element.value).toBe('local-path')
+    wrapper.unmount()
+    window.location.hash = ''
+  })
+
+  it('lets the user explicitly create the fixed Registry namespace before its PVC', async () => {
+    const { api } = await import('../api/index.js')
+    window.location.hash = '#/storage?create=1&namespace=cylism-system&name=cylism-oci-registry-data&storage_class_name=local-path&storage=100Gi'
+    api.get.mockImplementation(mockInventory())
+    api.post.mockResolvedValue({})
+    const wrapper = mount(PersistentVolumes)
+    await settle()
+
+    expect(wrapper.get('[data-testid="create-missing-namespace"]').text()).toContain('创建命名空间')
+    await wrapper.get('[data-testid="create-missing-namespace"]').trigger('click')
+    expect(api.post).toHaveBeenCalledWith('/k8s/namespaces', { name: 'cylism-system' })
+    expect(wrapper.find('[data-testid="create-missing-namespace"]').exists()).toBe(false)
+    wrapper.unmount()
+    window.location.hash = ''
   })
 
   it('uses project and environment as optional filters', async () => {
