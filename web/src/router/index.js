@@ -19,6 +19,7 @@ import ClusterHub from '../views/ClusterHub.vue'
 import ResourceHub from '../views/ResourceHub.vue'
 import NetworkHub from '../views/NetworkHub.vue'
 import RuntimeManagement from '../views/RuntimeManagement.vue'
+import ManagedOCIRegistries from '../views/ManagedOCIRegistries.vue'
 
 const routes = [
   { path: '/login', component: Login, meta: { public: true } },
@@ -41,6 +42,7 @@ const routes = [
   { path: '/storage', component: PersistentVolumes },
   { path: '/monitoring', component: Monitoring },
   { path: '/runtimes', component: RuntimeManagement },
+  { path: '/delivery/registry', component: ManagedOCIRegistries },
   { path: '/resources', component: ResourceHub },
   { path: '/workloads', redirect: { path: '/resources', query: { tab: 'workloads' } } },
   { path: '/services', redirect: { path: '/resources', query: { tab: 'services' } } },

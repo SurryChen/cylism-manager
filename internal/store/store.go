@@ -94,6 +94,7 @@ func New(dsn string) (*Store, error) {
 		&model.ImageRegistry{},
 		&model.NodeRegistryMirror{},
 		&model.NodeRegistryMirrorNode{},
+		&model.ManagedOCIRegistry{},
 		&model.RegistryProxy{},
 		&model.ClusterDNSPolicy{},
 		&model.ChartRepository{},
@@ -1312,6 +1313,84 @@ func (s *Store) CreateImageRegistry(registry *model.ImageRegistry, projectIDs []
 	})
 }
 
+// CreateManagedOCIRegistry persists the Registry and the two records that
+// expose it to releases and K3s nodes as one ownership unit.
+func (s *Store) CreateManagedOCIRegistry(registry *model.ManagedOCIRegistry, imageRegistry *model.ImageRegistry, mirror *model.NodeRegistryMirror, projectIDs []uint) error {
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		projects, err := imageRegistryProjects(tx, projectIDs)
+		if err != nil {
+			return err
+		}
+		if err := tx.Create(registry).Error; err != nil {
+			return err
+		}
+		imageRegistry.ManagedRegistryID = &registry.ID
+		if err := tx.Create(imageRegistry).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(imageRegistry).Association("Projects").Replace(projects); err != nil {
+			return err
+		}
+		mirror.ManagedRegistryID = &registry.ID
+		if err := tx.Create(mirror).Error; err != nil {
+			return err
+		}
+		registry.ImageRegistryID = &imageRegistry.ID
+		registry.NodeRegistryMirrorID = &mirror.ID
+		return tx.Save(registry).Error
+	})
+}
+
+func (s *Store) GetManagedOCIRegistry(id uint) (*model.ManagedOCIRegistry, error) {
+	var registry model.ManagedOCIRegistry
+	err := s.db.First(&registry, id).Error
+	if err == nil {
+		registry.CredentialConfigured = registry.EncryptedCredential != ""
+	}
+	return &registry, err
+}
+
+func (s *Store) GetManagedOCIRegistryByEndpoint(endpoint string) (*model.ManagedOCIRegistry, error) {
+	var registry model.ManagedOCIRegistry
+	err := s.db.Where("endpoint = ?", endpoint).First(&registry).Error
+	if err == nil {
+		registry.CredentialConfigured = registry.EncryptedCredential != ""
+	}
+	return &registry, err
+}
+
+func (s *Store) ListManagedOCIRegistries() ([]model.ManagedOCIRegistry, error) {
+	var registries []model.ManagedOCIRegistry
+	err := s.db.Order("created_at desc").Find(&registries).Error
+	for index := range registries {
+		registries[index].CredentialConfigured = registries[index].EncryptedCredential != ""
+	}
+	return registries, err
+}
+
+func (s *Store) UpdateManagedOCIRegistry(registry *model.ManagedOCIRegistry) error {
+	return s.db.Save(registry).Error
+}
+
+func (s *Store) DeleteManagedOCIRegistry(id uint) error {
+	return s.db.Delete(&model.ManagedOCIRegistry{}, id).Error
+}
+
+func (s *Store) CountManagedOCIRegistryReferences(registryID uint) (releases, projectDefaults int64, err error) {
+	registry, err := s.GetManagedOCIRegistry(registryID)
+	if err != nil {
+		return 0, 0, err
+	}
+	if registry.ImageRegistryID == nil {
+		return 0, 0, nil
+	}
+	if err = s.db.Model(&model.Release{}).Where("image_registry_id = ?", *registry.ImageRegistryID).Count(&releases).Error; err != nil {
+		return 0, 0, err
+	}
+	err = s.db.Model(&model.Project{}).Where("default_image_registry_id = ?", *registry.ImageRegistryID).Count(&projectDefaults).Error
+	return releases, projectDefaults, err
+}
+
 func (s *Store) ListImageRegistries(projectID uint) ([]model.ImageRegistry, error) {
 	var registries []model.ImageRegistry
 	query := s.db.Preload("Projects").Order("created_at desc")
@@ -1336,6 +1415,15 @@ func (s *Store) CreateNodeRegistryMirror(mirror *model.NodeRegistryMirror) error
 func (s *Store) GetNodeRegistryMirror(id uint) (*model.NodeRegistryMirror, error) {
 	var mirror model.NodeRegistryMirror
 	err := s.db.Preload("NodeStatuses.Server").First(&mirror, id).Error
+	if err == nil {
+		mirror.CredentialConfigured = mirror.Credential != ""
+	}
+	return &mirror, err
+}
+
+func (s *Store) GetNodeRegistryMirrorByRegistry(registry string) (*model.NodeRegistryMirror, error) {
+	var mirror model.NodeRegistryMirror
+	err := s.db.Preload("NodeStatuses.Server").Where("registry = ?", registry).First(&mirror).Error
 	if err == nil {
 		mirror.CredentialConfigured = mirror.Credential != ""
 	}
@@ -1458,6 +1546,15 @@ func (s *Store) DeleteDNSCredential(id uint) error {
 func (s *Store) GetImageRegistry(id uint) (*model.ImageRegistry, error) {
 	var registry model.ImageRegistry
 	err := s.db.Preload("Projects").First(&registry, id).Error
+	if err == nil {
+		registry.CredentialConfigured = registry.Credential != ""
+	}
+	return &registry, err
+}
+
+func (s *Store) GetImageRegistryByEndpoint(endpoint string) (*model.ImageRegistry, error) {
+	var registry model.ImageRegistry
+	err := s.db.Preload("Projects").Where("endpoint = ?", endpoint).First(&registry).Error
 	if err == nil {
 		registry.CredentialConfigured = registry.Credential != ""
 	}

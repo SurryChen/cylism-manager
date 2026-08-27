@@ -141,6 +141,14 @@ const navGroups = computed(() => [
     ],
   },
   {
+    id: 'delivery',
+    label: '交付中心',
+    to: '/delivery/registry',
+    items: [
+      { label: '制品库', to: '/delivery/registry', icon: Boxes },
+    ],
+  },
+  {
     id: 'records',
     label: '记录与系统',
     to: '/audit',
