@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -313,7 +314,16 @@ func TestApplicationHandlerGetReleaseMarksLegacyReleaseAsUntracked(t *testing.T)
 }
 
 func TestCreateRestartReleaseUsesCurrentTemplateAndSanitizesSecrets(t *testing.T) {
-	_, s := setupApplicationRouter()
+	// The restart operation runs its release worker asynchronously. A plain
+	// ":memory:" SQLite DSN creates one database per connection, so the worker
+	// can observe an empty schema when it obtains a different pooled connection.
+	// Use a shared in-memory database for this test so all connections see the
+	// same schema while keeping the test isolated from other cases.
+	dsn := fmt.Sprintf("file:restart-release-%d?mode=memory&cache=shared", time.Now().UnixNano())
+	s, err := store.New(dsn)
+	if err != nil {
+		t.Fatalf("create test store: %v", err)
+	}
 	app := createApplicationForReleaseRuntimeTest(t, s)
 	key := []byte("01234567890123456789012345678901")
 

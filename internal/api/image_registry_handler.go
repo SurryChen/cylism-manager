@@ -90,6 +90,10 @@ func (h *ImageRegistryHandler) Update(c *gin.Context) {
 		model.Error(c, http.StatusNotFound, model.CodeNotFound, "镜像仓库不存在")
 		return
 	}
+	if current.ManagedRegistryID != nil {
+		model.Error(c, http.StatusConflict, model.CodeConflict, "该镜像仓库由受管制品库维护，请在交付中心修改")
+		return
+	}
 	var req imageRegistryRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "镜像仓库定义无效")
@@ -114,8 +118,13 @@ func (h *ImageRegistryHandler) Delete(c *gin.Context) {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "镜像仓库 ID 无效")
 		return
 	}
-	if _, err := h.store.GetImageRegistry(id); err != nil {
+	registry, err := h.store.GetImageRegistry(id)
+	if err != nil {
 		model.Error(c, http.StatusNotFound, model.CodeNotFound, "镜像仓库不存在")
+		return
+	}
+	if registry.ManagedRegistryID != nil {
+		model.Error(c, http.StatusConflict, model.CodeConflict, "该镜像仓库由受管制品库维护，不能单独删除")
 		return
 	}
 	count, err := h.store.CountImageRegistryReleases(id)

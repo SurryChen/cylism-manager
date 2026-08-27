@@ -176,6 +176,16 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 		nodeRegistryMirrors.POST("/:id/apply", h.Apply)
 		nodeRegistryMirrors.GET("/:id/apply-status", h.ApplyStatus)
 	}
+	managedOCIRegistries := apiGroup.Group("/managed-oci-registries")
+	{
+		h := NewManagedOCIRegistryHandler(s, encKey)
+		managedOCIRegistries.GET("", h.List)
+		managedOCIRegistries.POST("", h.Create)
+		managedOCIRegistries.GET("/:id", h.Get)
+		managedOCIRegistries.PUT("/:id", h.Update)
+		managedOCIRegistries.POST("/:id/apply-node-access", h.ApplyNodeAccess)
+		managedOCIRegistries.DELETE("/:id", h.Delete)
+	}
 	registryProxyHandler := NewRegistryProxyHandler(s, encKey)
 	go registryProxyHandler.Reconcile()
 	registryProxy := apiGroup.Group("/registry-proxy")

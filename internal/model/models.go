@@ -569,6 +569,7 @@ type ImageRegistry struct {
 	LastVerifyStatus     string     `gorm:"size:32" json:"last_verify_status"`
 	LastVerifyError      string     `gorm:"size:512" json:"last_verify_error,omitempty"`
 	CreatedBy            uint       `gorm:"index" json:"created_by"`
+	ManagedRegistryID    *uint      `gorm:"uniqueIndex" json:"managed_registry_id,omitempty"`
 	CreatedAt            time.Time  `json:"created_at"`
 	UpdatedAt            time.Time  `json:"updated_at"`
 	Projects             []Project  `gorm:"many2many:image_registry_projects;" json:"projects,omitempty"`
@@ -587,6 +588,7 @@ type NodeRegistryMirror struct {
 	InsecureSkipVerify   bool                     `gorm:"default:false" json:"insecure_skip_verify"`
 	Enabled              bool                     `gorm:"default:true;not null" json:"enabled"`
 	CreatedBy            uint                     `gorm:"index" json:"created_by"`
+	ManagedRegistryID    *uint                    `gorm:"uniqueIndex" json:"managed_registry_id,omitempty"`
 	LastVerifiedAt       *time.Time               `json:"last_verified_at,omitempty"`
 	LastVerifyStatus     string                   `gorm:"size:32" json:"last_verify_status"`
 	LastVerifyError      string                   `gorm:"size:512" json:"last_verify_error,omitempty"`
@@ -608,6 +610,32 @@ type NodeRegistryMirrorNode struct {
 	Detail    string     `gorm:"size:512" json:"detail,omitempty"`
 	AppliedAt *time.Time `json:"applied_at,omitempty"`
 	Server    Server     `gorm:"foreignKey:ServerID" json:"server,omitempty"`
+}
+
+// ManagedOCIRegistry owns the platform configuration for one persistent
+// Docker Distribution Registry. Credentials are encrypted and never exposed.
+type ManagedOCIRegistry struct {
+	ID                   uint       `gorm:"primaryKey" json:"id"`
+	Name                 string     `gorm:"size:128;uniqueIndex;not null" json:"name"`
+	Namespace            string     `gorm:"size:253;not null" json:"namespace"`
+	ResourceName         string     `gorm:"size:253;uniqueIndex;not null" json:"resource_name"`
+	Endpoint             string     `gorm:"size:253;uniqueIndex;not null" json:"endpoint"`
+	RegistryImage        string     `gorm:"size:512;not null" json:"registry_image"`
+	DataNode             string     `gorm:"size:253;not null" json:"data_node"`
+	DataPath             string     `gorm:"size:1024;not null" json:"data_path"`
+	InsecureHTTP         bool       `gorm:"not null;default:false" json:"insecure_http"`
+	TLSSecretName        string     `gorm:"size:253" json:"tls_secret_name,omitempty"`
+	PullUsername         string     `gorm:"size:256;not null" json:"pull_username"`
+	EncryptedCredential  string     `gorm:"type:text" json:"-"`
+	ImageRegistryID      *uint      `gorm:"uniqueIndex" json:"image_registry_id,omitempty"`
+	NodeRegistryMirrorID *uint      `gorm:"uniqueIndex" json:"node_registry_mirror_id,omitempty"`
+	Status               string     `gorm:"size:32;not null;default:pending" json:"status"`
+	LastError            string     `gorm:"size:512" json:"last_error,omitempty"`
+	LastCheckedAt        *time.Time `json:"last_checked_at,omitempty"`
+	CreatedBy            uint       `gorm:"index;not null" json:"created_by"`
+	CreatedAt            time.Time  `json:"created_at"`
+	UpdatedAt            time.Time  `json:"updated_at"`
+	CredentialConfigured bool       `gorm:"-" json:"credential_configured"`
 }
 
 // RegistryProxy defines one platform-managed, non-persistent registry proxy.

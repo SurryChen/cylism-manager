@@ -87,6 +87,10 @@ func (h *NodeRegistryMirrorHandler) Update(c *gin.Context) {
 		model.Error(c, http.StatusNotFound, model.CodeNotFound, "镜像源不存在")
 		return
 	}
+	if current.ManagedRegistryID != nil {
+		model.Error(c, http.StatusConflict, model.CodeConflict, "该镜像源由受管制品库维护，请在交付中心修改")
+		return
+	}
 	var req nodeRegistryMirrorRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "镜像源定义无效")
@@ -108,6 +112,15 @@ func (h *NodeRegistryMirrorHandler) Delete(c *gin.Context) {
 	id, err := parseID(c.Param("id"))
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "镜像源 ID 无效")
+		return
+	}
+	mirror, err := h.store.GetNodeRegistryMirror(id)
+	if err != nil {
+		model.Error(c, http.StatusNotFound, model.CodeNotFound, "镜像源不存在")
+		return
+	}
+	if mirror.ManagedRegistryID != nil {
+		model.Error(c, http.StatusConflict, model.CodeConflict, "该镜像源由受管制品库维护，不能单独删除")
 		return
 	}
 	if err := h.store.DeleteNodeRegistryMirror(id); err != nil {
