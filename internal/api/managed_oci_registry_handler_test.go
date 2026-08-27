@@ -174,11 +174,11 @@ func TestManagedOCIRegistryRejectsUnconfirmedHTTP(t *testing.T) {
 	}
 }
 
-func TestManagedOCIRegistryListsAndRequiresMatchingReadyCertificate(t *testing.T) {
+func TestManagedOCIRegistryListsReadyCertificatesAndRequiresMatchingCertificate(t *testing.T) {
 	r, _ := setupManagedOCIRegistryRouter(t)
-	options := serve(r, newJSONRequest(http.MethodGet, "/api/managed-oci-registries/certificates?namespace=cylism-system&endpoint=registry.internal:5443", nil))
+	options := serve(r, newJSONRequest(http.MethodGet, "/api/managed-oci-registries/certificates?namespace=cylism-system", nil))
 	if options.Code != http.StatusOK || !strings.Contains(options.Body.String(), `"name":"registry-cert"`) || strings.Contains(options.Body.String(), `"secret_name":"registry-tls"`) {
-		t.Fatalf("expected redacted matching certificate option: %d %s", options.Code, options.Body.String())
+		t.Fatalf("expected redacted ready certificate option without endpoint: %d %s", options.Code, options.Body.String())
 	}
 	payload := managedRegistryPayload()
 	delete(payload, "certificate_name")

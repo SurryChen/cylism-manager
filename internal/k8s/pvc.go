@@ -26,6 +26,9 @@ const (
 	InfrastructureVictoriaMetrics = "victoria-metrics"
 	InfrastructureLoki            = "loki"
 	InfrastructureRuntime         = "agent-runtime"
+	InfrastructureOCIRegistry     = "oci-registry"
+	managedOCIRegistryNamespace   = "cylism-system"
+	managedOCIRegistryPVCName     = "cylism-oci-registry-data"
 )
 
 // PersistentVolumeClaimRequest contains the user-controlled fields supported
@@ -455,6 +458,9 @@ func infrastructurePVCOwner(claim *corev1.PersistentVolumeClaim) string {
 	if claim == nil || claim.Labels[ManagedByLabel] != ManagedByValue {
 		return ""
 	}
+	if claim.Namespace == managedOCIRegistryNamespace && claim.Name == managedOCIRegistryPVCName {
+		return InfrastructureOCIRegistry
+	}
 	switch claim.Labels[InfrastructureLabel] {
 	case InfrastructureAlertmanager, InfrastructureVictoriaMetrics, InfrastructureLoki, InfrastructureRuntime:
 		return claim.Labels[InfrastructureLabel]
@@ -473,6 +479,8 @@ func infrastructurePVCOwnerName(owner string) string {
 		return "Loki 日志存储"
 	case InfrastructureRuntime:
 		return "Agent Runtime"
+	case InfrastructureOCIRegistry:
+		return "OCI 制品库"
 	default:
 		return owner
 	}

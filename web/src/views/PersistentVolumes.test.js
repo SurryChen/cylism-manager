@@ -146,6 +146,17 @@ describe('PersistentVolumes view', () => {
     expect(wrapper.get('.monitoring-link').classes()).toContain('monitoring-link')
   })
 
+  it('links the managed OCI registry PVC to the registry page', async () => {
+    const { api } = await import('../api/index.js')
+    api.get.mockImplementation(mockInventory({ claims: [{ name: 'cylism-oci-registry-data', namespace: 'cylism-system', managed: true, owner_type: 'infrastructure', owner: 'oci-registry', owner_name: 'OCI 制品库', read_only: true, phase: 'Bound' }] }))
+    const wrapper = mount(PersistentVolumes)
+    await settle()
+
+    const link = wrapper.get('.monitoring-link')
+    expect(link.text()).toBe('查看制品库')
+    expect(link.attributes('href')).toBe('#/delivery/registry')
+  })
+
   it('loads local PVC usage without blocking the inventory', async () => {
     const { api } = await import('../api/index.js')
     api.get.mockImplementation(mockInventory({
