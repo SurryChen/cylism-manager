@@ -177,10 +177,14 @@ func (h *ManagedOCIRegistryHandler) ListMatchingCertificates(c *gin.Context) {
 		return
 	}
 	namespace = managedOCIRegistryNamespace
-	_, host, err := normalizeManagedRegistryEndpoint(c.Query("endpoint"))
-	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "有效的访问地址必填")
-		return
+	var host string
+	if endpoint := strings.TrimSpace(c.Query("endpoint")); endpoint != "" {
+		_, normalizedHost, err := normalizeManagedRegistryEndpoint(endpoint)
+		if err != nil {
+			model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "访问地址无效")
+			return
+		}
+		host = normalizedHost
 	}
 	certificates, err := K8s.ListCertificates()
 	if err != nil {
@@ -189,7 +193,7 @@ func (h *ManagedOCIRegistryHandler) ListMatchingCertificates(c *gin.Context) {
 	}
 	options := make([]managedOCIRegistryCertificateOption, 0)
 	for _, certificate := range certificates {
-		if certificate.Namespace != namespace || certificate.Status != "Ready" || certificate.SecretName == "" || !certificateDomainsCoverHostname(certificate.Domains, host) {
+		if certificate.Namespace != namespace || certificate.Status != "Ready" || certificate.SecretName == "" || (host != "" && !certificateDomainsCoverHostname(certificate.Domains, host)) {
 			continue
 		}
 		options = append(options, managedOCIRegistryCertificateOption{Name: certificate.Name, Namespace: certificate.Namespace, Domains: certificate.Domains, ExpiryDate: certificate.ExpiryDate, RenewalTime: certificate.RenewalTime})

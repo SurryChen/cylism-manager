@@ -71,8 +71,8 @@ function newClaimForm() { return { namespace: namespaceFilter.value || namespace
 function resetFilters() { namespaceFilter.value = ''; projectID.value = 0; environmentID.value = 0; phaseFilter.value = ''; storageClassFilter.value = '' }
 function hasManagedEnvironment(claim) { return claim.managed && Number(claim.environment_id) > 0 }
 function claimEnvironmentID(claim) { return Number(claim?.environment_id) || 0 }
-function infrastructureLink() { return '#/monitoring' }
-function infrastructureActionLabel() { return '查看监控' }
+function infrastructureLink(claim) { return claim.owner === 'oci-registry' ? '#/delivery/registry' : '#/monitoring' }
+function infrastructureActionLabel(claim) { return claim.owner === 'oci-registry' ? '查看制品库' : '查看监控' }
 function usageFor(claim) { return usage.value.find(item => item.namespace === claim.namespace && item.name === claim.name) }
 function formatBytes(value) { const bytes = Number(value) || 0; if (bytes < 1024) return `${bytes} B`; const units = ['KiB', 'MiB', 'GiB', 'TiB']; let amount = bytes; let index = -1; do { amount /= 1024; index += 1 } while (amount >= 1024 && index < units.length - 1); return `${amount >= 10 ? amount.toFixed(0) : amount.toFixed(1)} ${units[index]}` }
 function usagePercent(item) { const capacity = Number(item?.capacity_bytes) || 0; if (!capacity) return '已用容量'; return `${Math.min(100, Math.round((Number(item.used_bytes) / capacity) * 100))}% / 请求容量` }

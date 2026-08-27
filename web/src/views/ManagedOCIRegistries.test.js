@@ -44,18 +44,22 @@ describe('ManagedOCIRegistries view', () => {
     wrapper.unmount()
   })
 
-  it('selects a matching platform certificate for HTTPS', async () => {
+  it('lists ready certificates before an endpoint is entered and fills the certificate domain', async () => {
     const { api } = await import('../api/index.js')
     api.get.mockImplementation(path => Promise.resolve(path === '/servers' ? [] : path === '/managed-oci-registries/storage-preflight' ? { ready: true, storage_class_name: 'local-path', storage_classes: ['local-path'], data_nodes: ['node-a'] } : path === '/managed-oci-registries/pvcs' ? [{ name: 'registry-data', namespace: 'cylism-system', storage: '100Gi', storage_class_name: 'local-path', phase: 'Pending', access_modes: ['ReadWriteOnce'] }] : path.startsWith('/managed-oci-registries/certificates?') ? [{ name: 'registry-cert', namespace: 'cylism-system', domains: ['registry.internal'] }] : []))
     const wrapper = mount(ManagedOCIRegistries)
     await new Promise(resolve => setTimeout(resolve, 0))
     await wrapper.get('[data-testid="deploy-registry"]').trigger('click')
-    const endpoint = document.body.querySelector('input[placeholder="registry.example.com:31813"]')
-    endpoint.value = 'registry.internal:5443'
-    endpoint.dispatchEvent(new Event('input', { bubbles: true }))
     await new Promise(resolve => setTimeout(resolve, 0))
+    expect(api.get).toHaveBeenCalledWith('/managed-oci-registries/certificates?namespace=cylism-system')
     const certificateSelect = document.body.querySelector('.registry-certificate-select')
     expect(certificateSelect.textContent).toContain('registry-cert')
+
+    certificateSelect.value = 'registry-cert'
+    certificateSelect.dispatchEvent(new Event('change', { bubbles: true }))
+    await new Promise(resolve => setTimeout(resolve, 0))
+    const endpoint = document.body.querySelector('input[placeholder="registry.example.com:31813"]')
+    expect(endpoint.value).toBe('registry.internal')
     expect(document.body.querySelector('input[placeholder="registry-tls"]')).toBeNull()
     wrapper.unmount()
   })
@@ -78,6 +82,25 @@ describe('ManagedOCIRegistries view', () => {
     await new Promise(resolve => setTimeout(resolve, 0))
     expect(wrapper.get('[role="alert"]').text()).toContain('无法读取集群状态')
     expect(wrapper.find('[data-testid="registry-empty"]').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('shows a modal and keeps the deployment form open when deployment fails', async () => {
+    const { api } = await import('../api/index.js')
+    api.get.mockImplementation(path => Promise.resolve(path === '/servers' ? [] : path === '/managed-oci-registries/storage-preflight' ? { ready: true, storage_class_name: 'local-path', storage_classes: ['local-path'], data_nodes: ['node-a'] } : path === '/managed-oci-registries/pvcs' ? [{ name: 'registry-data', namespace: 'cylism-system', storage: '100Gi', storage_class_name: 'local-path', phase: 'Pending', access_modes: ['ReadWriteOnce'] }] : []))
+    api.post.mockRejectedValueOnce(new Error('保存制品库配置失败，请检查名称、地址和项目授权'))
+    const wrapper = mount(ManagedOCIRegistries)
+    await new Promise(resolve => setTimeout(resolve, 0))
+    await wrapper.get('[data-testid="deploy-registry"]').trigger('click')
+    document.body.querySelector('.registry-modal form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    const notice = document.body.querySelector('.registry-notice-modal')
+    expect(notice).not.toBeNull()
+    expect(notice.textContent).toContain('部署失败')
+    expect(notice.textContent).toContain('保存制品库配置失败，请检查名称、地址和项目授权')
+    expect(document.body.querySelector('.registry-modal')).not.toBeNull()
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false)
     wrapper.unmount()
   })
 })
