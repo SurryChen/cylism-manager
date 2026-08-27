@@ -14,7 +14,16 @@ function clearTokens() {
 
 // 统一响应解包
 async function unwrapResponse(res) {
-  const json = await res.json()
+  const raw = await res.text()
+  let json
+  try {
+    json = JSON.parse(raw)
+  } catch {
+    if (res.headers.get('content-type')?.includes('text/html') || /^\s*</.test(raw)) {
+      throw new Error('服务端未提供此 API（开发代理可能指向了旧服务，请检查 VITE_API_PROXY_TARGET）')
+    }
+    throw new Error(`服务端返回了无效 JSON（HTTP ${res.status}）`)
+  }
   if (json.code !== 0) {
     throw new Error(json.message || 'unknown error')
   }
