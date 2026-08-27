@@ -181,6 +181,7 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 		h := NewManagedOCIRegistryHandler(s, encKey)
 		managedOCIRegistries.GET("", h.List)
 		managedOCIRegistries.GET("/storage-preflight", h.StoragePreflight)
+		managedOCIRegistries.GET("/pvcs", h.ListEligiblePVCs)
 		managedOCIRegistries.GET("/certificates", h.ListMatchingCertificates)
 		managedOCIRegistries.POST("", h.Create)
 		managedOCIRegistries.GET("/:id", h.Get)

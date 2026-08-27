@@ -7,7 +7,7 @@ vi.mock('../api/index.js', () => ({ api: { get: vi.fn(), post: vi.fn(), put: vi.
 describe('ManagedOCIRegistries view', () => {
   it('shows the deployment action before a registry exists', async () => {
     const { api } = await import('../api/index.js')
-    api.get.mockImplementation(path => Promise.resolve(path === '/servers' ? [] : path === '/managed-oci-registries/storage-preflight' ? { ready: true, storage_class_name: 'local-path', storage_classes: ['local-path'], data_nodes: ['node-a'] } : []))
+    api.get.mockImplementation(path => Promise.resolve(path === '/servers' ? [] : path === '/managed-oci-registries/storage-preflight' ? { ready: true, storage_class_name: 'local-path', storage_classes: ['local-path'], data_nodes: ['node-a'] } : path === '/managed-oci-registries/pvcs' ? [{ name: 'registry-data', namespace: 'cylism-system', storage: '100Gi', storage_class_name: 'local-path', phase: 'Pending', access_modes: ['ReadWriteOnce'] }] : []))
     const wrapper = mount(ManagedOCIRegistries)
     await new Promise(resolve => setTimeout(resolve, 0))
     expect(wrapper.get('[data-testid="registry-empty"]').text()).toContain('尚未部署自托管制品库')
@@ -17,36 +17,36 @@ describe('ManagedOCIRegistries view', () => {
     await wrapper.get('[data-testid="deploy-registry"]').trigger('click')
     expect(document.body.querySelector('.registry-modal')).not.toBeNull()
     expect(document.body.querySelector('.registry-modal').textContent).toContain('local-path')
-    expect(document.body.querySelector('input[placeholder="100Gi"]').value).toBe('100Gi')
+    expect(document.body.querySelector('.registry-pvc-select').textContent).toContain('registry-data')
+    expect(document.body.querySelector('input[readonly]').value).toBe('cylism-system')
     wrapper.unmount()
   })
 
   it('offers known Kubernetes nodes when deploying a registry', async () => {
     const { api } = await import('../api/index.js')
-    api.get.mockImplementation(path => Promise.resolve(path === '/servers' ? [{ id: 7, name: 'worker-1', host: '10.0.0.7', cluster_role: 'worker', k8s_node_name: 'worker-1.cluster.local' }] : path === '/managed-oci-registries/storage-preflight' ? { ready: true, storage_class_name: 'local-path', storage_classes: ['local-path'], data_nodes: ['node-a'] } : []))
+    api.get.mockImplementation(path => Promise.resolve(path === '/servers' ? [{ id: 7, name: 'worker-1', host: '10.0.0.7', cluster_role: 'worker', k8s_node_name: 'worker-1.cluster.local' }] : path === '/managed-oci-registries/storage-preflight' ? { ready: true, storage_class_name: 'local-path', storage_classes: ['local-path'], data_nodes: ['node-a'] } : path === '/managed-oci-registries/pvcs' ? [{ name: 'registry-data', namespace: 'cylism-system', storage: '100Gi', storage_class_name: 'local-path', phase: 'Pending', access_modes: ['ReadWriteOnce'] }] : []))
     const wrapper = mount(ManagedOCIRegistries)
     await new Promise(resolve => setTimeout(resolve, 0))
     await wrapper.get('[data-testid="deploy-registry"]').trigger('click')
     expect(document.body.querySelector('.registry-data-node-select').textContent).toContain('node-a')
-    expect(document.body.querySelector('.registry-storage-class-select').textContent).toContain('local-path')
+    expect(document.body.querySelector('.registry-pvc-select').textContent).toContain('local-path')
     wrapper.unmount()
   })
 
   it('blocks deployment when local-path storage is not ready', async () => {
     const { api } = await import('../api/index.js')
-    api.get.mockImplementation(path => Promise.resolve(path === '/servers' ? [] : path === '/managed-oci-registries/storage-preflight' ? { ready: false, storage_class_name: 'local-path', storage_classes: ['local-path'], data_nodes: ['node-a'], message: 'StorageClass "local-path" 必须使用 WaitForFirstConsumer' } : []))
+    api.get.mockImplementation(path => Promise.resolve(path === '/servers' ? [] : path === '/managed-oci-registries/storage-preflight' ? { ready: false, storage_class_name: 'local-path', storage_classes: ['local-path'], data_nodes: ['node-a'], message: 'StorageClass "local-path" 必须使用 WaitForFirstConsumer' } : path === '/managed-oci-registries/pvcs' ? [{ name: 'registry-data', namespace: 'cylism-system', storage: '100Gi', storage_class_name: 'local-path', phase: 'Pending', access_modes: ['ReadWriteOnce'] }] : []))
     const wrapper = mount(ManagedOCIRegistries)
     await new Promise(resolve => setTimeout(resolve, 0))
     await wrapper.get('[data-testid="deploy-registry"]').trigger('click')
     const modal = document.body.querySelector('.registry-modal')
-    expect(modal.textContent).toContain('必须使用 WaitForFirstConsumer')
     expect([...modal.querySelectorAll('button')].find(button => button.textContent.includes('开始部署')).disabled).toBe(true)
     wrapper.unmount()
   })
 
   it('selects a matching platform certificate for HTTPS', async () => {
     const { api } = await import('../api/index.js')
-    api.get.mockImplementation(path => Promise.resolve(path === '/servers' ? [] : path === '/managed-oci-registries/storage-preflight' ? { ready: true, storage_class_name: 'local-path', storage_classes: ['local-path'], data_nodes: ['node-a'] } : path.startsWith('/managed-oci-registries/certificates?') ? [{ name: 'registry-cert', namespace: 'cylism-system', domains: ['registry.internal'] }] : []))
+    api.get.mockImplementation(path => Promise.resolve(path === '/servers' ? [] : path === '/managed-oci-registries/storage-preflight' ? { ready: true, storage_class_name: 'local-path', storage_classes: ['local-path'], data_nodes: ['node-a'] } : path === '/managed-oci-registries/pvcs' ? [{ name: 'registry-data', namespace: 'cylism-system', storage: '100Gi', storage_class_name: 'local-path', phase: 'Pending', access_modes: ['ReadWriteOnce'] }] : path.startsWith('/managed-oci-registries/certificates?') ? [{ name: 'registry-cert', namespace: 'cylism-system', domains: ['registry.internal'] }] : []))
     const wrapper = mount(ManagedOCIRegistries)
     await new Promise(resolve => setTimeout(resolve, 0))
     await wrapper.get('[data-testid="deploy-registry"]').trigger('click')
@@ -62,7 +62,7 @@ describe('ManagedOCIRegistries view', () => {
 
   it('marks an HTTP Registry as insecure without showing a credential', async () => {
     const { api } = await import('../api/index.js')
-    api.get.mockImplementation(path => Promise.resolve(path === '/servers' ? [{ id: 7, name: 'worker-1', host: '10.0.0.7', cluster_role: 'worker' }] : path === '/managed-oci-registries/storage-preflight' ? { ready: true, storage_class_name: 'local-path', storage_classes: ['local-path'], data_nodes: ['node-a'] } : [{ id: 1, endpoint: 'registry.internal', insecure_http: true, status: 'degraded', data_node: 'worker-1', pvc_name: 'cylism-oci-registry-data', storage_size: '100Gi', registry_image: 'registry:2', namespace: 'cylism-system', pull_username: 'cylism-pull', node_registry_mirror_id: 2, last_error: '入口不可达' }]))
+    api.get.mockImplementation(path => Promise.resolve(path === '/servers' ? [{ id: 7, name: 'worker-1', host: '10.0.0.7', cluster_role: 'worker' }] : path === '/managed-oci-registries/storage-preflight' ? { ready: true, storage_class_name: 'local-path', storage_classes: ['local-path'], data_nodes: ['node-a'] } : path === '/managed-oci-registries/pvcs' ? [{ name: 'registry-data', namespace: 'cylism-system', storage: '100Gi', storage_class_name: 'local-path', phase: 'Pending', access_modes: ['ReadWriteOnce'] }] : [{ id: 1, endpoint: 'registry.internal', insecure_http: true, status: 'degraded', data_node: 'worker-1', pvc_name: 'cylism-oci-registry-data', storage_size: '100Gi', registry_image: 'registry:2', namespace: 'cylism-system', pull_username: 'cylism-pull', node_registry_mirror_id: 2, last_error: '入口不可达' }]))
     const wrapper = mount(ManagedOCIRegistries)
     await new Promise(resolve => setTimeout(resolve, 0))
     expect(wrapper.get('[data-testid="registry-summary"]').text()).toContain('HTTP，凭据和镜像层以明文传输')

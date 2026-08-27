@@ -32,9 +32,9 @@
 
 ### 2. 单副本、节点固定的 PVC 持久存储
 
-Registry 使用单副本 `Recreate` 策略、`local-path` StorageClass 的 `ReadWriteOnce` PVC 和 `nodeSelector`。创建时用户选择数据节点和容量，容量默认 `100Gi`；平台在目标 namespace 创建名为 `cylism-oci-registry-data` 的 PVC，并将其挂载到 `/var/lib/registry`。PVC 必须使用 `WaitForFirstConsumer`，让调度器先依据 `nodeSelector` 选择节点，再由 local-path Provisioner 在该节点创建本地 PV。
+Registry 固定部署在 `cylism-system`，使用单副本 `Recreate` 策略、用户预先创建的 `local-path` `ReadWriteOnce` PVC 和 `nodeSelector`。创建表单只列出该命名空间内可选的 PVC；平台挂载所选 PVC 到 `/var/lib/registry`，不会创建、更新或接管该 PVC。
 
-平台在创建前读取 `local-path` StorageClass 并要求其存在且 `volumeBindingMode=WaitForFirstConsumer`。不满足时拒绝创建，避免 PVC 先绑定到未选择节点或永久 Pending。删除 Registry 资源时不删除 PVC；若同名 PVC 已存在，平台仅在其标签、StorageClass、访问模式与请求容量满足受管 Registry 要求时复用，否则拒绝接管。数据节点、StorageClass 与 PVC 容量在创建后不可变，避免本地卷迁移被误认为普通配置更新。
+平台校验所选 PVC 的 StorageClass 为 `local-path` 且使用 `WaitForFirstConsumer`，并要求具有 `ReadWriteOnce` 访问模式、状态为 Pending 或 Bound、且未被其他工作负载引用。Pending PVC 使用用户选择的 Ready 数据节点作为 Registry Pod 的 `nodeSelector`，使 local-path Provisioner 在该节点完成首次绑定；Bound PVC 必须已有可识别的绑定节点，平台使用该节点并拒绝不一致的输入。PVC、StorageClass、容量及数据节点在创建后不可变。删除 Registry 资源时不删除 PVC。
 
 **Alternatives considered:** 直接 `hostPath` 虽能固定目录，但没有 PVC 生命周期、容量声明和集群资源可见性，因此不采用。共享块/文件存储等待基础设施具备后再支持。
 
@@ -76,7 +76,7 @@ HTTPS endpoint 要求用户从平台证书管理中选择同一命名空间内�
 ## Migration Plan
 
 1. AutoMigrate 为受管 Registry 增加 PVC 名称、StorageClass、请求容量和容器资源字段；不修改现有 Registry Proxy、ImageRegistry 或 NodeRegistryMirror 数据。
-2. 已存在的 hostPath Registry 在升级后标记为需要迁移，不会自动创建或复制 PVC 数据。新建 Registry 只创建 PVC、Kubernetes Secret、Deployment、Service、Ingress，以及受控关联的仓库/节点镜像源记录。
+2. 已存在的 hostPath Registry 在升级后标记为需要迁移，不会自动创建或复制 PVC 数据。新建 Registry 只创建 Kubernetes Secret、Deployment、Service、Ingress，以及受控关联的仓库/节点镜像源记录；PVC 必须先在存储卷管理中创建。
 3. 用户选择节点后异步写入对应 `registries.yaml`；每个节点记录独立成功/失败状态。
 4. 回滚部署时删除 Manager 创建的 Kubernetes 工作负载资源和受控关联记录，但不删除 PVC；已应用节点配置须由用户通过受管入口解除。
 

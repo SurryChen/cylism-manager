@@ -63,6 +63,17 @@ describe('Certificates view', () => {
     })
   })
 
+  it('opens a prefilled certificate form from the Registry link', async () => {
+    window.location.hash = '#/network?tab=certificates&create=1&namespace=cylism-system&domains=registry.internal'
+    const wrapper = mount(Certificates)
+    await settle()
+
+    expect(wrapper.get('input[placeholder="default"]').element.value).toBe('cylism-system')
+    expect(wrapper.get('input[placeholder="example.com,*.example.com"]').element.value).toBe('registry.internal')
+    wrapper.unmount()
+    window.location.hash = ''
+  })
+
   it('shows setup status without loading certificate resources when cert-manager is absent', async () => {
     api.get.mockImplementation(path => {
       if (path === '/certs/status') return Promise.resolve({ state: 'not_installed', message: '未检测到完整的 cert-manager CRD', installer_available: true })
