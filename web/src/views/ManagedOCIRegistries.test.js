@@ -75,6 +75,17 @@ describe('ManagedOCIRegistries view', () => {
     wrapper.unmount()
   })
 
+  it('repairs an unhealthy Registry through the platform endpoint', async () => {
+    const { api } = await import('../api/index.js')
+    api.get.mockImplementation(path => Promise.resolve(path === '/servers' ? [] : path === '/managed-oci-registries/storage-preflight' ? { ready: true, storage_class_name: 'local-path', storage_classes: ['local-path'], data_nodes: ['node-a'] } : path === '/managed-oci-registries/pvcs' ? [{ name: 'registry-data', namespace: 'cylism-system', storage: '10Gi', storage_class_name: 'local-path', phase: 'Bound', access_modes: ['ReadWriteOnce'] }] : [{ id: 1, endpoint: 'registry.internal', status: 'degraded', data_node: 'node-a', pvc_name: 'registry-data', storage_size: '10Gi', registry_image: 'registry:2', namespace: 'cylism-system', pull_username: 'cylism-pull', last_error: 'Registry 尚未就绪' }]))
+    api.post.mockResolvedValueOnce({ id: 1, status: 'deploying' })
+    const wrapper = mount(ManagedOCIRegistries)
+    await new Promise(resolve => setTimeout(resolve, 0))
+    await wrapper.get('[data-testid="repair-registry"]').trigger('click')
+    expect(api.post).toHaveBeenCalledWith('/managed-oci-registries/1/repair')
+    wrapper.unmount()
+  })
+
   it('shows an API error without rendering a registry form', async () => {
     const { api } = await import('../api/index.js')
     api.get.mockRejectedValueOnce(new Error('无法读取集群状态'))
