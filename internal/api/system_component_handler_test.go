@@ -44,6 +44,7 @@ func setupSystemComponentRouter(t *testing.T) (*gin.Engine, *store.Store) {
 			&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "worker-a", Labels: map[string]string{corev1.LabelHostname: "worker-a"}}, Status: corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}}, Allocatable: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("2"), corev1.ResourceMemory: resource.MustParse("4Gi")}}},
 			&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "worker-b", Labels: map[string]string{corev1.LabelHostname: "worker-b"}}, Status: corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}}, Allocatable: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("2"), corev1.ResourceMemory: resource.MustParse("4Gi")}}},
 			&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "coredns", Namespace: "kube-system"}, Spec: appsv1.DeploymentSpec{Replicas: &replicas, Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{NodeSelector: map[string]string{"kubernetes.io/os": "linux"}}}}, Status: appsv1.DeploymentStatus{ReadyReplicas: 1, AvailableReplicas: 1}},
+			&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "traefik", Namespace: "kube-system", Labels: map[string]string{"app.kubernetes.io/name": "traefik"}}, Spec: appsv1.DeploymentSpec{Replicas: &replicas, Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "traefik"}}}}}, Status: appsv1.DeploymentStatus{ReadyReplicas: 1, AvailableReplicas: 1}},
 			&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "coredns-a", Namespace: "kube-system", Labels: map[string]string{"k8s-app": "coredns"}}, Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{{Name: "coredns", State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{}}}}}},
 		),
 		DynamicClient: dynamicfake.NewSimpleDynamicClient(systemComponentScheme(), &unstructured.Unstructured{Object: map[string]any{
@@ -140,6 +141,75 @@ func TestSystemComponentUpdateKeepsHelmChartConfigForOtherCharts(t *testing.T) {
 	obj, err := K8s.GetHelmChartConfig(context.Background(), "kube-system", "traefik")
 	if err != nil || obj == nil {
 		t.Fatalf("traefik helmchartconfig not applied: %v %#v", err, obj)
+	}
+}
+
+func TestSystemComponentUpdateManagesTraefikReadTimeout(t *testing.T) {
+	router, s := setupSystemComponentRouter(t)
+	response := serve(router, newJSONRequest(http.MethodPut, "/api/system-components/traefik", gin.H{
+		"values_content":       "maxUnavailable: 0\nmaxSurge: 1\n",
+		"traefik_read_timeout": "30m",
+	}))
+	if response.Code != http.StatusOK {
+		t.Fatalf("update status = %d: %s", response.Code, response.Body.String())
+	}
+	config, err := s.GetSystemComponentConfig("traefik")
+	if err != nil || !strings.Contains(config.ValuesContent, "--entryPoints.web.transport.respondingTimeouts.readTimeout=30m") || !strings.Contains(config.ValuesContent, "--entryPoints.websecure.transport.respondingTimeouts.readTimeout=30m") {
+		t.Fatalf("stored Traefik values missing entrypoint arguments: %#v err=%v", config, err)
+	}
+	obj, err := K8s.GetHelmChartConfig(context.Background(), "kube-system", "traefik")
+	if err != nil || obj == nil {
+		t.Fatalf("traefik helmchartconfig not applied: %v %#v", err, obj)
+	}
+	values, _, _ := unstructured.NestedString(obj.Object, "spec", "valuesContent")
+	if !strings.Contains(values, "readTimeout=30m") || strings.Count(values, "readTimeout=30m") != 2 {
+		t.Fatalf("values must render two readTimeout args: %q", values)
+	}
+
+	response = serve(router, newJSONRequest(http.MethodGet, "/api/system-components", nil))
+	if !strings.Contains(response.Body.String(), `"read_timeout_effective":false`) {
+		t.Fatalf("timeout must be pending before Helm rolls Traefik: %s", response.Body.String())
+	}
+
+	deployment, err := K8s.Clientset.AppsV1().Deployments("kube-system").Get(context.Background(), "traefik", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get traefik deployment: %v", err)
+	}
+	deployment.Spec.Template.Spec.Containers[0].Args = []string{
+		"--entryPoints.web.transport.respondingTimeouts.readTimeout=30m",
+		"--entryPoints.websecure.transport.respondingTimeouts.readTimeout=30m",
+	}
+	if _, err := K8s.Clientset.AppsV1().Deployments("kube-system").Update(context.Background(), deployment, metav1.UpdateOptions{}); err != nil {
+		t.Fatalf("update traefik deployment: %v", err)
+	}
+	response = serve(router, newJSONRequest(http.MethodGet, "/api/system-components", nil))
+	if !strings.Contains(response.Body.String(), `"read_timeout_effective":true`) || !strings.Contains(response.Body.String(), `"effective_read_timeout":"30m"`) {
+		t.Fatalf("timeout must become effective after rollout: %s", response.Body.String())
+	}
+}
+
+func TestSystemComponentUpdateRejectsInvalidTraefikReadTimeout(t *testing.T) {
+	router, _ := setupSystemComponentRouter(t)
+	for _, testCase := range []struct {
+		name    string
+		chart   string
+		timeout string
+	}{
+		{name: "zero", chart: "traefik", timeout: "0s"},
+		{name: "too short", chart: "traefik", timeout: "30s"},
+		{name: "too long", chart: "traefik", timeout: "2h"},
+		{name: "malformed", chart: "traefik", timeout: "forever"},
+		{name: "other chart", chart: "coredns", timeout: "30m"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			response := serve(router, newJSONRequest(http.MethodPut, "/api/system-components/"+testCase.chart, gin.H{
+				"values_content":       "replicas: 1\nmaxUnavailable: 0\nmaxSurge: 1\n",
+				"traefik_read_timeout": testCase.timeout,
+			}))
+			if response.Code != http.StatusBadRequest {
+				t.Fatalf("expected validation error, got %d: %s", response.Code, response.Body.String())
+			}
+		})
 	}
 }
 

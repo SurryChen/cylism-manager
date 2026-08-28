@@ -53,6 +53,43 @@ type ComponentWorkload struct {
 	Available int32
 }
 
+const (
+	traefikWebReadTimeoutArgument       = "--entryPoints.web.transport.respondingTimeouts.readTimeout="
+	traefikWebSecureReadTimeoutArgument = "--entryPoints.websecure.transport.respondingTimeouts.readTimeout="
+)
+
+// TraefikReadTimeout reports an effective timeout only when both HTTP and HTTPS
+// entrypoints are configured with the same expected value.
+func TraefikReadTimeout(deployment *appsv1.Deployment, expected string) (string, bool) {
+	if deployment == nil || expected == "" {
+		return "", false
+	}
+	var args []string
+	for index := range deployment.Spec.Template.Spec.Containers {
+		container := &deployment.Spec.Template.Spec.Containers[index]
+		if container.Name == "traefik" {
+			args = container.Args
+			break
+		}
+	}
+	if args == nil && len(deployment.Spec.Template.Spec.Containers) > 0 {
+		args = deployment.Spec.Template.Spec.Containers[0].Args
+	}
+	web, webSecure := "", ""
+	for _, argument := range args {
+		if strings.HasPrefix(argument, traefikWebReadTimeoutArgument) {
+			web = strings.TrimPrefix(argument, traefikWebReadTimeoutArgument)
+		}
+		if strings.HasPrefix(argument, traefikWebSecureReadTimeoutArgument) {
+			webSecure = strings.TrimPrefix(argument, traefikWebSecureReadTimeoutArgument)
+		}
+	}
+	if web == "" || web != webSecure {
+		return "", false
+	}
+	return web, web == expected
+}
+
 // StaticDeploymentConfig is the narrow set of workload fields owned by the
 // platform for a static K3s Deployment.
 type StaticDeploymentConfig struct {

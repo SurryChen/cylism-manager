@@ -15,23 +15,17 @@
       <div><h2>尚未部署自托管制品库</h2><p>部署后，平台会创建受认证保护、使用持久化存储并通过集群入口提供服务的 OCI Registry。</p></div>
     </section>
     <template v-else>
-      <section class="registry-summary" data-testid="registry-summary">
-        <div><span class="metric-label">入口地址</span><strong>{{ endpointURL(registry) }}</strong><small>{{ registry.insecure_http ? 'HTTP，凭据和镜像层以明文传输' : `HTTPS，证书 ${registry.certificate_name || '未关联'}` }}</small></div>
-        <div><span class="metric-label">运行状态</span><strong :class="statusClass(registry.status)">{{ statusLabel(registry.status) }}</strong><small>{{ registry.last_error || 'Registry 工作负载状态已同步' }}</small></div>
-        <div><span class="metric-label">持久化存储</span><strong>{{ registry.pvc_name }}</strong><small>{{ registry.storage_class_name }} · {{ registry.storage_size }} · {{ registry.pvc_phase || '等待状态同步' }}</small></div>
-        <div><span class="metric-label">节点下发</span><strong>{{ mirrorStatus(registry) }}</strong><small>选择节点后写入 K3s registries.yaml</small></div>
+      <section class="metric-grid registry-overview" data-testid="registry-summary">
+        <article class="metric registry-metric"><span>访问地址</span><strong class="registry-endpoint">{{ endpointURL(registry) }}</strong><small>{{ registry.insecure_http ? 'HTTP，凭据和镜像层以明文传输' : `HTTPS · ${registry.certificate_name || '未关联证书'}` }}</small></article>
+        <article class="metric registry-metric"><span>运行状态</span><strong><span class="badge" :class="statusBadgeClass(registry.status)"><i class="badge-dot"></i>{{ statusLabel(registry.status) }}</span></strong><small>{{ registry.last_error || 'Registry 工作负载状态已同步' }}</small></article>
+        <article class="metric registry-metric"><span>持久化存储</span><strong>{{ registry.pvc_name }}</strong><small>{{ registry.storage_class_name }} · {{ registry.storage_size }} · {{ registry.pvc_phase || '等待状态同步' }}</small></article>
       </section>
 
-      <section class="registry-details">
-        <div class="section-heading"><div><h2>Registry 配置</h2><p>凭据只以加密形式保存，不会再次展示。</p></div><div class="section-actions"><button v-if="needsRepair" data-testid="repair-registry" class="btn btn-secondary" :disabled="repairing" @click="repairRegistry"><RefreshCw :size="16" :class="{ 'is-spinning': repairing }" /> {{ repairing ? '修复中...' : '修复' }}</button><button class="icon-button" title="刷新状态" aria-label="刷新状态" :disabled="refreshing" @click="load"><RefreshCw :size="17" :class="{ 'is-spinning': refreshing }" /></button><button class="btn btn-secondary" @click="openEdit">编辑</button><button class="btn btn-danger" @click="deleteOpen = true">删除</button></div></div>
-        <dl class="detail-grid"><div><dt>Registry 镜像</dt><dd>{{ registry.registry_image }}</dd></div><div><dt>命名空间</dt><dd>{{ registry.namespace }}</dd></div><div><dt>数据节点</dt><dd>{{ registry.data_node }}</dd></div><div><dt>运行资源</dt><dd>CPU {{ registry.cpu_request }} - {{ registry.cpu_limit }} · 内存 {{ registry.memory_request }} - {{ registry.memory_limit }}</dd></div><div><dt>拉取账号</dt><dd>{{ registry.pull_username }}</dd></div><div><dt>TLS 证书</dt><dd>{{ registry.insecure_http ? '不使用（HTTP）' : registry.certificate_name || '未关联平台证书' }}</dd></div></dl>
+      <section class="card registry-panel" data-testid="registry-configuration">
+        <header class="card-header registry-panel-header"><div><h2 class="card-title">Registry 配置</h2><p>凭据仅以加密形式保存，不会再次展示。</p></div><div class="section-actions"><button v-if="needsRepair" data-testid="repair-registry" class="btn" :disabled="repairing" @click="repairRegistry"><RefreshCw :size="16" :class="{ 'is-spinning': repairing }" /> {{ repairing ? '修复中...' : '修复' }}</button><button class="icon-button" title="刷新状态" aria-label="刷新状态" :disabled="refreshing" @click="load"><RefreshCw :size="17" :class="{ 'is-spinning': refreshing }" /></button><button class="btn" @click="openEdit">编辑</button><button class="btn btn-danger" @click="deleteOpen = true">删除</button></div></header>
+        <dl class="registry-properties"><div><dt>Registry 镜像</dt><dd>{{ registry.registry_image }}</dd></div><div><dt>命名空间</dt><dd>{{ registry.namespace }}</dd></div><div><dt>数据节点</dt><dd>{{ registry.data_node }}</dd></div><div><dt>运行资源</dt><dd>CPU {{ registry.cpu_request }} - {{ registry.cpu_limit }} · 内存 {{ registry.memory_request }} - {{ registry.memory_limit }}</dd></div><div><dt>拉取账号</dt><dd>{{ registry.pull_username }}</dd></div><div><dt>TLS 证书</dt><dd>{{ registry.insecure_http ? '不使用（HTTP）' : registry.certificate_name || '未关联平台证书' }}</dd></div></dl>
       </section>
 
-      <section class="registry-details">
-        <div class="section-heading"><div><h2>节点镜像配置</h2><p>只会写入所选集群节点，并重启对应的 K3s 服务。</p></div><button class="btn btn-secondary" :disabled="selectedNodes.length === 0 || submitting" @click="applyNodes"><Send :size="16" /> 下发至 {{ selectedNodes.length }} 个节点</button></div>
-        <div v-if="clusterNodes.length" class="node-options"><label v-for="server in clusterNodes" :key="server.id" class="node-option"><input v-model="selectedNodes" :value="server.id" type="checkbox" /><span><strong>{{ server.k8s_node_name || server.name }}</strong><small>{{ server.host }} · {{ server.cluster_role }}</small></span></label></div>
-        <p v-else class="form-hint">尚无已绑定的 K3s 节点。</p>
-      </section>
     </template>
 
     <Teleport to="body"><div v-if="showForm" class="overlay registry-overlay" @click.self="closeForm"><div class="modal registry-modal"><h2 class="modal-title">{{ registry ? '编辑制品库' : '部署制品库' }}</h2><form @submit.prevent="save">
@@ -56,11 +50,10 @@
 
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
-import { AlertCircle, Database, Plus, RefreshCw, Send } from 'lucide-vue-next'
+import { AlertCircle, Database, Plus, RefreshCw } from 'lucide-vue-next'
 import { api } from '../api/index.js'
 
-const registry = ref(null); const servers = ref([]); const storagePreflight = ref(null); const pvcOptions = ref([]); const pvcOptionsLoading = ref(false); const certificateOptions = ref([]); const certificateError = ref(''); const certificatesLoading = ref(false); const loaded = ref(false); const refreshing = ref(false); const repairing = ref(false); const pageError = ref(''); const actionError = ref(null); const showForm = ref(false); const deleteOpen = ref(false); const submitting = ref(false); const selectedNodes = ref([]); const form = ref(newForm())
-const clusterNodes = computed(() => servers.value.filter(server => server.cluster_role))
+const registry = ref(null); const storagePreflight = ref(null); const pvcOptions = ref([]); const pvcOptionsLoading = ref(false); const certificateOptions = ref([]); const certificateError = ref(''); const certificatesLoading = ref(false); const loaded = ref(false); const refreshing = ref(false); const repairing = ref(false); const pageError = ref(''); const actionError = ref(null); const showForm = ref(false); const deleteOpen = ref(false); const submitting = ref(false); const form = ref(newForm())
 const registryDataNodes = computed(() => storagePreflight.value?.data_nodes || [])
 const selectedPVC = computed(() => pvcOptions.value.find(item => item.name === form.value.pvc_name) || null)
 const selectedCertificate = computed(() => certificateOptions.value.find(item => item.name === form.value.certificate_name) || null)
@@ -68,10 +61,9 @@ const needsRepair = computed(() => ['degraded', 'failed', 'pending'].includes(re
 function newForm() { return { name: '', namespace: 'cylism-system', endpoint: '', registry_image: 'registry:2', data_node: '', pvc_name: '', cpu_request: '100m', cpu_limit: '500m', memory_request: '256Mi', memory_limit: '1Gi', insecure_http: false, confirm_insecure_http: false, certificate_name: '', pull_username: 'cylism-pull', pull_password: '', project_ids: [] } }
 function endpointURL(item) { return `${item.insecure_http ? 'http' : 'https'}://${item.endpoint}` }
 function statusLabel(status) { return ({ ready: '就绪', deploying: '部署中', failed: '失败', degraded: '异常', pending: '待部署', migration_required: '需迁移' })[status] || '未知' }
-function statusClass(status) { return status === 'ready' ? 'status-ready' : status === 'failed' || status === 'degraded' || status === 'migration_required' ? 'status-failed' : 'status-pending' }
-function mirrorStatus(item) { return item.node_registry_mirror_id ? '可下发' : '未配置' }
+function statusBadgeClass(status) { return status === 'ready' ? 'badge-online' : status === 'failed' || status === 'degraded' || status === 'migration_required' ? 'badge-danger' : 'badge-deploying' }
 function showActionError(title, err, fallback) { actionError.value = { title, message: err.message || fallback } }
-async function load() { refreshing.value = true; pageError.value = ''; pvcOptionsLoading.value = true; try { const [registries, items, preflight, pvcs] = await Promise.all([api.get('/managed-oci-registries'), api.get('/servers'), api.get('/managed-oci-registries/storage-preflight'), api.get('/managed-oci-registries/pvcs')]); registry.value = registries[0] || null; servers.value = items || []; storagePreflight.value = preflight; pvcOptions.value = pvcs || [] } catch (err) { pageError.value = err.message || '加载制品库失败' } finally { loaded.value = true; refreshing.value = false; pvcOptionsLoading.value = false } }
+async function load() { refreshing.value = true; pageError.value = ''; pvcOptionsLoading.value = true; try { const [registries, preflight, pvcs] = await Promise.all([api.get('/managed-oci-registries'), api.get('/managed-oci-registries/storage-preflight'), api.get('/managed-oci-registries/pvcs')]); registry.value = registries[0] || null; storagePreflight.value = preflight; pvcOptions.value = pvcs || [] } catch (err) { pageError.value = err.message || '加载制品库失败' } finally { loaded.value = true; refreshing.value = false; pvcOptionsLoading.value = false } }
 function openCreate() { actionError.value = null; form.value = newForm(); showForm.value = true }
 function openEdit() { actionError.value = null; const item = registry.value; form.value = { ...newForm(), name: item.name, endpoint: item.endpoint, registry_image: item.registry_image, data_node: item.data_node, pvc_name: item.pvc_name, cpu_request: item.cpu_request, cpu_limit: item.cpu_limit, memory_request: item.memory_request, memory_limit: item.memory_limit, insecure_http: item.insecure_http, confirm_insecure_http: item.insecure_http, certificate_name: item.certificate_name, pull_username: item.pull_username }; showForm.value = true }
 function closeForm() { showForm.value = false; form.value = newForm(); certificateOptions.value = []; certificateError.value = '' }
@@ -83,13 +75,68 @@ function certificateCreateLink() { const params = new URLSearchParams({ create: 
 function pvcCreateLink() { const params = new URLSearchParams({ create: '1', namespace: 'cylism-system', name: 'cylism-oci-registry-data', storage_class_name: 'local-path', storage: '100Gi' }); if (form.value.data_node) params.set('node_name', form.value.data_node); return `#/storage?${params}` }
 async function save() { submitting.value = true; actionError.value = null; try { const payload = { ...form.value }; if (registry.value && !payload.pull_password) delete payload.pull_password; if (registry.value) await api.put(`/managed-oci-registries/${registry.value.id}`, payload); else await api.post('/managed-oci-registries', payload); closeForm(); await load() } catch (err) { showActionError(registry.value ? '保存配置失败' : '部署失败', err, '保存制品库失败') } finally { submitting.value = false } }
 async function repairRegistry() { if (!registry.value) return; repairing.value = true; actionError.value = null; try { await api.post(`/managed-oci-registries/${registry.value.id}/repair`); await load() } catch (err) { showActionError('修复制品库失败', err, '重新同步制品库资源失败') } finally { repairing.value = false } }
-async function applyNodes() { submitting.value = true; actionError.value = null; try { await api.post(`/managed-oci-registries/${registry.value.id}/apply-node-access`, { server_ids: selectedNodes.value }); await load() } catch (err) { showActionError('节点下发失败', err, '下发节点配置失败') } finally { submitting.value = false } }
-async function deleteRegistry() { submitting.value = true; actionError.value = null; try { await api.delete(`/managed-oci-registries/${registry.value.id}`, { confirm: true }); deleteOpen.value = false; selectedNodes.value = []; await load() } catch (err) { showActionError('删除制品库失败', err, '删除制品库失败') } finally { submitting.value = false } }
+async function deleteRegistry() { submitting.value = true; actionError.value = null; try { await api.delete(`/managed-oci-registries/${registry.value.id}`, { confirm: true }); deleteOpen.value = false; await load() } catch (err) { showActionError('删除制品库失败', err, '删除制品库失败') } finally { submitting.value = false } }
 onMounted(load)
 watch([showForm, () => form.value.insecure_http], loadCertificates)
 watch(() => selectedPVC.value?.bound_node, boundNode => { if (boundNode) form.value.data_node = boundNode })
 </script>
 
 <style scoped>
-.page-header,.section-heading { display:flex; align-items:flex-start; justify-content:space-between; gap:var(--space-16); }.page-subtitle,.section-heading p,.form-hint,.registry-empty p,.confirm-copy { margin:4px 0 0; color:var(--text-secondary); font-size:13px; }.registry-empty { display:flex; align-items:center; gap:16px; margin-top:28px; padding:24px 0; border-top:1px solid var(--border-muted); border-bottom:1px solid var(--border-muted); }.registry-empty h2,.section-heading h2 { margin:0; font-size:16px; }.registry-summary { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:1px; margin:26px 0; background:var(--border-muted); border:1px solid var(--border-muted); }.registry-summary>div { min-width:0; padding:16px; background:var(--surface); }.metric-label { display:block; margin-bottom:6px; color:var(--text-muted); font-size:11px; }.registry-summary strong,.registry-summary small { display:block; overflow-wrap:anywhere; }.registry-summary strong { font-size:14px; }.registry-summary small { margin-top:6px; color:var(--text-secondary); font-size:12px; }.status-ready { color:var(--success); }.status-failed { color:var(--danger); }.status-pending { color:var(--warning); }.registry-details { padding:20px 0; border-top:1px solid var(--border-muted); }.section-actions,.volume-heading { display:flex; align-items:center; gap:8px; }.volume-heading { justify-content:space-between; margin-bottom:8px; }.detail-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; margin:18px 0 0; }.detail-grid dt { color:var(--text-muted); font-size:12px; }.detail-grid dd { margin:4px 0 0; overflow-wrap:anywhere; font-size:13px; }.node-options,.transport-options { display:flex; flex-wrap:wrap; gap:8px; margin-top:18px; }.node-option,.transport-options label { display:flex; align-items:center; gap:8px; padding:9px 10px; border:1px solid var(--border-muted); border-radius:var(--radius-control); font-size:13px; }.node-option span { display:grid; gap:2px; }.node-option small { color:var(--text-muted); font-size:11px; }.resource-config { margin:20px 0; padding:16px 0; border-top:1px solid var(--border-muted); border-bottom:1px solid var(--border-muted); }.resource-config h3 { margin:0; font-size:14px; }.resource-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; margin-top:14px; }.registry-modal { width:min(620px,calc(100vw - 32px)); }.registry-overlay { z-index:3000; }.registry-notice-overlay { z-index:3100; }.registry-notice-modal { width:min(420px,calc(100vw - 32px)); }.registry-notice-icon { display:grid; width:46px; height:46px; margin-bottom:14px; place-items:center; border-radius:50%; background:var(--danger-surface); color:var(--danger); }.registry-notice-modal .modal-title { margin-bottom:0; }.registry-notice-text { margin:10px 0 0; color:var(--text-secondary); font-size:13px; line-height:1.7; overflow-wrap:anywhere; }.risk-confirm { display:flex; gap:8px; margin:0 0 14px; color:var(--danger); font-size:13px; }.is-spinning { animation:spin .8s linear infinite; }@keyframes spin { to { transform:rotate(360deg); } }@media(max-width:760px){.page-header,.section-heading{flex-direction:column;align-items:stretch}.registry-summary{grid-template-columns:1fr 1fr}.registry-empty{align-items:flex-start}.detail-grid,.resource-grid{grid-template-columns:1fr}}@media(max-width:480px){.registry-summary{grid-template-columns:1fr}}
+.page-header, .section-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-16); }
+.page-subtitle, .section-heading p, .form-hint, .registry-empty p, .confirm-copy { margin: 4px 0 0; color: var(--text-secondary); font-size: 13px; }
+.registry-empty { display: flex; align-items: center; gap: 16px; margin-top: 28px; padding: 24px 0; border-top: 1px solid var(--border-muted); border-bottom: 1px solid var(--border-muted); }
+.registry-empty h2 { margin: 0; font-size: 16px; }
+
+.registry-overview { margin-bottom: var(--space-16); }
+.registry-metric { display: grid; min-width: 0; min-height: 126px; align-content: start; gap: 8px; }
+.registry-metric > span { color: var(--text-muted); font-size: 11px; }
+.registry-metric strong { min-width: 0; color: var(--text-primary); font-size: 15px; line-height: 1.35; overflow-wrap: anywhere; }
+.registry-metric small { color: var(--text-secondary); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+.registry-endpoint { color: var(--action-primary) !important; font-family: var(--font-mono); }
+
+.registry-panel { margin-bottom: var(--space-16); padding: 0; }
+.registry-panel-header { min-height: 70px; margin: 0; padding: 16px 18px; border-bottom: 1px solid var(--border-muted); gap: var(--space-16); }
+.registry-panel-header p { margin: 4px 0 0; color: var(--text-secondary); font-size: 12px; line-height: 1.5; }
+.section-actions, .volume-heading { display: flex; align-items: center; gap: 8px; }
+.section-actions { flex-wrap: wrap; justify-content: flex-end; }
+.volume-heading { justify-content: space-between; margin-bottom: 8px; }
+.registry-properties { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin: 0; }
+.registry-properties > div { min-width: 0; min-height: 88px; padding: 15px 18px; border-right: 1px solid var(--border-muted); border-bottom: 1px solid var(--border-muted); }
+.registry-properties > div:nth-child(3n) { border-right: 0; }
+.registry-properties > div:nth-last-child(-n + 3) { border-bottom: 0; }
+.registry-properties dt { color: var(--text-muted); font-size: 10px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+.registry-properties dd { margin: 8px 0 0; color: var(--text-primary); font-size: 12px; line-height: 1.55; overflow-wrap: anywhere; }
+
+.transport-options { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.transport-options label { display: flex; align-items: center; gap: 8px; padding: 9px 10px; border: 1px solid var(--border-muted); border-radius: var(--radius-control); font-size: 13px; }
+.resource-config { margin: 20px 0; padding: 16px 0; border-top: 1px solid var(--border-muted); border-bottom: 1px solid var(--border-muted); }
+.resource-config h3 { margin: 0; font-size: 14px; }
+.resource-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 14px; }
+.registry-modal { width: min(620px, calc(100vw - 32px)); }
+.registry-overlay { z-index: 3000; }
+.registry-notice-overlay { z-index: 3100; }
+.registry-notice-modal { width: min(420px, calc(100vw - 32px)); }
+.registry-notice-icon { display: grid; width: 46px; height: 46px; margin-bottom: 14px; place-items: center; border-radius: 50%; background: var(--danger-surface); color: var(--danger); }
+.registry-notice-modal .modal-title { margin-bottom: 0; }
+.registry-notice-text { margin: 10px 0 0; color: var(--text-secondary); font-size: 13px; line-height: 1.7; overflow-wrap: anywhere; }
+.risk-confirm { display: flex; gap: 8px; margin: 0 0 14px; color: var(--danger); font-size: 13px; }
+.is-spinning { animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+@media (max-width: 760px) {
+  .page-header, .section-heading, .registry-panel-header { flex-direction: column; align-items: stretch; }
+  .registry-properties { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .registry-properties > div:nth-child(3n) { border-right: 1px solid var(--border-muted); }
+  .registry-properties > div:nth-child(2n) { border-right: 0; }
+  .registry-properties > div:nth-last-child(-n + 3) { border-bottom: 1px solid var(--border-muted); }
+  .registry-properties > div:nth-last-child(-n + 2) { border-bottom: 0; }
+  .resource-grid { grid-template-columns: 1fr; }
+}
+@media (max-width: 480px) {
+  .registry-properties { grid-template-columns: 1fr; }
+  .registry-properties > div, .registry-properties > div:nth-child(3n) { border-right: 0; border-bottom: 1px solid var(--border-muted); }
+  .registry-properties > div:last-child { border-bottom: 0; }
+  .section-actions { justify-content: flex-start; }
+  .section-actions .btn, .registry-panel-header > .btn { flex: 1 1 auto; }
+}
 </style>

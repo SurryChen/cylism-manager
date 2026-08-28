@@ -75,6 +75,18 @@ describe('ManagedOCIRegistries view', () => {
     wrapper.unmount()
   })
 
+  it('uses infrastructure metrics and configuration panel without duplicating node mirror controls', async () => {
+    const { api } = await import('../api/index.js')
+    api.get.mockImplementation(path => Promise.resolve(path === '/servers' ? [{ id: 7, name: 'worker-1', host: '10.0.0.7', cluster_role: 'worker', k8s_node_name: 'node-a' }] : path === '/managed-oci-registries/storage-preflight' ? { ready: true, storage_class_name: 'local-path', storage_classes: ['local-path'], data_nodes: ['node-a'] } : path === '/managed-oci-registries/pvcs' ? [{ name: 'registry-data', namespace: 'cylism-system', storage: '10Gi', storage_class_name: 'local-path', phase: 'Bound', access_modes: ['ReadWriteOnce'] }] : [{ id: 1, endpoint: 'registry.internal', status: 'ready', data_node: 'node-a', pvc_name: 'registry-data', storage_size: '10Gi', storage_class_name: 'local-path', registry_image: 'registry:2', namespace: 'cylism-system', pull_username: 'cylism-pull', certificate_name: 'registry-cert', node_registry_mirror_id: 2 }]))
+    const wrapper = mount(ManagedOCIRegistries)
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(wrapper.findAll('.registry-overview .metric')).toHaveLength(3)
+    expect(wrapper.findAll('.registry-panel.card')).toHaveLength(1)
+    expect(wrapper.text()).not.toContain('节点镜像配置')
+    expect(wrapper.find('[data-testid="registry-node-table"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
   it('repairs an unhealthy Registry through the platform endpoint', async () => {
     const { api } = await import('../api/index.js')
     api.get.mockImplementation(path => Promise.resolve(path === '/servers' ? [] : path === '/managed-oci-registries/storage-preflight' ? { ready: true, storage_class_name: 'local-path', storage_classes: ['local-path'], data_nodes: ['node-a'] } : path === '/managed-oci-registries/pvcs' ? [{ name: 'registry-data', namespace: 'cylism-system', storage: '10Gi', storage_class_name: 'local-path', phase: 'Bound', access_modes: ['ReadWriteOnce'] }] : [{ id: 1, endpoint: 'registry.internal', status: 'degraded', data_node: 'node-a', pvc_name: 'registry-data', storage_size: '10Gi', registry_image: 'registry:2', namespace: 'cylism-system', pull_username: 'cylism-pull', last_error: 'Registry 尚未就绪' }]))
