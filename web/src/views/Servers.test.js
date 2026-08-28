@@ -7,6 +7,17 @@ import { api } from '../api/index.js'
 vi.mock('../api/index.js', () => ({
   api: {
     get: vi.fn().mockImplementation(url => {
+	  if (url === '/servers/network-diagnostics') return Promise.resolve({
+	    servers: [
+	      { server_id: 1, name: 'test-srv', k8s_unit: 'k3s', network_mode: 'k3s_embedded_tailscale', tailscale: { installed: true, online: true, tailnet_ip: '100.101.102.1', udp: true, ipv4: true, nearest_derp: 'tok' } },
+	      { server_id: 2, name: 'cluster-srv', network_mode: 'external_tailscale', tailscale: { installed: true, online: true, tailnet_ip: '100.101.102.2', udp: false, ipv4: true } },
+	    ],
+	    links: [
+	      { source_server_id: 1, target_server_id: 2, path: 'direct', latency_ms: 18 },
+	      { source_server_id: 2, target_server_id: 1, path: 'derp', derp_region: 'tok', latency_ms: 126 },
+	      { source_server_id: 1, target_server_id: 3, path: 'unreachable', error_code: 'ping_timeout' },
+	    ],
+	  })
       if (url === '/servers/resource-stats') return Promise.resolve([
         { server_id: 1, status: 'ready', cpu_percent: 42.5, cpu_cores: 2, memory_used_mb: 512, memory_total_mb: 1024, disk_used_gb: 8, disk_total_gb: 40, load_1m: 0.4, uptime: '2 days', sampled_at: '2026-08-03T09:00:00Z' },
         { server_id: 2, status: 'unreachable', error: 'SSH connection timed out', sampled_at: '2026-08-03T09:00:00Z' },
@@ -31,7 +42,7 @@ describe('Servers view', () => {
     expect(wrapper.text()).toContain('集群节点已经拆分到“集群节点”页面')
     expect(wrapper.findAll('.tab-btn')).toHaveLength(0)
     expect(wrapper.get('.section-tabs-header').find('h1').text()).toBe('服务器')
-    expect(wrapper.findAll('.section-tab')).toHaveLength(2)
+    expect(wrapper.findAll('.section-tab')).toHaveLength(3)
     expect(wrapper.find('.server-content').exists()).toBe(true)
   })
 
@@ -69,6 +80,36 @@ describe('Servers view', () => {
     expect(wrapper.text()).toContain('42.5%')
     expect(wrapper.text()).toContain('不可达')
     expect(wrapper.find('.resource-overview').classes()).toContain('card')
+    wrapper.unmount()
+  })
+
+  it('shows manually refreshed Tailscale diagnostics without raw remote output', async () => {
+    const wrapper = mount(Servers, { global: { stubs: { RouterLink: true } } })
+    await new Promise(r => setTimeout(r, 200))
+    await wrapper.findAll('button').find(button => button.text().includes('网络诊断')).trigger('click')
+    await new Promise(r => setTimeout(r, 0))
+    await nextTick()
+
+    expect(api.get).toHaveBeenCalledWith('/servers/network-diagnostics')
+    expect(wrapper.text()).toContain('K3s 内建 Tailscale')
+	    expect(wrapper.text()).toContain('UDP 直连')
+    expect(wrapper.text()).toContain('DERP 中继')
+    expect(wrapper.text()).toContain('不可达')
+    expect(wrapper.text()).toContain('超时')
+    expect(wrapper.text()).toContain('126 ms')
+    expect(wrapper.text()).not.toContain('ExecStart')
+    wrapper.unmount()
+  })
+
+  it('shows a concise failure state when network diagnostics cannot be collected', async () => {
+    const wrapper = mount(Servers, { global: { stubs: { RouterLink: true } } })
+    await new Promise(r => setTimeout(r, 200))
+    api.get.mockRejectedValueOnce(new Error('connection failed'))
+    await wrapper.findAll('button').find(button => button.text().includes('网络诊断')).trigger('click')
+    await new Promise(r => setTimeout(r, 0))
+    await nextTick()
+
+    expect(wrapper.text()).toContain('网络诊断请求失败')
     wrapper.unmount()
   })
 

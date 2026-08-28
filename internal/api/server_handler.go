@@ -24,14 +24,18 @@ import (
 )
 
 type ServerHandler struct {
-	store          *store.Store
-	encKey         []byte
-	statsCollector func(*model.Server) (gin.H, error)
+	store                    *store.Store
+	encKey                   []byte
+	statsCollector           func(*model.Server) (gin.H, error)
+	networkSnapshotCollector func(*model.Server) (serverNetworkDiagnostic, error)
+	networkLinkCollector     func(*model.Server, string) (tailnetLinkDiagnostic, error)
 }
 
 func NewServerHandler(s *store.Store, encKey []byte) *ServerHandler {
 	h := &ServerHandler{store: s, encKey: encKey}
 	h.statsCollector = h.collectResourceStats
+	h.networkSnapshotCollector = h.collectNetworkSnapshot
+	h.networkLinkCollector = h.collectNetworkLink
 	return h
 }
 
