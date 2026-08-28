@@ -20,6 +20,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
 )
@@ -93,6 +94,7 @@ func setupManagedOCIRegistryRouterWithHandler(t *testing.T) (*gin.Engine, *store
 	group.POST("", h.Create)
 	group.GET("/:id", h.Get)
 	group.PUT("/:id", h.Update)
+	group.POST("/:id/repair", h.Repair)
 	group.POST("/:id/apply-node-access", h.ApplyNodeAccess)
 	group.DELETE("/:id", h.Delete)
 	return r, s, h
@@ -138,6 +140,45 @@ func TestManagedOCIRegistryCreateRendersProtectedResources(t *testing.T) {
 	ingress, err := K8s.Clientset.NetworkingV1().Ingresses(registry.Namespace).Get(context.Background(), registry.ResourceName, metav1.GetOptions{})
 	if err != nil || ingress.Spec.Rules[0].Host != "registry.internal" || len(ingress.Spec.TLS) != 1 {
 		t.Fatalf("expected HTTPS host ingress, ingress=%#v err=%v", ingress, err)
+	}
+}
+
+func TestManagedOCIRegistryRepairReconcilesResourcesAndTCPReadiness(t *testing.T) {
+	r, s := setupManagedOCIRegistryRouter(t)
+	created := serve(r, newJSONRequest(http.MethodPost, "/api/managed-oci-registries", managedRegistryPayload()))
+	if created.Code != http.StatusOK {
+		t.Fatal(created.Body.String())
+	}
+	registry, err := s.GetManagedOCIRegistry(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deployment, err := K8s.Clientset.AppsV1().Deployments(registry.Namespace).Get(context.Background(), registry.ResourceName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deployment.Spec.Template.Spec.Containers[0].ReadinessProbe = &corev1.Probe{ProbeHandler: corev1.ProbeHandler{HTTPGet: &corev1.HTTPGetAction{Path: "/v2/", Port: intstr.FromInt(5000)}}}
+	if _, err := K8s.Clientset.AppsV1().Deployments(registry.Namespace).Update(context.Background(), deployment, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := K8s.Clientset.CoreV1().Services(registry.Namespace).Delete(context.Background(), registry.ResourceName, metav1.DeleteOptions{}); err != nil {
+		t.Fatal(err)
+	}
+
+	repaired := serve(r, newJSONRequest(http.MethodPost, "/api/managed-oci-registries/1/repair", nil))
+	if repaired.Code != http.StatusOK || !strings.Contains(repaired.Body.String(), `"status":"deploying"`) {
+		t.Fatalf("expected repair success: %d %s", repaired.Code, repaired.Body.String())
+	}
+	deployment, err = K8s.Clientset.AppsV1().Deployments(registry.Namespace).Get(context.Background(), registry.ResourceName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	probe := deployment.Spec.Template.Spec.Containers[0].ReadinessProbe
+	if probe == nil || probe.TCPSocket == nil || probe.TCPSocket.Port.IntVal != 5000 || probe.HTTPGet != nil {
+		t.Fatalf("expected TCP readiness probe after repair: %#v", probe)
+	}
+	if _, err := K8s.Clientset.CoreV1().Services(registry.Namespace).Get(context.Background(), registry.ResourceName, metav1.GetOptions{}); err != nil {
+		t.Fatalf("expected service to be repaired: %v", err)
 	}
 }
 
@@ -279,6 +320,31 @@ func TestManagedOCIRegistryReportsPendingPVC(t *testing.T) {
 	}
 }
 
+func TestManagedOCIRegistryReportsUnreadyDeployment(t *testing.T) {
+	r, s := setupManagedOCIRegistryRouter(t)
+	created := serve(r, newJSONRequest(http.MethodPost, "/api/managed-oci-registries", managedRegistryPayload()))
+	if created.Code != http.StatusOK {
+		t.Fatal(created.Body.String())
+	}
+	registry, err := s.GetManagedOCIRegistry(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pvc, err := K8s.Clientset.CoreV1().PersistentVolumeClaims(registry.Namespace).Get(context.Background(), registry.PVCName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pvc.Status.Phase = corev1.ClaimBound
+	if _, err := K8s.Clientset.CoreV1().PersistentVolumeClaims(registry.Namespace).UpdateStatus(context.Background(), pvc, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+
+	response := serve(r, newJSONRequest(http.MethodGet, "/api/managed-oci-registries/1", nil))
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "Registry Deployment 尚未就绪") || strings.Contains(response.Body.String(), "Registry Deployment 不存在") {
+		t.Fatalf("expected unready Deployment status: %d %s", response.Code, response.Body.String())
+	}
+}
+
 func TestManagedOCIRegistryRequiresMigrationForLegacyHostPath(t *testing.T) {
 	r, s := setupManagedOCIRegistryRouter(t)
 	created := serve(r, newJSONRequest(http.MethodPost, "/api/managed-oci-registries", managedRegistryPayload()))
@@ -395,6 +461,9 @@ func assertManagedRegistryDeployment(t *testing.T, deployment *appsv1.Deployment
 	}
 	if container.Resources.Requests.Cpu().String() != "100m" || container.Resources.Limits.Cpu().String() != "500m" || container.Resources.Requests.Memory().String() != "256Mi" || container.Resources.Limits.Memory().String() != "1Gi" {
 		t.Fatalf("expected Registry resource configuration: %#v", container.Resources)
+	}
+	if container.ReadinessProbe == nil || container.ReadinessProbe.TCPSocket == nil || container.ReadinessProbe.TCPSocket.Port.IntVal != 5000 {
+		t.Fatalf("expected authenticated Registry TCP readiness probe: %#v", container.ReadinessProbe)
 	}
 }
 

@@ -186,6 +186,7 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 		managedOCIRegistries.POST("", h.Create)
 		managedOCIRegistries.GET("/:id", h.Get)
 		managedOCIRegistries.PUT("/:id", h.Update)
+		managedOCIRegistries.POST("/:id/repair", h.Repair)
 		managedOCIRegistries.POST("/:id/apply-node-access", h.ApplyNodeAccess)
 		managedOCIRegistries.DELETE("/:id", h.Delete)
 	}
