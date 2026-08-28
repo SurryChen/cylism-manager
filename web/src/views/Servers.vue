@@ -57,7 +57,7 @@
     </div>
     </template>
 
-    <template v-else>
+    <template v-else-if="activeSection === 'monitoring'">
       <section class="card resource-overview section-gap">
         <div><h2 class="resource-overview-title">资源概览</h2><p class="resource-overview-meta">{{ resourceSamplingLabel }}</p></div>
         <div class="btn-group"><button class="icon-button" title="刷新资源数据" aria-label="刷新资源数据" :disabled="resourceStatsLoading" @click="refreshResourceStats"><RefreshCw :size="16" :class="{ 'is-spinning': resourceStatsLoading }" /></button></div>
@@ -67,6 +67,22 @@
         <div v-if="resourceStatsLoading && !resourceStats.length" class="empty-state"><span class="empty-text">正在采集服务器资源...</span></div>
         <div v-else class="table-wrap"><table class="data-table resource-table"><thead><tr><th>服务器</th><th>采集状态</th><th>CPU</th><th>内存</th><th>磁盘 /</th><th>负载</th><th>运行时间</th><th>采样时间</th></tr></thead><tbody><tr v-for="srv in servers" :key="srv.id" class="resource-row" @click="openStats(srv.id)"><td class="cell-primary">{{ srv.name }}<small class="cell-secondary">{{ srv.host }}</small></td><td><span class="badge" :class="resourceStatusClass(resourceFor(srv.id))">{{ resourceStatusLabel(resourceFor(srv.id)) }}</span><small v-if="resourceFor(srv.id)?.error" class="resource-error">{{ resourceFor(srv.id).error }}</small></td><td><div class="resource-metric"><strong>{{ formatPercent(resourceFor(srv.id)?.cpu_percent) }}</strong><span class="resource-meter"><i :class="resourceLevelClass(resourceFor(srv.id)?.cpu_percent)" :style="{ width: `${metricPercent(resourceFor(srv.id)?.cpu_percent)}%` }" /></span></div></td><td><div class="resource-metric"><strong>{{ formatMB(resourceFor(srv.id)?.memory_used_mb) }} / {{ formatMB(resourceFor(srv.id)?.memory_total_mb) }}</strong><span class="resource-meter"><i :class="resourceLevelClass(memPercent(resourceFor(srv.id)))" :style="{ width: `${metricPercent(memPercent(resourceFor(srv.id)))}%` }" /></span></div></td><td><div class="resource-metric"><strong>{{ resourceFor(srv.id)?.disk_used_gb ?? '-' }} / {{ resourceFor(srv.id)?.disk_total_gb ?? '-' }} GB</strong><span class="resource-meter"><i :class="resourceLevelClass(diskPercent(resourceFor(srv.id)))" :style="{ width: `${metricPercent(diskPercent(resourceFor(srv.id)))}%` }" /></span></div></td><td>{{ formatLoad(resourceFor(srv.id)) }}</td><td>{{ resourceFor(srv.id)?.uptime || '-' }}</td><td>{{ formatSampleTime(resourceFor(srv.id)?.sampled_at) }}</td></tr></tbody></table></div>
       </div>
+    </template>
+
+    <template v-else>
+      <section class="card network-overview section-gap">
+        <h2 class="network-overview-title">网络诊断</h2>
+        <button class="icon-button" title="刷新网络诊断" aria-label="刷新网络诊断" :disabled="networkDiagnosticsLoading" @click="refreshNetworkDiagnostics"><RefreshCw :size="16" :class="{ 'is-spinning': networkDiagnosticsLoading }" /></button>
+      </section>
+      <div v-if="networkDiagnosticsLoading && !networkDiagnostics.servers.length" class="empty-state"><span class="empty-text">正在采集网络状态...</span></div>
+      <div v-else-if="networkDiagnosticsError" class="empty-state"><span class="empty-text">{{ networkDiagnosticsError }}</span></div>
+      <div v-else-if="!networkDiagnostics.servers.length" class="empty-state"><span class="empty-icon">⬡</span><span class="empty-text">暂无诊断结果</span></div>
+      <section v-else class="card section-gap network-table-card">
+        <div class="table-wrap"><table class="data-table network-table"><thead><tr><th>服务器</th><th>K3s 网络</th><th>Tailscale</th><th>Tailnet IP</th><th>UDP</th><th>IPv4</th><th>最近 DERP</th></tr></thead><tbody><tr v-for="diagnostic in networkDiagnostics.servers" :key="diagnostic.server_id"><td class="cell-primary">{{ diagnostic.name }}<small class="cell-secondary">{{ diagnostic.k8s_unit || '-' }}</small></td><td><span class="badge" :class="networkModeClass(diagnostic)">{{ networkModeLabel(diagnostic.network_mode) }}</span></td><td><span class="badge" :class="tailscaleStatusClass(diagnostic)">{{ tailscaleStatusLabel(diagnostic) }}</span></td><td>{{ diagnostic.tailscale?.tailnet_ip || '-' }}</td><td>{{ booleanLabel(diagnostic.tailscale?.udp) }}</td><td>{{ booleanLabel(diagnostic.tailscale?.ipv4) }}</td><td>{{ diagnostic.tailscale?.nearest_derp || '-' }}</td></tr></tbody></table></div>
+      </section>
+      <section v-if="networkDiagnostics.links.length" class="card network-table-card">
+        <div class="table-wrap"><table class="data-table network-table"><thead><tr><th>源服务器</th><th>目标服务器</th><th>链路</th><th>延迟</th><th>DERP</th><th>状态</th></tr></thead><tbody><tr v-for="link in networkDiagnostics.links" :key="`${link.source_server_id}-${link.target_server_id}`"><td class="cell-primary">{{ diagnosticServerName(link.source_server_id) }}</td><td class="cell-primary">{{ diagnosticServerName(link.target_server_id) }}</td><td><span class="badge" :class="linkPathClass(link.path)">{{ linkPathLabel(link.path) }}</span></td><td>{{ link.latency_ms ? `${link.latency_ms} ms` : '-' }}</td><td>{{ link.derp_region || '-' }}</td><td>{{ linkErrorLabel(link.error_code) }}</td></tr></tbody></table></div>
+      </section>
     </template>
     </main>
 
@@ -237,10 +253,14 @@ const activeSection = ref('configuration')
 const sections = [
   { id: 'configuration', label: '基本配置' },
   { id: 'monitoring', label: '资源监控' },
+  { id: 'network-diagnostics', label: '网络诊断' },
 ]
 const resourceStats = ref([])
 const resourceStatsLoading = ref(false)
 const resourceStatsUpdatedAt = ref('')
+const networkDiagnostics = ref({ servers: [], links: [] })
+const networkDiagnosticsLoading = ref(false)
+const networkDiagnosticsError = ref('')
 const showAdd = ref(false)
 const editingId = ref(null)
 const deleteTarget = ref(null)
@@ -277,6 +297,7 @@ const cpuChartData = computed(() => chartRingData(statsData.value.cpu_percent, '
 const memChartData = computed(() => chartRingData(memPercent(statsData.value), 'Mem'))
 const diskChartData = computed(() => chartRingData(diskPercent(statsData.value), 'Disk'))
 const resourceStatsByServerID = computed(() => new Map(resourceStats.value.map(stats => [Number(stats.server_id), stats])))
+const networkDiagnosticsByServerID = computed(() => new Map(networkDiagnostics.value.servers.map(diagnostic => [Number(diagnostic.server_id), diagnostic])))
 const resourceSamplingLabel = computed(() => {
   if (resourceStatsLoading.value) return '正在采集资源数据...'
   if (!resourceStatsUpdatedAt.value) return '进入此视图后开始采集'
@@ -308,7 +329,10 @@ onUnmounted(() => {
   closeTerminal()
 })
 
-watch(activeSection, syncResourcePolling)
+watch(activeSection, (section) => {
+  syncResourcePolling()
+  if (section === 'network-diagnostics') refreshNetworkDiagnostics()
+})
 
 async function fetchServers() { try { servers.value = await api.get('/servers') || [] } catch (e) { console.error(e) } }
 
@@ -333,6 +357,37 @@ async function refreshResourceStats() {
     resourceStatsLoading.value = false
   }
 }
+
+async function refreshNetworkDiagnostics() {
+  if (networkDiagnosticsLoading.value) return
+  networkDiagnosticsLoading.value = true
+  networkDiagnosticsError.value = ''
+  try {
+    const result = await api.get('/servers/network-diagnostics')
+    networkDiagnostics.value = {
+      servers: Array.isArray(result?.servers) ? result.servers : [],
+      links: Array.isArray(result?.links) ? result.links : [],
+    }
+  } catch (e) {
+    console.error(e)
+    networkDiagnostics.value = { servers: [], links: [] }
+    networkDiagnosticsError.value = '网络诊断请求失败'
+  } finally {
+    networkDiagnosticsLoading.value = false
+  }
+}
+
+function networkModeLabel(mode) {
+  return ({ k3s_embedded_tailscale: 'K3s 内建 Tailscale', external_tailscale: '外部 Tailscale', standard_network: '标准网络', unknown: '未知' })[mode] || '未知'
+}
+function networkModeClass(diagnostic) { return diagnostic.error_code ? 'badge-danger' : diagnostic.network_mode === 'k3s_embedded_tailscale' ? 'badge-online' : diagnostic.network_mode === 'external_tailscale' ? 'badge-deploying' : 'badge-offline' }
+function tailscaleStatusLabel(diagnostic) { if (!diagnostic.tailscale?.installed) return '未安装'; return diagnostic.tailscale.online ? '在线' : '未连接' }
+function tailscaleStatusClass(diagnostic) { return diagnostic.tailscale?.online ? 'badge-online' : diagnostic.tailscale?.installed ? 'badge-deploying' : 'badge-offline' }
+function booleanLabel(value) { return value === true ? '可用' : value === false ? '不可用' : '-' }
+function diagnosticServerName(serverID) { return networkDiagnosticsByServerID.value.get(Number(serverID))?.name || '-' }
+function linkPathLabel(path) { return ({ direct: 'UDP 直连', derp: 'DERP 中继', unreachable: '不可达', unknown: '未知' })[path] || '未知' }
+function linkPathClass(path) { return path === 'direct' ? 'badge-online' : path === 'derp' ? 'badge-deploying' : path === 'unreachable' ? 'badge-danger' : 'badge-offline' }
+function linkErrorLabel(code) { return ({ ping_timeout: '超时', ping_failed: '探测失败', ping_unclassified: '未识别', invalid_target: '目标无效' })[code] || (code ? '异常' : '正常') }
 
 function stopResourcePolling() {
   if (resourcePollTimer) window.clearInterval(resourcePollTimer)
@@ -708,6 +763,10 @@ function resetForm() { form.value = { name: '', host: '', ssh_port: 22, ssh_user
 .resource-overview { display: flex; align-items: center; justify-content: space-between; gap: var(--space-16); }
 .resource-overview-title { margin: 0; color: var(--text-primary); font-size: 16px; }
 .resource-overview-meta { margin: 4px 0 0; color: var(--text-muted); font-size: 11px; }
+.network-overview { display: flex; align-items: center; justify-content: space-between; gap: var(--space-16); }
+.network-overview-title { margin: 0; color: var(--text-primary); font-size: 16px; }
+.network-table-card { margin-top: var(--space-16); }
+.network-table td { white-space: nowrap; }
 .resource-row { cursor: pointer; }
 .resource-row:hover { background: var(--surface-hover); }
 .resource-metric { display: grid; min-width: 130px; gap: 6px; }
@@ -719,6 +778,7 @@ function resetForm() { form.value = { name: '', host: '', ssh_port: 22, ssh_user
 .resource-error { display: block; max-width: 170px; margin-top: 3px; overflow: hidden; color: var(--danger); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 @media (max-width: 640px) {
   .resource-overview { align-items: flex-start; }
+  .network-overview { align-items: flex-start; }
   .resource-metric { min-width: 116px; }
 }
 
