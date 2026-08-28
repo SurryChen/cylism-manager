@@ -54,6 +54,7 @@
               </td>
               <td>
                 <span class="badge" :class="configBadgeClass(item)">{{ configBadgeText(item) }}</span>
+                <small v-if="isTraefik(item)" class="cell-secondary">{{ traefikTimeoutStatus(item) }}</small>
                 <small v-if="configNeedsAttention(item)" class="detail">{{ configIssueText(item) }}</small>
                 <small v-if="item.availability?.description" class="cell-secondary">{{ item.availability.description }}</small>
                 <small v-if="item.last_applied_at" class="cell-secondary">应用于 {{ formatTime(item.last_applied_at) }}</small>
@@ -97,6 +98,17 @@
               <option value="25%">25%（Kubernetes 默认）</option>
             </select>
           </div>
+          <div v-if="isTraefik(editing)" class="form-group">
+            <label class="form-label">入口请求读取超时</label>
+            <select v-model="form.traefikReadTimeoutMode" class="form-select" data-testid="traefik-read-timeout" @change="selectTraefikReadTimeout">
+              <option value="">使用 Traefik 默认值（60 秒）</option>
+              <option value="5m">5 分钟</option>
+              <option value="30m">30 分钟（推荐）</option>
+              <option value="1h">1 小时</option>
+              <option value="custom">自定义</option>
+            </select>
+            <input v-if="form.traefikReadTimeoutMode === 'custom'" v-model.trim="form.traefikReadTimeout" class="form-input timeout-input" required placeholder="例如 15m" data-testid="traefik-custom-read-timeout" />
+          </div>
           <div v-if="canPlace(editing)" class="form-group">
             <div class="config-section-title">节点调度</div>
             <label class="form-label">部署节点</label>
@@ -136,7 +148,7 @@ const nodes = ref([])
 const schedulableNodes = computed(() => nodes.value.filter(node => node.ready && !node.evicted))
 
 function blankForm() {
-  return { replicas: null, maxUnavailable: '0', maxSurge: '1', nodeName: '' }
+  return { replicas: null, maxUnavailable: '0', maxSurge: '1', nodeName: '', traefikReadTimeout: '', traefikReadTimeoutMode: '' }
 }
 
 async function load() {
@@ -175,6 +187,28 @@ function configBadgeText(item) {
 
 function configNeedsAttention(item) {
   return item.apply_status === 'failed' || item.effective === false
+}
+
+function isTraefik(item) {
+  return item?.chart_name === 'traefik'
+}
+
+function traefikTimeoutStatus(item) {
+  const state = item?.traefik
+  if (!state?.read_timeout) return '读取超时使用默认 60 秒'
+  return state.read_timeout_effective ? `读取超时 ${state.effective_read_timeout}，已生效` : `读取超时 ${state.read_timeout}，等待生效`
+}
+
+function isTraefikTimeoutPreset(value) {
+  return ['', '5m', '30m', '1h'].includes(value)
+}
+
+function selectTraefikReadTimeout() {
+  if (form.value.traefikReadTimeoutMode !== 'custom') {
+    form.value.traefikReadTimeout = form.value.traefikReadTimeoutMode
+  } else if (isTraefikTimeoutPreset(form.value.traefikReadTimeout)) {
+    form.value.traefikReadTimeout = ''
+  }
 }
 
 function configIssueText(item) {
@@ -270,6 +304,12 @@ function parseValues(content, item) {
     else if (key === 'maxUnavailable') parsed.maxUnavailable = String(value)
     else if (key === 'maxSurge') parsed.maxSurge = String(value)
   }
+  const webTimeout = String(content || '').match(/--entryPoints\.web\.transport\.respondingTimeouts\.readTimeout=([^'"\s]+)/)?.[1] || ''
+  const webSecureTimeout = String(content || '').match(/--entryPoints\.websecure\.transport\.respondingTimeouts\.readTimeout=([^'"\s]+)/)?.[1] || ''
+  if (webTimeout && webTimeout === webSecureTimeout) {
+    parsed.traefikReadTimeout = webTimeout
+    parsed.traefikReadTimeoutMode = isTraefikTimeoutPreset(webTimeout) ? webTimeout : 'custom'
+  }
   return parsed
 }
 
@@ -319,7 +359,9 @@ async function save() {
   saving.value = true
   error.value = ''
   try {
-    await api.put(`/system-components/${editing.value.chart_name}`, { values_content: renderValues(form.value) })
+    const payload = { values_content: renderValues(form.value) }
+    if (isTraefik(editing.value)) payload.traefik_read_timeout = form.value.traefikReadTimeout
+    await api.put(`/system-components/${editing.value.chart_name}`, payload)
     close()
     await load()
   } catch (err) {
@@ -361,6 +403,7 @@ onMounted(load)
 .config-section-title { margin: 20px 0 10px; color: var(--text-primary); font-size: 13px; font-weight: 600; }
 .config-section-title:first-child { margin-top: 0; }
 .baseline-hint { margin: 12px 0 0; padding: 9px 11px; border-radius: var(--radius-control); background: var(--surface-subtle); color: var(--text-secondary); font-size: 12px; line-height: 1.5; }
+.timeout-input { margin-top: var(--space-8); }
 @media (max-width: 640px) {
   .page-header { flex-direction: column; }
   .page-header .btn { width: 100%; }

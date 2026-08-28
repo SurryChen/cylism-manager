@@ -123,6 +123,25 @@ func TestHelmChartConfigDeleteMissingIsNoop(t *testing.T) {
 	}
 }
 
+func TestTraefikReadTimeoutsRequireBothEntrypoints(t *testing.T) {
+	deployment := &appsv1.Deployment{Spec: appsv1.DeploymentSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{
+		Name: "traefik",
+		Args: []string{
+			"--entryPoints.web.transport.respondingTimeouts.readTimeout=30m",
+			"--entryPoints.websecure.transport.respondingTimeouts.readTimeout=30m",
+		},
+	}}}}}}
+	value, effective := TraefikReadTimeout(deployment, "30m")
+	if value != "30m" || !effective {
+		t.Fatalf("matching entrypoint arguments must be effective, got %q %v", value, effective)
+	}
+	deployment.Spec.Template.Spec.Containers[0].Args[1] = "--entryPoints.websecure.transport.respondingTimeouts.readTimeout=5m"
+	value, effective = TraefikReadTimeout(deployment, "30m")
+	if value != "" || effective {
+		t.Fatalf("mismatched entrypoint arguments must not be effective, got %q %v", value, effective)
+	}
+}
+
 func TestApplyCoreDNSConfigUpdatesRolloutAndNodePlacement(t *testing.T) {
 	replicas := int32(1)
 	client := &Client{Clientset: k8sfake.NewSimpleClientset(&appsv1.Deployment{

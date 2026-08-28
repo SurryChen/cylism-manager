@@ -35,8 +35,15 @@ func NewSystemComponentHandler(s *store.Store) *SystemComponentHandler {
 }
 
 type systemComponentUpdateRequest struct {
-	ValuesContent string `json:"values_content"`
+	ValuesContent      string  `json:"values_content"`
+	TraefikReadTimeout *string `json:"traefik_read_timeout"`
 }
+
+const (
+	traefikWebReadTimeoutArgument       = "--entryPoints.web.transport.respondingTimeouts.readTimeout="
+	traefikWebSecureReadTimeoutArgument = "--entryPoints.websecure.transport.respondingTimeouts.readTimeout="
+	traefikDefaultReadTimeout           = "60s"
+)
 
 type staticDeploymentValues struct {
 	Replicas           *int32                    `json:"replicas"`
@@ -158,6 +165,9 @@ func (h *SystemComponentHandler) List(c *gin.Context) {
 			item["has_config"] = true
 			item["saved_controller_mode"] = config.ControllerMode
 		}
+		if chart == "traefik" {
+			item["traefik"] = traefikTimeoutPayload(item["values_content"].(string), nil)
+		}
 		detection, detectErr := K8s.DetectSystemComponent(ctx, namespace, chart)
 		if detectErr != nil {
 			item["deployment_error"] = detectErr.Error()
@@ -196,10 +206,114 @@ func (h *SystemComponentHandler) List(c *gin.Context) {
 			if config := configs[chart]; config != nil && config.ValuesContent != "" {
 				item["effective"], item["effective_detail"] = systemComponentEffective(config.ValuesContent, deployment)
 			}
+			if chart == "traefik" {
+				state := traefikTimeoutPayload(item["values_content"].(string), deployment)
+				item["traefik"] = state
+				if state["read_timeout"] != "" {
+					item["effective"] = state["read_timeout_effective"]
+					if state["read_timeout_effective"] == false {
+						item["effective_detail"] = "入口请求读取超时与实际 Traefik 参数不一致"
+					}
+				}
+			}
 		}
 		result = append(result, item)
 	}
 	model.Success(c, result)
+}
+
+func traefikTimeoutPayload(valuesContent string, deployment *appsv1.Deployment) gin.H {
+	desired := traefikConfiguredReadTimeout(valuesContent)
+	if desired == "" {
+		return gin.H{
+			"read_timeout":           "",
+			"effective_read_timeout": traefikDefaultReadTimeout,
+			"read_timeout_effective": true,
+		}
+	}
+	actual, effective := k8s.TraefikReadTimeout(deployment, desired)
+	return gin.H{
+		"read_timeout":           desired,
+		"effective_read_timeout": actual,
+		"read_timeout_effective": effective,
+	}
+}
+
+func traefikConfiguredReadTimeout(valuesContent string) string {
+	var values struct {
+		AdditionalArguments []string `json:"additionalArguments"`
+	}
+	if err := yaml.Unmarshal([]byte(valuesContent), &values); err != nil {
+		return ""
+	}
+	web, webSecure := "", ""
+	for _, argument := range values.AdditionalArguments {
+		if strings.HasPrefix(argument, traefikWebReadTimeoutArgument) {
+			web = strings.TrimPrefix(argument, traefikWebReadTimeoutArgument)
+		}
+		if strings.HasPrefix(argument, traefikWebSecureReadTimeoutArgument) {
+			webSecure = strings.TrimPrefix(argument, traefikWebSecureReadTimeoutArgument)
+		}
+	}
+	if web == "" || web != webSecure {
+		return ""
+	}
+	return web
+}
+
+func normalizeTraefikReadTimeout(raw string) (string, error) {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return "", nil
+	}
+	duration, err := time.ParseDuration(value)
+	if err != nil {
+		return "", fmt.Errorf("Traefik 读取超时格式无效")
+	}
+	if duration < time.Minute || duration > time.Hour {
+		return "", fmt.Errorf("Traefik 读取超时必须在 1 分钟至 1 小时之间")
+	}
+	return value, nil
+}
+
+func renderTraefikReadTimeout(valuesContent, timeout string) (string, error) {
+	values := map[string]any{}
+	if err := yaml.Unmarshal([]byte(valuesContent), &values); err != nil {
+		return "", err
+	}
+	arguments := make([]string, 0)
+	if raw, found := values["additionalArguments"]; found {
+		list, ok := raw.([]any)
+		if !ok {
+			return "", fmt.Errorf("additionalArguments 必须是字符串列表")
+		}
+		for _, item := range list {
+			argument, ok := item.(string)
+			if !ok {
+				return "", fmt.Errorf("additionalArguments 必须是字符串列表")
+			}
+			if strings.HasPrefix(argument, traefikWebReadTimeoutArgument) || strings.HasPrefix(argument, traefikWebSecureReadTimeoutArgument) {
+				continue
+			}
+			arguments = append(arguments, argument)
+		}
+	}
+	if timeout != "" {
+		arguments = append(arguments,
+			traefikWebReadTimeoutArgument+timeout,
+			traefikWebSecureReadTimeoutArgument+timeout,
+		)
+	}
+	if len(arguments) == 0 {
+		delete(values, "additionalArguments")
+	} else {
+		values["additionalArguments"] = arguments
+	}
+	rendered, err := yaml.Marshal(values)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(rendered)), nil
 }
 
 func workloadPayload(workload *k8s.ComponentWorkload) any {
@@ -471,8 +585,25 @@ func (h *SystemComponentHandler) Update(c *gin.Context) {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "values 配置不能为空")
 		return
 	}
+	valuesContent := strings.TrimSpace(req.ValuesContent)
+	if req.TraefikReadTimeout != nil {
+		if chart != "traefik" {
+			model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "仅 Traefik 支持入口请求读取超时")
+			return
+		}
+		timeout, err := normalizeTraefikReadTimeout(*req.TraefikReadTimeout)
+		if err != nil {
+			model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+			return
+		}
+		valuesContent, err = renderTraefikReadTimeout(valuesContent, timeout)
+		if err != nil {
+			model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "Traefik 配置无效: "+err.Error())
+			return
+		}
+	}
 	var values map[string]any
-	if err := yaml.Unmarshal([]byte(req.ValuesContent), &values); err != nil {
+	if err := yaml.Unmarshal([]byte(valuesContent), &values); err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "values 配置不是合法 YAML: "+err.Error())
 		return
 	}
@@ -494,7 +625,7 @@ func (h *SystemComponentHandler) Update(c *gin.Context) {
 		ChartName:      chart,
 		Namespace:      namespace,
 		ControllerMode: string(detection.Mode),
-		ValuesContent:  strings.TrimSpace(req.ValuesContent),
+		ValuesContent:  valuesContent,
 		Enabled:        true,
 		LastAppliedAt:  &now,
 		CreatedBy:      getUserID(c),

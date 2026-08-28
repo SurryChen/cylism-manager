@@ -137,4 +137,63 @@ describe('SystemComponents', () => {
     expect(wrapper.text()).toContain('已安装')
     expect(wrapper.text()).not.toContain('未安装')
   })
+
+  it('configures the Traefik read timeout through a dedicated control', async () => {
+    apiMocks.get.mockResolvedValue([
+      item({
+        chart_name: 'traefik',
+        controller_mode: 'helm_chart',
+        values_content: 'maxUnavailable: 0\nmaxSurge: 1\n',
+        capabilities: { configure: true, node_placement: false, rollout: false, restore: true },
+        traefik: { read_timeout: '', effective_read_timeout: '60s', read_timeout_effective: true },
+      }),
+    ])
+    const wrapper = mount(SystemComponents)
+    await flushPromises()
+    await wrapper.findAll('button').find(button => button.text() === '配置').trigger('click')
+    await wrapper.get('[data-testid="traefik-read-timeout"]').setValue('30m')
+    await wrapper.get('form').trigger('submit')
+    expect(apiMocks.put).toHaveBeenCalledWith('/system-components/traefik', {
+      values_content: expect.stringContaining('maxUnavailable: 0'),
+      traefik_read_timeout: '30m',
+    })
+  })
+
+  it('accepts a validated custom Traefik read timeout', async () => {
+    apiMocks.get.mockResolvedValue([
+      item({
+        chart_name: 'traefik',
+        controller_mode: 'helm_chart',
+        capabilities: { configure: true, node_placement: false, rollout: false, restore: true },
+        traefik: { read_timeout: '', effective_read_timeout: '60s', read_timeout_effective: true },
+      }),
+    ])
+    const wrapper = mount(SystemComponents)
+    await flushPromises()
+    await wrapper.findAll('button').find(button => button.text() === '配置').trigger('click')
+    await wrapper.get('[data-testid="traefik-read-timeout"]').setValue('custom')
+    await wrapper.get('[data-testid="traefik-custom-read-timeout"]').setValue('15m')
+    await wrapper.get('form').trigger('submit')
+    expect(apiMocks.put).toHaveBeenCalledWith('/system-components/traefik', expect.objectContaining({
+      traefik_read_timeout: '15m',
+    }))
+  })
+
+  it('shows a pending Traefik timeout without offering it for other charts', async () => {
+    apiMocks.get.mockResolvedValue([
+      item({
+        chart_name: 'traefik',
+        controller_mode: 'helm_chart',
+        has_config: true,
+        capabilities: { configure: true, node_placement: false, rollout: false, restore: true },
+        traefik: { read_timeout: '30m', effective_read_timeout: '', read_timeout_effective: false },
+      }),
+      item(),
+    ])
+    const wrapper = mount(SystemComponents)
+    await flushPromises()
+    expect(wrapper.text()).toContain('读取超时 30m，等待生效')
+    await wrapper.findAll('button').find(button => button.text() === '配置').trigger('click')
+    expect(wrapper.find('[data-testid="traefik-read-timeout"]').exists()).toBe(true)
+  })
 })
