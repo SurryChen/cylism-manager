@@ -59,7 +59,7 @@
                   <button class="btn btn-sm" :data-testid="`apply-node-registry-mirror-${mirror.id}`" :disabled="isApplying(mirror.id)" @click="openApply(mirror)">
                     {{ isApplying(mirror.id) ? '应用中...' : '选择节点应用' }}
                   </button>
-                  <button class="btn btn-sm" @click="openEdit(mirror)">编辑</button>
+                  <button class="btn btn-sm" :data-testid="`edit-node-registry-mirror-${mirror.id}`" @click="openEdit(mirror)">编辑</button>
                   <button class="btn btn-sm btn-danger" @click="deleteTarget = mirror">删除</button>
                 </div>
               </td>
@@ -90,7 +90,7 @@
 
     <div v-if="dnsTarget" class="overlay" @click.self="closeDNS"><div class="modal"><h2 class="modal-title">配置 Proxy Pod DNS</h2><p class="confirm-copy">填写后，该 Proxy Pod 仅使用指定 DNS，不再经过 CoreDNS。留空并保存可恢复集群 DNS。</p><div class="form-group"><label class="form-label">DNS 服务器</label><input v-model.trim="dnsServersText" class="form-input" placeholder="例如 10.0.0.2,10.0.0.3" /><p class="form-hint">最多 3 个 IP，不能使用宿主机本地地址 127.0.0.53。保存后将滚动重建 Proxy Pod。</p></div><div class="modal-actions"><button class="btn" :disabled="dnsSaving" @click="closeDNS">取消</button><button class="btn btn-primary" :disabled="dnsSaving" @click="saveDNS">{{ dnsSaving ? '保存中...' : '保存 DNS' }}</button></div></div></div>
 
-    <div v-if="showModal" class="overlay" @click.self="closeModal">
+    <Teleport to="body"><div v-if="showModal" class="overlay mirror-overlay" @click.self="closeModal">
       <div class="modal mirror-modal">
         <h2 class="modal-title">{{ editing ? '编辑节点镜像源' : '新建节点镜像源' }}</h2>
         <form @submit.prevent="save">
@@ -124,7 +124,15 @@
           </div>
         </form>
       </div>
-    </div>
+    </div></Teleport>
+
+    <Teleport to="body"><div v-if="actionNotice" class="overlay mirror-notice-overlay" @click.self="actionNotice = null">
+      <section class="modal mirror-notice-modal" role="alertdialog" aria-modal="true" :aria-label="actionNotice.title">
+        <h2 class="modal-title">{{ actionNotice.title }}</h2>
+        <p class="confirm-copy">{{ actionNotice.message }}</p>
+        <div class="modal-actions"><button class="btn" :class="actionNotice.type === 'error' ? 'btn-danger' : 'btn-primary'" @click="actionNotice = null">知道了</button></div>
+      </section>
+    </div></Teleport>
 
     <div v-if="deleteTarget" class="overlay" @click.self="deleteTarget = null">
       <div class="modal">
@@ -145,6 +153,7 @@ const loaded = ref(false)
 const error = ref('')
 const showModal = ref(false)
 const editing = ref(null)
+const actionNotice = ref(null)
 const deleteTarget = ref(null)
 const submitting = ref(false)
 const applying = ref(false)
@@ -227,12 +236,14 @@ async function migrateProxy() { if (!migrationTarget.value) return; const item =
 async function diagnoseProxy(item) { proxyDiagnosingID.value = item.id; error.value = ''; try { await api.post(`/registry-proxies/${item.id}/diagnose`); await loadProxies() } catch (e) { error.value = e.message || '代理出网诊断失败' } finally { proxyDiagnosingID.value = null } }
 
 function openCreate() {
+  actionNotice.value = null
   editing.value = null
   form.value = blank()
   showModal.value = true
 }
 
 function openEdit(mirror) {
+  actionNotice.value = null
   editing.value = mirror
   form.value = {
     name: mirror.name,
@@ -256,6 +267,7 @@ function closeModal() {
 async function save() {
   submitting.value = true
   error.value = ''
+  const wasEditing = Boolean(editing.value)
   try {
     const payload = { ...form.value, endpoints: form.value.endpoints.split('\n').map(value => value.trim()).filter(Boolean) }
     if (editing.value && !payload.credential) delete payload.credential
@@ -263,7 +275,10 @@ async function save() {
     else await api.post('/node-registry-mirrors', payload)
     closeModal()
     await load()
-  } catch (e) { error.value = e.message || '保存节点镜像源失败' } finally { submitting.value = false }
+    actionNotice.value = { type: 'success', title: wasEditing ? '节点镜像源已保存' : '节点镜像源已创建', message: '配置已保存。需要下发到节点时，请在列表中点击“选择节点应用”。' }
+  } catch (e) {
+    actionNotice.value = { type: 'error', title: wasEditing ? '保存节点镜像源失败' : '创建节点镜像源失败', message: e.message || '保存节点镜像源失败' }
+  } finally { submitting.value = false }
 }
 
 async function verifyMirror(mirror) {
@@ -343,7 +358,10 @@ onBeforeUnmount(() => window.clearInterval(applyPollTimer))
 .success { color:var(--success); }
 .pending { color:var(--warning); }
 .failed, .verification-error { color:var(--danger); }
-.mirror-modal { width:min(580px,calc(100vw - 32px)); }
+.mirror-overlay { align-items: flex-start; overflow-y: auto; padding: 72px 16px 24px; }
+.mirror-modal { width:min(580px,calc(100vw - 32px)); max-height: calc(100dvh - 96px); margin: 0 auto; }
+.mirror-notice-overlay { z-index: 1300; }
+.mirror-notice-modal { width: min(420px, calc(100vw - 32px)); }
 .proxy-panel { padding:var(--space-16) 0; border-bottom:1px solid var(--border-muted); }.section-heading { display:flex; justify-content:space-between; gap:var(--space-16); align-items:flex-start; }.section-heading h2 { margin:0; font-size:16px; }.section-heading p,.proxy-status small { margin:4px 0 0; color:var(--text-secondary); font-size:12px; }.proxy-list { display:grid; gap:10px; margin-top:12px; }.proxy-instance { padding:12px; border:1px solid var(--border-muted); border-radius:var(--radius-control); background:var(--surface-subtle); }.proxy-instance-heading { display:flex; align-items:center; gap:8px; }.proxy-status { display:flex; flex-wrap:wrap; gap:8px 14px; align-items:center; margin-top:8px; color:var(--text-secondary); font-size:13px; }.proxy-status small { width:100%; }.proxy-error { color:var(--danger)!important; }.proxy-actions { margin-top:12px; }
 .proxy-modal { width:min(520px,calc(100vw - 32px)); }
 .egress-healthy { color:var(--success); }.egress-upstream_connect_timeout,.egress-dns_resolution_failed,.egress-upstream_tls_failed,.egress-command_missing,.egress-diagnostic_failed { color:var(--danger); }

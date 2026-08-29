@@ -46,6 +46,7 @@ type managedOCIRegistryRequest struct {
 	Name                string `json:"name"`
 	Namespace           string `json:"namespace"`
 	Endpoint            string `json:"endpoint"`
+	VerificationImage   string `json:"verification_image"`
 	RegistryImage       string `json:"registry_image"`
 	DataNode            string `json:"data_node"`
 	PVCName             string `json:"pvc_name"`
@@ -605,6 +606,13 @@ func (h *ManagedOCIRegistryHandler) registryFromRequest(request managedOCIRegist
 		return nil, "", err
 	}
 	registry := &model.ManagedOCIRegistry{Name: name, Namespace: managedOCIRegistryNamespace, ResourceName: managedOCIRegistryResourceName, Endpoint: endpoint, RegistryImage: image, DataNode: node, PVCName: pvcName, CPURequest: cpuRequest, CPULimit: cpuLimit, MemoryRequest: memoryRequest, MemoryLimit: memoryLimit, InsecureHTTP: request.InsecureHTTP, CertificateName: certificateName, PullUsername: username, Status: "pending"}
+	registry.VerificationImage = strings.TrimSpace(request.VerificationImage)
+	if registry.VerificationImage == "" {
+		return nil, "", errors.New("验证镜像必填")
+	}
+	if err := validateManagedVerificationImage(endpoint, registry.VerificationImage); err != nil {
+		return nil, "", err
+	}
 	if current != nil {
 		registry.ID, registry.CreatedAt, registry.CreatedBy, registry.EncryptedCredential = current.ID, current.CreatedAt, current.CreatedBy, current.EncryptedCredential
 		registry.ImageRegistryID, registry.NodeRegistryMirrorID = current.ImageRegistryID, current.NodeRegistryMirrorID
@@ -662,7 +670,14 @@ func managedRegistryAssociations(registry *model.ManagedOCIRegistry) (*model.Ima
 	}
 	endpoints, _ := json.Marshal([]string{scheme + "://" + registry.Endpoint})
 	name := "受管制品库 · " + registry.Name
-	return &model.ImageRegistry{Name: name, Endpoint: registry.Endpoint, AuthType: registryAuthBasic, Username: registry.PullUsername, Credential: registry.EncryptedCredential, Enabled: true, CreatedBy: registry.CreatedBy, ManagedRegistryID: &registry.ID}, &model.NodeRegistryMirror{Name: name, Registry: registry.Endpoint, Endpoints: string(endpoints), Username: registry.PullUsername, Credential: registry.EncryptedCredential, Enabled: true, CreatedBy: registry.CreatedBy, ManagedRegistryID: &registry.ID}
+	return &model.ImageRegistry{Name: name, Endpoint: registry.Endpoint, VerificationImage: registry.VerificationImage, AuthType: registryAuthBasic, Username: registry.PullUsername, Credential: registry.EncryptedCredential, Enabled: true, CreatedBy: registry.CreatedBy, ManagedRegistryID: &registry.ID}, &model.NodeRegistryMirror{Name: name, Registry: registry.Endpoint, Endpoints: string(endpoints), VerificationImage: registry.VerificationImage, Username: registry.PullUsername, Credential: registry.EncryptedCredential, Enabled: true, CreatedBy: registry.CreatedBy, ManagedRegistryID: &registry.ID}
+}
+
+func validateManagedVerificationImage(registry, image string) error {
+	if err := validateNodeRegistryMirrorVerificationImage(registry, image); err != nil {
+		return errors.New(strings.Replace(err.Error(), "当前 Registry", "制品库地址", 1))
+	}
+	return nil
 }
 
 func (h *ManagedOCIRegistryHandler) ensureEndpointOwnership(endpoint string) error {

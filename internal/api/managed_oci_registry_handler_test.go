@@ -104,8 +104,46 @@ func managedRegistryPayload() gin.H {
 	return gin.H{
 		"name": "内网制品库", "namespace": "cylism-system", "endpoint": "registry.internal:5443",
 		"registry_image": "registry:2.8", "data_node": "node-a", "pvc_name": "registry-data",
-		"cpu_request": "100m", "cpu_limit": "500m", "memory_request": "256Mi", "memory_limit": "1Gi",
+		"verification_image": "registry.internal:5443/cylism-manager:1.0.0",
+		"cpu_request":        "100m", "cpu_limit": "500m", "memory_request": "256Mi", "memory_limit": "1Gi",
 		"certificate_name": "registry-cert", "pull_username": "cylism-pull", "pull_password": "safe-registry-password",
+	}
+}
+
+func TestManagedOCIRegistryUpdatePersistsVerificationImageForOwnedMirror(t *testing.T) {
+	r, s := setupManagedOCIRegistryRouter(t)
+	created := serve(r, newJSONRequest(http.MethodPost, "/api/managed-oci-registries", managedRegistryPayload()))
+	if created.Code != http.StatusOK {
+		t.Fatal(created.Body.String())
+	}
+	payload := managedRegistryPayload()
+	payload["verification_image"] = "registry.internal:5443/cylism-manager:1.0.1"
+	delete(payload, "pull_password")
+	updated := serve(r, newJSONRequest(http.MethodPut, "/api/managed-oci-registries/1", payload))
+	if updated.Code != http.StatusOK {
+		t.Fatalf("update failed: %d %s", updated.Code, updated.Body.String())
+	}
+	registry, err := s.GetManagedOCIRegistry(1)
+	if err != nil || registry.VerificationImage != "registry.internal:5443/cylism-manager:1.0.1" {
+		t.Fatalf("verification image not persisted: %#v %v", registry, err)
+	}
+	imageRegistry, err := s.GetImageRegistry(*registry.ImageRegistryID)
+	if err != nil || imageRegistry.VerificationImage != registry.VerificationImage {
+		t.Fatalf("owned image registry verification image not updated: %#v %v", imageRegistry, err)
+	}
+	mirror, err := s.GetNodeRegistryMirror(*registry.NodeRegistryMirrorID)
+	if err != nil || mirror.VerificationImage != registry.VerificationImage {
+		t.Fatalf("owned node mirror verification image not updated: %#v %v", mirror, err)
+	}
+}
+
+func TestManagedOCIRegistryRejectsVerificationImageFromAnotherRegistry(t *testing.T) {
+	r, _ := setupManagedOCIRegistryRouter(t)
+	payload := managedRegistryPayload()
+	payload["verification_image"] = "docker.io/library/busybox:1.36"
+	response := serve(r, newJSONRequest(http.MethodPost, "/api/managed-oci-registries", payload))
+	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "验证镜像必须属于制品库地址") {
+		t.Fatalf("expected verification image validation error: %d %s", response.Code, response.Body.String())
 	}
 }
 
@@ -202,6 +240,7 @@ func TestManagedOCIRegistryRejectsUnconfirmedHTTP(t *testing.T) {
 	r, _ := setupManagedOCIRegistryRouter(t)
 	payload := managedRegistryPayload()
 	payload["endpoint"] = "registry.internal:80"
+	payload["verification_image"] = "registry.internal:80/cylism-manager:1.0.0"
 	payload["insecure_http"] = true
 	response := serve(r, newJSONRequest(http.MethodPost, "/api/managed-oci-registries", payload))
 	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "明确确认") {
@@ -229,6 +268,7 @@ func TestManagedOCIRegistryListsReadyCertificatesAndRequiresMatchingCertificate(
 	}
 	payload = managedRegistryPayload()
 	payload["endpoint"] = "other.internal:5443"
+	payload["verification_image"] = "other.internal:5443/cylism-manager:1.0.0"
 	response = serve(r, newJSONRequest(http.MethodPost, "/api/managed-oci-registries", payload))
 	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "未覆盖") {
 		t.Fatalf("expected certificate hostname rejection: %d %s", response.Code, response.Body.String())
