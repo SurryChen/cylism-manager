@@ -118,7 +118,7 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 		clusterDNS.DELETE("", clusterDNSHandler.Reset)
 		clusterDNS.POST("/history/:revision/rollback", clusterDNSHandler.Rollback)
 	}
-	platformHandler := NewPlatformHandler(s, encKey)
+	platformHandler := delivery.NewPlatformHandler(s, encKey, K8s)
 	go platformHandler.Reconcile()
 
 	// GitHub Actions calls this signed endpoint after pushing a platform image.

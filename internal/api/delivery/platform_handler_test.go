@@ -1,4 +1,4 @@
-package api
+package delivery
 
 import (
 	"crypto/hmac"
@@ -13,6 +13,7 @@ import (
 
 	"github.com/cylism/cylism-manager/internal/crypto"
 	k8sclient "github.com/cylism/cylism-manager/internal/k8s"
+	platformservice "github.com/cylism/cylism-manager/internal/service/platform"
 	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/gin-gonic/gin"
 	appsv1 "k8s.io/api/apps/v1"
@@ -22,9 +23,7 @@ import (
 )
 
 func TestPlatformWebhookAcceptsSignedTagAndRejectsReplay(t *testing.T) {
-	original := K8s
-	defer func() { K8s = original }()
-	K8s = &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "cylism-manager", Namespace: "default"}, Spec: appsv1.DeploymentSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "platform", Image: "registry.example.com/cylism-manager:latest"}}}}}})}
+	client := platformTestClient()
 	secretKey := []byte("01234567890123456789012345678901")
 	s, err := store.New(":memory:")
 	if err != nil {
@@ -34,13 +33,13 @@ func TestPlatformWebhookAcceptsSignedTagAndRejectsReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.SetSystemConfig(platformWebhookSecretConfigKey, encrypted); err != nil {
+	if err := s.SetSystemConfig(platformservice.WebhookSecretConfigKey, encrypted); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.SetSystemConfig(platformImagePrefixConfigKey, "registry.example.com/cylism-manager"); err != nil {
+	if err := s.SetSystemConfig(platformservice.ImagePrefixConfigKey, "registry.example.com/cylism-manager"); err != nil {
 		t.Fatal(err)
 	}
-	handler := NewPlatformHandler(s, secretKey)
+	handler := NewPlatformHandler(s, secretKey, client)
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	router.POST("/api/platform/deployments", handler.Webhook)
@@ -63,7 +62,7 @@ func TestPlatformWebhookAcceptsSignedTagAndRejectsReplay(t *testing.T) {
 }
 
 func TestPlatformWebhookRejectsInvalidSignature(t *testing.T) {
-	handler := NewPlatformHandler(nil, []byte("01234567890123456789012345678901"))
+	handler := NewPlatformHandler(nil, []byte("01234567890123456789012345678901"), nil)
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	router.POST("/api/platform/deployments", handler.Webhook)
@@ -79,18 +78,16 @@ func TestPlatformWebhookRejectsInvalidSignature(t *testing.T) {
 }
 
 func TestPlatformManualUpdateAcceptsAuthenticatedTag(t *testing.T) {
-	original := K8s
-	defer func() { K8s = original }()
-	K8s = &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "cylism-manager", Namespace: "default"}, Spec: appsv1.DeploymentSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "platform", Image: "registry.example.com/cylism-manager:latest"}}}}}})}
+	client := platformTestClient()
 	secretKey := []byte("01234567890123456789012345678901")
 	s, err := store.New(":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.SetSystemConfig(platformImagePrefixConfigKey, "registry.example.com/cylism-manager"); err != nil {
+	if err := s.SetSystemConfig(platformservice.ImagePrefixConfigKey, "registry.example.com/cylism-manager"); err != nil {
 		t.Fatal(err)
 	}
-	handler := NewPlatformHandler(s, secretKey)
+	handler := NewPlatformHandler(s, secretKey, client)
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	router.POST("/api/platform/releases", handler.ManualUpdate)
@@ -108,10 +105,10 @@ func TestPlatformManualUpdateRejectsUntaggedImage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.SetSystemConfig(platformImagePrefixConfigKey, "registry.example.com/cylism-manager"); err != nil {
+	if err := s.SetSystemConfig(platformservice.ImagePrefixConfigKey, "registry.example.com/cylism-manager"); err != nil {
 		t.Fatal(err)
 	}
-	handler := NewPlatformHandler(s, []byte("01234567890123456789012345678901"))
+	handler := NewPlatformHandler(s, []byte("01234567890123456789012345678901"), nil)
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	router.POST("/api/platform/releases", handler.ManualUpdate)
@@ -128,22 +125,22 @@ func TestPlatformImagePrefixesAllowMultipleRegistries(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.SetSystemConfig(platformImagePrefixConfigKey, "registry.example.com/cylism-manager\noci-registry.example.com/cylism-manager"); err != nil {
+	if err := s.SetSystemConfig(platformservice.ImagePrefixConfigKey, "registry.example.com/cylism-manager\noci-registry.example.com/cylism-manager"); err != nil {
 		t.Fatal(err)
 	}
-	h := NewPlatformHandler(s, []byte("01234567890123456789012345678901"))
+	h := NewPlatformHandler(s, []byte("01234567890123456789012345678901"), nil)
 	for _, image := range []string{
 		"registry.example.com/cylism-manager:1.0.0",
 		"oci-registry.example.com/cylism-manager:2.0.0",
 	} {
-		if err := h.validatePlatformImage(image); err != nil {
+		if err := h.release.ValidateImage(image); err != nil {
 			t.Fatalf("expected image %q to be accepted: %v", image, err)
 		}
 	}
-	if err := h.validatePlatformImage("other.example.com/cylism-manager:1.0.0"); err == nil {
+	if err := h.release.ValidateImage("other.example.com/cylism-manager:1.0.0"); err == nil {
 		t.Fatal("expected image outside configured prefixes to be rejected")
 	}
-	prefixes, err := normalizePlatformImagePrefixes("registry.example.com/cylism-manager, registry.example.com/cylism-manager\noci-registry.example.com/cylism-manager/")
+	prefixes, err := platformservice.NormalizeImagePrefixes("registry.example.com/cylism-manager, registry.example.com/cylism-manager\noci-registry.example.com/cylism-manager/")
 	if err != nil || len(prefixes) != 2 || prefixes[1] != "oci-registry.example.com/cylism-manager" {
 		t.Fatalf("unexpected normalized prefixes: %#v, %v", prefixes, err)
 	}
@@ -154,7 +151,7 @@ func TestPlatformEndpointStatusDefaultsToNotConfigured(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler := NewPlatformHandler(s, []byte("01234567890123456789012345678901"))
+	handler := NewPlatformHandler(s, []byte("01234567890123456789012345678901"), nil)
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	router.GET("/api/platform/endpoint", handler.EndpointStatus)
@@ -164,6 +161,10 @@ func TestPlatformEndpointStatusDefaultsToNotConfigured(t *testing.T) {
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"state":"not_configured"`) {
 		t.Fatalf("expected not configured endpoint status, got %d: %s", response.Code, response.Body.String())
 	}
+}
+
+func platformTestClient() *k8sclient.Client {
+	return &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "cylism-manager", Namespace: "default"}, Spec: appsv1.DeploymentSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "platform", Image: "registry.example.com/cylism-manager:latest"}}}}}})}
 }
 
 func TestValidPlatformHostname(t *testing.T) {
