@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/cylism/cylism-manager/internal/model"
+	registryservice "github.com/cylism/cylism-manager/internal/service/registry"
 )
 
 type agentRegistryEndpointResult struct {
@@ -38,13 +39,13 @@ func agentRegistryStatus(mirrors []model.NodeRegistryMirror, proxies []model.Reg
 			nodes = append(nodes, map[string]any{"node": status.Server.K8sNodeName, "status": status.Status, "detail": redactAgentText(truncateAgentText(status.Detail, 256))})
 		}
 		result["mirrors"] = append(result["mirrors"].([]map[string]any), map[string]any{
-			"registry": normalizeRegistry(mirror.Registry), "enabled": mirror.Enabled, "endpoints": agentSafeEndpoints(mirror.Endpoints),
+			"registry": registryservice.NormalizeRegistryHost(mirror.Registry), "enabled": mirror.Enabled, "endpoints": agentSafeEndpoints(mirror.Endpoints),
 			"verification_status": mirror.LastVerifyStatus, "verification_error": redactAgentText(truncateAgentText(mirror.LastVerifyError, 256)), "nodes": nodes,
 		})
 	}
 	for _, proxy := range proxies {
 		result["proxies"] = append(result["proxies"].([]map[string]any), map[string]any{
-			"registry": normalizeRegistry(proxy.Registry), "status": proxy.Status, "node": proxy.NodeName,
+			"registry": registryservice.NormalizeRegistryHost(proxy.Registry), "status": proxy.Status, "node": proxy.NodeName,
 			"endpoint": safeRegistryEndpoint("http://" + proxy.EndpointHost + fmt.Sprintf(":%d", proxy.NodePort)), "error": redactAgentText(truncateAgentText(proxy.LastError, 256)),
 			"egress_status": proxy.LastDiagnosticStatus, "egress_error": redactAgentText(truncateAgentText(proxy.LastDiagnosticError, 256)),
 		})
@@ -75,10 +76,10 @@ func safeRegistryEndpoint(raw string) string {
 }
 
 func agentResolveRegistry(registry string, mirrors []model.NodeRegistryMirror, proxies []model.RegistryProxy) (agentRegistryConfig, bool) {
-	registry = normalizeRegistry(registry)
+	registry = registryservice.NormalizeRegistryHost(registry)
 	for index := range mirrors {
 		mirror := &mirrors[index]
-		if mirror.Enabled && normalizeRegistry(mirror.Registry) == registry {
+		if mirror.Enabled && registryservice.NormalizeRegistryHost(mirror.Registry) == registry {
 			endpoints := agentSafeEndpoints(mirror.Endpoints)
 			if len(endpoints) > 0 {
 				return agentRegistryConfig{Registry: registry, Endpoints: endpoints, VerificationImage: strings.TrimSpace(mirror.VerificationImage), Mirror: mirror}, true
@@ -87,7 +88,7 @@ func agentResolveRegistry(registry string, mirrors []model.NodeRegistryMirror, p
 	}
 	for index := range proxies {
 		proxy := &proxies[index]
-		if normalizeRegistry(proxy.Registry) == registry && proxy.EndpointHost != "" && proxy.NodePort > 0 {
+		if registryservice.NormalizeRegistryHost(proxy.Registry) == registry && proxy.EndpointHost != "" && proxy.NodePort > 0 {
 			return agentRegistryConfig{Registry: registry, Endpoints: []string{safeRegistryEndpoint("http://" + proxy.EndpointHost + fmt.Sprintf(":%d", proxy.NodePort))}, Proxy: proxy}, true
 		}
 	}
@@ -121,7 +122,7 @@ func agentImageRegistry(image string) string {
 	if len(parts) < 2 || (!strings.Contains(parts[0], ".") && !strings.Contains(parts[0], ":") && parts[0] != "localhost") {
 		return "docker.io"
 	}
-	return normalizeRegistry(parts[0])
+	return registryservice.NormalizeRegistryHost(parts[0])
 }
 
 func agentImagePullFailures(podContainers []map[string]any) []map[string]string {

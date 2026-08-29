@@ -2,6 +2,8 @@
 package repository
 
 import (
+	"time"
+
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/store"
 )
@@ -29,6 +31,28 @@ type ManagedRegistryRepository interface {
 	DeleteNodeRegistryMirror(uint) error
 }
 
+// NodeRegistryMirrorRepository is the persistence contract used by the node
+// mirror workflow. Keeping it separate from ManagedRegistryRepository avoids
+// coupling standalone mirror operations to the managed OCI Registry use case.
+type NodeRegistryMirrorRepository interface {
+	CreateNodeRegistryMirror(*model.NodeRegistryMirror) error
+	GetNodeRegistryMirror(uint) (*model.NodeRegistryMirror, error)
+	ListNodeRegistryMirrors() ([]model.NodeRegistryMirror, error)
+	UpdateNodeRegistryMirror(*model.NodeRegistryMirror) error
+	UpdateNodeRegistryMirrorVerification(uint, string, string, time.Time) error
+	DeleteNodeRegistryMirror(uint) error
+	UpsertNodeRegistryMirrorStatus(*model.NodeRegistryMirrorNode) error
+	ListServers() ([]model.Server, error)
+}
+
+// RegistryProxyRepository is the persistence contract for proxy configuration.
+type RegistryProxyRepository interface {
+	GetRegistryProxy() (*model.RegistryProxy, error)
+	GetRegistryProxyByID(uint) (*model.RegistryProxy, error)
+	ListRegistryProxies() ([]model.RegistryProxy, error)
+	SaveRegistryProxy(*model.RegistryProxy) error
+}
+
 // StoreManagedRegistryRepository adapts the existing Store without leaking it
 // into Registry service APIs.
 type StoreManagedRegistryRepository struct {
@@ -36,6 +60,16 @@ type StoreManagedRegistryRepository struct {
 }
 
 func NewManagedRegistryRepository(s *store.Store) *StoreManagedRegistryRepository {
+	return &StoreManagedRegistryRepository{store: s}
+}
+
+// NewNodeRegistryMirrorRepository adapts the existing Store for the
+// standalone node registry mirror service.
+func NewNodeRegistryMirrorRepository(s *store.Store) *StoreManagedRegistryRepository {
+	return &StoreManagedRegistryRepository{store: s}
+}
+
+func NewRegistryProxyRepository(s *store.Store) *StoreManagedRegistryRepository {
 	return &StoreManagedRegistryRepository{store: s}
 }
 
@@ -81,6 +115,30 @@ func (r *StoreManagedRegistryRepository) GetNodeRegistryMirror(id uint) (*model.
 
 func (r *StoreManagedRegistryRepository) ListNodeRegistryMirrors() ([]model.NodeRegistryMirror, error) {
 	return r.store.ListNodeRegistryMirrors()
+}
+
+func (r *StoreManagedRegistryRepository) CreateNodeRegistryMirror(mirror *model.NodeRegistryMirror) error {
+	return r.store.CreateNodeRegistryMirror(mirror)
+}
+
+func (r *StoreManagedRegistryRepository) GetRegistryProxy() (*model.RegistryProxy, error) {
+	return r.store.GetRegistryProxy()
+}
+
+func (r *StoreManagedRegistryRepository) GetRegistryProxyByID(id uint) (*model.RegistryProxy, error) {
+	return r.store.GetRegistryProxyByID(id)
+}
+
+func (r *StoreManagedRegistryRepository) ListRegistryProxies() ([]model.RegistryProxy, error) {
+	return r.store.ListRegistryProxies()
+}
+
+func (r *StoreManagedRegistryRepository) SaveRegistryProxy(proxy *model.RegistryProxy) error {
+	return r.store.SaveRegistryProxy(proxy)
+}
+
+func (r *StoreManagedRegistryRepository) UpdateNodeRegistryMirrorVerification(id uint, status, detail string, verifiedAt time.Time) error {
+	return r.store.UpdateNodeRegistryMirrorVerification(id, status, detail, verifiedAt)
 }
 
 func (r *StoreManagedRegistryRepository) ListServers() ([]model.Server, error) {

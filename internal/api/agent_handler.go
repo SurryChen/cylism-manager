@@ -18,6 +18,7 @@ import (
 
 	"github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
+	registryservice "github.com/cylism/cylism-manager/internal/service/registry"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -524,9 +525,9 @@ func (h *AgentHandler) RegistryProxyDiagnose(w http.ResponseWriter, r *http.Requ
 		writeAgentError(w, http.StatusInternalServerError, "registry proxy diagnostics unavailable", true)
 		return
 	}
-	registry = normalizeRegistry(registry)
+	registry = registryservice.NormalizeRegistryHost(registry)
 	for _, proxy := range proxies {
-		if normalizeRegistry(proxy.Registry) != registry {
+		if registryservice.NormalizeRegistryHost(proxy.Registry) != registry {
 			continue
 		}
 		h.audit(instance, "agent.registry_proxy_diagnose", map[string]string{"capability": model.AgentCapabilityRegistryProxyDiagnose, "registry": registry})
