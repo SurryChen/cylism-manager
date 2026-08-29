@@ -26,6 +26,8 @@ import (
 // the platform-managed Registry. It is intentionally independent from HTTP.
 type ManagedRegistryReconciler struct{ client *Client }
 
+const managedRegistryResourceName = "cylism-oci-registry"
+
 // ManagedRegistryPVCOption is a PVC that can be mounted by the single-replica
 // platform Registry. It deliberately describes only existing claims.
 type ManagedRegistryPVCOption struct {
@@ -194,11 +196,11 @@ func (r *ManagedRegistryReconciler) ListEligiblePVCs(ctx context.Context, namesp
 		if ValidateManagedRegistryPVC(claim, namespace) != nil {
 			continue
 		}
-		inUse, err := r.pvcInUse(ctx, namespace, claim.Name)
+		inUse, err := r.pvcInUseExceptRegistry(ctx, namespace, claim.Name, managedRegistryResourceName)
 		if err != nil {
 			return nil, err
 		}
-		if !inUse {
+		if inUse == "" {
 			options = append(options, ManagedRegistryPVCOption{Name: claim.Name, Namespace: claim.Namespace, Storage: claim.Storage, StorageClassName: claim.StorageClassName, Phase: claim.Phase, AccessModes: claim.AccessModes, BoundNode: claim.BoundNode})
 		}
 	}
