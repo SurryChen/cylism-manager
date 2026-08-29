@@ -15,6 +15,7 @@ import (
 	"github.com/cylism/cylism-manager/internal/application"
 	"github.com/cylism/cylism-manager/internal/crypto"
 	"github.com/cylism/cylism-manager/internal/model"
+	registryservice "github.com/cylism/cylism-manager/internal/service/registry"
 	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/gin-gonic/gin"
 	"github.com/google/go-containerregistry/pkg/name"
@@ -2081,15 +2082,15 @@ func (h *ApplicationHandler) prepareRegistryReleaseSpec(app *model.Application, 
 	spec.Image = image
 	spec.RegistryEndpoint = registry.Endpoint
 	spec.RegistryAuthType = registry.AuthType
-	if registry.AuthType == registryAuthAnonymous {
+	if registry.AuthType == registryservice.AuthTypeAnonymous {
 		return nil
 	}
-	credential, err := crypto.Decrypt(h.encKey, registry.Credential)
+	credential, err := registryservice.DecryptCredential(h.encKey, registry.Credential)
 	if err != nil {
 		return fmt.Errorf("读取镜像仓库凭据失败")
 	}
 	spec.RegistryUsername = registry.Username
-	if registry.AuthType == registryAuthToken && spec.RegistryUsername == "" {
+	if registry.AuthType == registryservice.AuthTypeToken && spec.RegistryUsername == "" {
 		spec.RegistryUsername = "token"
 	}
 	spec.RegistryCredential = credential
@@ -2113,7 +2114,7 @@ func (h *ApplicationHandler) prepareReleaseImageVerification(spec *application.R
 		return fmt.Errorf("读取节点镜像源失败: %w", err)
 	}
 	for _, mirror := range mirrors {
-		if !mirror.Enabled || !sameRegistry(mirror.Registry, ref.Context().RegistryStr()) || !mirrorAppliedToNode(mirror, spec.NodeName) {
+		if !mirror.Enabled || !registryservice.SameRegistry(mirror.Registry, ref.Context().RegistryStr()) || !mirrorAppliedToNode(mirror, spec.NodeName) {
 			continue
 		}
 		var endpoints []string
@@ -2128,7 +2129,7 @@ func (h *ApplicationHandler) prepareReleaseImageVerification(spec *application.R
 		spec.ImageVerificationUsername = mirror.Username
 		spec.ImageVerificationInsecureSkipVerify = mirror.InsecureSkipVerify
 		if mirror.Username != "" {
-			credential, err := crypto.Decrypt(h.encKey, mirror.Credential)
+			credential, err := registryservice.DecryptCredential(h.encKey, mirror.Credential)
 			if err != nil {
 				return fmt.Errorf("读取节点镜像源 %q 凭据失败", mirror.Name)
 			}
@@ -2137,19 +2138,6 @@ func (h *ApplicationHandler) prepareReleaseImageVerification(spec *application.R
 		return nil
 	}
 	return nil
-}
-
-func sameRegistry(left, right string) bool {
-	normalize := func(value string) string {
-		value = strings.ToLower(strings.TrimSpace(value))
-		switch value {
-		case "index.docker.io", "registry-1.docker.io":
-			return "docker.io"
-		default:
-			return value
-		}
-	}
-	return normalize(left) == normalize(right)
 }
 
 func mirrorAppliedToNode(mirror model.NodeRegistryMirror, nodeName string) bool {

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/cylism/cylism-manager/internal/model"
+	registryservice "github.com/cylism/cylism-manager/internal/service/registry"
 	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/gin-gonic/gin"
 )
@@ -79,10 +80,7 @@ func TestNodeRegistryMirrorRejectsVerificationImageFromAnotherRegistry(t *testin
 }
 
 func TestNodeRegistryMirrorVerificationUsesMirrorEndpoint(t *testing.T) {
-	ref, err := nodeRegistryMirrorVerificationReference(&model.NodeRegistryMirror{
-		Registry:          "docker.io",
-		VerificationImage: "docker.io/library/busybox:1.36",
-	}, "https://mirror.example.com")
+	ref, err := registryservice.MirrorVerificationReference("docker.io", "docker.io/library/busybox:1.36", "https://mirror.example.com")
 	if err != nil {
 		t.Fatal(err)
 	}

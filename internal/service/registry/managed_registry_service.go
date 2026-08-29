@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/cylism/cylism-manager/internal/crypto"
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/repository"
 	"gorm.io/gorm"
@@ -60,7 +59,7 @@ func (s *ManagedRegistryService) PersistCreate(registry *model.ManagedOCIRegistr
 	if err := s.EnsureEndpointAvailable(registry.Endpoint); err != nil {
 		return err
 	}
-	credential, err := crypto.Encrypt(s.encKey, password)
+	credential, err := EncryptCredential(s.encKey, password)
 	if err != nil {
 		return fmt.Errorf("加密制品库凭据失败: %w", err)
 	}
@@ -76,9 +75,9 @@ func (s *ManagedRegistryService) ResolveUpdatePassword(registry *model.ManagedOC
 	password := strings.TrimSpace(suppliedPassword)
 	var err error
 	if password != "" {
-		registry.EncryptedCredential, err = crypto.Encrypt(s.encKey, password)
+		registry.EncryptedCredential, err = EncryptCredential(s.encKey, password)
 	} else {
-		password, err = crypto.Decrypt(s.encKey, registry.EncryptedCredential)
+		password, err = DecryptCredential(s.encKey, registry.EncryptedCredential)
 	}
 	if err != nil {
 		return "", fmt.Errorf("读取或加密制品库凭据失败: %w", err)
@@ -87,7 +86,7 @@ func (s *ManagedRegistryService) ResolveUpdatePassword(registry *model.ManagedOC
 }
 
 func (s *ManagedRegistryService) ResolveStoredPassword(registry *model.ManagedOCIRegistry) (string, error) {
-	password, err := crypto.Decrypt(s.encKey, registry.EncryptedCredential)
+	password, err := DecryptCredential(s.encKey, registry.EncryptedCredential)
 	if err != nil {
 		return "", fmt.Errorf("读取制品库凭据失败: %w", err)
 	}
@@ -117,21 +116,7 @@ func (s *ManagedRegistryService) RenderNodeMirrorConfig() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	credentials := make(map[uint]string)
-	for _, mirror := range mirrors {
-		if !mirror.Enabled || mirror.Username == "" {
-			continue
-		}
-		if mirror.Credential == "" {
-			return nil, fmt.Errorf("镜像源 %q 缺少密码或 Token", mirror.Name)
-		}
-		credential, err := crypto.Decrypt(s.encKey, mirror.Credential)
-		if err != nil {
-			return nil, fmt.Errorf("解密镜像源 %q 凭据失败", mirror.Name)
-		}
-		credentials[mirror.ID] = credential
-	}
-	return RenderK3sRegistries(mirrors, credentials)
+	return RenderK3sRegistriesWithStoredCredentials(mirrors, s.encKey)
 }
 
 func (s *ManagedRegistryService) Delete(id uint) (*model.ManagedOCIRegistry, error) {

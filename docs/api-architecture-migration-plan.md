@@ -143,7 +143,16 @@ internal/k8s/registry.go
 
 ### 阶段 2：提取 Registry 共用能力
 
-在制品库模块验证完成后，再提取：
+状态：已完成（2026-08-29）。
+
+已落地内容：
+
+- 镜像仓库、节点镜像源和应用发布统一使用共享的镜像引用解析、Registry 前缀匹配和 Docker Hub 别名判断。
+- CPU、内存 request/limit 与证书域名覆盖校验从受管制品库校验文件中拆出为独立资源校验能力。
+- Registry 凭据的加密、解密和“已配置”状态判断统一收敛；节点 `registries.yaml` 仅在渲染下发前解密，避免各入口复制凭据处理循环。
+- 外部 REST 路径、请求字段、响应字段和既有中文错误文案保持不变。
+
+本阶段实现文件：
 
 ```text
 internal/service/registry/image_reference.go
