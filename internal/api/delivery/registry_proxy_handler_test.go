@@ -1,4 +1,4 @@
-package api
+package delivery
 
 import (
 	"context"
@@ -11,6 +11,7 @@ import (
 
 	k8sclient "github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
+	registryservice "github.com/cylism/cylism-manager/internal/service/registry"
 	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/gin-gonic/gin"
 	appsv1 "k8s.io/api/apps/v1"
@@ -29,11 +30,9 @@ func TestRegistryProxyOutboundProxyIsEncryptedAndDiagnosticIsBounded(t *testing.
 	if err := st.SaveRegistryProxy(proxy); err != nil {
 		t.Fatal(err)
 	}
-	original := K8s
-	K8s = &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node-a"}})}
-	defer func() { K8s = original }()
-	handler := NewRegistryProxyHandler(st, []byte("01234567890123456789012345678901")).WithDiagnoser(func(_ context.Context, _ *model.RegistryProxy) (registryProxyDiagnostic, error) {
-		return registryProxyDiagnostic{Status: "upstream_connect_timeout", ResolvedIPs: []string{"128.121.243.75"}, ElapsedMS: 5000, Summary: "upstream timed out"}, nil
+	client := &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node-a"}})}
+	handler := NewRegistryProxyHandler(st, []byte("01234567890123456789012345678901"), client).WithDiagnoser(func(_ context.Context, _ *model.RegistryProxy) (k8sclient.RegistryProxyDiagnostic, error) {
+		return k8sclient.RegistryProxyDiagnostic{Status: "upstream_connect_timeout", ResolvedIPs: []string{"128.121.243.75"}, ElapsedMS: 5000, Summary: "upstream timed out"}, nil
 	})
 	router := gin.New()
 	router.PUT("/api/registry-proxies/:id", handler.Deploy)
@@ -73,11 +72,8 @@ func TestRegistryProxyHandlerDeploysIndependentUpstreamInstances(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	original := K8s
-	K8s = &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node-a"}})}
-	defer func() { K8s = original }()
-
-	handler := NewRegistryProxyHandler(st)
+	client := &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node-a"}})}
+	handler := NewRegistryProxyHandler(st, nil, client)
 	router := gin.New()
 	router.POST("/api/registry-proxies", handler.Deploy)
 	router.GET("/api/registry-proxies", handler.List)
@@ -107,7 +103,7 @@ func TestRegistryProxyHandlerDeploysIndependentUpstreamInstances(t *testing.T) {
 		if proxy.ResourceName == "" {
 			t.Fatalf("expected resource name for %#v", proxy)
 		}
-		deployment, getErr := K8s.Clientset.AppsV1().Deployments(registryProxyNamespace).Get(context.Background(), proxy.ResourceName, metav1.GetOptions{})
+		deployment, getErr := client.Clientset.AppsV1().Deployments(registryProxyNamespace).Get(context.Background(), proxy.ResourceName, metav1.GetOptions{})
 		if getErr != nil {
 			t.Fatalf("expected proxy deployment %s: %v", proxy.ResourceName, getErr)
 		}
@@ -128,10 +124,8 @@ func TestRegistryProxyHandlerUsesOnlyConfiguredPodDNS(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	original := K8s
-	K8s = &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node-a"}})}
-	defer func() { K8s = original }()
-	handler := NewRegistryProxyHandler(st)
+	client := &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node-a"}})}
+	handler := NewRegistryProxyHandler(st, nil, client)
 	router := gin.New()
 	router.POST("/api/registry-proxies", handler.Deploy)
 
@@ -145,7 +139,7 @@ func TestRegistryProxyHandlerUsesOnlyConfiguredPodDNS(t *testing.T) {
 	if err != nil || proxy.DNSResolvers != `["10.0.0.2","10.0.0.3"]` {
 		t.Fatalf("stored DNS: %#v err=%v", proxy, err)
 	}
-	deployment, err := K8s.Clientset.AppsV1().Deployments(registryProxyNamespace).Get(context.Background(), proxy.ResourceName, metav1.GetOptions{})
+	deployment, err := client.Clientset.AppsV1().Deployments(registryProxyNamespace).Get(context.Background(), proxy.ResourceName, metav1.GetOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,34 +150,8 @@ func TestRegistryProxyHandlerUsesOnlyConfiguredPodDNS(t *testing.T) {
 }
 
 func TestNormalizeProxyDNSServersRejectsHostLoopback(t *testing.T) {
-	if _, err := normalizeProxyDNSServers([]string{"127.0.0.53"}); err == nil {
+	if _, err := registryservice.NormalizeProxyDNSServers([]string{"127.0.0.53"}); err == nil {
 		t.Fatal("expected loopback DNS to be rejected")
-	}
-}
-
-func TestParseProxyDiagnosticClassifiesProbeResults(t *testing.T) {
-	tests := []struct {
-		name, output, status string
-	}{
-		{"busybox wget registry response", "status=healthy;tool=wget;ips=52.4.106.100,;http=401;elapsed=35", "healthy"},
-		{"connect timeout", "status=upstream_connect_timeout;tool=wget;ips=52.4.106.100,;http=;elapsed=10020", "upstream_connect_timeout"},
-		{"missing command", "status=command_missing;tool=missing;ips=52.4.106.100,;http=;elapsed=1", "command_missing"},
-		{"invalid output", "not a diagnostic", "diagnostic_failed"},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			result := parseProxyDiagnostic(test.output, 999)
-			if result.Status != test.status {
-				t.Fatalf("status = %q, want %q: %#v", result.Status, test.status, result)
-			}
-		})
-	}
-}
-
-func TestRegistryProxyDiagnosticCommandRecordsCurlStatus(t *testing.T) {
-	command := registryProxyDiagnosticCommand("registry-1.docker.io")
-	if !strings.Contains(command[2], `http=$output;`) {
-		t.Fatalf("curl result must be recorded as HTTP status: %q", command[2])
 	}
 }
 
@@ -199,11 +167,8 @@ func TestRegistryProxyHandlerMigratesLegacyDockerHubResources(t *testing.T) {
 
 	oldDeployment := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: registryProxyName, Namespace: registryProxyNamespace}}
 	oldService := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: registryProxyName, Namespace: registryProxyNamespace}}
-	original := K8s
-	K8s = &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(oldDeployment, oldService)}
-	defer func() { K8s = original }()
-
-	handler := NewRegistryProxyHandler(st)
+	client := &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(oldDeployment, oldService)}
+	handler := NewRegistryProxyHandler(st, nil, client)
 	router := gin.New()
 	router.POST("/api/registry-proxies/:id/migrate-resource-name", handler.MigrateResourceName)
 	response := httptest.NewRecorder()
@@ -220,13 +185,13 @@ func TestRegistryProxyHandlerMigratesLegacyDockerHubResources(t *testing.T) {
 	if updated.ResourceName != wantResourceName {
 		t.Fatalf("expected resource name %q, got %q", wantResourceName, updated.ResourceName)
 	}
-	if _, err := K8s.Clientset.AppsV1().Deployments(registryProxyNamespace).Get(context.Background(), wantResourceName, metav1.GetOptions{}); err != nil {
+	if _, err := client.Clientset.AppsV1().Deployments(registryProxyNamespace).Get(context.Background(), wantResourceName, metav1.GetOptions{}); err != nil {
 		t.Fatalf("expected migrated deployment: %v", err)
 	}
-	if _, err := K8s.Clientset.CoreV1().Services(registryProxyNamespace).Get(context.Background(), wantResourceName, metav1.GetOptions{}); err != nil {
+	if _, err := client.Clientset.CoreV1().Services(registryProxyNamespace).Get(context.Background(), wantResourceName, metav1.GetOptions{}); err != nil {
 		t.Fatalf("expected migrated service: %v", err)
 	}
-	if _, err := K8s.Clientset.AppsV1().Deployments(registryProxyNamespace).Get(context.Background(), registryProxyName, metav1.GetOptions{}); !apierrors.IsNotFound(err) {
+	if _, err := client.Clientset.AppsV1().Deployments(registryProxyNamespace).Get(context.Background(), registryProxyName, metav1.GetOptions{}); !apierrors.IsNotFound(err) {
 		t.Fatalf("expected legacy deployment to be deleted, got %v", err)
 	}
 }

@@ -169,7 +169,9 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 	}
 	nodeRegistryMirrors := apiGroup.Group("/node-registry-mirrors")
 	{
-		h := NewNodeRegistryMirrorHandler(s, encKey)
+		h := delivery.NewNodeRegistryMirrorHandler(s, encKey, func(server *model.Server, content []byte) (string, string) {
+			return applyK3sRegistriesToNode(server, encKey, content)
+		})
 		nodeRegistryMirrors.GET("", h.List)
 		nodeRegistryMirrors.POST("", h.Create)
 		nodeRegistryMirrors.PUT("/:id", h.Update)
@@ -194,7 +196,7 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 		managedOCIRegistries.POST("/:id/apply-node-access", h.ApplyNodeAccess)
 		managedOCIRegistries.DELETE("/:id", h.Delete)
 	}
-	registryProxyHandler := NewRegistryProxyHandler(s, encKey)
+	registryProxyHandler := delivery.NewRegistryProxyHandler(s, encKey, K8s)
 	go registryProxyHandler.Reconcile()
 	registryProxy := apiGroup.Group("/registry-proxy")
 	{

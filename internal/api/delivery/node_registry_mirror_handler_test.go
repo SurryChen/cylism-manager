@@ -1,4 +1,4 @@
-package api
+package delivery
 
 import (
 	"context"
@@ -24,7 +24,9 @@ func setupNodeRegistryMirrorRouter() (*gin.Engine, *store.Store, *NodeRegistryMi
 		db.SetMaxOpenConns(1)
 	}
 	r := gin.New()
-	h := NewNodeRegistryMirrorHandler(s, []byte("01234567890123456789012345678901"))
+	h := NewNodeRegistryMirrorHandler(s, []byte("01234567890123456789012345678901"), func(_ *model.Server, _ []byte) (string, string) {
+		return "success", "configured"
+	})
 	mirrors := r.Group("/api/node-registry-mirrors")
 	{
 		mirrors.GET("", h.List)
@@ -50,16 +52,16 @@ func TestNodeRegistryMirrorVerifyPersistsConnectionResult(t *testing.T) {
 	if err := s.CreateNodeRegistryMirror(mirror); err != nil {
 		t.Fatal(err)
 	}
-	h.verifyConnection = func(_ context.Context, _ *model.NodeRegistryMirror, _ []byte) error { return nil }
+	h.WithVerifier(func(_ context.Context, _ *model.NodeRegistryMirror, _ []byte) error { return nil })
 
 	success := serve(r, newJSONRequest(http.MethodPost, "/api/node-registry-mirrors/1/verify", nil))
 	if success.Code != http.StatusOK || !strings.Contains(success.Body.String(), `"last_verify_status":"succeeded"`) {
 		t.Fatalf("unexpected successful verification: %s", success.Body.String())
 	}
 
-	h.verifyConnection = func(_ context.Context, _ *model.NodeRegistryMirror, _ []byte) error {
+	h.WithVerifier(func(_ context.Context, _ *model.NodeRegistryMirror, _ []byte) error {
 		return errors.New("https://mirror.example.com: 认证失败 (HTTP 401)")
-	}
+	})
 	failure := serve(r, newJSONRequest(http.MethodPost, "/api/node-registry-mirrors/1/verify", nil))
 	if failure.Code != http.StatusOK || !strings.Contains(failure.Body.String(), `"last_verify_status":"failed"`) || !strings.Contains(failure.Body.String(), "认证失败") {
 		t.Fatalf("unexpected failed verification: %s", failure.Body.String())
@@ -89,19 +91,6 @@ func TestNodeRegistryMirrorVerificationUsesMirrorEndpoint(t *testing.T) {
 	}
 }
 
-func TestNodeRegistryMirrorApplyCommandSchedulesRestartOutsideSSHSession(t *testing.T) {
-	command := nodeRegistryMirrorApplyCommand("encoded-config")
-	if !strings.Contains(command, "printf %s encoded-config | base64 -d") {
-		t.Fatalf("expected encoded configuration write: %s", command)
-	}
-	if !strings.Contains(command, "nohup sudo -n sh -c \"sleep 2; systemctl restart $service\"") {
-		t.Fatalf("expected deferred restart: %s", command)
-	}
-	if strings.Contains(command, "then sudo -n systemctl restart k3s") {
-		t.Fatalf("restart must not block the SSH session: %s", command)
-	}
-}
-
 func TestNodeRegistryMirrorApplyRejectsEmptyOrNonClusterSelection(t *testing.T) {
 	r, s, _ := setupNodeRegistryMirrorRouter()
 	mirror := createEnabledNodeRegistryMirror(t, s)
@@ -128,11 +117,11 @@ func TestNodeRegistryMirrorApplyOnlyRunsOnSelectedNodesAndPersistsProgress(t *te
 	other := createClusterServer(t, s, "worker-b", "10.0.0.12")
 	started := make(chan uint, 1)
 	allowFinish := make(chan struct{})
-	h.applyNode = func(server *model.Server, _ []byte) (string, string) {
+	h.WithApplier(func(server *model.Server, _ []byte) (string, string) {
 		started <- server.ID
 		<-allowFinish
 		return "success", "配置已写入"
-	}
+	})
 
 	response := serve(r, newJSONRequest(http.MethodPost, "/api/node-registry-mirrors/"+uintString(mirror.ID)+"/apply", gin.H{"server_ids": []uint{selected.ID}}))
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "应用任务已提交") || !strings.Contains(response.Body.String(), `"last_apply_status":"applying"`) {

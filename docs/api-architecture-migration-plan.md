@@ -172,6 +172,17 @@ internal/service/registry/node_mirror.go
 
 ### 阶段 3：Registry Proxy 和节点镜像源
 
+状态：已完成（2026-08-29）。
+
+已落地内容：
+
+- 节点镜像源的输入校验、凭据加密、连接检测状态、节点筛选与单飞异步下发任务收敛至 `internal/service/registry/mirror_service.go`；API 层仅保留 HTTP 映射和 SSH 适配。
+- 镜像代理的请求校验、默认值、NodePort 冲突检测、出网代理凭据和持久化收敛至 `internal/service/registry/proxy_service.go`。
+- 镜像代理的 Kubernetes Deployment、Service、节点检查、缓存清理和状态读取收敛至 `internal/k8s/registry_proxy.go`，K8s 层只接收服务层解密后的运行环境变量。
+- Registry Proxy 与节点镜像源的 HTTP Adapter 已迁移至 `internal/api/delivery/`；路由、鉴权、错误码和响应字段保持不变。
+- Registry Proxy 的 Ready Pod 查询、固定诊断命令、Pod exec 和诊断结果解析已迁移至 `internal/k8s/registry_proxy.go`；API 层不再执行 Kubernetes Pod exec。
+- 节点 `registries.yaml` 的 SSH 下发由路由注入基础设施适配器，delivery Handler 不再依赖 API 根包的全局状态。
+
 迁移：
 
 ```text
