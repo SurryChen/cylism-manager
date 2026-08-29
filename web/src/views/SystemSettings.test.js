@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { nextTick } from 'vue'
 import { mount } from '@vue/test-utils'
 import SystemSettings from './SystemSettings.vue'
+import { api } from '../api/index.js'
 
 vi.mock('../api/index.js', () => ({
   api: {
@@ -54,9 +55,29 @@ describe('SystemSettings view', () => {
     await wrapper.get('[data-testid="platform-manual-update"]').trigger('click')
     expect(wrapper.text()).toContain('平台更新已提交')
 
+    await wrapper.get('[data-testid="platform-image-prefix"]').setValue('registry.example.com/cylism-manager\noci-registry.example.com/cylism-manager')
+    await wrapper.get('[data-testid="platform-image-prefix-save"]').trigger('click')
+    expect(api.put).toHaveBeenCalledWith('/platform/image-prefix', { image_prefix: 'registry.example.com/cylism-manager\noci-registry.example.com/cylism-manager' })
+
     await wrapper.get('[data-testid="generate-platform-webhook-secret"]').trigger('click')
     await nextTick()
     expect(wrapper.text()).toContain('generated-secret')
+    wrapper.unmount()
+  })
+
+  it('shows manual platform update errors in a dialog', async () => {
+    api.post.mockRejectedValueOnce(new Error('平台镜像不属于允许的仓库前缀'))
+    const wrapper = mount(SystemSettings)
+    await new Promise(r => setTimeout(r, 50))
+    await wrapper.get('[data-testid="platform-manual-image"]').setValue('oci-registry.crazycoding.top/cylism-manager:1.0.0')
+    await wrapper.get('[data-testid="platform-manual-update"]').trigger('click')
+    await new Promise(r => setTimeout(r, 0))
+
+    const notice = document.body.querySelector('.platform-action-notice-modal')
+    expect(notice).not.toBeNull()
+    expect(notice.textContent).toContain('平台更新失败')
+    expect(notice.textContent).toContain('平台镜像不属于允许的仓库前缀')
+    wrapper.unmount()
   })
 
   it('keeps unsaved endpoint fields when the status poll refreshes', async () => {

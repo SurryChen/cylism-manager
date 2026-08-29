@@ -123,6 +123,32 @@ func TestPlatformManualUpdateRejectsUntaggedImage(t *testing.T) {
 	}
 }
 
+func TestPlatformImagePrefixesAllowMultipleRegistries(t *testing.T) {
+	s, err := store.New(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetSystemConfig(platformImagePrefixConfigKey, "registry.example.com/cylism-manager\noci-registry.example.com/cylism-manager"); err != nil {
+		t.Fatal(err)
+	}
+	h := NewPlatformHandler(s, []byte("01234567890123456789012345678901"))
+	for _, image := range []string{
+		"registry.example.com/cylism-manager:1.0.0",
+		"oci-registry.example.com/cylism-manager:2.0.0",
+	} {
+		if err := h.validatePlatformImage(image); err != nil {
+			t.Fatalf("expected image %q to be accepted: %v", image, err)
+		}
+	}
+	if err := h.validatePlatformImage("other.example.com/cylism-manager:1.0.0"); err == nil {
+		t.Fatal("expected image outside configured prefixes to be rejected")
+	}
+	prefixes, err := normalizePlatformImagePrefixes("registry.example.com/cylism-manager, registry.example.com/cylism-manager\noci-registry.example.com/cylism-manager/")
+	if err != nil || len(prefixes) != 2 || prefixes[1] != "oci-registry.example.com/cylism-manager" {
+		t.Fatalf("unexpected normalized prefixes: %#v, %v", prefixes, err)
+	}
+}
+
 func TestPlatformEndpointStatusDefaultsToNotConfigured(t *testing.T) {
 	s, err := store.New(":memory:")
 	if err != nil {
