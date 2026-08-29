@@ -536,32 +536,6 @@ func TestApplicationHandlerReleasesFromSelectedDeploymentTemplateByVersion(t *te
 	}
 }
 
-func TestPrepareReleaseImageVerificationUsesAppliedNodeMirror(t *testing.T) {
-	s, err := store.New(":memory:")
-	if err != nil {
-		t.Fatal(err)
-	}
-	server := &model.Server{Name: "worker-a", Host: "10.0.0.11", ClusterRole: "worker", K8sNodeName: "worker-a"}
-	if err := s.CreateServer(server); err != nil {
-		t.Fatal(err)
-	}
-	mirror := &model.NodeRegistryMirror{Name: "docker-hub", Registry: "docker.io", Endpoints: `["https://docker.1panel.live"]`, Enabled: true}
-	if err := s.CreateNodeRegistryMirror(mirror); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.UpsertNodeRegistryMirrorStatus(&model.NodeRegistryMirrorNode{MirrorID: mirror.ID, ServerID: server.ID, Status: "success"}); err != nil {
-		t.Fatal(err)
-	}
-	handler := NewApplicationHandler(s, []byte("01234567890123456789012345678901"))
-	spec := application.ReleaseSpec{Image: "zenika/alpine-chrome:124", NodeName: "worker-a"}
-	if err := handler.prepareReleaseImageVerification(&spec); err != nil {
-		t.Fatal(err)
-	}
-	if spec.ImageVerificationEndpoint != "https://docker.1panel.live" {
-		t.Fatalf("expected applied node mirror endpoint, got %+v", spec)
-	}
-}
-
 func TestApplicationHandlerBindsDomainIndependentlyFromReleaseTemplate(t *testing.T) {
 	r, s := setupApplicationRouter()
 	if err := s.CreateProject(&model.Project{Name: "commerce", OwnerID: 1}); err != nil {

@@ -64,52 +64,6 @@ func (h *ApplicationHandler) ListManagedFiles(c *gin.Context) {
 	model.Success(c, result)
 }
 
-func (h *ApplicationHandler) syncManagedFilesForSpec(app *model.Application, spec application.ReleaseSpec, userID uint) error {
-	application.NormalizeManagedKeys(&spec)
-	bindings := make(map[string]struct{})
-	for _, managed := range []struct {
-		keys   []string
-		kind   string
-		name   string
-		secret bool
-	}{
-		{keys: spec.ConfigManagedKeys, kind: application.FileMountSourceConfigMap, name: app.Name + "-config"},
-		{keys: spec.SecretManagedKeys, kind: application.FileMountSourceSecret, name: app.Name + "-secret", secret: true},
-	} {
-		for _, key := range managed.keys {
-			key = strings.TrimSpace(key)
-			if key == "" {
-				continue
-			}
-			bindings[managedFileBinding(managed.kind, managed.name, key)] = struct{}{}
-			file := &model.ApplicationManagedFile{ApplicationID: app.ID, ResourceKind: managed.kind, ResourceName: managed.name, Key: key, MountPath: managedMountPath(spec, managed.secret, key), Format: "text", CreatedBy: userID, Enabled: true}
-			if err := h.store.UpsertApplicationManagedFile(file); err != nil {
-				return err
-			}
-		}
-	}
-	// Keep old templates working when they have not yet been saved through the
-	// new key-level editor; NormalizeManagedKeys above performs the migration.
-	return h.store.DisableApplicationManagedFilesNotIn(app.ID, bindings)
-}
-
-func managedMountPath(spec application.ReleaseSpec, secret bool, key string) string {
-	wantSource := application.FileMountSourceApplicationConfig
-	if secret {
-		wantSource = application.FileMountSourceApplicationSecret
-	}
-	for _, mount := range spec.FileMounts {
-		if mount.SourceType == wantSource && mount.Key == key {
-			return mount.MountPath
-		}
-	}
-	return ""
-}
-
-func managedFileBinding(kind, name, key string) string {
-	return strings.Join([]string{kind, name, key}, "\x00")
-}
-
 type delegationRequest struct {
 	EnvironmentIDs []uint   `json:"environment_ids"`
 	Capability     string   `json:"capability"`
@@ -683,47 +637,11 @@ func configMapKeyEnabled(spec application.ReleaseSpec, key string) bool {
 }
 
 func (h *ApplicationHandler) createRestartRelease(ctx context.Context, app *model.Application, userID uint) (*model.Release, error) {
-	template, err := h.store.GetDefaultApplicationDeploymentTemplate(app.ID)
-	if err != nil || !template.Enabled {
-		return nil, fmt.Errorf("应用没有可用的默认上线模板")
-	}
-	active, err := h.store.GetLatestSuccessfulRelease(app.ID)
-	if err != nil {
-		return nil, fmt.Errorf("应用尚无可重启的成功发布")
-	}
-	var spec application.ReleaseSpec
-	if err := json.Unmarshal([]byte(template.Spec), &spec); err != nil {
-		return nil, fmt.Errorf("读取上线模板失败")
-	}
-	secrets, err := h.decryptTemplateSecrets(template)
-	if err != nil {
-		return nil, fmt.Errorf("读取模板 Secret 失败")
-	}
-	spec.Secrets = secrets
-	spec.Image = active.Image
-	spec.Version = active.Version
-	// Restart releases must rebuild the same registry and node-mirror runtime
-	// settings as a normal publish. The persisted release snapshot deliberately
-	// omits these transient credentials and verification endpoints.
-	if err := h.prepareRegistryReleaseSpec(app, &spec); err != nil {
-		return nil, err
-	}
-	if err := h.prepareReleaseImageVerification(&spec); err != nil {
-		return nil, err
-	}
-	if err := h.applyApplicationEndpointSpec(app, &spec); err != nil {
-		return nil, err
-	}
-	service := application.NewService(h.store, application.NewKubernetesApplier(K8s))
-	release, err := service.CreateRelease(ctx, app.ID, userID, spec)
+	workflow := h.releaseWorkflow()
+	prepared, err := workflow.Restart(ctx, app, userID)
 	if err != nil {
 		return nil, err
 	}
-	templateID := template.ID
-	release.TemplateID, release.TemplateRevision = &templateID, template.Revision
-	if err := h.store.UpdateRelease(release); err != nil {
-		return nil, err
-	}
-	h.executeAsync(service, release.ID, app, spec)
-	return release, nil
+	workflow.ExecuteAsync(app, prepared)
+	return prepared.Release, nil
 }

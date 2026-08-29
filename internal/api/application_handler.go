@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -15,10 +14,8 @@ import (
 	"github.com/cylism/cylism-manager/internal/application"
 	"github.com/cylism/cylism-manager/internal/crypto"
 	"github.com/cylism/cylism-manager/internal/model"
-	registryservice "github.com/cylism/cylism-manager/internal/service/registry"
 	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/gin-gonic/gin"
-	"github.com/google/go-containerregistry/pkg/name"
 	"gorm.io/gorm"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -36,8 +33,6 @@ func (h *ApplicationHandler) WithDelegationSecret(secret []byte) *ApplicationHan
 	h.delegationSecret = append([]byte(nil), secret...)
 	return h
 }
-
-var imageTagPattern = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$`)
 
 type deploymentTemplateInfo struct {
 	ID            uint                    `json:"id"`
@@ -172,6 +167,14 @@ func NewApplicationHandler(store *store.Store, encKey ...[]byte) *ApplicationHan
 		handler.encKey = encKey[0]
 	}
 	return handler
+}
+
+func (h *ApplicationHandler) releaseWorkflow() *application.ReleaseWorkflow {
+	var applier application.ResourceApplier
+	if K8s != nil {
+		applier = application.NewKubernetesApplier(K8s)
+	}
+	return application.NewReleaseWorkflow(h.store, h.encKey, applier)
 }
 
 func (h *ApplicationHandler) ListProjects(c *gin.Context) {
@@ -1229,59 +1232,26 @@ func (h *ApplicationHandler) CreateRelease(c *gin.Context) {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
 		return
 	}
-	var spec application.ReleaseSpec
-	if err := json.Unmarshal([]byte(template.Spec), &spec); err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "读取应用上线模板失败")
-		return
-	}
-	secrets, err := h.decryptTemplateSecrets(template)
+	workflow := h.releaseWorkflow()
+	prepared, err := workflow.CreateFromTemplate(c.Request.Context(), app, template, version, getUserID(c))
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "读取模板 Secret 失败")
-		return
-	}
-	if len(spec.Secrets) > 0 && len(secrets) == 0 {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "模板中的 Secret 尚未配置明文值")
-		return
-	}
-	spec.Secrets = secrets
-	spec.Version = version
-	image, err := imageWithVersion(spec.Image, version)
-	if err != nil {
+		if errors.Is(err, application.ErrReleaseTemplateRead) {
+			model.Error(c, http.StatusInternalServerError, model.CodeDBError, "读取应用上线模板失败")
+			return
+		}
+		if errors.Is(err, application.ErrReleaseSecretRead) {
+			model.Error(c, http.StatusInternalServerError, model.CodeDBError, "读取模板 Secret 失败")
+			return
+		}
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
 		return
 	}
-	spec.Image = image
-	if err := h.prepareRegistryReleaseSpec(app, &spec); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
-		return
-	}
-	if err := h.prepareReleaseImageVerification(&spec); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
-		return
-	}
-	if err := h.applyApplicationEndpointSpec(app, &spec); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
-		return
-	}
-	service := application.NewService(h.store, application.NewKubernetesApplier(K8s))
-	release, err := service.CreateRelease(c.Request.Context(), applicationID, getUserID(c), spec)
-	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
-		return
-	}
-	templateID := template.ID
-	release.TemplateID = &templateID
-	release.TemplateRevision = template.Revision
-	if err := h.store.UpdateRelease(release); err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
-		return
-	}
-	if err := h.syncManagedFilesForSpec(app, spec, getUserID(c)); err != nil {
+	if err := workflow.SyncManagedFiles(app, prepared.Spec, getUserID(c)); err != nil {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "登记受管文件失败")
 		return
 	}
-	h.executeAsync(service, release.ID, app, spec)
-	model.SuccessWithMessage(c, release, "发布已创建")
+	workflow.ExecuteAsync(app, prepared)
+	model.SuccessWithMessage(c, prepared.Release, "发布已创建")
 }
 
 // RestartApplication recreates the latest successful release with the current
@@ -1305,12 +1275,14 @@ func (h *ApplicationHandler) RestartApplication(c *gin.Context) {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
 		return
 	}
-	release, err := h.createRestartRelease(c.Request.Context(), app, getUserID(c))
+	workflow := h.releaseWorkflow()
+	prepared, err := workflow.Restart(c.Request.Context(), app, getUserID(c))
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
 		return
 	}
-	model.SuccessWithMessage(c, release, "应用重启已创建")
+	workflow.ExecuteAsync(app, prepared)
+	model.SuccessWithMessage(c, prepared.Release, "应用重启已创建")
 }
 
 func (h *ApplicationHandler) ListDeploymentTemplates(c *gin.Context) {
@@ -1400,7 +1372,7 @@ func (h *ApplicationHandler) CreateDeploymentTemplate(c *gin.Context) {
 		app.DefaultDeploymentTemplateID = &template.ID
 	}
 	if app.DefaultDeploymentTemplateID != nil && *app.DefaultDeploymentTemplateID == template.ID {
-		if err := h.syncManagedFilesForSpec(app, req.Spec, getUserID(c)); err != nil {
+		if err := h.releaseWorkflow().SyncManagedFiles(app, req.Spec, getUserID(c)); err != nil {
 			model.Error(c, http.StatusInternalServerError, model.CodeDBError, "登记模板 ConfigMap 配置失败")
 			return
 		}
@@ -1477,7 +1449,7 @@ func (h *ApplicationHandler) UpdateDeploymentTemplate(c *gin.Context) {
 		return
 	}
 	if app.DefaultDeploymentTemplateID != nil && *app.DefaultDeploymentTemplateID == template.ID {
-		if err := h.syncManagedFilesForSpec(app, req.Spec, getUserID(c)); err != nil {
+		if err := h.releaseWorkflow().SyncManagedFiles(app, req.Spec, getUserID(c)); err != nil {
 			model.Error(c, http.StatusInternalServerError, model.CodeDBError, "登记模板 ConfigMap 配置失败")
 			return
 		}
@@ -1542,7 +1514,7 @@ func (h *ApplicationHandler) SetDefaultDeploymentTemplate(c *gin.Context) {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "读取上线模板失败")
 		return
 	}
-	if err := h.syncManagedFilesForSpec(app, spec, getUserID(c)); err != nil {
+	if err := h.releaseWorkflow().SyncManagedFiles(app, spec, getUserID(c)); err != nil {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "登记模板 ConfigMap 配置失败")
 		return
 	}
@@ -1564,7 +1536,7 @@ func (h *ApplicationHandler) templateFromRequest(app *model.Application, req *de
 	if err := validateImageRepository(spec.Image); err != nil {
 		return nil, err
 	}
-	if err := h.prepareRegistryReleaseSpec(app, &spec); err != nil {
+	if err := h.releaseWorkflow().PrepareRegistrySpec(app, &spec); err != nil {
 		return nil, err
 	}
 	encryptedSecrets := ""
@@ -1705,7 +1677,7 @@ func (h *ApplicationHandler) CreateApplicationEndpoint(c *gin.Context) {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
 		return
 	}
-	servicePort, err := resolveEndpointServicePort(serviceSpec, req.ServicePort, req.Protocol, endpointUsesIngress(*endpoint))
+	servicePort, err := application.ResolveEndpointServicePort(serviceSpec, req.ServicePort, req.Protocol, endpointUsesIngress(*endpoint))
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
 		return
@@ -1774,7 +1746,7 @@ func (h *ApplicationHandler) UpdateApplicationEndpoint(c *gin.Context) {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
 		return
 	}
-	servicePort, err := resolveEndpointServicePort(serviceSpec, req.ServicePort, req.Protocol, endpointUsesIngress(*updated))
+	servicePort, err := application.ResolveEndpointServicePort(serviceSpec, req.ServicePort, req.Protocol, endpointUsesIngress(*updated))
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
 		return
@@ -1896,59 +1868,10 @@ func (h *ApplicationHandler) applicationServiceSpec(app *model.Application) (app
 	return application.ServiceSpec{Port: 80}, nil
 }
 
-// resolveEndpointServicePort validates the explicitly selected Service port.
-// Empty values are retained for older clients and resolve to the first TCP
-// port when available, matching the historical behavior.
-func resolveEndpointServicePort(spec application.ServiceSpec, requestedPort int32, requestedProtocol string, ingress bool) (application.ServicePortSpec, error) {
-	ports := spec.PortSpecs()
-	if len(ports) == 0 {
-		return application.ServicePortSpec{}, fmt.Errorf("应用没有可绑定的 Service 端口")
-	}
-	protocol := strings.ToUpper(strings.TrimSpace(requestedProtocol))
-	if protocol != "" && protocol != application.ServiceProtocolTCP && protocol != application.ServiceProtocolUDP {
-		return application.ServicePortSpec{}, fmt.Errorf("Service 协议必须为 TCP 或 UDP")
-	}
-	if requestedPort == 0 {
-		if primary, ok := spec.PrimaryTCPPort(); ok {
-			requestedPort = primary.Port
-			if protocol == "" {
-				protocol = application.ServiceProtocolTCP
-			}
-		} else {
-			requestedPort = ports[0].Port
-		}
-	}
-	for _, port := range ports {
-		if port.Port != requestedPort {
-			continue
-		}
-		actualProtocol := strings.ToUpper(strings.TrimSpace(port.Protocol))
-		if actualProtocol == "" {
-			actualProtocol = application.ServiceProtocolTCP
-		}
-		if protocol != "" && protocol != actualProtocol {
-			return application.ServicePortSpec{}, fmt.Errorf("Service 端口 %d 的协议为 %s，不是 %s", requestedPort, actualProtocol, protocol)
-		}
-		if ingress && actualProtocol != application.ServiceProtocolTCP {
-			return application.ServicePortSpec{}, fmt.Errorf("UDP Service 不支持 HTTP Ingress 域名绑定")
-		}
-		port.Protocol = actualProtocol
-		return port, nil
-	}
-	return application.ServicePortSpec{}, fmt.Errorf("Service 端口 %d 不存在，请选择模板中已声明的端口", requestedPort)
-}
-
 func endpointUsesIngress(endpoint model.ApplicationEndpoint) bool {
 	// Empty mode is the legacy representation and must continue to create an
 	// Ingress for endpoints written before metadata-only bindings existed.
 	return strings.ToLower(strings.TrimSpace(endpoint.IngressMode)) != "metadata"
-}
-
-func (h *ApplicationHandler) applyApplicationEndpointSpec(app *model.Application, spec *application.ReleaseSpec) error {
-	// Domain bindings are application-level state. Release snapshots must not
-	// reapply historical endpoint data over newer bindings.
-	spec.Endpoint = application.EndpointSpec{Exposure: application.ExposureCluster}
-	return nil
 }
 
 func applicationContextFor(app *model.Application) application.ApplicationContext {
@@ -1965,17 +1888,6 @@ func validateImageRepository(image string) error {
 		return fmt.Errorf("上线模板镜像路径不应包含 Tag，请在发布时填写版本号")
 	}
 	return nil
-}
-
-func imageWithVersion(repository, version string) (string, error) {
-	if err := validateImageRepository(repository); err != nil {
-		return "", err
-	}
-	version = strings.TrimSpace(version)
-	if !imageTagPattern.MatchString(version) {
-		return "", fmt.Errorf("版本号必须是合法的镜像 Tag")
-	}
-	return strings.Trim(strings.TrimSpace(repository), "/") + ":" + version, nil
 }
 
 func (h *ApplicationHandler) RetryRelease(c *gin.Context) {
@@ -1998,27 +1910,19 @@ func (h *ApplicationHandler) RetryRelease(c *gin.Context) {
 		model.Error(c, http.StatusNotFound, model.CodeNotFound, "发布不存在")
 		return
 	}
-	service := application.NewService(h.store, application.NewKubernetesApplier(K8s))
-	release, spec, err := service.RetryRelease(releaseID, getUserID(c))
+	workflow := h.releaseWorkflow()
+	prepared, err := workflow.Retry(releaseID, getUserID(c))
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "无法重试该发布")
 		return
 	}
-	app, _ := h.store.GetApplication(applicationID)
-	if err := h.prepareRegistryReleaseSpec(app, &spec); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+	app, err := h.store.GetApplication(applicationID)
+	if err != nil {
+		model.Error(c, http.StatusNotFound, model.CodeNotFound, "应用不存在")
 		return
 	}
-	if err := h.prepareReleaseImageVerification(&spec); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
-		return
-	}
-	if err := h.applyApplicationEndpointSpec(app, &spec); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
-		return
-	}
-	h.executeAsync(service, release.ID, app, spec)
-	model.SuccessWithMessage(c, release, "重试已创建")
+	workflow.ExecuteAsync(app, prepared)
+	model.SuccessWithMessage(c, prepared.Release, "重试已创建")
 }
 
 func (h *ApplicationHandler) RollbackRelease(c *gin.Context) {
@@ -2041,112 +1945,19 @@ func (h *ApplicationHandler) RollbackRelease(c *gin.Context) {
 		model.Error(c, http.StatusNotFound, model.CodeNotFound, "发布不存在")
 		return
 	}
-	service := application.NewService(h.store, application.NewKubernetesApplier(K8s))
-	release, spec, err := service.RollbackRelease(releaseID, getUserID(c))
+	workflow := h.releaseWorkflow()
+	prepared, err := workflow.Rollback(releaseID, getUserID(c))
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "无法回滚该发布")
 		return
 	}
-	app, _ := h.store.GetApplication(applicationID)
-	if err := h.prepareRegistryReleaseSpec(app, &spec); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+	app, err := h.store.GetApplication(applicationID)
+	if err != nil {
+		model.Error(c, http.StatusNotFound, model.CodeNotFound, "应用不存在")
 		return
 	}
-	if err := h.prepareReleaseImageVerification(&spec); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
-		return
-	}
-	if err := h.applyApplicationEndpointSpec(app, &spec); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
-		return
-	}
-	h.executeAsync(service, release.ID, app, spec)
-	model.SuccessWithMessage(c, release, "回滚已创建")
-}
-
-func (h *ApplicationHandler) prepareRegistryReleaseSpec(app *model.Application, spec *application.ReleaseSpec) error {
-	if spec.RegistryID == 0 {
-		return nil
-	}
-	if app == nil {
-		return fmt.Errorf("应用不存在")
-	}
-	registry, err := h.store.GetImageRegistryForProject(spec.RegistryID, app.ProjectID)
-	if err != nil || !registry.Enabled {
-		return fmt.Errorf("镜像仓库不存在、未授权当前项目或已禁用")
-	}
-	image, err := registryImageReference(registry.Endpoint, spec.Image)
-	if err != nil {
-		return err
-	}
-	spec.Image = image
-	spec.RegistryEndpoint = registry.Endpoint
-	spec.RegistryAuthType = registry.AuthType
-	if registry.AuthType == registryservice.AuthTypeAnonymous {
-		return nil
-	}
-	credential, err := registryservice.DecryptCredential(h.encKey, registry.Credential)
-	if err != nil {
-		return fmt.Errorf("读取镜像仓库凭据失败")
-	}
-	spec.RegistryUsername = registry.Username
-	if registry.AuthType == registryservice.AuthTypeToken && spec.RegistryUsername == "" {
-		spec.RegistryUsername = "token"
-	}
-	spec.RegistryCredential = credential
-	return nil
-}
-
-func (h *ApplicationHandler) prepareReleaseImageVerification(spec *application.ReleaseSpec) error {
-	spec.ImageVerificationEndpoint = ""
-	spec.ImageVerificationUsername = ""
-	spec.ImageVerificationCredential = ""
-	spec.ImageVerificationInsecureSkipVerify = false
-	if spec.NodeName == "" {
-		return nil
-	}
-	ref, err := name.ParseReference(spec.Image)
-	if err != nil {
-		return fmt.Errorf("镜像地址无效: %w", err)
-	}
-	mirrors, err := h.store.ListNodeRegistryMirrors()
-	if err != nil {
-		return fmt.Errorf("读取节点镜像源失败: %w", err)
-	}
-	for _, mirror := range mirrors {
-		if !mirror.Enabled || !registryservice.SameRegistry(mirror.Registry, ref.Context().RegistryStr()) || !mirrorAppliedToNode(mirror, spec.NodeName) {
-			continue
-		}
-		var endpoints []string
-		if err := json.Unmarshal([]byte(mirror.Endpoints), &endpoints); err != nil || len(endpoints) == 0 {
-			return fmt.Errorf("节点镜像源 %q 配置损坏", mirror.Name)
-		}
-		endpoint := strings.TrimSpace(endpoints[0])
-		if endpoint == "" {
-			return fmt.Errorf("节点镜像源 %q 未配置可用地址", mirror.Name)
-		}
-		spec.ImageVerificationEndpoint = endpoint
-		spec.ImageVerificationUsername = mirror.Username
-		spec.ImageVerificationInsecureSkipVerify = mirror.InsecureSkipVerify
-		if mirror.Username != "" {
-			credential, err := registryservice.DecryptCredential(h.encKey, mirror.Credential)
-			if err != nil {
-				return fmt.Errorf("读取节点镜像源 %q 凭据失败", mirror.Name)
-			}
-			spec.ImageVerificationCredential = credential
-		}
-		return nil
-	}
-	return nil
-}
-
-func mirrorAppliedToNode(mirror model.NodeRegistryMirror, nodeName string) bool {
-	for _, status := range mirror.NodeStatuses {
-		if status.Status == "success" && status.Server.K8sNodeName == nodeName {
-			return true
-		}
-	}
-	return false
+	workflow.ExecuteAsync(app, prepared)
+	model.SuccessWithMessage(c, prepared.Release, "回滚已创建")
 }
 
 func (h *ApplicationHandler) prepareApplicationEndpoint(app *model.Application, endpointID uint, req applicationEndpointRequest) (*model.ApplicationEndpoint, error) {
@@ -2207,18 +2018,6 @@ func (h *ApplicationHandler) prepareApplicationEndpoint(app *model.Application, 
 	return endpoint, nil
 }
 
-func registryImageReference(endpoint, image string) (string, error) {
-	image = strings.Trim(strings.TrimSpace(image), "/")
-	if image == "" || strings.ContainsAny(image, " \t\r\n") {
-		return "", fmt.Errorf("镜像路径不能为空且不能包含空格")
-	}
-	prefix := endpoint + "/"
-	if strings.HasPrefix(image, prefix) {
-		return image, nil
-	}
-	return prefix + image, nil
-}
-
 func (h *ApplicationHandler) GetRelease(c *gin.Context) {
 	applicationID, err := parseID(c.Param("id"))
 	if err != nil {
@@ -2263,73 +2062,8 @@ func (h *ApplicationHandler) GetRelease(c *gin.Context) {
 	model.Success(c, release)
 }
 
-func (h *ApplicationHandler) executeAsync(service *application.Service, releaseID uint, app *model.Application, spec application.ReleaseSpec) {
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
-		defer cancel()
-		_ = service.ExecuteReleaseWithPostApply(ctx, releaseID, app, spec, func() error {
-			return h.syncApplicationEndpoints(ctx, app, spec.Service)
-		})
-	}()
-}
-
 func (h *ApplicationHandler) syncApplicationEndpoints(ctx context.Context, app *model.Application, service application.ServiceSpec) error {
-	endpoints, err := h.store.ListApplicationEndpoints(app.ID)
-	if err != nil {
-		return fmt.Errorf("读取应用入口: %w", err)
-	}
-	primaryTCPPort, hasTCPPort := service.PrimaryTCPPort()
-	if !hasTCPPort {
-		servicePorts := service.PortSpecs()
-		if len(servicePorts) == 0 {
-			return fmt.Errorf("应用没有可绑定的 Service 端口")
-		}
-		if err := application.NewKubernetesApplier(K8s).SyncApplicationEndpoints(ctx, applicationContextFor(app), nil, servicePorts[0].Port); err != nil {
-			return fmt.Errorf("移除 UDP Service 的 HTTP Ingress: %w", err)
-		}
-		return nil
-	}
-	for index := range endpoints {
-		if endpoints[index].Protocol == application.ServiceProtocolTCP && !servicePortExists(service, endpoints[index].ServicePort, application.ServiceProtocolTCP) {
-			// Migrate legacy endpoints that were created before explicit port
-			// selection and therefore carried the old implicit TCP port.
-			endpoints[index].ServicePort = primaryTCPPort.Port
-			if err := h.store.UpdateApplicationEndpoint(&endpoints[index]); err != nil {
-				return fmt.Errorf("更新应用入口端口: %w", err)
-			}
-		}
-		if endpoints[index].Protocol == "" {
-			resolved, resolveErr := resolveEndpointServicePort(service, endpoints[index].ServicePort, "", endpointUsesIngress(endpoints[index]))
-			if resolveErr != nil {
-				return fmt.Errorf("校验应用入口端口: %w", resolveErr)
-			}
-			endpoints[index].ServicePort = resolved.Port
-			endpoints[index].Protocol = resolved.Protocol
-			if err := h.store.UpdateApplicationEndpoint(&endpoints[index]); err != nil {
-				return fmt.Errorf("更新应用入口协议: %w", err)
-			}
-		}
-		if endpointUsesIngress(endpoints[index]) && strings.ToUpper(endpoints[index].Protocol) != application.ServiceProtocolTCP {
-			return fmt.Errorf("入口 %s 使用 UDP 端口但启用了 HTTP Ingress", endpoints[index].Domain)
-		}
-	}
-	if err := application.NewKubernetesApplier(K8s).SyncApplicationEndpoints(ctx, applicationContextFor(app), endpoints, primaryTCPPort.Port); err != nil {
-		return fmt.Errorf("同步应用入口: %w", err)
-	}
-	return nil
-}
-
-func servicePortExists(spec application.ServiceSpec, requestedPort int32, requestedProtocol string) bool {
-	for _, port := range spec.PortSpecs() {
-		protocol := strings.ToUpper(strings.TrimSpace(port.Protocol))
-		if protocol == "" {
-			protocol = application.ServiceProtocolTCP
-		}
-		if port.Port == requestedPort && protocol == requestedProtocol {
-			return true
-		}
-	}
-	return false
+	return h.releaseWorkflow().SyncApplicationEndpoints(ctx, app, service)
 }
 
 func parseID(value string) (uint, error) {

@@ -196,6 +196,16 @@ internal/service/registry/mirror_service.go
 
 ### 阶段 4：平台发布和应用发布
 
+状态：已完成（2026-08-29）。
+
+已落地内容：
+
+- 平台发布 HTTP Adapter 已迁移至 `internal/api/delivery/platform_handler.go`；平台镜像前缀校验、Webhook 签名和防重放、发布记录、自更新 Deployment reconcile 与未完成发布恢复收敛至 `internal/service/platform/release_service.go`。
+- 应用发布在复用既有 `internal/application.Service` 状态机的基础上新增 `ReleaseWorkflow`。模板发布、当前成功版本重启、重试和回滚统一在该工作流中准备运行期镜像仓库凭据、节点镜像源校验地址、发布快照和模板关联信息。
+- 发布后的应用入口同步，以及 ConfigMap/Secret 受管键登记已下沉至 `ReleaseWorkflow`；HTTP Handler 不再编排异步发布执行、镜像验证配置或受管文件持久化。
+- `ReleaseWorkflow` 的测试覆盖模板 Secret 与仓库凭据不进入发布快照、节点已下发镜像源选择；既有 API 集成测试覆盖重启、入口同步和受管文件工作流。
+- REST 路径、请求字段、响应字段、异步执行模型及原有中文错误提示保持不变。
+
 先迁移平台发布：
 
 ```text
