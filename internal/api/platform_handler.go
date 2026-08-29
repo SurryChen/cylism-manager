@@ -149,12 +149,9 @@ func (h *PlatformHandler) Status(c *gin.Context) {
 		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, "读取平台发布记录失败")
 		return
 	}
-	prefix, _ := h.store.GetSystemConfig(platformImagePrefixConfigKey)
-	if prefix == "" {
-		prefix = platformDefaultImagePrefix
-	}
+	prefixes := h.platformImagePrefixes()
 	_, configured := h.store.GetSystemConfig(platformWebhookSecretConfigKey)
-	model.Success(c, gin.H{"deployment": deployment, "releases": releases, "image_prefix": prefix, "webhook_configured": configured == nil})
+	model.Success(c, gin.H{"deployment": deployment, "releases": releases, "image_prefix": strings.Join(prefixes, "\n"), "image_prefixes": prefixes, "webhook_configured": configured == nil})
 }
 
 func (h *PlatformHandler) EndpointStatus(c *gin.Context) {
@@ -307,11 +304,16 @@ func (h *PlatformHandler) UpdateImagePrefix(c *gin.Context) {
 	var request struct {
 		ImagePrefix string `json:"image_prefix"`
 	}
-	if err := c.ShouldBindJSON(&request); err != nil || strings.TrimSpace(request.ImagePrefix) == "" || strings.ContainsAny(request.ImagePrefix, "@ \t\n") {
+	if err := c.ShouldBindJSON(&request); err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "平台镜像仓库前缀无效")
 		return
 	}
-	if err := h.store.SetSystemConfig(platformImagePrefixConfigKey, strings.TrimSuffix(strings.TrimSpace(request.ImagePrefix), "/")); err != nil {
+	prefixes, err := normalizePlatformImagePrefixes(request.ImagePrefix)
+	if err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "平台镜像仓库前缀无效")
+		return
+	}
+	if err := h.store.SetSystemConfig(platformImagePrefixConfigKey, strings.Join(prefixes, "\n")); err != nil {
 		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, "保存平台镜像仓库前缀失败")
 		return
 	}
@@ -518,19 +520,55 @@ func (h *PlatformHandler) verifyWebhookSignature(c *gin.Context, body []byte) bo
 
 func (h *PlatformHandler) validatePlatformImage(image string) error {
 	image = strings.TrimSpace(image)
-	prefix, err := h.store.GetSystemConfig(platformImagePrefixConfigKey)
-	if err != nil || prefix == "" {
-		prefix = platformDefaultImagePrefix
+	prefixes := h.platformImagePrefixes()
+	matched := ""
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(image, prefix+":") {
+			matched = prefix
+			break
+		}
 	}
-	prefix = strings.TrimSuffix(prefix, "/")
-	if !strings.HasPrefix(image, prefix+":") {
+	if matched == "" {
 		return fmt.Errorf("平台镜像不属于允许的仓库前缀")
 	}
-	tag := strings.TrimPrefix(image, prefix+":")
+	tag := strings.TrimPrefix(image, matched+":")
 	if !platformImageTagPattern.MatchString(tag) {
 		return fmt.Errorf("平台镜像 Tag 无效")
 	}
 	return nil
+}
+
+func (h *PlatformHandler) platformImagePrefixes() []string {
+	raw, err := h.store.GetSystemConfig(platformImagePrefixConfigKey)
+	if err != nil || strings.TrimSpace(raw) == "" {
+		return []string{platformDefaultImagePrefix}
+	}
+	prefixes, err := normalizePlatformImagePrefixes(raw)
+	if err != nil || len(prefixes) == 0 {
+		return []string{platformDefaultImagePrefix}
+	}
+	return prefixes
+}
+
+func normalizePlatformImagePrefixes(raw string) ([]string, error) {
+	parts := strings.FieldsFunc(raw, func(r rune) bool { return r == ',' || r == '\n' || r == '\r' })
+	seen := make(map[string]struct{}, len(parts))
+	prefixes := make([]string, 0, len(parts))
+	for _, part := range parts {
+		prefix := strings.TrimSuffix(strings.TrimSpace(part), "/")
+		if prefix == "" || strings.ContainsAny(prefix, "@ \t\r\n") {
+			return nil, errors.New("invalid image prefix")
+		}
+		if _, ok := seen[prefix]; ok {
+			continue
+		}
+		seen[prefix] = struct{}{}
+		prefixes = append(prefixes, prefix)
+	}
+	if len(prefixes) == 0 {
+		return nil, errors.New("image prefix is required")
+	}
+	return prefixes, nil
 }
 
 func (h *PlatformHandler) createPlatformRelease(image, source, commitSHA, runID string) (*model.PlatformRelease, error) {

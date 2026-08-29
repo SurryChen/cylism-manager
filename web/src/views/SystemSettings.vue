@@ -88,13 +88,23 @@
         <div class="platform-auto-update"><span class="detail-label">最近一次自动更新</span><div v-if="latestAutomaticRelease" class="platform-auto-release"><div class="platform-auto-release-meta"><span class="badge" :class="latestAutomaticRelease.status === 'succeeded' ? 'badge-online' : latestAutomaticRelease.status === 'failed' ? 'badge-danger' : 'badge-deploying'">{{ latestAutomaticRelease.status }}</span><small>{{ formatDateTime(latestAutomaticRelease.created_at) }}</small><small v-if="latestAutomaticRelease.commit_sha">提交 {{ latestAutomaticRelease.commit_sha.slice(0, 12) }}</small></div><code>{{ latestAutomaticRelease.image }}</code></div><span v-else class="settings-copy">尚无 GitHub Action 自动更新记录。</span></div>
         <div class="form-group"><label class="form-label" for="platform-manual-image">手动更新镜像 Tag</label><div class="settings-action-row"><input id="platform-manual-image" v-model.trim="manualImage" data-testid="platform-manual-image" class="form-input" :placeholder="`${platform.image_prefix || 'registry.example.com/cylism-manager'}:latest`" :disabled="updatingPlatform" /><button class="btn btn-sm btn-primary" data-testid="platform-manual-update" :disabled="updatingPlatform || !manualImage" @click="manualPlatformUpdate">{{ updatingPlatform ? '提交中...' : '手动更新' }}</button></div><p class="settings-copy form-hint">仅支持允许仓库前缀下的镜像 Tag。每次提交都会滚动重启平台，并按 imagePullPolicy 拉取镜像。</p></div>
         <p v-if="platformActionMessage" class="settings-copy platform-action-message">{{ platformActionMessage }}</p>
-        <div class="form-group"><label class="form-label">允许的镜像前缀</label><div class="settings-action-row"><input v-model.trim="platformImagePrefix" class="form-input" :disabled="savingPrefix" /><button class="btn btn-sm" :disabled="savingPrefix || !platformImagePrefix" @click="savePlatformImagePrefix">保存</button></div></div>
+        <div class="form-group"><label class="form-label">允许的镜像前缀</label><div class="settings-action-row"><textarea v-model.trim="platformImagePrefix" data-testid="platform-image-prefix" class="form-input platform-prefix-input" rows="3" :disabled="savingPrefix" placeholder="每行一个前缀，例如 registry.example.com/cylism-manager" /><button class="btn btn-sm" data-testid="platform-image-prefix-save" :disabled="savingPrefix || !platformImagePrefix" @click="savePlatformImagePrefix">保存</button></div></div>
         <div class="settings-action-row"><button class="btn btn-sm btn-primary" data-testid="generate-platform-webhook-secret" :disabled="generatingSecret" @click="generatePlatformWebhookSecret">{{ generatingSecret ? '生成中...' : '生成或轮换密钥' }}</button></div>
         <div v-if="generatedSecret" class="secret-once"><strong>仅显示一次</strong><code>{{ generatedSecret }}</code></div>
         <div v-if="platform.releases?.length" class="platform-release-list"><div v-for="release in platform.releases.slice(0, 5)" :key="release.id" class="platform-release-row"><div><code>{{ release.image }}</code><small>{{ release.source }} · {{ release.status }}</small></div><button class="btn btn-sm" :disabled="rollingBack === release.id || !release.previous_image" @click="rollbackPlatformRelease(release)">{{ rollingBack === release.id ? '提交中...' : '回滚' }}</button></div></div>
         <p v-else class="settings-copy">尚无平台发布记录。</p>
       </section>
     </div>
+
+    <Teleport to="body">
+      <div v-if="platformActionError" class="overlay platform-action-notice-overlay" @click.self="platformActionError = ''">
+        <section class="modal platform-action-notice-modal" role="alertdialog" aria-modal="true" aria-labelledby="platform-action-error-title">
+          <h2 id="platform-action-error-title" class="modal-title">平台更新失败</h2>
+          <p class="settings-copy platform-action-error-text">{{ platformActionError }}</p>
+          <div class="modal-actions"><button class="btn btn-danger" @click="platformActionError = ''">知道了</button></div>
+        </section>
+      </div>
+    </Teleport>
 
     <Teleport to="body">
       <div v-if="showDisableEndpointConfirmation" class="overlay" @click.self="showDisableEndpointConfirmation = false">
@@ -123,6 +133,7 @@ const certificates = ref([])
 const platformImagePrefix = ref('')
 const manualImage = ref('')
 const platformActionMessage = ref('')
+const platformActionError = ref('')
 const generatedSecret = ref('')
 const generatingSecret = ref(false)
 const savingPrefix = ref(false)
@@ -227,11 +238,15 @@ async function savePlatformImagePrefix() {
 
 async function manualPlatformUpdate() {
   updatingPlatform.value = true
+  platformActionMessage.value = ''
+  platformActionError.value = ''
   try {
     await api.post('/platform/releases', { image: manualImage.value })
     manualImage.value = ''
     platformActionMessage.value = '平台更新已提交'
     await refresh()
+  } catch (e) {
+    platformActionError.value = e.message || '平台更新失败'
   } finally { updatingPlatform.value = false }
 }
 
@@ -261,4 +276,8 @@ function formatDateTime(value) {
   line-height: 1.6;
 }
 .platform-endpoint-card,.platform-update-card{grid-column:1/-1}.platform-endpoint-card .card-header,.platform-update-card .card-header{align-items:flex-start}.settings-action-row{display:flex;align-items:center;gap:8px}.settings-action-row .form-input{min-width:0;flex:1}.platform-endpoint-form{margin-top:var(--space-16)}.platform-endpoint-form .form-group{margin-bottom:0}.endpoint-control-row{display:flex;align-items:center;justify-content:space-between;gap:var(--space-16);margin-top:var(--space-16);padding-top:var(--space-16);border-top:1px solid var(--border-muted)}.endpoint-control-row>.settings-copy{max-width:520px;font-size:12px}.platform-endpoint-status{display:grid;grid-template-columns:140px minmax(0,1fr);gap:9px 12px;margin-top:var(--space-16);padding:14px;border:1px solid var(--border-muted);border-radius:var(--radius-control);background:var(--surface-subtle);font-size:12px}.platform-endpoint-status a{min-width:0;overflow-wrap:anywhere;color:var(--action-primary);font-weight:700;text-decoration:none}.endpoint-error{margin-top:8px;color:var(--danger)}.endpoint-disable-modal{width:min(440px,calc(100vw - 32px))}.endpoint-disable-modal .settings-copy{margin:var(--space-12) 0 var(--space-20)}.platform-auto-update{display:grid;grid-template-columns:140px minmax(0,1fr);gap:12px;margin:var(--space-16) 0;padding:14px;border:1px solid var(--border-muted);border-radius:var(--radius-control);background:var(--surface-subtle)}.platform-auto-release{min-width:0;display:grid;gap:8px}.platform-auto-release-meta{display:flex;align-items:center;flex-wrap:wrap;gap:8px}.platform-auto-update code{min-width:0;overflow-wrap:anywhere}.platform-auto-update small{color:var(--text-secondary);font-size:12px}.secret-once{display:grid;gap:6px;margin-top:12px;padding:10px;border:1px solid var(--warning);border-radius:var(--radius-control);background:var(--warning-surface);font-size:12px}.secret-once code,.platform-release-row code{overflow-wrap:anywhere}.platform-release-list{display:grid;gap:8px;margin-top:16px}.platform-release-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px;border:1px solid var(--border-muted);border-radius:var(--radius-control);background:var(--surface-subtle)}.platform-release-row div{min-width:0;display:grid;gap:4px}.platform-release-row small{color:var(--text-secondary);font-size:11px}.form-hint{margin-top:6px}@media(max-width:700px){.settings-grid{grid-template-columns:1fr}.endpoint-control-row,.platform-release-row,.settings-action-row{align-items:stretch;flex-direction:column}.platform-auto-update,.platform-endpoint-status{grid-template-columns:1fr}}
+.platform-action-notice-overlay { z-index: 1300; }
+.platform-action-notice-modal { width: min(420px, calc(100vw - 32px)); }
+.platform-action-error-text { margin: 0; color: var(--danger); overflow-wrap: anywhere; }
+.platform-prefix-input { resize: vertical; min-height: 72px; font-family: var(--font-mono); font-size: 12px; }
 </style>
