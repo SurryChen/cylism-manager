@@ -71,6 +71,26 @@ type StorageClassInfo struct {
 	ReclaimPolicy     string `json:"reclaim_policy"`
 }
 
+// DeploymentReferencesPVC reports whether a Deployment mounts the named PVC.
+func DeploymentReferencesPVC(deployment *appsv1.Deployment, claimName string) bool {
+	for _, volume := range deployment.Spec.Template.Spec.Volumes {
+		if volume.PersistentVolumeClaim != nil && volume.PersistentVolumeClaim.ClaimName == claimName {
+			return true
+		}
+	}
+	return false
+}
+
+// StatefulSetReferencesPVC reports whether a StatefulSet mounts the named PVC.
+func StatefulSetReferencesPVC(statefulSet *appsv1.StatefulSet, claimName string) bool {
+	for _, volume := range statefulSet.Spec.Template.Spec.Volumes {
+		if volume.PersistentVolumeClaim != nil && volume.PersistentVolumeClaim.ClaimName == claimName {
+			return true
+		}
+	}
+	return false
+}
+
 func EnvironmentLabelValue(environmentID uint) string {
 	return fmt.Sprintf("environment-%d", environmentID)
 }

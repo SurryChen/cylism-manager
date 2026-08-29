@@ -14,24 +14,23 @@ import (
 
 	"github.com/cylism/cylism-manager/internal/crypto"
 	"github.com/cylism/cylism-manager/internal/model"
+	registryservice "github.com/cylism/cylism-manager/internal/service/registry"
 	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/gin-gonic/gin"
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
-	"sigs.k8s.io/yaml"
 )
 
 type NodeRegistryMirrorHandler struct {
 	store            *store.Store
 	encKey           []byte
 	verifyConnection nodeRegistryMirrorVerifier
-	applyNode        nodeRegistryMirrorApplier
+	applyNode        registryservice.NodeMirrorApplier
 	applyMu          sync.Mutex
 	runningApplies   map[uint]bool
 }
 type nodeRegistryMirrorVerifier func(context.Context, *model.NodeRegistryMirror, []byte) error
-type nodeRegistryMirrorApplier func(*model.Server, []byte) (string, string)
 type nodeRegistryMirrorApplyRequest struct {
 	ServerIDs []uint `json:"server_ids"`
 }
@@ -448,44 +447,36 @@ func (h *NodeRegistryMirrorHandler) renderK3sRegistries() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	configs := map[string]interface{}{}
-	registryMirrors := map[string]interface{}{}
+	credentials := make(map[uint]string)
 	for _, mirror := range mirrors {
-		if !mirror.Enabled {
+		if !mirror.Enabled || mirror.Username == "" {
 			continue
 		}
-		var endpoints []string
-		if json.Unmarshal([]byte(mirror.Endpoints), &endpoints) != nil {
-			return nil, fmt.Errorf("镜像源 %q 配置损坏", mirror.Name)
+		if mirror.Credential == "" {
+			return nil, fmt.Errorf("镜像源 %q 缺少密码或 Token", mirror.Name)
 		}
-		registryMirrors[mirror.Registry] = map[string]interface{}{"endpoint": endpoints}
-		if mirror.Username != "" || mirror.Credential != "" || mirror.InsecureSkipVerify {
-			config := map[string]interface{}{}
-			if mirror.Username != "" {
-				credential, err := crypto.Decrypt(h.encKey, mirror.Credential)
-				if err != nil {
-					return nil, fmt.Errorf("解密镜像源 %q 凭据失败", mirror.Name)
-				}
-				config["auth"] = map[string]string{"username": mirror.Username, "password": credential}
-			}
-			if mirror.InsecureSkipVerify {
-				config["tls"] = map[string]bool{"insecure_skip_verify": true}
-			}
-			configs[mirror.Registry] = config
+		credential, err := crypto.Decrypt(h.encKey, mirror.Credential)
+		if err != nil {
+			return nil, fmt.Errorf("解密镜像源 %q 凭据失败", mirror.Name)
 		}
+		credentials[mirror.ID] = credential
 	}
-	if len(registryMirrors) == 0 {
-		return nil, fmt.Errorf("没有已启用的节点镜像源")
-	}
-	return yaml.Marshal(map[string]interface{}{"mirrors": registryMirrors, "configs": configs})
+	return registryservice.RenderK3sRegistries(mirrors, credentials)
 }
 func (h *NodeRegistryMirrorHandler) applyToNode(server *model.Server, content []byte) (string, string) {
+	return applyK3sRegistriesToNode(server, h.encKey, content)
+}
+
+// applyK3sRegistriesToNode is the SSH adapter shared by Registry workflows.
+// The caller supplies already-rendered configuration, so this adapter only
+// performs the guarded remote write and K3s restart scheduling.
+func applyK3sRegistriesToNode(server *model.Server, encKey, content []byte) (string, string) {
 	if server.SSHAuthType != "key" || server.SSHKey == "" {
 		return "skipped", "需要已配置的 SSH 密钥认证"
 	}
 	payload := base64.StdEncoding.EncodeToString(content)
 	command := nodeRegistryMirrorApplyCommand(payload)
-	out, err := sshExec(90*time.Second, append(buildSSHArgs(server, h.encKey, server.Host), command))
+	out, err := sshExec(90*time.Second, append(buildSSHArgs(server, encKey, server.Host), command))
 	if err != nil {
 		return "failed", strings.TrimSpace(string(out))
 	}

@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/cylism/cylism-manager/internal/agentauth"
+	"github.com/cylism/cylism-manager/internal/api/delivery"
 	"github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
 	runtimepkg "github.com/cylism/cylism-manager/internal/runtime"
@@ -179,7 +180,9 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 	}
 	managedOCIRegistries := apiGroup.Group("/managed-oci-registries")
 	{
-		h := NewManagedOCIRegistryHandler(s, encKey)
+		h := delivery.NewManagedOCIRegistryHandler(s, encKey, K8s, func(server *model.Server, content []byte) (string, string) {
+			return applyK3sRegistriesToNode(server, encKey, content)
+		})
 		managedOCIRegistries.GET("", h.List)
 		managedOCIRegistries.GET("/storage-preflight", h.StoragePreflight)
 		managedOCIRegistries.GET("/pvcs", h.ListEligiblePVCs)
