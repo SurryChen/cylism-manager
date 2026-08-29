@@ -12,9 +12,6 @@ import (
 	"strings"
 
 	"github.com/cylism/cylism-manager/internal/model"
-	"github.com/google/go-containerregistry/pkg/name"
-	"k8s.io/apimachinery/pkg/api/resource"
-	"k8s.io/apimachinery/pkg/util/validation"
 )
 
 const (
@@ -69,26 +66,6 @@ func NormalizeEndpoint(value string) (endpoint, host string, err error) {
 	return strings.ToLower(value), strings.ToLower(host), nil
 }
 
-// ValidateResourceQuantities validates Kubernetes CPU and memory requests and
-// limits, including the request <= limit invariant.
-func ValidateResourceQuantities(cpuRequest, cpuLimit, memoryRequest, memoryLimit string) error {
-	values := []string{cpuRequest, cpuLimit, memoryRequest, memoryLimit}
-	for _, value := range values {
-		quantity, err := resource.ParseQuantity(value)
-		if err != nil || quantity.Sign() <= 0 {
-			return fmt.Errorf("资源数量 %q 无效", value)
-		}
-	}
-	cr, _ := resource.ParseQuantity(cpuRequest)
-	cl, _ := resource.ParseQuantity(cpuLimit)
-	mr, _ := resource.ParseQuantity(memoryRequest)
-	ml, _ := resource.ParseQuantity(memoryLimit)
-	if cr.Cmp(cl) > 0 || mr.Cmp(ml) > 0 {
-		return errors.New("资源 request 不能大于对应 limit")
-	}
-	return nil
-}
-
 // BuildManagedRegistry validates input and returns a normalized registry and
 // its ingress hostname. Current is supplied for update operations.
 func BuildManagedRegistry(input ManagedRegistryInput, current *model.ManagedOCIRegistry) (*model.ManagedOCIRegistry, string, error) {
@@ -108,8 +85,8 @@ func BuildManagedRegistry(input ManagedRegistryInput, current *model.ManagedOCIR
 	if image == "" || strings.ContainsAny(image, " \t\r\n") {
 		return nil, "", errors.New("Registry 镜像地址无效")
 	}
-	if pvcName == "" || len(validation.IsDNS1123Subdomain(pvcName)) > 0 {
-		return nil, "", errors.New("请选择合法的现有 PVC")
+	if err := ValidateExistingPVCName(pvcName); err != nil {
+		return nil, "", err
 	}
 	if username == "" || strings.ContainsAny(username, ":\r\n") {
 		return nil, "", errors.New("拉取账号必填，且不能包含冒号或换行")
@@ -172,52 +149,4 @@ func ManagedRegistryAssociations(registry *model.ManagedOCIRegistry) (*model.Ima
 	endpoints, _ := json.Marshal([]string{scheme + "://" + registry.Endpoint})
 	name := "受管制品库 · " + registry.Name
 	return &model.ImageRegistry{Name: name, Endpoint: registry.Endpoint, VerificationImage: registry.VerificationImage, AuthType: "basic", Username: registry.PullUsername, Credential: registry.EncryptedCredential, Enabled: true, CreatedBy: registry.CreatedBy, ManagedRegistryID: &registry.ID}, &model.NodeRegistryMirror{Name: name, Registry: registry.Endpoint, Endpoints: string(endpoints), VerificationImage: registry.VerificationImage, Username: registry.PullUsername, Credential: registry.EncryptedCredential, Enabled: true, CreatedBy: registry.CreatedBy, ManagedRegistryID: &registry.ID}
-}
-
-// ValidateVerificationImage ensures the image has an explicit reference and
-// belongs to the configured Registry.
-func ValidateVerificationImage(registry, image string) error {
-	if strings.TrimSpace(image) == "" {
-		return errors.New("验证镜像必填")
-	}
-	ref, err := name.ParseReference(strings.TrimSpace(image))
-	if err != nil {
-		return errors.New("验证镜像格式无效，请填写完整镜像地址和标签")
-	}
-	configuredRegistry, err := name.NewRegistry(strings.TrimSpace(registry))
-	if err != nil {
-		return errors.New("Registry 地址无效")
-	}
-	if !strings.EqualFold(ref.Context().RegistryStr(), configuredRegistry.RegistryStr()) {
-		return errors.New("验证镜像必须属于当前 Registry")
-	}
-	return nil
-}
-
-// CertificateDomainsCoverHostname reports whether one certificate SAN covers
-// the hostname. Wildcards match exactly one DNS label, as required by TLS.
-func CertificateDomainsCoverHostname(domains []string, hostname string) bool {
-	for _, domain := range domains {
-		if certificateCoversHostname(domain, hostname) {
-			return true
-		}
-	}
-	return false
-}
-
-func certificateCoversHostname(certificateDomain, hostname string) bool {
-	certificateDomain = strings.ToLower(strings.TrimSpace(certificateDomain))
-	hostname = strings.ToLower(strings.TrimSpace(hostname))
-	if certificateDomain == hostname {
-		return true
-	}
-	if !strings.HasPrefix(certificateDomain, "*.") {
-		return false
-	}
-	suffix := strings.TrimPrefix(certificateDomain, "*")
-	if !strings.HasSuffix(hostname, suffix) {
-		return false
-	}
-	prefix := strings.TrimSuffix(hostname, suffix)
-	return prefix != "" && !strings.Contains(prefix, ".")
 }

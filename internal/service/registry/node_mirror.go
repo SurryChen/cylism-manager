@@ -41,3 +41,25 @@ func RenderK3sRegistries(mirrors []model.NodeRegistryMirror, credentials map[uin
 	}
 	return yaml.Marshal(map[string]interface{}{"mirrors": registryMirrors, "configs": configs})
 }
+
+// RenderK3sRegistriesWithStoredCredentials resolves encrypted mirror
+// credentials only while rendering the configuration that will be applied to
+// a node. The returned YAML contains plaintext credentials by design and must
+// not be persisted or returned through an API response.
+func RenderK3sRegistriesWithStoredCredentials(mirrors []model.NodeRegistryMirror, encKey []byte) ([]byte, error) {
+	credentials := make(map[uint]string)
+	for _, mirror := range mirrors {
+		if !mirror.Enabled || mirror.Username == "" {
+			continue
+		}
+		if mirror.Credential == "" {
+			return nil, fmt.Errorf("镜像源 %q 缺少密码或 Token", mirror.Name)
+		}
+		credential, err := DecryptCredential(encKey, mirror.Credential)
+		if err != nil {
+			return nil, fmt.Errorf("解密镜像源 %q 凭据失败", mirror.Name)
+		}
+		credentials[mirror.ID] = credential
+	}
+	return RenderK3sRegistries(mirrors, credentials)
+}

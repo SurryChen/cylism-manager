@@ -48,6 +48,15 @@ func TestValidateResourceQuantities(t *testing.T) {
 	}
 }
 
+func TestValidateExistingPVCName(t *testing.T) {
+	if err := ValidateExistingPVCName("registry-data"); err != nil {
+		t.Fatalf("valid PVC name rejected: %v", err)
+	}
+	if err := ValidateExistingPVCName("Registry Data"); err == nil {
+		t.Fatal("invalid PVC name accepted")
+	}
+}
+
 func TestValidateVerificationImageRequiresConfiguredRegistry(t *testing.T) {
 	if err := ValidateVerificationImage("registry.example.com", "registry.example.com/cylism-manager:1.0.0"); err != nil {
 		t.Fatalf("matching verification image rejected: %v", err)
