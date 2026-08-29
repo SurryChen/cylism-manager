@@ -1,7 +1,9 @@
-package api
+package delivery
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -24,6 +26,27 @@ import (
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
 )
+
+var K8s *k8s.Client
+
+func newJSONRequest(method, path string, body interface{}) *http.Request {
+	var reader *bytes.Reader
+	if body == nil {
+		reader = bytes.NewReader(nil)
+	} else {
+		payload, _ := json.Marshal(body)
+		reader = bytes.NewReader(payload)
+	}
+	req := httptest.NewRequest(method, path, reader)
+	req.Header.Set("Content-Type", "application/json")
+	return req
+}
+
+func serve(r *gin.Engine, req *http.Request) *httptest.ResponseRecorder {
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	return w
+}
 
 func setupManagedOCIRegistryRouter(t *testing.T) (*gin.Engine, *store.Store) {
 	r, s, _ := setupManagedOCIRegistryRouterWithHandler(t)
@@ -84,7 +107,7 @@ func setupManagedOCIRegistryRouterWithHandler(t *testing.T) (*gin.Engine, *store
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { K8s = original })
-	h := NewManagedOCIRegistryHandler(s, []byte("01234567890123456789012345678901"))
+	h := NewManagedOCIRegistryHandler(s, []byte("01234567890123456789012345678901"), K8s, nil)
 	r := gin.New()
 	group := r.Group("/api/managed-oci-registries")
 	group.GET("", h.List)
@@ -446,7 +469,7 @@ func TestManagedOCIRegistryDeleteKeepsDataAndBlocksReleaseReference(t *testing.T
 
 func TestManagedOCIRegistryBlocksUnmanagedEndpointCollision(t *testing.T) {
 	r, s := setupManagedOCIRegistryRouter(t)
-	if err := s.CreateImageRegistry(&model.ImageRegistry{Name: "外部仓库", Endpoint: "registry.internal:5443", VerificationImage: "registry.internal:5443/app:latest", AuthType: registryAuthAnonymous, Enabled: true}, nil); err != nil {
+	if err := s.CreateImageRegistry(&model.ImageRegistry{Name: "外部仓库", Endpoint: "registry.internal:5443", VerificationImage: "registry.internal:5443/app:latest", AuthType: "anonymous", Enabled: true}, nil); err != nil {
 		t.Fatal(err)
 	}
 	response := serve(r, newJSONRequest(http.MethodPost, "/api/managed-oci-registries", managedRegistryPayload()))

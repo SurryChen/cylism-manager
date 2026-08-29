@@ -16,7 +16,6 @@ import (
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
-	appsv1 "k8s.io/api/apps/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -413,14 +412,14 @@ func (h *K8sHandler) pvcReferences(environmentID uint, namespace, claimName stri
 	if K8s != nil {
 		if deployments, err := K8s.Clientset.AppsV1().Deployments(namespace).List(K8s.Ctx(), metav1.ListOptions{}); err == nil {
 			for index := range deployments.Items {
-				if deploymentClaimReferenced(&deployments.Items[index], claimName) {
+				if k8sclient.DeploymentReferencesPVC(&deployments.Items[index], claimName) {
 					references = append(references, "工作负载："+deployments.Items[index].Name)
 				}
 			}
 		}
 		if statefulSets, err := K8s.Clientset.AppsV1().StatefulSets(namespace).List(K8s.Ctx(), metav1.ListOptions{}); err == nil {
 			for index := range statefulSets.Items {
-				if statefulSetClaimReferenced(&statefulSets.Items[index], claimName) {
+				if k8sclient.StatefulSetReferencesPVC(&statefulSets.Items[index], claimName) {
 					references = append(references, "工作负载："+statefulSets.Items[index].Name)
 				}
 			}
@@ -432,24 +431,6 @@ func (h *K8sHandler) pvcReferences(environmentID uint, namespace, claimName stri
 func volumeClaimReferenced(volumes []application.VolumeMountSpec, claimName string) bool {
 	for _, volume := range volumes {
 		if volume.ClaimName == claimName {
-			return true
-		}
-	}
-	return false
-}
-
-func deploymentClaimReferenced(deployment *appsv1.Deployment, claimName string) bool {
-	for _, volume := range deployment.Spec.Template.Spec.Volumes {
-		if volume.PersistentVolumeClaim != nil && volume.PersistentVolumeClaim.ClaimName == claimName {
-			return true
-		}
-	}
-	return false
-}
-
-func statefulSetClaimReferenced(statefulSet *appsv1.StatefulSet, claimName string) bool {
-	for _, volume := range statefulSet.Spec.Template.Spec.Volumes {
-		if volume.PersistentVolumeClaim != nil && volume.PersistentVolumeClaim.ClaimName == claimName {
 			return true
 		}
 	}
