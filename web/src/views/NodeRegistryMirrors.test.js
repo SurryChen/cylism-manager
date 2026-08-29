@@ -66,7 +66,33 @@ describe('Node registry mirrors view', () => {
     expect(api.post).toHaveBeenCalledWith('/node-registry-mirrors/1/verify')
 
     await wrapper.get('.page-header .btn-primary').trigger('click')
-    expect(wrapper.get('input[placeholder="docker.io/library/busybox:1.36"]').exists()).toBe(true)
+    expect(document.body.querySelector('input[placeholder="docker.io/library/busybox:1.36"]')).not.toBeNull()
+    wrapper.unmount()
+  })
+
+  it('renders the mirror editor in the document body above the app navigation', async () => {
+    const wrapper = mount(NodeRegistryMirrors)
+    await settle()
+    await wrapper.get('[data-testid="verify-node-registry-mirror-1"]').trigger('click')
+    await wrapper.get('.page-header .btn-primary').trigger('click')
+    expect(document.body.querySelector('.mirror-overlay')).not.toBeNull()
+    expect(document.body.querySelector('.mirror-overlay').parentElement).toBe(document.body)
+    wrapper.unmount()
+  })
+
+  it('shows a confirmation dialog after saving a mirror', async () => {
+    const wrapper = mount(NodeRegistryMirrors)
+    await settle()
+    await wrapper.get('[data-testid="edit-node-registry-mirror-1"]').trigger('click')
+    document.body.querySelector('.mirror-modal .modal-actions .btn-primary').click()
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(api.put).toHaveBeenCalledWith('/node-registry-mirrors/1', expect.objectContaining({
+      registry: 'docker.io',
+      verification_image: 'docker.io/library/busybox:1.36',
+    }))
+    expect(document.body.querySelector('.mirror-notice-modal')).not.toBeNull()
+    expect(document.body.querySelector('.mirror-notice-modal').textContent).toContain('节点镜像源已保存')
+    wrapper.unmount()
   })
 
   it('creates an independent Registry Proxy instance', async () => {

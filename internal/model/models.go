@@ -620,6 +620,7 @@ type ManagedOCIRegistry struct {
 	Namespace            string     `gorm:"size:253;not null" json:"namespace"`
 	ResourceName         string     `gorm:"size:253;uniqueIndex;not null" json:"resource_name"`
 	Endpoint             string     `gorm:"size:253;uniqueIndex;not null" json:"endpoint"`
+	VerificationImage    string     `gorm:"size:512" json:"verification_image"`
 	RegistryImage        string     `gorm:"size:512;not null" json:"registry_image"`
 	DataNode             string     `gorm:"size:253;not null" json:"data_node"`
 	StorageClassName     string     `gorm:"size:253;not null;default:local-path" json:"storage_class_name"`
