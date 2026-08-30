@@ -1,4 +1,4 @@
-package api
+package system
 
 import (
 	"context"
@@ -97,11 +97,11 @@ func NewLoggingHandler(stores ...*store.Store) *LoggingHandler {
 }
 
 func (h *LoggingHandler) Status(c *gin.Context) {
-	if K8s == nil {
+	if k8sClient == nil {
 		k8sUnavailable(c)
 		return
 	}
-	model.Success(c, K8s.LoggingStatus())
+	model.Success(c, k8sClient.LoggingStatus())
 }
 
 func (h *LoggingHandler) Install(c *gin.Context) {
@@ -113,7 +113,7 @@ func (h *LoggingHandler) Update(c *gin.Context) {
 }
 
 func (h *LoggingHandler) applyConfig(c *gin.Context, message string) {
-	if K8s == nil {
+	if k8sClient == nil {
 		k8sUnavailable(c)
 		return
 	}
@@ -122,7 +122,7 @@ func (h *LoggingHandler) applyConfig(c *gin.Context, message string) {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "日志采集配置无效")
 		return
 	}
-	status, err := K8s.InstallLogging(config)
+	status, err := k8sClient.InstallLogging(config)
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
 		return
@@ -131,11 +131,11 @@ func (h *LoggingHandler) applyConfig(c *gin.Context, message string) {
 }
 
 func (h *LoggingHandler) Uninstall(c *gin.Context) {
-	if K8s == nil {
+	if k8sClient == nil {
 		k8sUnavailable(c)
 		return
 	}
-	if err := K8s.UninstallLogging(); err != nil {
+	if err := k8sClient.UninstallLogging(); err != nil {
 		model.Error(c, http.StatusInternalServerError, model.CodeK8sAPIError, err.Error())
 		return
 	}
@@ -144,17 +144,17 @@ func (h *LoggingHandler) Uninstall(c *gin.Context) {
 
 // Filters returns small Kubernetes-derived lists for structured log search controls.
 func (h *LoggingHandler) Filters(c *gin.Context) {
-	if K8s == nil || K8s.Clientset == nil {
+	if k8sClient == nil || k8sClient.Clientset == nil {
 		k8sUnavailable(c)
 		return
 	}
 	namespace := strings.TrimSpace(c.Query("namespace"))
-	pods, err := K8s.Clientset.CoreV1().Pods(namespace).List(K8s.Ctx(), metav1.ListOptions{})
+	pods, err := k8sClient.Clientset.CoreV1().Pods(namespace).List(k8sClient.Ctx(), metav1.ListOptions{})
 	if err != nil {
 		model.Error(c, http.StatusBadGateway, model.CodeK8sAPIError, "读取日志筛选项失败: "+err.Error())
 		return
 	}
-	nodes, err := K8s.Clientset.CoreV1().Nodes().List(K8s.Ctx(), metav1.ListOptions{})
+	nodes, err := k8sClient.Clientset.CoreV1().Nodes().List(k8sClient.Ctx(), metav1.ListOptions{})
 	if err != nil {
 		model.Error(c, http.StatusBadGateway, model.CodeK8sAPIError, "读取节点筛选项失败: "+err.Error())
 		return
@@ -190,11 +190,11 @@ func (h *LoggingHandler) Filters(c *gin.Context) {
 }
 
 func (h *LoggingHandler) Query(c *gin.Context) {
-	if K8s == nil {
+	if k8sClient == nil {
 		k8sUnavailable(c)
 		return
 	}
-	if status := K8s.LoggingStatus(); status.LokiReady < 1 {
+	if status := k8sClient.LoggingStatus(); status.LokiReady < 1 {
 		model.Error(c, http.StatusConflict, model.CodeConflict, "日志采集尚未就绪")
 		return
 	}

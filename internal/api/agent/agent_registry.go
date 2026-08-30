@@ -1,4 +1,4 @@
-package api
+package agent
 
 import (
 	"encoding/base64"
@@ -14,14 +14,19 @@ import (
 	registryservice "github.com/cylism/cylism-manager/internal/service/registry"
 )
 
-type agentRegistryEndpointResult struct {
+type AgentRegistryEndpointResult struct {
 	Endpoint string `json:"endpoint"`
 	DNS      string `json:"dns"`
 	HTTP     string `json:"http"`
 }
 
-type agentRegistryNodeVerifier func(*model.Server, []string) ([]agentRegistryEndpointResult, error)
-type agentRegistryPullExecutor func(*model.Server, string) error
+type agentRegistryEndpointResult = AgentRegistryEndpointResult
+
+type AgentRegistryNodeVerifier func(*model.Server, []string) ([]AgentRegistryEndpointResult, error)
+type agentRegistryNodeVerifier = AgentRegistryNodeVerifier
+
+type AgentRegistryPullExecutor func(*model.Server, string) error
+type agentRegistryPullExecutor = AgentRegistryPullExecutor
 
 type agentRegistryConfig struct {
 	Registry          string
@@ -156,7 +161,7 @@ func agentRegistryPullCommand(image string) string {
 		"else echo '未找到 crictl 或 k3s 命令' >&2; exit 127; fi"
 }
 
-func defaultAgentRegistryNodeVerifier(encKey []byte) agentRegistryNodeVerifier {
+func DefaultAgentRegistryNodeVerifier(encKey []byte) AgentRegistryNodeVerifier {
 	return func(server *model.Server, endpoints []string) ([]agentRegistryEndpointResult, error) {
 		if server == nil || len(endpoints) == 0 {
 			return nil, fmt.Errorf("node or endpoint unavailable")
@@ -194,7 +199,7 @@ func agentRegistryVerificationOutputDetail(output string) string {
 	return truncateAgentText(output, 512)
 }
 
-func defaultAgentRegistryPullExecutor(encKey []byte) agentRegistryPullExecutor {
+func DefaultAgentRegistryPullExecutor(encKey []byte) AgentRegistryPullExecutor {
 	return func(server *model.Server, image string) error {
 		if server == nil || strings.TrimSpace(image) == "" {
 			return fmt.Errorf("node or verification image unavailable")

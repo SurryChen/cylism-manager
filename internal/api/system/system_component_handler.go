@@ -1,4 +1,4 @@
-package api
+package system
 
 import (
 	"fmt"
@@ -121,7 +121,7 @@ func componentAvailabilityPayload(chart string) gin.H {
 }
 
 func (h *SystemComponentHandler) List(c *gin.Context) {
-	if K8s == nil || K8s.Clientset == nil {
+	if k8sClient == nil || k8sClient.Clientset == nil {
 		model.Error(c, http.StatusServiceUnavailable, model.CodeK8sUnavailable, "Kubernetes 集群未连接")
 		return
 	}
@@ -168,7 +168,7 @@ func (h *SystemComponentHandler) List(c *gin.Context) {
 		if chart == "traefik" {
 			item["traefik"] = traefikTimeoutPayload(item["values_content"].(string), nil)
 		}
-		detection, detectErr := K8s.DetectSystemComponent(ctx, namespace, chart)
+		detection, detectErr := k8sClient.DetectSystemComponent(ctx, namespace, chart)
 		if detectErr != nil {
 			item["deployment_error"] = detectErr.Error()
 			item["detection_error"] = detectErr.Error()
@@ -369,7 +369,7 @@ func validateStaticDeploymentNode(nodeName string) error {
 	if nodeName == "" {
 		return nil
 	}
-	node, err := K8s.GetNodeInfo(nodeName)
+	node, err := k8sClient.GetNodeInfo(nodeName)
 	if err != nil {
 		return fmt.Errorf("部署节点不存在或未加入集群")
 	}
@@ -390,7 +390,7 @@ func (h *SystemComponentHandler) applyStaticDeployment(ctx *gin.Context, namespa
 	profile := componentAvailability(name)
 	var deployment *appsv1.Deployment
 	if profile.SupportsHA {
-		deployment, err = K8s.Clientset.AppsV1().Deployments(namespace).Get(ctx.Request.Context(), name, metav1.GetOptions{})
+		deployment, err = k8sClient.Clientset.AppsV1().Deployments(namespace).Get(ctx.Request.Context(), name, metav1.GetOptions{})
 		if err != nil {
 			return fmt.Errorf("读取 %s 当前副本数失败: %w", name, err)
 		}
@@ -405,7 +405,7 @@ func (h *SystemComponentHandler) applyStaticDeployment(ctx *gin.Context, namespa
 		}
 	}
 	if !profile.SupportsHA {
-		deployment, getErr := K8s.Clientset.AppsV1().Deployments(namespace).Get(ctx.Request.Context(), name, metav1.GetOptions{})
+		deployment, getErr := k8sClient.Clientset.AppsV1().Deployments(namespace).Get(ctx.Request.Context(), name, metav1.GetOptions{})
 		if getErr != nil {
 			return fmt.Errorf("读取 %s 当前副本数失败: %w", name, getErr)
 		}
@@ -423,12 +423,12 @@ func (h *SystemComponentHandler) applyStaticDeployment(ctx *gin.Context, namespa
 	// Remove stale configs created by older Manager versions. A static component
 	// is controlled by its Deployment, so retaining a HelmChartConfig would make
 	// a future control-source change ambiguous.
-	if K8s.DynamicClient != nil {
-		if err := K8s.DeleteHelmChartConfig(ctx.Request.Context(), namespace, name); err != nil {
+	if k8sClient.DynamicClient != nil {
+		if err := k8sClient.DeleteHelmChartConfig(ctx.Request.Context(), namespace, name); err != nil {
 			return err
 		}
 	}
-	return K8s.ApplyStaticDeploymentConfig(ctx.Request.Context(), namespace, name, config)
+	return k8sClient.ApplyStaticDeploymentConfig(ctx.Request.Context(), namespace, name, config)
 }
 
 // preflightHAIncrease keeps the narrow CoreDNS HA baseline from turning a
@@ -444,7 +444,7 @@ func (h *SystemComponentHandler) preflightHAIncrease(ctx *gin.Context, namespace
 	if deployment == nil || deployment.Status.ReadyReplicas < 1 || deployment.Status.AvailableReplicas < 1 {
 		return fmt.Errorf("%s 当前未健康，不允许在故障状态下增加副本", name)
 	}
-	nodes, err := K8s.Clientset.CoreV1().Nodes().List(ctx.Request.Context(), metav1.ListOptions{})
+	nodes, err := k8sClient.Clientset.CoreV1().Nodes().List(ctx.Request.Context(), metav1.ListOptions{})
 	if err != nil {
 		return fmt.Errorf("读取节点预检状态失败: %w", err)
 	}
@@ -459,7 +459,7 @@ func (h *SystemComponentHandler) preflightHAIncrease(ctx *gin.Context, namespace
 	if candidates < 2 {
 		return fmt.Errorf("%s 高可用需要至少 2 个 Ready、可调度且具备 CPU/内存可分配的节点，当前仅 %d 个", name, candidates)
 	}
-	pods, err := K8s.Clientset.CoreV1().Pods(namespace).List(ctx.Request.Context(), metav1.ListOptions{LabelSelector: "k8s-app=" + name})
+	pods, err := k8sClient.Clientset.CoreV1().Pods(namespace).List(ctx.Request.Context(), metav1.ListOptions{LabelSelector: "k8s-app=" + name})
 	if err != nil {
 		return fmt.Errorf("读取 %s Pod 预检状态失败: %w", name, err)
 	}
@@ -576,7 +576,7 @@ func (h *SystemComponentHandler) Update(c *gin.Context) {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "不支持该系统组件")
 		return
 	}
-	if K8s == nil || K8s.Clientset == nil {
+	if k8sClient == nil || k8sClient.Clientset == nil {
 		model.Error(c, http.StatusServiceUnavailable, model.CodeK8sUnavailable, "Kubernetes 集群未连接")
 		return
 	}
@@ -607,7 +607,7 @@ func (h *SystemComponentHandler) Update(c *gin.Context) {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "values 配置不是合法 YAML: "+err.Error())
 		return
 	}
-	detection, detectErr := K8s.DetectSystemComponent(c.Request.Context(), namespace, chart)
+	detection, detectErr := k8sClient.DetectSystemComponent(c.Request.Context(), namespace, chart)
 	if detectErr != nil {
 		model.Error(c, http.StatusBadGateway, model.CodeK8sAPIError, "检测系统组件控制源失败: "+detectErr.Error())
 		return
@@ -633,10 +633,10 @@ func (h *SystemComponentHandler) Update(c *gin.Context) {
 	var applyErr error
 	switch detection.Mode {
 	case k8s.HelmChartMode:
-		if K8s.DynamicClient == nil {
+		if k8sClient.DynamicClient == nil {
 			applyErr = fmt.Errorf("Kubernetes 动态客户端未初始化")
 		} else {
-			applyErr = K8s.ApplyHelmChartConfig(c.Request.Context(), namespace, chart, config.ValuesContent)
+			applyErr = k8sClient.ApplyHelmChartConfig(c.Request.Context(), namespace, chart, config.ValuesContent)
 		}
 	case k8s.StaticDeploymentMode:
 		applyErr = h.applyStaticDeployment(c, namespace, chart, config.ValuesContent)
@@ -665,11 +665,11 @@ func (h *SystemComponentHandler) Revert(c *gin.Context) {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "不支持该系统组件")
 		return
 	}
-	if K8s == nil || K8s.Clientset == nil {
+	if k8sClient == nil || k8sClient.Clientset == nil {
 		model.Error(c, http.StatusServiceUnavailable, model.CodeK8sUnavailable, "Kubernetes 集群未连接")
 		return
 	}
-	detection, detectErr := K8s.DetectSystemComponent(c.Request.Context(), namespace, chart)
+	detection, detectErr := k8sClient.DetectSystemComponent(c.Request.Context(), namespace, chart)
 	if detectErr != nil {
 		model.Error(c, http.StatusBadGateway, model.CodeK8sAPIError, "检测系统组件控制源失败: "+detectErr.Error())
 		return
@@ -677,17 +677,17 @@ func (h *SystemComponentHandler) Revert(c *gin.Context) {
 	var revertErr error
 	switch detection.Mode {
 	case k8s.HelmChartMode:
-		if K8s.DynamicClient == nil {
+		if k8sClient.DynamicClient == nil {
 			revertErr = fmt.Errorf("Kubernetes 动态客户端未初始化")
 		} else {
-			revertErr = K8s.DeleteHelmChartConfig(c.Request.Context(), namespace, chart)
+			revertErr = k8sClient.DeleteHelmChartConfig(c.Request.Context(), namespace, chart)
 		}
 	case k8s.StaticDeploymentMode:
-		if K8s.DynamicClient != nil {
-			revertErr = K8s.DeleteHelmChartConfig(c.Request.Context(), namespace, chart)
+		if k8sClient.DynamicClient != nil {
+			revertErr = k8sClient.DeleteHelmChartConfig(c.Request.Context(), namespace, chart)
 		}
 		if revertErr == nil {
-			revertErr = K8s.RestoreStaticDeploymentDefaults(c.Request.Context(), namespace, chart)
+			revertErr = k8sClient.RestoreStaticDeploymentDefaults(c.Request.Context(), namespace, chart)
 		}
 	case k8s.EmbeddedMode, k8s.UnknownMode:
 		model.Error(c, http.StatusConflict, model.CodeValidationFail, "该系统组件当前不支持恢复默认配置")
@@ -712,7 +712,7 @@ func (h *SystemComponentHandler) Reconcile() {
 }
 
 func (h *SystemComponentHandler) reconcileOnce() {
-	if K8s == nil || K8s.Clientset == nil {
+	if k8sClient == nil || k8sClient.Clientset == nil {
 		return
 	}
 	configs, err := h.store.ListSystemComponentConfigs()
@@ -724,7 +724,7 @@ func (h *SystemComponentHandler) reconcileOnce() {
 		if !config.Enabled {
 			continue
 		}
-		detection, detectErr := K8s.DetectSystemComponent(K8s.Ctx(), config.Namespace, config.ChartName)
+		detection, detectErr := k8sClient.DetectSystemComponent(k8sClient.Ctx(), config.Namespace, config.ChartName)
 		if detectErr != nil {
 			config.ApplyStatus, config.ApplyError = "failed", detectErr.Error()
 		} else if config.ControllerMode != "" && config.ControllerMode != string(detection.Mode) {
@@ -736,7 +736,7 @@ func (h *SystemComponentHandler) reconcileOnce() {
 				parseErr = validateStaticDeploymentNode(parsed.NodeName)
 			}
 			if parseErr == nil {
-				parseErr = K8s.ApplyStaticDeploymentConfig(K8s.Ctx(), config.Namespace, config.ChartName, parsed)
+				parseErr = k8sClient.ApplyStaticDeploymentConfig(k8sClient.Ctx(), config.Namespace, config.ChartName, parsed)
 			}
 			if parseErr != nil {
 				config.ApplyStatus, config.ApplyError = "failed", parseErr.Error()

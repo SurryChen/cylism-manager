@@ -1,4 +1,4 @@
-package api
+package agent
 
 import (
 	"encoding/json"
@@ -31,8 +31,8 @@ type AgentOperationHandler struct {
 		UpdateAlertEvent(*model.AlertEvent) error
 	}
 	client                     *k8s.Client
-	registryPullExecutor       agentRegistryPullExecutor
-	maintenanceCleanupExecutor agentMaintenanceCleanupExecutor
+	registryPullExecutor       AgentRegistryPullExecutor
+	maintenanceCleanupExecutor AgentMaintenanceCleanupExecutor
 }
 
 func NewAgentOperationHandler(store interface {
@@ -52,12 +52,12 @@ func NewAgentOperationHandler(store interface {
 	return &AgentOperationHandler{store: store, client: client}
 }
 
-func (h *AgentOperationHandler) WithRegistryPullExecutor(executor agentRegistryPullExecutor) *AgentOperationHandler {
+func (h *AgentOperationHandler) WithRegistryPullExecutor(executor AgentRegistryPullExecutor) *AgentOperationHandler {
 	h.registryPullExecutor = executor
 	return h
 }
 
-func (h *AgentOperationHandler) WithMaintenanceCleanupExecutor(executor agentMaintenanceCleanupExecutor) *AgentOperationHandler {
+func (h *AgentOperationHandler) WithMaintenanceCleanupExecutor(executor AgentMaintenanceCleanupExecutor) *AgentOperationHandler {
 	h.maintenanceCleanupExecutor = executor
 	return h
 }

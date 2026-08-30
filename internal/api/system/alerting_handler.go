@@ -1,4 +1,4 @@
-package api
+package system
 
 import (
 	"bytes"
@@ -22,6 +22,7 @@ import (
 	"sync"
 	"time"
 
+	agentapi "github.com/cylism/cylism-manager/internal/api/agent"
 	"github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/gin-gonic/gin"
@@ -153,15 +154,15 @@ func (h *AlertingHandler) WithAutomation(store interface {
 }
 
 func (h *AlertingHandler) Status(c *gin.Context) {
-	if K8s == nil {
+	if k8sClient == nil {
 		k8sUnavailable(c)
 		return
 	}
-	model.Success(c, K8s.AlertingStatus())
+	model.Success(c, k8sClient.AlertingStatus())
 }
 
 func (h *AlertingHandler) Install(c *gin.Context) {
-	if K8s == nil {
+	if k8sClient == nil {
 		k8sUnavailable(c)
 		return
 	}
@@ -170,7 +171,7 @@ func (h *AlertingHandler) Install(c *gin.Context) {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "告警配置无效")
 		return
 	}
-	status, err := K8s.InstallAlerting(config)
+	status, err := k8sClient.InstallAlerting(config)
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
 		return
@@ -179,7 +180,7 @@ func (h *AlertingHandler) Install(c *gin.Context) {
 }
 
 func (h *AlertingHandler) Update(c *gin.Context) {
-	if K8s == nil {
+	if k8sClient == nil {
 		k8sUnavailable(c)
 		return
 	}
@@ -188,7 +189,7 @@ func (h *AlertingHandler) Update(c *gin.Context) {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "告警配置无效")
 		return
 	}
-	status, err := K8s.UpdateAlerting(config)
+	status, err := k8sClient.UpdateAlerting(config)
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
 		return
@@ -197,11 +198,11 @@ func (h *AlertingHandler) Update(c *gin.Context) {
 }
 
 func (h *AlertingHandler) Uninstall(c *gin.Context) {
-	if K8s == nil {
+	if k8sClient == nil {
 		k8sUnavailable(c)
 		return
 	}
-	if err := K8s.UninstallAlerting(); err != nil {
+	if err := k8sClient.UninstallAlerting(); err != nil {
 		model.Error(c, http.StatusInternalServerError, model.CodeK8sAPIError, err.Error())
 		return
 	}
@@ -307,7 +308,7 @@ func (h *AlertingHandler) DeleteSilence(c *gin.Context) {
 }
 
 func (h *AlertingHandler) TestNotification(c *gin.Context) {
-	if K8s == nil {
+	if k8sClient == nil {
 		k8sUnavailable(c)
 		return
 	}
@@ -339,7 +340,7 @@ func (h *AlertingHandler) TestNotification(c *gin.Context) {
 // not use JWT because Alertmanager is not a browser client; the per-install token
 // mounted into Alertmanager authenticates this one endpoint instead.
 func (h *AlertingHandler) Notify(c *gin.Context) {
-	if K8s == nil {
+	if k8sClient == nil {
 		model.Error(c, http.StatusServiceUnavailable, model.CodeK8sAPIError, "Kubernetes 客户端未初始化")
 		return
 	}
@@ -480,7 +481,7 @@ func (h *AlertingHandler) UpdateAutomationPolicy(c *gin.Context) {
 	if policy.Enabled {
 		count, err := h.syncCurrentAlertEvents(c.Request.Context())
 		if err != nil {
-			result["sync_warning"] = "策略已保存；当前活跃告警将在下一次 Alertmanager 通知时处理：" + truncateAgentText(err.Error(), 180)
+			result["sync_warning"] = "策略已保存；当前活跃告警将在下一次 Alertmanager 通知时处理：" + agentapi.TruncateAgentText(err.Error(), 180)
 		} else {
 			result["synced"] = count
 		}
@@ -492,10 +493,10 @@ func (h *AlertingHandler) UpdateAutomationPolicy(c *gin.Context) {
 // sending another external notification. Saving an enabled policy invokes this
 // once so existing alerts do not need to wait for repeat_interval.
 func (h *AlertingHandler) syncCurrentAlertEvents(ctx context.Context) (int, error) {
-	if K8s == nil {
+	if k8sClient == nil {
 		return 0, fmt.Errorf("Kubernetes 客户端未初始化")
 	}
-	if status := K8s.AlertingStatus(); status.State != k8s.AlertingStateReady {
+	if status := k8sClient.AlertingStatus(); status.State != k8s.AlertingStateReady {
 		return 0, fmt.Errorf("Alertmanager 尚未就绪")
 	}
 	alerts := []alertmanagerAlert{}
@@ -583,11 +584,11 @@ func (h *AlertingHandler) recentResolved() []alertmanagerAlert {
 }
 
 func (h *AlertingHandler) readyForAlertmanager(c *gin.Context) bool {
-	if K8s == nil {
+	if k8sClient == nil {
 		k8sUnavailable(c)
 		return false
 	}
-	if status := K8s.AlertingStatus(); status.State != k8s.AlertingStateReady {
+	if status := k8sClient.AlertingStatus(); status.State != k8s.AlertingStateReady {
 		model.Error(c, http.StatusConflict, model.CodeConflict, "Alertmanager 尚未就绪: "+status.Message)
 		return false
 	}
@@ -605,7 +606,7 @@ func (s alertingNotificationSecrets) configured() bool {
 }
 
 func alertingSecrets() (alertingNotificationSecrets, error) {
-	secret, err := K8s.Clientset.CoreV1().Secrets(alertingNamespace).Get(K8s.Ctx(), alertingSecretName, metav1.GetOptions{})
+	secret, err := k8sClient.Clientset.CoreV1().Secrets(alertingNamespace).Get(k8sClient.Ctx(), alertingSecretName, metav1.GetOptions{})
 	if err != nil {
 		return alertingNotificationSecrets{}, fmt.Errorf("读取告警通知配置失败")
 	}

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/cylism/cylism-manager/internal/api"
+	systemapi "github.com/cylism/cylism-manager/internal/api/system"
 	"github.com/cylism/cylism-manager/internal/auth"
 	"github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
@@ -84,7 +85,7 @@ func main() {
 
 	// 注册路由
 	api.RegisterRoutes(r, db, encKey, authCfg)
-	go api.NewSystemComponentHandler(db).Reconcile()
+	go systemapi.NewSystemComponentHandler(db).Reconcile()
 
 	// 静态文件
 	r.Static("/assets", "./web/dist/assets")

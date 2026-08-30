@@ -1,4 +1,4 @@
-package api
+package agent
 
 import (
 	"fmt"
@@ -9,12 +9,13 @@ import (
 	"github.com/cylism/cylism-manager/internal/model"
 )
 
-type agentMaintenanceCleanupExecutor func(*model.Server, string) (string, error)
+type AgentMaintenanceCleanupExecutor func(*model.Server, string) (string, error)
+type agentMaintenanceCleanupExecutor = AgentMaintenanceCleanupExecutor
 
 // defaultAgentMaintenanceCleanupExecutor intentionally accepts a recipe ID,
 // not a command. These immutable scripts are the only remote mutations this
 // capability can ever execute.
-func defaultAgentMaintenanceCleanupExecutor(encKey []byte) agentMaintenanceCleanupExecutor {
+func DefaultAgentMaintenanceCleanupExecutor(encKey []byte) AgentMaintenanceCleanupExecutor {
 	return func(server *model.Server, recipe string) (string, error) {
 		if server == nil || !validMaintenanceRecipe(recipe) {
 			return "", fmt.Errorf("node or cleanup recipe unavailable")
