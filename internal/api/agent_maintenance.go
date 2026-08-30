@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	infrastructureapi "github.com/cylism/cylism-manager/internal/api/infrastructure"
 	"github.com/cylism/cylism-manager/internal/model"
 )
 
@@ -27,9 +28,9 @@ func defaultAgentMaintenanceCleanupExecutor(encKey []byte) agentMaintenanceClean
 		case "docker-image-prune":
 			command = dockerImagePruneCommand()
 		}
-		args := buildSSHArgs(server, encKey, server.Host)
+		args := infrastructureapi.BuildSSHArgs(server, encKey, server.Host)
 		args = append(args, command)
-		output, err := sshExec(2*time.Minute, args)
+		output, err := infrastructureapi.SSHExec(2*time.Minute, args)
 		summary := truncateAgentText(strings.TrimSpace(redactAgentText(string(output))), agentOperationErrorSummaryLimit)
 		if err != nil {
 			if summary == "" {

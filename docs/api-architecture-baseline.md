@@ -32,7 +32,7 @@
 | `internal/api/application_handler.go` | 2350 | application |
 | `internal/api/delivery/managed_registry_handler.go` | 1186 | delivery / registry |
 | `internal/api/agent_handler.go` | 1137 | agent |
-| `internal/api/k8s_handler.go` | 1083 | infrastructure |
+| `internal/api/infrastructure/k8s_handler.go` | 1083 | infrastructure |
 | `internal/api/alerting_handler.go` | 977 | system / monitoring |
 | `internal/api/server_handler.go` | 812 | infrastructure |
 | `internal/api/system_component_handler.go` | 754 | system |

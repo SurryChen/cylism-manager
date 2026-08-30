@@ -1,0 +1,329 @@
+package storage
+
+import (
+	"errors"
+	"path"
+	"strings"
+
+	k8sclient "github.com/cylism/cylism-manager/internal/k8s"
+	"github.com/cylism/cylism-manager/internal/model"
+	"github.com/cylism/cylism-manager/internal/store"
+	corev1 "k8s.io/api/core/v1"
+)
+
+// ValidateHostDirectoryImportPath normalizes an import source and rejects
+// operating-system and K3s data directories.
+func ValidateHostDirectoryImportPath(value string) (string, bool) {
+	cleaned := path.Clean(strings.TrimSpace(value))
+	if !strings.HasPrefix(cleaned, "/") || cleaned == "/" {
+		return "", false
+	}
+	for _, protected := range []string{"/boot", "/dev", "/etc", "/proc", "/run", "/sys", "/usr", "/bin", "/sbin", "/lib", "/lib64", "/var/lib/rancher/k3s", "/var/lib/kubelet"} {
+		if cleaned == protected || strings.HasPrefix(cleaned, protected+"/") {
+			return "", false
+		}
+	}
+	return cleaned, true
+}
+
+func HostDirectoryImportPathsOverlap(left, right string) bool {
+	left, right = path.Clean(left), path.Clean(right)
+	return left == right || strings.HasPrefix(left, right+"/") || strings.HasPrefix(right, left+"/")
+}
+
+func ValidateBackupRoot(value string) (string, error) {
+	root := path.Clean(strings.TrimSpace(value))
+	if !strings.HasPrefix(root, "/") || root == "/" {
+		return "", errors.New("备份根目录必须是非根目录的绝对路径")
+	}
+	return root, nil
+}
+
+// KubernetesAdapter is the storage subset used by the storage service.
+// Keeping this interface narrow makes PVC workflows testable without a live cluster.
+type KubernetesAdapter interface {
+	ListPVCs(namespace string) ([]k8sclient.PersistentVolumeClaimInfo, error)
+	ListManagedPVCs(namespace string, environmentID uint) ([]k8sclient.PersistentVolumeClaimInfo, error)
+	GetManagedPVC(namespace, name string, environmentID uint) (*k8sclient.PersistentVolumeClaimInfo, error)
+	CreateManagedPVC(namespace string, environmentID uint, request k8sclient.PersistentVolumeClaimRequest) (*corev1.PersistentVolumeClaim, error)
+	DeleteManagedPVC(namespace, name string, environmentID uint) error
+	ListStorageClasses() ([]k8sclient.StorageClassInfo, error)
+}
+
+// EnvironmentStore is the persistence subset required for namespace resolution.
+type EnvironmentStore interface {
+	GetEnvironmentByID(id uint) (*model.Environment, error)
+}
+
+type Service struct {
+	k8s          KubernetesAdapter
+	environments EnvironmentStore
+	records      *store.Store
+	executor     AsyncExecutor
+}
+
+// AsyncExecutor contains the infrastructure-specific execution hooks for
+// long-running storage operations. The service owns dispatch and lifecycle
+// boundaries while the API package supplies the SSH/Kubernetes implementation
+// during the compatibility migration.
+type AsyncExecutor struct {
+	RunMigration func(id uint, helperImage string)
+	RunImport    func(id uint, replaceTarget bool)
+	RunBackup    func(id uint)
+	RunRestore   func(id uint)
+}
+
+// ValidatePVCDeletion centralizes the destructive-operation policy shared by
+// HTTP, CLI and background callers. Kubernetes deletion itself remains in the
+// adapter; this method only evaluates durable business constraints.
+func (s *Service) ValidatePVCDeletion(confirmDataDelete, migrationActive bool, references []string, reclaimPolicy string) error {
+	if migrationActive {
+		return errors.New("存储卷正在迁移，不能删除")
+	}
+	if len(references) > 0 {
+		return errors.New("PVC 仍被应用模板或工作负载引用，不能删除")
+	}
+	if !confirmDataDelete {
+		policy := strings.TrimSpace(reclaimPolicy)
+		if policy == "" {
+			policy = "未知"
+		}
+		return errors.New("删除 PVC 可能影响底层数据（PV 回收策略：" + policy + "），请确认后重试")
+	}
+	return nil
+}
+
+func NewService(k8s KubernetesAdapter, environments EnvironmentStore) *Service {
+	service := &Service{k8s: k8s, environments: environments}
+	if records, ok := environments.(*store.Store); ok {
+		service.records = records
+	}
+	return service
+}
+
+// WithAsyncExecutor installs the execution adapter used by background tasks.
+// It returns the service to support construction-time composition.
+func (s *Service) WithAsyncExecutor(executor AsyncExecutor) *Service {
+	s.executor = executor
+	return s
+}
+
+func (s *Service) StartMigration(id uint, helperImage string) error {
+	if s.executor.RunMigration == nil {
+		return errors.New("存储卷迁移执行器未初始化")
+	}
+	go s.executor.RunMigration(id, helperImage)
+	return nil
+}
+
+func (s *Service) StartImport(id uint, replaceTarget bool) error {
+	if s.executor.RunImport == nil {
+		return errors.New("目录导入执行器未初始化")
+	}
+	go s.executor.RunImport(id, replaceTarget)
+	return nil
+}
+
+func (s *Service) StartBackup(id uint) error {
+	if s.executor.RunBackup == nil {
+		return errors.New("存储卷备份执行器未初始化")
+	}
+	go s.executor.RunBackup(id)
+	return nil
+}
+
+func (s *Service) StartRestore(id uint) error {
+	if s.executor.RunRestore == nil {
+		return errors.New("存储卷恢复执行器未初始化")
+	}
+	go s.executor.RunRestore(id)
+	return nil
+}
+
+func (s *Service) requireRecords() (*store.Store, error) {
+	if s.records == nil {
+		return nil, errors.New("数据存储未初始化")
+	}
+	return s.records, nil
+}
+
+func (s *Service) ListMigrations(environmentID uint) ([]model.PersistentVolumeMigration, error) {
+	records, err := s.requireRecords()
+	if err != nil {
+		return nil, err
+	}
+	return records.ListPersistentVolumeMigrations(environmentID)
+}
+func (s *Service) GetMigration(id uint) (*model.PersistentVolumeMigration, error) {
+	records, err := s.requireRecords()
+	if err != nil {
+		return nil, err
+	}
+	return records.GetPersistentVolumeMigration(id)
+}
+func (s *Service) FindActiveMigration(environmentID uint, pvc string) (*model.PersistentVolumeMigration, error) {
+	records, err := s.requireRecords()
+	if err != nil {
+		return nil, err
+	}
+	return records.FindActivePVCMigration(environmentID, pvc)
+}
+func (s *Service) CreateMigration(migration *model.PersistentVolumeMigration) error {
+	records, err := s.requireRecords()
+	if err != nil {
+		return err
+	}
+	return records.CreatePersistentVolumeMigration(migration)
+}
+func (s *Service) UpdateMigration(migration *model.PersistentVolumeMigration, status, detail string) error {
+	records, err := s.requireRecords()
+	if err != nil {
+		return err
+	}
+	return records.UpdatePersistentVolumeMigration(migration, status, detail)
+}
+func (s *Service) ListBackups(environmentID uint, pvc string) ([]model.PersistentVolumeBackup, error) {
+	records, err := s.requireRecords()
+	if err != nil {
+		return nil, err
+	}
+	return records.ListPersistentVolumeBackups(environmentID, pvc)
+}
+func (s *Service) GetBackup(id uint) (*model.PersistentVolumeBackup, error) {
+	records, err := s.requireRecords()
+	if err != nil {
+		return nil, err
+	}
+	return records.GetPersistentVolumeBackup(id)
+}
+func (s *Service) CreateBackup(backup *model.PersistentVolumeBackup) error {
+	records, err := s.requireRecords()
+	if err != nil {
+		return err
+	}
+	return records.CreatePersistentVolumeBackup(backup)
+}
+func (s *Service) UpdateBackup(backup *model.PersistentVolumeBackup) error {
+	records, err := s.requireRecords()
+	if err != nil {
+		return err
+	}
+	return records.UpdatePersistentVolumeBackup(backup)
+}
+func (s *Service) ListImports(environmentID uint, pvc string) ([]model.HostDirectoryPVCImport, error) {
+	records, err := s.requireRecords()
+	if err != nil {
+		return nil, err
+	}
+	return records.ListHostDirectoryPVCImports(environmentID, pvc)
+}
+func (s *Service) GetImport(id uint) (*model.HostDirectoryPVCImport, error) {
+	records, err := s.requireRecords()
+	if err != nil {
+		return nil, err
+	}
+	return records.GetHostDirectoryPVCImport(id)
+}
+func (s *Service) FindActiveImport(environmentID uint, pvc string) (*model.HostDirectoryPVCImport, error) {
+	records, err := s.requireRecords()
+	if err != nil {
+		return nil, err
+	}
+	return records.FindActiveHostDirectoryPVCImport(environmentID, pvc)
+}
+func (s *Service) CreateImport(task *model.HostDirectoryPVCImport) error {
+	records, err := s.requireRecords()
+	if err != nil {
+		return err
+	}
+	return records.CreateHostDirectoryPVCImport(task)
+}
+func (s *Service) UpdateImport(task *model.HostDirectoryPVCImport, status, detail string) error {
+	records, err := s.requireRecords()
+	if err != nil {
+		return err
+	}
+	return records.UpdateHostDirectoryPVCImport(task, status, detail)
+}
+
+func (s *Service) ListPVCs(namespace string, environmentID uint) ([]k8sclient.PersistentVolumeClaimInfo, error) {
+	if s.k8s == nil {
+		return nil, errors.New("Kubernetes 存储适配器未初始化")
+	}
+	if environmentID != 0 {
+		env, err := s.environments.GetEnvironmentByID(environmentID)
+		if err != nil {
+			return nil, errors.New("环境不存在")
+		}
+		if namespace != "" && strings.TrimSpace(namespace) != env.Namespace {
+			return nil, errors.New("命名空间与环境不匹配")
+		}
+		return s.k8s.ListManagedPVCs(env.Namespace, environmentID)
+	}
+	return s.k8s.ListPVCs(strings.TrimSpace(namespace))
+}
+
+// GetPVC resolves and reads one claim through the storage adapter. Keeping
+// this lookup beside ListPVCs prevents HTTP adapters from reaching into K8s.
+func (s *Service) GetPVC(namespace, name string, environmentID uint) (*k8sclient.PersistentVolumeClaimInfo, error) {
+	if s.k8s == nil {
+		return nil, errors.New("Kubernetes 存储适配器未初始化")
+	}
+	if strings.TrimSpace(name) == "" {
+		return nil, errors.New("PVC 名称必填")
+	}
+	resolved, err := s.ResolveNamespace(namespace, environmentID)
+	if err != nil {
+		return nil, err
+	}
+	return s.k8s.GetManagedPVC(resolved, strings.TrimSpace(name), environmentID)
+}
+
+func (s *Service) ListStorageClasses() ([]k8sclient.StorageClassInfo, error) {
+	if s.k8s == nil {
+		return nil, errors.New("Kubernetes 存储适配器未初始化")
+	}
+	return s.k8s.ListStorageClasses()
+}
+
+func (s *Service) CreatePVC(namespace string, environmentID uint, request k8sclient.PersistentVolumeClaimRequest) (*corev1.PersistentVolumeClaim, error) {
+	if s.k8s == nil {
+		return nil, errors.New("Kubernetes 存储适配器未初始化")
+	}
+	resolved, err := s.ResolveNamespace(namespace, environmentID)
+	if err != nil {
+		return nil, err
+	}
+	return s.k8s.CreateManagedPVC(resolved, environmentID, request)
+}
+
+func (s *Service) ResolveNamespace(namespace string, environmentID uint) (string, error) {
+	namespace = strings.TrimSpace(namespace)
+	if environmentID == 0 {
+		if namespace == "" {
+			return "", errors.New("命名空间必填")
+		}
+		return namespace, nil
+	}
+	if s.environments == nil {
+		return "", errors.New("数据存储未初始化")
+	}
+	env, err := s.environments.GetEnvironmentByID(environmentID)
+	if err != nil {
+		return "", errors.New("环境不存在")
+	}
+	if namespace != "" && namespace != env.Namespace {
+		return "", errors.New("命名空间与环境不匹配")
+	}
+	return env.Namespace, nil
+}
+
+func (s *Service) DeletePVC(namespace, name string, environmentID uint) error {
+	if s.k8s == nil {
+		return errors.New("Kubernetes 存储适配器未初始化")
+	}
+	if strings.TrimSpace(name) == "" {
+		return errors.New("PVC 名称必填")
+	}
+	return s.k8s.DeleteManagedPVC(namespace, strings.TrimSpace(name), environmentID)
+}

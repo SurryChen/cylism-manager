@@ -29,8 +29,8 @@ func (h *DashboardHandler) Get(c *gin.Context) {
 	logs, _, _ := h.store.ListAuditLogs("", "", 10, 0)
 
 	model.Success(c, gin.H{
-		"stats":         stats,
+		"stats":          stats,
 		"expiring_certs": expiringCerts,
-		"recent_logs":   logs,
+		"recent_logs":    logs,
 	})
 }
