@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	infrastructureapi "github.com/cylism/cylism-manager/internal/api/infrastructure"
 	"github.com/cylism/cylism-manager/internal/model"
 	registryservice "github.com/cylism/cylism-manager/internal/service/registry"
 )
@@ -160,9 +161,9 @@ func defaultAgentRegistryNodeVerifier(encKey []byte) agentRegistryNodeVerifier {
 		if server == nil || len(endpoints) == 0 {
 			return nil, fmt.Errorf("node or endpoint unavailable")
 		}
-		args := buildSSHArgs(server, encKey, server.Host)
+		args := infrastructureapi.BuildSSHArgs(server, encKey, server.Host)
 		args = append(args, agentRegistryVerificationCommand(endpoints))
-		output, err := sshExec(30*time.Second, args)
+		output, err := infrastructureapi.SSHExec(30*time.Second, args)
 		if err != nil {
 			return nil, fmt.Errorf("node verification command failed: %w: %s", err, agentRegistryVerificationOutputDetail(string(output)))
 		}
@@ -198,9 +199,9 @@ func defaultAgentRegistryPullExecutor(encKey []byte) agentRegistryPullExecutor {
 		if server == nil || strings.TrimSpace(image) == "" {
 			return fmt.Errorf("node or verification image unavailable")
 		}
-		args := buildSSHArgs(server, encKey, server.Host)
+		args := infrastructureapi.BuildSSHArgs(server, encKey, server.Host)
 		args = append(args, agentRegistryPullCommand(image))
-		output, err := sshExec(2*time.Minute, args)
+		output, err := infrastructureapi.SSHExec(2*time.Minute, args)
 		if err != nil {
 			detail := strings.TrimSpace(string(output))
 			if detail == "" {

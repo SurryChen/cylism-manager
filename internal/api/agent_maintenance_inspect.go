@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	infrastructureapi "github.com/cylism/cylism-manager/internal/api/infrastructure"
 	"github.com/cylism/cylism-manager/internal/model"
 )
 
@@ -57,9 +58,9 @@ func defaultAgentMaintenanceInspector(encKey []byte) agentMaintenanceInspector {
 		if server == nil {
 			return agentDiskInspection{}, fmt.Errorf("managed node unavailable")
 		}
-		args := buildSSHArgs(server, encKey, server.Host)
+		args := infrastructureapi.BuildSSHArgs(server, encKey, server.Host)
 		args = append(args, agentDiskInspectionCommand())
-		output, err := sshExec(agentDiskInspectionTimeout, args)
+		output, err := infrastructureapi.SSHExec(agentDiskInspectionTimeout, args)
 		if err != nil {
 			return agentDiskInspection{}, fmt.Errorf("node disk inspection command failed: %w: %s", err, truncateAgentText(strings.TrimSpace(string(output)), 512))
 		}

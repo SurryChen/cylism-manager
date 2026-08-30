@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	infrastructureapi "github.com/cylism/cylism-manager/internal/api/infrastructure"
 	"github.com/cylism/cylism-manager/internal/model"
 )
 
@@ -16,7 +17,7 @@ func applyK3sRegistriesToNode(server *model.Server, encKey, content []byte) (str
 		return "skipped", "需要已配置的 SSH 密钥认证"
 	}
 	payload := base64.StdEncoding.EncodeToString(content)
-	out, err := sshExec(90*time.Second, append(buildSSHArgs(server, encKey, server.Host), nodeRegistryMirrorApplyCommand(payload)))
+	out, err := infrastructureapi.SSHExec(90*time.Second, append(infrastructureapi.BuildSSHArgs(server, encKey, server.Host), nodeRegistryMirrorApplyCommand(payload)))
 	if err != nil {
 		return "failed", strings.TrimSpace(string(out))
 	}

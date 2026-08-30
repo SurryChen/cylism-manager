@@ -1,7 +1,6 @@
 package api
 
 import (
-
 	"github.com/cylism/cylism-manager/internal/model"
 
 	"github.com/gin-gonic/gin"
@@ -19,8 +18,8 @@ func NewCRDHandler() *CRDHandler {
 func (h *CRDHandler) CheckCRDs(c *gin.Context) {
 	// TODO: 调 K8s client 检测 CRD
 	model.Success(c, gin.H{
-		"traefik_ok":     false,
+		"traefik_ok":      false,
 		"cert_manager_ok": false,
-		"message":        "CRD check - K8s integration pending",
+		"message":         "CRD check - K8s integration pending",
 	})
 }

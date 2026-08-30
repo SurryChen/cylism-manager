@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	infrastructureapi "github.com/cylism/cylism-manager/internal/api/infrastructure"
 	"github.com/cylism/cylism-manager/internal/application"
 	"github.com/cylism/cylism-manager/internal/crypto"
 	"github.com/cylism/cylism-manager/internal/model"
@@ -1072,9 +1073,9 @@ func (h *ApplicationHandler) WorkspaceOverview(c *gin.Context) {
 		recentReleases = recentReleases[:8]
 	}
 	workspaceApplications := h.workspaceApplicationInfos(c.Request.Context(), environment.Namespace, applications, allReleases)
-	domainInfos := make([]managedDomainInfo, 0, len(domains))
+	domainInfos := make([]infrastructureapi.ManagedDomainInfo, 0, len(domains))
 	for index := range domains {
-		domainInfos = append(domainInfos, NewDomainHandler(h.store).domainInfo(&domains[index]))
+		domainInfos = append(domainInfos, infrastructureapi.NewDomainHandler(h.store, K8s).DomainInfo(&domains[index]))
 	}
 	model.Success(c, gin.H{"project": project, "environment": environment, "applications": workspaceApplications, "domains": domainInfos, "failed_releases": failedReleases, "recent_releases": recentReleases})
 }

@@ -217,13 +217,24 @@ internal/service/platform/release_service.go
 
 ### 阶段 5：基础设施模块
 
+实施状态：已完成（2026-08-30）。服务器、节点、PVC、域名、证书、Ingress、网络诊断、SSH 终端、Pod 终端、节点加入进度、通用 Kubernetes 资源和 CoreDNS HTTP 边界均已迁入 `internal/api/infrastructure`。服务器/节点生命周期由 `cluster.Service` 提供，存储与网络规则分别由 `storage.Service`、`network.Service` 提供。统一 SSH 执行、参数构造、连通性/前置检查、主机名清理和资源统计解析已收敛到 infrastructure 共享适配器，Agent、维护、镜像源、PVC 与集群适配器共同复用。根包旧 Handler、注入适配和重复测试已删除，生产路由直接绑定 infrastructure Handler；Agent 仅保留所需的纯 CoreDNS 状态格式化辅助。
+
 按领域迁移：
 
 ```text
 internal/api/infrastructure/
   server_handler.go
   node_handler.go
-  cluster_handler.go
+  node_join_progress_handler.go
+  server_network_diagnostics.go
+  server_terminal_handler.go
+  pod_terminal_handler.go
+  k8s_handler.go
+  cluster_dns_handler.go
+  domain_handler.go
+  cert_handler.go
+  ingress_handler.go
+  ssh.go
   storage_handler.go
   network_handler.go
 ```

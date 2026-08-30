@@ -5,9 +5,12 @@ import (
 
 	"github.com/cylism/cylism-manager/internal/agentauth"
 	"github.com/cylism/cylism-manager/internal/api/delivery"
+	infrastructureapi "github.com/cylism/cylism-manager/internal/api/infrastructure"
 	"github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
 	runtimepkg "github.com/cylism/cylism-manager/internal/runtime"
+	"github.com/cylism/cylism-manager/internal/service/cluster"
+	networkservice "github.com/cylism/cylism-manager/internal/service/network"
 	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/gin-gonic/gin"
 )
@@ -77,7 +80,12 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 	runtimeHandler := NewRuntimeHandler(s, encKey, runtimepkg.NewKubernetesManager(K8s, runtimeRegistry), runtimeRegistry)
 	agentOperationHandler := NewAgentOperationHandler(s, K8s).WithRegistryPullExecutor(defaultAgentRegistryPullExecutor(encKey)).WithMaintenanceCleanupExecutor(defaultAgentMaintenanceCleanupExecutor(encKey))
 	systemComponentHandler := NewSystemComponentHandler(s)
-	clusterDNSHandler := NewClusterDNSHandler(s)
+	networkService := networkservice.NewService(s).WithIngressAdapter(K8s).WithStandardIngressAdapter(K8s).WithDNSAdapter(K8s).WithCertificateAdapter(K8s)
+	clusterDNSHandler := infrastructureapi.NewClusterDNSHandler(s, K8s)
+	networkHandler := infrastructureapi.NewNetworkHandler(networkService, infrastructureapi.NetworkHandler{
+		DNSStatus: clusterDNSHandler.Status, DNSApply: clusterDNSHandler.Apply,
+		DNSReset: clusterDNSHandler.Reset, DNSRollback: clusterDNSHandler.Rollback,
+	})
 	runtimes := apiGroup.Group("/runtimes")
 	{
 		runtimes.GET("/catalog", runtimeHandler.Catalog)
@@ -113,10 +121,10 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 	}
 	clusterDNS := apiGroup.Group("/cluster-dns")
 	{
-		clusterDNS.GET("", clusterDNSHandler.Status)
-		clusterDNS.POST("", clusterDNSHandler.Apply)
-		clusterDNS.DELETE("", clusterDNSHandler.Reset)
-		clusterDNS.POST("/history/:revision/rollback", clusterDNSHandler.Rollback)
+		clusterDNS.GET("", networkHandler.DNSStatus)
+		clusterDNS.POST("", networkHandler.DNSApply)
+		clusterDNS.DELETE("", networkHandler.DNSReset)
+		clusterDNS.POST("/history/:revision/rollback", networkHandler.DNSRollback)
 	}
 	platformHandler := delivery.NewPlatformHandler(s, encKey, K8s)
 	go platformHandler.Reconcile()
@@ -127,13 +135,16 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 	dashHandler := NewDashboardHandler(s)
 	apiGroup.GET("/dashboard", dashHandler.Get)
 
-	serverHandler := NewServerHandler(s, encKey)
+	clusterService := cluster.NewService(s, clusterNodeAdapter()).WithServerInspector(infrastructureapi.ServerInspector{EncKey: encKey}).WithServerImporter(infrastructureapi.ServerInspector{EncKey: encKey}).WithMetricsInspector(infrastructureapi.ServerMetricsInspector{EncKey: encKey})
+	serverHandler := infrastructureapi.NewServerHandler(s, encKey, clusterService)
+	serverNetworkDiagnostics := infrastructureapi.NewServerNetworkDiagnosticsHandler(s, encKey)
+	serverTerminal := infrastructureapi.NewServerTerminalHandler(s, encKey)
 	servers := apiGroup.Group("/servers")
 	{
 		servers.POST("", serverHandler.Create)
 		servers.GET("", serverHandler.List)
 		servers.GET("/resource-stats", serverHandler.ResourceStats)
-		servers.GET("/network-diagnostics", serverHandler.NetworkDiagnostics)
+		servers.GET("/network-diagnostics", serverNetworkDiagnostics.NetworkDiagnostics)
 		servers.GET("/:id", serverHandler.Get)
 		servers.PUT("/:id", serverHandler.Update)
 		servers.DELETE("/:id", serverHandler.Delete)
@@ -141,7 +152,7 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 		servers.POST("/:id/probe", serverHandler.Probe)
 		servers.POST("/:id/precheck", serverHandler.Precheck)
 		servers.GET("/:id/stats", serverHandler.Stats)
-		servers.GET("/:id/terminal", serverHandler.Terminal)
+		servers.GET("/:id/terminal", serverTerminal.Terminal)
 	}
 
 	siteHandler := NewSiteHandler(s)
@@ -276,7 +287,7 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 		platform.PUT("/image-prefix", platformHandler.UpdateImagePrefix)
 		platform.POST("/releases/:id/rollback", platformHandler.Rollback)
 	}
-	domainHandler := NewDomainHandler(s)
+	domainHandler := infrastructureapi.NewDomainHandlerWithService(s, K8s, networkHandler.Service)
 	domains := apiGroup.Group("/domains")
 	{
 		domains.GET("", domainHandler.List)
@@ -368,13 +379,14 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 	}
 
 	// K8s 节点管理
-	nodeHandler := NewNodeHandler(s, encKey)
+	nodeHandler := infrastructureapi.NewNodeHandler(clusterService)
+	nodeJoinProgress := infrastructureapi.NewNodeJoinProgressHandler(s, encKey, K8s)
 	nodes := apiGroup.Group("/nodes")
 	{
 		nodes.GET("", nodeHandler.ListNode)
 		nodes.GET("/:id/labels", nodeHandler.GetLabels)
 		nodes.PATCH("/:id/labels", nodeHandler.UpdateLabels)
-		nodes.GET("/:id/join-progress", nodeHandler.JoinProgress)
+		nodes.GET("/:id/join-progress", nodeJoinProgress.JoinProgress)
 		nodes.GET("/:id/drain-plan", nodeHandler.DrainPlan)
 		nodes.GET("/:id/removal-check", nodeHandler.RemovalCheck)
 		nodes.POST("/:id/preimport", nodeHandler.PreImport)
@@ -387,7 +399,7 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 	}
 
 	// IngressRoute 管理
-	ingressHandler := NewIngressHandler()
+	ingressHandler := infrastructureapi.NewIngressHandler(K8s)
 	routes := apiGroup.Group("/routes")
 	{
 		routes.GET("", ingressHandler.ListRoutes)
@@ -399,7 +411,7 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 	}
 
 	// Certificate 管理
-	certHandler := NewCertHandlerWithEncryption(s, encKey)
+	certHandler := infrastructureapi.NewCertHandlerWithNetworkAndClient(s, encKey, networkService, K8s)
 	certs := apiGroup.Group("/certs")
 	{
 		certs.GET("/status", certHandler.Status)
@@ -422,7 +434,9 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 	}
 
 	// K8s 资源管理
-	k8sHandler := NewK8sHandlerWithEncryption(s, encKey)
+	k8sHandler := infrastructureapi.NewK8sHandlerWithEncryption(s, encKey, K8s)
+	storageHandler := infrastructureapi.NewStorageHandlerWithClient(k8sHandler.StorageService(), s, encKey, K8s)
+	storageHandler.ConfigureStorageExecutor()
 	k8sGroup := apiGroup.Group("/k8s")
 	{
 		k8sGroup.GET("/dashboard", k8sHandler.Dashboard)
@@ -468,28 +482,28 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 		k8sGroup.GET("/secrets/:namespace/:name", k8sHandler.GetSecret)
 		k8sGroup.PUT("/secrets/:namespace/:name", k8sHandler.UpdateOpaqueSecret)
 		k8sGroup.DELETE("/secrets/:namespace/:name", k8sHandler.DeleteOpaqueSecret)
-		k8sGroup.GET("/storage-classes", k8sHandler.ListStorageClasses)
-		k8sGroup.GET("/persistent-volume-claims", k8sHandler.ListPersistentVolumeClaims)
-		k8sGroup.GET("/persistent-volume-claims/usage", k8sHandler.ListPersistentVolumeClaimUsage)
-		k8sGroup.POST("/persistent-volume-claims", k8sHandler.CreatePersistentVolumeClaim)
-		k8sGroup.GET("/persistent-volume-migrations", k8sHandler.ListPersistentVolumeMigrations)
-		k8sGroup.GET("/persistent-volume-migrations/:id", k8sHandler.GetPersistentVolumeMigration)
-		k8sGroup.POST("/persistent-volume-migrations/:id/cleanup", k8sHandler.CleanupPersistentVolumeMigration)
-		k8sGroup.POST("/persistent-volume-claims/:name/migrations", k8sHandler.CreatePersistentVolumeMigration)
-		k8sGroup.GET("/persistent-volume-claims/:name/backups", k8sHandler.ListPersistentVolumeBackups)
-		k8sGroup.POST("/persistent-volume-claims/:name/backups", k8sHandler.CreatePersistentVolumeBackup)
-		k8sGroup.POST("/persistent-volume-claims/:name/backups/:backupID/restore", k8sHandler.RestorePersistentVolumeBackup)
-		k8sGroup.GET("/persistent-volume-claims/:name/imports", k8sHandler.ListHostDirectoryPVCImports)
-		k8sGroup.POST("/persistent-volume-claims/:name/imports", k8sHandler.CreateHostDirectoryPVCImport)
-		k8sGroup.DELETE("/persistent-volume-claims/:name/imports/:id/backup", k8sHandler.DeleteHostDirectoryPVCImportBackup)
-		k8sGroup.DELETE("/persistent-volume-claims/:name", k8sHandler.DeletePersistentVolumeClaim)
+		k8sGroup.GET("/storage-classes", storageHandler.ListStorageClasses)
+		k8sGroup.GET("/persistent-volume-claims", storageHandler.ListPersistentVolumeClaims)
+		k8sGroup.GET("/persistent-volume-claims/usage", storageHandler.ListPersistentVolumeClaimUsage)
+		k8sGroup.POST("/persistent-volume-claims", storageHandler.CreatePersistentVolumeClaim)
+		k8sGroup.GET("/persistent-volume-migrations", storageHandler.ListPersistentVolumeMigrations)
+		k8sGroup.GET("/persistent-volume-migrations/:id", storageHandler.GetPersistentVolumeMigration)
+		k8sGroup.POST("/persistent-volume-migrations/:id/cleanup", storageHandler.CleanupPersistentVolumeMigration)
+		k8sGroup.POST("/persistent-volume-claims/:name/migrations", storageHandler.CreatePersistentVolumeMigration)
+		k8sGroup.GET("/persistent-volume-claims/:name/backups", storageHandler.ListPersistentVolumeBackups)
+		k8sGroup.POST("/persistent-volume-claims/:name/backups", storageHandler.CreatePersistentVolumeBackup)
+		k8sGroup.POST("/persistent-volume-claims/:name/backups/:backupID/restore", storageHandler.RestorePersistentVolumeBackup)
+		k8sGroup.GET("/persistent-volume-claims/:name/imports", storageHandler.ListHostDirectoryPVCImports)
+		k8sGroup.POST("/persistent-volume-claims/:name/imports", storageHandler.CreateHostDirectoryPVCImport)
+		k8sGroup.DELETE("/persistent-volume-claims/:name/imports/:id/backup", storageHandler.DeleteHostDirectoryPVCImportBackup)
+		k8sGroup.DELETE("/persistent-volume-claims/:name", storageHandler.DeletePersistentVolumeClaim)
 
 		// 标准 Ingress
-		k8sGroup.GET("/ingresses", k8sHandler.ListIngresses)
-		k8sGroup.GET("/ingresses/:namespace/:name", k8sHandler.GetIngress)
-		k8sGroup.POST("/ingresses", k8sHandler.CreateIngress)
-		k8sGroup.DELETE("/ingresses/:namespace/:name", k8sHandler.DeleteIngress)
-		k8sGroup.GET("/ingress-controller", k8sHandler.GetIngressController)
+		k8sGroup.GET("/ingresses", networkHandler.ListStandardIngresses)
+		k8sGroup.GET("/ingresses/:namespace/:name", networkHandler.GetStandardIngress)
+		k8sGroup.POST("/ingresses", networkHandler.CreateStandardIngress)
+		k8sGroup.DELETE("/ingresses/:namespace/:name", networkHandler.DeleteStandardIngress)
+		k8sGroup.GET("/ingress-controller", networkHandler.StandardIngressController)
 	}
 
 	// Tailscale 管理

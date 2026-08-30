@@ -1,0 +1,84 @@
+package infrastructure
+
+import (
+	"net/http"
+
+	k8sclient "github.com/cylism/cylism-manager/internal/k8s"
+	"github.com/cylism/cylism-manager/internal/model"
+	networkservice "github.com/cylism/cylism-manager/internal/service/network"
+	"github.com/gin-gonic/gin"
+)
+
+// NetworkHandler is the infrastructure HTTP boundary for domains,
+// certificates, ingress and CoreDNS policy endpoints. Business workflows are
+// provided by the network service and existing compatibility executors.
+type NetworkHandler struct {
+	Service                                                                                *networkservice.Service
+	RouteList, RouteCreate, RouteUpdate, RouteDelete, RouteListMiddlewares, RouteTLSStores gin.HandlerFunc
+	DNSStatus, DNSApply, DNSReset, DNSRollback                                             gin.HandlerFunc
+	IngressList, IngressGet, IngressCreate, IngressDelete, IngressController               gin.HandlerFunc
+}
+
+func (h *NetworkHandler) ListStandardIngresses(c *gin.Context) {
+	result, err := h.Service.ListStandardIngresses(c.Query("namespace"))
+	if err != nil {
+		model.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
+		return
+	}
+	if result == nil {
+		result = []k8sclient.IngressStdInfo{}
+	}
+	model.Success(c, result)
+}
+
+func (h *NetworkHandler) GetStandardIngress(c *gin.Context) {
+	result, err := h.Service.GetStandardIngress(c.Param("namespace"), c.Param("name"))
+	if err != nil {
+		model.Error(c, http.StatusNotFound, model.CodeNotFound, err.Error())
+		return
+	}
+	model.Success(c, result)
+}
+
+func (h *NetworkHandler) CreateStandardIngress(c *gin.Context) {
+	var req struct {
+		Namespace   string `json:"namespace"`
+		Name        string `json:"name"`
+		Host        string `json:"host"`
+		Path        string `json:"path"`
+		ServiceName string `json:"service_name"`
+		ServicePort string `json:"service_port"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "invalid request")
+		return
+	}
+	result, err := h.Service.CreateStandardIngress(req.Namespace, req.Name, req.Host, req.Path, req.ServiceName, req.ServicePort)
+	if err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, err.Error())
+		return
+	}
+	model.Success(c, result)
+}
+
+func (h *NetworkHandler) DeleteStandardIngress(c *gin.Context) {
+	if err := h.Service.DeleteStandardIngress(c.Param("namespace"), c.Param("name")); err != nil {
+		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, err.Error())
+		return
+	}
+	model.SuccessWithMessage(c, nil, "删除成功")
+}
+
+func (h *NetworkHandler) StandardIngressController(c *gin.Context) {
+	status, err := h.Service.DetectIngressController()
+	if err != nil {
+		model.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
+		return
+	}
+	model.Success(c, status)
+}
+
+func NewNetworkHandler(service *networkservice.Service, h NetworkHandler) *NetworkHandler {
+	h.Service = service
+	return &h
+}
