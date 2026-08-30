@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 	k8sclient "github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/repository"
@@ -19,10 +20,6 @@ import (
 
 const registryProxyNamespace = "kube-system"
 const registryProxyName = "cylism-registry-proxy"
-
-func registryProxyK8sUnavailable(c *gin.Context) {
-	model.Error(c, http.StatusOK, model.CodeK8sUnavailable, "K8s 集群未连接")
-}
 
 type RegistryProxyHandler struct {
 	store      *store.Store
@@ -104,7 +101,7 @@ func (h *RegistryProxyHandler) List(c *gin.Context) {
 
 func (h *RegistryProxyHandler) Deploy(c *gin.Context) {
 	if !h.reconciler.Available() {
-		registryProxyK8sUnavailable(c)
+		apiShared.K8sUnavailable(c)
 		return
 	}
 	var req registryProxyRequest
@@ -130,9 +127,9 @@ func (h *RegistryProxyHandler) Deploy(c *gin.Context) {
 			model.Error(c, http.StatusNotFound, model.CodeNotFound, "镜像代理不存在")
 			return
 		}
-		proxy = &model.RegistryProxy{CreatedBy: getUserID(c)}
+		proxy = &model.RegistryProxy{CreatedBy: apiShared.UserID(c)}
 	}
-	proxy, err = h.service.PrepareDeployment(input, proxy, getUserID(c))
+	proxy, err = h.service.PrepareDeployment(input, proxy, apiShared.UserID(c))
 	if err != nil {
 		if strings.Contains(err.Error(), "读取现有镜像代理") {
 			model.Error(c, http.StatusInternalServerError, model.CodeDBError, "保存代理配置失败")
@@ -215,7 +212,7 @@ func (h *RegistryProxyHandler) Diagnose(c *gin.Context) {
 // MigrateResourceName recreates the legacy Docker Hub resources using the per-instance naming scheme.
 func (h *RegistryProxyHandler) MigrateResourceName(c *gin.Context) {
 	if !h.reconciler.Available() {
-		registryProxyK8sUnavailable(c)
+		apiShared.K8sUnavailable(c)
 		return
 	}
 	proxy, err := h.proxyForRequest(c)

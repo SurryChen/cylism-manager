@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/repository"
 	registryservice "github.com/cylism/cylism-manager/internal/service/registry"
@@ -82,7 +83,7 @@ func (h *NodeRegistryMirrorHandler) Create(c *gin.Context) {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "镜像源定义无效")
 		return
 	}
-	mirror, err := h.service.Create(mirrorInput(request), getUserID(c))
+	mirror, err := h.service.Create(mirrorInput(request), apiShared.UserID(c))
 	if err != nil {
 		handleNodeRegistryMirrorSaveError(c, err, false)
 		return
@@ -91,7 +92,7 @@ func (h *NodeRegistryMirrorHandler) Create(c *gin.Context) {
 }
 
 func (h *NodeRegistryMirrorHandler) Update(c *gin.Context) {
-	id, err := parseID(c.Param("id"))
+	id, err := apiShared.ParseID(c.Param("id"))
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "镜像源 ID 无效")
 		return
@@ -110,7 +111,7 @@ func (h *NodeRegistryMirrorHandler) Update(c *gin.Context) {
 }
 
 func (h *NodeRegistryMirrorHandler) Delete(c *gin.Context) {
-	id, err := parseID(c.Param("id"))
+	id, err := apiShared.ParseID(c.Param("id"))
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "镜像源 ID 无效")
 		return
@@ -129,7 +130,7 @@ func (h *NodeRegistryMirrorHandler) Delete(c *gin.Context) {
 }
 
 func (h *NodeRegistryMirrorHandler) Verify(c *gin.Context) {
-	id, err := parseID(c.Param("id"))
+	id, err := apiShared.ParseID(c.Param("id"))
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "镜像源 ID 无效")
 		return
@@ -149,7 +150,7 @@ func (h *NodeRegistryMirrorHandler) Verify(c *gin.Context) {
 }
 
 func (h *NodeRegistryMirrorHandler) Apply(c *gin.Context) {
-	id, err := parseID(c.Param("id"))
+	id, err := apiShared.ParseID(c.Param("id"))
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "镜像源 ID 无效")
 		return
@@ -172,7 +173,7 @@ func (h *NodeRegistryMirrorHandler) Apply(c *gin.Context) {
 }
 
 func (h *NodeRegistryMirrorHandler) ApplyStatus(c *gin.Context) {
-	id, err := parseID(c.Param("id"))
+	id, err := apiShared.ParseID(c.Param("id"))
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "镜像源 ID 无效")
 		return

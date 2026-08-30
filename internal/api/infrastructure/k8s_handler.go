@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 	k8sclient "github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
 	storageservice "github.com/cylism/cylism-manager/internal/service/storage"
@@ -56,10 +57,6 @@ func NewK8sHandlerWithEncryption(st *store.Store, encKey []byte, clients ...*k8s
 // StorageService exposes the composed storage service to the infrastructure
 // router; callers must still use the service API rather than handler helpers.
 func (h *K8sHandler) StorageService() *storageservice.Service { return h.storageService }
-
-func k8sUnavailable(c *gin.Context) {
-	model.Error(c, http.StatusOK, model.CodeK8sUnavailable, "h.k8s 集群未连接")
-}
 
 type NamespaceSummary struct {
 	Name             string            `json:"name"`
@@ -113,7 +110,7 @@ func (h *K8sHandler) resourceIsReferenced(namespace, sourceType, name string) (b
 // Dashboard 集群摘要（扩展 Deployment/Service 统计）
 func (h *K8sHandler) Dashboard(c *gin.Context) {
 	if h.k8s == nil {
-		k8sUnavailable(c)
+		apiShared.K8sUnavailable(c)
 		return
 	}
 
@@ -179,7 +176,7 @@ func (h *K8sHandler) Dashboard(c *gin.Context) {
 // per resource type and namespace.
 func (h *K8sHandler) ListNamespaceNames(c *gin.Context) {
 	if h.k8s == nil {
-		k8sUnavailable(c)
+		apiShared.K8sUnavailable(c)
 		return
 	}
 	nsList, err := h.k8s.Clientset.CoreV1().Namespaces().List(h.k8s.Ctx(), metav1.ListOptions{})
@@ -197,7 +194,7 @@ func (h *K8sHandler) ListNamespaceNames(c *gin.Context) {
 // ListNamespaces 列出 Namespace 与资源摘要
 func (h *K8sHandler) ListNamespaces(c *gin.Context) {
 	if h.k8s == nil {
-		k8sUnavailable(c)
+		apiShared.K8sUnavailable(c)
 		return
 	}
 
@@ -247,7 +244,7 @@ func (h *K8sHandler) ListNamespaces(c *gin.Context) {
 // CreateNamespace 创建 Namespace
 func (h *K8sHandler) CreateNamespace(c *gin.Context) {
 	if h.k8s == nil {
-		k8sUnavailable(c)
+		apiShared.K8sUnavailable(c)
 		return
 	}
 
@@ -283,7 +280,7 @@ func (h *K8sHandler) CreateNamespace(c *gin.Context) {
 // UpdateNamespace 更新 Namespace 元数据
 func (h *K8sHandler) UpdateNamespace(c *gin.Context) {
 	if h.k8s == nil {
-		k8sUnavailable(c)
+		apiShared.K8sUnavailable(c)
 		return
 	}
 
@@ -321,7 +318,7 @@ func (h *K8sHandler) UpdateNamespace(c *gin.Context) {
 // DeleteNamespace 删除 Namespace
 func (h *K8sHandler) DeleteNamespace(c *gin.Context) {
 	if h.k8s == nil {
-		k8sUnavailable(c)
+		apiShared.K8sUnavailable(c)
 		return
 	}
 
@@ -351,7 +348,7 @@ func isProtectedNamespace(name string) bool {
 // ListPods Pod 列表
 func (h *K8sHandler) ListPods(c *gin.Context) {
 	if h.k8s == nil {
-		k8sUnavailable(c)
+		apiShared.K8sUnavailable(c)
 		return
 	}
 	ns := c.Query("namespace")
@@ -401,7 +398,7 @@ func (h *K8sHandler) ListPods(c *gin.Context) {
 // ListDeployments 列出 Deployment（使用封装层）
 func (h *K8sHandler) ListDeployments(c *gin.Context) {
 	if h.k8s == nil {
-		k8sUnavailable(c)
+		apiShared.K8sUnavailable(c)
 		return
 	}
 	ns := c.Query("namespace")
@@ -419,7 +416,7 @@ func (h *K8sHandler) ListDeployments(c *gin.Context) {
 // GetDeployment 获取 Deployment 详情
 func (h *K8sHandler) GetDeployment(c *gin.Context) {
 	if h.k8s == nil {
-		k8sUnavailable(c)
+		apiShared.K8sUnavailable(c)
 		return
 	}
 	ns := c.Param("namespace")
@@ -435,7 +432,7 @@ func (h *K8sHandler) GetDeployment(c *gin.Context) {
 // ListDeploymentPods 获取 Deployment 关联 Pod
 func (h *K8sHandler) ListDeploymentPods(c *gin.Context) {
 	if h.k8s == nil {
-		k8sUnavailable(c)
+		apiShared.K8sUnavailable(c)
 		return
 	}
 	ns := c.Param("namespace")
@@ -451,7 +448,7 @@ func (h *K8sHandler) ListDeploymentPods(c *gin.Context) {
 // ListDeploymentRevisions 获取 Deployment 版本历史
 func (h *K8sHandler) ListDeploymentRevisions(c *gin.Context) {
 	if h.k8s == nil {
-		k8sUnavailable(c)
+		apiShared.K8sUnavailable(c)
 		return
 	}
 	ns := c.Param("namespace")
@@ -467,7 +464,7 @@ func (h *K8sHandler) ListDeploymentRevisions(c *gin.Context) {
 // ScaleDeployment 扩缩容 Deployment
 func (h *K8sHandler) ScaleDeployment(c *gin.Context) {
 	if h.k8s == nil {
-		k8sUnavailable(c)
+		apiShared.K8sUnavailable(c)
 		return
 	}
 	ns := c.Param("namespace")
@@ -491,7 +488,7 @@ func (h *K8sHandler) ScaleDeployment(c *gin.Context) {
 // UpdateDeploymentImage 更新 Deployment 镜像
 func (h *K8sHandler) UpdateDeploymentImage(c *gin.Context) {
 	if h.k8s == nil {
-		k8sUnavailable(c)
+		apiShared.K8sUnavailable(c)
 		return
 	}
 	ns := c.Param("namespace")
@@ -516,7 +513,7 @@ func (h *K8sHandler) UpdateDeploymentImage(c *gin.Context) {
 // RollbackDeployment 回滚 Deployment
 func (h *K8sHandler) RollbackDeployment(c *gin.Context) {
 	if h.k8s == nil {
-		k8sUnavailable(c)
+		apiShared.K8sUnavailable(c)
 		return
 	}
 	ns := c.Param("namespace")
@@ -542,7 +539,7 @@ func (h *K8sHandler) RollbackDeployment(c *gin.Context) {
 // ListStatefulSets 列出 StatefulSet
 func (h *K8sHandler) ListStatefulSets(c *gin.Context) {
 	if h.k8s == nil {
-		k8sUnavailable(c)
+		apiShared.K8sUnavailable(c)
 		return
 	}
 	ns := c.Query("namespace")
@@ -560,7 +557,7 @@ func (h *K8sHandler) ListStatefulSets(c *gin.Context) {
 // GetStatefulSet 获取 StatefulSet 详情
 func (h *K8sHandler) GetStatefulSet(c *gin.Context) {
 	if h.k8s == nil {
-		k8sUnavailable(c)
+		apiShared.K8sUnavailable(c)
 		return
 	}
 	ns := c.Param("namespace")
@@ -576,7 +573,7 @@ func (h *K8sHandler) GetStatefulSet(c *gin.Context) {
 // ScaleStatefulSet 扩缩容 StatefulSet
 func (h *K8sHandler) ScaleStatefulSet(c *gin.Context) {
 	if h.k8s == nil {
-		k8sUnavailable(c)
+		apiShared.K8sUnavailable(c)
 		return
 	}
 	ns := c.Param("namespace")
@@ -602,7 +599,7 @@ func (h *K8sHandler) ScaleStatefulSet(c *gin.Context) {
 // ListDaemonSets 列出 DaemonSet
 func (h *K8sHandler) ListDaemonSets(c *gin.Context) {
 	if h.k8s == nil {
-		k8sUnavailable(c)
+		apiShared.K8sUnavailable(c)
 		return
 	}
 	ns := c.Query("namespace")
@@ -620,7 +617,7 @@ func (h *K8sHandler) ListDaemonSets(c *gin.Context) {
 // GetDaemonSet 获取 DaemonSet 详情
 func (h *K8sHandler) GetDaemonSet(c *gin.Context) {
 	if h.k8s == nil {
-		k8sUnavailable(c)
+		apiShared.K8sUnavailable(c)
 		return
 	}
 	ns := c.Param("namespace")
@@ -638,7 +635,7 @@ func (h *K8sHandler) GetDaemonSet(c *gin.Context) {
 // ListServicesV2 列出 Service（使用封装层，含 endpoint_count）
 func (h *K8sHandler) ListServicesV2(c *gin.Context) {
 	if h.k8s == nil {
-		k8sUnavailable(c)
+		apiShared.K8sUnavailable(c)
 		return
 	}
 	ns := c.Query("namespace")
@@ -658,7 +655,7 @@ func (h *K8sHandler) ListServicesV2(c *gin.Context) {
 // GetServiceEndpoints 获取 Service 的 EndpointSlice
 func (h *K8sHandler) GetServiceEndpoints(c *gin.Context) {
 	if h.k8s == nil {
-		k8sUnavailable(c)
+		apiShared.K8sUnavailable(c)
 		return
 	}
 	ns := c.Param("namespace")
@@ -679,7 +676,7 @@ func (h *K8sHandler) GetServiceEndpoints(c *gin.Context) {
 // ListConfigMaps 列出 ConfigMap
 func (h *K8sHandler) ListConfigMaps(c *gin.Context) {
 	if h.k8s == nil {
-		k8sUnavailable(c)
+		apiShared.K8sUnavailable(c)
 		return
 	}
 	ns := c.Query("namespace")
@@ -703,7 +700,7 @@ func (h *K8sHandler) ListConfigMaps(c *gin.Context) {
 // GetConfigMap 获取 ConfigMap 详情
 func (h *K8sHandler) GetConfigMap(c *gin.Context) {
 	if h.k8s == nil {
-		k8sUnavailable(c)
+		apiShared.K8sUnavailable(c)
 		return
 	}
 	ns := c.Param("namespace")
@@ -718,7 +715,7 @@ func (h *K8sHandler) GetConfigMap(c *gin.Context) {
 
 func (h *K8sHandler) CreateConfigMap(c *gin.Context) {
 	if h.k8s == nil {
-		k8sUnavailable(c)
+		apiShared.K8sUnavailable(c)
 		return
 	}
 	var req resourceDataRequest
@@ -741,7 +738,7 @@ func (h *K8sHandler) CreateConfigMap(c *gin.Context) {
 
 func (h *K8sHandler) UpdateConfigMap(c *gin.Context) {
 	if h.k8s == nil {
-		k8sUnavailable(c)
+		apiShared.K8sUnavailable(c)
 		return
 	}
 	var req resourceDataRequest
@@ -765,7 +762,7 @@ func (h *K8sHandler) UpdateConfigMap(c *gin.Context) {
 
 func (h *K8sHandler) DeleteConfigMap(c *gin.Context) {
 	if h.k8s == nil {
-		k8sUnavailable(c)
+		apiShared.K8sUnavailable(c)
 		return
 	}
 	namespace, name := c.Param("namespace"), c.Param("name")
@@ -798,7 +795,7 @@ func (h *K8sHandler) DeleteConfigMap(c *gin.Context) {
 // ListSecrets 列出 Secret
 func (h *K8sHandler) ListSecrets(c *gin.Context) {
 	if h.k8s == nil {
-		k8sUnavailable(c)
+		apiShared.K8sUnavailable(c)
 		return
 	}
 	ns := c.Query("namespace")
@@ -823,7 +820,7 @@ func (h *K8sHandler) ListSecrets(c *gin.Context) {
 // GetSecret 获取 Secret 详情（value 已脱敏，仅返回 key 列表，前端需单独请求解码）
 func (h *K8sHandler) GetSecret(c *gin.Context) {
 	if h.k8s == nil {
-		k8sUnavailable(c)
+		apiShared.K8sUnavailable(c)
 		return
 	}
 	ns := c.Param("namespace")
@@ -845,7 +842,7 @@ func (h *K8sHandler) GetSecret(c *gin.Context) {
 
 func (h *K8sHandler) CreateOpaqueSecret(c *gin.Context) {
 	if h.k8s == nil {
-		k8sUnavailable(c)
+		apiShared.K8sUnavailable(c)
 		return
 	}
 	var req resourceDataRequest
@@ -868,7 +865,7 @@ func (h *K8sHandler) CreateOpaqueSecret(c *gin.Context) {
 
 func (h *K8sHandler) UpdateOpaqueSecret(c *gin.Context) {
 	if h.k8s == nil {
-		k8sUnavailable(c)
+		apiShared.K8sUnavailable(c)
 		return
 	}
 	var req resourceDataRequest
@@ -892,7 +889,7 @@ func (h *K8sHandler) UpdateOpaqueSecret(c *gin.Context) {
 
 func (h *K8sHandler) DeleteOpaqueSecret(c *gin.Context) {
 	if h.k8s == nil {
-		k8sUnavailable(c)
+		apiShared.K8sUnavailable(c)
 		return
 	}
 	namespace, name := c.Param("namespace"), c.Param("name")
@@ -929,7 +926,7 @@ func (h *K8sHandler) DeleteOpaqueSecret(c *gin.Context) {
 // ListIngresses 列出标准 Ingress
 func (h *K8sHandler) ListIngresses(c *gin.Context) {
 	if h.k8s == nil {
-		k8sUnavailable(c)
+		apiShared.K8sUnavailable(c)
 		return
 	}
 	ns := c.Query("namespace")
@@ -947,7 +944,7 @@ func (h *K8sHandler) ListIngresses(c *gin.Context) {
 // GetIngress 获取 Ingress 详情
 func (h *K8sHandler) GetIngress(c *gin.Context) {
 	if h.k8s == nil {
-		k8sUnavailable(c)
+		apiShared.K8sUnavailable(c)
 		return
 	}
 	ns := c.Param("namespace")
@@ -963,7 +960,7 @@ func (h *K8sHandler) GetIngress(c *gin.Context) {
 // CreateIngress 创建 Ingress
 func (h *K8sHandler) CreateIngress(c *gin.Context) {
 	if h.k8s == nil {
-		k8sUnavailable(c)
+		apiShared.K8sUnavailable(c)
 		return
 	}
 	var req struct {
@@ -997,7 +994,7 @@ func (h *K8sHandler) CreateIngress(c *gin.Context) {
 // DeleteIngress 删除标准 Ingress
 func (h *K8sHandler) DeleteIngress(c *gin.Context) {
 	if h.k8s == nil {
-		k8sUnavailable(c)
+		apiShared.K8sUnavailable(c)
 		return
 	}
 	ns := c.Param("namespace")
@@ -1012,7 +1009,7 @@ func (h *K8sHandler) DeleteIngress(c *gin.Context) {
 // GetIngressController 检测 Ingress Controller
 func (h *K8sHandler) GetIngressController(c *gin.Context) {
 	if h.k8s == nil {
-		k8sUnavailable(c)
+		apiShared.K8sUnavailable(c)
 		return
 	}
 	status, _ := h.k8s.DetectIngressController()
@@ -1024,7 +1021,7 @@ func (h *K8sHandler) GetIngressController(c *gin.Context) {
 // GetService 获取 Service 详情（兼容旧 API，实际调用封装层）
 func (h *K8sHandler) GetService(c *gin.Context) {
 	if h.k8s == nil {
-		k8sUnavailable(c)
+		apiShared.K8sUnavailable(c)
 		return
 	}
 	ns := c.Param("namespace")
@@ -1040,7 +1037,7 @@ func (h *K8sHandler) GetService(c *gin.Context) {
 // UpdateService 更新 Service
 func (h *K8sHandler) UpdateService(c *gin.Context) {
 	if h.k8s == nil {
-		k8sUnavailable(c)
+		apiShared.K8sUnavailable(c)
 		return
 	}
 	ns := c.Param("namespace")
@@ -1076,7 +1073,7 @@ func (h *K8sHandler) UpdateService(c *gin.Context) {
 // DeleteService 删除 Service
 func (h *K8sHandler) DeleteService(c *gin.Context) {
 	if h.k8s == nil {
-		k8sUnavailable(c)
+		apiShared.K8sUnavailable(c)
 		return
 	}
 	ns := c.Param("namespace")

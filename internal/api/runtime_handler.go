@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 	"github.com/cylism/cylism-manager/internal/crypto"
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/runtime"
@@ -73,7 +74,7 @@ func (h *RuntimeHandler) List(c *gin.Context) {
 }
 
 func (h *RuntimeHandler) Get(c *gin.Context) {
-	id, err := parseID(c.Param("id"))
+	id, err := apiShared.ParseID(c.Param("id"))
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "Runtime ID 无效")
 		return
@@ -98,7 +99,7 @@ func (h *RuntimeHandler) Create(c *gin.Context) {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
 		return
 	}
-	instance.CreatedBy = getUserID(c)
+	instance.CreatedBy = apiShared.UserID(c)
 	if err := h.store.CreateRuntime(instance); err != nil {
 		model.Error(c, http.StatusConflict, model.CodeConflict, "Runtime 名称已存在")
 		return
@@ -108,7 +109,7 @@ func (h *RuntimeHandler) Create(c *gin.Context) {
 }
 
 func (h *RuntimeHandler) Update(c *gin.Context) {
-	id, err := parseID(c.Param("id"))
+	id, err := apiShared.ParseID(c.Param("id"))
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "Runtime ID 无效")
 		return
@@ -142,7 +143,7 @@ func (h *RuntimeHandler) Update(c *gin.Context) {
 }
 
 func (h *RuntimeHandler) Deploy(c *gin.Context) {
-	id, err := parseID(c.Param("id"))
+	id, err := apiShared.ParseID(c.Param("id"))
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "Runtime ID 无效")
 		return
@@ -222,7 +223,7 @@ func (h *RuntimeHandler) Deploy(c *gin.Context) {
 }
 
 func (h *RuntimeHandler) Health(c *gin.Context) {
-	id, err := parseID(c.Param("id"))
+	id, err := apiShared.ParseID(c.Param("id"))
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "Runtime ID 无效")
 		return
@@ -257,7 +258,7 @@ func (h *RuntimeHandler) Health(c *gin.Context) {
 }
 
 func (h *RuntimeHandler) Uninstall(c *gin.Context) {
-	id, err := parseID(c.Param("id"))
+	id, err := apiShared.ParseID(c.Param("id"))
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "Runtime ID 无效")
 		return
@@ -308,7 +309,7 @@ func (h *RuntimeHandler) UninstallAgentTools(c *gin.Context) {
 // UpdateAgentTools rolls the Runtime so its installer retrieves the CLI bundled
 // with the currently deployed Manager. Existing capability grants are retained.
 func (h *RuntimeHandler) UpdateAgentTools(c *gin.Context) {
-	id, err := parseID(c.Param("id"))
+	id, err := apiShared.ParseID(c.Param("id"))
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "Runtime ID 无效")
 		return
@@ -359,7 +360,7 @@ func (h *RuntimeHandler) UpdateAgentTools(c *gin.Context) {
 }
 
 func (h *RuntimeHandler) setAgentTools(c *gin.Context, enabled bool) {
-	id, err := parseID(c.Param("id"))
+	id, err := apiShared.ParseID(c.Param("id"))
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "Runtime ID 无效")
 		return

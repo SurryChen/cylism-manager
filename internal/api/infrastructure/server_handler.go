@@ -5,8 +5,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"net/http"
-	"strconv"
 
+	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 	"github.com/cylism/cylism-manager/internal/crypto"
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/service/cluster"
@@ -80,7 +80,7 @@ func (h *ServerHandler) List(c *gin.Context) {
 }
 
 func (h *ServerHandler) Get(c *gin.Context) {
-	id, err := parseID(c)
+	id, err := apiShared.ParsePositiveID(c.Param("id"))
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "invalid server id")
 		return
@@ -94,7 +94,7 @@ func (h *ServerHandler) Get(c *gin.Context) {
 }
 
 func (h *ServerHandler) Update(c *gin.Context) {
-	id, err := parseID(c)
+	id, err := apiShared.ParsePositiveID(c.Param("id"))
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "invalid server id")
 		return
@@ -144,7 +144,7 @@ func (h *ServerHandler) Update(c *gin.Context) {
 }
 
 func (h *ServerHandler) Delete(c *gin.Context) {
-	id, err := parseID(c)
+	id, err := apiShared.ParsePositiveID(c.Param("id"))
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "invalid server id")
 		return
@@ -157,7 +157,7 @@ func (h *ServerHandler) Delete(c *gin.Context) {
 }
 
 func (h *ServerHandler) Unbind(c *gin.Context) {
-	id, err := parseID(c)
+	id, err := apiShared.ParsePositiveID(c.Param("id"))
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "invalid server id")
 		return
@@ -175,7 +175,7 @@ func (h *ServerHandler) Unbind(c *gin.Context) {
 }
 
 func (h *ServerHandler) Probe(c *gin.Context) {
-	id, err := parseID(c)
+	id, err := apiShared.ParsePositiveID(c.Param("id"))
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "invalid id")
 		return
@@ -193,7 +193,7 @@ func (h *ServerHandler) Probe(c *gin.Context) {
 }
 
 func (h *ServerHandler) Precheck(c *gin.Context) {
-	id, err := parseID(c)
+	id, err := apiShared.ParsePositiveID(c.Param("id"))
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "invalid id")
 		return
@@ -211,7 +211,7 @@ func (h *ServerHandler) Precheck(c *gin.Context) {
 }
 
 func (h *ServerHandler) Stats(c *gin.Context) {
-	id, err := parseID(c)
+	id, err := apiShared.ParsePositiveID(c.Param("id"))
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "invalid id")
 		return
@@ -235,12 +235,4 @@ func (h *ServerHandler) ResourceStats(c *gin.Context) {
 		return
 	}
 	model.Success(c, results)
-}
-
-func parseID(c *gin.Context) (uint, error) {
-	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
-	if err != nil || id == 0 {
-		return 0, errors.New("invalid id")
-	}
-	return uint(id), nil
 }

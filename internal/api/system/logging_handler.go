@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 	"github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/store"
@@ -98,7 +99,7 @@ func NewLoggingHandler(stores ...*store.Store) *LoggingHandler {
 
 func (h *LoggingHandler) Status(c *gin.Context) {
 	if k8sClient == nil {
-		k8sUnavailable(c)
+		apiShared.K8sUnavailable(c)
 		return
 	}
 	model.Success(c, k8sClient.LoggingStatus())
@@ -114,7 +115,7 @@ func (h *LoggingHandler) Update(c *gin.Context) {
 
 func (h *LoggingHandler) applyConfig(c *gin.Context, message string) {
 	if k8sClient == nil {
-		k8sUnavailable(c)
+		apiShared.K8sUnavailable(c)
 		return
 	}
 	var config k8s.LoggingConfig
@@ -132,7 +133,7 @@ func (h *LoggingHandler) applyConfig(c *gin.Context, message string) {
 
 func (h *LoggingHandler) Uninstall(c *gin.Context) {
 	if k8sClient == nil {
-		k8sUnavailable(c)
+		apiShared.K8sUnavailable(c)
 		return
 	}
 	if err := k8sClient.UninstallLogging(); err != nil {
@@ -145,7 +146,7 @@ func (h *LoggingHandler) Uninstall(c *gin.Context) {
 // Filters returns small Kubernetes-derived lists for structured log search controls.
 func (h *LoggingHandler) Filters(c *gin.Context) {
 	if k8sClient == nil || k8sClient.Clientset == nil {
-		k8sUnavailable(c)
+		apiShared.K8sUnavailable(c)
 		return
 	}
 	namespace := strings.TrimSpace(c.Query("namespace"))
@@ -191,7 +192,7 @@ func (h *LoggingHandler) Filters(c *gin.Context) {
 
 func (h *LoggingHandler) Query(c *gin.Context) {
 	if k8sClient == nil {
-		k8sUnavailable(c)
+		apiShared.K8sUnavailable(c)
 		return
 	}
 	if status := k8sClient.LoggingStatus(); status.LokiReady < 1 {

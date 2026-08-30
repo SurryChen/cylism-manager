@@ -90,6 +90,8 @@ Repository 封装持久化访问。迁移初期可以通过现有 `store.Store` 
 
 ### 阶段 0：建立基线
 
+实施状态：已完成（2026-08-30）。目录、复杂度和 Router 路由基线记录在 `docs/internal-architecture-stage0-baseline.md`；共享 API 辅助函数已收敛到 `internal/api/shared`，现有 REST 路径、鉴权和业务行为保持不变。
+
 不改变业务行为，完成以下工作：
 
 1. 记录当前 `internal/api` 文件、路由和主要依赖。

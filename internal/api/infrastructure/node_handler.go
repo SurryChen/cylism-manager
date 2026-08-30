@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 	"github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/service/cluster"
@@ -148,7 +149,7 @@ func (h *NodeHandler) RemoveNode(c *gin.Context) {
 }
 
 func (h *NodeHandler) AddNode(c *gin.Context) {
-	id, err := parseID(c)
+	id, err := apiShared.ParsePositiveID(c.Param("id"))
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "invalid server id")
 		return
@@ -162,7 +163,7 @@ func (h *NodeHandler) AddNode(c *gin.Context) {
 }
 
 func (h *NodeHandler) PreImport(c *gin.Context) {
-	id, err := parseID(c)
+	id, err := apiShared.ParsePositiveID(c.Param("id"))
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "invalid server id")
 		return
@@ -184,7 +185,7 @@ func (h *NodeHandler) PreImport(c *gin.Context) {
 }
 
 func (h *NodeHandler) ConfirmImport(c *gin.Context) {
-	id, err := parseID(c)
+	id, err := apiShared.ParsePositiveID(c.Param("id"))
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "invalid server id")
 		return

@@ -5,10 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
+	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 	k8sclient "github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/repository"
@@ -45,7 +45,7 @@ func (h *ManagedOCIRegistryHandler) List(c *gin.Context) {
 }
 
 func (h *ManagedOCIRegistryHandler) Get(c *gin.Context) {
-	id, err := parseID(c.Param("id"))
+	id, err := apiShared.ParseID(c.Param("id"))
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "制品库 ID 无效")
 		return
@@ -172,7 +172,7 @@ func (h *ManagedOCIRegistryHandler) Create(c *gin.Context) {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
 		return
 	}
-	if err := h.service.PersistCreate(registry, request.PullPassword, getUserID(c), request.ProjectIDs); err != nil {
+	if err := h.service.PersistCreate(registry, request.PullPassword, apiShared.UserID(c), request.ProjectIDs); err != nil {
 		model.Error(c, http.StatusConflict, model.CodeConflict, "保存制品库配置失败，请检查名称、地址和项目授权")
 		return
 	}
@@ -191,7 +191,7 @@ func (h *ManagedOCIRegistryHandler) Update(c *gin.Context) {
 	if !h.k8sReady(c) {
 		return
 	}
-	id, err := parseID(c.Param("id"))
+	id, err := apiShared.ParseID(c.Param("id"))
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "制品库 ID 无效")
 		return
@@ -264,7 +264,7 @@ func (h *ManagedOCIRegistryHandler) Repair(c *gin.Context) {
 	if !h.k8sReady(c) {
 		return
 	}
-	id, err := parseID(c.Param("id"))
+	id, err := apiShared.ParseID(c.Param("id"))
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "制品库 ID 无效")
 		return
@@ -324,7 +324,7 @@ func (h *ManagedOCIRegistryHandler) Repair(c *gin.Context) {
 }
 
 func (h *ManagedOCIRegistryHandler) ApplyNodeAccess(c *gin.Context) {
-	id, err := parseID(c.Param("id"))
+	id, err := apiShared.ParseID(c.Param("id"))
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "制品库 ID 无效")
 		return
@@ -395,7 +395,7 @@ func (h *ManagedOCIRegistryHandler) ApplyNodeAccess(c *gin.Context) {
 }
 
 func (h *ManagedOCIRegistryHandler) Delete(c *gin.Context) {
-	id, err := parseID(c.Param("id"))
+	id, err := apiShared.ParseID(c.Param("id"))
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "制品库 ID 无效")
 		return
@@ -474,18 +474,4 @@ func truncateManagedRegistryError(err error) string {
 		return value[:512]
 	}
 	return value
-}
-
-func parseID(value string) (uint, error) {
-	id, err := strconv.ParseUint(value, 10, 64)
-	return uint(id), err
-}
-
-func getUserID(c *gin.Context) uint {
-	if id, exists := c.Get("user_id"); exists {
-		if userID, ok := id.(uint); ok {
-			return userID
-		}
-	}
-	return 0
 }

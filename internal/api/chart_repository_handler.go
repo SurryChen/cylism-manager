@@ -1,6 +1,7 @@
 package api
 
 import (
+	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/gin-gonic/gin"
@@ -44,7 +45,7 @@ func (h *ChartRepositoryHandler) Create(c *gin.Context) {
 		model.Error(c, 400, model.CodeValidationFail, e.Error())
 		return
 	}
-	item.CreatedBy = getUserID(c)
+	item.CreatedBy = apiShared.UserID(c)
 	if e = h.store.CreateChartRepository(item); e != nil {
 		model.Error(c, 409, model.CodeConflict, "Chart 仓库名称或地址已存在")
 		return
@@ -52,7 +53,7 @@ func (h *ChartRepositoryHandler) Create(c *gin.Context) {
 	model.Success(c, item)
 }
 func (h *ChartRepositoryHandler) Update(c *gin.Context) {
-	id, e := parseID(c.Param("id"))
+	id, e := apiShared.ParseID(c.Param("id"))
 	if e != nil {
 		model.Error(c, 400, model.CodeBadRequest, "Chart 仓库 ID 无效")
 		return
@@ -79,7 +80,7 @@ func (h *ChartRepositoryHandler) Update(c *gin.Context) {
 	model.Success(c, item)
 }
 func (h *ChartRepositoryHandler) Delete(c *gin.Context) {
-	id, e := parseID(c.Param("id"))
+	id, e := apiShared.ParseID(c.Param("id"))
 	if e != nil {
 		model.Error(c, 400, model.CodeBadRequest, "Chart 仓库 ID 无效")
 		return
@@ -91,7 +92,7 @@ func (h *ChartRepositoryHandler) Delete(c *gin.Context) {
 	model.Success(c, gin.H{"id": id})
 }
 func (h *ChartRepositoryHandler) Verify(c *gin.Context) {
-	id, e := parseID(c.Param("id"))
+	id, e := apiShared.ParseID(c.Param("id"))
 	if e != nil {
 		model.Error(c, 400, model.CodeBadRequest, "Chart 仓库 ID 无效")
 		return

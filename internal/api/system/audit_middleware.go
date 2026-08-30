@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 	"github.com/cylism/cylism-manager/internal/auth"
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/store"
@@ -42,7 +43,7 @@ func AuditMiddleware(s *store.Store) gin.HandlerFunc {
 				Action:       inferAction(c.Request.Method, c.FullPath()),
 				ResourceType: inferResourceType(c.FullPath()),
 				ResourceID:   extractResourceID(c.Param("id")),
-				UserID:       getUserID(c),
+				UserID:       apiShared.UserID(c),
 				Detail:       buildDetailForRequest(c, bodyBytes, writer.body.Bytes()),
 				CreatedAt:    start,
 			}
@@ -194,13 +195,4 @@ func redactAuditValue(value interface{}) interface{} {
 func isSensitiveAuditKey(key string) bool {
 	key = strings.ToLower(key)
 	return strings.Contains(key, "secret") || strings.Contains(key, "password") || strings.Contains(key, "token") || strings.Contains(key, "private_key")
-}
-
-func getUserID(c *gin.Context) uint {
-	if id, exists := c.Get("user_id"); exists {
-		if uid, ok := id.(uint); ok {
-			return uid
-		}
-	}
-	return 0
 }

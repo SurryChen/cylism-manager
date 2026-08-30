@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 
+	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 	k8sclient "github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/gin-gonic/gin"
@@ -45,7 +46,7 @@ type clusterDNSPolicyRequest struct {
 
 func (h *ClusterDNSHandler) Status(c *gin.Context) {
 	if h.k8s == nil || h.k8s.Clientset == nil {
-		k8sUnavailable(c)
+		apiShared.K8sUnavailable(c)
 		return
 	}
 	configMap, err := h.k8s.Clientset.CoreV1().ConfigMaps(coreDNSNamespace).Get(c.Request.Context(), coreDNSConfigMap, metav1.GetOptions{})
@@ -83,7 +84,7 @@ func (h *ClusterDNSHandler) Status(c *gin.Context) {
 
 func (h *ClusterDNSHandler) Apply(c *gin.Context) {
 	if h.k8s == nil || h.k8s.Clientset == nil {
-		k8sUnavailable(c)
+		apiShared.K8sUnavailable(c)
 		return
 	}
 	var request clusterDNSPolicyRequest
@@ -109,7 +110,7 @@ func (h *ClusterDNSHandler) Apply(c *gin.Context) {
 // an unavailable or unmanaged CoreDNS configuration.
 func (h *ClusterDNSHandler) Reset(c *gin.Context) {
 	if h.k8s == nil || h.k8s.Clientset == nil {
-		k8sUnavailable(c)
+		apiShared.K8sUnavailable(c)
 		return
 	}
 	policy, err := h.applyResolvers(c, nil)
@@ -140,7 +141,7 @@ func (h *ClusterDNSHandler) applyResolvers(c *gin.Context, resolvers []string) (
 		encodedResolvers = []string{}
 	}
 	encoded, _ := json.Marshal(encodedResolvers)
-	policy := &model.ClusterDNSPolicy{Resolvers: string(encoded), CreatedBy: getUserID(c)}
+	policy := &model.ClusterDNSPolicy{Resolvers: string(encoded), CreatedBy: apiShared.UserID(c)}
 	if err := h.store.CreateClusterDNSPolicy(policy); err != nil {
 		configMap.Data["Corefile"] = previous
 		_, _ = configMaps.Update(c.Request.Context(), configMap, metav1.UpdateOptions{})

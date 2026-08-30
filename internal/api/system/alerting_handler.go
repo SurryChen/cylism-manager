@@ -23,6 +23,7 @@ import (
 	"time"
 
 	agentapi "github.com/cylism/cylism-manager/internal/api/agent"
+	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 	"github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/gin-gonic/gin"
@@ -155,7 +156,7 @@ func (h *AlertingHandler) WithAutomation(store interface {
 
 func (h *AlertingHandler) Status(c *gin.Context) {
 	if k8sClient == nil {
-		k8sUnavailable(c)
+		apiShared.K8sUnavailable(c)
 		return
 	}
 	model.Success(c, k8sClient.AlertingStatus())
@@ -163,7 +164,7 @@ func (h *AlertingHandler) Status(c *gin.Context) {
 
 func (h *AlertingHandler) Install(c *gin.Context) {
 	if k8sClient == nil {
-		k8sUnavailable(c)
+		apiShared.K8sUnavailable(c)
 		return
 	}
 	var config k8s.AlertingConfig
@@ -181,7 +182,7 @@ func (h *AlertingHandler) Install(c *gin.Context) {
 
 func (h *AlertingHandler) Update(c *gin.Context) {
 	if k8sClient == nil {
-		k8sUnavailable(c)
+		apiShared.K8sUnavailable(c)
 		return
 	}
 	var config k8s.AlertingConfig
@@ -199,7 +200,7 @@ func (h *AlertingHandler) Update(c *gin.Context) {
 
 func (h *AlertingHandler) Uninstall(c *gin.Context) {
 	if k8sClient == nil {
-		k8sUnavailable(c)
+		apiShared.K8sUnavailable(c)
 		return
 	}
 	if err := k8sClient.UninstallAlerting(); err != nil {
@@ -309,7 +310,7 @@ func (h *AlertingHandler) DeleteSilence(c *gin.Context) {
 
 func (h *AlertingHandler) TestNotification(c *gin.Context) {
 	if k8sClient == nil {
-		k8sUnavailable(c)
+		apiShared.K8sUnavailable(c)
 		return
 	}
 	channel := strings.ToLower(strings.TrimSpace(c.Query("channel")))
@@ -585,7 +586,7 @@ func (h *AlertingHandler) recentResolved() []alertmanagerAlert {
 
 func (h *AlertingHandler) readyForAlertmanager(c *gin.Context) bool {
 	if k8sClient == nil {
-		k8sUnavailable(c)
+		apiShared.K8sUnavailable(c)
 		return false
 	}
 	if status := k8sClient.AlertingStatus(); status.State != k8s.AlertingStateReady {
