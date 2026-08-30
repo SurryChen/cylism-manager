@@ -4,8 +4,10 @@ import (
 	"time"
 
 	"github.com/cylism/cylism-manager/internal/agentauth"
+	agentapi "github.com/cylism/cylism-manager/internal/api/agent"
 	"github.com/cylism/cylism-manager/internal/api/delivery"
 	infrastructureapi "github.com/cylism/cylism-manager/internal/api/infrastructure"
+	systemapi "github.com/cylism/cylism-manager/internal/api/system"
 	"github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
 	runtimepkg "github.com/cylism/cylism-manager/internal/runtime"
@@ -30,16 +32,17 @@ type AuthConfig struct {
 
 // RegisterRoutes 注册所有 API 路由
 func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthConfig) {
+	systemapi.SetKubernetesClient(K8s)
 	// 健康检查（无认证，用于 k8s 探活）
 	r.GET("/health", func(c *gin.Context) {
 		model.Success(c, gin.H{"status": "ok"})
 	})
 	// This endpoint is authenticated with a projected Runtime installer token,
 	// never with a browser JWT or the Runtime chat credential.
-	artifactHandler := NewAgentArtifactHandler("/usr/local/lib/cylism/runtime-tools", agentauth.NewRuntimeTokenAuthorizer(K8s, s, nil))
-	r.GET(cliArtifactPath, gin.WrapH(artifactHandler))
-	r.GET(cliArtifactManifestPath, gin.WrapH(artifactHandler))
-	agentHandler := NewAgentHandler(s, K8s, agentauth.NewRuntimeTokenAuthorizer(K8s, s, nil)).WithRegistryVerifier(defaultAgentRegistryNodeVerifier(encKey)).WithMaintenanceInspector(defaultAgentMaintenanceInspector(encKey))
+	artifactHandler := agentapi.NewAgentArtifactHandler("/usr/local/lib/cylism/runtime-tools", agentauth.NewRuntimeTokenAuthorizer(K8s, s, nil))
+	r.GET(agentapi.CLIArtifactPath, gin.WrapH(artifactHandler))
+	r.GET(agentapi.CLIArtifactManifestPath, gin.WrapH(artifactHandler))
+	agentHandler := agentapi.NewAgentHandler(s, K8s, agentauth.NewRuntimeTokenAuthorizer(K8s, s, nil)).WithRegistryVerifier(agentapi.DefaultAgentRegistryNodeVerifier(encKey)).WithMaintenanceInspector(agentapi.DefaultAgentMaintenanceInspector(encKey))
 	r.GET("/api/agent/v1/cluster/status", gin.WrapF(agentHandler.ClusterStatus))
 	r.GET("/api/agent/v1/capabilities/status", gin.WrapF(agentHandler.CapabilityStatus))
 	r.GET("/api/agent/v1/workloads/get", gin.WrapF(agentHandler.WorkloadGet))
@@ -75,11 +78,11 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 	// 业务 API（受 JWT 保护）
 	apiGroup := r.Group("/api")
 	apiGroup.Use(JWTAuthMiddleware(authCfg.JWTSecret))
-	apiGroup.Use(AuditMiddleware(s))
+	apiGroup.Use(systemapi.AuditMiddleware(s))
 	runtimeRegistry := runtimepkg.BuiltinRegistry()
 	runtimeHandler := NewRuntimeHandler(s, encKey, runtimepkg.NewKubernetesManager(K8s, runtimeRegistry), runtimeRegistry)
-	agentOperationHandler := NewAgentOperationHandler(s, K8s).WithRegistryPullExecutor(defaultAgentRegistryPullExecutor(encKey)).WithMaintenanceCleanupExecutor(defaultAgentMaintenanceCleanupExecutor(encKey))
-	systemComponentHandler := NewSystemComponentHandler(s)
+	agentOperationHandler := agentapi.NewAgentOperationHandler(s, K8s).WithRegistryPullExecutor(agentapi.DefaultAgentRegistryPullExecutor(encKey)).WithMaintenanceCleanupExecutor(agentapi.DefaultAgentMaintenanceCleanupExecutor(encKey))
+	systemComponentHandler := systemapi.NewSystemComponentHandler(s)
 	networkService := networkservice.NewService(s).WithIngressAdapter(K8s).WithStandardIngressAdapter(K8s).WithDNSAdapter(K8s).WithCertificateAdapter(K8s)
 	clusterDNSHandler := infrastructureapi.NewClusterDNSHandler(s, K8s)
 	networkHandler := infrastructureapi.NewNetworkHandler(networkService, infrastructureapi.NetworkHandler{
@@ -235,7 +238,7 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 	}
 	monitoring := apiGroup.Group("/monitoring")
 	{
-		h := NewMonitoringHandler()
+		h := systemapi.NewMonitoringHandler()
 		monitoring.GET("/status", h.Status)
 		monitoring.POST("/install", h.Install)
 		monitoring.POST("/storage-migration", h.MigrateLegacyStorage)
@@ -246,7 +249,7 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 		monitoring.GET("/disk-growth", h.DiskGrowth)
 		monitoring.GET("/targets", h.Targets)
 	}
-	alertingHandler := NewAlertingHandler(authCfg.PlatformURL).WithAutomation(s, NewAlertRuntimeDispatcher(s, encKey, runtimeRegistry))
+	alertingHandler := systemapi.NewAlertingHandler(authCfg.PlatformURL).WithAutomation(s, systemapi.NewAlertRuntimeDispatcher(s, encKey, runtimeRegistry))
 	alerts := apiGroup.Group("/monitoring/alerts")
 	{
 		alerts.GET("/status", alertingHandler.Status)
@@ -262,7 +265,7 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 		alerts.PUT("/automation-policy", alertingHandler.UpdateAutomationPolicy)
 		alerts.GET("/automation-events", alertingHandler.ListAutomationEvents)
 	}
-	loggingHandler := NewLoggingHandler(s)
+	loggingHandler := systemapi.NewLoggingHandler(s)
 	logs := apiGroup.Group("/monitoring/logs")
 	{
 		logs.GET("/status", loggingHandler.Status)
@@ -347,7 +350,7 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 	// instead of a browser JWT. This group must remain narrower than /api.
 	integration := r.Group("/api/integrations/applications")
 	integration.Use(DelegationAuthMiddleware(authCfg.JWTSecret))
-	integration.Use(AuditMiddleware(s))
+	integration.Use(systemapi.AuditMiddleware(s))
 	{
 		integration.GET("/discovery", applicationHandler.IntegrationDiscoverApplications)
 		integration.GET("/:id/runtime", applicationHandler.IntegrationGetApplicationRuntime)
@@ -507,7 +510,7 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 	}
 
 	// Tailscale 管理
-	tailscaleHandler := NewTailscaleHandler(s, encKey)
+	tailscaleHandler := systemapi.NewTailscaleHandler(s, encKey)
 	tailscale := apiGroup.Group("/tailscale")
 	{
 		tailscale.POST("/init", tailscaleHandler.Init)
@@ -519,6 +522,6 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 	crdHandler := NewCRDHandler()
 	apiGroup.GET("/system/crds", crdHandler.CheckCRDs)
 
-	auditHandler := NewAuditHandler(s)
+	auditHandler := systemapi.NewAuditHandler(s)
 	apiGroup.GET("/audit-logs", auditHandler.List)
 }

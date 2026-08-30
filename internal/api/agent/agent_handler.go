@@ -1,4 +1,4 @@
-package api
+package agent
 
 import (
 	"context"
@@ -45,8 +45,8 @@ type AgentHandler struct {
 	}
 	client               *k8s.Client
 	authenticator        AgentAuthenticator
-	registryVerifier     agentRegistryNodeVerifier
-	maintenanceInspector agentMaintenanceInspector
+	registryVerifier     AgentRegistryNodeVerifier
+	maintenanceInspector AgentMaintenanceInspector
 }
 
 func NewAgentHandler(store interface {
@@ -67,12 +67,12 @@ func NewAgentHandler(store interface {
 	return &AgentHandler{store: store, client: client, authenticator: authenticator}
 }
 
-func (h *AgentHandler) WithRegistryVerifier(verifier agentRegistryNodeVerifier) *AgentHandler {
+func (h *AgentHandler) WithRegistryVerifier(verifier AgentRegistryNodeVerifier) *AgentHandler {
 	h.registryVerifier = verifier
 	return h
 }
 
-func (h *AgentHandler) WithMaintenanceInspector(inspector agentMaintenanceInspector) *AgentHandler {
+func (h *AgentHandler) WithMaintenanceInspector(inspector AgentMaintenanceInspector) *AgentHandler {
 	h.maintenanceInspector = inspector
 	return h
 }
@@ -817,7 +817,7 @@ func (h *AgentHandler) MonitoringDiskGrowth(w http.ResponseWriter, r *http.Reque
 	if !ok || !h.requireCapability(w, instance, model.AgentCapabilityMonitoringRead, "") {
 		return
 	}
-	if K8s == nil || !monitoringDataStoreAvailable(K8s.VictoriaMetricsStatus()) {
+	if h.client == nil || !monitoringDataStoreAvailable(h.client.VictoriaMetricsStatus()) {
 		writeAgentError(w, http.StatusServiceUnavailable, "monitoring data store unavailable", true)
 		return
 	}
@@ -1074,16 +1074,18 @@ func stringValue(value *string) string {
 	return *value
 }
 
-func truncateAgentText(value string, limit int) string {
+func TruncateAgentText(value string, limit int) string {
 	if len(value) <= limit {
 		return value
 	}
 	return value[:limit] + "..."
 }
-func redactAgentText(value string) string {
+func RedactAgentText(value string) string {
 	value = agentSensitiveText.ReplaceAllString(value, "$1[REDACTED]")
 	return agentAuthorizationText.ReplaceAllString(value, "$1[REDACTED]")
 }
+func truncateAgentText(value string, limit int) string { return TruncateAgentText(value, limit) }
+func redactAgentText(value string) string              { return RedactAgentText(value) }
 func newAgentOperationID() string {
 	bytes := make([]byte, 18)
 	if _, err := rand.Read(bytes); err == nil {

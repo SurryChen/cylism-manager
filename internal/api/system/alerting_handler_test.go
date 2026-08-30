@@ -1,4 +1,4 @@
-package api
+package system
 
 import (
 	"context"
@@ -37,9 +37,9 @@ func setupAlertingRouter(handler *AlertingHandler) *gin.Engine {
 }
 
 func TestAlertingNotifyRejectsMissingOrInvalidToken(t *testing.T) {
-	original := K8s
-	K8s = alertingReadyK8s("relay-token")
-	defer func() { K8s = original }()
+	original := k8sClient
+	k8sClient = alertingReadyK8s("relay-token")
+	defer func() { k8sClient = original }()
 
 	handler := NewAlertingHandler()
 	handler.notify = func(context.Context, string, alertmanagerNotification) error {
@@ -53,9 +53,9 @@ func TestAlertingNotifyRejectsMissingOrInvalidToken(t *testing.T) {
 }
 
 func TestAlertingNotifyForwardsAuthorizedAlertBatch(t *testing.T) {
-	original := K8s
-	K8s = alertingReadyK8s("relay-token")
-	defer func() { K8s = original }()
+	original := k8sClient
+	k8sClient = alertingReadyK8s("relay-token")
+	defer func() { k8sClient = original }()
 
 	called := false
 	handler := NewAlertingHandler()
@@ -75,9 +75,9 @@ func TestAlertingNotifyForwardsAuthorizedAlertBatch(t *testing.T) {
 }
 
 func TestAlertingTestNotificationDoesNotExposeWebhook(t *testing.T) {
-	original := K8s
-	K8s = alertingReadyK8s("relay-token")
-	defer func() { K8s = original }()
+	original := k8sClient
+	k8sClient = alertingReadyK8s("relay-token")
+	defer func() { k8sClient = original }()
 
 	handler := NewAlertingHandler()
 	handler.notify = func(_ context.Context, url string, payload alertmanagerNotification) error {
@@ -100,10 +100,10 @@ func TestNewAlertingHandlerUsesConfiguredPlatformURL(t *testing.T) {
 }
 
 func TestAlertingTestNotificationSendsSMTPEmail(t *testing.T) {
-	original := K8s
-	K8s = alertingReadyK8s("relay-token")
-	defer func() { K8s = original }()
-	secret, err := K8s.Clientset.CoreV1().Secrets("monitoring").Get(t.Context(), "cylism-alerting-secret", metav1.GetOptions{})
+	original := k8sClient
+	k8sClient = alertingReadyK8s("relay-token")
+	defer func() { k8sClient = original }()
+	secret, err := k8sClient.Clientset.CoreV1().Secrets("monitoring").Get(t.Context(), "cylism-alerting-secret", metav1.GetOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +114,7 @@ func TestAlertingTestNotificationSendsSMTPEmail(t *testing.T) {
 	secret.Data["email-from"] = []byte("alerts@example.com")
 	secret.Data["email-to"] = []byte("ops@example.com")
 	secret.Data["email-tls-mode"] = []byte("starttls")
-	if _, err := K8s.Clientset.CoreV1().Secrets("monitoring").Update(t.Context(), secret, metav1.UpdateOptions{}); err != nil {
+	if _, err := k8sClient.Clientset.CoreV1().Secrets("monitoring").Update(t.Context(), secret, metav1.UpdateOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	handler := NewAlertingHandler()
@@ -172,9 +172,9 @@ func TestAlertEmailMIMEWrapsLongBodyLines(t *testing.T) {
 }
 
 func TestAlertingOverviewSurfacesAlertmanagerFailure(t *testing.T) {
-	original := K8s
-	K8s = alertingReadyK8s("relay-token")
-	defer func() { K8s = original }()
+	original := k8sClient
+	k8sClient = alertingReadyK8s("relay-token")
+	defer func() { k8sClient = original }()
 
 	handler := NewAlertingHandler()
 	handler.alertmanager = func(context.Context, string, string, interface{}, interface{}) error {
@@ -187,9 +187,9 @@ func TestAlertingOverviewSurfacesAlertmanagerFailure(t *testing.T) {
 }
 
 func TestAlertingOverviewIncludesRecentResolvedWebhookAlerts(t *testing.T) {
-	original := K8s
-	K8s = alertingReadyK8s("relay-token")
-	defer func() { K8s = original }()
+	original := k8sClient
+	k8sClient = alertingReadyK8s("relay-token")
+	defer func() { k8sClient = original }()
 
 	handler := NewAlertingHandler()
 	handler.notify = func(context.Context, string, alertmanagerNotification) error { return nil }
@@ -211,9 +211,9 @@ func TestAlertingOverviewIncludesRecentResolvedWebhookAlerts(t *testing.T) {
 }
 
 func TestUpdateAutomationPolicyImmediatelySyncsCurrentFiringAlerts(t *testing.T) {
-	original := K8s
-	K8s = alertingReadyK8s("relay-token")
-	defer func() { K8s = original }()
+	original := k8sClient
+	k8sClient = alertingReadyK8s("relay-token")
+	defer func() { k8sClient = original }()
 
 	store := &memoryAlertAutomationStore{runtime: &model.RuntimeInstance{ID: 7, RuntimeType: model.RuntimeTypeNanobot, DeploymentMode: model.RuntimeDeploymentManaged}, events: map[string]*model.AlertEvent{}}
 	dispatched := make(chan *model.AlertEvent, 1)

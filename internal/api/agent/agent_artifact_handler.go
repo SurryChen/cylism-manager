@@ -1,4 +1,4 @@
-package api
+package agent
 
 import (
 	"context"
@@ -14,8 +14,8 @@ import (
 )
 
 const (
-	cliArtifactPath         = "/internal/runtime-tools/v1/cylism-cli/linux-amd64"
-	cliArtifactManifestPath = cliArtifactPath + "/manifest"
+	CLIArtifactPath         = "/internal/runtime-tools/v1/cylism-cli/linux-amd64"
+	CLIArtifactManifestPath = CLIArtifactPath + "/manifest"
 	cliArtifactPlatform     = "linux-amd64"
 )
 
@@ -37,7 +37,7 @@ func NewAgentArtifactHandler(directory string, authorizer InstallerAuthorizer) *
 }
 
 func (h *AgentArtifactHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet || (r.URL.Path != cliArtifactPath && r.URL.Path != cliArtifactManifestPath) {
+	if r.Method != http.MethodGet || (r.URL.Path != CLIArtifactPath && r.URL.Path != CLIArtifactManifestPath) {
 		http.NotFound(w, r)
 		return
 	}
@@ -55,7 +55,7 @@ func (h *AgentArtifactHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "CLI artifact unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	if r.URL.Path == cliArtifactManifestPath {
+	if r.URL.Path == CLIArtifactManifestPath {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "no-store")
 		if err := json.NewEncoder(w).Encode(artifact.Manifest); err != nil {

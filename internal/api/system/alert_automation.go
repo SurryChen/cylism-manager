@@ -1,4 +1,4 @@
-package api
+package system
 
 import (
 	"context"
@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/cylism/cylism-manager/internal/agent"
+	agentapi "github.com/cylism/cylism-manager/internal/api/agent"
 	"github.com/cylism/cylism-manager/internal/crypto"
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/runtime"
@@ -135,7 +136,7 @@ func (d *AlertRuntimeDispatcher) Dispatch(ctx context.Context, event *model.Aler
 
 func (d *AlertRuntimeDispatcher) fail(event *model.AlertEvent, message string) {
 	event.Status = model.AlertEventFailed
-	event.LastError = truncateAgentText(message, 512)
+	event.LastError = agentapi.TruncateAgentText(message, 512)
 	_ = d.store.UpdateAlertEvent(event)
 }
 

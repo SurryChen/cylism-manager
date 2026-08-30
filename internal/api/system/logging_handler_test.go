@@ -1,4 +1,4 @@
-package api
+package system
 
 import (
 	"context"
@@ -31,9 +31,9 @@ func setupLoggingRouter(handler *LoggingHandler) *gin.Engine {
 }
 
 func TestLoggingQueryBuildsBoundedStructuredSelector(t *testing.T) {
-	original := K8s
-	K8s = loggingReadyK8s()
-	defer func() { K8s = original }()
+	original := k8sClient
+	k8sClient = loggingReadyK8s()
+	defer func() { k8sClient = original }()
 
 	handler := NewLoggingHandler()
 	handler.now = func() time.Time { return time.Unix(1_700_000_000, 0).UTC() }
@@ -57,12 +57,12 @@ func TestLoggingQueryBuildsBoundedStructuredSelector(t *testing.T) {
 }
 
 func TestLoggingQueryAllowsPartialAlloyCoverageWhenLokiIsReady(t *testing.T) {
-	original := K8s
-	K8s = &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(
+	original := k8sClient
+	k8sClient = &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(
 		&appsv1.StatefulSet{ObjectMeta: metav1.ObjectMeta{Name: "cylism-loki", Namespace: "monitoring"}, Status: appsv1.StatefulSetStatus{ReadyReplicas: 1}},
 		&appsv1.DaemonSet{ObjectMeta: metav1.ObjectMeta{Name: "cylism-alloy", Namespace: "monitoring"}, Status: appsv1.DaemonSetStatus{DesiredNumberScheduled: 2, NumberAvailable: 1}},
 	)}
-	defer func() { K8s = original }()
+	defer func() { k8sClient = original }()
 
 	handler := NewLoggingHandler()
 	handler.query = func(_ context.Context, _ string, _ url.Values) (*lokiQueryResponse, error) {
@@ -76,9 +76,9 @@ func TestLoggingQueryAllowsPartialAlloyCoverageWhenLokiIsReady(t *testing.T) {
 }
 
 func TestLoggingQuerySupportsExactTimeAndBooleanKeywordBranches(t *testing.T) {
-	original := K8s
-	K8s = loggingReadyK8s()
-	defer func() { K8s = original }()
+	original := k8sClient
+	k8sClient = loggingReadyK8s()
+	defer func() { k8sClient = original }()
 
 	handler := NewLoggingHandler()
 	queries := make([]string, 0, 2)
@@ -127,9 +127,9 @@ func TestBuildLogQLQueriesSupportsQuotedEscapesAndRejectsInvalidExpression(t *te
 }
 
 func TestLoggingQueryRejectsRawLogQLAndOversizedRange(t *testing.T) {
-	original := K8s
-	K8s = loggingReadyK8s()
-	defer func() { K8s = original }()
+	original := k8sClient
+	k8sClient = loggingReadyK8s()
+	defer func() { k8sClient = original }()
 
 	response := serve(setupLoggingRouter(NewLoggingHandler()), newJSONRequest(http.MethodPost, "/api/monitoring/logs/query", gin.H{"range": "7d", "logql": "{job=~\".*\"}"}))
 	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "24 小时") {
@@ -148,12 +148,12 @@ func TestBuildLogQLAddsNamespaceMatcherForUnfilteredQuery(t *testing.T) {
 }
 
 func TestLoggingInstallAndFiltersExposeNoLokiEndpoint(t *testing.T) {
-	original := K8s
-	K8s = &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(
+	original := k8sClient
+	k8sClient = &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(
 		&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node-a"}, Status: corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}}}},
 		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "api-123", Namespace: "project-demo", Labels: map[string]string{"app.kubernetes.io/name": "api"}}, Spec: corev1.PodSpec{NodeName: "node-a", Containers: []corev1.Container{{Name: "api"}}}},
 	)}
-	defer func() { K8s = original }()
+	defer func() { k8sClient = original }()
 
 	handler := NewLoggingHandler()
 	response := serve(setupLoggingRouter(handler), newJSONRequest(http.MethodPost, "/api/monitoring/logs/install", gin.H{"node_name": "node-a", "storage": "10Gi", "retention_days": 14}))

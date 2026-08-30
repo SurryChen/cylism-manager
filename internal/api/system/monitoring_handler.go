@@ -1,4 +1,4 @@
-package api
+package system
 
 import (
 	"context"
@@ -73,15 +73,15 @@ func NewMonitoringHandler() *MonitoringHandler {
 }
 
 func (h *MonitoringHandler) Status(c *gin.Context) {
-	if K8s == nil {
+	if k8sClient == nil {
 		k8sUnavailable(c)
 		return
 	}
-	model.Success(c, K8s.VictoriaMetricsStatus())
+	model.Success(c, k8sClient.VictoriaMetricsStatus())
 }
 
 func (h *MonitoringHandler) Install(c *gin.Context) {
-	if K8s == nil {
+	if k8sClient == nil {
 		k8sUnavailable(c)
 		return
 	}
@@ -90,7 +90,7 @@ func (h *MonitoringHandler) Install(c *gin.Context) {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "VictoriaMetrics 配置无效")
 		return
 	}
-	status, err := K8s.InstallVictoriaMetrics(config)
+	status, err := k8sClient.InstallVictoriaMetrics(config)
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
 		return
@@ -99,11 +99,11 @@ func (h *MonitoringHandler) Install(c *gin.Context) {
 }
 
 func (h *MonitoringHandler) Uninstall(c *gin.Context) {
-	if K8s == nil {
+	if k8sClient == nil {
 		k8sUnavailable(c)
 		return
 	}
-	if err := K8s.UninstallVictoriaMetrics(); err != nil {
+	if err := k8sClient.UninstallVictoriaMetrics(); err != nil {
 		model.Error(c, http.StatusInternalServerError, model.CodeK8sAPIError, err.Error())
 		return
 	}
@@ -111,7 +111,7 @@ func (h *MonitoringHandler) Uninstall(c *gin.Context) {
 }
 
 func (h *MonitoringHandler) MigrateLegacyStorage(c *gin.Context) {
-	if K8s == nil {
+	if k8sClient == nil {
 		k8sUnavailable(c)
 		return
 	}
@@ -120,7 +120,7 @@ func (h *MonitoringHandler) MigrateLegacyStorage(c *gin.Context) {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "迁移存储配置无效")
 		return
 	}
-	status, err := K8s.StartVictoriaMetricsHostPathMigration(request)
+	status, err := k8sClient.StartVictoriaMetricsHostPathMigration(request)
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
 		return
@@ -129,7 +129,7 @@ func (h *MonitoringHandler) MigrateLegacyStorage(c *gin.Context) {
 }
 
 func (h *MonitoringHandler) Query(c *gin.Context) {
-	if K8s == nil {
+	if k8sClient == nil {
 		k8sUnavailable(c)
 		return
 	}
@@ -138,7 +138,7 @@ func (h *MonitoringHandler) Query(c *gin.Context) {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "PromQL 查询不能为空且不能超过 2048 个字符")
 		return
 	}
-	status := K8s.VictoriaMetricsStatus()
+	status := k8sClient.VictoriaMetricsStatus()
 	if !monitoringDataStoreAvailable(status) {
 		model.Error(c, http.StatusConflict, model.CodeConflict, "VictoriaMetrics 存储实例尚未就绪")
 		return
@@ -153,7 +153,7 @@ func (h *MonitoringHandler) Query(c *gin.Context) {
 
 // QueryRange exposes a bounded set of history windows for dashboard charts.
 func (h *MonitoringHandler) QueryRange(c *gin.Context) {
-	if K8s == nil {
+	if k8sClient == nil {
 		k8sUnavailable(c)
 		return
 	}
@@ -167,7 +167,7 @@ func (h *MonitoringHandler) QueryRange(c *gin.Context) {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "时间范围仅支持 1h、6h、24h 或 7d")
 		return
 	}
-	status := K8s.VictoriaMetricsStatus()
+	status := k8sClient.VictoriaMetricsStatus()
 	if !monitoringDataStoreAvailable(status) {
 		model.Error(c, http.StatusConflict, model.CodeConflict, "VictoriaMetrics 存储实例尚未就绪")
 		return
@@ -189,7 +189,7 @@ func (h *MonitoringHandler) QueryRange(c *gin.Context) {
 // Dashboard batches the four default node trend queries into one browser
 // request while preserving concurrent reads against VictoriaMetrics.
 func (h *MonitoringHandler) Dashboard(c *gin.Context) {
-	if K8s == nil {
+	if k8sClient == nil {
 		k8sUnavailable(c)
 		return
 	}
@@ -199,7 +199,7 @@ func (h *MonitoringHandler) Dashboard(c *gin.Context) {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "时间范围仅支持 1h、6h、24h 或 7d")
 		return
 	}
-	if status := K8s.VictoriaMetricsStatus(); !monitoringDataStoreAvailable(status) {
+	if status := k8sClient.VictoriaMetricsStatus(); !monitoringDataStoreAvailable(status) {
 		model.Error(c, http.StatusConflict, model.CodeConflict, "VictoriaMetrics 存储实例尚未就绪")
 		return
 	}
@@ -243,7 +243,7 @@ func (h *MonitoringHandler) Dashboard(c *gin.Context) {
 // collected by the managed VictoriaMetrics instance. The browser selects only
 // a bounded window and optional node; all PromQL is controlled here.
 func (h *MonitoringHandler) DiskGrowth(c *gin.Context) {
-	if K8s == nil {
+	if k8sClient == nil {
 		k8sUnavailable(c)
 		return
 	}
@@ -258,7 +258,7 @@ func (h *MonitoringHandler) DiskGrowth(c *gin.Context) {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "节点名称无效")
 		return
 	}
-	if status := K8s.VictoriaMetricsStatus(); !monitoringDataStoreAvailable(status) {
+	if status := k8sClient.VictoriaMetricsStatus(); !monitoringDataStoreAvailable(status) {
 		model.Error(c, http.StatusConflict, model.CodeConflict, "VictoriaMetrics 存储实例尚未就绪")
 		return
 	}
@@ -339,7 +339,7 @@ func diskGrowthQueries(window, node string) []diskGrowthQuery {
 }
 
 func pvcConsumers(ctx context.Context) (map[string][]string, error) {
-	pods, err := K8s.Clientset.CoreV1().Pods("").List(ctx, metav1.ListOptions{})
+	pods, err := k8sClient.Clientset.CoreV1().Pods("").List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return nil, err
 	}
@@ -453,11 +453,11 @@ func monitoringRangeValues(query string, rangeSpec struct {
 }
 
 func (h *MonitoringHandler) Targets(c *gin.Context) {
-	if K8s == nil {
+	if k8sClient == nil {
 		k8sUnavailable(c)
 		return
 	}
-	status := K8s.VictoriaMetricsStatus()
+	status := k8sClient.VictoriaMetricsStatus()
 	if !monitoringDataStoreAvailable(status) {
 		model.Error(c, http.StatusConflict, model.CodeConflict, "VictoriaMetrics 存储实例尚未就绪")
 		return

@@ -1,4 +1,4 @@
-package api
+package agent
 
 import (
 	"fmt"
@@ -25,7 +25,8 @@ var agentDiskInspectionPaths = []string{
 
 var agentJournalUsagePattern = regexp.MustCompile(`(?i)([0-9]+(?:\.[0-9]+)?)\s*([KMGTPE]?)(?:i?B)?`)
 
-type agentMaintenanceInspector func(*model.Server) (agentDiskInspection, error)
+type AgentMaintenanceInspector func(*model.Server) (agentDiskInspection, error)
+type agentMaintenanceInspector = AgentMaintenanceInspector
 
 type agentDiskInspection struct {
 	Node           string                    `json:"node"`
@@ -53,7 +54,7 @@ type agentDiskUsageEntry struct {
 	Bytes int64  `json:"bytes"`
 }
 
-func defaultAgentMaintenanceInspector(encKey []byte) agentMaintenanceInspector {
+func DefaultAgentMaintenanceInspector(encKey []byte) AgentMaintenanceInspector {
 	return func(server *model.Server) (agentDiskInspection, error) {
 		if server == nil {
 			return agentDiskInspection{}, fmt.Errorf("managed node unavailable")

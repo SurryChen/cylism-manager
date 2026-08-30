@@ -1,4 +1,4 @@
-package api
+package system
 
 import (
 	"context"
@@ -39,7 +39,7 @@ func setupSystemComponentRouter(t *testing.T) (*gin.Engine, *store.Store) {
 		t.Fatalf("open store: %v", err)
 	}
 	replicas := int32(1)
-	K8s = &k8s.Client{
+	k8sClient = &k8s.Client{
 		Clientset: k8sfake.NewSimpleClientset(
 			&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "worker-a", Labels: map[string]string{corev1.LabelHostname: "worker-a"}}, Status: corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}}, Allocatable: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("2"), corev1.ResourceMemory: resource.MustParse("4Gi")}}},
 			&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "worker-b", Labels: map[string]string{corev1.LabelHostname: "worker-b"}}, Status: corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}}, Allocatable: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("2"), corev1.ResourceMemory: resource.MustParse("4Gi")}}},
@@ -53,8 +53,8 @@ func setupSystemComponentRouter(t *testing.T) (*gin.Engine, *store.Store) {
 			"metadata":   map[string]any{"name": "traefik", "namespace": "kube-system"},
 		}}),
 	}
-	t.Cleanup(func() { K8s = nil })
-	_, err = K8s.Clientset.AppsV1().DaemonSets("kube-system").Create(context.Background(), &appsv1.DaemonSet{
+	t.Cleanup(func() { k8sClient = nil })
+	_, err = k8sClient.Clientset.AppsV1().DaemonSets("kube-system").Create(context.Background(), &appsv1.DaemonSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "svclb-traefik-abc", Namespace: "kube-system"},
 	}, metav1.CreateOptions{})
 	if err != nil {
@@ -71,14 +71,14 @@ func setupSystemComponentRouter(t *testing.T) (*gin.Engine, *store.Store) {
 
 func TestSystemComponentUpdateBlocksCoreDNSHAWhenPreflightFails(t *testing.T) {
 	router, _ := setupSystemComponentRouter(t)
-	if err := K8s.Clientset.CoreV1().Nodes().Delete(context.Background(), "worker-a", metav1.DeleteOptions{}); err != nil {
+	if err := k8sClient.Clientset.CoreV1().Nodes().Delete(context.Background(), "worker-a", metav1.DeleteOptions{}); err != nil {
 		t.Fatalf("remove candidate node: %v", err)
 	}
 	response := serve(router, newJSONRequest(http.MethodPut, "/api/system-components/coredns", gin.H{"values_content": "replicas: 2\ndeploymentStrategy:\n  type: RollingUpdate\n  rollingUpdate:\n    maxUnavailable: 0\n    maxSurge: 1\n"}))
 	if response.Code != http.StatusBadGateway || !strings.Contains(response.Body.String(), "高可用需要至少 2 个") {
 		t.Fatalf("expected HA preflight rejection, got %d: %s", response.Code, response.Body.String())
 	}
-	deployment, err := K8s.Clientset.AppsV1().Deployments("kube-system").Get(context.Background(), "coredns", metav1.GetOptions{})
+	deployment, err := k8sClient.Clientset.AppsV1().Deployments("kube-system").Get(context.Background(), "coredns", metav1.GetOptions{})
 	if err != nil || deployment.Spec.Replicas == nil || *deployment.Spec.Replicas != 1 {
 		t.Fatalf("preflight must not mutate deployment: %v %#v", err, deployment)
 	}
@@ -116,7 +116,7 @@ func TestSystemComponentUpdatePersistsAndApplies(t *testing.T) {
 	if err != nil || config.ApplyStatus != "succeeded" {
 		t.Fatalf("config not persisted: %#v err=%v", config, err)
 	}
-	deployment, err := K8s.Clientset.AppsV1().Deployments("kube-system").Get(context.Background(), "coredns", metav1.GetOptions{})
+	deployment, err := k8sClient.Clientset.AppsV1().Deployments("kube-system").Get(context.Background(), "coredns", metav1.GetOptions{})
 	if err != nil || deployment.Spec.Replicas == nil || *deployment.Spec.Replicas != 2 {
 		t.Fatalf("coredns deployment not updated: %v %#v", err, deployment)
 	}
@@ -126,7 +126,7 @@ func TestSystemComponentUpdatePersistsAndApplies(t *testing.T) {
 	if deployment.Spec.Strategy.RollingUpdate == nil || deployment.Spec.Strategy.RollingUpdate.MaxUnavailable.IntValue() != 0 || deployment.Spec.Strategy.RollingUpdate.MaxSurge.IntValue() != 1 {
 		t.Fatalf("coredns rollout baseline missing: %#v", deployment.Spec.Strategy)
 	}
-	obj, err := K8s.GetHelmChartConfig(context.Background(), "kube-system", "coredns")
+	obj, err := k8sClient.GetHelmChartConfig(context.Background(), "kube-system", "coredns")
 	if err != nil || obj != nil {
 		t.Fatalf("coredns must not use HelmChartConfig: %v %#v", err, obj)
 	}
@@ -138,7 +138,7 @@ func TestSystemComponentUpdateKeepsHelmChartConfigForOtherCharts(t *testing.T) {
 	if response.Code != http.StatusOK {
 		t.Fatalf("update status = %d: %s", response.Code, response.Body.String())
 	}
-	obj, err := K8s.GetHelmChartConfig(context.Background(), "kube-system", "traefik")
+	obj, err := k8sClient.GetHelmChartConfig(context.Background(), "kube-system", "traefik")
 	if err != nil || obj == nil {
 		t.Fatalf("traefik helmchartconfig not applied: %v %#v", err, obj)
 	}
@@ -157,7 +157,7 @@ func TestSystemComponentUpdateManagesTraefikReadTimeout(t *testing.T) {
 	if err != nil || !strings.Contains(config.ValuesContent, "--entryPoints.web.transport.respondingTimeouts.readTimeout=30m") || !strings.Contains(config.ValuesContent, "--entryPoints.websecure.transport.respondingTimeouts.readTimeout=30m") {
 		t.Fatalf("stored Traefik values missing entrypoint arguments: %#v err=%v", config, err)
 	}
-	obj, err := K8s.GetHelmChartConfig(context.Background(), "kube-system", "traefik")
+	obj, err := k8sClient.GetHelmChartConfig(context.Background(), "kube-system", "traefik")
 	if err != nil || obj == nil {
 		t.Fatalf("traefik helmchartconfig not applied: %v %#v", err, obj)
 	}
@@ -171,7 +171,7 @@ func TestSystemComponentUpdateManagesTraefikReadTimeout(t *testing.T) {
 		t.Fatalf("timeout must be pending before Helm rolls Traefik: %s", response.Body.String())
 	}
 
-	deployment, err := K8s.Clientset.AppsV1().Deployments("kube-system").Get(context.Background(), "traefik", metav1.GetOptions{})
+	deployment, err := k8sClient.Clientset.AppsV1().Deployments("kube-system").Get(context.Background(), "traefik", metav1.GetOptions{})
 	if err != nil {
 		t.Fatalf("get traefik deployment: %v", err)
 	}
@@ -179,7 +179,7 @@ func TestSystemComponentUpdateManagesTraefikReadTimeout(t *testing.T) {
 		"--entryPoints.web.transport.respondingTimeouts.readTimeout=30m",
 		"--entryPoints.websecure.transport.respondingTimeouts.readTimeout=30m",
 	}
-	if _, err := K8s.Clientset.AppsV1().Deployments("kube-system").Update(context.Background(), deployment, metav1.UpdateOptions{}); err != nil {
+	if _, err := k8sClient.Clientset.AppsV1().Deployments("kube-system").Update(context.Background(), deployment, metav1.UpdateOptions{}); err != nil {
 		t.Fatalf("update traefik deployment: %v", err)
 	}
 	response = serve(router, newJSONRequest(http.MethodGet, "/api/system-components", nil))
@@ -216,7 +216,7 @@ func TestSystemComponentUpdateRejectsInvalidTraefikReadTimeout(t *testing.T) {
 func TestSystemComponentUpdateRejectsUnsupportedStaticReplicaIncrease(t *testing.T) {
 	router, _ := setupSystemComponentRouter(t)
 	replicas := int32(1)
-	_, err := K8s.Clientset.AppsV1().Deployments("kube-system").Create(context.Background(), &appsv1.Deployment{
+	_, err := k8sClient.Clientset.AppsV1().Deployments("kube-system").Create(context.Background(), &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{Name: "metrics-server", Namespace: "kube-system"},
 		Spec:       appsv1.DeploymentSpec{Replicas: &replicas},
 	}, metav1.CreateOptions{})
@@ -227,7 +227,7 @@ func TestSystemComponentUpdateRejectsUnsupportedStaticReplicaIncrease(t *testing
 	if response.Code != http.StatusBadGateway || !strings.Contains(response.Body.String(), "副本由 K3s/组件 profile 管理") {
 		t.Fatalf("expected profile rejection, got %d: %s", response.Code, response.Body.String())
 	}
-	deployment, err := K8s.Clientset.AppsV1().Deployments("kube-system").Get(context.Background(), "metrics-server", metav1.GetOptions{})
+	deployment, err := k8sClient.Clientset.AppsV1().Deployments("kube-system").Get(context.Background(), "metrics-server", metav1.GetOptions{})
 	if err != nil || deployment.Spec.Replicas == nil || *deployment.Spec.Replicas != 1 {
 		t.Fatalf("metrics server replica count must remain unchanged: %v %#v", err, deployment)
 	}
@@ -270,14 +270,14 @@ func TestSystemComponentRevertRestoresDefaults(t *testing.T) {
 	if response.Code != http.StatusOK {
 		t.Fatalf("revert status = %d: %s", response.Code, response.Body.String())
 	}
-	obj, _ := K8s.GetHelmChartConfig(context.Background(), "kube-system", "coredns")
+	obj, _ := k8sClient.GetHelmChartConfig(context.Background(), "kube-system", "coredns")
 	if obj != nil {
 		t.Fatalf("helmchartconfig should be deleted, got %#v", obj)
 	}
 	if _, err := s.GetSystemComponentConfig("coredns"); err == nil {
 		t.Fatal("store config should be removed after revert")
 	}
-	deployment, err := K8s.Clientset.AppsV1().Deployments("kube-system").Get(context.Background(), "coredns", metav1.GetOptions{})
+	deployment, err := k8sClient.Clientset.AppsV1().Deployments("kube-system").Get(context.Background(), "coredns", metav1.GetOptions{})
 	if err != nil || deployment.Spec.Replicas == nil || *deployment.Spec.Replicas != 1 {
 		t.Fatalf("coredns deployment defaults not restored: %v %#v", err, deployment)
 	}
@@ -301,7 +301,7 @@ func TestSystemComponentReconcileStopsWhenControlSourceChanges(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("save config: %v", err)
 	}
-	_, err := K8s.DynamicClient.Resource(schema.GroupVersionResource{Group: "helm.cattle.io", Version: "v1", Resource: "helmcharts"}).Namespace("kube-system").Create(context.Background(), &unstructured.Unstructured{Object: map[string]any{
+	_, err := k8sClient.DynamicClient.Resource(schema.GroupVersionResource{Group: "helm.cattle.io", Version: "v1", Resource: "helmcharts"}).Namespace("kube-system").Create(context.Background(), &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": "helm.cattle.io/v1",
 		"kind":       "HelmChart",
 		"metadata":   map[string]any{"name": "coredns", "namespace": "kube-system"},
@@ -318,7 +318,7 @@ func TestSystemComponentReconcileStopsWhenControlSourceChanges(t *testing.T) {
 	if config.ControllerMode != string(k8s.StaticDeploymentMode) || config.ApplyStatus != "failed" || !strings.Contains(config.ApplyError, "已停止自动重放") {
 		t.Fatalf("control source change must stop reconcile: %#v", config)
 	}
-	deployment, err := K8s.Clientset.AppsV1().Deployments("kube-system").Get(context.Background(), "coredns", metav1.GetOptions{})
+	deployment, err := k8sClient.Clientset.AppsV1().Deployments("kube-system").Get(context.Background(), "coredns", metav1.GetOptions{})
 	if err != nil || deployment.Spec.Replicas == nil || *deployment.Spec.Replicas != 1 {
 		t.Fatalf("static deployment must not be patched after source change: %v %#v", err, deployment)
 	}

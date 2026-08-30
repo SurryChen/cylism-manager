@@ -249,14 +249,16 @@ internal/service/network/
 
 ### 阶段 6：Agent 和系统模块
 
-最后迁移：
+实施状态：已完成（2026-08-30）。Agent 运行时 API、操作审批、维护与制品下载，以及 Tailscale、系统组件、监控、日志、告警和审计 HTTP 边界均已迁入独立包。Router 与平台启动入口直接绑定新包；Kubernetes 客户端由 Router 显式注入 system 包，Agent 的 SSH、Registry、维护和监控辅助逻辑在 Agent 包内复用 infrastructure 适配器。原根包 Handler、测试和重复绑定已删除，REST 路径、鉴权和响应契约保持不变。
+
+迁移后的领域包：
 
 ```text
 internal/api/agent/
 internal/api/system/
 ```
 
-包括 Agent 操作审批、Tailscale 诊断、系统组件、审计和监控。它们横向依赖较多，应在前面的 Service 边界稳定后处理。
+包括 Agent 操作审批、Tailscale 诊断、系统组件、审计和监控。上述模块已在前置 Service 边界稳定后完成物理迁移。
 
 ## 单模块迁移流程
 

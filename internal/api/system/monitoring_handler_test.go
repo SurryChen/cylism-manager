@@ -1,4 +1,4 @@
-package api
+package system
 
 import (
 	"context"
@@ -36,12 +36,12 @@ func setupMonitoringRouter(handler *MonitoringHandler) *gin.Engine {
 }
 
 func TestMonitoringRangeQueryUsesBoundedRange(t *testing.T) {
-	original := K8s
-	K8s = &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(
+	original := k8sClient
+	k8sClient = &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(
 		&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "cylism-victoria-metrics", Namespace: "monitoring"}, Status: appsv1.DeploymentStatus{AvailableReplicas: 1}},
 		&appsv1.DaemonSet{ObjectMeta: metav1.ObjectMeta{Name: "cylism-node-exporter", Namespace: "monitoring"}, Status: appsv1.DaemonSetStatus{DesiredNumberScheduled: 1, NumberAvailable: 1}},
 	)}
-	defer func() { K8s = original }()
+	defer func() { k8sClient = original }()
 
 	handler := NewMonitoringHandler()
 	handler.query = func(_ context.Context, path string, values url.Values) (interface{}, error) {
@@ -63,9 +63,9 @@ func TestMonitoringRangeQueryUsesBoundedRange(t *testing.T) {
 }
 
 func TestMonitoringRangeQueryRejectsUnknownRange(t *testing.T) {
-	original := K8s
-	K8s = &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset()}
-	defer func() { K8s = original }()
+	original := k8sClient
+	k8sClient = &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset()}
+	defer func() { k8sClient = original }()
 
 	response := serve(setupMonitoringRouter(NewMonitoringHandler()), newJSONRequest(http.MethodGet, "/api/monitoring/query-range?query=up&range=30d", nil))
 	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "时间范围") {
@@ -74,12 +74,12 @@ func TestMonitoringRangeQueryRejectsUnknownRange(t *testing.T) {
 }
 
 func TestMonitoringDashboardReturnsAllTrendSeries(t *testing.T) {
-	original := K8s
-	K8s = &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(
+	original := k8sClient
+	k8sClient = &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(
 		&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "cylism-victoria-metrics", Namespace: "monitoring"}, Status: appsv1.DeploymentStatus{AvailableReplicas: 1}},
 		&appsv1.DaemonSet{ObjectMeta: metav1.ObjectMeta{Name: "cylism-node-exporter", Namespace: "monitoring"}, Status: appsv1.DaemonSetStatus{DesiredNumberScheduled: 1, NumberAvailable: 1}},
 	)}
-	defer func() { K8s = original }()
+	defer func() { k8sClient = original }()
 
 	handler := NewMonitoringHandler()
 	handler.query = func(_ context.Context, path string, values url.Values) (interface{}, error) {
@@ -98,13 +98,13 @@ func TestMonitoringDashboardReturnsAllTrendSeries(t *testing.T) {
 }
 
 func TestMonitoringDiskGrowthReturnsRankingsAndPVCConsumers(t *testing.T) {
-	original := K8s
-	K8s = &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(
+	original := k8sClient
+	k8sClient = &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(
 		&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "cylism-victoria-metrics", Namespace: "monitoring"}, Status: appsv1.DeploymentStatus{AvailableReplicas: 1}},
 		&appsv1.DaemonSet{ObjectMeta: metav1.ObjectMeta{Name: "cylism-node-exporter", Namespace: "monitoring"}, Status: appsv1.DaemonSetStatus{DesiredNumberScheduled: 1, NumberAvailable: 1}},
 		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "app-1", Namespace: "project-demo"}, Spec: corev1.PodSpec{Volumes: []corev1.Volume{{Name: "data", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: "data"}}}}}},
 	)}
-	defer func() { K8s = original }()
+	defer func() { k8sClient = original }()
 
 	var mu sync.Mutex
 	queries := make([]string, 0, 3)
@@ -185,12 +185,12 @@ func TestDiskGrowthDoesNotQueryUnsupportedContainerWritableLayerMetrics(t *testi
 }
 
 func TestMonitoringDiskGrowthReturnsPartialResultsWhenOneQueryFails(t *testing.T) {
-	original := K8s
-	K8s = &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(
+	original := k8sClient
+	k8sClient = &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(
 		&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "cylism-victoria-metrics", Namespace: "monitoring"}, Status: appsv1.DeploymentStatus{AvailableReplicas: 1}},
 		&appsv1.DaemonSet{ObjectMeta: metav1.ObjectMeta{Name: "cylism-node-exporter", Namespace: "monitoring"}, Status: appsv1.DaemonSetStatus{DesiredNumberScheduled: 1, NumberAvailable: 1}},
 	)}
-	defer func() { K8s = original }()
+	defer func() { k8sClient = original }()
 
 	handler := NewMonitoringHandler()
 	handler.query = func(_ context.Context, _ string, values url.Values) (interface{}, error) {
@@ -207,9 +207,9 @@ func TestMonitoringDiskGrowthReturnsPartialResultsWhenOneQueryFails(t *testing.T
 }
 
 func TestMonitoringDiskGrowthRejectsUnsupportedRangeAndUnreadyInstance(t *testing.T) {
-	original := K8s
-	K8s = &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset()}
-	defer func() { K8s = original }()
+	original := k8sClient
+	k8sClient = &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset()}
+	defer func() { k8sClient = original }()
 
 	handler := NewMonitoringHandler()
 	handler.query = func(_ context.Context, _ string, _ url.Values) (interface{}, error) {
@@ -249,9 +249,9 @@ func slicesEqual(left, right []string) bool {
 }
 
 func TestMonitoringInstallCreatesPVCInstance(t *testing.T) {
-	original := K8s
-	K8s = &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node-a"}, Status: corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}}}})}
-	defer func() { K8s = original }()
+	original := k8sClient
+	k8sClient = &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node-a"}, Status: corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}}}})}
+	defer func() { k8sClient = original }()
 
 	response := serve(setupMonitoringRouter(NewMonitoringHandler()), newJSONRequest(http.MethodPost, "/api/monitoring/install", gin.H{"node_name": "node-a", "storage": "10Gi", "retention_days": 14}))
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"node_name":"node-a"`) {
@@ -260,9 +260,9 @@ func TestMonitoringInstallCreatesPVCInstance(t *testing.T) {
 }
 
 func TestMonitoringQueryRequiresReadyInstance(t *testing.T) {
-	original := K8s
-	K8s = &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset()}
-	defer func() { K8s = original }()
+	original := k8sClient
+	k8sClient = &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset()}
+	defer func() { k8sClient = original }()
 
 	response := serve(setupMonitoringRouter(NewMonitoringHandler()), newJSONRequest(http.MethodGet, "/api/monitoring/query?query=up", nil))
 	if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), "尚未就绪") {
@@ -271,12 +271,12 @@ func TestMonitoringQueryRequiresReadyInstance(t *testing.T) {
 }
 
 func TestMonitoringQueryReturnsMetricData(t *testing.T) {
-	original := K8s
-	K8s = &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(
+	original := k8sClient
+	k8sClient = &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(
 		&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "cylism-victoria-metrics", Namespace: "monitoring"}, Status: appsv1.DeploymentStatus{AvailableReplicas: 1}},
 		&appsv1.DaemonSet{ObjectMeta: metav1.ObjectMeta{Name: "cylism-node-exporter", Namespace: "monitoring"}, Status: appsv1.DaemonSetStatus{DesiredNumberScheduled: 1, NumberAvailable: 1}},
 	)}
-	defer func() { K8s = original }()
+	defer func() { k8sClient = original }()
 	handler := NewMonitoringHandler()
 	handler.query = func(_ context.Context, path string, values url.Values) (interface{}, error) {
 		if path != "/api/v1/query" || values.Get("query") != "up" {
@@ -292,12 +292,12 @@ func TestMonitoringQueryReturnsMetricData(t *testing.T) {
 }
 
 func TestMonitoringQueryAllowsPartialNodeExporterCoverage(t *testing.T) {
-	original := K8s
-	K8s = &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(
+	original := k8sClient
+	k8sClient = &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(
 		&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "cylism-victoria-metrics", Namespace: "monitoring"}, Status: appsv1.DeploymentStatus{AvailableReplicas: 1}},
 		&appsv1.DaemonSet{ObjectMeta: metav1.ObjectMeta{Name: "cylism-node-exporter", Namespace: "monitoring"}, Status: appsv1.DaemonSetStatus{DesiredNumberScheduled: 2, NumberAvailable: 1}},
 	)}
-	defer func() { K8s = original }()
+	defer func() { k8sClient = original }()
 
 	handler := NewMonitoringHandler()
 	handler.query = func(_ context.Context, _ string, _ url.Values) (interface{}, error) {
