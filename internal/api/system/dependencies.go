@@ -1,11 +1,7 @@
 package system
 
 import (
-	"net/http"
-
 	"github.com/cylism/cylism-manager/internal/k8s"
-	"github.com/cylism/cylism-manager/internal/model"
-	"github.com/gin-gonic/gin"
 )
 
 // k8sClient is the system API's Kubernetes boundary. It is assigned once during
@@ -17,8 +13,4 @@ var k8sClient *k8s.Client
 // handlers and the background system-component reconciler.
 func SetKubernetesClient(client *k8s.Client) {
 	k8sClient = client
-}
-
-func k8sUnavailable(c *gin.Context) {
-	model.Error(c, http.StatusOK, model.CodeK8sUnavailable, "k8sClient 集群未连接")
 }

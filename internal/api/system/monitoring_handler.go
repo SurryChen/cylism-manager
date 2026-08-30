@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 	"github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/gin-gonic/gin"
@@ -74,7 +75,7 @@ func NewMonitoringHandler() *MonitoringHandler {
 
 func (h *MonitoringHandler) Status(c *gin.Context) {
 	if k8sClient == nil {
-		k8sUnavailable(c)
+		apiShared.K8sUnavailable(c)
 		return
 	}
 	model.Success(c, k8sClient.VictoriaMetricsStatus())
@@ -82,7 +83,7 @@ func (h *MonitoringHandler) Status(c *gin.Context) {
 
 func (h *MonitoringHandler) Install(c *gin.Context) {
 	if k8sClient == nil {
-		k8sUnavailable(c)
+		apiShared.K8sUnavailable(c)
 		return
 	}
 	var config k8s.VictoriaMetricsConfig
@@ -100,7 +101,7 @@ func (h *MonitoringHandler) Install(c *gin.Context) {
 
 func (h *MonitoringHandler) Uninstall(c *gin.Context) {
 	if k8sClient == nil {
-		k8sUnavailable(c)
+		apiShared.K8sUnavailable(c)
 		return
 	}
 	if err := k8sClient.UninstallVictoriaMetrics(); err != nil {
@@ -112,7 +113,7 @@ func (h *MonitoringHandler) Uninstall(c *gin.Context) {
 
 func (h *MonitoringHandler) MigrateLegacyStorage(c *gin.Context) {
 	if k8sClient == nil {
-		k8sUnavailable(c)
+		apiShared.K8sUnavailable(c)
 		return
 	}
 	var request k8s.VictoriaMetricsMigrationRequest
@@ -130,7 +131,7 @@ func (h *MonitoringHandler) MigrateLegacyStorage(c *gin.Context) {
 
 func (h *MonitoringHandler) Query(c *gin.Context) {
 	if k8sClient == nil {
-		k8sUnavailable(c)
+		apiShared.K8sUnavailable(c)
 		return
 	}
 	query := strings.TrimSpace(c.Query("query"))
@@ -154,7 +155,7 @@ func (h *MonitoringHandler) Query(c *gin.Context) {
 // QueryRange exposes a bounded set of history windows for dashboard charts.
 func (h *MonitoringHandler) QueryRange(c *gin.Context) {
 	if k8sClient == nil {
-		k8sUnavailable(c)
+		apiShared.K8sUnavailable(c)
 		return
 	}
 	query := strings.TrimSpace(c.Query("query"))
@@ -190,7 +191,7 @@ func (h *MonitoringHandler) QueryRange(c *gin.Context) {
 // request while preserving concurrent reads against VictoriaMetrics.
 func (h *MonitoringHandler) Dashboard(c *gin.Context) {
 	if k8sClient == nil {
-		k8sUnavailable(c)
+		apiShared.K8sUnavailable(c)
 		return
 	}
 	rangeName := c.DefaultQuery("range", "6h")
@@ -244,7 +245,7 @@ func (h *MonitoringHandler) Dashboard(c *gin.Context) {
 // a bounded window and optional node; all PromQL is controlled here.
 func (h *MonitoringHandler) DiskGrowth(c *gin.Context) {
 	if k8sClient == nil {
-		k8sUnavailable(c)
+		apiShared.K8sUnavailable(c)
 		return
 	}
 	rangeName := c.DefaultQuery("range", "6h")
@@ -454,7 +455,7 @@ func monitoringRangeValues(query string, rangeSpec struct {
 
 func (h *MonitoringHandler) Targets(c *gin.Context) {
 	if k8sClient == nil {
-		k8sUnavailable(c)
+		apiShared.K8sUnavailable(c)
 		return
 	}
 	status := k8sClient.VictoriaMetricsStatus()

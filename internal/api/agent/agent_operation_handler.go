@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 	"github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/gin-gonic/gin"
@@ -94,7 +95,7 @@ func (h *AgentOperationHandler) ReplaceGrants(c *gin.Context) {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "授权范围或能力无效")
 		return
 	}
-	h.audit(runtimeID, getUserID(c), "agent.grants_replaced", map[string]any{"grant_count": len(request.Grants)})
+	h.audit(runtimeID, apiShared.UserID(c), "agent.grants_replaced", map[string]any{"grant_count": len(request.Grants)})
 	model.SuccessWithMessage(c, request.Grants, "Agent 能力授权已更新")
 }
 
@@ -203,7 +204,7 @@ func (h *AgentOperationHandler) resolve(c *gin.Context, approve bool) {
 		model.Error(c, http.StatusConflict, model.CodeConflict, "Agent 操作审批已过期")
 		return
 	}
-	userID := getUserID(c)
+	userID := apiShared.UserID(c)
 	if !approve {
 		changed, err := h.store.UpdateAgentOperationStatus(operationID, model.AgentOperationPendingApproval, model.AgentOperationRejected, "已被管理员拒绝", &userID, nil)
 		if err != nil || !changed {

@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/cylism/cylism-manager/internal/agent"
+	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/gin-gonic/gin"
 )
@@ -45,7 +46,7 @@ func (h *RuntimeHandler) chatClient(instance *model.RuntimeInstance, apiKey stri
 }
 
 func (h *RuntimeHandler) managedRuntime(c *gin.Context) (*model.RuntimeInstance, bool) {
-	id, err := parseID(c.Param("id"))
+	id, err := apiShared.ParseID(c.Param("id"))
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "Runtime ID 无效")
 		return nil, false

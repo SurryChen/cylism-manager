@@ -12,6 +12,7 @@ import (
 	"time"
 
 	infrastructureapi "github.com/cylism/cylism-manager/internal/api/infrastructure"
+	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 	"github.com/cylism/cylism-manager/internal/application"
 	"github.com/cylism/cylism-manager/internal/crypto"
 	"github.com/cylism/cylism-manager/internal/model"
@@ -197,7 +198,7 @@ func (h *ApplicationHandler) CreateProject(c *gin.Context) {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "请在项目创建后设置默认镜像仓库")
 		return
 	}
-	project := &model.Project{Name: req.Name, Description: req.Description, OwnerID: getUserID(c)}
+	project := &model.Project{Name: req.Name, Description: req.Description, OwnerID: apiShared.UserID(c)}
 	if err := h.store.CreateProject(project); err != nil {
 		model.Error(c, http.StatusConflict, model.CodeConflict, "项目名称已存在")
 		return
@@ -206,7 +207,7 @@ func (h *ApplicationHandler) CreateProject(c *gin.Context) {
 }
 
 func (h *ApplicationHandler) UpdateProject(c *gin.Context) {
-	projectID, err := parseID(c.Param("projectID"))
+	projectID, err := apiShared.ParseID(c.Param("projectID"))
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "项目 ID 无效")
 		return
@@ -254,7 +255,7 @@ func (h *ApplicationHandler) UpdateProject(c *gin.Context) {
 }
 
 func (h *ApplicationHandler) DeleteProject(c *gin.Context) {
-	projectID, err := parseID(c.Param("projectID"))
+	projectID, err := apiShared.ParseID(c.Param("projectID"))
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "项目 ID 无效")
 		return
@@ -285,7 +286,7 @@ func (h *ApplicationHandler) DeleteProject(c *gin.Context) {
 }
 
 func (h *ApplicationHandler) ListEnvironments(c *gin.Context) {
-	projectID, err := parseID(c.Param("projectID"))
+	projectID, err := apiShared.ParseID(c.Param("projectID"))
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "项目 ID 无效")
 		return
@@ -312,7 +313,7 @@ func (h *ApplicationHandler) ListEnvironments(c *gin.Context) {
 }
 
 func (h *ApplicationHandler) CreateEnvironment(c *gin.Context) {
-	projectID, err := parseID(c.Param("projectID"))
+	projectID, err := apiShared.ParseID(c.Param("projectID"))
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "项目 ID 无效")
 		return
@@ -332,7 +333,7 @@ func (h *ApplicationHandler) CreateEnvironment(c *gin.Context) {
 		return
 	}
 	if K8s == nil || K8s.Clientset == nil {
-		k8sUnavailable(c)
+		apiShared.K8sUnavailable(c)
 		return
 	}
 	name, namespace := strings.TrimSpace(req.Name), strings.TrimSpace(req.Namespace)
@@ -393,7 +394,7 @@ func (h *ApplicationHandler) UpdateEnvironment(c *gin.Context) {
 				return
 			}
 			if K8s == nil || K8s.Clientset == nil {
-				k8sUnavailable(c)
+				apiShared.K8sUnavailable(c)
 				return
 			}
 			if err := h.store.EnsureNamespaceAvailable(namespace, environment.ID); err != nil {
@@ -430,7 +431,7 @@ func (h *ApplicationHandler) SyncEnvironmentNamespace(c *gin.Context) {
 		return
 	}
 	if K8s == nil || K8s.Clientset == nil {
-		k8sUnavailable(c)
+		apiShared.K8sUnavailable(c)
 		return
 	}
 	if err := h.store.EnsureNamespaceAvailable(environment.Namespace, environment.ID); err != nil {
@@ -588,12 +589,12 @@ func environmentNamespaceStatus(ctx context.Context, namespace string) string {
 }
 
 func (h *ApplicationHandler) environmentRouteIDs(c *gin.Context) (uint, uint, bool) {
-	projectID, err := parseID(c.Param("projectID"))
+	projectID, err := apiShared.ParseID(c.Param("projectID"))
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "项目 ID 无效")
 		return 0, 0, false
 	}
-	environmentID, err := parseID(c.Param("environmentID"))
+	environmentID, err := apiShared.ParseID(c.Param("environmentID"))
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "环境 ID 无效")
 		return 0, 0, false
@@ -623,7 +624,7 @@ func (h *ApplicationHandler) ListApplications(c *gin.Context) {
 // UpdateCapabilities replaces opaque application metadata. Capability values
 // are not interpreted as authorization and do not affect a release.
 func (h *ApplicationHandler) UpdateCapabilities(c *gin.Context) {
-	applicationID, err := parseID(c.Param("id"))
+	applicationID, err := apiShared.ParseID(c.Param("id"))
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "应用 ID 无效")
 		return
@@ -706,7 +707,7 @@ func (h *ApplicationHandler) DiscoverApplications(c *gin.Context) {
 }
 
 func (h *ApplicationHandler) GetApplicationRuntime(c *gin.Context) {
-	applicationID, err := parseID(c.Param("id"))
+	applicationID, err := apiShared.ParseID(c.Param("id"))
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "应用 ID 无效")
 		return
@@ -902,7 +903,7 @@ func replicasValue(replicas *int32) int32 {
 }
 
 func (h *ApplicationHandler) GetApplication(c *gin.Context) {
-	id, err := parseID(c.Param("id"))
+	id, err := apiShared.ParseID(c.Param("id"))
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "应用 ID 无效")
 		return
@@ -918,10 +919,10 @@ func (h *ApplicationHandler) GetApplication(c *gin.Context) {
 
 func (h *ApplicationHandler) UpdateWorkloadKind(c *gin.Context) {
 	if K8s == nil {
-		k8sUnavailable(c)
+		apiShared.K8sUnavailable(c)
 		return
 	}
-	applicationID, err := parseID(c.Param("id"))
+	applicationID, err := apiShared.ParseID(c.Param("id"))
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "应用 ID 无效")
 		return
@@ -1006,7 +1007,7 @@ func (h *ApplicationHandler) CreateApplication(c *gin.Context) {
 		model.Error(c, http.StatusConflict, model.CodeConflict, "环境命名空间存在冲突，请先完成迁移")
 		return
 	}
-	app := &model.Application{ProjectID: req.ProjectID, EnvironmentID: req.EnvironmentID, Name: req.Name, WorkloadKind: "deployment", CreatedBy: getUserID(c)}
+	app := &model.Application{ProjectID: req.ProjectID, EnvironmentID: req.EnvironmentID, Name: req.Name, WorkloadKind: "deployment", CreatedBy: apiShared.UserID(c)}
 	if err := h.store.CreateApplication(app); err != nil {
 		model.Error(c, http.StatusConflict, model.CodeConflict, "该环境内应用名称已存在")
 		return
@@ -1201,10 +1202,10 @@ func applicationEndpointAccessMode(app model.Application) string {
 
 func (h *ApplicationHandler) CreateRelease(c *gin.Context) {
 	if K8s == nil {
-		k8sUnavailable(c)
+		apiShared.K8sUnavailable(c)
 		return
 	}
-	applicationID, err := parseID(c.Param("id"))
+	applicationID, err := apiShared.ParseID(c.Param("id"))
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "应用 ID 无效")
 		return
@@ -1234,7 +1235,7 @@ func (h *ApplicationHandler) CreateRelease(c *gin.Context) {
 		return
 	}
 	workflow := h.releaseWorkflow()
-	prepared, err := workflow.CreateFromTemplate(c.Request.Context(), app, template, version, getUserID(c))
+	prepared, err := workflow.CreateFromTemplate(c.Request.Context(), app, template, version, apiShared.UserID(c))
 	if err != nil {
 		if errors.Is(err, application.ErrReleaseTemplateRead) {
 			model.Error(c, http.StatusInternalServerError, model.CodeDBError, "读取应用上线模板失败")
@@ -1247,7 +1248,7 @@ func (h *ApplicationHandler) CreateRelease(c *gin.Context) {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
 		return
 	}
-	if err := workflow.SyncManagedFiles(app, prepared.Spec, getUserID(c)); err != nil {
+	if err := workflow.SyncManagedFiles(app, prepared.Spec, apiShared.UserID(c)); err != nil {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "登记受管文件失败")
 		return
 	}
@@ -1259,10 +1260,10 @@ func (h *ApplicationHandler) CreateRelease(c *gin.Context) {
 // managed resources, without requiring the caller to choose a template/version.
 func (h *ApplicationHandler) RestartApplication(c *gin.Context) {
 	if K8s == nil {
-		k8sUnavailable(c)
+		apiShared.K8sUnavailable(c)
 		return
 	}
-	applicationID, err := parseID(c.Param("id"))
+	applicationID, err := apiShared.ParseID(c.Param("id"))
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "应用 ID 无效")
 		return
@@ -1277,7 +1278,7 @@ func (h *ApplicationHandler) RestartApplication(c *gin.Context) {
 		return
 	}
 	workflow := h.releaseWorkflow()
-	prepared, err := workflow.Restart(c.Request.Context(), app, getUserID(c))
+	prepared, err := workflow.Restart(c.Request.Context(), app, apiShared.UserID(c))
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
 		return
@@ -1287,7 +1288,7 @@ func (h *ApplicationHandler) RestartApplication(c *gin.Context) {
 }
 
 func (h *ApplicationHandler) ListDeploymentTemplates(c *gin.Context) {
-	applicationID, err := parseID(c.Param("id"))
+	applicationID, err := apiShared.ParseID(c.Param("id"))
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "应用 ID 无效")
 		return
@@ -1315,12 +1316,12 @@ func (h *ApplicationHandler) ListDeploymentTemplates(c *gin.Context) {
 }
 
 func (h *ApplicationHandler) GetDeploymentTemplate(c *gin.Context) {
-	applicationID, err := parseID(c.Param("id"))
+	applicationID, err := apiShared.ParseID(c.Param("id"))
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "应用 ID 无效")
 		return
 	}
-	templateID, err := parseID(c.Param("templateID"))
+	templateID, err := apiShared.ParseID(c.Param("templateID"))
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "上线模板 ID 无效")
 		return
@@ -1344,7 +1345,7 @@ func (h *ApplicationHandler) GetDeploymentTemplate(c *gin.Context) {
 }
 
 func (h *ApplicationHandler) CreateDeploymentTemplate(c *gin.Context) {
-	applicationID, err := parseID(c.Param("id"))
+	applicationID, err := apiShared.ParseID(c.Param("id"))
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "应用 ID 无效")
 		return
@@ -1364,7 +1365,7 @@ func (h *ApplicationHandler) CreateDeploymentTemplate(c *gin.Context) {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
 		return
 	}
-	template.UpdatedBy = getUserID(c)
+	template.UpdatedBy = apiShared.UserID(c)
 	if err := h.store.CreateApplicationDeploymentTemplate(template, app.DefaultDeploymentTemplateID == nil); err != nil {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
 		return
@@ -1373,7 +1374,7 @@ func (h *ApplicationHandler) CreateDeploymentTemplate(c *gin.Context) {
 		app.DefaultDeploymentTemplateID = &template.ID
 	}
 	if app.DefaultDeploymentTemplateID != nil && *app.DefaultDeploymentTemplateID == template.ID {
-		if err := h.releaseWorkflow().SyncManagedFiles(app, req.Spec, getUserID(c)); err != nil {
+		if err := h.releaseWorkflow().SyncManagedFiles(app, req.Spec, apiShared.UserID(c)); err != nil {
 			model.Error(c, http.StatusInternalServerError, model.CodeDBError, "登记模板 ConfigMap 配置失败")
 			return
 		}
@@ -1387,12 +1388,12 @@ func (h *ApplicationHandler) CreateDeploymentTemplate(c *gin.Context) {
 }
 
 func (h *ApplicationHandler) UpdateDeploymentTemplate(c *gin.Context) {
-	applicationID, err := parseID(c.Param("id"))
+	applicationID, err := apiShared.ParseID(c.Param("id"))
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "应用 ID 无效")
 		return
 	}
-	templateID, err := parseID(c.Param("templateID"))
+	templateID, err := apiShared.ParseID(c.Param("templateID"))
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "上线模板 ID 无效")
 		return
@@ -1429,7 +1430,7 @@ func (h *ApplicationHandler) UpdateDeploymentTemplate(c *gin.Context) {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
 		return
 	}
-	template.UpdatedBy = getUserID(c)
+	template.UpdatedBy = apiShared.UserID(c)
 	var updateErr error
 	if req.Revision != 0 {
 		updateErr = h.store.UpdateApplicationDeploymentTemplateIfRevision(template, req.Revision)
@@ -1450,7 +1451,7 @@ func (h *ApplicationHandler) UpdateDeploymentTemplate(c *gin.Context) {
 		return
 	}
 	if app.DefaultDeploymentTemplateID != nil && *app.DefaultDeploymentTemplateID == template.ID {
-		if err := h.releaseWorkflow().SyncManagedFiles(app, req.Spec, getUserID(c)); err != nil {
+		if err := h.releaseWorkflow().SyncManagedFiles(app, req.Spec, apiShared.UserID(c)); err != nil {
 			model.Error(c, http.StatusInternalServerError, model.CodeDBError, "登记模板 ConfigMap 配置失败")
 			return
 		}
@@ -1464,12 +1465,12 @@ func (h *ApplicationHandler) UpdateDeploymentTemplate(c *gin.Context) {
 }
 
 func (h *ApplicationHandler) DeleteDeploymentTemplate(c *gin.Context) {
-	applicationID, err := parseID(c.Param("id"))
+	applicationID, err := apiShared.ParseID(c.Param("id"))
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "应用 ID 无效")
 		return
 	}
-	templateID, err := parseID(c.Param("templateID"))
+	templateID, err := apiShared.ParseID(c.Param("templateID"))
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "上线模板 ID 无效")
 		return
@@ -1486,12 +1487,12 @@ func (h *ApplicationHandler) DeleteDeploymentTemplate(c *gin.Context) {
 }
 
 func (h *ApplicationHandler) SetDefaultDeploymentTemplate(c *gin.Context) {
-	applicationID, err := parseID(c.Param("id"))
+	applicationID, err := apiShared.ParseID(c.Param("id"))
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "应用 ID 无效")
 		return
 	}
-	templateID, err := parseID(c.Param("templateID"))
+	templateID, err := apiShared.ParseID(c.Param("templateID"))
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "上线模板 ID 无效")
 		return
@@ -1515,7 +1516,7 @@ func (h *ApplicationHandler) SetDefaultDeploymentTemplate(c *gin.Context) {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "读取上线模板失败")
 		return
 	}
-	if err := h.releaseWorkflow().SyncManagedFiles(app, spec, getUserID(c)); err != nil {
+	if err := h.releaseWorkflow().SyncManagedFiles(app, spec, apiShared.UserID(c)); err != nil {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "登记模板 ConfigMap 配置失败")
 		return
 	}
@@ -1625,7 +1626,7 @@ func deploymentTemplateFromModel(template *model.ApplicationDeploymentTemplate, 
 }
 
 func (h *ApplicationHandler) ListApplicationEndpoints(c *gin.Context) {
-	applicationID, err := parseID(c.Param("id"))
+	applicationID, err := apiShared.ParseID(c.Param("id"))
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "应用 ID 无效")
 		return
@@ -1650,10 +1651,10 @@ func (h *ApplicationHandler) ListApplicationEndpoints(c *gin.Context) {
 
 func (h *ApplicationHandler) CreateApplicationEndpoint(c *gin.Context) {
 	if K8s == nil {
-		k8sUnavailable(c)
+		apiShared.K8sUnavailable(c)
 		return
 	}
-	applicationID, err := parseID(c.Param("id"))
+	applicationID, err := apiShared.ParseID(c.Param("id"))
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "应用 ID 无效")
 		return
@@ -1705,15 +1706,15 @@ func (h *ApplicationHandler) CreateApplicationEndpoint(c *gin.Context) {
 
 func (h *ApplicationHandler) UpdateApplicationEndpoint(c *gin.Context) {
 	if K8s == nil {
-		k8sUnavailable(c)
+		apiShared.K8sUnavailable(c)
 		return
 	}
-	applicationID, err := parseID(c.Param("id"))
+	applicationID, err := apiShared.ParseID(c.Param("id"))
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "应用 ID 无效")
 		return
 	}
-	endpointID, err := parseID(c.Param("endpointID"))
+	endpointID, err := apiShared.ParseID(c.Param("endpointID"))
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "入口 ID 无效")
 		return
@@ -1780,15 +1781,15 @@ func (h *ApplicationHandler) UpdateApplicationEndpoint(c *gin.Context) {
 
 func (h *ApplicationHandler) DeleteApplicationEndpoint(c *gin.Context) {
 	if K8s == nil {
-		k8sUnavailable(c)
+		apiShared.K8sUnavailable(c)
 		return
 	}
-	applicationID, err := parseID(c.Param("id"))
+	applicationID, err := apiShared.ParseID(c.Param("id"))
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "应用 ID 无效")
 		return
 	}
-	endpointID, err := parseID(c.Param("endpointID"))
+	endpointID, err := apiShared.ParseID(c.Param("endpointID"))
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "入口 ID 无效")
 		return
@@ -1893,15 +1894,15 @@ func validateImageRepository(image string) error {
 
 func (h *ApplicationHandler) RetryRelease(c *gin.Context) {
 	if K8s == nil {
-		k8sUnavailable(c)
+		apiShared.K8sUnavailable(c)
 		return
 	}
-	applicationID, err := parseID(c.Param("id"))
+	applicationID, err := apiShared.ParseID(c.Param("id"))
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "应用 ID 无效")
 		return
 	}
-	releaseID, err := parseID(c.Param("releaseID"))
+	releaseID, err := apiShared.ParseID(c.Param("releaseID"))
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "发布 ID 无效")
 		return
@@ -1912,7 +1913,7 @@ func (h *ApplicationHandler) RetryRelease(c *gin.Context) {
 		return
 	}
 	workflow := h.releaseWorkflow()
-	prepared, err := workflow.Retry(releaseID, getUserID(c))
+	prepared, err := workflow.Retry(releaseID, apiShared.UserID(c))
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "无法重试该发布")
 		return
@@ -1928,15 +1929,15 @@ func (h *ApplicationHandler) RetryRelease(c *gin.Context) {
 
 func (h *ApplicationHandler) RollbackRelease(c *gin.Context) {
 	if K8s == nil {
-		k8sUnavailable(c)
+		apiShared.K8sUnavailable(c)
 		return
 	}
-	applicationID, err := parseID(c.Param("id"))
+	applicationID, err := apiShared.ParseID(c.Param("id"))
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "应用 ID 无效")
 		return
 	}
-	releaseID, err := parseID(c.Param("releaseID"))
+	releaseID, err := apiShared.ParseID(c.Param("releaseID"))
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "发布 ID 无效")
 		return
@@ -1947,7 +1948,7 @@ func (h *ApplicationHandler) RollbackRelease(c *gin.Context) {
 		return
 	}
 	workflow := h.releaseWorkflow()
-	prepared, err := workflow.Rollback(releaseID, getUserID(c))
+	prepared, err := workflow.Rollback(releaseID, apiShared.UserID(c))
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "无法回滚该发布")
 		return
@@ -2020,12 +2021,12 @@ func (h *ApplicationHandler) prepareApplicationEndpoint(app *model.Application, 
 }
 
 func (h *ApplicationHandler) GetRelease(c *gin.Context) {
-	applicationID, err := parseID(c.Param("id"))
+	applicationID, err := apiShared.ParseID(c.Param("id"))
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "应用 ID 无效")
 		return
 	}
-	id, err := parseID(c.Param("releaseID"))
+	id, err := apiShared.ParseID(c.Param("releaseID"))
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "发布 ID 无效")
 		return
@@ -2065,9 +2066,4 @@ func (h *ApplicationHandler) GetRelease(c *gin.Context) {
 
 func (h *ApplicationHandler) syncApplicationEndpoints(ctx context.Context, app *model.Application, service application.ServiceSpec) error {
 	return h.releaseWorkflow().SyncApplicationEndpoints(ctx, app, service)
-}
-
-func parseID(value string) (uint, error) {
-	id, err := strconv.ParseUint(value, 10, 64)
-	return uint(id), err
 }

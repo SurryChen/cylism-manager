@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 	"github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/store"
@@ -628,7 +629,7 @@ func (h *SystemComponentHandler) Update(c *gin.Context) {
 		ValuesContent:  valuesContent,
 		Enabled:        true,
 		LastAppliedAt:  &now,
-		CreatedBy:      getUserID(c),
+		CreatedBy:      apiShared.UserID(c),
 	}
 	var applyErr error
 	switch detection.Mode {

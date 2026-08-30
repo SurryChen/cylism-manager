@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 	"github.com/cylism/cylism-manager/internal/model"
 	registryservice "github.com/cylism/cylism-manager/internal/service/registry"
 	"github.com/cylism/cylism-manager/internal/store"
@@ -63,7 +64,7 @@ func (h *ImageRegistryHandler) Create(c *gin.Context) {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
 		return
 	}
-	registry.CreatedBy = getUserID(c)
+	registry.CreatedBy = apiShared.UserID(c)
 	if err := h.store.CreateImageRegistry(registry, req.ProjectIDs); err != nil {
 		model.Error(c, http.StatusConflict, model.CodeConflict, "镜像仓库名称、地址或项目授权无效")
 		return
@@ -73,7 +74,7 @@ func (h *ImageRegistryHandler) Create(c *gin.Context) {
 }
 
 func (h *ImageRegistryHandler) Update(c *gin.Context) {
-	id, err := parseID(c.Param("id"))
+	id, err := apiShared.ParseID(c.Param("id"))
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "镜像仓库 ID 无效")
 		return
@@ -106,7 +107,7 @@ func (h *ImageRegistryHandler) Update(c *gin.Context) {
 }
 
 func (h *ImageRegistryHandler) Delete(c *gin.Context) {
-	id, err := parseID(c.Param("id"))
+	id, err := apiShared.ParseID(c.Param("id"))
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "镜像仓库 ID 无效")
 		return
@@ -137,7 +138,7 @@ func (h *ImageRegistryHandler) Delete(c *gin.Context) {
 }
 
 func (h *ImageRegistryHandler) Verify(c *gin.Context) {
-	id, err := parseID(c.Param("id"))
+	id, err := apiShared.ParseID(c.Param("id"))
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "镜像仓库 ID 无效")
 		return
@@ -268,5 +269,5 @@ func optionalID(value string) (uint, error) {
 	if value == "" {
 		return 0, nil
 	}
-	return parseID(value)
+	return apiShared.ParseID(value)
 }

@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 
+	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 	"github.com/cylism/cylism-manager/internal/model"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -69,7 +70,7 @@ func (w podTerminalOutput) Write(data []byte) (int, error) {
 // PodTerminal opens an interactive shell in one running Pod container.
 func (h *K8sHandler) PodTerminal(c *gin.Context) {
 	if h.k8s == nil || h.k8s.Clientset == nil || h.k8s.Config == nil {
-		k8sUnavailable(c)
+		apiShared.K8sUnavailable(c)
 		return
 	}
 
@@ -193,7 +194,7 @@ func (h *K8sHandler) recordPodTerminalSession(c *gin.Context, namespace, name, c
 	_ = h.store.CreateAuditLog(&model.AuditLog{
 		Action:       "terminal",
 		ResourceType: "pod",
-		UserID:       getUserID(c),
+		UserID:       apiShared.UserID(c),
 		Detail:       string(detail),
 	})
 }

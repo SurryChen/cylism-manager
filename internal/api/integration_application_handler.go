@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 	"github.com/cylism/cylism-manager/internal/application"
 	"github.com/cylism/cylism-manager/internal/auth"
 	"github.com/cylism/cylism-manager/internal/model"
@@ -100,7 +101,7 @@ type integrationHandoffRequest struct {
 // createIntegrationHandoff creates a one-time browser handoff for a generic
 // application link. The platform does not inspect the link's purpose.
 func (h *ApplicationHandler) createIntegrationHandoff(c *gin.Context) {
-	applicationID, err := parseID(c.Param("id"))
+	applicationID, err := apiShared.ParseID(c.Param("id"))
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "应用 ID 无效")
 		return
@@ -149,7 +150,7 @@ func (h *ApplicationHandler) createIntegrationHandoff(c *gin.Context) {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "创建管理会话失败")
 		return
 	}
-	session := &model.IntegrationSession{HandoffCodeHash: opaqueHash(code), UserID: getUserID(c), ProjectID: app.ProjectID, ApplicationID: app.ID, EnvironmentID: app.EnvironmentID, ActionsData: strings.Join(actions, ","), HandoffExpiresAt: now.Add(integrationHandoffTTL), ExpiresAt: now.Add(integrationSessionTTL)}
+	session := &model.IntegrationSession{HandoffCodeHash: opaqueHash(code), UserID: apiShared.UserID(c), ProjectID: app.ProjectID, ApplicationID: app.ID, EnvironmentID: app.EnvironmentID, ActionsData: strings.Join(actions, ","), HandoffExpiresAt: now.Add(integrationHandoffTTL), ExpiresAt: now.Add(integrationSessionTTL)}
 	if err := h.store.CreateIntegrationSession(session); err != nil {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "创建管理会话失败")
 		return
@@ -266,7 +267,7 @@ func (h *ApplicationHandler) createIntegrationDelegation(c *gin.Context) {
 }
 
 func (h *ApplicationHandler) CreateDelegation(c *gin.Context) {
-	applicationID, err := parseID(c.Param("id"))
+	applicationID, err := apiShared.ParseID(c.Param("id"))
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "应用 ID 无效")
 		return
@@ -308,7 +309,7 @@ func (h *ApplicationHandler) CreateDelegation(c *gin.Context) {
 		return
 	}
 	token, err := auth.GenerateDelegationToken(h.delegationSecret, auth.DelegationClaims{
-		UserID: getUserID(c), Username: c.GetString("username"), ProjectID: app.ProjectID,
+		UserID: apiShared.UserID(c), Username: c.GetString("username"), ProjectID: app.ProjectID,
 		EnvironmentIDs: req.EnvironmentIDs, Capability: normalized[0], Actions: req.Actions,
 		ApplicationIDs: []uint{app.ID},
 	}, auth.MaxDelegationTTL)
@@ -418,7 +419,7 @@ func (h *ApplicationHandler) IntegrationGetManagedConfigMap(c *gin.Context) {
 	if !ok {
 		return
 	}
-	configMapID, err := parseID(c.Param("configMapID"))
+	configMapID, err := apiShared.ParseID(c.Param("configMapID"))
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "ConfigMap 配置 ID 无效")
 		return
@@ -445,7 +446,7 @@ func (h *ApplicationHandler) IntegrationReplaceManagedConfigMap(c *gin.Context) 
 	if !ok {
 		return
 	}
-	configMapID, err := parseID(c.Param("configMapID"))
+	configMapID, err := apiShared.ParseID(c.Param("configMapID"))
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "ConfigMap 配置 ID 无效")
 		return
@@ -489,7 +490,7 @@ func (h *ApplicationHandler) IntegrationReplaceManagedConfigMap(c *gin.Context) 
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
 		return
 	}
-	updated.UpdatedBy = getUserID(c)
+	updated.UpdatedBy = apiShared.UserID(c)
 	if err := h.store.UpdateApplicationDeploymentTemplateIfRevision(updated, req.ExpectedRevision); err != nil {
 		var conflict *store.TemplateRevisionConflictError
 		if errors.As(err, &conflict) {
@@ -501,7 +502,7 @@ func (h *ApplicationHandler) IntegrationReplaceManagedConfigMap(c *gin.Context) 
 	}
 	response := gin.H{"version": updated.Revision, "template_id": updated.ID, "template_revision": updated.Revision}
 	if req.Restart {
-		release, restartErr := h.createRestartRelease(c.Request.Context(), app, getUserID(c))
+		release, restartErr := h.createRestartRelease(c.Request.Context(), app, apiShared.UserID(c))
 		if restartErr != nil {
 			response["restart_pending"] = true
 			response["restart_error"] = "ConfigMap 配置已保存，重新发布创建失败"
@@ -517,7 +518,7 @@ func (h *ApplicationHandler) IntegrationRestartApplication(c *gin.Context) {
 	if !ok {
 		return
 	}
-	release, err := h.createRestartRelease(c.Request.Context(), app, getUserID(c))
+	release, err := h.createRestartRelease(c.Request.Context(), app, apiShared.UserID(c))
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
 		return
@@ -530,7 +531,7 @@ func (h *ApplicationHandler) IntegrationGetRelease(c *gin.Context) {
 	if !ok {
 		return
 	}
-	releaseID, err := parseID(c.Param("releaseID"))
+	releaseID, err := apiShared.ParseID(c.Param("releaseID"))
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "发布 ID 无效")
 		return
@@ -548,7 +549,7 @@ func (h *ApplicationHandler) IntegrationGetRelease(c *gin.Context) {
 }
 
 func (h *ApplicationHandler) applicationForParam(c *gin.Context) (*model.Application, bool) {
-	id, err := parseID(c.Param("id"))
+	id, err := apiShared.ParseID(c.Param("id"))
 	if err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "应用 ID 无效")
 		return nil, false
