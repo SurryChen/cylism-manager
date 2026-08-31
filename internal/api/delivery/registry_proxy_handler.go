@@ -13,7 +13,6 @@ import (
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/repository"
 	registryservice "github.com/cylism/cylism-manager/internal/service/registry"
-	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/gin-gonic/gin"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 )
@@ -22,7 +21,7 @@ const registryProxyNamespace = "kube-system"
 const registryProxyName = "cylism-registry-proxy"
 
 type RegistryProxyHandler struct {
-	store      *store.Store
+	store      repository.RegistryProxyRepository
 	service    *registryservice.ProxyService
 	reconciler *k8sclient.RegistryProxyReconciler
 	encKey     []byte
@@ -57,10 +56,10 @@ func proxyInput(req registryProxyRequest) registryservice.ProxyInput {
 
 type registryProxyDiagnoser func(context.Context, *model.RegistryProxy) (k8sclient.RegistryProxyDiagnostic, error)
 
-func NewRegistryProxyHandler(s *store.Store, encKey []byte, client *k8sclient.Client) *RegistryProxyHandler {
-	h := &RegistryProxyHandler{store: s}
+func NewRegistryProxyHandler(repo repository.RegistryProxyRepository, encKey []byte, client *k8sclient.Client) *RegistryProxyHandler {
+	h := &RegistryProxyHandler{store: repo}
 	h.encKey = encKey
-	h.service = registryservice.NewProxyService(repository.NewRegistryProxyRepository(s), h.encKey)
+	h.service = registryservice.NewProxyService(repo, h.encKey)
 	h.reconciler = k8sclient.NewRegistryProxyReconciler(client)
 	h.diagnoser = h.reconciler.DiagnoseUpstream
 	return h

@@ -51,7 +51,7 @@ func (h *RuntimeHandler) managedRuntime(c *gin.Context) (*model.RuntimeInstance,
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "Runtime ID 无效")
 		return nil, false
 	}
-	instance, err := h.store.GetRuntime(id)
+	instance, err := h.runtimes.GetRuntime(id)
 	if err != nil {
 		model.Error(c, http.StatusNotFound, model.CodeNotFound, "Runtime 不存在")
 		return nil, false

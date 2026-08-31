@@ -19,7 +19,6 @@ import (
 	"github.com/cylism/cylism-manager/internal/application"
 	"github.com/cylism/cylism-manager/internal/auth"
 	"github.com/cylism/cylism-manager/internal/model"
-	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
@@ -53,7 +52,7 @@ func (h *ApplicationHandler) ListManagedFiles(c *gin.Context) {
 	if !ok {
 		return
 	}
-	files, err := h.store.ListApplicationManagedFiles(app.ID)
+	files, err := h.resources.ListApplicationManagedFiles(app.ID)
 	if err != nil {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
 		return
@@ -116,7 +115,7 @@ func (h *ApplicationHandler) createIntegrationHandoff(c *gin.Context) {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "应用入口必填")
 		return
 	}
-	endpoint, err := h.store.GetApplicationEndpoint(app.ID, req.EndpointID)
+	endpoint, err := h.resources.GetApplicationEndpoint(app.ID, req.EndpointID)
 	if err != nil {
 		model.Error(c, http.StatusNotFound, model.CodeNotFound, "应用入口不存在")
 		return
@@ -151,7 +150,7 @@ func (h *ApplicationHandler) createIntegrationHandoff(c *gin.Context) {
 		return
 	}
 	session := &model.IntegrationSession{HandoffCodeHash: opaqueHash(code), UserID: apiShared.UserID(c), ProjectID: app.ProjectID, ApplicationID: app.ID, EnvironmentID: app.EnvironmentID, ActionsData: strings.Join(actions, ","), HandoffExpiresAt: now.Add(integrationHandoffTTL), ExpiresAt: now.Add(integrationSessionTTL)}
-	if err := h.store.CreateIntegrationSession(session); err != nil {
+	if err := h.sessions.CreateIntegrationSession(session); err != nil {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "创建管理会话失败")
 		return
 	}
@@ -220,7 +219,7 @@ func (h *ApplicationHandler) ExchangeIntegrationSession(c *gin.Context) {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "交换管理会话失败")
 		return
 	}
-	session, err := h.store.ExchangeIntegrationSession(opaqueHash(code), opaqueHash(token), now.Add(integrationSessionTTL), now)
+	session, err := h.sessions.ExchangeIntegrationSession(opaqueHash(code), opaqueHash(token), now.Add(integrationSessionTTL), now)
 	if err != nil {
 		model.Error(c, http.StatusUnauthorized, model.CodeUnauthorized, "跳转码无效或已过期")
 		return
@@ -242,7 +241,7 @@ func (h *ApplicationHandler) createIntegrationDelegation(c *gin.Context) {
 		model.Error(c, http.StatusUnauthorized, model.CodeUnauthorized, "未提供管理会话")
 		return
 	}
-	session, err := h.store.GetActiveIntegrationSession(opaqueHash(token), time.Now())
+	session, err := h.sessions.GetActiveIntegrationSession(opaqueHash(token), time.Now())
 	if err != nil {
 		model.Error(c, http.StatusUnauthorized, model.CodeUnauthorized, "管理会话无效或已过期")
 		return
@@ -378,7 +377,7 @@ func (h *ApplicationHandler) IntegrationListManagedConfigMaps(c *gin.Context) {
 	if !ok {
 		return
 	}
-	template, err := h.store.GetDefaultApplicationDeploymentTemplate(app.ID)
+	template, err := h.resources.GetDefaultApplicationDeploymentTemplate(app.ID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			model.Error(c, http.StatusNotFound, model.CodeNotFound, "应用没有可用的默认上线模板")
@@ -391,7 +390,7 @@ func (h *ApplicationHandler) IntegrationListManagedConfigMaps(c *gin.Context) {
 		model.Error(c, http.StatusNotFound, model.CodeNotFound, "应用没有可用的默认上线模板")
 		return
 	}
-	files, err := h.store.ListApplicationManagedFiles(app.ID)
+	files, err := h.resources.ListApplicationManagedFiles(app.ID)
 	if err != nil {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
 		return
@@ -424,7 +423,7 @@ func (h *ApplicationHandler) IntegrationGetManagedConfigMap(c *gin.Context) {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "ConfigMap 配置 ID 无效")
 		return
 	}
-	file, err := h.store.GetApplicationManagedFile(app.ID, configMapID)
+	file, err := h.resources.GetApplicationManagedFile(app.ID, configMapID)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		model.Error(c, http.StatusNotFound, model.CodeNotFound, "受管 ConfigMap 配置不存在")
 		return
@@ -466,7 +465,7 @@ func (h *ApplicationHandler) IntegrationReplaceManagedConfigMap(c *gin.Context) 
 	}
 	managedFileMutationMu.Lock()
 	defer managedFileMutationMu.Unlock()
-	file, err := h.store.GetApplicationManagedFile(app.ID, configMapID)
+	file, err := h.resources.GetApplicationManagedFile(app.ID, configMapID)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		model.Error(c, http.StatusNotFound, model.CodeNotFound, "受管 ConfigMap 配置不存在")
 		return
@@ -491,8 +490,8 @@ func (h *ApplicationHandler) IntegrationReplaceManagedConfigMap(c *gin.Context) 
 		return
 	}
 	updated.UpdatedBy = apiShared.UserID(c)
-	if err := h.store.UpdateApplicationDeploymentTemplateIfRevision(updated, req.ExpectedRevision); err != nil {
-		var conflict *store.TemplateRevisionConflictError
+	if err := h.resources.UpdateApplicationDeploymentTemplateIfRevision(updated, req.ExpectedRevision); err != nil {
+		var conflict *model.TemplateRevisionConflictError
 		if errors.As(err, &conflict) {
 			model.Error(c, http.StatusConflict, model.CodeConflict, conflict.Error())
 			return
@@ -536,7 +535,7 @@ func (h *ApplicationHandler) IntegrationGetRelease(c *gin.Context) {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "发布 ID 无效")
 		return
 	}
-	release, err := h.store.GetRelease(releaseID)
+	release, err := h.resources.GetRelease(releaseID)
 	if errors.Is(err, gorm.ErrRecordNotFound) || release.ApplicationID != app.ID {
 		model.Error(c, http.StatusNotFound, model.CodeNotFound, "发布不存在")
 		return
@@ -596,7 +595,7 @@ func (h *ApplicationHandler) templateConfigMap(app *model.Application, file *mod
 	if file.ResourceKind != application.FileMountSourceConfigMap || file.ResourceName != app.Name+"-config" || !file.Enabled {
 		return nil, application.ReleaseSpec{}, fmt.Errorf("受管配置不是当前应用的 ConfigMap")
 	}
-	template, err := h.store.GetDefaultApplicationDeploymentTemplate(app.ID)
+	template, err := h.resources.GetDefaultApplicationDeploymentTemplate(app.ID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, application.ReleaseSpec{}, fmt.Errorf("应用没有可用的默认上线模板")

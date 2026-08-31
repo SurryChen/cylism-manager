@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/cylism/cylism-manager/internal/model"
+	"github.com/cylism/cylism-manager/internal/repository"
 	"github.com/cylism/cylism-manager/internal/store"
 )
 
@@ -30,6 +31,58 @@ func (a *fakeApplier) Apply(context.Context, *RenderedResources) error {
 }
 func (a *fakeApplier) WaitReady(context.Context, ApplicationContext, ReleaseSpec) error {
 	return a.readyErr
+}
+
+type releaseRepositoryStub struct {
+	application *model.Application
+	release     *model.Release
+	releases    []model.Release
+}
+
+var _ repository.ReleaseRepository = (*releaseRepositoryStub)(nil)
+
+func (s *releaseRepositoryStub) GetApplication(uint) (*model.Application, error) {
+	return s.application, nil
+}
+
+func (s *releaseRepositoryStub) ListReleases(uint) ([]model.Release, error) {
+	return append([]model.Release(nil), s.releases...), nil
+}
+
+func (s *releaseRepositoryStub) CreateRelease(release *model.Release) error {
+	release.ID = uint(len(s.releases) + 1)
+	s.release = release
+	s.releases = append(s.releases, *release)
+	return nil
+}
+
+func (s *releaseRepositoryStub) GetRelease(uint) (*model.Release, error) {
+	return s.release, nil
+}
+
+func (s *releaseRepositoryStub) UpdateRelease(release *model.Release) error {
+	s.release = release
+	return nil
+}
+
+func (*releaseRepositoryStub) CreateReleaseOperation(*model.ReleaseOperation) error { return nil }
+func (*releaseRepositoryStub) UpdateReleaseOperation(*model.ReleaseOperation) error { return nil }
+func (*releaseRepositoryStub) CreateOperationLog(*model.OperationLog) error         { return nil }
+func (*releaseRepositoryStub) UpdateOperationLog(*model.OperationLog) error         { return nil }
+
+func TestCreateReleaseUsesRepositoryStub(t *testing.T) {
+	repository := &releaseRepositoryStub{application: &model.Application{
+		ID: 1, Name: "order-api", WorkloadKind: WorkloadKindDeployment,
+		Project:     model.Project{ID: 2, Name: "commerce"},
+		Environment: model.Environment{ID: 3, Name: "production", Namespace: "commerce-production"},
+	}}
+	release, err := NewService(repository, &fakeApplier{}).CreateRelease(context.Background(), 1, 9, validTestReleaseSpec())
+	if err != nil {
+		t.Fatalf("CreateRelease() error = %v", err)
+	}
+	if repository.release != release || release.Sequence != 1 || release.CreatedBy != 9 || release.Status != model.ReleaseStatusDraft {
+		t.Fatalf("unexpected release persisted by repository: %#v", release)
+	}
 }
 
 func TestExecuteReleaseRecordsSuccessfulSteps(t *testing.T) {

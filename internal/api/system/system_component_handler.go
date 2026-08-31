@@ -9,7 +9,7 @@ import (
 	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 	"github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
-	"github.com/cylism/cylism-manager/internal/store"
+	"github.com/cylism/cylism-manager/internal/repository"
 	"github.com/gin-gonic/gin"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -28,11 +28,11 @@ var systemChartWhitelist = map[string]string{
 }
 
 type SystemComponentHandler struct {
-	store *store.Store
+	configs repository.SystemComponentRepository
 }
 
-func NewSystemComponentHandler(s *store.Store) *SystemComponentHandler {
-	return &SystemComponentHandler{store: s}
+func NewSystemComponentHandler(configs repository.SystemComponentRepository) *SystemComponentHandler {
+	return &SystemComponentHandler{configs: configs}
 }
 
 type systemComponentUpdateRequest struct {
@@ -127,7 +127,7 @@ func (h *SystemComponentHandler) List(c *gin.Context) {
 		return
 	}
 	configs := map[string]*model.SystemComponentConfig{}
-	rows, err := h.store.ListSystemComponentConfigs()
+	rows, err := h.configs.ListSystemComponentConfigs()
 	if err == nil {
 		for index := range rows {
 			configs[rows[index].ChartName] = &rows[index]
@@ -647,12 +647,12 @@ func (h *SystemComponentHandler) Update(c *gin.Context) {
 	if applyErr != nil {
 		config.ApplyStatus = "failed"
 		config.ApplyError = applyErr.Error()
-		_ = h.store.UpsertSystemComponentConfig(config)
+		_ = h.configs.UpsertSystemComponentConfig(config)
 		model.Error(c, http.StatusBadGateway, model.CodeK8sAPIError, "应用系统组件配置失败: "+applyErr.Error())
 		return
 	}
 	config.ApplyStatus = "succeeded"
-	if err := h.store.UpsertSystemComponentConfig(config); err != nil {
+	if err := h.configs.UpsertSystemComponentConfig(config); err != nil {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "保存系统组件配置失败")
 		return
 	}
@@ -698,7 +698,7 @@ func (h *SystemComponentHandler) Revert(c *gin.Context) {
 		model.Error(c, http.StatusBadGateway, model.CodeK8sAPIError, "恢复系统组件默认配置失败: "+revertErr.Error())
 		return
 	}
-	_ = h.store.DeleteSystemComponentConfig(chart)
+	_ = h.configs.DeleteSystemComponentConfig(chart)
 	model.SuccessWithMessage(c, nil, "已恢复系统组件默认配置")
 }
 
@@ -716,7 +716,7 @@ func (h *SystemComponentHandler) reconcileOnce() {
 	if k8sClient == nil || k8sClient.Clientset == nil {
 		return
 	}
-	configs, err := h.store.ListSystemComponentConfigs()
+	configs, err := h.configs.ListSystemComponentConfigs()
 	if err != nil {
 		return
 	}
@@ -750,6 +750,6 @@ func (h *SystemComponentHandler) reconcileOnce() {
 		if detectErr == nil && (config.ControllerMode == "" || config.ControllerMode == string(detection.Mode)) {
 			config.ControllerMode = string(detection.Mode)
 		}
-		_ = h.store.UpsertSystemComponentConfig(config)
+		_ = h.configs.UpsertSystemComponentConfig(config)
 	}
 }

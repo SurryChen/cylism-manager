@@ -5,15 +5,15 @@ import (
 
 	"github.com/cylism/cylism-manager/internal/model"
 
-	"github.com/cylism/cylism-manager/internal/store"
+	"github.com/cylism/cylism-manager/internal/repository"
 	"github.com/gin-gonic/gin"
 )
 
 type DashboardHandler struct {
-	store *store.Store
+	store repository.DashboardRepository
 }
 
-func NewDashboardHandler(s *store.Store) *DashboardHandler {
+func NewDashboardHandler(s repository.DashboardRepository) *DashboardHandler {
 	return &DashboardHandler{store: s}
 }
 

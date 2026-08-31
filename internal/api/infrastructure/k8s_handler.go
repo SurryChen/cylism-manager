@@ -9,8 +9,8 @@ import (
 	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 	k8sclient "github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
+	"github.com/cylism/cylism-manager/internal/repository"
 	storageservice "github.com/cylism/cylism-manager/internal/service/storage"
-	"github.com/cylism/cylism-manager/internal/store"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/validation"
@@ -20,36 +20,19 @@ import (
 
 // K8sHandler h.k8s 资源管理的 HTTP handler
 type K8sHandler struct {
-	store          *store.Store
-	encKey         []byte
-	k8s            *k8sclient.Client
-	storageService *storageservice.Service
+	resourceReferences repository.ResourceReferenceRepository
+	audit              repository.AuditRepository
+	encKey             []byte
+	k8s                *k8sclient.Client
+	storageService     *storageservice.Service
 }
 
-// NewK8sHandler 创建 K8sHandler
-func NewK8sHandler(stores ...*store.Store) *K8sHandler {
-	return NewK8sHandlerWithClient(nil, firstStore(stores...))
+func NewK8sHandlerWithClient(client *k8sclient.Client, references repository.ResourceReferenceRepository, storageService *storageservice.Service, audit repository.AuditRepository) *K8sHandler {
+	return &K8sHandler{k8s: client, resourceReferences: references, storageService: storageService, audit: audit}
 }
 
-func NewK8sHandlerWithClient(client *k8sclient.Client, st *store.Store) *K8sHandler {
-	h := &K8sHandler{k8s: client, store: st}
-	h.storageService = storageservice.NewService(client, st)
-	return h
-}
-
-func firstStore(stores ...*store.Store) *store.Store {
-	if len(stores) > 0 {
-		return stores[0]
-	}
-	return nil
-}
-
-func NewK8sHandlerWithEncryption(st *store.Store, encKey []byte, clients ...*k8sclient.Client) *K8sHandler {
-	var client *k8sclient.Client
-	if len(clients) > 0 {
-		client = clients[0]
-	}
-	h := NewK8sHandlerWithClient(client, st)
+func NewK8sHandlerWithEncryption(references repository.ResourceReferenceRepository, storageService *storageservice.Service, encKey []byte, client *k8sclient.Client, audit repository.AuditRepository) *K8sHandler {
+	h := NewK8sHandlerWithClient(client, references, storageService, audit)
 	h.encKey = encKey
 	return h
 }
@@ -100,10 +83,10 @@ func validateResourceDataRequest(req resourceDataRequest) string {
 }
 
 func (h *K8sHandler) resourceIsReferenced(namespace, sourceType, name string) (bool, error) {
-	if h.store == nil {
+	if h.resourceReferences == nil {
 		return false, nil
 	}
-	references, err := h.store.ListResourceReferences(namespace, sourceType, name)
+	references, err := h.resourceReferences.ListResourceReferences(namespace, sourceType, name)
 	return len(references) > 0, err
 }
 

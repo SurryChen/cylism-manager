@@ -9,14 +9,16 @@ import (
 	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 	"github.com/cylism/cylism-manager/internal/application"
 	"github.com/cylism/cylism-manager/internal/model"
+	"github.com/cylism/cylism-manager/internal/repository"
 	applicationservice "github.com/cylism/cylism-manager/internal/service/application"
-	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
 
 type ApplicationHandler struct {
-	store            *store.Store
+	resources        repository.ApplicationHandlerRepository
+	applications     repository.ApplicationManagementRepository
+	sessions         repository.IntegrationSessionRepository
 	queries          *applicationservice.QueryService
 	encKey           []byte
 	delegationSecret []byte
@@ -38,8 +40,13 @@ type applicationCapabilitiesRequest struct {
 // applicationDiscoveryInfo is intentionally limited to metadata needed by
 // authorized management UIs. It never embeds templates or Secret references.
 
-func NewApplicationHandler(store *store.Store, encKey ...[]byte) *ApplicationHandler {
-	handler := &ApplicationHandler{store: store, queries: applicationservice.NewQueryService(store)}
+func NewApplicationHandler(resources repository.ApplicationHandlerRepository, encKey ...[]byte) *ApplicationHandler {
+	handler := &ApplicationHandler{
+		resources:    resources,
+		applications: resources,
+		sessions:     resources,
+		queries:      applicationservice.NewQueryService(resources),
+	}
 	if len(encKey) > 0 {
 		handler.encKey = encKey[0]
 	}
@@ -51,7 +58,7 @@ func (h *ApplicationHandler) releaseWorkflow() *application.ReleaseWorkflow {
 	if K8s != nil {
 		applier = application.NewKubernetesApplier(K8s)
 	}
-	return application.NewReleaseWorkflow(h.store, h.encKey, applier)
+	return application.NewReleaseWorkflow(h.resources, h.encKey, applier)
 }
 
 func (h *ApplicationHandler) ListApplications(c *gin.Context) {
@@ -87,7 +94,7 @@ func (h *ApplicationHandler) UpdateCapabilities(c *gin.Context) {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "能力标签定义无效")
 		return
 	}
-	app, err := h.store.ReplaceApplicationCapabilities(applicationID, req.Capabilities)
+	app, err := h.applications.ReplaceApplicationCapabilities(applicationID, req.Capabilities)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		model.Error(c, http.StatusNotFound, model.CodeNotFound, "应用不存在")
 		return
@@ -147,10 +154,10 @@ func (h *ApplicationHandler) UpdateWorkloadKind(c *gin.Context) {
 		model.Success(c, app)
 		return
 	}
-	release, err := h.store.GetLatestSuccessfulRelease(app.ID)
+	release, err := h.applications.GetLatestSuccessfulRelease(app.ID)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		app.WorkloadKind = req.WorkloadKind
-		if err := h.store.UpdateApplication(app); err != nil {
+		if err := h.applications.UpdateApplication(app); err != nil {
 			model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
 			return
 		}
@@ -177,7 +184,7 @@ func (h *ApplicationHandler) UpdateWorkloadKind(c *gin.Context) {
 		return
 	}
 	app.WorkloadKind = req.WorkloadKind
-	if err := h.store.UpdateApplication(app); err != nil {
+	if err := h.applications.UpdateApplication(app); err != nil {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
 		return
 	}
@@ -204,12 +211,12 @@ func (h *ApplicationHandler) CreateApplication(c *gin.Context) {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "环境不属于所选项目")
 		return
 	}
-	if err := h.store.EnsureNamespaceAvailable(environment.Namespace, environment.ID); err != nil {
+	if err := h.applications.EnsureNamespaceAvailable(environment.Namespace, environment.ID); err != nil {
 		model.Error(c, http.StatusConflict, model.CodeConflict, "环境命名空间存在冲突，请先完成迁移")
 		return
 	}
 	app := &model.Application{ProjectID: req.ProjectID, EnvironmentID: req.EnvironmentID, Name: req.Name, WorkloadKind: "deployment", CreatedBy: apiShared.UserID(c)}
-	if err := h.store.CreateApplication(app); err != nil {
+	if err := h.applications.CreateApplication(app); err != nil {
 		model.Error(c, http.StatusConflict, model.CodeConflict, "该环境内应用名称已存在")
 		return
 	}

@@ -12,7 +12,6 @@ import (
 	"github.com/cylism/cylism-manager/internal/application"
 	"github.com/cylism/cylism-manager/internal/crypto"
 	"github.com/cylism/cylism-manager/internal/model"
-	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
@@ -48,7 +47,7 @@ func (h *ApplicationHandler) ListDeploymentTemplates(c *gin.Context) {
 		model.Error(c, http.StatusNotFound, model.CodeNotFound, "应用不存在")
 		return
 	}
-	templates, err := h.store.ListApplicationDeploymentTemplates(applicationID)
+	templates, err := h.applications.ListApplicationDeploymentTemplates(applicationID)
 	if err != nil {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
 		return
@@ -81,7 +80,7 @@ func (h *ApplicationHandler) GetDeploymentTemplate(c *gin.Context) {
 		model.Error(c, http.StatusNotFound, model.CodeNotFound, "应用不存在")
 		return
 	}
-	template, err := h.store.GetApplicationDeploymentTemplate(applicationID, templateID)
+	template, err := h.applications.GetApplicationDeploymentTemplate(applicationID, templateID)
 	if err != nil {
 		model.Error(c, http.StatusNotFound, model.CodeNotFound, "上线模板不存在")
 		return
@@ -116,7 +115,7 @@ func (h *ApplicationHandler) CreateDeploymentTemplate(c *gin.Context) {
 		return
 	}
 	template.UpdatedBy = apiShared.UserID(c)
-	if err := h.store.CreateApplicationDeploymentTemplate(template, app.DefaultDeploymentTemplateID == nil); err != nil {
+	if err := h.applications.CreateApplicationDeploymentTemplate(template, app.DefaultDeploymentTemplateID == nil); err != nil {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
 		return
 	}
@@ -162,7 +161,7 @@ func (h *ApplicationHandler) UpdateDeploymentTemplate(c *gin.Context) {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "默认模板不能停用，请先设置其他启用模板为默认")
 		return
 	}
-	currentTemplate, err := h.store.GetApplicationDeploymentTemplate(applicationID, templateID)
+	currentTemplate, err := h.applications.GetApplicationDeploymentTemplate(applicationID, templateID)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		model.Error(c, http.StatusNotFound, model.CodeNotFound, "上线模板不存在")
 		return
@@ -183,12 +182,12 @@ func (h *ApplicationHandler) UpdateDeploymentTemplate(c *gin.Context) {
 	template.UpdatedBy = apiShared.UserID(c)
 	var updateErr error
 	if req.Revision != 0 {
-		updateErr = h.store.UpdateApplicationDeploymentTemplateIfRevision(template, req.Revision)
+		updateErr = h.applications.UpdateApplicationDeploymentTemplateIfRevision(template, req.Revision)
 	} else {
-		updateErr = h.store.UpdateApplicationDeploymentTemplate(template)
+		updateErr = h.applications.UpdateApplicationDeploymentTemplate(template)
 	}
 	if err := updateErr; err != nil {
-		var conflict *store.TemplateRevisionConflictError
+		var conflict *model.TemplateRevisionConflictError
 		if errors.As(err, &conflict) {
 			model.Error(c, http.StatusConflict, model.CodeConflict, conflict.Error())
 			return
@@ -225,7 +224,7 @@ func (h *ApplicationHandler) DeleteDeploymentTemplate(c *gin.Context) {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "上线模板 ID 无效")
 		return
 	}
-	if err := h.store.DeleteApplicationDeploymentTemplate(applicationID, templateID); err != nil {
+	if err := h.applications.DeleteApplicationDeploymentTemplate(applicationID, templateID); err != nil {
 		if strings.Contains(err.Error(), "关联发布") {
 			model.Error(c, http.StatusConflict, model.CodeConflict, err.Error())
 			return
@@ -252,12 +251,12 @@ func (h *ApplicationHandler) SetDefaultDeploymentTemplate(c *gin.Context) {
 		model.Error(c, http.StatusNotFound, model.CodeNotFound, "应用不存在")
 		return
 	}
-	template, err := h.store.GetApplicationDeploymentTemplate(applicationID, templateID)
+	template, err := h.applications.GetApplicationDeploymentTemplate(applicationID, templateID)
 	if err != nil || !template.Enabled {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "上线模板不存在或已停用")
 		return
 	}
-	if err := h.store.SetDefaultApplicationDeploymentTemplate(applicationID, templateID); err != nil {
+	if err := h.applications.SetDefaultApplicationDeploymentTemplate(applicationID, templateID); err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "上线模板不存在或已停用")
 		return
 	}
@@ -293,7 +292,7 @@ func (h *ApplicationHandler) templateFromRequest(app *model.Application, req *de
 	}
 	encryptedSecrets := ""
 	if templateID != 0 {
-		current, err := h.store.GetApplicationDeploymentTemplate(app.ID, templateID)
+		current, err := h.applications.GetApplicationDeploymentTemplate(app.ID, templateID)
 		if err != nil {
 			return nil, fmt.Errorf("读取旧模板 Secret: %w", err)
 		}

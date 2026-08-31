@@ -80,7 +80,7 @@ func TestDeleteHostDirectoryPVCImportBackupAcceptsEnvironmentIDFromBody(t *testi
 		t.Fatal(err)
 	}
 	client := &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "project-knowledge-prod"}})}
-	h := NewStorageHandlerWithClient(storageservice.NewService(client, st), st, nil, client)
+	h := NewStorageHandlerWithClient(storageservice.NewService(client, st, st), st, nil, client)
 	r := gin.New()
 	r.DELETE("/api/k8s/persistent-volume-claims/:name/imports/:id/backup", h.DeleteHostDirectoryPVCImportBackup)
 	response := serve(r, newJSONRequest(http.MethodDelete, "/api/k8s/persistent-volume-claims/karakeep-data/imports/3/backup", gin.H{"environment_id": 1}))

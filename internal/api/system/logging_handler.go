@@ -14,7 +14,7 @@ import (
 	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 	"github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
-	"github.com/cylism/cylism-manager/internal/store"
+	"github.com/cylism/cylism-manager/internal/repository"
 	"github.com/gin-gonic/gin"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -38,7 +38,7 @@ type lokiQueryFunc func(context.Context, string, url.Values) (*lokiQueryResponse
 
 // LoggingHandler manages the platform-owned logging resources and proxies bounded queries.
 type LoggingHandler struct {
-	store *store.Store
+	scope repository.LoggingScopeRepository
 	query lokiQueryFunc
 	now   func() time.Time
 }
@@ -89,12 +89,8 @@ type logPodFilter struct {
 	Containers []string `json:"containers"`
 }
 
-func NewLoggingHandler(stores ...*store.Store) *LoggingHandler {
-	handler := &LoggingHandler{query: queryLoki, now: time.Now}
-	if len(stores) > 0 {
-		handler.store = stores[0]
-	}
-	return handler
+func NewLoggingHandler(scope repository.LoggingScopeRepository) *LoggingHandler {
+	return &LoggingHandler{scope: scope, query: queryLoki, now: time.Now}
 }
 
 func (h *LoggingHandler) Status(c *gin.Context) {
@@ -310,11 +306,11 @@ func (h *LoggingHandler) applyApplicationScope(request *logQueryRequest) error {
 	if request.ApplicationID == 0 && request.EnvironmentID == 0 && request.ProjectID == 0 {
 		return nil
 	}
-	if h.store == nil {
+	if h.scope == nil {
 		return fmt.Errorf("日志应用范围校验不可用")
 	}
 	if request.ApplicationID != 0 {
-		application, err := h.store.GetApplication(request.ApplicationID)
+		application, err := h.scope.GetApplication(request.ApplicationID)
 		if err != nil {
 			return fmt.Errorf("应用不存在")
 		}
@@ -336,7 +332,7 @@ func (h *LoggingHandler) applyApplicationScope(request *logQueryRequest) error {
 		request.Workload = application.Name
 	}
 	if request.EnvironmentID != 0 {
-		environment, err := h.store.GetEnvironmentByID(request.EnvironmentID)
+		environment, err := h.scope.GetEnvironmentByID(request.EnvironmentID)
 		if err != nil {
 			return fmt.Errorf("环境不存在")
 		}
@@ -350,7 +346,7 @@ func (h *LoggingHandler) applyApplicationScope(request *logQueryRequest) error {
 		request.Namespace = environment.Namespace
 	}
 	if request.ProjectID != 0 {
-		if _, err := h.store.GetProject(request.ProjectID); err != nil {
+		if _, err := h.scope.GetProject(request.ProjectID); err != nil {
 			return fmt.Errorf("项目不存在")
 		}
 	}

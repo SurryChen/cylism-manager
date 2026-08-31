@@ -7,7 +7,6 @@ import (
 
 	k8sclient "github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
-	"github.com/cylism/cylism-manager/internal/store"
 )
 
 // DomainStore is the persistence boundary used by domain lifecycle workflows.
@@ -22,6 +21,16 @@ type DomainStore interface {
 	UpdateManagedDomain(domain *model.ManagedDomain) error
 	DeleteManagedDomain(id uint) error
 	CountApplicationEndpointsByDomain(id uint) (int64, error)
+}
+
+// DNSCredentialStore is intentionally separate from domain state: credential
+// values have a different lifecycle and should not require a concrete Store.
+type DNSCredentialStore interface {
+	ListDNSCredentials() ([]model.DNSCredential, error)
+	GetDNSCredential(uint) (*model.DNSCredential, error)
+	CreateDNSCredential(*model.DNSCredential) error
+	UpdateDNSCredential(*model.DNSCredential) error
+	DeleteDNSCredential(uint) error
 }
 
 // DomainInput is the transport-neutral input for a managed domain.
@@ -55,7 +64,7 @@ type Issuer struct {
 
 type Service struct {
 	domains         DomainStore
-	credentials     *store.Store
+	credentials     DNSCredentialStore
 	ingress         IngressAdapter
 	dns             DNSAdapter
 	cert            CertificateAdapter
@@ -102,10 +111,10 @@ type StandardIngressAdapter interface {
 	DetectIngressController() (*k8sclient.IngressControllerStatus, error)
 }
 
-func NewService(domains DomainStore) *Service {
+func NewService(domains DomainStore, credentials ...DNSCredentialStore) *Service {
 	service := &Service{domains: domains}
-	if credentials, ok := domains.(*store.Store); ok {
-		service.credentials = credentials
+	if len(credentials) > 0 {
+		service.credentials = credentials[0]
 	}
 	return service
 }
@@ -288,7 +297,7 @@ func (s *Service) DeleteIngressRoute(namespace, name string) error {
 	return s.ingress.DeleteIngressRoute(strings.TrimSpace(namespace), strings.TrimSpace(name))
 }
 
-func (s *Service) requireCredentials() (*store.Store, error) {
+func (s *Service) requireCredentials() (DNSCredentialStore, error) {
 	if s.credentials == nil {
 		return nil, errors.New("DNS 凭据存储未初始化")
 	}
@@ -350,17 +359,13 @@ func (s *Service) ResolveEnvironment(environmentID uint) (*model.Environment, er
 	// Store implementations that expose conflict details get an additional
 	// defensive check. The optional shape avoids forcing every test double to
 	// implement a persistence-only method.
-	if conflicts, ok := any(s.domains).(interface {
-		ListEnvironmentNamespaceConflicts() ([]store.NamespaceConflict, error)
-	}); ok {
-		items, conflictErr := conflicts.ListEnvironmentNamespaceConflicts()
+	if conflicts, ok := any(s.domains).(interface{ IsEnvironmentNamespaceConflicted(string) (bool, error) }); ok {
+		conflicted, conflictErr := conflicts.IsEnvironmentNamespaceConflicted(env.Namespace)
 		if conflictErr != nil {
 			return nil, errors.New("检查命名空间归属失败")
 		}
-		for _, item := range items {
-			if item.Namespace == env.Namespace {
-				return nil, errors.New("环境命名空间存在冲突，请先完成迁移")
-			}
+		if conflicted {
+			return nil, errors.New("环境命名空间存在冲突，请先完成迁移")
 		}
 	}
 	return env, nil

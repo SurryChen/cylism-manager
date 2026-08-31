@@ -9,15 +9,15 @@ import (
 
 	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 	"github.com/cylism/cylism-manager/internal/model"
+	"github.com/cylism/cylism-manager/internal/repository"
 	registryservice "github.com/cylism/cylism-manager/internal/service/registry"
-	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/gin-gonic/gin"
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 )
 
 type ImageRegistryHandler struct {
-	store            *store.Store
+	store            repository.ImageRegistryRepository
 	encKey           []byte
 	verifyConnection registryConnectionVerifier
 }
@@ -35,7 +35,7 @@ type imageRegistryRequest struct {
 	ProjectIDs        []uint  `json:"project_ids"`
 }
 
-func NewImageRegistryHandler(s *store.Store, encKey []byte) *ImageRegistryHandler {
+func NewImageRegistryHandler(s repository.ImageRegistryRepository, encKey []byte) *ImageRegistryHandler {
 	return &ImageRegistryHandler{store: s, encKey: encKey, verifyConnection: verifyRegistryConnection}
 }
 

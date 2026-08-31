@@ -14,7 +14,6 @@ import (
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/repository"
 	registryservice "github.com/cylism/cylism-manager/internal/service/registry"
-	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/gin-gonic/gin"
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
@@ -49,9 +48,9 @@ type nodeRegistryMirrorRequest struct {
 	Enabled            *bool    `json:"enabled"`
 }
 
-func NewNodeRegistryMirrorHandler(s *store.Store, encKey []byte, applyNode registryservice.NodeMirrorApplier) *NodeRegistryMirrorHandler {
+func NewNodeRegistryMirrorHandler(repo repository.NodeRegistryMirrorRepository, encKey []byte, applyNode registryservice.NodeMirrorApplier) *NodeRegistryMirrorHandler {
 	return &NodeRegistryMirrorHandler{
-		service:          registryservice.NewMirrorService(repository.NewNodeRegistryMirrorRepository(s), encKey),
+		service:          registryservice.NewMirrorService(repo, encKey),
 		encKey:           encKey,
 		verifyConnection: verifyNodeRegistryMirrorConnection,
 		applyNode:        applyNode,

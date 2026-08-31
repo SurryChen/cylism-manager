@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/cylism/cylism-manager/internal/model"
-	"github.com/cylism/cylism-manager/internal/store"
 )
 
 // ManagedRegistryRepository is the persistence contract required by the
@@ -53,114 +52,25 @@ type RegistryProxyRepository interface {
 	SaveRegistryProxy(*model.RegistryProxy) error
 }
 
-// StoreManagedRegistryRepository adapts the existing Store without leaking it
-// into Registry service APIs.
-type StoreManagedRegistryRepository struct {
-	store *store.Store
+// ImageRegistryRepository owns externally configured image Registry records.
+type ImageRegistryRepository interface {
+	CreateImageRegistry(*model.ImageRegistry, []uint) error
+	ListImageRegistries(uint) ([]model.ImageRegistry, error)
+	GetImageRegistry(uint) (*model.ImageRegistry, error)
+	GetImageRegistryByEndpoint(string) (*model.ImageRegistry, error)
+	GetImageRegistryForProject(uint, uint) (*model.ImageRegistry, error)
+	UpdateImageRegistry(*model.ImageRegistry, []uint) error
+	UpdateImageRegistryVerification(uint, string, string, time.Time) error
+	CountImageRegistryReleases(uint) (int64, error)
+	DeleteImageRegistry(uint) error
 }
 
-func NewManagedRegistryRepository(s *store.Store) *StoreManagedRegistryRepository {
-	return &StoreManagedRegistryRepository{store: s}
-}
-
-// NewNodeRegistryMirrorRepository adapts the existing Store for the
-// standalone node registry mirror service.
-func NewNodeRegistryMirrorRepository(s *store.Store) *StoreManagedRegistryRepository {
-	return &StoreManagedRegistryRepository{store: s}
-}
-
-func NewRegistryProxyRepository(s *store.Store) *StoreManagedRegistryRepository {
-	return &StoreManagedRegistryRepository{store: s}
-}
-
-func (r *StoreManagedRegistryRepository) ListManagedOCIRegistries() ([]model.ManagedOCIRegistry, error) {
-	return r.store.ListManagedOCIRegistries()
-}
-
-func (r *StoreManagedRegistryRepository) GetManagedOCIRegistry(id uint) (*model.ManagedOCIRegistry, error) {
-	return r.store.GetManagedOCIRegistry(id)
-}
-
-func (r *StoreManagedRegistryRepository) GetManagedOCIRegistryByEndpoint(endpoint string) (*model.ManagedOCIRegistry, error) {
-	return r.store.GetManagedOCIRegistryByEndpoint(endpoint)
-}
-
-func (r *StoreManagedRegistryRepository) CreateManagedOCIRegistry(registry *model.ManagedOCIRegistry, image *model.ImageRegistry, mirror *model.NodeRegistryMirror, projectIDs []uint) error {
-	return r.store.CreateManagedOCIRegistry(registry, image, mirror, projectIDs)
-}
-
-func (r *StoreManagedRegistryRepository) UpdateManagedOCIRegistry(registry *model.ManagedOCIRegistry) error {
-	return r.store.UpdateManagedOCIRegistry(registry)
-}
-
-func (r *StoreManagedRegistryRepository) DeleteManagedOCIRegistry(id uint) error {
-	return r.store.DeleteManagedOCIRegistry(id)
-}
-
-func (r *StoreManagedRegistryRepository) CountManagedOCIRegistryReferences(id uint) (int64, int64, error) {
-	return r.store.CountManagedOCIRegistryReferences(id)
-}
-
-func (r *StoreManagedRegistryRepository) GetImageRegistryByEndpoint(endpoint string) (*model.ImageRegistry, error) {
-	return r.store.GetImageRegistryByEndpoint(endpoint)
-}
-
-func (r *StoreManagedRegistryRepository) GetNodeRegistryMirrorByRegistry(registry string) (*model.NodeRegistryMirror, error) {
-	return r.store.GetNodeRegistryMirrorByRegistry(registry)
-}
-
-func (r *StoreManagedRegistryRepository) GetNodeRegistryMirror(id uint) (*model.NodeRegistryMirror, error) {
-	return r.store.GetNodeRegistryMirror(id)
-}
-
-func (r *StoreManagedRegistryRepository) ListNodeRegistryMirrors() ([]model.NodeRegistryMirror, error) {
-	return r.store.ListNodeRegistryMirrors()
-}
-
-func (r *StoreManagedRegistryRepository) CreateNodeRegistryMirror(mirror *model.NodeRegistryMirror) error {
-	return r.store.CreateNodeRegistryMirror(mirror)
-}
-
-func (r *StoreManagedRegistryRepository) GetRegistryProxy() (*model.RegistryProxy, error) {
-	return r.store.GetRegistryProxy()
-}
-
-func (r *StoreManagedRegistryRepository) GetRegistryProxyByID(id uint) (*model.RegistryProxy, error) {
-	return r.store.GetRegistryProxyByID(id)
-}
-
-func (r *StoreManagedRegistryRepository) ListRegistryProxies() ([]model.RegistryProxy, error) {
-	return r.store.ListRegistryProxies()
-}
-
-func (r *StoreManagedRegistryRepository) SaveRegistryProxy(proxy *model.RegistryProxy) error {
-	return r.store.SaveRegistryProxy(proxy)
-}
-
-func (r *StoreManagedRegistryRepository) UpdateNodeRegistryMirrorVerification(id uint, status, detail string, verifiedAt time.Time) error {
-	return r.store.UpdateNodeRegistryMirrorVerification(id, status, detail, verifiedAt)
-}
-
-func (r *StoreManagedRegistryRepository) ListServers() ([]model.Server, error) {
-	return r.store.ListServers()
-}
-
-func (r *StoreManagedRegistryRepository) UpsertNodeRegistryMirrorStatus(status *model.NodeRegistryMirrorNode) error {
-	return r.store.UpsertNodeRegistryMirrorStatus(status)
-}
-
-func (r *StoreManagedRegistryRepository) UpdateImageRegistry(image *model.ImageRegistry, projectIDs []uint) error {
-	return r.store.UpdateImageRegistry(image, projectIDs)
-}
-
-func (r *StoreManagedRegistryRepository) UpdateNodeRegistryMirror(mirror *model.NodeRegistryMirror) error {
-	return r.store.UpdateNodeRegistryMirror(mirror)
-}
-
-func (r *StoreManagedRegistryRepository) DeleteImageRegistry(id uint) error {
-	return r.store.DeleteImageRegistry(id)
-}
-
-func (r *StoreManagedRegistryRepository) DeleteNodeRegistryMirror(id uint) error {
-	return r.store.DeleteNodeRegistryMirror(id)
+// ChartRepositoryStore persists Helm chart Repository configuration.
+type ChartRepositoryStore interface {
+	CreateChartRepository(*model.ChartRepository) error
+	ListChartRepositories() ([]model.ChartRepository, error)
+	GetChartRepository(uint) (*model.ChartRepository, error)
+	UpdateChartRepository(*model.ChartRepository) error
+	DeleteChartRepository(uint) error
+	GetVerifiedCertManagerChartRepository() (*model.ChartRepository, error)
 }

@@ -13,12 +13,12 @@ import (
 	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 	"github.com/cylism/cylism-manager/internal/auth"
 	"github.com/cylism/cylism-manager/internal/model"
-	"github.com/cylism/cylism-manager/internal/store"
+	"github.com/cylism/cylism-manager/internal/repository"
 	"github.com/gin-gonic/gin"
 )
 
 // AuditMiddleware 审计日志中间件，记录所有变更类 API 调用
-func AuditMiddleware(s *store.Store) gin.HandlerFunc {
+func AuditMiddleware(logs repository.AuditRepository) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// 只记录变更操作
 		if !isMutatingMethod(c.Request.Method) {
@@ -47,7 +47,7 @@ func AuditMiddleware(s *store.Store) gin.HandlerFunc {
 				Detail:       buildDetailForRequest(c, bodyBytes, writer.body.Bytes()),
 				CreatedAt:    start,
 			}
-			_ = s.CreateAuditLog(entry)
+			_ = logs.CreateAuditLog(entry)
 		}
 	}
 }

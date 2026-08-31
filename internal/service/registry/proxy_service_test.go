@@ -4,7 +4,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cylism/cylism-manager/internal/repository"
 	"github.com/cylism/cylism-manager/internal/store"
 )
 
@@ -13,7 +12,7 @@ func TestProxyServicePrepareDeploymentEncryptsCredentialsAndAllocatesResourceNam
 	if err != nil {
 		t.Fatal(err)
 	}
-	service := NewProxyService(repository.NewRegistryProxyRepository(s), []byte("01234567890123456789012345678901"))
+	service := NewProxyService(s, []byte("01234567890123456789012345678901"))
 	proxy, err := service.PrepareDeployment(ProxyInput{
 		Name: "Docker Hub", Registry: "docker.io", NodeName: "node-a", EndpointHost: "100.64.0.8",
 		NodePort: 30500, CacheLimitGi: 2, CleanupIntervalHours: 24,
@@ -36,7 +35,7 @@ func TestProxyServiceRejectsDuplicateNodePort(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	service := NewProxyService(repository.NewRegistryProxyRepository(s), nil)
+	service := NewProxyService(s, nil)
 	first := ProxyInput{Name: "Docker Hub", Registry: "docker.io", NodeName: "node-a", EndpointHost: "10.0.0.8", NodePort: 30500, CacheLimitGi: 2, CleanupIntervalHours: 24}
 	if _, err := service.PrepareDeployment(first, nil, 1); err != nil {
 		t.Fatal(err)

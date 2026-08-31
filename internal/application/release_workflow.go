@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/cylism/cylism-manager/internal/model"
+	"github.com/cylism/cylism-manager/internal/repository"
 	registryservice "github.com/cylism/cylism-manager/internal/service/registry"
-	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/google/go-containerregistry/pkg/name"
 )
 
@@ -32,17 +32,17 @@ type PreparedRelease struct {
 // ReleaseWorkflow owns the application release use cases that used to be
 // assembled in HTTP handlers.
 type ReleaseWorkflow struct {
-	store   *store.Store
-	encKey  []byte
-	applier ResourceApplier
+	repository repository.ReleaseWorkflowRepository
+	encKey     []byte
+	applier    ResourceApplier
 }
 
 type endpointSynchronizer interface {
 	SyncApplicationEndpoints(ctx context.Context, application ApplicationContext, endpoints []model.ApplicationEndpoint, servicePort int32) error
 }
 
-func NewReleaseWorkflow(st *store.Store, encKey []byte, applier ResourceApplier) *ReleaseWorkflow {
-	return &ReleaseWorkflow{store: st, encKey: append([]byte(nil), encKey...), applier: applier}
+func NewReleaseWorkflow(repository repository.ReleaseWorkflowRepository, encKey []byte, applier ResourceApplier) *ReleaseWorkflow {
+	return &ReleaseWorkflow{repository: repository, encKey: append([]byte(nil), encKey...), applier: applier}
 }
 
 func (w *ReleaseWorkflow) CreateFromTemplate(ctx context.Context, app *model.Application, template *model.ApplicationDeploymentTemplate, version string, userID uint) (*PreparedRelease, error) {
@@ -74,11 +74,11 @@ func (w *ReleaseWorkflow) CreateFromTemplate(ctx context.Context, app *model.App
 }
 
 func (w *ReleaseWorkflow) Restart(ctx context.Context, app *model.Application, userID uint) (*PreparedRelease, error) {
-	template, err := w.store.GetDefaultApplicationDeploymentTemplate(app.ID)
+	template, err := w.repository.GetDefaultApplicationDeploymentTemplate(app.ID)
 	if err != nil || !template.Enabled {
 		return nil, fmt.Errorf("应用没有可用的默认上线模板")
 	}
-	active, err := w.store.GetLatestSuccessfulRelease(app.ID)
+	active, err := w.repository.GetLatestSuccessfulRelease(app.ID)
 	if err != nil {
 		return nil, fmt.Errorf("应用尚无可重启的成功发布")
 	}
@@ -100,12 +100,12 @@ func (w *ReleaseWorkflow) Restart(ctx context.Context, app *model.Application, u
 }
 
 func (w *ReleaseWorkflow) Retry(releaseID, userID uint) (*PreparedRelease, error) {
-	service := NewService(w.store, w.applier)
+	service := NewService(w.repository, w.applier)
 	release, spec, err := service.RetryRelease(releaseID, userID)
 	if err != nil {
 		return nil, err
 	}
-	app, err := w.store.GetApplication(release.ApplicationID)
+	app, err := w.repository.GetApplication(release.ApplicationID)
 	if err != nil {
 		return nil, err
 	}
@@ -117,12 +117,12 @@ func (w *ReleaseWorkflow) Retry(releaseID, userID uint) (*PreparedRelease, error
 }
 
 func (w *ReleaseWorkflow) Rollback(releaseID, userID uint) (*PreparedRelease, error) {
-	service := NewService(w.store, w.applier)
+	service := NewService(w.repository, w.applier)
 	release, spec, err := service.RollbackRelease(releaseID, userID)
 	if err != nil {
 		return nil, err
 	}
-	app, err := w.store.GetApplication(release.ApplicationID)
+	app, err := w.repository.GetApplication(release.ApplicationID)
 	if err != nil {
 		return nil, err
 	}
@@ -179,23 +179,23 @@ func (w *ReleaseWorkflow) SyncManagedFiles(app *model.Application, spec ReleaseS
 				ApplicationID: app.ID, ResourceKind: managed.kind, ResourceName: managed.name, Key: key,
 				MountPath: managedMountPath(spec, managed.secret, key), Format: "text", CreatedBy: userID, Enabled: true,
 			}
-			if err := w.store.UpsertApplicationManagedFile(file); err != nil {
+			if err := w.repository.UpsertApplicationManagedFile(file); err != nil {
 				return err
 			}
 		}
 	}
-	return w.store.DisableApplicationManagedFilesNotIn(app.ID, bindings)
+	return w.repository.DisableApplicationManagedFilesNotIn(app.ID, bindings)
 }
 
 func (w *ReleaseWorkflow) create(ctx context.Context, app *model.Application, template *model.ApplicationDeploymentTemplate, userID uint, spec ReleaseSpec) (*PreparedRelease, error) {
-	service := NewService(w.store, w.applier)
+	service := NewService(w.repository, w.applier)
 	release, err := service.CreateRelease(ctx, app.ID, userID, spec)
 	if err != nil {
 		return nil, err
 	}
 	templateID := template.ID
 	release.TemplateID, release.TemplateRevision = &templateID, template.Revision
-	if err := w.store.UpdateRelease(release); err != nil {
+	if err := w.repository.UpdateRelease(release); err != nil {
 		return nil, err
 	}
 	return &PreparedRelease{Release: release, Spec: spec, Service: service}, nil
@@ -222,7 +222,7 @@ func (w *ReleaseWorkflow) PrepareRegistrySpec(app *model.Application, spec *Rele
 		if app == nil {
 			return fmt.Errorf("应用不存在")
 		}
-		registry, err := w.store.GetImageRegistryForProject(spec.RegistryID, app.ProjectID)
+		registry, err := w.repository.GetImageRegistryForProject(spec.RegistryID, app.ProjectID)
 		if err != nil || !registry.Enabled {
 			return fmt.Errorf("镜像仓库不存在、未授权当前项目或已禁用")
 		}
@@ -258,7 +258,7 @@ func (w *ReleaseWorkflow) prepareMirrorSpec(spec *ReleaseSpec) error {
 	if err != nil {
 		return fmt.Errorf("镜像地址无效: %w", err)
 	}
-	mirrors, err := w.store.ListNodeRegistryMirrors()
+	mirrors, err := w.repository.ListNodeRegistryMirrors()
 	if err != nil {
 		return fmt.Errorf("读取节点镜像源失败: %w", err)
 	}
@@ -357,7 +357,7 @@ func (w *ReleaseWorkflow) syncApplicationEndpoints(ctx context.Context, app *mod
 	if !ok {
 		return fmt.Errorf("Kubernetes 入口同步器未初始化")
 	}
-	endpoints, err := w.store.ListApplicationEndpoints(app.ID)
+	endpoints, err := w.repository.ListApplicationEndpoints(app.ID)
 	if err != nil {
 		return fmt.Errorf("读取应用入口: %w", err)
 	}
@@ -376,7 +376,7 @@ func (w *ReleaseWorkflow) syncApplicationEndpoints(ctx context.Context, app *mod
 	for index := range endpoints {
 		if endpoints[index].Protocol == ServiceProtocolTCP && !servicePortExists(service, endpoints[index].ServicePort, ServiceProtocolTCP) {
 			endpoints[index].ServicePort = primaryTCPPort.Port
-			if err := w.store.UpdateApplicationEndpoint(&endpoints[index]); err != nil {
+			if err := w.repository.UpdateApplicationEndpoint(&endpoints[index]); err != nil {
 				return fmt.Errorf("更新应用入口端口: %w", err)
 			}
 		}
@@ -387,7 +387,7 @@ func (w *ReleaseWorkflow) syncApplicationEndpoints(ctx context.Context, app *mod
 			}
 			endpoints[index].ServicePort = resolved.Port
 			endpoints[index].Protocol = resolved.Protocol
-			if err := w.store.UpdateApplicationEndpoint(&endpoints[index]); err != nil {
+			if err := w.repository.UpdateApplicationEndpoint(&endpoints[index]); err != nil {
 				return fmt.Errorf("更新应用入口协议: %w", err)
 			}
 		}

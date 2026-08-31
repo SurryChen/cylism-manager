@@ -10,18 +10,18 @@ import (
 
 	"github.com/cylism/cylism-manager/internal/crypto"
 	"github.com/cylism/cylism-manager/internal/model"
-	"github.com/cylism/cylism-manager/internal/store"
+	"github.com/cylism/cylism-manager/internal/repository"
 	"github.com/gin-gonic/gin"
 )
 
 // TailscaleHandler Tailscale 管理 handler
 type TailscaleHandler struct {
-	store  *store.Store
-	encKey []byte
+	configs repository.SystemConfigRepository
+	encKey  []byte
 }
 
-func NewTailscaleHandler(s *store.Store, encKey []byte) *TailscaleHandler {
-	return &TailscaleHandler{store: s, encKey: encKey}
+func NewTailscaleHandler(configs repository.SystemConfigRepository, encKey []byte) *TailscaleHandler {
+	return &TailscaleHandler{configs: configs, encKey: encKey}
 }
 
 // execWithTimeout runs a command with a timeout.
@@ -64,7 +64,11 @@ func (h *TailscaleHandler) Init(c *gin.Context) {
 		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, "加密 Auth Key 失败")
 		return
 	}
-	if err := h.store.SetSystemConfig("tailscale_auth_key", encVal); err != nil {
+	if h.configs == nil {
+		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, "存储 Auth Key 失败")
+		return
+	}
+	if err := h.configs.SetSystemConfig("tailscale_auth_key", encVal); err != nil {
 		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, "存储 Auth Key 失败")
 		return
 	}
@@ -103,7 +107,7 @@ func (h *TailscaleHandler) Init(c *gin.Context) {
 	if err == nil {
 		k3sToken = strings.TrimSpace(string(tokenBytes))
 		if tk, encErr := crypto.Encrypt(h.encKey, k3sToken); encErr == nil {
-			h.store.SetSystemConfig("k3s_join_token", tk)
+			_ = h.configs.SetSystemConfig("k3s_join_token", tk)
 		}
 	}
 
@@ -136,7 +140,11 @@ func (h *TailscaleHandler) Status(c *gin.Context) {
 
 // InstallScript 返回脱敏的一键安装命令 GET /api/tailscale/install-script
 func (h *TailscaleHandler) InstallScript(c *gin.Context) {
-	encVal, err := h.store.GetSystemConfig("tailscale_auth_key")
+	if h.configs == nil {
+		model.Error(c, http.StatusNotFound, model.CodeNotFound, "Auth Key 未配置")
+		return
+	}
+	encVal, err := h.configs.GetSystemConfig("tailscale_auth_key")
 	if err != nil {
 		model.Error(c, http.StatusNotFound, model.CodeNotFound, "Auth Key 未配置")
 		return

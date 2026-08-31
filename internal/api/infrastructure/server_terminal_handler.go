@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/cylism/cylism-manager/internal/crypto"
-	"github.com/cylism/cylism-manager/internal/store"
+	"github.com/cylism/cylism-manager/internal/repository"
 	"github.com/gin-gonic/gin"
 	"golang.org/x/crypto/ssh"
 )
@@ -16,11 +16,11 @@ import (
 // ServerTerminalHandler owns the SSH terminal WebSocket transport for a
 // registered server. Lifecycle and authorization remain outside this adapter.
 type ServerTerminalHandler struct {
-	store  *store.Store
+	store  repository.ServerRepository
 	encKey []byte
 }
 
-func NewServerTerminalHandler(st *store.Store, encKey []byte) *ServerTerminalHandler {
+func NewServerTerminalHandler(st repository.ServerRepository, encKey []byte) *ServerTerminalHandler {
 	return &ServerTerminalHandler{store: st, encKey: encKey}
 }
 

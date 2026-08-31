@@ -5,17 +5,17 @@ import (
 	"strconv"
 
 	"github.com/cylism/cylism-manager/internal/model"
-	"github.com/cylism/cylism-manager/internal/store"
+	"github.com/cylism/cylism-manager/internal/repository"
 	"github.com/gin-gonic/gin"
 )
 
 // OperationHandler 操作日志 HTTP handler
 type OperationHandler struct {
-	store *store.Store
+	store repository.OperationLogRepository
 }
 
 // NewOperationHandler 创建操作日志 handler
-func NewOperationHandler(s *store.Store) *OperationHandler {
+func NewOperationHandler(s repository.OperationLogRepository) *OperationHandler {
 	return &OperationHandler{store: s}
 }
 

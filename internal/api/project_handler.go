@@ -15,7 +15,7 @@ type projectRequest struct {
 }
 
 func (h *ApplicationHandler) ListProjects(c *gin.Context) {
-	projects, err := h.store.ListProjects()
+	projects, err := h.applications.ListProjects()
 	if err != nil {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
 		return
@@ -34,7 +34,7 @@ func (h *ApplicationHandler) CreateProject(c *gin.Context) {
 		return
 	}
 	project := &model.Project{Name: req.Name, Description: req.Description, OwnerID: apiShared.UserID(c)}
-	if err := h.store.CreateProject(project); err != nil {
+	if err := h.applications.CreateProject(project); err != nil {
 		model.Error(c, http.StatusConflict, model.CodeConflict, "项目名称已存在")
 		return
 	}
@@ -58,7 +58,7 @@ func (h *ApplicationHandler) UpdateProject(c *gin.Context) {
 		return
 	}
 	if project.Name != req.Name {
-		applicationCount, err := h.store.CountProjectApplications(projectID)
+		applicationCount, err := h.applications.CountProjectApplications(projectID)
 		if err != nil {
 			model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
 			return
@@ -74,7 +74,7 @@ func (h *ApplicationHandler) UpdateProject(c *gin.Context) {
 		if *req.DefaultImageRegistryID == 0 {
 			project.DefaultImageRegistryID = nil
 		} else {
-			registry, err := h.store.GetImageRegistryForProject(*req.DefaultImageRegistryID, projectID)
+			registry, err := h.resources.GetImageRegistryForProject(*req.DefaultImageRegistryID, projectID)
 			if err != nil || !registry.Enabled {
 				model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "默认镜像仓库未授权当前项目或已停用")
 				return
@@ -82,7 +82,7 @@ func (h *ApplicationHandler) UpdateProject(c *gin.Context) {
 			project.DefaultImageRegistryID = &registry.ID
 		}
 	}
-	if err := h.store.UpdateProject(project); err != nil {
+	if err := h.applications.UpdateProject(project); err != nil {
 		model.Error(c, http.StatusConflict, model.CodeConflict, "项目名称已存在")
 		return
 	}
@@ -99,12 +99,12 @@ func (h *ApplicationHandler) DeleteProject(c *gin.Context) {
 		model.Error(c, http.StatusNotFound, model.CodeNotFound, "项目不存在")
 		return
 	}
-	environmentCount, err := h.store.CountProjectEnvironments(projectID)
+	environmentCount, err := h.applications.CountProjectEnvironments(projectID)
 	if err != nil {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
 		return
 	}
-	applicationCount, err := h.store.CountProjectApplications(projectID)
+	applicationCount, err := h.applications.CountProjectApplications(projectID)
 	if err != nil {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
 		return
@@ -113,7 +113,7 @@ func (h *ApplicationHandler) DeleteProject(c *gin.Context) {
 		model.Error(c, http.StatusConflict, model.CodeConflict, "项目仍关联环境或应用，无法删除")
 		return
 	}
-	if err := h.store.DeleteProject(projectID); err != nil {
+	if err := h.applications.DeleteProject(projectID); err != nil {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
 		return
 	}

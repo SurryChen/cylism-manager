@@ -9,8 +9,8 @@ import (
 
 	"github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
+	"github.com/cylism/cylism-manager/internal/repository"
 	networkservice "github.com/cylism/cylism-manager/internal/service/network"
-	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -18,7 +18,6 @@ import (
 )
 
 type DomainHandler struct {
-	store   *store.Store
 	network *networkservice.Service
 	k8s     *k8s.Client
 }
@@ -49,16 +48,16 @@ type ManagedDomainInfo struct {
 	ApplicationCount int64         `json:"application_count"`
 }
 
-func NewDomainHandler(s *store.Store, client *k8s.Client) *DomainHandler {
-	return &DomainHandler{store: s, k8s: client, network: networkservice.NewService(s).WithCertificateAdapter(client).WithDNSAdapter(client).WithIngressAdapter(client)}
+func NewDomainHandler(domains repository.NetworkRepository, client *k8s.Client) *DomainHandler {
+	return &DomainHandler{k8s: client, network: networkservice.NewService(domains, domains).WithCertificateAdapter(client).WithDNSAdapter(client).WithIngressAdapter(client)}
 }
 
-func NewDomainHandlerWithService(s *store.Store, client *k8s.Client, service *networkservice.Service) *DomainHandler {
+func NewDomainHandlerWithService(domains repository.NetworkRepository, client *k8s.Client, service *networkservice.Service) *DomainHandler {
 	if service == nil {
-		service = networkservice.NewService(s)
+		service = networkservice.NewService(domains, domains)
 	}
 	service.WithCertificateAdapter(client).WithDNSAdapter(client).WithIngressAdapter(client)
-	return &DomainHandler{store: s, k8s: client, network: service}
+	return &DomainHandler{k8s: client, network: service}
 }
 
 func optionalQueryID(c *gin.Context, key string) (uint, error) {
@@ -422,23 +421,38 @@ func (h *DomainHandler) domainEnvironment(environmentID uint) (*model.Environmen
 }
 
 func (h *DomainHandler) DomainInfo(domain *model.ManagedDomain) ManagedDomainInfo {
-	if h.k8s == nil {
-		view := ManagedDomainInfo{ManagedDomain: *domain}
-		if count, err := h.network.CountApplicationEndpointsByDomain(domain.ID); err == nil {
+	return ManagedDomainInfoFor(domain, h.k8s, h.network)
+}
+
+// ManagedDomainInfoFor builds the read-only domain view from the two
+// capabilities it actually needs: endpoint-reference counting and optional
+// certificate lookup. It lets workspace views reuse the DTO without creating
+// a full domain lifecycle service.
+func ManagedDomainInfoFor(domain *model.ManagedDomain, client *k8s.Client, references interface {
+	CountApplicationEndpointsByDomain(uint) (int64, error)
+}) ManagedDomainInfo {
+	if domain == nil {
+		return ManagedDomainInfo{}
+	}
+	view := ManagedDomainInfo{ManagedDomain: *domain}
+	if references != nil {
+		if count, err := references.CountApplicationEndpointsByDomain(domain.ID); err == nil {
 			view.ApplicationCount = count
 		}
-		if domain.Namespace == "" {
+	}
+	if client == nil || strings.TrimSpace(domain.Namespace) == "" || strings.TrimSpace(domain.CertificateName) == "" {
+		if strings.TrimSpace(domain.Namespace) == "" {
 			view.CertificateError = "域名尚未绑定命名空间，请编辑后申请证书"
 		}
 		return view
 	}
-	view := h.network.BuildManagedDomainView(domain)
-	return ManagedDomainInfo{
-		ManagedDomain:    view.Domain,
-		Certificate:      view.Certificate,
-		CertificateError: normalizeCertificateViewError(view.CertificateError),
-		ApplicationCount: view.ApplicationCount,
+	certificate, err := client.GetCertificate(domain.Namespace, domain.CertificateName)
+	if err != nil {
+		view.CertificateError = normalizeCertificateViewError(err.Error())
+		return view
 	}
+	view.Certificate = certificate
+	return view
 }
 
 func normalizeCertificateViewError(message string) string {

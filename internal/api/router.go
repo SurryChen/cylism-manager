@@ -13,6 +13,7 @@ import (
 	runtimepkg "github.com/cylism/cylism-manager/internal/runtime"
 	"github.com/cylism/cylism-manager/internal/service/cluster"
 	networkservice "github.com/cylism/cylism-manager/internal/service/network"
+	storageservice "github.com/cylism/cylism-manager/internal/service/storage"
 	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/gin-gonic/gin"
 )
@@ -83,7 +84,7 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 	runtimeHandler := NewRuntimeHandler(s, encKey, runtimepkg.NewKubernetesManager(K8s, runtimeRegistry), runtimeRegistry)
 	agentOperationHandler := agentapi.NewAgentOperationHandler(s, K8s).WithRegistryPullExecutor(agentapi.DefaultAgentRegistryPullExecutor(encKey)).WithMaintenanceCleanupExecutor(agentapi.DefaultAgentMaintenanceCleanupExecutor(encKey))
 	systemComponentHandler := systemapi.NewSystemComponentHandler(s)
-	networkService := networkservice.NewService(s).WithIngressAdapter(K8s).WithStandardIngressAdapter(K8s).WithDNSAdapter(K8s).WithCertificateAdapter(K8s)
+	networkService := networkservice.NewService(s, s).WithIngressAdapter(K8s).WithStandardIngressAdapter(K8s).WithDNSAdapter(K8s).WithCertificateAdapter(K8s)
 	clusterDNSHandler := infrastructureapi.NewClusterDNSHandler(s, K8s)
 	networkHandler := infrastructureapi.NewNetworkHandler(networkService, infrastructureapi.NetworkHandler{
 		DNSStatus: clusterDNSHandler.Status, DNSApply: clusterDNSHandler.Apply,
@@ -139,7 +140,7 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 	apiGroup.GET("/dashboard", dashHandler.Get)
 
 	clusterService := cluster.NewService(s, clusterNodeAdapter()).WithServerInspector(infrastructureapi.ServerInspector{EncKey: encKey}).WithServerImporter(infrastructureapi.ServerInspector{EncKey: encKey}).WithMetricsInspector(infrastructureapi.ServerMetricsInspector{EncKey: encKey})
-	serverHandler := infrastructureapi.NewServerHandler(s, encKey, clusterService)
+	serverHandler := infrastructureapi.NewServerHandler(encKey, clusterService)
 	serverNetworkDiagnostics := infrastructureapi.NewServerNetworkDiagnosticsHandler(s, encKey)
 	serverTerminal := infrastructureapi.NewServerTerminalHandler(s, encKey)
 	servers := apiGroup.Group("/servers")
@@ -437,8 +438,9 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 	}
 
 	// K8s 资源管理
-	k8sHandler := infrastructureapi.NewK8sHandlerWithEncryption(s, encKey, K8s)
-	storageHandler := infrastructureapi.NewStorageHandlerWithClient(k8sHandler.StorageService(), s, encKey, K8s)
+	storageService := storageservice.NewService(K8s, s, s)
+	k8sHandler := infrastructureapi.NewK8sHandlerWithEncryption(s, storageService, encKey, K8s, s)
+	storageHandler := infrastructureapi.NewStorageHandlerWithClient(storageService, s, encKey, K8s)
 	storageHandler.ConfigureStorageExecutor()
 	k8sGroup := apiGroup.Group("/k8s")
 	{

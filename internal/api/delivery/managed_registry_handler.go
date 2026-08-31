@@ -13,7 +13,6 @@ import (
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/repository"
 	registryservice "github.com/cylism/cylism-manager/internal/service/registry"
-	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
@@ -27,9 +26,8 @@ type ManagedOCIRegistryHandler struct {
 	applyNode  registryservice.NodeMirrorApplier
 }
 
-func NewManagedOCIRegistryHandler(s *store.Store, encKey []byte, client *k8sclient.Client, applyNode registryservice.NodeMirrorApplier) *ManagedOCIRegistryHandler {
-	registryRepository := repository.NewManagedRegistryRepository(s)
-	return &ManagedOCIRegistryHandler{service: registryservice.NewManagedRegistryService(registryRepository, encKey), reconciler: k8sclient.NewManagedRegistryReconciler(client), store: registryRepository, applyNode: applyNode}
+func NewManagedOCIRegistryHandler(repo repository.ManagedRegistryRepository, encKey []byte, client *k8sclient.Client, applyNode registryservice.NodeMirrorApplier) *ManagedOCIRegistryHandler {
+	return &ManagedOCIRegistryHandler{service: registryservice.NewManagedRegistryService(repo, encKey), reconciler: k8sclient.NewManagedRegistryReconciler(client), store: repo, applyNode: applyNode}
 }
 
 func (h *ManagedOCIRegistryHandler) List(c *gin.Context) {

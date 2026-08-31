@@ -26,6 +26,7 @@ import (
 	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 	"github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
+	"github.com/cylism/cylism-manager/internal/repository"
 	"github.com/gin-gonic/gin"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -48,15 +49,8 @@ type AlertingHandler struct {
 	platformURL     string
 	resolvedMu      sync.Mutex
 	resolved        []alertmanagerAlert
-	automationStore interface {
-		UpsertAlertEvent(*model.AlertEvent) (*model.AlertEvent, error)
-		GetAlertAutomationPolicy() (*model.AlertAutomationPolicy, error)
-		SaveAlertAutomationPolicy(*model.AlertAutomationPolicy) error
-		ListAlertEvents(int) ([]model.AlertEvent, error)
-		UpdateAlertEvent(*model.AlertEvent) error
-		GetRuntime(uint) (*model.RuntimeInstance, error)
-	}
-	dispatcher alertRuntimeDispatcher
+	automationStore repository.AlertAutomationRepository
+	dispatcher      alertRuntimeDispatcher
 }
 
 type alertmanagerNotification struct {
@@ -141,14 +135,7 @@ func NewAlertingHandler(platformURLs ...string) *AlertingHandler {
 	return &AlertingHandler{alertmanager: alertmanagerRequest, notify: sendFeishuNotification, emailNotify: sendEmailNotification, platformURL: normalizeAlertingPlatformURL(platformURL)}
 }
 
-func (h *AlertingHandler) WithAutomation(store interface {
-	UpsertAlertEvent(*model.AlertEvent) (*model.AlertEvent, error)
-	GetAlertAutomationPolicy() (*model.AlertAutomationPolicy, error)
-	SaveAlertAutomationPolicy(*model.AlertAutomationPolicy) error
-	ListAlertEvents(int) ([]model.AlertEvent, error)
-	UpdateAlertEvent(*model.AlertEvent) error
-	GetRuntime(uint) (*model.RuntimeInstance, error)
-}, dispatcher alertRuntimeDispatcher) *AlertingHandler {
+func (h *AlertingHandler) WithAutomation(store repository.AlertAutomationRepository, dispatcher alertRuntimeDispatcher) *AlertingHandler {
 	h.automationStore = store
 	h.dispatcher = dispatcher
 	return h

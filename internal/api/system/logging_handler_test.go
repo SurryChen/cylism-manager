@@ -35,7 +35,7 @@ func TestLoggingQueryBuildsBoundedStructuredSelector(t *testing.T) {
 	k8sClient = loggingReadyK8s()
 	defer func() { k8sClient = original }()
 
-	handler := NewLoggingHandler()
+	handler := NewLoggingHandler(nil)
 	handler.now = func() time.Time { return time.Unix(1_700_000_000, 0).UTC() }
 	handler.query = func(_ context.Context, path string, values url.Values) (*lokiQueryResponse, error) {
 		if path != "/loki/api/v1/query_range" {
@@ -64,7 +64,7 @@ func TestLoggingQueryAllowsPartialAlloyCoverageWhenLokiIsReady(t *testing.T) {
 	)}
 	defer func() { k8sClient = original }()
 
-	handler := NewLoggingHandler()
+	handler := NewLoggingHandler(nil)
 	handler.query = func(_ context.Context, _ string, _ url.Values) (*lokiQueryResponse, error) {
 		return &lokiQueryResponse{Status: "success", Data: lokiQueryData{ResultType: "streams"}}, nil
 	}
@@ -80,7 +80,7 @@ func TestLoggingQuerySupportsExactTimeAndBooleanKeywordBranches(t *testing.T) {
 	k8sClient = loggingReadyK8s()
 	defer func() { k8sClient = original }()
 
-	handler := NewLoggingHandler()
+	handler := NewLoggingHandler(nil)
 	queries := make([]string, 0, 2)
 	handler.query = func(_ context.Context, _ string, values url.Values) (*lokiQueryResponse, error) {
 		queries = append(queries, values.Get("query"))
@@ -131,7 +131,7 @@ func TestLoggingQueryRejectsRawLogQLAndOversizedRange(t *testing.T) {
 	k8sClient = loggingReadyK8s()
 	defer func() { k8sClient = original }()
 
-	response := serve(setupLoggingRouter(NewLoggingHandler()), newJSONRequest(http.MethodPost, "/api/monitoring/logs/query", gin.H{"range": "7d", "logql": "{job=~\".*\"}"}))
+	response := serve(setupLoggingRouter(NewLoggingHandler(nil)), newJSONRequest(http.MethodPost, "/api/monitoring/logs/query", gin.H{"range": "7d", "logql": "{job=~\".*\"}"}))
 	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "24 小时") {
 		t.Fatalf("expected bounded range error, got %d %s", response.Code, response.Body.String())
 	}
@@ -155,7 +155,7 @@ func TestLoggingInstallAndFiltersExposeNoLokiEndpoint(t *testing.T) {
 	)}
 	defer func() { k8sClient = original }()
 
-	handler := NewLoggingHandler()
+	handler := NewLoggingHandler(nil)
 	response := serve(setupLoggingRouter(handler), newJSONRequest(http.MethodPost, "/api/monitoring/logs/install", gin.H{"node_name": "node-a", "storage": "10Gi", "retention_days": 14}))
 	if response.Code != http.StatusOK || strings.Contains(response.Body.String(), "loki.monitoring.svc") {
 		t.Fatalf("unexpected install response: %d %s", response.Code, response.Body.String())

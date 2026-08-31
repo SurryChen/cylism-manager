@@ -10,6 +10,7 @@ import (
 	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 	"github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
+	"github.com/cylism/cylism-manager/internal/repository"
 	"github.com/gin-gonic/gin"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -17,39 +18,13 @@ import (
 // AgentOperationHandler is the browser-only approval boundary. Runtime tokens
 // cannot approve operations; only this JWT-protected handler may execute them.
 type AgentOperationHandler struct {
-	store interface {
-		GetRuntime(id uint) (*model.RuntimeInstance, error)
-		ListAgentCapabilityGrants(runtimeID uint) ([]model.AgentCapabilityGrant, error)
-		ReplaceAgentCapabilityGrants(runtimeID uint, grants []model.AgentCapabilityGrant) error
-		GetAgentOperation(operationID string) (*model.AgentOperation, error)
-		ListAgentOperations(runtimeID uint, limit int, status, sessionID string) ([]model.AgentOperation, error)
-		UpdateAgentOperationStatus(operationID, fromStatus, toStatus, errorSummary string, approvedBy *uint, completedAt *time.Time) (bool, error)
-		CreateAuditLog(entry *model.AuditLog) error
-		ListNodeRegistryMirrors() ([]model.NodeRegistryMirror, error)
-		ListRegistryProxies() ([]model.RegistryProxy, error)
-		ListServers() ([]model.Server, error)
-		GetAlertEvent(uint) (*model.AlertEvent, error)
-		UpdateAlertEvent(*model.AlertEvent) error
-	}
+	store                      repository.AgentOperationManagementRepository
 	client                     *k8s.Client
 	registryPullExecutor       AgentRegistryPullExecutor
 	maintenanceCleanupExecutor AgentMaintenanceCleanupExecutor
 }
 
-func NewAgentOperationHandler(store interface {
-	GetRuntime(id uint) (*model.RuntimeInstance, error)
-	ListAgentCapabilityGrants(runtimeID uint) ([]model.AgentCapabilityGrant, error)
-	ReplaceAgentCapabilityGrants(runtimeID uint, grants []model.AgentCapabilityGrant) error
-	GetAgentOperation(operationID string) (*model.AgentOperation, error)
-	ListAgentOperations(runtimeID uint, limit int, status, sessionID string) ([]model.AgentOperation, error)
-	UpdateAgentOperationStatus(operationID, fromStatus, toStatus, errorSummary string, approvedBy *uint, completedAt *time.Time) (bool, error)
-	CreateAuditLog(entry *model.AuditLog) error
-	ListNodeRegistryMirrors() ([]model.NodeRegistryMirror, error)
-	ListRegistryProxies() ([]model.RegistryProxy, error)
-	ListServers() ([]model.Server, error)
-	GetAlertEvent(uint) (*model.AlertEvent, error)
-	UpdateAlertEvent(*model.AlertEvent) error
-}, client *k8s.Client) *AgentOperationHandler {
+func NewAgentOperationHandler(store repository.AgentOperationManagementRepository, client *k8s.Client) *AgentOperationHandler {
 	return &AgentOperationHandler{store: store, client: client}
 }
 

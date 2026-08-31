@@ -12,6 +12,7 @@ import (
 	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 	k8sclient "github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
+	"github.com/cylism/cylism-manager/internal/repository"
 	"github.com/gin-gonic/gin"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -25,18 +26,12 @@ const (
 
 var coreDNSForwardPattern = regexp.MustCompile(`(?m)^(\s*forward\s+\.\s+)([^\n{]+)(\{[^\n]*\})?\s*$`)
 
-type clusterDNSStore interface {
-	GetActiveClusterDNSPolicy() (*model.ClusterDNSPolicy, error)
-	ListClusterDNSPolicies(limit int) ([]model.ClusterDNSPolicy, error)
-	CreateClusterDNSPolicy(policy *model.ClusterDNSPolicy) error
-}
-
 type ClusterDNSHandler struct {
-	store clusterDNSStore
+	store repository.ClusterDNSRepository
 	k8s   *k8sclient.Client
 }
 
-func NewClusterDNSHandler(s clusterDNSStore, client *k8sclient.Client) *ClusterDNSHandler {
+func NewClusterDNSHandler(s repository.ClusterDNSRepository, client *k8sclient.Client) *ClusterDNSHandler {
 	return &ClusterDNSHandler{store: s, k8s: client}
 }
 
