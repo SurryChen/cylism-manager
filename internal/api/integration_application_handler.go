@@ -106,7 +106,7 @@ func (h *ApplicationHandler) createIntegrationHandoff(c *gin.Context) {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "应用 ID 无效")
 		return
 	}
-	app, err := h.store.GetApplication(applicationID)
+	app, err := h.queries.GetApplication(applicationID)
 	if err != nil {
 		model.Error(c, http.StatusNotFound, model.CodeNotFound, "应用不存在")
 		return
@@ -272,7 +272,7 @@ func (h *ApplicationHandler) CreateDelegation(c *gin.Context) {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "应用 ID 无效")
 		return
 	}
-	app, err := h.store.GetApplication(applicationID)
+	app, err := h.queries.GetApplication(applicationID)
 	if err != nil {
 		model.Error(c, http.StatusNotFound, model.CodeNotFound, "应用不存在")
 		return
@@ -295,7 +295,7 @@ func (h *ApplicationHandler) CreateDelegation(c *gin.Context) {
 		req.EnvironmentIDs = []uint{app.EnvironmentID}
 	}
 	for _, environmentID := range req.EnvironmentIDs {
-		environment, environmentErr := h.store.GetEnvironment(app.ProjectID, environmentID)
+		environment, environmentErr := h.queries.GetEnvironment(app.ProjectID, environmentID)
 		if environmentErr != nil || environment.ProjectID != app.ProjectID {
 			model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "委托环境不属于应用项目")
 			return
@@ -336,7 +336,7 @@ func (h *ApplicationHandler) IntegrationDiscoverApplications(c *gin.Context) {
 		integrationForbidden(c)
 		return
 	}
-	applications, err := h.store.ListApplications(claims.ProjectID, environmentID)
+	applications, err := h.queries.ListApplications(claims.ProjectID, environmentID)
 	if err != nil {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
 		return
@@ -347,12 +347,12 @@ func (h *ApplicationHandler) IntegrationDiscoverApplications(c *gin.Context) {
 			filtered = append(filtered, app)
 		}
 	}
-	releases, err := h.store.ListReleasesByApplications(applicationIDs(filtered))
+	releases, err := h.queries.ListReleasesByApplications(applicationIDs(filtered))
 	if err != nil {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
 		return
 	}
-	runtimes := h.applicationRuntimeInfos(c.Request.Context(), filtered, releases)
+	runtimes := h.queries.ApplicationRuntimeInfos(c.Request.Context(), K8s, filtered, releases)
 	infos := make([]applicationDiscoveryInfo, 0, len(filtered))
 	for _, app := range filtered {
 		infos = append(infos, applicationDiscoveryInfoFromModel(app, runtimes[app.ID]))
@@ -365,12 +365,12 @@ func (h *ApplicationHandler) IntegrationGetApplicationRuntime(c *gin.Context) {
 	if !ok {
 		return
 	}
-	releases, err := h.store.ListReleases(app.ID)
+	releases, err := h.queries.ListReleases(app.ID)
 	if err != nil {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
 		return
 	}
-	model.Success(c, h.applicationRuntimeInfos(c.Request.Context(), []model.Application{*app}, map[uint][]model.Release{app.ID: releases})[app.ID])
+	model.Success(c, h.queries.ApplicationRuntimeInfos(c.Request.Context(), K8s, []model.Application{*app}, map[uint][]model.Release{app.ID: releases})[app.ID])
 }
 
 func (h *ApplicationHandler) IntegrationListManagedConfigMaps(c *gin.Context) {
@@ -554,7 +554,7 @@ func (h *ApplicationHandler) applicationForParam(c *gin.Context) (*model.Applica
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "应用 ID 无效")
 		return nil, false
 	}
-	app, err := h.store.GetApplication(id)
+	app, err := h.queries.GetApplication(id)
 	if err != nil {
 		model.Error(c, http.StatusNotFound, model.CodeNotFound, "应用不存在")
 		return nil, false
