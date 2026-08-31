@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/cylism/cylism-manager/internal/model"
-	"github.com/cylism/cylism-manager/internal/repository"
 	"github.com/cylism/cylism-manager/internal/store"
 )
 
@@ -21,7 +20,7 @@ func newMirrorServiceTest(t *testing.T) (*MirrorService, *store.Store) {
 	if db, err := s.DB().DB(); err == nil {
 		db.SetMaxOpenConns(1)
 	}
-	return NewMirrorService(repository.NewNodeRegistryMirrorRepository(s), []byte("01234567890123456789012345678901")), s
+	return NewMirrorService(s, []byte("01234567890123456789012345678901")), s
 }
 
 func TestMirrorServiceCreateEncryptsCredentialAndRejectsWrongVerificationRegistry(t *testing.T) {

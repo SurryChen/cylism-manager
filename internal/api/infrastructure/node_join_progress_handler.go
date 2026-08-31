@@ -8,7 +8,7 @@ import (
 
 	"github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
-	"github.com/cylism/cylism-manager/internal/store"
+	"github.com/cylism/cylism-manager/internal/repository"
 	"github.com/gin-gonic/gin"
 )
 
@@ -16,14 +16,14 @@ import (
 // It is kept as a transport adapter; cluster lifecycle decisions stay in the
 // cluster service and the SSH operations use the shared infrastructure client.
 type NodeJoinProgressHandler struct {
-	store  *store.Store
+	store  repository.NodeJoinRepository
 	encKey []byte
 	k8s    *k8s.Client
 }
 
 const nodeJoinSSHTimeout = 15 * time.Second
 
-func NewNodeJoinProgressHandler(st *store.Store, encKey []byte, client *k8s.Client) *NodeJoinProgressHandler {
+func NewNodeJoinProgressHandler(st repository.NodeJoinRepository, encKey []byte, client *k8s.Client) *NodeJoinProgressHandler {
 	return &NodeJoinProgressHandler{store: st, encKey: encKey, k8s: client}
 }
 

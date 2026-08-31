@@ -10,7 +10,6 @@ import (
 	"github.com/cylism/cylism-manager/internal/crypto"
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/service/cluster"
-	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
@@ -18,13 +17,12 @@ import (
 // ServerHandler maps server lifecycle HTTP requests onto the reusable Cluster
 // Service. It deliberately contains no Kubernetes or SSH orchestration.
 type ServerHandler struct {
-	store   *store.Store
 	encKey  []byte
 	cluster *cluster.Service
 }
 
-func NewServerHandler(st *store.Store, encKey []byte, service *cluster.Service) *ServerHandler {
-	return &ServerHandler{store: st, encKey: encKey, cluster: service}
+func NewServerHandler(encKey []byte, service *cluster.Service) *ServerHandler {
+	return &ServerHandler{encKey: encKey, cluster: service}
 }
 
 type createServerRequest struct {

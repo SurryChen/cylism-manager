@@ -7,20 +7,20 @@ import (
 	"time"
 
 	"github.com/cylism/cylism-manager/internal/auth"
-	"github.com/cylism/cylism-manager/internal/store"
+	"github.com/cylism/cylism-manager/internal/repository"
 	"github.com/gin-gonic/gin"
 )
 
 type AuthHandler struct {
-	store           *store.Store
+	users           repository.UserRepository
 	jwtSecret       []byte
 	accessTokenTTL  time.Duration
 	refreshTokenTTL time.Duration
 }
 
-func NewAuthHandler(s *store.Store, jwtSecret []byte, accessTTL, refreshTTL time.Duration) *AuthHandler {
+func NewAuthHandler(users repository.UserRepository, jwtSecret []byte, accessTTL, refreshTTL time.Duration) *AuthHandler {
 	return &AuthHandler{
-		store:           s,
+		users:           users,
 		jwtSecret:       jwtSecret,
 		accessTokenTTL:  accessTTL,
 		refreshTokenTTL: refreshTTL,
@@ -40,7 +40,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 
-	user, err := h.store.GetUserByUsername(req.Username)
+	user, err := h.users.GetUserByUsername(req.Username)
 	if err != nil || !auth.CheckPassword(req.Password, user.PasswordHash) {
 		model.Error(c, http.StatusUnauthorized, model.CodeUnauthorized, "用户名或密码错误")
 		return

@@ -675,7 +675,7 @@ func TestEnvironmentNamespaceIsGloballyUnique(t *testing.T) {
 	}
 	second := &model.Environment{ProjectID: 2, Name: "production", Namespace: "commerce"}
 	err := st.CreateEnvironment(second)
-	var conflict *NamespaceConflictError
+	var conflict *model.NamespaceConflictError
 	if !errors.As(err, &conflict) {
 		t.Fatalf("expected NamespaceConflictError, got %v", err)
 	}

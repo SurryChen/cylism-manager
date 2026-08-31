@@ -2,20 +2,19 @@ package system
 
 import (
 	"net/http"
-
-	"github.com/cylism/cylism-manager/internal/model"
 	"strconv"
 
-	"github.com/cylism/cylism-manager/internal/store"
+	"github.com/cylism/cylism-manager/internal/model"
+	"github.com/cylism/cylism-manager/internal/repository"
 	"github.com/gin-gonic/gin"
 )
 
 type AuditHandler struct {
-	store *store.Store
+	logs repository.AuditRepository
 }
 
-func NewAuditHandler(s *store.Store) *AuditHandler {
-	return &AuditHandler{store: s}
+func NewAuditHandler(logs repository.AuditRepository) *AuditHandler {
+	return &AuditHandler{logs: logs}
 }
 
 // List 查询审计日志 GET /api/audit-logs
@@ -25,7 +24,7 @@ func (h *AuditHandler) List(c *gin.Context) {
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
 
-	logs, total, err := h.store.ListAuditLogs(resourceType, action, limit, offset)
+	logs, total, err := h.logs.ListAuditLogs(resourceType, action, limit, offset)
 	if err != nil {
 		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, err.Error())
 		return

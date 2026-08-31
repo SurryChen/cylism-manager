@@ -136,7 +136,7 @@ func TestServiceOwnsPersistentVolumeTaskRecords(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := NewService(nil, records)
+	s := NewService(nil, nil, records)
 	migration := &model.PersistentVolumeMigration{EnvironmentID: 1, SourcePVCName: "data", Status: model.PVCMigrationStatusPending}
 	if err := s.CreateMigration(migration); err != nil {
 		t.Fatal(err)

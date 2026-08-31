@@ -12,14 +12,14 @@ import (
 
 	k8sclient "github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
+	"github.com/cylism/cylism-manager/internal/repository"
 	platformservice "github.com/cylism/cylism-manager/internal/service/platform"
-	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
 
 type PlatformHandler struct {
-	store   *store.Store
+	store   repository.PlatformEndpointRepository
 	client  *k8sclient.Client
 	release *platformservice.ReleaseService
 }
@@ -54,7 +54,7 @@ type platformEndpointInfo struct {
 	CertificateError string                         `json:"certificate_error,omitempty"`
 }
 
-func NewPlatformHandler(s *store.Store, encKey []byte, client *k8sclient.Client) *PlatformHandler {
+func NewPlatformHandler(s repository.PlatformEndpointRepository, encKey []byte, client *k8sclient.Client) *PlatformHandler {
 	return &PlatformHandler{store: s, client: client, release: platformservice.NewReleaseService(s, encKey, client)}
 }
 

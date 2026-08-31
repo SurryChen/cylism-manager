@@ -192,7 +192,7 @@ func (h *ApplicationHandler) WorkspaceOverview(c *gin.Context) {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
 		return
 	}
-	domains, err := h.store.ListManagedDomains(environmentID)
+	domains, err := h.resources.ListManagedDomains(environmentID)
 	if err != nil {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
 		return
@@ -227,7 +227,7 @@ func (h *ApplicationHandler) WorkspaceOverview(c *gin.Context) {
 	workspaceApplications := h.workspaceApplicationInfos(c.Request.Context(), environment.Namespace, applications, allReleases)
 	domainInfos := make([]infrastructureapi.ManagedDomainInfo, 0, len(domains))
 	for index := range domains {
-		domainInfos = append(domainInfos, infrastructureapi.NewDomainHandler(h.store, K8s).DomainInfo(&domains[index]))
+		domainInfos = append(domainInfos, infrastructureapi.ManagedDomainInfoFor(&domains[index], K8s, h.resources))
 	}
 	model.Success(c, gin.H{"project": project, "environment": environment, "applications": workspaceApplications, "domains": domainInfos, "failed_releases": failedReleases, "recent_releases": recentReleases})
 }

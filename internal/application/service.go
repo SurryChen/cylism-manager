@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/cylism/cylism-manager/internal/model"
-	"github.com/cylism/cylism-manager/internal/store"
+	"github.com/cylism/cylism-manager/internal/repository"
 )
 
 type ResourceApplier interface {
@@ -18,23 +18,23 @@ type ResourceApplier interface {
 }
 
 type Service struct {
-	store   *store.Store
-	applier ResourceApplier
+	repository repository.ReleaseRepository
+	applier    ResourceApplier
 }
 
-func NewService(st *store.Store, applier ResourceApplier) *Service {
-	return &Service{store: st, applier: applier}
+func NewService(repository repository.ReleaseRepository, applier ResourceApplier) *Service {
+	return &Service{repository: repository, applier: applier}
 }
 
 func (s *Service) CreateRelease(ctx context.Context, applicationID, userID uint, spec ReleaseSpec) (*model.Release, error) {
-	application, err := s.store.GetApplication(applicationID)
+	application, err := s.repository.GetApplication(applicationID)
 	if err != nil {
 		return nil, fmt.Errorf("读取应用: %w", err)
 	}
 	if issues := ValidateReleaseSpec(spec); len(issues) > 0 {
 		return nil, fmt.Errorf("发布定义无效: %s", issues[0].Message)
 	}
-	releases, err := s.store.ListReleases(applicationID)
+	releases, err := s.repository.ListReleases(applicationID)
 	if err != nil {
 		return nil, fmt.Errorf("读取发布历史: %w", err)
 	}
@@ -65,7 +65,7 @@ func (s *Service) CreateRelease(ctx context.Context, applicationID, userID uint,
 		Status:             model.ReleaseStatusDraft,
 		CreatedBy:          userID,
 	}
-	if err := s.store.CreateRelease(release); err != nil {
+	if err := s.repository.CreateRelease(release); err != nil {
 		return nil, fmt.Errorf("创建发布记录: %w", err)
 	}
 	return release, nil
@@ -85,7 +85,7 @@ func (s *Service) executeRelease(ctx context.Context, releaseID uint, applicatio
 	if s.applier == nil {
 		return s.failRelease(releaseID, "preflight", fmt.Errorf("Kubernetes 发布器未初始化"))
 	}
-	release, err := s.store.GetRelease(releaseID)
+	release, err := s.repository.GetRelease(releaseID)
 	if err != nil {
 		return err
 	}
@@ -125,7 +125,7 @@ func (s *Service) executeRelease(ctx context.Context, releaseID uint, applicatio
 
 // RetryRelease 从既有 Release 的脱敏快照生成一个新的发布版本。
 func (s *Service) RetryRelease(releaseID, userID uint) (*model.Release, ReleaseSpec, error) {
-	release, err := s.store.GetRelease(releaseID)
+	release, err := s.repository.GetRelease(releaseID)
 	if err != nil {
 		return nil, ReleaseSpec{}, err
 	}
@@ -139,18 +139,18 @@ func (s *Service) RetryRelease(releaseID, userID uint) (*model.Release, ReleaseS
 	if err == nil {
 		retry.TemplateID = release.TemplateID
 		retry.TemplateRevision = release.TemplateRevision
-		err = s.store.UpdateRelease(retry)
+		err = s.repository.UpdateRelease(retry)
 	}
 	return retry, spec, err
 }
 
 // RollbackRelease 创建一个引用上一成功 Release 的新版本。
 func (s *Service) RollbackRelease(releaseID, userID uint) (*model.Release, ReleaseSpec, error) {
-	current, err := s.store.GetRelease(releaseID)
+	current, err := s.repository.GetRelease(releaseID)
 	if err != nil {
 		return nil, ReleaseSpec{}, err
 	}
-	releases, err := s.store.ListReleases(current.ApplicationID)
+	releases, err := s.repository.ListReleases(current.ApplicationID)
 	if err != nil {
 		return nil, ReleaseSpec{}, err
 	}
@@ -177,7 +177,7 @@ func (s *Service) RollbackRelease(releaseID, userID uint) (*model.Release, Relea
 	rollback.SourceReleaseID = &source.ID
 	rollback.TemplateID = source.TemplateID
 	rollback.TemplateRevision = source.TemplateRevision
-	if err := s.store.UpdateRelease(rollback); err != nil {
+	if err := s.repository.UpdateRelease(rollback); err != nil {
 		return nil, ReleaseSpec{}, err
 	}
 	return rollback, spec, nil
@@ -186,11 +186,11 @@ func (s *Service) RollbackRelease(releaseID, userID uint) (*model.Release, Relea
 func (s *Service) runStep(releaseID uint, step string, run func() error) error {
 	now := time.Now()
 	operation := &model.ReleaseOperation{ReleaseID: releaseID, Step: step, Status: model.ReleaseOperationRunning, StartedAt: &now}
-	if err := s.store.CreateReleaseOperation(operation); err != nil {
+	if err := s.repository.CreateReleaseOperation(operation); err != nil {
 		return err
 	}
 	operationLog := &model.OperationLog{ResourceType: "release", ResourceID: releaseID, Step: step, Status: model.ReleaseOperationRunning, CreatedAt: now}
-	if err := s.store.CreateOperationLog(operationLog); err != nil {
+	if err := s.repository.CreateOperationLog(operationLog); err != nil {
 		return err
 	}
 	err := run()
@@ -204,10 +204,10 @@ func (s *Service) runStep(releaseID uint, step string, run func() error) error {
 	}
 	operationLog.Status = operation.Status
 	operationLog.Detail = operation.Detail
-	if updateErr := s.store.UpdateReleaseOperation(operation); updateErr != nil {
+	if updateErr := s.repository.UpdateReleaseOperation(operation); updateErr != nil {
 		return updateErr
 	}
-	if updateErr := s.store.UpdateOperationLog(operationLog); updateErr != nil {
+	if updateErr := s.repository.UpdateOperationLog(operationLog); updateErr != nil {
 		return updateErr
 	}
 	return err
@@ -225,11 +225,11 @@ func (s *Service) transition(release *model.Release, status string) error {
 		release.CompletedAt = &now
 	}
 	release.Status = status
-	return s.store.UpdateRelease(release)
+	return s.repository.UpdateRelease(release)
 }
 
 func (s *Service) failRelease(releaseID uint, step string, cause error) error {
-	release, err := s.store.GetRelease(releaseID)
+	release, err := s.repository.GetRelease(releaseID)
 	if err != nil {
 		return cause
 	}

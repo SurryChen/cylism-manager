@@ -16,7 +16,7 @@ import (
 	"github.com/cylism/cylism-manager/internal/crypto"
 	k8sclient "github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
-	"github.com/cylism/cylism-manager/internal/store"
+	"github.com/cylism/cylism-manager/internal/repository"
 	"gorm.io/gorm"
 )
 
@@ -35,29 +35,29 @@ var ErrWebhookReplay = errors.New("platform webhook nonce already used")
 // self-update lifecycle. It has no HTTP dependency and can be reused by the
 // signed webhook and the management API.
 type ReleaseService struct {
-	store    *store.Store
+	releases repository.PlatformReleaseRepository
 	encKey   []byte
 	client   *k8sclient.Client
 	updateMu sync.Mutex
 }
 
-func NewReleaseService(st *store.Store, encKey []byte, client *k8sclient.Client) *ReleaseService {
-	return &ReleaseService{store: st, encKey: append([]byte(nil), encKey...), client: client}
+func NewReleaseService(releases repository.PlatformReleaseRepository, encKey []byte, client *k8sclient.Client) *ReleaseService {
+	return &ReleaseService{releases: releases, encKey: append([]byte(nil), encKey...), client: client}
 }
 
 func (s *ReleaseService) Available() bool {
-	return s != nil && s.store != nil && s.client != nil && s.client.Clientset != nil
+	return s != nil && s.releases != nil && s.client != nil && s.client.Clientset != nil
 }
 
 func (s *ReleaseService) ValidateWebhook(timestampHeader, nonce, signature string, body []byte) bool {
-	if s == nil || s.store == nil || len(strings.TrimSpace(timestampHeader)) == 0 || len(strings.TrimSpace(nonce)) < 16 || len(strings.TrimSpace(nonce)) > 256 || len(strings.TrimSpace(signature)) != 64 {
+	if s == nil || s.releases == nil || len(strings.TrimSpace(timestampHeader)) == 0 || len(strings.TrimSpace(nonce)) < 16 || len(strings.TrimSpace(nonce)) > 256 || len(strings.TrimSpace(signature)) != 64 {
 		return false
 	}
 	timestamp, err := strconv.ParseInt(timestampHeader, 10, 64)
 	if err != nil || time.Since(time.Unix(timestamp, 0)).Abs() > webhookMaxSkew {
 		return false
 	}
-	encrypted, err := s.store.GetSystemConfig(WebhookSecretConfigKey)
+	encrypted, err := s.releases.GetSystemConfig(WebhookSecretConfigKey)
 	if err != nil {
 		return false
 	}
@@ -76,20 +76,20 @@ func (s *ReleaseService) ValidateWebhook(timestampHeader, nonce, signature strin
 }
 
 func (s *ReleaseService) ConsumeWebhookNonce(nonce string, now time.Time) error {
-	if s == nil || s.store == nil {
+	if s == nil || s.releases == nil {
 		return errors.New("存储未初始化")
 	}
-	if err := s.store.DeleteExpiredPlatformWebhookNonces(now.UTC()); err != nil {
+	if err := s.releases.DeleteExpiredPlatformWebhookNonces(now.UTC()); err != nil {
 		return err
 	}
-	if err := s.store.CreatePlatformWebhookNonce(nonce, now.UTC().Add(24*time.Hour)); err != nil {
+	if err := s.releases.CreatePlatformWebhookNonce(nonce, now.UTC().Add(24*time.Hour)); err != nil {
 		return fmt.Errorf("%w: %v", ErrWebhookReplay, err)
 	}
 	return nil
 }
 
 func (s *ReleaseService) GenerateWebhookSecret() (string, error) {
-	if s == nil || s.store == nil {
+	if s == nil || s.releases == nil {
 		return "", errors.New("存储未初始化")
 	}
 	raw := make([]byte, 32)
@@ -101,17 +101,17 @@ func (s *ReleaseService) GenerateWebhookSecret() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if err := s.store.SetSystemConfig(WebhookSecretConfigKey, encrypted); err != nil {
+	if err := s.releases.SetSystemConfig(WebhookSecretConfigKey, encrypted); err != nil {
 		return "", err
 	}
 	return secret, nil
 }
 
 func (s *ReleaseService) ImagePrefixes() []string {
-	if s == nil || s.store == nil {
+	if s == nil || s.releases == nil {
 		return []string{DefaultImagePrefix}
 	}
-	raw, err := s.store.GetSystemConfig(ImagePrefixConfigKey)
+	raw, err := s.releases.GetSystemConfig(ImagePrefixConfigKey)
 	if err != nil || strings.TrimSpace(raw) == "" {
 		return []string{DefaultImagePrefix}
 	}
@@ -123,14 +123,14 @@ func (s *ReleaseService) ImagePrefixes() []string {
 }
 
 func (s *ReleaseService) SetImagePrefixes(raw string) ([]string, error) {
-	if s == nil || s.store == nil {
+	if s == nil || s.releases == nil {
 		return nil, errors.New("存储未初始化")
 	}
 	prefixes, err := NormalizeImagePrefixes(raw)
 	if err != nil {
 		return nil, err
 	}
-	if err := s.store.SetSystemConfig(ImagePrefixConfigKey, strings.Join(prefixes, "\n")); err != nil {
+	if err := s.releases.SetSystemConfig(ImagePrefixConfigKey, strings.Join(prefixes, "\n")); err != nil {
 		return nil, err
 	}
 	return prefixes, nil
@@ -184,7 +184,7 @@ func (s *ReleaseService) CreateRelease(image, source, commitSHA, runID string) (
 		return nil, err
 	}
 	release := &model.PlatformRelease{Source: source, Image: image, PreviousImage: status.Image, Status: "accepted", CommitSHA: strings.TrimSpace(commitSHA), RunID: strings.TrimSpace(runID)}
-	if err := s.store.CreatePlatformRelease(release); err != nil {
+	if err := s.releases.CreatePlatformRelease(release); err != nil {
 		return nil, fmt.Errorf("创建平台发布记录: %w", err)
 	}
 	return release, nil
@@ -203,7 +203,7 @@ func (s *ReleaseService) Apply(id uint) {
 	}
 	s.updateMu.Lock()
 	defer s.updateMu.Unlock()
-	release, err := s.store.GetPlatformRelease(id)
+	release, err := s.releases.GetPlatformRelease(id)
 	if err != nil || (release.Status != "accepted" && release.Status != "applying") {
 		return
 	}
@@ -212,23 +212,23 @@ func (s *ReleaseService) Apply(id uint) {
 		release.StartedAt = &now
 	}
 	release.Status = "applying"
-	if err := s.store.UpdatePlatformRelease(release); err != nil {
+	if err := s.releases.UpdatePlatformRelease(release); err != nil {
 		return
 	}
 	if _, err := s.client.UpdatePlatformDeployment(release.Image, release.ID); err != nil {
 		release.Status, release.Detail, release.CompletedAt = "failed", err.Error(), &now
-		_ = s.store.UpdatePlatformRelease(release)
+		_ = s.releases.UpdatePlatformRelease(release)
 		return
 	}
 	release.Status = "waiting_ready"
-	_ = s.store.UpdatePlatformRelease(release)
+	_ = s.releases.UpdatePlatformRelease(release)
 }
 
 func (s *ReleaseService) ReconcileLatest() {
 	if !s.Available() {
 		return
 	}
-	release, err := s.store.LatestIncompletePlatformRelease()
+	release, err := s.releases.LatestIncompletePlatformRelease()
 	if errors.Is(err, gorm.ErrRecordNotFound) || err != nil {
 		return
 	}
@@ -251,5 +251,5 @@ func (s *ReleaseService) ReconcileLatest() {
 	} else {
 		return
 	}
-	_ = s.store.UpdatePlatformRelease(release)
+	_ = s.releases.UpdatePlatformRelease(release)
 }

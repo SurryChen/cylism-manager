@@ -11,20 +11,20 @@ import (
 	"time"
 
 	"github.com/cylism/cylism-manager/internal/model"
-	"github.com/cylism/cylism-manager/internal/store"
+	"github.com/cylism/cylism-manager/internal/repository"
 	"github.com/gin-gonic/gin"
 )
 
 // ServerNetworkDiagnosticsHandler owns the read-only SSH/Tailscale diagnostics
 // endpoint independently from the server lifecycle handler.
 type ServerNetworkDiagnosticsHandler struct {
-	store                    *store.Store
+	store                    repository.ServerRepository
 	encKey                   []byte
 	networkSnapshotCollector func(*model.Server) (serverNetworkDiagnostic, error)
 	networkLinkCollector     func(*model.Server, string) (tailnetLinkDiagnostic, error)
 }
 
-func NewServerNetworkDiagnosticsHandler(st *store.Store, encKey []byte) *ServerNetworkDiagnosticsHandler {
+func NewServerNetworkDiagnosticsHandler(st repository.ServerRepository, encKey []byte) *ServerNetworkDiagnosticsHandler {
 	h := &ServerNetworkDiagnosticsHandler{store: st, encKey: encKey}
 	h.networkSnapshotCollector = h.collectNetworkSnapshot
 	h.networkLinkCollector = h.collectNetworkLink

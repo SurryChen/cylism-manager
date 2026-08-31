@@ -14,6 +14,19 @@ import (
 	"k8s.io/client-go/dynamic/fake"
 )
 
+type domainReferenceFake struct{ count int64 }
+
+func (f domainReferenceFake) CountApplicationEndpointsByDomain(uint) (int64, error) {
+	return f.count, nil
+}
+
+func TestManagedDomainInfoForUsesOnlyReferenceReaderWithoutKubernetes(t *testing.T) {
+	info := ManagedDomainInfoFor(&model.ManagedDomain{ID: 7, Hostname: "api.example.com"}, nil, domainReferenceFake{count: 3})
+	if info.Hostname != "api.example.com" || info.ApplicationCount != 3 || info.CertificateError == "" {
+		t.Fatalf("unexpected managed domain view: %#v", info)
+	}
+}
+
 func TestDomainFromRequestBuildsNamespaceBoundClusterIssuer(t *testing.T) {
 	environment := &model.Environment{ID: 9, ProjectID: 3, Namespace: "production"}
 	domain, err := domainFromRequest(domainRequest{Hostname: "API.Example.com", EnvironmentID: environment.ID, IssuerRef: "letsencrypt-prod", Enabled: true}, nil, environment)

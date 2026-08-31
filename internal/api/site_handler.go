@@ -6,15 +6,15 @@ import (
 
 	"github.com/cylism/cylism-manager/internal/model"
 
-	"github.com/cylism/cylism-manager/internal/store"
+	"github.com/cylism/cylism-manager/internal/repository"
 	"github.com/gin-gonic/gin"
 )
 
 type SiteHandler struct {
-	store *store.Store
+	store repository.SiteRepository
 }
 
-func NewSiteHandler(s *store.Store) *SiteHandler {
+func NewSiteHandler(s repository.SiteRepository) *SiteHandler {
 	return &SiteHandler{store: s}
 }
 

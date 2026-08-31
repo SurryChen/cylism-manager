@@ -11,15 +11,15 @@ import (
 	"github.com/cylism/cylism-manager/internal/crypto"
 	"github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
+	"github.com/cylism/cylism-manager/internal/repository"
 	networkservice "github.com/cylism/cylism-manager/internal/service/network"
-	"github.com/cylism/cylism-manager/internal/store"
 
 	"github.com/gin-gonic/gin"
 )
 
 // CertHandler Certificate 管理的 HTTP handler
 type CertHandler struct {
-	store   *store.Store
+	store   repository.CertificateRepository
 	encKey  []byte
 	network *networkservice.Service
 	k8s     *k8s.Client
@@ -34,31 +34,31 @@ type DNSCredentialRequest struct {
 }
 
 // NewCertHandler 创建 CertHandler
-func NewCertHandler(st ...*store.Store) *CertHandler {
+func NewCertHandler(st ...repository.CertificateRepository) *CertHandler {
 	h := &CertHandler{k8s: nil, network: networkservice.NewService(nil)}
 	if len(st) > 0 {
 		h.store = st[0]
-		h.network = networkservice.NewService(st[0])
+		h.network = networkservice.NewService(st[0], st[0])
 	}
 	return h
 }
 
 // NewCertHandlerWithEncryption constructs certificate management with encrypted DNS credentials.
-func NewCertHandlerWithEncryption(st *store.Store, encKey []byte) *CertHandler {
+func NewCertHandlerWithEncryption(st repository.CertificateRepository, encKey []byte) *CertHandler {
 	return NewCertHandlerWithClient(st, encKey, nil)
 }
 
-func NewCertHandlerWithNetwork(st *store.Store, encKey []byte, network *networkservice.Service) *CertHandler {
+func NewCertHandlerWithNetwork(st repository.CertificateRepository, encKey []byte, network *networkservice.Service) *CertHandler {
 	return NewCertHandlerWithNetworkAndClient(st, encKey, network, nil)
 }
 
-func NewCertHandlerWithClient(st *store.Store, encKey []byte, client *k8s.Client) *CertHandler {
+func NewCertHandlerWithClient(st repository.CertificateRepository, encKey []byte, client *k8s.Client) *CertHandler {
 	return NewCertHandlerWithNetworkAndClient(st, encKey, nil, client)
 }
 
-func NewCertHandlerWithNetworkAndClient(st *store.Store, encKey []byte, network *networkservice.Service, client *k8s.Client) *CertHandler {
+func NewCertHandlerWithNetworkAndClient(st repository.CertificateRepository, encKey []byte, network *networkservice.Service, client *k8s.Client) *CertHandler {
 	if network == nil {
-		network = networkservice.NewService(st)
+		network = networkservice.NewService(st, st)
 	}
 	network.WithCertificateAdapter(client).WithDNSAdapter(client)
 	return &CertHandler{store: st, encKey: encKey, network: network, k8s: client}

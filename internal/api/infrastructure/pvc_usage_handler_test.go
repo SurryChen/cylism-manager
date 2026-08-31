@@ -45,7 +45,7 @@ func TestPersistentVolumeClaimUsageReadsBoundLocalVolume(t *testing.T) {
 	defer func() { ReadPersistentVolumeUsage = originalReader }()
 
 	router := gin.New()
-	router.GET("/api/k8s/persistent-volume-claims/usage", NewStorageHandlerWithClient(storageservice.NewService(client, st), st, nil, client).ListPersistentVolumeClaimUsage)
+	router.GET("/api/k8s/persistent-volume-claims/usage", NewStorageHandlerWithClient(storageservice.NewService(client, st, st), st, nil, client).ListPersistentVolumeClaimUsage)
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/k8s/persistent-volume-claims/usage", nil))
 

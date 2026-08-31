@@ -34,7 +34,7 @@ func (h *ApplicationHandler) ListApplicationEndpoints(c *gin.Context) {
 		model.Error(c, http.StatusNotFound, model.CodeNotFound, "应用不存在")
 		return
 	}
-	endpoints, err := h.store.ListApplicationEndpoints(applicationID)
+	endpoints, err := h.applications.ListApplicationEndpoints(applicationID)
 	if err != nil {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
 		return
@@ -85,7 +85,7 @@ func (h *ApplicationHandler) CreateApplicationEndpoint(c *gin.Context) {
 	}
 	endpoint.ServicePort = servicePort.Port
 	endpoint.Protocol = servicePort.Protocol
-	endpoints, err := h.store.ListApplicationEndpoints(app.ID)
+	endpoints, err := h.applications.ListApplicationEndpoints(app.ID)
 	if err != nil {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
 		return
@@ -95,7 +95,7 @@ func (h *ApplicationHandler) CreateApplicationEndpoint(c *gin.Context) {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, fmt.Sprintf("同步应用入口: %v", err))
 		return
 	}
-	if err := h.store.CreateApplicationEndpoint(endpoint); err != nil {
+	if err := h.applications.CreateApplicationEndpoint(endpoint); err != nil {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
 		return
 	}
@@ -128,7 +128,7 @@ func (h *ApplicationHandler) UpdateApplicationEndpoint(c *gin.Context) {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "请选择受管域名")
 		return
 	}
-	endpoint, err := h.store.GetApplicationEndpoint(applicationID, endpointID)
+	endpoint, err := h.applications.GetApplicationEndpoint(applicationID, endpointID)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		model.Error(c, http.StatusNotFound, model.CodeNotFound, "应用入口不存在")
 		return
@@ -156,7 +156,7 @@ func (h *ApplicationHandler) UpdateApplicationEndpoint(c *gin.Context) {
 	updated.CreatedAt = endpoint.CreatedAt
 	updated.ServicePort = servicePort.Port
 	updated.Protocol = servicePort.Protocol
-	endpoints, err := h.store.ListApplicationEndpoints(app.ID)
+	endpoints, err := h.applications.ListApplicationEndpoints(app.ID)
 	if err != nil {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
 		return
@@ -170,7 +170,7 @@ func (h *ApplicationHandler) UpdateApplicationEndpoint(c *gin.Context) {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, fmt.Sprintf("同步应用入口: %v", err))
 		return
 	}
-	if err := h.store.UpdateApplicationEndpoint(updated); err != nil {
+	if err := h.applications.UpdateApplicationEndpoint(updated); err != nil {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
 		return
 	}
@@ -198,7 +198,7 @@ func (h *ApplicationHandler) DeleteApplicationEndpoint(c *gin.Context) {
 		model.Error(c, http.StatusNotFound, model.CodeNotFound, "应用不存在")
 		return
 	}
-	if _, err := h.store.GetApplicationEndpoint(applicationID, endpointID); errors.Is(err, gorm.ErrRecordNotFound) {
+	if _, err := h.applications.GetApplicationEndpoint(applicationID, endpointID); errors.Is(err, gorm.ErrRecordNotFound) {
 		model.Error(c, http.StatusNotFound, model.CodeNotFound, "应用入口不存在")
 		return
 	} else if err != nil {
@@ -219,7 +219,7 @@ func (h *ApplicationHandler) DeleteApplicationEndpoint(c *gin.Context) {
 		}
 		servicePort = servicePorts[0]
 	}
-	endpoints, err := h.store.ListApplicationEndpoints(app.ID)
+	endpoints, err := h.applications.ListApplicationEndpoints(app.ID)
 	if err != nil {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
 		return
@@ -235,7 +235,7 @@ func (h *ApplicationHandler) DeleteApplicationEndpoint(c *gin.Context) {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, fmt.Sprintf("移除应用入口: %v", err))
 		return
 	}
-	if err := h.store.DeleteApplicationEndpoint(applicationID, endpointID); err != nil {
+	if err := h.applications.DeleteApplicationEndpoint(applicationID, endpointID); err != nil {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
 		return
 	}
@@ -243,7 +243,7 @@ func (h *ApplicationHandler) DeleteApplicationEndpoint(c *gin.Context) {
 }
 
 func (h *ApplicationHandler) applicationServiceSpec(app *model.Application) (application.ServiceSpec, error) {
-	if release, err := h.store.GetLatestSuccessfulRelease(app.ID); err == nil {
+	if release, err := h.applications.GetLatestSuccessfulRelease(app.ID); err == nil {
 		var spec application.ReleaseSpec
 		if err := json.Unmarshal([]byte(release.DesiredSpec), &spec); err != nil {
 			return application.ServiceSpec{}, err
@@ -252,7 +252,7 @@ func (h *ApplicationHandler) applicationServiceSpec(app *model.Application) (app
 	} else if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 		return application.ServiceSpec{}, err
 	}
-	if template, err := h.store.GetDefaultApplicationDeploymentTemplate(app.ID); err == nil {
+	if template, err := h.applications.GetDefaultApplicationDeploymentTemplate(app.ID); err == nil {
 		var spec application.ReleaseSpec
 		if err := json.Unmarshal([]byte(template.Spec), &spec); err != nil {
 			return application.ServiceSpec{}, err
@@ -261,7 +261,7 @@ func (h *ApplicationHandler) applicationServiceSpec(app *model.Application) (app
 	} else if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 		return application.ServiceSpec{}, err
 	}
-	if endpoints, err := h.store.ListApplicationEndpoints(app.ID); err == nil && len(endpoints) > 0 && endpoints[0].ServicePort > 0 {
+	if endpoints, err := h.applications.ListApplicationEndpoints(app.ID); err == nil && len(endpoints) > 0 && endpoints[0].ServicePort > 0 {
 		return application.ServiceSpec{Port: endpoints[0].ServicePort}, nil
 	} else if err != nil {
 		return application.ServiceSpec{}, err
@@ -276,7 +276,7 @@ func endpointUsesIngress(endpoint model.ApplicationEndpoint) bool {
 }
 
 func (h *ApplicationHandler) prepareApplicationEndpoint(app *model.Application, endpointID uint, req applicationEndpointRequest) (*model.ApplicationEndpoint, error) {
-	domain, err := h.store.GetManagedDomain(req.DomainID)
+	domain, err := h.resources.GetManagedDomain(req.DomainID)
 	if err != nil || !domain.Enabled {
 		return nil, fmt.Errorf("域名不存在或已停用")
 	}
@@ -292,7 +292,7 @@ func (h *ApplicationHandler) prepareApplicationEndpoint(app *model.Application, 
 		ingressEnabled = *req.IngressEnabled
 	}
 	if ingressEnabled {
-		conflicts, err := h.store.CountApplicationEndpointRoute(domain.ID, path, endpointID)
+		conflicts, err := h.applications.CountApplicationEndpointRoute(domain.ID, path, endpointID)
 		if err != nil {
 			return nil, fmt.Errorf("检查域名路由冲突: %w", err)
 		}

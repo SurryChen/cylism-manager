@@ -182,7 +182,7 @@ func writePodTerminalError(conn *wsConn, err error) {
 }
 
 func (h *K8sHandler) recordPodTerminalSession(c *gin.Context, namespace, name, container string) {
-	if h.store == nil {
+	if h.audit == nil {
 		return
 	}
 	detail, _ := json.Marshal(map[string]string{
@@ -191,7 +191,7 @@ func (h *K8sHandler) recordPodTerminalSession(c *gin.Context, namespace, name, c
 		"container": container,
 		"event":     "session_started",
 	})
-	_ = h.store.CreateAuditLog(&model.AuditLog{
+	_ = h.audit.CreateAuditLog(&model.AuditLog{
 		Action:       "terminal",
 		ResourceType: "pod",
 		UserID:       apiShared.UserID(c),

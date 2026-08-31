@@ -9,7 +9,7 @@ import (
 
 	"github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
-	"github.com/cylism/cylism-manager/internal/store"
+	"github.com/cylism/cylism-manager/internal/repository"
 )
 
 var ErrNodeBindingCleanup = errors.New("节点已从集群移除，但解除服务器绑定失败")
@@ -78,15 +78,15 @@ type ImportResult struct {
 // Service owns server-to-node association maintenance and node workflows that
 // also update platform-owned server records.
 type Service struct {
-	store     *store.Store
+	servers   repository.ServerRepository
 	nodes     NodeAdapter
 	inspector ServerInspector
 	importer  ServerImporter
 	metrics   MetricsInspector
 }
 
-func NewService(st *store.Store, nodes NodeAdapter) *Service {
-	return &Service{store: st, nodes: nodes}
+func NewService(servers repository.ServerRepository, nodes NodeAdapter) *Service {
+	return &Service{servers: servers, nodes: nodes}
 }
 
 func (s *Service) WithServerInspector(inspector ServerInspector) *Service {
@@ -108,38 +108,38 @@ func (s *Service) WithMetricsInspector(metrics MetricsInspector) *Service {
 // remains an explicit caller concern so this service can be reused by HTTP,
 // CLI, and Agent entry points without accepting plaintext credentials.
 func (s *Service) CreateServer(server *model.Server) error {
-	return s.store.CreateServer(server)
+	return s.servers.CreateServer(server)
 }
 
 func (s *Service) GetServer(id uint) (*model.Server, error) {
-	return s.store.GetServer(id)
+	return s.servers.GetServer(id)
 }
 
 func (s *Service) UpdateServer(server *model.Server) error {
-	return s.store.UpdateServer(server)
+	return s.servers.UpdateServer(server)
 }
 
 func (s *Service) DeleteServer(id uint) error {
-	return s.store.DeleteServer(id)
+	return s.servers.DeleteServer(id)
 }
 
 // UnbindServer removes the platform-only server-to-node relation while
 // deliberately leaving Kubernetes resources and server connection data intact.
 func (s *Service) UnbindServer(id uint) (*model.Server, error) {
-	server, err := s.store.GetServer(id)
+	server, err := s.servers.GetServer(id)
 	if err != nil {
 		return nil, err
 	}
 	server.ClusterRole = ""
 	server.K8sNodeName = ""
-	if err := s.store.UpdateServer(server); err != nil {
+	if err := s.servers.UpdateServer(server); err != nil {
 		return nil, err
 	}
 	return server, nil
 }
 
 func (s *Service) ProbeServer(id uint) (*ProbeResult, error) {
-	server, err := s.store.GetServer(id)
+	server, err := s.servers.GetServer(id)
 	if err != nil {
 		return nil, err
 	}
@@ -156,7 +156,7 @@ func (s *Service) ProbeServer(id uint) (*ProbeResult, error) {
 }
 
 func (s *Service) PrecheckServer(id uint) (*PrecheckResult, error) {
-	server, err := s.store.GetServer(id)
+	server, err := s.servers.GetServer(id)
 	if err != nil {
 		return nil, err
 	}
@@ -175,7 +175,7 @@ func (s *Service) PrecheckServer(id uint) (*PrecheckResult, error) {
 }
 
 func (s *Service) PreImportServer(id uint) (*ImportResult, error) {
-	server, err := s.store.GetServer(id)
+	server, err := s.servers.GetServer(id)
 	if err != nil {
 		return nil, err
 	}
@@ -210,20 +210,20 @@ func (s *Service) PreImportServer(id uint) (*ImportResult, error) {
 }
 
 func (s *Service) ConfirmImport(id uint, hostname, role string) (*ImportResult, error) {
-	server, err := s.store.GetServer(id)
+	server, err := s.servers.GetServer(id)
 	if err != nil {
 		return nil, err
 	}
 	server.K8sNodeName = hostname
 	server.ClusterRole = role
-	if err := s.store.UpdateServer(server); err != nil {
+	if err := s.servers.UpdateServer(server); err != nil {
 		return nil, err
 	}
 	return &ImportResult{ServerName: server.Name, Hostname: hostname, NodeName: hostname, Role: role}, nil
 }
 
 func (s *Service) ServerStats(id uint) (map[string]interface{}, error) {
-	server, err := s.store.GetServer(id)
+	server, err := s.servers.GetServer(id)
 	if err != nil {
 		return nil, err
 	}
@@ -234,7 +234,7 @@ func (s *Service) ServerStats(id uint) (map[string]interface{}, error) {
 }
 
 func (s *Service) ResourceStats() ([]map[string]interface{}, error) {
-	servers, err := s.store.ListServers()
+	servers, err := s.servers.ListServers()
 	if err != nil {
 		return nil, err
 	}
@@ -276,7 +276,7 @@ func (s *Service) ResourceStats() ([]map[string]interface{}, error) {
 // associations when the cluster is reachable. A transient Kubernetes API
 // error deliberately preserves existing bindings.
 func (s *Service) ListServers() ([]model.Server, error) {
-	servers, err := s.store.ListServers()
+	servers, err := s.servers.ListServers()
 	if err != nil || s.nodes == nil {
 		return servers, err
 	}
@@ -300,12 +300,12 @@ func (s *Service) ListServers() ([]model.Server, error) {
 		}
 		if server.K8sNodeName == "" {
 			server.ClusterRole = ""
-			if err := s.store.UpdateServer(server); err != nil {
+			if err := s.servers.UpdateServer(server); err != nil {
 				continue
 			}
 			continue
 		}
-		if err := s.store.UnbindServersFromClusterNode(server.K8sNodeName); err != nil {
+		if err := s.servers.UnbindServersFromClusterNode(server.K8sNodeName); err != nil {
 			continue
 		}
 		server.ClusterRole = ""
@@ -385,7 +385,7 @@ func (s *Service) RemoveNode(name string) error {
 	if err := s.nodes.DeleteNode(name); err != nil {
 		return err
 	}
-	if err := s.store.UnbindServersFromClusterNode(name); err != nil {
+	if err := s.servers.UnbindServersFromClusterNode(name); err != nil {
 		return fmt.Errorf("%w: %v", ErrNodeBindingCleanup, err)
 	}
 	return nil

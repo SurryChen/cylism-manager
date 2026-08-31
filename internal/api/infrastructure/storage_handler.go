@@ -7,8 +7,8 @@ import (
 
 	k8sclient "github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
+	"github.com/cylism/cylism-manager/internal/repository"
 	"github.com/cylism/cylism-manager/internal/service/storage"
-	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
@@ -18,7 +18,7 @@ import (
 // retain their existing recovery behaviour while they are progressively moved
 // into the storage service.
 type StorageHandler struct {
-	store   *store.Store
+	store   repository.PVCRepository
 	k8s     *k8sclient.Client
 	encKey  []byte
 	Service *storage.Service
@@ -32,7 +32,7 @@ func NewStorageHandler(service *storage.Service, h StorageHandler, clients ...*k
 	return &h
 }
 
-func NewStorageHandlerWithClient(service *storage.Service, st *store.Store, encKey []byte, client *k8sclient.Client) *StorageHandler {
+func NewStorageHandlerWithClient(service *storage.Service, st repository.PVCRepository, encKey []byte, client *k8sclient.Client) *StorageHandler {
 	return &StorageHandler{Service: service, store: st, encKey: encKey, k8s: client}
 }
 

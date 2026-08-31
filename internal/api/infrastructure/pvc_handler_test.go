@@ -29,7 +29,7 @@ func TestPersistentVolumeClaimsAreScopedToEnvironment(t *testing.T) {
 		t.Fatal(err)
 	}
 	client := &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "project-knowledge-prod"}})}
-	h := NewStorageHandlerWithClient(storageservice.NewService(client, st), st, nil, client)
+	h := NewStorageHandlerWithClient(storageservice.NewService(client, st, st), st, nil, client)
 	r := gin.New()
 	r.POST("/api/k8s/persistent-volume-claims", h.CreatePersistentVolumeClaim)
 	r.GET("/api/k8s/persistent-volume-claims", h.ListPersistentVolumeClaims)
@@ -59,7 +59,7 @@ func TestPersistentVolumeClaimsListClusterInventoryWithoutEnvironment(t *testing
 		&corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: "manual-data", Namespace: "default"}},
 		&corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: "app-data", Namespace: "project-knowledge-prod", Labels: map[string]string{k8sclient.ManagedByLabel: k8sclient.ManagedByValue, k8sclient.EnvironmentLabel: k8sclient.EnvironmentLabelValue(1)}}},
 	)}
-	h := NewStorageHandlerWithClient(storageservice.NewService(client, st), st, nil, client)
+	h := NewStorageHandlerWithClient(storageservice.NewService(client, st, st), st, nil, client)
 	r := gin.New()
 	r.GET("/api/k8s/persistent-volume-claims", h.ListPersistentVolumeClaims)
 	response := serve(r, httptest.NewRequest(http.MethodGet, "/api/k8s/persistent-volume-claims", nil))
@@ -74,7 +74,7 @@ func TestPersistentVolumeClaimCanBeCreatedInNamespaceWithoutEnvironment(t *testi
 		t.Fatal(err)
 	}
 	client := &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "default"}})}
-	h := NewStorageHandlerWithClient(storageservice.NewService(client, st), st, nil, client)
+	h := NewStorageHandlerWithClient(storageservice.NewService(client, st, st), st, nil, client)
 	r := gin.New()
 	r.POST("/api/k8s/persistent-volume-claims", h.CreatePersistentVolumeClaim)
 	response := serve(r, newJSONRequest(http.MethodPost, "/api/k8s/persistent-volume-claims", gin.H{"namespace": "default", "name": "shared-data", "storage": "2Gi"}))

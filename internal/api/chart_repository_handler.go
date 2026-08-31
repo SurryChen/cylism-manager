@@ -3,7 +3,7 @@ package api
 import (
 	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 	"github.com/cylism/cylism-manager/internal/model"
-	"github.com/cylism/cylism-manager/internal/store"
+	"github.com/cylism/cylism-manager/internal/repository"
 	"github.com/gin-gonic/gin"
 	"net/http"
 	"net/url"
@@ -12,7 +12,7 @@ import (
 )
 
 type ChartRepositoryHandler struct {
-	store  *store.Store
+	store  repository.ChartRepositoryStore
 	client *http.Client
 }
 type chartRepositoryRequest struct {
@@ -23,7 +23,7 @@ type chartRepositoryRequest struct {
 	Enabled      *bool  `json:"enabled"`
 }
 
-func NewChartRepositoryHandler(s *store.Store) *ChartRepositoryHandler {
+func NewChartRepositoryHandler(s repository.ChartRepositoryStore) *ChartRepositoryHandler {
 	return &ChartRepositoryHandler{store: s, client: &http.Client{Timeout: 10 * time.Second}}
 }
 func (h *ChartRepositoryHandler) List(c *gin.Context) {

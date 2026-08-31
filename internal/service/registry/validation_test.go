@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/cylism/cylism-manager/internal/model"
-	"github.com/cylism/cylism-manager/internal/repository"
 	"github.com/cylism/cylism-manager/internal/store"
 )
 
@@ -147,7 +146,7 @@ func TestManagedRegistryServicePersistsOneOwnedRegistry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	service := NewManagedRegistryService(repository.NewManagedRegistryRepository(database), []byte("01234567890123456789012345678901"))
+	service := NewManagedRegistryService(database, []byte("01234567890123456789012345678901"))
 	registry, _, err := BuildManagedRegistry(ManagedRegistryInput{Name: "平台制品库", Endpoint: "registry.example.com", RegistryImage: "registry:2", DataNode: "node-a", PVCName: "registry-data", VerificationImage: "registry.example.com/app:1", CertificateName: "registry-cert", PullUsername: "pull", PullPassword: "long-enough-password"}, nil)
 	if err != nil {
 		t.Fatal(err)

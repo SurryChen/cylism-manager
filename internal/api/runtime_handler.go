@@ -12,13 +12,13 @@ import (
 	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 	"github.com/cylism/cylism-manager/internal/crypto"
 	"github.com/cylism/cylism-manager/internal/model"
+	"github.com/cylism/cylism-manager/internal/repository"
 	"github.com/cylism/cylism-manager/internal/runtime"
-	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/gin-gonic/gin"
 )
 
 type RuntimeHandler struct {
-	store    *store.Store
+	runtimes repository.RuntimeManagementRepository
 	encKey   []byte
 	k8s      *runtime.KubernetesManager
 	registry *runtime.Registry
@@ -47,14 +47,14 @@ type runtimeRequest struct {
 	Config           map[string]interface{} `json:"config"`
 }
 
-func NewRuntimeHandler(s *store.Store, encKey []byte, k8sManager *runtime.KubernetesManager, registries ...*runtime.Registry) *RuntimeHandler {
+func NewRuntimeHandler(runtimes repository.RuntimeManagementRepository, encKey []byte, k8sManager *runtime.KubernetesManager, registries ...*runtime.Registry) *RuntimeHandler {
 	registry := runtime.BuiltinRegistry()
 	if len(registries) > 0 && registries[0] != nil {
 		registry = registries[0]
 	} else if k8sManager != nil && k8sManager.Registry != nil {
 		registry = k8sManager.Registry
 	}
-	return &RuntimeHandler{store: s, encKey: encKey, k8s: k8sManager, registry: registry}
+	return &RuntimeHandler{runtimes: runtimes, encKey: encKey, k8s: k8sManager, registry: registry}
 }
 
 func (h *RuntimeHandler) Catalog(c *gin.Context) {
@@ -62,7 +62,7 @@ func (h *RuntimeHandler) Catalog(c *gin.Context) {
 }
 
 func (h *RuntimeHandler) List(c *gin.Context) {
-	runtimes, err := h.store.ListRuntimes()
+	runtimes, err := h.runtimes.ListRuntimes()
 	if err != nil {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "读取 Runtime 列表失败")
 		return
@@ -79,7 +79,7 @@ func (h *RuntimeHandler) Get(c *gin.Context) {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "Runtime ID 无效")
 		return
 	}
-	instance, err := h.store.GetRuntime(id)
+	instance, err := h.runtimes.GetRuntime(id)
 	if err != nil {
 		model.Error(c, http.StatusNotFound, model.CodeNotFound, "Runtime 不存在")
 		return
@@ -100,7 +100,7 @@ func (h *RuntimeHandler) Create(c *gin.Context) {
 		return
 	}
 	instance.CreatedBy = apiShared.UserID(c)
-	if err := h.store.CreateRuntime(instance); err != nil {
+	if err := h.runtimes.CreateRuntime(instance); err != nil {
 		model.Error(c, http.StatusConflict, model.CodeConflict, "Runtime 名称已存在")
 		return
 	}
@@ -114,7 +114,7 @@ func (h *RuntimeHandler) Update(c *gin.Context) {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "Runtime ID 无效")
 		return
 	}
-	current, err := h.store.GetRuntime(id)
+	current, err := h.runtimes.GetRuntime(id)
 	if err != nil {
 		model.Error(c, http.StatusNotFound, model.CodeNotFound, "Runtime 不存在")
 		return
@@ -134,7 +134,7 @@ func (h *RuntimeHandler) Update(c *gin.Context) {
 	updated.CreatedBy = current.CreatedBy
 	updated.Status = current.Status
 	updated.DesiredGeneration = current.DesiredGeneration + 1
-	if err := h.store.UpdateRuntime(updated); err != nil {
+	if err := h.runtimes.UpdateRuntime(updated); err != nil {
 		model.Error(c, http.StatusConflict, model.CodeConflict, "Runtime 名称已存在或配置无效")
 		return
 	}
@@ -148,7 +148,7 @@ func (h *RuntimeHandler) Deploy(c *gin.Context) {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "Runtime ID 无效")
 		return
 	}
-	instance, err := h.store.GetRuntime(id)
+	instance, err := h.runtimes.GetRuntime(id)
 	if err != nil {
 		model.Error(c, http.StatusNotFound, model.CodeNotFound, "Runtime 不存在")
 		return
@@ -171,7 +171,7 @@ func (h *RuntimeHandler) Deploy(c *gin.Context) {
 		status, detail := checker.Health(c.Request.Context(), instance)
 		instance.Status, instance.HealthStatus, instance.HealthDetail = status, status, detail
 		instance.ObservedGeneration = instance.DesiredGeneration
-		_ = h.store.UpdateRuntime(instance)
+		_ = h.runtimes.UpdateRuntime(instance)
 		h.sanitize(instance)
 		if status != model.RuntimeStatusReady {
 			model.ErrorWithData(c, http.StatusBadGateway, model.CodeK8sAPIError, detail, instance)
@@ -193,7 +193,7 @@ func (h *RuntimeHandler) Deploy(c *gin.Context) {
 		return
 	}
 	instance.Status = model.RuntimeStatusDeploying
-	if err := h.store.UpdateRuntime(instance); err != nil {
+	if err := h.runtimes.UpdateRuntime(instance); err != nil {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "保存 Runtime 状态失败")
 		return
 	}
@@ -205,7 +205,7 @@ func (h *RuntimeHandler) Deploy(c *gin.Context) {
 	if err := h.k8s.Apply(c.Request.Context(), instance, apiKey, runtimeAPIKey); err != nil {
 		instance.Status = model.RuntimeStatusFailed
 		instance.HealthDetail = err.Error()
-		_ = h.store.UpdateRuntime(instance)
+		_ = h.runtimes.UpdateRuntime(instance)
 		model.Error(c, http.StatusBadGateway, model.CodeK8sAPIError, err.Error())
 		return
 	}
@@ -214,7 +214,7 @@ func (h *RuntimeHandler) Deploy(c *gin.Context) {
 		instance.Status = model.RuntimeStatusReady
 	}
 	instance.ObservedGeneration = instance.DesiredGeneration
-	if err := h.store.UpdateRuntime(instance); err != nil {
+	if err := h.runtimes.UpdateRuntime(instance); err != nil {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "保存 Runtime 部署状态失败")
 		return
 	}
@@ -228,7 +228,7 @@ func (h *RuntimeHandler) Health(c *gin.Context) {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "Runtime ID 无效")
 		return
 	}
-	instance, err := h.store.GetRuntime(id)
+	instance, err := h.runtimes.GetRuntime(id)
 	if err != nil {
 		model.Error(c, http.StatusNotFound, model.CodeNotFound, "Runtime 不存在")
 		return
@@ -242,7 +242,7 @@ func (h *RuntimeHandler) Health(c *gin.Context) {
 		checker = runtime.NewKubernetesManager(nil)
 	}
 	status, detail := checker.Health(c.Request.Context(), instance)
-	if err := h.store.UpdateRuntimeHealth(instance.ID, status, detail, time.Now()); err != nil {
+	if err := h.runtimes.UpdateRuntimeHealth(instance.ID, status, detail, time.Now()); err != nil {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "保存健康检查结果失败")
 		return
 	}
@@ -252,7 +252,7 @@ func (h *RuntimeHandler) Health(c *gin.Context) {
 	} else if instance.Status != model.RuntimeStatusUninstalled {
 		instance.Status = model.RuntimeStatusDegraded
 	}
-	_ = h.store.UpdateRuntime(instance)
+	_ = h.runtimes.UpdateRuntime(instance)
 	h.sanitize(instance)
 	model.Success(c, instance)
 }
@@ -263,7 +263,7 @@ func (h *RuntimeHandler) Uninstall(c *gin.Context) {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "Runtime ID 无效")
 		return
 	}
-	instance, err := h.store.GetRuntime(id)
+	instance, err := h.runtimes.GetRuntime(id)
 	if err != nil {
 		model.Error(c, http.StatusNotFound, model.CodeNotFound, "Runtime 不存在")
 		return
@@ -274,7 +274,7 @@ func (h *RuntimeHandler) Uninstall(c *gin.Context) {
 	}
 	if instance.DeploymentMode == model.RuntimeDeploymentExternal {
 		instance.Status = model.RuntimeStatusUninstalled
-		if err := h.store.UpdateRuntime(instance); err != nil {
+		if err := h.runtimes.UpdateRuntime(instance); err != nil {
 			model.Error(c, http.StatusInternalServerError, model.CodeDBError, "保存卸载状态失败")
 			return
 		}
@@ -290,7 +290,7 @@ func (h *RuntimeHandler) Uninstall(c *gin.Context) {
 	instance.Status = model.RuntimeStatusUninstalled
 	instance.HealthStatus = ""
 	instance.HealthDetail = ""
-	if err := h.store.UpdateRuntime(instance); err != nil {
+	if err := h.runtimes.UpdateRuntime(instance); err != nil {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "保存卸载状态失败")
 		return
 	}
@@ -314,7 +314,7 @@ func (h *RuntimeHandler) UpdateAgentTools(c *gin.Context) {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "Runtime ID 无效")
 		return
 	}
-	instance, err := h.store.GetRuntime(id)
+	instance, err := h.runtimes.GetRuntime(id)
 	if err != nil {
 		model.Error(c, http.StatusNotFound, model.CodeNotFound, "Runtime 不存在")
 		return
@@ -345,13 +345,13 @@ func (h *RuntimeHandler) UpdateAgentTools(c *gin.Context) {
 	if err := h.k8s.Apply(c.Request.Context(), instance, apiKey, runtimeAPIKey); err != nil {
 		instance.Status = model.RuntimeStatusFailed
 		instance.HealthDetail = err.Error()
-		_ = h.store.UpdateRuntime(instance)
+		_ = h.runtimes.UpdateRuntime(instance)
 		model.Error(c, http.StatusBadGateway, model.CodeK8sAPIError, err.Error())
 		return
 	}
 	instance.Status = model.RuntimeStatusDeploying
 	instance.ObservedGeneration = instance.DesiredGeneration
-	if err := h.store.UpdateRuntime(instance); err != nil {
+	if err := h.runtimes.UpdateRuntime(instance); err != nil {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "保存 Runtime Agent 工具更新状态失败")
 		return
 	}
@@ -365,7 +365,7 @@ func (h *RuntimeHandler) setAgentTools(c *gin.Context, enabled bool) {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "Runtime ID 无效")
 		return
 	}
-	instance, err := h.store.GetRuntime(id)
+	instance, err := h.runtimes.GetRuntime(id)
 	if err != nil {
 		model.Error(c, http.StatusNotFound, model.CodeNotFound, "Runtime 不存在")
 		return
@@ -387,7 +387,7 @@ func (h *RuntimeHandler) setAgentTools(c *gin.Context, enabled bool) {
 	// Pod may remain reachable during rollout, but it can no longer authorize a
 	// platform action once uninstall has been requested.
 	if !enabled {
-		if err := h.store.ReplaceAgentCapabilityGrants(instance.ID, nil); err != nil {
+		if err := h.runtimes.ReplaceAgentCapabilityGrants(instance.ID, nil); err != nil {
 			model.Error(c, http.StatusInternalServerError, model.CodeDBError, "撤销 Runtime Agent 授权失败")
 			return
 		}
@@ -407,13 +407,13 @@ func (h *RuntimeHandler) setAgentTools(c *gin.Context, enabled bool) {
 	if err := h.k8s.Apply(c.Request.Context(), instance, apiKey, runtimeAPIKey); err != nil {
 		instance.Status = model.RuntimeStatusFailed
 		instance.HealthDetail = err.Error()
-		_ = h.store.UpdateRuntime(instance)
+		_ = h.runtimes.UpdateRuntime(instance)
 		model.Error(c, http.StatusBadGateway, model.CodeK8sAPIError, err.Error())
 		return
 	}
 	instance.Status = model.RuntimeStatusDeploying
 	instance.ObservedGeneration = instance.DesiredGeneration
-	if err := h.store.UpdateRuntime(instance); err != nil {
+	if err := h.runtimes.UpdateRuntime(instance); err != nil {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "保存 Runtime Agent 工具状态失败")
 		return
 	}
@@ -602,7 +602,7 @@ func (h *RuntimeHandler) runtimeAPIKey(instance *model.RuntimeInstance) (string,
 		return "", err
 	}
 	instance.EncryptedRuntimeAPIKey = encrypted
-	if err := h.store.UpdateRuntime(instance); err != nil {
+	if err := h.runtimes.UpdateRuntime(instance); err != nil {
 		return "", err
 	}
 	return plain, nil

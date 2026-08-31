@@ -10,7 +10,6 @@ import (
 
 	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 	"github.com/cylism/cylism-manager/internal/model"
-	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/gin-gonic/gin"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -29,12 +28,12 @@ func (h *ApplicationHandler) ListEnvironments(c *gin.Context) {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "项目 ID 无效")
 		return
 	}
-	environments, err := h.store.ListEnvironments(projectID)
+	environments, err := h.applications.ListEnvironments(projectID)
 	if err != nil {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
 		return
 	}
-	conflicts, err := h.store.ListEnvironmentNamespaceConflicts()
+	conflicts, err := h.applications.ListEnvironmentNamespaceConflicts()
 	if err != nil {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
 		return
@@ -75,7 +74,7 @@ func (h *ApplicationHandler) CreateEnvironment(c *gin.Context) {
 		return
 	}
 	name, namespace := strings.TrimSpace(req.Name), strings.TrimSpace(req.Namespace)
-	if err := h.store.EnsureNamespaceAvailable(namespace, 0); err != nil {
+	if err := h.applications.EnsureNamespaceAvailable(namespace, 0); err != nil {
 		handleEnvironmentNamespaceError(c, err)
 		return
 	}
@@ -84,7 +83,7 @@ func (h *ApplicationHandler) CreateEnvironment(c *gin.Context) {
 		return
 	}
 	environment := &model.Environment{ProjectID: projectID, Name: name, Namespace: namespace, NamespaceStatus: "active"}
-	if err := h.store.CreateEnvironment(environment); err != nil {
+	if err := h.applications.CreateEnvironment(environment); err != nil {
 		if handleEnvironmentNamespaceError(c, err) {
 			return
 		}
@@ -111,12 +110,12 @@ func (h *ApplicationHandler) UpdateEnvironment(c *gin.Context) {
 	}
 	name, namespace := strings.TrimSpace(req.Name), strings.TrimSpace(req.Namespace)
 	if environment.Name != name || environment.Namespace != namespace {
-		applicationCount, err := h.store.CountEnvironmentApplications(environmentID)
+		applicationCount, err := h.applications.CountEnvironmentApplications(environmentID)
 		if err != nil {
 			model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
 			return
 		}
-		namespaceConflict, err := h.store.IsEnvironmentNamespaceConflicted(environment.Namespace)
+		namespaceConflict, err := h.applications.IsEnvironmentNamespaceConflicted(environment.Namespace)
 		if err != nil {
 			model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
 			return
@@ -135,7 +134,7 @@ func (h *ApplicationHandler) UpdateEnvironment(c *gin.Context) {
 				apiShared.K8sUnavailable(c)
 				return
 			}
-			if err := h.store.EnsureNamespaceAvailable(namespace, environment.ID); err != nil {
+			if err := h.applications.EnsureNamespaceAvailable(namespace, environment.ID); err != nil {
 				handleEnvironmentNamespaceError(c, err)
 				return
 			}
@@ -148,7 +147,7 @@ func (h *ApplicationHandler) UpdateEnvironment(c *gin.Context) {
 	environment.Name = name
 	environment.Namespace = namespace
 	environment.NamespaceStatus = environmentNamespaceStatus(c.Request.Context(), namespace)
-	if err := h.store.UpdateEnvironment(environment); err != nil {
+	if err := h.applications.UpdateEnvironment(environment); err != nil {
 		if handleEnvironmentNamespaceError(c, err) {
 			return
 		}
@@ -172,7 +171,7 @@ func (h *ApplicationHandler) SyncEnvironmentNamespace(c *gin.Context) {
 		apiShared.K8sUnavailable(c)
 		return
 	}
-	if err := h.store.EnsureNamespaceAvailable(environment.Namespace, environment.ID); err != nil {
+	if err := h.applications.EnsureNamespaceAvailable(environment.Namespace, environment.ID); err != nil {
 		handleEnvironmentNamespaceError(c, err)
 		return
 	}
@@ -185,7 +184,7 @@ func (h *ApplicationHandler) SyncEnvironmentNamespace(c *gin.Context) {
 }
 
 func (h *ApplicationHandler) ListEnvironmentNamespaceConflicts(c *gin.Context) {
-	conflicts, err := h.store.ListEnvironmentNamespaceConflicts()
+	conflicts, err := h.applications.ListEnvironmentNamespaceConflicts()
 	if err != nil {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
 		return
@@ -202,7 +201,7 @@ func (h *ApplicationHandler) DeleteEnvironment(c *gin.Context) {
 		model.Error(c, http.StatusNotFound, model.CodeNotFound, "环境不存在")
 		return
 	}
-	applicationCount, err := h.store.CountEnvironmentApplications(environmentID)
+	applicationCount, err := h.applications.CountEnvironmentApplications(environmentID)
 	if err != nil {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
 		return
@@ -211,7 +210,7 @@ func (h *ApplicationHandler) DeleteEnvironment(c *gin.Context) {
 		model.Error(c, http.StatusConflict, model.CodeConflict, "环境仍关联应用，无法删除")
 		return
 	}
-	if err := h.store.DeleteEnvironment(environmentID); err != nil {
+	if err := h.applications.DeleteEnvironment(environmentID); err != nil {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
 		return
 	}
@@ -286,7 +285,7 @@ func isSystemNamespace(namespace string) bool {
 }
 
 func handleEnvironmentNamespaceError(c *gin.Context, err error) bool {
-	var conflict *store.NamespaceConflictError
+	var conflict *model.NamespaceConflictError
 	if errors.As(err, &conflict) {
 		model.Error(c, http.StatusConflict, model.CodeConflict, conflict.Error())
 		return true

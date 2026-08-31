@@ -18,6 +18,7 @@ import (
 
 	"github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
+	"github.com/cylism/cylism-manager/internal/repository"
 	registryservice "github.com/cylism/cylism-manager/internal/service/registry"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -28,42 +29,14 @@ type AgentAuthenticator interface {
 }
 
 type AgentHandler struct {
-	store interface {
-		HasAgentCapability(runtimeID uint, capability, namespace string) (bool, error)
-		ListAgentCapabilityGrants(runtimeID uint) ([]model.AgentCapabilityGrant, error)
-		CreateAgentOperation(operation *model.AgentOperation) (*model.AgentOperation, bool, error)
-		GetAgentOperation(operationID string) (*model.AgentOperation, error)
-		GetAlertEvent(id uint) (*model.AlertEvent, error)
-		ListAlertEvents(int) ([]model.AlertEvent, error)
-		UpdateAlertEvent(*model.AlertEvent) error
-		GetAlertAutomationPolicy() (*model.AlertAutomationPolicy, error)
-		ListNodeRegistryMirrors() ([]model.NodeRegistryMirror, error)
-		ListRegistryProxies() ([]model.RegistryProxy, error)
-		GetActiveClusterDNSPolicy() (*model.ClusterDNSPolicy, error)
-		ListServers() ([]model.Server, error)
-		CreateAuditLog(entry *model.AuditLog) error
-	}
+	store                repository.AgentReadRepository
 	client               *k8s.Client
 	authenticator        AgentAuthenticator
 	registryVerifier     AgentRegistryNodeVerifier
 	maintenanceInspector AgentMaintenanceInspector
 }
 
-func NewAgentHandler(store interface {
-	HasAgentCapability(runtimeID uint, capability, namespace string) (bool, error)
-	ListAgentCapabilityGrants(runtimeID uint) ([]model.AgentCapabilityGrant, error)
-	CreateAgentOperation(operation *model.AgentOperation) (*model.AgentOperation, bool, error)
-	GetAgentOperation(operationID string) (*model.AgentOperation, error)
-	GetAlertEvent(id uint) (*model.AlertEvent, error)
-	ListAlertEvents(int) ([]model.AlertEvent, error)
-	UpdateAlertEvent(*model.AlertEvent) error
-	GetAlertAutomationPolicy() (*model.AlertAutomationPolicy, error)
-	ListNodeRegistryMirrors() ([]model.NodeRegistryMirror, error)
-	ListRegistryProxies() ([]model.RegistryProxy, error)
-	GetActiveClusterDNSPolicy() (*model.ClusterDNSPolicy, error)
-	ListServers() ([]model.Server, error)
-	CreateAuditLog(entry *model.AuditLog) error
-}, client *k8s.Client, authenticator AgentAuthenticator) *AgentHandler {
+func NewAgentHandler(store repository.AgentReadRepository, client *k8s.Client, authenticator AgentAuthenticator) *AgentHandler {
 	return &AgentHandler{store: store, client: client, authenticator: authenticator}
 }
 

@@ -7,41 +7,34 @@ import (
 	"errors"
 
 	"github.com/cylism/cylism-manager/internal/model"
+	"github.com/cylism/cylism-manager/internal/repository"
 )
 
 var ErrEnvironmentNotInProject = errors.New("environment does not belong to project")
 
-// Store is the smallest read model needed by QueryService. Keeping this
-// interface here lets query consumers use a stub without depending on the
-// concrete database Store.
-type Store interface {
-	GetProject(id uint) (*model.Project, error)
-	GetEnvironment(projectID, environmentID uint) (*model.Environment, error)
-	GetApplication(id uint) (*model.Application, error)
-	ListApplications(scope ...uint) ([]model.Application, error)
-	ListReleases(applicationID uint) ([]model.Release, error)
-	ListReleasesByApplications(ids []uint) (map[uint][]model.Release, error)
-}
-
 // QueryService provides the shared read operations used by application views.
 // It deliberately has no mutation or Kubernetes dependencies.
-type QueryService struct{ store Store }
+type QueryService struct {
+	repository repository.ApplicationQueryRepository
+}
 
-func NewQueryService(store Store) *QueryService { return &QueryService{store: store} }
+func NewQueryService(repository repository.ApplicationQueryRepository) *QueryService {
+	return &QueryService{repository: repository}
+}
 
 func (s *QueryService) GetProject(id uint) (*model.Project, error) {
-	return s.store.GetProject(id)
+	return s.repository.GetProject(id)
 }
 
 func (s *QueryService) GetEnvironment(projectID, environmentID uint) (*model.Environment, error) {
-	return s.store.GetEnvironment(projectID, environmentID)
+	return s.repository.GetEnvironment(projectID, environmentID)
 }
 
 // ResolveEnvironment returns an environment only when it belongs to the
 // supplied project. Callers use the sentinel error to map an invalid project /
 // environment pair to their existing API response.
 func (s *QueryService) ResolveEnvironment(projectID, environmentID uint) (*model.Environment, error) {
-	environment, err := s.store.GetEnvironment(projectID, environmentID)
+	environment, err := s.repository.GetEnvironment(projectID, environmentID)
 	if err != nil {
 		return nil, ErrEnvironmentNotInProject
 	}
@@ -49,17 +42,17 @@ func (s *QueryService) ResolveEnvironment(projectID, environmentID uint) (*model
 }
 
 func (s *QueryService) GetApplication(id uint) (*model.Application, error) {
-	return s.store.GetApplication(id)
+	return s.repository.GetApplication(id)
 }
 
 func (s *QueryService) ListApplications(scope ...uint) ([]model.Application, error) {
-	return s.store.ListApplications(scope...)
+	return s.repository.ListApplications(scope...)
 }
 
 func (s *QueryService) ListReleases(applicationID uint) ([]model.Release, error) {
-	return s.store.ListReleases(applicationID)
+	return s.repository.ListReleases(applicationID)
 }
 
 func (s *QueryService) ListReleasesByApplications(ids []uint) (map[uint][]model.Release, error) {
-	return s.store.ListReleasesByApplications(ids)
+	return s.repository.ListReleasesByApplications(ids)
 }

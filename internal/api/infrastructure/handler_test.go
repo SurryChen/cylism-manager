@@ -53,7 +53,7 @@ func newInfrastructureTestRouter(t *testing.T) (*gin.Engine, *store.Store) {
 	}
 	service := cluster.NewService(st, fakeNodes{})
 	r := gin.New()
-	servers := NewServerHandler(st, make([]byte, 32), service)
+	servers := NewServerHandler(make([]byte, 32), service)
 	nodes := NewNodeHandler(service)
 	r.POST("/api/servers", servers.Create)
 	r.GET("/api/servers", servers.List)

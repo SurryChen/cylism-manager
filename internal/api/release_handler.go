@@ -44,7 +44,7 @@ func (h *ApplicationHandler) CreateRelease(c *gin.Context) {
 		model.Error(c, http.StatusNotFound, model.CodeNotFound, "应用不存在")
 		return
 	}
-	template, err := h.store.GetApplicationDeploymentTemplate(applicationID, req.TemplateID)
+	template, err := h.resources.GetApplicationDeploymentTemplate(applicationID, req.TemplateID)
 	if errors.Is(err, gorm.ErrRecordNotFound) || !template.Enabled {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "上线模板不存在或已停用")
 		return
@@ -122,7 +122,7 @@ func (h *ApplicationHandler) RetryRelease(c *gin.Context) {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "发布 ID 无效")
 		return
 	}
-	original, err := h.store.GetRelease(releaseID)
+	original, err := h.resources.GetRelease(releaseID)
 	if err != nil || original.ApplicationID != applicationID {
 		model.Error(c, http.StatusNotFound, model.CodeNotFound, "发布不存在")
 		return
@@ -157,7 +157,7 @@ func (h *ApplicationHandler) RollbackRelease(c *gin.Context) {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "发布 ID 无效")
 		return
 	}
-	original, err := h.store.GetRelease(releaseID)
+	original, err := h.resources.GetRelease(releaseID)
 	if err != nil || original.ApplicationID != applicationID {
 		model.Error(c, http.StatusNotFound, model.CodeNotFound, "发布不存在")
 		return
@@ -188,7 +188,7 @@ func (h *ApplicationHandler) GetRelease(c *gin.Context) {
 		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "发布 ID 无效")
 		return
 	}
-	release, err := h.store.GetRelease(id)
+	release, err := h.resources.GetRelease(id)
 	if err != nil {
 		model.Error(c, http.StatusNotFound, model.CodeNotFound, "发布不存在")
 		return

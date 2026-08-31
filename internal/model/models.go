@@ -6,6 +6,22 @@ import (
 	"gorm.io/gorm"
 )
 
+// ResourceReference identifies an application template or release snapshot
+// that projects a ConfigMap or Secret resource.
+type ResourceReference struct {
+	ApplicationID   uint   `json:"application_id"`
+	ApplicationName string `json:"application_name"`
+	Kind            string `json:"kind"`
+	Name            string `json:"name"`
+}
+
+// DashboardStats is the persisted-data summary rendered by the dashboard.
+type DashboardStats struct {
+	TotalServers  int64 `json:"total_servers"`
+	TotalSites    int64 `json:"total_sites"`
+	ExpiringCerts int64 `json:"expiring_certs"`
+}
+
 // Server 服务器模型
 type Server struct {
 	ID               uint           `gorm:"primaryKey" json:"id"`

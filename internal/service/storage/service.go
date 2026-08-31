@@ -7,7 +7,6 @@ import (
 
 	k8sclient "github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
-	"github.com/cylism/cylism-manager/internal/store"
 	corev1 "k8s.io/api/core/v1"
 )
 
@@ -55,10 +54,30 @@ type EnvironmentStore interface {
 	GetEnvironmentByID(id uint) (*model.Environment, error)
 }
 
+// RecordStore is the durable task state required by asynchronous PVC
+// workflows. It stays distinct from environment lookup so callers can supply
+// a read-only environment source where task records are unavailable.
+type RecordStore interface {
+	ListPersistentVolumeMigrations(uint) ([]model.PersistentVolumeMigration, error)
+	GetPersistentVolumeMigration(uint) (*model.PersistentVolumeMigration, error)
+	FindActivePVCMigration(uint, string) (*model.PersistentVolumeMigration, error)
+	CreatePersistentVolumeMigration(*model.PersistentVolumeMigration) error
+	UpdatePersistentVolumeMigration(*model.PersistentVolumeMigration, string, string) error
+	ListPersistentVolumeBackups(uint, string) ([]model.PersistentVolumeBackup, error)
+	GetPersistentVolumeBackup(uint) (*model.PersistentVolumeBackup, error)
+	CreatePersistentVolumeBackup(*model.PersistentVolumeBackup) error
+	UpdatePersistentVolumeBackup(*model.PersistentVolumeBackup) error
+	ListHostDirectoryPVCImports(uint, string) ([]model.HostDirectoryPVCImport, error)
+	GetHostDirectoryPVCImport(uint) (*model.HostDirectoryPVCImport, error)
+	FindActiveHostDirectoryPVCImport(uint, string) (*model.HostDirectoryPVCImport, error)
+	CreateHostDirectoryPVCImport(*model.HostDirectoryPVCImport) error
+	UpdateHostDirectoryPVCImport(*model.HostDirectoryPVCImport, string, string) error
+}
+
 type Service struct {
 	k8s          KubernetesAdapter
 	environments EnvironmentStore
-	records      *store.Store
+	records      RecordStore
 	executor     AsyncExecutor
 }
 
@@ -93,10 +112,10 @@ func (s *Service) ValidatePVCDeletion(confirmDataDelete, migrationActive bool, r
 	return nil
 }
 
-func NewService(k8s KubernetesAdapter, environments EnvironmentStore) *Service {
+func NewService(k8s KubernetesAdapter, environments EnvironmentStore, records ...RecordStore) *Service {
 	service := &Service{k8s: k8s, environments: environments}
-	if records, ok := environments.(*store.Store); ok {
-		service.records = records
+	if len(records) > 0 {
+		service.records = records[0]
 	}
 	return service
 }
@@ -140,7 +159,7 @@ func (s *Service) StartRestore(id uint) error {
 	return nil
 }
 
-func (s *Service) requireRecords() (*store.Store, error) {
+func (s *Service) requireRecords() (RecordStore, error) {
 	if s.records == nil {
 		return nil, errors.New("数据存储未初始化")
 	}

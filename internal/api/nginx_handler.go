@@ -3,16 +3,13 @@ package api
 import (
 	"github.com/cylism/cylism-manager/internal/model"
 
-	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/gin-gonic/gin"
 )
 
-type NginxHandler struct {
-	store *store.Store
-}
+type NginxHandler struct{}
 
-func NewNginxHandler(s *store.Store) *NginxHandler {
-	return &NginxHandler{store: s}
+func NewNginxHandler() *NginxHandler {
+	return &NginxHandler{}
 }
 
 // Import 从目标服务器导入 NGINX 配置 — K3s 版本待实现

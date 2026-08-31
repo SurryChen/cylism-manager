@@ -1,6 +1,6 @@
 # Cylism Manager Internal Architecture Optimization Plan
 
-状态：阶段 0～1 已完成（2026-08-30），阶段 2～6 待执行
+状态：阶段 0～2 已完成（2026-08-31），阶段 3～6 待执行
 
 本文档针对 `internal/` 目录的可维护性和复用能力进行优化规划。目标是逐步收窄模块职责、减少隐式依赖和重复逻辑，同时保持现有 REST API、数据库结构、Kubernetes 资源行为和前端工作流不变。
 
@@ -154,7 +154,7 @@ internal/
 - 发布和 Endpoint 逻辑不再直接复制项目/环境查询代码。
 - 现有应用创建、发布、重启、回滚、模板和 Endpoint 页面回归通过。
 
-### 阶段 2：Store 和 Repository 分域
+### 阶段 2：Store 和 Repository 分域（已完成）
 
 目标：消除 `Store` 作为全系统万能依赖的情况。
 
@@ -172,7 +172,28 @@ internal/
 - 不在 Repository 中放业务规则或 Kubernetes 调用。
 - 不为每个简单字段访问创建没有复用价值的抽象。
 
-验收：Service 单测可以使用内存 Repository 或 Stub，不需要启动完整 API；事务、唯一性和并发状态更新回归通过。
+当前进度：
+
+- 已完成 2.1：新增 `internal/repository/application_repository.go`，定义 `ApplicationQueryRepository`、`ReleaseRepository` 和 `ReleaseWorkflowRepository` 三个按消费者能力收敛的接口；现有 `*store.Store` 通过编译期断言继续作为过渡实现。
+- `internal/service/application.QueryService`、`internal/application.Service` 和 `internal/application.ReleaseWorkflow` 已依赖 Repository 接口，不再在生产代码中导入或持有 `*store.Store`。
+- 新增发布 Service 的 Repository Stub 单测；SQLite Store 测试继续保留，分别覆盖可替换性和真实持久化行为。
+- Release、受管文件和应用能力元数据的 GORM 实现已物理迁入 `internal/store/application_release_repository.go`。
+- 项目、环境、Application 查询、Deployment Template 和 Endpoint 的 GORM 查询与事务已物理迁入 `internal/store/application_repository.go`。环境命名空间唯一性校验、模板 Revision 乐观锁、默认模板与 Endpoint 路由冲突事务保持不变。
+- `ApplicationHandler` 新增 `ApplicationManagementRepository` 依赖。项目、环境、应用元数据、模板和 Endpoint Handler 的查询/写入均通过该接口；受管域名、镜像仓库、Kubernetes 操作及发布工作流仍经由各自的明确依赖处理。
+- 资源引用检索及集成 Session 等跨 Application/Infrastructure 边界能力暂留 Store；`GetEnvironmentByID` 已在 PVC、域名和证书消费者明确后迁入 Infrastructure Repository。
+- 已完成 Runtime 与 Agent 持久化：新增 `RuntimeRepository`、`AgentCapabilityRepository`、`AgentOperationRepository` 以及两个面向 Agent API 的组合接口；Runtime Handler、聊天路径和 Agent API 不再依赖具体 `*store.Store`。Runtime、授权和操作的 GORM 实现已迁入 `internal/store/runtime_repository.go`。
+- 已完成 Infrastructure 持久化的首批边界：`ServerRepository`、`NetworkRepository`、`CertificateRepository`、`StorageRepository`、`PVCRepository` 和 `NodeJoinRepository` 已按消费者定义。Cluster Service、Network Service、Storage Service、域名、证书、PVC、服务器诊断、终端和节点加入 Handler 使用这些接口；服务器、环境只读、域名、DNS 凭据和 PVC 任务实现已迁入 `internal/store/infrastructure_repository.go`。
+- 已完成 Observability 持久化：告警自动化、审计和系统组件配置的 Handler/中间件使用 `AlertRepository`、`AuditRepository`、`SystemComponentRepository` 或最小组合接口；其 GORM 实现已迁入 `internal/store/observability_repository.go`。
+- `service/cluster`、`service/platform`、`service/network`、`service/storage` 均已消除对具体 `*store.Store` 的依赖。Network/Storage 的凭据与任务记录通过明确的可选 Repository 注入；不再使用 Store 类型断言作为回退。
+- Registry 持久化已完整迁入 `internal/store/registry_repository.go`：镜像仓库、节点镜像源、Registry Proxy、受管 OCI 制品库和 Chart Repository 分别由 `ImageRegistryRepository`、`NodeRegistryMirrorRepository`、`RegistryProxyRepository`、`ManagedRegistryRepository`、`ChartRepositoryStore` 提供给 Registry Service 和交付中心 Handler。
+- `K8sHandler` 已改为注入 `ResourceReferenceRepository`、预组装的 Storage Service 与 `AuditRepository`；原有 Store 可变参数构造路径已删除。Logging 使用 `LoggingScopeRepository`，Tailscale 使用 `SystemConfigRepository`，两者均不再持有具体 Store。
+- 集群 DNS、站点/证书、用户、操作日志、集成 Session、资源引用和仪表盘统计已分别迁入 `cluster_repository.go`、`site_repository.go`、`auth_repository.go`、`operation_repository.go`、`integration_repository.go`、`resource_reference_repository.go`、`observability_repository.go`。这些接口均有明确消费者，未为无调用方的记录额外创建泛化抽象。
+- `ApplicationHandler` 已改为依赖其私有的 `ApplicationHandlerRepository` 组合能力；应用、发布、受管文件、集成会话和工作台域名读取不再持有具体 Store。域名信息组装提取为 `ManagedDomainInfoFor`，只依赖端点引用计数和可选的证书查询，避免反向创建完整域名生命周期 Service。
+- `store.go` 已收敛至约 266 行，只保留 SQLite 初始化、迁移、数据回填和 `DB()`。生产代码中对 `*store.Store` 的直接持有仅剩 Router 依赖组装根，以及必须执行通用 GORM 表管理的 `DBAdminHandler`；后者是明确的受限管理例外，不作为业务 Repository 的替代入口。
+- 命名空间冲突及模板 Revision 冲突的领域 DTO/Error 已迁入 `model`；Repository 接口和 Application Handler 不再反向导入 `internal/store` 取得错误类型。
+- 已补充独立 Fake/Stubs：Registry Proxy、受管 OCI 制品库、节点镜像源、外部镜像仓库和 Chart Repository 持久化契约，以及 K8s 资源引用保护、Tailscale 系统配置读取和域名只读信息组装；SQLite Store 测试继续覆盖真实事务、唯一性和状态更新。
+
+验收（2026-08-31）：`go test ./...`、`go build ./...`、`nvm use 24 && npm --prefix web run build`、`git diff --check` 均通过。前端构建保留既有主 JS chunk 超过 500 kB 的 Vite 警告，未阻塞构建。
 
 ### 阶段 3：Kubernetes Adapter 和 Reconciler 整理
 
