@@ -1,6 +1,6 @@
 # Cylism Manager Internal Architecture Optimization Plan
 
-状态：阶段 0 已完成（2026-08-30），阶段 1～6 待执行
+状态：阶段 0～1 已完成（2026-08-30），阶段 2～6 待执行
 
 本文档针对 `internal/` 目录的可维护性和复用能力进行优化规划。目标是逐步收窄模块职责、减少隐式依赖和重复逻辑，同时保持现有 REST API、数据库结构、Kubernetes 资源行为和前端工作流不变。
 
@@ -118,7 +118,7 @@ internal/
 
 验收：无 API 行为变化，完整测试和构建通过。
 
-### 阶段 1：Application API 拆分
+### 阶段 1：Application API 拆分（已完成）
 
 目标：处理当前最大的 `ApplicationHandler`，这是降低复杂度和提高复用率的最高优先级。
 
@@ -130,6 +130,16 @@ internal/
 - Deployment Template：`template_handler.go`
 - Application Endpoint：`endpoint_handler.go`
 - 工作台和运行状态查询：`runtime_view.go`
+
+实施结果：
+
+- `ApplicationHandler` 依赖结构、构造函数和应用生命周期入口保留在 `application_handler.go`。
+- 项目、环境、运行态、发布、模板和 Endpoint 实现已分别迁入对应文件，仍属于同一 `api` package，路由和构造函数保持兼容。
+- 发布路径继续调用 `application.ReleaseWorkflow`，模板加密/脱敏和 Endpoint 同步逻辑未复制状态机。
+- 工作台、发现和集成读取路径通过 `internal/service/application.QueryService` 复用项目、环境、应用和发布查询；环境归属解析和 Kubernetes 运行态 DTO 组装也已迁入该只读 Service。
+- 路由级回归测试已按项目、环境、应用、运行态、发布、模板、Endpoint 和集成入口物理拆分到对应 `*_handler_test.go`，共享 router fixture 保留在 `application_handler_test.go`。
+
+阶段一验收记录见 `docs/internal-architecture-stage1-baseline.md`。
 
 要求：
 
