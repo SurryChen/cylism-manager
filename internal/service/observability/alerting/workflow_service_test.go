@@ -2,11 +2,23 @@ package alerting
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"testing"
 
 	"github.com/cylism/cylism-manager/internal/model"
 )
+
+func TestBuildOverviewUsesStableJSONFieldNames(t *testing.T) {
+	o := BuildOverview(nil, nil)
+	raw, err := json.Marshal(o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) != `{"active":[],"resolved":[],"firing":0,"silenced":0}` {
+		t.Fatalf("unexpected overview JSON: %s", raw)
+	}
+}
 
 type workflowStoreFake struct {
 	events []model.AlertEvent

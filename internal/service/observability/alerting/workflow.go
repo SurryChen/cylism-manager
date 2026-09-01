@@ -40,12 +40,16 @@ type Alert struct {
 	GeneratorURL string            `json:"generatorURL,omitempty"`
 }
 type Overview struct {
-	Active, Resolved []Alert
-	Firing, Silenced int
+	Active   []Alert `json:"active"`
+	Resolved []Alert `json:"resolved"`
+	Firing   int     `json:"firing"`
+	Silenced int     `json:"silenced"`
 }
 type Matcher struct {
-	Name, Value      string
-	IsRegex, IsEqual bool
+	Name    string `json:"name"`
+	Value   string `json:"value"`
+	IsRegex bool   `json:"isRegex"`
+	IsEqual bool   `json:"isEqual"`
 }
 type SilenceRequest struct {
 	Matchers        []Matcher

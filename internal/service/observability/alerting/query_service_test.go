@@ -2,9 +2,20 @@ package alerting
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"testing"
 )
+
+func TestSilenceMatcherUsesFrontendJSONFieldNames(t *testing.T) {
+	raw, err := json.Marshal(Matcher{Name: "alertname", Value: "NodeDown", IsEqual: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) != `{"name":"alertname","value":"NodeDown","isRegex":false,"isEqual":true}` {
+		t.Fatalf("unexpected matcher JSON: %s", raw)
+	}
+}
 
 func TestQueryServiceDelegatesOverviewAndSilences(t *testing.T) {
 	client := NewClient(func(_ context.Context, method, path string, _ interface{}, out interface{}) error {
