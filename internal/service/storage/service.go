@@ -38,14 +38,14 @@ func ValidateBackupRoot(value string) (string, error) {
 	return root, nil
 }
 
-// KubernetesAdapter is the storage subset used by the storage service.
+// PVCRepositoryAdapter is the PVC resource subset used by the storage service.
 // Keeping this interface narrow makes PVC workflows testable without a live cluster.
-type KubernetesAdapter interface {
-	ListPVCs(namespace string) ([]k8sclient.PersistentVolumeClaimInfo, error)
-	ListManagedPVCs(namespace string, environmentID uint) ([]k8sclient.PersistentVolumeClaimInfo, error)
-	GetManagedPVC(namespace, name string, environmentID uint) (*k8sclient.PersistentVolumeClaimInfo, error)
-	CreateManagedPVC(namespace string, environmentID uint, request k8sclient.PersistentVolumeClaimRequest) (*corev1.PersistentVolumeClaim, error)
-	DeleteManagedPVC(namespace, name string, environmentID uint) error
+type PVCRepositoryAdapter interface {
+	ListPVCs(string) ([]k8sclient.PersistentVolumeClaimInfo, error)
+	ListManagedPVCs(string, uint) ([]k8sclient.PersistentVolumeClaimInfo, error)
+	GetManagedPVC(string, string, uint) (*k8sclient.PersistentVolumeClaimInfo, error)
+	CreateManagedPVC(string, uint, k8sclient.PersistentVolumeClaimRequest) (*corev1.PersistentVolumeClaim, error)
+	DeleteManagedPVC(string, string, uint) error
 	ListStorageClasses() ([]k8sclient.StorageClassInfo, error)
 }
 
@@ -75,7 +75,7 @@ type RecordStore interface {
 }
 
 type Service struct {
-	k8s          KubernetesAdapter
+	k8s          PVCRepositoryAdapter
 	environments EnvironmentStore
 	records      RecordStore
 	executor     AsyncExecutor
@@ -112,7 +112,7 @@ func (s *Service) ValidatePVCDeletion(confirmDataDelete, migrationActive bool, r
 	return nil
 }
 
-func NewService(k8s KubernetesAdapter, environments EnvironmentStore, records ...RecordStore) *Service {
+func NewService(k8s PVCRepositoryAdapter, environments EnvironmentStore, records ...RecordStore) *Service {
 	service := &Service{k8s: k8s, environments: environments}
 	if len(records) > 0 {
 		service.records = records[0]

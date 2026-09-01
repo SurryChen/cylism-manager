@@ -1,6 +1,6 @@
 # Cylism Manager Internal Architecture Optimization Plan
 
-状态：阶段 0～2 已完成（2026-08-31），阶段 3～6 待执行
+状态：阶段 0～3 已完成（2026-08-31），阶段 4～6 待执行
 
 本文档针对 `internal/` 目录的可维护性和复用能力进行优化规划。目标是逐步收窄模块职责、减少隐式依赖和重复逻辑，同时保持现有 REST API、数据库结构、Kubernetes 资源行为和前端工作流不变。
 
@@ -197,6 +197,18 @@ internal/
 
 ### 阶段 3：Kubernetes Adapter 和 Reconciler 整理
 
+当前进度（2026-09-01）：
+
+- 已完成第一批只读 Adapter：新增 `internal/service/application.RuntimeReader`，运行态查询不再直接依赖完整 `*k8s.Client`；`internal/k8s/runtime_reader.go` 提供 Service、Deployment、StatefulSet 和 Pod 的按命名空间读取实现。
+- 已为运行态 Reader 增加 Fake/Clientset 回归测试，并为平台发布 Service 定义最小 `PlatformAdapter`，移除了 Service 对完整 K8s Client 的业务依赖。
+- 已完成第二批 Reconciler 边界：受管 OCI 制品库和 Registry Proxy Handler 改为依赖最小 Reconciler 接口，不再把具体 Reconciler 类型作为 HTTP Handler 的持有类型。
+- 已完成应用发布资源 Apply 接口化：`KubernetesApplier` 通过 `ApplicationResourceApplier` 编排 ConfigMap、Secret、Deployment、StatefulSet、Service、Ingress 和 Certificate，真实实现集中在 `internal/k8s/application_resources.go`，可由 Fake 替换。预检、工作负载控制、Endpoint 读取和发布诊断分别由最小 Adapter 接口承载，CRD、Ingress Controller 和 PVC 预检均透传调用方 context。
+- 已完成 PVC Adapter 物理职责拆分：基础设施 Storage Handler 分别注入 `PVCRepositoryAdapter`、`PVCMigrationReconciler` 和 `PVCWorkloadReader`；迁移、绑定 Pod、Deployment/PVC 变更和工作负载查询接口均接收调用方 `context.Context`，真实 K8s Client 仅在适配器中组装。
+- 已完成系统组件 Adapter 整理：System Component Handler 通过 `SystemComponentAdapter` 访问检测、HelmChartConfig、静态 Deployment、节点与 Pod 预检能力，不再暴露或使用完整 `Clientset`/动态客户端。Alerting、Logging、Monitoring 的 Service 化明确归入阶段四。
+- Registry Handler 已提供可替换 Reconciler 注入，且 Registry 的资源收敛与状态/诊断能力已在 `internal/k8s` 中分为独立接口；Delivery Handler 分别持有资源接口与状态/诊断接口，不再重新组合大 Reconciler。
+- 已补充应用资源 Apply、系统组件 Adapter、Registry Handler 资源/状态委托以及 PVC 工作负载等待的 Fake 单测，并保留 Registry Reconciler 的 Clientset 回归测试覆盖部署、诊断和资源清理路径。
+- 应用 Kubernetes 适配器已物理拆为预检、工作负载控制、Endpoint 和发布诊断四个实现，`KubernetesApplier` 分别注入对应能力；PVC Handler 的引用检查、命名空间校验和后台任务均使用明确的 context 边界；PVC、Registry 和应用 Adapter 的 Fake 委托路径已通过回归测试。
+
 目标：降低 `internal/k8s` 中单个 Client 的职责密度。
 
 拆分方向：
@@ -214,7 +226,7 @@ internal/
 - 所有远程操作必须接受 context，并保留超时和错误包装。
 - Reconcile 只负责目标状态收敛，不负责 HTTP 响应格式。
 
-验收：系统组件、Registry、PVC、应用发布的 K8s 行为不变；Service 不再直接拼接 Kubernetes 资源对象。
+验收（2026-08-31）：系统组件、Registry、PVC、应用发布的 K8s 行为保持不变；应用与平台 Service 不再依赖完整 Kubernetes Client，远程调用均由 Adapter 接收 context；`go test ./...`、`go build ./...`、前端构建和 `git diff --check` 通过。
 
 ### 阶段 4：System 和 Observability Service 化
 

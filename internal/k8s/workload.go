@@ -1,6 +1,7 @@
 package k8s
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -109,13 +110,17 @@ func (c *Client) GetDeployment(namespace, name string) (*DeploymentInfo, error) 
 
 // ListDeploymentPods 获取 Deployment 关联的 Pod
 func (c *Client) ListDeploymentPods(namespace, name string) ([]PodRef, error) {
-	d, err := c.Clientset.AppsV1().Deployments(namespace).Get(c.ctx, name, metav1.GetOptions{})
+	return c.ListDeploymentPodsContext(c.Ctx(), namespace, name)
+}
+
+func (c *Client) ListDeploymentPodsContext(ctx context.Context, namespace, name string) ([]PodRef, error) {
+	d, err := c.Clientset.AppsV1().Deployments(namespace).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("get deployment: %w", err)
 	}
 
 	selector := metav1.FormatLabelSelector(d.Spec.Selector)
-	pods, err := c.Clientset.CoreV1().Pods(namespace).List(c.ctx, metav1.ListOptions{
+	pods, err := c.Clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
 		LabelSelector: selector,
 	})
 	if err != nil {
@@ -179,12 +184,16 @@ func (c *Client) ListDeploymentRevisions(namespace, name string) ([]RevisionInfo
 
 // ScaleDeployment 扩缩容 Deployment
 func (c *Client) ScaleDeployment(namespace, name string, replicas int32) error {
-	deployment, err := c.Clientset.AppsV1().Deployments(namespace).Get(c.ctx, name, metav1.GetOptions{})
+	return c.ScaleDeploymentContext(c.Ctx(), namespace, name, replicas)
+}
+
+func (c *Client) ScaleDeploymentContext(ctx context.Context, namespace, name string, replicas int32) error {
+	deployment, err := c.Clientset.AppsV1().Deployments(namespace).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
 		return fmt.Errorf("get deployment scale: %w", err)
 	}
 	deployment.Spec.Replicas = &replicas
-	_, err = c.Clientset.AppsV1().Deployments(namespace).Update(c.ctx, deployment, metav1.UpdateOptions{})
+	_, err = c.Clientset.AppsV1().Deployments(namespace).Update(ctx, deployment, metav1.UpdateOptions{})
 	if err != nil {
 		return fmt.Errorf("update deployment scale: %w", err)
 	}

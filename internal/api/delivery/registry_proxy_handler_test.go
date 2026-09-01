@@ -21,6 +21,18 @@ import (
 	k8sfake "k8s.io/client-go/kubernetes/fake"
 )
 
+type testRegistryProxyDiagnostics struct {
+	diagnose func(context.Context, *model.RegistryProxy) (k8sclient.RegistryProxyDiagnostic, error)
+}
+
+func (d testRegistryProxyDiagnostics) Available() bool { return true }
+func (d testRegistryProxyDiagnostics) DeploymentAvailable(context.Context, *model.RegistryProxy) (bool, bool, error) {
+	return true, false, nil
+}
+func (d testRegistryProxyDiagnostics) DiagnoseUpstream(ctx context.Context, proxy *model.RegistryProxy) (k8sclient.RegistryProxyDiagnostic, error) {
+	return d.diagnose(ctx, proxy)
+}
+
 func TestRegistryProxyOutboundProxyIsEncryptedAndDiagnosticIsBounded(t *testing.T) {
 	st, err := store.New(":memory:")
 	if err != nil {
@@ -31,9 +43,9 @@ func TestRegistryProxyOutboundProxyIsEncryptedAndDiagnosticIsBounded(t *testing.
 		t.Fatal(err)
 	}
 	client := &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node-a"}})}
-	handler := NewRegistryProxyHandler(st, []byte("01234567890123456789012345678901"), client).WithDiagnoser(func(_ context.Context, _ *model.RegistryProxy) (k8sclient.RegistryProxyDiagnostic, error) {
+	handler := NewRegistryProxyHandler(st, []byte("01234567890123456789012345678901"), client).WithDiagnostics(testRegistryProxyDiagnostics{diagnose: func(_ context.Context, _ *model.RegistryProxy) (k8sclient.RegistryProxyDiagnostic, error) {
 		return k8sclient.RegistryProxyDiagnostic{Status: "upstream_connect_timeout", ResolvedIPs: []string{"128.121.243.75"}, ElapsedMS: 5000, Summary: "upstream timed out"}, nil
-	})
+	}})
 	router := gin.New()
 	router.PUT("/api/registry-proxies/:id", handler.Deploy)
 	router.POST("/api/registry-proxies/:id/diagnose", handler.Diagnose)

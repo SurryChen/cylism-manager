@@ -1,6 +1,7 @@
 package k8s
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"strings"
@@ -141,6 +142,12 @@ func (c *Client) DeleteIngress(namespace, name string) error {
 
 // DetectIngressController 检测 Ingress Controller
 func (c *Client) DetectIngressController() (*IngressControllerStatus, error) {
+	return c.DetectIngressControllerContext(c.Ctx())
+}
+
+// DetectIngressControllerContext keeps the cache while allowing release
+// preflight cancellation to reach every Kubernetes request.
+func (c *Client) DetectIngressControllerContext(ctx context.Context) (*IngressControllerStatus, error) {
 	c.ingressControllerMu.Lock()
 	defer c.ingressControllerMu.Unlock()
 
@@ -148,7 +155,7 @@ func (c *Client) DetectIngressController() (*IngressControllerStatus, error) {
 		return cached, nil
 	}
 
-	status, err := c.detectIngressController()
+	status, err := c.detectIngressControllerContext(ctx)
 	if err == nil {
 		c.ingressControllerCache = cloneIngressControllerStatus(status)
 		c.ingressControllerCacheExpiry = time.Now().Add(ingressControllerCacheTTL)
@@ -157,8 +164,12 @@ func (c *Client) DetectIngressController() (*IngressControllerStatus, error) {
 }
 
 func (c *Client) detectIngressController() (*IngressControllerStatus, error) {
+	return c.detectIngressControllerContext(c.Ctx())
+}
+
+func (c *Client) detectIngressControllerContext(ctx context.Context) (*IngressControllerStatus, error) {
 	// 1. Check Traefik CRD
-	traefikCRD, _ := c.CheckCRD("ingressroutes.traefik.io")
+	traefikCRD, _ := c.CheckCRDContext(ctx, "ingressroutes.traefik.io")
 
 	status := &IngressControllerStatus{
 		Type: "Unknown",
@@ -167,7 +178,7 @@ func (c *Client) detectIngressController() (*IngressControllerStatus, error) {
 
 	// K3s installs Traefik as kube-system/traefik. Prefer the direct read
 	// over scanning every deployment in the cluster.
-	traefik, err := c.Clientset.AppsV1().Deployments("kube-system").Get(c.ctx, "traefik", metav1.GetOptions{})
+	traefik, err := c.Clientset.AppsV1().Deployments("kube-system").Get(ctx, "traefik", metav1.GetOptions{})
 	if err == nil {
 		return ingressControllerStatusFromDeployment(traefik, traefikCRD), nil
 	}
@@ -176,7 +187,7 @@ func (c *Client) detectIngressController() (*IngressControllerStatus, error) {
 	}
 
 	// Compatibility fallback for non-K3s controller installations.
-	deployList, err := c.Clientset.AppsV1().Deployments("").List(c.ctx, metav1.ListOptions{})
+	deployList, err := c.Clientset.AppsV1().Deployments("").List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return status, fmt.Errorf("list deployments: %w", err)
 	}

@@ -20,14 +20,28 @@ import (
 const managedOCIRegistryNamespace = "cylism-system"
 
 type ManagedOCIRegistryHandler struct {
-	service    *registryservice.ManagedRegistryService
-	reconciler *k8sclient.ManagedRegistryReconciler
-	store      repository.ManagedRegistryRepository
-	applyNode  registryservice.NodeMirrorApplier
+	service   *registryservice.ManagedRegistryService
+	resources k8sclient.ManagedRegistryResourceReconciler
+	status    k8sclient.ManagedRegistryStatusReader
+	store     repository.ManagedRegistryRepository
+	applyNode registryservice.NodeMirrorApplier
 }
 
 func NewManagedOCIRegistryHandler(repo repository.ManagedRegistryRepository, encKey []byte, client *k8sclient.Client, applyNode registryservice.NodeMirrorApplier) *ManagedOCIRegistryHandler {
-	return &ManagedOCIRegistryHandler{service: registryservice.NewManagedRegistryService(repo, encKey), reconciler: k8sclient.NewManagedRegistryReconciler(client), store: repo, applyNode: applyNode}
+	reconciler := k8sclient.NewManagedRegistryReconciler(client)
+	return &ManagedOCIRegistryHandler{service: registryservice.NewManagedRegistryService(repo, encKey), resources: reconciler, status: reconciler, store: repo, applyNode: applyNode}
+}
+
+// WithResourceReconciler replaces only mutating registry convergence actions.
+func (h *ManagedOCIRegistryHandler) WithResourceReconciler(resources k8sclient.ManagedRegistryResourceReconciler) *ManagedOCIRegistryHandler {
+	h.resources = resources
+	return h
+}
+
+// WithStatusReader replaces only registry discovery and status reads.
+func (h *ManagedOCIRegistryHandler) WithStatusReader(status k8sclient.ManagedRegistryStatusReader) *ManagedOCIRegistryHandler {
+	h.status = status
+	return h
 }
 
 func (h *ManagedOCIRegistryHandler) List(c *gin.Context) {
@@ -63,12 +77,12 @@ func (h *ManagedOCIRegistryHandler) StoragePreflight(c *gin.Context) {
 	}
 	registry := &model.ManagedOCIRegistry{StorageClassName: "local-path"}
 	result := gin.H{"storage_class_name": registry.StorageClassName, "storage_classes": []string{registry.StorageClassName}, "data_nodes": []string{}}
-	if err := h.reconciler.EnsureStorageClass(c.Request.Context(), registry.StorageClassName); err != nil {
+	if err := h.resources.EnsureStorageClass(c.Request.Context(), registry.StorageClassName); err != nil {
 		result["ready"], result["message"] = false, err.Error()
 		model.Success(c, result)
 		return
 	}
-	nodes, err := h.reconciler.ListReadyDataNodes(c.Request.Context())
+	nodes, err := h.status.ListReadyDataNodes(c.Request.Context())
 	if err != nil {
 		result["ready"], result["message"] = false, "读取 Kubernetes 数据节点失败: "+truncateManagedRegistryError(err)
 		model.Success(c, result)
@@ -90,7 +104,7 @@ func (h *ManagedOCIRegistryHandler) ListEligiblePVCs(c *gin.Context) {
 	if !h.k8sReady(c) {
 		return
 	}
-	claims, err := h.reconciler.ListEligiblePVCs(c.Request.Context(), managedOCIRegistryNamespace)
+	claims, err := h.status.ListEligiblePVCs(c.Request.Context(), managedOCIRegistryNamespace)
 	if err != nil {
 		model.Error(c, http.StatusServiceUnavailable, model.CodeK8sAPIError, "读取制品库存储卷失败: "+truncateManagedRegistryError(err))
 		return
@@ -117,7 +131,7 @@ func (h *ManagedOCIRegistryHandler) ListMatchingCertificates(c *gin.Context) {
 		}
 		host = normalizedHost
 	}
-	certificates, err := h.reconciler.ListMatchingCertificates(c.Request.Context(), namespace, host)
+	certificates, err := h.status.ListMatchingCertificates(c.Request.Context(), namespace, host)
 	if err != nil {
 		model.Error(c, http.StatusServiceUnavailable, model.CodeK8sAPIError, "读取平台证书失败: "+truncateManagedRegistryError(err))
 		return
@@ -150,23 +164,23 @@ func (h *ManagedOCIRegistryHandler) Create(c *gin.Context) {
 		model.Error(c, http.StatusConflict, model.CodeConflict, err.Error())
 		return
 	}
-	if err := h.reconciler.EnsureResourcesAvailable(c.Request.Context(), registry.Namespace, registry.ResourceName); err != nil {
+	if err := h.resources.EnsureResourcesAvailable(c.Request.Context(), registry.Namespace, registry.ResourceName); err != nil {
 		model.Error(c, http.StatusConflict, model.CodeConflict, err.Error())
 		return
 	}
-	if err := h.reconciler.ResolvePVC(c.Request.Context(), registry); err != nil {
+	if err := h.resources.ResolvePVC(c.Request.Context(), registry); err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
 		return
 	}
-	if err := h.reconciler.EnsureStorageClass(c.Request.Context(), registry.StorageClassName); err != nil {
+	if err := h.resources.EnsureStorageClass(c.Request.Context(), registry.StorageClassName); err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
 		return
 	}
-	if err := h.reconciler.EnsureDataNode(c.Request.Context(), registry.DataNode); err != nil {
+	if err := h.resources.EnsureDataNode(c.Request.Context(), registry.DataNode); err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
 		return
 	}
-	if err := h.reconciler.EnsureTLSCertificate(c.Request.Context(), registry); err != nil {
+	if err := h.resources.EnsureTLSCertificate(c.Request.Context(), registry); err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
 		return
 	}
@@ -199,7 +213,7 @@ func (h *ManagedOCIRegistryHandler) Update(c *gin.Context) {
 		model.Error(c, http.StatusNotFound, model.CodeNotFound, "受管制品库不存在")
 		return
 	}
-	legacy, err := h.reconciler.LegacyHostPath(c.Request.Context(), current)
+	legacy, err := h.status.LegacyHostPath(c.Request.Context(), current)
 	if err != nil {
 		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, "检查制品库存储状态失败")
 		return
@@ -222,15 +236,15 @@ func (h *ManagedOCIRegistryHandler) Update(c *gin.Context) {
 		model.Error(c, http.StatusConflict, model.CodeConflict, "首期不支持变更制品库地址，请新建并迁移镜像")
 		return
 	}
-	if err := h.reconciler.ResolvePVC(c.Request.Context(), registry); err != nil {
+	if err := h.resources.ResolvePVC(c.Request.Context(), registry); err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
 		return
 	}
-	if err := h.reconciler.EnsureStorageClass(c.Request.Context(), registry.StorageClassName); err != nil {
+	if err := h.resources.EnsureStorageClass(c.Request.Context(), registry.StorageClassName); err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
 		return
 	}
-	if err := h.reconciler.EnsureTLSCertificate(c.Request.Context(), registry); err != nil {
+	if err := h.resources.EnsureTLSCertificate(c.Request.Context(), registry); err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
 		return
 	}
@@ -272,7 +286,7 @@ func (h *ManagedOCIRegistryHandler) Repair(c *gin.Context) {
 		model.Error(c, http.StatusNotFound, model.CodeNotFound, "受管制品库不存在")
 		return
 	}
-	legacy, err := h.reconciler.LegacyHostPath(c.Request.Context(), registry)
+	legacy, err := h.status.LegacyHostPath(c.Request.Context(), registry)
 	if err != nil {
 		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, "检查制品库存储状态失败")
 		return
@@ -281,19 +295,19 @@ func (h *ManagedOCIRegistryHandler) Repair(c *gin.Context) {
 		model.Error(c, http.StatusConflict, model.CodeConflict, "现有制品库仍使用旧 hostPath 存储，请先完成 PVC 数据迁移后再修复")
 		return
 	}
-	if err := h.reconciler.ResolvePVC(c.Request.Context(), registry); err != nil {
+	if err := h.resources.ResolvePVC(c.Request.Context(), registry); err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
 		return
 	}
-	if err := h.reconciler.EnsureStorageClass(c.Request.Context(), registry.StorageClassName); err != nil {
+	if err := h.resources.EnsureStorageClass(c.Request.Context(), registry.StorageClassName); err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
 		return
 	}
-	if err := h.reconciler.EnsureDataNode(c.Request.Context(), registry.DataNode); err != nil {
+	if err := h.resources.EnsureDataNode(c.Request.Context(), registry.DataNode); err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
 		return
 	}
-	if err := h.reconciler.EnsureTLSCertificate(c.Request.Context(), registry); err != nil {
+	if err := h.resources.EnsureTLSCertificate(c.Request.Context(), registry); err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
 		return
 	}
@@ -416,9 +430,9 @@ func (h *ManagedOCIRegistryHandler) Delete(c *gin.Context) {
 		}
 		return
 	}
-	if h.reconciler.Available() {
+	if h.status != nil && h.status.Available() && h.resources != nil {
 		ctx := c.Request.Context()
-		h.reconciler.DeleteResources(ctx, registry)
+		h.resources.DeleteResources(ctx, registry)
 	}
 	if err := h.service.DeletePersisted(registry); err != nil {
 		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "删除受管制品库记录失败")
@@ -428,7 +442,7 @@ func (h *ManagedOCIRegistryHandler) Delete(c *gin.Context) {
 }
 
 func (h *ManagedOCIRegistryHandler) k8sReady(c *gin.Context) bool {
-	if h.reconciler.Available() {
+	if h.status != nil && h.status.Available() && h.resources != nil {
 		return true
 	}
 	model.Error(c, http.StatusServiceUnavailable, model.CodeInternalError, "Kubernetes 集群未连接")
@@ -447,14 +461,17 @@ func (h *ManagedOCIRegistryHandler) registryFromRequest(request ManagedOCIRegist
 }
 
 func (h *ManagedOCIRegistryHandler) applyResources(ctx context.Context, registry *model.ManagedOCIRegistry, host, password string) error {
-	return h.reconciler.Apply(ctx, registry, host, password)
+	if h.resources == nil {
+		return errors.New("Kubernetes 集群未连接")
+	}
+	return h.resources.Apply(ctx, registry, host, password)
 }
 
 func (h *ManagedOCIRegistryHandler) refreshStatus(ctx context.Context, registry *model.ManagedOCIRegistry) {
-	if !h.reconciler.Available() {
+	if h.status == nil || !h.status.Available() {
 		return
 	}
-	phase, status, detail := h.reconciler.ManagedRegistryStatus(ctx, registry)
+	phase, status, detail := h.status.ManagedRegistryStatus(ctx, registry)
 	now := time.Now()
 	registry.PVCPhase, registry.Status, registry.LastError, registry.LastCheckedAt = phase, status, truncateManagedRegistryError(errors.New(detail)), &now
 	_ = h.service.Save(registry)

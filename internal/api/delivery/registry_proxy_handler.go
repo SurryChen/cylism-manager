@@ -21,11 +21,11 @@ const registryProxyNamespace = "kube-system"
 const registryProxyName = "cylism-registry-proxy"
 
 type RegistryProxyHandler struct {
-	store      repository.RegistryProxyRepository
-	service    *registryservice.ProxyService
-	reconciler *k8sclient.RegistryProxyReconciler
-	encKey     []byte
-	diagnoser  registryProxyDiagnoser
+	store       repository.RegistryProxyRepository
+	service     *registryservice.ProxyService
+	resources   k8sclient.RegistryProxyResourceReconciler
+	diagnostics k8sclient.RegistryProxyDiagnostics
+	encKey      []byte
 }
 
 type registryProxyRequest struct {
@@ -54,19 +54,24 @@ func proxyInput(req registryProxyRequest) registryservice.ProxyInput {
 	}
 }
 
-type registryProxyDiagnoser func(context.Context, *model.RegistryProxy) (k8sclient.RegistryProxyDiagnostic, error)
-
 func NewRegistryProxyHandler(repo repository.RegistryProxyRepository, encKey []byte, client *k8sclient.Client) *RegistryProxyHandler {
 	h := &RegistryProxyHandler{store: repo}
 	h.encKey = encKey
 	h.service = registryservice.NewProxyService(repo, h.encKey)
-	h.reconciler = k8sclient.NewRegistryProxyReconciler(client)
-	h.diagnoser = h.reconciler.DiagnoseUpstream
+	reconciler := k8sclient.NewRegistryProxyReconciler(client)
+	h.resources, h.diagnostics = reconciler, reconciler
 	return h
 }
 
-func (h *RegistryProxyHandler) WithDiagnoser(diagnoser registryProxyDiagnoser) *RegistryProxyHandler {
-	h.diagnoser = diagnoser
+// WithResourceReconciler replaces only mutating proxy convergence actions.
+func (h *RegistryProxyHandler) WithResourceReconciler(resources k8sclient.RegistryProxyResourceReconciler) *RegistryProxyHandler {
+	h.resources = resources
+	return h
+}
+
+// WithDiagnostics replaces only proxy readiness and upstream diagnostics.
+func (h *RegistryProxyHandler) WithDiagnostics(diagnostics k8sclient.RegistryProxyDiagnostics) *RegistryProxyHandler {
+	h.diagnostics = diagnostics
 	return h
 }
 
@@ -99,7 +104,7 @@ func (h *RegistryProxyHandler) List(c *gin.Context) {
 }
 
 func (h *RegistryProxyHandler) Deploy(c *gin.Context) {
-	if !h.reconciler.Available() {
+	if !h.k8sReady() {
 		apiShared.K8sUnavailable(c)
 		return
 	}
@@ -116,7 +121,7 @@ func (h *RegistryProxyHandler) Deploy(c *gin.Context) {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
 		return
 	}
-	if err := h.reconciler.EnsureNode(c.Request.Context(), req.NodeName); err != nil {
+	if err := h.resources.EnsureNode(c.Request.Context(), req.NodeName); err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "部署节点不存在或未加入集群")
 		return
 	}
@@ -167,7 +172,7 @@ func applyDockerHubProxyDefaults(req *registryProxyRequest) {
 
 func (h *RegistryProxyHandler) Cleanup(c *gin.Context) {
 	proxy, err := h.proxyForRequest(c)
-	if err != nil || !h.reconciler.Available() {
+	if err != nil || !h.k8sReady() {
 		model.Error(c, http.StatusNotFound, model.CodeNotFound, "镜像代理不存在或集群未连接")
 		return
 	}
@@ -182,12 +187,12 @@ func (h *RegistryProxyHandler) Cleanup(c *gin.Context) {
 // this managed proxy. It accepts no caller-controlled network target or argv.
 func (h *RegistryProxyHandler) Diagnose(c *gin.Context) {
 	proxy, err := h.proxyForRequest(c)
-	if err != nil || !h.reconciler.Available() {
+	if err != nil || !h.k8sReady() {
 		model.Error(c, http.StatusNotFound, model.CodeNotFound, "镜像代理不存在或集群未连接")
 		return
 	}
 	registryservice.NormalizeRegistryProxy(proxy)
-	diagnostic, err := h.diagnoser(c.Request.Context(), proxy)
+	diagnostic, err := h.diagnostics.DiagnoseUpstream(c.Request.Context(), proxy)
 	if err != nil {
 		proxy.LastDiagnosticStatus = "diagnostic_failed"
 		proxy.LastDiagnosticError = "代理出网诊断失败"
@@ -210,7 +215,7 @@ func (h *RegistryProxyHandler) Diagnose(c *gin.Context) {
 
 // MigrateResourceName recreates the legacy Docker Hub resources using the per-instance naming scheme.
 func (h *RegistryProxyHandler) MigrateResourceName(c *gin.Context) {
-	if !h.reconciler.Available() {
+	if !h.k8sReady() {
 		apiShared.K8sUnavailable(c)
 		return
 	}
@@ -232,7 +237,7 @@ func (h *RegistryProxyHandler) MigrateResourceName(c *gin.Context) {
 	}
 
 	ctx := c.Request.Context()
-	if err := h.reconciler.DeleteLegacyResources(ctx, legacyResourceName); err != nil {
+	if err := h.resources.DeleteLegacyResources(ctx, legacyResourceName); err != nil {
 		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
 		return
 	}
@@ -254,7 +259,7 @@ func (h *RegistryProxyHandler) Reconcile() {
 	ticker := time.NewTicker(15 * time.Minute)
 	defer ticker.Stop()
 	for range ticker.C {
-		if !h.reconciler.Available() {
+		if !h.k8sReady() {
 			continue
 		}
 		proxies, err := h.store.ListRegistryProxies()
@@ -267,10 +272,10 @@ func (h *RegistryProxyHandler) Reconcile() {
 }
 
 func (h *RegistryProxyHandler) refreshStatus(ctx context.Context, proxy *model.RegistryProxy) {
-	if !h.reconciler.Available() {
+	if !h.k8sReady() {
 		return
 	}
-	available, missing, err := h.reconciler.DeploymentAvailable(ctx, proxy)
+	available, missing, err := h.diagnostics.DeploymentAvailable(ctx, proxy)
 	if missing {
 		proxy.Status, proxy.LastError = "missing", "代理 Deployment 不存在"
 	} else if err != nil {
@@ -299,7 +304,7 @@ func (h *RegistryProxyHandler) redactProxy(proxy *model.RegistryProxy) {
 }
 
 func (h *RegistryProxyHandler) clearCache(ctx context.Context, proxy *model.RegistryProxy, reason string) error {
-	if err := h.reconciler.ClearCache(ctx, proxy); err != nil {
+	if err := h.resources.ClearCache(ctx, proxy); err != nil {
 		return fmt.Errorf("%s失败: %w", reason, err)
 	}
 	now := time.Now()
@@ -312,7 +317,11 @@ func (h *RegistryProxyHandler) apply(ctx context.Context, proxy *model.RegistryP
 	if err != nil {
 		return err
 	}
-	return h.reconciler.Apply(ctx, proxy, environment)
+	return h.resources.Apply(ctx, proxy, environment)
+}
+
+func (h *RegistryProxyHandler) k8sReady() bool {
+	return h.resources != nil && h.diagnostics != nil && h.diagnostics.Available()
 }
 
 func truncateProxyDiagnosticText(value string) string {

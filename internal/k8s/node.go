@@ -1,6 +1,7 @@
 package k8s
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -112,7 +113,11 @@ func (c *Client) ListNodeInfos() ([]NodeInfo, error) {
 }
 
 func (c *Client) GetNodeInfo(name string) (*NodeInfo, error) {
-	node, err := c.Clientset.CoreV1().Nodes().Get(c.Ctx(), name, metav1.GetOptions{})
+	return c.GetNodeInfoContext(c.Ctx(), name)
+}
+
+func (c *Client) GetNodeInfoContext(ctx context.Context, name string) (*NodeInfo, error) {
+	node, err := c.Clientset.CoreV1().Nodes().Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("get node %s: %w", name, err)
 	}

@@ -31,6 +31,24 @@ const RegistryProxyNamespace = "kube-system"
 // environment only from the service boundary and never persists credentials.
 type RegistryProxyReconciler struct{ client *Client }
 
+// RegistryProxyResourceReconciler contains proxy resource lifecycle actions.
+type RegistryProxyResourceReconciler interface {
+	EnsureNode(context.Context, string) error
+	Apply(context.Context, *model.RegistryProxy, map[string]string) error
+	ClearCache(context.Context, *model.RegistryProxy) error
+	DeleteLegacyResources(context.Context, string) error
+}
+
+// RegistryProxyDiagnostics provides bounded upstream and readiness checks.
+type RegistryProxyDiagnostics interface {
+	Available() bool
+	DeploymentAvailable(context.Context, *model.RegistryProxy) (bool, bool, error)
+	DiagnoseUpstream(context.Context, *model.RegistryProxy) (RegistryProxyDiagnostic, error)
+}
+
+var _ RegistryProxyResourceReconciler = (*RegistryProxyReconciler)(nil)
+var _ RegistryProxyDiagnostics = (*RegistryProxyReconciler)(nil)
+
 // RegistryProxyDiagnostic is the bounded result of checking the configured
 // upstream from a ready Registry proxy Pod.
 type RegistryProxyDiagnostic struct {

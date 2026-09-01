@@ -1,6 +1,7 @@
 package infrastructure
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,7 +18,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 	"k8s.io/apimachinery/pkg/api/resource"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 type persistentVolumeClaimRequest struct {
@@ -50,7 +50,7 @@ type persistentVolumeClaimUsageResponse struct {
 var ReadPersistentVolumeUsage = readLocalPersistentVolumeUsage
 
 func (h *StorageHandler) ListPersistentVolumeClaims(c *gin.Context) {
-	if h.k8s == nil {
+	if h.pvc == nil {
 		storageK8sUnavailable(c)
 		return
 	}
@@ -67,7 +67,7 @@ func (h *StorageHandler) ListPersistentVolumeClaims(c *gin.Context) {
 	}
 	responses := make([]persistentVolumeClaimResponse, 0, len(claims))
 	for index := range claims {
-		responses = append(responses, h.pvcResponse(&claims[index]))
+		responses = append(responses, h.pvcResponse(c.Request.Context(), &claims[index]))
 	}
 	model.Success(c, responses)
 }
@@ -75,11 +75,11 @@ func (h *StorageHandler) ListPersistentVolumeClaims(c *gin.Context) {
 // ListPersistentVolumeClaimUsage reads local-path directory usage separately
 // from the inventory so a slow or unreachable node never delays the storage UI.
 func (h *StorageHandler) ListPersistentVolumeClaimUsage(c *gin.Context) {
-	if h.k8s == nil {
+	if h.pvc == nil {
 		storageK8sUnavailable(c)
 		return
 	}
-	claims, err := h.k8s.ListPVCs(strings.TrimSpace(c.Query("namespace")))
+	claims, err := h.pvc.ListPVCs(strings.TrimSpace(c.Query("namespace")))
 	if err != nil {
 		model.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
 		return
@@ -213,7 +213,7 @@ func persistentVolumeUsagePathAllowed(localPath string) bool {
 }
 
 func (h *StorageHandler) CreatePersistentVolumeClaim(c *gin.Context) {
-	if h.k8s == nil {
+	if h.pvc == nil {
 		storageK8sUnavailable(c)
 		return
 	}
@@ -241,11 +241,11 @@ func (h *StorageHandler) CreatePersistentVolumeClaim(c *gin.Context) {
 		model.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
 		return
 	}
-	model.Success(c, h.pvcResponse(info))
+	model.Success(c, h.pvcResponse(c.Request.Context(), info))
 }
 
 func (h *StorageHandler) DeletePersistentVolumeClaim(c *gin.Context) {
-	if h.k8s == nil {
+	if h.pvc == nil {
 		storageK8sUnavailable(c)
 		return
 	}
@@ -264,7 +264,7 @@ func (h *StorageHandler) DeletePersistentVolumeClaim(c *gin.Context) {
 		return
 	}
 	name := c.Param("name")
-	claim, err := h.k8s.GetManagedPVC(namespace, name, request.EnvironmentID)
+	claim, err := h.pvc.GetManagedPVC(namespace, name, request.EnvironmentID)
 	if err != nil {
 		model.Error(c, http.StatusNotFound, model.CodeNotFound, err.Error())
 		return
@@ -279,14 +279,14 @@ func (h *StorageHandler) DeletePersistentVolumeClaim(c *gin.Context) {
 			return
 		}
 	}
-	references := h.pvcReferences(request.EnvironmentID, namespace, name)
+	references := h.pvcReferences(c.Request.Context(), request.EnvironmentID, namespace, name)
 	if err := h.Service.ValidatePVCDeletion(request.ConfirmDataDelete, migrationActive, references, claim.ReclaimPolicy); err != nil {
 		if activeMigration != nil {
 			model.ErrorWithData(c, http.StatusConflict, model.CodeConflict, err.Error(), activeMigration)
 		} else if len(references) > 0 {
 			model.ErrorWithData(c, http.StatusConflict, model.CodeConflict, err.Error(), gin.H{"references": references})
 		} else {
-			model.ErrorWithData(c, http.StatusConflict, model.CodeConflict, err.Error(), h.pvcResponse(claim))
+			model.ErrorWithData(c, http.StatusConflict, model.CodeConflict, err.Error(), h.pvcResponse(c.Request.Context(), claim))
 		}
 		return
 	}
@@ -298,11 +298,11 @@ func (h *StorageHandler) DeletePersistentVolumeClaim(c *gin.Context) {
 }
 
 func (h *StorageHandler) ListStorageClasses(c *gin.Context) {
-	if h.k8s == nil {
+	if h.pvc == nil {
 		storageK8sUnavailable(c)
 		return
 	}
-	classes, err := h.k8s.ListStorageClasses()
+	classes, err := h.pvc.ListStorageClasses()
 	if err != nil {
 		model.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
 		return
@@ -311,7 +311,7 @@ func (h *StorageHandler) ListStorageClasses(c *gin.Context) {
 }
 
 func (h *StorageHandler) pvcEnvironment(c *gin.Context) (*model.Environment, bool) {
-	if h.k8s == nil {
+	if h.pvc == nil {
 		storageK8sUnavailable(c)
 		return nil, false
 	}
@@ -332,7 +332,7 @@ func (h *StorageHandler) pvcEnvironment(c *gin.Context) (*model.Environment, boo
 	return environment, true
 }
 
-func (h *StorageHandler) pvcRequestNamespace(request persistentVolumeClaimRequest) (string, error) {
+func (h *StorageHandler) pvcRequestNamespace(ctx context.Context, request persistentVolumeClaimRequest) (string, error) {
 	if request.EnvironmentID != 0 {
 		environment, err := h.store.GetEnvironmentByID(request.EnvironmentID)
 		if err != nil {
@@ -347,13 +347,13 @@ func (h *StorageHandler) pvcRequestNamespace(request persistentVolumeClaimReques
 	if namespace == "" {
 		return "", errors.New("请选择命名空间")
 	}
-	if _, err := h.k8s.Clientset.CoreV1().Namespaces().Get(h.k8s.Ctx(), namespace, metav1.GetOptions{}); err != nil {
+	if h.workloads == nil || h.workloads.NamespaceExists(ctx, namespace) != nil {
 		return "", errors.New("命名空间不存在或不可访问")
 	}
 	return namespace, nil
 }
 
-func (h *StorageHandler) pvcResponse(claim *k8sclient.PersistentVolumeClaimInfo) persistentVolumeClaimResponse {
+func (h *StorageHandler) pvcResponse(ctx context.Context, claim *k8sclient.PersistentVolumeClaimInfo) persistentVolumeClaimResponse {
 	response := persistentVolumeClaimResponse{PersistentVolumeClaimInfo: *claim}
 	if h.store != nil && claim.BoundNode != "" {
 		if servers, err := h.store.ListServers(); err == nil {
@@ -374,11 +374,11 @@ func (h *StorageHandler) pvcResponse(claim *k8sclient.PersistentVolumeClaimInfo)
 			}
 		}
 	}
-	response.References = h.pvcReferences(claim.EnvironmentID, claim.Namespace, claim.Name)
+	response.References = h.pvcReferences(ctx, claim.EnvironmentID, claim.Namespace, claim.Name)
 	return response
 }
 
-func (h *StorageHandler) pvcReferences(environmentID uint, namespace, claimName string) []string {
+func (h *StorageHandler) pvcReferences(ctx context.Context, environmentID uint, namespace, claimName string) []string {
 	references := make([]string, 0)
 	if h.store != nil {
 		if applications, err := h.store.ListApplications(0, environmentID); err == nil {
@@ -394,18 +394,18 @@ func (h *StorageHandler) pvcReferences(environmentID uint, namespace, claimName 
 			}
 		}
 	}
-	if h.k8s != nil {
-		if deployments, err := h.k8s.Clientset.AppsV1().Deployments(namespace).List(h.k8s.Ctx(), metav1.ListOptions{}); err == nil {
-			for index := range deployments.Items {
-				if k8sclient.DeploymentReferencesPVC(&deployments.Items[index], claimName) {
-					references = append(references, "工作负载："+deployments.Items[index].Name)
+	if h.workloads != nil {
+		if deployments, err := h.workloads.ListDeployments(ctx, namespace); err == nil {
+			for index := range deployments {
+				if k8sclient.DeploymentReferencesPVC(&deployments[index], claimName) {
+					references = append(references, "工作负载："+deployments[index].Name)
 				}
 			}
 		}
-		if statefulSets, err := h.k8s.Clientset.AppsV1().StatefulSets(namespace).List(h.k8s.Ctx(), metav1.ListOptions{}); err == nil {
-			for index := range statefulSets.Items {
-				if k8sclient.StatefulSetReferencesPVC(&statefulSets.Items[index], claimName) {
-					references = append(references, "工作负载："+statefulSets.Items[index].Name)
+		if statefulSets, err := h.workloads.ListStatefulSets(ctx, namespace); err == nil {
+			for index := range statefulSets {
+				if k8sclient.StatefulSetReferencesPVC(&statefulSets[index], claimName) {
+					references = append(references, "工作负载："+statefulSets[index].Name)
 				}
 			}
 		}

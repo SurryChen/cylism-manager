@@ -37,16 +37,24 @@ var ErrWebhookReplay = errors.New("platform webhook nonce already used")
 type ReleaseService struct {
 	releases repository.PlatformReleaseRepository
 	encKey   []byte
-	client   *k8sclient.Client
+	platform PlatformAdapter
 	updateMu sync.Mutex
 }
 
-func NewReleaseService(releases repository.PlatformReleaseRepository, encKey []byte, client *k8sclient.Client) *ReleaseService {
-	return &ReleaseService{releases: releases, encKey: append([]byte(nil), encKey...), client: client}
+// PlatformAdapter is the minimal Kubernetes capability needed by the
+// platform release state machine. Endpoint management remains owned by the
+// delivery handler and is intentionally outside this interface.
+type PlatformAdapter interface {
+	PlatformDeploymentStatus() (*k8sclient.PlatformDeploymentStatus, error)
+	UpdatePlatformDeployment(string, uint) (string, error)
+}
+
+func NewReleaseService(releases repository.PlatformReleaseRepository, encKey []byte, platform PlatformAdapter) *ReleaseService {
+	return &ReleaseService{releases: releases, encKey: append([]byte(nil), encKey...), platform: platform}
 }
 
 func (s *ReleaseService) Available() bool {
-	return s != nil && s.releases != nil && s.client != nil && s.client.Clientset != nil
+	return s != nil && s.releases != nil && s.platform != nil
 }
 
 func (s *ReleaseService) ValidateWebhook(timestampHeader, nonce, signature string, body []byte) bool {
@@ -179,7 +187,7 @@ func (s *ReleaseService) CreateRelease(image, source, commitSHA, runID string) (
 	if !s.Available() {
 		return nil, errors.New("Kubernetes 客户端未初始化")
 	}
-	status, err := s.client.PlatformDeploymentStatus()
+	status, err := s.platform.PlatformDeploymentStatus()
 	if err != nil {
 		return nil, err
 	}
@@ -215,7 +223,7 @@ func (s *ReleaseService) Apply(id uint) {
 	if err := s.releases.UpdatePlatformRelease(release); err != nil {
 		return
 	}
-	if _, err := s.client.UpdatePlatformDeployment(release.Image, release.ID); err != nil {
+	if _, err := s.platform.UpdatePlatformDeployment(release.Image, release.ID); err != nil {
 		release.Status, release.Detail, release.CompletedAt = "failed", err.Error(), &now
 		_ = s.releases.UpdatePlatformRelease(release)
 		return
@@ -232,7 +240,7 @@ func (s *ReleaseService) ReconcileLatest() {
 	if errors.Is(err, gorm.ErrRecordNotFound) || err != nil {
 		return
 	}
-	status, err := s.client.PlatformDeploymentStatus()
+	status, err := s.platform.PlatformDeploymentStatus()
 	if err != nil {
 		return
 	}
