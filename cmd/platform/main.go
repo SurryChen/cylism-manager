@@ -85,7 +85,11 @@ func main() {
 
 	// 注册路由
 	api.RegisterRoutes(r, db, encKey, authCfg)
-	go systemapi.NewSystemComponentHandler(db).Reconcile()
+	var systemComponentAdapter systemapi.SystemComponentAdapter
+	if k8sClient != nil {
+		systemComponentAdapter = k8s.SystemComponentKubernetesAdapter{Client: k8sClient}
+	}
+	go systemapi.NewSystemComponentHandler(db, systemComponentAdapter).Reconcile()
 
 	// 静态文件
 	r.Static("/assets", "./web/dist/assets")

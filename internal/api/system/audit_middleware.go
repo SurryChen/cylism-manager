@@ -11,6 +11,7 @@ import (
 	"time"
 
 	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
+	security "github.com/cylism/cylism-manager/internal/api/shared/security"
 	"github.com/cylism/cylism-manager/internal/auth"
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/repository"
@@ -147,7 +148,7 @@ func buildDetailForRequest(c *gin.Context, reqBody, respBody []byte) string {
 	var detail map[string]interface{}
 	_ = json.Unmarshal([]byte(buildDetail(c.Request.Method, c.FullPath(), reqBody, respBody)), &detail)
 	if strings.Contains(c.FullPath(), "/configmaps/") && c.Request.Method == http.MethodPut {
-		detail["request"] = redactConfigMapContent(detail["request"])
+		detail["request"] = redactAuditValue(detail["request"])
 	}
 	if delegation, exists := c.Get("delegation"); exists {
 		if claims, ok := delegation.(*auth.DelegationClaims); ok {
@@ -158,22 +159,15 @@ func buildDetailForRequest(c *gin.Context, reqBody, respBody []byte) string {
 	return string(data)
 }
 
-func redactConfigMapContent(value interface{}) interface{} {
-	root, ok := value.(map[string]interface{})
-	if !ok {
-		return value
-	}
-	if _, exists := root["content"]; exists {
-		root["content"] = "[REDACTED]"
-	}
-	return root
-}
-
 func redactAuditValue(value interface{}) interface{} {
 	switch typed := value.(type) {
 	case map[string]interface{}:
 		redacted := make(map[string]interface{}, len(typed))
 		for key, item := range typed {
+			if key == "content" {
+				redacted[key] = "[REDACTED]"
+				continue
+			}
 			if isSensitiveAuditKey(key) {
 				redacted[key] = "[REDACTED]"
 				continue
@@ -187,6 +181,8 @@ func redactAuditValue(value interface{}) interface{} {
 			redacted[index] = redactAuditValue(item)
 		}
 		return redacted
+	case string:
+		return security.Redact(typed)
 	default:
 		return value
 	}

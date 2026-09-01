@@ -13,6 +13,9 @@ import (
 	runtimepkg "github.com/cylism/cylism-manager/internal/runtime"
 	"github.com/cylism/cylism-manager/internal/service/cluster"
 	networkservice "github.com/cylism/cylism-manager/internal/service/network"
+	alertingservice "github.com/cylism/cylism-manager/internal/service/observability/alerting"
+	loggingservice "github.com/cylism/cylism-manager/internal/service/observability/logging"
+	monitoringservice "github.com/cylism/cylism-manager/internal/service/observability/monitoring"
 	storageservice "github.com/cylism/cylism-manager/internal/service/storage"
 	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/gin-gonic/gin"
@@ -33,7 +36,6 @@ type AuthConfig struct {
 
 // RegisterRoutes 注册所有 API 路由
 func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthConfig) {
-	systemapi.SetKubernetesClient(K8s)
 	// 健康检查（无认证，用于 k8s 探活）
 	r.GET("/health", func(c *gin.Context) {
 		model.Success(c, gin.H{"status": "ok"})
@@ -43,7 +45,13 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 	artifactHandler := agentapi.NewAgentArtifactHandler("/usr/local/lib/cylism/runtime-tools", agentauth.NewRuntimeTokenAuthorizer(K8s, s, nil))
 	r.GET(agentapi.CLIArtifactPath, gin.WrapH(artifactHandler))
 	r.GET(agentapi.CLIArtifactManifestPath, gin.WrapH(artifactHandler))
-	agentHandler := agentapi.NewAgentHandler(s, K8s, agentauth.NewRuntimeTokenAuthorizer(K8s, s, nil)).WithRegistryVerifier(agentapi.DefaultAgentRegistryNodeVerifier(encKey)).WithMaintenanceInspector(agentapi.DefaultAgentMaintenanceInspector(encKey))
+	var agentMonitoring *monitoringservice.AgentDiskGrowthService
+	if K8s != nil {
+		monitoringClient := monitoringservice.HTTPClient{BaseURL: k8s.VictoriaMetricsServiceURL}
+		query := monitoringservice.NewQueryService(monitoringClient.Query, k8s.VictoriaMetricsReadiness{Client: K8s})
+		agentMonitoring = monitoringservice.NewAgentDiskGrowthService(query, nil)
+	}
+	agentHandler := agentapi.NewAgentHandler(s, K8s, agentauth.NewRuntimeTokenAuthorizer(K8s, s, nil)).WithMonitoringDiskGrowth(agentMonitoring).WithRegistryVerifier(agentapi.DefaultAgentRegistryNodeVerifier(encKey)).WithMaintenanceInspector(agentapi.DefaultAgentMaintenanceInspector(encKey))
 	r.GET("/api/agent/v1/cluster/status", gin.WrapF(agentHandler.ClusterStatus))
 	r.GET("/api/agent/v1/capabilities/status", gin.WrapF(agentHandler.CapabilityStatus))
 	r.GET("/api/agent/v1/workloads/get", gin.WrapF(agentHandler.WorkloadGet))
@@ -83,7 +91,11 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 	runtimeRegistry := runtimepkg.BuiltinRegistry()
 	runtimeHandler := NewRuntimeHandler(s, encKey, runtimepkg.NewKubernetesManager(K8s, runtimeRegistry), runtimeRegistry)
 	agentOperationHandler := agentapi.NewAgentOperationHandler(s, K8s).WithRegistryPullExecutor(agentapi.DefaultAgentRegistryPullExecutor(encKey)).WithMaintenanceCleanupExecutor(agentapi.DefaultAgentMaintenanceCleanupExecutor(encKey))
-	systemComponentHandler := systemapi.NewSystemComponentHandler(s)
+	var systemComponentAdapter systemapi.SystemComponentAdapter
+	if K8s != nil {
+		systemComponentAdapter = k8s.SystemComponentKubernetesAdapter{Client: K8s}
+	}
+	systemComponentHandler := systemapi.NewSystemComponentHandler(s, systemComponentAdapter)
 	networkService := networkservice.NewService(s, s).WithIngressAdapter(K8s).WithStandardIngressAdapter(K8s).WithDNSAdapter(K8s).WithCertificateAdapter(K8s)
 	clusterDNSHandler := infrastructureapi.NewClusterDNSHandler(s, K8s)
 	networkHandler := infrastructureapi.NewNetworkHandler(networkService, infrastructureapi.NetworkHandler{
@@ -239,7 +251,17 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 	}
 	monitoring := apiGroup.Group("/monitoring")
 	{
-		h := systemapi.NewMonitoringHandler()
+		var monitoringDeps systemapi.MonitoringDependencies
+		if K8s != nil {
+			monitoringClient := monitoringservice.HTTPClient{BaseURL: k8s.VictoriaMetricsServiceURL}
+			monitoringDeps = systemapi.MonitoringDependencies{
+				Query:     monitoringClient.Query,
+				Status:    k8s.VictoriaMetricsReadiness{Client: K8s},
+				Component: k8s.MonitoringComponentAdapter{Client: K8s},
+				Consumers: monitoringservice.PVCConsumerReader{Pods: k8s.PodReader{Clientset: K8s.Clientset}},
+			}
+		}
+		h := systemapi.NewMonitoringHandler(monitoringDeps)
 		monitoring.GET("/status", h.Status)
 		monitoring.POST("/install", h.Install)
 		monitoring.POST("/storage-migration", h.MigrateLegacyStorage)
@@ -250,7 +272,20 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 		monitoring.GET("/disk-growth", h.DiskGrowth)
 		monitoring.GET("/targets", h.Targets)
 	}
-	alertingHandler := systemapi.NewAlertingHandler(authCfg.PlatformURL).WithAutomation(s, systemapi.NewAlertRuntimeDispatcher(s, encKey, runtimeRegistry))
+	var alertingDeps systemapi.AlertingDependencies
+	if K8s != nil {
+		alertingClient := &alertingservice.HTTPClient{BaseURL: k8s.AlertmanagerServiceURL}
+		alertingDeps = systemapi.AlertingDependencies{
+			Alertmanager: alertingClient.Request,
+			Component:    k8s.AlertingComponentAdapter{Client: K8s},
+			Ready:        func() bool { return K8s.AlertingStatus().State == k8s.AlertingStateReady },
+			Secrets:      k8s.SecretReader{Client: K8s},
+			Sender:       alertingservice.DefaultNotificationSender{},
+		}
+	}
+	alertingHandler := systemapi.NewAlertingHandler(authCfg.PlatformURL).
+		WithDependencies(alertingDeps).
+		WithAutomation(s, systemapi.NewAlertRuntimeDispatcher(s, encKey, runtimeRegistry))
 	alerts := apiGroup.Group("/monitoring/alerts")
 	{
 		alerts.GET("/status", alertingHandler.Status)
@@ -266,7 +301,17 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 		alerts.PUT("/automation-policy", alertingHandler.UpdateAutomationPolicy)
 		alerts.GET("/automation-events", alertingHandler.ListAutomationEvents)
 	}
-	loggingHandler := systemapi.NewLoggingHandler(s)
+	var loggingDeps systemapi.LoggingDependencies
+	if K8s != nil {
+		loggingClient := loggingservice.HTTPClient{BaseURL: k8s.LokiServiceURL()}
+		loggingDeps = systemapi.LoggingDependencies{
+			Query:        loggingClient.Query,
+			Ready:        func() bool { return K8s.LoggingStatus().LokiReady >= 1 },
+			Component:    k8s.LoggingComponentAdapter{Client: K8s},
+			FilterReader: k8s.LoggingFilterReader{Clientset: K8s.Clientset},
+		}
+	}
+	loggingHandler := systemapi.NewLoggingHandler(s, loggingDeps)
 	logs := apiGroup.Group("/monitoring/logs")
 	{
 		logs.GET("/status", loggingHandler.Status)

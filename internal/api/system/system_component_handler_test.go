@@ -5,9 +5,11 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
+	systemcomponentservice "github.com/cylism/cylism-manager/internal/service/system_component"
 	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/gin-gonic/gin"
 	appsv1 "k8s.io/api/apps/v1"
@@ -60,7 +62,7 @@ func setupSystemComponentRouter(t *testing.T) (*gin.Engine, *store.Store) {
 	if err != nil {
 		t.Fatalf("create daemonset: %v", err)
 	}
-	handler := NewSystemComponentHandler(s)
+	handler := NewSystemComponentHandler(s, k8s.SystemComponentKubernetesAdapter{Client: k8sClient})
 	router := gin.New()
 	group := router.Group("/api/system-components")
 	group.GET("", handler.List)
@@ -310,7 +312,12 @@ func TestSystemComponentReconcileStopsWhenControlSourceChanges(t *testing.T) {
 		t.Fatalf("create HelmChart: %v", err)
 	}
 
-	NewSystemComponentHandler(s).reconcileOnce()
+	adapter := k8s.SystemComponentKubernetesAdapter{Client: k8sClient}
+	if err := systemcomponentservice.Reconcile(context.Background(), s, adapter, systemcomponentservice.ParseStaticDeploymentConfig, func(ctx context.Context, node string) error {
+		return systemcomponentservice.ValidateNode(ctx, adapter, node)
+	}, time.Now()); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
 	config, err := s.GetSystemComponentConfig("coredns")
 	if err != nil {
 		t.Fatalf("load config: %v", err)
@@ -340,36 +347,88 @@ func TestSystemComponentEffectiveComparesSavedValuesWithDeployment(t *testing.T)
 			},
 		},
 	}
-	effective, detail := systemComponentEffective("maxUnavailable: 1\nmaxSurge: 25%\nreplicas: 1\n", deployment)
+	effective, detail := systemcomponentservice.Effective("maxUnavailable: 1\nmaxSurge: 25%\nreplicas: 1\n", deployment)
 	if !effective || detail != "" {
 		t.Fatalf("matching values must be effective, got %v %q", effective, detail)
 	}
-	effective, detail = systemComponentEffective("maxUnavailable: 0\nmaxSurge: 1\n", deployment)
+	effective, detail = systemcomponentservice.Effective("maxUnavailable: 0\nmaxSurge: 1\n", deployment)
 	if effective || !strings.Contains(detail, "maxUnavailable") || !strings.Contains(detail, "maxSurge") {
 		t.Fatalf("expected both strategy values ineffective, got %v %q", effective, detail)
 	}
-	effective, detail = systemComponentEffective("replicas: 2\n", deployment)
+	effective, detail = systemcomponentservice.Effective("replicas: 2\n", deployment)
 	if effective || !strings.Contains(detail, "replicas") {
 		t.Fatalf("expected replicas ineffective, got %v %q", effective, detail)
 	}
-	effective, _ = systemComponentEffective("maxUnavailable: 0\n", &appsv1.Deployment{})
+	effective, _ = systemcomponentservice.Effective("maxUnavailable: 0\n", &appsv1.Deployment{})
 	if effective {
 		t.Fatal("non-rolling strategy must report ineffective")
 	}
 	replicas = 2
 	deployment.Spec.Template.Spec.NodeSelector = map[string]string{corev1.LabelHostname: "worker-b"}
-	effective, detail = systemComponentEffective("replicas: 2\ndeploymentStrategy:\n  type: RollingUpdate\n  rollingUpdate:\n    maxUnavailable: 0\n    maxSurge: 1\nnodeSelector:\n  kubernetes.io/hostname: worker-b\n", deployment)
+	effective, detail = systemcomponentservice.Effective("replicas: 2\ndeploymentStrategy:\n  type: RollingUpdate\n  rollingUpdate:\n    maxUnavailable: 0\n    maxSurge: 1\nnodeSelector:\n  kubernetes.io/hostname: worker-b\n", deployment)
 	if effective || !strings.Contains(detail, "maxUnavailable") || !strings.Contains(detail, "maxSurge") {
 		t.Fatalf("nested CoreDNS values must detect rollout drift, got %v %q", effective, detail)
 	}
 	unavailable = intstr.FromInt(0)
 	surge = intstr.FromInt(1)
-	effective, detail = systemComponentEffective("replicas: 2\ndeploymentStrategy:\n  type: RollingUpdate\n  rollingUpdate:\n    maxUnavailable: 0\n    maxSurge: 1\nnodeSelector:\n  kubernetes.io/hostname: worker-b\n", deployment)
+	effective, detail = systemcomponentservice.Effective("replicas: 2\ndeploymentStrategy:\n  type: RollingUpdate\n  rollingUpdate:\n    maxUnavailable: 0\n    maxSurge: 1\nnodeSelector:\n  kubernetes.io/hostname: worker-b\n", deployment)
 	if !effective || detail != "" {
 		t.Fatalf("nested CoreDNS values must be effective, got %v %q", effective, detail)
 	}
-	effective, detail = systemComponentEffective("replicas: 2\ndeploymentStrategy:\n  type: RollingUpdate\n  rollingUpdate:\n    maxUnavailable: 0\n    maxSurge: 1\nnodeSelector: {}\n", deployment)
+	effective, detail = systemcomponentservice.Effective("replicas: 2\ndeploymentStrategy:\n  type: RollingUpdate\n  rollingUpdate:\n    maxUnavailable: 0\n    maxSurge: 1\nnodeSelector: {}\n", deployment)
 	if effective || !strings.Contains(detail, "nodeSelector") {
 		t.Fatalf("unfixed CoreDNS values must detect a remaining node pin, got %v %q", effective, detail)
+	}
+}
+
+type countingSystemComponentAdapter struct {
+	fakeSystemComponentAdapter
+	applyHelm  int
+	deleteHelm int
+}
+
+func (f *countingSystemComponentAdapter) HasDynamicClient() bool { return true }
+func (f *countingSystemComponentAdapter) DetectSystemComponent(context.Context, string, string) (k8s.SystemComponentDetection, error) {
+	return k8s.SystemComponentDetection{Mode: k8s.HelmChartMode}, nil
+}
+func (f *countingSystemComponentAdapter) ApplyHelmChartConfig(context.Context, string, string, string) error {
+	f.applyHelm++
+	return nil
+}
+func (f *countingSystemComponentAdapter) DeleteHelmChartConfig(context.Context, string, string) error {
+	f.deleteHelm++
+	return nil
+}
+
+func TestSystemComponentHandlerDelegatesUpdateAndRevertToServiceAdapter(t *testing.T) {
+	adapter := &countingSystemComponentAdapter{fakeSystemComponentAdapter: fakeSystemComponentAdapter{client: k8sfake.NewSimpleClientset()}}
+	handler := (&SystemComponentHandler{}).WithAdapter(adapter)
+	router := gin.New()
+	router.PUT("/api/system-components/:chart", handler.Update)
+	router.POST("/api/system-components/:chart/revert", handler.Revert)
+	values := gin.H{"values_content": "replicas: 1\nmaxUnavailable: 0\nmaxSurge: 1\n"}
+	if response := serve(router, newJSONRequest(http.MethodPut, "/api/system-components/traefik", values)); response.Code != http.StatusOK {
+		t.Fatalf("update status = %d: %s", response.Code, response.Body.String())
+	}
+	if response := serve(router, newJSONRequest(http.MethodPost, "/api/system-components/traefik/revert", nil)); response.Code != http.StatusOK {
+		t.Fatalf("revert status = %d: %s", response.Code, response.Body.String())
+	}
+	if adapter.applyHelm != 1 || adapter.deleteHelm != 1 {
+		t.Fatalf("expected service delegation, apply=%d delete=%d", adapter.applyHelm, adapter.deleteHelm)
+	}
+}
+
+func TestSystemComponentHandlerRunDelegatesReconciliationLifecycle(t *testing.T) {
+	store, err := store.New(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	adapter := &countingSystemComponentAdapter{fakeSystemComponentAdapter: fakeSystemComponentAdapter{client: k8sfake.NewSimpleClientset()}}
+	handler := (&SystemComponentHandler{}).WithAdapter(adapter)
+	handler.configs = store
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := handler.Run(ctx, time.Hour); err != context.Canceled {
+		t.Fatalf("expected canceled lifecycle, got %v", err)
 	}
 }

@@ -1,6 +1,7 @@
 package system
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +13,38 @@ import (
 	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/gin-gonic/gin"
 )
+
+type fakeTailscaleRuntime struct {
+	installed bool
+	outputs   map[string][]byte
+	calls     []string
+}
+
+func (f *fakeTailscaleRuntime) Installed(context.Context) bool { return f.installed }
+func (f *fakeTailscaleRuntime) Run(_ context.Context, name string, args ...string) ([]byte, error) {
+	f.calls = append(f.calls, name+" "+strings.Join(args, " "))
+	return f.outputs[name+" "+strings.Join(args, " ")], nil
+}
+func (f *fakeTailscaleRuntime) Install(context.Context) ([]byte, error) {
+	f.installed = true
+	f.calls = append(f.calls, "install")
+	return nil, nil
+}
+func (f *fakeTailscaleRuntime) ReadFile(context.Context, string) ([]byte, error) {
+	return []byte("token"), nil
+}
+
+func TestTailscaleStatusUsesRuntimeAdapter(t *testing.T) {
+	runtime := &fakeTailscaleRuntime{installed: true, outputs: map[string][]byte{"tailscale ip -4": []byte("100.64.0.10\n"), "tailscale status": []byte("peer online\n")}}
+	h := NewTailscaleHandler(nil, make([]byte, 32)).WithRuntime(runtime)
+	recorder := httptest.NewRecorder()
+	c := gin.CreateTestContextOnly(recorder, gin.New())
+	c.Request = httptest.NewRequest(http.MethodGet, "/", nil).WithContext(context.Background())
+	h.Status(c)
+	if !strings.Contains(recorder.Body.String(), "100.64.0.10") {
+		t.Fatalf("unexpected status response: %s", recorder.Body.String())
+	}
+}
 
 type systemConfigFake struct{ values map[string]string }
 

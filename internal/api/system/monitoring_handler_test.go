@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	k8sclient "github.com/cylism/cylism-manager/internal/k8s"
+	monitoringservice "github.com/cylism/cylism-manager/internal/service/observability/monitoring"
 	"github.com/gin-gonic/gin"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -43,7 +44,7 @@ func TestMonitoringRangeQueryUsesBoundedRange(t *testing.T) {
 	)}
 	defer func() { k8sClient = original }()
 
-	handler := NewMonitoringHandler()
+	handler := newTestMonitoringHandler()
 	handler.query = func(_ context.Context, path string, values url.Values) (interface{}, error) {
 		if path != "/api/v1/query_range" || values.Get("query") != "up" || values.Get("step") != "30" {
 			t.Fatalf("unexpected range query: %s %#v", path, values)
@@ -62,12 +63,40 @@ func TestMonitoringRangeQueryUsesBoundedRange(t *testing.T) {
 	}
 }
 
+func TestMonitoringQueryAndTargetsDelegateToInjectedTransport(t *testing.T) {
+	original := k8sClient
+	k8sClient = &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(
+		&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "cylism-victoria-metrics", Namespace: "monitoring"}, Status: appsv1.DeploymentStatus{AvailableReplicas: 1}},
+		&appsv1.DaemonSet{ObjectMeta: metav1.ObjectMeta{Name: "cylism-node-exporter", Namespace: "monitoring"}, Status: appsv1.DaemonSetStatus{DesiredNumberScheduled: 1, NumberAvailable: 1}},
+	)}
+	defer func() { k8sClient = original }()
+
+	paths := make([]string, 0, 2)
+	handler := newTestMonitoringHandler().WithQuery(func(_ context.Context, path string, values url.Values) (interface{}, error) {
+		paths = append(paths, path)
+		if path == "/api/v1/query" && values.Get("query") != "up" {
+			t.Fatalf("query expression was not delegated: %#v", values)
+		}
+		return map[string]interface{}{"status": "success"}, nil
+	})
+	router := setupMonitoringRouter(handler)
+	if response := serve(router, newJSONRequest(http.MethodGet, "/api/monitoring/query?query=up", nil)); response.Code != http.StatusOK {
+		t.Fatalf("query status = %d: %s", response.Code, response.Body.String())
+	}
+	if response := serve(router, newJSONRequest(http.MethodGet, "/api/monitoring/targets", nil)); response.Code != http.StatusOK {
+		t.Fatalf("targets status = %d: %s", response.Code, response.Body.String())
+	}
+	if strings.Join(paths, ",") != "/api/v1/query,/api/v1/targets" {
+		t.Fatalf("unexpected delegated paths: %#v", paths)
+	}
+}
+
 func TestMonitoringRangeQueryRejectsUnknownRange(t *testing.T) {
 	original := k8sClient
 	k8sClient = &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset()}
 	defer func() { k8sClient = original }()
 
-	response := serve(setupMonitoringRouter(NewMonitoringHandler()), newJSONRequest(http.MethodGet, "/api/monitoring/query-range?query=up&range=30d", nil))
+	response := serve(setupMonitoringRouter(newTestMonitoringHandler()), newJSONRequest(http.MethodGet, "/api/monitoring/query-range?query=up&range=30d", nil))
 	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "时间范围") {
 		t.Fatalf("unexpected range validation response: %s", response.Body.String())
 	}
@@ -81,7 +110,7 @@ func TestMonitoringDashboardReturnsAllTrendSeries(t *testing.T) {
 	)}
 	defer func() { k8sClient = original }()
 
-	handler := NewMonitoringHandler()
+	handler := newTestMonitoringHandler()
 	handler.query = func(_ context.Context, path string, values url.Values) (interface{}, error) {
 		if path != "/api/v1/query_range" || values.Get("query") == "" || values.Get("step") != "120" {
 			t.Fatalf("unexpected dashboard query: %s %#v", path, values)
@@ -108,7 +137,7 @@ func TestMonitoringDiskGrowthReturnsRankingsAndPVCConsumers(t *testing.T) {
 
 	var mu sync.Mutex
 	queries := make([]string, 0, 3)
-	handler := NewMonitoringHandler()
+	handler := newTestMonitoringHandler()
 	handler.query = func(_ context.Context, path string, values url.Values) (interface{}, error) {
 		if path != "/api/v1/query" {
 			t.Fatalf("unexpected metric endpoint: %s", path)
@@ -166,19 +195,19 @@ func TestMonitoringDiskGrowthReturnsRankingsAndPVCConsumers(t *testing.T) {
 }
 
 func TestDiskGrowthMountQueryAvoidsInvalidPromQLStringEscapes(t *testing.T) {
-	queries := diskGrowthQueries("6h", "")
-	if len(queries) == 0 || strings.Contains(queries[0].query, `\.`) || !strings.Contains(queries[0].query, "resolv[.]conf") || !strings.Contains(queries[0].query, "and on (node, mountpoint) node_filesystem_avail_bytes") {
+	queries := monitoringservice.DiskGrowthQueries("6h", "")
+	if len(queries) == 0 || strings.Contains(queries[0].Query, `\.`) || !strings.Contains(queries[0].Query, "resolv[.]conf") || !strings.Contains(queries[0].Query, "and on (node, mountpoint) node_filesystem_avail_bytes") {
 		t.Fatalf("unexpected mount query: %#v", queries)
 	}
 }
 
 func TestDiskGrowthDoesNotQueryUnsupportedContainerWritableLayerMetrics(t *testing.T) {
-	queries := diskGrowthQueries("6h", "")
+	queries := monitoringservice.DiskGrowthQueries("6h", "")
 	if len(queries) != 2 {
 		t.Fatalf("unexpected disk growth queries: %#v", queries)
 	}
 	for _, query := range queries {
-		if strings.Contains(query.query, "container_fs_usage_bytes") {
+		if strings.Contains(query.Query, "container_fs_usage_bytes") {
 			t.Fatalf("container writable-layer query must not be configured: %#v", queries)
 		}
 	}
@@ -192,7 +221,7 @@ func TestMonitoringDiskGrowthReturnsPartialResultsWhenOneQueryFails(t *testing.T
 	)}
 	defer func() { k8sClient = original }()
 
-	handler := NewMonitoringHandler()
+	handler := newTestMonitoringHandler()
 	handler.query = func(_ context.Context, _ string, values url.Values) (interface{}, error) {
 		if strings.Contains(values.Get("query"), "kubelet_volume_stats_used_bytes") {
 			return nil, errors.New("VictoriaMetrics 返回 422 Unprocessable Entity")
@@ -211,7 +240,7 @@ func TestMonitoringDiskGrowthRejectsUnsupportedRangeAndUnreadyInstance(t *testin
 	k8sClient = &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset()}
 	defer func() { k8sClient = original }()
 
-	handler := NewMonitoringHandler()
+	handler := newTestMonitoringHandler()
 	handler.query = func(_ context.Context, _ string, _ url.Values) (interface{}, error) {
 		t.Fatal("metric query must not run when validation or readiness fails")
 		return nil, nil
@@ -227,7 +256,7 @@ func TestMonitoringDiskGrowthRejectsUnsupportedRangeAndUnreadyInstance(t *testin
 }
 
 func TestNormalizeMountGrowthSortsLargestFirst(t *testing.T) {
-	items := normalizeMountGrowth(map[string]interface{}{"result": []interface{}{
+	items := monitoringservice.NormalizeMountGrowth(map[string]interface{}{"result": []interface{}{
 		map[string]interface{}{"metric": map[string]interface{}{"node": "node-a", "mountpoint": "/small"}, "value": []interface{}{float64(1), "7340032"}},
 		map[string]interface{}{"metric": map[string]interface{}{"node": "node-a", "mountpoint": "/large"}, "value": []interface{}{float64(1), "775946240"}},
 	}})
@@ -253,7 +282,7 @@ func TestMonitoringInstallCreatesPVCInstance(t *testing.T) {
 	k8sClient = &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node-a"}, Status: corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}}}})}
 	defer func() { k8sClient = original }()
 
-	response := serve(setupMonitoringRouter(NewMonitoringHandler()), newJSONRequest(http.MethodPost, "/api/monitoring/install", gin.H{"node_name": "node-a", "storage": "10Gi", "retention_days": 14}))
+	response := serve(setupMonitoringRouter(newTestMonitoringHandler()), newJSONRequest(http.MethodPost, "/api/monitoring/install", gin.H{"node_name": "node-a", "storage": "10Gi", "retention_days": 14}))
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"node_name":"node-a"`) {
 		t.Fatalf("unexpected install response: %s", response.Body.String())
 	}
@@ -264,7 +293,7 @@ func TestMonitoringQueryRequiresReadyInstance(t *testing.T) {
 	k8sClient = &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset()}
 	defer func() { k8sClient = original }()
 
-	response := serve(setupMonitoringRouter(NewMonitoringHandler()), newJSONRequest(http.MethodGet, "/api/monitoring/query?query=up", nil))
+	response := serve(setupMonitoringRouter(newTestMonitoringHandler()), newJSONRequest(http.MethodGet, "/api/monitoring/query?query=up", nil))
 	if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), "尚未就绪") {
 		t.Fatalf("unexpected query response: %s", response.Body.String())
 	}
@@ -277,7 +306,7 @@ func TestMonitoringQueryReturnsMetricData(t *testing.T) {
 		&appsv1.DaemonSet{ObjectMeta: metav1.ObjectMeta{Name: "cylism-node-exporter", Namespace: "monitoring"}, Status: appsv1.DaemonSetStatus{DesiredNumberScheduled: 1, NumberAvailable: 1}},
 	)}
 	defer func() { k8sClient = original }()
-	handler := NewMonitoringHandler()
+	handler := newTestMonitoringHandler()
 	handler.query = func(_ context.Context, path string, values url.Values) (interface{}, error) {
 		if path != "/api/v1/query" || values.Get("query") != "up" {
 			t.Fatalf("unexpected query: %s %#v", path, values)
@@ -299,7 +328,7 @@ func TestMonitoringQueryAllowsPartialNodeExporterCoverage(t *testing.T) {
 	)}
 	defer func() { k8sClient = original }()
 
-	handler := NewMonitoringHandler()
+	handler := newTestMonitoringHandler()
 	handler.query = func(_ context.Context, _ string, _ url.Values) (interface{}, error) {
 		return map[string]interface{}{"resultType": "vector", "result": []interface{}{}}, nil
 	}
