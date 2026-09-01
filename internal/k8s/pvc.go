@@ -96,7 +96,11 @@ func EnvironmentLabelValue(environmentID uint) string {
 }
 
 func (c *Client) ListManagedPVCs(namespace string, environmentID uint) ([]PersistentVolumeClaimInfo, error) {
-	claims, err := c.Clientset.CoreV1().PersistentVolumeClaims(namespace).List(c.Ctx(), metav1.ListOptions{LabelSelector: fmt.Sprintf("%s=%s", ManagedByLabel, ManagedByValue)})
+	return c.ListManagedPVCsContext(c.Ctx(), namespace, environmentID)
+}
+
+func (c *Client) ListManagedPVCsContext(ctx context.Context, namespace string, environmentID uint) ([]PersistentVolumeClaimInfo, error) {
+	claims, err := c.Clientset.CoreV1().PersistentVolumeClaims(namespace).List(ctx, metav1.ListOptions{LabelSelector: fmt.Sprintf("%s=%s", ManagedByLabel, ManagedByValue)})
 	if err != nil {
 		return nil, fmt.Errorf("list persistentvolumeclaims: %w", err)
 	}
@@ -119,7 +123,11 @@ func (c *Client) ListManagedPVCs(namespace string, environmentID uint) ([]Persis
 // when namespace is empty. It intentionally includes externally created
 // claims so the infrastructure inventory is not limited to applications.
 func (c *Client) ListPVCs(namespace string) ([]PersistentVolumeClaimInfo, error) {
-	claims, err := c.Clientset.CoreV1().PersistentVolumeClaims(namespace).List(c.Ctx(), metav1.ListOptions{})
+	return c.ListPVCsContext(c.Ctx(), namespace)
+}
+
+func (c *Client) ListPVCsContext(ctx context.Context, namespace string) ([]PersistentVolumeClaimInfo, error) {
+	claims, err := c.Clientset.CoreV1().PersistentVolumeClaims(namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("list persistentvolumeclaims: %w", err)
 	}
@@ -137,7 +145,13 @@ func (c *Client) ListPVCs(namespace string) ([]PersistentVolumeClaimInfo, error)
 }
 
 func (c *Client) GetManagedPVC(namespace, name string, environmentID uint) (*PersistentVolumeClaimInfo, error) {
-	claim, err := c.Clientset.CoreV1().PersistentVolumeClaims(namespace).Get(c.Ctx(), name, metav1.GetOptions{})
+	return c.GetManagedPVCContext(c.Ctx(), namespace, name, environmentID)
+}
+
+// GetManagedPVCContext resolves platform-owned PVC state using a caller-owned
+// timeout/cancellation boundary.
+func (c *Client) GetManagedPVCContext(ctx context.Context, namespace, name string, environmentID uint) (*PersistentVolumeClaimInfo, error) {
+	claim, err := c.Clientset.CoreV1().PersistentVolumeClaims(namespace).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("get persistentvolumeclaim %s/%s: %w", namespace, name, err)
 	}
@@ -169,6 +183,10 @@ func (c *Client) GetPVCInfo(namespace, name string) (*PersistentVolumeClaimInfo,
 }
 
 func (c *Client) CreateManagedPVC(namespace string, environmentID uint, request PersistentVolumeClaimRequest) (*corev1.PersistentVolumeClaim, error) {
+	return c.CreateManagedPVCContext(c.Ctx(), namespace, environmentID, request)
+}
+
+func (c *Client) CreateManagedPVCContext(ctx context.Context, namespace string, environmentID uint, request PersistentVolumeClaimRequest) (*corev1.PersistentVolumeClaim, error) {
 	name := strings.TrimSpace(request.Name)
 	if name == "" || len(validation.IsDNS1123Label(name)) > 0 {
 		return nil, fmt.Errorf("PVC 名称必须是合法的 Kubernetes 名称")
@@ -191,7 +209,7 @@ func (c *Client) CreateManagedPVC(namespace string, environmentID uint, request 
 	if storageClassName := strings.TrimSpace(request.StorageClassName); storageClassName != "" {
 		claim.Spec.StorageClassName = &storageClassName
 	}
-	created, err := c.Clientset.CoreV1().PersistentVolumeClaims(namespace).Create(c.Ctx(), claim, metav1.CreateOptions{})
+	created, err := c.Clientset.CoreV1().PersistentVolumeClaims(namespace).Create(ctx, claim, metav1.CreateOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("create persistentvolumeclaim: %w", err)
 	}
@@ -201,6 +219,10 @@ func (c *Client) CreateManagedPVC(namespace string, environmentID uint, request 
 // CreatePVCBindingPod schedules a temporary holder so WaitForFirstConsumer can
 // provision a local PVC on the requested node before data is copied.
 func (c *Client) CreatePVCBindingPod(namespace, migrationID, claimName, nodeName, image string) (*corev1.Pod, error) {
+	return c.CreatePVCBindingPodContext(c.Ctx(), namespace, migrationID, claimName, nodeName, image)
+}
+
+func (c *Client) CreatePVCBindingPodContext(ctx context.Context, namespace, migrationID, claimName, nodeName, image string) (*corev1.Pod, error) {
 	if strings.TrimSpace(migrationID) == "" || strings.TrimSpace(claimName) == "" || strings.TrimSpace(nodeName) == "" || strings.TrimSpace(image) == "" {
 		return nil, fmt.Errorf("迁移绑定 Pod 参数不完整")
 	}
@@ -213,9 +235,9 @@ func (c *Client) CreatePVCBindingPod(namespace, migrationID, claimName, nodeName
 			Volumes:       []corev1.Volume{{Name: "data", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: claimName}}}},
 		},
 	}
-	created, err := c.Clientset.CoreV1().Pods(namespace).Create(c.Ctx(), pod, metav1.CreateOptions{})
+	created, err := c.Clientset.CoreV1().Pods(namespace).Create(ctx, pod, metav1.CreateOptions{})
 	if apierrors.IsAlreadyExists(err) {
-		return c.Clientset.CoreV1().Pods(namespace).Get(c.Ctx(), pod.Name, metav1.GetOptions{})
+		return c.Clientset.CoreV1().Pods(namespace).Get(ctx, pod.Name, metav1.GetOptions{})
 	}
 	if err != nil {
 		return nil, fmt.Errorf("create PVC binding pod: %w", err)
@@ -246,8 +268,12 @@ func (c *Client) WaitForPVCBound(ctx context.Context, namespace, name string) (*
 }
 
 func (c *Client) DeletePVCBindingPod(namespace, migrationID string) error {
+	return c.DeletePVCBindingPodContext(c.Ctx(), namespace, migrationID)
+}
+
+func (c *Client) DeletePVCBindingPodContext(ctx context.Context, namespace, migrationID string) error {
 	name := "cylism-pvc-migrate-" + migrationID
-	err := c.Clientset.CoreV1().Pods(namespace).Delete(c.Ctx(), name, metav1.DeleteOptions{})
+	err := c.Clientset.CoreV1().Pods(namespace).Delete(ctx, name, metav1.DeleteOptions{})
 	if apierrors.IsNotFound(err) {
 		return nil
 	}
@@ -277,7 +303,11 @@ func (c *Client) WaitForManagedPVCBound(ctx context.Context, namespace, name str
 }
 
 func (c *Client) ReplaceDeploymentPVCNode(namespace, name, sourceClaim, targetClaim, targetNode string) (int32, error) {
-	deployment, err := c.Clientset.AppsV1().Deployments(namespace).Get(c.Ctx(), name, metav1.GetOptions{})
+	return c.ReplaceDeploymentPVCNodeContext(c.Ctx(), namespace, name, sourceClaim, targetClaim, targetNode)
+}
+
+func (c *Client) ReplaceDeploymentPVCNodeContext(ctx context.Context, namespace, name, sourceClaim, targetClaim, targetNode string) (int32, error) {
+	deployment, err := c.Clientset.AppsV1().Deployments(namespace).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
 		return 0, fmt.Errorf("get deployment: %w", err)
 	}
@@ -303,14 +333,18 @@ func (c *Client) ReplaceDeploymentPVCNode(namespace, name, sourceClaim, targetCl
 	if deployment.Spec.Replicas != nil {
 		replicas = *deployment.Spec.Replicas
 	}
-	if _, err := c.Clientset.AppsV1().Deployments(namespace).Update(c.Ctx(), deployment, metav1.UpdateOptions{}); err != nil {
+	if _, err := c.Clientset.AppsV1().Deployments(namespace).Update(ctx, deployment, metav1.UpdateOptions{}); err != nil {
 		return 0, fmt.Errorf("update deployment PVC: %w", err)
 	}
 	return replicas, nil
 }
 
 func (c *Client) DeploymentUsingPVC(namespace, claimName string) ([]appsv1.Deployment, error) {
-	deployments, err := c.Clientset.AppsV1().Deployments(namespace).List(c.Ctx(), metav1.ListOptions{})
+	return c.DeploymentUsingPVCContext(c.Ctx(), namespace, claimName)
+}
+
+func (c *Client) DeploymentUsingPVCContext(ctx context.Context, namespace, claimName string) ([]appsv1.Deployment, error) {
+	deployments, err := c.Clientset.AppsV1().Deployments(namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("list deployments: %w", err)
 	}
@@ -327,7 +361,11 @@ func (c *Client) DeploymentUsingPVC(namespace, claimName string) ([]appsv1.Deplo
 }
 
 func (c *Client) DeleteManagedPVC(namespace, name string, environmentID uint) error {
-	claim, err := c.Clientset.CoreV1().PersistentVolumeClaims(namespace).Get(c.Ctx(), name, metav1.GetOptions{})
+	return c.DeleteManagedPVCContext(c.Ctx(), namespace, name, environmentID)
+}
+
+func (c *Client) DeleteManagedPVCContext(ctx context.Context, namespace, name string, environmentID uint) error {
+	claim, err := c.Clientset.CoreV1().PersistentVolumeClaims(namespace).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
 		return fmt.Errorf("get persistentvolumeclaim %s/%s: %w", namespace, name, err)
 	}
@@ -337,14 +375,18 @@ func (c *Client) DeleteManagedPVC(namespace, name string, environmentID uint) er
 	if owner := infrastructurePVCOwner(claim); owner != "" {
 		return fmt.Errorf("PVC %q 由基础设施组件 %s 管理，不能通过通用存储接口删除", name, infrastructurePVCOwnerName(owner))
 	}
-	if err := c.Clientset.CoreV1().PersistentVolumeClaims(namespace).Delete(c.Ctx(), name, metav1.DeleteOptions{}); err != nil {
+	if err := c.Clientset.CoreV1().PersistentVolumeClaims(namespace).Delete(ctx, name, metav1.DeleteOptions{}); err != nil {
 		return fmt.Errorf("delete persistentvolumeclaim: %w", err)
 	}
 	return nil
 }
 
 func (c *Client) ListStorageClasses() ([]StorageClassInfo, error) {
-	classes, err := c.Clientset.StorageV1().StorageClasses().List(c.Ctx(), metav1.ListOptions{})
+	return c.ListStorageClassesContext(c.Ctx())
+}
+
+func (c *Client) ListStorageClassesContext(ctx context.Context) ([]StorageClassInfo, error) {
+	classes, err := c.Clientset.StorageV1().StorageClasses().List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("list storageclasses: %w", err)
 	}

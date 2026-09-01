@@ -123,6 +123,11 @@ func (c *Client) dynamicClient() (dynamic.Interface, error) {
 
 // CheckCRD 检测指定 CRD 是否存在
 func (c *Client) CheckCRD(name string) (bool, error) {
+	return c.CheckCRDContext(c.Ctx(), name)
+}
+
+// CheckCRDContext checks a CRD using the caller's cancellation boundary.
+func (c *Client) CheckCRDContext(ctx context.Context, name string) (bool, error) {
 	dynamicClient, err := c.dynamicClient()
 	if err != nil {
 		return false, err
@@ -132,7 +137,7 @@ func (c *Client) CheckCRD(name string) (bool, error) {
 		Version:  "v1",
 		Resource: "customresourcedefinitions",
 	}
-	_, err = dynamicClient.Resource(crdGVR).Get(c.Ctx(), name, metav1.GetOptions{})
+	_, err = dynamicClient.Resource(crdGVR).Get(ctx, name, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
 		return false, nil
 	}

@@ -20,21 +20,74 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/client-go/dynamic"
 )
 
-var certificateGVR = schema.GroupVersionResource{Group: "cert-manager.io", Version: "v1", Resource: "certificates"}
-
 type KubernetesApplier struct {
-	Client           *k8sclient.Client
+	resources        ApplicationResourceApplier
+	preflight        ApplicationPreflightReader
+	workloads        ApplicationWorkloadController
+	endpoints        ApplicationEndpointReader
+	diagnostics      ReleaseDiagnosticsReader
 	ReadinessTimeout time.Duration
 }
 
+// ApplicationPreflightReader reads only the cluster state needed before a
+// release changes resources.
+type ApplicationPreflightReader interface {
+	GetNamespace(context.Context, string) (*corev1.Namespace, error)
+	GetSecret(context.Context, string, string) (*corev1.Secret, error)
+	GetConfigMap(context.Context, string, string) (*corev1.ConfigMap, error)
+	GetNode(context.Context, string) (*corev1.Node, error)
+	DetectIngressController(context.Context) (*k8sclient.IngressControllerStatus, error)
+	CheckCRD(context.Context, string) (bool, error)
+	GetManagedPVC(context.Context, string, string, uint) (*k8sclient.PersistentVolumeClaimInfo, error)
+}
+
+// ApplicationWorkloadController owns Deployment and StatefulSet mutations.
+type ApplicationWorkloadController interface {
+	GetDeployment(context.Context, string, string) (*appsv1.Deployment, error)
+	UpdateDeployment(context.Context, *appsv1.Deployment) (*appsv1.Deployment, error)
+	GetStatefulSet(context.Context, string, string) (*appsv1.StatefulSet, error)
+	UpdateStatefulSet(context.Context, *appsv1.StatefulSet) (*appsv1.StatefulSet, error)
+}
+
+// ApplicationEndpointReader owns the existing Ingress read/delete boundary.
+type ApplicationEndpointReader interface {
+	DeleteIngress(context.Context, string, string) error
+	GetIngress(context.Context, string, string) (*networkingv1.Ingress, error)
+}
+
+// ReleaseDiagnosticsReader is the bounded runtime and certificate read path.
+type ReleaseDiagnosticsReader interface {
+	ListPods(context.Context, string, string) ([]corev1.Pod, error)
+	ListEvents(context.Context, string) ([]corev1.Event, error)
+	CertificateReady(context.Context, string, string) (bool, error)
+}
+
+// ApplicationResourceApplier owns the Kubernetes resource mutation boundary
+// used by release rendering. Keeping this interface separate from the client
+// also lets release orchestration tests use a fake without a full cluster
+// client.
+type ApplicationResourceApplier interface {
+	ApplyConfigMap(context.Context, *corev1.ConfigMap) error
+	ApplySecret(context.Context, *corev1.Secret) error
+	ApplyDeployment(context.Context, *appsv1.Deployment) error
+	ApplyStatefulSet(context.Context, *appsv1.StatefulSet) error
+	ApplyService(context.Context, *corev1.Service) error
+	ApplyIngress(context.Context, *networkingv1.Ingress) error
+	ApplyCertificate(context.Context, *unstructured.Unstructured) error
+}
+
 func NewKubernetesApplier(client *k8sclient.Client) *KubernetesApplier {
-	return &KubernetesApplier{Client: client, ReadinessTimeout: 2 * time.Minute}
+	return &KubernetesApplier{
+		resources:        k8sclient.NewApplicationResourceApplier(client),
+		preflight:        k8sclient.NewApplicationPreflightAdapter(client),
+		workloads:        k8sclient.NewApplicationWorkloadControllerAdapter(client),
+		endpoints:        k8sclient.NewApplicationEndpointAdapter(client),
+		diagnostics:      k8sclient.NewReleaseDiagnosticsAdapter(client),
+		ReadinessTimeout: 2 * time.Minute,
+	}
 }
 
 // VerifyImage confirms that the selected repository and tag can be resolved
@@ -100,10 +153,10 @@ func imageVerificationReference(spec ReleaseSpec) (name.Reference, error) {
 }
 
 func (a *KubernetesApplier) Preflight(ctx context.Context, application ApplicationContext, spec ReleaseSpec) error {
-	if a.Client == nil || a.Client.Clientset == nil {
+	if a.preflight == nil || a.resources == nil {
 		return fmt.Errorf("Kubernetes 客户端未初始化")
 	}
-	namespace, err := a.Client.Clientset.CoreV1().Namespaces().Get(ctx, application.Namespace, metav1.GetOptions{})
+	namespace, err := a.preflight.GetNamespace(ctx, application.Namespace)
 	if apierrors.IsNotFound(err) {
 		return fmt.Errorf("环境命名空间 %q 不存在，请在环境页面创建或同步命名空间", application.Namespace)
 	}
@@ -113,7 +166,7 @@ func (a *KubernetesApplier) Preflight(ctx context.Context, application Applicati
 	if namespace.Status.Phase != corev1.NamespaceActive {
 		return fmt.Errorf("环境命名空间 %q 未就绪", application.Namespace)
 	}
-	if err := a.ValidatePersistentVolumeClaims(application, spec); err != nil {
+	if err := a.ValidatePersistentVolumeClaims(ctx, application, spec); err != nil {
 		return err
 	}
 	if err := a.ValidateFileMountSources(ctx, application, spec); err != nil {
@@ -122,12 +175,12 @@ func (a *KubernetesApplier) Preflight(ctx context.Context, application Applicati
 	if spec.Endpoint.Exposure != ExposurePublic {
 		return nil
 	}
-	status, err := a.Client.DetectIngressController()
+	status, err := a.preflight.DetectIngressController(ctx)
 	if err != nil || status == nil || !status.Running {
 		return fmt.Errorf("Ingress Controller 未就绪")
 	}
 	if spec.Endpoint.TLSEnabled {
-		ok, err := a.Client.CheckCRD("certificates.cert-manager.io")
+		ok, err := a.preflight.CheckCRD(ctx, "certificates.cert-manager.io")
 		if err != nil || !ok {
 			return fmt.Errorf("cert-manager Certificate CRD 不可用")
 		}
@@ -152,7 +205,7 @@ func (a *KubernetesApplier) ValidateFileMountSources(ctx context.Context, applic
 				return fmt.Errorf("当前应用 Secret 不包含键 %q", fileMount.Key)
 			}
 		case FileMountSourceSecret:
-			secret, err := a.Client.Clientset.CoreV1().Secrets(application.Namespace).Get(ctx, fileMount.SourceName, metav1.GetOptions{})
+			secret, err := a.preflight.GetSecret(ctx, application.Namespace, fileMount.SourceName)
 			if apierrors.IsNotFound(err) {
 				return fmt.Errorf("文件挂载 Secret %q 不存在", fileMount.SourceName)
 			}
@@ -163,7 +216,7 @@ func (a *KubernetesApplier) ValidateFileMountSources(ctx context.Context, applic
 				return fmt.Errorf("文件挂载 Secret %q 不包含键 %q", fileMount.SourceName, fileMount.Key)
 			}
 		case FileMountSourceConfigMap:
-			configMap, err := a.Client.Clientset.CoreV1().ConfigMaps(application.Namespace).Get(ctx, fileMount.SourceName, metav1.GetOptions{})
+			configMap, err := a.preflight.GetConfigMap(ctx, application.Namespace, fileMount.SourceName)
 			if apierrors.IsNotFound(err) {
 				return fmt.Errorf("文件挂载 ConfigMap %q 不存在", fileMount.SourceName)
 			}
@@ -186,7 +239,7 @@ func (a *KubernetesApplier) ValidateFileMountSources(ctx context.Context, applic
 // template is saved or a release is applied. WFFC claims are allowed to remain
 // Pending when an explicit node is selected because the first Pod performs the
 // binding.
-func (a *KubernetesApplier) ValidatePersistentVolumeClaims(application ApplicationContext, spec ReleaseSpec) error {
+func (a *KubernetesApplier) ValidatePersistentVolumeClaims(ctx context.Context, application ApplicationContext, spec ReleaseSpec) error {
 	if len(spec.Volumes) == 0 {
 		return nil
 	}
@@ -194,12 +247,12 @@ func (a *KubernetesApplier) ValidatePersistentVolumeClaims(application Applicati
 		return fmt.Errorf("ReadWriteOnce PVC 仅支持单副本应用")
 	}
 	if spec.NodeName != "" {
-		if _, err := a.Client.Clientset.CoreV1().Nodes().Get(a.Client.Ctx(), spec.NodeName, metav1.GetOptions{}); err != nil {
+		if _, err := a.preflight.GetNode(ctx, spec.NodeName); err != nil {
 			return fmt.Errorf("检查部署节点 %q: %w", spec.NodeName, err)
 		}
 	}
 	for _, volume := range spec.Volumes {
-		claim, err := a.Client.GetManagedPVC(application.Namespace, volume.ClaimName, application.EnvironmentID)
+		claim, err := a.preflight.GetManagedPVC(ctx, application.Namespace, volume.ClaimName, application.EnvironmentID)
 		if err != nil {
 			return err
 		}
@@ -220,41 +273,44 @@ func (a *KubernetesApplier) ValidatePersistentVolumeClaims(application Applicati
 }
 
 func (a *KubernetesApplier) Apply(ctx context.Context, resources *RenderedResources) error {
+	if a.resources == nil {
+		return fmt.Errorf("Kubernetes 资源应用器未初始化")
+	}
 	if resources.ImagePullSecret != nil {
-		if err := a.applySecret(ctx, resources.ImagePullSecret); err != nil {
+		if err := a.resources.ApplySecret(ctx, resources.ImagePullSecret); err != nil {
 			return err
 		}
 	}
 	if resources.ConfigMap != nil {
-		if err := a.applyConfigMap(ctx, resources.ConfigMap); err != nil {
+		if err := a.resources.ApplyConfigMap(ctx, resources.ConfigMap); err != nil {
 			return err
 		}
 	}
 	if resources.Secret != nil {
-		if err := a.applySecret(ctx, resources.Secret); err != nil {
+		if err := a.resources.ApplySecret(ctx, resources.Secret); err != nil {
 			return err
 		}
 	}
 	if resources.Deployment != nil {
-		if err := a.applyDeployment(ctx, resources.Deployment); err != nil {
+		if err := a.resources.ApplyDeployment(ctx, resources.Deployment); err != nil {
 			return err
 		}
 	}
 	if resources.StatefulSet != nil {
-		if err := a.applyStatefulSet(ctx, resources.StatefulSet); err != nil {
+		if err := a.resources.ApplyStatefulSet(ctx, resources.StatefulSet); err != nil {
 			return err
 		}
 	}
-	if err := a.applyService(ctx, resources.Service); err != nil {
+	if err := a.resources.ApplyService(ctx, resources.Service); err != nil {
 		return err
 	}
 	if resources.Certificate != nil {
-		if err := a.applyCertificate(ctx, resources.Certificate); err != nil {
+		if err := a.resources.ApplyCertificate(ctx, resources.Certificate); err != nil {
 			return err
 		}
 	}
 	if resources.Ingress != nil {
-		if err := a.applyIngress(ctx, resources.Ingress); err != nil {
+		if err := a.resources.ApplyIngress(ctx, resources.Ingress); err != nil {
 			return err
 		}
 	}
@@ -275,7 +331,7 @@ func (a *KubernetesApplier) SyncEndpoint(ctx context.Context, application Applic
 
 // SyncApplicationEndpoints reconciles all public application endpoints into one managed Ingress.
 func (a *KubernetesApplier) SyncApplicationEndpoints(ctx context.Context, application ApplicationContext, endpoints []model.ApplicationEndpoint, servicePort int32) error {
-	if a.Client == nil || a.Client.Clientset == nil {
+	if a.endpoints == nil || a.resources == nil {
 		return fmt.Errorf("Kubernetes 客户端未初始化")
 	}
 	publicEndpoints := make([]model.ApplicationEndpoint, 0, len(endpoints))
@@ -289,14 +345,14 @@ func (a *KubernetesApplier) SyncApplicationEndpoints(ctx context.Context, applic
 	if len(publicEndpoints) == 0 {
 		return a.RemoveEndpoint(ctx, application)
 	}
-	return a.applyIngress(ctx, applicationEndpointsIngress(application, publicEndpoints, servicePort))
+	return a.resources.ApplyIngress(ctx, applicationEndpointsIngress(application, publicEndpoints, servicePort))
 }
 
 func (a *KubernetesApplier) RemoveEndpoint(ctx context.Context, application ApplicationContext) error {
-	if a.Client == nil || a.Client.Clientset == nil {
+	if a.endpoints == nil {
 		return fmt.Errorf("Kubernetes 客户端未初始化")
 	}
-	ingress, err := a.Client.Clientset.NetworkingV1().Ingresses(application.Namespace).Get(ctx, application.ApplicationName, metav1.GetOptions{})
+	ingress, err := a.endpoints.GetIngress(ctx, application.Namespace, application.ApplicationName)
 	if apierrors.IsNotFound(err) {
 		return nil
 	}
@@ -306,7 +362,7 @@ func (a *KubernetesApplier) RemoveEndpoint(ctx context.Context, application Appl
 	if err := ensureManaged(ingress.Labels); err != nil {
 		return err
 	}
-	return a.Client.Clientset.NetworkingV1().Ingresses(application.Namespace).Delete(ctx, application.ApplicationName, metav1.DeleteOptions{})
+	return a.endpoints.DeleteIngress(ctx, application.Namespace, application.ApplicationName)
 }
 
 func (a *KubernetesApplier) WaitReady(ctx context.Context, application ApplicationContext, spec ReleaseSpec) error {
@@ -355,13 +411,13 @@ func (a *KubernetesApplier) WaitReady(ctx context.Context, application Applicati
 
 func (a *KubernetesApplier) workloadReady(ctx context.Context, application ApplicationContext, replicas int32) (bool, error) {
 	if application.WorkloadKind == WorkloadKindStatefulSet {
-		statefulSet, err := a.Client.Clientset.AppsV1().StatefulSets(application.Namespace).Get(ctx, application.ApplicationName, metav1.GetOptions{})
+		statefulSet, err := a.workloads.GetStatefulSet(ctx, application.Namespace, application.ApplicationName)
 		if err != nil {
 			return false, fmt.Errorf("读取 StatefulSet 就绪状态: %w", err)
 		}
 		return statefulSet.Status.ObservedGeneration >= statefulSet.Generation && statefulSet.Status.ReadyReplicas >= replicas && statefulSet.Status.CurrentReplicas >= replicas, nil
 	}
-	deployment, err := a.Client.Clientset.AppsV1().Deployments(application.Namespace).Get(ctx, application.ApplicationName, metav1.GetOptions{})
+	deployment, err := a.workloads.GetDeployment(ctx, application.Namespace, application.ApplicationName)
 	if err != nil {
 		return false, fmt.Errorf("读取 Deployment 就绪状态: %w", err)
 	}
@@ -371,7 +427,7 @@ func (a *KubernetesApplier) workloadReady(ctx context.Context, application Appli
 // MigrateWorkloadKind replaces one managed controller with the other while
 // retaining the application name, Service and directly referenced PVCs.
 func (a *KubernetesApplier) MigrateWorkloadKind(ctx context.Context, application ApplicationContext, spec ReleaseSpec, targetKind string) error {
-	if a.Client == nil || a.Client.Clientset == nil {
+	if a.workloads == nil {
 		return fmt.Errorf("Kubernetes 客户端未初始化")
 	}
 	currentKind := application.WorkloadKind
@@ -421,7 +477,7 @@ func (a *KubernetesApplier) MigrateWorkloadKind(ctx context.Context, application
 
 func (a *KubernetesApplier) scaleManagedWorkload(ctx context.Context, namespace, name, kind string, replicas int32) (int32, error) {
 	if kind == WorkloadKindStatefulSet {
-		statefulSet, err := a.Client.Clientset.AppsV1().StatefulSets(namespace).Get(ctx, name, metav1.GetOptions{})
+		statefulSet, err := a.workloads.GetStatefulSet(ctx, namespace, name)
 		if err != nil {
 			return 0, fmt.Errorf("读取 StatefulSet: %w", err)
 		}
@@ -433,12 +489,12 @@ func (a *KubernetesApplier) scaleManagedWorkload(ctx context.Context, namespace,
 			previous = *statefulSet.Spec.Replicas
 		}
 		statefulSet.Spec.Replicas = &replicas
-		if _, err := a.Client.Clientset.AppsV1().StatefulSets(namespace).Update(ctx, statefulSet, metav1.UpdateOptions{}); err != nil {
+		if _, err := a.workloads.UpdateStatefulSet(ctx, statefulSet); err != nil {
 			return 0, fmt.Errorf("缩容 StatefulSet: %w", err)
 		}
 		return previous, nil
 	}
-	deployment, err := a.Client.Clientset.AppsV1().Deployments(namespace).Get(ctx, name, metav1.GetOptions{})
+	deployment, err := a.workloads.GetDeployment(ctx, namespace, name)
 	if err != nil {
 		return 0, fmt.Errorf("读取 Deployment: %w", err)
 	}
@@ -450,7 +506,7 @@ func (a *KubernetesApplier) scaleManagedWorkload(ctx context.Context, namespace,
 		previous = *deployment.Spec.Replicas
 	}
 	deployment.Spec.Replicas = &replicas
-	if _, err := a.Client.Clientset.AppsV1().Deployments(namespace).Update(ctx, deployment, metav1.UpdateOptions{}); err != nil {
+	if _, err := a.workloads.UpdateDeployment(ctx, deployment); err != nil {
 		return 0, fmt.Errorf("缩容 Deployment: %w", err)
 	}
 	return previous, nil
@@ -463,7 +519,7 @@ func (a *KubernetesApplier) restoreManagedWorkload(ctx context.Context, namespac
 
 func (a *KubernetesApplier) stopManagedWorkloadIfExists(ctx context.Context, namespace, name, kind string) error {
 	if kind == WorkloadKindStatefulSet {
-		statefulSet, err := a.Client.Clientset.AppsV1().StatefulSets(namespace).Get(ctx, name, metav1.GetOptions{})
+		statefulSet, err := a.workloads.GetStatefulSet(ctx, namespace, name)
 		if apierrors.IsNotFound(err) {
 			return nil
 		}
@@ -475,10 +531,10 @@ func (a *KubernetesApplier) stopManagedWorkloadIfExists(ctx context.Context, nam
 		}
 		zero := int32(0)
 		statefulSet.Spec.Replicas = &zero
-		_, err = a.Client.Clientset.AppsV1().StatefulSets(namespace).Update(ctx, statefulSet, metav1.UpdateOptions{})
+		_, err = a.workloads.UpdateStatefulSet(ctx, statefulSet)
 		return err
 	}
-	deployment, err := a.Client.Clientset.AppsV1().Deployments(namespace).Get(ctx, name, metav1.GetOptions{})
+	deployment, err := a.workloads.GetDeployment(ctx, namespace, name)
 	if apierrors.IsNotFound(err) {
 		return nil
 	}
@@ -490,7 +546,7 @@ func (a *KubernetesApplier) stopManagedWorkloadIfExists(ctx context.Context, nam
 	}
 	zero := int32(0)
 	deployment.Spec.Replicas = &zero
-	_, err = a.Client.Clientset.AppsV1().Deployments(namespace).Update(ctx, deployment, metav1.UpdateOptions{})
+	_, err = a.workloads.UpdateDeployment(ctx, deployment)
 	return err
 }
 
@@ -501,11 +557,11 @@ func (a *KubernetesApplier) waitForWorkloadPodsStopped(ctx context.Context, name
 	defer ticker.Stop()
 	selector := ApplicationNameLabel + "=" + name
 	for {
-		pods, err := a.Client.Clientset.CoreV1().Pods(namespace).List(deadline, metav1.ListOptions{LabelSelector: selector})
+		pods, err := a.diagnostics.ListPods(deadline, namespace, selector)
 		if err != nil {
 			return fmt.Errorf("检查旧 Pod: %w", err)
 		}
-		if len(pods.Items) == 0 {
+		if len(pods) == 0 {
 			return nil
 		}
 		select {
@@ -519,18 +575,18 @@ func (a *KubernetesApplier) waitForWorkloadPodsStopped(ctx context.Context, name
 // InspectReleasePods returns live runtime state for Pods created by a Release.
 // Release labels are placed on the Pod template so rollouts stay traceable.
 func (a *KubernetesApplier) InspectReleasePods(ctx context.Context, application ApplicationContext) (*model.ReleaseRuntime, error) {
-	if a.Client == nil || a.Client.Clientset == nil {
+	if a.diagnostics == nil {
 		return nil, fmt.Errorf("Kubernetes 客户端未初始化")
 	}
 	selector := ApplicationNameLabel + "=" + application.ApplicationName + "," + ReleaseLabel + "=" + strconv.FormatUint(uint64(application.ReleaseSequence), 10)
-	pods, err := a.Client.Clientset.CoreV1().Pods(application.Namespace).List(ctx, metav1.ListOptions{LabelSelector: selector})
+	pods, err := a.diagnostics.ListPods(ctx, application.Namespace, selector)
 	if err != nil {
 		return nil, fmt.Errorf("读取关联 Pod: %w", err)
 	}
-	runtime := &model.ReleaseRuntime{Tracking: "exact", Pods: make([]model.ReleasePodRuntime, 0, len(pods.Items))}
-	pendingPodNames := make(map[string]struct{}, len(pods.Items))
+	runtime := &model.ReleaseRuntime{Tracking: "exact", Pods: make([]model.ReleasePodRuntime, 0, len(pods))}
+	pendingPodNames := make(map[string]struct{}, len(pods))
 	diagnostics := make([]string, 0)
-	for _, pod := range pods.Items {
+	for _, pod := range pods {
 		status, diagnostic := releasePodRuntime(pod)
 		runtime.Pods = append(runtime.Pods, status)
 		if !status.Ready {
@@ -542,8 +598,8 @@ func (a *KubernetesApplier) InspectReleasePods(ctx context.Context, application 
 	}
 	sort.Slice(runtime.Pods, func(i, j int) bool { return runtime.Pods[i].Name < runtime.Pods[j].Name })
 	if len(pendingPodNames) > 0 {
-		if events, err := a.Client.Clientset.CoreV1().Events(application.Namespace).List(ctx, metav1.ListOptions{}); err == nil {
-			for _, event := range events.Items {
+		if events, err := a.diagnostics.ListEvents(ctx, application.Namespace); err == nil {
+			for _, event := range events {
 				if event.Type != corev1.EventTypeWarning || event.InvolvedObject.Kind != "Pod" || event.Message == "" {
 					continue
 				}
@@ -648,13 +704,13 @@ func (a *KubernetesApplier) deploymentFailureDiagnostic(ctx context.Context, app
 	if application.ReleaseSequence > 0 {
 		selector += "," + ReleaseLabel + "=" + strconv.FormatUint(uint64(application.ReleaseSequence), 10)
 	}
-	pods, err := a.Client.Clientset.CoreV1().Pods(application.Namespace).List(ctx, metav1.ListOptions{LabelSelector: selector})
+	pods, err := a.diagnostics.ListPods(ctx, application.Namespace, selector)
 	if err != nil {
 		return "", false
 	}
-	podNames := make(map[string]struct{}, len(pods.Items))
+	podNames := make(map[string]struct{}, len(pods))
 	lastDiagnostic := ""
-	for _, pod := range pods.Items {
+	for _, pod := range pods {
 		podNames[pod.Name] = struct{}{}
 		if pod.Status.Phase == corev1.PodFailed {
 			return redactReleaseDiagnostic(fmt.Sprintf("Pod %s 已失败: %s", pod.Name, pod.Status.Message), spec), true
@@ -678,11 +734,11 @@ func (a *KubernetesApplier) deploymentFailureDiagnostic(ctx context.Context, app
 			}
 		}
 	}
-	events, err := a.Client.Clientset.CoreV1().Events(application.Namespace).List(ctx, metav1.ListOptions{})
+	events, err := a.diagnostics.ListEvents(ctx, application.Namespace)
 	if err != nil {
 		return lastDiagnostic, false
 	}
-	for _, event := range events.Items {
+	for _, event := range events {
 		if event.Type != corev1.EventTypeWarning || event.InvolvedObject.Kind != "Pod" {
 			continue
 		}
@@ -716,152 +772,19 @@ func redactReleaseDiagnostic(detail string, spec ReleaseSpec) string {
 	return detail
 }
 
-func (a *KubernetesApplier) applyConfigMap(ctx context.Context, desired *corev1.ConfigMap) error {
-	existing, err := a.Client.Clientset.CoreV1().ConfigMaps(desired.Namespace).Get(ctx, desired.Name, metav1.GetOptions{})
-	if apierrors.IsNotFound(err) {
-		_, err = a.Client.Clientset.CoreV1().ConfigMaps(desired.Namespace).Create(ctx, desired, metav1.CreateOptions{})
-		return err
-	}
-	if err != nil {
-		return err
-	}
-	if err := ensureManaged(existing.Labels); err != nil {
-		return err
-	}
-	desired.ResourceVersion = existing.ResourceVersion
-	_, err = a.Client.Clientset.CoreV1().ConfigMaps(desired.Namespace).Update(ctx, desired, metav1.UpdateOptions{})
-	return err
-}
-
-func (a *KubernetesApplier) applySecret(ctx context.Context, desired *corev1.Secret) error {
-	existing, err := a.Client.Clientset.CoreV1().Secrets(desired.Namespace).Get(ctx, desired.Name, metav1.GetOptions{})
-	if apierrors.IsNotFound(err) {
-		_, err = a.Client.Clientset.CoreV1().Secrets(desired.Namespace).Create(ctx, desired, metav1.CreateOptions{})
-		return err
-	}
-	if err != nil {
-		return err
-	}
-	if err := ensureManaged(existing.Labels); err != nil {
-		return err
-	}
-	desired.ResourceVersion = existing.ResourceVersion
-	_, err = a.Client.Clientset.CoreV1().Secrets(desired.Namespace).Update(ctx, desired, metav1.UpdateOptions{})
-	return err
-}
-
-func (a *KubernetesApplier) applyDeployment(ctx context.Context, desired *appsv1.Deployment) error {
-	existing, err := a.Client.Clientset.AppsV1().Deployments(desired.Namespace).Get(ctx, desired.Name, metav1.GetOptions{})
-	if apierrors.IsNotFound(err) {
-		_, err = a.Client.Clientset.AppsV1().Deployments(desired.Namespace).Create(ctx, desired, metav1.CreateOptions{})
-		return err
-	}
-	if err != nil {
-		return err
-	}
-	if err := ensureManaged(existing.Labels); err != nil {
-		return err
-	}
-	desired.ResourceVersion = existing.ResourceVersion
-	_, err = a.Client.Clientset.AppsV1().Deployments(desired.Namespace).Update(ctx, desired, metav1.UpdateOptions{})
-	return err
-}
-
-func (a *KubernetesApplier) applyStatefulSet(ctx context.Context, desired *appsv1.StatefulSet) error {
-	existing, err := a.Client.Clientset.AppsV1().StatefulSets(desired.Namespace).Get(ctx, desired.Name, metav1.GetOptions{})
-	if apierrors.IsNotFound(err) {
-		_, err = a.Client.Clientset.AppsV1().StatefulSets(desired.Namespace).Create(ctx, desired, metav1.CreateOptions{})
-		return err
-	}
-	if err != nil {
-		return err
-	}
-	if err := ensureManaged(existing.Labels); err != nil {
-		return err
-	}
-	desired.ResourceVersion = existing.ResourceVersion
-	_, err = a.Client.Clientset.AppsV1().StatefulSets(desired.Namespace).Update(ctx, desired, metav1.UpdateOptions{})
-	return err
-}
-
-func (a *KubernetesApplier) applyService(ctx context.Context, desired *corev1.Service) error {
-	existing, err := a.Client.Clientset.CoreV1().Services(desired.Namespace).Get(ctx, desired.Name, metav1.GetOptions{})
-	if apierrors.IsNotFound(err) {
-		_, err = a.Client.Clientset.CoreV1().Services(desired.Namespace).Create(ctx, desired, metav1.CreateOptions{})
-		return err
-	}
-	if err != nil {
-		return err
-	}
-	if err := ensureManaged(existing.Labels); err != nil {
-		return err
-	}
-	desired.ResourceVersion = existing.ResourceVersion
-	desired.Spec.ClusterIP = existing.Spec.ClusterIP
-	_, err = a.Client.Clientset.CoreV1().Services(desired.Namespace).Update(ctx, desired, metav1.UpdateOptions{})
-	return err
-}
-
-func (a *KubernetesApplier) applyIngress(ctx context.Context, desired *networkingv1.Ingress) error {
-	existing, err := a.Client.Clientset.NetworkingV1().Ingresses(desired.Namespace).Get(ctx, desired.Name, metav1.GetOptions{})
-	if apierrors.IsNotFound(err) {
-		_, err = a.Client.Clientset.NetworkingV1().Ingresses(desired.Namespace).Create(ctx, desired, metav1.CreateOptions{})
-		return err
-	}
-	if err != nil {
-		return err
-	}
-	if err := ensureManaged(existing.Labels); err != nil {
-		return err
-	}
-	desired.ResourceVersion = existing.ResourceVersion
-	_, err = a.Client.Clientset.NetworkingV1().Ingresses(desired.Namespace).Update(ctx, desired, metav1.UpdateOptions{})
-	return err
-}
-
-func (a *KubernetesApplier) applyCertificate(ctx context.Context, desired *unstructured.Unstructured) error {
-	dynamicClient, err := dynamic.NewForConfig(a.Client.Config)
-	if err != nil {
-		return err
-	}
-	resource := dynamicClient.Resource(certificateGVR).Namespace(desired.GetNamespace())
-	existing, err := resource.Get(ctx, desired.GetName(), metav1.GetOptions{})
-	if apierrors.IsNotFound(err) {
-		_, err = resource.Create(ctx, desired, metav1.CreateOptions{})
-		return err
-	}
-	if err != nil {
-		return err
-	}
-	if err := ensureManaged(existing.GetLabels()); err != nil {
-		return err
-	}
-	desired.SetResourceVersion(existing.GetResourceVersion())
-	_, err = resource.Update(ctx, desired, metav1.UpdateOptions{})
-	return err
-}
-
 func (a *KubernetesApplier) certificateReady(ctx context.Context, application ApplicationContext, endpoint EndpointSpec) (bool, error) {
-	dynamicClient, err := dynamic.NewForConfig(a.Client.Config)
-	if err != nil {
-		return false, err
+	if a.diagnostics == nil {
+		return false, fmt.Errorf("Kubernetes 客户端未初始化")
 	}
 	certificateName := application.ApplicationName + "-tls"
 	if endpoint.ManagedCertificateName != "" {
 		certificateName = endpoint.ManagedCertificateName
 	}
-	certificate, err := dynamicClient.Resource(certificateGVR).Namespace(application.Namespace).Get(ctx, certificateName, metav1.GetOptions{})
+	ready, err := a.diagnostics.CertificateReady(ctx, application.Namespace, certificateName)
 	if err != nil {
 		return false, fmt.Errorf("读取 Certificate 状态: %w", err)
 	}
-	conditions, _, _ := unstructured.NestedSlice(certificate.Object, "status", "conditions")
-	for _, item := range conditions {
-		condition, ok := item.(map[string]interface{})
-		if ok && condition["type"] == "Ready" && condition["status"] == "True" {
-			return true, nil
-		}
-	}
-	return false, nil
+	return ready, nil
 }
 
 func ensureManaged(labels map[string]string) error {

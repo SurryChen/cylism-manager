@@ -182,7 +182,7 @@ func (h *NodeJoinProgressHandler) JoinProgress(c *gin.Context) {
 		for i := 0; i < 60 && !aborted(); i++ {
 			time.Sleep(5 * time.Second)
 			if h.k8s != nil {
-				node, getErr := h.k8s.GetNodeInfo(server.K8sNodeName)
+				node, getErr := h.k8s.GetNodeInfoContext(c.Request.Context(), server.K8sNodeName)
 				if getErr == nil && node != nil && node.Ready {
 					ready = true
 					break

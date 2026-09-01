@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -332,8 +333,8 @@ func (h *ApplicationHandler) templateFromRequest(app *model.Application, req *de
 		if K8s == nil {
 			return nil, fmt.Errorf("K8s 集群未连接，无法验证 PVC")
 		}
-		context := application.ApplicationContext{EnvironmentID: app.Environment.ID, Namespace: app.Environment.Namespace}
-		if err := application.NewKubernetesApplier(K8s).ValidatePersistentVolumeClaims(context, spec); err != nil {
+		applicationContext := application.ApplicationContext{EnvironmentID: app.Environment.ID, Namespace: app.Environment.Namespace}
+		if err := application.NewKubernetesApplier(K8s).ValidatePersistentVolumeClaims(context.Background(), applicationContext, spec); err != nil {
 			return nil, err
 		}
 	}

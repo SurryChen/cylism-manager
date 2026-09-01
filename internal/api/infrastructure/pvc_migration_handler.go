@@ -18,7 +18,6 @@ import (
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/gin-gonic/gin"
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 const defaultPVCMigrationHelperImage = "registry.k8s.io/pause:3.10"
@@ -66,7 +65,7 @@ func (h *StorageHandler) GetPersistentVolumeMigration(c *gin.Context) {
 }
 
 func (h *StorageHandler) CreatePersistentVolumeMigration(c *gin.Context) {
-	if h.k8s == nil {
+	if h.pvc == nil || h.migration == nil || h.workloads == nil {
 		storageK8sUnavailable(c)
 		return
 	}
@@ -92,7 +91,7 @@ func (h *StorageHandler) CreatePersistentVolumeMigration(c *gin.Context) {
 		model.Error(c, 500, model.CodeDBError, "检查存储卷迁移状态失败")
 		return
 	}
-	claim, err := h.k8s.GetManagedPVC(environment.Namespace, sourceName, environment.ID)
+	claim, err := h.pvc.GetManagedPVC(environment.Namespace, sourceName, environment.ID)
 	if err != nil {
 		model.Error(c, 400, model.CodeValidationFail, err.Error())
 		return
@@ -105,7 +104,7 @@ func (h *StorageHandler) CreatePersistentVolumeMigration(c *gin.Context) {
 		model.Error(c, 400, model.CodeValidationFail, "目标节点与当前绑定节点相同")
 		return
 	}
-	deployment, app, replicas, err := h.migrationWorkload(environment.ID, environment.Namespace, sourceName)
+	deployment, app, replicas, err := h.migrationWorkload(c.Request.Context(), environment.ID, environment.Namespace, sourceName)
 	if err != nil {
 		model.Error(c, 409, model.CodeConflict, err.Error())
 		return
@@ -138,7 +137,7 @@ func (h *StorageHandler) CreatePersistentVolumeMigration(c *gin.Context) {
 }
 
 func (h *StorageHandler) CleanupPersistentVolumeMigration(c *gin.Context) {
-	if h.k8s == nil {
+	if h.pvc == nil || h.migration == nil {
 		storageK8sUnavailable(c)
 		return
 	}
@@ -157,11 +156,11 @@ func (h *StorageHandler) CleanupPersistentVolumeMigration(c *gin.Context) {
 		model.Error(c, 404, model.CodeNotFound, "环境不存在")
 		return
 	}
-	if deployments, err := h.k8s.DeploymentUsingPVC(environment.Namespace, migration.SourcePVCName); err != nil || len(deployments) != 0 {
+	if deployments, err := h.migration.DeploymentUsingPVC(c.Request.Context(), environment.Namespace, migration.SourcePVCName); err != nil || len(deployments) != 0 {
 		model.Error(c, 409, model.CodeConflict, "源存储卷仍被工作负载引用，不能清理")
 		return
 	}
-	if err := h.k8s.DeleteManagedPVC(environment.Namespace, migration.SourcePVCName, environment.ID); err != nil {
+	if err := h.pvc.DeleteManagedPVC(environment.Namespace, migration.SourcePVCName, environment.ID); err != nil {
 		model.Error(c, 400, model.CodeK8sAPIError, err.Error())
 		return
 	}
@@ -169,8 +168,8 @@ func (h *StorageHandler) CleanupPersistentVolumeMigration(c *gin.Context) {
 	model.Success(c, migration)
 }
 
-func (h *StorageHandler) migrationWorkload(environmentID uint, namespace, claimName string) (string, *model.Application, int32, error) {
-	deployments, err := h.k8s.DeploymentUsingPVC(namespace, claimName)
+func (h *StorageHandler) migrationWorkload(ctx context.Context, environmentID uint, namespace, claimName string) (string, *model.Application, int32, error) {
+	deployments, err := h.migration.DeploymentUsingPVC(ctx, namespace, claimName)
 	if err != nil {
 		return "", nil, 0, err
 	}
@@ -198,6 +197,8 @@ func (h *StorageHandler) migrationWorkload(environmentID uint, namespace, claimN
 }
 
 func (h *StorageHandler) runPersistentVolumeMigration(id uint, helperImage string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 35*time.Minute)
+	defer cancel()
 	migration, err := h.Service.GetMigration(id)
 	if err != nil {
 		return
@@ -210,7 +211,7 @@ func (h *StorageHandler) runPersistentVolumeMigration(id uint, helperImage strin
 	if err := h.Service.UpdateMigration(migration, model.PVCMigrationStatusPreflight, "正在检查源节点、目标节点和工作负载"); err != nil {
 		return
 	}
-	source, target, claim, err := h.preflightMigration(environment, migration)
+	source, target, claim, err := h.preflightMigration(ctx, environment, migration)
 	if err != nil {
 		h.failMigration(migration, err, false)
 		return
@@ -218,20 +219,20 @@ func (h *StorageHandler) runPersistentVolumeMigration(id uint, helperImage strin
 	if err := h.Service.UpdateMigration(migration, model.PVCMigrationStatusProvisioningTarget, "正在预配目标本地卷"); err != nil {
 		return
 	}
-	if _, err := h.k8s.CreateManagedPVC(environment.Namespace, environment.ID, k8sclient.PersistentVolumeClaimRequest{Name: migration.TargetPVCName, Storage: claim.Storage, StorageClassName: claim.StorageClassName}); err != nil {
+	if _, err := h.pvc.CreateManagedPVC(environment.Namespace, environment.ID, k8sclient.PersistentVolumeClaimRequest{Name: migration.TargetPVCName, Storage: claim.Storage, StorageClassName: claim.StorageClassName}); err != nil {
 		h.failMigration(migration, err, false)
 		return
 	}
-	if _, err := h.k8s.CreatePVCBindingPod(environment.Namespace, strconv.FormatUint(uint64(migration.ID), 10), migration.TargetPVCName, migration.TargetNodeName, helperImage); err != nil {
-		h.cleanupMigrationTarget(environment, migration)
+	if _, err := h.migration.CreatePVCBindingPod(ctx, environment.Namespace, strconv.FormatUint(uint64(migration.ID), 10), migration.TargetPVCName, migration.TargetNodeName, helperImage); err != nil {
+		h.cleanupMigrationTarget(ctx, environment, migration)
 		h.failMigration(migration, err, false)
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
-	targetClaim, err := h.k8s.WaitForManagedPVCBound(ctx, environment.Namespace, migration.TargetPVCName, environment.ID)
-	cancel()
+	boundCtx, boundCancel := context.WithTimeout(ctx, 3*time.Minute)
+	targetClaim, err := h.migration.WaitForManagedPVCBound(boundCtx, environment.Namespace, migration.TargetPVCName, environment.ID)
+	boundCancel()
 	if err != nil || !targetClaim.IsLocal || targetClaim.BoundNode != migration.TargetNodeName {
-		h.cleanupMigrationTarget(environment, migration)
+		h.cleanupMigrationTarget(ctx, environment, migration)
 		if err == nil {
 			err = fmt.Errorf("目标 PVC 未绑定到所选节点")
 		}
@@ -239,20 +240,20 @@ func (h *StorageHandler) runPersistentVolumeMigration(id uint, helperImage strin
 		return
 	}
 	if err := h.checkMigrationTargetPath(target, targetClaim.LocalPath); err != nil {
-		h.cleanupMigrationTarget(environment, migration)
+		h.cleanupMigrationTarget(ctx, environment, migration)
 		h.failMigration(migration, err, false)
 		return
 	}
 	if err := h.Service.UpdateMigration(migration, model.PVCMigrationStatusStoppingSource, "正在停止源工作负载"); err != nil {
 		return
 	}
-	if err := h.k8s.ScaleDeployment(environment.Namespace, migration.SourceDeployment, 0); err != nil {
-		h.cleanupMigrationTarget(environment, migration)
+	if err := h.migration.ScaleDeployment(ctx, environment.Namespace, migration.SourceDeployment, 0); err != nil {
+		h.cleanupMigrationTarget(ctx, environment, migration)
 		h.failMigration(migration, err, false)
 		return
 	}
-	if err := h.waitForStorageDeploymentPods(environment.Namespace, migration.SourceDeployment, false, 90*time.Second); err != nil {
-		h.cleanupMigrationTarget(environment, migration)
+	if err := h.waitForStorageDeploymentPods(ctx, environment.Namespace, migration.SourceDeployment, false, 90*time.Second); err != nil {
+		h.cleanupMigrationTarget(ctx, environment, migration)
 		h.failMigration(migration, err, true)
 		return
 	}
@@ -262,18 +263,18 @@ func (h *StorageHandler) runPersistentVolumeMigration(id uint, helperImage strin
 	bytesCopied, err := streamPVCData(source, target, claim.LocalPath, targetClaim.LocalPath, h.encKey)
 	migration.BytesCopied = bytesCopied
 	if err != nil {
-		h.cleanupMigrationTarget(environment, migration)
+		h.cleanupMigrationTarget(ctx, environment, migration)
 		h.failMigration(migration, err, true)
 		return
 	}
 	if err := h.Service.UpdateMigration(migration, model.PVCMigrationStatusCutover, "正在切换应用到目标存储卷"); err != nil {
 		return
 	}
-	if err := h.k8s.DeletePVCBindingPod(environment.Namespace, strconv.FormatUint(uint64(migration.ID), 10)); err != nil {
+	if err := h.migration.DeletePVCBindingPod(ctx, environment.Namespace, strconv.FormatUint(uint64(migration.ID), 10)); err != nil {
 		h.failMigration(migration, err, true)
 		return
 	}
-	if _, err := h.k8s.ReplaceDeploymentPVCNode(environment.Namespace, migration.SourceDeployment, migration.SourcePVCName, migration.TargetPVCName, migration.TargetNodeName); err != nil {
+	if _, err := h.migration.ReplaceDeploymentPVCNode(ctx, environment.Namespace, migration.SourceDeployment, migration.SourcePVCName, migration.TargetPVCName, migration.TargetNodeName); err != nil {
 		h.failMigration(migration, err, true)
 		return
 	}
@@ -281,33 +282,33 @@ func (h *StorageHandler) runPersistentVolumeMigration(id uint, helperImage strin
 		h.failMigration(migration, err, true)
 		return
 	}
-	if err := h.k8s.ScaleDeployment(environment.Namespace, migration.SourceDeployment, migration.SourceReplicas); err != nil {
+	if err := h.migration.ScaleDeployment(ctx, environment.Namespace, migration.SourceDeployment, migration.SourceReplicas); err != nil {
 		h.failMigration(migration, err, true)
 		return
 	}
 	if err := h.Service.UpdateMigration(migration, model.PVCMigrationStatusWaitingReady, "正在等待目标工作负载就绪"); err != nil {
 		return
 	}
-	if err := h.waitForStorageDeploymentPods(environment.Namespace, migration.SourceDeployment, true, 2*time.Minute); err != nil {
+	if err := h.waitForStorageDeploymentPods(ctx, environment.Namespace, migration.SourceDeployment, true, 2*time.Minute); err != nil {
 		h.failMigration(migration, err, true)
 		return
 	}
 	_ = h.Service.UpdateMigration(migration, model.PVCMigrationStatusCleanupPending, "目标工作负载已就绪，可确认清理源卷")
 }
 
-func (h *StorageHandler) preflightMigration(environment *model.Environment, migration *model.PersistentVolumeMigration) (*model.Server, *model.Server, *k8sclient.PersistentVolumeClaimInfo, error) {
-	claim, err := h.k8s.GetManagedPVC(environment.Namespace, migration.SourcePVCName, environment.ID)
+func (h *StorageHandler) preflightMigration(ctx context.Context, environment *model.Environment, migration *model.PersistentVolumeMigration) (*model.Server, *model.Server, *k8sclient.PersistentVolumeClaimInfo, error) {
+	claim, err := h.pvc.GetManagedPVC(environment.Namespace, migration.SourcePVCName, environment.ID)
 	if err != nil || !claim.IsLocal || claim.LocalPath == "" || claim.BoundNode != migration.SourceNodeName {
 		if err == nil {
 			err = fmt.Errorf("源 PVC 状态已变化，无法迁移")
 		}
 		return nil, nil, nil, err
 	}
-	node, err := h.k8s.Clientset.CoreV1().Nodes().Get(h.k8s.Ctx(), migration.TargetNodeName, metav1.GetOptions{})
+	nodeInfo, err := h.migration.GetNodeInfo(ctx, migration.TargetNodeName)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("目标节点不可用: %w", err)
 	}
-	if !nodeReady(node) {
+	if nodeInfo == nil || !nodeInfo.Ready {
 		return nil, nil, nil, fmt.Errorf("目标节点未就绪")
 	}
 	servers, err := h.store.ListServers()
@@ -414,10 +415,11 @@ func (w countWriter) Write(value []byte) (int, error) {
 	return len(value), nil
 }
 
-func (h *StorageHandler) waitForStorageDeploymentPods(namespace, name string, ready bool, timeout time.Duration) error {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		deployment, err := h.k8s.Clientset.AppsV1().Deployments(namespace).Get(h.k8s.Ctx(), name, metav1.GetOptions{})
+func (h *StorageHandler) waitForStorageDeploymentPods(ctx context.Context, namespace, name string, ready bool, timeout time.Duration) error {
+	deadline, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	for {
+		deployment, err := h.workloads.GetDeployment(deadline, namespace, name)
 		if err != nil {
 			return err
 		}
@@ -426,7 +428,7 @@ func (h *StorageHandler) waitForStorageDeploymentPods(namespace, name string, re
 				return nil
 			}
 		} else {
-			pods, err := h.k8s.ListDeploymentPods(namespace, name)
+			pods, err := h.migration.ListDeploymentPods(deadline, namespace, name)
 			if err != nil {
 				return err
 			}
@@ -434,12 +436,15 @@ func (h *StorageHandler) waitForStorageDeploymentPods(namespace, name string, re
 				return nil
 			}
 		}
-		time.Sleep(time.Second)
+		select {
+		case <-deadline.Done():
+			if ready {
+				return fmt.Errorf("等待目标工作负载就绪超时")
+			}
+			return fmt.Errorf("等待源工作负载停止超时")
+		case <-time.After(time.Second):
+		}
 	}
-	if ready {
-		return fmt.Errorf("等待目标工作负载就绪超时")
-	}
-	return fmt.Errorf("等待源工作负载停止超时")
 }
 
 func (h *StorageHandler) replaceMigrationTemplateClaims(applicationID uint, sourceClaim, targetClaim, targetNode string) error {
@@ -514,20 +519,22 @@ func (h *StorageHandler) restoreMigrationTemplates(migration *model.PersistentVo
 	return nil
 }
 
-func (h *StorageHandler) cleanupMigrationTarget(environment *model.Environment, migration *model.PersistentVolumeMigration) {
-	_ = h.k8s.DeletePVCBindingPod(environment.Namespace, strconv.FormatUint(uint64(migration.ID), 10))
+func (h *StorageHandler) cleanupMigrationTarget(ctx context.Context, environment *model.Environment, migration *model.PersistentVolumeMigration) {
+	_ = h.migration.DeletePVCBindingPod(ctx, environment.Namespace, strconv.FormatUint(uint64(migration.ID), 10))
 	if migration.TargetPVCName != "" {
-		_ = h.k8s.DeleteManagedPVC(environment.Namespace, migration.TargetPVCName, environment.ID)
+		_ = h.pvc.DeleteManagedPVC(environment.Namespace, migration.TargetPVCName, environment.ID)
 	}
 }
 
 func (h *StorageHandler) failMigration(migration *model.PersistentVolumeMigration, cause error, restoreSource bool) {
-	if restoreSource && h.k8s != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	if restoreSource && h.migration != nil {
 		if environment, err := h.store.GetEnvironmentByID(migration.EnvironmentID); err == nil {
-			if deployments, _ := h.k8s.DeploymentUsingPVC(environment.Namespace, migration.TargetPVCName); len(deployments) == 1 {
-				_, _ = h.k8s.ReplaceDeploymentPVCNode(environment.Namespace, migration.SourceDeployment, migration.TargetPVCName, migration.SourcePVCName, migration.SourceNodeName)
+			if deployments, _ := h.migration.DeploymentUsingPVC(ctx, environment.Namespace, migration.TargetPVCName); len(deployments) == 1 {
+				_, _ = h.migration.ReplaceDeploymentPVCNode(ctx, environment.Namespace, migration.SourceDeployment, migration.TargetPVCName, migration.SourcePVCName, migration.SourceNodeName)
 			}
-			_ = h.k8s.ScaleDeployment(environment.Namespace, migration.SourceDeployment, migration.SourceReplicas)
+			_ = h.migration.ScaleDeployment(ctx, environment.Namespace, migration.SourceDeployment, migration.SourceReplicas)
 			_ = h.restoreMigrationTemplates(migration)
 		}
 	}

@@ -26,6 +26,31 @@ import (
 // the platform-managed Registry. It is intentionally independent from HTTP.
 type ManagedRegistryReconciler struct{ client *Client }
 
+// ManagedRegistryResourceReconciler contains mutating resource operations.
+type ManagedRegistryResourceReconciler interface {
+	EnsureDataNode(context.Context, string) error
+	EnsureStorageClass(context.Context, string) error
+	ResolvePVC(context.Context, *model.ManagedOCIRegistry) error
+	EnsureTLSCertificate(context.Context, *model.ManagedOCIRegistry) error
+	EnsureResourcesAvailable(context.Context, string, string) error
+	Apply(context.Context, *model.ManagedOCIRegistry, string, string) error
+	DeleteResources(context.Context, *model.ManagedOCIRegistry)
+}
+
+// ManagedRegistryStatusReader contains read-only discovery and status calls.
+type ManagedRegistryStatusReader interface {
+	Available() bool
+	StoragePreflight(context.Context, string) ([]string, error)
+	ListReadyDataNodes(context.Context) ([]string, error)
+	ListEligiblePVCs(context.Context, string) ([]ManagedRegistryPVCOption, error)
+	ListMatchingCertificates(context.Context, string, string) ([]ManagedRegistryCertificateOption, error)
+	LegacyHostPath(context.Context, *model.ManagedOCIRegistry) (bool, error)
+	ManagedRegistryStatus(context.Context, *model.ManagedOCIRegistry) (string, string, string)
+}
+
+var _ ManagedRegistryResourceReconciler = (*ManagedRegistryReconciler)(nil)
+var _ ManagedRegistryStatusReader = (*ManagedRegistryReconciler)(nil)
+
 const managedRegistryResourceName = "cylism-oci-registry"
 
 // ManagedRegistryPVCOption is a PVC that can be mounted by the single-replica

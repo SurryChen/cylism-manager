@@ -1,8 +1,6 @@
 package system
 
-import (
-	"github.com/cylism/cylism-manager/internal/k8s"
-)
+import "github.com/cylism/cylism-manager/internal/k8s"
 
 // k8sClient is the system API's Kubernetes boundary. It is assigned once during
 // route registration and kept here so system handlers do not depend on the

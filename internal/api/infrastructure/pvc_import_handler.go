@@ -1,6 +1,7 @@
 package infrastructure
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -38,7 +39,7 @@ func (h *StorageHandler) ListHostDirectoryPVCImports(c *gin.Context) {
 }
 
 func (h *StorageHandler) CreateHostDirectoryPVCImport(c *gin.Context) {
-	if h.k8s == nil || h.store == nil {
+	if h.pvc == nil || h.migration == nil || h.store == nil {
 		storageK8sUnavailable(c)
 		return
 	}
@@ -57,7 +58,7 @@ func (h *StorageHandler) CreateHostDirectoryPVCImport(c *gin.Context) {
 		model.Error(c, http.StatusNotFound, model.CodeNotFound, "环境不存在")
 		return
 	}
-	claim, err := h.k8s.GetManagedPVC(environment.Namespace, c.Param("name"), environment.ID)
+	claim, err := h.pvc.GetManagedPVC(environment.Namespace, c.Param("name"), environment.ID)
 	if err != nil {
 		model.Error(c, http.StatusNotFound, model.CodeNotFound, err.Error())
 		return
@@ -208,6 +209,8 @@ func (h *StorageHandler) DeleteHostDirectoryPVCImportBackup(c *gin.Context) {
 }
 
 func (h *StorageHandler) runHostDirectoryPVCImport(id uint, replaceTarget bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Hour)
+	defer cancel()
 	task, err := h.Service.GetImport(id)
 	if err != nil {
 		return
@@ -217,7 +220,7 @@ func (h *StorageHandler) runHostDirectoryPVCImport(id uint, replaceTarget bool) 
 	if err := h.Service.UpdateImport(task, model.PVCImportStatusPreflight, "正在检查源目录、目标 PVC 和工作负载"); err != nil {
 		return
 	}
-	environment, source, target, claim, targetHasData, err := h.preflightHostDirectoryPVCImport(task, replaceTarget)
+	environment, source, target, claim, targetHasData, err := h.preflightHostDirectoryPVCImport(ctx, task, replaceTarget)
 	if err != nil {
 		h.failHostDirectoryPVCImport(task, err, nil)
 		return
@@ -225,7 +228,7 @@ func (h *StorageHandler) runHostDirectoryPVCImport(id uint, replaceTarget bool) 
 	if err := h.Service.UpdateImport(task, model.PVCImportStatusStoppingWorkload, "正在停止引用 PVC 的工作负载"); err != nil {
 		return
 	}
-	replicas, err := h.stopPVCImportWorkloads(environment.Namespace, claim.Name)
+	replicas, err := h.stopPVCImportWorkloads(ctx, environment.Namespace, claim.Name)
 	if err != nil {
 		h.failHostDirectoryPVCImport(task, err, nil)
 		return
@@ -285,19 +288,19 @@ func (h *StorageHandler) runHostDirectoryPVCImport(id uint, replaceTarget bool) 
 	if err := h.Service.UpdateImport(task, model.PVCImportStatusRestoringWorkload, "数据校验完成，正在恢复工作负载"); err != nil {
 		return
 	}
-	if err := h.restorePVCImportWorkloads(environment.Namespace, replicas); err != nil {
+	if err := h.restorePVCImportWorkloads(ctx, environment.Namespace, replicas); err != nil {
 		h.failHostDirectoryPVCImport(task, err, replicas)
 		return
 	}
 	_ = h.Service.UpdateImport(task, model.PVCImportStatusSucceeded, "目录已导入 PVC 并完成校验，备份可按需删除")
 }
 
-func (h *StorageHandler) preflightHostDirectoryPVCImport(task *model.HostDirectoryPVCImport, replaceTarget bool) (*model.Environment, *model.Server, *model.Server, *k8sclient.PersistentVolumeClaimInfo, bool, error) {
+func (h *StorageHandler) preflightHostDirectoryPVCImport(ctx context.Context, task *model.HostDirectoryPVCImport, replaceTarget bool) (*model.Environment, *model.Server, *model.Server, *k8sclient.PersistentVolumeClaimInfo, bool, error) {
 	environment, err := h.store.GetEnvironmentByID(task.EnvironmentID)
 	if err != nil {
 		return nil, nil, nil, nil, false, err
 	}
-	claim, err := h.k8s.GetManagedPVC(environment.Namespace, task.PVCName, environment.ID)
+	claim, err := h.pvc.GetManagedPVC(environment.Namespace, task.PVCName, environment.ID)
 	if err != nil || claim.Phase != string(corev1.ClaimBound) || !claim.IsLocal || claim.BoundNode != task.TargetNodeName || claim.LocalPath != task.TargetPath {
 		if err == nil {
 			err = fmt.Errorf("目标 PVC 绑定状态已变化")
@@ -332,8 +335,8 @@ func (h *StorageHandler) preflightHostDirectoryPVCImport(task *model.HostDirecto
 	return environment, source, target, claim, targetHasData, nil
 }
 
-func (h *StorageHandler) stopPVCImportWorkloads(namespace, claimName string) (map[string]int32, error) {
-	deployments, err := h.k8s.DeploymentUsingPVC(namespace, claimName)
+func (h *StorageHandler) stopPVCImportWorkloads(ctx context.Context, namespace, claimName string) (map[string]int32, error) {
+	deployments, err := h.migration.DeploymentUsingPVC(ctx, namespace, claimName)
 	if err != nil {
 		return nil, err
 	}
@@ -348,24 +351,24 @@ func (h *StorageHandler) stopPVCImportWorkloads(namespace, claimName string) (ma
 		if deployment.Spec.Replicas != nil {
 			count = *deployment.Spec.Replicas
 		}
-		if err := h.k8s.ScaleDeployment(namespace, deployment.Name, 0); err != nil {
+		if err := h.migration.ScaleDeployment(ctx, namespace, deployment.Name, 0); err != nil {
 			return replicas, err
 		}
 		replicas[deployment.Name] = count
-		if err := h.waitForStorageDeploymentPods(namespace, deployment.Name, false, 90*time.Second); err != nil {
+		if err := h.waitForStorageDeploymentPods(ctx, namespace, deployment.Name, false, 90*time.Second); err != nil {
 			return replicas, err
 		}
 	}
 	return replicas, nil
 }
 
-func (h *StorageHandler) restorePVCImportWorkloads(namespace string, replicas map[string]int32) error {
+func (h *StorageHandler) restorePVCImportWorkloads(ctx context.Context, namespace string, replicas map[string]int32) error {
 	for name, count := range replicas {
-		if err := h.k8s.ScaleDeployment(namespace, name, count); err != nil {
+		if err := h.migration.ScaleDeployment(ctx, namespace, name, count); err != nil {
 			return err
 		}
 		if count > 0 {
-			if err := h.waitForStorageDeploymentPods(namespace, name, true, 2*time.Minute); err != nil {
+			if err := h.waitForStorageDeploymentPods(ctx, namespace, name, true, 2*time.Minute); err != nil {
 				return err
 			}
 		}
@@ -417,9 +420,9 @@ func (h *StorageHandler) rollbackHostDirectoryImportTarget(task *model.HostDirec
 }
 
 func (h *StorageHandler) failHostDirectoryPVCImport(task *model.HostDirectoryPVCImport, cause error, replicas map[string]int32) {
-	if len(replicas) > 0 && h.k8s != nil {
+	if len(replicas) > 0 && h.migration != nil {
 		if environment, err := h.store.GetEnvironmentByID(task.EnvironmentID); err == nil {
-			_ = h.restorePVCImportWorkloads(environment.Namespace, replicas)
+			_ = h.restorePVCImportWorkloads(context.Background(), environment.Namespace, replicas)
 		}
 	}
 	_ = h.Service.UpdateImport(task, model.PVCImportStatusFailed, cause.Error())

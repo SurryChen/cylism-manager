@@ -1,6 +1,7 @@
 package infrastructure
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"path"
@@ -34,7 +35,7 @@ func (h *StorageHandler) ListPersistentVolumeBackups(c *gin.Context) {
 }
 
 func (h *StorageHandler) CreatePersistentVolumeBackup(c *gin.Context) {
-	if h.k8s == nil || h.store == nil {
+	if h.pvc == nil || h.migration == nil || h.store == nil {
 		storageK8sUnavailable(c)
 		return
 	}
@@ -48,7 +49,7 @@ func (h *StorageHandler) CreatePersistentVolumeBackup(c *gin.Context) {
 		model.Error(c, http.StatusNotFound, model.CodeNotFound, "环境不存在")
 		return
 	}
-	claim, err := h.k8s.GetManagedPVC(environment.Namespace, c.Param("name"), environment.ID)
+	claim, err := h.pvc.GetManagedPVC(environment.Namespace, c.Param("name"), environment.ID)
 	if err != nil {
 		model.Error(c, http.StatusNotFound, model.CodeNotFound, err.Error())
 		return
@@ -79,7 +80,7 @@ func (h *StorageHandler) CreatePersistentVolumeBackup(c *gin.Context) {
 }
 
 func (h *StorageHandler) RestorePersistentVolumeBackup(c *gin.Context) {
-	if h.k8s == nil || h.store == nil {
+	if h.pvc == nil || h.migration == nil || h.store == nil {
 		storageK8sUnavailable(c)
 		return
 	}
@@ -135,7 +136,7 @@ func (h *StorageHandler) executePersistentVolumeBackup(backupID uint) {
 		h.failPersistentVolumeBackup(backup, err)
 		return
 	}
-	claim, err := h.k8s.GetManagedPVC(environment.Namespace, backup.PVCName, environment.ID)
+	claim, err := h.pvc.GetManagedPVC(environment.Namespace, backup.PVCName, environment.ID)
 	if err != nil || !claim.IsLocal || claim.LocalPath == "" || claim.BoundNode != backup.SourceNodeName {
 		h.failPersistentVolumeBackup(backup, fmt.Errorf("PVC 绑定状态已变化，无法执行备份"))
 		return
@@ -162,6 +163,8 @@ func (h *StorageHandler) executePersistentVolumeBackup(backupID uint) {
 }
 
 func (h *StorageHandler) executePersistentVolumeRestore(backupID uint) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Hour)
+	defer cancel()
 	backup, err := h.Service.GetBackup(backupID)
 	if err != nil {
 		return
@@ -171,7 +174,7 @@ func (h *StorageHandler) executePersistentVolumeRestore(backupID uint) {
 		h.failPersistentVolumeRestore(backup, err)
 		return
 	}
-	claim, err := h.k8s.GetManagedPVC(environment.Namespace, backup.PVCName, environment.ID)
+	claim, err := h.pvc.GetManagedPVC(environment.Namespace, backup.PVCName, environment.ID)
 	if err != nil || !claim.IsLocal || claim.LocalPath == "" {
 		h.failPersistentVolumeRestore(backup, fmt.Errorf("PVC 不再是可恢复的本地卷"))
 		return
@@ -186,7 +189,7 @@ func (h *StorageHandler) executePersistentVolumeRestore(backupID uint) {
 		h.failPersistentVolumeRestore(backup, err)
 		return
 	}
-	deployments, err := h.k8s.DeploymentUsingPVC(environment.Namespace, backup.PVCName)
+	deployments, err := h.migration.DeploymentUsingPVC(ctx, environment.Namespace, backup.PVCName)
 	if err != nil {
 		h.failPersistentVolumeRestore(backup, err)
 		return
@@ -201,28 +204,28 @@ func (h *StorageHandler) executePersistentVolumeRestore(backupID uint) {
 		if deployment.Spec.Replicas != nil {
 			count = *deployment.Spec.Replicas
 		}
-		if err := h.k8s.ScaleDeployment(environment.Namespace, deployment.Name, 0); err != nil {
+		if err := h.migration.ScaleDeployment(ctx, environment.Namespace, deployment.Name, 0); err != nil {
 			h.failPersistentVolumeRestore(backup, err)
 			return
 		}
 		replicas[deployment.Name] = count
-		if err := h.waitForStorageDeploymentPods(environment.Namespace, deployment.Name, false, 90*time.Second); err != nil {
+		if err := h.waitForStorageDeploymentPods(ctx, environment.Namespace, deployment.Name, false, 90*time.Second); err != nil {
 			h.failPersistentVolumeRestore(backup, err)
 			return
 		}
 	}
 	clear := "sudo -n find " + storageShellQuote(claim.LocalPath) + " -mindepth 1 -maxdepth 1 -exec rm -rf {} +"
 	if out, err := sshExec(30*time.Second, append(buildSSHArgs(source, h.encKey, source.Host), clear)); err != nil {
-		h.restoreBackupReplicas(environment.Namespace, replicas)
+		h.restoreBackupReplicas(ctx, environment.Namespace, replicas)
 		h.failPersistentVolumeRestore(backup, fmt.Errorf("清空目标 PVC 失败: %s", strings.TrimSpace(string(out))))
 		return
 	}
 	if _, err := streamPVCData(archive, source, backup.BackupPath, claim.LocalPath, h.encKey); err != nil {
-		h.restoreBackupReplicas(environment.Namespace, replicas)
+		h.restoreBackupReplicas(ctx, environment.Namespace, replicas)
 		h.failPersistentVolumeRestore(backup, err)
 		return
 	}
-	h.restoreBackupReplicas(environment.Namespace, replicas)
+	h.restoreBackupReplicas(ctx, environment.Namespace, replicas)
 	backup.RestoreStatus = "succeeded"
 	backup.RestoreDetail = "PVC 数据已从备份恢复"
 	completedAt := time.Now().UTC()
@@ -230,9 +233,9 @@ func (h *StorageHandler) executePersistentVolumeRestore(backupID uint) {
 	_ = h.Service.UpdateBackup(backup)
 }
 
-func (h *StorageHandler) restoreBackupReplicas(namespace string, replicas map[string]int32) {
+func (h *StorageHandler) restoreBackupReplicas(ctx context.Context, namespace string, replicas map[string]int32) {
 	for name, count := range replicas {
-		_ = h.k8s.ScaleDeployment(namespace, name, count)
+		_ = h.migration.ScaleDeployment(ctx, namespace, name, count)
 	}
 }
 

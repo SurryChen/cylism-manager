@@ -6,12 +6,20 @@ import (
 	"strconv"
 
 	applicationdomain "github.com/cylism/cylism-manager/internal/application"
-	k8sclient "github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
+
+// RuntimeReader is the minimal Kubernetes read capability required by
+// application runtime views. It deliberately exposes no client, mutation, or
+// reconciler details.
+type RuntimeReader interface {
+	ListRuntimeServices(context.Context, string) ([]corev1.Service, error)
+	ListRuntimeDeployments(context.Context, string) ([]appsv1.Deployment, error)
+	ListRuntimeStatefulSets(context.Context, string) ([]appsv1.StatefulSet, error)
+	ListRuntimePods(context.Context, string, string) ([]corev1.Pod, error)
+}
 
 type RuntimeInfo struct {
 	Status          string            `json:"status"`
@@ -60,7 +68,7 @@ type WorkspaceRuntimeSummary struct {
 
 // ApplicationRuntimeInfos batches Kubernetes reads per namespace. Missing
 // cluster access remains a view concern represented by unavailable statuses.
-func (s *QueryService) ApplicationRuntimeInfos(ctx context.Context, client *k8sclient.Client, applications []model.Application, releases map[uint][]model.Release) map[uint]RuntimeInfo {
+func (s *QueryService) ApplicationRuntimeInfos(ctx context.Context, reader RuntimeReader, applications []model.Application, releases map[uint][]model.Release) map[uint]RuntimeInfo {
 	result := make(map[uint]RuntimeInfo, len(applications))
 	byNamespace := make(map[string][]model.Application)
 	for _, app := range applications {
@@ -74,25 +82,25 @@ func (s *QueryService) ApplicationRuntimeInfos(ctx context.Context, client *k8sc
 		result[app.ID] = runtime
 		byNamespace[app.Environment.Namespace] = append(byNamespace[app.Environment.Namespace], app)
 	}
-	if client == nil || client.Clientset == nil {
+	if reader == nil {
 		return result
 	}
 	for namespace, namespaceApplications := range byNamespace {
-		collectNamespaceRuntime(ctx, client, namespace, namespaceApplications, result)
+		collectNamespaceRuntime(ctx, reader, namespace, namespaceApplications, result)
 	}
 	return result
 }
 
-func (s *QueryService) WorkspacePodStates(ctx context.Context, client *k8sclient.Client, namespace string) (map[string]WorkspaceRuntimeSummary, bool) {
+func (s *QueryService) WorkspacePodStates(ctx context.Context, reader RuntimeReader, namespace string) (map[string]WorkspaceRuntimeSummary, bool) {
 	states := make(map[string]WorkspaceRuntimeSummary)
-	if client == nil || client.Clientset == nil {
+	if reader == nil {
 		return states, false
 	}
-	pods, err := client.Clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{LabelSelector: applicationdomain.ManagedByLabel + "=" + applicationdomain.ManagedByValue})
+	pods, err := reader.ListRuntimePods(ctx, namespace, applicationdomain.ManagedByLabel+"="+applicationdomain.ManagedByValue)
 	if err != nil {
 		return states, false
 	}
-	for _, pod := range pods.Items {
+	for _, pod := range pods {
 		applicationName, release := pod.Labels[applicationdomain.ApplicationNameLabel], pod.Labels[applicationdomain.ReleaseLabel]
 		sequence, err := strconv.ParseUint(release, 10, 64)
 		if applicationName == "" || err != nil {
@@ -121,32 +129,32 @@ func WorkspacePodKey(applicationName string, sequence uint) string {
 	return applicationName + "\x00" + strconv.FormatUint(uint64(sequence), 10)
 }
 
-func collectNamespaceRuntime(ctx context.Context, client *k8sclient.Client, namespace string, applications []model.Application, result map[uint]RuntimeInfo) {
-	services, serviceErr := client.Clientset.CoreV1().Services(namespace).List(ctx, metav1.ListOptions{})
-	deployments, deploymentErr := client.Clientset.AppsV1().Deployments(namespace).List(ctx, metav1.ListOptions{})
-	statefulSets, statefulSetErr := client.Clientset.AppsV1().StatefulSets(namespace).List(ctx, metav1.ListOptions{})
-	pods, podErr := client.Clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{})
-	serviceByName := make(map[string]corev1.Service, len(services.Items))
+func collectNamespaceRuntime(ctx context.Context, reader RuntimeReader, namespace string, applications []model.Application, result map[uint]RuntimeInfo) {
+	services, serviceErr := reader.ListRuntimeServices(ctx, namespace)
+	deployments, deploymentErr := reader.ListRuntimeDeployments(ctx, namespace)
+	statefulSets, statefulSetErr := reader.ListRuntimeStatefulSets(ctx, namespace)
+	pods, podErr := reader.ListRuntimePods(ctx, namespace, "")
+	serviceByName := make(map[string]corev1.Service, len(services))
 	if serviceErr == nil {
-		for _, service := range services.Items {
+		for _, service := range services {
 			serviceByName[service.Name] = service
 		}
 	}
-	deploymentByName := make(map[string]appsv1.Deployment, len(deployments.Items))
+	deploymentByName := make(map[string]appsv1.Deployment, len(deployments))
 	if deploymentErr == nil {
-		for _, deployment := range deployments.Items {
+		for _, deployment := range deployments {
 			deploymentByName[deployment.Name] = deployment
 		}
 	}
-	statefulSetByName := make(map[string]appsv1.StatefulSet, len(statefulSets.Items))
+	statefulSetByName := make(map[string]appsv1.StatefulSet, len(statefulSets))
 	if statefulSetErr == nil {
-		for _, statefulSet := range statefulSets.Items {
+		for _, statefulSet := range statefulSets {
 			statefulSetByName[statefulSet.Name] = statefulSet
 		}
 	}
 	podsByApplication := make(map[string][]corev1.Pod)
 	if podErr == nil {
-		for _, pod := range pods.Items {
+		for _, pod := range pods {
 			if name := pod.Labels[applicationdomain.ApplicationNameLabel]; name != "" {
 				podsByApplication[name] = append(podsByApplication[name], pod)
 			}
