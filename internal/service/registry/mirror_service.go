@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	security "github.com/cylism/cylism-manager/internal/api/shared/security"
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/repository"
 )
@@ -124,7 +125,7 @@ func (s *MirrorService) Verify(ctx context.Context, id uint, verifier MirrorVeri
 	} else if verifier == nil {
 		status, detail = "failed", "镜像源连接检测不可用"
 	} else if err := verifier(ctx, mirror); err != nil {
-		status, detail = "failed", truncateMirrorDetail(err.Error())
+		status, detail = "failed", security.Truncate(strings.TrimSpace(err.Error()), 480)
 	}
 	if err := s.repository.UpdateNodeRegistryMirrorVerification(id, status, detail, time.Now()); err != nil {
 		return nil, err
@@ -307,12 +308,4 @@ func (s *MirrorService) finishApply(id uint) {
 func sanitizeMirror(mirror *model.NodeRegistryMirror) {
 	mirror.CredentialConfigured = CredentialConfigured(mirror.Credential)
 	mirror.Credential = ""
-}
-
-func truncateMirrorDetail(value string) string {
-	value = strings.TrimSpace(value)
-	if len(value) > 480 {
-		return value[:480]
-	}
-	return value
 }

@@ -18,7 +18,7 @@ func TestBuildDetailRedactsNestedReleaseSecrets(t *testing.T) {
 
 func TestRedactConfigMapContent(t *testing.T) {
 	value := map[string]interface{}{"content": "private-config", "expected_revision": float64(1)}
-	redacted := redactConfigMapContent(value).(map[string]interface{})
+	redacted := redactAuditValue(value).(map[string]interface{})
 	encoded, _ := json.Marshal(redacted)
 	if strings.Contains(string(encoded), "private-config") || !strings.Contains(string(encoded), "[REDACTED]") {
 		t.Fatalf("ConfigMap content leaked in audit detail: %s", encoded)

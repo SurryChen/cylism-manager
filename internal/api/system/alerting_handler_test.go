@@ -11,6 +11,7 @@ import (
 
 	k8sclient "github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
+	alertingservice "github.com/cylism/cylism-manager/internal/service/observability/alerting"
 	"github.com/gin-gonic/gin"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -32,6 +33,7 @@ func setupAlertingRouter(handler *AlertingHandler) *gin.Engine {
 	group.DELETE("/silences/:id", handler.DeleteSilence)
 	group.POST("/test-notification", handler.TestNotification)
 	group.PUT("/automation-policy", handler.UpdateAutomationPolicy)
+	group.GET("/automation-events", handler.ListAutomationEvents)
 	router.POST("/api/monitoring/alerts/notify", handler.Notify)
 	return router
 }
@@ -41,8 +43,8 @@ func TestAlertingNotifyRejectsMissingOrInvalidToken(t *testing.T) {
 	k8sClient = alertingReadyK8s("relay-token")
 	defer func() { k8sClient = original }()
 
-	handler := NewAlertingHandler()
-	handler.notify = func(context.Context, string, alertmanagerNotification) error {
+	handler, sender := newTestAlertingHandler()
+	sender.feishu = func(context.Context, string, alertingservice.AlertNotification) error {
 		t.Fatal("notification must not be forwarded without a valid token")
 		return nil
 	}
@@ -58,8 +60,8 @@ func TestAlertingNotifyForwardsAuthorizedAlertBatch(t *testing.T) {
 	defer func() { k8sClient = original }()
 
 	called := false
-	handler := NewAlertingHandler()
-	handler.notify = func(_ context.Context, url string, payload alertmanagerNotification) error {
+	handler, sender := newTestAlertingHandler()
+	sender.feishu = func(_ context.Context, url string, payload alertingservice.AlertNotification) error {
 		called = true
 		if url == "" || len(payload.Alerts) != 1 || payload.Alerts[0].Labels["alertname"] != "NodeDown" {
 			t.Fatalf("unexpected forwarded payload: %#v %q", payload, url)
@@ -79,8 +81,8 @@ func TestAlertingTestNotificationDoesNotExposeWebhook(t *testing.T) {
 	k8sClient = alertingReadyK8s("relay-token")
 	defer func() { k8sClient = original }()
 
-	handler := NewAlertingHandler()
-	handler.notify = func(_ context.Context, url string, payload alertmanagerNotification) error {
+	handler, sender := newTestAlertingHandler()
+	sender.feishu = func(_ context.Context, url string, payload alertingservice.AlertNotification) error {
 		if url != "https://open.feishu.cn/open-apis/bot/v2/hook/example" || len(payload.Alerts) != 1 || payload.PlatformURL != "https://cylism.crazycoding.top/#/monitoring?tab=alerts" || payload.Alerts[0].Labels["node"] != "示例节点" || payload.Alerts[0].Annotations["current_value"] != "92.4%" || payload.Alerts[0].Annotations["threshold"] != "85%" || payload.Alerts[0].Annotations["duration"] != "10 分钟" {
 			t.Fatalf("unexpected test notification: %q %#v", url, payload)
 		}
@@ -93,7 +95,7 @@ func TestAlertingTestNotificationDoesNotExposeWebhook(t *testing.T) {
 }
 
 func TestNewAlertingHandlerUsesConfiguredPlatformURL(t *testing.T) {
-	handler := NewAlertingHandler("https://alerts.example.com/platform")
+	handler, _ := newTestAlertingHandler("https://alerts.example.com/platform")
 	if handler.platformURL != "https://alerts.example.com/#/monitoring?tab=alerts" {
 		t.Fatalf("unexpected configured platform URL: %q", handler.platformURL)
 	}
@@ -117,12 +119,12 @@ func TestAlertingTestNotificationSendsSMTPEmail(t *testing.T) {
 	if _, err := k8sClient.Clientset.CoreV1().Secrets("monitoring").Update(t.Context(), secret, metav1.UpdateOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	handler := NewAlertingHandler()
-	handler.notify = func(context.Context, string, alertmanagerNotification) error {
+	handler, sender := newTestAlertingHandler()
+	sender.feishu = func(context.Context, string, alertingservice.AlertNotification) error {
 		t.Fatal("email-only test must not send a Feishu notification")
 		return nil
 	}
-	handler.emailNotify = func(_ context.Context, config k8sclient.EmailConfig, payload alertmanagerNotification) error {
+	sender.email = func(_ context.Context, config alertingservice.EmailConfig, payload alertingservice.AlertNotification) error {
 		if config.SMTPHost != "smtp.example.com" || config.Password != "smtp-password" || len(payload.Alerts) != 1 {
 			t.Fatalf("unexpected email notification: %#v %#v", config, payload)
 		}
@@ -145,7 +147,7 @@ func TestAlertNotificationMessagesIncludeContextAndPlatformLink(t *testing.T) {
 			StartsAt:    time.Date(2026, time.August, 5, 10, 30, 0, 0, time.UTC),
 		}},
 	}
-	feishu, err := json.Marshal(feishuMessage(payload))
+	feishu, err := json.Marshal(alertingservice.BuildFeishuCard(alertingservice.AlertNotification{Status: payload.Status, Alerts: payload.Alerts}, payload.PlatformURL))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -155,19 +157,20 @@ func TestAlertNotificationMessagesIncludeContextAndPlatformLink(t *testing.T) {
 		}
 	}
 	for _, expected := range []string{"告警规则", "当前值", "92.4%", "查看平台告警", "https://cylism.example.com/#/monitoring?tab=alerts"} {
-		if !strings.Contains(emailHTMLMessage(payload), expected) {
+		if !strings.Contains(alertingservice.BuildEmailHTML(alertingservice.AlertNotification{Status: payload.Status, Alerts: payload.Alerts}, payload.PlatformURL), expected) {
 			t.Fatalf("expected %q in HTML email", expected)
 		}
 	}
 }
 
 func TestAlertEmailMIMEWrapsLongBodyLines(t *testing.T) {
-	message := alertEmailMIME("alerts@example.com", "ops@example.com", alertmanagerNotification{Status: "firing"}, strings.Repeat("alert content ", 300), "<div>"+strings.Repeat("alert content ", 300)+"</div>")
+	payload := alertingservice.AlertNotification{Status: "firing", Alerts: []alertingservice.Alert{{Annotations: map[string]string{"summary": strings.Repeat("alert content ", 300)}}}}
+	message := alertingservice.BuildEmailMIME("alerts@example.com", "ops@example.com", payload, "")
 	if !strings.Contains(message, "Content-Transfer-Encoding: quoted-printable") {
 		t.Fatalf("expected quoted-printable body encoding: %s", message)
 	}
-	if maximumSMTPLineLength(message) > 998 {
-		t.Fatalf("SMTP line exceeds 998 bytes: %d", maximumSMTPLineLength(message))
+	if alertingservice.MaximumSMTPLineLength(message) > 998 {
+		t.Fatalf("SMTP line exceeds 998 bytes: %d", alertingservice.MaximumSMTPLineLength(message))
 	}
 }
 
@@ -176,7 +179,7 @@ func TestAlertingOverviewSurfacesAlertmanagerFailure(t *testing.T) {
 	k8sClient = alertingReadyK8s("relay-token")
 	defer func() { k8sClient = original }()
 
-	handler := NewAlertingHandler()
+	handler, _ := newTestAlertingHandler()
 	handler.alertmanager = func(context.Context, string, string, interface{}, interface{}) error {
 		return errors.New("connection refused")
 	}
@@ -186,13 +189,49 @@ func TestAlertingOverviewSurfacesAlertmanagerFailure(t *testing.T) {
 	}
 }
 
+func TestAlertingSilenceHandlersDelegateToWorkflowClient(t *testing.T) {
+	original := k8sClient
+	k8sClient = alertingReadyK8s("relay-token")
+	defer func() { k8sClient = original }()
+
+	requests := make([]string, 0, 3)
+	handler, _ := newTestAlertingHandler()
+	handler.alertmanager = func(_ context.Context, method, path string, input interface{}, output interface{}) error {
+		requests = append(requests, method+" "+path)
+		switch method {
+		case http.MethodGet:
+			*output.(*[]alertingservice.Silence) = []alertingservice.Silence{{ID: "silence-1"}}
+		case http.MethodPost:
+			request, ok := input.(alertingservice.Silence)
+			if !ok || request.Comment != "maintenance" || len(request.Matchers) != 1 {
+				t.Fatalf("silence request was not delegated correctly: %#v", input)
+			}
+			*output.(*alertingservice.SilenceResult) = alertingservice.SilenceResult{SilenceID: "silence-2"}
+		}
+		return nil
+	}
+	router := setupAlertingRouter(handler)
+	if response := serve(router, newJSONRequest(http.MethodGet, "/api/monitoring/alerts/silences", nil)); response.Code != http.StatusOK {
+		t.Fatalf("list status = %d: %s", response.Code, response.Body.String())
+	}
+	if response := serve(router, newJSONRequest(http.MethodPost, "/api/monitoring/alerts/silences", gin.H{"duration_minutes": 30, "comment": "maintenance", "matchers": []gin.H{{"name": "alertname", "value": "NodeDown", "is_equal": true}}})); response.Code != http.StatusOK {
+		t.Fatalf("create status = %d: %s", response.Code, response.Body.String())
+	}
+	if response := serve(router, newJSONRequest(http.MethodDelete, "/api/monitoring/alerts/silences/silence-2", nil)); response.Code != http.StatusOK {
+		t.Fatalf("delete status = %d: %s", response.Code, response.Body.String())
+	}
+	if strings.Join(requests, ",") != "GET /api/v2/silences,POST /api/v2/silences,DELETE /api/v2/silence/silence-2" {
+		t.Fatalf("unexpected delegated Alertmanager requests: %#v", requests)
+	}
+}
+
 func TestAlertingOverviewIncludesRecentResolvedWebhookAlerts(t *testing.T) {
 	original := k8sClient
 	k8sClient = alertingReadyK8s("relay-token")
 	defer func() { k8sClient = original }()
 
-	handler := NewAlertingHandler()
-	handler.notify = func(context.Context, string, alertmanagerNotification) error { return nil }
+	handler, sender := newTestAlertingHandler()
+	sender.feishu = func(context.Context, string, alertingservice.AlertNotification) error { return nil }
 	handler.alertmanager = func(_ context.Context, method, _ string, _ interface{}, output interface{}) error {
 		if method == http.MethodGet {
 			*output.(*[]alertmanagerAlert) = []alertmanagerAlert{}
@@ -217,7 +256,8 @@ func TestUpdateAutomationPolicyImmediatelySyncsCurrentFiringAlerts(t *testing.T)
 
 	store := &memoryAlertAutomationStore{runtime: &model.RuntimeInstance{ID: 7, RuntimeType: model.RuntimeTypeNanobot, DeploymentMode: model.RuntimeDeploymentManaged}, events: map[string]*model.AlertEvent{}}
 	dispatched := make(chan *model.AlertEvent, 1)
-	handler := NewAlertingHandler().WithAutomation(store, alertDispatcherFunc(func(_ context.Context, event *model.AlertEvent) { dispatched <- event }))
+	handler, _ := newTestAlertingHandler()
+	handler.WithAutomation(store, alertDispatcherFunc(func(_ context.Context, event *model.AlertEvent) { dispatched <- event }))
 	handler.alertmanager = func(_ context.Context, method, path string, _ interface{}, output interface{}) error {
 		if method != http.MethodGet || path != "/api/v2/alerts" {
 			t.Fatalf("unexpected Alertmanager request: %s %s", method, path)
@@ -242,6 +282,22 @@ func TestUpdateAutomationPolicyImmediatelySyncsCurrentFiringAlerts(t *testing.T)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("expected current firing alert to be dispatched")
+	}
+}
+
+func TestListAutomationEventsDelegatesToWorkflowStore(t *testing.T) {
+	original := k8sClient
+	k8sClient = alertingReadyK8s("relay-token")
+	defer func() { k8sClient = original }()
+
+	store := &memoryAlertAutomationStore{events: map[string]*model.AlertEvent{
+		"event-1": {ID: 1, Fingerprint: "event-1", AlertName: "NodeDown"},
+	}}
+	handler, _ := newTestAlertingHandler()
+	handler.WithAutomation(store, nil)
+	response := serve(setupAlertingRouter(handler), newJSONRequest(http.MethodGet, "/api/monitoring/alerts/automation-events", nil))
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "NodeDown") {
+		t.Fatalf("expected automation events from workflow store, got %d %s", response.Code, response.Body.String())
 	}
 }
 
@@ -283,7 +339,11 @@ func (s *memoryAlertAutomationStore) SaveAlertAutomationPolicy(policy *model.Ale
 }
 
 func (s *memoryAlertAutomationStore) ListAlertEvents(int) ([]model.AlertEvent, error) {
-	return nil, nil
+	result := make([]model.AlertEvent, 0, len(s.events))
+	for _, event := range s.events {
+		result = append(result, *event)
+	}
+	return result, nil
 }
 
 func (s *memoryAlertAutomationStore) UpdateAlertEvent(event *model.AlertEvent) error {

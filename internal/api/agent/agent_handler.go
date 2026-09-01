@@ -9,16 +9,17 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	security "github.com/cylism/cylism-manager/internal/api/shared/security"
 	"github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/repository"
+	monitoringservice "github.com/cylism/cylism-manager/internal/service/observability/monitoring"
 	registryservice "github.com/cylism/cylism-manager/internal/service/registry"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -34,6 +35,7 @@ type AgentHandler struct {
 	authenticator        AgentAuthenticator
 	registryVerifier     AgentRegistryNodeVerifier
 	maintenanceInspector AgentMaintenanceInspector
+	monitoringDiskGrowth *monitoringservice.AgentDiskGrowthService
 }
 
 func NewAgentHandler(store repository.AgentReadRepository, client *k8s.Client, authenticator AgentAuthenticator) *AgentHandler {
@@ -47,6 +49,11 @@ func (h *AgentHandler) WithRegistryVerifier(verifier AgentRegistryNodeVerifier) 
 
 func (h *AgentHandler) WithMaintenanceInspector(inspector AgentMaintenanceInspector) *AgentHandler {
 	h.maintenanceInspector = inspector
+	return h
+}
+
+func (h *AgentHandler) WithMonitoringDiskGrowth(service *monitoringservice.AgentDiskGrowthService) *AgentHandler {
+	h.monitoringDiskGrowth = service
 	return h
 }
 
@@ -790,27 +797,22 @@ func (h *AgentHandler) MonitoringDiskGrowth(w http.ResponseWriter, r *http.Reque
 	if !ok || !h.requireCapability(w, instance, model.AgentCapabilityMonitoringRead, "") {
 		return
 	}
-	if h.client == nil || !monitoringDataStoreAvailable(h.client.VictoriaMetricsStatus()) {
+	node := strings.TrimSpace(r.URL.Query().Get("node"))
+	rangeName := strings.TrimSpace(r.URL.Query().Get("range"))
+	if h.monitoringDiskGrowth == nil {
 		writeAgentError(w, http.StatusServiceUnavailable, "monitoring data store unavailable", true)
 		return
 	}
-	node := strings.TrimSpace(r.URL.Query().Get("node"))
-	if node == "" || !validAgentResourceName(node) {
-		writeAgentError(w, http.StatusBadRequest, "invalid node", false)
-		return
-	}
-	rangeName := strings.TrimSpace(r.URL.Query().Get("range"))
-	if rangeName != "6h" && rangeName != "24h" {
-		writeAgentError(w, http.StatusBadRequest, "range must be 6h or 24h", false)
-		return
-	}
-	rangeSpec := monitoringRanges[rangeName]
-	data, err := queryVictoriaMetrics(r.Context(), "/api/v1/query", url.Values{"query": []string{diskGrowthQueries(monitoringPromQLWindow(rangeSpec.window), node)[0].query}})
+	data, err := h.monitoringDiskGrowth.QueryNode(r.Context(), rangeName, node)
 	if err != nil {
-		writeAgentError(w, http.StatusBadGateway, "monitoring disk growth unavailable", true)
+		status := http.StatusBadGateway
+		if strings.HasPrefix(err.Error(), "invalid") || strings.HasPrefix(err.Error(), "range must") {
+			status = http.StatusBadRequest
+		}
+		writeAgentError(w, status, err.Error(), status != http.StatusBadRequest)
 		return
 	}
-	mounts := normalizeMountGrowth(data)
+	mounts := data["mounts"]
 	h.audit(instance, "agent.monitoring_disk_growth", map[string]string{"capability": model.AgentCapabilityMonitoringRead, "node": node, "range": rangeName})
 	writeAgentResponse(w, http.StatusOK, agentAPIResponse{Status: "ok", Data: map[string]any{"node": node, "range": rangeName, "mounts": mounts}, Summary: "disk growth retrieved"})
 }
@@ -1048,14 +1050,10 @@ func stringValue(value *string) string {
 }
 
 func TruncateAgentText(value string, limit int) string {
-	if len(value) <= limit {
-		return value
-	}
-	return value[:limit] + "..."
+	return security.Truncate(value, limit)
 }
 func RedactAgentText(value string) string {
-	value = agentSensitiveText.ReplaceAllString(value, "$1[REDACTED]")
-	return agentAuthorizationText.ReplaceAllString(value, "$1[REDACTED]")
+	return security.Redact(value)
 }
 func truncateAgentText(value string, limit int) string { return TruncateAgentText(value, limit) }
 func redactAgentText(value string) string              { return RedactAgentText(value) }

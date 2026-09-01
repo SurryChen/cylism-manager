@@ -2,115 +2,32 @@ package system
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"strings"
 	"time"
 
 	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
-	"github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/repository"
+	systemcomponentservice "github.com/cylism/cylism-manager/internal/service/system_component"
 	"github.com/gin-gonic/gin"
-	appsv1 "k8s.io/api/apps/v1"
-	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/intstr"
-	"sigs.k8s.io/yaml"
 )
 
-// systemChartWhitelist 只允许管理 K3s 内置 chart，防止误操作任意 CRD。
-var systemChartWhitelist = map[string]string{
-	"coredns":                "kube-system",
-	"traefik":                "kube-system",
-	"metrics-server":         "kube-system",
-	"local-path-provisioner": "kube-system",
-	"servicelb":              "kube-system",
-}
-
 type SystemComponentHandler struct {
-	configs repository.SystemComponentRepository
-	adapter SystemComponentAdapter
+	configs     repository.SystemComponentRepository
+	adapter     SystemComponentAdapter
+	listService *systemcomponentservice.ComponentListService
 }
 
-// SystemComponentAdapter is the narrow Kubernetes boundary for component
-// detection and configuration. It keeps HTTP handlers independent of the
-// concrete client while preserving typed access for HA preflight checks.
-type SystemComponentAdapter interface {
-	Available() bool
-	GetDeployment(context.Context, string, string) (*appsv1.Deployment, error)
-	ListNodes(context.Context) ([]corev1.Node, error)
-	ListPods(context.Context, string, string) ([]corev1.Pod, error)
-	HasDynamicClient() bool
-	Context() context.Context
-	DetectSystemComponent(context.Context, string, string) (k8s.SystemComponentDetection, error)
-	GetNodeInfo(context.Context, string) (*k8s.NodeInfo, error)
-	ApplyHelmChartConfig(context.Context, string, string, string) error
-	DeleteHelmChartConfig(context.Context, string, string) error
-	ApplyStaticDeploymentConfig(context.Context, string, string, k8s.StaticDeploymentConfig) error
-	RestoreStaticDeploymentDefaults(context.Context, string, string) error
-}
-
-type clientSystemComponentAdapter struct{ client *k8s.Client }
-
-func (a clientSystemComponentAdapter) Available() bool {
-	return a.client != nil && a.client.Clientset != nil
-}
-func (a clientSystemComponentAdapter) GetDeployment(ctx context.Context, ns, name string) (*appsv1.Deployment, error) {
-	return a.client.Clientset.AppsV1().Deployments(ns).Get(ctx, name, metav1.GetOptions{})
-}
-func (a clientSystemComponentAdapter) ListNodes(ctx context.Context) ([]corev1.Node, error) {
-	list, err := a.client.Clientset.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return nil, err
-	}
-	return list.Items, nil
-}
-func (a clientSystemComponentAdapter) ListPods(ctx context.Context, ns, selector string) ([]corev1.Pod, error) {
-	list, err := a.client.Clientset.CoreV1().Pods(ns).List(ctx, metav1.ListOptions{LabelSelector: selector})
-	if err != nil {
-		return nil, err
-	}
-	return list.Items, nil
-}
-func (a clientSystemComponentAdapter) HasDynamicClient() bool {
-	return a.client != nil && a.client.DynamicClient != nil
-}
-func (a clientSystemComponentAdapter) Context() context.Context { return a.client.Ctx() }
-func (a clientSystemComponentAdapter) DetectSystemComponent(ctx context.Context, ns, name string) (k8s.SystemComponentDetection, error) {
-	return a.client.DetectSystemComponent(ctx, ns, name)
-}
-func (a clientSystemComponentAdapter) GetNodeInfo(ctx context.Context, name string) (*k8s.NodeInfo, error) {
-	return a.client.GetNodeInfoContext(ctx, name)
-}
-func (a clientSystemComponentAdapter) ApplyHelmChartConfig(ctx context.Context, ns, name, values string) error {
-	return a.client.ApplyHelmChartConfig(ctx, ns, name, values)
-}
-func (a clientSystemComponentAdapter) DeleteHelmChartConfig(ctx context.Context, ns, name string) error {
-	return a.client.DeleteHelmChartConfig(ctx, ns, name)
-}
-func (a clientSystemComponentAdapter) ApplyStaticDeploymentConfig(ctx context.Context, ns, name string, config k8s.StaticDeploymentConfig) error {
-	return a.client.ApplyStaticDeploymentConfig(ctx, ns, name, config)
-}
-func (a clientSystemComponentAdapter) RestoreStaticDeploymentDefaults(ctx context.Context, ns, name string) error {
-	return a.client.RestoreStaticDeploymentDefaults(ctx, ns, name)
-}
-
-func NewSystemComponentHandler(configs repository.SystemComponentRepository) *SystemComponentHandler {
-	return &SystemComponentHandler{configs: configs, adapter: systemComponentAdapter()}
+func NewSystemComponentHandler(configs repository.SystemComponentRepository, adapter SystemComponentAdapter) *SystemComponentHandler {
+	return &SystemComponentHandler{configs: configs, adapter: adapter, listService: &systemcomponentservice.ComponentListService{Repo: configs, Adapter: adapter}}
 }
 
 // WithAdapter replaces the Kubernetes boundary for focused handler tests.
 func (h *SystemComponentHandler) WithAdapter(adapter SystemComponentAdapter) *SystemComponentHandler {
 	h.adapter = adapter
+	h.listService = &systemcomponentservice.ComponentListService{Repo: h.configs, Adapter: adapter}
 	return h
-}
-
-func systemComponentAdapter() SystemComponentAdapter {
-	if k8sClient == nil {
-		return nil
-	}
-	return clientSystemComponentAdapter{client: k8sClient}
 }
 
 type systemComponentUpdateRequest struct {
@@ -118,668 +35,64 @@ type systemComponentUpdateRequest struct {
 	TraefikReadTimeout *string `json:"traefik_read_timeout"`
 }
 
-const (
-	traefikWebReadTimeoutArgument       = "--entryPoints.web.transport.respondingTimeouts.readTimeout="
-	traefikWebSecureReadTimeoutArgument = "--entryPoints.websecure.transport.respondingTimeouts.readTimeout="
-	traefikDefaultReadTimeout           = "60s"
-)
-
-type staticDeploymentValues struct {
-	Replicas           *int32                    `json:"replicas"`
-	DeploymentStrategy *staticDeploymentStrategy `json:"deploymentStrategy"`
-	NodeSelector       map[string]string         `json:"nodeSelector"`
-	MaxUnavailable     *intstr.IntOrString       `json:"maxUnavailable"`
-	MaxSurge           *intstr.IntOrString       `json:"maxSurge"`
-}
-
-type staticDeploymentStrategy struct {
-	Type          string                         `json:"type"`
-	RollingUpdate *staticDeploymentRollingUpdate `json:"rollingUpdate"`
-}
-
-type staticDeploymentRollingUpdate struct {
-	MaxUnavailable *intstr.IntOrString `json:"maxUnavailable"`
-	MaxSurge       *intstr.IntOrString `json:"maxSurge"`
-}
-
-// componentAvailabilityProfile describes the deliberately narrow set of
-// platform-owned availability actions. A static Deployment is not inherently
-// horizontally scalable, so controller mode must not decide this by itself.
-type componentAvailabilityProfile struct {
-	DefaultReplicas       int32
-	SupportsHA            bool
-	SupportsNodePlacement bool
-	Description           string
-}
-
-var systemComponentAvailabilityProfiles = map[string]componentAvailabilityProfile{
-	"coredns": {
-		DefaultReplicas:       1,
-		SupportsHA:            true,
-		SupportsNodePlacement: true,
-		Description:           "支持高可用；启用前需要至少两个可调度节点。",
-	},
-	"metrics-server": {
-		DefaultReplicas: 1,
-		Description:     "副本由 K3s 管理，平台不提供通用双副本基线。",
-	},
-	"local-path-provisioner": {
-		DefaultReplicas: 1,
-		Description:     "保持单个活动 provisioner，平台不提供通用双副本基线。",
-	},
-}
-
-func componentAvailability(chart string) componentAvailabilityProfile {
-	if profile, ok := systemComponentAvailabilityProfiles[chart]; ok {
-		return profile
-	}
-	return componentAvailabilityProfile{Description: "未定义高可用 profile，副本策略由组件自身管理。"}
-}
-
-func componentCapabilities(chart string, mode k8s.ControllerMode) gin.H {
-	profile := componentAvailability(chart)
-	static := mode == k8s.StaticDeploymentMode
-	return gin.H{
-		"configure":       mode == k8s.HelmChartMode || mode == k8s.StaticDeploymentMode,
-		"node_placement":  static && profile.SupportsNodePlacement,
-		"rollout":         static,
-		"replica_scaling": static && profile.SupportsHA,
-		"safe_baseline":   static && profile.SupportsHA,
-		"restore":         mode == k8s.HelmChartMode || mode == k8s.StaticDeploymentMode,
-	}
-}
-
-func componentAvailabilityPayload(chart string) gin.H {
-	profile := componentAvailability(chart)
-	return gin.H{
-		"default_replicas":  profile.DefaultReplicas,
-		"high_availability": profile.SupportsHA,
-		"node_placement":    profile.SupportsNodePlacement,
-		"description":       profile.Description,
-	}
-}
-
 func (h *SystemComponentHandler) List(c *gin.Context) {
-	if h.adapter == nil || !h.adapter.Available() {
+	if h.listService == nil {
 		model.Error(c, http.StatusServiceUnavailable, model.CodeK8sUnavailable, "Kubernetes 集群未连接")
 		return
 	}
-	configs := map[string]*model.SystemComponentConfig{}
-	rows, err := h.configs.ListSystemComponentConfigs()
-	if err == nil {
-		for index := range rows {
-			configs[rows[index].ChartName] = &rows[index]
-		}
-	}
-	ctx := c.Request.Context()
-	result := make([]gin.H, 0, len(systemChartWhitelist))
-	for chart, namespace := range systemChartWhitelist {
-		item := gin.H{
-			"chart_name":         chart,
-			"namespace":          namespace,
-			"values_content":     "",
-			"enabled":            false,
-			"apply_status":       "",
-			"apply_error":        "",
-			"last_applied_at":    nil,
-			"has_config":         false,
-			"deployment":         nil,
-			"deployment_error":   "",
-			"workload":           nil,
-			"chart_ready":        false,
-			"chart_failed":       false,
-			"chart_status":       "",
-			"lb_active":          false,
-			"controller_mode":    string(k8s.UnknownMode),
-			"detection_evidence": []string{},
-			"capabilities":       componentCapabilities(chart, k8s.UnknownMode),
-			"availability":       componentAvailabilityPayload(chart),
-		}
-		if config := configs[chart]; config != nil {
-			item["values_content"] = config.ValuesContent
-			item["enabled"] = config.Enabled
-			item["apply_status"] = config.ApplyStatus
-			item["apply_error"] = config.ApplyError
-			item["last_applied_at"] = config.LastAppliedAt
-			item["has_config"] = true
-			item["saved_controller_mode"] = config.ControllerMode
-		}
-		if chart == "traefik" {
-			item["traefik"] = traefikTimeoutPayload(item["values_content"].(string), nil)
-		}
-		detection, detectErr := h.adapter.DetectSystemComponent(ctx, namespace, chart)
-		if detectErr != nil {
-			item["deployment_error"] = detectErr.Error()
-			item["detection_error"] = detectErr.Error()
-		} else {
-			item["controller_mode"] = string(detection.Mode)
-			item["detection_evidence"] = detection.Evidence
-			item["capabilities"] = componentCapabilities(chart, detection.Mode)
-			item["workload"] = workloadPayload(detection.Workload)
-			item["chart_ready"] = detection.ChartReady
-			item["chart_failed"] = detection.ChartFailed
-			item["chart_status"] = detection.ChartStatus
-			if detection.Mode == k8s.EmbeddedMode {
-				item["lb_active"] = true
-			}
-		}
-		deployment := detection.Deployment
-		if deployment == nil && detection.Workload == nil && detection.Mode != k8s.HelmChartMode && item["deployment_error"] == "" {
-			item["deployment_error"] = fmt.Sprintf("deployments.apps %q/%q not found", namespace, chart)
-		} else if deployment != nil {
-			image := ""
-			if len(deployment.Spec.Template.Spec.Containers) > 0 {
-				image = deployment.Spec.Template.Spec.Containers[0].Image
-			}
-			item["deployment"] = gin.H{
-				"replicas":           deployment.Status.Replicas,
-				"ready_replicas":     deployment.Status.ReadyReplicas,
-				"available_replicas": deployment.Status.AvailableReplicas,
-				"strategy":           deployment.Spec.Strategy,
-				"image":              image,
-				"node_selector":      deployment.Spec.Template.Spec.NodeSelector,
-				"fixed_node":         deployment.Spec.Template.Spec.NodeSelector[corev1.LabelHostname],
-			}
-			item["effective"] = true
-			item["effective_detail"] = ""
-			if config := configs[chart]; config != nil && config.ValuesContent != "" {
-				item["effective"], item["effective_detail"] = systemComponentEffective(config.ValuesContent, deployment)
-			}
-			if chart == "traefik" {
-				state := traefikTimeoutPayload(item["values_content"].(string), deployment)
-				item["traefik"] = state
-				if state["read_timeout"] != "" {
-					item["effective"] = state["read_timeout_effective"]
-					if state["read_timeout_effective"] == false {
-						item["effective_detail"] = "入口请求读取超时与实际 Traefik 参数不一致"
-					}
-				}
-			}
-		}
-		result = append(result, item)
+	result, err := h.listService.List(c.Request.Context())
+	if err != nil {
+		model.Error(c, http.StatusServiceUnavailable, model.CodeK8sUnavailable, err.Error())
+		return
 	}
 	model.Success(c, result)
 }
 
-func traefikTimeoutPayload(valuesContent string, deployment *appsv1.Deployment) gin.H {
-	desired := traefikConfiguredReadTimeout(valuesContent)
-	if desired == "" {
-		return gin.H{
-			"read_timeout":           "",
-			"effective_read_timeout": traefikDefaultReadTimeout,
-			"read_timeout_effective": true,
-		}
-	}
-	actual, effective := k8s.TraefikReadTimeout(deployment, desired)
-	return gin.H{
-		"read_timeout":           desired,
-		"effective_read_timeout": actual,
-		"read_timeout_effective": effective,
-	}
-}
-
-func traefikConfiguredReadTimeout(valuesContent string) string {
-	var values struct {
-		AdditionalArguments []string `json:"additionalArguments"`
-	}
-	if err := yaml.Unmarshal([]byte(valuesContent), &values); err != nil {
-		return ""
-	}
-	web, webSecure := "", ""
-	for _, argument := range values.AdditionalArguments {
-		if strings.HasPrefix(argument, traefikWebReadTimeoutArgument) {
-			web = strings.TrimPrefix(argument, traefikWebReadTimeoutArgument)
-		}
-		if strings.HasPrefix(argument, traefikWebSecureReadTimeoutArgument) {
-			webSecure = strings.TrimPrefix(argument, traefikWebSecureReadTimeoutArgument)
-		}
-	}
-	if web == "" || web != webSecure {
-		return ""
-	}
-	return web
-}
-
-func normalizeTraefikReadTimeout(raw string) (string, error) {
-	value := strings.TrimSpace(raw)
-	if value == "" {
-		return "", nil
-	}
-	duration, err := time.ParseDuration(value)
-	if err != nil {
-		return "", fmt.Errorf("Traefik 读取超时格式无效")
-	}
-	if duration < time.Minute || duration > time.Hour {
-		return "", fmt.Errorf("Traefik 读取超时必须在 1 分钟至 1 小时之间")
-	}
-	return value, nil
-}
-
-func renderTraefikReadTimeout(valuesContent, timeout string) (string, error) {
-	values := map[string]any{}
-	if err := yaml.Unmarshal([]byte(valuesContent), &values); err != nil {
-		return "", err
-	}
-	arguments := make([]string, 0)
-	if raw, found := values["additionalArguments"]; found {
-		list, ok := raw.([]any)
-		if !ok {
-			return "", fmt.Errorf("additionalArguments 必须是字符串列表")
-		}
-		for _, item := range list {
-			argument, ok := item.(string)
-			if !ok {
-				return "", fmt.Errorf("additionalArguments 必须是字符串列表")
-			}
-			if strings.HasPrefix(argument, traefikWebReadTimeoutArgument) || strings.HasPrefix(argument, traefikWebSecureReadTimeoutArgument) {
-				continue
-			}
-			arguments = append(arguments, argument)
-		}
-	}
-	if timeout != "" {
-		arguments = append(arguments,
-			traefikWebReadTimeoutArgument+timeout,
-			traefikWebSecureReadTimeoutArgument+timeout,
-		)
-	}
-	if len(arguments) == 0 {
-		delete(values, "additionalArguments")
-	} else {
-		values["additionalArguments"] = arguments
-	}
-	rendered, err := yaml.Marshal(values)
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(string(rendered)), nil
-}
-
-func workloadPayload(workload *k8s.ComponentWorkload) any {
-	if workload == nil {
-		return nil
-	}
-	return gin.H{
-		"kind":      workload.Kind,
-		"name":      workload.Name,
-		"desired":   workload.Desired,
-		"ready":     workload.Ready,
-		"available": workload.Available,
-	}
-}
-
-func parseStaticDeploymentConfig(valuesContent, component string) (k8s.StaticDeploymentConfig, error) {
-	var values staticDeploymentValues
-	if err := yaml.Unmarshal([]byte(valuesContent), &values); err != nil {
-		return k8s.StaticDeploymentConfig{}, err
-	}
-	if values.Replicas == nil || *values.Replicas < 1 {
-		return k8s.StaticDeploymentConfig{}, fmt.Errorf("%s 副本数必须至少为 1", component)
-	}
-	strategy := values.DeploymentStrategy
-	if strategy != nil && strategy.Type != "" && strategy.Type != string(appsv1.RollingUpdateDeploymentStrategyType) {
-		return k8s.StaticDeploymentConfig{}, fmt.Errorf("%s 仅支持 RollingUpdate 策略", component)
-	}
-	var maxUnavailable, maxSurge *intstr.IntOrString
-	if strategy != nil && strategy.RollingUpdate != nil {
-		maxUnavailable = strategy.RollingUpdate.MaxUnavailable
-		maxSurge = strategy.RollingUpdate.MaxSurge
-	}
-	// Accept the old top-level fields so previously persisted configurations can
-	// be repaired by the platform's reconciliation loop.
-	if maxUnavailable == nil {
-		maxUnavailable = values.MaxUnavailable
-	}
-	if maxSurge == nil {
-		maxSurge = values.MaxSurge
-	}
-	if maxUnavailable == nil || maxSurge == nil {
-		return k8s.StaticDeploymentConfig{}, fmt.Errorf("%s 滚动策略必须包含 maxUnavailable 和 maxSurge", component)
-	}
-	return k8s.StaticDeploymentConfig{
-		Replicas:       *values.Replicas,
-		MaxUnavailable: *maxUnavailable,
-		MaxSurge:       *maxSurge,
-		NodeName:       strings.TrimSpace(values.NodeSelector[corev1.LabelHostname]),
-	}, nil
-}
-
-func (h *SystemComponentHandler) validateStaticDeploymentNode(ctx context.Context, nodeName string) error {
-	if nodeName == "" {
-		return nil
-	}
-	if h.adapter == nil {
-		return fmt.Errorf("Kubernetes 集群未连接")
-	}
-	node, err := h.adapter.GetNodeInfo(ctx, nodeName)
-	if err != nil {
-		return fmt.Errorf("部署节点不存在或未加入集群")
-	}
-	if !node.Ready || node.Evicted {
-		return fmt.Errorf("部署节点未就绪或已禁止调度")
-	}
-	return nil
-}
-
-func (h *SystemComponentHandler) applyStaticDeployment(ctx *gin.Context, namespace, name, valuesContent string) error {
-	config, err := parseStaticDeploymentConfig(valuesContent, name)
-	if err != nil {
-		return err
-	}
-	if err := h.validateStaticDeploymentNode(ctx.Request.Context(), config.NodeName); err != nil {
-		return err
-	}
-	profile := componentAvailability(name)
-	var deployment *appsv1.Deployment
-	if profile.SupportsHA {
-		deployment, err = h.adapter.GetDeployment(ctx.Request.Context(), namespace, name)
-		if err != nil {
-			return fmt.Errorf("读取 %s 当前副本数失败: %w", name, err)
-		}
-		current := profile.DefaultReplicas
-		if deployment.Spec.Replicas != nil {
-			current = *deployment.Spec.Replicas
-		}
-		if config.Replicas > current {
-			if err := h.preflightHAIncrease(ctx, namespace, name, deployment, config); err != nil {
-				return err
-			}
-		}
-	}
-	if !profile.SupportsHA {
-		deployment, getErr := h.adapter.GetDeployment(ctx.Request.Context(), namespace, name)
-		if getErr != nil {
-			return fmt.Errorf("读取 %s 当前副本数失败: %w", name, getErr)
-		}
-		current := profile.DefaultReplicas
-		if deployment.Spec.Replicas != nil {
-			current = *deployment.Spec.Replicas
-		}
-		if config.Replicas != current {
-			return fmt.Errorf("%s 副本由 K3s/组件 profile 管理，平台不支持修改为 %d 副本", name, config.Replicas)
-		}
-	}
-	if config.NodeName != "" && !profile.SupportsNodePlacement {
-		return fmt.Errorf("%s 不支持通过平台固定部署节点", name)
-	}
-	// Remove stale configs created by older Manager versions. A static component
-	// is controlled by its Deployment, so retaining a HelmChartConfig would make
-	// a future control-source change ambiguous.
-	if h.adapter.HasDynamicClient() {
-		if err := h.adapter.DeleteHelmChartConfig(ctx.Request.Context(), namespace, name); err != nil {
-			return err
-		}
-	}
-	return h.adapter.ApplyStaticDeploymentConfig(ctx.Request.Context(), namespace, name, config)
-}
-
-// preflightHAIncrease keeps the narrow CoreDNS HA baseline from turning a
-// healthy singleton into two replicas that are both unschedulable, unhealthy,
-// or pinned to one node. Kubernetes remains the final scheduler authority.
-func (h *SystemComponentHandler) preflightHAIncrease(ctx *gin.Context, namespace, name string, deployment *appsv1.Deployment, config k8s.StaticDeploymentConfig) error {
-	if config.Replicas < 2 {
-		return nil
-	}
-	if config.NodeName != "" {
-		return fmt.Errorf("%s 高可用副本不能固定在单个节点，请选择自动调度", name)
-	}
-	if deployment == nil || deployment.Status.ReadyReplicas < 1 || deployment.Status.AvailableReplicas < 1 {
-		return fmt.Errorf("%s 当前未健康，不允许在故障状态下增加副本", name)
-	}
-	nodes, err := h.adapter.ListNodes(ctx.Request.Context())
-	if err != nil {
-		return fmt.Errorf("读取节点预检状态失败: %w", err)
-	}
-	candidates := 0
-	for index := range nodes {
-		node := &nodes[index]
-		if node.Spec.Unschedulable || !systemComponentNodeReady(node) || node.Status.Allocatable.Cpu().IsZero() || node.Status.Allocatable.Memory().IsZero() {
-			continue
-		}
-		candidates++
-	}
-	if candidates < 2 {
-		return fmt.Errorf("%s 高可用需要至少 2 个 Ready、可调度且具备 CPU/内存可分配的节点，当前仅 %d 个", name, candidates)
-	}
-	pods, err := h.adapter.ListPods(ctx.Request.Context(), namespace, "k8s-app="+name)
-	if err != nil {
-		return fmt.Errorf("读取 %s Pod 预检状态失败: %w", name, err)
-	}
-	for index := range pods {
-		for _, status := range pods[index].Status.ContainerStatuses {
-			if status.State.Waiting == nil {
-				continue
-			}
-			if status.State.Waiting.Reason == "ErrImagePull" || status.State.Waiting.Reason == "ImagePullBackOff" || status.State.Waiting.Reason == "InvalidImageName" {
-				return fmt.Errorf("%s 存在镜像拉取失败，完成镜像源诊断后再增加副本", name)
-			}
-		}
-	}
-	return nil
-}
-
-func systemComponentNodeReady(node *corev1.Node) bool {
-	for _, condition := range node.Status.Conditions {
-		if condition.Type == corev1.NodeReady {
-			return condition.Status == corev1.ConditionTrue
-		}
-	}
-	return false
-}
-
-// systemComponentEffective 对比平台保存的期望值与 Deployment 实际生效值，
-// 返回配置是否真正生效。Helm 只渲染 chart 模板支持的 value，不支持的会被静默忽略。
-func systemComponentEffective(valuesContent string, deployment *appsv1.Deployment) (bool, string) {
-	var values map[string]any
-	if err := yaml.Unmarshal([]byte(valuesContent), &values); err != nil {
-		return false, "values 配置解析失败"
-	}
-	var issues []string
-	if raw, ok := values["replicas"]; ok {
-		if expected, ok := intValue(raw); ok && expected > 0 {
-			actual := int32(0)
-			if deployment.Spec.Replicas != nil {
-				actual = *deployment.Spec.Replicas
-			}
-			if int32(expected) != actual {
-				issues = append(issues, "replicas")
-			}
-		}
-	}
-	rolling := deployment.Spec.Strategy.Type == appsv1.RollingUpdateDeploymentStrategyType && deployment.Spec.Strategy.RollingUpdate != nil
-	actualUnavailable := ""
-	actualSurge := ""
-	if rolling {
-		actualUnavailable = deployment.Spec.Strategy.RollingUpdate.MaxUnavailable.String()
-		actualSurge = deployment.Spec.Strategy.RollingUpdate.MaxSurge.String()
-	}
-	maxUnavailable, maxSurge := rolloutValues(values)
-	if raw := maxUnavailable; raw != nil {
-		if fmt.Sprint(raw) != actualUnavailable {
-			issues = append(issues, "maxUnavailable")
-		}
-	}
-	if raw := maxSurge; raw != nil {
-		if fmt.Sprint(raw) != actualSurge {
-			issues = append(issues, "maxSurge")
-		}
-	}
-	if raw, ok := values["nodeSelector"].(map[string]any); ok {
-		expected := ""
-		if value, configured := raw[corev1.LabelHostname]; configured {
-			expected = fmt.Sprint(value)
-		}
-		if expected != deployment.Spec.Template.Spec.NodeSelector[corev1.LabelHostname] {
-			issues = append(issues, "nodeSelector")
-		}
-	}
-	if len(issues) == 0 {
-		return true, ""
-	}
-	return false, strings.Join(issues, "、") + " 与实际 Deployment 不一致"
-}
-
-func rolloutValues(values map[string]any) (maxUnavailable, maxSurge any) {
-	maxUnavailable = values["maxUnavailable"]
-	maxSurge = values["maxSurge"]
-	strategy, ok := values["deploymentStrategy"].(map[string]any)
-	if !ok {
-		return maxUnavailable, maxSurge
-	}
-	rollingUpdate, ok := strategy["rollingUpdate"].(map[string]any)
-	if !ok {
-		return maxUnavailable, maxSurge
-	}
-	if value, found := rollingUpdate["maxUnavailable"]; found {
-		maxUnavailable = value
-	}
-	if value, found := rollingUpdate["maxSurge"]; found {
-		maxSurge = value
-	}
-	return maxUnavailable, maxSurge
-}
-
-func intValue(raw any) (int, bool) {
-	switch value := raw.(type) {
-	case int:
-		return value, true
-	case int64:
-		return int(value), true
-	case float64:
-		return int(value), true
-	}
-	return 0, false
-}
-
 func (h *SystemComponentHandler) Update(c *gin.Context) {
 	chart := strings.TrimSpace(c.Param("chart"))
-	namespace, ok := systemChartWhitelist[chart]
-	if !ok {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "不支持该系统组件")
-		return
-	}
-	if h.adapter == nil || !h.adapter.Available() {
-		model.Error(c, http.StatusServiceUnavailable, model.CodeK8sUnavailable, "Kubernetes 集群未连接")
-		return
-	}
 	var req systemComponentUpdateRequest
-	if err := c.ShouldBindJSON(&req); err != nil || strings.TrimSpace(req.ValuesContent) == "" {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "values 配置不能为空")
+	if err := c.ShouldBindJSON(&req); err != nil {
+		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "请求参数无效")
 		return
 	}
-	valuesContent := strings.TrimSpace(req.ValuesContent)
+	timeout := ""
 	if req.TraefikReadTimeout != nil {
-		if chart != "traefik" {
-			model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "仅 Traefik 支持入口请求读取超时")
-			return
+		timeout = *req.TraefikReadTimeout
+	}
+	result, err := systemcomponentservice.Update(c.Request.Context(), h.configs, h.adapter, chart, req.ValuesContent, timeout, apiShared.UserID(c), time.Now())
+	if err != nil {
+		status, code := workflowHTTPError(err)
+		model.Error(c, status, code, err.Error())
+		return
+	}
+	model.SuccessWithMessage(c, result.Config, "系统组件配置已应用")
+}
+
+func workflowHTTPError(err error) (int, int) {
+	status, code := http.StatusBadGateway, model.CodeK8sAPIError
+	if we, ok := err.(*systemcomponentservice.WorkflowError); ok {
+		switch we.Kind {
+		case "validation":
+			status, code = http.StatusBadRequest, model.CodeValidationFail
+		case "conflict":
+			status, code = http.StatusConflict, model.CodeValidationFail
+		case "unavailable":
+			status, code = http.StatusServiceUnavailable, model.CodeK8sUnavailable
+		case "db":
+			status, code = http.StatusInternalServerError, model.CodeDBError
 		}
-		timeout, err := normalizeTraefikReadTimeout(*req.TraefikReadTimeout)
-		if err != nil {
-			model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
-			return
-		}
-		valuesContent, err = renderTraefikReadTimeout(valuesContent, timeout)
-		if err != nil {
-			model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "Traefik 配置无效: "+err.Error())
-			return
-		}
 	}
-	var values map[string]any
-	if err := yaml.Unmarshal([]byte(valuesContent), &values); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "values 配置不是合法 YAML: "+err.Error())
-		return
-	}
-	detection, detectErr := h.adapter.DetectSystemComponent(c.Request.Context(), namespace, chart)
-	if detectErr != nil {
-		model.Error(c, http.StatusBadGateway, model.CodeK8sAPIError, "检测系统组件控制源失败: "+detectErr.Error())
-		return
-	}
-	if detection.Mode == k8s.EmbeddedMode {
-		model.Error(c, http.StatusConflict, model.CodeValidationFail, "该系统组件由 K3s 内置控制器管理，不支持通过平台修改")
-		return
-	}
-	if detection.Mode == k8s.UnknownMode {
-		model.Error(c, http.StatusConflict, model.CodeValidationFail, "无法识别该系统组件的控制源，已拒绝写入")
-		return
-	}
-	now := time.Now()
-	config := &model.SystemComponentConfig{
-		ChartName:      chart,
-		Namespace:      namespace,
-		ControllerMode: string(detection.Mode),
-		ValuesContent:  valuesContent,
-		Enabled:        true,
-		LastAppliedAt:  &now,
-		CreatedBy:      apiShared.UserID(c),
-	}
-	var applyErr error
-	switch detection.Mode {
-	case k8s.HelmChartMode:
-		if !h.adapter.HasDynamicClient() {
-			applyErr = fmt.Errorf("Kubernetes 动态客户端未初始化")
-		} else {
-			applyErr = h.adapter.ApplyHelmChartConfig(c.Request.Context(), namespace, chart, config.ValuesContent)
-		}
-	case k8s.StaticDeploymentMode:
-		applyErr = h.applyStaticDeployment(c, namespace, chart, config.ValuesContent)
-	default:
-		applyErr = fmt.Errorf("不支持的系统组件控制模式: %s", detection.Mode)
-	}
-	if applyErr != nil {
-		config.ApplyStatus = "failed"
-		config.ApplyError = applyErr.Error()
-		_ = h.configs.UpsertSystemComponentConfig(config)
-		model.Error(c, http.StatusBadGateway, model.CodeK8sAPIError, "应用系统组件配置失败: "+applyErr.Error())
-		return
-	}
-	config.ApplyStatus = "succeeded"
-	if err := h.configs.UpsertSystemComponentConfig(config); err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "保存系统组件配置失败")
-		return
-	}
-	model.SuccessWithMessage(c, config, "系统组件配置已应用")
+	return status, code
 }
 
 func (h *SystemComponentHandler) Revert(c *gin.Context) {
 	chart := strings.TrimSpace(c.Param("chart"))
-	namespace, ok := systemChartWhitelist[chart]
-	if !ok {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "不支持该系统组件")
-		return
-	}
-	if h.adapter == nil || !h.adapter.Available() {
-		model.Error(c, http.StatusServiceUnavailable, model.CodeK8sUnavailable, "Kubernetes 集群未连接")
-		return
-	}
-	detection, detectErr := h.adapter.DetectSystemComponent(c.Request.Context(), namespace, chart)
-	if detectErr != nil {
-		model.Error(c, http.StatusBadGateway, model.CodeK8sAPIError, "检测系统组件控制源失败: "+detectErr.Error())
-		return
-	}
-	var revertErr error
-	switch detection.Mode {
-	case k8s.HelmChartMode:
-		if !h.adapter.HasDynamicClient() {
-			revertErr = fmt.Errorf("Kubernetes 动态客户端未初始化")
-		} else {
-			revertErr = h.adapter.DeleteHelmChartConfig(c.Request.Context(), namespace, chart)
-		}
-	case k8s.StaticDeploymentMode:
-		if h.adapter.HasDynamicClient() {
-			revertErr = h.adapter.DeleteHelmChartConfig(c.Request.Context(), namespace, chart)
-		}
-		if revertErr == nil {
-			revertErr = h.adapter.RestoreStaticDeploymentDefaults(c.Request.Context(), namespace, chart)
-		}
-	case k8s.EmbeddedMode, k8s.UnknownMode:
-		model.Error(c, http.StatusConflict, model.CodeValidationFail, "该系统组件当前不支持恢复默认配置")
-		return
-	}
+	revertErr := systemcomponentservice.RevertManaged(c.Request.Context(), h.configs, h.adapter, chart)
 	if revertErr != nil {
-		model.Error(c, http.StatusBadGateway, model.CodeK8sAPIError, "恢复系统组件默认配置失败: "+revertErr.Error())
+		status, code := workflowHTTPError(revertErr)
+		model.Error(c, status, code, "恢复系统组件默认配置失败: "+revertErr.Error())
 		return
 	}
-	_ = h.configs.DeleteSystemComponentConfig(chart)
 	model.SuccessWithMessage(c, nil, "已恢复系统组件默认配置")
 }
 
@@ -787,50 +100,16 @@ func (h *SystemComponentHandler) Revert(c *gin.Context) {
 // re-render. It re-detects every component first and stops if its control source
 // changed, avoiding a fight with helm-controller or a user-installed workload.
 func (h *SystemComponentHandler) Reconcile() {
-	for {
-		h.reconcileOnce()
-		time.Sleep(5 * time.Minute)
-	}
+	_ = h.Run(context.Background(), 5*time.Minute)
 }
 
-func (h *SystemComponentHandler) reconcileOnce() {
+// Run exposes the lifecycle to the application startup layer while keeping
+// reconciliation implementation in the system-component service.
+func (h *SystemComponentHandler) Run(ctx context.Context, interval time.Duration) error {
 	if h.adapter == nil || !h.adapter.Available() {
-		return
+		return nil
 	}
-	configs, err := h.configs.ListSystemComponentConfigs()
-	if err != nil {
-		return
-	}
-	for index := range configs {
-		config := &configs[index]
-		if !config.Enabled {
-			continue
-		}
-		detection, detectErr := h.adapter.DetectSystemComponent(h.adapter.Context(), config.Namespace, config.ChartName)
-		if detectErr != nil {
-			config.ApplyStatus, config.ApplyError = "failed", detectErr.Error()
-		} else if config.ControllerMode != "" && config.ControllerMode != string(detection.Mode) {
-			config.ApplyStatus = "failed"
-			config.ApplyError = "组件控制源已变更为 " + string(detection.Mode) + "，已停止自动重放"
-		} else if detection.Mode == k8s.StaticDeploymentMode {
-			parsed, parseErr := parseStaticDeploymentConfig(config.ValuesContent, config.ChartName)
-			if parseErr == nil {
-				parseErr = h.validateStaticDeploymentNode(h.adapter.Context(), parsed.NodeName)
-			}
-			if parseErr == nil {
-				parseErr = h.adapter.ApplyStaticDeploymentConfig(h.adapter.Context(), config.Namespace, config.ChartName, parsed)
-			}
-			if parseErr != nil {
-				config.ApplyStatus, config.ApplyError = "failed", parseErr.Error()
-			} else {
-				now := time.Now()
-				config.LastAppliedAt = &now
-				config.ApplyStatus, config.ApplyError = "succeeded", ""
-			}
-		}
-		if detectErr == nil && (config.ControllerMode == "" || config.ControllerMode == string(detection.Mode)) {
-			config.ControllerMode = string(detection.Mode)
-		}
-		_ = h.configs.UpsertSystemComponentConfig(config)
-	}
+	return systemcomponentservice.Run(ctx, interval, h.configs, h.adapter, systemcomponentservice.ParseStaticDeploymentConfig, func(ctx context.Context, node string) error {
+		return systemcomponentservice.ValidateNode(ctx, h.adapter, node)
+	}, time.Now)
 }

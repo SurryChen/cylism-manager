@@ -9,6 +9,7 @@ import (
 	"time"
 
 	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
+	security "github.com/cylism/cylism-manager/internal/api/shared/security"
 	k8sclient "github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/repository"
@@ -84,7 +85,7 @@ func (h *ManagedOCIRegistryHandler) StoragePreflight(c *gin.Context) {
 	}
 	nodes, err := h.status.ListReadyDataNodes(c.Request.Context())
 	if err != nil {
-		result["ready"], result["message"] = false, "读取 Kubernetes 数据节点失败: "+truncateManagedRegistryError(err)
+		result["ready"], result["message"] = false, "读取 Kubernetes 数据节点失败: "+security.Truncate(strings.TrimSpace(err.Error()), 512)
 		model.Success(c, result)
 		return
 	}
@@ -106,7 +107,7 @@ func (h *ManagedOCIRegistryHandler) ListEligiblePVCs(c *gin.Context) {
 	}
 	claims, err := h.status.ListEligiblePVCs(c.Request.Context(), managedOCIRegistryNamespace)
 	if err != nil {
-		model.Error(c, http.StatusServiceUnavailable, model.CodeK8sAPIError, "读取制品库存储卷失败: "+truncateManagedRegistryError(err))
+		model.Error(c, http.StatusServiceUnavailable, model.CodeK8sAPIError, "读取制品库存储卷失败: "+security.Truncate(strings.TrimSpace(err.Error()), 512))
 		return
 	}
 	model.Success(c, claims)
@@ -133,7 +134,7 @@ func (h *ManagedOCIRegistryHandler) ListMatchingCertificates(c *gin.Context) {
 	}
 	certificates, err := h.status.ListMatchingCertificates(c.Request.Context(), namespace, host)
 	if err != nil {
-		model.Error(c, http.StatusServiceUnavailable, model.CodeK8sAPIError, "读取平台证书失败: "+truncateManagedRegistryError(err))
+		model.Error(c, http.StatusServiceUnavailable, model.CodeK8sAPIError, "读取平台证书失败: "+security.Truncate(strings.TrimSpace(err.Error()), 512))
 		return
 	}
 	model.Success(c, certificates)
@@ -189,7 +190,7 @@ func (h *ManagedOCIRegistryHandler) Create(c *gin.Context) {
 		return
 	}
 	if err := h.applyResources(c.Request.Context(), registry, host, request.PullPassword); err != nil {
-		registry.Status, registry.LastError = "failed", truncateManagedRegistryError(err)
+		registry.Status, registry.LastError = "failed", security.Truncate(strings.TrimSpace(err.Error()), 512)
 		_ = h.service.Save(registry)
 		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, "部署制品库失败: "+registry.LastError)
 		return
@@ -254,7 +255,7 @@ func (h *ManagedOCIRegistryHandler) Update(c *gin.Context) {
 		return
 	}
 	if err := h.applyResources(c.Request.Context(), registry, host, password); err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, "更新制品库失败: "+truncateManagedRegistryError(err))
+		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, "更新制品库失败: "+security.Truncate(strings.TrimSpace(err.Error()), 512))
 		return
 	}
 	if err := h.service.UpdateAssociations(registry, request.ProjectIDs); err != nil {
@@ -322,7 +323,7 @@ func (h *ManagedOCIRegistryHandler) Repair(c *gin.Context) {
 		return
 	}
 	if err := h.applyResources(c.Request.Context(), registry, host, password); err != nil {
-		registry.Status, registry.LastError = "failed", truncateManagedRegistryError(err)
+		registry.Status, registry.LastError = "failed", security.Truncate(strings.TrimSpace(err.Error()), 512)
 		_ = h.service.Save(registry)
 		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, "修复制品库失败: "+registry.LastError)
 		return
@@ -392,7 +393,7 @@ func (h *ManagedOCIRegistryHandler) ApplyNodeAccess(c *gin.Context) {
 			failed++
 		}
 		now := time.Now()
-		_ = h.store.UpsertNodeRegistryMirrorStatus(&model.NodeRegistryMirrorNode{MirrorID: mirror.ID, ServerID: server.ID, Status: status, Detail: truncateManagedRegistryError(errors.New(detail)), AppliedAt: &now})
+		_ = h.store.UpsertNodeRegistryMirrorStatus(&model.NodeRegistryMirrorNode{MirrorID: mirror.ID, ServerID: server.ID, Status: status, Detail: security.Truncate(strings.TrimSpace(detail), 512), AppliedAt: &now})
 	}
 	now := time.Now()
 	mirror.LastAppliedAt = &now
@@ -473,20 +474,10 @@ func (h *ManagedOCIRegistryHandler) refreshStatus(ctx context.Context, registry 
 	}
 	phase, status, detail := h.status.ManagedRegistryStatus(ctx, registry)
 	now := time.Now()
-	registry.PVCPhase, registry.Status, registry.LastError, registry.LastCheckedAt = phase, status, truncateManagedRegistryError(errors.New(detail)), &now
+	registry.PVCPhase, registry.Status, registry.LastError, registry.LastCheckedAt = phase, status, security.Truncate(strings.TrimSpace(detail), 512), &now
 	_ = h.service.Save(registry)
 }
 
 func managedRegistryEndpointReady(ctx context.Context, endpoint string) bool {
 	return k8sclient.EndpointReady(ctx, endpoint)
-}
-func truncateManagedRegistryError(err error) string {
-	if err == nil {
-		return ""
-	}
-	value := strings.TrimSpace(err.Error())
-	if len(value) > 512 {
-		return value[:512]
-	}
-	return value
 }

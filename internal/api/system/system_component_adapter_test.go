@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/cylism/cylism-manager/internal/k8s"
+	systemcomponentservice "github.com/cylism/cylism-manager/internal/service/system_component"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes/fake"
@@ -46,7 +47,7 @@ func (f fakeSystemComponentAdapter) RestoreStaticDeploymentDefaults(context.Cont
 func TestSystemComponentHandlerUsesInjectedAdapterForNodeValidation(t *testing.T) {
 	client := fake.NewSimpleClientset()
 	h := (&SystemComponentHandler{}).WithAdapter(fakeSystemComponentAdapter{client: client})
-	if err := h.validateStaticDeploymentNode(context.Background(), "node-a"); err != nil {
+	if err := systemcomponentservice.ValidateNode(context.Background(), h.adapter, "node-a"); err != nil {
 		t.Fatal(err)
 	}
 }

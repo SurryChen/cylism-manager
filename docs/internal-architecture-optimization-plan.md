@@ -1,6 +1,6 @@
 # Cylism Manager Internal Architecture Optimization Plan
 
-状态：阶段 0～3 已完成（2026-08-31），阶段 4～6 待执行
+状态：阶段 0～4 已完成（2026-09-01）
 
 本文档针对 `internal/` 目录的可维护性和复用能力进行优化规划。目标是逐步收窄模块职责、减少隐式依赖和重复逻辑，同时保持现有 REST API、数据库结构、Kubernetes 资源行为和前端工作流不变。
 
@@ -242,6 +242,32 @@ internal/
 - 脱敏和截断放入 `internal/api/shared/sanitize` 或独立安全包，禁止 system 依赖 agent 包内部工具。
 
 验收：system Handler 主要由 DTO、鉴权、Service 调用和响应映射组成；告警、日志、监控单测可以注入 Fake Client。
+
+当前进度（2026-09-01）：
+
+- 已新增 `service/observability/logging`，集中承载日志查询参数校验、时间边界、LogQL 查询构造和 Loki 结果归一化能力；Logging Handler 已使用 Service 处理这些业务规则，仅保留请求/响应 DTO 转换。
+- 已新增 `service/observability/monitoring`，集中承载 VictoriaMetrics 时间范围、查询参数、磁盘增长 PromQL 生成和结果归一化能力；Monitoring Handler 的历史查询与磁盘增长响应已使用 Service 规则。
+- 已新增 `service/observability/alerting` 的 Alertmanager Query Service，Overview、Silence 列表/创建/删除、就绪检查和 resolved 缓存均通过 Service 委托；通知、Secret、SMTP、自动化事务继续由同一 Service 域编排。
+- 已新增 `service/system_component`，承载系统组件白名单和超时参数校验；System Component Handler 的更新/恢复路径通过该 Service 解析组件归属。
+- Tailscale Handler 已改为使用可注入 `tailscaleRuntime` Adapter，主机 `os/exec`、安装命令和 k3s token 文件读取均集中在 Adapter；新增 Runtime Fake 测试。
+- Loki 与 VictoriaMetrics 的结果归一化已由对应 Observability Service 统一处理；PVC Consumers 由 Monitoring Service 的 `PVCConsumerReader` 负责，Agent 磁盘增长查询复用同一 DiskGrowth Service。
+- 新增 `api/shared/security`，统一凭据脱敏、Token 展示和文本截断；Agent 与 Tailscale 已接入该公共能力。
+- 新增各 Service 的纯逻辑/Fake 单测，现有 system Handler 回归测试保持通过。
+- 已将告警自动化策略合法性、告警匹配及冷却窗口判定迁入 `service/observability/alerting`，通知分发也统一通过 Service 编排。
+- Alerting 的 `Workflow` 已进一步收敛完整编排：Alertmanager 查询/静默、通知 Secret 加载、Webhook 载荷校验、事件持久化与 resolved 缓存、通知测试、自动化策略同步及事件列表均由 Service 负责；Handler 中的旧 `send*`、就绪、事件转换和缓存兼容入口已物理删除。
+- Monitoring 的 Dashboard、DiskGrowth 时间范围/节点校验及 VictoriaMetrics 就绪检查已统一进入 Query Service；PVC/Pod 查询已迁入 Kubernetes Adapter，Query Service 由 Handler 持久复用，组件生命周期 Adapter 全部接收调用方 context。
+- Logging 的 Loki/Alloy 生命周期已通过 `logging.ComponentService`，Pod/Namespace/Node 筛选项已通过 `FilterService` 与独立 Kubernetes Reader，Handler 不再直接组装这些查询结果。
+- 全量验证已在宿主机权限下通过：`go test ./...`、`go build ./...`；前端使用 Node 24 执行 `npm --prefix web run build` 成功，仅保留既有主 JS chunk 超过 500 kB 的提示。
+
+告警自动化的持久化事务和派发编排已集中到 `service/observability/alerting.PersistAndDispatch`；系统组件 Helm/静态 Deployment 应用与恢复编排已集中到 `service/system_component.Apply/Restore`，Handler 仅负责检测、鉴权、持久化和响应映射。
+本轮继续完成了 Logging 旧查询兼容实现的物理删除；Alerting 通知卡片、纯文本/HTML/MIME 渲染及通知测试入口统一由 `service/observability/alerting` 提供；System Component 列表状态组装、Deployment 有效性比对、静态 Deployment 节点/副本/HA 预检与 Apply 已迁入 `service/system_component`。
+System Component Handler 仅保留请求校验、控制源检测、Service 调用和响应映射；相关 Handler 回归测试已改为调用新的 Service API，并补充通知渲染单测。
+本轮进一步完成了 System Component 的物理收敛：YAML 解析、Traefik 超时注入、控制源检测、Helm/静态 Deployment 模式分支、配置成功/失败持久化及 Revert 前检查统一由 `service/system_component.Update`/`RevertManaged` 负责；具体 Kubernetes Adapter 已移出 Handler 文件，`reconcileOnce` 兼容入口及其调用点已删除，后台生命周期统一使用 `Run`/`Reconcile` Service API。
+新增 Handler 委托回归覆盖 Alerting Overview/Silence/Notify/TestNotification、Monitoring Query/Targets/DiskGrowth、Logging Loki 查询链路以及 System Component Update/Revert；PVC Consumer 路径继续由 DiskGrowth Handler + `PVCConsumerReader` 集成测试覆盖。
+本轮收尾进一步将 Monitoring 的 `ConsumerReader`、Logging 的 `FilterReader` 和 Alertmanager readiness callback 统一放到 Router 依赖组装层注入；Alerting Component Adapter 的生命周期接口全部接收调用方 `context.Context`，Handler 不再负责这些 Kubernetes 适配器组装。
+System Component Adapter 也已统一改为由 Router/平台启动层显式创建并注入，删除 Handler 对全局 `k8sClient` 的构造依赖。
+系统 API 包中的生产级 `k8sClient` 全局变量和 setter 已删除，测试夹具使用测试文件内的独立变量。
+阶段四当前验收：Alerting、Monitoring、Logging、System Component 的 Service/Fake 回归测试，Agent 查询复用，PVC Consumer 解析，`go test ./...`、`go build ./...`、Node 24 下前端构建和 `git diff --check` 均已通过；前端保留既有主 JS chunk 超过 500 kB 的非阻塞警告。`sec-code` 工具不存在，无法执行安全扫描上报。
 
 ### 阶段 5：路由组装和公共 API 能力收敛
 

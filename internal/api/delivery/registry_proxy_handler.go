@@ -9,6 +9,7 @@ import (
 	"time"
 
 	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
+	security "github.com/cylism/cylism-manager/internal/api/shared/security"
 	k8sclient "github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/repository"
@@ -203,7 +204,7 @@ func (h *RegistryProxyHandler) Diagnose(c *gin.Context) {
 		return
 	}
 	proxy.LastDiagnosticStatus = diagnostic.Status
-	proxy.LastDiagnosticError = truncateProxyDiagnosticText(diagnostic.Summary)
+	proxy.LastDiagnosticError = security.Truncate(strings.TrimSpace(diagnostic.Summary), 512)
 	now := time.Now()
 	proxy.LastDiagnosticAt = &now
 	if err := h.store.SaveRegistryProxy(proxy); err != nil {
@@ -322,14 +323,6 @@ func (h *RegistryProxyHandler) apply(ctx context.Context, proxy *model.RegistryP
 
 func (h *RegistryProxyHandler) k8sReady() bool {
 	return h.resources != nil && h.diagnostics != nil && h.diagnostics.Available()
-}
-
-func truncateProxyDiagnosticText(value string) string {
-	value = strings.TrimSpace(value)
-	if len(value) > 512 {
-		return value[:512]
-	}
-	return value
 }
 
 func (h *RegistryProxyHandler) proxyForRequest(c *gin.Context) (*model.RegistryProxy, error) {
