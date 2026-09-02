@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/cylism/cylism-manager/internal/api"
+	authapi "github.com/cylism/cylism-manager/internal/api/auth"
 	systemapi "github.com/cylism/cylism-manager/internal/api/system"
 	"github.com/cylism/cylism-manager/internal/auth"
 	"github.com/cylism/cylism-manager/internal/k8s"
@@ -59,7 +60,7 @@ func main() {
 	accessTTL := time.Duration(viper.GetInt("auth.access_token_ttl")) * time.Second
 	refreshTTL := time.Duration(viper.GetInt("auth.refresh_token_ttl")) * time.Second
 
-	authCfg := &api.AuthConfig{
+	authCfg := &authapi.AuthConfig{
 		JWTSecret:       jwtSecret,
 		AccessTokenTTL:  accessTTL,
 		RefreshTokenTTL: refreshTTL,

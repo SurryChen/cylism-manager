@@ -6,11 +6,11 @@ import (
 )
 
 type deliveryRouteHandlers struct {
-	image       *ImageRegistryHandler
+	image       *delivery.ImageRegistryHandler
 	nodeMirrors *delivery.NodeRegistryMirrorHandler
 	managed     *delivery.ManagedOCIRegistryHandler
 	proxy       *delivery.RegistryProxyHandler
-	chart       *ChartRepositoryHandler
+	chart       *delivery.ChartRepositoryHandler
 	platform    *delivery.PlatformHandler
 }
 

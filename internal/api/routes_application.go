@@ -1,10 +1,12 @@
 package api
 
 import (
+	applicationapi "github.com/cylism/cylism-manager/internal/api/application"
+	authapi "github.com/cylism/cylism-manager/internal/api/auth"
 	"github.com/gin-gonic/gin"
 )
 
-func registerApplicationRoutes(r *gin.Engine, apiGroup *gin.RouterGroup, h *ApplicationHandler, jwtSecret []byte, audit gin.HandlerFunc) {
+func registerApplicationRoutes(r *gin.Engine, apiGroup *gin.RouterGroup, h *applicationapi.ApplicationHandler, jwtSecret []byte, audit gin.HandlerFunc) {
 	projects := apiGroup.Group("/projects")
 	projects.GET("", h.ListProjects)
 	projects.POST("", h.CreateProject)
@@ -45,7 +47,7 @@ func registerApplicationRoutes(r *gin.Engine, apiGroup *gin.RouterGroup, h *Appl
 	applications.POST("/:id/releases/:releaseID/rollback", h.RollbackRelease)
 
 	integration := r.Group("/api/integrations/applications")
-	integration.Use(DelegationAuthMiddleware(jwtSecret), audit)
+	integration.Use(authapi.DelegationAuthMiddleware(jwtSecret), audit)
 	integration.GET("/discovery", h.IntegrationDiscoverApplications)
 	integration.GET("/:id/runtime", h.IntegrationGetApplicationRuntime)
 	integration.GET("/:id/configmaps", h.IntegrationListManagedConfigMaps)

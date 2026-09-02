@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	agentapi "github.com/cylism/cylism-manager/internal/api/agent"
+	authapi "github.com/cylism/cylism-manager/internal/api/auth"
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/gin-gonic/gin"
 )
@@ -42,9 +43,9 @@ func registerAgentRoutes(r *gin.Engine, h *agentapi.AgentHandler) {
 	r.POST("/api/agent/v1/maintenance/cleanup-request", gin.WrapF(h.MaintenanceCleanupRequest))
 }
 
-func registerAuthRoutes(r *gin.Engine, h *AuthHandler, cfg *AuthConfig) {
+func registerAuthRoutes(r *gin.Engine, h *authapi.AuthHandler, cfg *authapi.AuthConfig) {
 	g := r.Group("/api/auth")
 	g.POST("/login", h.Login)
 	g.POST("/refresh", h.Refresh)
-	g.GET("/me", JWTAuthMiddleware(cfg.JWTSecret), h.Me)
+	g.GET("/me", authapi.JWTAuthMiddleware(cfg.JWTSecret), h.Me)
 }

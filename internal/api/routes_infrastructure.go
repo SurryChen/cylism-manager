@@ -6,7 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func registerInfrastructureRoutes(apiGroup *gin.RouterGroup, server *infrastructureapi.ServerHandler, networkDiag *infrastructureapi.ServerNetworkDiagnosticsHandler, terminal *infrastructureapi.ServerTerminalHandler, site *SiteHandler, operations *OperationHandler, domain *infrastructureapi.DomainHandler, node *infrastructureapi.NodeHandler, join *infrastructureapi.NodeJoinProgressHandler, ingress *infrastructureapi.IngressHandler, cert *infrastructureapi.CertHandler, k8sHandler *infrastructureapi.K8sHandler, storage *infrastructureapi.StorageHandler, network *infrastructureapi.NetworkHandler, tailscale *systemapi.TailscaleHandler, crd *CRDHandler, audit *systemapi.AuditHandler, dbAdmin *DBAdminHandler) {
+func registerInfrastructureRoutes(apiGroup *gin.RouterGroup, server *infrastructureapi.ServerHandler, networkDiag *infrastructureapi.ServerNetworkDiagnosticsHandler, terminal *infrastructureapi.ServerTerminalHandler, site *infrastructureapi.SiteHandler, operations *systemapi.OperationHandler, domain *infrastructureapi.DomainHandler, node *infrastructureapi.NodeHandler, join *infrastructureapi.NodeJoinProgressHandler, ingress *infrastructureapi.IngressHandler, cert *infrastructureapi.CertHandler, k8sHandler *infrastructureapi.K8sHandler, storage *infrastructureapi.StorageHandler, network *infrastructureapi.NetworkHandler, tailscale *systemapi.TailscaleHandler, crd *infrastructureapi.CRDHandler, audit *systemapi.AuditHandler, dbAdmin *systemapi.DBAdminHandler) {
 	servers := apiGroup.Group("/servers")
 	servers.POST("", server.Create)
 	servers.GET("", server.List)
