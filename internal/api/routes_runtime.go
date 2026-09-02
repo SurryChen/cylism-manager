@@ -3,11 +3,12 @@ package api
 import (
 	agentapi "github.com/cylism/cylism-manager/internal/api/agent"
 	infrastructureapi "github.com/cylism/cylism-manager/internal/api/infrastructure"
+	runtimeapi "github.com/cylism/cylism-manager/internal/api/runtime"
 	systemapi "github.com/cylism/cylism-manager/internal/api/system"
 	"github.com/gin-gonic/gin"
 )
 
-func registerRuntimeRoutes(apiGroup *gin.RouterGroup, runtime *RuntimeHandler, operations *agentapi.AgentOperationHandler, components *systemapi.SystemComponentHandler, network *infrastructureapi.NetworkHandler) {
+func registerRuntimeRoutes(apiGroup *gin.RouterGroup, runtime *runtimeapi.RuntimeHandler, operations *agentapi.AgentOperationHandler, components *systemapi.SystemComponentHandler, network *infrastructureapi.NetworkHandler) {
 	runtimes := apiGroup.Group("/runtimes")
 	runtimes.GET("/catalog", runtime.Catalog)
 	runtimes.GET("", runtime.List)
@@ -46,6 +47,6 @@ func registerRuntimeRoutes(apiGroup *gin.RouterGroup, runtime *RuntimeHandler, o
 	clusterDNS.POST("/history/:revision/rollback", network.DNSRollback)
 }
 
-func registerDashboardRoutes(apiGroup *gin.RouterGroup, h *DashboardHandler) {
+func registerDashboardRoutes(apiGroup *gin.RouterGroup, h *systemapi.DashboardHandler) {
 	apiGroup.GET("/dashboard", h.Get)
 }

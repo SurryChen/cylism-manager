@@ -6,11 +6,11 @@
 
 ## 1. 现状基线
 
-当前 `internal/` 已经具备 API、Service、K8s Adapter、Store 和 Domain Model 的基本分层，但领域边界仍不均衡：
+当前 `internal/` 已经具备 API、Service、K8s Adapter、Store 和 Domain Model 的基本分层，API 领域 Handler 已按功能物理归组：
 
 | 位置 | 生产代码规模 | 主要问题 |
 |---|---:|---|
-| `internal/api` 根包 | 约 5592 行 | 应用、运行时和通用路由仍集中在根包 |
+| `internal/api` 根包 | 仅保留路由/组装与特殊适配 | 业务 Handler 已迁入领域子目录 |
 | `internal/api/application_handler.go` | 2073 行 | 同时处理项目、环境、应用、发布、模板和 Endpoint |
 | `internal/api/router.go` | 527 行 | 路由注册和依赖组装耦合在一个函数 |
 | `internal/api/infrastructure/k8s_handler.go` | 1103 行 | Namespace、Workload、Service、ConfigMap、Secret、Ingress 混在一个 Handler |
@@ -23,6 +23,9 @@
 
 ```text
 internal/api/agent/
+internal/api/auth/
+internal/api/application/
+internal/api/runtime/
 internal/api/delivery/
 internal/api/infrastructure/
 internal/api/system/
@@ -36,7 +39,7 @@ internal/api/system/
 2. Handler 只做请求绑定、鉴权上下文提取、Service 调用和响应映射。
 3. 业务规则进入 `internal/service` 或 `internal/application`，持久化进入 Repository/Store Adapter，Kubernetes 操作进入 `internal/k8s` Adapter/Reconciler。
 4. 消除跨领域包复用内部辅助函数的情况，公共能力进入明确的 shared/security 包。
-5. 将根包 `internal/api` 收敛为认证、应用组装和少量尚未迁移的领域入口。
+5. 将根包 `internal/api` 收敛为路由注册、依赖组装和少量特殊适配入口。
 6. 每次迁移都可以独立验证、独立提交和回滚。
 
 ## 3. 目标结构
@@ -61,6 +64,8 @@ internal/
       http.go
       identity.go
       sanitize.go
+    (root: router.go, routes_*.go, websocket.go,
+     cluster_adapter.go, cluster_dns_helpers.go)
   application/
     spec_types.go
     spec_validation.go
@@ -95,16 +100,6 @@ internal/
     adapter.go
     image.go
     kubernetes.go
-    chat/
-      client.go
-      sse.go
-      types.go
-    identity/
-      identity.go
-    artifact/
-      artifact.go
-    cli/
-      client.go
     chat/
       client.go
       sse.go
@@ -167,7 +162,7 @@ internal/
 实施结果：
 
 - `ApplicationHandler` 依赖结构、构造函数和应用生命周期入口保留在 `application_handler.go`。
-- 项目、环境、运行态、发布、模板和 Endpoint 实现已分别迁入对应文件，仍属于同一 `api` package，路由和构造函数保持兼容。
+- 项目、环境、运行态、发布、模板和 Endpoint 实现已分别迁入 `internal/api/application`，运行时与聊天入口迁入 `internal/api/runtime`，认证入口迁入 `internal/api/auth`；路由路径和公开构造函数行为保持不变。
 - 发布路径继续调用 `application.ReleaseWorkflow`，模板加密/脱敏和 Endpoint 同步逻辑未复制状态机。
 - 工作台、发现和集成读取路径通过 `internal/service/application.QueryService` 复用项目、环境、应用和发布查询；环境归属解析和 Kubernetes 运行态 DTO 组装也已迁入该只读 Service。
 - 路由级回归测试已按项目、环境、应用、运行态、发布、模板、Endpoint 和集成入口物理拆分到对应 `*_handler_test.go`，共享 router fixture 保留在 `application_handler_test.go`。
@@ -342,6 +337,7 @@ System Component Adapter 也已统一改为由 Router/平台启动层显式创�
 - `internal/model/models.go` 已按领域物理拆分为 `application.go`、`auth.go`、`runtime.go`、`infrastructure.go`、`observability.go`、`platform.go` 和 `registry.go`，仍保持 `package model`，公开类型、字段、表名和调用方式不变。
 - `internal/application/spec.go` 已物理拆分为 `spec_types.go`、`spec_validation.go`、`spec_normalization.go`、`spec_rendering.go` 和 `spec_security.go`；发布 Spec 的类型、校验、归一化、Kubernetes 资源渲染和敏感字段清理分别归位。
 - Runtime/Agent 底层能力已收敛到 `internal/runtime` 领域：Chat 客户端、Runtime 身份鉴权、CLI 制品校验和 CLI API 客户端分别位于 `chat`、`identity`、`artifact` 和 `cli` 子包；`internal/api/agent` 仅保留 HTTP Handler。
+- `internal/api` 根包业务 Handler 已完成物理归组：认证进入 `auth`，应用与工作台进入 `application`，Runtime/Chat 进入 `runtime`，镜像仓库与 Chart 入口进入 `delivery`，站点/CRD/NGINX 进入 `infrastructure`，Dashboard/DB Admin/操作日志进入 `system`；根包仅保留路由注册、依赖组装、WebSocket 及 `cluster_adapter.go`、`cluster_dns_helpers.go` 两类特殊适配。
 - 补充并更新本文件的目标目录结构和依赖图，明确 API → Service/Application → Repository/K8s → Store 的依赖方向；阶段六拆分不引入新的跨层依赖。
 - 通过 `rg` 检查旧 `models.go`、`spec.go`、阶段迁移兼容入口和临时适配器的生产调用点；无调用方的旧模型/Spec 文件已删除，仍保留的兼容逻辑均有明确业务消费者。
 - `go test ./...` 与 `go build ./...` 在宿主机权限下通过；沙箱内少数 `httptest` 用例因 IPv6 监听权限失败，不属于代码回归。Node 24 下前端构建和 `git diff --check` 通过。

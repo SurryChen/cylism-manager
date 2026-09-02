@@ -1,11 +1,12 @@
 package api
 
 import (
-	"time"
-
 	agentapi "github.com/cylism/cylism-manager/internal/api/agent"
+	applicationapi "github.com/cylism/cylism-manager/internal/api/application"
+	authapi "github.com/cylism/cylism-manager/internal/api/auth"
 	"github.com/cylism/cylism-manager/internal/api/delivery"
 	infrastructureapi "github.com/cylism/cylism-manager/internal/api/infrastructure"
+	runtimeapi "github.com/cylism/cylism-manager/internal/api/runtime"
 	systemapi "github.com/cylism/cylism-manager/internal/api/system"
 	"github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
@@ -24,18 +25,10 @@ import (
 // K8s K8s 客户端全局单例，main.go 初始化
 var K8s *k8s.Client
 
-// AuthConfig 认证相关配置
-type AuthConfig struct {
-	JWTSecret       []byte
-	AccessTokenTTL  time.Duration
-	RefreshTokenTTL time.Duration
-	AdminUser       string
-	AdminPassword   string
-	PlatformURL     string
-}
-
 // RegisterRoutes 注册所有 API 路由
-func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthConfig) {
+func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *authapi.AuthConfig) {
+	applicationapi.K8s = K8s
+	runtimeapi.K8s = K8s
 	// This endpoint is authenticated with a projected Runtime installer token,
 	// never with a browser JWT or the Runtime chat credential.
 	artifactHandler := agentapi.NewAgentArtifactHandler("/usr/local/lib/cylism/runtime-tools", runtimeidentity.NewRuntimeTokenAuthorizer(K8s, s, nil))
@@ -49,15 +42,15 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 	registerPublicRoutes(r, artifactHandler, agentHandler)
 
 	// 认证路由
-	authHandler := NewAuthHandler(s, authCfg.JWTSecret, authCfg.AccessTokenTTL, authCfg.RefreshTokenTTL)
+	authHandler := authapi.NewAuthHandler(s, authCfg.JWTSecret, authCfg.AccessTokenTTL, authCfg.RefreshTokenTTL)
 	registerAuthRoutes(r, authHandler, authCfg)
 
 	// 业务 API（受 JWT 保护）
 	apiGroup := r.Group("/api")
-	apiGroup.Use(JWTAuthMiddleware(authCfg.JWTSecret))
+	apiGroup.Use(authapi.JWTAuthMiddleware(authCfg.JWTSecret))
 	apiGroup.Use(systemapi.AuditMiddleware(s))
 	runtimeRegistry := runtimepkg.BuiltinRegistry()
-	runtimeHandler := NewRuntimeHandler(s, encKey, runtimepkg.NewKubernetesManager(K8s, runtimeRegistry), runtimeRegistry)
+	runtimeHandler := runtimeapi.NewRuntimeHandler(s, encKey, runtimepkg.NewKubernetesManager(K8s, runtimeRegistry), runtimeRegistry)
 	agentOperationHandler := agentapi.NewAgentOperationHandler(s, K8s).WithRegistryPullExecutor(agentapi.DefaultAgentRegistryPullExecutor(encKey)).WithMaintenanceCleanupExecutor(agentapi.DefaultAgentMaintenanceCleanupExecutor(encKey))
 	var systemComponentAdapter systemapi.SystemComponentAdapter
 	if K8s != nil {
@@ -74,7 +67,7 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 	platformHandler := delivery.NewPlatformHandler(s, encKey, K8s)
 	go platformHandler.Reconcile()
 
-	dashHandler := NewDashboardHandler(s)
+	dashHandler := systemapi.NewDashboardHandler(s)
 	registerDashboardRoutes(apiGroup, dashHandler)
 
 	clusterService := cluster.NewService(s, clusterNodeAdapter()).WithServerInspector(infrastructureapi.ServerInspector{EncKey: encKey}).WithServerImporter(infrastructureapi.ServerInspector{EncKey: encKey}).WithMetricsInspector(infrastructureapi.ServerMetricsInspector{EncKey: encKey})
@@ -82,21 +75,21 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 	serverNetworkDiagnostics := infrastructureapi.NewServerNetworkDiagnosticsHandler(s, encKey)
 	serverTerminal := infrastructureapi.NewServerTerminalHandler(s, encKey)
 
-	siteHandler := NewSiteHandler(s)
+	siteHandler := infrastructureapi.NewSiteHandler(s)
 
-	operationHandler := NewOperationHandler(s)
+	operationHandler := systemapi.NewOperationHandler(s)
 
-	applicationHandler := NewApplicationHandler(s, encKey).WithDelegationSecret(authCfg.JWTSecret)
-	imageRegistryHandler := NewImageRegistryHandler(s, encKey)
+	applicationHandler := applicationapi.NewApplicationHandler(s, encKey).WithDelegationSecret(authCfg.JWTSecret)
+	imageRegistryHandler := delivery.NewImageRegistryHandler(s, encKey)
 	nodeMirrorHandler := delivery.NewNodeRegistryMirrorHandler(s, encKey, func(server *model.Server, content []byte) (string, string) {
-		return applyK3sRegistriesToNode(server, encKey, content)
+		return delivery.ApplyK3sRegistriesToNode(server, encKey, content)
 	})
 	managedRegistryHandler := delivery.NewManagedOCIRegistryHandler(s, encKey, K8s, func(server *model.Server, content []byte) (string, string) {
-		return applyK3sRegistriesToNode(server, encKey, content)
+		return delivery.ApplyK3sRegistriesToNode(server, encKey, content)
 	})
 	registryProxyHandler := delivery.NewRegistryProxyHandler(s, encKey, K8s)
 	go registryProxyHandler.Reconcile()
-	chartHandler := NewChartRepositoryHandler(s)
+	chartHandler := delivery.NewChartRepositoryHandler(s)
 	registerDeliveryRoutes(r, apiGroup, deliveryRouteHandlers{image: imageRegistryHandler, nodeMirrors: nodeMirrorHandler, managed: managedRegistryHandler, proxy: registryProxyHandler, chart: chartHandler, platform: platformHandler})
 	var monitoringDeps systemapi.MonitoringDependencies
 	if K8s != nil {
@@ -137,7 +130,7 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 	domainHandler := infrastructureapi.NewDomainHandlerWithService(s, K8s, networkHandler.Service)
 	registerApplicationRoutes(r, apiGroup, applicationHandler, authCfg.JWTSecret, systemapi.AuditMiddleware(s))
 
-	dbAdminHandler := NewDBAdminHandler(s)
+	dbAdminHandler := systemapi.NewDBAdminHandler(s)
 
 	// K8s 节点管理
 	nodeHandler := infrastructureapi.NewNodeHandler(clusterService)
@@ -157,7 +150,7 @@ func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthC
 
 	// Tailscale 管理
 	tailscaleHandler := systemapi.NewTailscaleHandler(s, encKey)
-	crdHandler := NewCRDHandler()
+	crdHandler := infrastructureapi.NewCRDHandler()
 	auditHandler := systemapi.NewAuditHandler(s)
 	registerInfrastructureRoutes(apiGroup, serverHandler, serverNetworkDiagnostics, serverTerminal, siteHandler, operationHandler, domainHandler, nodeHandler, nodeJoinProgress, ingressHandler, certHandler, k8sHandler, storageHandler, networkHandler, tailscaleHandler, crdHandler, auditHandler, dbAdminHandler)
 }
