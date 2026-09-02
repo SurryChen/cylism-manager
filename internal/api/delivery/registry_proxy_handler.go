@@ -55,10 +55,14 @@ func proxyInput(req registryProxyRequest) registryservice.ProxyInput {
 }
 
 func NewRegistryProxyHandler(repo repository.RegistryProxyRepository, encKey []byte, resources k8sclient.RegistryProxyResourceReconciler, diagnostics k8sclient.RegistryProxyDiagnostics) *RegistryProxyHandler {
-	h := &RegistryProxyHandler{store: repo}
-	h.encKey = encKey
-	h.service = registryservice.NewProxyService(repo, h.encKey)
-	h.resources, h.diagnostics = resources, diagnostics
+	return NewRegistryProxyHandlerWithService(repo, encKey, resources, diagnostics, registryservice.NewProxyService(repo, encKey))
+}
+
+func NewRegistryProxyHandlerWithService(repo repository.RegistryProxyRepository, encKey []byte, resources k8sclient.RegistryProxyResourceReconciler, diagnostics k8sclient.RegistryProxyDiagnostics, service *registryservice.ProxyService) *RegistryProxyHandler {
+	h := &RegistryProxyHandler{store: repo, encKey: encKey, service: service, resources: resources, diagnostics: diagnostics}
+	if h.service == nil {
+		h.service = registryservice.NewProxyService(repo, encKey)
+	}
 	return h
 }
 

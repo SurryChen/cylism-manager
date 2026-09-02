@@ -32,7 +32,7 @@ func (c *Container) BuildRouteDependencies() api.RouteDependencies {
 	agent := agentapi.NewAgentHandler(c.Store, agentAdapter, authenticator).WithMonitoringDiskGrowth(monitoring).WithRegistryVerifier(agentapi.DefaultAgentRegistryNodeVerifier(key)).WithMaintenanceInspector(agentapi.DefaultAgentMaintenanceInspector(key))
 	agentOp := agentapi.NewAgentOperationHandler(c.Store, agentAdapter).WithRegistryPullExecutor(agentapi.DefaultAgentRegistryPullExecutor(key)).WithMaintenanceCleanupExecutor(agentapi.DefaultAgentMaintenanceCleanupExecutor(key))
 	runtimeHandler := runtimeapi.NewRuntimeHandler(c.Store, key, runtimepkg.NewKubernetesManager(c.K8s, registry), registry)
-	platform := deliveryapi.NewPlatformHandler(c.Store, key, deliveryapi.NewPlatformKubernetesAdapter(c.K8s))
+	platform := deliveryapi.NewPlatformHandlerWithService(c.Store, key, deliveryapi.NewPlatformKubernetesAdapter(c.K8s), c.Services.PlatformRelease)
 	networkService := c.Services.Network
 	clusterService := c.Services.Cluster
 	clusterDNS := infrastructureapi.NewClusterDNSHandler(c.Store, infrastructureapi.NewClusterDNSAdapter(c.K8s))
@@ -41,19 +41,27 @@ func (c *Container) BuildRouteDependencies() api.RouteDependencies {
 	networkHandler := infrastructureapi.NewNetworkHandler(networkService, infrastructureapi.NetworkHandler{
 		DNSStatus: clusterDNS.Status, DNSApply: clusterDNS.Apply, DNSReset: clusterDNS.Reset, DNSRollback: clusterDNS.Rollback,
 	})
-	monitoringHandler := systemapi.NewMonitoringHandler(c.Adapters.Monitoring)
-	alertingHandler := systemapi.NewAlertingHandler(c.Auth.PlatformURL).WithDependencies(c.Adapters.Alerting).
+	monitoringDeps := c.Adapters.Monitoring
+	monitoringDeps.QueryService = c.Services.Monitoring
+	monitoringDeps.ComponentService = c.Services.MonitoringComponent
+	monitoringHandler := systemapi.NewMonitoringHandler(monitoringDeps)
+	alertingDeps := c.Adapters.Alerting
+	alertingDeps.ComponentService = c.Services.AlertingComponent
+	alertingHandler := systemapi.NewAlertingHandler(c.Auth.PlatformURL).WithDependencies(alertingDeps).
 		WithAutomation(c.Store, systemapi.NewAlertRuntimeDispatcher(c.Store, key, runtimepkg.BuiltinRegistry()))
-	loggingHandler := systemapi.NewLoggingHandler(c.Store, c.Adapters.Logging)
-	applicationHandler := applicationapi.NewApplicationHandler(c.Store, key, applicationapi.NewKubernetesDependencies(c.K8s))
+	loggingDeps := c.Adapters.Logging
+	loggingDeps.QueryService = c.Services.LoggingQuery
+	loggingDeps.ComponentService = c.Services.LoggingComponent
+	loggingHandler := systemapi.NewLoggingHandler(c.Store, loggingDeps)
+	applicationHandler := applicationapi.NewApplicationHandlerWithQuery(c.Store, c.Services.ApplicationQuery, key, applicationapi.NewKubernetesDependencies(c.K8s))
 	image := deliveryapi.NewImageRegistryHandler(c.Store, key)
-	nodeMirrors := deliveryapi.NewNodeRegistryMirrorHandler(c.Store, key, func(ctx context.Context, server *model.Server, content []byte) (string, string) {
+	nodeMirrors := deliveryapi.NewNodeRegistryMirrorHandlerWithService(c.Store, key, func(ctx context.Context, server *model.Server, content []byte) (string, string) {
 		return deliveryapi.ApplyK3sRegistriesToNode(ctx, server, key, content)
-	})
-	managed := deliveryapi.NewManagedOCIRegistryHandler(c.Store, key, c.Adapters.Registry.ManagedResources, c.Adapters.Registry.ManagedStatus, func(ctx context.Context, server *model.Server, content []byte) (string, string) {
+	}, c.Services.RegistryMirror)
+	managed := deliveryapi.NewManagedOCIRegistryHandlerWithService(c.Store, key, c.Adapters.Registry.ManagedResources, c.Adapters.Registry.ManagedStatus, func(ctx context.Context, server *model.Server, content []byte) (string, string) {
 		return deliveryapi.ApplyK3sRegistriesToNode(ctx, server, key, content)
-	})
-	proxy := deliveryapi.NewRegistryProxyHandler(c.Store, key, c.Adapters.Registry.ProxyResources, c.Adapters.Registry.ProxyDiagnostics)
+	}, c.Services.RegistryManaged)
+	proxy := deliveryapi.NewRegistryProxyHandlerWithService(c.Store, key, c.Adapters.Registry.ProxyResources, c.Adapters.Registry.ProxyDiagnostics, c.Services.RegistryProxy)
 	storageService := c.Services.Storage
 	pvcAdapter, pvcMigration, pvcWorkloads := infrastructureapi.NewPVCAdapters(c.K8s)
 	storageHandler := infrastructureapi.NewStorageHandlerWithDependencies(storageService, c.Store, key, pvcAdapter, pvcMigration, pvcWorkloads)

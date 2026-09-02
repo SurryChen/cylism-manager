@@ -29,7 +29,14 @@ type ManagedOCIRegistryHandler struct {
 }
 
 func NewManagedOCIRegistryHandler(repo repository.ManagedRegistryRepository, encKey []byte, resources k8sclient.ManagedRegistryResourceReconciler, status k8sclient.ManagedRegistryStatusReader, applyNode registryservice.NodeMirrorApplier) *ManagedOCIRegistryHandler {
-	return &ManagedOCIRegistryHandler{service: registryservice.NewManagedRegistryService(repo, encKey), resources: resources, status: status, store: repo, applyNode: applyNode}
+	return NewManagedOCIRegistryHandlerWithService(repo, encKey, resources, status, applyNode, registryservice.NewManagedRegistryService(repo, encKey))
+}
+
+func NewManagedOCIRegistryHandlerWithService(repo repository.ManagedRegistryRepository, encKey []byte, resources k8sclient.ManagedRegistryResourceReconciler, status k8sclient.ManagedRegistryStatusReader, applyNode registryservice.NodeMirrorApplier, service *registryservice.ManagedRegistryService) *ManagedOCIRegistryHandler {
+	if service == nil {
+		service = registryservice.NewManagedRegistryService(repo, encKey)
+	}
+	return &ManagedOCIRegistryHandler{service: service, resources: resources, status: status, store: repo, applyNode: applyNode}
 }
 
 // WithResourceReconciler replaces only mutating registry convergence actions.

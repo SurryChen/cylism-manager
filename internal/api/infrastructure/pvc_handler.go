@@ -51,7 +51,7 @@ type persistentVolumeClaimUsageResponse struct {
 var ReadPersistentVolumeUsage = readLocalPersistentVolumeUsage
 
 func (h *StorageHandler) ListPersistentVolumeClaims(c *gin.Context) {
-	if h.pvc == nil {
+	if h == nil || h.pvc == nil || h.Service == nil {
 		storageK8sUnavailable(c)
 		return
 	}

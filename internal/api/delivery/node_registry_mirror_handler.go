@@ -49,8 +49,15 @@ type nodeRegistryMirrorRequest struct {
 }
 
 func NewNodeRegistryMirrorHandler(repo repository.NodeRegistryMirrorRepository, encKey []byte, applyNode registryservice.NodeMirrorApplier) *NodeRegistryMirrorHandler {
+	return NewNodeRegistryMirrorHandlerWithService(repo, encKey, applyNode, registryservice.NewMirrorService(repo, encKey))
+}
+
+func NewNodeRegistryMirrorHandlerWithService(repo repository.NodeRegistryMirrorRepository, encKey []byte, applyNode registryservice.NodeMirrorApplier, service *registryservice.MirrorService) *NodeRegistryMirrorHandler {
+	if service == nil {
+		service = registryservice.NewMirrorService(repo, encKey)
+	}
 	return &NodeRegistryMirrorHandler{
-		service:          registryservice.NewMirrorService(repo, encKey),
+		service:          service,
 		encKey:           encKey,
 		verifyConnection: verifyNodeRegistryMirrorConnection,
 		applyNode:        applyNode,

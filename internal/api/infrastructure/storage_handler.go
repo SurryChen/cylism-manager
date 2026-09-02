@@ -65,6 +65,9 @@ func newClientPVCReconciler(client *k8sclient.Client) *clientPVCReconciler {
 // NewPVCAdapters composes the narrow PVC ports used by infrastructure
 // handlers and the storage service.
 func NewPVCAdapters(client *k8sclient.Client) (PVCRepositoryAdapter, PVCMigrationReconciler, PVCWorkloadReader) {
+	if client == nil || client.Clientset == nil {
+		return nil, nil, nil
+	}
 	adapter := newClientPVCReconciler(client)
 	if adapter == nil {
 		return nil, nil, nil

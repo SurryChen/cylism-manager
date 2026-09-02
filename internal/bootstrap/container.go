@@ -62,7 +62,7 @@ func NewContainer(cfg Config) (*Container, error) {
 			PlatformURL:     cfg.PlatformURL,
 		},
 	}
-	container.Services = BuildServices(db, container.Adapters, cfg.EncryptionKey)
+	container.Services = BuildServices(db, client, container.Adapters, cfg.EncryptionKey)
 	container.components = systemapi.NewSystemComponentHandler(container.Store, container.Adapters.SystemComponent)
 	return container, nil
 }

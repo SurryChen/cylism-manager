@@ -162,7 +162,7 @@ func (r *ManagedRegistryReconciler) ResolvePVC(ctx context.Context, registry *mo
 	if err != nil {
 		return fmt.Errorf("读取 PVC %q 失败: %w", registry.PVCName, err)
 	}
-	info, err := r.client.pvcInfo(claim)
+	info, err := r.client.pvcInfo(ctx, claim)
 	if err != nil {
 		return fmt.Errorf("读取 PVC %q 失败: %w", registry.PVCName, err)
 	}

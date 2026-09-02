@@ -1,6 +1,6 @@
 # Bootstrap 依赖组装层迁移计划
 
-状态：阶段一、阶段二已完成，阶段三待开始（Router 已改为纯路由绑定，应用 Handler 已改为应用领域 Kubernetes Port，通用 K8s Handler 已改为窄资源 Adapter，发布重试/回滚/异步任务及 Cluster/Agent/Registry/PVC/节点加入/网络诊断 SSH 调用均已透传请求 Context；基础设施与平台发布 Kubernetes 调用已透传请求 Context，PVC/节点/Workload/Service/Config/Secret/Ingress 旧无 Context API、`Client.Ctx()`、`SSHExec` 及相关兼容适配已删除，2026-09-03）
+状态：阶段一、阶段二已完成，阶段三进行中（Application、Platform、Registry、Monitoring、Logging、Alerting Service 已纳入 Bootstrap 组合，Router 继续保持纯路由绑定；Cluster/Agent/Registry/PVC/节点加入/网络诊断 SSH 调用及基础设施 Kubernetes 调用均已透传 Context，2026-09-03）
 
 本文档规划将应用初始化、第三方依赖接入、Repository/Service/Handler 创建从 `cmd/platform` 和 `internal/api/router.go` 逐步迁移到 `internal/bootstrap`。
 
@@ -556,3 +556,9 @@ npm --prefix web run build
 ## 十、下一步执行项
 
 阶段二已验收完成。下一步进入阶段三的 Service 组装迁移：继续将 Router 中尚存的 Service/Handler 创建移动到 Bootstrap，并按领域补齐依赖容器和回归测试。迁移仍应按单领域推进，避免一次性移动所有 Handler 导致问题难以定位。
+
+阶段三当前进度：
+
+- `bootstrap.Services` 已增加 Application Query、Platform Release、Registry Mirror/Managed/Proxy、Monitoring/Logging/Alerting Component/Query Service；
+- Bootstrap Handler 组装已优先注入上述 Service，保留旧构造函数仅用于现有测试与嵌入方兼容；
+- 下一步继续迁移 Auth、Runtime、System Component 及剩余 Handler 内部 Service 创建，并逐步删除兼容构造路径。
