@@ -27,25 +27,33 @@ type MonitoringHandler struct {
 }
 
 type MonitoringDependencies struct {
-	Query     monitoringservice.QueryFunc
-	Status    monitoringservice.StatusReader
-	Component monitoringservice.ComponentAdapter
-	Consumers monitoringservice.ConsumerReader
+	Query            monitoringservice.QueryFunc
+	QueryService     *monitoringservice.QueryService
+	Status           monitoringservice.StatusReader
+	Component        monitoringservice.ComponentAdapter
+	ComponentService *monitoringservice.ComponentService
+	Consumers        monitoringservice.ConsumerReader
 }
 
 func NewMonitoringHandler(deps MonitoringDependencies) *MonitoringHandler {
 	var component *monitoringservice.ComponentService
-	if deps.Component != nil {
+	if deps.ComponentService != nil {
+		component = deps.ComponentService
+	} else if deps.Component != nil {
 		component = monitoringservice.NewComponentService(deps.Component)
 	}
 	handler := &MonitoringHandler{component: component, consumers: deps.Consumers, status: deps.Status}
 	handler.query = monitoringQueryFunc(deps.Query)
-	handler.queryService = monitoringservice.NewQueryService(func(ctx context.Context, path string, values url.Values) (interface{}, error) {
-		if handler.query == nil {
-			return nil, fmt.Errorf("VictoriaMetrics 查询不可用")
-		}
-		return handler.query(ctx, path, values)
-	}, deps.Status)
+	if deps.QueryService != nil {
+		handler.queryService = deps.QueryService
+	} else {
+		handler.queryService = monitoringservice.NewQueryService(func(ctx context.Context, path string, values url.Values) (interface{}, error) {
+			if handler.query == nil {
+				return nil, fmt.Errorf("VictoriaMetrics 查询不可用")
+			}
+			return handler.query(ctx, path, values)
+		}, deps.Status)
+	}
 	return handler
 }
 

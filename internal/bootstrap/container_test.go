@@ -62,3 +62,23 @@ func TestBuildKubernetesAdaptersUsesExplicitClient(t *testing.T) {
 		t.Fatal("expected registry adapters for an explicit client")
 	}
 }
+
+func TestBuildServicesComposesDomainServices(t *testing.T) {
+	db, err := NewRepositories(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	services := BuildServices(db, &k8s.Client{}, BuildKubernetesAdapters(&k8s.Client{}), []byte("01234567890123456789012345678901"))
+	if services.Cluster == nil || services.Network == nil || services.Storage == nil {
+		t.Fatal("expected core services to be composed")
+	}
+	if services.ApplicationQuery == nil || services.PlatformRelease == nil {
+		t.Fatal("expected application and platform services to be composed")
+	}
+	if services.RegistryMirror == nil || services.RegistryManaged == nil || services.RegistryProxy == nil {
+		t.Fatal("expected registry services to be composed")
+	}
+	if services.Monitoring == nil || services.LoggingQuery == nil {
+		t.Fatal("expected observability query services to be composed")
+	}
+}

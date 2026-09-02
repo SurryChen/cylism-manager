@@ -47,10 +47,12 @@ type LoggingHandler struct {
 }
 
 type LoggingDependencies struct {
-	Query        loggingservice.QueryFunc
-	Ready        func(context.Context) bool
-	Component    loggingservice.ComponentAdapter
-	FilterReader loggingservice.FilterReader
+	Query            loggingservice.QueryFunc
+	QueryService     *loggingservice.QueryService
+	Ready            func(context.Context) bool
+	Component        loggingservice.ComponentAdapter
+	ComponentService *loggingservice.ComponentService
+	FilterReader     loggingservice.FilterReader
 }
 
 type logQueryRequest struct {
@@ -94,7 +96,9 @@ type logLine struct {
 
 func NewLoggingHandler(scope repository.LoggingScopeRepository, deps LoggingDependencies) *LoggingHandler {
 	var component *loggingservice.ComponentService
-	if deps.Component != nil {
+	if deps.ComponentService != nil {
+		component = deps.ComponentService
+	} else if deps.Component != nil {
 		component = loggingservice.NewComponentService(deps.Component)
 	}
 	handler := &LoggingHandler{scope: scope, component: component, filterReader: deps.FilterReader, ready: deps.Ready, now: time.Now, query: func(ctx context.Context, path string, values url.Values) (*lokiQueryResponse, error) {
@@ -111,7 +115,11 @@ func NewLoggingHandler(scope repository.LoggingScopeRepository, deps LoggingDepe
 		}
 		return response, nil
 	}}
-	handler.configureQueryService()
+	if deps.QueryService != nil {
+		handler.queryService = deps.QueryService
+	} else {
+		handler.configureQueryService()
+	}
 	return handler
 }
 

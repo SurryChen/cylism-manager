@@ -37,11 +37,12 @@ type AlertingHandler struct {
 }
 
 type AlertingDependencies struct {
-	Alertmanager alertingservice.RequestFunc
-	Component    alertingservice.ComponentAdapter
-	Ready        func(context.Context) bool
-	Secrets      alertingservice.SecretReader
-	Sender       alertingservice.NotificationSender
+	Alertmanager     alertingservice.RequestFunc
+	Component        alertingservice.ComponentAdapter
+	ComponentService *alertingservice.ComponentService
+	Ready            func(context.Context) bool
+	Secrets          alertingservice.SecretReader
+	Sender           alertingservice.NotificationSender
 }
 
 type alertmanagerNotification struct {
@@ -78,7 +79,9 @@ func (h *AlertingHandler) WithDependencies(deps AlertingDependencies) *AlertingH
 	if deps.Alertmanager != nil {
 		h.alertmanager = alertmanagerRequestFunc(deps.Alertmanager)
 	}
-	if deps.Component != nil {
+	if deps.ComponentService != nil {
+		h.component = deps.ComponentService
+	} else if deps.Component != nil {
 		h.component = alertingservice.NewComponentService(deps.Component)
 	}
 	h.ready = deps.Ready

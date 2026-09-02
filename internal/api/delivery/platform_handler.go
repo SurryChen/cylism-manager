@@ -80,7 +80,14 @@ type platformEndpointInfo struct {
 }
 
 func NewPlatformHandler(s repository.PlatformEndpointRepository, encKey []byte, client platformKubernetes) *PlatformHandler {
-	return &PlatformHandler{store: s, client: client, release: platformservice.NewReleaseService(s, encKey, client)}
+	return NewPlatformHandlerWithService(s, encKey, client, platformservice.NewReleaseService(s, encKey, client))
+}
+
+func NewPlatformHandlerWithService(s repository.PlatformEndpointRepository, encKey []byte, client platformKubernetes, release *platformservice.ReleaseService) *PlatformHandler {
+	if release == nil {
+		release = platformservice.NewReleaseService(s, encKey, client)
+	}
+	return &PlatformHandler{store: s, client: client, release: release}
 }
 
 // Webhook accepts authenticated platform image deployment requests.

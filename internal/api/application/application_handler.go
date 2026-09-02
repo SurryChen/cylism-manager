@@ -49,7 +49,15 @@ type applicationCapabilitiesRequest struct {
 // authorized management UIs. It never embeds templates or Secret references.
 
 func NewApplicationHandler(resources repository.ApplicationHandlerRepository, encKey []byte, dependencies KubernetesDependencies) *ApplicationHandler {
-	return &ApplicationHandler{resources: resources, applications: resources, sessions: resources, queries: applicationservice.NewQueryService(resources), encKey: append([]byte(nil), encKey...), kubernetes: dependencies}
+	return NewApplicationHandlerWithQuery(resources, applicationservice.NewQueryService(resources), encKey, dependencies)
+}
+
+// NewApplicationHandlerWithQuery uses a query service composed by Bootstrap.
+func NewApplicationHandlerWithQuery(resources repository.ApplicationHandlerRepository, queries *applicationservice.QueryService, encKey []byte, dependencies KubernetesDependencies) *ApplicationHandler {
+	if queries == nil {
+		queries = applicationservice.NewQueryService(resources)
+	}
+	return &ApplicationHandler{resources: resources, applications: resources, sessions: resources, queries: queries, encKey: append([]byte(nil), encKey...), kubernetes: dependencies}
 }
 
 func (h *ApplicationHandler) releaseWorkflow() *application.ReleaseWorkflow {

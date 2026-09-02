@@ -127,6 +127,16 @@ func TestListPVCsBatchesPersistentVolumeAndStorageClassLookups(t *testing.T) {
 	}
 }
 
+func TestListPVCsRejectsMissingClientOrContext(t *testing.T) {
+	client := &Client{Clientset: k8sfake.NewSimpleClientset()}
+	if _, err := client.ListPVCsContext(nil, ""); err == nil || !strings.Contains(err.Error(), "上下文") {
+		t.Fatalf("expected nil context error, got %v", err)
+	}
+	if _, err := (&Client{}).ListPVCsContext(context.Background(), ""); err == nil || !strings.Contains(err.Error(), "客户端未初始化") {
+		t.Fatalf("expected missing client error, got %v", err)
+	}
+}
+
 func TestInfrastructurePVCIsClassifiedAndProtectedFromGenericDelete(t *testing.T) {
 	client := &Client{Clientset: k8sfake.NewSimpleClientset(&corev1.PersistentVolumeClaim{
 		ObjectMeta: metav1.ObjectMeta{Name: "cylism-victoria-metrics-data", Namespace: "monitoring", Labels: infrastructurePVCLabels(InfrastructureVictoriaMetrics)},
