@@ -1,9 +1,9 @@
 package api
 
 import (
-	authapi "github.com/cylism/cylism-manager/internal/api/auth"
 	"crypto/sha256"
 	"encoding/hex"
+	authapi "github.com/cylism/cylism-manager/internal/api/auth"
 	"net/http"
 	"net/http/httptest"
 	"sort"
@@ -26,7 +26,7 @@ func TestRegisterRoutesSnapshot(t *testing.T) {
 		JWTSecret:       []byte("router-snapshot-secret"),
 		AccessTokenTTL:  time.Hour,
 		RefreshTokenTTL: 24 * time.Hour,
-	})
+	}, nil)
 
 	want := []string{
 		"GET /health",
@@ -80,7 +80,7 @@ func TestRegisterRoutesDoesNotFallbackUnknownAPI(t *testing.T) {
 		t.Fatalf("create store: %v", err)
 	}
 	r := gin.New()
-	RegisterRoutes(r, db, make([]byte, 32), &authapi.AuthConfig{JWTSecret: []byte("router-fallback-secret")})
+	RegisterRoutes(r, db, make([]byte, 32), &authapi.AuthConfig{JWTSecret: []byte("router-fallback-secret")}, nil)
 	req := httptest.NewRequest(http.MethodGet, "/api/route-that-does-not-exist", nil)
 	resp := httptest.NewRecorder()
 	r.ServeHTTP(resp, req)

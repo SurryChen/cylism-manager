@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net/http"
@@ -9,11 +10,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/cylism/cylism-manager/internal/api"
-	authapi "github.com/cylism/cylism-manager/internal/api/auth"
-	systemapi "github.com/cylism/cylism-manager/internal/api/system"
 	"github.com/cylism/cylism-manager/internal/auth"
-	"github.com/cylism/cylism-manager/internal/k8s"
+	"github.com/cylism/cylism-manager/internal/bootstrap"
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/gin-gonic/gin"
@@ -40,43 +38,34 @@ func main() {
 	}
 	os.MkdirAll("data", 0755)
 
-	db, err := store.New(dbPath)
+	encKey := []byte(viper.GetString("encryption.key"))
+	if len(encKey) != 32 {
+		log.Fatalf("Encryption key must be exactly 32 bytes (got %d)", len(encKey))
+	}
+	jwtSecret := []byte(viper.GetString("auth.jwt_secret"))
+	accessTTL := time.Duration(viper.GetInt("auth.access_token_ttl")) * time.Second
+	refreshTTL := time.Duration(viper.GetInt("auth.refresh_token_ttl")) * time.Second
+	container, err := bootstrap.NewContainer(bootstrap.Config{
+		DBPath: dbPath, EncryptionKey: encKey, JWTSecret: jwtSecret,
+		AccessTokenTTL: accessTTL, RefreshTokenTTL: refreshTTL,
+		PlatformURL: viper.GetString("server.public_url"),
+	})
 	if err != nil {
 		log.Fatalf("Failed to init database: %v", err)
 	}
+	db := container.Store
 	log.Println("Database initialized")
 
 	// 管理员初始化
 	initAdmin(db)
 
-	// 加密密钥
-	encKey := []byte(viper.GetString("encryption.key"))
-	if len(encKey) != 32 {
-		log.Fatalf("Encryption key must be exactly 32 bytes (got %d)", len(encKey))
-	}
-
-	// JWT 配置
-	jwtSecret := []byte(viper.GetString("auth.jwt_secret"))
-	accessTTL := time.Duration(viper.GetInt("auth.access_token_ttl")) * time.Second
-	refreshTTL := time.Duration(viper.GetInt("auth.refresh_token_ttl")) * time.Second
-
-	authCfg := &authapi.AuthConfig{
-		JWTSecret:       jwtSecret,
-		AccessTokenTTL:  accessTTL,
-		RefreshTokenTTL: refreshTTL,
-		PlatformURL:     viper.GetString("server.public_url"),
-	}
-
 	// 操作日志清理任务
 	opLogRetention := viper.GetInt("operation_log.retention_days")
-	go startOperationLogCleaner(db, time.Duration(opLogRetention))
+	appCtx, cancelBackground := context.WithCancel(context.Background())
+	defer cancelBackground()
+	container.StartBackground(appCtx, time.Duration(opLogRetention))
 
-	// K8s 客户端初始化（非阻塞）
-	k8sClient, err := k8s.NewClient()
-	if err != nil {
-		log.Printf("WARNING: K8s 客户端不可用: %v（集群相关功能将降级）", err)
-	} else {
-		api.K8s = k8sClient
+	if container.K8s != nil {
 		log.Println("K8s 客户端已就绪")
 	}
 
@@ -85,13 +74,7 @@ func main() {
 	r := gin.Default()
 
 	// 注册路由
-	api.RegisterRoutes(r, db, encKey, authCfg)
-	var systemComponentAdapter systemapi.SystemComponentAdapter
-	if k8sClient != nil {
-		systemComponentAdapter = k8s.SystemComponentKubernetesAdapter{Client: k8sClient}
-	}
-	go systemapi.NewSystemComponentHandler(db, systemComponentAdapter).Reconcile()
-
+	container.RegisterRoutes(r)
 	registerFrontendRoutes(r, "./web/dist")
 
 	// 启动服务器
@@ -108,6 +91,7 @@ func main() {
 		quit := make(chan os.Signal, 1)
 		signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 		<-quit
+		cancelBackground()
 		log.Println("Shutting down...")
 		srv.Close()
 	}()
@@ -115,24 +99,6 @@ func main() {
 	log.Printf("Cylism Manager Platform starting on %s", addr)
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("Server error: %v", err)
-	}
-}
-
-// startOperationLogCleaner 启动操作日志定时清理
-func startOperationLogCleaner(s *store.Store, retentionDays time.Duration) {
-	if int(retentionDays) <= 0 {
-		log.Println("操作日志清理已禁用（retention_days <= 0）")
-		return
-	}
-	log.Printf("操作日志清理已启动，保留 %d 天", int(retentionDays))
-	ticker := time.NewTicker(1 * time.Hour)
-	defer ticker.Stop()
-	for range ticker.C {
-		if err := s.DeleteExpiredOperationLogs(int(retentionDays)); err != nil {
-			log.Printf("操作日志清理失败: %v", err)
-		} else {
-			log.Println("操作日志清理完成")
-		}
 	}
 }
 

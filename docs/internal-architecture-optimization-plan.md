@@ -39,13 +39,19 @@ internal/api/system/
 2. Handler 只做请求绑定、鉴权上下文提取、Service 调用和响应映射。
 3. 业务规则进入 `internal/service` 或 `internal/application`，持久化进入 Repository/Store Adapter，Kubernetes 操作进入 `internal/k8s` Adapter/Reconciler。
 4. 消除跨领域包复用内部辅助函数的情况，公共能力进入明确的 shared/security 包。
-5. 将根包 `internal/api` 收敛为路由注册、依赖组装和少量特殊适配入口。
+5. 将根包 `internal/api` 收敛为路由注册和少量特殊适配入口；应用依赖组装逐步迁入 `internal/bootstrap`。
 6. 每次迁移都可以独立验证、独立提交和回滚。
 
 ## 3. 目标结构
 
 ```text
 internal/
+  bootstrap/
+    container.go
+    kubernetes.go
+    repositories.go
+    services.go
+    handlers.go
   api/
     auth/
     application/
