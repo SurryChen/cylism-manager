@@ -180,9 +180,9 @@ func TestAlertingOverviewSurfacesAlertmanagerFailure(t *testing.T) {
 	defer func() { k8sClient = original }()
 
 	handler, _ := newTestAlertingHandler()
-	handler.alertmanager = func(context.Context, string, string, interface{}, interface{}) error {
+	handler.WithAlertmanager(func(context.Context, string, string, interface{}, interface{}) error {
 		return errors.New("connection refused")
-	}
+	}, func(context.Context) bool { return true })
 	response := serve(setupAlertingRouter(handler), newJSONRequest(http.MethodGet, "/api/monitoring/alerts/overview", nil))
 	if response.Code != http.StatusBadGateway || !strings.Contains(response.Body.String(), "Alertmanager") {
 		t.Fatalf("expected Alertmanager error, got %s", response.Body.String())
@@ -196,7 +196,7 @@ func TestAlertingSilenceHandlersDelegateToWorkflowClient(t *testing.T) {
 
 	requests := make([]string, 0, 3)
 	handler, _ := newTestAlertingHandler()
-	handler.alertmanager = func(_ context.Context, method, path string, input interface{}, output interface{}) error {
+	handler.WithAlertmanager(func(_ context.Context, method, path string, input interface{}, output interface{}) error {
 		requests = append(requests, method+" "+path)
 		switch method {
 		case http.MethodGet:
@@ -209,7 +209,7 @@ func TestAlertingSilenceHandlersDelegateToWorkflowClient(t *testing.T) {
 			*output.(*alertingservice.SilenceResult) = alertingservice.SilenceResult{SilenceID: "silence-2"}
 		}
 		return nil
-	}
+	}, func(context.Context) bool { return true })
 	router := setupAlertingRouter(handler)
 	if response := serve(router, newJSONRequest(http.MethodGet, "/api/monitoring/alerts/silences", nil)); response.Code != http.StatusOK {
 		t.Fatalf("list status = %d: %s", response.Code, response.Body.String())
@@ -232,12 +232,12 @@ func TestAlertingOverviewIncludesRecentResolvedWebhookAlerts(t *testing.T) {
 
 	handler, sender := newTestAlertingHandler()
 	sender.feishu = func(context.Context, string, alertingservice.AlertNotification) error { return nil }
-	handler.alertmanager = func(_ context.Context, method, _ string, _ interface{}, output interface{}) error {
+	handler.WithAlertmanager(func(_ context.Context, method, _ string, _ interface{}, output interface{}) error {
 		if method == http.MethodGet {
 			*output.(*[]alertmanagerAlert) = []alertmanagerAlert{}
 		}
 		return nil
-	}
+	}, func(context.Context) bool { return true })
 	callback := newJSONRequest(http.MethodPost, "/api/monitoring/alerts/notify", gin.H{"status": "resolved", "alerts": []gin.H{{"status": "resolved", "fingerprint": "resolved-1", "labels": gin.H{"alertname": "NodeDown"}, "annotations": gin.H{"summary": "节点已恢复"}}}})
 	callback.Header.Set("Authorization", "Bearer relay-token")
 	if response := serve(setupAlertingRouter(handler), callback); response.Code != http.StatusOK {
@@ -258,7 +258,7 @@ func TestUpdateAutomationPolicyImmediatelySyncsCurrentFiringAlerts(t *testing.T)
 	dispatched := make(chan *model.AlertEvent, 1)
 	handler, _ := newTestAlertingHandler()
 	handler.WithAutomation(store, alertDispatcherFunc(func(_ context.Context, event *model.AlertEvent) { dispatched <- event }))
-	handler.alertmanager = func(_ context.Context, method, path string, _ interface{}, output interface{}) error {
+	handler.WithAlertmanager(func(_ context.Context, method, path string, _ interface{}, output interface{}) error {
 		if method != http.MethodGet || path != "/api/v2/alerts" {
 			t.Fatalf("unexpected Alertmanager request: %s %s", method, path)
 		}
@@ -267,7 +267,7 @@ func TestUpdateAutomationPolicyImmediatelySyncsCurrentFiringAlerts(t *testing.T)
 			{Fingerprint: "resolved-1", Status: alertStatus{State: "resolved"}, Labels: map[string]string{"alertname": "NodeDiskHigh", "severity": "warning"}},
 		}
 		return nil
-	}
+	}, func(context.Context) bool { return true })
 
 	response := serve(setupAlertingRouter(handler), newJSONRequest(http.MethodPut, "/api/monitoring/alerts/automation-policy", gin.H{
 		"runtime_id": 7, "enabled": true, "minimum_severity": "warning", "mode": "report_only", "cooldown_minutes": 30,

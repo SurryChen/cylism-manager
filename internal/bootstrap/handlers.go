@@ -21,7 +21,6 @@ import (
 // adapters itself.
 func (c *Container) BuildRouteDependencies() api.RouteDependencies {
 	key := c.configEncryptionKey()
-	registry := runtimepkg.BuiltinRegistry()
 	authenticator := runtimeidentity.NewRuntimeTokenAuthorizer(c.K8s, c.Store, nil)
 	artifact := agentapi.NewAgentArtifactHandler("/usr/local/lib/cylism/runtime-tools", authenticator)
 	var monitoring *monitoringservice.AgentDiskGrowthService
@@ -31,7 +30,7 @@ func (c *Container) BuildRouteDependencies() api.RouteDependencies {
 	agentAdapter := agentapi.NewKubernetesAdapter(c.K8s)
 	agent := agentapi.NewAgentHandler(c.Store, agentAdapter, authenticator).WithMonitoringDiskGrowth(monitoring).WithRegistryVerifier(agentapi.DefaultAgentRegistryNodeVerifier(key)).WithMaintenanceInspector(agentapi.DefaultAgentMaintenanceInspector(key))
 	agentOp := agentapi.NewAgentOperationHandler(c.Store, agentAdapter).WithRegistryPullExecutor(agentapi.DefaultAgentRegistryPullExecutor(key)).WithMaintenanceCleanupExecutor(agentapi.DefaultAgentMaintenanceCleanupExecutor(key))
-	runtimeHandler := runtimeapi.NewRuntimeHandler(c.Store, key, runtimepkg.NewKubernetesManager(c.K8s, registry), registry)
+	runtimeHandler := runtimeapi.NewRuntimeHandler(c.Store, key, c.Services.RuntimeManager, c.Services.RuntimeRegistry)
 	platform := deliveryapi.NewPlatformHandlerWithService(c.Store, key, deliveryapi.NewPlatformKubernetesAdapter(c.K8s), c.Services.PlatformRelease)
 	networkService := c.Services.Network
 	clusterService := c.Services.Cluster
@@ -47,8 +46,10 @@ func (c *Container) BuildRouteDependencies() api.RouteDependencies {
 	monitoringHandler := systemapi.NewMonitoringHandler(monitoringDeps)
 	alertingDeps := c.Adapters.Alerting
 	alertingDeps.ComponentService = c.Services.AlertingComponent
+	alertingDeps.QueryService = c.Services.AlertingQuery
+	dispatcher := systemapi.NewAlertRuntimeDispatcher(c.Store, key, runtimepkg.BuiltinRegistry())
 	alertingHandler := systemapi.NewAlertingHandler(c.Auth.PlatformURL).WithDependencies(alertingDeps).
-		WithAutomation(c.Store, systemapi.NewAlertRuntimeDispatcher(c.Store, key, runtimepkg.BuiltinRegistry()))
+		WithAutomationService(c.Store, c.Services.AlertingAutomation.WithDispatcher(dispatcher), dispatcher)
 	loggingDeps := c.Adapters.Logging
 	loggingDeps.QueryService = c.Services.LoggingQuery
 	loggingDeps.ComponentService = c.Services.LoggingComponent
@@ -68,7 +69,7 @@ func (c *Container) BuildRouteDependencies() api.RouteDependencies {
 	storageHandler.ConfigureStorageExecutor()
 	return api.RouteDependencies{
 		Store: c.Store, AuthConfig: c.Auth, Audit: systemapi.AuditMiddleware(c.Store),
-		Artifact: artifact, Agent: agent, Auth: authapi.NewAuthHandler(c.Store, c.Auth.JWTSecret, c.Auth.AccessTokenTTL, c.Auth.RefreshTokenTTL, c.Store),
+		Artifact: artifact, Agent: agent, Auth: authapi.NewAuthHandlerWithTemporaryService(c.Repositories.Users, c.Auth.JWTSecret, c.Auth.AccessTokenTTL, c.Auth.RefreshTokenTTL, c.Services.AuthTemporaryTokens),
 		Runtime: runtimeHandler, AgentOp: agentOp, Components: c.componentHandler(), Network: networkHandler,
 		Dashboard: systemapi.NewDashboardHandler(c.Store), Platform: platform, Image: image, NodeMirrors: nodeMirrors, Managed: managed, Proxy: proxy, Chart: deliveryapi.NewChartRepositoryHandler(c.Store),
 		Monitoring: monitoringHandler, Alerting: alertingHandler, Logging: loggingHandler, Application: applicationHandler,

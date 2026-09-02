@@ -14,6 +14,7 @@ import (
 // orchestration. HTTP handlers only translate requests into these types.
 type Workflow struct {
 	Client     *Client
+	Query      *QueryService
 	Ready      func(context.Context) bool
 	Automation *AutomationService
 	Store      interface {
@@ -42,7 +43,10 @@ func (w *Workflow) query() *QueryService {
 	if w == nil {
 		return nil
 	}
-	return NewQueryService(w.Client, w.Ready)
+	if w.Query != nil {
+		return w.Query
+	}
+	return nil
 }
 
 func (w *Workflow) Overview(ctx context.Context) (Overview, error) {
@@ -99,7 +103,7 @@ func (w *Workflow) UpdatePolicy(ctx context.Context, policy *model.AlertAutomati
 }
 
 func (w *Workflow) EnsureReady(ctx context.Context) error {
-	if w == nil || w.Client == nil {
+	if w == nil || w.Client == nil || w.query() == nil {
 		return fmt.Errorf("Alertmanager 查询不可用")
 	}
 	if w.Ready != nil && !w.Ready(ctx) {

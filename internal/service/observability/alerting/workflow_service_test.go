@@ -45,7 +45,7 @@ func TestWorkflowOverviewDelegatesQueryAndResolvedCache(t *testing.T) {
 	})
 	cache := NewResolvedCache(12)
 	cache.Add([]Alert{{Fingerprint: "resolved-1", Status: AlertStatus{State: "resolved"}}})
-	w := &Workflow{Client: client, Ready: func(context.Context) bool { return true }, Cache: cache}
+	w := &Workflow{Client: client, Query: NewQueryService(client, func(context.Context) bool { return true }), Ready: func(context.Context) bool { return true }, Cache: cache}
 	overview, err := w.Overview(context.Background())
 	if err != nil || overview.Firing != 1 || len(overview.Resolved) != 1 || overview.Resolved[0].Fingerprint != "resolved-1" {
 		t.Fatalf("unexpected overview=%#v err=%v", overview, err)

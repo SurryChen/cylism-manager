@@ -30,6 +30,8 @@ type AuthHandler struct {
 	temporaryTokens *authservice.TemporaryTokenService
 }
 
+// Deprecated: use NewAuthHandlerWithTemporaryService from the composition
+// root. Kept for focused tests and external embedders during migration.
 func NewAuthHandler(users repository.UserRepository, jwtSecret []byte, accessTTL, refreshTTL time.Duration, temporaryRepos ...repository.TemporaryLoginTokenRepository) *AuthHandler {
 	handler := &AuthHandler{
 		users:           users,
@@ -41,6 +43,11 @@ func NewAuthHandler(users repository.UserRepository, jwtSecret []byte, accessTTL
 		handler.temporaryTokens = authservice.NewTemporaryTokenService(users, temporaryRepos[0])
 	}
 	return handler
+}
+
+// NewAuthHandlerWithTemporaryService uses a service composed by Bootstrap.
+func NewAuthHandlerWithTemporaryService(users repository.UserRepository, jwtSecret []byte, accessTTL, refreshTTL time.Duration, temporaryTokens *authservice.TemporaryTokenService) *AuthHandler {
+	return &AuthHandler{users: users, jwtSecret: jwtSecret, accessTokenTTL: accessTTL, refreshTokenTTL: refreshTTL, temporaryTokens: temporaryTokens}
 }
 
 type temporaryLoginReq struct {

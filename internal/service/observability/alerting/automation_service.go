@@ -39,6 +39,16 @@ func NewAutomationService(repo AutomationRepository, dispatcher Dispatcher) *Aut
 	return &AutomationService{repo: repo, dispatcher: dispatcher, now: time.Now}
 }
 
+// WithDispatcher attaches the runtime dispatch boundary after the service has
+// been composed. This keeps construction in Bootstrap while allowing the API
+// package to provide its transport-specific dispatcher.
+func (s *AutomationService) WithDispatcher(dispatcher Dispatcher) *AutomationService {
+	if s != nil {
+		s.dispatcher = dispatcher
+	}
+	return s
+}
+
 func (s *AutomationService) Policy() (*model.AlertAutomationPolicy, error) {
 	if s == nil || s.repo == nil {
 		return nil, fmt.Errorf("告警自动化不可用")

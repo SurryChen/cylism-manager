@@ -30,13 +30,14 @@ type Config struct {
 
 // Container is the application dependency container.
 type Container struct {
-	Store      *store.Store
-	K8s        *k8s.Client
-	Adapters   KubernetesAdapters
-	Services   Services
-	Auth       *authapi.AuthConfig
-	components *systemapi.SystemComponentHandler
-	encKey     []byte
+	Store        *store.Store
+	Repositories Repositories
+	K8s          *k8s.Client
+	Adapters     KubernetesAdapters
+	Services     Services
+	Auth         *authapi.AuthConfig
+	components   *systemapi.SystemComponentHandler
+	encKey       []byte
 }
 
 // NewContainer initializes process-owned infrastructure. Kubernetes is
@@ -50,11 +51,13 @@ func NewContainer(cfg Config) (*Container, error) {
 	if err != nil {
 		log.Printf("WARNING: K8s 客户端不可用: %v（集群相关功能将降级）", err)
 	}
+	repos := BuildRepositories(db)
 	container := &Container{
-		Store:    db,
-		K8s:      client,
-		Adapters: BuildKubernetesAdapters(client),
-		encKey:   append([]byte(nil), cfg.EncryptionKey...),
+		Store:        db,
+		Repositories: repos,
+		K8s:          client,
+		Adapters:     BuildKubernetesAdapters(client),
+		encKey:       append([]byte(nil), cfg.EncryptionKey...),
 		Auth: &authapi.AuthConfig{
 			JWTSecret:       append([]byte(nil), cfg.JWTSecret...),
 			AccessTokenTTL:  cfg.AccessTokenTTL,
@@ -62,8 +65,8 @@ func NewContainer(cfg Config) (*Container, error) {
 			PlatformURL:     cfg.PlatformURL,
 		},
 	}
-	container.Services = BuildServices(db, client, container.Adapters, cfg.EncryptionKey)
-	container.components = systemapi.NewSystemComponentHandler(container.Store, container.Adapters.SystemComponent)
+	container.Services = BuildServices(repos, client, container.Adapters, cfg.EncryptionKey)
+	container.components = systemapi.NewSystemComponentHandlerWithComposedService(container.Store, container.Adapters.SystemComponent, container.Services.SystemComponent, container.Services.SystemComponentList)
 	return container, nil
 }
 
@@ -83,7 +86,7 @@ func (c *Container) configEncryptionKey() []byte { return append([]byte(nil), c.
 // rebuilding a handler with a separate dependency graph at runtime.
 func (c *Container) componentHandler() *systemapi.SystemComponentHandler {
 	if c.components == nil {
-		c.components = systemapi.NewSystemComponentHandler(c.Store, c.Adapters.SystemComponent)
+		c.components = systemapi.NewSystemComponentHandlerWithComposedService(c.Store, c.Adapters.SystemComponent, c.Services.SystemComponent, c.Services.SystemComponentList)
 	}
 	return c.components
 }

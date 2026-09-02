@@ -465,6 +465,13 @@ func (s *Service) BuildManagedDomainView(ctx context.Context, domain *model.Mana
 // BuildManagedDomain applies the shared normalization and immutable binding
 // rules used by create and update endpoints.
 func (s *Service) BuildManagedDomain(input DomainInput, current *model.ManagedDomain, environment *model.Environment) (*model.ManagedDomain, error) {
+	return BuildManagedDomain(input, current, environment)
+}
+
+// BuildManagedDomain applies normalization and immutable binding rules without
+// requiring a repository-backed Service instance. This keeps pure request
+// mapping usable from HTTP code without constructing a Service per request.
+func BuildManagedDomain(input DomainInput, current *model.ManagedDomain, environment *model.Environment) (*model.ManagedDomain, error) {
 	hostname := strings.ToLower(strings.TrimSpace(input.Hostname))
 	if err := ValidateHostname(hostname); err != nil || strings.HasPrefix(hostname, "*.") {
 		return nil, errors.New("域名必须是合法的精确 DNS 名称，且不支持泛域名")

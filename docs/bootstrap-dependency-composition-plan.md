@@ -561,4 +561,6 @@ npm --prefix web run build
 
 - `bootstrap.Services` 已增加 Application Query、Platform Release、Registry Mirror/Managed/Proxy、Monitoring/Logging/Alerting Component/Query Service；
 - Bootstrap Handler 组装已优先注入上述 Service，保留旧构造函数仅用于现有测试与嵌入方兼容；
-- 下一步继续迁移 Auth、Runtime、System Component 及剩余 Handler 内部 Service 创建，并逐步删除兼容构造路径。
+- 已补齐 Auth 临时令牌、Alerting Automation、Runtime Manager/Registry、System Component 列表 Service，并通过 `Repositories` 组合结构向 Service 提供窄 Repository 接口；
+- 域名纯构建逻辑已改为无状态函数，Alerting QueryService 已在 Handler 创建时注入并复用，System Component 的 List/Update/Revert/Reconcile 已统一由 ComponentService 承载；
+- 生产组装路径已改为使用上述 Bootstrap 实例。剩余旧构造函数仅用于测试和嵌入方兼容，属于阶段六的过渡依赖清理；全量网络测试仍需在允许 IPv6 监听的宿主机环境执行。
