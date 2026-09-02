@@ -7,22 +7,22 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cylism/cylism-manager/internal/agent"
 	"github.com/cylism/cylism-manager/internal/crypto"
 	"github.com/cylism/cylism-manager/internal/model"
+	runtimechat "github.com/cylism/cylism-manager/internal/runtime/chat"
 	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/gin-gonic/gin"
 )
 
 type fakeChatClient struct {
 	streamBody   string
-	sessions     []agent.Session
-	detail       *agent.SessionDetail
+	sessions     []runtimechat.Session
+	detail       *runtimechat.SessionDetail
 	listErr      error
 	readErr      error
 	streamErr    error
 	streamStatus int
-	readOptions  agent.SessionHistoryOptions
+	readOptions  runtimechat.SessionHistoryOptions
 	renameTitle  string
 	archived     bool
 	deleted      bool
@@ -39,18 +39,18 @@ func (f *fakeChatClient) StreamChat(_ context.Context, _ string, _ string) (*htt
 	return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader(f.streamBody)), Header: http.Header{}}, nil
 }
 
-func (f *fakeChatClient) ListSessions(_ context.Context, _ bool) ([]agent.Session, error) {
+func (f *fakeChatClient) ListSessions(_ context.Context, _ bool) ([]runtimechat.Session, error) {
 	return f.sessions, f.listErr
 }
 
-func (f *fakeChatClient) ReadSession(_ context.Context, _ string, options agent.SessionHistoryOptions) (*agent.SessionDetail, error) {
+func (f *fakeChatClient) ReadSession(_ context.Context, _ string, options runtimechat.SessionHistoryOptions) (*runtimechat.SessionDetail, error) {
 	f.readOptions = options
 	return f.detail, f.readErr
 }
 
-func (f *fakeChatClient) RenameSession(_ context.Context, _ string, title string) (*agent.Session, error) {
+func (f *fakeChatClient) RenameSession(_ context.Context, _ string, title string) (*runtimechat.Session, error) {
 	f.renameTitle = title
-	return &agent.Session{ID: "abc", Title: title}, nil
+	return &runtimechat.Session{ID: "abc", Title: title}, nil
 }
 
 func (f *fakeChatClient) ArchiveSession(_ context.Context, _ string, archived bool) error {
@@ -58,8 +58,8 @@ func (f *fakeChatClient) ArchiveSession(_ context.Context, _ string, archived bo
 	return nil
 }
 
-func (f *fakeChatClient) ExportSession(_ context.Context, _ string) (*agent.SessionExport, error) {
-	return &agent.SessionExport{ID: "abc", Snapshot: map[string]any{"messages": []any{}}}, nil
+func (f *fakeChatClient) ExportSession(_ context.Context, _ string) (*runtimechat.SessionExport, error) {
+	return &runtimechat.SessionExport{ID: "abc", Snapshot: map[string]any{"messages": []any{}}}, nil
 }
 
 func (f *fakeChatClient) DeleteSession(_ context.Context, _ string) error {
@@ -67,7 +67,7 @@ func (f *fakeChatClient) DeleteSession(_ context.Context, _ string) error {
 	return nil
 }
 
-func setupChatRouter(t *testing.T, client agent.ChatClient, seenKey *string) (*gin.Engine, *store.Store, []byte) {
+func setupChatRouter(t *testing.T, client runtimechat.ChatClient, seenKey *string) (*gin.Engine, *store.Store, []byte) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	s, err := store.New(":memory:")
@@ -76,7 +76,7 @@ func setupChatRouter(t *testing.T, client agent.ChatClient, seenKey *string) (*g
 	}
 	encKey := []byte("01234567890123456789012345678901")
 	handler := NewRuntimeHandler(s, encKey, nil, nil)
-	handler.newChatClient = func(instance *model.RuntimeInstance, apiKey string) (agent.ChatClient, error) {
+	handler.newChatClient = func(instance *model.RuntimeInstance, apiKey string) (runtimechat.ChatClient, error) {
 		if seenKey != nil {
 			*seenKey = apiKey
 		}
@@ -154,7 +154,7 @@ func TestChatUsesDecryptedRuntimeKey(t *testing.T) {
 }
 
 func TestChatSessionsListsRuntimeSessions(t *testing.T) {
-	client := &fakeChatClient{sessions: []agent.Session{{ID: "abc", Title: "Hello", UpdatedAt: "2026-01-01T00:00:00Z"}}}
+	client := &fakeChatClient{sessions: []runtimechat.Session{{ID: "abc", Title: "Hello", UpdatedAt: "2026-01-01T00:00:00Z"}}}
 	router, s, encKey := setupChatRouter(t, client, nil)
 	id := createChatRuntime(t, s, encKey)
 	response := serve(router, newJSONRequest(http.MethodGet, "/api/runtimes/"+itoa(id)+"/chat/sessions", nil))
@@ -167,7 +167,7 @@ func TestChatSessionsListsRuntimeSessions(t *testing.T) {
 }
 
 func TestChatSessionMessagesReturnsHistory(t *testing.T) {
-	client := &fakeChatClient{detail: &agent.SessionDetail{ID: "abc", Title: "Hello", Messages: []agent.Message{{Role: "user", Content: "hi", CreatedAt: "2026-01-01T00:00:00Z"}}}}
+	client := &fakeChatClient{detail: &runtimechat.SessionDetail{ID: "abc", Title: "Hello", Messages: []runtimechat.Message{{Role: "user", Content: "hi", CreatedAt: "2026-01-01T00:00:00Z"}}}}
 	router, s, encKey := setupChatRouter(t, client, nil)
 	id := createChatRuntime(t, s, encKey)
 	response := serve(router, newJSONRequest(http.MethodGet, "/api/runtimes/"+itoa(id)+"/chat/sessions/abc/messages", nil))
@@ -177,20 +177,20 @@ func TestChatSessionMessagesReturnsHistory(t *testing.T) {
 	if !strings.Contains(response.Body.String(), `"content":"hi"`) {
 		t.Fatalf("unexpected messages body: %s", response.Body.String())
 	}
-	if client.readOptions != (agent.SessionHistoryOptions{Limit: 50}) {
+	if client.readOptions != (runtimechat.SessionHistoryOptions{Limit: 50}) {
 		t.Fatalf("unexpected default options: %#v", client.readOptions)
 	}
 }
 
 func TestChatSessionMessagesPassesPageOptions(t *testing.T) {
-	client := &fakeChatClient{detail: &agent.SessionDetail{ID: "abc"}}
+	client := &fakeChatClient{detail: &runtimechat.SessionDetail{ID: "abc"}}
 	router, s, encKey := setupChatRouter(t, client, nil)
 	id := createChatRuntime(t, s, encKey)
 	response := serve(router, newJSONRequest(http.MethodGet, "/api/runtimes/"+itoa(id)+"/chat/sessions/abc/messages?limit=20&before=30", nil))
 	if response.Code != http.StatusOK {
 		t.Fatalf("messages status = %d: %s", response.Code, response.Body.String())
 	}
-	if client.readOptions != (agent.SessionHistoryOptions{Limit: 20, Before: "30"}) {
+	if client.readOptions != (runtimechat.SessionHistoryOptions{Limit: 20, Before: "30"}) {
 		t.Fatalf("unexpected options: %#v", client.readOptions)
 	}
 }

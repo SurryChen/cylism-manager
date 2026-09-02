@@ -1,4 +1,4 @@
-package agentartifact
+package artifact
 
 import (
 	"crypto/sha256"

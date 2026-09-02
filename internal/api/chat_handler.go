@@ -8,9 +8,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/cylism/cylism-manager/internal/agent"
 	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 	"github.com/cylism/cylism-manager/internal/model"
+	runtimechat "github.com/cylism/cylism-manager/internal/runtime/chat"
 	"github.com/gin-gonic/gin"
 )
 
@@ -24,9 +24,9 @@ type chatSessionRenameRequest struct {
 }
 
 // chatClientFactory builds a runtime chat client; tests replace it with a fake.
-type chatClientFactory func(instance *model.RuntimeInstance, apiKey string) (agent.ChatClient, error)
+type chatClientFactory func(instance *model.RuntimeInstance, apiKey string) (runtimechat.ChatClient, error)
 
-func (h *RuntimeHandler) chatClient(instance *model.RuntimeInstance, apiKey string) (agent.ChatClient, error) {
+func (h *RuntimeHandler) chatClient(instance *model.RuntimeInstance, apiKey string) (runtimechat.ChatClient, error) {
 	if h.newChatClient != nil {
 		return h.newChatClient(instance, apiKey)
 	}
@@ -42,7 +42,7 @@ func (h *RuntimeHandler) chatClient(instance *model.RuntimeInstance, apiKey stri
 	if err != nil {
 		return nil, err
 	}
-	return agent.NewRuntimeChatClient(chatURL, sessionURL, instance.ModelName, apiKey), nil
+	return runtimechat.NewRuntimeChatClient(chatURL, sessionURL, instance.ModelName, apiKey), nil
 }
 
 func (h *RuntimeHandler) managedRuntime(c *gin.Context) (*model.RuntimeInstance, bool) {
@@ -118,7 +118,7 @@ func (h *RuntimeHandler) Chat(c *gin.Context) {
 	header.Set("X-Accel-Buffering", "no")
 	c.Writer.WriteHeader(http.StatusOK)
 	flusher, _ := c.Writer.(http.Flusher)
-	_ = agent.ForEachChatEvent(upstream.Body, func(event agent.ChatEvent) error {
+	_ = runtimechat.ForEachChatEvent(upstream.Body, func(event runtimechat.ChatEvent) error {
 		payload, marshalErr := json.Marshal(event)
 		if marshalErr != nil {
 			return marshalErr
@@ -266,7 +266,7 @@ func (h *RuntimeHandler) DeleteChatSession(c *gin.Context) {
 	model.Success(c, gin.H{"id": sessionID, "deleted": true})
 }
 
-func (h *RuntimeHandler) sessionClient(c *gin.Context) (agent.ChatClient, string, bool) {
+func (h *RuntimeHandler) sessionClient(c *gin.Context) (runtimechat.ChatClient, string, bool) {
 	instance, ok := h.managedRuntime(c)
 	if !ok || !h.requiresCapability(c, instance, "sessions") {
 		return nil, "", false
@@ -289,15 +289,15 @@ func (h *RuntimeHandler) sessionClient(c *gin.Context) (agent.ChatClient, string
 	return client, sessionID, true
 }
 
-func sessionHistoryOptions(c *gin.Context) (agent.SessionHistoryOptions, error) {
+func sessionHistoryOptions(c *gin.Context) (runtimechat.SessionHistoryOptions, error) {
 	// Session history intentionally keeps its endpoint-specific 1..200 bound;
 	// unlike list pagination, an invalid value must return a validation error so
 	// clients can correct the request instead of silently receiving defaults.
-	options := agent.SessionHistoryOptions{Limit: 50, Before: strings.TrimSpace(c.Query("before"))}
+	options := runtimechat.SessionHistoryOptions{Limit: 50, Before: strings.TrimSpace(c.Query("before"))}
 	if raw, ok := c.GetQuery("limit"); ok {
 		limit, err := strconv.Atoi(raw)
 		if err != nil || limit < 1 || limit > 200 {
-			return agent.SessionHistoryOptions{}, fmt.Errorf("limit 必须为 1 到 200 之间的整数")
+			return runtimechat.SessionHistoryOptions{}, fmt.Errorf("limit 必须为 1 到 200 之间的整数")
 		}
 		options.Limit = limit
 	}

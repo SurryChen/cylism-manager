@@ -1,5 +1,5 @@
 // Package agentcli implements the fixed, JSON-only Runtime-to-Manager client.
-package agentcli
+package cli
 
 import (
 	"bytes"

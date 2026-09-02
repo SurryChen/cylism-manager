@@ -1,5 +1,5 @@
 // Package agentauth authenticates projected Runtime workload identities.
-package agentauth
+package identity
 
 import (
 	"context"

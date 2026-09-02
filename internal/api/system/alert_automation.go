@@ -9,11 +9,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cylism/cylism-manager/internal/agent"
 	agentapi "github.com/cylism/cylism-manager/internal/api/agent"
 	"github.com/cylism/cylism-manager/internal/crypto"
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/runtime"
+	runtimechat "github.com/cylism/cylism-manager/internal/runtime/chat"
 )
 
 // alertRuntimeDispatcher is deliberately small: the webhook handler owns
@@ -95,7 +95,7 @@ func (d *AlertRuntimeDispatcher) Dispatch(ctx context.Context, event *model.Aler
 	prompt := alertAutomationPrompt(event, policy.Mode)
 	callCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
-	client := agent.NewRuntimeChatClient(endpoint, sessionEndpoint, runtimeInstance.ModelName, apiKey)
+	client := runtimechat.NewRuntimeChatClient(endpoint, sessionEndpoint, runtimeInstance.ModelName, apiKey)
 	response, err := client.StreamChat(callCtx, event.SessionID, prompt)
 	if err != nil {
 		d.fail(event, "连接告警自动化 Runtime 失败: "+err.Error())
@@ -108,8 +108,8 @@ func (d *AlertRuntimeDispatcher) Dispatch(ctx context.Context, event *model.Aler
 		return
 	}
 	var report strings.Builder
-	err = agent.ForEachChatEvent(response.Body, func(chunk agent.ChatEvent) error {
-		if chunk.Type == agent.EventDelta && report.Len()+len(chunk.Content) <= 24*1024 {
+	err = runtimechat.ForEachChatEvent(response.Body, func(chunk runtimechat.ChatEvent) error {
+		if chunk.Type == runtimechat.EventDelta && report.Len()+len(chunk.Content) <= 24*1024 {
 			report.WriteString(chunk.Content)
 		}
 		return nil

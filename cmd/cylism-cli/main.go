@@ -4,11 +4,11 @@ import (
 	"context"
 	"os"
 
-	"github.com/cylism/cylism-manager/internal/agentcli"
+	runtimecli "github.com/cylism/cylism-manager/internal/runtime/cli"
 )
 
 func main() {
-	code := agentcli.Run(context.Background(), os.Args[1:], agentcli.Config{
+	code := runtimecli.Run(context.Background(), os.Args[1:], runtimecli.Config{
 		BaseURL:   os.Getenv("CYLISM_AGENT_API_URL"),
 		TokenFile: os.Getenv("CYLISM_AGENT_TOKEN_FILE"),
 	}, os.Stdout)
