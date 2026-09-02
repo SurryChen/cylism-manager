@@ -163,7 +163,7 @@ func (h *NodeRegistryMirrorHandler) Apply(c *gin.Context) {
 		apiShared.Error(c, http.StatusServiceUnavailable, model.CodeK8sUnavailable, "节点配置通道未就绪")
 		return
 	}
-	mirror, err := h.service.StartApply(id, request.ServerIDs, h.applyNode)
+	mirror, err := h.service.StartApply(c.Request.Context(), id, request.ServerIDs, h.applyNode)
 	if err != nil {
 		handleNodeRegistryMirrorApplyError(c, err)
 		return

@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"path"
@@ -25,7 +26,7 @@ var agentDiskInspectionPaths = []string{
 
 var agentJournalUsagePattern = regexp.MustCompile(`(?i)([0-9]+(?:\.[0-9]+)?)\s*([KMGTPE]?)(?:i?B)?`)
 
-type AgentMaintenanceInspector func(*model.Server) (agentDiskInspection, error)
+type AgentMaintenanceInspector func(context.Context, *model.Server) (agentDiskInspection, error)
 type agentMaintenanceInspector = AgentMaintenanceInspector
 
 type agentDiskInspection struct {
@@ -55,13 +56,13 @@ type agentDiskUsageEntry struct {
 }
 
 func DefaultAgentMaintenanceInspector(encKey []byte) AgentMaintenanceInspector {
-	return func(server *model.Server) (agentDiskInspection, error) {
+	return func(ctx context.Context, server *model.Server) (agentDiskInspection, error) {
 		if server == nil {
 			return agentDiskInspection{}, fmt.Errorf("managed node unavailable")
 		}
 		args := infrastructureapi.BuildSSHArgs(server, encKey, server.Host)
 		args = append(args, agentDiskInspectionCommand())
-		output, err := infrastructureapi.SSHExec(agentDiskInspectionTimeout, args)
+		output, err := infrastructureapi.SSHExecContext(ctx, agentDiskInspectionTimeout, args)
 		if err != nil {
 			return agentDiskInspection{}, fmt.Errorf("node disk inspection command failed: %w: %s", err, truncateAgentText(strings.TrimSpace(string(output)), 512))
 		}

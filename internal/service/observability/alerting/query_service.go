@@ -23,23 +23,23 @@ type SilenceResult struct {
 
 type QueryService struct {
 	client *Client
-	ready  func() bool
+	ready  func(context.Context) bool
 }
 
-func NewQueryService(client *Client, ready func() bool) *QueryService {
+func NewQueryService(client *Client, ready func(context.Context) bool) *QueryService {
 	return &QueryService{client: client, ready: ready}
 }
-func (s *QueryService) ensureReady() error {
+func (s *QueryService) ensureReady(ctx context.Context) error {
 	if s == nil || s.client == nil {
 		return fmt.Errorf("Alertmanager 查询不可用")
 	}
-	if s.ready != nil && !s.ready() {
+	if s.ready != nil && !s.ready(ctx) {
 		return fmt.Errorf("Alertmanager 尚未就绪")
 	}
 	return nil
 }
 func (s *QueryService) Overview(ctx context.Context, recent []Alert) (Overview, error) {
-	if err := s.ensureReady(); err != nil {
+	if err := s.ensureReady(ctx); err != nil {
 		return Overview{}, err
 	}
 	var alerts []Alert
@@ -49,7 +49,7 @@ func (s *QueryService) Overview(ctx context.Context, recent []Alert) (Overview, 
 	return BuildOverview(alerts, recent), nil
 }
 func (s *QueryService) Silences(ctx context.Context) ([]Silence, error) {
-	if err := s.ensureReady(); err != nil {
+	if err := s.ensureReady(ctx); err != nil {
 		return nil, err
 	}
 	var out []Silence
@@ -59,7 +59,7 @@ func (s *QueryService) Silences(ctx context.Context) ([]Silence, error) {
 	return out, nil
 }
 func (s *QueryService) CreateSilence(ctx context.Context, req SilenceRequest, now time.Time) (SilenceResult, time.Time, error) {
-	if err := s.ensureReady(); err != nil {
+	if err := s.ensureReady(ctx); err != nil {
 		return SilenceResult{}, time.Time{}, err
 	}
 	if err := ValidateSilence(&req); err != nil {
@@ -73,7 +73,7 @@ func (s *QueryService) CreateSilence(ctx context.Context, req SilenceRequest, no
 	return out, payload.EndsAt, nil
 }
 func (s *QueryService) DeleteSilence(ctx context.Context, id string) error {
-	if err := s.ensureReady(); err != nil {
+	if err := s.ensureReady(ctx); err != nil {
 		return err
 	}
 	id = strings.TrimSpace(id)

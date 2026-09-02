@@ -499,7 +499,7 @@ func TestAgentRegistryDiagnosticsAreScopedAndNeverExposeCredentials(t *testing.T
 		t.Fatalf("create server: %v", err)
 	}
 	client := &k8s.Client{Clientset: fake.NewSimpleClientset(&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "pending-pod", Namespace: "kube-system"}, Spec: corev1.PodSpec{NodeName: "node-1"}, Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{{Name: "app", Image: "registry.k8s.io/pause:3.10", State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "ImagePullBackOff", Message: "token=should-not-leak"}}}}}})}
-	handler := NewAgentHandler(s, client, agentAuthenticatorStub{instance: instance}).WithRegistryVerifier(func(_ *model.Server, endpoints []string) ([]agentRegistryEndpointResult, error) {
+	handler := NewAgentHandler(s, client, agentAuthenticatorStub{instance: instance}).WithRegistryVerifier(func(_ context.Context, _ *model.Server, endpoints []string) ([]agentRegistryEndpointResult, error) {
 		return []agentRegistryEndpointResult{{Endpoint: endpoints[0], DNS: "ok", HTTP: "200"}}, nil
 	})
 	request := httptest.NewRequest(http.MethodGet, "/api/agent/v1/registries/status", nil)
@@ -532,7 +532,7 @@ func TestAgentRegistryDiagnosticsAreScopedAndNeverExposeCredentials(t *testing.T
 		t.Fatalf("verify: %d %s", recorder.Code, recorder.Body.String())
 	}
 
-	failingHandler := NewAgentHandler(s, client, agentAuthenticatorStub{instance: instance}).WithRegistryVerifier(func(_ *model.Server, _ []string) ([]agentRegistryEndpointResult, error) {
+	failingHandler := NewAgentHandler(s, client, agentAuthenticatorStub{instance: instance}).WithRegistryVerifier(func(context.Context, *model.Server, []string) ([]agentRegistryEndpointResult, error) {
 		return nil, fmt.Errorf("node verification returned no endpoint results: token=should-not-leak")
 	})
 	recorder = httptest.NewRecorder()
@@ -578,7 +578,7 @@ func TestAgentRegistryPullCheckRequiresApprovalAndUsesConfiguredImage(t *testing
 		t.Fatalf("decode operation: %v %s", err, recorder.Body.String())
 	}
 	calledImage := ""
-	approvalHandler := NewAgentOperationHandler(s, nil).WithRegistryPullExecutor(func(_ *model.Server, image string) error { calledImage = image; return nil })
+	approvalHandler := NewAgentOperationHandler(s, nil).WithRegistryPullExecutor(func(_ context.Context, _ *model.Server, image string) error { calledImage = image; return nil })
 	router := gin.New()
 	router.POST("/agent-operations/:operationID/approve", func(c *gin.Context) { c.Set("user_id", uint(7)); approvalHandler.Approve(c) })
 	approval := serve(router, newJSONRequest(http.MethodPost, "/agent-operations/"+response.OperationID+"/approve", nil))
@@ -619,7 +619,7 @@ func TestAgentRegistryPullCheckPersistsSanitizedExecutionFailure(t *testing.T) {
 	if recorder.Code != http.StatusAccepted || json.Unmarshal(recorder.Body.Bytes(), &response) != nil {
 		t.Fatalf("pull check request: %d %s", recorder.Code, recorder.Body.String())
 	}
-	approvalHandler := NewAgentOperationHandler(s, nil).WithRegistryPullExecutor(func(_ *model.Server, _ string) error {
+	approvalHandler := NewAgentOperationHandler(s, nil).WithRegistryPullExecutor(func(_ context.Context, _ *model.Server, _ string) error {
 		return fmt.Errorf("rpc error: code = Unknown desc = pull timed out token=not-for-history")
 	})
 	router := gin.New()

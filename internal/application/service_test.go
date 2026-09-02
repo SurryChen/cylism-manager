@@ -188,11 +188,11 @@ func TestRetryAndRollbackUseSanitizedSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	retry, retrySpec, err := service.RetryRelease(failed.ID, 1)
+	retry, retrySpec, err := service.RetryRelease(context.Background(), failed.ID, 1)
 	if err != nil || retry.Sequence != 3 || retrySpec.Secrets["DATABASE_PASSWORD"] != "" || retrySpec.Endpoint.Exposure != ExposureCluster {
 		t.Fatalf("unexpected retry: %+v %+v err=%v", retry, retrySpec, err)
 	}
-	rollback, rollbackSpec, err := service.RollbackRelease(failed.ID, 1)
+	rollback, rollbackSpec, err := service.RollbackRelease(context.Background(), failed.ID, 1)
 	if err != nil || rollback.SourceReleaseID == nil || *rollback.SourceReleaseID != first.ID || rollbackSpec.Image != spec.Image || rollbackSpec.Endpoint.Exposure != ExposureCluster {
 		t.Fatalf("unexpected rollback: %+v %+v err=%v", rollback, rollbackSpec, err)
 	}

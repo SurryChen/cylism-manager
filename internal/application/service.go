@@ -124,7 +124,7 @@ func (s *Service) executeRelease(ctx context.Context, releaseID uint, applicatio
 }
 
 // RetryRelease 从既有 Release 的脱敏快照生成一个新的发布版本。
-func (s *Service) RetryRelease(releaseID, userID uint) (*model.Release, ReleaseSpec, error) {
+func (s *Service) RetryRelease(ctx context.Context, releaseID, userID uint) (*model.Release, ReleaseSpec, error) {
 	release, err := s.repository.GetRelease(releaseID)
 	if err != nil {
 		return nil, ReleaseSpec{}, err
@@ -135,7 +135,7 @@ func (s *Service) RetryRelease(releaseID, userID uint) (*model.Release, ReleaseS
 	}
 	// Endpoints are current application state, not historical release state.
 	spec.Endpoint = EndpointSpec{Exposure: ExposureCluster}
-	retry, err := s.CreateRelease(context.Background(), release.ApplicationID, userID, spec)
+	retry, err := s.CreateRelease(ctx, release.ApplicationID, userID, spec)
 	if err == nil {
 		retry.TemplateID = release.TemplateID
 		retry.TemplateRevision = release.TemplateRevision
@@ -145,7 +145,7 @@ func (s *Service) RetryRelease(releaseID, userID uint) (*model.Release, ReleaseS
 }
 
 // RollbackRelease 创建一个引用上一成功 Release 的新版本。
-func (s *Service) RollbackRelease(releaseID, userID uint) (*model.Release, ReleaseSpec, error) {
+func (s *Service) RollbackRelease(ctx context.Context, releaseID, userID uint) (*model.Release, ReleaseSpec, error) {
 	current, err := s.repository.GetRelease(releaseID)
 	if err != nil {
 		return nil, ReleaseSpec{}, err
@@ -170,7 +170,7 @@ func (s *Service) RollbackRelease(releaseID, userID uint) (*model.Release, Relea
 	}
 	// Rolling back a workload must preserve domain bindings created later.
 	spec.Endpoint = EndpointSpec{Exposure: ExposureCluster}
-	rollback, err := s.CreateRelease(context.Background(), current.ApplicationID, userID, spec)
+	rollback, err := s.CreateRelease(ctx, current.ApplicationID, userID, spec)
 	if err != nil {
 		return nil, ReleaseSpec{}, err
 	}

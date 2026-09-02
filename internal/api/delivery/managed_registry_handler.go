@@ -28,9 +28,8 @@ type ManagedOCIRegistryHandler struct {
 	applyNode registryservice.NodeMirrorApplier
 }
 
-func NewManagedOCIRegistryHandler(repo repository.ManagedRegistryRepository, encKey []byte, client *k8sclient.Client, applyNode registryservice.NodeMirrorApplier) *ManagedOCIRegistryHandler {
-	reconciler := k8sclient.NewManagedRegistryReconciler(client)
-	return &ManagedOCIRegistryHandler{service: registryservice.NewManagedRegistryService(repo, encKey), resources: reconciler, status: reconciler, store: repo, applyNode: applyNode}
+func NewManagedOCIRegistryHandler(repo repository.ManagedRegistryRepository, encKey []byte, resources k8sclient.ManagedRegistryResourceReconciler, status k8sclient.ManagedRegistryStatusReader, applyNode registryservice.NodeMirrorApplier) *ManagedOCIRegistryHandler {
+	return &ManagedOCIRegistryHandler{service: registryservice.NewManagedRegistryService(repo, encKey), resources: resources, status: status, store: repo, applyNode: applyNode}
 }
 
 // WithResourceReconciler replaces only mutating registry convergence actions.
@@ -388,7 +387,7 @@ func (h *ManagedOCIRegistryHandler) ApplyNodeAccess(c *gin.Context) {
 			apiShared.Error(c, http.StatusServiceUnavailable, model.CodeInternalError, "节点镜像源下发能力未初始化")
 			return
 		}
-		status, detail := h.applyNode(&server, content)
+		status, detail := h.applyNode(c.Request.Context(), &server, content)
 		if status != "success" {
 			failed++
 		}

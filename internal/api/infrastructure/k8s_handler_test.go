@@ -22,7 +22,7 @@ func setupK8sTestRouter(clients ...*k8sclient.Client) *gin.Engine {
 	if len(clients) > 0 {
 		client = clients[0]
 	}
-	h := NewK8sHandlerWithClient(client, nil, nil, nil)
+	h := NewK8sHandlerWithAdapter(NewK8sResourceAdapter(client), nil, nil, nil)
 	g := r.Group("/api/k8s")
 	{
 		g.GET("/dashboard", h.Dashboard)

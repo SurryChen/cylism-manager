@@ -1,6 +1,8 @@
 package k8s
 
 import (
+	"context"
+	"errors"
 	"testing"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -8,6 +10,16 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic/fake"
 )
+
+func TestCertificateOperationsHonorCallerContext(t *testing.T) {
+	client := &Client{DynamicClient: fake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{certGVR: "CertificateList"})}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := client.ListCertificatesContext(ctx)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context cancellation, got %v", err)
+	}
+}
 
 func TestCertToInfoKeepsTransientReadyFalseConditionsIssuing(t *testing.T) {
 	certificate := &unstructured.Unstructured{Object: map[string]interface{}{
@@ -90,7 +102,7 @@ func TestListCertificateOperationsFollowsOwnerReferences(t *testing.T) {
 	}
 	listKinds := map[schema.GroupVersionResource]string{certificateRequestGVR: "CertificateRequestList", orderGVR: "OrderList", challengeGVR: "ChallengeList"}
 	client := &Client{DynamicClient: fake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), listKinds, objects...)}
-	operations, err := client.ListCertificateOperations("production", "api-cert")
+	operations, err := client.ListCertificateOperationsContext(context.Background(), "production", "api-cert")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,14 +115,14 @@ func TestEnsureCertificateUsesManagedSecretAndIsIdempotent(t *testing.T) {
 	listKinds := map[schema.GroupVersionResource]string{certGVR: "CertificateList"}
 	client := &Client{DynamicClient: fake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), listKinds)}
 	request := CreateCertificateRequest{Name: "cylism-domain-7", Namespace: "production", Domains: []string{"api.example.com"}, IssuerRef: "letsencrypt-prod", IssuerKind: "ClusterIssuer", SecretName: "cylism-domain-7-tls"}
-	if _, err := client.EnsureCertificate(request); err != nil {
+	if _, err := client.EnsureCertificateContext(context.Background(), request); err != nil {
 		t.Fatal(err)
 	}
 	request.IssuerRef = "letsencrypt-new"
-	if _, err := client.EnsureCertificate(request); err != nil {
+	if _, err := client.EnsureCertificateContext(context.Background(), request); err != nil {
 		t.Fatal(err)
 	}
-	certificate, err := client.GetCertificate("production", "cylism-domain-7")
+	certificate, err := client.GetCertificateContext(context.Background(), "production", "cylism-domain-7")
 	if err != nil {
 		t.Fatal(err)
 	}

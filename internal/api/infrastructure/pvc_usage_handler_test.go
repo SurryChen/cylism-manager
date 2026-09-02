@@ -1,6 +1,7 @@
 package infrastructure
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -36,7 +37,7 @@ func TestPersistentVolumeClaimUsageReadsBoundLocalVolume(t *testing.T) {
 	)}
 
 	originalReader := ReadPersistentVolumeUsage
-	ReadPersistentVolumeUsage = func(_ *model.Server, localPath string, _ []byte) (int64, error) {
+	ReadPersistentVolumeUsage = func(_ context.Context, _ *model.Server, localPath string, _ []byte) (int64, error) {
 		if localPath != "/var/lib/rancher/k3s/storage/pv-app-data" {
 			t.Fatalf("unexpected local path: %s", localPath)
 		}
@@ -45,7 +46,8 @@ func TestPersistentVolumeClaimUsageReadsBoundLocalVolume(t *testing.T) {
 	defer func() { ReadPersistentVolumeUsage = originalReader }()
 
 	router := gin.New()
-	router.GET("/api/k8s/persistent-volume-claims/usage", NewStorageHandlerWithClient(storageservice.NewService(client, st, st), st, nil, client).ListPersistentVolumeClaimUsage)
+	pvc, migration, workloads := NewPVCAdapters(client)
+	router.GET("/api/k8s/persistent-volume-claims/usage", NewStorageHandlerWithDependencies(storageservice.NewService(client, st, st), st, nil, pvc, migration, workloads).ListPersistentVolumeClaimUsage)
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/k8s/persistent-volume-claims/usage", nil))
 
@@ -58,7 +60,8 @@ func TestPersistentVolumeClaimUsageReportsUnsupportedVolume(t *testing.T) {
 	client := &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(&corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: "remote-data", Namespace: "default"}})}
 
 	router := gin.New()
-	router.GET("/api/k8s/persistent-volume-claims/usage", NewStorageHandlerWithClient(storageservice.NewService(client, nil), nil, nil, client).ListPersistentVolumeClaimUsage)
+	pvc, migration, workloads := NewPVCAdapters(client)
+	router.GET("/api/k8s/persistent-volume-claims/usage", NewStorageHandlerWithDependencies(storageservice.NewService(client, nil), nil, nil, pvc, migration, workloads).ListPersistentVolumeClaimUsage)
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/k8s/persistent-volume-claims/usage", nil))
 

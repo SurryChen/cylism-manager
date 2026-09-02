@@ -23,7 +23,7 @@ func NewNodeHandler(service *cluster.Service) *NodeHandler {
 }
 
 func (h *NodeHandler) ListNode(c *gin.Context) {
-	nodes, err := h.cluster.ListNodes()
+	nodes, err := h.cluster.ListNodesContext(c.Request.Context())
 	if err != nil {
 		writeClusterError(c, err, http.StatusOK, model.CodeK8sAPIError)
 		return
@@ -32,7 +32,7 @@ func (h *NodeHandler) ListNode(c *gin.Context) {
 }
 
 func (h *NodeHandler) GetLabels(c *gin.Context) {
-	labels, err := h.cluster.GetNodeLabels(c.Param("id"))
+	labels, err := h.cluster.GetNodeLabelsContext(c.Request.Context(), c.Param("id"))
 	if err != nil {
 		writeClusterError(c, err, http.StatusNotFound, model.CodeNotFound)
 		return
@@ -51,7 +51,7 @@ func (h *NodeHandler) UpdateLabels(c *gin.Context) {
 		apiShared.BadRequest(c, "节点标签请求无效")
 		return
 	}
-	labels, err := h.cluster.UpdateNodeLabels(c.Param("id"), request.Set, request.Remove)
+	labels, err := h.cluster.UpdateNodeLabelsContext(c.Request.Context(), c.Param("id"), request.Set, request.Remove)
 	if err != nil {
 		writeClusterError(c, err, http.StatusBadRequest, model.CodeValidationFail)
 		return
@@ -60,7 +60,7 @@ func (h *NodeHandler) UpdateLabels(c *gin.Context) {
 }
 
 func (h *NodeHandler) DrainPlan(c *gin.Context) {
-	plan, err := h.cluster.GetDrainPlan(c.Param("id"))
+	plan, err := h.cluster.GetDrainPlanContext(c.Request.Context(), c.Param("id"))
 	if err != nil {
 		writeClusterError(c, err, http.StatusInternalServerError, model.CodeK8sAPIError)
 		return
@@ -78,7 +78,7 @@ func (h *NodeHandler) DrainNode(c *gin.Context) {
 		apiShared.BadRequest(c, "驱逐选项无效")
 		return
 	}
-	result, err := h.cluster.DrainNode(c.Param("id"), k8s.DrainOptions{DeleteEmptyDirData: request.DeleteEmptyDirData})
+	result, err := h.cluster.DrainNodeContext(c.Request.Context(), c.Param("id"), k8s.DrainOptions{DeleteEmptyDirData: request.DeleteEmptyDirData})
 	if err != nil {
 		apiShared.ErrorWithData(c, http.StatusConflict, model.CodeConflict, err.Error(), result)
 		return
@@ -102,7 +102,7 @@ func (h *NodeHandler) ForceDrainNode(c *gin.Context) {
 		apiShared.BadRequest(c, "强制驱逐选项无效")
 		return
 	}
-	result, err := h.cluster.ForceDrainNode(c.Param("id"), k8s.ForceDrainOptions{
+	result, err := h.cluster.ForceDrainNodeContext(c.Request.Context(), c.Param("id"), k8s.ForceDrainOptions{
 		DeleteEmptyDirData: request.DeleteEmptyDirData,
 		AcknowledgeRisk:    request.AcknowledgeRisk,
 		ConfirmNodeName:    strings.TrimSpace(request.ConfirmNodeName),
@@ -119,7 +119,7 @@ func (h *NodeHandler) ForceDrainNode(c *gin.Context) {
 }
 
 func (h *NodeHandler) RejoinNode(c *gin.Context) {
-	info, err := h.cluster.RejoinNode(c.Param("id"))
+	info, err := h.cluster.RejoinNodeContext(c.Request.Context(), c.Param("id"))
 	if err != nil {
 		writeClusterError(c, err, http.StatusConflict, model.CodeConflict)
 		return
@@ -128,7 +128,7 @@ func (h *NodeHandler) RejoinNode(c *gin.Context) {
 }
 
 func (h *NodeHandler) RemovalCheck(c *gin.Context) {
-	check, err := h.cluster.GetRemovalCheck(c.Param("id"))
+	check, err := h.cluster.GetRemovalCheckContext(c.Request.Context(), c.Param("id"))
 	if err != nil {
 		writeClusterError(c, err, http.StatusInternalServerError, model.CodeK8sAPIError)
 		return
@@ -137,7 +137,7 @@ func (h *NodeHandler) RemovalCheck(c *gin.Context) {
 }
 
 func (h *NodeHandler) RemoveNode(c *gin.Context) {
-	if err := h.cluster.RemoveNode(c.Param("id")); err != nil {
+	if err := h.cluster.RemoveNodeContext(c.Request.Context(), c.Param("id")); err != nil {
 		if errors.Is(err, cluster.ErrNodeBindingCleanup) {
 			apiShared.InternalError(c, err.Error())
 			return
@@ -168,7 +168,7 @@ func (h *NodeHandler) PreImport(c *gin.Context) {
 		apiShared.BadRequest(c, "invalid server id")
 		return
 	}
-	result, err := h.cluster.PreImportServer(id)
+	result, err := h.cluster.PreImportServerContext(c.Request.Context(), id)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			apiShared.NotFound(c, "server not found")

@@ -1,6 +1,7 @@
 package k8s
 
 import (
+	"context"
 	"fmt"
 
 	corev1 "k8s.io/api/core/v1"
@@ -9,7 +10,7 @@ import (
 )
 
 // UpsertDNSCredentialSecret writes one controlled provider Secret. Values must already pass adapter validation.
-func (c *Client) UpsertDNSCredentialSecret(providerID, namespace, name string, values map[string]string) error {
+func (c *Client) UpsertDNSCredentialSecretContext(ctx context.Context, providerID, namespace, name string, values map[string]string) error {
 	if c == nil || c.Clientset == nil {
 		return fmt.Errorf("Kubernetes 客户端未初始化")
 	}
@@ -22,9 +23,9 @@ func (c *Client) UpsertDNSCredentialSecret(providerID, namespace, name string, v
 	}
 	data := provider.SecretData(values)
 	secrets := c.Clientset.CoreV1().Secrets(namespace)
-	current, err := secrets.Get(c.Ctx(), name, metav1.GetOptions{})
+	current, err := secrets.Get(ctx, name, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
-		_, err = secrets.Create(c.Ctx(), &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace, Labels: map[string]string{"app.kubernetes.io/managed-by": "cylism-manager", "cylism.io/dns-provider": providerID}}, Type: corev1.SecretTypeOpaque, StringData: data}, metav1.CreateOptions{})
+		_, err = secrets.Create(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace, Labels: map[string]string{"app.kubernetes.io/managed-by": "cylism-manager", "cylism.io/dns-provider": providerID}}, Type: corev1.SecretTypeOpaque, StringData: data}, metav1.CreateOptions{})
 		return err
 	}
 	if err != nil {
@@ -36,15 +37,15 @@ func (c *Client) UpsertDNSCredentialSecret(providerID, namespace, name string, v
 	}
 	current.Labels["app.kubernetes.io/managed-by"] = "cylism-manager"
 	current.Labels["cylism.io/dns-provider"] = providerID
-	_, err = secrets.Update(c.Ctx(), current, metav1.UpdateOptions{})
+	_, err = secrets.Update(ctx, current, metav1.UpdateOptions{})
 	return err
 }
 
-func (c *Client) DeleteDNSCredentialSecret(namespace, name string) error {
+func (c *Client) DeleteDNSCredentialSecretContext(ctx context.Context, namespace, name string) error {
 	if c == nil || c.Clientset == nil {
 		return fmt.Errorf("Kubernetes 客户端未初始化")
 	}
-	err := c.Clientset.CoreV1().Secrets(namespace).Delete(c.Ctx(), name, metav1.DeleteOptions{})
+	err := c.Clientset.CoreV1().Secrets(namespace).Delete(ctx, name, metav1.DeleteOptions{})
 	if apierrors.IsNotFound(err) {
 		return nil
 	}

@@ -59,14 +59,13 @@ type IngressControllerStatus struct {
 	Namespace string `json:"namespace"`
 }
 
-// ListIngresses 列出所有标准 Ingress
-func (c *Client) ListIngresses(ns string) ([]IngressStdInfo, error) {
+func (c *Client) ListIngressesContext(ctx context.Context, ns string) ([]IngressStdInfo, error) {
 	var list *networkingv1.IngressList
 	var err error
 	if ns == "" {
-		list, err = c.Clientset.NetworkingV1().Ingresses("").List(c.ctx, metav1.ListOptions{})
+		list, err = c.Clientset.NetworkingV1().Ingresses("").List(ctx, metav1.ListOptions{})
 	} else {
-		list, err = c.Clientset.NetworkingV1().Ingresses(ns).List(c.ctx, metav1.ListOptions{})
+		list, err = c.Clientset.NetworkingV1().Ingresses(ns).List(ctx, metav1.ListOptions{})
 	}
 	if err != nil {
 		return nil, fmt.Errorf("list ingresses: %w", err)
@@ -79,17 +78,15 @@ func (c *Client) ListIngresses(ns string) ([]IngressStdInfo, error) {
 	return result, nil
 }
 
-// GetIngress 获取单个 Ingress 详情
-func (c *Client) GetIngress(namespace, name string) (*IngressStdDetail, error) {
-	ing, err := c.Clientset.NetworkingV1().Ingresses(namespace).Get(c.ctx, name, metav1.GetOptions{})
+func (c *Client) GetIngressContext(ctx context.Context, namespace, name string) (*IngressStdDetail, error) {
+	ing, err := c.Clientset.NetworkingV1().Ingresses(namespace).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("get ingress %s/%s: %w", namespace, name, err)
 	}
 	return ingressStdToDetail(ing), nil
 }
 
-// CreateIngress 创建 Ingress
-func (c *Client) CreateIngress(namespace, name, host, path, svcName, svcPort string) (*IngressStdDetail, error) {
+func (c *Client) CreateIngressContext(ctx context.Context, namespace, name, host, path, svcName, svcPort string) (*IngressStdDetail, error) {
 	pathType := networkingv1.PathTypePrefix
 	backendPort := networkingv1.ServiceBackendPort{}
 	if numPort, err := strconv.Atoi(svcPort); err == nil {
@@ -128,21 +125,15 @@ func (c *Client) CreateIngress(namespace, name, host, path, svcName, svcPort str
 		},
 	}
 
-	created, err := c.Clientset.NetworkingV1().Ingresses(namespace).Create(c.ctx, ing, metav1.CreateOptions{})
+	created, err := c.Clientset.NetworkingV1().Ingresses(namespace).Create(ctx, ing, metav1.CreateOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("create ingress: %w", err)
 	}
 	return ingressStdToDetail(created), nil
 }
 
-// DeleteIngress 删除 Ingress
-func (c *Client) DeleteIngress(namespace, name string) error {
-	return c.Clientset.NetworkingV1().Ingresses(namespace).Delete(c.ctx, name, metav1.DeleteOptions{})
-}
-
-// DetectIngressController 检测 Ingress Controller
-func (c *Client) DetectIngressController() (*IngressControllerStatus, error) {
-	return c.DetectIngressControllerContext(c.Ctx())
+func (c *Client) DeleteIngressContext(ctx context.Context, namespace, name string) error {
+	return c.Clientset.NetworkingV1().Ingresses(namespace).Delete(ctx, name, metav1.DeleteOptions{})
 }
 
 // DetectIngressControllerContext keeps the cache while allowing release
@@ -161,10 +152,6 @@ func (c *Client) DetectIngressControllerContext(ctx context.Context) (*IngressCo
 		c.ingressControllerCacheExpiry = time.Now().Add(ingressControllerCacheTTL)
 	}
 	return status, err
-}
-
-func (c *Client) detectIngressController() (*IngressControllerStatus, error) {
-	return c.detectIngressControllerContext(c.Ctx())
 }
 
 func (c *Client) detectIngressControllerContext(ctx context.Context) (*IngressControllerStatus, error) {

@@ -59,7 +59,7 @@ func (h *StorageHandler) CreateHostDirectoryPVCImport(c *gin.Context) {
 		apiShared.NotFound(c, "环境不存在")
 		return
 	}
-	claim, err := h.pvc.GetManagedPVC(environment.Namespace, c.Param("name"), environment.ID)
+	claim, err := h.pvc.GetManagedPVCContext(c.Request.Context(), environment.Namespace, c.Param("name"), environment.ID)
 	if err != nil {
 		apiShared.NotFound(c, err.Error())
 		return
@@ -124,7 +124,7 @@ func (h *StorageHandler) CreateHostDirectoryPVCImport(c *gin.Context) {
 		apiShared.DBError(c, "初始化目录导入记录失败")
 		return
 	}
-	if err := h.Service.StartImport(task.ID, request.ConfirmDataReplace); err != nil {
+	if err := h.Service.StartImport(c.Request.Context(), task.ID, request.ConfirmDataReplace); err != nil {
 		apiShared.InternalError(c, err.Error())
 		return
 	}
@@ -185,17 +185,17 @@ func (h *StorageHandler) DeleteHostDirectoryPVCImportBackup(c *gin.Context) {
 		apiShared.ValidationError(c, err.Error())
 		return
 	}
-	if err := h.deleteHostDirectoryImportArchive(source, task.BackupPath); err != nil {
+	if err := h.deleteHostDirectoryImportArchive(c.Request.Context(), source, task.BackupPath); err != nil {
 		apiShared.ValidationError(c, err.Error())
 		return
 	}
 	if task.TargetBackupChecksum != "" && target.ID != source.ID {
-		if err := h.deleteHostDirectoryImportArchive(target, task.TargetBackupPath); err != nil {
+		if err := h.deleteHostDirectoryImportArchive(c.Request.Context(), target, task.TargetBackupPath); err != nil {
 			apiShared.ValidationError(c, err.Error())
 			return
 		}
 	} else if task.TargetBackupChecksum != "" {
-		if err := h.deleteHostDirectoryImportArchive(source, task.TargetBackupPath); err != nil {
+		if err := h.deleteHostDirectoryImportArchive(c.Request.Context(), source, task.TargetBackupPath); err != nil {
 			apiShared.ValidationError(c, err.Error())
 			return
 		}
@@ -209,8 +209,8 @@ func (h *StorageHandler) DeleteHostDirectoryPVCImportBackup(c *gin.Context) {
 	model.Success(c, task)
 }
 
-func (h *StorageHandler) runHostDirectoryPVCImport(id uint, replaceTarget bool) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Hour)
+func (h *StorageHandler) runHostDirectoryPVCImport(parent context.Context, id uint, replaceTarget bool) {
+	ctx, cancel := context.WithTimeout(parent, 2*time.Hour)
 	defer cancel()
 	task, err := h.Service.GetImport(id)
 	if err != nil {
@@ -223,7 +223,7 @@ func (h *StorageHandler) runHostDirectoryPVCImport(id uint, replaceTarget bool) 
 	}
 	environment, source, target, claim, targetHasData, err := h.preflightHostDirectoryPVCImport(ctx, task, replaceTarget)
 	if err != nil {
-		h.failHostDirectoryPVCImport(task, err, nil)
+		h.failHostDirectoryPVCImport(ctx, task, err, nil)
 		return
 	}
 	if err := h.Service.UpdateImport(task, model.PVCImportStatusStoppingWorkload, "正在停止引用 PVC 的工作负载"); err != nil {
@@ -231,56 +231,56 @@ func (h *StorageHandler) runHostDirectoryPVCImport(id uint, replaceTarget bool) 
 	}
 	replicas, err := h.stopPVCImportWorkloads(ctx, environment.Namespace, claim.Name)
 	if err != nil {
-		h.failHostDirectoryPVCImport(task, err, nil)
+		h.failHostDirectoryPVCImport(ctx, task, err, nil)
 		return
 	}
 	value, _ := json.Marshal(replicas)
 	task.ApplicationReplicas = string(value)
 	_ = h.Service.UpdateImport(task, model.PVCImportStatusBackingUp, "正在创建本地归档备份")
-	backupChecksum, err := h.createHostDirectoryImportArchive(source, task.SourcePath, task.BackupPath)
+	backupChecksum, err := h.createHostDirectoryImportArchive(ctx, source, task.SourcePath, task.BackupPath)
 	if err != nil {
-		h.failHostDirectoryPVCImport(task, err, replicas)
+		h.failHostDirectoryPVCImport(ctx, task, err, replicas)
 		return
 	}
 	task.BackupChecksum = backupChecksum
 	if targetHasData {
-		targetChecksum, err := h.createHostDirectoryImportArchive(target, task.TargetPath, task.TargetBackupPath)
+		targetChecksum, err := h.createHostDirectoryImportArchive(ctx, target, task.TargetPath, task.TargetBackupPath)
 		if err != nil {
-			h.failHostDirectoryPVCImport(task, err, replicas)
+			h.failHostDirectoryPVCImport(ctx, task, err, replicas)
 			return
 		}
 		task.TargetBackupChecksum = targetChecksum
 	}
-	if err := h.clearHostDirectoryImportTarget(target, task.TargetPath); err != nil {
-		h.failHostDirectoryPVCImport(task, err, replicas)
+	if err := h.clearHostDirectoryImportTarget(ctx, target, task.TargetPath); err != nil {
+		h.failHostDirectoryPVCImport(ctx, task, err, replicas)
 		return
 	}
 	if err := h.Service.UpdateImport(task, model.PVCImportStatusCopying, "正在将宿主机目录复制到 PVC"); err != nil {
 		return
 	}
-	bytesCopied, err := streamPVCData(source, target, task.SourcePath, task.TargetPath, h.encKey)
+	bytesCopied, err := streamPVCData(ctx, source, target, task.SourcePath, task.TargetPath, h.encKey)
 	task.BytesCopied = bytesCopied
 	if err != nil {
-		h.rollbackHostDirectoryImportTarget(task, target)
-		h.failHostDirectoryPVCImport(task, err, replicas)
+		h.rollbackHostDirectoryImportTarget(ctx, task, target)
+		h.failHostDirectoryPVCImport(ctx, task, err, replicas)
 		return
 	}
 	if err := h.Service.UpdateImport(task, model.PVCImportStatusVerifying, "正在校验源目录与 PVC 内容"); err != nil {
 		return
 	}
-	sourceChecksum, err := h.hostDirectoryContentChecksum(source, task.SourcePath)
+	sourceChecksum, err := h.hostDirectoryContentChecksum(ctx, source, task.SourcePath)
 	if err != nil {
-		h.rollbackHostDirectoryImportTarget(task, target)
-		h.failHostDirectoryPVCImport(task, err, replicas)
+		h.rollbackHostDirectoryImportTarget(ctx, task, target)
+		h.failHostDirectoryPVCImport(ctx, task, err, replicas)
 		return
 	}
-	targetChecksum, err := h.hostDirectoryContentChecksum(target, task.TargetPath)
+	targetChecksum, err := h.hostDirectoryContentChecksum(ctx, target, task.TargetPath)
 	if err != nil || sourceChecksum != targetChecksum {
 		if err == nil {
 			err = fmt.Errorf("目录校验失败：源与 PVC 内容摘要不一致")
 		}
-		h.rollbackHostDirectoryImportTarget(task, target)
-		h.failHostDirectoryPVCImport(task, err, replicas)
+		h.rollbackHostDirectoryImportTarget(ctx, task, target)
+		h.failHostDirectoryPVCImport(ctx, task, err, replicas)
 		return
 	}
 	task.SourceChecksum, task.TargetChecksum = sourceChecksum, targetChecksum
@@ -290,7 +290,7 @@ func (h *StorageHandler) runHostDirectoryPVCImport(id uint, replaceTarget bool) 
 		return
 	}
 	if err := h.restorePVCImportWorkloads(ctx, environment.Namespace, replicas); err != nil {
-		h.failHostDirectoryPVCImport(task, err, replicas)
+		h.failHostDirectoryPVCImport(ctx, task, err, replicas)
 		return
 	}
 	_ = h.Service.UpdateImport(task, model.PVCImportStatusSucceeded, "目录已导入 PVC 并完成校验，备份可按需删除")
@@ -301,7 +301,7 @@ func (h *StorageHandler) preflightHostDirectoryPVCImport(ctx context.Context, ta
 	if err != nil {
 		return nil, nil, nil, nil, false, err
 	}
-	claim, err := h.pvc.GetManagedPVC(environment.Namespace, task.PVCName, environment.ID)
+	claim, err := h.pvc.GetManagedPVCContext(ctx, environment.Namespace, task.PVCName, environment.ID)
 	if err != nil || claim.Phase != string(corev1.ClaimBound) || !claim.IsLocal || claim.BoundNode != task.TargetNodeName || claim.LocalPath != task.TargetPath {
 		if err == nil {
 			err = fmt.Errorf("目标 PVC 绑定状态已变化")
@@ -321,11 +321,11 @@ func (h *StorageHandler) preflightHostDirectoryPVCImport(ctx context.Context, ta
 			return nil, nil, nil, nil, false, fmt.Errorf("服务器 %q 必须使用 SSH 密钥认证", server.Name)
 		}
 	}
-	if out, err := sshExec(20*time.Second, append(buildSSHArgs(source, h.encKey, source.Host), "sudo -n test -d "+storageShellQuote(task.SourcePath)+" && command -v tar >/dev/null && command -v sha256sum >/dev/null")); err != nil {
+	if out, err := sshExec(ctx, 20*time.Second, append(buildSSHArgs(source, h.encKey, source.Host), "sudo -n test -d "+storageShellQuote(task.SourcePath)+" && command -v tar >/dev/null && command -v sha256sum >/dev/null")); err != nil {
 		return nil, nil, nil, nil, false, fmt.Errorf("源目录或工具预检失败: %s", strings.TrimSpace(string(out)))
 	}
 	command := "sudo -n test -d " + storageShellQuote(task.TargetPath) + " && command -v tar >/dev/null && command -v sha256sum >/dev/null && if sudo -n find " + storageShellQuote(task.TargetPath) + " -mindepth 1 -maxdepth 1 -print -quit | grep -q .; then echo nonempty; else echo empty; fi"
-	out, err := sshExec(20*time.Second, append(buildSSHArgs(target, h.encKey, target.Host), command))
+	out, err := sshExec(ctx, 20*time.Second, append(buildSSHArgs(target, h.encKey, target.Host), command))
 	if err != nil {
 		return nil, nil, nil, nil, false, fmt.Errorf("目标 PVC 或工具预检失败: %s", strings.TrimSpace(string(out)))
 	}
@@ -377,9 +377,9 @@ func (h *StorageHandler) restorePVCImportWorkloads(ctx context.Context, namespac
 	return nil
 }
 
-func (h *StorageHandler) createHostDirectoryImportArchive(server *model.Server, sourcePath, archivePath string) (string, error) {
+func (h *StorageHandler) createHostDirectoryImportArchive(ctx context.Context, server *model.Server, sourcePath, archivePath string) (string, error) {
 	command := "sudo -n mkdir -p " + storageShellQuote(path.Dir(archivePath)) + " && sudo -n rm -f " + storageShellQuote(archivePath) + " && sudo -n tar --numeric-owner -C " + storageShellQuote(sourcePath) + " -czf " + storageShellQuote(archivePath) + " . && sudo -n sha256sum " + storageShellQuote(archivePath) + " | awk '{print $1}'"
-	out, err := sshExec(30*time.Minute, append(buildSSHArgs(server, h.encKey, server.Host), command))
+	out, err := sshExec(ctx, 30*time.Minute, append(buildSSHArgs(server, h.encKey, server.Host), command))
 	if err != nil {
 		return "", fmt.Errorf("创建本地备份失败: %s", strings.TrimSpace(string(out)))
 	}
@@ -390,9 +390,9 @@ func (h *StorageHandler) createHostDirectoryImportArchive(server *model.Server, 
 	return checksum, nil
 }
 
-func (h *StorageHandler) hostDirectoryContentChecksum(server *model.Server, directory string) (string, error) {
+func (h *StorageHandler) hostDirectoryContentChecksum(ctx context.Context, server *model.Server, directory string) (string, error) {
 	command := "LC_ALL=C sudo -n tar --sort=name --numeric-owner --mtime='UTC 1970-01-01' -C " + storageShellQuote(directory) + " -cf - . | sha256sum | awk '{print $1}'"
-	out, err := sshExec(30*time.Minute, append(buildSSHArgs(server, h.encKey, server.Host), command))
+	out, err := sshExec(ctx, 30*time.Minute, append(buildSSHArgs(server, h.encKey, server.Host), command))
 	if err != nil {
 		return "", fmt.Errorf("计算目录校验摘要失败: %s", strings.TrimSpace(string(out)))
 	}
@@ -403,38 +403,38 @@ func (h *StorageHandler) hostDirectoryContentChecksum(server *model.Server, dire
 	return checksum, nil
 }
 
-func (h *StorageHandler) clearHostDirectoryImportTarget(server *model.Server, targetPath string) error {
+func (h *StorageHandler) clearHostDirectoryImportTarget(ctx context.Context, server *model.Server, targetPath string) error {
 	command := "sudo -n find " + storageShellQuote(targetPath) + " -mindepth 1 -maxdepth 1 -exec rm -rf {} +"
-	out, err := sshExec(30*time.Second, append(buildSSHArgs(server, h.encKey, server.Host), command))
+	out, err := sshExec(ctx, 30*time.Second, append(buildSSHArgs(server, h.encKey, server.Host), command))
 	if err != nil {
 		return fmt.Errorf("清空目标 PVC 失败: %s", strings.TrimSpace(string(out)))
 	}
 	return nil
 }
 
-func (h *StorageHandler) rollbackHostDirectoryImportTarget(task *model.HostDirectoryPVCImport, target *model.Server) {
+func (h *StorageHandler) rollbackHostDirectoryImportTarget(ctx context.Context, task *model.HostDirectoryPVCImport, target *model.Server) {
 	if task.TargetBackupChecksum == "" || task.TargetBackupPath == "" {
 		return
 	}
 	command := "sudo -n find " + storageShellQuote(task.TargetPath) + " -mindepth 1 -maxdepth 1 -exec rm -rf {} + && sudo -n tar -xzf " + storageShellQuote(task.TargetBackupPath) + " -C " + storageShellQuote(task.TargetPath)
-	_, _ = sshExec(30*time.Minute, append(buildSSHArgs(target, h.encKey, target.Host), command))
+	_, _ = sshExec(ctx, 30*time.Minute, append(buildSSHArgs(target, h.encKey, target.Host), command))
 }
 
-func (h *StorageHandler) failHostDirectoryPVCImport(task *model.HostDirectoryPVCImport, cause error, replicas map[string]int32) {
+func (h *StorageHandler) failHostDirectoryPVCImport(ctx context.Context, task *model.HostDirectoryPVCImport, cause error, replicas map[string]int32) {
 	if len(replicas) > 0 && h.migration != nil {
 		if environment, err := h.store.GetEnvironmentByID(task.EnvironmentID); err == nil {
-			_ = h.restorePVCImportWorkloads(context.Background(), environment.Namespace, replicas)
+			_ = h.restorePVCImportWorkloads(ctx, environment.Namespace, replicas)
 		}
 	}
 	_ = h.Service.UpdateImport(task, model.PVCImportStatusFailed, cause.Error())
 }
 
-func (h *StorageHandler) deleteHostDirectoryImportArchive(server *model.Server, archivePath string) error {
+func (h *StorageHandler) deleteHostDirectoryImportArchive(ctx context.Context, server *model.Server, archivePath string) error {
 	cleaned := path.Clean(archivePath)
 	if !strings.HasPrefix(cleaned, hostDirectoryImportBackupRoot+"/") || !strings.HasSuffix(cleaned, ".tar.gz") {
 		return fmt.Errorf("备份路径不属于平台管理目录")
 	}
-	out, err := sshExec(30*time.Second, append(buildSSHArgs(server, h.encKey, server.Host), "sudo -n rm -f "+storageShellQuote(cleaned)))
+	out, err := sshExec(ctx, 30*time.Second, append(buildSSHArgs(server, h.encKey, server.Host), "sudo -n rm -f "+storageShellQuote(cleaned)))
 	if err != nil {
 		return fmt.Errorf("删除本地备份失败: %s", strings.TrimSpace(string(out)))
 	}

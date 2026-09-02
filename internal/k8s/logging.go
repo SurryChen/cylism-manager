@@ -60,7 +60,7 @@ func (c *Client) LoggingStatus() *LoggingStatus {
 		return status
 	}
 
-	loki, err := c.Clientset.AppsV1().StatefulSets(victoriaMetricsNamespace).Get(c.Ctx(), lokiName, metav1.GetOptions{})
+	loki, err := c.Clientset.AppsV1().StatefulSets(victoriaMetricsNamespace).Get(c.ctx, lokiName, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
 		return status
 	}
@@ -77,14 +77,14 @@ func (c *Client) LoggingStatus() *LoggingStatus {
 		status.RetentionDays, _ = strconv.Atoi(raw)
 	}
 	status.PVCName = lokiPVCName
-	if claim, claimErr := c.Clientset.CoreV1().PersistentVolumeClaims(victoriaMetricsNamespace).Get(c.Ctx(), lokiPVCName, metav1.GetOptions{}); claimErr == nil {
+	if claim, claimErr := c.Clientset.CoreV1().PersistentVolumeClaims(victoriaMetricsNamespace).Get(c.ctx, lokiPVCName, metav1.GetOptions{}); claimErr == nil {
 		status.Storage = claim.Spec.Resources.Requests.Storage().String()
 		if claim.Spec.StorageClassName != nil {
 			status.StorageClass = *claim.Spec.StorageClassName
 		}
 	}
 
-	alloy, alloyErr := c.Clientset.AppsV1().DaemonSets(victoriaMetricsNamespace).Get(c.Ctx(), alloyName, metav1.GetOptions{})
+	alloy, alloyErr := c.Clientset.AppsV1().DaemonSets(victoriaMetricsNamespace).Get(c.ctx, alloyName, metav1.GetOptions{})
 	if apierrors.IsNotFound(alloyErr) {
 		if status.LokiReady > 0 {
 			status.State = LoggingStateDegraded
@@ -115,14 +115,14 @@ func (c *Client) LoggingStatus() *LoggingStatus {
 }
 
 // InstallLogging creates or updates the platform-owned Loki and Alloy resources.
-func (c *Client) InstallLogging(config LoggingConfig) (*LoggingStatus, error) {
+func (c *Client) installLogging(config LoggingConfig) (*LoggingStatus, error) {
 	if c == nil || c.Clientset == nil {
 		return c.LoggingStatus(), fmt.Errorf("Kubernetes 客户端未初始化")
 	}
 	if err := normalizeLoggingConfig(&config); err != nil {
 		return c.LoggingStatus(), err
 	}
-	existing, err := c.Clientset.AppsV1().StatefulSets(victoriaMetricsNamespace).Get(c.Ctx(), lokiName, metav1.GetOptions{})
+	existing, err := c.Clientset.AppsV1().StatefulSets(victoriaMetricsNamespace).Get(c.ctx, lokiName, metav1.GetOptions{})
 	if err != nil && !apierrors.IsNotFound(err) {
 		return c.LoggingStatus(), fmt.Errorf("读取 Loki 配置失败: %w", err)
 	}
@@ -135,7 +135,7 @@ func (c *Client) InstallLogging(config LoggingConfig) (*LoggingStatus, error) {
 		config.Storage = ""
 		config.StorageClassName = ""
 	}
-	node, err := c.Clientset.CoreV1().Nodes().Get(c.Ctx(), config.NodeName, metav1.GetOptions{})
+	node, err := c.Clientset.CoreV1().Nodes().Get(c.ctx, config.NodeName, metav1.GetOptions{})
 	if err != nil {
 		return c.LoggingStatus(), fmt.Errorf("读取日志数据节点失败: %w", err)
 	}
@@ -167,31 +167,31 @@ func (c *Client) InstallLogging(config LoggingConfig) (*LoggingStatus, error) {
 }
 
 // UninstallLogging removes compute and configuration while retaining the Loki PVC.
-func (c *Client) UninstallLogging() error {
+func (c *Client) uninstallLogging() error {
 	if c == nil || c.Clientset == nil {
 		return fmt.Errorf("Kubernetes 客户端未初始化")
 	}
 	resources := []func() error{
 		func() error {
-			return c.Clientset.AppsV1().DaemonSets(victoriaMetricsNamespace).Delete(c.Ctx(), alloyName, metav1.DeleteOptions{})
+			return c.Clientset.AppsV1().DaemonSets(victoriaMetricsNamespace).Delete(c.ctx, alloyName, metav1.DeleteOptions{})
 		},
 		func() error {
-			return c.Clientset.AppsV1().StatefulSets(victoriaMetricsNamespace).Delete(c.Ctx(), lokiName, metav1.DeleteOptions{})
+			return c.Clientset.AppsV1().StatefulSets(victoriaMetricsNamespace).Delete(c.ctx, lokiName, metav1.DeleteOptions{})
 		},
 		func() error {
-			return c.Clientset.CoreV1().Services(victoriaMetricsNamespace).Delete(c.Ctx(), lokiName, metav1.DeleteOptions{})
+			return c.Clientset.CoreV1().Services(victoriaMetricsNamespace).Delete(c.ctx, lokiName, metav1.DeleteOptions{})
 		},
 		func() error {
-			return c.Clientset.CoreV1().ConfigMaps(victoriaMetricsNamespace).Delete(c.Ctx(), loggingConfigName, metav1.DeleteOptions{})
+			return c.Clientset.CoreV1().ConfigMaps(victoriaMetricsNamespace).Delete(c.ctx, loggingConfigName, metav1.DeleteOptions{})
 		},
 		func() error {
-			return c.Clientset.RbacV1().ClusterRoleBindings().Delete(c.Ctx(), alloyName, metav1.DeleteOptions{})
+			return c.Clientset.RbacV1().ClusterRoleBindings().Delete(c.ctx, alloyName, metav1.DeleteOptions{})
 		},
 		func() error {
-			return c.Clientset.RbacV1().ClusterRoles().Delete(c.Ctx(), alloyName, metav1.DeleteOptions{})
+			return c.Clientset.RbacV1().ClusterRoles().Delete(c.ctx, alloyName, metav1.DeleteOptions{})
 		},
 		func() error {
-			return c.Clientset.CoreV1().ServiceAccounts(victoriaMetricsNamespace).Delete(c.Ctx(), alloyName, metav1.DeleteOptions{})
+			return c.Clientset.CoreV1().ServiceAccounts(victoriaMetricsNamespace).Delete(c.ctx, alloyName, metav1.DeleteOptions{})
 		},
 	}
 	for _, remove := range resources {
@@ -224,7 +224,7 @@ func normalizeLoggingConfig(config *LoggingConfig) error {
 
 func ensureAlloyAccess(c *Client) error {
 	serviceAccount := &corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: alloyName, Namespace: victoriaMetricsNamespace, Labels: alloyLabels()}}
-	if _, err := c.Clientset.CoreV1().ServiceAccounts(victoriaMetricsNamespace).Create(c.Ctx(), serviceAccount, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
+	if _, err := c.Clientset.CoreV1().ServiceAccounts(victoriaMetricsNamespace).Create(c.ctx, serviceAccount, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
 		return fmt.Errorf("创建 Alloy 服务账号失败: %w", err)
 	}
 	role := &rbacv1.ClusterRole{ObjectMeta: metav1.ObjectMeta{Name: alloyName, Labels: alloyLabels()}, Rules: []rbacv1.PolicyRule{{APIGroups: []string{""}, Resources: []string{"pods", "namespaces"}, Verbs: []string{"get", "list", "watch"}}}}
@@ -240,7 +240,7 @@ func ensureAlloyAccess(c *Client) error {
 
 func upsertLokiPVC(c *Client, config LoggingConfig) error {
 	claims := c.Clientset.CoreV1().PersistentVolumeClaims(victoriaMetricsNamespace)
-	existing, err := claims.Get(c.Ctx(), lokiPVCName, metav1.GetOptions{})
+	existing, err := claims.Get(c.ctx, lokiPVCName, metav1.GetOptions{})
 	if err == nil {
 		labels := existing.Labels
 		if labels == nil {
@@ -253,7 +253,7 @@ func upsertLokiPVC(c *Client, config LoggingConfig) error {
 			return nil
 		}
 		existing.Labels = labels
-		if _, err := claims.Update(c.Ctx(), existing, metav1.UpdateOptions{}); err != nil {
+		if _, err := claims.Update(c.ctx, existing, metav1.UpdateOptions{}); err != nil {
 			return fmt.Errorf("更新 Loki 存储卷归属失败: %w", err)
 		}
 		return nil
@@ -269,7 +269,7 @@ func upsertLokiPVC(c *Client, config LoggingConfig) error {
 	if config.StorageClassName != "" {
 		claim.Spec.StorageClassName = &config.StorageClassName
 	}
-	if _, err := claims.Create(c.Ctx(), claim, metav1.CreateOptions{}); err != nil {
+	if _, err := claims.Create(c.ctx, claim, metav1.CreateOptions{}); err != nil {
 		return fmt.Errorf("创建 Loki 存储卷失败: %w", err)
 	}
 	return nil
@@ -284,17 +284,17 @@ func upsertLoggingConfig(c *Client, config LoggingConfig) error {
 
 func upsertLokiService(c *Client) error {
 	services := c.Clientset.CoreV1().Services(victoriaMetricsNamespace)
-	current, err := services.Get(c.Ctx(), lokiName, metav1.GetOptions{})
+	current, err := services.Get(c.ctx, lokiName, metav1.GetOptions{})
 	service := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: lokiName, Namespace: victoriaMetricsNamespace, Labels: lokiLabels()}, Spec: corev1.ServiceSpec{ClusterIP: corev1.ClusterIPNone, Selector: lokiLabels(), Ports: []corev1.ServicePort{{Name: "http", Port: 3100, TargetPort: intstr.FromInt(3100)}}}}
 	if apierrors.IsNotFound(err) {
-		_, err = services.Create(c.Ctx(), service, metav1.CreateOptions{})
+		_, err = services.Create(c.ctx, service, metav1.CreateOptions{})
 	} else if err == nil {
 		service.ResourceVersion = current.ResourceVersion
 		service.Spec.ClusterIP = current.Spec.ClusterIP
 		service.Spec.ClusterIPs = current.Spec.ClusterIPs
 		service.Spec.IPFamilies = current.Spec.IPFamilies
 		service.Spec.IPFamilyPolicy = current.Spec.IPFamilyPolicy
-		_, err = services.Update(c.Ctx(), service, metav1.UpdateOptions{})
+		_, err = services.Update(c.ctx, service, metav1.UpdateOptions{})
 	}
 	if err != nil {
 		return fmt.Errorf("创建 Loki Service 失败: %w", err)
@@ -326,12 +326,12 @@ func upsertLokiStatefulSet(c *Client, config LoggingConfig) error {
 			}},
 		}},
 	}}
-	current, err := c.Clientset.AppsV1().StatefulSets(victoriaMetricsNamespace).Get(c.Ctx(), lokiName, metav1.GetOptions{})
+	current, err := c.Clientset.AppsV1().StatefulSets(victoriaMetricsNamespace).Get(c.ctx, lokiName, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
-		_, err = c.Clientset.AppsV1().StatefulSets(victoriaMetricsNamespace).Create(c.Ctx(), statefulSet, metav1.CreateOptions{})
+		_, err = c.Clientset.AppsV1().StatefulSets(victoriaMetricsNamespace).Create(c.ctx, statefulSet, metav1.CreateOptions{})
 	} else if err == nil {
 		statefulSet.ResourceVersion = current.ResourceVersion
-		_, err = c.Clientset.AppsV1().StatefulSets(victoriaMetricsNamespace).Update(c.Ctx(), statefulSet, metav1.UpdateOptions{})
+		_, err = c.Clientset.AppsV1().StatefulSets(victoriaMetricsNamespace).Update(c.ctx, statefulSet, metav1.UpdateOptions{})
 	}
 	if err != nil {
 		return fmt.Errorf("创建 Loki StatefulSet 失败: %w", err)
@@ -362,12 +362,12 @@ func upsertAlloyDaemonSet(c *Client) error {
 			}},
 		}},
 	}}
-	current, err := c.Clientset.AppsV1().DaemonSets(victoriaMetricsNamespace).Get(c.Ctx(), alloyName, metav1.GetOptions{})
+	current, err := c.Clientset.AppsV1().DaemonSets(victoriaMetricsNamespace).Get(c.ctx, alloyName, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
-		_, err = c.Clientset.AppsV1().DaemonSets(victoriaMetricsNamespace).Create(c.Ctx(), daemonSet, metav1.CreateOptions{})
+		_, err = c.Clientset.AppsV1().DaemonSets(victoriaMetricsNamespace).Create(c.ctx, daemonSet, metav1.CreateOptions{})
 	} else if err == nil {
 		daemonSet.ResourceVersion = current.ResourceVersion
-		_, err = c.Clientset.AppsV1().DaemonSets(victoriaMetricsNamespace).Update(c.Ctx(), daemonSet, metav1.UpdateOptions{})
+		_, err = c.Clientset.AppsV1().DaemonSets(victoriaMetricsNamespace).Update(c.ctx, daemonSet, metav1.UpdateOptions{})
 	}
 	if err != nil {
 		return fmt.Errorf("创建 Alloy DaemonSet 失败: %w", err)

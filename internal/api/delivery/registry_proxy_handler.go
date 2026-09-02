@@ -54,12 +54,11 @@ func proxyInput(req registryProxyRequest) registryservice.ProxyInput {
 	}
 }
 
-func NewRegistryProxyHandler(repo repository.RegistryProxyRepository, encKey []byte, client *k8sclient.Client) *RegistryProxyHandler {
+func NewRegistryProxyHandler(repo repository.RegistryProxyRepository, encKey []byte, resources k8sclient.RegistryProxyResourceReconciler, diagnostics k8sclient.RegistryProxyDiagnostics) *RegistryProxyHandler {
 	h := &RegistryProxyHandler{store: repo}
 	h.encKey = encKey
 	h.service = registryservice.NewProxyService(repo, h.encKey)
-	reconciler := k8sclient.NewRegistryProxyReconciler(client)
-	h.resources, h.diagnostics = reconciler, reconciler
+	h.resources, h.diagnostics = resources, diagnostics
 	return h
 }
 
@@ -253,22 +252,6 @@ func (h *RegistryProxyHandler) MigrateResourceName(c *gin.Context) {
 		return
 	}
 	model.SuccessWithMessage(c, proxy, "旧 Docker Hub 代理已按新资源名重建，等待新 Pod 就绪")
-}
-
-func (h *RegistryProxyHandler) Reconcile() {
-	ticker := time.NewTicker(15 * time.Minute)
-	defer ticker.Stop()
-	for range ticker.C {
-		if !h.k8sReady() {
-			continue
-		}
-		proxies, err := h.store.ListRegistryProxies()
-		if err == nil {
-			for index := range proxies {
-				h.refreshStatus(context.Background(), &proxies[index])
-			}
-		}
-	}
 }
 
 func (h *RegistryProxyHandler) refreshStatus(ctx context.Context, proxy *model.RegistryProxy) {

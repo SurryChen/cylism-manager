@@ -23,18 +23,18 @@ func TestNewWorkloadMethods_Exist(t *testing.T) {
 	}
 
 	// 验证关键方法可调用（nil clientset 会在调用时 panic，仅验证编译通过）
-	_ = client.ListDeployments
-	_ = client.GetDeployment
-	_ = client.ListDeploymentPods
-	_ = client.ListDeploymentRevisions
-	_ = client.ScaleDeployment
-	_ = client.UpdateDeploymentImage
-	_ = client.RollbackDeployment
-	_ = client.ListStatefulSets
-	_ = client.GetStatefulSet
-	_ = client.ScaleStatefulSet
-	_ = client.ListDaemonSets
-	_ = client.GetDaemonSet
+	_ = client.ListDeploymentsContext
+	_ = client.GetDeploymentContext
+	_ = client.ListDeploymentPodsContext
+	_ = client.ListDeploymentRevisionsContext
+	_ = client.ScaleDeploymentContext
+	_ = client.UpdateDeploymentImageContext
+	_ = client.RollbackDeploymentContext
+	_ = client.ListStatefulSetsContext
+	_ = client.GetStatefulSetContext
+	_ = client.ScaleStatefulSetContext
+	_ = client.ListDaemonSetsContext
+	_ = client.GetDaemonSetContext
 }
 
 func TestDeploymentInfo_FieldsComplete(t *testing.T) {

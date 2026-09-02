@@ -15,7 +15,9 @@ import (
 )
 
 func TestApplicationHandlerDiscoversCapabilityAndSanitizedRuntime(t *testing.T) {
-	r, s := setupApplicationRouter()
+	replicas := int32(2)
+	clientset := k8sfake.NewSimpleClientset()
+	r, s := setupApplicationRouter(&k8sclient.Client{Clientset: clientset})
 	app := createApplicationForReleaseRuntimeTest(t, s)
 	if _, err := s.ReplaceApplicationCapabilities(app.ID, []string{"hysteria2"}); err != nil {
 		t.Fatal(err)
@@ -23,19 +25,24 @@ func TestApplicationHandlerDiscoversCapabilityAndSanitizedRuntime(t *testing.T) 
 	if err := s.CreateRelease(&model.Release{ApplicationID: app.ID, Sequence: 4, Version: "2.12.1", Image: "ghcr.io/example/hysteria:2.12.1", DesiredSpec: `{"secrets":{"api":"private"}}`, Status: model.ReleaseStatusSucceeded, CreatedBy: 1}); err != nil {
 		t.Fatal(err)
 	}
-	originalK8s := K8s
-	replicas := int32(2)
-	K8s = &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(
-		&corev1.Service{
-			ObjectMeta: metav1.ObjectMeta{Name: app.Name, Namespace: app.Environment.Namespace},
-			Spec:       corev1.ServiceSpec{Type: corev1.ServiceTypeLoadBalancer, Ports: []corev1.ServicePort{{Name: "proxy", Port: 8443, TargetPort: intstr.FromInt32(8443), Protocol: corev1.ProtocolUDP}, {Name: "traffic-api", Port: 10001, TargetPort: intstr.FromInt32(10001), Protocol: corev1.ProtocolTCP}}},
-			Status:     corev1.ServiceStatus{LoadBalancer: corev1.LoadBalancerStatus{Ingress: []corev1.LoadBalancerIngress{{IP: "203.0.113.20"}}}},
-		},
-		&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: app.Name, Namespace: app.Environment.Namespace}, Spec: appsv1.DeploymentSpec{Replicas: &replicas}, Status: appsv1.DeploymentStatus{ReadyReplicas: 1, AvailableReplicas: 1}},
-		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "hysteria-ready", Namespace: app.Environment.Namespace, Labels: map[string]string{application.ApplicationNameLabel: app.Name}}, Spec: corev1.PodSpec{NodeName: "worker-a"}, Status: corev1.PodStatus{Phase: corev1.PodRunning, ContainerStatuses: []corev1.ContainerStatus{{Name: "hysteria", Ready: true}}}},
-		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "hysteria-pending", Namespace: app.Environment.Namespace, Labels: map[string]string{application.ApplicationNameLabel: app.Name}}, Spec: corev1.PodSpec{NodeName: "worker-b"}, Status: corev1.PodStatus{Phase: corev1.PodPending}},
-	)}
-	defer func() { K8s = originalK8s }()
+	if _, err := clientset.CoreV1().Services(app.Environment.Namespace).Create(t.Context(), &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Name: app.Name, Namespace: app.Environment.Namespace},
+		Spec:       corev1.ServiceSpec{Type: corev1.ServiceTypeLoadBalancer, Ports: []corev1.ServicePort{{Name: "proxy", Port: 8443, TargetPort: intstr.FromInt32(8443), Protocol: corev1.ProtocolUDP}, {Name: "traffic-api", Port: 10001, TargetPort: intstr.FromInt32(10001), Protocol: corev1.ProtocolTCP}}},
+		Status:     corev1.ServiceStatus{LoadBalancer: corev1.LoadBalancerStatus{Ingress: []corev1.LoadBalancerIngress{{IP: "203.0.113.20"}}}},
+	}, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := clientset.AppsV1().Deployments(app.Environment.Namespace).Create(t.Context(), &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: app.Name, Namespace: app.Environment.Namespace}, Spec: appsv1.DeploymentSpec{Replicas: &replicas}, Status: appsv1.DeploymentStatus{ReadyReplicas: 1, AvailableReplicas: 1}}, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	for _, pod := range []*corev1.Pod{
+		{ObjectMeta: metav1.ObjectMeta{Name: "hysteria-ready", Namespace: app.Environment.Namespace, Labels: map[string]string{application.ApplicationNameLabel: app.Name}}, Spec: corev1.PodSpec{NodeName: "worker-a"}, Status: corev1.PodStatus{Phase: corev1.PodRunning, ContainerStatuses: []corev1.ContainerStatus{{Name: "hysteria", Ready: true}}}},
+		{ObjectMeta: metav1.ObjectMeta{Name: "hysteria-pending", Namespace: app.Environment.Namespace, Labels: map[string]string{application.ApplicationNameLabel: app.Name}}, Spec: corev1.PodSpec{NodeName: "worker-b"}, Status: corev1.PodStatus{Phase: corev1.PodPending}},
+	} {
+		if _, err := clientset.CoreV1().Pods(app.Environment.Namespace).Create(t.Context(), pod, metav1.CreateOptions{}); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	response := serve(r, newJSONRequest(http.MethodGet, "/api/applications/discovery?project_id=1&environment_id=1&capability=hysteria2", nil))
 	body := response.Body.String()
@@ -71,7 +78,8 @@ func TestApplicationHandlerDiscoveryRejectsEnvironmentOutsideProject(t *testing.
 }
 
 func TestWorkspaceOverviewIncludesApplicationRuntimeSummary(t *testing.T) {
-	r, s := setupApplicationRouter()
+	clientset := k8sfake.NewSimpleClientset()
+	r, s := setupApplicationRouter(&k8sclient.Client{Clientset: clientset})
 	app := createApplicationForReleaseRuntimeTest(t, s)
 	active := &model.Release{ApplicationID: app.ID, Sequence: 2, Version: "1.4.0", Image: "registry.example.com/browser:1.4.0", DesiredSpec: "{}", Status: model.ReleaseStatusSucceeded, CreatedBy: 1}
 	failed := &model.Release{ApplicationID: app.ID, Sequence: 3, Version: "1.5.0", Image: "registry.example.com/browser:1.5.0", DesiredSpec: "{}", Status: model.ReleaseStatusFailed, CreatedBy: 1}
@@ -84,12 +92,12 @@ func TestWorkspaceOverviewIncludesApplicationRuntimeSummary(t *testing.T) {
 	if err := s.CreateApplicationEndpoint(&model.ApplicationEndpoint{ApplicationID: app.ID, Exposure: application.ExposurePublic, Domain: "browser.example.com", TLSEnabled: true, ServicePort: 80}); err != nil {
 		t.Fatal(err)
 	}
-	originalK8s := K8s
-	K8s = &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(&corev1.Pod{
+	if _, err := clientset.CoreV1().Pods(app.Environment.Namespace).Create(t.Context(), &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: "browser-2", Namespace: app.Environment.Namespace, Labels: map[string]string{application.ManagedByLabel: application.ManagedByValue, application.ApplicationNameLabel: app.Name, application.ReleaseLabel: "2"}},
 		Status:     corev1.PodStatus{Phase: corev1.PodRunning, ContainerStatuses: []corev1.ContainerStatus{{Name: "browser", Ready: true}}},
-	})}
-	defer func() { K8s = originalK8s }()
+	}, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
 
 	response := serve(r, newJSONRequest(http.MethodGet, "/api/workspace/overview?project_id=1&environment_id=1", nil))
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "\"status\":\"running\"") || !strings.Contains(response.Body.String(), "\"version\":\"1.4.0\"") || !strings.Contains(response.Body.String(), "https://browser.example.com") {

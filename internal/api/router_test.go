@@ -1,9 +1,10 @@
-package api
+package api_test
 
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	authapi "github.com/cylism/cylism-manager/internal/api/auth"
+	api "github.com/cylism/cylism-manager/internal/api"
+	"github.com/cylism/cylism-manager/internal/bootstrap"
 	"net/http"
 	"net/http/httptest"
 	"sort"
@@ -11,22 +12,17 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/gin-gonic/gin"
 )
 
 func TestRegisterRoutesSnapshot(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	db, err := store.New("file:router-snapshot?mode=memory&cache=shared")
-	if err != nil {
-		t.Fatalf("create store: %v", err)
-	}
 	r := gin.New()
-	RegisterRoutes(r, db, make([]byte, 32), &authapi.AuthConfig{
-		JWTSecret:       []byte("router-snapshot-secret"),
-		AccessTokenTTL:  time.Hour,
-		RefreshTokenTTL: 24 * time.Hour,
-	}, nil, KubernetesDependencies{})
+	container, err := bootstrap.NewContainer(bootstrap.Config{DBPath: "file:router-snapshot?mode=memory&cache=shared", EncryptionKey: make([]byte, 32), JWTSecret: []byte("router-snapshot-secret"), AccessTokenTTL: time.Hour, RefreshTokenTTL: 24 * time.Hour})
+	if err != nil {
+		t.Fatalf("create container: %v", err)
+	}
+	api.RegisterRoutes(r, container.BuildRouteDependencies())
 
 	want := []string{
 		"GET /health",
@@ -79,12 +75,12 @@ func routeSnapshotDigest(r *gin.Engine) routeSnapshot {
 
 func TestRegisterRoutesDoesNotFallbackUnknownAPI(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	db, err := store.New("file:router-fallback?mode=memory&cache=shared")
-	if err != nil {
-		t.Fatalf("create store: %v", err)
-	}
 	r := gin.New()
-	RegisterRoutes(r, db, make([]byte, 32), &authapi.AuthConfig{JWTSecret: []byte("router-fallback-secret")}, nil, KubernetesDependencies{})
+	container, err := bootstrap.NewContainer(bootstrap.Config{DBPath: "file:router-fallback?mode=memory&cache=shared", EncryptionKey: make([]byte, 32), JWTSecret: []byte("router-fallback-secret")})
+	if err != nil {
+		t.Fatalf("create container: %v", err)
+	}
+	api.RegisterRoutes(r, container.BuildRouteDependencies())
 	req := httptest.NewRequest(http.MethodGet, "/api/route-that-does-not-exist", nil)
 	resp := httptest.NewRecorder()
 	r.ServeHTTP(resp, req)

@@ -16,7 +16,6 @@ import (
 	"time"
 
 	security "github.com/cylism/cylism-manager/internal/api/shared/security"
-	"github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/repository"
 	monitoringservice "github.com/cylism/cylism-manager/internal/service/observability/monitoring"
@@ -31,15 +30,15 @@ type AgentAuthenticator interface {
 
 type AgentHandler struct {
 	store                repository.AgentReadRepository
-	client               *k8s.Client
+	client               KubernetesAdapter
 	authenticator        AgentAuthenticator
 	registryVerifier     AgentRegistryNodeVerifier
 	maintenanceInspector AgentMaintenanceInspector
 	monitoringDiskGrowth *monitoringservice.AgentDiskGrowthService
 }
 
-func NewAgentHandler(store repository.AgentReadRepository, client *k8s.Client, authenticator AgentAuthenticator) *AgentHandler {
-	return &AgentHandler{store: store, client: client, authenticator: authenticator}
+func NewAgentHandler(store repository.AgentReadRepository, client interface{}, authenticator AgentAuthenticator) *AgentHandler {
+	return &AgentHandler{store: store, client: adaptClient(client), authenticator: authenticator}
 }
 
 func (h *AgentHandler) WithRegistryVerifier(verifier AgentRegistryNodeVerifier) *AgentHandler {
@@ -110,11 +109,11 @@ func (h *AgentHandler) ClusterStatus(w http.ResponseWriter, r *http.Request) {
 		writeAgentError(w, http.StatusForbidden, "capability not granted", false)
 		return
 	}
-	if h.client == nil || h.client.Clientset == nil {
+	if h.client == nil || !h.client.KubernetesAvailable() {
 		writeAgentError(w, http.StatusServiceUnavailable, "Kubernetes client unavailable", true)
 		return
 	}
-	nodes, err := h.client.Clientset.CoreV1().Nodes().List(r.Context(), metav1.ListOptions{})
+	nodes, err := h.client.Clientset().CoreV1().Nodes().List(r.Context(), metav1.ListOptions{})
 	if err != nil {
 		writeAgentError(w, http.StatusBadGateway, "cluster status unavailable", true)
 		return
@@ -136,7 +135,7 @@ func (h *AgentHandler) WorkloadGet(w http.ResponseWriter, r *http.Request) {
 	if !h.requireCapability(w, instance, model.AgentCapabilityWorkloadRead, namespace) {
 		return
 	}
-	if h.client == nil || h.client.Clientset == nil {
+	if h.client == nil || !h.client.KubernetesAvailable() {
 		writeAgentError(w, http.StatusServiceUnavailable, "Kubernetes client unavailable", true)
 		return
 	}
@@ -144,19 +143,19 @@ func (h *AgentHandler) WorkloadGet(w http.ResponseWriter, r *http.Request) {
 	var err error
 	switch kind {
 	case "deployment":
-		object, getErr := h.client.Clientset.AppsV1().Deployments(namespace).Get(r.Context(), name, metav1.GetOptions{})
+		object, getErr := h.client.Clientset().AppsV1().Deployments(namespace).Get(r.Context(), name, metav1.GetOptions{})
 		err = getErr
 		if object != nil {
 			data = workloadSummary(object.Name, object.Namespace, kind, object.ResourceVersion, replicas(object.Spec.Replicas), object.Status.ReadyReplicas)
 		}
 	case "statefulset":
-		object, getErr := h.client.Clientset.AppsV1().StatefulSets(namespace).Get(r.Context(), name, metav1.GetOptions{})
+		object, getErr := h.client.Clientset().AppsV1().StatefulSets(namespace).Get(r.Context(), name, metav1.GetOptions{})
 		err = getErr
 		if object != nil {
 			data = workloadSummary(object.Name, object.Namespace, kind, object.ResourceVersion, replicas(object.Spec.Replicas), object.Status.ReadyReplicas)
 		}
 	case "daemonset":
-		object, getErr := h.client.Clientset.AppsV1().DaemonSets(namespace).Get(r.Context(), name, metav1.GetOptions{})
+		object, getErr := h.client.Clientset().AppsV1().DaemonSets(namespace).Get(r.Context(), name, metav1.GetOptions{})
 		err = getErr
 		if object != nil {
 			data = map[string]any{"name": object.Name, "namespace": object.Namespace, "kind": kind, "resource_version": object.ResourceVersion, "desired": object.Status.DesiredNumberScheduled, "ready": object.Status.NumberReady}
@@ -188,11 +187,11 @@ func (h *AgentHandler) WorkloadLogs(w http.ResponseWriter, r *http.Request) {
 	if !h.requireCapability(w, instance, model.AgentCapabilityWorkloadLogs, namespace) {
 		return
 	}
-	if h.client == nil || h.client.Clientset == nil {
+	if h.client == nil || !h.client.KubernetesAvailable() {
 		writeAgentError(w, http.StatusServiceUnavailable, "Kubernetes client unavailable", true)
 		return
 	}
-	stream, err := h.client.Clientset.CoreV1().Pods(namespace).GetLogs(pod, &corev1.PodLogOptions{Container: container, TailLines: &tail, Previous: previous}).Stream(r.Context())
+	stream, err := h.client.Clientset().CoreV1().Pods(namespace).GetLogs(pod, &corev1.PodLogOptions{Container: container, TailLines: &tail, Previous: previous}).Stream(r.Context())
 	if err != nil {
 		writeAgentError(w, http.StatusBadGateway, "workload logs unavailable", true)
 		return
@@ -225,11 +224,11 @@ func (h *AgentHandler) PodGet(w http.ResponseWriter, r *http.Request) {
 	if !h.requireCapability(w, instance, model.AgentCapabilityWorkloadRead, namespace) {
 		return
 	}
-	if h.client == nil || h.client.Clientset == nil {
+	if h.client == nil || !h.client.KubernetesAvailable() {
 		writeAgentError(w, http.StatusServiceUnavailable, "Kubernetes client unavailable", true)
 		return
 	}
-	pod, err := h.client.Clientset.CoreV1().Pods(namespace).Get(r.Context(), name, metav1.GetOptions{})
+	pod, err := h.client.Clientset().CoreV1().Pods(namespace).Get(r.Context(), name, metav1.GetOptions{})
 	if err != nil {
 		writeAgentError(w, http.StatusBadGateway, "pod unavailable", true)
 		return
@@ -253,11 +252,11 @@ func (h *AgentHandler) EventList(w http.ResponseWriter, r *http.Request) {
 	if !h.requireCapability(w, instance, model.AgentCapabilityEventsRead, namespace) {
 		return
 	}
-	if h.client == nil || h.client.Clientset == nil {
+	if h.client == nil || !h.client.KubernetesAvailable() {
 		writeAgentError(w, http.StatusServiceUnavailable, "Kubernetes client unavailable", true)
 		return
 	}
-	events, err := h.client.Clientset.CoreV1().Events(namespace).List(r.Context(), metav1.ListOptions{})
+	events, err := h.client.Clientset().CoreV1().Events(namespace).List(r.Context(), metav1.ListOptions{})
 	if err != nil {
 		writeAgentError(w, http.StatusBadGateway, "events unavailable", true)
 		return
@@ -293,11 +292,11 @@ func (h *AgentHandler) PVCGet(w http.ResponseWriter, r *http.Request) {
 	if !h.requireCapability(w, instance, model.AgentCapabilityStorageRead, namespace) {
 		return
 	}
-	if h.client == nil || h.client.Clientset == nil {
+	if h.client == nil || !h.client.KubernetesAvailable() {
 		writeAgentError(w, http.StatusServiceUnavailable, "Kubernetes client unavailable", true)
 		return
 	}
-	pvc, err := h.client.Clientset.CoreV1().PersistentVolumeClaims(namespace).Get(r.Context(), name, metav1.GetOptions{})
+	pvc, err := h.client.Clientset().CoreV1().PersistentVolumeClaims(namespace).Get(r.Context(), name, metav1.GetOptions{})
 	if err != nil {
 		writeAgentError(w, http.StatusBadGateway, "persistent volume claim unavailable", true)
 		return
@@ -323,11 +322,11 @@ func (h *AgentHandler) NodeGet(w http.ResponseWriter, r *http.Request) {
 	if !h.requireCapability(w, instance, model.AgentCapabilityClusterRead, "") {
 		return
 	}
-	if h.client == nil || h.client.Clientset == nil {
+	if h.client == nil || !h.client.KubernetesAvailable() {
 		writeAgentError(w, http.StatusServiceUnavailable, "Kubernetes client unavailable", true)
 		return
 	}
-	node, err := h.client.Clientset.CoreV1().Nodes().Get(r.Context(), name, metav1.GetOptions{})
+	node, err := h.client.Clientset().CoreV1().Nodes().Get(r.Context(), name, metav1.GetOptions{})
 	if err != nil {
 		writeAgentError(w, http.StatusBadGateway, "node unavailable", true)
 		return
@@ -360,11 +359,11 @@ func (h *AgentHandler) DeploymentScale(w http.ResponseWriter, r *http.Request) {
 	if !h.requireCapability(w, instance, model.AgentCapabilityDeploymentScale, request.Namespace) {
 		return
 	}
-	if h.client == nil || h.client.Clientset == nil {
+	if h.client == nil || !h.client.KubernetesAvailable() {
 		writeAgentError(w, http.StatusServiceUnavailable, "Kubernetes client unavailable", true)
 		return
 	}
-	deployment, err := h.client.Clientset.AppsV1().Deployments(request.Namespace).Get(r.Context(), request.Name, metav1.GetOptions{})
+	deployment, err := h.client.Clientset().AppsV1().Deployments(request.Namespace).Get(r.Context(), request.Name, metav1.GetOptions{})
 	if err != nil {
 		writeAgentError(w, http.StatusBadGateway, "deployment unavailable", true)
 		return
@@ -415,16 +414,16 @@ func (h *AgentHandler) DNSStatus(w http.ResponseWriter, r *http.Request) {
 	if !h.requireCapability(w, instance, model.AgentCapabilityDNSRead, "") {
 		return
 	}
-	if h.client == nil || h.client.Clientset == nil {
+	if h.client == nil || !h.client.KubernetesAvailable() {
 		writeAgentError(w, http.StatusServiceUnavailable, "Kubernetes client unavailable", true)
 		return
 	}
-	configMap, err := h.client.Clientset.CoreV1().ConfigMaps(coreDNSNamespace).Get(r.Context(), coreDNSConfigMap, metav1.GetOptions{})
+	configMap, err := h.client.Clientset().CoreV1().ConfigMaps(coreDNSNamespace).Get(r.Context(), coreDNSConfigMap, metav1.GetOptions{})
 	if err != nil {
 		writeAgentError(w, http.StatusBadGateway, "CoreDNS configuration unavailable", true)
 		return
 	}
-	pods, err := h.client.Clientset.CoreV1().Pods(coreDNSNamespace).List(r.Context(), metav1.ListOptions{LabelSelector: "k8s-app=kube-dns"})
+	pods, err := h.client.Clientset().CoreV1().Pods(coreDNSNamespace).List(r.Context(), metav1.ListOptions{LabelSelector: "k8s-app=kube-dns"})
 	if err != nil {
 		writeAgentError(w, http.StatusBadGateway, "CoreDNS status unavailable", true)
 		return
@@ -547,11 +546,11 @@ func (h *AgentHandler) ImageDiagnose(w http.ResponseWriter, r *http.Request) {
 	if !h.requireCapability(w, instance, model.AgentCapabilityWorkloadRead, namespace) || !h.requireCapability(w, instance, model.AgentCapabilityRegistryRead, "") {
 		return
 	}
-	if h.client == nil || h.client.Clientset == nil {
+	if h.client == nil || !h.client.KubernetesAvailable() {
 		writeAgentError(w, http.StatusServiceUnavailable, "Kubernetes client unavailable", true)
 		return
 	}
-	pod, err := h.client.Clientset.CoreV1().Pods(namespace).Get(r.Context(), name, metav1.GetOptions{})
+	pod, err := h.client.Clientset().CoreV1().Pods(namespace).Get(r.Context(), name, metav1.GetOptions{})
 	if err != nil {
 		writeAgentError(w, http.StatusBadGateway, "pod unavailable", true)
 		return
@@ -616,7 +615,7 @@ func (h *AgentHandler) RegistryNodeVerify(w http.ResponseWriter, r *http.Request
 		writeAgentError(w, http.StatusServiceUnavailable, "registry verification unavailable", true)
 		return
 	}
-	results, err := h.registryVerifier(server, config.Endpoints)
+	results, err := h.registryVerifier(r.Context(), server, config.Endpoints)
 	if err != nil {
 		detail := redactAgentText(truncateAgentText(err.Error(), 512))
 		writeAgentError(w, http.StatusBadGateway, "registry endpoint verification failed: "+detail, true)
@@ -844,7 +843,7 @@ func (h *AgentHandler) MaintenanceDiskInspect(w http.ResponseWriter, r *http.Req
 		writeAgentError(w, http.StatusServiceUnavailable, "node disk inspection unavailable", true)
 		return
 	}
-	inspection, err := h.maintenanceInspector(server)
+	inspection, err := h.maintenanceInspector(r.Context(), server)
 	if err != nil {
 		summary := redactAgentText(truncateAgentText(strings.TrimSpace(err.Error()), 512))
 		if summary == "" {

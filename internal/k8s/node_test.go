@@ -1,6 +1,7 @@
 package k8s
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -23,7 +24,7 @@ func TestDrainPlanSeparatesSafePodsFromBlockers(t *testing.T) {
 		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "debug", Namespace: "default"}, Spec: corev1.PodSpec{NodeName: "worker-a"}},
 	)}
 
-	plan, err := client.DrainPlan("worker-a")
+	plan, err := client.DrainPlanContext(context.Background(), "worker-a")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -34,7 +35,7 @@ func TestDrainPlanSeparatesSafePodsFromBlockers(t *testing.T) {
 
 func TestDeleteNodeRequiresStoppedAndDrainedNode(t *testing.T) {
 	client := &Client{Clientset: k8sfake.NewSimpleClientset(readyNode("worker-a", true))}
-	if err := client.DeleteNode("worker-a"); err == nil {
+	if err := client.DeleteNodeContext(context.Background(), "worker-a"); err == nil {
 		t.Fatal("expected a ready node to be rejected")
 	}
 }
@@ -53,7 +54,7 @@ func TestDrainNodeUsesEvictionInsteadOfDeletingPods(t *testing.T) {
 	})
 	client := &Client{Clientset: clientset}
 
-	result, err := client.DrainNode("worker-a", DrainOptions{})
+	result, err := client.DrainNodeContext(context.Background(), "worker-a", DrainOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +115,7 @@ func TestUpdateNodeLabelsOnlyChangesValidCustomLabels(t *testing.T) {
 	}}})
 	client := &Client{Clientset: clientset}
 
-	labels, err := client.UpdateNodeLabels("worker-a", map[string]string{"cylism.io/zone": "shanghai", "team": "platform"}, []string{"cylism.io/unused"})
+	labels, err := client.UpdateNodeLabelsContext(context.Background(), "worker-a", map[string]string{"cylism.io/zone": "shanghai", "team": "platform"}, []string{"cylism.io/unused"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,7 +136,7 @@ func TestUpdateNodeLabelsRejectsProtectedAndInvalidLabels(t *testing.T) {
 		"invalid value":     {set: map[string]string{"team": "not valid"}},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if _, err := client.UpdateNodeLabels("worker-a", update.set, update.remove); err == nil {
+			if _, err := client.UpdateNodeLabelsContext(context.Background(), "worker-a", update.set, update.remove); err == nil {
 				t.Fatal("expected label update to be rejected")
 			}
 		})
@@ -148,14 +149,14 @@ func TestRejoinNodeUncordonsNodeAndClearsDrainMarker(t *testing.T) {
 	clientset := k8sfake.NewSimpleClientset(node)
 	client := &Client{Clientset: clientset}
 
-	info, err := client.RejoinNode("worker-a")
+	info, err := client.RejoinNodeContext(context.Background(), "worker-a")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if info.Evicted {
 		t.Fatalf("expected rejoined node to be schedulable, got %#v", info)
 	}
-	updated, err := clientset.CoreV1().Nodes().Get(client.Ctx(), "worker-a", metav1.GetOptions{})
+	updated, err := clientset.CoreV1().Nodes().Get(context.Background(), "worker-a", metav1.GetOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -176,14 +177,14 @@ func TestForceDrainDeletesOnlyControlledPodsOnFailedWorker(t *testing.T) {
 	)
 	client := &Client{Clientset: clientset}
 
-	result, err := client.ForceDrainNode("worker-a", ForceDrainOptions{AcknowledgeRisk: true, ConfirmNodeName: "worker-a", DeleteEmptyDirData: true})
+	result, err := client.ForceDrainNodeContext(context.Background(), "worker-a", ForceDrainOptions{AcknowledgeRisk: true, ConfirmNodeName: "worker-a", DeleteEmptyDirData: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !result.Forced || len(result.Deleted) != 1 || result.Deleted[0].Name != "web" || len(result.Blocked) != 1 || result.Blocked[0].Name != "debug" || len(result.Skipped) != 2 {
 		t.Fatalf("unexpected force drain result: %#v", result)
 	}
-	updated, err := clientset.CoreV1().Nodes().Get(client.Ctx(), "worker-a", metav1.GetOptions{})
+	updated, err := clientset.CoreV1().Nodes().Get(context.Background(), "worker-a", metav1.GetOptions{})
 	if err != nil || !updated.Spec.Unschedulable {
 		t.Fatalf("expected failed worker to be cordoned: %#v, %v", updated, err)
 	}
@@ -206,7 +207,7 @@ func TestForceDrainRejectsUnsafeRequests(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			client := &Client{Clientset: k8sfake.NewSimpleClientset(test.node)}
-			if _, err := client.ForceDrainNode(test.node.Name, test.options); err == nil {
+			if _, err := client.ForceDrainNodeContext(context.Background(), test.node.Name, test.options); err == nil {
 				t.Fatal("expected unsafe force drain to be rejected")
 			}
 		})
@@ -233,7 +234,7 @@ func TestDrainNodeOnlyLabelsPDBViolationsAsPDB(t *testing.T) {
 				}
 				return false, nil, nil
 			})
-			result, err := (&Client{Clientset: clientset}).DrainNode("worker-a", DrainOptions{})
+			result, err := (&Client{Clientset: clientset}).DrainNodeContext(context.Background(), "worker-a", DrainOptions{})
 			if err != nil || len(result.Pending) != 1 || !strings.HasPrefix(result.Pending[0].Reason, test.wantPrefix) {
 				t.Fatalf("unexpected drain result: %#v, %v", result, err)
 			}

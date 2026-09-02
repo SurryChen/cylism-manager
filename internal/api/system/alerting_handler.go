@@ -31,7 +31,7 @@ type AlertingHandler struct {
 	dispatcher      alertRuntimeDispatcher
 	automation      *alertingservice.AutomationService
 	component       *alertingservice.ComponentService
-	ready           func() bool
+	ready           func(context.Context) bool
 	secrets         alertingservice.SecretReader
 	sender          alertingservice.NotificationSender
 }
@@ -39,7 +39,7 @@ type AlertingHandler struct {
 type AlertingDependencies struct {
 	Alertmanager alertingservice.RequestFunc
 	Component    alertingservice.ComponentAdapter
-	Ready        func() bool
+	Ready        func(context.Context) bool
 	Secrets      alertingservice.SecretReader
 	Sender       alertingservice.NotificationSender
 }
@@ -159,7 +159,7 @@ func (h *AlertingHandler) Uninstall(c *gin.Context) {
 }
 
 func (h *AlertingHandler) Overview(c *gin.Context) {
-	if err := h.workflow().EnsureReady(); err != nil {
+	if err := h.workflow().EnsureReady(c.Request.Context()); err != nil {
 		apiShared.Conflict(c, err.Error())
 		return
 	}
@@ -172,7 +172,7 @@ func (h *AlertingHandler) Overview(c *gin.Context) {
 }
 
 func (h *AlertingHandler) ListSilences(c *gin.Context) {
-	if err := h.workflow().EnsureReady(); err != nil {
+	if err := h.workflow().EnsureReady(c.Request.Context()); err != nil {
 		apiShared.Conflict(c, err.Error())
 		return
 	}
@@ -185,7 +185,7 @@ func (h *AlertingHandler) ListSilences(c *gin.Context) {
 }
 
 func (h *AlertingHandler) CreateSilence(c *gin.Context) {
-	if err := h.workflow().EnsureReady(); err != nil {
+	if err := h.workflow().EnsureReady(c.Request.Context()); err != nil {
 		apiShared.Conflict(c, err.Error())
 		return
 	}
@@ -211,7 +211,7 @@ func (h *AlertingHandler) CreateSilence(c *gin.Context) {
 }
 
 func (h *AlertingHandler) DeleteSilence(c *gin.Context) {
-	if err := h.workflow().EnsureReady(); err != nil {
+	if err := h.workflow().EnsureReady(c.Request.Context()); err != nil {
 		apiShared.Conflict(c, err.Error())
 		return
 	}

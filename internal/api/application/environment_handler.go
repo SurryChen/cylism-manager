@@ -42,7 +42,7 @@ func (h *ApplicationHandler) ListEnvironments(c *gin.Context) {
 		conflictNamespaces[conflict.Namespace] = struct{}{}
 	}
 	for index := range environments {
-		environments[index].NamespaceStatus = environmentNamespaceStatus(c.Request.Context(), environments[index].Namespace)
+		environments[index].NamespaceStatus = environmentNamespaceStatus(c.Request.Context(), h.namespaces(), environments[index].Namespace)
 		_, environments[index].NamespaceConflict = conflictNamespaces[environments[index].Namespace]
 	}
 	model.Success(c, environments)
@@ -68,7 +68,7 @@ func (h *ApplicationHandler) CreateEnvironment(c *gin.Context) {
 		apiShared.ValidationError(c, err.Error())
 		return
 	}
-	if K8s == nil || K8s.Clientset == nil {
+	if h.kubernetes == nil || !h.kubernetes.KubernetesAvailable() {
 		apiShared.K8sUnavailable(c)
 		return
 	}
@@ -77,7 +77,7 @@ func (h *ApplicationHandler) CreateEnvironment(c *gin.Context) {
 		handleEnvironmentNamespaceError(c, err)
 		return
 	}
-	if err := ensureEnvironmentNamespace(c.Request.Context(), projectID, namespace, mode, false); err != nil {
+	if err := ensureEnvironmentNamespace(c.Request.Context(), h.namespaces(), projectID, namespace, mode, false); err != nil {
 		apiShared.ValidationError(c, err.Error())
 		return
 	}
@@ -129,7 +129,7 @@ func (h *ApplicationHandler) UpdateEnvironment(c *gin.Context) {
 				apiShared.ValidationError(c, err.Error())
 				return
 			}
-			if K8s == nil || K8s.Clientset == nil {
+			if h.kubernetes == nil || !h.kubernetes.KubernetesAvailable() {
 				apiShared.K8sUnavailable(c)
 				return
 			}
@@ -137,7 +137,7 @@ func (h *ApplicationHandler) UpdateEnvironment(c *gin.Context) {
 				handleEnvironmentNamespaceError(c, err)
 				return
 			}
-			if err := ensureEnvironmentNamespace(c.Request.Context(), projectID, namespace, mode, false); err != nil {
+			if err := ensureEnvironmentNamespace(c.Request.Context(), h.namespaces(), projectID, namespace, mode, false); err != nil {
 				apiShared.ValidationError(c, err.Error())
 				return
 			}
@@ -145,7 +145,7 @@ func (h *ApplicationHandler) UpdateEnvironment(c *gin.Context) {
 	}
 	environment.Name = name
 	environment.Namespace = namespace
-	environment.NamespaceStatus = environmentNamespaceStatus(c.Request.Context(), namespace)
+	environment.NamespaceStatus = environmentNamespaceStatus(c.Request.Context(), h.namespaces(), namespace)
 	if err := h.applications.UpdateEnvironment(environment); err != nil {
 		if handleEnvironmentNamespaceError(c, err) {
 			return
@@ -166,7 +166,7 @@ func (h *ApplicationHandler) SyncEnvironmentNamespace(c *gin.Context) {
 		apiShared.NotFound(c, "环境不存在")
 		return
 	}
-	if K8s == nil || K8s.Clientset == nil {
+	if h.kubernetes == nil || !h.kubernetes.KubernetesAvailable() {
 		apiShared.K8sUnavailable(c)
 		return
 	}
@@ -174,11 +174,11 @@ func (h *ApplicationHandler) SyncEnvironmentNamespace(c *gin.Context) {
 		handleEnvironmentNamespaceError(c, err)
 		return
 	}
-	if err := ensureEnvironmentNamespace(c.Request.Context(), projectID, environment.Namespace, "create", true); err != nil {
+	if err := ensureEnvironmentNamespace(c.Request.Context(), h.namespaces(), projectID, environment.Namespace, "create", true); err != nil {
 		apiShared.ValidationError(c, err.Error())
 		return
 	}
-	environment.NamespaceStatus = environmentNamespaceStatus(c.Request.Context(), environment.Namespace)
+	environment.NamespaceStatus = environmentNamespaceStatus(c.Request.Context(), h.namespaces(), environment.Namespace)
 	model.SuccessWithMessage(c, environment, "命名空间已同步")
 }
 
@@ -227,11 +227,14 @@ func normalizeEnvironmentNamespaceMode(value string) (string, error) {
 	}
 }
 
-func ensureEnvironmentNamespace(ctx context.Context, projectID uint, namespace, mode string, allowExisting bool) error {
+func ensureEnvironmentNamespace(ctx context.Context, client NamespaceClient, projectID uint, namespace, mode string, allowExisting bool) error {
 	if isSystemNamespace(namespace) {
 		return fmt.Errorf("系统命名空间 %q 不能绑定为应用环境", namespace)
 	}
-	existing, err := K8s.Clientset.CoreV1().Namespaces().Get(ctx, namespace, metav1.GetOptions{})
+	if client == nil {
+		return fmt.Errorf("K8s 集群未连接")
+	}
+	existing, err := client.GetNamespace(ctx, namespace)
 	if err == nil {
 		if existing.Status.Phase != "" && existing.Status.Phase != corev1.NamespaceActive {
 			return fmt.Errorf("命名空间 %q 未就绪", namespace)
@@ -252,7 +255,7 @@ func ensureEnvironmentNamespace(ctx context.Context, projectID uint, namespace, 
 			labels["cylism.io/project-id"] = project
 			labels["app.kubernetes.io/managed-by"] = "cylism-manager"
 			existing.Labels = labels
-			if _, err := K8s.Clientset.CoreV1().Namespaces().Update(ctx, existing, metav1.UpdateOptions{}); err != nil {
+			if _, err := client.UpdateNamespace(ctx, existing); err != nil {
 				return fmt.Errorf("认领命名空间 %q: %w", namespace, err)
 			}
 		}
@@ -264,10 +267,10 @@ func ensureEnvironmentNamespace(ctx context.Context, projectID uint, namespace, 
 	if mode == "bind" {
 		return fmt.Errorf("命名空间 %q 不存在，无法绑定", namespace)
 	}
-	_, err = K8s.Clientset.CoreV1().Namespaces().Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: namespace, Labels: map[string]string{
+	_, err = client.CreateNamespace(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: namespace, Labels: map[string]string{
 		"app.kubernetes.io/managed-by": "cylism-manager",
 		"cylism.io/project-id":         strconv.FormatUint(uint64(projectID), 10),
-	}}}, metav1.CreateOptions{})
+	}}})
 	if err != nil {
 		return fmt.Errorf("创建命名空间 %q: %w", namespace, err)
 	}
@@ -292,11 +295,11 @@ func handleEnvironmentNamespaceError(c *gin.Context, err error) bool {
 	return false
 }
 
-func environmentNamespaceStatus(ctx context.Context, namespace string) string {
-	if K8s == nil || K8s.Clientset == nil {
+func environmentNamespaceStatus(ctx context.Context, client NamespaceClient, namespace string) string {
+	if client == nil {
 		return "unknown"
 	}
-	resource, err := K8s.Clientset.CoreV1().Namespaces().Get(ctx, namespace, metav1.GetOptions{})
+	resource, err := client.GetNamespace(ctx, namespace)
 	if apierrors.IsNotFound(err) {
 		return "missing"
 	}

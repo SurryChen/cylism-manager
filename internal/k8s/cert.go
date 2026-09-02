@@ -1,6 +1,7 @@
 package k8s
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -82,14 +83,17 @@ type CreateCertificateRequest struct {
 	SecretName string   `json:"secret_name,omitempty"`
 }
 
-// ListCertificates 列出所有 Certificate
-func (c *Client) ListCertificates() ([]CertInfo, error) {
+// ListCertificatesContext 列出所有 Certificate，并透传调用方 Context。
+func (c *Client) ListCertificatesContext(ctx context.Context) ([]CertInfo, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	dynamicClient, err := c.dynamicClient()
 	if err != nil {
 		return nil, err
 	}
 
-	list, err := dynamicClient.Resource(certGVR).Namespace("").List(c.Ctx(), metav1.ListOptions{})
+	list, err := dynamicClient.Resource(certGVR).Namespace("").List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("list certificates: %w", err)
 	}
@@ -102,7 +106,10 @@ func (c *Client) ListCertificates() ([]CertInfo, error) {
 	return result, nil
 }
 
-func (c *Client) ListIssuers() ([]IssuerInfo, error) {
+func (c *Client) ListIssuersContext(ctx context.Context) ([]IssuerInfo, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	dynamicClient, err := c.dynamicClient()
 	if err != nil {
 		return nil, err
@@ -116,9 +123,9 @@ func (c *Client) ListIssuers() ([]IssuerInfo, error) {
 		resource := dynamicClient.Resource(source.gvr)
 		var list *unstructured.UnstructuredList
 		if source.namespaced {
-			list, err = resource.Namespace("").List(c.Ctx(), metav1.ListOptions{})
+			list, err = resource.Namespace("").List(ctx, metav1.ListOptions{})
 		} else {
-			list, err = resource.List(c.Ctx(), metav1.ListOptions{})
+			list, err = resource.List(ctx, metav1.ListOptions{})
 		}
 		if err != nil {
 			return nil, fmt.Errorf("list %s: %w", source.kind, err)
@@ -166,16 +173,22 @@ func issuerToInfo(item *unstructured.Unstructured, kind string) IssuerInfo {
 }
 
 // CreateIssuer creates only the explicitly supported Issuer shapes.
-func (c *Client) CreateIssuer(request IssuerRequest) (*IssuerInfo, error) {
-	return c.applyIssuer(request, false)
+func (c *Client) CreateIssuerContext(ctx context.Context, request IssuerRequest) (*IssuerInfo, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return c.applyIssuer(ctx, request, false)
 }
 
 // UpdateIssuer replaces a managed Issuer definition while retaining its cert-manager status.
-func (c *Client) UpdateIssuer(request IssuerRequest) (*IssuerInfo, error) {
-	return c.applyIssuer(request, true)
+func (c *Client) UpdateIssuerContext(ctx context.Context, request IssuerRequest) (*IssuerInfo, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return c.applyIssuer(ctx, request, true)
 }
 
-func (c *Client) applyIssuer(request IssuerRequest, update bool) (*IssuerInfo, error) {
+func (c *Client) applyIssuer(ctx context.Context, request IssuerRequest, update bool) (*IssuerInfo, error) {
 	dynamicClient, err := c.dynamicClient()
 	if err != nil {
 		return nil, err
@@ -198,16 +211,16 @@ func (c *Client) applyIssuer(request IssuerRequest, update bool) (*IssuerInfo, e
 	if request.Kind == "Issuer" {
 		resource := dynamicClient.Resource(issuerGVR).Namespace(request.Namespace)
 		if update {
-			applied, err = resource.Update(c.Ctx(), object, metav1.UpdateOptions{})
+			applied, err = resource.Update(ctx, object, metav1.UpdateOptions{})
 		} else {
-			applied, err = resource.Create(c.Ctx(), object, metav1.CreateOptions{})
+			applied, err = resource.Create(ctx, object, metav1.CreateOptions{})
 		}
 	} else {
 		resource := dynamicClient.Resource(clusterIssuerGVR)
 		if update {
-			applied, err = resource.Update(c.Ctx(), object, metav1.UpdateOptions{})
+			applied, err = resource.Update(ctx, object, metav1.UpdateOptions{})
 		} else {
-			applied, err = resource.Create(c.Ctx(), object, metav1.CreateOptions{})
+			applied, err = resource.Create(ctx, object, metav1.CreateOptions{})
 		}
 	}
 	if err != nil {
@@ -258,27 +271,33 @@ func issuerObject(request IssuerRequest) (*unstructured.Unstructured, error) {
 	return &unstructured.Unstructured{Object: map[string]interface{}{"apiVersion": "cert-manager.io/v1", "kind": request.Kind, "metadata": metadata, "spec": spec}}, nil
 }
 
-func (c *Client) DeleteIssuer(kind, namespace, name string) error {
+func (c *Client) DeleteIssuerContext(ctx context.Context, kind, namespace, name string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	dynamicClient, err := c.dynamicClient()
 	if err != nil {
 		return err
 	}
 	if kind == "ClusterIssuer" {
-		return dynamicClient.Resource(clusterIssuerGVR).Delete(c.Ctx(), name, metav1.DeleteOptions{})
+		return dynamicClient.Resource(clusterIssuerGVR).Delete(ctx, name, metav1.DeleteOptions{})
 	}
 	if kind != "Issuer" || namespace == "" {
 		return fmt.Errorf("Issuer 类型或命名空间无效")
 	}
-	return dynamicClient.Resource(issuerGVR).Namespace(namespace).Delete(c.Ctx(), name, metav1.DeleteOptions{})
+	return dynamicClient.Resource(issuerGVR).Namespace(namespace).Delete(ctx, name, metav1.DeleteOptions{})
 }
 
 // ListCertificateOperations follows owner references from Certificate to request, order and challenge resources.
-func (c *Client) ListCertificateOperations(namespace, certificateName string) ([]CertificateOperation, error) {
+func (c *Client) ListCertificateOperationsContext(ctx context.Context, namespace, certificateName string) ([]CertificateOperation, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	dynamicClient, err := c.dynamicClient()
 	if err != nil {
 		return nil, err
 	}
-	requests, err := dynamicClient.Resource(certificateRequestGVR).Namespace(namespace).List(c.Ctx(), metav1.ListOptions{})
+	requests, err := dynamicClient.Resource(certificateRequestGVR).Namespace(namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("list certificaterequests: %w", err)
 	}
@@ -291,7 +310,7 @@ func (c *Client) ListCertificateOperations(namespace, certificateName string) ([
 			operations = append(operations, operationToInfo(item, "CertificateRequest"))
 		}
 	}
-	orders, err := dynamicClient.Resource(orderGVR).Namespace(namespace).List(c.Ctx(), metav1.ListOptions{})
+	orders, err := dynamicClient.Resource(orderGVR).Namespace(namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("list orders: %w", err)
 	}
@@ -303,7 +322,7 @@ func (c *Client) ListCertificateOperations(namespace, certificateName string) ([
 			operations = append(operations, operationToInfo(item, "Order"))
 		}
 	}
-	challenges, err := dynamicClient.Resource(challengeGVR).Namespace(namespace).List(c.Ctx(), metav1.ListOptions{})
+	challenges, err := dynamicClient.Resource(challengeGVR).Namespace(namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("list challenges: %w", err)
 	}
@@ -356,13 +375,16 @@ func operationToInfo(item *unstructured.Unstructured, kind string) CertificateOp
 	return info
 }
 
-func (c *Client) CreateCertificate(request CreateCertificateRequest) (*CertInfo, error) {
+func (c *Client) CreateCertificateContext(ctx context.Context, request CreateCertificateRequest) (*CertInfo, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	dynamicClient, err := c.dynamicClient()
 	if err != nil {
 		return nil, err
 	}
 	object := certificateObject(request)
-	created, err := dynamicClient.Resource(certGVR).Namespace(request.Namespace).Create(c.Ctx(), object, metav1.CreateOptions{})
+	created, err := dynamicClient.Resource(certGVR).Namespace(request.Namespace).Create(ctx, object, metav1.CreateOptions{})
 	if err != nil {
 		return nil, err
 	}
@@ -371,16 +393,19 @@ func (c *Client) CreateCertificate(request CreateCertificateRequest) (*CertInfo,
 }
 
 // EnsureCertificate applies the controlled Certificate shape used by a managed domain.
-func (c *Client) EnsureCertificate(request CreateCertificateRequest) (*CertInfo, error) {
+func (c *Client) EnsureCertificateContext(ctx context.Context, request CreateCertificateRequest) (*CertInfo, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	dynamicClient, err := c.dynamicClient()
 	if err != nil {
 		return nil, err
 	}
 	object := certificateObject(request)
 	resource := dynamicClient.Resource(certGVR).Namespace(request.Namespace)
-	existing, err := resource.Get(c.Ctx(), request.Name, metav1.GetOptions{})
+	existing, err := resource.Get(ctx, request.Name, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
-		created, createErr := resource.Create(c.Ctx(), object, metav1.CreateOptions{})
+		created, createErr := resource.Create(ctx, object, metav1.CreateOptions{})
 		if createErr != nil {
 			return nil, createErr
 		}
@@ -391,7 +416,7 @@ func (c *Client) EnsureCertificate(request CreateCertificateRequest) (*CertInfo,
 		return nil, err
 	}
 	object.SetResourceVersion(existing.GetResourceVersion())
-	updated, err := resource.Update(c.Ctx(), object, metav1.UpdateOptions{})
+	updated, err := resource.Update(ctx, object, metav1.UpdateOptions{})
 	if err != nil {
 		return nil, err
 	}
@@ -399,12 +424,15 @@ func (c *Client) EnsureCertificate(request CreateCertificateRequest) (*CertInfo,
 	return &info, nil
 }
 
-func (c *Client) GetCertificate(namespace, name string) (*CertInfo, error) {
+func (c *Client) GetCertificateContext(ctx context.Context, namespace, name string) (*CertInfo, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	dynamicClient, err := c.dynamicClient()
 	if err != nil {
 		return nil, err
 	}
-	certificate, err := dynamicClient.Resource(certGVR).Namespace(namespace).Get(c.Ctx(), name, metav1.GetOptions{})
+	certificate, err := dynamicClient.Resource(certGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
 		return nil, err
 	}
@@ -433,12 +461,15 @@ func stringSlice(values []string) []interface{} {
 }
 
 // DeleteCertificate 删除 Certificate
-func (c *Client) DeleteCertificate(namespace, name string) error {
+func (c *Client) DeleteCertificateContext(ctx context.Context, namespace, name string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	dynamicClient, err := c.dynamicClient()
 	if err != nil {
 		return err
 	}
-	return dynamicClient.Resource(certGVR).Namespace(namespace).Delete(c.Ctx(), name, metav1.DeleteOptions{})
+	return dynamicClient.Resource(certGVR).Namespace(namespace).Delete(ctx, name, metav1.DeleteOptions{})
 }
 
 func certToInfo(item *unstructured.Unstructured) CertInfo {

@@ -1,6 +1,7 @@
 package infrastructure
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -19,7 +20,46 @@ import (
 
 type DomainHandler struct {
 	network *networkservice.Service
-	k8s     *k8s.Client
+	k8s     DomainKubernetesAdapter
+}
+
+type DomainKubernetesAdapter interface {
+	KubernetesAvailable() bool
+	GetCertificateContext(context.Context, string, string) (*k8s.CertInfo, error)
+	DeleteTLSSecret(context.Context, string, string) error
+	NamespaceExists(context.Context, string) (bool, error)
+	ListIssuersContext(context.Context) ([]k8s.IssuerInfo, error)
+}
+
+type clientDomainAdapter struct{ client *k8s.Client }
+
+// NewDomainKubernetesAdapter creates the narrow Kubernetes port used by the
+// domain handler. The concrete client remains an infrastructure concern.
+func NewDomainKubernetesAdapter(client *k8s.Client) DomainKubernetesAdapter {
+	if client == nil {
+		return nil
+	}
+	return clientDomainAdapter{client: client}
+}
+
+func (a clientDomainAdapter) KubernetesAvailable() bool {
+	return a.client != nil && (a.client.Clientset != nil || a.client.DynamicClient != nil)
+}
+func (a clientDomainAdapter) GetCertificateContext(ctx context.Context, ns, name string) (*k8s.CertInfo, error) {
+	return a.client.GetCertificateContext(ctx, ns, name)
+}
+func (a clientDomainAdapter) DeleteTLSSecret(ctx context.Context, ns, name string) error {
+	return a.client.Clientset.CoreV1().Secrets(ns).Delete(ctx, name, metav1.DeleteOptions{})
+}
+func (a clientDomainAdapter) NamespaceExists(ctx context.Context, name string) (bool, error) {
+	_, err := a.client.Clientset.CoreV1().Namespaces().Get(ctx, name, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return false, nil
+	}
+	return err == nil, err
+}
+func (a clientDomainAdapter) ListIssuersContext(ctx context.Context) ([]k8s.IssuerInfo, error) {
+	return a.client.ListIssuersContext(ctx)
 }
 
 type domainRequest struct {
@@ -48,16 +88,27 @@ type ManagedDomainInfo struct {
 	ApplicationCount int64         `json:"application_count"`
 }
 
-func NewDomainHandler(domains repository.NetworkRepository, client *k8s.Client) *DomainHandler {
-	return &DomainHandler{k8s: client, network: networkservice.NewService(domains, domains).WithCertificateAdapter(client).WithDNSAdapter(client).WithIngressAdapter(client)}
-}
-
-func NewDomainHandlerWithService(domains repository.NetworkRepository, client *k8s.Client, service *networkservice.Service) *DomainHandler {
+func NewDomainHandlerWithService(domains repository.NetworkRepository, client interface{}, service *networkservice.Service) *DomainHandler {
 	if service == nil {
 		service = networkservice.NewService(domains, domains)
 	}
-	service.WithCertificateAdapter(client).WithDNSAdapter(client).WithIngressAdapter(client)
-	return &DomainHandler{k8s: client, network: service}
+	var adapter DomainKubernetesAdapter
+	if value, ok := client.(DomainKubernetesAdapter); ok {
+		adapter = value
+	}
+	if value, ok := client.(*k8s.Client); ok {
+		adapter = NewDomainKubernetesAdapter(value)
+	}
+	if value, ok := client.(networkservice.CertificateAdapter); ok {
+		service.WithCertificateAdapter(value)
+	}
+	if value, ok := client.(networkservice.DNSAdapter); ok {
+		service.WithDNSAdapter(value)
+	}
+	if value, ok := client.(networkservice.IngressAdapter); ok {
+		service.WithIngressAdapter(value)
+	}
+	return &DomainHandler{k8s: adapter, network: service}
 }
 
 func (h *DomainHandler) List(c *gin.Context) {
@@ -69,7 +120,7 @@ func (h *DomainHandler) List(c *gin.Context) {
 		}
 		result := make([]ManagedDomainInfo, 0, len(domains))
 		for index := range domains {
-			result = append(result, h.DomainInfo(&domains[index]))
+			result = append(result, h.DomainInfo(c.Request.Context(), &domains[index]))
 		}
 		model.Success(c, result)
 		return
@@ -86,7 +137,7 @@ func (h *DomainHandler) List(c *gin.Context) {
 	}
 	result := make([]ManagedDomainInfo, 0, len(domains))
 	for index := range domains {
-		result = append(result, h.DomainInfo(&domains[index]))
+		result = append(result, h.DomainInfo(c.Request.Context(), &domains[index]))
 	}
 	model.Success(c, result)
 }
@@ -107,7 +158,7 @@ func (h *DomainHandler) Create(c *gin.Context) {
 		apiShared.ValidationError(c, err.Error())
 		return
 	}
-	if err := h.validateManagedDomainPrerequisites(domain); err != nil {
+	if err := h.validateManagedDomainPrerequisites(c.Request.Context(), domain); err != nil {
 		apiShared.ValidationError(c, err.Error())
 		return
 	}
@@ -120,13 +171,13 @@ func (h *DomainHandler) Create(c *gin.Context) {
 		apiShared.DBError(c, err.Error())
 		return
 	}
-	info := h.DomainInfo(domain)
-	if err := h.ensureManagedDomainCertificate(domain); err != nil {
+	info := h.DomainInfo(c.Request.Context(), domain)
+	if err := h.ensureManagedDomainCertificate(c.Request.Context(), domain); err != nil {
 		info.CertificateError = err.Error()
 		model.SuccessWithMessage(c, info, "域名已创建，但证书申请尚未成功，可在域名列表中重试")
 		return
 	}
-	info = h.DomainInfo(domain)
+	info = h.DomainInfo(c.Request.Context(), domain)
 	model.SuccessWithMessage(c, info, "受管 HTTPS 域名已创建，正在申请证书")
 }
 
@@ -141,11 +192,11 @@ func (h *DomainHandler) ListImportableCertificates(c *gin.Context) {
 		apiShared.ValidationError(c, err.Error())
 		return
 	}
-	if h.k8s == nil {
+	if h.k8s == nil || !h.k8s.KubernetesAvailable() {
 		apiShared.K8sUnavailable(c)
 		return
 	}
-	certificates, err := h.network.ListCertificates()
+	certificates, err := h.network.ListCertificatesContext(c.Request.Context())
 	if err != nil {
 		apiShared.Error(c, http.StatusBadRequest, model.CodeK8sAPIError, err.Error())
 		return
@@ -178,7 +229,7 @@ func (h *DomainHandler) ListClaimable(c *gin.Context) {
 	}
 	result := make([]ManagedDomainInfo, 0, len(domains))
 	for index := range domains {
-		result = append(result, h.DomainInfo(&domains[index]))
+		result = append(result, h.DomainInfo(c.Request.Context(), &domains[index]))
 	}
 	model.Success(c, result)
 }
@@ -194,11 +245,11 @@ func (h *DomainHandler) ImportCertificate(c *gin.Context) {
 		apiShared.ValidationError(c, err.Error())
 		return
 	}
-	if h.k8s == nil {
+	if h.k8s == nil || !h.k8s.KubernetesAvailable() {
 		apiShared.K8sUnavailable(c)
 		return
 	}
-	certificate, err := h.network.GetCertificate(environment.Namespace, strings.TrimSpace(req.CertificateName))
+	certificate, err := h.network.GetCertificateContext(c.Request.Context(), environment.Namespace, strings.TrimSpace(req.CertificateName))
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			apiShared.NotFound(c, "Certificate 不存在")
@@ -232,7 +283,7 @@ func (h *DomainHandler) ImportCertificate(c *gin.Context) {
 		apiShared.Conflict(c, "域名已被平台管理")
 		return
 	}
-	model.SuccessWithMessage(c, h.DomainInfo(domain), "已接管现有证书，Certificate 与 TLS Secret 保持原样")
+	model.SuccessWithMessage(c, h.DomainInfo(c.Request.Context(), domain), "已接管现有证书，Certificate 与 TLS Secret 保持原样")
 }
 
 func (h *DomainHandler) Claim(c *gin.Context) {
@@ -263,7 +314,7 @@ func (h *DomainHandler) Claim(c *gin.Context) {
 		apiShared.DBError(c, err.Error())
 		return
 	}
-	model.SuccessWithMessage(c, h.DomainInfo(domain), "已关联历史域名，Certificate 与 TLS Secret 保持原样")
+	model.SuccessWithMessage(c, h.DomainInfo(c.Request.Context(), domain), "已关联历史域名，Certificate 与 TLS Secret 保持原样")
 }
 
 func (h *DomainHandler) Update(c *gin.Context) {
@@ -293,7 +344,7 @@ func (h *DomainHandler) Update(c *gin.Context) {
 		return
 	}
 	if !isImportedDomain(domain) {
-		if err := h.validateManagedDomainPrerequisites(domain); err != nil {
+		if err := h.validateManagedDomainPrerequisites(c.Request.Context(), domain); err != nil {
 			apiShared.ValidationError(c, err.Error())
 			return
 		}
@@ -303,17 +354,17 @@ func (h *DomainHandler) Update(c *gin.Context) {
 		apiShared.Conflict(c, "域名已存在")
 		return
 	}
-	info := h.DomainInfo(domain)
+	info := h.DomainInfo(c.Request.Context(), domain)
 	if isImportedDomain(domain) {
 		model.SuccessWithMessage(c, info, "导入域名已更新，Certificate 保持原样")
 		return
 	}
-	if err := h.ensureManagedDomainCertificate(domain); err != nil {
+	if err := h.ensureManagedDomainCertificate(c.Request.Context(), domain); err != nil {
 		info.CertificateError = err.Error()
 		model.SuccessWithMessage(c, info, "域名已更新，但证书申请尚未成功，可重试")
 		return
 	}
-	model.SuccessWithMessage(c, h.DomainInfo(domain), "受管域名已更新，正在同步证书")
+	model.SuccessWithMessage(c, h.DomainInfo(c.Request.Context(), domain), "受管域名已更新，正在同步证书")
 }
 
 func (h *DomainHandler) RetryCertificate(c *gin.Context) {
@@ -325,15 +376,15 @@ func (h *DomainHandler) RetryCertificate(c *gin.Context) {
 		apiShared.ValidationError(c, "导入证书由原有 cert-manager 配置维护，不能从平台重新签发")
 		return
 	}
-	if err := h.validateManagedDomainPrerequisites(domain); err != nil {
+	if err := h.validateManagedDomainPrerequisites(c.Request.Context(), domain); err != nil {
 		apiShared.ValidationError(c, err.Error())
 		return
 	}
-	if err := h.ensureManagedDomainCertificate(domain); err != nil {
+	if err := h.ensureManagedDomainCertificate(c.Request.Context(), domain); err != nil {
 		apiShared.ValidationError(c, "申请证书: "+err.Error())
 		return
 	}
-	model.SuccessWithMessage(c, h.DomainInfo(domain), "证书申请已重新提交")
+	model.SuccessWithMessage(c, h.DomainInfo(c.Request.Context(), domain), "证书申请已重新提交")
 }
 
 func (h *DomainHandler) ListOperations(c *gin.Context) {
@@ -345,7 +396,7 @@ func (h *DomainHandler) ListOperations(c *gin.Context) {
 		apiShared.ValidationError(c, "域名尚未绑定证书")
 		return
 	}
-	operations, err := h.network.ListCertificateOperations(domain.Namespace, domain.CertificateName)
+	operations, err := h.network.ListCertificateOperationsContext(c.Request.Context(), domain.Namespace, domain.CertificateName)
 	if err != nil {
 		apiShared.Error(c, http.StatusBadRequest, model.CodeK8sAPIError, err.Error())
 		return
@@ -368,12 +419,12 @@ func (h *DomainHandler) Delete(c *gin.Context) {
 		return
 	}
 	if !isImportedDomain(domain) && h.k8s != nil && domain.Namespace != "" && domain.CertificateName != "" {
-		if err := h.network.DeleteCertificate(domain.Namespace, domain.CertificateName); err != nil && !apierrors.IsNotFound(err) {
+		if err := h.network.DeleteCertificateContext(c.Request.Context(), domain.Namespace, domain.CertificateName); err != nil && !apierrors.IsNotFound(err) {
 			apiShared.Error(c, http.StatusBadRequest, model.CodeK8sAPIError, "删除域名证书: "+err.Error())
 			return
 		}
 		if domain.TLSSecretName != "" {
-			if err := h.k8s.Clientset.CoreV1().Secrets(domain.Namespace).Delete(h.k8s.Ctx(), domain.TLSSecretName, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+			if err := h.k8s.DeleteTLSSecret(c.Request.Context(), domain.Namespace, domain.TLSSecretName); err != nil && !apierrors.IsNotFound(err) {
 				apiShared.Error(c, http.StatusBadRequest, model.CodeK8sAPIError, "删除域名 TLS Secret: "+err.Error())
 				return
 			}
@@ -411,15 +462,17 @@ func (h *DomainHandler) domainEnvironment(environmentID uint) (*model.Environmen
 	return environment, nil
 }
 
-func (h *DomainHandler) DomainInfo(domain *model.ManagedDomain) ManagedDomainInfo {
-	return ManagedDomainInfoFor(domain, h.k8s, h.network)
+func (h *DomainHandler) DomainInfo(ctx context.Context, domain *model.ManagedDomain) ManagedDomainInfo {
+	return ManagedDomainInfoFor(ctx, domain, h.k8s, h.network)
 }
 
 // ManagedDomainInfoFor builds the read-only domain view from the two
 // capabilities it actually needs: endpoint-reference counting and optional
 // certificate lookup. It lets workspace views reuse the DTO without creating
 // a full domain lifecycle service.
-func ManagedDomainInfoFor(domain *model.ManagedDomain, client *k8s.Client, references interface {
+func ManagedDomainInfoFor(ctx context.Context, domain *model.ManagedDomain, client interface {
+	GetCertificateContext(context.Context, string, string) (*k8s.CertInfo, error)
+}, references interface {
 	CountApplicationEndpointsByDomain(uint) (int64, error)
 }) ManagedDomainInfo {
 	if domain == nil {
@@ -437,7 +490,7 @@ func ManagedDomainInfoFor(domain *model.ManagedDomain, client *k8s.Client, refer
 		}
 		return view
 	}
-	certificate, err := client.GetCertificate(domain.Namespace, domain.CertificateName)
+	certificate, err := client.GetCertificateContext(ctx, domain.Namespace, domain.CertificateName)
 	if err != nil {
 		view.CertificateError = normalizeCertificateViewError(err.Error())
 		return view
@@ -499,20 +552,16 @@ func assignManagedCertificateNames(domain *model.ManagedDomain) {
 	}
 }
 
-func (h *DomainHandler) validateManagedDomainPrerequisites(domain *model.ManagedDomain) error {
-	if h.k8s == nil || h.k8s.Clientset == nil {
+func (h *DomainHandler) validateManagedDomainPrerequisites(ctx context.Context, domain *model.ManagedDomain) error {
+	if h.k8s == nil || !h.k8s.KubernetesAvailable() {
 		return fmt.Errorf("Kubernetes 客户端未初始化")
 	}
-	return h.network.ValidateManagedDomainPrerequisites(domain, networkservice.DomainPrerequisiteAdapter{
-		NamespaceExists: func(namespace string) (bool, error) {
-			_, err := h.k8s.Clientset.CoreV1().Namespaces().Get(h.k8s.Ctx(), namespace, metav1.GetOptions{})
-			if apierrors.IsNotFound(err) {
-				return false, nil
-			}
-			return err == nil, err
+	return h.network.ValidateManagedDomainPrerequisites(ctx, domain, networkservice.DomainPrerequisiteAdapter{
+		NamespaceExists: func(ctx context.Context, namespace string) (bool, error) {
+			return h.k8s.NamespaceExists(ctx, namespace)
 		},
-		ListIssuers: func() ([]networkservice.Issuer, error) {
-			issuers, err := h.k8s.ListIssuers()
+		ListIssuers: func(ctx context.Context) ([]networkservice.Issuer, error) {
+			issuers, err := h.k8s.ListIssuersContext(ctx)
 			if err != nil {
 				return nil, err
 			}
@@ -525,11 +574,11 @@ func (h *DomainHandler) validateManagedDomainPrerequisites(domain *model.Managed
 	})
 }
 
-func (h *DomainHandler) ensureManagedDomainCertificate(domain *model.ManagedDomain) error {
-	if h.k8s == nil {
+func (h *DomainHandler) ensureManagedDomainCertificate(ctx context.Context, domain *model.ManagedDomain) error {
+	if h.k8s == nil || !h.k8s.KubernetesAvailable() {
 		return fmt.Errorf("Kubernetes 客户端未初始化")
 	}
-	_, err := h.network.EnsureCertificate(k8s.CreateCertificateRequest{Name: domain.CertificateName, Namespace: domain.Namespace, Domains: []string{domain.Hostname}, IssuerRef: domain.IssuerRef, IssuerKind: "ClusterIssuer", SecretName: domain.TLSSecretName})
+	_, err := h.network.EnsureCertificateContext(ctx, k8s.CreateCertificateRequest{Name: domain.CertificateName, Namespace: domain.Namespace, Domains: []string{domain.Hostname}, IssuerRef: domain.IssuerRef, IssuerKind: "ClusterIssuer", SecretName: domain.TLSSecretName})
 	return err
 }
 

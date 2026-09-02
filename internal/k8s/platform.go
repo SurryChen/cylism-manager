@@ -1,6 +1,7 @@
 package k8s
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"time"
@@ -44,8 +45,8 @@ type PlatformIngressInfo struct {
 	Managed       bool   `json:"managed"`
 }
 
-func (c *Client) PlatformDeploymentStatus() (*PlatformDeploymentStatus, error) {
-	deployment, err := c.Clientset.AppsV1().Deployments(platformDeploymentNamespace).Get(c.Ctx(), platformDeploymentName, metav1.GetOptions{})
+func (c *Client) PlatformDeploymentStatusContext(ctx context.Context) (*PlatformDeploymentStatus, error) {
+	deployment, err := c.Clientset.AppsV1().Deployments(platformDeploymentNamespace).Get(ctx, platformDeploymentName, metav1.GetOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("read platform deployment: %w", err)
 	}
@@ -75,8 +76,8 @@ func (c *Client) PlatformDeploymentStatus() (*PlatformDeploymentStatus, error) {
 }
 
 // UpdatePlatformDeployment changes exactly one known Deployment/container pair.
-func (c *Client) UpdatePlatformDeployment(image string, releaseID uint) (string, error) {
-	deployment, err := c.Clientset.AppsV1().Deployments(platformDeploymentNamespace).Get(c.Ctx(), platformDeploymentName, metav1.GetOptions{})
+func (c *Client) UpdatePlatformDeploymentContext(ctx context.Context, image string, releaseID uint) (string, error) {
+	deployment, err := c.Clientset.AppsV1().Deployments(platformDeploymentNamespace).Get(ctx, platformDeploymentName, metav1.GetOptions{})
 	if err != nil {
 		return "", fmt.Errorf("read platform deployment: %w", err)
 	}
@@ -97,7 +98,7 @@ func (c *Client) UpdatePlatformDeployment(image string, releaseID uint) (string,
 	}
 	deployment.Spec.Template.Annotations[platformReleaseAnnotation] = strconv.FormatUint(uint64(releaseID), 10)
 	deployment.Spec.Template.Annotations[platformRestartAnnotation] = time.Now().UTC().Format(time.RFC3339Nano)
-	if _, err := c.Clientset.AppsV1().Deployments(platformDeploymentNamespace).Update(c.Ctx(), deployment, metav1.UpdateOptions{}); err != nil {
+	if _, err := c.Clientset.AppsV1().Deployments(platformDeploymentNamespace).Update(ctx, deployment, metav1.UpdateOptions{}); err != nil {
 		return "", fmt.Errorf("update platform deployment: %w", err)
 	}
 	return previous, nil
@@ -105,25 +106,25 @@ func (c *Client) UpdatePlatformDeployment(image string, releaseID uint) (string,
 
 // EnsurePlatformEndpoint reconciles the Ingress used to reach Cylism Manager
 // itself. Certificate lifecycle remains in the central certificate manager.
-func (c *Client) EnsurePlatformEndpoint(hostname, tlsSecretName, ingressName string) error {
+func (c *Client) EnsurePlatformEndpointContext(ctx context.Context, hostname, tlsSecretName, ingressName string) error {
 	if c == nil || c.Clientset == nil {
 		return fmt.Errorf("Kubernetes 客户端未初始化")
 	}
-	if err := c.ensurePlatformIngress(hostname, tlsSecretName, ingressName); err != nil {
+	if err := c.ensurePlatformIngress(ctx, hostname, tlsSecretName, ingressName); err != nil {
 		return fmt.Errorf("同步平台 Ingress: %w", err)
 	}
 	return nil
 }
 
-func (c *Client) ensurePlatformIngress(hostname, tlsSecretName, ingressName string) error {
+func (c *Client) ensurePlatformIngress(ctx context.Context, hostname, tlsSecretName, ingressName string) error {
 	ingressName = platformIngressName(ingressName)
-	if err := c.ensurePlatformHostnameAvailable(hostname, ingressName); err != nil {
+	if err := c.ensurePlatformHostnameAvailable(ctx, hostname, ingressName); err != nil {
 		return err
 	}
 	resource := c.Clientset.NetworkingV1().Ingresses(platformDeploymentNamespace)
-	existing, err := resource.Get(c.Ctx(), ingressName, metav1.GetOptions{})
+	existing, err := resource.Get(ctx, ingressName, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
-		_, err = resource.Create(c.Ctx(), platformIngress(ingressName, hostname, tlsSecretName), metav1.CreateOptions{})
+		_, err = resource.Create(ctx, platformIngress(ingressName, hostname, tlsSecretName), metav1.CreateOptions{})
 		return err
 	}
 	if err != nil {
@@ -139,18 +140,18 @@ func (c *Client) ensurePlatformIngress(hostname, tlsSecretName, ingressName stri
 	desired.Labels["app.kubernetes.io/managed-by"] = "cylism-manager"
 	desired.Annotations = copyStringMap(existing.Annotations)
 	desired.Spec.IngressClassName = existing.Spec.IngressClassName
-	_, err = resource.Update(c.Ctx(), desired, metav1.UpdateOptions{})
+	_, err = resource.Update(ctx, desired, metav1.UpdateOptions{})
 	return err
 }
 
 // AdoptPlatformIngress takes ownership only after verifying that the existing
 // resource already routes the requested root host to the platform Service.
-func (c *Client) AdoptPlatformIngress(hostname, tlsSecretName string) (string, error) {
+func (c *Client) AdoptPlatformIngressContext(ctx context.Context, hostname, tlsSecretName string) (string, error) {
 	if c == nil || c.Clientset == nil {
 		return "", fmt.Errorf("Kubernetes 客户端未初始化")
 	}
 	resource := c.Clientset.NetworkingV1().Ingresses(platformDeploymentNamespace)
-	items, err := resource.List(c.Ctx(), metav1.ListOptions{})
+	items, err := resource.List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return "", fmt.Errorf("读取候选 Ingress: %w", err)
 	}
@@ -173,18 +174,18 @@ func (c *Client) AdoptPlatformIngress(hostname, tlsSecretName string) (string, e
 		updated.Labels = copyStringMap(updated.Labels)
 		updated.Labels[platformEndpointLabel] = platformEndpointLabelValue
 		updated.Labels["app.kubernetes.io/managed-by"] = "cylism-manager"
-		if _, err := resource.Update(c.Ctx(), updated, metav1.UpdateOptions{}); err != nil {
+		if _, err := resource.Update(ctx, updated, metav1.UpdateOptions{}); err != nil {
 			return "", err
 		}
 	}
-	if err := c.ensurePlatformIngress(hostname, tlsSecretName, existing.Name); err != nil {
+	if err := c.ensurePlatformIngress(ctx, hostname, tlsSecretName, existing.Name); err != nil {
 		return "", err
 	}
 	return existing.Name, nil
 }
 
-func (c *Client) ensurePlatformHostnameAvailable(hostname, managedIngressName string) error {
-	ingresses, err := c.Clientset.NetworkingV1().Ingresses("").List(c.Ctx(), metav1.ListOptions{})
+func (c *Client) ensurePlatformHostnameAvailable(ctx context.Context, hostname, managedIngressName string) error {
+	ingresses, err := c.Clientset.NetworkingV1().Ingresses("").List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return fmt.Errorf("检查现有 Ingress: %w", err)
 	}
@@ -203,13 +204,13 @@ func (c *Client) ensurePlatformHostnameAvailable(hostname, managedIngressName st
 
 // RemovePlatformEndpoint stops public routing without modifying certificates
 // or TLS Secrets managed by the certificate subsystem.
-func (c *Client) RemovePlatformEndpoint(ingressName string) error {
+func (c *Client) RemovePlatformEndpointContext(ctx context.Context, ingressName string) error {
 	if c == nil || c.Clientset == nil {
 		return fmt.Errorf("Kubernetes 客户端未初始化")
 	}
 	resource := c.Clientset.NetworkingV1().Ingresses(platformDeploymentNamespace)
 	ingressName = platformIngressName(ingressName)
-	ingress, err := resource.Get(c.Ctx(), ingressName, metav1.GetOptions{})
+	ingress, err := resource.Get(ctx, ingressName, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
 		return nil
 	}
@@ -219,15 +220,15 @@ func (c *Client) RemovePlatformEndpoint(ingressName string) error {
 	if ingress.Labels[platformEndpointLabel] != platformEndpointLabelValue {
 		return fmt.Errorf("目标 Ingress %s/%s 不受平台管理", platformDeploymentNamespace, platformDeploymentName)
 	}
-	return resource.Delete(c.Ctx(), ingressName, metav1.DeleteOptions{})
+	return resource.Delete(ctx, ingressName, metav1.DeleteOptions{})
 }
 
-func (c *Client) PlatformIngressReady(ingressName string) (bool, error) {
+func (c *Client) PlatformIngressReadyContext(ctx context.Context, ingressName string) (bool, error) {
 	if c == nil || c.Clientset == nil {
 		return false, fmt.Errorf("Kubernetes 客户端未初始化")
 	}
 	ingressName = platformIngressName(ingressName)
-	ingress, err := c.Clientset.NetworkingV1().Ingresses(platformDeploymentNamespace).Get(c.Ctx(), ingressName, metav1.GetOptions{})
+	ingress, err := c.Clientset.NetworkingV1().Ingresses(platformDeploymentNamespace).Get(ctx, ingressName, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
 		return false, nil
 	}
@@ -240,12 +241,12 @@ func (c *Client) PlatformIngressReady(ingressName string) (bool, error) {
 // PlatformIngressInfo returns the route currently used for the platform
 // endpoint. A missing Ingress is represented as nil so callers can distinguish
 // it from an unavailable Kubernetes API.
-func (c *Client) PlatformIngressInfo(ingressName string) (*PlatformIngressInfo, error) {
+func (c *Client) PlatformIngressInfoContext(ctx context.Context, ingressName string) (*PlatformIngressInfo, error) {
 	if c == nil || c.Clientset == nil {
 		return nil, fmt.Errorf("Kubernetes 客户端未初始化")
 	}
 	ingressName = platformIngressName(ingressName)
-	ingress, err := c.Clientset.NetworkingV1().Ingresses(platformDeploymentNamespace).Get(c.Ctx(), ingressName, metav1.GetOptions{})
+	ingress, err := c.Clientset.NetworkingV1().Ingresses(platformDeploymentNamespace).Get(ctx, ingressName, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
 		return nil, nil
 	}

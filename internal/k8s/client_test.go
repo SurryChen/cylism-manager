@@ -1,6 +1,7 @@
 package k8s
 
 import (
+	"context"
 	"testing"
 )
 
@@ -28,7 +29,9 @@ func TestCheckCRD_NotFound(t *testing.T) {
 
 func TestClientContext(t *testing.T) {
 	client, _ := newClientFromRestConfig(nil)
-	if client.ctx == nil {
-		t.Fatal("expected non-nil context")
+	ctx := context.WithValue(context.Background(), "test", "value")
+	view := client.withContext(ctx)
+	if view == nil || view.ctx != ctx {
+		t.Fatal("expected context-bound client view")
 	}
 }

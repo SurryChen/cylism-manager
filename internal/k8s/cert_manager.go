@@ -1,6 +1,7 @@
 package k8s
 
 import (
+	"context"
 	"fmt"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -46,8 +47,12 @@ type DNSProviderStatus struct {
 	InstallationName string `json:"installation_name,omitempty"`
 }
 
-func (c *Client) DNSProviderStatus(providerID string) *DNSProviderStatus {
+func (c *Client) DNSProviderStatusContext(ctx context.Context, providerID string) *DNSProviderStatus {
 	status := &DNSProviderStatus{Provider: providerID, State: CertManagerStateUnavailable, Message: "Kubernetes 客户端未初始化"}
+	if err := ctx.Err(); err != nil {
+		status.Message = err.Error()
+		return status
+	}
 	provider, ok := GetDNSProvider(providerID)
 	if !ok {
 		status.Message = "不支持的 DNS Provider: " + providerID
@@ -62,16 +67,16 @@ func (c *Client) DNSProviderStatus(providerID string) *DNSProviderStatus {
 	if c == nil || c.Clientset == nil {
 		return status
 	}
-	base := c.CertManagerStatus()
+	base := c.CertManagerStatusContext(ctx)
 	if base.State != CertManagerStateReady {
 		status.State, status.Message = base.State, "cert-manager 未就绪: "+base.Message
 		return status
 	}
-	if !c.helmChartInstallerAvailable() {
+	if !c.helmChartInstallerAvailableContext(ctx) {
 		status.Message = "当前集群未提供 K3s HelmChart 安装器"
 		return status
 	}
-	exists, failed, detail := c.helmChartState(chart.ReleaseName)
+	exists, failed, detail := c.helmChartStateContext(ctx, chart.ReleaseName)
 	if !exists {
 		status.State, status.Message = CertManagerStateNotInstalled, provider.Info().Name+" Webhook 尚未安装"
 		return status
@@ -80,7 +85,7 @@ func (c *Client) DNSProviderStatus(providerID string) *DNSProviderStatus {
 		status.State, status.Message = CertManagerStateDegraded, provider.Info().Name+" Webhook 安装失败: "+detail
 		return status
 	}
-	if deploymentReady(c, chart.ReleaseName) {
+	if deploymentReady(ctx, c, chart.ReleaseName) {
 		status.State, status.Message, status.Ready = CertManagerStateReady, provider.Info().Name+" Webhook 已就绪", true
 		return status
 	}
@@ -88,8 +93,11 @@ func (c *Client) DNSProviderStatus(providerID string) *DNSProviderStatus {
 	return status
 }
 
-func (c *Client) InstallDNSProvider(providerID string) (*DNSProviderStatus, error) {
-	status := c.DNSProviderStatus(providerID)
+func (c *Client) InstallDNSProviderContext(ctx context.Context, providerID string) (*DNSProviderStatus, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	status := c.DNSProviderStatusContext(ctx, providerID)
 	provider, ok := GetDNSProvider(providerID)
 	if !ok {
 		return status, fmt.Errorf("%s", status.Message)
@@ -106,7 +114,7 @@ func (c *Client) InstallDNSProvider(providerID string) (*DNSProviderStatus, erro
 		return status, err
 	}
 	object := &unstructured.Unstructured{Object: map[string]interface{}{"apiVersion": "helm.cattle.io/v1", "kind": "HelmChart", "metadata": map[string]interface{}{"name": chart.ReleaseName, "namespace": "kube-system", "labels": map[string]interface{}{"app.kubernetes.io/managed-by": "cylism-manager", "cylism.io/dns-provider": providerID}}, "spec": map[string]interface{}{"chart": chart.Chart, "repo": chart.Repository, "version": chart.Version, "targetNamespace": certManagerNamespace, "createNamespace": true, "valuesContent": chart.Values}}}
-	_, err = dynamicClient.Resource(helmChartGVR).Namespace("kube-system").Create(c.Ctx(), object, metav1.CreateOptions{})
+	_, err = dynamicClient.Resource(helmChartGVR).Namespace("kube-system").Create(ctx, object, metav1.CreateOptions{})
 	if err != nil && !apierrors.IsAlreadyExists(err) {
 		return status, fmt.Errorf("创建 %s Webhook HelmChart: %w", provider.Info().Name, err)
 	}
@@ -114,28 +122,32 @@ func (c *Client) InstallDNSProvider(providerID string) (*DNSProviderStatus, erro
 	return status, nil
 }
 
-func (c *Client) CertManagerStatus() *CertManagerStatus {
+func (c *Client) CertManagerStatusContext(ctx context.Context) *CertManagerStatus {
 	status := &CertManagerStatus{State: CertManagerStateUnavailable, Message: "Kubernetes 客户端未初始化"}
+	if err := ctx.Err(); err != nil {
+		status.Message = err.Error()
+		return status
+	}
 	if c == nil || c.Clientset == nil {
 		return status
 	}
 
 	var err error
-	status.CertificateCRD, err = c.CheckCRD("certificates.cert-manager.io")
+	status.CertificateCRD, err = c.CheckCRDContext(ctx, "certificates.cert-manager.io")
 	if err != nil {
 		return certManagerStatusForError(status, "检查 Certificate CRD", err)
 	}
-	status.IssuerCRD, err = c.CheckCRD("issuers.cert-manager.io")
+	status.IssuerCRD, err = c.CheckCRDContext(ctx, "issuers.cert-manager.io")
 	if err != nil {
 		return certManagerStatusForError(status, "检查 Issuer CRD", err)
 	}
-	status.ClusterIssuerCRD, err = c.CheckCRD("clusterissuers.cert-manager.io")
+	status.ClusterIssuerCRD, err = c.CheckCRDContext(ctx, "clusterissuers.cert-manager.io")
 	if err != nil {
 		return certManagerStatusForError(status, "检查 ClusterIssuer CRD", err)
 	}
 	if !status.CertificateCRD || !status.IssuerCRD || !status.ClusterIssuerCRD {
-		status.InstallerAvailable = c.helmChartInstallerAvailable()
-		if exists, failed, detail := c.certManagerHelmChartState(); exists {
+		status.InstallerAvailable = c.helmChartInstallerAvailableContext(ctx)
+		if exists, failed, detail := c.certManagerHelmChartStateContext(ctx); exists {
 			status.InstallationName = certManagerHelmName
 			if failed {
 				status.State = CertManagerStateDegraded
@@ -151,14 +163,14 @@ func (c *Client) CertManagerStatus() *CertManagerStatus {
 		return status
 	}
 
-	if err := c.checkCertManagerAccess(); err != nil {
+	if err := c.checkCertManagerAccessContext(ctx); err != nil {
 		return certManagerStatusForError(status, "验证 cert-manager 访问权限", err)
 	}
-	status.ControllerReady = deploymentReady(c, certManagerHelmName)
-	status.WebhookReady = deploymentReady(c, certManagerHelmName+"-webhook")
-	status.CAInjectorReady = deploymentReady(c, certManagerHelmName+"-cainjector")
+	status.ControllerReady = deploymentReady(ctx, c, certManagerHelmName)
+	status.WebhookReady = deploymentReady(ctx, c, certManagerHelmName+"-webhook")
+	status.CAInjectorReady = deploymentReady(ctx, c, certManagerHelmName+"-cainjector")
 	if !status.ControllerReady || !status.WebhookReady || !status.CAInjectorReady {
-		if exists, failed, detail := c.certManagerHelmChartState(); exists && !failed {
+		if exists, failed, detail := c.certManagerHelmChartStateContext(ctx); exists && !failed {
 			status.State = CertManagerStateInstalling
 			status.InstallationName = certManagerHelmName
 			status.Message = "cert-manager 正在安装，等待控制组件就绪"
@@ -177,9 +189,12 @@ func (c *Client) CertManagerStatus() *CertManagerStatus {
 	return status
 }
 
-// InstallCertManager creates a fixed K3s HelmChart and returns immediately while the Helm controller installs it.
-func (c *Client) InstallCertManager(repository, chartName, chartVersion string) (*CertManagerStatus, error) {
-	status := c.CertManagerStatus()
+// InstallCertManagerContext creates a fixed K3s HelmChart and returns immediately while the Helm controller installs it.
+func (c *Client) InstallCertManagerContext(ctx context.Context, repository, chartName, chartVersion string) (*CertManagerStatus, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	status := c.CertManagerStatusContext(ctx)
 	if status.State == CertManagerStateReady || status.State == CertManagerStateInstalling {
 		return status, nil
 	}
@@ -216,7 +231,7 @@ func (c *Client) InstallCertManager(repository, chartName, chartVersion string) 
 			"valuesContent":   "crds:\n  enabled: true\nprometheus:\n  enabled: false\n",
 		},
 	}}
-	_, err = dynamicClient.Resource(helmChartGVR).Namespace("kube-system").Create(c.Ctx(), chart, metav1.CreateOptions{})
+	_, err = dynamicClient.Resource(helmChartGVR).Namespace("kube-system").Create(ctx, chart, metav1.CreateOptions{})
 	if err != nil && !apierrors.IsAlreadyExists(err) {
 		return status, fmt.Errorf("创建 cert-manager HelmChart: %w", err)
 	}
@@ -236,7 +251,7 @@ func certManagerStatusForError(status *CertManagerStatus, action string, err err
 	return status
 }
 
-func (c *Client) checkCertManagerAccess() error {
+func (c *Client) checkCertManagerAccessContext(ctx context.Context) error {
 	dynamicClient, err := c.dynamicClient()
 	if err != nil {
 		return err
@@ -246,9 +261,9 @@ func (c *Client) checkCertManagerAccess() error {
 		namespaced bool
 	}{{certGVR, true}, {issuerGVR, true}, {clusterIssuerGVR, false}, {certificateRequestGVR, true}, {orderGVR, true}, {challengeGVR, true}} {
 		if resource.namespaced {
-			_, err = dynamicClient.Resource(resource.gvr).Namespace("").List(c.Ctx(), metav1.ListOptions{Limit: 1})
+			_, err = dynamicClient.Resource(resource.gvr).Namespace("").List(ctx, metav1.ListOptions{Limit: 1})
 		} else {
-			_, err = dynamicClient.Resource(resource.gvr).List(c.Ctx(), metav1.ListOptions{Limit: 1})
+			_, err = dynamicClient.Resource(resource.gvr).List(ctx, metav1.ListOptions{Limit: 1})
 		}
 		if err != nil {
 			return err
@@ -257,26 +272,26 @@ func (c *Client) checkCertManagerAccess() error {
 	return nil
 }
 
-func deploymentReady(c *Client, name string) bool {
-	deployment, err := c.Clientset.AppsV1().Deployments(certManagerNamespace).Get(c.Ctx(), name, metav1.GetOptions{})
+func deploymentReady(ctx context.Context, c *Client, name string) bool {
+	deployment, err := c.Clientset.AppsV1().Deployments(certManagerNamespace).Get(ctx, name, metav1.GetOptions{})
 	return err == nil && deployment.Status.AvailableReplicas > 0
 }
 
-func (c *Client) helmChartInstallerAvailable() bool {
-	exists, err := c.CheckCRD("helmcharts.helm.cattle.io")
+func (c *Client) helmChartInstallerAvailableContext(ctx context.Context) bool {
+	exists, err := c.CheckCRDContext(ctx, "helmcharts.helm.cattle.io")
 	return err == nil && exists
 }
 
-func (c *Client) certManagerHelmChartState() (exists, failed bool, detail string) {
-	return c.helmChartState(certManagerHelmName)
+func (c *Client) certManagerHelmChartStateContext(ctx context.Context) (exists, failed bool, detail string) {
+	return c.helmChartStateContext(ctx, certManagerHelmName)
 }
 
-func (c *Client) helmChartState(name string) (exists, failed bool, detail string) {
+func (c *Client) helmChartStateContext(ctx context.Context, name string) (exists, failed bool, detail string) {
 	dynamicClient, err := c.dynamicClient()
 	if err != nil {
 		return false, false, ""
 	}
-	chart, err := dynamicClient.Resource(helmChartGVR).Namespace("kube-system").Get(c.Ctx(), name, metav1.GetOptions{})
+	chart, err := dynamicClient.Resource(helmChartGVR).Namespace("kube-system").Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
 		return false, false, ""
 	}

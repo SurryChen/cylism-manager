@@ -8,7 +8,6 @@ import (
 	"time"
 
 	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
-	"github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/repository"
 	"github.com/gin-gonic/gin"
@@ -19,13 +18,13 @@ import (
 // cannot approve operations; only this JWT-protected handler may execute them.
 type AgentOperationHandler struct {
 	store                      repository.AgentOperationManagementRepository
-	client                     *k8s.Client
+	client                     KubernetesAdapter
 	registryPullExecutor       AgentRegistryPullExecutor
 	maintenanceCleanupExecutor AgentMaintenanceCleanupExecutor
 }
 
-func NewAgentOperationHandler(store repository.AgentOperationManagementRepository, client *k8s.Client) *AgentOperationHandler {
-	return &AgentOperationHandler{store: store, client: client}
+func NewAgentOperationHandler(store repository.AgentOperationManagementRepository, client interface{}) *AgentOperationHandler {
+	return &AgentOperationHandler{store: store, client: adaptClient(client)}
 }
 
 func (h *AgentOperationHandler) WithRegistryPullExecutor(executor AgentRegistryPullExecutor) *AgentOperationHandler {
@@ -198,7 +197,7 @@ func (h *AgentOperationHandler) resolve(c *gin.Context, approve bool) {
 		h.resolveMaintenanceCleanup(c, operation, userID)
 		return
 	}
-	if operation.Capability != model.AgentCapabilityDeploymentScale || h.client == nil || h.client.Clientset == nil {
+	if operation.Capability != model.AgentCapabilityDeploymentScale || h.client == nil || !h.client.KubernetesAvailable() {
 		apiShared.Error(c, http.StatusServiceUnavailable, model.CodeK8sUnavailable, "Agent 操作执行器不可用")
 		return
 	}
@@ -207,7 +206,7 @@ func (h *AgentOperationHandler) resolve(c *gin.Context, approve bool) {
 		apiShared.InternalError(c, "Agent 操作参数无效")
 		return
 	}
-	deployment, err := h.client.Clientset.AppsV1().Deployments(parameters.Namespace).Get(c.Request.Context(), parameters.Name, metav1.GetOptions{})
+	deployment, err := h.client.Clientset().AppsV1().Deployments(parameters.Namespace).Get(c.Request.Context(), parameters.Name, metav1.GetOptions{})
 	if err != nil {
 		apiShared.K8sAPIError(c, "读取目标 Deployment 失败")
 		return
@@ -223,7 +222,7 @@ func (h *AgentOperationHandler) resolve(c *gin.Context, approve bool) {
 		return
 	}
 	deployment.Spec.Replicas = &parameters.Replicas
-	if _, err := h.client.Clientset.AppsV1().Deployments(parameters.Namespace).Update(c.Request.Context(), deployment, metav1.UpdateOptions{}); err != nil {
+	if _, err := h.client.Clientset().AppsV1().Deployments(parameters.Namespace).Update(c.Request.Context(), deployment, metav1.UpdateOptions{}); err != nil {
 		now := time.Now()
 		_, _ = h.store.UpdateAgentOperationStatus(operationID, model.AgentOperationApproved, model.AgentOperationFailed, agentOperationErrorSummary("执行 Deployment 扩缩容失败", err), nil, &now)
 		apiShared.K8sAPIError(c, "执行 Deployment 扩缩容失败")
@@ -267,7 +266,7 @@ func (h *AgentOperationHandler) resolveMaintenanceCleanup(c *gin.Context, operat
 	}
 	event.Status, event.DiagnosticSummary = model.AlertEventRemediating, "管理员已批准，正在执行固定清理配方"
 	_ = h.store.UpdateAlertEvent(event)
-	output, executeErr := h.maintenanceCleanupExecutor(server, parameters.Recipe)
+	output, executeErr := h.maintenanceCleanupExecutor(c.Request.Context(), server, parameters.Recipe)
 	now := time.Now()
 	if executeErr != nil {
 		message := maintenanceCleanupFailureSummary(output, executeErr)
@@ -324,7 +323,7 @@ func (h *AgentOperationHandler) resolveRegistryPullCheck(c *gin.Context, operati
 		apiShared.Conflict(c, "Agent 操作状态已变化")
 		return
 	}
-	if err := h.registryPullExecutor(server, config.VerificationImage); err != nil {
+	if err := h.registryPullExecutor(c.Request.Context(), server, config.VerificationImage); err != nil {
 		now := time.Now()
 		_, _ = h.store.UpdateAgentOperationStatus(operation.OperationID, model.AgentOperationApproved, model.AgentOperationFailed, agentOperationErrorSummary("节点验证镜像拉取失败", err), nil, &now)
 		apiShared.Error(c, http.StatusBadGateway, model.CodeInternalError, "节点验证镜像拉取失败")

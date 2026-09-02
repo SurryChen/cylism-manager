@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -21,21 +22,57 @@ func (f *fakeK8s) ListPVCs(string) ([]k8sclient.PersistentVolumeClaimInfo, error
 	f.listed = true
 	return []k8sclient.PersistentVolumeClaimInfo{{Name: "data"}}, nil
 }
+func (f *fakeK8s) ListPVCsContext(ctx context.Context, ns string) ([]k8sclient.PersistentVolumeClaimInfo, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return f.ListPVCs(ns)
+}
 func (f *fakeK8s) ListManagedPVCs(ns string, id uint) ([]k8sclient.PersistentVolumeClaimInfo, error) {
 	return []k8sclient.PersistentVolumeClaimInfo{{Namespace: ns, EnvironmentID: id}}, nil
 }
+func (f *fakeK8s) ListManagedPVCsContext(ctx context.Context, ns string, id uint) ([]k8sclient.PersistentVolumeClaimInfo, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return f.ListManagedPVCs(ns, id)
+}
 func (f *fakeK8s) GetManagedPVC(string, string, uint) (*k8sclient.PersistentVolumeClaimInfo, error) {
 	return nil, nil
+}
+func (f *fakeK8s) GetManagedPVCContext(ctx context.Context, ns, name string, id uint) (*k8sclient.PersistentVolumeClaimInfo, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return f.GetManagedPVC(ns, name, id)
 }
 func (f *fakeK8s) CreateManagedPVC(namespace string, _ uint, request k8sclient.PersistentVolumeClaimRequest) (*corev1.PersistentVolumeClaim, error) {
 	f.created = namespace + "/" + request.Name
 	return &corev1.PersistentVolumeClaim{}, nil
 }
+func (f *fakeK8s) CreateManagedPVCContext(ctx context.Context, namespace string, id uint, request k8sclient.PersistentVolumeClaimRequest) (*corev1.PersistentVolumeClaim, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return f.CreateManagedPVC(namespace, id, request)
+}
 func (f *fakeK8s) DeleteManagedPVC(ns, name string, _ uint) error {
 	f.deleted = ns + "/" + name
 	return nil
 }
+func (f *fakeK8s) DeleteManagedPVCContext(ctx context.Context, ns, name string, id uint) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return f.DeleteManagedPVC(ns, name, id)
+}
 func (f *fakeK8s) ListStorageClasses() ([]k8sclient.StorageClassInfo, error) { return nil, nil }
+func (f *fakeK8s) ListStorageClassesContext(ctx context.Context) ([]k8sclient.StorageClassInfo, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return f.ListStorageClasses()
+}
 
 type fakeEnv struct{ env *model.Environment }
 
@@ -48,7 +85,7 @@ func (f fakeEnv) GetEnvironmentByID(uint) (*model.Environment, error) {
 
 func TestServiceResolvesEnvironmentNamespace(t *testing.T) {
 	s := NewService(&fakeK8s{}, fakeEnv{env: &model.Environment{Namespace: "project-a"}})
-	claims, err := s.ListPVCs("", 2)
+	claims, err := s.ListPVCsContext(context.Background(), "", 2)
 	if err != nil || len(claims) != 1 || claims[0].Namespace != "project-a" {
 		t.Fatalf("unexpected claims: %#v, %v", claims, err)
 	}
@@ -56,14 +93,14 @@ func TestServiceResolvesEnvironmentNamespace(t *testing.T) {
 
 func TestServiceRejectsNamespaceMismatch(t *testing.T) {
 	s := NewService(&fakeK8s{}, fakeEnv{env: &model.Environment{Namespace: "project-a"}})
-	if _, err := s.ListPVCs("other", 2); err == nil {
+	if _, err := s.ListPVCsContext(context.Background(), "other", 2); err == nil {
 		t.Fatal("expected namespace mismatch")
 	}
 }
 
 func TestServiceDeletesNamedPVC(t *testing.T) {
 	f := &fakeK8s{}
-	if err := NewService(f, nil).DeletePVC("ns", "data", 1); err != nil || f.deleted != "ns/data" {
+	if err := NewService(f, nil).DeletePVCContext(context.Background(), "ns", "data", 1); err != nil || f.deleted != "ns/data" {
 		t.Fatalf("delete failed: %v %q", err, f.deleted)
 	}
 }
@@ -71,7 +108,7 @@ func TestServiceDeletesNamedPVC(t *testing.T) {
 func TestServiceGetsPVCThroughAdapter(t *testing.T) {
 	f := &fakeK8s{}
 	s := NewService(f, nil)
-	if _, err := s.GetPVC("ns", "data", 0); err != nil {
+	if _, err := s.GetPVCContext(context.Background(), "ns", "data", 0); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -79,7 +116,7 @@ func TestServiceGetsPVCThroughAdapter(t *testing.T) {
 func TestServiceCreatesPVCInEnvironmentNamespace(t *testing.T) {
 	f := &fakeK8s{}
 	s := NewService(f, fakeEnv{env: &model.Environment{Namespace: "project-a"}})
-	if _, err := s.CreatePVC("", 1, k8sclient.PersistentVolumeClaimRequest{Name: "data", Storage: "1Gi"}); err != nil {
+	if _, err := s.CreatePVCContext(context.Background(), "", 1, k8sclient.PersistentVolumeClaimRequest{Name: "data", Storage: "1Gi"}); err != nil {
 		t.Fatal(err)
 	}
 	if f.created != "project-a/data" {
@@ -153,21 +190,22 @@ func TestServiceOwnsPersistentVolumeTaskRecords(t *testing.T) {
 func TestServiceDispatchesLongRunningStorageTasks(t *testing.T) {
 	started := make(chan string, 4)
 	s := NewService(nil, nil).WithAsyncExecutor(AsyncExecutor{
-		RunMigration: func(uint, string) { started <- "migration" },
-		RunImport:    func(uint, bool) { started <- "import" },
-		RunBackup:    func(uint) { started <- "backup" },
-		RunRestore:   func(uint) { started <- "restore" },
+		RunMigration: func(context.Context, uint, string) { started <- "migration" },
+		RunImport:    func(context.Context, uint, bool) { started <- "import" },
+		RunBackup:    func(context.Context, uint) { started <- "backup" },
+		RunRestore:   func(context.Context, uint) { started <- "restore" },
 	})
-	if err := s.StartMigration(1, "helper"); err != nil {
+	ctx := context.Background()
+	if err := s.StartMigration(ctx, 1, "helper"); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.StartImport(2, true); err != nil {
+	if err := s.StartImport(ctx, 2, true); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.StartBackup(3); err != nil {
+	if err := s.StartBackup(ctx, 3); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.StartRestore(4); err != nil {
+	if err := s.StartRestore(ctx, 4); err != nil {
 		t.Fatal(err)
 	}
 	seen := map[string]bool{}
@@ -182,7 +220,7 @@ func TestServiceDispatchesLongRunningStorageTasks(t *testing.T) {
 }
 
 func TestServiceRejectsMissingStorageExecutor(t *testing.T) {
-	if err := NewService(nil, nil).StartBackup(1); err == nil {
+	if err := NewService(nil, nil).StartBackup(context.Background(), 1); err == nil {
 		t.Fatal("expected missing executor error")
 	}
 }

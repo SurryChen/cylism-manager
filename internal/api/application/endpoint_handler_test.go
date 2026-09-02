@@ -15,16 +15,13 @@ import (
 )
 
 func TestSyncApplicationEndpointsRemovesHTTPIngressForUDPService(t *testing.T) {
-	_, s := setupApplicationRouter()
+	clientset := k8sfake.NewSimpleClientset()
+	_, s := setupApplicationRouter(&k8sclient.Client{Clientset: clientset})
 	app := createApplicationForReleaseRuntimeTest(t, s)
 	if err := s.CreateApplicationEndpoint(&model.ApplicationEndpoint{ApplicationID: app.ID, Exposure: application.ExposurePublic, Domain: "udp.example.com", Path: "/", ServicePort: 443}); err != nil {
 		t.Fatal(err)
 	}
-	originalK8s := K8s
-	clientset := k8sfake.NewSimpleClientset()
-	K8s = &k8sclient.Client{Clientset: clientset}
-	defer func() { K8s = originalK8s }()
-	handler := NewApplicationHandler(s, []byte("01234567890123456789012345678901"))
+	handler := NewApplicationHandler(s, []byte("01234567890123456789012345678901"), NewKubernetesDependencies(&k8sclient.Client{Clientset: clientset}))
 	if err := handler.syncApplicationEndpoints(t.Context(), app, application.ServiceSpec{Port: 443}); err != nil {
 		t.Fatalf("create TCP Ingress: %v", err)
 	}
@@ -40,17 +37,13 @@ func TestSyncApplicationEndpointsRemovesHTTPIngressForUDPService(t *testing.T) {
 }
 
 func TestSyncApplicationEndpointsUsesFirstTCPPortForMultiPortService(t *testing.T) {
-	_, s := setupApplicationRouter()
+	clientset := k8sfake.NewSimpleClientset()
+	_, s := setupApplicationRouter(&k8sclient.Client{Clientset: clientset})
 	app := createApplicationForReleaseRuntimeTest(t, s)
 	if err := s.CreateApplicationEndpoint(&model.ApplicationEndpoint{ApplicationID: app.ID, Exposure: application.ExposurePublic, Domain: "api.example.com", Path: "/", ServicePort: 80}); err != nil {
 		t.Fatal(err)
 	}
-	originalK8s := K8s
-	clientset := k8sfake.NewSimpleClientset()
-	K8s = &k8sclient.Client{Clientset: clientset}
-	defer func() { K8s = originalK8s }()
-
-	handler := NewApplicationHandler(s, []byte("01234567890123456789012345678901"))
+	handler := NewApplicationHandler(s, []byte("01234567890123456789012345678901"), NewKubernetesDependencies(&k8sclient.Client{Clientset: clientset}))
 	service := application.ServiceSpec{Ports: []application.ServicePortSpec{
 		{Name: "proxy", Port: 443, TargetPort: 443, Protocol: application.ServiceProtocolUDP},
 		{Name: "api", Port: 8080, TargetPort: 8080, Protocol: application.ServiceProtocolTCP},
@@ -72,7 +65,8 @@ func TestSyncApplicationEndpointsUsesFirstTCPPortForMultiPortService(t *testing.
 }
 
 func TestApplicationHandlerBindsDomainIndependentlyFromReleaseTemplate(t *testing.T) {
-	r, s := setupApplicationRouter()
+	clientset := k8sfake.NewSimpleClientset(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "commerce-prod"}})
+	r, s := setupApplicationRouter(&k8sclient.Client{Clientset: clientset})
 	if err := s.CreateProject(&model.Project{Name: "commerce", OwnerID: 1}); err != nil {
 		t.Fatal(err)
 	}
@@ -88,10 +82,6 @@ func TestApplicationHandlerBindsDomainIndependentlyFromReleaseTemplate(t *testin
 	if err := s.CreateManagedDomain(&model.ManagedDomain{Hostname: "admin.example.com", EnvironmentID: 1, Namespace: "commerce-prod", CertificateName: "admin-cert", TLSSecretName: "admin-tls", Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
-	originalK8s := K8s
-	K8s = &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "commerce-prod"}})}
-	defer func() { K8s = originalK8s }()
-
 	bind := serve(r, newJSONRequest(http.MethodPost, "/api/applications/1/endpoints", gin.H{"domain_id": 1, "path": "/", "tls_enabled": false}))
 	if bind.Code != http.StatusOK || !strings.Contains(bind.Body.String(), "api.example.com") {
 		t.Fatalf("bind endpoint: %d %s", bind.Code, bind.Body.String())
@@ -116,7 +106,8 @@ func TestApplicationHandlerBindsDomainIndependentlyFromReleaseTemplate(t *testin
 }
 
 func TestApplicationHandlerRejectsHTTPIngressBindingForUDPService(t *testing.T) {
-	r, s := setupApplicationRouter()
+	clientset := k8sfake.NewSimpleClientset(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "edge-prod"}})
+	r, s := setupApplicationRouter(&k8sclient.Client{Clientset: clientset})
 	if err := s.CreateProject(&model.Project{Name: "edge", OwnerID: 1}); err != nil {
 		t.Fatal(err)
 	}
@@ -132,10 +123,6 @@ func TestApplicationHandlerRejectsHTTPIngressBindingForUDPService(t *testing.T) 
 	if err := s.CreateRelease(&model.Release{ApplicationID: 1, Sequence: 1, Image: "registry.example.com/udp-server:1.0.0", DesiredSpec: `{"service":{"port":443,"protocol":"UDP"}}`, Status: model.ReleaseStatusSucceeded, CreatedBy: 1}); err != nil {
 		t.Fatal(err)
 	}
-	originalK8s := K8s
-	K8s = &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "edge-prod"}})}
-	defer func() { K8s = originalK8s }()
-
 	response := serve(r, newJSONRequest(http.MethodPost, "/api/applications/1/endpoints", gin.H{"domain_id": 1, "path": "/", "tls_enabled": false}))
 	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "UDP Service 不支持 HTTP Ingress") {
 		t.Fatalf("expected UDP Ingress rejection, got %d %s", response.Code, response.Body.String())

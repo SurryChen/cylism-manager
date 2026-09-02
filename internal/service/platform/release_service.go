@@ -1,6 +1,7 @@
 package platform
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -45,8 +46,8 @@ type ReleaseService struct {
 // platform release state machine. Endpoint management remains owned by the
 // delivery handler and is intentionally outside this interface.
 type PlatformAdapter interface {
-	PlatformDeploymentStatus() (*k8sclient.PlatformDeploymentStatus, error)
-	UpdatePlatformDeployment(string, uint) (string, error)
+	PlatformDeploymentStatusContext(context.Context) (*k8sclient.PlatformDeploymentStatus, error)
+	UpdatePlatformDeploymentContext(context.Context, string, uint) (string, error)
 }
 
 func NewReleaseService(releases repository.PlatformReleaseRepository, encKey []byte, platform PlatformAdapter) *ReleaseService {
@@ -183,11 +184,11 @@ func NormalizeImagePrefixes(raw string) ([]string, error) {
 	return prefixes, nil
 }
 
-func (s *ReleaseService) CreateRelease(image, source, commitSHA, runID string) (*model.PlatformRelease, error) {
+func (s *ReleaseService) CreateRelease(ctx context.Context, image, source, commitSHA, runID string) (*model.PlatformRelease, error) {
 	if !s.Available() {
 		return nil, errors.New("Kubernetes 客户端未初始化")
 	}
-	status, err := s.platform.PlatformDeploymentStatus()
+	status, err := s.platform.PlatformDeploymentStatusContext(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -198,15 +199,18 @@ func (s *ReleaseService) CreateRelease(image, source, commitSHA, runID string) (
 	return release, nil
 }
 
-func (s *ReleaseService) Submit(image, source, commitSHA, runID string) (*model.PlatformRelease, error) {
+func (s *ReleaseService) Submit(ctx context.Context, image, source, commitSHA, runID string) (*model.PlatformRelease, error) {
 	if err := s.ValidateImage(image); err != nil {
 		return nil, err
 	}
-	return s.CreateRelease(image, source, commitSHA, runID)
+	return s.CreateRelease(ctx, image, source, commitSHA, runID)
 }
 
-func (s *ReleaseService) Apply(id uint) {
+func (s *ReleaseService) Apply(ctx context.Context, id uint) {
 	if !s.Available() {
+		return
+	}
+	if ctx == nil {
 		return
 	}
 	s.updateMu.Lock()
@@ -223,7 +227,7 @@ func (s *ReleaseService) Apply(id uint) {
 	if err := s.releases.UpdatePlatformRelease(release); err != nil {
 		return
 	}
-	if _, err := s.platform.UpdatePlatformDeployment(release.Image, release.ID); err != nil {
+	if _, err := s.platform.UpdatePlatformDeploymentContext(ctx, release.Image, release.ID); err != nil {
 		release.Status, release.Detail, release.CompletedAt = "failed", err.Error(), &now
 		_ = s.releases.UpdatePlatformRelease(release)
 		return
@@ -232,20 +236,23 @@ func (s *ReleaseService) Apply(id uint) {
 	_ = s.releases.UpdatePlatformRelease(release)
 }
 
-func (s *ReleaseService) ReconcileLatest() {
+func (s *ReleaseService) ReconcileLatest(ctx context.Context) {
 	if !s.Available() {
+		return
+	}
+	if ctx == nil {
 		return
 	}
 	release, err := s.releases.LatestIncompletePlatformRelease()
 	if errors.Is(err, gorm.ErrRecordNotFound) || err != nil {
 		return
 	}
-	status, err := s.platform.PlatformDeploymentStatus()
+	status, err := s.platform.PlatformDeploymentStatusContext(ctx)
 	if err != nil {
 		return
 	}
 	if (release.Status == "accepted" || release.Status == "applying") && (status.ReleaseID != release.ID || status.Image != release.Image) {
-		s.Apply(release.ID)
+		s.Apply(ctx, release.ID)
 		return
 	}
 	now := time.Now().UTC()

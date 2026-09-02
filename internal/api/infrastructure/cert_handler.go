@@ -1,6 +1,7 @@
 package infrastructure
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -22,7 +23,21 @@ type CertHandler struct {
 	store   repository.CertificateRepository
 	encKey  []byte
 	network *networkservice.Service
-	k8s     *k8s.Client
+	k8s     CertificateKubernetesAdapter
+}
+
+type CertificateKubernetesAdapter interface {
+	KubernetesAvailable() bool
+	InstallCertManagerContext(context.Context, string, string, string) (*k8s.CertManagerStatus, error)
+}
+
+// NewCertificateKubernetesAdapter exposes only the cert-manager capability
+// needed by the HTTP handler; Bootstrap owns the concrete client.
+func NewCertificateKubernetesAdapter(client *k8s.Client) CertificateKubernetesAdapter {
+	if client == nil {
+		return nil
+	}
+	return client
 }
 
 type DNSCredentialRequest struct {
@@ -33,34 +48,28 @@ type DNSCredentialRequest struct {
 	Enabled   *bool              `json:"enabled"`
 }
 
-// NewCertHandlerWithEncryption constructs certificate management with encrypted DNS credentials.
-func NewCertHandlerWithEncryption(st repository.CertificateRepository, encKey []byte) *CertHandler {
-	return NewCertHandlerWithClient(st, encKey, nil)
-}
-
-func NewCertHandlerWithNetwork(st repository.CertificateRepository, encKey []byte, network *networkservice.Service) *CertHandler {
-	return NewCertHandlerWithNetworkAndClient(st, encKey, network, nil)
-}
-
-func NewCertHandlerWithClient(st repository.CertificateRepository, encKey []byte, client *k8s.Client) *CertHandler {
-	return NewCertHandlerWithNetworkAndClient(st, encKey, nil, client)
-}
-
-func NewCertHandlerWithNetworkAndClient(st repository.CertificateRepository, encKey []byte, network *networkservice.Service, client *k8s.Client) *CertHandler {
+// NewCertHandlerWithDependencies constructs the certificate handler from
+// already-composed network and cert-manager ports.
+func NewCertHandlerWithDependencies(st repository.CertificateRepository, encKey []byte, network *networkservice.Service, client CertificateKubernetesAdapter) *CertHandler {
 	if network == nil {
 		network = networkservice.NewService(st, st)
 	}
-	network.WithCertificateAdapter(client).WithDNSAdapter(client)
+	if value, ok := any(client).(networkservice.CertificateAdapter); ok {
+		network.WithCertificateAdapter(value)
+	}
+	if value, ok := any(client).(networkservice.DNSAdapter); ok {
+		network.WithDNSAdapter(value)
+	}
 	return &CertHandler{store: st, encKey: encKey, network: network, k8s: client}
 }
 
 // Status reports cert-manager prerequisites before certificate resources are queried.
 func (h *CertHandler) Status(c *gin.Context) {
-	if h.k8s == nil {
+	if h.k8s == nil || !h.k8s.KubernetesAvailable() {
 		model.Success(c, &k8s.CertManagerStatus{State: k8s.CertManagerStateUnavailable, Message: "Kubernetes 客户端未初始化"})
 		return
 	}
-	status, err := h.network.CertificateManagerStatus()
+	status, err := h.network.CertificateManagerStatusContext(c.Request.Context())
 	if err != nil {
 		apiShared.Error(c, http.StatusOK, model.CodeK8sUnavailable, err.Error())
 		return
@@ -70,7 +79,7 @@ func (h *CertHandler) Status(c *gin.Context) {
 
 // Install starts the fixed cert-manager HelmChart installation supported by K3s.
 func (h *CertHandler) Install(c *gin.Context) {
-	if h.k8s == nil {
+	if h.k8s == nil || !h.k8s.KubernetesAvailable() {
 		certK8sUnavailable(c)
 		return
 	}
@@ -83,7 +92,7 @@ func (h *CertHandler) Install(c *gin.Context) {
 		apiShared.ValidationError(c, "请先配置并验证可用的 cert-manager Chart 仓库")
 		return
 	}
-	status, err := h.k8s.InstallCertManager(repository.Endpoint, repository.ChartName, repository.ChartVersion)
+	status, err := h.k8s.InstallCertManagerContext(c.Request.Context(), repository.Endpoint, repository.ChartName, repository.ChartVersion)
 	if err != nil {
 		apiShared.ErrorWithData(c, http.StatusBadRequest, model.CodeK8sAPIError, err.Error(), status)
 		return
@@ -96,7 +105,7 @@ func (h *CertHandler) ListCerts(c *gin.Context) {
 	if !h.requireReady(c) {
 		return
 	}
-	certs, err := h.network.ListCertificates()
+	certs, err := h.network.ListCertificatesContext(c.Request.Context())
 	if err != nil {
 		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
 		return
@@ -124,7 +133,7 @@ func (h *CertHandler) CreateCert(c *gin.Context) {
 			return
 		}
 	}
-	certificate, err := h.network.CreateCertificate(request)
+	certificate, err := h.network.CreateCertificateContext(c.Request.Context(), request)
 	if err != nil {
 		apiShared.Error(c, http.StatusInternalServerError, model.CodeK8sAPIError, err.Error())
 		return
@@ -136,7 +145,7 @@ func (h *CertHandler) ListIssuers(c *gin.Context) {
 	if !h.requireReady(c) {
 		return
 	}
-	issuers, err := h.network.ListIssuers()
+	issuers, err := h.network.ListIssuersContext(c.Request.Context())
 	if err != nil {
 		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
 		return
@@ -190,7 +199,7 @@ func (h *CertHandler) saveIssuer(c *gin.Context, update bool) {
 			return
 		}
 		request.DNSProvider = credential.Provider
-		webhook, webhookErr := h.network.DNSProviderStatus(credential.Provider)
+		webhook, webhookErr := h.network.DNSProviderStatusContext(c.Request.Context(), credential.Provider)
 		if webhookErr != nil {
 			apiShared.Error(c, http.StatusBadRequest, model.CodeK8sAPIError, webhookErr.Error())
 			return
@@ -208,9 +217,9 @@ func (h *CertHandler) saveIssuer(c *gin.Context, update bool) {
 	var issuer *k8s.IssuerInfo
 	var err error
 	if update {
-		issuer, err = h.network.UpdateIssuer(request)
+		issuer, err = h.network.UpdateIssuerContext(c.Request.Context(), request)
 	} else {
-		issuer, err = h.network.CreateIssuer(request)
+		issuer, err = h.network.CreateIssuerContext(c.Request.Context(), request)
 	}
 	if err != nil {
 		apiShared.Error(c, http.StatusBadRequest, model.CodeK8sAPIError, err.Error())
@@ -223,7 +232,7 @@ func (h *CertHandler) DeleteIssuer(c *gin.Context) {
 	if !h.requireReady(c) {
 		return
 	}
-	if err := h.network.DeleteIssuer(c.Param("kind"), c.Param("namespace"), c.Param("name")); err != nil {
+	if err := h.network.DeleteIssuerContext(c.Request.Context(), c.Param("kind"), c.Param("namespace"), c.Param("name")); err != nil {
 		apiShared.Error(c, http.StatusBadRequest, model.CodeK8sAPIError, err.Error())
 		return
 	}
@@ -234,7 +243,7 @@ func (h *CertHandler) ListOperations(c *gin.Context) {
 	if !h.requireReady(c) {
 		return
 	}
-	operations, err := h.network.ListCertificateOperations(c.Param("namespace"), c.Param("name"))
+	operations, err := h.network.ListCertificateOperationsContext(c.Request.Context(), c.Param("namespace"), c.Param("name"))
 	if err != nil {
 		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
 		return
@@ -270,8 +279,8 @@ func (h *CertHandler) ListDNSProviders(c *gin.Context) {
 	result := make([]dnsProviderView, 0, len(providers))
 	for _, provider := range providers {
 		view := dnsProviderView{DNSProviderInfo: provider}
-		if h.k8s != nil {
-			if status, err := h.network.DNSProviderStatus(provider.ID); err == nil {
+		if h.k8s != nil && h.k8s.KubernetesAvailable() {
+			if status, err := h.network.DNSProviderStatusContext(c.Request.Context(), provider.ID); err == nil {
 				view.Status = status
 			}
 		}
@@ -281,11 +290,11 @@ func (h *CertHandler) ListDNSProviders(c *gin.Context) {
 }
 
 func (h *CertHandler) DNSProviderStatus(c *gin.Context) {
-	if h.k8s == nil {
+	if h.k8s == nil || !h.k8s.KubernetesAvailable() {
 		certK8sUnavailable(c)
 		return
 	}
-	status, err := h.network.DNSProviderStatus(c.Param("provider"))
+	status, err := h.network.DNSProviderStatusContext(c.Request.Context(), c.Param("provider"))
 	if err != nil {
 		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
 		return
@@ -294,11 +303,11 @@ func (h *CertHandler) DNSProviderStatus(c *gin.Context) {
 }
 
 func (h *CertHandler) InstallDNSProvider(c *gin.Context) {
-	if h.k8s == nil {
+	if h.k8s == nil || !h.k8s.KubernetesAvailable() {
 		certK8sUnavailable(c)
 		return
 	}
-	status, err := h.network.InstallDNSProvider(c.Param("provider"))
+	status, err := h.network.InstallDNSProviderContext(c.Request.Context(), c.Param("provider"))
 	if err != nil {
 		apiShared.ErrorWithData(c, http.StatusBadRequest, model.CodeK8sAPIError, err.Error(), status)
 		return
@@ -347,7 +356,7 @@ func (h *CertHandler) CreateDNSCredential(c *gin.Context) {
 		apiShared.DBError(c, "保存 DNS Secret 名称失败")
 		return
 	}
-	if err := h.network.SyncDNSCredentialSecret(credential, values); err != nil {
+	if err := h.network.SyncDNSCredentialSecretContext(c.Request.Context(), credential, values); err != nil {
 		_ = h.network.DeleteDNSCredential(credential.ID)
 		apiShared.Error(c, http.StatusBadRequest, model.CodeK8sAPIError, "创建 DNS Secret: "+err.Error())
 		return
@@ -384,12 +393,12 @@ func (h *CertHandler) UpdateDNSCredential(c *gin.Context) {
 		apiShared.Conflict(c, "DNS 凭据名称无效或已存在")
 		return
 	}
-	if err := h.network.SyncDNSCredentialSecret(credential, values); err != nil {
+	if err := h.network.SyncDNSCredentialSecretContext(c.Request.Context(), credential, values); err != nil {
 		apiShared.Error(c, http.StatusBadRequest, model.CodeK8sAPIError, "更新 DNS Secret: "+err.Error())
 		return
 	}
 	if current.Namespace != credential.Namespace {
-		if err := h.network.RemoveDNSCredentialSecret(current.Namespace, current.SecretName); err != nil {
+		if err := h.network.RemoveDNSCredentialSecretContext(c.Request.Context(), current.Namespace, current.SecretName); err != nil {
 			apiShared.Error(c, http.StatusBadRequest, model.CodeK8sAPIError, "清理旧 DNS Secret: "+err.Error())
 			return
 		}
@@ -412,7 +421,7 @@ func (h *CertHandler) DeleteDNSCredential(c *gin.Context) {
 		apiShared.NotFound(c, "DNS 凭据不存在")
 		return
 	}
-	issuers, listErr := h.network.ListIssuers()
+	issuers, listErr := h.network.ListIssuersContext(c.Request.Context())
 	if listErr != nil {
 		apiShared.Error(c, http.StatusBadRequest, model.CodeK8sAPIError, "检查签发者引用: "+listErr.Error())
 		return
@@ -423,7 +432,7 @@ func (h *CertHandler) DeleteDNSCredential(c *gin.Context) {
 			return
 		}
 	}
-	if err := h.network.RemoveDNSCredentialSecret(credential.Namespace, credential.SecretName); err != nil {
+	if err := h.network.RemoveDNSCredentialSecretContext(c.Request.Context(), credential.Namespace, credential.SecretName); err != nil {
 		apiShared.Error(c, http.StatusBadRequest, model.CodeK8sAPIError, "删除 DNS Secret: "+err.Error())
 		return
 	}
@@ -535,7 +544,7 @@ func (h *CertHandler) DeleteCert(c *gin.Context) {
 	}
 	ns := c.Param("namespace")
 	name := c.Param("name")
-	if err := h.network.DeleteCertificate(ns, name); err != nil {
+	if err := h.network.DeleteCertificateContext(c.Request.Context(), ns, name); err != nil {
 		apiShared.InternalError(c, err.Error())
 		return
 	}
@@ -543,11 +552,11 @@ func (h *CertHandler) DeleteCert(c *gin.Context) {
 }
 
 func (h *CertHandler) requireReady(c *gin.Context) bool {
-	if h.k8s == nil {
+	if h.k8s == nil || !h.k8s.KubernetesAvailable() {
 		certK8sUnavailable(c)
 		return false
 	}
-	status, err := h.network.CertificateManagerStatus()
+	status, err := h.network.CertificateManagerStatusContext(c.Request.Context())
 	if err != nil {
 		apiShared.Error(c, http.StatusOK, model.CodeK8sUnavailable, err.Error())
 		return false

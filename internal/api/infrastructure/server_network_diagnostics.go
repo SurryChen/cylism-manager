@@ -1,6 +1,7 @@
 package infrastructure
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"net"
@@ -21,8 +22,8 @@ import (
 type ServerNetworkDiagnosticsHandler struct {
 	store                    repository.ServerRepository
 	encKey                   []byte
-	networkSnapshotCollector func(*model.Server) (serverNetworkDiagnostic, error)
-	networkLinkCollector     func(*model.Server, string) (tailnetLinkDiagnostic, error)
+	networkSnapshotCollector func(context.Context, *model.Server) (serverNetworkDiagnostic, error)
+	networkLinkCollector     func(context.Context, *model.Server, string) (tailnetLinkDiagnostic, error)
 }
 
 func NewServerNetworkDiagnosticsHandler(st repository.ServerRepository, encKey []byte) *ServerNetworkDiagnosticsHandler {
@@ -127,7 +128,7 @@ func (h *ServerNetworkDiagnosticsHandler) NetworkDiagnostics(c *gin.Context) {
 			defer func() { <-semaphore }()
 
 			started := time.Now()
-			snapshot, collectErr := h.networkSnapshotCollector(&servers[index])
+			snapshot, collectErr := h.networkSnapshotCollector(c.Request.Context(), &servers[index])
 			snapshot.ServerID = servers[index].ID
 			snapshot.Name = servers[index].Name
 			snapshot.SampledAt = started.UTC().Format(time.RFC3339)
@@ -144,7 +145,7 @@ func (h *ServerNetworkDiagnosticsHandler) NetworkDiagnostics(c *gin.Context) {
 	}
 	group.Wait()
 
-	links := h.collectNetworkLinks(servers, snapshots)
+	links := h.collectNetworkLinks(c.Request.Context(), servers, snapshots)
 	model.Success(c, gin.H{
 		"servers":    snapshots,
 		"links":      links,
@@ -152,16 +153,16 @@ func (h *ServerNetworkDiagnosticsHandler) NetworkDiagnostics(c *gin.Context) {
 	})
 }
 
-func (h *ServerNetworkDiagnosticsHandler) collectNetworkSnapshot(server *model.Server) (serverNetworkDiagnostic, error) {
+func (h *ServerNetworkDiagnosticsHandler) collectNetworkSnapshot(ctx context.Context, server *model.Server) (serverNetworkDiagnostic, error) {
 	args := buildSSHArgs(server, h.encKey, server.Host)
-	out, err := sshExec(25*time.Second, append(args, networkSnapshotCommand))
+	out, err := sshExec(ctx, 25*time.Second, append(args, networkSnapshotCommand))
 	if err != nil {
 		return serverNetworkDiagnostic{}, err
 	}
 	return parseNetworkSnapshot(string(out)), nil
 }
 
-func (h *ServerNetworkDiagnosticsHandler) collectNetworkLinks(servers []model.Server, snapshots []serverNetworkDiagnostic) []tailnetLinkDiagnostic {
+func (h *ServerNetworkDiagnosticsHandler) collectNetworkLinks(ctx context.Context, servers []model.Server, snapshots []serverNetworkDiagnostic) []tailnetLinkDiagnostic {
 	eligible := make([]int, 0, len(snapshots))
 	for index := range snapshots {
 		if snapshots[index].Tailscale.Online && validTailnetIPv4(snapshots[index].Tailscale.TailnetIP) {
@@ -206,7 +207,7 @@ func (h *ServerNetworkDiagnosticsHandler) collectNetworkLinks(servers []model.Se
 				links[index].ErrorCode = "invalid_target"
 				return
 			}
-			result, collectErr := h.networkLinkCollector(source, targetIP)
+			result, collectErr := h.networkLinkCollector(ctx, source, targetIP)
 			result.SourceServerID = links[index].SourceServerID
 			result.TargetServerID = links[index].TargetServerID
 			if collectErr != nil && result.ErrorCode == "" {
@@ -223,12 +224,12 @@ func (h *ServerNetworkDiagnosticsHandler) collectNetworkLinks(servers []model.Se
 	return links
 }
 
-func (h *ServerNetworkDiagnosticsHandler) collectNetworkLink(source *model.Server, targetIP string) (tailnetLinkDiagnostic, error) {
+func (h *ServerNetworkDiagnosticsHandler) collectNetworkLink(ctx context.Context, source *model.Server, targetIP string) (tailnetLinkDiagnostic, error) {
 	if !validTailnetIPv4(targetIP) {
 		return tailnetLinkDiagnostic{Path: "unknown", ErrorCode: "invalid_target"}, fmt.Errorf("invalid tailnet target")
 	}
 	args := buildSSHArgs(source, h.encKey, source.Host)
-	out, err := sshExec(20*time.Second, append(args, "tailscale ping --c=3 --timeout=5s "+targetIP))
+	out, err := sshExec(ctx, 20*time.Second, append(args, "tailscale ping --c=3 --timeout=5s "+targetIP))
 	result := parseTailnetLinkDiagnostic(string(out))
 	if err != nil {
 		return result, err

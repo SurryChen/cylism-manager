@@ -1,6 +1,7 @@
 package registry
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/cylism/cylism-manager/internal/model"
@@ -10,7 +11,7 @@ import (
 // NodeMirrorApplier is the infrastructure adapter used to apply an already
 // rendered K3s Registry configuration to a managed node. The Registry domain
 // owns the contract; API packages provide the SSH implementation.
-type NodeMirrorApplier func(*model.Server, []byte) (string, string)
+type NodeMirrorApplier func(context.Context, *model.Server, []byte) (string, string)
 
 // RenderK3sRegistries renders enabled Registry mirrors into K3s configuration.
 // Credentials are supplied by the caller after it has decrypted them.

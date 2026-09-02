@@ -1,6 +1,6 @@
 # Bootstrap 依赖组装层迁移计划
 
-状态：阶段一已完成，阶段二进行中（Cluster/System Component/Monitoring/Logging/Alerting Adapter 已迁移，2026-09-02）
+状态：阶段一、阶段二已完成，阶段三待开始（Router 已改为纯路由绑定，应用 Handler 已改为应用领域 Kubernetes Port，通用 K8s Handler 已改为窄资源 Adapter，发布重试/回滚/异步任务及 Cluster/Agent/Registry/PVC/节点加入/网络诊断 SSH 调用均已透传请求 Context；基础设施与平台发布 Kubernetes 调用已透传请求 Context，PVC/节点/Workload/Service/Config/Secret/Ingress 旧无 Context API、`Client.Ctx()`、`SSHExec` 及相关兼容适配已删除，2026-09-03）
 
 本文档规划将应用初始化、第三方依赖接入、Repository/Service/Handler 创建从 `cmd/platform` 和 `internal/api/router.go` 逐步迁移到 `internal/bootstrap`。
 
@@ -213,15 +213,28 @@ internal/
 - Cluster `NodeAdapter` 已由 Bootstrap 创建并通过 `RegisterRoutes` 显式注入；
 - `SystemComponentAdapter` 已由 Bootstrap 创建并注入 Handler 及后台 Reconcile；
 - Monitoring、Logging、Alerting 的查询、就绪、组件和资源读取 Adapter 已由 Bootstrap 创建并注入；
+- Network 的 Ingress、DNS、Certificate Adapter，以及 Storage PVC Adapter 已由 Bootstrap 创建并注入；
+- Registry 的 Managed OCI、Registry Proxy Resource/Status/Diagnostics Adapter 已由 Bootstrap 创建并注入；
 - `internal/api/cluster_adapter.go` 已删除，Router 不再创建这两个 Adapter。
 
 当前仍存在的过渡逻辑：
 
-- `api.RegisterRoutes` 仍创建大部分 Service 和 Handler；
-- `api/application`、`api/runtime` 的包级 `K8s` 变量仍待迁移；
-- Network、Storage、Registry Adapter 仍在 Router 中组装，等待对应窄接口完成；
-- `api.RegisterRoutes` 仍创建大部分 Service 和 Handler，并启动 Platform/Registry Proxy 的历史 Reconcile 任务；
-- `bootstrap/services.go`、`handlers.go` 目前是后续迁移落点。
+- `api.RegisterRoutes` 已不再创建 Service、Adapter 或 Handler，仅接收 `RouteDependencies` 并绑定路由；
+- `api/application`、`api/runtime` 的包级 `K8s` 变量已删除；Application 测试已改为显式注入 fake Client；
+- 后台 Reconcile 仍需继续迁入统一生命周期管理，Router 不再创建业务依赖；
+- Cluster/Network/Storage Service 及 cert-manager 证书/Issuer/Operation/HelmChart 调用已改为接收并透传请求 Context；PVC 异步迁移/导入/备份/恢复任务也会从请求派生独立任务 Context；
+- Cluster DNS、Domain、Certificate、Node Join、Agent、PVC Handler 已改为最小能力接口注入，具体 Kubernetes Client 仅保留在 Bootstrap/Adapter 工厂组装层；
+- Runtime、Platform、Agent、Cluster DNS、Ingress、Node Join Handler 已由 Bootstrap 组合并通过 `ComposedHandlers` 注入，Router 仅保留测试兼容回退构造；
+- `bootstrap/services.go` 已集中创建 Cluster、Network、Storage、Monitoring Query Service；`handlers.go` 负责基于这些 Service 创建全部 Handler。平台发布状态机也已改为接收 Context，HTTP 异步 Apply 从请求派生独立任务 Context；
+- Application Handler 已通过 `KubernetesDependencies` 接收 ResourceApplier、RuntimeReader、Namespace、Certificate、Endpoint、PVC 和 Workload 迁移等最小能力，不再保存或创建具体 `*k8s.Client`；通用 K8s Handler 已通过 `K8sResourceAdapter` 注入 Core/Apps 资源能力，Bootstrap 使用 `NewK8sResourceAdapter` 完成组合；
+- 发布 Retry/Rollback/CreateRelease 与异步执行链路均接收 Context，后台执行从请求 Context 派生 `context.WithoutCancel` 的独立超时上下文；nil 生命周期 Context 不再隐式启动后台任务。
+- 已删除 `NewStorageHandlerWithClient`、`NewK8sHandlerWithClient`、`NewK8sHandlerWithEncryption`、`NewDomainHandler` 及证书 Handler 的旧 Client 兼容构造，测试统一通过 Adapter/Dependencies 构造；Cluster、Agent、Registry、PVC、节点加入和网络诊断的远程操作均使用 `SSHExecContext`，旧 `SSHExec`、`Client.Ctx()` 和默认 Context 兼容入口已删除。
+
+阶段二收尾还包括一项明确的 K8s Context 原生化工作：
+
+- `internal/k8s/resource_context.go`（原 context adapter 兼容层）已删除；Certificate、Issuer、CertificateOperation、cert-manager HelmChart 和 DNS Provider 状态/安装流程已直接使用调用方 Context；
+- Registry、基础设施 Handler、后台任务和 Fake 已迁移到证书资源的原生 Context 方法；
+- PVC、节点、Workload、Service、ConfigMap、Secret、Ingress 等基础资源的旧无 Context 导出方法已删除，Handler/测试统一使用 Context API；观测组件生命周期通过隔离 Client 视图透传 Context。
 
 本轮已完成的阶段一收尾：
 
@@ -542,12 +555,4 @@ npm --prefix web run build
 
 ## 十、下一步执行项
 
-下一步优先完成阶段 2 的第一小步：
-
-1. 在 `bootstrap/kubernetes.go` 中创建 `cluster.NodeAdapter`；
-2. 修改 `cluster.NewService` 的组装调用，直接接收该 Adapter；
-3. 删除 `clusterNodeAdapter()` 的生产调用；
-4. 保留行为一致性测试；
-5. 确认通过后再迁移 System Component、Monitoring 和 Logging Adapter。
-
-完成第一小步后，再继续阶段 3 的 Service 组装迁移，避免一次性移动所有 Handler 导致难以定位问题。
+阶段二已验收完成。下一步进入阶段三的 Service 组装迁移：继续将 Router 中尚存的 Service/Handler 创建移动到 Bootstrap，并按领域补齐依赖容器和回归测试。迁移仍应按单领域推进，避免一次性移动所有 Handler 导致问题难以定位。

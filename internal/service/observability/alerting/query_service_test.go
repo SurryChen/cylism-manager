@@ -24,14 +24,14 @@ func TestQueryServiceDelegatesOverviewAndSilences(t *testing.T) {
 		}
 		return nil
 	})
-	s := NewQueryService(client, func() bool { return true })
+	s := NewQueryService(client, func(context.Context) bool { return true })
 	o, err := s.Overview(context.Background(), nil)
 	if err != nil || o.Firing != 1 {
 		t.Fatalf("overview=%#v err=%v", o, err)
 	}
 }
 func TestQueryServiceRejectsWhenNotReady(t *testing.T) {
-	s := NewQueryService(NewClient(nil), func() bool { return false })
+	s := NewQueryService(NewClient(nil), func(context.Context) bool { return false })
 	if _, err := s.Silences(context.Background()); err == nil {
 		t.Fatal("expected readiness error")
 	}

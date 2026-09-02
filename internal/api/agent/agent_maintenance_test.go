@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -102,7 +103,7 @@ func TestMaintenanceDiskInspectRequiresExplicitGrantAndRedactsFailures(t *testin
 		t.Fatalf("create server: %v", err)
 	}
 	called := 0
-	handler := NewAgentHandler(s, nil, agentAuthenticatorStub{instance: instance}).WithMaintenanceInspector(func(server *model.Server) (agentDiskInspection, error) {
+	handler := NewAgentHandler(s, nil, agentAuthenticatorStub{instance: instance}).WithMaintenanceInspector(func(_ context.Context, server *model.Server) (agentDiskInspection, error) {
 		called++
 		if server.K8sNodeName != "node-1" {
 			return agentDiskInspection{}, fmt.Errorf("unexpected node")
@@ -124,7 +125,7 @@ func TestMaintenanceDiskInspectRequiresExplicitGrantAndRedactsFailures(t *testin
 	if recorder.Code != http.StatusOK || called != 1 || !strings.Contains(recorder.Body.String(), `"used_percent":83`) {
 		t.Fatalf("unexpected inspection response: %d %s", recorder.Code, recorder.Body.String())
 	}
-	failing := NewAgentHandler(s, nil, agentAuthenticatorStub{instance: instance}).WithMaintenanceInspector(func(*model.Server) (agentDiskInspection, error) {
+	failing := NewAgentHandler(s, nil, agentAuthenticatorStub{instance: instance}).WithMaintenanceInspector(func(context.Context, *model.Server) (agentDiskInspection, error) {
 		return agentDiskInspection{}, fmt.Errorf("token=secret remote inspection failed")
 	})
 	recorder = httptest.NewRecorder()

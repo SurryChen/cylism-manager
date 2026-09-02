@@ -1,6 +1,7 @@
 package network
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -16,6 +17,18 @@ func (f *fakeIngress) ListIngressRoutes() ([]k8sclient.IngressRouteInfo, error) 
 func (f *fakeIngress) DeleteIngressRoute(namespace, name string) error {
 	f.deleted = namespace + "/" + name
 	return nil
+}
+func (f *fakeIngress) ListIngressRoutesContext(ctx context.Context) ([]k8sclient.IngressRouteInfo, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return f.ListIngressRoutes()
+}
+func (f *fakeIngress) DeleteIngressRouteContext(ctx context.Context, ns, name string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return f.DeleteIngressRoute(ns, name)
 }
 
 type fakeStandardIngress struct{ deleted string }
@@ -36,39 +49,104 @@ func (f *fakeStandardIngress) DeleteIngress(namespace, name string) error {
 func (f *fakeStandardIngress) DetectIngressController() (*k8sclient.IngressControllerStatus, error) {
 	return &k8sclient.IngressControllerStatus{Type: "Traefik", Running: true}, nil
 }
+func (f *fakeStandardIngress) ListIngressesContext(ctx context.Context, ns string) ([]k8sclient.IngressStdInfo, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return f.ListIngresses(ns)
+}
+func (f *fakeStandardIngress) GetIngressContext(ctx context.Context, ns, name string) (*k8sclient.IngressStdDetail, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return f.GetIngress(ns, name)
+}
+func (f *fakeStandardIngress) CreateIngressContext(ctx context.Context, ns, name, host, path, svc, port string) (*k8sclient.IngressStdDetail, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return f.CreateIngress(ns, name, host, path, svc, port)
+}
+func (f *fakeStandardIngress) DeleteIngressContext(ctx context.Context, ns, name string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return f.DeleteIngress(ns, name)
+}
+func (f *fakeStandardIngress) DetectIngressControllerContext(ctx context.Context) (*k8sclient.IngressControllerStatus, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return f.DetectIngressController()
+}
 
 type fakeCertificates struct{ deleted string }
 
-func (f *fakeCertificates) CertManagerStatus() *k8sclient.CertManagerStatus {
+func (f *fakeCertificates) CertManagerStatusContext(ctx context.Context) *k8sclient.CertManagerStatus {
+	if err := ctx.Err(); err != nil {
+		return &k8sclient.CertManagerStatus{State: k8sclient.CertManagerStateUnavailable, Message: err.Error()}
+	}
 	return &k8sclient.CertManagerStatus{}
 }
-func (f *fakeCertificates) ListCertificates() ([]k8sclient.CertInfo, error) {
+func (f *fakeCertificates) ListCertificatesContext(ctx context.Context) ([]k8sclient.CertInfo, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	return []k8sclient.CertInfo{{Name: "cert"}}, nil
 }
-func (f *fakeCertificates) GetCertificate(string, string) (*k8sclient.CertInfo, error) {
+func (f *fakeCertificates) GetCertificateContext(ctx context.Context, ns, name string) (*k8sclient.CertInfo, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	return &k8sclient.CertInfo{Name: "cert"}, nil
 }
-func (f *fakeCertificates) EnsureCertificate(k8sclient.CreateCertificateRequest) (*k8sclient.CertInfo, error) {
+func (f *fakeCertificates) EnsureCertificateContext(ctx context.Context, req k8sclient.CreateCertificateRequest) (*k8sclient.CertInfo, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	return &k8sclient.CertInfo{Name: "cert"}, nil
 }
-func (f *fakeCertificates) ListIssuers() ([]k8sclient.IssuerInfo, error) {
+func (f *fakeCertificates) ListIssuersContext(ctx context.Context) ([]k8sclient.IssuerInfo, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	return []k8sclient.IssuerInfo{{Name: "issuer"}}, nil
 }
-func (f *fakeCertificates) CreateIssuer(k8sclient.IssuerRequest) (*k8sclient.IssuerInfo, error) {
+func (f *fakeCertificates) CreateIssuerContext(ctx context.Context, req k8sclient.IssuerRequest) (*k8sclient.IssuerInfo, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	return &k8sclient.IssuerInfo{Name: "issuer"}, nil
 }
-func (f *fakeCertificates) UpdateIssuer(k8sclient.IssuerRequest) (*k8sclient.IssuerInfo, error) {
+func (f *fakeCertificates) UpdateIssuerContext(ctx context.Context, req k8sclient.IssuerRequest) (*k8sclient.IssuerInfo, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	return &k8sclient.IssuerInfo{Name: "issuer"}, nil
 }
-func (f *fakeCertificates) DeleteIssuer(_, _, _ string) error { return nil }
-func (f *fakeCertificates) ListCertificateOperations(_, _ string) ([]k8sclient.CertificateOperation, error) {
+func (f *fakeCertificates) DeleteIssuerContext(ctx context.Context, kind, ns, name string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return nil
+}
+func (f *fakeCertificates) ListCertificateOperationsContext(ctx context.Context, ns, name string) ([]k8sclient.CertificateOperation, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	return nil, nil
 }
-func (f *fakeCertificates) CreateCertificate(k8sclient.CreateCertificateRequest) (*k8sclient.CertInfo, error) {
+func (f *fakeCertificates) CreateCertificateContext(ctx context.Context, req k8sclient.CreateCertificateRequest) (*k8sclient.CertInfo, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	return &k8sclient.CertInfo{Name: "cert"}, nil
 }
-func (f *fakeCertificates) DeleteCertificate(namespace, name string) error {
-	f.deleted = namespace + "/" + name
+func (f *fakeCertificates) DeleteCertificateContext(ctx context.Context, ns, name string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	f.deleted = ns + "/" + name
 	return nil
 }
 
@@ -121,7 +199,7 @@ func TestDomainPersistenceUsesServiceBoundary(t *testing.T) {
 
 func TestBuildManagedDomainViewAggregatesCertificateAndReferences(t *testing.T) {
 	s := NewService(fakeDomainStore{environment: &model.Environment{Namespace: "app"}}).WithCertificateAdapter(&fakeCertificates{})
-	view := s.BuildManagedDomainView(&model.ManagedDomain{ID: 7, Namespace: "app", CertificateName: "cert"})
+	view := s.BuildManagedDomainView(context.Background(), &model.ManagedDomain{ID: 7, Namespace: "app", CertificateName: "cert"})
 	if view.Certificate == nil || view.Certificate.Name != "cert" {
 		t.Fatalf("certificate view = %#v", view.Certificate)
 	}
@@ -154,14 +232,18 @@ func TestValidateManagedDomainPrerequisites(t *testing.T) {
 	s := NewService(nil)
 	domain := &model.ManagedDomain{Namespace: "production", IssuerRef: "prod"}
 	adapter := DomainPrerequisiteAdapter{
-		NamespaceExists: func(string) (bool, error) { return true, nil },
-		ListIssuers:     func() ([]Issuer, error) { return []Issuer{{Name: "prod", Kind: "ClusterIssuer", Ready: true}}, nil },
+		NamespaceExists: func(context.Context, string) (bool, error) { return true, nil },
+		ListIssuers: func(context.Context) ([]Issuer, error) {
+			return []Issuer{{Name: "prod", Kind: "ClusterIssuer", Ready: true}}, nil
+		},
 	}
-	if err := s.ValidateManagedDomainPrerequisites(domain, adapter); err != nil {
+	if err := s.ValidateManagedDomainPrerequisites(context.Background(), domain, adapter); err != nil {
 		t.Fatal(err)
 	}
-	adapter.ListIssuers = func() ([]Issuer, error) { return []Issuer{{Name: "prod", Kind: "ClusterIssuer", Ready: false}}, nil }
-	if err := s.ValidateManagedDomainPrerequisites(domain, adapter); err == nil {
+	adapter.ListIssuers = func(context.Context) ([]Issuer, error) {
+		return []Issuer{{Name: "prod", Kind: "ClusterIssuer", Ready: false}}, nil
+	}
+	if err := s.ValidateManagedDomainPrerequisites(context.Background(), domain, adapter); err == nil {
 		t.Fatal("expected unready issuer to be rejected")
 	}
 }
@@ -169,14 +251,14 @@ func TestValidateManagedDomainPrerequisites(t *testing.T) {
 func TestIngressWorkflowUsesAdapterAndValidatesIdentity(t *testing.T) {
 	fake := &fakeIngress{}
 	s := NewService(nil).WithIngressAdapter(fake)
-	routes, err := s.ListIngressRoutes()
+	routes, err := s.ListIngressRoutesContext(context.Background())
 	if err != nil || len(routes) != 1 {
 		t.Fatalf("unexpected routes: %#v, %v", routes, err)
 	}
-	if err := s.DeleteIngressRoute("default", "route"); err != nil || fake.deleted != "default/route" {
+	if err := s.DeleteIngressRouteContext(context.Background(), "default", "route"); err != nil || fake.deleted != "default/route" {
 		t.Fatalf("delete = %q, %v", fake.deleted, err)
 	}
-	if err := s.DeleteIngressRoute("", "route"); err == nil {
+	if err := s.DeleteIngressRouteContext(context.Background(), "", "route"); err == nil {
 		t.Fatal("expected missing namespace validation")
 	}
 }
@@ -184,17 +266,17 @@ func TestIngressWorkflowUsesAdapterAndValidatesIdentity(t *testing.T) {
 func TestStandardIngressWorkflowValidatesAndUsesAdapter(t *testing.T) {
 	fake := &fakeStandardIngress{}
 	s := NewService(nil).WithStandardIngressAdapter(fake)
-	if _, err := s.CreateStandardIngress("", "web", "example.com", "/", "svc", "80"); err == nil {
+	if _, err := s.CreateStandardIngressContext(context.Background(), "", "web", "example.com", "/", "svc", "80"); err == nil {
 		t.Fatal("expected required field validation")
 	}
-	detail, err := s.CreateStandardIngress("default", "web", "example.com", "", "svc", "80")
+	detail, err := s.CreateStandardIngressContext(context.Background(), "default", "web", "example.com", "", "svc", "80")
 	if err != nil || detail.Name != "web" {
 		t.Fatalf("create standard ingress = %#v, %v", detail, err)
 	}
-	if err := s.DeleteStandardIngress("default", "web"); err != nil || fake.deleted != "default/web" {
+	if err := s.DeleteStandardIngressContext(context.Background(), "default", "web"); err != nil || fake.deleted != "default/web" {
 		t.Fatalf("delete standard ingress = %q, %v", fake.deleted, err)
 	}
-	status, err := s.DetectIngressController()
+	status, err := s.DetectIngressControllerContext(context.Background())
 	if err != nil || !status.Running {
 		t.Fatalf("controller status = %#v, %v", status, err)
 	}
@@ -203,11 +285,11 @@ func TestStandardIngressWorkflowValidatesAndUsesAdapter(t *testing.T) {
 func TestCertificateWorkflowUsesAdapter(t *testing.T) {
 	fake := &fakeCertificates{}
 	s := NewService(nil).WithCertificateAdapter(fake)
-	certs, err := s.ListCertificates()
+	certs, err := s.ListCertificatesContext(context.Background())
 	if err != nil || len(certs) != 1 {
 		t.Fatalf("unexpected certificates: %#v, %v", certs, err)
 	}
-	if err := s.DeleteCertificate("default", "cert"); err != nil || fake.deleted != "default/cert" {
+	if err := s.DeleteCertificateContext(context.Background(), "default", "cert"); err != nil || fake.deleted != "default/cert" {
 		t.Fatalf("delete = %q, %v", fake.deleted, err)
 	}
 }

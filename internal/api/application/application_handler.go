@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 
+	"context"
 	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 	"github.com/cylism/cylism-manager/internal/application"
 	"github.com/cylism/cylism-manager/internal/model"
@@ -12,7 +13,14 @@ import (
 	applicationservice "github.com/cylism/cylism-manager/internal/service/application"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
+	corev1 "k8s.io/api/core/v1"
 )
+
+type NamespaceClient interface {
+	GetNamespace(context.Context, string) (*corev1.Namespace, error)
+	UpdateNamespace(context.Context, *corev1.Namespace) (*corev1.Namespace, error)
+	CreateNamespace(context.Context, *corev1.Namespace) (*corev1.Namespace, error)
+}
 
 type ApplicationHandler struct {
 	resources        repository.ApplicationHandlerRepository
@@ -21,6 +29,7 @@ type ApplicationHandler struct {
 	queries          *applicationservice.QueryService
 	encKey           []byte
 	delegationSecret []byte
+	kubernetes       KubernetesDependencies
 }
 
 func (h *ApplicationHandler) WithDelegationSecret(secret []byte) *ApplicationHandler {
@@ -39,23 +48,20 @@ type applicationCapabilitiesRequest struct {
 // applicationDiscoveryInfo is intentionally limited to metadata needed by
 // authorized management UIs. It never embeds templates or Secret references.
 
-func NewApplicationHandler(resources repository.ApplicationHandlerRepository, encKey []byte) *ApplicationHandler {
-	handler := &ApplicationHandler{
-		resources:    resources,
-		applications: resources,
-		sessions:     resources,
-		queries:      applicationservice.NewQueryService(resources),
-	}
-	handler.encKey = append([]byte(nil), encKey...)
-	return handler
+func NewApplicationHandler(resources repository.ApplicationHandlerRepository, encKey []byte, dependencies KubernetesDependencies) *ApplicationHandler {
+	return &ApplicationHandler{resources: resources, applications: resources, sessions: resources, queries: applicationservice.NewQueryService(resources), encKey: append([]byte(nil), encKey...), kubernetes: dependencies}
 }
 
 func (h *ApplicationHandler) releaseWorkflow() *application.ReleaseWorkflow {
 	var applier application.ResourceApplier
-	if K8s != nil {
-		applier = application.NewKubernetesApplier(K8s)
+	if h.kubernetes != nil {
+		applier = h.kubernetes
 	}
 	return application.NewReleaseWorkflow(h.resources, h.encKey, applier)
+}
+
+func (h *ApplicationHandler) namespaces() NamespaceClient {
+	return h.kubernetes
 }
 
 func (h *ApplicationHandler) ListApplications(c *gin.Context) {
@@ -123,7 +129,7 @@ func (h *ApplicationHandler) GetApplication(c *gin.Context) {
 }
 
 func (h *ApplicationHandler) UpdateWorkloadKind(c *gin.Context) {
-	if K8s == nil {
+	if h.kubernetes == nil || !h.kubernetes.KubernetesAvailable() {
 		apiShared.K8sUnavailable(c)
 		return
 	}
@@ -172,11 +178,11 @@ func (h *ApplicationHandler) UpdateWorkloadKind(c *gin.Context) {
 	}
 	context := applicationContextFor(app)
 	context.ReleaseSequence = release.Sequence
-	if err := application.NewKubernetesApplier(K8s).Preflight(c.Request.Context(), context, spec); err != nil {
+	if err := h.kubernetes.Preflight(c.Request.Context(), context, spec); err != nil {
 		apiShared.ValidationError(c, err.Error())
 		return
 	}
-	if err := application.NewKubernetesApplier(K8s).MigrateWorkloadKind(c.Request.Context(), context, spec, req.WorkloadKind); err != nil {
+	if err := h.kubernetes.MigrateWorkloadKind(c.Request.Context(), context, spec, req.WorkloadKind); err != nil {
 		apiShared.ValidationError(c, err.Error())
 		return
 	}

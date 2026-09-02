@@ -1,6 +1,7 @@
 package k8s
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -17,7 +18,7 @@ import (
 func TestInstallAlertingCreatesSelectedNodeResources(t *testing.T) {
 	client := alertingReadyClient()
 
-	status, err := client.InstallAlerting(AlertingConfig{
+	status, err := client.InstallAlertingContext(context.Background(), AlertingConfig{
 		NodeName:           "node-b",
 		FeishuWebhookURL:   "https://open.feishu.cn/open-apis/bot/v2/hook/example",
 		NotificationPolicy: AlertNotificationPolicy{GroupWaitSeconds: 45, GroupIntervalMinutes: 8, RepeatIntervalMinutes: 360},
@@ -73,7 +74,7 @@ func TestInstallAlertingRequiresReadyVictoriaMetrics(t *testing.T) {
 		Status:     corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}}},
 	})}
 
-	_, err := client.InstallAlerting(AlertingConfig{NodeName: "node-a"})
+	_, err := client.InstallAlertingContext(context.Background(), AlertingConfig{NodeName: "node-a"})
 	if err == nil || !strings.Contains(err.Error(), "VictoriaMetrics") {
 		t.Fatalf("expected VictoriaMetrics readiness error, got %v", err)
 	}
@@ -91,14 +92,14 @@ func TestInstallAlertingAllowsPartialNodeExporterCoverage(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := client.InstallAlerting(AlertingConfig{NodeName: "node-b"}); err != nil {
+	if _, err := client.InstallAlertingContext(context.Background(), AlertingConfig{NodeName: "node-b"}); err != nil {
 		t.Fatalf("expected alerting installation with partial node-exporter coverage, got %v", err)
 	}
 }
 
 func TestInstallAlertingStoresSMTPSettingsOnlyInSecret(t *testing.T) {
 	client := alertingReadyClient()
-	_, err := client.InstallAlerting(AlertingConfig{NodeName: "node-b", Email: EmailConfig{Enabled: true, SMTPHost: "smtp.example.com", SMTPPort: 587, Username: "alerts", Password: "smtp-password", From: "alerts@example.com", To: "ops@example.com", TLSMode: "starttls"}})
+	_, err := client.InstallAlertingContext(context.Background(), AlertingConfig{NodeName: "node-b", Email: EmailConfig{Enabled: true, SMTPHost: "smtp.example.com", SMTPPort: 587, Username: "alerts", Password: "smtp-password", From: "alerts@example.com", To: "ops@example.com", TLSMode: "starttls"}})
 	if err != nil {
 		t.Fatal(err)
 	}

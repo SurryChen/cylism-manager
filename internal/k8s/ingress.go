@@ -1,11 +1,12 @@
 package k8s
 
 import (
+	"context"
 	"fmt"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/dynamic"
 )
 
@@ -24,14 +25,13 @@ type IngressRouteInfo struct {
 	CreatedAt string `json:"created_at"`
 }
 
-// ListIngressRoutes 列出所有 IngressRoute（所有 namespace）
-func (c *Client) ListIngressRoutes() ([]IngressRouteInfo, error) {
+func (c *Client) ListIngressRoutesContext(ctx context.Context) ([]IngressRouteInfo, error) {
 	dynamicClient, err := dynamic.NewForConfig(c.Config)
 	if err != nil {
 		return nil, err
 	}
 
-	list, err := dynamicClient.Resource(ingressRouteGVR).Namespace("").List(c.ctx, metav1.ListOptions{})
+	list, err := dynamicClient.Resource(ingressRouteGVR).Namespace("").List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("list ingressroutes: %w", err)
 	}
@@ -44,10 +44,9 @@ func (c *Client) ListIngressRoutes() ([]IngressRouteInfo, error) {
 	return result, nil
 }
 
-// DeleteIngressRoute 删除 IngressRoute
-func (c *Client) DeleteIngressRoute(namespace, name string) error {
+func (c *Client) DeleteIngressRouteContext(ctx context.Context, namespace, name string) error {
 	dynamicClient, _ := dynamic.NewForConfig(c.Config)
-	return dynamicClient.Resource(ingressRouteGVR).Namespace(namespace).Delete(c.ctx, name, metav1.DeleteOptions{})
+	return dynamicClient.Resource(ingressRouteGVR).Namespace(namespace).Delete(ctx, name, metav1.DeleteOptions{})
 }
 
 func ingressRouteToInfo(item *unstructured.Unstructured) IngressRouteInfo {
