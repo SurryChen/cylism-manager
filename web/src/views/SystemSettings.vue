@@ -22,7 +22,7 @@
       </section>
 
       <section class="card temporary-token-card">
-        <div class="card-header"><div><h2 class="card-title">临时登录秘钥</h2><p class="settings-copy">生成可分享给其他人的临时登录凭据。秘钥只在生成时显示一次，可随时撤销。使用者将以当前账号权限登录。</p></div><span class="badge badge-online">安全管理</span></div>
+        <div class="card-header temporary-token-header"><div><h2 class="card-title">临时登录秘钥</h2><p class="settings-copy">生成可分享给其他人的临时登录凭据。秘钥只在生成时显示一次，可随时撤销。使用者将以当前账号权限登录。</p></div><span class="badge temporary-token-badge">安全管理</span></div>
         <div class="form-row">
           <div class="form-group"><label class="form-label" for="temporary-token-label">备注</label><input id="temporary-token-label" v-model.trim="temporaryTokenForm.label" class="form-input" placeholder="例如：供应商临时访问" /></div>
           <div class="form-group"><label class="form-label" for="temporary-token-ttl">有效期</label><select id="temporary-token-ttl" v-model.number="temporaryTokenForm.ttl_seconds" class="form-select"><option :value="3600">1 小时</option><option :value="21600">6 小时</option><option :value="86400">1 天</option><option :value="604800">7 天</option></select></div>
@@ -308,4 +308,17 @@ function formatDateTime(value) {
 .platform-action-notice-modal { width: min(420px, calc(100vw - 32px)); }
 .platform-action-error-text { margin: 0; color: var(--danger); overflow-wrap: anywhere; }
 .platform-prefix-input { resize: vertical; min-height: 72px; font-family: var(--font-mono); font-size: 12px; }
+.temporary-token-header { display: block; }
+.temporary-token-header > .temporary-token-badge { margin-top: 10px; background: var(--surface-hover); color: var(--action-primary); }
+.temporary-token-card .form-row { margin-top: var(--space-16); }
+.temporary-token-secret { grid-template-columns: minmax(0, 1fr) auto; align-items: center; }
+.temporary-token-secret strong { grid-column: 1 / -1; color: var(--warning); }
+.temporary-token-secret code { min-width: 0; overflow-wrap: anywhere; color: var(--text-primary); font-family: var(--font-mono); }
+.temporary-token-list { display: grid; gap: 8px; margin-top: var(--space-16); }
+.temporary-token-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 11px 12px; border: 1px solid var(--border-muted); border-radius: var(--radius-control); background: var(--surface-subtle); }
+.temporary-token-row > div:first-child { min-width: 0; display: grid; gap: 4px; }
+.temporary-token-row strong { color: var(--text-primary); font-size: 12px; }
+.temporary-token-row small { color: var(--text-secondary); font-size: 11px; }
+.temporary-token-row .badge { width: fit-content; }
+@media(max-width:700px){.temporary-token-row{align-items:stretch; flex-direction:column}.temporary-token-row .btn{align-self:flex-start}.temporary-token-secret{grid-template-columns:1fr}}
 </style>
