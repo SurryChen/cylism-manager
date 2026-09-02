@@ -91,6 +91,30 @@ internal/
     ingress.go
     system_components.go
     reconciler_*.go
+  runtime/
+    adapter.go
+    image.go
+    kubernetes.go
+    chat/
+      client.go
+      sse.go
+      types.go
+    identity/
+      identity.go
+    artifact/
+      artifact.go
+    cli/
+      client.go
+    chat/
+      client.go
+      sse.go
+      types.go
+    identity/
+      identity.go
+    artifact/
+      artifact.go
+    cli/
+      client.go
   store/
     db.go
     migrations.go
@@ -317,6 +341,7 @@ System Component Adapter 也已统一改为由 Router/平台启动层显式创�
 
 - `internal/model/models.go` 已按领域物理拆分为 `application.go`、`auth.go`、`runtime.go`、`infrastructure.go`、`observability.go`、`platform.go` 和 `registry.go`，仍保持 `package model`，公开类型、字段、表名和调用方式不变。
 - `internal/application/spec.go` 已物理拆分为 `spec_types.go`、`spec_validation.go`、`spec_normalization.go`、`spec_rendering.go` 和 `spec_security.go`；发布 Spec 的类型、校验、归一化、Kubernetes 资源渲染和敏感字段清理分别归位。
+- Runtime/Agent 底层能力已收敛到 `internal/runtime` 领域：Chat 客户端、Runtime 身份鉴权、CLI 制品校验和 CLI API 客户端分别位于 `chat`、`identity`、`artifact` 和 `cli` 子包；`internal/api/agent` 仅保留 HTTP Handler。
 - 补充并更新本文件的目标目录结构和依赖图，明确 API → Service/Application → Repository/K8s → Store 的依赖方向；阶段六拆分不引入新的跨层依赖。
 - 通过 `rg` 检查旧 `models.go`、`spec.go`、阶段迁移兼容入口和临时适配器的生产调用点；无调用方的旧模型/Spec 文件已删除，仍保留的兼容逻辑均有明确业务消费者。
 - `go test ./...` 与 `go build ./...` 在宿主机权限下通过；沙箱内少数 `httptest` 用例因 IPv6 监听权限失败，不属于代码回归。Node 24 下前端构建和 `git diff --check` 通过。

@@ -1,7 +1,7 @@
 // Package agent defines the platform contract for runtime chat and session
 // access. Manager acts as the authenticated proxy; the runtime owns session
 // state in its workspace.
-package agent
+package chat
 
 // Session is one runtime conversation in the platform contract.
 type Session struct {

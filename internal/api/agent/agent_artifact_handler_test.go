@@ -11,7 +11,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/cylism/cylism-manager/internal/agentartifact"
+	runtimeartifact "github.com/cylism/cylism-manager/internal/runtime/artifact"
 )
 
 type artifactAuthorizerStub struct {
@@ -47,7 +47,7 @@ func TestAgentArtifactHandlerRequiresInstallerIdentityAndServesFixedArtifact(t *
 	if manifestRecorder.Code != http.StatusOK {
 		t.Fatalf("expected manifest request to succeed, got %d: %s", manifestRecorder.Code, manifestRecorder.Body.String())
 	}
-	var manifest agentartifact.Manifest
+	var manifest runtimeartifact.Manifest
 	if err := json.Unmarshal(manifestRecorder.Body.Bytes(), &manifest); err != nil {
 		t.Fatalf("decode manifest: %v", err)
 	}
@@ -87,16 +87,16 @@ func writeCLIArtifact(t *testing.T) string {
 	t.Helper()
 	directory := t.TempDir()
 	binary := []byte("cli-binary")
-	if err := os.WriteFile(filepath.Join(directory, agentartifact.BinaryFileName), binary, 0o555); err != nil {
+	if err := os.WriteFile(filepath.Join(directory, runtimeartifact.BinaryFileName), binary, 0o555); err != nil {
 		t.Fatalf("write binary: %v", err)
 	}
 	digest := sha256.Sum256(binary)
-	manifest := agentartifact.Manifest{Version: "test", Platform: "linux-amd64", Size: int64(len(binary)), SHA256: hex.EncodeToString(digest[:])}
+	manifest := runtimeartifact.Manifest{Version: "test", Platform: "linux-amd64", Size: int64(len(binary)), SHA256: hex.EncodeToString(digest[:])}
 	encoded, err := json.Marshal(manifest)
 	if err != nil {
 		t.Fatalf("marshal manifest: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(directory, agentartifact.ManifestFileName), encoded, 0o444); err != nil {
+	if err := os.WriteFile(filepath.Join(directory, runtimeartifact.ManifestFileName), encoded, 0o444); err != nil {
 		t.Fatalf("write manifest: %v", err)
 	}
 	return directory

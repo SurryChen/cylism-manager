@@ -3,7 +3,6 @@ package api
 import (
 	"time"
 
-	"github.com/cylism/cylism-manager/internal/agentauth"
 	agentapi "github.com/cylism/cylism-manager/internal/api/agent"
 	"github.com/cylism/cylism-manager/internal/api/delivery"
 	infrastructureapi "github.com/cylism/cylism-manager/internal/api/infrastructure"
@@ -11,6 +10,7 @@ import (
 	"github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
 	runtimepkg "github.com/cylism/cylism-manager/internal/runtime"
+	runtimeidentity "github.com/cylism/cylism-manager/internal/runtime/identity"
 	"github.com/cylism/cylism-manager/internal/service/cluster"
 	networkservice "github.com/cylism/cylism-manager/internal/service/network"
 	alertingservice "github.com/cylism/cylism-manager/internal/service/observability/alerting"
@@ -38,14 +38,14 @@ type AuthConfig struct {
 func RegisterRoutes(r *gin.Engine, s *store.Store, encKey []byte, authCfg *AuthConfig) {
 	// This endpoint is authenticated with a projected Runtime installer token,
 	// never with a browser JWT or the Runtime chat credential.
-	artifactHandler := agentapi.NewAgentArtifactHandler("/usr/local/lib/cylism/runtime-tools", agentauth.NewRuntimeTokenAuthorizer(K8s, s, nil))
+	artifactHandler := agentapi.NewAgentArtifactHandler("/usr/local/lib/cylism/runtime-tools", runtimeidentity.NewRuntimeTokenAuthorizer(K8s, s, nil))
 	var agentMonitoring *monitoringservice.AgentDiskGrowthService
 	if K8s != nil {
 		monitoringClient := monitoringservice.HTTPClient{BaseURL: k8s.VictoriaMetricsServiceURL}
 		query := monitoringservice.NewQueryService(monitoringClient.Query, k8s.VictoriaMetricsReadiness{Client: K8s})
 		agentMonitoring = monitoringservice.NewAgentDiskGrowthService(query, nil)
 	}
-	agentHandler := agentapi.NewAgentHandler(s, K8s, agentauth.NewRuntimeTokenAuthorizer(K8s, s, nil)).WithMonitoringDiskGrowth(agentMonitoring).WithRegistryVerifier(agentapi.DefaultAgentRegistryNodeVerifier(encKey)).WithMaintenanceInspector(agentapi.DefaultAgentMaintenanceInspector(encKey))
+	agentHandler := agentapi.NewAgentHandler(s, K8s, runtimeidentity.NewRuntimeTokenAuthorizer(K8s, s, nil)).WithMonitoringDiskGrowth(agentMonitoring).WithRegistryVerifier(agentapi.DefaultAgentRegistryNodeVerifier(encKey)).WithMaintenanceInspector(agentapi.DefaultAgentMaintenanceInspector(encKey))
 	registerPublicRoutes(r, artifactHandler, agentHandler)
 
 	// 认证路由

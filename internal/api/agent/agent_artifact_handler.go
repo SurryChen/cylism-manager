@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/cylism/cylism-manager/internal/agentartifact"
+	runtimeartifact "github.com/cylism/cylism-manager/internal/runtime/artifact"
 )
 
 const (
@@ -50,7 +50,7 @@ func (h *AgentArtifactHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "installer authentication required", http.StatusUnauthorized)
 		return
 	}
-	artifact, err := agentartifact.Load(h.directory, cliArtifactPlatform)
+	artifact, err := runtimeartifact.Load(h.directory, cliArtifactPlatform)
 	if err != nil {
 		http.Error(w, "CLI artifact unavailable", http.StatusServiceUnavailable)
 		return

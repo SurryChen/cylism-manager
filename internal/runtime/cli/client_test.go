@@ -1,4 +1,4 @@
-package agentcli
+package cli
 
 import (
 	"bytes"

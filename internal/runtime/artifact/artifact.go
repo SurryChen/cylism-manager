@@ -1,5 +1,5 @@
 // Package agentartifact loads the Manager-owned CLI binary shipped in the image.
-package agentartifact
+package artifact
 
 import (
 	"crypto/sha256"
