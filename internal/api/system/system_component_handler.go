@@ -17,16 +17,32 @@ type SystemComponentHandler struct {
 	configs     repository.SystemComponentRepository
 	adapter     SystemComponentAdapter
 	listService *systemcomponentservice.ComponentListService
+	service     *systemcomponentservice.ComponentService
 }
 
 func NewSystemComponentHandler(configs repository.SystemComponentRepository, adapter SystemComponentAdapter) *SystemComponentHandler {
-	return &SystemComponentHandler{configs: configs, adapter: adapter, listService: &systemcomponentservice.ComponentListService{Repo: configs, Adapter: adapter}}
+	return NewSystemComponentHandlerWithService(configs, adapter, &systemcomponentservice.ComponentListService{Repo: configs, Adapter: adapter})
+}
+
+// NewSystemComponentHandlerWithListService injects the pre-composed query
+// service while retaining the original constructor for focused tests.
+func NewSystemComponentHandlerWithListService(configs repository.SystemComponentRepository, adapter SystemComponentAdapter, listService *systemcomponentservice.ComponentListService) *SystemComponentHandler {
+	return NewSystemComponentHandlerWithService(configs, adapter, listService)
+}
+
+func NewSystemComponentHandlerWithService(configs repository.SystemComponentRepository, adapter SystemComponentAdapter, listService *systemcomponentservice.ComponentListService) *SystemComponentHandler {
+	return &SystemComponentHandler{configs: configs, adapter: adapter, listService: listService, service: systemcomponentservice.NewComponentService(configs, adapter, listService)}
+}
+
+func NewSystemComponentHandlerWithComposedService(configs repository.SystemComponentRepository, adapter SystemComponentAdapter, service *systemcomponentservice.ComponentService, listService *systemcomponentservice.ComponentListService) *SystemComponentHandler {
+	return &SystemComponentHandler{configs: configs, adapter: adapter, listService: listService, service: service}
 }
 
 // WithAdapter replaces the Kubernetes boundary for focused handler tests.
 func (h *SystemComponentHandler) WithAdapter(adapter SystemComponentAdapter) *SystemComponentHandler {
 	h.adapter = adapter
 	h.listService = &systemcomponentservice.ComponentListService{Repo: h.configs, Adapter: adapter}
+	h.service = systemcomponentservice.NewComponentService(h.configs, adapter, h.listService)
 	return h
 }
 
@@ -59,7 +75,7 @@ func (h *SystemComponentHandler) Update(c *gin.Context) {
 	if req.TraefikReadTimeout != nil {
 		timeout = *req.TraefikReadTimeout
 	}
-	result, err := systemcomponentservice.Update(c.Request.Context(), h.configs, h.adapter, chart, req.ValuesContent, timeout, apiShared.UserID(c), time.Now())
+	result, err := h.service.Update(c.Request.Context(), chart, req.ValuesContent, timeout, apiShared.UserID(c))
 	if err != nil {
 		status, code := workflowHTTPError(err)
 		apiShared.Error(c, status, code, err.Error())
@@ -87,7 +103,7 @@ func workflowHTTPError(err error) (int, int) {
 
 func (h *SystemComponentHandler) Revert(c *gin.Context) {
 	chart := strings.TrimSpace(c.Param("chart"))
-	revertErr := systemcomponentservice.RevertManaged(c.Request.Context(), h.configs, h.adapter, chart)
+	revertErr := h.service.Revert(c.Request.Context(), chart)
 	if revertErr != nil {
 		status, code := workflowHTTPError(revertErr)
 		apiShared.Error(c, status, code, "恢复系统组件默认配置失败: "+revertErr.Error())
@@ -102,7 +118,5 @@ func (h *SystemComponentHandler) Run(ctx context.Context, interval time.Duration
 	if h.adapter == nil || !h.adapter.Available() {
 		return nil
 	}
-	return systemcomponentservice.Run(ctx, interval, h.configs, h.adapter, systemcomponentservice.ParseStaticDeploymentConfig, func(ctx context.Context, node string) error {
-		return systemcomponentservice.ValidateNode(ctx, h.adapter, node)
-	}, time.Now)
+	return h.service.Run(ctx, interval)
 }

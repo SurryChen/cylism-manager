@@ -68,7 +68,7 @@ func TestBuildServicesComposesDomainServices(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	services := BuildServices(db, &k8s.Client{}, BuildKubernetesAdapters(&k8s.Client{}), []byte("01234567890123456789012345678901"))
+	services := BuildServices(BuildRepositories(db), &k8s.Client{}, BuildKubernetesAdapters(&k8s.Client{}), []byte("01234567890123456789012345678901"))
 	if services.Cluster == nil || services.Network == nil || services.Storage == nil {
 		t.Fatal("expected core services to be composed")
 	}
@@ -80,5 +80,11 @@ func TestBuildServicesComposesDomainServices(t *testing.T) {
 	}
 	if services.Monitoring == nil || services.LoggingQuery == nil {
 		t.Fatal("expected observability query services to be composed")
+	}
+	if services.AuthTemporaryTokens == nil || services.AlertingAutomation == nil {
+		t.Fatal("expected auth and alerting workflow services to be composed")
+	}
+	if services.RuntimeManager == nil || services.RuntimeRegistry == nil || services.SystemComponentList == nil || services.SystemComponent == nil || services.AlertingQuery == nil {
+		t.Fatal("expected runtime and system-component services to be composed")
 	}
 }

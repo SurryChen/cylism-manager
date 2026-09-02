@@ -507,8 +507,7 @@ func normalizeCertificateViewError(message string) string {
 }
 
 func domainFromRequest(req domainRequest, current *model.ManagedDomain, environment *model.Environment) (*model.ManagedDomain, error) {
-	service := networkservice.NewService(nil)
-	domain, err := service.BuildManagedDomain(networkservice.DomainInput{
+	domain, err := networkservice.BuildManagedDomain(networkservice.DomainInput{
 		Hostname: req.Hostname, EnvironmentID: req.EnvironmentID, IssuerRef: req.IssuerRef,
 		Description: req.Description, Enabled: req.Enabled,
 	}, current, environment)

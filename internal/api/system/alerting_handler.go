@@ -30,6 +30,7 @@ type AlertingHandler struct {
 	automationStore repository.AlertAutomationRepository
 	dispatcher      alertRuntimeDispatcher
 	automation      *alertingservice.AutomationService
+	queryService    *alertingservice.QueryService
 	component       *alertingservice.ComponentService
 	ready           func(context.Context) bool
 	secrets         alertingservice.SecretReader
@@ -43,6 +44,7 @@ type AlertingDependencies struct {
 	Ready            func(context.Context) bool
 	Secrets          alertingservice.SecretReader
 	Sender           alertingservice.NotificationSender
+	QueryService     *alertingservice.QueryService
 }
 
 type alertmanagerNotification struct {
@@ -87,6 +89,20 @@ func (h *AlertingHandler) WithDependencies(deps AlertingDependencies) *AlertingH
 	h.ready = deps.Ready
 	h.secrets = deps.Secrets
 	h.sender = deps.Sender
+	if deps.QueryService != nil {
+		h.queryService = deps.QueryService
+	} else if deps.Alertmanager != nil {
+		h.queryService = alertingservice.NewQueryService(alertingservice.NewClient(deps.Alertmanager), deps.Ready)
+	}
+	return h
+}
+
+// WithAlertmanager injects a request transport and its pre-composed query
+// service for focused tests or alternate embeddings.
+func (h *AlertingHandler) WithAlertmanager(request alertingservice.RequestFunc, ready func(context.Context) bool) *AlertingHandler {
+	h.alertmanager = alertmanagerRequestFunc(request)
+	h.ready = ready
+	h.queryService = alertingservice.NewQueryService(alertingservice.NewClient(request), ready)
 	return h
 }
 
@@ -97,9 +113,17 @@ func (h *AlertingHandler) WithAutomation(store repository.AlertAutomationReposit
 	return h
 }
 
+// WithAutomationService injects the pre-composed automation service.
+func (h *AlertingHandler) WithAutomationService(store repository.AlertAutomationRepository, service *alertingservice.AutomationService, dispatcher alertRuntimeDispatcher) *AlertingHandler {
+	h.automationStore = store
+	h.dispatcher = dispatcher
+	h.automation = service
+	return h
+}
+
 func (h *AlertingHandler) workflow() *alertingservice.Workflow {
 	return &alertingservice.Workflow{
-		Client: alertingservice.NewClient(alertingservice.RequestFunc(h.alertmanager)), Ready: h.ready,
+		Client: alertingservice.NewClient(alertingservice.RequestFunc(h.alertmanager)), Query: h.queryService, Ready: h.ready,
 		Automation: h.automation, Store: h.automationStore, Dispatcher: h.dispatcher, Cache: h.resolvedCache, PlatformURL: h.platformURL,
 		Secrets: h.secrets, Sender: h.sender,
 	}

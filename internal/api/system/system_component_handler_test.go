@@ -401,8 +401,12 @@ func (f *countingSystemComponentAdapter) DeleteHelmChartConfig(context.Context, 
 }
 
 func TestSystemComponentHandlerDelegatesUpdateAndRevertToServiceAdapter(t *testing.T) {
+	store, err := store.New(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
 	adapter := &countingSystemComponentAdapter{fakeSystemComponentAdapter: fakeSystemComponentAdapter{client: k8sfake.NewSimpleClientset()}}
-	handler := (&SystemComponentHandler{}).WithAdapter(adapter)
+	handler := (&SystemComponentHandler{configs: store}).WithAdapter(adapter)
 	router := gin.New()
 	router.PUT("/api/system-components/:chart", handler.Update)
 	router.POST("/api/system-components/:chart/revert", handler.Revert)
@@ -424,8 +428,7 @@ func TestSystemComponentHandlerRunDelegatesReconciliationLifecycle(t *testing.T)
 		t.Fatal(err)
 	}
 	adapter := &countingSystemComponentAdapter{fakeSystemComponentAdapter: fakeSystemComponentAdapter{client: k8sfake.NewSimpleClientset()}}
-	handler := (&SystemComponentHandler{}).WithAdapter(adapter)
-	handler.configs = store
+	handler := (&SystemComponentHandler{configs: store}).WithAdapter(adapter)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	if err := handler.Run(ctx, time.Hour); err != context.Canceled {
