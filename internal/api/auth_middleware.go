@@ -1,12 +1,11 @@
 package api
 
 import (
-	"net/http"
-
 	"strings"
 
+	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
+
 	"github.com/cylism/cylism-manager/internal/auth"
-	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/gin-gonic/gin"
 )
 
@@ -30,14 +29,14 @@ func JWTAuthMiddleware(secret []byte) gin.HandlerFunc {
 		}
 
 		if tokenStr == "" {
-			model.Error(c, http.StatusUnauthorized, model.CodeUnauthorized, "未提供认证 token")
+			apiShared.Unauthorized(c, "未提供认证 token")
 			c.Abort()
 			return
 		}
 
 		claims, err := auth.ParseToken(secret, tokenStr)
 		if err != nil {
-			model.Error(c, http.StatusUnauthorized, model.CodeUnauthorized, "token 无效或已过期")
+			apiShared.Unauthorized(c, "token 无效或已过期")
 			c.Abort()
 			return
 		}
@@ -55,13 +54,13 @@ func DelegationAuthMiddleware(secret []byte) gin.HandlerFunc {
 		authHeader := c.GetHeader("Authorization")
 		parts := strings.SplitN(authHeader, " ", 2)
 		if len(parts) != 2 || parts[0] != "Bearer" || strings.TrimSpace(parts[1]) == "" {
-			model.Error(c, http.StatusUnauthorized, model.CodeUnauthorized, "未提供委托 token")
+			apiShared.Unauthorized(c, "未提供委托 token")
 			c.Abort()
 			return
 		}
 		claims, err := auth.ParseDelegationToken(secret, parts[1])
 		if err != nil {
-			model.Error(c, http.StatusUnauthorized, model.CodeUnauthorized, "委托 token 无效或已过期")
+			apiShared.Unauthorized(c, "委托 token 无效或已过期")
 			c.Abort()
 			return
 		}

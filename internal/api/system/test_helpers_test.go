@@ -68,7 +68,11 @@ func (f *fakeNotificationSender) SendTest(ctx context.Context, secrets alertings
 func newTestAlertingHandler(platformURL ...string) (*AlertingHandler, *fakeNotificationSender) {
 	var client *k8sclient.Client = k8sClient
 	sender := &fakeNotificationSender{}
-	h := NewAlertingHandler(platformURL...)
+	configuredURL := ""
+	if len(platformURL) > 0 {
+		configuredURL = platformURL[0]
+	}
+	h := NewAlertingHandler(configuredURL)
 	h.WithDependencies(AlertingDependencies{Component: k8sclient.AlertingComponentAdapter{Client: client}, Ready: func() bool { return client != nil && client.AlertingStatus().State == k8sclient.AlertingStateReady }, Secrets: k8sclient.SecretReader{Client: client}, Sender: sender})
 	return h, sender
 }

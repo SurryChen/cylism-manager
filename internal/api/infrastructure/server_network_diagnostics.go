@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/repository"
 	"github.com/gin-gonic/gin"
@@ -111,7 +112,7 @@ var (
 func (h *ServerNetworkDiagnosticsHandler) NetworkDiagnostics(c *gin.Context) {
 	servers, err := h.store.ListServers()
 	if err != nil {
-		model.Error(c, 500, model.CodeInternalError, err.Error())
+		apiShared.Error(c, 500, model.CodeInternalError, err.Error())
 		return
 	}
 

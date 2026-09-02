@@ -34,3 +34,80 @@ func ParsePositiveID(value string) (uint, error) {
 func K8sUnavailable(c *gin.Context) {
 	model.Error(c, http.StatusOK, model.CodeK8sUnavailable, "K8s 集群未连接")
 }
+
+// The following helpers keep status/code/message mapping at the API boundary
+// consistent while allowing handlers to avoid repeating the same boilerplate.
+func BadRequest(c *gin.Context, message string) {
+	model.Error(c, http.StatusBadRequest, model.CodeBadRequest, message)
+}
+func ValidationError(c *gin.Context, message string) {
+	model.Error(c, http.StatusBadRequest, model.CodeValidationFail, message)
+}
+func Unauthorized(c *gin.Context, message string) {
+	model.Error(c, http.StatusUnauthorized, model.CodeUnauthorized, message)
+}
+func NotFound(c *gin.Context, message string) {
+	model.Error(c, http.StatusNotFound, model.CodeNotFound, message)
+}
+func Conflict(c *gin.Context, message string) {
+	model.Error(c, http.StatusConflict, model.CodeConflict, message)
+}
+func InternalError(c *gin.Context, message string) {
+	model.Error(c, http.StatusInternalServerError, model.CodeInternalError, message)
+}
+func DBError(c *gin.Context, message string) {
+	model.Error(c, http.StatusInternalServerError, model.CodeDBError, message)
+}
+func ServiceUnavailable(c *gin.Context, code int, message string) {
+	model.Error(c, http.StatusServiceUnavailable, code, message)
+}
+func K8sAPIError(c *gin.Context, message string) {
+	model.Error(c, http.StatusBadGateway, model.CodeK8sAPIError, message)
+}
+func K8sAPIErrorWithData(c *gin.Context, message string, data interface{}) {
+	model.ErrorWithData(c, http.StatusBadGateway, model.CodeK8sAPIError, message, data)
+}
+
+// Error handles endpoint-specific status/code combinations that do not map
+// to one of the semantic helpers above.
+func Error(c *gin.Context, status, code int, message string) {
+	model.Error(c, status, code, message)
+}
+
+func ErrorWithData(c *gin.Context, status, code int, message string, data interface{}) {
+	model.ErrorWithData(c, status, code, message, data)
+}
+
+// Pagination normalizes the common page/size query parameters used by list
+// endpoints. Invalid or out-of-range values retain the API's historical
+// defaults while keeping the upper bound consistent across handlers.
+func Pagination(c *gin.Context) (page, size, offset int) {
+	page, _ = strconv.Atoi(c.DefaultQuery("page", "1"))
+	size, _ = strconv.Atoi(c.DefaultQuery("size", "20"))
+	if page < 1 {
+		page = 1
+	}
+	if size < 1 {
+		size = 20
+	}
+	if size > 100 {
+		size = 100
+	}
+	return page, size, (page - 1) * size
+}
+
+// LimitOffset normalizes endpoints that expose limit/offset directly.
+func LimitOffset(c *gin.Context, defaultLimit, maxLimit int) (limit, offset int) {
+	limit, _ = strconv.Atoi(c.DefaultQuery("limit", strconv.Itoa(defaultLimit)))
+	offset, _ = strconv.Atoi(c.DefaultQuery("offset", "0"))
+	if limit < 1 {
+		limit = defaultLimit
+	}
+	if maxLimit > 0 && limit > maxLimit {
+		limit = maxLimit
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	return limit, offset
+}

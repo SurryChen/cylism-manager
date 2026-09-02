@@ -2,10 +2,10 @@ package api
 
 import (
 	"fmt"
-	"net/http"
 	"reflect"
 	"strconv"
 
+	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/gin-gonic/gin"
@@ -51,12 +51,11 @@ func (h *DBAdminHandler) ListRecords(c *gin.Context) {
 	tableName := c.Param("table")
 	tableModel, ok := tableRegistry[tableName]
 	if !ok {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "invalid table")
+		apiShared.BadRequest(c, "invalid table")
 		return
 	}
 
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	size, _ := strconv.Atoi(c.DefaultQuery("size", "20"))
+	page, size, offset := apiShared.Pagination(c)
 	sort := c.DefaultQuery("sort", "id")
 	order := c.DefaultQuery("order", "desc")
 
@@ -85,10 +84,9 @@ func (h *DBAdminHandler) ListRecords(c *gin.Context) {
 	db.Table(tableName).Count(&total)
 
 	// 分页查询
-	offset := (page - 1) * size
 	rows, err := db.Table(tableName).Select("*").Order(sort + " " + order).Limit(size).Offset(offset).Rows()
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, fmt.Sprintf("query failed: %v", err))
+		apiShared.InternalError(c, fmt.Sprintf("query failed: %v", err))
 		return
 	}
 	defer rows.Close()
@@ -96,7 +94,7 @@ func (h *DBAdminHandler) ListRecords(c *gin.Context) {
 	// 读取列名
 	columns, err := rows.Columns()
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, "failed to get columns")
+		apiShared.InternalError(c, "failed to get columns")
 		return
 	}
 
@@ -147,13 +145,13 @@ func (h *DBAdminHandler) CreateRecord(c *gin.Context) {
 	tableName := c.Param("table")
 	_, ok := tableRegistry[tableName]
 	if !ok {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "invalid table")
+		apiShared.BadRequest(c, "invalid table")
 		return
 	}
 
 	var body map[string]interface{}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, err.Error())
+		apiShared.BadRequest(c, err.Error())
 		return
 	}
 
@@ -166,13 +164,13 @@ func (h *DBAdminHandler) CreateRecord(c *gin.Context) {
 	}
 
 	if len(filtered) == 0 {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "no valid fields")
+		apiShared.BadRequest(c, "no valid fields")
 		return
 	}
 
 	result := h.store.DB().Table(tableName).Create(filtered)
 	if result.Error != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, result.Error.Error())
+		apiShared.InternalError(c, result.Error.Error())
 		return
 	}
 
@@ -184,19 +182,19 @@ func (h *DBAdminHandler) UpdateRecord(c *gin.Context) {
 	tableName := c.Param("table")
 	_, ok := tableRegistry[tableName]
 	if !ok {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "invalid table")
+		apiShared.BadRequest(c, "invalid table")
 		return
 	}
 
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "invalid id")
+		apiShared.BadRequest(c, "invalid id")
 		return
 	}
 
 	var body map[string]interface{}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, err.Error())
+		apiShared.BadRequest(c, err.Error())
 		return
 	}
 
@@ -209,17 +207,17 @@ func (h *DBAdminHandler) UpdateRecord(c *gin.Context) {
 	}
 
 	if len(filtered) == 0 {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "no valid fields")
+		apiShared.BadRequest(c, "no valid fields")
 		return
 	}
 
 	result := h.store.DB().Table(tableName).Where("id = ?", id).Updates(filtered)
 	if result.Error != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, result.Error.Error())
+		apiShared.InternalError(c, result.Error.Error())
 		return
 	}
 	if result.RowsAffected == 0 {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, "record not found")
+		apiShared.NotFound(c, "record not found")
 		return
 	}
 
@@ -231,23 +229,23 @@ func (h *DBAdminHandler) DeleteRecord(c *gin.Context) {
 	tableName := c.Param("table")
 	_, ok := tableRegistry[tableName]
 	if !ok {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "invalid table")
+		apiShared.BadRequest(c, "invalid table")
 		return
 	}
 
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "invalid id")
+		apiShared.BadRequest(c, "invalid id")
 		return
 	}
 
 	result := h.store.DB().Table(tableName).Where("id = ?", id).Delete(nil)
 	if result.Error != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, result.Error.Error())
+		apiShared.InternalError(c, result.Error.Error())
 		return
 	}
 	if result.RowsAffected == 0 {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, "record not found")
+		apiShared.NotFound(c, "record not found")
 		return
 	}
 

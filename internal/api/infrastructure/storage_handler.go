@@ -2,12 +2,9 @@ package infrastructure
 
 import (
 	"context"
-	"net/http"
-	"strconv"
-	"strings"
 
+	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 	k8sclient "github.com/cylism/cylism-manager/internal/k8s"
-	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/repository"
 	"github.com/cylism/cylism-manager/internal/service/storage"
 	"github.com/gin-gonic/gin"
@@ -127,15 +124,6 @@ func (r clientPVCReconciler) ListStatefulSets(ctx context.Context, namespace str
 func (r clientPVCReconciler) GetDeployment(ctx context.Context, namespace, name string) (*appsv1.Deployment, error) {
 	return r.client.Clientset.AppsV1().Deployments(namespace).Get(ctx, name, metav1.GetOptions{})
 }
-func NewStorageHandler(service *storage.Service, h StorageHandler, clients ...*k8sclient.Client) *StorageHandler {
-	h.Service = service
-	if len(clients) > 0 {
-		adapter := newClientPVCReconciler(clients[0])
-		h.pvc, h.migration, h.workloads = adapter, adapter, adapter
-	}
-	return &h
-}
-
 func NewStorageHandlerWithClient(service *storage.Service, st repository.PVCRepository, encKey []byte, client *k8sclient.Client) *StorageHandler {
 	adapter := newClientPVCReconciler(client)
 	return &StorageHandler{Service: service, store: st, encKey: encKey, pvc: adapter, migration: adapter, workloads: adapter}
@@ -154,35 +142,11 @@ func (h *StorageHandler) ConfigureStorageExecutor() {
 }
 
 func storageK8sUnavailable(c *gin.Context) {
-	model.Error(c, http.StatusOK, model.CodeK8sUnavailable, "K8s 集群未连接")
-}
-
-func optionalStorageQueryID(c *gin.Context, key string) (uint, error) {
-	raw := strings.TrimSpace(c.Query(key))
-	if raw == "" {
-		return 0, nil
-	}
-	id, err := strconv.ParseUint(raw, 10, 64)
-	return uint(id), err
-}
-
-func parseStorageID(value string) (uint, error) {
-	id, err := strconv.ParseUint(strings.TrimSpace(value), 10, 64)
-	return uint(id), err
+	apiShared.K8sUnavailable(c)
 }
 
 func storageRequestUserID(c *gin.Context) uint {
-	if value, ok := c.Get("user_id"); ok {
-		switch id := value.(type) {
-		case uint:
-			return id
-		case uint64:
-			return uint(id)
-		case int:
-			return uint(id)
-		}
-	}
-	return 0
+	return apiShared.UserID(c)
 }
 
 func storageErrorsIsNotFound(err error) bool { return err == gorm.ErrRecordNotFound }

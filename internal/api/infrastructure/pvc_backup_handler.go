@@ -3,11 +3,11 @@ package infrastructure
 import (
 	"context"
 	"fmt"
-	"net/http"
 	"path"
 	"strings"
 	"time"
 
+	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 	k8sclient "github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
 	storageservice "github.com/cylism/cylism-manager/internal/service/storage"
@@ -28,7 +28,7 @@ func (h *StorageHandler) ListPersistentVolumeBackups(c *gin.Context) {
 	}
 	backups, err := h.Service.ListBackups(environment.ID, c.Param("name"))
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "读取存储卷备份失败")
+		apiShared.DBError(c, "读取存储卷备份失败")
 		return
 	}
 	model.Success(c, backups)
@@ -41,39 +41,39 @@ func (h *StorageHandler) CreatePersistentVolumeBackup(c *gin.Context) {
 	}
 	var request persistentVolumeBackupRequest
 	if err := c.ShouldBindJSON(&request); err != nil || request.EnvironmentID == 0 || request.BackupServerID == 0 {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "环境和备份服务器必填")
+		apiShared.BadRequest(c, "环境和备份服务器必填")
 		return
 	}
 	environment, err := h.store.GetEnvironmentByID(request.EnvironmentID)
 	if err != nil {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, "环境不存在")
+		apiShared.NotFound(c, "环境不存在")
 		return
 	}
 	claim, err := h.pvc.GetManagedPVC(environment.Namespace, c.Param("name"), environment.ID)
 	if err != nil {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, err.Error())
+		apiShared.NotFound(c, err.Error())
 		return
 	}
 	if !claim.IsLocal || claim.BoundNode == "" || claim.LocalPath == "" {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "当前仅支持已绑定的 local-path 或 hostPath PVC 备份")
+		apiShared.ValidationError(c, "当前仅支持已绑定的 local-path 或 hostPath PVC 备份")
 		return
 	}
 	root, rootErr := storageservice.ValidateBackupRoot(request.BackupRoot)
 	if rootErr != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, rootErr.Error())
+		apiShared.ValidationError(c, rootErr.Error())
 		return
 	}
 	if _, err := h.store.GetServer(request.BackupServerID); err != nil {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, "备份服务器不存在")
+		apiShared.NotFound(c, "备份服务器不存在")
 		return
 	}
 	backup := &model.PersistentVolumeBackup{EnvironmentID: environment.ID, PVCName: claim.Name, SourceNodeName: claim.BoundNode, BackupServerID: request.BackupServerID, BackupPath: path.Join(root, environment.Namespace, claim.Name, time.Now().UTC().Format("20060102T150405Z")), Status: "accepted", CreatedBy: storageRequestUserID(c)}
 	if err := h.Service.CreateBackup(backup); err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "创建存储卷备份记录失败")
+		apiShared.DBError(c, "创建存储卷备份记录失败")
 		return
 	}
 	if err := h.Service.StartBackup(backup.ID); err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, err.Error())
+		apiShared.InternalError(c, err.Error())
 		return
 	}
 	model.SuccessWithMessage(c, backup, "存储卷备份已创建")
@@ -86,25 +86,25 @@ func (h *StorageHandler) RestorePersistentVolumeBackup(c *gin.Context) {
 	}
 	var request persistentVolumeBackupRequest
 	if err := c.ShouldBindJSON(&request); err != nil || request.EnvironmentID == 0 || !request.ConfirmDataReplace {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "恢复需要环境并确认覆盖当前 PVC 数据")
+		apiShared.BadRequest(c, "恢复需要环境并确认覆盖当前 PVC 数据")
 		return
 	}
-	backupID, err := parseStorageID(c.Param("backupID"))
+	backupID, err := apiShared.ParsePositiveID(strings.TrimSpace(c.Param("backupID")))
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "备份 ID 无效")
+		apiShared.BadRequest(c, "备份 ID 无效")
 		return
 	}
 	backup, err := h.Service.GetBackup(backupID)
 	if err != nil || backup.EnvironmentID != request.EnvironmentID || backup.PVCName != c.Param("name") {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, "备份不存在")
+		apiShared.NotFound(c, "备份不存在")
 		return
 	}
 	if backup.Status != "succeeded" {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "只有成功备份可以恢复")
+		apiShared.ValidationError(c, "只有成功备份可以恢复")
 		return
 	}
 	if backup.RestoreStatus == "running" {
-		model.Error(c, http.StatusConflict, model.CodeConflict, "该备份正在恢复")
+		apiShared.Conflict(c, "该备份正在恢复")
 		return
 	}
 	now := time.Now().UTC()
@@ -113,11 +113,11 @@ func (h *StorageHandler) RestorePersistentVolumeBackup(c *gin.Context) {
 	backup.RestoreStartedAt = &now
 	backup.RestoreCompletedAt = nil
 	if err := h.Service.UpdateBackup(backup); err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "更新存储卷恢复状态失败")
+		apiShared.DBError(c, "更新存储卷恢复状态失败")
 		return
 	}
 	if err := h.Service.StartRestore(backup.ID); err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, err.Error())
+		apiShared.InternalError(c, err.Error())
 		return
 	}
 	model.SuccessWithMessage(c, backup, "存储卷恢复已开始")

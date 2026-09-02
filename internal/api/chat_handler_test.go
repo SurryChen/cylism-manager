@@ -75,7 +75,7 @@ func setupChatRouter(t *testing.T, client agent.ChatClient, seenKey *string) (*g
 		t.Fatalf("open store: %v", err)
 	}
 	encKey := []byte("01234567890123456789012345678901")
-	handler := NewRuntimeHandler(s, encKey, nil)
+	handler := NewRuntimeHandler(s, encKey, nil, nil)
 	handler.newChatClient = func(instance *model.RuntimeInstance, apiKey string) (agent.ChatClient, error) {
 		if seenKey != nil {
 			*seenKey = apiKey

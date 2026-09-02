@@ -91,11 +91,7 @@ func main() {
 	}
 	go systemapi.NewSystemComponentHandler(db, systemComponentAdapter).Reconcile()
 
-	// 静态文件
-	r.Static("/assets", "./web/dist/assets")
-	r.NoRoute(func(c *gin.Context) {
-		c.File("./web/dist/index.html")
-	})
+	registerFrontendRoutes(r, "./web/dist")
 
 	// 启动服务器
 	addr := fmt.Sprintf("%s:%d",

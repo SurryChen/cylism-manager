@@ -6,13 +6,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/http"
 	"os/exec"
 	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
 
+	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 	"github.com/cylism/cylism-manager/internal/application"
 	k8sclient "github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
@@ -30,17 +30,17 @@ type pvcMigrationRequest struct {
 
 func (h *StorageHandler) ListPersistentVolumeMigrations(c *gin.Context) {
 	if h.store == nil {
-		model.Error(c, 500, model.CodeInternalError, "数据存储未初始化")
+		apiShared.Error(c, 500, model.CodeInternalError, "数据存储未初始化")
 		return
 	}
-	environmentID, err := optionalStorageQueryID(c, "environment_id")
+	environmentID, err := apiShared.OptionalID(strings.TrimSpace(c.Query("environment_id")))
 	if err != nil {
-		model.Error(c, 400, model.CodeBadRequest, "环境 ID 无效")
+		apiShared.Error(c, 400, model.CodeBadRequest, "环境 ID 无效")
 		return
 	}
 	migrations, err := h.Service.ListMigrations(environmentID)
 	if err != nil {
-		model.Error(c, 500, model.CodeDBError, "读取存储卷迁移失败")
+		apiShared.Error(c, 500, model.CodeDBError, "读取存储卷迁移失败")
 		return
 	}
 	model.Success(c, migrations)
@@ -48,17 +48,17 @@ func (h *StorageHandler) ListPersistentVolumeMigrations(c *gin.Context) {
 
 func (h *StorageHandler) GetPersistentVolumeMigration(c *gin.Context) {
 	if h.store == nil {
-		model.Error(c, 500, model.CodeInternalError, "数据存储未初始化")
+		apiShared.Error(c, 500, model.CodeInternalError, "数据存储未初始化")
 		return
 	}
-	id, err := parseStorageID(c.Param("id"))
+	id, err := apiShared.ParsePositiveID(strings.TrimSpace(c.Param("id")))
 	if err != nil {
-		model.Error(c, 400, model.CodeBadRequest, "迁移 ID 无效")
+		apiShared.Error(c, 400, model.CodeBadRequest, "迁移 ID 无效")
 		return
 	}
 	migration, err := h.Service.GetMigration(id)
 	if err != nil {
-		model.Error(c, 404, model.CodeNotFound, "迁移任务不存在")
+		apiShared.Error(c, 404, model.CodeNotFound, "迁移任务不存在")
 		return
 	}
 	model.Success(c, migration)
@@ -70,58 +70,58 @@ func (h *StorageHandler) CreatePersistentVolumeMigration(c *gin.Context) {
 		return
 	}
 	if h.store == nil {
-		model.Error(c, 500, model.CodeInternalError, "数据存储未初始化")
+		apiShared.Error(c, 500, model.CodeInternalError, "数据存储未初始化")
 		return
 	}
 	var request pvcMigrationRequest
 	if err := c.ShouldBindJSON(&request); err != nil || request.EnvironmentID == 0 || strings.TrimSpace(request.TargetNode) == "" {
-		model.Error(c, 400, model.CodeBadRequest, "环境和目标节点必填")
+		apiShared.Error(c, 400, model.CodeBadRequest, "环境和目标节点必填")
 		return
 	}
 	environment, err := h.store.GetEnvironmentByID(request.EnvironmentID)
 	if err != nil {
-		model.Error(c, 404, model.CodeNotFound, "环境不存在")
+		apiShared.Error(c, 404, model.CodeNotFound, "环境不存在")
 		return
 	}
 	sourceName := c.Param("name")
 	if active, err := h.Service.FindActiveMigration(environment.ID, sourceName); err == nil {
-		model.ErrorWithData(c, 409, model.CodeConflict, "该存储卷已有迁移任务", active)
+		apiShared.ErrorWithData(c, 409, model.CodeConflict, "该存储卷已有迁移任务", active)
 		return
 	} else if !storageErrorsIsNotFound(err) {
-		model.Error(c, 500, model.CodeDBError, "检查存储卷迁移状态失败")
+		apiShared.Error(c, 500, model.CodeDBError, "检查存储卷迁移状态失败")
 		return
 	}
 	claim, err := h.pvc.GetManagedPVC(environment.Namespace, sourceName, environment.ID)
 	if err != nil {
-		model.Error(c, 400, model.CodeValidationFail, err.Error())
+		apiShared.Error(c, 400, model.CodeValidationFail, err.Error())
 		return
 	}
 	if claim.Phase != string(corev1.ClaimBound) || !claim.IsLocal || claim.BoundNode == "" {
-		model.Error(c, 400, model.CodeValidationFail, "仅支持迁移已绑定的 local-path/hostPath 存储卷")
+		apiShared.Error(c, 400, model.CodeValidationFail, "仅支持迁移已绑定的 local-path/hostPath 存储卷")
 		return
 	}
 	if claim.BoundNode == request.TargetNode {
-		model.Error(c, 400, model.CodeValidationFail, "目标节点与当前绑定节点相同")
+		apiShared.Error(c, 400, model.CodeValidationFail, "目标节点与当前绑定节点相同")
 		return
 	}
 	deployment, app, replicas, err := h.migrationWorkload(c.Request.Context(), environment.ID, environment.Namespace, sourceName)
 	if err != nil {
-		model.Error(c, 409, model.CodeConflict, err.Error())
+		apiShared.Error(c, 409, model.CodeConflict, err.Error())
 		return
 	}
 	templateSnapshot, err := h.migrationTemplateSnapshot(app.ID)
 	if err != nil {
-		model.Error(c, 500, model.CodeDBError, "保存迁移前模板快照失败")
+		apiShared.Error(c, 500, model.CodeDBError, "保存迁移前模板快照失败")
 		return
 	}
 	migration := &model.PersistentVolumeMigration{EnvironmentID: environment.ID, ApplicationID: app.ID, SourcePVCName: sourceName, SourceNodeName: claim.BoundNode, TargetNodeName: request.TargetNode, SourceDeployment: deployment, SourceReplicas: replicas, SourceTemplateSpec: templateSnapshot, Status: model.PVCMigrationStatusPending}
 	if err := h.Service.CreateMigration(migration); err != nil {
-		model.Error(c, 500, model.CodeDBError, "创建存储卷迁移失败")
+		apiShared.Error(c, 500, model.CodeDBError, "创建存储卷迁移失败")
 		return
 	}
 	migration.TargetPVCName = migrationPVCName(sourceName, migration.ID)
 	if err := h.Service.UpdateMigration(migration, model.PVCMigrationStatusPending, "等待预检"); err != nil {
-		model.Error(c, 500, model.CodeDBError, "初始化迁移任务失败")
+		apiShared.Error(c, 500, model.CodeDBError, "初始化迁移任务失败")
 		return
 	}
 	helperImage := strings.TrimSpace(request.HelperImage)
@@ -129,7 +129,7 @@ func (h *StorageHandler) CreatePersistentVolumeMigration(c *gin.Context) {
 		helperImage = defaultPVCMigrationHelperImage
 	}
 	if err := h.Service.StartMigration(migration.ID, helperImage); err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, err.Error())
+		apiShared.InternalError(c, err.Error())
 		return
 	}
 	c.Status(202)
@@ -141,27 +141,27 @@ func (h *StorageHandler) CleanupPersistentVolumeMigration(c *gin.Context) {
 		storageK8sUnavailable(c)
 		return
 	}
-	id, err := parseStorageID(c.Param("id"))
+	id, err := apiShared.ParsePositiveID(strings.TrimSpace(c.Param("id")))
 	if err != nil {
-		model.Error(c, 400, model.CodeBadRequest, "迁移 ID 无效")
+		apiShared.Error(c, 400, model.CodeBadRequest, "迁移 ID 无效")
 		return
 	}
 	migration, err := h.Service.GetMigration(id)
 	if err != nil || migration.Status != model.PVCMigrationStatusCleanupPending {
-		model.Error(c, 409, model.CodeConflict, "迁移任务当前不能清理源卷")
+		apiShared.Error(c, 409, model.CodeConflict, "迁移任务当前不能清理源卷")
 		return
 	}
 	environment, err := h.store.GetEnvironmentByID(migration.EnvironmentID)
 	if err != nil {
-		model.Error(c, 404, model.CodeNotFound, "环境不存在")
+		apiShared.Error(c, 404, model.CodeNotFound, "环境不存在")
 		return
 	}
 	if deployments, err := h.migration.DeploymentUsingPVC(c.Request.Context(), environment.Namespace, migration.SourcePVCName); err != nil || len(deployments) != 0 {
-		model.Error(c, 409, model.CodeConflict, "源存储卷仍被工作负载引用，不能清理")
+		apiShared.Error(c, 409, model.CodeConflict, "源存储卷仍被工作负载引用，不能清理")
 		return
 	}
 	if err := h.pvc.DeleteManagedPVC(environment.Namespace, migration.SourcePVCName, environment.ID); err != nil {
-		model.Error(c, 400, model.CodeK8sAPIError, err.Error())
+		apiShared.Error(c, 400, model.CodeK8sAPIError, err.Error())
 		return
 	}
 	_ = h.Service.UpdateMigration(migration, model.PVCMigrationStatusCleaned, "源卷已按回收策略清理")

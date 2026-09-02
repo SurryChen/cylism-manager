@@ -1,9 +1,7 @@
 package api
 
 import (
-	"net/http"
-	"strconv"
-
+	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 	"github.com/cylism/cylism-manager/internal/model"
 
 	"github.com/cylism/cylism-manager/internal/repository"
@@ -31,7 +29,7 @@ type createSiteReq struct {
 func (h *SiteHandler) Create(c *gin.Context) {
 	var req createSiteReq
 	if err := c.ShouldBindJSON(&req); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, err.Error())
+		apiShared.BadRequest(c, err.Error())
 		return
 	}
 	if req.Port == 0 {
@@ -49,7 +47,7 @@ func (h *SiteHandler) Create(c *gin.Context) {
 		Locations:  req.Locations,
 	}
 	if err := h.store.CreateSite(site); err != nil {
-		model.Error(c, http.StatusConflict, model.CodeConflict, err.Error())
+		apiShared.Conflict(c, err.Error())
 		return
 	}
 	model.Success(c, site)
@@ -58,14 +56,14 @@ func (h *SiteHandler) Create(c *gin.Context) {
 func (h *SiteHandler) List(c *gin.Context) {
 	serverIDStr := c.Query("server_id")
 	if serverIDStr != "" {
-		id, err := strconv.ParseUint(serverIDStr, 10, 64)
+		id, err := apiShared.ParsePositiveID(serverIDStr)
 		if err != nil {
-			model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "invalid server_id")
+			apiShared.BadRequest(c, "invalid server_id")
 			return
 		}
 		sites, err := h.store.ListSitesByServer(uint(id))
 		if err != nil {
-			model.Error(c, http.StatusInternalServerError, model.CodeInternalError, err.Error())
+			apiShared.InternalError(c, err.Error())
 			return
 		}
 		model.Success(c, sites)
@@ -73,32 +71,40 @@ func (h *SiteHandler) List(c *gin.Context) {
 	}
 	sites, err := h.store.ListSites()
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, err.Error())
+		apiShared.InternalError(c, err.Error())
 		return
 	}
 	model.Success(c, sites)
 }
 
 func (h *SiteHandler) Get(c *gin.Context) {
-	id, _ := strconv.ParseUint(c.Param("id"), 10, 64)
-	site, err := h.store.GetSite(uint(id))
+	id, err := apiShared.ParsePositiveID(c.Param("id"))
 	if err != nil {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, "site not found")
+		apiShared.BadRequest(c, "site ID 无效")
+		return
+	}
+	site, err := h.store.GetSite(id)
+	if err != nil {
+		apiShared.NotFound(c, "site not found")
 		return
 	}
 	model.Success(c, site)
 }
 
 func (h *SiteHandler) Update(c *gin.Context) {
-	id, _ := strconv.ParseUint(c.Param("id"), 10, 64)
-	site, err := h.store.GetSite(uint(id))
+	id, err := apiShared.ParsePositiveID(c.Param("id"))
 	if err != nil {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, "site not found")
+		apiShared.BadRequest(c, "site ID 无效")
+		return
+	}
+	site, err := h.store.GetSite(id)
+	if err != nil {
+		apiShared.NotFound(c, "site not found")
 		return
 	}
 	var updates map[string]interface{}
 	if err := c.ShouldBindJSON(&updates); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, err.Error())
+		apiShared.BadRequest(c, err.Error())
 		return
 	}
 	if v, ok := updates["root_path"]; ok {
@@ -120,16 +126,20 @@ func (h *SiteHandler) Update(c *gin.Context) {
 		site.Locations = v.(string)
 	}
 	if err := h.store.UpdateSite(site); err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, err.Error())
+		apiShared.InternalError(c, err.Error())
 		return
 	}
 	model.Success(c, site)
 }
 
 func (h *SiteHandler) Delete(c *gin.Context) {
-	id, _ := strconv.ParseUint(c.Param("id"), 10, 64)
-	if err := h.store.DeleteSite(uint(id)); err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, err.Error())
+	id, err := apiShared.ParsePositiveID(c.Param("id"))
+	if err != nil {
+		apiShared.BadRequest(c, "site ID 无效")
+		return
+	}
+	if err := h.store.DeleteSite(id); err != nil {
+		apiShared.InternalError(c, err.Error())
 		return
 	}
 	model.SuccessWithMessage(c, nil, "操作成功")

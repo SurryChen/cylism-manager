@@ -1,9 +1,7 @@
 package system
 
 import (
-	"net/http"
-	"strconv"
-
+	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/repository"
 	"github.com/gin-gonic/gin"
@@ -21,12 +19,11 @@ func NewAuditHandler(logs repository.AuditRepository) *AuditHandler {
 func (h *AuditHandler) List(c *gin.Context) {
 	resourceType := c.Query("resource_type")
 	action := c.Query("action")
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
-	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
+	limit, offset := apiShared.LimitOffset(c, 20, 100)
 
 	logs, total, err := h.logs.ListAuditLogs(resourceType, action, limit, offset)
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, err.Error())
+		apiShared.InternalError(c, err.Error())
 		return
 	}
 	model.Success(c, gin.H{

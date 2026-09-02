@@ -1,0 +1,62 @@
+package api
+
+import (
+	"github.com/gin-gonic/gin"
+)
+
+func registerApplicationRoutes(r *gin.Engine, apiGroup *gin.RouterGroup, h *ApplicationHandler, jwtSecret []byte, audit gin.HandlerFunc) {
+	projects := apiGroup.Group("/projects")
+	projects.GET("", h.ListProjects)
+	projects.POST("", h.CreateProject)
+	projects.PUT("/:projectID", h.UpdateProject)
+	projects.DELETE("/:projectID", h.DeleteProject)
+	projects.GET("/:projectID/environments", h.ListEnvironments)
+	projects.GET("/environments/namespace-conflicts", h.ListEnvironmentNamespaceConflicts)
+	projects.POST("/:projectID/environments", h.CreateEnvironment)
+	projects.PUT("/:projectID/environments/:environmentID", h.UpdateEnvironment)
+	projects.POST("/:projectID/environments/:environmentID/sync-namespace", h.SyncEnvironmentNamespace)
+	projects.DELETE("/:projectID/environments/:environmentID", h.DeleteEnvironment)
+
+	applications := apiGroup.Group("/applications")
+	applications.GET("", h.ListApplications)
+	applications.GET("/discovery", h.DiscoverApplications)
+	applications.POST("", h.CreateApplication)
+	applications.GET("/:id", h.GetApplication)
+	applications.PUT("/:id/capabilities", h.UpdateCapabilities)
+	applications.GET("/:id/managed-files", h.ListManagedFiles)
+	applications.POST("/:id/delegations", h.CreateDelegation)
+	applications.POST("/:id/integration-handoffs", h.CreateIntegrationHandoff)
+	applications.PUT("/:id/workload-kind", h.UpdateWorkloadKind)
+	applications.GET("/:id/runtime", h.GetApplicationRuntime)
+	applications.GET("/:id/deployment-templates", h.ListDeploymentTemplates)
+	applications.POST("/:id/deployment-templates", h.CreateDeploymentTemplate)
+	applications.GET("/:id/deployment-templates/:templateID", h.GetDeploymentTemplate)
+	applications.PUT("/:id/deployment-templates/:templateID", h.UpdateDeploymentTemplate)
+	applications.DELETE("/:id/deployment-templates/:templateID", h.DeleteDeploymentTemplate)
+	applications.POST("/:id/deployment-templates/:templateID/default", h.SetDefaultDeploymentTemplate)
+	applications.GET("/:id/endpoints", h.ListApplicationEndpoints)
+	applications.POST("/:id/endpoints", h.CreateApplicationEndpoint)
+	applications.PUT("/:id/endpoints/:endpointID", h.UpdateApplicationEndpoint)
+	applications.DELETE("/:id/endpoints/:endpointID", h.DeleteApplicationEndpoint)
+	applications.POST("/:id/releases", h.CreateRelease)
+	applications.POST("/:id/restarts", h.RestartApplication)
+	applications.GET("/:id/releases/:releaseID", h.GetRelease)
+	applications.POST("/:id/releases/:releaseID/retry", h.RetryRelease)
+	applications.POST("/:id/releases/:releaseID/rollback", h.RollbackRelease)
+
+	integration := r.Group("/api/integrations/applications")
+	integration.Use(DelegationAuthMiddleware(jwtSecret), audit)
+	integration.GET("/discovery", h.IntegrationDiscoverApplications)
+	integration.GET("/:id/runtime", h.IntegrationGetApplicationRuntime)
+	integration.GET("/:id/configmaps", h.IntegrationListManagedConfigMaps)
+	integration.GET("/:id/configmaps/:configMapID", h.IntegrationGetManagedConfigMap)
+	integration.PUT("/:id/configmaps/:configMapID", h.IntegrationReplaceManagedConfigMap)
+	integration.POST("/:id/restarts", h.IntegrationRestartApplication)
+	integration.GET("/:id/releases/:releaseID", h.IntegrationGetRelease)
+
+	sessions := r.Group("/api/integrations/sessions")
+	sessions.POST("/exchange", h.ExchangeIntegrationSession)
+	sessions.POST("/delegation", h.CreateIntegrationDelegation)
+
+	apiGroup.GET("/workspace/overview", h.WorkspaceOverview)
+}

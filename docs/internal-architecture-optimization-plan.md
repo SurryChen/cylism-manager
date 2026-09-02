@@ -1,6 +1,6 @@
 # Cylism Manager Internal Architecture Optimization Plan
 
-状态：阶段 0～4 已完成（2026-09-01）
+状态：阶段 0～5 已完成（2026-09-02）
 
 本文档针对 `internal/` 目录的可维护性和复用能力进行优化规划。目标是逐步收窄模块职责、减少隐式依赖和重复逻辑，同时保持现有 REST API、数据库结构、Kubernetes 资源行为和前端工作流不变。
 
@@ -281,6 +281,19 @@ System Component Adapter 也已统一改为由 Router/平台启动层显式创�
 - 保留根包中认证、启动组装和尚未迁移的模块，禁止重新放入大型业务 Handler。
 
 验收：所有路由路径通过路由快照或集成测试核对；前端请求不落入 SPA fallback。
+
+当前进度（2026-09-02，阶段 5 已完成）：
+
+- `RegisterRoutes` 保留数据库、Kubernetes、Service 和 Handler 的唯一依赖组装入口；路由绑定已物理拆分到 `routes_public.go`、`routes_runtime.go`、`routes_observability.go`、`routes_application.go`、`routes_delivery.go` 和 `routes_infrastructure.go`。
+- Agent/Auth、Runtime/System、Monitoring/Alerting/Logging、Application/Integration、Delivery/Registry、Infrastructure/K8s 六组注册函数只负责创建路由和绑定 Handler，不重新创建底层依赖。
+- 新增 `router_test.go` 完整路由快照测试，对全部 308 条 method/path 排序后校验数量和 SHA-256 摘要，同时保留健康检查、认证、监控、告警、日志、系统组件、应用、PVC、Tailscale 和审计入口的可读性断言；未知 `/api/*` 路径回归为 404，避免被应用层 SPA fallback 吞掉。
+- `internal/api/shared` 新增统一分页与 limit/offset 解析，DB Admin 和 Audit 列表已复用；身份读取、用户名读取、可选 ID/正数 ID 解析和 K8s 不可用响应统一由 shared 提供。Chat 会话历史与 Agent 查询保留各自业务边界并有明确校验。
+- `internal/api/shared` 新增 BadRequest、ValidationError、Unauthorized、NotFound、Conflict、InternalError 和 DBError，站点与操作日志 Handler 已迁移并补充稳定错误码测试。
+- 删除无生产调用方的旧 `NewStorageHandler` 与无生产调用方的零参数 `NewCertHandler`；其余构造函数均有生产或测试消费者，暂不做无收益的兼容删除。
+- 所有 API Handler 的错误响应已统一经 `internal/api/shared` 输出：标准 BadRequest、Validation、NotFound、Conflict、DB、Internal、Unauthorized、K8s 和带数据错误均通过公共 Helper，特殊状态码仍使用通用 `shared.Error` 保持原 HTTP 状态码和业务错误码不变；生产代码不再直接调用 `model.Error`。
+- K8s 不可用响应已统一使用 `apiShared.K8sUnavailable`；路由 ID 解析已统一使用 `ParseID`/`ParsePositiveID`，站点、平台发布、节点加入和终端路径不再直接调用 `strconv.ParseUint`。
+- `NewApplicationHandler`、`NewAlertingHandler` 和 `NewRuntimeHandler` 的构造参数已收窄为显式依赖；测试夹具同步传入默认值，避免生产代码静默接受错误数量的参数。会话历史的 `limit` 保留 1～200 的端点专属校验语义，不与普通列表分页混用。
+- 当前阶段验证：`go test ./...`、`go build ./...`、Node 24 下前端构建和 `git diff --check` 通过；前端保留既有主 JS chunk 超过 500 kB 的非阻塞提示。阶段五收尾不再存在 Handler 直接 `model.Error`、未收敛的可变 Handler 构造函数或未覆盖的路由集合。
 
 ### 阶段 6：Model 和目录收尾
 

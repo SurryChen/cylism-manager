@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
-	"net/http"
 	"regexp"
 	"sort"
 	"strings"
@@ -46,22 +45,22 @@ func (h *ClusterDNSHandler) Status(c *gin.Context) {
 	}
 	configMap, err := h.k8s.Clientset.CoreV1().ConfigMaps(coreDNSNamespace).Get(c.Request.Context(), coreDNSConfigMap, metav1.GetOptions{})
 	if err != nil {
-		model.Error(c, http.StatusBadGateway, model.CodeK8sAPIError, "读取 CoreDNS 配置失败")
+		apiShared.K8sAPIError(c, "读取 CoreDNS 配置失败")
 		return
 	}
 	policy, err := h.store.GetActiveClusterDNSPolicy()
 	if err != nil && !apierrors.IsNotFound(err) && !strings.Contains(err.Error(), "record not found") {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "读取 DNS 策略失败")
+		apiShared.DBError(c, "读取 DNS 策略失败")
 		return
 	}
 	history, err := h.store.ListClusterDNSPolicies(20)
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "读取 DNS 策略历史失败")
+		apiShared.DBError(c, "读取 DNS 策略历史失败")
 		return
 	}
 	pods, err := h.k8s.Clientset.CoreV1().Pods(coreDNSNamespace).List(c.Request.Context(), metav1.ListOptions{LabelSelector: "k8s-app=kube-dns"})
 	if err != nil {
-		model.Error(c, http.StatusBadGateway, model.CodeK8sAPIError, "读取 CoreDNS Pod 状态失败")
+		apiShared.K8sAPIError(c, "读取 CoreDNS Pod 状态失败")
 		return
 	}
 	podStatus := make([]gin.H, 0, len(pods.Items))
@@ -84,17 +83,17 @@ func (h *ClusterDNSHandler) Apply(c *gin.Context) {
 	}
 	var request clusterDNSPolicyRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "DNS 策略无效")
+		apiShared.BadRequest(c, "DNS 策略无效")
 		return
 	}
 	resolvers, err := normalizeDNSResolvers(request.Resolvers)
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		apiShared.ValidationError(c, err.Error())
 		return
 	}
 	policy, err := h.applyResolvers(c, resolvers)
 	if err != nil {
-		model.Error(c, http.StatusBadGateway, model.CodeK8sAPIError, err.Error())
+		apiShared.K8sAPIError(c, err.Error())
 		return
 	}
 	model.SuccessWithMessage(c, policyPayload(policy), "集群 DNS 策略已应用，CoreDNS 将自动重载配置")
@@ -110,7 +109,7 @@ func (h *ClusterDNSHandler) Reset(c *gin.Context) {
 	}
 	policy, err := h.applyResolvers(c, nil)
 	if err != nil {
-		model.Error(c, http.StatusBadGateway, model.CodeK8sAPIError, err.Error())
+		apiShared.K8sAPIError(c, err.Error())
 		return
 	}
 	model.SuccessWithMessage(c, policyPayload(policy), "已恢复使用各节点宿主机 DNS")
@@ -149,7 +148,7 @@ func (h *ClusterDNSHandler) Rollback(c *gin.Context) {
 	revision := strings.TrimSpace(c.Param("revision"))
 	history, err := h.store.ListClusterDNSPolicies(50)
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "读取 DNS 策略历史失败")
+		apiShared.DBError(c, "读取 DNS 策略历史失败")
 		return
 	}
 	for _, policy := range history {
@@ -163,7 +162,7 @@ func (h *ClusterDNSHandler) Rollback(c *gin.Context) {
 		if len(resolvers) == 0 {
 			applied, applyErr := h.applyResolvers(c, nil)
 			if applyErr != nil {
-				model.Error(c, http.StatusBadGateway, model.CodeK8sAPIError, applyErr.Error())
+				apiShared.K8sAPIError(c, applyErr.Error())
 				return
 			}
 			model.SuccessWithMessage(c, policyPayload(applied), "DNS 策略已回滚为宿主机 DNS，CoreDNS 将自动重载配置")
@@ -175,13 +174,13 @@ func (h *ClusterDNSHandler) Rollback(c *gin.Context) {
 		}
 		applied, applyErr := h.applyResolvers(c, resolvers)
 		if applyErr != nil {
-			model.Error(c, http.StatusBadGateway, model.CodeK8sAPIError, applyErr.Error())
+			apiShared.K8sAPIError(c, applyErr.Error())
 			return
 		}
 		model.SuccessWithMessage(c, policyPayload(applied), "DNS 策略已回滚，CoreDNS 将自动重载配置")
 		return
 	}
-	model.Error(c, http.StatusNotFound, model.CodeNotFound, "DNS 策略版本不存在")
+	apiShared.NotFound(c, "DNS 策略版本不存在")
 }
 
 func normalizeDNSResolvers(raw []string) ([]string, error) {

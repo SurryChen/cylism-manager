@@ -6,13 +6,14 @@ import (
 	"strings"
 	"testing"
 
+	networkservice "github.com/cylism/cylism-manager/internal/service/network"
 	"github.com/gin-gonic/gin"
 )
 
 func setupCertRouter() *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	h := NewCertHandler()
+	h := &CertHandler{network: networkservice.NewService(nil)}
 	cert := r.Group("/api/certs")
 	{
 		cert.GET("/status", h.Status)

@@ -77,17 +77,17 @@ func (h *K8sHandler) PodTerminal(c *gin.Context) {
 	namespace, name := c.Param("namespace"), c.Param("name")
 	pod, err := h.k8s.Clientset.CoreV1().Pods(namespace).Get(h.k8s.Ctx(), name, metav1.GetOptions{})
 	if err != nil {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, fmt.Sprintf("获取 Pod 失败: %v", err))
+		apiShared.NotFound(c, fmt.Sprintf("获取 Pod 失败: %v", err))
 		return
 	}
 	if pod.Status.Phase != corev1.PodRunning {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "仅运行中的 Pod 可打开终端")
+		apiShared.BadRequest(c, "仅运行中的 Pod 可打开终端")
 		return
 	}
 
 	container, err := selectPodTerminalContainer(pod, c.Query("container"))
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, err.Error())
+		apiShared.BadRequest(c, err.Error())
 		return
 	}
 

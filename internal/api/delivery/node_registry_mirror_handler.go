@@ -70,7 +70,7 @@ func (h *NodeRegistryMirrorHandler) WithApplier(applier registryservice.NodeMirr
 func (h *NodeRegistryMirrorHandler) List(c *gin.Context) {
 	mirrors, err := h.service.List()
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "读取节点镜像源失败")
+		apiShared.DBError(c, "读取节点镜像源失败")
 		return
 	}
 	model.Success(c, mirrors)
@@ -79,7 +79,7 @@ func (h *NodeRegistryMirrorHandler) List(c *gin.Context) {
 func (h *NodeRegistryMirrorHandler) Create(c *gin.Context) {
 	var request nodeRegistryMirrorRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "镜像源定义无效")
+		apiShared.BadRequest(c, "镜像源定义无效")
 		return
 	}
 	mirror, err := h.service.Create(mirrorInput(request), apiShared.UserID(c))
@@ -93,12 +93,12 @@ func (h *NodeRegistryMirrorHandler) Create(c *gin.Context) {
 func (h *NodeRegistryMirrorHandler) Update(c *gin.Context) {
 	id, err := apiShared.ParseID(c.Param("id"))
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "镜像源 ID 无效")
+		apiShared.BadRequest(c, "镜像源 ID 无效")
 		return
 	}
 	var request nodeRegistryMirrorRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "镜像源定义无效")
+		apiShared.BadRequest(c, "镜像源定义无效")
 		return
 	}
 	mirror, err := h.service.Update(id, mirrorInput(request))
@@ -112,16 +112,16 @@ func (h *NodeRegistryMirrorHandler) Update(c *gin.Context) {
 func (h *NodeRegistryMirrorHandler) Delete(c *gin.Context) {
 	id, err := apiShared.ParseID(c.Param("id"))
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "镜像源 ID 无效")
+		apiShared.BadRequest(c, "镜像源 ID 无效")
 		return
 	}
 	if err := h.service.Delete(id); err != nil {
 		if errorsIsRecordNotFound(err) {
-			model.Error(c, http.StatusNotFound, model.CodeNotFound, "镜像源不存在")
+			apiShared.NotFound(c, "镜像源不存在")
 		} else if strings.Contains(err.Error(), "受管制品库") {
-			model.Error(c, http.StatusConflict, model.CodeConflict, err.Error())
+			apiShared.Conflict(c, err.Error())
 		} else {
-			model.Error(c, http.StatusInternalServerError, model.CodeDBError, "删除节点镜像源失败")
+			apiShared.DBError(c, "删除节点镜像源失败")
 		}
 		return
 	}
@@ -131,7 +131,7 @@ func (h *NodeRegistryMirrorHandler) Delete(c *gin.Context) {
 func (h *NodeRegistryMirrorHandler) Verify(c *gin.Context) {
 	id, err := apiShared.ParseID(c.Param("id"))
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "镜像源 ID 无效")
+		apiShared.BadRequest(c, "镜像源 ID 无效")
 		return
 	}
 	mirror, err := h.service.Verify(c.Request.Context(), id, func(ctx context.Context, mirror *model.NodeRegistryMirror) error {
@@ -139,9 +139,9 @@ func (h *NodeRegistryMirrorHandler) Verify(c *gin.Context) {
 	})
 	if err != nil {
 		if errorsIsRecordNotFound(err) {
-			model.Error(c, http.StatusNotFound, model.CodeNotFound, "镜像源不存在")
+			apiShared.NotFound(c, "镜像源不存在")
 		} else {
-			model.Error(c, http.StatusInternalServerError, model.CodeDBError, "保存检测结果失败")
+			apiShared.DBError(c, "保存检测结果失败")
 		}
 		return
 	}
@@ -151,16 +151,16 @@ func (h *NodeRegistryMirrorHandler) Verify(c *gin.Context) {
 func (h *NodeRegistryMirrorHandler) Apply(c *gin.Context) {
 	id, err := apiShared.ParseID(c.Param("id"))
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "镜像源 ID 无效")
+		apiShared.BadRequest(c, "镜像源 ID 无效")
 		return
 	}
 	var request nodeRegistryMirrorApplyRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "至少选择一个集群节点")
+		apiShared.BadRequest(c, "至少选择一个集群节点")
 		return
 	}
 	if h.applyNode == nil {
-		model.Error(c, http.StatusServiceUnavailable, model.CodeK8sUnavailable, "节点配置通道未就绪")
+		apiShared.Error(c, http.StatusServiceUnavailable, model.CodeK8sUnavailable, "节点配置通道未就绪")
 		return
 	}
 	mirror, err := h.service.StartApply(id, request.ServerIDs, h.applyNode)
@@ -174,12 +174,12 @@ func (h *NodeRegistryMirrorHandler) Apply(c *gin.Context) {
 func (h *NodeRegistryMirrorHandler) ApplyStatus(c *gin.Context) {
 	id, err := apiShared.ParseID(c.Param("id"))
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "镜像源 ID 无效")
+		apiShared.BadRequest(c, "镜像源 ID 无效")
 		return
 	}
 	mirror, err := h.service.Get(id)
 	if err != nil {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, "镜像源不存在")
+		apiShared.NotFound(c, "镜像源不存在")
 		return
 	}
 	model.Success(c, mirror)
@@ -191,28 +191,28 @@ func mirrorInput(request nodeRegistryMirrorRequest) registryservice.MirrorInput 
 
 func handleNodeRegistryMirrorSaveError(c *gin.Context, err error, update bool) {
 	if errorsIsRecordNotFound(err) {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, "镜像源不存在")
+		apiShared.NotFound(c, "镜像源不存在")
 	} else if errors.Is(err, registryservice.ErrManagedNodeRegistryMirror) {
-		model.Error(c, http.StatusConflict, model.CodeConflict, err.Error())
+		apiShared.Conflict(c, err.Error())
 	} else if strings.Contains(err.Error(), "名称") || strings.Contains(err.Error(), "Registry") || strings.Contains(err.Error(), "镜像") || strings.Contains(err.Error(), "凭据") {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		apiShared.ValidationError(c, err.Error())
 	} else if update || err != nil {
-		model.Error(c, http.StatusConflict, model.CodeConflict, "镜像源名称或 Registry 地址已存在")
+		apiShared.Conflict(c, "镜像源名称或 Registry 地址已存在")
 	}
 }
 
 func handleNodeRegistryMirrorApplyError(c *gin.Context, err error) {
 	switch {
 	case errorsIsRecordNotFound(err):
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, "镜像源不存在")
+		apiShared.NotFound(c, "镜像源不存在")
 	case errors.Is(err, registryservice.ErrMirrorDisabled), errors.Is(err, registryservice.ErrMirrorApplyRunning):
-		model.Error(c, http.StatusConflict, model.CodeConflict, err.Error())
+		apiShared.Conflict(c, err.Error())
 	case strings.Contains(err.Error(), "节点 "), strings.Contains(err.Error(), "至少选择"), strings.Contains(err.Error(), "镜像源"), strings.Contains(err.Error(), "凭据"):
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		apiShared.ValidationError(c, err.Error())
 	case strings.Contains(err.Error(), "集群节点"):
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "读取集群节点失败")
+		apiShared.DBError(c, "读取集群节点失败")
 	default:
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		apiShared.DBError(c, err.Error())
 	}
 }
 

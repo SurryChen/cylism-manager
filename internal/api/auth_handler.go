@@ -1,7 +1,7 @@
 package api
 
 import (
-	"net/http"
+	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 
 	"github.com/cylism/cylism-manager/internal/model"
 	"time"
@@ -36,24 +36,24 @@ type loginReq struct {
 func (h *AuthHandler) Login(c *gin.Context) {
 	var req loginReq
 	if err := c.ShouldBindJSON(&req); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "请提供用户名和密码")
+		apiShared.BadRequest(c, "请提供用户名和密码")
 		return
 	}
 
 	user, err := h.users.GetUserByUsername(req.Username)
 	if err != nil || !auth.CheckPassword(req.Password, user.PasswordHash) {
-		model.Error(c, http.StatusUnauthorized, model.CodeUnauthorized, "用户名或密码错误")
+		apiShared.Unauthorized(c, "用户名或密码错误")
 		return
 	}
 
 	accessToken, err := auth.GenerateAccessToken(h.jwtSecret, user.ID, user.Username, h.accessTokenTTL)
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, "生成 token 失败")
+		apiShared.InternalError(c, "生成 token 失败")
 		return
 	}
 	refreshToken, err := auth.GenerateRefreshToken(h.jwtSecret, user.ID, h.refreshTokenTTL)
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, "生成 token 失败")
+		apiShared.InternalError(c, "生成 token 失败")
 		return
 	}
 
@@ -75,25 +75,25 @@ type refreshReq struct {
 func (h *AuthHandler) Refresh(c *gin.Context) {
 	var req refreshReq
 	if err := c.ShouldBindJSON(&req); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "请提供 refresh_token")
+		apiShared.BadRequest(c, "请提供 refresh_token")
 		return
 	}
 
 	// 验证 refresh token
 	claims, err := auth.ParseToken(h.jwtSecret, req.RefreshToken)
 	if err != nil {
-		model.Error(c, http.StatusUnauthorized, model.CodeUnauthorized, "refresh token 无效或已过期")
+		apiShared.Unauthorized(c, "refresh token 无效或已过期")
 		return
 	}
 
 	accessToken, err := auth.GenerateAccessToken(h.jwtSecret, claims.UserID, claims.Username, h.accessTokenTTL)
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, "生成 token 失败")
+		apiShared.InternalError(c, "生成 token 失败")
 		return
 	}
 	refreshToken, err := auth.GenerateRefreshToken(h.jwtSecret, claims.UserID, h.refreshTokenTTL)
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, "生成 token 失败")
+		apiShared.InternalError(c, "生成 token 失败")
 		return
 	}
 
@@ -105,14 +105,13 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 
 // Me 获取当前用户信息 GET /api/auth/me
 func (h *AuthHandler) Me(c *gin.Context) {
-	userID, exists := c.Get("user_id")
-	if !exists {
-		model.Error(c, http.StatusUnauthorized, model.CodeUnauthorized, "未认证")
+	userID := apiShared.UserID(c)
+	if userID == 0 {
+		apiShared.Unauthorized(c, "未认证")
 		return
 	}
-	username, _ := c.Get("username")
 	model.Success(c, gin.H{
 		"id":       userID,
-		"username": username,
+		"username": apiShared.Username(c),
 	})
 }

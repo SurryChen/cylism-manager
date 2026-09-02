@@ -144,12 +144,12 @@ func (h *LoggingHandler) applyConfig(c *gin.Context, message string) {
 	}
 	var config k8s.LoggingConfig
 	if err := c.ShouldBindJSON(&config); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "日志采集配置无效")
+		apiShared.BadRequest(c, "日志采集配置无效")
 		return
 	}
 	status, err := h.component.Install(c.Request.Context(), config)
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		apiShared.ValidationError(c, err.Error())
 		return
 	}
 	model.SuccessWithMessage(c, status, message)
@@ -161,7 +161,7 @@ func (h *LoggingHandler) Uninstall(c *gin.Context) {
 		return
 	}
 	if err := h.component.Uninstall(c.Request.Context()); err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeK8sAPIError, err.Error())
+		apiShared.Error(c, http.StatusInternalServerError, model.CodeK8sAPIError, err.Error())
 		return
 	}
 	model.SuccessWithMessage(c, gin.H{"data_retained": true}, "日志采集已卸载，系统管理的 Loki 存储卷已保留")
@@ -176,7 +176,7 @@ func (h *LoggingHandler) Filters(c *gin.Context) {
 	namespace := strings.TrimSpace(c.Query("namespace"))
 	filters, err := loggingservice.Filters(c.Request.Context(), namespace, h.filterReader)
 	if err != nil {
-		model.Error(c, http.StatusBadGateway, model.CodeK8sAPIError, "读取日志筛选项失败: "+err.Error())
+		apiShared.K8sAPIError(c, "读取日志筛选项失败: "+err.Error())
 		return
 	}
 	model.Success(c, gin.H{"namespaces": filters.Namespaces, "pods": filters.Pods, "nodes": filters.Nodes})
@@ -189,7 +189,7 @@ func (h *LoggingHandler) Query(c *gin.Context) {
 	}
 	var request logQueryRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "日志查询参数无效")
+		apiShared.BadRequest(c, "日志查询参数无效")
 		return
 	}
 	serviceRequest := loggingservice.QueryRequest{ApplicationID: request.ApplicationID, EnvironmentID: request.EnvironmentID, ProjectID: request.ProjectID, Range: request.Range, Limit: request.Limit, Keyword: request.Keyword, Namespace: request.Namespace, Pod: request.Pod, Container: request.Container, Node: request.Node, Workload: request.Workload, StartTime: request.StartTime, EndTime: request.EndTime, RawLogQL: request.RawLogQL}
@@ -202,7 +202,7 @@ func (h *LoggingHandler) Query(c *gin.Context) {
 		if strings.Contains(err.Error(), "尚未就绪") {
 			status = http.StatusConflict
 		}
-		model.Error(c, status, model.CodeK8sAPIError, err.Error())
+		apiShared.Error(c, status, model.CodeK8sAPIError, err.Error())
 		return
 	}
 	lines := make([]logLine, 0, len(serviceLines))

@@ -48,7 +48,7 @@ type updateNodeLabelsRequest struct {
 func (h *NodeHandler) UpdateLabels(c *gin.Context) {
 	var request updateNodeLabelsRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "节点标签请求无效")
+		apiShared.BadRequest(c, "节点标签请求无效")
 		return
 	}
 	labels, err := h.cluster.UpdateNodeLabels(c.Param("id"), request.Set, request.Remove)
@@ -75,12 +75,12 @@ type drainNodeRequest struct {
 func (h *NodeHandler) DrainNode(c *gin.Context) {
 	var request drainNodeRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "驱逐选项无效")
+		apiShared.BadRequest(c, "驱逐选项无效")
 		return
 	}
 	result, err := h.cluster.DrainNode(c.Param("id"), k8s.DrainOptions{DeleteEmptyDirData: request.DeleteEmptyDirData})
 	if err != nil {
-		model.ErrorWithData(c, http.StatusConflict, model.CodeConflict, err.Error(), result)
+		apiShared.ErrorWithData(c, http.StatusConflict, model.CodeConflict, err.Error(), result)
 		return
 	}
 	message := "驱逐请求已提交"
@@ -99,7 +99,7 @@ type forceDrainNodeRequest struct {
 func (h *NodeHandler) ForceDrainNode(c *gin.Context) {
 	var request forceDrainNodeRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "强制驱逐选项无效")
+		apiShared.BadRequest(c, "强制驱逐选项无效")
 		return
 	}
 	result, err := h.cluster.ForceDrainNode(c.Param("id"), k8s.ForceDrainOptions{
@@ -109,10 +109,10 @@ func (h *NodeHandler) ForceDrainNode(c *gin.Context) {
 	})
 	if err != nil {
 		if strings.Contains(err.Error(), "请确认风险") {
-			model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+			apiShared.ValidationError(c, err.Error())
 			return
 		}
-		model.ErrorWithData(c, http.StatusConflict, model.CodeConflict, err.Error(), result)
+		apiShared.ErrorWithData(c, http.StatusConflict, model.CodeConflict, err.Error(), result)
 		return
 	}
 	model.SuccessWithMessage(c, result, "故障节点强制驱逐请求已提交")
@@ -139,10 +139,10 @@ func (h *NodeHandler) RemovalCheck(c *gin.Context) {
 func (h *NodeHandler) RemoveNode(c *gin.Context) {
 	if err := h.cluster.RemoveNode(c.Param("id")); err != nil {
 		if errors.Is(err, cluster.ErrNodeBindingCleanup) {
-			model.Error(c, http.StatusInternalServerError, model.CodeInternalError, err.Error())
+			apiShared.InternalError(c, err.Error())
 			return
 		}
-		model.Error(c, http.StatusConflict, model.CodeConflict, err.Error())
+		apiShared.Conflict(c, err.Error())
 		return
 	}
 	model.SuccessWithMessage(c, nil, "移除成功")
@@ -151,12 +151,12 @@ func (h *NodeHandler) RemoveNode(c *gin.Context) {
 func (h *NodeHandler) AddNode(c *gin.Context) {
 	id, err := apiShared.ParsePositiveID(c.Param("id"))
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "invalid server id")
+		apiShared.BadRequest(c, "invalid server id")
 		return
 	}
 	server, err := h.cluster.GetServer(id)
 	if err != nil {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, "server not found")
+		apiShared.NotFound(c, "server not found")
 		return
 	}
 	model.SuccessWithMessage(c, gin.H{"server": server.Name}, "加入集群 - SSH 集成待实现")
@@ -165,20 +165,20 @@ func (h *NodeHandler) AddNode(c *gin.Context) {
 func (h *NodeHandler) PreImport(c *gin.Context) {
 	id, err := apiShared.ParsePositiveID(c.Param("id"))
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "invalid server id")
+		apiShared.BadRequest(c, "invalid server id")
 		return
 	}
 	result, err := h.cluster.PreImportServer(id)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			model.Error(c, http.StatusNotFound, model.CodeNotFound, "server not found")
+			apiShared.NotFound(c, "server not found")
 			return
 		}
 		code := model.CodeInternalError
 		if strings.Contains(err.Error(), "集群") || strings.Contains(err.Error(), "节点") {
 			code = model.CodeK8sAPIError
 		}
-		model.Error(c, http.StatusOK, code, err.Error())
+		apiShared.Error(c, http.StatusOK, code, err.Error())
 		return
 	}
 	model.Success(c, result)
@@ -187,7 +187,7 @@ func (h *NodeHandler) PreImport(c *gin.Context) {
 func (h *NodeHandler) ConfirmImport(c *gin.Context) {
 	id, err := apiShared.ParsePositiveID(c.Param("id"))
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "invalid server id")
+		apiShared.BadRequest(c, "invalid server id")
 		return
 	}
 	var request struct {
@@ -195,16 +195,16 @@ func (h *NodeHandler) ConfirmImport(c *gin.Context) {
 		Role     string `json:"role" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&request); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, err.Error())
+		apiShared.BadRequest(c, err.Error())
 		return
 	}
 	result, err := h.cluster.ConfirmImport(id, request.Hostname, request.Role)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			model.Error(c, http.StatusNotFound, model.CodeNotFound, "server not found")
+			apiShared.NotFound(c, "server not found")
 			return
 		}
-		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, err.Error())
+		apiShared.InternalError(c, err.Error())
 		return
 	}
 	model.SuccessWithMessage(c, gin.H{"server_name": result.ServerName, "node_name": result.NodeName, "role": result.Role}, "导入成功")
@@ -212,8 +212,8 @@ func (h *NodeHandler) ConfirmImport(c *gin.Context) {
 
 func writeClusterError(c *gin.Context, err error, status, code int) {
 	if strings.Contains(err.Error(), "Kubernetes 集群未连接") {
-		model.Error(c, http.StatusOK, model.CodeK8sUnavailable, "K8s 集群未连接")
+		apiShared.K8sUnavailable(c)
 		return
 	}
-	model.Error(c, status, code, err.Error())
+	apiShared.Error(c, status, code, err.Error())
 }

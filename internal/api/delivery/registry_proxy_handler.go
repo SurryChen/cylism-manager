@@ -3,7 +3,6 @@ package delivery
 import (
 	"context"
 	"fmt"
-	"net/http"
 	"strconv"
 	"strings"
 	"time"
@@ -83,7 +82,7 @@ func (h *RegistryProxyHandler) Get(c *gin.Context) {
 		return
 	}
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "读取镜像代理失败")
+		apiShared.DBError(c, "读取镜像代理失败")
 		return
 	}
 	h.refreshStatus(c.Request.Context(), proxy)
@@ -94,7 +93,7 @@ func (h *RegistryProxyHandler) Get(c *gin.Context) {
 func (h *RegistryProxyHandler) List(c *gin.Context) {
 	proxies, err := h.service.List()
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "读取镜像代理失败")
+		apiShared.DBError(c, "读取镜像代理失败")
 		return
 	}
 	for index := range proxies {
@@ -111,7 +110,7 @@ func (h *RegistryProxyHandler) Deploy(c *gin.Context) {
 	}
 	var req registryProxyRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "代理配置无效")
+		apiShared.BadRequest(c, "代理配置无效")
 		return
 	}
 	if isLegacyRegistryProxyRoute(c) {
@@ -119,17 +118,17 @@ func (h *RegistryProxyHandler) Deploy(c *gin.Context) {
 	}
 	input := proxyInput(req)
 	if err := registryservice.ValidateProxyInput(input); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		apiShared.ValidationError(c, err.Error())
 		return
 	}
 	if err := h.resources.EnsureNode(c.Request.Context(), req.NodeName); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "部署节点不存在或未加入集群")
+		apiShared.ValidationError(c, "部署节点不存在或未加入集群")
 		return
 	}
 	proxy, err := h.proxyForRequest(c)
 	if err != nil {
 		if c.Param("id") != "" {
-			model.Error(c, http.StatusNotFound, model.CodeNotFound, "镜像代理不存在")
+			apiShared.NotFound(c, "镜像代理不存在")
 			return
 		}
 		proxy = &model.RegistryProxy{CreatedBy: apiShared.UserID(c)}
@@ -137,21 +136,21 @@ func (h *RegistryProxyHandler) Deploy(c *gin.Context) {
 	proxy, err = h.service.PrepareDeployment(input, proxy, apiShared.UserID(c))
 	if err != nil {
 		if strings.Contains(err.Error(), "读取现有镜像代理") {
-			model.Error(c, http.StatusInternalServerError, model.CodeDBError, "保存代理配置失败")
+			apiShared.DBError(c, "保存代理配置失败")
 		} else if strings.Contains(err.Error(), "保存") {
-			model.Error(c, http.StatusInternalServerError, model.CodeDBError, "保存代理配置失败")
+			apiShared.DBError(c, "保存代理配置失败")
 		} else {
-			model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+			apiShared.ValidationError(c, err.Error())
 		}
 		return
 	}
 	if proxy == nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "保存代理配置失败")
+		apiShared.DBError(c, "保存代理配置失败")
 		return
 	}
 	if err := h.apply(c.Request.Context(), proxy); err != nil {
 		h.service.MarkFailed(proxy, err)
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "部署镜像代理失败: "+err.Error())
+		apiShared.ValidationError(c, "部署镜像代理失败: "+err.Error())
 		return
 	}
 	h.redactProxy(proxy)
@@ -174,11 +173,11 @@ func applyDockerHubProxyDefaults(req *registryProxyRequest) {
 func (h *RegistryProxyHandler) Cleanup(c *gin.Context) {
 	proxy, err := h.proxyForRequest(c)
 	if err != nil || !h.k8sReady() {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, "镜像代理不存在或集群未连接")
+		apiShared.NotFound(c, "镜像代理不存在或集群未连接")
 		return
 	}
 	if err := h.clearCache(c.Request.Context(), proxy, "手动清理"); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		apiShared.ValidationError(c, err.Error())
 		return
 	}
 	model.SuccessWithMessage(c, proxy, "代理 Pod 已重建，临时缓存正在清理")
@@ -189,7 +188,7 @@ func (h *RegistryProxyHandler) Cleanup(c *gin.Context) {
 func (h *RegistryProxyHandler) Diagnose(c *gin.Context) {
 	proxy, err := h.proxyForRequest(c)
 	if err != nil || !h.k8sReady() {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, "镜像代理不存在或集群未连接")
+		apiShared.NotFound(c, "镜像代理不存在或集群未连接")
 		return
 	}
 	registryservice.NormalizeRegistryProxy(proxy)
@@ -200,7 +199,7 @@ func (h *RegistryProxyHandler) Diagnose(c *gin.Context) {
 		now := time.Now()
 		proxy.LastDiagnosticAt = &now
 		_ = h.store.SaveRegistryProxy(proxy)
-		model.Error(c, http.StatusBadGateway, model.CodeK8sAPIError, "代理出网诊断失败")
+		apiShared.K8sAPIError(c, "代理出网诊断失败")
 		return
 	}
 	proxy.LastDiagnosticStatus = diagnostic.Status
@@ -208,7 +207,7 @@ func (h *RegistryProxyHandler) Diagnose(c *gin.Context) {
 	now := time.Now()
 	proxy.LastDiagnosticAt = &now
 	if err := h.store.SaveRegistryProxy(proxy); err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "保存代理诊断结果失败")
+		apiShared.DBError(c, "保存代理诊断结果失败")
 		return
 	}
 	model.Success(c, diagnostic)
@@ -222,7 +221,7 @@ func (h *RegistryProxyHandler) MigrateResourceName(c *gin.Context) {
 	}
 	proxy, err := h.proxyForRequest(c)
 	if err != nil {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, "镜像代理不存在")
+		apiShared.NotFound(c, "镜像代理不存在")
 		return
 	}
 	registryservice.NormalizeRegistryProxy(proxy)
@@ -233,24 +232,24 @@ func (h *RegistryProxyHandler) MigrateResourceName(c *gin.Context) {
 		return
 	}
 	if legacyResourceName != registryProxyName || proxy.Registry != "docker.io" {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "仅支持迁移旧 Docker Hub 代理资源")
+		apiShared.ValidationError(c, "仅支持迁移旧 Docker Hub 代理资源")
 		return
 	}
 
 	ctx := c.Request.Context()
 	if err := h.resources.DeleteLegacyResources(ctx, legacyResourceName); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		apiShared.ValidationError(c, err.Error())
 		return
 	}
 	proxy.ResourceName, proxy.Status, proxy.LastError = newResourceName, "deploying", ""
 	if err := h.store.SaveRegistryProxy(proxy); err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "保存迁移后的代理配置失败")
+		apiShared.DBError(c, "保存迁移后的代理配置失败")
 		return
 	}
 	if err := h.apply(ctx, proxy); err != nil {
 		proxy.Status, proxy.LastError = "failed", "使用新资源名重建失败: "+err.Error()
 		_ = h.store.SaveRegistryProxy(proxy)
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, proxy.LastError)
+		apiShared.ValidationError(c, proxy.LastError)
 		return
 	}
 	model.SuccessWithMessage(c, proxy, "旧 Docker Hub 代理已按新资源名重建，等待新 Pod 就绪")
@@ -327,8 +326,8 @@ func (h *RegistryProxyHandler) k8sReady() bool {
 
 func (h *RegistryProxyHandler) proxyForRequest(c *gin.Context) (*model.RegistryProxy, error) {
 	if rawID := strings.TrimSpace(c.Param("id")); rawID != "" {
-		id, err := strconv.ParseUint(rawID, 10, 64)
-		if err != nil || id == 0 {
+		id, err := apiShared.ParsePositiveID(rawID)
+		if err != nil {
 			return nil, fmt.Errorf("invalid proxy id")
 		}
 		return h.store.GetRegistryProxyByID(uint(id))

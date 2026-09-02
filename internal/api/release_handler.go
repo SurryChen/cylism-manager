@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
 	"strings"
 
 	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
@@ -26,49 +25,49 @@ func (h *ApplicationHandler) CreateRelease(c *gin.Context) {
 	}
 	applicationID, err := apiShared.ParseID(c.Param("id"))
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "应用 ID 无效")
+		apiShared.BadRequest(c, "应用 ID 无效")
 		return
 	}
 	var req releaseRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "发布定义无效")
+		apiShared.BadRequest(c, "发布定义无效")
 		return
 	}
 	version := strings.TrimSpace(req.Version)
 	if req.TemplateID == 0 || version == "" {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "请选择上线模板并填写版本号")
+		apiShared.ValidationError(c, "请选择上线模板并填写版本号")
 		return
 	}
 	app, err := h.queries.GetApplication(applicationID)
 	if err != nil {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, "应用不存在")
+		apiShared.NotFound(c, "应用不存在")
 		return
 	}
 	template, err := h.resources.GetApplicationDeploymentTemplate(applicationID, req.TemplateID)
 	if errors.Is(err, gorm.ErrRecordNotFound) || !template.Enabled {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "上线模板不存在或已停用")
+		apiShared.ValidationError(c, "上线模板不存在或已停用")
 		return
 	}
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		apiShared.DBError(c, err.Error())
 		return
 	}
 	workflow := h.releaseWorkflow()
 	prepared, err := workflow.CreateFromTemplate(c.Request.Context(), app, template, version, apiShared.UserID(c))
 	if err != nil {
 		if errors.Is(err, application.ErrReleaseTemplateRead) {
-			model.Error(c, http.StatusInternalServerError, model.CodeDBError, "读取应用上线模板失败")
+			apiShared.DBError(c, "读取应用上线模板失败")
 			return
 		}
 		if errors.Is(err, application.ErrReleaseSecretRead) {
-			model.Error(c, http.StatusInternalServerError, model.CodeDBError, "读取模板 Secret 失败")
+			apiShared.DBError(c, "读取模板 Secret 失败")
 			return
 		}
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		apiShared.ValidationError(c, err.Error())
 		return
 	}
 	if err := workflow.SyncManagedFiles(app, prepared.Spec, apiShared.UserID(c)); err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "登记受管文件失败")
+		apiShared.DBError(c, "登记受管文件失败")
 		return
 	}
 	workflow.ExecuteAsync(app, prepared)
@@ -85,22 +84,22 @@ func (h *ApplicationHandler) RestartApplication(c *gin.Context) {
 	}
 	applicationID, err := apiShared.ParseID(c.Param("id"))
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "应用 ID 无效")
+		apiShared.BadRequest(c, "应用 ID 无效")
 		return
 	}
 	app, err := h.queries.GetApplication(applicationID)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, "应用不存在")
+		apiShared.NotFound(c, "应用不存在")
 		return
 	}
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		apiShared.DBError(c, err.Error())
 		return
 	}
 	workflow := h.releaseWorkflow()
 	prepared, err := workflow.Restart(c.Request.Context(), app, apiShared.UserID(c))
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		apiShared.ValidationError(c, err.Error())
 		return
 	}
 	workflow.ExecuteAsync(app, prepared)
@@ -114,28 +113,28 @@ func (h *ApplicationHandler) RetryRelease(c *gin.Context) {
 	}
 	applicationID, err := apiShared.ParseID(c.Param("id"))
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "应用 ID 无效")
+		apiShared.BadRequest(c, "应用 ID 无效")
 		return
 	}
 	releaseID, err := apiShared.ParseID(c.Param("releaseID"))
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "发布 ID 无效")
+		apiShared.BadRequest(c, "发布 ID 无效")
 		return
 	}
 	original, err := h.resources.GetRelease(releaseID)
 	if err != nil || original.ApplicationID != applicationID {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, "发布不存在")
+		apiShared.NotFound(c, "发布不存在")
 		return
 	}
 	workflow := h.releaseWorkflow()
 	prepared, err := workflow.Retry(releaseID, apiShared.UserID(c))
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "无法重试该发布")
+		apiShared.BadRequest(c, "无法重试该发布")
 		return
 	}
 	app, err := h.queries.GetApplication(applicationID)
 	if err != nil {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, "应用不存在")
+		apiShared.NotFound(c, "应用不存在")
 		return
 	}
 	workflow.ExecuteAsync(app, prepared)
@@ -149,28 +148,28 @@ func (h *ApplicationHandler) RollbackRelease(c *gin.Context) {
 	}
 	applicationID, err := apiShared.ParseID(c.Param("id"))
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "应用 ID 无效")
+		apiShared.BadRequest(c, "应用 ID 无效")
 		return
 	}
 	releaseID, err := apiShared.ParseID(c.Param("releaseID"))
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "发布 ID 无效")
+		apiShared.BadRequest(c, "发布 ID 无效")
 		return
 	}
 	original, err := h.resources.GetRelease(releaseID)
 	if err != nil || original.ApplicationID != applicationID {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, "发布不存在")
+		apiShared.NotFound(c, "发布不存在")
 		return
 	}
 	workflow := h.releaseWorkflow()
 	prepared, err := workflow.Rollback(releaseID, apiShared.UserID(c))
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "无法回滚该发布")
+		apiShared.BadRequest(c, "无法回滚该发布")
 		return
 	}
 	app, err := h.queries.GetApplication(applicationID)
 	if err != nil {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, "应用不存在")
+		apiShared.NotFound(c, "应用不存在")
 		return
 	}
 	workflow.ExecuteAsync(app, prepared)
@@ -180,21 +179,21 @@ func (h *ApplicationHandler) RollbackRelease(c *gin.Context) {
 func (h *ApplicationHandler) GetRelease(c *gin.Context) {
 	applicationID, err := apiShared.ParseID(c.Param("id"))
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "应用 ID 无效")
+		apiShared.BadRequest(c, "应用 ID 无效")
 		return
 	}
 	id, err := apiShared.ParseID(c.Param("releaseID"))
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "发布 ID 无效")
+		apiShared.BadRequest(c, "发布 ID 无效")
 		return
 	}
 	release, err := h.resources.GetRelease(id)
 	if err != nil {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, "发布不存在")
+		apiShared.NotFound(c, "发布不存在")
 		return
 	}
 	if release.ApplicationID != applicationID {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, "发布不存在")
+		apiShared.NotFound(c, "发布不存在")
 		return
 	}
 	if !release.PodTrackingEnabled {
@@ -209,7 +208,7 @@ func (h *ApplicationHandler) GetRelease(c *gin.Context) {
 	}
 	applicationModel, err := h.queries.GetApplication(applicationID)
 	if err != nil {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, "应用不存在")
+		apiShared.NotFound(c, "应用不存在")
 		return
 	}
 	runtime, err := application.NewKubernetesApplier(K8s).InspectReleasePods(c.Request.Context(), application.ApplicationContext{Namespace: applicationModel.Environment.Namespace, ApplicationName: applicationModel.Name, ReleaseSequence: release.Sequence})

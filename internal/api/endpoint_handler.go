@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
 	"strings"
 
 	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
@@ -27,16 +26,16 @@ type applicationEndpointRequest struct {
 func (h *ApplicationHandler) ListApplicationEndpoints(c *gin.Context) {
 	applicationID, err := apiShared.ParseID(c.Param("id"))
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "应用 ID 无效")
+		apiShared.BadRequest(c, "应用 ID 无效")
 		return
 	}
 	if _, err := h.queries.GetApplication(applicationID); err != nil {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, "应用不存在")
+		apiShared.NotFound(c, "应用不存在")
 		return
 	}
 	endpoints, err := h.applications.ListApplicationEndpoints(applicationID)
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		apiShared.DBError(c, err.Error())
 		return
 	}
 	for index := range endpoints {
@@ -55,48 +54,48 @@ func (h *ApplicationHandler) CreateApplicationEndpoint(c *gin.Context) {
 	}
 	applicationID, err := apiShared.ParseID(c.Param("id"))
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "应用 ID 无效")
+		apiShared.BadRequest(c, "应用 ID 无效")
 		return
 	}
 	app, err := h.queries.GetApplication(applicationID)
 	if err != nil {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, "应用不存在")
+		apiShared.NotFound(c, "应用不存在")
 		return
 	}
 	var req applicationEndpointRequest
 	if err := c.ShouldBindJSON(&req); err != nil || req.DomainID == 0 {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "请选择受管域名")
+		apiShared.BadRequest(c, "请选择受管域名")
 		return
 	}
 	endpoint, err := h.prepareApplicationEndpoint(app, 0, req)
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		apiShared.ValidationError(c, err.Error())
 		return
 	}
 	serviceSpec, err := h.applicationServiceSpec(app)
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		apiShared.DBError(c, err.Error())
 		return
 	}
 	servicePort, err := application.ResolveEndpointServicePort(serviceSpec, req.ServicePort, req.Protocol, endpointUsesIngress(*endpoint))
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		apiShared.ValidationError(c, err.Error())
 		return
 	}
 	endpoint.ServicePort = servicePort.Port
 	endpoint.Protocol = servicePort.Protocol
 	endpoints, err := h.applications.ListApplicationEndpoints(app.ID)
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		apiShared.DBError(c, err.Error())
 		return
 	}
 	endpoints = append(endpoints, *endpoint)
 	if err := application.NewKubernetesApplier(K8s).SyncApplicationEndpoints(c.Request.Context(), applicationContextFor(app), endpoints, servicePort.Port); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, fmt.Sprintf("同步应用入口: %v", err))
+		apiShared.ValidationError(c, fmt.Sprintf("同步应用入口: %v", err))
 		return
 	}
 	if err := h.applications.CreateApplicationEndpoint(endpoint); err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		apiShared.DBError(c, err.Error())
 		return
 	}
 	endpoint.IngressEnabled = endpointUsesIngress(*endpoint)
@@ -110,46 +109,46 @@ func (h *ApplicationHandler) UpdateApplicationEndpoint(c *gin.Context) {
 	}
 	applicationID, err := apiShared.ParseID(c.Param("id"))
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "应用 ID 无效")
+		apiShared.BadRequest(c, "应用 ID 无效")
 		return
 	}
 	endpointID, err := apiShared.ParseID(c.Param("endpointID"))
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "入口 ID 无效")
+		apiShared.BadRequest(c, "入口 ID 无效")
 		return
 	}
 	app, err := h.queries.GetApplication(applicationID)
 	if err != nil {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, "应用不存在")
+		apiShared.NotFound(c, "应用不存在")
 		return
 	}
 	var req applicationEndpointRequest
 	if err := c.ShouldBindJSON(&req); err != nil || req.DomainID == 0 {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "请选择受管域名")
+		apiShared.BadRequest(c, "请选择受管域名")
 		return
 	}
 	endpoint, err := h.applications.GetApplicationEndpoint(applicationID, endpointID)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, "应用入口不存在")
+		apiShared.NotFound(c, "应用入口不存在")
 		return
 	}
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		apiShared.DBError(c, err.Error())
 		return
 	}
 	updated, err := h.prepareApplicationEndpoint(app, endpoint.ID, req)
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		apiShared.ValidationError(c, err.Error())
 		return
 	}
 	serviceSpec, err := h.applicationServiceSpec(app)
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		apiShared.DBError(c, err.Error())
 		return
 	}
 	servicePort, err := application.ResolveEndpointServicePort(serviceSpec, req.ServicePort, req.Protocol, endpointUsesIngress(*updated))
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		apiShared.ValidationError(c, err.Error())
 		return
 	}
 	updated.ID = endpoint.ID
@@ -158,7 +157,7 @@ func (h *ApplicationHandler) UpdateApplicationEndpoint(c *gin.Context) {
 	updated.Protocol = servicePort.Protocol
 	endpoints, err := h.applications.ListApplicationEndpoints(app.ID)
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		apiShared.DBError(c, err.Error())
 		return
 	}
 	for index := range endpoints {
@@ -167,11 +166,11 @@ func (h *ApplicationHandler) UpdateApplicationEndpoint(c *gin.Context) {
 		}
 	}
 	if err := application.NewKubernetesApplier(K8s).SyncApplicationEndpoints(c.Request.Context(), applicationContextFor(app), endpoints, servicePort.Port); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, fmt.Sprintf("同步应用入口: %v", err))
+		apiShared.ValidationError(c, fmt.Sprintf("同步应用入口: %v", err))
 		return
 	}
 	if err := h.applications.UpdateApplicationEndpoint(updated); err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		apiShared.DBError(c, err.Error())
 		return
 	}
 	updated.IngressEnabled = endpointUsesIngress(*updated)
@@ -185,43 +184,43 @@ func (h *ApplicationHandler) DeleteApplicationEndpoint(c *gin.Context) {
 	}
 	applicationID, err := apiShared.ParseID(c.Param("id"))
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "应用 ID 无效")
+		apiShared.BadRequest(c, "应用 ID 无效")
 		return
 	}
 	endpointID, err := apiShared.ParseID(c.Param("endpointID"))
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "入口 ID 无效")
+		apiShared.BadRequest(c, "入口 ID 无效")
 		return
 	}
 	app, err := h.queries.GetApplication(applicationID)
 	if err != nil {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, "应用不存在")
+		apiShared.NotFound(c, "应用不存在")
 		return
 	}
 	if _, err := h.applications.GetApplicationEndpoint(applicationID, endpointID); errors.Is(err, gorm.ErrRecordNotFound) {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, "应用入口不存在")
+		apiShared.NotFound(c, "应用入口不存在")
 		return
 	} else if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		apiShared.DBError(c, err.Error())
 		return
 	}
 	serviceSpec, err := h.applicationServiceSpec(app)
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		apiShared.DBError(c, err.Error())
 		return
 	}
 	servicePort, hasTCPPort := serviceSpec.PrimaryTCPPort()
 	if !hasTCPPort {
 		servicePorts := serviceSpec.PortSpecs()
 		if len(servicePorts) == 0 {
-			model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "应用没有可绑定的 Service 端口")
+			apiShared.ValidationError(c, "应用没有可绑定的 Service 端口")
 			return
 		}
 		servicePort = servicePorts[0]
 	}
 	endpoints, err := h.applications.ListApplicationEndpoints(app.ID)
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		apiShared.DBError(c, err.Error())
 		return
 	}
 	remaining := make([]model.ApplicationEndpoint, 0, len(endpoints)-1)
@@ -232,11 +231,11 @@ func (h *ApplicationHandler) DeleteApplicationEndpoint(c *gin.Context) {
 	}
 	// Metadata-only UDP bindings remain discoverable and do not require an Ingress.
 	if err := application.NewKubernetesApplier(K8s).SyncApplicationEndpoints(c.Request.Context(), applicationContextFor(app), remaining, servicePort.Port); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, fmt.Sprintf("移除应用入口: %v", err))
+		apiShared.ValidationError(c, fmt.Sprintf("移除应用入口: %v", err))
 		return
 	}
 	if err := h.applications.DeleteApplicationEndpoint(applicationID, endpointID); err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		apiShared.DBError(c, err.Error())
 		return
 	}
 	model.Success(c, gin.H{"id": endpointID})
