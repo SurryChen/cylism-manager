@@ -8,15 +8,20 @@
       <form @submit.prevent="login">
         <div class="form-group">
           <label class="form-label">用户名</label>
-          <input v-model="username" class="form-input" placeholder="admin" required autofocus />
+          <input v-model="username" class="form-input" placeholder="admin" :required="!temporaryToken" :disabled="!!temporaryToken" autofocus />
         </div>
         <div class="form-group">
           <label class="form-label">密码</label>
-          <input v-model="password" class="form-input" type="password" placeholder="••••••" required />
+          <input v-model="password" class="form-input" type="password" placeholder="••••••" :required="!temporaryToken" :disabled="!!temporaryToken" />
+        </div>
+        <div class="login-divider"><span>或使用临时秘钥</span></div>
+        <div class="form-group">
+          <label class="form-label">临时秘钥</label>
+          <input v-model.trim="temporaryToken" class="form-input" placeholder="粘贴临时登录秘钥" autocomplete="off" />
         </div>
         <div v-if="error" class="login-error">{{ error }}</div>
         <button type="submit" class="btn btn-primary login-btn" :disabled="loading">
-          {{ loading ? '登录中...' : '登录' }}
+          {{ loading ? '登录中...' : temporaryToken ? '使用临时秘钥登录' : '登录' }}
         </button>
       </form>
     </div>
@@ -31,6 +36,7 @@ import { setTokens, api } from '../api/index.js'
 const router = useRouter()
 const username = ref('')
 const password = ref('')
+const temporaryToken = ref('')
 const error = ref('')
 const loading = ref(false)
 
@@ -38,7 +44,9 @@ async function login() {
   error.value = ''
   loading.value = true
   try {
-    const data = await api.post('/auth/login', { username: username.value, password: password.value })
+    const data = temporaryToken.value
+      ? await api.post('/auth/temporary-login', { token: temporaryToken.value })
+      : await api.post('/auth/login', { username: username.value, password: password.value })
     setTokens(data.access_token, data.refresh_token)
     router.push('/')
   } catch (e) {
@@ -114,6 +122,9 @@ async function login() {
   color: var(--danger);
   font-size: 12px;
 }
+
+.login-divider { display: flex; align-items: center; gap: 10px; margin: 18px 0 14px; color: var(--text-muted); font-size: 11px; }
+.login-divider::before, .login-divider::after { flex: 1; height: 1px; background: var(--border); content: ''; }
 
 .login-btn {
   width: 100%;

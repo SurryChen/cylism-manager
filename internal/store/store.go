@@ -29,6 +29,7 @@ func New(dsn string) (*Store, error) {
 		&model.AuditLog{},
 		&model.OperationLog{},
 		&model.User{},
+		&model.TemporaryLoginToken{},
 		&model.SystemConfig{},
 		&model.RuntimeInstance{},
 		&model.AgentCapabilityGrant{},

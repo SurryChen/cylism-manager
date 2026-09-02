@@ -30,10 +30,11 @@ type Config struct {
 
 // Container is the application dependency container.
 type Container struct {
-	Store  *store.Store
-	K8s    *k8s.Client
-	Auth   *authapi.AuthConfig
-	encKey []byte
+	Store    *store.Store
+	K8s      *k8s.Client
+	Adapters KubernetesAdapters
+	Auth     *authapi.AuthConfig
+	encKey   []byte
 }
 
 // NewContainer initializes process-owned infrastructure. Kubernetes is
@@ -48,9 +49,10 @@ func NewContainer(cfg Config) (*Container, error) {
 		log.Printf("WARNING: K8s 客户端不可用: %v（集群相关功能将降级）", err)
 	}
 	return &Container{
-		Store:  db,
-		K8s:    client,
-		encKey: append([]byte(nil), cfg.EncryptionKey...),
+		Store:    db,
+		K8s:      client,
+		Adapters: BuildKubernetesAdapters(client),
+		encKey:   append([]byte(nil), cfg.EncryptionKey...),
 		Auth: &authapi.AuthConfig{
 			JWTSecret:       append([]byte(nil), cfg.JWTSecret...),
 			AccessTokenTTL:  cfg.AccessTokenTTL,
@@ -61,10 +63,9 @@ func NewContainer(cfg Config) (*Container, error) {
 }
 
 // RegisterRoutes exposes the composed application through the existing API
-// route binder. The global client assignment is kept at this boundary for
-// backward compatibility with the remaining infrastructure adapters.
+// route binder and passes migrated Kubernetes adapters explicitly.
 func (c *Container) RegisterRoutes(r *gin.Engine) {
-	api.RegisterRoutes(r, c.Store, c.configEncryptionKey(), c.Auth, c.K8s)
+	api.RegisterRoutes(r, c.Store, c.configEncryptionKey(), c.Auth, c.K8s, c.Adapters.RouterDependencies())
 }
 
 // Handler returns the HTTP handler after routes have been registered.
@@ -81,12 +82,8 @@ func (c *Container) StartBackground(ctx context.Context, operationLogRetention t
 	}
 	go c.startOperationLogCleaner(ctx, operationLogRetention)
 
-	var adapter systemapi.SystemComponentAdapter
-	if c.K8s != nil {
-		adapter = k8s.SystemComponentKubernetesAdapter{Client: c.K8s}
-	}
 	go func() {
-		_ = systemapi.NewSystemComponentHandler(c.Store, adapter).Run(ctx, 5*time.Minute)
+		_ = systemapi.NewSystemComponentHandler(c.Store, c.Adapters.SystemComponent).Run(ctx, 5*time.Minute)
 	}()
 }
 

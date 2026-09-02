@@ -1,6 +1,6 @@
 # Bootstrap 依赖组装层迁移计划
 
-状态：阶段一已完成，阶段二待执行（2026-09-02）
+状态：阶段一已完成，阶段二进行中（Cluster/System Component/Monitoring/Logging/Alerting Adapter 已迁移，2026-09-02）
 
 本文档规划将应用初始化、第三方依赖接入、Repository/Service/Handler 创建从 `cmd/platform` 和 `internal/api/router.go` 逐步迁移到 `internal/bootstrap`。
 
@@ -207,11 +207,19 @@ internal/
 - `Container.RegisterRoutes` 已成为新的启动入口；
 - Bootstrap 容器测试、Go 编译检查和 `go build ./...` 已通过。
 
+阶段二已完成的部分：
+
+- `KubernetesAdapters` 已在 `internal/bootstrap/kubernetes.go` 定义；
+- Cluster `NodeAdapter` 已由 Bootstrap 创建并通过 `RegisterRoutes` 显式注入；
+- `SystemComponentAdapter` 已由 Bootstrap 创建并注入 Handler 及后台 Reconcile；
+- Monitoring、Logging、Alerting 的查询、就绪、组件和资源读取 Adapter 已由 Bootstrap 创建并注入；
+- `internal/api/cluster_adapter.go` 已删除，Router 不再创建这两个 Adapter。
+
 当前仍存在的过渡逻辑：
 
 - `api.RegisterRoutes` 仍创建大部分 Service 和 Handler；
-- `api.K8s` 全局变量仍被部分旧适配器使用；
-- `cluster_adapter.go` 仍通过全局 `K8s` 转换为 `cluster.NodeAdapter`；
+- `api/application`、`api/runtime` 的包级 `K8s` 变量仍待迁移；
+- Network、Storage、Registry Adapter 仍在 Router 中组装，等待对应窄接口完成；
 - `api.RegisterRoutes` 仍创建大部分 Service 和 Handler，并启动 Platform/Registry Proxy 的历史 Reconcile 任务；
 - `bootstrap/services.go`、`handlers.go` 目前是后续迁移落点。
 
