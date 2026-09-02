@@ -8,6 +8,11 @@ func (s *Store) GetUserByUsername(username string) (*model.User, error) {
 	err := s.db.Where("username = ?", username).First(&user).Error
 	return &user, err
 }
+func (s *Store) GetUserByID(id uint) (*model.User, error) {
+	var user model.User
+	err := s.db.First(&user, id).Error
+	return &user, err
+}
 func (s *Store) CountUsers() (int64, error) {
 	var count int64
 	err := s.db.Model(&model.User{}).Count(&count).Error

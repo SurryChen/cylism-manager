@@ -46,6 +46,12 @@ func registerAgentRoutes(r *gin.Engine, h *agentapi.AgentHandler) {
 func registerAuthRoutes(r *gin.Engine, h *authapi.AuthHandler, cfg *authapi.AuthConfig) {
 	g := r.Group("/api/auth")
 	g.POST("/login", h.Login)
+	g.POST("/temporary-login", h.TemporaryLogin)
 	g.POST("/refresh", h.Refresh)
 	g.GET("/me", authapi.JWTAuthMiddleware(cfg.JWTSecret), h.Me)
+	authenticated := g.Group("")
+	authenticated.Use(authapi.JWTAuthMiddleware(cfg.JWTSecret))
+	authenticated.GET("/temporary-tokens", h.ListTemporaryTokens)
+	authenticated.POST("/temporary-tokens", h.CreateTemporaryToken)
+	authenticated.DELETE("/temporary-tokens/:id", h.RevokeTemporaryToken)
 }

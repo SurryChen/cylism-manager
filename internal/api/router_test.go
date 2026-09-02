@@ -26,11 +26,15 @@ func TestRegisterRoutesSnapshot(t *testing.T) {
 		JWTSecret:       []byte("router-snapshot-secret"),
 		AccessTokenTTL:  time.Hour,
 		RefreshTokenTTL: 24 * time.Hour,
-	}, nil)
+	}, nil, KubernetesDependencies{})
 
 	want := []string{
 		"GET /health",
 		"POST /api/auth/login",
+		"POST /api/auth/temporary-login",
+		"GET /api/auth/temporary-tokens",
+		"POST /api/auth/temporary-tokens",
+		"DELETE /api/auth/temporary-tokens/:id",
 		"GET /api/monitoring/query",
 		"GET /api/monitoring/alerts/overview",
 		"POST /api/monitoring/logs/query",
@@ -49,7 +53,7 @@ func TestRegisterRoutesSnapshot(t *testing.T) {
 			t.Errorf("missing route %s", route)
 		}
 	}
-	if got := routeSnapshotDigest(r); got.count != 308 || got.digest != "124928c9528d9be7d3cde1843f630bfe43611c7555910aacd65c1a713a4ee118" {
+	if got := routeSnapshotDigest(r); got.count != 312 || got.digest != "7d4d473b9d334363b67939f8d44f45ae243d7ebe1aecaf5e3bc6ce1444e7c76a" {
 		t.Fatalf("full route snapshot changed: count=%d digest=%s", got.count, got.digest)
 	}
 }
@@ -80,7 +84,7 @@ func TestRegisterRoutesDoesNotFallbackUnknownAPI(t *testing.T) {
 		t.Fatalf("create store: %v", err)
 	}
 	r := gin.New()
-	RegisterRoutes(r, db, make([]byte, 32), &authapi.AuthConfig{JWTSecret: []byte("router-fallback-secret")}, nil)
+	RegisterRoutes(r, db, make([]byte, 32), &authapi.AuthConfig{JWTSecret: []byte("router-fallback-secret")}, nil, KubernetesDependencies{})
 	req := httptest.NewRequest(http.MethodGet, "/api/route-that-does-not-exist", nil)
 	resp := httptest.NewRecorder()
 	r.ServeHTTP(resp, req)
