@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
+	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 	k8sclient "github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/repository"
@@ -25,7 +25,7 @@ type PlatformHandler struct {
 }
 
 func platformK8sUnavailable(c *gin.Context) {
-	model.Error(c, http.StatusOK, model.CodeK8sUnavailable, "K8s 集群未连接")
+	apiShared.K8sUnavailable(c)
 }
 
 type platformDeployRequest struct {
@@ -61,38 +61,38 @@ func NewPlatformHandler(s repository.PlatformEndpointRepository, encKey []byte, 
 // Webhook accepts authenticated platform image deployment requests.
 func (h *PlatformHandler) Webhook(c *gin.Context) {
 	if h.store == nil {
-		model.Error(c, http.StatusUnauthorized, model.CodeUnauthorized, "部署签名无效或已过期")
+		apiShared.Unauthorized(c, "部署签名无效或已过期")
 		return
 	}
 	body, err := io.ReadAll(io.LimitReader(c.Request.Body, 64<<10))
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "读取部署请求失败")
+		apiShared.BadRequest(c, "读取部署请求失败")
 		return
 	}
 	if !h.release.ValidateWebhook(c.GetHeader("X-Cylism-Timestamp"), c.GetHeader("X-Cylism-Nonce"), c.GetHeader("X-Cylism-Signature"), body) {
-		model.Error(c, http.StatusUnauthorized, model.CodeUnauthorized, "部署签名无效或已过期")
+		apiShared.Unauthorized(c, "部署签名无效或已过期")
 		return
 	}
 	var request platformDeployRequest
 	if err := json.Unmarshal(body, &request); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "部署请求无效")
+		apiShared.BadRequest(c, "部署请求无效")
 		return
 	}
 	if err := h.release.ValidateImage(request.Image); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		apiShared.ValidationError(c, err.Error())
 		return
 	}
 	if err := h.release.ConsumeWebhookNonce(c.GetHeader("X-Cylism-Nonce"), time.Now()); err != nil {
 		if errors.Is(err, platformservice.ErrWebhookReplay) {
-			model.Error(c, http.StatusUnauthorized, model.CodeUnauthorized, "部署签名无效或已过期")
+			apiShared.Unauthorized(c, "部署签名无效或已过期")
 		} else {
-			model.Error(c, http.StatusInternalServerError, model.CodeInternalError, "清理部署请求失败")
+			apiShared.InternalError(c, "清理部署请求失败")
 		}
 		return
 	}
 	release, err := h.release.CreateRelease(request.Image, "github", request.CommitSHA, request.RunID)
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeK8sAPIError, err.Error())
+		apiShared.Error(c, http.StatusBadRequest, model.CodeK8sAPIError, err.Error())
 		return
 	}
 	c.JSON(http.StatusAccepted, model.APIResponse{Code: model.CodeSuccess, Message: "平台发布已接受", Data: release})
@@ -104,16 +104,16 @@ func (h *PlatformHandler) Webhook(c *gin.Context) {
 func (h *PlatformHandler) ManualUpdate(c *gin.Context) {
 	var request platformManualReleaseRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "平台镜像请求无效")
+		apiShared.BadRequest(c, "平台镜像请求无效")
 		return
 	}
 	if err := h.release.ValidateImage(request.Image); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		apiShared.ValidationError(c, err.Error())
 		return
 	}
 	release, err := h.release.CreateRelease(request.Image, "manual", "", "")
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeK8sAPIError, err.Error())
+		apiShared.Error(c, http.StatusBadRequest, model.CodeK8sAPIError, err.Error())
 		return
 	}
 	c.JSON(http.StatusAccepted, model.APIResponse{Code: model.CodeSuccess, Message: "平台更新已提交", Data: release})
@@ -129,12 +129,12 @@ func (h *PlatformHandler) Status(c *gin.Context) {
 	h.release.ReconcileLatest()
 	deployment, err := h.client.PlatformDeploymentStatus()
 	if err != nil {
-		model.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
+		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
 		return
 	}
 	releases, err := h.store.ListPlatformReleases(20)
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, "读取平台发布记录失败")
+		apiShared.InternalError(c, "读取平台发布记录失败")
 		return
 	}
 	prefixes := h.release.ImagePrefixes()
@@ -151,16 +151,16 @@ func (h *PlatformHandler) EndpointStatus(c *gin.Context) {
 func (h *PlatformHandler) UpdateEndpoint(c *gin.Context) {
 	var request platformEndpointRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "平台入口定义无效")
+		apiShared.BadRequest(c, "平台入口定义无效")
 		return
 	}
 	if h.store == nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, "存储未初始化")
+		apiShared.InternalError(c, "存储未初始化")
 		return
 	}
 	current, err := h.store.GetPlatformEndpoint()
 	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, "读取平台入口失败")
+		apiShared.InternalError(c, "读取平台入口失败")
 		return
 	}
 	if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -188,29 +188,29 @@ func (h *PlatformHandler) UpdateEndpoint(c *gin.Context) {
 	}
 	if endpoint.Enabled {
 		if !validPlatformHostname(endpoint.Hostname) {
-			model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "管理域名必须是合法的精确 DNS 名称，且不支持泛域名")
+			apiShared.ValidationError(c, "管理域名必须是合法的精确 DNS 名称，且不支持泛域名")
 			return
 		}
 		if err := h.validatePlatformEndpointPrerequisites(); err != nil {
-			model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+			apiShared.ValidationError(c, err.Error())
 			return
 		}
 		certificate, err := h.platformEndpointCertificate(endpoint)
 		if err != nil {
-			model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+			apiShared.ValidationError(c, err.Error())
 			return
 		}
 		endpoint.TLSSecretName = certificate.SecretName
 		if domain, lookupErr := h.store.GetManagedDomainByHostname(endpoint.Hostname); lookupErr == nil {
-			model.Error(c, http.StatusConflict, model.CodeConflict, fmt.Sprintf("域名 %q 已作为项目受管域名使用", domain.Hostname))
+			apiShared.Conflict(c, fmt.Sprintf("域名 %q 已作为项目受管域名使用", domain.Hostname))
 			return
 		} else if !errors.Is(lookupErr, gorm.ErrRecordNotFound) {
-			model.Error(c, http.StatusInternalServerError, model.CodeInternalError, "检查域名归属失败")
+			apiShared.InternalError(c, "检查域名归属失败")
 			return
 		}
 	}
 	if err := h.store.SavePlatformEndpoint(endpoint); err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, "保存平台入口失败")
+		apiShared.InternalError(c, "保存平台入口失败")
 		return
 	}
 	if err := h.reconcilePlatformEndpoint(); err != nil {
@@ -224,7 +224,7 @@ func (h *PlatformHandler) UpdateEndpoint(c *gin.Context) {
 
 func (h *PlatformHandler) ReconcileEndpoint(c *gin.Context) {
 	if err := h.reconcilePlatformEndpoint(); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeK8sAPIError, err.Error())
+		apiShared.Error(c, http.StatusBadRequest, model.CodeK8sAPIError, err.Error())
 		return
 	}
 	model.SuccessWithMessage(c, h.platformEndpointInfo(), "平台入口已重新同步")
@@ -239,31 +239,31 @@ func (h *PlatformHandler) AdoptEndpointIngress(c *gin.Context) {
 	}
 	endpoint, err := h.store.GetPlatformEndpoint()
 	if errors.Is(err, gorm.ErrRecordNotFound) || !endpoint.Enabled {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "请先保存并启用平台 HTTPS 入口")
+		apiShared.ValidationError(c, "请先保存并启用平台 HTTPS 入口")
 		return
 	}
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, "读取平台入口失败")
+		apiShared.InternalError(c, "读取平台入口失败")
 		return
 	}
 	certificate, err := h.platformEndpointCertificate(endpoint)
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		apiShared.ValidationError(c, err.Error())
 		return
 	}
 	endpoint.TLSSecretName = certificate.SecretName
 	if err := h.store.SavePlatformEndpoint(endpoint); err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, "保存平台入口失败")
+		apiShared.InternalError(c, "保存平台入口失败")
 		return
 	}
 	ingressName, err := h.client.AdoptPlatformIngress(endpoint.Hostname, endpoint.TLSSecretName)
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeK8sAPIError, err.Error())
+		apiShared.Error(c, http.StatusBadRequest, model.CodeK8sAPIError, err.Error())
 		return
 	}
 	endpoint.IngressName = ingressName
 	if err := h.store.SavePlatformEndpoint(endpoint); err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, "保存平台入口失败")
+		apiShared.InternalError(c, "保存平台入口失败")
 		return
 	}
 	model.SuccessWithMessage(c, h.platformEndpointInfo(), "现有 Ingress 已接管并重新同步")
@@ -271,12 +271,12 @@ func (h *PlatformHandler) AdoptEndpointIngress(c *gin.Context) {
 
 func (h *PlatformHandler) GenerateWebhookSecret(c *gin.Context) {
 	if h.store == nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, "存储未初始化")
+		apiShared.InternalError(c, "存储未初始化")
 		return
 	}
 	secret, err := h.release.GenerateWebhookSecret()
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, "保存部署密钥失败")
+		apiShared.InternalError(c, "保存部署密钥失败")
 		return
 	}
 	model.Success(c, gin.H{"secret": secret})
@@ -287,31 +287,31 @@ func (h *PlatformHandler) UpdateImagePrefix(c *gin.Context) {
 		ImagePrefix string `json:"image_prefix"`
 	}
 	if err := c.ShouldBindJSON(&request); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "平台镜像仓库前缀无效")
+		apiShared.BadRequest(c, "平台镜像仓库前缀无效")
 		return
 	}
 	_, err := h.release.SetImagePrefixes(request.ImagePrefix)
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "平台镜像仓库前缀无效")
+		apiShared.BadRequest(c, "平台镜像仓库前缀无效")
 		return
 	}
 	model.Success(c, nil)
 }
 
 func (h *PlatformHandler) Rollback(c *gin.Context) {
-	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	id, err := apiShared.ParsePositiveID(c.Param("id"))
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "发布记录 ID 无效")
+		apiShared.BadRequest(c, "发布记录 ID 无效")
 		return
 	}
-	previous, err := h.store.GetPlatformRelease(uint(id))
+	previous, err := h.store.GetPlatformRelease(id)
 	if err != nil || previous.PreviousImage == "" {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "该发布记录不能回滚")
+		apiShared.BadRequest(c, "该发布记录不能回滚")
 		return
 	}
 	release, err := h.release.CreateRelease(previous.PreviousImage, "manual_rollback", "", "")
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeK8sAPIError, err.Error())
+		apiShared.Error(c, http.StatusBadRequest, model.CodeK8sAPIError, err.Error())
 		return
 	}
 	model.SuccessWithMessage(c, release, "平台回滚已提交")

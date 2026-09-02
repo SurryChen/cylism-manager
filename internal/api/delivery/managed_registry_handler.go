@@ -48,7 +48,7 @@ func (h *ManagedOCIRegistryHandler) WithStatusReader(status k8sclient.ManagedReg
 func (h *ManagedOCIRegistryHandler) List(c *gin.Context) {
 	registries, err := h.service.List()
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "读取受管制品库失败")
+		apiShared.DBError(c, "读取受管制品库失败")
 		return
 	}
 	for i := range registries {
@@ -60,12 +60,12 @@ func (h *ManagedOCIRegistryHandler) List(c *gin.Context) {
 func (h *ManagedOCIRegistryHandler) Get(c *gin.Context) {
 	id, err := apiShared.ParseID(c.Param("id"))
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "制品库 ID 无效")
+		apiShared.BadRequest(c, "制品库 ID 无效")
 		return
 	}
 	registry, err := h.service.Get(id)
 	if err != nil {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, "受管制品库不存在")
+		apiShared.NotFound(c, "受管制品库不存在")
 		return
 	}
 	h.refreshStatus(c.Request.Context(), registry)
@@ -107,7 +107,7 @@ func (h *ManagedOCIRegistryHandler) ListEligiblePVCs(c *gin.Context) {
 	}
 	claims, err := h.status.ListEligiblePVCs(c.Request.Context(), managedOCIRegistryNamespace)
 	if err != nil {
-		model.Error(c, http.StatusServiceUnavailable, model.CodeK8sAPIError, "读取制品库存储卷失败: "+security.Truncate(strings.TrimSpace(err.Error()), 512))
+		apiShared.Error(c, http.StatusServiceUnavailable, model.CodeK8sAPIError, "读取制品库存储卷失败: "+security.Truncate(strings.TrimSpace(err.Error()), 512))
 		return
 	}
 	model.Success(c, claims)
@@ -119,7 +119,7 @@ func (h *ManagedOCIRegistryHandler) ListMatchingCertificates(c *gin.Context) {
 	}
 	namespace := strings.TrimSpace(c.Query("namespace"))
 	if namespace != "" && namespace != managedOCIRegistryNamespace {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "制品库命名空间固定为 "+managedOCIRegistryNamespace)
+		apiShared.ValidationError(c, "制品库命名空间固定为 "+managedOCIRegistryNamespace)
 		return
 	}
 	namespace = managedOCIRegistryNamespace
@@ -127,14 +127,14 @@ func (h *ManagedOCIRegistryHandler) ListMatchingCertificates(c *gin.Context) {
 	if endpoint := strings.TrimSpace(c.Query("endpoint")); endpoint != "" {
 		_, normalizedHost, err := registryservice.NormalizeEndpoint(endpoint)
 		if err != nil {
-			model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "访问地址无效")
+			apiShared.ValidationError(c, "访问地址无效")
 			return
 		}
 		host = normalizedHost
 	}
 	certificates, err := h.status.ListMatchingCertificates(c.Request.Context(), namespace, host)
 	if err != nil {
-		model.Error(c, http.StatusServiceUnavailable, model.CodeK8sAPIError, "读取平台证书失败: "+security.Truncate(strings.TrimSpace(err.Error()), 512))
+		apiShared.Error(c, http.StatusServiceUnavailable, model.CodeK8sAPIError, "读取平台证书失败: "+security.Truncate(strings.TrimSpace(err.Error()), 512))
 		return
 	}
 	model.Success(c, certificates)
@@ -146,53 +146,53 @@ func (h *ManagedOCIRegistryHandler) Create(c *gin.Context) {
 	}
 	var request ManagedOCIRegistryRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "制品库配置无效")
+		apiShared.BadRequest(c, "制品库配置无效")
 		return
 	}
 	registry, host, err := h.registryFromRequest(request, nil)
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		apiShared.ValidationError(c, err.Error())
 		return
 	}
 	if existing, err := h.service.List(); err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "读取现有制品库失败")
+		apiShared.DBError(c, "读取现有制品库失败")
 		return
 	} else if len(existing) > 0 {
-		model.Error(c, http.StatusConflict, model.CodeConflict, "首期仅支持一个受管制品库")
+		apiShared.Conflict(c, "首期仅支持一个受管制品库")
 		return
 	}
 	if err := h.service.EnsureEndpointAvailable(registry.Endpoint); err != nil {
-		model.Error(c, http.StatusConflict, model.CodeConflict, err.Error())
+		apiShared.Conflict(c, err.Error())
 		return
 	}
 	if err := h.resources.EnsureResourcesAvailable(c.Request.Context(), registry.Namespace, registry.ResourceName); err != nil {
-		model.Error(c, http.StatusConflict, model.CodeConflict, err.Error())
+		apiShared.Conflict(c, err.Error())
 		return
 	}
 	if err := h.resources.ResolvePVC(c.Request.Context(), registry); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		apiShared.ValidationError(c, err.Error())
 		return
 	}
 	if err := h.resources.EnsureStorageClass(c.Request.Context(), registry.StorageClassName); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		apiShared.ValidationError(c, err.Error())
 		return
 	}
 	if err := h.resources.EnsureDataNode(c.Request.Context(), registry.DataNode); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		apiShared.ValidationError(c, err.Error())
 		return
 	}
 	if err := h.resources.EnsureTLSCertificate(c.Request.Context(), registry); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		apiShared.ValidationError(c, err.Error())
 		return
 	}
 	if err := h.service.PersistCreate(registry, request.PullPassword, apiShared.UserID(c), request.ProjectIDs); err != nil {
-		model.Error(c, http.StatusConflict, model.CodeConflict, "保存制品库配置失败，请检查名称、地址和项目授权")
+		apiShared.Conflict(c, "保存制品库配置失败，请检查名称、地址和项目授权")
 		return
 	}
 	if err := h.applyResources(c.Request.Context(), registry, host, request.PullPassword); err != nil {
 		registry.Status, registry.LastError = "failed", security.Truncate(strings.TrimSpace(err.Error()), 512)
 		_ = h.service.Save(registry)
-		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, "部署制品库失败: "+registry.LastError)
+		apiShared.InternalError(c, "部署制品库失败: "+registry.LastError)
 		return
 	}
 	registry.Status, registry.LastError, registry.CredentialConfigured = "deploying", "", true
@@ -206,65 +206,65 @@ func (h *ManagedOCIRegistryHandler) Update(c *gin.Context) {
 	}
 	id, err := apiShared.ParseID(c.Param("id"))
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "制品库 ID 无效")
+		apiShared.BadRequest(c, "制品库 ID 无效")
 		return
 	}
 	current, err := h.service.Get(id)
 	if err != nil {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, "受管制品库不存在")
+		apiShared.NotFound(c, "受管制品库不存在")
 		return
 	}
 	legacy, err := h.status.LegacyHostPath(c.Request.Context(), current)
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, "检查制品库存储状态失败")
+		apiShared.InternalError(c, "检查制品库存储状态失败")
 		return
 	}
 	if legacy {
-		model.Error(c, http.StatusConflict, model.CodeConflict, "现有制品库仍使用旧 hostPath 存储，请先完成 PVC 数据迁移后再更新")
+		apiShared.Conflict(c, "现有制品库仍使用旧 hostPath 存储，请先完成 PVC 数据迁移后再更新")
 		return
 	}
 	var request ManagedOCIRegistryRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "制品库配置无效")
+		apiShared.BadRequest(c, "制品库配置无效")
 		return
 	}
 	registry, host, err := h.registryFromRequest(request, current)
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		apiShared.ValidationError(c, err.Error())
 		return
 	}
 	if registry.Endpoint != current.Endpoint {
-		model.Error(c, http.StatusConflict, model.CodeConflict, "首期不支持变更制品库地址，请新建并迁移镜像")
+		apiShared.Conflict(c, "首期不支持变更制品库地址，请新建并迁移镜像")
 		return
 	}
 	if err := h.resources.ResolvePVC(c.Request.Context(), registry); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		apiShared.ValidationError(c, err.Error())
 		return
 	}
 	if err := h.resources.EnsureStorageClass(c.Request.Context(), registry.StorageClassName); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		apiShared.ValidationError(c, err.Error())
 		return
 	}
 	if err := h.resources.EnsureTLSCertificate(c.Request.Context(), registry); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		apiShared.ValidationError(c, err.Error())
 		return
 	}
 	password, err := h.service.ResolveUpdatePassword(registry, request.PullPassword)
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, "读取或加密制品库凭据失败")
+		apiShared.InternalError(c, "读取或加密制品库凭据失败")
 		return
 	}
 	if err := h.applyResources(c.Request.Context(), registry, host, password); err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, "更新制品库失败: "+security.Truncate(strings.TrimSpace(err.Error()), 512))
+		apiShared.InternalError(c, "更新制品库失败: "+security.Truncate(strings.TrimSpace(err.Error()), 512))
 		return
 	}
 	if err := h.service.UpdateAssociations(registry, request.ProjectIDs); err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "更新关联制品库配置失败")
+		apiShared.DBError(c, "更新关联制品库配置失败")
 		return
 	}
 	registry.Status, registry.LastError, registry.CredentialConfigured = "deploying", "", true
 	if err := h.service.Save(registry); err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "保存制品库配置失败")
+		apiShared.DBError(c, "保存制品库配置失败")
 		return
 	}
 	model.Success(c, registry)
@@ -279,58 +279,58 @@ func (h *ManagedOCIRegistryHandler) Repair(c *gin.Context) {
 	}
 	id, err := apiShared.ParseID(c.Param("id"))
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "制品库 ID 无效")
+		apiShared.BadRequest(c, "制品库 ID 无效")
 		return
 	}
 	registry, err := h.service.Get(id)
 	if err != nil {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, "受管制品库不存在")
+		apiShared.NotFound(c, "受管制品库不存在")
 		return
 	}
 	legacy, err := h.status.LegacyHostPath(c.Request.Context(), registry)
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, "检查制品库存储状态失败")
+		apiShared.InternalError(c, "检查制品库存储状态失败")
 		return
 	}
 	if legacy {
-		model.Error(c, http.StatusConflict, model.CodeConflict, "现有制品库仍使用旧 hostPath 存储，请先完成 PVC 数据迁移后再修复")
+		apiShared.Conflict(c, "现有制品库仍使用旧 hostPath 存储，请先完成 PVC 数据迁移后再修复")
 		return
 	}
 	if err := h.resources.ResolvePVC(c.Request.Context(), registry); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		apiShared.ValidationError(c, err.Error())
 		return
 	}
 	if err := h.resources.EnsureStorageClass(c.Request.Context(), registry.StorageClassName); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		apiShared.ValidationError(c, err.Error())
 		return
 	}
 	if err := h.resources.EnsureDataNode(c.Request.Context(), registry.DataNode); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		apiShared.ValidationError(c, err.Error())
 		return
 	}
 	if err := h.resources.EnsureTLSCertificate(c.Request.Context(), registry); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		apiShared.ValidationError(c, err.Error())
 		return
 	}
 	password, err := h.service.ResolveStoredPassword(registry)
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, "读取制品库凭据失败")
+		apiShared.InternalError(c, "读取制品库凭据失败")
 		return
 	}
 	_, host, err := registryservice.NormalizeEndpoint(registry.Endpoint)
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, "读取制品库地址失败")
+		apiShared.InternalError(c, "读取制品库地址失败")
 		return
 	}
 	if err := h.applyResources(c.Request.Context(), registry, host, password); err != nil {
 		registry.Status, registry.LastError = "failed", security.Truncate(strings.TrimSpace(err.Error()), 512)
 		_ = h.service.Save(registry)
-		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, "修复制品库失败: "+registry.LastError)
+		apiShared.InternalError(c, "修复制品库失败: "+registry.LastError)
 		return
 	}
 	registry.Status, registry.LastError, registry.CredentialConfigured = "deploying", "", true
 	if err := h.service.Save(registry); err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "保存制品库状态失败")
+		apiShared.DBError(c, "保存制品库状态失败")
 		return
 	}
 	model.SuccessWithMessage(c, registry, "制品库资源已重新同步")
@@ -339,32 +339,32 @@ func (h *ManagedOCIRegistryHandler) Repair(c *gin.Context) {
 func (h *ManagedOCIRegistryHandler) ApplyNodeAccess(c *gin.Context) {
 	id, err := apiShared.ParseID(c.Param("id"))
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "制品库 ID 无效")
+		apiShared.BadRequest(c, "制品库 ID 无效")
 		return
 	}
 	var request ManagedOCIRegistryApplyRequest
 	if err := c.ShouldBindJSON(&request); err != nil || len(request.ServerIDs) == 0 {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "至少选择一个集群节点")
+		apiShared.BadRequest(c, "至少选择一个集群节点")
 		return
 	}
 	registry, err := h.store.GetManagedOCIRegistry(id)
 	if err != nil || registry.NodeRegistryMirrorID == nil {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, "受管制品库不存在")
+		apiShared.NotFound(c, "受管制品库不存在")
 		return
 	}
 	mirror, err := h.store.GetNodeRegistryMirror(*registry.NodeRegistryMirrorID)
 	if err != nil {
-		model.Error(c, http.StatusConflict, model.CodeConflict, "制品库节点镜像源配置缺失")
+		apiShared.Conflict(c, "制品库节点镜像源配置缺失")
 		return
 	}
 	content, err := h.service.RenderNodeMirrorConfig()
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "生成节点镜像源配置失败: "+err.Error())
+		apiShared.ValidationError(c, "生成节点镜像源配置失败: "+err.Error())
 		return
 	}
 	servers, err := h.store.ListServers()
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "读取服务器失败")
+		apiShared.DBError(c, "读取服务器失败")
 		return
 	}
 	byID := make(map[uint]model.Server, len(servers))
@@ -381,11 +381,11 @@ func (h *ManagedOCIRegistryHandler) ApplyNodeAccess(c *gin.Context) {
 		seen[serverID] = struct{}{}
 		server, ok := byID[serverID]
 		if !ok {
-			model.Error(c, http.StatusBadRequest, model.CodeValidationFail, fmt.Sprintf("节点 %d 不是可应用的集群节点", serverID))
+			apiShared.ValidationError(c, fmt.Sprintf("节点 %d 不是可应用的集群节点", serverID))
 			return
 		}
 		if h.applyNode == nil {
-			model.Error(c, http.StatusServiceUnavailable, model.CodeInternalError, "节点镜像源下发能力未初始化")
+			apiShared.Error(c, http.StatusServiceUnavailable, model.CodeInternalError, "节点镜像源下发能力未初始化")
 			return
 		}
 		status, detail := h.applyNode(&server, content)
@@ -410,24 +410,24 @@ func (h *ManagedOCIRegistryHandler) ApplyNodeAccess(c *gin.Context) {
 func (h *ManagedOCIRegistryHandler) Delete(c *gin.Context) {
 	id, err := apiShared.ParseID(c.Param("id"))
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "制品库 ID 无效")
+		apiShared.BadRequest(c, "制品库 ID 无效")
 		return
 	}
 	var request struct {
 		Confirm bool `json:"confirm"`
 	}
 	if err := c.ShouldBindJSON(&request); err != nil || !request.Confirm {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "删除受管制品库必须明确确认；PVC 数据不会被删除")
+		apiShared.BadRequest(c, "删除受管制品库必须明确确认；PVC 数据不会被删除")
 		return
 	}
 	registry, err := h.service.PrepareDelete(id)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			model.Error(c, http.StatusNotFound, model.CodeNotFound, "受管制品库不存在")
+			apiShared.NotFound(c, "受管制品库不存在")
 		} else if strings.Contains(err.Error(), "仍被") {
-			model.Error(c, http.StatusConflict, model.CodeConflict, err.Error())
+			apiShared.Conflict(c, err.Error())
 		} else {
-			model.Error(c, http.StatusInternalServerError, model.CodeDBError, "检查制品库引用失败")
+			apiShared.DBError(c, "检查制品库引用失败")
 		}
 		return
 	}
@@ -436,7 +436,7 @@ func (h *ManagedOCIRegistryHandler) Delete(c *gin.Context) {
 		h.resources.DeleteResources(ctx, registry)
 	}
 	if err := h.service.DeletePersisted(registry); err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "删除受管制品库记录失败")
+		apiShared.DBError(c, "删除受管制品库记录失败")
 		return
 	}
 	model.SuccessWithMessage(c, gin.H{"id": id, "pvc_name": registry.PVCName}, "制品库资源已删除，PVC 数据已保留")
@@ -446,7 +446,7 @@ func (h *ManagedOCIRegistryHandler) k8sReady(c *gin.Context) bool {
 	if h.status != nil && h.status.Available() && h.resources != nil {
 		return true
 	}
-	model.Error(c, http.StatusServiceUnavailable, model.CodeInternalError, "Kubernetes 集群未连接")
+	apiShared.Error(c, http.StatusServiceUnavailable, model.CodeInternalError, "Kubernetes 集群未连接")
 	return false
 }
 

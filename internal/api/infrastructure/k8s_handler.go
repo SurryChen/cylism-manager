@@ -164,7 +164,7 @@ func (h *K8sHandler) ListNamespaceNames(c *gin.Context) {
 	}
 	nsList, err := h.k8s.Clientset.CoreV1().Namespaces().List(h.k8s.Ctx(), metav1.ListOptions{})
 	if err != nil {
-		model.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
+		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
 		return
 	}
 	result := make([]NamespaceNameSummary, 0, len(nsList.Items))
@@ -183,7 +183,7 @@ func (h *K8sHandler) ListNamespaces(c *gin.Context) {
 
 	nsList, err := h.k8s.Clientset.CoreV1().Namespaces().List(h.k8s.Ctx(), metav1.ListOptions{})
 	if err != nil {
-		model.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
+		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
 		return
 	}
 
@@ -237,7 +237,7 @@ func (h *K8sHandler) CreateNamespace(c *gin.Context) {
 		Annotations map[string]string `json:"annotations"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil || req.Name == "" {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "name 必填")
+		apiShared.BadRequest(c, "name 必填")
 		return
 	}
 
@@ -251,7 +251,7 @@ func (h *K8sHandler) CreateNamespace(c *gin.Context) {
 
 	created, err := h.k8s.Clientset.CoreV1().Namespaces().Create(h.k8s.Ctx(), ns, metav1.CreateOptions{})
 	if err != nil {
-		model.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
+		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
 		return
 	}
 
@@ -273,13 +273,13 @@ func (h *K8sHandler) UpdateNamespace(c *gin.Context) {
 		Annotations map[string]string `json:"annotations"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "invalid namespace payload")
+		apiShared.BadRequest(c, "invalid namespace payload")
 		return
 	}
 
 	ns, err := h.k8s.Clientset.CoreV1().Namespaces().Get(h.k8s.Ctx(), name, metav1.GetOptions{})
 	if err != nil {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, err.Error())
+		apiShared.NotFound(c, err.Error())
 		return
 	}
 
@@ -287,7 +287,7 @@ func (h *K8sHandler) UpdateNamespace(c *gin.Context) {
 	ns.Annotations = req.Annotations
 	updated, err := h.k8s.Clientset.CoreV1().Namespaces().Update(h.k8s.Ctx(), ns, metav1.UpdateOptions{})
 	if err != nil {
-		model.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
+		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
 		return
 	}
 
@@ -307,12 +307,12 @@ func (h *K8sHandler) DeleteNamespace(c *gin.Context) {
 
 	name := c.Param("name")
 	if isProtectedNamespace(name) {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "系统命名空间不允许删除")
+		apiShared.BadRequest(c, "系统命名空间不允许删除")
 		return
 	}
 
 	if err := h.k8s.Clientset.CoreV1().Namespaces().Delete(h.k8s.Ctx(), name, metav1.DeleteOptions{}); err != nil {
-		model.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
+		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
 		return
 	}
 
@@ -337,7 +337,7 @@ func (h *K8sHandler) ListPods(c *gin.Context) {
 	ns := c.Query("namespace")
 	pods, err := h.k8s.Clientset.CoreV1().Pods(ns).List(h.k8s.Ctx(), metav1.ListOptions{})
 	if err != nil {
-		model.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
+		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
 		return
 	}
 
@@ -387,7 +387,7 @@ func (h *K8sHandler) ListDeployments(c *gin.Context) {
 	ns := c.Query("namespace")
 	result, err := h.k8s.ListDeployments(ns)
 	if err != nil {
-		model.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
+		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
 		return
 	}
 	if result == nil {
@@ -406,7 +406,7 @@ func (h *K8sHandler) GetDeployment(c *gin.Context) {
 	name := c.Param("name")
 	result, err := h.k8s.GetDeployment(ns, name)
 	if err != nil {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, err.Error())
+		apiShared.NotFound(c, err.Error())
 		return
 	}
 	model.Success(c, result)
@@ -422,7 +422,7 @@ func (h *K8sHandler) ListDeploymentPods(c *gin.Context) {
 	name := c.Param("name")
 	result, err := h.k8s.ListDeploymentPods(ns, name)
 	if err != nil {
-		model.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
+		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
 		return
 	}
 	model.Success(c, result)
@@ -438,7 +438,7 @@ func (h *K8sHandler) ListDeploymentRevisions(c *gin.Context) {
 	name := c.Param("name")
 	result, err := h.k8s.ListDeploymentRevisions(ns, name)
 	if err != nil {
-		model.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
+		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
 		return
 	}
 	model.Success(c, result)
@@ -457,12 +457,12 @@ func (h *K8sHandler) ScaleDeployment(c *gin.Context) {
 		Replicas int32 `json:"replicas"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "invalid replicas")
+		apiShared.BadRequest(c, "invalid replicas")
 		return
 	}
 
 	if err := h.k8s.ScaleDeployment(ns, name, req.Replicas); err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, err.Error())
+		apiShared.InternalError(c, err.Error())
 		return
 	}
 	model.SuccessWithMessage(c, map[string]interface{}{"replicas": req.Replicas}, "扩缩容成功")
@@ -482,12 +482,12 @@ func (h *K8sHandler) UpdateDeploymentImage(c *gin.Context) {
 		Image     string `json:"image"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil || req.Container == "" || req.Image == "" {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "container 和 image 必填")
+		apiShared.BadRequest(c, "container 和 image 必填")
 		return
 	}
 
 	if err := h.k8s.UpdateDeploymentImage(ns, name, req.Container, req.Image); err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, err.Error())
+		apiShared.InternalError(c, err.Error())
 		return
 	}
 	model.SuccessWithMessage(c, nil, "镜像更新已触发滚动更新")
@@ -506,12 +506,12 @@ func (h *K8sHandler) RollbackDeployment(c *gin.Context) {
 		Revision int64 `json:"revision"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "invalid revision")
+		apiShared.BadRequest(c, "invalid revision")
 		return
 	}
 
 	if err := h.k8s.RollbackDeployment(ns, name, req.Revision); err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, err.Error())
+		apiShared.InternalError(c, err.Error())
 		return
 	}
 	model.SuccessWithMessage(c, nil, "回滚成功")
@@ -528,7 +528,7 @@ func (h *K8sHandler) ListStatefulSets(c *gin.Context) {
 	ns := c.Query("namespace")
 	result, err := h.k8s.ListStatefulSets(ns)
 	if err != nil {
-		model.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
+		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
 		return
 	}
 	if result == nil {
@@ -547,7 +547,7 @@ func (h *K8sHandler) GetStatefulSet(c *gin.Context) {
 	name := c.Param("name")
 	result, err := h.k8s.GetStatefulSet(ns, name)
 	if err != nil {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, err.Error())
+		apiShared.NotFound(c, err.Error())
 		return
 	}
 	model.Success(c, result)
@@ -566,12 +566,12 @@ func (h *K8sHandler) ScaleStatefulSet(c *gin.Context) {
 		Replicas int32 `json:"replicas"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "invalid replicas")
+		apiShared.BadRequest(c, "invalid replicas")
 		return
 	}
 
 	if err := h.k8s.ScaleStatefulSet(ns, name, req.Replicas); err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, err.Error())
+		apiShared.InternalError(c, err.Error())
 		return
 	}
 	model.SuccessWithMessage(c, map[string]interface{}{"replicas": req.Replicas}, "扩缩容成功")
@@ -588,7 +588,7 @@ func (h *K8sHandler) ListDaemonSets(c *gin.Context) {
 	ns := c.Query("namespace")
 	result, err := h.k8s.ListDaemonSets(ns)
 	if err != nil {
-		model.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
+		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
 		return
 	}
 	if result == nil {
@@ -607,7 +607,7 @@ func (h *K8sHandler) GetDaemonSet(c *gin.Context) {
 	name := c.Param("name")
 	result, err := h.k8s.GetDaemonSet(ns, name)
 	if err != nil {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, err.Error())
+		apiShared.NotFound(c, err.Error())
 		return
 	}
 	model.Success(c, result)
@@ -624,7 +624,7 @@ func (h *K8sHandler) ListServicesV2(c *gin.Context) {
 	ns := c.Query("namespace")
 	result, err := h.k8s.ListServices(ns)
 	if err != nil {
-		model.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
+		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
 		return
 	}
 	if result == nil {
@@ -645,7 +645,7 @@ func (h *K8sHandler) GetServiceEndpoints(c *gin.Context) {
 	name := c.Param("name")
 	result, err := h.k8s.GetServiceEndpoints(ns, name)
 	if err != nil {
-		model.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
+		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
 		return
 	}
 	if result == nil {
@@ -671,7 +671,7 @@ func (h *K8sHandler) ListConfigMaps(c *gin.Context) {
 		result, err = h.k8s.ListConfigMaps(ns)
 	}
 	if err != nil {
-		model.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
+		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
 		return
 	}
 	if result == nil {
@@ -690,7 +690,7 @@ func (h *K8sHandler) GetConfigMap(c *gin.Context) {
 	name := c.Param("name")
 	result, err := h.k8s.GetConfigMap(ns, name)
 	if err != nil {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, err.Error())
+		apiShared.NotFound(c, err.Error())
 		return
 	}
 	model.Success(c, result)
@@ -703,16 +703,16 @@ func (h *K8sHandler) CreateConfigMap(c *gin.Context) {
 	}
 	var req resourceDataRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "请求格式无效")
+		apiShared.BadRequest(c, "请求格式无效")
 		return
 	}
 	if message := validateResourceDataRequest(req); message != "" {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, message)
+		apiShared.BadRequest(c, message)
 		return
 	}
 	result, err := h.k8s.CreateConfigMap(k8sclient.ConfigMapMutation{Namespace: req.Namespace, Name: req.Name, Data: req.Data})
 	if err != nil {
-		model.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
+		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
 		return
 	}
 	log.Printf("AUDIT: configmap created: %s/%s", req.Namespace, req.Name)
@@ -726,17 +726,17 @@ func (h *K8sHandler) UpdateConfigMap(c *gin.Context) {
 	}
 	var req resourceDataRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "请求格式无效")
+		apiShared.BadRequest(c, "请求格式无效")
 		return
 	}
 	req.Namespace, req.Name = c.Param("namespace"), c.Param("name")
 	if message := validateResourceDataRequest(req); message != "" {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, message)
+		apiShared.BadRequest(c, message)
 		return
 	}
 	result, err := h.k8s.UpdateConfigMap(k8sclient.ConfigMapMutation{Namespace: req.Namespace, Name: req.Name, Data: req.Data})
 	if err != nil {
-		model.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
+		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
 		return
 	}
 	log.Printf("AUDIT: configmap updated: %s/%s", req.Namespace, req.Name)
@@ -751,22 +751,22 @@ func (h *K8sHandler) DeleteConfigMap(c *gin.Context) {
 	namespace, name := c.Param("namespace"), c.Param("name")
 	resource, err := h.k8s.GetConfigMap(namespace, name)
 	if err != nil {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, err.Error())
+		apiShared.NotFound(c, err.Error())
 		return
 	}
 	if len(resource.UsedBy) > 0 {
-		model.Error(c, http.StatusConflict, model.CodeBadRequest, "ConfigMap 正被工作负载引用，不能删除")
+		apiShared.Error(c, http.StatusConflict, model.CodeBadRequest, "ConfigMap 正被工作负载引用，不能删除")
 		return
 	}
 	if referenced, err := h.resourceIsReferenced(namespace, "configmap", name); err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		apiShared.DBError(c, err.Error())
 		return
 	} else if referenced {
-		model.Error(c, http.StatusConflict, model.CodeBadRequest, "ConfigMap 仍被上线模板或发布快照引用，不能删除")
+		apiShared.Error(c, http.StatusConflict, model.CodeBadRequest, "ConfigMap 仍被上线模板或发布快照引用，不能删除")
 		return
 	}
 	if err := h.k8s.DeleteConfigMap(namespace, name); err != nil {
-		model.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
+		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
 		return
 	}
 	log.Printf("AUDIT: configmap deleted: %s/%s", namespace, name)
@@ -790,7 +790,7 @@ func (h *K8sHandler) ListSecrets(c *gin.Context) {
 		result, err = h.k8s.ListSecrets(ns)
 	}
 	if err != nil {
-		model.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
+		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
 		return
 	}
 	if result == nil {
@@ -810,7 +810,7 @@ func (h *K8sHandler) GetSecret(c *gin.Context) {
 	name := c.Param("name")
 	result, err := h.k8s.GetSecret(ns, name)
 	if err != nil {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, err.Error())
+		apiShared.NotFound(c, err.Error())
 		return
 	}
 	log.Printf("AUDIT: secret accessed: %s/%s", ns, name)
@@ -830,16 +830,16 @@ func (h *K8sHandler) CreateOpaqueSecret(c *gin.Context) {
 	}
 	var req resourceDataRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "请求格式无效")
+		apiShared.BadRequest(c, "请求格式无效")
 		return
 	}
 	if message := validateResourceDataRequest(req); message != "" {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, message)
+		apiShared.BadRequest(c, message)
 		return
 	}
 	result, err := h.k8s.CreateOpaqueSecret(k8sclient.OpaqueSecretMutation{Namespace: req.Namespace, Name: req.Name, Data: req.Data})
 	if err != nil {
-		model.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
+		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
 		return
 	}
 	log.Printf("AUDIT: opaque secret created: %s/%s", req.Namespace, req.Name)
@@ -853,17 +853,17 @@ func (h *K8sHandler) UpdateOpaqueSecret(c *gin.Context) {
 	}
 	var req resourceDataRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "请求格式无效")
+		apiShared.BadRequest(c, "请求格式无效")
 		return
 	}
 	req.Namespace, req.Name = c.Param("namespace"), c.Param("name")
 	if message := validateResourceDataRequest(req); message != "" {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, message)
+		apiShared.BadRequest(c, message)
 		return
 	}
 	result, err := h.k8s.UpdateOpaqueSecret(k8sclient.OpaqueSecretMutation{Namespace: req.Namespace, Name: req.Name, Data: req.Data})
 	if err != nil {
-		model.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
+		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
 		return
 	}
 	log.Printf("AUDIT: opaque secret updated: %s/%s", req.Namespace, req.Name)
@@ -878,26 +878,26 @@ func (h *K8sHandler) DeleteOpaqueSecret(c *gin.Context) {
 	namespace, name := c.Param("namespace"), c.Param("name")
 	resource, err := h.k8s.GetSecret(namespace, name)
 	if err != nil {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, err.Error())
+		apiShared.NotFound(c, err.Error())
 		return
 	}
 	if resource.Type != string(corev1.SecretTypeOpaque) {
-		model.Error(c, http.StatusConflict, model.CodeBadRequest, "仅可管理 Opaque Secret")
+		apiShared.Error(c, http.StatusConflict, model.CodeBadRequest, "仅可管理 Opaque Secret")
 		return
 	}
 	if len(resource.UsedBy) > 0 {
-		model.Error(c, http.StatusConflict, model.CodeBadRequest, "Secret 正被工作负载引用，不能删除")
+		apiShared.Error(c, http.StatusConflict, model.CodeBadRequest, "Secret 正被工作负载引用，不能删除")
 		return
 	}
 	if referenced, err := h.resourceIsReferenced(namespace, "secret", name); err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		apiShared.DBError(c, err.Error())
 		return
 	} else if referenced {
-		model.Error(c, http.StatusConflict, model.CodeBadRequest, "Secret 仍被上线模板或发布快照引用，不能删除")
+		apiShared.Error(c, http.StatusConflict, model.CodeBadRequest, "Secret 仍被上线模板或发布快照引用，不能删除")
 		return
 	}
 	if err := h.k8s.DeleteOpaqueSecret(namespace, name); err != nil {
-		model.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
+		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
 		return
 	}
 	log.Printf("AUDIT: opaque secret deleted: %s/%s", namespace, name)
@@ -915,7 +915,7 @@ func (h *K8sHandler) ListIngresses(c *gin.Context) {
 	ns := c.Query("namespace")
 	result, err := h.k8s.ListIngresses(ns)
 	if err != nil {
-		model.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
+		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
 		return
 	}
 	if result == nil {
@@ -934,7 +934,7 @@ func (h *K8sHandler) GetIngress(c *gin.Context) {
 	name := c.Param("name")
 	result, err := h.k8s.GetIngress(ns, name)
 	if err != nil {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, err.Error())
+		apiShared.NotFound(c, err.Error())
 		return
 	}
 	model.Success(c, result)
@@ -955,7 +955,7 @@ func (h *K8sHandler) CreateIngress(c *gin.Context) {
 		ServicePort string `json:"service_port"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "invalid request")
+		apiShared.BadRequest(c, "invalid request")
 		return
 	}
 	if req.Path == "" {
@@ -963,12 +963,12 @@ func (h *K8sHandler) CreateIngress(c *gin.Context) {
 	}
 
 	if req.Namespace == "" || req.Name == "" || req.Host == "" || req.ServiceName == "" || req.ServicePort == "" {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "namespace, name, host, service_name, service_port 必填")
+		apiShared.BadRequest(c, "namespace, name, host, service_name, service_port 必填")
 		return
 	}
 	result, err := h.k8s.CreateIngress(req.Namespace, req.Name, req.Host, req.Path, req.ServiceName, req.ServicePort)
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, err.Error())
+		apiShared.InternalError(c, err.Error())
 		return
 	}
 	model.Success(c, result)
@@ -983,7 +983,7 @@ func (h *K8sHandler) DeleteIngress(c *gin.Context) {
 	ns := c.Param("namespace")
 	name := c.Param("name")
 	if err := h.k8s.DeleteIngress(ns, name); err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, err.Error())
+		apiShared.InternalError(c, err.Error())
 		return
 	}
 	model.SuccessWithMessage(c, nil, "删除成功")
@@ -1011,7 +1011,7 @@ func (h *K8sHandler) GetService(c *gin.Context) {
 	name := c.Param("name")
 	result, err := h.k8s.GetService(ns, name)
 	if err != nil {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, err.Error())
+		apiShared.NotFound(c, err.Error())
 		return
 	}
 	model.Success(c, result)
@@ -1030,13 +1030,13 @@ func (h *K8sHandler) UpdateService(c *gin.Context) {
 		Spec map[string]interface{} `json:"spec"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "invalid request")
+		apiShared.BadRequest(c, "invalid request")
 		return
 	}
 
 	svc, err := h.k8s.Clientset.CoreV1().Services(ns).Get(h.k8s.Ctx(), name, metav1.GetOptions{})
 	if err != nil {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, err.Error())
+		apiShared.NotFound(c, err.Error())
 		return
 	}
 
@@ -1047,7 +1047,7 @@ func (h *K8sHandler) UpdateService(c *gin.Context) {
 
 	_, err = h.k8s.Clientset.CoreV1().Services(ns).Update(h.k8s.Ctx(), svc, metav1.UpdateOptions{})
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, err.Error())
+		apiShared.InternalError(c, err.Error())
 		return
 	}
 	model.SuccessWithMessage(c, nil, "更新成功")
@@ -1063,7 +1063,7 @@ func (h *K8sHandler) DeleteService(c *gin.Context) {
 	name := c.Param("name")
 	err := h.k8s.Clientset.CoreV1().Services(ns).Delete(h.k8s.Ctx(), name, metav1.DeleteOptions{})
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, err.Error())
+		apiShared.InternalError(c, err.Error())
 		return
 	}
 	model.SuccessWithMessage(c, nil, "删除成功")

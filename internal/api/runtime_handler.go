@@ -5,7 +5,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"strings"
 	"time"
 
@@ -47,12 +46,12 @@ type runtimeRequest struct {
 	Config           map[string]interface{} `json:"config"`
 }
 
-func NewRuntimeHandler(runtimes repository.RuntimeManagementRepository, encKey []byte, k8sManager *runtime.KubernetesManager, registries ...*runtime.Registry) *RuntimeHandler {
-	registry := runtime.BuiltinRegistry()
-	if len(registries) > 0 && registries[0] != nil {
-		registry = registries[0]
-	} else if k8sManager != nil && k8sManager.Registry != nil {
-		registry = k8sManager.Registry
+func NewRuntimeHandler(runtimes repository.RuntimeManagementRepository, encKey []byte, k8sManager *runtime.KubernetesManager, registry *runtime.Registry) *RuntimeHandler {
+	if registry == nil {
+		registry = runtime.BuiltinRegistry()
+		if k8sManager != nil && k8sManager.Registry != nil {
+			registry = k8sManager.Registry
+		}
 	}
 	return &RuntimeHandler{runtimes: runtimes, encKey: encKey, k8s: k8sManager, registry: registry}
 }
@@ -64,7 +63,7 @@ func (h *RuntimeHandler) Catalog(c *gin.Context) {
 func (h *RuntimeHandler) List(c *gin.Context) {
 	runtimes, err := h.runtimes.ListRuntimes()
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "读取 Runtime 列表失败")
+		apiShared.DBError(c, "读取 Runtime 列表失败")
 		return
 	}
 	for index := range runtimes {
@@ -76,12 +75,12 @@ func (h *RuntimeHandler) List(c *gin.Context) {
 func (h *RuntimeHandler) Get(c *gin.Context) {
 	id, err := apiShared.ParseID(c.Param("id"))
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "Runtime ID 无效")
+		apiShared.BadRequest(c, "Runtime ID 无效")
 		return
 	}
 	instance, err := h.runtimes.GetRuntime(id)
 	if err != nil {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, "Runtime 不存在")
+		apiShared.NotFound(c, "Runtime 不存在")
 		return
 	}
 	h.sanitize(instance)
@@ -91,17 +90,17 @@ func (h *RuntimeHandler) Get(c *gin.Context) {
 func (h *RuntimeHandler) Create(c *gin.Context) {
 	var req runtimeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "Runtime 定义无效")
+		apiShared.BadRequest(c, "Runtime 定义无效")
 		return
 	}
 	instance, err := h.instanceFromRequest(req, nil)
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		apiShared.ValidationError(c, err.Error())
 		return
 	}
 	instance.CreatedBy = apiShared.UserID(c)
 	if err := h.runtimes.CreateRuntime(instance); err != nil {
-		model.Error(c, http.StatusConflict, model.CodeConflict, "Runtime 名称已存在")
+		apiShared.Conflict(c, "Runtime 名称已存在")
 		return
 	}
 	h.sanitize(instance)
@@ -111,22 +110,22 @@ func (h *RuntimeHandler) Create(c *gin.Context) {
 func (h *RuntimeHandler) Update(c *gin.Context) {
 	id, err := apiShared.ParseID(c.Param("id"))
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "Runtime ID 无效")
+		apiShared.BadRequest(c, "Runtime ID 无效")
 		return
 	}
 	current, err := h.runtimes.GetRuntime(id)
 	if err != nil {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, "Runtime 不存在")
+		apiShared.NotFound(c, "Runtime 不存在")
 		return
 	}
 	var req runtimeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "Runtime 定义无效")
+		apiShared.BadRequest(c, "Runtime 定义无效")
 		return
 	}
 	updated, err := h.instanceFromRequest(req, current)
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		apiShared.ValidationError(c, err.Error())
 		return
 	}
 	updated.ID = current.ID
@@ -135,7 +134,7 @@ func (h *RuntimeHandler) Update(c *gin.Context) {
 	updated.Status = current.Status
 	updated.DesiredGeneration = current.DesiredGeneration + 1
 	if err := h.runtimes.UpdateRuntime(updated); err != nil {
-		model.Error(c, http.StatusConflict, model.CodeConflict, "Runtime 名称已存在或配置无效")
+		apiShared.Conflict(c, "Runtime 名称已存在或配置无效")
 		return
 	}
 	h.sanitize(updated)
@@ -145,23 +144,23 @@ func (h *RuntimeHandler) Update(c *gin.Context) {
 func (h *RuntimeHandler) Deploy(c *gin.Context) {
 	id, err := apiShared.ParseID(c.Param("id"))
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "Runtime ID 无效")
+		apiShared.BadRequest(c, "Runtime ID 无效")
 		return
 	}
 	instance, err := h.runtimes.GetRuntime(id)
 	if err != nil {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, "Runtime 不存在")
+		apiShared.NotFound(c, "Runtime 不存在")
 		return
 	}
 	if h.k8s == nil {
 		if instance.DeploymentMode != model.RuntimeDeploymentExternal {
-			model.Error(c, http.StatusServiceUnavailable, model.CodeK8sUnavailable, "Kubernetes 集群未连接")
+			apiShared.ServiceUnavailable(c, model.CodeK8sUnavailable, "Kubernetes 集群未连接")
 			return
 		}
 	}
 	if instance.DeploymentMode == model.RuntimeDeploymentExternal {
 		if strings.TrimSpace(instance.EndpointURL) == "" {
-			model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "外部 Runtime 必须提供连接地址")
+			apiShared.ValidationError(c, "外部 Runtime 必须提供连接地址")
 			return
 		}
 		checker := h.k8s
@@ -174,7 +173,7 @@ func (h *RuntimeHandler) Deploy(c *gin.Context) {
 		_ = h.runtimes.UpdateRuntime(instance)
 		h.sanitize(instance)
 		if status != model.RuntimeStatusReady {
-			model.ErrorWithData(c, http.StatusBadGateway, model.CodeK8sAPIError, detail, instance)
+			apiShared.K8sAPIErrorWithData(c, detail, instance)
 			return
 		}
 		model.SuccessWithMessage(c, instance, "外部 Runtime 已连接")
@@ -184,29 +183,29 @@ func (h *RuntimeHandler) Deploy(c *gin.Context) {
 	if instance.EncryptedAPIKey != "" {
 		apiKey, err = crypto.Decrypt(h.encKey, instance.EncryptedAPIKey)
 		if err != nil {
-			model.Error(c, http.StatusInternalServerError, model.CodeInternalError, "读取 Runtime 模型凭据失败")
+			apiShared.InternalError(c, "读取 Runtime 模型凭据失败")
 			return
 		}
 	}
 	if strings.TrimSpace(apiKey) == "" {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "托管 Runtime 必须配置模型 API 密钥")
+		apiShared.ValidationError(c, "托管 Runtime 必须配置模型 API 密钥")
 		return
 	}
 	instance.Status = model.RuntimeStatusDeploying
 	if err := h.runtimes.UpdateRuntime(instance); err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "保存 Runtime 状态失败")
+		apiShared.DBError(c, "保存 Runtime 状态失败")
 		return
 	}
 	runtimeAPIKey, err := h.runtimeAPIKey(instance)
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, "读取 Runtime API 凭据失败")
+		apiShared.InternalError(c, "读取 Runtime API 凭据失败")
 		return
 	}
 	if err := h.k8s.Apply(c.Request.Context(), instance, apiKey, runtimeAPIKey); err != nil {
 		instance.Status = model.RuntimeStatusFailed
 		instance.HealthDetail = err.Error()
 		_ = h.runtimes.UpdateRuntime(instance)
-		model.Error(c, http.StatusBadGateway, model.CodeK8sAPIError, err.Error())
+		apiShared.K8sAPIError(c, err.Error())
 		return
 	}
 	instance.Status = model.RuntimeStatusDeploying
@@ -215,7 +214,7 @@ func (h *RuntimeHandler) Deploy(c *gin.Context) {
 	}
 	instance.ObservedGeneration = instance.DesiredGeneration
 	if err := h.runtimes.UpdateRuntime(instance); err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "保存 Runtime 部署状态失败")
+		apiShared.DBError(c, "保存 Runtime 部署状态失败")
 		return
 	}
 	h.sanitize(instance)
@@ -225,16 +224,16 @@ func (h *RuntimeHandler) Deploy(c *gin.Context) {
 func (h *RuntimeHandler) Health(c *gin.Context) {
 	id, err := apiShared.ParseID(c.Param("id"))
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "Runtime ID 无效")
+		apiShared.BadRequest(c, "Runtime ID 无效")
 		return
 	}
 	instance, err := h.runtimes.GetRuntime(id)
 	if err != nil {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, "Runtime 不存在")
+		apiShared.NotFound(c, "Runtime 不存在")
 		return
 	}
 	if h.k8s == nil && instance.DeploymentMode != model.RuntimeDeploymentExternal {
-		model.Error(c, http.StatusServiceUnavailable, model.CodeK8sUnavailable, "Kubernetes 集群未连接")
+		apiShared.ServiceUnavailable(c, model.CodeK8sUnavailable, "Kubernetes 集群未连接")
 		return
 	}
 	checker := h.k8s
@@ -243,7 +242,7 @@ func (h *RuntimeHandler) Health(c *gin.Context) {
 	}
 	status, detail := checker.Health(c.Request.Context(), instance)
 	if err := h.runtimes.UpdateRuntimeHealth(instance.ID, status, detail, time.Now()); err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "保存健康检查结果失败")
+		apiShared.DBError(c, "保存健康检查结果失败")
 		return
 	}
 	instance.HealthStatus, instance.HealthDetail, instance.LastHealthAt = status, detail, ptrTime(time.Now())
@@ -260,22 +259,22 @@ func (h *RuntimeHandler) Health(c *gin.Context) {
 func (h *RuntimeHandler) Uninstall(c *gin.Context) {
 	id, err := apiShared.ParseID(c.Param("id"))
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "Runtime ID 无效")
+		apiShared.BadRequest(c, "Runtime ID 无效")
 		return
 	}
 	instance, err := h.runtimes.GetRuntime(id)
 	if err != nil {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, "Runtime 不存在")
+		apiShared.NotFound(c, "Runtime 不存在")
 		return
 	}
 	if h.k8s == nil && instance.DeploymentMode != model.RuntimeDeploymentExternal {
-		model.Error(c, http.StatusServiceUnavailable, model.CodeK8sUnavailable, "Kubernetes 集群未连接")
+		apiShared.ServiceUnavailable(c, model.CodeK8sUnavailable, "Kubernetes 集群未连接")
 		return
 	}
 	if instance.DeploymentMode == model.RuntimeDeploymentExternal {
 		instance.Status = model.RuntimeStatusUninstalled
 		if err := h.runtimes.UpdateRuntime(instance); err != nil {
-			model.Error(c, http.StatusInternalServerError, model.CodeDBError, "保存卸载状态失败")
+			apiShared.DBError(c, "保存卸载状态失败")
 			return
 		}
 		h.sanitize(instance)
@@ -284,14 +283,14 @@ func (h *RuntimeHandler) Uninstall(c *gin.Context) {
 	}
 	deletePVC := c.Query("delete_data") == "true"
 	if err := h.k8s.Delete(c.Request.Context(), instance, deletePVC); err != nil {
-		model.Error(c, http.StatusBadGateway, model.CodeK8sAPIError, err.Error())
+		apiShared.K8sAPIError(c, err.Error())
 		return
 	}
 	instance.Status = model.RuntimeStatusUninstalled
 	instance.HealthStatus = ""
 	instance.HealthDetail = ""
 	if err := h.runtimes.UpdateRuntime(instance); err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "保存卸载状态失败")
+		apiShared.DBError(c, "保存卸载状态失败")
 		return
 	}
 	h.sanitize(instance)
@@ -311,34 +310,34 @@ func (h *RuntimeHandler) UninstallAgentTools(c *gin.Context) {
 func (h *RuntimeHandler) UpdateAgentTools(c *gin.Context) {
 	id, err := apiShared.ParseID(c.Param("id"))
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "Runtime ID 无效")
+		apiShared.BadRequest(c, "Runtime ID 无效")
 		return
 	}
 	instance, err := h.runtimes.GetRuntime(id)
 	if err != nil {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, "Runtime 不存在")
+		apiShared.NotFound(c, "Runtime 不存在")
 		return
 	}
 	if instance.DeploymentMode != model.RuntimeDeploymentManaged || instance.RuntimeType != model.RuntimeTypeNanobot {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "只有受管 Nanobot Runtime 支持 Cylism Agent 工具")
+		apiShared.ValidationError(c, "只有受管 Nanobot Runtime 支持 Cylism Agent 工具")
 		return
 	}
 	if !instance.AgentToolEnabled {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "请先安装 Cylism Agent 工具")
+		apiShared.ValidationError(c, "请先安装 Cylism Agent 工具")
 		return
 	}
 	if h.k8s == nil {
-		model.Error(c, http.StatusServiceUnavailable, model.CodeK8sUnavailable, "Kubernetes 集群未连接")
+		apiShared.ServiceUnavailable(c, model.CodeK8sUnavailable, "Kubernetes 集群未连接")
 		return
 	}
 	apiKey, err := crypto.Decrypt(h.encKey, instance.EncryptedAPIKey)
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, "读取 Runtime 模型凭据失败")
+		apiShared.InternalError(c, "读取 Runtime 模型凭据失败")
 		return
 	}
 	runtimeAPIKey, err := h.runtimeAPIKey(instance)
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, "读取 Runtime API 凭据失败")
+		apiShared.InternalError(c, "读取 Runtime API 凭据失败")
 		return
 	}
 	instance.DesiredGeneration++
@@ -346,13 +345,13 @@ func (h *RuntimeHandler) UpdateAgentTools(c *gin.Context) {
 		instance.Status = model.RuntimeStatusFailed
 		instance.HealthDetail = err.Error()
 		_ = h.runtimes.UpdateRuntime(instance)
-		model.Error(c, http.StatusBadGateway, model.CodeK8sAPIError, err.Error())
+		apiShared.K8sAPIError(c, err.Error())
 		return
 	}
 	instance.Status = model.RuntimeStatusDeploying
 	instance.ObservedGeneration = instance.DesiredGeneration
 	if err := h.runtimes.UpdateRuntime(instance); err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "保存 Runtime Agent 工具更新状态失败")
+		apiShared.DBError(c, "保存 Runtime Agent 工具更新状态失败")
 		return
 	}
 	h.sanitize(instance)
@@ -362,20 +361,20 @@ func (h *RuntimeHandler) UpdateAgentTools(c *gin.Context) {
 func (h *RuntimeHandler) setAgentTools(c *gin.Context, enabled bool) {
 	id, err := apiShared.ParseID(c.Param("id"))
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "Runtime ID 无效")
+		apiShared.BadRequest(c, "Runtime ID 无效")
 		return
 	}
 	instance, err := h.runtimes.GetRuntime(id)
 	if err != nil {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, "Runtime 不存在")
+		apiShared.NotFound(c, "Runtime 不存在")
 		return
 	}
 	if instance.DeploymentMode != model.RuntimeDeploymentManaged || instance.RuntimeType != model.RuntimeTypeNanobot {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "只有受管 Nanobot Runtime 支持 Cylism Agent 工具")
+		apiShared.ValidationError(c, "只有受管 Nanobot Runtime 支持 Cylism Agent 工具")
 		return
 	}
 	if h.k8s == nil {
-		model.Error(c, http.StatusServiceUnavailable, model.CodeK8sUnavailable, "Kubernetes 集群未连接")
+		apiShared.ServiceUnavailable(c, model.CodeK8sUnavailable, "Kubernetes 集群未连接")
 		return
 	}
 	if instance.AgentToolEnabled == enabled {
@@ -388,18 +387,18 @@ func (h *RuntimeHandler) setAgentTools(c *gin.Context, enabled bool) {
 	// platform action once uninstall has been requested.
 	if !enabled {
 		if err := h.runtimes.ReplaceAgentCapabilityGrants(instance.ID, nil); err != nil {
-			model.Error(c, http.StatusInternalServerError, model.CodeDBError, "撤销 Runtime Agent 授权失败")
+			apiShared.DBError(c, "撤销 Runtime Agent 授权失败")
 			return
 		}
 	}
 	apiKey, err := crypto.Decrypt(h.encKey, instance.EncryptedAPIKey)
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, "读取 Runtime 模型凭据失败")
+		apiShared.InternalError(c, "读取 Runtime 模型凭据失败")
 		return
 	}
 	runtimeAPIKey, err := h.runtimeAPIKey(instance)
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, "读取 Runtime API 凭据失败")
+		apiShared.InternalError(c, "读取 Runtime API 凭据失败")
 		return
 	}
 	instance.AgentToolEnabled = enabled
@@ -408,13 +407,13 @@ func (h *RuntimeHandler) setAgentTools(c *gin.Context, enabled bool) {
 		instance.Status = model.RuntimeStatusFailed
 		instance.HealthDetail = err.Error()
 		_ = h.runtimes.UpdateRuntime(instance)
-		model.Error(c, http.StatusBadGateway, model.CodeK8sAPIError, err.Error())
+		apiShared.K8sAPIError(c, err.Error())
 		return
 	}
 	instance.Status = model.RuntimeStatusDeploying
 	instance.ObservedGeneration = instance.DesiredGeneration
 	if err := h.runtimes.UpdateRuntime(instance); err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "保存 Runtime Agent 工具状态失败")
+		apiShared.DBError(c, "保存 Runtime Agent 工具状态失败")
 		return
 	}
 	h.sanitize(instance)

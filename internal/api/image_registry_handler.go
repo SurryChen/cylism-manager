@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"fmt"
-	"net/http"
 	"strings"
 	"time"
 
@@ -42,12 +41,12 @@ func NewImageRegistryHandler(s repository.ImageRegistryRepository, encKey []byte
 func (h *ImageRegistryHandler) List(c *gin.Context) {
 	projectID, err := optionalID(c.Query("project_id"))
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "项目 ID 无效")
+		apiShared.BadRequest(c, "项目 ID 无效")
 		return
 	}
 	registries, err := h.store.ListImageRegistries(projectID)
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		apiShared.DBError(c, err.Error())
 		return
 	}
 	model.Success(c, registries)
@@ -56,17 +55,17 @@ func (h *ImageRegistryHandler) List(c *gin.Context) {
 func (h *ImageRegistryHandler) Create(c *gin.Context) {
 	var req imageRegistryRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "镜像仓库定义无效")
+		apiShared.BadRequest(c, "镜像仓库定义无效")
 		return
 	}
 	registry, err := h.registryFromRequest(req, nil)
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		apiShared.ValidationError(c, err.Error())
 		return
 	}
 	registry.CreatedBy = apiShared.UserID(c)
 	if err := h.store.CreateImageRegistry(registry, req.ProjectIDs); err != nil {
-		model.Error(c, http.StatusConflict, model.CodeConflict, "镜像仓库名称、地址或项目授权无效")
+		apiShared.Conflict(c, "镜像仓库名称、地址或项目授权无效")
 		return
 	}
 	registry.CredentialConfigured = registryservice.CredentialConfigured(registry.Credential)
@@ -76,30 +75,30 @@ func (h *ImageRegistryHandler) Create(c *gin.Context) {
 func (h *ImageRegistryHandler) Update(c *gin.Context) {
 	id, err := apiShared.ParseID(c.Param("id"))
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "镜像仓库 ID 无效")
+		apiShared.BadRequest(c, "镜像仓库 ID 无效")
 		return
 	}
 	current, err := h.store.GetImageRegistry(id)
 	if err != nil {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, "镜像仓库不存在")
+		apiShared.NotFound(c, "镜像仓库不存在")
 		return
 	}
 	if current.ManagedRegistryID != nil {
-		model.Error(c, http.StatusConflict, model.CodeConflict, "该镜像仓库由受管制品库维护，请在交付中心修改")
+		apiShared.Conflict(c, "该镜像仓库由受管制品库维护，请在交付中心修改")
 		return
 	}
 	var req imageRegistryRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "镜像仓库定义无效")
+		apiShared.BadRequest(c, "镜像仓库定义无效")
 		return
 	}
 	registry, err := h.registryFromRequest(req, current)
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		apiShared.ValidationError(c, err.Error())
 		return
 	}
 	if err := h.store.UpdateImageRegistry(registry, req.ProjectIDs); err != nil {
-		model.Error(c, http.StatusConflict, model.CodeConflict, "镜像仓库名称、地址或项目授权无效")
+		apiShared.Conflict(c, "镜像仓库名称、地址或项目授权无效")
 		return
 	}
 	registry.CredentialConfigured = registryservice.CredentialConfigured(registry.Credential)
@@ -109,29 +108,29 @@ func (h *ImageRegistryHandler) Update(c *gin.Context) {
 func (h *ImageRegistryHandler) Delete(c *gin.Context) {
 	id, err := apiShared.ParseID(c.Param("id"))
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "镜像仓库 ID 无效")
+		apiShared.BadRequest(c, "镜像仓库 ID 无效")
 		return
 	}
 	registry, err := h.store.GetImageRegistry(id)
 	if err != nil {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, "镜像仓库不存在")
+		apiShared.NotFound(c, "镜像仓库不存在")
 		return
 	}
 	if registry.ManagedRegistryID != nil {
-		model.Error(c, http.StatusConflict, model.CodeConflict, "该镜像仓库由受管制品库维护，不能单独删除")
+		apiShared.Conflict(c, "该镜像仓库由受管制品库维护，不能单独删除")
 		return
 	}
 	count, err := h.store.CountImageRegistryReleases(id)
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		apiShared.DBError(c, err.Error())
 		return
 	}
 	if count > 0 {
-		model.Error(c, http.StatusConflict, model.CodeConflict, "镜像仓库已被发布记录引用，无法删除")
+		apiShared.Conflict(c, "镜像仓库已被发布记录引用，无法删除")
 		return
 	}
 	if err := h.store.DeleteImageRegistry(id); err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		apiShared.DBError(c, err.Error())
 		return
 	}
 	model.Success(c, gin.H{"id": id})
@@ -140,12 +139,12 @@ func (h *ImageRegistryHandler) Delete(c *gin.Context) {
 func (h *ImageRegistryHandler) Verify(c *gin.Context) {
 	id, err := apiShared.ParseID(c.Param("id"))
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "镜像仓库 ID 无效")
+		apiShared.BadRequest(c, "镜像仓库 ID 无效")
 		return
 	}
 	registry, err := h.store.GetImageRegistry(id)
 	if err != nil {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, "镜像仓库不存在")
+		apiShared.NotFound(c, "镜像仓库不存在")
 		return
 	}
 	status, detail := "succeeded", ""
@@ -155,12 +154,12 @@ func (h *ImageRegistryHandler) Verify(c *gin.Context) {
 		status, detail = "failed", verificationDetail(err)
 	}
 	if err := h.store.UpdateImageRegistryVerification(registry.ID, status, detail, time.Now()); err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "保存检测结果失败")
+		apiShared.DBError(c, "保存检测结果失败")
 		return
 	}
 	registry, err = h.store.GetImageRegistry(id)
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "读取检测结果失败")
+		apiShared.DBError(c, "读取检测结果失败")
 		return
 	}
 	model.Success(c, registry)

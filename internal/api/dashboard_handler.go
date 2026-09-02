@@ -1,8 +1,7 @@
 package api
 
 import (
-	"net/http"
-
+	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 	"github.com/cylism/cylism-manager/internal/model"
 
 	"github.com/cylism/cylism-manager/internal/repository"
@@ -21,7 +20,7 @@ func NewDashboardHandler(s repository.DashboardRepository) *DashboardHandler {
 func (h *DashboardHandler) Get(c *gin.Context) {
 	stats, err := h.store.GetDashboardStats(30)
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, err.Error())
+		apiShared.InternalError(c, err.Error())
 		return
 	}
 

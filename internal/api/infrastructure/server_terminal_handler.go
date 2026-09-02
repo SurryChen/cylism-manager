@@ -4,9 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"strconv"
 	"time"
 
+	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 	"github.com/cylism/cylism-manager/internal/crypto"
 	"github.com/cylism/cylism-manager/internal/repository"
 	"github.com/gin-gonic/gin"
@@ -25,8 +25,8 @@ func NewServerTerminalHandler(st repository.ServerRepository, encKey []byte) *Se
 }
 
 func (h *ServerTerminalHandler) Terminal(c *gin.Context) {
-	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
-	if err != nil || id == 0 {
+	id, err := apiShared.ParsePositiveID(c.Param("id"))
+	if err != nil {
 		return
 	}
 	server, err := h.store.GetServer(uint(id))

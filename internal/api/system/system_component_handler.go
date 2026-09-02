@@ -37,12 +37,12 @@ type systemComponentUpdateRequest struct {
 
 func (h *SystemComponentHandler) List(c *gin.Context) {
 	if h.listService == nil {
-		model.Error(c, http.StatusServiceUnavailable, model.CodeK8sUnavailable, "Kubernetes 集群未连接")
+		apiShared.Error(c, http.StatusServiceUnavailable, model.CodeK8sUnavailable, "Kubernetes 集群未连接")
 		return
 	}
 	result, err := h.listService.List(c.Request.Context())
 	if err != nil {
-		model.Error(c, http.StatusServiceUnavailable, model.CodeK8sUnavailable, err.Error())
+		apiShared.Error(c, http.StatusServiceUnavailable, model.CodeK8sUnavailable, err.Error())
 		return
 	}
 	model.Success(c, result)
@@ -52,7 +52,7 @@ func (h *SystemComponentHandler) Update(c *gin.Context) {
 	chart := strings.TrimSpace(c.Param("chart"))
 	var req systemComponentUpdateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "请求参数无效")
+		apiShared.ValidationError(c, "请求参数无效")
 		return
 	}
 	timeout := ""
@@ -62,7 +62,7 @@ func (h *SystemComponentHandler) Update(c *gin.Context) {
 	result, err := systemcomponentservice.Update(c.Request.Context(), h.configs, h.adapter, chart, req.ValuesContent, timeout, apiShared.UserID(c), time.Now())
 	if err != nil {
 		status, code := workflowHTTPError(err)
-		model.Error(c, status, code, err.Error())
+		apiShared.Error(c, status, code, err.Error())
 		return
 	}
 	model.SuccessWithMessage(c, result.Config, "系统组件配置已应用")
@@ -90,7 +90,7 @@ func (h *SystemComponentHandler) Revert(c *gin.Context) {
 	revertErr := systemcomponentservice.RevertManaged(c.Request.Context(), h.configs, h.adapter, chart)
 	if revertErr != nil {
 		status, code := workflowHTTPError(revertErr)
-		model.Error(c, status, code, "恢复系统组件默认配置失败: "+revertErr.Error())
+		apiShared.Error(c, status, code, "恢复系统组件默认配置失败: "+revertErr.Error())
 		return
 	}
 	model.SuccessWithMessage(c, nil, "已恢复系统组件默认配置")

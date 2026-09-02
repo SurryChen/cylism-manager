@@ -54,7 +54,7 @@ func (h *ApplicationHandler) ListManagedFiles(c *gin.Context) {
 	}
 	files, err := h.resources.ListApplicationManagedFiles(app.ID)
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		apiShared.DBError(c, err.Error())
 		return
 	}
 	result := make([]managedFileInfo, 0, len(files))
@@ -102,31 +102,31 @@ type integrationHandoffRequest struct {
 func (h *ApplicationHandler) createIntegrationHandoff(c *gin.Context) {
 	applicationID, err := apiShared.ParseID(c.Param("id"))
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "应用 ID 无效")
+		apiShared.BadRequest(c, "应用 ID 无效")
 		return
 	}
 	app, err := h.queries.GetApplication(applicationID)
 	if err != nil {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, "应用不存在")
+		apiShared.NotFound(c, "应用不存在")
 		return
 	}
 	var req integrationHandoffRequest
 	if err := c.ShouldBindJSON(&req); err != nil || req.EndpointID == 0 {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "应用入口必填")
+		apiShared.BadRequest(c, "应用入口必填")
 		return
 	}
 	endpoint, err := h.resources.GetApplicationEndpoint(app.ID, req.EndpointID)
 	if err != nil {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, "应用入口不存在")
+		apiShared.NotFound(c, "应用入口不存在")
 		return
 	}
 	if endpoint.AccessMode != model.ApplicationEndpointAccessProtectedConsole {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "该入口不是受保护控制台")
+		apiShared.ValidationError(c, "该入口不是受保护控制台")
 		return
 	}
 	// Validate and construct the redirect before persisting the one-time session.
 	if endpoint.Domain == "" {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "应用入口尚未绑定域名")
+		apiShared.ValidationError(c, "应用入口尚未绑定域名")
 		return
 	}
 	scheme := "http"
@@ -137,7 +137,7 @@ func (h *ApplicationHandler) createIntegrationHandoff(c *gin.Context) {
 	if strings.TrimSpace(req.RedirectURL) != "" {
 		localURL, err := parseLoopbackRedirectURL(req.RedirectURL)
 		if err != nil {
-			model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "本地联调地址无效，仅支持 http(s)://localhost、127.0.0.1 或 ::1")
+			apiShared.ValidationError(c, "本地联调地址无效，仅支持 http(s)://localhost、127.0.0.1 或 ::1")
 			return
 		}
 		endpointURL = localURL.String()
@@ -146,17 +146,17 @@ func (h *ApplicationHandler) createIntegrationHandoff(c *gin.Context) {
 	now := time.Now()
 	code, err := randomOpaqueValue(32)
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "创建管理会话失败")
+		apiShared.DBError(c, "创建管理会话失败")
 		return
 	}
 	session := &model.IntegrationSession{HandoffCodeHash: opaqueHash(code), UserID: apiShared.UserID(c), ProjectID: app.ProjectID, ApplicationID: app.ID, EnvironmentID: app.EnvironmentID, ActionsData: strings.Join(actions, ","), HandoffExpiresAt: now.Add(integrationHandoffTTL), ExpiresAt: now.Add(integrationSessionTTL)}
 	if err := h.sessions.CreateIntegrationSession(session); err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "创建管理会话失败")
+		apiShared.DBError(c, "创建管理会话失败")
 		return
 	}
 	handoffURL, err := appendHandoffCode(endpointURL, code)
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "生成跳转地址失败")
+		apiShared.DBError(c, "生成跳转地址失败")
 		return
 	}
 	model.Success(c, gin.H{"handoff_code": code, "handoff_url": handoffURL, "expires_in": int(integrationHandoffTTL.Seconds())})
@@ -210,18 +210,18 @@ func bearerValue(c *gin.Context) string {
 func (h *ApplicationHandler) ExchangeIntegrationSession(c *gin.Context) {
 	code := bearerValue(c)
 	if code == "" {
-		model.Error(c, http.StatusUnauthorized, model.CodeUnauthorized, "未提供跳转码")
+		apiShared.Unauthorized(c, "未提供跳转码")
 		return
 	}
 	now := time.Now()
 	token, err := randomOpaqueValue(48)
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "交换管理会话失败")
+		apiShared.DBError(c, "交换管理会话失败")
 		return
 	}
 	session, err := h.sessions.ExchangeIntegrationSession(opaqueHash(code), opaqueHash(token), now.Add(integrationSessionTTL), now)
 	if err != nil {
-		model.Error(c, http.StatusUnauthorized, model.CodeUnauthorized, "跳转码无效或已过期")
+		apiShared.Unauthorized(c, "跳转码无效或已过期")
 		return
 	}
 	model.Success(c, gin.H{"session_token": token, "expires_at": session.ExpiresAt})
@@ -238,28 +238,28 @@ type integrationDelegationRequest struct {
 func (h *ApplicationHandler) createIntegrationDelegation(c *gin.Context) {
 	token := bearerValue(c)
 	if token == "" {
-		model.Error(c, http.StatusUnauthorized, model.CodeUnauthorized, "未提供管理会话")
+		apiShared.Unauthorized(c, "未提供管理会话")
 		return
 	}
 	session, err := h.sessions.GetActiveIntegrationSession(opaqueHash(token), time.Now())
 	if err != nil {
-		model.Error(c, http.StatusUnauthorized, model.CodeUnauthorized, "管理会话无效或已过期")
+		apiShared.Unauthorized(c, "管理会话无效或已过期")
 		return
 	}
 	actions := strings.Split(session.ActionsData, ",")
 	var req integrationDelegationRequest
 	if err := c.ShouldBindJSON(&req); err != nil || strings.TrimSpace(req.Capability) == "" {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "capability 必填")
+		apiShared.ValidationError(c, "capability 必填")
 		return
 	}
 	capability, err := model.NormalizeApplicationCapabilities([]string{req.Capability})
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "capability 格式无效")
+		apiShared.ValidationError(c, "capability 格式无效")
 		return
 	}
 	delegation, err := auth.GenerateDelegationToken(h.delegationSecret, auth.DelegationClaims{UserID: session.UserID, ProjectID: session.ProjectID, EnvironmentIDs: []uint{session.EnvironmentID}, Capability: capability[0], Actions: actions}, auth.MaxDelegationTTL)
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "签发委托失败")
+		apiShared.DBError(c, "签发委托失败")
 		return
 	}
 	model.Success(c, gin.H{"token": delegation, "expires_in": int(auth.MaxDelegationTTL.Seconds())})
@@ -268,26 +268,26 @@ func (h *ApplicationHandler) createIntegrationDelegation(c *gin.Context) {
 func (h *ApplicationHandler) CreateDelegation(c *gin.Context) {
 	applicationID, err := apiShared.ParseID(c.Param("id"))
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "应用 ID 无效")
+		apiShared.BadRequest(c, "应用 ID 无效")
 		return
 	}
 	app, err := h.queries.GetApplication(applicationID)
 	if err != nil {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, "应用不存在")
+		apiShared.NotFound(c, "应用不存在")
 		return
 	}
 	var req delegationRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "委托参数无效")
+		apiShared.BadRequest(c, "委托参数无效")
 		return
 	}
 	if strings.TrimSpace(req.Capability) == "" {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "委托 capability 必填")
+		apiShared.ValidationError(c, "委托 capability 必填")
 		return
 	}
 	normalized, normalizeErr := model.NormalizeApplicationCapabilities([]string{req.Capability})
 	if normalizeErr != nil || !applicationHasCapability(*app, normalized[0]) {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "委托 capability 必须属于目标应用")
+		apiShared.ValidationError(c, "委托 capability 必须属于目标应用")
 		return
 	}
 	if len(req.EnvironmentIDs) == 0 {
@@ -296,7 +296,7 @@ func (h *ApplicationHandler) CreateDelegation(c *gin.Context) {
 	for _, environmentID := range req.EnvironmentIDs {
 		environment, environmentErr := h.queries.GetEnvironment(app.ProjectID, environmentID)
 		if environmentErr != nil || environment.ProjectID != app.ProjectID {
-			model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "委托环境不属于应用项目")
+			apiShared.ValidationError(c, "委托环境不属于应用项目")
 			return
 		}
 	}
@@ -304,16 +304,16 @@ func (h *ApplicationHandler) CreateDelegation(c *gin.Context) {
 		req.Actions = []string{"application:read", "configmap:read", "configmap:write", "application:restart"}
 	}
 	if len(h.delegationSecret) == 0 {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "委托签名未配置")
+		apiShared.DBError(c, "委托签名未配置")
 		return
 	}
 	token, err := auth.GenerateDelegationToken(h.delegationSecret, auth.DelegationClaims{
-		UserID: apiShared.UserID(c), Username: c.GetString("username"), ProjectID: app.ProjectID,
+		UserID: apiShared.UserID(c), Username: apiShared.Username(c), ProjectID: app.ProjectID,
 		EnvironmentIDs: req.EnvironmentIDs, Capability: normalized[0], Actions: req.Actions,
 		ApplicationIDs: []uint{app.ID},
 	}, auth.MaxDelegationTTL)
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "签发委托失败")
+		apiShared.DBError(c, "签发委托失败")
 		return
 	}
 	model.Success(c, gin.H{"token": token, "expires_in": int(auth.MaxDelegationTTL.Seconds())})
@@ -325,19 +325,19 @@ func (h *ApplicationHandler) IntegrationDiscoverApplications(c *gin.Context) {
 		integrationForbidden(c)
 		return
 	}
-	projectID, err := optionalQueryID(c, "project_id")
+	projectID, err := apiShared.OptionalID(strings.TrimSpace(c.Query("project_id")))
 	if err != nil || (projectID != 0 && projectID != claims.ProjectID) {
 		integrationForbidden(c)
 		return
 	}
-	environmentID, err := optionalQueryID(c, "environment_id")
+	environmentID, err := apiShared.OptionalID(strings.TrimSpace(c.Query("environment_id")))
 	if err != nil || (environmentID != 0 && !claims.AllowsEnvironment(environmentID)) {
 		integrationForbidden(c)
 		return
 	}
 	applications, err := h.queries.ListApplications(claims.ProjectID, environmentID)
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		apiShared.DBError(c, err.Error())
 		return
 	}
 	filtered := make([]model.Application, 0, len(applications))
@@ -348,7 +348,7 @@ func (h *ApplicationHandler) IntegrationDiscoverApplications(c *gin.Context) {
 	}
 	releases, err := h.queries.ListReleasesByApplications(applicationIDs(filtered))
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		apiShared.DBError(c, err.Error())
 		return
 	}
 	runtimes := h.queries.ApplicationRuntimeInfos(c.Request.Context(), K8s, filtered, releases)
@@ -366,7 +366,7 @@ func (h *ApplicationHandler) IntegrationGetApplicationRuntime(c *gin.Context) {
 	}
 	releases, err := h.queries.ListReleases(app.ID)
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		apiShared.DBError(c, err.Error())
 		return
 	}
 	model.Success(c, h.queries.ApplicationRuntimeInfos(c.Request.Context(), K8s, []model.Application{*app}, map[uint][]model.Release{app.ID: releases})[app.ID])
@@ -380,24 +380,24 @@ func (h *ApplicationHandler) IntegrationListManagedConfigMaps(c *gin.Context) {
 	template, err := h.resources.GetDefaultApplicationDeploymentTemplate(app.ID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			model.Error(c, http.StatusNotFound, model.CodeNotFound, "应用没有可用的默认上线模板")
+			apiShared.NotFound(c, "应用没有可用的默认上线模板")
 			return
 		}
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		apiShared.DBError(c, err.Error())
 		return
 	}
 	if !template.Enabled {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, "应用没有可用的默认上线模板")
+		apiShared.NotFound(c, "应用没有可用的默认上线模板")
 		return
 	}
 	files, err := h.resources.ListApplicationManagedFiles(app.ID)
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		apiShared.DBError(c, err.Error())
 		return
 	}
 	var spec application.ReleaseSpec
 	if err := json.Unmarshal([]byte(template.Spec), &spec); err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "读取默认模板 ConfigMap 配置失败")
+		apiShared.DBError(c, "读取默认模板 ConfigMap 配置失败")
 		return
 	}
 	result := make([]configMapInfo, 0, len(files))
@@ -420,21 +420,21 @@ func (h *ApplicationHandler) IntegrationGetManagedConfigMap(c *gin.Context) {
 	}
 	configMapID, err := apiShared.ParseID(c.Param("configMapID"))
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "ConfigMap 配置 ID 无效")
+		apiShared.BadRequest(c, "ConfigMap 配置 ID 无效")
 		return
 	}
 	file, err := h.resources.GetApplicationManagedFile(app.ID, configMapID)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, "受管 ConfigMap 配置不存在")
+		apiShared.NotFound(c, "受管 ConfigMap 配置不存在")
 		return
 	}
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		apiShared.DBError(c, err.Error())
 		return
 	}
 	template, spec, err := h.templateConfigMap(app, file)
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		apiShared.ValidationError(c, err.Error())
 		return
 	}
 	model.Success(c, gin.H{"id": file.ID, "resource_kind": file.ResourceKind, "resource_name": file.ResourceName, "key": file.Key, "mount_path": file.MountPath, "format": file.Format, "version": template.Revision, "template_id": template.ID, "template_revision": template.Revision, "content": spec.Config[file.Key]})
@@ -447,16 +447,16 @@ func (h *ApplicationHandler) IntegrationReplaceManagedConfigMap(c *gin.Context) 
 	}
 	configMapID, err := apiShared.ParseID(c.Param("configMapID"))
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "ConfigMap 配置 ID 无效")
+		apiShared.BadRequest(c, "ConfigMap 配置 ID 无效")
 		return
 	}
 	var req configMapReplaceRequest
 	if err := c.ShouldBindJSON(&req); err != nil || req.ExpectedRevision == 0 {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "ConfigMap 配置参数无效")
+		apiShared.BadRequest(c, "ConfigMap 配置参数无效")
 		return
 	}
 	if len(req.Content) > 4<<20 {
-		model.Error(c, http.StatusRequestEntityTooLarge, model.CodeValidationFail, "ConfigMap 内容不能超过 4 MiB")
+		apiShared.Error(c, http.StatusRequestEntityTooLarge, model.CodeValidationFail, "ConfigMap 内容不能超过 4 MiB")
 		return
 	}
 	if req.Restart && !delegationClaims(c).Allows("application:restart") {
@@ -467,36 +467,36 @@ func (h *ApplicationHandler) IntegrationReplaceManagedConfigMap(c *gin.Context) 
 	defer managedFileMutationMu.Unlock()
 	file, err := h.resources.GetApplicationManagedFile(app.ID, configMapID)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, "受管 ConfigMap 配置不存在")
+		apiShared.NotFound(c, "受管 ConfigMap 配置不存在")
 		return
 	}
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		apiShared.DBError(c, err.Error())
 		return
 	}
 	template, spec, err := h.templateConfigMap(app, file)
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		apiShared.ValidationError(c, err.Error())
 		return
 	}
 	if template.Revision != req.ExpectedRevision {
-		model.Error(c, http.StatusConflict, model.CodeConflict, fmt.Sprintf("模板版本冲突，当前版本为 %d", template.Revision))
+		apiShared.Conflict(c, fmt.Sprintf("模板版本冲突，当前版本为 %d", template.Revision))
 		return
 	}
 	spec.Config[file.Key] = req.Content
 	updated, err := h.templateFromRequest(app, &deploymentTemplateRequest{Name: template.Name, Description: template.Description, Enabled: template.Enabled, Spec: spec}, template.ID)
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		apiShared.ValidationError(c, err.Error())
 		return
 	}
 	updated.UpdatedBy = apiShared.UserID(c)
 	if err := h.resources.UpdateApplicationDeploymentTemplateIfRevision(updated, req.ExpectedRevision); err != nil {
 		var conflict *model.TemplateRevisionConflictError
 		if errors.As(err, &conflict) {
-			model.Error(c, http.StatusConflict, model.CodeConflict, conflict.Error())
+			apiShared.Conflict(c, conflict.Error())
 			return
 		}
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		apiShared.DBError(c, err.Error())
 		return
 	}
 	response := gin.H{"version": updated.Revision, "template_id": updated.ID, "template_revision": updated.Revision}
@@ -519,7 +519,7 @@ func (h *ApplicationHandler) IntegrationRestartApplication(c *gin.Context) {
 	}
 	release, err := h.createRestartRelease(c.Request.Context(), app, apiShared.UserID(c))
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		apiShared.ValidationError(c, err.Error())
 		return
 	}
 	model.Success(c, gin.H{"release_id": release.ID, "status": release.Status})
@@ -532,16 +532,16 @@ func (h *ApplicationHandler) IntegrationGetRelease(c *gin.Context) {
 	}
 	releaseID, err := apiShared.ParseID(c.Param("releaseID"))
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "发布 ID 无效")
+		apiShared.BadRequest(c, "发布 ID 无效")
 		return
 	}
 	release, err := h.resources.GetRelease(releaseID)
 	if errors.Is(err, gorm.ErrRecordNotFound) || release.ApplicationID != app.ID {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, "发布不存在")
+		apiShared.NotFound(c, "发布不存在")
 		return
 	}
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		apiShared.DBError(c, err.Error())
 		return
 	}
 	model.Success(c, applicationReleaseSummary{ID: release.ID, Sequence: release.Sequence, Version: release.Version, Status: release.Status})
@@ -550,12 +550,12 @@ func (h *ApplicationHandler) IntegrationGetRelease(c *gin.Context) {
 func (h *ApplicationHandler) applicationForParam(c *gin.Context) (*model.Application, bool) {
 	id, err := apiShared.ParseID(c.Param("id"))
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "应用 ID 无效")
+		apiShared.BadRequest(c, "应用 ID 无效")
 		return nil, false
 	}
 	app, err := h.queries.GetApplication(id)
 	if err != nil {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, "应用不存在")
+		apiShared.NotFound(c, "应用不存在")
 		return nil, false
 	}
 	return app, true
@@ -585,7 +585,7 @@ func delegationClaims(c *gin.Context) *auth.DelegationClaims {
 }
 
 func integrationForbidden(c *gin.Context) {
-	model.Error(c, http.StatusForbidden, model.CodeUnauthorized, "委托范围不允许该操作")
+	apiShared.Error(c, http.StatusForbidden, model.CodeUnauthorized, "委托范围不允许该操作")
 }
 
 // templateConfigMap returns the ConfigMap section from the default template.

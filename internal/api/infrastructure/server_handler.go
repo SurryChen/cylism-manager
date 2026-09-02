@@ -4,7 +4,6 @@ import (
 	"crypto/md5"
 	"encoding/hex"
 	"errors"
-	"net/http"
 
 	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 	"github.com/cylism/cylism-manager/internal/crypto"
@@ -39,7 +38,7 @@ type createServerRequest struct {
 func (h *ServerHandler) Create(c *gin.Context) {
 	var req createServerRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, err.Error())
+		apiShared.BadRequest(c, err.Error())
 		return
 	}
 	if req.SSHPort == 0 {
@@ -62,7 +61,7 @@ func (h *ServerHandler) Create(c *gin.Context) {
 		SSHKeyPassphrase: passphrase, SSHKeyHash: keyHash,
 	}
 	if err := h.cluster.CreateServer(server); err != nil {
-		model.Error(c, http.StatusConflict, model.CodeConflict, err.Error())
+		apiShared.Conflict(c, err.Error())
 		return
 	}
 	model.Success(c, server)
@@ -71,7 +70,7 @@ func (h *ServerHandler) Create(c *gin.Context) {
 func (h *ServerHandler) List(c *gin.Context) {
 	servers, err := h.cluster.ListServers()
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, err.Error())
+		apiShared.InternalError(c, err.Error())
 		return
 	}
 	model.Success(c, servers)
@@ -80,12 +79,12 @@ func (h *ServerHandler) List(c *gin.Context) {
 func (h *ServerHandler) Get(c *gin.Context) {
 	id, err := apiShared.ParsePositiveID(c.Param("id"))
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "invalid server id")
+		apiShared.BadRequest(c, "invalid server id")
 		return
 	}
 	server, err := h.cluster.GetServer(id)
 	if err != nil {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, "server not found")
+		apiShared.NotFound(c, "server not found")
 		return
 	}
 	model.Success(c, server)
@@ -94,17 +93,17 @@ func (h *ServerHandler) Get(c *gin.Context) {
 func (h *ServerHandler) Update(c *gin.Context) {
 	id, err := apiShared.ParsePositiveID(c.Param("id"))
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "invalid server id")
+		apiShared.BadRequest(c, "invalid server id")
 		return
 	}
 	server, err := h.cluster.GetServer(id)
 	if err != nil {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, "server not found")
+		apiShared.NotFound(c, "server not found")
 		return
 	}
 	var updates map[string]interface{}
 	if err := c.ShouldBindJSON(&updates); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, err.Error())
+		apiShared.BadRequest(c, err.Error())
 		return
 	}
 	if value, ok := updates["name"].(string); ok {
@@ -135,7 +134,7 @@ func (h *ServerHandler) Update(c *gin.Context) {
 		server.SSHAuthType = value
 	}
 	if err := h.cluster.UpdateServer(server); err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, err.Error())
+		apiShared.InternalError(c, err.Error())
 		return
 	}
 	model.Success(c, server)
@@ -144,11 +143,11 @@ func (h *ServerHandler) Update(c *gin.Context) {
 func (h *ServerHandler) Delete(c *gin.Context) {
 	id, err := apiShared.ParsePositiveID(c.Param("id"))
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "invalid server id")
+		apiShared.BadRequest(c, "invalid server id")
 		return
 	}
 	if err := h.cluster.DeleteServer(id); err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, err.Error())
+		apiShared.InternalError(c, err.Error())
 		return
 	}
 	model.SuccessWithMessage(c, nil, "操作成功")
@@ -157,16 +156,16 @@ func (h *ServerHandler) Delete(c *gin.Context) {
 func (h *ServerHandler) Unbind(c *gin.Context) {
 	id, err := apiShared.ParsePositiveID(c.Param("id"))
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "invalid server id")
+		apiShared.BadRequest(c, "invalid server id")
 		return
 	}
 	server, err := h.cluster.UnbindServer(id)
 	if err != nil {
 		if !errors.Is(err, gorm.ErrRecordNotFound) {
-			model.Error(c, http.StatusInternalServerError, model.CodeInternalError, err.Error())
+			apiShared.InternalError(c, err.Error())
 			return
 		}
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, "server not found")
+		apiShared.NotFound(c, "server not found")
 		return
 	}
 	model.SuccessWithMessage(c, server, "已解除集群绑定")
@@ -175,16 +174,16 @@ func (h *ServerHandler) Unbind(c *gin.Context) {
 func (h *ServerHandler) Probe(c *gin.Context) {
 	id, err := apiShared.ParsePositiveID(c.Param("id"))
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "invalid id")
+		apiShared.BadRequest(c, "invalid id")
 		return
 	}
 	result, err := h.cluster.ProbeServer(id)
 	if err != nil {
 		if !errors.Is(err, gorm.ErrRecordNotFound) {
-			model.Error(c, http.StatusInternalServerError, model.CodeInternalError, err.Error())
+			apiShared.InternalError(c, err.Error())
 			return
 		}
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, "server not found")
+		apiShared.NotFound(c, "server not found")
 		return
 	}
 	model.Success(c, result)
@@ -193,16 +192,16 @@ func (h *ServerHandler) Probe(c *gin.Context) {
 func (h *ServerHandler) Precheck(c *gin.Context) {
 	id, err := apiShared.ParsePositiveID(c.Param("id"))
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "invalid id")
+		apiShared.BadRequest(c, "invalid id")
 		return
 	}
 	result, err := h.cluster.PrecheckServer(id)
 	if err != nil {
 		if !errors.Is(err, gorm.ErrRecordNotFound) {
-			model.Error(c, http.StatusInternalServerError, model.CodeInternalError, err.Error())
+			apiShared.InternalError(c, err.Error())
 			return
 		}
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, "server not found")
+		apiShared.NotFound(c, "server not found")
 		return
 	}
 	model.Success(c, result)
@@ -211,16 +210,16 @@ func (h *ServerHandler) Precheck(c *gin.Context) {
 func (h *ServerHandler) Stats(c *gin.Context) {
 	id, err := apiShared.ParsePositiveID(c.Param("id"))
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "invalid id")
+		apiShared.BadRequest(c, "invalid id")
 		return
 	}
 	result, err := h.cluster.ServerStats(id)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			model.Error(c, http.StatusNotFound, model.CodeNotFound, "server not found")
+			apiShared.NotFound(c, "server not found")
 			return
 		}
-		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, err.Error())
+		apiShared.InternalError(c, err.Error())
 		return
 	}
 	model.Success(c, result)
@@ -229,7 +228,7 @@ func (h *ServerHandler) Stats(c *gin.Context) {
 func (h *ServerHandler) ResourceStats(c *gin.Context) {
 	results, err := h.cluster.ResourceStats()
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, err.Error())
+		apiShared.InternalError(c, err.Error())
 		return
 	}
 	model.Success(c, results)

@@ -4,9 +4,9 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strconv"
 	"strings"
 
+	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 	"github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/repository"
@@ -60,20 +60,11 @@ func NewDomainHandlerWithService(domains repository.NetworkRepository, client *k
 	return &DomainHandler{k8s: client, network: service}
 }
 
-func optionalQueryID(c *gin.Context, key string) (uint, error) {
-	raw := strings.TrimSpace(c.Query(key))
-	if raw == "" {
-		return 0, nil
-	}
-	value, err := strconv.ParseUint(raw, 10, 0)
-	return uint(value), err
-}
-
 func (h *DomainHandler) List(c *gin.Context) {
 	if c.Query("unassigned") == "true" {
 		domains, err := h.network.ListUnassignedManagedDomains()
 		if err != nil {
-			model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+			apiShared.DBError(c, err.Error())
 			return
 		}
 		result := make([]ManagedDomainInfo, 0, len(domains))
@@ -83,14 +74,14 @@ func (h *DomainHandler) List(c *gin.Context) {
 		model.Success(c, result)
 		return
 	}
-	environmentID, err := optionalQueryID(c, "environment_id")
+	environmentID, err := apiShared.OptionalID(strings.TrimSpace(c.Query("environment_id")))
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "环境 ID 无效")
+		apiShared.BadRequest(c, "环境 ID 无效")
 		return
 	}
 	domains, err := h.network.ListManagedDomains(environmentID)
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		apiShared.DBError(c, err.Error())
 		return
 	}
 	result := make([]ManagedDomainInfo, 0, len(domains))
@@ -103,30 +94,30 @@ func (h *DomainHandler) List(c *gin.Context) {
 func (h *DomainHandler) Create(c *gin.Context) {
 	var req domainRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "域名定义无效")
+		apiShared.BadRequest(c, "域名定义无效")
 		return
 	}
 	environment, err := h.domainEnvironment(req.EnvironmentID)
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		apiShared.ValidationError(c, err.Error())
 		return
 	}
 	domain, err := domainFromRequest(req, nil, environment)
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		apiShared.ValidationError(c, err.Error())
 		return
 	}
 	if err := h.validateManagedDomainPrerequisites(domain); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		apiShared.ValidationError(c, err.Error())
 		return
 	}
 	if err := h.network.CreateManagedDomain(domain); err != nil {
-		model.Error(c, http.StatusConflict, model.CodeConflict, "域名已存在")
+		apiShared.Conflict(c, "域名已存在")
 		return
 	}
 	assignManagedCertificateNames(domain)
 	if err := h.network.UpdateManagedDomain(domain); err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		apiShared.DBError(c, err.Error())
 		return
 	}
 	info := h.DomainInfo(domain)
@@ -140,23 +131,23 @@ func (h *DomainHandler) Create(c *gin.Context) {
 }
 
 func (h *DomainHandler) ListImportableCertificates(c *gin.Context) {
-	environmentID, err := optionalQueryID(c, "environment_id")
+	environmentID, err := apiShared.OptionalID(strings.TrimSpace(c.Query("environment_id")))
 	if err != nil || environmentID == 0 {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "环境 ID 必填且必须有效")
+		apiShared.BadRequest(c, "环境 ID 必填且必须有效")
 		return
 	}
 	environment, err := h.domainEnvironment(environmentID)
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		apiShared.ValidationError(c, err.Error())
 		return
 	}
 	if h.k8s == nil {
-		model.Error(c, http.StatusOK, model.CodeK8sUnavailable, "K8s 集群未连接")
+		apiShared.K8sUnavailable(c)
 		return
 	}
 	certificates, err := h.network.ListCertificates()
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeK8sAPIError, err.Error())
+		apiShared.Error(c, http.StatusBadRequest, model.CodeK8sAPIError, err.Error())
 		return
 	}
 	candidates := make([]k8s.CertInfo, 0)
@@ -170,19 +161,19 @@ func (h *DomainHandler) ListImportableCertificates(c *gin.Context) {
 }
 
 func (h *DomainHandler) ListClaimable(c *gin.Context) {
-	environmentID, err := optionalQueryID(c, "environment_id")
+	environmentID, err := apiShared.OptionalID(strings.TrimSpace(c.Query("environment_id")))
 	if err != nil || environmentID == 0 {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "环境 ID 必填且必须有效")
+		apiShared.BadRequest(c, "环境 ID 必填且必须有效")
 		return
 	}
 	environment, err := h.domainEnvironment(environmentID)
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		apiShared.ValidationError(c, err.Error())
 		return
 	}
 	domains, err := h.network.ListClaimableManagedDomains(environment.Namespace)
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		apiShared.DBError(c, err.Error())
 		return
 	}
 	result := make([]ManagedDomainInfo, 0, len(domains))
@@ -195,29 +186,29 @@ func (h *DomainHandler) ListClaimable(c *gin.Context) {
 func (h *DomainHandler) ImportCertificate(c *gin.Context) {
 	var req importCertificateRequest
 	if err := c.ShouldBindJSON(&req); err != nil || strings.TrimSpace(req.CertificateName) == "" {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "环境和 Certificate 名称必填")
+		apiShared.BadRequest(c, "环境和 Certificate 名称必填")
 		return
 	}
 	environment, err := h.domainEnvironment(req.EnvironmentID)
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		apiShared.ValidationError(c, err.Error())
 		return
 	}
 	if h.k8s == nil {
-		model.Error(c, http.StatusOK, model.CodeK8sUnavailable, "K8s 集群未连接")
+		apiShared.K8sUnavailable(c)
 		return
 	}
 	certificate, err := h.network.GetCertificate(environment.Namespace, strings.TrimSpace(req.CertificateName))
 	if err != nil {
 		if apierrors.IsNotFound(err) {
-			model.Error(c, http.StatusNotFound, model.CodeNotFound, "Certificate 不存在")
+			apiShared.NotFound(c, "Certificate 不存在")
 			return
 		}
-		model.Error(c, http.StatusBadRequest, model.CodeK8sAPIError, err.Error())
+		apiShared.Error(c, http.StatusBadRequest, model.CodeK8sAPIError, err.Error())
 		return
 	}
 	if !importableCertificate(*certificate) {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "Certificate 必须包含一个精确域名、签发者和 TLS Secret")
+		apiShared.ValidationError(c, "Certificate 必须包含一个精确域名、签发者和 TLS Secret")
 		return
 	}
 	issuerKind := certificate.IssuerKind
@@ -227,18 +218,18 @@ func (h *DomainHandler) ImportCertificate(c *gin.Context) {
 	hostname := strings.ToLower(certificate.Domains[0])
 	if existing, err := h.network.GetManagedDomainByHostname(hostname); err == nil {
 		if existing.EnvironmentID == 0 && existing.Namespace == environment.Namespace {
-			model.Error(c, http.StatusConflict, model.CodeConflict, "域名存在未关联的历史记录，请使用“关联历史域名”")
+			apiShared.Conflict(c, "域名存在未关联的历史记录，请使用“关联历史域名”")
 			return
 		}
-		model.Error(c, http.StatusConflict, model.CodeConflict, "域名已被平台管理")
+		apiShared.Conflict(c, "域名已被平台管理")
 		return
 	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		apiShared.DBError(c, err.Error())
 		return
 	}
 	domain := &model.ManagedDomain{Hostname: hostname, EnvironmentID: environment.ID, Namespace: environment.Namespace, CertificateName: certificate.Name, TLSSecretName: certificate.SecretName, IssuerRef: certificate.Issuer, IssuerKind: issuerKind, CertificateOwnership: "imported", Description: strings.TrimSpace(req.Description), Enabled: req.Enabled}
 	if err := h.network.CreateManagedDomain(domain); err != nil {
-		model.Error(c, http.StatusConflict, model.CodeConflict, "域名已被平台管理")
+		apiShared.Conflict(c, "域名已被平台管理")
 		return
 	}
 	model.SuccessWithMessage(c, h.DomainInfo(domain), "已接管现有证书，Certificate 与 TLS Secret 保持原样")
@@ -251,65 +242,65 @@ func (h *DomainHandler) Claim(c *gin.Context) {
 	}
 	var req claimDomainRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "域名关联定义无效")
+		apiShared.BadRequest(c, "域名关联定义无效")
 		return
 	}
 	environment, err := h.domainEnvironment(req.EnvironmentID)
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		apiShared.ValidationError(c, err.Error())
 		return
 	}
 	if domain.EnvironmentID != 0 {
-		model.Error(c, http.StatusConflict, model.CodeConflict, "域名已关联环境")
+		apiShared.Conflict(c, "域名已关联环境")
 		return
 	}
 	if domain.Namespace == "" || domain.Namespace != environment.Namespace {
-		model.Error(c, http.StatusConflict, model.CodeConflict, "历史域名命名空间与目标环境不一致，不能关联")
+		apiShared.Conflict(c, "历史域名命名空间与目标环境不一致，不能关联")
 		return
 	}
 	domain.EnvironmentID = environment.ID
 	if err := h.network.UpdateManagedDomain(domain); err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		apiShared.DBError(c, err.Error())
 		return
 	}
 	model.SuccessWithMessage(c, h.DomainInfo(domain), "已关联历史域名，Certificate 与 TLS Secret 保持原样")
 }
 
 func (h *DomainHandler) Update(c *gin.Context) {
-	id, err := parseDomainID(c.Param("id"))
+	id, err := apiShared.ParsePositiveID(strings.TrimSpace(c.Param("id")))
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "域名 ID 无效")
+		apiShared.BadRequest(c, "域名 ID 无效")
 		return
 	}
 	current, err := h.network.GetManagedDomain(id)
 	if err != nil {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, "域名不存在")
+		apiShared.NotFound(c, "域名不存在")
 		return
 	}
 	var req domainRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "域名定义无效")
+		apiShared.BadRequest(c, "域名定义无效")
 		return
 	}
 	environment, err := h.domainEnvironment(req.EnvironmentID)
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		apiShared.ValidationError(c, err.Error())
 		return
 	}
 	domain, err := domainFromRequest(req, current, environment)
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		apiShared.ValidationError(c, err.Error())
 		return
 	}
 	if !isImportedDomain(domain) {
 		if err := h.validateManagedDomainPrerequisites(domain); err != nil {
-			model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+			apiShared.ValidationError(c, err.Error())
 			return
 		}
 	}
 	assignManagedCertificateNames(domain)
 	if err := h.network.UpdateManagedDomain(domain); err != nil {
-		model.Error(c, http.StatusConflict, model.CodeConflict, "域名已存在")
+		apiShared.Conflict(c, "域名已存在")
 		return
 	}
 	info := h.DomainInfo(domain)
@@ -331,15 +322,15 @@ func (h *DomainHandler) RetryCertificate(c *gin.Context) {
 		return
 	}
 	if isImportedDomain(domain) {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "导入证书由原有 cert-manager 配置维护，不能从平台重新签发")
+		apiShared.ValidationError(c, "导入证书由原有 cert-manager 配置维护，不能从平台重新签发")
 		return
 	}
 	if err := h.validateManagedDomainPrerequisites(domain); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		apiShared.ValidationError(c, err.Error())
 		return
 	}
 	if err := h.ensureManagedDomainCertificate(domain); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "申请证书: "+err.Error())
+		apiShared.ValidationError(c, "申请证书: "+err.Error())
 		return
 	}
 	model.SuccessWithMessage(c, h.DomainInfo(domain), "证书申请已重新提交")
@@ -351,12 +342,12 @@ func (h *DomainHandler) ListOperations(c *gin.Context) {
 		return
 	}
 	if h.k8s == nil || domain.Namespace == "" || domain.CertificateName == "" {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "域名尚未绑定证书")
+		apiShared.ValidationError(c, "域名尚未绑定证书")
 		return
 	}
 	operations, err := h.network.ListCertificateOperations(domain.Namespace, domain.CertificateName)
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeK8sAPIError, err.Error())
+		apiShared.Error(c, http.StatusBadRequest, model.CodeK8sAPIError, err.Error())
 		return
 	}
 	model.Success(c, operations)
@@ -369,41 +360,41 @@ func (h *DomainHandler) Delete(c *gin.Context) {
 	}
 	count, err := h.network.CountApplicationEndpointsByDomain(domain.ID)
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		apiShared.DBError(c, err.Error())
 		return
 	}
 	if err := networkservice.ValidateDomainDeletion(count); err != nil {
-		model.Error(c, http.StatusConflict, model.CodeConflict, err.Error())
+		apiShared.Conflict(c, err.Error())
 		return
 	}
 	if !isImportedDomain(domain) && h.k8s != nil && domain.Namespace != "" && domain.CertificateName != "" {
 		if err := h.network.DeleteCertificate(domain.Namespace, domain.CertificateName); err != nil && !apierrors.IsNotFound(err) {
-			model.Error(c, http.StatusBadRequest, model.CodeK8sAPIError, "删除域名证书: "+err.Error())
+			apiShared.Error(c, http.StatusBadRequest, model.CodeK8sAPIError, "删除域名证书: "+err.Error())
 			return
 		}
 		if domain.TLSSecretName != "" {
 			if err := h.k8s.Clientset.CoreV1().Secrets(domain.Namespace).Delete(h.k8s.Ctx(), domain.TLSSecretName, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
-				model.Error(c, http.StatusBadRequest, model.CodeK8sAPIError, "删除域名 TLS Secret: "+err.Error())
+				apiShared.Error(c, http.StatusBadRequest, model.CodeK8sAPIError, "删除域名 TLS Secret: "+err.Error())
 				return
 			}
 		}
 	}
 	if err := h.network.DeleteManagedDomain(domain.ID); err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		apiShared.DBError(c, err.Error())
 		return
 	}
 	model.Success(c, gin.H{"id": domain.ID})
 }
 
 func (h *DomainHandler) managedDomain(c *gin.Context) (*model.ManagedDomain, bool) {
-	id, err := parseDomainID(c.Param("id"))
+	id, err := apiShared.ParsePositiveID(strings.TrimSpace(c.Param("id")))
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "域名 ID 无效")
+		apiShared.BadRequest(c, "域名 ID 无效")
 		return nil, false
 	}
 	domain, err := h.network.GetManagedDomain(id)
 	if err != nil {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, "域名不存在")
+		apiShared.NotFound(c, "域名不存在")
 		return nil, false
 	}
 	return domain, true
@@ -540,11 +531,6 @@ func (h *DomainHandler) ensureManagedDomainCertificate(domain *model.ManagedDoma
 	}
 	_, err := h.network.EnsureCertificate(k8s.CreateCertificateRequest{Name: domain.CertificateName, Namespace: domain.Namespace, Domains: []string{domain.Hostname}, IssuerRef: domain.IssuerRef, IssuerKind: "ClusterIssuer", SecretName: domain.TLSSecretName})
 	return err
-}
-
-func parseDomainID(value string) (uint, error) {
-	id, err := strconv.ParseUint(strings.TrimSpace(value), 10, 64)
-	return uint(id), err
 }
 
 func errInvalid(message string) error { return errors.New(message) }

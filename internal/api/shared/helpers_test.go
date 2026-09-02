@@ -41,6 +41,27 @@ func TestParseIDPreservesNumericParsingBehavior(t *testing.T) {
 	}
 }
 
+func TestOptionalIDAndIdentityHelpers(t *testing.T) {
+	if got, err := OptionalID(""); err != nil || got != 0 {
+		t.Fatalf("OptionalID(empty) = %d, %v", got, err)
+	}
+	if got, err := OptionalID("9"); err != nil || got != 9 {
+		t.Fatalf("OptionalID(9) = %d, %v", got, err)
+	}
+	if _, err := OptionalID("0"); err == nil {
+		t.Fatal("OptionalID should reject zero")
+	}
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Set("user_id", uint64(12))
+	c.Set("username", "alice")
+	if got := UserID(c); got != 12 {
+		t.Fatalf("UserID = %d, want 12", got)
+	}
+	if got := Username(c); got != "alice" {
+		t.Fatalf("Username = %q, want alice", got)
+	}
+}
+
 func TestK8sUnavailableUsesStableAPIError(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
@@ -54,5 +75,52 @@ func TestK8sUnavailableUsesStableAPIError(t *testing.T) {
 	}
 	if response.Code != model.CodeK8sUnavailable || response.Message != "K8s 集群未连接" {
 		t.Fatalf("unexpected response: %#v", response)
+	}
+}
+
+func TestPaginationNormalizesBounds(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest("GET", "/?page=0&size=1000", nil)
+	page, size, offset := Pagination(c)
+	if page != 1 || size != 100 || offset != 0 {
+		t.Fatalf("Pagination() = %d, %d, %d", page, size, offset)
+	}
+}
+
+func TestLimitOffsetNormalizesBounds(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest("GET", "/?limit=999&offset=-2", nil)
+	limit, offset := LimitOffset(c, 20, 100)
+	if limit != 100 || offset != 0 {
+		t.Fatalf("LimitOffset() = %d, %d", limit, offset)
+	}
+}
+
+func TestCommonErrorHelpersUseStableCodes(t *testing.T) {
+	cases := []struct {
+		name string
+		fn   func(*gin.Context)
+		code int
+	}{
+		{"bad request", func(c *gin.Context) { BadRequest(c, "bad") }, model.CodeBadRequest},
+		{"validation", func(c *gin.Context) { ValidationError(c, "invalid") }, model.CodeValidationFail},
+		{"not found", func(c *gin.Context) { NotFound(c, "missing") }, model.CodeNotFound},
+		{"conflict", func(c *gin.Context) { Conflict(c, "conflict") }, model.CodeConflict},
+		{"internal", func(c *gin.Context) { InternalError(c, "error") }, model.CodeInternalError},
+		{"database", func(c *gin.Context) { DBError(c, "db") }, model.CodeDBError},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
+			tc.fn(c)
+			var response model.APIResponse
+			if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+				t.Fatal(err)
+			}
+			if response.Code != tc.code {
+				t.Fatalf("code = %d, want %d", response.Code, tc.code)
+			}
+		})
 	}
 }

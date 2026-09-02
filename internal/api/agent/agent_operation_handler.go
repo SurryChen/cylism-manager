@@ -45,7 +45,7 @@ func (h *AgentOperationHandler) ListGrants(c *gin.Context) {
 	}
 	grants, err := h.store.ListAgentCapabilityGrants(runtimeID)
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "读取 Agent 能力授权失败")
+		apiShared.DBError(c, "读取 Agent 能力授权失败")
 		return
 	}
 	model.Success(c, grants)
@@ -60,14 +60,14 @@ func (h *AgentOperationHandler) ReplaceGrants(c *gin.Context) {
 		Grants []model.AgentCapabilityGrant `json:"grants"`
 	}
 	if err := c.ShouldBindJSON(&request); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "授权参数无效")
+		apiShared.ValidationError(c, "授权参数无效")
 		return
 	}
 	for index := range request.Grants {
 		request.Grants[index].RuntimeID = runtimeID
 	}
 	if err := h.store.ReplaceAgentCapabilityGrants(runtimeID, request.Grants); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "授权范围或能力无效")
+		apiShared.ValidationError(c, "授权范围或能力无效")
 		return
 	}
 	h.audit(runtimeID, apiShared.UserID(c), "agent.grants_replaced", map[string]any{"grant_count": len(request.Grants)})
@@ -81,17 +81,17 @@ func (h *AgentOperationHandler) ListOperations(c *gin.Context) {
 	}
 	status := strings.TrimSpace(c.Query("status"))
 	if status != "" && !validAgentOperationStatus(status) {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "Agent 操作状态无效")
+		apiShared.ValidationError(c, "Agent 操作状态无效")
 		return
 	}
 	sessionID := strings.TrimSpace(c.Query("session_id"))
 	if len(sessionID) > 128 || strings.HasPrefix(sessionID, "api:") {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "会话 ID 无效")
+		apiShared.ValidationError(c, "会话 ID 无效")
 		return
 	}
 	operations, err := h.store.ListAgentOperations(runtimeID, 50, status, sessionID)
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "读取 Agent 操作失败")
+		apiShared.DBError(c, "读取 Agent 操作失败")
 		return
 	}
 	items := make([]agentOperationSummary, 0, len(operations))
@@ -167,23 +167,23 @@ func (h *AgentOperationHandler) resolve(c *gin.Context, approve bool) {
 	operationID := c.Param("operationID")
 	operation, err := h.store.GetAgentOperation(operationID)
 	if err != nil {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, "Agent 操作不存在")
+		apiShared.NotFound(c, "Agent 操作不存在")
 		return
 	}
 	if operation.Status != model.AgentOperationPendingApproval {
-		model.Error(c, http.StatusConflict, model.CodeConflict, "Agent 操作不再等待审批")
+		apiShared.Conflict(c, "Agent 操作不再等待审批")
 		return
 	}
 	if time.Now().After(operation.ExpiresAt) {
 		_, _ = h.store.UpdateAgentOperationStatus(operationID, model.AgentOperationPendingApproval, model.AgentOperationExpired, "审批已过期", nil, nil)
-		model.Error(c, http.StatusConflict, model.CodeConflict, "Agent 操作审批已过期")
+		apiShared.Conflict(c, "Agent 操作审批已过期")
 		return
 	}
 	userID := apiShared.UserID(c)
 	if !approve {
 		changed, err := h.store.UpdateAgentOperationStatus(operationID, model.AgentOperationPendingApproval, model.AgentOperationRejected, "已被管理员拒绝", &userID, nil)
 		if err != nil || !changed {
-			model.Error(c, http.StatusConflict, model.CodeConflict, "Agent 操作状态已变化")
+			apiShared.Conflict(c, "Agent 操作状态已变化")
 			return
 		}
 		h.audit(operation.RuntimeID, userID, "agent.operation_rejected", map[string]any{"operation_id": operation.OperationID})
@@ -199,34 +199,34 @@ func (h *AgentOperationHandler) resolve(c *gin.Context, approve bool) {
 		return
 	}
 	if operation.Capability != model.AgentCapabilityDeploymentScale || h.client == nil || h.client.Clientset == nil {
-		model.Error(c, http.StatusServiceUnavailable, model.CodeK8sUnavailable, "Agent 操作执行器不可用")
+		apiShared.Error(c, http.StatusServiceUnavailable, model.CodeK8sUnavailable, "Agent 操作执行器不可用")
 		return
 	}
 	var parameters deploymentScaleRequest
 	if json.Unmarshal([]byte(operation.Parameters), &parameters) != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, "Agent 操作参数无效")
+		apiShared.InternalError(c, "Agent 操作参数无效")
 		return
 	}
 	deployment, err := h.client.Clientset.AppsV1().Deployments(parameters.Namespace).Get(c.Request.Context(), parameters.Name, metav1.GetOptions{})
 	if err != nil {
-		model.Error(c, http.StatusBadGateway, model.CodeK8sAPIError, "读取目标 Deployment 失败")
+		apiShared.K8sAPIError(c, "读取目标 Deployment 失败")
 		return
 	}
 	if deployment.ResourceVersion != operation.ResourceVersion {
 		_, _ = h.store.UpdateAgentOperationStatus(operationID, model.AgentOperationPendingApproval, model.AgentOperationStale, "目标资源已变化，需要重新发起审批", nil, nil)
-		model.Error(c, http.StatusConflict, model.CodeConflict, "目标资源已变化，需要重新发起审批")
+		apiShared.Conflict(c, "目标资源已变化，需要重新发起审批")
 		return
 	}
 	changed, err := h.store.UpdateAgentOperationStatus(operationID, model.AgentOperationPendingApproval, model.AgentOperationApproved, "", &userID, nil)
 	if err != nil || !changed {
-		model.Error(c, http.StatusConflict, model.CodeConflict, "Agent 操作状态已变化")
+		apiShared.Conflict(c, "Agent 操作状态已变化")
 		return
 	}
 	deployment.Spec.Replicas = &parameters.Replicas
 	if _, err := h.client.Clientset.AppsV1().Deployments(parameters.Namespace).Update(c.Request.Context(), deployment, metav1.UpdateOptions{}); err != nil {
 		now := time.Now()
 		_, _ = h.store.UpdateAgentOperationStatus(operationID, model.AgentOperationApproved, model.AgentOperationFailed, agentOperationErrorSummary("执行 Deployment 扩缩容失败", err), nil, &now)
-		model.Error(c, http.StatusBadGateway, model.CodeK8sAPIError, "执行 Deployment 扩缩容失败")
+		apiShared.K8sAPIError(c, "执行 Deployment 扩缩容失败")
 		return
 	}
 	now := time.Now()
@@ -237,12 +237,12 @@ func (h *AgentOperationHandler) resolve(c *gin.Context, approve bool) {
 
 func (h *AgentOperationHandler) resolveMaintenanceCleanup(c *gin.Context, operation *model.AgentOperation, userID uint) {
 	if h.maintenanceCleanupExecutor == nil {
-		model.Error(c, http.StatusServiceUnavailable, model.CodeInternalError, "固定清理执行器不可用")
+		apiShared.Error(c, http.StatusServiceUnavailable, model.CodeInternalError, "固定清理执行器不可用")
 		return
 	}
 	var parameters maintenanceCleanupParameters
 	if json.Unmarshal([]byte(operation.Parameters), &parameters) != nil || !validMaintenanceRecipe(parameters.Recipe) || parameters.AlertID == 0 || !validAgentResourceName(parameters.Node) {
-		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, "Agent 操作参数无效")
+		apiShared.InternalError(c, "Agent 操作参数无效")
 		return
 	}
 	event, err := h.store.GetAlertEvent(parameters.AlertID)
@@ -252,7 +252,7 @@ func (h *AgentOperationHandler) resolveMaintenanceCleanup(c *gin.Context, operat
 	}
 	servers, err := h.store.ListServers()
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "读取节点映射失败")
+		apiShared.DBError(c, "读取节点映射失败")
 		return
 	}
 	server, found := agentServerForNode(parameters.Node, servers)
@@ -262,7 +262,7 @@ func (h *AgentOperationHandler) resolveMaintenanceCleanup(c *gin.Context, operat
 	}
 	changed, err := h.store.UpdateAgentOperationStatus(operation.OperationID, model.AgentOperationPendingApproval, model.AgentOperationApproved, "", &userID, nil)
 	if err != nil || !changed {
-		model.Error(c, http.StatusConflict, model.CodeConflict, "Agent 操作状态已变化")
+		apiShared.Conflict(c, "Agent 操作状态已变化")
 		return
 	}
 	event.Status, event.DiagnosticSummary = model.AlertEventRemediating, "管理员已批准，正在执行固定清理配方"
@@ -274,7 +274,7 @@ func (h *AgentOperationHandler) resolveMaintenanceCleanup(c *gin.Context, operat
 		_, _ = h.store.UpdateAgentOperationStatus(operation.OperationID, model.AgentOperationApproved, model.AgentOperationFailed, message, nil, &now)
 		event.Status, event.LastError = model.AlertEventFailed, message
 		_ = h.store.UpdateAlertEvent(event)
-		model.Error(c, http.StatusBadGateway, model.CodeInternalError, "执行固定清理配方失败")
+		apiShared.Error(c, http.StatusBadGateway, model.CodeInternalError, "执行固定清理配方失败")
 		return
 	}
 	_, _ = h.store.UpdateAgentOperationStatus(operation.OperationID, model.AgentOperationApproved, model.AgentOperationSucceeded, "", nil, &now)
@@ -286,22 +286,22 @@ func (h *AgentOperationHandler) resolveMaintenanceCleanup(c *gin.Context, operat
 
 func (h *AgentOperationHandler) resolveRegistryPullCheck(c *gin.Context, operation *model.AgentOperation, userID uint) {
 	if h.registryPullExecutor == nil {
-		model.Error(c, http.StatusServiceUnavailable, model.CodeInternalError, "镜像拉取检测执行器不可用")
+		apiShared.Error(c, http.StatusServiceUnavailable, model.CodeInternalError, "镜像拉取检测执行器不可用")
 		return
 	}
 	var parameters registryNodeRequest
 	if json.Unmarshal([]byte(operation.Parameters), &parameters) != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, "Agent 操作参数无效")
+		apiShared.InternalError(c, "Agent 操作参数无效")
 		return
 	}
 	mirrors, err := h.store.ListNodeRegistryMirrors()
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "读取镜像源配置失败")
+		apiShared.DBError(c, "读取镜像源配置失败")
 		return
 	}
 	proxies, err := h.store.ListRegistryProxies()
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "读取镜像代理配置失败")
+		apiShared.DBError(c, "读取镜像代理配置失败")
 		return
 	}
 	config, found := agentResolveRegistry(parameters.Registry, mirrors, proxies)
@@ -311,7 +311,7 @@ func (h *AgentOperationHandler) resolveRegistryPullCheck(c *gin.Context, operati
 	}
 	servers, err := h.store.ListServers()
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "读取节点映射失败")
+		apiShared.DBError(c, "读取节点映射失败")
 		return
 	}
 	server, found := agentServerForNode(parameters.Node, servers)
@@ -321,13 +321,13 @@ func (h *AgentOperationHandler) resolveRegistryPullCheck(c *gin.Context, operati
 	}
 	changed, err := h.store.UpdateAgentOperationStatus(operation.OperationID, model.AgentOperationPendingApproval, model.AgentOperationApproved, "", &userID, nil)
 	if err != nil || !changed {
-		model.Error(c, http.StatusConflict, model.CodeConflict, "Agent 操作状态已变化")
+		apiShared.Conflict(c, "Agent 操作状态已变化")
 		return
 	}
 	if err := h.registryPullExecutor(server, config.VerificationImage); err != nil {
 		now := time.Now()
 		_, _ = h.store.UpdateAgentOperationStatus(operation.OperationID, model.AgentOperationApproved, model.AgentOperationFailed, agentOperationErrorSummary("节点验证镜像拉取失败", err), nil, &now)
-		model.Error(c, http.StatusBadGateway, model.CodeInternalError, "节点验证镜像拉取失败")
+		apiShared.Error(c, http.StatusBadGateway, model.CodeInternalError, "节点验证镜像拉取失败")
 		return
 	}
 	now := time.Now()
@@ -338,12 +338,12 @@ func (h *AgentOperationHandler) resolveRegistryPullCheck(c *gin.Context, operati
 
 func (h *AgentOperationHandler) markOperationStale(c *gin.Context, operation *model.AgentOperation, message string) {
 	_, _ = h.store.UpdateAgentOperationStatus(operation.OperationID, model.AgentOperationPendingApproval, model.AgentOperationStale, message, nil, nil)
-	model.Error(c, http.StatusConflict, model.CodeConflict, message)
+	apiShared.Conflict(c, message)
 }
 
 func (h *AgentOperationHandler) runtimeExists(c *gin.Context, runtimeID uint) bool {
 	if _, err := h.store.GetRuntime(runtimeID); err != nil {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, "Runtime 不存在")
+		apiShared.NotFound(c, "Runtime 不存在")
 		return false
 	}
 	return true
@@ -360,7 +360,7 @@ func parseRuntimeID(c *gin.Context) (uint, bool) {
 	value := strings.TrimSpace(c.Param("id"))
 	var runtimeID uint
 	if _, err := fmt.Sscan(value, &runtimeID); err != nil || runtimeID == 0 {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "Runtime ID 无效")
+		apiShared.BadRequest(c, "Runtime ID 无效")
 		return 0, false
 	}
 	return runtimeID, true

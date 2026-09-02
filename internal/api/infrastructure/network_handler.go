@@ -3,6 +3,7 @@ package infrastructure
 import (
 	"net/http"
 
+	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 	k8sclient "github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
 	networkservice "github.com/cylism/cylism-manager/internal/service/network"
@@ -22,7 +23,7 @@ type NetworkHandler struct {
 func (h *NetworkHandler) ListStandardIngresses(c *gin.Context) {
 	result, err := h.Service.ListStandardIngresses(c.Query("namespace"))
 	if err != nil {
-		model.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
+		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
 		return
 	}
 	if result == nil {
@@ -34,7 +35,7 @@ func (h *NetworkHandler) ListStandardIngresses(c *gin.Context) {
 func (h *NetworkHandler) GetStandardIngress(c *gin.Context) {
 	result, err := h.Service.GetStandardIngress(c.Param("namespace"), c.Param("name"))
 	if err != nil {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, err.Error())
+		apiShared.NotFound(c, err.Error())
 		return
 	}
 	model.Success(c, result)
@@ -50,12 +51,12 @@ func (h *NetworkHandler) CreateStandardIngress(c *gin.Context) {
 		ServicePort string `json:"service_port"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "invalid request")
+		apiShared.BadRequest(c, "invalid request")
 		return
 	}
 	result, err := h.Service.CreateStandardIngress(req.Namespace, req.Name, req.Host, req.Path, req.ServiceName, req.ServicePort)
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, err.Error())
+		apiShared.BadRequest(c, err.Error())
 		return
 	}
 	model.Success(c, result)
@@ -63,7 +64,7 @@ func (h *NetworkHandler) CreateStandardIngress(c *gin.Context) {
 
 func (h *NetworkHandler) DeleteStandardIngress(c *gin.Context) {
 	if err := h.Service.DeleteStandardIngress(c.Param("namespace"), c.Param("name")); err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, err.Error())
+		apiShared.InternalError(c, err.Error())
 		return
 	}
 	model.SuccessWithMessage(c, nil, "删除成功")
@@ -72,7 +73,7 @@ func (h *NetworkHandler) DeleteStandardIngress(c *gin.Context) {
 func (h *NetworkHandler) StandardIngressController(c *gin.Context) {
 	status, err := h.Service.DetectIngressController()
 	if err != nil {
-		model.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
+		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
 		return
 	}
 	model.Success(c, status)

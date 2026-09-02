@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"net/http"
 	"sort"
 	"strings"
 
@@ -57,23 +56,23 @@ type applicationRuntimeInfo = applicationservice.RuntimeInfo
 type applicationReleaseSummary = applicationservice.ReleaseSummary
 
 func (h *ApplicationHandler) DiscoverApplications(c *gin.Context) {
-	projectID, err := optionalQueryID(c, "project_id")
+	projectID, err := apiShared.OptionalID(strings.TrimSpace(c.Query("project_id")))
 	if err != nil || projectID == 0 {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "项目 ID 必填且必须有效")
+		apiShared.BadRequest(c, "项目 ID 必填且必须有效")
 		return
 	}
 	if _, err := h.queries.GetProject(projectID); err != nil {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, "项目不存在")
+		apiShared.NotFound(c, "项目不存在")
 		return
 	}
-	environmentID, err := optionalQueryID(c, "environment_id")
+	environmentID, err := apiShared.OptionalID(strings.TrimSpace(c.Query("environment_id")))
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "环境 ID 无效")
+		apiShared.BadRequest(c, "环境 ID 无效")
 		return
 	}
 	if environmentID != 0 {
 		if _, err := h.queries.ResolveEnvironment(projectID, environmentID); err != nil {
-			model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "环境不属于所选项目")
+			apiShared.ValidationError(c, "环境不属于所选项目")
 			return
 		}
 	}
@@ -81,14 +80,14 @@ func (h *ApplicationHandler) DiscoverApplications(c *gin.Context) {
 	if capability != "" {
 		normalized, err := model.NormalizeApplicationCapabilities([]string{capability})
 		if err != nil {
-			model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+			apiShared.ValidationError(c, err.Error())
 			return
 		}
 		capability = normalized[0]
 	}
 	applications, err := h.queries.ListApplications(projectID, environmentID)
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		apiShared.DBError(c, err.Error())
 		return
 	}
 	if capability != "" {
@@ -102,7 +101,7 @@ func (h *ApplicationHandler) DiscoverApplications(c *gin.Context) {
 	}
 	releases, err := h.queries.ListReleasesByApplications(applicationIDs(applications))
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		apiShared.DBError(c, err.Error())
 		return
 	}
 	runtimes := h.queries.ApplicationRuntimeInfos(c.Request.Context(), K8s, applications, releases)
@@ -116,17 +115,17 @@ func (h *ApplicationHandler) DiscoverApplications(c *gin.Context) {
 func (h *ApplicationHandler) GetApplicationRuntime(c *gin.Context) {
 	applicationID, err := apiShared.ParseID(c.Param("id"))
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "应用 ID 无效")
+		apiShared.BadRequest(c, "应用 ID 无效")
 		return
 	}
 	app, err := h.queries.GetApplication(applicationID)
 	if err != nil {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, "应用不存在")
+		apiShared.NotFound(c, "应用不存在")
 		return
 	}
 	releases, err := h.queries.ListReleases(applicationID)
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		apiShared.DBError(c, err.Error())
 		return
 	}
 	runtime := h.queries.ApplicationRuntimeInfos(c.Request.Context(), K8s, []model.Application{*app}, map[uint][]model.Release{applicationID: releases})[applicationID]
@@ -167,34 +166,34 @@ func applicationDiscoveryInfoFromModel(app model.Application, runtime applicatio
 }
 
 func (h *ApplicationHandler) WorkspaceOverview(c *gin.Context) {
-	projectID, err := optionalQueryID(c, "project_id")
+	projectID, err := apiShared.OptionalID(strings.TrimSpace(c.Query("project_id")))
 	if err != nil || projectID == 0 {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "项目 ID 必填且必须有效")
+		apiShared.BadRequest(c, "项目 ID 必填且必须有效")
 		return
 	}
-	environmentID, err := optionalQueryID(c, "environment_id")
+	environmentID, err := apiShared.OptionalID(strings.TrimSpace(c.Query("environment_id")))
 	if err != nil || environmentID == 0 {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "环境 ID 必填且必须有效")
+		apiShared.BadRequest(c, "环境 ID 必填且必须有效")
 		return
 	}
 	project, err := h.queries.GetProject(projectID)
 	if err != nil {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, "项目不存在")
+		apiShared.NotFound(c, "项目不存在")
 		return
 	}
 	environment, err := h.queries.ResolveEnvironment(projectID, environmentID)
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "环境不属于所选项目")
+		apiShared.ValidationError(c, "环境不属于所选项目")
 		return
 	}
 	applications, err := h.queries.ListApplications(projectID, environmentID)
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		apiShared.DBError(c, err.Error())
 		return
 	}
 	domains, err := h.resources.ListManagedDomains(environmentID)
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		apiShared.DBError(c, err.Error())
 		return
 	}
 	type workspaceRelease struct {

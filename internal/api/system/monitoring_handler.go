@@ -72,12 +72,12 @@ func (h *MonitoringHandler) Install(c *gin.Context) {
 	}
 	var config k8s.VictoriaMetricsConfig
 	if err := c.ShouldBindJSON(&config); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "VictoriaMetrics 配置无效")
+		apiShared.BadRequest(c, "VictoriaMetrics 配置无效")
 		return
 	}
 	status, err := h.component.Install(c.Request.Context(), config)
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		apiShared.ValidationError(c, err.Error())
 		return
 	}
 	model.SuccessWithMessage(c, status, "VictoriaMetrics 配置已提交")
@@ -89,7 +89,7 @@ func (h *MonitoringHandler) Uninstall(c *gin.Context) {
 		return
 	}
 	if err := h.component.Uninstall(c.Request.Context()); err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeK8sAPIError, err.Error())
+		apiShared.Error(c, http.StatusInternalServerError, model.CodeK8sAPIError, err.Error())
 		return
 	}
 	model.SuccessWithMessage(c, gin.H{"data_retained": true}, "VictoriaMetrics 已卸载，系统管理的存储卷已保留")
@@ -102,12 +102,12 @@ func (h *MonitoringHandler) MigrateLegacyStorage(c *gin.Context) {
 	}
 	var request k8s.VictoriaMetricsMigrationRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "迁移存储配置无效")
+		apiShared.BadRequest(c, "迁移存储配置无效")
 		return
 	}
 	status, err := h.component.Migrate(c.Request.Context(), request)
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		apiShared.ValidationError(c, err.Error())
 		return
 	}
 	model.SuccessWithMessage(c, status, "已停止 VictoriaMetrics，正在复制并校验历史数据")
@@ -127,7 +127,7 @@ func (h *MonitoringHandler) Query(c *gin.Context) {
 		if strings.Contains(err.Error(), "尚未就绪") {
 			status = http.StatusConflict
 		}
-		model.Error(c, status, model.CodeK8sAPIError, "查询 VictoriaMetrics 失败: "+err.Error())
+		apiShared.Error(c, status, model.CodeK8sAPIError, "查询 VictoriaMetrics 失败: "+err.Error())
 		return
 	}
 	model.Success(c, result)
@@ -149,7 +149,7 @@ func (h *MonitoringHandler) QueryRange(c *gin.Context) {
 		if strings.Contains(err.Error(), "尚未就绪") {
 			status = http.StatusConflict
 		}
-		model.Error(c, status, model.CodeK8sAPIError, "查询 VictoriaMetrics 历史指标失败: "+err.Error())
+		apiShared.Error(c, status, model.CodeK8sAPIError, "查询 VictoriaMetrics 历史指标失败: "+err.Error())
 		return
 	}
 	model.Success(c, result)
@@ -171,7 +171,7 @@ func (h *MonitoringHandler) Dashboard(c *gin.Context) {
 		} else if strings.Contains(err.Error(), "尚未就绪") {
 			status = http.StatusConflict
 		}
-		model.Error(c, status, model.CodeK8sAPIError, "查询 VictoriaMetrics 趋势指标失败: "+err.Error())
+		apiShared.Error(c, status, model.CodeK8sAPIError, "查询 VictoriaMetrics 趋势指标失败: "+err.Error())
 		return
 	}
 	model.Success(c, gin.H{"range": rangeName, "trends": trends})
@@ -198,7 +198,7 @@ func (h *MonitoringHandler) DiskGrowth(c *gin.Context) {
 				status = http.StatusConflict
 			}
 		}
-		model.Error(c, status, model.CodeK8sAPIError, err.Error())
+		apiShared.Error(c, status, model.CodeK8sAPIError, err.Error())
 		return
 	}
 	model.Success(c, data)
@@ -211,7 +211,7 @@ func (h *MonitoringHandler) Targets(c *gin.Context) {
 	}
 	result, err := h.queryService.Targets(c.Request.Context())
 	if err != nil {
-		model.Error(c, http.StatusBadGateway, model.CodeK8sAPIError, "读取采集目标失败: "+err.Error())
+		apiShared.K8sAPIError(c, "读取采集目标失败: "+err.Error())
 		return
 	}
 	model.Success(c, result)

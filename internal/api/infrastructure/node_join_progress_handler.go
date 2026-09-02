@@ -2,10 +2,10 @@ package infrastructure
 
 import (
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 
+	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 	"github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/repository"
@@ -28,13 +28,13 @@ func NewNodeJoinProgressHandler(st repository.NodeJoinRepository, encKey []byte,
 }
 
 func (h *NodeJoinProgressHandler) JoinProgress(c *gin.Context) {
-	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
-	if err != nil || id == 0 {
+	id, err := apiShared.ParsePositiveID(c.Param("id"))
+	if err != nil {
 		return
 	}
 	server, err := h.store.GetServer(uint(id))
 	if err != nil {
-		model.Error(c, 404, model.CodeNotFound, "server not found")
+		apiShared.Error(c, 404, model.CodeNotFound, "server not found")
 		return
 	}
 	conn, err := wsUpgrade(c.Writer, c.Request)

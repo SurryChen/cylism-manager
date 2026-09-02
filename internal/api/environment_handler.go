@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
 	"strconv"
 	"strings"
 
@@ -25,17 +24,17 @@ type environmentRequest struct {
 func (h *ApplicationHandler) ListEnvironments(c *gin.Context) {
 	projectID, err := apiShared.ParseID(c.Param("projectID"))
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "项目 ID 无效")
+		apiShared.BadRequest(c, "项目 ID 无效")
 		return
 	}
 	environments, err := h.applications.ListEnvironments(projectID)
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		apiShared.DBError(c, err.Error())
 		return
 	}
 	conflicts, err := h.applications.ListEnvironmentNamespaceConflicts()
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		apiShared.DBError(c, err.Error())
 		return
 	}
 	conflictNamespaces := make(map[string]struct{}, len(conflicts))
@@ -52,21 +51,21 @@ func (h *ApplicationHandler) ListEnvironments(c *gin.Context) {
 func (h *ApplicationHandler) CreateEnvironment(c *gin.Context) {
 	projectID, err := apiShared.ParseID(c.Param("projectID"))
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "项目 ID 无效")
+		apiShared.BadRequest(c, "项目 ID 无效")
 		return
 	}
 	if _, err := h.queries.GetProject(projectID); err != nil {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, "项目不存在")
+		apiShared.NotFound(c, "项目不存在")
 		return
 	}
 	var req environmentRequest
 	if err := c.ShouldBindJSON(&req); err != nil || strings.TrimSpace(req.Name) == "" || strings.TrimSpace(req.Namespace) == "" {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "环境名称和命名空间必填")
+		apiShared.BadRequest(c, "环境名称和命名空间必填")
 		return
 	}
 	mode, err := normalizeEnvironmentNamespaceMode(req.NamespaceMode)
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		apiShared.ValidationError(c, err.Error())
 		return
 	}
 	if K8s == nil || K8s.Clientset == nil {
@@ -79,7 +78,7 @@ func (h *ApplicationHandler) CreateEnvironment(c *gin.Context) {
 		return
 	}
 	if err := ensureEnvironmentNamespace(c.Request.Context(), projectID, namespace, mode, false); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		apiShared.ValidationError(c, err.Error())
 		return
 	}
 	environment := &model.Environment{ProjectID: projectID, Name: name, Namespace: namespace, NamespaceStatus: "active"}
@@ -87,7 +86,7 @@ func (h *ApplicationHandler) CreateEnvironment(c *gin.Context) {
 		if handleEnvironmentNamespaceError(c, err) {
 			return
 		}
-		model.Error(c, http.StatusConflict, model.CodeConflict, "环境名称已存在")
+		apiShared.Conflict(c, "环境名称已存在")
 		return
 	}
 	model.Success(c, environment)
@@ -100,34 +99,34 @@ func (h *ApplicationHandler) UpdateEnvironment(c *gin.Context) {
 	}
 	var req environmentRequest
 	if err := c.ShouldBindJSON(&req); err != nil || strings.TrimSpace(req.Name) == "" || strings.TrimSpace(req.Namespace) == "" {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "环境名称和命名空间必填")
+		apiShared.BadRequest(c, "环境名称和命名空间必填")
 		return
 	}
 	environment, err := h.queries.ResolveEnvironment(projectID, environmentID)
 	if err != nil {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, "环境不存在")
+		apiShared.NotFound(c, "环境不存在")
 		return
 	}
 	name, namespace := strings.TrimSpace(req.Name), strings.TrimSpace(req.Namespace)
 	if environment.Name != name || environment.Namespace != namespace {
 		applicationCount, err := h.applications.CountEnvironmentApplications(environmentID)
 		if err != nil {
-			model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+			apiShared.DBError(c, err.Error())
 			return
 		}
 		namespaceConflict, err := h.applications.IsEnvironmentNamespaceConflicted(environment.Namespace)
 		if err != nil {
-			model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+			apiShared.DBError(c, err.Error())
 			return
 		}
 		if applicationCount > 0 && !namespaceConflict {
-			model.Error(c, http.StatusConflict, model.CodeConflict, "环境已有应用，不能修改名称或命名空间")
+			apiShared.Conflict(c, "环境已有应用，不能修改名称或命名空间")
 			return
 		}
 		if environment.Namespace != namespace {
 			mode, err := normalizeEnvironmentNamespaceMode(req.NamespaceMode)
 			if err != nil {
-				model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+				apiShared.ValidationError(c, err.Error())
 				return
 			}
 			if K8s == nil || K8s.Clientset == nil {
@@ -139,7 +138,7 @@ func (h *ApplicationHandler) UpdateEnvironment(c *gin.Context) {
 				return
 			}
 			if err := ensureEnvironmentNamespace(c.Request.Context(), projectID, namespace, mode, false); err != nil {
-				model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+				apiShared.ValidationError(c, err.Error())
 				return
 			}
 		}
@@ -151,7 +150,7 @@ func (h *ApplicationHandler) UpdateEnvironment(c *gin.Context) {
 		if handleEnvironmentNamespaceError(c, err) {
 			return
 		}
-		model.Error(c, http.StatusConflict, model.CodeConflict, "环境名称已存在")
+		apiShared.Conflict(c, "环境名称已存在")
 		return
 	}
 	model.Success(c, environment)
@@ -164,7 +163,7 @@ func (h *ApplicationHandler) SyncEnvironmentNamespace(c *gin.Context) {
 	}
 	environment, err := h.queries.ResolveEnvironment(projectID, environmentID)
 	if err != nil {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, "环境不存在")
+		apiShared.NotFound(c, "环境不存在")
 		return
 	}
 	if K8s == nil || K8s.Clientset == nil {
@@ -176,7 +175,7 @@ func (h *ApplicationHandler) SyncEnvironmentNamespace(c *gin.Context) {
 		return
 	}
 	if err := ensureEnvironmentNamespace(c.Request.Context(), projectID, environment.Namespace, "create", true); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		apiShared.ValidationError(c, err.Error())
 		return
 	}
 	environment.NamespaceStatus = environmentNamespaceStatus(c.Request.Context(), environment.Namespace)
@@ -186,7 +185,7 @@ func (h *ApplicationHandler) SyncEnvironmentNamespace(c *gin.Context) {
 func (h *ApplicationHandler) ListEnvironmentNamespaceConflicts(c *gin.Context) {
 	conflicts, err := h.applications.ListEnvironmentNamespaceConflicts()
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		apiShared.DBError(c, err.Error())
 		return
 	}
 	model.Success(c, conflicts)
@@ -198,20 +197,20 @@ func (h *ApplicationHandler) DeleteEnvironment(c *gin.Context) {
 		return
 	}
 	if _, err := h.queries.ResolveEnvironment(projectID, environmentID); err != nil {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, "环境不存在")
+		apiShared.NotFound(c, "环境不存在")
 		return
 	}
 	applicationCount, err := h.applications.CountEnvironmentApplications(environmentID)
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		apiShared.DBError(c, err.Error())
 		return
 	}
 	if applicationCount > 0 {
-		model.Error(c, http.StatusConflict, model.CodeConflict, "环境仍关联应用，无法删除")
+		apiShared.Conflict(c, "环境仍关联应用，无法删除")
 		return
 	}
 	if err := h.applications.DeleteEnvironment(environmentID); err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		apiShared.DBError(c, err.Error())
 		return
 	}
 	model.Success(c, gin.H{"id": environmentID})
@@ -287,7 +286,7 @@ func isSystemNamespace(namespace string) bool {
 func handleEnvironmentNamespaceError(c *gin.Context, err error) bool {
 	var conflict *model.NamespaceConflictError
 	if errors.As(err, &conflict) {
-		model.Error(c, http.StatusConflict, model.CodeConflict, conflict.Error())
+		apiShared.Conflict(c, conflict.Error())
 		return true
 	}
 	return false
@@ -316,12 +315,12 @@ func environmentNamespaceStatus(ctx context.Context, namespace string) string {
 func (h *ApplicationHandler) environmentRouteIDs(c *gin.Context) (uint, uint, bool) {
 	projectID, err := apiShared.ParseID(c.Param("projectID"))
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "项目 ID 无效")
+		apiShared.BadRequest(c, "项目 ID 无效")
 		return 0, 0, false
 	}
 	environmentID, err := apiShared.ParseID(c.Param("environmentID"))
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "环境 ID 无效")
+		apiShared.BadRequest(c, "环境 ID 无效")
 		return 0, 0, false
 	}
 	return projectID, environmentID, true

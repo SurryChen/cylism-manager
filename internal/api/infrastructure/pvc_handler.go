@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 	"github.com/cylism/cylism-manager/internal/application"
 	k8sclient "github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
@@ -54,15 +55,15 @@ func (h *StorageHandler) ListPersistentVolumeClaims(c *gin.Context) {
 		storageK8sUnavailable(c)
 		return
 	}
-	environmentID, err := optionalStorageQueryID(c, "environment_id")
+	environmentID, err := apiShared.OptionalID(strings.TrimSpace(c.Query("environment_id")))
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "环境 ID 无效")
+		apiShared.BadRequest(c, "环境 ID 无效")
 		return
 	}
 	namespace := strings.TrimSpace(c.Query("namespace"))
 	claims, err := h.Service.ListPVCs(namespace, environmentID)
 	if err != nil {
-		model.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
+		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
 		return
 	}
 	responses := make([]persistentVolumeClaimResponse, 0, len(claims))
@@ -81,7 +82,7 @@ func (h *StorageHandler) ListPersistentVolumeClaimUsage(c *gin.Context) {
 	}
 	claims, err := h.pvc.ListPVCs(strings.TrimSpace(c.Query("namespace")))
 	if err != nil {
-		model.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
+		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
 		return
 	}
 
@@ -218,27 +219,27 @@ func (h *StorageHandler) CreatePersistentVolumeClaim(c *gin.Context) {
 		return
 	}
 	if h.store == nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, "数据存储未初始化")
+		apiShared.InternalError(c, "数据存储未初始化")
 		return
 	}
 	var request persistentVolumeClaimRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "名称和容量必填")
+		apiShared.BadRequest(c, "名称和容量必填")
 		return
 	}
 	namespace, err := h.Service.ResolveNamespace(request.Namespace, request.EnvironmentID)
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, err.Error())
+		apiShared.BadRequest(c, err.Error())
 		return
 	}
 	claim, err := h.Service.CreatePVC(namespace, request.EnvironmentID, k8sclient.PersistentVolumeClaimRequest{Name: request.Name, Storage: request.Storage, StorageClassName: request.StorageClassName})
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		apiShared.ValidationError(c, err.Error())
 		return
 	}
 	info, err := h.Service.GetPVC(namespace, claim.Name, request.EnvironmentID)
 	if err != nil {
-		model.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
+		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
 		return
 	}
 	model.Success(c, h.pvcResponse(c.Request.Context(), info))
@@ -250,23 +251,23 @@ func (h *StorageHandler) DeletePersistentVolumeClaim(c *gin.Context) {
 		return
 	}
 	if h.store == nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, "数据存储未初始化")
+		apiShared.InternalError(c, "数据存储未初始化")
 		return
 	}
 	var request persistentVolumeClaimRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "删除请求无效")
+		apiShared.BadRequest(c, "删除请求无效")
 		return
 	}
 	namespace, err := h.Service.ResolveNamespace(request.Namespace, request.EnvironmentID)
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, err.Error())
+		apiShared.BadRequest(c, err.Error())
 		return
 	}
 	name := c.Param("name")
 	claim, err := h.pvc.GetManagedPVC(namespace, name, request.EnvironmentID)
 	if err != nil {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, err.Error())
+		apiShared.NotFound(c, err.Error())
 		return
 	}
 	migrationActive := false
@@ -275,23 +276,23 @@ func (h *StorageHandler) DeletePersistentVolumeClaim(c *gin.Context) {
 		if migration, migrationErr := h.Service.FindActiveMigration(request.EnvironmentID, name); migrationErr == nil {
 			migrationActive, activeMigration = true, migration
 		} else if !errors.Is(migrationErr, gorm.ErrRecordNotFound) {
-			model.Error(c, http.StatusInternalServerError, model.CodeDBError, "检查存储卷迁移状态失败")
+			apiShared.DBError(c, "检查存储卷迁移状态失败")
 			return
 		}
 	}
 	references := h.pvcReferences(c.Request.Context(), request.EnvironmentID, namespace, name)
 	if err := h.Service.ValidatePVCDeletion(request.ConfirmDataDelete, migrationActive, references, claim.ReclaimPolicy); err != nil {
 		if activeMigration != nil {
-			model.ErrorWithData(c, http.StatusConflict, model.CodeConflict, err.Error(), activeMigration)
+			apiShared.ErrorWithData(c, http.StatusConflict, model.CodeConflict, err.Error(), activeMigration)
 		} else if len(references) > 0 {
-			model.ErrorWithData(c, http.StatusConflict, model.CodeConflict, err.Error(), gin.H{"references": references})
+			apiShared.ErrorWithData(c, http.StatusConflict, model.CodeConflict, err.Error(), gin.H{"references": references})
 		} else {
-			model.ErrorWithData(c, http.StatusConflict, model.CodeConflict, err.Error(), h.pvcResponse(c.Request.Context(), claim))
+			apiShared.ErrorWithData(c, http.StatusConflict, model.CodeConflict, err.Error(), h.pvcResponse(c.Request.Context(), claim))
 		}
 		return
 	}
 	if err := h.Service.DeletePVC(namespace, name, request.EnvironmentID); err != nil {
-		model.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
+		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
 		return
 	}
 	model.Success(c, gin.H{"name": name})
@@ -304,7 +305,7 @@ func (h *StorageHandler) ListStorageClasses(c *gin.Context) {
 	}
 	classes, err := h.pvc.ListStorageClasses()
 	if err != nil {
-		model.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
+		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
 		return
 	}
 	model.Success(c, classes)
@@ -316,17 +317,17 @@ func (h *StorageHandler) pvcEnvironment(c *gin.Context) (*model.Environment, boo
 		return nil, false
 	}
 	if h.store == nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, "数据存储未初始化")
+		apiShared.InternalError(c, "数据存储未初始化")
 		return nil, false
 	}
-	environmentID, err := parseStorageID(c.Query("environment_id"))
+	environmentID, err := apiShared.ParsePositiveID(strings.TrimSpace(c.Query("environment_id")))
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "环境 ID 无效")
+		apiShared.BadRequest(c, "环境 ID 无效")
 		return nil, false
 	}
 	environment, err := h.store.GetEnvironmentByID(environmentID)
 	if err != nil {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, "环境不存在")
+		apiShared.NotFound(c, "环境不存在")
 		return nil, false
 	}
 	return environment, true

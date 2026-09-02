@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
 	"strings"
 	"time"
 
@@ -40,24 +39,24 @@ type deploymentTemplateRequest struct {
 func (h *ApplicationHandler) ListDeploymentTemplates(c *gin.Context) {
 	applicationID, err := apiShared.ParseID(c.Param("id"))
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "应用 ID 无效")
+		apiShared.BadRequest(c, "应用 ID 无效")
 		return
 	}
 	app, err := h.queries.GetApplication(applicationID)
 	if err != nil {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, "应用不存在")
+		apiShared.NotFound(c, "应用不存在")
 		return
 	}
 	templates, err := h.applications.ListApplicationDeploymentTemplates(applicationID)
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		apiShared.DBError(c, err.Error())
 		return
 	}
 	infos := make([]deploymentTemplateInfo, 0, len(templates))
 	for index := range templates {
 		info, err := deploymentTemplateFromModel(&templates[index], app.DefaultDeploymentTemplateID)
 		if err != nil {
-			model.Error(c, http.StatusInternalServerError, model.CodeDBError, "读取应用上线模板失败")
+			apiShared.DBError(c, "读取应用上线模板失败")
 			return
 		}
 		infos = append(infos, *info)
@@ -68,27 +67,27 @@ func (h *ApplicationHandler) ListDeploymentTemplates(c *gin.Context) {
 func (h *ApplicationHandler) GetDeploymentTemplate(c *gin.Context) {
 	applicationID, err := apiShared.ParseID(c.Param("id"))
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "应用 ID 无效")
+		apiShared.BadRequest(c, "应用 ID 无效")
 		return
 	}
 	templateID, err := apiShared.ParseID(c.Param("templateID"))
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "上线模板 ID 无效")
+		apiShared.BadRequest(c, "上线模板 ID 无效")
 		return
 	}
 	app, err := h.queries.GetApplication(applicationID)
 	if err != nil {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, "应用不存在")
+		apiShared.NotFound(c, "应用不存在")
 		return
 	}
 	template, err := h.applications.GetApplicationDeploymentTemplate(applicationID, templateID)
 	if err != nil {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, "上线模板不存在")
+		apiShared.NotFound(c, "上线模板不存在")
 		return
 	}
 	info, err := deploymentTemplateFromModel(template, app.DefaultDeploymentTemplateID)
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "读取应用上线模板失败")
+		apiShared.DBError(c, "读取应用上线模板失败")
 		return
 	}
 	model.Success(c, info)
@@ -97,27 +96,27 @@ func (h *ApplicationHandler) GetDeploymentTemplate(c *gin.Context) {
 func (h *ApplicationHandler) CreateDeploymentTemplate(c *gin.Context) {
 	applicationID, err := apiShared.ParseID(c.Param("id"))
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "应用 ID 无效")
+		apiShared.BadRequest(c, "应用 ID 无效")
 		return
 	}
 	app, err := h.queries.GetApplication(applicationID)
 	if err != nil {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, "应用不存在")
+		apiShared.NotFound(c, "应用不存在")
 		return
 	}
 	var req deploymentTemplateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "上线模板定义无效")
+		apiShared.BadRequest(c, "上线模板定义无效")
 		return
 	}
 	template, err := h.templateFromRequest(app, &req, 0)
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		apiShared.ValidationError(c, err.Error())
 		return
 	}
 	template.UpdatedBy = apiShared.UserID(c)
 	if err := h.applications.CreateApplicationDeploymentTemplate(template, app.DefaultDeploymentTemplateID == nil); err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		apiShared.DBError(c, err.Error())
 		return
 	}
 	if app.DefaultDeploymentTemplateID == nil {
@@ -125,13 +124,13 @@ func (h *ApplicationHandler) CreateDeploymentTemplate(c *gin.Context) {
 	}
 	if app.DefaultDeploymentTemplateID != nil && *app.DefaultDeploymentTemplateID == template.ID {
 		if err := h.releaseWorkflow().SyncManagedFiles(app, req.Spec, apiShared.UserID(c)); err != nil {
-			model.Error(c, http.StatusInternalServerError, model.CodeDBError, "登记模板 ConfigMap 配置失败")
+			apiShared.DBError(c, "登记模板 ConfigMap 配置失败")
 			return
 		}
 	}
 	info, err := deploymentTemplateFromModel(template, app.DefaultDeploymentTemplateID)
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "读取上线模板失败")
+		apiShared.DBError(c, "读取上线模板失败")
 		return
 	}
 	model.Success(c, info)
@@ -140,44 +139,44 @@ func (h *ApplicationHandler) CreateDeploymentTemplate(c *gin.Context) {
 func (h *ApplicationHandler) UpdateDeploymentTemplate(c *gin.Context) {
 	applicationID, err := apiShared.ParseID(c.Param("id"))
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "应用 ID 无效")
+		apiShared.BadRequest(c, "应用 ID 无效")
 		return
 	}
 	templateID, err := apiShared.ParseID(c.Param("templateID"))
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "上线模板 ID 无效")
+		apiShared.BadRequest(c, "上线模板 ID 无效")
 		return
 	}
 	app, err := h.queries.GetApplication(applicationID)
 	if err != nil {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, "应用不存在")
+		apiShared.NotFound(c, "应用不存在")
 		return
 	}
 	var req deploymentTemplateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "上线模板定义无效")
+		apiShared.BadRequest(c, "上线模板定义无效")
 		return
 	}
 	if app.DefaultDeploymentTemplateID != nil && *app.DefaultDeploymentTemplateID == templateID && !req.Enabled {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "默认模板不能停用，请先设置其他启用模板为默认")
+		apiShared.ValidationError(c, "默认模板不能停用，请先设置其他启用模板为默认")
 		return
 	}
 	currentTemplate, err := h.applications.GetApplicationDeploymentTemplate(applicationID, templateID)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, "上线模板不存在")
+		apiShared.NotFound(c, "上线模板不存在")
 		return
 	}
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		apiShared.DBError(c, err.Error())
 		return
 	}
 	if req.Revision != 0 && currentTemplate.Revision != req.Revision {
-		model.Error(c, http.StatusConflict, model.CodeConflict, fmt.Sprintf("模板版本冲突，当前版本为 %d", currentTemplate.Revision))
+		apiShared.Conflict(c, fmt.Sprintf("模板版本冲突，当前版本为 %d", currentTemplate.Revision))
 		return
 	}
 	template, err := h.templateFromRequest(app, &req, templateID)
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		apiShared.ValidationError(c, err.Error())
 		return
 	}
 	template.UpdatedBy = apiShared.UserID(c)
@@ -190,25 +189,25 @@ func (h *ApplicationHandler) UpdateDeploymentTemplate(c *gin.Context) {
 	if err := updateErr; err != nil {
 		var conflict *model.TemplateRevisionConflictError
 		if errors.As(err, &conflict) {
-			model.Error(c, http.StatusConflict, model.CodeConflict, conflict.Error())
+			apiShared.Conflict(c, conflict.Error())
 			return
 		}
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			model.Error(c, http.StatusNotFound, model.CodeNotFound, "上线模板不存在")
+			apiShared.NotFound(c, "上线模板不存在")
 			return
 		}
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, err.Error())
+		apiShared.DBError(c, err.Error())
 		return
 	}
 	if app.DefaultDeploymentTemplateID != nil && *app.DefaultDeploymentTemplateID == template.ID {
 		if err := h.releaseWorkflow().SyncManagedFiles(app, req.Spec, apiShared.UserID(c)); err != nil {
-			model.Error(c, http.StatusInternalServerError, model.CodeDBError, "登记模板 ConfigMap 配置失败")
+			apiShared.DBError(c, "登记模板 ConfigMap 配置失败")
 			return
 		}
 	}
 	info, err := deploymentTemplateFromModel(template, app.DefaultDeploymentTemplateID)
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "读取上线模板失败")
+		apiShared.DBError(c, "读取上线模板失败")
 		return
 	}
 	model.Success(c, info)
@@ -217,20 +216,20 @@ func (h *ApplicationHandler) UpdateDeploymentTemplate(c *gin.Context) {
 func (h *ApplicationHandler) DeleteDeploymentTemplate(c *gin.Context) {
 	applicationID, err := apiShared.ParseID(c.Param("id"))
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "应用 ID 无效")
+		apiShared.BadRequest(c, "应用 ID 无效")
 		return
 	}
 	templateID, err := apiShared.ParseID(c.Param("templateID"))
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "上线模板 ID 无效")
+		apiShared.BadRequest(c, "上线模板 ID 无效")
 		return
 	}
 	if err := h.applications.DeleteApplicationDeploymentTemplate(applicationID, templateID); err != nil {
 		if strings.Contains(err.Error(), "关联发布") {
-			model.Error(c, http.StatusConflict, model.CodeConflict, err.Error())
+			apiShared.Conflict(c, err.Error())
 			return
 		}
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, "上线模板不存在")
+		apiShared.NotFound(c, "上线模板不存在")
 		return
 	}
 	model.Success(c, gin.H{"id": templateID})
@@ -239,35 +238,35 @@ func (h *ApplicationHandler) DeleteDeploymentTemplate(c *gin.Context) {
 func (h *ApplicationHandler) SetDefaultDeploymentTemplate(c *gin.Context) {
 	applicationID, err := apiShared.ParseID(c.Param("id"))
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "应用 ID 无效")
+		apiShared.BadRequest(c, "应用 ID 无效")
 		return
 	}
 	templateID, err := apiShared.ParseID(c.Param("templateID"))
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "上线模板 ID 无效")
+		apiShared.BadRequest(c, "上线模板 ID 无效")
 		return
 	}
 	app, err := h.queries.GetApplication(applicationID)
 	if err != nil {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, "应用不存在")
+		apiShared.NotFound(c, "应用不存在")
 		return
 	}
 	template, err := h.applications.GetApplicationDeploymentTemplate(applicationID, templateID)
 	if err != nil || !template.Enabled {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "上线模板不存在或已停用")
+		apiShared.ValidationError(c, "上线模板不存在或已停用")
 		return
 	}
 	if err := h.applications.SetDefaultApplicationDeploymentTemplate(applicationID, templateID); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "上线模板不存在或已停用")
+		apiShared.ValidationError(c, "上线模板不存在或已停用")
 		return
 	}
 	var spec application.ReleaseSpec
 	if err := json.Unmarshal([]byte(template.Spec), &spec); err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "读取上线模板失败")
+		apiShared.DBError(c, "读取上线模板失败")
 		return
 	}
 	if err := h.releaseWorkflow().SyncManagedFiles(app, spec, apiShared.UserID(c)); err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "登记模板 ConfigMap 配置失败")
+		apiShared.DBError(c, "登记模板 ConfigMap 配置失败")
 		return
 	}
 	model.Success(c, gin.H{"id": templateID})

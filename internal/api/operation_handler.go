@@ -1,9 +1,7 @@
 package api
 
 import (
-	"net/http"
-	"strconv"
-
+	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/repository"
 	"github.com/gin-gonic/gin"
@@ -25,19 +23,19 @@ func (h *OperationHandler) ListOperations(c *gin.Context) {
 	resourceIDStr := c.Query("resource_id")
 
 	if resourceType == "" || resourceIDStr == "" {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "resource_type 和 resource_id 参数为必填项")
+		apiShared.BadRequest(c, "resource_type 和 resource_id 参数为必填项")
 		return
 	}
 
-	resourceID, err := strconv.ParseUint(resourceIDStr, 10, 64)
+	resourceID, err := apiShared.ParsePositiveID(resourceIDStr)
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "resource_id 必须为整数")
+		apiShared.BadRequest(c, "resource_id 必须为整数")
 		return
 	}
 
-	logs, err := h.store.ListOperationsByResource(resourceType, uint(resourceID))
+	logs, err := h.store.ListOperationsByResource(resourceType, resourceID)
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, "查询操作日志失败")
+		apiShared.InternalError(c, "查询操作日志失败")
 		return
 	}
 

@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strings"
 
+	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 	security "github.com/cylism/cylism-manager/internal/api/shared/security"
 	"github.com/cylism/cylism-manager/internal/crypto"
 	"github.com/cylism/cylism-manager/internal/model"
@@ -35,28 +36,28 @@ func (h *TailscaleHandler) Init(c *gin.Context) {
 		AuthKey string `json:"auth_key" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "缺少 auth_key 参数")
+		apiShared.BadRequest(c, "缺少 auth_key 参数")
 		return
 	}
 
 	// Validate auth key format: tskey-auth-<base64>
 	if !strings.HasPrefix(req.AuthKey, "tskey-auth-") {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "Auth Key 格式无效")
+		apiShared.BadRequest(c, "Auth Key 格式无效")
 		return
 	}
 
 	// Encrypt and store
 	encVal, err := crypto.Encrypt(h.encKey, req.AuthKey)
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, "加密 Auth Key 失败")
+		apiShared.InternalError(c, "加密 Auth Key 失败")
 		return
 	}
 	if h.configs == nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, "存储 Auth Key 失败")
+		apiShared.InternalError(c, "存储 Auth Key 失败")
 		return
 	}
 	if err := h.configs.SetSystemConfig("tailscale_auth_key", encVal); err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, "存储 Auth Key 失败")
+		apiShared.InternalError(c, "存储 Auth Key 失败")
 		return
 	}
 
@@ -67,7 +68,7 @@ func (h *TailscaleHandler) Init(c *gin.Context) {
 	if !h.runtime.Installed(ctx) {
 		out, err := h.runtime.Install(ctx)
 		if err != nil {
-			model.Error(c, http.StatusInternalServerError, model.CodeInternalError,
+			apiShared.Error(c, http.StatusInternalServerError, model.CodeInternalError,
 				"安装 Tailscale 失败: "+string(out))
 			return
 		}
@@ -77,7 +78,7 @@ func (h *TailscaleHandler) Init(c *gin.Context) {
 	out, err := h.runtime.Run(ctx, "tailscale", "up",
 		"--auth-key="+req.AuthKey, "--hostname=cylism-control-plane", "--accept-routes")
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeInternalError,
+		apiShared.Error(c, http.StatusInternalServerError, model.CodeInternalError,
 			"注册 Tailscale 失败: "+string(out))
 		return
 	}
@@ -129,17 +130,17 @@ func (h *TailscaleHandler) Status(c *gin.Context) {
 // InstallScript 返回脱敏的一键安装命令 GET /api/tailscale/install-script
 func (h *TailscaleHandler) InstallScript(c *gin.Context) {
 	if h.configs == nil {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, "Auth Key 未配置")
+		apiShared.NotFound(c, "Auth Key 未配置")
 		return
 	}
 	encVal, err := h.configs.GetSystemConfig("tailscale_auth_key")
 	if err != nil {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, "Auth Key 未配置")
+		apiShared.NotFound(c, "Auth Key 未配置")
 		return
 	}
 	authKey, err := crypto.Decrypt(h.encKey, encVal)
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, "解密 Auth Key 失败")
+		apiShared.InternalError(c, "解密 Auth Key 失败")
 		return
 	}
 	// Only return a sanitized prefix — never expose the full key

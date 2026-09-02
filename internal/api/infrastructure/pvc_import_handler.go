@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 	k8sclient "github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
 	storageservice "github.com/cylism/cylism-manager/internal/service/storage"
@@ -32,7 +33,7 @@ func (h *StorageHandler) ListHostDirectoryPVCImports(c *gin.Context) {
 	}
 	tasks, err := h.Service.ListImports(environment.ID, c.Param("name"))
 	if err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "读取目录导入记录失败")
+		apiShared.DBError(c, "读取目录导入记录失败")
 		return
 	}
 	model.Success(c, tasks)
@@ -45,58 +46,58 @@ func (h *StorageHandler) CreateHostDirectoryPVCImport(c *gin.Context) {
 	}
 	var request hostDirectoryPVCImportRequest
 	if err := c.ShouldBindJSON(&request); err != nil || request.EnvironmentID == 0 || request.SourceServerID == 0 {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "环境、源服务器和源目录必填")
+		apiShared.BadRequest(c, "环境、源服务器和源目录必填")
 		return
 	}
 	sourcePath, valid := storageservice.ValidateHostDirectoryImportPath(request.SourcePath)
 	if !valid {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "源目录必须是非系统目录的绝对路径")
+		apiShared.ValidationError(c, "源目录必须是非系统目录的绝对路径")
 		return
 	}
 	environment, err := h.store.GetEnvironmentByID(request.EnvironmentID)
 	if err != nil {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, "环境不存在")
+		apiShared.NotFound(c, "环境不存在")
 		return
 	}
 	claim, err := h.pvc.GetManagedPVC(environment.Namespace, c.Param("name"), environment.ID)
 	if err != nil {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, err.Error())
+		apiShared.NotFound(c, err.Error())
 		return
 	}
 	if claim.Phase != string(corev1.ClaimBound) || !claim.IsLocal || claim.BoundNode == "" || claim.LocalPath == "" {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "仅支持已绑定的 local-path 或 hostPath PVC 导入")
+		apiShared.ValidationError(c, "仅支持已绑定的 local-path 或 hostPath PVC 导入")
 		return
 	}
 	if active, err := h.Service.FindActiveImport(environment.ID, claim.Name); err == nil {
-		model.ErrorWithData(c, http.StatusConflict, model.CodeConflict, "该存储卷已有目录导入任务", active)
+		apiShared.ErrorWithData(c, http.StatusConflict, model.CodeConflict, "该存储卷已有目录导入任务", active)
 		return
 	} else if !storageErrorsIsNotFound(err) {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "检查目录导入状态失败")
+		apiShared.DBError(c, "检查目录导入状态失败")
 		return
 	}
 	if active, err := h.Service.FindActiveMigration(environment.ID, claim.Name); err == nil {
-		model.ErrorWithData(c, http.StatusConflict, model.CodeConflict, "该存储卷已有迁移任务，暂不能导入目录", active)
+		apiShared.ErrorWithData(c, http.StatusConflict, model.CodeConflict, "该存储卷已有迁移任务，暂不能导入目录", active)
 		return
 	} else if !storageErrorsIsNotFound(err) {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "检查存储卷迁移状态失败")
+		apiShared.DBError(c, "检查存储卷迁移状态失败")
 		return
 	}
 	source, err := h.store.GetServer(request.SourceServerID)
 	if err != nil {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, "源服务器不存在")
+		apiShared.NotFound(c, "源服务器不存在")
 		return
 	}
 	if source.SSHAuthType != "key" {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "源服务器必须使用 SSH 密钥认证")
+		apiShared.ValidationError(c, "源服务器必须使用 SSH 密钥认证")
 		return
 	}
 	target, err := h.serverForK8sNode(claim.BoundNode)
 	if err != nil || target.SSHAuthType != "key" {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "PVC 绑定节点必须关联使用 SSH 密钥认证的服务器")
+		apiShared.ValidationError(c, "PVC 绑定节点必须关联使用 SSH 密钥认证的服务器")
 		return
 	}
 	if source.ID == target.ID && storageservice.HostDirectoryImportPathsOverlap(sourcePath, claim.LocalPath) {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, "源目录不能与目标 PVC 目录重叠")
+		apiShared.ValidationError(c, "源目录不能与目标 PVC 目录重叠")
 		return
 	}
 	task := &model.HostDirectoryPVCImport{
@@ -111,7 +112,7 @@ func (h *StorageHandler) CreateHostDirectoryPVCImport(c *gin.Context) {
 		CreatedBy:      storageRequestUserID(c),
 	}
 	if err := h.Service.CreateImport(task); err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "创建目录导入记录失败")
+		apiShared.DBError(c, "创建目录导入记录失败")
 		return
 	}
 	task.BackupPath = hostDirectoryImportBackupPath(claim.Name, task.ID, false)
@@ -120,11 +121,11 @@ func (h *StorageHandler) CreateHostDirectoryPVCImport(c *gin.Context) {
 		task.Detail = "已确认可覆盖目标 PVC 数据"
 	}
 	if err := h.Service.UpdateImport(task, model.PVCImportStatusPending, task.Detail); err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "初始化目录导入记录失败")
+		apiShared.DBError(c, "初始化目录导入记录失败")
 		return
 	}
 	if err := h.Service.StartImport(task.ID, request.ConfirmDataReplace); err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, err.Error())
+		apiShared.InternalError(c, err.Error())
 		return
 	}
 	c.Status(http.StatusAccepted)
@@ -133,12 +134,12 @@ func (h *StorageHandler) CreateHostDirectoryPVCImport(c *gin.Context) {
 
 func (h *StorageHandler) DeleteHostDirectoryPVCImportBackup(c *gin.Context) {
 	if h.store == nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeInternalError, "数据存储未初始化")
+		apiShared.InternalError(c, "数据存储未初始化")
 		return
 	}
-	environmentID, err := optionalStorageQueryID(c, "environment_id")
+	environmentID, err := apiShared.OptionalID(strings.TrimSpace(c.Query("environment_id")))
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "环境 ID 无效")
+		apiShared.BadRequest(c, "环境 ID 无效")
 		return
 	}
 	if environmentID == 0 {
@@ -146,28 +147,28 @@ func (h *StorageHandler) DeleteHostDirectoryPVCImportBackup(c *gin.Context) {
 			EnvironmentID uint `json:"environment_id"`
 		}
 		if err := c.ShouldBindJSON(&request); err != nil || request.EnvironmentID == 0 {
-			model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "环境 ID 无效")
+			apiShared.BadRequest(c, "环境 ID 无效")
 			return
 		}
 		environmentID = request.EnvironmentID
 	}
 	environment, err := h.store.GetEnvironmentByID(environmentID)
 	if err != nil {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, "环境不存在")
+		apiShared.NotFound(c, "环境不存在")
 		return
 	}
-	id, err := parseStorageID(c.Param("id"))
+	id, err := apiShared.ParsePositiveID(strings.TrimSpace(c.Param("id")))
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeBadRequest, "导入任务 ID 无效")
+		apiShared.BadRequest(c, "导入任务 ID 无效")
 		return
 	}
 	task, err := h.Service.GetImport(id)
 	if err != nil || task.EnvironmentID != environment.ID || task.PVCName != c.Param("name") {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, "目录导入记录不存在")
+		apiShared.NotFound(c, "目录导入记录不存在")
 		return
 	}
 	if task.Status != model.PVCImportStatusSucceeded || task.VerifiedAt == nil {
-		model.Error(c, http.StatusConflict, model.CodeConflict, "仅已完成校验的导入可以删除备份")
+		apiShared.Conflict(c, "仅已完成校验的导入可以删除备份")
 		return
 	}
 	if task.BackupDeletedAt != nil {
@@ -176,33 +177,33 @@ func (h *StorageHandler) DeleteHostDirectoryPVCImportBackup(c *gin.Context) {
 	}
 	source, err := h.store.GetServer(task.SourceServerID)
 	if err != nil {
-		model.Error(c, http.StatusNotFound, model.CodeNotFound, "源服务器不存在")
+		apiShared.NotFound(c, "源服务器不存在")
 		return
 	}
 	target, err := h.serverForK8sNode(task.TargetNodeName)
 	if err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		apiShared.ValidationError(c, err.Error())
 		return
 	}
 	if err := h.deleteHostDirectoryImportArchive(source, task.BackupPath); err != nil {
-		model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+		apiShared.ValidationError(c, err.Error())
 		return
 	}
 	if task.TargetBackupChecksum != "" && target.ID != source.ID {
 		if err := h.deleteHostDirectoryImportArchive(target, task.TargetBackupPath); err != nil {
-			model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+			apiShared.ValidationError(c, err.Error())
 			return
 		}
 	} else if task.TargetBackupChecksum != "" {
 		if err := h.deleteHostDirectoryImportArchive(source, task.TargetBackupPath); err != nil {
-			model.Error(c, http.StatusBadRequest, model.CodeValidationFail, err.Error())
+			apiShared.ValidationError(c, err.Error())
 			return
 		}
 	}
 	now := time.Now().UTC()
 	task.BackupDeletedAt = &now
 	if err := h.Service.UpdateImport(task, task.Status, "已删除已验证的本地导入备份"); err != nil {
-		model.Error(c, http.StatusInternalServerError, model.CodeDBError, "更新备份删除状态失败")
+		apiShared.DBError(c, "更新备份删除状态失败")
 		return
 	}
 	model.Success(c, task)
