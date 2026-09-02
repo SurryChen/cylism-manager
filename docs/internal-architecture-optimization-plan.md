@@ -1,6 +1,6 @@
 # Cylism Manager Internal Architecture Optimization Plan
 
-状态：阶段 0～5 已完成（2026-09-02）
+状态：阶段 0～6 已完成（2026-09-02）
 
 本文档针对 `internal/` 目录的可维护性和复用能力进行优化规划。目标是逐步收窄模块职责、减少隐式依赖和重复逻辑，同时保持现有 REST API、数据库结构、Kubernetes 资源行为和前端工作流不变。
 
@@ -16,7 +16,7 @@
 | `internal/api/infrastructure/k8s_handler.go` | 1103 行 | Namespace、Workload、Service、ConfigMap、Secret、Ingress 混在一个 Handler |
 | `internal/store/store.go` | 1923 行 | 约 190 个跨领域持久化方法集中在一个 Store |
 | `internal/k8s` | 约 7300 行 | 每个文件虽按功能拆分，但 Adapter、Reconcile、状态查询仍经常混合 |
-| `internal/application/spec.go` | 955 行 | 发布 Spec、校验、默认值和转换逻辑集中 |
+| `internal/application/spec_*.go` | 已按职责拆分 | 发布 Spec、校验、归一化、渲染和安全清理分别归位 |
 | `internal/api/system/alerting_handler.go` | 约 978 行 | HTTP、Alertmanager、SMTP 和自动化职责混合 |
 
 已经完成的领域迁移包：
@@ -62,9 +62,12 @@ internal/
       identity.go
       sanitize.go
   application/
-    spec.go
-    validation.go
-    normalization.go
+    spec_types.go
+    spec_validation.go
+    spec_normalization.go
+    spec_rendering.go
+    spec_security.go
+    service.go
     release_workflow.go
     kubernetes.go
   service/
@@ -94,10 +97,16 @@ internal/
     repositories.go
   model/
     application.go
+    application_capabilities.go
+    application_managed_file.go
+    auth.go
+    errors.go
+    response.go
     runtime.go
     infrastructure.go
     registry.go
     observability.go
+    platform.go
 ```
 
 这里的文件拆分优先于 Go package 拆分。同一领域内部先保持 package 不变，只有出现清晰的依赖边界和独立测试价值时才新建 package，避免为了目录数量增加而增加适配代码。
@@ -304,6 +313,30 @@ System Component Adapter 也已统一改为由 Router/平台启动层显式创�
 - 更新架构文档、依赖图和开发流程说明。
 - 删除迁移期间的临时 Adapter、重复测试辅助函数和死代码。
 
+当前进度（2026-09-02，阶段 6 已完成）：
+
+- `internal/model/models.go` 已按领域物理拆分为 `application.go`、`auth.go`、`runtime.go`、`infrastructure.go`、`observability.go`、`platform.go` 和 `registry.go`，仍保持 `package model`，公开类型、字段、表名和调用方式不变。
+- `internal/application/spec.go` 已物理拆分为 `spec_types.go`、`spec_validation.go`、`spec_normalization.go`、`spec_rendering.go` 和 `spec_security.go`；发布 Spec 的类型、校验、归一化、Kubernetes 资源渲染和敏感字段清理分别归位。
+- 补充并更新本文件的目标目录结构和依赖图，明确 API → Service/Application → Repository/K8s → Store 的依赖方向；阶段六拆分不引入新的跨层依赖。
+- 通过 `rg` 检查旧 `models.go`、`spec.go`、阶段迁移兼容入口和临时适配器的生产调用点；无调用方的旧模型/Spec 文件已删除，仍保留的兼容逻辑均有明确业务消费者。
+- `go test ./...` 与 `go build ./...` 在宿主机权限下通过；沙箱内少数 `httptest` 用例因 IPv6 监听权限失败，不属于代码回归。Node 24 下前端构建和 `git diff --check` 通过。
+
+依赖方向（阶段六收尾）：
+
+```mermaid
+flowchart TD
+  API[internal/api] --> APP[internal/application]
+  API --> SVC[internal/service]
+  APP --> K8S[internal/k8s]
+  SVC --> REPO[internal/repository]
+  SVC --> K8S
+  REPO --> STORE[internal/store]
+  STORE --> MODEL[internal/model]
+  APP --> MODEL
+  SVC --> MODEL
+  API --> MODEL
+```
+
 ## 5. 每个模块的执行门禁
 
 每个模块必须独立完成以下步骤：
@@ -315,6 +348,12 @@ System Component Adapter 也已统一改为由 Router/平台启动层显式创�
 5. 执行 `go test ./...`、`go build ./...` 和前端构建。
 6. 对涉及页面的功能验证列表、详情、创建、更新、删除、错误和空状态。
 7. 检查 `git diff --check`，单模块独立提交。
+
+阶段六补充流程：
+
+- 物理拆分只移动声明块，不修改公开符号和运行行为；拆分后的测试继续与所属 package 同目录。
+- 先执行包级测试，再执行全量测试、构建和前端构建；宿主机与沙箱环境差异（例如 IPv6 监听权限）必须在验收记录中注明。
+- 仅删除通过 `rg` 确认无生产调用方的迁移残留；有明确消费者的兼容入口保留并记录原因，避免为了减少文件数破坏既有 API。
 
 ## 6. 量化检查项
 

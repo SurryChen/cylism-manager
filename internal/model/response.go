@@ -19,19 +19,19 @@ const (
 	CodeSuccess = 0
 
 	// 客户端错误 4xxxx
-	CodeBadRequest      = 40001 // 通用参数错误
-	CodeValidationFail  = 40002 // 请求体验证失败
-	CodeUnauthorized    = 40101 // 未认证
-	CodeTokenExpired    = 40102 // Token 过期
-	CodeForbidden       = 40301 // 无权限
-	CodeNotFound        = 40401 // 资源不存在
-	CodeConflict        = 40901 // 资源冲突（如重复名称）
+	CodeBadRequest     = 40001 // 通用参数错误
+	CodeValidationFail = 40002 // 请求体验证失败
+	CodeUnauthorized   = 40101 // 未认证
+	CodeTokenExpired   = 40102 // Token 过期
+	CodeForbidden      = 40301 // 无权限
+	CodeNotFound       = 40401 // 资源不存在
+	CodeConflict       = 40901 // 资源冲突（如重复名称）
 
 	// 服务端错误 5xxxx
-	CodeInternalError   = 50001 // 通用内部错误
-	CodeDBError         = 50002 // 数据库操作失败
-	CodeK8sUnavailable  = 50101 // K8s 集群未连接
-	CodeK8sAPIError     = 50102 // K8s API 调用失败
+	CodeInternalError  = 50001 // 通用内部错误
+	CodeDBError        = 50002 // 数据库操作失败
+	CodeK8sUnavailable = 50101 // K8s 集群未连接
+	CodeK8sAPIError    = 50102 // K8s API 调用失败
 )
 
 // Success 统一成功响应

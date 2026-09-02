@@ -106,17 +106,17 @@ func TestAPIResponse_FieldsMatchDesign(t *testing.T) {
 
 func TestErrorCodes_Unique(t *testing.T) {
 	codes := map[int]string{
-		CodeSuccess:       "success",
-		CodeBadRequest:    "bad_request",
-		CodeUnauthorized:  "unauthorized",
-		CodeTokenExpired:  "token_expired",
-		CodeForbidden:     "forbidden",
-		CodeNotFound:      "not_found",
-		CodeConflict:      "conflict",
-		CodeInternalError: "internal_error",
+		CodeSuccess:        "success",
+		CodeBadRequest:     "bad_request",
+		CodeUnauthorized:   "unauthorized",
+		CodeTokenExpired:   "token_expired",
+		CodeForbidden:      "forbidden",
+		CodeNotFound:       "not_found",
+		CodeConflict:       "conflict",
+		CodeInternalError:  "internal_error",
 		CodeK8sUnavailable: "k8s_unavailable",
-		CodeK8sAPIError:   "k8s_api_error",
-		CodeDBError:       "db_error",
+		CodeK8sAPIError:    "k8s_api_error",
+		CodeDBError:        "db_error",
 	}
 	seen := make(map[int]bool)
 	for c := range codes {
