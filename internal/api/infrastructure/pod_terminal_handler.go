@@ -69,13 +69,13 @@ func (w podTerminalOutput) Write(data []byte) (int, error) {
 
 // PodTerminal opens an interactive shell in one running Pod container.
 func (h *K8sHandler) PodTerminal(c *gin.Context) {
-	if h.k8s == nil || h.k8s.Clientset == nil || h.k8s.Config == nil {
+	if h.k8s == nil || !h.k8s.KubernetesAvailable() || h.k8s.KubeConfig() == nil {
 		apiShared.K8sUnavailable(c)
 		return
 	}
 
 	namespace, name := c.Param("namespace"), c.Param("name")
-	pod, err := h.k8s.Clientset.CoreV1().Pods(namespace).Get(h.k8s.Ctx(), name, metav1.GetOptions{})
+	pod, err := h.k8s.CoreV1().Pods(namespace).Get(c.Request.Context(), name, metav1.GetOptions{})
 	if err != nil {
 		apiShared.NotFound(c, fmt.Sprintf("获取 Pod 失败: %v", err))
 		return
@@ -98,7 +98,7 @@ func (h *K8sHandler) PodTerminal(c *gin.Context) {
 	defer conn.Close()
 	h.recordPodTerminalSession(c, namespace, name, container)
 
-	request := h.k8s.Clientset.CoreV1().RESTClient().Post().
+	request := h.k8s.CoreV1().RESTClient().Post().
 		Resource("pods").
 		Namespace(namespace).
 		Name(name).
@@ -112,7 +112,7 @@ func (h *K8sHandler) PodTerminal(c *gin.Context) {
 			TTY:       true,
 		}, scheme.ParameterCodec)
 
-	executor, err := remotecommand.NewSPDYExecutor(h.k8s.Config, http.MethodPost, request.URL())
+	executor, err := remotecommand.NewSPDYExecutor(h.k8s.KubeConfig(), http.MethodPost, request.URL())
 	if err != nil {
 		writePodTerminalError(conn, err)
 		return

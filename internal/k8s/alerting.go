@@ -119,7 +119,7 @@ func (c *Client) AlertingStatus() *AlertingStatus {
 		status.Message = "Kubernetes 客户端未初始化"
 		return status
 	}
-	alertmanager, err := c.Clientset.AppsV1().Deployments(victoriaMetricsNamespace).Get(c.Ctx(), alertmanagerName, metav1.GetOptions{})
+	alertmanager, err := c.Clientset.AppsV1().Deployments(victoriaMetricsNamespace).Get(c.ctx, alertmanagerName, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
 		return status
 	}
@@ -132,17 +132,17 @@ func (c *Client) AlertingStatus() *AlertingStatus {
 	status.Message = deploymentStatusMessage(alertmanager)
 	status.NodeName = alertmanager.Spec.Template.Spec.NodeSelector[corev1.LabelHostname]
 	status.AlertmanagerReady = alertmanager.Status.AvailableReplicas
-	if deployment, getErr := c.Clientset.AppsV1().Deployments(victoriaMetricsNamespace).Get(c.Ctx(), vmalertName, metav1.GetOptions{}); getErr == nil {
+	if deployment, getErr := c.Clientset.AppsV1().Deployments(victoriaMetricsNamespace).Get(c.ctx, vmalertName, metav1.GetOptions{}); getErr == nil {
 		status.VMAlertReady = deployment.Status.AvailableReplicas
 	}
-	if deployment, getErr := c.Clientset.AppsV1().Deployments(victoriaMetricsNamespace).Get(c.Ctx(), kubeStateMetricsName, metav1.GetOptions{}); getErr == nil {
+	if deployment, getErr := c.Clientset.AppsV1().Deployments(victoriaMetricsNamespace).Get(c.ctx, kubeStateMetricsName, metav1.GetOptions{}); getErr == nil {
 		status.KubeStateMetricsReady = deployment.Status.AvailableReplicas
 	}
 	if settings, getErr := c.alertingSettings(); getErr == nil {
 		status.NotificationPolicy = settings.NotificationPolicy
 		status.Rules = settings.Rules
 	}
-	if secret, getErr := c.Clientset.CoreV1().Secrets(victoriaMetricsNamespace).Get(c.Ctx(), alertingSecretName, metav1.GetOptions{}); getErr == nil {
+	if secret, getErr := c.Clientset.CoreV1().Secrets(victoriaMetricsNamespace).Get(c.ctx, alertingSecretName, metav1.GetOptions{}); getErr == nil {
 		status.FeishuConfigured = strings.TrimSpace(string(secret.Data["feishu-webhook-url"])) != ""
 		status.EmailConfigured = strings.TrimSpace(string(secret.Data["email-to"])) != ""
 		status.NotificationConfigured = status.FeishuConfigured || status.EmailConfigured
@@ -155,7 +155,7 @@ func (c *Client) AlertingStatus() *AlertingStatus {
 }
 
 // InstallAlerting creates or updates all platform-owned alerting resources.
-func (c *Client) InstallAlerting(config AlertingConfig) (*AlertingStatus, error) {
+func (c *Client) installAlerting(config AlertingConfig) (*AlertingStatus, error) {
 	if c == nil || c.Clientset == nil {
 		return c.AlertingStatus(), fmt.Errorf("Kubernetes 客户端未初始化")
 	}
@@ -166,7 +166,7 @@ func (c *Client) InstallAlerting(config AlertingConfig) (*AlertingStatus, error)
 	if err != nil {
 		return c.AlertingStatus(), err
 	}
-	node, err := c.Clientset.CoreV1().Nodes().Get(c.Ctx(), settings.NodeName, metav1.GetOptions{})
+	node, err := c.Clientset.CoreV1().Nodes().Get(c.ctx, settings.NodeName, metav1.GetOptions{})
 	if err != nil {
 		return c.AlertingStatus(), fmt.Errorf("读取告警节点失败: %w", err)
 	}
@@ -199,51 +199,51 @@ func (c *Client) InstallAlerting(config AlertingConfig) (*AlertingStatus, error)
 	return c.AlertingStatus(), nil
 }
 
-func (c *Client) UpdateAlerting(config AlertingConfig) (*AlertingStatus, error) {
+func (c *Client) updateAlerting(config AlertingConfig) (*AlertingStatus, error) {
 	existing, err := c.alertingSettings()
 	if err != nil {
 		return c.AlertingStatus(), fmt.Errorf("告警尚未安装")
 	}
 	config.NodeName = existing.NodeName
-	return c.InstallAlerting(config)
+	return c.installAlerting(config)
 }
 
 // UninstallAlerting removes workloads and generated configs. The PVC and Secret
 // are intentionally retained so silences and notification settings survive a rollback.
-func (c *Client) UninstallAlerting() error {
+func (c *Client) uninstallAlerting() error {
 	if c == nil || c.Clientset == nil {
 		return fmt.Errorf("Kubernetes 客户端未初始化")
 	}
 	for _, remove := range []func() error{
 		func() error {
-			return c.Clientset.AppsV1().Deployments(victoriaMetricsNamespace).Delete(c.Ctx(), vmalertName, metav1.DeleteOptions{})
+			return c.Clientset.AppsV1().Deployments(victoriaMetricsNamespace).Delete(c.ctx, vmalertName, metav1.DeleteOptions{})
 		},
 		func() error {
-			return c.Clientset.AppsV1().Deployments(victoriaMetricsNamespace).Delete(c.Ctx(), alertmanagerName, metav1.DeleteOptions{})
+			return c.Clientset.AppsV1().Deployments(victoriaMetricsNamespace).Delete(c.ctx, alertmanagerName, metav1.DeleteOptions{})
 		},
 		func() error {
-			return c.Clientset.AppsV1().Deployments(victoriaMetricsNamespace).Delete(c.Ctx(), kubeStateMetricsName, metav1.DeleteOptions{})
+			return c.Clientset.AppsV1().Deployments(victoriaMetricsNamespace).Delete(c.ctx, kubeStateMetricsName, metav1.DeleteOptions{})
 		},
 		func() error {
-			return c.Clientset.CoreV1().Services(victoriaMetricsNamespace).Delete(c.Ctx(), alertmanagerName, metav1.DeleteOptions{})
+			return c.Clientset.CoreV1().Services(victoriaMetricsNamespace).Delete(c.ctx, alertmanagerName, metav1.DeleteOptions{})
 		},
 		func() error {
-			return c.Clientset.CoreV1().Services(victoriaMetricsNamespace).Delete(c.Ctx(), kubeStateMetricsName, metav1.DeleteOptions{})
+			return c.Clientset.CoreV1().Services(victoriaMetricsNamespace).Delete(c.ctx, kubeStateMetricsName, metav1.DeleteOptions{})
 		},
 		func() error {
-			return c.Clientset.CoreV1().ConfigMaps(victoriaMetricsNamespace).Delete(c.Ctx(), alertingRulesConfigName, metav1.DeleteOptions{})
+			return c.Clientset.CoreV1().ConfigMaps(victoriaMetricsNamespace).Delete(c.ctx, alertingRulesConfigName, metav1.DeleteOptions{})
 		},
 		func() error {
-			return c.Clientset.CoreV1().ConfigMaps(victoriaMetricsNamespace).Delete(c.Ctx(), alertmanagerConfigName, metav1.DeleteOptions{})
+			return c.Clientset.CoreV1().ConfigMaps(victoriaMetricsNamespace).Delete(c.ctx, alertmanagerConfigName, metav1.DeleteOptions{})
 		},
 		func() error {
-			return c.Clientset.CoreV1().ServiceAccounts(victoriaMetricsNamespace).Delete(c.Ctx(), kubeStateMetricsName, metav1.DeleteOptions{})
+			return c.Clientset.CoreV1().ServiceAccounts(victoriaMetricsNamespace).Delete(c.ctx, kubeStateMetricsName, metav1.DeleteOptions{})
 		},
 		func() error {
-			return c.Clientset.RbacV1().ClusterRoleBindings().Delete(c.Ctx(), kubeStateMetricsName, metav1.DeleteOptions{})
+			return c.Clientset.RbacV1().ClusterRoleBindings().Delete(c.ctx, kubeStateMetricsName, metav1.DeleteOptions{})
 		},
 		func() error {
-			return c.Clientset.RbacV1().ClusterRoles().Delete(c.Ctx(), kubeStateMetricsName, metav1.DeleteOptions{})
+			return c.Clientset.RbacV1().ClusterRoles().Delete(c.ctx, kubeStateMetricsName, metav1.DeleteOptions{})
 		},
 	} {
 		if err := remove(); err != nil && !apierrors.IsNotFound(err) {
@@ -262,7 +262,7 @@ func refreshVictoriaMetricsScrapeConfig(c *Client) error {
 	if err := upsertVictoriaMetricsConfig(c, VictoriaMetricsConfig{}); err != nil {
 		return err
 	}
-	deployment, err := c.Clientset.AppsV1().Deployments(victoriaMetricsNamespace).Get(c.Ctx(), victoriaMetricsName, metav1.GetOptions{})
+	deployment, err := c.Clientset.AppsV1().Deployments(victoriaMetricsNamespace).Get(c.ctx, victoriaMetricsName, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
 		return nil
 	}
@@ -273,7 +273,7 @@ func refreshVictoriaMetricsScrapeConfig(c *Client) error {
 		deployment.Spec.Template.Annotations = map[string]string{}
 	}
 	deployment.Spec.Template.Annotations["cylism.io/scrape-config-hash"] = victoriaMetricsScrapeConfigHash(kubeStateMetricsInstalled(c))
-	if _, err := c.Clientset.AppsV1().Deployments(victoriaMetricsNamespace).Update(c.Ctx(), deployment, metav1.UpdateOptions{}); err != nil {
+	if _, err := c.Clientset.AppsV1().Deployments(victoriaMetricsNamespace).Update(c.ctx, deployment, metav1.UpdateOptions{}); err != nil {
 		return fmt.Errorf("同步 VictoriaMetrics 采集配置失败: %w", err)
 	}
 	return nil
@@ -375,7 +375,7 @@ func alertRuleSupportsThreshold(id string) bool {
 }
 
 func (c *Client) alertingSettings() (alertingSettings, error) {
-	configMap, err := c.Clientset.CoreV1().ConfigMaps(victoriaMetricsNamespace).Get(c.Ctx(), alertingConfigName, metav1.GetOptions{})
+	configMap, err := c.Clientset.CoreV1().ConfigMaps(victoriaMetricsNamespace).Get(c.ctx, alertingConfigName, metav1.GetOptions{})
 	if err != nil {
 		return alertingSettings{}, err
 	}
@@ -394,7 +394,7 @@ func (c *Client) alertingSettings() (alertingSettings, error) {
 
 func (c *Client) upsertAlertingSecret(webhookURL string, email EmailConfig) error {
 	secretClient := c.Clientset.CoreV1().Secrets(victoriaMetricsNamespace)
-	current, err := secretClient.Get(c.Ctx(), alertingSecretName, metav1.GetOptions{})
+	current, err := secretClient.Get(c.ctx, alertingSecretName, metav1.GetOptions{})
 	if err != nil && !apierrors.IsNotFound(err) {
 		return fmt.Errorf("读取告警通知 Secret 失败: %w", err)
 	}
@@ -430,9 +430,9 @@ func (c *Client) upsertAlertingSecret(webhookURL string, email EmailConfig) erro
 	resource := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: alertingSecretName, Namespace: victoriaMetricsNamespace, Labels: alertingLabels("alerting")}, Type: corev1.SecretTypeOpaque, Data: data}
 	if exists {
 		resource.ResourceVersion = current.ResourceVersion
-		_, err = secretClient.Update(c.Ctx(), resource, metav1.UpdateOptions{})
+		_, err = secretClient.Update(c.ctx, resource, metav1.UpdateOptions{})
 	} else {
-		_, err = secretClient.Create(c.Ctx(), resource, metav1.CreateOptions{})
+		_, err = secretClient.Create(c.ctx, resource, metav1.CreateOptions{})
 	}
 	if err != nil {
 		return fmt.Errorf("保存告警通知 Secret 失败: %w", err)
@@ -475,7 +475,7 @@ func (c *Client) upsertAlertingResources(settings alertingSettings) error {
 
 func ensureKubeStateMetricsAccess(c *Client) error {
 	serviceAccount := &corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: kubeStateMetricsName, Namespace: victoriaMetricsNamespace, Labels: kubeStateMetricsLabels()}}
-	if _, err := c.Clientset.CoreV1().ServiceAccounts(victoriaMetricsNamespace).Create(c.Ctx(), serviceAccount, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
+	if _, err := c.Clientset.CoreV1().ServiceAccounts(victoriaMetricsNamespace).Create(c.ctx, serviceAccount, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
 		return fmt.Errorf("创建 kube-state-metrics 服务账号失败: %w", err)
 	}
 	role := &rbacv1.ClusterRole{ObjectMeta: metav1.ObjectMeta{Name: kubeStateMetricsName, Labels: kubeStateMetricsLabels()}, Rules: []rbacv1.PolicyRule{
@@ -491,7 +491,7 @@ func ensureKubeStateMetricsAccess(c *Client) error {
 
 func upsertAlertmanagerPVC(c *Client) error {
 	claims := c.Clientset.CoreV1().PersistentVolumeClaims(victoriaMetricsNamespace)
-	existing, err := claims.Get(c.Ctx(), alertmanagerName+"-data", metav1.GetOptions{})
+	existing, err := claims.Get(c.ctx, alertmanagerName+"-data", metav1.GetOptions{})
 	if err == nil {
 		labels := existing.Labels
 		if labels == nil {
@@ -504,7 +504,7 @@ func upsertAlertmanagerPVC(c *Client) error {
 			return nil
 		}
 		existing.Labels = labels
-		if _, err := claims.Update(c.Ctx(), existing, metav1.UpdateOptions{}); err != nil {
+		if _, err := claims.Update(c.ctx, existing, metav1.UpdateOptions{}); err != nil {
 			return fmt.Errorf("更新 Alertmanager 存储卷归属失败: %w", err)
 		}
 		return nil
@@ -514,7 +514,7 @@ func upsertAlertmanagerPVC(c *Client) error {
 	}
 	storage := resource.MustParse("1Gi")
 	claim := &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: alertmanagerName + "-data", Namespace: victoriaMetricsNamespace, Labels: infrastructurePVCLabels(InfrastructureAlertmanager)}, Spec: corev1.PersistentVolumeClaimSpec{AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce}, Resources: corev1.VolumeResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceStorage: storage}}}}
-	if _, err := claims.Create(c.Ctx(), claim, metav1.CreateOptions{}); err != nil {
+	if _, err := claims.Create(c.ctx, claim, metav1.CreateOptions{}); err != nil {
 		return fmt.Errorf("创建 Alertmanager 存储卷失败: %w", err)
 	}
 	return nil
@@ -522,17 +522,17 @@ func upsertAlertmanagerPVC(c *Client) error {
 
 func upsertAlertingService(c *Client, name string, port int32, selector map[string]string) error {
 	services := c.Clientset.CoreV1().Services(victoriaMetricsNamespace)
-	current, err := services.Get(c.Ctx(), name, metav1.GetOptions{})
+	current, err := services.Get(c.ctx, name, metav1.GetOptions{})
 	resource := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: victoriaMetricsNamespace, Labels: selector}, Spec: corev1.ServiceSpec{Selector: selector, Ports: []corev1.ServicePort{{Name: "http", Port: port, TargetPort: intstr.FromInt32(port)}}}}
 	if apierrors.IsNotFound(err) {
-		_, err = services.Create(c.Ctx(), resource, metav1.CreateOptions{})
+		_, err = services.Create(c.ctx, resource, metav1.CreateOptions{})
 	} else if err == nil {
 		resource.ResourceVersion = current.ResourceVersion
 		resource.Spec.ClusterIP = current.Spec.ClusterIP
 		resource.Spec.ClusterIPs = current.Spec.ClusterIPs
 		resource.Spec.IPFamilies = current.Spec.IPFamilies
 		resource.Spec.IPFamilyPolicy = current.Spec.IPFamilyPolicy
-		_, err = services.Update(c.Ctx(), resource, metav1.UpdateOptions{})
+		_, err = services.Update(c.ctx, resource, metav1.UpdateOptions{})
 	}
 	if err != nil {
 		return fmt.Errorf("创建告警 Service %s 失败: %w", name, err)
@@ -568,12 +568,12 @@ func alertingResources(cpu, memory string) corev1.ResourceRequirements {
 
 func upsertAlertingDeployment(c *Client, deployment *appsv1.Deployment) error {
 	deployments := c.Clientset.AppsV1().Deployments(victoriaMetricsNamespace)
-	current, err := deployments.Get(c.Ctx(), deployment.Name, metav1.GetOptions{})
+	current, err := deployments.Get(c.ctx, deployment.Name, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
-		_, err = deployments.Create(c.Ctx(), deployment, metav1.CreateOptions{})
+		_, err = deployments.Create(c.ctx, deployment, metav1.CreateOptions{})
 	} else if err == nil {
 		deployment.ResourceVersion = current.ResourceVersion
-		_, err = deployments.Update(c.Ctx(), deployment, metav1.UpdateOptions{})
+		_, err = deployments.Update(c.ctx, deployment, metav1.UpdateOptions{})
 	}
 	if err != nil {
 		return fmt.Errorf("创建告警 Deployment %s 失败: %w", deployment.Name, err)
@@ -583,12 +583,12 @@ func upsertAlertingDeployment(c *Client, deployment *appsv1.Deployment) error {
 
 func upsertNamedConfigMap(c *Client, configMap *corev1.ConfigMap) error {
 	configMaps := c.Clientset.CoreV1().ConfigMaps(victoriaMetricsNamespace)
-	current, err := configMaps.Get(c.Ctx(), configMap.Name, metav1.GetOptions{})
+	current, err := configMaps.Get(c.ctx, configMap.Name, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
-		_, err = configMaps.Create(c.Ctx(), configMap, metav1.CreateOptions{})
+		_, err = configMaps.Create(c.ctx, configMap, metav1.CreateOptions{})
 	} else if err == nil {
 		configMap.ResourceVersion = current.ResourceVersion
-		_, err = configMaps.Update(c.Ctx(), configMap, metav1.UpdateOptions{})
+		_, err = configMaps.Update(c.ctx, configMap, metav1.UpdateOptions{})
 	}
 	if err != nil {
 		return fmt.Errorf("保存告警配置 %s 失败: %w", configMap.Name, err)

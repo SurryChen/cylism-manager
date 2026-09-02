@@ -136,7 +136,7 @@ func (s *MirrorService) Verify(ctx context.Context, id uint, verifier MirrorVeri
 // StartApply persists the pending state synchronously and launches the
 // supplied infrastructure adapter in the background. It returns after the
 // task is accepted, mirroring the existing REST contract.
-func (s *MirrorService) StartApply(id uint, serverIDs []uint, apply NodeMirrorApplier) (*model.NodeRegistryMirror, error) {
+func (s *MirrorService) StartApply(ctx context.Context, id uint, serverIDs []uint, apply NodeMirrorApplier) (*model.NodeRegistryMirror, error) {
 	selected, err := s.repository.GetNodeRegistryMirror(id)
 	if err != nil {
 		return nil, err
@@ -174,7 +174,7 @@ func (s *MirrorService) StartApply(id uint, serverIDs []uint, apply NodeMirrorAp
 		s.finishApply(id)
 		return nil, fmt.Errorf("保存应用任务状态失败: %w", err)
 	}
-	go s.runApply(id, servers, content, apply)
+	go s.runApply(ctx, id, servers, content, apply)
 	return s.Get(id)
 }
 
@@ -261,12 +261,12 @@ func (s *MirrorService) selectClusterServers(serverIDs []uint) ([]model.Server, 
 	return selected, nil
 }
 
-func (s *MirrorService) runApply(mirrorID uint, servers []model.Server, content []byte, apply NodeMirrorApplier) {
+func (s *MirrorService) runApply(ctx context.Context, mirrorID uint, servers []model.Server, content []byte, apply NodeMirrorApplier) {
 	successCount, failedCount := 0, 0
 	for index := range servers {
 		server := &servers[index]
 		_ = s.repository.UpsertNodeRegistryMirrorStatus(&model.NodeRegistryMirrorNode{MirrorID: mirrorID, ServerID: server.ID, Status: "applying", Detail: "正在写入配置并重启 K3s"})
-		status, detail := apply(server, content)
+		status, detail := apply(ctx, server, content)
 		if status == "success" {
 			successCount++
 		} else if status == "failed" {

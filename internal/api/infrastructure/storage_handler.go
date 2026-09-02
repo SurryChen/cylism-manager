@@ -61,23 +61,33 @@ func newClientPVCReconciler(client *k8sclient.Client) *clientPVCReconciler {
 	}
 	return &clientPVCReconciler{client: client}
 }
-func (r clientPVCReconciler) ListPVCs(ns string) ([]k8sclient.PersistentVolumeClaimInfo, error) {
-	return r.client.ListPVCs(ns)
+
+// NewPVCAdapters composes the narrow PVC ports used by infrastructure
+// handlers and the storage service.
+func NewPVCAdapters(client *k8sclient.Client) (PVCRepositoryAdapter, PVCMigrationReconciler, PVCWorkloadReader) {
+	adapter := newClientPVCReconciler(client)
+	if adapter == nil {
+		return nil, nil, nil
+	}
+	return adapter, adapter, adapter
 }
-func (r clientPVCReconciler) ListManagedPVCs(ns string, id uint) ([]k8sclient.PersistentVolumeClaimInfo, error) {
-	return r.client.ListManagedPVCs(ns, id)
+func (r clientPVCReconciler) ListPVCsContext(ctx context.Context, ns string) ([]k8sclient.PersistentVolumeClaimInfo, error) {
+	return r.client.ListPVCsContext(ctx, ns)
 }
-func (r clientPVCReconciler) GetManagedPVC(ns, name string, id uint) (*k8sclient.PersistentVolumeClaimInfo, error) {
-	return r.client.GetManagedPVC(ns, name, id)
+func (r clientPVCReconciler) ListManagedPVCsContext(ctx context.Context, ns string, id uint) ([]k8sclient.PersistentVolumeClaimInfo, error) {
+	return r.client.ListManagedPVCsContext(ctx, ns, id)
 }
-func (r clientPVCReconciler) CreateManagedPVC(ns string, id uint, req k8sclient.PersistentVolumeClaimRequest) (*corev1.PersistentVolumeClaim, error) {
-	return r.client.CreateManagedPVC(ns, id, req)
+func (r clientPVCReconciler) GetManagedPVCContext(ctx context.Context, ns, name string, id uint) (*k8sclient.PersistentVolumeClaimInfo, error) {
+	return r.client.GetManagedPVCContext(ctx, ns, name, id)
 }
-func (r clientPVCReconciler) DeleteManagedPVC(ns, name string, id uint) error {
-	return r.client.DeleteManagedPVC(ns, name, id)
+func (r clientPVCReconciler) CreateManagedPVCContext(ctx context.Context, ns string, id uint, req k8sclient.PersistentVolumeClaimRequest) (*corev1.PersistentVolumeClaim, error) {
+	return r.client.CreateManagedPVCContext(ctx, ns, id, req)
 }
-func (r clientPVCReconciler) ListStorageClasses() ([]k8sclient.StorageClassInfo, error) {
-	return r.client.ListStorageClasses()
+func (r clientPVCReconciler) DeleteManagedPVCContext(ctx context.Context, ns, name string, id uint) error {
+	return r.client.DeleteManagedPVCContext(ctx, ns, name, id)
+}
+func (r clientPVCReconciler) ListStorageClassesContext(ctx context.Context) ([]k8sclient.StorageClassInfo, error) {
+	return r.client.ListStorageClassesContext(ctx)
 }
 func (r clientPVCReconciler) GetNodeInfo(ctx context.Context, name string) (*k8sclient.NodeInfo, error) {
 	return r.client.GetNodeInfoContext(ctx, name)
@@ -124,9 +134,10 @@ func (r clientPVCReconciler) ListStatefulSets(ctx context.Context, namespace str
 func (r clientPVCReconciler) GetDeployment(ctx context.Context, namespace, name string) (*appsv1.Deployment, error) {
 	return r.client.Clientset.AppsV1().Deployments(namespace).Get(ctx, name, metav1.GetOptions{})
 }
-func NewStorageHandlerWithClient(service *storage.Service, st repository.PVCRepository, encKey []byte, client *k8sclient.Client) *StorageHandler {
-	adapter := newClientPVCReconciler(client)
-	return &StorageHandler{Service: service, store: st, encKey: encKey, pvc: adapter, migration: adapter, workloads: adapter}
+
+// NewStorageHandlerWithDependencies injects already-composed PVC ports.
+func NewStorageHandlerWithDependencies(service *storage.Service, st repository.PVCRepository, encKey []byte, pvc PVCRepositoryAdapter, migration PVCMigrationReconciler, workloads PVCWorkloadReader) *StorageHandler {
+	return &StorageHandler{Service: service, store: st, encKey: encKey, pvc: pvc, migration: migration, workloads: workloads}
 }
 
 func (h *StorageHandler) ConfigureStorageExecutor() {

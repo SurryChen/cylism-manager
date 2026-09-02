@@ -96,13 +96,6 @@ func (h *SystemComponentHandler) Revert(c *gin.Context) {
 	model.SuccessWithMessage(c, nil, "已恢复系统组件默认配置")
 }
 
-// Reconcile re-applies stored static Deployment fields after a K3s manifest
-// re-render. It re-detects every component first and stops if its control source
-// changed, avoiding a fight with helm-controller or a user-installed workload.
-func (h *SystemComponentHandler) Reconcile() {
-	_ = h.Run(context.Background(), 5*time.Minute)
-}
-
 // Run exposes the lifecycle to the application startup layer while keeping
 // reconciliation implementation in the system-component service.
 func (h *SystemComponentHandler) Run(ctx context.Context, interval time.Duration) error {

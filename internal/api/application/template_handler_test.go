@@ -13,7 +13,8 @@ import (
 )
 
 func TestApplicationHandlerReleasesFromSelectedDeploymentTemplateByVersion(t *testing.T) {
-	r, s := setupApplicationRouter()
+	clientset := k8sfake.NewSimpleClientset(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "commerce-prod"}, Status: corev1.NamespaceStatus{Phase: corev1.NamespaceActive}})
+	r, s := setupApplicationRouter(&k8sclient.Client{Clientset: clientset})
 	if err := s.CreateProject(&model.Project{Name: "commerce", OwnerID: 1}); err != nil {
 		t.Fatal(err)
 	}
@@ -48,9 +49,6 @@ func TestApplicationHandlerReleasesFromSelectedDeploymentTemplateByVersion(t *te
 		t.Fatalf("set default template status = %d: %s", setDefault.Code, setDefault.Body.String())
 	}
 
-	originalK8s := K8s
-	K8s = &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "commerce-prod"}, Status: corev1.NamespaceStatus{Phase: corev1.NamespaceActive}})}
-	defer func() { K8s = originalK8s }()
 	release := serve(r, newJSONRequest(http.MethodPost, "/api/applications/1/releases", gin.H{"template_id": canaryID, "version": "1.2.3"}))
 	if release.Code != http.StatusOK || !strings.Contains(release.Body.String(), "order-api:1.2.3") || !strings.Contains(release.Body.String(), "\"template_id\":2") {
 		t.Fatalf("unexpected version release: %d %s", release.Code, release.Body.String())

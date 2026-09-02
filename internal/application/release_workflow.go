@@ -99,9 +99,9 @@ func (w *ReleaseWorkflow) Restart(ctx context.Context, app *model.Application, u
 	return w.create(ctx, app, template, userID, spec)
 }
 
-func (w *ReleaseWorkflow) Retry(releaseID, userID uint) (*PreparedRelease, error) {
+func (w *ReleaseWorkflow) Retry(ctx context.Context, releaseID, userID uint) (*PreparedRelease, error) {
 	service := NewService(w.repository, w.applier)
-	release, spec, err := service.RetryRelease(releaseID, userID)
+	release, spec, err := service.RetryRelease(ctx, releaseID, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -116,9 +116,9 @@ func (w *ReleaseWorkflow) Retry(releaseID, userID uint) (*PreparedRelease, error
 	return &PreparedRelease{Release: release, Spec: spec, Service: service}, nil
 }
 
-func (w *ReleaseWorkflow) Rollback(releaseID, userID uint) (*PreparedRelease, error) {
+func (w *ReleaseWorkflow) Rollback(ctx context.Context, releaseID, userID uint) (*PreparedRelease, error) {
 	service := NewService(w.repository, w.applier)
-	release, spec, err := service.RollbackRelease(releaseID, userID)
+	release, spec, err := service.RollbackRelease(ctx, releaseID, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -135,12 +135,15 @@ func (w *ReleaseWorkflow) Rollback(releaseID, userID uint) (*PreparedRelease, er
 
 // ExecuteAsync runs the Kubernetes lifecycle after the HTTP request has
 // returned. The release record remains the durable source of progress.
-func (w *ReleaseWorkflow) ExecuteAsync(app *model.Application, prepared *PreparedRelease) {
+func (w *ReleaseWorkflow) ExecuteAsync(parent context.Context, app *model.Application, prepared *PreparedRelease) {
 	if app == nil || prepared == nil || prepared.Release == nil || prepared.Service == nil {
 		return
 	}
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+		if parent == nil {
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), 3*time.Minute)
 		defer cancel()
 		_ = prepared.Service.ExecuteReleaseWithPostApply(ctx, prepared.Release.ID, app, prepared.Spec, func() error {
 			return w.syncApplicationEndpoints(ctx, app, prepared.Spec.Service)

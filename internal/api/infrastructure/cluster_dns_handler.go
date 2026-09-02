@@ -1,6 +1,7 @@
 package infrastructure
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -27,11 +28,52 @@ var coreDNSForwardPattern = regexp.MustCompile(`(?m)^(\s*forward\s+\.\s+)([^\n{]
 
 type ClusterDNSHandler struct {
 	store repository.ClusterDNSRepository
-	k8s   *k8sclient.Client
+	k8s   ClusterDNSAdapter
 }
 
-func NewClusterDNSHandler(s repository.ClusterDNSRepository, client *k8sclient.Client) *ClusterDNSHandler {
-	return &ClusterDNSHandler{store: s, k8s: client}
+// ClusterDNSAdapter is the minimal Kubernetes capability required by this
+// handler. The concrete client is composed by bootstrap, keeping transport
+// code independent from the Kubernetes SDK.
+type ClusterDNSAdapter interface {
+	KubernetesAvailable() bool
+	GetCoreDNSConfig(context.Context) (*corev1.ConfigMap, error)
+	UpdateCoreDNSConfig(context.Context, *corev1.ConfigMap) (*corev1.ConfigMap, error)
+	ListCoreDNSPods(context.Context) (*corev1.PodList, error)
+}
+
+type clientClusterDNSAdapter struct{ client *k8sclient.Client }
+
+// NewClusterDNSAdapter adapts the Kubernetes client at the composition root.
+// Handlers should receive the returned narrow interface instead of a client.
+func NewClusterDNSAdapter(client *k8sclient.Client) ClusterDNSAdapter {
+	if client == nil {
+		return nil
+	}
+	return clientClusterDNSAdapter{client: client}
+}
+
+func (a clientClusterDNSAdapter) KubernetesAvailable() bool {
+	return a.client != nil && a.client.Clientset != nil
+}
+func (a clientClusterDNSAdapter) GetCoreDNSConfig(ctx context.Context) (*corev1.ConfigMap, error) {
+	return a.client.Clientset.CoreV1().ConfigMaps(coreDNSNamespace).Get(ctx, coreDNSConfigMap, metav1.GetOptions{})
+}
+func (a clientClusterDNSAdapter) UpdateCoreDNSConfig(ctx context.Context, config *corev1.ConfigMap) (*corev1.ConfigMap, error) {
+	return a.client.Clientset.CoreV1().ConfigMaps(coreDNSNamespace).Update(ctx, config, metav1.UpdateOptions{})
+}
+func (a clientClusterDNSAdapter) ListCoreDNSPods(ctx context.Context) (*corev1.PodList, error) {
+	return a.client.Clientset.CoreV1().Pods(coreDNSNamespace).List(ctx, metav1.ListOptions{LabelSelector: "k8s-app=kube-dns"})
+}
+
+func NewClusterDNSHandler(s repository.ClusterDNSRepository, client interface{}) *ClusterDNSHandler {
+	var adapter ClusterDNSAdapter
+	switch value := client.(type) {
+	case ClusterDNSAdapter:
+		adapter = value
+	case *k8sclient.Client:
+		adapter = NewClusterDNSAdapter(value)
+	}
+	return &ClusterDNSHandler{store: s, k8s: adapter}
 }
 
 type clusterDNSPolicyRequest struct {
@@ -39,11 +81,11 @@ type clusterDNSPolicyRequest struct {
 }
 
 func (h *ClusterDNSHandler) Status(c *gin.Context) {
-	if h.k8s == nil || h.k8s.Clientset == nil {
+	if h.k8s == nil || !h.k8s.KubernetesAvailable() {
 		apiShared.K8sUnavailable(c)
 		return
 	}
-	configMap, err := h.k8s.Clientset.CoreV1().ConfigMaps(coreDNSNamespace).Get(c.Request.Context(), coreDNSConfigMap, metav1.GetOptions{})
+	configMap, err := h.k8s.GetCoreDNSConfig(c.Request.Context())
 	if err != nil {
 		apiShared.K8sAPIError(c, "读取 CoreDNS 配置失败")
 		return
@@ -58,7 +100,7 @@ func (h *ClusterDNSHandler) Status(c *gin.Context) {
 		apiShared.DBError(c, "读取 DNS 策略历史失败")
 		return
 	}
-	pods, err := h.k8s.Clientset.CoreV1().Pods(coreDNSNamespace).List(c.Request.Context(), metav1.ListOptions{LabelSelector: "k8s-app=kube-dns"})
+	pods, err := h.k8s.ListCoreDNSPods(c.Request.Context())
 	if err != nil {
 		apiShared.K8sAPIError(c, "读取 CoreDNS Pod 状态失败")
 		return
@@ -77,7 +119,7 @@ func (h *ClusterDNSHandler) Status(c *gin.Context) {
 }
 
 func (h *ClusterDNSHandler) Apply(c *gin.Context) {
-	if h.k8s == nil || h.k8s.Clientset == nil {
+	if h.k8s == nil || !h.k8s.KubernetesAvailable() {
 		apiShared.K8sUnavailable(c)
 		return
 	}
@@ -103,7 +145,7 @@ func (h *ClusterDNSHandler) Apply(c *gin.Context) {
 // is persisted as an inherited policy so the UI can distinguish reset from
 // an unavailable or unmanaged CoreDNS configuration.
 func (h *ClusterDNSHandler) Reset(c *gin.Context) {
-	if h.k8s == nil || h.k8s.Clientset == nil {
+	if h.k8s == nil || !h.k8s.KubernetesAvailable() {
 		apiShared.K8sUnavailable(c)
 		return
 	}
@@ -116,8 +158,7 @@ func (h *ClusterDNSHandler) Reset(c *gin.Context) {
 }
 
 func (h *ClusterDNSHandler) applyResolvers(c *gin.Context, resolvers []string) (*model.ClusterDNSPolicy, error) {
-	configMaps := h.k8s.Clientset.CoreV1().ConfigMaps(coreDNSNamespace)
-	configMap, err := configMaps.Get(c.Request.Context(), coreDNSConfigMap, metav1.GetOptions{})
+	configMap, err := h.k8s.GetCoreDNSConfig(c.Request.Context())
 	if err != nil {
 		return nil, fmt.Errorf("读取 CoreDNS 配置失败")
 	}
@@ -127,7 +168,7 @@ func (h *ClusterDNSHandler) applyResolvers(c *gin.Context, resolvers []string) (
 	}
 	previous := configMap.Data["Corefile"]
 	configMap.Data["Corefile"] = updated
-	if _, err := configMaps.Update(c.Request.Context(), configMap, metav1.UpdateOptions{}); err != nil {
+	if _, err := h.k8s.UpdateCoreDNSConfig(c.Request.Context(), configMap); err != nil {
 		return nil, fmt.Errorf("更新 CoreDNS 配置失败")
 	}
 	encodedResolvers := resolvers
@@ -138,7 +179,7 @@ func (h *ClusterDNSHandler) applyResolvers(c *gin.Context, resolvers []string) (
 	policy := &model.ClusterDNSPolicy{Resolvers: string(encoded), CreatedBy: apiShared.UserID(c)}
 	if err := h.store.CreateClusterDNSPolicy(policy); err != nil {
 		configMap.Data["Corefile"] = previous
-		_, _ = configMaps.Update(c.Request.Context(), configMap, metav1.UpdateOptions{})
+		_, _ = h.k8s.UpdateCoreDNSConfig(c.Request.Context(), configMap)
 		return nil, fmt.Errorf("保存 DNS 策略历史失败")
 	}
 	return policy, nil

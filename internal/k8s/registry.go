@@ -212,7 +212,7 @@ func (r *ManagedRegistryReconciler) ListEligiblePVCs(ctx context.Context, namesp
 	if !r.Available() {
 		return nil, errors.New("Kubernetes 集群未连接")
 	}
-	claims, err := r.client.ListPVCs(namespace)
+	claims, err := r.client.ListPVCsContext(ctx, namespace)
 	if err != nil {
 		return nil, err
 	}
@@ -278,7 +278,7 @@ func (r *ManagedRegistryReconciler) ListMatchingCertificates(ctx context.Context
 	if r == nil || r.client == nil {
 		return nil, errors.New("Kubernetes 集群未连接")
 	}
-	certificates, err := r.client.ListCertificates()
+	certificates, err := r.client.ListCertificatesContext(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -303,7 +303,7 @@ func (r *ManagedRegistryReconciler) EnsureTLSCertificate(ctx context.Context, re
 	if r == nil || r.client == nil || r.client.Clientset == nil {
 		return errors.New("Kubernetes 集群未连接")
 	}
-	certificate, err := r.client.GetCertificate(registry.Namespace, registry.CertificateName)
+	certificate, err := r.client.GetCertificateContext(ctx, registry.Namespace, registry.CertificateName)
 	if apierrors.IsNotFound(err) {
 		return fmt.Errorf("证书 %q 不存在或不属于命名空间 %q", registry.CertificateName, registry.Namespace)
 	}

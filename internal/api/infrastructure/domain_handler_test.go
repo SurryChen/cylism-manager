@@ -1,11 +1,13 @@
 package infrastructure
 
 import (
+	"context"
 	"net/http"
 	"testing"
 
 	k8sclient "github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
+	networkservice "github.com/cylism/cylism-manager/internal/service/network"
 	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/gin-gonic/gin"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -21,7 +23,7 @@ func (f domainReferenceFake) CountApplicationEndpointsByDomain(uint) (int64, err
 }
 
 func TestManagedDomainInfoForUsesOnlyReferenceReaderWithoutKubernetes(t *testing.T) {
-	info := ManagedDomainInfoFor(&model.ManagedDomain{ID: 7, Hostname: "api.example.com"}, nil, domainReferenceFake{count: 3})
+	info := ManagedDomainInfoFor(context.Background(), &model.ManagedDomain{ID: 7, Hostname: "api.example.com"}, nil, domainReferenceFake{count: 3})
 	if info.Hostname != "api.example.com" || info.ApplicationCount != 3 || info.CertificateError == "" {
 		t.Fatalf("unexpected managed domain view: %#v", info)
 	}
@@ -67,7 +69,8 @@ func TestDomainHandlerImportsExistingCertificateWithoutTakingOwnership(t *testin
 	client := &k8sclient.Client{DynamicClient: fake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{{Group: "cert-manager.io", Version: "v1", Resource: "certificates"}: "CertificateList"}, certificate)}
 
 	router := gin.New()
-	handler := NewDomainHandler(s, client)
+	service := networkservice.NewService(s, s).WithCertificateAdapter(client)
+	handler := NewDomainHandlerWithService(s, NewDomainKubernetesAdapter(client), service)
 	router.POST("/api/domains/import", handler.ImportCertificate)
 	response := serve(router, newJSONRequest(http.MethodPost, "/api/domains/import", gin.H{"environment_id": 1, "certificate_name": "legacy-api", "enabled": true}))
 	if response.Code != http.StatusOK {
@@ -101,7 +104,7 @@ func TestDomainHandlerClaimBindsMatchingLegacyDomainToEnvironment(t *testing.T) 
 		t.Fatal(err)
 	}
 	router := gin.New()
-	handler := NewDomainHandler(s, nil)
+	handler := NewDomainHandlerWithService(s, nil, networkservice.NewService(s, s))
 	router.POST("/api/domains/:id/claim", handler.Claim)
 	response := serve(router, newJSONRequest(http.MethodPost, "/api/domains/1/claim", gin.H{"environment_id": 1}))
 	if response.Code != http.StatusOK {

@@ -13,10 +13,7 @@ import (
 )
 
 func TestApplicationHandler_ProjectAndEnvironmentCRUD(t *testing.T) {
-	r, s := setupApplicationRouter()
-	originalK8s := K8s
-	K8s = &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset()}
-	defer func() { K8s = originalK8s }()
+	r, s := setupApplicationRouter(&k8sclient.Client{Clientset: k8sfake.NewSimpleClientset()})
 
 	createProject := serve(r, newJSONRequest(http.MethodPost, "/api/projects", gin.H{"name": "commerce", "description": "订单服务"}))
 	if createProject.Code != http.StatusOK {
@@ -58,11 +55,8 @@ func TestApplicationHandler_ProjectAndEnvironmentCRUD(t *testing.T) {
 }
 
 func TestApplicationHandlerEnvironmentNamespaceBindAndSync(t *testing.T) {
-	r, s := setupApplicationRouter()
-	originalK8s := K8s
 	clientset := k8sfake.NewSimpleClientset(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "existing"}, Status: corev1.NamespaceStatus{Phase: corev1.NamespaceActive}})
-	K8s = &k8sclient.Client{Clientset: clientset}
-	defer func() { K8s = originalK8s }()
+	r, s := setupApplicationRouter(&k8sclient.Client{Clientset: clientset})
 	if err := s.CreateProject(&model.Project{Name: "commerce", OwnerID: 1}); err != nil {
 		t.Fatal(err)
 	}
@@ -88,14 +82,11 @@ func TestApplicationHandlerEnvironmentNamespaceBindAndSync(t *testing.T) {
 }
 
 func TestApplicationHandlerRejectsDuplicateSystemAndForeignNamespaceBindings(t *testing.T) {
-	r, s := setupApplicationRouter()
-	originalK8s := K8s
 	clientset := k8sfake.NewSimpleClientset(
 		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "shared", Labels: map[string]string{"cylism.io/project-id": "1"}}, Status: corev1.NamespaceStatus{Phase: corev1.NamespaceActive}},
 		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "foreign", Labels: map[string]string{"cylism.io/project-id": "2"}}, Status: corev1.NamespaceStatus{Phase: corev1.NamespaceActive}},
 	)
-	K8s = &k8sclient.Client{Clientset: clientset}
-	defer func() { K8s = originalK8s }()
+	r, s := setupApplicationRouter(&k8sclient.Client{Clientset: clientset})
 	if err := s.CreateProject(&model.Project{Name: "commerce", OwnerID: 1}); err != nil {
 		t.Fatal(err)
 	}

@@ -2,6 +2,7 @@
 package network
 
 import (
+	"context"
 	"errors"
 	"strings"
 
@@ -53,8 +54,8 @@ type ManagedDomainView struct {
 }
 
 type DomainPrerequisiteAdapter struct {
-	NamespaceExists func(string) (bool, error)
-	ListIssuers     func() ([]Issuer, error)
+	NamespaceExists func(context.Context, string) (bool, error)
+	ListIssuers     func(context.Context) ([]Issuer, error)
 }
 
 type Issuer struct {
@@ -75,40 +76,40 @@ type Service struct {
 // inventory and deletion. Resource rendering stays in the adapter so the
 // service can be reused by HTTP and background callers.
 type IngressAdapter interface {
-	ListIngressRoutes() ([]k8sclient.IngressRouteInfo, error)
-	DeleteIngressRoute(namespace, name string) error
+	ListIngressRoutesContext(context.Context) ([]k8sclient.IngressRouteInfo, error)
+	DeleteIngressRouteContext(context.Context, string, string) error
 }
 
 // DNSAdapter is the Kubernetes boundary for DNS webhook installation and
 // credential Secret synchronization.
 type DNSAdapter interface {
-	DNSProviderStatus(provider string) *k8sclient.DNSProviderStatus
-	InstallDNSProvider(provider string) (*k8sclient.DNSProviderStatus, error)
-	UpsertDNSCredentialSecret(provider, namespace, secretName string, values map[string]string) error
-	DeleteDNSCredentialSecret(namespace, secretName string) error
+	DNSProviderStatusContext(context.Context, string) *k8sclient.DNSProviderStatus
+	InstallDNSProviderContext(context.Context, string) (*k8sclient.DNSProviderStatus, error)
+	UpsertDNSCredentialSecretContext(context.Context, string, string, string, map[string]string) error
+	DeleteDNSCredentialSecretContext(context.Context, string, string) error
 }
 
 // CertificateAdapter is the Kubernetes boundary for cert-manager resources.
 type CertificateAdapter interface {
-	CertManagerStatus() *k8sclient.CertManagerStatus
-	ListCertificates() ([]k8sclient.CertInfo, error)
-	GetCertificate(namespace, name string) (*k8sclient.CertInfo, error)
-	EnsureCertificate(k8sclient.CreateCertificateRequest) (*k8sclient.CertInfo, error)
-	ListIssuers() ([]k8sclient.IssuerInfo, error)
-	CreateIssuer(k8sclient.IssuerRequest) (*k8sclient.IssuerInfo, error)
-	UpdateIssuer(k8sclient.IssuerRequest) (*k8sclient.IssuerInfo, error)
-	DeleteIssuer(kind, namespace, name string) error
-	ListCertificateOperations(namespace, name string) ([]k8sclient.CertificateOperation, error)
-	CreateCertificate(k8sclient.CreateCertificateRequest) (*k8sclient.CertInfo, error)
-	DeleteCertificate(namespace, name string) error
+	CertManagerStatusContext(context.Context) *k8sclient.CertManagerStatus
+	ListCertificatesContext(context.Context) ([]k8sclient.CertInfo, error)
+	GetCertificateContext(context.Context, string, string) (*k8sclient.CertInfo, error)
+	EnsureCertificateContext(context.Context, k8sclient.CreateCertificateRequest) (*k8sclient.CertInfo, error)
+	ListIssuersContext(context.Context) ([]k8sclient.IssuerInfo, error)
+	CreateIssuerContext(context.Context, k8sclient.IssuerRequest) (*k8sclient.IssuerInfo, error)
+	UpdateIssuerContext(context.Context, k8sclient.IssuerRequest) (*k8sclient.IssuerInfo, error)
+	DeleteIssuerContext(context.Context, string, string, string) error
+	ListCertificateOperationsContext(context.Context, string, string) ([]k8sclient.CertificateOperation, error)
+	CreateCertificateContext(context.Context, k8sclient.CreateCertificateRequest) (*k8sclient.CertInfo, error)
+	DeleteCertificateContext(context.Context, string, string) error
 }
 
 type StandardIngressAdapter interface {
-	ListIngresses(namespace string) ([]k8sclient.IngressStdInfo, error)
-	GetIngress(namespace, name string) (*k8sclient.IngressStdDetail, error)
-	CreateIngress(namespace, name, host, path, serviceName, servicePort string) (*k8sclient.IngressStdDetail, error)
-	DeleteIngress(namespace, name string) error
-	DetectIngressController() (*k8sclient.IngressControllerStatus, error)
+	ListIngressesContext(context.Context, string) ([]k8sclient.IngressStdInfo, error)
+	GetIngressContext(context.Context, string, string) (*k8sclient.IngressStdDetail, error)
+	CreateIngressContext(context.Context, string, string, string, string, string, string) (*k8sclient.IngressStdDetail, error)
+	DeleteIngressContext(context.Context, string, string) error
+	DetectIngressControllerContext(context.Context) (*k8sclient.IngressControllerStatus, error)
 }
 
 func NewService(domains DomainStore, credentials ...DNSCredentialStore) *Service {
@@ -139,19 +140,19 @@ func (s *Service) WithStandardIngressAdapter(adapter StandardIngressAdapter) *Se
 	return s
 }
 
-func (s *Service) ListStandardIngresses(namespace string) ([]k8sclient.IngressStdInfo, error) {
+func (s *Service) ListStandardIngressesContext(ctx context.Context, namespace string) ([]k8sclient.IngressStdInfo, error) {
 	if s.standardIngress == nil {
 		return nil, errors.New("标准 Ingress 适配器未初始化")
 	}
-	return s.standardIngress.ListIngresses(strings.TrimSpace(namespace))
+	return s.standardIngress.ListIngressesContext(ctx, strings.TrimSpace(namespace))
 }
-func (s *Service) GetStandardIngress(namespace, name string) (*k8sclient.IngressStdDetail, error) {
+func (s *Service) GetStandardIngressContext(ctx context.Context, namespace, name string) (*k8sclient.IngressStdDetail, error) {
 	if s.standardIngress == nil {
 		return nil, errors.New("标准 Ingress 适配器未初始化")
 	}
-	return s.standardIngress.GetIngress(strings.TrimSpace(namespace), strings.TrimSpace(name))
+	return s.standardIngress.GetIngressContext(ctx, strings.TrimSpace(namespace), strings.TrimSpace(name))
 }
-func (s *Service) CreateStandardIngress(namespace, name, host, ingressPath, serviceName, servicePort string) (*k8sclient.IngressStdDetail, error) {
+func (s *Service) CreateStandardIngressContext(ctx context.Context, namespace, name, host, ingressPath, serviceName, servicePort string) (*k8sclient.IngressStdDetail, error) {
 	if s.standardIngress == nil {
 		return nil, errors.New("标准 Ingress 适配器未初始化")
 	}
@@ -161,140 +162,140 @@ func (s *Service) CreateStandardIngress(namespace, name, host, ingressPath, serv
 	if strings.TrimSpace(ingressPath) == "" {
 		ingressPath = "/"
 	}
-	return s.standardIngress.CreateIngress(strings.TrimSpace(namespace), strings.TrimSpace(name), strings.TrimSpace(host), ingressPath, strings.TrimSpace(serviceName), strings.TrimSpace(servicePort))
+	return s.standardIngress.CreateIngressContext(ctx, strings.TrimSpace(namespace), strings.TrimSpace(name), strings.TrimSpace(host), ingressPath, strings.TrimSpace(serviceName), strings.TrimSpace(servicePort))
 }
-func (s *Service) DeleteStandardIngress(namespace, name string) error {
+func (s *Service) DeleteStandardIngressContext(ctx context.Context, namespace, name string) error {
 	if s.standardIngress == nil {
 		return errors.New("标准 Ingress 适配器未初始化")
 	}
 	if strings.TrimSpace(namespace) == "" || strings.TrimSpace(name) == "" {
 		return errors.New("Ingress 命名空间和名称必填")
 	}
-	return s.standardIngress.DeleteIngress(strings.TrimSpace(namespace), strings.TrimSpace(name))
+	return s.standardIngress.DeleteIngressContext(ctx, strings.TrimSpace(namespace), strings.TrimSpace(name))
 }
-func (s *Service) DetectIngressController() (*k8sclient.IngressControllerStatus, error) {
+func (s *Service) DetectIngressControllerContext(ctx context.Context) (*k8sclient.IngressControllerStatus, error) {
 	if s.standardIngress == nil {
 		return nil, errors.New("标准 Ingress 适配器未初始化")
 	}
-	return s.standardIngress.DetectIngressController()
+	return s.standardIngress.DetectIngressControllerContext(ctx)
 }
 
-func (s *Service) CertificateManagerStatus() (*k8sclient.CertManagerStatus, error) {
+func (s *Service) CertificateManagerStatusContext(ctx context.Context) (*k8sclient.CertManagerStatus, error) {
 	if s.cert == nil {
 		return nil, errors.New("证书管理适配器未初始化")
 	}
-	return s.cert.CertManagerStatus(), nil
+	return s.cert.CertManagerStatusContext(ctx), nil
 }
-func (s *Service) ListCertificates() ([]k8sclient.CertInfo, error) {
+func (s *Service) ListCertificatesContext(ctx context.Context) ([]k8sclient.CertInfo, error) {
 	if s.cert == nil {
 		return nil, errors.New("证书管理适配器未初始化")
 	}
-	return s.cert.ListCertificates()
+	return s.cert.ListCertificatesContext(ctx)
 }
-func (s *Service) GetCertificate(namespace, name string) (*k8sclient.CertInfo, error) {
+func (s *Service) GetCertificateContext(ctx context.Context, namespace, name string) (*k8sclient.CertInfo, error) {
 	if s.cert == nil {
 		return nil, errors.New("证书管理适配器未初始化")
 	}
-	return s.cert.GetCertificate(namespace, name)
+	return s.cert.GetCertificateContext(ctx, namespace, name)
 }
-func (s *Service) EnsureCertificate(req k8sclient.CreateCertificateRequest) (*k8sclient.CertInfo, error) {
+func (s *Service) EnsureCertificateContext(ctx context.Context, req k8sclient.CreateCertificateRequest) (*k8sclient.CertInfo, error) {
 	if s.cert == nil {
 		return nil, errors.New("证书管理适配器未初始化")
 	}
-	return s.cert.EnsureCertificate(req)
+	return s.cert.EnsureCertificateContext(ctx, req)
 }
-func (s *Service) ListIssuers() ([]k8sclient.IssuerInfo, error) {
+func (s *Service) ListIssuersContext(ctx context.Context) ([]k8sclient.IssuerInfo, error) {
 	if s.cert == nil {
 		return nil, errors.New("证书管理适配器未初始化")
 	}
-	return s.cert.ListIssuers()
+	return s.cert.ListIssuersContext(ctx)
 }
-func (s *Service) CreateIssuer(req k8sclient.IssuerRequest) (*k8sclient.IssuerInfo, error) {
+func (s *Service) CreateIssuerContext(ctx context.Context, req k8sclient.IssuerRequest) (*k8sclient.IssuerInfo, error) {
 	if s.cert == nil {
 		return nil, errors.New("证书管理适配器未初始化")
 	}
-	return s.cert.CreateIssuer(req)
+	return s.cert.CreateIssuerContext(ctx, req)
 }
-func (s *Service) UpdateIssuer(req k8sclient.IssuerRequest) (*k8sclient.IssuerInfo, error) {
+func (s *Service) UpdateIssuerContext(ctx context.Context, req k8sclient.IssuerRequest) (*k8sclient.IssuerInfo, error) {
 	if s.cert == nil {
 		return nil, errors.New("证书管理适配器未初始化")
 	}
-	return s.cert.UpdateIssuer(req)
+	return s.cert.UpdateIssuerContext(ctx, req)
 }
-func (s *Service) DeleteIssuer(kind, namespace, name string) error {
+func (s *Service) DeleteIssuerContext(ctx context.Context, kind, namespace, name string) error {
 	if s.cert == nil {
 		return errors.New("证书管理适配器未初始化")
 	}
-	return s.cert.DeleteIssuer(kind, namespace, name)
+	return s.cert.DeleteIssuerContext(ctx, kind, namespace, name)
 }
-func (s *Service) ListCertificateOperations(namespace, name string) ([]k8sclient.CertificateOperation, error) {
+func (s *Service) ListCertificateOperationsContext(ctx context.Context, namespace, name string) ([]k8sclient.CertificateOperation, error) {
 	if s.cert == nil {
 		return nil, errors.New("证书管理适配器未初始化")
 	}
-	return s.cert.ListCertificateOperations(namespace, name)
+	return s.cert.ListCertificateOperationsContext(ctx, namespace, name)
 }
-func (s *Service) CreateCertificate(req k8sclient.CreateCertificateRequest) (*k8sclient.CertInfo, error) {
+func (s *Service) CreateCertificateContext(ctx context.Context, req k8sclient.CreateCertificateRequest) (*k8sclient.CertInfo, error) {
 	if s.cert == nil {
 		return nil, errors.New("证书管理适配器未初始化")
 	}
-	return s.cert.CreateCertificate(req)
+	return s.cert.CreateCertificateContext(ctx, req)
 }
-func (s *Service) DeleteCertificate(namespace, name string) error {
+func (s *Service) DeleteCertificateContext(ctx context.Context, namespace, name string) error {
 	if s.cert == nil {
 		return errors.New("证书管理适配器未初始化")
 	}
-	return s.cert.DeleteCertificate(namespace, name)
+	return s.cert.DeleteCertificateContext(ctx, namespace, name)
 }
 
-func (s *Service) DNSProviderStatus(provider string) (*k8sclient.DNSProviderStatus, error) {
+func (s *Service) DNSProviderStatusContext(ctx context.Context, provider string) (*k8sclient.DNSProviderStatus, error) {
 	if s.dns == nil {
 		return nil, errors.New("DNS Provider 适配器未初始化")
 	}
-	return s.dns.DNSProviderStatus(strings.TrimSpace(provider)), nil
+	return s.dns.DNSProviderStatusContext(ctx, strings.TrimSpace(provider)), nil
 }
 
-func (s *Service) InstallDNSProvider(provider string) (*k8sclient.DNSProviderStatus, error) {
+func (s *Service) InstallDNSProviderContext(ctx context.Context, provider string) (*k8sclient.DNSProviderStatus, error) {
 	if s.dns == nil {
 		return nil, errors.New("DNS Provider 适配器未初始化")
 	}
-	return s.dns.InstallDNSProvider(strings.TrimSpace(provider))
+	return s.dns.InstallDNSProviderContext(ctx, strings.TrimSpace(provider))
 }
 
-func (s *Service) SyncDNSCredentialSecret(credential *model.DNSCredential, values map[string]string) error {
+func (s *Service) SyncDNSCredentialSecretContext(ctx context.Context, credential *model.DNSCredential, values map[string]string) error {
 	if s.dns == nil {
 		return errors.New("DNS Provider 适配器未初始化")
 	}
 	if credential == nil || strings.TrimSpace(credential.Provider) == "" || strings.TrimSpace(credential.Namespace) == "" || strings.TrimSpace(credential.SecretName) == "" {
 		return errors.New("DNS 凭据定义不完整")
 	}
-	return s.dns.UpsertDNSCredentialSecret(credential.Provider, credential.Namespace, credential.SecretName, values)
+	return s.dns.UpsertDNSCredentialSecretContext(ctx, credential.Provider, credential.Namespace, credential.SecretName, values)
 }
 
-func (s *Service) RemoveDNSCredentialSecret(namespace, secretName string) error {
+func (s *Service) RemoveDNSCredentialSecretContext(ctx context.Context, namespace, secretName string) error {
 	if s.dns == nil {
 		return errors.New("DNS Provider 适配器未初始化")
 	}
 	if strings.TrimSpace(namespace) == "" || strings.TrimSpace(secretName) == "" {
 		return errors.New("DNS Secret 名称和命名空间必填")
 	}
-	return s.dns.DeleteDNSCredentialSecret(strings.TrimSpace(namespace), strings.TrimSpace(secretName))
+	return s.dns.DeleteDNSCredentialSecretContext(ctx, strings.TrimSpace(namespace), strings.TrimSpace(secretName))
 }
 
-func (s *Service) ListIngressRoutes() ([]k8sclient.IngressRouteInfo, error) {
+func (s *Service) ListIngressRoutesContext(ctx context.Context) ([]k8sclient.IngressRouteInfo, error) {
 	if s.ingress == nil {
 		return nil, errors.New("IngressRoute 适配器未初始化")
 	}
-	return s.ingress.ListIngressRoutes()
+	return s.ingress.ListIngressRoutesContext(ctx)
 }
 
-func (s *Service) DeleteIngressRoute(namespace, name string) error {
+func (s *Service) DeleteIngressRouteContext(ctx context.Context, namespace, name string) error {
 	if s.ingress == nil {
 		return errors.New("IngressRoute 适配器未初始化")
 	}
 	if strings.TrimSpace(namespace) == "" || strings.TrimSpace(name) == "" {
 		return errors.New("IngressRoute 命名空间和名称必填")
 	}
-	return s.ingress.DeleteIngressRoute(strings.TrimSpace(namespace), strings.TrimSpace(name))
+	return s.ingress.DeleteIngressRouteContext(ctx, strings.TrimSpace(namespace), strings.TrimSpace(name))
 }
 
 func (s *Service) requireCredentials() (DNSCredentialStore, error) {
@@ -437,7 +438,7 @@ func (s *Service) CountApplicationEndpointsByDomain(id uint) (int64, error) {
 	return s.domains.CountApplicationEndpointsByDomain(id)
 }
 
-func (s *Service) BuildManagedDomainView(domain *model.ManagedDomain) ManagedDomainView {
+func (s *Service) BuildManagedDomainView(ctx context.Context, domain *model.ManagedDomain) ManagedDomainView {
 	view := ManagedDomainView{}
 	if domain == nil {
 		return view
@@ -452,7 +453,7 @@ func (s *Service) BuildManagedDomainView(domain *model.ManagedDomain) ManagedDom
 		}
 		return view
 	}
-	certificate, err := s.GetCertificate(domain.Namespace, domain.CertificateName)
+	certificate, err := s.GetCertificateContext(ctx, domain.Namespace, domain.CertificateName)
 	if err != nil {
 		view.CertificateError = err.Error()
 		return view
@@ -493,21 +494,21 @@ func (s *Service) BuildManagedDomain(input DomainInput, current *model.ManagedDo
 	return domain, nil
 }
 
-func (s *Service) ValidateManagedDomainPrerequisites(domain *model.ManagedDomain, adapter DomainPrerequisiteAdapter) error {
+func (s *Service) ValidateManagedDomainPrerequisites(ctx context.Context, domain *model.ManagedDomain, adapter DomainPrerequisiteAdapter) error {
 	if domain == nil || strings.TrimSpace(domain.Namespace) == "" {
 		return errors.New("域名命名空间不能为空")
 	}
 	if adapter.NamespaceExists == nil || adapter.ListIssuers == nil {
 		return errors.New("网络资源检查器未初始化")
 	}
-	exists, err := adapter.NamespaceExists(domain.Namespace)
+	exists, err := adapter.NamespaceExists(ctx, domain.Namespace)
 	if err != nil {
 		return errors.New("检查命名空间: " + err.Error())
 	}
 	if !exists {
 		return errors.New("命名空间 \"" + domain.Namespace + "\" 不存在")
 	}
-	issuers, err := adapter.ListIssuers()
+	issuers, err := adapter.ListIssuers(ctx)
 	if err != nil {
 		return errors.New("读取签发者: " + err.Error())
 	}

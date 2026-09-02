@@ -1,6 +1,7 @@
 package k8s
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -25,7 +26,7 @@ func TestListManagedPVCsIncludesBoundNodeAndReclaimPolicy(t *testing.T) {
 		&storagev1.StorageClass{ObjectMeta: metav1.ObjectMeta{Name: "local-path"}, VolumeBindingMode: volumeBindingModePtr(storagev1.VolumeBindingWaitForFirstConsumer)},
 	)}
 
-	pvcs, err := client.ListManagedPVCs("project-knowledge", 3)
+	pvcs, err := client.ListManagedPVCsContext(context.Background(), "project-knowledge", 3)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +44,7 @@ func TestListManagedPVCsIncludesBoundNodeAndReclaimPolicy(t *testing.T) {
 
 func TestCreatePVCBindingPodPinsClaimToTargetNode(t *testing.T) {
 	client := &Client{Clientset: k8sfake.NewSimpleClientset()}
-	pod, err := client.CreatePVCBindingPod("project-knowledge", "migration-1", "karakeep-data-migration-1", "storage-node-b", "registry.example.com/pause:3.10")
+	pod, err := client.CreatePVCBindingPodContext(context.Background(), "project-knowledge", "migration-1", "karakeep-data-migration-1", "storage-node-b", "registry.example.com/pause:3.10")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,7 +60,7 @@ func TestListManagedPVCsExcludesOtherEnvironment(t *testing.T) {
 	client := &Client{Clientset: k8sfake.NewSimpleClientset(
 		&corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: "other", Namespace: "project-knowledge", Labels: map[string]string{ManagedByLabel: ManagedByValue, EnvironmentLabel: EnvironmentLabelValue(4)}}},
 	)}
-	pvcs, err := client.ListManagedPVCs("project-knowledge", 3)
+	pvcs, err := client.ListManagedPVCsContext(context.Background(), "project-knowledge", 3)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +73,7 @@ func TestListManagedPVCsIncludesIndependentClaimInSameNamespace(t *testing.T) {
 	client := &Client{Clientset: k8sfake.NewSimpleClientset(
 		&corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: "shared", Namespace: "project-knowledge", Labels: map[string]string{ManagedByLabel: ManagedByValue}}},
 	)}
-	pvcs, err := client.ListManagedPVCs("project-knowledge", 3)
+	pvcs, err := client.ListManagedPVCsContext(context.Background(), "project-knowledge", 3)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +88,7 @@ func TestListPVCsIncludesExternalAndManagedClaimsAcrossNamespaces(t *testing.T) 
 		&corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: "managed-data", Namespace: "project-knowledge", Labels: map[string]string{ManagedByLabel: ManagedByValue, EnvironmentLabel: EnvironmentLabelValue(3)}}},
 	)}
 
-	pvcs, err := client.ListPVCs("")
+	pvcs, err := client.ListPVCsContext(context.Background(), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +118,7 @@ func TestListPVCsBatchesPersistentVolumeAndStorageClassLookups(t *testing.T) {
 		return false, nil, nil
 	})
 
-	claims, err := (&Client{Clientset: clientset}).ListPVCs("")
+	claims, err := (&Client{Clientset: clientset}).ListPVCsContext(context.Background(), "")
 	if err != nil || len(claims) != 2 {
 		t.Fatalf("expected two claims, got %#v err=%v", claims, err)
 	}
@@ -130,14 +131,14 @@ func TestInfrastructurePVCIsClassifiedAndProtectedFromGenericDelete(t *testing.T
 	client := &Client{Clientset: k8sfake.NewSimpleClientset(&corev1.PersistentVolumeClaim{
 		ObjectMeta: metav1.ObjectMeta{Name: "cylism-victoria-metrics-data", Namespace: "monitoring", Labels: infrastructurePVCLabels(InfrastructureVictoriaMetrics)},
 	})}
-	claims, err := client.ListPVCs("monitoring")
+	claims, err := client.ListPVCsContext(context.Background(), "monitoring")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(claims) != 1 || claims[0].OwnerType != "infrastructure" || claims[0].OwnerName != "VictoriaMetrics" || !claims[0].ReadOnly {
 		t.Fatalf("expected read-only infrastructure PVC, got %#v", claims)
 	}
-	if err := client.DeleteManagedPVC("monitoring", "cylism-victoria-metrics-data", 0); err == nil || !strings.Contains(err.Error(), "基础设施组件") {
+	if err := client.DeleteManagedPVCContext(context.Background(), "monitoring", "cylism-victoria-metrics-data", 0); err == nil || !strings.Contains(err.Error(), "基础设施组件") {
 		t.Fatalf("expected protected PVC delete error, got %v", err)
 	}
 }
@@ -146,14 +147,14 @@ func TestRuntimePVCIsClassifiedAndProtectedFromGenericDelete(t *testing.T) {
 	client := &Client{Clientset: k8sfake.NewSimpleClientset(&corev1.PersistentVolumeClaim{
 		ObjectMeta: metav1.ObjectMeta{Name: "nanobot-data", Namespace: "cylism-assistant", Labels: map[string]string{ManagedByLabel: ManagedByValue, InfrastructureLabel: InfrastructureRuntime}},
 	})}
-	claims, err := client.ListPVCs("cylism-assistant")
+	claims, err := client.ListPVCsContext(context.Background(), "cylism-assistant")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(claims) != 1 || claims[0].OwnerType != "infrastructure" || claims[0].OwnerName != "Agent Runtime" || !claims[0].ReadOnly {
 		t.Fatalf("expected runtime PVC to be read-only infrastructure, got %#v", claims)
 	}
-	if err := client.DeleteManagedPVC("cylism-assistant", "nanobot-data", 0); err == nil || !strings.Contains(err.Error(), "基础设施组件") {
+	if err := client.DeleteManagedPVCContext(context.Background(), "cylism-assistant", "nanobot-data", 0); err == nil || !strings.Contains(err.Error(), "基础设施组件") {
 		t.Fatalf("expected protected runtime PVC delete error, got %v", err)
 	}
 }
@@ -162,21 +163,21 @@ func TestManagedOCIRegistryPVCIsClassifiedAndProtectedFromGenericDelete(t *testi
 	client := &Client{Clientset: k8sfake.NewSimpleClientset(&corev1.PersistentVolumeClaim{
 		ObjectMeta: metav1.ObjectMeta{Name: "cylism-oci-registry-data", Namespace: "cylism-system", Labels: map[string]string{ManagedByLabel: ManagedByValue}},
 	})}
-	claims, err := client.ListPVCs("cylism-system")
+	claims, err := client.ListPVCsContext(context.Background(), "cylism-system")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(claims) != 1 || claims[0].OwnerType != "infrastructure" || claims[0].OwnerName != "OCI 制品库" || !claims[0].ReadOnly {
 		t.Fatalf("expected managed OCI registry PVC to be read-only infrastructure, got %#v", claims)
 	}
-	if err := client.DeleteManagedPVC("cylism-system", "cylism-oci-registry-data", 0); err == nil || !strings.Contains(err.Error(), "基础设施组件") {
+	if err := client.DeleteManagedPVCContext(context.Background(), "cylism-system", "cylism-oci-registry-data", 0); err == nil || !strings.Contains(err.Error(), "基础设施组件") {
 		t.Fatalf("expected protected PVC delete error, got %v", err)
 	}
 }
 
 func TestCreateManagedPVCUsesEnvironmentLabelsAndReadWriteOnce(t *testing.T) {
 	client := &Client{Clientset: k8sfake.NewSimpleClientset()}
-	created, err := client.CreateManagedPVC("project-knowledge", 3, PersistentVolumeClaimRequest{Name: "karakeep-data", Storage: "5Gi", StorageClassName: "local-path"})
+	created, err := client.CreateManagedPVCContext(context.Background(), "project-knowledge", 3, PersistentVolumeClaimRequest{Name: "karakeep-data", Storage: "5Gi", StorageClassName: "local-path"})
 	if err != nil {
 		t.Fatal(err)
 	}

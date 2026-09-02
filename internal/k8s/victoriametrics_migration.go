@@ -13,14 +13,14 @@ const victoriaMetricsMigrationImage = "busybox:1.36.1"
 
 // StartVictoriaMetricsHostPathMigration converts a legacy metrics directory to
 // the platform-owned PVC on the same node. The source hostPath is preserved.
-func (c *Client) StartVictoriaMetricsHostPathMigration(request VictoriaMetricsMigrationRequest) (*VictoriaMetricsStatus, error) {
+func (c *Client) startVictoriaMetricsHostPathMigration(request VictoriaMetricsMigrationRequest) (*VictoriaMetricsStatus, error) {
 	if c == nil || c.Clientset == nil {
 		return c.VictoriaMetricsStatus(), fmt.Errorf("Kubernetes 客户端未初始化")
 	}
 	if err := validateVictoriaMetricsPVCConfig(VictoriaMetricsConfig{NodeName: "migration", Storage: request.Storage}); err != nil {
 		return c.VictoriaMetricsStatus(), err
 	}
-	deployment, err := c.Clientset.AppsV1().Deployments(victoriaMetricsNamespace).Get(c.Ctx(), victoriaMetricsName, metav1.GetOptions{})
+	deployment, err := c.Clientset.AppsV1().Deployments(victoriaMetricsNamespace).Get(c.ctx, victoriaMetricsName, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
 		return c.VictoriaMetricsStatus(), fmt.Errorf("VictoriaMetrics 尚未安装")
 	}
@@ -31,16 +31,16 @@ func (c *Client) StartVictoriaMetricsHostPathMigration(request VictoriaMetricsMi
 	if !legacy || config.DataPath == "" {
 		return c.VictoriaMetricsStatus(), fmt.Errorf("当前 VictoriaMetrics 未使用旧 hostPath 存储，无需迁移")
 	}
-	node, err := c.Clientset.CoreV1().Nodes().Get(c.Ctx(), config.NodeName, metav1.GetOptions{})
+	node, err := c.Clientset.CoreV1().Nodes().Get(c.ctx, config.NodeName, metav1.GetOptions{})
 	if err != nil {
 		return c.VictoriaMetricsStatus(), fmt.Errorf("读取数据节点失败: %w", err)
 	}
 	if !nodeReady(node) {
 		return c.VictoriaMetricsStatus(), fmt.Errorf("数据节点 %s 未就绪，不能迁移", config.NodeName)
 	}
-	if job, getErr := c.Clientset.BatchV1().Jobs(victoriaMetricsNamespace).Get(c.Ctx(), victoriaMetricsMigrationJobName, metav1.GetOptions{}); getErr == nil {
+	if job, getErr := c.Clientset.BatchV1().Jobs(victoriaMetricsNamespace).Get(c.ctx, victoriaMetricsMigrationJobName, metav1.GetOptions{}); getErr == nil {
 		if jobFailed(job) {
-			if deleteErr := c.Clientset.BatchV1().Jobs(victoriaMetricsNamespace).Delete(c.Ctx(), job.Name, metav1.DeleteOptions{}); deleteErr != nil {
+			if deleteErr := c.Clientset.BatchV1().Jobs(victoriaMetricsNamespace).Delete(c.ctx, job.Name, metav1.DeleteOptions{}); deleteErr != nil {
 				return c.VictoriaMetricsStatus(), fmt.Errorf("清理失败的存储迁移任务失败: %w", deleteErr)
 			}
 		} else {
@@ -95,7 +95,7 @@ func createVictoriaMetricsMigrationJob(c *Client, config VictoriaMetricsConfig) 
 			},
 		},
 	}
-	if _, err := c.Clientset.BatchV1().Jobs(victoriaMetricsNamespace).Create(c.Ctx(), job, metav1.CreateOptions{}); err != nil {
+	if _, err := c.Clientset.BatchV1().Jobs(victoriaMetricsNamespace).Create(c.ctx, job, metav1.CreateOptions{}); err != nil {
 		return fmt.Errorf("创建 VictoriaMetrics 数据迁移任务失败: %w", err)
 	}
 	return nil
@@ -104,7 +104,7 @@ func createVictoriaMetricsMigrationJob(c *Client, config VictoriaMetricsConfig) 
 // reconcileVictoriaMetricsMigration performs an idempotent cutover or recovery
 // from the Kubernetes Job state, so a platform restart does not strand metrics.
 func (c *Client) reconcileVictoriaMetricsMigration() error {
-	job, err := c.Clientset.BatchV1().Jobs(victoriaMetricsNamespace).Get(c.Ctx(), victoriaMetricsMigrationJobName, metav1.GetOptions{})
+	job, err := c.Clientset.BatchV1().Jobs(victoriaMetricsNamespace).Get(c.ctx, victoriaMetricsMigrationJobName, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
 		return nil
 	}
@@ -120,7 +120,7 @@ func (c *Client) reconcileVictoriaMetricsMigration() error {
 	if !jobSucceeded(job) {
 		return fmt.Errorf("迁移任务仍在执行")
 	}
-	deployment, err := c.Clientset.AppsV1().Deployments(victoriaMetricsNamespace).Get(c.Ctx(), victoriaMetricsName, metav1.GetOptions{})
+	deployment, err := c.Clientset.AppsV1().Deployments(victoriaMetricsNamespace).Get(c.ctx, victoriaMetricsName, metav1.GetOptions{})
 	if err != nil {
 		return err
 	}
@@ -133,14 +133,14 @@ func (c *Client) reconcileVictoriaMetricsMigration() error {
 	if err := upsertVictoriaMetricsDeployment(c, config); err != nil {
 		return err
 	}
-	return c.Clientset.BatchV1().Jobs(victoriaMetricsNamespace).Delete(c.Ctx(), victoriaMetricsMigrationJobName, metav1.DeleteOptions{})
+	return c.Clientset.BatchV1().Jobs(victoriaMetricsNamespace).Delete(c.ctx, victoriaMetricsMigrationJobName, metav1.DeleteOptions{})
 }
 
 func (c *Client) victoriaMetricsMigrationStatus() *VictoriaMetricsStorageMigration {
 	if c == nil || c.Clientset == nil {
 		return nil
 	}
-	job, err := c.Clientset.BatchV1().Jobs(victoriaMetricsNamespace).Get(c.Ctx(), victoriaMetricsMigrationJobName, metav1.GetOptions{})
+	job, err := c.Clientset.BatchV1().Jobs(victoriaMetricsNamespace).Get(c.ctx, victoriaMetricsMigrationJobName, metav1.GetOptions{})
 	if err != nil {
 		return nil
 	}
@@ -154,12 +154,12 @@ func (c *Client) victoriaMetricsMigrationStatus() *VictoriaMetricsStorageMigrati
 }
 
 func scaleVictoriaMetrics(c *Client, replicas int32) error {
-	deployment, err := c.Clientset.AppsV1().Deployments(victoriaMetricsNamespace).Get(c.Ctx(), victoriaMetricsName, metav1.GetOptions{})
+	deployment, err := c.Clientset.AppsV1().Deployments(victoriaMetricsNamespace).Get(c.ctx, victoriaMetricsName, metav1.GetOptions{})
 	if err != nil {
 		return fmt.Errorf("读取 VictoriaMetrics 工作负载失败: %w", err)
 	}
 	deployment.Spec.Replicas = &replicas
-	if _, err := c.Clientset.AppsV1().Deployments(victoriaMetricsNamespace).Update(c.Ctx(), deployment, metav1.UpdateOptions{}); err != nil {
+	if _, err := c.Clientset.AppsV1().Deployments(victoriaMetricsNamespace).Update(c.ctx, deployment, metav1.UpdateOptions{}); err != nil {
 		return fmt.Errorf("更新 VictoriaMetrics 副本失败: %w", err)
 	}
 	return nil

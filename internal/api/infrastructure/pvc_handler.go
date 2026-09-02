@@ -61,7 +61,7 @@ func (h *StorageHandler) ListPersistentVolumeClaims(c *gin.Context) {
 		return
 	}
 	namespace := strings.TrimSpace(c.Query("namespace"))
-	claims, err := h.Service.ListPVCs(namespace, environmentID)
+	claims, err := h.Service.ListPVCsContext(c.Request.Context(), namespace, environmentID)
 	if err != nil {
 		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
 		return
@@ -80,7 +80,7 @@ func (h *StorageHandler) ListPersistentVolumeClaimUsage(c *gin.Context) {
 		storageK8sUnavailable(c)
 		return
 	}
-	claims, err := h.pvc.ListPVCs(strings.TrimSpace(c.Query("namespace")))
+	claims, err := h.pvc.ListPVCsContext(c.Request.Context(), strings.TrimSpace(c.Query("namespace")))
 	if err != nil {
 		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
 		return
@@ -151,7 +151,7 @@ func (h *StorageHandler) ListPersistentVolumeClaimUsage(c *gin.Context) {
 			defer waitGroup.Done()
 			for job := range jobQueue {
 				job.lock.Lock()
-				usedBytes, readErr := ReadPersistentVolumeUsage(&job.server, job.claim.LocalPath, h.encKey)
+				usedBytes, readErr := ReadPersistentVolumeUsage(c.Request.Context(), &job.server, job.claim.LocalPath, h.encKey)
 				job.lock.Unlock()
 				if readErr != nil {
 					responses[job.index].Message = "节点不可访问或存储目录不可读取"
@@ -171,9 +171,9 @@ func (h *StorageHandler) ListPersistentVolumeClaimUsage(c *gin.Context) {
 	model.Success(c, responses)
 }
 
-func readLocalPersistentVolumeUsage(server *model.Server, localPath string, encKey []byte) (int64, error) {
+func readLocalPersistentVolumeUsage(ctx context.Context, server *model.Server, localPath string, encKey []byte) (int64, error) {
 	command := "sudo -n du -sb -- " + storageShellQuote(localPath)
-	output, err := sshExec(12*time.Second, append(buildSSHArgs(server, encKey, server.Host), command))
+	output, err := sshExec(ctx, 12*time.Second, append(buildSSHArgs(server, encKey, server.Host), command))
 	if err != nil {
 		return 0, err
 	}
@@ -232,12 +232,12 @@ func (h *StorageHandler) CreatePersistentVolumeClaim(c *gin.Context) {
 		apiShared.BadRequest(c, err.Error())
 		return
 	}
-	claim, err := h.Service.CreatePVC(namespace, request.EnvironmentID, k8sclient.PersistentVolumeClaimRequest{Name: request.Name, Storage: request.Storage, StorageClassName: request.StorageClassName})
+	claim, err := h.Service.CreatePVCContext(c.Request.Context(), namespace, request.EnvironmentID, k8sclient.PersistentVolumeClaimRequest{Name: request.Name, Storage: request.Storage, StorageClassName: request.StorageClassName})
 	if err != nil {
 		apiShared.ValidationError(c, err.Error())
 		return
 	}
-	info, err := h.Service.GetPVC(namespace, claim.Name, request.EnvironmentID)
+	info, err := h.Service.GetPVCContext(c.Request.Context(), namespace, claim.Name, request.EnvironmentID)
 	if err != nil {
 		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
 		return
@@ -265,7 +265,7 @@ func (h *StorageHandler) DeletePersistentVolumeClaim(c *gin.Context) {
 		return
 	}
 	name := c.Param("name")
-	claim, err := h.pvc.GetManagedPVC(namespace, name, request.EnvironmentID)
+	claim, err := h.pvc.GetManagedPVCContext(c.Request.Context(), namespace, name, request.EnvironmentID)
 	if err != nil {
 		apiShared.NotFound(c, err.Error())
 		return
@@ -291,7 +291,7 @@ func (h *StorageHandler) DeletePersistentVolumeClaim(c *gin.Context) {
 		}
 		return
 	}
-	if err := h.Service.DeletePVC(namespace, name, request.EnvironmentID); err != nil {
+	if err := h.Service.DeletePVCContext(c.Request.Context(), namespace, name, request.EnvironmentID); err != nil {
 		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
 		return
 	}
@@ -303,7 +303,7 @@ func (h *StorageHandler) ListStorageClasses(c *gin.Context) {
 		storageK8sUnavailable(c)
 		return
 	}
-	classes, err := h.pvc.ListStorageClasses()
+	classes, err := h.pvc.ListStorageClassesContext(c.Request.Context())
 	if err != nil {
 		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
 		return

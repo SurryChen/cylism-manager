@@ -18,22 +18,23 @@ import (
 )
 
 func TestApplicationHandlerGetReleaseIncludesLivePodRuntime(t *testing.T) {
-	r, s := setupApplicationRouter()
+	clientset := k8sfake.NewSimpleClientset()
+	r, s := setupApplicationRouter(&k8sclient.Client{Clientset: clientset})
 	app := createApplicationForReleaseRuntimeTest(t, s)
 	release := &model.Release{ApplicationID: app.ID, Sequence: 6, Image: "gcr.io/zenika-hub/alpine-chrome:124", DesiredSpec: "{}", Status: model.ReleaseStatusSucceeded, CreatedBy: 1, PodTrackingEnabled: true}
 	if err := s.CreateRelease(release); err != nil {
 		t.Fatal(err)
 	}
-	originalK8s := K8s
-	K8s = &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(&corev1.Pod{
+	if _, err := clientset.CoreV1().Pods(app.Environment.Namespace).Create(t.Context(), &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: "browser-abc", Namespace: app.Environment.Namespace, Labels: map[string]string{application.ApplicationNameLabel: app.Name, application.ReleaseLabel: "6"}},
 		Spec:       corev1.PodSpec{NodeName: "worker-a"},
 		Status: corev1.PodStatus{Phase: corev1.PodRunning, ContainerStatuses: []corev1.ContainerStatus{{
 			Name: "browser", RestartCount: 4, State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "CrashLoopBackOff"}},
 			LastTerminationState: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{Reason: "Completed", ExitCode: 0}},
 		}}},
-	})}
-	defer func() { K8s = originalK8s }()
+	}, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
 
 	response := serve(r, newJSONRequest(http.MethodGet, "/api/applications/1/releases/1", nil))
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "\"tracking\":\"exact\"") || !strings.Contains(response.Body.String(), "CrashLoopBackOff") || !strings.Contains(response.Body.String(), "正常退出") {
@@ -102,14 +103,12 @@ func TestCreateRestartReleaseUsesCurrentTemplateAndSanitizesSecrets(t *testing.T
 		t.Fatal(err)
 	}
 
-	originalK8s := K8s
-	K8s = &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(&corev1.Namespace{
+	client := &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(&corev1.Namespace{
 		ObjectMeta: metav1.ObjectMeta{Name: app.Environment.Namespace},
 		Status:     corev1.NamespaceStatus{Phase: corev1.NamespaceActive},
 	})}
-	defer func() { K8s = originalK8s }()
 
-	handler := NewApplicationHandler(s, key)
+	handler := NewApplicationHandler(s, key, NewKubernetesDependencies(client))
 	release, err := handler.createRestartRelease(t.Context(), app, 9)
 	if err != nil {
 		t.Fatalf("create restart release: %v", err)
@@ -146,7 +145,7 @@ func TestCreateRestartReleaseUsesCurrentTemplateAndSanitizesSecrets(t *testing.T
 	for time.Now().Before(deadline) {
 		stored, getErr := s.GetRelease(release.ID)
 		if getErr == nil && stored.Status == model.ReleaseStatusFailed {
-			return // The invalid test image makes the asynchronous worker finish before restoring K8s.
+			return // The invalid test image makes the asynchronous worker finish before the test deadline.
 		}
 		time.Sleep(10 * time.Millisecond)
 	}

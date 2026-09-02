@@ -4,7 +4,6 @@ import (
 	"net/http"
 
 	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
-	"github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
 	networkservice "github.com/cylism/cylism-manager/internal/service/network"
 	"github.com/gin-gonic/gin"
@@ -14,20 +13,19 @@ import (
 // HTTP adapter. Kubernetes operations remain behind api.K8s for compatibility
 // with the existing client initialization path.
 type IngressHandler struct {
-	client  *k8s.Client
 	service *networkservice.Service
 }
 
-func NewIngressHandler(client *k8s.Client) *IngressHandler {
-	return &IngressHandler{client: client, service: networkservice.NewService(nil).WithIngressAdapter(client)}
+func NewIngressHandler(service *networkservice.Service) *IngressHandler {
+	return &IngressHandler{service: service}
 }
 
 func (h *IngressHandler) ListRoutes(c *gin.Context) {
-	if h.client == nil {
+	if h.service == nil {
 		apiShared.K8sUnavailable(c)
 		return
 	}
-	routes, err := h.service.ListIngressRoutes()
+	routes, err := h.service.ListIngressRoutesContext(c.Request.Context())
 	if err != nil {
 		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
 		return
@@ -36,7 +34,7 @@ func (h *IngressHandler) ListRoutes(c *gin.Context) {
 }
 
 func (h *IngressHandler) CreateRoute(c *gin.Context) {
-	if h.client == nil {
+	if h.service == nil {
 		apiShared.K8sUnavailable(c)
 		return
 	}
@@ -44,7 +42,7 @@ func (h *IngressHandler) CreateRoute(c *gin.Context) {
 }
 
 func (h *IngressHandler) UpdateRoute(c *gin.Context) {
-	if h.client == nil {
+	if h.service == nil {
 		apiShared.K8sUnavailable(c)
 		return
 	}
@@ -52,11 +50,11 @@ func (h *IngressHandler) UpdateRoute(c *gin.Context) {
 }
 
 func (h *IngressHandler) DeleteRoute(c *gin.Context) {
-	if h.client == nil {
+	if h.service == nil {
 		apiShared.K8sUnavailable(c)
 		return
 	}
-	if err := h.service.DeleteIngressRoute(c.Param("namespace"), c.Param("name")); err != nil {
+	if err := h.service.DeleteIngressRouteContext(c.Request.Context(), c.Param("namespace"), c.Param("name")); err != nil {
 		apiShared.InternalError(c, err.Error())
 		return
 	}
@@ -64,7 +62,7 @@ func (h *IngressHandler) DeleteRoute(c *gin.Context) {
 }
 
 func (h *IngressHandler) ListMiddlewares(c *gin.Context) {
-	if h.client == nil {
+	if h.service == nil {
 		apiShared.K8sUnavailable(c)
 		return
 	}
@@ -72,7 +70,7 @@ func (h *IngressHandler) ListMiddlewares(c *gin.Context) {
 }
 
 func (h *IngressHandler) ListTLSStores(c *gin.Context) {
-	if h.client == nil {
+	if h.service == nil {
 		apiShared.K8sUnavailable(c)
 		return
 	}

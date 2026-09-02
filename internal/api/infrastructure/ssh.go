@@ -22,20 +22,23 @@ import (
 // SSHTimeout is the default bound for a single remote SSH command.
 const SSHTimeout = 15 * time.Second
 
-// Package-local aliases keep existing infrastructure handlers source-compatible
-// while all SSH behavior remains implemented by this file.
 const sshTimeout = SSHTimeout
 
-func sshExec(timeout time.Duration, args []string) ([]byte, error) { return SSHExec(timeout, args) }
+func sshExec(ctx context.Context, timeout time.Duration, args []string) ([]byte, error) {
+	return SSHExecContext(ctx, timeout, args)
+}
 
 func buildSSHArgs(server *model.Server, encKey []byte, host string) []string {
 	return BuildSSHArgs(server, encKey, host)
 }
 
-// SSHExec runs one already-rendered remote command and combines stdout and
-// stderr so callers can retain useful diagnostics without a second channel.
-func SSHExec(timeout time.Duration, args []string) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+// SSHExecContext executes a remote command with the caller's cancellation
+// boundary and a per-command timeout.
+func SSHExecContext(parent context.Context, timeout time.Duration, args []string) ([]byte, error) {
+	if parent == nil {
+		return nil, fmt.Errorf("ssh context is required")
+	}
+	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
 	log.Printf("[ssh] running remote command for host %s", sshTarget(args))
 	return exec.CommandContext(ctx, "ssh", args...).CombinedOutput()
@@ -90,11 +93,11 @@ func BuildSSHArgs(server *model.Server, encKey []byte, host string) []string {
 }
 
 // ProbeSSH checks that a server accepts a non-interactive SSH command.
-func ProbeSSH(server *model.Server, encKey []byte) (bool, string) {
+func ProbeSSHContext(ctx context.Context, server *model.Server, encKey []byte) (bool, string) {
 	if server == nil {
 		return false, "server unavailable"
 	}
-	out, err := SSHExec(SSHTimeout, append(BuildSSHArgs(server, encKey, server.Host), "echo ok"))
+	out, err := SSHExecContext(ctx, SSHTimeout, append(BuildSSHArgs(server, encKey, server.Host), "echo ok"))
 	if err != nil {
 		return false, fmt.Sprintf("%v: %s", err, strings.TrimSpace(string(out)))
 	}
@@ -106,10 +109,10 @@ func ProbeSSH(server *model.Server, encKey []byte) (bool, string) {
 
 // RunPrechecks performs the standard server checks used by both probe and
 // node-import workflows. It returns the transport-independent Cluster shape.
-func RunPrechecks(server *model.Server, encKey []byte) []cluster.Precheck {
+func RunPrechecksContext(ctx context.Context, server *model.Server, encKey []byte) []cluster.Precheck {
 	args := BuildSSHArgs(server, encKey, server.Host)
 	checks := make([]cluster.Precheck, 0, 5)
-	out, err := SSHExec(SSHTimeout, append(args, "echo ok"))
+	out, err := SSHExecContext(ctx, SSHTimeout, append(args, "echo ok"))
 	sshOK := err == nil && (strings.Contains(string(out), "\nok") || strings.TrimSpace(string(out)) == "ok")
 	checks = append(checks, cluster.Precheck{Name: "ssh_connect", Label: "SSH 连接", Pass: sshOK, Detail: precheckDetail(sshOK, "连接成功", fmt.Sprintf("连接失败: %v", err))})
 	if !sshOK {
@@ -118,11 +121,11 @@ func RunPrechecks(server *model.Server, encKey []byte) []cluster.Precheck {
 		}
 		return checks
 	}
-	out, err = SSHExec(SSHTimeout, append(args, "id -u"))
+	out, err = SSHExecContext(ctx, SSHTimeout, append(args, "id -u"))
 	rootOK := err == nil && strings.TrimSpace(string(out)) == "0"
 	rootDetail := strings.TrimSpace(string(out))
 	if !rootOK {
-		sudoOut, sudoErr := SSHExec(SSHTimeout, append(args, "sudo -n true 2>&1"))
+		sudoOut, sudoErr := SSHExecContext(ctx, SSHTimeout, append(args, "sudo -n true 2>&1"))
 		if sudoErr == nil || strings.Contains(string(sudoOut), "password") {
 			rootOK, rootDetail = true, "有 sudo 权限（非 root 用户）"
 		} else {
@@ -130,13 +133,13 @@ func RunPrechecks(server *model.Server, encKey []byte) []cluster.Precheck {
 		}
 	}
 	checks = append(checks, cluster.Precheck{Name: "root_privilege", Label: "Root 权限", Pass: rootOK, Detail: rootDetail})
-	out, err = SSHExec(SSHTimeout, append(args, "swapon --show 2>/dev/null | wc -l"))
+	out, err = SSHExecContext(ctx, SSHTimeout, append(args, "swapon --show 2>/dev/null | wc -l"))
 	swapOK := err == nil && strings.TrimSpace(string(out)) == "0"
 	checks = append(checks, cluster.Precheck{Name: "swap_disabled", Label: "Swap 状态", Pass: swapOK, Detail: precheckDetail(swapOK, "已关闭", "swap 已开启")})
-	out, err = SSHExec(SSHTimeout, append(args, "uname -m"))
+	out, err = SSHExecContext(ctx, SSHTimeout, append(args, "uname -m"))
 	osOK := err == nil && (strings.Contains(string(out), "x86_64") || strings.Contains(string(out), "aarch64"))
 	checks = append(checks, cluster.Precheck{Name: "os_compatible", Label: "操作系统", Pass: osOK, Detail: strings.TrimSpace(string(out))})
-	out, err = SSHExec(SSHTimeout, append(args, "df -BG / | tail -1 | awk '{print $4}' | sed 's/G//'"))
+	out, err = SSHExecContext(ctx, SSHTimeout, append(args, "df -BG / | tail -1 | awk '{print $4}' | sed 's/G//'"))
 	diskGB := 0
 	if err == nil {
 		_, _ = fmt.Sscanf(strings.TrimSpace(string(out)), "%d", &diskGB)
@@ -155,17 +158,17 @@ func precheckDetail(pass bool, success, failure string) string {
 // ServerInspector adapts the shared SSH checks to Cluster Service interfaces.
 type ServerInspector struct{ EncKey []byte }
 
-func (i ServerInspector) Probe(server *model.Server) (bool, string) {
-	return ProbeSSH(server, i.EncKey)
+func (i ServerInspector) Probe(ctx context.Context, server *model.Server) (bool, string) {
+	return ProbeSSHContext(ctx, server, i.EncKey)
 }
-func (i ServerInspector) Precheck(server *model.Server) []cluster.Precheck {
-	return RunPrechecks(server, i.EncKey)
+func (i ServerInspector) Precheck(ctx context.Context, server *model.Server) []cluster.Precheck {
+	return RunPrechecksContext(ctx, server, i.EncKey)
 }
-func (i ServerInspector) Hostname(server *model.Server) (string, error) {
-	if _, err := SSHExec(SSHTimeout, append(BuildSSHArgs(server, i.EncKey, server.Host), "echo ok")); err != nil {
+func (i ServerInspector) Hostname(ctx context.Context, server *model.Server) (string, error) {
+	if _, err := SSHExecContext(ctx, SSHTimeout, append(BuildSSHArgs(server, i.EncKey, server.Host), "echo ok")); err != nil {
 		return "", err
 	}
-	out, err := SSHExec(SSHTimeout, append(BuildSSHArgs(server, i.EncKey, server.Host), "hostname"))
+	out, err := SSHExecContext(ctx, SSHTimeout, append(BuildSSHArgs(server, i.EncKey, server.Host), "hostname"))
 	if err != nil {
 		return "", err
 	}
@@ -179,9 +182,9 @@ func (i ServerInspector) Hostname(server *model.Server) (string, error) {
 // ServerMetricsInspector adapts the shared resource command to Cluster Service.
 type ServerMetricsInspector struct{ EncKey []byte }
 
-func (i ServerMetricsInspector) ResourceStats(server *model.Server) (map[string]interface{}, error) {
+func (i ServerMetricsInspector) ResourceStats(ctx context.Context, server *model.Server) (map[string]interface{}, error) {
 	command := "echo 'CPU:' $(top -bn1 | awk '/^%Cpu|^CPU:/{print 100-$8}');echo 'CPU_CORES:' $(nproc);echo 'MEM:' $(free -m | awk '/^Mem:/{print $2,$3,$7}');echo 'DISK:' $(df -BG / | awk 'NR==2{print $2,$3,$4,$5}' | sed 's/G//g');echo 'LOAD:' $(cat /proc/loadavg | awk '{print $1,$2,$3}');echo 'UP:' $(uptime -p | sed 's/up //')"
-	out, err := SSHExec(5*time.Second, append(BuildSSHArgs(server, i.EncKey, server.Host), command))
+	out, err := SSHExecContext(ctx, 5*time.Second, append(BuildSSHArgs(server, i.EncKey, server.Host), command))
 	if err != nil {
 		return nil, err
 	}

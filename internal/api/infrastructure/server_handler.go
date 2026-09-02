@@ -68,7 +68,7 @@ func (h *ServerHandler) Create(c *gin.Context) {
 }
 
 func (h *ServerHandler) List(c *gin.Context) {
-	servers, err := h.cluster.ListServers()
+	servers, err := h.cluster.ListServersContext(c.Request.Context())
 	if err != nil {
 		apiShared.InternalError(c, err.Error())
 		return
@@ -177,7 +177,7 @@ func (h *ServerHandler) Probe(c *gin.Context) {
 		apiShared.BadRequest(c, "invalid id")
 		return
 	}
-	result, err := h.cluster.ProbeServer(id)
+	result, err := h.cluster.ProbeServerContext(c.Request.Context(), id)
 	if err != nil {
 		if !errors.Is(err, gorm.ErrRecordNotFound) {
 			apiShared.InternalError(c, err.Error())
@@ -195,7 +195,7 @@ func (h *ServerHandler) Precheck(c *gin.Context) {
 		apiShared.BadRequest(c, "invalid id")
 		return
 	}
-	result, err := h.cluster.PrecheckServer(id)
+	result, err := h.cluster.PrecheckServerContext(c.Request.Context(), id)
 	if err != nil {
 		if !errors.Is(err, gorm.ErrRecordNotFound) {
 			apiShared.InternalError(c, err.Error())
@@ -213,7 +213,7 @@ func (h *ServerHandler) Stats(c *gin.Context) {
 		apiShared.BadRequest(c, "invalid id")
 		return
 	}
-	result, err := h.cluster.ServerStats(id)
+	result, err := h.cluster.ServerStatsContext(c.Request.Context(), id)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			apiShared.NotFound(c, "server not found")
@@ -226,7 +226,7 @@ func (h *ServerHandler) Stats(c *gin.Context) {
 }
 
 func (h *ServerHandler) ResourceStats(c *gin.Context) {
-	results, err := h.cluster.ResourceStats()
+	results, err := h.cluster.ResourceStatsContext(c.Request.Context())
 	if err != nil {
 		apiShared.InternalError(c, err.Error())
 		return

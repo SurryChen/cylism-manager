@@ -1,14 +1,31 @@
 package bootstrap
 
+import "context"
+
 import (
-	api "github.com/cylism/cylism-manager/internal/api"
 	systemapi "github.com/cylism/cylism-manager/internal/api/system"
 	"github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/service/cluster"
+	"github.com/cylism/cylism-manager/internal/service/network"
 	alertingservice "github.com/cylism/cylism-manager/internal/service/observability/alerting"
 	loggingservice "github.com/cylism/cylism-manager/internal/service/observability/logging"
 	monitoringservice "github.com/cylism/cylism-manager/internal/service/observability/monitoring"
+	storageservice "github.com/cylism/cylism-manager/internal/service/storage"
 )
+
+type NetworkAdapters struct {
+	Ingress         network.IngressAdapter
+	StandardIngress network.StandardIngressAdapter
+	DNS             network.DNSAdapter
+	Certificate     network.CertificateAdapter
+}
+
+type RegistryAdapters struct {
+	ManagedResources k8s.ManagedRegistryResourceReconciler
+	ManagedStatus    k8s.ManagedRegistryStatusReader
+	ProxyResources   k8s.RegistryProxyResourceReconciler
+	ProxyDiagnostics k8s.RegistryProxyDiagnostics
+}
 
 // KubernetesAdapters contains the narrow Kubernetes capabilities assembled by
 // the composition root. Services receive only the interfaces they declare.
@@ -19,6 +36,9 @@ type KubernetesAdapters struct {
 	Monitoring      systemapi.MonitoringDependencies
 	Logging         systemapi.LoggingDependencies
 	Alerting        systemapi.AlertingDependencies
+	Network         NetworkAdapters
+	Storage         storageservice.PVCRepositoryAdapter
+	Registry        RegistryAdapters
 }
 
 // NewKubernetesClient creates the Kubernetes client used by all adapters.
@@ -34,6 +54,8 @@ func BuildKubernetesAdapters(client *k8s.Client) KubernetesAdapters {
 	monitoringClient := monitoringservice.HTTPClient{BaseURL: k8s.VictoriaMetricsServiceURL}
 	loggingClient := loggingservice.HTTPClient{BaseURL: k8s.LokiServiceURL()}
 	alertingClient := &alertingservice.HTTPClient{BaseURL: k8s.AlertmanagerServiceURL}
+	managedRegistryReconciler := k8s.NewManagedRegistryReconciler(client)
+	registryProxyReconciler := k8s.NewRegistryProxyReconciler(client)
 	return KubernetesAdapters{
 		Nodes:           client,
 		SystemComponent: k8s.SystemComponentKubernetesAdapter{Client: client},
@@ -45,28 +67,21 @@ func BuildKubernetesAdapters(client *k8s.Client) KubernetesAdapters {
 		},
 		Logging: systemapi.LoggingDependencies{
 			Query:        loggingClient.Query,
-			Ready:        func() bool { return client.LoggingStatus().LokiReady >= 1 },
+			Ready:        func(ctx context.Context) bool { return client.LoggingStatusContext(ctx).LokiReady >= 1 },
 			Component:    k8s.LoggingComponentAdapter{Client: client},
 			FilterReader: k8s.LoggingFilterReader{Clientset: client.Clientset},
 		},
 		Alerting: systemapi.AlertingDependencies{
 			Alertmanager: alertingClient.Request,
 			Component:    k8s.AlertingComponentAdapter{Client: client},
-			Ready:        func() bool { return client.AlertingStatus().State == k8s.AlertingStateReady },
-			Secrets:      k8s.SecretReader{Client: client},
-			Sender:       alertingservice.DefaultNotificationSender{},
+			Ready: func(ctx context.Context) bool {
+				return client.AlertingStatusContext(ctx).State == k8s.AlertingStateReady
+			},
+			Secrets: k8s.SecretReader{Client: client},
+			Sender:  alertingservice.DefaultNotificationSender{},
 		},
-	}
-}
-
-// RouterDependencies adapts bootstrap-owned wiring to the API route binder
-// without exposing the composition container itself to the API package.
-func (a KubernetesAdapters) RouterDependencies() api.KubernetesDependencies {
-	return api.KubernetesDependencies{
-		Nodes:           a.Nodes,
-		SystemComponent: a.SystemComponent,
-		Monitoring:      a.Monitoring,
-		Logging:         a.Logging,
-		Alerting:        a.Alerting,
+		Network:  NetworkAdapters{Ingress: client, StandardIngress: client, DNS: client, Certificate: client},
+		Storage:  client,
+		Registry: RegistryAdapters{ManagedResources: managedRegistryReconciler, ManagedStatus: managedRegistryReconciler, ProxyResources: registryProxyReconciler, ProxyDiagnostics: registryProxyReconciler},
 	}
 }

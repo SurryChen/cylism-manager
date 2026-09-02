@@ -1,6 +1,7 @@
 package k8s
 
 import (
+	"context"
 	"testing"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -20,7 +21,7 @@ func TestUpdatePlatformDeploymentOnlyUpdatesPlatformContainer(t *testing.T) {
 		}}}},
 	})}
 
-	previous, err := client.UpdatePlatformDeployment("registry.example.com/cylism-manager@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", 9)
+	previous, err := client.UpdatePlatformDeploymentContext(context.Background(), "registry.example.com/cylism-manager@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", 9)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,14 +39,14 @@ func TestUpdatePlatformDeploymentOnlyUpdatesPlatformContainer(t *testing.T) {
 
 func TestUpdatePlatformDeploymentRejectsMissingPlatformContainer(t *testing.T) {
 	client := &Client{Clientset: k8sfake.NewSimpleClientset(&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: platformDeploymentName, Namespace: platformDeploymentNamespace}, Spec: appsv1.DeploymentSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "other", Image: "example.com/other"}}}}}})}
-	if _, err := client.UpdatePlatformDeployment("registry.example.com/cylism-manager@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", 9); err == nil {
+	if _, err := client.UpdatePlatformDeploymentContext(context.Background(), "registry.example.com/cylism-manager@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", 9); err == nil {
 		t.Fatal("expected missing platform container rejection")
 	}
 }
 
 func TestEnsurePlatformIngressUsesPlatformServiceAndManagedTLSSecret(t *testing.T) {
 	client := &Client{Clientset: k8sfake.NewSimpleClientset()}
-	if err := client.ensurePlatformIngress("console.example.com", "console-example-com-tls", ""); err != nil {
+	if err := client.ensurePlatformIngress(context.Background(), "console.example.com", "console-example-com-tls", ""); err != nil {
 		t.Fatal(err)
 	}
 	ingress, err := client.Clientset.NetworkingV1().Ingresses(platformDeploymentNamespace).Get(t.Context(), platformDeploymentName, metav1.GetOptions{})
@@ -73,7 +74,7 @@ func TestEnsurePlatformIngressRejectsConflictingHostname(t *testing.T) {
 		}}},
 	}
 	client := &Client{Clientset: k8sfake.NewSimpleClientset(conflicting)}
-	if err := client.ensurePlatformIngress("console.example.com", "console-example-com-tls", ""); err == nil {
+	if err := client.ensurePlatformIngress(context.Background(), "console.example.com", "console-example-com-tls", ""); err == nil {
 		t.Fatal("expected hostname conflict")
 	}
 }
@@ -85,7 +86,7 @@ func TestAdoptPlatformIngressPreservesControllerSettings(t *testing.T) {
 	className := "traefik"
 	existing.Spec.IngressClassName = &className
 	client := &Client{Clientset: k8sfake.NewSimpleClientset(existing)}
-	ingressName, err := client.AdoptPlatformIngress("console.example.com", "console-example-com-tls")
+	ingressName, err := client.AdoptPlatformIngressContext(context.Background(), "console.example.com", "console-example-com-tls")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +100,7 @@ func TestAdoptPlatformIngressPreservesControllerSettings(t *testing.T) {
 	if ingress.Labels[platformEndpointLabel] != platformEndpointLabelValue || ingress.Annotations["traefik.ingress.kubernetes.io/router.middlewares"] == "" || ingress.Spec.IngressClassName == nil || *ingress.Spec.IngressClassName != "traefik" || ingress.Spec.TLS[0].SecretName != "console-example-com-tls" {
 		t.Fatalf("unexpected adopted ingress: %#v", ingress)
 	}
-	if err := client.EnsurePlatformEndpoint("console.example.com", "rotated-tls", ingressName); err != nil {
+	if err := client.EnsurePlatformEndpointContext(context.Background(), "console.example.com", "rotated-tls", ingressName); err != nil {
 		t.Fatal(err)
 	}
 	ingress, err = client.Clientset.NetworkingV1().Ingresses(platformDeploymentNamespace).Get(t.Context(), ingressName, metav1.GetOptions{})
@@ -109,7 +110,7 @@ func TestAdoptPlatformIngressPreservesControllerSettings(t *testing.T) {
 	if ingress.Spec.TLS[0].SecretName != "rotated-tls" {
 		t.Fatalf("expected adopted ingress TLS secret to be updated, got %q", ingress.Spec.TLS[0].SecretName)
 	}
-	info, err := client.PlatformIngressInfo(ingressName)
+	info, err := client.PlatformIngressInfoContext(context.Background(), ingressName)
 	if err != nil {
 		t.Fatal(err)
 	}

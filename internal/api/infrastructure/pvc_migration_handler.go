@@ -91,7 +91,7 @@ func (h *StorageHandler) CreatePersistentVolumeMigration(c *gin.Context) {
 		apiShared.Error(c, 500, model.CodeDBError, "检查存储卷迁移状态失败")
 		return
 	}
-	claim, err := h.pvc.GetManagedPVC(environment.Namespace, sourceName, environment.ID)
+	claim, err := h.pvc.GetManagedPVCContext(c.Request.Context(), environment.Namespace, sourceName, environment.ID)
 	if err != nil {
 		apiShared.Error(c, 400, model.CodeValidationFail, err.Error())
 		return
@@ -128,7 +128,7 @@ func (h *StorageHandler) CreatePersistentVolumeMigration(c *gin.Context) {
 	if helperImage == "" {
 		helperImage = defaultPVCMigrationHelperImage
 	}
-	if err := h.Service.StartMigration(migration.ID, helperImage); err != nil {
+	if err := h.Service.StartMigration(c.Request.Context(), migration.ID, helperImage); err != nil {
 		apiShared.InternalError(c, err.Error())
 		return
 	}
@@ -160,7 +160,7 @@ func (h *StorageHandler) CleanupPersistentVolumeMigration(c *gin.Context) {
 		apiShared.Error(c, 409, model.CodeConflict, "源存储卷仍被工作负载引用，不能清理")
 		return
 	}
-	if err := h.pvc.DeleteManagedPVC(environment.Namespace, migration.SourcePVCName, environment.ID); err != nil {
+	if err := h.pvc.DeleteManagedPVCContext(c.Request.Context(), environment.Namespace, migration.SourcePVCName, environment.ID); err != nil {
 		apiShared.Error(c, 400, model.CodeK8sAPIError, err.Error())
 		return
 	}
@@ -196,8 +196,8 @@ func (h *StorageHandler) migrationWorkload(ctx context.Context, environmentID ui
 	return "", nil, 0, fmt.Errorf("找不到引用存储卷的平台应用")
 }
 
-func (h *StorageHandler) runPersistentVolumeMigration(id uint, helperImage string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 35*time.Minute)
+func (h *StorageHandler) runPersistentVolumeMigration(parent context.Context, id uint, helperImage string) {
+	ctx, cancel := context.WithTimeout(parent, 35*time.Minute)
 	defer cancel()
 	migration, err := h.Service.GetMigration(id)
 	if err != nil {
@@ -205,7 +205,7 @@ func (h *StorageHandler) runPersistentVolumeMigration(id uint, helperImage strin
 	}
 	environment, err := h.store.GetEnvironmentByID(migration.EnvironmentID)
 	if err != nil {
-		h.failMigration(migration, err, false)
+		h.failMigration(ctx, migration, err, false)
 		return
 	}
 	if err := h.Service.UpdateMigration(migration, model.PVCMigrationStatusPreflight, "正在检查源节点、目标节点和工作负载"); err != nil {
@@ -213,19 +213,19 @@ func (h *StorageHandler) runPersistentVolumeMigration(id uint, helperImage strin
 	}
 	source, target, claim, err := h.preflightMigration(ctx, environment, migration)
 	if err != nil {
-		h.failMigration(migration, err, false)
+		h.failMigration(ctx, migration, err, false)
 		return
 	}
 	if err := h.Service.UpdateMigration(migration, model.PVCMigrationStatusProvisioningTarget, "正在预配目标本地卷"); err != nil {
 		return
 	}
-	if _, err := h.pvc.CreateManagedPVC(environment.Namespace, environment.ID, k8sclient.PersistentVolumeClaimRequest{Name: migration.TargetPVCName, Storage: claim.Storage, StorageClassName: claim.StorageClassName}); err != nil {
-		h.failMigration(migration, err, false)
+	if _, err := h.pvc.CreateManagedPVCContext(ctx, environment.Namespace, environment.ID, k8sclient.PersistentVolumeClaimRequest{Name: migration.TargetPVCName, Storage: claim.Storage, StorageClassName: claim.StorageClassName}); err != nil {
+		h.failMigration(ctx, migration, err, false)
 		return
 	}
 	if _, err := h.migration.CreatePVCBindingPod(ctx, environment.Namespace, strconv.FormatUint(uint64(migration.ID), 10), migration.TargetPVCName, migration.TargetNodeName, helperImage); err != nil {
 		h.cleanupMigrationTarget(ctx, environment, migration)
-		h.failMigration(migration, err, false)
+		h.failMigration(ctx, migration, err, false)
 		return
 	}
 	boundCtx, boundCancel := context.WithTimeout(ctx, 3*time.Minute)
@@ -236,12 +236,12 @@ func (h *StorageHandler) runPersistentVolumeMigration(id uint, helperImage strin
 		if err == nil {
 			err = fmt.Errorf("目标 PVC 未绑定到所选节点")
 		}
-		h.failMigration(migration, err, false)
+		h.failMigration(ctx, migration, err, false)
 		return
 	}
-	if err := h.checkMigrationTargetPath(target, targetClaim.LocalPath); err != nil {
+	if err := h.checkMigrationTargetPath(ctx, target, targetClaim.LocalPath); err != nil {
 		h.cleanupMigrationTarget(ctx, environment, migration)
-		h.failMigration(migration, err, false)
+		h.failMigration(ctx, migration, err, false)
 		return
 	}
 	if err := h.Service.UpdateMigration(migration, model.PVCMigrationStatusStoppingSource, "正在停止源工作负载"); err != nil {
@@ -249,55 +249,55 @@ func (h *StorageHandler) runPersistentVolumeMigration(id uint, helperImage strin
 	}
 	if err := h.migration.ScaleDeployment(ctx, environment.Namespace, migration.SourceDeployment, 0); err != nil {
 		h.cleanupMigrationTarget(ctx, environment, migration)
-		h.failMigration(migration, err, false)
+		h.failMigration(ctx, migration, err, false)
 		return
 	}
 	if err := h.waitForStorageDeploymentPods(ctx, environment.Namespace, migration.SourceDeployment, false, 90*time.Second); err != nil {
 		h.cleanupMigrationTarget(ctx, environment, migration)
-		h.failMigration(migration, err, true)
+		h.failMigration(ctx, migration, err, true)
 		return
 	}
 	if err := h.Service.UpdateMigration(migration, model.PVCMigrationStatusCopying, "正在复制本地卷数据"); err != nil {
 		return
 	}
-	bytesCopied, err := streamPVCData(source, target, claim.LocalPath, targetClaim.LocalPath, h.encKey)
+	bytesCopied, err := streamPVCData(ctx, source, target, claim.LocalPath, targetClaim.LocalPath, h.encKey)
 	migration.BytesCopied = bytesCopied
 	if err != nil {
 		h.cleanupMigrationTarget(ctx, environment, migration)
-		h.failMigration(migration, err, true)
+		h.failMigration(ctx, migration, err, true)
 		return
 	}
 	if err := h.Service.UpdateMigration(migration, model.PVCMigrationStatusCutover, "正在切换应用到目标存储卷"); err != nil {
 		return
 	}
 	if err := h.migration.DeletePVCBindingPod(ctx, environment.Namespace, strconv.FormatUint(uint64(migration.ID), 10)); err != nil {
-		h.failMigration(migration, err, true)
+		h.failMigration(ctx, migration, err, true)
 		return
 	}
 	if _, err := h.migration.ReplaceDeploymentPVCNode(ctx, environment.Namespace, migration.SourceDeployment, migration.SourcePVCName, migration.TargetPVCName, migration.TargetNodeName); err != nil {
-		h.failMigration(migration, err, true)
+		h.failMigration(ctx, migration, err, true)
 		return
 	}
 	if err := h.replaceMigrationTemplateClaims(migration.ApplicationID, migration.SourcePVCName, migration.TargetPVCName, migration.TargetNodeName); err != nil {
-		h.failMigration(migration, err, true)
+		h.failMigration(ctx, migration, err, true)
 		return
 	}
 	if err := h.migration.ScaleDeployment(ctx, environment.Namespace, migration.SourceDeployment, migration.SourceReplicas); err != nil {
-		h.failMigration(migration, err, true)
+		h.failMigration(ctx, migration, err, true)
 		return
 	}
 	if err := h.Service.UpdateMigration(migration, model.PVCMigrationStatusWaitingReady, "正在等待目标工作负载就绪"); err != nil {
 		return
 	}
 	if err := h.waitForStorageDeploymentPods(ctx, environment.Namespace, migration.SourceDeployment, true, 2*time.Minute); err != nil {
-		h.failMigration(migration, err, true)
+		h.failMigration(ctx, migration, err, true)
 		return
 	}
 	_ = h.Service.UpdateMigration(migration, model.PVCMigrationStatusCleanupPending, "目标工作负载已就绪，可确认清理源卷")
 }
 
 func (h *StorageHandler) preflightMigration(ctx context.Context, environment *model.Environment, migration *model.PersistentVolumeMigration) (*model.Server, *model.Server, *k8sclient.PersistentVolumeClaimInfo, error) {
-	claim, err := h.pvc.GetManagedPVC(environment.Namespace, migration.SourcePVCName, environment.ID)
+	claim, err := h.pvc.GetManagedPVCContext(ctx, environment.Namespace, migration.SourcePVCName, environment.ID)
 	if err != nil || !claim.IsLocal || claim.LocalPath == "" || claim.BoundNode != migration.SourceNodeName {
 		if err == nil {
 			err = fmt.Errorf("源 PVC 状态已变化，无法迁移")
@@ -328,7 +328,7 @@ func (h *StorageHandler) preflightMigration(ctx context.Context, environment *mo
 		return nil, nil, nil, fmt.Errorf("源节点和目标节点必须绑定使用 SSH 密钥认证的平台注册服务器")
 	}
 	for _, server := range []*model.Server{source, target} {
-		out, err := sshExec(20*time.Second, append(buildSSHArgs(server, h.encKey, server.Host), "sudo -n true && command -v tar >/dev/null"))
+		out, err := sshExec(ctx, 20*time.Second, append(buildSSHArgs(server, h.encKey, server.Host), "sudo -n true && command -v tar >/dev/null"))
 		if err != nil {
 			return nil, nil, nil, fmt.Errorf("服务器 %q 的 sudo 或 tar 预检失败: %s", server.Name, strings.TrimSpace(string(out)))
 		}
@@ -336,17 +336,17 @@ func (h *StorageHandler) preflightMigration(ctx context.Context, environment *mo
 	return source, target, claim, nil
 }
 
-func (h *StorageHandler) checkMigrationTargetPath(server *model.Server, path string) error {
+func (h *StorageHandler) checkMigrationTargetPath(ctx context.Context, server *model.Server, path string) error {
 	command := "sudo -n test -d " + storageShellQuote(path) + " && df -Pk " + storageShellQuote(path) + " >/dev/null"
-	out, err := sshExec(20*time.Second, append(buildSSHArgs(server, h.encKey, server.Host), command))
+	out, err := sshExec(ctx, 20*time.Second, append(buildSSHArgs(server, h.encKey, server.Host), command))
 	if err != nil {
 		return fmt.Errorf("目标节点目录或磁盘预检失败: %s", strings.TrimSpace(string(out)))
 	}
 	return nil
 }
 
-func streamPVCData(source, target *model.Server, sourcePath, targetPath string, encKey []byte) (int64, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+func streamPVCData(parent context.Context, source, target *model.Server, sourcePath, targetPath string, encKey []byte) (int64, error) {
+	ctx, cancel := context.WithTimeout(parent, 30*time.Minute)
 	defer cancel()
 	sourceArgs := append(buildSSHArgs(source, encKey, source.Host), "sudo -n tar --numeric-owner -C "+storageShellQuote(sourcePath)+" -cpf - .")
 	targetArgs := append(buildSSHArgs(target, encKey, target.Host), "sudo -n mkdir -p "+storageShellQuote(targetPath)+" && sudo -n tar --numeric-owner -C "+storageShellQuote(targetPath)+" -xpf -")
@@ -522,12 +522,12 @@ func (h *StorageHandler) restoreMigrationTemplates(migration *model.PersistentVo
 func (h *StorageHandler) cleanupMigrationTarget(ctx context.Context, environment *model.Environment, migration *model.PersistentVolumeMigration) {
 	_ = h.migration.DeletePVCBindingPod(ctx, environment.Namespace, strconv.FormatUint(uint64(migration.ID), 10))
 	if migration.TargetPVCName != "" {
-		_ = h.pvc.DeleteManagedPVC(environment.Namespace, migration.TargetPVCName, environment.ID)
+		_ = h.pvc.DeleteManagedPVCContext(ctx, environment.Namespace, migration.TargetPVCName, environment.ID)
 	}
 }
 
-func (h *StorageHandler) failMigration(migration *model.PersistentVolumeMigration, cause error, restoreSource bool) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+func (h *StorageHandler) failMigration(parent context.Context, migration *model.PersistentVolumeMigration, cause error, restoreSource bool) {
+	ctx, cancel := context.WithTimeout(parent, 2*time.Minute)
 	defer cancel()
 	if restoreSource && h.migration != nil {
 		if environment, err := h.store.GetEnvironmentByID(migration.EnvironmentID); err == nil {

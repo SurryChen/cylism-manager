@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -27,6 +28,21 @@ type Client struct {
 	ingressControllerCache       *IngressControllerStatus
 	ingressControllerCacheExpiry time.Time
 }
+
+func (c *Client) GetNamespace(ctx context.Context, name string) (*corev1.Namespace, error) {
+	return c.Clientset.CoreV1().Namespaces().Get(ctx, name, metav1.GetOptions{})
+}
+func (c *Client) UpdateNamespace(ctx context.Context, namespace *corev1.Namespace) (*corev1.Namespace, error) {
+	return c.Clientset.CoreV1().Namespaces().Update(ctx, namespace, metav1.UpdateOptions{})
+}
+func (c *Client) CreateNamespace(ctx context.Context, namespace *corev1.Namespace) (*corev1.Namespace, error) {
+	return c.Clientset.CoreV1().Namespaces().Create(ctx, namespace, metav1.CreateOptions{})
+}
+
+// KubernetesAvailable reports whether the typed clientset is ready for
+// remote operations. It is exposed as a capability method so API handlers do
+// not depend on the concrete Kubernetes client type.
+func (c *Client) KubernetesAvailable() bool { return c != nil && c.Clientset != nil }
 
 // NewClient 创建 K8s 客户端，支持 InCluster（生产）和 kubeconfig（开发）双模式
 func NewClient() (*Client, error) {
@@ -99,16 +115,23 @@ func newClientFromRestConfig(config *rest.Config) (*Client, error) {
 		Clientset:     clientset,
 		DynamicClient: dynamicClient,
 		Config:        config,
-		ctx:           context.Background(),
 	}, nil
 }
 
-// Ctx 返回客户端上下文
-func (c *Client) Ctx() context.Context {
-	if c.ctx == nil {
-		return context.Background()
+// withContext returns an isolated client view carrying the caller's
+// cancellation boundary. The underlying clients are immutable handles, so
+// cloning avoids mutating the shared process client while allowing legacy
+// resource implementations to honor request cancellation.
+func (c *Client) withContext(ctx context.Context) *Client {
+	if c == nil {
+		return nil
 	}
-	return c.ctx
+	clone := *c
+	if ctx == nil {
+		return nil
+	}
+	clone.ctx = ctx
+	return &clone
 }
 
 func (c *Client) dynamicClient() (dynamic.Interface, error) {
@@ -119,11 +142,6 @@ func (c *Client) dynamicClient() (dynamic.Interface, error) {
 		return nil, fmt.Errorf("Kubernetes dynamic client 未初始化")
 	}
 	return dynamic.NewForConfig(c.Config)
-}
-
-// CheckCRD 检测指定 CRD 是否存在
-func (c *Client) CheckCRD(name string) (bool, error) {
-	return c.CheckCRDContext(c.Ctx(), name)
 }
 
 // CheckCRDContext checks a CRD using the caller's cancellation boundary.
@@ -147,13 +165,13 @@ func (c *Client) CheckCRDContext(ctx context.Context, name string) (bool, error)
 	return true, nil
 }
 
-// CheckRequiredCRDs 检测所有必需的 CRD
-func (c *Client) CheckRequiredCRDs() (traefikOK, certManagerOK bool, err error) {
-	traefikOK, err = c.CheckCRD("ingressroutes.traefik.io")
+// CheckRequiredCRDsContext 检测所有必需的 CRD。
+func (c *Client) CheckRequiredCRDsContext(ctx context.Context) (traefikOK, certManagerOK bool, err error) {
+	traefikOK, err = c.CheckCRDContext(ctx, "ingressroutes.traefik.io")
 	if err != nil {
 		return false, false, err
 	}
-	certManagerOK, err = c.CheckCRD("certificates.cert-manager.io")
+	certManagerOK, err = c.CheckCRDContext(ctx, "certificates.cert-manager.io")
 	if err != nil {
 		return traefikOK, false, err
 	}

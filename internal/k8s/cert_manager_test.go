@@ -1,6 +1,7 @@
 package k8s
 
 import (
+	"context"
 	"testing"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -21,7 +22,7 @@ func TestCertManagerStatusReady(t *testing.T) {
 		customResourceDefinition("clusterissuers.cert-manager.io"),
 	}, true)
 
-	status := client.CertManagerStatus()
+	status := client.CertManagerStatusContext(context.Background())
 	if status.State != CertManagerStateReady {
 		t.Fatalf("expected ready status, got %+v", status)
 	}
@@ -30,7 +31,7 @@ func TestCertManagerStatusReady(t *testing.T) {
 func TestInstallCertManagerCreatesFixedHelmChart(t *testing.T) {
 	client := certManagerTestClient(t, []runtime.Object{customResourceDefinition("helmcharts.helm.cattle.io")}, false)
 
-	status, err := client.InstallCertManager("https://charts.jetstack.io", "cert-manager", "v1.16.3")
+	status, err := client.InstallCertManagerContext(context.Background(), "https://charts.jetstack.io", "cert-manager", "v1.16.3")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +58,7 @@ func TestCertManagerStatusReportsFailedHelmChart(t *testing.T) {
 	}}
 	client := certManagerTestClient(t, []runtime.Object{customResourceDefinition("helmcharts.helm.cattle.io"), chart}, false)
 
-	status := client.CertManagerStatus()
+	status := client.CertManagerStatusContext(context.Background())
 	if status.State != CertManagerStateDegraded || status.Message != "cert-manager 安装失败: chart download failed" {
 		t.Fatalf("expected failed installation status, got %+v", status)
 	}
@@ -67,7 +68,7 @@ func TestInstallDNSProviderCreatesFixedHelmChart(t *testing.T) {
 	client := certManagerTestClient(t, []runtime.Object{
 		customResourceDefinition("certificates.cert-manager.io"), customResourceDefinition("issuers.cert-manager.io"), customResourceDefinition("clusterissuers.cert-manager.io"), customResourceDefinition("helmcharts.helm.cattle.io"),
 	}, true)
-	status, err := client.InstallDNSProvider("alidns")
+	status, err := client.InstallDNSProviderContext(context.Background(), "alidns")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1,6 +1,7 @@
 package cluster
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -40,50 +41,60 @@ type fakeServerImporter struct {
 
 type fakeMetricsInspector struct{}
 
-func (fakeMetricsInspector) ResourceStats(_ *model.Server) (map[string]interface{}, error) {
+func (fakeMetricsInspector) ResourceStats(_ context.Context, _ *model.Server) (map[string]interface{}, error) {
 	return map[string]interface{}{"cpu_percent": 12.5}, nil
 }
 
-func (f fakeServerImporter) Hostname(_ *model.Server) (string, error) { return f.hostname, f.err }
+func (f fakeServerImporter) Hostname(_ context.Context, _ *model.Server) (string, error) {
+	return f.hostname, f.err
+}
 
-func (f *fakeServerInspector) Probe(server *model.Server) (bool, string) {
+func (f *fakeServerInspector) Probe(_ context.Context, server *model.Server) (bool, string) {
 	f.probed = server.ID
 	return f.reachable, f.probeError
 }
 
-func (f *fakeServerInspector) Precheck(server *model.Server) []Precheck {
+func (f *fakeServerInspector) Precheck(_ context.Context, server *model.Server) []Precheck {
 	f.checked = server.ID
 	return f.checks
 }
 
-func (f *fakeNodeAdapter) ListNodeInfos() ([]k8s.NodeInfo, error) { return f.nodes, f.listErr }
+func (f *fakeNodeAdapter) ListNodeInfosContext(context.Context) ([]k8s.NodeInfo, error) {
+	return f.nodes, f.listErr
+}
 
-func (f *fakeNodeAdapter) GetNodeLabels(_ string) (*k8s.NodeLabels, error) { return f.getLabels, nil }
+func (f *fakeNodeAdapter) GetNodeLabelsContext(context.Context, string) (*k8s.NodeLabels, error) {
+	return f.getLabels, nil
+}
 
-func (f *fakeNodeAdapter) UpdateNodeLabels(_ string, _ map[string]string, _ []string) (*k8s.NodeLabels, error) {
+func (f *fakeNodeAdapter) UpdateNodeLabelsContext(context.Context, string, map[string]string, []string) (*k8s.NodeLabels, error) {
 	return f.labels, nil
 }
 
-func (f *fakeNodeAdapter) DeleteNode(name string) error {
+func (f *fakeNodeAdapter) DeleteNodeContext(_ context.Context, name string) error {
 	f.deletedNode = name
 	return nil
 }
 
-func (f *fakeNodeAdapter) DrainPlan(_ string) (*k8s.DrainPlan, error) { return f.drainPlan, nil }
+func (f *fakeNodeAdapter) DrainPlanContext(context.Context, string) (*k8s.DrainPlan, error) {
+	return f.drainPlan, nil
+}
 
-func (f *fakeNodeAdapter) DrainNode(_ string, options k8s.DrainOptions) (*k8s.DrainResult, error) {
+func (f *fakeNodeAdapter) DrainNodeContext(_ context.Context, _ string, options k8s.DrainOptions) (*k8s.DrainResult, error) {
 	f.lastDrain = options
 	return f.drainResult, f.drainErr
 }
 
-func (f *fakeNodeAdapter) ForceDrainNode(_ string, options k8s.ForceDrainOptions) (*k8s.DrainResult, error) {
+func (f *fakeNodeAdapter) ForceDrainNodeContext(_ context.Context, _ string, options k8s.ForceDrainOptions) (*k8s.DrainResult, error) {
 	f.lastForce = options
 	return f.drainResult, f.forceErr
 }
 
-func (f *fakeNodeAdapter) RejoinNode(_ string) (*k8s.NodeInfo, error) { return f.rejoined, nil }
+func (f *fakeNodeAdapter) RejoinNodeContext(context.Context, string) (*k8s.NodeInfo, error) {
+	return f.rejoined, nil
+}
 
-func (f *fakeNodeAdapter) NodeRemovalCheck(_ string) (*k8s.NodeRemovalCheck, error) {
+func (f *fakeNodeAdapter) NodeRemovalCheckContext(context.Context, string) (*k8s.NodeRemovalCheck, error) {
 	return f.removal, nil
 }
 
@@ -102,7 +113,7 @@ func TestServiceReconcilesOnlyRemovedClusterBindings(t *testing.T) {
 	}
 
 	service := NewService(st, &fakeNodeAdapter{nodes: []k8s.NodeInfo{{Name: "worker-present"}}})
-	servers, err := service.ListServers()
+	servers, err := service.ListServersContext(context.Background())
 	if err != nil {
 		t.Fatalf("ListServers: %v", err)
 	}
@@ -137,11 +148,11 @@ func TestServiceUpdatesLabelsAndUnbindsRemovedNode(t *testing.T) {
 	adapter := &fakeNodeAdapter{labels: &k8s.NodeLabels{Name: "worker-a", Labels: map[string]string{"team": "platform"}}}
 	service := NewService(st, adapter)
 
-	labels, err := service.UpdateNodeLabels("worker-a", map[string]string{"team": "platform"}, nil)
+	labels, err := service.UpdateNodeLabelsContext(context.Background(), "worker-a", map[string]string{"team": "platform"}, nil)
 	if err != nil || labels.Labels["team"] != "platform" {
 		t.Fatalf("UpdateNodeLabels = %#v, %v", labels, err)
 	}
-	if err := service.RemoveNode("worker-a"); err != nil {
+	if err := service.RemoveNodeContext(context.Background(), "worker-a"); err != nil {
 		t.Fatalf("RemoveNode: %v", err)
 	}
 	if adapter.deletedNode != "worker-a" {
@@ -199,31 +210,31 @@ func TestServiceDelegatesNodeOperationsAndValidatesForceDrainConfirmation(t *tes
 	}
 	service := NewService(st, adapter)
 
-	if _, err := service.ListNodes(); err != nil {
+	if _, err := service.ListNodesContext(context.Background()); err != nil {
 		t.Fatalf("ListNodes: %v", err)
 	}
-	if _, err := service.GetNodeLabels("worker-a"); err != nil {
+	if _, err := service.GetNodeLabelsContext(context.Background(), "worker-a"); err != nil {
 		t.Fatalf("GetNodeLabels: %v", err)
 	}
-	if _, err := service.GetDrainPlan("worker-a"); err != nil {
+	if _, err := service.GetDrainPlanContext(context.Background(), "worker-a"); err != nil {
 		t.Fatalf("GetDrainPlan: %v", err)
 	}
-	if _, err := service.DrainNode("worker-a", k8s.DrainOptions{DeleteEmptyDirData: true}); err != nil {
+	if _, err := service.DrainNodeContext(context.Background(), "worker-a", k8s.DrainOptions{DeleteEmptyDirData: true}); err != nil {
 		t.Fatalf("DrainNode: %v", err)
 	}
 	if !adapter.lastDrain.DeleteEmptyDirData {
 		t.Fatal("drain option was not forwarded")
 	}
-	if _, err := service.ForceDrainNode("worker-a", k8s.ForceDrainOptions{}); err == nil {
+	if _, err := service.ForceDrainNodeContext(context.Background(), "worker-a", k8s.ForceDrainOptions{}); err == nil {
 		t.Fatal("ForceDrainNode accepted missing confirmation")
 	}
-	if _, err := service.ForceDrainNode("worker-a", k8s.ForceDrainOptions{AcknowledgeRisk: true, ConfirmNodeName: "worker-a"}); err != nil {
+	if _, err := service.ForceDrainNodeContext(context.Background(), "worker-a", k8s.ForceDrainOptions{AcknowledgeRisk: true, ConfirmNodeName: "worker-a"}); err != nil {
 		t.Fatalf("ForceDrainNode: %v", err)
 	}
-	if _, err := service.RejoinNode("worker-a"); err != nil {
+	if _, err := service.RejoinNodeContext(context.Background(), "worker-a"); err != nil {
 		t.Fatalf("RejoinNode: %v", err)
 	}
-	if _, err := service.GetRemovalCheck("worker-a"); err != nil {
+	if _, err := service.GetRemovalCheckContext(context.Background(), "worker-a"); err != nil {
 		t.Fatalf("GetRemovalCheck: %v", err)
 	}
 }
@@ -238,7 +249,7 @@ func TestServicePreservesServerBindingsWhenNodeLookupFails(t *testing.T) {
 		t.Fatal(err)
 	}
 	service := NewService(st, &fakeNodeAdapter{listErr: errors.New("cluster unavailable")})
-	if _, err := service.ListServers(); err != nil {
+	if _, err := service.ListServersContext(context.Background()); err != nil {
 		t.Fatalf("ListServers: %v", err)
 	}
 	stored, err := st.GetServer(server.ID)
@@ -269,14 +280,14 @@ func TestServiceRunsServerInspectionThroughInjectedAdapter(t *testing.T) {
 	}
 	service := NewService(st, nil).WithServerInspector(inspector)
 
-	probe, err := service.ProbeServer(server.ID)
+	probe, err := service.ProbeServerContext(context.Background(), server.ID)
 	if err != nil {
 		t.Fatalf("ProbeServer: %v", err)
 	}
 	if probe.Reachable || probe.Error != "connection refused" || inspector.probed != server.ID {
 		t.Fatalf("unexpected probe result: %#v, fake=%#v", probe, inspector)
 	}
-	precheck, err := service.PrecheckServer(server.ID)
+	precheck, err := service.PrecheckServerContext(context.Background(), server.ID)
 	if err != nil {
 		t.Fatalf("PrecheckServer: %v", err)
 	}
@@ -295,10 +306,10 @@ func TestServiceRejectsInspectionWithoutInjectedAdapter(t *testing.T) {
 		t.Fatal(err)
 	}
 	service := NewService(st, nil)
-	if _, err := service.ProbeServer(server.ID); err == nil {
+	if _, err := service.ProbeServerContext(context.Background(), server.ID); err == nil {
 		t.Fatal("ProbeServer succeeded without an inspector")
 	}
-	if _, err := service.PrecheckServer(server.ID); err == nil {
+	if _, err := service.PrecheckServerContext(context.Background(), server.ID); err == nil {
 		t.Fatal("PrecheckServer succeeded without an inspector")
 	}
 }
@@ -313,7 +324,7 @@ func TestServiceMatchesAndConfirmsImportedNode(t *testing.T) {
 		t.Fatal(err)
 	}
 	service := NewService(st, &fakeNodeAdapter{nodes: []k8s.NodeInfo{{Name: "worker-a", Ready: true, Roles: "worker", InternalIP: "10.0.0.11", Version: "v1", OS: "linux"}}}).WithServerImporter(fakeServerImporter{hostname: "worker-a"})
-	result, err := service.PreImportServer(server.ID)
+	result, err := service.PreImportServerContext(context.Background(), server.ID)
 	if err != nil {
 		t.Fatalf("PreImportServer: %v", err)
 	}
@@ -345,14 +356,14 @@ func TestServiceCollectsResourceStatsWithServerMetadata(t *testing.T) {
 		t.Fatal(err)
 	}
 	service := NewService(st, nil).WithMetricsInspector(fakeMetricsInspector{})
-	results, err := service.ResourceStats()
+	results, err := service.ResourceStatsContext(context.Background())
 	if err != nil {
 		t.Fatalf("ResourceStats: %v", err)
 	}
 	if len(results) != 1 || results[0]["server_name"] != "worker" || results[0]["status"] != "ready" || results[0]["cpu_percent"] != 12.5 {
 		t.Fatalf("unexpected resource stats: %#v", results)
 	}
-	stats, err := service.ServerStats(1)
+	stats, err := service.ServerStatsContext(context.Background(), 1)
 	if err != nil || stats["cpu_percent"] != 12.5 {
 		t.Fatalf("unexpected single-server stats: %#v, %v", stats, err)
 	}

@@ -21,7 +21,7 @@ type NetworkHandler struct {
 }
 
 func (h *NetworkHandler) ListStandardIngresses(c *gin.Context) {
-	result, err := h.Service.ListStandardIngresses(c.Query("namespace"))
+	result, err := h.Service.ListStandardIngressesContext(c.Request.Context(), c.Query("namespace"))
 	if err != nil {
 		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
 		return
@@ -33,7 +33,7 @@ func (h *NetworkHandler) ListStandardIngresses(c *gin.Context) {
 }
 
 func (h *NetworkHandler) GetStandardIngress(c *gin.Context) {
-	result, err := h.Service.GetStandardIngress(c.Param("namespace"), c.Param("name"))
+	result, err := h.Service.GetStandardIngressContext(c.Request.Context(), c.Param("namespace"), c.Param("name"))
 	if err != nil {
 		apiShared.NotFound(c, err.Error())
 		return
@@ -54,7 +54,7 @@ func (h *NetworkHandler) CreateStandardIngress(c *gin.Context) {
 		apiShared.BadRequest(c, "invalid request")
 		return
 	}
-	result, err := h.Service.CreateStandardIngress(req.Namespace, req.Name, req.Host, req.Path, req.ServiceName, req.ServicePort)
+	result, err := h.Service.CreateStandardIngressContext(c.Request.Context(), req.Namespace, req.Name, req.Host, req.Path, req.ServiceName, req.ServicePort)
 	if err != nil {
 		apiShared.BadRequest(c, err.Error())
 		return
@@ -63,7 +63,7 @@ func (h *NetworkHandler) CreateStandardIngress(c *gin.Context) {
 }
 
 func (h *NetworkHandler) DeleteStandardIngress(c *gin.Context) {
-	if err := h.Service.DeleteStandardIngress(c.Param("namespace"), c.Param("name")); err != nil {
+	if err := h.Service.DeleteStandardIngressContext(c.Request.Context(), c.Param("namespace"), c.Param("name")); err != nil {
 		apiShared.InternalError(c, err.Error())
 		return
 	}
@@ -71,7 +71,7 @@ func (h *NetworkHandler) DeleteStandardIngress(c *gin.Context) {
 }
 
 func (h *NetworkHandler) StandardIngressController(c *gin.Context) {
-	status, err := h.Service.DetectIngressController()
+	status, err := h.Service.DetectIngressControllerContext(c.Request.Context())
 	if err != nil {
 		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
 		return

@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	"path"
 	"strings"
@@ -41,12 +42,12 @@ func ValidateBackupRoot(value string) (string, error) {
 // PVCRepositoryAdapter is the PVC resource subset used by the storage service.
 // Keeping this interface narrow makes PVC workflows testable without a live cluster.
 type PVCRepositoryAdapter interface {
-	ListPVCs(string) ([]k8sclient.PersistentVolumeClaimInfo, error)
-	ListManagedPVCs(string, uint) ([]k8sclient.PersistentVolumeClaimInfo, error)
-	GetManagedPVC(string, string, uint) (*k8sclient.PersistentVolumeClaimInfo, error)
-	CreateManagedPVC(string, uint, k8sclient.PersistentVolumeClaimRequest) (*corev1.PersistentVolumeClaim, error)
-	DeleteManagedPVC(string, string, uint) error
-	ListStorageClasses() ([]k8sclient.StorageClassInfo, error)
+	ListPVCsContext(context.Context, string) ([]k8sclient.PersistentVolumeClaimInfo, error)
+	ListManagedPVCsContext(context.Context, string, uint) ([]k8sclient.PersistentVolumeClaimInfo, error)
+	GetManagedPVCContext(context.Context, string, string, uint) (*k8sclient.PersistentVolumeClaimInfo, error)
+	CreateManagedPVCContext(context.Context, string, uint, k8sclient.PersistentVolumeClaimRequest) (*corev1.PersistentVolumeClaim, error)
+	DeleteManagedPVCContext(context.Context, string, string, uint) error
+	ListStorageClassesContext(context.Context) ([]k8sclient.StorageClassInfo, error)
 }
 
 // EnvironmentStore is the persistence subset required for namespace resolution.
@@ -86,10 +87,10 @@ type Service struct {
 // boundaries while the API package supplies the SSH/Kubernetes implementation
 // during the compatibility migration.
 type AsyncExecutor struct {
-	RunMigration func(id uint, helperImage string)
-	RunImport    func(id uint, replaceTarget bool)
-	RunBackup    func(id uint)
-	RunRestore   func(id uint)
+	RunMigration func(context.Context, uint, string)
+	RunImport    func(context.Context, uint, bool)
+	RunBackup    func(context.Context, uint)
+	RunRestore   func(context.Context, uint)
 }
 
 // ValidatePVCDeletion centralizes the destructive-operation policy shared by
@@ -127,35 +128,35 @@ func (s *Service) WithAsyncExecutor(executor AsyncExecutor) *Service {
 	return s
 }
 
-func (s *Service) StartMigration(id uint, helperImage string) error {
+func (s *Service) StartMigration(ctx context.Context, id uint, helperImage string) error {
 	if s.executor.RunMigration == nil {
 		return errors.New("存储卷迁移执行器未初始化")
 	}
-	go s.executor.RunMigration(id, helperImage)
+	go s.executor.RunMigration(context.WithoutCancel(ctx), id, helperImage)
 	return nil
 }
 
-func (s *Service) StartImport(id uint, replaceTarget bool) error {
+func (s *Service) StartImport(ctx context.Context, id uint, replaceTarget bool) error {
 	if s.executor.RunImport == nil {
 		return errors.New("目录导入执行器未初始化")
 	}
-	go s.executor.RunImport(id, replaceTarget)
+	go s.executor.RunImport(context.WithoutCancel(ctx), id, replaceTarget)
 	return nil
 }
 
-func (s *Service) StartBackup(id uint) error {
+func (s *Service) StartBackup(ctx context.Context, id uint) error {
 	if s.executor.RunBackup == nil {
 		return errors.New("存储卷备份执行器未初始化")
 	}
-	go s.executor.RunBackup(id)
+	go s.executor.RunBackup(context.WithoutCancel(ctx), id)
 	return nil
 }
 
-func (s *Service) StartRestore(id uint) error {
+func (s *Service) StartRestore(ctx context.Context, id uint) error {
 	if s.executor.RunRestore == nil {
 		return errors.New("存储卷恢复执行器未初始化")
 	}
-	go s.executor.RunRestore(id)
+	go s.executor.RunRestore(context.WithoutCancel(ctx), id)
 	return nil
 }
 
@@ -265,7 +266,7 @@ func (s *Service) UpdateImport(task *model.HostDirectoryPVCImport, status, detai
 	return records.UpdateHostDirectoryPVCImport(task, status, detail)
 }
 
-func (s *Service) ListPVCs(namespace string, environmentID uint) ([]k8sclient.PersistentVolumeClaimInfo, error) {
+func (s *Service) ListPVCsContext(ctx context.Context, namespace string, environmentID uint) ([]k8sclient.PersistentVolumeClaimInfo, error) {
 	if s.k8s == nil {
 		return nil, errors.New("Kubernetes 存储适配器未初始化")
 	}
@@ -277,14 +278,14 @@ func (s *Service) ListPVCs(namespace string, environmentID uint) ([]k8sclient.Pe
 		if namespace != "" && strings.TrimSpace(namespace) != env.Namespace {
 			return nil, errors.New("命名空间与环境不匹配")
 		}
-		return s.k8s.ListManagedPVCs(env.Namespace, environmentID)
+		return s.k8s.ListManagedPVCsContext(ctx, env.Namespace, environmentID)
 	}
-	return s.k8s.ListPVCs(strings.TrimSpace(namespace))
+	return s.k8s.ListPVCsContext(ctx, strings.TrimSpace(namespace))
 }
 
 // GetPVC resolves and reads one claim through the storage adapter. Keeping
 // this lookup beside ListPVCs prevents HTTP adapters from reaching into K8s.
-func (s *Service) GetPVC(namespace, name string, environmentID uint) (*k8sclient.PersistentVolumeClaimInfo, error) {
+func (s *Service) GetPVCContext(ctx context.Context, namespace, name string, environmentID uint) (*k8sclient.PersistentVolumeClaimInfo, error) {
 	if s.k8s == nil {
 		return nil, errors.New("Kubernetes 存储适配器未初始化")
 	}
@@ -295,17 +296,17 @@ func (s *Service) GetPVC(namespace, name string, environmentID uint) (*k8sclient
 	if err != nil {
 		return nil, err
 	}
-	return s.k8s.GetManagedPVC(resolved, strings.TrimSpace(name), environmentID)
+	return s.k8s.GetManagedPVCContext(ctx, resolved, strings.TrimSpace(name), environmentID)
 }
 
-func (s *Service) ListStorageClasses() ([]k8sclient.StorageClassInfo, error) {
+func (s *Service) ListStorageClassesContext(ctx context.Context) ([]k8sclient.StorageClassInfo, error) {
 	if s.k8s == nil {
 		return nil, errors.New("Kubernetes 存储适配器未初始化")
 	}
-	return s.k8s.ListStorageClasses()
+	return s.k8s.ListStorageClassesContext(ctx)
 }
 
-func (s *Service) CreatePVC(namespace string, environmentID uint, request k8sclient.PersistentVolumeClaimRequest) (*corev1.PersistentVolumeClaim, error) {
+func (s *Service) CreatePVCContext(ctx context.Context, namespace string, environmentID uint, request k8sclient.PersistentVolumeClaimRequest) (*corev1.PersistentVolumeClaim, error) {
 	if s.k8s == nil {
 		return nil, errors.New("Kubernetes 存储适配器未初始化")
 	}
@@ -313,7 +314,7 @@ func (s *Service) CreatePVC(namespace string, environmentID uint, request k8scli
 	if err != nil {
 		return nil, err
 	}
-	return s.k8s.CreateManagedPVC(resolved, environmentID, request)
+	return s.k8s.CreateManagedPVCContext(ctx, resolved, environmentID, request)
 }
 
 func (s *Service) ResolveNamespace(namespace string, environmentID uint) (string, error) {
@@ -337,12 +338,12 @@ func (s *Service) ResolveNamespace(namespace string, environmentID uint) (string
 	return env.Namespace, nil
 }
 
-func (s *Service) DeletePVC(namespace, name string, environmentID uint) error {
+func (s *Service) DeletePVCContext(ctx context.Context, namespace, name string, environmentID uint) error {
 	if s.k8s == nil {
 		return errors.New("Kubernetes 存储适配器未初始化")
 	}
 	if strings.TrimSpace(name) == "" {
 		return errors.New("PVC 名称必填")
 	}
-	return s.k8s.DeleteManagedPVC(namespace, strings.TrimSpace(name), environmentID)
+	return s.k8s.DeleteManagedPVCContext(ctx, namespace, strings.TrimSpace(name), environmentID)
 }

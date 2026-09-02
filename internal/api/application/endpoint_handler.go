@@ -1,6 +1,7 @@
 package applicationapi
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -48,7 +49,7 @@ func (h *ApplicationHandler) ListApplicationEndpoints(c *gin.Context) {
 }
 
 func (h *ApplicationHandler) CreateApplicationEndpoint(c *gin.Context) {
-	if K8s == nil {
+	if h.kubernetes == nil || !h.kubernetes.KubernetesAvailable() {
 		apiShared.K8sUnavailable(c)
 		return
 	}
@@ -67,7 +68,7 @@ func (h *ApplicationHandler) CreateApplicationEndpoint(c *gin.Context) {
 		apiShared.BadRequest(c, "请选择受管域名")
 		return
 	}
-	endpoint, err := h.prepareApplicationEndpoint(app, 0, req)
+	endpoint, err := h.prepareApplicationEndpoint(c.Request.Context(), app, 0, req)
 	if err != nil {
 		apiShared.ValidationError(c, err.Error())
 		return
@@ -90,7 +91,7 @@ func (h *ApplicationHandler) CreateApplicationEndpoint(c *gin.Context) {
 		return
 	}
 	endpoints = append(endpoints, *endpoint)
-	if err := application.NewKubernetesApplier(K8s).SyncApplicationEndpoints(c.Request.Context(), applicationContextFor(app), endpoints, servicePort.Port); err != nil {
+	if err := h.kubernetes.SyncApplicationEndpoints(c.Request.Context(), applicationContextFor(app), endpoints, servicePort.Port); err != nil {
 		apiShared.ValidationError(c, fmt.Sprintf("同步应用入口: %v", err))
 		return
 	}
@@ -103,7 +104,7 @@ func (h *ApplicationHandler) CreateApplicationEndpoint(c *gin.Context) {
 }
 
 func (h *ApplicationHandler) UpdateApplicationEndpoint(c *gin.Context) {
-	if K8s == nil {
+	if h.kubernetes == nil || !h.kubernetes.KubernetesAvailable() {
 		apiShared.K8sUnavailable(c)
 		return
 	}
@@ -136,7 +137,7 @@ func (h *ApplicationHandler) UpdateApplicationEndpoint(c *gin.Context) {
 		apiShared.DBError(c, err.Error())
 		return
 	}
-	updated, err := h.prepareApplicationEndpoint(app, endpoint.ID, req)
+	updated, err := h.prepareApplicationEndpoint(c.Request.Context(), app, endpoint.ID, req)
 	if err != nil {
 		apiShared.ValidationError(c, err.Error())
 		return
@@ -165,7 +166,7 @@ func (h *ApplicationHandler) UpdateApplicationEndpoint(c *gin.Context) {
 			endpoints[index] = *updated
 		}
 	}
-	if err := application.NewKubernetesApplier(K8s).SyncApplicationEndpoints(c.Request.Context(), applicationContextFor(app), endpoints, servicePort.Port); err != nil {
+	if err := h.kubernetes.SyncApplicationEndpoints(c.Request.Context(), applicationContextFor(app), endpoints, servicePort.Port); err != nil {
 		apiShared.ValidationError(c, fmt.Sprintf("同步应用入口: %v", err))
 		return
 	}
@@ -178,7 +179,7 @@ func (h *ApplicationHandler) UpdateApplicationEndpoint(c *gin.Context) {
 }
 
 func (h *ApplicationHandler) DeleteApplicationEndpoint(c *gin.Context) {
-	if K8s == nil {
+	if h.kubernetes == nil || !h.kubernetes.KubernetesAvailable() {
 		apiShared.K8sUnavailable(c)
 		return
 	}
@@ -230,7 +231,7 @@ func (h *ApplicationHandler) DeleteApplicationEndpoint(c *gin.Context) {
 		}
 	}
 	// Metadata-only UDP bindings remain discoverable and do not require an Ingress.
-	if err := application.NewKubernetesApplier(K8s).SyncApplicationEndpoints(c.Request.Context(), applicationContextFor(app), remaining, servicePort.Port); err != nil {
+	if err := h.kubernetes.SyncApplicationEndpoints(c.Request.Context(), applicationContextFor(app), remaining, servicePort.Port); err != nil {
 		apiShared.ValidationError(c, fmt.Sprintf("移除应用入口: %v", err))
 		return
 	}
@@ -274,7 +275,7 @@ func endpointUsesIngress(endpoint model.ApplicationEndpoint) bool {
 	return strings.ToLower(strings.TrimSpace(endpoint.IngressMode)) != "metadata"
 }
 
-func (h *ApplicationHandler) prepareApplicationEndpoint(app *model.Application, endpointID uint, req applicationEndpointRequest) (*model.ApplicationEndpoint, error) {
+func (h *ApplicationHandler) prepareApplicationEndpoint(ctx context.Context, app *model.Application, endpointID uint, req applicationEndpointRequest) (*model.ApplicationEndpoint, error) {
 	domain, err := h.resources.GetManagedDomain(req.DomainID)
 	if err != nil || !domain.Enabled {
 		return nil, fmt.Errorf("域名不存在或已停用")
@@ -317,7 +318,7 @@ func (h *ApplicationHandler) prepareApplicationEndpoint(app *model.Application, 
 	if domain.CertificateName == "" || domain.TLSSecretName == "" {
 		return nil, fmt.Errorf("域名尚未申请证书")
 	}
-	certificate, err := K8s.GetCertificate(domain.Namespace, domain.CertificateName)
+	certificate, err := h.kubernetes.GetCertificateContext(ctx, domain.Namespace, domain.CertificateName)
 	if err != nil {
 		return nil, fmt.Errorf("读取域名证书: %w", err)
 	}

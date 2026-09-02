@@ -30,11 +30,13 @@ type Config struct {
 
 // Container is the application dependency container.
 type Container struct {
-	Store    *store.Store
-	K8s      *k8s.Client
-	Adapters KubernetesAdapters
-	Auth     *authapi.AuthConfig
-	encKey   []byte
+	Store      *store.Store
+	K8s        *k8s.Client
+	Adapters   KubernetesAdapters
+	Services   Services
+	Auth       *authapi.AuthConfig
+	components *systemapi.SystemComponentHandler
+	encKey     []byte
 }
 
 // NewContainer initializes process-owned infrastructure. Kubernetes is
@@ -48,7 +50,7 @@ func NewContainer(cfg Config) (*Container, error) {
 	if err != nil {
 		log.Printf("WARNING: K8s 客户端不可用: %v（集群相关功能将降级）", err)
 	}
-	return &Container{
+	container := &Container{
 		Store:    db,
 		K8s:      client,
 		Adapters: BuildKubernetesAdapters(client),
@@ -59,13 +61,16 @@ func NewContainer(cfg Config) (*Container, error) {
 			RefreshTokenTTL: cfg.RefreshTokenTTL,
 			PlatformURL:     cfg.PlatformURL,
 		},
-	}, nil
+	}
+	container.Services = BuildServices(db, container.Adapters, cfg.EncryptionKey)
+	container.components = systemapi.NewSystemComponentHandler(container.Store, container.Adapters.SystemComponent)
+	return container, nil
 }
 
 // RegisterRoutes exposes the composed application through the existing API
 // route binder and passes migrated Kubernetes adapters explicitly.
 func (c *Container) RegisterRoutes(r *gin.Engine) {
-	api.RegisterRoutes(r, c.Store, c.configEncryptionKey(), c.Auth, c.K8s, c.Adapters.RouterDependencies())
+	api.RegisterRoutes(r, c.BuildRouteDependencies())
 }
 
 // Handler returns the HTTP handler after routes have been registered.
@@ -73,17 +78,29 @@ func (c *Container) Handler(r *gin.Engine) http.Handler { return r }
 
 func (c *Container) configEncryptionKey() []byte { return append([]byte(nil), c.encKey...) }
 
+// componentHandler returns the singleton system-component handler shared by
+// HTTP routes and the background reconciler. Keeping one instance here avoids
+// rebuilding a handler with a separate dependency graph at runtime.
+func (c *Container) componentHandler() *systemapi.SystemComponentHandler {
+	if c.components == nil {
+		c.components = systemapi.NewSystemComponentHandler(c.Store, c.Adapters.SystemComponent)
+	}
+	return c.components
+}
+
 // StartBackground starts application-owned reconciliation and maintenance
 // loops. The caller only supplies lifecycle configuration; concrete handlers
 // and adapters are assembled inside the composition root.
 func (c *Container) StartBackground(ctx context.Context, operationLogRetention time.Duration) {
 	if ctx == nil {
-		ctx = context.Background()
+		return
 	}
 	go c.startOperationLogCleaner(ctx, operationLogRetention)
 
 	go func() {
-		_ = systemapi.NewSystemComponentHandler(c.Store, c.Adapters.SystemComponent).Run(ctx, 5*time.Minute)
+		if handler := c.componentHandler(); handler != nil {
+			_ = handler.Run(ctx, 5*time.Minute)
+		}
 	}()
 }
 

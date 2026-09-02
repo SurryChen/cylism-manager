@@ -79,13 +79,13 @@ type RevisionInfo struct {
 // --- Deployment ---
 
 // ListDeployments 列出所有 Deployment
-func (c *Client) ListDeployments(ns string) ([]DeploymentInfo, error) {
+func (c *Client) ListDeploymentsContext(ctx context.Context, ns string) ([]DeploymentInfo, error) {
 	var list *appsv1.DeploymentList
 	var err error
 	if ns == "" {
-		list, err = c.Clientset.AppsV1().Deployments("").List(c.ctx, metav1.ListOptions{})
+		list, err = c.Clientset.AppsV1().Deployments("").List(ctx, metav1.ListOptions{})
 	} else {
-		list, err = c.Clientset.AppsV1().Deployments(ns).List(c.ctx, metav1.ListOptions{})
+		list, err = c.Clientset.AppsV1().Deployments(ns).List(ctx, metav1.ListOptions{})
 	}
 	if err != nil {
 		return nil, fmt.Errorf("list deployments: %w", err)
@@ -99,18 +99,13 @@ func (c *Client) ListDeployments(ns string) ([]DeploymentInfo, error) {
 }
 
 // GetDeployment 获取单个 Deployment 详情
-func (c *Client) GetDeployment(namespace, name string) (*DeploymentInfo, error) {
-	d, err := c.Clientset.AppsV1().Deployments(namespace).Get(c.ctx, name, metav1.GetOptions{})
+func (c *Client) GetDeploymentContext(ctx context.Context, namespace, name string) (*DeploymentInfo, error) {
+	d, err := c.Clientset.AppsV1().Deployments(namespace).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("get deployment %s/%s: %w", namespace, name, err)
 	}
 	info := deploymentToInfo(d)
 	return &info, nil
-}
-
-// ListDeploymentPods 获取 Deployment 关联的 Pod
-func (c *Client) ListDeploymentPods(namespace, name string) ([]PodRef, error) {
-	return c.ListDeploymentPodsContext(c.Ctx(), namespace, name)
 }
 
 func (c *Client) ListDeploymentPodsContext(ctx context.Context, namespace, name string) ([]PodRef, error) {
@@ -136,14 +131,14 @@ func (c *Client) ListDeploymentPodsContext(ctx context.Context, namespace, name 
 }
 
 // ListDeploymentRevisions 获取 Deployment 版本历史（通过 ReplicaSet）
-func (c *Client) ListDeploymentRevisions(namespace, name string) ([]RevisionInfo, error) {
-	d, err := c.Clientset.AppsV1().Deployments(namespace).Get(c.ctx, name, metav1.GetOptions{})
+func (c *Client) ListDeploymentRevisionsContext(ctx context.Context, namespace, name string) ([]RevisionInfo, error) {
+	d, err := c.Clientset.AppsV1().Deployments(namespace).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("get deployment: %w", err)
 	}
 
 	selector := metav1.FormatLabelSelector(d.Spec.Selector)
-	rsList, err := c.Clientset.AppsV1().ReplicaSets(namespace).List(c.ctx, metav1.ListOptions{
+	rsList, err := c.Clientset.AppsV1().ReplicaSets(namespace).List(ctx, metav1.ListOptions{
 		LabelSelector: selector,
 	})
 	if err != nil {
@@ -183,10 +178,6 @@ func (c *Client) ListDeploymentRevisions(namespace, name string) ([]RevisionInfo
 }
 
 // ScaleDeployment 扩缩容 Deployment
-func (c *Client) ScaleDeployment(namespace, name string, replicas int32) error {
-	return c.ScaleDeploymentContext(c.Ctx(), namespace, name, replicas)
-}
-
 func (c *Client) ScaleDeploymentContext(ctx context.Context, namespace, name string, replicas int32) error {
 	deployment, err := c.Clientset.AppsV1().Deployments(namespace).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
@@ -201,10 +192,10 @@ func (c *Client) ScaleDeploymentContext(ctx context.Context, namespace, name str
 }
 
 // UpdateDeploymentImage 更新 Deployment 容器镜像
-func (c *Client) UpdateDeploymentImage(namespace, name, container, image string) error {
+func (c *Client) UpdateDeploymentImageContext(ctx context.Context, namespace, name, container, image string) error {
 	patch := fmt.Sprintf(`{"spec":{"template":{"spec":{"containers":[{"name":"%s","image":"%s"}]}}}}`, container, image)
 	_, err := c.Clientset.AppsV1().Deployments(namespace).Patch(
-		c.ctx, name, types.StrategicMergePatchType,
+		ctx, name, types.StrategicMergePatchType,
 		[]byte(patch), metav1.PatchOptions{},
 	)
 	if err != nil {
@@ -214,8 +205,8 @@ func (c *Client) UpdateDeploymentImage(namespace, name, container, image string)
 }
 
 // RollbackDeployment 回滚 Deployment 到指定版本
-func (c *Client) RollbackDeployment(namespace, name string, revision int64) error {
-	d, err := c.Clientset.AppsV1().Deployments(namespace).Get(c.ctx, name, metav1.GetOptions{})
+func (c *Client) RollbackDeploymentContext(ctx context.Context, namespace, name string, revision int64) error {
+	d, err := c.Clientset.AppsV1().Deployments(namespace).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
 		return fmt.Errorf("get deployment: %w", err)
 	}
@@ -229,7 +220,7 @@ func (c *Client) RollbackDeployment(namespace, name string, revision int64) erro
 	// 我们通过设置 deployment.kubernetes.io/revision 触发回滚
 	patch := fmt.Sprintf(`{"spec":{"rollbackTo":{"revision":%d}}}`, revision)
 	_, err = c.Clientset.AppsV1().Deployments(namespace).Patch(
-		c.ctx, name, types.StrategicMergePatchType,
+		ctx, name, types.StrategicMergePatchType,
 		[]byte(patch), metav1.PatchOptions{},
 	)
 	if err != nil {
@@ -241,13 +232,13 @@ func (c *Client) RollbackDeployment(namespace, name string, revision int64) erro
 // --- StatefulSet ---
 
 // ListStatefulSets 列出所有 StatefulSet
-func (c *Client) ListStatefulSets(ns string) ([]StatefulSetInfo, error) {
+func (c *Client) ListStatefulSetsContext(ctx context.Context, ns string) ([]StatefulSetInfo, error) {
 	var list *appsv1.StatefulSetList
 	var err error
 	if ns == "" {
-		list, err = c.Clientset.AppsV1().StatefulSets("").List(c.ctx, metav1.ListOptions{})
+		list, err = c.Clientset.AppsV1().StatefulSets("").List(ctx, metav1.ListOptions{})
 	} else {
-		list, err = c.Clientset.AppsV1().StatefulSets(ns).List(c.ctx, metav1.ListOptions{})
+		list, err = c.Clientset.AppsV1().StatefulSets(ns).List(ctx, metav1.ListOptions{})
 	}
 	if err != nil {
 		return nil, fmt.Errorf("list statefulsets: %w", err)
@@ -261,8 +252,8 @@ func (c *Client) ListStatefulSets(ns string) ([]StatefulSetInfo, error) {
 }
 
 // GetStatefulSet 获取单个 StatefulSet 详情
-func (c *Client) GetStatefulSet(namespace, name string) (*StatefulSetInfo, error) {
-	s, err := c.Clientset.AppsV1().StatefulSets(namespace).Get(c.ctx, name, metav1.GetOptions{})
+func (c *Client) GetStatefulSetContext(ctx context.Context, namespace, name string) (*StatefulSetInfo, error) {
+	s, err := c.Clientset.AppsV1().StatefulSets(namespace).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("get statefulset %s/%s: %w", namespace, name, err)
 	}
@@ -271,14 +262,14 @@ func (c *Client) GetStatefulSet(namespace, name string) (*StatefulSetInfo, error
 }
 
 // ScaleStatefulSet 扩缩容 StatefulSet
-func (c *Client) ScaleStatefulSet(namespace, name string, replicas int32) error {
-	scale, err := c.Clientset.AppsV1().StatefulSets(namespace).GetScale(c.ctx, name, metav1.GetOptions{})
+func (c *Client) ScaleStatefulSetContext(ctx context.Context, namespace, name string, replicas int32) error {
+	scale, err := c.Clientset.AppsV1().StatefulSets(namespace).GetScale(ctx, name, metav1.GetOptions{})
 	if err != nil {
 		return fmt.Errorf("get scale: %w", err)
 	}
 	scale.Spec.Replicas = replicas
 
-	_, err = c.Clientset.AppsV1().StatefulSets(namespace).UpdateScale(c.ctx, name, scale, metav1.UpdateOptions{})
+	_, err = c.Clientset.AppsV1().StatefulSets(namespace).UpdateScale(ctx, name, scale, metav1.UpdateOptions{})
 	if err != nil {
 		return fmt.Errorf("update scale: %w", err)
 	}
@@ -288,13 +279,13 @@ func (c *Client) ScaleStatefulSet(namespace, name string, replicas int32) error 
 // --- DaemonSet ---
 
 // ListDaemonSets 列出所有 DaemonSet
-func (c *Client) ListDaemonSets(ns string) ([]DaemonSetInfo, error) {
+func (c *Client) ListDaemonSetsContext(ctx context.Context, ns string) ([]DaemonSetInfo, error) {
 	var list *appsv1.DaemonSetList
 	var err error
 	if ns == "" {
-		list, err = c.Clientset.AppsV1().DaemonSets("").List(c.ctx, metav1.ListOptions{})
+		list, err = c.Clientset.AppsV1().DaemonSets("").List(ctx, metav1.ListOptions{})
 	} else {
-		list, err = c.Clientset.AppsV1().DaemonSets(ns).List(c.ctx, metav1.ListOptions{})
+		list, err = c.Clientset.AppsV1().DaemonSets(ns).List(ctx, metav1.ListOptions{})
 	}
 	if err != nil {
 		return nil, fmt.Errorf("list daemonsets: %w", err)
@@ -308,8 +299,8 @@ func (c *Client) ListDaemonSets(ns string) ([]DaemonSetInfo, error) {
 }
 
 // GetDaemonSet 获取单个 DaemonSet 详情
-func (c *Client) GetDaemonSet(namespace, name string) (*DaemonSetInfo, error) {
-	d, err := c.Clientset.AppsV1().DaemonSets(namespace).Get(c.ctx, name, metav1.GetOptions{})
+func (c *Client) GetDaemonSetContext(ctx context.Context, namespace, name string) (*DaemonSetInfo, error) {
+	d, err := c.Clientset.AppsV1().DaemonSets(namespace).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("get daemonset %s/%s: %w", namespace, name, err)
 	}

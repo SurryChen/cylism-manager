@@ -104,7 +104,7 @@ func (h *ApplicationHandler) DiscoverApplications(c *gin.Context) {
 		apiShared.DBError(c, err.Error())
 		return
 	}
-	runtimes := h.queries.ApplicationRuntimeInfos(c.Request.Context(), K8s, applications, releases)
+	runtimes := h.queries.ApplicationRuntimeInfos(c.Request.Context(), h.kubernetes, applications, releases)
 	infos := make([]applicationDiscoveryInfo, 0, len(applications))
 	for _, app := range applications {
 		infos = append(infos, applicationDiscoveryInfoFromModel(app, runtimes[app.ID]))
@@ -128,7 +128,7 @@ func (h *ApplicationHandler) GetApplicationRuntime(c *gin.Context) {
 		apiShared.DBError(c, err.Error())
 		return
 	}
-	runtime := h.queries.ApplicationRuntimeInfos(c.Request.Context(), K8s, []model.Application{*app}, map[uint][]model.Release{applicationID: releases})[applicationID]
+	runtime := h.queries.ApplicationRuntimeInfos(c.Request.Context(), h.kubernetes, []model.Application{*app}, map[uint][]model.Release{applicationID: releases})[applicationID]
 	model.Success(c, runtime)
 }
 
@@ -226,13 +226,13 @@ func (h *ApplicationHandler) WorkspaceOverview(c *gin.Context) {
 	workspaceApplications := h.workspaceApplicationInfos(c.Request.Context(), environment.Namespace, applications, allReleases)
 	domainInfos := make([]infrastructureapi.ManagedDomainInfo, 0, len(domains))
 	for index := range domains {
-		domainInfos = append(domainInfos, infrastructureapi.ManagedDomainInfoFor(&domains[index], K8s, h.resources))
+		domainInfos = append(domainInfos, infrastructureapi.ManagedDomainInfoFor(c.Request.Context(), &domains[index], h.kubernetes, h.resources))
 	}
 	model.Success(c, gin.H{"project": project, "environment": environment, "applications": workspaceApplications, "domains": domainInfos, "failed_releases": failedReleases, "recent_releases": recentReleases})
 }
 
 func (h *ApplicationHandler) workspaceApplicationInfos(ctx context.Context, namespace string, applications []model.Application, allReleases map[uint][]model.Release) []workspaceApplicationInfo {
-	podStates, runtimeAvailable := h.queries.WorkspacePodStates(ctx, K8s, namespace)
+	podStates, runtimeAvailable := h.queries.WorkspacePodStates(ctx, h.kubernetes, namespace)
 	infos := make([]workspaceApplicationInfo, 0, len(applications))
 	for _, app := range applications {
 		var latest, active *model.Release

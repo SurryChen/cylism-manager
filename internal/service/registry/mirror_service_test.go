@@ -85,7 +85,7 @@ func TestMirrorServiceApplyUsesOnlySelectedClusterNodes(t *testing.T) {
 
 	started := make(chan uint, 1)
 	finish := make(chan struct{})
-	updated, err := service.StartApply(mirror.ID, []uint{worker.ID}, func(server *model.Server, _ []byte) (string, string) {
+	updated, err := service.StartApply(context.Background(), mirror.ID, []uint{worker.ID}, func(_ context.Context, server *model.Server, _ []byte) (string, string) {
 		started <- server.ID
 		<-finish
 		return "success", "配置已写入"
@@ -104,10 +104,10 @@ func TestMirrorServiceApplyUsesOnlySelectedClusterNodes(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("apply did not start")
 	}
-	if _, err := service.StartApply(mirror.ID, []uint{worker.ID}, func(*model.Server, []byte) (string, string) { return "success", "" }); !errors.Is(err, ErrMirrorApplyRunning) {
+	if _, err := service.StartApply(context.Background(), mirror.ID, []uint{worker.ID}, func(context.Context, *model.Server, []byte) (string, string) { return "success", "" }); !errors.Is(err, ErrMirrorApplyRunning) {
 		t.Fatalf("expected in-flight error, got %v", err)
 	}
-	if _, err := service.StartApply(mirror.ID, []uint{standalone.ID}, func(*model.Server, []byte) (string, string) { return "success", "" }); err == nil || !strings.Contains(err.Error(), "不是可应用的集群节点") {
+	if _, err := service.StartApply(context.Background(), mirror.ID, []uint{standalone.ID}, func(context.Context, *model.Server, []byte) (string, string) { return "success", "" }); err == nil || !strings.Contains(err.Error(), "不是可应用的集群节点") {
 		t.Fatalf("expected invalid node error, got %v", err)
 	}
 	close(finish)

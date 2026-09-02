@@ -43,12 +43,12 @@ type LoggingHandler struct {
 	component    *loggingservice.ComponentService
 	filterReader loggingservice.FilterReader
 	queryService *loggingservice.QueryService
-	ready        func() bool
+	ready        func(context.Context) bool
 }
 
 type LoggingDependencies struct {
 	Query        loggingservice.QueryFunc
-	Ready        func() bool
+	Ready        func(context.Context) bool
 	Component    loggingservice.ComponentAdapter
 	FilterReader loggingservice.FilterReader
 }

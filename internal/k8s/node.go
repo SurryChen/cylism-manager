@@ -100,8 +100,8 @@ type NodeRemovalCheck struct {
 	Blockers  []DrainPod `json:"blockers"`
 }
 
-func (c *Client) ListNodeInfos() ([]NodeInfo, error) {
-	nodes, err := c.Clientset.CoreV1().Nodes().List(c.Ctx(), metav1.ListOptions{})
+func (c *Client) ListNodeInfosContext(ctx context.Context) ([]NodeInfo, error) {
+	nodes, err := c.Clientset.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("list nodes: %w", err)
 	}
@@ -110,10 +110,6 @@ func (c *Client) ListNodeInfos() ([]NodeInfo, error) {
 		result = append(result, nodeToInfo(&nodes.Items[index]))
 	}
 	return result, nil
-}
-
-func (c *Client) GetNodeInfo(name string) (*NodeInfo, error) {
-	return c.GetNodeInfoContext(c.Ctx(), name)
 }
 
 func (c *Client) GetNodeInfoContext(ctx context.Context, name string) (*NodeInfo, error) {
@@ -125,8 +121,8 @@ func (c *Client) GetNodeInfoContext(ctx context.Context, name string) (*NodeInfo
 	return &info, nil
 }
 
-func (c *Client) GetNodeLabels(name string) (*NodeLabels, error) {
-	node, err := c.Clientset.CoreV1().Nodes().Get(c.Ctx(), name, metav1.GetOptions{})
+func (c *Client) GetNodeLabelsContext(ctx context.Context, name string) (*NodeLabels, error) {
+	node, err := c.Clientset.CoreV1().Nodes().Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("get node %s labels: %w", name, err)
 	}
@@ -135,11 +131,11 @@ func (c *Client) GetNodeLabels(name string) (*NodeLabels, error) {
 
 // UpdateNodeLabels applies only validated custom labels. Kubernetes and K3s
 // managed label prefixes are deliberately read-only in this control plane.
-func (c *Client) UpdateNodeLabels(name string, set map[string]string, remove []string) (*NodeLabels, error) {
+func (c *Client) UpdateNodeLabelsContext(ctx context.Context, name string, set map[string]string, remove []string) (*NodeLabels, error) {
 	if err := validateNodeLabelUpdate(set, remove); err != nil {
 		return nil, err
 	}
-	node, err := c.Clientset.CoreV1().Nodes().Get(c.Ctx(), name, metav1.GetOptions{})
+	node, err := c.Clientset.CoreV1().Nodes().Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("get node %s labels: %w", name, err)
 	}
@@ -152,7 +148,7 @@ func (c *Client) UpdateNodeLabels(name string, set map[string]string, remove []s
 	for _, key := range remove {
 		delete(node.Labels, key)
 	}
-	updated, err := c.Clientset.CoreV1().Nodes().Update(c.Ctx(), node, metav1.UpdateOptions{})
+	updated, err := c.Clientset.CoreV1().Nodes().Update(ctx, node, metav1.UpdateOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("update node %s labels: %w", name, err)
 	}
@@ -208,12 +204,12 @@ func isProtectedNodeLabel(key string) bool {
 
 // DrainPlan checks the node without modifying Pods. It never treats DaemonSet,
 // mirror/static, terminal, or unmanaged Pods as ordinary eviction candidates.
-func (c *Client) DrainPlan(name string) (*DrainPlan, error) {
-	node, err := c.Clientset.CoreV1().Nodes().Get(c.Ctx(), name, metav1.GetOptions{})
+func (c *Client) DrainPlanContext(ctx context.Context, name string) (*DrainPlan, error) {
+	node, err := c.Clientset.CoreV1().Nodes().Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("读取节点失败: %w", err)
 	}
-	pods, err := c.Clientset.CoreV1().Pods("").List(c.Ctx(), metav1.ListOptions{FieldSelector: "spec.nodeName=" + name})
+	pods, err := c.Clientset.CoreV1().Pods("").List(ctx, metav1.ListOptions{FieldSelector: "spec.nodeName=" + name})
 	if err != nil {
 		return nil, fmt.Errorf("读取节点 Pod 失败: %w", err)
 	}
@@ -247,8 +243,8 @@ func (c *Client) DrainPlan(name string) (*DrainPlan, error) {
 
 // DrainNode cordons the node and submits PDB-aware eviction requests. It never
 // directly deletes Pods, so a PodDisruptionBudget can defer an unsafe disruption.
-func (c *Client) DrainNode(name string, options DrainOptions) (*DrainResult, error) {
-	plan, err := c.DrainPlan(name)
+func (c *Client) DrainNodeContext(ctx context.Context, name string, options DrainOptions) (*DrainResult, error) {
+	plan, err := c.DrainPlanContext(ctx, name)
 	if err != nil {
 		return nil, err
 	}
@@ -259,7 +255,7 @@ func (c *Client) DrainNode(name string, options DrainOptions) (*DrainResult, err
 		return &DrainResult{Plan: plan}, fmt.Errorf("存在包含 emptyDir 的 Pod，需要确认允许丢弃本地临时数据")
 	}
 
-	node, err := c.Clientset.CoreV1().Nodes().Get(c.Ctx(), name, metav1.GetOptions{})
+	node, err := c.Clientset.CoreV1().Nodes().Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("读取节点失败: %w", err)
 	}
@@ -267,14 +263,14 @@ func (c *Client) DrainNode(name string, options DrainOptions) (*DrainResult, err
 		node.Spec.Unschedulable = true
 	}
 	markNodeDrained(node)
-	if _, err := c.Clientset.CoreV1().Nodes().Update(c.Ctx(), node, metav1.UpdateOptions{}); err != nil {
+	if _, err := c.Clientset.CoreV1().Nodes().Update(ctx, node, metav1.UpdateOptions{}); err != nil {
 		return nil, fmt.Errorf("标记节点不可调度失败: %w", err)
 	}
 
 	candidates := append(append([]DrainPod{}, plan.Evictable...), plan.RequiresEmptyDirConfirmation...)
 	result := &DrainResult{Plan: plan}
 	for _, item := range candidates {
-		err := c.Clientset.CoreV1().Pods(item.Namespace).EvictV1(c.Ctx(), &policyv1.Eviction{ObjectMeta: metav1.ObjectMeta{Name: item.Name, Namespace: item.Namespace}})
+		err := c.Clientset.CoreV1().Pods(item.Namespace).EvictV1(ctx, &policyv1.Eviction{ObjectMeta: metav1.ObjectMeta{Name: item.Name, Namespace: item.Namespace}})
 		if err == nil {
 			result.Evicted = append(result.Evicted, item)
 			continue
@@ -293,11 +289,11 @@ func (c *Client) DrainNode(name string, options DrainOptions) (*DrainResult, err
 // directly deletes only controller-managed Pods, so Kubernetes recreates them
 // on healthy nodes without waiting for a PDB that cannot be satisfied by a
 // permanently unavailable source node.
-func (c *Client) ForceDrainNode(name string, options ForceDrainOptions) (*DrainResult, error) {
+func (c *Client) ForceDrainNodeContext(ctx context.Context, name string, options ForceDrainOptions) (*DrainResult, error) {
 	if !options.AcknowledgeRisk || options.ConfirmNodeName != name {
 		return nil, fmt.Errorf("必须确认绕过 PodDisruptionBudget 并输入目标节点名")
 	}
-	node, err := c.Clientset.CoreV1().Nodes().Get(c.Ctx(), name, metav1.GetOptions{})
+	node, err := c.Clientset.CoreV1().Nodes().Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("读取节点失败: %w", err)
 	}
@@ -307,7 +303,7 @@ func (c *Client) ForceDrainNode(name string, options ForceDrainOptions) (*DrainR
 	if nodeHealth(node, time.Now()).State != NodeHealthFailed {
 		return nil, fmt.Errorf("节点尚未被判定为故障，不能绕过 PodDisruptionBudget")
 	}
-	plan, err := c.DrainPlan(name)
+	plan, err := c.DrainPlanContext(ctx, name)
 	if err != nil {
 		return nil, err
 	}
@@ -319,14 +315,14 @@ func (c *Client) ForceDrainNode(name string, options ForceDrainOptions) (*DrainR
 		node.Spec.Unschedulable = true
 	}
 	markNodeDrained(node)
-	if _, err := c.Clientset.CoreV1().Nodes().Update(c.Ctx(), node, metav1.UpdateOptions{}); err != nil {
+	if _, err := c.Clientset.CoreV1().Nodes().Update(ctx, node, metav1.UpdateOptions{}); err != nil {
 		return result, fmt.Errorf("标记节点不可调度失败: %w", err)
 	}
 
 	gracePeriodSeconds := int64(0)
 	candidates := append(append([]DrainPod{}, plan.Evictable...), plan.RequiresEmptyDirConfirmation...)
 	for _, item := range candidates {
-		if err := c.Clientset.CoreV1().Pods(item.Namespace).Delete(c.Ctx(), item.Name, metav1.DeleteOptions{GracePeriodSeconds: &gracePeriodSeconds}); err != nil {
+		if err := c.Clientset.CoreV1().Pods(item.Namespace).Delete(ctx, item.Name, metav1.DeleteOptions{GracePeriodSeconds: &gracePeriodSeconds}); err != nil {
 			item.Reason = "强制删除请求失败: " + strings.TrimSpace(err.Error())
 			result.Failed = append(result.Failed, item)
 			continue
@@ -337,8 +333,8 @@ func (c *Client) ForceDrainNode(name string, options ForceDrainOptions) (*DrainR
 	return result, nil
 }
 
-func (c *Client) NodeRemovalCheck(name string) (*NodeRemovalCheck, error) {
-	node, err := c.Clientset.CoreV1().Nodes().Get(c.Ctx(), name, metav1.GetOptions{})
+func (c *Client) NodeRemovalCheckContext(ctx context.Context, name string) (*NodeRemovalCheck, error) {
+	node, err := c.Clientset.CoreV1().Nodes().Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("读取节点失败: %w", err)
 	}
@@ -349,7 +345,7 @@ func (c *Client) NodeRemovalCheck(name string) (*NodeRemovalCheck, error) {
 	if nodeReady(node) {
 		check.Blockers = append(check.Blockers, DrainPod{Reason: "节点仍处于就绪状态，请先停止该节点的 K3s 服务"})
 	}
-	plan, err := c.DrainPlan(name)
+	plan, err := c.DrainPlanContext(ctx, name)
 	if err != nil {
 		return nil, err
 	}
@@ -362,22 +358,22 @@ func (c *Client) NodeRemovalCheck(name string) (*NodeRemovalCheck, error) {
 
 // DeleteNode only deletes a stopped, cordoned, fully drained Node object. Stopping
 // k3s or k3s-agent remains an explicit host operation outside this API.
-func (c *Client) DeleteNode(name string) error {
-	check, err := c.NodeRemovalCheck(name)
+func (c *Client) DeleteNodeContext(ctx context.Context, name string) error {
+	check, err := c.NodeRemovalCheckContext(ctx, name)
 	if err != nil {
 		return err
 	}
 	if !check.CanRemove {
 		return fmt.Errorf("节点尚未满足移出条件: %s", check.Blockers[0].Reason)
 	}
-	return c.Clientset.CoreV1().Nodes().Delete(c.Ctx(), name, metav1.DeleteOptions{})
+	return c.Clientset.CoreV1().Nodes().Delete(ctx, name, metav1.DeleteOptions{})
 }
 
 // RejoinNode makes a previously drained node schedulable again. It only
 // changes the Node object; K3s installation and Node registration are kept
 // outside this reversible operation.
-func (c *Client) RejoinNode(name string) (*NodeInfo, error) {
-	node, err := c.Clientset.CoreV1().Nodes().Get(c.Ctx(), name, metav1.GetOptions{})
+func (c *Client) RejoinNodeContext(ctx context.Context, name string) (*NodeInfo, error) {
+	node, err := c.Clientset.CoreV1().Nodes().Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("读取节点失败: %w", err)
 	}
@@ -389,7 +385,7 @@ func (c *Client) RejoinNode(name string) (*NodeInfo, error) {
 	if node.Annotations != nil {
 		delete(node.Annotations, nodeDrainAnnotation)
 	}
-	updated, err := c.Clientset.CoreV1().Nodes().Update(c.Ctx(), node, metav1.UpdateOptions{})
+	updated, err := c.Clientset.CoreV1().Nodes().Update(ctx, node, metav1.UpdateOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("恢复节点调度失败: %w", err)
 	}

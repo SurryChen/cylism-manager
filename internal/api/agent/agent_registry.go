@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -22,10 +23,10 @@ type AgentRegistryEndpointResult struct {
 
 type agentRegistryEndpointResult = AgentRegistryEndpointResult
 
-type AgentRegistryNodeVerifier func(*model.Server, []string) ([]AgentRegistryEndpointResult, error)
+type AgentRegistryNodeVerifier func(context.Context, *model.Server, []string) ([]AgentRegistryEndpointResult, error)
 type agentRegistryNodeVerifier = AgentRegistryNodeVerifier
 
-type AgentRegistryPullExecutor func(*model.Server, string) error
+type AgentRegistryPullExecutor func(context.Context, *model.Server, string) error
 type agentRegistryPullExecutor = AgentRegistryPullExecutor
 
 type agentRegistryConfig struct {
@@ -162,13 +163,13 @@ func agentRegistryPullCommand(image string) string {
 }
 
 func DefaultAgentRegistryNodeVerifier(encKey []byte) AgentRegistryNodeVerifier {
-	return func(server *model.Server, endpoints []string) ([]agentRegistryEndpointResult, error) {
+	return func(ctx context.Context, server *model.Server, endpoints []string) ([]agentRegistryEndpointResult, error) {
 		if server == nil || len(endpoints) == 0 {
 			return nil, fmt.Errorf("node or endpoint unavailable")
 		}
 		args := infrastructureapi.BuildSSHArgs(server, encKey, server.Host)
 		args = append(args, agentRegistryVerificationCommand(endpoints))
-		output, err := infrastructureapi.SSHExec(30*time.Second, args)
+		output, err := infrastructureapi.SSHExecContext(ctx, 30*time.Second, args)
 		if err != nil {
 			return nil, fmt.Errorf("node verification command failed: %w: %s", err, agentRegistryVerificationOutputDetail(string(output)))
 		}
@@ -200,13 +201,13 @@ func agentRegistryVerificationOutputDetail(output string) string {
 }
 
 func DefaultAgentRegistryPullExecutor(encKey []byte) AgentRegistryPullExecutor {
-	return func(server *model.Server, image string) error {
+	return func(ctx context.Context, server *model.Server, image string) error {
 		if server == nil || strings.TrimSpace(image) == "" {
 			return fmt.Errorf("node or verification image unavailable")
 		}
 		args := infrastructureapi.BuildSSHArgs(server, encKey, server.Host)
 		args = append(args, agentRegistryPullCommand(image))
-		output, err := infrastructureapi.SSHExec(2*time.Minute, args)
+		output, err := infrastructureapi.SSHExecContext(ctx, 2*time.Minute, args)
 		if err != nil {
 			detail := strings.TrimSpace(string(output))
 			if detail == "" {

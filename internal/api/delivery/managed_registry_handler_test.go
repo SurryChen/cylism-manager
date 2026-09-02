@@ -107,7 +107,8 @@ func setupManagedOCIRegistryRouterWithHandler(t *testing.T) (*gin.Engine, *store
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { K8s = original })
-	h := NewManagedOCIRegistryHandler(s, []byte("01234567890123456789012345678901"), K8s, nil)
+	reconciler := k8s.NewManagedRegistryReconciler(K8s)
+	h := NewManagedOCIRegistryHandler(s, []byte("01234567890123456789012345678901"), reconciler, reconciler, nil)
 	r := gin.New()
 	group := r.Group("/api/managed-oci-registries")
 	group.GET("", h.List)
@@ -486,7 +487,7 @@ func TestManagedOCIRegistryAppliesSelectedNodesAndKeepsPerNodeStatus(t *testing.
 	if err := s.CreateServer(&model.Server{Name: "worker-b", Host: "10.0.0.5", ClusterRole: "worker"}); err != nil {
 		t.Fatal(err)
 	}
-	handler.applyNode = func(server *model.Server, _ []byte) (string, string) {
+	handler.applyNode = func(_ context.Context, server *model.Server, _ []byte) (string, string) {
 		if server.Host == "10.0.0.5" {
 			return "failed", "SSH unavailable"
 		}

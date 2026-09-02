@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -9,14 +10,14 @@ import (
 	"github.com/cylism/cylism-manager/internal/model"
 )
 
-type AgentMaintenanceCleanupExecutor func(*model.Server, string) (string, error)
+type AgentMaintenanceCleanupExecutor func(context.Context, *model.Server, string) (string, error)
 type agentMaintenanceCleanupExecutor = AgentMaintenanceCleanupExecutor
 
 // defaultAgentMaintenanceCleanupExecutor intentionally accepts a recipe ID,
 // not a command. These immutable scripts are the only remote mutations this
 // capability can ever execute.
 func DefaultAgentMaintenanceCleanupExecutor(encKey []byte) AgentMaintenanceCleanupExecutor {
-	return func(server *model.Server, recipe string) (string, error) {
+	return func(ctx context.Context, server *model.Server, recipe string) (string, error) {
 		if server == nil || !validMaintenanceRecipe(recipe) {
 			return "", fmt.Errorf("node or cleanup recipe unavailable")
 		}
@@ -31,7 +32,7 @@ func DefaultAgentMaintenanceCleanupExecutor(encKey []byte) AgentMaintenanceClean
 		}
 		args := infrastructureapi.BuildSSHArgs(server, encKey, server.Host)
 		args = append(args, command)
-		output, err := infrastructureapi.SSHExec(2*time.Minute, args)
+		output, err := infrastructureapi.SSHExecContext(ctx, 2*time.Minute, args)
 		summary := truncateAgentText(strings.TrimSpace(redactAgentText(string(output))), agentOperationErrorSummaryLimit)
 		if err != nil {
 			if summary == "" {

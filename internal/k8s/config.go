@@ -1,6 +1,7 @@
 package k8s
 
 import (
+	"context"
 	"fmt"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -73,23 +74,23 @@ type OpaqueSecretMutation struct {
 }
 
 // ListConfigMaps 列出所有 ConfigMap
-func (c *Client) ListConfigMaps(ns string) ([]ConfigMapInfo, error) {
-	return c.listConfigMaps(ns, true)
+func (c *Client) ListConfigMapsContext(ctx context.Context, ns string) ([]ConfigMapInfo, error) {
+	return c.listConfigMapsContext(ctx, ns, true)
 }
 
 // ListConfigMapsMetadata lists only resource metadata and keys. It avoids
 // workload reference scans for selectors and inventory pages.
-func (c *Client) ListConfigMapsMetadata(ns string) ([]ConfigMapInfo, error) {
-	return c.listConfigMaps(ns, false)
+func (c *Client) ListConfigMapsMetadataContext(ctx context.Context, ns string) ([]ConfigMapInfo, error) {
+	return c.listConfigMapsContext(ctx, ns, false)
 }
 
-func (c *Client) listConfigMaps(ns string, includeUsage bool) ([]ConfigMapInfo, error) {
+func (c *Client) listConfigMapsContext(ctx context.Context, ns string, includeUsage bool) ([]ConfigMapInfo, error) {
 	var list *corev1.ConfigMapList
 	var err error
 	if ns == "" {
-		list, err = c.Clientset.CoreV1().ConfigMaps("").List(c.ctx, metav1.ListOptions{})
+		list, err = c.Clientset.CoreV1().ConfigMaps("").List(ctx, metav1.ListOptions{})
 	} else {
-		list, err = c.Clientset.CoreV1().ConfigMaps(ns).List(c.ctx, metav1.ListOptions{})
+		list, err = c.Clientset.CoreV1().ConfigMaps(ns).List(ctx, metav1.ListOptions{})
 	}
 	if err != nil {
 		return nil, fmt.Errorf("list configmaps: %w", err)
@@ -98,7 +99,7 @@ func (c *Client) listConfigMaps(ns string, includeUsage bool) ([]ConfigMapInfo, 
 	result := make([]ConfigMapInfo, 0, len(list.Items))
 	refsByResource := make(map[configReferenceKey][]WorkloadRef)
 	if includeUsage {
-		refsByResource = c.buildConfigReferenceIndex(referenceNamespacesFromConfigMaps(list.Items), "ConfigMap")
+		refsByResource = c.buildConfigReferenceIndex(ctx, referenceNamespacesFromConfigMaps(list.Items), "ConfigMap")
 	}
 	for _, cm := range list.Items {
 		keys := make([]string, 0, len(cm.Data))
@@ -118,8 +119,8 @@ func (c *Client) listConfigMaps(ns string, includeUsage bool) ([]ConfigMapInfo, 
 }
 
 // GetConfigMap 获取 ConfigMap 详情
-func (c *Client) GetConfigMap(namespace, name string) (*ConfigMapDetail, error) {
-	cm, err := c.Clientset.CoreV1().ConfigMaps(namespace).Get(c.ctx, name, metav1.GetOptions{})
+func (c *Client) GetConfigMapContext(ctx context.Context, namespace, name string) (*ConfigMapDetail, error) {
+	cm, err := c.Clientset.CoreV1().ConfigMaps(namespace).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("get configmap %s/%s: %w", namespace, name, err)
 	}
@@ -127,13 +128,13 @@ func (c *Client) GetConfigMap(namespace, name string) (*ConfigMapDetail, error) 
 		Name:      cm.Name,
 		Namespace: cm.Namespace,
 		Data:      cm.Data,
-		UsedBy:    c.findConfigRefs(namespace, name, "ConfigMap"),
+		UsedBy:    c.findConfigRefs(ctx, namespace, name, "ConfigMap"),
 		Age:       timeAgo(cm.CreationTimestamp.Time),
 	}, nil
 }
 
-func (c *Client) CreateConfigMap(request ConfigMapMutation) (*ConfigMapDetail, error) {
-	created, err := c.Clientset.CoreV1().ConfigMaps(request.Namespace).Create(c.ctx, &corev1.ConfigMap{
+func (c *Client) CreateConfigMapContext(ctx context.Context, request ConfigMapMutation) (*ConfigMapDetail, error) {
+	created, err := c.Clientset.CoreV1().ConfigMaps(request.Namespace).Create(ctx, &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{Name: request.Name, Namespace: request.Namespace},
 		Data:       request.Data,
 	}, metav1.CreateOptions{})
@@ -143,44 +144,44 @@ func (c *Client) CreateConfigMap(request ConfigMapMutation) (*ConfigMapDetail, e
 	return &ConfigMapDetail{Name: created.Name, Namespace: created.Namespace, Data: created.Data, Age: timeAgo(created.CreationTimestamp.Time)}, nil
 }
 
-func (c *Client) UpdateConfigMap(request ConfigMapMutation) (*ConfigMapDetail, error) {
-	configMap, err := c.Clientset.CoreV1().ConfigMaps(request.Namespace).Get(c.ctx, request.Name, metav1.GetOptions{})
+func (c *Client) UpdateConfigMapContext(ctx context.Context, request ConfigMapMutation) (*ConfigMapDetail, error) {
+	configMap, err := c.Clientset.CoreV1().ConfigMaps(request.Namespace).Get(ctx, request.Name, metav1.GetOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("get configmap %s/%s: %w", request.Namespace, request.Name, err)
 	}
 	configMap.Data = request.Data
-	updated, err := c.Clientset.CoreV1().ConfigMaps(request.Namespace).Update(c.ctx, configMap, metav1.UpdateOptions{})
+	updated, err := c.Clientset.CoreV1().ConfigMaps(request.Namespace).Update(ctx, configMap, metav1.UpdateOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("update configmap %s/%s: %w", request.Namespace, request.Name, err)
 	}
-	return &ConfigMapDetail{Name: updated.Name, Namespace: updated.Namespace, Data: updated.Data, UsedBy: c.findConfigRefs(request.Namespace, request.Name, "ConfigMap"), Age: timeAgo(updated.CreationTimestamp.Time)}, nil
+	return &ConfigMapDetail{Name: updated.Name, Namespace: updated.Namespace, Data: updated.Data, UsedBy: c.findConfigRefs(ctx, request.Namespace, request.Name, "ConfigMap"), Age: timeAgo(updated.CreationTimestamp.Time)}, nil
 }
 
-func (c *Client) DeleteConfigMap(namespace, name string) error {
-	if err := c.Clientset.CoreV1().ConfigMaps(namespace).Delete(c.ctx, name, metav1.DeleteOptions{}); err != nil {
+func (c *Client) DeleteConfigMapContext(ctx context.Context, namespace, name string) error {
+	if err := c.Clientset.CoreV1().ConfigMaps(namespace).Delete(ctx, name, metav1.DeleteOptions{}); err != nil {
 		return fmt.Errorf("delete configmap %s/%s: %w", namespace, name, err)
 	}
 	return nil
 }
 
 // ListSecrets 列出所有 Secret（不返回 value）
-func (c *Client) ListSecrets(ns string) ([]SecretInfo, error) {
-	return c.listSecrets(ns, true)
+func (c *Client) ListSecretsContext(ctx context.Context, ns string) ([]SecretInfo, error) {
+	return c.listSecretsContext(ctx, ns, true)
 }
 
 // ListSecretsMetadata lists only resource metadata and keys. Secret values
 // and workload scans are intentionally excluded from this inventory path.
-func (c *Client) ListSecretsMetadata(ns string) ([]SecretInfo, error) {
-	return c.listSecrets(ns, false)
+func (c *Client) ListSecretsMetadataContext(ctx context.Context, ns string) ([]SecretInfo, error) {
+	return c.listSecretsContext(ctx, ns, false)
 }
 
-func (c *Client) listSecrets(ns string, includeUsage bool) ([]SecretInfo, error) {
+func (c *Client) listSecretsContext(ctx context.Context, ns string, includeUsage bool) ([]SecretInfo, error) {
 	var list *corev1.SecretList
 	var err error
 	if ns == "" {
-		list, err = c.Clientset.CoreV1().Secrets("").List(c.ctx, metav1.ListOptions{})
+		list, err = c.Clientset.CoreV1().Secrets("").List(ctx, metav1.ListOptions{})
 	} else {
-		list, err = c.Clientset.CoreV1().Secrets(ns).List(c.ctx, metav1.ListOptions{})
+		list, err = c.Clientset.CoreV1().Secrets(ns).List(ctx, metav1.ListOptions{})
 	}
 	if err != nil {
 		return nil, fmt.Errorf("list secrets: %w", err)
@@ -189,7 +190,7 @@ func (c *Client) listSecrets(ns string, includeUsage bool) ([]SecretInfo, error)
 	result := make([]SecretInfo, 0, len(list.Items))
 	refsByResource := make(map[configReferenceKey][]WorkloadRef)
 	if includeUsage {
-		refsByResource = c.buildConfigReferenceIndex(referenceNamespacesFromSecrets(list.Items), "Secret")
+		refsByResource = c.buildConfigReferenceIndex(ctx, referenceNamespacesFromSecrets(list.Items), "Secret")
 	}
 	for _, s := range list.Items {
 		keys := make([]string, 0, len(s.Data))
@@ -241,20 +242,20 @@ func referenceNamespacesFromSecrets(items []corev1.Secret) []string {
 }
 
 // buildConfigReferenceIndex scans each workload type once per namespace instead of once per resource.
-func (c *Client) buildConfigReferenceIndex(namespaces []string, kind string) map[configReferenceKey][]WorkloadRef {
+func (c *Client) buildConfigReferenceIndex(ctx context.Context, namespaces []string, kind string) map[configReferenceKey][]WorkloadRef {
 	refsByResource := make(map[configReferenceKey][]WorkloadRef)
 	for _, namespace := range namespaces {
-		if deploys, err := c.Clientset.AppsV1().Deployments(namespace).List(c.ctx, metav1.ListOptions{}); err == nil {
+		if deploys, err := c.Clientset.AppsV1().Deployments(namespace).List(ctx, metav1.ListOptions{}); err == nil {
 			for _, deployment := range deploys.Items {
 				indexWorkloadConfigRefs(deployment.Namespace, deployment.Name, "Deployment", deployment.Spec.Template.Spec, kind, refsByResource)
 			}
 		}
-		if statefulSets, err := c.Clientset.AppsV1().StatefulSets(namespace).List(c.ctx, metav1.ListOptions{}); err == nil {
+		if statefulSets, err := c.Clientset.AppsV1().StatefulSets(namespace).List(ctx, metav1.ListOptions{}); err == nil {
 			for _, statefulSet := range statefulSets.Items {
 				indexWorkloadConfigRefs(statefulSet.Namespace, statefulSet.Name, "StatefulSet", statefulSet.Spec.Template.Spec, kind, refsByResource)
 			}
 		}
-		if daemonSets, err := c.Clientset.AppsV1().DaemonSets(namespace).List(c.ctx, metav1.ListOptions{}); err == nil {
+		if daemonSets, err := c.Clientset.AppsV1().DaemonSets(namespace).List(ctx, metav1.ListOptions{}); err == nil {
 			for _, daemonSet := range daemonSets.Items {
 				indexWorkloadConfigRefs(daemonSet.Namespace, daemonSet.Name, "DaemonSet", daemonSet.Spec.Template.Spec, kind, refsByResource)
 			}
@@ -303,8 +304,8 @@ func indexWorkloadConfigRefs(namespace, workloadName, workloadKind string, spec 
 }
 
 // GetSecret 获取 Secret 详情（含 base64 value）
-func (c *Client) GetSecret(namespace, name string) (*SecretDetail, error) {
-	s, err := c.Clientset.CoreV1().Secrets(namespace).Get(c.ctx, name, metav1.GetOptions{})
+func (c *Client) GetSecretContext(ctx context.Context, namespace, name string) (*SecretDetail, error) {
+	s, err := c.Clientset.CoreV1().Secrets(namespace).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("get secret %s/%s: %w", namespace, name, err)
 	}
@@ -317,17 +318,17 @@ func (c *Client) GetSecret(namespace, name string) (*SecretDetail, error) {
 		Namespace: s.Namespace,
 		Type:      string(s.Type),
 		Data:      data,
-		UsedBy:    c.findConfigRefs(namespace, name, "Secret"),
+		UsedBy:    c.findConfigRefs(ctx, namespace, name, "Secret"),
 		Age:       timeAgo(s.CreationTimestamp.Time),
 	}, nil
 }
 
-func (c *Client) CreateOpaqueSecret(request OpaqueSecretMutation) (*SecretInfo, error) {
+func (c *Client) CreateOpaqueSecretContext(ctx context.Context, request OpaqueSecretMutation) (*SecretInfo, error) {
 	data := make(map[string][]byte, len(request.Data))
 	for key, value := range request.Data {
 		data[key] = []byte(value)
 	}
-	created, err := c.Clientset.CoreV1().Secrets(request.Namespace).Create(c.ctx, &corev1.Secret{
+	created, err := c.Clientset.CoreV1().Secrets(request.Namespace).Create(ctx, &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: request.Name, Namespace: request.Namespace},
 		Type:       corev1.SecretTypeOpaque,
 		Data:       data,
@@ -338,8 +339,8 @@ func (c *Client) CreateOpaqueSecret(request OpaqueSecretMutation) (*SecretInfo, 
 	return secretInfoFromObject(*created, nil), nil
 }
 
-func (c *Client) UpdateOpaqueSecret(request OpaqueSecretMutation) (*SecretInfo, error) {
-	secret, err := c.Clientset.CoreV1().Secrets(request.Namespace).Get(c.ctx, request.Name, metav1.GetOptions{})
+func (c *Client) UpdateOpaqueSecretContext(ctx context.Context, request OpaqueSecretMutation) (*SecretInfo, error) {
+	secret, err := c.Clientset.CoreV1().Secrets(request.Namespace).Get(ctx, request.Name, metav1.GetOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("get secret %s/%s: %w", request.Namespace, request.Name, err)
 	}
@@ -357,22 +358,22 @@ func (c *Client) UpdateOpaqueSecret(request OpaqueSecretMutation) (*SecretInfo, 
 		data[key] = []byte(value)
 	}
 	secret.Data = data
-	updated, err := c.Clientset.CoreV1().Secrets(request.Namespace).Update(c.ctx, secret, metav1.UpdateOptions{})
+	updated, err := c.Clientset.CoreV1().Secrets(request.Namespace).Update(ctx, secret, metav1.UpdateOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("update secret %s/%s: %w", request.Namespace, request.Name, err)
 	}
-	return secretInfoFromObject(*updated, c.findConfigRefs(request.Namespace, request.Name, "Secret")), nil
+	return secretInfoFromObject(*updated, c.findConfigRefs(ctx, request.Namespace, request.Name, "Secret")), nil
 }
 
-func (c *Client) DeleteOpaqueSecret(namespace, name string) error {
-	secret, err := c.Clientset.CoreV1().Secrets(namespace).Get(c.ctx, name, metav1.GetOptions{})
+func (c *Client) DeleteOpaqueSecretContext(ctx context.Context, namespace, name string) error {
+	secret, err := c.Clientset.CoreV1().Secrets(namespace).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
 		return fmt.Errorf("get secret %s/%s: %w", namespace, name, err)
 	}
 	if secret.Type != corev1.SecretTypeOpaque {
 		return fmt.Errorf("secret %s/%s is not an Opaque Secret", namespace, name)
 	}
-	if err := c.Clientset.CoreV1().Secrets(namespace).Delete(c.ctx, name, metav1.DeleteOptions{}); err != nil {
+	if err := c.Clientset.CoreV1().Secrets(namespace).Delete(ctx, name, metav1.DeleteOptions{}); err != nil {
 		return fmt.Errorf("delete secret %s/%s: %w", namespace, name, err)
 	}
 	return nil
@@ -387,23 +388,23 @@ func secretInfoFromObject(secret corev1.Secret, usedBy []WorkloadRef) *SecretInf
 }
 
 // findConfigRefs 查找引用指定 ConfigMap/Secret 的工作负载
-func (c *Client) findConfigRefs(ns, name string, kind string) []WorkloadRef {
+func (c *Client) findConfigRefs(ctx context.Context, ns, name string, kind string) []WorkloadRef {
 	var refs []WorkloadRef
 
 	// 查 Deployment
-	deploys, err := c.Clientset.AppsV1().Deployments(ns).List(c.ctx, metav1.ListOptions{})
+	deploys, err := c.Clientset.AppsV1().Deployments(ns).List(ctx, metav1.ListOptions{})
 	if err == nil {
 		refs = append(refs, findRefsInDeployments(deploys.Items, name, kind)...)
 	}
 
 	// 查 StatefulSet
-	sts, err := c.Clientset.AppsV1().StatefulSets(ns).List(c.ctx, metav1.ListOptions{})
+	sts, err := c.Clientset.AppsV1().StatefulSets(ns).List(ctx, metav1.ListOptions{})
 	if err == nil {
 		refs = append(refs, findRefsInStatefulSets(sts.Items, name, kind)...)
 	}
 
 	// 查 DaemonSet
-	ds, err := c.Clientset.AppsV1().DaemonSets(ns).List(c.ctx, metav1.ListOptions{})
+	ds, err := c.Clientset.AppsV1().DaemonSets(ns).List(ctx, metav1.ListOptions{})
 	if err == nil {
 		refs = append(refs, findRefsInDaemonSets(ds.Items, name, kind)...)
 	}

@@ -24,7 +24,7 @@ func setupNodeRegistryMirrorRouter() (*gin.Engine, *store.Store, *NodeRegistryMi
 		db.SetMaxOpenConns(1)
 	}
 	r := gin.New()
-	h := NewNodeRegistryMirrorHandler(s, []byte("01234567890123456789012345678901"), func(_ *model.Server, _ []byte) (string, string) {
+	h := NewNodeRegistryMirrorHandler(s, []byte("01234567890123456789012345678901"), func(context.Context, *model.Server, []byte) (string, string) {
 		return "success", "configured"
 	})
 	mirrors := r.Group("/api/node-registry-mirrors")
@@ -117,7 +117,7 @@ func TestNodeRegistryMirrorApplyOnlyRunsOnSelectedNodesAndPersistsProgress(t *te
 	other := createClusterServer(t, s, "worker-b", "10.0.0.12")
 	started := make(chan uint, 1)
 	allowFinish := make(chan struct{})
-	h.WithApplier(func(server *model.Server, _ []byte) (string, string) {
+	h.WithApplier(func(_ context.Context, server *model.Server, _ []byte) (string, string) {
 		started <- server.ID
 		<-allowFinish
 		return "success", "配置已写入"

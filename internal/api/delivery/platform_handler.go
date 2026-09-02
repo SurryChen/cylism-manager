@@ -1,6 +1,7 @@
 package delivery
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,8 +21,32 @@ import (
 
 type PlatformHandler struct {
 	store   repository.PlatformEndpointRepository
-	client  *k8sclient.Client
+	client  platformKubernetes
 	release *platformservice.ReleaseService
+}
+
+// PlatformKubernetesAdapter is the narrow Kubernetes port required by the
+// platform delivery handler. Bootstrap creates the concrete implementation.
+type PlatformKubernetesAdapter interface {
+	platformservice.PlatformAdapter
+	AdoptPlatformIngressContext(context.Context, string, string) (string, error)
+	RemovePlatformEndpointContext(context.Context, string) error
+	EnsurePlatformEndpointContext(context.Context, string, string, string) error
+	PlatformIngressInfoContext(context.Context, string) (*k8sclient.PlatformIngressInfo, error)
+	GetCertificateContext(context.Context, string, string) (*k8sclient.CertInfo, error)
+	DetectIngressControllerContext(context.Context) (*k8sclient.IngressControllerStatus, error)
+	KubernetesAvailable() bool
+}
+
+type platformKubernetes = PlatformKubernetesAdapter
+
+// NewPlatformKubernetesAdapter narrows a concrete client before it reaches
+// the HTTP handler.
+func NewPlatformKubernetesAdapter(client *k8sclient.Client) PlatformKubernetesAdapter {
+	if client == nil {
+		return nil
+	}
+	return client
 }
 
 func platformK8sUnavailable(c *gin.Context) {
@@ -54,7 +79,7 @@ type platformEndpointInfo struct {
 	CertificateError string                         `json:"certificate_error,omitempty"`
 }
 
-func NewPlatformHandler(s repository.PlatformEndpointRepository, encKey []byte, client *k8sclient.Client) *PlatformHandler {
+func NewPlatformHandler(s repository.PlatformEndpointRepository, encKey []byte, client platformKubernetes) *PlatformHandler {
 	return &PlatformHandler{store: s, client: client, release: platformservice.NewReleaseService(s, encKey, client)}
 }
 
@@ -90,14 +115,14 @@ func (h *PlatformHandler) Webhook(c *gin.Context) {
 		}
 		return
 	}
-	release, err := h.release.CreateRelease(request.Image, "github", request.CommitSHA, request.RunID)
+	release, err := h.release.CreateRelease(c.Request.Context(), request.Image, "github", request.CommitSHA, request.RunID)
 	if err != nil {
 		apiShared.Error(c, http.StatusBadRequest, model.CodeK8sAPIError, err.Error())
 		return
 	}
 	c.JSON(http.StatusAccepted, model.APIResponse{Code: model.CodeSuccess, Message: "平台发布已接受", Data: release})
 	c.Writer.Flush()
-	h.release.Apply(release.ID)
+	h.release.Apply(context.WithoutCancel(c.Request.Context()), release.ID)
 }
 
 // ManualUpdate lets an authenticated administrator submit a tagged platform image.
@@ -111,23 +136,23 @@ func (h *PlatformHandler) ManualUpdate(c *gin.Context) {
 		apiShared.ValidationError(c, err.Error())
 		return
 	}
-	release, err := h.release.CreateRelease(request.Image, "manual", "", "")
+	release, err := h.release.CreateRelease(c.Request.Context(), request.Image, "manual", "", "")
 	if err != nil {
 		apiShared.Error(c, http.StatusBadRequest, model.CodeK8sAPIError, err.Error())
 		return
 	}
 	c.JSON(http.StatusAccepted, model.APIResponse{Code: model.CodeSuccess, Message: "平台更新已提交", Data: release})
 	c.Writer.Flush()
-	h.release.Apply(release.ID)
+	h.release.Apply(context.WithoutCancel(c.Request.Context()), release.ID)
 }
 
 func (h *PlatformHandler) Status(c *gin.Context) {
-	if h.store == nil || h.client == nil {
+	if h.store == nil || h.client == nil || !h.client.KubernetesAvailable() {
 		platformK8sUnavailable(c)
 		return
 	}
-	h.release.ReconcileLatest()
-	deployment, err := h.client.PlatformDeploymentStatus()
+	h.release.ReconcileLatest(c.Request.Context())
+	deployment, err := h.client.PlatformDeploymentStatusContext(c.Request.Context())
 	if err != nil {
 		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
 		return
@@ -143,7 +168,7 @@ func (h *PlatformHandler) Status(c *gin.Context) {
 }
 
 func (h *PlatformHandler) EndpointStatus(c *gin.Context) {
-	model.Success(c, h.platformEndpointInfo())
+	model.Success(c, h.platformEndpointInfo(c.Request.Context()))
 }
 
 // UpdateEndpoint stores and reconciles the public HTTPS entry for the Manager
@@ -191,11 +216,11 @@ func (h *PlatformHandler) UpdateEndpoint(c *gin.Context) {
 			apiShared.ValidationError(c, "管理域名必须是合法的精确 DNS 名称，且不支持泛域名")
 			return
 		}
-		if err := h.validatePlatformEndpointPrerequisites(); err != nil {
+		if err := h.validatePlatformEndpointPrerequisites(c.Request.Context()); err != nil {
 			apiShared.ValidationError(c, err.Error())
 			return
 		}
-		certificate, err := h.platformEndpointCertificate(endpoint)
+		certificate, err := h.platformEndpointCertificate(c.Request.Context(), endpoint)
 		if err != nil {
 			apiShared.ValidationError(c, err.Error())
 			return
@@ -213,27 +238,27 @@ func (h *PlatformHandler) UpdateEndpoint(c *gin.Context) {
 		apiShared.InternalError(c, "保存平台入口失败")
 		return
 	}
-	if err := h.reconcilePlatformEndpoint(); err != nil {
-		info := h.platformEndpointInfo()
+	if err := h.reconcilePlatformEndpoint(c.Request.Context()); err != nil {
+		info := h.platformEndpointInfo(c.Request.Context())
 		info.CertificateError = err.Error()
 		model.SuccessWithMessage(c, info, "平台入口已保存，但 Kubernetes 同步尚未完成")
 		return
 	}
-	model.SuccessWithMessage(c, h.platformEndpointInfo(), "平台入口已保存，正在同步证书和 Ingress")
+	model.SuccessWithMessage(c, h.platformEndpointInfo(c.Request.Context()), "平台入口已保存，正在同步证书和 Ingress")
 }
 
 func (h *PlatformHandler) ReconcileEndpoint(c *gin.Context) {
-	if err := h.reconcilePlatformEndpoint(); err != nil {
+	if err := h.reconcilePlatformEndpoint(c.Request.Context()); err != nil {
 		apiShared.Error(c, http.StatusBadRequest, model.CodeK8sAPIError, err.Error())
 		return
 	}
-	model.SuccessWithMessage(c, h.platformEndpointInfo(), "平台入口已重新同步")
+	model.SuccessWithMessage(c, h.platformEndpointInfo(c.Request.Context()), "平台入口已重新同步")
 }
 
 // AdoptEndpointIngress explicitly transfers a matching manually created
 // platform Ingress to the platform controller.
 func (h *PlatformHandler) AdoptEndpointIngress(c *gin.Context) {
-	if h.store == nil || h.client == nil {
+	if h.store == nil || h.client == nil || !h.client.KubernetesAvailable() {
 		platformK8sUnavailable(c)
 		return
 	}
@@ -246,7 +271,7 @@ func (h *PlatformHandler) AdoptEndpointIngress(c *gin.Context) {
 		apiShared.InternalError(c, "读取平台入口失败")
 		return
 	}
-	certificate, err := h.platformEndpointCertificate(endpoint)
+	certificate, err := h.platformEndpointCertificate(c.Request.Context(), endpoint)
 	if err != nil {
 		apiShared.ValidationError(c, err.Error())
 		return
@@ -256,7 +281,7 @@ func (h *PlatformHandler) AdoptEndpointIngress(c *gin.Context) {
 		apiShared.InternalError(c, "保存平台入口失败")
 		return
 	}
-	ingressName, err := h.client.AdoptPlatformIngress(endpoint.Hostname, endpoint.TLSSecretName)
+	ingressName, err := h.client.AdoptPlatformIngressContext(c.Request.Context(), endpoint.Hostname, endpoint.TLSSecretName)
 	if err != nil {
 		apiShared.Error(c, http.StatusBadRequest, model.CodeK8sAPIError, err.Error())
 		return
@@ -266,7 +291,7 @@ func (h *PlatformHandler) AdoptEndpointIngress(c *gin.Context) {
 		apiShared.InternalError(c, "保存平台入口失败")
 		return
 	}
-	model.SuccessWithMessage(c, h.platformEndpointInfo(), "现有 Ingress 已接管并重新同步")
+	model.SuccessWithMessage(c, h.platformEndpointInfo(c.Request.Context()), "现有 Ingress 已接管并重新同步")
 }
 
 func (h *PlatformHandler) GenerateWebhookSecret(c *gin.Context) {
@@ -309,24 +334,19 @@ func (h *PlatformHandler) Rollback(c *gin.Context) {
 		apiShared.BadRequest(c, "该发布记录不能回滚")
 		return
 	}
-	release, err := h.release.CreateRelease(previous.PreviousImage, "manual_rollback", "", "")
+	release, err := h.release.CreateRelease(c.Request.Context(), previous.PreviousImage, "manual_rollback", "", "")
 	if err != nil {
 		apiShared.Error(c, http.StatusBadRequest, model.CodeK8sAPIError, err.Error())
 		return
 	}
 	model.SuccessWithMessage(c, release, "平台回滚已提交")
 	c.Writer.Flush()
-	h.release.Apply(release.ID)
+	h.release.Apply(context.WithoutCancel(c.Request.Context()), release.ID)
 }
 
 // Reconcile resumes a pending self-update after this service has restarted.
-func (h *PlatformHandler) Reconcile() {
-	_ = h.reconcilePlatformEndpoint()
-	h.release.ReconcileLatest()
-}
-
-func (h *PlatformHandler) reconcilePlatformEndpoint() error {
-	if h.store == nil || h.client == nil {
+func (h *PlatformHandler) reconcilePlatformEndpoint(ctx context.Context) error {
+	if h.store == nil || h.client == nil || !h.client.KubernetesAvailable() {
 		return nil
 	}
 	endpoint, err := h.store.GetPlatformEndpoint()
@@ -337,9 +357,9 @@ func (h *PlatformHandler) reconcilePlatformEndpoint() error {
 		return err
 	}
 	if !endpoint.Enabled {
-		return h.client.RemovePlatformEndpoint(endpoint.IngressName)
+		return h.client.RemovePlatformEndpointContext(ctx, endpoint.IngressName)
 	}
-	certificate, err := h.platformEndpointCertificate(endpoint)
+	certificate, err := h.platformEndpointCertificate(ctx, endpoint)
 	if err != nil {
 		return err
 	}
@@ -349,10 +369,10 @@ func (h *PlatformHandler) reconcilePlatformEndpoint() error {
 			return err
 		}
 	}
-	return h.client.EnsurePlatformEndpoint(endpoint.Hostname, endpoint.TLSSecretName, endpoint.IngressName)
+	return h.client.EnsurePlatformEndpointContext(ctx, endpoint.Hostname, endpoint.TLSSecretName, endpoint.IngressName)
 }
 
-func (h *PlatformHandler) platformEndpointInfo() platformEndpointInfo {
+func (h *PlatformHandler) platformEndpointInfo(ctx context.Context) platformEndpointInfo {
 	info := platformEndpointInfo{Endpoint: model.PlatformEndpoint{}, State: "not_configured"}
 	if h.store == nil {
 		info.CertificateError = "存储未初始化"
@@ -373,17 +393,17 @@ func (h *PlatformHandler) platformEndpointInfo() platformEndpointInfo {
 	}
 	info.URL = "https://" + endpoint.Hostname
 	info.State = "waiting_certificate"
-	if h.client == nil {
+	if h.client == nil || !h.client.KubernetesAvailable() {
 		info.State, info.CertificateError = "unavailable", "Kubernetes 客户端未初始化"
 		return info
 	}
-	if ingress, ingressErr := h.client.PlatformIngressInfo(endpoint.IngressName); ingressErr != nil {
+	if ingress, ingressErr := h.client.PlatformIngressInfoContext(ctx, endpoint.IngressName); ingressErr != nil {
 		info.CertificateError = ingressErr.Error()
 	} else {
 		info.Ingress = ingress
 		info.IngressReady = ingress != nil && ingress.Managed
 	}
-	certificate, certificateErr := h.client.GetCertificate("default", endpoint.CertificateName)
+	certificate, certificateErr := h.client.GetCertificateContext(ctx, "default", endpoint.CertificateName)
 	if certificateErr != nil {
 		info.CertificateError = certificateErr.Error()
 		return info
@@ -399,14 +419,14 @@ func (h *PlatformHandler) platformEndpointInfo() platformEndpointInfo {
 	return info
 }
 
-func (h *PlatformHandler) platformEndpointCertificate(endpoint *model.PlatformEndpoint) (*k8sclient.CertInfo, error) {
-	if h.client == nil {
+func (h *PlatformHandler) platformEndpointCertificate(ctx context.Context, endpoint *model.PlatformEndpoint) (*k8sclient.CertInfo, error) {
+	if h.client == nil || !h.client.KubernetesAvailable() {
 		return nil, errors.New("Kubernetes 客户端未初始化")
 	}
 	if strings.TrimSpace(endpoint.CertificateName) == "" {
 		return nil, errors.New("请选择 default 命名空间中已就绪的 TLS 证书")
 	}
-	certificate, err := h.client.GetCertificate("default", endpoint.CertificateName)
+	certificate, err := h.client.GetCertificateContext(ctx, "default", endpoint.CertificateName)
 	if err != nil {
 		return nil, fmt.Errorf("读取 TLS 证书: %w", err)
 	}
@@ -441,11 +461,11 @@ func certificateCoversHostname(certificateDomain, hostname string) bool {
 	return prefix != "" && !strings.Contains(prefix, ".")
 }
 
-func (h *PlatformHandler) validatePlatformEndpointPrerequisites() error {
-	if h.client == nil || h.client.Clientset == nil {
+func (h *PlatformHandler) validatePlatformEndpointPrerequisites(ctx context.Context) error {
+	if h.client == nil || !h.client.KubernetesAvailable() {
 		return errors.New("Kubernetes 客户端未初始化")
 	}
-	status, err := h.client.DetectIngressController()
+	status, err := h.client.DetectIngressControllerContext(ctx)
 	if err != nil || status == nil || !status.Running {
 		return errors.New("Ingress Controller 未就绪")
 	}

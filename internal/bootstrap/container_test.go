@@ -52,4 +52,13 @@ func TestBuildKubernetesAdaptersUsesExplicitClient(t *testing.T) {
 	if adapters.Alerting.Alertmanager == nil || adapters.Alerting.Component == nil || adapters.Alerting.Secrets == nil {
 		t.Fatal("expected alerting adapters for an explicit client")
 	}
+	if adapters.Network.Ingress == nil || adapters.Network.StandardIngress == nil || adapters.Network.DNS == nil || adapters.Network.Certificate == nil {
+		t.Fatal("expected network adapters for an explicit client")
+	}
+	if adapters.Storage == nil {
+		t.Fatal("expected storage adapter for an explicit client")
+	}
+	if adapters.Registry.ManagedResources == nil || adapters.Registry.ManagedStatus == nil || adapters.Registry.ProxyResources == nil || adapters.Registry.ProxyDiagnostics == nil {
+		t.Fatal("expected registry adapters for an explicit client")
+	}
 }

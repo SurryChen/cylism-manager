@@ -1,6 +1,7 @@
 package infrastructure
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net/http"
@@ -14,6 +15,9 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/validation"
+	appstyped "k8s.io/client-go/kubernetes/typed/apps/v1"
+	coretyped "k8s.io/client-go/kubernetes/typed/core/v1"
+	"k8s.io/client-go/rest"
 
 	"github.com/gin-gonic/gin"
 )
@@ -23,16 +27,73 @@ type K8sHandler struct {
 	resourceReferences repository.ResourceReferenceRepository
 	audit              repository.AuditRepository
 	encKey             []byte
-	k8s                *k8sclient.Client
+	k8s                K8sResourceAdapter
 	storageService     *storageservice.Service
 }
 
-func NewK8sHandlerWithClient(client *k8sclient.Client, references repository.ResourceReferenceRepository, storageService *storageservice.Service, audit repository.AuditRepository) *K8sHandler {
-	return &K8sHandler{k8s: client, resourceReferences: references, storageService: storageService, audit: audit}
+// K8sResourceAdapter is the resource capability consumed by this HTTP API.
+// The concrete Kubernetes client is wrapped at the composition boundary.
+type K8sResourceAdapter interface {
+	KubernetesAvailable() bool
+	CoreV1() coretyped.CoreV1Interface
+	AppsV1() appstyped.AppsV1Interface
+	KubeConfig() *rest.Config
+	ListNodeInfosContext(context.Context) ([]k8sclient.NodeInfo, error)
+	ListDeploymentsContext(context.Context, string) ([]k8sclient.DeploymentInfo, error)
+	ListServicesContext(context.Context, string) ([]k8sclient.ServiceEndpointInfo, error)
+	ListDeploymentPodsContext(context.Context, string, string) ([]k8sclient.PodRef, error)
+	GetDeploymentContext(context.Context, string, string) (*k8sclient.DeploymentInfo, error)
+	ListDeploymentRevisionsContext(context.Context, string, string) ([]k8sclient.RevisionInfo, error)
+	ScaleDeploymentContext(context.Context, string, string, int32) error
+	UpdateDeploymentImageContext(context.Context, string, string, string, string) error
+	RollbackDeploymentContext(context.Context, string, string, int64) error
+	ListStatefulSetsContext(context.Context, string) ([]k8sclient.StatefulSetInfo, error)
+	GetStatefulSetContext(context.Context, string, string) (*k8sclient.StatefulSetInfo, error)
+	ScaleStatefulSetContext(context.Context, string, string, int32) error
+	ListDaemonSetsContext(context.Context, string) ([]k8sclient.DaemonSetInfo, error)
+	GetDaemonSetContext(context.Context, string, string) (*k8sclient.DaemonSetInfo, error)
+	GetServiceEndpointsContext(context.Context, string, string) ([]k8sclient.EndpointSliceInfo, error)
+	ListConfigMapsMetadataContext(context.Context, string) ([]k8sclient.ConfigMapInfo, error)
+	ListConfigMapsContext(context.Context, string) ([]k8sclient.ConfigMapInfo, error)
+	GetConfigMapContext(context.Context, string, string) (*k8sclient.ConfigMapDetail, error)
+	CreateConfigMapContext(context.Context, k8sclient.ConfigMapMutation) (*k8sclient.ConfigMapDetail, error)
+	UpdateConfigMapContext(context.Context, k8sclient.ConfigMapMutation) (*k8sclient.ConfigMapDetail, error)
+	DeleteConfigMapContext(context.Context, string, string) error
+	ListSecretsMetadataContext(context.Context, string) ([]k8sclient.SecretInfo, error)
+	ListSecretsContext(context.Context, string) ([]k8sclient.SecretInfo, error)
+	GetSecretContext(context.Context, string, string) (*k8sclient.SecretDetail, error)
+	CreateOpaqueSecretContext(context.Context, k8sclient.OpaqueSecretMutation) (*k8sclient.SecretInfo, error)
+	UpdateOpaqueSecretContext(context.Context, k8sclient.OpaqueSecretMutation) (*k8sclient.SecretInfo, error)
+	DeleteOpaqueSecretContext(context.Context, string, string) error
+	ListIngressesContext(context.Context, string) ([]k8sclient.IngressStdInfo, error)
+	GetIngressContext(context.Context, string, string) (*k8sclient.IngressStdDetail, error)
+	CreateIngressContext(context.Context, string, string, string, string, string, string) (*k8sclient.IngressStdDetail, error)
+	DeleteIngressContext(context.Context, string, string) error
+	DetectIngressControllerContext(context.Context) (*k8sclient.IngressControllerStatus, error)
+	GetServiceContext(context.Context, string, string) (*k8sclient.ServiceEndpointInfo, error)
 }
 
-func NewK8sHandlerWithEncryption(references repository.ResourceReferenceRepository, storageService *storageservice.Service, encKey []byte, client *k8sclient.Client, audit repository.AuditRepository) *K8sHandler {
-	h := NewK8sHandlerWithClient(client, references, storageService, audit)
+type clientK8sResourceAdapter struct{ *k8sclient.Client }
+
+func (a clientK8sResourceAdapter) CoreV1() coretyped.CoreV1Interface { return a.Clientset.CoreV1() }
+func (a clientK8sResourceAdapter) AppsV1() appstyped.AppsV1Interface { return a.Clientset.AppsV1() }
+func (a clientK8sResourceAdapter) KubeConfig() *rest.Config          { return a.Config }
+
+// NewK8sResourceAdapter is the infrastructure adapter factory used by the
+// bootstrap composition root. It returns nil when Kubernetes is unavailable.
+func NewK8sResourceAdapter(client *k8sclient.Client) K8sResourceAdapter {
+	if client == nil || client.Clientset == nil {
+		return nil
+	}
+	return clientK8sResourceAdapter{Client: client}
+}
+
+func NewK8sHandlerWithAdapter(adapter K8sResourceAdapter, references repository.ResourceReferenceRepository, storageService *storageservice.Service, audit repository.AuditRepository) *K8sHandler {
+	return &K8sHandler{k8s: adapter, resourceReferences: references, storageService: storageService, audit: audit}
+}
+
+func NewK8sHandlerWithAdapterAndEncryption(references repository.ResourceReferenceRepository, storageService *storageservice.Service, encKey []byte, adapter K8sResourceAdapter, audit repository.AuditRepository) *K8sHandler {
+	h := NewK8sHandlerWithAdapter(adapter, references, storageService, audit)
 	h.encKey = encKey
 	return h
 }
@@ -97,19 +158,19 @@ func (h *K8sHandler) Dashboard(c *gin.Context) {
 		return
 	}
 
-	nodes, err := h.k8s.ListNodeInfos()
+	nodes, err := h.k8s.ListNodeInfosContext(c.Request.Context())
 	nodeTotal := 0
 	if err == nil {
 		nodeTotal = len(nodes)
 	}
 
 	nsCount := 0
-	if nsList, err := h.k8s.Clientset.CoreV1().Namespaces().List(h.k8s.Ctx(), metav1.ListOptions{}); err == nil {
+	if nsList, err := h.k8s.CoreV1().Namespaces().List(c.Request.Context(), metav1.ListOptions{}); err == nil {
 		nsCount = len(nsList.Items)
 	}
 
 	podTotal, podReady := 0, 0
-	if pods, pErr := h.k8s.Clientset.CoreV1().Pods("").List(h.k8s.Ctx(), metav1.ListOptions{}); pErr == nil {
+	if pods, pErr := h.k8s.CoreV1().Pods("").List(c.Request.Context(), metav1.ListOptions{}); pErr == nil {
 		podTotal = len(pods.Items)
 		for _, p := range pods.Items {
 			if p.Status.Phase == "Running" {
@@ -120,7 +181,7 @@ func (h *K8sHandler) Dashboard(c *gin.Context) {
 
 	// 新增：Deployment 统计
 	deployTotal, deployReady := 0, 0
-	if deps, dErr := h.k8s.ListDeployments(""); dErr == nil {
+	if deps, dErr := h.k8s.ListDeploymentsContext(c.Request.Context(), ""); dErr == nil {
 		deployTotal = len(deps)
 		for _, d := range deps {
 			if d.Ready == d.Replicas {
@@ -131,7 +192,7 @@ func (h *K8sHandler) Dashboard(c *gin.Context) {
 
 	// 新增：Service 统计
 	svcTotal := 0
-	if svcs, sErr := h.k8s.ListServices(""); sErr == nil {
+	if svcs, sErr := h.k8s.ListServicesContext(c.Request.Context(), ""); sErr == nil {
 		svcTotal = len(svcs)
 	}
 
@@ -162,7 +223,7 @@ func (h *K8sHandler) ListNamespaceNames(c *gin.Context) {
 		apiShared.K8sUnavailable(c)
 		return
 	}
-	nsList, err := h.k8s.Clientset.CoreV1().Namespaces().List(h.k8s.Ctx(), metav1.ListOptions{})
+	nsList, err := h.k8s.CoreV1().Namespaces().List(c.Request.Context(), metav1.ListOptions{})
 	if err != nil {
 		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
 		return
@@ -181,7 +242,7 @@ func (h *K8sHandler) ListNamespaces(c *gin.Context) {
 		return
 	}
 
-	nsList, err := h.k8s.Clientset.CoreV1().Namespaces().List(h.k8s.Ctx(), metav1.ListOptions{})
+	nsList, err := h.k8s.CoreV1().Namespaces().List(c.Request.Context(), metav1.ListOptions{})
 	if err != nil {
 		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
 		return
@@ -199,22 +260,22 @@ func (h *K8sHandler) ListNamespaces(c *gin.Context) {
 			AnnotationsCount: len(ns.Annotations),
 		}
 
-		if list, listErr := h.k8s.Clientset.AppsV1().Deployments(name).List(h.k8s.Ctx(), metav1.ListOptions{}); listErr == nil {
+		if list, listErr := h.k8s.AppsV1().Deployments(name).List(c.Request.Context(), metav1.ListOptions{}); listErr == nil {
 			summary.Deployments = len(list.Items)
 		}
-		if list, listErr := h.k8s.Clientset.AppsV1().StatefulSets(name).List(h.k8s.Ctx(), metav1.ListOptions{}); listErr == nil {
+		if list, listErr := h.k8s.AppsV1().StatefulSets(name).List(c.Request.Context(), metav1.ListOptions{}); listErr == nil {
 			summary.StatefulSets = len(list.Items)
 		}
-		if list, listErr := h.k8s.Clientset.AppsV1().DaemonSets(name).List(h.k8s.Ctx(), metav1.ListOptions{}); listErr == nil {
+		if list, listErr := h.k8s.AppsV1().DaemonSets(name).List(c.Request.Context(), metav1.ListOptions{}); listErr == nil {
 			summary.DaemonSets = len(list.Items)
 		}
-		if list, listErr := h.k8s.Clientset.CoreV1().Services(name).List(h.k8s.Ctx(), metav1.ListOptions{}); listErr == nil {
+		if list, listErr := h.k8s.CoreV1().Services(name).List(c.Request.Context(), metav1.ListOptions{}); listErr == nil {
 			summary.Services = len(list.Items)
 		}
-		if list, listErr := h.k8s.Clientset.CoreV1().ConfigMaps(name).List(h.k8s.Ctx(), metav1.ListOptions{}); listErr == nil {
+		if list, listErr := h.k8s.CoreV1().ConfigMaps(name).List(c.Request.Context(), metav1.ListOptions{}); listErr == nil {
 			summary.ConfigMaps = len(list.Items)
 		}
-		if list, listErr := h.k8s.Clientset.CoreV1().Secrets(name).List(h.k8s.Ctx(), metav1.ListOptions{}); listErr == nil {
+		if list, listErr := h.k8s.CoreV1().Secrets(name).List(c.Request.Context(), metav1.ListOptions{}); listErr == nil {
 			summary.Secrets = len(list.Items)
 		}
 
@@ -249,7 +310,7 @@ func (h *K8sHandler) CreateNamespace(c *gin.Context) {
 		},
 	}
 
-	created, err := h.k8s.Clientset.CoreV1().Namespaces().Create(h.k8s.Ctx(), ns, metav1.CreateOptions{})
+	created, err := h.k8s.CoreV1().Namespaces().Create(c.Request.Context(), ns, metav1.CreateOptions{})
 	if err != nil {
 		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
 		return
@@ -277,7 +338,7 @@ func (h *K8sHandler) UpdateNamespace(c *gin.Context) {
 		return
 	}
 
-	ns, err := h.k8s.Clientset.CoreV1().Namespaces().Get(h.k8s.Ctx(), name, metav1.GetOptions{})
+	ns, err := h.k8s.CoreV1().Namespaces().Get(c.Request.Context(), name, metav1.GetOptions{})
 	if err != nil {
 		apiShared.NotFound(c, err.Error())
 		return
@@ -285,7 +346,7 @@ func (h *K8sHandler) UpdateNamespace(c *gin.Context) {
 
 	ns.Labels = req.Labels
 	ns.Annotations = req.Annotations
-	updated, err := h.k8s.Clientset.CoreV1().Namespaces().Update(h.k8s.Ctx(), ns, metav1.UpdateOptions{})
+	updated, err := h.k8s.CoreV1().Namespaces().Update(c.Request.Context(), ns, metav1.UpdateOptions{})
 	if err != nil {
 		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
 		return
@@ -311,7 +372,7 @@ func (h *K8sHandler) DeleteNamespace(c *gin.Context) {
 		return
 	}
 
-	if err := h.k8s.Clientset.CoreV1().Namespaces().Delete(h.k8s.Ctx(), name, metav1.DeleteOptions{}); err != nil {
+	if err := h.k8s.CoreV1().Namespaces().Delete(c.Request.Context(), name, metav1.DeleteOptions{}); err != nil {
 		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
 		return
 	}
@@ -335,7 +396,7 @@ func (h *K8sHandler) ListPods(c *gin.Context) {
 		return
 	}
 	ns := c.Query("namespace")
-	pods, err := h.k8s.Clientset.CoreV1().Pods(ns).List(h.k8s.Ctx(), metav1.ListOptions{})
+	pods, err := h.k8s.CoreV1().Pods(ns).List(c.Request.Context(), metav1.ListOptions{})
 	if err != nil {
 		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
 		return
@@ -385,7 +446,7 @@ func (h *K8sHandler) ListDeployments(c *gin.Context) {
 		return
 	}
 	ns := c.Query("namespace")
-	result, err := h.k8s.ListDeployments(ns)
+	result, err := h.k8s.ListDeploymentsContext(c.Request.Context(), ns)
 	if err != nil {
 		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
 		return
@@ -404,7 +465,7 @@ func (h *K8sHandler) GetDeployment(c *gin.Context) {
 	}
 	ns := c.Param("namespace")
 	name := c.Param("name")
-	result, err := h.k8s.GetDeployment(ns, name)
+	result, err := h.k8s.GetDeploymentContext(c.Request.Context(), ns, name)
 	if err != nil {
 		apiShared.NotFound(c, err.Error())
 		return
@@ -420,7 +481,7 @@ func (h *K8sHandler) ListDeploymentPods(c *gin.Context) {
 	}
 	ns := c.Param("namespace")
 	name := c.Param("name")
-	result, err := h.k8s.ListDeploymentPods(ns, name)
+	result, err := h.k8s.ListDeploymentPodsContext(c.Request.Context(), ns, name)
 	if err != nil {
 		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
 		return
@@ -436,7 +497,7 @@ func (h *K8sHandler) ListDeploymentRevisions(c *gin.Context) {
 	}
 	ns := c.Param("namespace")
 	name := c.Param("name")
-	result, err := h.k8s.ListDeploymentRevisions(ns, name)
+	result, err := h.k8s.ListDeploymentRevisionsContext(c.Request.Context(), ns, name)
 	if err != nil {
 		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
 		return
@@ -461,7 +522,7 @@ func (h *K8sHandler) ScaleDeployment(c *gin.Context) {
 		return
 	}
 
-	if err := h.k8s.ScaleDeployment(ns, name, req.Replicas); err != nil {
+	if err := h.k8s.ScaleDeploymentContext(c.Request.Context(), ns, name, req.Replicas); err != nil {
 		apiShared.InternalError(c, err.Error())
 		return
 	}
@@ -486,7 +547,7 @@ func (h *K8sHandler) UpdateDeploymentImage(c *gin.Context) {
 		return
 	}
 
-	if err := h.k8s.UpdateDeploymentImage(ns, name, req.Container, req.Image); err != nil {
+	if err := h.k8s.UpdateDeploymentImageContext(c.Request.Context(), ns, name, req.Container, req.Image); err != nil {
 		apiShared.InternalError(c, err.Error())
 		return
 	}
@@ -510,7 +571,7 @@ func (h *K8sHandler) RollbackDeployment(c *gin.Context) {
 		return
 	}
 
-	if err := h.k8s.RollbackDeployment(ns, name, req.Revision); err != nil {
+	if err := h.k8s.RollbackDeploymentContext(c.Request.Context(), ns, name, req.Revision); err != nil {
 		apiShared.InternalError(c, err.Error())
 		return
 	}
@@ -526,7 +587,7 @@ func (h *K8sHandler) ListStatefulSets(c *gin.Context) {
 		return
 	}
 	ns := c.Query("namespace")
-	result, err := h.k8s.ListStatefulSets(ns)
+	result, err := h.k8s.ListStatefulSetsContext(c.Request.Context(), ns)
 	if err != nil {
 		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
 		return
@@ -545,7 +606,7 @@ func (h *K8sHandler) GetStatefulSet(c *gin.Context) {
 	}
 	ns := c.Param("namespace")
 	name := c.Param("name")
-	result, err := h.k8s.GetStatefulSet(ns, name)
+	result, err := h.k8s.GetStatefulSetContext(c.Request.Context(), ns, name)
 	if err != nil {
 		apiShared.NotFound(c, err.Error())
 		return
@@ -570,7 +631,7 @@ func (h *K8sHandler) ScaleStatefulSet(c *gin.Context) {
 		return
 	}
 
-	if err := h.k8s.ScaleStatefulSet(ns, name, req.Replicas); err != nil {
+	if err := h.k8s.ScaleStatefulSetContext(c.Request.Context(), ns, name, req.Replicas); err != nil {
 		apiShared.InternalError(c, err.Error())
 		return
 	}
@@ -586,7 +647,7 @@ func (h *K8sHandler) ListDaemonSets(c *gin.Context) {
 		return
 	}
 	ns := c.Query("namespace")
-	result, err := h.k8s.ListDaemonSets(ns)
+	result, err := h.k8s.ListDaemonSetsContext(c.Request.Context(), ns)
 	if err != nil {
 		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
 		return
@@ -605,7 +666,7 @@ func (h *K8sHandler) GetDaemonSet(c *gin.Context) {
 	}
 	ns := c.Param("namespace")
 	name := c.Param("name")
-	result, err := h.k8s.GetDaemonSet(ns, name)
+	result, err := h.k8s.GetDaemonSetContext(c.Request.Context(), ns, name)
 	if err != nil {
 		apiShared.NotFound(c, err.Error())
 		return
@@ -622,7 +683,7 @@ func (h *K8sHandler) ListServicesV2(c *gin.Context) {
 		return
 	}
 	ns := c.Query("namespace")
-	result, err := h.k8s.ListServices(ns)
+	result, err := h.k8s.ListServicesContext(c.Request.Context(), ns)
 	if err != nil {
 		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
 		return
@@ -643,7 +704,7 @@ func (h *K8sHandler) GetServiceEndpoints(c *gin.Context) {
 	}
 	ns := c.Param("namespace")
 	name := c.Param("name")
-	result, err := h.k8s.GetServiceEndpoints(ns, name)
+	result, err := h.k8s.GetServiceEndpointsContext(c.Request.Context(), ns, name)
 	if err != nil {
 		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
 		return
@@ -666,9 +727,9 @@ func (h *K8sHandler) ListConfigMaps(c *gin.Context) {
 	var result []k8sclient.ConfigMapInfo
 	var err error
 	if c.Query("usage") == "false" {
-		result, err = h.k8s.ListConfigMapsMetadata(ns)
+		result, err = h.k8s.ListConfigMapsMetadataContext(c.Request.Context(), ns)
 	} else {
-		result, err = h.k8s.ListConfigMaps(ns)
+		result, err = h.k8s.ListConfigMapsContext(c.Request.Context(), ns)
 	}
 	if err != nil {
 		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
@@ -688,7 +749,7 @@ func (h *K8sHandler) GetConfigMap(c *gin.Context) {
 	}
 	ns := c.Param("namespace")
 	name := c.Param("name")
-	result, err := h.k8s.GetConfigMap(ns, name)
+	result, err := h.k8s.GetConfigMapContext(c.Request.Context(), ns, name)
 	if err != nil {
 		apiShared.NotFound(c, err.Error())
 		return
@@ -710,7 +771,7 @@ func (h *K8sHandler) CreateConfigMap(c *gin.Context) {
 		apiShared.BadRequest(c, message)
 		return
 	}
-	result, err := h.k8s.CreateConfigMap(k8sclient.ConfigMapMutation{Namespace: req.Namespace, Name: req.Name, Data: req.Data})
+	result, err := h.k8s.CreateConfigMapContext(c.Request.Context(), k8sclient.ConfigMapMutation{Namespace: req.Namespace, Name: req.Name, Data: req.Data})
 	if err != nil {
 		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
 		return
@@ -734,7 +795,7 @@ func (h *K8sHandler) UpdateConfigMap(c *gin.Context) {
 		apiShared.BadRequest(c, message)
 		return
 	}
-	result, err := h.k8s.UpdateConfigMap(k8sclient.ConfigMapMutation{Namespace: req.Namespace, Name: req.Name, Data: req.Data})
+	result, err := h.k8s.UpdateConfigMapContext(c.Request.Context(), k8sclient.ConfigMapMutation{Namespace: req.Namespace, Name: req.Name, Data: req.Data})
 	if err != nil {
 		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
 		return
@@ -749,7 +810,7 @@ func (h *K8sHandler) DeleteConfigMap(c *gin.Context) {
 		return
 	}
 	namespace, name := c.Param("namespace"), c.Param("name")
-	resource, err := h.k8s.GetConfigMap(namespace, name)
+	resource, err := h.k8s.GetConfigMapContext(c.Request.Context(), namespace, name)
 	if err != nil {
 		apiShared.NotFound(c, err.Error())
 		return
@@ -765,7 +826,7 @@ func (h *K8sHandler) DeleteConfigMap(c *gin.Context) {
 		apiShared.Error(c, http.StatusConflict, model.CodeBadRequest, "ConfigMap 仍被上线模板或发布快照引用，不能删除")
 		return
 	}
-	if err := h.k8s.DeleteConfigMap(namespace, name); err != nil {
+	if err := h.k8s.DeleteConfigMapContext(c.Request.Context(), namespace, name); err != nil {
 		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
 		return
 	}
@@ -785,9 +846,9 @@ func (h *K8sHandler) ListSecrets(c *gin.Context) {
 	var result []k8sclient.SecretInfo
 	var err error
 	if c.Query("usage") == "false" {
-		result, err = h.k8s.ListSecretsMetadata(ns)
+		result, err = h.k8s.ListSecretsMetadataContext(c.Request.Context(), ns)
 	} else {
-		result, err = h.k8s.ListSecrets(ns)
+		result, err = h.k8s.ListSecretsContext(c.Request.Context(), ns)
 	}
 	if err != nil {
 		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
@@ -808,7 +869,7 @@ func (h *K8sHandler) GetSecret(c *gin.Context) {
 	}
 	ns := c.Param("namespace")
 	name := c.Param("name")
-	result, err := h.k8s.GetSecret(ns, name)
+	result, err := h.k8s.GetSecretContext(c.Request.Context(), ns, name)
 	if err != nil {
 		apiShared.NotFound(c, err.Error())
 		return
@@ -837,7 +898,7 @@ func (h *K8sHandler) CreateOpaqueSecret(c *gin.Context) {
 		apiShared.BadRequest(c, message)
 		return
 	}
-	result, err := h.k8s.CreateOpaqueSecret(k8sclient.OpaqueSecretMutation{Namespace: req.Namespace, Name: req.Name, Data: req.Data})
+	result, err := h.k8s.CreateOpaqueSecretContext(c.Request.Context(), k8sclient.OpaqueSecretMutation{Namespace: req.Namespace, Name: req.Name, Data: req.Data})
 	if err != nil {
 		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
 		return
@@ -861,7 +922,7 @@ func (h *K8sHandler) UpdateOpaqueSecret(c *gin.Context) {
 		apiShared.BadRequest(c, message)
 		return
 	}
-	result, err := h.k8s.UpdateOpaqueSecret(k8sclient.OpaqueSecretMutation{Namespace: req.Namespace, Name: req.Name, Data: req.Data})
+	result, err := h.k8s.UpdateOpaqueSecretContext(c.Request.Context(), k8sclient.OpaqueSecretMutation{Namespace: req.Namespace, Name: req.Name, Data: req.Data})
 	if err != nil {
 		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
 		return
@@ -876,7 +937,7 @@ func (h *K8sHandler) DeleteOpaqueSecret(c *gin.Context) {
 		return
 	}
 	namespace, name := c.Param("namespace"), c.Param("name")
-	resource, err := h.k8s.GetSecret(namespace, name)
+	resource, err := h.k8s.GetSecretContext(c.Request.Context(), namespace, name)
 	if err != nil {
 		apiShared.NotFound(c, err.Error())
 		return
@@ -896,7 +957,7 @@ func (h *K8sHandler) DeleteOpaqueSecret(c *gin.Context) {
 		apiShared.Error(c, http.StatusConflict, model.CodeBadRequest, "Secret 仍被上线模板或发布快照引用，不能删除")
 		return
 	}
-	if err := h.k8s.DeleteOpaqueSecret(namespace, name); err != nil {
+	if err := h.k8s.DeleteOpaqueSecretContext(c.Request.Context(), namespace, name); err != nil {
 		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
 		return
 	}
@@ -913,7 +974,7 @@ func (h *K8sHandler) ListIngresses(c *gin.Context) {
 		return
 	}
 	ns := c.Query("namespace")
-	result, err := h.k8s.ListIngresses(ns)
+	result, err := h.k8s.ListIngressesContext(c.Request.Context(), ns)
 	if err != nil {
 		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
 		return
@@ -932,7 +993,7 @@ func (h *K8sHandler) GetIngress(c *gin.Context) {
 	}
 	ns := c.Param("namespace")
 	name := c.Param("name")
-	result, err := h.k8s.GetIngress(ns, name)
+	result, err := h.k8s.GetIngressContext(c.Request.Context(), ns, name)
 	if err != nil {
 		apiShared.NotFound(c, err.Error())
 		return
@@ -966,7 +1027,7 @@ func (h *K8sHandler) CreateIngress(c *gin.Context) {
 		apiShared.BadRequest(c, "namespace, name, host, service_name, service_port 必填")
 		return
 	}
-	result, err := h.k8s.CreateIngress(req.Namespace, req.Name, req.Host, req.Path, req.ServiceName, req.ServicePort)
+	result, err := h.k8s.CreateIngressContext(c.Request.Context(), req.Namespace, req.Name, req.Host, req.Path, req.ServiceName, req.ServicePort)
 	if err != nil {
 		apiShared.InternalError(c, err.Error())
 		return
@@ -982,7 +1043,7 @@ func (h *K8sHandler) DeleteIngress(c *gin.Context) {
 	}
 	ns := c.Param("namespace")
 	name := c.Param("name")
-	if err := h.k8s.DeleteIngress(ns, name); err != nil {
+	if err := h.k8s.DeleteIngressContext(c.Request.Context(), ns, name); err != nil {
 		apiShared.InternalError(c, err.Error())
 		return
 	}
@@ -995,7 +1056,7 @@ func (h *K8sHandler) GetIngressController(c *gin.Context) {
 		apiShared.K8sUnavailable(c)
 		return
 	}
-	status, _ := h.k8s.DetectIngressController()
+	status, _ := h.k8s.DetectIngressControllerContext(c.Request.Context())
 	model.Success(c, status)
 }
 
@@ -1009,7 +1070,7 @@ func (h *K8sHandler) GetService(c *gin.Context) {
 	}
 	ns := c.Param("namespace")
 	name := c.Param("name")
-	result, err := h.k8s.GetService(ns, name)
+	result, err := h.k8s.GetServiceContext(c.Request.Context(), ns, name)
 	if err != nil {
 		apiShared.NotFound(c, err.Error())
 		return
@@ -1034,7 +1095,7 @@ func (h *K8sHandler) UpdateService(c *gin.Context) {
 		return
 	}
 
-	svc, err := h.k8s.Clientset.CoreV1().Services(ns).Get(h.k8s.Ctx(), name, metav1.GetOptions{})
+	svc, err := h.k8s.CoreV1().Services(ns).Get(c.Request.Context(), name, metav1.GetOptions{})
 	if err != nil {
 		apiShared.NotFound(c, err.Error())
 		return
@@ -1045,7 +1106,7 @@ func (h *K8sHandler) UpdateService(c *gin.Context) {
 		_ = ports
 	}
 
-	_, err = h.k8s.Clientset.CoreV1().Services(ns).Update(h.k8s.Ctx(), svc, metav1.UpdateOptions{})
+	_, err = h.k8s.CoreV1().Services(ns).Update(c.Request.Context(), svc, metav1.UpdateOptions{})
 	if err != nil {
 		apiShared.InternalError(c, err.Error())
 		return
@@ -1061,7 +1122,7 @@ func (h *K8sHandler) DeleteService(c *gin.Context) {
 	}
 	ns := c.Param("namespace")
 	name := c.Param("name")
-	err := h.k8s.Clientset.CoreV1().Services(ns).Delete(h.k8s.Ctx(), name, metav1.DeleteOptions{})
+	err := h.k8s.CoreV1().Services(ns).Delete(c.Request.Context(), name, metav1.DeleteOptions{})
 	if err != nil {
 		apiShared.InternalError(c, err.Error())
 		return

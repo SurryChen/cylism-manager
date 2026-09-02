@@ -1,6 +1,7 @@
 package cluster
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -18,31 +19,31 @@ var ErrNodeBindingCleanup = errors.New("节点已从集群移除，但解除服�
 // workflows. The production adapter is the K8s client; tests provide a small
 // fake without importing HTTP concerns.
 type NodeAdapter interface {
-	ListNodeInfos() ([]k8s.NodeInfo, error)
-	GetNodeLabels(name string) (*k8s.NodeLabels, error)
-	UpdateNodeLabels(name string, set map[string]string, remove []string) (*k8s.NodeLabels, error)
-	DrainPlan(name string) (*k8s.DrainPlan, error)
-	DrainNode(name string, options k8s.DrainOptions) (*k8s.DrainResult, error)
-	ForceDrainNode(name string, options k8s.ForceDrainOptions) (*k8s.DrainResult, error)
-	RejoinNode(name string) (*k8s.NodeInfo, error)
-	NodeRemovalCheck(name string) (*k8s.NodeRemovalCheck, error)
-	DeleteNode(name string) error
+	ListNodeInfosContext(context.Context) ([]k8s.NodeInfo, error)
+	GetNodeLabelsContext(context.Context, string) (*k8s.NodeLabels, error)
+	UpdateNodeLabelsContext(context.Context, string, map[string]string, []string) (*k8s.NodeLabels, error)
+	DrainPlanContext(context.Context, string) (*k8s.DrainPlan, error)
+	DrainNodeContext(context.Context, string, k8s.DrainOptions) (*k8s.DrainResult, error)
+	ForceDrainNodeContext(context.Context, string, k8s.ForceDrainOptions) (*k8s.DrainResult, error)
+	RejoinNodeContext(context.Context, string) (*k8s.NodeInfo, error)
+	NodeRemovalCheckContext(context.Context, string) (*k8s.NodeRemovalCheck, error)
+	DeleteNodeContext(context.Context, string) error
 }
 
 // ServerInspector is the side-effect boundary for remote SSH checks. The
 // service owns lookup and result semantics; each entry point supplies its own
 // concrete SSH or Agent implementation.
 type ServerInspector interface {
-	Probe(server *model.Server) (reachable bool, errorMessage string)
-	Precheck(server *model.Server) []Precheck
+	Probe(context.Context, *model.Server) (reachable bool, errorMessage string)
+	Precheck(context.Context, *model.Server) []Precheck
 }
 
 type ServerImporter interface {
-	Hostname(server *model.Server) (string, error)
+	Hostname(context.Context, *model.Server) (string, error)
 }
 
 type MetricsInspector interface {
-	ResourceStats(server *model.Server) (map[string]interface{}, error)
+	ResourceStats(context.Context, *model.Server) (map[string]interface{}, error)
 }
 
 // Precheck is the transport-independent shape returned by the server join
@@ -138,7 +139,7 @@ func (s *Service) UnbindServer(id uint) (*model.Server, error) {
 	return server, nil
 }
 
-func (s *Service) ProbeServer(id uint) (*ProbeResult, error) {
+func (s *Service) ProbeServerContext(ctx context.Context, id uint) (*ProbeResult, error) {
 	server, err := s.servers.GetServer(id)
 	if err != nil {
 		return nil, err
@@ -147,7 +148,7 @@ func (s *Service) ProbeServer(id uint) (*ProbeResult, error) {
 		return nil, fmt.Errorf("服务器检查器未配置")
 	}
 	startedAt := time.Now()
-	reachable, errorMessage := s.inspector.Probe(server)
+	reachable, errorMessage := s.inspector.Probe(ctx, server)
 	return &ProbeResult{
 		Reachable: reachable,
 		Error:     errorMessage,
@@ -155,7 +156,7 @@ func (s *Service) ProbeServer(id uint) (*ProbeResult, error) {
 	}, nil
 }
 
-func (s *Service) PrecheckServer(id uint) (*PrecheckResult, error) {
+func (s *Service) PrecheckServerContext(ctx context.Context, id uint) (*PrecheckResult, error) {
 	server, err := s.servers.GetServer(id)
 	if err != nil {
 		return nil, err
@@ -163,7 +164,7 @@ func (s *Service) PrecheckServer(id uint) (*PrecheckResult, error) {
 	if s.inspector == nil {
 		return nil, fmt.Errorf("服务器检查器未配置")
 	}
-	checks := s.inspector.Precheck(server)
+	checks := s.inspector.Precheck(ctx, server)
 	result := &PrecheckResult{Checks: checks, AllPass: true}
 	for _, check := range checks {
 		if !check.Pass {
@@ -174,7 +175,7 @@ func (s *Service) PrecheckServer(id uint) (*PrecheckResult, error) {
 	return result, nil
 }
 
-func (s *Service) PreImportServer(id uint) (*ImportResult, error) {
+func (s *Service) PreImportServerContext(ctx context.Context, id uint) (*ImportResult, error) {
 	server, err := s.servers.GetServer(id)
 	if err != nil {
 		return nil, err
@@ -185,11 +186,11 @@ func (s *Service) PreImportServer(id uint) (*ImportResult, error) {
 	if s.nodes == nil {
 		return nil, fmt.Errorf("Kubernetes 集群未连接")
 	}
-	hostname, err := s.importer.Hostname(server)
+	hostname, err := s.importer.Hostname(ctx, server)
 	if err != nil {
 		return nil, fmt.Errorf("获取主机名失败: %w", err)
 	}
-	nodes, err := s.nodes.ListNodeInfos()
+	nodes, err := s.nodes.ListNodeInfosContext(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("获取集群节点列表失败: %w", err)
 	}
@@ -222,7 +223,7 @@ func (s *Service) ConfirmImport(id uint, hostname, role string) (*ImportResult, 
 	return &ImportResult{ServerName: server.Name, Hostname: hostname, NodeName: hostname, Role: role}, nil
 }
 
-func (s *Service) ServerStats(id uint) (map[string]interface{}, error) {
+func (s *Service) ServerStatsContext(ctx context.Context, id uint) (map[string]interface{}, error) {
 	server, err := s.servers.GetServer(id)
 	if err != nil {
 		return nil, err
@@ -230,10 +231,10 @@ func (s *Service) ServerStats(id uint) (map[string]interface{}, error) {
 	if s.metrics == nil {
 		return nil, fmt.Errorf("服务器指标检查器未配置")
 	}
-	return s.metrics.ResourceStats(server)
+	return s.metrics.ResourceStats(ctx, server)
 }
 
-func (s *Service) ResourceStats() ([]map[string]interface{}, error) {
+func (s *Service) ResourceStatsContext(ctx context.Context) ([]map[string]interface{}, error) {
 	servers, err := s.servers.ListServers()
 	if err != nil {
 		return nil, err
@@ -251,7 +252,7 @@ func (s *Service) ResourceStats() ([]map[string]interface{}, error) {
 			semaphore <- struct{}{}
 			defer func() { <-semaphore }()
 			started := time.Now()
-			stats, statsErr := s.metrics.ResourceStats(&servers[index])
+			stats, statsErr := s.metrics.ResourceStats(ctx, &servers[index])
 			if stats == nil {
 				stats = map[string]interface{}{}
 			}
@@ -275,12 +276,12 @@ func (s *Service) ResourceStats() ([]map[string]interface{}, error) {
 // ListServers returns registered servers and reconciles stale Kubernetes node
 // associations when the cluster is reachable. A transient Kubernetes API
 // error deliberately preserves existing bindings.
-func (s *Service) ListServers() ([]model.Server, error) {
+func (s *Service) ListServersContext(ctx context.Context) ([]model.Server, error) {
 	servers, err := s.servers.ListServers()
 	if err != nil || s.nodes == nil {
 		return servers, err
 	}
-	nodes, err := s.nodes.ListNodeInfos()
+	nodes, err := s.nodes.ListNodeInfosContext(ctx)
 	if err != nil {
 		return servers, nil
 	}
@@ -314,44 +315,44 @@ func (s *Service) ListServers() ([]model.Server, error) {
 	return servers, nil
 }
 
-func (s *Service) UpdateNodeLabels(name string, set map[string]string, remove []string) (*k8s.NodeLabels, error) {
+func (s *Service) UpdateNodeLabelsContext(ctx context.Context, name string, set map[string]string, remove []string) (*k8s.NodeLabels, error) {
 	if s.nodes == nil {
 		return nil, fmt.Errorf("Kubernetes 集群未连接")
 	}
-	return s.nodes.UpdateNodeLabels(name, set, remove)
+	return s.nodes.UpdateNodeLabelsContext(ctx, name, set, remove)
 }
 
-func (s *Service) ListNodes() ([]k8s.NodeInfo, error) {
+func (s *Service) ListNodesContext(ctx context.Context) ([]k8s.NodeInfo, error) {
 	if s.nodes == nil {
 		return nil, fmt.Errorf("Kubernetes 集群未连接")
 	}
-	return s.nodes.ListNodeInfos()
+	return s.nodes.ListNodeInfosContext(ctx)
 }
 
-func (s *Service) GetNodeLabels(name string) (*k8s.NodeLabels, error) {
+func (s *Service) GetNodeLabelsContext(ctx context.Context, name string) (*k8s.NodeLabels, error) {
 	if s.nodes == nil {
 		return nil, fmt.Errorf("Kubernetes 集群未连接")
 	}
-	return s.nodes.GetNodeLabels(name)
+	return s.nodes.GetNodeLabelsContext(ctx, name)
 }
 
-func (s *Service) GetDrainPlan(name string) (*k8s.DrainPlan, error) {
+func (s *Service) GetDrainPlanContext(ctx context.Context, name string) (*k8s.DrainPlan, error) {
 	if s.nodes == nil {
 		return nil, fmt.Errorf("Kubernetes 集群未连接")
 	}
-	return s.nodes.DrainPlan(name)
+	return s.nodes.DrainPlanContext(ctx, name)
 }
 
-func (s *Service) DrainNode(name string, options k8s.DrainOptions) (*k8s.DrainResult, error) {
+func (s *Service) DrainNodeContext(ctx context.Context, name string, options k8s.DrainOptions) (*k8s.DrainResult, error) {
 	if s.nodes == nil {
 		return nil, fmt.Errorf("Kubernetes 集群未连接")
 	}
-	return s.nodes.DrainNode(name, options)
+	return s.nodes.DrainNodeContext(ctx, name, options)
 }
 
 // ForceDrainNode protects this destructive workflow with the same explicit
 // acknowledgement and exact target confirmation required by the HTTP API.
-func (s *Service) ForceDrainNode(name string, options k8s.ForceDrainOptions) (*k8s.DrainResult, error) {
+func (s *Service) ForceDrainNodeContext(ctx context.Context, name string, options k8s.ForceDrainOptions) (*k8s.DrainResult, error) {
 	if s.nodes == nil {
 		return nil, fmt.Errorf("Kubernetes 集群未连接")
 	}
@@ -359,30 +360,30 @@ func (s *Service) ForceDrainNode(name string, options k8s.ForceDrainOptions) (*k
 		return nil, fmt.Errorf("请确认风险并输入目标节点名")
 	}
 	options.ConfirmNodeName = strings.TrimSpace(options.ConfirmNodeName)
-	return s.nodes.ForceDrainNode(name, options)
+	return s.nodes.ForceDrainNodeContext(ctx, name, options)
 }
 
-func (s *Service) RejoinNode(name string) (*k8s.NodeInfo, error) {
+func (s *Service) RejoinNodeContext(ctx context.Context, name string) (*k8s.NodeInfo, error) {
 	if s.nodes == nil {
 		return nil, fmt.Errorf("Kubernetes 集群未连接")
 	}
-	return s.nodes.RejoinNode(name)
+	return s.nodes.RejoinNodeContext(ctx, name)
 }
 
-func (s *Service) GetRemovalCheck(name string) (*k8s.NodeRemovalCheck, error) {
+func (s *Service) GetRemovalCheckContext(ctx context.Context, name string) (*k8s.NodeRemovalCheck, error) {
 	if s.nodes == nil {
 		return nil, fmt.Errorf("Kubernetes 集群未连接")
 	}
-	return s.nodes.NodeRemovalCheck(name)
+	return s.nodes.NodeRemovalCheckContext(ctx, name)
 }
 
 // RemoveNode deletes the Kubernetes node only after the adapter's own
 // preconditions pass, then removes the stale platform association.
-func (s *Service) RemoveNode(name string) error {
+func (s *Service) RemoveNodeContext(ctx context.Context, name string) error {
 	if s.nodes == nil {
 		return fmt.Errorf("Kubernetes 集群未连接")
 	}
-	if err := s.nodes.DeleteNode(name); err != nil {
+	if err := s.nodes.DeleteNodeContext(ctx, name); err != nil {
 		return err
 	}
 	if err := s.servers.UnbindServersFromClusterNode(name); err != nil {

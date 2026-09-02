@@ -13,11 +13,15 @@ import (
 	"testing"
 )
 
-func setupApplicationRouter() (*gin.Engine, *store.Store) {
+func setupApplicationRouter(clients ...*k8sclient.Client) (*gin.Engine, *store.Store) {
 	gin.SetMode(gin.TestMode)
 	s, _ := store.New(":memory:")
 	r := gin.New()
-	h := NewApplicationHandler(s, []byte("01234567890123456789012345678901"))
+	var dependency KubernetesDependencies
+	if len(clients) > 0 {
+		dependency = NewKubernetesDependencies(clients[0])
+	}
+	h := NewApplicationHandler(s, []byte("01234567890123456789012345678901"), dependency)
 	projects := r.Group("/api/projects")
 	{
 		projects.GET("", h.ListProjects)
@@ -82,11 +86,9 @@ func TestApplicationHandlerUpdatesNormalizedCapabilities(t *testing.T) {
 }
 
 func TestApplicationHandlerSetsWorkloadKindBeforeFirstRelease(t *testing.T) {
-	r, s := setupApplicationRouter()
+	client := &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset()}
+	r, s := setupApplicationRouter(client)
 	app := createApplicationForReleaseRuntimeTest(t, s)
-	originalK8s := K8s
-	K8s = &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset()}
-	defer func() { K8s = originalK8s }()
 
 	response := serve(r, newJSONRequest(http.MethodPut, "/api/applications/1/workload-kind", gin.H{"workload_kind": "statefulset"}))
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "statefulset") {

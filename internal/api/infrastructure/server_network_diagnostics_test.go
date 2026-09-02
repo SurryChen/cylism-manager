@@ -2,6 +2,7 @@ package infrastructure
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"net/http"
 	"testing"
@@ -16,10 +17,10 @@ func TestServerNetworkDiagnosticsReturnsRedactedSnapshotsAndLinks(t *testing.T) 
 	_ = s.CreateServer(&model.Server{Name: "control-plane", Host: "10.0.0.1"})
 	_ = s.CreateServer(&model.Server{Name: "worker", Host: "10.0.0.2"})
 	h := NewServerNetworkDiagnosticsHandler(s, make([]byte, 32))
-	h.networkSnapshotCollector = func(server *model.Server) (serverNetworkDiagnostic, error) {
+	h.networkSnapshotCollector = func(_ context.Context, server *model.Server) (serverNetworkDiagnostic, error) {
 		return serverNetworkDiagnostic{NetworkMode: "k3s_embedded_tailscale", K8sUnit: "k3s", Tailscale: tailscaleStatus{Installed: true, Online: true, TailnetIP: "100.101.102." + fmt.Sprint(server.ID)}}, nil
 	}
-	h.networkLinkCollector = func(*model.Server, string) (tailnetLinkDiagnostic, error) {
+	h.networkLinkCollector = func(context.Context, *model.Server, string) (tailnetLinkDiagnostic, error) {
 		return tailnetLinkDiagnostic{Path: "direct", LatencyMS: 12}, nil
 	}
 	r := gin.New()
@@ -68,7 +69,7 @@ func TestServerNetworkDiagnosticsKeepsPartialFailuresStructured(t *testing.T) {
 	_ = s.CreateServer(&model.Server{Name: "reachable", Host: "10.0.0.1"})
 	_ = s.CreateServer(&model.Server{Name: "unreachable", Host: "10.0.0.2"})
 	h := NewServerNetworkDiagnosticsHandler(s, make([]byte, 32))
-	h.networkSnapshotCollector = func(server *model.Server) (serverNetworkDiagnostic, error) {
+	h.networkSnapshotCollector = func(_ context.Context, server *model.Server) (serverNetworkDiagnostic, error) {
 		if server.Name == "unreachable" {
 			return serverNetworkDiagnostic{}, fmt.Errorf("connection timed out: host details must remain private")
 		}

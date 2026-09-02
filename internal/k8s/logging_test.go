@@ -1,6 +1,7 @@
 package k8s
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -17,7 +18,7 @@ func TestInstallLoggingCreatesManagedLokiAndAlloy(t *testing.T) {
 		Status:     corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}}},
 	})}
 
-	status, err := client.InstallLogging(LoggingConfig{NodeName: "node-a", Storage: "10Gi", RetentionDays: 14})
+	status, err := client.InstallLoggingContext(context.Background(), LoggingConfig{NodeName: "node-a", Storage: "10Gi", RetentionDays: 14})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,10 +120,10 @@ func TestInstallLoggingRejectsRelocationAndUninstallRetainsPVC(t *testing.T) {
 		&corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: lokiPVCName, Namespace: victoriaMetricsNamespace, Labels: infrastructurePVCLabels(InfrastructureLoki)}},
 	)}
 
-	if _, err := client.InstallLogging(LoggingConfig{NodeName: "node-b", RetentionDays: 14}); err == nil || !strings.Contains(err.Error(), "不能直接修改") {
+	if _, err := client.InstallLoggingContext(context.Background(), LoggingConfig{NodeName: "node-b", RetentionDays: 14}); err == nil || !strings.Contains(err.Error(), "不能直接修改") {
 		t.Fatalf("expected relocation error, got %v", err)
 	}
-	if err := client.UninstallLogging(); err != nil {
+	if err := client.UninstallLoggingContext(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := client.Clientset.CoreV1().PersistentVolumeClaims(victoriaMetricsNamespace).Get(t.Context(), lokiPVCName, metav1.GetOptions{}); err != nil {

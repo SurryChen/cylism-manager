@@ -1,6 +1,7 @@
 package delivery
 
 import (
+	"context"
 	"encoding/base64"
 	"fmt"
 	"strings"
@@ -12,12 +13,12 @@ import (
 
 // applyK3sRegistriesToNode is the SSH infrastructure adapter shared by
 // Registry workflows. The service supplies already-rendered configuration.
-func ApplyK3sRegistriesToNode(server *model.Server, encKey, content []byte) (string, string) {
+func ApplyK3sRegistriesToNode(ctx context.Context, server *model.Server, encKey, content []byte) (string, string) {
 	if server.SSHAuthType != "key" || server.SSHKey == "" {
 		return "skipped", "需要已配置的 SSH 密钥认证"
 	}
 	payload := base64.StdEncoding.EncodeToString(content)
-	out, err := infrastructureapi.SSHExec(90*time.Second, append(infrastructureapi.BuildSSHArgs(server, encKey, server.Host), nodeRegistryMirrorApplyCommand(payload)))
+	out, err := infrastructureapi.SSHExecContext(ctx, 90*time.Second, append(infrastructureapi.BuildSSHArgs(server, encKey, server.Host), nodeRegistryMirrorApplyCommand(payload)))
 	if err != nil {
 		return "failed", strings.TrimSpace(string(out))
 	}

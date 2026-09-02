@@ -2,6 +2,7 @@ package infrastructure
 
 import (
 	"bytes"
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -18,31 +19,31 @@ func TestInfrastructureAdaptersKeepInjectedHandlers(t *testing.T) {
 
 type fakeNodes struct{}
 
-func (fakeNodes) ListNodeInfos() ([]k8s.NodeInfo, error) {
+func (fakeNodes) ListNodeInfosContext(context.Context) ([]k8s.NodeInfo, error) {
 	return []k8s.NodeInfo{{Name: "worker-a", Ready: true}}, nil
 }
-func (fakeNodes) GetNodeLabels(string) (*k8s.NodeLabels, error) {
+func (fakeNodes) GetNodeLabelsContext(context.Context, string) (*k8s.NodeLabels, error) {
 	return &k8s.NodeLabels{Name: "worker-a", Labels: map[string]string{}}, nil
 }
-func (fakeNodes) UpdateNodeLabels(string, map[string]string, []string) (*k8s.NodeLabels, error) {
+func (fakeNodes) UpdateNodeLabelsContext(context.Context, string, map[string]string, []string) (*k8s.NodeLabels, error) {
 	return &k8s.NodeLabels{Name: "worker-a", Labels: map[string]string{"team": "platform"}}, nil
 }
-func (fakeNodes) DrainPlan(string) (*k8s.DrainPlan, error) {
+func (fakeNodes) DrainPlanContext(context.Context, string) (*k8s.DrainPlan, error) {
 	return &k8s.DrainPlan{NodeName: "worker-a"}, nil
 }
-func (fakeNodes) DrainNode(string, k8s.DrainOptions) (*k8s.DrainResult, error) {
+func (fakeNodes) DrainNodeContext(context.Context, string, k8s.DrainOptions) (*k8s.DrainResult, error) {
 	return &k8s.DrainResult{Plan: &k8s.DrainPlan{NodeName: "worker-a"}}, nil
 }
-func (fakeNodes) ForceDrainNode(string, k8s.ForceDrainOptions) (*k8s.DrainResult, error) {
+func (fakeNodes) ForceDrainNodeContext(context.Context, string, k8s.ForceDrainOptions) (*k8s.DrainResult, error) {
 	return &k8s.DrainResult{Forced: true}, nil
 }
-func (fakeNodes) RejoinNode(string) (*k8s.NodeInfo, error) {
+func (fakeNodes) RejoinNodeContext(context.Context, string) (*k8s.NodeInfo, error) {
 	return &k8s.NodeInfo{Name: "worker-a"}, nil
 }
-func (fakeNodes) NodeRemovalCheck(string) (*k8s.NodeRemovalCheck, error) {
+func (fakeNodes) NodeRemovalCheckContext(context.Context, string) (*k8s.NodeRemovalCheck, error) {
 	return &k8s.NodeRemovalCheck{NodeName: "worker-a", CanRemove: true}, nil
 }
-func (fakeNodes) DeleteNode(string) error { return nil }
+func (fakeNodes) DeleteNodeContext(context.Context, string) error { return nil }
 
 func newInfrastructureTestRouter(t *testing.T) (*gin.Engine, *store.Store) {
 	t.Helper()

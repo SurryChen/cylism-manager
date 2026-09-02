@@ -49,7 +49,7 @@ func (h *StorageHandler) CreatePersistentVolumeBackup(c *gin.Context) {
 		apiShared.NotFound(c, "环境不存在")
 		return
 	}
-	claim, err := h.pvc.GetManagedPVC(environment.Namespace, c.Param("name"), environment.ID)
+	claim, err := h.pvc.GetManagedPVCContext(c.Request.Context(), environment.Namespace, c.Param("name"), environment.ID)
 	if err != nil {
 		apiShared.NotFound(c, err.Error())
 		return
@@ -72,7 +72,7 @@ func (h *StorageHandler) CreatePersistentVolumeBackup(c *gin.Context) {
 		apiShared.DBError(c, "创建存储卷备份记录失败")
 		return
 	}
-	if err := h.Service.StartBackup(backup.ID); err != nil {
+	if err := h.Service.StartBackup(c.Request.Context(), backup.ID); err != nil {
 		apiShared.InternalError(c, err.Error())
 		return
 	}
@@ -116,14 +116,16 @@ func (h *StorageHandler) RestorePersistentVolumeBackup(c *gin.Context) {
 		apiShared.DBError(c, "更新存储卷恢复状态失败")
 		return
 	}
-	if err := h.Service.StartRestore(backup.ID); err != nil {
+	if err := h.Service.StartRestore(c.Request.Context(), backup.ID); err != nil {
 		apiShared.InternalError(c, err.Error())
 		return
 	}
 	model.SuccessWithMessage(c, backup, "存储卷恢复已开始")
 }
 
-func (h *StorageHandler) executePersistentVolumeBackup(backupID uint) {
+func (h *StorageHandler) executePersistentVolumeBackup(parent context.Context, backupID uint) {
+	ctx, cancel := context.WithTimeout(parent, 2*time.Hour)
+	defer cancel()
 	backup, err := h.Service.GetBackup(backupID)
 	if err != nil {
 		return
@@ -136,7 +138,7 @@ func (h *StorageHandler) executePersistentVolumeBackup(backupID uint) {
 		h.failPersistentVolumeBackup(backup, err)
 		return
 	}
-	claim, err := h.pvc.GetManagedPVC(environment.Namespace, backup.PVCName, environment.ID)
+	claim, err := h.pvc.GetManagedPVCContext(ctx, environment.Namespace, backup.PVCName, environment.ID)
 	if err != nil || !claim.IsLocal || claim.LocalPath == "" || claim.BoundNode != backup.SourceNodeName {
 		h.failPersistentVolumeBackup(backup, fmt.Errorf("PVC 绑定状态已变化，无法执行备份"))
 		return
@@ -151,7 +153,7 @@ func (h *StorageHandler) executePersistentVolumeBackup(backupID uint) {
 		h.failPersistentVolumeBackup(backup, err)
 		return
 	}
-	bytesCopied, err := streamPVCData(source, target, claim.LocalPath, backup.BackupPath, h.encKey)
+	bytesCopied, err := streamPVCData(ctx, source, target, claim.LocalPath, backup.BackupPath, h.encKey)
 	if err != nil {
 		h.failPersistentVolumeBackup(backup, err)
 		return
@@ -162,8 +164,8 @@ func (h *StorageHandler) executePersistentVolumeBackup(backupID uint) {
 	_ = h.Service.UpdateBackup(backup)
 }
 
-func (h *StorageHandler) executePersistentVolumeRestore(backupID uint) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Hour)
+func (h *StorageHandler) executePersistentVolumeRestore(parent context.Context, backupID uint) {
+	ctx, cancel := context.WithTimeout(parent, 2*time.Hour)
 	defer cancel()
 	backup, err := h.Service.GetBackup(backupID)
 	if err != nil {
@@ -174,7 +176,7 @@ func (h *StorageHandler) executePersistentVolumeRestore(backupID uint) {
 		h.failPersistentVolumeRestore(backup, err)
 		return
 	}
-	claim, err := h.pvc.GetManagedPVC(environment.Namespace, backup.PVCName, environment.ID)
+	claim, err := h.pvc.GetManagedPVCContext(ctx, environment.Namespace, backup.PVCName, environment.ID)
 	if err != nil || !claim.IsLocal || claim.LocalPath == "" {
 		h.failPersistentVolumeRestore(backup, fmt.Errorf("PVC 不再是可恢复的本地卷"))
 		return
@@ -215,12 +217,12 @@ func (h *StorageHandler) executePersistentVolumeRestore(backupID uint) {
 		}
 	}
 	clear := "sudo -n find " + storageShellQuote(claim.LocalPath) + " -mindepth 1 -maxdepth 1 -exec rm -rf {} +"
-	if out, err := sshExec(30*time.Second, append(buildSSHArgs(source, h.encKey, source.Host), clear)); err != nil {
+	if out, err := sshExec(ctx, 30*time.Second, append(buildSSHArgs(source, h.encKey, source.Host), clear)); err != nil {
 		h.restoreBackupReplicas(ctx, environment.Namespace, replicas)
 		h.failPersistentVolumeRestore(backup, fmt.Errorf("清空目标 PVC 失败: %s", strings.TrimSpace(string(out))))
 		return
 	}
-	if _, err := streamPVCData(archive, source, backup.BackupPath, claim.LocalPath, h.encKey); err != nil {
+	if _, err := streamPVCData(ctx, archive, source, backup.BackupPath, claim.LocalPath, h.encKey); err != nil {
 		h.restoreBackupReplicas(ctx, environment.Namespace, replicas)
 		h.failPersistentVolumeRestore(backup, err)
 		return

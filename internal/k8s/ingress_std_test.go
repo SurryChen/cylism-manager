@@ -72,9 +72,9 @@ func TestCachedIngressControllerStatusReturnsFreshCopyOnly(t *testing.T) {
 
 func TestIngressStdMethods_Exist(t *testing.T) {
 	client, _ := newClientFromRestConfig(nil)
-	_ = client.ListIngresses
-	_ = client.GetIngress
-	_ = client.CreateIngress
-	_ = client.DeleteIngress
-	_ = client.DetectIngressController
+	_ = client.ListIngressesContext
+	_ = client.GetIngressContext
+	_ = client.CreateIngressContext
+	_ = client.DeleteIngressContext
+	_ = client.DetectIngressControllerContext
 }

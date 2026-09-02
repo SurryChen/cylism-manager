@@ -1,6 +1,7 @@
 package k8s
 
 import (
+	"context"
 	"crypto/sha256"
 	"fmt"
 	"strconv"
@@ -84,7 +85,7 @@ func (c *Client) VictoriaMetricsStatus() *VictoriaMetricsStatus {
 		return status
 	}
 
-	deployment, err := c.Clientset.AppsV1().Deployments(victoriaMetricsNamespace).Get(c.Ctx(), victoriaMetricsName, metav1.GetOptions{})
+	deployment, err := c.Clientset.AppsV1().Deployments(victoriaMetricsNamespace).Get(c.ctx, victoriaMetricsName, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
 		status.State = VictoriaMetricsStateNotInstalled
 		status.Message = "尚未安装 VictoriaMetrics"
@@ -96,7 +97,7 @@ func (c *Client) VictoriaMetricsStatus() *VictoriaMetricsStatus {
 		return status
 	}
 	if reconcileErr := c.reconcileVictoriaMetricsMigration(); reconcileErr == nil {
-		if updated, getErr := c.Clientset.AppsV1().Deployments(victoriaMetricsNamespace).Get(c.Ctx(), victoriaMetricsName, metav1.GetOptions{}); getErr == nil {
+		if updated, getErr := c.Clientset.AppsV1().Deployments(victoriaMetricsNamespace).Get(c.ctx, victoriaMetricsName, metav1.GetOptions{}); getErr == nil {
 			deployment = updated
 		}
 	}
@@ -110,7 +111,7 @@ func (c *Client) VictoriaMetricsStatus() *VictoriaMetricsStatus {
 	} else {
 		status.StorageMode = VictoriaMetricsStoragePVC
 		status.PVCName = victoriaMetricsPVCName
-		if claim, claimErr := c.Clientset.CoreV1().PersistentVolumeClaims(victoriaMetricsNamespace).Get(c.Ctx(), victoriaMetricsPVCName, metav1.GetOptions{}); claimErr == nil {
+		if claim, claimErr := c.Clientset.CoreV1().PersistentVolumeClaims(victoriaMetricsNamespace).Get(c.ctx, victoriaMetricsPVCName, metav1.GetOptions{}); claimErr == nil {
 			status.StorageClassName = valueOrEmpty(claim.Spec.StorageClassName)
 			if storage := claim.Spec.Resources.Requests.Storage(); storage != nil {
 				status.Storage = storage.String()
@@ -133,7 +134,7 @@ func (c *Client) VictoriaMetricsStatus() *VictoriaMetricsStatus {
 		return status
 	}
 
-	nodeExporter, err := c.Clientset.AppsV1().DaemonSets(victoriaMetricsNamespace).Get(c.Ctx(), nodeExporterName, metav1.GetOptions{})
+	nodeExporter, err := c.Clientset.AppsV1().DaemonSets(victoriaMetricsNamespace).Get(c.ctx, nodeExporterName, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
 		status.State = VictoriaMetricsStateDegraded
 		status.Message = "VictoriaMetrics 已就绪，但 node-exporter 未安装；节点指标不可用"
@@ -156,15 +157,27 @@ func (c *Client) VictoriaMetricsStatus() *VictoriaMetricsStatus {
 	return status
 }
 
+func (c *Client) VictoriaMetricsStatusContext(ctx context.Context) *VictoriaMetricsStatus {
+	return c.withContext(ctx).VictoriaMetricsStatus()
+}
+
+func (c *Client) InstallVictoriaMetricsContext(ctx context.Context, config VictoriaMetricsConfig) (*VictoriaMetricsStatus, error) {
+	return c.withContext(ctx).installVictoriaMetrics(config)
+}
+
+func (c *Client) UninstallVictoriaMetricsContext(ctx context.Context) error {
+	return c.withContext(ctx).uninstallVictoriaMetrics()
+}
+
 // InstallVictoriaMetrics creates or updates the managed metrics store. New
 // installations always use the platform-owned PVC; legacy hostPath deployments
 // retain their existing volume until explicitly migrated.
-func (c *Client) InstallVictoriaMetrics(config VictoriaMetricsConfig) (*VictoriaMetricsStatus, error) {
+func (c *Client) installVictoriaMetrics(config VictoriaMetricsConfig) (*VictoriaMetricsStatus, error) {
 	if c == nil || c.Clientset == nil {
 		return c.VictoriaMetricsStatus(), fmt.Errorf("Kubernetes 客户端未初始化")
 	}
 
-	existing, err := c.Clientset.AppsV1().Deployments(victoriaMetricsNamespace).Get(c.Ctx(), victoriaMetricsName, metav1.GetOptions{})
+	existing, err := c.Clientset.AppsV1().Deployments(victoriaMetricsNamespace).Get(c.ctx, victoriaMetricsName, metav1.GetOptions{})
 	if err != nil && !apierrors.IsNotFound(err) {
 		return c.VictoriaMetricsStatus(), fmt.Errorf("读取现有 VictoriaMetrics 配置失败: %w", err)
 	}
@@ -190,7 +203,7 @@ func (c *Client) InstallVictoriaMetrics(config VictoriaMetricsConfig) (*Victoria
 	if err := validateVictoriaMetricsRetention(config.RetentionDays); err != nil {
 		return c.VictoriaMetricsStatus(), err
 	}
-	node, err := c.Clientset.CoreV1().Nodes().Get(c.Ctx(), config.NodeName, metav1.GetOptions{})
+	node, err := c.Clientset.CoreV1().Nodes().Get(c.ctx, config.NodeName, metav1.GetOptions{})
 	if err != nil {
 		return c.VictoriaMetricsStatus(), fmt.Errorf("读取数据节点失败: %w", err)
 	}
@@ -231,31 +244,31 @@ func (c *Client) InstallVictoriaMetrics(config VictoriaMetricsConfig) (*Victoria
 
 // UninstallVictoriaMetrics removes only platform-managed Kubernetes resources. The
 // hostPath directory is intentionally retained so metrics data is not deleted by mistake.
-func (c *Client) UninstallVictoriaMetrics() error {
+func (c *Client) uninstallVictoriaMetrics() error {
 	if c == nil || c.Clientset == nil {
 		return fmt.Errorf("Kubernetes 客户端未初始化")
 	}
 	for _, remove := range []func() error{
 		func() error {
-			return c.Clientset.AppsV1().DaemonSets(victoriaMetricsNamespace).Delete(c.Ctx(), nodeExporterName, metav1.DeleteOptions{})
+			return c.Clientset.AppsV1().DaemonSets(victoriaMetricsNamespace).Delete(c.ctx, nodeExporterName, metav1.DeleteOptions{})
 		},
 		func() error {
-			return c.Clientset.AppsV1().Deployments(victoriaMetricsNamespace).Delete(c.Ctx(), victoriaMetricsName, metav1.DeleteOptions{})
+			return c.Clientset.AppsV1().Deployments(victoriaMetricsNamespace).Delete(c.ctx, victoriaMetricsName, metav1.DeleteOptions{})
 		},
 		func() error {
-			return c.Clientset.CoreV1().Services(victoriaMetricsNamespace).Delete(c.Ctx(), victoriaMetricsName, metav1.DeleteOptions{})
+			return c.Clientset.CoreV1().Services(victoriaMetricsNamespace).Delete(c.ctx, victoriaMetricsName, metav1.DeleteOptions{})
 		},
 		func() error {
-			return c.Clientset.CoreV1().ConfigMaps(victoriaMetricsNamespace).Delete(c.Ctx(), victoriaMetricsName+"-scrape", metav1.DeleteOptions{})
+			return c.Clientset.CoreV1().ConfigMaps(victoriaMetricsNamespace).Delete(c.ctx, victoriaMetricsName+"-scrape", metav1.DeleteOptions{})
 		},
 		func() error {
-			return c.Clientset.RbacV1().ClusterRoleBindings().Delete(c.Ctx(), victoriaMetricsName, metav1.DeleteOptions{})
+			return c.Clientset.RbacV1().ClusterRoleBindings().Delete(c.ctx, victoriaMetricsName, metav1.DeleteOptions{})
 		},
 		func() error {
-			return c.Clientset.RbacV1().ClusterRoles().Delete(c.Ctx(), victoriaMetricsName, metav1.DeleteOptions{})
+			return c.Clientset.RbacV1().ClusterRoles().Delete(c.ctx, victoriaMetricsName, metav1.DeleteOptions{})
 		},
 		func() error {
-			return c.Clientset.CoreV1().ServiceAccounts(victoriaMetricsNamespace).Delete(c.Ctx(), victoriaMetricsName, metav1.DeleteOptions{})
+			return c.Clientset.CoreV1().ServiceAccounts(victoriaMetricsNamespace).Delete(c.ctx, victoriaMetricsName, metav1.DeleteOptions{})
 		},
 	} {
 		if err := remove(); err != nil && !apierrors.IsNotFound(err) {
@@ -285,14 +298,14 @@ func validateVictoriaMetricsRetention(retentionDays int) error {
 }
 
 func ensureMonitoringNamespace(c *Client) error {
-	_, err := c.Clientset.CoreV1().Namespaces().Get(c.Ctx(), victoriaMetricsNamespace, metav1.GetOptions{})
+	_, err := c.Clientset.CoreV1().Namespaces().Get(c.ctx, victoriaMetricsNamespace, metav1.GetOptions{})
 	if err == nil {
 		return nil
 	}
 	if !apierrors.IsNotFound(err) {
 		return fmt.Errorf("读取 monitoring 命名空间失败: %w", err)
 	}
-	_, err = c.Clientset.CoreV1().Namespaces().Create(c.Ctx(), &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: victoriaMetricsNamespace, Labels: victoriaMetricsLabels()}}, metav1.CreateOptions{})
+	_, err = c.Clientset.CoreV1().Namespaces().Create(c.ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: victoriaMetricsNamespace, Labels: victoriaMetricsLabels()}}, metav1.CreateOptions{})
 	if err != nil && !apierrors.IsAlreadyExists(err) {
 		return fmt.Errorf("创建 monitoring 命名空间失败: %w", err)
 	}
@@ -301,7 +314,7 @@ func ensureMonitoringNamespace(c *Client) error {
 
 func ensureVictoriaMetricsAccess(c *Client) error {
 	serviceAccount := &corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: victoriaMetricsName, Namespace: victoriaMetricsNamespace, Labels: victoriaMetricsLabels()}}
-	if _, err := c.Clientset.CoreV1().ServiceAccounts(victoriaMetricsNamespace).Create(c.Ctx(), serviceAccount, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
+	if _, err := c.Clientset.CoreV1().ServiceAccounts(victoriaMetricsNamespace).Create(c.ctx, serviceAccount, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
 		return fmt.Errorf("创建 VictoriaMetrics 服务账号失败: %w", err)
 	}
 	role := &rbacv1.ClusterRole{ObjectMeta: metav1.ObjectMeta{Name: victoriaMetricsName, Labels: victoriaMetricsLabels()}, Rules: []rbacv1.PolicyRule{
@@ -325,16 +338,16 @@ func upsertVictoriaMetricsConfig(c *Client, config VictoriaMetricsConfig) error 
 
 func upsertVictoriaMetricsService(c *Client) error {
 	resource := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: victoriaMetricsName, Namespace: victoriaMetricsNamespace, Labels: victoriaMetricsLabels()}, Spec: corev1.ServiceSpec{Selector: victoriaMetricsLabels(), Ports: []corev1.ServicePort{{Name: "http", Port: 8428, TargetPort: intstr.FromInt(8428)}}}}
-	current, err := c.Clientset.CoreV1().Services(victoriaMetricsNamespace).Get(c.Ctx(), victoriaMetricsName, metav1.GetOptions{})
+	current, err := c.Clientset.CoreV1().Services(victoriaMetricsNamespace).Get(c.ctx, victoriaMetricsName, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
-		_, err = c.Clientset.CoreV1().Services(victoriaMetricsNamespace).Create(c.Ctx(), resource, metav1.CreateOptions{})
+		_, err = c.Clientset.CoreV1().Services(victoriaMetricsNamespace).Create(c.ctx, resource, metav1.CreateOptions{})
 	} else if err == nil {
 		resource.ResourceVersion = current.ResourceVersion
 		resource.Spec.ClusterIP = current.Spec.ClusterIP
 		resource.Spec.ClusterIPs = current.Spec.ClusterIPs
 		resource.Spec.IPFamilies = current.Spec.IPFamilies
 		resource.Spec.IPFamilyPolicy = current.Spec.IPFamilyPolicy
-		_, err = c.Clientset.CoreV1().Services(victoriaMetricsNamespace).Update(c.Ctx(), resource, metav1.UpdateOptions{})
+		_, err = c.Clientset.CoreV1().Services(victoriaMetricsNamespace).Update(c.ctx, resource, metav1.UpdateOptions{})
 	}
 	if err != nil {
 		return fmt.Errorf("创建 VictoriaMetrics Service 失败: %w", err)
@@ -344,7 +357,7 @@ func upsertVictoriaMetricsService(c *Client) error {
 
 func upsertVictoriaMetricsPVC(c *Client, config VictoriaMetricsConfig) error {
 	claims := c.Clientset.CoreV1().PersistentVolumeClaims(victoriaMetricsNamespace)
-	existing, err := claims.Get(c.Ctx(), victoriaMetricsPVCName, metav1.GetOptions{})
+	existing, err := claims.Get(c.ctx, victoriaMetricsPVCName, metav1.GetOptions{})
 	if err == nil {
 		labels := infrastructurePVCLabels(InfrastructureVictoriaMetrics)
 		changed := false
@@ -358,7 +371,7 @@ func upsertVictoriaMetricsPVC(c *Client, config VictoriaMetricsConfig) error {
 			}
 		}
 		if changed {
-			if _, err := claims.Update(c.Ctx(), existing, metav1.UpdateOptions{}); err != nil {
+			if _, err := claims.Update(c.ctx, existing, metav1.UpdateOptions{}); err != nil {
 				return fmt.Errorf("更新 VictoriaMetrics 存储卷归属失败: %w", err)
 			}
 		}
@@ -379,7 +392,7 @@ func upsertVictoriaMetricsPVC(c *Client, config VictoriaMetricsConfig) error {
 		},
 	}
 	if storageClassName := strings.TrimSpace(config.StorageClassName); storageClassName != "" {
-		if _, err := c.Clientset.StorageV1().StorageClasses().Get(c.Ctx(), storageClassName, metav1.GetOptions{}); err != nil {
+		if _, err := c.Clientset.StorageV1().StorageClasses().Get(c.ctx, storageClassName, metav1.GetOptions{}); err != nil {
 			if apierrors.IsNotFound(err) {
 				return fmt.Errorf("StorageClass %q 不存在", storageClassName)
 			}
@@ -387,7 +400,7 @@ func upsertVictoriaMetricsPVC(c *Client, config VictoriaMetricsConfig) error {
 		}
 		claim.Spec.StorageClassName = &storageClassName
 	}
-	if _, err := claims.Create(c.Ctx(), claim, metav1.CreateOptions{}); err != nil {
+	if _, err := claims.Create(c.ctx, claim, metav1.CreateOptions{}); err != nil {
 		return fmt.Errorf("创建 VictoriaMetrics 存储卷失败: %w", err)
 	}
 	return nil
@@ -422,12 +435,12 @@ func upsertVictoriaMetricsDeployment(c *Client, config VictoriaMetricsConfig) er
 			}},
 		}},
 	}}
-	current, err := c.Clientset.AppsV1().Deployments(victoriaMetricsNamespace).Get(c.Ctx(), victoriaMetricsName, metav1.GetOptions{})
+	current, err := c.Clientset.AppsV1().Deployments(victoriaMetricsNamespace).Get(c.ctx, victoriaMetricsName, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
-		_, err = c.Clientset.AppsV1().Deployments(victoriaMetricsNamespace).Create(c.Ctx(), deployment, metav1.CreateOptions{})
+		_, err = c.Clientset.AppsV1().Deployments(victoriaMetricsNamespace).Create(c.ctx, deployment, metav1.CreateOptions{})
 	} else if err == nil {
 		deployment.ResourceVersion = current.ResourceVersion
-		_, err = c.Clientset.AppsV1().Deployments(victoriaMetricsNamespace).Update(c.Ctx(), deployment, metav1.UpdateOptions{})
+		_, err = c.Clientset.AppsV1().Deployments(victoriaMetricsNamespace).Update(c.ctx, deployment, metav1.UpdateOptions{})
 	}
 	if err != nil {
 		return fmt.Errorf("创建 VictoriaMetrics Deployment 失败: %w", err)
@@ -453,12 +466,12 @@ func upsertNodeExporter(c *Client) error {
 			}},
 		}},
 	}}
-	current, err := c.Clientset.AppsV1().DaemonSets(victoriaMetricsNamespace).Get(c.Ctx(), nodeExporterName, metav1.GetOptions{})
+	current, err := c.Clientset.AppsV1().DaemonSets(victoriaMetricsNamespace).Get(c.ctx, nodeExporterName, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
-		_, err = c.Clientset.AppsV1().DaemonSets(victoriaMetricsNamespace).Create(c.Ctx(), daemonSet, metav1.CreateOptions{})
+		_, err = c.Clientset.AppsV1().DaemonSets(victoriaMetricsNamespace).Create(c.ctx, daemonSet, metav1.CreateOptions{})
 	} else if err == nil {
 		daemonSet.ResourceVersion = current.ResourceVersion
-		_, err = c.Clientset.AppsV1().DaemonSets(victoriaMetricsNamespace).Update(c.Ctx(), daemonSet, metav1.UpdateOptions{})
+		_, err = c.Clientset.AppsV1().DaemonSets(victoriaMetricsNamespace).Update(c.ctx, daemonSet, metav1.UpdateOptions{})
 	}
 	if err != nil {
 		return fmt.Errorf("创建 node-exporter DaemonSet 失败: %w", err)
@@ -467,12 +480,12 @@ func upsertNodeExporter(c *Client) error {
 }
 
 func createOrUpdateConfigMap(c *Client, resource *corev1.ConfigMap) error {
-	current, err := c.Clientset.CoreV1().ConfigMaps(victoriaMetricsNamespace).Get(c.Ctx(), resource.Name, metav1.GetOptions{})
+	current, err := c.Clientset.CoreV1().ConfigMaps(victoriaMetricsNamespace).Get(c.ctx, resource.Name, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
-		_, err = c.Clientset.CoreV1().ConfigMaps(victoriaMetricsNamespace).Create(c.Ctx(), resource, metav1.CreateOptions{})
+		_, err = c.Clientset.CoreV1().ConfigMaps(victoriaMetricsNamespace).Create(c.ctx, resource, metav1.CreateOptions{})
 	} else if err == nil {
 		resource.ResourceVersion = current.ResourceVersion
-		_, err = c.Clientset.CoreV1().ConfigMaps(victoriaMetricsNamespace).Update(c.Ctx(), resource, metav1.UpdateOptions{})
+		_, err = c.Clientset.CoreV1().ConfigMaps(victoriaMetricsNamespace).Update(c.ctx, resource, metav1.UpdateOptions{})
 	}
 	if err != nil {
 		return fmt.Errorf("创建 VictoriaMetrics 采集配置失败: %w", err)
@@ -481,12 +494,12 @@ func createOrUpdateConfigMap(c *Client, resource *corev1.ConfigMap) error {
 }
 
 func createOrUpdateClusterRole(c *Client, resource *rbacv1.ClusterRole) error {
-	current, err := c.Clientset.RbacV1().ClusterRoles().Get(c.Ctx(), resource.Name, metav1.GetOptions{})
+	current, err := c.Clientset.RbacV1().ClusterRoles().Get(c.ctx, resource.Name, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
-		_, err = c.Clientset.RbacV1().ClusterRoles().Create(c.Ctx(), resource, metav1.CreateOptions{})
+		_, err = c.Clientset.RbacV1().ClusterRoles().Create(c.ctx, resource, metav1.CreateOptions{})
 	} else if err == nil {
 		resource.ResourceVersion = current.ResourceVersion
-		_, err = c.Clientset.RbacV1().ClusterRoles().Update(c.Ctx(), resource, metav1.UpdateOptions{})
+		_, err = c.Clientset.RbacV1().ClusterRoles().Update(c.ctx, resource, metav1.UpdateOptions{})
 	}
 	if err != nil {
 		return fmt.Errorf("创建 VictoriaMetrics 采集权限失败: %w", err)
@@ -495,12 +508,12 @@ func createOrUpdateClusterRole(c *Client, resource *rbacv1.ClusterRole) error {
 }
 
 func createOrUpdateClusterRoleBinding(c *Client, resource *rbacv1.ClusterRoleBinding) error {
-	current, err := c.Clientset.RbacV1().ClusterRoleBindings().Get(c.Ctx(), resource.Name, metav1.GetOptions{})
+	current, err := c.Clientset.RbacV1().ClusterRoleBindings().Get(c.ctx, resource.Name, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
-		_, err = c.Clientset.RbacV1().ClusterRoleBindings().Create(c.Ctx(), resource, metav1.CreateOptions{})
+		_, err = c.Clientset.RbacV1().ClusterRoleBindings().Create(c.ctx, resource, metav1.CreateOptions{})
 	} else if err == nil {
 		resource.ResourceVersion = current.ResourceVersion
-		_, err = c.Clientset.RbacV1().ClusterRoleBindings().Update(c.Ctx(), resource, metav1.UpdateOptions{})
+		_, err = c.Clientset.RbacV1().ClusterRoleBindings().Update(c.ctx, resource, metav1.UpdateOptions{})
 	}
 	if err != nil {
 		return fmt.Errorf("绑定 VictoriaMetrics 采集权限失败: %w", err)
@@ -616,7 +629,7 @@ func kubeStateMetricsInstalled(c *Client) bool {
 	if c == nil || c.Clientset == nil {
 		return false
 	}
-	_, err := c.Clientset.AppsV1().Deployments(victoriaMetricsNamespace).Get(c.Ctx(), kubeStateMetricsName, metav1.GetOptions{})
+	_, err := c.Clientset.AppsV1().Deployments(victoriaMetricsNamespace).Get(c.ctx, kubeStateMetricsName, metav1.GetOptions{})
 	return err == nil
 }
 

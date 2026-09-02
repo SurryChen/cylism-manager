@@ -351,7 +351,7 @@ func (h *ApplicationHandler) IntegrationDiscoverApplications(c *gin.Context) {
 		apiShared.DBError(c, err.Error())
 		return
 	}
-	runtimes := h.queries.ApplicationRuntimeInfos(c.Request.Context(), K8s, filtered, releases)
+	runtimes := h.queries.ApplicationRuntimeInfos(c.Request.Context(), h.kubernetes, filtered, releases)
 	infos := make([]applicationDiscoveryInfo, 0, len(filtered))
 	for _, app := range filtered {
 		infos = append(infos, applicationDiscoveryInfoFromModel(app, runtimes[app.ID]))
@@ -369,7 +369,7 @@ func (h *ApplicationHandler) IntegrationGetApplicationRuntime(c *gin.Context) {
 		apiShared.DBError(c, err.Error())
 		return
 	}
-	model.Success(c, h.queries.ApplicationRuntimeInfos(c.Request.Context(), K8s, []model.Application{*app}, map[uint][]model.Release{app.ID: releases})[app.ID])
+	model.Success(c, h.queries.ApplicationRuntimeInfos(c.Request.Context(), h.kubernetes, []model.Application{*app}, map[uint][]model.Release{app.ID: releases})[app.ID])
 }
 
 func (h *ApplicationHandler) IntegrationListManagedConfigMaps(c *gin.Context) {
@@ -484,7 +484,7 @@ func (h *ApplicationHandler) IntegrationReplaceManagedConfigMap(c *gin.Context) 
 		return
 	}
 	spec.Config[file.Key] = req.Content
-	updated, err := h.templateFromRequest(app, &deploymentTemplateRequest{Name: template.Name, Description: template.Description, Enabled: template.Enabled, Spec: spec}, template.ID)
+	updated, err := h.templateFromRequest(c.Request.Context(), app, &deploymentTemplateRequest{Name: template.Name, Description: template.Description, Enabled: template.Enabled, Spec: spec}, template.ID)
 	if err != nil {
 		apiShared.ValidationError(c, err.Error())
 		return
@@ -642,6 +642,6 @@ func (h *ApplicationHandler) createRestartRelease(ctx context.Context, app *mode
 	if err != nil {
 		return nil, err
 	}
-	workflow.ExecuteAsync(app, prepared)
+	workflow.ExecuteAsync(ctx, app, prepared)
 	return prepared.Release, nil
 }

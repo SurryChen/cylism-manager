@@ -1,6 +1,7 @@
 package k8s
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -18,7 +19,7 @@ func TestInstallVictoriaMetricsCreatesSystemManagedPVCDeployment(t *testing.T) {
 		Status:     corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}}},
 	})}
 
-	status, err := client.InstallVictoriaMetrics(VictoriaMetricsConfig{
+	status, err := client.InstallVictoriaMetricsContext(context.Background(), VictoriaMetricsConfig{
 		NodeName:      "node-a",
 		Storage:       "10Gi",
 		RetentionDays: 14,
@@ -133,7 +134,7 @@ func TestInstallVictoriaMetricsRejectsRelocation(t *testing.T) {
 		existing,
 	)}
 
-	_, err := client.InstallVictoriaMetrics(VictoriaMetricsConfig{NodeName: "node-b", Storage: "10Gi", RetentionDays: 14})
+	_, err := client.InstallVictoriaMetricsContext(context.Background(), VictoriaMetricsConfig{NodeName: "node-b", Storage: "10Gi", RetentionDays: 14})
 	if err == nil || !strings.Contains(err.Error(), "不能直接修改") {
 		t.Fatalf("expected relocation error, got %v", err)
 	}
@@ -151,7 +152,7 @@ func TestStartVictoriaMetricsHostPathMigrationCreatesNodeBoundJob(t *testing.T) 
 		deployment,
 	)}
 
-	status, err := client.StartVictoriaMetricsHostPathMigration(VictoriaMetricsMigrationRequest{Storage: "10Gi"})
+	status, err := client.StartVictoriaMetricsHostPathMigrationContext(context.Background(), VictoriaMetricsMigrationRequest{Storage: "10Gi"})
 	if err != nil {
 		t.Fatal(err)
 	}

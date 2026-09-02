@@ -1,6 +1,7 @@
 package platform
 
 import (
+	"context"
 	"testing"
 
 	k8sclient "github.com/cylism/cylism-manager/internal/k8s"
@@ -12,10 +13,10 @@ type platformAdapterFake struct {
 	updated string
 }
 
-func (f *platformAdapterFake) PlatformDeploymentStatus() (*k8sclient.PlatformDeploymentStatus, error) {
+func (f *platformAdapterFake) PlatformDeploymentStatusContext(context.Context) (*k8sclient.PlatformDeploymentStatus, error) {
 	return f.status, nil
 }
-func (f *platformAdapterFake) UpdatePlatformDeployment(image string, _ uint) (string, error) {
+func (f *platformAdapterFake) UpdatePlatformDeploymentContext(_ context.Context, image string, _ uint) (string, error) {
 	f.updated = image
 	return "old-image", nil
 }
@@ -49,14 +50,14 @@ func TestReleaseServiceUsesMinimalPlatformAdapter(t *testing.T) {
 	if !service.Available() {
 		t.Fatal("expected release service to be available with the minimal platform adapter")
 	}
-	release, err := service.CreateRelease("registry.example.com/cylism-manager:1.0.0", "manual", "abc", "run-1")
+	release, err := service.CreateRelease(context.Background(), "registry.example.com/cylism-manager:1.0.0", "manual", "abc", "run-1")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if release.PreviousImage != "registry.example.com/cylism-manager:0.9" {
 		t.Fatalf("expected previous image from adapter, got %q", release.PreviousImage)
 	}
-	service.Apply(release.ID)
+	service.Apply(context.Background(), release.ID)
 	if adapter.updated != release.Image {
 		t.Fatalf("expected adapter update for %q, got %q", release.Image, adapter.updated)
 	}

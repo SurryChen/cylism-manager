@@ -73,7 +73,9 @@ func newTestAlertingHandler(platformURL ...string) (*AlertingHandler, *fakeNotif
 		configuredURL = platformURL[0]
 	}
 	h := NewAlertingHandler(configuredURL)
-	h.WithDependencies(AlertingDependencies{Component: k8sclient.AlertingComponentAdapter{Client: client}, Ready: func() bool { return client != nil && client.AlertingStatus().State == k8sclient.AlertingStateReady }, Secrets: k8sclient.SecretReader{Client: client}, Sender: sender})
+	h.WithDependencies(AlertingDependencies{Component: k8sclient.AlertingComponentAdapter{Client: client}, Ready: func(ctx context.Context) bool {
+		return client != nil && client.AlertingStatusContext(ctx).State == k8sclient.AlertingStateReady
+	}, Secrets: k8sclient.SecretReader{Client: client}, Sender: sender})
 	return h, sender
 }
 
@@ -89,7 +91,9 @@ func newTestMonitoringHandler() *MonitoringHandler {
 
 func newTestLoggingHandler(scope repository.LoggingScopeRepository) *LoggingHandler {
 	var client *k8sclient.Client = k8sClient
-	return NewLoggingHandler(scope, LoggingDependencies{Component: k8sclient.LoggingComponentAdapter{Client: client}, Ready: func() bool { return client != nil && client.LoggingStatus().LokiReady >= 1 }, FilterReader: func() loggingservice.FilterReader {
+	return NewLoggingHandler(scope, LoggingDependencies{Component: k8sclient.LoggingComponentAdapter{Client: client}, Ready: func(ctx context.Context) bool {
+		return client != nil && client.LoggingStatusContext(ctx).LokiReady >= 1
+	}, FilterReader: func() loggingservice.FilterReader {
 		if client == nil {
 			return nil
 		}

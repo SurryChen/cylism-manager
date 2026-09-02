@@ -109,7 +109,7 @@ func (h *ApplicationHandler) CreateDeploymentTemplate(c *gin.Context) {
 		apiShared.BadRequest(c, "上线模板定义无效")
 		return
 	}
-	template, err := h.templateFromRequest(app, &req, 0)
+	template, err := h.templateFromRequest(c.Request.Context(), app, &req, 0)
 	if err != nil {
 		apiShared.ValidationError(c, err.Error())
 		return
@@ -174,7 +174,7 @@ func (h *ApplicationHandler) UpdateDeploymentTemplate(c *gin.Context) {
 		apiShared.Conflict(c, fmt.Sprintf("模板版本冲突，当前版本为 %d", currentTemplate.Revision))
 		return
 	}
-	template, err := h.templateFromRequest(app, &req, templateID)
+	template, err := h.templateFromRequest(c.Request.Context(), app, &req, templateID)
 	if err != nil {
 		apiShared.ValidationError(c, err.Error())
 		return
@@ -272,7 +272,7 @@ func (h *ApplicationHandler) SetDefaultDeploymentTemplate(c *gin.Context) {
 	model.Success(c, gin.H{"id": templateID})
 }
 
-func (h *ApplicationHandler) templateFromRequest(app *model.Application, req *deploymentTemplateRequest, templateID uint) (*model.ApplicationDeploymentTemplate, error) {
+func (h *ApplicationHandler) templateFromRequest(ctx context.Context, app *model.Application, req *deploymentTemplateRequest, templateID uint) (*model.ApplicationDeploymentTemplate, error) {
 	if strings.TrimSpace(req.Name) == "" {
 		return nil, fmt.Errorf("模板名称必填")
 	}
@@ -329,11 +329,11 @@ func (h *ApplicationHandler) templateFromRequest(app *model.Application, req *de
 		return nil, fmt.Errorf("%s", issues[0].Message)
 	}
 	if len(spec.Volumes) > 0 {
-		if K8s == nil {
+		if h.kubernetes == nil || !h.kubernetes.KubernetesAvailable() {
 			return nil, fmt.Errorf("K8s 集群未连接，无法验证 PVC")
 		}
 		applicationContext := application.ApplicationContext{EnvironmentID: app.Environment.ID, Namespace: app.Environment.Namespace}
-		if err := application.NewKubernetesApplier(K8s).ValidatePersistentVolumeClaims(context.Background(), applicationContext, spec); err != nil {
+		if err := h.kubernetes.ValidatePersistentVolumeClaims(ctx, applicationContext, spec); err != nil {
 			return nil, err
 		}
 	}

@@ -14,11 +14,11 @@ type QueryFunc func(context.Context, string, url.Values) (Response, error)
 // bounded Loki query workflow. HTTP handlers only decode and map DTOs.
 type QueryService struct {
 	query QueryFunc
-	ready func() bool
+	ready func(context.Context) bool
 	scope ScopeResolver
 }
 
-func NewQueryService(query QueryFunc, ready func() bool, scope ScopeResolver) *QueryService {
+func NewQueryService(query QueryFunc, ready func(context.Context) bool, scope ScopeResolver) *QueryService {
 	return &QueryService{query: query, ready: ready, scope: scope}
 }
 
@@ -26,7 +26,7 @@ func (s *QueryService) Query(ctx context.Context, req QueryRequest, now time.Tim
 	if s == nil || s.query == nil {
 		return nil, fmt.Errorf("日志查询不可用")
 	}
-	if s.ready != nil && !s.ready() {
+	if s.ready != nil && !s.ready(ctx) {
 		return nil, fmt.Errorf("日志采集尚未就绪")
 	}
 	if err := ValidateQuery(&req); err != nil {

@@ -14,7 +14,7 @@ import (
 // orchestration. HTTP handlers only translate requests into these types.
 type Workflow struct {
 	Client     *Client
-	Ready      func() bool
+	Ready      func(context.Context) bool
 	Automation *AutomationService
 	Store      interface {
 		EventStore
@@ -46,28 +46,28 @@ func (w *Workflow) query() *QueryService {
 }
 
 func (w *Workflow) Overview(ctx context.Context) (Overview, error) {
-	if err := w.EnsureReady(); err != nil {
+	if err := w.EnsureReady(ctx); err != nil {
 		return Overview{}, err
 	}
 	return w.query().Overview(ctx, w.RecentResolved())
 }
 
 func (w *Workflow) Silences(ctx context.Context) ([]Silence, error) {
-	if err := w.EnsureReady(); err != nil {
+	if err := w.EnsureReady(ctx); err != nil {
 		return nil, err
 	}
 	return w.query().Silences(ctx)
 }
 
 func (w *Workflow) CreateSilence(ctx context.Context, req SilenceRequest, now time.Time) (SilenceResult, time.Time, error) {
-	if err := w.EnsureReady(); err != nil {
+	if err := w.EnsureReady(ctx); err != nil {
 		return SilenceResult{}, time.Time{}, err
 	}
 	return w.query().CreateSilence(ctx, req, now)
 }
 
 func (w *Workflow) DeleteSilence(ctx context.Context, id string) error {
-	if err := w.EnsureReady(); err != nil {
+	if err := w.EnsureReady(ctx); err != nil {
 		return err
 	}
 	return w.query().DeleteSilence(ctx, id)
@@ -98,11 +98,11 @@ func (w *Workflow) UpdatePolicy(ctx context.Context, policy *model.AlertAutomati
 	return w.Automation.UpdatePolicy(ctx, policy, w.SyncCurrent)
 }
 
-func (w *Workflow) EnsureReady() error {
+func (w *Workflow) EnsureReady(ctx context.Context) error {
 	if w == nil || w.Client == nil {
 		return fmt.Errorf("Alertmanager 查询不可用")
 	}
-	if w.Ready != nil && !w.Ready() {
+	if w.Ready != nil && !w.Ready(ctx) {
 		return fmt.Errorf("Alertmanager 尚未就绪")
 	}
 	return nil
@@ -116,7 +116,7 @@ func (w *Workflow) Persist(ctx context.Context, payload AlertNotification, force
 }
 
 func (w *Workflow) SyncCurrent(ctx context.Context) (int, error) {
-	if err := w.EnsureReady(); err != nil {
+	if err := w.EnsureReady(ctx); err != nil {
 		return 0, err
 	}
 	var alerts []Alert

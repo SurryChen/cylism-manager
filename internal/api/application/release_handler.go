@@ -19,7 +19,7 @@ type releaseRequest struct {
 }
 
 func (h *ApplicationHandler) CreateRelease(c *gin.Context) {
-	if K8s == nil {
+	if h.kubernetes == nil || !h.kubernetes.KubernetesAvailable() {
 		apiShared.K8sUnavailable(c)
 		return
 	}
@@ -70,7 +70,7 @@ func (h *ApplicationHandler) CreateRelease(c *gin.Context) {
 		apiShared.DBError(c, "登记受管文件失败")
 		return
 	}
-	workflow.ExecuteAsync(app, prepared)
+	workflow.ExecuteAsync(c.Request.Context(), app, prepared)
 	model.SuccessWithMessage(c, prepared.Release, "发布已创建")
 }
 
@@ -78,7 +78,7 @@ func (h *ApplicationHandler) CreateRelease(c *gin.Context) {
 // managed resources, without requiring the caller to choose a template/version.
 
 func (h *ApplicationHandler) RestartApplication(c *gin.Context) {
-	if K8s == nil {
+	if h.kubernetes == nil || !h.kubernetes.KubernetesAvailable() {
 		apiShared.K8sUnavailable(c)
 		return
 	}
@@ -102,12 +102,12 @@ func (h *ApplicationHandler) RestartApplication(c *gin.Context) {
 		apiShared.ValidationError(c, err.Error())
 		return
 	}
-	workflow.ExecuteAsync(app, prepared)
+	workflow.ExecuteAsync(c.Request.Context(), app, prepared)
 	model.SuccessWithMessage(c, prepared.Release, "应用重启已创建")
 }
 
 func (h *ApplicationHandler) RetryRelease(c *gin.Context) {
-	if K8s == nil {
+	if h.kubernetes == nil || !h.kubernetes.KubernetesAvailable() {
 		apiShared.K8sUnavailable(c)
 		return
 	}
@@ -127,7 +127,7 @@ func (h *ApplicationHandler) RetryRelease(c *gin.Context) {
 		return
 	}
 	workflow := h.releaseWorkflow()
-	prepared, err := workflow.Retry(releaseID, apiShared.UserID(c))
+	prepared, err := workflow.Retry(c.Request.Context(), releaseID, apiShared.UserID(c))
 	if err != nil {
 		apiShared.BadRequest(c, "无法重试该发布")
 		return
@@ -137,12 +137,12 @@ func (h *ApplicationHandler) RetryRelease(c *gin.Context) {
 		apiShared.NotFound(c, "应用不存在")
 		return
 	}
-	workflow.ExecuteAsync(app, prepared)
+	workflow.ExecuteAsync(c.Request.Context(), app, prepared)
 	model.SuccessWithMessage(c, prepared.Release, "重试已创建")
 }
 
 func (h *ApplicationHandler) RollbackRelease(c *gin.Context) {
-	if K8s == nil {
+	if h.kubernetes == nil || !h.kubernetes.KubernetesAvailable() {
 		apiShared.K8sUnavailable(c)
 		return
 	}
@@ -162,7 +162,7 @@ func (h *ApplicationHandler) RollbackRelease(c *gin.Context) {
 		return
 	}
 	workflow := h.releaseWorkflow()
-	prepared, err := workflow.Rollback(releaseID, apiShared.UserID(c))
+	prepared, err := workflow.Rollback(c.Request.Context(), releaseID, apiShared.UserID(c))
 	if err != nil {
 		apiShared.BadRequest(c, "无法回滚该发布")
 		return
@@ -172,7 +172,7 @@ func (h *ApplicationHandler) RollbackRelease(c *gin.Context) {
 		apiShared.NotFound(c, "应用不存在")
 		return
 	}
-	workflow.ExecuteAsync(app, prepared)
+	workflow.ExecuteAsync(c.Request.Context(), app, prepared)
 	model.SuccessWithMessage(c, prepared.Release, "回滚已创建")
 }
 
@@ -201,7 +201,7 @@ func (h *ApplicationHandler) GetRelease(c *gin.Context) {
 		model.Success(c, release)
 		return
 	}
-	if K8s == nil {
+	if h.kubernetes == nil || !h.kubernetes.KubernetesAvailable() {
 		release.Runtime = &model.ReleaseRuntime{Tracking: "unavailable", Pods: []model.ReleasePodRuntime{}, Diagnostic: "Kubernetes 集群未连接，无法读取 Pod 运行态"}
 		model.Success(c, release)
 		return
@@ -211,7 +211,7 @@ func (h *ApplicationHandler) GetRelease(c *gin.Context) {
 		apiShared.NotFound(c, "应用不存在")
 		return
 	}
-	runtime, err := application.NewKubernetesApplier(K8s).InspectReleasePods(c.Request.Context(), application.ApplicationContext{Namespace: applicationModel.Environment.Namespace, ApplicationName: applicationModel.Name, ReleaseSequence: release.Sequence})
+	runtime, err := h.kubernetes.InspectReleasePods(c.Request.Context(), application.ApplicationContext{Namespace: applicationModel.Environment.Namespace, ApplicationName: applicationModel.Name, ReleaseSequence: release.Sequence})
 	if err != nil {
 		release.Runtime = &model.ReleaseRuntime{Tracking: "unavailable", Pods: []model.ReleasePodRuntime{}, Diagnostic: "读取 Pod 运行态失败: " + err.Error()}
 	} else {

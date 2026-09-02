@@ -73,7 +73,7 @@ func TestIntegrationConfigMapReadsAndReplacesTemplateConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	h := NewApplicationHandler(s, []byte("01234567890123456789012345678901"))
+	h := NewApplicationHandler(s, []byte("01234567890123456789012345678901"), nil)
 	claims := &auth.DelegationClaims{UserID: 1, ProjectID: app.ProjectID, EnvironmentIDs: []uint{app.EnvironmentID}, ApplicationIDs: []uint{app.ID}, Capability: "config-editor", Actions: []string{"configmap:read", "configmap:write"}}
 	r := gin.New()
 	r.Use(func(c *gin.Context) { c.Set("delegation", claims); c.Set("user_id", uint(1)); c.Next() })
