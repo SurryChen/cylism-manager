@@ -555,12 +555,19 @@ npm --prefix web run build
 
 ## 十、下一步执行项
 
-阶段二已验收完成。下一步进入阶段三的 Service 组装迁移：继续将 Router 中尚存的 Service/Handler 创建移动到 Bootstrap，并按领域补齐依赖容器和回归测试。迁移仍应按单领域推进，避免一次性移动所有 Handler 导致问题难以定位。
+阶段三已完成。阶段四 Handler 组装迁移完成后，下一步将进入阶段五的后台任务与生命周期迁移。
 
-阶段三当前进度：
+阶段三完成情况：
 
 - `bootstrap.Services` 已增加 Application Query、Platform Release、Registry Mirror/Managed/Proxy、Monitoring/Logging/Alerting Component/Query Service；
 - Bootstrap Handler 组装已优先注入上述 Service，保留旧构造函数仅用于现有测试与嵌入方兼容；
 - 已补齐 Auth 临时令牌、Alerting Automation、Runtime Manager/Registry、System Component 列表 Service，并通过 `Repositories` 组合结构向 Service 提供窄 Repository 接口；
 - 域名纯构建逻辑已改为无状态函数，Alerting QueryService 已在 Handler 创建时注入并复用，System Component 的 List/Update/Revert/Reconcile 已统一由 ComponentService 承载；
 - 生产组装路径已改为使用上述 Bootstrap 实例。剩余旧构造函数仅用于测试和嵌入方兼容，属于阶段六的过渡依赖清理；全量网络测试仍需在允许 IPv6 监听的宿主机环境执行。
+
+阶段四完成情况：
+
+- `RouteDependencies` 已按 Auth、Application、Runtime/Agent、Delivery、Infrastructure 和 System 分组，Router 仅绑定已组装的依赖；完整路由快照保持不变；
+- Bootstrap 已成为生产 Handler 的唯一构造位置。Runtime 改用最小 Manager port，Agent、Cluster DNS、Domain、Certificate、Node Join、Storage、K8s Resource 和 Delivery Registry 使用显式窄 Adapter 或 Service；
+- Monitoring、Logging、Alerting 和 System Component 的生产 Handler 接收 Bootstrap 复用的 Query、Component、Automation 与 ComponentService；DBAdmin 改为依赖最小数据库 Repository port；
+- 旧宽构造和 fallback 保留并标记为 Deprecated，仅供测试和嵌入方过渡使用，计划在阶段六删除。

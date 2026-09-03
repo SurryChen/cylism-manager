@@ -88,6 +88,7 @@ type ManagedDomainInfo struct {
 	ApplicationCount int64         `json:"application_count"`
 }
 
+// Deprecated: use NewDomainHandlerWithDependencies from Bootstrap.
 func NewDomainHandlerWithService(domains repository.NetworkRepository, client interface{}, service *networkservice.Service) *DomainHandler {
 	if service == nil {
 		service = networkservice.NewService(domains, domains)
@@ -108,6 +109,12 @@ func NewDomainHandlerWithService(domains repository.NetworkRepository, client in
 	if value, ok := client.(networkservice.IngressAdapter); ok {
 		service.WithIngressAdapter(value)
 	}
+	return NewDomainHandlerWithDependencies(adapter, service)
+}
+
+// NewDomainHandlerWithDependencies uses the already configured network
+// service and the narrow Kubernetes port supplied by Bootstrap.
+func NewDomainHandlerWithDependencies(adapter DomainKubernetesAdapter, service *networkservice.Service) *DomainHandler {
 	return &DomainHandler{k8s: adapter, network: service}
 }
 

@@ -23,8 +23,15 @@ type AgentOperationHandler struct {
 	maintenanceCleanupExecutor AgentMaintenanceCleanupExecutor
 }
 
+// Deprecated: use NewAgentOperationHandlerWithKubernetesAdapter from Bootstrap.
 func NewAgentOperationHandler(store repository.AgentOperationManagementRepository, client interface{}) *AgentOperationHandler {
 	return &AgentOperationHandler{store: store, client: adaptClient(client)}
+}
+
+// NewAgentOperationHandlerWithKubernetesAdapter constructs the browser
+// approval boundary from the narrow Bootstrap-owned adapter.
+func NewAgentOperationHandlerWithKubernetesAdapter(store repository.AgentOperationManagementRepository, client KubernetesAdapter) *AgentOperationHandler {
+	return &AgentOperationHandler{store: store, client: client}
 }
 
 func (h *AgentOperationHandler) WithRegistryPullExecutor(executor AgentRegistryPullExecutor) *AgentOperationHandler {

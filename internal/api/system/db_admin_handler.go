@@ -7,8 +7,8 @@ import (
 
 	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 	"github.com/cylism/cylism-manager/internal/model"
-	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 	"gorm.io/gorm/schema"
 )
 
@@ -29,11 +29,17 @@ var autoColumns = map[string]bool{
 
 // DBAdminHandler 数据库管理 handler
 type DBAdminHandler struct {
-	store *store.Store
+	store DBAdminRepository
+}
+
+// DBAdminRepository limits this legacy generic-table endpoint to the database
+// capability it requires, rather than coupling it to Store.
+type DBAdminRepository interface {
+	DB() *gorm.DB
 }
 
 // NewDBAdminHandler 创建 DBAdminHandler
-func NewDBAdminHandler(s *store.Store) *DBAdminHandler {
+func NewDBAdminHandler(s DBAdminRepository) *DBAdminHandler {
 	return &DBAdminHandler{store: s}
 }
 

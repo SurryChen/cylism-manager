@@ -88,3 +88,37 @@ func TestBuildServicesComposesDomainServices(t *testing.T) {
 		t.Fatal("expected runtime and system-component services to be composed")
 	}
 }
+
+func TestBuildRouteDependenciesComposesAllHandlerGroups(t *testing.T) {
+	container, err := NewContainer(Config{
+		DBPath:          ":memory:",
+		EncryptionKey:   []byte("01234567890123456789012345678901"),
+		JWTSecret:       []byte("secret"),
+		AccessTokenTTL:  time.Minute,
+		RefreshTokenTTL: time.Hour,
+	})
+	if err != nil {
+		t.Fatalf("NewContainer: %v", err)
+	}
+
+	deps := container.BuildRouteDependencies()
+	if deps.Auth.Config != container.Auth || deps.Auth.Handler == nil || deps.Auth.Audit == nil {
+		t.Fatal("expected auth dependencies composed by bootstrap")
+	}
+	if deps.Application.Handler == nil {
+		t.Fatal("expected application handler composed by bootstrap")
+	}
+	if deps.RuntimeAgent.Artifact == nil || deps.RuntimeAgent.Agent == nil || deps.RuntimeAgent.Runtime == nil || deps.RuntimeAgent.AgentOp == nil || deps.RuntimeAgent.Components == nil || deps.RuntimeAgent.Network == nil {
+		t.Fatal("expected runtime and agent handlers composed by bootstrap")
+	}
+	if deps.Delivery.Platform == nil || deps.Delivery.Image == nil || deps.Delivery.NodeMirrors == nil || deps.Delivery.Managed == nil || deps.Delivery.Proxy == nil || deps.Delivery.Chart == nil {
+		t.Fatal("expected delivery handlers composed by bootstrap")
+	}
+	infra := deps.Infrastructure
+	if infra.Network != deps.RuntimeAgent.Network || infra.Server == nil || infra.NetworkDiag == nil || infra.Terminal == nil || infra.Site == nil || infra.Operation == nil || infra.Domain == nil || infra.Node == nil || infra.NodeJoin == nil || infra.Ingress == nil || infra.Certificate == nil || infra.K8s == nil || infra.Storage == nil || infra.Tailscale == nil || infra.CRD == nil || infra.AuditLog == nil || infra.DBAdmin == nil {
+		t.Fatal("expected infrastructure handlers composed by bootstrap")
+	}
+	if deps.System.Dashboard == nil || deps.System.Monitoring == nil || deps.System.Alerting == nil || deps.System.Logging == nil {
+		t.Fatal("expected system handlers composed by bootstrap")
+	}
+}

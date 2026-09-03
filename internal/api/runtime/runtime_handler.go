@@ -1,6 +1,7 @@
 package runtimeapi
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
@@ -19,10 +20,19 @@ import (
 type RuntimeHandler struct {
 	runtimes repository.RuntimeManagementRepository
 	encKey   []byte
-	k8s      *runtime.KubernetesManager
+	manager  RuntimeManager
 	registry *runtime.Registry
 	// newChatClient overrides the runtime chat client factory in tests.
 	newChatClient chatClientFactory
+}
+
+// RuntimeManager is the Kubernetes capability required by Runtime HTTP
+// operations. Bootstrap provides the concrete implementation.
+type RuntimeManager interface {
+	Apply(context.Context, *model.RuntimeInstance, string, string) error
+	Delete(context.Context, *model.RuntimeInstance, bool) error
+	DeploymentReady(context.Context, *model.RuntimeInstance) (bool, error)
+	Health(context.Context, *model.RuntimeInstance) (string, string)
 }
 
 type runtimeRequest struct {
@@ -46,6 +56,7 @@ type runtimeRequest struct {
 	Config           map[string]interface{} `json:"config"`
 }
 
+// Deprecated: use NewRuntimeHandlerWithDependencies from Bootstrap.
 func NewRuntimeHandler(runtimes repository.RuntimeManagementRepository, encKey []byte, k8sManager *runtime.KubernetesManager, registry *runtime.Registry) *RuntimeHandler {
 	if registry == nil {
 		registry = runtime.BuiltinRegistry()
@@ -53,7 +64,13 @@ func NewRuntimeHandler(runtimes repository.RuntimeManagementRepository, encKey [
 			registry = k8sManager.Registry
 		}
 	}
-	return &RuntimeHandler{runtimes: runtimes, encKey: encKey, k8s: k8sManager, registry: registry}
+	return NewRuntimeHandlerWithDependencies(runtimes, encKey, k8sManager, registry)
+}
+
+// NewRuntimeHandlerWithDependencies constructs a RuntimeHandler using the
+// Manager and Registry owned by Bootstrap. It never creates a fallback manager.
+func NewRuntimeHandlerWithDependencies(runtimes repository.RuntimeManagementRepository, encKey []byte, manager RuntimeManager, registry *runtime.Registry) *RuntimeHandler {
+	return &RuntimeHandler{runtimes: runtimes, encKey: append([]byte(nil), encKey...), manager: manager, registry: registry}
 }
 
 func (h *RuntimeHandler) Catalog(c *gin.Context) {
@@ -152,7 +169,7 @@ func (h *RuntimeHandler) Deploy(c *gin.Context) {
 		apiShared.NotFound(c, "Runtime 不存在")
 		return
 	}
-	if h.k8s == nil {
+	if h.manager == nil {
 		if instance.DeploymentMode != model.RuntimeDeploymentExternal {
 			apiShared.ServiceUnavailable(c, model.CodeK8sUnavailable, "Kubernetes 集群未连接")
 			return
@@ -163,11 +180,7 @@ func (h *RuntimeHandler) Deploy(c *gin.Context) {
 			apiShared.ValidationError(c, "外部 Runtime 必须提供连接地址")
 			return
 		}
-		checker := h.k8s
-		if checker == nil {
-			checker = runtime.NewKubernetesManager(nil)
-		}
-		status, detail := checker.Health(c.Request.Context(), instance)
+		status, detail := h.manager.Health(c.Request.Context(), instance)
 		instance.Status, instance.HealthStatus, instance.HealthDetail = status, status, detail
 		instance.ObservedGeneration = instance.DesiredGeneration
 		_ = h.runtimes.UpdateRuntime(instance)
@@ -201,7 +214,7 @@ func (h *RuntimeHandler) Deploy(c *gin.Context) {
 		apiShared.InternalError(c, "读取 Runtime API 凭据失败")
 		return
 	}
-	if err := h.k8s.Apply(c.Request.Context(), instance, apiKey, runtimeAPIKey); err != nil {
+	if err := h.manager.Apply(c.Request.Context(), instance, apiKey, runtimeAPIKey); err != nil {
 		instance.Status = model.RuntimeStatusFailed
 		instance.HealthDetail = err.Error()
 		_ = h.runtimes.UpdateRuntime(instance)
@@ -209,7 +222,7 @@ func (h *RuntimeHandler) Deploy(c *gin.Context) {
 		return
 	}
 	instance.Status = model.RuntimeStatusDeploying
-	if ready, readyErr := h.k8s.DeploymentReady(c.Request.Context(), instance); readyErr == nil && ready {
+	if ready, readyErr := h.manager.DeploymentReady(c.Request.Context(), instance); readyErr == nil && ready {
 		instance.Status = model.RuntimeStatusReady
 	}
 	instance.ObservedGeneration = instance.DesiredGeneration
@@ -232,15 +245,11 @@ func (h *RuntimeHandler) Health(c *gin.Context) {
 		apiShared.NotFound(c, "Runtime 不存在")
 		return
 	}
-	if h.k8s == nil && instance.DeploymentMode != model.RuntimeDeploymentExternal {
+	if h.manager == nil {
 		apiShared.ServiceUnavailable(c, model.CodeK8sUnavailable, "Kubernetes 集群未连接")
 		return
 	}
-	checker := h.k8s
-	if checker == nil {
-		checker = runtime.NewKubernetesManager(nil)
-	}
-	status, detail := checker.Health(c.Request.Context(), instance)
+	status, detail := h.manager.Health(c.Request.Context(), instance)
 	if err := h.runtimes.UpdateRuntimeHealth(instance.ID, status, detail, time.Now()); err != nil {
 		apiShared.DBError(c, "保存健康检查结果失败")
 		return
@@ -267,7 +276,7 @@ func (h *RuntimeHandler) Uninstall(c *gin.Context) {
 		apiShared.NotFound(c, "Runtime 不存在")
 		return
 	}
-	if h.k8s == nil && instance.DeploymentMode != model.RuntimeDeploymentExternal {
+	if h.manager == nil && instance.DeploymentMode != model.RuntimeDeploymentExternal {
 		apiShared.ServiceUnavailable(c, model.CodeK8sUnavailable, "Kubernetes 集群未连接")
 		return
 	}
@@ -282,7 +291,7 @@ func (h *RuntimeHandler) Uninstall(c *gin.Context) {
 		return
 	}
 	deletePVC := c.Query("delete_data") == "true"
-	if err := h.k8s.Delete(c.Request.Context(), instance, deletePVC); err != nil {
+	if err := h.manager.Delete(c.Request.Context(), instance, deletePVC); err != nil {
 		apiShared.K8sAPIError(c, err.Error())
 		return
 	}
@@ -326,7 +335,7 @@ func (h *RuntimeHandler) UpdateAgentTools(c *gin.Context) {
 		apiShared.ValidationError(c, "请先安装 Cylism Agent 工具")
 		return
 	}
-	if h.k8s == nil {
+	if h.manager == nil {
 		apiShared.ServiceUnavailable(c, model.CodeK8sUnavailable, "Kubernetes 集群未连接")
 		return
 	}
@@ -341,7 +350,7 @@ func (h *RuntimeHandler) UpdateAgentTools(c *gin.Context) {
 		return
 	}
 	instance.DesiredGeneration++
-	if err := h.k8s.Apply(c.Request.Context(), instance, apiKey, runtimeAPIKey); err != nil {
+	if err := h.manager.Apply(c.Request.Context(), instance, apiKey, runtimeAPIKey); err != nil {
 		instance.Status = model.RuntimeStatusFailed
 		instance.HealthDetail = err.Error()
 		_ = h.runtimes.UpdateRuntime(instance)
@@ -373,7 +382,7 @@ func (h *RuntimeHandler) setAgentTools(c *gin.Context, enabled bool) {
 		apiShared.ValidationError(c, "只有受管 Nanobot Runtime 支持 Cylism Agent 工具")
 		return
 	}
-	if h.k8s == nil {
+	if h.manager == nil {
 		apiShared.ServiceUnavailable(c, model.CodeK8sUnavailable, "Kubernetes 集群未连接")
 		return
 	}
@@ -403,7 +412,7 @@ func (h *RuntimeHandler) setAgentTools(c *gin.Context, enabled bool) {
 	}
 	instance.AgentToolEnabled = enabled
 	instance.DesiredGeneration++
-	if err := h.k8s.Apply(c.Request.Context(), instance, apiKey, runtimeAPIKey); err != nil {
+	if err := h.manager.Apply(c.Request.Context(), instance, apiKey, runtimeAPIKey); err != nil {
 		instance.Status = model.RuntimeStatusFailed
 		instance.HealthDetail = err.Error()
 		_ = h.runtimes.UpdateRuntime(instance)

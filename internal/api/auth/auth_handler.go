@@ -50,6 +50,15 @@ func NewAuthHandlerWithTemporaryService(users repository.UserRepository, jwtSecr
 	return &AuthHandler{users: users, jwtSecret: jwtSecret, accessTokenTTL: accessTTL, refreshTokenTTL: refreshTTL, temporaryTokens: temporaryTokens}
 }
 
+// NewAuthHandlerWithDependencies constructs an AuthHandler from dependencies
+// composed by Bootstrap. It does not create services.
+func NewAuthHandlerWithDependencies(users repository.UserRepository, config *AuthConfig, temporaryTokens *authservice.TemporaryTokenService) *AuthHandler {
+	if config == nil {
+		return &AuthHandler{users: users, temporaryTokens: temporaryTokens}
+	}
+	return NewAuthHandlerWithTemporaryService(users, config.JWTSecret, config.AccessTokenTTL, config.RefreshTokenTTL, temporaryTokens)
+}
+
 type temporaryLoginReq struct {
 	Token string `json:"token" binding:"required"`
 }

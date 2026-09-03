@@ -37,8 +37,15 @@ type AgentHandler struct {
 	monitoringDiskGrowth *monitoringservice.AgentDiskGrowthService
 }
 
+// Deprecated: use NewAgentHandlerWithKubernetesAdapter from Bootstrap.
 func NewAgentHandler(store repository.AgentReadRepository, client interface{}, authenticator AgentAuthenticator) *AgentHandler {
 	return &AgentHandler{store: store, client: adaptClient(client), authenticator: authenticator}
+}
+
+// NewAgentHandlerWithKubernetesAdapter constructs an AgentHandler from the
+// narrow Kubernetes adapter supplied by Bootstrap.
+func NewAgentHandlerWithKubernetesAdapter(store repository.AgentReadRepository, client KubernetesAdapter, authenticator AgentAuthenticator) *AgentHandler {
+	return &AgentHandler{store: store, client: client, authenticator: authenticator}
 }
 
 func (h *AgentHandler) WithRegistryVerifier(verifier AgentRegistryNodeVerifier) *AgentHandler {
