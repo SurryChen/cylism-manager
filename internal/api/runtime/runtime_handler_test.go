@@ -1,6 +1,7 @@
 package runtimeapi
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 	"strings"
@@ -14,6 +15,22 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 )
+
+type runtimeManagerStub struct {
+	healthContext context.Context
+}
+
+func (s *runtimeManagerStub) Apply(context.Context, *model.RuntimeInstance, string, string) error {
+	return nil
+}
+func (s *runtimeManagerStub) Delete(context.Context, *model.RuntimeInstance, bool) error { return nil }
+func (s *runtimeManagerStub) DeploymentReady(context.Context, *model.RuntimeInstance) (bool, error) {
+	return true, nil
+}
+func (s *runtimeManagerStub) Health(ctx context.Context, _ *model.RuntimeInstance) (string, string) {
+	s.healthContext = ctx
+	return model.RuntimeStatusReady, "healthy"
+}
 
 func setupRuntimeRouter() (*gin.Engine, *store.Store) {
 	gin.SetMode(gin.TestMode)
@@ -226,6 +243,33 @@ func TestRuntimeHandlerAllowsExternalConnectionWithoutKubernetesImage(t *testing
 	instance, err := s.GetRuntime(responseID(t, create.Body.Bytes()))
 	if err != nil || instance.DeploymentMode != model.RuntimeDeploymentExternal || instance.Image != "external" {
 		t.Fatalf("unexpected external runtime: %+v err=%v", instance, err)
+	}
+}
+
+func TestRuntimeHandlerPropagatesRequestContextToManager(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	s, err := store.New(":memory:")
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	instance := &model.RuntimeInstance{Name: "nanobot-remote", RuntimeType: model.RuntimeTypeNanobot, DeploymentMode: model.RuntimeDeploymentExternal, EndpointURL: "https://runtime.example.test", Status: model.RuntimeStatusReady}
+	if err := s.CreateRuntime(instance); err != nil {
+		t.Fatalf("create runtime: %v", err)
+	}
+	manager := &runtimeManagerStub{}
+	handler := NewRuntimeHandlerWithDependencies(s, []byte("01234567890123456789012345678901"), manager, runtime.BuiltinRegistry())
+	router := gin.New()
+	router.POST("/api/runtimes/:id/health", handler.Health)
+
+	type contextKey struct{}
+	ctx := context.WithValue(context.Background(), contextKey{}, "request-value")
+	request := newJSONRequest(http.MethodPost, "/api/runtimes/"+itoa(instance.ID)+"/health", nil).WithContext(ctx)
+	response := serve(router, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("health status = %d: %s", response.Code, response.Body.String())
+	}
+	if manager.healthContext == nil || manager.healthContext.Value(contextKey{}) != "request-value" {
+		t.Fatal("runtime manager did not receive the HTTP request context")
 	}
 }
 

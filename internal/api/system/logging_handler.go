@@ -123,6 +123,37 @@ func NewLoggingHandler(scope repository.LoggingScopeRepository, deps LoggingDepe
 	return handler
 }
 
+// NewLoggingHandlerWithComposedDependencies receives services composed by
+// Bootstrap. It intentionally does not create query or component services.
+func NewLoggingHandlerWithComposedDependencies(scope repository.LoggingScopeRepository, deps LoggingDependencies) *LoggingHandler {
+	return &LoggingHandler{
+		scope:        scope,
+		query:        newLokiQueryFunc(deps.Query),
+		now:          time.Now,
+		component:    deps.ComponentService,
+		filterReader: deps.FilterReader,
+		queryService: deps.QueryService,
+		ready:        deps.Ready,
+	}
+}
+
+func newLokiQueryFunc(query loggingservice.QueryFunc) lokiQueryFunc {
+	return func(ctx context.Context, path string, values url.Values) (*lokiQueryResponse, error) {
+		if query == nil {
+			return nil, fmt.Errorf("日志查询不可用")
+		}
+		result, err := query(ctx, path, values)
+		if err != nil {
+			return nil, err
+		}
+		response := &lokiQueryResponse{Status: "success", Data: lokiQueryData{ResultType: "streams"}}
+		for _, stream := range result.Streams {
+			response.Data.Result = append(response.Data.Result, lokiStream{Stream: stream.Labels, Values: stream.Values})
+		}
+		return response, nil
+	}
+}
+
 func (h *LoggingHandler) configureQueryService() {
 	h.queryService = loggingservice.NewQueryService(loggingQueryAdapter(func(ctx context.Context, path string, values url.Values) (*lokiQueryResponse, error) {
 		return h.query(ctx, path, values)

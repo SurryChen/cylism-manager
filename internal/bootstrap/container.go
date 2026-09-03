@@ -66,7 +66,7 @@ func NewContainer(cfg Config) (*Container, error) {
 		},
 	}
 	container.Services = BuildServices(repos, client, container.Adapters, cfg.EncryptionKey)
-	container.components = systemapi.NewSystemComponentHandlerWithComposedService(container.Store, container.Adapters.SystemComponent, container.Services.SystemComponent, container.Services.SystemComponentList)
+	container.components = systemapi.NewSystemComponentHandlerWithComposedDependencies(container.Store, container.Adapters.SystemComponent, container.Services.SystemComponent, container.Services.SystemComponentList)
 	return container, nil
 }
 
@@ -86,7 +86,7 @@ func (c *Container) configEncryptionKey() []byte { return append([]byte(nil), c.
 // rebuilding a handler with a separate dependency graph at runtime.
 func (c *Container) componentHandler() *systemapi.SystemComponentHandler {
 	if c.components == nil {
-		c.components = systemapi.NewSystemComponentHandlerWithComposedService(c.Store, c.Adapters.SystemComponent, c.Services.SystemComponent, c.Services.SystemComponentList)
+		c.components = systemapi.NewSystemComponentHandlerWithComposedDependencies(c.Store, c.Adapters.SystemComponent, c.Services.SystemComponent, c.Services.SystemComponentList)
 	}
 	return c.components
 }

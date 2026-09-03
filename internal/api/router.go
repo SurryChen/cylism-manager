@@ -8,31 +8,32 @@ import (
 // RegisterRoutes binds all HTTP/WebSocket routes using the fully composed
 // dependency graph. No services, adapters, or handlers are constructed here.
 func RegisterRoutes(r *gin.Engine, deps RouteDependencies) {
-	registerPublicRoutes(r, deps.Artifact, deps.Agent)
-	registerAuthRoutes(r, deps.Auth, deps.AuthConfig)
+	registerPublicRoutes(r, deps.RuntimeAgent.Artifact, deps.RuntimeAgent.Agent)
+	registerAuthRoutes(r, deps.Auth.Handler, deps.Auth.Config)
 
 	apiGroup := r.Group("/api")
-	if deps.AuthConfig != nil {
-		apiGroup.Use(authapi.JWTAuthMiddleware(deps.AuthConfig.JWTSecret))
+	if deps.Auth.Config != nil {
+		apiGroup.Use(authapi.JWTAuthMiddleware(deps.Auth.Config.JWTSecret))
 	}
-	if deps.Audit != nil {
-		apiGroup.Use(deps.Audit)
+	if deps.Auth.Audit != nil {
+		apiGroup.Use(deps.Auth.Audit)
 	}
-	registerRuntimeRoutes(apiGroup, deps.Runtime, deps.AgentOp, deps.Components, deps.Network)
-	registerDashboardRoutes(apiGroup, deps.Dashboard)
+	registerRuntimeRoutes(apiGroup, deps.RuntimeAgent.Runtime, deps.RuntimeAgent.AgentOp, deps.RuntimeAgent.Components, deps.RuntimeAgent.Network)
+	registerDashboardRoutes(apiGroup, deps.System.Dashboard)
 	registerDeliveryRoutes(r, apiGroup, deliveryRouteHandlers{
-		image: deps.Image, nodeMirrors: deps.NodeMirrors, managed: deps.Managed,
-		proxy: deps.Proxy, chart: deps.Chart, platform: deps.Platform,
+		image: deps.Delivery.Image, nodeMirrors: deps.Delivery.NodeMirrors, managed: deps.Delivery.Managed,
+		proxy: deps.Delivery.Proxy, chart: deps.Delivery.Chart, platform: deps.Delivery.Platform,
 	})
-	registerMonitoringRoutes(apiGroup, deps.Monitoring)
-	registerLoggingRoutes(apiGroup, deps.Logging)
-	registerAlertingRoutes(r, apiGroup, deps.Alerting)
-	if deps.AuthConfig != nil {
-		registerApplicationRoutes(r, apiGroup, deps.Application, deps.AuthConfig.JWTSecret, deps.Audit)
+	registerMonitoringRoutes(apiGroup, deps.System.Monitoring)
+	registerLoggingRoutes(apiGroup, deps.System.Logging)
+	registerAlertingRoutes(r, apiGroup, deps.System.Alerting)
+	if deps.Auth.Config != nil {
+		registerApplicationRoutes(r, apiGroup, deps.Application.Handler, deps.Auth.Config.JWTSecret, deps.Auth.Audit)
 	} else {
-		registerApplicationRoutes(r, apiGroup, deps.Application, nil, deps.Audit)
+		registerApplicationRoutes(r, apiGroup, deps.Application.Handler, nil, deps.Auth.Audit)
 	}
-	registerInfrastructureRoutes(apiGroup, deps.Server, deps.NetworkDiag, deps.Terminal, deps.Site,
-		deps.Operation, deps.Domain, deps.Node, deps.NodeJoin, deps.Ingress, deps.Certificate,
-		deps.K8s, deps.Storage, deps.Network, deps.Tailscale, deps.CRD, deps.AuditLog, deps.DBAdmin)
+	infra := deps.Infrastructure
+	registerInfrastructureRoutes(apiGroup, infra.Server, infra.NetworkDiag, infra.Terminal, infra.Site,
+		infra.Operation, infra.Domain, infra.Node, infra.NodeJoin, infra.Ingress, infra.Certificate,
+		infra.K8s, infra.Storage, infra.Network, infra.Tailscale, infra.CRD, infra.AuditLog, infra.DBAdmin)
 }

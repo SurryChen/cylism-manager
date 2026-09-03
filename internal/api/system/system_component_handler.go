@@ -38,6 +38,12 @@ func NewSystemComponentHandlerWithComposedService(configs repository.SystemCompo
 	return &SystemComponentHandler{configs: configs, adapter: adapter, listService: listService, service: service}
 }
 
+// NewSystemComponentHandlerWithComposedDependencies is the Bootstrap entry
+// point for the singleton component Handler.
+func NewSystemComponentHandlerWithComposedDependencies(configs repository.SystemComponentRepository, adapter SystemComponentAdapter, service *systemcomponentservice.ComponentService, listService *systemcomponentservice.ComponentListService) *SystemComponentHandler {
+	return NewSystemComponentHandlerWithComposedService(configs, adapter, service, listService)
+}
+
 // WithAdapter replaces the Kubernetes boundary for focused handler tests.
 func (h *SystemComponentHandler) WithAdapter(adapter SystemComponentAdapter) *SystemComponentHandler {
 	h.adapter = adapter

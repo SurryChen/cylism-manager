@@ -57,6 +57,18 @@ func NewMonitoringHandler(deps MonitoringDependencies) *MonitoringHandler {
 	return handler
 }
 
+// NewMonitoringHandlerWithComposedDependencies receives services created by
+// Bootstrap. It intentionally does not create query or component services.
+func NewMonitoringHandlerWithComposedDependencies(deps MonitoringDependencies) *MonitoringHandler {
+	return &MonitoringHandler{
+		query:        monitoringQueryFunc(deps.Query),
+		queryService: deps.QueryService,
+		component:    deps.ComponentService,
+		consumers:    deps.Consumers,
+		status:       deps.Status,
+	}
+}
+
 // WithQuery replaces the VictoriaMetrics transport for focused handler tests
 // and for embedders that provide their own transport.
 func (h *MonitoringHandler) WithQuery(query monitoringQueryFunc) *MonitoringHandler {

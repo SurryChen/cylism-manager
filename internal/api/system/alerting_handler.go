@@ -77,6 +77,22 @@ func NewAlertingHandler(platformURL string) *AlertingHandler {
 	return &AlertingHandler{resolvedCache: alertingservice.NewResolvedCache(12), platformURL: normalizeAlertingPlatformURL(platformURL)}
 }
 
+// NewAlertingHandlerWithComposedDependencies receives the query, component
+// and automation services created by Bootstrap without constructing fallbacks.
+func NewAlertingHandlerWithComposedDependencies(platformURL string, deps AlertingDependencies, store repository.AlertAutomationRepository, automation *alertingservice.AutomationService, dispatcher alertRuntimeDispatcher) *AlertingHandler {
+	handler := NewAlertingHandler(platformURL)
+	handler.alertmanager = alertmanagerRequestFunc(deps.Alertmanager)
+	handler.component = deps.ComponentService
+	handler.ready = deps.Ready
+	handler.secrets = deps.Secrets
+	handler.sender = deps.Sender
+	handler.queryService = deps.QueryService
+	handler.automationStore = store
+	handler.automation = automation
+	handler.dispatcher = dispatcher
+	return handler
+}
+
 func (h *AlertingHandler) WithDependencies(deps AlertingDependencies) *AlertingHandler {
 	if deps.Alertmanager != nil {
 		h.alertmanager = alertmanagerRequestFunc(deps.Alertmanager)

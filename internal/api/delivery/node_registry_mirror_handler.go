@@ -52,10 +52,17 @@ func NewNodeRegistryMirrorHandler(repo repository.NodeRegistryMirrorRepository, 
 	return NewNodeRegistryMirrorHandlerWithService(repo, encKey, applyNode, registryservice.NewMirrorService(repo, encKey))
 }
 
+// Deprecated: use NewNodeRegistryMirrorHandlerWithDependencies from Bootstrap.
 func NewNodeRegistryMirrorHandlerWithService(repo repository.NodeRegistryMirrorRepository, encKey []byte, applyNode registryservice.NodeMirrorApplier, service *registryservice.MirrorService) *NodeRegistryMirrorHandler {
 	if service == nil {
 		service = registryservice.NewMirrorService(repo, encKey)
 	}
+	return NewNodeRegistryMirrorHandlerWithDependencies(encKey, applyNode, service)
+}
+
+// NewNodeRegistryMirrorHandlerWithDependencies uses a MirrorService composed
+// by Bootstrap and never creates a fallback service.
+func NewNodeRegistryMirrorHandlerWithDependencies(encKey []byte, applyNode registryservice.NodeMirrorApplier, service *registryservice.MirrorService) *NodeRegistryMirrorHandler {
 	return &NodeRegistryMirrorHandler{
 		service:          service,
 		encKey:           encKey,

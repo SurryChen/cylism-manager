@@ -48,8 +48,8 @@ type DNSCredentialRequest struct {
 	Enabled   *bool              `json:"enabled"`
 }
 
-// NewCertHandlerWithDependencies constructs the certificate handler from
-// already-composed network and cert-manager ports.
+// Deprecated: use NewCertHandlerWithComposedDependencies from Bootstrap.
+// NewCertHandlerWithDependencies keeps the legacy fallback network service.
 func NewCertHandlerWithDependencies(st repository.CertificateRepository, encKey []byte, network *networkservice.Service, client CertificateKubernetesAdapter) *CertHandler {
 	if network == nil {
 		network = networkservice.NewService(st, st)
@@ -60,7 +60,13 @@ func NewCertHandlerWithDependencies(st repository.CertificateRepository, encKey 
 	if value, ok := any(client).(networkservice.DNSAdapter); ok {
 		network.WithDNSAdapter(value)
 	}
-	return &CertHandler{store: st, encKey: encKey, network: network, k8s: client}
+	return NewCertHandlerWithComposedDependencies(st, encKey, network, client)
+}
+
+// NewCertHandlerWithComposedDependencies receives the configured network
+// service and cert-manager port from Bootstrap without creating fallbacks.
+func NewCertHandlerWithComposedDependencies(st repository.CertificateRepository, encKey []byte, network *networkservice.Service, client CertificateKubernetesAdapter) *CertHandler {
+	return &CertHandler{store: st, encKey: append([]byte(nil), encKey...), network: network, k8s: client}
 }
 
 // Status reports cert-manager prerequisites before certificate resources are queried.

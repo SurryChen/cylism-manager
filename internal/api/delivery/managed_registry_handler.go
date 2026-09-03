@@ -32,10 +32,17 @@ func NewManagedOCIRegistryHandler(repo repository.ManagedRegistryRepository, enc
 	return NewManagedOCIRegistryHandlerWithService(repo, encKey, resources, status, applyNode, registryservice.NewManagedRegistryService(repo, encKey))
 }
 
+// Deprecated: use NewManagedOCIRegistryHandlerWithDependencies from Bootstrap.
 func NewManagedOCIRegistryHandlerWithService(repo repository.ManagedRegistryRepository, encKey []byte, resources k8sclient.ManagedRegistryResourceReconciler, status k8sclient.ManagedRegistryStatusReader, applyNode registryservice.NodeMirrorApplier, service *registryservice.ManagedRegistryService) *ManagedOCIRegistryHandler {
 	if service == nil {
 		service = registryservice.NewManagedRegistryService(repo, encKey)
 	}
+	return NewManagedOCIRegistryHandlerWithDependencies(repo, resources, status, applyNode, service)
+}
+
+// NewManagedOCIRegistryHandlerWithDependencies uses the explicit registry
+// service and Kubernetes ports composed by Bootstrap.
+func NewManagedOCIRegistryHandlerWithDependencies(repo repository.ManagedRegistryRepository, resources k8sclient.ManagedRegistryResourceReconciler, status k8sclient.ManagedRegistryStatusReader, applyNode registryservice.NodeMirrorApplier, service *registryservice.ManagedRegistryService) *ManagedOCIRegistryHandler {
 	return &ManagedOCIRegistryHandler{service: service, resources: resources, status: status, store: repo, applyNode: applyNode}
 }
 

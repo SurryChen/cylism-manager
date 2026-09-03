@@ -58,12 +58,19 @@ func NewRegistryProxyHandler(repo repository.RegistryProxyRepository, encKey []b
 	return NewRegistryProxyHandlerWithService(repo, encKey, resources, diagnostics, registryservice.NewProxyService(repo, encKey))
 }
 
+// Deprecated: use NewRegistryProxyHandlerWithDependencies from Bootstrap.
 func NewRegistryProxyHandlerWithService(repo repository.RegistryProxyRepository, encKey []byte, resources k8sclient.RegistryProxyResourceReconciler, diagnostics k8sclient.RegistryProxyDiagnostics, service *registryservice.ProxyService) *RegistryProxyHandler {
 	h := &RegistryProxyHandler{store: repo, encKey: encKey, service: service, resources: resources, diagnostics: diagnostics}
 	if h.service == nil {
 		h.service = registryservice.NewProxyService(repo, encKey)
 	}
-	return h
+	return NewRegistryProxyHandlerWithDependencies(repo, encKey, resources, diagnostics, h.service)
+}
+
+// NewRegistryProxyHandlerWithDependencies uses the service and adapters
+// composed by Bootstrap and never creates a fallback service.
+func NewRegistryProxyHandlerWithDependencies(repo repository.RegistryProxyRepository, encKey []byte, resources k8sclient.RegistryProxyResourceReconciler, diagnostics k8sclient.RegistryProxyDiagnostics, service *registryservice.ProxyService) *RegistryProxyHandler {
+	return &RegistryProxyHandler{store: repo, encKey: encKey, service: service, resources: resources, diagnostics: diagnostics}
 }
 
 // WithResourceReconciler replaces only mutating proxy convergence actions.
