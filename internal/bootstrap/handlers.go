@@ -13,7 +13,10 @@ import (
 	"github.com/cylism/cylism-manager/internal/model"
 	runtimepkg "github.com/cylism/cylism-manager/internal/runtime"
 	runtimeidentity "github.com/cylism/cylism-manager/internal/runtime/identity"
+	maintenance "github.com/cylism/cylism-manager/internal/service/maintenance"
 	monitoringservice "github.com/cylism/cylism-manager/internal/service/observability/monitoring"
+	registryservice "github.com/cylism/cylism-manager/internal/service/registry"
+	"time"
 )
 
 // BuildRouteDependencies constructs every HTTP dependency exactly once. The
@@ -28,8 +31,16 @@ func (c *Container) BuildRouteDependencies() api.RouteDependencies {
 		monitoring = monitoringservice.NewAgentDiskGrowthService(c.Services.Monitoring, nil)
 	}
 	agentAdapter := agentapi.NewKubernetesAdapter(c.K8s)
-	agent := agentapi.NewAgentHandlerWithKubernetesAdapter(c.Store, agentAdapter, authenticator).WithMonitoringDiskGrowth(monitoring).WithRegistryVerifier(agentapi.DefaultAgentRegistryNodeVerifier(key)).WithMaintenanceInspector(agentapi.DefaultAgentMaintenanceInspector(key))
-	agentOp := agentapi.NewAgentOperationHandlerWithKubernetesAdapter(c.Store, agentAdapter).WithRegistryPullExecutor(agentapi.DefaultAgentRegistryPullExecutor(key)).WithMaintenanceCleanupExecutor(agentapi.DefaultAgentMaintenanceCleanupExecutor(key))
+	maintenanceSSH := maintenance.SSHExecutorFunc(func(ctx context.Context, timeout time.Duration, server *model.Server, command string) ([]byte, error) {
+		return infrastructureapi.SSHExecContext(ctx, timeout, append(infrastructureapi.BuildSSHArgs(server, key, server.Host), command))
+	})
+	diskInspection := maintenance.NewDiskInspectionService(maintenanceSSH)
+	cleanup := maintenance.NewCleanupService(maintenanceSSH)
+	registrySSH := registryservice.SSHExecutorFunc(maintenanceSSH)
+	registryVerifier := registryservice.NewNodeVerifierService(registrySSH)
+	registryPull := registryservice.NewNodePullService(registrySSH)
+	agent := agentapi.NewAgentHandlerWithKubernetesAdapter(c.Store, agentAdapter, authenticator).WithMonitoringDiskGrowth(monitoring).WithRegistryVerifier(registryVerifier).WithMaintenanceInspector(diskInspection)
+	agentOp := agentapi.NewAgentOperationHandlerWithKubernetesAdapter(c.Store, agentAdapter).WithRegistryPullExecutor(registryPull).WithMaintenanceCleanupExecutor(cleanup)
 	runtimeHandler := runtimeapi.NewRuntimeHandlerWithDependencies(c.Store, key, c.Services.RuntimeManager, c.Services.RuntimeRegistry)
 	platform := deliveryapi.NewPlatformHandlerWithDependencies(c.Store, deliveryapi.NewPlatformKubernetesAdapter(c.K8s), c.Services.PlatformRelease)
 	networkService := c.Services.Network
