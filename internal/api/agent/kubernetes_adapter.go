@@ -32,13 +32,3 @@ func (a clientAdapter) Clientset() kubernetes.Interface {
 	}
 	return a.client.Clientset
 }
-
-func adaptClient(value interface{}) KubernetesAdapter {
-	if adapter, ok := value.(KubernetesAdapter); ok {
-		return adapter
-	}
-	if client, ok := value.(*k8s.Client); ok {
-		return clientAdapter{client: client}
-	}
-	return nil
-}

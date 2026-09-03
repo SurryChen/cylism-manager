@@ -21,7 +21,7 @@ func TestSyncApplicationEndpointsRemovesHTTPIngressForUDPService(t *testing.T) {
 	if err := s.CreateApplicationEndpoint(&model.ApplicationEndpoint{ApplicationID: app.ID, Exposure: application.ExposurePublic, Domain: "udp.example.com", Path: "/", ServicePort: 443}); err != nil {
 		t.Fatal(err)
 	}
-	handler := NewApplicationHandler(s, []byte("01234567890123456789012345678901"), NewKubernetesDependencies(&k8sclient.Client{Clientset: clientset}))
+	handler := newTestApplicationHandler(s, []byte("01234567890123456789012345678901"), NewKubernetesDependencies(&k8sclient.Client{Clientset: clientset}))
 	if err := handler.syncApplicationEndpoints(t.Context(), app, application.ServiceSpec{Port: 443}); err != nil {
 		t.Fatalf("create TCP Ingress: %v", err)
 	}
@@ -43,7 +43,7 @@ func TestSyncApplicationEndpointsUsesFirstTCPPortForMultiPortService(t *testing.
 	if err := s.CreateApplicationEndpoint(&model.ApplicationEndpoint{ApplicationID: app.ID, Exposure: application.ExposurePublic, Domain: "api.example.com", Path: "/", ServicePort: 80}); err != nil {
 		t.Fatal(err)
 	}
-	handler := NewApplicationHandler(s, []byte("01234567890123456789012345678901"), NewKubernetesDependencies(&k8sclient.Client{Clientset: clientset}))
+	handler := newTestApplicationHandler(s, []byte("01234567890123456789012345678901"), NewKubernetesDependencies(&k8sclient.Client{Clientset: clientset}))
 	service := application.ServiceSpec{Ports: []application.ServicePortSpec{
 		{Name: "proxy", Port: 443, TargetPort: 443, Protocol: application.ServiceProtocolUDP},
 		{Name: "api", Port: 8080, TargetPort: 8080, Protocol: application.ServiceProtocolTCP},

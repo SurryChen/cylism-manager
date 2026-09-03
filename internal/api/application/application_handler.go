@@ -48,22 +48,8 @@ type applicationCapabilitiesRequest struct {
 // applicationDiscoveryInfo is intentionally limited to metadata needed by
 // authorized management UIs. It never embeds templates or Secret references.
 
-// Deprecated: use NewApplicationHandlerWithDependencies from Bootstrap.
-func NewApplicationHandler(resources repository.ApplicationHandlerRepository, encKey []byte, dependencies KubernetesDependencies) *ApplicationHandler {
-	return NewApplicationHandlerWithQuery(resources, applicationservice.NewQueryService(resources), encKey, dependencies)
-}
-
-// NewApplicationHandlerWithQuery uses a query service composed by Bootstrap.
-func NewApplicationHandlerWithQuery(resources repository.ApplicationHandlerRepository, queries *applicationservice.QueryService, encKey []byte, dependencies KubernetesDependencies) *ApplicationHandler {
-	if queries == nil {
-		queries = applicationservice.NewQueryService(resources)
-	}
-	return newApplicationHandler(resources, queries, encKey, dependencies)
-}
-
 // NewApplicationHandlerWithDependencies constructs a handler from Bootstrap
-// dependencies. Unlike compatibility constructors, it never creates a query
-// service when one was not provided.
+// dependencies. It never creates a query service when one was not provided.
 func NewApplicationHandlerWithDependencies(resources repository.ApplicationHandlerRepository, queries *applicationservice.QueryService, encKey []byte, dependencies KubernetesDependencies) *ApplicationHandler {
 	return newApplicationHandler(resources, queries, encKey, dependencies)
 }

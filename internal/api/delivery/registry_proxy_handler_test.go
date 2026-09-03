@@ -44,7 +44,7 @@ func TestRegistryProxyOutboundProxyIsEncryptedAndDiagnosticIsBounded(t *testing.
 	}
 	client := &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node-a"}})}
 	reconciler := k8sclient.NewRegistryProxyReconciler(client)
-	handler := NewRegistryProxyHandler(st, []byte("01234567890123456789012345678901"), reconciler, reconciler).WithDiagnostics(testRegistryProxyDiagnostics{diagnose: func(_ context.Context, _ *model.RegistryProxy) (k8sclient.RegistryProxyDiagnostic, error) {
+	handler := newTestRegistryProxyHandler(st, []byte("01234567890123456789012345678901"), reconciler, reconciler).WithDiagnostics(testRegistryProxyDiagnostics{diagnose: func(_ context.Context, _ *model.RegistryProxy) (k8sclient.RegistryProxyDiagnostic, error) {
 		return k8sclient.RegistryProxyDiagnostic{Status: "upstream_connect_timeout", ResolvedIPs: []string{"128.121.243.75"}, ElapsedMS: 5000, Summary: "upstream timed out"}, nil
 	}})
 	router := gin.New()
@@ -87,7 +87,7 @@ func TestRegistryProxyHandlerDeploysIndependentUpstreamInstances(t *testing.T) {
 	}
 	client := &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node-a"}})}
 	reconciler := k8sclient.NewRegistryProxyReconciler(client)
-	handler := NewRegistryProxyHandler(st, nil, reconciler, reconciler)
+	handler := newTestRegistryProxyHandler(st, nil, reconciler, reconciler)
 	router := gin.New()
 	router.POST("/api/registry-proxies", handler.Deploy)
 	router.GET("/api/registry-proxies", handler.List)
@@ -140,7 +140,7 @@ func TestRegistryProxyHandlerUsesOnlyConfiguredPodDNS(t *testing.T) {
 	}
 	client := &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node-a"}})}
 	reconciler := k8sclient.NewRegistryProxyReconciler(client)
-	handler := NewRegistryProxyHandler(st, nil, reconciler, reconciler)
+	handler := newTestRegistryProxyHandler(st, nil, reconciler, reconciler)
 	router := gin.New()
 	router.POST("/api/registry-proxies", handler.Deploy)
 
@@ -184,7 +184,7 @@ func TestRegistryProxyHandlerMigratesLegacyDockerHubResources(t *testing.T) {
 	oldService := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: registryProxyName, Namespace: registryProxyNamespace}}
 	client := &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(oldDeployment, oldService)}
 	reconciler := k8sclient.NewRegistryProxyReconciler(client)
-	handler := NewRegistryProxyHandler(st, nil, reconciler, reconciler)
+	handler := newTestRegistryProxyHandler(st, nil, reconciler, reconciler)
 	router := gin.New()
 	router.POST("/api/registry-proxies/:id/migrate-resource-name", handler.MigrateResourceName)
 	response := httptest.NewRecorder()

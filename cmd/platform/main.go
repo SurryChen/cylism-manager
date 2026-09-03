@@ -18,6 +18,26 @@ import (
 	"github.com/spf13/viper"
 )
 
+type serverShutdowner interface {
+	Shutdown(context.Context) error
+}
+
+type backgroundStopper interface {
+	Stop()
+	Wait()
+}
+
+// shutdownPlatform stops HTTP admission first, then cancels and joins
+// Container-owned work so no background goroutine outlives the process.
+func shutdownPlatform(ctx context.Context, server serverShutdowner, background backgroundStopper) error {
+	err := server.Shutdown(ctx)
+	if background != nil {
+		background.Stop()
+		background.Wait()
+	}
+	return err
+}
+
 func main() {
 	// 加载配置
 	viper.SetConfigName("config")
@@ -59,11 +79,14 @@ func main() {
 	// 管理员初始化
 	initAdmin(db)
 
-	// 操作日志清理任务
-	opLogRetention := viper.GetInt("operation_log.retention_days")
 	appCtx, cancelBackground := context.WithCancel(context.Background())
-	defer cancelBackground()
-	container.StartBackground(appCtx, time.Duration(opLogRetention))
+	background := container.StartBackground(appCtx, bootstrap.BackgroundConfig{
+		OperationLogRetentionDays: viper.GetInt("operation_log.retention_days"),
+	})
+	defer func() {
+		cancelBackground()
+		background.Wait()
+	}()
 
 	if container.K8s != nil {
 		log.Println("K8s 客户端已就绪")
@@ -87,13 +110,17 @@ func main() {
 		Handler: r,
 	}
 
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(quit)
 	go func() {
-		quit := make(chan os.Signal, 1)
-		signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 		<-quit
-		cancelBackground()
 		log.Println("Shutting down...")
-		srv.Close()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		if err := shutdownPlatform(shutdownCtx, srv, background); err != nil {
+			log.Printf("HTTP server shutdown failed: %v", err)
+		}
 	}()
 
 	log.Printf("Cylism Manager Platform starting on %s", addr)

@@ -70,7 +70,7 @@ func TestDomainHandlerImportsExistingCertificateWithoutTakingOwnership(t *testin
 
 	router := gin.New()
 	service := networkservice.NewService(s, s).WithCertificateAdapter(client)
-	handler := NewDomainHandlerWithService(s, NewDomainKubernetesAdapter(client), service)
+	handler := NewDomainHandlerWithDependencies(NewDomainKubernetesAdapter(client), service)
 	router.POST("/api/domains/import", handler.ImportCertificate)
 	response := serve(router, newJSONRequest(http.MethodPost, "/api/domains/import", gin.H{"environment_id": 1, "certificate_name": "legacy-api", "enabled": true}))
 	if response.Code != http.StatusOK {
@@ -104,7 +104,7 @@ func TestDomainHandlerClaimBindsMatchingLegacyDomainToEnvironment(t *testing.T) 
 		t.Fatal(err)
 	}
 	router := gin.New()
-	handler := NewDomainHandlerWithService(s, nil, networkservice.NewService(s, s))
+	handler := NewDomainHandlerWithDependencies(nil, networkservice.NewService(s, s))
 	router.POST("/api/domains/:id/claim", handler.Claim)
 	response := serve(router, newJSONRequest(http.MethodPost, "/api/domains/1/claim", gin.H{"environment_id": 1}))
 	if response.Code != http.StatusOK {

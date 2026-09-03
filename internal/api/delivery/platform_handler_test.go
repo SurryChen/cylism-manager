@@ -39,7 +39,7 @@ func TestPlatformWebhookAcceptsSignedTagAndRejectsReplay(t *testing.T) {
 	if err := s.SetSystemConfig(platformservice.ImagePrefixConfigKey, "registry.example.com/cylism-manager"); err != nil {
 		t.Fatal(err)
 	}
-	handler := NewPlatformHandler(s, secretKey, client)
+	handler := newTestPlatformHandler(s, secretKey, client)
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	router.POST("/api/platform/deployments", handler.Webhook)
@@ -62,7 +62,7 @@ func TestPlatformWebhookAcceptsSignedTagAndRejectsReplay(t *testing.T) {
 }
 
 func TestPlatformWebhookRejectsInvalidSignature(t *testing.T) {
-	handler := NewPlatformHandler(nil, []byte("01234567890123456789012345678901"), nil)
+	handler := newTestPlatformHandler(nil, []byte("01234567890123456789012345678901"), nil)
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	router.POST("/api/platform/deployments", handler.Webhook)
@@ -87,7 +87,7 @@ func TestPlatformManualUpdateAcceptsAuthenticatedTag(t *testing.T) {
 	if err := s.SetSystemConfig(platformservice.ImagePrefixConfigKey, "registry.example.com/cylism-manager"); err != nil {
 		t.Fatal(err)
 	}
-	handler := NewPlatformHandler(s, secretKey, client)
+	handler := newTestPlatformHandler(s, secretKey, client)
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	router.POST("/api/platform/releases", handler.ManualUpdate)
@@ -108,7 +108,7 @@ func TestPlatformManualUpdateRejectsUntaggedImage(t *testing.T) {
 	if err := s.SetSystemConfig(platformservice.ImagePrefixConfigKey, "registry.example.com/cylism-manager"); err != nil {
 		t.Fatal(err)
 	}
-	handler := NewPlatformHandler(s, []byte("01234567890123456789012345678901"), nil)
+	handler := newTestPlatformHandler(s, []byte("01234567890123456789012345678901"), nil)
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	router.POST("/api/platform/releases", handler.ManualUpdate)
@@ -128,7 +128,7 @@ func TestPlatformImagePrefixesAllowMultipleRegistries(t *testing.T) {
 	if err := s.SetSystemConfig(platformservice.ImagePrefixConfigKey, "registry.example.com/cylism-manager\noci-registry.example.com/cylism-manager"); err != nil {
 		t.Fatal(err)
 	}
-	h := NewPlatformHandler(s, []byte("01234567890123456789012345678901"), nil)
+	h := newTestPlatformHandler(s, []byte("01234567890123456789012345678901"), nil)
 	for _, image := range []string{
 		"registry.example.com/cylism-manager:1.0.0",
 		"oci-registry.example.com/cylism-manager:2.0.0",
@@ -151,7 +151,7 @@ func TestPlatformEndpointStatusDefaultsToNotConfigured(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler := NewPlatformHandler(s, []byte("01234567890123456789012345678901"), nil)
+	handler := newTestPlatformHandler(s, []byte("01234567890123456789012345678901"), nil)
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	router.GET("/api/platform/endpoint", handler.EndpointStatus)

@@ -13,7 +13,7 @@ func TestDNSCredentialRequestEncryptsSecretAndKeepsItWhenBlank(t *testing.T) {
 		t.Fatal(err)
 	}
 	key := []byte("01234567890123456789012345678901")
-	h := NewCertHandlerWithDependencies(st, key, nil, nil)
+	h := NewCertHandlerWithComposedDependencies(st, key, nil, nil)
 	secret, identifier := "aliyun-secret", "LTAI"
 	credential, values, err := h.dnsCredentialFromRequest(dnsCredentialRequest{Name: "aliyun", Namespace: "cert-manager", Provider: "alidns", Values: map[string]*string{"access_key_id": &identifier, "access_key_secret": &secret}}, nil)
 	if err != nil {
@@ -45,7 +45,7 @@ func TestDNSCredentialRequestRejectsUnknownProviderField(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := NewCertHandlerWithDependencies(st, []byte("01234567890123456789012345678901"), nil, nil)
+	h := NewCertHandlerWithComposedDependencies(st, []byte("01234567890123456789012345678901"), nil, nil)
 	value := "unexpected"
 	_, _, err = h.dnsCredentialFromRequest(dnsCredentialRequest{Name: "aliyun", Namespace: "cert-manager", Provider: "alidns", Values: map[string]*string{"unknown": &value}}, nil)
 	if err == nil {

@@ -108,7 +108,7 @@ func setupManagedOCIRegistryRouterWithHandler(t *testing.T) (*gin.Engine, *store
 	}
 	t.Cleanup(func() { K8s = original })
 	reconciler := k8s.NewManagedRegistryReconciler(K8s)
-	h := NewManagedOCIRegistryHandler(s, []byte("01234567890123456789012345678901"), reconciler, reconciler, nil)
+	h := newTestManagedOCIRegistryHandler(s, []byte("01234567890123456789012345678901"), reconciler, reconciler, nil)
 	r := gin.New()
 	group := r.Group("/api/managed-oci-registries")
 	group.GET("", h.List)

@@ -10,6 +10,7 @@ import (
 
 	coreauth "github.com/cylism/cylism-manager/internal/auth"
 	"github.com/cylism/cylism-manager/internal/model"
+	authservice "github.com/cylism/cylism-manager/internal/service/auth"
 	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/gin-gonic/gin"
 )
@@ -24,7 +25,7 @@ func TestTemporaryLoginIssuesNormalSessionAndCanBeRevoked(t *testing.T) {
 	if err := db.CreateUser(user); err != nil {
 		t.Fatal(err)
 	}
-	h := NewAuthHandler(db, []byte("secret"), time.Hour, time.Hour, db)
+	h := NewAuthHandlerWithTemporaryService(db, []byte("secret"), time.Hour, time.Hour, authservice.NewTemporaryTokenService(db, db))
 	r := gin.New()
 	r.POST("/create", func(c *gin.Context) { c.Set("user_id", user.ID); h.CreateTemporaryToken(c) })
 	r.POST("/login", h.TemporaryLogin)

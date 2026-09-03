@@ -56,17 +56,6 @@ type runtimeRequest struct {
 	Config           map[string]interface{} `json:"config"`
 }
 
-// Deprecated: use NewRuntimeHandlerWithDependencies from Bootstrap.
-func NewRuntimeHandler(runtimes repository.RuntimeManagementRepository, encKey []byte, k8sManager *runtime.KubernetesManager, registry *runtime.Registry) *RuntimeHandler {
-	if registry == nil {
-		registry = runtime.BuiltinRegistry()
-		if k8sManager != nil && k8sManager.Registry != nil {
-			registry = k8sManager.Registry
-		}
-	}
-	return NewRuntimeHandlerWithDependencies(runtimes, encKey, k8sManager, registry)
-}
-
 // NewRuntimeHandlerWithDependencies constructs a RuntimeHandler using the
 // Manager and Registry owned by Bootstrap. It never creates a fallback manager.
 func NewRuntimeHandlerWithDependencies(runtimes repository.RuntimeManagementRepository, encKey []byte, manager RuntimeManager, registry *runtime.Registry) *RuntimeHandler {

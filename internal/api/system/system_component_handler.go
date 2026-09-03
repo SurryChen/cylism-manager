@@ -20,28 +20,10 @@ type SystemComponentHandler struct {
 	service     *systemcomponentservice.ComponentService
 }
 
-func NewSystemComponentHandler(configs repository.SystemComponentRepository, adapter SystemComponentAdapter) *SystemComponentHandler {
-	return NewSystemComponentHandlerWithService(configs, adapter, &systemcomponentservice.ComponentListService{Repo: configs, Adapter: adapter})
-}
-
-// NewSystemComponentHandlerWithListService injects the pre-composed query
-// service while retaining the original constructor for focused tests.
-func NewSystemComponentHandlerWithListService(configs repository.SystemComponentRepository, adapter SystemComponentAdapter, listService *systemcomponentservice.ComponentListService) *SystemComponentHandler {
-	return NewSystemComponentHandlerWithService(configs, adapter, listService)
-}
-
-func NewSystemComponentHandlerWithService(configs repository.SystemComponentRepository, adapter SystemComponentAdapter, listService *systemcomponentservice.ComponentListService) *SystemComponentHandler {
-	return &SystemComponentHandler{configs: configs, adapter: adapter, listService: listService, service: systemcomponentservice.NewComponentService(configs, adapter, listService)}
-}
-
-func NewSystemComponentHandlerWithComposedService(configs repository.SystemComponentRepository, adapter SystemComponentAdapter, service *systemcomponentservice.ComponentService, listService *systemcomponentservice.ComponentListService) *SystemComponentHandler {
-	return &SystemComponentHandler{configs: configs, adapter: adapter, listService: listService, service: service}
-}
-
 // NewSystemComponentHandlerWithComposedDependencies is the Bootstrap entry
 // point for the singleton component Handler.
 func NewSystemComponentHandlerWithComposedDependencies(configs repository.SystemComponentRepository, adapter SystemComponentAdapter, service *systemcomponentservice.ComponentService, listService *systemcomponentservice.ComponentListService) *SystemComponentHandler {
-	return NewSystemComponentHandlerWithComposedService(configs, adapter, service, listService)
+	return &SystemComponentHandler{configs: configs, adapter: adapter, listService: listService, service: service}
 }
 
 // WithAdapter replaces the Kubernetes boundary for focused handler tests.

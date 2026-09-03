@@ -79,18 +79,6 @@ type platformEndpointInfo struct {
 	CertificateError string                         `json:"certificate_error,omitempty"`
 }
 
-func NewPlatformHandler(s repository.PlatformEndpointRepository, encKey []byte, client platformKubernetes) *PlatformHandler {
-	return NewPlatformHandlerWithService(s, encKey, client, platformservice.NewReleaseService(s, encKey, client))
-}
-
-// Deprecated: use NewPlatformHandlerWithDependencies from Bootstrap.
-func NewPlatformHandlerWithService(s repository.PlatformEndpointRepository, encKey []byte, client platformKubernetes, release *platformservice.ReleaseService) *PlatformHandler {
-	if release == nil {
-		release = platformservice.NewReleaseService(s, encKey, client)
-	}
-	return NewPlatformHandlerWithDependencies(s, client, release)
-}
-
 // NewPlatformHandlerWithDependencies uses the release service composed by
 // Bootstrap and never creates a fallback service.
 func NewPlatformHandlerWithDependencies(s repository.PlatformEndpointRepository, client platformKubernetes, release *platformservice.ReleaseService) *PlatformHandler {

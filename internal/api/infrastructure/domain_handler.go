@@ -10,7 +10,6 @@ import (
 	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 	"github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
-	"github.com/cylism/cylism-manager/internal/repository"
 	networkservice "github.com/cylism/cylism-manager/internal/service/network"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -86,30 +85,6 @@ type ManagedDomainInfo struct {
 	Certificate      *k8s.CertInfo `json:"certificate,omitempty"`
 	CertificateError string        `json:"certificate_error,omitempty"`
 	ApplicationCount int64         `json:"application_count"`
-}
-
-// Deprecated: use NewDomainHandlerWithDependencies from Bootstrap.
-func NewDomainHandlerWithService(domains repository.NetworkRepository, client interface{}, service *networkservice.Service) *DomainHandler {
-	if service == nil {
-		service = networkservice.NewService(domains, domains)
-	}
-	var adapter DomainKubernetesAdapter
-	if value, ok := client.(DomainKubernetesAdapter); ok {
-		adapter = value
-	}
-	if value, ok := client.(*k8s.Client); ok {
-		adapter = NewDomainKubernetesAdapter(value)
-	}
-	if value, ok := client.(networkservice.CertificateAdapter); ok {
-		service.WithCertificateAdapter(value)
-	}
-	if value, ok := client.(networkservice.DNSAdapter); ok {
-		service.WithDNSAdapter(value)
-	}
-	if value, ok := client.(networkservice.IngressAdapter); ok {
-		service.WithIngressAdapter(value)
-	}
-	return NewDomainHandlerWithDependencies(adapter, service)
 }
 
 // NewDomainHandlerWithDependencies uses the already configured network
