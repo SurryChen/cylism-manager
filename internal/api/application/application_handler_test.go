@@ -13,13 +13,25 @@ import (
 	"testing"
 )
 
+func TestApplicationHandlerCachesReleaseService(t *testing.T) {
+	h := newApplicationHandler(nil, nil, []byte("test-key"), nil)
+	first := h.releaseWorkflow()
+	second := h.releaseWorkflow()
+	if first == nil {
+		t.Fatal("release service must be initialized")
+	}
+	if first != second {
+		t.Fatal("release service should be reused by the handler")
+	}
+}
+
 func setupApplicationRouter(clients ...*k8sclient.Client) (*gin.Engine, *store.Store) {
 	gin.SetMode(gin.TestMode)
 	s, _ := store.New(":memory:")
 	r := gin.New()
-	var dependency KubernetesDependencies
+	var dependency KubernetesAdapter
 	if len(clients) > 0 {
-		dependency = NewKubernetesDependencies(clients[0])
+		dependency = NewKubernetesAdapter(clients[0])
 	}
 	h := newTestApplicationHandler(s, []byte("01234567890123456789012345678901"), dependency)
 	projects := r.Group("/api/projects")

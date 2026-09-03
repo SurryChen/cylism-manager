@@ -108,7 +108,7 @@ func TestCreateRestartReleaseUsesCurrentTemplateAndSanitizesSecrets(t *testing.T
 		Status:     corev1.NamespaceStatus{Phase: corev1.NamespaceActive},
 	})}
 
-	handler := newTestApplicationHandler(s, key, NewKubernetesDependencies(client))
+	handler := newTestApplicationHandler(s, key, NewKubernetesAdapter(client))
 	release, err := handler.createRestartRelease(t.Context(), app, 9)
 	if err != nil {
 		t.Fatalf("create restart release: %v", err)

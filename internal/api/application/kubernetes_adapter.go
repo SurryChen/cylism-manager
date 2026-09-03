@@ -25,9 +25,9 @@ func NewNamespaceClient(client *k8sclient.Client) NamespaceClient {
 	return client
 }
 
-// KubernetesDependencies is the smallest application-facing Kubernetes port.
+// KubernetesAdapter is the smallest application-facing Kubernetes port.
 // Concrete clients are assembled outside the handler and never exposed to it.
-type KubernetesDependencies interface {
+type KubernetesAdapter interface {
 	application.ResourceApplier
 	applicationservice.RuntimeReader
 	NamespaceClient
@@ -109,9 +109,9 @@ func (d *kubernetesDependencies) MigrateWorkloadKind(ctx context.Context, app ap
 }
 func (d *kubernetesDependencies) KubernetesAvailable() bool { return d.available }
 
-// NewKubernetesDependencies is the only application adapter factory that
+// NewKubernetesAdapter is the only application adapter factory that
 // accepts the concrete Kubernetes client. Handlers receive only the port.
-func NewKubernetesDependencies(client *k8sclient.Client) KubernetesDependencies {
+func NewKubernetesAdapter(client *k8sclient.Client) KubernetesAdapter {
 	if client == nil || client.Clientset == nil {
 		return nil
 	}

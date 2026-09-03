@@ -1,7 +1,6 @@
 package applicationapi
 
 import (
-	"encoding/json"
 	"errors"
 	"strings"
 
@@ -23,13 +22,72 @@ type NamespaceClient interface {
 }
 
 type ApplicationHandler struct {
-	resources        repository.ApplicationHandlerRepository
-	applications     repository.ApplicationManagementRepository
+	resources        applicationResourceRepository
+	applications     applicationManagementRepository
 	sessions         repository.IntegrationSessionRepository
 	queries          *applicationservice.QueryService
 	encKey           []byte
 	delegationSecret []byte
-	kubernetes       KubernetesDependencies
+	kubernetes       KubernetesAdapter
+	workflow         *applicationservice.ReleaseService
+	workloads        *applicationservice.WorkloadService
+}
+
+// applicationManagementRepository is the mutation surface used by the
+// application aggregate handlers. Keeping it local prevents handlers from
+// depending on release-state, integration-session, or domain persistence.
+type applicationManagementRepository interface {
+	repository.ApplicationQueryRepository
+	ListProjects() ([]model.Project, error)
+	CreateProject(*model.Project) error
+	UpdateProject(*model.Project) error
+	DeleteProject(uint) error
+	CountProjectEnvironments(uint) (int64, error)
+	CountProjectApplications(uint) (int64, error)
+	ListEnvironments(uint) ([]model.Environment, error)
+	CreateEnvironment(*model.Environment) error
+	UpdateEnvironment(*model.Environment) error
+	DeleteEnvironment(uint) error
+	EnsureNamespaceAvailable(string, uint) error
+	ListEnvironmentNamespaceConflicts() ([]model.NamespaceConflict, error)
+	IsEnvironmentNamespaceConflicted(string) (bool, error)
+	CountEnvironmentApplications(uint) (int64, error)
+	CreateApplication(*model.Application) error
+	UpdateApplication(*model.Application) error
+	ReplaceApplicationCapabilities(uint, []string) (*model.Application, error)
+	GetLatestSuccessfulRelease(uint) (*model.Release, error)
+	ListApplicationDeploymentTemplates(uint) ([]model.ApplicationDeploymentTemplate, error)
+	GetApplicationDeploymentTemplate(uint, uint) (*model.ApplicationDeploymentTemplate, error)
+	GetDefaultApplicationDeploymentTemplate(uint) (*model.ApplicationDeploymentTemplate, error)
+	CreateApplicationDeploymentTemplate(*model.ApplicationDeploymentTemplate, bool) error
+	UpdateApplicationDeploymentTemplate(*model.ApplicationDeploymentTemplate) error
+	UpdateApplicationDeploymentTemplateIfRevision(*model.ApplicationDeploymentTemplate, uint) error
+	DeleteApplicationDeploymentTemplate(uint, uint) error
+	SetDefaultApplicationDeploymentTemplate(uint, uint) error
+	ListApplicationEndpoints(uint) ([]model.ApplicationEndpoint, error)
+	GetApplicationEndpoint(uint, uint) (*model.ApplicationEndpoint, error)
+	CreateApplicationEndpoint(*model.ApplicationEndpoint) error
+	UpdateApplicationEndpoint(*model.ApplicationEndpoint) error
+	DeleteApplicationEndpoint(uint, uint) error
+	CountApplicationEndpointRoute(uint, string, uint) (int64, error)
+}
+
+type applicationResourceRepository interface {
+	repository.ReleaseWorkflowRepository
+	repository.ApplicationManagedFileRepository
+	repository.ApplicationDomainReader
+	GetApplicationEndpoint(uint, uint) (*model.ApplicationEndpoint, error)
+	GetApplicationDeploymentTemplate(uint, uint) (*model.ApplicationDeploymentTemplate, error)
+	UpdateApplicationDeploymentTemplateIfRevision(*model.ApplicationDeploymentTemplate, uint) error
+}
+
+// ApplicationHandlerDependencies is the complete persistence contract needed
+// to compose the application HTTP aggregate. It replaces the broader shared
+// repository aggregate at this package boundary.
+type ApplicationHandlerDependencies interface {
+	applicationResourceRepository
+	applicationManagementRepository
+	repository.IntegrationSessionRepository
 }
 
 func (h *ApplicationHandler) WithDelegationSecret(secret []byte) *ApplicationHandler {
@@ -50,20 +108,26 @@ type applicationCapabilitiesRequest struct {
 
 // NewApplicationHandlerWithDependencies constructs a handler from Bootstrap
 // dependencies. It never creates a query service when one was not provided.
-func NewApplicationHandlerWithDependencies(resources repository.ApplicationHandlerRepository, queries *applicationservice.QueryService, encKey []byte, dependencies KubernetesDependencies) *ApplicationHandler {
+func NewApplicationHandlerWithDependencies(resources ApplicationHandlerDependencies, queries *applicationservice.QueryService, encKey []byte, dependencies KubernetesAdapter) *ApplicationHandler {
 	return newApplicationHandler(resources, queries, encKey, dependencies)
 }
 
-func newApplicationHandler(resources repository.ApplicationHandlerRepository, queries *applicationservice.QueryService, encKey []byte, dependencies KubernetesDependencies) *ApplicationHandler {
-	return &ApplicationHandler{resources: resources, applications: resources, sessions: resources, queries: queries, encKey: append([]byte(nil), encKey...), kubernetes: dependencies}
+func newApplicationHandler(resources ApplicationHandlerDependencies, queries *applicationservice.QueryService, encKey []byte, dependencies KubernetesAdapter) *ApplicationHandler {
+	var applier application.ResourceApplier
+	if dependencies != nil {
+		applier = dependencies
+	}
+	handler := &ApplicationHandler{
+		resources: resources, applications: resources, sessions: resources,
+		queries: queries, encKey: append([]byte(nil), encKey...), kubernetes: dependencies,
+		workflow: applicationservice.NewReleaseService(resources, encKey, applier),
+	}
+	handler.workloads = applicationservice.NewWorkloadService(resources, dependencies)
+	return handler
 }
 
-func (h *ApplicationHandler) releaseWorkflow() *application.ReleaseWorkflow {
-	var applier application.ResourceApplier
-	if h.kubernetes != nil {
-		applier = h.kubernetes
-	}
-	return application.NewReleaseWorkflow(h.resources, h.encKey, applier)
+func (h *ApplicationHandler) releaseWorkflow() *applicationservice.ReleaseService {
+	return h.workflow
 }
 
 func (h *ApplicationHandler) namespaces() NamespaceClient {
@@ -163,38 +227,16 @@ func (h *ApplicationHandler) UpdateWorkloadKind(c *gin.Context) {
 		model.Success(c, app)
 		return
 	}
-	release, err := h.applications.GetLatestSuccessfulRelease(app.ID)
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		app.WorkloadKind = req.WorkloadKind
-		if err := h.applications.UpdateApplication(app); err != nil {
+	if err := h.workloads.UpdateKind(c.Request.Context(), app, req.WorkloadKind); err != nil {
+		if errors.Is(err, applicationservice.ErrWorkloadSnapshot) {
+			apiShared.DBError(c, "读取成功发布快照失败")
+			return
+		}
+		if errors.Is(err, applicationservice.ErrWorkloadPersistence) {
 			apiShared.DBError(c, err.Error())
 			return
 		}
-		model.Success(c, app)
-		return
-	}
-	if err != nil {
-		apiShared.DBError(c, err.Error())
-		return
-	}
-	var spec application.ReleaseSpec
-	if err := json.Unmarshal([]byte(release.DesiredSpec), &spec); err != nil {
-		apiShared.DBError(c, "读取成功发布快照失败")
-		return
-	}
-	context := applicationContextFor(app)
-	context.ReleaseSequence = release.Sequence
-	if err := h.kubernetes.Preflight(c.Request.Context(), context, spec); err != nil {
 		apiShared.ValidationError(c, err.Error())
-		return
-	}
-	if err := h.kubernetes.MigrateWorkloadKind(c.Request.Context(), context, spec, req.WorkloadKind); err != nil {
-		apiShared.ValidationError(c, err.Error())
-		return
-	}
-	app.WorkloadKind = req.WorkloadKind
-	if err := h.applications.UpdateApplication(app); err != nil {
-		apiShared.DBError(c, err.Error())
 		return
 	}
 	model.Success(c, app)

@@ -64,7 +64,7 @@ func (c *Container) BuildRouteDependencies() api.RouteDependencies {
 	loggingDeps.QueryService = c.Services.LoggingQuery
 	loggingDeps.ComponentService = c.Services.LoggingComponent
 	loggingHandler := systemapi.NewLoggingHandlerWithComposedDependencies(c.Store, loggingDeps)
-	applicationHandler := applicationapi.NewApplicationHandlerWithDependencies(c.Store, c.Services.ApplicationQuery, key, applicationapi.NewKubernetesDependencies(c.K8s))
+	applicationHandler := applicationapi.NewApplicationHandlerWithDependencies(c.Store, c.Services.ApplicationQuery, key, applicationapi.NewKubernetesAdapter(c.K8s))
 	image := deliveryapi.NewImageRegistryHandler(c.Store, key)
 	nodeMirrors := deliveryapi.NewNodeRegistryMirrorHandlerWithDependencies(key, func(ctx context.Context, server *model.Server, content []byte) (string, string) {
 		return deliveryapi.ApplyK3sRegistriesToNode(ctx, server, key, content)
