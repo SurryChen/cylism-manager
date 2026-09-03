@@ -256,20 +256,11 @@ func replaceCoreDNSForward(corefile string, resolvers []string) (string, error) 
 }
 
 func forwardTargets(corefile string) []string {
-	matches := coreDNSForwardPattern.FindStringSubmatch(corefile)
-	if len(matches) < 3 {
-		return []string{}
-	}
-	return strings.Fields(strings.TrimSpace(matches[2]))
+	return apiShared.ForwardTargets(corefile)
 }
 
 func policyPayload(policy *model.ClusterDNSPolicy) any {
-	if policy == nil {
-		return nil
-	}
-	var resolvers []string
-	_ = json.Unmarshal([]byte(policy.Resolvers), &resolvers)
-	return gin.H{"revision": policy.Revision, "resolvers": resolvers, "created_at": policy.CreatedAt}
+	return apiShared.PolicyPayload(policy)
 }
 
 func historyPayload(policies []model.ClusterDNSPolicy) []gin.H {
@@ -283,10 +274,5 @@ func historyPayload(policies []model.ClusterDNSPolicy) []gin.H {
 }
 
 func coreDNSPodReady(pod *corev1.Pod) bool {
-	for _, condition := range pod.Status.Conditions {
-		if condition.Type == corev1.PodReady {
-			return condition.Status == corev1.ConditionTrue
-		}
-	}
-	return false
+	return apiShared.CoreDNSPodReady(pod)
 }

@@ -10,6 +10,8 @@ import (
 	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/repository"
+	maintenance "github.com/cylism/cylism-manager/internal/service/maintenance"
+	registryservice "github.com/cylism/cylism-manager/internal/service/registry"
 	"github.com/gin-gonic/gin"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -19,8 +21,8 @@ import (
 type AgentOperationHandler struct {
 	store                      repository.AgentOperationManagementRepository
 	client                     KubernetesAdapter
-	registryPullExecutor       AgentRegistryPullExecutor
-	maintenanceCleanupExecutor AgentMaintenanceCleanupExecutor
+	registryPullExecutor       registryservice.PullExecutor
+	maintenanceCleanupExecutor maintenance.CleanupExecutor
 }
 
 // NewAgentOperationHandlerWithKubernetesAdapter constructs the browser
@@ -29,12 +31,12 @@ func NewAgentOperationHandlerWithKubernetesAdapter(store repository.AgentOperati
 	return &AgentOperationHandler{store: store, client: client}
 }
 
-func (h *AgentOperationHandler) WithRegistryPullExecutor(executor AgentRegistryPullExecutor) *AgentOperationHandler {
+func (h *AgentOperationHandler) WithRegistryPullExecutor(executor registryservice.PullExecutor) *AgentOperationHandler {
 	h.registryPullExecutor = executor
 	return h
 }
 
-func (h *AgentOperationHandler) WithMaintenanceCleanupExecutor(executor AgentMaintenanceCleanupExecutor) *AgentOperationHandler {
+func (h *AgentOperationHandler) WithMaintenanceCleanupExecutor(executor maintenance.CleanupExecutor) *AgentOperationHandler {
 	h.maintenanceCleanupExecutor = executor
 	return h
 }
@@ -268,7 +270,7 @@ func (h *AgentOperationHandler) resolveMaintenanceCleanup(c *gin.Context, operat
 	}
 	event.Status, event.DiagnosticSummary = model.AlertEventRemediating, "管理员已批准，正在执行固定清理配方"
 	_ = h.store.UpdateAlertEvent(event)
-	output, executeErr := h.maintenanceCleanupExecutor(c.Request.Context(), server, parameters.Recipe)
+	output, executeErr := h.maintenanceCleanupExecutor.Execute(c.Request.Context(), server, parameters.Recipe)
 	now := time.Now()
 	if executeErr != nil {
 		message := maintenanceCleanupFailureSummary(output, executeErr)
@@ -279,7 +281,7 @@ func (h *AgentOperationHandler) resolveMaintenanceCleanup(c *gin.Context, operat
 		return
 	}
 	_, _ = h.store.UpdateAgentOperationStatus(operation.OperationID, model.AgentOperationApproved, model.AgentOperationSucceeded, "", nil, &now)
-	event.Status, event.DiagnosticSummary, event.LastError = model.AlertEventFiring, maintenanceCompletionSummary(parameters.Recipe, output), ""
+	event.Status, event.DiagnosticSummary, event.LastError = model.AlertEventFiring, maintenance.CleanupCompletionSummary(parameters.Recipe, output), ""
 	_ = h.store.UpdateAlertEvent(event)
 	h.audit(operation.RuntimeID, userID, "agent.maintenance_cleanup_executed", map[string]any{"operation_id": operation.OperationID, "recipe": parameters.Recipe, "alert_id": parameters.AlertID})
 	model.SuccessWithMessage(c, gin.H{"operation_id": operation.OperationID, "status": model.AgentOperationSucceeded}, "固定清理配方已执行，请根据后续告警与指标确认恢复")
@@ -305,7 +307,7 @@ func (h *AgentOperationHandler) resolveRegistryPullCheck(c *gin.Context, operati
 		apiShared.DBError(c, "读取镜像代理配置失败")
 		return
 	}
-	config, found := agentResolveRegistry(parameters.Registry, mirrors, proxies)
+	config, found := registryservice.ResolveRegistry(parameters.Registry, mirrors, proxies)
 	if !found || config.Mirror == nil || config.VerificationImage == "" || config.VerificationImage != parameters.VerificationImage {
 		h.markOperationStale(c, operation, "镜像源配置或验证镜像已变化，需要重新发起审批")
 		return
@@ -325,7 +327,7 @@ func (h *AgentOperationHandler) resolveRegistryPullCheck(c *gin.Context, operati
 		apiShared.Conflict(c, "Agent 操作状态已变化")
 		return
 	}
-	if err := h.registryPullExecutor(c.Request.Context(), server, config.VerificationImage); err != nil {
+	if err := h.registryPullExecutor.Pull(c.Request.Context(), server, config.VerificationImage); err != nil {
 		now := time.Now()
 		_, _ = h.store.UpdateAgentOperationStatus(operation.OperationID, model.AgentOperationApproved, model.AgentOperationFailed, agentOperationErrorSummary("节点验证镜像拉取失败", err), nil, &now)
 		apiShared.Error(c, http.StatusBadGateway, model.CodeInternalError, "节点验证镜像拉取失败")
