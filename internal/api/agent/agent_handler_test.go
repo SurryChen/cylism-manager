@@ -50,7 +50,7 @@ func TestAgentAlertEndpointsSeparateAlertAndAutomationState(t *testing.T) {
 	if err := s.UpdateAlertEvent(event); err != nil {
 		t.Fatalf("mark alert analyzing: %v", err)
 	}
-	handler := NewAgentHandler(s, nil, agentAuthenticatorStub{instance: instance})
+	handler := newTestAgentHandler(s, nil, agentAuthenticatorStub{instance: instance})
 
 	getRequest := httptest.NewRequest(http.MethodGet, "/api/agent/v1/alerts/get?id="+itoa(event.ID), nil)
 	getRequest.Header.Set("Authorization", "Bearer agent-token")
@@ -79,7 +79,7 @@ func TestAgentHandlerWorkloadGetRespectsNamespaceScope(t *testing.T) {
 		t.Fatalf("create runtime: %v", err)
 	}
 	client := &k8s.Client{Clientset: fake.NewSimpleClientset(&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "operations"}})}
-	handler := NewAgentHandler(s, client, agentAuthenticatorStub{instance: instance})
+	handler := newTestAgentHandler(s, client, agentAuthenticatorStub{instance: instance})
 	request := httptest.NewRequest(http.MethodGet, "/api/agent/v1/workloads/get?namespace=operations&kind=deployment&name=api", nil)
 	request.Header.Set("Authorization", "Bearer agent-token")
 	recorder := httptest.NewRecorder()
@@ -120,7 +120,7 @@ func TestAgentHandlerWorkloadLogsSupportsPreviousContainer(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			clientset := fake.NewSimpleClientset()
-			handler := NewAgentHandler(s, &k8s.Client{Clientset: clientset}, agentAuthenticatorStub{instance: instance})
+			handler := newTestAgentHandler(s, &k8s.Client{Clientset: clientset}, agentAuthenticatorStub{instance: instance})
 			request := httptest.NewRequest(http.MethodGet, "/api/agent/v1/workloads/logs?"+test.query, nil)
 			request.Header.Set("Authorization", "Bearer agent-token")
 			recorder := httptest.NewRecorder()
@@ -154,7 +154,7 @@ func TestAgentHandlerWorkloadLogsRejectsInvalidPrevious(t *testing.T) {
 		t.Fatalf("create runtime: %v", err)
 	}
 	clientset := fake.NewSimpleClientset()
-	handler := NewAgentHandler(s, &k8s.Client{Clientset: clientset}, agentAuthenticatorStub{instance: instance})
+	handler := newTestAgentHandler(s, &k8s.Client{Clientset: clientset}, agentAuthenticatorStub{instance: instance})
 	request := httptest.NewRequest(http.MethodGet, "/api/agent/v1/workloads/logs?namespace=operations&pod=api-1&container=api&tail=200&previous=invalid", nil)
 	request.Header.Set("Authorization", "Bearer agent-token")
 	recorder := httptest.NewRecorder()
@@ -180,7 +180,7 @@ func TestAgentScaleDoesNotMutateBeforeApprovalAndExecutesAfterApproval(t *testin
 	if err := s.ReplaceAgentCapabilityGrants(instance.ID, []model.AgentCapabilityGrant{{RuntimeID: instance.ID, Capability: model.AgentCapabilityDeploymentScale, Namespace: "operations", Enabled: true}}); err != nil {
 		t.Fatalf("grant: %v", err)
 	}
-	agentHandler := NewAgentHandler(s, client, agentAuthenticatorStub{instance: instance})
+	agentHandler := newTestAgentHandler(s, client, agentAuthenticatorStub{instance: instance})
 	request := httptest.NewRequest(http.MethodPost, "/api/agent/v1/deployments/scale", bytes.NewBufferString(`{"namespace":"operations","name":"api","replicas":3}`))
 	request.Header.Set("Authorization", "Bearer agent-token")
 	request.Header.Set("X-Request-ID", "request_123")
@@ -202,7 +202,7 @@ func TestAgentScaleDoesNotMutateBeforeApprovalAndExecutesAfterApproval(t *testin
 	}
 
 	router := gin.New()
-	approvalHandler := NewAgentOperationHandler(s, client)
+	approvalHandler := newTestAgentOperationHandler(s, client)
 	router.POST("/agent-operations/:operationID/approve", func(c *gin.Context) { c.Set("user_id", uint(7)); approvalHandler.Approve(c) })
 	approval := serve(router, newJSONRequest(http.MethodPost, "/agent-operations/"+response.OperationID+"/approve", nil))
 	if approval.Code != http.StatusOK {
@@ -236,7 +236,7 @@ func TestAgentOperationListFiltersAndDoesNotExposeExecutionParameters(t *testing
 			t.Fatalf("create operation: %v", err)
 		}
 	}
-	handler := NewAgentOperationHandler(s, nil)
+	handler := newTestAgentOperationHandler(s, nil)
 	router := gin.New()
 	router.GET("/runtimes/:id/agent-operations", handler.ListOperations)
 	response := serve(router, newJSONRequest(http.MethodGet, "/runtimes/"+itoa(instance.ID)+"/agent-operations?status=pending_approval&session_id=chat-a", nil))
@@ -327,7 +327,7 @@ func TestAgentHandlerClusterStatusRequiresCapabilityGrant(t *testing.T) {
 		t.Fatalf("create runtime: %v", err)
 	}
 	client := &k8s.Client{Clientset: fake.NewSimpleClientset(&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node-1"}})}
-	handler := NewAgentHandler(s, client, agentAuthenticatorStub{instance: instance})
+	handler := newTestAgentHandler(s, client, agentAuthenticatorStub{instance: instance})
 
 	request := httptest.NewRequest(http.MethodGet, "/api/agent/v1/cluster/status", nil)
 	request.Header.Set("Authorization", "Bearer agent-token")
@@ -361,7 +361,7 @@ func TestAgentHandlerCapabilityStatusReturnsEffectiveScopes(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("grant: %v", err)
 	}
-	handler := NewAgentHandler(s, &k8s.Client{Clientset: fake.NewSimpleClientset()}, agentAuthenticatorStub{instance: instance})
+	handler := newTestAgentHandler(s, &k8s.Client{Clientset: fake.NewSimpleClientset()}, agentAuthenticatorStub{instance: instance})
 	request := httptest.NewRequest(http.MethodGet, "/api/agent/v1/capabilities/status", nil)
 	request.Header.Set("Authorization", "Bearer agent-token")
 	recorder := httptest.NewRecorder()
@@ -388,7 +388,7 @@ func TestAgentDNSAndRegistryProxyDiagnosticsAreClusterScopedAndRedacted(t *testi
 		&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: coreDNSConfigMap, Namespace: coreDNSNamespace}, Data: map[string]string{"Corefile": ".:53 {\n  forward . 1.1.1.1\n}\n"}},
 		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "coredns-a", Namespace: coreDNSNamespace, Labels: map[string]string{"k8s-app": "kube-dns"}}, Status: corev1.PodStatus{Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}}},
 	)}
-	handler := NewAgentHandler(s, client, agentAuthenticatorStub{instance: instance})
+	handler := newTestAgentHandler(s, client, agentAuthenticatorStub{instance: instance})
 	for _, test := range []struct {
 		path    string
 		handler http.HandlerFunc
@@ -452,7 +452,7 @@ func TestAgentHandlerProvidesScopedPendingPodDiagnostics(t *testing.T) {
 		&corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: "data", Namespace: "kube-system"}, Status: corev1.PersistentVolumeClaimStatus{Phase: corev1.ClaimPending}},
 		&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node-1", Labels: map[string]string{corev1.LabelHostname: "node-1"}}, Status: corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}}, Allocatable: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("4")}}},
 	)}
-	handler := NewAgentHandler(s, client, agentAuthenticatorStub{instance: instance})
+	handler := newTestAgentHandler(s, client, agentAuthenticatorStub{instance: instance})
 	if err := s.ReplaceAgentCapabilityGrants(instance.ID, []model.AgentCapabilityGrant{
 		{RuntimeID: instance.ID, Capability: model.AgentCapabilityWorkloadRead, Namespace: "kube-system", Enabled: true},
 		{RuntimeID: instance.ID, Capability: model.AgentCapabilityEventsRead, Namespace: "kube-system", Enabled: true},
@@ -499,7 +499,7 @@ func TestAgentRegistryDiagnosticsAreScopedAndNeverExposeCredentials(t *testing.T
 		t.Fatalf("create server: %v", err)
 	}
 	client := &k8s.Client{Clientset: fake.NewSimpleClientset(&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "pending-pod", Namespace: "kube-system"}, Spec: corev1.PodSpec{NodeName: "node-1"}, Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{{Name: "app", Image: "registry.k8s.io/pause:3.10", State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "ImagePullBackOff", Message: "token=should-not-leak"}}}}}})}
-	handler := NewAgentHandler(s, client, agentAuthenticatorStub{instance: instance}).WithRegistryVerifier(func(_ context.Context, _ *model.Server, endpoints []string) ([]agentRegistryEndpointResult, error) {
+	handler := newTestAgentHandler(s, client, agentAuthenticatorStub{instance: instance}).WithRegistryVerifier(func(_ context.Context, _ *model.Server, endpoints []string) ([]agentRegistryEndpointResult, error) {
 		return []agentRegistryEndpointResult{{Endpoint: endpoints[0], DNS: "ok", HTTP: "200"}}, nil
 	})
 	request := httptest.NewRequest(http.MethodGet, "/api/agent/v1/registries/status", nil)
@@ -532,7 +532,7 @@ func TestAgentRegistryDiagnosticsAreScopedAndNeverExposeCredentials(t *testing.T
 		t.Fatalf("verify: %d %s", recorder.Code, recorder.Body.String())
 	}
 
-	failingHandler := NewAgentHandler(s, client, agentAuthenticatorStub{instance: instance}).WithRegistryVerifier(func(context.Context, *model.Server, []string) ([]agentRegistryEndpointResult, error) {
+	failingHandler := newTestAgentHandler(s, client, agentAuthenticatorStub{instance: instance}).WithRegistryVerifier(func(context.Context, *model.Server, []string) ([]agentRegistryEndpointResult, error) {
 		return nil, fmt.Errorf("node verification returned no endpoint results: token=should-not-leak")
 	})
 	recorder = httptest.NewRecorder()
@@ -561,7 +561,7 @@ func TestAgentRegistryPullCheckRequiresApprovalAndUsesConfiguredImage(t *testing
 	if err := s.ReplaceAgentCapabilityGrants(instance.ID, []model.AgentCapabilityGrant{{RuntimeID: instance.ID, Capability: model.AgentCapabilityRegistryPullCheck, Namespace: "*", Enabled: true}}); err != nil {
 		t.Fatalf("grant: %v", err)
 	}
-	agentHandler := NewAgentHandler(s, &k8s.Client{Clientset: fake.NewSimpleClientset()}, agentAuthenticatorStub{instance: instance})
+	agentHandler := newTestAgentHandler(s, &k8s.Client{Clientset: fake.NewSimpleClientset()}, agentAuthenticatorStub{instance: instance})
 	request := httptest.NewRequest(http.MethodPost, "/api/agent/v1/registries/node-pull-check", bytes.NewBufferString(`{"node":"node-1","registry":"registry.k8s.io"}`))
 	request.Header.Set("Authorization", "Bearer agent-token")
 	request.Header.Set("X-Request-ID", "request_456")
@@ -578,7 +578,7 @@ func TestAgentRegistryPullCheckRequiresApprovalAndUsesConfiguredImage(t *testing
 		t.Fatalf("decode operation: %v %s", err, recorder.Body.String())
 	}
 	calledImage := ""
-	approvalHandler := NewAgentOperationHandler(s, nil).WithRegistryPullExecutor(func(_ context.Context, _ *model.Server, image string) error { calledImage = image; return nil })
+	approvalHandler := newTestAgentOperationHandler(s, nil).WithRegistryPullExecutor(func(_ context.Context, _ *model.Server, image string) error { calledImage = image; return nil })
 	router := gin.New()
 	router.POST("/agent-operations/:operationID/approve", func(c *gin.Context) { c.Set("user_id", uint(7)); approvalHandler.Approve(c) })
 	approval := serve(router, newJSONRequest(http.MethodPost, "/agent-operations/"+response.OperationID+"/approve", nil))
@@ -606,7 +606,7 @@ func TestAgentRegistryPullCheckPersistsSanitizedExecutionFailure(t *testing.T) {
 	if err := s.ReplaceAgentCapabilityGrants(instance.ID, []model.AgentCapabilityGrant{{RuntimeID: instance.ID, Capability: model.AgentCapabilityRegistryPullCheck, Namespace: "*", Enabled: true}}); err != nil {
 		t.Fatalf("grant: %v", err)
 	}
-	agentHandler := NewAgentHandler(s, &k8s.Client{Clientset: fake.NewSimpleClientset()}, agentAuthenticatorStub{instance: instance})
+	agentHandler := newTestAgentHandler(s, &k8s.Client{Clientset: fake.NewSimpleClientset()}, agentAuthenticatorStub{instance: instance})
 	request := httptest.NewRequest(http.MethodPost, "/api/agent/v1/registries/node-pull-check", bytes.NewBufferString(`{"node":"node-1","registry":"registry.k8s.io"}`))
 	request.Header.Set("Authorization", "Bearer agent-token")
 	request.Header.Set("X-Request-ID", "request_457")
@@ -619,7 +619,7 @@ func TestAgentRegistryPullCheckPersistsSanitizedExecutionFailure(t *testing.T) {
 	if recorder.Code != http.StatusAccepted || json.Unmarshal(recorder.Body.Bytes(), &response) != nil {
 		t.Fatalf("pull check request: %d %s", recorder.Code, recorder.Body.String())
 	}
-	approvalHandler := NewAgentOperationHandler(s, nil).WithRegistryPullExecutor(func(_ context.Context, _ *model.Server, _ string) error {
+	approvalHandler := newTestAgentOperationHandler(s, nil).WithRegistryPullExecutor(func(_ context.Context, _ *model.Server, _ string) error {
 		return fmt.Errorf("rpc error: code = Unknown desc = pull timed out token=not-for-history")
 	})
 	router := gin.New()
@@ -632,7 +632,7 @@ func TestAgentRegistryPullCheckPersistsSanitizedExecutionFailure(t *testing.T) {
 	if err != nil || operation.Status != model.AgentOperationFailed || !strings.Contains(operation.ErrorSummary, "pull timed out") || strings.Contains(operation.ErrorSummary, "not-for-history") {
 		t.Fatalf("unexpected failed operation: %+v err=%v", operation, err)
 	}
-	listHandler := NewAgentOperationHandler(s, nil)
+	listHandler := newTestAgentOperationHandler(s, nil)
 	listRouter := gin.New()
 	listRouter.GET("/runtimes/:id/agent-operations", listHandler.ListOperations)
 	list := serve(listRouter, newJSONRequest(http.MethodGet, "/runtimes/"+itoa(instance.ID)+"/agent-operations", nil))

@@ -9,6 +9,7 @@ import (
 
 	"github.com/cylism/cylism-manager/internal/crypto"
 	"github.com/cylism/cylism-manager/internal/model"
+	"github.com/cylism/cylism-manager/internal/runtime"
 	runtimechat "github.com/cylism/cylism-manager/internal/runtime/chat"
 	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/gin-gonic/gin"
@@ -75,7 +76,7 @@ func setupChatRouter(t *testing.T, client runtimechat.ChatClient, seenKey *strin
 		t.Fatalf("open store: %v", err)
 	}
 	encKey := []byte("01234567890123456789012345678901")
-	handler := NewRuntimeHandler(s, encKey, nil, nil)
+	handler := NewRuntimeHandlerWithDependencies(s, encKey, nil, runtime.BuiltinRegistry())
 	handler.newChatClient = func(instance *model.RuntimeInstance, apiKey string) (runtimechat.ChatClient, error) {
 		if seenKey != nil {
 			*seenKey = apiKey

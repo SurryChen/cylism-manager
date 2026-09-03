@@ -3,20 +3,26 @@ package platform
 import (
 	"context"
 	"testing"
+	"time"
 
 	k8sclient "github.com/cylism/cylism-manager/internal/k8s"
+	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/store"
 )
 
 type platformAdapterFake struct {
-	status  *k8sclient.PlatformDeploymentStatus
-	updated string
+	status    *k8sclient.PlatformDeploymentStatus
+	statusCtx context.Context
+	updateCtx context.Context
+	updated   string
 }
 
-func (f *platformAdapterFake) PlatformDeploymentStatusContext(context.Context) (*k8sclient.PlatformDeploymentStatus, error) {
+func (f *platformAdapterFake) PlatformDeploymentStatusContext(ctx context.Context) (*k8sclient.PlatformDeploymentStatus, error) {
+	f.statusCtx = ctx
 	return f.status, nil
 }
-func (f *platformAdapterFake) UpdatePlatformDeploymentContext(_ context.Context, image string, _ uint) (string, error) {
+func (f *platformAdapterFake) UpdatePlatformDeploymentContext(ctx context.Context, image string, _ uint) (string, error) {
+	f.updateCtx = ctx
 	f.updated = image
 	return "old-image", nil
 }
@@ -60,5 +66,32 @@ func TestReleaseServiceUsesMinimalPlatformAdapter(t *testing.T) {
 	service.Apply(context.Background(), release.ID)
 	if adapter.updated != release.Image {
 		t.Fatalf("expected adapter update for %q, got %q", release.Image, adapter.updated)
+	}
+}
+
+func TestReleaseServiceReconcileLatestPropagatesLifecycleContext(t *testing.T) {
+	st, err := store.New(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	adapter := &platformAdapterFake{status: &k8sclient.PlatformDeploymentStatus{
+		Image: "registry.example.com/cylism-manager:0.9", DesiredReplicas: 1,
+	}}
+	service := NewReleaseService(st, nil, adapter)
+	if err := st.CreatePlatformRelease(&model.PlatformRelease{
+		Source: "manual", Image: "registry.example.com/cylism-manager:1.0.0", Status: "accepted",
+		CreatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	type contextKey struct{}
+	ctx := context.WithValue(context.Background(), contextKey{}, "background-lifecycle")
+	service.ReconcileLatest(ctx)
+	if adapter.statusCtx == nil || adapter.statusCtx.Value(contextKey{}) != "background-lifecycle" {
+		t.Fatal("reconcile did not propagate its lifecycle context to the status adapter")
+	}
+	if adapter.updateCtx == nil || adapter.updateCtx.Value(contextKey{}) != "background-lifecycle" {
+		t.Fatal("reconcile did not propagate its lifecycle context to the update adapter")
 	}
 }

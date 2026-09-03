@@ -65,18 +65,6 @@ func (a clientClusterDNSAdapter) ListCoreDNSPods(ctx context.Context) (*corev1.P
 	return a.client.Clientset.CoreV1().Pods(coreDNSNamespace).List(ctx, metav1.ListOptions{LabelSelector: "k8s-app=kube-dns"})
 }
 
-// Deprecated: use NewClusterDNSHandlerWithAdapter from Bootstrap.
-func NewClusterDNSHandler(s repository.ClusterDNSRepository, client interface{}) *ClusterDNSHandler {
-	var adapter ClusterDNSAdapter
-	switch value := client.(type) {
-	case ClusterDNSAdapter:
-		adapter = value
-	case *k8sclient.Client:
-		adapter = NewClusterDNSAdapter(value)
-	}
-	return NewClusterDNSHandlerWithAdapter(s, adapter)
-}
-
 // NewClusterDNSHandlerWithAdapter receives the narrow Kubernetes port owned
 // by Bootstrap and does not inspect concrete client types.
 func NewClusterDNSHandlerWithAdapter(s repository.ClusterDNSRepository, adapter ClusterDNSAdapter) *ClusterDNSHandler {

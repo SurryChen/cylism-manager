@@ -62,7 +62,9 @@ func setupSystemComponentRouter(t *testing.T) (*gin.Engine, *store.Store) {
 	if err != nil {
 		t.Fatalf("create daemonset: %v", err)
 	}
-	handler := NewSystemComponentHandler(s, k8s.SystemComponentKubernetesAdapter{Client: k8sClient})
+	adapter := k8s.SystemComponentKubernetesAdapter{Client: k8sClient}
+	listService := &systemcomponentservice.ComponentListService{Repo: s, Adapter: adapter}
+	handler := NewSystemComponentHandlerWithComposedDependencies(s, adapter, systemcomponentservice.NewComponentService(s, adapter, listService), listService)
 	router := gin.New()
 	group := router.Group("/api/system-components")
 	group.GET("", handler.List)

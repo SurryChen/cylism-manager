@@ -12,7 +12,6 @@ import (
 
 	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 	"github.com/cylism/cylism-manager/internal/model"
-	"github.com/cylism/cylism-manager/internal/repository"
 	registryservice "github.com/cylism/cylism-manager/internal/service/registry"
 	"github.com/gin-gonic/gin"
 	"github.com/google/go-containerregistry/pkg/authn"
@@ -46,18 +45,6 @@ type nodeRegistryMirrorRequest struct {
 	Credential         string   `json:"credential"`
 	InsecureSkipVerify bool     `json:"insecure_skip_verify"`
 	Enabled            *bool    `json:"enabled"`
-}
-
-func NewNodeRegistryMirrorHandler(repo repository.NodeRegistryMirrorRepository, encKey []byte, applyNode registryservice.NodeMirrorApplier) *NodeRegistryMirrorHandler {
-	return NewNodeRegistryMirrorHandlerWithService(repo, encKey, applyNode, registryservice.NewMirrorService(repo, encKey))
-}
-
-// Deprecated: use NewNodeRegistryMirrorHandlerWithDependencies from Bootstrap.
-func NewNodeRegistryMirrorHandlerWithService(repo repository.NodeRegistryMirrorRepository, encKey []byte, applyNode registryservice.NodeMirrorApplier, service *registryservice.MirrorService) *NodeRegistryMirrorHandler {
-	if service == nil {
-		service = registryservice.NewMirrorService(repo, encKey)
-	}
-	return NewNodeRegistryMirrorHandlerWithDependencies(encKey, applyNode, service)
 }
 
 // NewNodeRegistryMirrorHandlerWithDependencies uses a MirrorService composed

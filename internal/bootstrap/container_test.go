@@ -75,7 +75,7 @@ func TestBuildServicesComposesDomainServices(t *testing.T) {
 	if services.ApplicationQuery == nil || services.PlatformRelease == nil {
 		t.Fatal("expected application and platform services to be composed")
 	}
-	if services.RegistryMirror == nil || services.RegistryManaged == nil || services.RegistryProxy == nil {
+	if services.RegistryMirror == nil || services.RegistryManaged == nil || services.RegistryProxy == nil || services.RegistryProxyReconciler == nil {
 		t.Fatal("expected registry services to be composed")
 	}
 	if services.Monitoring == nil || services.LoggingQuery == nil {

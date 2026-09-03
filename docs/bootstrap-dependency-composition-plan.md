@@ -1,6 +1,6 @@
 # Bootstrap 依赖组装层迁移计划
 
-状态：阶段一、阶段二已完成，阶段三进行中（Application、Platform、Registry、Monitoring、Logging、Alerting Service 已纳入 Bootstrap 组合，Router 继续保持纯路由绑定；Cluster/Agent/Registry/PVC/节点加入/网络诊断 SSH 调用及基础设施 Kubernetes 调用均已透传 Context，2026-09-03）
+状态：阶段一至六实现与验证已完成，等待 OpenSpec 归档（Application、Platform、Registry、Monitoring、Logging、Alerting Service 已纳入 Bootstrap 组合，Router 继续保持纯路由绑定；Container 已统一管理常驻后台任务及其优雅关闭，2026-09-03）
 
 本文档规划将应用初始化、第三方依赖接入、Repository/Service/Handler 创建从 `cmd/platform` 和 `internal/api/router.go` 逐步迁移到 `internal/bootstrap`。
 
@@ -555,7 +555,7 @@ npm --prefix web run build
 
 ## 十、下一步执行项
 
-阶段三已完成。阶段四 Handler 组装迁移完成后，下一步将进入阶段五的后台任务与生命周期迁移。
+阶段一至六的实现和验证均已完成；等待 OpenSpec 变更确认并归档。
 
 阶段三完成情况：
 
@@ -571,3 +571,18 @@ npm --prefix web run build
 - Bootstrap 已成为生产 Handler 的唯一构造位置。Runtime 改用最小 Manager port，Agent、Cluster DNS、Domain、Certificate、Node Join、Storage、K8s Resource 和 Delivery Registry 使用显式窄 Adapter 或 Service；
 - Monitoring、Logging、Alerting 和 System Component 的生产 Handler 接收 Bootstrap 复用的 Query、Component、Automation 与 ComponentService；DBAdmin 改为依赖最小数据库 Repository port；
 - 旧宽构造和 fallback 保留并标记为 Deprecated，仅供测试和嵌入方过渡使用，计划在阶段六删除。
+
+阶段五完成情况：
+
+- `Container.StartBackground` 已成为 Platform Release、Registry Proxy、System Component Reconcile 和 Operation Log Cleaner 的统一生命周期入口；重复启动会停止并等待旧控制器，避免任务重叠；
+- Registry Proxy 状态刷新和到期缓存清理已提取为 `registry.ProxyReconciler`，由 Bootstrap 创建并同时供 HTTP Handler 和后台周期任务复用；
+- Platform Release、Registry Proxy 与 System Component 均接收同一生命周期 Context；Operation Log Cleaner 在启用时立即执行并按小时重复，保留 `retention_days <= 0` 的禁用语义；
+- `main.go` 现在以 15 秒超时执行 HTTP `Shutdown`，随后停止并等待后台任务退出；请求拥有的异步发布、PVC 迁移和 WebSocket 生命周期不纳入常驻任务控制器；
+- 已补齐后台控制器、Platform/Registry Context 透传、Registry 状态分支以及关闭顺序测试，并在宿主机通过全量 Go 测试、Go 构建和前端构建。OpenSpec 变更等待用户确认后归档。
+
+阶段六完成情况：
+
+- 已删除 Application、Agent、Auth、Runtime、Cluster DNS、Domain、Certificate、Platform、Registry Mirror/Managed/Proxy Handler 中会隐式创建 Service、Adapter 或默认 Registry 的过渡构造；
+- System Component Handler 已收敛为直接接收 Bootstrap 组装的 `ComponentService` 和 `ComponentListService` 的单一组合入口；
+- 所有受影响测试均改为显式创建并注入窄 Adapter 或领域 Service；旧构造符号搜索无结果，业务历史兼容、REST 路径和 Registry Proxy 旧资源迁移逻辑保持不变；
+- 宿主机全量 Go 测试、Go 构建、前端构建、`git diff --check` 与严格 OpenSpec 校验均已通过，等待用户确认后归档。

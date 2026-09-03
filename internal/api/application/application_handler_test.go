@@ -21,7 +21,7 @@ func setupApplicationRouter(clients ...*k8sclient.Client) (*gin.Engine, *store.S
 	if len(clients) > 0 {
 		dependency = NewKubernetesDependencies(clients[0])
 	}
-	h := NewApplicationHandler(s, []byte("01234567890123456789012345678901"), dependency)
+	h := newTestApplicationHandler(s, []byte("01234567890123456789012345678901"), dependency)
 	projects := r.Group("/api/projects")
 	{
 		projects.GET("", h.ListProjects)

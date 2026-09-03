@@ -22,26 +22,27 @@ import (
 // Services contains all application services assembled by the composition
 // root. Handlers consume these instances instead of constructing services.
 type Services struct {
-	Cluster             *cluster.Service
-	Network             *networkservice.Service
-	Storage             *storageservice.Service
-	Monitoring          *monitoringservice.QueryService
-	ApplicationQuery    *applicationservice.QueryService
-	PlatformRelease     *platformservice.ReleaseService
-	RegistryMirror      *registryservice.MirrorService
-	RegistryManaged     *registryservice.ManagedRegistryService
-	RegistryProxy       *registryservice.ProxyService
-	MonitoringComponent *monitoringservice.ComponentService
-	LoggingQuery        *loggingservice.QueryService
-	LoggingComponent    *loggingservice.ComponentService
-	AlertingComponent   *alertingservice.ComponentService
-	AlertingQuery       *alertingservice.QueryService
-	AlertingAutomation  *alertingservice.AutomationService
-	AuthTemporaryTokens *authservice.TemporaryTokenService
-	RuntimeManager      *runtimepkg.KubernetesManager
-	RuntimeRegistry     *runtimepkg.Registry
-	SystemComponentList *systemcomponentservice.ComponentListService
-	SystemComponent     *systemcomponentservice.ComponentService
+	Cluster                 *cluster.Service
+	Network                 *networkservice.Service
+	Storage                 *storageservice.Service
+	Monitoring              *monitoringservice.QueryService
+	ApplicationQuery        *applicationservice.QueryService
+	PlatformRelease         *platformservice.ReleaseService
+	RegistryMirror          *registryservice.MirrorService
+	RegistryManaged         *registryservice.ManagedRegistryService
+	RegistryProxy           *registryservice.ProxyService
+	RegistryProxyReconciler *registryservice.ProxyReconciler
+	MonitoringComponent     *monitoringservice.ComponentService
+	LoggingQuery            *loggingservice.QueryService
+	LoggingComponent        *loggingservice.ComponentService
+	AlertingComponent       *alertingservice.ComponentService
+	AlertingQuery           *alertingservice.QueryService
+	AlertingAutomation      *alertingservice.AutomationService
+	AuthTemporaryTokens     *authservice.TemporaryTokenService
+	RuntimeManager          *runtimepkg.KubernetesManager
+	RuntimeRegistry         *runtimepkg.Registry
+	SystemComponentList     *systemcomponentservice.ComponentListService
+	SystemComponent         *systemcomponentservice.ComponentService
 }
 
 func BuildServices(repos Repositories, client *k8s.Client, adapters KubernetesAdapters, encKey []byte) Services {
@@ -60,6 +61,7 @@ func BuildServices(repos Repositories, client *k8s.Client, adapters KubernetesAd
 	var registryMirror *registryservice.MirrorService
 	var registryManaged *registryservice.ManagedRegistryService
 	var registryProxy *registryservice.ProxyService
+	var registryProxyReconciler *registryservice.ProxyReconciler
 	if repos.Platform != nil {
 		platformRelease = platformservice.NewReleaseService(repos.Platform, encKey, platformAdapter)
 	}
@@ -71,6 +73,7 @@ func BuildServices(repos Repositories, client *k8s.Client, adapters KubernetesAd
 	}
 	if repos.Proxy != nil {
 		registryProxy = registryservice.NewProxyService(repos.Proxy, encKey)
+		registryProxyReconciler = registryservice.NewProxyReconciler(registryProxy, adapters.Registry.ProxyDiagnostics, adapters.Registry.ProxyResources)
 	}
 	var monitoringComponent *monitoringservice.ComponentService
 	if adapters.Monitoring.Component != nil {
@@ -103,25 +106,26 @@ func BuildServices(repos Repositories, client *k8s.Client, adapters KubernetesAd
 	}
 	systemComponentList := &systemcomponentservice.ComponentListService{Repo: repos.SystemComponents, Adapter: adapters.SystemComponent}
 	return Services{
-		Cluster:             clusterSvc,
-		Network:             networkSvc,
-		Storage:             storageservice.NewService(adapters.Storage, repos.StorageEnv, repos.StorageRecords),
-		Monitoring:          monitoringQuery,
-		ApplicationQuery:    applicationservice.NewQueryService(repos.Application),
-		PlatformRelease:     platformRelease,
-		RegistryMirror:      registryMirror,
-		RegistryManaged:     registryManaged,
-		RegistryProxy:       registryProxy,
-		MonitoringComponent: monitoringComponent,
-		LoggingQuery:        loggingservice.NewQueryService(loggingClient.Query, loggingReady, repos.LoggingScope),
-		LoggingComponent:    loggingComponent,
-		AlertingComponent:   alertingComponent,
-		AlertingQuery:       alertingQuery,
-		AlertingAutomation:  alertingAutomation,
-		AuthTemporaryTokens: authTemporaryTokens,
-		RuntimeManager:      runtimepkg.NewKubernetesManager(client, runtimepkg.BuiltinRegistry()),
-		RuntimeRegistry:     runtimepkg.BuiltinRegistry(),
-		SystemComponentList: systemComponentList,
-		SystemComponent:     systemcomponentservice.NewComponentService(repos.SystemComponents, adapters.SystemComponent, systemComponentList),
+		Cluster:                 clusterSvc,
+		Network:                 networkSvc,
+		Storage:                 storageservice.NewService(adapters.Storage, repos.StorageEnv, repos.StorageRecords),
+		Monitoring:              monitoringQuery,
+		ApplicationQuery:        applicationservice.NewQueryService(repos.Application),
+		PlatformRelease:         platformRelease,
+		RegistryMirror:          registryMirror,
+		RegistryManaged:         registryManaged,
+		RegistryProxy:           registryProxy,
+		RegistryProxyReconciler: registryProxyReconciler,
+		MonitoringComponent:     monitoringComponent,
+		LoggingQuery:            loggingservice.NewQueryService(loggingClient.Query, loggingReady, repos.LoggingScope),
+		LoggingComponent:        loggingComponent,
+		AlertingComponent:       alertingComponent,
+		AlertingQuery:           alertingQuery,
+		AlertingAutomation:      alertingAutomation,
+		AuthTemporaryTokens:     authTemporaryTokens,
+		RuntimeManager:          runtimepkg.NewKubernetesManager(client, runtimepkg.BuiltinRegistry()),
+		RuntimeRegistry:         runtimepkg.BuiltinRegistry(),
+		SystemComponentList:     systemComponentList,
+		SystemComponent:         systemcomponentservice.NewComponentService(repos.SystemComponents, adapters.SystemComponent, systemComponentList),
 	}
 }

@@ -26,7 +26,7 @@ func setupClusterDNSRouter(t *testing.T) (*gin.Engine, *store.Store, *k8s.Client
 		&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: coreDNSConfigMap, Namespace: coreDNSNamespace}, Data: map[string]string{"Corefile": ".:53 {\n  forward . /etc/resolv.conf\n}\n"}},
 		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "coredns-a", Namespace: coreDNSNamespace, Labels: map[string]string{"k8s-app": "kube-dns"}}, Spec: corev1.PodSpec{NodeName: "node-a"}, Status: corev1.PodStatus{PodIP: "10.42.0.10", Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}}},
 	)}
-	h := NewClusterDNSHandler(s, client)
+	h := NewClusterDNSHandlerWithAdapter(s, NewClusterDNSAdapter(client))
 	router := gin.New()
 	group := router.Group("/api/cluster-dns")
 	group.GET("", h.Status)

@@ -24,7 +24,7 @@ func setupNodeRegistryMirrorRouter() (*gin.Engine, *store.Store, *NodeRegistryMi
 		db.SetMaxOpenConns(1)
 	}
 	r := gin.New()
-	h := NewNodeRegistryMirrorHandler(s, []byte("01234567890123456789012345678901"), func(context.Context, *model.Server, []byte) (string, string) {
+	h := newTestNodeRegistryMirrorHandler(s, []byte("01234567890123456789012345678901"), func(context.Context, *model.Server, []byte) (string, string) {
 		return "success", "configured"
 	})
 	mirrors := r.Group("/api/node-registry-mirrors")

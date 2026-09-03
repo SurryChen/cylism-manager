@@ -25,6 +25,7 @@ type RegistryProxyHandler struct {
 	service     *registryservice.ProxyService
 	resources   k8sclient.RegistryProxyResourceReconciler
 	diagnostics k8sclient.RegistryProxyDiagnostics
+	reconciler  *registryservice.ProxyReconciler
 	encKey      []byte
 }
 
@@ -54,23 +55,16 @@ func proxyInput(req registryProxyRequest) registryservice.ProxyInput {
 	}
 }
 
-func NewRegistryProxyHandler(repo repository.RegistryProxyRepository, encKey []byte, resources k8sclient.RegistryProxyResourceReconciler, diagnostics k8sclient.RegistryProxyDiagnostics) *RegistryProxyHandler {
-	return NewRegistryProxyHandlerWithService(repo, encKey, resources, diagnostics, registryservice.NewProxyService(repo, encKey))
-}
-
-// Deprecated: use NewRegistryProxyHandlerWithDependencies from Bootstrap.
-func NewRegistryProxyHandlerWithService(repo repository.RegistryProxyRepository, encKey []byte, resources k8sclient.RegistryProxyResourceReconciler, diagnostics k8sclient.RegistryProxyDiagnostics, service *registryservice.ProxyService) *RegistryProxyHandler {
-	h := &RegistryProxyHandler{store: repo, encKey: encKey, service: service, resources: resources, diagnostics: diagnostics}
-	if h.service == nil {
-		h.service = registryservice.NewProxyService(repo, encKey)
-	}
-	return NewRegistryProxyHandlerWithDependencies(repo, encKey, resources, diagnostics, h.service)
-}
-
 // NewRegistryProxyHandlerWithDependencies uses the service and adapters
 // composed by Bootstrap and never creates a fallback service.
 func NewRegistryProxyHandlerWithDependencies(repo repository.RegistryProxyRepository, encKey []byte, resources k8sclient.RegistryProxyResourceReconciler, diagnostics k8sclient.RegistryProxyDiagnostics, service *registryservice.ProxyService) *RegistryProxyHandler {
 	return &RegistryProxyHandler{store: repo, encKey: encKey, service: service, resources: resources, diagnostics: diagnostics}
+}
+
+// WithReconciler injects the Bootstrap-owned status and cache reconciler.
+func (h *RegistryProxyHandler) WithReconciler(reconciler *registryservice.ProxyReconciler) *RegistryProxyHandler {
+	h.reconciler = reconciler
+	return h
 }
 
 // WithResourceReconciler replaces only mutating proxy convergence actions.
@@ -266,6 +260,10 @@ func (h *RegistryProxyHandler) MigrateResourceName(c *gin.Context) {
 }
 
 func (h *RegistryProxyHandler) refreshStatus(ctx context.Context, proxy *model.RegistryProxy) {
+	if h.reconciler != nil {
+		_ = h.reconciler.Refresh(ctx, proxy)
+		return
+	}
 	if !h.k8sReady() {
 		return
 	}

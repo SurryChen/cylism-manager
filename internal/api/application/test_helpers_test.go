@@ -3,6 +3,8 @@ package applicationapi
 import (
 	"bytes"
 	"encoding/json"
+	"github.com/cylism/cylism-manager/internal/repository"
+	applicationservice "github.com/cylism/cylism-manager/internal/service/application"
 	"github.com/gin-gonic/gin"
 	"net/http"
 	"net/http/httptest"
@@ -18,4 +20,8 @@ func serve(r *gin.Engine, req *http.Request) *httptest.ResponseRecorder {
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 	return w
+}
+
+func newTestApplicationHandler(resources repository.ApplicationHandlerRepository, encKey []byte, dependencies KubernetesDependencies) *ApplicationHandler {
+	return NewApplicationHandlerWithDependencies(resources, applicationservice.NewQueryService(resources), encKey, dependencies)
 }

@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"strconv"
 
+	"github.com/cylism/cylism-manager/internal/k8s"
+	"github.com/cylism/cylism-manager/internal/repository"
 	"github.com/gin-gonic/gin"
 )
 
@@ -24,3 +26,11 @@ func serve(r *gin.Engine, req *http.Request) *httptest.ResponseRecorder {
 }
 
 func itoa(id uint) string { return strconv.FormatUint(uint64(id), 10) }
+
+func newTestAgentHandler(store repository.AgentReadRepository, client *k8s.Client, authenticator AgentAuthenticator) *AgentHandler {
+	return NewAgentHandlerWithKubernetesAdapter(store, NewKubernetesAdapter(client), authenticator)
+}
+
+func newTestAgentOperationHandler(store repository.AgentOperationManagementRepository, client *k8s.Client) *AgentOperationHandler {
+	return NewAgentOperationHandlerWithKubernetesAdapter(store, NewKubernetesAdapter(client))
+}

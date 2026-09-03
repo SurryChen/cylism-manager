@@ -7,6 +7,7 @@ import (
 	"context"
 	"log"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/cylism/cylism-manager/internal/api"
@@ -38,6 +39,34 @@ type Container struct {
 	Auth         *authapi.AuthConfig
 	components   *systemapi.SystemComponentHandler
 	encKey       []byte
+	backgroundMu sync.Mutex
+	background   *BackgroundTasks
+}
+
+// BackgroundConfig controls Container-owned periodic work. A zero interval
+// uses the documented default; a non-positive log retention disables cleanup.
+type BackgroundConfig struct {
+	OperationLogRetentionDays        int
+	OperationLogCleanupInterval      time.Duration
+	PlatformReconcileInterval        time.Duration
+	RegistryProxyReconcileInterval   time.Duration
+	SystemComponentReconcileInterval time.Duration
+}
+
+func (c BackgroundConfig) normalized() BackgroundConfig {
+	if c.OperationLogCleanupInterval <= 0 {
+		c.OperationLogCleanupInterval = time.Hour
+	}
+	if c.PlatformReconcileInterval <= 0 {
+		c.PlatformReconcileInterval = time.Minute
+	}
+	if c.RegistryProxyReconcileInterval <= 0 {
+		c.RegistryProxyReconcileInterval = time.Minute
+	}
+	if c.SystemComponentReconcileInterval <= 0 {
+		c.SystemComponentReconcileInterval = 5 * time.Minute
+	}
+	return c
 }
 
 // NewContainer initializes process-owned infrastructure. Kubernetes is
@@ -91,40 +120,63 @@ func (c *Container) componentHandler() *systemapi.SystemComponentHandler {
 	return c.components
 }
 
-// StartBackground starts application-owned reconciliation and maintenance
-// loops. The caller only supplies lifecycle configuration; concrete handlers
-// and adapters are assembled inside the composition root.
-func (c *Container) StartBackground(ctx context.Context, operationLogRetention time.Duration) {
-	if ctx == nil {
-		return
+// StartBackground starts every Container-owned maintenance task. Starting a
+// second set stops and waits for the old set so periodic jobs cannot overlap.
+func (c *Container) StartBackground(parent context.Context, config BackgroundConfig) *BackgroundTasks {
+	if c == nil {
+		return nil
 	}
-	go c.startOperationLogCleaner(ctx, operationLogRetention)
+	config = config.normalized()
+	c.backgroundMu.Lock()
+	defer c.backgroundMu.Unlock()
+	if c.background != nil {
+		c.background.Stop()
+		c.background.Wait()
+	}
+	tasks := newBackgroundTasks(parent)
+	c.background = tasks
 
-	go func() {
-		if handler := c.componentHandler(); handler != nil {
-			_ = handler.Run(ctx, 5*time.Minute)
-		}
-	}()
+	if c.Services.PlatformRelease != nil {
+		tasks.Go(func(ctx context.Context) {
+			runPeriodic(ctx, config.PlatformReconcileInterval, func(ctx context.Context) {
+				c.Services.PlatformRelease.ReconcileLatest(ctx)
+			})
+		})
+	}
+	if c.Services.RegistryProxyReconciler != nil {
+		tasks.Go(func(ctx context.Context) {
+			runPeriodic(ctx, config.RegistryProxyReconcileInterval, func(ctx context.Context) {
+				if err := c.Services.RegistryProxyReconciler.Reconcile(ctx); err != nil {
+					log.Printf("镜像代理后台协调失败: %v", err)
+				}
+			})
+		})
+	}
+	if service := c.Services.SystemComponent; service != nil {
+		tasks.Go(func(ctx context.Context) {
+			if err := service.Run(ctx, config.SystemComponentReconcileInterval); err != nil && ctx.Err() == nil {
+				log.Printf("系统组件后台协调停止: %v", err)
+			}
+		})
+	}
+	if config.OperationLogRetentionDays > 0 && c.Store != nil {
+		tasks.Go(func(ctx context.Context) {
+			runPeriodic(ctx, config.OperationLogCleanupInterval, func(context.Context) {
+				c.cleanOperationLogs(config.OperationLogRetentionDays)
+			})
+		})
+	}
+	return tasks
 }
 
-func (c *Container) startOperationLogCleaner(ctx context.Context, retention time.Duration) {
-	if int(retention) <= 0 {
+func (c *Container) cleanOperationLogs(retentionDays int) {
+	if retentionDays <= 0 || c == nil || c.Store == nil {
 		log.Println("操作日志清理已禁用（retention_days <= 0）")
 		return
 	}
-	log.Printf("操作日志清理已启动，保留 %d 天", int(retention))
-	ticker := time.NewTicker(time.Hour)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			if err := c.Store.DeleteExpiredOperationLogs(int(retention)); err != nil {
-				log.Printf("操作日志清理失败: %v", err)
-			} else {
-				log.Println("操作日志清理完成")
-			}
-		}
+	if err := c.Store.DeleteExpiredOperationLogs(retentionDays); err != nil {
+		log.Printf("操作日志清理失败: %v", err)
+	} else {
+		log.Println("操作日志清理完成")
 	}
 }

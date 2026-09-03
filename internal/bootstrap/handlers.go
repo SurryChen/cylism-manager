@@ -61,7 +61,7 @@ func (c *Container) BuildRouteDependencies() api.RouteDependencies {
 	managed := deliveryapi.NewManagedOCIRegistryHandlerWithDependencies(c.Store, c.Adapters.Registry.ManagedResources, c.Adapters.Registry.ManagedStatus, func(ctx context.Context, server *model.Server, content []byte) (string, string) {
 		return deliveryapi.ApplyK3sRegistriesToNode(ctx, server, key, content)
 	}, c.Services.RegistryManaged)
-	proxy := deliveryapi.NewRegistryProxyHandlerWithDependencies(c.Store, key, c.Adapters.Registry.ProxyResources, c.Adapters.Registry.ProxyDiagnostics, c.Services.RegistryProxy)
+	proxy := deliveryapi.NewRegistryProxyHandlerWithDependencies(c.Store, key, c.Adapters.Registry.ProxyResources, c.Adapters.Registry.ProxyDiagnostics, c.Services.RegistryProxy).WithReconciler(c.Services.RegistryProxyReconciler)
 	storageService := c.Services.Storage
 	pvcAdapter, pvcMigration, pvcWorkloads := infrastructureapi.NewPVCAdapters(c.K8s)
 	storageHandler := infrastructureapi.NewStorageHandlerWithDependencies(storageService, c.Store, key, pvcAdapter, pvcMigration, pvcWorkloads)
