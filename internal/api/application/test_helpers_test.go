@@ -22,6 +22,6 @@ func serve(r *gin.Engine, req *http.Request) *httptest.ResponseRecorder {
 	return w
 }
 
-func newTestApplicationHandler(resources repository.ApplicationHandlerRepository, encKey []byte, dependencies KubernetesDependencies) *ApplicationHandler {
+func newTestApplicationHandler(resources repository.ApplicationHandlerRepository, encKey []byte, dependencies KubernetesAdapter) *ApplicationHandler {
 	return NewApplicationHandlerWithDependencies(resources, applicationservice.NewQueryService(resources), encKey, dependencies)
 }

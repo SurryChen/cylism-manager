@@ -5,68 +5,92 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	coreauth "github.com/cylism/cylism-manager/internal/auth"
 	"github.com/cylism/cylism-manager/internal/model"
-	authservice "github.com/cylism/cylism-manager/internal/service/auth"
 	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/gin-gonic/gin"
 )
 
-func TestTemporaryLoginIssuesNormalSessionAndCanBeRevoked(t *testing.T) {
+func TestLoginRefreshAndMe(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db, err := store.New(":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}
-	user := &model.User{Username: "token-owner", PasswordHash: "hash"}
+	hash, err := coreauth.HashPassword("password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	user := &model.User{Username: "alice", PasswordHash: hash}
 	if err := db.CreateUser(user); err != nil {
 		t.Fatal(err)
 	}
-	h := NewAuthHandlerWithTemporaryService(db, []byte("secret"), time.Hour, time.Hour, authservice.NewTemporaryTokenService(db, db))
+	h := NewAuthHandlerWithTemporaryService(db, []byte("secret"), time.Hour, 2*time.Hour, nil)
 	r := gin.New()
-	r.POST("/create", func(c *gin.Context) { c.Set("user_id", user.ID); h.CreateTemporaryToken(c) })
-	r.POST("/login", h.TemporaryLogin)
+	r.POST("/login", h.Login)
+	r.POST("/refresh", h.Refresh)
+	r.GET("/me", func(c *gin.Context) { c.Set("user_id", user.ID); c.Set("username", user.Username); h.Me(c) })
 
-	createReq := httptest.NewRequest(http.MethodPost, "/create", bytes.NewBufferString(`{"label":"test","ttl_seconds":3600}`))
-	createReq.Header.Set("Content-Type", "application/json")
-	createResp := httptest.NewRecorder()
-	r.ServeHTTP(createResp, createReq)
-	if createResp.Code != http.StatusOK {
-		t.Fatalf("create status = %d, body=%s", createResp.Code, createResp.Body.String())
+	login := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/login", bytes.NewBufferString(`{"username":"alice","password":"password"}`))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(login, req)
+	if login.Code != http.StatusOK {
+		t.Fatalf("login status = %d, body=%s", login.Code, login.Body.String())
 	}
-	var envelope struct {
+	var payload struct {
 		Data struct {
-			ID    uint   `json:"id"`
-			Token string `json:"token"`
+			AccessToken  string `json:"access_token"`
+			RefreshToken string `json:"refresh_token"`
 		} `json:"data"`
 	}
-	if err := json.Unmarshal(createResp.Body.Bytes(), &envelope); err != nil {
+	if err := json.Unmarshal(login.Body.Bytes(), &payload); err != nil {
 		t.Fatal(err)
 	}
-	if envelope.Data.ID == 0 || envelope.Data.Token == "" {
-		t.Fatalf("unexpected create response: %s", createResp.Body.String())
+	claims, err := coreauth.ParseToken([]byte("secret"), payload.Data.AccessToken)
+	if err != nil || claims.UserID != user.ID || claims.Username != user.Username {
+		t.Fatalf("access claims = %#v, %v", claims, err)
 	}
 
-	loginBody := httptest.NewRequest(http.MethodPost, "/login", bytes.NewBufferString(`{"token":"`+envelope.Data.Token+`"}`))
-	loginBody.Header.Set("Content-Type", "application/json")
-	loginResp := httptest.NewRecorder()
-	r.ServeHTTP(loginResp, loginBody)
-	if loginResp.Code != http.StatusOK {
-		t.Fatalf("login status = %d, body=%s", loginResp.Code, loginResp.Body.String())
+	refresh := httptest.NewRecorder()
+	refreshReq := httptest.NewRequest(http.MethodPost, "/refresh", bytes.NewBufferString(`{"refresh_token":"`+payload.Data.RefreshToken+`"}`))
+	refreshReq.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(refresh, refreshReq)
+	if refresh.Code != http.StatusOK || !strings.Contains(refresh.Body.String(), "access_token") {
+		t.Fatalf("refresh response = %d %s", refresh.Code, refresh.Body.String())
 	}
-	var loginEnvelope struct {
-		Data struct {
-			AccessToken string `json:"access_token"`
-		} `json:"data"`
+
+	me := httptest.NewRecorder()
+	r.ServeHTTP(me, httptest.NewRequest(http.MethodGet, "/me", nil))
+	if me.Code != http.StatusOK || !strings.Contains(me.Body.String(), `"username":"alice"`) {
+		t.Fatalf("me response = %d %s", me.Code, me.Body.String())
 	}
-	if err := json.Unmarshal(loginResp.Body.Bytes(), &loginEnvelope); err != nil {
+}
+
+func TestLoginRejectsInvalidCredentials(t *testing.T) {
+	db, err := store.New(":memory:")
+	if err != nil {
 		t.Fatal(err)
 	}
-	claims, err := coreauth.ParseToken([]byte("secret"), loginEnvelope.Data.AccessToken)
-	if err != nil || claims.UserID != user.ID {
-		t.Fatalf("claims = %#v, err=%v", claims, err)
+	hash, err := coreauth.HashPassword("password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.CreateUser(&model.User{Username: "alice", PasswordHash: hash}); err != nil {
+		t.Fatal(err)
+	}
+	h := NewAuthHandlerWithTemporaryService(db, []byte("secret"), time.Hour, time.Hour, nil)
+	r := gin.New()
+	r.POST("/login", h.Login)
+	req := httptest.NewRequest(http.MethodPost, "/login", bytes.NewBufferString(`{"username":"alice","password":"wrong"}`))
+	req.Header.Set("Content-Type", "application/json")
+	resp := httptest.NewRecorder()
+	r.ServeHTTP(resp, req)
+	if resp.Code != http.StatusUnauthorized {
+		t.Fatalf("invalid login status = %d", resp.Code)
 	}
 }
