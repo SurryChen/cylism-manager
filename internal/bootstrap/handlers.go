@@ -66,7 +66,9 @@ func (c *Container) BuildRouteDependencies() api.RouteDependencies {
 	loggingDeps.QueryService = c.Services.LoggingQuery
 	loggingDeps.ComponentService = c.Services.LoggingComponent
 	loggingHandler := systemapi.NewLoggingHandlerWithComposedDependencies(c.Store, loggingDeps)
-	applicationHandler := applicationapi.NewApplicationHandlerWithDependencies(c.Store, c.Services.ApplicationQuery, key, applicationapi.NewKubernetesAdapter(c.K8s))
+	// Integration delegations are verified by the route middleware with JWTSecret;
+	// keep the handler's signing key aligned with that verifier.
+	applicationHandler := applicationapi.NewApplicationHandlerWithDependencies(c.Store, c.Services.ApplicationQuery, key, applicationapi.NewKubernetesAdapter(c.K8s)).WithDelegationSecret(c.Auth.JWTSecret)
 	image := deliveryapi.NewImageRegistryHandler(c.Store, key)
 	nodeMirrors := deliveryapi.NewNodeRegistryMirrorHandlerWithDependencies(key, func(ctx context.Context, server *model.Server, content []byte) (string, string) {
 		return applyK3sRegistriesToNode(ctx, server, key, content)

@@ -13,6 +13,7 @@ import (
 	k8sclient "github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/repository"
+	networkservice "github.com/cylism/cylism-manager/internal/service/network"
 	"github.com/gin-gonic/gin"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -256,23 +257,23 @@ func replaceCoreDNSForward(corefile string, resolvers []string) (string, error) 
 }
 
 func forwardTargets(corefile string) []string {
-	return apiShared.ForwardTargets(corefile)
+	return networkservice.ForwardTargets(corefile)
 }
 
 func policyPayload(policy *model.ClusterDNSPolicy) any {
-	return apiShared.PolicyPayload(policy)
+	return networkservice.PolicyPayload(policy)
 }
 
 func historyPayload(policies []model.ClusterDNSPolicy) []gin.H {
 	result := make([]gin.H, 0, len(policies))
 	for index := range policies {
-		if payload, ok := policyPayload(&policies[index]).(gin.H); ok {
-			result = append(result, payload)
+		if payload := networkservice.PolicyPayload(&policies[index]); payload != nil {
+			result = append(result, gin.H(payload))
 		}
 	}
 	return result
 }
 
 func coreDNSPodReady(pod *corev1.Pod) bool {
-	return apiShared.CoreDNSPodReady(pod)
+	return networkservice.CoreDNSPodReady(pod)
 }

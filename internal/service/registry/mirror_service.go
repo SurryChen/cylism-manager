@@ -9,9 +9,9 @@ import (
 	"sync"
 	"time"
 
-	security "github.com/cylism/cylism-manager/internal/api/shared/security"
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/repository"
+	security "github.com/cylism/cylism-manager/internal/security"
 )
 
 var (

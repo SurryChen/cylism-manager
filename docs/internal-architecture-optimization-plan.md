@@ -38,7 +38,7 @@ internal/api/system/
 1. 一个 Handler 只负责一个业务聚合或一个基础设施资源族。
 2. Handler 只做请求绑定、鉴权上下文提取、Service 调用和响应映射。
 3. 业务规则进入 `internal/service` 或 `internal/application`，持久化进入 Repository/Store Adapter，Kubernetes 操作进入 `internal/k8s` Adapter/Reconciler。
-4. 消除跨领域包复用内部辅助函数的情况，公共能力进入明确的 shared/security 包。
+4. 消除跨领域包复用内部辅助函数的情况，API 通用能力进入 `internal/api/shared`，与 API 无关的安全能力进入 `internal/security`。
 5. 将根包 `internal/api` 收敛为路由注册和少量特殊适配入口；应用依赖组装逐步迁入 `internal/bootstrap`。
 6. 每次迁移都可以独立验证、独立提交和回滚。
 
@@ -69,9 +69,9 @@ internal/
     shared/
       http.go
       identity.go
-      sanitize.go
-    (root: router.go, routes_*.go, websocket.go,
-     cluster_adapter.go, cluster_dns_helpers.go)
+    (root: router.go, routes_*.go, websocket.go, cluster_adapter.go)
+  security/
+    sanitize.go
   application/
     spec_types.go
     spec_validation.go
@@ -273,7 +273,7 @@ internal/
 - VictoriaMetrics 查询、时间范围和磁盘增长分析移入 `service/observability/monitoring`。
 - 系统组件的白名单、配置检测和超时状态移入 `service/system_component`。
 - Tailscale 的主机命令执行封装成可测试 Adapter，Handler 不直接调用 `os/exec`。
-- 脱敏和截断放入 `internal/api/shared/sanitize` 或独立安全包，禁止 system 依赖 agent 包内部工具。
+- 脱敏和截断放入独立的 `internal/security` 包，禁止 system 依赖 agent 包内部工具。
 
 验收：system Handler 主要由 DTO、鉴权、Service 调用和响应映射组成；告警、日志、监控单测可以注入 Fake Client。
 
@@ -285,7 +285,7 @@ internal/
 - 已新增 `service/system_component`，承载系统组件白名单和超时参数校验；System Component Handler 的更新/恢复路径通过该 Service 解析组件归属。
 - Tailscale Handler 已改为使用可注入 `tailscaleRuntime` Adapter，主机 `os/exec`、安装命令和 k3s token 文件读取均集中在 Adapter；新增 Runtime Fake 测试。
 - Loki 与 VictoriaMetrics 的结果归一化已由对应 Observability Service 统一处理；PVC Consumers 由 Monitoring Service 的 `PVCConsumerReader` 负责，Agent 磁盘增长查询复用同一 DiskGrowth Service。
-- 新增 `api/shared/security`，统一凭据脱敏、Token 展示和文本截断；Agent 与 Tailscale 已接入该公共能力。
+- 凭据脱敏、Token 展示和文本截断已收敛到 `internal/security`；Agent、Tailscale、Delivery、Audit Middleware 和 Registry Service 已接入该公共能力。
 - 新增各 Service 的纯逻辑/Fake 单测，现有 system Handler 回归测试保持通过。
 - 已将告警自动化策略合法性、告警匹配及冷却窗口判定迁入 `service/observability/alerting`，通知分发也统一通过 Service 编排。
 - Alerting 的 `Workflow` 已进一步收敛完整编排：Alertmanager 查询/静默、通知 Secret 加载、Webhook 载荷校验、事件持久化与 resolved 缓存、通知测试、自动化策略同步及事件列表均由 Service 负责；Handler 中的旧 `send*`、就绪、事件转换和缓存兼容入口已物理删除。
@@ -343,7 +343,8 @@ System Component Adapter 也已统一改为由 Router/平台启动层显式创�
 - `internal/model/models.go` 已按领域物理拆分为 `application.go`、`auth.go`、`runtime.go`、`infrastructure.go`、`observability.go`、`platform.go` 和 `registry.go`，仍保持 `package model`，公开类型、字段、表名和调用方式不变。
 - `internal/application/spec.go` 已物理拆分为 `spec_types.go`、`spec_validation.go`、`spec_normalization.go`、`spec_rendering.go` 和 `spec_security.go`；发布 Spec 的类型、校验、归一化、Kubernetes 资源渲染和敏感字段清理分别归位。
 - Runtime/Agent 底层能力已收敛到 `internal/runtime` 领域：Chat 客户端、Runtime 身份鉴权、CLI 制品校验和 CLI API 客户端分别位于 `chat`、`identity`、`artifact` 和 `cli` 子包；`internal/api/agent` 仅保留 HTTP Handler。
-- `internal/api` 根包业务 Handler 已完成物理归组：认证进入 `auth`，应用与工作台进入 `application`，Runtime/Chat 进入 `runtime`，镜像仓库与 Chart 入口进入 `delivery`，站点/CRD/NGINX 进入 `infrastructure`，Dashboard/DB Admin/操作日志进入 `system`；根包仅保留路由注册、依赖组装、WebSocket 及 `cluster_adapter.go`、`cluster_dns_helpers.go` 两类特殊适配。
+- `internal/api` 根包业务 Handler 已完成物理归组：认证进入 `auth`，应用与工作台进入 `application`，Runtime/Chat 进入 `runtime`，镜像仓库与 Chart 入口进入 `delivery`，站点/CRD/NGINX 进入 `infrastructure`，Dashboard/DB Admin/操作日志进入 `system`；根包仅保留路由注册、依赖组装、WebSocket 和 `cluster_adapter.go` 等启动适配。
+- CoreDNS 状态格式化辅助已从 `internal/api/shared` 迁移到 `internal/service/network`，Agent 与 Infrastructure Handler 共同复用；API 层仅保留 CoreDNS 配置变更所需的 HTTP 编排。
 - 补充并更新本文件的目标目录结构和依赖图，明确 API → Service/Application → Repository/K8s → Store 的依赖方向；阶段六拆分不引入新的跨层依赖。
 - 通过 `rg` 检查旧 `models.go`、`spec.go`、阶段迁移兼容入口和临时适配器的生产调用点；无调用方的旧模型/Spec 文件已删除，仍保留的兼容逻辑均有明确业务消费者。
 - `go test ./...` 与 `go build ./...` 在宿主机权限下通过；沙箱内少数 `httptest` 用例因 IPv6 监听权限失败，不属于代码回归。Node 24 下前端构建和 `git diff --check` 通过。

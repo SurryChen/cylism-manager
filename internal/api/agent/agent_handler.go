@@ -11,9 +11,9 @@ import (
 	"strings"
 	"time"
 
-	security "github.com/cylism/cylism-manager/internal/api/shared/security"
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/repository"
+	security "github.com/cylism/cylism-manager/internal/security"
 	maintenance "github.com/cylism/cylism-manager/internal/service/maintenance"
 	monitoringservice "github.com/cylism/cylism-manager/internal/service/observability/monitoring"
 	registryservice "github.com/cylism/cylism-manager/internal/service/registry"

@@ -1,4 +1,4 @@
-package shared
+package network
 
 import (
 	"encoding/json"
@@ -11,6 +11,7 @@ import (
 
 var coreDNSForwardPattern = regexp.MustCompile(`(?m)^(\s*forward\s+\.\s+)([^\n{]+)(\{[^\n]*\})?\s*$`)
 
+// ForwardTargets extracts the upstream resolvers from a CoreDNS Corefile.
 func ForwardTargets(corefile string) []string {
 	matches := coreDNSForwardPattern.FindStringSubmatch(corefile)
 	if len(matches) < 3 {
@@ -19,6 +20,7 @@ func ForwardTargets(corefile string) []string {
 	return strings.Fields(strings.TrimSpace(matches[2]))
 }
 
+// PolicyPayload creates the API-safe representation of a DNS policy.
 func PolicyPayload(policy *model.ClusterDNSPolicy) map[string]any {
 	if policy == nil {
 		return nil
@@ -28,6 +30,7 @@ func PolicyPayload(policy *model.ClusterDNSPolicy) map[string]any {
 	return map[string]any{"revision": policy.Revision, "resolvers": resolvers, "created_at": policy.CreatedAt}
 }
 
+// CoreDNSPodReady reports whether a CoreDNS Pod has a positive Ready condition.
 func CoreDNSPodReady(pod *corev1.Pod) bool {
 	if pod == nil {
 		return false
