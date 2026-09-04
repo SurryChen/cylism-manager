@@ -1,12 +1,15 @@
 package api
 
 import (
-	infrastructureapi "github.com/cylism/cylism-manager/internal/api/infrastructure"
+	clusterapi "github.com/cylism/cylism-manager/internal/api/infrastructure/cluster"
+	kubernetesapi "github.com/cylism/cylism-manager/internal/api/infrastructure/kubernetes"
+	networkapi "github.com/cylism/cylism-manager/internal/api/infrastructure/network"
+	storageapi "github.com/cylism/cylism-manager/internal/api/infrastructure/storage"
 	systemapi "github.com/cylism/cylism-manager/internal/api/system"
 	"github.com/gin-gonic/gin"
 )
 
-func registerInfrastructureRoutes(apiGroup *gin.RouterGroup, server *infrastructureapi.ServerHandler, networkDiag *infrastructureapi.ServerNetworkDiagnosticsHandler, terminal *infrastructureapi.ServerTerminalHandler, site *infrastructureapi.SiteHandler, operations *systemapi.OperationHandler, domain *infrastructureapi.DomainHandler, node *infrastructureapi.NodeHandler, join *infrastructureapi.NodeJoinProgressHandler, ingress *infrastructureapi.IngressHandler, cert *infrastructureapi.CertHandler, k8sHandler *infrastructureapi.K8sHandler, storage *infrastructureapi.StorageHandler, network *infrastructureapi.NetworkHandler, tailscale *systemapi.TailscaleHandler, crd *infrastructureapi.CRDHandler, audit *systemapi.AuditHandler, dbAdmin *systemapi.DBAdminHandler) {
+func registerInfrastructureRoutes(apiGroup *gin.RouterGroup, server *clusterapi.ServerHandler, networkDiag *clusterapi.ServerNetworkDiagnosticsHandler, terminal *clusterapi.ServerTerminalHandler, site *networkapi.SiteHandler, operations *systemapi.OperationHandler, domain *networkapi.DomainHandler, node *clusterapi.NodeHandler, join *clusterapi.NodeJoinProgressHandler, ingress *networkapi.IngressHandler, cert *networkapi.CertHandler, k8sHandler *kubernetesapi.K8sHandler, storage *storageapi.StorageHandler, network *networkapi.NetworkHandler, tailscale *systemapi.TailscaleHandler, crd *kubernetesapi.CRDHandler, audit *systemapi.AuditHandler, dbAdmin *systemapi.DBAdminHandler) {
 	servers := apiGroup.Group("/servers")
 	servers.POST("", server.Create)
 	servers.GET("", server.List)
@@ -100,7 +103,7 @@ func registerInfrastructureRoutes(apiGroup *gin.RouterGroup, server *infrastruct
 	admin.DELETE("/:table/:id", dbAdmin.DeleteRecord)
 }
 
-func registerK8sRoutes(apiGroup *gin.RouterGroup, h *infrastructureapi.K8sHandler, storage *infrastructureapi.StorageHandler, network *infrastructureapi.NetworkHandler) {
+func registerK8sRoutes(apiGroup *gin.RouterGroup, h *kubernetesapi.K8sHandler, storage *storageapi.StorageHandler, network *networkapi.NetworkHandler) {
 	g := apiGroup.Group("/k8s")
 	g.GET("/dashboard", h.Dashboard)
 	g.GET("/namespaces", h.ListNamespaces)

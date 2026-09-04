@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	infrastructureapi "github.com/cylism/cylism-manager/internal/api/infrastructure"
 	"github.com/cylism/cylism-manager/internal/model"
+	"github.com/cylism/cylism-manager/internal/transport"
 )
 
 // applyK3sRegistriesToNode is a composition-root adapter. The delivery API
@@ -16,7 +16,7 @@ import (
 // depend on infrastructure HTTP helpers.
 func applyK3sRegistriesToNode(ctx context.Context, server *model.Server, encKey, content []byte) (string, string) {
 	payload := base64.StdEncoding.EncodeToString(content)
-	out, err := infrastructureapi.SSHExecContext(ctx, 90*time.Second, append(infrastructureapi.BuildSSHArgs(server, encKey, server.Host), nodeRegistryMirrorApplyCommand(payload)))
+	out, err := transport.SSHExecContext(ctx, 90*time.Second, append(transport.BuildSSHArgs(server, encKey, server.Host), nodeRegistryMirrorApplyCommand(payload)))
 	if err != nil {
 		return "failed", err.Error()
 	}

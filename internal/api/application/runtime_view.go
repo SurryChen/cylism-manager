@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	infrastructureapi "github.com/cylism/cylism-manager/internal/api/infrastructure"
+	networkapi "github.com/cylism/cylism-manager/internal/api/infrastructure/network"
 	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 	"github.com/cylism/cylism-manager/internal/application"
 	"github.com/cylism/cylism-manager/internal/model"
@@ -224,9 +224,9 @@ func (h *ApplicationHandler) WorkspaceOverview(c *gin.Context) {
 		recentReleases = recentReleases[:8]
 	}
 	workspaceApplications := h.workspaceApplicationInfos(c.Request.Context(), environment.Namespace, applications, allReleases)
-	domainInfos := make([]infrastructureapi.ManagedDomainInfo, 0, len(domains))
+	domainInfos := make([]networkapi.ManagedDomainInfo, 0, len(domains))
 	for index := range domains {
-		domainInfos = append(domainInfos, infrastructureapi.ManagedDomainInfoFor(c.Request.Context(), &domains[index], h.kubernetes, h.resources))
+		domainInfos = append(domainInfos, networkapi.ManagedDomainInfoFor(c.Request.Context(), &domains[index], h.kubernetes, h.resources))
 	}
 	model.Success(c, gin.H{"project": project, "environment": environment, "applications": workspaceApplications, "domains": domainInfos, "failed_releases": failedReleases, "recent_releases": recentReleases})
 }

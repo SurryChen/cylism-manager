@@ -5,7 +5,10 @@ import (
 	applicationapi "github.com/cylism/cylism-manager/internal/api/application"
 	authapi "github.com/cylism/cylism-manager/internal/api/auth"
 	deliveryapi "github.com/cylism/cylism-manager/internal/api/delivery"
-	infrastructureapi "github.com/cylism/cylism-manager/internal/api/infrastructure"
+	clusterapi "github.com/cylism/cylism-manager/internal/api/infrastructure/cluster"
+	kubernetesapi "github.com/cylism/cylism-manager/internal/api/infrastructure/kubernetes"
+	networkapi "github.com/cylism/cylism-manager/internal/api/infrastructure/network"
+	storageapi "github.com/cylism/cylism-manager/internal/api/infrastructure/storage"
 	runtimeapi "github.com/cylism/cylism-manager/internal/api/runtime"
 	systemapi "github.com/cylism/cylism-manager/internal/api/system"
 	"github.com/gin-gonic/gin"
@@ -39,7 +42,7 @@ type RuntimeAgentDependencies struct {
 	Runtime    *runtimeapi.RuntimeHandler
 	AgentOp    *agentapi.AgentOperationHandler
 	Components *systemapi.SystemComponentHandler
-	Network    *infrastructureapi.NetworkHandler
+	Network    *networkapi.NetworkHandler
 }
 
 type DeliveryDependencies struct {
@@ -52,21 +55,21 @@ type DeliveryDependencies struct {
 }
 
 type InfrastructureDependencies struct {
-	Network     *infrastructureapi.NetworkHandler
-	Server      *infrastructureapi.ServerHandler
-	NetworkDiag *infrastructureapi.ServerNetworkDiagnosticsHandler
-	Terminal    *infrastructureapi.ServerTerminalHandler
-	Site        *infrastructureapi.SiteHandler
+	Network     *networkapi.NetworkHandler
+	Server      *clusterapi.ServerHandler
+	NetworkDiag *clusterapi.ServerNetworkDiagnosticsHandler
+	Terminal    *clusterapi.ServerTerminalHandler
+	Site        *networkapi.SiteHandler
 	Operation   *systemapi.OperationHandler
-	Domain      *infrastructureapi.DomainHandler
-	Node        *infrastructureapi.NodeHandler
-	NodeJoin    *infrastructureapi.NodeJoinProgressHandler
-	Ingress     *infrastructureapi.IngressHandler
-	Certificate *infrastructureapi.CertHandler
-	K8s         *infrastructureapi.K8sHandler
-	Storage     *infrastructureapi.StorageHandler
+	Domain      *networkapi.DomainHandler
+	Node        *clusterapi.NodeHandler
+	NodeJoin    *clusterapi.NodeJoinProgressHandler
+	Ingress     *networkapi.IngressHandler
+	Certificate *networkapi.CertHandler
+	K8s         *kubernetesapi.K8sHandler
+	Storage     *storageapi.StorageHandler
 	Tailscale   *systemapi.TailscaleHandler
-	CRD         *infrastructureapi.CRDHandler
+	CRD         *kubernetesapi.CRDHandler
 	AuditLog    *systemapi.AuditHandler
 	DBAdmin     *systemapi.DBAdminHandler
 }

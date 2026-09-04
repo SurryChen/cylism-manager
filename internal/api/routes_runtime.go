@@ -2,13 +2,13 @@ package api
 
 import (
 	agentapi "github.com/cylism/cylism-manager/internal/api/agent"
-	infrastructureapi "github.com/cylism/cylism-manager/internal/api/infrastructure"
+	networkapi "github.com/cylism/cylism-manager/internal/api/infrastructure/network"
 	runtimeapi "github.com/cylism/cylism-manager/internal/api/runtime"
 	systemapi "github.com/cylism/cylism-manager/internal/api/system"
 	"github.com/gin-gonic/gin"
 )
 
-func registerRuntimeRoutes(apiGroup *gin.RouterGroup, runtime *runtimeapi.RuntimeHandler, operations *agentapi.AgentOperationHandler, components *systemapi.SystemComponentHandler, network *infrastructureapi.NetworkHandler) {
+func registerRuntimeRoutes(apiGroup *gin.RouterGroup, runtime *runtimeapi.RuntimeHandler, operations *agentapi.AgentOperationHandler, components *systemapi.SystemComponentHandler, network *networkapi.NetworkHandler) {
 	runtimes := apiGroup.Group("/runtimes")
 	runtimes.GET("/catalog", runtime.Catalog)
 	runtimes.GET("", runtime.List)
