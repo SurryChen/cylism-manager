@@ -17,6 +17,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
 )
 
@@ -34,6 +35,16 @@ func setupMonitoringRouter(handler *MonitoringHandler) *gin.Engine {
 	group.GET("/disk-growth", handler.DiskGrowth)
 	group.GET("/targets", handler.Targets)
 	return router
+}
+
+func newTestMonitoringHandler() *MonitoringHandler {
+	client := k8sClient
+	return NewMonitoringHandler(MonitoringDependencies{Component: k8sclient.MonitoringComponentAdapter{Client: client}, Status: k8sclient.VictoriaMetricsReadiness{Client: client}, Consumers: monitoringservice.PVCConsumerReader{Pods: k8sclient.PodReader{Clientset: func() kubernetes.Interface {
+		if client == nil {
+			return nil
+		}
+		return client.Clientset
+	}()}}})
 }
 
 func TestMonitoringRangeQueryUsesBoundedRange(t *testing.T) {

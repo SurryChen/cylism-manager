@@ -80,6 +80,32 @@ func TestRegistryProxyOutboundProxyIsEncryptedAndDiagnosticIsBounded(t *testing.
 	}
 }
 
+type fakeRegistryProxyReconciler struct{}
+
+func (fakeRegistryProxyReconciler) Available() bool                          { return true }
+func (fakeRegistryProxyReconciler) EnsureNode(context.Context, string) error { return nil }
+func (fakeRegistryProxyReconciler) Apply(context.Context, *model.RegistryProxy, map[string]string) error {
+	return nil
+}
+func (fakeRegistryProxyReconciler) ClearCache(context.Context, *model.RegistryProxy) error {
+	return nil
+}
+func (fakeRegistryProxyReconciler) DeploymentAvailable(context.Context, *model.RegistryProxy) (bool, bool, error) {
+	return true, true, nil
+}
+func (fakeRegistryProxyReconciler) DeleteLegacyResources(context.Context, string) error { return nil }
+func (fakeRegistryProxyReconciler) DiagnoseUpstream(context.Context, *model.RegistryProxy) (k8sclient.RegistryProxyDiagnostic, error) {
+	return k8sclient.RegistryProxyDiagnostic{Status: "ok"}, nil
+}
+
+func TestRegistryProxyHandlerAcceptsFakeReconciler(t *testing.T) {
+	fake := fakeRegistryProxyReconciler{}
+	h := (&RegistryProxyHandler{}).WithResourceReconciler(fake).WithDiagnostics(fake)
+	if h.resources == nil || h.diagnostics == nil || !h.diagnostics.Available() {
+		t.Fatal("fake registry proxy reconciler was not injected")
+	}
+}
+
 func TestRegistryProxyHandlerDeploysIndependentUpstreamInstances(t *testing.T) {
 	st, err := store.New(":memory:")
 	if err != nil {

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	k8sclient "github.com/cylism/cylism-manager/internal/k8s"
+	"github.com/cylism/cylism-manager/internal/repository"
 	loggingservice "github.com/cylism/cylism-manager/internal/service/observability/logging"
 	"github.com/gin-gonic/gin"
 	appsv1 "k8s.io/api/apps/v1"
@@ -29,6 +30,18 @@ func setupLoggingRouter(handler *LoggingHandler) *gin.Engine {
 	group.GET("/filters", handler.Filters)
 	group.POST("/query", handler.Query)
 	return router
+}
+
+func newTestLoggingHandler(scope repository.LoggingScopeRepository) *LoggingHandler {
+	client := k8sClient
+	return NewLoggingHandler(scope, LoggingDependencies{Component: k8sclient.LoggingComponentAdapter{Client: client}, Ready: func(ctx context.Context) bool {
+		return client != nil && client.LoggingStatusContext(ctx).LokiReady >= 1
+	}, FilterReader: func() loggingservice.FilterReader {
+		if client == nil {
+			return nil
+		}
+		return k8sclient.LoggingFilterReader{Clientset: client.Clientset}
+	}()})
 }
 
 func TestLoggingQueryBuildsBoundedStructuredSelector(t *testing.T) {

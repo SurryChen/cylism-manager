@@ -169,6 +169,56 @@ func (h *PlatformHandler) Status(c *gin.Context) {
 	model.Success(c, gin.H{"deployment": deployment, "releases": releases, "image_prefix": strings.Join(prefixes, "\n"), "image_prefixes": prefixes, "webhook_configured": configured == nil})
 }
 
+func (h *PlatformHandler) GenerateWebhookSecret(c *gin.Context) {
+	if h.store == nil {
+		apiShared.InternalError(c, "存储未初始化")
+		return
+	}
+	secret, err := h.release.GenerateWebhookSecret()
+	if err != nil {
+		apiShared.InternalError(c, "保存部署密钥失败")
+		return
+	}
+	model.Success(c, gin.H{"secret": secret})
+}
+
+func (h *PlatformHandler) UpdateImagePrefix(c *gin.Context) {
+	var request struct {
+		ImagePrefix string `json:"image_prefix"`
+	}
+	if err := c.ShouldBindJSON(&request); err != nil {
+		apiShared.BadRequest(c, "平台镜像仓库前缀无效")
+		return
+	}
+	_, err := h.release.SetImagePrefixes(request.ImagePrefix)
+	if err != nil {
+		apiShared.BadRequest(c, "平台镜像仓库前缀无效")
+		return
+	}
+	model.Success(c, nil)
+}
+
+func (h *PlatformHandler) Rollback(c *gin.Context) {
+	id, err := apiShared.ParsePositiveID(c.Param("id"))
+	if err != nil {
+		apiShared.BadRequest(c, "发布记录 ID 无效")
+		return
+	}
+	previous, err := h.store.GetPlatformRelease(id)
+	if err != nil || previous.PreviousImage == "" {
+		apiShared.BadRequest(c, "该发布记录不能回滚")
+		return
+	}
+	release, err := h.release.CreateRelease(c.Request.Context(), previous.PreviousImage, "manual_rollback", "", "")
+	if err != nil {
+		apiShared.Error(c, http.StatusBadRequest, model.CodeK8sAPIError, err.Error())
+		return
+	}
+	model.SuccessWithMessage(c, release, "平台回滚已提交")
+	c.Writer.Flush()
+	h.release.Apply(context.WithoutCancel(c.Request.Context()), release.ID)
+}
+
 func (h *PlatformHandler) EndpointStatus(c *gin.Context) {
 	model.Success(c, h.platformEndpointInfo(c.Request.Context()))
 }
@@ -193,11 +243,7 @@ func (h *PlatformHandler) UpdateEndpoint(c *gin.Context) {
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		current = &model.PlatformEndpoint{}
 	}
-	endpoint := &model.PlatformEndpoint{
-		Hostname:        strings.ToLower(strings.TrimSpace(request.Hostname)),
-		CertificateName: strings.TrimSpace(request.CertificateName),
-		Enabled:         request.Enabled,
-	}
+	endpoint := &model.PlatformEndpoint{Hostname: strings.ToLower(strings.TrimSpace(request.Hostname)), CertificateName: strings.TrimSpace(request.CertificateName), Enabled: request.Enabled}
 	if endpoint.Hostname == current.Hostname {
 		endpoint.IngressName = current.IngressName
 	}
@@ -251,7 +297,7 @@ func (h *PlatformHandler) UpdateEndpoint(c *gin.Context) {
 
 func (h *PlatformHandler) ReconcileEndpoint(c *gin.Context) {
 	if err := h.reconcilePlatformEndpoint(c.Request.Context()); err != nil {
-		apiShared.Error(c, http.StatusBadRequest, model.CodeK8sAPIError, err.Error())
+		apiShared.Error(c, 400, model.CodeK8sAPIError, err.Error())
 		return
 	}
 	model.SuccessWithMessage(c, h.platformEndpointInfo(c.Request.Context()), "平台入口已重新同步")
@@ -285,7 +331,7 @@ func (h *PlatformHandler) AdoptEndpointIngress(c *gin.Context) {
 	}
 	ingressName, err := h.client.AdoptPlatformIngressContext(c.Request.Context(), endpoint.Hostname, endpoint.TLSSecretName)
 	if err != nil {
-		apiShared.Error(c, http.StatusBadRequest, model.CodeK8sAPIError, err.Error())
+		apiShared.Error(c, 400, model.CodeK8sAPIError, err.Error())
 		return
 	}
 	endpoint.IngressName = ingressName
@@ -296,57 +342,6 @@ func (h *PlatformHandler) AdoptEndpointIngress(c *gin.Context) {
 	model.SuccessWithMessage(c, h.platformEndpointInfo(c.Request.Context()), "现有 Ingress 已接管并重新同步")
 }
 
-func (h *PlatformHandler) GenerateWebhookSecret(c *gin.Context) {
-	if h.store == nil {
-		apiShared.InternalError(c, "存储未初始化")
-		return
-	}
-	secret, err := h.release.GenerateWebhookSecret()
-	if err != nil {
-		apiShared.InternalError(c, "保存部署密钥失败")
-		return
-	}
-	model.Success(c, gin.H{"secret": secret})
-}
-
-func (h *PlatformHandler) UpdateImagePrefix(c *gin.Context) {
-	var request struct {
-		ImagePrefix string `json:"image_prefix"`
-	}
-	if err := c.ShouldBindJSON(&request); err != nil {
-		apiShared.BadRequest(c, "平台镜像仓库前缀无效")
-		return
-	}
-	_, err := h.release.SetImagePrefixes(request.ImagePrefix)
-	if err != nil {
-		apiShared.BadRequest(c, "平台镜像仓库前缀无效")
-		return
-	}
-	model.Success(c, nil)
-}
-
-func (h *PlatformHandler) Rollback(c *gin.Context) {
-	id, err := apiShared.ParsePositiveID(c.Param("id"))
-	if err != nil {
-		apiShared.BadRequest(c, "发布记录 ID 无效")
-		return
-	}
-	previous, err := h.store.GetPlatformRelease(id)
-	if err != nil || previous.PreviousImage == "" {
-		apiShared.BadRequest(c, "该发布记录不能回滚")
-		return
-	}
-	release, err := h.release.CreateRelease(c.Request.Context(), previous.PreviousImage, "manual_rollback", "", "")
-	if err != nil {
-		apiShared.Error(c, http.StatusBadRequest, model.CodeK8sAPIError, err.Error())
-		return
-	}
-	model.SuccessWithMessage(c, release, "平台回滚已提交")
-	c.Writer.Flush()
-	h.release.Apply(context.WithoutCancel(c.Request.Context()), release.ID)
-}
-
-// Reconcile resumes a pending self-update after this service has restarted.
 func (h *PlatformHandler) reconcilePlatformEndpoint(ctx context.Context) error {
 	if h.store == nil || h.client == nil || !h.client.KubernetesAvailable() {
 		return nil
@@ -393,8 +388,7 @@ func (h *PlatformHandler) platformEndpointInfo(ctx context.Context) platformEndp
 		info.State = "disabled"
 		return info
 	}
-	info.URL = "https://" + endpoint.Hostname
-	info.State = "waiting_certificate"
+	info.URL, info.State = "https://"+endpoint.Hostname, "waiting_certificate"
 	if h.client == nil || !h.client.KubernetesAvailable() {
 		info.State, info.CertificateError = "unavailable", "Kubernetes 客户端未初始化"
 		return info
@@ -447,8 +441,7 @@ func (h *PlatformHandler) platformEndpointCertificate(ctx context.Context, endpo
 }
 
 func certificateCoversHostname(certificateDomain, hostname string) bool {
-	certificateDomain = strings.ToLower(strings.TrimSpace(certificateDomain))
-	hostname = strings.ToLower(strings.TrimSpace(hostname))
+	certificateDomain, hostname = strings.ToLower(strings.TrimSpace(certificateDomain)), strings.ToLower(strings.TrimSpace(hostname))
 	if certificateDomain == hostname {
 		return true
 	}

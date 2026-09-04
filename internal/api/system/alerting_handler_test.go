@@ -302,7 +302,7 @@ func TestListAutomationEventsDelegatesToWorkflowStore(t *testing.T) {
 }
 
 func TestAlertAutomationPromptDistinguishesLifecycleAndAlertState(t *testing.T) {
-	prompt := alertAutomationPrompt(&model.AlertEvent{ID: 7, NodeName: "node-a"}, model.AlertAutomationApproval)
+	prompt := alertingservice.AutomationPrompt(&model.AlertEvent{ID: 7, NodeName: "node-a"}, model.AlertAutomationApproval)
 	for _, expected := range []string{"automation_status", "alert_state", `alert_state="firing"`, "DiskPressure", "KubeletHasNoDiskPressure"} {
 		if !strings.Contains(prompt, expected) {
 			t.Fatalf("expected %q in automation prompt: %s", expected, prompt)
@@ -369,4 +369,45 @@ func alertingReadyK8s(token string) *k8sclient.Client {
 		&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "cylism-alerting-config", Namespace: "monitoring"}, Data: map[string]string{"settings.json": `{"node_name":"node-a","rules":[]}`}},
 		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "cylism-alerting-secret", Namespace: "monitoring"}, Data: map[string][]byte{"relay-token": []byte(token), "feishu-webhook-url": []byte("https://open.feishu.cn/open-apis/bot/v2/hook/example")}},
 	)}
+}
+
+type fakeNotificationSender struct {
+	feishu func(context.Context, string, alertingservice.AlertNotification) error
+	email  func(context.Context, alertingservice.EmailConfig, alertingservice.AlertNotification) error
+}
+
+func (f *fakeNotificationSender) Send(ctx context.Context, secrets alertingservice.NotificationSecrets, payload alertingservice.AlertNotification) error {
+	if secrets.FeishuWebhookURL != "" && f.feishu != nil {
+		if err := f.feishu(ctx, secrets.FeishuWebhookURL, payload); err != nil {
+			return err
+		}
+	}
+	if secrets.Email.Enabled && f.email != nil {
+		return f.email(ctx, secrets.Email, payload)
+	}
+	return nil
+}
+
+func (f *fakeNotificationSender) SendTest(ctx context.Context, secrets alertingservice.NotificationSecrets, payload alertingservice.AlertNotification, channel string) error {
+	if channel == "email" && f.email != nil {
+		return f.email(ctx, secrets.Email, payload)
+	}
+	if channel == "feishu" && f.feishu != nil {
+		return f.feishu(ctx, secrets.FeishuWebhookURL, payload)
+	}
+	return f.Send(ctx, secrets, payload)
+}
+
+func newTestAlertingHandler(platformURL ...string) (*AlertingHandler, *fakeNotificationSender) {
+	client := k8sClient
+	sender := &fakeNotificationSender{}
+	configuredURL := ""
+	if len(platformURL) > 0 {
+		configuredURL = platformURL[0]
+	}
+	h := NewAlertingHandler(configuredURL)
+	h.WithDependencies(AlertingDependencies{Component: k8sclient.AlertingComponentAdapter{Client: client}, Ready: func(ctx context.Context) bool {
+		return client != nil && client.AlertingStatusContext(ctx).State == k8sclient.AlertingStateReady
+	}, Secrets: k8sclient.SecretReader{Client: client}, Sender: sender})
+	return h, sender
 }

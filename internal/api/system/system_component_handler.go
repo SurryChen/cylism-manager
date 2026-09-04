@@ -20,6 +20,10 @@ type SystemComponentHandler struct {
 	service     *systemcomponentservice.ComponentService
 }
 
+// SystemComponentAdapter is the service boundary used by the HTTP handler.
+// The concrete Kubernetes implementation lives in internal/k8s.
+type SystemComponentAdapter = systemcomponentservice.KubernetesAdapter
+
 // NewSystemComponentHandlerWithComposedDependencies is the Bootstrap entry
 // point for the singleton component Handler.
 func NewSystemComponentHandlerWithComposedDependencies(configs repository.SystemComponentRepository, adapter SystemComponentAdapter, service *systemcomponentservice.ComponentService, listService *systemcomponentservice.ComponentListService) *SystemComponentHandler {
