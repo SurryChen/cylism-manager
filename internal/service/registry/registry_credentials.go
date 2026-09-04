@@ -1,6 +1,6 @@
 package registry
 
-import "github.com/cylism/cylism-manager/internal/crypto"
+import crypto "github.com/cylism/cylism-manager/internal/security"
 
 const (
 	AuthTypeAnonymous = "anonymous"

@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cylism/cylism-manager/internal/crypto"
 	"github.com/cylism/cylism-manager/internal/model"
+	crypto "github.com/cylism/cylism-manager/internal/security"
 )
 
 func TestRenderK3sRegistriesUsesDecryptedCredentialAndTLSSetting(t *testing.T) {

@@ -5,9 +5,9 @@ import (
 	"strings"
 
 	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
-	"github.com/cylism/cylism-manager/internal/crypto"
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/repository"
+	crypto "github.com/cylism/cylism-manager/internal/security"
 	security "github.com/cylism/cylism-manager/internal/security"
 	tailscaleservice "github.com/cylism/cylism-manager/internal/service/system"
 	"github.com/gin-gonic/gin"

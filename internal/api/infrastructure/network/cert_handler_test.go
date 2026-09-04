@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cylism/cylism-manager/internal/crypto"
+	crypto "github.com/cylism/cylism-manager/internal/security"
 	networkservice "github.com/cylism/cylism-manager/internal/service/network"
 	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/gin-gonic/gin"

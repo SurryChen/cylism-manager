@@ -7,10 +7,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cylism/cylism-manager/internal/crypto"
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/runtime"
 	runtimechat "github.com/cylism/cylism-manager/internal/runtime/chat"
+	crypto "github.com/cylism/cylism-manager/internal/security"
 	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/gin-gonic/gin"
 )

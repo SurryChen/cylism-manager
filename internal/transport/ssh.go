@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cylism/cylism-manager/internal/crypto"
 	"github.com/cylism/cylism-manager/internal/model"
+	crypto "github.com/cylism/cylism-manager/internal/security"
 )
 
 // SSHTimeout is the default bound for a single remote SSH command.

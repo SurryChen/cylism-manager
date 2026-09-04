@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cylism/cylism-manager/internal/crypto"
 	k8sclient "github.com/cylism/cylism-manager/internal/k8s"
+	crypto "github.com/cylism/cylism-manager/internal/security"
 	platformservice "github.com/cylism/cylism-manager/internal/service/platform"
 	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/gin-gonic/gin"
