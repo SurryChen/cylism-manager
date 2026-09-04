@@ -4,7 +4,6 @@ import (
 	"context"
 	"testing"
 
-	"github.com/cylism/cylism-manager/internal/application"
 	"github.com/cylism/cylism-manager/internal/model"
 	"gorm.io/gorm"
 )
@@ -27,11 +26,11 @@ func (f *workloadManagementFake) UpdateApplication(app *model.Application) error
 
 type workloadMigratorFake struct{ preflight, migrate bool }
 
-func (f *workloadMigratorFake) Preflight(context.Context, application.ApplicationContext, application.ReleaseSpec) error {
+func (f *workloadMigratorFake) Preflight(context.Context, ApplicationContext, ReleaseSpec) error {
 	f.preflight = true
 	return nil
 }
-func (f *workloadMigratorFake) MigrateWorkloadKind(context.Context, application.ApplicationContext, application.ReleaseSpec, string) error {
+func (f *workloadMigratorFake) MigrateWorkloadKind(context.Context, ApplicationContext, ReleaseSpec, string) error {
 	f.migrate = true
 	return nil
 }
@@ -39,11 +38,11 @@ func (f *workloadMigratorFake) MigrateWorkloadKind(context.Context, application.
 func TestWorkloadServiceUpdatesWithoutRelease(t *testing.T) {
 	fake := &workloadManagementFake{}
 	svc := NewWorkloadService(fake, nil)
-	app := &model.Application{ID: 1, WorkloadKind: application.WorkloadKindDeployment}
-	if err := svc.UpdateKind(context.Background(), app, application.WorkloadKindStatefulSet); err != nil {
+	app := &model.Application{ID: 1, WorkloadKind: WorkloadKindDeployment}
+	if err := svc.UpdateKind(context.Background(), app, WorkloadKindStatefulSet); err != nil {
 		t.Fatal(err)
 	}
-	if fake.app != app || app.WorkloadKind != application.WorkloadKindStatefulSet {
+	if fake.app != app || app.WorkloadKind != WorkloadKindStatefulSet {
 		t.Fatalf("application was not updated: %#v", fake.app)
 	}
 }
@@ -52,8 +51,8 @@ func TestWorkloadServiceMigratesSuccessfulRelease(t *testing.T) {
 	fake := &workloadManagementFake{release: &model.Release{Sequence: 3, DesiredSpec: `{}`}}
 	migrator := &workloadMigratorFake{}
 	svc := NewWorkloadService(fake, migrator)
-	app := &model.Application{ID: 1, Name: "demo", WorkloadKind: application.WorkloadKindDeployment, Environment: model.Environment{Namespace: "ns"}}
-	if err := svc.UpdateKind(context.Background(), app, application.WorkloadKindStatefulSet); err != nil {
+	app := &model.Application{ID: 1, Name: "demo", WorkloadKind: WorkloadKindDeployment, Environment: model.Environment{Namespace: "ns"}}
+	if err := svc.UpdateKind(context.Background(), app, WorkloadKindStatefulSet); err != nil {
 		t.Fatal(err)
 	}
 	if !migrator.preflight || !migrator.migrate || fake.app != app {

@@ -10,6 +10,7 @@ import (
 	"github.com/cylism/cylism-manager/internal/repository"
 )
 
+// ResourceApplier is the Kubernetes capability required by release execution.
 type ResourceApplier interface {
 	VerifyImage(ctx context.Context, spec ReleaseSpec) error
 	Preflight(ctx context.Context, application ApplicationContext, spec ReleaseSpec) error

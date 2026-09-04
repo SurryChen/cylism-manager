@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cylism/cylism-manager/internal/application"
 	"github.com/cylism/cylism-manager/internal/model"
+	"github.com/cylism/cylism-manager/internal/service/application"
 	"github.com/gin-gonic/gin"
 )
 

@@ -2,9 +2,9 @@ package applicationapi
 
 import (
 	"encoding/json"
-	"github.com/cylism/cylism-manager/internal/application"
 	k8sclient "github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
+	"github.com/cylism/cylism-manager/internal/service/application"
 	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/gin-gonic/gin"
 	k8sfake "k8s.io/client-go/kubernetes/fake"

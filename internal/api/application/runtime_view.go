@@ -7,7 +7,6 @@ import (
 
 	networkapi "github.com/cylism/cylism-manager/internal/api/infrastructure/network"
 	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
-	"github.com/cylism/cylism-manager/internal/application"
 	"github.com/cylism/cylism-manager/internal/model"
 	applicationservice "github.com/cylism/cylism-manager/internal/service/application"
 	"github.com/gin-gonic/gin"
@@ -154,7 +153,7 @@ func applicationDiscoveryInfoFromModel(app model.Application, runtime applicatio
 	for _, endpoint := range app.Endpoints {
 		protocol := endpoint.Protocol
 		if protocol == "" {
-			protocol = application.ServiceProtocolTCP
+			protocol = applicationservice.ServiceProtocolTCP
 		}
 		endpoints = append(endpoints, applicationPublicEndpoint{Domain: endpoint.Domain, Path: endpoint.Path, ServicePort: endpoint.ServicePort, Protocol: protocol, TLSEnabled: endpoint.TLSEnabled, IngressEnabled: endpointUsesIngress(endpoint)})
 	}

@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 
-	applicationdomain "github.com/cylism/cylism-manager/internal/application"
 	"github.com/cylism/cylism-manager/internal/model"
 	"gorm.io/gorm"
 )
@@ -19,8 +18,8 @@ var (
 // WorkloadMigrator is the Kubernetes capability needed to switch an
 // application's workload kind while preserving its last successful spec.
 type WorkloadMigrator interface {
-	Preflight(context.Context, applicationdomain.ApplicationContext, applicationdomain.ReleaseSpec) error
-	MigrateWorkloadKind(context.Context, applicationdomain.ApplicationContext, applicationdomain.ReleaseSpec, string) error
+	Preflight(context.Context, ApplicationContext, ReleaseSpec) error
+	MigrateWorkloadKind(context.Context, ApplicationContext, ReleaseSpec, string) error
 }
 
 type WorkloadService struct {
@@ -58,7 +57,7 @@ func (s *WorkloadService) UpdateKind(ctx context.Context, app *model.Application
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrWorkloadPersistence, err)
 	}
-	var spec applicationdomain.ReleaseSpec
+	var spec ReleaseSpec
 	if err := json.Unmarshal([]byte(release.DesiredSpec), &spec); err != nil {
 		return fmt.Errorf("%w: 读取成功发布快照失败", ErrWorkloadSnapshot)
 	}
@@ -80,6 +79,6 @@ func (s *WorkloadService) UpdateKind(ctx context.Context, app *model.Application
 	return nil
 }
 
-func applicationContextFor(app *model.Application) applicationdomain.ApplicationContext {
-	return applicationdomain.ApplicationContext{ProjectID: app.ProjectID, EnvironmentID: app.EnvironmentID, ApplicationName: app.Name, Namespace: app.Environment.Namespace, WorkloadKind: app.WorkloadKind}
+func applicationContextFor(app *model.Application) ApplicationContext {
+	return ApplicationContext{ProjectID: app.ProjectID, EnvironmentID: app.EnvironmentID, ApplicationName: app.Name, Namespace: app.Environment.Namespace, WorkloadKind: app.WorkloadKind}
 }

@@ -9,9 +9,9 @@ import (
 	"strings"
 
 	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
-	"github.com/cylism/cylism-manager/internal/application"
 	k8sclient "github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
+	applicationservice "github.com/cylism/cylism-manager/internal/service/application"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
@@ -230,7 +230,7 @@ func (h *StorageHandler) pvcReferences(ctx context.Context, environmentID uint, 
 			for _, app := range applications {
 				if templates, err := h.store.ListApplicationDeploymentTemplates(app.ID); err == nil {
 					for _, template := range templates {
-						var spec application.ReleaseSpec
+						var spec applicationservice.ReleaseSpec
 						if json.Unmarshal([]byte(template.Spec), &spec) == nil && volumeClaimReferenced(spec.Volumes, claimName) {
 							references = append(references, fmt.Sprintf("模板：%s / %s", app.Name, template.Name))
 						}
@@ -258,7 +258,7 @@ func (h *StorageHandler) pvcReferences(ctx context.Context, environmentID uint, 
 	return references
 }
 
-func volumeClaimReferenced(volumes []application.VolumeMountSpec, claimName string) bool {
+func volumeClaimReferenced(volumes []applicationservice.VolumeMountSpec, claimName string) bool {
 	for _, volume := range volumes {
 		if volume.ClaimName == claimName {
 			return true

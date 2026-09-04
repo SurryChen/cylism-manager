@@ -7,8 +7,8 @@ import (
 	"strings"
 
 	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
-	"github.com/cylism/cylism-manager/internal/application"
 	"github.com/cylism/cylism-manager/internal/model"
+	applicationservice "github.com/cylism/cylism-manager/internal/service/application"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
@@ -55,11 +55,11 @@ func (h *ApplicationHandler) CreateRelease(c *gin.Context) {
 	workflow := h.releaseWorkflow()
 	prepared, err := workflow.CreateFromTemplate(c.Request.Context(), app, template, version, apiShared.UserID(c))
 	if err != nil {
-		if errors.Is(err, application.ErrReleaseTemplateRead) {
+		if errors.Is(err, applicationservice.ErrReleaseTemplateRead) {
 			apiShared.DBError(c, "读取应用上线模板失败")
 			return
 		}
-		if errors.Is(err, application.ErrReleaseSecretRead) {
+		if errors.Is(err, applicationservice.ErrReleaseSecretRead) {
 			apiShared.DBError(c, "读取模板 Secret 失败")
 			return
 		}
@@ -211,7 +211,7 @@ func (h *ApplicationHandler) GetRelease(c *gin.Context) {
 		apiShared.NotFound(c, "应用不存在")
 		return
 	}
-	runtime, err := h.kubernetes.InspectReleasePods(c.Request.Context(), application.ApplicationContext{Namespace: applicationModel.Environment.Namespace, ApplicationName: applicationModel.Name, ReleaseSequence: release.Sequence})
+	runtime, err := h.kubernetes.InspectReleasePods(c.Request.Context(), applicationservice.ApplicationContext{Namespace: applicationModel.Environment.Namespace, ApplicationName: applicationModel.Name, ReleaseSequence: release.Sequence})
 	if err != nil {
 		release.Runtime = &model.ReleaseRuntime{Tracking: "unavailable", Pods: []model.ReleasePodRuntime{}, Diagnostic: "读取 Pod 运行态失败: " + err.Error()}
 	} else {
@@ -220,8 +220,8 @@ func (h *ApplicationHandler) GetRelease(c *gin.Context) {
 	model.Success(c, release)
 }
 
-func applicationContextFor(app *model.Application) application.ApplicationContext {
-	return application.ApplicationContext{ProjectID: app.ProjectID, EnvironmentID: app.EnvironmentID, ProjectName: app.Project.Name, EnvironmentName: app.Environment.Name, ApplicationName: app.Name, Namespace: app.Environment.Namespace, WorkloadKind: app.WorkloadKind}
+func applicationContextFor(app *model.Application) applicationservice.ApplicationContext {
+	return applicationservice.ApplicationContext{ProjectID: app.ProjectID, EnvironmentID: app.EnvironmentID, ProjectName: app.Project.Name, EnvironmentName: app.Environment.Name, ApplicationName: app.Name, Namespace: app.Environment.Namespace, WorkloadKind: app.WorkloadKind}
 }
 
 func validateImageRepository(image string) error {
@@ -236,6 +236,6 @@ func validateImageRepository(image string) error {
 	return nil
 }
 
-func (h *ApplicationHandler) syncApplicationEndpoints(ctx context.Context, app *model.Application, service application.ServiceSpec) error {
+func (h *ApplicationHandler) syncApplicationEndpoints(ctx context.Context, app *model.Application, service applicationservice.ServiceSpec) error {
 	return h.releaseWorkflow().SyncApplicationEndpoints(ctx, app, service)
 }
