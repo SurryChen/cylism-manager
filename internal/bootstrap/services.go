@@ -3,7 +3,7 @@ package bootstrap
 import (
 	"context"
 	deliveryapi "github.com/cylism/cylism-manager/internal/api/delivery"
-	infrastructureapi "github.com/cylism/cylism-manager/internal/api/infrastructure"
+	clusterapi "github.com/cylism/cylism-manager/internal/api/infrastructure/cluster"
 	"github.com/cylism/cylism-manager/internal/k8s"
 	runtimepkg "github.com/cylism/cylism-manager/internal/runtime"
 	applicationservice "github.com/cylism/cylism-manager/internal/service/application"
@@ -47,9 +47,9 @@ type Services struct {
 
 func BuildServices(repos Repositories, client *k8s.Client, adapters KubernetesAdapters, encKey []byte) Services {
 	clusterSvc := cluster.NewService(repos.Cluster, adapters.Nodes).
-		WithServerInspector(infrastructureapi.ServerInspector{EncKey: encKey}).
-		WithServerImporter(infrastructureapi.ServerInspector{EncKey: encKey}).
-		WithMetricsInspector(infrastructureapi.ServerMetricsInspector{EncKey: encKey})
+		WithServerInspector(clusterapi.ServerInspector{EncKey: encKey}).
+		WithServerImporter(clusterapi.ServerInspector{EncKey: encKey}).
+		WithMetricsInspector(clusterapi.ServerMetricsInspector{EncKey: encKey})
 	networkSvc := networkservice.NewService(repos.Network, repos.DNSCredentials).
 		WithIngressAdapter(adapters.Network.Ingress).
 		WithStandardIngressAdapter(adapters.Network.StandardIngress).

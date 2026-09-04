@@ -7,7 +7,10 @@ import (
 	applicationapi "github.com/cylism/cylism-manager/internal/api/application"
 	authapi "github.com/cylism/cylism-manager/internal/api/auth"
 	deliveryapi "github.com/cylism/cylism-manager/internal/api/delivery"
-	infrastructureapi "github.com/cylism/cylism-manager/internal/api/infrastructure"
+	clusterapi "github.com/cylism/cylism-manager/internal/api/infrastructure/cluster"
+	kubernetesapi "github.com/cylism/cylism-manager/internal/api/infrastructure/kubernetes"
+	networkapi "github.com/cylism/cylism-manager/internal/api/infrastructure/network"
+	storageapi "github.com/cylism/cylism-manager/internal/api/infrastructure/storage"
 	runtimeapi "github.com/cylism/cylism-manager/internal/api/runtime"
 	apisShared "github.com/cylism/cylism-manager/internal/api/shared"
 	systemapi "github.com/cylism/cylism-manager/internal/api/system"
@@ -18,6 +21,7 @@ import (
 	alertingservice "github.com/cylism/cylism-manager/internal/service/observability/alerting"
 	monitoringservice "github.com/cylism/cylism-manager/internal/service/observability/monitoring"
 	registryservice "github.com/cylism/cylism-manager/internal/service/registry"
+	"github.com/cylism/cylism-manager/internal/transport"
 	"time"
 )
 
@@ -34,7 +38,7 @@ func (c *Container) BuildRouteDependencies() api.RouteDependencies {
 	}
 	agentAdapter := agentapi.NewKubernetesAdapter(c.K8s)
 	maintenanceSSH := maintenance.SSHExecutorFunc(func(ctx context.Context, timeout time.Duration, server *model.Server, command string) ([]byte, error) {
-		return infrastructureapi.SSHExecContext(ctx, timeout, append(infrastructureapi.BuildSSHArgs(server, key, server.Host), command))
+		return transport.SSHExecContext(ctx, timeout, append(transport.BuildSSHArgs(server, key, server.Host), command))
 	})
 	diskInspection := maintenance.NewDiskInspectionService(maintenanceSSH)
 	cleanup := maintenance.NewCleanupService(maintenanceSSH)
@@ -47,10 +51,10 @@ func (c *Container) BuildRouteDependencies() api.RouteDependencies {
 	platform := deliveryapi.NewPlatformHandlerWithDependencies(c.Store, deliveryapi.NewPlatformKubernetesAdapter(c.K8s), c.Services.PlatformRelease)
 	networkService := c.Services.Network
 	clusterService := c.Services.Cluster
-	clusterDNS := infrastructureapi.NewClusterDNSHandlerWithAdapter(c.Store, infrastructureapi.NewClusterDNSAdapter(c.K8s))
-	ingress := infrastructureapi.NewIngressHandler(networkService)
-	nodeJoin := infrastructureapi.NewNodeJoinProgressHandler(c.Store, key, infrastructureapi.NewNodeJoinAdapter(c.K8s))
-	networkHandler := infrastructureapi.NewNetworkHandler(networkService, infrastructureapi.NetworkHandler{
+	clusterDNS := networkapi.NewClusterDNSHandlerWithAdapter(c.Store, networkapi.NewClusterDNSAdapter(c.K8s))
+	ingress := networkapi.NewIngressHandler(networkService)
+	nodeJoin := clusterapi.NewNodeJoinProgressHandler(c.Store, key, clusterapi.NewNodeJoinAdapter(c.K8s))
+	networkHandler := networkapi.NewNetworkHandler(networkService, networkapi.NetworkHandler{
 		DNSStatus: clusterDNS.Status, DNSApply: clusterDNS.Apply, DNSReset: clusterDNS.Reset, DNSRollback: clusterDNS.Rollback,
 	})
 	monitoringDeps := c.Adapters.Monitoring
@@ -78,8 +82,8 @@ func (c *Container) BuildRouteDependencies() api.RouteDependencies {
 	}, c.Services.RegistryManaged)
 	proxy := deliveryapi.NewRegistryProxyHandlerWithDependencies(c.Store, key, c.Adapters.Registry.ProxyResources, c.Adapters.Registry.ProxyDiagnostics, c.Services.RegistryProxy).WithReconciler(c.Services.RegistryProxyReconciler)
 	storageService := c.Services.Storage
-	pvcAdapter, pvcMigration, pvcWorkloads := infrastructureapi.NewPVCAdapters(c.K8s)
-	storageHandler := infrastructureapi.NewStorageHandlerWithDependencies(storageService, c.Store, key, pvcAdapter, pvcMigration, pvcWorkloads)
+	pvcAdapter, pvcMigration, pvcWorkloads := storageapi.NewPVCAdapters(c.K8s)
+	storageHandler := storageapi.NewStorageHandlerWithDependencies(storageService, c.Store, key, pvcAdapter, pvcMigration, pvcWorkloads)
 	storageHandler.ConfigureStorageExecutor()
 	return api.RouteDependencies{
 		Auth: api.AuthDependencies{
@@ -97,16 +101,16 @@ func (c *Container) BuildRouteDependencies() api.RouteDependencies {
 			Proxy: proxy, Chart: deliveryapi.NewChartRepositoryHandler(c.Store),
 		},
 		Infrastructure: api.InfrastructureDependencies{
-			Network: networkHandler, Server: infrastructureapi.NewServerHandler(key, clusterService),
-			NetworkDiag: infrastructureapi.NewServerNetworkDiagnosticsHandler(c.Store, key),
-			Terminal:    infrastructureapi.NewServerTerminalHandler(c.Store, key),
-			Site:        infrastructureapi.NewSiteHandler(c.Store), Operation: systemapi.NewOperationHandler(c.Store),
-			Domain: infrastructureapi.NewDomainHandlerWithDependencies(infrastructureapi.NewDomainKubernetesAdapter(c.K8s), networkService),
-			Node:   infrastructureapi.NewNodeHandler(clusterService), NodeJoin: nodeJoin, Ingress: ingress,
-			Certificate: infrastructureapi.NewCertHandlerWithComposedDependencies(c.Store, key, networkService, infrastructureapi.NewCertificateKubernetesAdapter(c.K8s)),
-			K8s:         infrastructureapi.NewK8sHandlerWithAdapterAndEncryption(c.Store, storageService, key, infrastructureapi.NewK8sResourceAdapter(c.K8s), c.Store),
+			Network: networkHandler, Server: clusterapi.NewServerHandler(key, clusterService),
+			NetworkDiag: clusterapi.NewServerNetworkDiagnosticsHandler(c.Store, key),
+			Terminal:    clusterapi.NewServerTerminalHandler(c.Store, key),
+			Site:        networkapi.NewSiteHandler(c.Store), Operation: systemapi.NewOperationHandler(c.Store),
+			Domain: networkapi.NewDomainHandlerWithDependencies(networkapi.NewDomainKubernetesAdapter(c.K8s), networkService),
+			Node:   clusterapi.NewNodeHandler(clusterService), NodeJoin: nodeJoin, Ingress: ingress,
+			Certificate: networkapi.NewCertHandlerWithComposedDependencies(c.Store, key, networkService, networkapi.NewCertificateKubernetesAdapter(c.K8s)),
+			K8s:         kubernetesapi.NewK8sHandlerWithAdapterAndEncryption(c.Store, storageService, key, kubernetesapi.NewK8sResourceAdapter(c.K8s), c.Store),
 			Storage:     storageHandler, Tailscale: systemapi.NewTailscaleHandler(c.Store, key),
-			CRD: infrastructureapi.NewCRDHandler(), AuditLog: systemapi.NewAuditHandler(c.Store), DBAdmin: systemapi.NewDBAdminHandler(c.Store),
+			CRD: kubernetesapi.NewCRDHandler(), AuditLog: systemapi.NewAuditHandler(c.Store), DBAdmin: systemapi.NewDBAdminHandler(c.Store),
 		},
 		System: api.SystemDependencies{
 			Dashboard: systemapi.NewDashboardHandler(c.Store), Monitoring: monitoringHandler,
