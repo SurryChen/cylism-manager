@@ -61,7 +61,7 @@ func (h *ApplicationHandler) ListDeploymentTemplates(c *gin.Context) {
 		}
 		infos = append(infos, *info)
 	}
-	model.Success(c, infos)
+	apiShared.Success(c, infos)
 }
 
 func (h *ApplicationHandler) GetDeploymentTemplate(c *gin.Context) {
@@ -90,7 +90,7 @@ func (h *ApplicationHandler) GetDeploymentTemplate(c *gin.Context) {
 		apiShared.DBError(c, "读取应用上线模板失败")
 		return
 	}
-	model.Success(c, info)
+	apiShared.Success(c, info)
 }
 
 func (h *ApplicationHandler) CreateDeploymentTemplate(c *gin.Context) {
@@ -133,7 +133,7 @@ func (h *ApplicationHandler) CreateDeploymentTemplate(c *gin.Context) {
 		apiShared.DBError(c, "读取上线模板失败")
 		return
 	}
-	model.Success(c, info)
+	apiShared.Success(c, info)
 }
 
 func (h *ApplicationHandler) UpdateDeploymentTemplate(c *gin.Context) {
@@ -210,7 +210,7 @@ func (h *ApplicationHandler) UpdateDeploymentTemplate(c *gin.Context) {
 		apiShared.DBError(c, "读取上线模板失败")
 		return
 	}
-	model.Success(c, info)
+	apiShared.Success(c, info)
 }
 
 func (h *ApplicationHandler) DeleteDeploymentTemplate(c *gin.Context) {
@@ -232,7 +232,7 @@ func (h *ApplicationHandler) DeleteDeploymentTemplate(c *gin.Context) {
 		apiShared.NotFound(c, "上线模板不存在")
 		return
 	}
-	model.Success(c, gin.H{"id": templateID})
+	apiShared.Success(c, gin.H{"id": templateID})
 }
 
 func (h *ApplicationHandler) SetDefaultDeploymentTemplate(c *gin.Context) {
@@ -269,7 +269,7 @@ func (h *ApplicationHandler) SetDefaultDeploymentTemplate(c *gin.Context) {
 		apiShared.DBError(c, "登记模板 ConfigMap 配置失败")
 		return
 	}
-	model.Success(c, gin.H{"id": templateID})
+	apiShared.Success(c, gin.H{"id": templateID})
 }
 
 func (h *ApplicationHandler) templateFromRequest(ctx context.Context, app *model.Application, req *deploymentTemplateRequest, templateID uint) (*model.ApplicationDeploymentTemplate, error) {

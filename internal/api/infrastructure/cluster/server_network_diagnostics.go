@@ -114,7 +114,7 @@ var (
 func (h *ServerNetworkDiagnosticsHandler) NetworkDiagnostics(c *gin.Context) {
 	servers, err := h.store.ListServers()
 	if err != nil {
-		apiShared.Error(c, 500, model.CodeInternalError, err.Error())
+		apiShared.Error(c, 500, apiShared.CodeInternalError, err.Error())
 		return
 	}
 
@@ -147,7 +147,7 @@ func (h *ServerNetworkDiagnosticsHandler) NetworkDiagnostics(c *gin.Context) {
 	group.Wait()
 
 	links := h.collectNetworkLinks(c.Request.Context(), servers, snapshots)
-	model.Success(c, gin.H{
+	apiShared.Success(c, gin.H{
 		"servers":    snapshots,
 		"links":      links,
 		"sampled_at": time.Now().UTC().Format(time.RFC3339),

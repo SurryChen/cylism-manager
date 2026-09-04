@@ -43,5 +43,5 @@ func (h *OperationHandler) ListOperations(c *gin.Context) {
 		logs = []model.OperationLog{}
 	}
 
-	model.Success(c, gin.H{"operations": logs})
+	apiShared.Success(c, gin.H{"operations": apiShared.OperationLogsDTO(logs)})
 }

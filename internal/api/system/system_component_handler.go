@@ -7,7 +7,6 @@ import (
 	"time"
 
 	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
-	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/repository"
 	systemcomponentservice "github.com/cylism/cylism-manager/internal/service/system_component"
 	"github.com/gin-gonic/gin"
@@ -45,15 +44,15 @@ type systemComponentUpdateRequest struct {
 
 func (h *SystemComponentHandler) List(c *gin.Context) {
 	if h.listService == nil {
-		apiShared.Error(c, http.StatusServiceUnavailable, model.CodeK8sUnavailable, "Kubernetes 集群未连接")
+		apiShared.Error(c, http.StatusServiceUnavailable, apiShared.CodeK8sUnavailable, "Kubernetes 集群未连接")
 		return
 	}
 	result, err := h.listService.List(c.Request.Context())
 	if err != nil {
-		apiShared.Error(c, http.StatusServiceUnavailable, model.CodeK8sUnavailable, err.Error())
+		apiShared.Error(c, http.StatusServiceUnavailable, apiShared.CodeK8sUnavailable, err.Error())
 		return
 	}
-	model.Success(c, result)
+	apiShared.Success(c, result)
 }
 
 func (h *SystemComponentHandler) Update(c *gin.Context) {
@@ -73,21 +72,21 @@ func (h *SystemComponentHandler) Update(c *gin.Context) {
 		apiShared.Error(c, status, code, err.Error())
 		return
 	}
-	model.SuccessWithMessage(c, result.Config, "系统组件配置已应用")
+	apiShared.SuccessWithMessage(c, result.Config, "系统组件配置已应用")
 }
 
 func workflowHTTPError(err error) (int, int) {
-	status, code := http.StatusBadGateway, model.CodeK8sAPIError
+	status, code := http.StatusBadGateway, apiShared.CodeK8sAPIError
 	if we, ok := err.(*systemcomponentservice.WorkflowError); ok {
 		switch we.Kind {
 		case "validation":
-			status, code = http.StatusBadRequest, model.CodeValidationFail
+			status, code = http.StatusBadRequest, apiShared.CodeValidationFail
 		case "conflict":
-			status, code = http.StatusConflict, model.CodeValidationFail
+			status, code = http.StatusConflict, apiShared.CodeValidationFail
 		case "unavailable":
-			status, code = http.StatusServiceUnavailable, model.CodeK8sUnavailable
+			status, code = http.StatusServiceUnavailable, apiShared.CodeK8sUnavailable
 		case "db":
-			status, code = http.StatusInternalServerError, model.CodeDBError
+			status, code = http.StatusInternalServerError, apiShared.CodeDBError
 		}
 	}
 	return status, code
@@ -101,7 +100,7 @@ func (h *SystemComponentHandler) Revert(c *gin.Context) {
 		apiShared.Error(c, status, code, "恢复系统组件默认配置失败: "+revertErr.Error())
 		return
 	}
-	model.SuccessWithMessage(c, nil, "已恢复系统组件默认配置")
+	apiShared.SuccessWithMessage(c, nil, "已恢复系统组件默认配置")
 }
 
 // Run exposes the lifecycle to the application startup layer while keeping

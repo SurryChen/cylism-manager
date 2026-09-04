@@ -29,77 +29,77 @@ func NewChartRepositoryHandler(s repository.ChartRepositoryStore) *ChartReposito
 func (h *ChartRepositoryHandler) List(c *gin.Context) {
 	items, e := h.store.ListChartRepositories()
 	if e != nil {
-		apiShared.Error(c, 500, model.CodeDBError, "读取 Chart 仓库失败")
+		apiShared.Error(c, 500, apiShared.CodeDBError, "读取 Chart 仓库失败")
 		return
 	}
-	model.Success(c, items)
+	apiShared.Success(c, apiShared.ChartRepositoriesDTO(items))
 }
 func (h *ChartRepositoryHandler) Create(c *gin.Context) {
 	var r chartRepositoryRequest
 	if c.ShouldBindJSON(&r) != nil {
-		apiShared.Error(c, 400, model.CodeBadRequest, "Chart 仓库定义无效")
+		apiShared.Error(c, 400, apiShared.CodeBadRequest, "Chart 仓库定义无效")
 		return
 	}
 	item, e := chartRepositoryFromRequest(r, nil)
 	if e != nil {
-		apiShared.Error(c, 400, model.CodeValidationFail, e.Error())
+		apiShared.Error(c, 400, apiShared.CodeValidationFail, e.Error())
 		return
 	}
 	item.CreatedBy = apiShared.UserID(c)
 	if e = h.store.CreateChartRepository(item); e != nil {
-		apiShared.Error(c, 409, model.CodeConflict, "Chart 仓库名称或地址已存在")
+		apiShared.Error(c, 409, apiShared.CodeConflict, "Chart 仓库名称或地址已存在")
 		return
 	}
-	model.Success(c, item)
+	apiShared.Success(c, apiShared.ChartRepositoryDTO(item))
 }
 func (h *ChartRepositoryHandler) Update(c *gin.Context) {
 	id, e := apiShared.ParseID(c.Param("id"))
 	if e != nil {
-		apiShared.Error(c, 400, model.CodeBadRequest, "Chart 仓库 ID 无效")
+		apiShared.Error(c, 400, apiShared.CodeBadRequest, "Chart 仓库 ID 无效")
 		return
 	}
 	old, e := h.store.GetChartRepository(id)
 	if e != nil {
-		apiShared.Error(c, 404, model.CodeNotFound, "Chart 仓库不存在")
+		apiShared.Error(c, 404, apiShared.CodeNotFound, "Chart 仓库不存在")
 		return
 	}
 	var r chartRepositoryRequest
 	if c.ShouldBindJSON(&r) != nil {
-		apiShared.Error(c, 400, model.CodeBadRequest, "Chart 仓库定义无效")
+		apiShared.Error(c, 400, apiShared.CodeBadRequest, "Chart 仓库定义无效")
 		return
 	}
 	item, e := chartRepositoryFromRequest(r, old)
 	if e != nil {
-		apiShared.Error(c, 400, model.CodeValidationFail, e.Error())
+		apiShared.Error(c, 400, apiShared.CodeValidationFail, e.Error())
 		return
 	}
 	if e = h.store.UpdateChartRepository(item); e != nil {
-		apiShared.Error(c, 409, model.CodeConflict, "Chart 仓库名称或地址已存在")
+		apiShared.Error(c, 409, apiShared.CodeConflict, "Chart 仓库名称或地址已存在")
 		return
 	}
-	model.Success(c, item)
+	apiShared.Success(c, apiShared.ChartRepositoryDTO(item))
 }
 func (h *ChartRepositoryHandler) Delete(c *gin.Context) {
 	id, e := apiShared.ParseID(c.Param("id"))
 	if e != nil {
-		apiShared.Error(c, 400, model.CodeBadRequest, "Chart 仓库 ID 无效")
+		apiShared.Error(c, 400, apiShared.CodeBadRequest, "Chart 仓库 ID 无效")
 		return
 	}
 	if e = h.store.DeleteChartRepository(id); e != nil {
-		apiShared.Error(c, 500, model.CodeDBError, "删除 Chart 仓库失败")
+		apiShared.Error(c, 500, apiShared.CodeDBError, "删除 Chart 仓库失败")
 		return
 	}
-	model.Success(c, gin.H{"id": id})
+	apiShared.Success(c, gin.H{"id": id})
 }
 func (h *ChartRepositoryHandler) Verify(c *gin.Context) {
 	id, e := apiShared.ParseID(c.Param("id"))
 	if e != nil {
-		apiShared.Error(c, 400, model.CodeBadRequest, "Chart 仓库 ID 无效")
+		apiShared.Error(c, 400, apiShared.CodeBadRequest, "Chart 仓库 ID 无效")
 		return
 	}
 	item, e := h.store.GetChartRepository(id)
 	if e != nil {
-		apiShared.Error(c, 404, model.CodeNotFound, "Chart 仓库不存在")
+		apiShared.Error(c, 404, apiShared.CodeNotFound, "Chart 仓库不存在")
 		return
 	}
 	status, detail := "succeeded", ""
@@ -117,7 +117,7 @@ func (h *ChartRepositoryHandler) Verify(c *gin.Context) {
 	item.LastVerifyStatus = status
 	item.LastVerifyError = detail
 	_ = h.store.UpdateChartRepository(item)
-	model.Success(c, item)
+	apiShared.Success(c, apiShared.ChartRepositoryDTO(item))
 }
 func chartRepositoryFromRequest(r chartRepositoryRequest, old *model.ChartRepository) (*model.ChartRepository, error) {
 	u, e := url.ParseRequestURI(strings.TrimSpace(r.Endpoint))

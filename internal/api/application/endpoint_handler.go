@@ -45,7 +45,11 @@ func (h *ApplicationHandler) ListApplicationEndpoints(c *gin.Context) {
 			endpoints[index].Protocol = applicationservice.ServiceProtocolTCP
 		}
 	}
-	model.Success(c, endpoints)
+	views := make([]apiShared.ApplicationEndpointView, 0, len(endpoints))
+	for _, endpoint := range endpoints {
+		views = append(views, apiShared.ApplicationEndpointDTO(endpoint))
+	}
+	apiShared.Success(c, views)
 }
 
 func (h *ApplicationHandler) CreateApplicationEndpoint(c *gin.Context) {
@@ -100,7 +104,7 @@ func (h *ApplicationHandler) CreateApplicationEndpoint(c *gin.Context) {
 		return
 	}
 	endpoint.IngressEnabled = endpointUsesIngress(*endpoint)
-	model.Success(c, endpoint)
+	apiShared.Success(c, apiShared.ApplicationEndpointDTO(*endpoint))
 }
 
 func (h *ApplicationHandler) UpdateApplicationEndpoint(c *gin.Context) {
@@ -175,7 +179,7 @@ func (h *ApplicationHandler) UpdateApplicationEndpoint(c *gin.Context) {
 		return
 	}
 	updated.IngressEnabled = endpointUsesIngress(*updated)
-	model.Success(c, updated)
+	apiShared.Success(c, apiShared.ApplicationEndpointDTO(*updated))
 }
 
 func (h *ApplicationHandler) DeleteApplicationEndpoint(c *gin.Context) {
@@ -239,7 +243,7 @@ func (h *ApplicationHandler) DeleteApplicationEndpoint(c *gin.Context) {
 		apiShared.DBError(c, err.Error())
 		return
 	}
-	model.Success(c, gin.H{"id": endpointID})
+	apiShared.Success(c, gin.H{"id": endpointID})
 }
 
 func (h *ApplicationHandler) applicationServiceSpec(app *model.Application) (applicationservice.ServiceSpec, error) {

@@ -63,7 +63,7 @@ func NewRuntimeHandlerWithDependencies(runtimes repository.RuntimeManagementRepo
 }
 
 func (h *RuntimeHandler) Catalog(c *gin.Context) {
-	model.Success(c, h.registry.List())
+	apiShared.Success(c, h.registry.List())
 }
 
 func (h *RuntimeHandler) List(c *gin.Context) {
@@ -75,7 +75,7 @@ func (h *RuntimeHandler) List(c *gin.Context) {
 	for index := range runtimes {
 		h.sanitize(&runtimes[index])
 	}
-	model.Success(c, runtimes)
+	apiShared.Success(c, apiShared.RuntimesDTO(runtimes))
 }
 
 func (h *RuntimeHandler) Get(c *gin.Context) {
@@ -90,7 +90,7 @@ func (h *RuntimeHandler) Get(c *gin.Context) {
 		return
 	}
 	h.sanitize(instance)
-	model.Success(c, instance)
+	apiShared.Success(c, apiShared.RuntimeDTO(instance))
 }
 
 func (h *RuntimeHandler) Create(c *gin.Context) {
@@ -110,7 +110,7 @@ func (h *RuntimeHandler) Create(c *gin.Context) {
 		return
 	}
 	h.sanitize(instance)
-	model.SuccessWithMessage(c, instance, "Runtime 已创建")
+	apiShared.SuccessWithMessage(c, apiShared.RuntimeDTO(instance), "Runtime 已创建")
 }
 
 func (h *RuntimeHandler) Update(c *gin.Context) {
@@ -144,7 +144,7 @@ func (h *RuntimeHandler) Update(c *gin.Context) {
 		return
 	}
 	h.sanitize(updated)
-	model.SuccessWithMessage(c, updated, "Runtime 配置已更新，请部署或更新 Runtime")
+	apiShared.SuccessWithMessage(c, apiShared.RuntimeDTO(updated), "Runtime 配置已更新，请部署或更新 Runtime")
 }
 
 func (h *RuntimeHandler) Deploy(c *gin.Context) {
@@ -160,7 +160,7 @@ func (h *RuntimeHandler) Deploy(c *gin.Context) {
 	}
 	if h.manager == nil {
 		if instance.DeploymentMode != model.RuntimeDeploymentExternal {
-			apiShared.ServiceUnavailable(c, model.CodeK8sUnavailable, "Kubernetes 集群未连接")
+			apiShared.ServiceUnavailable(c, apiShared.CodeK8sUnavailable, "Kubernetes 集群未连接")
 			return
 		}
 	}
@@ -178,7 +178,7 @@ func (h *RuntimeHandler) Deploy(c *gin.Context) {
 			apiShared.K8sAPIErrorWithData(c, detail, instance)
 			return
 		}
-		model.SuccessWithMessage(c, instance, "外部 Runtime 已连接")
+		apiShared.SuccessWithMessage(c, apiShared.RuntimeDTO(instance), "外部 Runtime 已连接")
 		return
 	}
 	apiKey := ""
@@ -220,7 +220,7 @@ func (h *RuntimeHandler) Deploy(c *gin.Context) {
 		return
 	}
 	h.sanitize(instance)
-	model.SuccessWithMessage(c, instance, "Runtime 已部署或更新")
+	apiShared.SuccessWithMessage(c, apiShared.RuntimeDTO(instance), "Runtime 已部署或更新")
 }
 
 func (h *RuntimeHandler) Health(c *gin.Context) {
@@ -235,7 +235,7 @@ func (h *RuntimeHandler) Health(c *gin.Context) {
 		return
 	}
 	if h.manager == nil {
-		apiShared.ServiceUnavailable(c, model.CodeK8sUnavailable, "Kubernetes 集群未连接")
+		apiShared.ServiceUnavailable(c, apiShared.CodeK8sUnavailable, "Kubernetes 集群未连接")
 		return
 	}
 	status, detail := h.manager.Health(c.Request.Context(), instance)
@@ -251,7 +251,7 @@ func (h *RuntimeHandler) Health(c *gin.Context) {
 	}
 	_ = h.runtimes.UpdateRuntime(instance)
 	h.sanitize(instance)
-	model.Success(c, instance)
+	apiShared.Success(c, apiShared.RuntimeDTO(instance))
 }
 
 func (h *RuntimeHandler) Uninstall(c *gin.Context) {
@@ -266,7 +266,7 @@ func (h *RuntimeHandler) Uninstall(c *gin.Context) {
 		return
 	}
 	if h.manager == nil && instance.DeploymentMode != model.RuntimeDeploymentExternal {
-		apiShared.ServiceUnavailable(c, model.CodeK8sUnavailable, "Kubernetes 集群未连接")
+		apiShared.ServiceUnavailable(c, apiShared.CodeK8sUnavailable, "Kubernetes 集群未连接")
 		return
 	}
 	if instance.DeploymentMode == model.RuntimeDeploymentExternal {
@@ -276,7 +276,7 @@ func (h *RuntimeHandler) Uninstall(c *gin.Context) {
 			return
 		}
 		h.sanitize(instance)
-		model.SuccessWithMessage(c, gin.H{"runtime": instance, "pvc_deleted": false}, "外部 Runtime 已解除连接")
+		apiShared.SuccessWithMessage(c, gin.H{"runtime": apiShared.RuntimeDTO(instance), "pvc_deleted": false}, "外部 Runtime 已解除连接")
 		return
 	}
 	deletePVC := c.Query("delete_data") == "true"
@@ -292,7 +292,7 @@ func (h *RuntimeHandler) Uninstall(c *gin.Context) {
 		return
 	}
 	h.sanitize(instance)
-	model.SuccessWithMessage(c, gin.H{"runtime": instance, "pvc_deleted": deletePVC}, "Runtime 已卸载")
+	apiShared.SuccessWithMessage(c, gin.H{"runtime": apiShared.RuntimeDTO(instance), "pvc_deleted": deletePVC}, "Runtime 已卸载")
 }
 
 func (h *RuntimeHandler) InstallAgentTools(c *gin.Context) {
@@ -325,7 +325,7 @@ func (h *RuntimeHandler) UpdateAgentTools(c *gin.Context) {
 		return
 	}
 	if h.manager == nil {
-		apiShared.ServiceUnavailable(c, model.CodeK8sUnavailable, "Kubernetes 集群未连接")
+		apiShared.ServiceUnavailable(c, apiShared.CodeK8sUnavailable, "Kubernetes 集群未连接")
 		return
 	}
 	apiKey, err := crypto.Decrypt(h.encKey, instance.EncryptedAPIKey)
@@ -353,7 +353,7 @@ func (h *RuntimeHandler) UpdateAgentTools(c *gin.Context) {
 		return
 	}
 	h.sanitize(instance)
-	model.SuccessWithMessage(c, instance, "Runtime Agent 工具更新已提交，Pod 将滚动重建")
+	apiShared.SuccessWithMessage(c, apiShared.RuntimeDTO(instance), "Runtime Agent 工具更新已提交，Pod 将滚动重建")
 }
 
 func (h *RuntimeHandler) setAgentTools(c *gin.Context, enabled bool) {
@@ -372,12 +372,12 @@ func (h *RuntimeHandler) setAgentTools(c *gin.Context, enabled bool) {
 		return
 	}
 	if h.manager == nil {
-		apiShared.ServiceUnavailable(c, model.CodeK8sUnavailable, "Kubernetes 集群未连接")
+		apiShared.ServiceUnavailable(c, apiShared.CodeK8sUnavailable, "Kubernetes 集群未连接")
 		return
 	}
 	if instance.AgentToolEnabled == enabled {
 		h.sanitize(instance)
-		model.SuccessWithMessage(c, instance, "Runtime Agent 工具状态未变化")
+		apiShared.SuccessWithMessage(c, apiShared.RuntimeDTO(instance), "Runtime Agent 工具状态未变化")
 		return
 	}
 	// Revoke Manager-side permissions before changing the Pod template. An old
@@ -419,7 +419,7 @@ func (h *RuntimeHandler) setAgentTools(c *gin.Context, enabled bool) {
 	if !enabled {
 		message = "Runtime Agent 工具卸载已提交，Pod 将滚动重建"
 	}
-	model.SuccessWithMessage(c, instance, message)
+	apiShared.SuccessWithMessage(c, apiShared.RuntimeDTO(instance), message)
 }
 
 func (h *RuntimeHandler) instanceFromRequest(req runtimeRequest, current *model.RuntimeInstance) (*model.RuntimeInstance, error) {

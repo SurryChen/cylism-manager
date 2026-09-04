@@ -5,7 +5,6 @@ import (
 
 	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 	k8sclient "github.com/cylism/cylism-manager/internal/k8s"
-	"github.com/cylism/cylism-manager/internal/model"
 	networkservice "github.com/cylism/cylism-manager/internal/service/network"
 	"github.com/gin-gonic/gin"
 )
@@ -23,13 +22,13 @@ type NetworkHandler struct {
 func (h *NetworkHandler) ListStandardIngresses(c *gin.Context) {
 	result, err := h.Service.ListStandardIngressesContext(c.Request.Context(), c.Query("namespace"))
 	if err != nil {
-		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
+		apiShared.Error(c, http.StatusOK, apiShared.CodeK8sAPIError, err.Error())
 		return
 	}
 	if result == nil {
 		result = []k8sclient.IngressStdInfo{}
 	}
-	model.Success(c, result)
+	apiShared.Success(c, result)
 }
 
 func (h *NetworkHandler) GetStandardIngress(c *gin.Context) {
@@ -38,7 +37,7 @@ func (h *NetworkHandler) GetStandardIngress(c *gin.Context) {
 		apiShared.NotFound(c, err.Error())
 		return
 	}
-	model.Success(c, result)
+	apiShared.Success(c, result)
 }
 
 func (h *NetworkHandler) CreateStandardIngress(c *gin.Context) {
@@ -59,7 +58,7 @@ func (h *NetworkHandler) CreateStandardIngress(c *gin.Context) {
 		apiShared.BadRequest(c, err.Error())
 		return
 	}
-	model.Success(c, result)
+	apiShared.Success(c, result)
 }
 
 func (h *NetworkHandler) DeleteStandardIngress(c *gin.Context) {
@@ -67,16 +66,16 @@ func (h *NetworkHandler) DeleteStandardIngress(c *gin.Context) {
 		apiShared.InternalError(c, err.Error())
 		return
 	}
-	model.SuccessWithMessage(c, nil, "删除成功")
+	apiShared.SuccessWithMessage(c, nil, "删除成功")
 }
 
 func (h *NetworkHandler) StandardIngressController(c *gin.Context) {
 	status, err := h.Service.DetectIngressControllerContext(c.Request.Context())
 	if err != nil {
-		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
+		apiShared.Error(c, http.StatusOK, apiShared.CodeK8sAPIError, err.Error())
 		return
 	}
-	model.Success(c, status)
+	apiShared.Success(c, status)
 }
 
 func NewNetworkHandler(service *networkservice.Service, h NetworkHandler) *NetworkHandler {

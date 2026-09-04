@@ -38,7 +38,7 @@ func (h *StorageHandler) ListPersistentVolumeClaimUsage(c *gin.Context) {
 	}
 	claims, err := h.pvc.ListPVCsContext(c.Request.Context(), strings.TrimSpace(c.Query("namespace")))
 	if err != nil {
-		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
+		apiShared.Error(c, http.StatusOK, apiShared.CodeK8sAPIError, err.Error())
 		return
 	}
 
@@ -119,7 +119,7 @@ func (h *StorageHandler) ListPersistentVolumeClaimUsage(c *gin.Context) {
 	close(jobQueue)
 	waitGroup.Wait()
 
-	model.Success(c, responses)
+	apiShared.Success(c, responses)
 }
 
 func readLocalPersistentVolumeUsage(ctx context.Context, server *model.Server, localPath string, encKey []byte) (int64, error) {

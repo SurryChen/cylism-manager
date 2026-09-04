@@ -18,7 +18,7 @@ func (h *ApplicationHandler) ListProjects(c *gin.Context) {
 		apiShared.DBError(c, err.Error())
 		return
 	}
-	model.Success(c, projects)
+	apiShared.Success(c, apiShared.ProjectsDTO(projects))
 }
 
 func (h *ApplicationHandler) CreateProject(c *gin.Context) {
@@ -36,7 +36,7 @@ func (h *ApplicationHandler) CreateProject(c *gin.Context) {
 		apiShared.Conflict(c, "项目名称已存在")
 		return
 	}
-	model.Success(c, project)
+	apiShared.Success(c, apiShared.ProjectDTO(project))
 }
 
 func (h *ApplicationHandler) UpdateProject(c *gin.Context) {
@@ -84,7 +84,7 @@ func (h *ApplicationHandler) UpdateProject(c *gin.Context) {
 		apiShared.Conflict(c, "项目名称已存在")
 		return
 	}
-	model.Success(c, project)
+	apiShared.Success(c, apiShared.ProjectDTO(project))
 }
 
 func (h *ApplicationHandler) DeleteProject(c *gin.Context) {
@@ -115,5 +115,5 @@ func (h *ApplicationHandler) DeleteProject(c *gin.Context) {
 		apiShared.DBError(c, err.Error())
 		return
 	}
-	model.Success(c, gin.H{"id": projectID})
+	apiShared.Success(c, gin.H{"id": projectID})
 }

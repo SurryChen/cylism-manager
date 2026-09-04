@@ -49,7 +49,7 @@ func (h *ImageRegistryHandler) List(c *gin.Context) {
 		apiShared.DBError(c, err.Error())
 		return
 	}
-	model.Success(c, registries)
+	apiShared.Success(c, apiShared.ImageRegistriesDTO(registries))
 }
 
 func (h *ImageRegistryHandler) Create(c *gin.Context) {
@@ -69,7 +69,7 @@ func (h *ImageRegistryHandler) Create(c *gin.Context) {
 		return
 	}
 	registry.CredentialConfigured = registryservice.CredentialConfigured(registry.Credential)
-	model.Success(c, registry)
+	apiShared.Success(c, apiShared.ImageRegistryDTO(registry))
 }
 
 func (h *ImageRegistryHandler) Update(c *gin.Context) {
@@ -102,7 +102,7 @@ func (h *ImageRegistryHandler) Update(c *gin.Context) {
 		return
 	}
 	registry.CredentialConfigured = registryservice.CredentialConfigured(registry.Credential)
-	model.Success(c, registry)
+	apiShared.Success(c, apiShared.ImageRegistryDTO(registry))
 }
 
 func (h *ImageRegistryHandler) Delete(c *gin.Context) {
@@ -133,7 +133,7 @@ func (h *ImageRegistryHandler) Delete(c *gin.Context) {
 		apiShared.DBError(c, err.Error())
 		return
 	}
-	model.Success(c, gin.H{"id": id})
+	apiShared.Success(c, gin.H{"id": id})
 }
 
 func (h *ImageRegistryHandler) Verify(c *gin.Context) {
@@ -162,7 +162,7 @@ func (h *ImageRegistryHandler) Verify(c *gin.Context) {
 		apiShared.DBError(c, "读取检测结果失败")
 		return
 	}
-	model.Success(c, registry)
+	apiShared.Success(c, apiShared.ImageRegistryDTO(registry))
 }
 
 func verifyRegistryConnection(ctx context.Context, registry *model.ImageRegistry, encKey []byte) error {

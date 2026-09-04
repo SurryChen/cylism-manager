@@ -4,7 +4,6 @@ import (
 	"time"
 
 	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
-	"github.com/cylism/cylism-manager/internal/model"
 	authservice "github.com/cylism/cylism-manager/internal/service/auth"
 	"github.com/gin-gonic/gin"
 )
@@ -35,7 +34,7 @@ func (h *AuthHandler) TemporaryLogin(c *gin.Context) {
 		apiShared.InternalError(c, "生成 token 失败")
 		return
 	}
-	model.Success(c, gin.H{"access_token": accessToken, "refresh_token": refreshToken, "user": gin.H{"id": user.ID, "username": user.Username}})
+	apiShared.Success(c, gin.H{"access_token": accessToken, "refresh_token": refreshToken, "user": gin.H{"id": user.ID, "username": user.Username}})
 }
 
 type createTemporaryTokenReq struct {
@@ -53,7 +52,7 @@ func (h *AuthHandler) ListTemporaryTokens(c *gin.Context) {
 		apiShared.InternalError(c, "读取临时登录秘钥失败")
 		return
 	}
-	model.Success(c, items)
+	apiShared.Success(c, items)
 }
 
 func (h *AuthHandler) CreateTemporaryToken(c *gin.Context) {
@@ -71,7 +70,7 @@ func (h *AuthHandler) CreateTemporaryToken(c *gin.Context) {
 		apiShared.InternalError(c, "生成临时登录秘钥失败")
 		return
 	}
-	model.SuccessWithMessage(c, item, "临时登录秘钥已生成，请立即复制保存")
+	apiShared.SuccessWithMessage(c, item, "临时登录秘钥已生成，请立即复制保存")
 }
 
 func (h *AuthHandler) RevokeTemporaryToken(c *gin.Context) {
@@ -88,5 +87,5 @@ func (h *AuthHandler) RevokeTemporaryToken(c *gin.Context) {
 		apiShared.InternalError(c, "撤销临时登录秘钥失败")
 		return
 	}
-	model.SuccessWithMessage(c, gin.H{"id": id}, "临时登录秘钥已撤销")
+	apiShared.SuccessWithMessage(c, gin.H{"id": id}, "临时登录秘钥已撤销")
 }

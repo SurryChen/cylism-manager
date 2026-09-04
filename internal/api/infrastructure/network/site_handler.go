@@ -50,7 +50,7 @@ func (h *SiteHandler) Create(c *gin.Context) {
 		apiShared.Conflict(c, err.Error())
 		return
 	}
-	model.Success(c, site)
+	apiShared.Success(c, apiShared.SiteDTO(site))
 }
 
 func (h *SiteHandler) List(c *gin.Context) {
@@ -66,7 +66,7 @@ func (h *SiteHandler) List(c *gin.Context) {
 			apiShared.InternalError(c, err.Error())
 			return
 		}
-		model.Success(c, sites)
+		apiShared.Success(c, apiShared.SitesDTO(sites))
 		return
 	}
 	sites, err := h.store.ListSites()
@@ -74,7 +74,7 @@ func (h *SiteHandler) List(c *gin.Context) {
 		apiShared.InternalError(c, err.Error())
 		return
 	}
-	model.Success(c, sites)
+	apiShared.Success(c, apiShared.SitesDTO(sites))
 }
 
 func (h *SiteHandler) Get(c *gin.Context) {
@@ -88,7 +88,7 @@ func (h *SiteHandler) Get(c *gin.Context) {
 		apiShared.NotFound(c, "site not found")
 		return
 	}
-	model.Success(c, site)
+	apiShared.Success(c, apiShared.SiteDTO(site))
 }
 
 func (h *SiteHandler) Update(c *gin.Context) {
@@ -129,7 +129,7 @@ func (h *SiteHandler) Update(c *gin.Context) {
 		apiShared.InternalError(c, err.Error())
 		return
 	}
-	model.Success(c, site)
+	apiShared.Success(c, apiShared.SiteDTO(site))
 }
 
 func (h *SiteHandler) Delete(c *gin.Context) {
@@ -142,30 +142,30 @@ func (h *SiteHandler) Delete(c *gin.Context) {
 		apiShared.InternalError(c, err.Error())
 		return
 	}
-	model.SuccessWithMessage(c, nil, "操作成功")
+	apiShared.SuccessWithMessage(c, nil, "操作成功")
 }
 
 // -- Certificate stubs --
 
 func (h *SiteHandler) IssueCert(c *gin.Context) {
 	// TODO: acme.sh 集成
-	model.SuccessWithMessage(c, nil, "issue cert - not implemented yet")
+	apiShared.SuccessWithMessage(c, nil, "issue cert - not implemented yet")
 }
 
 func (h *SiteHandler) RenewCert(c *gin.Context) {
-	model.SuccessWithMessage(c, nil, "renew cert - not implemented yet")
+	apiShared.SuccessWithMessage(c, nil, "renew cert - not implemented yet")
 }
 
 func (h *SiteHandler) RevokeCert(c *gin.Context) {
-	model.SuccessWithMessage(c, nil, "revoke cert - not implemented yet")
+	apiShared.SuccessWithMessage(c, nil, "revoke cert - not implemented yet")
 }
 
 // -- NGINX stubs --
 
 func (h *SiteHandler) GenerateNginx(c *gin.Context) {
-	model.SuccessWithMessage(c, nil, "generate nginx - K3s implementation pending")
+	apiShared.SuccessWithMessage(c, nil, "generate nginx - K3s implementation pending")
 }
 
 func (h *SiteHandler) ReloadNginx(c *gin.Context) {
-	model.SuccessWithMessage(c, nil, "reload nginx - K3s implementation pending")
+	apiShared.SuccessWithMessage(c, nil, "reload nginx - K3s implementation pending")
 }

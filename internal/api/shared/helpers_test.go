@@ -6,7 +6,6 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/gin-gonic/gin"
 )
 
@@ -69,11 +68,11 @@ func TestK8sUnavailableUsesStableAPIError(t *testing.T) {
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("K8sUnavailable status = %d, want %d", recorder.Code, http.StatusOK)
 	}
-	var response model.APIResponse
+	var response APIResponse
 	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if response.Code != model.CodeK8sUnavailable || response.Message != "K8s 集群未连接" {
+	if response.Code != CodeK8sUnavailable || response.Message != "K8s 集群未连接" {
 		t.Fatalf("unexpected response: %#v", response)
 	}
 }
@@ -102,19 +101,19 @@ func TestCommonErrorHelpersUseStableCodes(t *testing.T) {
 		fn   func(*gin.Context)
 		code int
 	}{
-		{"bad request", func(c *gin.Context) { BadRequest(c, "bad") }, model.CodeBadRequest},
-		{"validation", func(c *gin.Context) { ValidationError(c, "invalid") }, model.CodeValidationFail},
-		{"not found", func(c *gin.Context) { NotFound(c, "missing") }, model.CodeNotFound},
-		{"conflict", func(c *gin.Context) { Conflict(c, "conflict") }, model.CodeConflict},
-		{"internal", func(c *gin.Context) { InternalError(c, "error") }, model.CodeInternalError},
-		{"database", func(c *gin.Context) { DBError(c, "db") }, model.CodeDBError},
+		{"bad request", func(c *gin.Context) { BadRequest(c, "bad") }, CodeBadRequest},
+		{"validation", func(c *gin.Context) { ValidationError(c, "invalid") }, CodeValidationFail},
+		{"not found", func(c *gin.Context) { NotFound(c, "missing") }, CodeNotFound},
+		{"conflict", func(c *gin.Context) { Conflict(c, "conflict") }, CodeConflict},
+		{"internal", func(c *gin.Context) { InternalError(c, "error") }, CodeInternalError},
+		{"database", func(c *gin.Context) { DBError(c, "db") }, CodeDBError},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			recorder := httptest.NewRecorder()
 			c, _ := gin.CreateTestContext(recorder)
 			tc.fn(c)
-			var response model.APIResponse
+			var response APIResponse
 			if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
 				t.Fatal(err)
 			}

@@ -149,7 +149,7 @@ func (h *ApplicationHandler) ListApplications(c *gin.Context) {
 		apiShared.DBError(c, err.Error())
 		return
 	}
-	model.Success(c, applications)
+	apiShared.Success(c, apiShared.ApplicationsDTO(applications))
 }
 
 // UpdateCapabilities replaces opaque application metadata. Capability values
@@ -175,7 +175,7 @@ func (h *ApplicationHandler) UpdateCapabilities(c *gin.Context) {
 		apiShared.ValidationError(c, err.Error())
 		return
 	}
-	model.Success(c, app)
+	apiShared.Success(c, apiShared.ApplicationDTO(app))
 }
 
 // DiscoverApplications provides a project-scoped, sanitized view for other
@@ -194,7 +194,7 @@ func (h *ApplicationHandler) GetApplication(c *gin.Context) {
 		return
 	}
 	releases, _ := h.queries.ListReleases(id)
-	model.Success(c, gin.H{"application": app, "releases": releases})
+	apiShared.Success(c, gin.H{"application": apiShared.ApplicationDTO(app), "releases": apiShared.ReleasesDTO(releases)})
 }
 
 func (h *ApplicationHandler) UpdateWorkloadKind(c *gin.Context) {
@@ -223,7 +223,7 @@ func (h *ApplicationHandler) UpdateWorkloadKind(c *gin.Context) {
 		return
 	}
 	if app.WorkloadKind == req.WorkloadKind {
-		model.Success(c, app)
+		apiShared.Success(c, apiShared.ApplicationDTO(app))
 		return
 	}
 	if err := h.workloads.UpdateKind(c.Request.Context(), app, req.WorkloadKind); err != nil {
@@ -238,7 +238,7 @@ func (h *ApplicationHandler) UpdateWorkloadKind(c *gin.Context) {
 		apiShared.ValidationError(c, err.Error())
 		return
 	}
-	model.Success(c, app)
+	apiShared.Success(c, apiShared.ApplicationDTO(app))
 }
 
 func (h *ApplicationHandler) CreateApplication(c *gin.Context) {
@@ -270,5 +270,5 @@ func (h *ApplicationHandler) CreateApplication(c *gin.Context) {
 		apiShared.Conflict(c, "该环境内应用名称已存在")
 		return
 	}
-	model.Success(c, app)
+	apiShared.Success(c, apiShared.ApplicationDTO(app))
 }

@@ -45,7 +45,7 @@ func (h *ApplicationHandler) ListEnvironments(c *gin.Context) {
 		environments[index].NamespaceStatus = environmentNamespaceStatus(c.Request.Context(), h.namespaces(), environments[index].Namespace)
 		_, environments[index].NamespaceConflict = conflictNamespaces[environments[index].Namespace]
 	}
-	model.Success(c, environments)
+	apiShared.Success(c, apiShared.EnvironmentsDTO(environments))
 }
 
 func (h *ApplicationHandler) CreateEnvironment(c *gin.Context) {
@@ -89,7 +89,7 @@ func (h *ApplicationHandler) CreateEnvironment(c *gin.Context) {
 		apiShared.Conflict(c, "环境名称已存在")
 		return
 	}
-	model.Success(c, environment)
+	apiShared.Success(c, apiShared.EnvironmentDTO(environment))
 }
 
 func (h *ApplicationHandler) UpdateEnvironment(c *gin.Context) {
@@ -153,7 +153,7 @@ func (h *ApplicationHandler) UpdateEnvironment(c *gin.Context) {
 		apiShared.Conflict(c, "环境名称已存在")
 		return
 	}
-	model.Success(c, environment)
+	apiShared.Success(c, apiShared.EnvironmentDTO(environment))
 }
 
 func (h *ApplicationHandler) SyncEnvironmentNamespace(c *gin.Context) {
@@ -179,7 +179,7 @@ func (h *ApplicationHandler) SyncEnvironmentNamespace(c *gin.Context) {
 		return
 	}
 	environment.NamespaceStatus = environmentNamespaceStatus(c.Request.Context(), h.namespaces(), environment.Namespace)
-	model.SuccessWithMessage(c, environment, "命名空间已同步")
+	apiShared.SuccessWithMessage(c, apiShared.EnvironmentDTO(environment), "命名空间已同步")
 }
 
 func (h *ApplicationHandler) ListEnvironmentNamespaceConflicts(c *gin.Context) {
@@ -188,7 +188,7 @@ func (h *ApplicationHandler) ListEnvironmentNamespaceConflicts(c *gin.Context) {
 		apiShared.DBError(c, err.Error())
 		return
 	}
-	model.Success(c, conflicts)
+	apiShared.Success(c, conflicts)
 }
 
 func (h *ApplicationHandler) DeleteEnvironment(c *gin.Context) {
@@ -213,7 +213,7 @@ func (h *ApplicationHandler) DeleteEnvironment(c *gin.Context) {
 		apiShared.DBError(c, err.Error())
 		return
 	}
-	model.Success(c, gin.H{"id": environmentID})
+	apiShared.Success(c, gin.H{"id": environmentID})
 }
 
 func normalizeEnvironmentNamespaceMode(value string) (string, error) {

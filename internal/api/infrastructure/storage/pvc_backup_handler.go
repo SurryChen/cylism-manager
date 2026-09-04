@@ -32,7 +32,7 @@ func (h *StorageHandler) ListPersistentVolumeBackups(c *gin.Context) {
 		apiShared.DBError(c, "读取存储卷备份失败")
 		return
 	}
-	model.Success(c, backups)
+	apiShared.Success(c, apiShared.PersistentVolumeBackupsDTO(backups))
 }
 
 func (h *StorageHandler) CreatePersistentVolumeBackup(c *gin.Context) {
@@ -77,7 +77,7 @@ func (h *StorageHandler) CreatePersistentVolumeBackup(c *gin.Context) {
 		apiShared.InternalError(c, err.Error())
 		return
 	}
-	model.SuccessWithMessage(c, backup, "存储卷备份已创建")
+	apiShared.SuccessWithMessage(c, apiShared.PersistentVolumeBackupDTO(backup), "存储卷备份已创建")
 }
 
 func (h *StorageHandler) RestorePersistentVolumeBackup(c *gin.Context) {
@@ -121,7 +121,7 @@ func (h *StorageHandler) RestorePersistentVolumeBackup(c *gin.Context) {
 		apiShared.InternalError(c, err.Error())
 		return
 	}
-	model.SuccessWithMessage(c, backup, "存储卷恢复已开始")
+	apiShared.SuccessWithMessage(c, apiShared.PersistentVolumeBackupDTO(backup), "存储卷恢复已开始")
 }
 
 func (h *StorageHandler) executePersistentVolumeBackup(parent context.Context, backupID uint) {

@@ -37,7 +37,7 @@ func (h *StorageHandler) ListHostDirectoryPVCImports(c *gin.Context) {
 		apiShared.DBError(c, "读取目录导入记录失败")
 		return
 	}
-	model.Success(c, tasks)
+	apiShared.Success(c, apiShared.HostDirectoryPVCImportsDTO(tasks))
 }
 
 func (h *StorageHandler) CreateHostDirectoryPVCImport(c *gin.Context) {
@@ -70,14 +70,14 @@ func (h *StorageHandler) CreateHostDirectoryPVCImport(c *gin.Context) {
 		return
 	}
 	if active, err := h.Service.FindActiveImport(environment.ID, claim.Name); err == nil {
-		apiShared.ErrorWithData(c, http.StatusConflict, model.CodeConflict, "该存储卷已有目录导入任务", active)
+		apiShared.ErrorWithData(c, http.StatusConflict, apiShared.CodeConflict, "该存储卷已有目录导入任务", apiShared.HostDirectoryPVCImportDTO(active))
 		return
 	} else if !storageErrorsIsNotFound(err) {
 		apiShared.DBError(c, "检查目录导入状态失败")
 		return
 	}
 	if active, err := h.Service.FindActiveMigration(environment.ID, claim.Name); err == nil {
-		apiShared.ErrorWithData(c, http.StatusConflict, model.CodeConflict, "该存储卷已有迁移任务，暂不能导入目录", active)
+		apiShared.ErrorWithData(c, http.StatusConflict, apiShared.CodeConflict, "该存储卷已有迁移任务，暂不能导入目录", apiShared.PersistentVolumeMigrationDTO(active))
 		return
 	} else if !storageErrorsIsNotFound(err) {
 		apiShared.DBError(c, "检查存储卷迁移状态失败")
@@ -130,7 +130,7 @@ func (h *StorageHandler) CreateHostDirectoryPVCImport(c *gin.Context) {
 		return
 	}
 	c.Status(http.StatusAccepted)
-	model.Success(c, task)
+	apiShared.Success(c, apiShared.HostDirectoryPVCImportDTO(task))
 }
 
 func (h *StorageHandler) DeleteHostDirectoryPVCImportBackup(c *gin.Context) {
@@ -173,7 +173,7 @@ func (h *StorageHandler) DeleteHostDirectoryPVCImportBackup(c *gin.Context) {
 		return
 	}
 	if task.BackupDeletedAt != nil {
-		model.Success(c, task)
+		apiShared.Success(c, apiShared.HostDirectoryPVCImportDTO(task))
 		return
 	}
 	source, err := h.store.GetServer(task.SourceServerID)
@@ -207,7 +207,7 @@ func (h *StorageHandler) DeleteHostDirectoryPVCImportBackup(c *gin.Context) {
 		apiShared.DBError(c, "更新备份删除状态失败")
 		return
 	}
-	model.Success(c, task)
+	apiShared.Success(c, apiShared.HostDirectoryPVCImportDTO(task))
 }
 
 func (h *StorageHandler) runHostDirectoryPVCImport(parent context.Context, id uint, replaceTarget bool) {

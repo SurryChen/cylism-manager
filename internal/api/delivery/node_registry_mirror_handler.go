@@ -74,7 +74,7 @@ func (h *NodeRegistryMirrorHandler) List(c *gin.Context) {
 		apiShared.DBError(c, "读取节点镜像源失败")
 		return
 	}
-	model.Success(c, mirrors)
+	apiShared.Success(c, apiShared.NodeRegistryMirrorsDTO(mirrors))
 }
 
 func (h *NodeRegistryMirrorHandler) Create(c *gin.Context) {
@@ -88,7 +88,7 @@ func (h *NodeRegistryMirrorHandler) Create(c *gin.Context) {
 		handleNodeRegistryMirrorSaveError(c, err, false)
 		return
 	}
-	model.Success(c, mirror)
+	apiShared.Success(c, apiShared.NodeRegistryMirrorDTO(mirror))
 }
 
 func (h *NodeRegistryMirrorHandler) Update(c *gin.Context) {
@@ -107,7 +107,7 @@ func (h *NodeRegistryMirrorHandler) Update(c *gin.Context) {
 		handleNodeRegistryMirrorSaveError(c, err, true)
 		return
 	}
-	model.Success(c, mirror)
+	apiShared.Success(c, apiShared.NodeRegistryMirrorDTO(mirror))
 }
 
 func (h *NodeRegistryMirrorHandler) Delete(c *gin.Context) {
@@ -126,7 +126,7 @@ func (h *NodeRegistryMirrorHandler) Delete(c *gin.Context) {
 		}
 		return
 	}
-	model.Success(c, gin.H{"id": id})
+	apiShared.Success(c, gin.H{"id": id})
 }
 
 func (h *NodeRegistryMirrorHandler) Verify(c *gin.Context) {
@@ -146,7 +146,7 @@ func (h *NodeRegistryMirrorHandler) Verify(c *gin.Context) {
 		}
 		return
 	}
-	model.Success(c, mirror)
+	apiShared.Success(c, apiShared.NodeRegistryMirrorDTO(mirror))
 }
 
 func (h *NodeRegistryMirrorHandler) Apply(c *gin.Context) {
@@ -161,7 +161,7 @@ func (h *NodeRegistryMirrorHandler) Apply(c *gin.Context) {
 		return
 	}
 	if h.applyNode == nil {
-		apiShared.Error(c, http.StatusServiceUnavailable, model.CodeK8sUnavailable, "节点配置通道未就绪")
+		apiShared.Error(c, http.StatusServiceUnavailable, apiShared.CodeK8sUnavailable, "节点配置通道未就绪")
 		return
 	}
 	mirror, err := h.service.StartApply(c.Request.Context(), id, request.ServerIDs, h.applyNode)
@@ -169,7 +169,7 @@ func (h *NodeRegistryMirrorHandler) Apply(c *gin.Context) {
 		handleNodeRegistryMirrorApplyError(c, err)
 		return
 	}
-	model.SuccessWithMessage(c, mirror, "应用任务已提交")
+	apiShared.SuccessWithMessage(c, apiShared.NodeRegistryMirrorDTO(mirror), "应用任务已提交")
 }
 
 func (h *NodeRegistryMirrorHandler) ApplyStatus(c *gin.Context) {
@@ -183,7 +183,7 @@ func (h *NodeRegistryMirrorHandler) ApplyStatus(c *gin.Context) {
 		apiShared.NotFound(c, "镜像源不存在")
 		return
 	}
-	model.Success(c, mirror)
+	apiShared.Success(c, apiShared.NodeRegistryMirrorDTO(mirror))
 }
 
 func mirrorInput(request nodeRegistryMirrorRequest) registryservice.MirrorInput {

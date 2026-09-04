@@ -2,7 +2,6 @@ package system
 
 import (
 	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
-	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/repository"
 	"github.com/gin-gonic/gin"
 )
@@ -26,8 +25,8 @@ func (h *AuditHandler) List(c *gin.Context) {
 		apiShared.InternalError(c, err.Error())
 		return
 	}
-	model.Success(c, gin.H{
-		"data":  logs,
+	apiShared.Success(c, gin.H{
+		"data":  apiShared.AuditLogsDTO(logs),
 		"total": total,
 	})
 }

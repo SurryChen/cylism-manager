@@ -155,7 +155,7 @@ func (h *RuntimeHandler) ChatSessions(c *gin.Context) {
 		apiShared.K8sAPIError(c, "读取 Runtime 会话失败: "+err.Error())
 		return
 	}
-	model.Success(c, sessions)
+	apiShared.Success(c, sessions)
 }
 
 // ChatSessionMessages proxies one session's message history from the runtime.
@@ -193,7 +193,7 @@ func (h *RuntimeHandler) ChatSessionMessages(c *gin.Context) {
 		apiShared.NotFound(c, "会话不存在")
 		return
 	}
-	model.Success(c, detail)
+	apiShared.Success(c, detail)
 }
 
 // RenameChatSession stores a Nanobot sidebar title override. It does not alter
@@ -217,7 +217,7 @@ func (h *RuntimeHandler) RenameChatSession(c *gin.Context) {
 		apiShared.NotFound(c, "会话不存在")
 		return
 	}
-	model.Success(c, session)
+	apiShared.Success(c, session)
 }
 
 func (h *RuntimeHandler) ArchiveChatSession(c *gin.Context) { h.setChatSessionArchived(c, true) }
@@ -232,7 +232,7 @@ func (h *RuntimeHandler) setChatSessionArchived(c *gin.Context, archived bool) {
 		apiShared.K8sAPIError(c, "更新 Runtime 会话归档状态失败: "+err.Error())
 		return
 	}
-	model.Success(c, gin.H{"id": sessionID, "archived": archived})
+	apiShared.Success(c, gin.H{"id": sessionID, "archived": archived})
 }
 
 func (h *RuntimeHandler) ExportChatSession(c *gin.Context) {
@@ -249,7 +249,7 @@ func (h *RuntimeHandler) ExportChatSession(c *gin.Context) {
 		apiShared.NotFound(c, "会话不存在")
 		return
 	}
-	model.Success(c, exported)
+	apiShared.Success(c, exported)
 }
 
 // DeleteChatSession permanently deletes the native Nanobot session file only.
@@ -263,7 +263,7 @@ func (h *RuntimeHandler) DeleteChatSession(c *gin.Context) {
 		apiShared.K8sAPIError(c, "删除 Runtime 会话失败: "+err.Error())
 		return
 	}
-	model.Success(c, gin.H{"id": sessionID, "deleted": true})
+	apiShared.Success(c, gin.H{"id": sessionID, "deleted": true})
 }
 
 func (h *RuntimeHandler) sessionClient(c *gin.Context) (runtimechat.ChatClient, string, bool) {

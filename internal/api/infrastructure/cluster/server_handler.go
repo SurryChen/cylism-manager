@@ -64,7 +64,7 @@ func (h *ServerHandler) Create(c *gin.Context) {
 		apiShared.Conflict(c, err.Error())
 		return
 	}
-	model.Success(c, server)
+	apiShared.Success(c, apiShared.ServerDTO(server))
 }
 
 func (h *ServerHandler) List(c *gin.Context) {
@@ -73,7 +73,7 @@ func (h *ServerHandler) List(c *gin.Context) {
 		apiShared.InternalError(c, err.Error())
 		return
 	}
-	model.Success(c, servers)
+	apiShared.Success(c, apiShared.ServersDTO(servers))
 }
 
 func (h *ServerHandler) Get(c *gin.Context) {
@@ -87,7 +87,7 @@ func (h *ServerHandler) Get(c *gin.Context) {
 		apiShared.NotFound(c, "server not found")
 		return
 	}
-	model.Success(c, server)
+	apiShared.Success(c, apiShared.ServerDTO(server))
 }
 
 func (h *ServerHandler) Update(c *gin.Context) {
@@ -137,7 +137,7 @@ func (h *ServerHandler) Update(c *gin.Context) {
 		apiShared.InternalError(c, err.Error())
 		return
 	}
-	model.Success(c, server)
+	apiShared.Success(c, apiShared.ServerDTO(server))
 }
 
 func (h *ServerHandler) Delete(c *gin.Context) {
@@ -150,7 +150,7 @@ func (h *ServerHandler) Delete(c *gin.Context) {
 		apiShared.InternalError(c, err.Error())
 		return
 	}
-	model.SuccessWithMessage(c, nil, "操作成功")
+	apiShared.SuccessWithMessage(c, nil, "操作成功")
 }
 
 func (h *ServerHandler) Unbind(c *gin.Context) {
@@ -168,7 +168,7 @@ func (h *ServerHandler) Unbind(c *gin.Context) {
 		apiShared.NotFound(c, "server not found")
 		return
 	}
-	model.SuccessWithMessage(c, server, "已解除集群绑定")
+	apiShared.SuccessWithMessage(c, apiShared.ServerDTO(server), "已解除集群绑定")
 }
 
 func (h *ServerHandler) Probe(c *gin.Context) {
@@ -186,7 +186,7 @@ func (h *ServerHandler) Probe(c *gin.Context) {
 		apiShared.NotFound(c, "server not found")
 		return
 	}
-	model.Success(c, result)
+	apiShared.Success(c, result)
 }
 
 func (h *ServerHandler) Precheck(c *gin.Context) {
@@ -204,7 +204,7 @@ func (h *ServerHandler) Precheck(c *gin.Context) {
 		apiShared.NotFound(c, "server not found")
 		return
 	}
-	model.Success(c, result)
+	apiShared.Success(c, result)
 }
 
 func (h *ServerHandler) Stats(c *gin.Context) {
@@ -222,7 +222,7 @@ func (h *ServerHandler) Stats(c *gin.Context) {
 		apiShared.InternalError(c, err.Error())
 		return
 	}
-	model.Success(c, result)
+	apiShared.Success(c, result)
 }
 
 func (h *ServerHandler) ResourceStats(c *gin.Context) {
@@ -231,5 +231,5 @@ func (h *ServerHandler) ResourceStats(c *gin.Context) {
 		apiShared.InternalError(c, err.Error())
 		return
 	}
-	model.Success(c, results)
+	apiShared.Success(c, results)
 }

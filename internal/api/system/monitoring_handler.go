@@ -10,7 +10,6 @@ import (
 
 	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 	"github.com/cylism/cylism-manager/internal/k8s"
-	"github.com/cylism/cylism-manager/internal/model"
 	monitoringservice "github.com/cylism/cylism-manager/internal/service/observability/monitoring"
 	"github.com/gin-gonic/gin"
 )
@@ -82,7 +81,7 @@ func (h *MonitoringHandler) Status(c *gin.Context) {
 		apiShared.K8sUnavailable(c)
 		return
 	}
-	model.Success(c, h.component.Status(c.Request.Context()))
+	apiShared.Success(c, h.component.Status(c.Request.Context()))
 }
 
 func (h *MonitoringHandler) Install(c *gin.Context) {
@@ -100,7 +99,7 @@ func (h *MonitoringHandler) Install(c *gin.Context) {
 		apiShared.ValidationError(c, err.Error())
 		return
 	}
-	model.SuccessWithMessage(c, status, "VictoriaMetrics 配置已提交")
+	apiShared.SuccessWithMessage(c, status, "VictoriaMetrics 配置已提交")
 }
 
 func (h *MonitoringHandler) Uninstall(c *gin.Context) {
@@ -109,10 +108,10 @@ func (h *MonitoringHandler) Uninstall(c *gin.Context) {
 		return
 	}
 	if err := h.component.Uninstall(c.Request.Context()); err != nil {
-		apiShared.Error(c, http.StatusInternalServerError, model.CodeK8sAPIError, err.Error())
+		apiShared.Error(c, http.StatusInternalServerError, apiShared.CodeK8sAPIError, err.Error())
 		return
 	}
-	model.SuccessWithMessage(c, gin.H{"data_retained": true}, "VictoriaMetrics 已卸载，系统管理的存储卷已保留")
+	apiShared.SuccessWithMessage(c, gin.H{"data_retained": true}, "VictoriaMetrics 已卸载，系统管理的存储卷已保留")
 }
 
 func (h *MonitoringHandler) MigrateLegacyStorage(c *gin.Context) {
@@ -130,7 +129,7 @@ func (h *MonitoringHandler) MigrateLegacyStorage(c *gin.Context) {
 		apiShared.ValidationError(c, err.Error())
 		return
 	}
-	model.SuccessWithMessage(c, status, "已停止 VictoriaMetrics，正在复制并校验历史数据")
+	apiShared.SuccessWithMessage(c, status, "已停止 VictoriaMetrics，正在复制并校验历史数据")
 }
 
 func (h *MonitoringHandler) Query(c *gin.Context) {
@@ -147,10 +146,10 @@ func (h *MonitoringHandler) Query(c *gin.Context) {
 		if strings.Contains(err.Error(), "尚未就绪") {
 			status = http.StatusConflict
 		}
-		apiShared.Error(c, status, model.CodeK8sAPIError, "查询 VictoriaMetrics 失败: "+err.Error())
+		apiShared.Error(c, status, apiShared.CodeK8sAPIError, "查询 VictoriaMetrics 失败: "+err.Error())
 		return
 	}
-	model.Success(c, result)
+	apiShared.Success(c, result)
 }
 
 // QueryRange exposes a bounded set of history windows for dashboard charts.
@@ -169,10 +168,10 @@ func (h *MonitoringHandler) QueryRange(c *gin.Context) {
 		if strings.Contains(err.Error(), "尚未就绪") {
 			status = http.StatusConflict
 		}
-		apiShared.Error(c, status, model.CodeK8sAPIError, "查询 VictoriaMetrics 历史指标失败: "+err.Error())
+		apiShared.Error(c, status, apiShared.CodeK8sAPIError, "查询 VictoriaMetrics 历史指标失败: "+err.Error())
 		return
 	}
-	model.Success(c, result)
+	apiShared.Success(c, result)
 }
 
 // Dashboard batches the four default node trend queries into one browser
@@ -191,10 +190,10 @@ func (h *MonitoringHandler) Dashboard(c *gin.Context) {
 		} else if strings.Contains(err.Error(), "尚未就绪") {
 			status = http.StatusConflict
 		}
-		apiShared.Error(c, status, model.CodeK8sAPIError, "查询 VictoriaMetrics 趋势指标失败: "+err.Error())
+		apiShared.Error(c, status, apiShared.CodeK8sAPIError, "查询 VictoriaMetrics 趋势指标失败: "+err.Error())
 		return
 	}
-	model.Success(c, gin.H{"range": rangeName, "trends": trends})
+	apiShared.Success(c, gin.H{"range": rangeName, "trends": trends})
 }
 
 // DiskGrowth ranks positive filesystem growth from the metrics already
@@ -218,10 +217,10 @@ func (h *MonitoringHandler) DiskGrowth(c *gin.Context) {
 				status = http.StatusConflict
 			}
 		}
-		apiShared.Error(c, status, model.CodeK8sAPIError, err.Error())
+		apiShared.Error(c, status, apiShared.CodeK8sAPIError, err.Error())
 		return
 	}
-	model.Success(c, data)
+	apiShared.Success(c, data)
 }
 
 func (h *MonitoringHandler) Targets(c *gin.Context) {
@@ -234,5 +233,5 @@ func (h *MonitoringHandler) Targets(c *gin.Context) {
 		apiShared.K8sAPIError(c, "读取采集目标失败: "+err.Error())
 		return
 	}
-	model.Success(c, result)
+	apiShared.Success(c, result)
 }

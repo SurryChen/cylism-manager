@@ -15,9 +15,9 @@ import (
 type workspaceRuntimeSummary = applicationservice.WorkspaceRuntimeSummary
 
 type workspaceApplicationInfo struct {
-	model.Application
-	ActiveRelease      *model.Release          `json:"active_release,omitempty"`
-	LatestRelease      *model.Release          `json:"latest_release,omitempty"`
+	apiShared.ApplicationView
+	ActiveRelease      *apiShared.ReleaseView  `json:"active_release,omitempty"`
+	LatestRelease      *apiShared.ReleaseView  `json:"latest_release,omitempty"`
 	Runtime            workspaceRuntimeSummary `json:"runtime"`
 	EndpointURL        string                  `json:"endpoint_url,omitempty"`
 	EndpointAccessMode string                  `json:"endpoint_access_mode,omitempty"`
@@ -108,7 +108,7 @@ func (h *ApplicationHandler) DiscoverApplications(c *gin.Context) {
 	for _, app := range applications {
 		infos = append(infos, applicationDiscoveryInfoFromModel(app, runtimes[app.ID]))
 	}
-	model.Success(c, infos)
+	apiShared.Success(c, infos)
 }
 
 func (h *ApplicationHandler) GetApplicationRuntime(c *gin.Context) {
@@ -128,7 +128,7 @@ func (h *ApplicationHandler) GetApplicationRuntime(c *gin.Context) {
 		return
 	}
 	runtime := h.queries.ApplicationRuntimeInfos(c.Request.Context(), h.kubernetes, []model.Application{*app}, map[uint][]model.Release{applicationID: releases})[applicationID]
-	model.Success(c, runtime)
+	apiShared.Success(c, runtime)
 }
 
 func applicationIDs(applications []model.Application) []uint {
@@ -196,7 +196,7 @@ func (h *ApplicationHandler) WorkspaceOverview(c *gin.Context) {
 		return
 	}
 	type workspaceRelease struct {
-		model.Release
+		apiShared.ReleaseView
 		ApplicationName string `json:"application_name"`
 	}
 	failedReleases := make([]workspaceRelease, 0)
@@ -210,7 +210,7 @@ func (h *ApplicationHandler) WorkspaceOverview(c *gin.Context) {
 		for _, app := range applications {
 			releases := allReleases[app.ID]
 			for _, release := range releases {
-				item := workspaceRelease{Release: release, ApplicationName: app.Name}
+				item := workspaceRelease{ReleaseView: *apiShared.ReleaseDTO(&release), ApplicationName: app.Name}
 				recentReleases = append(recentReleases, item)
 				if release.Status == model.ReleaseStatusFailed {
 					failedReleases = append(failedReleases, item)
@@ -227,7 +227,7 @@ func (h *ApplicationHandler) WorkspaceOverview(c *gin.Context) {
 	for index := range domains {
 		domainInfos = append(domainInfos, networkapi.ManagedDomainInfoFor(c.Request.Context(), &domains[index], h.kubernetes, h.resources))
 	}
-	model.Success(c, gin.H{"project": project, "environment": environment, "applications": workspaceApplications, "domains": domainInfos, "failed_releases": failedReleases, "recent_releases": recentReleases})
+	apiShared.Success(c, gin.H{"project": apiShared.ProjectDTO(project), "environment": apiShared.EnvironmentDTO(environment), "applications": workspaceApplications, "domains": domainInfos, "failed_releases": failedReleases, "recent_releases": recentReleases})
 }
 
 func (h *ApplicationHandler) workspaceApplicationInfos(ctx context.Context, namespace string, applications []model.Application, allReleases map[uint][]model.Release) []workspaceApplicationInfo {
@@ -259,7 +259,7 @@ func (h *ApplicationHandler) workspaceApplicationInfos(ctx context.Context, name
 		} else if latest != nil {
 			runtime.Status = "unavailable"
 		}
-		infos = append(infos, workspaceApplicationInfo{Application: app, ActiveRelease: active, LatestRelease: latest, Runtime: runtime, EndpointURL: applicationEndpointURL(app), EndpointAccessMode: applicationEndpointAccessMode(app), EndpointCount: len(app.Endpoints)})
+		infos = append(infos, workspaceApplicationInfo{ApplicationView: *apiShared.ApplicationDTO(&app), ActiveRelease: apiShared.ReleaseDTO(active), LatestRelease: apiShared.ReleaseDTO(latest), Runtime: runtime, EndpointURL: applicationEndpointURL(app), EndpointAccessMode: applicationEndpointAccessMode(app), EndpointCount: len(app.Endpoints)})
 	}
 	return infos
 }

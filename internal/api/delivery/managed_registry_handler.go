@@ -81,7 +81,13 @@ func (h *ManagedOCIRegistryHandler) List(c *gin.Context) {
 	for i := range registries {
 		h.refreshStatus(c.Request.Context(), &registries[i])
 	}
-	model.Success(c, registries)
+	views := make([]apiShared.ManagedOCIRegistryView, 0, len(registries))
+	for i := range registries {
+		if view := apiShared.ManagedOCIRegistryDTO(&registries[i]); view != nil {
+			views = append(views, *view)
+		}
+	}
+	apiShared.Success(c, views)
 }
 
 func (h *ManagedOCIRegistryHandler) Get(c *gin.Context) {
@@ -96,7 +102,7 @@ func (h *ManagedOCIRegistryHandler) Get(c *gin.Context) {
 		return
 	}
 	h.refreshStatus(c.Request.Context(), registry)
-	model.Success(c, registry)
+	apiShared.Success(c, apiShared.ManagedOCIRegistryDTO(registry))
 }
 
 // Repair reconciles every platform-owned Registry resource from the saved
@@ -162,7 +168,7 @@ func (h *ManagedOCIRegistryHandler) Repair(c *gin.Context) {
 		apiShared.DBError(c, "保存制品库状态失败")
 		return
 	}
-	model.SuccessWithMessage(c, registry, "制品库资源已重新同步")
+	apiShared.SuccessWithMessage(c, apiShared.ManagedOCIRegistryDTO(registry), "制品库资源已重新同步")
 }
 
 func (h *ManagedOCIRegistryHandler) ApplyNodeAccess(c *gin.Context) {
@@ -214,7 +220,7 @@ func (h *ManagedOCIRegistryHandler) ApplyNodeAccess(c *gin.Context) {
 			return
 		}
 		if h.applyNode == nil {
-			apiShared.Error(c, http.StatusServiceUnavailable, model.CodeInternalError, "节点镜像源下发能力未初始化")
+			apiShared.Error(c, http.StatusServiceUnavailable, apiShared.CodeInternalError, "节点镜像源下发能力未初始化")
 			return
 		}
 		status, detail := h.applyNode(c.Request.Context(), &server, content)
@@ -233,7 +239,7 @@ func (h *ManagedOCIRegistryHandler) ApplyNodeAccess(c *gin.Context) {
 	}
 	_ = h.store.UpdateNodeRegistryMirror(mirror)
 	updated, _ := h.store.GetManagedOCIRegistry(registry.ID)
-	model.SuccessWithMessage(c, updated, "节点制品库配置已提交")
+	apiShared.SuccessWithMessage(c, apiShared.ManagedOCIRegistryDTO(updated), "节点制品库配置已提交")
 }
 
 func (h *ManagedOCIRegistryHandler) Delete(c *gin.Context) {
@@ -267,7 +273,7 @@ func (h *ManagedOCIRegistryHandler) Delete(c *gin.Context) {
 		apiShared.DBError(c, "删除受管制品库记录失败")
 		return
 	}
-	model.SuccessWithMessage(c, gin.H{"id": id, "pvc_name": registry.PVCName}, "制品库资源已删除，PVC 数据已保留")
+	apiShared.SuccessWithMessage(c, gin.H{"id": id, "pvc_name": registry.PVCName}, "制品库资源已删除，PVC 数据已保留")
 }
 
 func (h *ManagedOCIRegistryHandler) StoragePreflight(c *gin.Context) {
@@ -278,23 +284,23 @@ func (h *ManagedOCIRegistryHandler) StoragePreflight(c *gin.Context) {
 	result := gin.H{"storage_class_name": registry.StorageClassName, "storage_classes": []string{registry.StorageClassName}, "data_nodes": []string{}}
 	if err := h.resources.EnsureStorageClass(c.Request.Context(), registry.StorageClassName); err != nil {
 		result["ready"], result["message"] = false, err.Error()
-		model.Success(c, result)
+		apiShared.Success(c, result)
 		return
 	}
 	nodes, err := h.status.ListReadyDataNodes(c.Request.Context())
 	if err != nil {
 		result["ready"], result["message"] = false, "读取 Kubernetes 数据节点失败: "+security.Truncate(strings.TrimSpace(err.Error()), 512)
-		model.Success(c, result)
+		apiShared.Success(c, result)
 		return
 	}
 	result["data_nodes"] = nodes
 	if len(nodes) == 0 {
 		result["ready"], result["message"] = false, "没有可用于 Registry 数据存储的 Ready Kubernetes 节点"
-		model.Success(c, result)
+		apiShared.Success(c, result)
 		return
 	}
 	result["ready"], result["message"] = true, "local-path StorageClass 与数据节点已就绪"
-	model.Success(c, result)
+	apiShared.Success(c, result)
 }
 
 // ListEligiblePVCs exposes only the existing local-path claims that can be
@@ -305,10 +311,10 @@ func (h *ManagedOCIRegistryHandler) ListEligiblePVCs(c *gin.Context) {
 	}
 	claims, err := h.status.ListEligiblePVCs(c.Request.Context(), managedOCIRegistryNamespace)
 	if err != nil {
-		apiShared.Error(c, http.StatusServiceUnavailable, model.CodeK8sAPIError, "读取制品库存储卷失败: "+security.Truncate(strings.TrimSpace(err.Error()), 512))
+		apiShared.Error(c, http.StatusServiceUnavailable, apiShared.CodeK8sAPIError, "读取制品库存储卷失败: "+security.Truncate(strings.TrimSpace(err.Error()), 512))
 		return
 	}
-	model.Success(c, claims)
+	apiShared.Success(c, claims)
 }
 
 func (h *ManagedOCIRegistryHandler) ListMatchingCertificates(c *gin.Context) {
@@ -332,10 +338,10 @@ func (h *ManagedOCIRegistryHandler) ListMatchingCertificates(c *gin.Context) {
 	}
 	certificates, err := h.status.ListMatchingCertificates(c.Request.Context(), namespace, host)
 	if err != nil {
-		apiShared.Error(c, http.StatusServiceUnavailable, model.CodeK8sAPIError, "读取平台证书失败: "+security.Truncate(strings.TrimSpace(err.Error()), 512))
+		apiShared.Error(c, http.StatusServiceUnavailable, apiShared.CodeK8sAPIError, "读取平台证书失败: "+security.Truncate(strings.TrimSpace(err.Error()), 512))
 		return
 	}
-	model.Success(c, certificates)
+	apiShared.Success(c, certificates)
 }
 
 func (h *ManagedOCIRegistryHandler) Create(c *gin.Context) {
@@ -395,7 +401,7 @@ func (h *ManagedOCIRegistryHandler) Create(c *gin.Context) {
 	}
 	registry.Status, registry.LastError, registry.CredentialConfigured = "deploying", "", true
 	_ = h.service.Save(registry)
-	model.Success(c, registry)
+	apiShared.Success(c, apiShared.ManagedOCIRegistryDTO(registry))
 }
 
 func (h *ManagedOCIRegistryHandler) Update(c *gin.Context) {
@@ -465,14 +471,14 @@ func (h *ManagedOCIRegistryHandler) Update(c *gin.Context) {
 		apiShared.DBError(c, "保存制品库配置失败")
 		return
 	}
-	model.Success(c, registry)
+	apiShared.Success(c, apiShared.ManagedOCIRegistryDTO(registry))
 }
 
 func (h *ManagedOCIRegistryHandler) k8sReady(c *gin.Context) bool {
 	if h.status != nil && h.status.Available() && h.resources != nil {
 		return true
 	}
-	apiShared.Error(c, http.StatusServiceUnavailable, model.CodeInternalError, "Kubernetes 集群未连接")
+	apiShared.Error(c, http.StatusServiceUnavailable, apiShared.CodeInternalError, "Kubernetes 集群未连接")
 	return false
 }
 

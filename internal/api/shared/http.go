@@ -4,7 +4,6 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/gin-gonic/gin"
 )
 
@@ -32,50 +31,40 @@ func ParsePositiveID(value string) (uint, error) {
 // K8sUnavailable writes the stable API response used when the Kubernetes
 // boundary has not been configured or is unavailable.
 func K8sUnavailable(c *gin.Context) {
-	model.Error(c, http.StatusOK, model.CodeK8sUnavailable, "K8s 集群未连接")
+	Error(c, http.StatusOK, CodeK8sUnavailable, "K8s 集群未连接")
 }
 
 // The following helpers keep status/code/message mapping at the API boundary
 // consistent while allowing handlers to avoid repeating the same boilerplate.
 func BadRequest(c *gin.Context, message string) {
-	model.Error(c, http.StatusBadRequest, model.CodeBadRequest, message)
+	Error(c, http.StatusBadRequest, CodeBadRequest, message)
 }
 func ValidationError(c *gin.Context, message string) {
-	model.Error(c, http.StatusBadRequest, model.CodeValidationFail, message)
+	Error(c, http.StatusBadRequest, CodeValidationFail, message)
 }
 func Unauthorized(c *gin.Context, message string) {
-	model.Error(c, http.StatusUnauthorized, model.CodeUnauthorized, message)
+	Error(c, http.StatusUnauthorized, CodeUnauthorized, message)
 }
 func NotFound(c *gin.Context, message string) {
-	model.Error(c, http.StatusNotFound, model.CodeNotFound, message)
+	Error(c, http.StatusNotFound, CodeNotFound, message)
 }
 func Conflict(c *gin.Context, message string) {
-	model.Error(c, http.StatusConflict, model.CodeConflict, message)
+	Error(c, http.StatusConflict, CodeConflict, message)
 }
 func InternalError(c *gin.Context, message string) {
-	model.Error(c, http.StatusInternalServerError, model.CodeInternalError, message)
+	Error(c, http.StatusInternalServerError, CodeInternalError, message)
 }
 func DBError(c *gin.Context, message string) {
-	model.Error(c, http.StatusInternalServerError, model.CodeDBError, message)
+	Error(c, http.StatusInternalServerError, CodeDBError, message)
 }
 func ServiceUnavailable(c *gin.Context, code int, message string) {
-	model.Error(c, http.StatusServiceUnavailable, code, message)
+	Error(c, http.StatusServiceUnavailable, code, message)
 }
 func K8sAPIError(c *gin.Context, message string) {
-	model.Error(c, http.StatusBadGateway, model.CodeK8sAPIError, message)
+	Error(c, http.StatusBadGateway, CodeK8sAPIError, message)
 }
 func K8sAPIErrorWithData(c *gin.Context, message string, data interface{}) {
-	model.ErrorWithData(c, http.StatusBadGateway, model.CodeK8sAPIError, message, data)
-}
-
-// Error handles endpoint-specific status/code combinations that do not map
-// to one of the semantic helpers above.
-func Error(c *gin.Context, status, code int, message string) {
-	model.Error(c, status, code, message)
-}
-
-func ErrorWithData(c *gin.Context, status, code int, message string, data interface{}) {
-	model.ErrorWithData(c, status, code, message, data)
+	ErrorWithData(c, http.StatusBadGateway, CodeK8sAPIError, message, data)
 }
 
 // Pagination normalizes the common page/size query parameters used by list
