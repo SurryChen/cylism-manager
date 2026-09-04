@@ -10,9 +10,9 @@ import (
 	"sync"
 
 	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
-	"github.com/cylism/cylism-manager/internal/auth"
 	"github.com/cylism/cylism-manager/internal/model"
 	applicationservice "github.com/cylism/cylism-manager/internal/service/application"
+	"github.com/cylism/cylism-manager/internal/service/auth"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )

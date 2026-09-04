@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	coreauth "github.com/cylism/cylism-manager/internal/auth"
 	"github.com/cylism/cylism-manager/internal/model"
 	authservice "github.com/cylism/cylism-manager/internal/service/auth"
+	coreauth "github.com/cylism/cylism-manager/internal/service/auth"
 	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/gin-gonic/gin"
 )

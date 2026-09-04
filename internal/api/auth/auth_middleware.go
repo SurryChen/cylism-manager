@@ -5,7 +5,7 @@ import (
 
 	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 
-	"github.com/cylism/cylism-manager/internal/auth"
+	authservice "github.com/cylism/cylism-manager/internal/service/auth"
 	"github.com/gin-gonic/gin"
 )
 
@@ -34,7 +34,7 @@ func JWTAuthMiddleware(secret []byte) gin.HandlerFunc {
 			return
 		}
 
-		claims, err := auth.ParseToken(secret, tokenStr)
+		claims, err := authservice.ParseToken(secret, tokenStr)
 		if err != nil {
 			apiShared.Unauthorized(c, "token 无效或已过期")
 			c.Abort()
@@ -58,7 +58,7 @@ func DelegationAuthMiddleware(secret []byte) gin.HandlerFunc {
 			c.Abort()
 			return
 		}
-		claims, err := auth.ParseDelegationToken(secret, parts[1])
+		claims, err := authservice.ParseDelegationToken(secret, parts[1])
 		if err != nil {
 			apiShared.Unauthorized(c, "委托 token 无效或已过期")
 			c.Abort()
