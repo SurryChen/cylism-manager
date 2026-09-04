@@ -9,6 +9,7 @@ import (
 	"github.com/cylism/cylism-manager/internal/crypto"
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/repository"
+	tailscaleservice "github.com/cylism/cylism-manager/internal/service/system"
 	"github.com/gin-gonic/gin"
 )
 
@@ -16,11 +17,13 @@ import (
 type TailscaleHandler struct {
 	configs repository.SystemConfigRepository
 	encKey  []byte
-	runtime tailscaleRuntime
+	runtime tailscaleservice.Runtime
 }
 
+type tailscaleRuntime = tailscaleservice.Runtime
+
 func NewTailscaleHandler(configs repository.SystemConfigRepository, encKey []byte) *TailscaleHandler {
-	return &TailscaleHandler{configs: configs, encKey: encKey, runtime: hostTailscaleRuntime{}}
+	return &TailscaleHandler{configs: configs, encKey: encKey, runtime: tailscaleservice.HostRuntime{}}
 }
 
 func (h *TailscaleHandler) WithRuntime(runtime tailscaleRuntime) *TailscaleHandler {

@@ -9,11 +9,13 @@ import (
 	deliveryapi "github.com/cylism/cylism-manager/internal/api/delivery"
 	infrastructureapi "github.com/cylism/cylism-manager/internal/api/infrastructure"
 	runtimeapi "github.com/cylism/cylism-manager/internal/api/runtime"
+	apisShared "github.com/cylism/cylism-manager/internal/api/shared"
 	systemapi "github.com/cylism/cylism-manager/internal/api/system"
 	"github.com/cylism/cylism-manager/internal/model"
 	runtimepkg "github.com/cylism/cylism-manager/internal/runtime"
 	runtimeidentity "github.com/cylism/cylism-manager/internal/runtime/identity"
 	maintenance "github.com/cylism/cylism-manager/internal/service/maintenance"
+	alertingservice "github.com/cylism/cylism-manager/internal/service/observability/alerting"
 	monitoringservice "github.com/cylism/cylism-manager/internal/service/observability/monitoring"
 	registryservice "github.com/cylism/cylism-manager/internal/service/registry"
 	"time"
@@ -58,7 +60,7 @@ func (c *Container) BuildRouteDependencies() api.RouteDependencies {
 	alertingDeps := c.Adapters.Alerting
 	alertingDeps.ComponentService = c.Services.AlertingComponent
 	alertingDeps.QueryService = c.Services.AlertingQuery
-	dispatcher := systemapi.NewAlertRuntimeDispatcher(c.Store, key, runtimepkg.BuiltinRegistry())
+	dispatcher := alertingservice.NewRuntimeDispatcher(c.Store, key, runtimepkg.BuiltinRegistry())
 	alertingHandler := systemapi.NewAlertingHandlerWithComposedDependencies(c.Auth.PlatformURL, alertingDeps, c.Store, c.Services.AlertingAutomation.WithDispatcher(dispatcher), dispatcher)
 	loggingDeps := c.Adapters.Logging
 	loggingDeps.QueryService = c.Services.LoggingQuery
@@ -67,10 +69,10 @@ func (c *Container) BuildRouteDependencies() api.RouteDependencies {
 	applicationHandler := applicationapi.NewApplicationHandlerWithDependencies(c.Store, c.Services.ApplicationQuery, key, applicationapi.NewKubernetesAdapter(c.K8s))
 	image := deliveryapi.NewImageRegistryHandler(c.Store, key)
 	nodeMirrors := deliveryapi.NewNodeRegistryMirrorHandlerWithDependencies(key, func(ctx context.Context, server *model.Server, content []byte) (string, string) {
-		return deliveryapi.ApplyK3sRegistriesToNode(ctx, server, key, content)
+		return applyK3sRegistriesToNode(ctx, server, key, content)
 	}, c.Services.RegistryMirror)
 	managed := deliveryapi.NewManagedOCIRegistryHandlerWithDependencies(c.Store, c.Adapters.Registry.ManagedResources, c.Adapters.Registry.ManagedStatus, func(ctx context.Context, server *model.Server, content []byte) (string, string) {
-		return deliveryapi.ApplyK3sRegistriesToNode(ctx, server, key, content)
+		return applyK3sRegistriesToNode(ctx, server, key, content)
 	}, c.Services.RegistryManaged)
 	proxy := deliveryapi.NewRegistryProxyHandlerWithDependencies(c.Store, key, c.Adapters.Registry.ProxyResources, c.Adapters.Registry.ProxyDiagnostics, c.Services.RegistryProxy).WithReconciler(c.Services.RegistryProxyReconciler)
 	storageService := c.Services.Storage
@@ -80,7 +82,7 @@ func (c *Container) BuildRouteDependencies() api.RouteDependencies {
 	return api.RouteDependencies{
 		Auth: api.AuthDependencies{
 			Config:  c.Auth,
-			Audit:   systemapi.AuditMiddleware(c.Store),
+			Audit:   apisShared.AuditMiddleware(c.Store),
 			Handler: authapi.NewAuthHandlerWithDependencies(c.Repositories.Users, c.Auth, c.Services.AuthTemporaryTokens),
 		},
 		Application: api.ApplicationDependencies{Handler: applicationHandler},

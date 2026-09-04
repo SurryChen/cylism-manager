@@ -28,7 +28,7 @@ type AlertingHandler struct {
 	platformURL     string
 	resolvedCache   *alertingservice.ResolvedCache
 	automationStore repository.AlertAutomationRepository
-	dispatcher      alertRuntimeDispatcher
+	dispatcher      alertingservice.Dispatcher
 	automation      *alertingservice.AutomationService
 	queryService    *alertingservice.QueryService
 	component       *alertingservice.ComponentService
@@ -79,7 +79,7 @@ func NewAlertingHandler(platformURL string) *AlertingHandler {
 
 // NewAlertingHandlerWithComposedDependencies receives the query, component
 // and automation services created by Bootstrap without constructing fallbacks.
-func NewAlertingHandlerWithComposedDependencies(platformURL string, deps AlertingDependencies, store repository.AlertAutomationRepository, automation *alertingservice.AutomationService, dispatcher alertRuntimeDispatcher) *AlertingHandler {
+func NewAlertingHandlerWithComposedDependencies(platformURL string, deps AlertingDependencies, store repository.AlertAutomationRepository, automation *alertingservice.AutomationService, dispatcher alertingservice.Dispatcher) *AlertingHandler {
 	handler := NewAlertingHandler(platformURL)
 	handler.alertmanager = alertmanagerRequestFunc(deps.Alertmanager)
 	handler.component = deps.ComponentService
@@ -122,7 +122,7 @@ func (h *AlertingHandler) WithAlertmanager(request alertingservice.RequestFunc, 
 	return h
 }
 
-func (h *AlertingHandler) WithAutomation(store repository.AlertAutomationRepository, dispatcher alertRuntimeDispatcher) *AlertingHandler {
+func (h *AlertingHandler) WithAutomation(store repository.AlertAutomationRepository, dispatcher alertingservice.Dispatcher) *AlertingHandler {
 	h.automationStore = store
 	h.dispatcher = dispatcher
 	h.automation = alertingservice.NewAutomationService(store, dispatcher)
@@ -130,7 +130,7 @@ func (h *AlertingHandler) WithAutomation(store repository.AlertAutomationReposit
 }
 
 // WithAutomationService injects the pre-composed automation service.
-func (h *AlertingHandler) WithAutomationService(store repository.AlertAutomationRepository, service *alertingservice.AutomationService, dispatcher alertRuntimeDispatcher) *AlertingHandler {
+func (h *AlertingHandler) WithAutomationService(store repository.AlertAutomationRepository, service *alertingservice.AutomationService, dispatcher alertingservice.Dispatcher) *AlertingHandler {
 	h.automationStore = store
 	h.dispatcher = dispatcher
 	h.automation = service

@@ -1,4 +1,4 @@
-package system
+package shared
 
 import (
 	"bytes"
@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 	security "github.com/cylism/cylism-manager/internal/api/shared/security"
 	"github.com/cylism/cylism-manager/internal/auth"
 	"github.com/cylism/cylism-manager/internal/model"
@@ -18,42 +17,26 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// AuditMiddleware 审计日志中间件，记录所有变更类 API 调用
+// AuditMiddleware records successful mutating API calls.
 func AuditMiddleware(logs repository.AuditRepository) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// 只记录变更操作
 		if !isMutatingMethod(c.Request.Method) {
 			c.Next()
 			return
 		}
-
-		// 读取请求体
 		bodyBytes, _ := io.ReadAll(c.Request.Body)
 		c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
-
-		// 记录响应
 		writer := &responseBodyWriter{ResponseWriter: c.Writer, body: &bytes.Buffer{}}
 		c.Writer = writer
-
 		start := time.Now()
 		c.Next()
-
-		// 只记录成功的变更
-		if c.Writer.Status() >= 200 && c.Writer.Status() < 300 {
-			entry := &model.AuditLog{
-				Action:       inferAction(c.Request.Method, c.FullPath()),
-				ResourceType: inferResourceType(c.FullPath()),
-				ResourceID:   extractResourceID(c.Param("id")),
-				UserID:       apiShared.UserID(c),
-				Detail:       buildDetailForRequest(c, bodyBytes, writer.body.Bytes()),
-				CreatedAt:    start,
-			}
+		if c.Writer.Status() >= 200 && c.Writer.Status() < 300 && logs != nil {
+			entry := &model.AuditLog{Action: inferAction(c.Request.Method, c.FullPath()), ResourceType: inferResourceType(c.FullPath()), ResourceID: extractResourceID(c.Param("id")), UserID: UserID(c), Detail: buildDetailForRequest(c, bodyBytes, writer.body.Bytes()), CreatedAt: start}
 			_ = logs.CreateAuditLog(entry)
 		}
 	}
 }
 
-// responseBodyWriter 捕获响应体
 type responseBodyWriter struct {
 	gin.ResponseWriter
 	body *bytes.Buffer
@@ -66,57 +49,39 @@ func (w *responseBodyWriter) Write(b []byte) (int, error) {
 
 func isMutatingMethod(method string) bool {
 	switch method {
-	case "POST", "PUT", "PATCH", "DELETE":
+	case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
 		return true
 	}
 	return false
 }
 
 func inferAction(method, path string) string {
-	pathActions := map[string]string{
-		"deploy":   "deploy",
-		"issue":    "issue",
-		"renew":    "renew",
-		"revoke":   "revoke",
-		"reload":   "reload",
-		"generate": "generate",
-		"import":   "import",
-	}
-	// 检查路径中的特殊操作
+	pathActions := map[string]string{"deploy": "deploy", "issue": "issue", "renew": "renew", "revoke": "revoke", "reload": "reload", "generate": "generate", "import": "import"}
 	for keyword, action := range pathActions {
 		if matched, _ := regexp.MatchString(keyword, path); matched {
 			return action
 		}
 	}
 	switch method {
-	case "POST":
+	case http.MethodPost:
 		return "create"
-	case "PUT", "PATCH":
+	case http.MethodPut, http.MethodPatch:
 		return "update"
-	case "DELETE":
+	case http.MethodDelete:
 		return "delete"
 	}
 	return method
 }
 
 func inferResourceType(path string) string {
-	if matched, _ := regexp.MatchString("/servers", path); matched {
-		return "server"
-	}
-	if matched, _ := regexp.MatchString("/sites.*/(issue|renew|revoke)", path); matched {
-		return "cert"
-	}
-	if matched, _ := regexp.MatchString("/sites", path); matched {
-		return "site"
-	}
-	if matched, _ := regexp.MatchString("/nginx", path); matched {
-		return "nginx"
-	}
-	if matched, _ := regexp.MatchString("/applications", path); matched {
-		return "application"
-	}
-	if matched, _ := regexp.MatchString("/projects", path); matched {
-		return "project"
+	checks := []struct {
+		pattern string
+		value   string
+	}{{"/servers", "server"}, {"/sites.*/(issue|renew|revoke)", "cert"}, {"/sites", "site"}, {"/nginx", "nginx"}, {"/applications", "application"}, {"/projects", "project"}}
+	for _, check := range checks {
+		if matched, _ := regexp.MatchString(check.pattern, path); matched {
+			return check.value
+		}
 	}
 	return "unknown"
 }
@@ -130,10 +95,7 @@ func extractResourceID(idStr string) uint {
 }
 
 func buildDetail(method, path string, reqBody, respBody []byte) string {
-	detail := map[string]interface{}{
-		"method": method,
-		"path":   path,
-	}
+	detail := map[string]interface{}{"method": method, "path": path}
 	if len(reqBody) > 0 {
 		var body map[string]interface{}
 		if json.Unmarshal(reqBody, &body) == nil {
@@ -164,11 +126,7 @@ func redactAuditValue(value interface{}) interface{} {
 	case map[string]interface{}:
 		redacted := make(map[string]interface{}, len(typed))
 		for key, item := range typed {
-			if key == "content" {
-				redacted[key] = "[REDACTED]"
-				continue
-			}
-			if isSensitiveAuditKey(key) {
+			if key == "content" || isSensitiveAuditKey(key) {
 				redacted[key] = "[REDACTED]"
 				continue
 			}
