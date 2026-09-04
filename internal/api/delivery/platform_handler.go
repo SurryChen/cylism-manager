@@ -70,7 +70,7 @@ type platformEndpointRequest struct {
 }
 
 type platformEndpointInfo struct {
-	Endpoint         model.PlatformEndpoint         `json:"endpoint"`
+	Endpoint         apiShared.PlatformEndpointView `json:"endpoint"`
 	URL              string                         `json:"url,omitempty"`
 	State            string                         `json:"state"`
 	IngressReady     bool                           `json:"ingress_ready"`
@@ -119,10 +119,10 @@ func (h *PlatformHandler) Webhook(c *gin.Context) {
 	}
 	release, err := h.release.CreateRelease(c.Request.Context(), request.Image, "github", request.CommitSHA, request.RunID)
 	if err != nil {
-		apiShared.Error(c, http.StatusBadRequest, model.CodeK8sAPIError, err.Error())
+		apiShared.Error(c, http.StatusBadRequest, apiShared.CodeK8sAPIError, err.Error())
 		return
 	}
-	c.JSON(http.StatusAccepted, model.APIResponse{Code: model.CodeSuccess, Message: "平台发布已接受", Data: release})
+	c.JSON(http.StatusAccepted, apiShared.APIResponse{Code: apiShared.CodeSuccess, Message: "平台发布已接受", Data: apiShared.PlatformReleaseDTO(release)})
 	c.Writer.Flush()
 	h.release.Apply(context.WithoutCancel(c.Request.Context()), release.ID)
 }
@@ -140,10 +140,10 @@ func (h *PlatformHandler) ManualUpdate(c *gin.Context) {
 	}
 	release, err := h.release.CreateRelease(c.Request.Context(), request.Image, "manual", "", "")
 	if err != nil {
-		apiShared.Error(c, http.StatusBadRequest, model.CodeK8sAPIError, err.Error())
+		apiShared.Error(c, http.StatusBadRequest, apiShared.CodeK8sAPIError, err.Error())
 		return
 	}
-	c.JSON(http.StatusAccepted, model.APIResponse{Code: model.CodeSuccess, Message: "平台更新已提交", Data: release})
+	c.JSON(http.StatusAccepted, apiShared.APIResponse{Code: apiShared.CodeSuccess, Message: "平台更新已提交", Data: apiShared.PlatformReleaseDTO(release)})
 	c.Writer.Flush()
 	h.release.Apply(context.WithoutCancel(c.Request.Context()), release.ID)
 }
@@ -156,7 +156,7 @@ func (h *PlatformHandler) Status(c *gin.Context) {
 	h.release.ReconcileLatest(c.Request.Context())
 	deployment, err := h.client.PlatformDeploymentStatusContext(c.Request.Context())
 	if err != nil {
-		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
+		apiShared.Error(c, http.StatusOK, apiShared.CodeK8sAPIError, err.Error())
 		return
 	}
 	releases, err := h.store.ListPlatformReleases(20)
@@ -166,7 +166,7 @@ func (h *PlatformHandler) Status(c *gin.Context) {
 	}
 	prefixes := h.release.ImagePrefixes()
 	_, configured := h.store.GetSystemConfig(platformservice.WebhookSecretConfigKey)
-	model.Success(c, gin.H{"deployment": deployment, "releases": releases, "image_prefix": strings.Join(prefixes, "\n"), "image_prefixes": prefixes, "webhook_configured": configured == nil})
+	apiShared.Success(c, gin.H{"deployment": deployment, "releases": apiShared.PlatformReleasesDTO(releases), "image_prefix": strings.Join(prefixes, "\n"), "image_prefixes": prefixes, "webhook_configured": configured == nil})
 }
 
 func (h *PlatformHandler) GenerateWebhookSecret(c *gin.Context) {
@@ -179,7 +179,7 @@ func (h *PlatformHandler) GenerateWebhookSecret(c *gin.Context) {
 		apiShared.InternalError(c, "保存部署密钥失败")
 		return
 	}
-	model.Success(c, gin.H{"secret": secret})
+	apiShared.Success(c, gin.H{"secret": secret})
 }
 
 func (h *PlatformHandler) UpdateImagePrefix(c *gin.Context) {
@@ -195,7 +195,7 @@ func (h *PlatformHandler) UpdateImagePrefix(c *gin.Context) {
 		apiShared.BadRequest(c, "平台镜像仓库前缀无效")
 		return
 	}
-	model.Success(c, nil)
+	apiShared.Success(c, nil)
 }
 
 func (h *PlatformHandler) Rollback(c *gin.Context) {
@@ -211,16 +211,16 @@ func (h *PlatformHandler) Rollback(c *gin.Context) {
 	}
 	release, err := h.release.CreateRelease(c.Request.Context(), previous.PreviousImage, "manual_rollback", "", "")
 	if err != nil {
-		apiShared.Error(c, http.StatusBadRequest, model.CodeK8sAPIError, err.Error())
+		apiShared.Error(c, http.StatusBadRequest, apiShared.CodeK8sAPIError, err.Error())
 		return
 	}
-	model.SuccessWithMessage(c, release, "平台回滚已提交")
+	apiShared.SuccessWithMessage(c, apiShared.PlatformReleaseDTO(release), "平台回滚已提交")
 	c.Writer.Flush()
 	h.release.Apply(context.WithoutCancel(c.Request.Context()), release.ID)
 }
 
 func (h *PlatformHandler) EndpointStatus(c *gin.Context) {
-	model.Success(c, h.platformEndpointInfo(c.Request.Context()))
+	apiShared.Success(c, h.platformEndpointInfo(c.Request.Context()))
 }
 
 // UpdateEndpoint stores and reconciles the public HTTPS entry for the Manager
@@ -289,18 +289,18 @@ func (h *PlatformHandler) UpdateEndpoint(c *gin.Context) {
 	if err := h.reconcilePlatformEndpoint(c.Request.Context()); err != nil {
 		info := h.platformEndpointInfo(c.Request.Context())
 		info.CertificateError = err.Error()
-		model.SuccessWithMessage(c, info, "平台入口已保存，但 Kubernetes 同步尚未完成")
+		apiShared.SuccessWithMessage(c, info, "平台入口已保存，但 Kubernetes 同步尚未完成")
 		return
 	}
-	model.SuccessWithMessage(c, h.platformEndpointInfo(c.Request.Context()), "平台入口已保存，正在同步证书和 Ingress")
+	apiShared.SuccessWithMessage(c, h.platformEndpointInfo(c.Request.Context()), "平台入口已保存，正在同步证书和 Ingress")
 }
 
 func (h *PlatformHandler) ReconcileEndpoint(c *gin.Context) {
 	if err := h.reconcilePlatformEndpoint(c.Request.Context()); err != nil {
-		apiShared.Error(c, 400, model.CodeK8sAPIError, err.Error())
+		apiShared.Error(c, 400, apiShared.CodeK8sAPIError, err.Error())
 		return
 	}
-	model.SuccessWithMessage(c, h.platformEndpointInfo(c.Request.Context()), "平台入口已重新同步")
+	apiShared.SuccessWithMessage(c, h.platformEndpointInfo(c.Request.Context()), "平台入口已重新同步")
 }
 
 // AdoptEndpointIngress explicitly transfers a matching manually created
@@ -331,7 +331,7 @@ func (h *PlatformHandler) AdoptEndpointIngress(c *gin.Context) {
 	}
 	ingressName, err := h.client.AdoptPlatformIngressContext(c.Request.Context(), endpoint.Hostname, endpoint.TLSSecretName)
 	if err != nil {
-		apiShared.Error(c, 400, model.CodeK8sAPIError, err.Error())
+		apiShared.Error(c, 400, apiShared.CodeK8sAPIError, err.Error())
 		return
 	}
 	endpoint.IngressName = ingressName
@@ -339,7 +339,7 @@ func (h *PlatformHandler) AdoptEndpointIngress(c *gin.Context) {
 		apiShared.InternalError(c, "保存平台入口失败")
 		return
 	}
-	model.SuccessWithMessage(c, h.platformEndpointInfo(c.Request.Context()), "现有 Ingress 已接管并重新同步")
+	apiShared.SuccessWithMessage(c, h.platformEndpointInfo(c.Request.Context()), "现有 Ingress 已接管并重新同步")
 }
 
 func (h *PlatformHandler) reconcilePlatformEndpoint(ctx context.Context) error {
@@ -370,7 +370,7 @@ func (h *PlatformHandler) reconcilePlatformEndpoint(ctx context.Context) error {
 }
 
 func (h *PlatformHandler) platformEndpointInfo(ctx context.Context) platformEndpointInfo {
-	info := platformEndpointInfo{Endpoint: model.PlatformEndpoint{}, State: "not_configured"}
+	info := platformEndpointInfo{Endpoint: apiShared.PlatformEndpointView{}, State: "not_configured"}
 	if h.store == nil {
 		info.CertificateError = "存储未初始化"
 		return info
@@ -383,7 +383,9 @@ func (h *PlatformHandler) platformEndpointInfo(ctx context.Context) platformEndp
 		info.State, info.CertificateError = "unavailable", "读取平台入口失败"
 		return info
 	}
-	info.Endpoint = *endpoint
+	if view := apiShared.PlatformEndpointDTO(endpoint); view != nil {
+		info.Endpoint = *view
+	}
 	if !endpoint.Enabled {
 		info.State = "disabled"
 		return info

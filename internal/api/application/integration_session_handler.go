@@ -107,7 +107,7 @@ func (h *ApplicationHandler) createIntegrationHandoff(c *gin.Context) {
 		apiShared.DBError(c, "生成跳转地址失败")
 		return
 	}
-	model.Success(c, gin.H{"handoff_code": code, "handoff_url": handoffURL, "expires_in": int(integrationHandoffTTL.Seconds())})
+	apiShared.Success(c, gin.H{"handoff_code": code, "handoff_url": handoffURL, "expires_in": int(integrationHandoffTTL.Seconds())})
 }
 
 func appendHandoffCode(raw, code string) (string, error) {
@@ -169,7 +169,7 @@ func (h *ApplicationHandler) ExchangeIntegrationSession(c *gin.Context) {
 		apiShared.Unauthorized(c, "跳转码无效或已过期")
 		return
 	}
-	model.Success(c, gin.H{"session_token": token, "expires_at": session.ExpiresAt})
+	apiShared.Success(c, gin.H{"session_token": token, "expires_at": session.ExpiresAt})
 }
 
 func (h *ApplicationHandler) CreateIntegrationDelegation(c *gin.Context) {
@@ -207,5 +207,5 @@ func (h *ApplicationHandler) createIntegrationDelegation(c *gin.Context) {
 		apiShared.DBError(c, "签发委托失败")
 		return
 	}
-	model.Success(c, gin.H{"token": delegation, "expires_in": int(auth.MaxDelegationTTL.Seconds())})
+	apiShared.Success(c, gin.H{"token": delegation, "expires_in": int(auth.MaxDelegationTTL.Seconds())})
 }

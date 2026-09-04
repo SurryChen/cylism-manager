@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 	"github.com/cylism/cylism-manager/internal/k8s"
@@ -81,10 +82,22 @@ type claimDomainRequest struct {
 }
 
 type ManagedDomainInfo struct {
-	model.ManagedDomain
-	Certificate      *k8s.CertInfo `json:"certificate,omitempty"`
-	CertificateError string        `json:"certificate_error,omitempty"`
-	ApplicationCount int64         `json:"application_count"`
+	ID                   uint          `json:"id"`
+	Hostname             string        `json:"hostname"`
+	EnvironmentID        uint          `json:"environment_id,omitempty"`
+	Namespace            string        `json:"namespace"`
+	CertificateName      string        `json:"certificate_name"`
+	TLSSecretName        string        `json:"tls_secret_name"`
+	IssuerRef            string        `json:"issuer_ref"`
+	IssuerKind           string        `json:"issuer_kind"`
+	CertificateOwnership string        `json:"certificate_ownership"`
+	Description          string        `json:"description"`
+	Enabled              bool          `json:"enabled"`
+	CreatedAt            time.Time     `json:"created_at"`
+	UpdatedAt            time.Time     `json:"updated_at"`
+	Certificate          *k8s.CertInfo `json:"certificate,omitempty"`
+	CertificateError     string        `json:"certificate_error,omitempty"`
+	ApplicationCount     int64         `json:"application_count"`
 }
 
 // NewDomainHandlerWithDependencies uses the already configured network
@@ -104,7 +117,7 @@ func (h *DomainHandler) List(c *gin.Context) {
 		for index := range domains {
 			result = append(result, h.DomainInfo(c.Request.Context(), &domains[index]))
 		}
-		model.Success(c, result)
+		apiShared.Success(c, result)
 		return
 	}
 	environmentID, err := apiShared.OptionalID(strings.TrimSpace(c.Query("environment_id")))
@@ -121,7 +134,7 @@ func (h *DomainHandler) List(c *gin.Context) {
 	for index := range domains {
 		result = append(result, h.DomainInfo(c.Request.Context(), &domains[index]))
 	}
-	model.Success(c, result)
+	apiShared.Success(c, result)
 }
 
 func (h *DomainHandler) Create(c *gin.Context) {
@@ -156,11 +169,11 @@ func (h *DomainHandler) Create(c *gin.Context) {
 	info := h.DomainInfo(c.Request.Context(), domain)
 	if err := h.ensureManagedDomainCertificate(c.Request.Context(), domain); err != nil {
 		info.CertificateError = err.Error()
-		model.SuccessWithMessage(c, info, "域名已创建，但证书申请尚未成功，可在域名列表中重试")
+		apiShared.SuccessWithMessage(c, info, "域名已创建，但证书申请尚未成功，可在域名列表中重试")
 		return
 	}
 	info = h.DomainInfo(c.Request.Context(), domain)
-	model.SuccessWithMessage(c, info, "受管 HTTPS 域名已创建，正在申请证书")
+	apiShared.SuccessWithMessage(c, info, "受管 HTTPS 域名已创建，正在申请证书")
 }
 
 func (h *DomainHandler) ListImportableCertificates(c *gin.Context) {
@@ -180,7 +193,7 @@ func (h *DomainHandler) ListImportableCertificates(c *gin.Context) {
 	}
 	certificates, err := h.network.ListCertificatesContext(c.Request.Context())
 	if err != nil {
-		apiShared.Error(c, http.StatusBadRequest, model.CodeK8sAPIError, err.Error())
+		apiShared.Error(c, http.StatusBadRequest, apiShared.CodeK8sAPIError, err.Error())
 		return
 	}
 	candidates := make([]k8s.CertInfo, 0)
@@ -190,7 +203,7 @@ func (h *DomainHandler) ListImportableCertificates(c *gin.Context) {
 		}
 		candidates = append(candidates, certificate)
 	}
-	model.Success(c, candidates)
+	apiShared.Success(c, candidates)
 }
 
 func (h *DomainHandler) ListClaimable(c *gin.Context) {
@@ -213,7 +226,7 @@ func (h *DomainHandler) ListClaimable(c *gin.Context) {
 	for index := range domains {
 		result = append(result, h.DomainInfo(c.Request.Context(), &domains[index]))
 	}
-	model.Success(c, result)
+	apiShared.Success(c, result)
 }
 
 func (h *DomainHandler) ImportCertificate(c *gin.Context) {
@@ -237,7 +250,7 @@ func (h *DomainHandler) ImportCertificate(c *gin.Context) {
 			apiShared.NotFound(c, "Certificate 不存在")
 			return
 		}
-		apiShared.Error(c, http.StatusBadRequest, model.CodeK8sAPIError, err.Error())
+		apiShared.Error(c, http.StatusBadRequest, apiShared.CodeK8sAPIError, err.Error())
 		return
 	}
 	if !importableCertificate(*certificate) {
@@ -265,7 +278,7 @@ func (h *DomainHandler) ImportCertificate(c *gin.Context) {
 		apiShared.Conflict(c, "域名已被平台管理")
 		return
 	}
-	model.SuccessWithMessage(c, h.DomainInfo(c.Request.Context(), domain), "已接管现有证书，Certificate 与 TLS Secret 保持原样")
+	apiShared.SuccessWithMessage(c, h.DomainInfo(c.Request.Context(), domain), "已接管现有证书，Certificate 与 TLS Secret 保持原样")
 }
 
 func (h *DomainHandler) Claim(c *gin.Context) {
@@ -296,7 +309,7 @@ func (h *DomainHandler) Claim(c *gin.Context) {
 		apiShared.DBError(c, err.Error())
 		return
 	}
-	model.SuccessWithMessage(c, h.DomainInfo(c.Request.Context(), domain), "已关联历史域名，Certificate 与 TLS Secret 保持原样")
+	apiShared.SuccessWithMessage(c, h.DomainInfo(c.Request.Context(), domain), "已关联历史域名，Certificate 与 TLS Secret 保持原样")
 }
 
 func (h *DomainHandler) Update(c *gin.Context) {
@@ -338,15 +351,15 @@ func (h *DomainHandler) Update(c *gin.Context) {
 	}
 	info := h.DomainInfo(c.Request.Context(), domain)
 	if isImportedDomain(domain) {
-		model.SuccessWithMessage(c, info, "导入域名已更新，Certificate 保持原样")
+		apiShared.SuccessWithMessage(c, info, "导入域名已更新，Certificate 保持原样")
 		return
 	}
 	if err := h.ensureManagedDomainCertificate(c.Request.Context(), domain); err != nil {
 		info.CertificateError = err.Error()
-		model.SuccessWithMessage(c, info, "域名已更新，但证书申请尚未成功，可重试")
+		apiShared.SuccessWithMessage(c, info, "域名已更新，但证书申请尚未成功，可重试")
 		return
 	}
-	model.SuccessWithMessage(c, h.DomainInfo(c.Request.Context(), domain), "受管域名已更新，正在同步证书")
+	apiShared.SuccessWithMessage(c, h.DomainInfo(c.Request.Context(), domain), "受管域名已更新，正在同步证书")
 }
 
 func (h *DomainHandler) RetryCertificate(c *gin.Context) {
@@ -366,7 +379,7 @@ func (h *DomainHandler) RetryCertificate(c *gin.Context) {
 		apiShared.ValidationError(c, "申请证书: "+err.Error())
 		return
 	}
-	model.SuccessWithMessage(c, h.DomainInfo(c.Request.Context(), domain), "证书申请已重新提交")
+	apiShared.SuccessWithMessage(c, h.DomainInfo(c.Request.Context(), domain), "证书申请已重新提交")
 }
 
 func (h *DomainHandler) ListOperations(c *gin.Context) {
@@ -380,10 +393,10 @@ func (h *DomainHandler) ListOperations(c *gin.Context) {
 	}
 	operations, err := h.network.ListCertificateOperationsContext(c.Request.Context(), domain.Namespace, domain.CertificateName)
 	if err != nil {
-		apiShared.Error(c, http.StatusBadRequest, model.CodeK8sAPIError, err.Error())
+		apiShared.Error(c, http.StatusBadRequest, apiShared.CodeK8sAPIError, err.Error())
 		return
 	}
-	model.Success(c, operations)
+	apiShared.Success(c, operations)
 }
 
 func (h *DomainHandler) Delete(c *gin.Context) {
@@ -402,12 +415,12 @@ func (h *DomainHandler) Delete(c *gin.Context) {
 	}
 	if !isImportedDomain(domain) && h.k8s != nil && domain.Namespace != "" && domain.CertificateName != "" {
 		if err := h.network.DeleteCertificateContext(c.Request.Context(), domain.Namespace, domain.CertificateName); err != nil && !apierrors.IsNotFound(err) {
-			apiShared.Error(c, http.StatusBadRequest, model.CodeK8sAPIError, "删除域名证书: "+err.Error())
+			apiShared.Error(c, http.StatusBadRequest, apiShared.CodeK8sAPIError, "删除域名证书: "+err.Error())
 			return
 		}
 		if domain.TLSSecretName != "" {
 			if err := h.k8s.DeleteTLSSecret(c.Request.Context(), domain.Namespace, domain.TLSSecretName); err != nil && !apierrors.IsNotFound(err) {
-				apiShared.Error(c, http.StatusBadRequest, model.CodeK8sAPIError, "删除域名 TLS Secret: "+err.Error())
+				apiShared.Error(c, http.StatusBadRequest, apiShared.CodeK8sAPIError, "删除域名 TLS Secret: "+err.Error())
 				return
 			}
 		}
@@ -416,7 +429,7 @@ func (h *DomainHandler) Delete(c *gin.Context) {
 		apiShared.DBError(c, err.Error())
 		return
 	}
-	model.Success(c, gin.H{"id": domain.ID})
+	apiShared.Success(c, gin.H{"id": domain.ID})
 }
 
 func (h *DomainHandler) managedDomain(c *gin.Context) (*model.ManagedDomain, bool) {
@@ -460,7 +473,7 @@ func ManagedDomainInfoFor(ctx context.Context, domain *model.ManagedDomain, clie
 	if domain == nil {
 		return ManagedDomainInfo{}
 	}
-	view := ManagedDomainInfo{ManagedDomain: *domain}
+	view := ManagedDomainInfo{ID: domain.ID, Hostname: domain.Hostname, EnvironmentID: domain.EnvironmentID, Namespace: domain.Namespace, CertificateName: domain.CertificateName, TLSSecretName: domain.TLSSecretName, IssuerRef: domain.IssuerRef, IssuerKind: domain.IssuerKind, CertificateOwnership: domain.CertificateOwnership, Description: domain.Description, Enabled: domain.Enabled, CreatedAt: domain.CreatedAt, UpdatedAt: domain.UpdatedAt}
 	if references != nil {
 		if count, err := references.CountApplicationEndpointsByDomain(domain.ID); err == nil {
 			view.ApplicationCount = count

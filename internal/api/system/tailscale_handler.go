@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
-	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/repository"
 	crypto "github.com/cylism/cylism-manager/internal/security"
 	security "github.com/cylism/cylism-manager/internal/security"
@@ -71,7 +70,7 @@ func (h *TailscaleHandler) Init(c *gin.Context) {
 	if !h.runtime.Installed(ctx) {
 		out, err := h.runtime.Install(ctx)
 		if err != nil {
-			apiShared.Error(c, http.StatusInternalServerError, model.CodeInternalError,
+			apiShared.Error(c, http.StatusInternalServerError, apiShared.CodeInternalError,
 				"安装 Tailscale 失败: "+string(out))
 			return
 		}
@@ -81,7 +80,7 @@ func (h *TailscaleHandler) Init(c *gin.Context) {
 	out, err := h.runtime.Run(ctx, "tailscale", "up",
 		"--auth-key="+req.AuthKey, "--hostname=cylism-control-plane", "--accept-routes")
 	if err != nil {
-		apiShared.Error(c, http.StatusInternalServerError, model.CodeInternalError,
+		apiShared.Error(c, http.StatusInternalServerError, apiShared.CodeInternalError,
 			"注册 Tailscale 失败: "+string(out))
 		return
 	}
@@ -102,7 +101,7 @@ func (h *TailscaleHandler) Init(c *gin.Context) {
 		}
 	}
 
-	model.Success(c, gin.H{
+	apiShared.Success(c, gin.H{
 		"tailscale_ip": tsIP,
 		"k3s_token":    k3sToken,
 		"status":       "initialized",
@@ -113,7 +112,7 @@ func (h *TailscaleHandler) Init(c *gin.Context) {
 func (h *TailscaleHandler) Status(c *gin.Context) {
 	ctx := c.Request.Context()
 	if !h.runtime.Installed(ctx) {
-		model.Success(c, gin.H{"initialized": false, "ip": "", "online": false})
+		apiShared.Success(c, gin.H{"initialized": false, "ip": "", "online": false})
 		return
 	}
 
@@ -122,7 +121,7 @@ func (h *TailscaleHandler) Status(c *gin.Context) {
 
 	statusOut, _ := h.runtime.Run(ctx, "tailscale", "status")
 
-	model.Success(c, gin.H{
+	apiShared.Success(c, gin.H{
 		"initialized": true,
 		"ip":          tsIP,
 		"online":      tsIP != "",
@@ -148,7 +147,7 @@ func (h *TailscaleHandler) InstallScript(c *gin.Context) {
 	}
 	// Only return a sanitized prefix — never expose the full key
 	display := security.TokenDisplay(authKey, 8)
-	model.Success(c, gin.H{
+	apiShared.Success(c, gin.H{
 		"command": "tailscale up --auth-key=<your-key>",
 		"prefix":  display,
 	})

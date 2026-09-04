@@ -106,7 +106,7 @@ func (h *ClusterDNSHandler) Status(c *gin.Context) {
 		podStatus = append(podStatus, gin.H{"name": pod.Name, "node": pod.Spec.NodeName, "ip": pod.Status.PodIP, "ready": coreDNSPodReady(&pod)})
 	}
 	sort.Slice(podStatus, func(i, j int) bool { return podStatus[i]["name"].(string) < podStatus[j]["name"].(string) })
-	model.Success(c, gin.H{
+	apiShared.Success(c, gin.H{
 		"forwarding":    forwardTargets(configMap.Data["Corefile"]),
 		"active_policy": policyPayload(policy),
 		"history":       historyPayload(history),
@@ -134,7 +134,7 @@ func (h *ClusterDNSHandler) Apply(c *gin.Context) {
 		apiShared.K8sAPIError(c, err.Error())
 		return
 	}
-	model.SuccessWithMessage(c, policyPayload(policy), "集群 DNS 策略已应用，CoreDNS 将自动重载配置")
+	apiShared.SuccessWithMessage(c, policyPayload(policy), "集群 DNS 策略已应用，CoreDNS 将自动重载配置")
 }
 
 // Reset restores K3s's default resolver forwarding. The empty resolver list
@@ -150,7 +150,7 @@ func (h *ClusterDNSHandler) Reset(c *gin.Context) {
 		apiShared.K8sAPIError(c, err.Error())
 		return
 	}
-	model.SuccessWithMessage(c, policyPayload(policy), "已恢复使用各节点宿主机 DNS")
+	apiShared.SuccessWithMessage(c, policyPayload(policy), "已恢复使用各节点宿主机 DNS")
 }
 
 func (h *ClusterDNSHandler) applyResolvers(c *gin.Context, resolvers []string) (*model.ClusterDNSPolicy, error) {
@@ -202,7 +202,7 @@ func (h *ClusterDNSHandler) Rollback(c *gin.Context) {
 				apiShared.K8sAPIError(c, applyErr.Error())
 				return
 			}
-			model.SuccessWithMessage(c, policyPayload(applied), "DNS 策略已回滚为宿主机 DNS，CoreDNS 将自动重载配置")
+			apiShared.SuccessWithMessage(c, policyPayload(applied), "DNS 策略已回滚为宿主机 DNS，CoreDNS 将自动重载配置")
 			return
 		}
 		resolvers, normalizeErr := normalizeDNSResolvers(resolvers)
@@ -214,7 +214,7 @@ func (h *ClusterDNSHandler) Rollback(c *gin.Context) {
 			apiShared.K8sAPIError(c, applyErr.Error())
 			return
 		}
-		model.SuccessWithMessage(c, policyPayload(applied), "DNS 策略已回滚，CoreDNS 将自动重载配置")
+		apiShared.SuccessWithMessage(c, policyPayload(applied), "DNS 策略已回滚，CoreDNS 将自动重载配置")
 		return
 	}
 	apiShared.NotFound(c, "DNS 策略版本不存在")

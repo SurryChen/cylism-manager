@@ -10,7 +10,6 @@ import (
 
 	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 	"github.com/cylism/cylism-manager/internal/k8s"
-	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/repository"
 	loggingservice "github.com/cylism/cylism-manager/internal/service/observability/logging"
 	"github.com/gin-gonic/gin"
@@ -165,7 +164,7 @@ func (h *LoggingHandler) Status(c *gin.Context) {
 		apiShared.K8sUnavailable(c)
 		return
 	}
-	model.Success(c, h.component.Status(c.Request.Context()))
+	apiShared.Success(c, h.component.Status(c.Request.Context()))
 }
 
 func (h *LoggingHandler) Install(c *gin.Context) {
@@ -191,7 +190,7 @@ func (h *LoggingHandler) applyConfig(c *gin.Context, message string) {
 		apiShared.ValidationError(c, err.Error())
 		return
 	}
-	model.SuccessWithMessage(c, status, message)
+	apiShared.SuccessWithMessage(c, status, message)
 }
 
 func (h *LoggingHandler) Uninstall(c *gin.Context) {
@@ -200,10 +199,10 @@ func (h *LoggingHandler) Uninstall(c *gin.Context) {
 		return
 	}
 	if err := h.component.Uninstall(c.Request.Context()); err != nil {
-		apiShared.Error(c, http.StatusInternalServerError, model.CodeK8sAPIError, err.Error())
+		apiShared.Error(c, http.StatusInternalServerError, apiShared.CodeK8sAPIError, err.Error())
 		return
 	}
-	model.SuccessWithMessage(c, gin.H{"data_retained": true}, "日志采集已卸载，系统管理的 Loki 存储卷已保留")
+	apiShared.SuccessWithMessage(c, gin.H{"data_retained": true}, "日志采集已卸载，系统管理的 Loki 存储卷已保留")
 }
 
 // Filters returns small Kubernetes-derived lists for structured log search controls.
@@ -218,7 +217,7 @@ func (h *LoggingHandler) Filters(c *gin.Context) {
 		apiShared.K8sAPIError(c, "读取日志筛选项失败: "+err.Error())
 		return
 	}
-	model.Success(c, gin.H{"namespaces": filters.Namespaces, "pods": filters.Pods, "nodes": filters.Nodes})
+	apiShared.Success(c, gin.H{"namespaces": filters.Namespaces, "pods": filters.Pods, "nodes": filters.Nodes})
 }
 
 func (h *LoggingHandler) Query(c *gin.Context) {
@@ -241,7 +240,7 @@ func (h *LoggingHandler) Query(c *gin.Context) {
 		if strings.Contains(err.Error(), "尚未就绪") {
 			status = http.StatusConflict
 		}
-		apiShared.Error(c, status, model.CodeK8sAPIError, err.Error())
+		apiShared.Error(c, status, apiShared.CodeK8sAPIError, err.Error())
 		return
 	}
 	lines := make([]logLine, 0, len(serviceLines))
@@ -255,5 +254,5 @@ func (h *LoggingHandler) Query(c *gin.Context) {
 	if limit == 0 {
 		limit = loggingservice.DefaultLimit
 	}
-	model.Success(c, gin.H{"range": rangeName, "lines": lines, "has_more": len(lines) >= limit})
+	apiShared.Success(c, gin.H{"range": rangeName, "lines": lines, "has_more": len(lines) >= limit})
 }

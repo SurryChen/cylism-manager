@@ -9,7 +9,6 @@ import (
 
 	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 	k8sclient "github.com/cylism/cylism-manager/internal/k8s"
-	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/repository"
 	storageservice "github.com/cylism/cylism-manager/internal/service/storage"
 	corev1 "k8s.io/api/core/v1"
@@ -201,7 +200,7 @@ func (h *K8sHandler) Dashboard(c *gin.Context) {
 		version = nodes[0].Version
 	}
 
-	model.Success(c, map[string]interface{}{
+	apiShared.Success(c, map[string]interface{}{
 		"nodes_total":       nodeTotal,
 		"pods_total":        podTotal,
 		"pods_ready":        podReady,
@@ -225,14 +224,14 @@ func (h *K8sHandler) ListNamespaceNames(c *gin.Context) {
 	}
 	nsList, err := h.k8s.CoreV1().Namespaces().List(c.Request.Context(), metav1.ListOptions{})
 	if err != nil {
-		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
+		apiShared.Error(c, http.StatusOK, apiShared.CodeK8sAPIError, err.Error())
 		return
 	}
 	result := make([]NamespaceNameSummary, 0, len(nsList.Items))
 	for _, namespace := range nsList.Items {
 		result = append(result, NamespaceNameSummary{Name: namespace.Name, Status: string(namespace.Status.Phase)})
 	}
-	model.Success(c, result)
+	apiShared.Success(c, result)
 }
 
 // ListNamespaces 列出 Namespace 与资源摘要
@@ -244,7 +243,7 @@ func (h *K8sHandler) ListNamespaces(c *gin.Context) {
 
 	nsList, err := h.k8s.CoreV1().Namespaces().List(c.Request.Context(), metav1.ListOptions{})
 	if err != nil {
-		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
+		apiShared.Error(c, http.StatusOK, apiShared.CodeK8sAPIError, err.Error())
 		return
 	}
 
@@ -282,7 +281,7 @@ func (h *K8sHandler) ListNamespaces(c *gin.Context) {
 		result = append(result, summary)
 	}
 
-	model.Success(c, result)
+	apiShared.Success(c, result)
 }
 
 // CreateNamespace 创建 Namespace
@@ -312,11 +311,11 @@ func (h *K8sHandler) CreateNamespace(c *gin.Context) {
 
 	created, err := h.k8s.CoreV1().Namespaces().Create(c.Request.Context(), ns, metav1.CreateOptions{})
 	if err != nil {
-		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
+		apiShared.Error(c, http.StatusOK, apiShared.CodeK8sAPIError, err.Error())
 		return
 	}
 
-	model.SuccessWithMessage(c, gin.H{
+	apiShared.SuccessWithMessage(c, gin.H{
 		"name": created.Name,
 	}, "命名空间创建成功")
 }
@@ -348,11 +347,11 @@ func (h *K8sHandler) UpdateNamespace(c *gin.Context) {
 	ns.Annotations = req.Annotations
 	updated, err := h.k8s.CoreV1().Namespaces().Update(c.Request.Context(), ns, metav1.UpdateOptions{})
 	if err != nil {
-		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
+		apiShared.Error(c, http.StatusOK, apiShared.CodeK8sAPIError, err.Error())
 		return
 	}
 
-	model.SuccessWithMessage(c, gin.H{
+	apiShared.SuccessWithMessage(c, gin.H{
 		"name":        updated.Name,
 		"labels":      updated.Labels,
 		"annotations": updated.Annotations,
@@ -373,11 +372,11 @@ func (h *K8sHandler) DeleteNamespace(c *gin.Context) {
 	}
 
 	if err := h.k8s.CoreV1().Namespaces().Delete(c.Request.Context(), name, metav1.DeleteOptions{}); err != nil {
-		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
+		apiShared.Error(c, http.StatusOK, apiShared.CodeK8sAPIError, err.Error())
 		return
 	}
 
-	model.SuccessWithMessage(c, nil, "命名空间删除成功")
+	apiShared.SuccessWithMessage(c, nil, "命名空间删除成功")
 }
 
 func isProtectedNamespace(name string) bool {
@@ -398,7 +397,7 @@ func (h *K8sHandler) ListPods(c *gin.Context) {
 	ns := c.Query("namespace")
 	pods, err := h.k8s.CoreV1().Pods(ns).List(c.Request.Context(), metav1.ListOptions{})
 	if err != nil {
-		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
+		apiShared.Error(c, http.StatusOK, apiShared.CodeK8sAPIError, err.Error())
 		return
 	}
 
@@ -434,7 +433,7 @@ func (h *K8sHandler) ListPods(c *gin.Context) {
 			Containers: containers,
 		})
 	}
-	model.Success(c, result)
+	apiShared.Success(c, result)
 }
 
 // ==================== Deployment ====================
@@ -448,13 +447,13 @@ func (h *K8sHandler) ListDeployments(c *gin.Context) {
 	ns := c.Query("namespace")
 	result, err := h.k8s.ListDeploymentsContext(c.Request.Context(), ns)
 	if err != nil {
-		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
+		apiShared.Error(c, http.StatusOK, apiShared.CodeK8sAPIError, err.Error())
 		return
 	}
 	if result == nil {
 		result = []k8sclient.DeploymentInfo{}
 	}
-	model.Success(c, result)
+	apiShared.Success(c, result)
 }
 
 // GetDeployment 获取 Deployment 详情
@@ -470,7 +469,7 @@ func (h *K8sHandler) GetDeployment(c *gin.Context) {
 		apiShared.NotFound(c, err.Error())
 		return
 	}
-	model.Success(c, result)
+	apiShared.Success(c, result)
 }
 
 // ListDeploymentPods 获取 Deployment 关联 Pod
@@ -483,10 +482,10 @@ func (h *K8sHandler) ListDeploymentPods(c *gin.Context) {
 	name := c.Param("name")
 	result, err := h.k8s.ListDeploymentPodsContext(c.Request.Context(), ns, name)
 	if err != nil {
-		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
+		apiShared.Error(c, http.StatusOK, apiShared.CodeK8sAPIError, err.Error())
 		return
 	}
-	model.Success(c, result)
+	apiShared.Success(c, result)
 }
 
 // ListDeploymentRevisions 获取 Deployment 版本历史
@@ -499,10 +498,10 @@ func (h *K8sHandler) ListDeploymentRevisions(c *gin.Context) {
 	name := c.Param("name")
 	result, err := h.k8s.ListDeploymentRevisionsContext(c.Request.Context(), ns, name)
 	if err != nil {
-		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
+		apiShared.Error(c, http.StatusOK, apiShared.CodeK8sAPIError, err.Error())
 		return
 	}
-	model.Success(c, result)
+	apiShared.Success(c, result)
 }
 
 // ScaleDeployment 扩缩容 Deployment
@@ -526,7 +525,7 @@ func (h *K8sHandler) ScaleDeployment(c *gin.Context) {
 		apiShared.InternalError(c, err.Error())
 		return
 	}
-	model.SuccessWithMessage(c, map[string]interface{}{"replicas": req.Replicas}, "扩缩容成功")
+	apiShared.SuccessWithMessage(c, map[string]interface{}{"replicas": req.Replicas}, "扩缩容成功")
 }
 
 // UpdateDeploymentImage 更新 Deployment 镜像
@@ -551,7 +550,7 @@ func (h *K8sHandler) UpdateDeploymentImage(c *gin.Context) {
 		apiShared.InternalError(c, err.Error())
 		return
 	}
-	model.SuccessWithMessage(c, nil, "镜像更新已触发滚动更新")
+	apiShared.SuccessWithMessage(c, nil, "镜像更新已触发滚动更新")
 }
 
 // RollbackDeployment 回滚 Deployment
@@ -575,7 +574,7 @@ func (h *K8sHandler) RollbackDeployment(c *gin.Context) {
 		apiShared.InternalError(c, err.Error())
 		return
 	}
-	model.SuccessWithMessage(c, nil, "回滚成功")
+	apiShared.SuccessWithMessage(c, nil, "回滚成功")
 }
 
 // ==================== StatefulSet ====================
@@ -589,13 +588,13 @@ func (h *K8sHandler) ListStatefulSets(c *gin.Context) {
 	ns := c.Query("namespace")
 	result, err := h.k8s.ListStatefulSetsContext(c.Request.Context(), ns)
 	if err != nil {
-		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
+		apiShared.Error(c, http.StatusOK, apiShared.CodeK8sAPIError, err.Error())
 		return
 	}
 	if result == nil {
 		result = []k8sclient.StatefulSetInfo{}
 	}
-	model.Success(c, result)
+	apiShared.Success(c, result)
 }
 
 // GetStatefulSet 获取 StatefulSet 详情
@@ -611,7 +610,7 @@ func (h *K8sHandler) GetStatefulSet(c *gin.Context) {
 		apiShared.NotFound(c, err.Error())
 		return
 	}
-	model.Success(c, result)
+	apiShared.Success(c, result)
 }
 
 // ScaleStatefulSet 扩缩容 StatefulSet
@@ -635,7 +634,7 @@ func (h *K8sHandler) ScaleStatefulSet(c *gin.Context) {
 		apiShared.InternalError(c, err.Error())
 		return
 	}
-	model.SuccessWithMessage(c, map[string]interface{}{"replicas": req.Replicas}, "扩缩容成功")
+	apiShared.SuccessWithMessage(c, map[string]interface{}{"replicas": req.Replicas}, "扩缩容成功")
 }
 
 // ==================== DaemonSet ====================
@@ -649,13 +648,13 @@ func (h *K8sHandler) ListDaemonSets(c *gin.Context) {
 	ns := c.Query("namespace")
 	result, err := h.k8s.ListDaemonSetsContext(c.Request.Context(), ns)
 	if err != nil {
-		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
+		apiShared.Error(c, http.StatusOK, apiShared.CodeK8sAPIError, err.Error())
 		return
 	}
 	if result == nil {
 		result = []k8sclient.DaemonSetInfo{}
 	}
-	model.Success(c, result)
+	apiShared.Success(c, result)
 }
 
 // GetDaemonSet 获取 DaemonSet 详情
@@ -671,7 +670,7 @@ func (h *K8sHandler) GetDaemonSet(c *gin.Context) {
 		apiShared.NotFound(c, err.Error())
 		return
 	}
-	model.Success(c, result)
+	apiShared.Success(c, result)
 }
 
 // ==================== Service (extended) ====================
@@ -685,13 +684,13 @@ func (h *K8sHandler) ListServicesV2(c *gin.Context) {
 	ns := c.Query("namespace")
 	result, err := h.k8s.ListServicesContext(c.Request.Context(), ns)
 	if err != nil {
-		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
+		apiShared.Error(c, http.StatusOK, apiShared.CodeK8sAPIError, err.Error())
 		return
 	}
 	if result == nil {
 		result = []k8sclient.ServiceEndpointInfo{}
 	}
-	model.Success(c, result)
+	apiShared.Success(c, result)
 }
 
 // ==================== EndpointSlice ====================
@@ -706,13 +705,13 @@ func (h *K8sHandler) GetServiceEndpoints(c *gin.Context) {
 	name := c.Param("name")
 	result, err := h.k8s.GetServiceEndpointsContext(c.Request.Context(), ns, name)
 	if err != nil {
-		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
+		apiShared.Error(c, http.StatusOK, apiShared.CodeK8sAPIError, err.Error())
 		return
 	}
 	if result == nil {
 		result = []k8sclient.EndpointSliceInfo{}
 	}
-	model.Success(c, result)
+	apiShared.Success(c, result)
 }
 
 // ==================== ConfigMap ====================
@@ -732,13 +731,13 @@ func (h *K8sHandler) ListConfigMaps(c *gin.Context) {
 		result, err = h.k8s.ListConfigMapsContext(c.Request.Context(), ns)
 	}
 	if err != nil {
-		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
+		apiShared.Error(c, http.StatusOK, apiShared.CodeK8sAPIError, err.Error())
 		return
 	}
 	if result == nil {
 		result = []k8sclient.ConfigMapInfo{}
 	}
-	model.Success(c, result)
+	apiShared.Success(c, result)
 }
 
 // GetConfigMap 获取 ConfigMap 详情
@@ -754,7 +753,7 @@ func (h *K8sHandler) GetConfigMap(c *gin.Context) {
 		apiShared.NotFound(c, err.Error())
 		return
 	}
-	model.Success(c, result)
+	apiShared.Success(c, result)
 }
 
 func (h *K8sHandler) CreateConfigMap(c *gin.Context) {
@@ -773,11 +772,11 @@ func (h *K8sHandler) CreateConfigMap(c *gin.Context) {
 	}
 	result, err := h.k8s.CreateConfigMapContext(c.Request.Context(), k8sclient.ConfigMapMutation{Namespace: req.Namespace, Name: req.Name, Data: req.Data})
 	if err != nil {
-		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
+		apiShared.Error(c, http.StatusOK, apiShared.CodeK8sAPIError, err.Error())
 		return
 	}
 	log.Printf("AUDIT: configmap created: %s/%s", req.Namespace, req.Name)
-	model.SuccessWithMessage(c, result, "ConfigMap 创建成功")
+	apiShared.SuccessWithMessage(c, result, "ConfigMap 创建成功")
 }
 
 func (h *K8sHandler) UpdateConfigMap(c *gin.Context) {
@@ -797,11 +796,11 @@ func (h *K8sHandler) UpdateConfigMap(c *gin.Context) {
 	}
 	result, err := h.k8s.UpdateConfigMapContext(c.Request.Context(), k8sclient.ConfigMapMutation{Namespace: req.Namespace, Name: req.Name, Data: req.Data})
 	if err != nil {
-		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
+		apiShared.Error(c, http.StatusOK, apiShared.CodeK8sAPIError, err.Error())
 		return
 	}
 	log.Printf("AUDIT: configmap updated: %s/%s", req.Namespace, req.Name)
-	model.SuccessWithMessage(c, result, "ConfigMap 更新成功")
+	apiShared.SuccessWithMessage(c, result, "ConfigMap 更新成功")
 }
 
 func (h *K8sHandler) DeleteConfigMap(c *gin.Context) {
@@ -816,22 +815,22 @@ func (h *K8sHandler) DeleteConfigMap(c *gin.Context) {
 		return
 	}
 	if len(resource.UsedBy) > 0 {
-		apiShared.Error(c, http.StatusConflict, model.CodeBadRequest, "ConfigMap 正被工作负载引用，不能删除")
+		apiShared.Error(c, http.StatusConflict, apiShared.CodeBadRequest, "ConfigMap 正被工作负载引用，不能删除")
 		return
 	}
 	if referenced, err := h.resourceIsReferenced(namespace, "configmap", name); err != nil {
 		apiShared.DBError(c, err.Error())
 		return
 	} else if referenced {
-		apiShared.Error(c, http.StatusConflict, model.CodeBadRequest, "ConfigMap 仍被上线模板或发布快照引用，不能删除")
+		apiShared.Error(c, http.StatusConflict, apiShared.CodeBadRequest, "ConfigMap 仍被上线模板或发布快照引用，不能删除")
 		return
 	}
 	if err := h.k8s.DeleteConfigMapContext(c.Request.Context(), namespace, name); err != nil {
-		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
+		apiShared.Error(c, http.StatusOK, apiShared.CodeK8sAPIError, err.Error())
 		return
 	}
 	log.Printf("AUDIT: configmap deleted: %s/%s", namespace, name)
-	model.SuccessWithMessage(c, nil, "ConfigMap 删除成功")
+	apiShared.SuccessWithMessage(c, nil, "ConfigMap 删除成功")
 }
 
 // ==================== Secret ====================
@@ -851,13 +850,13 @@ func (h *K8sHandler) ListSecrets(c *gin.Context) {
 		result, err = h.k8s.ListSecretsContext(c.Request.Context(), ns)
 	}
 	if err != nil {
-		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
+		apiShared.Error(c, http.StatusOK, apiShared.CodeK8sAPIError, err.Error())
 		return
 	}
 	if result == nil {
 		result = []k8sclient.SecretInfo{}
 	}
-	model.Success(c, result)
+	apiShared.Success(c, result)
 }
 
 // GetSecret 获取 Secret 详情
@@ -881,7 +880,7 @@ func (h *K8sHandler) GetSecret(c *gin.Context) {
 		redacted[k] = "W1JFREFDVEVEXQ==" // base64 of [REDACTED]
 	}
 	result.Data = redacted
-	model.Success(c, result)
+	apiShared.Success(c, result)
 }
 
 func (h *K8sHandler) CreateOpaqueSecret(c *gin.Context) {
@@ -900,11 +899,11 @@ func (h *K8sHandler) CreateOpaqueSecret(c *gin.Context) {
 	}
 	result, err := h.k8s.CreateOpaqueSecretContext(c.Request.Context(), k8sclient.OpaqueSecretMutation{Namespace: req.Namespace, Name: req.Name, Data: req.Data})
 	if err != nil {
-		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
+		apiShared.Error(c, http.StatusOK, apiShared.CodeK8sAPIError, err.Error())
 		return
 	}
 	log.Printf("AUDIT: opaque secret created: %s/%s", req.Namespace, req.Name)
-	model.SuccessWithMessage(c, result, "Secret 创建成功")
+	apiShared.SuccessWithMessage(c, result, "Secret 创建成功")
 }
 
 func (h *K8sHandler) UpdateOpaqueSecret(c *gin.Context) {
@@ -924,11 +923,11 @@ func (h *K8sHandler) UpdateOpaqueSecret(c *gin.Context) {
 	}
 	result, err := h.k8s.UpdateOpaqueSecretContext(c.Request.Context(), k8sclient.OpaqueSecretMutation{Namespace: req.Namespace, Name: req.Name, Data: req.Data})
 	if err != nil {
-		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
+		apiShared.Error(c, http.StatusOK, apiShared.CodeK8sAPIError, err.Error())
 		return
 	}
 	log.Printf("AUDIT: opaque secret updated: %s/%s", req.Namespace, req.Name)
-	model.SuccessWithMessage(c, result, "Secret 更新成功")
+	apiShared.SuccessWithMessage(c, result, "Secret 更新成功")
 }
 
 func (h *K8sHandler) DeleteOpaqueSecret(c *gin.Context) {
@@ -943,26 +942,26 @@ func (h *K8sHandler) DeleteOpaqueSecret(c *gin.Context) {
 		return
 	}
 	if resource.Type != string(corev1.SecretTypeOpaque) {
-		apiShared.Error(c, http.StatusConflict, model.CodeBadRequest, "仅可管理 Opaque Secret")
+		apiShared.Error(c, http.StatusConflict, apiShared.CodeBadRequest, "仅可管理 Opaque Secret")
 		return
 	}
 	if len(resource.UsedBy) > 0 {
-		apiShared.Error(c, http.StatusConflict, model.CodeBadRequest, "Secret 正被工作负载引用，不能删除")
+		apiShared.Error(c, http.StatusConflict, apiShared.CodeBadRequest, "Secret 正被工作负载引用，不能删除")
 		return
 	}
 	if referenced, err := h.resourceIsReferenced(namespace, "secret", name); err != nil {
 		apiShared.DBError(c, err.Error())
 		return
 	} else if referenced {
-		apiShared.Error(c, http.StatusConflict, model.CodeBadRequest, "Secret 仍被上线模板或发布快照引用，不能删除")
+		apiShared.Error(c, http.StatusConflict, apiShared.CodeBadRequest, "Secret 仍被上线模板或发布快照引用，不能删除")
 		return
 	}
 	if err := h.k8s.DeleteOpaqueSecretContext(c.Request.Context(), namespace, name); err != nil {
-		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
+		apiShared.Error(c, http.StatusOK, apiShared.CodeK8sAPIError, err.Error())
 		return
 	}
 	log.Printf("AUDIT: opaque secret deleted: %s/%s", namespace, name)
-	model.SuccessWithMessage(c, nil, "Secret 删除成功")
+	apiShared.SuccessWithMessage(c, nil, "Secret 删除成功")
 }
 
 // ==================== Ingress (standard) ====================
@@ -976,13 +975,13 @@ func (h *K8sHandler) ListIngresses(c *gin.Context) {
 	ns := c.Query("namespace")
 	result, err := h.k8s.ListIngressesContext(c.Request.Context(), ns)
 	if err != nil {
-		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
+		apiShared.Error(c, http.StatusOK, apiShared.CodeK8sAPIError, err.Error())
 		return
 	}
 	if result == nil {
 		result = []k8sclient.IngressStdInfo{}
 	}
-	model.Success(c, result)
+	apiShared.Success(c, result)
 }
 
 // GetIngress 获取 Ingress 详情
@@ -998,7 +997,7 @@ func (h *K8sHandler) GetIngress(c *gin.Context) {
 		apiShared.NotFound(c, err.Error())
 		return
 	}
-	model.Success(c, result)
+	apiShared.Success(c, result)
 }
 
 // CreateIngress 创建 Ingress
@@ -1032,7 +1031,7 @@ func (h *K8sHandler) CreateIngress(c *gin.Context) {
 		apiShared.InternalError(c, err.Error())
 		return
 	}
-	model.Success(c, result)
+	apiShared.Success(c, result)
 }
 
 // DeleteIngress 删除标准 Ingress
@@ -1047,7 +1046,7 @@ func (h *K8sHandler) DeleteIngress(c *gin.Context) {
 		apiShared.InternalError(c, err.Error())
 		return
 	}
-	model.SuccessWithMessage(c, nil, "删除成功")
+	apiShared.SuccessWithMessage(c, nil, "删除成功")
 }
 
 // GetIngressController 检测 Ingress Controller
@@ -1057,7 +1056,7 @@ func (h *K8sHandler) GetIngressController(c *gin.Context) {
 		return
 	}
 	status, _ := h.k8s.DetectIngressControllerContext(c.Request.Context())
-	model.Success(c, status)
+	apiShared.Success(c, status)
 }
 
 // ==================== Legacy compatibility wrappers ====================
@@ -1075,7 +1074,7 @@ func (h *K8sHandler) GetService(c *gin.Context) {
 		apiShared.NotFound(c, err.Error())
 		return
 	}
-	model.Success(c, result)
+	apiShared.Success(c, result)
 }
 
 // UpdateService 更新 Service
@@ -1111,7 +1110,7 @@ func (h *K8sHandler) UpdateService(c *gin.Context) {
 		apiShared.InternalError(c, err.Error())
 		return
 	}
-	model.SuccessWithMessage(c, nil, "更新成功")
+	apiShared.SuccessWithMessage(c, nil, "更新成功")
 }
 
 // DeleteService 删除 Service
@@ -1127,7 +1126,7 @@ func (h *K8sHandler) DeleteService(c *gin.Context) {
 		apiShared.InternalError(c, err.Error())
 		return
 	}
-	model.SuccessWithMessage(c, nil, "删除成功")
+	apiShared.SuccessWithMessage(c, nil, "删除成功")
 }
 
 func ageStr(d time.Duration) string {

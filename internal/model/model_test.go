@@ -202,3 +202,18 @@ func TestApplicationReleaseModel(t *testing.T) {
 		t.Fatal("release status validation is incorrect")
 	}
 }
+
+func TestRuntimeAndAgentConstants(t *testing.T) {
+	if RuntimeTypeNanobot == "" || RuntimeDeploymentManaged == RuntimeDeploymentExternal {
+		t.Fatal("runtime constants must define distinct non-empty values")
+	}
+	if !ValidAgentCapability(AgentCapabilityWorkloadRead) {
+		t.Fatal("known agent capability should be valid")
+	}
+	if ValidAgentCapability("unknown.capability") {
+		t.Fatal("unknown agent capability should be rejected")
+	}
+	if !AgentOperationTerminal(AgentOperationSucceeded) || AgentOperationTerminal(AgentOperationApproved) {
+		t.Fatal("agent operation terminal status classification is incorrect")
+	}
+}

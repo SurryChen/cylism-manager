@@ -45,6 +45,7 @@ func (c *Container) BuildRouteDependencies() api.RouteDependencies {
 	registrySSH := registryservice.SSHExecutorFunc(maintenanceSSH)
 	registryVerifier := registryservice.NewNodeVerifierService(registrySSH)
 	registryPull := registryservice.NewNodePullService(registrySSH)
+	nodeMirrorApplier := registryservice.NewNodeMirrorApplier(registrySSH)
 	agent := agentapi.NewAgentHandlerWithKubernetesAdapter(c.Store, agentAdapter, authenticator).WithMonitoringDiskGrowth(monitoring).WithRegistryVerifier(registryVerifier).WithMaintenanceInspector(diskInspection)
 	agentOp := agentapi.NewAgentOperationHandlerWithKubernetesAdapter(c.Store, agentAdapter).WithRegistryPullExecutor(registryPull).WithMaintenanceCleanupExecutor(cleanup)
 	runtimeHandler := runtimeapi.NewRuntimeHandlerWithDependencies(c.Store, key, c.Services.RuntimeManager, c.Services.RuntimeRegistry)
@@ -74,12 +75,8 @@ func (c *Container) BuildRouteDependencies() api.RouteDependencies {
 	// keep the handler's signing key aligned with that verifier.
 	applicationHandler := applicationapi.NewApplicationHandlerWithDependencies(c.Store, c.Services.ApplicationQuery, key, applicationapi.NewKubernetesAdapter(c.K8s)).WithDelegationSecret(c.Auth.JWTSecret)
 	image := deliveryapi.NewImageRegistryHandler(c.Store, key)
-	nodeMirrors := deliveryapi.NewNodeRegistryMirrorHandlerWithDependencies(key, func(ctx context.Context, server *model.Server, content []byte) (string, string) {
-		return applyK3sRegistriesToNode(ctx, server, key, content)
-	}, c.Services.RegistryMirror)
-	managed := deliveryapi.NewManagedOCIRegistryHandlerWithDependencies(c.Store, c.Adapters.Registry.ManagedResources, c.Adapters.Registry.ManagedStatus, func(ctx context.Context, server *model.Server, content []byte) (string, string) {
-		return applyK3sRegistriesToNode(ctx, server, key, content)
-	}, c.Services.RegistryManaged)
+	nodeMirrors := deliveryapi.NewNodeRegistryMirrorHandlerWithDependencies(key, nodeMirrorApplier.Apply, c.Services.RegistryMirror)
+	managed := deliveryapi.NewManagedOCIRegistryHandlerWithDependencies(c.Store, c.Adapters.Registry.ManagedResources, c.Adapters.Registry.ManagedStatus, nodeMirrorApplier.Apply, c.Services.RegistryManaged)
 	proxy := deliveryapi.NewRegistryProxyHandlerWithDependencies(c.Store, key, c.Adapters.Registry.ProxyResources, c.Adapters.Registry.ProxyDiagnostics, c.Services.RegistryProxy).WithReconciler(c.Services.RegistryProxyReconciler)
 	storageService := c.Services.Storage
 	pvcAdapter, pvcMigration, pvcWorkloads := storageapi.NewPVCAdapters(c.K8s)

@@ -49,7 +49,7 @@ func (h *DBAdminHandler) ListTables(c *gin.Context) {
 	for name := range tableRegistry {
 		names = append(names, name)
 	}
-	model.Success(c, gin.H{"tables": names})
+	apiShared.Success(c, gin.H{"tables": names})
 }
 
 // ListRecords 分页查询指定表的数据
@@ -137,7 +137,7 @@ func (h *DBAdminHandler) ListRecords(c *gin.Context) {
 		results = []map[string]interface{}{}
 	}
 
-	model.Success(c, gin.H{
+	apiShared.Success(c, gin.H{
 		"rows":    results,
 		"columns": h.visibleColumns(tableName, tableModel),
 		"total":   total,
@@ -180,7 +180,7 @@ func (h *DBAdminHandler) CreateRecord(c *gin.Context) {
 		return
 	}
 
-	model.SuccessWithMessage(c, gin.H{"id": filtered["id"]}, "创建成功")
+	apiShared.SuccessWithMessage(c, gin.H{"id": filtered["id"]}, "创建成功")
 }
 
 // UpdateRecord 按主键更新记录
@@ -227,7 +227,7 @@ func (h *DBAdminHandler) UpdateRecord(c *gin.Context) {
 		return
 	}
 
-	model.SuccessWithMessage(c, nil, "操作成功")
+	apiShared.SuccessWithMessage(c, nil, "操作成功")
 }
 
 // DeleteRecord 按主键删除记录
@@ -255,7 +255,7 @@ func (h *DBAdminHandler) DeleteRecord(c *gin.Context) {
 		return
 	}
 
-	model.SuccessWithMessage(c, nil, "操作成功")
+	apiShared.SuccessWithMessage(c, nil, "操作成功")
 }
 
 // columnExists 检查表中是否存在指定列（缓存到 map 中）

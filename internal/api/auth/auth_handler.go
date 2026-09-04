@@ -3,7 +3,6 @@ package authapi
 import (
 	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 
-	"github.com/cylism/cylism-manager/internal/model"
 	"time"
 
 	"github.com/cylism/cylism-manager/internal/repository"
@@ -73,7 +72,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 
-	model.Success(c, gin.H{
+	apiShared.Success(c, gin.H{
 		"access_token":  accessToken,
 		"refresh_token": refreshToken,
 		"user": gin.H{
@@ -113,7 +112,7 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 		return
 	}
 
-	model.Success(c, gin.H{
+	apiShared.Success(c, gin.H{
 		"access_token":  accessToken,
 		"refresh_token": refreshToken,
 	})
@@ -126,7 +125,7 @@ func (h *AuthHandler) Me(c *gin.Context) {
 		apiShared.Unauthorized(c, "未认证")
 		return
 	}
-	model.Success(c, gin.H{
+	apiShared.Success(c, gin.H{
 		"id":       userID,
 		"username": apiShared.Username(c),
 	})

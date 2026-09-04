@@ -7,7 +7,6 @@ import (
 
 	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 	"github.com/cylism/cylism-manager/internal/k8s"
-	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/service/cluster"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -25,19 +24,19 @@ func NewNodeHandler(service *cluster.Service) *NodeHandler {
 func (h *NodeHandler) ListNode(c *gin.Context) {
 	nodes, err := h.cluster.ListNodesContext(c.Request.Context())
 	if err != nil {
-		writeClusterError(c, err, http.StatusOK, model.CodeK8sAPIError)
+		writeClusterError(c, err, http.StatusOK, apiShared.CodeK8sAPIError)
 		return
 	}
-	model.Success(c, nodes)
+	apiShared.Success(c, nodes)
 }
 
 func (h *NodeHandler) GetLabels(c *gin.Context) {
 	labels, err := h.cluster.GetNodeLabelsContext(c.Request.Context(), c.Param("id"))
 	if err != nil {
-		writeClusterError(c, err, http.StatusNotFound, model.CodeNotFound)
+		writeClusterError(c, err, http.StatusNotFound, apiShared.CodeNotFound)
 		return
 	}
-	model.Success(c, labels)
+	apiShared.Success(c, labels)
 }
 
 type updateNodeLabelsRequest struct {
@@ -53,19 +52,19 @@ func (h *NodeHandler) UpdateLabels(c *gin.Context) {
 	}
 	labels, err := h.cluster.UpdateNodeLabelsContext(c.Request.Context(), c.Param("id"), request.Set, request.Remove)
 	if err != nil {
-		writeClusterError(c, err, http.StatusBadRequest, model.CodeValidationFail)
+		writeClusterError(c, err, http.StatusBadRequest, apiShared.CodeValidationFail)
 		return
 	}
-	model.Success(c, labels)
+	apiShared.Success(c, labels)
 }
 
 func (h *NodeHandler) DrainPlan(c *gin.Context) {
 	plan, err := h.cluster.GetDrainPlanContext(c.Request.Context(), c.Param("id"))
 	if err != nil {
-		writeClusterError(c, err, http.StatusInternalServerError, model.CodeK8sAPIError)
+		writeClusterError(c, err, http.StatusInternalServerError, apiShared.CodeK8sAPIError)
 		return
 	}
-	model.Success(c, plan)
+	apiShared.Success(c, plan)
 }
 
 type drainNodeRequest struct {
@@ -80,14 +79,14 @@ func (h *NodeHandler) DrainNode(c *gin.Context) {
 	}
 	result, err := h.cluster.DrainNodeContext(c.Request.Context(), c.Param("id"), k8s.DrainOptions{DeleteEmptyDirData: request.DeleteEmptyDirData})
 	if err != nil {
-		apiShared.ErrorWithData(c, http.StatusConflict, model.CodeConflict, err.Error(), result)
+		apiShared.ErrorWithData(c, http.StatusConflict, apiShared.CodeConflict, err.Error(), result)
 		return
 	}
 	message := "驱逐请求已提交"
 	if len(result.Pending) > 0 {
 		message = "部分 Pod 暂未迁移，请查看逐 Pod 原因后重试"
 	}
-	model.SuccessWithMessage(c, result, message)
+	apiShared.SuccessWithMessage(c, result, message)
 }
 
 type forceDrainNodeRequest struct {
@@ -112,28 +111,28 @@ func (h *NodeHandler) ForceDrainNode(c *gin.Context) {
 			apiShared.ValidationError(c, err.Error())
 			return
 		}
-		apiShared.ErrorWithData(c, http.StatusConflict, model.CodeConflict, err.Error(), result)
+		apiShared.ErrorWithData(c, http.StatusConflict, apiShared.CodeConflict, err.Error(), result)
 		return
 	}
-	model.SuccessWithMessage(c, result, "故障节点强制驱逐请求已提交")
+	apiShared.SuccessWithMessage(c, result, "故障节点强制驱逐请求已提交")
 }
 
 func (h *NodeHandler) RejoinNode(c *gin.Context) {
 	info, err := h.cluster.RejoinNodeContext(c.Request.Context(), c.Param("id"))
 	if err != nil {
-		writeClusterError(c, err, http.StatusConflict, model.CodeConflict)
+		writeClusterError(c, err, http.StatusConflict, apiShared.CodeConflict)
 		return
 	}
-	model.SuccessWithMessage(c, info, "节点已重新加入调度")
+	apiShared.SuccessWithMessage(c, info, "节点已重新加入调度")
 }
 
 func (h *NodeHandler) RemovalCheck(c *gin.Context) {
 	check, err := h.cluster.GetRemovalCheckContext(c.Request.Context(), c.Param("id"))
 	if err != nil {
-		writeClusterError(c, err, http.StatusInternalServerError, model.CodeK8sAPIError)
+		writeClusterError(c, err, http.StatusInternalServerError, apiShared.CodeK8sAPIError)
 		return
 	}
-	model.Success(c, check)
+	apiShared.Success(c, check)
 }
 
 func (h *NodeHandler) RemoveNode(c *gin.Context) {
@@ -145,7 +144,7 @@ func (h *NodeHandler) RemoveNode(c *gin.Context) {
 		apiShared.Conflict(c, err.Error())
 		return
 	}
-	model.SuccessWithMessage(c, nil, "移除成功")
+	apiShared.SuccessWithMessage(c, nil, "移除成功")
 }
 
 func (h *NodeHandler) AddNode(c *gin.Context) {
@@ -159,7 +158,7 @@ func (h *NodeHandler) AddNode(c *gin.Context) {
 		apiShared.NotFound(c, "server not found")
 		return
 	}
-	model.SuccessWithMessage(c, gin.H{"server": server.Name}, "加入集群 - SSH 集成待实现")
+	apiShared.SuccessWithMessage(c, gin.H{"server": server.Name}, "加入集群 - SSH 集成待实现")
 }
 
 func (h *NodeHandler) PreImport(c *gin.Context) {
@@ -174,14 +173,14 @@ func (h *NodeHandler) PreImport(c *gin.Context) {
 			apiShared.NotFound(c, "server not found")
 			return
 		}
-		code := model.CodeInternalError
+		code := apiShared.CodeInternalError
 		if strings.Contains(err.Error(), "集群") || strings.Contains(err.Error(), "节点") {
-			code = model.CodeK8sAPIError
+			code = apiShared.CodeK8sAPIError
 		}
 		apiShared.Error(c, http.StatusOK, code, err.Error())
 		return
 	}
-	model.Success(c, result)
+	apiShared.Success(c, result)
 }
 
 func (h *NodeHandler) ConfirmImport(c *gin.Context) {
@@ -207,7 +206,7 @@ func (h *NodeHandler) ConfirmImport(c *gin.Context) {
 		apiShared.InternalError(c, err.Error())
 		return
 	}
-	model.SuccessWithMessage(c, gin.H{"server_name": result.ServerName, "node_name": result.NodeName, "role": result.Role}, "导入成功")
+	apiShared.SuccessWithMessage(c, gin.H{"server_name": result.ServerName, "node_name": result.NodeName, "role": result.Role}, "导入成功")
 }
 
 func writeClusterError(c *gin.Context, err error, status, code int) {

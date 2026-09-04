@@ -47,14 +47,14 @@ func (h *StorageHandler) ListPersistentVolumeClaims(c *gin.Context) {
 	namespace := strings.TrimSpace(c.Query("namespace"))
 	claims, err := h.Service.ListPVCsContext(c.Request.Context(), namespace, environmentID)
 	if err != nil {
-		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
+		apiShared.Error(c, http.StatusOK, apiShared.CodeK8sAPIError, err.Error())
 		return
 	}
 	responses := make([]persistentVolumeClaimResponse, 0, len(claims))
 	for index := range claims {
 		responses = append(responses, h.pvcResponse(c.Request.Context(), &claims[index]))
 	}
-	model.Success(c, responses)
+	apiShared.Success(c, responses)
 }
 
 func (h *StorageHandler) CreatePersistentVolumeClaim(c *gin.Context) {
@@ -83,10 +83,10 @@ func (h *StorageHandler) CreatePersistentVolumeClaim(c *gin.Context) {
 	}
 	info, err := h.Service.GetPVCContext(c.Request.Context(), namespace, claim.Name, request.EnvironmentID)
 	if err != nil {
-		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
+		apiShared.Error(c, http.StatusOK, apiShared.CodeK8sAPIError, err.Error())
 		return
 	}
-	model.Success(c, h.pvcResponse(c.Request.Context(), info))
+	apiShared.Success(c, h.pvcResponse(c.Request.Context(), info))
 }
 
 func (h *StorageHandler) DeletePersistentVolumeClaim(c *gin.Context) {
@@ -127,19 +127,19 @@ func (h *StorageHandler) DeletePersistentVolumeClaim(c *gin.Context) {
 	references := h.pvcReferences(c.Request.Context(), request.EnvironmentID, namespace, name)
 	if err := h.Service.ValidatePVCDeletion(request.ConfirmDataDelete, migrationActive, references, claim.ReclaimPolicy); err != nil {
 		if activeMigration != nil {
-			apiShared.ErrorWithData(c, http.StatusConflict, model.CodeConflict, err.Error(), activeMigration)
+			apiShared.ErrorWithData(c, http.StatusConflict, apiShared.CodeConflict, err.Error(), apiShared.PersistentVolumeMigrationDTO(activeMigration))
 		} else if len(references) > 0 {
-			apiShared.ErrorWithData(c, http.StatusConflict, model.CodeConflict, err.Error(), gin.H{"references": references})
+			apiShared.ErrorWithData(c, http.StatusConflict, apiShared.CodeConflict, err.Error(), gin.H{"references": references})
 		} else {
-			apiShared.ErrorWithData(c, http.StatusConflict, model.CodeConflict, err.Error(), h.pvcResponse(c.Request.Context(), claim))
+			apiShared.ErrorWithData(c, http.StatusConflict, apiShared.CodeConflict, err.Error(), h.pvcResponse(c.Request.Context(), claim))
 		}
 		return
 	}
 	if err := h.Service.DeletePVCContext(c.Request.Context(), namespace, name, request.EnvironmentID); err != nil {
-		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
+		apiShared.Error(c, http.StatusOK, apiShared.CodeK8sAPIError, err.Error())
 		return
 	}
-	model.Success(c, gin.H{"name": name})
+	apiShared.Success(c, gin.H{"name": name})
 }
 
 func (h *StorageHandler) ListStorageClasses(c *gin.Context) {
@@ -149,10 +149,10 @@ func (h *StorageHandler) ListStorageClasses(c *gin.Context) {
 	}
 	classes, err := h.pvc.ListStorageClassesContext(c.Request.Context())
 	if err != nil {
-		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
+		apiShared.Error(c, http.StatusOK, apiShared.CodeK8sAPIError, err.Error())
 		return
 	}
-	model.Success(c, classes)
+	apiShared.Success(c, classes)
 }
 
 func (h *StorageHandler) pvcEnvironment(c *gin.Context) (*model.Environment, bool) {

@@ -82,7 +82,7 @@ func (h *RegistryProxyHandler) WithDiagnostics(diagnostics k8sclient.RegistryPro
 func (h *RegistryProxyHandler) Get(c *gin.Context) {
 	proxy, err := h.service.GetLegacy()
 	if apierrors.IsNotFound(err) || err != nil && strings.Contains(err.Error(), "record not found") {
-		model.Success(c, nil)
+		apiShared.Success(c, nil)
 		return
 	}
 	if err != nil {
@@ -91,7 +91,7 @@ func (h *RegistryProxyHandler) Get(c *gin.Context) {
 	}
 	h.refreshStatus(c.Request.Context(), proxy)
 	h.redactProxy(proxy)
-	model.Success(c, proxy)
+	apiShared.Success(c, apiShared.RegistryProxyDTO(proxy))
 }
 
 func (h *RegistryProxyHandler) List(c *gin.Context) {
@@ -104,7 +104,13 @@ func (h *RegistryProxyHandler) List(c *gin.Context) {
 		h.refreshStatus(c.Request.Context(), &proxies[index])
 		h.redactProxy(&proxies[index])
 	}
-	model.Success(c, proxies)
+	views := make([]apiShared.RegistryProxyView, 0, len(proxies))
+	for i := range proxies {
+		if view := apiShared.RegistryProxyDTO(&proxies[i]); view != nil {
+			views = append(views, *view)
+		}
+	}
+	apiShared.Success(c, views)
 }
 
 func (h *RegistryProxyHandler) Deploy(c *gin.Context) {
@@ -158,7 +164,7 @@ func (h *RegistryProxyHandler) Deploy(c *gin.Context) {
 		return
 	}
 	h.redactProxy(proxy)
-	model.SuccessWithMessage(c, proxy, "镜像代理已提交部署，稍后可在节点镜像源中使用该地址")
+	apiShared.SuccessWithMessage(c, apiShared.RegistryProxyDTO(proxy), "镜像代理已提交部署，稍后可在节点镜像源中使用该地址")
 }
 
 func isLegacyRegistryProxyRoute(c *gin.Context) bool {
@@ -184,7 +190,7 @@ func (h *RegistryProxyHandler) Cleanup(c *gin.Context) {
 		apiShared.ValidationError(c, err.Error())
 		return
 	}
-	model.SuccessWithMessage(c, proxy, "代理 Pod 已重建，临时缓存正在清理")
+	apiShared.SuccessWithMessage(c, apiShared.RegistryProxyDTO(proxy), "代理 Pod 已重建，临时缓存正在清理")
 }
 
 // Diagnose probes only the configured upstream from a Ready Pod belonging to
@@ -214,7 +220,7 @@ func (h *RegistryProxyHandler) Diagnose(c *gin.Context) {
 		apiShared.DBError(c, "保存代理诊断结果失败")
 		return
 	}
-	model.Success(c, diagnostic)
+	apiShared.Success(c, diagnostic)
 }
 
 // MigrateResourceName recreates the legacy Docker Hub resources using the per-instance naming scheme.
@@ -232,7 +238,7 @@ func (h *RegistryProxyHandler) MigrateResourceName(c *gin.Context) {
 	legacyResourceName := registryservice.ProxyResourceName(proxy)
 	newResourceName := registryProxyName + "-" + strconv.Itoa(int(proxy.ID))
 	if legacyResourceName == newResourceName {
-		model.SuccessWithMessage(c, proxy, "镜像代理已使用新资源命名")
+		apiShared.SuccessWithMessage(c, apiShared.RegistryProxyDTO(proxy), "镜像代理已使用新资源命名")
 		return
 	}
 	if legacyResourceName != registryProxyName || proxy.Registry != "docker.io" {
@@ -256,7 +262,7 @@ func (h *RegistryProxyHandler) MigrateResourceName(c *gin.Context) {
 		apiShared.ValidationError(c, proxy.LastError)
 		return
 	}
-	model.SuccessWithMessage(c, proxy, "旧 Docker Hub 代理已按新资源名重建，等待新 Pod 就绪")
+	apiShared.SuccessWithMessage(c, apiShared.RegistryProxyDTO(proxy), "旧 Docker Hub 代理已按新资源名重建，等待新 Pod 就绪")
 }
 
 func (h *RegistryProxyHandler) refreshStatus(ctx context.Context, proxy *model.RegistryProxy) {

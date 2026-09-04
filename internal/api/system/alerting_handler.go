@@ -150,7 +150,7 @@ func (h *AlertingHandler) Status(c *gin.Context) {
 		apiShared.K8sUnavailable(c)
 		return
 	}
-	model.Success(c, h.component.Status(c.Request.Context()))
+	apiShared.Success(c, h.component.Status(c.Request.Context()))
 }
 
 func (h *AlertingHandler) Install(c *gin.Context) {
@@ -168,7 +168,7 @@ func (h *AlertingHandler) Install(c *gin.Context) {
 		apiShared.ValidationError(c, err.Error())
 		return
 	}
-	model.SuccessWithMessage(c, status, "告警组件配置已提交")
+	apiShared.SuccessWithMessage(c, status, "告警组件配置已提交")
 }
 
 func (h *AlertingHandler) Update(c *gin.Context) {
@@ -186,7 +186,7 @@ func (h *AlertingHandler) Update(c *gin.Context) {
 		apiShared.ValidationError(c, err.Error())
 		return
 	}
-	model.SuccessWithMessage(c, status, "告警设置已保存")
+	apiShared.SuccessWithMessage(c, status, "告警设置已保存")
 }
 
 func (h *AlertingHandler) Uninstall(c *gin.Context) {
@@ -195,10 +195,10 @@ func (h *AlertingHandler) Uninstall(c *gin.Context) {
 		return
 	}
 	if err := h.component.Uninstall(c.Request.Context()); err != nil {
-		apiShared.Error(c, http.StatusInternalServerError, model.CodeK8sAPIError, err.Error())
+		apiShared.Error(c, http.StatusInternalServerError, apiShared.CodeK8sAPIError, err.Error())
 		return
 	}
-	model.SuccessWithMessage(c, gin.H{"data_retained": true}, "告警工作负载已卸载，通知 Secret 和本地 PVC 已保留")
+	apiShared.SuccessWithMessage(c, gin.H{"data_retained": true}, "告警工作负载已卸载，通知 Secret 和本地 PVC 已保留")
 }
 
 func (h *AlertingHandler) Overview(c *gin.Context) {
@@ -211,7 +211,7 @@ func (h *AlertingHandler) Overview(c *gin.Context) {
 		apiShared.K8sAPIError(c, "读取 Alertmanager 告警失败: "+err.Error())
 		return
 	}
-	model.Success(c, overview)
+	apiShared.Success(c, overview)
 }
 
 func (h *AlertingHandler) ListSilences(c *gin.Context) {
@@ -224,7 +224,7 @@ func (h *AlertingHandler) ListSilences(c *gin.Context) {
 		apiShared.K8sAPIError(c, "读取 Alertmanager 静默失败: "+err.Error())
 		return
 	}
-	model.Success(c, silences)
+	apiShared.Success(c, silences)
 }
 
 func (h *AlertingHandler) CreateSilence(c *gin.Context) {
@@ -250,7 +250,7 @@ func (h *AlertingHandler) CreateSilence(c *gin.Context) {
 		apiShared.K8sAPIError(c, "创建 Alertmanager 静默失败: "+err.Error())
 		return
 	}
-	model.Success(c, gin.H{"id": response.SilenceID, "ends_at": endsAt})
+	apiShared.Success(c, gin.H{"id": response.SilenceID, "ends_at": endsAt})
 }
 
 func (h *AlertingHandler) DeleteSilence(c *gin.Context) {
@@ -267,7 +267,7 @@ func (h *AlertingHandler) DeleteSilence(c *gin.Context) {
 		apiShared.K8sAPIError(c, "删除 Alertmanager 静默失败: "+err.Error())
 		return
 	}
-	model.Success(c, gin.H{"id": id})
+	apiShared.Success(c, gin.H{"id": id})
 }
 
 func (h *AlertingHandler) TestNotification(c *gin.Context) {
@@ -296,7 +296,7 @@ func (h *AlertingHandler) TestNotification(c *gin.Context) {
 	} else if channel == "email" {
 		message = "邮件测试通知已发送"
 	}
-	model.SuccessWithMessage(c, gin.H{"configured": true}, message)
+	apiShared.SuccessWithMessage(c, gin.H{"configured": true}, message)
 }
 
 // Notify receives Alertmanager's cluster-internal webhook. It deliberately does
@@ -334,16 +334,16 @@ func (h *AlertingHandler) Notify(c *gin.Context) {
 		delivered = true
 	}
 	workflow.RecordResolved(servicePayload)
-	model.Success(c, gin.H{"delivered": delivered, "persisted": true})
+	apiShared.Success(c, gin.H{"delivered": delivered, "persisted": true})
 }
 
 func (h *AlertingHandler) AutomationPolicy(c *gin.Context) {
 	policy, err := h.workflow().Policy()
 	if err != nil {
-		model.Success(c, model.AlertAutomationPolicy{Enabled: false, MinimumSeverity: "warning", Mode: model.AlertAutomationReportOnly, CooldownMinutes: 30})
+		apiShared.Success(c, apiShared.AlertAutomationPolicyDTO(&model.AlertAutomationPolicy{Enabled: false, MinimumSeverity: "warning", Mode: model.AlertAutomationReportOnly, CooldownMinutes: 30}))
 		return
 	}
-	model.Success(c, policy)
+	apiShared.Success(c, apiShared.AlertAutomationPolicyDTO(policy))
 }
 
 func (h *AlertingHandler) UpdateAutomationPolicy(c *gin.Context) {
@@ -352,18 +352,18 @@ func (h *AlertingHandler) UpdateAutomationPolicy(c *gin.Context) {
 		apiShared.ValidationError(c, "告警自动化策略无效")
 		return
 	}
-	result := gin.H{"policy": policy, "synced": 0, "sync_warning": ""}
+	result := gin.H{"policy": apiShared.AlertAutomationPolicyDTO(&policy), "synced": 0, "sync_warning": ""}
 	count, err := h.workflow().UpdatePolicy(c.Request.Context(), &policy)
 	if err != nil {
 		status := http.StatusInternalServerError
 		if strings.Contains(err.Error(), "无效") || strings.Contains(err.Error(), "必须选择") {
 			status = http.StatusBadRequest
 		}
-		apiShared.Error(c, status, model.CodeValidationFail, err.Error())
+		apiShared.Error(c, status, apiShared.CodeValidationFail, err.Error())
 		return
 	}
 	result["synced"] = count
-	model.SuccessWithMessage(c, result, "告警自动化策略已保存")
+	apiShared.SuccessWithMessage(c, result, "告警自动化策略已保存")
 }
 
 func (h *AlertingHandler) ListAutomationEvents(c *gin.Context) {
@@ -372,7 +372,7 @@ func (h *AlertingHandler) ListAutomationEvents(c *gin.Context) {
 		apiShared.DBError(c, "读取告警自动化事件失败")
 		return
 	}
-	model.Success(c, events)
+	apiShared.Success(c, apiShared.AlertEventsDTO(events))
 }
 
 func normalizeAlertingPlatformURL(raw string) string {

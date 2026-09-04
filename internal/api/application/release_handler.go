@@ -71,7 +71,7 @@ func (h *ApplicationHandler) CreateRelease(c *gin.Context) {
 		return
 	}
 	workflow.ExecuteAsync(c.Request.Context(), app, prepared)
-	model.SuccessWithMessage(c, prepared.Release, "发布已创建")
+	apiShared.SuccessWithMessage(c, apiShared.ReleaseDTO(prepared.Release), "发布已创建")
 }
 
 // RestartApplication recreates the latest successful release with the current
@@ -103,7 +103,7 @@ func (h *ApplicationHandler) RestartApplication(c *gin.Context) {
 		return
 	}
 	workflow.ExecuteAsync(c.Request.Context(), app, prepared)
-	model.SuccessWithMessage(c, prepared.Release, "应用重启已创建")
+	apiShared.SuccessWithMessage(c, apiShared.ReleaseDTO(prepared.Release), "应用重启已创建")
 }
 
 func (h *ApplicationHandler) RetryRelease(c *gin.Context) {
@@ -138,7 +138,7 @@ func (h *ApplicationHandler) RetryRelease(c *gin.Context) {
 		return
 	}
 	workflow.ExecuteAsync(c.Request.Context(), app, prepared)
-	model.SuccessWithMessage(c, prepared.Release, "重试已创建")
+	apiShared.SuccessWithMessage(c, apiShared.ReleaseDTO(prepared.Release), "重试已创建")
 }
 
 func (h *ApplicationHandler) RollbackRelease(c *gin.Context) {
@@ -173,7 +173,7 @@ func (h *ApplicationHandler) RollbackRelease(c *gin.Context) {
 		return
 	}
 	workflow.ExecuteAsync(c.Request.Context(), app, prepared)
-	model.SuccessWithMessage(c, prepared.Release, "回滚已创建")
+	apiShared.SuccessWithMessage(c, apiShared.ReleaseDTO(prepared.Release), "回滚已创建")
 }
 
 func (h *ApplicationHandler) GetRelease(c *gin.Context) {
@@ -198,12 +198,12 @@ func (h *ApplicationHandler) GetRelease(c *gin.Context) {
 	}
 	if !release.PodTrackingEnabled {
 		release.Runtime = &model.ReleaseRuntime{Tracking: "legacy_untracked", Pods: []model.ReleasePodRuntime{}, Diagnostic: "该历史发布未记录 Pod 关联标签，无法精确查询当前运行态"}
-		model.Success(c, release)
+		apiShared.Success(c, apiShared.ReleaseDTO(release))
 		return
 	}
 	if h.kubernetes == nil || !h.kubernetes.KubernetesAvailable() {
 		release.Runtime = &model.ReleaseRuntime{Tracking: "unavailable", Pods: []model.ReleasePodRuntime{}, Diagnostic: "Kubernetes 集群未连接，无法读取 Pod 运行态"}
-		model.Success(c, release)
+		apiShared.Success(c, apiShared.ReleaseDTO(release))
 		return
 	}
 	applicationModel, err := h.queries.GetApplication(applicationID)
@@ -217,7 +217,7 @@ func (h *ApplicationHandler) GetRelease(c *gin.Context) {
 	} else {
 		release.Runtime = runtime
 	}
-	model.Success(c, release)
+	apiShared.Success(c, apiShared.ReleaseDTO(release))
 }
 
 func applicationContextFor(app *model.Application) applicationservice.ApplicationContext {

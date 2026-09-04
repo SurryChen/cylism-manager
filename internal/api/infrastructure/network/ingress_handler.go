@@ -4,7 +4,6 @@ import (
 	"net/http"
 
 	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
-	"github.com/cylism/cylism-manager/internal/model"
 	networkservice "github.com/cylism/cylism-manager/internal/service/network"
 	"github.com/gin-gonic/gin"
 )
@@ -27,10 +26,10 @@ func (h *IngressHandler) ListRoutes(c *gin.Context) {
 	}
 	routes, err := h.service.ListIngressRoutesContext(c.Request.Context())
 	if err != nil {
-		apiShared.Error(c, http.StatusOK, model.CodeK8sAPIError, err.Error())
+		apiShared.Error(c, http.StatusOK, apiShared.CodeK8sAPIError, err.Error())
 		return
 	}
-	model.Success(c, routes)
+	apiShared.Success(c, routes)
 }
 
 func (h *IngressHandler) CreateRoute(c *gin.Context) {
@@ -38,7 +37,7 @@ func (h *IngressHandler) CreateRoute(c *gin.Context) {
 		apiShared.K8sUnavailable(c)
 		return
 	}
-	model.SuccessWithMessage(c, nil, "创建 IngressRoute - 待实现")
+	apiShared.SuccessWithMessage(c, nil, "创建 IngressRoute - 待实现")
 }
 
 func (h *IngressHandler) UpdateRoute(c *gin.Context) {
@@ -46,7 +45,7 @@ func (h *IngressHandler) UpdateRoute(c *gin.Context) {
 		apiShared.K8sUnavailable(c)
 		return
 	}
-	model.SuccessWithMessage(c, nil, "更新 IngressRoute - 待实现")
+	apiShared.SuccessWithMessage(c, nil, "更新 IngressRoute - 待实现")
 }
 
 func (h *IngressHandler) DeleteRoute(c *gin.Context) {
@@ -58,7 +57,7 @@ func (h *IngressHandler) DeleteRoute(c *gin.Context) {
 		apiShared.InternalError(c, err.Error())
 		return
 	}
-	model.SuccessWithMessage(c, nil, "删除成功")
+	apiShared.SuccessWithMessage(c, nil, "删除成功")
 }
 
 func (h *IngressHandler) ListMiddlewares(c *gin.Context) {
@@ -66,7 +65,7 @@ func (h *IngressHandler) ListMiddlewares(c *gin.Context) {
 		apiShared.K8sUnavailable(c)
 		return
 	}
-	model.SuccessWithMessage(c, nil, "Middleware - 待实现")
+	apiShared.SuccessWithMessage(c, nil, "Middleware - 待实现")
 }
 
 func (h *IngressHandler) ListTLSStores(c *gin.Context) {
@@ -74,5 +73,5 @@ func (h *IngressHandler) ListTLSStores(c *gin.Context) {
 		apiShared.K8sUnavailable(c)
 		return
 	}
-	model.SuccessWithMessage(c, nil, "TLS Store - 待实现")
+	apiShared.SuccessWithMessage(c, nil, "TLS Store - 待实现")
 }

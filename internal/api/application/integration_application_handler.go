@@ -55,7 +55,7 @@ func (h *ApplicationHandler) ListManagedFiles(c *gin.Context) {
 	for _, file := range files {
 		result = append(result, managedFileInfo{ID: file.ID, ResourceKind: file.ResourceKind, ResourceName: file.ResourceName, Key: file.Key, MountPath: file.MountPath, Format: file.Format, Version: file.Version})
 	}
-	model.Success(c, result)
+	apiShared.Success(c, result)
 }
 
 func (h *ApplicationHandler) CreateDelegation(c *gin.Context) {
@@ -109,7 +109,7 @@ func (h *ApplicationHandler) CreateDelegation(c *gin.Context) {
 		apiShared.DBError(c, "签发委托失败")
 		return
 	}
-	model.Success(c, gin.H{"token": token, "expires_in": int(auth.MaxDelegationTTL.Seconds())})
+	apiShared.Success(c, gin.H{"token": token, "expires_in": int(auth.MaxDelegationTTL.Seconds())})
 }
 
 func (h *ApplicationHandler) IntegrationDiscoverApplications(c *gin.Context) {
@@ -149,7 +149,7 @@ func (h *ApplicationHandler) IntegrationDiscoverApplications(c *gin.Context) {
 	for _, app := range filtered {
 		infos = append(infos, applicationDiscoveryInfoFromModel(app, runtimes[app.ID]))
 	}
-	model.Success(c, infos)
+	apiShared.Success(c, infos)
 }
 
 func (h *ApplicationHandler) IntegrationGetApplicationRuntime(c *gin.Context) {
@@ -162,7 +162,7 @@ func (h *ApplicationHandler) IntegrationGetApplicationRuntime(c *gin.Context) {
 		apiShared.DBError(c, err.Error())
 		return
 	}
-	model.Success(c, h.queries.ApplicationRuntimeInfos(c.Request.Context(), h.kubernetes, []model.Application{*app}, map[uint][]model.Release{app.ID: releases})[app.ID])
+	apiShared.Success(c, h.queries.ApplicationRuntimeInfos(c.Request.Context(), h.kubernetes, []model.Application{*app}, map[uint][]model.Release{app.ID: releases})[app.ID])
 }
 
 func (h *ApplicationHandler) IntegrationListManagedConfigMaps(c *gin.Context) {
@@ -203,7 +203,7 @@ func (h *ApplicationHandler) IntegrationListManagedConfigMaps(c *gin.Context) {
 		}
 		result = append(result, configMapInfo{ID: file.ID, ResourceKind: file.ResourceKind, ResourceName: file.ResourceName, Key: file.Key, MountPath: file.MountPath, Format: file.Format, Version: template.Revision, TemplateID: template.ID, TemplateRevision: template.Revision})
 	}
-	model.Success(c, result)
+	apiShared.Success(c, result)
 }
 
 func (h *ApplicationHandler) IntegrationGetManagedConfigMap(c *gin.Context) {
@@ -230,7 +230,7 @@ func (h *ApplicationHandler) IntegrationGetManagedConfigMap(c *gin.Context) {
 		apiShared.ValidationError(c, err.Error())
 		return
 	}
-	model.Success(c, gin.H{"id": file.ID, "resource_kind": file.ResourceKind, "resource_name": file.ResourceName, "key": file.Key, "mount_path": file.MountPath, "format": file.Format, "version": template.Revision, "template_id": template.ID, "template_revision": template.Revision, "content": spec.Config[file.Key]})
+	apiShared.Success(c, gin.H{"id": file.ID, "resource_kind": file.ResourceKind, "resource_name": file.ResourceName, "key": file.Key, "mount_path": file.MountPath, "format": file.Format, "version": template.Revision, "template_id": template.ID, "template_revision": template.Revision, "content": spec.Config[file.Key]})
 }
 
 func (h *ApplicationHandler) IntegrationReplaceManagedConfigMap(c *gin.Context) {
@@ -249,7 +249,7 @@ func (h *ApplicationHandler) IntegrationReplaceManagedConfigMap(c *gin.Context) 
 		return
 	}
 	if len(req.Content) > 4<<20 {
-		apiShared.Error(c, http.StatusRequestEntityTooLarge, model.CodeValidationFail, "ConfigMap 内容不能超过 4 MiB")
+		apiShared.Error(c, http.StatusRequestEntityTooLarge, apiShared.CodeValidationFail, "ConfigMap 内容不能超过 4 MiB")
 		return
 	}
 	if req.Restart && !delegationClaims(c).Allows("application:restart") {
@@ -302,7 +302,7 @@ func (h *ApplicationHandler) IntegrationReplaceManagedConfigMap(c *gin.Context) 
 			response["release_id"] = release.ID
 		}
 	}
-	model.Success(c, response)
+	apiShared.Success(c, response)
 }
 
 func (h *ApplicationHandler) IntegrationRestartApplication(c *gin.Context) {
@@ -315,7 +315,7 @@ func (h *ApplicationHandler) IntegrationRestartApplication(c *gin.Context) {
 		apiShared.ValidationError(c, err.Error())
 		return
 	}
-	model.Success(c, gin.H{"release_id": release.ID, "status": release.Status})
+	apiShared.Success(c, gin.H{"release_id": release.ID, "status": release.Status})
 }
 
 func (h *ApplicationHandler) IntegrationGetRelease(c *gin.Context) {
@@ -337,7 +337,7 @@ func (h *ApplicationHandler) IntegrationGetRelease(c *gin.Context) {
 		apiShared.DBError(c, err.Error())
 		return
 	}
-	model.Success(c, applicationReleaseSummary{ID: release.ID, Sequence: release.Sequence, Version: release.Version, Status: release.Status})
+	apiShared.Success(c, applicationReleaseSummary{ID: release.ID, Sequence: release.Sequence, Version: release.Version, Status: release.Status})
 }
 
 func (h *ApplicationHandler) applicationForParam(c *gin.Context) (*model.Application, bool) {
@@ -378,7 +378,7 @@ func delegationClaims(c *gin.Context) *auth.DelegationClaims {
 }
 
 func integrationForbidden(c *gin.Context) {
-	apiShared.Error(c, http.StatusForbidden, model.CodeUnauthorized, "委托范围不允许该操作")
+	apiShared.Error(c, http.StatusForbidden, apiShared.CodeUnauthorized, "委托范围不允许该操作")
 }
 
 // templateConfigMap returns the ConfigMap section from the default template.

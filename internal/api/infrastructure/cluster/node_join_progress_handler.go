@@ -8,7 +8,6 @@ import (
 
 	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 	"github.com/cylism/cylism-manager/internal/k8s"
-	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/repository"
 	"github.com/cylism/cylism-manager/internal/transport"
 	"github.com/gin-gonic/gin"
@@ -47,7 +46,7 @@ func (h *NodeJoinProgressHandler) JoinProgress(c *gin.Context) {
 	}
 	server, err := h.store.GetServer(uint(id))
 	if err != nil {
-		apiShared.Error(c, 404, model.CodeNotFound, "server not found")
+		apiShared.Error(c, 404, apiShared.CodeNotFound, "server not found")
 		return
 	}
 	conn, err := transport.WSUpgrade(c.Writer, c.Request)

@@ -51,7 +51,7 @@ func (h *AgentOperationHandler) ListGrants(c *gin.Context) {
 		apiShared.DBError(c, "读取 Agent 能力授权失败")
 		return
 	}
-	model.Success(c, grants)
+	apiShared.Success(c, apiShared.AgentCapabilityGrantsDTO(grants))
 }
 
 func (h *AgentOperationHandler) ReplaceGrants(c *gin.Context) {
@@ -74,7 +74,7 @@ func (h *AgentOperationHandler) ReplaceGrants(c *gin.Context) {
 		return
 	}
 	h.audit(runtimeID, apiShared.UserID(c), "agent.grants_replaced", map[string]any{"grant_count": len(request.Grants)})
-	model.SuccessWithMessage(c, request.Grants, "Agent 能力授权已更新")
+	apiShared.SuccessWithMessage(c, apiShared.AgentCapabilityGrantsDTO(request.Grants), "Agent 能力授权已更新")
 }
 
 func (h *AgentOperationHandler) ListOperations(c *gin.Context) {
@@ -101,7 +101,7 @@ func (h *AgentOperationHandler) ListOperations(c *gin.Context) {
 	for _, operation := range operations {
 		items = append(items, toAgentOperationSummary(operation))
 	}
-	model.Success(c, items)
+	apiShared.Success(c, items)
 }
 
 // agentOperationSummary intentionally omits raw parameters and their hash.
@@ -190,7 +190,7 @@ func (h *AgentOperationHandler) resolve(c *gin.Context, approve bool) {
 			return
 		}
 		h.audit(operation.RuntimeID, userID, "agent.operation_rejected", map[string]any{"operation_id": operation.OperationID})
-		model.SuccessWithMessage(c, gin.H{"operation_id": operation.OperationID, "status": model.AgentOperationRejected}, "Agent 操作已拒绝")
+		apiShared.SuccessWithMessage(c, gin.H{"operation_id": operation.OperationID, "status": model.AgentOperationRejected}, "Agent 操作已拒绝")
 		return
 	}
 	if operation.Capability == model.AgentCapabilityRegistryPullCheck {
@@ -202,7 +202,7 @@ func (h *AgentOperationHandler) resolve(c *gin.Context, approve bool) {
 		return
 	}
 	if operation.Capability != model.AgentCapabilityDeploymentScale || h.client == nil || !h.client.KubernetesAvailable() {
-		apiShared.Error(c, http.StatusServiceUnavailable, model.CodeK8sUnavailable, "Agent 操作执行器不可用")
+		apiShared.Error(c, http.StatusServiceUnavailable, apiShared.CodeK8sUnavailable, "Agent 操作执行器不可用")
 		return
 	}
 	var parameters deploymentScaleRequest
@@ -235,12 +235,12 @@ func (h *AgentOperationHandler) resolve(c *gin.Context, approve bool) {
 	now := time.Now()
 	_, _ = h.store.UpdateAgentOperationStatus(operationID, model.AgentOperationApproved, model.AgentOperationSucceeded, "", nil, &now)
 	h.audit(operation.RuntimeID, userID, "agent.operation_executed", map[string]any{"operation_id": operation.OperationID})
-	model.SuccessWithMessage(c, gin.H{"operation_id": operation.OperationID, "status": model.AgentOperationSucceeded}, "Agent 操作已执行")
+	apiShared.SuccessWithMessage(c, gin.H{"operation_id": operation.OperationID, "status": model.AgentOperationSucceeded}, "Agent 操作已执行")
 }
 
 func (h *AgentOperationHandler) resolveMaintenanceCleanup(c *gin.Context, operation *model.AgentOperation, userID uint) {
 	if h.maintenanceCleanupExecutor == nil {
-		apiShared.Error(c, http.StatusServiceUnavailable, model.CodeInternalError, "固定清理执行器不可用")
+		apiShared.Error(c, http.StatusServiceUnavailable, apiShared.CodeInternalError, "固定清理执行器不可用")
 		return
 	}
 	var parameters maintenanceCleanupParameters
@@ -277,19 +277,19 @@ func (h *AgentOperationHandler) resolveMaintenanceCleanup(c *gin.Context, operat
 		_, _ = h.store.UpdateAgentOperationStatus(operation.OperationID, model.AgentOperationApproved, model.AgentOperationFailed, message, nil, &now)
 		event.Status, event.LastError = model.AlertEventFailed, message
 		_ = h.store.UpdateAlertEvent(event)
-		apiShared.Error(c, http.StatusBadGateway, model.CodeInternalError, "执行固定清理配方失败")
+		apiShared.Error(c, http.StatusBadGateway, apiShared.CodeInternalError, "执行固定清理配方失败")
 		return
 	}
 	_, _ = h.store.UpdateAgentOperationStatus(operation.OperationID, model.AgentOperationApproved, model.AgentOperationSucceeded, "", nil, &now)
 	event.Status, event.DiagnosticSummary, event.LastError = model.AlertEventFiring, maintenance.CleanupCompletionSummary(parameters.Recipe, output), ""
 	_ = h.store.UpdateAlertEvent(event)
 	h.audit(operation.RuntimeID, userID, "agent.maintenance_cleanup_executed", map[string]any{"operation_id": operation.OperationID, "recipe": parameters.Recipe, "alert_id": parameters.AlertID})
-	model.SuccessWithMessage(c, gin.H{"operation_id": operation.OperationID, "status": model.AgentOperationSucceeded}, "固定清理配方已执行，请根据后续告警与指标确认恢复")
+	apiShared.SuccessWithMessage(c, gin.H{"operation_id": operation.OperationID, "status": model.AgentOperationSucceeded}, "固定清理配方已执行，请根据后续告警与指标确认恢复")
 }
 
 func (h *AgentOperationHandler) resolveRegistryPullCheck(c *gin.Context, operation *model.AgentOperation, userID uint) {
 	if h.registryPullExecutor == nil {
-		apiShared.Error(c, http.StatusServiceUnavailable, model.CodeInternalError, "镜像拉取检测执行器不可用")
+		apiShared.Error(c, http.StatusServiceUnavailable, apiShared.CodeInternalError, "镜像拉取检测执行器不可用")
 		return
 	}
 	var parameters registryNodeRequest
@@ -330,13 +330,13 @@ func (h *AgentOperationHandler) resolveRegistryPullCheck(c *gin.Context, operati
 	if err := h.registryPullExecutor.Pull(c.Request.Context(), server, config.VerificationImage); err != nil {
 		now := time.Now()
 		_, _ = h.store.UpdateAgentOperationStatus(operation.OperationID, model.AgentOperationApproved, model.AgentOperationFailed, agentOperationErrorSummary("节点验证镜像拉取失败", err), nil, &now)
-		apiShared.Error(c, http.StatusBadGateway, model.CodeInternalError, "节点验证镜像拉取失败")
+		apiShared.Error(c, http.StatusBadGateway, apiShared.CodeInternalError, "节点验证镜像拉取失败")
 		return
 	}
 	now := time.Now()
 	_, _ = h.store.UpdateAgentOperationStatus(operation.OperationID, model.AgentOperationApproved, model.AgentOperationSucceeded, "", nil, &now)
 	h.audit(operation.RuntimeID, userID, "agent.operation_executed", map[string]any{"operation_id": operation.OperationID})
-	model.SuccessWithMessage(c, gin.H{"operation_id": operation.OperationID, "status": model.AgentOperationSucceeded}, "节点验证镜像已拉取")
+	apiShared.SuccessWithMessage(c, gin.H{"operation_id": operation.OperationID, "status": model.AgentOperationSucceeded}, "节点验证镜像已拉取")
 }
 
 func (h *AgentOperationHandler) markOperationStale(c *gin.Context, operation *model.AgentOperation, message string) {

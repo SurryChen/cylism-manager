@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/cylism/cylism-manager/internal/model"
+	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 	"github.com/gin-gonic/gin"
 )
 
@@ -27,12 +27,12 @@ func TestRegisterFrontendRoutesKeepsAPINotFoundAsJSON(t *testing.T) {
 	if resp.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", resp.Code)
 	}
-	var body model.APIResponse
+	var body apiShared.APIResponse
 	if err := json.Unmarshal(resp.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode API error: %v", err)
 	}
-	if body.Code != model.CodeNotFound {
-		t.Fatalf("code = %d, want %d", body.Code, model.CodeNotFound)
+	if body.Code != apiShared.CodeNotFound {
+		t.Fatalf("code = %d, want %d", body.Code, apiShared.CodeNotFound)
 	}
 }
 

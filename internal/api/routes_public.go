@@ -5,13 +5,13 @@ import (
 
 	agentapi "github.com/cylism/cylism-manager/internal/api/agent"
 	authapi "github.com/cylism/cylism-manager/internal/api/auth"
-	"github.com/cylism/cylism-manager/internal/model"
+	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 	"github.com/gin-gonic/gin"
 )
 
 func registerPublicRoutes(r *gin.Engine, artifact http.Handler, agent *agentapi.AgentHandler) {
 	r.GET("/health", func(c *gin.Context) {
-		model.Success(c, gin.H{"status": "ok"})
+		apiShared.Success(c, gin.H{"status": "ok"})
 	})
 	r.GET(agentapi.CLIArtifactPath, gin.WrapH(artifact))
 	r.GET(agentapi.CLIArtifactManifestPath, gin.WrapH(artifact))

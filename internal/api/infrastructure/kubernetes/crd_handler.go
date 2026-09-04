@@ -1,7 +1,7 @@
 package kubernetes
 
 import (
-	"github.com/cylism/cylism-manager/internal/model"
+	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 
 	"github.com/gin-gonic/gin"
 )
@@ -17,7 +17,7 @@ func NewCRDHandler() *CRDHandler {
 // CheckCRDs 检测必需 CRD 是否安装
 func (h *CRDHandler) CheckCRDs(c *gin.Context) {
 	// TODO: 调 K8s client 检测 CRD
-	model.Success(c, gin.H{
+	apiShared.Success(c, gin.H{
 		"traefik_ok":      false,
 		"cert_manager_ok": false,
 		"message":         "CRD check - K8s integration pending",
