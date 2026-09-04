@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cylism/cylism-manager/internal/crypto"
+	crypto "github.com/cylism/cylism-manager/internal/security"
 	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/gin-gonic/gin"
 )

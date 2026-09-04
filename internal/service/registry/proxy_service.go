@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cylism/cylism-manager/internal/crypto"
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/repository"
+	crypto "github.com/cylism/cylism-manager/internal/security"
 )
 
 const DefaultRegistryProxyResourceName = "cylism-registry-proxy"

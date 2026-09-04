@@ -7,8 +7,8 @@ import (
 	"time"
 
 	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
-	"github.com/cylism/cylism-manager/internal/crypto"
 	"github.com/cylism/cylism-manager/internal/repository"
+	crypto "github.com/cylism/cylism-manager/internal/security"
 	"github.com/cylism/cylism-manager/internal/transport"
 	"github.com/gin-gonic/gin"
 	"golang.org/x/crypto/ssh"

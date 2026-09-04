@@ -10,10 +10,10 @@ import (
 	"time"
 
 	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
-	"github.com/cylism/cylism-manager/internal/crypto"
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/repository"
 	"github.com/cylism/cylism-manager/internal/runtime"
+	crypto "github.com/cylism/cylism-manager/internal/security"
 	"github.com/gin-gonic/gin"
 )
 
