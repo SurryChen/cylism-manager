@@ -365,7 +365,7 @@ func (w *ReleaseWorkflow) syncApplicationEndpoints(ctx context.Context, app *mod
 		return fmt.Errorf("读取应用入口: %w", err)
 	}
 	primaryTCPPort, hasTCPPort := service.PrimaryTCPPort()
-	context := applicationContextFor(app)
+	context := releaseApplicationContextFor(app)
 	if !hasTCPPort {
 		servicePorts := service.PortSpecs()
 		if len(servicePorts) == 0 {
@@ -445,7 +445,7 @@ func ResolveEndpointServicePort(spec ServiceSpec, requestedPort int32, requested
 	return ServicePortSpec{}, fmt.Errorf("Service 端口 %d 不存在，请选择模板中已声明的端口", requestedPort)
 }
 
-func applicationContextFor(app *model.Application) ApplicationContext {
+func releaseApplicationContextFor(app *model.Application) ApplicationContext {
 	return ApplicationContext{
 		ProjectID: app.ProjectID, EnvironmentID: app.EnvironmentID,
 		ProjectName: app.Project.Name, EnvironmentName: app.Environment.Name,

@@ -9,31 +9,31 @@ import (
 	"time"
 
 	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
-	"github.com/cylism/cylism-manager/internal/application"
 	"github.com/cylism/cylism-manager/internal/crypto"
 	"github.com/cylism/cylism-manager/internal/model"
+	applicationservice "github.com/cylism/cylism-manager/internal/service/application"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
 
 type deploymentTemplateInfo struct {
-	ID            uint                    `json:"id"`
-	ApplicationID uint                    `json:"application_id"`
-	Name          string                  `json:"name"`
-	Description   string                  `json:"description"`
-	Enabled       bool                    `json:"enabled"`
-	IsDefault     bool                    `json:"is_default"`
-	Revision      uint                    `json:"revision"`
-	Spec          application.ReleaseSpec `json:"spec"`
-	UpdatedAt     time.Time               `json:"updated_at"`
+	ID            uint                           `json:"id"`
+	ApplicationID uint                           `json:"application_id"`
+	Name          string                         `json:"name"`
+	Description   string                         `json:"description"`
+	Enabled       bool                           `json:"enabled"`
+	IsDefault     bool                           `json:"is_default"`
+	Revision      uint                           `json:"revision"`
+	Spec          applicationservice.ReleaseSpec `json:"spec"`
+	UpdatedAt     time.Time                      `json:"updated_at"`
 }
 
 type deploymentTemplateRequest struct {
-	Name        string                  `json:"name"`
-	Description string                  `json:"description"`
-	Enabled     bool                    `json:"enabled"`
-	Revision    uint                    `json:"revision,omitempty"`
-	Spec        application.ReleaseSpec `json:"spec"`
+	Name        string                         `json:"name"`
+	Description string                         `json:"description"`
+	Enabled     bool                           `json:"enabled"`
+	Revision    uint                           `json:"revision,omitempty"`
+	Spec        applicationservice.ReleaseSpec `json:"spec"`
 }
 
 func (h *ApplicationHandler) ListDeploymentTemplates(c *gin.Context) {
@@ -260,7 +260,7 @@ func (h *ApplicationHandler) SetDefaultDeploymentTemplate(c *gin.Context) {
 		apiShared.ValidationError(c, "上线模板不存在或已停用")
 		return
 	}
-	var spec application.ReleaseSpec
+	var spec applicationservice.ReleaseSpec
 	if err := json.Unmarshal([]byte(template.Spec), &spec); err != nil {
 		apiShared.DBError(c, "读取上线模板失败")
 		return
@@ -280,7 +280,7 @@ func (h *ApplicationHandler) templateFromRequest(ctx context.Context, app *model
 		return nil, fmt.Errorf("模板名称不能超过 128 个字符")
 	}
 	spec := req.Spec
-	application.NormalizeManagedKeys(&spec)
+	applicationservice.NormalizeManagedKeys(&spec)
 	if strings.TrimSpace(spec.Version) != "" {
 		return nil, fmt.Errorf("上线模板不应包含版本号")
 	}
@@ -324,20 +324,20 @@ func (h *ApplicationHandler) templateFromRequest(ctx context.Context, app *model
 		}
 	}
 	// Domain binding belongs to the application endpoint, never to a rollout template.
-	spec.Endpoint = application.EndpointSpec{Exposure: application.ExposureCluster}
-	if issues := application.ValidateReleaseSpec(spec); len(issues) > 0 {
+	spec.Endpoint = applicationservice.EndpointSpec{Exposure: applicationservice.ExposureCluster}
+	if issues := applicationservice.ValidateReleaseSpec(spec); len(issues) > 0 {
 		return nil, fmt.Errorf("%s", issues[0].Message)
 	}
 	if len(spec.Volumes) > 0 {
 		if h.kubernetes == nil || !h.kubernetes.KubernetesAvailable() {
 			return nil, fmt.Errorf("K8s 集群未连接，无法验证 PVC")
 		}
-		applicationContext := application.ApplicationContext{EnvironmentID: app.Environment.ID, Namespace: app.Environment.Namespace}
+		applicationContext := applicationservice.ApplicationContext{EnvironmentID: app.Environment.ID, Namespace: app.Environment.Namespace}
 		if err := h.kubernetes.ValidatePersistentVolumeClaims(ctx, applicationContext, spec); err != nil {
 			return nil, err
 		}
 	}
-	snapshot, err := json.Marshal(application.SanitizeReleaseSpec(spec))
+	snapshot, err := json.Marshal(applicationservice.SanitizeReleaseSpec(spec))
 	if err != nil {
 		return nil, fmt.Errorf("保存上线模板失败: %w", err)
 	}
@@ -367,7 +367,7 @@ func (h *ApplicationHandler) decryptTemplateSecretsByValue(encrypted string) (ma
 }
 
 func deploymentTemplateFromModel(template *model.ApplicationDeploymentTemplate, defaultTemplateID *uint) (*deploymentTemplateInfo, error) {
-	var spec application.ReleaseSpec
+	var spec applicationservice.ReleaseSpec
 	if err := json.Unmarshal([]byte(template.Spec), &spec); err != nil {
 		return nil, err
 	}

@@ -4,7 +4,6 @@ import (
 	"context"
 	"testing"
 
-	applicationdomain "github.com/cylism/cylism-manager/internal/application"
 	k8sclient "github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
 	appsv1 "k8s.io/api/apps/v1"
@@ -33,14 +32,14 @@ func TestQueryServiceApplicationRuntimeInfosAssemblesWorkloadsAndServices(t *tes
 			Status:     appsv1.StatefulSetStatus{ReadyReplicas: 1, AvailableReplicas: 1},
 		},
 		&corev1.Pod{
-			ObjectMeta: metav1.ObjectMeta{Name: "api-1", Namespace: "demo", Labels: map[string]string{applicationdomain.ApplicationNameLabel: "api"}},
+			ObjectMeta: metav1.ObjectMeta{Name: "api-1", Namespace: "demo", Labels: map[string]string{ApplicationNameLabel: "api"}},
 			Spec:       corev1.PodSpec{NodeName: "node-a"},
 			Status:     corev1.PodStatus{Phase: corev1.PodRunning, ContainerStatuses: []corev1.ContainerStatus{{Name: "api", Ready: true}}},
 		},
 	)}
 	applications := []model.Application{
-		{ID: 1, Name: "api", Environment: model.Environment{Namespace: "demo"}, WorkloadKind: applicationdomain.WorkloadKindDeployment},
-		{ID: 2, Name: "database", Environment: model.Environment{Namespace: "demo"}, WorkloadKind: applicationdomain.WorkloadKindStatefulSet},
+		{ID: 1, Name: "api", Environment: model.Environment{Namespace: "demo"}, WorkloadKind: WorkloadKindDeployment},
+		{ID: 2, Name: "database", Environment: model.Environment{Namespace: "demo"}, WorkloadKind: WorkloadKindStatefulSet},
 	}
 	runtimes := NewQueryService(queryStoreStub{}).ApplicationRuntimeInfos(context.Background(), client, applications, map[uint][]model.Release{
 		1: {{ID: 11, Sequence: 2, Version: "1.2.0", Status: model.ReleaseStatusSucceeded}},
@@ -83,9 +82,9 @@ func TestQueryServiceWorkspacePodStatesCountsReadyPods(t *testing.T) {
 func workspacePod(name, namespace, applicationName, release string, phase corev1.PodPhase, ready bool) *corev1.Pod {
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace, Labels: map[string]string{
-			applicationdomain.ManagedByLabel:       applicationdomain.ManagedByValue,
-			applicationdomain.ApplicationNameLabel: applicationName,
-			applicationdomain.ReleaseLabel:         release,
+			ManagedByLabel:       ManagedByValue,
+			ApplicationNameLabel: applicationName,
+			ReleaseLabel:         release,
 		}},
 		Status: corev1.PodStatus{Phase: phase, ContainerStatuses: []corev1.ContainerStatus{{Name: "app", Ready: ready}}},
 	}

@@ -5,7 +5,6 @@ import (
 	"sort"
 	"strconv"
 
-	applicationdomain "github.com/cylism/cylism-manager/internal/application"
 	"github.com/cylism/cylism-manager/internal/model"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -96,12 +95,12 @@ func (s *QueryService) WorkspacePodStates(ctx context.Context, reader RuntimeRea
 	if reader == nil {
 		return states, false
 	}
-	pods, err := reader.ListRuntimePods(ctx, namespace, applicationdomain.ManagedByLabel+"="+applicationdomain.ManagedByValue)
+	pods, err := reader.ListRuntimePods(ctx, namespace, ManagedByLabel+"="+ManagedByValue)
 	if err != nil {
 		return states, false
 	}
 	for _, pod := range pods {
-		applicationName, release := pod.Labels[applicationdomain.ApplicationNameLabel], pod.Labels[applicationdomain.ReleaseLabel]
+		applicationName, release := pod.Labels[ApplicationNameLabel], pod.Labels[ReleaseLabel]
 		sequence, err := strconv.ParseUint(release, 10, 64)
 		if applicationName == "" || err != nil {
 			continue
@@ -155,7 +154,7 @@ func collectNamespaceRuntime(ctx context.Context, reader RuntimeReader, namespac
 	podsByApplication := make(map[string][]corev1.Pod)
 	if podErr == nil {
 		for _, pod := range pods {
-			if name := pod.Labels[applicationdomain.ApplicationNameLabel]; name != "" {
+			if name := pod.Labels[ApplicationNameLabel]; name != "" {
 				podsByApplication[name] = append(podsByApplication[name], pod)
 			}
 		}
@@ -165,7 +164,7 @@ func collectNamespaceRuntime(ctx context.Context, reader RuntimeReader, namespac
 		if service, ok := serviceByName[app.Name]; ok {
 			runtime.Service = serviceRuntime(service)
 		}
-		if app.WorkloadKind == applicationdomain.WorkloadKindStatefulSet {
+		if app.WorkloadKind == WorkloadKindStatefulSet {
 			if workload, ok := statefulSetByName[app.Name]; ok {
 				runtime.DesiredReplicas = replicasValue(workload.Spec.Replicas)
 				runtime.ReadyReplicas = workload.Status.ReadyReplicas

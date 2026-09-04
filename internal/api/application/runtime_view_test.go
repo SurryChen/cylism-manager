@@ -1,9 +1,9 @@
 package applicationapi
 
 import (
-	"github.com/cylism/cylism-manager/internal/application"
 	k8sclient "github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
+	"github.com/cylism/cylism-manager/internal/service/application"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"

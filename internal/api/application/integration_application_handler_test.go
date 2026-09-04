@@ -2,9 +2,9 @@ package applicationapi
 
 import (
 	"encoding/json"
-	"github.com/cylism/cylism-manager/internal/application"
 	"github.com/cylism/cylism-manager/internal/auth"
 	"github.com/cylism/cylism-manager/internal/model"
+	"github.com/cylism/cylism-manager/internal/service/application"
 	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/gin-gonic/gin"
 	"net/http"

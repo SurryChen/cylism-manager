@@ -13,9 +13,9 @@ import (
 	"time"
 
 	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
-	"github.com/cylism/cylism-manager/internal/application"
 	k8sclient "github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
+	applicationservice "github.com/cylism/cylism-manager/internal/service/application"
 	"github.com/cylism/cylism-manager/internal/transport"
 	"github.com/gin-gonic/gin"
 	corev1 "k8s.io/api/core/v1"
@@ -454,7 +454,7 @@ func (h *StorageHandler) replaceMigrationTemplateClaims(applicationID uint, sour
 		return err
 	}
 	for index := range templates {
-		var spec application.ReleaseSpec
+		var spec applicationservice.ReleaseSpec
 		if err := json.Unmarshal([]byte(templates[index].Spec), &spec); err != nil {
 			return err
 		}

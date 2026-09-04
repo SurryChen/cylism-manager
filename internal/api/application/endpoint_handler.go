@@ -8,8 +8,8 @@ import (
 	"strings"
 
 	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
-	"github.com/cylism/cylism-manager/internal/application"
 	"github.com/cylism/cylism-manager/internal/model"
+	applicationservice "github.com/cylism/cylism-manager/internal/service/application"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
@@ -42,7 +42,7 @@ func (h *ApplicationHandler) ListApplicationEndpoints(c *gin.Context) {
 	for index := range endpoints {
 		endpoints[index].IngressEnabled = endpointUsesIngress(endpoints[index])
 		if endpoints[index].Protocol == "" {
-			endpoints[index].Protocol = application.ServiceProtocolTCP
+			endpoints[index].Protocol = applicationservice.ServiceProtocolTCP
 		}
 	}
 	model.Success(c, endpoints)
@@ -78,7 +78,7 @@ func (h *ApplicationHandler) CreateApplicationEndpoint(c *gin.Context) {
 		apiShared.DBError(c, err.Error())
 		return
 	}
-	servicePort, err := application.ResolveEndpointServicePort(serviceSpec, req.ServicePort, req.Protocol, endpointUsesIngress(*endpoint))
+	servicePort, err := applicationservice.ResolveEndpointServicePort(serviceSpec, req.ServicePort, req.Protocol, endpointUsesIngress(*endpoint))
 	if err != nil {
 		apiShared.ValidationError(c, err.Error())
 		return
@@ -147,7 +147,7 @@ func (h *ApplicationHandler) UpdateApplicationEndpoint(c *gin.Context) {
 		apiShared.DBError(c, err.Error())
 		return
 	}
-	servicePort, err := application.ResolveEndpointServicePort(serviceSpec, req.ServicePort, req.Protocol, endpointUsesIngress(*updated))
+	servicePort, err := applicationservice.ResolveEndpointServicePort(serviceSpec, req.ServicePort, req.Protocol, endpointUsesIngress(*updated))
 	if err != nil {
 		apiShared.ValidationError(c, err.Error())
 		return
@@ -242,31 +242,31 @@ func (h *ApplicationHandler) DeleteApplicationEndpoint(c *gin.Context) {
 	model.Success(c, gin.H{"id": endpointID})
 }
 
-func (h *ApplicationHandler) applicationServiceSpec(app *model.Application) (application.ServiceSpec, error) {
+func (h *ApplicationHandler) applicationServiceSpec(app *model.Application) (applicationservice.ServiceSpec, error) {
 	if release, err := h.applications.GetLatestSuccessfulRelease(app.ID); err == nil {
-		var spec application.ReleaseSpec
+		var spec applicationservice.ReleaseSpec
 		if err := json.Unmarshal([]byte(release.DesiredSpec), &spec); err != nil {
-			return application.ServiceSpec{}, err
+			return applicationservice.ServiceSpec{}, err
 		}
 		return spec.Service, nil
 	} else if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-		return application.ServiceSpec{}, err
+		return applicationservice.ServiceSpec{}, err
 	}
 	if template, err := h.applications.GetDefaultApplicationDeploymentTemplate(app.ID); err == nil {
-		var spec application.ReleaseSpec
+		var spec applicationservice.ReleaseSpec
 		if err := json.Unmarshal([]byte(template.Spec), &spec); err != nil {
-			return application.ServiceSpec{}, err
+			return applicationservice.ServiceSpec{}, err
 		}
 		return spec.Service, nil
 	} else if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-		return application.ServiceSpec{}, err
+		return applicationservice.ServiceSpec{}, err
 	}
 	if endpoints, err := h.applications.ListApplicationEndpoints(app.ID); err == nil && len(endpoints) > 0 && endpoints[0].ServicePort > 0 {
-		return application.ServiceSpec{Port: endpoints[0].ServicePort}, nil
+		return applicationservice.ServiceSpec{Port: endpoints[0].ServicePort}, nil
 	} else if err != nil {
-		return application.ServiceSpec{}, err
+		return applicationservice.ServiceSpec{}, err
 	}
-	return application.ServiceSpec{Port: 80}, nil
+	return applicationservice.ServiceSpec{Port: 80}, nil
 }
 
 func endpointUsesIngress(endpoint model.ApplicationEndpoint) bool {
@@ -311,7 +311,7 @@ func (h *ApplicationHandler) prepareApplicationEndpoint(ctx context.Context, app
 	if !ingressEnabled {
 		ingressMode = "metadata"
 	}
-	endpoint := &model.ApplicationEndpoint{ApplicationID: app.ID, DomainID: domain.ID, Exposure: application.ExposurePublic, Domain: domain.Hostname, Path: path, TLSEnabled: req.TLSEnabled, IngressEnabled: ingressEnabled, IngressMode: ingressMode, IssuerRef: domain.IssuerRef, AccessMode: accessMode}
+	endpoint := &model.ApplicationEndpoint{ApplicationID: app.ID, DomainID: domain.ID, Exposure: applicationservice.ExposurePublic, Domain: domain.Hostname, Path: path, TLSEnabled: req.TLSEnabled, IngressEnabled: ingressEnabled, IngressMode: ingressMode, IssuerRef: domain.IssuerRef, AccessMode: accessMode}
 	if !endpoint.TLSEnabled {
 		return endpoint, nil
 	}

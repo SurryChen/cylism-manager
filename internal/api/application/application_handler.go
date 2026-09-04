@@ -6,7 +6,6 @@ import (
 
 	"context"
 	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
-	"github.com/cylism/cylism-manager/internal/application"
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/repository"
 	applicationservice "github.com/cylism/cylism-manager/internal/service/application"
@@ -113,7 +112,7 @@ func NewApplicationHandlerWithDependencies(resources ApplicationHandlerDependenc
 }
 
 func newApplicationHandler(resources ApplicationHandlerDependencies, queries *applicationservice.QueryService, encKey []byte, dependencies KubernetesAdapter) *ApplicationHandler {
-	var applier application.ResourceApplier
+	var applier applicationservice.ResourceApplier
 	if dependencies != nil {
 		applier = dependencies
 	}
@@ -214,7 +213,7 @@ func (h *ApplicationHandler) UpdateWorkloadKind(c *gin.Context) {
 		return
 	}
 	req.WorkloadKind = strings.ToLower(strings.TrimSpace(req.WorkloadKind))
-	if req.WorkloadKind != application.WorkloadKindDeployment && req.WorkloadKind != application.WorkloadKindStatefulSet {
+	if req.WorkloadKind != applicationservice.WorkloadKindDeployment && req.WorkloadKind != applicationservice.WorkloadKindStatefulSet {
 		apiShared.ValidationError(c, "工作负载类型必须为 Deployment 或 StatefulSet")
 		return
 	}
@@ -253,7 +252,7 @@ func (h *ApplicationHandler) CreateApplication(c *gin.Context) {
 		return
 	}
 	req.Name = strings.TrimSpace(req.Name)
-	if err := application.ValidateApplicationName(req.Name); err != nil {
+	if err := applicationservice.ValidateApplicationName(req.Name); err != nil {
 		apiShared.ValidationError(c, err.Error())
 		return
 	}

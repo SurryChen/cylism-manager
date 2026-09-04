@@ -10,9 +10,9 @@ import (
 	"sync"
 
 	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
-	"github.com/cylism/cylism-manager/internal/application"
 	"github.com/cylism/cylism-manager/internal/auth"
 	"github.com/cylism/cylism-manager/internal/model"
+	applicationservice "github.com/cylism/cylism-manager/internal/service/application"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
@@ -188,17 +188,17 @@ func (h *ApplicationHandler) IntegrationListManagedConfigMaps(c *gin.Context) {
 		apiShared.DBError(c, err.Error())
 		return
 	}
-	var spec application.ReleaseSpec
+	var spec applicationservice.ReleaseSpec
 	if err := json.Unmarshal([]byte(template.Spec), &spec); err != nil {
 		apiShared.DBError(c, "读取默认模板 ConfigMap 配置失败")
 		return
 	}
 	result := make([]configMapInfo, 0, len(files))
 	for _, file := range files {
-		if !file.Enabled || file.ResourceKind != application.FileMountSourceConfigMap || file.ResourceName != app.Name+"-config" {
+		if !file.Enabled || file.ResourceKind != applicationservice.FileMountSourceConfigMap || file.ResourceName != app.Name+"-config" {
 			continue
 		}
-		if !configMapKeyEnabled(spec, file.Key) || !application.IsConfigKeyManaged(spec, file.Key) {
+		if !configMapKeyEnabled(spec, file.Key) || !applicationservice.IsConfigKeyManaged(spec, file.Key) {
 			continue
 		}
 		result = append(result, configMapInfo{ID: file.ID, ResourceKind: file.ResourceKind, ResourceName: file.ResourceName, Key: file.Key, MountPath: file.MountPath, Format: file.Format, Version: template.Revision, TemplateID: template.ID, TemplateRevision: template.Revision})
@@ -384,37 +384,37 @@ func integrationForbidden(c *gin.Context) {
 // templateConfigMap returns the ConfigMap section from the default template.
 // The rendered Kubernetes ConfigMap is deliberately never read here: it is a
 // materialized copy of the template and may be stale until a release applies it.
-func (h *ApplicationHandler) templateConfigMap(app *model.Application, file *model.ApplicationManagedFile) (*model.ApplicationDeploymentTemplate, application.ReleaseSpec, error) {
-	if file.ResourceKind != application.FileMountSourceConfigMap || file.ResourceName != app.Name+"-config" || !file.Enabled {
-		return nil, application.ReleaseSpec{}, fmt.Errorf("受管配置不是当前应用的 ConfigMap")
+func (h *ApplicationHandler) templateConfigMap(app *model.Application, file *model.ApplicationManagedFile) (*model.ApplicationDeploymentTemplate, applicationservice.ReleaseSpec, error) {
+	if file.ResourceKind != applicationservice.FileMountSourceConfigMap || file.ResourceName != app.Name+"-config" || !file.Enabled {
+		return nil, applicationservice.ReleaseSpec{}, fmt.Errorf("受管配置不是当前应用的 ConfigMap")
 	}
 	template, err := h.resources.GetDefaultApplicationDeploymentTemplate(app.ID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, application.ReleaseSpec{}, fmt.Errorf("应用没有可用的默认上线模板")
+			return nil, applicationservice.ReleaseSpec{}, fmt.Errorf("应用没有可用的默认上线模板")
 		}
-		return nil, application.ReleaseSpec{}, fmt.Errorf("读取默认上线模板: %w", err)
+		return nil, applicationservice.ReleaseSpec{}, fmt.Errorf("读取默认上线模板: %w", err)
 	}
 	if !template.Enabled {
-		return nil, application.ReleaseSpec{}, fmt.Errorf("应用没有可用的默认上线模板")
+		return nil, applicationservice.ReleaseSpec{}, fmt.Errorf("应用没有可用的默认上线模板")
 	}
-	var spec application.ReleaseSpec
+	var spec applicationservice.ReleaseSpec
 	if err := json.Unmarshal([]byte(template.Spec), &spec); err != nil {
-		return nil, application.ReleaseSpec{}, fmt.Errorf("读取上线模板配置: %w", err)
+		return nil, applicationservice.ReleaseSpec{}, fmt.Errorf("读取上线模板配置: %w", err)
 	}
 	if spec.Config == nil {
-		return nil, application.ReleaseSpec{}, fmt.Errorf("模板没有 ConfigMap 配置")
+		return nil, applicationservice.ReleaseSpec{}, fmt.Errorf("模板没有 ConfigMap 配置")
 	}
 	if !configMapKeyEnabled(spec, file.Key) {
-		return nil, application.ReleaseSpec{}, fmt.Errorf("模板 ConfigMap 不包含已启用的键 %q", file.Key)
+		return nil, applicationservice.ReleaseSpec{}, fmt.Errorf("模板 ConfigMap 不包含已启用的键 %q", file.Key)
 	}
-	if !application.IsConfigKeyManaged(spec, file.Key) {
-		return nil, application.ReleaseSpec{}, fmt.Errorf("ConfigMap 键 %q 未开放外部应用修改", file.Key)
+	if !applicationservice.IsConfigKeyManaged(spec, file.Key) {
+		return nil, applicationservice.ReleaseSpec{}, fmt.Errorf("ConfigMap 键 %q 未开放外部应用修改", file.Key)
 	}
 	return template, spec, nil
 }
 
-func configMapKeyEnabled(spec application.ReleaseSpec, key string) bool {
+func configMapKeyEnabled(spec applicationservice.ReleaseSpec, key string) bool {
 	if spec.Config == nil {
 		return false
 	}
