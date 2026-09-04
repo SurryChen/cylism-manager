@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/cylism/cylism-manager/internal/k8s"
+	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/gin-gonic/gin"
 	corev1 "k8s.io/api/core/v1"
@@ -81,5 +82,19 @@ func TestClusterDNSResetRestoresHostResolver(t *testing.T) {
 	policy, err := s.GetActiveClusterDNSPolicy()
 	if err != nil || policy.Resolvers != "[]" {
 		t.Fatalf("expected inherited policy marker: %#v err=%v", policy, err)
+	}
+}
+
+func TestClusterDNSHistoryPayloadPreservesPolicies(t *testing.T) {
+	history := historyPayload([]model.ClusterDNSPolicy{{Revision: 2, Resolvers: `["8.8.8.8"]`}})
+	if len(history) != 1 {
+		t.Fatalf("expected one history item, got %#v", history)
+	}
+	if history[0]["revision"] != uint(2) {
+		t.Fatalf("unexpected revision: %#v", history[0])
+	}
+	resolvers, ok := history[0]["resolvers"].([]string)
+	if !ok || len(resolvers) != 1 || resolvers[0] != "8.8.8.8" {
+		t.Fatalf("unexpected resolvers: %#v", history[0]["resolvers"])
 	}
 }

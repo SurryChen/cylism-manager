@@ -10,10 +10,10 @@ import (
 	"strings"
 	"time"
 
-	security "github.com/cylism/cylism-manager/internal/api/shared/security"
 	"github.com/cylism/cylism-manager/internal/auth"
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/repository"
+	security "github.com/cylism/cylism-manager/internal/security"
 	"github.com/gin-gonic/gin"
 )
 

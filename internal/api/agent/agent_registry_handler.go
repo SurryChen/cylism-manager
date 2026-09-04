@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 	"github.com/cylism/cylism-manager/internal/model"
+	networkservice "github.com/cylism/cylism-manager/internal/service/network"
 	registryservice "github.com/cylism/cylism-manager/internal/service/registry"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -70,7 +70,7 @@ func (h *AgentHandler) DNSStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	ready, total := 0, len(pods.Items)
 	for index := range pods.Items {
-		if apiShared.CoreDNSPodReady(&pods.Items[index]) {
+		if networkservice.CoreDNSPodReady(&pods.Items[index]) {
 			ready++
 		}
 	}
@@ -81,8 +81,8 @@ func (h *AgentHandler) DNSStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	h.audit(instance, "agent.dns_status", map[string]string{"capability": model.AgentCapabilityDNSRead})
 	writeAgentResponse(w, http.StatusOK, agentAPIResponse{Status: "ok", Data: map[string]any{
-		"forwarding":    apiShared.ForwardTargets(configMap.Data["Corefile"]),
-		"active_policy": apiShared.PolicyPayload(policy),
+		"forwarding":    networkservice.ForwardTargets(configMap.Data["Corefile"]),
+		"active_policy": networkservice.PolicyPayload(policy),
 		"coredns":       map[string]int{"ready": ready, "total": total},
 	}, Summary: "cluster DNS status retrieved"})
 }

@@ -1,10 +1,19 @@
 package bootstrap
 
 import (
+	"crypto/sha256"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
+	coreauth "github.com/cylism/cylism-manager/internal/auth"
 	"github.com/cylism/cylism-manager/internal/k8s"
+	"github.com/cylism/cylism-manager/internal/model"
+	"github.com/gin-gonic/gin"
 )
 
 func TestNewContainerInitializesStoreAndAuth(t *testing.T) {
@@ -120,5 +129,59 @@ func TestBuildRouteDependenciesComposesAllHandlerGroups(t *testing.T) {
 	}
 	if deps.System.Dashboard == nil || deps.System.Monitoring == nil || deps.System.Alerting == nil || deps.System.Logging == nil {
 		t.Fatal("expected system handlers composed by bootstrap")
+	}
+}
+
+func TestBuildRouteDependenciesUsesJWTSecretForIntegrationDelegation(t *testing.T) {
+	const sessionToken = "integration-session-token"
+	jwtSecret := []byte("jwt-secret")
+	container, err := NewContainer(Config{
+		DBPath:          ":memory:",
+		EncryptionKey:   []byte("01234567890123456789012345678901"),
+		JWTSecret:       jwtSecret,
+		AccessTokenTTL:  time.Minute,
+		RefreshTokenTTL: time.Hour,
+	})
+	if err != nil {
+		t.Fatalf("NewContainer: %v", err)
+	}
+	hash := sha256.Sum256([]byte(sessionToken))
+	hashValue := fmt.Sprintf("%x", hash[:])
+	now := time.Now()
+	if err := container.Store.CreateIntegrationSession(&model.IntegrationSession{
+		HandoffCodeHash:  "handoff-hash",
+		SessionTokenHash: &hashValue,
+		UserID:           7,
+		ProjectID:        9,
+		ApplicationID:    11,
+		EnvironmentID:    13,
+		ActionsData:      "application:read",
+		HandoffExpiresAt: now.Add(time.Minute),
+		ExpiresAt:        now.Add(time.Hour),
+	}); err != nil {
+		t.Fatalf("create integration session: %v", err)
+	}
+
+	deps := container.BuildRouteDependencies()
+	r := gin.New()
+	r.POST("/delegation", deps.Application.Handler.CreateIntegrationDelegation)
+	req := httptest.NewRequest(http.MethodPost, "/delegation", strings.NewReader(`{"capability":"hysteria2"}`))
+	req.Header.Set("Authorization", "Bearer "+sessionToken)
+	req.Header.Set("Content-Type", "application/json")
+	resp := httptest.NewRecorder()
+	r.ServeHTTP(resp, req)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("delegation status = %d, body = %s", resp.Code, resp.Body.String())
+	}
+	var envelope struct {
+		Data struct {
+			Token string `json:"token"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(resp.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("decode delegation response: %v", err)
+	}
+	if _, err := coreauth.ParseDelegationToken(jwtSecret, envelope.Data.Token); err != nil {
+		t.Fatalf("delegation token was not signed with JWT secret: %v", err)
 	}
 }

@@ -8,10 +8,10 @@ import (
 	"time"
 
 	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
-	security "github.com/cylism/cylism-manager/internal/api/shared/security"
 	k8sclient "github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/repository"
+	security "github.com/cylism/cylism-manager/internal/security"
 	registryservice "github.com/cylism/cylism-manager/internal/service/registry"
 	"github.com/gin-gonic/gin"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
