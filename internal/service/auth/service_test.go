@@ -4,7 +4,6 @@ import (
 	"testing"
 	"time"
 
-	coreauth "github.com/cylism/cylism-manager/internal/auth"
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/store"
 )
@@ -63,7 +62,7 @@ func TestTemporaryTokenExpiresAndSessionTokensAreNormalJWT(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	claims, err := coreauth.ParseToken([]byte("secret"), access)
+	claims, err := ParseToken([]byte("secret"), access)
 	if err != nil || claims.UserID != user.ID {
 		t.Fatalf("access claims = %#v, %v", claims, err)
 	}

@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	coreauth "github.com/cylism/cylism-manager/internal/auth"
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/repository"
 )
@@ -105,11 +104,11 @@ func (s *TemporaryTokenService) Redeem(token string) (*model.User, error) {
 }
 
 func GenerateSessionTokens(secret []byte, user *model.User, accessTTL, refreshTTL time.Duration) (string, string, error) {
-	access, err := coreauth.GenerateAccessToken(secret, user.ID, user.Username, accessTTL)
+	access, err := GenerateAccessToken(secret, user.ID, user.Username, accessTTL)
 	if err != nil {
 		return "", "", err
 	}
-	refresh, err := coreauth.GenerateRefreshToken(secret, user.ID, refreshTTL)
+	refresh, err := GenerateRefreshToken(secret, user.ID, refreshTTL)
 	if err != nil {
 		return "", "", err
 	}

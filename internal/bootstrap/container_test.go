@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	coreauth "github.com/cylism/cylism-manager/internal/auth"
+	coreauth "github.com/cylism/cylism-manager/internal/service/auth"
 	"github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/gin-gonic/gin"

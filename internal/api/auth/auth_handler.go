@@ -6,7 +6,6 @@ import (
 	"github.com/cylism/cylism-manager/internal/model"
 	"time"
 
-	"github.com/cylism/cylism-manager/internal/auth"
 	"github.com/cylism/cylism-manager/internal/repository"
 	authservice "github.com/cylism/cylism-manager/internal/service/auth"
 	"github.com/gin-gonic/gin"
@@ -58,17 +57,17 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	}
 
 	user, err := h.users.GetUserByUsername(req.Username)
-	if err != nil || !auth.CheckPassword(req.Password, user.PasswordHash) {
+	if err != nil || !authservice.CheckPassword(req.Password, user.PasswordHash) {
 		apiShared.Unauthorized(c, "用户名或密码错误")
 		return
 	}
 
-	accessToken, err := auth.GenerateAccessToken(h.jwtSecret, user.ID, user.Username, h.accessTokenTTL)
+	accessToken, err := authservice.GenerateAccessToken(h.jwtSecret, user.ID, user.Username, h.accessTokenTTL)
 	if err != nil {
 		apiShared.InternalError(c, "生成 token 失败")
 		return
 	}
-	refreshToken, err := auth.GenerateRefreshToken(h.jwtSecret, user.ID, h.refreshTokenTTL)
+	refreshToken, err := authservice.GenerateRefreshToken(h.jwtSecret, user.ID, h.refreshTokenTTL)
 	if err != nil {
 		apiShared.InternalError(c, "生成 token 失败")
 		return
@@ -97,18 +96,18 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 	}
 
 	// 验证 refresh token
-	claims, err := auth.ParseToken(h.jwtSecret, req.RefreshToken)
+	claims, err := authservice.ParseToken(h.jwtSecret, req.RefreshToken)
 	if err != nil {
 		apiShared.Unauthorized(c, "refresh token 无效或已过期")
 		return
 	}
 
-	accessToken, err := auth.GenerateAccessToken(h.jwtSecret, claims.UserID, claims.Username, h.accessTokenTTL)
+	accessToken, err := authservice.GenerateAccessToken(h.jwtSecret, claims.UserID, claims.Username, h.accessTokenTTL)
 	if err != nil {
 		apiShared.InternalError(c, "生成 token 失败")
 		return
 	}
-	refreshToken, err := auth.GenerateRefreshToken(h.jwtSecret, claims.UserID, h.refreshTokenTTL)
+	refreshToken, err := authservice.GenerateRefreshToken(h.jwtSecret, claims.UserID, h.refreshTokenTTL)
 	if err != nil {
 		apiShared.InternalError(c, "生成 token 失败")
 		return
