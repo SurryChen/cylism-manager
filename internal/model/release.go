@@ -2,6 +2,22 @@ package model
 
 import "time"
 
+const (
+	ReleaseStatusDraft        = "draft"
+	ReleaseStatusValidating   = "validating"
+	ReleaseStatusApplying     = "applying"
+	ReleaseStatusWaitingReady = "waiting_ready"
+	ReleaseStatusVerifying    = "verifying"
+	ReleaseStatusSucceeded    = "succeeded"
+	ReleaseStatusFailed       = "failed"
+	ReleaseStatusRollingBack  = "rolling_back"
+	ReleaseStatusRolledBack   = "rolled_back"
+
+	ReleaseOperationRunning = "running"
+	ReleaseOperationSuccess = "success"
+	ReleaseOperationFailed  = "failed"
+)
+
 type Release struct {
 	ID                 uint               `gorm:"primaryKey" json:"id"`
 	ApplicationID      uint               `gorm:"uniqueIndex:idx_application_sequence;not null" json:"application_id"`

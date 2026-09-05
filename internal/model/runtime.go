@@ -2,6 +2,20 @@ package model
 
 import "time"
 
+const (
+	RuntimeTypeNanobot = "nanobot"
+
+	RuntimeDeploymentManaged  = "managed"
+	RuntimeDeploymentExternal = "external"
+
+	RuntimeStatusDraft       = "draft"
+	RuntimeStatusDeploying   = "deploying"
+	RuntimeStatusReady       = "ready"
+	RuntimeStatusDegraded    = "degraded"
+	RuntimeStatusFailed      = "failed"
+	RuntimeStatusUninstalled = "uninstalled"
+)
+
 // RuntimeInstance is a managed runtime endpoint deployed in Kubernetes.
 type RuntimeInstance struct {
 	ID                     uint       `gorm:"primaryKey" json:"id"`
