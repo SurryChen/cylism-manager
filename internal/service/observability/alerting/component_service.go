@@ -6,10 +6,10 @@ import (
 )
 
 type ComponentAdapter interface {
-	AlertingStatus(context.Context) *k8s.AlertingStatus
-	InstallAlerting(context.Context, k8s.AlertingConfig) (*k8s.AlertingStatus, error)
-	UpdateAlerting(context.Context, k8s.AlertingConfig) (*k8s.AlertingStatus, error)
-	UninstallAlerting(context.Context) error
+	AlertingStatusContext(context.Context) *k8s.AlertingStatus
+	InstallAlertingContext(context.Context, k8s.AlertingConfig) (*k8s.AlertingStatus, error)
+	UpdateAlertingContext(context.Context, k8s.AlertingConfig) (*k8s.AlertingStatus, error)
+	UninstallAlertingContext(context.Context) error
 }
 type ComponentService struct{ adapter ComponentAdapter }
 
@@ -20,14 +20,14 @@ func (s *ComponentService) Status(ctx context.Context) *k8s.AlertingStatus {
 	if s == nil || s.adapter == nil {
 		return &k8s.AlertingStatus{}
 	}
-	return s.adapter.AlertingStatus(ctx)
+	return s.adapter.AlertingStatusContext(ctx)
 }
 func (s *ComponentService) Install(ctx context.Context, c k8s.AlertingConfig) (*k8s.AlertingStatus, error) {
-	return s.adapter.InstallAlerting(ctx, c)
+	return s.adapter.InstallAlertingContext(ctx, c)
 }
 func (s *ComponentService) Update(ctx context.Context, c k8s.AlertingConfig) (*k8s.AlertingStatus, error) {
-	return s.adapter.UpdateAlerting(ctx, c)
+	return s.adapter.UpdateAlertingContext(ctx, c)
 }
 func (s *ComponentService) Uninstall(ctx context.Context) error {
-	return s.adapter.UninstallAlerting(ctx)
+	return s.adapter.UninstallAlertingContext(ctx)
 }

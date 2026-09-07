@@ -14,6 +14,10 @@ const MaxPromQLLength = 2048
 
 type StatusReader interface{ Ready(context.Context) bool }
 
+type StatusFunc func(context.Context) bool
+
+func (fn StatusFunc) Ready(ctx context.Context) bool { return fn(ctx) }
+
 type QueryService struct {
 	query  QueryFunc
 	status StatusReader

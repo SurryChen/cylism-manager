@@ -406,8 +406,8 @@ func newTestAlertingHandler(platformURL ...string) (*AlertingHandler, *fakeNotif
 		configuredURL = platformURL[0]
 	}
 	h := NewAlertingHandler(configuredURL)
-	h.WithDependencies(AlertingDependencies{Component: k8sclient.AlertingComponentAdapter{Client: client}, Ready: func(ctx context.Context) bool {
+	h.WithDependencies(AlertingDependencies{Component: client, Ready: func(ctx context.Context) bool {
 		return client != nil && client.AlertingStatusContext(ctx).State == k8sclient.AlertingStateReady
-	}, Secrets: k8sclient.SecretReader{Client: client}, Sender: sender})
+	}, Secrets: client, Sender: sender})
 	return h, sender
 }

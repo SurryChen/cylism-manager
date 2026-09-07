@@ -10,7 +10,9 @@ import (
 
 type fakePodReader struct{ pods []corev1.Pod }
 
-func (f fakePodReader) ListPods(context.Context) ([]corev1.Pod, error) { return f.pods, nil }
+func (f fakePodReader) ListRuntimePods(context.Context, string, string) ([]corev1.Pod, error) {
+	return f.pods, nil
+}
 
 func TestPVCConsumerReaderGroupsAndSortsPods(t *testing.T) {
 	r := PVCConsumerReader{Pods: fakePodReader{pods: []corev1.Pod{

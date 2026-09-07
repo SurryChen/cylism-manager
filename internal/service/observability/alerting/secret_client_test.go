@@ -7,7 +7,7 @@ import (
 
 type secretReaderFake map[string][]byte
 
-func (f secretReaderFake) Get(context.Context, string, string) (map[string][]byte, error) {
+func (f secretReaderFake) GetSecretDataContext(context.Context, string, string) (map[string][]byte, error) {
 	return f, nil
 }
 

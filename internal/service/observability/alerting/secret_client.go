@@ -9,7 +9,7 @@ import (
 )
 
 type SecretReader interface {
-	Get(context.Context, string, string) (map[string][]byte, error)
+	GetSecretDataContext(context.Context, string, string) (map[string][]byte, error)
 }
 
 type EmailConfig struct {
@@ -31,7 +31,7 @@ func LoadSecrets(ctx context.Context, reader SecretReader, namespace, name strin
 	if reader == nil {
 		return NotificationSecrets{}, fmt.Errorf("读取告警通知配置失败")
 	}
-	data, err := reader.Get(ctx, namespace, name)
+	data, err := reader.GetSecretDataContext(ctx, namespace, name)
 	if err != nil {
 		return NotificationSecrets{}, fmt.Errorf("读取告警通知配置失败")
 	}

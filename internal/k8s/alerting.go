@@ -1,6 +1,7 @@
 package k8s
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
@@ -152,6 +153,22 @@ func (c *Client) AlertingStatus() *AlertingStatus {
 		status.Message = "告警规则正在评估，通知通道已就绪"
 	}
 	return status
+}
+
+func (c *Client) AlertingStatusContext(ctx context.Context) *AlertingStatus {
+	return c.withContext(ctx).AlertingStatus()
+}
+
+func (c *Client) InstallAlertingContext(ctx context.Context, config AlertingConfig) (*AlertingStatus, error) {
+	return c.withContext(ctx).installAlerting(config)
+}
+
+func (c *Client) UpdateAlertingContext(ctx context.Context, config AlertingConfig) (*AlertingStatus, error) {
+	return c.withContext(ctx).updateAlerting(config)
+}
+
+func (c *Client) UninstallAlertingContext(ctx context.Context) error {
+	return c.withContext(ctx).uninstallAlerting()
 }
 
 // InstallAlerting creates or updates all platform-owned alerting resources.
