@@ -34,14 +34,9 @@ func setupLoggingRouter(handler *LoggingHandler) *gin.Engine {
 
 func newTestLoggingHandler(scope repository.LoggingScopeRepository) *LoggingHandler {
 	client := k8sClient
-	return NewLoggingHandler(scope, LoggingDependencies{Component: k8sclient.LoggingComponentAdapter{Client: client}, Ready: func(ctx context.Context) bool {
+	return NewLoggingHandler(scope, LoggingDependencies{Component: client, Ready: func(ctx context.Context) bool {
 		return client != nil && client.LoggingStatusContext(ctx).LokiReady >= 1
-	}, FilterReader: func() loggingservice.FilterReader {
-		if client == nil {
-			return nil
-		}
-		return k8sclient.LoggingFilterReader{Clientset: client.Clientset}
-	}()})
+	}, FilterReader: client})
 }
 
 func TestLoggingQueryBuildsBoundedStructuredSelector(t *testing.T) {

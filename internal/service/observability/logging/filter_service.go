@@ -8,8 +8,8 @@ import (
 )
 
 type FilterReader interface {
-	ListPods(context.Context, string) ([]corev1.Pod, error)
-	ListNodes(context.Context) ([]corev1.Node, error)
+	ListRuntimePods(context.Context, string, string) ([]corev1.Pod, error)
+	ListNodesContext(context.Context) ([]corev1.Node, error)
 }
 
 type PodFilter struct {
@@ -29,11 +29,11 @@ func Filters(ctx context.Context, namespace string, reader FilterReader) (Filter
 	if reader == nil {
 		return FilterOptions{}, nil
 	}
-	pods, err := reader.ListPods(ctx, namespace)
+	pods, err := reader.ListRuntimePods(ctx, namespace, "")
 	if err != nil {
 		return FilterOptions{}, err
 	}
-	nodes, err := reader.ListNodes(ctx)
+	nodes, err := reader.ListNodesContext(ctx)
 	if err != nil {
 		return FilterOptions{}, err
 	}

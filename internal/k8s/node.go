@@ -112,6 +112,19 @@ func (c *Client) ListNodeInfosContext(ctx context.Context) ([]NodeInfo, error) {
 	return result, nil
 }
 
+// ListNodesContext exposes raw Node objects to service-level readers without
+// exposing the typed clientset outside the Kubernetes package.
+func (c *Client) ListNodesContext(ctx context.Context) ([]corev1.Node, error) {
+	if c == nil || c.Clientset == nil {
+		return nil, fmt.Errorf("Kubernetes 客户端未初始化")
+	}
+	list, err := c.Clientset.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+	return list.Items, nil
+}
+
 func (c *Client) GetNodeInfoContext(ctx context.Context, name string) (*NodeInfo, error) {
 	node, err := c.Clientset.CoreV1().Nodes().Get(ctx, name, metav1.GetOptions{})
 	if err != nil {

@@ -61,12 +61,32 @@ func TestConfigMethods_Exist(t *testing.T) {
 	_ = client.GetConfigMapContext
 	_ = client.ListSecretsContext
 	_ = client.GetSecretContext
+	_ = client.GetSecretDataContext
 	_ = client.CreateConfigMapContext
 	_ = client.UpdateConfigMapContext
 	_ = client.DeleteConfigMapContext
 	_ = client.CreateOpaqueSecretContext
 	_ = client.UpdateOpaqueSecretContext
 	_ = client.DeleteOpaqueSecretContext
+}
+
+func TestGetSecretDataContextReturnsIndependentSecretData(t *testing.T) {
+	client := &Client{Clientset: k8sfake.NewSimpleClientset(&corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "notification", Namespace: "monitoring"},
+		Data:       map[string][]byte{"relay-token": []byte("token")},
+	})}
+	data, err := client.GetSecretDataContext(context.Background(), "monitoring", "notification")
+	if err != nil || string(data["relay-token"]) != "token" {
+		t.Fatalf("unexpected secret data: %#v %v", data, err)
+	}
+	data["relay-token"][0] = 'X'
+	secret, err := client.Clientset.CoreV1().Secrets("monitoring").Get(context.Background(), "notification", metav1.GetOptions{})
+	if err != nil || string(secret.Data["relay-token"]) != "token" {
+		t.Fatalf("returned data must not mutate the Kubernetes object: %#v %v", secret, err)
+	}
+	if _, err := (&Client{}).GetSecretDataContext(context.Background(), "monitoring", "notification"); err == nil {
+		t.Fatal("expected uninitialized client error")
+	}
 }
 
 func TestConfigMapMutationLifecycle(t *testing.T) {

@@ -10,7 +10,7 @@ import (
 // PodReader is the minimal Kubernetes read boundary needed to resolve PVC
 // consumers. The monitoring service does not depend on a concrete client.
 type PodReader interface {
-	ListPods(context.Context) ([]corev1.Pod, error)
+	ListRuntimePods(context.Context, string, string) ([]corev1.Pod, error)
 }
 
 type PVCConsumerReader struct{ Pods PodReader }
@@ -19,7 +19,7 @@ func (r PVCConsumerReader) Consumers(ctx context.Context) (map[string][]string, 
 	if r.Pods == nil {
 		return map[string][]string{}, nil
 	}
-	pods, err := r.Pods.ListPods(ctx)
+	pods, err := r.Pods.ListRuntimePods(ctx, "", "")
 	if err != nil {
 		return nil, err
 	}

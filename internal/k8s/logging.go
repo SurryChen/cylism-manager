@@ -1,6 +1,7 @@
 package k8s
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"strings"
@@ -112,6 +113,18 @@ func (c *Client) LoggingStatus() *LoggingStatus {
 		}
 	}
 	return status
+}
+
+func (c *Client) LoggingStatusContext(ctx context.Context) *LoggingStatus {
+	return c.withContext(ctx).LoggingStatus()
+}
+
+func (c *Client) InstallLoggingContext(ctx context.Context, config LoggingConfig) (*LoggingStatus, error) {
+	return c.withContext(ctx).installLogging(config)
+}
+
+func (c *Client) UninstallLoggingContext(ctx context.Context) error {
+	return c.withContext(ctx).uninstallLogging()
 }
 
 // InstallLogging creates or updates the platform-owned Loki and Alloy resources.

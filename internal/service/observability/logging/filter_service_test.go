@@ -10,13 +10,13 @@ import (
 
 type filterReaderFake struct{}
 
-func (filterReaderFake) ListPods(context.Context, string) ([]corev1.Pod, error) {
+func (filterReaderFake) ListRuntimePods(context.Context, string, string) ([]corev1.Pod, error) {
 	return []corev1.Pod{
 		{ObjectMeta: metav1.ObjectMeta{Name: "z", Namespace: "ns"}, Spec: corev1.PodSpec{NodeName: "node-b", Containers: []corev1.Container{{Name: "web"}, {Name: "api"}}}},
 		{ObjectMeta: metav1.ObjectMeta{Name: "a", Namespace: "ns"}, Spec: corev1.PodSpec{NodeName: "node-a"}},
 	}, nil
 }
-func (filterReaderFake) ListNodes(context.Context) ([]corev1.Node, error) {
+func (filterReaderFake) ListNodesContext(context.Context) ([]corev1.Node, error) {
 	return []corev1.Node{{ObjectMeta: metav1.ObjectMeta{Name: "node-b"}}, {ObjectMeta: metav1.ObjectMeta{Name: "node-a"}}}, nil
 }
 

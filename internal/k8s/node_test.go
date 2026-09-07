@@ -100,6 +100,17 @@ func TestNodeHealthStateDistinguishesTransientNotReadyFromFailed(t *testing.T) {
 	}
 }
 
+func TestListNodesContextReturnsRawNodes(t *testing.T) {
+	client := &Client{Clientset: k8sfake.NewSimpleClientset(readyNode("worker-a", false))}
+	nodes, err := client.ListNodesContext(context.Background())
+	if err != nil || len(nodes) != 1 || nodes[0].Name != "worker-a" {
+		t.Fatalf("unexpected node list: %#v %v", nodes, err)
+	}
+	if _, err := (&Client{}).ListNodesContext(context.Background()); err == nil {
+		t.Fatal("expected uninitialized client error")
+	}
+}
+
 func TestNodeInfoMarksCordonedNodeAsEvicted(t *testing.T) {
 	info := nodeToInfo(readyNode("worker-a", true))
 	if !info.Evicted {

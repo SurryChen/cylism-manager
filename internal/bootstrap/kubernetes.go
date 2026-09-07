@@ -61,23 +61,23 @@ func BuildKubernetesAdapters(client *k8s.Client) KubernetesAdapters {
 		SystemComponent: k8s.SystemComponentKubernetesAdapter{Client: client},
 		Monitoring: systemapi.MonitoringDependencies{
 			Query:     monitoringClient.Query,
-			Status:    k8s.VictoriaMetricsReadiness{Client: client},
-			Component: k8s.MonitoringComponentAdapter{Client: client},
-			Consumers: monitoringservice.PVCConsumerReader{Pods: k8s.PodReader{Clientset: client.Clientset}},
+			Status:    monitoringservice.StatusFunc(func(ctx context.Context) bool { return client.VictoriaMetricsStatusContext(ctx).ReadyReplicas > 0 }),
+			Component: client,
+			Consumers: monitoringservice.PVCConsumerReader{Pods: client},
 		},
 		Logging: systemapi.LoggingDependencies{
 			Query:        loggingClient.Query,
 			Ready:        func(ctx context.Context) bool { return client.LoggingStatusContext(ctx).LokiReady >= 1 },
-			Component:    k8s.LoggingComponentAdapter{Client: client},
-			FilterReader: k8s.LoggingFilterReader{Clientset: client.Clientset},
+			Component:    client,
+			FilterReader: client,
 		},
 		Alerting: systemapi.AlertingDependencies{
 			Alertmanager: alertingClient.Request,
-			Component:    k8s.AlertingComponentAdapter{Client: client},
+			Component:    client,
 			Ready: func(ctx context.Context) bool {
 				return client.AlertingStatusContext(ctx).State == k8s.AlertingStateReady
 			},
-			Secrets: k8s.SecretReader{Client: client},
+			Secrets: client,
 			Sender:  alertingservice.DefaultNotificationSender{},
 		},
 		Network:  NetworkAdapters{Ingress: client, StandardIngress: client, DNS: client, Certificate: client},

@@ -323,6 +323,23 @@ func (c *Client) GetSecretContext(ctx context.Context, namespace, name string) (
 	}, nil
 }
 
+// GetSecretDataContext exposes only Secret data to internal services that
+// need credential values, without coupling them to the typed clientset.
+func (c *Client) GetSecretDataContext(ctx context.Context, namespace, name string) (map[string][]byte, error) {
+	if c == nil || c.Clientset == nil {
+		return nil, fmt.Errorf("Kubernetes 客户端未初始化")
+	}
+	secret, err := c.Clientset.CoreV1().Secrets(namespace).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return nil, err
+	}
+	data := make(map[string][]byte, len(secret.Data))
+	for key, value := range secret.Data {
+		data[key] = append([]byte(nil), value...)
+	}
+	return data, nil
+}
+
 func (c *Client) CreateOpaqueSecretContext(ctx context.Context, request OpaqueSecretMutation) (*SecretInfo, error) {
 	data := make(map[string][]byte, len(request.Data))
 	for key, value := range request.Data {

@@ -135,6 +135,9 @@ func (c *Client) withContext(ctx context.Context) *Client {
 }
 
 func (c *Client) dynamicClient() (dynamic.Interface, error) {
+	if c == nil {
+		return nil, fmt.Errorf("Kubernetes dynamic client 未初始化")
+	}
 	if c.DynamicClient != nil {
 		return c.DynamicClient, nil
 	}

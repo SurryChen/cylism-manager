@@ -169,6 +169,10 @@ func (c *Client) UninstallVictoriaMetricsContext(ctx context.Context) error {
 	return c.withContext(ctx).uninstallVictoriaMetrics()
 }
 
+func (c *Client) StartVictoriaMetricsHostPathMigrationContext(ctx context.Context, request VictoriaMetricsMigrationRequest) (*VictoriaMetricsStatus, error) {
+	return c.withContext(ctx).startVictoriaMetricsHostPathMigration(request)
+}
+
 // InstallVictoriaMetrics creates or updates the managed metrics store. New
 // installations always use the platform-owned PVC; legacy hostPath deployments
 // retain their existing volume until explicitly migrated.
