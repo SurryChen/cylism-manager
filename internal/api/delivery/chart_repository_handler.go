@@ -12,7 +12,7 @@ import (
 )
 
 type ChartRepositoryHandler struct {
-	store  repository.ChartRepositoryStore
+	store  repository.ChartRepositoryRepository
 	client *http.Client
 }
 type chartRepositoryRequest struct {
@@ -23,7 +23,7 @@ type chartRepositoryRequest struct {
 	Enabled      *bool  `json:"enabled"`
 }
 
-func NewChartRepositoryHandler(s repository.ChartRepositoryStore) *ChartRepositoryHandler {
+func NewChartRepositoryHandler(s repository.ChartRepositoryRepository) *ChartRepositoryHandler {
 	return &ChartRepositoryHandler{store: s, client: &http.Client{Timeout: 10 * time.Second}}
 }
 func (h *ChartRepositoryHandler) List(c *gin.Context) {
