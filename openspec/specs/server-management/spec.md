@@ -2,56 +2,32 @@
 服务器注册、Agent 部署和状态监控管理。
 ## Requirements
 ### Requirement: 服务器注册
-系统 SHALL允许用户注册远程服务器，提供名称、主机地址、gRPC 端口、SSH 主机、SSH 端口、SSH 用户名以及 SSH 认证凭据（密码或私钥）。
+系统 SHALL 允许用户注册远程 Linux 服务器，提供名称、管理地址、SSH 端口、SSH 用户、权限模式以及 SSH 认证凭据（密码或私钥）；系统 SHALL 不再要求 gRPC 端口或 Agent 部署信息。
 
 #### Scenario: 使用密码认证注册服务器
-- **WHEN** 用户提交服务器注册，名称为 "web-01"，主机为 "10.0.0.1"，SSH 用户为 "root"，SSH 密码为指定值
-- **THEN** 系统存储服务器记录，并在持久化到 SQLite 前使用 AES-256 加密密码
+- **WHEN** 用户提交服务器注册，名称为 "worker-01"，管理地址为 "100.101.1.10"，SSH 用户为 "ops"，权限模式为 "sudo"，SSH 密码为指定值
+- **THEN** 系统存储服务器记录，并在持久化前使用 AES-256 加密密码
+- **AND** 新记录状态为 `credential_pending` 或 `ready` 之前的纳管状态，而不是 Agent online/offline 状态
 
 #### Scenario: 使用密钥认证注册服务器
-- **WHEN** 用户提交服务器注册，附带 SSH 私钥内容
-- **THEN** 系统存储服务器记录，并在持久化前使用 AES-256 加密私钥
+- **WHEN** 用户提交服务器注册，附带 SSH 私钥内容与可选口令
+- **THEN** 系统存储服务器记录，并在持久化前加密私钥和口令
 
-#### Scenario: 拒绝重复主机
-- **WHEN** 用户尝试注册一个已存在的主机地址
-- **THEN** 系统返回错误，提示该主机已注册
-
-### Requirement: Agent 部署
-系统 SHALL通过 SSH 将 Agent 二进制部署到已注册的服务器，探测远程操作系统和架构，上传匹配的二进制文件，并启动 Agent 进程。
-
-#### Scenario: Agent 部署成功
-- **WHEN** 用户对一台具有有效 SSH 凭据的服务器触发部署
-- **THEN** 系统通过 SSH 连接，检测 OS/Arch，上传 Agent 二进制，通过 systemd 或 nohup 启动 Agent，建立 gRPC 连接，并将服务器状态设为 "online"
-
-#### Scenario: SSH 认证失败
-- **WHEN** 用户触发部署但 SSH 凭据无效
-- **THEN** 系统返回认证失败的错误，并将服务器状态设为 "offline"
-
-#### Scenario: 远程未安装 acme.sh
-- **WHEN** Agent 在未安装 acme.sh 的服务器上启动
-- **THEN** 系统将服务器标记为 online，但在服务器详情中将 acme.sh 标记为不可用
-
-### Requirement: 服务器状态监控
-系统 SHALL与每个 Agent 维持 gRPC 心跳，并据此更新服务器状态。
-
-#### Scenario: Agent 心跳正常
-- **WHEN** Agent 在 30 秒超时内响应 Ping RPC
-- **THEN** 服务器状态保持 "online"，并更新 last_seen 时间戳
-
-#### Scenario: Agent 心跳丢失
-- **WHEN** Agent 连续 3 次未能响应 Ping RPC
-- **THEN** 系统将服务器状态设为 "offline"
+#### Scenario: 拒绝重复管理地址
+- **WHEN** 用户尝试注册一个已存在的 `management_address`
+- **THEN** 系统返回错误，提示该服务器已注册
 
 ### Requirement: 服务器列表与详情
-系统 SHALL提供 API 端点以列出所有已注册服务器，以及查看单个服务器详情（含状态和最后在线时间）。
+系统 SHALL 提供服务器列表与详情能力，返回服务器台账、Tailscale 纳管信息、激活状态和主机事实缓存摘要；系统 SHALL 不再把 Agent 心跳状态作为列表主状态。
 
 #### Scenario: 列出所有服务器
 - **WHEN** 用户请求服务器列表
-- **THEN** 系统返回所有已注册服务器及其状态、主机和最后在线时间
+- **THEN** 系统返回名称、管理地址、`tailscale_ipv4`、`tailscale_online`、`ssh_user`、`privilege_mode`、`activation_state`、`last_collected_at`
+- **AND** 响应中不包含明文凭据
 
 #### Scenario: 查看服务器详情
-- **WHEN** 用户请求特定服务器的详情
-- **THEN** 系统返回完整服务器信息，包含 SSH 配置（凭据已脱敏）、Agent 状态和关联站点数量
+- **WHEN** 用户请求特定服务器详情
+- **THEN** 系统返回完整台账信息、脱敏后的 SSH 配置、最近一次激活结果和主机事实缓存
 
 ### Requirement: 操作日志展示
 系统 SHALL在服务器详情面板中展示操作日志，支持实时轮询更新。
@@ -90,28 +66,49 @@
 - **WHEN** 部署请求携带 force=true，且远端有运行中的 Agent
 - **THEN** 系统先执行 systemctl stop（或 pkill），再覆盖二进制文件，最后重启 Agent 并建立 gRPC 连接
 
-### Requirement: Agent 信息卡片展示
-系统 SHALL 在服务器详情面板中展示 Agent 信息卡片，包含状态、版本、部署路径、最后部署时间和最后在线时间。
-
-#### Scenario: 已部署 Agent 的服务器详情
-- **WHEN** 用户点击已部署 Agent 的服务器行
-- **THEN** 详情面板展示 Agent 信息卡片：在线/离线状态、Agent 版本、部署路径、最后部署时间和最后在线时间
-
-#### Scenario: 未部署 Agent 的服务器详情
-- **WHEN** 用户点击未部署 Agent 的服务器行
-- **THEN** 详情面板展示 Agent 信息卡片，版本和部署路径显示为"未部署"
-
-### Requirement: 状态同步操作入口
-系统 SHALL 在服务器列表每行提供"状态同步"按钮。
-
-#### Scenario: 点击状态同步
-- **WHEN** 用户点击某服务器的"状态同步"按钮
-- **THEN** 系统调用 ProbeAgent 探测远端 Agent，若运行中则更新状态为 online 并刷新列表
-
 ### Requirement: API 响应格式
 该 capability 的所有 API 响应 SHALL 使用统一的 APIResponse 格式，包含 code/message/data 字段，替代原有裸 gin.H 或裸对象返回。
 
 #### Scenario: 响应使用统一格式
 - **WHEN** 调用该 capability 的任意 API
 - **THEN** 响应 body 必须是 `{"code": 0, "message": "ok", "data": ...}` 格式
+
+### Requirement: Tailnet 服务器导入
+系统 SHALL 支持从当前 control-plane 宿主机可见的 tailnet peer 列表中预览并导入服务器记录。
+
+#### Scenario: 预览可导入服务器
+- **WHEN** 用户在服务器页的导入入口触发“扫描 tailnet 设备”
+- **THEN** 系统返回 peer 列表，并将结果区分为 `importable`、`existing`、`conflict`
+
+#### Scenario: 严格模式导入失败
+- **WHEN** 用户以严格模式提交导入，且预览结果中存在冲突项
+- **THEN** 系统拒绝本次导入，并返回冲突列表
+
+#### Scenario: 导入无冲突服务器
+- **WHEN** 用户确认导入所有无冲突 peer
+- **THEN** 系统批量创建服务器记录
+- **AND** 新记录至少包含 `tailscale_device_id`、`tailscale_hostname`、`tailscale_ipv4`
+
+### Requirement: 服务器激活检测
+系统 SHALL 通过 SSH 对服务器执行激活检测，并将结果映射到纳管状态。
+
+#### Scenario: 激活检测通过
+- **WHEN** 服务器 SSH 登录成功，且 root 或 sudo、systemd、磁盘空间等前置条件均满足
+- **THEN** 系统将服务器状态更新为 `ready`
+
+#### Scenario: SSH 登录失败
+- **WHEN** 服务器凭据错误或网络不可达
+- **THEN** 系统将服务器状态更新为 `connectivity_failed`
+- **AND** 详情中记录最近一次失败原因
+
+### Requirement: 服务器实时资源查看
+系统 SHALL 在服务器详情中支持按需查看实时资源使用情况，并采用短缓存避免重复 SSH 采集。
+
+#### Scenario: 首次打开详情触发采集
+- **WHEN** 用户打开某服务器详情并请求实时资源
+- **THEN** 系统通过 SSH 采集 CPU、内存、磁盘和负载信息并返回
+
+#### Scenario: 短时间内重复查看命中缓存
+- **WHEN** 同一服务器在 15 秒内重复请求实时资源
+- **THEN** 系统返回缓存结果，而不是再次建立 SSH 会话
 
