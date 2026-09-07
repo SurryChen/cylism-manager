@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -25,6 +26,19 @@ type serverShutdowner interface {
 type backgroundStopper interface {
 	Stop()
 	Wait()
+}
+
+func validateSecurityConfig(encryptionKey, jwtSecret, adminPassword string) error {
+	if len(encryptionKey) != 32 {
+		return fmt.Errorf("encryption key must be exactly 32 bytes (got %d)", len(encryptionKey))
+	}
+	if strings.TrimSpace(jwtSecret) == "" {
+		return fmt.Errorf("auth.jwt_secret must be configured")
+	}
+	if strings.TrimSpace(adminPassword) == "" {
+		return fmt.Errorf("auth.admin_password must be configured")
+	}
+	return nil
 }
 
 // shutdownPlatform stops HTTP admission first, then cancels and joins
@@ -58,11 +72,14 @@ func main() {
 	}
 	os.MkdirAll("data", 0755)
 
-	encKey := []byte(viper.GetString("encryption.key"))
-	if len(encKey) != 32 {
-		log.Fatalf("Encryption key must be exactly 32 bytes (got %d)", len(encKey))
+	encryptionKey := viper.GetString("encryption.key")
+	jwtSecretValue := viper.GetString("auth.jwt_secret")
+	adminPassword := viper.GetString("auth.admin_password")
+	if err := validateSecurityConfig(encryptionKey, jwtSecretValue, adminPassword); err != nil {
+		log.Fatalf("Invalid security configuration: %v", err)
 	}
-	jwtSecret := []byte(viper.GetString("auth.jwt_secret"))
+	encKey := []byte(encryptionKey)
+	jwtSecret := []byte(jwtSecretValue)
 	accessTTL := time.Duration(viper.GetInt("auth.access_token_ttl")) * time.Second
 	refreshTTL := time.Duration(viper.GetInt("auth.refresh_token_ttl")) * time.Second
 	container, err := bootstrap.NewContainer(bootstrap.Config{

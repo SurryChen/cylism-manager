@@ -1,8 +1,22 @@
 # Cylism Manager 设计文档
 
 > 主题：Tailscale + 单控制面 K3s 基础设施控制台  
-> 版本：v2.0  
-> 日期：2026-07-25
+> 版本：v2.1
+> 原始设计：2026-07-25；当前实现校准：2026-09-07
+
+> 本文是产品与架构基线，不是逐项 API 参考。实现细节以当前路由、Service、Kubernetes 清单和部署脚本为准。
+
+## 当前实现校准（2026-09-07）
+
+以下内容已根据当前代码补充或修正：
+
+- 平台保留可选的 gRPC/HTTP Agent 能力，用于运行时诊断、受控操作、审批和 Nanobot Runtime；主机纳管仍以 SSH 为主，因此 Agent 不是平台启动前提。
+- 路由能力同时覆盖标准 Kubernetes `Ingress` 和 Traefik `IngressRoute`，分别对应 `/api/k8s/ingresses` 与 `/api/routes`。
+- 应用发布支持 `ClusterIP`、`NodePort`、`LoadBalancer`，并支持多端口及 TCP/UDP 协议；“不支持四层路由”仅适用于独立路由编排页面，不适用于应用 Service。
+- 平台 Deployment 当前使用 `/data/cylism-manager` hostPath 保存 SQLite 和运行数据，并通过 `/run/tailscale` hostPath 访问宿主机 socket；不是 PVC 部署模板。
+- 当前已实现 VictoriaMetrics、Alertmanager、Loki、cert-manager、Registry/Registry Proxy 等扩展能力，扩展状态由系统与对应领域页面展示。
+- Tailscale 既可由部署前脚本配置，也可通过平台 `/api/tailscale/init` 和 `/api/tailscale/install-script` 管理本机接入；两种方式都不改变“平台依赖已有 tailnet”的产品定位。
+- 前端当前以 `/resources`、`/network`、`/cluster` 等聚合页承载资源导航；`/workloads`、`/services`、`/configs`、`/routes`、`/certs` 主要作为兼容入口或重定向。
 
 ## 1. 设计目标
 
@@ -25,7 +39,7 @@
 - Linux 主机
 - 服务器导入、纳管、SSH 激活
 - Worker 节点加入与移除
-- Namespace、Workload、Service、ConfigMap、Secret、Ingress 管理
+- Namespace、Workload、Service、ConfigMap、Secret、Ingress/IngressRoute 管理
 - 证书能力入口与扩展状态提示
 - 审计日志
 
@@ -35,9 +49,10 @@
 - 多 control-plane / HA K3s 管理
 - Windows 节点
 - 宿主机 NGINX 站点配置管理
-- TCP/UDP 四层路由编排
 - 持续型主机监控系统替代品
 - 无 Tailscale 场景下的集群引导
+
+应用 Service 已支持 `LoadBalancer` 以及多端口 TCP/UDP；这里不提供的是独立于应用 Service 的通用四层路由编排。
 
 ## 3. 必须锁定的产品决策
 
@@ -66,7 +81,7 @@
 - TLS Secret 引用
 - 常见注解
 
-这样与 K3s 默认的 Traefik/Ingress 生态兼容，职责边界也最清晰。
+标准 Ingress 是应用和通用 HTTP 路由的主模型；已有 Traefik `IngressRoute` 资源通过独立的高级入口读取和维护。两者都不再表示宿主机 NGINX 站点配置。
 
 ### 3.3 集群运行态以 Kubernetes API 为事实来源
 
@@ -83,20 +98,21 @@
 
 数据库只保存平台元数据，不复制整套集群状态。
 
-### 3.4 平台不负责“搭建 tailnet”，只负责“利用已有 tailnet”
+### 3.4 平台不负责“组织 tailnet”，主要负责“利用已有 tailnet”
 
 用户在部署平台前，已经完成：
 
 - 控制面宿主机加入 tailnet
 - 其他候选服务器加入 tailnet，或至少具备后续加入 tailnet 的前提
 
-平台需要做的是：
+平台的默认部署前提是 tailnet 已可用；在此前提下平台也提供受控的本机初始化入口：
 
 - 读取本机 `tailscaled` socket，发现 tailnet 设备
 - 允许用户保存可复用 auth key，便于远程补装 Tailscale
+- 通过 `/api/tailscale/init` 执行本机安装/注册，通过 `/api/tailscale/install-script` 返回脱敏命令
 - 用 Tailscale 地址做 SSH 与 K3s 节点加入
 
-这比“平台首次启动时自己初始化本机 Tailscale”更可实施，也更符合你的真实部署顺序。
+平台不会替用户创建 tailnet、管理 tailnet ACL 或替代 Tailscale 控制台；本机初始化属于部署辅助能力。
 
 ### 3.5 V1 只支持通过 UI 加入 worker，不支持新增 control-plane
 
@@ -143,7 +159,7 @@
 - 已安装并运行单节点 K3s
 - 能通过 hostPath 向平台暴露 `tailscaled` socket
 - 平台 Pod 固定调度在该控制面节点
-- 提供持久化存储给 SQLite
+- 提供持久化存储给 SQLite（当前清单使用控制面宿主机的 `hostPath`；生产环境应自行保障该目录的备份与权限）
 
 ## 4.3 平台运行前提
 
@@ -159,7 +175,7 @@
 - `replicas: 1`
 - `nodeSelector` 或 `nodeAffinity` 固定到控制面节点
 - `hostPath` 挂载 `tailscaled.sock`
-- SQLite 使用 PVC
+- SQLite 使用 `/data/cylism-manager` hostPath
 - Service 使用 `ClusterIP`
 - 通过 Ingress 对外暴露 UI
 
@@ -226,13 +242,14 @@
 - 创建、更新、删除相应资源
 - 检测扩展 CRD 是否存在
 
-## 5.2 V1 不使用独立远程 Agent
+## 5.2 Agent 是可选运行时能力，不是主机纳管前提
 
-尽管仓库中存在 gRPC Agent 方向的历史设计，但基于你当前描述的主场景，V1 最合理的实现是：
+平台的主机纳管和 K3s 编排仍采用 SSH + Kubernetes API；同时当前实现提供可选的 Agent/Runtime 能力，用于受控诊断、审批和运行时工具：
 
 - 直接用 SSH 远程执行主机级操作
 - 直接用 Kubernetes API 管理集群内资源
-- 不引入额外的远程常驻 Agent 进程
+- 不要求所有被纳管服务器运行额外的常驻 Agent 进程
+- Agent API 仅在对应 Runtime 或受控操作启用时使用
 
 这样可以把方案真正收敛到“少组件、少故障点、可解释”。
 
@@ -500,15 +517,14 @@ V1 支持：
 
 - `ClusterIP`
 - `NodePort`
+- `LoadBalancer`
 - `Headless`
 
-不支持：
-
-- 云厂商 `LoadBalancer` 语义扩展
+多端口 TCP/UDP Service 用于应用自身的流量暴露；平台不负责云厂商 LoadBalancer 的额外编排。
 
 ### 路由
 
-V1 使用标准 Kubernetes `Ingress` 模型：
+通用路由优先使用标准 Kubernetes `Ingress` 模型：
 
 - Host
 - Path
@@ -516,7 +532,7 @@ V1 使用标准 Kubernetes `Ingress` 模型：
 - TLS Secret
 - 常用注解
 
-不在 V1 提供 Traefik CRD 的完整可视化编辑器；如需高级能力，放入扩展或高级模式。
+现有 Traefik `IngressRoute` 通过 `/api/routes` 提供独立的高级读取/操作入口，不等同于宿主机 NGINX 配置。
 
 ## 9. 页面与导航规划
 
@@ -598,7 +614,7 @@ Tailscale 导入、SSH 纳管和激活入口都收敛在这里，系统级的 Au
 - Cordon / Drain / Remove
 - 查看 Node Conditions
 
-### 工作负载 `/workloads`
+### 工作负载 `/resources?tab=workloads`
 
 聚焦 Deployment / StatefulSet / DaemonSet。
 
@@ -611,7 +627,7 @@ Tailscale 导入、SSH 纳管和激活入口都收敛在这里，系统级的 Au
 V1 保持三类工作负载即可，不把 Job / CronJob 一次性塞进来。  
 命名空间不再单独成页，而是作为工作负载等页面的统一筛选条件。
 
-### 服务 `/services`
+### 服务 `/resources?tab=services`
 
 展示：
 
@@ -624,7 +640,7 @@ V1 保持三类工作负载即可，不把 Job / CronJob 一次性塞进来。
 
 支持 CRUD 与详情查看。
 
-### 配置 `/configs`
+### 配置 `/resources?tab=configs`
 
 页签分为：
 
@@ -633,7 +649,7 @@ V1 保持三类工作负载即可，不把 Job / CronJob 一次性塞进来。
 
 Secret 相关交互必须强调风险。
 
-### 路由 `/routes`
+### 路由 `/network?tab=routes`
 
 展示当前 Ingress 规则：
 
@@ -646,7 +662,7 @@ Secret 相关交互必须强调风险。
 
 提供可视化创建与编辑，不暴露过多底层 YAML。
 
-### 证书 `/certs`
+### 证书 `/network?tab=certificates`
 
 该页受扩展能力控制：
 
@@ -684,17 +700,14 @@ Secret 相关交互必须强调风险。
 
 ## 10.1 前端路由调整
 
-建议最终路由：
+当前前端主要路由：
 
 ```text
 /
 /servers
 /cluster
-/workloads
-/services
-/configs
-/routes
-/certs
+/resources?tab=workloads|services|configs
+/network?tab=routes|certificates
 /audit
 /settings/system
 /db-admin
