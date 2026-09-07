@@ -153,3 +153,21 @@ func (s *Store) UpsertSystemComponentConfig(config *model.SystemComponentConfig)
 func (s *Store) DeleteSystemComponentConfig(chartName string) error {
 	return s.db.Where("chart_name = ?", chartName).Delete(&model.SystemComponentConfig{}).Error
 }
+
+func (s *Store) CreateOperationLog(log *model.OperationLog) error { return s.db.Create(log).Error }
+
+func (s *Store) UpdateOperationLog(log *model.OperationLog) error { return s.db.Save(log).Error }
+
+func (s *Store) ListOperationsByResource(resourceType string, resourceID uint) ([]model.OperationLog, error) {
+	var logs []model.OperationLog
+	err := s.db.Where("resource_type = ? AND resource_id = ?", resourceType, resourceID).Order("created_at desc").Find(&logs).Error
+	return logs, err
+}
+
+func (s *Store) DeleteExpiredOperationLogs(retentionDays int) error {
+	if retentionDays <= 0 {
+		return nil
+	}
+	threshold := time.Now().AddDate(0, 0, -retentionDays)
+	return s.db.Where("created_at < ?", threshold).Delete(&model.OperationLog{}).Error
+}

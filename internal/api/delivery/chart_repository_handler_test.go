@@ -14,7 +14,7 @@ type chartRepositoryFake struct {
 	created *model.ChartRepository
 }
 
-var _ repository.ChartRepositoryStore = (*chartRepositoryFake)(nil)
+var _ repository.ChartRepositoryRepository = (*chartRepositoryFake)(nil)
 
 func (f *chartRepositoryFake) CreateChartRepository(item *model.ChartRepository) error {
 	item.ID = 1

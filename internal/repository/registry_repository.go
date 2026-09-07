@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/cylism/cylism-manager/internal/model"
+	"github.com/cylism/cylism-manager/internal/store"
 )
 
 // ManagedRegistryRepository is the persistence contract required by the
@@ -65,8 +66,8 @@ type ImageRegistryRepository interface {
 	DeleteImageRegistry(uint) error
 }
 
-// ChartRepositoryStore persists Helm chart Repository configuration.
-type ChartRepositoryStore interface {
+// ChartRepositoryRepository persists Helm chart repository configuration.
+type ChartRepositoryRepository interface {
 	CreateChartRepository(*model.ChartRepository) error
 	ListChartRepositories() ([]model.ChartRepository, error)
 	GetChartRepository(uint) (*model.ChartRepository, error)
@@ -74,3 +75,11 @@ type ChartRepositoryStore interface {
 	DeleteChartRepository(uint) error
 	GetVerifiedCertManagerChartRepository() (*model.ChartRepository, error)
 }
+
+var (
+	_ ManagedRegistryRepository    = (*store.Store)(nil)
+	_ NodeRegistryMirrorRepository = (*store.Store)(nil)
+	_ RegistryProxyRepository      = (*store.Store)(nil)
+	_ ImageRegistryRepository      = (*store.Store)(nil)
+	_ ChartRepositoryRepository    = (*store.Store)(nil)
+)
