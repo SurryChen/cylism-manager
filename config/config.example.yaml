@@ -1,0 +1,31 @@
+# Cylism Manager 配置文件
+server:
+  host: "0.0.0.0"
+  port: 8080
+  # 飞书和邮件告警中“查看平台告警”按钮的公开访问地址
+  public_url: "https:/test.com"
+
+database:
+  path: "/data/cylism.db"
+
+encryption:
+  # AES-256 密钥，32 字节，部署时请更换
+  key: "lsjflsjfslfjsljWRWrwersfdSDFsdjs"
+
+acme:
+  bin_path: "acme.sh"
+  renew_before_days: 30
+
+log:
+  level: "info"
+  file: "./data/cylism.log"
+
+auth:
+  admin_user: "admin"
+  admin_password: "admin"
+  jwt_secret: "lsjflsjfslujsljWRWrwersfdSDFsdjs"
+  access_token_ttl: 7200   # 2 hours in seconds
+  refresh_token_ttl: 604800  # 7 days in seconds
+
+operation_log:
+  retention_days: 30

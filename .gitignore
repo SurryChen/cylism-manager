@@ -45,3 +45,5 @@ Thumbs.db
 .k3s-offline
 v1.36.3+k3s1.zip
 skill
+
+config/config.yaml
