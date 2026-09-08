@@ -134,10 +134,30 @@ jobs:
         env:
           CYLISM_DEV_DEPLOY_URL: ${{ secrets.CYLISM_DEV_DEPLOY_URL }}
           CYLISM_DEV_DEPLOY_SECRET: ${{ secrets.CYLISM_DEV_DEPLOY_SECRET }}
+          CYLISM_DEV_DEPLOY_RESOLVE_IP: ${{ secrets.CYLISM_DEV_DEPLOY_RESOLVE_IP }}
           DEV_IMAGE: ${{ steps.dev.outputs.image }}
         run: |
           [ -n "${CYLISM_DEV_DEPLOY_URL}" ] || { echo "CYLISM_DEV_DEPLOY_URL is required"; exit 1; }
           [ -n "${CYLISM_DEV_DEPLOY_SECRET}" ] || { echo "CYLISM_DEV_DEPLOY_SECRET is required"; exit 1; }
+
+          parsed="$(CYLISM_DEV_DEPLOY_URL="${CYLISM_DEV_DEPLOY_URL}" python3 - <<'PY'
+          from urllib.parse import urlparse
+          import os
+
+          parsed = urlparse(os.environ["CYLISM_DEV_DEPLOY_URL"])
+          if not parsed.scheme or not parsed.hostname:
+              raise SystemExit("CYLISM_DEV_DEPLOY_URL must be an absolute URL")
+          port = parsed.port
+          if port is None:
+              port = 443 if parsed.scheme == "https" else 80
+          print(f"{parsed.hostname}\t{port}")
+          PY
+          )"
+          IFS=$'\t' read -r deploy_host deploy_port <<< "${parsed}"
+          resolve_arg=()
+          if [ -n "${CYLISM_DEV_DEPLOY_RESOLVE_IP}" ]; then
+            resolve_arg=(--resolve "${deploy_host}:${deploy_port}:${CYLISM_DEV_DEPLOY_RESOLVE_IP}")
+          fi
 
           body="$(python3 - <<'PY'
           import json
@@ -172,6 +192,7 @@ jobs:
             -H "X-Cylism-Timestamp: ${timestamp}" \
             -H "X-Cylism-Nonce: ${nonce}" \
             -H "X-Cylism-Signature: ${signature}" \
+            "${resolve_arg[@]}" \
             --data "${body}"
 
   release:

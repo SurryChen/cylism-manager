@@ -120,7 +120,10 @@ ghcr.io/surrychen/cylism-manager:<full-sha>
    ```text
    CYLISM_DEV_DEPLOY_URL=https://你的测试环境域名/api/platform/deployments
    CYLISM_DEV_DEPLOY_SECRET=平台生成的部署 Webhook Secret
+   CYLISM_DEV_DEPLOY_RESOLVE_IP=可选，GitHub Actions 访问该域名时强制解析到的 IP
    ```
+
+   如果测试环境域名在 GitHub Actions 侧 DNS 不稳定，或者你想固定打到某个内网/公网入口，可以设置 `CYLISM_DEV_DEPLOY_RESOLVE_IP`。工作流会在发起请求时使用 `curl --resolve` 将该域名指向指定 IP，但仍保留原始域名用于 TLS/SNI 校验。
 
 配置完成后，推送 `dev` 分支即可触发测试环境镜像更新：
 
