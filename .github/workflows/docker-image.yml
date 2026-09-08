@@ -8,9 +8,13 @@ on:
     tags:
       - "v*"
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+
 permissions:
-  contents: write
-  packages: write
+  contents: read
+  packages: read
 
 env:
   REGISTRY: ghcr.io
@@ -20,17 +24,51 @@ env:
   RELEASE_PACKAGE_DIR: dist/release
 
 jobs:
-  verify:
+  verify-go:
     runs-on: ubuntu-latest
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Go test
+        run: go test ./...
+
+      - name: Go build
+        run: go build ./...
+
+  verify-helm:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v5
+
+      - name: Lint Helm chart
+        run: helm lint charts/${{ env.CHART_NAME }}
+
+      - name: Render Helm chart
+        run: helm template cylism-manager charts/${{ env.CHART_NAME }} >/tmp/cylism-manager-rendered.yaml
+
+  verify-image:
+    if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Build image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: Dockerfile
@@ -41,39 +79,29 @@ jobs:
             GOPROXY=https://goproxy.cn,direct
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
-
-      - name: Set up Helm
-        uses: azure/setup-helm@v4
-
-      - name: Lint Helm chart
-        run: helm lint charts/${{ env.CHART_NAME }}
-
-      - name: Render Helm chart
-        run: helm template cylism-manager charts/${{ env.CHART_NAME }} >/tmp/cylism-manager-rendered.yaml
-
-      - name: Go test
-        run: go test ./...
-
-      - name: Go build
-        run: go build ./...
+          cache-from: type=gha
+          cache-to: type=gha,mode=max,ignore-error=true
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
-    needs: [verify]
+    needs: [verify-go, verify-helm]
+    permissions:
+      contents: write
+      packages: write
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Derive release version
         id: version
         run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -81,7 +109,7 @@ jobs:
 
       - name: Build and push image
         id: image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: Dockerfile
@@ -96,9 +124,11 @@ jobs:
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max,ignore-error=true
 
       - name: Set up Helm
-        uses: azure/setup-helm@v4
+        uses: azure/setup-helm@v5
 
       - name: Package Helm chart
         run: |
@@ -132,7 +162,7 @@ jobs:
           sha256sum "${RELEASE_PACKAGE_DIR}/cylism-manager-deploy-${{ steps.version.outputs.version }}.tar.gz" > "${RELEASE_PACKAGE_DIR}/cylism-manager-deploy-${{ steps.version.outputs.version }}.tar.gz.sha256"
 
       - name: Upload release assets
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: |
             ${{ env.RELEASE_PACKAGE_DIR }}/cylism-manager-deploy-${{ steps.version.outputs.version }}.tar.gz

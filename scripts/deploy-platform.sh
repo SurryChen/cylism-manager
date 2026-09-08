@@ -4,6 +4,7 @@ set -Eeuo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MANIFEST="${MANIFEST:-$ROOT_DIR/k8s/platform-deployment.yaml}"
+DEFAULT_IMAGE="${CYLISM_DEFAULT_IMAGE:-ghcr.io/surrychen/cylism-manager:latest}"
 NAMESPACE="${NAMESPACE:-default}"
 DEPLOYMENT="${DEPLOYMENT:-cylism-manager}"
 CONTAINER="${CONTAINER:-platform}"
@@ -11,6 +12,9 @@ IMAGE="${CYLISM_IMAGE:-}"
 NODE_NAME="${CYLISM_NODE_NAME:-}"
 SSH_KEY_PATH="${CYLISM_SSH_KEY_PATH:-${HOME:-}/.ssh/id_ed25519}"
 IMAGE_PULL_SECRET="${CYLISM_IMAGE_PULL_SECRET:-}"
+GHCR_USERNAME="${CYLISM_GHCR_USERNAME:-}"
+GHCR_TOKEN="${CYLISM_GHCR_TOKEN:-}"
+CONFIGURE_GHCR_PULL_SECRET="${CYLISM_CONFIGURE_GHCR_PULL_SECRET:-}"
 
 usage() {
   cat <<'EOF'
@@ -20,11 +24,16 @@ Usage: scripts/deploy-platform.sh [options]
   --node NAME                Node selector for a fresh deployment
   --ssh-key PATH             SSH private key used by the Manager
   --image-pull-secret NAME   Existing imagePullSecret name
+  --ghcr-username NAME       GitHub username for private GHCR image pulls
+  --ghcr-token TOKEN         GitHub token for private GHCR image pulls
+  --configure-ghcr-pull      Create/reuse an imagePullSecret for private GHCR
   --manifest PATH            Kubernetes manifest path
   -h, --help                 Show this help
 
 Existing cylism-secret values are reused. Missing values are generated or
-requested interactively; existing values are never rotated.
+requested interactively; existing values are never rotated. If no image is
+specified and an existing deployment uses another registry, the script switches
+it to ghcr.io/surrychen/cylism-manager:latest.
 EOF
 }
 
@@ -38,6 +47,9 @@ while [ "$#" -gt 0 ]; do
     --node) NODE_NAME="${2:?--node 需要参数}"; shift 2 ;;
     --ssh-key) SSH_KEY_PATH="${2:?--ssh-key 需要参数}"; shift 2 ;;
     --image-pull-secret) IMAGE_PULL_SECRET="${2:?--image-pull-secret 需要参数}"; shift 2 ;;
+    --ghcr-username) GHCR_USERNAME="${2:?--ghcr-username 需要参数}"; shift 2 ;;
+    --ghcr-token) GHCR_TOKEN="${2:?--ghcr-token 需要参数}"; shift 2 ;;
+    --configure-ghcr-pull) CONFIGURE_GHCR_PULL_SECRET="true"; shift ;;
     --manifest) MANIFEST="${2:?--manifest 需要参数}"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) die "未知参数: $1（使用 --help 查看用法）" ;;
@@ -89,6 +101,18 @@ secret_value() {
   value="$(k -n "$NAMESPACE" get secret cylism-secret -o "jsonpath={.data['$key']}" 2>/dev/null || true)"
   [ -n "$value" ] || return 0
   printf '%s' "$value" | decode_b64
+}
+is_cylism_ghcr_image() {
+  case "$1" in
+    ghcr.io/surrychen/cylism-manager:*|ghcr.io/surrychen/cylism-manager@*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+image_uses_ghcr() {
+  case "$1" in
+    ghcr.io/*) return 0 ;;
+    *) return 1 ;;
+  esac
 }
 
 encryption_key="$(secret_value encryption-key || true)"
@@ -149,9 +173,54 @@ retention_days="$(read_config operation-log-retention-days)"; retention_days="${
   printf '  operation-log-retention-days: %s\n' "$retention_days"
 } | k apply -f - >/dev/null
 
-if [ -z "$IMAGE" ]; then IMAGE="$(k -n "$NAMESPACE" get deployment "$DEPLOYMENT" -o "jsonpath={.spec.template.spec.containers[?(@.name=='$CONTAINER')].image}" 2>/dev/null || true)"; fi
-if [ -z "$IMAGE" ]; then read -r -p "请输入要部署的镜像地址: " IMAGE; fi
+current_image=""
+if [ -z "$IMAGE" ]; then
+  current_image="$(k -n "$NAMESPACE" get deployment "$DEPLOYMENT" -o "jsonpath={.spec.template.spec.containers[?(@.name=='$CONTAINER')].image}" 2>/dev/null || true)"
+  if is_cylism_ghcr_image "$current_image"; then
+    IMAGE="$current_image"
+    echo "复用现有 GHCR 镜像: $IMAGE"
+  elif [ -n "$current_image" ]; then
+    IMAGE="$DEFAULT_IMAGE"
+    echo "检测到现有镜像: $current_image"
+    echo "将更新为默认 GHCR 镜像: $IMAGE"
+  else
+    IMAGE="$DEFAULT_IMAGE"
+    echo "使用默认 GHCR 镜像: $IMAGE"
+  fi
+fi
 [ -n "$IMAGE" ] || die "镜像地址不能为空"
+
+if [ -z "$IMAGE_PULL_SECRET" ] && image_uses_ghcr "$IMAGE"; then
+  existing_pull_secret="$(k -n "$NAMESPACE" get deployment "$DEPLOYMENT" -o jsonpath='{.spec.template.spec.imagePullSecrets[0].name}' 2>/dev/null || true)"
+  IMAGE_PULL_SECRET="$existing_pull_secret"
+  if [ -z "$IMAGE_PULL_SECRET" ]; then
+    configure_answer="$CONFIGURE_GHCR_PULL_SECRET"
+    if [ -z "$configure_answer" ]; then
+      read -r -p "GHCR 镜像如果是私有，需要 imagePullSecret。是否现在配置？[y/N] " configure_answer
+    fi
+    if [[ "$configure_answer" =~ ^([Yy]|true|TRUE|1)$ ]]; then
+      IMAGE_PULL_SECRET="${CYLISM_IMAGE_PULL_SECRET_NAME:-ghcr-pull-secret}"
+      if k -n "$NAMESPACE" get secret "$IMAGE_PULL_SECRET" >/dev/null 2>&1; then
+        echo "复用现有 imagePullSecret: $IMAGE_PULL_SECRET"
+      else
+        [ -n "$GHCR_USERNAME" ] || read -r -p "GitHub 用户名: " GHCR_USERNAME
+        if [ -z "$GHCR_TOKEN" ]; then
+          read -r -s -p "GitHub Token（需要 read:packages 权限，不会回显）: " GHCR_TOKEN; echo
+        fi
+        [ -n "$GHCR_USERNAME" ] || die "GitHub 用户名不能为空"
+        [ -n "$GHCR_TOKEN" ] || die "GitHub Token 不能为空"
+        k -n "$NAMESPACE" create secret docker-registry "$IMAGE_PULL_SECRET" \
+          --docker-server=ghcr.io \
+          --docker-username="$GHCR_USERNAME" \
+          --docker-password="$GHCR_TOKEN" \
+          --dry-run=client -o yaml | k apply -f - >/dev/null
+        echo "已创建 imagePullSecret: $IMAGE_PULL_SECRET"
+      fi
+    fi
+  else
+    echo "复用现有 imagePullSecret: $IMAGE_PULL_SECRET"
+  fi
+fi
 
 if ! k -n "$NAMESPACE" get secret cylism-ssh-key >/dev/null 2>&1; then
   [ -f "$SSH_KEY_PATH" ] || die "找不到 SSH 私钥 $SSH_KEY_PATH，请使用 --ssh-key 指定路径"

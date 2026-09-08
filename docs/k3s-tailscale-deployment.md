@@ -70,6 +70,16 @@ GitHub tag `v*` 发布后，默认镜像会推送到 GitHub Container Registry�
 ghcr.io/surrychen/cylism-manager:v1.2.3
 ```
 
+如果 GHCR 镜像是 Public，不需要配置镜像拉取账号密码。如果镜像是 Private，可以让脚本交互式创建或复用 imagePullSecret：
+
+```bash
+bash scripts/deploy-platform.sh \
+  --image ghcr.io/surrychen/cylism-manager:v1.2.3 \
+  --configure-ghcr-pull
+```
+
+其中 GitHub Token 需要具备 `read:packages` 权限。脚本只会把它写入 Kubernetes Secret，不会写入仓库文件。
+
 仓库内的 `scripts/deploy.sh` 是当前维护者环境的快捷部署脚本，包含固定的镜像仓库、SSH 主机和密钥路径；使用前必须替换这些环境相关变量，不能直接照搬到其他环境。
 
 ## 4. Helm 发布包部署
