@@ -1,0 +1,125 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "cylism-manager.fullname" . }}
+  labels:
+    {{- include "cylism-manager.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "cylism-manager.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "cylism-manager.selectorLabels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "cylism-manager.serviceAccountName" . }}
+      {{- with .Values.image.pullSecrets }}
+      imagePullSecrets:
+        {{- range . }}
+        - name: {{ . | quote }}
+        {{- end }}
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      volumes:
+        - name: data
+          hostPath:
+            path: {{ .Values.data.hostPath | quote }}
+            type: DirectoryOrCreate
+        - name: tailscale-socket
+          hostPath:
+            path: {{ .Values.tailscale.hostPath | quote }}
+            type: DirectoryOrCreate
+        - name: ssh-key
+          secret:
+            secretName: {{ .Values.ssh.existingSecret | quote }}
+            defaultMode: 0600
+      containers:
+        - name: platform
+          image: {{ include "cylism-manager.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.port }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: tailscale-socket
+              mountPath: /run/tailscale
+            - name: ssh-key
+              mountPath: /root/.ssh
+              readOnly: true
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          env:
+            - name: ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "cylism-manager.secretName" . }}
+                  key: encryption-key
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "cylism-manager.secretName" . }}
+                  key: jwt-secret
+            - name: ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "cylism-manager.secretName" . }}
+                  key: admin-password
+            - name: ADMIN_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "cylism-manager.configMapName" . }}
+                  key: admin-user
+                  optional: true
+            - name: PUBLIC_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "cylism-manager.configMapName" . }}
+                  key: public-url
+                  optional: true
+            - name: DATABASE_PATH
+              value: /data/cylism.db
+            - name: ACCESS_TOKEN_TTL
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "cylism-manager.configMapName" . }}
+                  key: access-token-ttl
+                  optional: true
+            - name: REFRESH_TOKEN_TTL
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "cylism-manager.configMapName" . }}
+                  key: refresh-token-ttl
+                  optional: true
+            - name: OPERATION_LOG_RETENTION_DAYS
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "cylism-manager.configMapName" . }}
+                  key: operation-log-retention-days
+                  optional: true

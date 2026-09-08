@@ -1,0 +1,29 @@
+{{- if .Values.dnsWebhookRbac.enabled }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: cylism-alidns-webhook-solver
+  labels:
+    {{- include "cylism-manager.labels" . | nindent 4 }}
+    cylism.io/dns-provider: alidns
+rules:
+  - apiGroups: ["acme.cylism.io"]
+    resources: ["alidns"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: cylism-alidns-webhook-solver
+  labels:
+    {{- include "cylism-manager.labels" . | nindent 4 }}
+    cylism.io/dns-provider: alidns
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.dnsWebhookRbac.serviceAccountName }}
+    namespace: {{ .Values.dnsWebhookRbac.serviceAccountNamespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cylism-alidns-webhook-solver
+{{- end }}

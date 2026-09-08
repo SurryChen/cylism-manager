@@ -1,0 +1,59 @@
+replicaCount: 1
+
+image:
+  repository: crpi-c5u9bb8i5qxw1m72.cn-guangzhou.personal.cr.aliyuncs.com/surrychen/cylism-manager
+  tag: ""
+  pullPolicy: Always
+  pullSecrets: []
+
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  name: ""
+
+service:
+  type: ClusterIP
+  port: 8080
+
+nodeSelector: {}
+tolerations:
+  - key: node-role.kubernetes.io/control-plane
+    operator: Exists
+    effect: NoSchedule
+affinity: {}
+
+data:
+  hostPath: /data/cylism-manager
+tailscale:
+  hostPath: /run/tailscale
+ssh:
+  existingSecret: cylism-ssh-key
+
+secrets:
+  existingSecret: cylism-secret
+  encryptionKey: ""
+  jwtSecret: ""
+  adminPassword: ""
+
+config:
+  existingConfigMap: ""
+  adminUser: admin
+  publicURL: ""
+  accessTokenTTL: "7200"
+  refreshTokenTTL: "604800"
+  operationLogRetentionDays: "30"
+
+dnsWebhookRbac:
+  enabled: true
+  serviceAccountName: cylism-cert-manager
+  serviceAccountNamespace: cert-manager
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi

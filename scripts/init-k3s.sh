@@ -26,9 +26,9 @@ fi
 
 echo "cert-manager 已就绪"
 
-# 3. 部署 Cylism Manager
+# 3. 部署 Cylism Manager（交互式创建/复用运行时 Secret）
 echo "部署 Cylism Manager..."
-kubectl apply -f k8s/platform-deployment.yaml
+bash "$(dirname "$0")/deploy-platform.sh"
 
 echo ""
 echo "=== 初始化完成 ==="
