@@ -48,3 +48,11 @@ func TestValidateSecurityConfig(t *testing.T) {
 		})
 	}
 }
+
+func TestConfigMayBeProvidedByEnvironmentWithoutConfigFile(t *testing.T) {
+	// The startup path intentionally allows a missing config.yaml when all
+	// required security values are supplied by the environment.
+	if err := validateSecurityConfig("12345678901234567890123456789012", "jwt-secret", "admin-password"); err != nil {
+		t.Fatalf("environment-backed security config should validate: %v", err)
+	}
+}

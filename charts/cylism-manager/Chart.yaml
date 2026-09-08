@@ -1,0 +1,8 @@
+apiVersion: v2
+name: cylism-manager
+description: Cylism Manager platform and Kubernetes RBAC resources
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+kubeVersion: ">=1.25.0-0"
+icon: https://raw.githubusercontent.com/SurryChen/cylism-manager/main/docs/assets/cylism-manager-icon.svg

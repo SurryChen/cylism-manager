@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -58,8 +59,32 @@ func main() {
 	viper.SetConfigType("yaml")
 	viper.AddConfigPath("./config")
 	viper.AddConfigPath(".")
+	// Environment variables override the optional local configuration file so
+	// production images do not need to contain secrets or a generated config.
+	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+	viper.BindEnv("encryption.key", "ENCRYPTION_KEY")
+	viper.BindEnv("auth.admin_user", "ADMIN_USER")
+	viper.BindEnv("auth.admin_password", "ADMIN_PASSWORD")
+	viper.BindEnv("auth.jwt_secret", "JWT_SECRET")
+	viper.BindEnv("server.host", "SERVER_HOST")
+	viper.BindEnv("server.port", "SERVER_PORT")
+	viper.BindEnv("server.public_url", "PUBLIC_URL")
+	viper.BindEnv("database.path", "DATABASE_PATH")
+	viper.BindEnv("auth.access_token_ttl", "ACCESS_TOKEN_TTL")
+	viper.BindEnv("auth.refresh_token_ttl", "REFRESH_TOKEN_TTL")
+	viper.BindEnv("operation_log.retention_days", "OPERATION_LOG_RETENTION_DAYS")
+	viper.SetDefault("server.host", "0.0.0.0")
+	viper.SetDefault("server.port", 8080)
+	viper.SetDefault("database.path", "/data/cylism.db")
+	viper.SetDefault("auth.admin_user", "admin")
+	viper.SetDefault("auth.access_token_ttl", 7200)
+	viper.SetDefault("auth.refresh_token_ttl", 604800)
+	viper.SetDefault("operation_log.retention_days", 30)
 	if err := viper.ReadInConfig(); err != nil {
-		log.Fatalf("Failed to read config: %v", err)
+		var notFound viper.ConfigFileNotFoundError
+		if !errors.As(err, &notFound) {
+			log.Fatalf("Failed to read config: %v", err)
+		}
 	}
 
 	// 初始化数据库（优先环境变量，兼容 k8s）

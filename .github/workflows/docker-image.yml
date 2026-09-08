@@ -1,22 +1,27 @@
-name: Build and Push Docker Image
+name: Build, Test, and Release
 
 on:
-  push:
-    branches: [main]
   pull_request:
     branches: [main]
+  push:
+    branches: [main]
+    tags:
+      - "v*"
 
 permissions:
-  contents: read
+  contents: write
+  packages: write
 
 env:
   REGISTRY: crpi-c5u9bb8i5qxw1m72.cn-guangzhou.personal.cr.aliyuncs.com
   IMAGE_NAME: surrychen/cylism-manager
+  CHART_NAME: cylism-manager
+  CHART_PACKAGE_DIR: dist/charts
+  RELEASE_PACKAGE_DIR: dist/release
 
 jobs:
-  build:
+  verify:
     runs-on: ubuntu-latest
-
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -24,8 +29,48 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          push: false
+          provenance: false
+          sbom: false
+          build-args: |
+            GOPROXY=https://goproxy.cn,direct
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+
+      - name: Lint Helm chart
+        run: helm lint charts/${{ env.CHART_NAME }}
+
+      - name: Render Helm chart
+        run: helm template cylism-manager charts/${{ env.CHART_NAME }} >/tmp/cylism-manager-rendered.yaml
+
+      - name: Go test
+        run: go test ./...
+
+      - name: Go build
+        run: go build ./...
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    needs: [verify]
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Derive release version
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
       - name: Log in to Alibaba Cloud Container Registry
-        if: github.event_name == 'push'
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
@@ -33,41 +78,59 @@ jobs:
           password: ${{ secrets.ACR_PASSWORD }}
 
       - name: Build and push image
+        id: image
         uses: docker/build-push-action@v6
         with:
           context: .
           file: Dockerfile
-          push: ${{ github.event_name == 'push' }}
-          # The target ACR personal registry rejects OCI attestation manifests.
+          push: true
           provenance: false
           sbom: false
           build-args: |
             GOPROXY=https://goproxy.cn,direct
           tags: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
 
-      - name: Notify Cylism platform deployment
-        if: github.event_name == 'push'
-        env:
-          CYLISM_DEPLOY_WEBHOOK_SECRET: ${{ secrets.CYLISM_DEPLOY_WEBHOOK_SECRET }}
-          CYLISM_DEPLOY_IP: ${{ secrets.CYLISM_DEPLOY_IP }}
-          IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+
+      - name: Package Helm chart
         run: |
-          test -n "$CYLISM_DEPLOY_WEBHOOK_SECRET"
-          timestamp="$(date +%s)"
-          nonce="$(openssl rand -hex 16)"
-          body="$(printf '{\"image\":\"%s\",\"commit_sha\":\"%s\",\"run_id\":\"%s\"}' "$IMAGE" "$GITHUB_SHA" "$GITHUB_RUN_ID")"
-          signature="$(printf '%s.%s.%s' "$timestamp" "$nonce" "$body" | openssl dgst -sha256 -hmac "$CYLISM_DEPLOY_WEBHOOK_SECRET" -hex | sed 's/^.* //')"
-          curl_args=(--fail-with-body --retry 3 --retry-all-errors
-            -X POST
-            -H 'Content-Type: application/json'
-            -H "X-Cylism-Timestamp: $timestamp"
-            -H "X-Cylism-Nonce: $nonce"
-            -H "X-Cylism-Signature: $signature"
-            --data "$body")
-          if test -n "$CYLISM_DEPLOY_IP"; then
-            curl_args+=(--resolve "cylism.crazycoding.top:443:$CYLISM_DEPLOY_IP")
-          fi
-          curl "${curl_args[@]}" \
-            https://cylism.crazycoding.top/api/platform/deployments
+          mkdir -p "${CHART_PACKAGE_DIR}"
+          helm package charts/${CHART_NAME} \
+            --version "${{ steps.version.outputs.version }}" \
+            --app-version "${{ steps.version.outputs.version }}" \
+            --destination "${CHART_PACKAGE_DIR}"
+
+      - name: Log in to GHCR
+        run: echo "${GITHUB_TOKEN}" | helm registry login ghcr.io --username "${GITHUB_ACTOR}" --password-stdin
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push Helm chart to GHCR
+        run: |
+          helm push "${CHART_PACKAGE_DIR}/${CHART_NAME}-${{ steps.version.outputs.version }}.tgz" oci://ghcr.io/surrychen/charts
+
+      - name: Assemble release package
+        run: |
+          mkdir -p "${RELEASE_PACKAGE_DIR}/cylism-manager-${{ steps.version.outputs.version }}"
+          tar_root="${RELEASE_PACKAGE_DIR}/cylism-manager-${{ steps.version.outputs.version }}"
+          cp scripts/deploy-platform.sh "$tar_root/"
+          cp scripts/init-k3s.sh "$tar_root/"
+          cp scripts/install-tailscale.sh "$tar_root/"
+          cp -R charts "$tar_root/"
+          cp -R k8s "$tar_root/"
+          cp config/config.example.yaml "$tar_root/"
+          cp docs/k3s-tailscale-deployment.md "$tar_root/"
+          tar -C "${RELEASE_PACKAGE_DIR}" -czf "${RELEASE_PACKAGE_DIR}/cylism-manager-deploy-${{ steps.version.outputs.version }}.tar.gz" "cylism-manager-${{ steps.version.outputs.version }}"
+          sha256sum "${RELEASE_PACKAGE_DIR}/cylism-manager-deploy-${{ steps.version.outputs.version }}.tar.gz" > "${RELEASE_PACKAGE_DIR}/cylism-manager-deploy-${{ steps.version.outputs.version }}.tar.gz.sha256"
+
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ${{ env.RELEASE_PACKAGE_DIR }}/cylism-manager-deploy-${{ steps.version.outputs.version }}.tar.gz
+            ${{ env.RELEASE_PACKAGE_DIR }}/cylism-manager-deploy-${{ steps.version.outputs.version }}.tar.gz.sha256
+            ${{ env.CHART_PACKAGE_DIR }}/${{ env.CHART_NAME }}-${{ steps.version.outputs.version }}.tgz

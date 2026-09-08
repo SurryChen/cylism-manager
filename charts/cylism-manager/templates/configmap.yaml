@@ -1,0 +1,14 @@
+{{- if not .Values.config.existingConfigMap }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "cylism-manager.configMapName" . }}
+  labels:
+    {{- include "cylism-manager.labels" . | nindent 4 }}
+data:
+  admin-user: {{ .Values.config.adminUser | quote }}
+  public-url: {{ .Values.config.publicURL | quote }}
+  access-token-ttl: {{ .Values.config.accessTokenTTL | quote }}
+  refresh-token-ttl: {{ .Values.config.refreshTokenTTL | quote }}
+  operation-log-retention-days: {{ .Values.config.operationLogRetentionDays | quote }}
+{{- end }}

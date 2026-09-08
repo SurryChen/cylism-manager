@@ -83,9 +83,48 @@ spec:
                 secretKeyRef:
                   name: cylism-secret
                   key: encryption-key
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: cylism-secret
+                  key: jwt-secret
+            - name: ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: cylism-secret
+                  key: admin-password
+            - name: ADMIN_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: cylism-config
+                  key: admin-user
+                  optional: true
+            - name: PUBLIC_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: cylism-config
+                  key: public-url
                   optional: true
             - name: DATABASE_PATH
               value: /data/cylism.db
+            - name: ACCESS_TOKEN_TTL
+              valueFrom:
+                configMapKeyRef:
+                  name: cylism-config
+                  key: access-token-ttl
+                  optional: true
+            - name: REFRESH_TOKEN_TTL
+              valueFrom:
+                configMapKeyRef:
+                  name: cylism-config
+                  key: refresh-token-ttl
+                  optional: true
+            - name: OPERATION_LOG_RETENTION_DAYS
+              valueFrom:
+                configMapKeyRef:
+                  name: cylism-config
+                  key: operation-log-retention-days
+                  optional: true
 ---
 apiVersion: v1
 kind: ServiceAccount

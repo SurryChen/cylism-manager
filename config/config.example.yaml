@@ -3,7 +3,7 @@ server:
   host: "0.0.0.0"
   port: 8080
   # 飞书和邮件告警中“查看平台告警”按钮的公开访问地址
-  public_url: "https:/test.com"
+  public_url: "https://test.com"
 
 database:
   path: "/data/cylism.db"

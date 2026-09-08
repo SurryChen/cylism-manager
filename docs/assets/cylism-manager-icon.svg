@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="Cylism Manager">
+  <rect width="256" height="256" rx="56" fill="#eaf1f0"/>
+  <path d="M128 36 200 78v100l-72 42-72-42V78z" fill="#d8e4f7" stroke="#1f3c43" stroke-width="5.25" stroke-linejoin="round"/>
+  <path d="M148 86a42 42 0 1 0 0 84" fill="none" stroke="#22736b" stroke-width="16" stroke-linecap="round"/>
+  <path d="M88 94h34" stroke="#16835d" stroke-width="10" stroke-linecap="round"/>
+  <circle cx="84" cy="94" r="8.5" fill="#16835d"/>
+  <circle cx="172" cy="128" r="10.5" fill="#285f9a"/>
+  <path d="M172 128H128" stroke="#285f9a" stroke-width="9" stroke-linecap="round"/>
+</svg>
