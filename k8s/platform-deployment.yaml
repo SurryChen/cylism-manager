@@ -47,7 +47,7 @@ spec:
       containers:
         - name: platform
           imagePullPolicy: Always
-          image: crpi-c5u9bb8i5qxw1m72.cn-guangzhou.personal.cr.aliyuncs.com/surrychen/cylism-manager:latest
+          image: ghcr.io/surrychen/cylism-manager:latest
           ports:
             - containerPort: 8080
           volumeMounts:
