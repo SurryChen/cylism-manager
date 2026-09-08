@@ -11,6 +11,18 @@ Cylism Manager 是一个面向 Tailscale + 单节点 K3s 场景的基础设施�
 - 管理平台自身的发布与回滚
 - 提供 Web UI、REST API 和 Agent 通信能力
 
+## 产品定位
+
+Cylism Manager 是一个面向 Tailscale + 单节点 K3s 场景的基础设施控制台。
+它把服务器纳管、SSH 操作、K3s 集群管理和 Kubernetes 资源可视化收敛到同一个界面，降低多机器混合网络环境下的运维复杂度。
+
+核心原则：
+
+- Tailscale 负责组网与节点寻址
+- SSH 负责远程安装与主机级探测
+- Kubernetes API 负责集群内实时状态
+- 平台数据库只保存元数据、凭据、审计和缓存
+
 ## 仓库结构
 
 - `cmd/`：Go 程序入口
@@ -22,7 +34,6 @@ Cylism Manager 是一个面向 Tailscale + 单节点 K3s 场景的基础设施�
 - `docs/`：部署、设计和迁移文档
 - `openspec/`：OpenSpec 变更与规范
 - `config/`：示例配置
-- `PRODUCT.md`：产品定义与定位说明
 
 ## 快速开始
 
@@ -63,9 +74,6 @@ make build
 常用脚本：
 
 - `scripts/deploy-platform.sh`：当前推荐的安装 / 升级脚本
-- `scripts/init-k3s.sh`：初始化 K3s 和平台资源
-- `scripts/install-tailscale.sh`：安装 Tailscale
-- `scripts/deploy.sh`、`scripts/dev-deploy.sh`：历史维护脚本，保留作参考
 
 GitHub Release 会生成：
 
@@ -83,7 +91,5 @@ GitHub Release 会生成：
 
 ## 文档入口
 
-- [PRODUCT.md](PRODUCT.md)
 - [docs/k3s-tailscale-deployment.md](docs/k3s-tailscale-deployment.md)
 - [docs/design/cylism-manager-k3s-infra-console.md](docs/design/cylism-manager-k3s-infra-console.md)
-

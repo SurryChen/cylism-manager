@@ -265,8 +265,6 @@ jobs:
           mkdir -p "${RELEASE_PACKAGE_DIR}/cylism-manager-${{ steps.version.outputs.version }}"
           tar_root="${RELEASE_PACKAGE_DIR}/cylism-manager-${{ steps.version.outputs.version }}"
           cp scripts/deploy-platform.sh "$tar_root/"
-          cp scripts/init-k3s.sh "$tar_root/"
-          cp scripts/install-tailscale.sh "$tar_root/"
           cp -R charts "$tar_root/"
           cp -R k8s "$tar_root/"
           cp config/config.example.yaml "$tar_root/"

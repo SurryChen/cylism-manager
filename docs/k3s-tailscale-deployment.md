@@ -21,11 +21,7 @@
 
 已有 Tailscale 的主机只需确认服务在线；新主机可使用脚本：
 
-```bash
-./scripts/install-tailscale.sh <tskey-auth-...> <hostname>
-```
-
-脚本当前使用 `--accept-routes`。如果所在环境不希望 Tailscale 管理 DNS，请在执行后检查并按需补充 `--accept-dns=false`。确认控制面可以访问 tailnet 中的目标主机：
+手工安装 Tailscale 后，确认控制面可以访问 tailnet 中的目标主机：
 
 ```bash
 tailscale status
@@ -34,18 +30,7 @@ tailscale ip -4
 
 ## 2. 初始化 K3s 与平台资源
 
-在控制面主机执行：
-
-```bash
-./scripts/init-k3s.sh
-```
-
-该脚本会：
-
-1. 在未检测到 `kubectl` 时安装 K3s。
-2. 安装 cert-manager（如果 CRD 尚不存在）。
-3. 调用 `scripts/deploy-platform.sh`，交互式创建或复用运行时 Secret 并应用 `k8s/platform-deployment.yaml`。
-4. 输出 K3s worker join token 和本地端口转发命令。
+K3s、cert-manager 和平台清单请按当前环境手工安装，再使用 `scripts/deploy-platform.sh` 部署平台。
 
 应用清单前，请检查并按环境修改：
 
@@ -131,8 +116,6 @@ ghcr.io/surrychen/cylism-manager:<full-sha>
 git push origin dev
 ```
 
-仓库内的 `scripts/deploy.sh` 是当前维护者环境的快捷部署脚本，包含固定的镜像仓库、SSH 主机和密钥路径；使用前必须替换这些环境相关变量，不能直接照搬到其他环境。
-
 ## 5. Helm 发布包部署
 
 GitHub tag `v*` 发布后，会生成 Helm Chart 包和部署压缩包。安装 Chart 时，默认复用现有 Secret 名称：
@@ -198,8 +181,5 @@ kubectl get crd certificates.cert-manager.io
 
 ## 相关文件
 
-- `scripts/install-tailscale.sh`：安装并注册 Tailscale。
-- `scripts/init-k3s.sh`：初始化 K3s、cert-manager 和平台清单。
-- `scripts/deploy.sh`：维护者环境的镜像构建/推送/部署快捷脚本。
 - `k8s/platform-deployment.yaml`：平台 Deployment、Service、RBAC 和 hostPath 挂载。
 - `docs/archive/operations/k3s-tailscale-ip-migration.md`：旧的特定环境 IP 迁移记录，仅供历史排障参考。
