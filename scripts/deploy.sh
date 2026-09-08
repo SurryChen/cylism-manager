@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-IMAGE="crpi-c5u9bb8i5qxw1m72.cn-guangzhou.personal.cr.aliyuncs.com/surrychen/cylism-manager:latest"
+IMAGE="ghcr.io/surrychen/cylism-manager:latest"
 SSH_HOST="8.148.243.141"
 SSH_USER="chenyilong"
 SSH_KEY="$HOME/.ssh/id_ed25519_claw"
@@ -22,7 +22,7 @@ fi
 echo "✅ Build done"
 
 echo ""
-echo "[2/3] Pushing to ACR..."
+echo "[2/3] Pushing image..."
 sudo docker push "$IMAGE" 2>&1
 if [ $? -ne 0 ]; then
   echo "❌ Push failed"

@@ -1,7 +1,7 @@
 replicaCount: 1
 
 image:
-  repository: crpi-c5u9bb8i5qxw1m72.cn-guangzhou.personal.cr.aliyuncs.com/surrychen/cylism-manager
+  repository: ghcr.io/surrychen/cylism-manager
   tag: ""
   pullPolicy: Always
   pullSecrets: []
