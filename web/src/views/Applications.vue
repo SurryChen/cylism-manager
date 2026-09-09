@@ -5,7 +5,8 @@
       <div v-if="section === 'workspace'" class="page-actions"><div class="workspace-context" @click.stop><div class="workspace-picker"><span class="context-picker-label">项目</span><button data-testid="workspace-project-trigger" type="button" class="context-picker-trigger" :class="{ 'is-open': activeWorkspacePicker === 'project' }" :aria-expanded="activeWorkspacePicker === 'project'" aria-haspopup="listbox" @click="toggleWorkspacePicker('project')"><span class="context-picker-value">{{ workspaceProject?.name || '选择项目' }}</span><ChevronDown :size="15" /></button><div v-if="activeWorkspacePicker === 'project'" data-testid="workspace-project-menu" class="context-picker-menu" role="listbox" aria-label="项目"><button v-for="project in projects" :key="project.id" type="button" class="context-picker-option" :class="{ 'is-selected': project.id === workspaceProjectID }" role="option" :aria-selected="project.id === workspaceProjectID" @click="selectWorkspaceProject(project.id)"><span><strong>{{ project.name }}</strong><small>{{ project.description || '未设置项目说明' }}</small></span><Check v-if="project.id === workspaceProjectID" :size="15" /></button><div v-if="!projects.length" class="context-picker-empty">暂无项目</div></div></div><div class="workspace-picker"><span class="context-picker-label">环境</span><button data-testid="workspace-environment-trigger" type="button" class="context-picker-trigger" :class="{ 'is-open': activeWorkspacePicker === 'environment' }" :aria-expanded="activeWorkspacePicker === 'environment'" aria-haspopup="listbox" :disabled="!workspaceProject" @click="toggleWorkspacePicker('environment')"><span class="context-picker-value">{{ workspaceEnvironment ? `${workspaceEnvironment.name} · ${workspaceEnvironment.namespace}` : '选择环境' }}</span><ChevronDown :size="15" /></button><div v-if="activeWorkspacePicker === 'environment'" data-testid="workspace-environment-menu" class="context-picker-menu context-picker-menu--environment" role="listbox" aria-label="环境"><button v-for="environment in workspaceProject?.environments || []" :key="environment.id" type="button" class="context-picker-option" :class="{ 'is-selected': environment.id === workspaceEnvironmentID }" role="option" :aria-selected="environment.id === workspaceEnvironmentID" @click="selectWorkspaceEnvironment(environment.id)"><span><strong>{{ environment.name }}</strong><small>{{ environment.namespace }}</small></span><Check v-if="environment.id === workspaceEnvironmentID" :size="15" /></button><div v-if="!(workspaceProject?.environments || []).length" class="context-picker-empty">该项目暂无环境</div></div></div></div></div>
       <button v-else-if="section === 'projects'" class="btn btn-primary" @click="showProjectModal = true">+ 新建项目</button>
     </div>
-    <div v-if="error" class="k8s-banner k8s-banner-warn section-gap">⚠ {{ error }}</div>
+    <div v-if="readError" data-testid="applications-read-error" class="k8s-banner k8s-banner-warn section-gap">⚠ {{ readError }}</div>
+    <div v-if="mutationError" data-testid="applications-mutation-error" class="k8s-banner k8s-banner-warn section-gap">⚠ {{ mutationError }}</div>
 
     <template v-if="section === 'workspace'">
       <div v-if="!workspaceReady && projectsLoaded" class="empty-state"><span class="empty-text">请选择项目与环境，或先创建部署目标</span><button class="btn btn-primary" @click="openProjectManagement">创建项目与环境</button></div>
@@ -78,8 +79,20 @@
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Check, ChevronDown } from 'lucide-vue-next'
-import { api } from '../api/index.js'
-import { getApplication, getApplications, getDeploymentTemplates, getDomains, getImageRegistries, getProjects, getWorkspace } from '../api/applications.js'
+import {
+  createApplication as createApplicationRequest,
+  createProject,
+  createRelease as createReleaseRequest,
+  deleteProject as deleteProjectRequest,
+  getApplication,
+  getApplications,
+  getDeploymentTemplates,
+  getDomains,
+  getImageRegistries,
+  getProjects,
+  getWorkspace,
+  updateProject,
+} from '../api/applications.js'
 import { useAsyncResource } from '../composables/useAsyncResource.js'
 
 const props = defineProps({ section: { type: String, default: 'workspace' } })
@@ -91,7 +104,8 @@ const releaseHistory = ref([])
 const applicationsLoaded = ref(false)
 const projectsLoaded = ref(false)
 const releaseHistoryLoaded = ref(false)
-const error = ref('')
+const readError = ref('')
+const mutationError = ref('')
 const submitting = ref(false)
 const showCreate = ref(false)
 const showProjectModal = ref(false)
@@ -175,19 +189,17 @@ function formatTime(value) { return value ? new Date(value).toLocaleString() : '
 function applicationCount(projectID) { return applications.value.filter(app => app.project_id === projectID).length }
 
 async function fetchApplications(scoped = false) {
-  error.value = ''
   const scope = scoped && workspaceReady.value ? { projectID: workspaceProjectID.value, environmentID: workspaceEnvironmentID.value } : {}
   const result = await applicationsResource.refresh(scope)
   if (result !== undefined) applications.value = result || []
-  else if (applicationsResource.error.value) error.value = applicationsResource.error.value.message || '加载应用失败'
+  else if (applicationsResource.error.value) readError.value = applicationsResource.error.value.message || '加载应用失败'
   applicationsLoaded.value = true
 }
 
 async function fetchProjects() {
-  error.value = ''
   const result = await projectsResource.refresh()
   if (result !== undefined) projects.value = result || []
-  else if (projectsResource.error.value) error.value = projectsResource.error.value.message || '加载项目失败'
+  else if (projectsResource.error.value) readError.value = projectsResource.error.value.message || '加载项目失败'
   projectsLoaded.value = true
 }
 
@@ -195,33 +207,28 @@ async function fetchImageRegistries(projectID) {
   const result = await imageRegistriesResource.refresh(projectID)
   if (result !== undefined) imageRegistries.value = result || []
   else if (imageRegistriesResource.error.value) {
-    imageRegistries.value = []
-    error.value = imageRegistriesResource.error.value.message || '加载镜像仓库失败'
+    readError.value = imageRegistriesResource.error.value.message || '加载镜像仓库失败'
   }
 }
 
 async function fetchWorkspace() {
-  error.value = ''
   const result = await workspaceResource.refresh(workspaceProjectID.value, workspaceEnvironmentID.value)
   if (result !== undefined) {
     workspaceOverview.value = result.overview
     workspaceRegistries.value = result.registries || []
     applications.value = result.overview?.applications || []
   } else if (workspaceResource.error.value) {
-    workspaceOverview.value = null
-    workspaceRegistries.value = []
-    error.value = workspaceResource.error.value.message || '加载工作台失败'
+    readError.value = workspaceResource.error.value.message || '加载工作台失败'
   }
   applicationsLoaded.value = true
 }
 
 async function fetchReleaseHistory() {
-  error.value = ''
   const result = await releaseHistoryResource.refresh()
   if (result !== undefined) {
     applications.value = result.applications
     releaseHistory.value = result.releases
-  } else if (releaseHistoryResource.error.value) error.value = releaseHistoryResource.error.value.message || '加载发布记录失败'
+  } else if (releaseHistoryResource.error.value) readError.value = releaseHistoryResource.error.value.message || '加载发布记录失败'
   releaseHistoryLoaded.value = true
 }
 
@@ -231,14 +238,13 @@ async function fetchOverviewDomains() {
     globalDomains.value = result.domains || []
     unassignedManagedDomains.value = result.unassigned || []
   } else if (overviewDomainsResource.error.value) {
-    globalDomains.value = []
-    unassignedManagedDomains.value = []
-    error.value = overviewDomainsResource.error.value.message || '加载证书概览失败'
+    readError.value = overviewDomainsResource.error.value.message || '加载证书概览失败'
   }
 }
 
 async function loadSection(section) {
   const loadID = ++sectionLoadID
+  readError.value = ''
   if (section === 'projects') {
     await Promise.all([fetchProjects(), fetchApplications(), fetchImageRegistries()])
     return
@@ -273,19 +279,19 @@ async function loadSection(section) {
 }
 
 async function openCreateApplication() {
-  error.value = ''
-  if (!workspaceReady.value) { error.value = '请先在顶部选择项目与环境'; return }
+  mutationError.value = ''
+  if (!workspaceReady.value) { mutationError.value = '请先在顶部选择项目与环境'; return }
   createForm.value = { projectID: workspaceProjectID.value, environmentID: workspaceEnvironmentID.value, applicationName: '' }
   showCreate.value = true
 }
-async function createApplication() { submitting.value = true; error.value = ''; try { await api.post('/applications', { project_id: createForm.value.projectID, environment_id: createForm.value.environmentID, name: createForm.value.applicationName }); showCreate.value = false; createForm.value = newApplicationForm(); await fetchWorkspace() } catch (e) { error.value = e.message || '创建应用失败' } finally { submitting.value = false } }
+async function createApplication() { submitting.value = true; mutationError.value = ''; try { await createApplicationRequest({ projectID: createForm.value.projectID, environmentID: createForm.value.environmentID, name: createForm.value.applicationName }); showCreate.value = false; createForm.value = newApplicationForm(); await fetchWorkspace() } catch (e) { mutationError.value = e.message || '创建应用失败' } finally { submitting.value = false } }
 function projectRegistries(project) { return imageRegistries.value.filter(registry => registry.enabled && registry.projects?.some(allowedProject => allowedProject.id === project.id)) }
 function authorizedProjectRegistries(project) { return imageRegistries.value.filter(registry => registry.projects?.some(allowedProject => allowedProject.id === project.id)) }
 function openProjectEditor(project) { editingProject.value = project; projectForm.value = { name: project.name, description: project.description || '', defaultImageRegistryID: project.default_image_registry_id || 0 }; showProjectModal.value = true }
 function closeProjectModal() { showProjectModal.value = false; editingProject.value = null; projectForm.value = { name: '', description: '', defaultImageRegistryID: 0 } }
-async function saveProject() { const isEditing = !!editingProject.value; submitting.value = true; error.value = ''; try { if (isEditing) { await api.put(`/projects/${editingProject.value.id}`, { name: projectForm.value.name, description: projectForm.value.description, default_image_registry_id: projectForm.value.defaultImageRegistryID }) } else { await api.post('/projects', { name: projectForm.value.name, description: projectForm.value.description }) } closeProjectModal(); await Promise.all([fetchProjects(), fetchApplications()]) } catch (e) { error.value = e.message || (isEditing ? '更新项目失败' : '创建项目失败') } finally { submitting.value = false } }
+async function saveProject() { const isEditing = !!editingProject.value; submitting.value = true; mutationError.value = ''; try { const payload = isEditing ? { name: projectForm.value.name, description: projectForm.value.description, default_image_registry_id: projectForm.value.defaultImageRegistryID } : { name: projectForm.value.name, description: projectForm.value.description }; if (isEditing) await updateProject(editingProject.value.id, payload); else await createProject(payload); closeProjectModal(); await Promise.all([fetchProjects(), fetchApplications()]) } catch (e) { mutationError.value = e.message || (isEditing ? '更新项目失败' : '创建项目失败') } finally { submitting.value = false } }
 function requestProjectDelete(project) { projectDeleteTarget.value = project }
-async function deleteProject() { if (!projectDeleteTarget.value) return; submitting.value = true; error.value = ''; try { await api.delete(`/projects/${projectDeleteTarget.value.id}`); projectDeleteTarget.value = null; await Promise.all([fetchProjects(), fetchApplications()]) } catch (e) { error.value = e.message || '删除项目失败' } finally { submitting.value = false } }
+async function deleteProject() { if (!projectDeleteTarget.value) return; submitting.value = true; mutationError.value = ''; try { await deleteProjectRequest(projectDeleteTarget.value.id); projectDeleteTarget.value = null; await Promise.all([fetchProjects(), fetchApplications()]) } catch (e) { mutationError.value = e.message || '删除项目失败' } finally { submitting.value = false } }
 async function openProjectEnvironments(project) { await router.push(`/applications/projects/${project.id}`) }
 async function openHistoryRelease(item) { await router.push(`/applications/${item.application.id}/releases/${item.id}`) }
 async function openUnassignedDomains() { await router.push({ path: '/applications/domains', query: { ...route.query, unassigned: 'true' } }) }
@@ -300,7 +306,7 @@ async function openRegistries() { await router.push({ path: '/applications/regis
 async function openWorkspaceRelease(release) { await router.push(`/applications/${release.application_id}/releases/${release.id}`) }
 
 async function openRelease(app) {
-  error.value = ''
+  readError.value = ''
   releaseForm.value = newReleaseForm()
   releaseTemplates.value = []
   const result = await releaseTemplatesResource.refresh(app.id)
@@ -308,10 +314,10 @@ async function openRelease(app) {
     releaseTemplates.value = (result || []).filter(template => template.enabled)
     const defaultTemplate = releaseTemplates.value.find(template => template.is_default) || releaseTemplates.value[0]
     releaseForm.value.template_id = defaultTemplate?.id || 0
-  } else if (releaseTemplatesResource.error.value) error.value = releaseTemplatesResource.error.value.message || '加载上线模板失败'
+  } else if (releaseTemplatesResource.error.value) readError.value = releaseTemplatesResource.error.value.message || '加载上线模板失败'
   releaseApp.value = app
 }
-async function createRelease() { error.value = ''; if (!releaseForm.value.template_id || !releaseForm.value.version) { error.value = '请选择上线模板并填写版本号'; return } submitting.value = true; try { const applicationID = releaseApp.value.id; const release = await api.post(`/applications/${applicationID}/releases`, releaseForm.value); releaseApp.value = null; await router.push(`/applications/${applicationID}/releases/${release.id}`); fetchWorkspace() } catch (e) { error.value = e.message || '创建发布失败' } finally { submitting.value = false } }
+async function createRelease() { mutationError.value = ''; if (!releaseForm.value.template_id || !releaseForm.value.version) { mutationError.value = '请选择上线模板并填写版本号'; return } submitting.value = true; try { const applicationID = releaseApp.value.id; const release = await createReleaseRequest(applicationID, releaseForm.value); releaseApp.value = null; await router.push(`/applications/${applicationID}/releases/${release.id}`); fetchWorkspace() } catch (e) { mutationError.value = e.message || '创建发布失败' } finally { submitting.value = false } }
 async function openTemplateManagement(app) { releaseApp.value = null; await router.push(`/applications/${app.id}`) }
 async function openDetails(app) { await router.push(`/applications/${app.id}`) }
 

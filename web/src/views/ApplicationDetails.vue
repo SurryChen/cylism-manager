@@ -5,7 +5,8 @@
       <div><h1 class="page-title">{{ application?.name || '应用详情' }}</h1><p class="page-subtitle">{{ application?.project?.name || '-' }} · {{ application?.environment?.name || '-' }} · {{ application?.environment?.namespace || '-' }}</p></div>
       <div class="btn-group"><button class="btn" :disabled="restarting || !releases.length" @click="openRestartConfirmation"><RefreshCw :size="14" :class="{ 'is-spinning': restarting }" />{{ restarting ? '重启中...' : '重启应用' }}</button><button class="btn btn-primary" @click="openTemplateEditor()">新建上线模板</button></div>
     </div>
-    <div v-if="error" class="k8s-banner k8s-banner-warn section-gap">{{ error }}</div>
+    <div v-if="readError" data-testid="application-detail-read-error" class="k8s-banner k8s-banner-warn section-gap">{{ readError }}</div>
+    <div v-if="mutationError" data-testid="application-detail-mutation-error" class="k8s-banner k8s-banner-warn section-gap">{{ mutationError }}</div>
 
     <section v-if="application" class="detail-section capability-section">
       <div class="section-heading"><div><h2>能力标签</h2><p>用于让受权管理台发现应用；标签不影响模板、发布或 Kubernetes 资源。</p></div><button class="btn btn-sm" @click="addCapability">添加标签</button></div>
@@ -61,8 +62,25 @@
 import { computed, defineComponent, h, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ArrowLeft, Pencil, RefreshCw, Trash2 } from 'lucide-vue-next'
-import { api } from '../api/index.js'
-import { getApplication, getApplicationConfigResources, getApplicationEndpoints, getApplicationSecretResources, getDeploymentTemplates, getImageRegistries } from '../api/applications.js'
+import {
+  createDeploymentTemplate,
+  createEndpoint,
+  createIntegrationHandoff,
+  deleteDeploymentTemplate,
+  deleteEndpoint,
+  getApplication,
+  getApplicationConfigResources,
+  getApplicationEndpoints,
+  getApplicationSecretResources,
+  getDeploymentTemplates,
+  getImageRegistries,
+  restartApplication as restartApplicationRequest,
+  saveApplicationCapabilities,
+  setDefaultDeploymentTemplate,
+  updateDeploymentTemplate,
+  updateEndpoint,
+  updateWorkloadKind as updateWorkloadKindRequest,
+} from '../api/applications.js'
 import { getManagedDomains } from '../api/domains.js'
 import { useAsyncResource } from '../composables/useAsyncResource.js'
 import { getPersistentVolumeInventory } from '../api/storage.js'
@@ -94,7 +112,8 @@ const persistentVolumeClaims = ref([])
 const clusterNodes = ref([])
 const storageResourcesLoaded = ref(false)
 const storageResourcesLoading = ref(false)
-const error = ref('')
+const readError = ref('')
+const mutationError = ref('')
 const saving = ref(false)
 const restarting = ref(false)
 const showTemplateEditor = ref(false)
@@ -172,13 +191,13 @@ function templatePayload() { const form = templateForm.value; const service = { 
 function templateServiceSummary(service) { const ports = servicePortsFromSpec(service, 0); return `${service?.type || 'ClusterIP'} · ${ports.map(port => `${port.protocol} ${port.port}`).join(', ')}` }
 
 async function loadApplication() {
-  error.value = ''
+  readError.value = ''
   storageResourcesLoaded.value = false
   persistentVolumeClaims.value = []
   clusterNodes.value = []
   const loaded = await applicationResource.refresh()
   if (!loaded) {
-    if (applicationResource.error.value) error.value = applicationResource.error.value.message || '加载应用详情失败'
+    if (applicationResource.error.value) readError.value = applicationResource.error.value.message || '加载应用详情失败'
     return
   }
   const { result, loadedTemplates, loadedEndpoints, loadedDomains, loadedRegistries, configmaps, secrets } = loaded
@@ -215,16 +234,16 @@ function addArgumentItem() { templateForm.value.argument_items.push({ value: '' 
 function removeArgumentItem(index) { templateForm.value.argument_items.splice(index, 1) }
 function addCapability() { capabilityItems.value.push({ value: '' }) }
 function removeCapability(index) { capabilityItems.value.splice(index, 1) }
-async function saveCapabilities() { savingCapabilities.value = true; error.value = ''; try { const capabilities = capabilityItems.value.map(item => item.value.trim()).filter(Boolean); const updated = await api.put(`/applications/${props.applicationID}/capabilities`, { capabilities }); application.value = updated; capabilityItems.value = (updated.capabilities || []).map(value => ({ value })) } catch (e) { error.value = e.message || '保存能力标签失败' } finally { savingCapabilities.value = false } }
+async function saveCapabilities() { savingCapabilities.value = true; mutationError.value = ''; try { const capabilities = capabilityItems.value.map(item => item.value.trim()).filter(Boolean); const updated = await saveApplicationCapabilities(props.applicationID, capabilities); application.value = updated; capabilityItems.value = (updated.capabilities || []).map(value => ({ value })) } catch (e) { mutationError.value = e.message || '保存能力标签失败' } finally { savingCapabilities.value = false } }
 function isProtectedConsole(endpoint) { return endpoint.access_mode === 'protected_console' }
 function endpointAccessLabel(endpoint) { return isProtectedConsole(endpoint) ? '受保护控制台' : '普通访问' }
 function endpointURL(endpoint) { return `${endpoint.tls_enabled ? 'https' : 'http'}://${endpoint.domain}${endpoint.path || '/'}` }
 function localDebugStorageKey(endpoint) { return `cylism.protected-console.local-url:${endpoint.id}` }
-async function openApplicationEndpoint(endpoint) { error.value = ''; try { if (!isProtectedConsole(endpoint)) { window.open(endpointURL(endpoint), '_blank', 'noopener,noreferrer'); return } await openProtectedConsole(endpoint) } catch (e) { error.value = e.message || '打开应用入口失败' } }
-async function openProtectedConsole(endpoint, redirectURL = '') { const body = { endpoint_id: endpoint.id }; if (redirectURL) body.redirect_url = redirectURL; const result = await api.post(`/applications/${props.applicationID}/integration-handoffs`, body); if (!result.handoff_url) throw new Error('应用入口跳转创建失败'); window.open(result.handoff_url, '_blank', 'noopener,noreferrer') }
+async function openApplicationEndpoint(endpoint) { mutationError.value = ''; try { if (!isProtectedConsole(endpoint)) { window.open(endpointURL(endpoint), '_blank', 'noopener,noreferrer'); return } await openProtectedConsole(endpoint) } catch (e) { mutationError.value = e.message || '打开应用入口失败' } }
+async function openProtectedConsole(endpoint, redirectURL = '') { const body = { endpoint_id: endpoint.id }; if (redirectURL) body.redirect_url = redirectURL; const result = await createIntegrationHandoff(props.applicationID, body); if (!result.handoff_url) throw new Error('应用入口跳转创建失败'); window.open(result.handoff_url, '_blank', 'noopener,noreferrer') }
 function openLocalDebugEditor(endpoint) { localDebugEndpoint.value = endpoint; localDebugURL.value = window.localStorage.getItem(localDebugStorageKey(endpoint)) || 'http://localhost:5178'; showLocalDebugEditor.value = true }
 function closeLocalDebugEditor() { showLocalDebugEditor.value = false; localDebugEndpoint.value = null; localDebugURL.value = '' }
-async function openLocalDebugEndpoint() { error.value = ''; try { const endpoint = localDebugEndpoint.value; if (!endpoint) return; window.localStorage.setItem(localDebugStorageKey(endpoint), localDebugURL.value); await openProtectedConsole(endpoint, localDebugURL.value); closeLocalDebugEditor() } catch (e) { error.value = e.message || '打开本地联调失败' } }
+async function openLocalDebugEndpoint() { mutationError.value = ''; try { const endpoint = localDebugEndpoint.value; if (!endpoint) return; window.localStorage.setItem(localDebugStorageKey(endpoint), localDebugURL.value); await openProtectedConsole(endpoint, localDebugURL.value); closeLocalDebugEditor() } catch (e) { mutationError.value = e.message || '打开本地联调失败' } }
 function addConfigItem() { templateForm.value.config_items.push({ key: '', value: '', enabled: true, externally_managed: false }) }
 function removeConfigItem(index) { templateForm.value.config_items.splice(index, 1) }
 function addSecretItem() { templateForm.value.secret_items.push({ key: '', value: '', enabled: true, externally_managed: false }) }
@@ -237,18 +256,18 @@ async function openResourceManagement() { await router.push('/resources?tab=conf
 async function openCertificateManagement() { await router.push('/domains') }
 function addServicePort() { const ports = templateForm.value.service.ports; ports.push(newServicePort(ports.length + 1, templateForm.value.container_port)) }
 function removeServicePort(index) { if (templateForm.value.service.ports.length > 1) templateForm.value.service.ports.splice(index, 1) }
-async function saveTemplate() { saving.value = true; error.value = ''; try { const path = `/applications/${props.applicationID}/deployment-templates`; if (editingTemplate.value) await api.put(`${path}/${editingTemplate.value.id}`, templatePayload()); else await api.post(path, templatePayload()); closeTemplateEditor(); await loadApplication() } catch (e) { error.value = e.message || '保存上线模板失败' } finally { saving.value = false } }
+async function saveTemplate() { saving.value = true; mutationError.value = ''; try { const payload = templatePayload(); if (editingTemplate.value) await updateDeploymentTemplate(props.applicationID, editingTemplate.value.id, payload); else await createDeploymentTemplate(props.applicationID, payload); closeTemplateEditor(); await loadApplication() } catch (e) { mutationError.value = e.message || '保存上线模板失败' } finally { saving.value = false } }
 function openRestartConfirmation() { showRestartConfirmation.value = true }
 function closeRestartConfirmation() { if (!restarting.value) showRestartConfirmation.value = false }
-async function restartApplication() { restarting.value = true; error.value = ''; try { const release = await api.post(`/applications/${props.applicationID}/restarts`); releases.value = [release, ...releases.value]; showRestartConfirmation.value = false } catch (e) { error.value = e.message || '重启应用失败' } finally { restarting.value = false } }
-async function setDefaultTemplate(template) { try { await api.post(`/applications/${props.applicationID}/deployment-templates/${template.id}/default`); await loadApplication() } catch (e) { error.value = e.message || '设置默认模板失败' } }
-async function deleteTemplate(template) { try { await api.delete(`/applications/${props.applicationID}/deployment-templates/${template.id}`); await loadApplication() } catch (e) { error.value = e.message || '删除上线模板失败' } }
+async function restartApplication() { restarting.value = true; mutationError.value = ''; try { const release = await restartApplicationRequest(props.applicationID); releases.value = [release, ...releases.value]; showRestartConfirmation.value = false } catch (e) { mutationError.value = e.message || '重启应用失败' } finally { restarting.value = false } }
+async function setDefaultTemplate(template) { mutationError.value = ''; try { await setDefaultDeploymentTemplate(props.applicationID, template.id); await loadApplication() } catch (e) { mutationError.value = e.message || '设置默认模板失败' } }
+async function deleteTemplate(template) { mutationError.value = ''; try { await deleteDeploymentTemplate(props.applicationID, template.id); await loadApplication() } catch (e) { mutationError.value = e.message || '删除上线模板失败' } }
 function openEndpointEditor(endpoint = null) { editingEndpoint.value = endpoint; if (endpoint) { const selected = endpointServicePorts.value.find(port => port.port === endpoint.service_port); endpointForm.value = { domain_id: endpoint.domain_id, path: endpoint.path || '/', service_port: endpoint.service_port || selected?.port || 0, protocol: endpoint.protocol || selected?.protocol || 'TCP', tls_enabled: endpoint.tls_enabled, ingress_enabled: endpoint.ingress_enabled !== false && (endpoint.protocol || selected?.protocol || 'TCP') !== 'UDP', access_mode: endpoint.access_mode || 'public' } } else { const form = newEndpointForm(); const first = endpointServicePorts.value[0]; if (first) { form.service_port = first.port; form.protocol = first.protocol; form.ingress_enabled = first.protocol !== 'UDP' } endpointForm.value = form } showEndpointEditor.value = true }
 function syncEndpointProtocol() { const selected = endpointServicePorts.value.find(port => port.port === endpointForm.value.service_port); if (!selected) return; endpointForm.value.protocol = selected.protocol; if (selected.protocol === 'UDP') endpointForm.value.ingress_enabled = false }
 function closeEndpointEditor() { showEndpointEditor.value = false; editingEndpoint.value = null; endpointForm.value = newEndpointForm() }
-async function saveEndpoint() { saving.value = true; error.value = ''; try { const current = editingEndpoint.value; const payload = { ...endpointForm.value }; if (!payload.service_port) { delete payload.service_port; delete payload.protocol } const saved = current ? await api.put(`/applications/${props.applicationID}/endpoints/${current.id}`, payload) : await api.post(`/applications/${props.applicationID}/endpoints`, payload); if (current) endpoints.value = endpoints.value.map(endpoint => endpoint.id === saved.id ? saved : endpoint); else endpoints.value = [...endpoints.value, saved]; closeEndpointEditor() } catch (e) { error.value = e.message || '保存域名绑定失败' } finally { saving.value = false } }
-async function removeEndpoint(endpoint) { try { await api.delete(`/applications/${props.applicationID}/endpoints/${endpoint.id}`); endpoints.value = endpoints.value.filter(item => item.id !== endpoint.id) } catch (e) { error.value = e.message || '解绑域名失败' } }
-async function updateWorkloadKind() { if (!window.confirm('切换会先停止当前 Pod，再创建新的工作负载控制器。服务会短暂中断，是否继续？')) return; saving.value = true; error.value = ''; try { application.value = await api.put(`/applications/${props.applicationID}/workload-kind`, { workload_kind: workloadKind.value }) } catch (e) { error.value = e.message || '迁移工作负载失败'; workloadKind.value = application.value?.workload_kind || 'deployment' } finally { saving.value = false } }
+async function saveEndpoint() { saving.value = true; mutationError.value = ''; try { const current = editingEndpoint.value; const payload = { ...endpointForm.value }; if (!payload.service_port) { delete payload.service_port; delete payload.protocol } const saved = current ? await updateEndpoint(props.applicationID, current.id, payload) : await createEndpoint(props.applicationID, payload); if (current) endpoints.value = endpoints.value.map(endpoint => endpoint.id === saved.id ? saved : endpoint); else endpoints.value = [...endpoints.value, saved]; closeEndpointEditor() } catch (e) { mutationError.value = e.message || '保存域名绑定失败' } finally { saving.value = false } }
+async function removeEndpoint(endpoint) { mutationError.value = ''; try { await deleteEndpoint(props.applicationID, endpoint.id); endpoints.value = endpoints.value.filter(item => item.id !== endpoint.id) } catch (e) { mutationError.value = e.message || '解绑域名失败' } }
+async function updateWorkloadKind() { if (!window.confirm('切换会先停止当前 Pod，再创建新的工作负载控制器。服务会短暂中断，是否继续？')) return; saving.value = true; mutationError.value = ''; try { application.value = await updateWorkloadKindRequest(props.applicationID, workloadKind.value) } catch (e) { mutationError.value = e.message || '迁移工作负载失败'; workloadKind.value = application.value?.workload_kind || 'deployment' } finally { saving.value = false } }
 watch(() => props.applicationID, loadApplication, { immediate: true })
 watch(() => endpointForm.value.protocol, protocol => { if (protocol === 'UDP') endpointForm.value.ingress_enabled = false })
 watch(hasTCPServicePort, hasTCP => { if (!hasTCP) { templateForm.value.health.readiness_enabled = false; templateForm.value.health.liveness_enabled = false } })
