@@ -56,6 +56,16 @@ describe('Dashboard view with K8s stats', () => {
     expect(wrapper.find('.page-title').text()).toBe('服务健康度')
   })
 
+  it('renders the cluster strip before the Kubernetes request resolves', () => {
+    const wrapper = mount(Dashboard, {
+      global: { stubs: { RouterLink: true } }
+    })
+
+    expect(wrapper.find('.cluster-strip').exists()).toBe(true)
+    expect(wrapper.find('.cluster-strip').text()).toContain('集群运行概况')
+    expect(wrapper.find('.cluster-strip').text()).toContain('—')
+  })
+
   it('renders cluster strip with 6 stat columns', async () => {
     const wrapper = mount(Dashboard, {
       global: { stubs: { RouterLink: true } }

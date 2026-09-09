@@ -4,20 +4,17 @@
       <div><h1 class="page-title">服务健康度</h1><p class="page-subtitle">集中查看受管服务、证书风险与最近变更。</p></div>
     </div>
 
-    <section v-if="k8sStats" class="cluster-strip section-gap">
+    <section class="cluster-strip section-gap" :class="{ 'is-loading': k8sLoading }" :aria-busy="k8sLoading">
       <div class="cluster-strip-heading"><strong>集群运行概况</strong></div>
       <div class="cluster-strip-stats">
-        <div><strong>{{ k8sStats.deployments_ready || 0 }}/{{ k8sStats.deployments_total || 0 }}</strong><span>Deployments 就绪</span></div>
-        <div><strong>{{ k8sStats.services_total || 0 }}</strong><span>Services</span></div>
-        <div><strong class="metric-accent">{{ k8sStats.nodes_total || 0 }}</strong><span>节点</span></div>
-        <div><strong>{{ k8sStats.namespaces || 0 }}</strong><span>命名空间</span></div>
-        <div><strong class="metric-success">{{ k8sStats.pods_ready || 0 }}/{{ k8sStats.pods_total || 0 }}</strong><span>Pods 就绪</span></div>
-        <div><strong class="metric-version">{{ k8sStats.version || '-' }}</strong><span>K3s 版本</span></div>
+        <div><strong>{{ k8sReadyMetric('deployments_ready', 'deployments_total') }}</strong><span>Deployments 就绪</span></div>
+        <div><strong>{{ k8sMetric('services_total') }}</strong><span>Services</span></div>
+        <div><strong class="metric-accent">{{ k8sMetric('nodes_total') }}</strong><span>节点</span></div>
+        <div><strong>{{ k8sMetric('namespaces') }}</strong><span>命名空间</span></div>
+        <div><strong class="metric-success">{{ k8sReadyMetric('pods_ready', 'pods_total') }}</strong><span>Pods 就绪</span></div>
+        <div><strong class="metric-version">{{ k8sMetric('version') }}</strong><span>K3s 版本</span></div>
       </div>
     </section>
-    <div v-else-if="k8sError" class="k8s-banner k8s-banner-warn section-gap">
-      ⚠ K8s 集群未连接，集群信息不可用
-    </div>
 
     <div class="metric-grid dashboard-metrics">
       <div class="metric">
@@ -178,7 +175,7 @@ const stats = ref({})
 const expiringCerts = ref([])
 const recentLogs = ref([])
 const k8sStats = ref(null)
-const k8sError = ref('')
+const k8sLoading = ref(true)
 const alertOverview = ref(null)
 const alertingError = ref('')
 
@@ -210,25 +207,44 @@ const attentionItems = computed(() => {
   return items.slice(0, 4)
 })
 
-onMounted(async () => {
+onMounted(() => {
+  void loadDashboard()
+  void loadK8sDashboard()
+  void loadAlertOverview()
+})
+
+async function loadDashboard() {
   try {
     const data = await api.get('/dashboard')
     stats.value = data.stats || {}
     expiringCerts.value = data.expiring_certs || []
     recentLogs.value = data.recent_logs || []
   } catch (e) { console.error(e) }
+}
 
-  // 获取 K8s 集群状态
+async function loadK8sDashboard() {
   try {
     const d = await api.get('/k8s/dashboard')
-    if (!d) { k8sError.value = '' }
-    else { k8sStats.value = d }
-  } catch(e) { /* silent */ }
+    k8sStats.value = d || null
+  } catch(e) { /* preserve the placeholder state */ }
+  finally { k8sLoading.value = false }
+}
 
+async function loadAlertOverview() {
   try {
     alertOverview.value = await api.get('/monitoring/alerts/overview')
   } catch(e) { alertingError.value = e.message || '告警组件暂不可用' }
-})
+}
+
+function k8sMetric(key) {
+  if (k8sLoading.value || k8sStats.value?.[key] === undefined || k8sStats.value?.[key] === null) return '—'
+  return k8sStats.value[key]
+}
+
+function k8sReadyMetric(readyKey, totalKey) {
+  if (k8sLoading.value || k8sStats.value?.[readyKey] === undefined || k8sStats.value?.[totalKey] === undefined) return '—'
+  return `${k8sStats.value[readyKey]}/${k8sStats.value[totalKey]}`
+}
 
 function formatDate(d) { if (!d) return '-'; return new Date(d).toLocaleDateString('zh-CN', { month:'short', day:'numeric', year:'numeric' }) }
 function formatTime(d) { if (!d) return '-'; return new Date(d).toLocaleString('zh-CN', { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' }) }
@@ -246,7 +262,7 @@ function alertSeverityBadge(alert) { return alert?.labels?.severity === 'critica
 
 <style scoped>
 .dashboard-page { max-width: 1320px; margin: 0 auto; }
-.cluster-strip { display: flex; align-items: center; gap: 28px; min-height: 94px; padding: 18px 22px; border: 1px solid var(--border); border-radius: var(--radius-panel); background: var(--surface-glass); box-shadow: var(--shadow-soft); backdrop-filter: blur(22px) saturate(125%); }
+.cluster-strip { display: flex; align-items: center; gap: 28px; min-height: 94px; padding: 18px 22px; border: 1px solid var(--border); border-radius: var(--radius-panel); background: var(--surface-glass); box-shadow: var(--shadow-soft); backdrop-filter: blur(22px) saturate(125%); }.cluster-strip.is-loading { opacity: .86; }
 .cluster-strip-heading { display: flex; min-width: 142px; flex-direction: column; gap: 5px; }.cluster-strip-heading strong { color: var(--text-primary); font-size: 13px; }
 .cluster-strip-stats { display: grid; width: 100%; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 14px; }.cluster-strip-stats > div { display: flex; min-width: 0; flex-direction: column; gap: 4px; padding-left: 16px; border-left: 1px solid var(--border-muted); }.cluster-strip-stats strong { overflow: hidden; color: var(--text-primary); font-size: 19px; font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }.cluster-strip-stats span { color: var(--text-muted); font-size: 10px; }
 .dashboard-metrics { grid-template-columns: repeat(6, minmax(0, 1fr)); }.dashboard-metrics .metric { min-height: 96px; padding: 16px 18px; }.dashboard-metrics .metric-value { font-size: 26px; }.dashboard-workspace, .dashboard-attention-grid { display: grid; grid-template-columns: minmax(0, 7fr) minmax(310px, 4fr); gap: var(--space-20); }.dashboard-attention-grid { margin-top: var(--space-20); }.dashboard-workspace { margin-top: var(--space-20); }.dashboard-primary-panel, .dashboard-activity-panel, .dashboard-attention-panel, .dashboard-alert-panel { min-width: 0; }.dashboard-workspace .card-header, .dashboard-attention-grid .card-header { align-items: flex-start; margin-bottom: 16px; }.panel-caption { padding: 5px 7px; border-radius: 5px; background: var(--warning-surface); color: var(--warning); font: 10px/1 var(--font-mono); }.panel-link { color: var(--action-primary); font-size: 12px; text-decoration: none; }.panel-link:hover { text-decoration: underline; }.dashboard-empty-state { min-height: 230px; }.metric-version { font-size: 15px !important; }
