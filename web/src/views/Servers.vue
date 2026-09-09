@@ -237,6 +237,8 @@
 <script setup>
 import { computed, ref, onMounted, onUnmounted, Teleport, watch } from 'vue'
 import { api } from '../api/index.js'
+import { getServerNetworkDiagnostics, getServerResourceStats, getServers, getServerStats } from '../api/servers.js'
+import { useAsyncResource } from '../composables/useAsyncResource.js'
 import { RefreshCw } from 'lucide-vue-next'
 import SectionTabsHeader from '../components/SectionTabsHeader.vue'
 import { Doughnut } from 'vue-chartjs'
@@ -248,19 +250,28 @@ import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
 import { installTerminalClipboard } from '../utils/terminalClipboard.js'
 
-const servers = ref([])
+const serversResource = useAsyncResource(({ signal }) => getServers({ signal }), [])
+const servers = serversResource.data
 const activeSection = ref('configuration')
 const sections = [
   { id: 'configuration', label: '基本配置' },
   { id: 'monitoring', label: '资源监控' },
   { id: 'network-diagnostics', label: '网络诊断' },
 ]
-const resourceStats = ref([])
-const resourceStatsLoading = ref(false)
+const resourceStatsResource = useAsyncResource(({ signal }) => getServerResourceStats({ signal }), [])
+const resourceStats = resourceStatsResource.data
+const resourceStatsLoading = resourceStatsResource.loading
 const resourceStatsUpdatedAt = ref('')
-const networkDiagnostics = ref({ servers: [], links: [] })
-const networkDiagnosticsLoading = ref(false)
-const networkDiagnosticsError = ref('')
+const networkDiagnosticsResource = useAsyncResource(async ({ signal }) => {
+  const result = await getServerNetworkDiagnostics({ signal })
+  return {
+    servers: Array.isArray(result?.servers) ? result.servers : [],
+    links: Array.isArray(result?.links) ? result.links : [],
+  }
+}, { servers: [], links: [] })
+const networkDiagnostics = networkDiagnosticsResource.data
+const networkDiagnosticsLoading = networkDiagnosticsResource.loading
+const networkDiagnosticsError = computed(() => networkDiagnosticsResource.error.value ? '网络诊断请求失败' : '')
 const showAdd = ref(false)
 const editingId = ref(null)
 const deleteTarget = ref(null)
@@ -270,8 +281,9 @@ const probeResult = ref(null)
 const importState = ref(null)
 const importServer = ref(null)
 const statsServer = ref(null)
-const statsData = ref({})
-const statsLoading = ref(false)
+const serverStatsResource = useAsyncResource(({ signal }, serverID) => getServerStats(serverID, { signal }), {})
+const statsData = serverStatsResource.data
+const statsLoading = serverStatsResource.loading
 const terminalServer = ref(null)
 const terminalEl = ref(null)
 const termStatus = ref(null)
@@ -334,7 +346,7 @@ watch(activeSection, (section) => {
   if (section === 'network-diagnostics') refreshNetworkDiagnostics()
 })
 
-async function fetchServers() { try { servers.value = await api.get('/servers') || [] } catch (e) { console.error(e) } }
+async function fetchServers() { await serversResource.refresh() }
 
 function resourceFor(serverID) { return resourceStatsByServerID.value.get(Number(serverID)) || null }
 function metricPercent(value) { return Math.min(100, Math.max(0, Number(value) || 0)) }
@@ -346,35 +358,14 @@ function formatLoad(stats) { if (!stats?.load_1m && stats?.load_1m !== 0) return
 function formatSampleTime(value) { if (!value) return '-'; const date = new Date(value); return Number.isNaN(date.getTime()) ? '-' : date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) }
 
 async function refreshResourceStats() {
-  if (resourceStatsLoading.value) return
-  resourceStatsLoading.value = true
-  try {
-    resourceStats.value = await api.get('/servers/resource-stats') || []
+  const result = await resourceStatsResource.refresh()
+  if (result !== undefined) {
     resourceStatsUpdatedAt.value = new Date().toISOString()
-  } catch (e) {
-    console.error(e)
-  } finally {
-    resourceStatsLoading.value = false
   }
 }
 
 async function refreshNetworkDiagnostics() {
-  if (networkDiagnosticsLoading.value) return
-  networkDiagnosticsLoading.value = true
-  networkDiagnosticsError.value = ''
-  try {
-    const result = await api.get('/servers/network-diagnostics')
-    networkDiagnostics.value = {
-      servers: Array.isArray(result?.servers) ? result.servers : [],
-      links: Array.isArray(result?.links) ? result.links : [],
-    }
-  } catch (e) {
-    console.error(e)
-    networkDiagnostics.value = { servers: [], links: [] }
-    networkDiagnosticsError.value = '网络诊断请求失败'
-  } finally {
-    networkDiagnosticsLoading.value = false
-  }
+  await networkDiagnosticsResource.refresh()
 }
 
 function networkModeLabel(mode) {
@@ -488,13 +479,7 @@ async function openStats(id) {
   const srv = servers.value.find(s => s.id === id)
   if (!srv) return
   statsServer.value = srv
-  statsLoading.value = true
-  try {
-    statsData.value = await api.get(`/servers/${id}/stats`) || {}
-  } catch (e) {
-    statsData.value = { _error: e.message }
-  }
-  statsLoading.value = false
+  await serverStatsResource.refresh(id)
 }
 
 function openTerminal(id) {
@@ -594,11 +579,11 @@ function closeTerminal() {
 }
 
 function memPercent(d) {
-  if (!d.memory_total_mb || d.memory_total_mb <= 0) return 0
+  if (!d?.memory_total_mb || d.memory_total_mb <= 0) return 0
   return ((d.memory_used_mb || 0) / d.memory_total_mb) * 100
 }
 function diskPercent(d) {
-  if (!d.disk_total_gb || d.disk_total_gb <= 0) return 0
+  if (!d?.disk_total_gb || d.disk_total_gb <= 0) return 0
   return ((d.disk_used_gb || 0) / d.disk_total_gb) * 100
 }
 function formatMB(mb) {

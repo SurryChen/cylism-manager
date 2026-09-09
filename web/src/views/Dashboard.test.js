@@ -2,46 +2,40 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { nextTick } from 'vue'
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 import Dashboard from './Dashboard.vue'
+import { getAlertOverview, getDashboardOverview, getKubernetesDashboard } from '../api/dashboard.js'
 
 const dashboardSource = readFileSync(resolve(process.cwd(), 'src/views/Dashboard.vue'), 'utf8')
 
-vi.mock('../api/index.js', () => ({
-  api: {
-    get: vi.fn().mockImplementation(url => {
-      if (url.includes('/monitoring/alerts/overview')) {
-        return Promise.resolve({
-          active: [
-            {
-              fingerprint: 'alert-1',
-              status: 'firing',
-              labels: { alertname: 'NodeDown', severity: 'critical', node: 'node-a' },
-              annotations: { summary: '节点 node-a 不可用' },
-            },
-          ],
-          resolved: [],
-          firing: 1,
-          silenced: 2,
-        })
-      }
-      if (url.includes('/k8s/dashboard')) {
-        return Promise.resolve({
-          nodes_total: 3, pods_total: 12, pods_ready: 10,
-          deployments_total: 5, deployments_ready: 4,
-          services_total: 8, namespaces: 3, version: 'v1.28.4+k3s1'
-        })
-      }
-      return Promise.resolve({
-        stats: { total_servers: 2, total_sites: 5, expiring_certs: 1 },
-        expiring_certs: [], recent_logs: []
-      })
-    })
-  }
+vi.mock('../api/dashboard.js', () => ({
+  getDashboardOverview: vi.fn().mockResolvedValue({
+    stats: { total_servers: 2, total_sites: 5, expiring_certs: 1 },
+    expiring_certs: [], recent_logs: [],
+  }),
+  getKubernetesDashboard: vi.fn().mockResolvedValue({
+    nodes_total: 3, pods_total: 12, pods_ready: 10,
+    deployments_total: 5, deployments_ready: 4,
+    services_total: 8, namespaces: 3, version: 'v1.28.4+k3s1',
+  }),
+  getAlertOverview: vi.fn().mockResolvedValue({
+    active: [
+      {
+        fingerprint: 'alert-1',
+        status: 'firing',
+        labels: { alertname: 'NodeDown', severity: 'critical', node: 'node-a' },
+        annotations: { summary: '节点 node-a 不可用' },
+      },
+    ],
+    resolved: [],
+    firing: 1,
+    silenced: 2,
+  }),
 }))
 
 beforeEach(() => {
   document.body.innerHTML = ''
+  vi.clearAllMocks()
 })
 
 describe('Dashboard view with K8s stats', () => {
@@ -64,6 +58,18 @@ describe('Dashboard view with K8s stats', () => {
     expect(wrapper.find('.cluster-strip').exists()).toBe(true)
     expect(wrapper.find('.cluster-strip').text()).toContain('集群运行概况')
     expect(wrapper.find('.cluster-strip').text()).toContain('—')
+  })
+
+  it('loads overview, cluster, and alert data independently', async () => {
+    mount(Dashboard, {
+      global: { stubs: { RouterLink: true } },
+    })
+    await flushPromises()
+
+    for (const request of [getDashboardOverview, getKubernetesDashboard, getAlertOverview]) {
+      expect(request).toHaveBeenCalledTimes(1)
+      expect(request).toHaveBeenCalledWith(expect.objectContaining({ signal: expect.any(AbortSignal) }))
+    }
   })
 
   it('renders cluster strip with 6 stat columns', async () => {

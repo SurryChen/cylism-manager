@@ -76,6 +76,8 @@ import { computed, defineComponent, h, onMounted, onUnmounted, ref, watch } from
 import { useRoute, useRouter } from 'vue-router'
 import { ChevronDown, RefreshCw, Settings2, X } from 'lucide-vue-next'
 import { api } from '../api/index.js'
+import { getMonitoringDashboard, getMonitoringNodes, getMonitoringStatus, getMonitoringTargets, getStorageClasses, queryMonitoring } from '../api/monitoring.js'
+import { useAsyncResource } from '../composables/useAsyncResource.js'
 import AlertingWorkspace from '../components/AlertingWorkspace.vue'
 import DiskGrowthWorkspace from '../components/DiskGrowthWorkspace.vue'
 import LoggingWorkspace from '../components/LoggingWorkspace.vue'
@@ -103,10 +105,6 @@ const uninstalling = ref(false)
 const syncing = ref(false)
 const confirmUninstall = ref(false)
 const targets = ref(null)
-const targetsLoading = ref(false)
-const trendsLoading = ref(false)
-const workloadsLoading = ref(false)
-const querying = ref(false)
 const monitoringSettingsOpen = ref(false)
 const monitoringSettingsSaving = ref(false)
 const migrating = ref(false)
@@ -121,6 +119,25 @@ const workloads = ref({ cpu: [], memory: [] })
 const form = ref({ node_name: '', storage: '10Gi', storage_class_name: '', retention_days: 14 })
 const settingsForm = ref({ retention_days: 14 })
 const migrationForm = ref({ storage: '10Gi', storage_class_name: '' })
+const monitoringStateResource = useAsyncResource(({ signal }) => Promise.all([
+  getMonitoringStatus({ signal }),
+  getMonitoringNodes({ signal }),
+  getStorageClasses({ signal }),
+]), null)
+const monitoringTargetsResource = useAsyncResource(({ signal }) => getMonitoringTargets({ signal }))
+const monitoringTrendsResource = useAsyncResource(({ signal }, range) => getMonitoringDashboard(range, { signal }))
+const monitoringWorkloadsResource = useAsyncResource(async ({ signal }) => {
+  const [cpu, memory] = await Promise.all([
+    queryMonitoring('topk(12, sum by (namespace, pod) (rate(container_cpu_usage_seconds_total{container!="",image!=""}[5m])) * 1000)', { signal }),
+    queryMonitoring('topk(12, sum by (namespace, pod) (container_memory_working_set_bytes{container!="",image!=""}) / 1024 / 1024)', { signal }),
+  ])
+  return { cpu, memory }
+})
+const monitoringQueryResource = useAsyncResource(({ signal }, queryText) => queryMonitoring(queryText, { signal }))
+const targetsLoading = monitoringTargetsResource.loading
+const trendsLoading = monitoringTrendsResource.loading
+const workloadsLoading = monitoringWorkloadsResource.loading
+const querying = monitoringQueryResource.loading
 let migrationPollTimer
 
 const presets = [
@@ -181,20 +198,26 @@ onMounted(async () => {
 })
 onUnmounted(() => { if (migrationPollTimer) window.clearInterval(migrationPollTimer) })
 watch([activeTab, trendRange], async () => {
+  if (activeTab.value !== 'overview') monitoringTrendsResource.cancel()
+  if (activeTab.value !== 'workloads') monitoringWorkloadsResource.cancel()
   if (metricsAvailable.value) await loadActiveData()
 })
 
 async function refresh() {
   error.value = ''
-  try {
-    const [nextStatus, nodeList, classes] = await Promise.all([api.get('/monitoring/status'), api.get('/nodes'), api.get('/k8s/storage-classes')])
+  const result = await monitoringStateResource.refresh()
+  if (result !== undefined) {
+    const [nextStatus, nodeList, classes] = result
     status.value = nextStatus
     nodes.value = nodeList || []
     storageClasses.value = classes || []
     if (!form.value.node_name) form.value.node_name = readyNodes.value[0]?.name || ''
     if (metricsAvailable.value) await loadActiveData()
     syncMigrationPolling()
-  } catch (e) { error.value = e.message || '加载监控状态失败' } finally { loaded.value = true }
+  } else if (monitoringStateResource.error.value) {
+    error.value = monitoringStateResource.error.value.message || '加载监控状态失败'
+  }
+  loaded.value = true
 }
 
 function syncMigrationPolling() {
@@ -259,8 +282,9 @@ async function migrateLegacyStorage() {
 }
 
 async function loadTargets() {
-  targetsLoading.value = true
-  try { targets.value = await api.get('/monitoring/targets') } catch (e) { error.value = e.message || '读取采集状态失败' } finally { targetsLoading.value = false }
+  const result = await monitoringTargetsResource.refresh()
+  if (result !== undefined) targets.value = result
+  else if (monitoringTargetsResource.error.value) error.value = monitoringTargetsResource.error.value.message || '读取采集状态失败'
 }
 
 async function loadActiveData() {
@@ -269,9 +293,8 @@ async function loadActiveData() {
 }
 
 async function loadNodeTrends() {
-  trendsLoading.value = true
-  try {
-    const dashboard = await api.get(`/monitoring/dashboard?range=${trendRange.value}`)
+  const dashboard = await monitoringTrendsResource.refresh(trendRange.value)
+  if (dashboard !== undefined) {
     nodeTrends.value = { cpu: [], memory: [], disk: [], network: [], ...Object.fromEntries(Object.entries(dashboard?.trends || {}).map(([key, result]) => [key, matrixToSeries(result)])) }
     const available = trendNodes.value.map(node => node.name)
     if (!trendSelectionInitialized.value) {
@@ -280,18 +303,13 @@ async function loadNodeTrends() {
     } else {
       selectedTrendNodes.value = selectedTrendNodes.value.filter(name => available.includes(name))
     }
-  } catch (e) { error.value = e.message || '读取节点趋势失败' } finally { trendsLoading.value = false }
+  } else if (monitoringTrendsResource.error.value) error.value = monitoringTrendsResource.error.value.message || '读取节点趋势失败'
 }
 
 async function loadWorkloads() {
-  workloadsLoading.value = true
-  try {
-    const [cpu, memory] = await Promise.all([
-      api.get(`/monitoring/query?query=${encodeURIComponent('topk(12, sum by (namespace, pod) (rate(container_cpu_usage_seconds_total{container!="",image!=""}[5m])) * 1000)')}`),
-      api.get(`/monitoring/query?query=${encodeURIComponent('topk(12, sum by (namespace, pod) (container_memory_working_set_bytes{container!="",image!=""}) / 1024 / 1024)')}`),
-    ])
-    workloads.value = { cpu: vectorToWorkloads(cpu), memory: vectorToWorkloads(memory) }
-  } catch (e) { error.value = e.message || '读取工作负载指标失败' } finally { workloadsLoading.value = false }
+  const result = await monitoringWorkloadsResource.refresh()
+  if (result !== undefined) workloads.value = { cpu: vectorToWorkloads(result.cpu), memory: vectorToWorkloads(result.memory) }
+  else if (monitoringWorkloadsResource.error.value) error.value = monitoringWorkloadsResource.error.value.message || '读取工作负载指标失败'
 }
 
 function matrixToSeries(result) {
@@ -330,9 +348,11 @@ function formatRate(value) { return Number.isFinite(value) ? `${value.toFixed(2)
 function rangeLabel(range) { return ({ '1h': '最近 1 小时', '6h': '最近 6 小时', '24h': '最近 24 小时', '7d': '最近 7 天' }[range] || range) }
 
 async function runQuery(queryText) {
-  querying.value = true
   error.value = ''
-  try { query.value = queryText; queryResult.value = JSON.stringify(await api.get(`/monitoring/query?query=${encodeURIComponent(queryText)}`), null, 2) } catch (e) { error.value = e.message || '查询指标失败' } finally { querying.value = false }
+  query.value = queryText
+  const result = await monitoringQueryResource.refresh(queryText)
+  if (result !== undefined) queryResult.value = JSON.stringify(result, null, 2)
+  else if (monitoringQueryResource.error.value) error.value = monitoringQueryResource.error.value.message || '查询指标失败'
 }
 </script>
 

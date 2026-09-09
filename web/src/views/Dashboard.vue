@@ -168,16 +168,21 @@
 </template>
 
 <script setup>
-import { computed, ref, onMounted } from 'vue'
-import { api } from '../api/index.js'
+import { computed, onMounted } from 'vue'
+import { getAlertOverview, getDashboardOverview, getKubernetesDashboard } from '../api/dashboard.js'
+import { useAsyncResource } from '../composables/useAsyncResource.js'
 
-const stats = ref({})
-const expiringCerts = ref([])
-const recentLogs = ref([])
-const k8sStats = ref(null)
-const k8sLoading = ref(true)
-const alertOverview = ref(null)
-const alertingError = ref('')
+const dashboard = useAsyncResource(getDashboardOverview, {})
+const kubernetesDashboard = useAsyncResource(getKubernetesDashboard)
+const alerting = useAsyncResource(getAlertOverview)
+
+const stats = computed(() => dashboard.data.value?.stats || {})
+const expiringCerts = computed(() => dashboard.data.value?.expiring_certs || [])
+const recentLogs = computed(() => dashboard.data.value?.recent_logs || [])
+const k8sStats = kubernetesDashboard.data
+const k8sLoading = kubernetesDashboard.loading
+const alertOverview = alerting.data
+const alertingError = computed(() => alerting.error.value?.message || '')
 
 const activeAlerts = computed(() => alertOverview.value?.active || [])
 const firingAlerts = computed(() => Number(alertOverview.value?.firing || 0))
@@ -208,33 +213,10 @@ const attentionItems = computed(() => {
 })
 
 onMounted(() => {
-  void loadDashboard()
-  void loadK8sDashboard()
-  void loadAlertOverview()
+  void dashboard.refresh()
+  void kubernetesDashboard.refresh()
+  void alerting.refresh()
 })
-
-async function loadDashboard() {
-  try {
-    const data = await api.get('/dashboard')
-    stats.value = data.stats || {}
-    expiringCerts.value = data.expiring_certs || []
-    recentLogs.value = data.recent_logs || []
-  } catch (e) { console.error(e) }
-}
-
-async function loadK8sDashboard() {
-  try {
-    const d = await api.get('/k8s/dashboard')
-    k8sStats.value = d || null
-  } catch(e) { /* preserve the placeholder state */ }
-  finally { k8sLoading.value = false }
-}
-
-async function loadAlertOverview() {
-  try {
-    alertOverview.value = await api.get('/monitoring/alerts/overview')
-  } catch(e) { alertingError.value = e.message || '告警组件暂不可用' }
-}
 
 function k8sMetric(key) {
   if (k8sLoading.value || k8sStats.value?.[key] === undefined || k8sStats.value?.[key] === null) return '—'

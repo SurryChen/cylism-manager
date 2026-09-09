@@ -6,14 +6,15 @@
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { computed, defineAsyncComponent } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import Cluster from './Cluster.vue'
-import NodeRegistryMirrors from './NodeRegistryMirrors.vue'
-import ClusterDNS from './ClusterDNS.vue'
-import ChartRepositories from './ChartRepositories.vue'
-import SystemComponents from './SystemComponents.vue'
 import SectionTabsHeader from '../components/SectionTabsHeader.vue'
+
+const Cluster = defineAsyncComponent(() => import('./Cluster.vue'))
+const NodeRegistryMirrors = defineAsyncComponent(() => import('./NodeRegistryMirrors.vue'))
+const ClusterDNS = defineAsyncComponent(() => import('./ClusterDNS.vue'))
+const ChartRepositories = defineAsyncComponent(() => import('./ChartRepositories.vue'))
+const SystemComponents = defineAsyncComponent(() => import('./SystemComponents.vue'))
 
 const route = useRoute()
 const router = useRouter()

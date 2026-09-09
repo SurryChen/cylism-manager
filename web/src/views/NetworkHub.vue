@@ -13,10 +13,11 @@
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { computed, defineAsyncComponent } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import Sites from './Sites.vue'
-import Certificates from './Certificates.vue'
+
+const Sites = defineAsyncComponent(() => import('./Sites.vue'))
+const Certificates = defineAsyncComponent(() => import('./Certificates.vue'))
 
 const route = useRoute()
 const router = useRouter()

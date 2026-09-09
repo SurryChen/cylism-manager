@@ -1,6 +1,6 @@
-import { describe, expect, it, vi } from 'vitest'
-import { mount } from '@vue/test-utils'
-import { reactive } from 'vue'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { flushPromises, mount } from '@vue/test-utils'
+import { nextTick, reactive } from 'vue'
 import Applications from './Applications.vue'
 
 vi.mock('../api/index.js', () => ({
@@ -9,7 +9,51 @@ vi.mock('../api/index.js', () => ({
 const route = reactive({ query: { project_id: '1', environment_id: '2' } })
 vi.mock('vue-router', () => ({ useRouter: () => ({ push: vi.fn() }), useRoute: () => route }))
 
+beforeEach(async () => {
+  const { api } = await import('../api/index.js')
+  route.query.project_id = '1'
+  route.query.environment_id = '2'
+  api.get.mockReset()
+  api.get.mockResolvedValue([])
+  api.post.mockReset()
+  api.post.mockResolvedValue({ id: 1 })
+})
+
 describe('Applications view', () => {
+  it('keeps the latest workspace data when the route context changes during a request', async () => {
+    let resolveFirstWorkspace
+    const firstWorkspace = new Promise(resolve => { resolveFirstWorkspace = resolve })
+    const { api } = await import('../api/index.js')
+    route.query.project_id = '1'
+    route.query.environment_id = '2'
+    api.get.mockImplementation(path => {
+      if (path === '/projects') return Promise.resolve([
+        { id: 1, name: 'first-project', environments: [{ id: 2, name: 'first-env' }] },
+        { id: 3, name: 'second-project', environments: [{ id: 4, name: 'second-env' }] },
+      ])
+      if (path === '/workspace/overview?project_id=1&environment_id=2') return firstWorkspace
+      if (path === '/workspace/overview?project_id=3&environment_id=4') {
+        return Promise.resolve({ applications: [{ id: 2, name: 'new-api' }], domains: [], recent_releases: [] })
+      }
+      return Promise.resolve([])
+    })
+    const wrapper = mount(Applications)
+    await flushPromises()
+
+    route.query.project_id = '3'
+    route.query.environment_id = '4'
+    await nextTick()
+    await flushPromises()
+    resolveFirstWorkspace({ applications: [{ id: 1, name: 'old-api' }], domains: [], recent_releases: [] })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('new-api')
+    expect(wrapper.text()).not.toContain('old-api')
+    wrapper.unmount()
+    route.query.project_id = '1'
+    route.query.environment_id = '2'
+  })
+
   it('keeps the application entry free of a list frame when there is no data', async () => {
     const wrapper = mount(Applications)
     await new Promise(resolve => setTimeout(resolve, 0))

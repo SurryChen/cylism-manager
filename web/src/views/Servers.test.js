@@ -75,7 +75,7 @@ describe('Servers view', () => {
     await new Promise(r => setTimeout(r, 0))
     await nextTick()
 
-    expect(api.get).toHaveBeenCalledWith('/servers/resource-stats')
+    expect(api.get).toHaveBeenCalledWith('/servers/resource-stats', expect.objectContaining({ signal: expect.any(AbortSignal) }))
     expect(wrapper.text()).toContain('资源概览')
     expect(wrapper.text()).toContain('42.5%')
     expect(wrapper.text()).toContain('不可达')
@@ -90,7 +90,7 @@ describe('Servers view', () => {
     await new Promise(r => setTimeout(r, 0))
     await nextTick()
 
-    expect(api.get).toHaveBeenCalledWith('/servers/network-diagnostics')
+    expect(api.get).toHaveBeenCalledWith('/servers/network-diagnostics', expect.objectContaining({ signal: expect.any(AbortSignal) }))
     expect(wrapper.text()).toContain('K3s 内建 Tailscale')
 	    expect(wrapper.text()).toContain('UDP 直连')
     expect(wrapper.text()).toContain('DERP 中继')
@@ -140,6 +140,40 @@ describe('Servers view', () => {
     await nextTick()
 
     expect(document.querySelector('.terminal-overlay')).not.toBeNull()
+    wrapper.unmount()
+  })
+
+  it('keeps the latest selected server statistics when an earlier selection resolves late', async () => {
+    let resolveFirstStats
+    const firstStats = new Promise(resolve => { resolveFirstStats = resolve })
+    api.get.mockImplementation(url => {
+      if (url === '/servers') return Promise.resolve([
+        { id: 1, name: 'first-srv', host: '10.0.0.1', ssh_user: 'root', ssh_auth_type: 'password', ssh_port: 22 },
+        { id: 2, name: 'second-srv', host: '10.0.0.2', ssh_user: 'root', ssh_auth_type: 'password', ssh_port: 22 },
+      ])
+      if (url === '/servers/resource-stats') return Promise.resolve([
+        { server_id: 1, memory_used_mb: 1, memory_total_mb: 1, disk_used_gb: 1, disk_total_gb: 1 },
+        { server_id: 2, memory_used_mb: 1, memory_total_mb: 1, disk_used_gb: 1, disk_total_gb: 1 },
+      ])
+      if (url === '/servers/1/stats') return firstStats
+      if (url === '/servers/2/stats') return Promise.resolve({ uptime: 'new result' })
+      return Promise.resolve({})
+    })
+    const wrapper = mount(Servers, { global: { stubs: { RouterLink: true } } })
+    await new Promise(r => setTimeout(r, 0))
+    await wrapper.findAll('button').find(button => button.text().includes('资源监控')).trigger('click')
+    await new Promise(r => setTimeout(r, 0))
+
+    const rows = wrapper.findAll('.resource-row')
+    await rows[0].trigger('click')
+    await rows[1].trigger('click')
+    resolveFirstStats({ uptime: 'stale result' })
+    await new Promise(r => setTimeout(r, 0))
+    await nextTick()
+
+    expect(wrapper.text()).toContain('资源监控 — second-srv')
+    expect(wrapper.text()).toContain('运行 new result')
+    expect(wrapper.text()).not.toContain('运行 stale result')
     wrapper.unmount()
   })
 })

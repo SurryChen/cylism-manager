@@ -79,6 +79,8 @@ import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Check, ChevronDown } from 'lucide-vue-next'
 import { api } from '../api/index.js'
+import { getApplication, getApplications, getDeploymentTemplates, getDomains, getImageRegistries, getProjects, getWorkspace } from '../api/applications.js'
+import { useAsyncResource } from '../composables/useAsyncResource.js'
 
 const props = defineProps({ section: { type: String, default: 'workspace' } })
 const router = useRouter()
@@ -106,6 +108,36 @@ const unassignedManagedDomains = ref([])
 const workspaceOverview = ref(null)
 const workspaceRegistries = ref([])
 const activeWorkspacePicker = ref('')
+const applicationsResource = useAsyncResource(({ signal }, scope = {}) => getApplications(scope, { signal }), [])
+const projectsResource = useAsyncResource(({ signal }) => getProjects({ signal }), [])
+const imageRegistriesResource = useAsyncResource(({ signal }, projectID) => getImageRegistries({ projectID }, { signal }), [])
+const workspaceResource = useAsyncResource(async ({ signal }, projectID, environmentID) => {
+  const [overview, registries] = await Promise.all([
+    getWorkspace(projectID, environmentID, { signal }),
+    getImageRegistries({ projectID }, { signal }),
+  ])
+  return { overview, registries }
+}, null)
+const releaseHistoryResource = useAsyncResource(async ({ signal }) => {
+  const apps = await getApplications({}, { signal }) || []
+  const details = await Promise.allSettled(apps.map(app => getApplication(app.id, { signal })))
+  return {
+    applications: apps,
+    releases: details.flatMap((result, index) => result.status === 'fulfilled'
+      ? (result.value.releases || []).map(release => ({ ...release, application: apps[index] }))
+      : [])
+      .sort((left, right) => new Date(right.created_at || 0) - new Date(left.created_at || 0)),
+  }
+}, null)
+const overviewDomainsResource = useAsyncResource(async ({ signal }) => {
+  const [domains, unassigned] = await Promise.all([
+    getDomains({}, { signal }),
+    getDomains({ unassigned: true }, { signal }),
+  ])
+  return { domains, unassigned }
+}, null)
+const releaseTemplatesResource = useAsyncResource(({ signal }, applicationID) => getDeploymentTemplates(applicationID, { signal }), [])
+let sectionLoadID = 0
 
 const pageMeta = computed(() => ({
   workspace: { title: '工作台', subtitle: '当前项目与环境下的应用、发布和运行状态' },
@@ -142,11 +174,103 @@ function runtimeLabel(status) { return ({ running: '运行中', deploying: '发�
 function formatTime(value) { return value ? new Date(value).toLocaleString() : '-' }
 function applicationCount(projectID) { return applications.value.filter(app => app.project_id === projectID).length }
 
-async function fetchApplications(scoped = false) { error.value = ''; try { const suffix = scoped && workspaceReady.value ? `?project_id=${workspaceProjectID.value}&environment_id=${workspaceEnvironmentID.value}` : ''; applications.value = await api.get(`/applications${suffix}`) || [] } catch (e) { error.value = e.message || '加载应用失败' } finally { applicationsLoaded.value = true } }
-async function fetchProjects() { error.value = ''; try { projects.value = await api.get('/projects') || [] } catch (e) { error.value = e.message || '加载项目失败' } finally { projectsLoaded.value = true } }
-async function fetchImageRegistries() { try { imageRegistries.value = await api.get('/image-registries') || [] } catch (e) { imageRegistries.value = []; error.value = e.message || '加载镜像仓库失败' } }
-async function fetchWorkspace() { error.value = ''; try { const [overview, registries] = await Promise.all([api.get(`/workspace/overview?project_id=${workspaceProjectID.value}&environment_id=${workspaceEnvironmentID.value}`), api.get(`/image-registries?project_id=${workspaceProjectID.value}`)]); workspaceOverview.value = overview; workspaceRegistries.value = registries || []; applications.value = overview.applications || []; applicationsLoaded.value = true } catch (e) { workspaceOverview.value = null; workspaceRegistries.value = []; error.value = e.message || '加载工作台失败'; applicationsLoaded.value = true } }
-async function loadSection(section) { if (section === 'projects') { await Promise.all([fetchProjects(), fetchApplications(), fetchImageRegistries()]) } else if (section === 'overview') { await fetchReleaseHistory(); try { const [domains, unassigned] = await Promise.all([api.get('/domains'), api.get('/domains?unassigned=true')]); globalDomains.value = domains || []; unassignedManagedDomains.value = unassigned || [] } catch (e) { globalDomains.value = []; unassignedManagedDomains.value = []; error.value = e.message || '加载证书概览失败' } } else if (workspaceProjectID.value && workspaceEnvironmentID.value) { await Promise.all([fetchProjects(), fetchWorkspace()]) } else { await fetchProjects(); if (!workspaceProjectID.value) { const saved = JSON.parse(localStorage.getItem('cylism.application-workspace') || '{}'); const savedProject = projects.value.find(project => project.id === Number(saved.project_id)); const savedEnvironment = savedProject?.environments?.find(environment => environment.id === Number(saved.environment_id)); if (savedProject && savedEnvironment) { await updateWorkspace(savedProject.id, savedEnvironment.id); return } } if (workspaceReady.value) await fetchWorkspace(); else { workspaceOverview.value = null; workspaceRegistries.value = []; applications.value = []; applicationsLoaded.value = true } } }
+async function fetchApplications(scoped = false) {
+  error.value = ''
+  const scope = scoped && workspaceReady.value ? { projectID: workspaceProjectID.value, environmentID: workspaceEnvironmentID.value } : {}
+  const result = await applicationsResource.refresh(scope)
+  if (result !== undefined) applications.value = result || []
+  else if (applicationsResource.error.value) error.value = applicationsResource.error.value.message || '加载应用失败'
+  applicationsLoaded.value = true
+}
+
+async function fetchProjects() {
+  error.value = ''
+  const result = await projectsResource.refresh()
+  if (result !== undefined) projects.value = result || []
+  else if (projectsResource.error.value) error.value = projectsResource.error.value.message || '加载项目失败'
+  projectsLoaded.value = true
+}
+
+async function fetchImageRegistries(projectID) {
+  const result = await imageRegistriesResource.refresh(projectID)
+  if (result !== undefined) imageRegistries.value = result || []
+  else if (imageRegistriesResource.error.value) {
+    imageRegistries.value = []
+    error.value = imageRegistriesResource.error.value.message || '加载镜像仓库失败'
+  }
+}
+
+async function fetchWorkspace() {
+  error.value = ''
+  const result = await workspaceResource.refresh(workspaceProjectID.value, workspaceEnvironmentID.value)
+  if (result !== undefined) {
+    workspaceOverview.value = result.overview
+    workspaceRegistries.value = result.registries || []
+    applications.value = result.overview?.applications || []
+  } else if (workspaceResource.error.value) {
+    workspaceOverview.value = null
+    workspaceRegistries.value = []
+    error.value = workspaceResource.error.value.message || '加载工作台失败'
+  }
+  applicationsLoaded.value = true
+}
+
+async function fetchReleaseHistory() {
+  error.value = ''
+  const result = await releaseHistoryResource.refresh()
+  if (result !== undefined) {
+    applications.value = result.applications
+    releaseHistory.value = result.releases
+  } else if (releaseHistoryResource.error.value) error.value = releaseHistoryResource.error.value.message || '加载发布记录失败'
+  releaseHistoryLoaded.value = true
+}
+
+async function fetchOverviewDomains() {
+  const result = await overviewDomainsResource.refresh()
+  if (result !== undefined) {
+    globalDomains.value = result.domains || []
+    unassignedManagedDomains.value = result.unassigned || []
+  } else if (overviewDomainsResource.error.value) {
+    globalDomains.value = []
+    unassignedManagedDomains.value = []
+    error.value = overviewDomainsResource.error.value.message || '加载证书概览失败'
+  }
+}
+
+async function loadSection(section) {
+  const loadID = ++sectionLoadID
+  if (section === 'projects') {
+    await Promise.all([fetchProjects(), fetchApplications(), fetchImageRegistries()])
+    return
+  }
+  if (section === 'overview') {
+    await Promise.all([fetchReleaseHistory(), fetchOverviewDomains()])
+    return
+  }
+  if (workspaceProjectID.value && workspaceEnvironmentID.value) {
+    await Promise.all([fetchProjects(), fetchWorkspace()])
+    return
+  }
+
+  await fetchProjects()
+  if (loadID !== sectionLoadID) return
+  if (!workspaceProjectID.value) {
+    const saved = JSON.parse(localStorage.getItem('cylism.application-workspace') || '{}')
+    const savedProject = projects.value.find(project => project.id === Number(saved.project_id))
+    const savedEnvironment = savedProject?.environments?.find(environment => environment.id === Number(saved.environment_id))
+    if (savedProject && savedEnvironment) {
+      await updateWorkspace(savedProject.id, savedEnvironment.id)
+      return
+    }
+  }
+  if (workspaceReady.value) await fetchWorkspace()
+  else {
+    workspaceOverview.value = null
+    workspaceRegistries.value = []
+    applications.value = []
+    applicationsLoaded.value = true
+  }
+}
 
 async function openCreateApplication() {
   error.value = ''
@@ -163,7 +287,6 @@ async function saveProject() { const isEditing = !!editingProject.value; submitt
 function requestProjectDelete(project) { projectDeleteTarget.value = project }
 async function deleteProject() { if (!projectDeleteTarget.value) return; submitting.value = true; error.value = ''; try { await api.delete(`/projects/${projectDeleteTarget.value.id}`); projectDeleteTarget.value = null; await Promise.all([fetchProjects(), fetchApplications()]) } catch (e) { error.value = e.message || '删除项目失败' } finally { submitting.value = false } }
 async function openProjectEnvironments(project) { await router.push(`/applications/projects/${project.id}`) }
-async function fetchReleaseHistory() { error.value = ''; try { await fetchApplications(); const details = await Promise.allSettled(applications.value.map(app => api.get(`/applications/${app.id}`))); releaseHistory.value = details.flatMap((result, index) => result.status === 'fulfilled' ? (result.value.releases || []).map(release => ({ ...release, application: applications.value[index] })) : []).sort((left, right) => new Date(right.created_at || 0) - new Date(left.created_at || 0)) } catch (e) { error.value = e.message || '加载发布记录失败' } finally { releaseHistoryLoaded.value = true } }
 async function openHistoryRelease(item) { await router.push(`/applications/${item.application.id}/releases/${item.id}`) }
 async function openUnassignedDomains() { await router.push({ path: '/applications/domains', query: { ...route.query, unassigned: 'true' } }) }
 async function openProjectManagement() { await router.push('/applications/projects') }
@@ -176,7 +299,18 @@ async function openDomains() { await router.push({ path: '/applications/domains'
 async function openRegistries() { await router.push({ path: '/applications/registries', query: { project_id: workspaceProjectID.value, environment_id: workspaceEnvironmentID.value } }) }
 async function openWorkspaceRelease(release) { await router.push(`/applications/${release.application_id}/releases/${release.id}`) }
 
-async function openRelease(app) { error.value = ''; releaseForm.value = newReleaseForm(); releaseTemplates.value = []; try { releaseTemplates.value = (await api.get(`/applications/${app.id}/deployment-templates`) || []).filter(template => template.enabled); const defaultTemplate = releaseTemplates.value.find(template => template.is_default) || releaseTemplates.value[0]; releaseForm.value.template_id = defaultTemplate?.id || 0 } catch (e) { error.value = e.message || '加载上线模板失败' } finally { releaseApp.value = app } }
+async function openRelease(app) {
+  error.value = ''
+  releaseForm.value = newReleaseForm()
+  releaseTemplates.value = []
+  const result = await releaseTemplatesResource.refresh(app.id)
+  if (result !== undefined) {
+    releaseTemplates.value = (result || []).filter(template => template.enabled)
+    const defaultTemplate = releaseTemplates.value.find(template => template.is_default) || releaseTemplates.value[0]
+    releaseForm.value.template_id = defaultTemplate?.id || 0
+  } else if (releaseTemplatesResource.error.value) error.value = releaseTemplatesResource.error.value.message || '加载上线模板失败'
+  releaseApp.value = app
+}
 async function createRelease() { error.value = ''; if (!releaseForm.value.template_id || !releaseForm.value.version) { error.value = '请选择上线模板并填写版本号'; return } submitting.value = true; try { const applicationID = releaseApp.value.id; const release = await api.post(`/applications/${applicationID}/releases`, releaseForm.value); releaseApp.value = null; await router.push(`/applications/${applicationID}/releases/${release.id}`); fetchWorkspace() } catch (e) { error.value = e.message || '创建发布失败' } finally { submitting.value = false } }
 async function openTemplateManagement(app) { releaseApp.value = null; await router.push(`/applications/${app.id}`) }
 async function openDetails(app) { await router.push(`/applications/${app.id}`) }

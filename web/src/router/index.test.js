@@ -4,6 +4,15 @@ import router from './index.js'
 describe('infrastructure route migration', () => {
   beforeEach(() => localStorage.setItem('access_token', 'test-token'))
 
+  it('loads page components on demand', () => {
+    const componentRoutes = router.getRoutes().filter(route => route.components?.default)
+
+    expect(componentRoutes).not.toHaveLength(0)
+    for (const route of componentRoutes) {
+      expect(route.components.default).toEqual(expect.any(Function))
+    }
+  })
+
   it.each([
     ['/cluster/registry-mirrors', '/cluster?tab=registry-mirrors'],
     ['/cluster/chart-repositories', '/cluster?tab=chart-repositories'],
