@@ -13,21 +13,22 @@ import { onBeforeUnmount, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ArrowLeft } from 'lucide-vue-next'
 import { api } from '../api/index.js'
+import { usePolling } from '../composables/usePolling.js'
 
 const props = defineProps({ applicationID: { type: String, required: true }, releaseID: { type: String, required: true } })
 const router = useRouter()
 const application = ref(null)
 const release = ref(null)
 const error = ref('')
-let poller = null
+const releasePolling = usePolling(loadRelease, { interval: 2000 })
 
 function operationBadge(status) { return status === 'success' ? 'badge-online' : status === 'failed' ? 'badge-danger' : 'badge-offline' }
 function runtimeHealthy(runtime) { return runtime.tracking === 'exact' && runtime.pods?.length > 0 && runtime.pods.every(pod => pod.ready) && !runtime.diagnostic }
 function runtimeBadge(runtime) { if (runtime.tracking !== 'exact') return 'badge-offline'; return runtimeHealthy(runtime) ? 'badge-online' : 'badge-danger' }
 function runtimeLabel(runtime) { if (runtime.tracking === 'legacy_untracked') return '历史发布未关联'; if (runtime.tracking === 'unavailable') return '运行态不可用'; if (!runtime.pods?.length) return '暂无 Pod'; return runtimeHealthy(runtime) ? '运行正常' : '需要处理' }
 function formatTime(value) { return value ? new Date(value).toLocaleString() : '-' }
-function stopPolling() { if (poller) { window.clearInterval(poller); poller = null } }
-function startPolling() { stopPolling(); if (!release.value) return; poller = window.setInterval(loadRelease, ['succeeded', 'failed', 'rolled_back'].includes(release.value.status) ? 5000 : 2000) }
+function stopPolling() { releasePolling.stop() }
+function startPolling() { if (!release.value) return; releasePolling.stop(); releasePolling.start({ interval: ['succeeded', 'failed', 'rolled_back'].includes(release.value.status) ? 5000 : 2000 }) }
 async function loadRelease() { error.value = ''; try { const [applicationResult, releaseResult] = await Promise.all([api.get(`/applications/${props.applicationID}`), api.get(`/applications/${props.applicationID}/releases/${props.releaseID}`)]); application.value = applicationResult.application; release.value = releaseResult; startPolling() } catch (e) { error.value = e.message || '加载发布详情失败'; stopPolling() } }
 async function retryRelease() { try { const next = await api.post(`/applications/${props.applicationID}/releases/${props.releaseID}/retry`); await router.push(`/applications/${props.applicationID}/releases/${next.id}`) } catch (e) { error.value = e.message || '重试失败' } }
 async function rollbackRelease() { try { const next = await api.post(`/applications/${props.applicationID}/releases/${props.releaseID}/rollback`); await router.push(`/applications/${props.applicationID}/releases/${next.id}`) } catch (e) { error.value = e.message || '回滚失败' } }

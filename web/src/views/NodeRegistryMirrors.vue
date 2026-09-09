@@ -147,6 +147,7 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { api } from '../api/index.js'
+import { usePolling } from '../composables/usePolling.js'
 
 const mirrors = ref([])
 const loaded = ref(false)
@@ -175,7 +176,22 @@ const dnsServersText = ref('')
 const dnsSaving = ref(false)
 const proxyForm = ref(proxyBlank())
 const form = ref(blank())
-let applyPollTimer = null
+const applyPolling = usePolling(async () => {
+  if (!activeApplyIDs.value.length) return
+  try {
+    const updates = await Promise.all(activeApplyIDs.value.map(mirrorID => api.get(`/node-registry-mirrors/${mirrorID}/apply-status`)))
+    const completedIDs = []
+    for (const mirror of updates) {
+      const index = mirrors.value.findIndex(item => item.id === mirror.id)
+      if (index >= 0) mirrors.value[index] = mirror
+      if (mirror.last_apply_status !== 'applying') completedIDs.push(mirror.id)
+    }
+    activeApplyIDs.value = activeApplyIDs.value.filter(mirrorID => !completedIDs.includes(mirrorID))
+    if (!activeApplyIDs.value.length) applyPolling.stop()
+  } catch (e) {
+    error.value = e.message || '读取节点应用进度失败'
+  }
+}, { interval: 2000 })
 
 const clusterServers = computed(() => servers.value.filter(server => server.cluster_role))
 
@@ -318,24 +334,7 @@ async function applyMirror() {
 
 function startApplyPolling(mirrorIDs) {
   activeApplyIDs.value = [...new Set([...activeApplyIDs.value, ...mirrorIDs])]
-  window.clearInterval(applyPollTimer)
-  applyPollTimer = window.setInterval(async () => {
-    try {
-      const updates = await Promise.all(activeApplyIDs.value.map(mirrorID => api.get(`/node-registry-mirrors/${mirrorID}/apply-status`)))
-      const completedIDs = []
-      for (const mirror of updates) {
-        const index = mirrors.value.findIndex(item => item.id === mirror.id)
-        if (index >= 0) mirrors.value[index] = mirror
-        if (mirror.last_apply_status !== 'applying') completedIDs.push(mirror.id)
-      }
-      activeApplyIDs.value = activeApplyIDs.value.filter(mirrorID => !completedIDs.includes(mirrorID))
-      if (!activeApplyIDs.value.length) {
-        window.clearInterval(applyPollTimer)
-      }
-    } catch (e) {
-      error.value = e.message || '读取节点应用进度失败'
-    }
-  }, 2000)
+  applyPolling.start()
 }
 
 async function remove() {
@@ -347,7 +346,7 @@ async function remove() {
 }
 
 onMounted(() => { load(); loadServers(); loadProxies() })
-onBeforeUnmount(() => window.clearInterval(applyPollTimer))
+onBeforeUnmount(applyPolling.stop)
 </script>
 
 <style scoped>

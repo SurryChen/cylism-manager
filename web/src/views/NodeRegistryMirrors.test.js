@@ -176,6 +176,9 @@ describe('Node registry mirrors view', () => {
     await vi.advanceTimersByTimeAsync(2000)
     expect(api.get).toHaveBeenCalledWith('/node-registry-mirrors/1/apply-status')
     expect(wrapper.text()).toContain('worker-a: 成功 - 配置已写入')
+    const statusRequests = api.get.mock.calls.filter(([path]) => path === '/node-registry-mirrors/1/apply-status').length
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(api.get.mock.calls.filter(([path]) => path === '/node-registry-mirrors/1/apply-status')).toHaveLength(statusRequests)
     wrapper.unmount()
   })
 })

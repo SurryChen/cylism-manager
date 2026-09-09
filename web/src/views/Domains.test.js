@@ -56,6 +56,8 @@ describe('Domains view', () => {
     await vi.advanceTimersByTimeAsync(5000)
     expect(api.get.mock.calls.filter(([path]) => path === '/domains?environment_id=2')).toHaveLength(initialRequests + 1)
     wrapper.unmount()
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(api.get.mock.calls.filter(([path]) => path === '/domains?environment_id=2')).toHaveLength(initialRequests + 1)
     vi.useRealTimers()
   })
 })

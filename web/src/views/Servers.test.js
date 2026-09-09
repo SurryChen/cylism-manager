@@ -83,6 +83,37 @@ describe('Servers view', () => {
     wrapper.unmount()
   })
 
+  it('stops resource polling after leaving the monitoring section', async () => {
+    vi.useFakeTimers()
+    const wrapper = mount(Servers, { global: { stubs: { RouterLink: true } } })
+    await vi.advanceTimersByTimeAsync(0)
+    await wrapper.findAll('button').find(button => button.text().includes('资源监控')).trigger('click')
+    await vi.advanceTimersByTimeAsync(0)
+
+    const initialRequests = api.get.mock.calls.filter(([url]) => url === '/servers/resource-stats').length
+    await wrapper.findAll('button').find(button => button.text().includes('基本配置')).trigger('click')
+    await vi.advanceTimersByTimeAsync(10000)
+
+    expect(api.get.mock.calls.filter(([url]) => url === '/servers/resource-stats')).toHaveLength(initialRequests)
+    wrapper.unmount()
+    vi.useRealTimers()
+  })
+
+  it('stops resource polling when the view is unmounted', async () => {
+    vi.useFakeTimers()
+    const wrapper = mount(Servers, { global: { stubs: { RouterLink: true } } })
+    await vi.advanceTimersByTimeAsync(0)
+    await wrapper.findAll('button').find(button => button.text().includes('资源监控')).trigger('click')
+    await vi.advanceTimersByTimeAsync(0)
+
+    const initialRequests = api.get.mock.calls.filter(([url]) => url === '/servers/resource-stats').length
+    wrapper.unmount()
+    await vi.advanceTimersByTimeAsync(10000)
+
+    expect(api.get.mock.calls.filter(([url]) => url === '/servers/resource-stats')).toHaveLength(initialRequests)
+    vi.useRealTimers()
+  })
+
   it('shows manually refreshed Tailscale diagnostics without raw remote output', async () => {
     const wrapper = mount(Servers, { global: { stubs: { RouterLink: true } } })
     await new Promise(r => setTimeout(r, 200))

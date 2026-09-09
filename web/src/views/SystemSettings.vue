@@ -17,6 +17,7 @@ import SectionTabsHeader from '../components/SectionTabsHeader.vue'
 import SystemSettingsSecurity from './SystemSettingsSecurity.vue'
 import SystemSettingsEntry from './SystemSettingsEntry.vue'
 import SystemSettingsRelease from './SystemSettingsRelease.vue'
+import { usePolling } from '../composables/usePolling.js'
 
 const route = useRoute()
 const router = useRouter()
@@ -28,13 +29,13 @@ const tabs = [
 ]
 const activeTab = computed(() => tabs.some(tab => tab.id === route.query.tab) ? route.query.tab : 'security')
 const activeComponent = computed(() => tabs.find(tab => tab.id === activeTab.value)?.component || SystemSettingsSecurity)
-let refreshTimer
+const refreshPolling = usePolling(() => activeView.value?.refresh?.(), { interval: 15000 })
 
 onMounted(() => {
-  refreshTimer = window.setInterval(() => activeView.value?.refresh?.(), 15000)
+  refreshPolling.start()
 })
 
-onBeforeUnmount(() => window.clearInterval(refreshTimer))
+onBeforeUnmount(refreshPolling.stop)
 
 watch(activeTab, async () => {
   await nextTick()

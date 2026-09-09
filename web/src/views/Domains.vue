@@ -57,6 +57,7 @@ import { api } from '../api/index.js'
 import { getProjects } from '../api/applications.js'
 import { getClaimableDomains, getDomainOptions, getImportableCertificates, getManagedDomains } from '../api/domains.js'
 import { useAsyncResource } from '../composables/useAsyncResource.js'
+import { usePolling } from '../composables/usePolling.js'
 
 const router = useRouter()
 const route = useRoute()
@@ -79,7 +80,7 @@ const domainResource = useAsyncResource(async ({ signal }) => {
 const issuers = computed(() => allIssuers.value.filter(issuer => issuer.kind === 'ClusterIssuer' && issuer.ready))
 const selectedImportCertificate = computed(() => importCandidates.value.find(certificate => certificate.name === importForm.value.certificate_name) || null)
 const selectedClaimDomain = computed(() => claimCandidates.value.find(domain => domain.id === claimForm.value.domain_id) || null)
-let statusPoller = null
+const statusPolling = usePolling(load, { interval: 5000 })
 function blank(){ return { hostname: '', environment_id: environmentID.value, issuer_ref: '', description: '', enabled: true } }
 function blankImport(){ return { environment_id: environmentID.value, certificate_name: '', description: '', enabled: true } }
 function blankClaim(){ return { environment_id: environmentID.value, domain_id: 0 } }
@@ -104,9 +105,9 @@ function certificateClass(domain){ return certificateLabel(domain) === '已就�
 function certificateReason(domain){ return domain.certificate?.reason || domain.certificate_error || '' }
 function formatDate(value){ return value ? new Date(value).toLocaleString('zh-CN') : '-' }
 function shouldPollStatus(domain){ return domain.namespace && domain.certificate_ownership !== 'imported' && (domain.certificate?.status === 'Issuing' || domain.certificate_error === '证书尚未创建') }
-function syncStatusPolling(){ const pending = route.query.unassigned !== 'true' && domains.value.some(shouldPollStatus); if (pending && statusPoller === null) statusPoller = window.setInterval(load, 5000); if (!pending && statusPoller !== null) { window.clearInterval(statusPoller); statusPoller = null } }
+function syncStatusPolling(){ const pending = route.query.unassigned !== 'true' && domains.value.some(shouldPollStatus); if (pending) statusPolling.start(); else statusPolling.stop() }
 onMounted(load)
-onBeforeUnmount(() => { if (statusPoller !== null) window.clearInterval(statusPoller) })
+onBeforeUnmount(statusPolling.stop)
 watch(() => [route.query.project_id, route.query.environment_id, route.query.unassigned], load)
 </script>
 

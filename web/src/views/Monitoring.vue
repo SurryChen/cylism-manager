@@ -78,6 +78,7 @@ import { ChevronDown, RefreshCw, Settings2, X } from 'lucide-vue-next'
 import { api } from '../api/index.js'
 import { getMonitoringDashboard, getMonitoringNodes, getMonitoringStatus, getMonitoringTargets, getStorageClasses, queryMonitoring } from '../api/monitoring.js'
 import { useAsyncResource } from '../composables/useAsyncResource.js'
+import { usePolling } from '../composables/usePolling.js'
 import AlertingWorkspace from '../components/AlertingWorkspace.vue'
 import DiskGrowthWorkspace from '../components/DiskGrowthWorkspace.vue'
 import LoggingWorkspace from '../components/LoggingWorkspace.vue'
@@ -138,7 +139,7 @@ const targetsLoading = monitoringTargetsResource.loading
 const trendsLoading = monitoringTrendsResource.loading
 const workloadsLoading = monitoringWorkloadsResource.loading
 const querying = monitoringQueryResource.loading
-let migrationPollTimer
+const migrationPolling = usePolling(refresh, { interval: 2500 })
 
 const presets = [
   { label: '全部目标', query: 'up{job=~"kubernetes-(nodes|cadvisor)"}' },
@@ -196,7 +197,7 @@ const WorkloadTable = defineComponent({
 onMounted(async () => {
   await refresh()
 })
-onUnmounted(() => { if (migrationPollTimer) window.clearInterval(migrationPollTimer) })
+onUnmounted(migrationPolling.stop)
 watch([activeTab, trendRange], async () => {
   if (activeTab.value !== 'overview') monitoringTrendsResource.cancel()
   if (activeTab.value !== 'workloads') monitoringWorkloadsResource.cancel()
@@ -221,8 +222,8 @@ async function refresh() {
 }
 
 function syncMigrationPolling() {
-  if (status.value?.storage_migration?.stage === 'copying' && !migrationPollTimer) migrationPollTimer = window.setInterval(refresh, 2500)
-  if (status.value?.storage_migration?.stage !== 'copying' && migrationPollTimer) { window.clearInterval(migrationPollTimer); migrationPollTimer = undefined }
+  if (status.value?.storage_migration?.stage === 'copying') migrationPolling.start()
+  else migrationPolling.stop()
 }
 
 function displayNode(node) { return nodeDisplayName(node.name) }

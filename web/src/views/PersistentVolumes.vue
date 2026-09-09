@@ -22,6 +22,7 @@ import { api } from '../api/index.js'
 import { getProjects } from '../api/applications.js'
 import { getPersistentVolumeBackups, getPersistentVolumeImports, getPersistentVolumeInventory, getPersistentVolumeUsage } from '../api/storage.js'
 import { useAsyncResource } from '../composables/useAsyncResource.js'
+import { usePolling } from '../composables/usePolling.js'
 
 const projects = ref([])
 const claims = ref([])
@@ -52,9 +53,9 @@ const backupForm = ref({ backup_server_id: 0, backup_root: '/data/cylism-backups
 const importTarget = ref(null)
 const importForm = ref({ source_server_id: 0, source_path: '', confirm_data_replace: false })
 const form = ref(newClaimForm())
-let migrationPollTimer
-let backupPollTimer
-let importPollTimer
+const migrationPolling = usePolling(loadClaims, { interval: 2500 })
+const backupPolling = usePolling(refreshBackups, { interval: 2500 })
+const importPolling = usePolling(refreshImports, { interval: 2500 })
 const createQueryHandled = ref(false)
 const inventoryResource = useAsyncResource(({ signal }) => getPersistentVolumeInventory({ signal }), null)
 const usageResource = useAsyncResource(({ signal }) => getPersistentVolumeUsage({ signal }), [])
@@ -112,23 +113,23 @@ function requestDelete(claim) { deleteTarget.value = claim }
 function migrationFor(claim) { return migrations.value.find(item => item.environment_id === claimEnvironmentID(claim) && item.source_pvc_name === claim.name && item.status !== 'cleaned') || null }
 function migrationLabel(status) { return ({ pending: '等待预检', preflight: '预检中', provisioning_target: '预配目标卷', stopping_source: '停止源工作负载', copying: '复制数据中', cutover: '切换中', waiting_ready: '等待就绪', cleanup_pending: '等待清理源卷', failed: '迁移失败', rolled_back: '已回滚' })[status] || status }
 function migrationRunning(task) { return !['cleanup_pending', 'failed', 'rolled_back', 'cleaned'].includes(task.status) }
-function syncMigrationPolling() { if (migrations.value.some(migrationRunning) && !migrationPollTimer) migrationPollTimer = window.setInterval(loadClaims, 2500); if (!migrations.value.some(migrationRunning)) stopMigrationPolling() }
-function stopMigrationPolling() { if (migrationPollTimer) window.clearInterval(migrationPollTimer); migrationPollTimer = undefined }
+function syncMigrationPolling() { if (migrations.value.some(migrationRunning)) migrationPolling.start(); else migrationPolling.stop() }
+function stopMigrationPolling() { migrationPolling.stop() }
 function openMigration(claim) { migrationTarget.value = claim; migrationNode.value = '' }
 async function createMigration() { if (!migrationTarget.value || !migrationNode.value) return; saving.value = true; error.value = ''; try { await api.post(`/k8s/persistent-volume-claims/${migrationTarget.value.name}/migrations`, { environment_id: claimEnvironmentID(migrationTarget.value), target_node_name: migrationNode.value }); migrationTarget.value = null; await loadClaims() } catch (e) { error.value = e.message || '创建存储卷迁移失败' } finally { saving.value = false } }
 function requestCleanup(migration) { cleanupTarget.value = migration }
 async function cleanupMigration() { if (!cleanupTarget.value) return; saving.value = true; error.value = ''; try { await api.post(`/k8s/persistent-volume-migrations/${cleanupTarget.value.id}/cleanup`); cleanupTarget.value = null; await loadClaims() } catch (e) { error.value = e.message || '清理源存储卷失败' } finally { saving.value = false } }
 function backupRunning(backup) { return ['accepted', 'running'].includes(backup.status) || backup.restore_status === 'running' }
-function syncBackupPolling() { if (backupTarget.value && backups.value.some(backupRunning) && !backupPollTimer) backupPollTimer = window.setInterval(refreshBackups, 2500); if (!backupTarget.value || !backups.value.some(backupRunning)) stopBackupPolling() }
-function stopBackupPolling() { if (backupPollTimer) window.clearInterval(backupPollTimer); backupPollTimer = undefined }
+function syncBackupPolling() { if (backupTarget.value && backups.value.some(backupRunning)) backupPolling.start(); else backupPolling.stop() }
+function stopBackupPolling() { backupPolling.stop() }
 async function refreshBackups() { if (!backupTarget.value) return; try { backups.value = await getPersistentVolumeBackups(backupTarget.value.name, claimEnvironmentID(backupTarget.value)) || []; syncBackupPolling() } catch (e) { error.value = e.message || '读取备份记录失败'; stopBackupPolling() } }
 async function openBackup(claim) { backupTarget.value = claim; backupForm.value = { backup_server_id: backupServers.value[0]?.id || 0, backup_root: '/data/cylism-backups' }; await refreshBackups() }
 async function createBackup() { if (!backupTarget.value) return; saving.value = true; error.value = ''; try { await api.post(`/k8s/persistent-volume-claims/${backupTarget.value.name}/backups`, { environment_id: claimEnvironmentID(backupTarget.value), ...backupForm.value }); await refreshBackups() } catch (e) { error.value = e.message || '创建备份失败' } finally { saving.value = false } }
 async function restoreBackup(backup) { if (!backupTarget.value || !window.confirm('恢复会覆盖当前 PVC 数据，并短暂停止引用它的工作负载，确定继续吗？')) return; saving.value = true; error.value = ''; try { await api.post(`/k8s/persistent-volume-claims/${backupTarget.value.name}/backups/${backup.id}/restore`, { environment_id: claimEnvironmentID(backupTarget.value), confirm_data_replace: true }); await refreshBackups() } catch (e) { error.value = e.message || '恢复备份失败' } finally { saving.value = false } }
 function importRunning(task) { return !['succeeded', 'failed'].includes(task.status) }
 function importLabel(status) { return ({ pending: '等待执行', preflight: '预检中', stopping_workload: '停止应用中', backing_up: '创建备份中', copying: '复制数据中', verifying: '校验中', restoring_workload: '恢复应用中', succeeded: '导入完成', failed: '导入失败' })[status] || status }
-function syncImportPolling() { if (importTarget.value && imports.value.some(importRunning) && !importPollTimer) importPollTimer = window.setInterval(refreshImports, 2500); if (!importTarget.value || !imports.value.some(importRunning)) stopImportPolling() }
-function stopImportPolling() { if (importPollTimer) window.clearInterval(importPollTimer); importPollTimer = undefined }
+function syncImportPolling() { if (importTarget.value && imports.value.some(importRunning)) importPolling.start(); else importPolling.stop() }
+function stopImportPolling() { importPolling.stop() }
 async function refreshImports() { if (!importTarget.value) return; try { imports.value = await getPersistentVolumeImports(importTarget.value.name, claimEnvironmentID(importTarget.value)) || []; syncImportPolling() } catch (e) { error.value = e.message || '读取目录导入记录失败'; stopImportPolling() } }
 async function openImport(claim) { importTarget.value = claim; importForm.value = { source_server_id: backupServers.value[0]?.id || 0, source_path: '', confirm_data_replace: false }; await refreshImports() }
 async function createImport() { if (!importTarget.value) return; saving.value = true; error.value = ''; try { await api.post(`/k8s/persistent-volume-claims/${importTarget.value.name}/imports`, { environment_id: claimEnvironmentID(importTarget.value), ...importForm.value }); await refreshImports() } catch (e) { error.value = e.message || '创建目录导入失败' } finally { saving.value = false } }

@@ -239,6 +239,7 @@ import { computed, ref, onMounted, onUnmounted, Teleport, watch } from 'vue'
 import { api } from '../api/index.js'
 import { getServerNetworkDiagnostics, getServerResourceStats, getServers, getServerStats } from '../api/servers.js'
 import { useAsyncResource } from '../composables/useAsyncResource.js'
+import { usePolling } from '../composables/usePolling.js'
 import { RefreshCw } from 'lucide-vue-next'
 import SectionTabsHeader from '../components/SectionTabsHeader.vue'
 import { Doughnut } from 'vue-chartjs'
@@ -288,7 +289,7 @@ const terminalServer = ref(null)
 const terminalEl = ref(null)
 const termStatus = ref(null)
 const termError = ref('')
-let resourcePollTimer
+const resourcePolling = usePolling(refreshResourceStats, { interval: 10000 })
 
 // Chart.js computed ring data
 function chartRingData(percent, label) {
@@ -336,7 +337,7 @@ onMounted(() => {
   document.addEventListener('visibilitychange', syncResourcePolling)
 })
 onUnmounted(() => {
-  stopResourcePolling()
+  resourcePolling.stop()
   document.removeEventListener('visibilitychange', syncResourcePolling)
   closeTerminal()
 })
@@ -381,15 +382,13 @@ function linkPathClass(path) { return path === 'direct' ? 'badge-online' : path 
 function linkErrorLabel(code) { return ({ ping_timeout: '超时', ping_failed: '探测失败', ping_unclassified: '未识别', invalid_target: '目标无效' })[code] || (code ? '异常' : '正常') }
 
 function stopResourcePolling() {
-  if (resourcePollTimer) window.clearInterval(resourcePollTimer)
-  resourcePollTimer = undefined
+  resourcePolling.stop()
 }
 
 function syncResourcePolling() {
   stopResourcePolling()
   if (activeSection.value !== 'monitoring' || document.hidden) return
-  refreshResourceStats()
-  resourcePollTimer = window.setInterval(refreshResourceStats, 10000)
+  resourcePolling.start({ immediate: true })
 }
 
 async function addServer() {
