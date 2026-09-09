@@ -131,6 +131,8 @@
 import { computed, onMounted, ref } from 'vue'
 import { AlertCircle, Bot, CheckCircle2, Plus, RefreshCw, X } from 'lucide-vue-next'
 import { api } from '../api/index.js'
+import { getRuntimeAgentState, getRuntimeCatalog, getRuntimeNamespaces, getRuntimeNodes, getRuntimes } from '../api/runtimes.js'
+import { useAsyncResource } from '../composables/useAsyncResource.js'
 import ChatDrawer from '../components/ChatDrawer.vue'
 import SectionTabsHeader from '../components/SectionTabsHeader.vue'
 
@@ -175,6 +177,9 @@ const tabs = [{ id: 'instances', label: '实例' }]
 const emptyForm = () => ({ name: '', runtime_type: 'nanobot', deployment_mode: 'managed', runtime_version: '', image: '', namespace: 'cylism-assistant', port: 8900, health_path: '/health', endpoint_url: '', pvc_name: '', storage: 10, storage_class_name: '', node_name: '', model_name: '', model_base_url: '', api_style: 'responses', api_key: '', api_key_configured: false, config: {} })
 const form = ref(emptyForm())
 const supportedProtocols = computed(() => catalog.value.find(item => item.runtime_type === form.value.runtime_type)?.supported_model_protocols || ['responses'])
+const catalogResource = useAsyncResource(({ signal }) => getRuntimeCatalog({ signal }), [])
+const runtimesResource = useAsyncResource(({ signal }) => getRuntimes({ signal }), [])
+const agentStateResource = useAsyncResource(({ signal }, runtimeID) => getRuntimeAgentState(runtimeID, { signal }), null)
 
 function statusLabel(status) { return ({ draft: '未部署', deploying: '部署中', ready: '就绪', degraded: '异常', failed: '失败', uninstalled: '已卸载' })[status] || status || '未知' }
 function protocolLabel(protocol) { return ({ responses: 'Responses API', anthropic: 'Anthropic API' })[protocol] || protocol }
@@ -191,10 +196,10 @@ function cancelEdit() { editing.value = false; if (!selected.value && runtimes.v
 function clearNotice() { notice.value = null }
 function showNotice(type, text) { notice.value = { type, text } }
 function formBody() { const body = { ...form.value }; delete body.id; delete body.status; delete body.api_key_configured; delete body.config; if (!body.api_key) delete body.api_key; body.storage = `${storageGi(body.storage)}Gi`; return body }
-async function loadNodes() { try { const list = await api.get('/nodes'); nodes.value = Array.isArray(list) ? list.filter(node => node && node.name).map(node => node.name) : [] } catch { nodes.value = [] } }
-async function loadNamespaces() { try { const list = await api.get('/k8s/namespace-names'); namespaces.value = Array.isArray(list) ? list.map(item => item?.name).filter(Boolean).sort() : [] } catch { namespaces.value = [] } }
-async function loadCatalog() { try { const definitions = await api.get('/runtimes/catalog'); if (Array.isArray(definitions) && definitions.every(item => item.runtime_type && Array.isArray(item.supported_model_protocols))) catalog.value = definitions } catch (err) { showNotice('error', err.message) } }
-async function load() { loading.value = true; try { runtimes.value = await api.get('/runtimes'); if (selected.value) { selected.value = runtimes.value.find(item => item.id === selected.value.id) || null; if (selected.value) loadAgentState() } } catch (err) { showNotice('error', err.message) } finally { loading.value = false } }
+async function loadNodes() { try { const list = await getRuntimeNodes(); nodes.value = Array.isArray(list) ? list.filter(node => node && node.name).map(node => node.name) : [] } catch { nodes.value = [] } }
+async function loadNamespaces() { try { const list = await getRuntimeNamespaces(); namespaces.value = Array.isArray(list) ? list.map(item => item?.name).filter(Boolean).sort() : [] } catch { namespaces.value = [] } }
+async function loadCatalog() { const definitions = await catalogResource.refresh(); if (Array.isArray(definitions) && definitions.every(item => item.runtime_type && Array.isArray(item.supported_model_protocols))) catalog.value = definitions; else if (catalogResource.error.value) showNotice('error', catalogResource.error.value.message) }
+async function load() { loading.value = true; const result = await runtimesResource.refresh(); if (result) { runtimes.value = result; if (selected.value) { selected.value = runtimes.value.find(item => item.id === selected.value.id) || null; if (selected.value) loadAgentState() } } else if (runtimesResource.error.value) showNotice('error', runtimesResource.error.value.message); loading.value = false }
 async function save() { saving.value = true; clearNotice(); try { const result = form.value.id ? await api.put(`/runtimes/${form.value.id}`, formBody()) : await api.post('/runtimes', formBody()); showNotice('success', result.message || 'Runtime 已保存'); await load(); selected.value = runtimes.value.find(item => item.id === result.id) || runtimes.value[0] || null; editing.value = false } catch (err) { showNotice('error', err.message) } finally { saving.value = false } }
 async function deploy(item) { await runAction(`/runtimes/${item.id}/deploy`, 'Runtime 已部署或更新') }
 async function health(item) { await runAction(`/runtimes/${item.id}/health-check`, '健康检查已完成') }
@@ -221,7 +226,9 @@ async function loadAgentState() {
   if (!selected.value || selected.value.deployment_mode !== 'managed' || selected.value.runtime_type !== 'nanobot') return
   agentLoading.value = true
   try {
-    const [grants, operations] = await Promise.all([api.get(`/runtimes/${selected.value.id}/agent-capability-grants`), api.get(`/runtimes/${selected.value.id}/agent-operations`), loadNamespaces()])
+    const result = await agentStateResource.refresh(selected.value.id)
+    await loadNamespaces()
+    const [grants, operations] = result || [[], []]
     resetAgentGrants(Array.isArray(grants) ? grants : [])
     agentOperations.value = Array.isArray(operations) ? operations : []
   } catch (err) { showNotice('error', err.message) } finally { agentLoading.value = false }

@@ -126,6 +126,9 @@ import MarkdownIt from 'markdown-it'
 import taskLists from 'markdown-it-task-lists'
 import { ArrowUpRight, BellRing, Bot, CheckCircle2, RefreshCw, Settings2, VolumeX, X } from 'lucide-vue-next'
 import { api } from '../api/index.js'
+import { getRuntimes } from '../api/runtimes.js'
+import { getAlertingAutomationEvents, getAlertingAutomationPolicy, getAlertingOverview, getAlertingSilences, getAlertingStatus } from '../api/alerting.js'
+import { useAsyncResource } from '../composables/useAsyncResource.js'
 
 const props = defineProps({ nodes: { type: Array, default: () => [] }, monitoringReady: Boolean, metricsNodeName: { type: String, default: '' } })
 const emit = defineEmits(['navigate'])
@@ -148,6 +151,16 @@ const automationPolicy = ref(blankAutomationPolicy())
 const automationEvents = ref([])
 const runtimes = ref([])
 const reportMarkdown = new MarkdownIt({ breaks: true, html: false, linkify: true }).use(taskLists, { enabled: true })
+const statusResource = useAsyncResource(({ signal }) => getAlertingStatus({ signal }), null)
+const alertResource = useAsyncResource(async ({ signal }) => {
+  const [overviewResult, policy, events, runtimeItems] = await Promise.all([
+    getAlertingOverview({ signal }),
+    getAlertingAutomationPolicy({ signal }),
+    getAlertingAutomationEvents({ signal }),
+    getRuntimes({ signal }),
+  ])
+  return { overviewResult, policy, events, runtimeItems }
+}, null)
 
 const readyNodes = computed(() => props.nodes.filter(node => node.ready))
 const sortedAlerts = computed(() => [...overview.value.active].sort((left, right) => severityWeight(left) - severityWeight(right)))
@@ -158,18 +171,16 @@ async function refresh() {
   if (!props.monitoringReady) return
   loading.value = true
   try {
-    status.value = await api.get('/monitoring/alerts/status')
+    status.value = await statusResource.refresh()
     if (!installForm.value.node_name) installForm.value.node_name = defaultNodeName()
+    if (!status.value) return
     if (status.value.state === 'ready') {
-      overview.value = await api.get('/monitoring/alerts/overview')
-      const [policy, events, runtimeItems] = await Promise.all([
-        api.get('/monitoring/alerts/automation-policy'),
-        api.get('/monitoring/alerts/automation-events'),
-        api.get('/runtimes')
-      ])
-      automationPolicy.value = { ...blankAutomationPolicy(), ...policy }
-      automationEvents.value = Array.isArray(events) ? events : []
-      runtimes.value = Array.isArray(runtimeItems) ? runtimeItems : []
+      const result = await alertResource.refresh()
+      if (!result) return
+      overview.value = result.overviewResult || { active: [], resolved: [], firing: 0, silenced: 0 }
+      automationPolicy.value = { ...blankAutomationPolicy(), ...result.policy }
+      automationEvents.value = Array.isArray(result.events) ? result.events : []
+      runtimes.value = Array.isArray(result.runtimeItems) ? result.runtimeItems : []
     }
   } finally { loading.value = false }
 }
@@ -231,7 +242,7 @@ async function saveAutomationPolicy() {
 async function openSettings() {
   settingsForm.value = { feishu_webhook_url: '', email: blankEmail(), notification_policy: { ...(status.value?.notification_policy || defaultNotificationPolicy()) }, rules: (status.value?.rules || []).map(rule => ({ ...rule })) }
   settingsOpen.value = true
-  try { await api.get('/monitoring/alerts/silences') } catch { /* The active-alert view remains usable when only silence history is unavailable. */ }
+  try { await getAlertingSilences() } catch { /* The active-alert view remains usable when only silence history is unavailable. */ }
 }
 async function testNotification(channel) {
   testingChannel.value = channel

@@ -62,6 +62,10 @@ import { computed, defineComponent, h, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ArrowLeft, Pencil, RefreshCw, Trash2 } from 'lucide-vue-next'
 import { api } from '../api/index.js'
+import { getApplication, getApplicationConfigResources, getApplicationEndpoints, getApplicationSecretResources, getDeploymentTemplates, getImageRegistries } from '../api/applications.js'
+import { getManagedDomains } from '../api/domains.js'
+import { useAsyncResource } from '../composables/useAsyncResource.js'
+import { getPersistentVolumeInventory } from '../api/storage.js'
 
 const QuantityInput = defineComponent({
   props: { label: String, value: Number, unit: String, units: Array }, emits: ['update:value', 'update:unit'],
@@ -106,6 +110,20 @@ const capabilityItems = ref([])
 const savingCapabilities = ref(false)
 const templateForm = ref(newTemplateForm())
 const endpointForm = ref(newEndpointForm())
+const applicationResource = useAsyncResource(async ({ signal }) => {
+  const result = await getApplication(props.applicationID, { signal })
+  const namespace = result.application?.environment?.namespace || ''
+  const [loadedTemplates, loadedEndpoints, loadedDomains, loadedRegistries, configmaps, secrets] = await Promise.all([
+    getDeploymentTemplates(props.applicationID, { signal }),
+    getApplicationEndpoints(props.applicationID, { signal }),
+    getManagedDomains({ environmentID: result.application?.environment_id }, { signal }),
+    getImageRegistries({ projectID: result.application?.project_id }, { signal }),
+    getApplicationConfigResources(namespace, { signal }),
+    getApplicationSecretResources(namespace, { signal }),
+  ])
+  return { result, loadedTemplates, loadedEndpoints, loadedDomains, loadedRegistries, configmaps, secrets }
+}, null)
+const storageResource = useAsyncResource(({ signal }) => getPersistentVolumeInventory({ signal }), null)
 
 const readyDomains = computed(() => domains.value.filter(domain => domain.enabled && domain.certificate?.status === 'Ready'))
 const endpointServicePorts = computed(() => {
@@ -153,9 +171,41 @@ function managedKeys(items) { return items.filter(item => item.key.trim() && ite
 function templatePayload() { const form = templateForm.value; const service = { type: form.service.type, external_traffic_policy: form.service.type === 'ClusterIP' ? '' : form.service.external_traffic_policy, ports: form.service.ports.map(port => ({ name: port.name, port: port.port, target_port: port.target_port, protocol: port.protocol, node_port: form.service.type === 'NodePort' ? port.node_port || 0 : 0 })) }; const fileMounts = form.file_mounts.map(({ source_type, source_name, key, mount_path }) => ({ source_type, source_name, key, mount_path })); return { ...(editingTemplate.value ? { revision: editingTemplate.value.revision } : {}), name: form.name, description: form.description, enabled: form.enabled, spec: { image: form.image, registry_id: form.registry_id, command: stringValues(form.command_items), args: stringValues(form.argument_items), container_port: form.container_port, replicas: form.replicas, node_name: form.node_name, host_network: form.host_network, volumes: form.volumes, file_mounts: fileMounts, config: keyValueMap(form.config_items), config_disabled: disabledKeys(form.config_items), config_managed_keys: managedKeys(form.config_items), secrets: keyValueMap(form.secret_items), secrets_disabled: disabledKeys(form.secret_items), secret_managed_keys: managedKeys(form.secret_items), resources: { requests_cpu: `${form.resources.requests_cpu}${form.resources.requests_cpu_unit}`, requests_memory: `${form.resources.requests_memory}${form.resources.requests_memory_unit}`, limits_cpu: `${form.resources.limits_cpu}${form.resources.limits_cpu_unit}`, limits_memory: `${form.resources.limits_memory}${form.resources.limits_memory_unit}` }, health: hasTCPServicePort.value ? form.health : { ...form.health, readiness_enabled: false, liveness_enabled: false }, service } } }
 function templateServiceSummary(service) { const ports = servicePortsFromSpec(service, 0); return `${service?.type || 'ClusterIP'} · ${ports.map(port => `${port.protocol} ${port.port}`).join(', ')}` }
 
-async function refreshFileResources(namespace = application.value?.environment?.namespace || '') { const [configmaps, secrets] = await Promise.all([api.get(`/k8s/configmaps?namespace=${encodeURIComponent(namespace)}&usage=false`), api.get(`/k8s/secrets?namespace=${encodeURIComponent(namespace)}&usage=false`)]); configResources.value = configmaps || []; secretResources.value = secrets || [] }
-async function loadApplication() { error.value = ''; storageResourcesLoaded.value = false; persistentVolumeClaims.value = []; clusterNodes.value = []; try { const result = await api.get(`/applications/${props.applicationID}`); application.value = result.application; capabilityItems.value = (result.application.capabilities || []).map(value => ({ value })); workloadKind.value = result.application.workload_kind || 'deployment'; releases.value = result.releases || []; const namespace = result.application.environment?.namespace || ''; const [loadedTemplates, loadedEndpoints, loadedDomains, loadedRegistries] = await Promise.all([api.get(`/applications/${props.applicationID}/deployment-templates`), api.get(`/applications/${props.applicationID}/endpoints`), api.get(`/domains?environment_id=${result.application.environment_id}`), api.get(`/image-registries?project_id=${result.application.project_id}`), refreshFileResources(namespace)]); templates.value = loadedTemplates || []; endpoints.value = loadedEndpoints || []; domains.value = loadedDomains || []; registries.value = loadedRegistries || [] } catch (e) { error.value = e.message || '加载应用详情失败' } }
-async function loadStorageResources() { if (storageResourcesLoaded.value || storageResourcesLoading.value || !application.value) return; storageResourcesLoading.value = true; try { const storage = await Promise.allSettled([api.get(`/k8s/persistent-volume-claims?environment_id=${application.value.environment_id}`), api.get('/nodes'), api.get('/servers')]); persistentVolumeClaims.value = storage[0].status === 'fulfilled' ? storage[0].value || [] : []; const servers = storage[2].status === 'fulfilled' ? storage[2].value || [] : []; const serverNames = new Map(servers.filter(server => server.k8s_node_name).map(server => [server.k8s_node_name, server.name])); clusterNodes.value = storage[1].status === 'fulfilled' ? (storage[1].value || []).map(node => ({ name: node.name, display_name: serverNames.get(node.name) || node.name })) : []; storageResourcesLoaded.value = true } finally { storageResourcesLoading.value = false } }
+async function loadApplication() {
+  error.value = ''
+  storageResourcesLoaded.value = false
+  persistentVolumeClaims.value = []
+  clusterNodes.value = []
+  const loaded = await applicationResource.refresh()
+  if (!loaded) {
+    if (applicationResource.error.value) error.value = applicationResource.error.value.message || '加载应用详情失败'
+    return
+  }
+  const { result, loadedTemplates, loadedEndpoints, loadedDomains, loadedRegistries, configmaps, secrets } = loaded
+  application.value = result.application
+  capabilityItems.value = (result.application.capabilities || []).map(value => ({ value }))
+  workloadKind.value = result.application.workload_kind || 'deployment'
+  releases.value = result.releases || []
+  templates.value = loadedTemplates || []
+  endpoints.value = loadedEndpoints || []
+  domains.value = loadedDomains || []
+  registries.value = loadedRegistries || []
+  configResources.value = configmaps || []
+  secretResources.value = secrets || []
+}
+async function loadStorageResources() {
+  if (storageResourcesLoaded.value || storageResourcesLoading.value || !application.value) return
+  storageResourcesLoading.value = true
+  try {
+    const result = await storageResource.refresh()
+    if (!result) return
+    const [items, , , clusterNodesResult, servers] = result
+    persistentVolumeClaims.value = items || []
+    const serverNames = new Map((servers || []).filter(server => server.k8s_node_name).map(server => [server.k8s_node_name, server.name]))
+    clusterNodes.value = (clusterNodesResult || []).map(node => ({ name: node.name, display_name: serverNames.get(node.name) || node.name }))
+    storageResourcesLoaded.value = true
+  } finally { storageResourcesLoading.value = false }
+}
 async function openRelease(release) { await router.push(`/applications/${props.applicationID}/releases/${release.id}`) }
 function openTemplateEditor(template = null) { editingTemplate.value = template; templateForm.value = template ? formFromTemplate(template) : newTemplateForm(); showTemplateEditor.value = true; loadStorageResources() }
 function closeTemplateEditor() { showTemplateEditor.value = false; editingTemplate.value = null }

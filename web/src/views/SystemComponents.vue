@@ -135,6 +135,8 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { api } from '../api/index.js'
+import { getClusterNodes, getSystemComponents } from '../api/system-components.js'
+import { useAsyncResource } from '../composables/useAsyncResource.js'
 
 const items = ref([])
 const loaded = ref(false)
@@ -146,6 +148,10 @@ const error = ref('')
 const form = ref(blankForm())
 const nodes = ref([])
 const schedulableNodes = computed(() => nodes.value.filter(node => node.ready && !node.evicted))
+const componentResource = useAsyncResource(async ({ signal }) => {
+  const [items, nodeList] = await Promise.all([getSystemComponents({ signal }), getClusterNodes({ signal })])
+  return { items, nodeList }
+}, null)
 
 function blankForm() {
   return { replicas: null, maxUnavailable: '0', maxSurge: '1', nodeName: '', traefikReadTimeout: '', traefikReadTimeoutMode: '' }
@@ -154,19 +160,11 @@ function blankForm() {
 async function load() {
   loading.value = true
   error.value = ''
-  try {
-    items.value = (await api.get('/system-components')) || []
-    try {
-      nodes.value = (await api.get('/nodes')) || []
-    } catch (_) {
-      nodes.value = []
-    }
-  } catch (err) {
-    error.value = err.message || '加载系统组件失败'
-  } finally {
-    loading.value = false
-    loaded.value = true
-  }
+  const result = await componentResource.refresh()
+  if (result) { items.value = result.items || []; nodes.value = result.nodeList || [] }
+  else if (componentResource.error.value) error.value = componentResource.error.value.message || '加载系统组件失败'
+  loading.value = false
+  loaded.value = true
 }
 
 function configBadgeClass(item) {

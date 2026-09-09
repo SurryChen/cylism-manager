@@ -35,7 +35,7 @@ describe('Domains view', () => {
     await new Promise(resolve => setTimeout(resolve, 20))
     await wrapper.get('.btn-primary').trigger('click')
     await nextTick()
-    expect(api.get).toHaveBeenCalledWith('/certs/issuers')
+    expect(api.get).toHaveBeenCalledWith('/certs/issuers', undefined)
     expect(wrapper.text()).toContain('申请 HTTPS 域名')
     expect(wrapper.text()).toContain('letsencrypt-prod')
   })

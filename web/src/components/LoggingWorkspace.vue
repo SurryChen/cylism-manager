@@ -61,6 +61,9 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { RefreshCw, Settings2, X } from 'lucide-vue-next'
 import { api } from '../api/index.js'
+import { getApplications, getProjects } from '../api/applications.js'
+import { getLoggingFilters, getLoggingStatus, queryLogs as requestLogs } from '../api/logging.js'
+import { useAsyncResource } from '../composables/useAsyncResource.js'
 
 const props = defineProps({ nodes: { type: Array, default: () => [] }, storageClasses: { type: Array, default: () => [] } })
 
@@ -82,6 +85,12 @@ const projects = ref([])
 const installForm = ref({ node_name: '', storage: '10Gi', storage_class_name: '', retention_days: 14 })
 const settingsForm = ref({ retention_days: 14 })
 const queryForm = ref({ range: '1h', start_time: '', end_time: '', limit: 200, keyword: '', project_id: 0, environment_id: 0, application_id: 0, namespace: '', pod: '', container: '', node: '' })
+const statusResource = useAsyncResource(({ signal }) => getLoggingStatus({ signal }), null)
+const filtersResource = useAsyncResource(async ({ signal }) => {
+  const [filters, apps, projectList] = await Promise.all([getLoggingFilters({ signal }), getApplications({}, { signal }), getProjects({ signal })])
+  return { filters, apps, projectList }
+}, null)
+const queryResource = useAsyncResource(({ signal }, payload) => requestLogs(payload, { signal }), null)
 
 const readyNodes = computed(() => props.nodes.filter(node => node.ready))
 const logsAvailable = computed(() => Number(status.value?.loki_ready) > 0)
@@ -124,17 +133,19 @@ async function refresh() {
   loading.value = true
   error.value = ''
   try {
-    status.value = await api.get('/monitoring/logs/status')
+    status.value = await statusResource.refresh()
     if (!installForm.value.node_name) installForm.value.node_name = readyNodes.value[0]?.name || ''
     if (logsAvailable.value) await loadFilters()
+    if (statusResource.error.value) throw statusResource.error.value
   } catch (e) { error.value = e.message || '读取日志采集状态失败' } finally { loading.value = false }
 }
 
 async function loadFilters() {
-  const [filters, apps, projectList] = await Promise.all([api.get('/monitoring/logs/filters'), api.get('/applications'), api.get('/projects')])
-  filterOptions.value = { namespaces: filters?.namespaces || [], pods: filters?.pods || [], nodes: filters?.nodes || [] }
-  applications.value = apps || []
-  projects.value = projectList || []
+  const result = await filtersResource.refresh()
+  if (!result) { if (filtersResource.error.value) throw filtersResource.error.value; return }
+  filterOptions.value = { namespaces: result.filters?.namespaces || [], pods: result.filters?.pods || [], nodes: result.filters?.nodes || [] }
+  applications.value = result.apps || []
+  projects.value = result.projectList || []
 }
 
 async function install() {
@@ -149,7 +160,8 @@ async function queryLogs() {
   try {
     const payload = buildLogQueryPayload()
     if (!payload) return
-    const result = await api.post('/monitoring/logs/query', payload)
+    const result = await queryResource.refresh(payload)
+    if (!result) { if (queryResource.error.value) throw queryResource.error.value; return }
     lines.value = result?.lines || []
     hasMore.value = Boolean(result?.has_more)
     queried.value = true

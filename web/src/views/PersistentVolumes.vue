@@ -19,6 +19,9 @@
 import { computed, onUnmounted, ref, watch } from 'vue'
 import { RotateCcw, Trash2 } from 'lucide-vue-next'
 import { api } from '../api/index.js'
+import { getProjects } from '../api/applications.js'
+import { getPersistentVolumeBackups, getPersistentVolumeImports, getPersistentVolumeInventory, getPersistentVolumeUsage } from '../api/storage.js'
+import { useAsyncResource } from '../composables/useAsyncResource.js'
 
 const projects = ref([])
 const claims = ref([])
@@ -53,6 +56,8 @@ let migrationPollTimer
 let backupPollTimer
 let importPollTimer
 const createQueryHandled = ref(false)
+const inventoryResource = useAsyncResource(({ signal }) => getPersistentVolumeInventory({ signal }), null)
+const usageResource = useAsyncResource(({ signal }) => getPersistentVolumeUsage({ signal }), [])
 const selectedProject = computed(() => projects.value.find(project => project.id === projectID.value) || null)
 const validStorage = computed(() => Boolean(form.value.namespace) && Number.isInteger(form.value.storage_value) && form.value.storage_value > 0 && ['Mi', 'Gi', 'Ti'].includes(form.value.storage_unit))
 const migrationNodes = computed(() => nodes.value.filter(node => node.name && node.name !== migrationTarget.value?.bound_node && (node.status === 'Ready' || node.status === 'ready')))
@@ -76,9 +81,29 @@ function infrastructureActionLabel(claim) { return claim.owner === 'oci-registry
 function usageFor(claim) { return usage.value.find(item => item.namespace === claim.namespace && item.name === claim.name) }
 function formatBytes(value) { const bytes = Number(value) || 0; if (bytes < 1024) return `${bytes} B`; const units = ['KiB', 'MiB', 'GiB', 'TiB']; let amount = bytes; let index = -1; do { amount /= 1024; index += 1 } while (amount >= 1024 && index < units.length - 1); return `${amount >= 10 ? amount.toFixed(0) : amount.toFixed(1)} ${units[index]}` }
 function usagePercent(item) { const capacity = Number(item?.capacity_bytes) || 0; if (!capacity) return '已用容量'; return `${Math.min(100, Math.round((Number(item.used_bytes) / capacity) * 100))}% / 请求容量` }
-async function loadProjects() { try { projects.value = await api.get('/projects') || [] } catch (e) { error.value = e.message || '加载项目失败' } }
-async function loadClaims() { loaded.value = false; error.value = ''; try { const [items, classes, tasks, clusterNodes, servers, namespaceList] = await Promise.all([api.get('/k8s/persistent-volume-claims'), api.get('/k8s/storage-classes'), api.get('/k8s/persistent-volume-migrations'), api.get('/nodes'), api.get('/servers'), api.get('/k8s/namespace-names')]); claims.value = items || []; storageClasses.value = classes || []; migrations.value = tasks || []; nodes.value = clusterNodes || []; backupServers.value = servers || []; namespaces.value = (namespaceList || []).map(item => item.name).filter(Boolean).sort(); applyCreateQuery(); loaded.value = true; syncMigrationPolling(); void loadUsage() } catch (e) { error.value = e.message || '加载存储卷失败' } }
-async function loadUsage() { usageLoading.value = true; try { usage.value = await api.get('/k8s/persistent-volume-claims/usage') || [] } catch { usage.value = [] } finally { usageLoading.value = false } }
+async function loadProjects() { try { projects.value = await getProjects() || [] } catch (e) { error.value = e.message || '加载项目失败' } }
+async function loadClaims() {
+  loaded.value = false
+  error.value = ''
+  const result = await inventoryResource.refresh()
+  if (!result) {
+    error.value = inventoryResource.error.value?.message || '加载存储卷失败'
+    loaded.value = true
+    return
+  }
+  const [items, classes, tasks, clusterNodes, servers, namespaceList] = result
+  claims.value = items || []
+  storageClasses.value = classes || []
+  migrations.value = tasks || []
+  nodes.value = clusterNodes || []
+  backupServers.value = servers || []
+  namespaces.value = (namespaceList || []).map(item => item.name).filter(Boolean).sort()
+  applyCreateQuery()
+  loaded.value = true
+  syncMigrationPolling()
+  void loadUsage()
+}
+async function loadUsage() { usageLoading.value = true; const result = await usageResource.refresh(); if (result) usage.value = result || []; else usage.value = []; usageLoading.value = false }
 function openCreate() { form.value = newClaimForm(); showCreate.value = true }
 function applyCreateQuery() { if (createQueryHandled.value || typeof window === 'undefined') return; const query = new URLSearchParams(window.location.hash.split('?')[1] || ''); if (query.get('create') !== '1') return; createQueryHandled.value = true; const storage = query.get('storage') || '100Gi'; const matched = storage.match(/^(\d+)(Mi|Gi|Ti)$/); form.value = { namespace: query.get('namespace') || newClaimForm().namespace, name: query.get('name') || '', storage_value: matched ? Number(matched[1]) : 100, storage_unit: matched ? matched[2] : 'Gi', storage_class_name: query.get('storage_class_name') || 'local-path' }; showCreate.value = true }
 async function createNamespace() { if (!form.value.namespace || namespaces.value.includes(form.value.namespace)) return; saving.value = true; error.value = ''; try { await api.post('/k8s/namespaces', { name: form.value.namespace }); namespaces.value = [...namespaces.value, form.value.namespace].sort() } catch (e) { error.value = e.message || '创建命名空间失败' } finally { saving.value = false } }
@@ -96,7 +121,7 @@ async function cleanupMigration() { if (!cleanupTarget.value) return; saving.val
 function backupRunning(backup) { return ['accepted', 'running'].includes(backup.status) || backup.restore_status === 'running' }
 function syncBackupPolling() { if (backupTarget.value && backups.value.some(backupRunning) && !backupPollTimer) backupPollTimer = window.setInterval(refreshBackups, 2500); if (!backupTarget.value || !backups.value.some(backupRunning)) stopBackupPolling() }
 function stopBackupPolling() { if (backupPollTimer) window.clearInterval(backupPollTimer); backupPollTimer = undefined }
-async function refreshBackups() { if (!backupTarget.value) return; try { backups.value = await api.get(`/k8s/persistent-volume-claims/${backupTarget.value.name}/backups?environment_id=${claimEnvironmentID(backupTarget.value)}`) || []; syncBackupPolling() } catch (e) { error.value = e.message || '读取备份记录失败'; stopBackupPolling() } }
+async function refreshBackups() { if (!backupTarget.value) return; try { backups.value = await getPersistentVolumeBackups(backupTarget.value.name, claimEnvironmentID(backupTarget.value)) || []; syncBackupPolling() } catch (e) { error.value = e.message || '读取备份记录失败'; stopBackupPolling() } }
 async function openBackup(claim) { backupTarget.value = claim; backupForm.value = { backup_server_id: backupServers.value[0]?.id || 0, backup_root: '/data/cylism-backups' }; await refreshBackups() }
 async function createBackup() { if (!backupTarget.value) return; saving.value = true; error.value = ''; try { await api.post(`/k8s/persistent-volume-claims/${backupTarget.value.name}/backups`, { environment_id: claimEnvironmentID(backupTarget.value), ...backupForm.value }); await refreshBackups() } catch (e) { error.value = e.message || '创建备份失败' } finally { saving.value = false } }
 async function restoreBackup(backup) { if (!backupTarget.value || !window.confirm('恢复会覆盖当前 PVC 数据，并短暂停止引用它的工作负载，确定继续吗？')) return; saving.value = true; error.value = ''; try { await api.post(`/k8s/persistent-volume-claims/${backupTarget.value.name}/backups/${backup.id}/restore`, { environment_id: claimEnvironmentID(backupTarget.value), confirm_data_replace: true }); await refreshBackups() } catch (e) { error.value = e.message || '恢复备份失败' } finally { saving.value = false } }
@@ -104,7 +129,7 @@ function importRunning(task) { return !['succeeded', 'failed'].includes(task.sta
 function importLabel(status) { return ({ pending: '等待执行', preflight: '预检中', stopping_workload: '停止应用中', backing_up: '创建备份中', copying: '复制数据中', verifying: '校验中', restoring_workload: '恢复应用中', succeeded: '导入完成', failed: '导入失败' })[status] || status }
 function syncImportPolling() { if (importTarget.value && imports.value.some(importRunning) && !importPollTimer) importPollTimer = window.setInterval(refreshImports, 2500); if (!importTarget.value || !imports.value.some(importRunning)) stopImportPolling() }
 function stopImportPolling() { if (importPollTimer) window.clearInterval(importPollTimer); importPollTimer = undefined }
-async function refreshImports() { if (!importTarget.value) return; try { imports.value = await api.get(`/k8s/persistent-volume-claims/${importTarget.value.name}/imports?environment_id=${claimEnvironmentID(importTarget.value)}`) || []; syncImportPolling() } catch (e) { error.value = e.message || '读取目录导入记录失败'; stopImportPolling() } }
+async function refreshImports() { if (!importTarget.value) return; try { imports.value = await getPersistentVolumeImports(importTarget.value.name, claimEnvironmentID(importTarget.value)) || []; syncImportPolling() } catch (e) { error.value = e.message || '读取目录导入记录失败'; stopImportPolling() } }
 async function openImport(claim) { importTarget.value = claim; importForm.value = { source_server_id: backupServers.value[0]?.id || 0, source_path: '', confirm_data_replace: false }; await refreshImports() }
 async function createImport() { if (!importTarget.value) return; saving.value = true; error.value = ''; try { await api.post(`/k8s/persistent-volume-claims/${importTarget.value.name}/imports`, { environment_id: claimEnvironmentID(importTarget.value), ...importForm.value }); await refreshImports() } catch (e) { error.value = e.message || '创建目录导入失败' } finally { saving.value = false } }
 async function deleteImportBackup(task) { if (!importTarget.value || !window.confirm('删除后无法通过平台恢复本次导入前的数据，确定删除本地归档吗？')) return; saving.value = true; error.value = ''; try { await api.delete(`/k8s/persistent-volume-claims/${importTarget.value.name}/imports/${task.id}/backup`, { environment_id: claimEnvironmentID(importTarget.value) }); await refreshImports() } catch (e) { error.value = e.message || '删除导入备份失败' } finally { saving.value = false } }

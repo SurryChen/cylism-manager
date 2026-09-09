@@ -36,7 +36,7 @@ describe('PersistentVolumes view', () => {
     const wrapper = mount(PersistentVolumes)
     await settle()
 
-    expect(api.get).toHaveBeenCalledWith('/k8s/persistent-volume-claims')
+    expect(api.get).toHaveBeenCalledWith('/k8s/persistent-volume-claims', expect.objectContaining({ signal: expect.any(AbortSignal) }))
     expect(wrapper.text()).toContain('manual-data')
     expect(wrapper.text()).toContain('外部创建')
   })
@@ -167,7 +167,7 @@ describe('PersistentVolumes view', () => {
     await settle()
     await settle()
 
-    expect(api.get).toHaveBeenCalledWith('/k8s/persistent-volume-claims/usage')
+    expect(api.get).toHaveBeenCalledWith('/k8s/persistent-volume-claims/usage', expect.objectContaining({ signal: expect.any(AbortSignal) }))
     expect(wrapper.text()).toContain('1.0 GiB')
     expect(wrapper.text()).toContain('20% / 请求容量')
   })

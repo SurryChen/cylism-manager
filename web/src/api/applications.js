@@ -36,3 +36,15 @@ export function getApplication(applicationID, options) {
 export function getDeploymentTemplates(applicationID, options) {
   return api.get(`/applications/${applicationID}/deployment-templates`, options)
 }
+
+export function getApplicationEndpoints(applicationID, options) {
+  return api.get(`/applications/${applicationID}/endpoints`, options)
+}
+
+export function getApplicationConfigResources(namespace, options) {
+  return api.get(`/k8s/configmaps?namespace=${encodeURIComponent(namespace || '')}&usage=false`, options)
+}
+
+export function getApplicationSecretResources(namespace, options) {
+  return api.get(`/k8s/secrets?namespace=${encodeURIComponent(namespace || '')}&usage=false`, options)
+}

@@ -45,7 +45,7 @@ describe('LoggingWorkspace', () => {
     await wrapper.get('[data-testid="log-result-limit"]').setValue('500')
     await wrapper.get('form.logging-query').trigger('submit')
     await flushPromises()
-    expect(apiMocks.post).toHaveBeenCalledWith('/monitoring/logs/query', expect.objectContaining({ range: '1h', limit: 500 }))
+    expect(apiMocks.post).toHaveBeenCalledWith('/monitoring/logs/query', expect.objectContaining({ range: '1h', limit: 500 }), expect.objectContaining({ signal: expect.any(AbortSignal) }))
     expect(wrapper.text()).toContain('request failed')
   })
 
@@ -62,7 +62,7 @@ describe('LoggingWorkspace', () => {
 
     expect(wrapper.text()).toContain('部分节点日志不可用')
     expect(wrapper.text()).toContain('日志检索')
-    expect(apiMocks.get).toHaveBeenCalledWith('/monitoring/logs/filters')
+    expect(apiMocks.get).toHaveBeenCalledWith('/monitoring/logs/filters', expect.objectContaining({ signal: expect.any(AbortSignal) }))
   })
 
   it('sends an exact local time range as UTC values', async () => {
@@ -87,7 +87,7 @@ describe('LoggingWorkspace', () => {
       range: 'custom',
       start_time: new Date('2026-08-05T09:54:40').toISOString(),
       end_time: new Date('2026-08-05T09:55:00').toISOString(),
-    }))
+    }), expect.objectContaining({ signal: expect.any(AbortSignal) }))
   })
 
   it('allows retention settings to be saved while logging is starting', async () => {

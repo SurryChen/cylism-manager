@@ -54,6 +54,9 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ArrowLeft } from 'lucide-vue-next'
 import { api } from '../api/index.js'
+import { getProjects } from '../api/applications.js'
+import { getClaimableDomains, getDomainOptions, getImportableCertificates, getManagedDomains } from '../api/domains.js'
+import { useAsyncResource } from '../composables/useAsyncResource.js'
 
 const router = useRouter()
 const route = useRoute()
@@ -65,6 +68,14 @@ const currentEnvironment = computed(() => currentProject.value?.environments?.fi
 const form = ref(blank())
 const importForm = ref(blankImport())
 const claimForm = ref(blankClaim())
+const domainResource = useAsyncResource(async ({ signal }) => {
+  const unassigned = route.query.unassigned === 'true'
+  const [domainResult, projectResult] = await Promise.all([
+    getManagedDomains({ environmentID: environmentID.value || undefined, unassigned }, { signal }),
+    getProjects({ signal }),
+  ])
+  return { domainResult, projectResult }
+}, null)
 const issuers = computed(() => allIssuers.value.filter(issuer => issuer.kind === 'ClusterIssuer' && issuer.ready))
 const selectedImportCertificate = computed(() => importCandidates.value.find(certificate => certificate.name === importForm.value.certificate_name) || null)
 const selectedClaimDomain = computed(() => claimCandidates.value.find(domain => domain.id === claimForm.value.domain_id) || null)
@@ -72,11 +83,11 @@ let statusPoller = null
 function blank(){ return { hostname: '', environment_id: environmentID.value, issuer_ref: '', description: '', enabled: true } }
 function blankImport(){ return { environment_id: environmentID.value, certificate_name: '', description: '', enabled: true } }
 function blankClaim(){ return { environment_id: environmentID.value, domain_id: 0 } }
-async function load(){ try { const unassigned = route.query.unassigned === 'true'; const [domainResult, projectResult] = await Promise.all([unassigned ? api.get('/domains?unassigned=true') : environmentID.value ? api.get(`/domains?environment_id=${environmentID.value}`) : api.get('/domains'), api.get('/projects')]); domains.value = domainResult || []; projects.value = projectResult || [] } catch(e) { error.value = e.message || '加载受管域名失败' } finally { loaded.value = true; syncStatusPolling() } }
-async function loadOptions(){ allIssuers.value = await api.get('/certs/issuers') || [] }
+async function load(){ error.value = ''; const result = await domainResource.refresh(); if (result) { domains.value = result.domainResult || []; projects.value = result.projectResult || [] } else if (domainResource.error.value) error.value = domainResource.error.value.message || '加载受管域名失败'; loaded.value = true; syncStatusPolling() }
+async function loadOptions(){ allIssuers.value = await getDomainOptions() || [] }
 async function openCreate(){ error.value = ''; editing.value = null; if (!currentEnvironment.value) { error.value = '请先在顶部选择项目与环境'; return } form.value = blank(); try { await loadOptions(); form.value.issuer_ref = issuers.value[0]?.name || ''; modal.value = true } catch(e) { error.value = e.message || '加载签发前置条件失败' } }
-async function openImport(){ error.value = ''; if (!currentEnvironment.value) { error.value = '请先从工作台进入对应项目与环境'; return } try { importCandidates.value = await api.get(`/domains/importable-certificates?environment_id=${environmentID.value}`) || []; importForm.value = blankImport(); importModal.value = true } catch(e) { error.value = e.message || '加载可接管证书失败' } }
-async function openClaim(){ error.value = ''; if (!currentEnvironment.value) { error.value = '请先从工作台进入对应项目与环境'; return } try { claimCandidates.value = await api.get(`/domains/claimable?environment_id=${environmentID.value}`) || []; claimForm.value = blankClaim(); claimModal.value = true } catch(e) { error.value = e.message || '加载可关联历史域名失败' } }
+async function openImport(){ error.value = ''; if (!currentEnvironment.value) { error.value = '请先从工作台进入对应项目与环境'; return } try { importCandidates.value = await getImportableCertificates(environmentID.value) || []; importForm.value = blankImport(); importModal.value = true } catch(e) { error.value = e.message || '加载可接管证书失败' } }
+async function openClaim(){ error.value = ''; if (!currentEnvironment.value) { error.value = '请先从工作台进入对应项目与环境'; return } try { claimCandidates.value = await getClaimableDomains(environmentID.value) || []; claimForm.value = blankClaim(); claimModal.value = true } catch(e) { error.value = e.message || '加载可关联历史域名失败' } }
 async function openEdit(domain){ error.value = ''; if (!domain.environment_id && !currentEnvironment.value) { error.value = '请先在顶部选择要重新绑定的项目与环境'; return } editing.value = domain; form.value = { hostname: domain.hostname, environment_id: domain.environment_id || environmentID.value, issuer_ref: domain.issuer_ref || '', description: domain.description || '', enabled: domain.enabled }; try { await loadOptions(); modal.value = true } catch(e) { error.value = e.message || '加载签发前置条件失败' } }
 function close(){ modal.value = false; editing.value = null }
 function closeImport(){ importModal.value = false; importCandidates.value = [] }
