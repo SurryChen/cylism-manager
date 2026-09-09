@@ -1,12 +1,24 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { nextTick } from 'vue'
+import { nextTick, reactive } from 'vue'
 import { mount } from '@vue/test-utils'
 import SystemSettings from './SystemSettings.vue'
 import { api } from '../api/index.js'
 
+const route = reactive({ path: '/settings/system', query: reactive({}) })
+const routerPush = vi.fn(async ({ query }) => {
+  Object.assign(route.query, query || {})
+  await nextTick()
+})
+
+vi.mock('vue-router', () => ({
+  useRoute: () => route,
+  useRouter: () => ({ push: routerPush }),
+}))
+
 vi.mock('../api/index.js', () => ({
   api: {
     get: vi.fn(path => {
+      if (path === '/auth/temporary-tokens') return Promise.resolve([])
       if (path === '/platform/status') return Promise.resolve({ webhook_configured: true, image_prefix: 'registry.example.com/cylism-manager', deployment: { image: 'registry.example.com/cylism-manager:latest', ready_replicas: 1 }, releases: [{ id: 3, source: 'github', status: 'succeeded', image: 'registry.example.com/cylism-manager:latest', commit_sha: 'aabbccddeeff00112233445566778899', created_at: '2026-08-01T12:00:00Z' }] })
       if (path === '/platform/endpoint') return Promise.resolve({ endpoint: { hostname: 'console.example.com', certificate_name: 'console-example-com', enabled: true }, url: 'https://console.example.com', state: 'ready', ingress_ready: true, ingress: { namespace: 'default', name: 'cylism-ingress', ingress_class: 'traefik', hostname: 'console.example.com', path: '/', service_name: 'cylism-manager', service_port: '8080', tls_secret_name: 'console-example-com-tls' }, certificate: { name: 'console-example-com', status: 'Ready', expiry_date: '2026-10-01T12:00:00Z', renewal_time: '2026-09-01T12:00:00Z' } })
       if (path === '/certs') return Promise.resolve([{ name: 'console-example-com', namespace: 'default', status: 'Ready', domains: ['console.example.com'] }])
@@ -14,44 +26,51 @@ vi.mock('../api/index.js', () => ({
     }),
     post: vi.fn().mockResolvedValue({ secret: 'generated-secret' }),
     put: vi.fn().mockResolvedValue({}),
+    delete: vi.fn().mockResolvedValue({}),
   },
 }))
 
-beforeEach(() => { document.body.innerHTML = ''; vi.useRealTimers() })
+beforeEach(() => {
+  document.body.innerHTML = ''
+  vi.useRealTimers()
+  route.query.tab = undefined
+  routerPush.mockClear()
+  api.get.mockClear()
+  api.post.mockClear()
+  api.put.mockClear()
+  api.delete.mockClear()
+})
 
 describe('SystemSettings view', () => {
-  it('shows tailscale summary and setup entry', async () => {
-    const wrapper = mount(SystemSettings, {
-      global: {
-        stubs: {
-          RouterLink: {
-            props: ['to'],
-            template: '<a :href="to"><slot /></a>',
-          },
-        },
-      },
-    })
-    await new Promise(r => setTimeout(r, 50))
+  it('shows tabbed settings sections', async () => {
+    const wrapper = mount(SystemSettings, { global: { stubs: { Teleport: true } } })
+    await nextTick()
     await nextTick()
 
     expect(wrapper.text()).toContain('系统设置')
-    expect(wrapper.text()).toContain('100.88.0.1')
-    expect(wrapper.text()).toContain('不再单独占一个基础设施页面')
+    expect(wrapper.text()).toContain('安全与访问')
+    expect(wrapper.text()).not.toContain('Tailscale')
+    expect(wrapper.text()).not.toContain('平台自更新')
+
+    await wrapper.get('[data-testid="system-settings-tab-entry"]').trigger('click')
+    await nextTick()
+    expect(wrapper.text()).toContain('平台管理入口')
+    expect(wrapper.text()).not.toContain('临时登录秘钥')
+
+    await wrapper.get('[data-testid="system-settings-tab-release"]').trigger('click')
+    await nextTick()
     expect(wrapper.text()).toContain('平台自更新')
     expect(wrapper.text()).toContain('registry.example.com/cylism-manager:latest')
-    expect(wrapper.text()).toContain('最近一次自动更新')
-    expect(wrapper.text()).toContain('提交 aabbccddeeff')
-    expect(wrapper.text()).toContain('平台管理入口')
-    expect(wrapper.text()).toContain('https://console.example.com')
-    expect(wrapper.text()).toContain('console-example-com')
-    expect(wrapper.text()).toContain('default/cylism-ingress')
-    expect(wrapper.text()).toContain('console-example-com-tls')
-    expect(wrapper.text()).toContain('证书到期时间')
-    expect(wrapper.text()).toContain('下次续期时间')
-    expect(wrapper.text()).not.toContain('启用 HTTPS 管理入口')
+    wrapper.unmount()
+  })
 
-    const imageInput = wrapper.get('[data-testid="platform-manual-image"]')
-    await imageInput.setValue('registry.example.com/cylism-manager:latest')
+  it('supports release actions on the release tab', async () => {
+    const wrapper = mount(SystemSettings, { global: { stubs: { Teleport: true } } })
+    await nextTick()
+    await wrapper.get('[data-testid="system-settings-tab-release"]').trigger('click')
+    await nextTick()
+
+    await wrapper.get('[data-testid="platform-manual-image"]').setValue('registry.example.com/cylism-manager:latest')
     await wrapper.get('[data-testid="platform-manual-update"]').trigger('click')
     expect(wrapper.text()).toContain('平台更新已提交')
 
@@ -67,29 +86,35 @@ describe('SystemSettings view', () => {
 
   it('shows manual platform update errors in a dialog', async () => {
     api.post.mockRejectedValueOnce(new Error('平台镜像不属于允许的仓库前缀'))
-    const wrapper = mount(SystemSettings)
-    await new Promise(r => setTimeout(r, 50))
+    const wrapper = mount(SystemSettings, { global: { stubs: { Teleport: true } } })
+    await nextTick()
+    await wrapper.get('[data-testid="system-settings-tab-release"]').trigger('click')
+    await nextTick()
     await wrapper.get('[data-testid="platform-manual-image"]').setValue('oci-registry.crazycoding.top/cylism-manager:1.0.0')
     await wrapper.get('[data-testid="platform-manual-update"]').trigger('click')
-    await new Promise(r => setTimeout(r, 0))
+    await nextTick()
 
-    const notice = document.body.querySelector('.platform-action-notice-modal')
-    expect(notice).not.toBeNull()
-    expect(notice.textContent).toContain('平台更新失败')
-    expect(notice.textContent).toContain('平台镜像不属于允许的仓库前缀')
+    const notice = wrapper.find('.platform-action-notice-modal')
+    expect(notice.exists()).toBe(true)
+    expect(notice.text()).toContain('平台更新失败')
+    expect(notice.text()).toContain('平台镜像不属于允许的仓库前缀')
     wrapper.unmount()
   })
 
-  it('keeps unsaved endpoint fields when the status poll refreshes', async () => {
+  it('keeps unsaved endpoint fields when switching tabs and refreshes', async () => {
     vi.useFakeTimers()
-    const wrapper = mount(SystemSettings)
+    const wrapper = mount(SystemSettings, { global: { stubs: { Teleport: true } } })
     await vi.advanceTimersByTimeAsync(0)
+    await wrapper.get('[data-testid="system-settings-tab-entry"]').trigger('click')
     const hostname = wrapper.get('#platform-endpoint-hostname')
     await hostname.setValue('draft.example.com')
 
+    await wrapper.get('[data-testid="system-settings-tab-security"]').trigger('click')
+    await wrapper.get('[data-testid="system-settings-tab-entry"]').trigger('click')
     await vi.advanceTimersByTimeAsync(15000)
     await nextTick()
 
     expect(hostname.element.value).toBe('draft.example.com')
+    wrapper.unmount()
   })
 })

@@ -31,18 +31,15 @@ afterEach(() => {
 })
 
 describe('Glass UI application shell', () => {
-  it('shows primary navigation in the top bar and scopes desktop secondary navigation to the active module', async () => {
+  it('uses a full-width workspace for the overview while keeping primary navigation in the top bar', async () => {
     const wrapper = await mountApp()
-    const navigation = wrapper.get('[data-testid="desktop-navigation"]')
     const primaryNavigation = wrapper.get('[data-testid="primary-navigation"]')
 
     expect(primaryNavigation.text()).toContain('概览')
     expect(primaryNavigation.text()).toContain('基础设施')
     expect(primaryNavigation.text()).toContain('记录与系统')
-    expect(navigation.text()).toContain('概览')
-    expect(navigation.text()).not.toContain('服务器')
-    expect(navigation.text()).not.toContain('数据管理')
-    expect(navigation.find('.sidebar-context').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="desktop-navigation"]').exists()).toBe(false)
+    expect(wrapper.get('.app-workspace').classes()).toContain('app-workspace--wide')
   })
 
   it('shows infrastructure secondary navigation for infrastructure routes while preserving all mobile destinations', async () => {
