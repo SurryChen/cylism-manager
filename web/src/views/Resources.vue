@@ -112,8 +112,9 @@
 </template>
 
 <script setup>
-import { ref, onMounted, computed } from 'vue'
-import { api } from '../api/index.js'
+import { ref, onMounted, computed, watch } from 'vue'
+import { getResourceInventory, getResourceService } from '../api/kubernetes.js'
+import { useAsyncResource } from '../composables/useAsyncResource.js'
 
 const activeTab = ref('pods')
 const filterNs = ref('')
@@ -122,6 +123,7 @@ const services = ref([])
 const deployments = ref([])
 const k8sError = ref('')
 const serviceDetail = ref(null)
+const resourceResource = useAsyncResource(({ signal }, namespace) => getResourceInventory(namespace, { signal }), [[], [], []])
 
 const namespaces = computed(() => {
   const ns = new Set()
@@ -131,36 +133,24 @@ const namespaces = computed(() => {
   return [...ns].sort()
 })
 
-onMounted(() => { fetchAll() })
+onMounted(() => { refreshResources() })
+watch(filterNs, refreshResources)
 
-async function fetchAll() {
-  await Promise.all([fetchPods(), fetchServices(), fetchDeployments()])
-}
-
-async function fetchPods() {
-  try {
-    const ns = filterNs.value ? '?namespace=' + filterNs.value : ''
-    pods.value = await api.get('/k8s/pods' + ns) || []
-  } catch(e) { k8sError.value = 'K8s 集群未连接，资源数据不可用'; console.error(e) }
-}
-
-async function fetchServices() {
-  try {
-    const ns = filterNs.value ? '?namespace=' + filterNs.value : ''
-    services.value = await api.get('/k8s/services' + ns) || []
-  } catch(e) { k8sError.value = 'K8s 集群未连接，资源数据不可用'; console.error(e) }
-}
-
-async function fetchDeployments() {
-  try {
-    const ns = filterNs.value ? '?namespace=' + filterNs.value : ''
-    deployments.value = await api.get('/k8s/deployments' + ns) || []
-  } catch(e) { k8sError.value = 'K8s 集群未连接，资源数据不可用'; console.error(e) }
+async function refreshResources() {
+  k8sError.value = ''
+  const result = await resourceResource.refresh(filterNs.value)
+  if (result) {
+    pods.value = result[0] || []
+    services.value = result[1] || []
+    deployments.value = result[2] || []
+  } else if (resourceResource.error.value) {
+    k8sError.value = resourceResource.error.value.message || 'K8s 集群未连接，资源数据不可用'
+  }
 }
 
 async function viewService(svc) {
   try {
-    const json = await api.get(`/k8s/services/${svc.namespace}/${svc.name}`)
+    const json = await getResourceService(svc.namespace, svc.name)
     serviceDetail.value = {
       ...json,
       selectors: json.selector ? Object.entries(json.selector).map(([k,v])=>k+'='+v) : [],

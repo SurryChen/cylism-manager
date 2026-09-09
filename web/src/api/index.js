@@ -1,4 +1,5 @@
 const API_BASE = '/api'
+let refreshPromise = null
 
 // Token 管理
 function getAccessToken() { return localStorage.getItem('access_token') }
@@ -10,6 +11,46 @@ function setTokens(access, refresh) {
 function clearTokens() {
   localStorage.removeItem('access_token')
   localStorage.removeItem('refresh_token')
+}
+
+async function refreshAccessToken() {
+  if (refreshPromise) return refreshPromise
+  const refreshToken = getRefreshToken()
+  if (!refreshToken) throw new Error('Token expired')
+
+  refreshPromise = (async () => {
+    const refreshRes = await fetch(API_BASE + '/auth/refresh', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refresh_token: refreshToken }),
+    })
+    if (!refreshRes.ok) throw new Error('Token expired')
+    const data = await unwrapResponse(refreshRes)
+    if (!data?.access_token || !data?.refresh_token) throw new Error('Token expired')
+    setTokens(data.access_token, data.refresh_token)
+    return data.access_token
+  })()
+
+  try {
+    return await refreshPromise
+  } catch (error) {
+    if (error?.name === 'AbortError') throw error
+    clearTokens()
+    window.location.hash = '#/login'
+    throw error instanceof Error ? error : new Error('Token expired')
+  } finally {
+    refreshPromise = null
+  }
+}
+
+function awaitWithAbort(promise, signal) {
+  if (!signal) return promise
+  if (signal.aborted) return Promise.reject(new DOMException('Aborted', 'AbortError'))
+  return new Promise((resolve, reject) => {
+    const onAbort = () => reject(new DOMException('Aborted', 'AbortError'))
+    signal.addEventListener('abort', onAbort, { once: true })
+    promise.then(resolve, reject).finally(() => signal.removeEventListener('abort', onAbort))
+  })
 }
 
 // 统一响应解包
@@ -39,23 +80,11 @@ async function request(path, options = {}) {
 
   let res = await fetch(API_BASE + path, { ...options, headers })
 
-  // 401 时尝试刷新 token
+  // 401 时尝试刷新 token；并发请求共享同一个 refresh Promise。
   if (res.status === 401 && getRefreshToken()) {
-    const refreshRes = await fetch(API_BASE + '/auth/refresh', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ refresh_token: getRefreshToken() })
-    })
-    if (refreshRes.ok) {
-      const data = await unwrapResponse(refreshRes)
-      setTokens(data.access_token, data.refresh_token)
-      headers['Authorization'] = `Bearer ${data.access_token}`
-      res = await fetch(API_BASE + path, { ...options, headers })
-    } else {
-      clearTokens()
-      window.location.hash = '#/login'
-      throw new Error('Token expired')
-    }
+    const accessToken = await awaitWithAbort(refreshAccessToken(), options.signal)
+    headers['Authorization'] = `Bearer ${accessToken}`
+    res = await fetch(API_BASE + path, { ...options, headers })
   }
 
   // 统一解包

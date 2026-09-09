@@ -1,7 +1,7 @@
 <template>
   <div>
     <div class="page-header"><div><h1 class="page-title">证书</h1><p class="page-subtitle">管理签发者、受控 DNS Provider 凭据和证书续期</p></div><div v-if="ready" class="btn-group"><button class="btn" @click="openCredential()">DNS 凭据</button><button class="btn" @click="openIssuer()">新增签发者</button><button class="btn btn-primary" @click="showCertificate=true">+ 添加证书</button></div></div>
-    <section v-if="loaded&&!ready" class="card section-gap"><div class="card-header"><div><h2 class="card-title">cert-manager {{ statusTitle }}</h2><p class="status-copy">{{ status?.message }}</p></div><span class="badge" :class="status?.state==='installing'?'badge-deploying':'badge-danger'">{{ statusTitle }}</span></div><div class="modal-actions status-actions"><button v-if="status?.state==='not_installed'&&status?.installer_available" class="btn btn-primary" @click="installCertManager">安装 cert-manager</button><button class="btn" @click="refresh">重新检测</button></div></section>
+    <section v-if="loaded&&!ready" class="card section-gap"><div class="card-header"><div><h2 class="card-title">cert-manager {{ statusTitle }}</h2><p class="status-copy">{{ status?.message }}</p></div><span class="badge" :class="status?.state==='installing'?'badge-deploying':'badge-danger'">{{ statusTitle }}</span></div><p v-if="error" class="k8s-banner k8s-banner-warn">{{ error }}</p><div class="modal-actions status-actions"><button v-if="status?.state==='not_installed'&&status?.installer_available" class="btn btn-primary" @click="installCertManager">安装 cert-manager</button><button class="btn" @click="refresh">重新检测</button></div></section>
     <template v-if="loaded&&ready">
       <div v-if="error" class="k8s-banner k8s-banner-warn section-gap">{{ error }}</div>
       <section v-if="providers.length" class="provider-grid section-gap"><article v-for="provider in providers" :key="provider.id" class="card provider-card"><div class="card-header"><div><h2 class="card-title">{{ provider.name }}</h2><p class="status-copy">{{ provider.description }}</p></div><span class="badge" :class="provider.status?.ready?'badge-online':provider.status?.state==='installing'?'badge-deploying':'badge-offline'">{{ providerStatusLabel(provider) }}</span></div><div class="provider-actions"><span class="cell-secondary">{{ provider.status?.message }}</span><button v-if="provider.webhook&&provider.status?.state==='not_installed'" class="btn btn-sm" :disabled="installingProvider===provider.id" @click="installProvider(provider.id)">{{ installingProvider===provider.id?'安装中...':'安装 Webhook' }}</button><button v-else class="btn btn-sm" @click="refresh">刷新</button></div></article></section>
@@ -20,6 +20,8 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { FileCheck2 } from 'lucide-vue-next'
 import { api } from '../api/index.js'
+import { getCertificateResources, getCertificateStatus } from '../api/certificates.js'
+import { useAsyncResource } from '../composables/useAsyncResource.js'
 const router=useRouter(), certs=ref([]), issuers=ref([]), credentials=ref([]), providers=ref([]), status=ref(null), loaded=ref(false), error=ref(''), submitting=ref(false), installingProvider=ref('')
 const showCertificate=ref(false),showIssuer=ref(false),showCredential=ref(false),editingIssuer=ref(null),editingCredential=ref(null)
 const certificateForm=ref(newCertificate()),issuerForm=ref(newIssuer()),credentialForm=ref(newCredential())
@@ -28,8 +30,13 @@ const ready=computed(()=>status.value?.state==='ready'), statusTitle=computed(()
 const availableIssuers=computed(()=>issuers.value.filter(i=>i.ready&&(i.kind==='ClusterIssuer'||i.namespace===certificateForm.value.namespace)))
 const readyProviders=computed(()=>providers.value.filter(p=>p.status?.ready)), credentialFields=computed(()=>providers.value.find(p=>p.id===credentialForm.value.provider)?.fields||[])
 const eligibleCredentials=computed(()=>credentials.value.filter(c=>c.enabled&&c.provider===issuerForm.value.dns_provider&&(issuerForm.value.kind==='ClusterIssuer'||c.namespace===issuerForm.value.namespace)))
+const certificateResource = useAsyncResource(async ({ signal }) => {
+  const currentStatus = await getCertificateStatus({ signal })
+  if (currentStatus?.state !== 'ready') return { status: currentStatus, resources: null }
+  return { status: currentStatus, resources: await getCertificateResources({ signal }) }
+}, null)
 onMounted(refresh);watch(()=>certificateForm.value.namespace,()=>{if(!availableIssuers.value.some(i=>issuerKey(i)===certificateForm.value.issuer))certificateForm.value.issuer=availableIssuers.value[0]?issuerKey(availableIssuers.value[0]):''});watch(()=>issuerForm.value.dns_provider,()=>issuerForm.value.credential_id=0)
-async function refresh(){error.value='';try{status.value=await api.get('/certs/status');if(!ready.value)return;const [a,b,c,d]=await Promise.all([api.get('/certs'),api.get('/certs/issuers'),api.get('/certs/dns-credentials'),api.get('/certs/dns-providers')]);certs.value=a||[];issuers.value=b||[];credentials.value=c||[];providers.value=d||[];applyCreateQuery()}catch(e){error.value=e.message||'加载证书管理资源失败'}finally{loaded.value=true}}
+async function refresh(){error.value='';const result=await certificateResource.refresh();if(result){status.value=result.status;if(result.resources){const [a,b,c,d]=result.resources;certs.value=a||[];issuers.value=b||[];credentials.value=c||[];providers.value=d||[];applyCreateQuery()}}else if(certificateResource.error.value)error.value=certificateResource.error.value.message||'加载证书管理资源失败';loaded.value=true}
 async function installCertManager(){try{await api.post('/certs/install');await refresh()}catch(e){error.value=e.message||'安装失败'}}
 async function installProvider(id){installingProvider.value=id;try{await api.post(`/certs/dns-providers/${id}/install`);await refresh()}catch(e){error.value=e.message||'安装 Provider 失败'}finally{installingProvider.value=''}}
 async function createCertificate(){const issuer=availableIssuers.value.find(i=>issuerKey(i)===certificateForm.value.issuer);if(!issuer)return;submitting.value=true;try{await api.post('/certs',{name:certificateForm.value.name,namespace:certificateForm.value.namespace,domains:certificateForm.value.domains.split(',').map(x=>x.trim()).filter(Boolean),issuer_ref:issuer.name,issuer_kind:issuer.kind});showCertificate.value=false;await refresh()}catch(e){error.value=e.message||'创建证书失败'}finally{submitting.value=false}}

@@ -56,6 +56,7 @@
           </button>
         </div>
       </div>
+      <p v-if="temporaryTokensError" class="settings-copy endpoint-error">{{ temporaryTokensError }}</p>
       <p v-else class="settings-copy">尚未生成临时登录秘钥。</p>
     </section>
   </section>
@@ -64,23 +65,26 @@
 <script setup>
 import { onMounted, ref } from 'vue'
 import { api } from '../api/index.js'
+import { getTemporaryTokens } from '../api/settings.js'
+import { useAsyncResource } from '../composables/useAsyncResource.js'
 
 const temporaryTokens = ref([])
 const generatedTemporaryToken = ref('')
+const temporaryTokensError = ref('')
 const creatingTemporaryToken = ref(false)
 const revokingTemporaryToken = ref(0)
 const temporaryTokenForm = ref({ label: '', ttl_seconds: 3600 })
+const temporaryTokensResource = useAsyncResource(({ signal }) => getTemporaryTokens({ signal }), [])
 
 onMounted(() => {
   void refresh()
 })
 
 async function refresh() {
-  try {
-    temporaryTokens.value = await api.get('/auth/temporary-tokens') || []
-  } catch {
-    temporaryTokens.value = []
-  }
+  temporaryTokensError.value = ''
+  const result = await temporaryTokensResource.refresh()
+  if (result) temporaryTokens.value = result || []
+  else if (temporaryTokensResource.error.value) temporaryTokensError.value = temporaryTokensResource.error.value.message || '读取临时登录秘钥失败'
 }
 
 async function createTemporaryToken() {

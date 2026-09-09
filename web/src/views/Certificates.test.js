@@ -99,4 +99,12 @@ describe('Certificates view', () => {
     expect(wrapper.get('[data-testid="certificate-empty-icon"]').element.tagName).toBe('svg')
     expect(wrapper.text()).not.toContain('🔒')
   })
+
+  it('shows a local error when the initial certificate read fails', async () => {
+    api.get.mockRejectedValueOnce(new Error('cert-manager unavailable'))
+    const wrapper = mount(Certificates)
+    await settle()
+
+    expect(wrapper.text()).toContain('cert-manager unavailable')
+  })
 })

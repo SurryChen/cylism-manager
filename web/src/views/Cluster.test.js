@@ -32,4 +32,12 @@ describe('Cluster view', () => {
     expect(patch).toHaveBeenCalledWith('/nodes/worker-a/labels', { set: {}, remove: [] })
     expect(wrapper.text()).not.toContain('管理节点标签')
   })
+
+  it('shows a local error when cluster inventory cannot be loaded', async () => {
+    get.mockRejectedValueOnce(new Error('集群连接失败'))
+    const wrapper = mount(Cluster)
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    expect(wrapper.text()).toContain('集群连接失败')
+  })
 })

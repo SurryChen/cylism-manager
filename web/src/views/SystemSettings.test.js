@@ -117,4 +117,17 @@ describe('SystemSettings view', () => {
     expect(hostname.element.value).toBe('draft.example.com')
     wrapper.unmount()
   })
+
+  it('shows a local error when the active settings read fails', async () => {
+    api.get.mockImplementation(path => path === '/platform/status'
+      ? Promise.reject(new Error('设置服务不可用'))
+      : Promise.resolve({}))
+    const wrapper = mount(SystemSettings, { global: { stubs: { Teleport: true } } })
+    await nextTick()
+    await wrapper.get('[data-testid="system-settings-tab-release"]').trigger('click')
+    await nextTick()
+    await nextTick()
+
+    expect(wrapper.text()).toContain('设置服务不可用')
+  })
 })

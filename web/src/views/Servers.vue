@@ -171,18 +171,20 @@
       <div class="modal modal-wide">
         <h2 class="modal-title">资源监控 — {{ statsServer?.name }}</h2>
         <div v-if="statsLoading" style="color:var(--text-secondary);text-align:center;padding:20px">加载中...</div>
+        <div v-else-if="chartLoadError" class="empty-state"><span class="empty-text">{{ chartLoadError }}</span></div>
+        <div v-else-if="!DoughnutComponent" class="empty-state"><span class="empty-text">正在加载图表...</span></div>
         <div v-else class="stats-grid">
           <div class="stats-card">
-            <Doughnut :data="cpuChartData" :options="chartOptions" />
+            <component :is="DoughnutComponent" :data="cpuChartData" :options="chartOptions" />
             <div class="ring-title">CPU</div>
           </div>
           <div class="stats-card">
-            <Doughnut :data="memChartData" :options="chartOptions" />
+            <component :is="DoughnutComponent" :data="memChartData" :options="chartOptions" />
             <div class="ring-title">内存</div>
             <div class="ring-detail">{{ formatMB(statsData.memory_used_mb) }} / {{ formatMB(statsData.memory_total_mb) }}</div>
           </div>
           <div class="stats-card">
-            <Doughnut :data="diskChartData" :options="chartOptions" />
+            <component :is="DoughnutComponent" :data="diskChartData" :options="chartOptions" />
             <div class="ring-title">磁盘 /</div>
             <div class="ring-detail">{{ statsData.disk_used_gb || 0 }} / {{ statsData.disk_total_gb || 0 }} GB</div>
           </div>
@@ -198,35 +200,7 @@
       </div>
     </div>
 
-    <!-- Terminal modal -->
-    <Teleport to="body">
-    <div v-if="terminalServer" class="overlay terminal-overlay">
-      <div class="terminal-modal">
-        <div class="terminal-modal-header">
-          <span>💻 SSH 终端 — {{ terminalServer?.name }} ({{ terminalServer?.host }})</span>
-          <button class="btn btn-sm btn-icon" @click="closeTerminal" title="关闭">✕</button>
-        </div>
-        <div class="terminal-body">
-          <div v-if="termStatus === 'connecting'" class="terminal-placeholder">⏳ 正在连接...</div>
-          <div v-else-if="termStatus === 'error'" class="terminal-placeholder terminal-error">
-            ❌ {{ termError }}
-            <button class="btn btn-sm btn-primary" style="margin-left:8px" @click="openTerminal(terminalServer.id)">重试</button>
-          </div>
-          <div v-else-if="termStatus === 'closed'" class="terminal-placeholder">
-            🔌 连接已断开
-            <button class="btn btn-sm btn-primary" style="margin-left:8px" @click="openTerminal(terminalServer.id)">重连</button>
-          </div>
-          <div ref="terminalEl" class="terminal-container" v-show="termStatus === 'connected'"></div>
-        </div>
-        <div class="terminal-modal-footer">
-          <span v-if="termStatus === 'connected'" class="terminal-status-ok">🟢 已连接</span>
-          <span v-else-if="termStatus === 'connecting'" class="terminal-status-connecting">🟡 连接中</span>
-          <span v-else-if="termStatus === 'error'" class="terminal-status-error">🔴 连接失败</span>
-          <span v-else class="terminal-status-closed">⚫ 已断开</span>
-        </div>
-      </div>
-    </div>
-    </Teleport>
+    <ServerTerminal v-if="terminalServer" :server="terminalServer" @close="terminalServer = null" />
 
     <div v-if="deleteTarget" class="overlay" @click.self="deleteTarget = null">
       <div class="modal"><h2 class="modal-title">删除服务器</h2><p class="modal-copy">确定删除 <strong>{{ deleteTarget.name }}</strong> 吗？</p><div class="modal-actions"><button class="btn" @click="deleteTarget = null">取消</button><button class="btn btn-danger" @click="deleteServer">确认删除</button></div></div>
@@ -235,21 +209,14 @@
 </template>
 
 <script setup>
-import { computed, ref, onMounted, onUnmounted, Teleport, watch } from 'vue'
+import { computed, ref, shallowRef, onMounted, onUnmounted, watch } from 'vue'
 import { api } from '../api/index.js'
 import { getServerNetworkDiagnostics, getServerResourceStats, getServers, getServerStats } from '../api/servers.js'
 import { useAsyncResource } from '../composables/useAsyncResource.js'
 import { usePolling } from '../composables/usePolling.js'
 import { RefreshCw } from 'lucide-vue-next'
 import SectionTabsHeader from '../components/SectionTabsHeader.vue'
-import { Doughnut } from 'vue-chartjs'
-import { Chart as ChartJS, ArcElement, Tooltip } from 'chart.js'
-
-ChartJS.register(ArcElement, Tooltip)
-import { Terminal } from '@xterm/xterm'
-import { FitAddon } from '@xterm/addon-fit'
-import '@xterm/xterm/css/xterm.css'
-import { installTerminalClipboard } from '../utils/terminalClipboard.js'
+import ServerTerminal from '../components/ServerTerminal.vue'
 
 const serversResource = useAsyncResource(({ signal }) => getServers({ signal }), [])
 const servers = serversResource.data
@@ -282,13 +249,12 @@ const probeResult = ref(null)
 const importState = ref(null)
 const importServer = ref(null)
 const statsServer = ref(null)
+const DoughnutComponent = shallowRef(null)
+const chartLoadError = ref('')
 const serverStatsResource = useAsyncResource(({ signal }, serverID) => getServerStats(serverID, { signal }), {})
 const statsData = serverStatsResource.data
 const statsLoading = serverStatsResource.loading
 const terminalServer = ref(null)
-const terminalEl = ref(null)
-const termStatus = ref(null)
-const termError = ref('')
 const resourcePolling = usePolling(refreshResourceStats, { interval: 10000 })
 
 // Chart.js computed ring data
@@ -328,8 +294,6 @@ const chartOptions = {
 
 
 
-let termInstance = null
-let termWs = null
 const form = ref({ name: '', host: '', ssh_port: 22, ssh_user: 'root', ssh_auth_type: 'password', ssh_password: '', ssh_key: '' })
 
 onMounted(() => {
@@ -339,7 +303,6 @@ onMounted(() => {
 onUnmounted(() => {
   resourcePolling.stop()
   document.removeEventListener('visibilitychange', syncResourcePolling)
-  closeTerminal()
 })
 
 watch(activeSection, (section) => {
@@ -478,103 +441,28 @@ async function openStats(id) {
   const srv = servers.value.find(s => s.id === id)
   if (!srv) return
   statsServer.value = srv
-  await serverStatsResource.refresh(id)
+  await Promise.all([serverStatsResource.refresh(id), loadChartRuntime()])
+}
+
+let chartRuntimePromise = null
+async function loadChartRuntime() {
+  if (DoughnutComponent.value) return
+  if (!chartRuntimePromise) {
+    chartRuntimePromise = Promise.all([import('vue-chartjs'), import('chart.js')])
+      .then(([vueChart, chart]) => {
+        chart.Chart.register(chart.ArcElement, chart.Tooltip)
+        DoughnutComponent.value = vueChart.Doughnut
+      })
+      .catch(error => {
+        chartLoadError.value = error?.message || '图表组件加载失败'
+      })
+  }
+  return chartRuntimePromise
 }
 
 function openTerminal(id) {
   const srv = servers.value.find(s => s.id === id)
-  if (!srv) return
-  terminalServer.value = srv
-  termStatus.value = 'connecting'
-  termError.value = ''
-  document.body.style.overflow = 'hidden'
-
-  setTimeout(() => {
-    const el = terminalEl.value
-    if (!el) { termStatus.value = 'error'; termError.value = '终端容器未就绪'; return }
-
-    const rootStyle = getComputedStyle(document.documentElement)
-    const term = new Terminal({
-      cursorBlink: true,
-      cursorStyle: 'bar',
-      fontSize: 14,
-      fontFamily: '"JetBrains Mono", "Cascadia Code", "Fira Code", monospace',
-      letterSpacing: 0,
-      lineHeight: 1.2,
-      theme: {
-        background: rootStyle.getPropertyValue('--terminal-background').trim(),
-        foreground: rootStyle.getPropertyValue('--terminal-foreground').trim(),
-        cursor: rootStyle.getPropertyValue('--terminal-cursor').trim(),
-        selectionBackground: rootStyle.getPropertyValue('--terminal-selection').trim(),
-      },
-    })
-    const fitAddon = new FitAddon()
-    term.loadAddon(fitAddon)
-    term.open(el)
-    installTerminalClipboard(term)
-
-    // 给 xterm 内部容器加圆角样式
-    const xtermScreen = el.querySelector('.xterm-screen')
-    if (xtermScreen) xtermScreen.style.borderRadius = '8px'
-
-    // 手动计算行列数（不用 fitAddon，避免放大字体替代调行列数）
-    fitAddon.fit()
-
-    const wsUrl = `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/api/servers/${id}/terminal`
-    const token = localStorage.getItem('access_token')
-    const ws = new WebSocket(wsUrl + '?token=' + encodeURIComponent(token || ''))
-    ws.binaryType = 'arraybuffer'
-
-    ws.onopen = () => {
-      termStatus.value = 'connected'
-      term.onData(data => {
-        if (ws.readyState === WebSocket.OPEN) ws.send(data)
-      })
-    }
-    ws.onmessage = (e) => {
-      if (e.data instanceof ArrayBuffer) {
-        term.write(new Uint8Array(e.data))
-      }
-    }
-    ws.onclose = () => {
-      termStatus.value = 'closed'
-    }
-    ws.onerror = () => {
-      termStatus.value = 'error'
-      termError.value = 'WebSocket 连接失败'
-    }
-
-    termInstance = term
-    termWs = ws
-
-    // resize 自适应：fit + PTY resize 通知后端
-    const sendResize = () => {
-      try {
-        // 手动计算行列数（不用 fitAddon，避免放大字体替代调行列数）
-    fitAddon.fit()
-        if (ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }))
-        }
-      } catch (_) {}
-    }
-    const observer = new ResizeObserver(sendResize)
-    observer.observe(el)
-    term._resizeObserver = observer
-  }, 100)
-}
-
-function closeTerminal() {
-  if (termInstance && termInstance._resizeObserver) {
-    termInstance._resizeObserver.disconnect()
-  }
-  if (termWs) termWs.close()
-  if (termInstance) termInstance.dispose()
-  termInstance = null
-  termWs = null
-  termStatus.value = null
-  termError.value = ''
-  terminalServer.value = null
-  document.body.style.overflow = ''
+  if (srv) terminalServer.value = srv
 }
 
 function memPercent(d) {
@@ -602,115 +490,6 @@ function resetForm() { form.value = { name: '', host: '', ssh_port: 22, ssh_user
   font-size: 13px;
   line-height: 1.6;
 }
-.terminal-overlay {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 9999;
-  backdrop-filter: blur(6px);
-}
-.terminal-modal {
-  width: 85vw;
-  max-width: 1100px;
-  height: 82vh;
-  display: flex;
-  flex-direction: column;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: var(--surface-raised);
-  box-shadow: var(--shadow);
-  overflow: hidden;
-}
-.terminal-modal-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 10px 16px;
-  border-bottom: 1px solid var(--border-muted);
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-primary);
-  flex-shrink: 0;
-}
-.btn-icon {
-  width: 28px;
-  height: 28px;
-  padding: 0;
-  border: none;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--text-secondary);
-  font-size: 16px;
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-.btn-icon:hover {
-  background: var(--surface-hover);
-  color: var(--text-primary);
-}
-.terminal-body {
-  flex: 1;
-  padding: 12px;
-  overflow: hidden;
-  position: relative;
-  min-height: 0;
-}
-.terminal-placeholder {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  height: 100%;
-  color: var(--text-secondary);
-  font-size: 14px;
-  gap: 8px;
-}
-.terminal-error {
-  color: var(--danger);
-}
-.terminal-container {
-  width: 100%;
-  height: 100%;
-  overflow: hidden;
-  background: var(--terminal-background);
-}
-.terminal-container :deep(.xterm) {
-  height: 100%;
-  border-radius: 8px;
-}
-.terminal-container :deep(.xterm-viewport) {
-  scrollbar-width: thin;
-  scrollbar-color: var(--text-muted) transparent;
-}
-.terminal-container :deep(.xterm-viewport::-webkit-scrollbar) {
-  width: 6px;
-}
-.terminal-container :deep(.xterm-viewport::-webkit-scrollbar-thumb) {
-  background: var(--text-muted);
-  border-radius: 3px;
-}
-.terminal-container :deep(.xterm-viewport::-webkit-scrollbar-track) {
-  background: transparent;
-}
-.terminal-container :deep(.xterm-screen:focus-within) {
-  outline: none;
-}
-.terminal-modal-footer {
-  display: flex;
-  align-items: center;
-  padding: 6px 16px;
-  border-top: 1px solid var(--border-muted);
-  font-size: 11px;
-  flex-shrink: 0;
-}
-.terminal-status-ok { color: var(--success); }
-.terminal-status-connecting { color: var(--warning); }
-.terminal-status-error { color: var(--danger); }
-.terminal-status-closed { color: var(--text-muted); }
-
-
-
 .stats-grid {
   display: flex;
   gap: 16px;

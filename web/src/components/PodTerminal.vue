@@ -29,10 +29,7 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { X } from 'lucide-vue-next'
-import { Terminal } from '@xterm/xterm'
-import { FitAddon } from '@xterm/addon-fit'
-import '@xterm/xterm/css/xterm.css'
-import { installTerminalClipboard } from '../utils/terminalClipboard.js'
+import { loadTerminalRuntime } from '../utils/terminalRuntime.js'
 
 const props = defineProps({
   pod: { type: Object, required: true },
@@ -68,13 +65,23 @@ function connect() {
   nextTick(openTerminal)
 }
 
-function openTerminal() {
+async function openTerminal() {
   const element = terminalEl.value
   if (!element) {
     status.value = 'error'
     error.value = '终端容器未就绪'
     return
   }
+
+  let terminalRuntime
+  try {
+    terminalRuntime = await loadTerminalRuntime()
+  } catch (loadError) {
+    status.value = 'error'
+    error.value = loadError?.message || '终端组件加载失败'
+    return
+  }
+  const { Terminal, FitAddon, installTerminalClipboard } = terminalRuntime
 
   const rootStyle = getComputedStyle(document.documentElement)
   const term = new Terminal({

@@ -88,6 +88,8 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { api } from '../api/index.js'
+import { getPlatformCertificates, getPlatformEndpoint } from '../api/settings.js'
+import { useAsyncResource } from '../composables/useAsyncResource.js'
 
 const platformEndpoint = ref({ endpoint: {}, state: 'not_configured', ingress_ready: false })
 const endpointForm = ref({ hostname: '', certificate_name: '' })
@@ -98,6 +100,10 @@ const savingEndpoint = ref(false)
 const syncingEndpoint = ref(false)
 const adoptingEndpoint = ref(false)
 const showDisableEndpointConfirmation = ref(false)
+const endpointResource = useAsyncResource(async ({ signal }) => Promise.allSettled([
+  getPlatformEndpoint({ signal }),
+  getPlatformCertificates({ signal }),
+]), null)
 
 const readyPlatformCertificates = computed(() => certificates.value.filter(certificate => certificate.namespace === 'default' && certificate.status === 'Ready' && certificate.domains?.length))
 const endpointStateLabel = computed(() => ({ not_configured: '待配置', disabled: '已停用', ready: '已就绪', waiting_certificate: '证书未就绪', waiting_ingress: '等待 Ingress', failed: '签发失败', unavailable: '不可用' }[platformEndpoint.value.state] || '未知'))
@@ -108,9 +114,14 @@ onMounted(() => {
 })
 
 async function refresh({ syncForm = false } = {}) {
-  const [endpointResult, certificatesResult] = await Promise.allSettled([api.get('/platform/endpoint'), api.get('/certs')])
+  endpointError.value = ''
+  const results = await endpointResource.refresh()
+  if (!results) return
+  const [endpointResult, certificatesResult] = results
   if (endpointResult.status === 'fulfilled') syncEndpoint(endpointResult.value, { syncForm })
+  else endpointError.value = endpointResult.reason?.message || '读取平台入口失败'
   if (certificatesResult.status === 'fulfilled') certificates.value = certificatesResult.value || []
+  else if (!endpointError.value) endpointError.value = certificatesResult.reason?.message || '读取可用证书失败'
 }
 
 function syncEndpoint(info, { syncForm = true } = {}) {

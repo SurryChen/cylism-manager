@@ -110,6 +110,8 @@
 <script setup>
 import { ref, onMounted, computed } from 'vue'
 import { api } from '../api/index.js'
+import { getIngressControllerStatus, getIngresses, getRoutes } from '../api/sites.js'
+import { useAsyncResource } from '../composables/useAsyncResource.js'
 
 const controllerStatusCacheKey = 'cylism.ingress-controller.status'
 const controllerStatusCacheTtl = 60 * 1000
@@ -126,6 +128,9 @@ const deleteRouteTarget = ref(null)
 const deleteIngressTarget = ref(null)
 const showAddIngress = ref(false)
 const ingressForm = ref({ name: '', namespace: 'default', host: '', path: '/', service_name: '', service_port: 'http' })
+const routesResource = useAsyncResource(({ signal }) => getRoutes({ signal }), [])
+const ingressesResource = useAsyncResource(({ signal }) => getIngresses({ signal }), [])
+const controllerResource = useAsyncResource(({ signal }) => getIngressControllerStatus({ signal }), null)
 
 const namespaces = computed(() => [...new Set(routes.value.map(r => r.namespace))].sort())
 const filteredRoutes = computed(() =>
@@ -144,22 +149,25 @@ async function fetchControllerStatus() {
   if (cached?.status) controllerStatus.value = cached.status
   if (cached && cached.expiresAt > Date.now()) return
   try {
-    const status = await api.get('/k8s/ingress-controller')
-    controllerStatus.value = status
-    cacheControllerStatus(status)
+    const status = await controllerResource.refresh()
+    if (status) { controllerStatus.value = status; cacheControllerStatus(status) }
   } catch(e) {}
 }
 
 async function fetchRoutes() {
   routesLoading.value = true
-  try { routes.value = await api.get('/routes') || [] } catch(e) {}
-  finally { routesLoading.value = false }
+  try {
+    const result = await routesResource.refresh()
+    if (result) routes.value = result || []
+  } finally { routesLoading.value = false }
 }
 
 async function fetchIngresses() {
   ingressesLoading.value = true
-  try { ingresses.value = await api.get('/k8s/ingresses') || [] } catch(e) {}
-  finally { ingressesLoading.value = false }
+  try {
+    const result = await ingressesResource.refresh()
+    if (result) ingresses.value = result || []
+  } finally { ingressesLoading.value = false }
 }
 
 function getCachedControllerStatus() {

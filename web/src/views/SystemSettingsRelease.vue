@@ -40,6 +40,7 @@
         <p class="settings-copy form-hint">仅支持允许仓库前缀下的镜像 Tag。每次提交都会滚动重启平台，并按 imagePullPolicy 拉取镜像。</p>
       </div>
       <p v-if="platformActionMessage" class="settings-copy platform-action-message">{{ platformActionMessage }}</p>
+      <p v-if="platformReadError" class="settings-copy endpoint-error">{{ platformReadError }}</p>
       <div class="form-group">
         <label class="form-label">允许的镜像前缀</label>
         <div class="settings-action-row">
@@ -85,18 +86,22 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { api } from '../api/index.js'
+import { getPlatformStatus } from '../api/settings.js'
+import { useAsyncResource } from '../composables/useAsyncResource.js'
 
 const platform = ref({ webhook_configured: false, image_prefix: '', deployment: null, releases: [] })
 const platformImagePrefix = ref('')
 const manualImage = ref('')
 const platformActionMessage = ref('')
 const platformActionError = ref('')
+const platformReadError = ref('')
 const generatedSecret = ref('')
 const generatingSecret = ref(false)
 const savingPrefix = ref(false)
 const updatingPlatform = ref(false)
 const rollingBack = ref(0)
 const platformPrefixDirty = ref(false)
+const platformResource = useAsyncResource(({ signal }) => getPlatformStatus({ signal }), null)
 
 const latestAutomaticRelease = computed(() => (platform.value.releases || []).find(release => release.source === 'github') || null)
 
@@ -105,9 +110,13 @@ onMounted(() => {
 })
 
 async function refresh({ syncForm = false } = {}) {
-  const platformResult = await Promise.allSettled([api.get('/platform/status')])
-  if (platformResult[0].status !== 'fulfilled') return
-  platform.value = platformResult[0].value
+  platformReadError.value = ''
+  const result = await platformResource.refresh()
+  if (!result) {
+    platformReadError.value = platformResource.error.value?.message || '读取平台发布状态失败'
+    return
+  }
+  platform.value = result
   if (syncForm || !platformPrefixDirty.value) {
     platformImagePrefix.value = platform.value.image_prefix || ''
     platformPrefixDirty.value = false

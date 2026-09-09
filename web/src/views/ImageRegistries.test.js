@@ -99,7 +99,7 @@ describe('ImageRegistries view', () => {
     const wrapper = mount(ImageRegistries)
     await new Promise(resolve => setTimeout(resolve, 0))
 
-    expect(api.get).toHaveBeenCalledWith('/image-registries')
+    expect(api.get).toHaveBeenCalledWith('/image-registries', expect.objectContaining({ signal: expect.any(AbortSignal) }))
     expect(api.get).not.toHaveBeenCalledWith('/image-registries?project_id=1')
     wrapper.unmount()
   })

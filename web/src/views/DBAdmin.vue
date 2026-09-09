@@ -4,6 +4,7 @@
       <h1 class="page-title">数据管理</h1>
       <button class="btn btn-primary" @click="showAdd = true" :disabled="!currentTable">+ 新增记录</button>
     </div>
+    <div v-if="error" class="k8s-banner k8s-banner-warn section-gap">{{ error }}</div>
 
     <div class="card section-gap">
       <div class="table-tabs">
@@ -87,6 +88,8 @@
 <script setup>
 import { ref, computed, onMounted, reactive } from 'vue'
 import { api } from '../api/index.js'
+import { getAdminTableRows, getAdminTables } from '../api/admin.js'
+import { useAsyncResource } from '../composables/useAsyncResource.js'
 
 const tables = ref([])
 const currentTable = ref('')
@@ -96,12 +99,15 @@ const loading = ref(false)
 const page = ref(1)
 const size = 20
 const total = ref(0)
+const error = ref('')
 const sort = ref('id')
 const order = ref('desc')
 const showAdd = ref(false)
 const editTarget = ref(null)
 const deleteTarget = ref(null)
 const formData = reactive({})
+const tablesResource = useAsyncResource(({ signal }) => getAdminTables({ signal }), { tables: [] })
+const rowsResource = useAsyncResource(({ signal }, table, query) => getAdminTableRows(table, query, { signal }), { columns: [], rows: [], total: 0 })
 
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / size)))
 const editableColumns = computed(() => columns.value.filter(c => !['id','created_at','updated_at','deleted_at'].includes(c)))
@@ -109,12 +115,14 @@ const editableColumns = computed(() => columns.value.filter(c => !['id','created
 const tableLabels = { servers:'服务器', sites:'站点', certs:'证书', audit_logs:'审计日志', operation_logs:'操作日志', users:'用户' }
 function tableLabel(t) { return tableLabels[t] || t }
 
-onMounted(async () => {
-  try {
-    const data = await api.get('/admin/tables')
-    tables.value = data.tables || []
-  } catch (e) { console.error(e) }
-})
+onMounted(loadTables)
+
+async function loadTables() {
+  error.value = ''
+  const data = await tablesResource.refresh()
+  if (data) tables.value = data.tables || []
+  else if (tablesResource.error.value) error.value = tablesResource.error.value.message || '加载数据表失败'
+}
 
 async function selectTable(name) {
   currentTable.value = name
@@ -126,13 +134,16 @@ async function selectTable(name) {
 
 async function fetchData() {
   if (!currentTable.value) return
+  error.value = ''
   loading.value = true
-  try {
-    const data = await api.get(`/admin/tables/${currentTable.value}?page=${page.value}&size=${size}&sort=${sort.value}&order=${order.value}`)
+  const data = await rowsResource.refresh(currentTable.value, { page: page.value, size, sort: sort.value, order: order.value })
+  if (data) {
     columns.value = data.columns || []
     rows.value = data.rows || []
     total.value = data.total || 0
-  } catch (e) { console.error(e) }
+  } else if (rowsResource.error.value) {
+    error.value = rowsResource.error.value.message || '加载数据失败'
+  }
   loading.value = false
 }
 
@@ -175,7 +186,7 @@ async function submitForm() {
     }
     closeForm()
     fetchData()
-  } catch (e) { console.error(e) }
+  } catch (e) { error.value = e.message || '保存记录失败' }
 }
 
 function confirmDel(row) { deleteTarget.value = row }
@@ -185,6 +196,6 @@ async function doDelete() {
     await api.delete(`/admin/tables/${currentTable.value}/${deleteTarget.value.id}`)
     deleteTarget.value = null
     fetchData()
-  } catch (e) { console.error(e) }
+  } catch (e) { error.value = e.message || '删除记录失败' }
 }
 </script>

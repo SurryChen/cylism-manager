@@ -51,26 +51,28 @@
 
 <script setup>
 import { computed, ref, onMounted } from 'vue'
-import { api } from '../api/index.js'
+import { getServiceDiscovery, getServiceEndpoints } from '../api/kubernetes.js'
+import { useAsyncResource } from '../composables/useAsyncResource.js'
 
 const services = ref([])
 const loading = ref(true)
 const error = ref('')
 const expandedSvc = ref('')
 const endpointSlices = ref({})
+const servicesResource = useAsyncResource(({ signal }) => getServiceDiscovery({ signal }), [])
 
 const safeServices = computed(() => (services.value || []).filter(s => s != null))
 
-onMounted(async () => {
+onMounted(loadServices)
+
+async function loadServices() {
   loading.value = true
   error.value = ''
-  try {
-    services.value = await api.get('/k8s/services') || []
-  } catch(e) {
-    error.value = e.message || '加载失败，请检查集群连接'
-  }
-  finally { loading.value = false }
-})
+  const result = await servicesResource.refresh()
+  if (result) services.value = result || []
+  else if (servicesResource.error.value) error.value = servicesResource.error.value.message || '加载失败，请检查集群连接'
+  loading.value = false
+}
 
 async function toggleExpand(s) {
   const key = s.namespace + '/' + s.name
@@ -78,7 +80,7 @@ async function toggleExpand(s) {
   expandedSvc.value = key
   if (!endpointSlices.value[key]) {
     try {
-      endpointSlices.value[key] = await api.get(`/k8s/services/${s.namespace}/${s.name}/endpoints`) || []
+      endpointSlices.value[key] = await getServiceEndpoints(s.namespace, s.name) || []
     } catch(e) { console.error(e) }
   }
 }

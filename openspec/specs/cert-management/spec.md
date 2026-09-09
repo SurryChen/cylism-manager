@@ -1,5 +1,5 @@
 ## Purpose
-证书生命周期管理，包括签发、续期和吊销 SSL/TLS 证书。
+证书生命周期管理，包括签发、续期、吊销和导入 SSL/TLS 证书，并负责 DNS-01 凭据、Issuer 状态以及 Kubernetes 证书资源之间的一致性。
 ## Requirements
 ### Requirement: API 响应格式
 该 capability 的所有 API 响应 SHALL 使用统一的 APIResponse 格式，包含 code/message/data 字段，替代原有裸 gin.H 或裸对象返回。
@@ -127,4 +127,3 @@
 #### Scenario: 查看 Certificate 详情
 - **WHEN** 用户打开某个 `Certificate` 详情
 - **THEN** 系统展示 spec、status、条件和关联 Secret 名称
-

@@ -4,6 +4,10 @@ import { mount } from '@vue/test-utils'
 import Servers from './Servers.vue'
 import { api } from '../api/index.js'
 
+vi.mock('../utils/terminalRuntime.js', () => ({
+  loadTerminalRuntime: vi.fn(() => Promise.reject(new Error('终端组件加载失败'))),
+}))
+
 vi.mock('../api/index.js', () => ({
   api: {
     get: vi.fn().mockImplementation(url => {
@@ -167,6 +171,7 @@ describe('Servers view', () => {
     await terminal.trigger('click')
     await nextTick()
     const overlay = document.querySelector('.terminal-overlay')
+    expect(overlay).not.toBeNull()
     overlay.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     await nextTick()
 

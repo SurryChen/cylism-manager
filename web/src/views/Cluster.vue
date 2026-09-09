@@ -136,6 +136,8 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { api } from '../api/index.js'
+import { getClusterInventory } from '../api/cluster.js'
+import { useAsyncResource } from '../composables/useAsyncResource.js'
 
 const nodes = ref([])
 const servers = ref([])
@@ -156,6 +158,7 @@ const rejoiningNode = ref('')
 const labelsTarget = ref(null)
 const labelDraft = ref([])
 const savingLabels = ref(false)
+const clusterResource = useAsyncResource(({ signal }) => getClusterInventory({ signal }), [[], []])
 
 const serverLookup = computed(() => servers.value)
 const systemLabelEntries = computed(() => {
@@ -170,16 +173,12 @@ onMounted(() => {
 
 async function fetchData() {
   error.value = ''
-  try {
-    const [nodeList, serverList] = await Promise.all([
-      api.get('/nodes'),
-      api.get('/servers'),
-    ])
+  const result = await clusterResource.refresh()
+  if (result) {
+    const [nodeList, serverList] = result
     nodes.value = nodeList || []
     servers.value = serverList || []
-  } catch (e) {
-    error.value = e.message || '加载节点失败'
-  }
+  } else if (clusterResource.error.value) error.value = clusterResource.error.value.message || '加载节点失败'
 }
 
 function mappedServer(node) {
