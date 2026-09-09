@@ -8,7 +8,11 @@
       <button class="btn btn-primary" @click="openCreate">+ 新建镜像源</button>
     </div>
 
-    <div v-if="error" class="k8s-banner k8s-banner-warn section-gap">{{ error }}</div>
+    <div v-if="mirrorError" class="k8s-banner k8s-banner-warn section-gap">{{ mirrorError }}</div>
+    <div v-if="proxyError" class="k8s-banner k8s-banner-warn section-gap">{{ proxyError }}</div>
+    <div v-if="serverError" class="k8s-banner k8s-banner-warn section-gap">{{ serverError }}</div>
+    <div v-if="pollingError" class="k8s-banner k8s-banner-warn section-gap">{{ pollingError }}</div>
+    <div v-if="mutationError" class="k8s-banner k8s-banner-warn section-gap">{{ mutationError }}</div>
 
     <section class="proxy-panel section-gap">
       <div class="section-heading">
@@ -146,12 +150,18 @@
 
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { api } from '../api/index.js'
+import { getServers } from '../api/servers.js'
+import { createNodeRegistryMirror, applyNodeRegistryMirror, createRegistryProxy, cleanupRegistryProxy, deleteNodeRegistryMirror, diagnoseRegistryProxy, getNodeRegistryMirrorApplyStatus, getNodeRegistryMirrors, getRegistryProxies, migrateRegistryProxy, updateNodeRegistryMirror, updateRegistryProxy, verifyNodeRegistryMirror } from '../api/node-registry-mirrors.js'
+import { useAsyncResource } from '../composables/useAsyncResource.js'
 import { usePolling } from '../composables/usePolling.js'
 
 const mirrors = ref([])
 const loaded = ref(false)
-const error = ref('')
+const mirrorError = ref('')
+const proxyError = ref('')
+const serverError = ref('')
+const pollingError = ref('')
+const mutationError = ref('')
 const showModal = ref(false)
 const editing = ref(null)
 const actionNotice = ref(null)
@@ -176,10 +186,16 @@ const dnsServersText = ref('')
 const dnsSaving = ref(false)
 const proxyForm = ref(proxyBlank())
 const form = ref(blank())
+const mirrorResource = useAsyncResource(({ signal }) => getNodeRegistryMirrors({ signal }), [])
+const proxyResource = useAsyncResource(({ signal }) => getRegistryProxies({ signal }), [])
+const serverResource = useAsyncResource(({ signal }) => getServers({ signal }), [])
+let pollingController = null
 const applyPolling = usePolling(async () => {
   if (!activeApplyIDs.value.length) return
   try {
-    const updates = await Promise.all(activeApplyIDs.value.map(mirrorID => api.get(`/node-registry-mirrors/${mirrorID}/apply-status`)))
+    pollingError.value = ''
+    pollingController = new AbortController()
+    const updates = await Promise.all(activeApplyIDs.value.map(mirrorID => getNodeRegistryMirrorApplyStatus(mirrorID, { signal: pollingController.signal })))
     const completedIDs = []
     for (const mirror of updates) {
       const index = mirrors.value.findIndex(item => item.id === mirror.id)
@@ -188,9 +204,8 @@ const applyPolling = usePolling(async () => {
     }
     activeApplyIDs.value = activeApplyIDs.value.filter(mirrorID => !completedIDs.includes(mirrorID))
     if (!activeApplyIDs.value.length) applyPolling.stop()
-  } catch (e) {
-    error.value = e.message || '读取节点应用进度失败'
-  }
+  } catch (e) { if (e?.name !== 'AbortError') pollingError.value = e.message || '读取节点应用进度失败' }
+  finally { pollingController = null }
 }, { interval: 2000 })
 
 const clusterServers = computed(() => servers.value.filter(server => server.cluster_role))
@@ -225,31 +240,35 @@ function isApplying(mirrorID) {
 }
 
 async function load() {
-  error.value = ''
-  try {
-    mirrors.value = await api.get('/node-registry-mirrors') || []
-    const pendingIDs = mirrors.value.filter(mirror => mirror.last_apply_status === 'applying').map(mirror => mirror.id)
-    if (pendingIDs.length) startApplyPolling(pendingIDs)
-  } catch (e) { error.value = e.message || '加载节点镜像源失败' } finally { loaded.value = true }
+  mirrorError.value = ''
+  const result = await mirrorResource.refresh()
+  if (!result) { mirrorError.value = mirrorResource.error.value?.message || '加载节点镜像源失败'; loaded.value = true; return }
+  mirrors.value = result || []
+  const pendingIDs = mirrors.value.filter(mirror => mirror.last_apply_status === 'applying').map(mirror => mirror.id)
+  if (pendingIDs.length) startApplyPolling(pendingIDs)
+  loaded.value = true
 }
 
 async function loadServers() {
-  try { servers.value = await api.get('/servers') || [] } catch (e) { error.value = e.message || '加载集群节点失败' }
+  serverError.value = ''
+  const result = await serverResource.refresh()
+  if (result) servers.value = result || []
+  else serverError.value = serverResource.error.value?.message || '加载集群节点失败'
 }
 
 function proxyStatusLabel(status) { return { ready: '就绪', deploying: '部署中', failed: '失败', missing: '缺失' }[status] || '未知' }
 function diagnosticStatusLabel(status) { return { healthy: '正常', proxy_not_ready: '未就绪', dns_resolution_failed: 'DNS 解析失败', upstream_connect_timeout: '上游连接超时', upstream_tls_failed: 'TLS 失败', upstream_http_error: '上游响应异常', command_missing: '缺少诊断工具', diagnostic_failed: '诊断失败' }[status] || status }
 function isLegacyDockerHubProxy(item) { return item.registry === 'docker.io' && item.resource_name === 'cylism-registry-proxy' }
-async function loadProxies() { try { proxies.value = await api.get('/registry-proxies') || [] } catch (e) { error.value = e.message || '加载自建镜像代理失败' } }
+async function loadProxies() { proxyError.value = ''; const result = await proxyResource.refresh(); if (result) proxies.value = result || []; else proxyError.value = proxyResource.error.value?.message || '加载自建镜像代理失败' }
 function openProxy(item = null) { editingProxy.value = item; proxyForm.value = item ? { name: item.name, registry: item.registry, upstream_url: item.upstream_url, node_name: item.node_name, endpoint_host: item.endpoint_host, node_port: item.node_port, cache_limit_gi: item.cache_limit_gi, cleanup_interval_hours: item.cleanup_interval_hours, dns_servers_text: (item.dns_servers || []).join(','), http_proxy: '', https_proxy: '', no_proxy: item.no_proxy || '', clear_outbound_proxy: false } : proxyBlank(); showProxyModal.value = true }
 function closeProxy() { showProxyModal.value = false; editingProxy.value = null; proxyForm.value = proxyBlank() }
-async function deployProxy() { proxyDeploying.value = true; error.value = ''; try { const payload = { ...proxyForm.value, dns_servers: proxyForm.value.dns_servers_text.split(',').map(value => value.trim()).filter(Boolean) }; delete payload.dns_servers_text; if (editingProxy.value) await api.put(`/registry-proxies/${editingProxy.value.id}`, payload); else await api.post('/registry-proxies', payload); closeProxy(); await loadProxies() } catch (e) { error.value = e.message || '部署自建镜像代理失败' } finally { proxyDeploying.value = false } }
+async function deployProxy() { proxyDeploying.value = true; mutationError.value = ''; try { const payload = { ...proxyForm.value, dns_servers: proxyForm.value.dns_servers_text.split(',').map(value => value.trim()).filter(Boolean) }; delete payload.dns_servers_text; if (editingProxy.value) await updateRegistryProxy(editingProxy.value.id, payload); else await createRegistryProxy(payload); closeProxy(); await loadProxies() } catch (e) { mutationError.value = e.message || '部署自建镜像代理失败' } finally { proxyDeploying.value = false } }
 function openDNS(item) { dnsTarget.value = item; dnsServersText.value = (item.dns_servers || []).join(',') }
 function closeDNS() { if (!dnsSaving.value) { dnsTarget.value = null; dnsServersText.value = '' } }
-async function saveDNS() { if (!dnsTarget.value) return; dnsSaving.value = true; error.value = ''; try { const item = dnsTarget.value; await api.put(`/registry-proxies/${item.id}`, { name: item.name, registry: item.registry, upstream_url: item.upstream_url, node_name: item.node_name, endpoint_host: item.endpoint_host, node_port: item.node_port, cache_limit_gi: item.cache_limit_gi, cleanup_interval_hours: item.cleanup_interval_hours, no_proxy: item.no_proxy || '', dns_servers: dnsServersText.value.split(',').map(value => value.trim()).filter(Boolean) }); closeDNS(); await loadProxies() } catch (e) { error.value = e.message || '保存 Proxy Pod DNS 失败' } finally { dnsSaving.value = false } }
-async function cleanupProxy(item) { proxyCleaningID.value = item.id; error.value = ''; try { await api.post(`/registry-proxies/${item.id}/cleanup`); await loadProxies() } catch (e) { error.value = e.message || '清理代理缓存失败' } finally { proxyCleaningID.value = null } }
-async function migrateProxy() { if (!migrationTarget.value) return; const item = migrationTarget.value; migratingID.value = item.id; error.value = ''; try { await api.post(`/registry-proxies/${item.id}/migrate-resource-name`); migrationTarget.value = null; await loadProxies() } catch (e) { error.value = e.message || '迁移代理资源命名失败' } finally { migratingID.value = null } }
-async function diagnoseProxy(item) { proxyDiagnosingID.value = item.id; error.value = ''; try { await api.post(`/registry-proxies/${item.id}/diagnose`); await loadProxies() } catch (e) { error.value = e.message || '代理出网诊断失败' } finally { proxyDiagnosingID.value = null } }
+async function saveDNS() { if (!dnsTarget.value) return; dnsSaving.value = true; mutationError.value = ''; try { const item = dnsTarget.value; await updateRegistryProxy(item.id, { name: item.name, registry: item.registry, upstream_url: item.upstream_url, node_name: item.node_name, endpoint_host: item.endpoint_host, node_port: item.node_port, cache_limit_gi: item.cache_limit_gi, cleanup_interval_hours: item.cleanup_interval_hours, no_proxy: item.no_proxy || '', dns_servers: dnsServersText.value.split(',').map(value => value.trim()).filter(Boolean) }); closeDNS(); await loadProxies() } catch (e) { mutationError.value = e.message || '保存 Proxy Pod DNS 失败' } finally { dnsSaving.value = false } }
+async function cleanupProxy(item) { proxyCleaningID.value = item.id; mutationError.value = ''; try { await cleanupRegistryProxy(item.id); await loadProxies() } catch (e) { mutationError.value = e.message || '清理代理缓存失败' } finally { proxyCleaningID.value = null } }
+async function migrateProxy() { if (!migrationTarget.value) return; const item = migrationTarget.value; migratingID.value = item.id; mutationError.value = ''; try { await migrateRegistryProxy(item.id); migrationTarget.value = null; await loadProxies() } catch (e) { mutationError.value = e.message || '迁移代理资源命名失败' } finally { migratingID.value = null } }
+async function diagnoseProxy(item) { proxyDiagnosingID.value = item.id; mutationError.value = ''; try { await diagnoseRegistryProxy(item.id); await loadProxies() } catch (e) { mutationError.value = e.message || '代理出网诊断失败' } finally { proxyDiagnosingID.value = null } }
 
 function openCreate() {
   actionNotice.value = null
@@ -282,13 +301,13 @@ function closeModal() {
 
 async function save() {
   submitting.value = true
-  error.value = ''
+  mutationError.value = ''
   const wasEditing = Boolean(editing.value)
   try {
     const payload = { ...form.value, endpoints: form.value.endpoints.split('\n').map(value => value.trim()).filter(Boolean) }
     if (editing.value && !payload.credential) delete payload.credential
-    if (editing.value) await api.put(`/node-registry-mirrors/${editing.value.id}`, payload)
-    else await api.post('/node-registry-mirrors', payload)
+    if (editing.value) await updateNodeRegistryMirror(editing.value.id, payload)
+    else await createNodeRegistryMirror(payload)
     closeModal()
     await load()
     actionNotice.value = { type: 'success', title: wasEditing ? '节点镜像源已保存' : '节点镜像源已创建', message: '配置已保存。需要下发到节点时，请在列表中点击“选择节点应用”。' }
@@ -299,11 +318,11 @@ async function save() {
 
 async function verifyMirror(mirror) {
   verifyingID.value = mirror.id
-  error.value = ''
+  mutationError.value = ''
   try {
-    await api.post(`/node-registry-mirrors/${mirror.id}/verify`)
+    await verifyNodeRegistryMirror(mirror.id)
     await load()
-  } catch (e) { error.value = e.message || '检测节点镜像源失败' } finally { verifyingID.value = null }
+  } catch (e) { mutationError.value = e.message || '检测节点镜像源失败' } finally { verifyingID.value = null }
 }
 
 function openApply(mirror) {
@@ -320,16 +339,16 @@ function closeApply() {
 async function applyMirror() {
   if (!applyTarget.value || !selectedServerIDs.value.length) return
   applying.value = true
-  error.value = ''
+  mutationError.value = ''
   try {
     const mirrorID = applyTarget.value.id
-    const updated = await api.post(`/node-registry-mirrors/${mirrorID}/apply`, { server_ids: selectedServerIDs.value })
+    const updated = await applyNodeRegistryMirror(mirrorID, { server_ids: selectedServerIDs.value })
     applyTarget.value = null
     selectedServerIDs.value = []
     const index = mirrors.value.findIndex(mirror => mirror.id === mirrorID)
     if (index >= 0 && updated?.id === mirrorID) mirrors.value[index] = updated
     startApplyPolling([mirrorID])
-  } catch (e) { error.value = e.message || '下发节点镜像源失败' } finally { applying.value = false }
+  } catch (e) { mutationError.value = e.message || '下发节点镜像源失败' } finally { applying.value = false }
 }
 
 function startApplyPolling(mirrorIDs) {
@@ -337,16 +356,22 @@ function startApplyPolling(mirrorIDs) {
   applyPolling.start()
 }
 
+function stopApplyPolling() {
+  pollingController?.abort()
+  pollingController = null
+  applyPolling.stop()
+}
+
 async function remove() {
   try {
-    await api.delete(`/node-registry-mirrors/${deleteTarget.value.id}`)
+    await deleteNodeRegistryMirror(deleteTarget.value.id)
     deleteTarget.value = null
     await load()
-  } catch (e) { error.value = e.message || '删除节点镜像源失败' }
+  } catch (e) { mutationError.value = e.message || '删除节点镜像源失败' }
 }
 
 onMounted(() => { load(); loadServers(); loadProxies() })
-onBeforeUnmount(applyPolling.stop)
+onBeforeUnmount(stopApplyPolling)
 </script>
 
 <style scoped>

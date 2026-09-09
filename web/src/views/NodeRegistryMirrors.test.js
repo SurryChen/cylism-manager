@@ -174,11 +174,32 @@ describe('Node registry mirrors view', () => {
     expect(api.post).toHaveBeenCalledWith('/node-registry-mirrors/1/apply', { server_ids: [11] })
 
     await vi.advanceTimersByTimeAsync(2000)
-    expect(api.get).toHaveBeenCalledWith('/node-registry-mirrors/1/apply-status')
+    const applyStatusCall = api.get.mock.calls.find(([path]) => path === '/node-registry-mirrors/1/apply-status')
+    expect(applyStatusCall[1]).toEqual(expect.objectContaining({ signal: expect.any(AbortSignal) }))
     expect(wrapper.text()).toContain('worker-a: 成功 - 配置已写入')
     const statusRequests = api.get.mock.calls.filter(([path]) => path === '/node-registry-mirrors/1/apply-status').length
     await vi.advanceTimersByTimeAsync(2000)
     expect(api.get.mock.calls.filter(([path]) => path === '/node-registry-mirrors/1/apply-status')).toHaveLength(statusRequests)
     wrapper.unmount()
+  })
+
+  it('aborts an in-flight apply status read when the page unmounts', async () => {
+    vi.useFakeTimers()
+    let statusSignal
+    api.get.mockImplementation((path, options) => {
+      if (path === '/servers') return Promise.resolve([])
+      if (path === '/registry-proxies') return Promise.resolve([])
+      if (path === '/node-registry-mirrors') return Promise.resolve([{ id: 1, last_apply_status: 'applying', endpoints: '[]' }])
+      if (path === '/node-registry-mirrors/1/apply-status') {
+        statusSignal = options?.signal
+        return new Promise(() => {})
+      }
+      return Promise.resolve([])
+    })
+    const wrapper = mount(NodeRegistryMirrors)
+    await settle()
+    await vi.advanceTimersByTimeAsync(2000)
+    wrapper.unmount()
+    expect(statusSignal?.aborted).toBe(true)
   })
 })

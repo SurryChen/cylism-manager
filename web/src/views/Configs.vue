@@ -1,7 +1,9 @@
 <template>
   <div>
     <div class="page-header"><h1 class="page-title">配置</h1><button class="btn btn-sm btn-primary" @click="openCreate"><Plus :size="15" /> 新建 {{ activeTab === 'configmaps' ? 'ConfigMap' : 'Secret' }}</button></div>
-    <div v-if="error" class="k8s-banner k8s-banner-warn page-error">{{ error }}</div>
+    <div v-if="listError" class="k8s-banner k8s-banner-warn page-error">{{ listError }}</div>
+    <div v-if="detailError" class="k8s-banner k8s-banner-warn page-error">{{ detailError }}</div>
+    <div v-if="mutationError" class="k8s-banner k8s-banner-warn page-error">{{ mutationError }}</div>
 
     <div class="card section-gap">
       <div class="table-tabs">
@@ -48,15 +50,20 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { Pencil, Plus, Trash2 } from 'lucide-vue-next'
-import { api } from '../api/index.js'
+import { createConfigMap, createSecret, deleteConfigMap, deleteSecret, getConfigMap, getConfigMaps, getNamespaceNames, getSecrets, updateConfigMap, updateSecret } from '../api/kubernetes.js'
+import { useAsyncResource } from '../composables/useAsyncResource.js'
 
 const activeTab = ref('configmaps')
 const configmaps = ref([])
 const secrets = ref([])
 const namespaces = ref([])
-const loadingTab = ref(false)
+const listResource = useAsyncResource(({ signal }, tab) => tab === 'configmaps' ? getConfigMaps({ signal }) : getSecrets({ signal }), null)
+const detailResource = useAsyncResource(({ signal }, kind, namespace, name) => kind === 'configmap' ? getConfigMap(namespace, name, { signal }) : Promise.resolve(null), null)
+const loadingTab = listResource.loading
 const saving = ref(false)
-const error = ref('')
+const listError = ref('')
+const detailError = ref('')
+const mutationError = ref('')
 const expandedKey = ref('')
 const detail = ref({})
 const showEditor = ref(false)
@@ -74,14 +81,67 @@ function addDataItem() { resourceForm.value.data.push({ key: '', value: '' }) }
 function removeDataItem(index) { resourceForm.value.data.splice(index, 1); if (!resourceForm.value.data.length) addDataItem() }
 
 onMounted(async () => { await Promise.all([loadNamespaces(), selectTab('configmaps')]) })
-async function loadNamespaces() { try { namespaces.value = await api.get('/k8s/namespace-names') || [] } catch (_) { namespaces.value = [] } }
-async function selectTab(tab) { activeTab.value = tab; expandedKey.value = ''; loadingTab.value = true; error.value = ''; try { if (tab === 'configmaps') configmaps.value = await api.get('/k8s/configmaps?usage=false') || []; else secrets.value = await api.get('/k8s/secrets?usage=false') || [] } catch (e) { error.value = e.message || '加载失败，请检查集群连接' } finally { loadingTab.value = false } }
-async function toggleExpand(resource) { const key = resourceKey(resource); if (expandedKey.value === key) { expandedKey.value = ''; return }; expandedKey.value = key; if (activeTab.value === 'configmaps') { try { detail.value = await api.get(`/k8s/configmaps/${resource.namespace}/${resource.name}`) } catch (e) { error.value = e.message || '读取 ConfigMap 失败' } } }
+async function loadNamespaces() { try { namespaces.value = await getNamespaceNames() || [] } catch (_) { namespaces.value = [] } }
+async function selectTab(tab) {
+  activeTab.value = tab
+  expandedKey.value = ''
+  listError.value = ''
+  const result = await listResource.refresh(tab)
+  if (!result) {
+    if (listResource.error.value) listError.value = listResource.error.value.message || '加载失败，请检查集群连接'
+    return
+  }
+  if (tab === 'configmaps') configmaps.value = result || []
+  else secrets.value = result || []
+}
+async function toggleExpand(resource) {
+  const key = resourceKey(resource)
+  if (expandedKey.value === key) { expandedKey.value = ''; detailResource.cancel(); return }
+  expandedKey.value = key
+  detailError.value = ''
+  if (activeTab.value === 'configmaps') {
+    const result = await detailResource.refresh('configmap', resource.namespace, resource.name)
+    if (result && expandedKey.value === key) detail.value = result
+    if (!result && detailResource.error.value) detailError.value = detailResource.error.value.message || '读取 ConfigMap 失败'
+  }
+}
 function openCreate() { editing.value = false; resourceForm.value = newResourceForm(); if (namespaces.value.length === 1) resourceForm.value.namespace = namespaces.value[0].name; showEditor.value = true }
-async function openEdit(resource) { editing.value = true; resourceForm.value = { namespace: resource.namespace, name: resource.name, data: [] }; if (activeTab.value === 'configmaps') { try { const loaded = await api.get(`/k8s/configmaps/${resource.namespace}/${resource.name}`); resourceForm.value.data = Object.entries(loaded.data || {}).map(([key, value]) => ({ key, value })) } catch (e) { error.value = e.message || '读取 ConfigMap 失败'; return } } else { resourceForm.value.data = (resource.keys || []).map(key => ({ key, value: '' })) }; if (!resourceForm.value.data.length) addDataItem(); showEditor.value = true }
+async function openEdit(resource) {
+  editing.value = true
+  resourceForm.value = { namespace: resource.namespace, name: resource.name, data: [] }
+  detailError.value = ''
+  if (activeTab.value === 'configmaps') {
+    const loaded = await detailResource.refresh('configmap', resource.namespace, resource.name)
+    if (!loaded) { detailError.value = detailResource.error.value?.message || '读取 ConfigMap 失败'; return }
+    resourceForm.value.data = Object.entries(loaded.data || {}).map(([key, value]) => ({ key, value }))
+  } else resourceForm.value.data = (resource.keys || []).map(key => ({ key, value: '' }))
+  if (!resourceForm.value.data.length) addDataItem()
+  showEditor.value = true
+}
 function closeEditor() { showEditor.value = false; resourceForm.value = newResourceForm() }
-async function saveResource() { saving.value = true; error.value = ''; try { const base = activeTab.value === 'configmaps' ? '/k8s/configmaps' : '/k8s/secrets'; const payload = { namespace: resourceForm.value.namespace, name: resourceForm.value.name, data: dataMap() }; if (editing.value) await api.put(`${base}/${payload.namespace}/${payload.name}`, { data: payload.data }); else await api.post(base, payload); closeEditor(); await selectTab(activeTab.value) } catch (e) { error.value = e.message || '保存资源失败' } finally { saving.value = false } }
-async function removeResource(resource) { if (!window.confirm(`删除 ${resource.name} 后无法恢复，是否继续？`)) return; error.value = ''; try { const base = activeTab.value === 'configmaps' ? '/k8s/configmaps' : '/k8s/secrets'; await api.delete(`${base}/${resource.namespace}/${resource.name}`); await selectTab(activeTab.value) } catch (e) { error.value = e.message || '删除资源失败' } }
+async function saveResource() {
+  saving.value = true
+  mutationError.value = ''
+  try {
+    const payload = { namespace: resourceForm.value.namespace, name: resourceForm.value.name, data: dataMap() }
+    if (activeTab.value === 'configmaps') {
+      if (editing.value) await updateConfigMap(payload.namespace, payload.name, { data: payload.data })
+      else await createConfigMap(payload)
+    } else if (editing.value) await updateSecret(payload.namespace, payload.name, { data: payload.data })
+    else await createSecret(payload)
+    closeEditor()
+    await selectTab(activeTab.value)
+  } catch (e) { mutationError.value = e.message || '保存资源失败' } finally { saving.value = false }
+}
+async function removeResource(resource) {
+  if (!window.confirm(`删除 ${resource.name} 后无法恢复，是否继续？`)) return
+  mutationError.value = ''
+  try {
+    if (activeTab.value === 'configmaps') await deleteConfigMap(resource.namespace, resource.name)
+    else await deleteSecret(resource.namespace, resource.name)
+    await selectTab(activeTab.value)
+  } catch (e) { mutationError.value = e.message || '删除资源失败' }
+}
 </script>
 
 <style scoped>

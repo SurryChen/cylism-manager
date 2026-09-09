@@ -1,4 +1,5 @@
 import { api } from './index.js'
+import { getConfigMapsForNamespace, getSecretsForNamespace } from './kubernetes.js'
 
 function queryString(params) {
   const query = new URLSearchParams()
@@ -42,9 +43,9 @@ export function getApplicationEndpoints(applicationID, options) {
 }
 
 export function getApplicationConfigResources(namespace, options) {
-  return api.get(`/k8s/configmaps?namespace=${encodeURIComponent(namespace || '')}&usage=false`, options)
+  return getConfigMapsForNamespace(namespace, options)
 }
 
 export function getApplicationSecretResources(namespace, options) {
-  return api.get(`/k8s/secrets?namespace=${encodeURIComponent(namespace || '')}&usage=false`, options)
+  return getSecretsForNamespace(namespace, options)
 }

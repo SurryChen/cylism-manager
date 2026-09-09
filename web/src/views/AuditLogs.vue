@@ -10,6 +10,7 @@
         <span class="audit-summary">第 {{ currentPage }} / {{ totalPages }} 页</span>
       </div>
     </div>
+    <div v-if="error" class="k8s-banner k8s-banner-warn page-error">{{ error }}</div>
 
     <div class="card audit-card">
       <div class="audit-filter-panel">
@@ -127,7 +128,8 @@
 
 <script setup>
 import { computed, onMounted, ref } from 'vue'
-import { api } from '../api/index.js'
+import { getAuditLogs } from '../api/audit.js'
+import { useAsyncResource } from '../composables/useAsyncResource.js'
 
 const pageSize = 20
 const logs = ref([])
@@ -136,7 +138,9 @@ const offset = ref(0)
 const filterType = ref('')
 const filterAction = ref('')
 const keyword = ref('')
-const loading = ref(false)
+const auditResource = useAsyncResource(({ signal }, params) => getAuditLogs(params, { signal }), { data: [], total: 0 })
+const loading = auditResource.loading
+const error = ref('')
 const selectedLog = ref(null)
 
 const currentPage = computed(() => Math.floor(offset.value / pageSize) + 1)
@@ -158,22 +162,20 @@ async function resetFilters() {
 
 async function loadLogs(resetOffset = false) {
   if (resetOffset) offset.value = 0
-  loading.value = true
-  const params = new URLSearchParams({ limit: String(pageSize), offset: String(offset.value) })
-  if (filterType.value) params.set('resource_type', filterType.value)
-  if (filterAction.value) params.set('action', filterAction.value)
-  if (keyword.value) params.set('keyword', keyword.value)
-  try {
-    const d = await api.get(`/audit-logs?${params}`)
-    logs.value = (d && d.data) || []
-    total.value = (d && d.total) || 0
-  } catch (err) {
-    console.error(err)
-    logs.value = []
-    total.value = 0
-  } finally {
-    loading.value = false
+  error.value = ''
+  const result = await auditResource.refresh({
+    limit: pageSize,
+    offset: offset.value,
+    resourceType: filterType.value,
+    action: filterAction.value,
+    keyword: keyword.value,
+  })
+  if (!result) {
+    if (auditResource.error.value) error.value = auditResource.error.value.message || '加载审计日志失败'
+    return
   }
+  logs.value = result.data || []
+  total.value = result.total || 0
 }
 
 async function prevPage() {

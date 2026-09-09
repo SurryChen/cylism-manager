@@ -1,21 +1,4 @@
-# frontend-resource-request-lifecycle Specification
-
-## Purpose
-TBD - created by archiving change frontend-resource-request-lifecycle. Update Purpose after archive.
-## Requirements
-### Requirement: Latest page read result is authoritative
-
-The frontend SHALL cancel an in-flight managed read when the same resource is refreshed, and SHALL update page state only from the most recently started managed read.
-
-#### Scenario: A filter changes before its previous request completes
-
-- **WHEN** a user changes an application workspace, server section, monitoring tab, or monitoring time range before its current managed read completes
-- **THEN** the frontend SHALL start a new read and SHALL not render the prior read's result after the newer read has started
-
-#### Scenario: A page is left with a managed read in progress
-
-- **WHEN** a component using a managed resource is unmounted before its request completes
-- **THEN** the frontend SHALL abort the request and SHALL not update that component's state from its response
+## MODIFIED Requirements
 
 ### Requirement: High-frequency reads use domain API functions
 
@@ -50,6 +33,8 @@ The frontend SHALL expose managed read failures through purpose-specific resourc
 - **WHEN** a filter, tab, pagination, route, or component disposal aborts a pending request
 - **THEN** the aborted request SHALL not replace newer data and SHALL not set a visible page error
 
+## ADDED Requirements
+
 ### Requirement: Operational mutations expose local outcome state
 
 Workloads, Configs, and NodeRegistryMirrors SHALL expose submitting state while a mutation is pending, release it on both success and failure, show a local mutation error on failure, and refresh only the affected resource after success.
@@ -82,4 +67,3 @@ NodeRegistryMirrors SHALL start apply-status polling only for active application
 
 - **WHEN** an apply-status read rejects for a transient or server error
 - **THEN** the page SHALL expose a polling-specific error and SHALL preserve the last known mirror and proxy data
-

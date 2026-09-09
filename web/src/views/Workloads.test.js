@@ -166,6 +166,35 @@ describe('Workloads view', () => {
     expect(wrapper.find('.pod-filter-panel').exists()).toBe(true)
   })
 
+  it('shows a local error when scaling a deployment fails', async () => {
+    api.get.mockImplementation(url => url === '/k8s/deployments'
+      ? Promise.resolve([{ name: 'api', namespace: 'default', replicas: 1, ready: 1, images: ['nginx:1.0'] }])
+      : Promise.resolve([]))
+    api.patch.mockRejectedValueOnce(new Error('扩缩容被拒绝'))
+    const wrapper = mount(Workloads)
+    await flush()
+    await wrapper.findAll('.resource-tab')[1].trigger('click')
+    await wrapper.find('.action-cell .btn').trigger('click')
+    await wrapper.find('.modal .btn-primary').trigger('click')
+    await flush()
+    expect(api.patch).toHaveBeenCalledWith('/k8s/deployments/default/api/scale', { replicas: 1 })
+    expect(wrapper.text()).toContain('扩缩容被拒绝')
+  })
+
+  it('shows a local error when updating an image fails', async () => {
+    api.get.mockImplementation(url => url === '/k8s/deployments'
+      ? Promise.resolve([{ name: 'api', namespace: 'default', replicas: 1, ready: 1, images: ['nginx:1.0'] }])
+      : Promise.resolve([]))
+    api.patch.mockRejectedValueOnce(new Error('镜像地址无效'))
+    const wrapper = mount(Workloads)
+    await flush()
+    await wrapper.findAll('.resource-tab')[1].trigger('click')
+    await wrapper.find('.action-cell .btn:nth-child(2)').trigger('click')
+    await wrapper.find('.modal .btn-primary').trigger('click')
+    await flush()
+    expect(wrapper.text()).toContain('镜像地址无效')
+  })
+
   it('opens a container terminal only for running Pods with containers', async () => {
     api.get.mockImplementation(url => {
       if (url === '/k8s/pods') return Promise.resolve([{ name: 'orders-api-1', namespace: 'production', status: 'Running', node: 'worker-a', ip: '10.42.0.8', restarts: 0, age: '5m', containers: ['app'] }])

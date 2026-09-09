@@ -5,6 +5,8 @@
       <button class="icon-button" title="刷新工作负载" aria-label="刷新工作负载" :disabled="loading" @click="fetchData"><RefreshCw :size="16" :class="{ 'is-spinning': loading }" /></button>
     </div>
     <div v-if="error" class="k8s-banner k8s-banner-warn" style="margin-bottom:var(--space-16)">⚠ {{ error }}</div>
+    <div v-if="detailError" class="k8s-banner k8s-banner-warn" style="margin-bottom:var(--space-16)">⚠ {{ detailError }}</div>
+    <div v-if="mutationError" class="k8s-banner k8s-banner-warn" style="margin-bottom:var(--space-16)">⚠ {{ mutationError }}</div>
 
     <nav class="resource-switcher section-gap" aria-label="工作负载资源类型">
       <button :class="['resource-tab', { 'resource-tab-active': activeTab === 'pods' }]" :aria-selected="activeTab === 'pods'" @click="selectTab('pods')"><Box :size="16" /><span>Pods<small>实例</small></span><strong>{{ pods.length }}</strong></button>
@@ -167,7 +169,7 @@
       <div class="modal"><div class="modal-body">
         <h3>扩缩容: {{ scaleDialog.name }}</h3>
         <p class="modal-copy">当前: {{ scaleDialog.current }} → <input type="number" v-model="scaleDialog.replicas" min="0" class="form-input" style="width:80px;display:inline" /></p>
-        <div class="btn-group" style="margin-top:var(--space-16)"><button class="btn btn-primary" @click="doScale">确认</button><button class="btn" @click="scaleDialog = null">取消</button></div>
+        <div class="btn-group" style="margin-top:var(--space-16)"><button class="btn btn-primary" :disabled="mutationLoading" @click="doScale">{{ mutationLoading ? '提交中...' : '确认' }}</button><button class="btn" :disabled="mutationLoading" @click="scaleDialog = null">取消</button></div>
       </div></div>
     </div>
 
@@ -177,7 +179,7 @@
         <h3>更新镜像: {{ imageDialog.name }}</h3>
         <p class="modal-copy">容器: <select v-model="imageDialog.container" class="form-select" style="width:auto;display:inline"><option v-for="img in imageDialog.images" :key="img" :value="img.split(':')[0]">{{ img }}</option></select></p>
         <p class="modal-copy">新镜像: <input v-model="imageDialog.newImage" class="form-input" style="width:200px;display:inline" placeholder="nginx:1.25" /></p>
-        <div class="btn-group" style="margin-top:var(--space-16)"><button class="btn btn-primary" @click="doUpdateImage">确认</button><button class="btn" @click="imageDialog = null">取消</button></div>
+        <div class="btn-group" style="margin-top:var(--space-16)"><button class="btn btn-primary" :disabled="mutationLoading" @click="doUpdateImage">{{ mutationLoading ? '提交中...' : '确认' }}</button><button class="btn" :disabled="mutationLoading" @click="imageDialog = null">取消</button></div>
       </div></div>
     </div>
 
@@ -187,7 +189,7 @@
         <h3>回滚: {{ rollbackDialog.name }}</h3>
         <div class="table-wrap" style="margin:var(--space-12) 0"><table class="data-table">
           <thead><tr><th>版本</th><th>镜像</th><th>时间</th><th></th></tr></thead>
-          <tbody><tr v-for="r in rollbackDialog.revisions" :key="r.revision"><td>{{ r.revision }}</td><td>{{ r.image }}</td><td>{{ r.age }}</td><td><button class="btn btn-sm" @click="doRollback(r.revision)">回滚到此</button></td></tr></tbody>
+          <tbody><tr v-for="r in rollbackDialog.revisions" :key="r.revision"><td>{{ r.revision }}</td><td>{{ r.image }}</td><td>{{ r.age }}</td><td><button class="btn btn-sm" :disabled="mutationLoading" @click="doRollback(r.revision)">{{ mutationLoading ? '提交中...' : '回滚到此' }}</button></td></tr></tbody>
         </table></div>
         <button class="btn" @click="rollbackDialog = null">取消</button>
       </div></div>
@@ -198,7 +200,8 @@
 <script setup>
 import { computed, ref, onMounted, onErrorCaptured } from 'vue'
 import { Box, Database, Filter, Layers3, Network, RefreshCw, RotateCcw, Search, SquareTerminal, X } from 'lucide-vue-next'
-import { api } from '../api/index.js'
+import { getWorkloadDaemonSets, getWorkloadDeploymentPods, getWorkloadDeploymentRevisions, getWorkloadDeployments, getWorkloadPods, getWorkloadServers, getWorkloadStatefulSets, rollbackWorkload, scaleWorkload, updateWorkloadImage } from '../api/kubernetes.js'
+import { useAsyncResource } from '../composables/useAsyncResource.js'
 import PodTerminal from '../components/PodTerminal.vue'
 
 const activeTab = ref('pods')
@@ -207,8 +210,22 @@ const statefulsets = ref([])
 const daemonsets = ref([])
 const pods = ref([])
 const servers = ref([])
-const loading = ref(true)
+const inventoryResource = useAsyncResource(async ({ signal }) => Promise.allSettled([
+  getWorkloadDeployments({ signal }),
+  getWorkloadStatefulSets({ signal }),
+  getWorkloadDaemonSets({ signal }),
+  getWorkloadPods({ signal }),
+  getWorkloadServers({ signal }),
+]), null)
+const detailResource = useAsyncResource(({ signal }, kind, namespace, name) => {
+  if (kind === 'pods') return getWorkloadDeploymentPods(namespace, name, { signal })
+  return getWorkloadDeploymentRevisions(namespace, name, { signal })
+}, null)
+const loading = inventoryResource.loading
 const error = ref('')
+const mutationError = ref('')
+const mutationLoading = ref(false)
+const detailError = ref('')
 const expandedDeploy = ref('')
 const deployPods = ref({})
 const podNamespaceFilter = ref('')
@@ -266,28 +283,18 @@ onErrorCaptured((err, instance, info) => {
 })
 
 async function fetchData() {
-  loading.value = true
   error.value = ''
-  try {
-    const [deps, sts, ds, podList, serverList] = await Promise.allSettled([
-      api.get('/k8s/deployments'),
-      api.get('/k8s/statefulsets'),
-      api.get('/k8s/daemonsets'),
-      api.get('/k8s/pods'),
-      api.get('/servers'),
-    ])
+  mutationError.value = ''
+  const result = await inventoryResource.refresh()
+  if (!result) return
+  const [deps, sts, ds, podList, serverList] = result
     deployments.value = deps.status === 'fulfilled' ? (deps.value || []) : []
     statefulsets.value = sts.status === 'fulfilled' ? (sts.value || []) : []
     daemonsets.value = ds.status === 'fulfilled' ? (ds.value || []) : []
     pods.value = podList.status === 'fulfilled' ? (podList.value || []) : []
     servers.value = serverList.status === 'fulfilled' ? (serverList.value || []) : []
     const failed = [deps, sts, ds, podList, serverList].filter(r => r.status === 'rejected')
-    if (failed.length > 0) {
-      const msg = failed.map(r => r.reason?.message || '未知错误').join('\n')
-      error.value = msg
-    }
-  } catch(e) { error.value = '加载失败，请检查集群连接' }
-  finally { loading.value = false }
+  if (failed.length > 0) error.value = failed.map(r => r.reason?.message || '未知错误').join('\n')
 }
 onMounted(fetchData)
 
@@ -342,8 +349,14 @@ async function toggleDeployExpand(d) {
   expandedDeploy.value = key
   if (!deployPods.value[key]) {
     try {
-      deployPods.value[key] = await api.get(`/k8s/deployments/${d.namespace}/${d.name}/pods`) || []
-    } catch(e) { deployPods.value[key] = [] }
+      const result = await detailResource.refresh('pods', d.namespace, d.name)
+      if (result !== undefined) {
+        deployPods.value[key] = result || []
+        detailError.value = ''
+      } else if (detailResource.error.value) {
+        detailError.value = detailResource.error.value.message || '读取工作负载 Pod 失败'
+      }
+    } catch(e) { detailError.value = e.message || '读取工作负载 Pod 失败'; deployPods.value[key] = [] }
   }
 }
 
@@ -356,15 +369,14 @@ function openScaleDialog(d) {
 }
 async function doScale() {
   const d = scaleDialog.value
-  const isSts = d.kind === 'statefulset'
-  const path = isSts
-    ? `/k8s/statefulsets/${d.namespace}/${d.name}/scale`
-    : `/k8s/deployments/${d.namespace}/${d.name}/scale`
+  mutationError.value = ''
+  mutationLoading.value = true
   try {
-    await api.patch(path, { replicas: Number(d.replicas) })
+    await scaleWorkload(d.kind, d.namespace, d.name, Number(d.replicas))
     scaleDialog.value = null
-    fetchData()
-  } catch(e) { console.error(e) }
+    await fetchData()
+  } catch(e) { mutationError.value = e.message || '扩缩容失败' }
+  finally { mutationLoading.value = false }
 }
 
 function openImageDialog(d) {
@@ -374,23 +386,37 @@ function openImageDialog(d) {
     newImage: ''
   }
 }
-function doUpdateImage() {
+async function doUpdateImage() {
   const d = imageDialog.value
-  api.patch(`/k8s/deployments/${d.namespace}/${d.name}/image`, { container: d.container, image: d.newImage }).then(() => { imageDialog.value = null; fetchData() })
+  mutationError.value = ''
+  mutationLoading.value = true
+  try {
+    await updateWorkloadImage(d.namespace, d.name, { container: d.container, image: d.newImage })
+    imageDialog.value = null
+    await fetchData()
+  } catch (e) { mutationError.value = e.message || '更新镜像失败' }
+  finally { mutationLoading.value = false }
 }
 
 async function openRollbackDialog(d) {
-  const result = await api.get(`/k8s/deployments/${d.namespace}/${d.name}/revisions`)
-  rollbackDialog.value = { namespace: d.namespace, name: d.name, revisions: result || [] }
+  detailError.value = ''
+  try {
+    const result = await detailResource.refresh('revisions', d.namespace, d.name)
+    if (result) rollbackDialog.value = { namespace: d.namespace, name: d.name, revisions: result || [] }
+    else if (detailResource.error.value) detailError.value = detailResource.error.value.message || '读取回滚版本失败'
+  } catch (e) { detailError.value = e.message || '读取回滚版本失败' }
 }
 
 async function doRollback(revision) {
   const d = rollbackDialog.value
+  mutationError.value = ''
+  mutationLoading.value = true
   try {
-    await api.post(`/k8s/deployments/${d.namespace}/${d.name}/rollback`, { revision })
+    await rollbackWorkload(d.namespace, d.name, revision)
     rollbackDialog.value = null
-    fetchData()
-  } catch(e) { console.error(e) }
+    await fetchData()
+  } catch(e) { mutationError.value = e.message || '回滚失败' }
+  finally { mutationLoading.value = false }
 }
 
 function openStsScaleDialog(s) {

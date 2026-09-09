@@ -52,8 +52,9 @@ describe('Configs view', () => {
     })
     await new Promise(r => setTimeout(r, 100))
     await nextTick()
-    expect(api.get).toHaveBeenCalledWith('/k8s/configmaps?usage=false')
-    expect(api.get).not.toHaveBeenCalledWith('/k8s/secrets')
+    expect(api.get.mock.calls.some(([path]) => path === '/k8s/configmaps?usage=false')).toBe(true)
+    expect(api.get.mock.calls.some(([path]) => path === '/k8s/secrets?usage=false')).toBe(false)
+    expect(api.get.mock.calls.find(([path]) => path === '/k8s/configmaps?usage=false')[1]).toEqual(expect.objectContaining({ signal: expect.any(AbortSignal) }))
     expect(wrapper.text()).toContain('app-config')
   })
 
@@ -69,7 +70,8 @@ describe('Configs view', () => {
     await nextTick()
     await new Promise(r => setTimeout(r, 100))
 
-    expect(api.get).toHaveBeenCalledWith('/k8s/secrets?usage=false')
+    expect(api.get.mock.calls.some(([path]) => path === '/k8s/secrets?usage=false')).toBe(true)
+    expect(api.get.mock.calls.find(([path]) => path === '/k8s/secrets?usage=false')[1]).toEqual(expect.objectContaining({ signal: expect.any(AbortSignal) }))
     expect(wrapper.text()).toContain('db-pass')
     expect(wrapper.text()).toContain('Opaque')
   })
@@ -106,5 +108,25 @@ describe('Configs view', () => {
     expect(api.post).toHaveBeenCalledWith('/k8s/configmaps', {
       namespace: 'default', name: 'runtime-config', data: { 'config.yaml': 'port: 8080' }
     })
+  })
+
+  it('does not let an older tab response replace the latest tab', async () => {
+    let resolveConfig
+    let resolveSecret
+    api.get.mockImplementation(path => {
+      if (path === '/k8s/namespace-names') return Promise.resolve([])
+      if (path === '/k8s/configmaps?usage=false') return new Promise(resolve => { resolveConfig = resolve })
+      if (path === '/k8s/secrets?usage=false') return new Promise(resolve => { resolveSecret = resolve })
+      return Promise.resolve([])
+    })
+    const wrapper = mount(Configs, { global: { stubs: { Teleport: true } } })
+    await Promise.resolve()
+    await wrapper.findAll('.tab-btn')[1].trigger('click')
+    resolveSecret([{ name: 'latest-secret', namespace: 'default', type: 'Opaque', keys: [] }])
+    await Promise.resolve()
+    resolveConfig([{ name: 'stale-config', namespace: 'default', keys: [] }])
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(wrapper.text()).toContain('latest-secret')
+    expect(wrapper.text()).not.toContain('stale-config')
   })
 })
