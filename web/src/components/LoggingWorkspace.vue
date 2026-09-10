@@ -1,5 +1,5 @@
 <template>
-  <section v-if="error" class="k8s-banner k8s-banner-warn section-gap">{{ error }}</section>
+  <section v-if="statusError" class="k8s-banner k8s-banner-warn section-gap" role="alert">{{ statusError }}</section>
 
   <section v-if="loading && !status" class="card logging-wait"><div class="empty-state"><span class="empty-icon">◌</span><span class="empty-text">正在读取日志采集状态</span></div></section>
 
@@ -9,6 +9,7 @@
       <div class="form-group"><label class="form-label">数据节点</label><select v-model="installForm.node_name" class="form-select" required><option value="" disabled>选择就绪节点</option><option v-for="node in readyNodes" :key="node.name" :value="node.name">{{ displayNode(node) }}</option></select><p class="form-hint">Loki 数据卷会绑定到所选节点；Alloy 会在所有可调度节点采集容器日志。</p></div>
       <div class="form-row"><label class="form-group"><span class="form-label">存储容量</span><input v-model.trim="installForm.storage" class="form-input" required placeholder="10Gi" /></label><label class="form-group"><span class="form-label">StorageClass</span><select v-model="installForm.storage_class_name" class="form-select"><option value="">使用集群默认 StorageClass</option><option v-for="item in storageClasses" :key="item.name" :value="item.name">{{ item.name }}{{ item.is_default ? '（默认）' : '' }}</option></select></label><label class="form-group"><span class="form-label">日志保留天数</span><input v-model.number="installForm.retention_days" class="form-input" type="number" min="1" max="365" required /></label></div>
       <p class="form-hint">平台会自动创建 <code>cylism-loki-data</code>。该存储卷由日志组件管理，卸载采集器不会删除已有日志。</p>
+      <p v-if="installError" class="form-error" role="alert">{{ installError }}</p>
       <div class="modal-actions status-actions"><button class="btn btn-primary" :disabled="installing || !installForm.node_name">{{ installing ? '正在提交...' : '启用日志采集' }}</button><button type="button" class="btn" :disabled="installing" @click="refresh">重新检测</button></div>
     </form>
   </section>
@@ -28,6 +29,7 @@
       <section class="logging-section-heading section-gap"><div><h2>日志检索</h2><p>按容器标准输出检索。日志不会在打开页面时自动加载。</p></div><div class="icon-actions"><button class="icon-button" data-testid="logging-settings" title="日志设置" aria-label="日志设置" @click="openSettings"><Settings2 :size="16" /></button><button class="icon-button" title="刷新日志状态与筛选项" aria-label="刷新日志状态与筛选项" :disabled="loading" @click="refresh"><RefreshCw :size="16" :class="{ 'is-spinning': loading }" /></button></div></section>
 
       <form class="card logging-query section-gap" @submit.prevent="queryLogs">
+        <p v-if="filterError" class="form-error">{{ filterError }}</p>
         <div class="logging-filter-grid">
           <label class="form-group"><span class="form-label">时间范围</span><select v-model="queryForm.range" class="form-select" data-testid="log-time-range"><option value="1h">最近 1 小时</option><option value="6h">最近 6 小时</option><option value="24h">最近 24 小时</option><option value="custom">精确范围</option></select></label>
           <label v-if="queryForm.range === 'custom'" class="form-group"><span class="form-label">开始时间</span><input v-model="queryForm.start_time" class="form-input" data-testid="log-start-time" type="datetime-local" step="1" required /></label>
@@ -45,30 +47,35 @@
       </form>
 
       <section v-if="querying" class="card logging-results section-gap"><div class="empty-inline">正在查询日志...</div></section>
-      <section v-else-if="queried && !lines.length" class="card logging-results section-gap"><div class="empty-inline">当前筛选范围内没有匹配日志</div></section>
-      <section v-else-if="lines.length" class="card logging-results section-gap"><div class="logging-results-header"><span>已返回 {{ lines.length }} 行</span><small v-if="hasMore">结果已达到本次查询上限，请缩小筛选范围</small></div><div class="logging-lines"><article v-for="(entry, index) in lines" :key="`${entry.timestamp}-${index}`" class="logging-line"><time>{{ formatTime(entry.timestamp) }}</time><div class="logging-line-copy"><span class="logging-labels">{{ lineContext(entry.labels) }}</span><pre>{{ entry.line }}</pre></div></article></div></section>
+      <p v-if="queryError" class="form-error section-gap">{{ queryError }}</p>
+      <section v-if="queried && !lines.length" class="card logging-results section-gap"><div class="empty-inline">当前筛选范围内没有匹配日志</div></section>
+      <section v-if="lines.length" class="card logging-results section-gap"><div class="logging-results-header"><span>已返回 {{ lines.length }} 行</span><small v-if="hasMore">结果已达到本次查询上限，请缩小筛选范围</small></div><div class="logging-lines"><article v-for="(entry, index) in lines" :key="`${entry.timestamp}-${index}`" class="logging-line"><time>{{ formatTime(entry.timestamp) }}</time><div class="logging-line-copy"><span class="logging-labels">{{ lineContext(entry.labels) }}</span><pre>{{ entry.line }}</pre></div></article></div></section>
     </template>
   </template>
 
   <Teleport to="body">
-    <div v-if="settingsOpen" class="overlay logging-settings-overlay" @click.self="settingsOpen = false"><form class="modal logging-settings-modal" @submit.prevent="saveSettings"><header class="drawer-header"><div><h2>日志设置</h2><p>调整日志保留策略，不会直接修改系统管理的存储卷。</p></div><button class="icon-button" type="button" title="关闭日志设置" aria-label="关闭日志设置" @click="settingsOpen = false"><X :size="16" /></button></header><section class="drawer-section"><div class="settings-field"><span>数据节点</span><strong>{{ status?.node_name || '-' }}</strong></div><div class="settings-field"><span>系统存储卷</span><strong class="metric-code">{{ status?.pvc_name || 'cylism-loki-data' }}</strong><small>{{ status?.storage || '-' }}</small></div><label class="form-group settings-retention"><span class="form-label">日志保留天数</span><input v-model.number="settingsForm.retention_days" class="form-input" type="number" min="1" max="365" required /><span class="form-hint">超过新保留周期的日志由 Loki 后台自动清理。</span></label></section><footer class="drawer-footer"><button class="btn" type="button" @click="settingsOpen = false">取消</button><button class="btn btn-primary" :disabled="saving">{{ saving ? '保存中...' : '保存设置' }}</button></footer></form></div>
+    <div v-if="settingsOpen" class="overlay logging-settings-overlay" @click.self="settingsOpen = false"><form class="modal logging-settings-modal" @submit.prevent="saveSettings"><header class="drawer-header"><div><h2>日志设置</h2><p>调整日志保留策略，不会直接修改系统管理的存储卷。</p></div><button class="icon-button" type="button" title="关闭日志设置" aria-label="关闭日志设置" @click="settingsOpen = false"><X :size="16" /></button></header><section class="drawer-section"><div class="settings-field"><span>数据节点</span><strong>{{ status?.node_name || '-' }}</strong></div><div class="settings-field"><span>系统存储卷</span><strong class="metric-code">{{ status?.pvc_name || 'cylism-loki-data' }}</strong><small>{{ status?.storage || '-' }}</small></div><label class="form-group settings-retention"><span class="form-label">日志保留天数</span><input v-model.number="settingsForm.retention_days" class="form-input" type="number" min="1" max="365" required /><span class="form-hint">超过新保留周期的日志由 Loki 后台自动清理。</span></label></section><p v-if="settingsError" class="form-error" role="alert">{{ settingsError }}</p><footer class="drawer-footer"><button class="btn" type="button" @click="settingsOpen = false">取消</button><button class="btn btn-primary" :disabled="saving">{{ saving ? '保存中...' : '保存设置' }}</button></footer></form></div>
   </Teleport>
 
-  <div v-if="confirmUninstall" class="overlay" @click.self="confirmUninstall = false"><div class="modal logging-uninstall-modal"><h2 class="modal-title">卸载日志采集</h2><p class="confirm-copy">将删除 Loki、Alloy 与采集配置，但保留 <code>cylism-loki-data</code> 中已有日志。</p><div class="modal-actions"><button class="btn" @click="confirmUninstall = false">取消</button><button class="btn btn-danger" :disabled="uninstalling" @click="uninstall">{{ uninstalling ? '卸载中...' : '确认卸载' }}</button></div></div></div>
+  <div v-if="confirmUninstall" class="overlay" @click.self="confirmUninstall = false"><div class="modal logging-uninstall-modal"><h2 class="modal-title">卸载日志采集</h2><p class="confirm-copy">将删除 Loki、Alloy 与采集配置，但保留 <code>cylism-loki-data</code> 中已有日志。</p><p v-if="uninstallError" class="form-error" role="alert">{{ uninstallError }}</p><div class="modal-actions"><button class="btn" @click="confirmUninstall = false">取消</button><button class="btn btn-danger" :disabled="uninstalling" @click="uninstall">{{ uninstalling ? '卸载中...' : '确认卸载' }}</button></div></div></div>
 </template>
 
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
 import { RefreshCw, Settings2, X } from 'lucide-vue-next'
-import { api } from '../api/index.js'
 import { getApplications, getProjects } from '../api/applications.js'
-import { getLoggingFilters, getLoggingStatus, queryLogs as requestLogs } from '../api/logging.js'
+import { getLoggingFilters, getLoggingStatus, installLogging, queryLogs as requestLogs, saveLoggingConfig, uninstallLogging } from '../api/logging.js'
 import { useAsyncResource } from '../composables/useAsyncResource.js'
 
 const props = defineProps({ nodes: { type: Array, default: () => [] }, storageClasses: { type: Array, default: () => [] } })
 
 const status = ref(null)
-const error = ref('')
+const statusError = ref('')
+const filterError = ref('')
+const queryError = ref('')
+const installError = ref('')
+const settingsError = ref('')
+const uninstallError = ref('')
 const loading = ref(false)
 const installing = ref(false)
 const querying = ref(false)
@@ -131,41 +138,44 @@ function displayNode(node) { return node.display_name || node.name }
 
 async function refresh() {
   loading.value = true
-  error.value = ''
-  try {
-    status.value = await statusResource.refresh()
+  statusError.value = ''
+  const result = await statusResource.refresh()
+  if (result !== undefined) {
+    status.value = result
     if (!installForm.value.node_name) installForm.value.node_name = readyNodes.value[0]?.name || ''
     if (logsAvailable.value) await loadFilters()
-    if (statusResource.error.value) throw statusResource.error.value
-  } catch (e) { error.value = e.message || '读取日志采集状态失败' } finally { loading.value = false }
+  } else if (statusResource.error.value) statusError.value = statusResource.error.value.message || '读取日志采集状态失败'
+  loading.value = false
 }
 
 async function loadFilters() {
+  filterError.value = ''
   const result = await filtersResource.refresh()
-  if (!result) { if (filtersResource.error.value) throw filtersResource.error.value; return }
-  filterOptions.value = { namespaces: result.filters?.namespaces || [], pods: result.filters?.pods || [], nodes: result.filters?.nodes || [] }
-  applications.value = result.apps || []
-  projects.value = result.projectList || []
+  if (result !== undefined) {
+    filterOptions.value = { namespaces: result.filters?.namespaces || [], pods: result.filters?.pods || [], nodes: result.filters?.nodes || [] }
+    applications.value = result.apps || []
+    projects.value = result.projectList || []
+  } else if (filtersResource.error.value) filterError.value = filtersResource.error.value.message || '读取日志筛选项失败'
 }
 
 async function install() {
   installing.value = true
-  error.value = ''
-  try { status.value = await api.post('/monitoring/logs/install', installForm.value); await refresh() } catch (e) { error.value = e.message || '启用日志采集失败' } finally { installing.value = false }
+  installError.value = ''
+  try { status.value = await installLogging(installForm.value); await refresh() } catch (e) { installError.value = e.message || '启用日志采集失败' } finally { installing.value = false }
 }
 
 async function queryLogs() {
   querying.value = true
-  error.value = ''
+  queryError.value = ''
   try {
     const payload = buildLogQueryPayload()
     if (!payload) return
     const result = await queryResource.refresh(payload)
-    if (!result) { if (queryResource.error.value) throw queryResource.error.value; return }
+    if (result === undefined) { if (queryResource.error.value) queryError.value = queryResource.error.value.message || '查询日志失败'; return }
     lines.value = result?.lines || []
     hasMore.value = Boolean(result?.has_more)
     queried.value = true
-  } catch (e) { error.value = e.message || '查询日志失败' } finally { querying.value = false }
+  } catch (e) { queryError.value = e.message || '查询日志失败' } finally { querying.value = false }
 }
 
 function buildLogQueryPayload() {
@@ -178,7 +188,7 @@ function buildLogQueryPayload() {
   const start = new Date(payload.start_time)
   const end = new Date(payload.end_time)
   if (Number.isNaN(start.valueOf()) || Number.isNaN(end.valueOf())) {
-    error.value = '请选择有效的开始和结束时间'
+    queryError.value = '请选择有效的开始和结束时间'
     return null
   }
   payload.start_time = start.toISOString()
@@ -189,13 +199,13 @@ function buildLogQueryPayload() {
 function openSettings() { settingsForm.value = { retention_days: status.value?.retention_days || 14 }; settingsOpen.value = true }
 async function saveSettings() {
   saving.value = true
-  error.value = ''
-  try { status.value = await api.put('/monitoring/logs/config', { node_name: status.value.node_name, retention_days: settingsForm.value.retention_days }); settingsOpen.value = false; await refresh() } catch (e) { error.value = e.message || '保存日志设置失败' } finally { saving.value = false }
+  settingsError.value = ''
+  try { status.value = await saveLoggingConfig({ node_name: status.value.node_name, retention_days: settingsForm.value.retention_days }); settingsOpen.value = false; await refresh() } catch (e) { settingsError.value = e.message || '保存日志设置失败' } finally { saving.value = false }
 }
 async function uninstall() {
   uninstalling.value = true
-  error.value = ''
-  try { await api.delete('/monitoring/logs'); confirmUninstall.value = false; lines.value = []; queried.value = false; await refresh() } catch (e) { error.value = e.message || '卸载日志采集失败' } finally { uninstalling.value = false }
+  uninstallError.value = ''
+  try { await uninstallLogging(); confirmUninstall.value = false; lines.value = []; queried.value = false; await refresh() } catch (e) { uninstallError.value = e.message || '卸载日志采集失败' } finally { uninstalling.value = false }
 }
 function formatTime(value) { return value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '-' }
 function lineContext(labels = {}) { return [labels.namespace, labels.pod, labels.container].filter(Boolean).join(' / ') || '容器日志' }

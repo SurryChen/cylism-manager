@@ -95,7 +95,7 @@ describe('Monitoring view', () => {
     expect(apiMocks.get.mock.calls.some(([path]) => path.includes('/monitoring/disk-growth'))).toBe(false)
     await wrapper.findAll('.section-tab').find(tab => tab.text() === '磁盘').trigger('click')
     await flushPromises()
-    expect(apiMocks.get).toHaveBeenCalledWith('/monitoring/disk-growth?range=6h')
+    expect(apiMocks.get).toHaveBeenCalledWith('/monitoring/disk-growth?range=6h', expect.objectContaining({ signal: expect.any(AbortSignal) }))
     wrapper.unmount()
   })
 

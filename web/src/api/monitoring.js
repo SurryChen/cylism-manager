@@ -36,6 +36,12 @@ export function queryMonitoring(query, options) {
   return api.get(`/monitoring/query?query=${encodeURIComponent(query)}`, options)
 }
 
+export function getDiskGrowth({ range, node } = {}, options) {
+  const params = new URLSearchParams({ range })
+  if (node) params.set('node', node)
+  return api.get(`/monitoring/disk-growth?${params.toString()}`, options)
+}
+
 export function installMonitoring(body, options) { return post('/monitoring/install', body, options) }
 export function uninstallMonitoring(options) { return remove('/monitoring', undefined, options) }
 export function migrateMonitoringStorage(body, options) { return post('/monitoring/storage-migration', body, options) }

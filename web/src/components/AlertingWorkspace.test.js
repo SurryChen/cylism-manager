@@ -3,6 +3,12 @@ import { flushPromises, mount } from '@vue/test-utils'
 import AlertingWorkspace from './AlertingWorkspace.vue'
 
 const apiMocks = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), put: vi.fn(), delete: vi.fn() }))
+function deferred() {
+  let resolve
+  let reject
+  const promise = new Promise((resolvePromise, rejectPromise) => { resolve = resolvePromise; reject = rejectPromise })
+  return { promise, resolve, reject }
+}
 
 vi.mock('../api/index.js', () => ({ api: apiMocks }))
 
@@ -97,5 +103,61 @@ describe('AlertingWorkspace', () => {
     expect(wrapper.get('.event-report-markdown').html()).toContain('<strong>影响</strong>')
     expect(wrapper.get('.event-report-markdown').findAll('li')).toHaveLength(1)
     expect(wrapper.get('.event-report-markdown').html()).not.toContain('<script')
+  })
+
+  it('keeps active alerts visible when a notification test fails', async () => {
+    apiMocks.get.mockImplementation(path => {
+      if (path === '/monitoring/alerts/status') return Promise.resolve({ state: 'ready', feishu_configured: true, notification_configured: true })
+      if (path === '/monitoring/alerts/overview') return Promise.resolve({ firing: 1, silenced: 0, active: [{ labels: { alertname: 'NodeDiskHigh', node: 'node-a', severity: 'critical' }, annotations: { summary: '节点磁盘使用率过高' } }], resolved: [] })
+      if (path === '/runtimes') return Promise.resolve([])
+      return Promise.resolve({})
+    })
+    apiMocks.post.mockRejectedValue(new Error('飞书机器人不可用'))
+    const wrapper = mount(AlertingWorkspace, { props: { monitoringReady: true } })
+    await flushPromises()
+
+    await wrapper.get('[title="告警设置"]').trigger('click')
+    const modal = document.body.querySelector('.alert-settings-modal')
+    ;[...modal.querySelectorAll('button')].find(button => button.textContent.includes('测试飞书通知')).click()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('节点磁盘使用率过高')
+    expect(document.body.querySelector('.alert-settings-modal')).not.toBeNull()
+    expect(modal.textContent).toContain('飞书机器人不可用')
+    wrapper.unmount()
+  })
+
+  it('retains the previous alert overview when a later refresh fails', async () => {
+    let overviewReads = 0
+    apiMocks.get.mockImplementation(path => {
+      if (path === '/monitoring/alerts/status') return Promise.resolve({ state: 'ready' })
+      if (path === '/monitoring/alerts/overview') {
+        overviewReads += 1
+        return overviewReads === 1
+          ? Promise.resolve({ firing: 1, silenced: 0, active: [{ labels: { alertname: 'NodeCPUHigh', node: 'node-a', severity: 'warning' }, annotations: { summary: '保留的 CPU 告警' } }], resolved: [] })
+          : Promise.reject(new Error('告警概览暂时不可用'))
+      }
+      if (path === '/runtimes') return Promise.resolve([])
+      return Promise.resolve({})
+    })
+    const wrapper = mount(AlertingWorkspace, { props: { monitoringReady: true } })
+    await flushPromises()
+
+    await wrapper.vm.refresh()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('保留的 CPU 告警')
+    expect(wrapper.text()).toContain('告警概览暂时不可用')
+  })
+
+  it('aborts a pending status read when the workspace unmounts', async () => {
+    const pending = deferred()
+    apiMocks.get.mockReturnValue(pending.promise)
+    const wrapper = mount(AlertingWorkspace, { props: { monitoringReady: true } })
+    await flushPromises()
+
+    const [, options] = apiMocks.get.mock.calls[0]
+    wrapper.unmount()
+    expect(options.signal.aborted).toBe(true)
   })
 })

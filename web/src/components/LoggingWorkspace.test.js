@@ -3,6 +3,12 @@ import { flushPromises, mount } from '@vue/test-utils'
 import LoggingWorkspace from './LoggingWorkspace.vue'
 
 const apiMocks = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), put: vi.fn(), delete: vi.fn() }))
+function deferred() {
+  let resolve
+  let reject
+  const promise = new Promise((resolvePromise, rejectPromise) => { resolve = resolvePromise; reject = rejectPromise })
+  return { promise, resolve, reject }
+}
 
 vi.mock('../api/index.js', () => ({ api: apiMocks }))
 
@@ -110,5 +116,74 @@ describe('LoggingWorkspace', () => {
     await flushPromises()
 
     expect(apiMocks.put).toHaveBeenCalledWith('/monitoring/logs/config', { node_name: 'node-a', retention_days: 21 })
+  })
+
+  it('keeps the previous log results when a later query fails', async () => {
+    apiMocks.get.mockImplementation(path => {
+      if (path === '/monitoring/logs/status') return Promise.resolve({ state: 'ready', node_name: 'node-a', loki_ready: 1, alloy_ready: 1, alloy_desired: 1 })
+      if (path === '/monitoring/logs/filters') return Promise.resolve({ namespaces: [], nodes: [], pods: [] })
+      if (path === '/applications' || path === '/projects') return Promise.resolve([])
+      return Promise.resolve({})
+    })
+    apiMocks.post
+      .mockResolvedValueOnce({ lines: [{ timestamp: '2026-08-05T10:00:00Z', line: '保留的日志', labels: {} }], has_more: false })
+      .mockRejectedValueOnce(new Error('Loki 查询超时'))
+    const wrapper = mount(LoggingWorkspace)
+    await flushPromises()
+
+    await wrapper.get('form.logging-query').trigger('submit')
+    await flushPromises()
+    await wrapper.get('form.logging-query').trigger('submit')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('保留的日志')
+    expect(wrapper.text()).toContain('Loki 查询超时')
+  })
+
+  it('shows a filter error without hiding an available logging workspace', async () => {
+    apiMocks.get.mockImplementation(path => {
+      if (path === '/monitoring/logs/status') return Promise.resolve({ state: 'ready', message: '日志采集中', node_name: 'node-a', loki_ready: 1, alloy_ready: 1, alloy_desired: 1 })
+      if (path === '/monitoring/logs/filters') return Promise.reject(new Error('筛选项暂时不可用'))
+      if (path === '/applications' || path === '/projects') return Promise.resolve([])
+      return Promise.resolve({})
+    })
+    const wrapper = mount(LoggingWorkspace)
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('日志检索')
+    expect(wrapper.text()).toContain('筛选项暂时不可用')
+  })
+
+  it('keeps the settings drawer open and scopes a failed settings save to it', async () => {
+    apiMocks.get.mockImplementation(path => {
+      if (path === '/monitoring/logs/status') return Promise.resolve({ state: 'ready', node_name: 'node-a', loki_ready: 1, alloy_ready: 1, alloy_desired: 1, retention_days: 14 })
+      if (path === '/monitoring/logs/filters') return Promise.resolve({ namespaces: [], nodes: [], pods: [] })
+      if (path === '/applications' || path === '/projects') return Promise.resolve([])
+      return Promise.resolve({})
+    })
+    apiMocks.put.mockRejectedValue(new Error('保留策略保存失败'))
+    const wrapper = mount(LoggingWorkspace)
+    await flushPromises()
+
+    await wrapper.get('[data-testid="logging-settings"]').trigger('click')
+    const modal = document.body.querySelector('.logging-settings-modal')
+    modal.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    await flushPromises()
+
+    expect(document.body.querySelector('.logging-settings-modal')).not.toBeNull()
+    expect(modal.textContent).toContain('保留策略保存失败')
+    expect(wrapper.text()).toContain('日志检索')
+    wrapper.unmount()
+  })
+
+  it('aborts a pending logging status read when the workspace unmounts', async () => {
+    const pending = deferred()
+    apiMocks.get.mockReturnValue(pending.promise)
+    const wrapper = mount(LoggingWorkspace)
+    await flushPromises()
+
+    const [, options] = apiMocks.get.mock.calls[0]
+    wrapper.unmount()
+    expect(options.signal.aborted).toBe(true)
   })
 })

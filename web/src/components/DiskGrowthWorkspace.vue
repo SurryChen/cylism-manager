@@ -21,7 +21,8 @@
 <script setup>
 import { computed, defineComponent, h, onMounted, ref, watch } from 'vue'
 import { RefreshCw } from 'lucide-vue-next'
-import { api } from '../api/index.js'
+import { getDiskGrowth } from '../api/monitoring.js'
+import { useAsyncResource } from '../composables/useAsyncResource.js'
 
 const props = defineProps({ nodes: { type: Array, default: () => [] } })
 
@@ -33,10 +34,11 @@ const ranges = [
 ]
 const range = ref('6h')
 const node = ref('')
-const loading = ref(false)
 const error = ref('')
 const warning = ref('')
 const rows = ref({ mounts: [], pvcs: [] })
+const diskGrowthResource = useAsyncResource(({ signal }, filters) => getDiskGrowth(filters, { signal }), null)
+const loading = diskGrowthResource.loading
 const readyNodes = computed(() => props.nodes.filter(item => item.ready))
 
 const GrowthTable = defineComponent({
@@ -71,16 +73,12 @@ function formatBytes(value) {
   return `${amount >= 10 ? amount.toFixed(0) : amount.toFixed(1)} ${units[index]}`
 }
 async function load() {
-  loading.value = true
   error.value = ''
-  warning.value = ''
-  try {
-    const params = new URLSearchParams({ range: range.value })
-    if (node.value) params.set('node', node.value)
-    const result = await api.get(`/monitoring/disk-growth?${params.toString()}`)
+  const result = await diskGrowthResource.refresh({ range: range.value, node: node.value })
+  if (result !== undefined) {
     rows.value = { mounts: result?.mounts || [], pvcs: result?.pvcs || [] }
     warning.value = warningText(result?.warnings)
-  } catch (cause) { error.value = cause.message || '读取磁盘增长诊断失败' } finally { loading.value = false }
+  } else if (diskGrowthResource.error.value) error.value = diskGrowthResource.error.value.message || '读取磁盘增长诊断失败'
 }
 </script>
 

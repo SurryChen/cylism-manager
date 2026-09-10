@@ -1,4 +1,6 @@
 <template>
+  <section v-if="statusError" class="k8s-banner k8s-banner-warn section-gap" role="alert">{{ statusError }}</section>
+
   <section v-if="!monitoringReady" class="card alerting-empty">
     <div class="empty-state"><span class="empty-icon">◌</span><span class="empty-text">等待 VictoriaMetrics 就绪后再启用告警</span></div>
   </section>
@@ -12,6 +14,7 @@
     <form class="alerting-form" @submit.prevent="install">
       <div class="form-group"><label class="form-label">告警节点</label><select v-model="installForm.node_name" class="form-select" required><option value="" disabled>选择就绪节点</option><option v-for="node in readyNodes" :key="node.name" :value="node.name">{{ displayNode(node) }}</option></select><p class="form-hint">Alertmanager 的 1Gi 本地 PVC 会绑定到该节点。默认优先选择与指标数据节点不同的节点。</p></div>
       <div class="form-group"><label class="form-label">飞书机器人地址</label><input v-model.trim="installForm.feishu_webhook_url" class="form-input" type="url" placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/..." /><p class="form-hint">可稍后在告警设置中填写。地址仅写入 Kubernetes Secret，不会再次展示。</p></div>
+      <p v-if="installError" class="form-error" role="alert">{{ installError }}</p>
       <div class="modal-actions status-actions"><button class="btn btn-primary" :disabled="installing || !installForm.node_name">{{ installing ? '正在提交...' : '启用告警' }}</button><button class="btn" type="button" :disabled="installing" @click="refresh">重新检测</button></div>
     </form>
   </section>
@@ -62,6 +65,8 @@
 
       <section class="alert-section-heading section-gap"><div><h2>正在告警</h2><p>按严重程度排序，优先处理影响服务可用性的异常</p></div><div class="icon-actions"><button class="icon-button" title="刷新告警" aria-label="刷新告警" :disabled="loading" @click="refresh"><RefreshCw :size="16" :class="{ 'is-spinning': loading }" /></button><button class="icon-button" title="告警设置" aria-label="告警设置" @click="openSettings"><Settings2 :size="16" /></button></div></section>
 
+      <p v-if="overviewError" class="form-error section-gap" role="alert">{{ overviewError }}</p>
+
       <section v-if="overview.active.length" class="alert-list section-gap">
         <article v-for="alert in sortedAlerts" :key="alert.fingerprint || alertKey(alert)" class="alert-row" :class="severityClass(alert)">
           <div class="alert-severity"><BellRing :size="17" /><span class="badge" :class="severityBadge(alert)">{{ severityLabel(alert) }}</span></div>
@@ -76,7 +81,7 @@
     </template>
   </template>
 
-  <div v-if="silencingAlert" class="overlay" @click.self="silencingAlert = null"><form class="modal alert-silence-modal" @submit.prevent="createSilence"><div class="card-header"><div><h2 class="modal-title">静默告警</h2><p class="status-copy">{{ silencingAlert.annotations?.summary || silencingAlert.labels?.alertname }}</p></div><button class="icon-button" type="button" title="关闭" aria-label="关闭" @click="silencingAlert = null"><X :size="16" /></button></div><div class="form-group"><label class="form-label">静默时长</label><select v-model.number="silenceForm.duration_minutes" class="form-select"><option :value="60">1 小时</option><option :value="240">4 小时</option><option :value="1440">24 小时</option></select></div><div class="form-group"><label class="form-label">说明</label><input v-model.trim="silenceForm.comment" class="form-input" maxlength="120" placeholder="计划维护" /></div><div class="modal-actions"><button class="btn" type="button" @click="silencingAlert = null">取消</button><button class="btn btn-danger" :disabled="silencing" type="submit">{{ silencing ? '正在静默...' : '确认静默' }}</button></div></form></div>
+  <div v-if="silencingAlert" class="overlay" @click.self="silencingAlert = null"><form class="modal alert-silence-modal" @submit.prevent="createSilence"><div class="card-header"><div><h2 class="modal-title">静默告警</h2><p class="status-copy">{{ silencingAlert.annotations?.summary || silencingAlert.labels?.alertname }}</p></div><button class="icon-button" type="button" title="关闭" aria-label="关闭" @click="silencingAlert = null"><X :size="16" /></button></div><div class="form-group"><label class="form-label">静默时长</label><select v-model.number="silenceForm.duration_minutes" class="form-select"><option :value="60">1 小时</option><option :value="240">4 小时</option><option :value="1440">24 小时</option></select></div><div class="form-group"><label class="form-label">说明</label><input v-model.trim="silenceForm.comment" class="form-input" maxlength="120" placeholder="计划维护" /></div><p v-if="silenceError" class="form-error" role="alert">{{ silenceError }}</p><div class="modal-actions"><button class="btn" type="button" @click="silencingAlert = null">取消</button><button class="btn btn-danger" :disabled="silencing" type="submit">{{ silencing ? '正在静默...' : '确认静默' }}</button></div></form></div>
 
   <Teleport to="body">
     <div v-if="settingsOpen" class="overlay alert-settings-overlay" @click.self="settingsOpen = false">
@@ -113,6 +118,8 @@
           <div class="drawer-section-heading"><div><h3>告警规则</h3><p>修改后将重载规则评估</p></div></div>
           <div class="rule-list"><div v-for="rule in settingsForm.rules" :key="rule.id" class="rule-row"><label class="rule-title"><input v-model="rule.enabled" type="checkbox" /><span>{{ rule.name }}</span></label><div class="rule-fields"><label v-if="ruleSupportsThreshold(rule.id)"><span>阈值</span><input v-model.number="rule.threshold" class="form-input" type="number" min="0" max="100000" /></label><label><span>持续</span><input v-model.number="rule.duration_minutes" class="form-input" type="number" min="1" max="1440" /></label><small>分钟</small></div></div></div>
         </section>
+        <p v-if="notificationError" class="form-error" role="alert">{{ notificationError }}</p>
+        <p v-if="settingsError" class="form-error" role="alert">{{ settingsError }}</p>
         <footer class="drawer-footer"><button class="btn" type="button" :disabled="saving" @click="settingsOpen = false">取消</button><button class="btn btn-primary" :disabled="saving">{{ saving ? '保存中...' : '保存设置' }}</button></footer>
       </form>
     </div>
@@ -125,9 +132,19 @@ import DOMPurify from 'dompurify'
 import MarkdownIt from 'markdown-it'
 import taskLists from 'markdown-it-task-lists'
 import { ArrowUpRight, BellRing, Bot, CheckCircle2, RefreshCw, Settings2, VolumeX, X } from 'lucide-vue-next'
-import { api } from '../api/index.js'
 import { getRuntimes } from '../api/runtimes.js'
-import { getAlertingAutomationEvents, getAlertingAutomationPolicy, getAlertingOverview, getAlertingSilences, getAlertingStatus } from '../api/alerting.js'
+import {
+  createAlertingSilence,
+  getAlertingAutomationEvents,
+  getAlertingAutomationPolicy,
+  getAlertingOverview,
+  getAlertingSilences,
+  getAlertingStatus,
+  installAlerting,
+  saveAlertingAutomationPolicy,
+  saveAlertingConfig,
+  testAlertingNotification,
+} from '../api/alerting.js'
 import { useAsyncResource } from '../composables/useAsyncResource.js'
 
 const props = defineProps({ nodes: { type: Array, default: () => [] }, monitoringReady: Boolean, metricsNodeName: { type: String, default: '' } })
@@ -135,7 +152,12 @@ const emit = defineEmits(['navigate'])
 
 const status = ref(null)
 const overview = ref({ active: [], resolved: [], firing: 0, silenced: 0 })
-const loading = ref(false)
+const statusError = ref('')
+const overviewError = ref('')
+const installError = ref('')
+const silenceError = ref('')
+const notificationError = ref('')
+const settingsError = ref('')
 const installing = ref(false)
 const testingChannel = ref('')
 const saving = ref(false)
@@ -161,6 +183,7 @@ const alertResource = useAsyncResource(async ({ signal }) => {
   ])
   return { overviewResult, policy, events, runtimeItems }
 }, null)
+const loading = computed(() => statusResource.loading.value || alertResource.loading.value)
 
 const readyNodes = computed(() => props.nodes.filter(node => node.ready))
 const sortedAlerts = computed(() => [...overview.value.active].sort((left, right) => severityWeight(left) - severityWeight(right)))
@@ -169,20 +192,22 @@ onMounted(() => { refresh() })
 
 async function refresh() {
   if (!props.monitoringReady) return
-  loading.value = true
-  try {
-    status.value = await statusResource.refresh()
-    if (!installForm.value.node_name) installForm.value.node_name = defaultNodeName()
-    if (!status.value) return
-    if (status.value.state === 'ready') {
-      const result = await alertResource.refresh()
-      if (!result) return
-      overview.value = result.overviewResult || { active: [], resolved: [], firing: 0, silenced: 0 }
-      automationPolicy.value = { ...blankAutomationPolicy(), ...result.policy }
-      automationEvents.value = Array.isArray(result.events) ? result.events : []
-      runtimes.value = Array.isArray(result.runtimeItems) ? result.runtimeItems : []
-    }
-  } finally { loading.value = false }
+  statusError.value = ''
+  overviewError.value = ''
+  const statusResult = await statusResource.refresh()
+  if (statusResult !== undefined) status.value = statusResult
+  else if (statusResource.error.value) statusError.value = statusResource.error.value.message || '读取告警状态失败'
+
+  if (!installForm.value.node_name) installForm.value.node_name = defaultNodeName()
+  if (status.value?.state !== 'ready') return
+
+  const result = await alertResource.refresh()
+  if (result !== undefined) {
+    overview.value = result.overviewResult || { active: [], resolved: [], firing: 0, silenced: 0 }
+    automationPolicy.value = { ...blankAutomationPolicy(), ...result.policy }
+    automationEvents.value = Array.isArray(result.events) ? result.events : []
+    runtimes.value = Array.isArray(result.runtimeItems) ? result.runtimeItems : []
+  } else if (alertResource.error.value) overviewError.value = alertResource.error.value.message || '读取告警概览失败'
 }
 
 function defaultNodeName() {
@@ -206,7 +231,8 @@ function renderReportMarkdown(content) {
 
 async function install() {
   installing.value = true
-  try { await api.post('/monitoring/alerts/install', installForm.value); await refresh() } finally { installing.value = false }
+  installError.value = ''
+  try { await installAlerting(installForm.value); await refresh() } catch (error) { installError.value = error.message || '启用告警失败' } finally { installing.value = false }
 }
 function navigate(alert) { emit('navigate', { tab: alert.labels?.node ? 'nodes' : 'workloads', node: alert.labels?.node || '' }) }
 function openSilence(alert) { silencingAlert.value = alert; silenceForm.value = { duration_minutes: 240, comment: '' } }
@@ -216,7 +242,8 @@ function alertMatchers(alert) {
 }
 async function createSilence() {
   silencing.value = true
-  try { await api.post('/monitoring/alerts/silences', { ...silenceForm.value, matchers: alertMatchers(silencingAlert.value) }); silencingAlert.value = null; await refresh() } finally { silencing.value = false }
+  silenceError.value = ''
+  try { await createAlertingSilence({ ...silenceForm.value, matchers: alertMatchers(silencingAlert.value) }); silencingAlert.value = null; await refresh() } catch (error) { silenceError.value = error.message || '静默告警失败' } finally { silencing.value = false }
 }
 function blankEmail() { return { enabled: false, smtp_host: '', smtp_port: 587, username: '', password: '', from: '', to: '', tls_mode: 'starttls' } }
 function defaultNotificationPolicy() { return { group_wait_seconds: 30, group_interval_minutes: 5, repeat_interval_minutes: 240 } }
@@ -227,7 +254,7 @@ async function saveAutomationPolicy() {
   automationSaving.value = true
   automationNotice.value = null
   try {
-    const result = await api.put('/monitoring/alerts/automation-policy', automationPolicy.value)
+    const result = await saveAlertingAutomationPolicy(automationPolicy.value)
     if (result?.sync_warning) {
       automationNotice.value = { type: 'warning', text: result.sync_warning }
     } else if (automationPolicy.value.enabled) {
@@ -237,20 +264,24 @@ async function saveAutomationPolicy() {
       automationNotice.value = { type: 'neutral', text: '自动处置策略已保存，自动分析已关闭。' }
     }
     await refresh()
-  } finally { automationSaving.value = false }
+  } catch (error) { automationNotice.value = { type: 'error', text: error.message || '保存自动处置策略失败' } } finally { automationSaving.value = false }
 }
 async function openSettings() {
+  notificationError.value = ''
+  settingsError.value = ''
   settingsForm.value = { feishu_webhook_url: '', email: blankEmail(), notification_policy: { ...(status.value?.notification_policy || defaultNotificationPolicy()) }, rules: (status.value?.rules || []).map(rule => ({ ...rule })) }
   settingsOpen.value = true
   try { await getAlertingSilences() } catch { /* The active-alert view remains usable when only silence history is unavailable. */ }
 }
 async function testNotification(channel) {
   testingChannel.value = channel
-  try { await api.post(`/monitoring/alerts/test-notification?channel=${channel}`, {}) } finally { testingChannel.value = '' }
+  notificationError.value = ''
+  try { await testAlertingNotification(channel) } catch (error) { notificationError.value = error.message || '测试通知失败' } finally { testingChannel.value = '' }
 }
 async function saveSettings() {
   saving.value = true
-  try { await api.put('/monitoring/alerts/config', settingsForm.value); settingsOpen.value = false; await refresh() } finally { saving.value = false }
+  settingsError.value = ''
+  try { await saveAlertingConfig(settingsForm.value); settingsOpen.value = false; await refresh() } catch (error) { settingsError.value = error.message || '保存告警设置失败' } finally { saving.value = false }
 }
 
 defineExpose({ refresh })
@@ -258,5 +289,6 @@ defineExpose({ refresh })
 
 <style scoped>
 .status-copy,.form-hint,.metric small,.alert-section-heading p,.drawer-header p,.drawer-section-heading p{margin:5px 0 0;color:var(--text-secondary);font-size:12px}.alerting-empty .empty-state{min-height:160px}.alerting-form{margin-top:var(--space-20)}.status-actions{justify-content:flex-start;margin-top:var(--space-16)}.alert-summary{grid-template-columns:repeat(4,minmax(0,1fr))}.metric{display:grid;min-width:0;gap:5px;padding:14px;border:1px solid var(--border-muted);border-radius:var(--radius-control);background:var(--surface-subtle)}.metric>span{color:var(--text-secondary);font-size:11px}.metric strong{min-width:0;font-size:18px}.metric small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.metric .is-danger{color:var(--danger)}.alert-section-heading{display:flex;align-items:center;justify-content:space-between;gap:var(--space-16)}.alert-section-heading h2{margin:0;color:var(--text-primary);font-size:16px}.icon-actions,.alert-actions{display:flex;align-items:center;gap:6px}.alert-list{border:1px solid var(--border-muted);border-radius:var(--radius-control);background:var(--surface-subtle)}.alert-row{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:12px;align-items:center;padding:13px 14px;border-bottom:1px solid var(--border-muted)}.alert-row:last-child{border-bottom:0}.alert-row.is-critical{box-shadow:inset 3px 0 0 var(--danger)}.alert-row.is-warning{box-shadow:inset 3px 0 0 var(--warning)}.alert-severity{display:grid;justify-items:center;gap:5px;color:var(--text-secondary)}.alert-copy{display:grid;min-width:0;gap:3px}.alert-copy>strong,.alert-copy>small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.alert-copy small{color:var(--text-secondary);font-size:12px}.alert-reading{display:flex;align-items:center;gap:7px;min-width:0}.alert-reading strong{color:var(--danger);font-size:13px;font-variant-numeric:tabular-nums}.alert-reading span:last-child{padding-left:7px;border-left:1px solid var(--border-muted)}.alerting-healthy{display:flex;align-items:center;gap:10px;padding:18px;border:1px solid var(--success-border);border-radius:var(--radius-control);background:var(--surface-glass);color:var(--success)}.alerting-healthy div{display:grid;gap:3px}.alerting-healthy small{color:var(--text-secondary);font-size:12px}.alert-resolved{padding:0;border-radius:var(--radius-control)}.automation-panel,.event-list{border:1px solid var(--border-muted);border-radius:var(--radius-control);background:var(--surface-glass)}.automation-panel{padding:16px}.automation-toggle,.automation-footer,.event-row{display:flex;align-items:center;justify-content:space-between;gap:14px}.automation-toggle strong,.event-copy strong{display:block;color:var(--text-primary);font-size:13px}.automation-toggle small,.automation-footer small,.event-copy small,.event-copy p{display:block;margin-top:4px;color:var(--text-secondary);font-size:12px}.automation-switch{display:inline-flex;flex:0 0 auto;padding:3px;border:1px solid var(--border-muted);border-radius:999px;background:var(--surface-raised);box-shadow:inset 0 1px 0 var(--border);cursor:pointer}.automation-switch input{position:absolute;opacity:0}.automation-switch span{display:block;width:34px;height:20px;border-radius:10px;background:var(--surface-subtle);transition:background .16s ease}.automation-switch span::after{display:block;width:16px;height:16px;margin:2px;border-radius:50%;background:var(--text-primary);box-shadow:0 1px 2px var(--border-muted);content:'';transition:transform .16s ease,background .16s ease}.automation-switch input:checked+span{background:var(--action-primary)}.automation-switch input:checked+span::after{background:var(--action-contrast);transform:translateX(14px)}.automation-switch:has(input:focus-visible){outline:2px solid var(--focus);outline-offset:2px}.automation-fields{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-top:16px}.automation-fields .form-group{margin:0}.field-suffix{display:flex;align-items:center;gap:8px}.field-suffix .form-input{min-width:0}.field-suffix span{color:var(--text-secondary);font-size:12px;white-space:nowrap}.automation-notice{margin:14px 0 0;padding:9px 11px;border:1px solid var(--border-muted);border-radius:var(--radius-control);background:var(--surface-subtle);color:var(--text-secondary);font-size:12px;line-height:1.5}.automation-notice.is-success{border-color:var(--success);color:var(--success)}.automation-notice.is-warning{border-color:var(--warning);background:var(--warning-surface);color:var(--warning)}.automation-footer{margin-top:16px;padding-top:14px;border-top:1px solid var(--border-muted)}.automation-events>.alert-section-heading{margin-bottom:var(--space-16)}.event-row{align-items:flex-start;padding:14px;border-bottom:1px solid var(--border-muted)}.event-row:last-child{border-bottom:0}.event-state{display:grid;place-items:center;flex:0 0 30px;width:30px;height:30px;border-radius:50%;background:var(--surface-subtle);color:var(--text-secondary)}.state-awaiting_approval{color:var(--warning)}.state-failed{color:var(--danger)}.state-resolved{color:var(--success)}.event-copy{min-width:0;flex:1}.event-copy p{margin-bottom:0;white-space:pre-wrap}.event-error{color:var(--danger)!important}.event-report{margin-top:var(--space-12)}.event-report summary{display:flex;align-items:center;gap:6px;color:var(--text-secondary);font-size:12px;list-style:none;cursor:pointer}.event-report summary::-webkit-details-marker{display:none}.event-report summary::before{color:var(--action-primary);content:'▸';font-size:13px;transition:transform .16s ease}.event-report[open] summary::before{transform:rotate(90deg)}.event-report summary:hover{color:var(--text-primary)}.event-report-markdown{max-height:300px;overflow:auto;margin-top:10px;padding:12px;border:1px solid var(--border-muted);border-radius:var(--radius-control);background:var(--surface-subtle);color:var(--text-primary);font-size:12px;line-height:1.6;overflow-wrap:anywhere}.event-report-markdown :deep(p){margin:0 0 8px}.event-report-markdown :deep(p:last-child){margin-bottom:0}.event-report-markdown :deep(h1),.event-report-markdown :deep(h2),.event-report-markdown :deep(h3){margin:12px 0 6px;color:var(--text-primary);font-size:1em}.event-report-markdown :deep(ul),.event-report-markdown :deep(ol){margin:6px 0;padding-left:20px}.event-report-markdown :deep(li+li){margin-top:2px}.event-report-markdown :deep(a){color:var(--action-primary);text-decoration:underline}.event-report-markdown :deep(code){padding:1px 4px;border-radius:3px;background:var(--surface-input);font-family:var(--font-mono);font-size:.9em}.event-report-markdown :deep(pre){overflow-x:auto;margin:8px 0;padding:10px;border:1px solid var(--border-muted);border-radius:var(--radius-control);background:var(--surface-input)}.event-report-markdown :deep(pre code){padding:0;background:transparent;white-space:pre}.event-report-markdown :deep(blockquote){margin:8px 0;padding-left:10px;border-left:2px solid var(--border);color:var(--text-secondary)}.event-report-markdown :deep(table){width:100%;margin:8px 0;border-collapse:collapse;font-size:12px}.event-report-markdown :deep(th),.event-report-markdown :deep(td){padding:4px 6px;border:1px solid var(--border-muted);text-align:left}.drawer-header,.drawer-section-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}.drawer-header h2,.drawer-section-heading h3{margin:0;color:var(--text-primary);font-size:16px}.drawer-section{padding:var(--space-20) 0;border-bottom:1px solid var(--border-muted)}.drawer-section>.form-input{margin-top:var(--space-16)}.drawer-actions{margin-top:10px}.rule-list{display:grid;gap:0;margin-top:var(--space-12);border-top:1px solid var(--border-muted)}.rule-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:center;padding:11px 0;border-bottom:1px solid var(--border-muted)}.rule-title{display:flex;align-items:center;gap:8px;min-width:0;color:var(--text-primary);font-size:13px}.rule-title input{margin:0}.rule-fields{display:flex;align-items:flex-end;gap:6px}.rule-fields label{display:grid;gap:3px;color:var(--text-secondary);font-size:10px}.rule-fields .form-input{width:58px;min-height:30px;margin:0;padding:4px 6px;font-size:11px}.rule-fields small{padding-bottom:7px;color:var(--text-secondary);font-size:10px}.drawer-footer{display:flex;justify-content:flex-end;gap:8px;padding-top:var(--space-20)}.alert-silence-modal{width:min(420px,calc(100vw - 32px))}.alert-silence-modal .form-group{margin-top:var(--space-16)}@media(max-width:760px){.alert-summary{grid-template-columns:repeat(2,minmax(0,1fr))}.alert-section-heading{align-items:flex-start;flex-direction:column}.alert-row{grid-template-columns:auto minmax(0,1fr)}.alert-actions{grid-column:2;justify-content:flex-start}.rule-row{grid-template-columns:1fr}.rule-fields{justify-content:flex-start}.automation-fields{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:440px){.alert-summary,.automation-fields{grid-template-columns:1fr}.automation-footer{align-items:flex-start;flex-direction:column}}
+.automation-notice.is-error{border-color:var(--danger);background:var(--danger-surface);color:var(--danger)}
 .alert-settings-overlay{z-index:2000;align-items:center;justify-content:center}.alert-settings-modal{width:min(680px,100%);max-height:calc(100dvh - 32px)}.check-row{display:flex;gap:8px;margin-top:var(--space-16);color:var(--text-secondary);font-size:13px}.email-fields{margin-top:var(--space-16)}.email-fields .form-row{align-items:start}.email-fields .form-input,.email-fields .form-select{margin-top:0}.alert-timing-fields{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:var(--space-12);margin-top:var(--space-16)}.alert-timing-fields .form-group{margin:0}@media(max-width:600px){.alert-timing-fields{grid-template-columns:1fr}}
 </style>
