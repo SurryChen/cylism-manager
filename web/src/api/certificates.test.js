@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { api } from './index.js'
-import { getCertificateResources, getCertificateStatus } from './certificates.js'
+import { createCertificate, deleteCertificate, getCertificateResources, getCertificateStatus, installCertificateManager, updateIssuer } from './certificates.js'
 
-vi.mock('./index.js', () => ({ api: { get: vi.fn() } }))
+vi.mock('./index.js', () => ({ api: { get: vi.fn(), post: vi.fn(), put: vi.fn(), delete: vi.fn() } }))
 
 describe('certificates api', () => {
   afterEach(() => vi.clearAllMocks())
@@ -20,5 +20,18 @@ describe('certificates api', () => {
     const options = { signal: new AbortController().signal }
     getCertificateStatus(options)
     expect(api.get).toHaveBeenCalledWith('/certs/status', options)
+  })
+
+  it('keeps certificate mutation payloads separate from request options', () => {
+    const options = { signal: new AbortController().signal }
+    const body = { name: 'cert' }
+    createCertificate(body, options)
+    updateIssuer('Issuer', 'prod', 'issuer', body, options)
+    deleteCertificate('prod', 'cert', options)
+    installCertificateManager(options)
+    expect(api.post).toHaveBeenCalledWith('/certs', body, options)
+    expect(api.put).toHaveBeenCalledWith('/certs/issuers/Issuer/prod/issuer', body, options)
+    expect(api.delete).toHaveBeenCalledWith('/certs/prod/cert', undefined, options)
+    expect(api.post).toHaveBeenCalledWith('/certs/install', undefined, options)
   })
 })

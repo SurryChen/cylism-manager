@@ -75,8 +75,7 @@
 import { computed, defineComponent, h, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ChevronDown, RefreshCw, Settings2, X } from 'lucide-vue-next'
-import { api } from '../api/index.js'
-import { getMonitoringDashboard, getMonitoringNodes, getMonitoringStatus, getMonitoringTargets, getStorageClasses, queryMonitoring } from '../api/monitoring.js'
+import { getMonitoringDashboard, getMonitoringNodes, getMonitoringStatus, getMonitoringTargets, getStorageClasses, installMonitoring, migrateMonitoringStorage, queryMonitoring, uninstallMonitoring } from '../api/monitoring.js'
 import { useAsyncResource } from '../composables/useAsyncResource.js'
 import { usePolling } from '../composables/usePolling.js'
 import AlertingWorkspace from '../components/AlertingWorkspace.vue'
@@ -100,7 +99,11 @@ const nodes = ref([])
 const storageClasses = ref([])
 const activeTab = computed(() => tabs.some(item => item.id === route.query.tab) ? route.query.tab : 'overview')
 const loaded = ref(false)
-const error = ref('')
+const statusError = ref('')
+const trendError = ref('')
+const queryError = ref('')
+const mutationError = ref('')
+const error = computed(() => mutationError.value || statusError.value || trendError.value || queryError.value)
 const installing = ref(false)
 const uninstalling = ref(false)
 const syncing = ref(false)
@@ -205,7 +208,8 @@ watch([activeTab, trendRange], async () => {
 })
 
 async function refresh() {
-  error.value = ''
+  statusError.value = ''
+  mutationError.value = ''
   const result = await monitoringStateResource.refresh()
   if (result !== undefined) {
     const [nextStatus, nodeList, classes] = result
@@ -216,7 +220,7 @@ async function refresh() {
     if (metricsAvailable.value) await loadActiveData()
     syncMigrationPolling()
   } else if (monitoringStateResource.error.value) {
-    error.value = monitoringStateResource.error.value.message || '加载监控状态失败'
+    statusError.value = monitoringStateResource.error.value.message || '加载监控状态失败'
   }
   loaded.value = true
 }
@@ -231,23 +235,23 @@ function nodeDisplayName(name) { return nodes.value.find(node => node.name === n
 
 async function install() {
   installing.value = true
-  error.value = ''
-  try { status.value = await api.post('/monitoring/install', form.value); await refresh() } catch (e) { error.value = e.message || '安装 VictoriaMetrics 失败' } finally { installing.value = false }
+  mutationError.value = ''
+  try { status.value = await installMonitoring(form.value); await refresh() } catch (e) { mutationError.value = e.message || '安装 VictoriaMetrics 失败' } finally { installing.value = false }
 }
 
 async function uninstall() {
   uninstalling.value = true
-  error.value = ''
-  try { await api.delete('/monitoring'); confirmUninstall.value = false; targets.value = null; queryResult.value = ''; await refresh() } catch (e) { error.value = e.message || '卸载 VictoriaMetrics 失败' } finally { uninstalling.value = false }
+  mutationError.value = ''
+  try { await uninstallMonitoring(); confirmUninstall.value = false; targets.value = null; queryResult.value = ''; await refresh() } catch (e) { mutationError.value = e.message || '卸载 VictoriaMetrics 失败' } finally { uninstalling.value = false }
 }
 
 async function syncConfiguration() {
   syncing.value = true
-  error.value = ''
+  mutationError.value = ''
   try {
-    await api.post('/monitoring/install', { node_name: status.value.node_name, retention_days: status.value.retention_days })
+    await installMonitoring({ node_name: status.value.node_name, retention_days: status.value.retention_days })
     await refresh()
-  } catch (e) { error.value = e.message || '同步采集配置失败' } finally { syncing.value = false }
+  } catch (e) { mutationError.value = e.message || '同步采集配置失败' } finally { syncing.value = false }
 }
 
 function openMonitoringSettings() {
@@ -260,32 +264,32 @@ function openMonitoringSettings() {
 async function saveMonitoringConfig() {
   if (!status.value || !validRetentionDays.value) return
   monitoringSettingsSaving.value = true
-  error.value = ''
+  mutationError.value = ''
   try {
-    await api.post('/monitoring/install', {
+    await installMonitoring({
       node_name: status.value.node_name,
       retention_days: settingsForm.value.retention_days,
     })
     monitoringSettingsOpen.value = false
     await refresh()
-  } catch (e) { error.value = e.message || '更新监控运行配置失败' } finally { monitoringSettingsSaving.value = false }
+  } catch (e) { mutationError.value = e.message || '更新监控运行配置失败' } finally { monitoringSettingsSaving.value = false }
 }
 
 async function migrateLegacyStorage() {
   if (!status.value || status.value.storage_mode !== 'host_path' || !migrationForm.value.storage) return
   if (!window.confirm('迁移会停止 VictoriaMetrics，复制并校验历史数据后切换到系统 PVC。旧数据目录将保留，确定继续吗？')) return
   migrating.value = true
-  error.value = ''
+  mutationError.value = ''
   try {
-    status.value = await api.post('/monitoring/storage-migration', migrationForm.value)
+    status.value = await migrateMonitoringStorage(migrationForm.value)
     await refresh()
-  } catch (e) { error.value = e.message || '迁移 VictoriaMetrics 存储失败' } finally { migrating.value = false }
+  } catch (e) { mutationError.value = e.message || '迁移 VictoriaMetrics 存储失败' } finally { migrating.value = false }
 }
 
 async function loadTargets() {
   const result = await monitoringTargetsResource.refresh()
   if (result !== undefined) targets.value = result
-  else if (monitoringTargetsResource.error.value) error.value = monitoringTargetsResource.error.value.message || '读取采集状态失败'
+  else if (monitoringTargetsResource.error.value) queryError.value = monitoringTargetsResource.error.value.message || '读取采集状态失败'
 }
 
 async function loadActiveData() {
@@ -304,13 +308,13 @@ async function loadNodeTrends() {
     } else {
       selectedTrendNodes.value = selectedTrendNodes.value.filter(name => available.includes(name))
     }
-  } else if (monitoringTrendsResource.error.value) error.value = monitoringTrendsResource.error.value.message || '读取节点趋势失败'
+  } else if (monitoringTrendsResource.error.value) trendError.value = monitoringTrendsResource.error.value.message || '读取节点趋势失败'
 }
 
 async function loadWorkloads() {
   const result = await monitoringWorkloadsResource.refresh()
   if (result !== undefined) workloads.value = { cpu: vectorToWorkloads(result.cpu), memory: vectorToWorkloads(result.memory) }
-  else if (monitoringWorkloadsResource.error.value) error.value = monitoringWorkloadsResource.error.value.message || '读取工作负载指标失败'
+  else if (monitoringWorkloadsResource.error.value) trendError.value = monitoringWorkloadsResource.error.value.message || '读取工作负载指标失败'
 }
 
 function matrixToSeries(result) {
@@ -349,11 +353,11 @@ function formatRate(value) { return Number.isFinite(value) ? `${value.toFixed(2)
 function rangeLabel(range) { return ({ '1h': '最近 1 小时', '6h': '最近 6 小时', '24h': '最近 24 小时', '7d': '最近 7 天' }[range] || range) }
 
 async function runQuery(queryText) {
-  error.value = ''
+  queryError.value = ''
   query.value = queryText
   const result = await monitoringQueryResource.refresh(queryText)
   if (result !== undefined) queryResult.value = JSON.stringify(result, null, 2)
-  else if (monitoringQueryResource.error.value) error.value = monitoringQueryResource.error.value.message || '查询指标失败'
+  else if (monitoringQueryResource.error.value) queryError.value = monitoringQueryResource.error.value.message || '查询指标失败'
 }
 </script>
 
