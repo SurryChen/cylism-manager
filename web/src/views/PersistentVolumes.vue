@@ -2,6 +2,7 @@
   <div>
     <div class="page-header section-page-header"><h1 class="page-title">存储卷</h1><button class="btn btn-primary" @click="openCreate">+ 创建存储卷</button></div>
     <div v-if="error" class="k8s-banner k8s-banner-warn section-gap">{{ error }}</div>
+    <div v-if="workflowError && (showCreate || deleteTarget || migrationTarget || cleanupTarget || backupTarget || importTarget)" class="k8s-banner k8s-banner-warn section-gap">{{ workflowError }}</div>
     <section class="storage-context"><div class="storage-picker"><span class="context-picker-label">命名空间</span><select v-model="namespaceFilter" data-testid="storage-namespace-filter" class="form-select"><option value="">全部命名空间</option><option v-for="namespace in namespaces" :key="namespace" :value="namespace">{{ namespace }}</option></select></div><div class="storage-picker"><span class="context-picker-label">项目</span><select v-model.number="projectID" data-testid="storage-project-filter" class="form-select"><option :value="0">全部项目</option><option v-for="project in projects" :key="project.id" :value="project.id">{{ project.name }}</option></select></div><div class="storage-picker"><span class="context-picker-label">环境</span><select v-model.number="environmentID" data-testid="storage-environment-filter" class="form-select" :disabled="!selectedProject"><option :value="0">全部环境</option><option v-for="environment in selectedProject?.environments || []" :key="environment.id" :value="environment.id">{{ environment.name }} · {{ environment.namespace }}</option></select></div><div class="storage-picker"><span class="context-picker-label">状态</span><select v-model="phaseFilter" data-testid="storage-phase-filter" class="form-select"><option value="">全部状态</option><option v-for="phase in phases" :key="phase" :value="phase">{{ phase }}</option></select></div><div class="storage-picker"><span class="context-picker-label">StorageClass</span><select v-model="storageClassFilter" data-testid="storage-class-filter" class="form-select"><option value="">全部 StorageClass</option><option v-for="storageClass in claimStorageClasses" :key="storageClass" :value="storageClass">{{ storageClass }}</option></select></div><button v-if="hasFilters" class="icon-button" title="重置筛选" aria-label="重置筛选" @click="resetFilters"><RotateCcw :size="16" /></button></section>
     <div v-if="loaded && !filteredClaims.length" class="empty-state"><span class="empty-icon">▣</span><span class="empty-text">没有匹配筛选条件的存储卷</span></div>
     <div v-else-if="filteredClaims.length" class="card"><div class="table-wrap"><table class="data-table"><thead><tr><th>存储卷</th><th>命名空间</th><th>归属</th><th>容量</th><th>已用空间 <button class="usage-refresh" :disabled="usageLoading" title="刷新已用空间" @click="loadUsage">{{ usageLoading ? '读取中' : '刷新' }}</button></th><th>StorageClass</th><th>状态</th><th>绑定节点</th><th>数据回收</th><th>引用</th><th>操作</th></tr></thead><tbody><tr v-for="claim in filteredClaims" :key="claim.namespace + '/' + claim.name"><td class="cell-primary">{{ claim.name }}<small v-if="migrationFor(claim)?.target_pvc_name" class="node-meta">迁移目标：{{ migrationFor(claim).target_pvc_name }}</small></td><td>{{ claim.namespace }}</td><td><span class="badge" :class="claim.owner_type === 'infrastructure' ? 'badge-deploying' : (claim.managed ? 'badge-online' : 'badge-offline')">{{ claim.owner_type === 'infrastructure' ? '基础设施' : (claim.managed ? '平台托管' : '外部创建') }}</span><small v-if="claim.owner_name" class="node-meta">{{ claim.owner_name }}</small><small v-else-if="claim.environment_name" class="node-meta">{{ claim.project_name }} · {{ claim.environment_name }}</small></td><td>{{ claim.storage || '-' }}</td><td><span v-if="usageFor(claim)?.status === 'available'">{{ formatBytes(usageFor(claim).used_bytes) }}<small class="node-meta">{{ usagePercent(usageFor(claim)) }}</small></span><small v-else class="node-meta" :title="usageFor(claim)?.message">{{ usageFor(claim)?.message || (usageLoading ? '读取中...' : '暂不可用') }}</small></td><td>{{ claim.storage_class_name || '默认 StorageClass' }}</td><td><span class="badge" :class="claim.phase === 'Bound' ? 'badge-online' : 'badge-deploying'">{{ claim.phase || 'Pending' }}</span><small v-if="migrationFor(claim)" class="migration-status">{{ migrationLabel(migrationFor(claim).status) }}</small></td><td><span v-if="claim.bound_node_display_name">{{ claim.bound_node_display_name }}<small class="node-meta">{{ claim.bound_node }}</small></span><span v-else-if="claim.wait_for_first_consumer">首次挂载时决定</span><span v-else>-</span></td><td><span class="badge" :class="claim.reclaim_policy === 'Delete' ? 'badge-danger' : 'badge-offline'">{{ claim.reclaim_policy || '-' }}</span></td><td>{{ claim.references?.join('、') || '-' }}</td><td><a v-if="claim.owner_type === 'infrastructure'" class="btn btn-sm monitoring-link" :href="infrastructureLink(claim)">{{ infrastructureActionLabel(claim) }}</a><div v-else-if="claim.managed" class="btn-group"><button v-if="hasManagedEnvironment(claim) && claim.is_local && claim.bound_node && !migrationFor(claim)" class="btn btn-sm" @click="openMigration(claim)">迁移</button><button v-if="hasManagedEnvironment(claim) && claim.is_local && claim.bound_node && !migrationFor(claim)" data-testid="open-directory-import" class="btn btn-sm" @click="openImport(claim)">导入目录</button><button v-if="hasManagedEnvironment(claim) && claim.is_local && claim.bound_node" class="btn btn-sm" @click="openBackup(claim)">备份</button><button v-if="migrationFor(claim)?.status === 'cleanup_pending'" class="btn btn-sm btn-danger" @click="requestCleanup(migrationFor(claim))">清理源卷</button><button class="icon-button danger-action" title="删除存储卷" :disabled="claim.references?.length || !!migrationFor(claim)" @click="requestDelete(claim)"><Trash2 :size="16" /></button></div><span v-else>-</span></td></tr></tbody></table></div></div>
@@ -18,9 +19,22 @@
 <script setup>
 import { computed, onUnmounted, ref, watch } from 'vue'
 import { RotateCcw, Trash2 } from 'lucide-vue-next'
-import { api } from '../api/index.js'
 import { getProjects } from '../api/applications.js'
-import { getPersistentVolumeBackups, getPersistentVolumeImports, getPersistentVolumeInventory, getPersistentVolumeUsage } from '../api/storage.js'
+import {
+  cleanupPersistentVolumeMigration,
+  createNamespace as createNamespaceRequest,
+  createPersistentVolumeBackup,
+  createPersistentVolumeClaim,
+  createPersistentVolumeImport,
+  createPersistentVolumeMigration,
+  deletePersistentVolumeClaim,
+  deletePersistentVolumeImportBackup,
+  getPersistentVolumeBackups,
+  getPersistentVolumeImports,
+  getPersistentVolumeInventory,
+  getPersistentVolumeUsage,
+  restorePersistentVolumeBackup,
+} from '../api/storage.js'
 import { useAsyncResource } from '../composables/useAsyncResource.js'
 import { usePolling } from '../composables/usePolling.js'
 
@@ -42,6 +56,7 @@ const phaseFilter = ref('')
 const storageClassFilter = ref('')
 const loaded = ref(false)
 const error = ref('')
+const workflowError = ref('')
 const saving = ref(false)
 const showCreate = ref(false)
 const deleteTarget = ref(null)
@@ -59,6 +74,8 @@ const importPolling = usePolling(refreshImports, { interval: 2500 })
 const createQueryHandled = ref(false)
 const inventoryResource = useAsyncResource(({ signal }) => getPersistentVolumeInventory({ signal }), null)
 const usageResource = useAsyncResource(({ signal }) => getPersistentVolumeUsage({ signal }), [])
+const backupsResource = useAsyncResource(({ signal }, name, targetEnvironmentID) => getPersistentVolumeBackups(name, targetEnvironmentID, { signal }), [])
+const importsResource = useAsyncResource(({ signal }, name, targetEnvironmentID) => getPersistentVolumeImports(name, targetEnvironmentID, { signal }), [])
 const selectedProject = computed(() => projects.value.find(project => project.id === projectID.value) || null)
 const validStorage = computed(() => Boolean(form.value.namespace) && Number.isInteger(form.value.storage_value) && form.value.storage_value > 0 && ['Mi', 'Gi', 'Ti'].includes(form.value.storage_unit))
 const migrationNodes = computed(() => nodes.value.filter(node => node.name && node.name !== migrationTarget.value?.bound_node && (node.status === 'Ready' || node.status === 'ready')))
@@ -105,41 +122,41 @@ async function loadClaims() {
   void loadUsage()
 }
 async function loadUsage() { usageLoading.value = true; const result = await usageResource.refresh(); if (result) usage.value = result || []; else usage.value = []; usageLoading.value = false }
-function openCreate() { form.value = newClaimForm(); showCreate.value = true }
+function openCreate() { workflowError.value = ''; form.value = newClaimForm(); showCreate.value = true }
 function applyCreateQuery() { if (createQueryHandled.value || typeof window === 'undefined') return; const query = new URLSearchParams(window.location.hash.split('?')[1] || ''); if (query.get('create') !== '1') return; createQueryHandled.value = true; const storage = query.get('storage') || '100Gi'; const matched = storage.match(/^(\d+)(Mi|Gi|Ti)$/); form.value = { namespace: query.get('namespace') || newClaimForm().namespace, name: query.get('name') || '', storage_value: matched ? Number(matched[1]) : 100, storage_unit: matched ? matched[2] : 'Gi', storage_class_name: query.get('storage_class_name') || 'local-path' }; showCreate.value = true }
-async function createNamespace() { if (!form.value.namespace || namespaces.value.includes(form.value.namespace)) return; saving.value = true; error.value = ''; try { await api.post('/k8s/namespaces', { name: form.value.namespace }); namespaces.value = [...namespaces.value, form.value.namespace].sort() } catch (e) { error.value = e.message || '创建命名空间失败' } finally { saving.value = false } }
-async function createClaim() { if (!validStorage.value) return; saving.value = true; error.value = ''; try { const { storage_value, storage_unit, ...claim } = form.value; await api.post('/k8s/persistent-volume-claims', { ...claim, storage: `${storage_value}${storage_unit}` }); showCreate.value = false; await loadClaims() } catch (e) { error.value = e.message || '创建存储卷失败' } finally { saving.value = false } }
-function requestDelete(claim) { deleteTarget.value = claim }
+async function createNamespace() { if (!form.value.namespace || namespaces.value.includes(form.value.namespace)) return; saving.value = true; workflowError.value = ''; try { await createNamespaceRequest({ name: form.value.namespace }); namespaces.value = [...namespaces.value, form.value.namespace].sort() } catch (e) { workflowError.value = e.message || '创建命名空间失败' } finally { saving.value = false } }
+async function createClaim() { if (!validStorage.value) return; saving.value = true; workflowError.value = ''; try { const { storage_value, storage_unit, ...claim } = form.value; await createPersistentVolumeClaim({ ...claim, storage: `${storage_value}${storage_unit}` }); showCreate.value = false; await loadClaims() } catch (e) { workflowError.value = e.message || '创建存储卷失败' } finally { saving.value = false } }
+function requestDelete(claim) { workflowError.value = ''; deleteTarget.value = claim }
 function migrationFor(claim) { return migrations.value.find(item => item.environment_id === claimEnvironmentID(claim) && item.source_pvc_name === claim.name && item.status !== 'cleaned') || null }
 function migrationLabel(status) { return ({ pending: '等待预检', preflight: '预检中', provisioning_target: '预配目标卷', stopping_source: '停止源工作负载', copying: '复制数据中', cutover: '切换中', waiting_ready: '等待就绪', cleanup_pending: '等待清理源卷', failed: '迁移失败', rolled_back: '已回滚' })[status] || status }
 function migrationRunning(task) { return !['cleanup_pending', 'failed', 'rolled_back', 'cleaned'].includes(task.status) }
 function syncMigrationPolling() { if (migrations.value.some(migrationRunning)) migrationPolling.start(); else migrationPolling.stop() }
 function stopMigrationPolling() { migrationPolling.stop() }
-function openMigration(claim) { migrationTarget.value = claim; migrationNode.value = '' }
-async function createMigration() { if (!migrationTarget.value || !migrationNode.value) return; saving.value = true; error.value = ''; try { await api.post(`/k8s/persistent-volume-claims/${migrationTarget.value.name}/migrations`, { environment_id: claimEnvironmentID(migrationTarget.value), target_node_name: migrationNode.value }); migrationTarget.value = null; await loadClaims() } catch (e) { error.value = e.message || '创建存储卷迁移失败' } finally { saving.value = false } }
-function requestCleanup(migration) { cleanupTarget.value = migration }
-async function cleanupMigration() { if (!cleanupTarget.value) return; saving.value = true; error.value = ''; try { await api.post(`/k8s/persistent-volume-migrations/${cleanupTarget.value.id}/cleanup`); cleanupTarget.value = null; await loadClaims() } catch (e) { error.value = e.message || '清理源存储卷失败' } finally { saving.value = false } }
+function openMigration(claim) { workflowError.value = ''; migrationTarget.value = claim; migrationNode.value = '' }
+async function createMigration() { if (!migrationTarget.value || !migrationNode.value) return; saving.value = true; workflowError.value = ''; try { await createPersistentVolumeMigration(migrationTarget.value.name, { environment_id: claimEnvironmentID(migrationTarget.value), target_node_name: migrationNode.value }); migrationTarget.value = null; await loadClaims() } catch (e) { workflowError.value = e.message || '创建存储卷迁移失败' } finally { saving.value = false } }
+function requestCleanup(migration) { workflowError.value = ''; cleanupTarget.value = migration }
+async function cleanupMigration() { if (!cleanupTarget.value) return; saving.value = true; workflowError.value = ''; try { await cleanupPersistentVolumeMigration(cleanupTarget.value.id); cleanupTarget.value = null; await loadClaims() } catch (e) { workflowError.value = e.message || '清理源存储卷失败' } finally { saving.value = false } }
 function backupRunning(backup) { return ['accepted', 'running'].includes(backup.status) || backup.restore_status === 'running' }
 function syncBackupPolling() { if (backupTarget.value && backups.value.some(backupRunning)) backupPolling.start(); else backupPolling.stop() }
 function stopBackupPolling() { backupPolling.stop() }
-async function refreshBackups() { if (!backupTarget.value) return; try { backups.value = await getPersistentVolumeBackups(backupTarget.value.name, claimEnvironmentID(backupTarget.value)) || []; syncBackupPolling() } catch (e) { error.value = e.message || '读取备份记录失败'; stopBackupPolling() } }
-async function openBackup(claim) { backupTarget.value = claim; backupForm.value = { backup_server_id: backupServers.value[0]?.id || 0, backup_root: '/data/cylism-backups' }; await refreshBackups() }
-async function createBackup() { if (!backupTarget.value) return; saving.value = true; error.value = ''; try { await api.post(`/k8s/persistent-volume-claims/${backupTarget.value.name}/backups`, { environment_id: claimEnvironmentID(backupTarget.value), ...backupForm.value }); await refreshBackups() } catch (e) { error.value = e.message || '创建备份失败' } finally { saving.value = false } }
-async function restoreBackup(backup) { if (!backupTarget.value || !window.confirm('恢复会覆盖当前 PVC 数据，并短暂停止引用它的工作负载，确定继续吗？')) return; saving.value = true; error.value = ''; try { await api.post(`/k8s/persistent-volume-claims/${backupTarget.value.name}/backups/${backup.id}/restore`, { environment_id: claimEnvironmentID(backupTarget.value), confirm_data_replace: true }); await refreshBackups() } catch (e) { error.value = e.message || '恢复备份失败' } finally { saving.value = false } }
+async function refreshBackups() { const target = backupTarget.value; if (!target) return; const targetEnvironmentID = claimEnvironmentID(target); const result = await backupsResource.refresh(target.name, targetEnvironmentID); if (!backupTarget.value || backupTarget.value.name !== target.name || claimEnvironmentID(backupTarget.value) !== targetEnvironmentID) return; if (result) { backups.value = result || []; syncBackupPolling() } else { workflowError.value = backupsResource.error.value?.message || '读取备份记录失败'; stopBackupPolling() } }
+async function openBackup(claim) { workflowError.value = ''; backupTarget.value = claim; backupForm.value = { backup_server_id: backupServers.value[0]?.id || 0, backup_root: '/data/cylism-backups' }; await refreshBackups() }
+async function createBackup() { if (!backupTarget.value) return; saving.value = true; workflowError.value = ''; try { await createPersistentVolumeBackup(backupTarget.value.name, { environment_id: claimEnvironmentID(backupTarget.value), ...backupForm.value }); await refreshBackups() } catch (e) { workflowError.value = e.message || '创建备份失败' } finally { saving.value = false } }
+async function restoreBackup(backup) { if (!backupTarget.value || !window.confirm('恢复会覆盖当前 PVC 数据，并短暂停止引用它的工作负载，确定继续吗？')) return; saving.value = true; workflowError.value = ''; try { await restorePersistentVolumeBackup(backupTarget.value.name, backup.id, { environment_id: claimEnvironmentID(backupTarget.value), confirm_data_replace: true }); await refreshBackups() } catch (e) { workflowError.value = e.message || '恢复备份失败' } finally { saving.value = false } }
 function importRunning(task) { return !['succeeded', 'failed'].includes(task.status) }
 function importLabel(status) { return ({ pending: '等待执行', preflight: '预检中', stopping_workload: '停止应用中', backing_up: '创建备份中', copying: '复制数据中', verifying: '校验中', restoring_workload: '恢复应用中', succeeded: '导入完成', failed: '导入失败' })[status] || status }
 function syncImportPolling() { if (importTarget.value && imports.value.some(importRunning)) importPolling.start(); else importPolling.stop() }
 function stopImportPolling() { importPolling.stop() }
-async function refreshImports() { if (!importTarget.value) return; try { imports.value = await getPersistentVolumeImports(importTarget.value.name, claimEnvironmentID(importTarget.value)) || []; syncImportPolling() } catch (e) { error.value = e.message || '读取目录导入记录失败'; stopImportPolling() } }
-async function openImport(claim) { importTarget.value = claim; importForm.value = { source_server_id: backupServers.value[0]?.id || 0, source_path: '', confirm_data_replace: false }; await refreshImports() }
-async function createImport() { if (!importTarget.value) return; saving.value = true; error.value = ''; try { await api.post(`/k8s/persistent-volume-claims/${importTarget.value.name}/imports`, { environment_id: claimEnvironmentID(importTarget.value), ...importForm.value }); await refreshImports() } catch (e) { error.value = e.message || '创建目录导入失败' } finally { saving.value = false } }
-async function deleteImportBackup(task) { if (!importTarget.value || !window.confirm('删除后无法通过平台恢复本次导入前的数据，确定删除本地归档吗？')) return; saving.value = true; error.value = ''; try { await api.delete(`/k8s/persistent-volume-claims/${importTarget.value.name}/imports/${task.id}/backup`, { environment_id: claimEnvironmentID(importTarget.value) }); await refreshImports() } catch (e) { error.value = e.message || '删除导入备份失败' } finally { saving.value = false } }
-async function deleteClaim() { if (!deleteTarget.value) return; saving.value = true; error.value = ''; try { await api.delete(`/k8s/persistent-volume-claims/${deleteTarget.value.name}`, { environment_id: claimEnvironmentID(deleteTarget.value), namespace: deleteTarget.value.namespace, confirm_data_delete: true }); deleteTarget.value = null; await loadClaims() } catch (e) { error.value = e.message || '删除存储卷失败' } finally { saving.value = false } }
+async function refreshImports() { const target = importTarget.value; if (!target) return; const targetEnvironmentID = claimEnvironmentID(target); const result = await importsResource.refresh(target.name, targetEnvironmentID); if (!importTarget.value || importTarget.value.name !== target.name || claimEnvironmentID(importTarget.value) !== targetEnvironmentID) return; if (result) { imports.value = result || []; syncImportPolling() } else { workflowError.value = importsResource.error.value?.message || '读取目录导入记录失败'; stopImportPolling() } }
+async function openImport(claim) { workflowError.value = ''; importTarget.value = claim; importForm.value = { source_server_id: backupServers.value[0]?.id || 0, source_path: '', confirm_data_replace: false }; await refreshImports() }
+async function createImport() { if (!importTarget.value) return; saving.value = true; workflowError.value = ''; try { await createPersistentVolumeImport(importTarget.value.name, { environment_id: claimEnvironmentID(importTarget.value), ...importForm.value }); await refreshImports() } catch (e) { workflowError.value = e.message || '创建目录导入失败' } finally { saving.value = false } }
+async function deleteImportBackup(task) { if (!importTarget.value || !window.confirm('删除后无法通过平台恢复本次导入前的数据，确定删除本地归档吗？')) return; saving.value = true; workflowError.value = ''; try { await deletePersistentVolumeImportBackup(importTarget.value.name, task.id, { environment_id: claimEnvironmentID(importTarget.value) }); await refreshImports() } catch (e) { workflowError.value = e.message || '删除导入备份失败' } finally { saving.value = false } }
+async function deleteClaim() { if (!deleteTarget.value) return; saving.value = true; workflowError.value = ''; try { await deletePersistentVolumeClaim(deleteTarget.value.name, { environment_id: claimEnvironmentID(deleteTarget.value), namespace: deleteTarget.value.namespace, confirm_data_delete: true }); deleteTarget.value = null; await loadClaims() } catch (e) { workflowError.value = e.message || '删除存储卷失败' } finally { saving.value = false } }
 
 watch(projectID, () => { const environments = selectedProject.value?.environments || []; if (!environments.some(item => item.id === environmentID.value)) environmentID.value = 0 })
-watch(backupTarget, target => { if (!target) stopBackupPolling() })
-watch(importTarget, target => { if (!target) stopImportPolling() })
-onUnmounted(() => { stopMigrationPolling(); stopBackupPolling(); stopImportPolling() })
+watch(backupTarget, target => { if (!target) { backupsResource.cancel(); stopBackupPolling() } })
+watch(importTarget, target => { if (!target) { importsResource.cancel(); stopImportPolling() } })
+onUnmounted(() => { stopMigrationPolling(); stopBackupPolling(); stopImportPolling(); backupsResource.cancel(); importsResource.cancel() })
 loadProjects()
 loadClaims()
 </script>

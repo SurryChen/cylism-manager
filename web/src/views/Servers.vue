@@ -55,6 +55,7 @@
         </table>
       </div>
     </div>
+    <div v-if="unbindError" class="k8s-banner k8s-banner-warn section-gap">{{ unbindError }}</div>
     </template>
 
     <template v-else-if="activeSection === 'monitoring'">
@@ -102,6 +103,7 @@
           <div class="form-group"><label class="form-label">认证方式</label><select v-model="form.ssh_auth_type" class="form-select"><option value="password">密码</option><option value="key">密钥</option></select></div>
           <div class="form-group" v-if="form.ssh_auth_type === 'password'"><label class="form-label">SSH 密码</label><input v-model="form.ssh_password" class="form-input" type="password" placeholder="输入密码" /></div>
           <div class="form-group" v-if="form.ssh_auth_type === 'key'"><label class="form-label">SSH 密钥</label><textarea v-model="form.ssh_key" class="form-input textarea-input" placeholder="粘贴私钥内容" /></div>
+          <p v-if="formError" class="form-error">{{ formError }}</p>
           <div class="modal-actions"><button type="button" class="btn" @click="closeForm">取消</button><button type="submit" class="btn btn-primary">{{ editingId ? '保存修改' : '确认添加' }}</button></div>
         </form>
       </div>
@@ -203,15 +205,26 @@
     <ServerTerminal v-if="terminalServer" :server="terminalServer" @close="terminalServer = null" />
 
     <div v-if="deleteTarget" class="overlay" @click.self="deleteTarget = null">
-      <div class="modal"><h2 class="modal-title">删除服务器</h2><p class="modal-copy">确定删除 <strong>{{ deleteTarget.name }}</strong> 吗？</p><div class="modal-actions"><button class="btn" @click="deleteTarget = null">取消</button><button class="btn btn-danger" @click="deleteServer">确认删除</button></div></div>
+      <div class="modal"><h2 class="modal-title">删除服务器</h2><p class="modal-copy">确定删除 <strong>{{ deleteTarget.name }}</strong> 吗？</p><p v-if="deleteError" class="form-error">{{ deleteError }}</p><div class="modal-actions"><button class="btn" @click="deleteTarget = null">取消</button><button class="btn btn-danger" @click="deleteServer">确认删除</button></div></div>
     </div>
   </div>
 </template>
 
 <script setup>
 import { computed, ref, shallowRef, onMounted, onUnmounted, watch } from 'vue'
-import { api } from '../api/index.js'
-import { getServerNetworkDiagnostics, getServerResourceStats, getServers, getServerStats } from '../api/servers.js'
+import {
+  createServer,
+  deleteServer as deleteServerRequest,
+  getServerNetworkDiagnostics,
+  getServerResourceStats,
+  getServers,
+  getServerStats,
+  importServerToCluster,
+  preimportServer,
+  probeServer as probeServerRequest,
+  unbindServer as unbindServerRequest,
+  updateServer,
+} from '../api/servers.js'
 import { useAsyncResource } from '../composables/useAsyncResource.js'
 import { usePolling } from '../composables/usePolling.js'
 import { RefreshCw } from 'lucide-vue-next'
@@ -243,6 +256,9 @@ const networkDiagnosticsError = computed(() => networkDiagnosticsResource.error.
 const showAdd = ref(false)
 const editingId = ref(null)
 const deleteTarget = ref(null)
+const formError = ref('')
+const deleteError = ref('')
+const unbindError = ref('')
 const probingId = ref(null)
 const unbindingId = ref(null)
 const probeResult = ref(null)
@@ -355,15 +371,16 @@ function syncResourcePolling() {
 }
 
 async function addServer() {
+  formError.value = ''
   try {
     if (editingId.value) {
-      await api.put('/servers/' + editingId.value, form.value)
+      await updateServer(editingId.value, form.value)
     } else {
-      await api.post('/servers', form.value)
+      await createServer(form.value)
     }
     closeForm()
     fetchServers()
-  } catch (e) { console.error(e) }
+  } catch (e) { formError.value = e.message || '保存服务器失败' }
 }
 
 function startEdit(srv) {
@@ -383,6 +400,7 @@ function startEdit(srv) {
 function closeForm() {
   showAdd.value = false
   editingId.value = null
+  formError.value = ''
   resetForm()
 }
 
@@ -390,7 +408,7 @@ async function probeServer(id) {
   probingId.value = id
   try {
     const srv = servers.value.find(s => s.id === id)
-    const result = await api.post(`/servers/${id}/probe`)
+    const result = await probeServerRequest(id)
     probeResult.value = { host: srv?.host || '', ...result }
   } catch (e) { probeResult.value = { host: '', reachable: false, error: e.message } }
   probingId.value = null
@@ -403,7 +421,7 @@ async function startImport(id) {
   importState.value = { phase: 'detecting' }
 
   try {
-    const result = await api.post(`/nodes/${id}/preimport`)
+    const result = await preimportServer(id)
     importState.value = { phase: 'confirm', info: result }
   } catch (e) {
     importState.value = { phase: 'error', error: e.message || '预检失败' }
@@ -415,7 +433,7 @@ async function doConfirmImport() {
   if (!info) return
   importState.value.phase = 'detecting'
   try {
-    await api.post(`/nodes/${importServer.value.id}/import`, {
+    await importServerToCluster(importServer.value.id, {
       hostname: info.node_name,
       role: info.role,
     })
@@ -427,15 +445,24 @@ async function doConfirmImport() {
   }
 }
 
-function confirmDelete(srv) { deleteTarget.value = srv }
-async function deleteServer() { try { await api.delete(`/servers/${deleteTarget.value.id}`); deleteTarget.value = null; fetchServers() } catch (e) { console.error(e) } }
+function confirmDelete(srv) { deleteTarget.value = srv; deleteError.value = '' }
+async function deleteServer() {
+  if (!deleteTarget.value) return
+  deleteError.value = ''
+  try {
+    await deleteServerRequest(deleteTarget.value.id)
+    deleteTarget.value = null
+    fetchServers()
+  } catch (e) { deleteError.value = e.message || '删除服务器失败' }
+}
 async function unbindServer(srv) {
   if (!window.confirm(`解除 ${srv.name} 与集群节点 ${srv.k8s_node_name || '-'} 的绑定？此操作不会删除节点或影响 Pod。`)) return
   unbindingId.value = srv.id
+  unbindError.value = ''
   try {
-    await api.post(`/servers/${srv.id}/unbind`)
+    await unbindServerRequest(srv.id)
     fetchServers()
-  } catch (e) { console.error(e) } finally { unbindingId.value = null }
+  } catch (e) { unbindError.value = e.message || '解除绑定失败' } finally { unbindingId.value = null }
 }
 async function openStats(id) {
   const srv = servers.value.find(s => s.id === id)

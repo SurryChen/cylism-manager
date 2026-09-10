@@ -56,8 +56,9 @@
         </table>
       </div>
     </div>
+    <div v-if="rejoinError" class="k8s-banner k8s-banner-warn section-gap">{{ rejoinError }}</div>
 
-    <div v-if="drainTarget" class="overlay" @click.self="drainTarget = null">
+    <div v-if="drainTarget" class="overlay" @click.self="closeDrain">
       <div class="modal">
         <h2 class="modal-title">驱逐节点</h2>
         <p class="modal-copy">节点会先停止接收新 Pod，再通过 Kubernetes Eviction API 迁移可安全中断的工作负载。</p>
@@ -66,8 +67,9 @@
         <div v-if="drainTarget.plan?.skipped?.length" class="drain-pods"><strong>不会迁移</strong><small v-for="pod in drainTarget.plan.skipped" :key="pod.namespace + pod.name">{{ pod.namespace }}/{{ pod.name }}: {{ pod.reason }}</small></div>
         <div v-if="drainTarget.plan?.requires_empty_dir_confirmation?.length" class="drain-warning"><strong>本地临时数据</strong><small v-for="pod in drainTarget.plan.requires_empty_dir_confirmation" :key="pod.namespace + pod.name">{{ pod.namespace }}/{{ pod.name }}</small><label class="check-row"><input v-model="deleteEmptyDirData" type="checkbox" /> 允许删除 emptyDir 临时数据</label></div>
         <div v-if="drainTarget.plan?.blocked?.length" class="drain-blockers"><strong>当前不能自动驱逐</strong><small v-for="pod in drainTarget.plan.blocked" :key="pod.namespace + pod.name">{{ pod.namespace }}/{{ pod.name }}: {{ pod.reason }}</small></div>
+        <p v-if="drainError" class="form-error">{{ drainError }}</p>
         <div class="modal-actions">
-          <button class="btn" @click="drainTarget = null">取消</button>
+          <button class="btn" @click="closeDrain">取消</button>
           <button class="btn btn-danger" :disabled="draining || hasDrainBlocker || needsEmptyDirConfirmation" @click="doDrain">{{ draining ? '驱逐中...' : '确认驱逐' }}</button>
         </div>
       </div>
@@ -83,6 +85,7 @@
         <div v-if="forceDrainTarget.plan?.requires_empty_dir_confirmation?.length" class="drain-warning"><strong>本地临时数据</strong><small v-for="pod in forceDrainTarget.plan.requires_empty_dir_confirmation" :key="pod.namespace + pod.name">{{ pod.namespace }}/{{ pod.name }}</small><label class="check-row"><input v-model="forceDeleteEmptyDirData" type="checkbox" /> 允许删除 emptyDir 临时数据</label></div>
         <label class="check-row force-ack"><input v-model="forceAcknowledged" data-testid="force-drain-acknowledge" type="checkbox" /> 我理解此操作会绕过 PodDisruptionBudget</label>
         <div class="form-group compact-field"><label class="form-label">输入节点名确认</label><input v-model.trim="forceConfirmNodeName" class="form-input" data-testid="force-drain-node-name" :placeholder="forceDrainTarget.name" /></div>
+        <p v-if="forceDrainError" class="form-error">{{ forceDrainError }}</p>
         <div class="modal-actions"><button class="btn" :disabled="forceDraining" @click="closeForceDrain">取消</button><button class="btn btn-danger" data-testid="submit-force-drain" :disabled="!canSubmitForceDrain" @click="doForceDrain">{{ forceDraining ? '强制驱逐中...' : '确认强制驱逐' }}</button></div>
       </div>
     </div>
@@ -101,13 +104,14 @@
       </div>
     </div>
 
-    <div v-if="removeTarget" class="overlay" @click.self="removeTarget = null">
+    <div v-if="removeTarget" class="overlay" @click.self="closeRemove">
       <div class="modal">
         <h2 class="modal-title">移出集群</h2>
         <p class="modal-copy">移出仅删除 Kubernetes Node 记录。请先在宿主机停止 k3s 或 k3s-agent，并完成驱逐。</p>
         <div v-if="removeTarget.check?.blockers?.length" class="drain-blockers"><strong>尚不能移出</strong><small v-for="(blocker, index) in removeTarget.check.blockers" :key="index">{{ blocker.namespace ? `${blocker.namespace}/${blocker.name}: ` : '' }}{{ blocker.reason }}</small></div>
+        <p v-if="removeError" class="form-error">{{ removeError }}</p>
         <div class="modal-actions">
-          <button class="btn" @click="removeTarget = null">取消</button>
+          <button class="btn" @click="closeRemove">取消</button>
           <button class="btn btn-danger" :disabled="removing || !removeTarget.check?.can_remove" @click="doRemoveNode">{{ removing ? '移出中...' : '确认移出' }}</button>
         </div>
       </div>
@@ -127,6 +131,7 @@
           <div v-if="labelDraft.length" class="label-editor-list"><div v-for="(label, index) in labelDraft" :key="label.id" class="label-editor-row"><input v-model.trim="label.key" class="form-input" placeholder="team" /><input v-model.trim="label.value" class="form-input" placeholder="platform" /><button class="btn btn-sm btn-danger" type="button" title="删除标签" @click="removeLabel(index)">删除</button></div></div>
           <p v-else class="empty-inline">尚未设置自定义标签</p>
         </div>
+        <p v-if="labelsError" class="form-error">{{ labelsError }}</p>
         <div class="modal-actions"><button class="btn" :disabled="savingLabels" @click="closeLabels">取消</button><button class="btn btn-primary" :disabled="savingLabels" @click="saveLabels">{{ savingLabels ? '保存中...' : '保存标签' }}</button></div>
       </div>
     </div>
@@ -135,8 +140,17 @@
 
 <script setup>
 import { computed, onMounted, ref } from 'vue'
-import { api } from '../api/index.js'
-import { getClusterInventory } from '../api/cluster.js'
+import {
+  drainNode,
+  forceDrainNode,
+  getClusterInventory,
+  getNodeDrainPlan,
+  getNodeLabels,
+  getNodeRemovalCheck,
+  rejoinNode as rejoinClusterNode,
+  removeClusterNode,
+  updateNodeLabels,
+} from '../api/cluster.js'
 import { useAsyncResource } from '../composables/useAsyncResource.js'
 
 const nodes = ref([])
@@ -159,6 +173,14 @@ const labelsTarget = ref(null)
 const labelDraft = ref([])
 const savingLabels = ref(false)
 const clusterResource = useAsyncResource(({ signal }) => getClusterInventory({ signal }), [[], []])
+const drainPlanResource = useAsyncResource(({ signal }, nodeName) => getNodeDrainPlan(nodeName, { signal }), null)
+const labelsResource = useAsyncResource(({ signal }, nodeName) => getNodeLabels(nodeName, { signal }), null)
+const removalCheckResource = useAsyncResource(({ signal }, nodeName) => getNodeRemovalCheck(nodeName, { signal }), null)
+const drainError = ref('')
+const forceDrainError = ref('')
+const labelsError = ref('')
+const removeError = ref('')
+const rejoinError = ref('')
 
 const serverLookup = computed(() => servers.value)
 const systemLabelEntries = computed(() => {
@@ -217,48 +239,66 @@ const canSubmitForceDrain = computed(() => Boolean(forceDrainTarget.value) && fo
 
 async function openDrain(node) {
   checkingNode.value = node.name
-  error.value = ''
+  drainError.value = ''
   try {
-    const plan = await api.get(`/nodes/${node.name}/drain-plan`)
+    const plan = await drainPlanResource.refresh(node.name)
+    if (!plan) {
+      drainError.value = drainPlanResource.error.value?.message || ''
+      return
+    }
     deleteEmptyDirData.value = false
     drainTarget.value = { ...node, plan }
-  } catch (e) { error.value = e.message || '检查驱逐条件失败' } finally { checkingNode.value = '' }
+  } catch (e) { drainError.value = e.message || '检查驱逐条件失败' } finally { if (checkingNode.value === node.name) checkingNode.value = '' }
+}
+
+function closeDrain() {
+  if (draining.value) return
+  drainPlanResource.cancel()
+  drainTarget.value = null
+  drainError.value = ''
 }
 
 async function doDrain() {
   if (!drainTarget.value) return
   draining.value = true
+  drainError.value = ''
   try {
-    const result = await api.post(`/nodes/${drainTarget.value.name}/drain`, { delete_empty_dir_data: deleteEmptyDirData.value })
+    const result = await drainNode(drainTarget.value.name, { delete_empty_dir_data: deleteEmptyDirData.value })
     drainTarget.value = null
     drainResult.value = result
     await fetchData()
-  } catch (e) { error.value = e.message || '驱逐失败' } finally { draining.value = false }
+  } catch (e) { drainError.value = e.message || '驱逐失败' } finally { draining.value = false }
 }
 
 async function openForceDrain(node) {
   checkingNode.value = node.name
-  error.value = ''
+  forceDrainError.value = ''
   try {
-    const plan = await api.get(`/nodes/${node.name}/drain-plan`)
+    const plan = await drainPlanResource.refresh(node.name)
+    if (!plan) {
+      forceDrainError.value = drainPlanResource.error.value?.message || ''
+      return
+    }
     forceAcknowledged.value = false
     forceConfirmNodeName.value = ''
     forceDeleteEmptyDirData.value = false
     forceDrainTarget.value = { ...node, plan }
-  } catch (e) { error.value = e.message || '检查故障节点驱逐条件失败' } finally { checkingNode.value = '' }
+  } catch (e) { forceDrainError.value = e.message || '检查故障节点驱逐条件失败' } finally { if (checkingNode.value === node.name) checkingNode.value = '' }
 }
 
 function closeForceDrain() {
   if (forceDraining.value) return
+  drainPlanResource.cancel()
   forceDrainTarget.value = null
+  forceDrainError.value = ''
 }
 
 async function doForceDrain() {
   if (!canSubmitForceDrain.value || !forceDrainTarget.value) return
   forceDraining.value = true
-  error.value = ''
+  forceDrainError.value = ''
   try {
-    const result = await api.post(`/nodes/${forceDrainTarget.value.name}/force-drain`, {
+    const result = await forceDrainNode(forceDrainTarget.value.name, {
       acknowledge_risk: true,
       confirm_node_name: forceConfirmNodeName.value,
       delete_empty_dir_data: forceDeleteEmptyDirData.value,
@@ -266,33 +306,39 @@ async function doForceDrain() {
     forceDrainTarget.value = null
     drainResult.value = result
     await fetchData()
-  } catch (e) { error.value = e.message || '故障节点强制驱逐失败' } finally { forceDraining.value = false }
+  } catch (e) { forceDrainError.value = e.message || '故障节点强制驱逐失败' } finally { forceDraining.value = false }
 }
 
 async function rejoinNode(node) {
   rejoiningNode.value = node.name
-  error.value = ''
+  rejoinError.value = ''
   try {
-    await api.post(`/nodes/${node.name}/rejoin`)
+    await rejoinClusterNode(node.name)
     await fetchData()
-  } catch (e) { error.value = e.message || '节点重新加入失败' } finally { rejoiningNode.value = '' }
+  } catch (e) { rejoinError.value = e.message || '节点重新加入失败' } finally { rejoiningNode.value = '' }
 }
 
 async function openLabels(node) {
   checkingNode.value = node.name
-  error.value = ''
+  labelsError.value = ''
   try {
-    const result = await api.get(`/nodes/${node.name}/labels`)
+    const result = await labelsResource.refresh(node.name)
+    if (!result) {
+      labelsError.value = labelsResource.error.value?.message || ''
+      return
+    }
     const protectedKeys = new Set(result.protected_keys || [])
     labelsTarget.value = { name: node.name, displayName: displayNode(node), labels: result.labels || {}, protectedKeys: result.protected_keys || [] }
     labelDraft.value = Object.entries(result.labels || {}).filter(([key]) => !protectedKeys.has(key)).sort(([left], [right]) => left.localeCompare(right)).map(([key, value], index) => ({ id: `${key}-${index}`, key, value }))
-  } catch (e) { error.value = e.message || '读取节点标签失败' } finally { checkingNode.value = '' }
+  } catch (e) { labelsError.value = e.message || '读取节点标签失败' } finally { if (checkingNode.value === node.name) checkingNode.value = '' }
 }
 
 function closeLabels(force = false) {
   if (savingLabels.value && !force) return
+  labelsResource.cancel()
   labelsTarget.value = null
   labelDraft.value = []
+  labelsError.value = ''
 }
 
 function addLabel() {
@@ -309,7 +355,7 @@ async function saveLabels() {
   const next = {}
   for (const label of labelDraft.value) {
     if (!label.key || Object.prototype.hasOwnProperty.call(next, label.key)) {
-      error.value = '自定义标签键不能为空且不能重复'
+      labelsError.value = '自定义标签键不能为空且不能重复'
       return
     }
     next[label.key] = label.value
@@ -317,31 +363,43 @@ async function saveLabels() {
   const set = Object.fromEntries(Object.entries(next).filter(([key, value]) => original[key] !== value))
   const remove = Object.keys(original).filter(key => !Object.prototype.hasOwnProperty.call(next, key))
   savingLabels.value = true
-  error.value = ''
+  labelsError.value = ''
   try {
-    await api.patch(`/nodes/${labelsTarget.value.name}/labels`, { set, remove })
+    await updateNodeLabels(labelsTarget.value.name, { set, remove })
     closeLabels(true)
     await fetchData()
-  } catch (e) { error.value = e.message || '保存节点标签失败' } finally { savingLabels.value = false }
+  } catch (e) { labelsError.value = e.message || '保存节点标签失败' } finally { savingLabels.value = false }
 }
 
 async function openRemove(node) {
   checkingNode.value = node.name
-  error.value = ''
+  removeError.value = ''
   try {
-    const check = await api.get(`/nodes/${node.name}/removal-check`)
+    const check = await removalCheckResource.refresh(node.name)
+    if (!check) {
+      removeError.value = removalCheckResource.error.value?.message || ''
+      return
+    }
     removeTarget.value = { ...node, check }
-  } catch (e) { error.value = e.message || '检查移出条件失败' } finally { checkingNode.value = '' }
+  } catch (e) { removeError.value = e.message || '检查移出条件失败' } finally { if (checkingNode.value === node.name) checkingNode.value = '' }
 }
 
 async function doRemoveNode() {
   if (!removeTarget.value) return
   removing.value = true
+  removeError.value = ''
   try {
-    await api.delete(`/nodes/${removeTarget.value.name}`)
+    await removeClusterNode(removeTarget.value.name)
     removeTarget.value = null
     await fetchData()
-  } catch (e) { error.value = e.message || '移出失败' } finally { removing.value = false }
+  } catch (e) { removeError.value = e.message || '移出失败' } finally { removing.value = false }
+}
+
+function closeRemove() {
+  if (removing.value) return
+  removalCheckResource.cancel()
+  removeTarget.value = null
+  removeError.value = ''
 }
 </script>
 

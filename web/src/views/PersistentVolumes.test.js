@@ -133,6 +133,48 @@ describe('PersistentVolumes view', () => {
     })
   })
 
+  it('keeps the directory import form open when starting an import fails', async () => {
+    const { api } = await import('../api/index.js')
+    api.get.mockImplementation(mockInventory({
+      claims: [{ name: 'karakeep-data', namespace: 'project-knowledge-prod', managed: true, environment_id: 2, phase: 'Bound', is_local: true, bound_node: 'node-a' }],
+      servers: [{ id: 8, name: '历史数据服务器', host: '100.64.0.8' }],
+    }))
+    api.post.mockRejectedValueOnce(new Error('源目录不可访问'))
+    const wrapper = mount(PersistentVolumes)
+    await settle()
+    await wrapper.get('[data-testid="open-directory-import"]').trigger('click')
+    await wrapper.get('[data-testid="import-source-server"]').setValue('8')
+    await wrapper.get('[data-testid="import-source-path"]').setValue('/data/legacy/karakeep')
+    await wrapper.get('.import-form').trigger('submit')
+    await settle()
+
+    expect(wrapper.text()).toContain('源目录不可访问')
+    expect(wrapper.get('[data-testid="import-source-path"]').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('aborts an in-flight directory import read when the modal closes', async () => {
+    const { api } = await import('../api/index.js')
+    let importSignal
+    api.get.mockImplementation((path, options) => {
+      if (path.includes('/imports?')) {
+        importSignal = options.signal
+        return new Promise(() => {})
+      }
+      return mockInventory({
+        claims: [{ name: 'karakeep-data', namespace: 'project-knowledge-prod', managed: true, environment_id: 2, phase: 'Bound', is_local: true, bound_node: 'node-a' }],
+        servers: [{ id: 8, name: '历史数据服务器', host: '100.64.0.8' }],
+      })(path, options)
+    })
+    const wrapper = mount(PersistentVolumes)
+    await settle()
+    await wrapper.get('[data-testid="open-directory-import"]').trigger('click')
+    await settle()
+    wrapper.unmount()
+
+    expect(importSignal?.aborted).toBe(true)
+  })
+
   it('renders infrastructure PVCs as read-only monitoring resources', async () => {
     const { api } = await import('../api/index.js')
     api.get.mockImplementation(mockInventory({ claims: [{ name: 'cylism-victoria-metrics-data', namespace: 'monitoring', managed: true, owner_type: 'infrastructure', owner_name: 'VictoriaMetrics', read_only: true, phase: 'Bound' }] }))

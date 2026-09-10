@@ -72,6 +72,21 @@ describe('Servers view', () => {
     expect(wrapper.find('.modal').exists()).toBe(true)
   })
 
+  it('keeps the server form open and shows its error when saving fails', async () => {
+    api.post.mockRejectedValueOnce(new Error('SSH 凭据无效'))
+    const wrapper = mount(Servers, { global: { stubs: { RouterLink: true } } })
+    await new Promise(r => setTimeout(r, 0))
+    await wrapper.find('.btn-primary').trigger('click')
+    await wrapper.get('input[placeholder="我的服务器"]').setValue('edge-a')
+    await wrapper.get('input[placeholder="192.168.1.100"]').setValue('10.0.0.9')
+    await wrapper.get('form').trigger('submit')
+    await new Promise(r => setTimeout(r, 0))
+
+    expect(wrapper.text()).toContain('SSH 凭据无效')
+    expect(wrapper.find('input[placeholder="我的服务器"]').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
   it('shows a batch-refreshed resource monitoring view', async () => {
     const wrapper = mount(Servers, { global: { stubs: { RouterLink: true } } })
     await new Promise(r => setTimeout(r, 200))

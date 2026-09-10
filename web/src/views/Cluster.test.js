@@ -40,4 +40,51 @@ describe('Cluster view', () => {
 
     expect(wrapper.text()).toContain('集群连接失败')
   })
+
+  it('keeps the labels modal open and scopes a save failure to it', async () => {
+    get.mockImplementation(path => {
+      if (path === '/nodes') return Promise.resolve([{ name: 'worker-a', ready: true, roles: 'worker' }])
+      if (path === '/servers') return Promise.resolve([])
+      if (path === '/nodes/worker-a/labels') return Promise.resolve({ labels: { team: 'platform' }, protected_keys: [] })
+      return Promise.resolve([])
+    })
+    patch.mockRejectedValueOnce(new Error('标签保存被拒绝'))
+    const wrapper = mount(Cluster)
+    await new Promise(resolve => setTimeout(resolve, 0))
+    await wrapper.get('[data-testid="manage-labels-worker-a"]').trigger('click')
+    await new Promise(resolve => setTimeout(resolve, 0))
+    await wrapper.get('.modal-actions .btn-primary').trigger('click')
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    expect(wrapper.text()).toContain('标签保存被拒绝')
+    expect(wrapper.text()).toContain('管理节点标签')
+    wrapper.unmount()
+  })
+
+  it('keeps only the latest node label response when selection changes quickly', async () => {
+    let resolveFirstLabels
+    const firstLabels = new Promise(resolve => { resolveFirstLabels = resolve })
+    get.mockImplementation(path => {
+      if (path === '/nodes') return Promise.resolve([
+        { name: 'worker-a', ready: true, roles: 'worker' },
+        { name: 'worker-b', ready: true, roles: 'worker' },
+      ])
+      if (path === '/servers') return Promise.resolve([])
+      if (path === '/nodes/worker-a/labels') return firstLabels
+      if (path === '/nodes/worker-b/labels') return Promise.resolve({ labels: { team: 'latest' }, protected_keys: [] })
+      return Promise.resolve([])
+    })
+    const wrapper = mount(Cluster)
+    await new Promise(resolve => setTimeout(resolve, 0))
+    await wrapper.get('[data-testid="manage-labels-worker-a"]').trigger('click')
+    await wrapper.get('[data-testid="manage-labels-worker-b"]').trigger('click')
+    await new Promise(resolve => setTimeout(resolve, 0))
+    resolveFirstLabels({ labels: { team: 'stale' }, protected_keys: [] })
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    expect(wrapper.text()).toContain('worker-b')
+    expect(wrapper.find('.label-editor-row input').element.value).toBe('team')
+    expect(wrapper.findAll('.label-editor-row input')[1].element.value).toBe('latest')
+    wrapper.unmount()
+  })
 })
