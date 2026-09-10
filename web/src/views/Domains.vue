@@ -53,9 +53,8 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ArrowLeft } from 'lucide-vue-next'
-import { api } from '../api/index.js'
 import { getProjects } from '../api/applications.js'
-import { getClaimableDomains, getDomainOptions, getImportableCertificates, getManagedDomains } from '../api/domains.js'
+import { claimManagedDomain, createManagedDomain, deleteManagedDomain, getClaimableDomains, getDomainOptions, getImportableCertificates, getManagedDomains, importManagedDomainCertificate, retryManagedDomainCertificate, updateManagedDomain } from '../api/domains.js'
 import { useAsyncResource } from '../composables/useAsyncResource.js'
 import { usePolling } from '../composables/usePolling.js'
 
@@ -94,12 +93,12 @@ function close(){ modal.value = false; editing.value = null }
 function closeImport(){ importModal.value = false; importCandidates.value = [] }
 function closeClaim(){ claimModal.value = false; claimCandidates.value = [] }
 async function backToWorkspace(){ await router.push({ path: '/applications', query: { project_id: route.query.project_id, environment_id: route.query.environment_id } }) }
-async function save(){ saving.value = true; error.value = ''; try { if(editing.value) await api.put(`/domains/${editing.value.id}`, form.value); else await api.post('/domains', form.value); close(); await load() } catch(e) { error.value = e.message || '提交域名申请失败' } finally { saving.value = false } }
-async function importCertificate(){ saving.value = true; error.value = ''; try { await api.post('/domains/import', importForm.value); closeImport(); await load() } catch(e) { error.value = e.message || '导入已有证书失败' } finally { saving.value = false } }
-async function claimDomain(){ saving.value = true; error.value = ''; try { await api.post(`/domains/${claimForm.value.domain_id}/claim`, { environment_id: environmentID.value }); closeClaim(); await load() } catch(e) { error.value = e.message || '关联历史域名失败' } finally { saving.value = false } }
-async function retry(domain){ error.value = ''; try { await api.post(`/domains/${domain.id}/certificate`); await load() } catch(e) { error.value = e.message || '重新申请证书失败' } }
+async function save(){ saving.value = true; error.value = ''; try { if(editing.value) await updateManagedDomain(editing.value.id, form.value); else await createManagedDomain(form.value); close(); await load() } catch(e) { error.value = e.message || '提交域名申请失败' } finally { saving.value = false } }
+async function importCertificate(){ saving.value = true; error.value = ''; try { await importManagedDomainCertificate(importForm.value); closeImport(); await load() } catch(e) { error.value = e.message || '导入已有证书失败' } finally { saving.value = false } }
+async function claimDomain(){ saving.value = true; error.value = ''; try { await claimManagedDomain(claimForm.value.domain_id, { environment_id: environmentID.value }); closeClaim(); await load() } catch(e) { error.value = e.message || '关联历史域名失败' } finally { saving.value = false } }
+async function retry(domain){ error.value = ''; try { await retryManagedDomainCertificate(domain.id); await load() } catch(e) { error.value = e.message || '重新申请证书失败' } }
 function openOperations(domain){ router.push(`/certs/${domain.namespace}/${domain.certificate_name}`) }
-async function remove(domain){ if(domain.application_count > 0) return; const suffix = domain.certificate_ownership === 'imported' ? '平台域名记录？原 Certificate 和 TLS Secret 会保留。' : '及其 Certificate？'; if(!window.confirm(`删除受管域名 ${domain.hostname} ${suffix}`)) return; try { await api.delete(`/domains/${domain.id}`); await load() } catch(e) { error.value = e.message || '删除受管域名失败' } }
+async function remove(domain){ if(domain.application_count > 0) return; const suffix = domain.certificate_ownership === 'imported' ? '平台域名记录？原 Certificate 和 TLS Secret 会保留。' : '及其 Certificate？'; if(!window.confirm(`删除受管域名 ${domain.hostname} ${suffix}`)) return; try { await deleteManagedDomain(domain.id); await load() } catch(e) { error.value = e.message || '删除受管域名失败' } }
 function certificateLabel(domain){ if(!domain.namespace) return '未绑定'; return domain.certificate?.status === 'Ready' ? '已就绪' : domain.certificate?.status === 'Failed' ? '签发失败' : '签发中' }
 function certificateClass(domain){ return certificateLabel(domain) === '已就绪' ? 'badge-online' : certificateLabel(domain) === '签发失败' ? 'badge-danger' : 'badge-deploying' }
 function certificateReason(domain){ return domain.certificate?.reason || domain.certificate_error || '' }

@@ -103,4 +103,21 @@ describe('ImageRegistries view', () => {
     expect(api.get).not.toHaveBeenCalledWith('/image-registries?project_id=1')
     wrapper.unmount()
   })
+
+  it('keeps the registry form open when saving fails', async () => {
+    const { api } = await import('../api/index.js')
+    api.post.mockRejectedValueOnce(new Error('仓库认证失败'))
+    const wrapper = mount(ImageRegistries)
+    await new Promise(resolve => setTimeout(resolve, 0))
+    await wrapper.get('.page-header .btn-primary').trigger('click')
+    await wrapper.get('input[placeholder="commerce-harbor"]').setValue('commerce-harbor')
+    await wrapper.get('input[placeholder="harbor.example.com"]').setValue('harbor.example.com')
+    await wrapper.get('input[placeholder="harbor.example.com/commerce/order-api:latest"]').setValue('harbor.example.com/commerce/order-api:latest')
+    await wrapper.get('form').trigger('submit')
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    expect(wrapper.find('.registry-modal').exists()).toBe(true)
+    expect(wrapper.get('input[placeholder="commerce-harbor"]').element.value).toBe('commerce-harbor')
+    expect(wrapper.text()).toContain('仓库认证失败')
+  })
 })

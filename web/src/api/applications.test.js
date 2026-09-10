@@ -14,6 +14,7 @@ import {
   getApplicationEndpoints,
   getApplicationRelease,
   getApplications,
+  getProjectEnvironmentResources,
   getWorkspace,
   restartApplication,
   retryRelease,
@@ -23,7 +24,11 @@ import {
   updateDeploymentTemplate,
   updateEndpoint,
   updateProject,
+  updateProjectEnvironment,
   updateWorkloadKind,
+  createProjectEnvironment,
+  deleteProjectEnvironment,
+  syncProjectEnvironmentNamespace,
 } from './applications.js'
 
 vi.mock('./index.js', () => ({ api: {
@@ -101,5 +106,24 @@ describe('applications API', () => {
     expect(api.delete).toHaveBeenNthCalledWith(2, '/applications/7/endpoints/11', undefined, options)
     expect(api.post).toHaveBeenNthCalledWith(5, '/applications/7/releases/rel%2F8/retry', undefined, options)
     expect(api.post).toHaveBeenNthCalledWith(6, '/applications/7/releases/rel%2F8/rollback', undefined, options)
+  })
+
+  it('owns project environment reads and mutations', () => {
+    const options = { signal: new AbortController().signal }
+    const body = { name: 'production', namespace: 'project-commerce' }
+    getProjectEnvironmentResources('project/1', options)
+    createProjectEnvironment('project/1', body, options)
+    updateProjectEnvironment('project/1', 'environment/2', body, options)
+    syncProjectEnvironmentNamespace('project/1', 'environment/2', options)
+    deleteProjectEnvironment('project/1', 'environment/2', options)
+
+    expect(api.get).toHaveBeenNthCalledWith(1, '/projects', options)
+    expect(api.get).toHaveBeenNthCalledWith(2, '/applications', options)
+    expect(api.get).toHaveBeenNthCalledWith(3, '/projects/environments/namespace-conflicts', options)
+    expect(api.get).toHaveBeenNthCalledWith(4, '/projects/project%2F1/environments', options)
+    expect(api.post).toHaveBeenNthCalledWith(1, '/projects/project%2F1/environments', body, options)
+    expect(api.put).toHaveBeenCalledWith('/projects/project%2F1/environments/environment%2F2', body, options)
+    expect(api.post).toHaveBeenNthCalledWith(2, '/projects/project%2F1/environments/environment%2F2/sync-namespace', undefined, options)
+    expect(api.delete).toHaveBeenCalledWith('/projects/project%2F1/environments/environment%2F2', undefined, options)
   })
 })

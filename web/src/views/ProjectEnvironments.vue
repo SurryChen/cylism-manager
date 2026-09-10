@@ -25,7 +25,8 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
 import { ArrowLeft, RefreshCw } from 'lucide-vue-next'
-import { api } from '../api/index.js'
+import { createProjectEnvironment, deleteProjectEnvironment, getProjectEnvironmentResources, syncProjectEnvironmentNamespace, updateProjectEnvironment } from '../api/applications.js'
+import { useAsyncResource } from '../composables/useAsyncResource.js'
 
 const props = defineProps({ projectID: { type: String, required: true } })
 const projects = ref([])
@@ -40,6 +41,7 @@ const environmentDeleteTarget = ref(null)
 const submitting = ref(false)
 const environmentForm = ref({ name: 'production', namespace: '', namespace_mode: 'create' })
 const syncingEnvironmentID = ref(null)
+const projectEnvironmentResource = useAsyncResource(({ signal }, requestedProjectID) => getProjectEnvironmentResources(requestedProjectID, { signal }), null)
 const project = computed(() => projects.value.find(item => String(item.id) === props.projectID))
 const showEnvironmentList = computed(() => loadedProjectID.value === props.projectID && !!project.value && environments.value.length > 0)
 const namespaceSuffix = computed({
@@ -52,20 +54,19 @@ function environmentHasApplications(environmentID) { return environmentApplicati
 async function loadProject() {
   const requestedProjectID = props.projectID
   error.value = ''
-  try {
-    const [projectList, applicationList, conflicts] = await Promise.all([api.get('/projects'), api.get('/applications'), api.get('/projects/environments/namespace-conflicts')])
-    projects.value = projectList || []
-    applications.value = applicationList || []
-    namespaceConflicts.value = conflicts || []
-    if (!project.value) return
-    const result = await api.get(`/projects/${requestedProjectID}/environments`) || []
-    if (props.projectID === requestedProjectID) {
-      environments.value = result
-      loadedProjectID.value = requestedProjectID
-    }
-  } catch (e) {
-    error.value = e.message || '加载项目环境失败'
+  const result = await projectEnvironmentResource.refresh(requestedProjectID)
+  if (!result) {
+    if (projectEnvironmentResource.error.value) error.value = projectEnvironmentResource.error.value.message || '加载项目环境失败'
+    return
   }
+  if (props.projectID !== requestedProjectID) return
+  const [projectList, applicationList, conflicts, environmentList] = result
+  projects.value = projectList || []
+  applications.value = applicationList || []
+  namespaceConflicts.value = conflicts || []
+  if (!projects.value.some(item => String(item.id) === requestedProjectID)) return
+  environments.value = environmentList || []
+  loadedProjectID.value = requestedProjectID
 }
 
 function namespaceStatusLabel(status) { return status === 'active' ? '就绪' : status === 'missing' ? '缺失' : status === 'pending' ? '创建中' : status === 'terminating' ? '删除中' : '未检测' }
@@ -80,7 +81,7 @@ async function saveEnvironment() {
   submitting.value = true
   error.value = ''
   try {
-    if (isEditing) { await api.put(`/projects/${props.projectID}/environments/${editingEnvironment.value.id}`, environmentForm.value) } else { await api.post(`/projects/${props.projectID}/environments`, environmentForm.value) }
+    if (isEditing) { await updateProjectEnvironment(props.projectID, editingEnvironment.value.id, environmentForm.value) } else { await createProjectEnvironment(props.projectID, environmentForm.value) }
     closeEnvironmentModal()
     await loadProject()
   } catch (e) {
@@ -91,8 +92,8 @@ async function saveEnvironment() {
 }
 
 function requestEnvironmentDelete(environment) { environmentDeleteTarget.value = environment }
-async function deleteEnvironment() { if (!environmentDeleteTarget.value) return; submitting.value = true; error.value = ''; try { await api.delete(`/projects/${props.projectID}/environments/${environmentDeleteTarget.value.id}`); environmentDeleteTarget.value = null; await loadProject() } catch (e) { error.value = e.message || '删除环境失败' } finally { submitting.value = false } }
-async function syncNamespace(environment) { syncingEnvironmentID.value = environment.id; error.value = ''; try { const updated = await api.post(`/projects/${props.projectID}/environments/${environment.id}/sync-namespace`); const index = environments.value.findIndex(item => item.id === environment.id); if (index >= 0) environments.value[index] = updated } catch (e) { error.value = e.message || '同步命名空间失败' } finally { syncingEnvironmentID.value = null } }
+async function deleteEnvironment() { if (!environmentDeleteTarget.value) return; submitting.value = true; error.value = ''; try { await deleteProjectEnvironment(props.projectID, environmentDeleteTarget.value.id); environmentDeleteTarget.value = null; await loadProject() } catch (e) { error.value = e.message || '删除环境失败' } finally { submitting.value = false } }
+async function syncNamespace(environment) { syncingEnvironmentID.value = environment.id; error.value = ''; try { const updated = await syncProjectEnvironmentNamespace(props.projectID, environment.id); const index = environments.value.findIndex(item => item.id === environment.id); if (index >= 0) environments.value[index] = updated } catch (e) { error.value = e.message || '同步命名空间失败' } finally { syncingEnvironmentID.value = null } }
 
 watch(() => props.projectID, loadProject, { immediate: true })
 watch(() => environmentForm.value.namespace_mode, (mode) => {

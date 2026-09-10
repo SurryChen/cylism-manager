@@ -35,6 +35,23 @@ export function getProjects(options) {
   return api.get('/projects', options)
 }
 
+export function getProjectEnvironments(projectID, options) {
+  return api.get(`/projects/${segment(projectID)}/environments`, options)
+}
+
+export function getProjectEnvironmentNamespaceConflicts(options) {
+  return api.get('/projects/environments/namespace-conflicts', options)
+}
+
+export function getProjectEnvironmentResources(projectID, options) {
+  return Promise.all([
+    getProjects(options),
+    getApplications({}, options),
+    getProjectEnvironmentNamespaceConflicts(options),
+    getProjectEnvironments(projectID, options),
+  ])
+}
+
 export function getImageRegistries({ projectID } = {}, options) {
   return api.get(`/image-registries${queryString({ project_id: projectID })}`, options)
 }
@@ -81,6 +98,22 @@ export function updateProject(projectID, payload, options) {
 
 export function deleteProject(projectID, options) {
   return deleteRequest(`/projects/${segment(projectID)}`, options)
+}
+
+export function createProjectEnvironment(projectID, body, options) {
+  return postRequest(`/projects/${segment(projectID)}/environments`, body, options)
+}
+
+export function updateProjectEnvironment(projectID, environmentID, body, options) {
+  return putRequest(`/projects/${segment(projectID)}/environments/${segment(environmentID)}`, body, options)
+}
+
+export function deleteProjectEnvironment(projectID, environmentID, options) {
+  return deleteRequest(`/projects/${segment(projectID)}/environments/${segment(environmentID)}`, options)
+}
+
+export function syncProjectEnvironmentNamespace(projectID, environmentID, options) {
+  return postRequest(`/projects/${segment(projectID)}/environments/${segment(environmentID)}/sync-namespace`, undefined, options)
 }
 
 export function createRelease(applicationID, payload, options) {

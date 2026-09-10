@@ -109,8 +109,7 @@
 
 <script setup>
 import { ref, onMounted, computed } from 'vue'
-import { api } from '../api/index.js'
-import { getIngressControllerStatus, getIngresses, getRoutes } from '../api/sites.js'
+import { createIngress as createIngressRequest, deleteIngress, deleteRoute, getIngressControllerStatus, getIngresses, getRoutes } from '../api/sites.js'
 import { useAsyncResource } from '../composables/useAsyncResource.js'
 
 const controllerStatusCacheKey = 'cylism.ingress-controller.status'
@@ -192,20 +191,20 @@ function confirmDeleteRoute(route) { deleteRouteTarget.value = route }
 function confirmDeleteIngress(ing) { deleteIngressTarget.value = ing }
 
 async function removeRoute() {
-  try { await api.delete(`/routes/${deleteRouteTarget.value.namespace}/${deleteRouteTarget.value.name}`); deleteRouteTarget.value = null; fetchRoutes() } catch(e) {}
+  try { await deleteRoute(deleteRouteTarget.value.namespace, deleteRouteTarget.value.name); deleteRouteTarget.value = null; fetchRoutes() } catch(e) { error.value = e.message || '删除 IngressRoute 失败' }
 }
 
 async function removeIngress() {
-  try { await api.delete(`/k8s/ingresses/${deleteIngressTarget.value.namespace}/${deleteIngressTarget.value.name}`); deleteIngressTarget.value = null; fetchIngresses() } catch(e) {}
+  try { await deleteIngress(deleteIngressTarget.value.namespace, deleteIngressTarget.value.name); deleteIngressTarget.value = null; fetchIngresses() } catch(e) { error.value = e.message || '删除 Ingress 失败' }
 }
 
 async function createIngress() {
   try {
-    await api.post('/k8s/ingresses', ingressForm.value)
+    await createIngressRequest(ingressForm.value)
     showAddIngress.value = false
     ingressForm.value = { name: '', namespace: 'default', host: '', path: '/', service_name: '', service_port: 'http' }
     fetchIngresses()
-  } catch(e) { console.error(e) }
+  } catch(e) { error.value = e.message || '创建 Ingress 失败' }
 }
 </script>
 

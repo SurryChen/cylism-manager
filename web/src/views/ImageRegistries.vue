@@ -27,8 +27,7 @@
 import { onMounted, ref } from 'vue'
 import { ArrowLeft, RefreshCw } from 'lucide-vue-next'
 import { useRoute, useRouter } from 'vue-router'
-import { api } from '../api/index.js'
-import { getImageRegistries, getProjects } from '../api/applications.js'
+import { createImageRegistry, deleteImageRegistry, getImageRegistryResources, updateImageRegistry, verifyImageRegistry } from '../api/image-registries.js'
 import { useAsyncResource } from '../composables/useAsyncResource.js'
 
 const registries = ref([])
@@ -43,10 +42,7 @@ const editingRegistry = ref(null)
 const deleteTarget = ref(null)
 const verifyingID = ref(null)
 const form = ref(newRegistryForm())
-const registryResource = useAsyncResource(async ({ signal }) => Promise.all([
-  getImageRegistries({}, { signal }),
-  getProjects({ signal }),
-]), [[], []])
+const registryResource = useAsyncResource(({ signal }) => getImageRegistryResources({ signal }), [[], []])
 function newRegistryForm() { return { name: '', endpoint: '', verification_image: '', auth_type: 'anonymous', username: '', credential: '', enabled: true, project_ids: [] } }
 function authLabel(type) { return type === 'basic' ? '账号密码' : type === 'token' ? 'Token' : '匿名访问' }
 function verificationLabel(status) { return status === 'succeeded' ? '连通' : status === 'failed' ? '检测失败' : '未检测' }
@@ -56,9 +52,9 @@ async function fetchData() { error.value = ''; const result = await registryReso
 function openCreate() { editingRegistry.value = null; form.value = newRegistryForm(); showModal.value = true }
 function openEdit(registry) { editingRegistry.value = registry; form.value = { name: registry.name, endpoint: registry.endpoint, verification_image: registry.verification_image || '', auth_type: registry.auth_type, username: registry.username || '', credential: '', enabled: registry.enabled, project_ids: (registry.projects || []).map(project => project.id) }; showModal.value = true }
 function closeModal() { showModal.value = false; editingRegistry.value = null; form.value = newRegistryForm() }
-async function saveRegistry() { submitting.value = true; error.value = ''; try { const payload = { ...form.value, project_ids: [...form.value.project_ids] }; if (editingRegistry.value && !payload.credential) delete payload.credential; if (editingRegistry.value) await api.put(`/image-registries/${editingRegistry.value.id}`, payload); else await api.post('/image-registries', payload); closeModal(); await fetchData() } catch (e) { error.value = e.message || '保存镜像仓库失败' } finally { submitting.value = false } }
-async function deleteRegistry() { if (!deleteTarget.value) return; submitting.value = true; error.value = ''; try { await api.delete(`/image-registries/${deleteTarget.value.id}`); deleteTarget.value = null; await fetchData() } catch (e) { error.value = e.message || '删除镜像仓库失败' } finally { submitting.value = false } }
-async function verifyRegistry(registry) { verifyingID.value = registry.id; error.value = ''; try { const updated = await api.post(`/image-registries/${registry.id}/verify`); const index = registries.value.findIndex(item => item.id === registry.id); if (index >= 0) registries.value[index] = updated } catch (e) { error.value = e.message || '检测镜像仓库失败' } finally { verifyingID.value = null } }
+async function saveRegistry() { submitting.value = true; error.value = ''; try { const payload = { ...form.value, project_ids: [...form.value.project_ids] }; if (editingRegistry.value && !payload.credential) delete payload.credential; if (editingRegistry.value) await updateImageRegistry(editingRegistry.value.id, payload); else await createImageRegistry(payload); closeModal(); await fetchData() } catch (e) { error.value = e.message || '保存镜像仓库失败' } finally { submitting.value = false } }
+async function deleteRegistry() { if (!deleteTarget.value) return; submitting.value = true; error.value = ''; try { await deleteImageRegistry(deleteTarget.value.id); deleteTarget.value = null; await fetchData() } catch (e) { error.value = e.message || '删除镜像仓库失败' } finally { submitting.value = false } }
+async function verifyRegistry(registry) { verifyingID.value = registry.id; error.value = ''; try { const updated = await verifyImageRegistry(registry.id); const index = registries.value.findIndex(item => item.id === registry.id); if (index >= 0) registries.value[index] = updated } catch (e) { error.value = e.message || '检测镜像仓库失败' } finally { verifyingID.value = null } }
 async function backToWorkspace() { await router.push({ path: '/applications', query: { project_id: route.query.project_id, environment_id: route.query.environment_id } }) }
 
 onMounted(fetchData)
