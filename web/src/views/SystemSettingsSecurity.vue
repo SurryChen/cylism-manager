@@ -64,8 +64,7 @@
 
 <script setup>
 import { onMounted, ref } from 'vue'
-import { api } from '../api/index.js'
-import { getTemporaryTokens } from '../api/settings.js'
+import { createTemporaryToken as createTemporaryTokenRequest, deleteTemporaryToken, getTemporaryTokens } from '../api/settings.js'
 import { useAsyncResource } from '../composables/useAsyncResource.js'
 
 const temporaryTokens = ref([])
@@ -89,11 +88,14 @@ async function refresh() {
 
 async function createTemporaryToken() {
   creatingTemporaryToken.value = true
+  temporaryTokensError.value = ''
   try {
-    const result = await api.post('/auth/temporary-tokens', temporaryTokenForm.value)
+    const result = await createTemporaryTokenRequest(temporaryTokenForm.value)
     generatedTemporaryToken.value = result.token
     temporaryTokenForm.value.label = ''
     await refresh()
+  } catch (e) {
+    temporaryTokensError.value = e.message || '生成临时登录秘钥失败'
   } finally {
     creatingTemporaryToken.value = false
   }
@@ -101,9 +103,12 @@ async function createTemporaryToken() {
 
 async function revokeTemporaryToken(item) {
   revokingTemporaryToken.value = item.id
+  temporaryTokensError.value = ''
   try {
-    await api.delete(`/auth/temporary-tokens/${item.id}`)
+    await deleteTemporaryToken(item.id)
     await refresh()
+  } catch (e) {
+    temporaryTokensError.value = e.message || '撤销临时登录秘钥失败'
   } finally {
     revokingTemporaryToken.value = 0
   }

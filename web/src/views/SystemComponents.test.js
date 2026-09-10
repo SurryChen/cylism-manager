@@ -159,6 +159,20 @@ describe('SystemComponents', () => {
     })
   })
 
+  it('keeps the component modal and form values when saving fails', async () => {
+    apiMocks.put.mockRejectedValueOnce(new Error('组件配置写入失败'))
+    const wrapper = mount(SystemComponents)
+    await flushPromises()
+    await wrapper.findAll('button').find(button => button.text() === '配置').trigger('click')
+    await wrapper.get('input[type="number"]').setValue('3')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+
+    expect(wrapper.find('.modal').exists()).toBe(true)
+    expect(wrapper.get('input[type="number"]').element.value).toBe('3')
+    expect(wrapper.text()).toContain('组件配置写入失败')
+  })
+
   it('accepts a validated custom Traefik read timeout', async () => {
     apiMocks.get.mockResolvedValue([
       item({

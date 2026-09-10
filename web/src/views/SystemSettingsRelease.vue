@@ -85,8 +85,7 @@
 
 <script setup>
 import { computed, onMounted, ref } from 'vue'
-import { api } from '../api/index.js'
-import { getPlatformStatus } from '../api/settings.js'
+import { createPlatformRelease, generatePlatformWebhookSecret as generatePlatformWebhookSecretRequest, getPlatformStatus, rollbackPlatformRelease as rollbackPlatformReleaseRequest, updatePlatformImagePrefix } from '../api/settings.js'
 import { useAsyncResource } from '../composables/useAsyncResource.js'
 
 const platform = ref({ webhook_configured: false, image_prefix: '', deployment: null, releases: [] })
@@ -125,9 +124,12 @@ async function refresh({ syncForm = false } = {}) {
 
 async function generatePlatformWebhookSecret() {
   generatingSecret.value = true
+  platformActionError.value = ''
   try {
-    generatedSecret.value = (await api.post('/platform/webhook-secret')).secret
+    generatedSecret.value = (await generatePlatformWebhookSecretRequest()).secret
     await refresh()
+  } catch (e) {
+    platformActionError.value = e.message || '生成平台 Webhook 密钥失败'
   } finally {
     generatingSecret.value = false
   }
@@ -135,10 +137,13 @@ async function generatePlatformWebhookSecret() {
 
 async function savePlatformImagePrefix() {
   savingPrefix.value = true
+  platformActionError.value = ''
   try {
-    await api.put('/platform/image-prefix', { image_prefix: platformImagePrefix.value })
+    await updatePlatformImagePrefix({ image_prefix: platformImagePrefix.value })
     platformPrefixDirty.value = false
     await refresh({ syncForm: true })
+  } catch (e) {
+    platformActionError.value = e.message || '保存镜像前缀失败'
   } finally {
     savingPrefix.value = false
   }
@@ -149,7 +154,7 @@ async function manualPlatformUpdate() {
   platformActionMessage.value = ''
   platformActionError.value = ''
   try {
-    await api.post('/platform/releases', { image: manualImage.value })
+    await createPlatformRelease({ image: manualImage.value })
     manualImage.value = ''
     platformActionMessage.value = '平台更新已提交'
     await refresh()
@@ -162,9 +167,12 @@ async function manualPlatformUpdate() {
 
 async function rollbackPlatformRelease(release) {
   rollingBack.value = release.id
+  platformActionError.value = ''
   try {
-    await api.post(`/platform/releases/${release.id}/rollback`)
+    await rollbackPlatformReleaseRequest(release.id)
     await refresh()
+  } catch (e) {
+    platformActionError.value = e.message || '回滚平台发布失败'
   } finally {
     rollingBack.value = 0
   }

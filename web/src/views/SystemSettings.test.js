@@ -101,6 +101,29 @@ describe('SystemSettings view', () => {
     wrapper.unmount()
   })
 
+  it('keeps release controls usable when webhook generation fails', async () => {
+    const wrapper = mount(SystemSettings, { global: { stubs: { Teleport: true } } })
+    await nextTick()
+    await wrapper.get('[data-testid="system-settings-tab-release"]').trigger('click')
+    await nextTick()
+    api.post.mockRejectedValueOnce(new Error('Webhook 服务不可用'))
+    await wrapper.get('[data-testid="generate-platform-webhook-secret"]').trigger('click')
+    await nextTick()
+    expect(wrapper.text()).toContain('Webhook 服务不可用')
+    expect(wrapper.get('[data-testid="generate-platform-webhook-secret"]').attributes('disabled')).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('shows a local error when temporary-token creation fails', async () => {
+    const wrapper = mount(SystemSettings, { global: { stubs: { Teleport: true } } })
+    await nextTick()
+    api.post.mockRejectedValueOnce(new Error('临时秘钥创建失败'))
+    await wrapper.findAll('button').find(button => button.text() === '生成临时秘钥').trigger('click')
+    await nextTick()
+    expect(wrapper.text()).toContain('临时秘钥创建失败')
+    wrapper.unmount()
+  })
+
   it('keeps unsaved endpoint fields when switching tabs and refreshes', async () => {
     vi.useFakeTimers()
     const wrapper = mount(SystemSettings, { global: { stubs: { Teleport: true } } })

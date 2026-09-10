@@ -9,6 +9,7 @@
     </div>
 
     <div v-if="error" class="k8s-banner k8s-banner-warn section-gap">{{ error }}</div>
+    <div v-if="actionError" class="k8s-banner k8s-banner-warn section-gap">{{ actionError }}</div>
 
     <template v-if="loaded">
       <section class="dns-summary metric-grid section-gap" aria-label="集群 DNS 状态">
@@ -56,6 +57,7 @@
       <div class="modal">
         <h2 class="modal-title">应用集群 DNS 策略</h2>
         <p class="confirm-copy">CoreDNS 将改用：{{ normalizedResolvers.join('，') }}。此操作影响所有通过集群 DNS 解析的工作负载。</p>
+        <p v-if="actionError" class="k8s-banner k8s-banner-warn">{{ actionError }}</p>
         <div class="modal-actions"><button class="btn" @click="confirming = false">取消</button><button class="btn btn-primary" @click="apply">确认应用</button></div>
       </div>
     </div>
@@ -63,6 +65,7 @@
       <div class="modal">
         <h2 class="modal-title">恢复宿主机 DNS</h2>
         <p class="confirm-copy">CoreDNS 将恢复为 <code>/etc/resolv.conf</code>，由各节点宿主机决定外部 DNS。此操作影响所有通过集群 DNS 解析的工作负载。</p>
+        <p v-if="actionError" class="k8s-banner k8s-banner-warn">{{ actionError }}</p>
         <div class="modal-actions"><button class="btn" @click="resetConfirming = false">取消</button><button class="btn btn-primary" :disabled="saving" @click="reset">确认恢复</button></div>
       </div>
     </div>
@@ -71,7 +74,8 @@
 
 <script setup>
 import { computed, onMounted, ref } from 'vue'
-import { api } from '../api/index.js'
+import { deleteClusterDNS, getClusterDNS, rollbackClusterDNS, updateClusterDNS } from '../api/cluster-dns.js'
+import { useAsyncResource } from '../composables/useAsyncResource.js'
 
 const data = ref({ forwarding: [], pods: [], history: [], active_policy: null })
 const resolvers = ref([''])
@@ -79,8 +83,10 @@ const loading = ref(false)
 const saving = ref(false)
 const loaded = ref(false)
 const error = ref('')
+const actionError = ref('')
 const confirming = ref(false)
 const resetConfirming = ref(false)
+const dnsResource = useAsyncResource(({ signal }) => getClusterDNS({ signal }), null)
 
 const normalizedResolvers = computed(() => resolvers.value.map(value => value.trim()).filter(Boolean))
 const forwardingText = computed(() => data.value.forwarding?.join('，') || '未识别')
@@ -88,19 +94,17 @@ const readyPods = computed(() => (data.value.pods || []).filter(pod => pod.ready
 const inheritedDNS = computed(() => !(data.value.active_policy?.resolvers?.length) && data.value.forwarding?.length === 1 && data.value.forwarding[0] === '/etc/resolv.conf')
 
 async function load() {
-  loading.value = true
   error.value = ''
-  try {
-    data.value = await api.get('/cluster-dns') || { forwarding: [], pods: [], history: [], active_policy: null }
+  const result = await dnsResource.refresh()
+  loading.value = dnsResource.loading.value
+  if (result) {
+    data.value = result || { forwarding: [], pods: [], history: [], active_policy: null }
     const inherited = data.value.forwarding?.length === 1 && data.value.forwarding[0] === '/etc/resolv.conf'
     resolvers.value = data.value.active_policy?.resolvers?.length ? [...data.value.active_policy.resolvers] : inherited ? [''] : [...(data.value.forwarding || [])]
     if (!resolvers.value.length) resolvers.value = ['']
-  } catch (err) {
-    error.value = err.message || '加载集群 DNS 状态失败'
-  } finally {
-    loading.value = false
-    loaded.value = true
-  }
+  } else if (dnsResource.error.value) error.value = dnsResource.error.value.message || '加载集群 DNS 状态失败'
+  loading.value = false
+  loaded.value = true
 }
 
 function openConfirm() {
@@ -118,13 +122,13 @@ function openResetConfirm() {
 
 async function apply() {
   saving.value = true
-  error.value = ''
+  actionError.value = ''
   try {
-    await api.post('/cluster-dns', { resolvers: normalizedResolvers.value })
+    await updateClusterDNS({ resolvers: normalizedResolvers.value })
     confirming.value = false
     await load()
   } catch (err) {
-    error.value = err.message || '应用集群 DNS 策略失败'
+    actionError.value = err.message || '应用集群 DNS 策略失败'
   } finally {
     saving.value = false
   }
@@ -132,13 +136,13 @@ async function apply() {
 
 async function reset() {
   saving.value = true
-  error.value = ''
+  actionError.value = ''
   try {
-    await api.delete('/cluster-dns')
+    await deleteClusterDNS()
     resetConfirming.value = false
     await load()
   } catch (err) {
-    error.value = err.message || '恢复宿主机 DNS 失败'
+    actionError.value = err.message || '恢复宿主机 DNS 失败'
   } finally {
     saving.value = false
   }
@@ -147,12 +151,12 @@ async function reset() {
 async function rollback(policy) {
   if (!window.confirm(`回滚到 DNS 策略版本 ${policy.revision}？`)) return
   saving.value = true
-  error.value = ''
+  actionError.value = ''
   try {
-    await api.post(`/cluster-dns/history/${policy.revision}/rollback`)
+    await rollbackClusterDNS(policy.revision)
     await load()
   } catch (err) {
-    error.value = err.message || '回滚 DNS 策略失败'
+    actionError.value = err.message || '回滚 DNS 策略失败'
   } finally {
     saving.value = false
   }

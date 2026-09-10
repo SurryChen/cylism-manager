@@ -87,8 +87,7 @@
 
 <script setup>
 import { computed, onMounted, ref } from 'vue'
-import { api } from '../api/index.js'
-import { getPlatformCertificates, getPlatformEndpoint } from '../api/settings.js'
+import { adoptPlatformIngress as adoptPlatformIngressRequest, getPlatformCertificates, getPlatformEndpoint, reconcilePlatformEndpoint as reconcilePlatformEndpointRequest, updatePlatformEndpoint } from '../api/settings.js'
 import { useAsyncResource } from '../composables/useAsyncResource.js'
 
 const platformEndpoint = ref({ endpoint: {}, state: 'not_configured', ingress_ready: false })
@@ -138,7 +137,7 @@ async function savePlatformEndpoint() {
   endpointMessage.value = ''
   endpointError.value = ''
   try {
-    syncEndpoint(await api.put('/platform/endpoint', { ...endpointForm.value, enabled: true }))
+    syncEndpoint(await updatePlatformEndpoint({ ...endpointForm.value, enabled: true }))
     endpointMessage.value = '平台入口已保存，正在同步 Ingress。'
   } catch (e) { endpointError.value = e.message || '保存平台入口失败' } finally { savingEndpoint.value = false }
 }
@@ -149,7 +148,7 @@ async function disablePlatformEndpoint() {
   endpointError.value = ''
   try {
     const endpoint = platformEndpoint.value.endpoint || {}
-    syncEndpoint(await api.put('/platform/endpoint', {
+    syncEndpoint(await updatePlatformEndpoint({
       hostname: endpoint.hostname || endpointForm.value.hostname,
       certificate_name: endpoint.certificate_name || endpointForm.value.certificate_name,
       enabled: false,
@@ -164,7 +163,7 @@ async function adoptPlatformIngress() {
   endpointMessage.value = ''
   endpointError.value = ''
   try {
-    syncEndpoint(await api.post('/platform/endpoint/adopt-ingress'))
+    syncEndpoint(await adoptPlatformIngressRequest())
     endpointMessage.value = '现有 Ingress 已接管并重新同步。'
   } catch (e) { endpointError.value = e.message || '接管现有 Ingress 失败' } finally { adoptingEndpoint.value = false }
 }
@@ -174,7 +173,7 @@ async function reconcilePlatformEndpoint() {
   endpointMessage.value = ''
   endpointError.value = ''
   try {
-    syncEndpoint(await api.post('/platform/endpoint/reconcile'))
+    syncEndpoint(await reconcilePlatformEndpointRequest())
     endpointMessage.value = '平台入口已重新同步。'
   } catch (e) { endpointError.value = e.message || '重新同步平台入口失败' } finally { syncingEndpoint.value = false }
 }

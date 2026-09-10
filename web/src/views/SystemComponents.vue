@@ -9,6 +9,7 @@
     </div>
 
     <div v-if="error" class="k8s-banner k8s-banner-warn section-gap">{{ error }}</div>
+    <div v-if="componentActionError" class="k8s-banner k8s-banner-warn section-gap">{{ componentActionError }}</div>
 
     <div v-if="loaded" class="card section-gap">
       <div class="table-wrap">
@@ -76,6 +77,7 @@
         <h2 class="modal-title">配置 {{ editing?.chart_name }}</h2>
         <p class="modal-copy">{{ modalDescription(editing) }}</p>
         <form @submit.prevent="save">
+          <p v-if="componentFormError" class="k8s-banner k8s-banner-warn section-gap">{{ componentFormError }}</p>
           <div class="config-section-title">运行容量</div>
           <div class="form-row">
             <div v-if="canScale(editing) || !isStatic(editing)" class="form-group">
@@ -134,8 +136,7 @@
 
 <script setup>
 import { computed, onMounted, ref } from 'vue'
-import { api } from '../api/index.js'
-import { getClusterNodes, getSystemComponents } from '../api/system-components.js'
+import { getClusterNodes, getSystemComponents, revertSystemComponent, updateSystemComponent } from '../api/system-components.js'
 import { useAsyncResource } from '../composables/useAsyncResource.js'
 
 const items = ref([])
@@ -145,6 +146,8 @@ const modal = ref(false)
 const editing = ref(null)
 const saving = ref(false)
 const error = ref('')
+const componentFormError = ref('')
+const componentActionError = ref('')
 const form = ref(blankForm())
 const nodes = ref([])
 const schedulableNodes = computed(() => nodes.value.filter(node => node.ready && !node.evicted))
@@ -337,6 +340,7 @@ function renderValues(form) {
 
 function edit(item) {
   editing.value = item
+  componentFormError.value = ''
   form.value = parseValues(item.values_content, item)
   modal.value = true
 }
@@ -350,20 +354,21 @@ function applyBaseline() {
 function close() {
   modal.value = false
   editing.value = null
+  componentFormError.value = ''
 }
 
 async function save() {
   if (!editing.value) return
   saving.value = true
-  error.value = ''
+  componentFormError.value = ''
   try {
     const payload = { values_content: renderValues(form.value) }
     if (isTraefik(editing.value)) payload.traefik_read_timeout = form.value.traefikReadTimeout
-    await api.put(`/system-components/${editing.value.chart_name}`, payload)
+    await updateSystemComponent(editing.value.chart_name, payload)
     close()
     await load()
   } catch (err) {
-    error.value = err.message || '保存系统组件配置失败'
+    componentFormError.value = err.message || '保存系统组件配置失败'
   } finally {
     saving.value = false
   }
@@ -371,12 +376,12 @@ async function save() {
 
 async function revert(item) {
   if (!window.confirm(`恢复 ${item.chart_name} 为默认配置？${isStatic(item) ? '将重置平台受控的 Deployment 字段。' : '将删除 HelmChartConfig。'}`)) return
-  error.value = ''
+  componentActionError.value = ''
   try {
-    await api.post(`/system-components/${item.chart_name}/revert`)
+    await revertSystemComponent(item.chart_name)
     await load()
   } catch (err) {
-    error.value = err.message || '恢复默认配置失败'
+    componentActionError.value = err.message || '恢复默认配置失败'
   }
 }
 
