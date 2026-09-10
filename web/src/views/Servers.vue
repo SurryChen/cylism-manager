@@ -1,10 +1,14 @@
 <template>
   <div>
     <SectionTabsHeader title="服务器" :tabs="sections" :active-tab="activeSection" @select="activeSection = $event">
-      <template #actions><button class="btn btn-primary" @click="showAdd = true">+ 添加服务器</button></template>
+      <template #actions>
+        <button class="icon-button" title="刷新服务器列表" aria-label="刷新服务器列表" :disabled="serversLoading" @click="fetchServers"><RefreshCw :size="16" :class="{ 'is-spinning': serversLoading }" /></button>
+        <button class="btn btn-primary" @click="showAdd = true">+ 添加服务器</button>
+      </template>
     </SectionTabsHeader>
 
     <main class="server-content">
+    <div v-if="serverListError" class="k8s-banner k8s-banner-warn section-gap">{{ serverListError }}</div>
     <template v-if="activeSection === 'configuration'">
     <div class="card section-gap">
       <p class="section-copy">
@@ -65,6 +69,7 @@
       </section>
       <div v-if="servers.length === 0" class="empty-state"><span class="empty-icon">⬡</span><span class="empty-text">暂无服务器</span></div>
       <div v-else class="card">
+        <div v-if="resourceStatsError" class="k8s-banner k8s-banner-warn section-gap">{{ resourceStatsError }}</div>
         <div v-if="resourceStatsLoading && !resourceStats.length" class="empty-state"><span class="empty-text">正在采集服务器资源...</span></div>
         <div v-else class="table-wrap"><table class="data-table resource-table"><thead><tr><th>服务器</th><th>采集状态</th><th>CPU</th><th>内存</th><th>磁盘 /</th><th>负载</th><th>运行时间</th><th>采样时间</th></tr></thead><tbody><tr v-for="srv in servers" :key="srv.id" class="resource-row" @click="openStats(srv.id)"><td class="cell-primary">{{ srv.name }}<small class="cell-secondary">{{ srv.host }}</small></td><td><span class="badge" :class="resourceStatusClass(resourceFor(srv.id))">{{ resourceStatusLabel(resourceFor(srv.id)) }}</span><small v-if="resourceFor(srv.id)?.error" class="resource-error">{{ resourceFor(srv.id).error }}</small></td><td><div class="resource-metric"><strong>{{ formatPercent(resourceFor(srv.id)?.cpu_percent) }}</strong><span class="resource-meter"><i :class="resourceLevelClass(resourceFor(srv.id)?.cpu_percent)" :style="{ width: `${metricPercent(resourceFor(srv.id)?.cpu_percent)}%` }" /></span></div></td><td><div class="resource-metric"><strong>{{ formatMB(resourceFor(srv.id)?.memory_used_mb) }} / {{ formatMB(resourceFor(srv.id)?.memory_total_mb) }}</strong><span class="resource-meter"><i :class="resourceLevelClass(memPercent(resourceFor(srv.id)))" :style="{ width: `${metricPercent(memPercent(resourceFor(srv.id)))}%` }" /></span></div></td><td><div class="resource-metric"><strong>{{ resourceFor(srv.id)?.disk_used_gb ?? '-' }} / {{ resourceFor(srv.id)?.disk_total_gb ?? '-' }} GB</strong><span class="resource-meter"><i :class="resourceLevelClass(diskPercent(resourceFor(srv.id)))" :style="{ width: `${metricPercent(diskPercent(resourceFor(srv.id)))}%` }" /></span></div></td><td>{{ formatLoad(resourceFor(srv.id)) }}</td><td>{{ resourceFor(srv.id)?.uptime || '-' }}</td><td>{{ formatSampleTime(resourceFor(srv.id)?.sampled_at) }}</td></tr></tbody></table></div>
       </div>
@@ -75,8 +80,8 @@
         <h2 class="network-overview-title">网络诊断</h2>
         <button class="icon-button" title="刷新网络诊断" aria-label="刷新网络诊断" :disabled="networkDiagnosticsLoading" @click="refreshNetworkDiagnostics"><RefreshCw :size="16" :class="{ 'is-spinning': networkDiagnosticsLoading }" /></button>
       </section>
+      <div v-if="networkDiagnosticsError" class="k8s-banner k8s-banner-warn section-gap">{{ networkDiagnosticsError }}，已保留上次成功结果</div>
       <div v-if="networkDiagnosticsLoading && !networkDiagnostics.servers.length" class="empty-state"><span class="empty-text">正在采集网络状态...</span></div>
-      <div v-else-if="networkDiagnosticsError" class="empty-state"><span class="empty-text">{{ networkDiagnosticsError }}</span></div>
       <div v-else-if="!networkDiagnostics.servers.length" class="empty-state"><span class="empty-icon">⬡</span><span class="empty-text">暂无诊断结果</span></div>
       <section v-else class="card section-gap network-table-card">
         <div class="table-wrap"><table class="data-table network-table"><thead><tr><th>服务器</th><th>K3s 网络</th><th>Tailscale</th><th>Tailnet IP</th><th>UDP</th><th>IPv4</th><th>最近 DERP</th></tr></thead><tbody><tr v-for="diagnostic in networkDiagnostics.servers" :key="diagnostic.server_id"><td class="cell-primary">{{ diagnostic.name }}<small class="cell-secondary">{{ diagnostic.k8s_unit || '-' }}</small></td><td><span class="badge" :class="networkModeClass(diagnostic)">{{ networkModeLabel(diagnostic.network_mode) }}</span></td><td><span class="badge" :class="tailscaleStatusClass(diagnostic)">{{ tailscaleStatusLabel(diagnostic) }}</span></td><td>{{ diagnostic.tailscale?.tailnet_ip || '-' }}</td><td>{{ booleanLabel(diagnostic.tailscale?.udp) }}</td><td>{{ booleanLabel(diagnostic.tailscale?.ipv4) }}</td><td>{{ diagnostic.tailscale?.nearest_derp || '-' }}</td></tr></tbody></table></div>
@@ -104,7 +109,7 @@
           <div class="form-group" v-if="form.ssh_auth_type === 'password'"><label class="form-label">SSH 密码</label><input v-model="form.ssh_password" class="form-input" type="password" placeholder="输入密码" /></div>
           <div class="form-group" v-if="form.ssh_auth_type === 'key'"><label class="form-label">SSH 密钥</label><textarea v-model="form.ssh_key" class="form-input textarea-input" placeholder="粘贴私钥内容" /></div>
           <p v-if="formError" class="form-error">{{ formError }}</p>
-          <div class="modal-actions"><button type="button" class="btn" @click="closeForm">取消</button><button type="submit" class="btn btn-primary">{{ editingId ? '保存修改' : '确认添加' }}</button></div>
+          <div class="modal-actions"><button type="button" class="btn" :disabled="savingServer" @click="closeForm">取消</button><button type="submit" class="btn btn-primary" :disabled="savingServer">{{ savingServer ? '保存中...' : (editingId ? '保存修改' : '确认添加') }}</button></div>
         </form>
       </div>
     </div>
@@ -153,7 +158,7 @@
           </table>
           <div class="modal-actions">
             <button class="btn" @click="importState = null">取消</button>
-            <button class="btn btn-primary" @click="doConfirmImport">确认导入</button>
+            <button class="btn btn-primary" :disabled="importSubmitting" @click="doConfirmImport">{{ importSubmitting ? '导入中...' : '确认导入' }}</button>
           </div>
         </div>
         <!-- Error -->
@@ -205,7 +210,7 @@
     <ServerTerminal v-if="terminalServer" :server="terminalServer" @close="terminalServer = null" />
 
     <div v-if="deleteTarget" class="overlay" @click.self="deleteTarget = null">
-      <div class="modal"><h2 class="modal-title">删除服务器</h2><p class="modal-copy">确定删除 <strong>{{ deleteTarget.name }}</strong> 吗？</p><p v-if="deleteError" class="form-error">{{ deleteError }}</p><div class="modal-actions"><button class="btn" @click="deleteTarget = null">取消</button><button class="btn btn-danger" @click="deleteServer">确认删除</button></div></div>
+      <div class="modal"><h2 class="modal-title">删除服务器</h2><p class="modal-copy">确定删除 <strong>{{ deleteTarget.name }}</strong> 吗？</p><p v-if="deleteError" class="form-error">{{ deleteError }}</p><div class="modal-actions"><button class="btn" :disabled="deletingServer" @click="deleteTarget = null">取消</button><button class="btn btn-danger" :disabled="deletingServer" @click="deleteServer">{{ deletingServer ? '删除中...' : '确认删除' }}</button></div></div>
     </div>
   </div>
 </template>
@@ -233,6 +238,8 @@ import ServerTerminal from '../components/ServerTerminal.vue'
 
 const serversResource = useAsyncResource(({ signal }) => getServers({ signal }), [])
 const servers = serversResource.data
+const serversLoading = serversResource.loading
+const serverListError = computed(() => serversResource.error.value?.message || '')
 const activeSection = ref('configuration')
 const sections = [
   { id: 'configuration', label: '基本配置' },
@@ -242,6 +249,7 @@ const sections = [
 const resourceStatsResource = useAsyncResource(({ signal }) => getServerResourceStats({ signal }), [])
 const resourceStats = resourceStatsResource.data
 const resourceStatsLoading = resourceStatsResource.loading
+const resourceStatsError = computed(() => resourceStatsResource.error.value ? '资源数据刷新失败，已保留上次成功结果' : '')
 const resourceStatsUpdatedAt = ref('')
 const networkDiagnosticsResource = useAsyncResource(async ({ signal }) => {
   const result = await getServerNetworkDiagnostics({ signal })
@@ -257,13 +265,16 @@ const showAdd = ref(false)
 const editingId = ref(null)
 const deleteTarget = ref(null)
 const formError = ref('')
+const savingServer = ref(false)
 const deleteError = ref('')
+const deletingServer = ref(false)
 const unbindError = ref('')
 const probingId = ref(null)
 const unbindingId = ref(null)
 const probeResult = ref(null)
 const importState = ref(null)
 const importServer = ref(null)
+const importSubmitting = ref(false)
 const statsServer = ref(null)
 const DoughnutComponent = shallowRef(null)
 const chartLoadError = ref('')
@@ -371,7 +382,9 @@ function syncResourcePolling() {
 }
 
 async function addServer() {
+  if (savingServer.value) return
   formError.value = ''
+  savingServer.value = true
   try {
     if (editingId.value) {
       await updateServer(editingId.value, form.value)
@@ -379,8 +392,9 @@ async function addServer() {
       await createServer(form.value)
     }
     closeForm()
-    fetchServers()
+    await fetchServers()
   } catch (e) { formError.value = e.message || '保存服务器失败' }
+  finally { savingServer.value = false }
 }
 
 function startEdit(srv) {
@@ -429,9 +443,11 @@ async function startImport(id) {
 }
 
 async function doConfirmImport() {
+  if (importSubmitting.value) return
   const info = importState.value.info
   if (!info) return
   importState.value.phase = 'detecting'
+  importSubmitting.value = true
   try {
     await importServerToCluster(importServer.value.id, {
       hostname: info.node_name,
@@ -439,21 +455,25 @@ async function doConfirmImport() {
     })
     importState.value = null
     importServer.value = null
-    fetchServers()
+    await fetchServers()
   } catch (e) {
     importState.value = { phase: 'error', error: e.message || '导入失败' }
+  } finally {
+    importSubmitting.value = false
   }
 }
 
 function confirmDelete(srv) { deleteTarget.value = srv; deleteError.value = '' }
 async function deleteServer() {
-  if (!deleteTarget.value) return
+  if (!deleteTarget.value || deletingServer.value) return
   deleteError.value = ''
+  deletingServer.value = true
   try {
     await deleteServerRequest(deleteTarget.value.id)
     deleteTarget.value = null
-    fetchServers()
+    await fetchServers()
   } catch (e) { deleteError.value = e.message || '删除服务器失败' }
+  finally { deletingServer.value = false }
 }
 async function unbindServer(srv) {
   if (!window.confirm(`解除 ${srv.name} 与集群节点 ${srv.k8s_node_name || '-'} 的绑定？此操作不会删除节点或影响 Pod。`)) return
@@ -461,7 +481,7 @@ async function unbindServer(srv) {
   unbindError.value = ''
   try {
     await unbindServerRequest(srv.id)
-    fetchServers()
+    await fetchServers()
   } catch (e) { unbindError.value = e.message || '解除绑定失败' } finally { unbindingId.value = null }
 }
 async function openStats(id) {

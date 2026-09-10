@@ -6,7 +6,6 @@
     </div>
     <div v-if="error" class="k8s-banner k8s-banner-warn" style="margin-bottom:var(--space-16)">⚠ {{ error }}</div>
     <div v-if="detailError" class="k8s-banner k8s-banner-warn" style="margin-bottom:var(--space-16)">⚠ {{ detailError }}</div>
-    <div v-if="mutationError" class="k8s-banner k8s-banner-warn" style="margin-bottom:var(--space-16)">⚠ {{ mutationError }}</div>
 
     <nav class="resource-switcher section-gap" aria-label="工作负载资源类型">
       <button :class="['resource-tab', { 'resource-tab-active': activeTab === 'pods' }]" :aria-selected="activeTab === 'pods'" @click="selectTab('pods')"><Box :size="16" /><span>Pods<small>实例</small></span><strong>{{ pods.length }}</strong></button>
@@ -169,7 +168,8 @@
       <div class="modal"><div class="modal-body">
         <h3>扩缩容: {{ scaleDialog.name }}</h3>
         <p class="modal-copy">当前: {{ scaleDialog.current }} → <input type="number" v-model="scaleDialog.replicas" min="0" class="form-input" style="width:80px;display:inline" /></p>
-        <div class="btn-group" style="margin-top:var(--space-16)"><button class="btn btn-primary" :disabled="mutationLoading" @click="doScale">{{ mutationLoading ? '提交中...' : '确认' }}</button><button class="btn" :disabled="mutationLoading" @click="scaleDialog = null">取消</button></div>
+        <p v-if="scaleError" class="form-error" role="alert">{{ scaleError }}</p>
+        <div class="btn-group" style="margin-top:var(--space-16)"><button class="btn btn-primary" :disabled="scaleSubmitting" @click="doScale">{{ scaleSubmitting ? '提交中...' : '确认' }}</button><button class="btn" :disabled="scaleSubmitting" @click="scaleDialog = null">取消</button></div>
       </div></div>
     </div>
 
@@ -179,7 +179,8 @@
         <h3>更新镜像: {{ imageDialog.name }}</h3>
         <p class="modal-copy">容器: <select v-model="imageDialog.container" class="form-select" style="width:auto;display:inline"><option v-for="img in imageDialog.images" :key="img" :value="img.split(':')[0]">{{ img }}</option></select></p>
         <p class="modal-copy">新镜像: <input v-model="imageDialog.newImage" class="form-input" style="width:200px;display:inline" placeholder="nginx:1.25" /></p>
-        <div class="btn-group" style="margin-top:var(--space-16)"><button class="btn btn-primary" :disabled="mutationLoading" @click="doUpdateImage">{{ mutationLoading ? '提交中...' : '确认' }}</button><button class="btn" :disabled="mutationLoading" @click="imageDialog = null">取消</button></div>
+        <p v-if="imageError" class="form-error" role="alert">{{ imageError }}</p>
+        <div class="btn-group" style="margin-top:var(--space-16)"><button class="btn btn-primary" :disabled="imageSubmitting" @click="doUpdateImage">{{ imageSubmitting ? '提交中...' : '确认' }}</button><button class="btn" :disabled="imageSubmitting" @click="imageDialog = null">取消</button></div>
       </div></div>
     </div>
 
@@ -189,9 +190,10 @@
         <h3>回滚: {{ rollbackDialog.name }}</h3>
         <div class="table-wrap" style="margin:var(--space-12) 0"><table class="data-table">
           <thead><tr><th>版本</th><th>镜像</th><th>时间</th><th></th></tr></thead>
-          <tbody><tr v-for="r in rollbackDialog.revisions" :key="r.revision"><td>{{ r.revision }}</td><td>{{ r.image }}</td><td>{{ r.age }}</td><td><button class="btn btn-sm" :disabled="mutationLoading" @click="doRollback(r.revision)">{{ mutationLoading ? '提交中...' : '回滚到此' }}</button></td></tr></tbody>
+          <tbody><tr v-for="r in rollbackDialog.revisions" :key="r.revision"><td>{{ r.revision }}</td><td>{{ r.image }}</td><td>{{ r.age }}</td><td><button class="btn btn-sm" :disabled="rollbackSubmitting" @click="doRollback(r.revision)">{{ rollbackSubmitting ? '提交中...' : '回滚到此' }}</button></td></tr></tbody>
         </table></div>
-        <button class="btn" @click="rollbackDialog = null">取消</button>
+        <p v-if="rollbackError" class="form-error" role="alert">{{ rollbackError }}</p>
+        <button class="btn" :disabled="rollbackSubmitting" @click="rollbackDialog = null">取消</button>
       </div></div>
     </div>
   </div>
@@ -217,15 +219,17 @@ const inventoryResource = useAsyncResource(async ({ signal }) => Promise.allSett
   getWorkloadPods({ signal }),
   getWorkloadServers({ signal }),
 ]), null)
-const detailResource = useAsyncResource(({ signal }, kind, namespace, name) => {
-  if (kind === 'pods') return getWorkloadDeploymentPods(namespace, name, { signal })
-  return getWorkloadDeploymentRevisions(namespace, name, { signal })
-}, null)
+const deploymentPodsResource = useAsyncResource(({ signal }, namespace, name) => getWorkloadDeploymentPods(namespace, name, { signal }), null)
+const revisionsResource = useAsyncResource(({ signal }, namespace, name) => getWorkloadDeploymentRevisions(namespace, name, { signal }), null)
 const loading = inventoryResource.loading
 const error = ref('')
-const mutationError = ref('')
-const mutationLoading = ref(false)
 const detailError = ref('')
+const scaleError = ref('')
+const imageError = ref('')
+const rollbackError = ref('')
+const scaleSubmitting = ref(false)
+const imageSubmitting = ref(false)
+const rollbackSubmitting = ref(false)
 const expandedDeploy = ref('')
 const deployPods = ref({})
 const podNamespaceFilter = ref('')
@@ -284,15 +288,14 @@ onErrorCaptured((err, instance, info) => {
 
 async function fetchData() {
   error.value = ''
-  mutationError.value = ''
   const result = await inventoryResource.refresh()
   if (!result) return
   const [deps, sts, ds, podList, serverList] = result
-    deployments.value = deps.status === 'fulfilled' ? (deps.value || []) : []
-    statefulsets.value = sts.status === 'fulfilled' ? (sts.value || []) : []
-    daemonsets.value = ds.status === 'fulfilled' ? (ds.value || []) : []
-    pods.value = podList.status === 'fulfilled' ? (podList.value || []) : []
-    servers.value = serverList.status === 'fulfilled' ? (serverList.value || []) : []
+    if (deps.status === 'fulfilled') deployments.value = deps.value || []
+    if (sts.status === 'fulfilled') statefulsets.value = sts.value || []
+    if (ds.status === 'fulfilled') daemonsets.value = ds.value || []
+    if (podList.status === 'fulfilled') pods.value = podList.value || []
+    if (serverList.status === 'fulfilled') servers.value = serverList.value || []
     const failed = [deps, sts, ds, podList, serverList].filter(r => r.status === 'rejected')
   if (failed.length > 0) error.value = failed.map(r => r.reason?.message || '未知错误').join('\n')
 }
@@ -349,18 +352,19 @@ async function toggleDeployExpand(d) {
   expandedDeploy.value = key
   if (!deployPods.value[key]) {
     try {
-      const result = await detailResource.refresh('pods', d.namespace, d.name)
+      const result = await deploymentPodsResource.refresh(d.namespace, d.name)
       if (result !== undefined) {
         deployPods.value[key] = result || []
         detailError.value = ''
-      } else if (detailResource.error.value) {
-        detailError.value = detailResource.error.value.message || '读取工作负载 Pod 失败'
+      } else if (deploymentPodsResource.error.value) {
+        detailError.value = deploymentPodsResource.error.value.message || '读取工作负载 Pod 失败'
       }
     } catch(e) { detailError.value = e.message || '读取工作负载 Pod 失败'; deployPods.value[key] = [] }
   }
 }
 
 function openScaleDialog(d) {
+  scaleError.value = ''
   scaleDialog.value = {
     namespace: d.namespace, name: d.name,
     current: d.replicas, replicas: d.replicas,
@@ -369,17 +373,19 @@ function openScaleDialog(d) {
 }
 async function doScale() {
   const d = scaleDialog.value
-  mutationError.value = ''
-  mutationLoading.value = true
+  if (!d || scaleSubmitting.value) return
+  scaleError.value = ''
+  scaleSubmitting.value = true
   try {
     await scaleWorkload(d.kind, d.namespace, d.name, Number(d.replicas))
     scaleDialog.value = null
     await fetchData()
-  } catch(e) { mutationError.value = e.message || '扩缩容失败' }
-  finally { mutationLoading.value = false }
+  } catch(e) { scaleError.value = e.message || '扩缩容失败' }
+  finally { scaleSubmitting.value = false }
 }
 
 function openImageDialog(d) {
+  imageError.value = ''
   imageDialog.value = {
     namespace: d.namespace, name: d.name,
     images: d.images || [], container: (d.images?.[0] || '').split(':')[0] || '',
@@ -388,38 +394,41 @@ function openImageDialog(d) {
 }
 async function doUpdateImage() {
   const d = imageDialog.value
-  mutationError.value = ''
-  mutationLoading.value = true
+  if (!d || imageSubmitting.value) return
+  imageError.value = ''
+  imageSubmitting.value = true
   try {
     await updateWorkloadImage(d.namespace, d.name, { container: d.container, image: d.newImage })
     imageDialog.value = null
     await fetchData()
-  } catch (e) { mutationError.value = e.message || '更新镜像失败' }
-  finally { mutationLoading.value = false }
+  } catch (e) { imageError.value = e.message || '更新镜像失败' }
+  finally { imageSubmitting.value = false }
 }
 
 async function openRollbackDialog(d) {
   detailError.value = ''
   try {
-    const result = await detailResource.refresh('revisions', d.namespace, d.name)
+    const result = await revisionsResource.refresh(d.namespace, d.name)
     if (result) rollbackDialog.value = { namespace: d.namespace, name: d.name, revisions: result || [] }
-    else if (detailResource.error.value) detailError.value = detailResource.error.value.message || '读取回滚版本失败'
+    else if (revisionsResource.error.value) detailError.value = revisionsResource.error.value.message || '读取回滚版本失败'
   } catch (e) { detailError.value = e.message || '读取回滚版本失败' }
 }
 
 async function doRollback(revision) {
   const d = rollbackDialog.value
-  mutationError.value = ''
-  mutationLoading.value = true
+  if (!d || rollbackSubmitting.value) return
+  rollbackError.value = ''
+  rollbackSubmitting.value = true
   try {
     await rollbackWorkload(d.namespace, d.name, revision)
     rollbackDialog.value = null
     await fetchData()
-  } catch(e) { mutationError.value = e.message || '回滚失败' }
-  finally { mutationLoading.value = false }
+  } catch(e) { rollbackError.value = e.message || '回滚失败' }
+  finally { rollbackSubmitting.value = false }
 }
 
 function openStsScaleDialog(s) {
+  scaleError.value = ''
   scaleDialog.value = {
     namespace: s.namespace, name: s.name,
     current: s.replicas, replicas: s.replicas,

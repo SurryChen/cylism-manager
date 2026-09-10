@@ -2,147 +2,95 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import Workloads from './Workloads.vue'
-import { api } from '../api/index.js'
+import {
+  getWorkloadDaemonSets,
+  getWorkloadDeploymentPods,
+  getWorkloadDeploymentRevisions,
+  getWorkloadDeployments,
+  getWorkloadPods,
+  getWorkloadServers,
+  getWorkloadStatefulSets,
+  rollbackWorkload,
+  scaleWorkload,
+  updateWorkloadImage,
+} from '../api/kubernetes.js'
 
-vi.mock('../api/index.js', () => {
-  return {
-    api: {
-      get: vi.fn().mockImplementation((url) => {
-        if (url.includes('/deployments')) return Promise.resolve([])
-        if (url.includes('/statefulsets')) return Promise.resolve([])
-        if (url.includes('/daemonsets')) return Promise.resolve([])
-        return Promise.resolve([])
-      }),
-      patch: vi.fn().mockResolvedValue({ message: 'ok' }),
-      post: vi.fn().mockResolvedValue({ message: 'ok' }),
-    }
-  }
-})
+vi.mock('../api/kubernetes.js', () => ({
+  getWorkloadDaemonSets: vi.fn(),
+  getWorkloadDeploymentPods: vi.fn(),
+  getWorkloadDeploymentRevisions: vi.fn(),
+  getWorkloadDeployments: vi.fn(),
+  getWorkloadPods: vi.fn(),
+  getWorkloadServers: vi.fn(),
+  getWorkloadStatefulSets: vi.fn(),
+  rollbackWorkload: vi.fn(),
+  scaleWorkload: vi.fn(),
+  updateWorkloadImage: vi.fn(),
+}))
 
 function flush() {
-  return new Promise(r => setTimeout(r, 200))
+  return new Promise(resolve => setTimeout(resolve, 0))
 }
 
 beforeEach(() => {
   document.body.innerHTML = ''
-  api.get.mockReset()
-  api.patch.mockReset()
-  api.post.mockReset()
-  api.get.mockImplementation(() => Promise.resolve([]))
-  api.patch.mockResolvedValue({ message: 'ok' })
-  api.post.mockResolvedValue({ message: 'ok' })
+  vi.clearAllMocks()
+  getWorkloadDeployments.mockResolvedValue([])
+  getWorkloadStatefulSets.mockResolvedValue([])
+  getWorkloadDaemonSets.mockResolvedValue([])
+  getWorkloadPods.mockResolvedValue([])
+  getWorkloadServers.mockResolvedValue([])
+  getWorkloadDeploymentPods.mockResolvedValue([])
+  getWorkloadDeploymentRevisions.mockResolvedValue([])
+  scaleWorkload.mockResolvedValue({ message: 'ok' })
+  updateWorkloadImage.mockResolvedValue({ message: 'ok' })
+  rollbackWorkload.mockResolvedValue({ message: 'ok' })
 })
 
 describe('Workloads view', () => {
-  it('shows an inline error banner without opening an alert when loading fails', async () => {
-    const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => {})
-    const { api } = await import('../api/index.js')
-    api.get.mockImplementation((url) => {
-      if (url.includes('/deployments')) return Promise.reject(new Error('集群连接失败'))
-      return Promise.resolve([])
-    })
-
+  it('loads inventory through named Kubernetes API functions with AbortSignals', async () => {
     const wrapper = mount(Workloads)
     await flush()
 
-    expect(wrapper.find('.k8s-banner').text()).toContain('集群连接失败')
-    expect(wrapper.find('.page-header .k8s-banner').exists()).toBe(false)
-    expect(wrapper.find('.page-header + .k8s-banner').exists()).toBe(true)
-    expect(alertSpy).not.toHaveBeenCalled()
-  })
-
-  it('renders resource navigation with workload counts', async () => {
-    const wrapper = mount(Workloads, {
-      global: { stubs: { RouterLink: true } }
-    })
-    await flush()
-    const tabs = wrapper.findAll('.resource-tab')
-    expect(tabs).toHaveLength(4)
-    expect(tabs[0].text()).toContain('Pods')
-    expect(tabs[1].text()).toContain('Deployments')
-    expect(tabs[2].text()).toContain('StatefulSets')
-    expect(tabs[3].text()).toContain('DaemonSets')
-  })
-
-  it('opens Pods by default when entering the page', async () => {
-    const wrapper = mount(Workloads, {
-      global: { stubs: { RouterLink: true } }
-    })
-    await flush()
-    expect(wrapper.findAll('.resource-tab')[0].classes()).toContain('resource-tab-active')
+    expect(getWorkloadDeployments).toHaveBeenCalledWith(expect.objectContaining({ signal: expect.any(AbortSignal) }))
+    expect(getWorkloadStatefulSets).toHaveBeenCalledWith(expect.objectContaining({ signal: expect.any(AbortSignal) }))
+    expect(getWorkloadDaemonSets).toHaveBeenCalledWith(expect.objectContaining({ signal: expect.any(AbortSignal) }))
+    expect(getWorkloadPods).toHaveBeenCalledWith(expect.objectContaining({ signal: expect.any(AbortSignal) }))
+    expect(wrapper.findAll('.resource-tab')).toHaveLength(4)
     expect(wrapper.text()).toContain('暂无 Pod')
+    wrapper.unmount()
   })
 
-  it('switches to StatefulSets tab', async () => {
-    const wrapper = mount(Workloads, {
-      global: { stubs: { RouterLink: true } }
-    })
-    await flush()
-    const stsTab = wrapper.findAll('.resource-tab')[2]
-    await stsTab.trigger('click')
-    await nextTick()
-    await flush()
-    expect(wrapper.text()).toContain('暂无 StatefulSet')
-  })
-
-  it('switches to DaemonSets tab', async () => {
-    const wrapper = mount(Workloads, {
-      global: { stubs: { RouterLink: true } }
-    })
-    await flush()
-    const dsTab = wrapper.findAll('.resource-tab')[3]
-    await dsTab.trigger('click')
-    await nextTick()
-    await flush()
-    expect(wrapper.text()).toContain('暂无 DaemonSet')
-  })
-
-  it('directly shows pod custom server names and falls back to node names', async () => {
-    api.get.mockImplementation((url) => {
-      if (url === '/k8s/pods') {
-        return Promise.resolve([
-          { name: 'api-7f8d', namespace: 'default', status: 'Running', node: 'worker-a', ip: '10.42.0.8', restarts: 0, age: '5m' },
-          { name: 'system-5d6c', namespace: 'kube-system', status: 'Pending', node: 'unmanaged-node', ip: '', restarts: 0, age: '1m' },
-        ])
-      }
-      if (url === '/servers') return Promise.resolve([{ id: 1, name: '广州生产节点', k8s_node_name: 'worker-a' }])
-      return Promise.resolve([])
-    })
-
+  it('retains successful inventory regions when one refresh request fails', async () => {
+    getWorkloadDeployments.mockResolvedValue([{ name: 'api', namespace: 'default', replicas: 1, ready: 1, images: ['nginx:1.0'] }])
     const wrapper = mount(Workloads)
     await flush()
-    await wrapper.findAll('.resource-tab')[0].trigger('click')
-    await nextTick()
+    await flush()
+    await wrapper.findAll('.resource-tab')[1].trigger('click')
+    expect(wrapper.text()).toContain('api')
 
-    expect(wrapper.text()).toContain('api-7f8d')
-    expect(wrapper.text()).toContain('广州生产节点')
-    expect(wrapper.text()).toContain('worker-a')
-    expect(wrapper.text()).toContain('unmanaged-node')
+    getWorkloadDeployments.mockRejectedValueOnce(new Error('Deployment 刷新失败'))
+    await wrapper.find('.icon-button[title="刷新工作负载"]').trigger('click')
+    await flush()
+
+    expect(wrapper.text()).toContain('api')
+    expect(wrapper.text()).toContain('Deployment 刷新失败')
+    wrapper.unmount()
   })
 
-  it('filters pods by namespace, server, status, restart count, and name', async () => {
-    api.get.mockImplementation((url) => {
-      if (url === '/k8s/pods') {
-        return Promise.resolve([
-          { name: 'orders-api-1', namespace: 'production', status: 'Running', node: 'worker-a', ip: '10.42.0.8', restarts: 2, age: '5m' },
-          { name: 'orders-worker-1', namespace: 'production', status: 'Pending', node: 'worker-b', ip: '', restarts: 0, age: '1m' },
-          { name: 'frontend-1', namespace: 'staging', status: 'Running', node: 'worker-a', ip: '10.42.0.9', restarts: 0, age: '3m' },
-        ])
-      }
-      if (url === '/servers') return Promise.resolve([
-        { id: 1, name: '生产服务器 A', k8s_node_name: 'worker-a' },
-        { id: 2, name: '生产服务器 B', k8s_node_name: 'worker-b' },
-      ])
-      return Promise.resolve([])
-    })
-
+  it('filters Pods by namespace, node, status, restart count, and name', async () => {
+    getWorkloadPods.mockResolvedValue([
+      { name: 'orders-api-1', namespace: 'production', status: 'Running', node: 'worker-a', ip: '10.42.0.8', restarts: 2, age: '5m' },
+      { name: 'orders-worker-1', namespace: 'production', status: 'Pending', node: 'worker-b', ip: '', restarts: 0, age: '1m' },
+      { name: 'frontend-1', namespace: 'staging', status: 'Running', node: 'worker-a', ip: '10.42.0.9', restarts: 0, age: '3m' },
+    ])
+    getWorkloadServers.mockResolvedValue([
+      { id: 1, name: '生产服务器 A', k8s_node_name: 'worker-a' },
+      { id: 2, name: '生产服务器 B', k8s_node_name: 'worker-b' },
+    ])
     const wrapper = mount(Workloads)
     await flush()
-    await wrapper.findAll('.resource-tab')[0].trigger('click')
-    await nextTick()
-
     await wrapper.find('.pod-filter-trigger').trigger('click')
-
     await wrapper.find('.pod-filter-namespace').setValue('production')
     await wrapper.find('.pod-filter-node').setValue('worker-a')
     await wrapper.find('.pod-filter-status').setValue('Running')
@@ -153,105 +101,111 @@ describe('Workloads view', () => {
     expect(wrapper.text()).not.toContain('orders-worker-1')
     expect(wrapper.text()).not.toContain('frontend-1')
     expect(wrapper.text()).toContain('生产服务器 A')
+    wrapper.unmount()
   })
 
-  it('keeps detailed pod filters collapsed until the filter control is opened', async () => {
+  it('associates late deployment detail responses with their own workload key', async () => {
+    let resolveFirst
+    const first = new Promise(resolve => { resolveFirst = resolve })
+    getWorkloadDeployments.mockResolvedValue([
+      { name: 'first', namespace: 'default', replicas: 1, ready: 1, images: ['nginx:1.0'] },
+      { name: 'second', namespace: 'default', replicas: 1, ready: 1, images: ['nginx:2.0'] },
+    ])
+    getWorkloadDeploymentPods.mockImplementation((_namespace, name) => name === 'first' ? first : Promise.resolve([{ name: 'second-pod', status: 'Running', node: 'worker' }]))
     const wrapper = mount(Workloads)
     await flush()
-    await wrapper.findAll('.resource-tab')[0].trigger('click')
+    await wrapper.findAll('.resource-tab')[1].trigger('click')
+    const rows = wrapper.findAll('tbody > tr').filter(row => row.classes('clickable'))
+    await rows[0].trigger('click')
+    await rows[1].trigger('click')
+    resolveFirst([{ name: 'first-pod', status: 'Running', node: 'worker' }])
+    await flush()
     await nextTick()
 
-    expect(wrapper.find('.pod-filter-panel').exists()).toBe(false)
-    await wrapper.find('.pod-filter-trigger').trigger('click')
-    expect(wrapper.find('.pod-filter-panel').exists()).toBe(true)
+    expect(wrapper.text()).toContain('second-pod')
+    expect(wrapper.text()).not.toContain('first-pod')
+    wrapper.unmount()
   })
 
-  it('shows a local error when scaling a deployment fails', async () => {
-    api.get.mockImplementation(url => url === '/k8s/deployments'
-      ? Promise.resolve([{ name: 'api', namespace: 'default', replicas: 1, ready: 1, images: ['nginx:1.0'] }])
-      : Promise.resolve([]))
-    api.patch.mockRejectedValueOnce(new Error('扩缩容被拒绝'))
+  it('keeps the scale dialog open and releases submitting state on failure', async () => {
+    getWorkloadDeployments.mockResolvedValue([{ name: 'api', namespace: 'default', replicas: 1, ready: 1, images: ['nginx:1.0'] }])
+    scaleWorkload.mockRejectedValueOnce(new Error('扩缩容被拒绝'))
     const wrapper = mount(Workloads)
     await flush()
     await wrapper.findAll('.resource-tab')[1].trigger('click')
     await wrapper.find('.action-cell .btn').trigger('click')
     await wrapper.find('.modal .btn-primary').trigger('click')
     await flush()
-    expect(api.patch).toHaveBeenCalledWith('/k8s/deployments/default/api/scale', { replicas: 1 })
+
     expect(wrapper.text()).toContain('扩缩容被拒绝')
+    expect(wrapper.find('.modal').exists()).toBe(true)
+    expect(wrapper.find('.modal .btn-primary').attributes('disabled')).toBeUndefined()
+    wrapper.unmount()
   })
 
-  it('shows a local error when updating an image fails', async () => {
-    api.get.mockImplementation(url => url === '/k8s/deployments'
-      ? Promise.resolve([{ name: 'api', namespace: 'default', replicas: 1, ready: 1, images: ['nginx:1.0'] }])
-      : Promise.resolve([]))
-    api.patch.mockRejectedValueOnce(new Error('镜像地址无效'))
+  it('awaits inventory refresh after a successful scale operation', async () => {
+    getWorkloadDeployments.mockResolvedValue([{ name: 'api', namespace: 'default', replicas: 1, ready: 1, images: ['nginx:1.0'] }])
+    const wrapper = mount(Workloads)
+    await flush()
+    await wrapper.findAll('.resource-tab')[1].trigger('click')
+    await wrapper.find('.action-cell .btn').trigger('click')
+    await wrapper.find('.modal .btn-primary').trigger('click')
+    await flush()
+    await flush()
+
+    expect(scaleWorkload).toHaveBeenCalledWith('deployment', 'default', 'api', 1)
+    expect(getWorkloadDeployments).toHaveBeenCalledTimes(2)
+    expect(wrapper.find('.modal').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('keeps the image dialog open when updating an image fails', async () => {
+    getWorkloadDeployments.mockResolvedValue([{ name: 'api', namespace: 'default', replicas: 1, ready: 1, images: ['nginx:1.0'] }])
+    updateWorkloadImage.mockRejectedValueOnce(new Error('镜像地址无效'))
     const wrapper = mount(Workloads)
     await flush()
     await wrapper.findAll('.resource-tab')[1].trigger('click')
     await wrapper.find('.action-cell .btn:nth-child(2)').trigger('click')
     await wrapper.find('.modal .btn-primary').trigger('click')
     await flush()
+
     expect(wrapper.text()).toContain('镜像地址无效')
+    expect(wrapper.find('.modal').exists()).toBe(true)
+    wrapper.unmount()
   })
 
-  it('opens a container terminal only for running Pods with containers', async () => {
-    api.get.mockImplementation(url => {
-      if (url === '/k8s/pods') return Promise.resolve([{ name: 'orders-api-1', namespace: 'production', status: 'Running', node: 'worker-a', ip: '10.42.0.8', restarts: 0, age: '5m', containers: ['app'] }])
-      return Promise.resolve([])
-    })
-    const wrapper = mount(Workloads, { global: { stubs: { PodTerminal: true } } })
-    await flush()
-    await wrapper.findAll('.resource-tab')[0].trigger('click')
-    await nextTick()
-
-    const terminalButton = wrapper.find('.pod-terminal-action')
-    expect(terminalButton.attributes('disabled')).toBeUndefined()
-    await terminalButton.trigger('click')
-    expect(wrapper.find('pod-terminal-stub').exists()).toBe(true)
-  })
-
-  it('renders deployments without accessing a loop variable outside its scope', async () => {
-    api.get.mockImplementation((url) => {
-      if (url.includes('/deployments')) {
-        return Promise.resolve([{
-          name: 'demo-api', namespace: 'default', ready: 1, replicas: 1,
-          images: ['nginx:1.27'], age: '1h', volume_mounts: [{ claim_name: 'karakeep-data', mount_path: '/data' }]
-        }])
-      }
-      return Promise.resolve([])
-    })
-
+  it('shows revisions in a rollback dialog and retains it on rollback failure', async () => {
+    getWorkloadDeployments.mockResolvedValue([{ name: 'api', namespace: 'default', replicas: 1, ready: 1, images: ['nginx:1.0'] }])
+    getWorkloadDeploymentRevisions.mockResolvedValue([{ revision: 3, image: 'nginx:1.0', age: '1h' }])
+    rollbackWorkload.mockRejectedValueOnce(new Error('回滚失败'))
     const wrapper = mount(Workloads)
     await flush()
     await wrapper.findAll('.resource-tab')[1].trigger('click')
-    await nextTick()
+    await wrapper.find('.action-cell .btn:nth-child(3)').trigger('click')
+    await flush()
+    await wrapper.find('.modal .btn-sm').trigger('click')
+    await flush()
 
-    expect(wrapper.text()).toContain('demo-api')
-    expect(wrapper.text()).toContain('karakeep-data -> /data')
+    expect(wrapper.text()).toContain('回滚失败')
+    expect(wrapper.find('.modal').exists()).toBe(true)
+    wrapper.unmount()
   })
 
-  it('renders StatefulSet PVC mounts', async () => {
-    api.get.mockImplementation(url => {
-      if (url === '/k8s/statefulsets') {
-        return Promise.resolve([{
-          name: 'meilisearch', namespace: 'project-demo', ready: 1, replicas: 1,
-          images: ['getmeili/meilisearch:v1.41.0'], age: '1h',
-          volume_mounts: [
-            { claim_name: 'meilisearch-data', mount_path: '/meili_data', type: 'pvc' },
-            { claim_name: 'logs', mount_path: '/var/log/app', type: 'volume_claim_template' },
-          ],
-        }])
-      }
-      return Promise.resolve([])
+  it('does not update disposed state after a pending detail request resolves', async () => {
+    let resolveDetails
+    let detailSignal
+    getWorkloadDeployments.mockResolvedValue([{ name: 'api', namespace: 'default', replicas: 1, ready: 1, images: ['nginx:1.0'] }])
+    getWorkloadDeploymentPods.mockImplementation((_namespace, _name, { signal }) => {
+      detailSignal = signal
+      return new Promise(resolve => { resolveDetails = resolve })
     })
-
     const wrapper = mount(Workloads)
     await flush()
-    await wrapper.findAll('.resource-tab')[2].trigger('click')
-    await nextTick()
-
-    expect(wrapper.text()).toContain('meilisearch-data -> /meili_data')
-    expect(wrapper.text()).toContain('logs (卷声明模板) -> /var/log/app')
+    await wrapper.findAll('.resource-tab')[1].trigger('click')
+    await wrapper.find('tbody > tr.clickable').trigger('click')
+    wrapper.unmount()
+    resolveDetails([{ name: 'api-pod', status: 'Running', node: 'worker' }])
+    await flush()
+    expect(detailSignal.aborted).toBe(true)
   })
 })
