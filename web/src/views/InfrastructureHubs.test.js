@@ -3,14 +3,14 @@ import { resolve } from 'node:path'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createMemoryHistory, createRouter } from 'vue-router'
-import ClusterHub from './ClusterHub.vue'
-import ResourceHub from './ResourceHub.vue'
-import NetworkHub from './NetworkHub.vue'
+import ClusterHub from './cluster/ClusterHub.vue'
+import ResourceHub from './resources/ResourceHub.vue'
+import NetworkHub from './network/NetworkHub.vue'
 
 const hubSources = [
-  'ResourceHub.vue',
-  'NetworkHub.vue',
-  'ClusterHub.vue',
+  'resources/ResourceHub.vue',
+  'network/NetworkHub.vue',
+  'cluster/ClusterHub.vue',
 ].map(file => readFileSync(resolve(process.cwd(), 'src/views', file), 'utf8'))
 
 function routerFor(path) {
