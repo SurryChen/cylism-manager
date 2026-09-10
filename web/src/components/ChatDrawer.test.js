@@ -3,7 +3,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import ChatDrawer from './ChatDrawer.vue'
 
 const apiMocks = vi.hoisted(() => ({ chatSessions: vi.fn(), chatMessages: vi.fn(), chatStream: vi.fn(), agentOperations: vi.fn(), resolveAgentOperation: vi.fn(), renameChatSession: vi.fn(), archiveChatSession: vi.fn(), exportChatSession: vi.fn(), deleteChatSession: vi.fn() }))
-vi.mock('../api/index.js', () => apiMocks)
+vi.mock('../api/runtimes.js', () => apiMocks)
 
 const runtime = () => ({ id: 1, name: 'nanobot-main', image: 'cylism-nanobot-runtime:0.3.0', runtime_version: '0.3.0' })
 

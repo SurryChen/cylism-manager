@@ -87,8 +87,7 @@
 
 <script setup>
 import { ref, computed, onMounted, reactive } from 'vue'
-import { api } from '../api/index.js'
-import { getAdminTableRows, getAdminTables } from '../api/admin.js'
+import { createAdminTableRow, deleteAdminTableRow, getAdminTableRows, getAdminTables, updateAdminTableRow } from '../api/admin.js'
 import { useAsyncResource } from '../composables/useAsyncResource.js'
 
 const tables = ref([])
@@ -180,9 +179,9 @@ function closeForm() {
 async function submitForm() {
   try {
     if (editTarget.value) {
-      await api.put(`/admin/tables/${currentTable.value}/${editTarget.value.id}`, { ...formData })
+      await updateAdminTableRow(currentTable.value, editTarget.value.id, { ...formData })
     } else {
-      await api.post(`/admin/tables/${currentTable.value}`, { ...formData })
+      await createAdminTableRow(currentTable.value, { ...formData })
     }
     closeForm()
     fetchData()
@@ -193,7 +192,7 @@ function confirmDel(row) { deleteTarget.value = row }
 
 async function doDelete() {
   try {
-    await api.delete(`/admin/tables/${currentTable.value}/${deleteTarget.value.id}`)
+    await deleteAdminTableRow(currentTable.value, deleteTarget.value.id)
     deleteTarget.value = null
     fetchData()
   } catch (e) { error.value = e.message || '删除记录失败' }

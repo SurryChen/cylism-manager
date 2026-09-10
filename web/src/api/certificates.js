@@ -21,6 +21,9 @@ export function getCertificates(options) { return api.get('/certs', options) }
 export function getCertificateIssuers(options) { return api.get('/certs/issuers', options) }
 export function getDNSCredentials(options) { return api.get('/certs/dns-credentials', options) }
 export function getDNSProviders(options) { return api.get('/certs/dns-providers', options) }
+export function getCertificateOperations(namespace, name, options) {
+  return api.get(`/certs/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/operations`, options)
+}
 
 export function installCertificateManager(options) { return post('/certs/install', undefined, options) }
 export function installDNSProvider(id, options) { return post(`/certs/dns-providers/${encodeURIComponent(id)}/install`, undefined, options) }

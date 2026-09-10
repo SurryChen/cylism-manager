@@ -130,8 +130,23 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { AlertCircle, Bot, CheckCircle2, Plus, RefreshCw, X } from 'lucide-vue-next'
-import { api } from '../api/index.js'
-import { getRuntimeAgentState, getRuntimeCatalog, getRuntimeNamespaces, getRuntimeNodes, getRuntimes } from '../api/runtimes.js'
+import {
+  createRuntime,
+  deployRuntime,
+  getRuntimeAgentState,
+  getRuntimeCatalog,
+  getRuntimeNamespaces,
+  getRuntimeNodes,
+  getRuntimes,
+  healthCheckRuntime,
+  installRuntimeAgentTools,
+  resolveAgentOperation as resolveAgentOperationRequest,
+  saveAgentCapabilityGrants,
+  uninstallRuntime,
+  uninstallRuntimeAgentTools,
+  updateRuntime,
+  updateRuntimeAgentTools,
+} from '../api/runtimes.js'
 import { useAsyncResource } from '../composables/useAsyncResource.js'
 import ChatDrawer from '../components/ChatDrawer.vue'
 import SectionTabsHeader from '../components/SectionTabsHeader.vue'
@@ -200,18 +215,18 @@ async function loadNodes() { try { const list = await getRuntimeNodes(); nodes.v
 async function loadNamespaces() { try { const list = await getRuntimeNamespaces(); namespaces.value = Array.isArray(list) ? list.map(item => item?.name).filter(Boolean).sort() : [] } catch { namespaces.value = [] } }
 async function loadCatalog() { const definitions = await catalogResource.refresh(); if (Array.isArray(definitions) && definitions.every(item => item.runtime_type && Array.isArray(item.supported_model_protocols))) catalog.value = definitions; else if (catalogResource.error.value) showNotice('error', catalogResource.error.value.message) }
 async function load() { loading.value = true; const result = await runtimesResource.refresh(); if (result) { runtimes.value = result; if (selected.value) { selected.value = runtimes.value.find(item => item.id === selected.value.id) || null; if (selected.value) loadAgentState() } } else if (runtimesResource.error.value) showNotice('error', runtimesResource.error.value.message); loading.value = false }
-async function save() { saving.value = true; clearNotice(); try { const result = form.value.id ? await api.put(`/runtimes/${form.value.id}`, formBody()) : await api.post('/runtimes', formBody()); showNotice('success', result.message || 'Runtime 已保存'); await load(); selected.value = runtimes.value.find(item => item.id === result.id) || runtimes.value[0] || null; editing.value = false } catch (err) { showNotice('error', err.message) } finally { saving.value = false } }
-async function deploy(item) { await runAction(`/runtimes/${item.id}/deploy`, 'Runtime 已部署或更新') }
-async function health(item) { await runAction(`/runtimes/${item.id}/health-check`, '健康检查已完成') }
+async function save() { saving.value = true; clearNotice(); try { const result = form.value.id ? await updateRuntime(form.value.id, formBody()) : await createRuntime(formBody()); showNotice('success', result.message || 'Runtime 已保存'); await load(); selected.value = runtimes.value.find(item => item.id === result.id) || runtimes.value[0] || null; editing.value = false } catch (err) { showNotice('error', err.message) } finally { saving.value = false } }
+async function deploy(item) { await runAction(() => deployRuntime(item.id), 'Runtime 已部署或更新') }
+async function health(item) { await runAction(() => healthCheckRuntime(item.id), '健康检查已完成') }
 function openUninstall(item) { uninstallTarget.value = item; deleteData.value = false; clearNotice() }
 async function confirmUninstall() {
   const item = uninstallTarget.value
   if (!item) return
-  await runAction(`/runtimes/${item.id}/uninstall${deleteData.value ? '?delete_data=true' : ''}`, 'Runtime 已卸载')
+  await runAction(() => uninstallRuntime(item.id, { deleteData: deleteData.value }), 'Runtime 已卸载')
   uninstallTarget.value = null
   deleteData.value = false
 }
-async function runAction(path, success) { working.value = true; clearNotice(); try { const result = await api.post(path); showNotice('success', result.message || success); await load() } catch (err) { showNotice('error', err.message) } finally { working.value = false } }
+async function runAction(action, success) { working.value = true; clearNotice(); try { const result = await action(); showNotice('success', result.message || success); await load() } catch (err) { showNotice('error', err.message) } finally { working.value = false } }
 function resetAgentGrants(grants = []) {
   const next = emptyAgentGrantState()
   for (const grant of grants) {
@@ -233,9 +248,9 @@ async function loadAgentState() {
     agentOperations.value = Array.isArray(operations) ? operations : []
   } catch (err) { showNotice('error', err.message) } finally { agentLoading.value = false }
 }
-async function installAgentTools() { await runAction(`/runtimes/${selected.value.id}/agent-tools/install`, 'Agent 工具已开始安装，Runtime 正在滚动重建') }
-async function updateAgentTools() { await runAction(`/runtimes/${selected.value.id}/agent-tools/update`, 'Agent 工具更新已提交，Runtime 正在滚动重建') }
-async function uninstallAgentTools() { await runAction(`/runtimes/${selected.value.id}/agent-tools/uninstall`, 'Agent 工具已卸载，Runtime 正在滚动重建') }
+async function installAgentTools() { await runAction(() => installRuntimeAgentTools(selected.value.id), 'Agent 工具已开始安装，Runtime 正在滚动重建') }
+async function updateAgentTools() { await runAction(() => updateRuntimeAgentTools(selected.value.id), 'Agent 工具更新已提交，Runtime 正在滚动重建') }
+async function uninstallAgentTools() { await runAction(() => uninstallRuntimeAgentTools(selected.value.id), 'Agent 工具已卸载，Runtime 正在滚动重建') }
 async function saveAgentGrants() {
   const grants = agentCapabilities.flatMap(capability => {
     if (!agentGrantState.value[capability.id].enabled) return [{ capability: capability.id, namespace: capability.clusterScoped ? '*' : selected.value.namespace, enabled: false }]
@@ -244,13 +259,13 @@ async function saveAgentGrants() {
   })
   working.value = true
   clearNotice()
-  try { const result = await api.put(`/runtimes/${selected.value.id}/agent-capability-grants`, { grants }); showNotice('success', result.message || 'Agent 能力授权已更新'); permissionModal.value = false; await loadAgentState() } catch (err) { showNotice('error', err.message) } finally { working.value = false }
+  try { const result = await saveAgentCapabilityGrants(selected.value.id, grants); showNotice('success', result.message || 'Agent 能力授权已更新'); permissionModal.value = false; await loadAgentState() } catch (err) { showNotice('error', err.message) } finally { working.value = false }
 }
 function toggleAllNamespaces(capabilityID, enabled) { agentGrantState.value[capabilityID].namespaces = enabled ? ['*'] : [] }
 async function resolveAgentOperation(operation, approve) {
   working.value = true
   clearNotice()
-  try { const result = await api.post(`/agent-operations/${operation.operation_id}/${approve ? 'approve' : 'reject'}`); showNotice('success', result.message || (approve ? 'Agent 操作已批准' : 'Agent 操作已拒绝')); await loadAgentState() } catch (err) { showNotice('error', err.message) } finally { working.value = false }
+  try { const result = await resolveAgentOperationRequest(operation.operation_id, approve); showNotice('success', result.message || (approve ? 'Agent 操作已批准' : 'Agent 操作已拒绝')); await loadAgentState() } catch (err) { showNotice('error', err.message) } finally { working.value = false }
 }
 onMounted(async () => { await loadCatalog(); if (!catalog.value.length) catalog.value = [{ runtime_type: 'nanobot', display_name: 'nanobot', supported_model_protocols: ['responses', 'anthropic'] }]; await load(); loadNodes() })
 </script>

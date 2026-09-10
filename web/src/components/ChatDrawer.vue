@@ -85,7 +85,7 @@ import DOMPurify from 'dompurify'
 import MarkdownIt from 'markdown-it'
 import taskLists from 'markdown-it-task-lists'
 import { Archive, ArchiveRestore, ClipboardCheck, Download, Eye, EyeOff, MoreHorizontal, Pencil, Shield, Trash2, X } from 'lucide-vue-next'
-import { agentOperations, archiveChatSession, chatMessages, chatSessions, chatStream, deleteChatSession, exportChatSession, renameChatSession, resolveAgentOperation } from '../api/index.js'
+import { agentOperations, archiveChatSession, chatMessages, chatSessions, chatStream, deleteChatSession, exportChatSession, renameChatSession, resolveAgentOperation } from '../api/runtimes.js'
 
 const props = defineProps({
   runtime: { type: Object, default: null },

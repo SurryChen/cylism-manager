@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { api } from './index.js'
-import { createCertificate, deleteCertificate, getCertificateResources, getCertificateStatus, installCertificateManager, updateIssuer } from './certificates.js'
+import { createCertificate, deleteCertificate, getCertificateOperations, getCertificateResources, getCertificateStatus, installCertificateManager, updateIssuer } from './certificates.js'
 
 vi.mock('./index.js', () => ({ api: { get: vi.fn(), post: vi.fn(), put: vi.fn(), delete: vi.fn() } }))
 
@@ -33,5 +33,11 @@ describe('certificates api', () => {
     expect(api.put).toHaveBeenCalledWith('/certs/issuers/Issuer/prod/issuer', body, options)
     expect(api.delete).toHaveBeenCalledWith('/certs/prod/cert', undefined, options)
     expect(api.post).toHaveBeenCalledWith('/certs/install', undefined, options)
+  })
+
+  it('loads certificate operation resources with encoded identifiers and options', () => {
+    const options = { signal: new AbortController().signal }
+    getCertificateOperations('prod space', 'api/cert', options)
+    expect(api.get).toHaveBeenCalledWith('/certs/prod%20space/api%2Fcert/operations', options)
   })
 })
