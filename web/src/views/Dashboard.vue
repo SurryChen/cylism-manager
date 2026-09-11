@@ -171,6 +171,7 @@
 import { computed, onMounted } from 'vue'
 import { getAlertOverview, getDashboardOverview, getKubernetesDashboard } from '../api/dashboard.js'
 import { useAsyncResource } from '../composables/useAsyncResource.js'
+import { formatShortDate as formatDate, formatShortDateTime as formatTime } from '../utils/formatters.js'
 
 const dashboard = useAsyncResource(getDashboardOverview, {})
 const kubernetesDashboard = useAsyncResource(getKubernetesDashboard)
@@ -228,8 +229,6 @@ function k8sReadyMetric(readyKey, totalKey) {
   return `${k8sStats.value[readyKey]}/${k8sStats.value[totalKey]}`
 }
 
-function formatDate(d) { if (!d) return '-'; return new Date(d).toLocaleDateString('zh-CN', { month:'short', day:'numeric', year:'numeric' }) }
-function formatTime(d) { if (!d) return '-'; return new Date(d).toLocaleString('zh-CN', { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' }) }
 function actionBadge(a) { const m = { create:'badge-online',issue:'badge-online',renew:'badge-online',delete:'badge-danger',revoke:'badge-danger',deploy:'badge-deploying' }; return m[a]||'' }
 function actionLabel(a) { const m = { create:'创建',update:'更新',delete:'删除',deploy:'部署',issue:'签发',renew:'续期',revoke:'吊销',reload:'重载',generate:'生成' }; return m[a]||a }
 function resourceLabel(r) { const m = { server:'服务器',site:'站点',cert:'证书',nginx:'NGINX' }; return m[r]||r }

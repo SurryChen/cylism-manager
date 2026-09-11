@@ -57,6 +57,7 @@ import { getProjects } from '../../api/applications.js'
 import { claimManagedDomain, createManagedDomain, deleteManagedDomain, getClaimableDomains, getDomainOptions, getImportableCertificates, getManagedDomains, importManagedDomainCertificate, retryManagedDomainCertificate, updateManagedDomain } from '../../api/domains.js'
 import { useAsyncResource } from '../../composables/useAsyncResource.js'
 import { usePolling } from '../../composables/usePolling.js'
+import { formatDateTime as formatDate } from '../../utils/formatters.js'
 
 const router = useRouter()
 const route = useRoute()
@@ -102,7 +103,6 @@ async function remove(domain){ if(domain.application_count > 0) return; const su
 function certificateLabel(domain){ if(!domain.namespace) return '未绑定'; return domain.certificate?.status === 'Ready' ? '已就绪' : domain.certificate?.status === 'Failed' ? '签发失败' : '签发中' }
 function certificateClass(domain){ return certificateLabel(domain) === '已就绪' ? 'badge-online' : certificateLabel(domain) === '签发失败' ? 'badge-danger' : 'badge-deploying' }
 function certificateReason(domain){ return domain.certificate?.reason || domain.certificate_error || '' }
-function formatDate(value){ return value ? new Date(value).toLocaleString('zh-CN') : '-' }
 function shouldPollStatus(domain){ return domain.namespace && domain.certificate_ownership !== 'imported' && (domain.certificate?.status === 'Issuing' || domain.certificate_error === '证书尚未创建') }
 function syncStatusPolling(){ const pending = route.query.unassigned !== 'true' && domains.value.some(shouldPollStatus); if (pending) statusPolling.start(); else statusPolling.stop() }
 onMounted(load)

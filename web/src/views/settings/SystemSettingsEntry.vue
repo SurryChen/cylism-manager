@@ -89,6 +89,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { adoptPlatformIngress as adoptPlatformIngressRequest, getPlatformCertificates, getPlatformEndpoint, reconcilePlatformEndpoint as reconcilePlatformEndpointRequest, updatePlatformEndpoint } from '../../api/settings.js'
 import { useAsyncResource } from '../../composables/useAsyncResource.js'
+import { formatDateTime } from '../../utils/formatters.js'
 
 const platformEndpoint = ref({ endpoint: {}, state: 'not_configured', ingress_ready: false })
 const endpointForm = ref({ hostname: '', certificate_name: '' })
@@ -176,12 +177,6 @@ async function reconcilePlatformEndpoint() {
     syncEndpoint(await reconcilePlatformEndpointRequest())
     endpointMessage.value = '平台入口已重新同步。'
   } catch (e) { endpointError.value = e.message || '重新同步平台入口失败' } finally { syncingEndpoint.value = false }
-}
-
-function formatDateTime(value) {
-  if (!value) return '-'
-  const date = new Date(value)
-  return Number.isNaN(date.getTime()) ? '-' : date.toLocaleString('zh-CN', { hour12: false })
 }
 
 defineExpose({ refresh })

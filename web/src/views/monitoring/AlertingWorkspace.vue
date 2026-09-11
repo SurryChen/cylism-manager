@@ -146,6 +146,7 @@ import {
   testAlertingNotification,
 } from '../../api/alerting.js'
 import { useAsyncResource } from '../../composables/useAsyncResource.js'
+import { formatDateTime as formatTime } from '../../utils/formatters.js'
 
 const props = defineProps({ nodes: { type: Array, default: () => [] }, monitoringReady: Boolean, metricsNodeName: { type: String, default: '' } })
 const emit = defineEmits(['navigate'])
@@ -224,7 +225,6 @@ function alertCurrentValue(alert) { return alert.annotations?.current_value || '
 function alertThreshold(alert) { return alert.annotations?.threshold || '' }
 function alertTarget(alert) { return alert.labels?.node || (alert.labels?.namespace && alert.labels?.pod ? `${alert.labels.namespace}/${alert.labels.pod}` : '') }
 function alertKey(alert) { return `${alert.labels?.alertname || ''}-${alertTarget(alert)}-${alert.startsAt || ''}` }
-function formatTime(value) { return value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '-' }
 function renderReportMarkdown(content) {
   return DOMPurify.sanitize(reportMarkdown.render(String(content || '')), { USE_PROFILES: { html: true } })
 }

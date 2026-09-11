@@ -141,6 +141,7 @@ import EmptyState from '../../components/EmptyState.vue'
 import FeedbackBanner from '../../components/FeedbackBanner.vue'
 import PageHeader from '../../components/PageHeader.vue'
 import SectionHeading from '../../components/SectionHeading.vue'
+import { formatDateTime as formatTime } from '../../utils/formatters.js'
 
 const props = defineProps({ section: { type: String, default: 'workspace' } })
 const router = useRouter()
@@ -232,7 +233,6 @@ function releaseBadge(status) { return status === 'succeeded' ? 'badge-online' :
 function releaseLabel(status) { return status === 'succeeded' ? '成功' : status === 'failed' ? '失败' : '发布中' }
 function runtimeBadge(status) { return status === 'running' ? 'badge-online' : status === 'deploying' ? 'badge-deploying' : status === 'not_released' || status === 'unknown' ? 'badge-offline' : 'badge-danger' }
 function runtimeLabel(status) { return ({ running: '运行中', deploying: '发布中', degraded: '异常', unavailable: '不可用', not_released: '未发布', unknown: '未知' })[status] || '未知' }
-function formatTime(value) { return value ? new Date(value).toLocaleString() : '-' }
 function applicationCount(projectID) { return applications.value.filter(app => app.project_id === projectID).length }
 
 async function fetchApplications(scoped = false) {

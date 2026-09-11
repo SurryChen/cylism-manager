@@ -23,6 +23,7 @@ import { computed, defineComponent, h, onMounted, ref, watch } from 'vue'
 import { RefreshCw } from 'lucide-vue-next'
 import { getDiskGrowth } from '../../api/monitoring.js'
 import { useAsyncResource } from '../../composables/useAsyncResource.js'
+import { formatBytes } from '../../utils/formatters.js'
 
 const props = defineProps({ nodes: { type: Array, default: () => [] } })
 
@@ -62,15 +63,6 @@ function nodeLabel(item) { return item.display_name || item.name }
 function warningText(warnings) {
   const labels = { mounts: '节点挂载点', pvcs: 'PVC' }
   return Object.entries(warnings || {}).map(([key, message]) => `${labels[key] || key} 查询失败：${message}`).join('；')
-}
-function formatBytes(value) {
-  const bytes = Number(value) || 0
-  if (bytes < 1024) return `${bytes.toFixed(0)} B`
-  const units = ['KiB', 'MiB', 'GiB', 'TiB']
-  let amount = bytes
-  let index = -1
-  do { amount /= 1024; index += 1 } while (amount >= 1024 && index < units.length - 1)
-  return `${amount >= 10 ? amount.toFixed(0) : amount.toFixed(1)} ${units[index]}`
 }
 async function load() {
   error.value = ''

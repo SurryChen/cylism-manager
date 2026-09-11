@@ -88,6 +88,7 @@ import { computed, onMounted, ref } from 'vue'
 import { createPlatformRelease, generatePlatformWebhookSecret as generatePlatformWebhookSecretRequest, getPlatformStatus, rollbackPlatformRelease as rollbackPlatformReleaseRequest, updatePlatformImagePrefix } from '../../api/settings.js'
 import { useActionState } from '../../composables/useActionState.js'
 import { useAsyncResource } from '../../composables/useAsyncResource.js'
+import { formatDateTime } from '../../utils/formatters.js'
 
 const platform = ref({ webhook_configured: false, image_prefix: '', deployment: null, releases: [] })
 const platformImagePrefix = ref('')
@@ -171,12 +172,6 @@ async function rollbackPlatformRelease(release) {
   } finally {
     rollingBack.value = 0
   }
-}
-
-function formatDateTime(value) {
-  if (!value) return '-'
-  const date = new Date(value)
-  return Number.isNaN(date.getTime()) ? '-' : date.toLocaleString('zh-CN', { hour12: false })
 }
 
 defineExpose({ refresh })

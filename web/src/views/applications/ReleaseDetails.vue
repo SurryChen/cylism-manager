@@ -16,6 +16,7 @@ import { ArrowLeft } from 'lucide-vue-next'
 import { getApplication, getApplicationRelease, retryRelease as retryReleaseRequest, rollbackRelease as rollbackReleaseRequest } from '../../api/applications.js'
 import { useAsyncResource } from '../../composables/useAsyncResource.js'
 import { usePolling } from '../../composables/usePolling.js'
+import { formatDateTime as formatTime } from '../../utils/formatters.js'
 
 const props = defineProps({ applicationID: { type: String, required: true }, releaseID: { type: String, required: true } })
 const router = useRouter()
@@ -36,7 +37,6 @@ function operationBadge(status) { return status === 'success' ? 'badge-online' :
 function runtimeHealthy(runtime) { return runtime.tracking === 'exact' && runtime.pods?.length > 0 && runtime.pods.every(pod => pod.ready) && !runtime.diagnostic }
 function runtimeBadge(runtime) { if (runtime.tracking !== 'exact') return 'badge-offline'; return runtimeHealthy(runtime) ? 'badge-online' : 'badge-danger' }
 function runtimeLabel(runtime) { if (runtime.tracking === 'legacy_untracked') return '历史发布未关联'; if (runtime.tracking === 'unavailable') return '运行态不可用'; if (!runtime.pods?.length) return '暂无 Pod'; return runtimeHealthy(runtime) ? '运行正常' : '需要处理' }
-function formatTime(value) { return value ? new Date(value).toLocaleString() : '-' }
 function stopPolling() { releasePolling.stop() }
 function startPolling() { if (!release.value) return; releasePolling.stop(); releasePolling.start({ interval: ['succeeded', 'failed', 'rolled_back'].includes(release.value.status) ? 5000 : 2000 }) }
 async function loadRelease() { readError.value = ''; const result = await releaseResource.refresh(); if (result) { application.value = result.applicationResult.application; release.value = result.releaseResult; startPolling() } else if (releaseResource.error.value) { readError.value = releaseResource.error.value.message || '加载发布详情失败'; stopPolling() } }

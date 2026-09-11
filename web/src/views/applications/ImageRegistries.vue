@@ -29,6 +29,7 @@ import { ArrowLeft, RefreshCw } from 'lucide-vue-next'
 import { useRoute, useRouter } from 'vue-router'
 import { createImageRegistry, deleteImageRegistry, getImageRegistryResources, updateImageRegistry, verifyImageRegistry } from '../../api/image-registries.js'
 import { useAsyncResource } from '../../composables/useAsyncResource.js'
+import { formatDateTime as formatTime } from '../../utils/formatters.js'
 
 const registries = ref([])
 const projects = ref([])
@@ -47,7 +48,6 @@ function newRegistryForm() { return { name: '', endpoint: '', verification_image
 function authLabel(type) { return type === 'basic' ? '账号密码' : type === 'token' ? 'Token' : '匿名访问' }
 function verificationLabel(status) { return status === 'succeeded' ? '连通' : status === 'failed' ? '检测失败' : '未检测' }
 function verificationBadge(status) { return status === 'succeeded' ? 'badge-online' : status === 'failed' ? 'badge-danger' : 'badge-offline' }
-function formatTime(value) { return value ? new Date(value).toLocaleString() : '-' }
 async function fetchData() { error.value = ''; const result = await registryResource.refresh(); if (result) { registries.value = result[0] || []; projects.value = result[1] || [] } else if (registryResource.error.value) error.value = registryResource.error.value.message || '加载镜像仓库失败'; loaded.value = true }
 function openCreate() { editingRegistry.value = null; form.value = newRegistryForm(); showModal.value = true }
 function openEdit(registry) { editingRegistry.value = registry; form.value = { name: registry.name, endpoint: registry.endpoint, verification_image: registry.verification_image || '', auth_type: registry.auth_type, username: registry.username || '', credential: '', enabled: registry.enabled, project_ids: (registry.projects || []).map(project => project.id) }; showModal.value = true }

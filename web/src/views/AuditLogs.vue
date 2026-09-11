@@ -129,6 +129,7 @@ import BaseModal from '../components/BaseModal.vue'
 import EmptyState from '../components/EmptyState.vue'
 import FeedbackBanner from '../components/FeedbackBanner.vue'
 import PageHeader from '../components/PageHeader.vue'
+import { formatShortDateTime as formatTime } from '../utils/formatters.js'
 
 const pageSize = 20
 const logs = ref([])
@@ -193,11 +194,6 @@ function openDetail(log) {
 
 function closeDetail() {
   selectedLog.value = null
-}
-
-function formatTime(d) {
-  if (!d) return '-'
-  return new Date(d).toLocaleString('zh-CN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
 }
 
 function actionLabel(a) {

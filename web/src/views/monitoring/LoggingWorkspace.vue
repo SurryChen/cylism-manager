@@ -66,6 +66,7 @@ import { RefreshCw, Settings2, X } from 'lucide-vue-next'
 import { getApplications, getProjects } from '../../api/applications.js'
 import { getLoggingFilters, getLoggingStatus, installLogging, queryLogs as requestLogs, saveLoggingConfig, uninstallLogging } from '../../api/logging.js'
 import { useAsyncResource } from '../../composables/useAsyncResource.js'
+import { formatDateTime as formatTime } from '../../utils/formatters.js'
 
 const props = defineProps({ nodes: { type: Array, default: () => [] }, storageClasses: { type: Array, default: () => [] } })
 
@@ -207,7 +208,6 @@ async function uninstall() {
   uninstallError.value = ''
   try { await uninstallLogging(); confirmUninstall.value = false; lines.value = []; queried.value = false; await refresh() } catch (e) { uninstallError.value = e.message || '卸载日志采集失败' } finally { uninstalling.value = false }
 }
-function formatTime(value) { return value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '-' }
 function lineContext(labels = {}) { return [labels.namespace, labels.pod, labels.container].filter(Boolean).join(' / ') || '容器日志' }
 </script>
 

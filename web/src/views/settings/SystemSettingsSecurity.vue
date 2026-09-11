@@ -66,6 +66,7 @@
 import { onMounted, ref } from 'vue'
 import { createTemporaryToken as createTemporaryTokenRequest, deleteTemporaryToken, getTemporaryTokens } from '../../api/settings.js'
 import { useAsyncResource } from '../../composables/useAsyncResource.js'
+import { formatDateTime } from '../../utils/formatters.js'
 
 const temporaryTokens = ref([])
 const generatedTemporaryToken = ref('')
@@ -116,12 +117,6 @@ async function revokeTemporaryToken(item) {
 
 async function copyTemporaryToken() {
   if (generatedTemporaryToken.value) await navigator.clipboard?.writeText(generatedTemporaryToken.value)
-}
-
-function formatDateTime(value) {
-  if (!value) return '-'
-  const date = new Date(value)
-  return Number.isNaN(date.getTime()) ? '-' : date.toLocaleString('zh-CN', { hour12: false })
 }
 
 defineExpose({ refresh })
