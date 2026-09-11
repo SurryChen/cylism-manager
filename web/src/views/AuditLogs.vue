@@ -1,16 +1,14 @@
 <template>
   <div class="audit-page">
-    <div class="page-header audit-page-header">
-      <div>
-        <h1 class="page-title">审计日志</h1>
-        <p class="audit-copy">筛查用户、系统和自动化动作，支持资源、动作和关键字检索。</p>
-      </div>
-      <div class="audit-toolbar">
-        <span class="audit-summary">共 {{ total }} 条</span>
-        <span class="audit-summary">第 {{ currentPage }} / {{ totalPages }} 页</span>
-      </div>
-    </div>
-    <div v-if="error" class="k8s-banner k8s-banner-warn page-error">{{ error }}</div>
+    <PageHeader title="审计日志" description="筛查用户、系统和自动化动作，支持资源、动作和关键字检索。" class="audit-page-header">
+      <template #actions>
+        <div class="audit-toolbar">
+          <span class="audit-summary">共 {{ total }} 条</span>
+          <span class="audit-summary">第 {{ currentPage }} / {{ totalPages }} 页</span>
+        </div>
+      </template>
+    </PageHeader>
+    <FeedbackBanner v-if="error" tone="warning" :message="error" class="page-error" />
 
     <div class="card audit-card">
       <div class="audit-filter-panel">
@@ -52,8 +50,8 @@
         </div>
       </div>
 
-      <div v-if="loading" class="empty-state"><span class="empty-text">加载中...</span></div>
-      <div v-else-if="logs.length===0" class="empty-state"><span class="empty-icon">☰</span><span class="empty-text">暂无审计日志</span></div>
+      <EmptyState v-if="loading" variant="loading" message="加载中..." />
+      <EmptyState v-else-if="logs.length===0" icon="☰" message="暂无审计日志" />
       <div v-else class="table-wrap">
         <table class="data-table audit-table">
           <thead>
@@ -78,16 +76,15 @@
       </div>
     </div>
 
-    <Teleport to="body">
-      <div v-if="selectedLog" class="overlay audit-detail-overlay" @click.self="closeDetail">
-        <section class="modal audit-detail-modal" role="dialog" aria-modal="true" aria-labelledby="audit-detail-title">
-          <div class="audit-detail-header">
-            <div>
-              <h2 id="audit-detail-title" class="modal-title">审计详情</h2>
-              <p class="audit-copy">点击表格行后查看完整内容和结构化字段。</p>
-            </div>
-            <button class="icon-button" type="button" aria-label="关闭" @click="closeDetail">×</button>
-          </div>
+    <BaseModal
+      :open="!!selectedLog"
+      title="审计详情"
+      size="large"
+      dialog-class="audit-detail-modal"
+      overlay-class="audit-detail-overlay"
+      @close="closeDetail"
+    >
+          <p class="audit-copy">点击表格行后查看完整内容和结构化字段。</p>
 
           <div class="audit-detail-meta">
             <span class="badge" :class="actionBadge(selectedLog.action)">{{ actionLabel(selectedLog.action) }}</span>
@@ -117,12 +114,10 @@
             <pre class="audit-detail-pre">{{ selectedLog.detail || '-' }}</pre>
           </div>
 
-          <div class="modal-actions">
-            <button class="btn btn-primary" @click="closeDetail">关闭</button>
-          </div>
-        </section>
-      </div>
-    </Teleport>
+      <template #actions>
+        <button class="btn btn-primary" @click="closeDetail">关闭</button>
+      </template>
+    </BaseModal>
   </div>
 </template>
 
@@ -130,6 +125,10 @@
 import { computed, onMounted, ref } from 'vue'
 import { getAuditLogs } from '../api/audit.js'
 import { useAsyncResource } from '../composables/useAsyncResource.js'
+import BaseModal from '../components/BaseModal.vue'
+import EmptyState from '../components/EmptyState.vue'
+import FeedbackBanner from '../components/FeedbackBanner.vue'
+import PageHeader from '../components/PageHeader.vue'
 
 const pageSize = 20
 const logs = ref([])

@@ -1,15 +1,13 @@
 <template>
   <div>
-    <div class="page-header">
-      <div>
-        <h1 class="page-title">集群 DNS</h1>
-        <p class="page-subtitle">统一管理 CoreDNS 的外部解析上游；副本数和调度仍在系统组件中管理</p>
-      </div>
-      <button class="btn btn-primary" :disabled="loading" @click="load">刷新</button>
-    </div>
+    <PageHeader title="集群 DNS" description="统一管理 CoreDNS 的外部解析上游；副本数和调度仍在系统组件中管理">
+      <template #actions>
+        <button class="btn btn-primary" :disabled="loading" @click="load">刷新</button>
+      </template>
+    </PageHeader>
 
-    <div v-if="error" class="k8s-banner k8s-banner-warn section-gap">{{ error }}</div>
-    <div v-if="actionError" class="k8s-banner k8s-banner-warn section-gap">{{ actionError }}</div>
+    <FeedbackBanner v-if="error" tone="warning" :message="error" class="section-gap" />
+    <FeedbackBanner v-if="actionError" tone="warning" :message="actionError" class="section-gap" />
 
     <template v-if="loaded">
       <section class="dns-summary metric-grid section-gap" aria-label="集群 DNS 状态">
@@ -19,10 +17,11 @@
       </section>
 
       <section class="card section-gap">
-        <div class="section-heading">
-          <div><h2>外部 DNS 上游</h2><p>仅接受 IP 地址。保存时只替换 CoreDNS 根域的 forward 指令，其余 Corefile 保持不变。</p></div>
-          <button class="btn btn-sm" :disabled="saving || inheritedDNS" @click="openResetConfirm">恢复宿主机 DNS</button>
-        </div>
+        <SectionHeading title="外部 DNS 上游" description="仅接受 IP 地址。保存时只替换 CoreDNS 根域的 forward 指令，其余 Corefile 保持不变。">
+          <template #actions>
+            <button class="btn btn-sm" :disabled="saving || inheritedDNS" @click="openResetConfirm">恢复宿主机 DNS</button>
+          </template>
+        </SectionHeading>
         <form class="dns-form" @submit.prevent="openConfirm">
           <div v-for="(_, index) in resolvers" :key="index" class="resolver-row">
             <span class="resolver-index">{{ index + 1 }}</span>
@@ -38,37 +37,37 @@
       </section>
 
       <section class="card section-gap">
-        <div class="section-heading"><div><h2>CoreDNS 副本</h2><p>用于确认策略实际覆盖的 DNS 工作负载。</p></div></div>
+        <SectionHeading title="CoreDNS 副本" description="用于确认策略实际覆盖的 DNS 工作负载。" />
         <div v-if="data.pods?.length" class="pod-list">
           <div v-for="pod in data.pods" :key="pod.name" class="pod-row"><strong>{{ pod.name }}</strong><span>{{ pod.node || '-' }}</span><span>{{ pod.ip || '-' }}</span><span class="badge" :class="pod.ready ? 'badge-online' : 'badge-danger'">{{ pod.ready ? '就绪' : '未就绪' }}</span></div>
         </div>
-        <div v-else class="empty-inline">未发现 CoreDNS Pod</div>
+        <EmptyState v-else message="未发现 CoreDNS Pod" />
       </section>
 
       <section v-if="data.history?.length" class="card section-gap">
-        <div class="section-heading"><div><h2>策略历史</h2><p>回滚会以选中版本的上游创建一个新的策略版本。</p></div></div>
+        <SectionHeading title="策略历史" description="回滚会以选中版本的上游创建一个新的策略版本。" />
         <div class="history-list">
           <div v-for="policy in data.history" :key="policy.revision" class="history-row"><div><strong>版本 {{ policy.revision }}</strong><small>{{ policy.resolvers?.join('，') }}</small></div><button class="btn btn-sm" :disabled="saving || policy.revision === data.active_policy?.revision" @click="rollback(policy)">{{ policy.revision === data.active_policy?.revision ? '当前版本' : '回滚到此版本' }}</button></div>
         </div>
       </section>
     </template>
 
-    <div v-if="confirming" class="overlay" @click.self="confirming = false">
-      <div class="modal">
-        <h2 class="modal-title">应用集群 DNS 策略</h2>
-        <p class="confirm-copy">CoreDNS 将改用：{{ normalizedResolvers.join('，') }}。此操作影响所有通过集群 DNS 解析的工作负载。</p>
-        <p v-if="actionError" class="k8s-banner k8s-banner-warn">{{ actionError }}</p>
-        <div class="modal-actions"><button class="btn" @click="confirming = false">取消</button><button class="btn btn-primary" @click="apply">确认应用</button></div>
-      </div>
-    </div>
-    <div v-if="resetConfirming" class="overlay" @click.self="resetConfirming = false">
-      <div class="modal">
-        <h2 class="modal-title">恢复宿主机 DNS</h2>
-        <p class="confirm-copy">CoreDNS 将恢复为 <code>/etc/resolv.conf</code>，由各节点宿主机决定外部 DNS。此操作影响所有通过集群 DNS 解析的工作负载。</p>
-        <p v-if="actionError" class="k8s-banner k8s-banner-warn">{{ actionError }}</p>
-        <div class="modal-actions"><button class="btn" @click="resetConfirming = false">取消</button><button class="btn btn-primary" :disabled="saving" @click="reset">确认恢复</button></div>
-      </div>
-    </div>
+    <BaseModal :open="confirming" title="应用集群 DNS 策略" size="small" @close="confirming = false">
+      <p class="confirm-copy">CoreDNS 将改用：{{ normalizedResolvers.join('，') }}。此操作影响所有通过集群 DNS 解析的工作负载。</p>
+      <FeedbackBanner v-if="actionError" tone="warning" :message="actionError" />
+      <template #actions>
+        <button class="btn" @click="confirming = false">取消</button>
+        <button class="btn btn-primary" :disabled="saving" @click="apply">确认应用</button>
+      </template>
+    </BaseModal>
+    <BaseModal :open="resetConfirming" title="恢复宿主机 DNS" size="small" @close="resetConfirming = false">
+      <p class="confirm-copy">CoreDNS 将恢复为 <code>/etc/resolv.conf</code>，由各节点宿主机决定外部 DNS。此操作影响所有通过集群 DNS 解析的工作负载。</p>
+      <FeedbackBanner v-if="actionError" tone="warning" :message="actionError" />
+      <template #actions>
+        <button class="btn" @click="resetConfirming = false">取消</button>
+        <button class="btn btn-primary" :disabled="saving" @click="reset">确认恢复</button>
+      </template>
+    </BaseModal>
   </div>
 </template>
 
@@ -76,6 +75,11 @@
 import { computed, onMounted, ref } from 'vue'
 import { deleteClusterDNS, getClusterDNS, rollbackClusterDNS, updateClusterDNS } from '../../api/cluster-dns.js'
 import { useAsyncResource } from '../../composables/useAsyncResource.js'
+import BaseModal from '../../components/BaseModal.vue'
+import EmptyState from '../../components/EmptyState.vue'
+import FeedbackBanner from '../../components/FeedbackBanner.vue'
+import PageHeader from '../../components/PageHeader.vue'
+import SectionHeading from '../../components/SectionHeading.vue'
 
 const data = ref({ forwarding: [], pods: [], history: [], active_policy: null })
 const resolvers = ref([''])

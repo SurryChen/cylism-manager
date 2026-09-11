@@ -11,7 +11,7 @@
     </SectionTabsHeader>
 
     <main class="monitoring-content">
-      <div v-if="error" class="k8s-banner k8s-banner-warn section-gap">{{ error }}</div>
+      <FeedbackBanner v-if="error" tone="warning" :message="error" class="section-gap" />
 
       <section v-if="loaded && status?.state === 'not_installed'" class="card monitoring-install-card">
         <div class="card-header"><div><h2 class="card-title">VictoriaMetrics 未安装</h2><p class="status-copy">选择数据节点和容量后，平台将创建并管理专用存储卷及节点采集组件。</p></div><span class="badge badge-offline">未安装</span></div>
@@ -24,7 +24,7 @@
       </section>
 
       <template v-else-if="loaded && status">
-        <section v-if="!metricsAvailable" class="card wait-card"><div class="empty-state"><span class="empty-icon">◌</span><span class="empty-text">{{ status.message || '等待 VictoriaMetrics 存储实例就绪' }}</span></div></section>
+        <section v-if="!metricsAvailable" class="card wait-card"><EmptyState variant="loading" icon="◌" :message="status.message || '等待 VictoriaMetrics 存储实例就绪'" /></section>
 
         <template v-else-if="activeTab === 'overview'">
           <section class="metric-grid monitoring-summary section-gap">
@@ -35,7 +35,7 @@
             <article class="metric"><span>最高磁盘</span><strong>{{ formatPercent(highestDisk?.disk) }}</strong><small>{{ highestDisk?.name || '等待指标采集' }}</small></article>
           </section>
 
-          <section class="monitoring-section-heading section-gap"><div><h2>资源趋势</h2><p>按节点对比持续资源压力</p></div><div class="trend-controls"><RangePicker :range="trendRange" @select="trendRange = $event" /><div class="trend-node-picker"><button class="trend-node-trigger" type="button" :aria-expanded="nodeFilterOpen" @click="nodeFilterOpen = !nodeFilterOpen"><span>节点: {{ trendNodeSelectionLabel }}</span><ChevronDown :size="14" /></button><div v-if="nodeFilterOpen" class="trend-node-menu"><div class="trend-node-menu-actions"><button type="button" @click="selectAllTrendNodes">全选</button><button type="button" @click="clearTrendNodes">清空</button></div><label v-for="node in trendNodes" :key="node.name" class="trend-node-option"><input v-model="selectedTrendNodes" type="checkbox" :value="node.name" /><span>{{ displayNode(node) }}</span></label><p v-if="!trendNodes.length" class="empty-inline">暂无就绪节点</p></div></div></div></section>
+          <SectionHeading title="资源趋势" description="按节点对比持续资源压力" class="monitoring-section-heading section-gap"><template #actions><div class="trend-controls"><RangePicker :range="trendRange" @select="trendRange = $event" /><div class="trend-node-picker"><button class="trend-node-trigger" type="button" :aria-expanded="nodeFilterOpen" @click="nodeFilterOpen = !nodeFilterOpen"><span>节点: {{ trendNodeSelectionLabel }}</span><ChevronDown :size="14" /></button><div v-if="nodeFilterOpen" class="trend-node-menu"><div class="trend-node-menu-actions"><button type="button" @click="selectAllTrendNodes">全选</button><button type="button" @click="clearTrendNodes">清空</button></div><label v-for="node in trendNodes" :key="node.name" class="trend-node-option"><input v-model="selectedTrendNodes" type="checkbox" :value="node.name" /><span>{{ displayNode(node) }}</span></label><p v-if="!trendNodes.length" class="empty-inline">暂无就绪节点</p></div></div></div></template></SectionHeading>
           <section class="monitoring-trend-grid">
             <MetricTrendChart title="CPU 使用率" subtitle="5 分钟平均" unit="%" :threshold="85" :loading="trendsLoading" :series="filteredTrendSeries(nodeTrends.cpu)" />
             <MetricTrendChart title="内存使用率" subtitle="可用内存占比" unit="%" :threshold="90" :loading="trendsLoading" :series="filteredTrendSeries(nodeTrends.memory)" />
@@ -45,7 +45,7 @@
         </template>
 
         <template v-else-if="activeTab === 'workloads'">
-          <section class="monitoring-section-heading section-gap"><div><h2>工作负载资源</h2><p>按当前资源使用排序，定位最需要排查的 Pod</p></div><button class="icon-button" title="刷新工作负载指标" aria-label="刷新工作负载指标" :disabled="workloadsLoading" @click="loadWorkloads"><RefreshCw :size="16" :class="{ 'is-spinning': workloadsLoading }" /></button></section>
+          <SectionHeading title="工作负载资源" description="按当前资源使用排序，定位最需要排查的 Pod" class="monitoring-section-heading section-gap"><template #actions><button class="icon-button" title="刷新工作负载指标" aria-label="刷新工作负载指标" :disabled="workloadsLoading" @click="loadWorkloads"><RefreshCw :size="16" :class="{ 'is-spinning': workloadsLoading }" /></button></template></SectionHeading>
           <section class="monitoring-workload-grid"><article class="card"><div class="card-header"><div><h2 class="card-title">CPU 使用最高</h2><p class="status-copy">最近 5 分钟平均</p></div></div><WorkloadTable :rows="workloads.cpu" unit="m" :loading="workloadsLoading" /></article><article class="card"><div class="card-header"><div><h2 class="card-title">内存使用最高</h2><p class="status-copy">工作集内存</p></div></div><WorkloadTable :rows="workloads.memory" unit="MiB" :loading="workloadsLoading" /></article></section>
         </template>
 
@@ -78,6 +78,9 @@ import { getMonitoringDashboard, getMonitoringNodes, getMonitoringStatus, getMon
 import { useAsyncResource } from '../composables/useAsyncResource.js'
 import { usePolling } from '../composables/usePolling.js'
 import { useRoutedTab } from '../composables/useRoutedTab.js'
+import EmptyState from '../components/EmptyState.vue'
+import FeedbackBanner from '../components/FeedbackBanner.vue'
+import SectionHeading from '../components/SectionHeading.vue'
 import AlertingWorkspace from './monitoring/AlertingWorkspace.vue'
 import DiskGrowthWorkspace from './monitoring/DiskGrowthWorkspace.vue'
 import LoggingWorkspace from './monitoring/LoggingWorkspace.vue'

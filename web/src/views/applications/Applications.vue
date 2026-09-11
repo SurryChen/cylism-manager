@@ -1,26 +1,60 @@
 <template>
   <div @click="closeWorkspacePicker" @keydown.esc="closeWorkspacePicker">
-    <div class="page-header">
-      <div><h1 class="page-title">{{ pageMeta.title }}</h1><p class="page-subtitle">{{ pageMeta.subtitle }}</p></div>
-      <div v-if="section === 'workspace'" class="page-actions"><div class="workspace-context" @click.stop><div class="workspace-picker"><span class="context-picker-label">项目</span><button data-testid="workspace-project-trigger" type="button" class="context-picker-trigger" :class="{ 'is-open': activeWorkspacePicker === 'project' }" :aria-expanded="activeWorkspacePicker === 'project'" aria-haspopup="listbox" @click="toggleWorkspacePicker('project')"><span class="context-picker-value">{{ workspaceProject?.name || '选择项目' }}</span><ChevronDown :size="15" /></button><div v-if="activeWorkspacePicker === 'project'" data-testid="workspace-project-menu" class="context-picker-menu" role="listbox" aria-label="项目"><button v-for="project in projects" :key="project.id" type="button" class="context-picker-option" :class="{ 'is-selected': project.id === workspaceProjectID }" role="option" :aria-selected="project.id === workspaceProjectID" @click="selectWorkspaceProject(project.id)"><span><strong>{{ project.name }}</strong><small>{{ project.description || '未设置项目说明' }}</small></span><Check v-if="project.id === workspaceProjectID" :size="15" /></button><div v-if="!projects.length" class="context-picker-empty">暂无项目</div></div></div><div class="workspace-picker"><span class="context-picker-label">环境</span><button data-testid="workspace-environment-trigger" type="button" class="context-picker-trigger" :class="{ 'is-open': activeWorkspacePicker === 'environment' }" :aria-expanded="activeWorkspacePicker === 'environment'" aria-haspopup="listbox" :disabled="!workspaceProject" @click="toggleWorkspacePicker('environment')"><span class="context-picker-value">{{ workspaceEnvironment ? `${workspaceEnvironment.name} · ${workspaceEnvironment.namespace}` : '选择环境' }}</span><ChevronDown :size="15" /></button><div v-if="activeWorkspacePicker === 'environment'" data-testid="workspace-environment-menu" class="context-picker-menu context-picker-menu--environment" role="listbox" aria-label="环境"><button v-for="environment in workspaceProject?.environments || []" :key="environment.id" type="button" class="context-picker-option" :class="{ 'is-selected': environment.id === workspaceEnvironmentID }" role="option" :aria-selected="environment.id === workspaceEnvironmentID" @click="selectWorkspaceEnvironment(environment.id)"><span><strong>{{ environment.name }}</strong><small>{{ environment.namespace }}</small></span><Check v-if="environment.id === workspaceEnvironmentID" :size="15" /></button><div v-if="!(workspaceProject?.environments || []).length" class="context-picker-empty">该项目暂无环境</div></div></div></div></div>
-      <button v-else-if="section === 'projects'" class="btn btn-primary" @click="showProjectModal = true">+ 新建项目</button>
-    </div>
-    <div v-if="readError" data-testid="applications-read-error" class="k8s-banner k8s-banner-warn section-gap">⚠ {{ readError }}</div>
-    <div v-if="mutationError" data-testid="applications-mutation-error" class="k8s-banner k8s-banner-warn section-gap">⚠ {{ mutationError }}</div>
+    <PageHeader :title="pageMeta.title" :description="pageMeta.subtitle">
+      <template #actions>
+        <div v-if="section === 'workspace'" class="page-actions">
+          <div class="workspace-context" @click.stop>
+            <div class="workspace-picker">
+              <span class="context-picker-label">项目</span>
+              <button data-testid="workspace-project-trigger" type="button" class="context-picker-trigger" :class="{ 'is-open': activeWorkspacePicker === 'project' }" :aria-expanded="activeWorkspacePicker === 'project'" aria-haspopup="listbox" @click="toggleWorkspacePicker('project')">
+                <span class="context-picker-value">{{ workspaceProject?.name || '选择项目' }}</span>
+                <ChevronDown :size="15" />
+              </button>
+              <div v-if="activeWorkspacePicker === 'project'" data-testid="workspace-project-menu" class="context-picker-menu" role="listbox" aria-label="项目">
+                <button v-for="project in projects" :key="project.id" type="button" class="context-picker-option" :class="{ 'is-selected': project.id === workspaceProjectID }" role="option" :aria-selected="project.id === workspaceProjectID" @click="selectWorkspaceProject(project.id)">
+                  <span><strong>{{ project.name }}</strong><small>{{ project.description || '未设置项目说明' }}</small></span>
+                  <Check v-if="project.id === workspaceProjectID" :size="15" />
+                </button>
+                <div v-if="!projects.length" class="context-picker-empty">暂无项目</div>
+              </div>
+            </div>
+            <div class="workspace-picker">
+              <span class="context-picker-label">环境</span>
+              <button data-testid="workspace-environment-trigger" type="button" class="context-picker-trigger" :class="{ 'is-open': activeWorkspacePicker === 'environment' }" :aria-expanded="activeWorkspacePicker === 'environment'" aria-haspopup="listbox" :disabled="!workspaceProject" @click="toggleWorkspacePicker('environment')">
+                <span class="context-picker-value">{{ workspaceEnvironment ? `${workspaceEnvironment.name} · ${workspaceEnvironment.namespace}` : '选择环境' }}</span>
+                <ChevronDown :size="15" />
+              </button>
+              <div v-if="activeWorkspacePicker === 'environment'" data-testid="workspace-environment-menu" class="context-picker-menu context-picker-menu--environment" role="listbox" aria-label="环境">
+                <button v-for="environment in workspaceProject?.environments || []" :key="environment.id" type="button" class="context-picker-option" :class="{ 'is-selected': environment.id === workspaceEnvironmentID }" role="option" :aria-selected="environment.id === workspaceEnvironmentID" @click="selectWorkspaceEnvironment(environment.id)">
+                  <span><strong>{{ environment.name }}</strong><small>{{ environment.namespace }}</small></span>
+                  <Check v-if="environment.id === workspaceEnvironmentID" :size="15" />
+                </button>
+                <div v-if="!(workspaceProject?.environments || []).length" class="context-picker-empty">该项目暂无环境</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <button v-else-if="section === 'projects'" class="btn btn-primary" @click="showProjectModal = true">+ 新建项目</button>
+      </template>
+    </PageHeader>
+    <FeedbackBanner v-if="readError" data-testid="applications-read-error" tone="warning" :message="readError" />
+    <FeedbackBanner v-if="mutationError" data-testid="applications-mutation-error" tone="warning" :message="mutationError" />
 
     <template v-if="section === 'workspace'">
-      <div v-if="!workspaceReady && projectsLoaded" class="empty-state"><span class="empty-text">请选择项目与环境，或先创建部署目标</span><button class="btn btn-primary" @click="openProjectManagement">创建项目与环境</button></div>
+      <EmptyState v-if="!workspaceReady && projectsLoaded" variant="actionable" message="请选择项目与环境，或先创建部署目标">
+        <template #action><button class="btn btn-primary" @click="openProjectManagement">创建项目与环境</button></template>
+      </EmptyState>
       <template v-else-if="workspaceReady && workspaceOverview">
         <div class="overview-metrics workspace-metrics">
           <div class="metric"><span>应用</span><strong>{{ applications.length }}</strong></div><div class="metric"><span>运行中</span><strong>{{ workspaceRuntimeCounts.running }}</strong></div><div class="metric"><span>发布中</span><strong>{{ workspaceRuntimeCounts.deploying }}</strong></div><div class="metric"><span>异常服务</span><strong>{{ workspaceRuntimeCounts.attention }}</strong></div>
         </div>
-        <section class="workspace-section"><div class="section-heading"><div><h2>应用</h2><p>当前环境中的服务与入口</p></div><button class="btn btn-sm btn-primary" @click="openCreateApplication">创建应用</button></div>
+        <section class="workspace-section"><SectionHeading title="应用" description="当前环境中的服务与入口"><template #actions><button class="btn btn-sm btn-primary" @click="openCreateApplication">创建应用</button></template></SectionHeading>
       <div v-if="applicationsLoaded && applications.length > 0" class="card">
         <div class="table-wrap"><table class="data-table"><thead><tr><th>应用</th><th>运行状态</th><th>运行版本</th><th>最近发布</th><th>访问地址</th><th>操作</th></tr></thead><tbody>
           <tr v-for="app in applications" :key="app.id" class="clickable" @click="openDetails(app)"><td class="cell-primary">{{ app.name }}<small>{{ app.workload_kind === 'statefulset' ? 'StatefulSet' : 'Deployment' }}</small></td><td><span class="badge" :class="runtimeBadge(app.runtime?.status)">{{ runtimeLabel(app.runtime?.status) }}</span><small v-if="app.runtime?.total_pods" class="runtime-count">{{ app.runtime.ready_pods }}/{{ app.runtime.total_pods }} Pods</small></td><td>{{ app.active_release?.version || '-' }}</td><td>{{ app.latest_release ? formatTime(app.latest_release.created_at) : '-' }}<small v-if="app.latest_release" :class="['release-state', releaseBadge(app.latest_release.status)]">{{ releaseLabel(app.latest_release.status) }}</small></td><td><a v-if="app.endpoint_url" class="endpoint-link" :href="app.endpoint_url" target="_blank" rel="noopener noreferrer" @click.stop>{{ app.endpoint_url }}</a><span v-else-if="app.endpoint_access_mode === 'protected_console'" class="endpoint-protected">受保护控制台（请在详情页打开）</span><small v-if="app.endpoint_count > 1" class="endpoint-more">另有 {{ app.endpoint_count - 1 }} 个地址</small><span v-else-if="!app.endpoint_url && app.endpoint_access_mode !== 'protected_console'">集群内</span></td><td><button class="btn btn-sm" @click.stop="openRelease(app)">发布版本</button></td></tr>
         </tbody></table></div>
       </div>
-      <div v-else-if="applicationsLoaded" class="empty-state"><span class="empty-text">当前项目与环境下还没有应用</span></div></section>
+      <EmptyState v-else-if="applicationsLoaded" message="当前项目与环境下还没有应用" /></section>
         <div class="workspace-grid">
           <section class="workspace-section"><div class="section-heading"><div><h2>最近发布</h2><p>仅显示当前环境的最新 8 次发布</p></div></div><div v-if="workspaceRecentReleases.length" class="compact-list"><button v-for="release in workspaceRecentReleases" :key="release.id" class="list-row" @click="openWorkspaceRelease(release)"><span><strong>{{ release.application_name }}</strong><small>#{{ release.sequence }} · {{ release.image }} · {{ formatTime(release.created_at) }}</small></span><span class="badge" :class="releaseBadge(release.status)">{{ releaseLabel(release.status) }}</span></button></div><div v-else class="empty-inline">暂无发布记录</div></section>
           <section class="workspace-section"><div class="section-heading"><div><h2>受管域名</h2><p>证书和入口均归属当前环境</p></div><button class="btn btn-sm" @click="openDomains">管理域名</button></div><div v-if="workspaceDomains.length" class="compact-list"><button v-for="domain in workspaceDomains" :key="domain.id" class="list-row" @click="openDomains"><span><strong>{{ domain.hostname }}</strong><small>{{ domain.tls_secret_name || '等待 TLS Secret' }}</small></span><span class="badge" :class="domain.certificate?.status === 'Ready' ? 'badge-online' : 'badge-deploying'">{{ domain.certificate?.status === 'Ready' ? '已就绪' : '签发中' }}</span></button></div><div v-else class="empty-inline">尚未申请受管域名</div></section>
@@ -63,7 +97,15 @@
       <div class="modal-actions"><button type="button" class="btn" @click="closeProjectModal">取消</button><button class="btn btn-primary" :disabled="submitting">{{ submitting ? '保存中...' : editingProject ? '保存' : '创建项目' }}</button></div>
     </form></div></div>
 
-    <div v-if="projectDeleteTarget" class="overlay" @click.self="projectDeleteTarget = null"><div class="modal"><h2 class="modal-title">删除项目</h2><p class="confirm-copy">确认删除项目“{{ projectDeleteTarget.name }}”吗？该操作不可撤销。</p><div class="modal-actions"><button class="btn" @click="projectDeleteTarget = null">取消</button><button class="btn btn-danger" :disabled="submitting" @click="deleteProject">删除</button></div></div></div>
+    <ConfirmDialog
+      :open="!!projectDeleteTarget"
+      title="删除项目"
+      :message="projectDeleteTarget ? `确认删除项目“${projectDeleteTarget.name}”吗？该操作不可撤销。` : ''"
+      confirm-text="删除"
+      :busy="submitting"
+      @cancel="projectDeleteTarget = null"
+      @confirm="deleteProject"
+    />
 
     <Teleport to="body"><div v-if="releaseApp" class="overlay" @click.self="releaseApp = null"><div class="modal release-modal"><h2 class="modal-title">发布 {{ releaseApp.name }}</h2><form @submit.prevent="createRelease">
       <div v-if="releaseTemplates.length" class="form-group"><label class="form-label">上线模板</label><select v-model.number="releaseForm.template_id" class="form-select" required><option v-for="template in releaseTemplates" :key="template.id" :value="template.id">{{ template.name }}{{ template.is_default ? '（默认）' : '' }}</option></select></div>
@@ -94,6 +136,11 @@ import {
   updateProject,
 } from '../../api/applications.js'
 import { useAsyncResource } from '../../composables/useAsyncResource.js'
+import ConfirmDialog from '../../components/ConfirmDialog.vue'
+import EmptyState from '../../components/EmptyState.vue'
+import FeedbackBanner from '../../components/FeedbackBanner.vue'
+import PageHeader from '../../components/PageHeader.vue'
+import SectionHeading from '../../components/SectionHeading.vue'
 
 const props = defineProps({ section: { type: String, default: 'workspace' } })
 const router = useRouter()
