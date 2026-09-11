@@ -7,8 +7,8 @@
 
 <script setup>
 import { computed, defineAsyncComponent } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
 import SectionTabsHeader from '../../components/SectionTabsHeader.vue'
+import { useRoutedTab } from '../../composables/useRoutedTab.js'
 
 const Cluster = defineAsyncComponent(() => import('./Cluster.vue'))
 const NodeRegistryMirrors = defineAsyncComponent(() => import('./NodeRegistryMirrors.vue'))
@@ -16,8 +16,6 @@ const ClusterDNS = defineAsyncComponent(() => import('./ClusterDNS.vue'))
 const ChartRepositories = defineAsyncComponent(() => import('./ChartRepositories.vue'))
 const SystemComponents = defineAsyncComponent(() => import('./SystemComponents.vue'))
 
-const route = useRoute()
-const router = useRouter()
 const tabs = [
   { id: 'nodes', label: '节点', component: Cluster },
   { id: 'registry-mirrors', label: '节点镜像源', component: NodeRegistryMirrors },
@@ -25,12 +23,8 @@ const tabs = [
   { id: 'chart-repositories', label: 'Chart 仓库', component: ChartRepositories },
   { id: 'system-components', label: '系统组件', component: SystemComponents },
 ]
-const activeTab = computed(() => tabs.some(item => item.id === route.query.tab) ? route.query.tab : 'nodes')
+const { activeTab, selectTab } = useRoutedTab({ tabs, defaultTab: 'nodes', path: '/cluster' })
 const activeComponent = computed(() => tabs.find(item => item.id === activeTab.value)?.component || Cluster)
-
-function selectTab(tab) {
-  router.push({ path: '/cluster', query: { ...route.query, tab } })
-}
 </script>
 
 <style scoped>

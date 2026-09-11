@@ -8,11 +8,13 @@ vi.mock('../../utils/terminalRuntime.js', () => ({
 
 describe('PodTerminal', () => {
   it('lets users choose a container before connecting', async () => {
+    document.body.style.overflow = 'auto'
     const wrapper = mount(PodTerminal, {
       props: { pod: { namespace: 'project-demo', name: 'api-123', containers: ['api', 'sidecar'] } },
       global: { stubs: { Teleport: true } },
     })
 
+    expect(document.body.style.overflow).toBe('hidden')
     expect(wrapper.text()).toContain('该 Pod 包含多个容器')
     expect(wrapper.findAll('select option')).toHaveLength(3)
     expect(wrapper.find('button.btn-primary').element.disabled).toBe(true)
@@ -23,9 +25,12 @@ describe('PodTerminal', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('终端组件加载失败')
+    wrapper.unmount()
+    expect(document.body.style.overflow).toBe('auto')
   })
 
   it('emits close and cleans up when the terminal is closed', async () => {
+    document.body.style.overflow = 'auto'
     const wrapper = mount(PodTerminal, {
       props: { pod: { namespace: 'project-demo', name: 'api-123', containers: ['api', 'sidecar'] } },
       global: { stubs: { Teleport: true } },
@@ -34,5 +39,7 @@ describe('PodTerminal', () => {
     await wrapper.get('button[title="关闭终端"]').trigger('click')
 
     expect(wrapper.emitted('close')).toHaveLength(1)
+    expect(document.body.style.overflow).toBe('auto')
+    wrapper.unmount()
   })
 })

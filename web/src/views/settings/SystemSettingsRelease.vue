@@ -86,6 +86,7 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { createPlatformRelease, generatePlatformWebhookSecret as generatePlatformWebhookSecretRequest, getPlatformStatus, rollbackPlatformRelease as rollbackPlatformReleaseRequest, updatePlatformImagePrefix } from '../../api/settings.js'
+import { useActionState } from '../../composables/useActionState.js'
 import { useAsyncResource } from '../../composables/useAsyncResource.js'
 
 const platform = ref({ webhook_configured: false, image_prefix: '', deployment: null, releases: [] })
@@ -95,12 +96,15 @@ const platformActionMessage = ref('')
 const platformActionError = ref('')
 const platformReadError = ref('')
 const generatedSecret = ref('')
-const generatingSecret = ref(false)
-const savingPrefix = ref(false)
-const updatingPlatform = ref(false)
 const rollingBack = ref(0)
 const platformPrefixDirty = ref(false)
 const platformResource = useAsyncResource(({ signal }) => getPlatformStatus({ signal }), null)
+const generateSecretAction = useActionState()
+const savePrefixAction = useActionState()
+const manualUpdateAction = useActionState()
+const generatingSecret = generateSecretAction.running
+const savingPrefix = savePrefixAction.running
+const updatingPlatform = manualUpdateAction.running
 
 const latestAutomaticRelease = computed(() => (platform.value.releases || []).find(release => release.source === 'github') || null)
 
@@ -123,45 +127,36 @@ async function refresh({ syncForm = false } = {}) {
 }
 
 async function generatePlatformWebhookSecret() {
-  generatingSecret.value = true
   platformActionError.value = ''
   try {
-    generatedSecret.value = (await generatePlatformWebhookSecretRequest()).secret
+    generatedSecret.value = (await generateSecretAction.run(() => generatePlatformWebhookSecretRequest())).secret
     await refresh()
   } catch (e) {
     platformActionError.value = e.message || '生成平台 Webhook 密钥失败'
-  } finally {
-    generatingSecret.value = false
   }
 }
 
 async function savePlatformImagePrefix() {
-  savingPrefix.value = true
   platformActionError.value = ''
   try {
-    await updatePlatformImagePrefix({ image_prefix: platformImagePrefix.value })
+    await savePrefixAction.run(() => updatePlatformImagePrefix({ image_prefix: platformImagePrefix.value }))
     platformPrefixDirty.value = false
     await refresh({ syncForm: true })
   } catch (e) {
     platformActionError.value = e.message || '保存镜像前缀失败'
-  } finally {
-    savingPrefix.value = false
   }
 }
 
 async function manualPlatformUpdate() {
-  updatingPlatform.value = true
   platformActionMessage.value = ''
   platformActionError.value = ''
   try {
-    await createPlatformRelease({ image: manualImage.value })
+    await manualUpdateAction.run(() => createPlatformRelease({ image: manualImage.value }))
     manualImage.value = ''
     platformActionMessage.value = '平台更新已提交'
     await refresh()
   } catch (e) {
     platformActionError.value = e.message || '平台更新失败'
-  } finally {
-    updatingPlatform.value = false
   }
 }
 

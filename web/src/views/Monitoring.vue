@@ -73,11 +73,11 @@
 
 <script setup>
 import { computed, defineComponent, h, onMounted, onUnmounted, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
 import { ChevronDown, RefreshCw, Settings2, X } from 'lucide-vue-next'
 import { getMonitoringDashboard, getMonitoringNodes, getMonitoringStatus, getMonitoringTargets, getStorageClasses, installMonitoring, migrateMonitoringStorage, queryMonitoring, uninstallMonitoring } from '../api/monitoring.js'
 import { useAsyncResource } from '../composables/useAsyncResource.js'
 import { usePolling } from '../composables/usePolling.js'
+import { useRoutedTab } from '../composables/useRoutedTab.js'
 import AlertingWorkspace from './monitoring/AlertingWorkspace.vue'
 import DiskGrowthWorkspace from './monitoring/DiskGrowthWorkspace.vue'
 import LoggingWorkspace from './monitoring/LoggingWorkspace.vue'
@@ -91,13 +91,11 @@ const tabs = [
   { id: 'logs', label: '日志' },
   { id: 'alerts', label: '告警' },
 ]
-const route = useRoute()
-const router = useRouter()
 const trendRanges = ['1h', '6h', '24h', '7d']
 const status = ref(null)
 const nodes = ref([])
 const storageClasses = ref([])
-const activeTab = computed(() => tabs.some(item => item.id === route.query.tab) ? route.query.tab : 'overview')
+const { activeTab, selectTab } = useRoutedTab({ tabs, defaultTab: 'overview', path: '/monitoring' })
 const loaded = ref(false)
 const statusError = ref('')
 const trendError = ref('')
@@ -338,9 +336,6 @@ function highestNode(metric) {
 function filteredTrendSeries(series = []) { return series.filter(item => selectedTrendNodes.value.includes(item.label)) }
 function selectAllTrendNodes() { selectedTrendNodes.value = trendNodes.value.map(node => node.name) }
 function clearTrendNodes() { selectedTrendNodes.value = [] }
-function selectTab(tab) {
-  router.push({ path: '/monitoring', query: { ...route.query, tab } })
-}
 function navigateFromAlert(target) {
   if (target.node) {
     selectedTrendNodes.value = [target.node]

@@ -14,23 +14,17 @@
 
 <script setup>
 import { computed, defineAsyncComponent } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoutedTab } from '../../composables/useRoutedTab.js'
 
 const Sites = defineAsyncComponent(() => import('./Sites.vue'))
 const Certificates = defineAsyncComponent(() => import('./Certificates.vue'))
 
-const route = useRoute()
-const router = useRouter()
 const tabs = [
   { id: 'routes', label: '路由', component: Sites },
   { id: 'certificates', label: '证书', component: Certificates },
 ]
-const activeTab = computed(() => tabs.some(item => item.id === route.query.tab) ? route.query.tab : 'routes')
+const { activeTab, selectTab } = useRoutedTab({ tabs, defaultTab: 'routes', path: '/network' })
 const activeComponent = computed(() => tabs.find(item => item.id === activeTab.value)?.component || Sites)
-
-function selectTab(tab) {
-  router.push({ path: '/network', query: { ...route.query, tab } })
-}
 </script>
 
 <style scoped>

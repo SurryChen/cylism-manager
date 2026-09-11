@@ -31,6 +31,7 @@
 
 <script setup>
 import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { useBodyScrollLock } from '../../composables/useBodyScrollLock.js'
 import { loadTerminalRuntime } from '../../utils/terminalRuntime.js'
 
 const props = defineProps({ server: { type: Object, required: true } })
@@ -40,15 +41,14 @@ const status = ref('connecting')
 const error = ref('')
 let termInstance = null
 let termWs = null
+const bodyScrollLock = useBodyScrollLock(true)
 
 onMounted(() => {
-  document.body.style.overflow = 'hidden'
   nextTick(connect)
 })
 
 onBeforeUnmount(() => {
   dispose()
-  document.body.style.overflow = ''
 })
 
 function connect() {
@@ -142,7 +142,7 @@ function dispose() {
 
 function close() {
   dispose()
-  document.body.style.overflow = ''
+  bodyScrollLock.unlock()
   emit('close')
 }
 </script>

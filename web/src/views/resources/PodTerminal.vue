@@ -29,6 +29,7 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { X } from 'lucide-vue-next'
+import { useBodyScrollLock } from '../../composables/useBodyScrollLock.js'
 import { loadTerminalRuntime } from '../../utils/terminalRuntime.js'
 
 const props = defineProps({
@@ -46,15 +47,14 @@ const statusLabel = computed(() => ({ connecting: '连接中', connected: '已�
 let terminal = null
 let websocket = null
 let resizeObserver = null
+const bodyScrollLock = useBodyScrollLock(true)
 
 onMounted(() => {
-  document.body.style.overflow = 'hidden'
   if (status.value === 'connecting') connect()
 })
 
 onBeforeUnmount(() => {
   disposeTerminal()
-  document.body.style.overflow = ''
 })
 
 function connect() {
@@ -163,7 +163,7 @@ function disposeTerminal() {
 
 function close() {
   disposeTerminal()
-  document.body.style.overflow = ''
+  bodyScrollLock.unlock()
   emit('close')
 }
 </script>

@@ -14,25 +14,19 @@
 
 <script setup>
 import { computed, defineAsyncComponent } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoutedTab } from '../../composables/useRoutedTab.js'
 
 const Workloads = defineAsyncComponent(() => import('./Workloads.vue'))
 const Services = defineAsyncComponent(() => import('./Services.vue'))
 const Configs = defineAsyncComponent(() => import('./Configs.vue'))
 
-const route = useRoute()
-const router = useRouter()
 const tabs = [
   { id: 'workloads', label: '工作负载', component: Workloads },
   { id: 'services', label: '服务', component: Services },
   { id: 'configs', label: '配置', component: Configs },
 ]
-const activeTab = computed(() => tabs.some(item => item.id === route.query.tab) ? route.query.tab : 'workloads')
+const { activeTab, selectTab } = useRoutedTab({ tabs, defaultTab: 'workloads', path: '/resources' })
 const activeComponent = computed(() => tabs.find(item => item.id === activeTab.value)?.component || Workloads)
-
-function selectTab(tab) {
-  router.push({ path: '/resources', query: { ...route.query, tab } })
-}
 </script>
 
 <style scoped>

@@ -98,6 +98,7 @@ describe('SystemSettings view', () => {
     expect(notice.exists()).toBe(true)
     expect(notice.text()).toContain('平台更新失败')
     expect(notice.text()).toContain('平台镜像不属于允许的仓库前缀')
+    expect(wrapper.get('[data-testid="platform-manual-update"]').attributes('disabled')).toBeUndefined()
     wrapper.unmount()
   })
 
