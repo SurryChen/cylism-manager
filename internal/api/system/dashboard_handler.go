@@ -24,7 +24,7 @@ func (h *DashboardHandler) Get(c *gin.Context) {
 	}
 
 	expiringCerts, _ := h.store.ListExpiringCerts(30)
-	logs, _, _ := h.store.ListAuditLogs("", "", 10, 0)
+	logs, _, _ := h.store.ListAuditLogs("", "", "", 10, 0)
 
 	apiShared.Success(c, gin.H{
 		"stats":          apiShared.DashboardStatsDTO(stats),

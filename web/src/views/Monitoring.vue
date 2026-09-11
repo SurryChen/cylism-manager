@@ -11,7 +11,7 @@
     </SectionTabsHeader>
 
     <main class="monitoring-content">
-      <div v-if="error" class="k8s-banner k8s-banner-warn section-gap">{{ error }}</div>
+      <FeedbackBanner v-if="error" tone="warning" :message="error" class="section-gap" />
 
       <section v-if="loaded && status?.state === 'not_installed'" class="card monitoring-install-card">
         <div class="card-header"><div><h2 class="card-title">VictoriaMetrics 未安装</h2><p class="status-copy">选择数据节点和容量后，平台将创建并管理专用存储卷及节点采集组件。</p></div><span class="badge badge-offline">未安装</span></div>
@@ -24,7 +24,7 @@
       </section>
 
       <template v-else-if="loaded && status">
-        <section v-if="!metricsAvailable" class="card wait-card"><div class="empty-state"><span class="empty-icon">◌</span><span class="empty-text">{{ status.message || '等待 VictoriaMetrics 存储实例就绪' }}</span></div></section>
+        <section v-if="!metricsAvailable" class="card wait-card"><EmptyState variant="loading" icon="◌" :message="status.message || '等待 VictoriaMetrics 存储实例就绪'" /></section>
 
         <template v-else-if="activeTab === 'overview'">
           <section class="metric-grid monitoring-summary section-gap">
@@ -35,7 +35,7 @@
             <article class="metric"><span>最高磁盘</span><strong>{{ formatPercent(highestDisk?.disk) }}</strong><small>{{ highestDisk?.name || '等待指标采集' }}</small></article>
           </section>
 
-          <section class="monitoring-section-heading section-gap"><div><h2>资源趋势</h2><p>按节点对比持续资源压力</p></div><div class="trend-controls"><RangePicker :range="trendRange" @select="trendRange = $event" /><div class="trend-node-picker"><button class="trend-node-trigger" type="button" :aria-expanded="nodeFilterOpen" @click="nodeFilterOpen = !nodeFilterOpen"><span>节点: {{ trendNodeSelectionLabel }}</span><ChevronDown :size="14" /></button><div v-if="nodeFilterOpen" class="trend-node-menu"><div class="trend-node-menu-actions"><button type="button" @click="selectAllTrendNodes">全选</button><button type="button" @click="clearTrendNodes">清空</button></div><label v-for="node in trendNodes" :key="node.name" class="trend-node-option"><input v-model="selectedTrendNodes" type="checkbox" :value="node.name" /><span>{{ displayNode(node) }}</span></label><p v-if="!trendNodes.length" class="empty-inline">暂无就绪节点</p></div></div></div></section>
+          <SectionHeading title="资源趋势" description="按节点对比持续资源压力" class="monitoring-section-heading section-gap"><template #actions><div class="trend-controls"><RangePicker :range="trendRange" @select="trendRange = $event" /><div class="trend-node-picker"><button class="trend-node-trigger" type="button" :aria-expanded="nodeFilterOpen" @click="nodeFilterOpen = !nodeFilterOpen"><span>节点: {{ trendNodeSelectionLabel }}</span><ChevronDown :size="14" /></button><div v-if="nodeFilterOpen" class="trend-node-menu"><div class="trend-node-menu-actions"><button type="button" @click="selectAllTrendNodes">全选</button><button type="button" @click="clearTrendNodes">清空</button></div><label v-for="node in trendNodes" :key="node.name" class="trend-node-option"><input v-model="selectedTrendNodes" type="checkbox" :value="node.name" /><span>{{ displayNode(node) }}</span></label><p v-if="!trendNodes.length" class="empty-inline">暂无就绪节点</p></div></div></div></template></SectionHeading>
           <section class="monitoring-trend-grid">
             <MetricTrendChart title="CPU 使用率" subtitle="5 分钟平均" unit="%" :threshold="85" :loading="trendsLoading" :series="filteredTrendSeries(nodeTrends.cpu)" />
             <MetricTrendChart title="内存使用率" subtitle="可用内存占比" unit="%" :threshold="90" :loading="trendsLoading" :series="filteredTrendSeries(nodeTrends.memory)" />
@@ -45,7 +45,7 @@
         </template>
 
         <template v-else-if="activeTab === 'workloads'">
-          <section class="monitoring-section-heading section-gap"><div><h2>工作负载资源</h2><p>按当前资源使用排序，定位最需要排查的 Pod</p></div><button class="icon-button" title="刷新工作负载指标" aria-label="刷新工作负载指标" :disabled="workloadsLoading" @click="loadWorkloads"><RefreshCw :size="16" :class="{ 'is-spinning': workloadsLoading }" /></button></section>
+          <SectionHeading title="工作负载资源" description="按当前资源使用排序，定位最需要排查的 Pod" class="monitoring-section-heading section-gap"><template #actions><button class="icon-button" title="刷新工作负载指标" aria-label="刷新工作负载指标" :disabled="workloadsLoading" @click="loadWorkloads"><RefreshCw :size="16" :class="{ 'is-spinning': workloadsLoading }" /></button></template></SectionHeading>
           <section class="monitoring-workload-grid"><article class="card"><div class="card-header"><div><h2 class="card-title">CPU 使用最高</h2><p class="status-copy">最近 5 分钟平均</p></div></div><WorkloadTable :rows="workloads.cpu" unit="m" :loading="workloadsLoading" /></article><article class="card"><div class="card-header"><div><h2 class="card-title">内存使用最高</h2><p class="status-copy">工作集内存</p></div></div><WorkloadTable :rows="workloads.memory" unit="MiB" :loading="workloadsLoading" /></article></section>
         </template>
 
@@ -73,13 +73,18 @@
 
 <script setup>
 import { computed, defineComponent, h, onMounted, onUnmounted, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
 import { ChevronDown, RefreshCw, Settings2, X } from 'lucide-vue-next'
-import { api } from '../api/index.js'
-import AlertingWorkspace from '../components/AlertingWorkspace.vue'
-import DiskGrowthWorkspace from '../components/DiskGrowthWorkspace.vue'
-import LoggingWorkspace from '../components/LoggingWorkspace.vue'
-import MetricTrendChart from '../components/MetricTrendChart.vue'
+import { getMonitoringDashboard, getMonitoringNodes, getMonitoringStatus, getMonitoringTargets, getStorageClasses, installMonitoring, migrateMonitoringStorage, queryMonitoring, uninstallMonitoring } from '../api/monitoring.js'
+import { useAsyncResource } from '../composables/useAsyncResource.js'
+import { usePolling } from '../composables/usePolling.js'
+import { useRoutedTab } from '../composables/useRoutedTab.js'
+import EmptyState from '../components/EmptyState.vue'
+import FeedbackBanner from '../components/FeedbackBanner.vue'
+import SectionHeading from '../components/SectionHeading.vue'
+import AlertingWorkspace from './monitoring/AlertingWorkspace.vue'
+import DiskGrowthWorkspace from './monitoring/DiskGrowthWorkspace.vue'
+import LoggingWorkspace from './monitoring/LoggingWorkspace.vue'
+import MetricTrendChart from './monitoring/MetricTrendChart.vue'
 import SectionTabsHeader from '../components/SectionTabsHeader.vue'
 
 const tabs = [
@@ -89,24 +94,22 @@ const tabs = [
   { id: 'logs', label: '日志' },
   { id: 'alerts', label: '告警' },
 ]
-const route = useRoute()
-const router = useRouter()
 const trendRanges = ['1h', '6h', '24h', '7d']
 const status = ref(null)
 const nodes = ref([])
 const storageClasses = ref([])
-const activeTab = computed(() => tabs.some(item => item.id === route.query.tab) ? route.query.tab : 'overview')
+const { activeTab, selectTab } = useRoutedTab({ tabs, defaultTab: 'overview', path: '/monitoring' })
 const loaded = ref(false)
-const error = ref('')
+const statusError = ref('')
+const trendError = ref('')
+const queryError = ref('')
+const mutationError = ref('')
+const error = computed(() => mutationError.value || statusError.value || trendError.value || queryError.value)
 const installing = ref(false)
 const uninstalling = ref(false)
 const syncing = ref(false)
 const confirmUninstall = ref(false)
 const targets = ref(null)
-const targetsLoading = ref(false)
-const trendsLoading = ref(false)
-const workloadsLoading = ref(false)
-const querying = ref(false)
 const monitoringSettingsOpen = ref(false)
 const monitoringSettingsSaving = ref(false)
 const migrating = ref(false)
@@ -121,7 +124,26 @@ const workloads = ref({ cpu: [], memory: [] })
 const form = ref({ node_name: '', storage: '10Gi', storage_class_name: '', retention_days: 14 })
 const settingsForm = ref({ retention_days: 14 })
 const migrationForm = ref({ storage: '10Gi', storage_class_name: '' })
-let migrationPollTimer
+const monitoringStateResource = useAsyncResource(({ signal }) => Promise.all([
+  getMonitoringStatus({ signal }),
+  getMonitoringNodes({ signal }),
+  getStorageClasses({ signal }),
+]), null)
+const monitoringTargetsResource = useAsyncResource(({ signal }) => getMonitoringTargets({ signal }))
+const monitoringTrendsResource = useAsyncResource(({ signal }, range) => getMonitoringDashboard(range, { signal }))
+const monitoringWorkloadsResource = useAsyncResource(async ({ signal }) => {
+  const [cpu, memory] = await Promise.all([
+    queryMonitoring('topk(12, sum by (namespace, pod) (rate(container_cpu_usage_seconds_total{container!="",image!=""}[5m])) * 1000)', { signal }),
+    queryMonitoring('topk(12, sum by (namespace, pod) (container_memory_working_set_bytes{container!="",image!=""}) / 1024 / 1024)', { signal }),
+  ])
+  return { cpu, memory }
+})
+const monitoringQueryResource = useAsyncResource(({ signal }, queryText) => queryMonitoring(queryText, { signal }))
+const targetsLoading = monitoringTargetsResource.loading
+const trendsLoading = monitoringTrendsResource.loading
+const workloadsLoading = monitoringWorkloadsResource.loading
+const querying = monitoringQueryResource.loading
+const migrationPolling = usePolling(refresh, { interval: 2500 })
 
 const presets = [
   { label: '全部目标', query: 'up{job=~"kubernetes-(nodes|cadvisor)"}' },
@@ -179,27 +201,34 @@ const WorkloadTable = defineComponent({
 onMounted(async () => {
   await refresh()
 })
-onUnmounted(() => { if (migrationPollTimer) window.clearInterval(migrationPollTimer) })
+onUnmounted(migrationPolling.stop)
 watch([activeTab, trendRange], async () => {
+  if (activeTab.value !== 'overview') monitoringTrendsResource.cancel()
+  if (activeTab.value !== 'workloads') monitoringWorkloadsResource.cancel()
   if (metricsAvailable.value) await loadActiveData()
 })
 
 async function refresh() {
-  error.value = ''
-  try {
-    const [nextStatus, nodeList, classes] = await Promise.all([api.get('/monitoring/status'), api.get('/nodes'), api.get('/k8s/storage-classes')])
+  statusError.value = ''
+  mutationError.value = ''
+  const result = await monitoringStateResource.refresh()
+  if (result !== undefined) {
+    const [nextStatus, nodeList, classes] = result
     status.value = nextStatus
     nodes.value = nodeList || []
     storageClasses.value = classes || []
     if (!form.value.node_name) form.value.node_name = readyNodes.value[0]?.name || ''
     if (metricsAvailable.value) await loadActiveData()
     syncMigrationPolling()
-  } catch (e) { error.value = e.message || '加载监控状态失败' } finally { loaded.value = true }
+  } else if (monitoringStateResource.error.value) {
+    statusError.value = monitoringStateResource.error.value.message || '加载监控状态失败'
+  }
+  loaded.value = true
 }
 
 function syncMigrationPolling() {
-  if (status.value?.storage_migration?.stage === 'copying' && !migrationPollTimer) migrationPollTimer = window.setInterval(refresh, 2500)
-  if (status.value?.storage_migration?.stage !== 'copying' && migrationPollTimer) { window.clearInterval(migrationPollTimer); migrationPollTimer = undefined }
+  if (status.value?.storage_migration?.stage === 'copying') migrationPolling.start()
+  else migrationPolling.stop()
 }
 
 function displayNode(node) { return nodeDisplayName(node.name) }
@@ -207,23 +236,23 @@ function nodeDisplayName(name) { return nodes.value.find(node => node.name === n
 
 async function install() {
   installing.value = true
-  error.value = ''
-  try { status.value = await api.post('/monitoring/install', form.value); await refresh() } catch (e) { error.value = e.message || '安装 VictoriaMetrics 失败' } finally { installing.value = false }
+  mutationError.value = ''
+  try { status.value = await installMonitoring(form.value); await refresh() } catch (e) { mutationError.value = e.message || '安装 VictoriaMetrics 失败' } finally { installing.value = false }
 }
 
 async function uninstall() {
   uninstalling.value = true
-  error.value = ''
-  try { await api.delete('/monitoring'); confirmUninstall.value = false; targets.value = null; queryResult.value = ''; await refresh() } catch (e) { error.value = e.message || '卸载 VictoriaMetrics 失败' } finally { uninstalling.value = false }
+  mutationError.value = ''
+  try { await uninstallMonitoring(); confirmUninstall.value = false; targets.value = null; queryResult.value = ''; await refresh() } catch (e) { mutationError.value = e.message || '卸载 VictoriaMetrics 失败' } finally { uninstalling.value = false }
 }
 
 async function syncConfiguration() {
   syncing.value = true
-  error.value = ''
+  mutationError.value = ''
   try {
-    await api.post('/monitoring/install', { node_name: status.value.node_name, retention_days: status.value.retention_days })
+    await installMonitoring({ node_name: status.value.node_name, retention_days: status.value.retention_days })
     await refresh()
-  } catch (e) { error.value = e.message || '同步采集配置失败' } finally { syncing.value = false }
+  } catch (e) { mutationError.value = e.message || '同步采集配置失败' } finally { syncing.value = false }
 }
 
 function openMonitoringSettings() {
@@ -236,31 +265,32 @@ function openMonitoringSettings() {
 async function saveMonitoringConfig() {
   if (!status.value || !validRetentionDays.value) return
   monitoringSettingsSaving.value = true
-  error.value = ''
+  mutationError.value = ''
   try {
-    await api.post('/monitoring/install', {
+    await installMonitoring({
       node_name: status.value.node_name,
       retention_days: settingsForm.value.retention_days,
     })
     monitoringSettingsOpen.value = false
     await refresh()
-  } catch (e) { error.value = e.message || '更新监控运行配置失败' } finally { monitoringSettingsSaving.value = false }
+  } catch (e) { mutationError.value = e.message || '更新监控运行配置失败' } finally { monitoringSettingsSaving.value = false }
 }
 
 async function migrateLegacyStorage() {
   if (!status.value || status.value.storage_mode !== 'host_path' || !migrationForm.value.storage) return
   if (!window.confirm('迁移会停止 VictoriaMetrics，复制并校验历史数据后切换到系统 PVC。旧数据目录将保留，确定继续吗？')) return
   migrating.value = true
-  error.value = ''
+  mutationError.value = ''
   try {
-    status.value = await api.post('/monitoring/storage-migration', migrationForm.value)
+    status.value = await migrateMonitoringStorage(migrationForm.value)
     await refresh()
-  } catch (e) { error.value = e.message || '迁移 VictoriaMetrics 存储失败' } finally { migrating.value = false }
+  } catch (e) { mutationError.value = e.message || '迁移 VictoriaMetrics 存储失败' } finally { migrating.value = false }
 }
 
 async function loadTargets() {
-  targetsLoading.value = true
-  try { targets.value = await api.get('/monitoring/targets') } catch (e) { error.value = e.message || '读取采集状态失败' } finally { targetsLoading.value = false }
+  const result = await monitoringTargetsResource.refresh()
+  if (result !== undefined) targets.value = result
+  else if (monitoringTargetsResource.error.value) queryError.value = monitoringTargetsResource.error.value.message || '读取采集状态失败'
 }
 
 async function loadActiveData() {
@@ -269,9 +299,8 @@ async function loadActiveData() {
 }
 
 async function loadNodeTrends() {
-  trendsLoading.value = true
-  try {
-    const dashboard = await api.get(`/monitoring/dashboard?range=${trendRange.value}`)
+  const dashboard = await monitoringTrendsResource.refresh(trendRange.value)
+  if (dashboard !== undefined) {
     nodeTrends.value = { cpu: [], memory: [], disk: [], network: [], ...Object.fromEntries(Object.entries(dashboard?.trends || {}).map(([key, result]) => [key, matrixToSeries(result)])) }
     const available = trendNodes.value.map(node => node.name)
     if (!trendSelectionInitialized.value) {
@@ -280,18 +309,13 @@ async function loadNodeTrends() {
     } else {
       selectedTrendNodes.value = selectedTrendNodes.value.filter(name => available.includes(name))
     }
-  } catch (e) { error.value = e.message || '读取节点趋势失败' } finally { trendsLoading.value = false }
+  } else if (monitoringTrendsResource.error.value) trendError.value = monitoringTrendsResource.error.value.message || '读取节点趋势失败'
 }
 
 async function loadWorkloads() {
-  workloadsLoading.value = true
-  try {
-    const [cpu, memory] = await Promise.all([
-      api.get(`/monitoring/query?query=${encodeURIComponent('topk(12, sum by (namespace, pod) (rate(container_cpu_usage_seconds_total{container!="",image!=""}[5m])) * 1000)')}`),
-      api.get(`/monitoring/query?query=${encodeURIComponent('topk(12, sum by (namespace, pod) (container_memory_working_set_bytes{container!="",image!=""}) / 1024 / 1024)')}`),
-    ])
-    workloads.value = { cpu: vectorToWorkloads(cpu), memory: vectorToWorkloads(memory) }
-  } catch (e) { error.value = e.message || '读取工作负载指标失败' } finally { workloadsLoading.value = false }
+  const result = await monitoringWorkloadsResource.refresh()
+  if (result !== undefined) workloads.value = { cpu: vectorToWorkloads(result.cpu), memory: vectorToWorkloads(result.memory) }
+  else if (monitoringWorkloadsResource.error.value) trendError.value = monitoringWorkloadsResource.error.value.message || '读取工作负载指标失败'
 }
 
 function matrixToSeries(result) {
@@ -315,9 +339,6 @@ function highestNode(metric) {
 function filteredTrendSeries(series = []) { return series.filter(item => selectedTrendNodes.value.includes(item.label)) }
 function selectAllTrendNodes() { selectedTrendNodes.value = trendNodes.value.map(node => node.name) }
 function clearTrendNodes() { selectedTrendNodes.value = [] }
-function selectTab(tab) {
-  router.push({ path: '/monitoring', query: { ...route.query, tab } })
-}
 function navigateFromAlert(target) {
   if (target.node) {
     selectedTrendNodes.value = [target.node]
@@ -330,9 +351,11 @@ function formatRate(value) { return Number.isFinite(value) ? `${value.toFixed(2)
 function rangeLabel(range) { return ({ '1h': '最近 1 小时', '6h': '最近 6 小时', '24h': '最近 24 小时', '7d': '最近 7 天' }[range] || range) }
 
 async function runQuery(queryText) {
-  querying.value = true
-  error.value = ''
-  try { query.value = queryText; queryResult.value = JSON.stringify(await api.get(`/monitoring/query?query=${encodeURIComponent(queryText)}`), null, 2) } catch (e) { error.value = e.message || '查询指标失败' } finally { querying.value = false }
+  queryError.value = ''
+  query.value = queryText
+  const result = await monitoringQueryResource.refresh(queryText)
+  if (result !== undefined) queryResult.value = JSON.stringify(result, null, 2)
+  else if (monitoringQueryResource.error.value) queryError.value = monitoringQueryResource.error.value.message || '查询指标失败'
 }
 </script>
 

@@ -18,9 +18,10 @@ func NewAuditHandler(logs repository.AuditRepository) *AuditHandler {
 func (h *AuditHandler) List(c *gin.Context) {
 	resourceType := c.Query("resource_type")
 	action := c.Query("action")
+	keyword := c.Query("keyword")
 	limit, offset := apiShared.LimitOffset(c, 20, 100)
 
-	logs, total, err := h.logs.ListAuditLogs(resourceType, action, limit, offset)
+	logs, total, err := h.logs.ListAuditLogs(resourceType, action, keyword, limit, offset)
 	if err != nil {
 		apiShared.InternalError(c, err.Error())
 		return

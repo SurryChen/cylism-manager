@@ -1,5 +1,5 @@
 ## Purpose
-站点（域名）的创建、配置和 NGINX 重载管理。
+站点（域名）的创建、配置和 NGINX 重载管理，覆盖站点元数据、代理与静态资源规则、证书关联、配置同步以及运行状态反馈。
 ## Requirements
 ### Requirement: 站点增删改查
 系统 SHALL提供 API 端点以创建、查看、更新和删除 NGINX 站点配置，元数据包括域名、端口、SSL 状态、根路径、上游代理和自定义 location。
@@ -48,4 +48,3 @@
 #### Scenario: 响应使用统一格式
 - **WHEN** 调用该 capability 的任意 API
 - **THEN** 响应 body 必须是 `{"code": 0, "message": "ok", "data": ...}` 格式
-

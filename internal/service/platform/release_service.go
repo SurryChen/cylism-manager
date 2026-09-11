@@ -24,7 +24,7 @@ import (
 const (
 	WebhookSecretConfigKey = "platform_deploy_webhook_secret"
 	ImagePrefixConfigKey   = "platform_image_prefix"
-	DefaultImagePrefix     = "crpi-c5u9bb8i5qxw1m72.cn-guangzhou.personal.cr.aliyuncs.com/surrychen/cylism-manager"
+	DefaultImagePrefix     = "ghcr.io/surrychen/cylism-manager"
 	webhookMaxSkew         = 5 * time.Minute
 )
 

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"sync"
 	"time"
 
 	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
@@ -157,48 +158,69 @@ func (h *K8sHandler) Dashboard(c *gin.Context) {
 		return
 	}
 
-	nodes, err := h.k8s.ListNodeInfosContext(c.Request.Context())
-	nodeTotal := 0
-	if err == nil {
+	ctx := c.Request.Context()
+	var nodeTotal, nsCount, podTotal, podReady, deployTotal, deployReady, svcTotal int
+	var version string
+	var group sync.WaitGroup
+	group.Add(5)
+
+	go func() {
+		defer group.Done()
+		nodes, err := h.k8s.ListNodeInfosContext(ctx)
+		if err != nil {
+			return
+		}
 		nodeTotal = len(nodes)
-	}
-
-	nsCount := 0
-	if nsList, err := h.k8s.CoreV1().Namespaces().List(c.Request.Context(), metav1.ListOptions{}); err == nil {
-		nsCount = len(nsList.Items)
-	}
-
-	podTotal, podReady := 0, 0
-	if pods, pErr := h.k8s.CoreV1().Pods("").List(c.Request.Context(), metav1.ListOptions{}); pErr == nil {
+		if nodeTotal > 0 {
+			version = nodes[0].Version
+		}
+	}()
+	go func() {
+		defer group.Done()
+		namespaces, err := h.k8s.CoreV1().Namespaces().List(ctx, metav1.ListOptions{})
+		if err == nil {
+			nsCount = len(namespaces.Items)
+		}
+	}()
+	go func() {
+		defer group.Done()
+		pods, err := h.k8s.CoreV1().Pods("").List(ctx, metav1.ListOptions{})
+		if err != nil {
+			return
+		}
 		podTotal = len(pods.Items)
-		for _, p := range pods.Items {
-			if p.Status.Phase == "Running" {
+		for _, pod := range pods.Items {
+			if pod.Status.Phase == corev1.PodRunning {
 				podReady++
 			}
 		}
-	}
-
-	// 新增：Deployment 统计
-	deployTotal, deployReady := 0, 0
-	if deps, dErr := h.k8s.ListDeploymentsContext(c.Request.Context(), ""); dErr == nil {
-		deployTotal = len(deps)
-		for _, d := range deps {
-			if d.Ready == d.Replicas {
+	}()
+	go func() {
+		defer group.Done()
+		deployments, err := h.k8s.AppsV1().Deployments("").List(ctx, metav1.ListOptions{})
+		if err != nil {
+			return
+		}
+		deployTotal = len(deployments.Items)
+		for _, deployment := range deployments.Items {
+			replicas := int32(0)
+			if deployment.Spec.Replicas != nil {
+				replicas = *deployment.Spec.Replicas
+			}
+			if deployment.Status.ReadyReplicas == replicas {
 				deployReady++
 			}
 		}
-	}
+	}()
+	go func() {
+		defer group.Done()
+		services, err := h.k8s.CoreV1().Services("").List(ctx, metav1.ListOptions{})
+		if err == nil {
+			svcTotal = len(services.Items)
+		}
+	}()
 
-	// 新增：Service 统计
-	svcTotal := 0
-	if svcs, sErr := h.k8s.ListServicesContext(c.Request.Context(), ""); sErr == nil {
-		svcTotal = len(svcs)
-	}
-
-	version := ""
-	if nodeTotal > 0 {
-		version = nodes[0].Version
-	}
+	group.Wait()
 
 	apiShared.Success(c, map[string]interface{}{
 		"nodes_total":       nodeTotal,

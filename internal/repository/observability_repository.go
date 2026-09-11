@@ -17,7 +17,7 @@ type AlertRepository interface {
 
 type AuditRepository interface {
 	CreateAuditLog(*model.AuditLog) error
-	ListAuditLogs(string, string, int, int) ([]model.AuditLog, int64, error)
+	ListAuditLogs(string, string, string, int, int) ([]model.AuditLog, int64, error)
 }
 
 type SystemComponentRepository interface {
@@ -60,7 +60,7 @@ type OperationLogRepository interface {
 type DashboardRepository interface {
 	GetDashboardStats(int) (*model.DashboardStats, error)
 	ListExpiringCerts(int) ([]model.Cert, error)
-	ListAuditLogs(string, string, int, int) ([]model.AuditLog, int64, error)
+	ListAuditLogs(string, string, string, int, int) ([]model.AuditLog, int64, error)
 }
 
 var (

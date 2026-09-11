@@ -131,6 +131,43 @@ describe('RuntimeManagement', () => {
     expect(wrapper.text()).toContain('部署失败：权限修复超时')
   })
 
+  it('keeps the runtime form values when saving fails', async () => {
+    apiMocks.post.mockRejectedValueOnce(new Error('保存失败'))
+    const wrapper = mount(RuntimeManagement, { global: { stubs: { Teleport: true } } })
+    await flushPromises()
+    await wrapper.get('[data-testid="runtime-create"]').trigger('click')
+    await wrapper.get('input[placeholder="nanobot-main"]').setValue('retry-runtime')
+    await wrapper.get('input[placeholder="托管模式填写镜像地址"]').setValue('example/retry:v1')
+    await wrapper.get('.runtime-create-modal form').trigger('submit')
+    await flushPromises()
+
+    expect(wrapper.find('.runtime-create-modal').exists()).toBe(true)
+    expect(wrapper.get('input[placeholder="nanobot-main"]').element.value).toBe('retry-runtime')
+    expect(wrapper.get('input[placeholder="托管模式填写镜像地址"]').element.value).toBe('example/retry:v1')
+    expect(wrapper.text()).toContain('保存失败')
+  })
+
+  it('keeps the Agent permission dialog open when grant saving fails', async () => {
+    const enabledRuntime = { ...runtime(), agent_tool_enabled: true }
+    apiMocks.get.mockImplementation((path) => {
+      if (path === '/runtimes/catalog') return Promise.resolve([{ runtime_type: 'nanobot', display_name: 'nanobot', supported_model_protocols: ['responses', 'anthropic'] }])
+      if (path === '/nodes' || path === '/k8s/namespace-names') return Promise.resolve([])
+      if (path.endsWith('/agent-capability-grants') || path.endsWith('/agent-operations')) return Promise.resolve([])
+      return Promise.resolve([enabledRuntime])
+    })
+    apiMocks.put.mockRejectedValueOnce(new Error('授权失败'))
+    const wrapper = mount(RuntimeManagement, { global: { stubs: { Teleport: true } } })
+    await flushPromises()
+    await wrapper.get('.runtime-item').trigger('click')
+    await flushPromises()
+    await wrapper.get('.agent-permission-summary .btn').trigger('click')
+    await wrapper.findAll('.agent-permission-modal .btn').find(button => button.text() === '保存授权').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.agent-permission-modal').exists()).toBe(true)
+    expect(wrapper.text()).toContain('授权失败')
+  })
+
   it('installs the controlled CLI and saves valid Agent grant scopes', async () => {
     const enabledRuntime = { ...runtime(), agent_tool_enabled: true }
     apiMocks.get.mockImplementation((path) => {

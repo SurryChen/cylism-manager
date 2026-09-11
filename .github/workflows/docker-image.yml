@@ -4,7 +4,7 @@ on:
   pull_request:
     branches: [main]
   push:
-    branches: [main]
+    branches: [main, dev]
     tags:
       - "v*"
 
@@ -25,6 +25,7 @@ env:
 
 jobs:
   verify-go:
+    name: Backend verification
     runs-on: ubuntu-latest
     steps:
       - name: Check out source
@@ -42,7 +43,31 @@ jobs:
       - name: Go build
         run: go build ./...
 
+  verify-web:
+    name: Frontend verification
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm --prefix web ci
+
+      - name: Run frontend tests
+        run: npm --prefix web test
+
+      - name: Build frontend
+        run: npm --prefix web run build
+
   verify-helm:
+    name: Helm chart verification
     runs-on: ubuntu-latest
     steps:
       - name: Check out source
@@ -58,7 +83,8 @@ jobs:
         run: helm template cylism-manager charts/${{ env.CHART_NAME }} >/tmp/cylism-manager-rendered.yaml
 
   verify-image:
-    if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+    name: Container image verification
+    if: ${{ !startsWith(github.ref, 'refs/tags/v') && github.ref != 'refs/heads/dev' }}
     runs-on: ubuntu-latest
     steps:
       - name: Check out source
@@ -82,10 +108,123 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max,ignore-error=true
 
+  deploy-dev:
+    if: github.ref == 'refs/heads/dev'
+    runs-on: ubuntu-latest
+    needs: [verify-go, verify-web, verify-helm]
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Derive dev image tags
+        id: dev
+        run: |
+          short_sha="${GITHUB_SHA::12}"
+          image="${REGISTRY}/${IMAGE_NAME}:dev-${short_sha}"
+          echo "short-sha=${short_sha}" >> "$GITHUB_OUTPUT"
+          echo "image=${image}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push dev image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Dockerfile
+          push: true
+          provenance: false
+          sbom: false
+          build-args: |
+            GOPROXY=https://goproxy.cn,direct
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+          tags: |
+            ${{ steps.dev.outputs.image }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:dev
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max,ignore-error=true
+
+      - name: Trigger dev platform update
+        env:
+          CYLISM_DEV_DEPLOY_URL: ${{ secrets.CYLISM_DEV_DEPLOY_URL }}
+          CYLISM_DEV_DEPLOY_SECRET: ${{ secrets.CYLISM_DEV_DEPLOY_SECRET }}
+          CYLISM_DEV_DEPLOY_RESOLVE_IP: ${{ secrets.CYLISM_DEV_DEPLOY_RESOLVE_IP }}
+          DEV_IMAGE: ${{ steps.dev.outputs.image }}
+        run: |
+          [ -n "${CYLISM_DEV_DEPLOY_URL}" ] || { echo "CYLISM_DEV_DEPLOY_URL is required"; exit 1; }
+          [ -n "${CYLISM_DEV_DEPLOY_SECRET}" ] || { echo "CYLISM_DEV_DEPLOY_SECRET is required"; exit 1; }
+
+          parsed="$(CYLISM_DEV_DEPLOY_URL="${CYLISM_DEV_DEPLOY_URL}" python3 - <<'PY'
+          from urllib.parse import urlparse
+          import os
+
+          parsed = urlparse(os.environ["CYLISM_DEV_DEPLOY_URL"])
+          if not parsed.scheme or not parsed.hostname:
+              raise SystemExit("CYLISM_DEV_DEPLOY_URL must be an absolute URL")
+          port = parsed.port
+          if port is None:
+              port = 443 if parsed.scheme == "https" else 80
+          print(f"{parsed.hostname}\t{port}")
+          PY
+          )"
+          IFS=$'\t' read -r deploy_host deploy_port <<< "${parsed}"
+          resolve_arg=()
+          if [ -n "${CYLISM_DEV_DEPLOY_RESOLVE_IP}" ]; then
+            resolve_arg=(--resolve "${deploy_host}:${deploy_port}:${CYLISM_DEV_DEPLOY_RESOLVE_IP}")
+          fi
+
+          body="$(python3 - <<'PY'
+          import json
+          import os
+
+          print(json.dumps({
+              "image": os.environ["DEV_IMAGE"],
+              "commit_sha": os.environ["GITHUB_SHA"],
+              "run_id": os.environ["GITHUB_RUN_ID"],
+          }, separators=(",", ":")))
+          PY
+          )"
+          timestamp="$(date +%s)"
+          nonce="$(python3 - <<'PY'
+          import uuid
+
+          print(uuid.uuid4().hex)
+          PY
+          )"
+          signature="$(BODY="$body" TIMESTAMP="$timestamp" NONCE="$nonce" python3 - <<'PY'
+          import hashlib
+          import hmac
+          import os
+
+          message = (os.environ["TIMESTAMP"] + "." + os.environ["NONCE"] + ".").encode() + os.environ["BODY"].encode()
+          print(hmac.new(os.environ["CYLISM_DEV_DEPLOY_SECRET"].encode(), message, hashlib.sha256).hexdigest())
+          PY
+          )"
+
+          curl -fsS -X POST "${CYLISM_DEV_DEPLOY_URL}" \
+            -H "Content-Type: application/json" \
+            -H "X-Cylism-Timestamp: ${timestamp}" \
+            -H "X-Cylism-Nonce: ${nonce}" \
+            -H "X-Cylism-Signature: ${signature}" \
+            "${resolve_arg[@]}" \
+            --data "${body}"
+
   release:
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
-    needs: [verify-go, verify-helm]
+    needs: [verify-go, verify-web, verify-helm]
     permissions:
       contents: write
       packages: write
@@ -152,8 +291,6 @@ jobs:
           mkdir -p "${RELEASE_PACKAGE_DIR}/cylism-manager-${{ steps.version.outputs.version }}"
           tar_root="${RELEASE_PACKAGE_DIR}/cylism-manager-${{ steps.version.outputs.version }}"
           cp scripts/deploy-platform.sh "$tar_root/"
-          cp scripts/init-k3s.sh "$tar_root/"
-          cp scripts/install-tailscale.sh "$tar_root/"
           cp -R charts "$tar_root/"
           cp -R k8s "$tar_root/"
           cp config/config.example.yaml "$tar_root/"
