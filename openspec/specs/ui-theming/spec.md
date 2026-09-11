@@ -1,7 +1,7 @@
 # ui-theming Specification
 
 ## Purpose
-定义五套配色方案的切换、持久化与即时生效行为。
+定义五套配色方案的切换、持久化与即时生效行为，确保登录页和所有已认证页面共享设计令牌，并在不同系统明暗偏好下保持可读性与视觉一致性。
 
 ## Requirements
 ### Requirement: 配色选择完整性

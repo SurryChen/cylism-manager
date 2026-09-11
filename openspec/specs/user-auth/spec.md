@@ -1,5 +1,5 @@
 ## Purpose
-用户认证、JWT Token 管理和管理员初始化。
+用户认证、JWT Token 管理和管理员初始化，覆盖登录、刷新、退出、凭据校验、会话安全策略以及首次部署时的管理员账号配置流程。
 ## Requirements
 ### Requirement: 管理员登录
 系统 SHALL提供登录接口，验证用户名和密码后返回 JWT access token 和 refresh token。
@@ -59,4 +59,3 @@
 #### Scenario: 响应使用统一格式
 - **WHEN** 调用该 capability 的任意 API
 - **THEN** 响应 body 必须是 `{"code": 0, "message": "ok", "data": ...}` 格式
-

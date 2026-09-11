@@ -11,6 +11,7 @@ import (
 	k8sclient "github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/gin-gonic/gin"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
@@ -136,6 +137,53 @@ func TestNoK8s_AllEndpoints(t *testing.T) {
 		doNoK8s(t, "DELETE", "/api/k8s/ingresses/default/web", nil)
 		doNoK8s(t, "GET", "/api/k8s/ingress-controller", nil)
 	}()
+}
+
+func TestDashboardUsesLightweightClusterLists(t *testing.T) {
+	replicas := int32(2)
+	client := &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(
+		&corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{Name: "node-a"},
+			Status:     corev1.NodeStatus{NodeInfo: corev1.NodeSystemInfo{KubeletVersion: "v1.32.1+k3s1"}},
+		},
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "default"}},
+		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "ready", Namespace: "default"}, Status: corev1.PodStatus{Phase: corev1.PodRunning}},
+		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "pending", Namespace: "default"}, Status: corev1.PodStatus{Phase: corev1.PodPending}},
+		&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "ready", Namespace: "default"}, Spec: appsv1.DeploymentSpec{Replicas: &replicas}, Status: appsv1.DeploymentStatus{ReadyReplicas: 2}},
+		&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "pending", Namespace: "default"}, Spec: appsv1.DeploymentSpec{Replicas: &replicas}, Status: appsv1.DeploymentStatus{ReadyReplicas: 1}},
+		&corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "service-a", Namespace: "default"}},
+		&corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "service-b", Namespace: "default"}},
+	)}
+
+	response := serve(setupK8sTestRouter(client), httptest.NewRequest(http.MethodGet, "/api/k8s/dashboard", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", response.Code, response.Body.String())
+	}
+
+	var payload struct {
+		Data struct {
+			NodesTotal       int    `json:"nodes_total"`
+			PodsTotal        int    `json:"pods_total"`
+			PodsReady        int    `json:"pods_ready"`
+			DeploymentsTotal int    `json:"deployments_total"`
+			DeploymentsReady int    `json:"deployments_ready"`
+			ServicesTotal    int    `json:"services_total"`
+			Namespaces       int    `json:"namespaces"`
+			Version          string `json:"version"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if got := payload.Data; got.NodesTotal != 1 || got.PodsTotal != 2 || got.PodsReady != 1 || got.DeploymentsTotal != 2 || got.DeploymentsReady != 1 || got.ServicesTotal != 2 || got.Namespaces != 1 || got.Version != "v1.32.1+k3s1" {
+		t.Fatalf("unexpected dashboard data: %#v", got)
+	}
+
+	for _, action := range client.Clientset.(*k8sfake.Clientset).Actions() {
+		if action.GetResource().Resource == "endpointslices" || action.GetResource().Resource == "endpoints" {
+			t.Fatalf("dashboard must not query service endpoints: %#v", action)
+		}
+	}
 }
 
 func TestListNamespaceNamesDoesNotLoadResourceSummaries(t *testing.T) {

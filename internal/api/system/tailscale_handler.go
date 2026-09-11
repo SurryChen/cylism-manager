@@ -2,6 +2,7 @@ package system
 
 import (
 	"net/http"
+	"regexp"
 	"strings"
 
 	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
@@ -20,6 +21,8 @@ type TailscaleHandler struct {
 }
 
 type tailscaleRuntime = tailscaleservice.Runtime
+
+var tailscaleIPv4Pattern = regexp.MustCompile(`(?:\b\d{1,3}\.){3}\d{1,3}\b`)
 
 func NewTailscaleHandler(configs repository.SystemConfigRepository, encKey []byte) *TailscaleHandler {
 	return &TailscaleHandler{configs: configs, encKey: encKey, runtime: tailscaleservice.HostRuntime{}}
@@ -117,7 +120,7 @@ func (h *TailscaleHandler) Status(c *gin.Context) {
 	}
 
 	ipOut, _ := h.runtime.Run(ctx, "tailscale", "ip", "-4")
-	tsIP := strings.TrimSpace(string(ipOut))
+	tsIP := extractTailscaleIPv4(string(ipOut))
 
 	statusOut, _ := h.runtime.Run(ctx, "tailscale", "status")
 
@@ -127,6 +130,13 @@ func (h *TailscaleHandler) Status(c *gin.Context) {
 		"online":      tsIP != "",
 		"status_raw":  string(statusOut),
 	})
+}
+
+func extractTailscaleIPv4(output string) string {
+	if match := tailscaleIPv4Pattern.FindString(output); match != "" {
+		return match
+	}
+	return strings.TrimSpace(output)
 }
 
 // InstallScript 返回脱敏的一键安装命令 GET /api/tailscale/install-script

@@ -31,7 +31,8 @@
 <script setup>
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { setTokens, api } from '../api/index.js'
+import { setTokens } from '../api/index.js'
+import { login as loginWithCredentials, temporaryLogin } from '../api/auth.js'
 
 const router = useRouter()
 const username = ref('')
@@ -45,8 +46,8 @@ async function login() {
   loading.value = true
   try {
     const data = temporaryToken.value
-      ? await api.post('/auth/temporary-login', { token: temporaryToken.value })
-      : await api.post('/auth/login', { username: username.value, password: password.value })
+      ? await temporaryLogin(temporaryToken.value)
+      : await loginWithCredentials(username.value, password.value)
     setTokens(data.access_token, data.refresh_token)
     router.push('/')
   } catch (e) {

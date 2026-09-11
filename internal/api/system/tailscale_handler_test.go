@@ -46,6 +46,24 @@ func TestTailscaleStatusUsesRuntimeAdapter(t *testing.T) {
 	}
 }
 
+func TestTailscaleStatusStripsWarningsFromIPOutput(t *testing.T) {
+	runtime := &fakeTailscaleRuntime{installed: true, outputs: map[string][]byte{
+		"tailscale ip -4":  []byte("Warning: client version mismatch\n100.64.0.10\n"),
+		"tailscale status": []byte("peer online\n"),
+	}}
+	h := NewTailscaleHandler(nil, make([]byte, 32)).WithRuntime(runtime)
+	recorder := httptest.NewRecorder()
+	c := gin.CreateTestContextOnly(recorder, gin.New())
+	c.Request = httptest.NewRequest(http.MethodGet, "/", nil).WithContext(context.Background())
+	h.Status(c)
+	if !strings.Contains(recorder.Body.String(), `"ip":"100.64.0.10"`) {
+		t.Fatalf("unexpected sanitized status response: %s", recorder.Body.String())
+	}
+	if strings.Contains(recorder.Body.String(), "Warning: client version mismatch") {
+		t.Fatalf("warning leaked into status response: %s", recorder.Body.String())
+	}
+}
+
 type systemConfigFake struct{ values map[string]string }
 
 func (f *systemConfigFake) GetSystemConfig(key string) (string, error) {

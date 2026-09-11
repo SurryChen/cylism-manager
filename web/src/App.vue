@@ -50,7 +50,7 @@
       </div>
     </header>
 
-    <aside class="app-sidebar" data-testid="desktop-navigation">
+    <aside v-if="showDesktopSidebar" class="app-sidebar" data-testid="desktop-navigation">
       <nav class="navigation-groups" aria-label="主导航">
         <section class="navigation-group">
           <router-link
@@ -70,7 +70,7 @@
       <div class="sidebar-status"><span class="status-indicator"></span><span>平台在线</span><small>4 agents connected</small></div>
     </aside>
 
-    <div class="app-workspace">
+    <div class="app-workspace" :class="{ 'app-workspace--wide': !showDesktopSidebar }">
       <main class="app-content"><router-view /></main>
     </div>
 
@@ -104,6 +104,7 @@ const paletteMenu = ref(null)
 const paletteMenuStyle = ref({})
 const { activePalette, selectPalette } = usePalette()
 const isLoginPage = computed(() => route.path === '/login')
+const showDesktopSidebar = computed(() => route.path !== '/')
 
 const palettes = [
   { id: 'mint', name: '薄荷玻璃' },

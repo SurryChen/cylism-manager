@@ -1,7 +1,7 @@
 # ui-components Specification
 
 ## Purpose
-定义 Glass UI 统一组件视觉规范，包括面板、按钮、模态框、表格等共享组件的样式与交互行为。
+定义 Glass UI 统一组件视觉规范，包括面板、按钮、模态框、表格等共享组件的样式、可访问交互、状态反馈和响应式布局行为，确保各页面体验一致。
 
 ## Requirements
 ### Requirement: 统一 Glass UI 组件视觉

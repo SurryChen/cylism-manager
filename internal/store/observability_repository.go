@@ -106,7 +106,7 @@ func (s *Store) CreateAuditLog(entry *model.AuditLog) error {
 	return s.db.Create(entry).Error
 }
 
-func (s *Store) ListAuditLogs(resourceType, action string, limit, offset int) ([]model.AuditLog, int64, error) {
+func (s *Store) ListAuditLogs(resourceType, action, keyword string, limit, offset int) ([]model.AuditLog, int64, error) {
 	var logs []model.AuditLog
 	var total int64
 	query := s.db.Model(&model.AuditLog{})
@@ -115,6 +115,9 @@ func (s *Store) ListAuditLogs(resourceType, action string, limit, offset int) ([
 	}
 	if action != "" {
 		query = query.Where("action = ?", action)
+	}
+	if keyword != "" {
+		query = query.Where("detail LIKE ?", "%"+keyword+"%")
 	}
 	query.Count(&total)
 	err := query.Order("created_at desc").Limit(limit).Offset(offset).Find(&logs).Error

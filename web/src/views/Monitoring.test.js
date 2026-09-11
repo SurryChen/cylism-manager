@@ -6,7 +6,7 @@ import Monitoring from './Monitoring.vue'
 const apiMocks = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), delete: vi.fn() }))
 
 vi.mock('../api/index.js', () => ({ api: apiMocks }))
-vi.mock('../components/MetricTrendChart.vue', () => ({
+vi.mock('./monitoring/MetricTrendChart.vue', () => ({
   default: {
     name: 'MetricTrendChart',
     props: ['series'],
@@ -76,9 +76,9 @@ describe('Monitoring view', () => {
     expect(wrapper.findAll('.metric-trend-chart')).toHaveLength(4)
     expect(wrapper.text()).toContain('最高 CPU')
     expect(wrapper.text()).toContain('42.5%')
-    expect(apiMocks.get).toHaveBeenCalledWith('/monitoring/dashboard?range=6h')
-    expect(apiMocks.get).not.toHaveBeenCalledWith('/monitoring/targets')
-    expect(apiMocks.get).not.toHaveBeenCalledWith(expect.stringContaining('/monitoring/disk-growth'))
+    expect(apiMocks.get).toHaveBeenCalledWith('/monitoring/dashboard?range=6h', expect.objectContaining({ signal: expect.any(AbortSignal) }))
+    expect(apiMocks.get.mock.calls.map(([path]) => path)).not.toContain('/monitoring/targets')
+    expect(apiMocks.get.mock.calls.some(([path]) => path.includes('/monitoring/disk-growth'))).toBe(false)
     expect(wrapper.get('.trend-node-trigger').text()).toContain('全部节点')
     await wrapper.get('.trend-node-trigger').trigger('click')
     expect(wrapper.findAll('.trend-node-option')).toHaveLength(1)
@@ -87,15 +87,15 @@ describe('Monitoring view', () => {
     expect(wrapper.get('.trend-node-option input').element.checked).toBe(false)
     await wrapper.get('.trend-range-select').setValue('24h')
     await flushPromises()
-    expect(apiMocks.get).toHaveBeenCalledWith('/monitoring/dashboard?range=24h')
+    expect(apiMocks.get).toHaveBeenCalledWith('/monitoring/dashboard?range=24h', expect.objectContaining({ signal: expect.any(AbortSignal) }))
     await wrapper.get('.section-tab:nth-child(2)').trigger('click')
     await flushPromises()
-    expect(apiMocks.get).toHaveBeenCalledWith(expect.stringContaining('/monitoring/query?query='))
-    expect(apiMocks.get).not.toHaveBeenCalledWith('/monitoring/targets')
-    expect(apiMocks.get).not.toHaveBeenCalledWith(expect.stringContaining('/monitoring/disk-growth'))
+    expect(apiMocks.get).toHaveBeenCalledWith(expect.stringContaining('/monitoring/query?query='), expect.objectContaining({ signal: expect.any(AbortSignal) }))
+    expect(apiMocks.get.mock.calls.map(([path]) => path)).not.toContain('/monitoring/targets')
+    expect(apiMocks.get.mock.calls.some(([path]) => path.includes('/monitoring/disk-growth'))).toBe(false)
     await wrapper.findAll('.section-tab').find(tab => tab.text() === '磁盘').trigger('click')
     await flushPromises()
-    expect(apiMocks.get).toHaveBeenCalledWith('/monitoring/disk-growth?range=6h')
+    expect(apiMocks.get).toHaveBeenCalledWith('/monitoring/disk-growth?range=6h', expect.objectContaining({ signal: expect.any(AbortSignal) }))
     wrapper.unmount()
   })
 
@@ -112,7 +112,7 @@ describe('Monitoring view', () => {
 
     expect(wrapper.text()).toContain('node-exporter 仅 1/2 个节点就绪')
     expect(wrapper.findAll('.metric-trend-chart')).toHaveLength(4)
-    expect(apiMocks.get).toHaveBeenCalledWith('/monitoring/dashboard?range=6h')
+    expect(apiMocks.get).toHaveBeenCalledWith('/monitoring/dashboard?range=6h', expect.objectContaining({ signal: expect.any(AbortSignal) }))
   })
 
   it('moves monitoring configuration into a settings drawer and updates retention', async () => {
@@ -162,6 +162,60 @@ describe('Monitoring view', () => {
     expect(router.currentRoute.value.path).toBe('/monitoring')
     expect(router.currentRoute.value.query).toEqual({ range: '24h', tab: 'workloads' })
     expect(wrapper.get('[data-testid="monitoring-tab-workloads"]').classes()).toContain('is-active')
+    wrapper.unmount()
+  })
+
+  it('keeps the latest trend range when an earlier trend response resolves late', async () => {
+    let resolveTwentyFourHours
+    const twentyFourHours = new Promise(resolve => { resolveTwentyFourHours = resolve })
+    apiMocks.get.mockImplementation(path => {
+      if (path === '/monitoring/status') return Promise.resolve({ state: 'ready', node_name: 'node-a' })
+      if (path === '/nodes') return Promise.resolve([{ name: 'node-a', internal_ip: '10.0.0.1', ready: true }])
+      if (path === '/k8s/storage-classes') return Promise.resolve([])
+      if (path === '/monitoring/dashboard?range=6h') {
+        return Promise.resolve({ trends: { cpu: { result: [{ metric: { node: 'node-a' }, values: [[1785000000, '6']] }] } } })
+      }
+      if (path === '/monitoring/dashboard?range=24h') return twentyFourHours
+      if (path === '/monitoring/dashboard?range=7d') {
+        return Promise.resolve({ trends: { cpu: { result: [{ metric: { node: 'node-a' }, values: [[1785000000, '7']] }] } } })
+      }
+      return Promise.resolve({ result: [] })
+    })
+    const { wrapper } = await mountMonitoring()
+    await flushPromises()
+
+    await wrapper.get('.trend-range-select').setValue('24h')
+    await wrapper.get('.trend-range-select').setValue('7d')
+    await flushPromises()
+    resolveTwentyFourHours({ trends: { cpu: { result: [{ metric: { node: 'node-a' }, values: [[1785000000, '24']] }] } } })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('7.0%')
+    expect(wrapper.text()).not.toContain('24.0%')
+    expect(wrapper.text()).not.toContain('6.0%')
+    wrapper.unmount()
+  })
+
+  it('keeps the loaded monitoring state when a later trend request fails', async () => {
+    apiMocks.get.mockImplementation(path => {
+      if (path === '/monitoring/status') return Promise.resolve({ state: 'ready', node_name: 'node-a' })
+      if (path === '/nodes') return Promise.resolve([{ name: 'node-a', internal_ip: '10.0.0.1', ready: true }])
+      if (path === '/k8s/storage-classes') return Promise.resolve([])
+      if (path === '/monitoring/dashboard?range=6h') {
+        return Promise.resolve({ trends: { cpu: { result: [{ metric: { node: 'node-a' }, values: [[1785000000, '6']] }] } } })
+      }
+      if (path === '/monitoring/dashboard?range=24h') return Promise.reject(new Error('trend unavailable'))
+      return Promise.resolve({ result: [] })
+    })
+    const { wrapper } = await mountMonitoring()
+    await flushPromises()
+
+    await wrapper.get('.trend-range-select').setValue('24h')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('已就绪')
+    expect(wrapper.text()).toContain('6.0%')
+    expect(wrapper.text()).toContain('trend unavailable')
     wrapper.unmount()
   })
 })

@@ -46,6 +46,16 @@ func TestReleaseServiceValidatesMultipleImagePrefixes(t *testing.T) {
 	}
 }
 
+func TestReleaseServiceAcceptsDefaultGHCRDevImage(t *testing.T) {
+	service := NewReleaseService(nil, nil, nil)
+	if err := service.ValidateImage(DefaultImagePrefix + ":dev-abcdef123456"); err != nil {
+		t.Fatalf("expected default GHCR dev image to be accepted: %v", err)
+	}
+	if err := service.ValidateImage("crpi-c5u9bb8i5qxw1m72.cn-guangzhou.personal.cr.aliyuncs.com/surrychen/cylism-manager:dev-abcdef123456"); err == nil {
+		t.Fatal("expected old ACR platform image prefix to be rejected by default")
+	}
+}
+
 func TestReleaseServiceUsesMinimalPlatformAdapter(t *testing.T) {
 	st, err := store.New(":memory:")
 	if err != nil {

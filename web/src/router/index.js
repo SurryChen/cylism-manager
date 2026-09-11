@@ -1,25 +1,26 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
 import { getAccessToken } from '../api/index.js'
-import Dashboard from '../views/Dashboard.vue'
-import Servers from '../views/Servers.vue'
-import CertificateOperations from '../views/CertificateOperations.vue'
-import AuditLogs from '../views/AuditLogs.vue'
-import Login from '../views/Login.vue'
-import DBAdmin from '../views/DBAdmin.vue'
-import SystemSettings from '../views/SystemSettings.vue'
-import Applications from '../views/Applications.vue'
-import ProjectEnvironments from '../views/ProjectEnvironments.vue'
-import ApplicationDetails from '../views/ApplicationDetails.vue'
-import ReleaseDetails from '../views/ReleaseDetails.vue'
-import ImageRegistries from '../views/ImageRegistries.vue'
-import Domains from '../views/Domains.vue'
-import Monitoring from '../views/Monitoring.vue'
-import PersistentVolumes from '../views/PersistentVolumes.vue'
-import ClusterHub from '../views/ClusterHub.vue'
-import ResourceHub from '../views/ResourceHub.vue'
-import NetworkHub from '../views/NetworkHub.vue'
-import RuntimeManagement from '../views/RuntimeManagement.vue'
-import ManagedOCIRegistries from '../views/ManagedOCIRegistries.vue'
+
+const Dashboard = () => import('../views/Dashboard.vue')
+const Servers = () => import('../views/cluster/Servers.vue')
+const CertificateOperations = () => import('../views/network/CertificateOperations.vue')
+const AuditLogs = () => import('../views/AuditLogs.vue')
+const Login = () => import('../views/Login.vue')
+const DBAdmin = () => import('../views/DBAdmin.vue')
+const SystemSettings = () => import('../views/settings/SystemSettings.vue')
+const Applications = () => import('../views/applications/Applications.vue')
+const ProjectEnvironments = () => import('../views/applications/ProjectEnvironments.vue')
+const ApplicationDetails = () => import('../views/applications/ApplicationDetails.vue')
+const ReleaseDetails = () => import('../views/applications/ReleaseDetails.vue')
+const ImageRegistries = () => import('../views/applications/ImageRegistries.vue')
+const Domains = () => import('../views/applications/Domains.vue')
+const Monitoring = () => import('../views/Monitoring.vue')
+const PersistentVolumes = () => import('../views/cluster/PersistentVolumes.vue')
+const ClusterHub = () => import('../views/cluster/ClusterHub.vue')
+const ResourceHub = () => import('../views/resources/ResourceHub.vue')
+const NetworkHub = () => import('../views/network/NetworkHub.vue')
+const RuntimeManagement = () => import('../views/RuntimeManagement.vue')
+const ManagedOCIRegistries = () => import('../views/ManagedOCIRegistries.vue')
 
 const routes = [
   { path: '/login', component: Login, meta: { public: true } },
