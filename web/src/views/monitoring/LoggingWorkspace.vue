@@ -63,9 +63,9 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
 import { RefreshCw, Settings2, X } from 'lucide-vue-next'
-import { getApplications, getProjects } from '../api/applications.js'
-import { getLoggingFilters, getLoggingStatus, installLogging, queryLogs as requestLogs, saveLoggingConfig, uninstallLogging } from '../api/logging.js'
-import { useAsyncResource } from '../composables/useAsyncResource.js'
+import { getApplications, getProjects } from '../../api/applications.js'
+import { getLoggingFilters, getLoggingStatus, installLogging, queryLogs as requestLogs, saveLoggingConfig, uninstallLogging } from '../../api/logging.js'
+import { useAsyncResource } from '../../composables/useAsyncResource.js'
 
 const props = defineProps({ nodes: { type: Array, default: () => [] }, storageClasses: { type: Array, default: () => [] } })
 

@@ -3,7 +3,7 @@ import { nextTick } from 'vue'
 import { mount } from '@vue/test-utils'
 import ServerTerminal from './ServerTerminal.vue'
 
-vi.mock('../utils/terminalRuntime.js', () => ({
+vi.mock('../../utils/terminalRuntime.js', () => ({
   loadTerminalRuntime: vi.fn(() => Promise.reject(new Error('终端组件加载失败'))),
 }))
 

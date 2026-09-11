@@ -29,7 +29,7 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { X } from 'lucide-vue-next'
-import { loadTerminalRuntime } from '../utils/terminalRuntime.js'
+import { loadTerminalRuntime } from '../../utils/terminalRuntime.js'
 
 const props = defineProps({
   pod: { type: Object, required: true },

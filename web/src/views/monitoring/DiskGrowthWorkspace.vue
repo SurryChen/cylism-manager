@@ -21,8 +21,8 @@
 <script setup>
 import { computed, defineComponent, h, onMounted, ref, watch } from 'vue'
 import { RefreshCw } from 'lucide-vue-next'
-import { getDiskGrowth } from '../api/monitoring.js'
-import { useAsyncResource } from '../composables/useAsyncResource.js'
+import { getDiskGrowth } from '../../api/monitoring.js'
+import { useAsyncResource } from '../../composables/useAsyncResource.js'
 
 const props = defineProps({ nodes: { type: Array, default: () => [] } })
 

@@ -10,7 +10,7 @@ function deferred() {
   return { promise, resolve, reject }
 }
 
-vi.mock('../api/index.js', () => ({ api: apiMocks }))
+vi.mock('../../api/index.js', () => ({ api: apiMocks }))
 
 beforeEach(() => {
   Object.values(apiMocks).forEach(mock => mock.mockReset())

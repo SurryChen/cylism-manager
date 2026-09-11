@@ -132,7 +132,7 @@ import DOMPurify from 'dompurify'
 import MarkdownIt from 'markdown-it'
 import taskLists from 'markdown-it-task-lists'
 import { ArrowUpRight, BellRing, Bot, CheckCircle2, RefreshCw, Settings2, VolumeX, X } from 'lucide-vue-next'
-import { getRuntimes } from '../api/runtimes.js'
+import { getRuntimes } from '../../api/runtimes.js'
 import {
   createAlertingSilence,
   getAlertingAutomationEvents,
@@ -144,8 +144,8 @@ import {
   saveAlertingAutomationPolicy,
   saveAlertingConfig,
   testAlertingNotification,
-} from '../api/alerting.js'
-import { useAsyncResource } from '../composables/useAsyncResource.js'
+} from '../../api/alerting.js'
+import { useAsyncResource } from '../../composables/useAsyncResource.js'
 
 const props = defineProps({ nodes: { type: Array, default: () => [] }, monitoringReady: Boolean, metricsNodeName: { type: String, default: '' } })
 const emit = defineEmits(['navigate'])

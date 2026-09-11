@@ -204,7 +204,7 @@ import { computed, ref, onMounted, onErrorCaptured } from 'vue'
 import { Box, Database, Filter, Layers3, Network, RefreshCw, RotateCcw, Search, SquareTerminal, X } from 'lucide-vue-next'
 import { getWorkloadDaemonSets, getWorkloadDeploymentPods, getWorkloadDeploymentRevisions, getWorkloadDeployments, getWorkloadPods, getWorkloadServers, getWorkloadStatefulSets, rollbackWorkload, scaleWorkload, updateWorkloadImage } from '../../api/kubernetes.js'
 import { useAsyncResource } from '../../composables/useAsyncResource.js'
-import PodTerminal from '../../components/PodTerminal.vue'
+import PodTerminal from './PodTerminal.vue'
 
 const activeTab = ref('pods')
 const deployments = ref([])

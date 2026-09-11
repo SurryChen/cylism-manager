@@ -148,7 +148,7 @@ import {
   updateRuntimeAgentTools,
 } from '../api/runtimes.js'
 import { useAsyncResource } from '../composables/useAsyncResource.js'
-import ChatDrawer from '../components/ChatDrawer.vue'
+import ChatDrawer from './runtime/ChatDrawer.vue'
 import SectionTabsHeader from '../components/SectionTabsHeader.vue'
 
 const runtimes = ref([])

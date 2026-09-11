@@ -6,7 +6,7 @@ import Monitoring from './Monitoring.vue'
 const apiMocks = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), delete: vi.fn() }))
 
 vi.mock('../api/index.js', () => ({ api: apiMocks }))
-vi.mock('../components/MetricTrendChart.vue', () => ({
+vi.mock('./monitoring/MetricTrendChart.vue', () => ({
   default: {
     name: 'MetricTrendChart',
     props: ['series'],

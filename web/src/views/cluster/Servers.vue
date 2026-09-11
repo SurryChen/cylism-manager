@@ -234,7 +234,7 @@ import { useAsyncResource } from '../../composables/useAsyncResource.js'
 import { usePolling } from '../../composables/usePolling.js'
 import { RefreshCw } from 'lucide-vue-next'
 import SectionTabsHeader from '../../components/SectionTabsHeader.vue'
-import ServerTerminal from '../../components/ServerTerminal.vue'
+import ServerTerminal from './ServerTerminal.vue'
 
 const serversResource = useAsyncResource(({ signal }) => getServers({ signal }), [])
 const servers = serversResource.data

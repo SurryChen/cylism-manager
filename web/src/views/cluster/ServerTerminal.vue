@@ -31,7 +31,7 @@
 
 <script setup>
 import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
-import { loadTerminalRuntime } from '../utils/terminalRuntime.js'
+import { loadTerminalRuntime } from '../../utils/terminalRuntime.js'
 
 const props = defineProps({ server: { type: Object, required: true } })
 const emit = defineEmits(['close'])
