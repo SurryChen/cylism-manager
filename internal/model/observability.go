@@ -9,6 +9,7 @@ type DashboardStats struct {
 	TotalServers  int64 `json:"total_servers"`
 	TotalSites    int64 `json:"total_sites"`
 	ExpiringCerts int64 `json:"expiring_certs"`
+	ExpiredCerts  int64 `json:"expired_certs"`
 }
 
 type AuditLog struct {

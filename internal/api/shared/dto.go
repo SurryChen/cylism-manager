@@ -688,6 +688,7 @@ type DashboardStatsView struct {
 	TotalServers  int64 `json:"total_servers"`
 	TotalSites    int64 `json:"total_sites"`
 	ExpiringCerts int64 `json:"expiring_certs"`
+	ExpiredCerts  int64 `json:"expired_certs"`
 }
 
 type timeFields struct {
@@ -752,7 +753,7 @@ func DashboardStatsDTO(stats *model.DashboardStats) *DashboardStatsView {
 	if stats == nil {
 		return nil
 	}
-	return &DashboardStatsView{TotalServers: stats.TotalServers, TotalSites: stats.TotalSites, ExpiringCerts: stats.ExpiringCerts}
+	return &DashboardStatsView{TotalServers: stats.TotalServers, TotalSites: stats.TotalSites, ExpiringCerts: stats.ExpiringCerts, ExpiredCerts: stats.ExpiredCerts}
 }
 
 func RegistryProxyDTO(p *model.RegistryProxy) *RegistryProxyView {

@@ -18,15 +18,15 @@
 
     <div class="metric-grid dashboard-metrics">
       <div class="metric">
-        <div class="metric-value">{{ stats.total_servers || 0 }}</div>
+        <div class="metric-value">{{ dashboardMetric('total_servers') }}</div>
         <div class="metric-label">服务器</div>
       </div>
       <div class="metric">
-        <div class="metric-value">{{ stats.total_sites || 0 }}</div>
+        <div class="metric-value">{{ dashboardMetric('total_sites') }}</div>
         <div class="metric-label">站点</div>
       </div>
       <div class="metric">
-        <div class="metric-value metric-warn">{{ stats.expiring_certs || 0 }}</div>
+        <div class="metric-value metric-warn">{{ dashboardMetric('expiring_certs') }}</div>
         <div class="metric-label">即将到期</div>
       </div>
       <div class="metric">
@@ -35,10 +35,10 @@
       </div>
       <div class="metric">
         <div class="metric-value" :class="{ 'metric-warn': notReadyDeployments > 0 }">{{ notReadyDeployments }}</div>
-        <div class="metric-label">未就绪应用</div>
+        <div class="metric-label">未就绪 Deployment</div>
       </div>
       <div class="metric">
-        <div class="metric-value">{{ recentLogs.length }}</div>
+        <div class="metric-value">{{ dashboardLoaded ? recentLogs.length : '—' }}</div>
         <div class="metric-label">最近操作</div>
       </div>
     </div>
@@ -127,7 +127,9 @@
           <h2 class="card-title">即将到期的证书</h2>
           <span class="panel-caption">未来 30 天</span>
         </div>
-        <div v-if="expiringCerts.length === 0" class="empty-state dashboard-empty-state">
+        <div v-if="dashboardError || dashboardSectionError('expiring_certs')" class="empty-state dashboard-empty-state"><span class="empty-icon">!</span><span class="empty-text">证书数据暂不可用</span></div>
+        <div v-else-if="dashboardLoading" class="empty-state dashboard-empty-state"><span class="empty-text">正在读取证书状态...</span></div>
+        <div v-else-if="expiringCerts.length === 0" class="empty-state dashboard-empty-state">
           <span class="empty-icon">✓</span>
           <span class="empty-text">30 天内没有即将到期的证书</span>
         </div>
@@ -135,7 +137,7 @@
           <table class="data-table">
             <thead><tr><th>域名</th><th>到期时间</th><th>状态</th></tr></thead>
             <tbody>
-              <tr v-for="cert in expiringCerts" :key="cert.id">
+              <tr v-for="cert in expiringCerts.slice(0, 3)" :key="cert.id">
                 <td>{{ cert.domains }}</td>
                 <td>{{ formatDate(cert.valid_to) }}</td>
                 <td><span class="badge badge-warn">即将到期</span></td>
@@ -143,18 +145,21 @@
             </tbody>
           </table>
         </div>
+        <div class="dashboard-panel-footer"><router-link to="/network?tab=certificates">查看全部证书</router-link></div>
       </section>
 
       <section class="card dashboard-activity-panel">
         <div class="card-header"><h2 class="card-title">最近操作</h2></div>
-        <div v-if="recentLogs.length === 0" class="empty-state dashboard-empty-state">
+        <div v-if="dashboardError || dashboardSectionError('recent_logs')" class="empty-state dashboard-empty-state"><span class="empty-icon">!</span><span class="empty-text">操作记录暂不可用</span></div>
+        <div v-else-if="dashboardLoading" class="empty-state dashboard-empty-state"><span class="empty-text">正在读取操作记录...</span></div>
+        <div v-else-if="recentLogs.length === 0" class="empty-state dashboard-empty-state">
           <span class="empty-icon">⊙</span><span class="empty-text">暂无操作记录</span>
         </div>
         <div v-else class="table-wrap">
           <table class="data-table">
             <thead><tr><th>操作</th><th>资源</th><th>时间</th></tr></thead>
             <tbody>
-              <tr v-for="log in recentLogs" :key="log.id">
+              <tr v-for="log in recentLogs.slice(0, 3)" :key="log.id">
                 <td><span class="badge" :class="actionBadge(log.action)">{{ actionLabel(log.action) }}</span></td>
                 <td>{{ resourceLabel(log.resource_type) }} #{{ log.resource_id }}</td>
                 <td>{{ formatTime(log.created_at) }}</td>
@@ -162,6 +167,7 @@
             </tbody>
           </table>
         </div>
+        <div class="dashboard-panel-footer"><router-link to="/audit">查看全部操作</router-link></div>
       </section>
     </div>
   </div>
@@ -173,15 +179,21 @@ import { getAlertOverview, getDashboardOverview, getKubernetesDashboard } from '
 import { useAsyncResource } from '../composables/useAsyncResource.js'
 import { formatShortDate as formatDate, formatShortDateTime as formatTime } from '../utils/formatters.js'
 
-const dashboard = useAsyncResource(getDashboardOverview, {})
+const dashboard = useAsyncResource(getDashboardOverview)
 const kubernetesDashboard = useAsyncResource(getKubernetesDashboard)
 const alerting = useAsyncResource(getAlertOverview)
 
 const stats = computed(() => dashboard.data.value?.stats || {})
 const expiringCerts = computed(() => dashboard.data.value?.expiring_certs || [])
 const recentLogs = computed(() => dashboard.data.value?.recent_logs || [])
+const dashboardLoading = dashboard.loading
+const dashboardLoaded = computed(() => dashboard.data.value !== null)
+const dashboardErrors = computed(() => dashboard.data.value?.errors || {})
+const dashboardError = computed(() => dashboard.error.value?.message || '')
 const k8sStats = kubernetesDashboard.data
 const k8sLoading = kubernetesDashboard.loading
+const k8sError = computed(() => kubernetesDashboard.error.value?.message || '')
+const k8sErrors = computed(() => k8sStats.value?.errors || {})
 const alertOverview = alerting.data
 const alertingError = computed(() => alerting.error.value?.message || '')
 
@@ -189,22 +201,32 @@ const activeAlerts = computed(() => alertOverview.value?.active || [])
 const firingAlerts = computed(() => Number(alertOverview.value?.firing || 0))
 const silencedAlerts = computed(() => Number(alertOverview.value?.silenced || 0))
 const alertMetricValue = computed(() => alertOverview.value ? firingAlerts.value : '-')
-const notReadyDeployments = computed(() => Math.max(0, Number(k8sStats.value?.deployments_total || 0) - Number(k8sStats.value?.deployments_ready || 0)))
-const notReadyPods = computed(() => Math.max(0, Number(k8sStats.value?.pods_total || 0) - Number(k8sStats.value?.pods_ready || 0)))
+const notReadyDeployments = computed(() => k8sSectionError('deployments') ? null : Math.max(0, Number(k8sStats.value?.deployments_total || 0) - Number(k8sStats.value?.deployments_ready || 0)))
+const notReadyPods = computed(() => k8sSectionError('pods') ? null : Math.max(0, Number(k8sStats.value?.pods_total || 0) - Number(k8sStats.value?.pods_ready || 0)))
 const attentionItems = computed(() => {
   const items = []
+  if (dashboardError.value) {
+    items.push({ key: 'dashboard-unavailable', level: 'is-muted', title: '平台概览暂不可用', description: dashboardError.value, value: '—', to: '/applications' })
+  }
+  if (k8sError.value) {
+    items.push({ key: 'k8s-unavailable', level: 'is-muted', title: '集群概况暂不可用', description: k8sError.value, value: '—', to: '/servers' })
+  } else if (k8sErrors.value.deployments || k8sErrors.value.pods) {
+    items.push({ key: 'k8s-partial', level: 'is-muted', title: '集群概况部分不可用', description: '部分 Kubernetes 资源读取失败，请进入集群页确认。', value: '—', to: '/servers' })
+  }
   if (firingAlerts.value > 0) {
     items.push({ key: 'alerts', level: 'is-danger', title: '存在触发中的告警', description: '优先进入告警页确认影响范围与处理建议。', value: firingAlerts.value, to: '/monitoring?tab=alerts' })
   } else if (alertingError.value) {
     items.push({ key: 'alerting-unavailable', level: 'is-muted', title: '告警组件暂不可用', description: '无法读取 Alertmanager 状态，可进入监控页重新检测。', value: '—', to: '/monitoring?tab=alerts' })
   }
-  if (Number(stats.value.expiring_certs || 0) > 0) {
+  if (dashboardSectionError('expiring_certs')) {
+    items.push({ key: 'certs-unavailable', level: 'is-muted', title: '证书状态暂不可用', description: '无法读取证书列表，请进入证书页重试。', value: '—', to: '/network?tab=certificates' })
+  } else if (Number(stats.value.expiring_certs || 0) > 0) {
     items.push({ key: 'certs', level: 'is-warning', title: '证书即将到期', description: '检查证书续期状态，避免入口访问中断。', value: stats.value.expiring_certs, to: '/network?tab=certificates' })
   }
-  if (notReadyDeployments.value > 0) {
+  if (notReadyDeployments.value !== null && notReadyDeployments.value > 0) {
     items.push({ key: 'deployments', level: 'is-warning', title: '有应用未完全就绪', description: 'Deployment Ready 数低于期望值，建议查看工作负载。', value: notReadyDeployments.value, to: '/resources?tab=workloads' })
   }
-  if (notReadyPods.value > 0) {
+  if (notReadyPods.value !== null && notReadyPods.value > 0) {
     items.push({ key: 'pods', level: 'is-warning', title: '有 Pod 未就绪', description: '可能存在拉取镜像、探针或调度问题。', value: notReadyPods.value, to: '/resources?tab=workloads' })
   }
   if (items.length === 0) {
@@ -228,6 +250,9 @@ function k8sReadyMetric(readyKey, totalKey) {
   if (k8sLoading.value || k8sStats.value?.[readyKey] === undefined || k8sStats.value?.[totalKey] === undefined) return '—'
   return `${k8sStats.value[readyKey]}/${k8sStats.value[totalKey]}`
 }
+function dashboardMetric(key) { return dashboardLoaded.value && stats.value[key] !== undefined ? stats.value[key] : '—' }
+function dashboardSectionError(key) { return Boolean(dashboardErrors.value[key]) }
+function k8sSectionError(key) { return Boolean(k8sErrors.value[key]) || Boolean(k8sError.value) }
 
 function actionBadge(a) { const m = { create:'badge-online',issue:'badge-online',renew:'badge-online',delete:'badge-danger',revoke:'badge-danger',deploy:'badge-deploying' }; return m[a]||'' }
 function actionLabel(a) { const m = { create:'创建',update:'更新',delete:'删除',deploy:'部署',issue:'签发',renew:'续期',revoke:'吊销',reload:'重载',generate:'生成' }; return m[a]||a }
@@ -271,4 +296,11 @@ function alertSeverityBadge(alert) { return alert?.labels?.severity === 'critica
 @media (max-width: 960px) { .dashboard-workspace, .dashboard-attention-grid { grid-template-columns: 1fr; }.dashboard-activity-panel { min-height: 0; } }
 @media (max-width: 960px) { .dashboard-action-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 700px) { .cluster-strip { align-items: flex-start; flex-direction: column; gap: 16px; }.cluster-strip-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }.dashboard-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }.dashboard-metrics .metric { min-height: 88px; }.dashboard-workspace, .dashboard-attention-grid { gap: var(--space-16); }.dashboard-action-grid { grid-template-columns: 1fr; } }
+/* Keep dashboard previews compact on desktop while preserving full detail pages. */
+.dashboard-empty-state { min-height: 110px; }
+.dashboard-actions-panel { gap: 12px; padding: 14px 18px; }
+.dashboard-panel-footer { display: flex; justify-content: flex-end; padding-top: 8px; border-top: 1px solid var(--border-muted); }
+.dashboard-panel-footer a { color: var(--action-primary); font-size: 11px; text-decoration: none; }
+.dashboard-panel-footer a:hover { text-decoration: underline; }
+@media (max-width: 700px) { .dashboard-empty-state { min-height: 90px; } }
 </style>

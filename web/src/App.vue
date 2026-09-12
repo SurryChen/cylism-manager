@@ -21,7 +21,6 @@
           {{ group.label }}
         </router-link>
       </nav>
-      <div class="environment-status"><span class="status-indicator"></span><span>Production</span></div>
       <div class="topbar-actions">
         <div class="palette-picker">
           <button ref="paletteButton" class="icon-button" aria-label="选择配色" aria-haspopup="menu" :aria-expanded="paletteMenuOpen" @click="togglePaletteMenu">
@@ -67,7 +66,6 @@
         </section>
       </nav>
 
-      <div class="sidebar-status"><span class="status-indicator"></span><span>平台在线</span><small>4 agents connected</small></div>
     </aside>
 
     <div class="app-workspace" :class="{ 'app-workspace--wide': !showDesktopSidebar }">

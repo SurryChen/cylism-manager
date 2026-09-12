@@ -112,6 +112,35 @@ func TestSiteCRUD(t *testing.T) {
 	}
 }
 
+func TestListExpiringCertsExcludesExpiredCertificates(t *testing.T) {
+	st := setupTestDB(t)
+	now := time.Now()
+	certs := []model.Cert{
+		{SiteID: 1, Domains: "expired.example.com", Status: "issued", ValidTo: now.Add(-time.Hour)},
+		{SiteID: 1, Domains: "soon.example.com", Status: "issued", ValidTo: now.Add(10 * 24 * time.Hour)},
+		{SiteID: 1, Domains: "later.example.com", Status: "issued", ValidTo: now.Add(60 * 24 * time.Hour)},
+	}
+	for i := range certs {
+		if err := st.CreateCert(&certs[i]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := st.ListExpiringCerts(30)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Domains != "soon.example.com" {
+		t.Fatalf("unexpected expiring certs: %#v", got)
+	}
+	stats, err := st.GetDashboardStats(30)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.ExpiringCerts != 1 || stats.ExpiredCerts != 1 {
+		t.Fatalf("unexpected cert stats: %#v", stats)
+	}
+}
+
 func TestSiteDuplicateDomain(t *testing.T) {
 	st := setupTestDB(t)
 	server := &model.Server{Name: "s1", Host: "10.0.0.1"}

@@ -10,10 +10,20 @@ import (
 
 func (s *Store) GetDashboardStats(daysBefore int) (*model.DashboardStats, error) {
 	stats := &model.DashboardStats{}
-	s.db.Model(&model.Server{}).Count(&stats.TotalServers)
-	s.db.Model(&model.Site{}).Count(&stats.TotalSites)
-	threshold := time.Now().Add(time.Duration(daysBefore) * 24 * time.Hour)
-	s.db.Model(&model.Cert{}).Where("status = ? AND valid_to <= ?", "issued", threshold).Count(&stats.ExpiringCerts)
+	if err := s.db.Model(&model.Server{}).Count(&stats.TotalServers).Error; err != nil {
+		return nil, err
+	}
+	if err := s.db.Model(&model.Site{}).Count(&stats.TotalSites).Error; err != nil {
+		return nil, err
+	}
+	now := time.Now()
+	threshold := now.Add(time.Duration(daysBefore) * 24 * time.Hour)
+	if err := s.db.Model(&model.Cert{}).Where("status = ? AND valid_to > ? AND valid_to <= ?", "issued", now, threshold).Count(&stats.ExpiringCerts).Error; err != nil {
+		return nil, err
+	}
+	if err := s.db.Model(&model.Cert{}).Where("status = ? AND valid_to <= ?", "issued", now).Count(&stats.ExpiredCerts).Error; err != nil {
+		return nil, err
+	}
 	return stats, nil
 }
 

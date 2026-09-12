@@ -147,7 +147,7 @@ func TestDashboardUsesLightweightClusterLists(t *testing.T) {
 			Status:     corev1.NodeStatus{NodeInfo: corev1.NodeSystemInfo{KubeletVersion: "v1.32.1+k3s1"}},
 		},
 		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "default"}},
-		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "ready", Namespace: "default"}, Status: corev1.PodStatus{Phase: corev1.PodRunning}},
+		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "ready", Namespace: "default"}, Status: corev1.PodStatus{Phase: corev1.PodRunning, Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}}},
 		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "pending", Namespace: "default"}, Status: corev1.PodStatus{Phase: corev1.PodPending}},
 		&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "ready", Namespace: "default"}, Spec: appsv1.DeploymentSpec{Replicas: &replicas}, Status: appsv1.DeploymentStatus{ReadyReplicas: 2}},
 		&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "pending", Namespace: "default"}, Spec: appsv1.DeploymentSpec{Replicas: &replicas}, Status: appsv1.DeploymentStatus{ReadyReplicas: 1}},
@@ -183,6 +183,39 @@ func TestDashboardUsesLightweightClusterLists(t *testing.T) {
 		if action.GetResource().Resource == "endpointslices" || action.GetResource().Resource == "endpoints" {
 			t.Fatalf("dashboard must not query service endpoints: %#v", action)
 		}
+	}
+}
+
+func TestDashboardUsesPodReadyAndCachesClusterSummary(t *testing.T) {
+	client := &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(
+		&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node-a"}, Status: corev1.NodeStatus{NodeInfo: corev1.NodeSystemInfo{KubeletVersion: "v1.32.1"}}},
+		&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node-b"}, Status: corev1.NodeStatus{NodeInfo: corev1.NodeSystemInfo{KubeletVersion: "v1.33.0"}}},
+		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "running-not-ready", Namespace: "default"}, Status: corev1.PodStatus{Phase: corev1.PodRunning}},
+	)}
+	r := setupK8sTestRouter(client)
+	first := serve(r, httptest.NewRequest(http.MethodGet, "/api/k8s/dashboard", nil))
+	if first.Code != http.StatusOK || strings.Contains(first.Body.String(), `"pods_ready":1`) {
+		t.Fatalf("running pod without Ready condition must not count: %s", first.Body.String())
+	}
+	var firstPayload struct {
+		Data struct {
+			Version    string `json:"version"`
+			Consistent bool   `json:"version_consistent"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(first.Body.Bytes(), &firstPayload); err != nil {
+		t.Fatal(err)
+	}
+	if firstPayload.Data.Version != "多版本" || firstPayload.Data.Consistent {
+		t.Fatalf("expected mixed node versions: %#v", firstPayload.Data)
+	}
+	actionsAfterFirst := len(client.Clientset.(*k8sfake.Clientset).Actions())
+	second := serve(r, httptest.NewRequest(http.MethodGet, "/api/k8s/dashboard", nil))
+	if second.Code != http.StatusOK {
+		t.Fatalf("second request failed: %s", second.Body.String())
+	}
+	if got := len(client.Clientset.(*k8sfake.Clientset).Actions()); got != actionsAfterFirst {
+		t.Fatalf("expected cache hit, actions grew from %d to %d", actionsAfterFirst, got)
 	}
 }
 

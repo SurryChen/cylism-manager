@@ -31,6 +31,16 @@ afterEach(() => {
 })
 
 describe('Glass UI application shell', () => {
+  it('does not render static environment or agent connection status', async () => {
+    const wrapper = await mountApp('/servers')
+
+    expect(wrapper.find('.environment-status').exists()).toBe(false)
+    expect(wrapper.find('.sidebar-status').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('Production')
+    expect(wrapper.text()).not.toContain('平台在线')
+    expect(wrapper.text()).not.toContain('agents connected')
+  })
+
   it('uses a full-width workspace for the overview while keeping primary navigation in the top bar', async () => {
     const wrapper = await mountApp()
     const primaryNavigation = wrapper.get('[data-testid="primary-navigation"]')

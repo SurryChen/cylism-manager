@@ -133,6 +133,13 @@ describe('Dashboard view with K8s stats', () => {
     expect(wrapper.text()).toContain('服务器与集群')
   })
 
+  it('limits dashboard previews and links to full views', () => {
+    expect(dashboardSource).toContain('expiringCerts.slice(0, 3)')
+    expect(dashboardSource).toContain('recentLogs.slice(0, 3)')
+    expect(dashboardSource).toContain('查看全部证书')
+    expect(dashboardSource).toContain('查看全部操作')
+  })
+
   it('renders alert attention and overview blocks', async () => {
     const wrapper = mount(Dashboard, {
       global: { stubs: { RouterLink: { template: '<a><slot /></a>' } } }
