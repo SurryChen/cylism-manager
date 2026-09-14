@@ -27,6 +27,50 @@ func (s *Store) GetDashboardStats(daysBefore int) (*model.DashboardStats, error)
 	return stats, nil
 }
 
+// GetDashboardApplicationSummary aggregates the latest release of each
+// application, so historical release attempts do not affect current state.
+func (s *Store) GetDashboardApplicationSummary() (*model.DashboardApplicationSummary, error) {
+	var applications []model.Application
+	if err := s.db.Select("id, name").Find(&applications).Error; err != nil {
+		return nil, err
+	}
+	var releases []model.Release
+	if err := s.db.Order("application_id asc, sequence desc, id desc").Find(&releases).Error; err != nil {
+		return nil, err
+	}
+	applicationNames := make(map[uint]string, len(applications))
+	for _, application := range applications {
+		applicationNames[application.ID] = application.Name
+	}
+	latestByApplication := make(map[uint]model.Release, len(applications))
+	for _, release := range releases {
+		if _, exists := latestByApplication[release.ApplicationID]; !exists {
+			latestByApplication[release.ApplicationID] = release
+		}
+	}
+	summary := &model.DashboardApplicationSummary{TotalApplications: int64(len(applications))}
+	var latest *model.Release
+	for _, release := range latestByApplication {
+		switch release.Status {
+		case model.ReleaseStatusSucceeded:
+			summary.SuccessfulApplications++
+		case model.ReleaseStatusValidating, model.ReleaseStatusApplying, model.ReleaseStatusWaitingReady, model.ReleaseStatusVerifying, model.ReleaseStatusRollingBack:
+			summary.ReleasingApplications++
+		case model.ReleaseStatusFailed, model.ReleaseStatusRolledBack:
+			summary.FailedApplications++
+		}
+		if latest == nil || release.CreatedAt.After(latest.CreatedAt) || (release.CreatedAt.Equal(latest.CreatedAt) && release.ID > latest.ID) {
+			copy := release
+			latest = &copy
+		}
+	}
+	summary.UnreleasedApplications = summary.TotalApplications - int64(len(latestByApplication))
+	if latest != nil {
+		summary.LatestRelease = &model.DashboardLatestRelease{ApplicationName: applicationNames[latest.ApplicationID], Version: latest.Version, Status: latest.Status, CreatedAt: latest.CreatedAt}
+	}
+	return summary, nil
+}
+
 func (s *Store) UpsertAlertEvent(event *model.AlertEvent) (*model.AlertEvent, error) {
 	if event == nil || event.Fingerprint == "" || event.AlertName == "" || event.Labels == "" || event.Annotations == "" || event.Status == "" || event.StartsAt.IsZero() {
 		return nil, errors.New("invalid alert event")

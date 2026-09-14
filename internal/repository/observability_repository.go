@@ -59,6 +59,7 @@ type OperationLogRepository interface {
 // the management dashboard.
 type DashboardRepository interface {
 	GetDashboardStats(int) (*model.DashboardStats, error)
+	GetDashboardApplicationSummary() (*model.DashboardApplicationSummary, error)
 	ListExpiringCerts(int) ([]model.Cert, error)
 	ListAuditLogs(string, string, string, int, int) ([]model.AuditLog, int64, error)
 }

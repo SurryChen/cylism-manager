@@ -14,8 +14,13 @@ import (
 )
 
 type dashboardRepositoryFake struct {
-	certErr error
-	logErr  error
+	applicationErr error
+	certErr        error
+	logErr         error
+}
+
+func (f dashboardRepositoryFake) GetDashboardApplicationSummary() (*model.DashboardApplicationSummary, error) {
+	return nil, f.applicationErr
 }
 
 func (f dashboardRepositoryFake) GetDashboardStats(int) (*model.DashboardStats, error) {
@@ -58,5 +63,23 @@ func TestDashboardHandlerExposesSectionErrors(t *testing.T) {
 	}
 	if response.Data.Errors["expiring_certs"] == "" || response.Data.Errors["recent_logs"] == "" {
 		t.Fatalf("expected section errors, got %#v", response.Data.Errors)
+	}
+}
+
+func TestDashboardHandlerExposesApplicationSummaryError(t *testing.T) {
+	r := gin.New()
+	r.GET("/api/dashboard", NewDashboardHandler(dashboardRepositoryFake{applicationErr: errors.New("application store down")}).Get)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/dashboard", nil))
+	var response struct {
+		Data struct {
+			Errors map[string]string `json:"errors"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Data.Errors["applications"] == "" {
+		t.Fatalf("expected application summary error, got %#v", response.Data.Errors)
 	}
 }

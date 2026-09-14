@@ -23,9 +23,13 @@ func (h *DashboardHandler) Get(c *gin.Context) {
 		return
 	}
 
+	applicationSummary, applicationErr := h.store.GetDashboardApplicationSummary()
 	expiringCerts, certErr := h.store.ListExpiringCerts(30)
 	logs, _, logErr := h.store.ListAuditLogs("", "", "", 10, 0)
 	sectionErrors := gin.H{}
+	if applicationErr != nil {
+		sectionErrors["applications"] = applicationErr.Error()
+	}
 	if certErr != nil {
 		sectionErrors["expiring_certs"] = certErr.Error()
 	}
@@ -34,9 +38,10 @@ func (h *DashboardHandler) Get(c *gin.Context) {
 	}
 
 	apiShared.Success(c, gin.H{
-		"stats":          apiShared.DashboardStatsDTO(stats),
-		"expiring_certs": apiShared.CertsDTO(expiringCerts),
-		"recent_logs":    apiShared.AuditLogsDTO(logs),
-		"errors":         sectionErrors,
+		"stats":               apiShared.DashboardStatsDTO(stats),
+		"application_summary": apiShared.DashboardApplicationSummaryDTO(applicationSummary),
+		"expiring_certs":      apiShared.CertsDTO(expiringCerts),
+		"recent_logs":         apiShared.AuditLogsDTO(logs),
+		"errors":              sectionErrors,
 	})
 }

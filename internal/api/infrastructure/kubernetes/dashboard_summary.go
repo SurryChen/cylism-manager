@@ -138,12 +138,33 @@ func (s *DashboardSummaryService) refreshValue(ctx context.Context) (map[string]
 		case "nodes":
 			nodes := r.value.([]k8sclient.NodeInfo)
 			out["nodes_total"] = len(nodes)
+			readyNodes := 0
+			controlPlaneNodes := 0
+			workerNodes := 0
+			var cpuCores int64
+			var memoryMB int64
 			versions := map[string]struct{}{}
 			for _, node := range nodes {
+				if node.Ready {
+					readyNodes++
+				}
+				if node.Roles == "control-plane" {
+					controlPlaneNodes++
+				} else {
+					workerNodes++
+				}
+				cpuCores += node.CPUCores
+				memoryMB += node.MemoryMB
 				if node.Version != "" {
 					versions[normalizeVersion(node.Version)] = struct{}{}
 				}
 			}
+			out["nodes_ready"] = readyNodes
+			out["nodes_not_ready"] = len(nodes) - readyNodes
+			out["control_plane_nodes"] = controlPlaneNodes
+			out["worker_nodes"] = workerNodes
+			out["cpu_cores_total"] = cpuCores
+			out["memory_mb_total"] = memoryMB
 			out["version_consistent"] = len(versions) <= 1
 			if len(versions) == 1 {
 				for version := range versions {

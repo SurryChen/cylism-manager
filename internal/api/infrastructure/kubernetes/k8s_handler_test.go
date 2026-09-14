@@ -13,6 +13,7 @@ import (
 	"github.com/gin-gonic/gin"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
 )
@@ -143,8 +144,12 @@ func TestDashboardUsesLightweightClusterLists(t *testing.T) {
 	replicas := int32(2)
 	client := &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(
 		&corev1.Node{
-			ObjectMeta: metav1.ObjectMeta{Name: "node-a"},
-			Status:     corev1.NodeStatus{NodeInfo: corev1.NodeSystemInfo{KubeletVersion: "v1.32.1+k3s1"}},
+			ObjectMeta: metav1.ObjectMeta{Name: "node-a", Labels: map[string]string{"node-role.kubernetes.io/control-plane": ""}},
+			Status: corev1.NodeStatus{
+				NodeInfo:   corev1.NodeSystemInfo{KubeletVersion: "v1.32.1+k3s1"},
+				Capacity:   corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("4"), corev1.ResourceMemory: resource.MustParse("8Gi")},
+				Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}},
+			},
 		},
 		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "default"}},
 		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "ready", Namespace: "default"}, Status: corev1.PodStatus{Phase: corev1.PodRunning, Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}}},
@@ -162,20 +167,26 @@ func TestDashboardUsesLightweightClusterLists(t *testing.T) {
 
 	var payload struct {
 		Data struct {
-			NodesTotal       int    `json:"nodes_total"`
-			PodsTotal        int    `json:"pods_total"`
-			PodsReady        int    `json:"pods_ready"`
-			DeploymentsTotal int    `json:"deployments_total"`
-			DeploymentsReady int    `json:"deployments_ready"`
-			ServicesTotal    int    `json:"services_total"`
-			Namespaces       int    `json:"namespaces"`
-			Version          string `json:"version"`
+			NodesTotal        int    `json:"nodes_total"`
+			NodesReady        int    `json:"nodes_ready"`
+			NodesNotReady     int    `json:"nodes_not_ready"`
+			ControlPlaneNodes int    `json:"control_plane_nodes"`
+			WorkerNodes       int    `json:"worker_nodes"`
+			CPUCoresTotal     int64  `json:"cpu_cores_total"`
+			MemoryMBTotal     int64  `json:"memory_mb_total"`
+			PodsTotal         int    `json:"pods_total"`
+			PodsReady         int    `json:"pods_ready"`
+			DeploymentsTotal  int    `json:"deployments_total"`
+			DeploymentsReady  int    `json:"deployments_ready"`
+			ServicesTotal     int    `json:"services_total"`
+			Namespaces        int    `json:"namespaces"`
+			Version           string `json:"version"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
 		t.Fatal(err)
 	}
-	if got := payload.Data; got.NodesTotal != 1 || got.PodsTotal != 2 || got.PodsReady != 1 || got.DeploymentsTotal != 2 || got.DeploymentsReady != 1 || got.ServicesTotal != 2 || got.Namespaces != 1 || got.Version != "v1.32.1+k3s1" {
+	if got := payload.Data; got.NodesTotal != 1 || got.NodesReady != 1 || got.NodesNotReady != 0 || got.ControlPlaneNodes != 1 || got.WorkerNodes != 0 || got.CPUCoresTotal != 4 || got.MemoryMBTotal != 8192 || got.PodsTotal != 2 || got.PodsReady != 1 || got.DeploymentsTotal != 2 || got.DeploymentsReady != 1 || got.ServicesTotal != 2 || got.Namespaces != 1 || got.Version != "v1.32.1+k3s1" {
 		t.Fatalf("unexpected dashboard data: %#v", got)
 	}
 

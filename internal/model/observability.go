@@ -12,6 +12,24 @@ type DashboardStats struct {
 	ExpiredCerts  int64 `json:"expired_certs"`
 }
 
+// DashboardApplicationSummary is the current release state aggregated per
+// application for the operational dashboard.
+type DashboardApplicationSummary struct {
+	TotalApplications      int64
+	SuccessfulApplications int64
+	ReleasingApplications  int64
+	FailedApplications     int64
+	UnreleasedApplications int64
+	LatestRelease          *DashboardLatestRelease
+}
+
+type DashboardLatestRelease struct {
+	ApplicationName string
+	Version         string
+	Status          string
+	CreatedAt       time.Time
+}
+
 type AuditLog struct {
 	ID           uint      `gorm:"primaryKey" json:"id"`
 	Action       string    `gorm:"size:64;index;not null" json:"action"`

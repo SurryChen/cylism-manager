@@ -30,3 +30,12 @@
 - [x] 5.2 Run the full Go test suite and `go build ./...`.
 - [x] 5.3 Run the full frontend test suite and `npm run build`.
 - [x] 5.4 Run `git diff --check` and `openspec validate dashboard-operational-overview`.
+
+## 6. Application overview and first-screen composition
+
+- [x] 6.1 Add a dashboard application summary read model that aggregates only each application's latest release.
+- [x] 6.2 Expose application summary data and section-level errors through the dashboard API and DTOs.
+- [x] 6.3 Split the desktop dashboard into cluster overview, application overview, and quick action cards while keeping runtime checks separate.
+- [x] 6.4 Default resource trends to node-level series and preserve a compact single-screen layout with responsive fallback.
+- [x] 6.5 Add node readiness, role distribution, and capacity summaries to make the cluster overview informative without crowding the application overview.
+- [x] 6.6 Move quick-action configuration into a modal so editing does not expand the first-screen layout.

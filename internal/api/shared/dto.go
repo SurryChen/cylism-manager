@@ -691,6 +691,22 @@ type DashboardStatsView struct {
 	ExpiredCerts  int64 `json:"expired_certs"`
 }
 
+type DashboardApplicationSummaryView struct {
+	TotalApplications      int64                       `json:"total_applications"`
+	SuccessfulApplications int64                       `json:"successful_applications"`
+	ReleasingApplications  int64                       `json:"releasing_applications"`
+	FailedApplications     int64                       `json:"failed_applications"`
+	UnreleasedApplications int64                       `json:"unreleased_applications"`
+	LatestRelease          *DashboardLatestReleaseView `json:"latest_release,omitempty"`
+}
+
+type DashboardLatestReleaseView struct {
+	ApplicationName string    `json:"application_name"`
+	Version         string    `json:"version,omitempty"`
+	Status          string    `json:"status"`
+	CreatedAt       time.Time `json:"created_at"`
+}
+
 type timeFields struct {
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
@@ -754,6 +770,28 @@ func DashboardStatsDTO(stats *model.DashboardStats) *DashboardStatsView {
 		return nil
 	}
 	return &DashboardStatsView{TotalServers: stats.TotalServers, TotalSites: stats.TotalSites, ExpiringCerts: stats.ExpiringCerts, ExpiredCerts: stats.ExpiredCerts}
+}
+
+func DashboardApplicationSummaryDTO(summary *model.DashboardApplicationSummary) *DashboardApplicationSummaryView {
+	if summary == nil {
+		return nil
+	}
+	view := &DashboardApplicationSummaryView{
+		TotalApplications:      summary.TotalApplications,
+		SuccessfulApplications: summary.SuccessfulApplications,
+		ReleasingApplications:  summary.ReleasingApplications,
+		FailedApplications:     summary.FailedApplications,
+		UnreleasedApplications: summary.UnreleasedApplications,
+	}
+	if summary.LatestRelease != nil {
+		view.LatestRelease = &DashboardLatestReleaseView{
+			ApplicationName: summary.LatestRelease.ApplicationName,
+			Version:         summary.LatestRelease.Version,
+			Status:          summary.LatestRelease.Status,
+			CreatedAt:       summary.LatestRelease.CreatedAt,
+		}
+	}
+	return view
 }
 
 func RegistryProxyDTO(p *model.RegistryProxy) *RegistryProxyView {
