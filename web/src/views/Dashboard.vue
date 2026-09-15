@@ -11,7 +11,6 @@
       <article class="card dashboard-health-panel" :class="{ 'is-loading': k8sLoading }" :aria-busy="k8sLoading">
         <div class="card-header"><h2 class="card-title">集群概况</h2><div class="dashboard-health-header"><span :class="`cluster-status cluster-status-${k8sStatusTone}`">{{ k8sStatusLabel }}</span><router-link class="panel-link" to="/servers">查看集群</router-link></div></div>
         <section class="dashboard-overview-section" aria-label="集群资源">
-          <div class="dashboard-overview-heading">集群资源</div>
           <div class="dashboard-overview-grid">
             <div class="dashboard-overview-metric"><strong>{{ k8sMetric('nodes_total') }}</strong><span>节点</span></div>
             <div class="dashboard-overview-metric"><strong class="metric-success">{{ k8sReadyMetric('pods_ready', 'pods_total') }}</strong><span>Pods 就绪</span></div>
@@ -22,7 +21,13 @@
           </div>
           <div class="dashboard-cluster-health">
             <div class="dashboard-cluster-health-heading"><span>节点健康</span><strong>{{ k8sReadyMetric('nodes_ready', 'nodes_total') }}</strong></div>
-            <div class="dashboard-cluster-health-bar" role="progressbar" aria-label="节点健康比例" :aria-valuenow="nodeReadyPercent" aria-valuemin="0" aria-valuemax="100"><span :style="{ width: `${nodeReadyPercent}%` }"></span></div>
+            <div class="dashboard-cluster-health-status" role="list" aria-label="节点健康状态">
+              <div v-for="segment in nodeHealthSegments" :key="segment.key" class="dashboard-node-health-item" :class="`dashboard-node-health-${segment.tone}`" role="listitem">
+                <span class="dashboard-node-health-dot" aria-hidden="true"></span>
+                <span>{{ segment.label }}</span>
+                <strong>{{ segment.count }}</strong>
+              </div>
+            </div>
             <div class="dashboard-cluster-health-meta"><span>{{ k8sMetric('control_plane_nodes') }} 控制面</span><span>{{ k8sMetric('worker_nodes') }} 工作节点</span><span>{{ k8sMetric('cpu_cores_total') }} vCPU · {{ k8sMemoryMetric() }}</span></div>
           </div>
         </section>
@@ -30,26 +35,28 @@
 
       <article class="card dashboard-application-panel" :class="{ 'is-loading': dashboardLoading && !applicationSummary }" :aria-busy="dashboardLoading">
         <div class="card-header"><h2 class="card-title">应用情况</h2><router-link class="panel-link" to="/applications">查看应用</router-link></div>
-        <div v-if="dashboardSectionError('applications')" class="dashboard-application-unavailable"><span class="empty-icon">!</span><span>应用状态暂不可用</span></div>
-        <template v-else>
-          <div class="application-summary-count"><strong>{{ applicationMetric('total_applications') }}</strong><span>个应用</span></div>
-          <div class="application-status-grid">
-            <div><strong class="metric-success">{{ applicationMetric('successful_applications') }}</strong><span>运行正常</span></div>
-            <div><strong class="metric-accent">{{ applicationMetric('releasing_applications') }}</strong><span>发布中</span></div>
-            <div><strong :class="{ 'metric-warn': Number(applicationSummary?.failed_applications || 0) > 0 }">{{ applicationMetric('failed_applications') }}</strong><span>发布失败</span></div>
-            <div><strong>{{ applicationMetric('unreleased_applications') }}</strong><span>未发布</span></div>
-          </div>
-          <div class="application-latest-release">
-            <span>最近发布</span>
-            <template v-if="applicationSummary?.latest_release"><strong>{{ applicationSummary.latest_release.application_name }}</strong><span>{{ releaseStatusLabel(applicationSummary.latest_release.status) }}<template v-if="applicationSummary.latest_release.version"> · {{ applicationSummary.latest_release.version }}</template></span></template>
-            <span v-else>暂无发布记录</span>
-          </div>
-        </template>
+        <div class="dashboard-application-content dashboard-card-scroll-region" tabindex="0">
+          <div v-if="dashboardSectionError('applications')" class="dashboard-application-unavailable"><span class="empty-icon">!</span><span>应用状态暂不可用</span></div>
+          <template v-else>
+            <div class="application-summary-count"><strong>{{ applicationMetric('total_applications') }}</strong><span>个应用</span></div>
+            <div class="application-status-grid">
+              <div><strong class="metric-success">{{ applicationMetric('successful_applications') }}</strong><span>运行正常</span></div>
+              <div><strong class="metric-accent">{{ applicationMetric('releasing_applications') }}</strong><span>发布中</span></div>
+              <div><strong :class="{ 'metric-warn': Number(applicationSummary?.failed_applications || 0) > 0 }">{{ applicationMetric('failed_applications') }}</strong><span>发布失败</span></div>
+              <div><strong>{{ applicationMetric('unreleased_applications') }}</strong><span>未发布</span></div>
+            </div>
+            <div class="application-latest-release">
+              <span>最近发布</span>
+              <template v-if="applicationSummary?.latest_release"><strong>{{ applicationSummary.latest_release.application_name }}</strong><span>{{ releaseStatusLabel(applicationSummary.latest_release.status) }}<template v-if="applicationSummary.latest_release.version"> · {{ applicationSummary.latest_release.version }}</template></span></template>
+              <span v-else>暂无发布记录</span>
+            </div>
+          </template>
+        </div>
       </article>
 
       <aside class="card dashboard-side-panel">
         <div class="card-header"><h2 class="card-title">快捷操作</h2><button class="icon-button dashboard-action-settings" type="button" title="编辑快捷操作" aria-label="编辑快捷操作" :aria-expanded="quickActionsEditing" @click="quickActionsEditing = true"><Settings2 :size="15" /></button></div>
-        <nav class="dashboard-action-list" aria-label="快捷操作">
+        <nav class="dashboard-action-list dashboard-card-scroll-region" aria-label="快捷操作" tabindex="0">
           <router-link v-for="action in visibleQuickActions" :key="action.id" class="dashboard-action-card" :class="{ 'dashboard-action-card-primary': action.id === 'deploy' }" :to="action.to"><span class="dashboard-action-icon">{{ action.icon }}</span><strong>{{ action.label }}</strong><span class="action-arrow">→</span></router-link>
         </nav>
       </aside>
@@ -133,11 +140,16 @@ const k8sStatusTone = computed(() => {
   if (k8sLoading.value || !k8sStats.value) return 'loading'
   return k8sError.value || k8sStats.value.partial || k8sStats.value.version_consistent === false ? 'warn' : 'ok'
 })
-const nodeReadyPercent = computed(() => {
-  if (k8sLoading.value || !k8sStats.value) return 0
-  const total = Number(k8sStats.value.nodes_total)
-  if (!Number.isFinite(total) || total <= 0) return 0
-  return Math.round((Number(k8sStats.value.nodes_ready || 0) / total) * 100)
+const nodeHealthSegments = computed(() => {
+  if (k8sLoading.value || !k8sStats.value || k8sError.value) {
+    return [{ key: 'ready', label: 'Ready', count: '—', tone: 'muted' }]
+  }
+  const ready = Math.max(0, Number(k8sStats.value.nodes_ready || 0))
+  const total = Math.max(0, Number(k8sStats.value.nodes_total || 0))
+  const notReady = Math.max(0, total - ready)
+  const segments = [{ key: 'ready', label: 'Ready', count: ready, tone: 'success' }]
+  if (notReady > 0) segments.push({ key: 'not-ready', label: '异常', count: notReady, tone: 'warning' })
+  return segments
 })
 const alertOverview = alerting.data
 const alertingLoading = alerting.loading
@@ -309,7 +321,7 @@ function resourceLabel(r) { const m = { server:'服务器',site:'站点',cert:'�
 .dashboard-primary-action:hover, .dashboard-primary-action:focus-visible { text-decoration: none; }
 
 .dashboard-main-grid { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(280px, 1fr) minmax(240px, .85fr); gap: 16px; align-items: stretch; }
-.dashboard-health-panel, .dashboard-application-panel, .dashboard-side-panel { min-width: 0; }
+.dashboard-health-panel, .dashboard-application-panel, .dashboard-side-panel { min-width: 0; min-height: 0; overflow: hidden; }
 .dashboard-health-panel { display: flex; flex-direction: column; }
 .dashboard-health-panel.is-loading { opacity: .86; }
 .cluster-status { font-size: 10px; font-weight: 600; }
@@ -317,24 +329,32 @@ function resourceLabel(r) { const m = { server:'服务器',site:'站点',cert:'�
 .cluster-status-warn { color: var(--warning); }
 .cluster-status-loading { color: var(--text-muted); }
 .dashboard-health-header { display: flex; align-items: center; gap: 12px; }
-.dashboard-overview-section { display: grid; flex: 1; align-content: center; gap: 9px; }
+.dashboard-card-scroll-region { min-height: 0; overflow: auto; overscroll-behavior: contain; scrollbar-color: var(--border-strong) transparent; scrollbar-width: thin; }
+.dashboard-card-scroll-region::-webkit-scrollbar { width: 6px; height: 6px; }
+.dashboard-card-scroll-region::-webkit-scrollbar-thumb { border-radius: 999px; background: var(--border-strong); }
+.dashboard-overview-section { display: grid; flex: 1; align-content: center; gap: 8px; }
 .dashboard-platform-section { margin-top: 22px; }
-.dashboard-overview-heading { color: var(--text-secondary); font-size: 11px; font-weight: 700; }
-.dashboard-overview-grid, .dashboard-platform-grid { display: grid; gap: 18px 24px; }
+.dashboard-overview-grid, .dashboard-platform-grid { display: grid; gap: 11px 24px; }
 .dashboard-overview-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .dashboard-platform-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .dashboard-overview-metric { display: grid; min-width: 0; gap: 5px; padding: 0; }
 .dashboard-overview-metric strong { overflow: hidden; color: var(--text-primary); font: 700 18px/1 var(--font-mono); font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }
 .dashboard-overview-metric span { overflow: hidden; color: var(--text-muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .dashboard-version strong { font-size: 14px; }
-.dashboard-cluster-health { display: grid; gap: 7px; margin-top: 17px; padding-top: 14px; border-top: 1px solid var(--border-muted); }
-.dashboard-cluster-health-heading, .dashboard-cluster-health-meta { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--text-muted); font-size: 10px; }
+.dashboard-cluster-health { display: flex; align-items: center; flex-wrap: wrap; gap: 7px 13px; margin-top: 8px; padding-top: 10px; border-top: 1px solid var(--border-muted); }
+.dashboard-cluster-health-heading, .dashboard-cluster-health-meta { display: flex; align-items: center; gap: 6px; color: var(--text-muted); font-size: 10px; }
 .dashboard-cluster-health-heading strong { color: var(--text-primary); font: 700 12px/1 var(--font-mono); }
-.dashboard-cluster-health-bar { height: 5px; overflow: hidden; border-radius: 999px; background: var(--surface-subtle); }
-.dashboard-cluster-health-bar span { display: block; height: 100%; border-radius: inherit; background: var(--success); transition: width .2s ease; }
-.dashboard-cluster-health-meta { justify-content: flex-start; flex-wrap: wrap; }
+.dashboard-cluster-health-status { display: flex; flex-wrap: wrap; gap: 7px; }
+.dashboard-node-health-item { display: inline-flex; align-items: center; gap: 5px; color: var(--text-secondary); font-size: 10px; }
+.dashboard-node-health-item strong { color: var(--text-primary); font: 700 11px/1 var(--font-mono); }
+.dashboard-node-health-dot { width: 7px; height: 7px; flex: 0 0 auto; border-radius: 50%; background: var(--text-muted); }
+.dashboard-node-health-success .dashboard-node-health-dot { background: var(--success); }
+.dashboard-node-health-warning .dashboard-node-health-dot { background: var(--warning); }
+.dashboard-cluster-health-meta { flex-wrap: wrap; gap: 0; }
+.dashboard-cluster-health-meta span + span::before { content: '·'; margin: 0 6px; color: var(--text-muted); }
 .dashboard-application-panel { display: flex; min-width: 0; flex-direction: column; padding: 16px; }
 .dashboard-application-panel .card-header { margin-bottom: 12px; }
+.dashboard-application-content { display: flex; min-height: 0; flex: 1; flex-direction: column; padding-right: 4px; }
 .application-summary-count { display: flex; align-items: baseline; gap: 6px; }
 .application-summary-count strong { color: var(--text-primary); font: 700 30px/1 var(--font-mono); }
 .application-summary-count span, .application-status-grid span, .application-latest-release > span:first-child { color: var(--text-muted); font-size: 10px; }
@@ -346,7 +366,8 @@ function resourceLabel(r) { const m = { server:'服务器',site:'站点',cert:'�
 .application-latest-release span:not(:first-child) { color: var(--text-secondary); font-size: 10px; }
 .dashboard-application-unavailable { display: flex; min-height: 100px; align-items: center; gap: 8px; color: var(--text-muted); font-size: 11px; }
 
-.dashboard-action-list { display: grid; gap: 2px; }
+.dashboard-side-panel { display: flex; flex-direction: column; }
+.dashboard-action-list { display: grid; min-height: 0; flex: 1; gap: 2px; padding-right: 4px; }
 .dashboard-action-card { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; align-items: center; min-height: 44px; padding: 7px 4px; border-bottom: 1px solid var(--border-muted); color: var(--text-primary); text-decoration: none; }
 .dashboard-action-card:last-child { border-bottom: 0; }
 .dashboard-action-card:hover { color: var(--action-primary); }
@@ -395,10 +416,11 @@ function resourceLabel(r) { const m = { server:'服务器',site:'站点',cert:'�
 /* Keep the desktop overview within the content viewport while preserving a natural
    scrolling layout for short windows and mobile screens. */
 @media (min-width: 961px) and (min-height: 700px) {
-  .dashboard-page { height: calc(100dvh - var(--topbar-height) - var(--shell-padding) - 36px); min-height: 0; grid-template-rows: auto minmax(220px, .9fr) minmax(260px, 1.1fr); }
+  .dashboard-page { height: calc(100dvh - var(--topbar-height) - var(--shell-padding) - 36px); min-height: 0; grid-template-rows: auto minmax(220px, 250px) minmax(260px, 1fr); }
   .dashboard-main-grid, .dashboard-insights-grid { min-height: 0; }
   .dashboard-health-panel, .dashboard-application-panel, .dashboard-side-panel, .dashboard-activity-panel { height: 100%; }
-  .dashboard-side-panel, .dashboard-activity-panel { overflow: auto; }
+  .dashboard-side-panel { overflow: hidden; }
+  .dashboard-activity-panel { overflow: auto; }
 }
 
 @media (max-width: 960px) {

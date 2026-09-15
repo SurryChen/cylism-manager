@@ -19,7 +19,7 @@ vi.mock('../api/dashboard.js', () => ({
     expiring_certs: [], recent_logs: [],
   }),
   getKubernetesDashboard: vi.fn().mockResolvedValue({
-    nodes_total: 3, pods_total: 12, pods_ready: 10,
+    nodes_total: 3, nodes_ready: 3, pods_total: 12, pods_ready: 10,
     deployments_total: 5, deployments_ready: 4,
     services_total: 8, namespaces: 3, version: 'v1.28.4+k3s1',
   }),
@@ -64,7 +64,10 @@ describe('Dashboard view with K8s stats', () => {
     expect(dashboardSource).toContain('.dashboard-main-grid { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(280px, 1fr) minmax(240px, .85fr);')
     expect(dashboardSource).toContain('.dashboard-insights-grid { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(250px, .8fr);')
     expect(dashboardSource).toContain('height: calc(100dvh - var(--topbar-height) - var(--shell-padding) - 36px);')
+    expect(dashboardSource).toContain('grid-template-rows: auto minmax(220px, 250px) minmax(260px, 1fr);')
     expect(dashboardSource).toContain('align-items: stretch;')
+    expect(dashboardSource).toContain('dashboard-card-scroll-region')
+    expect(dashboardSource).toContain('overscroll-behavior: contain;')
   })
 
   it('renders page title', () => {
@@ -156,6 +159,11 @@ describe('Dashboard view with K8s stats', () => {
     await nextTick()
 
     expect(wrapper.find('.dashboard-cluster-health').exists()).toBe(true)
+    expect(wrapper.find('.dashboard-cluster-health-bar').exists()).toBe(false)
+    expect(wrapper.find('.dashboard-overview-section').classes()).not.toContain('dashboard-card-scroll-region')
+    expect(wrapper.findAll('.dashboard-node-health-item')).toHaveLength(1)
+    expect(wrapper.find('.dashboard-node-health-item').text()).toContain('Ready')
+    expect(wrapper.find('.dashboard-node-health-item').text()).toContain('3')
     expect(wrapper.text()).toContain('节点健康')
     expect(wrapper.text()).toContain('控制面')
     expect(wrapper.text()).toContain('工作节点')
