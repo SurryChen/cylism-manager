@@ -16,6 +16,8 @@ type Dispatcher interface {
 	Dispatch(context.Context, *model.AlertEvent)
 }
 
+const alertDispatchTimeout = 2 * time.Minute
+
 func PersistAndDispatch(ctx context.Context, store EventStore, dispatcher Dispatcher, events []*model.AlertEvent, force bool, now time.Time) (int, error) {
 	if store == nil {
 		return 0, nil
@@ -37,7 +39,11 @@ func PersistAndDispatch(ctx context.Context, store EventStore, dispatcher Dispat
 			return dispatched, err
 		}
 		dispatched++
-		go dispatcher.Dispatch(ctx, persisted)
+		dispatchCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), alertDispatchTimeout)
+		go func(event *model.AlertEvent) {
+			defer cancel()
+			dispatcher.Dispatch(dispatchCtx, event)
+		}(persisted)
 	}
 	return dispatched, nil
 }

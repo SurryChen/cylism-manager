@@ -20,6 +20,8 @@ var (
 	ErrMirrorDisabled            = errors.New("镜像源已停用，不能应用")
 )
 
+const nodeRegistryMirrorApplyTimeout = 10 * time.Minute
+
 // MirrorInput is the transport-independent definition of a K3s registry
 // mirror. HTTP handlers map JSON requests into this type before calling the
 // service, while other callers can reuse the same validation and lifecycle.
@@ -174,7 +176,14 @@ func (s *MirrorService) StartApply(ctx context.Context, id uint, serverIDs []uin
 		s.finishApply(id)
 		return nil, fmt.Errorf("保存应用任务状态失败: %w", err)
 	}
-	go s.runApply(ctx, id, servers, content, apply)
+	// Applying a mirror is asynchronous, so it must outlive the HTTP request
+	// that accepted it. Keep request values while dropping request cancellation
+	// and enforce a lifecycle owned by the background task instead.
+	applyCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), nodeRegistryMirrorApplyTimeout)
+	go func() {
+		defer cancel()
+		s.runApply(applyCtx, id, servers, content, apply)
+	}()
 	return s.Get(id)
 }
 

@@ -100,13 +100,19 @@ describe('Node registry mirrors view', () => {
     await settle()
 
     await wrapper.get('[data-testid="create-registry-proxy"]').trigger('click')
-    const inputs = wrapper.findAll('.proxy-modal input')
-    await inputs[0].setValue('Kubernetes Registry')
-    await inputs[1].setValue('registry.k8s.io')
-    await inputs[3].setValue('100.64.0.8')
-    const select = wrapper.get('.proxy-modal select')
-    await select.setValue('node-a')
-    await wrapper.get('.proxy-modal form').trigger('submit')
+    expect(document.body.querySelector('.proxy-modal')?.closest('.overlay')?.parentElement).toBe(document.body)
+    const inputs = document.body.querySelectorAll('.proxy-modal input')
+    inputs[0].value = 'Kubernetes Registry'
+    inputs[0].dispatchEvent(new Event('input', { bubbles: true }))
+    inputs[1].value = 'registry.k8s.io'
+    inputs[1].dispatchEvent(new Event('input', { bubbles: true }))
+    inputs[3].value = '100.64.0.8'
+    inputs[3].dispatchEvent(new Event('input', { bubbles: true }))
+    const select = document.body.querySelector('.proxy-modal select')
+    select.value = 'node-a'
+    select.dispatchEvent(new Event('change', { bubbles: true }))
+    document.body.querySelector('.proxy-modal form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    await settle()
 
     expect(api.post).toHaveBeenCalledWith('/registry-proxies', expect.objectContaining({
       name: 'Kubernetes Registry',

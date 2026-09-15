@@ -124,3 +124,49 @@ func TestMirrorServiceApplyUsesOnlySelectedClusterNodes(t *testing.T) {
 	}
 	t.Fatal("apply did not complete")
 }
+
+func TestMirrorServiceApplySurvivesRequestCancellation(t *testing.T) {
+	service, s := newMirrorServiceTest(t)
+	mirror, err := service.Create(MirrorInput{
+		Name:              "docker-hub-mirror",
+		Registry:          "docker.io",
+		Endpoints:         []string{"https://mirror.example.com"},
+		VerificationImage: "docker.io/library/busybox:1.36",
+	}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	worker := &model.Server{Name: "worker-a", Host: "10.0.0.11", ClusterRole: "worker", K8sNodeName: "worker-a"}
+	if err := s.CreateServer(worker); err != nil {
+		t.Fatal(err)
+	}
+
+	requestCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+	observedErr := make(chan error, 1)
+	if _, err := service.StartApply(requestCtx, mirror.ID, []uint{worker.ID}, func(ctx context.Context, _ *model.Server, _ []byte) (string, string) {
+		observedErr <- ctx.Err()
+		return "success", "配置已写入"
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case err := <-observedErr:
+		if err != nil {
+			t.Fatalf("background apply context was canceled: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("apply did not start")
+	}
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		result, getErr := service.Get(mirror.ID)
+		if getErr == nil && result.LastApplyStatus == "succeeded" {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("apply did not complete")
+}
