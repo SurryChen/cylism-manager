@@ -57,4 +57,8 @@ func TestAgentHandlerProvidesScopedPendingPodDiagnostics(t *testing.T) {
 			t.Fatalf("diagnostic %s = %d: %s", test.path, recorder.Code, recorder.Body.String())
 		}
 	}
+	logs, total, err := s.ListAuditLogsFiltered(model.AuditLogFilter{Limit: 20})
+	if err != nil || total != 0 || len(logs) != 0 {
+		t.Fatalf("ordinary Agent reads must not create audit events: %#v total=%d err=%v", logs, total, err)
+	}
 }

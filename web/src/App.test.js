@@ -76,6 +76,19 @@ describe('Glass UI application shell', () => {
     expect(mobileNavigation.text()).not.toContain('数据管理')
   })
 
+  it.each([
+    ['/audit', '审计日志'],
+    ['/operations', '操作历史'],
+    ['/settings/system', '系统设置'],
+  ])('keeps %s as a direct records-and-system sidebar route', async (path, label) => {
+    const wrapper = await mountApp(path)
+    const navigation = wrapper.get('[data-testid="desktop-navigation"]')
+
+    expect(router.currentRoute.value.path).toBe(path)
+    expect(navigation.get('.sidebar-link.is-active').text()).toContain(label)
+    expect(navigation.findAll('.sidebar-link.is-active')).toHaveLength(1)
+  })
+
   it('activates the cluster aggregation entry for a cluster configuration route', async () => {
     const wrapper = await mountApp('/cluster/registry-mirrors')
     const links = wrapper.get('[data-testid="desktop-navigation"]').findAll('.sidebar-link')
@@ -147,7 +160,9 @@ describe('Glass UI application shell', () => {
     expect(themeCss).toContain('width: 85vw')
     expect(themeCss).toContain('height: 58vh')
     expect(componentsCss).not.toContain('当前工作区')
-    expect(componentsCss).toContain('height: 52px')
+    expect(themeCss).toContain('--page-header-height: 64px')
+    expect(themeCss).toContain('--tabbed-page-header-height: var(--page-header-height)')
+    expect(componentsCss).toContain('height: var(--tabbed-page-header-height)')
   })
 
   it('renders active navigation as floating glass controls and keeps the mobile workspace shrinkable', async () => {
@@ -158,6 +173,7 @@ describe('Glass UI application shell', () => {
     expect(themeCss).toContain('.topbar-nav-link.is-active { align-self: center;')
     expect(themeCss).toContain('box-shadow: var(--shadow-soft), inset 0 1px 0 rgba(255,255,255,.78)')
     expect(themeCss).toContain('.sidebar-link.is-active { border-color: var(--border);')
+    expect(themeCss).toContain('transition: background .18s ease, color .18s ease, border-color .18s ease, transform .18s ease, box-shadow .18s ease')
     expect(themeCss).toContain('.topbar-nav-link { display: inline-flex; align-self: center; min-height: 34px;')
     expect(themeCss).toContain('.topbar-nav-link:hover { border-color: var(--border);')
     expect(themeCss).toContain('@media (max-width: 840px) { .app-workspace { width: 100%; min-width: 0; max-width: 100%;')

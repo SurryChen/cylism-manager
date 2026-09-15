@@ -11,6 +11,9 @@ import (
 
 // backfillData applies idempotent data upgrades after the schema is ready.
 func (s *Store) backfillData() error {
+	if err := s.backfillAuditLogs(); err != nil {
+		return err
+	}
 	if err := s.backfillManagedDomainEnvironments(); err != nil {
 		return err
 	}
@@ -21,6 +24,44 @@ func (s *Store) backfillData() error {
 		return err
 	}
 	return s.ReconcileEnvironmentNamespaceUniqueness()
+}
+
+func (s *Store) backfillAuditLogs() error {
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		var logs []model.AuditLog
+		if err := tx.Where("source IS NULL OR source = '' OR outcome IS NULL OR outcome = '' OR summary IS NULL OR summary = '' OR target_name IS NULL OR target_name = '' OR actor_type IS NULL OR actor_type = ''").Find(&logs).Error; err != nil {
+			return err
+		}
+		for index := range logs {
+			log := &logs[index]
+			updates := map[string]any{}
+			if log.Source == "" {
+				updates["source"] = model.AuditSourceLegacy
+			}
+			if log.Outcome == "" {
+				updates["outcome"] = model.AuditOutcomeSucceeded
+			}
+			if log.ActorType == "" {
+				if log.UserID != 0 {
+					updates["actor_type"] = model.AuditActorUser
+				} else {
+					updates["actor_type"] = model.AuditActorSystem
+				}
+			}
+			if log.TargetName == "" {
+				updates["target_name"] = model.AuditTargetFallback(log.ResourceType, log.ResourceID)
+			}
+			if log.Summary == "" {
+				updates["summary"] = model.AuditSummaryFallback(log.Action, log.ResourceType, log.ResourceID)
+			}
+			if len(updates) > 0 {
+				if err := tx.Model(log).Updates(updates).Error; err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	})
 }
 
 func (s *Store) backfillRuntimeVersions() error {

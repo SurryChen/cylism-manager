@@ -48,6 +48,9 @@ describe('SystemSettings view', () => {
     await nextTick()
 
     expect(wrapper.text()).toContain('系统设置')
+    expect(wrapper.findAll('h1')).toHaveLength(1)
+    expect(wrapper.get('.section-tabs-header').find('h1').text()).toBe('系统设置')
+    expect(wrapper.find('.page-header').exists()).toBe(false)
     expect(wrapper.text()).toContain('安全与访问')
     expect(wrapper.text()).not.toContain('Tailscale')
     expect(wrapper.text()).not.toContain('平台自更新')

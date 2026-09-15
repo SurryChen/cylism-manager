@@ -1,5 +1,5 @@
 <template>
-  <header class="page-header">
+  <header class="page-header" data-header-variant="standard">
     <div class="page-header-main">
       <button
         v-if="backTo"
@@ -32,9 +32,11 @@ defineEmits(['back'])
 <style scoped>
 .page-header {
   display: flex;
+  min-height: var(--page-header-height);
   align-items: flex-start;
   justify-content: space-between;
-  gap: var(--space-16);
+  gap: var(--page-header-inline-gap);
+  margin-bottom: 0;
 }
 
 .page-header-main {

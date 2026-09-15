@@ -14,6 +14,7 @@ import (
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/repository"
 	security "github.com/cylism/cylism-manager/internal/security"
+	auditservice "github.com/cylism/cylism-manager/internal/service/audit"
 	maintenance "github.com/cylism/cylism-manager/internal/service/maintenance"
 	monitoringservice "github.com/cylism/cylism-manager/internal/service/observability/monitoring"
 	registryservice "github.com/cylism/cylism-manager/internal/service/registry"
@@ -73,10 +74,23 @@ func (h *AgentHandler) audit(instance *model.RuntimeInstance, action string, det
 	if h == nil || h.store == nil || instance == nil {
 		return
 	}
-	encoded, err := json.Marshal(detail)
-	if err == nil {
-		_ = h.store.CreateAuditLog(&model.AuditLog{Action: action, ResourceType: "agent_runtime", ResourceID: instance.ID, Detail: string(encoded), CreatedAt: time.Now()})
+	metadata := make(map[string]any, len(detail))
+	for key, value := range detail {
+		metadata[key] = value
 	}
+	outcome := model.AuditOutcomeSucceeded
+	if strings.Contains(action, "denied") {
+		outcome = model.AuditOutcomeDenied
+	}
+	if strings.Contains(action, "requested") {
+		outcome = model.AuditOutcomeAccepted
+	}
+	_ = auditservice.NewService(h.store).Record(auditservice.AuditEventInput{
+		Action: action, ResourceType: "agent_runtime", ResourceID: instance.ID, TargetName: instance.Name,
+		Actor:  auditservice.Actor{Type: model.AuditActorAgent, ID: instance.ID, Name: instance.Name},
+		Source: model.AuditSourceAgent, Outcome: outcome, Summary: model.AuditSummaryFallback(action, "agent_runtime", instance.ID),
+		RequestID: detail["request_id"], OperationID: detail["operation_id"], Metadata: metadata,
+	})
 }
 func validAgentName(value string) bool {
 	return len(value) <= 63 && agentResourceNamePattern.MatchString(value)

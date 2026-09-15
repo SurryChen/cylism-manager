@@ -10,6 +10,7 @@ import (
 	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/repository"
+	auditservice "github.com/cylism/cylism-manager/internal/service/audit"
 	maintenance "github.com/cylism/cylism-manager/internal/service/maintenance"
 	registryservice "github.com/cylism/cylism-manager/internal/service/registry"
 	"github.com/gin-gonic/gin"
@@ -73,7 +74,7 @@ func (h *AgentOperationHandler) ReplaceGrants(c *gin.Context) {
 		apiShared.ValidationError(c, "授权范围或能力无效")
 		return
 	}
-	h.audit(runtimeID, apiShared.UserID(c), "agent.grants_replaced", map[string]any{"grant_count": len(request.Grants)})
+	h.audit(c, runtimeID, apiShared.UserID(c), "agent.grants_replaced", model.AuditOutcomeSucceeded, map[string]any{"grant_count": len(request.Grants)})
 	apiShared.SuccessWithMessage(c, apiShared.AgentCapabilityGrantsDTO(request.Grants), "Agent 能力授权已更新")
 }
 
@@ -178,7 +179,10 @@ func (h *AgentOperationHandler) resolve(c *gin.Context, approve bool) {
 		return
 	}
 	if time.Now().After(operation.ExpiresAt) {
-		_, _ = h.store.UpdateAgentOperationStatus(operationID, model.AgentOperationPendingApproval, model.AgentOperationExpired, "审批已过期", nil, nil)
+		changed, _ := h.store.UpdateAgentOperationStatus(operationID, model.AgentOperationPendingApproval, model.AgentOperationExpired, "审批已过期", nil, nil)
+		if changed {
+			h.audit(c, operation.RuntimeID, 0, "agent.operation_expired", model.AuditOutcomeFailed, map[string]any{"operation_id": operation.OperationID})
+		}
 		apiShared.Conflict(c, "Agent 操作审批已过期")
 		return
 	}
@@ -189,7 +193,7 @@ func (h *AgentOperationHandler) resolve(c *gin.Context, approve bool) {
 			apiShared.Conflict(c, "Agent 操作状态已变化")
 			return
 		}
-		h.audit(operation.RuntimeID, userID, "agent.operation_rejected", map[string]any{"operation_id": operation.OperationID})
+		h.audit(c, operation.RuntimeID, userID, "agent.operation_rejected", model.AuditOutcomeDenied, map[string]any{"operation_id": operation.OperationID})
 		apiShared.SuccessWithMessage(c, gin.H{"operation_id": operation.OperationID, "status": model.AgentOperationRejected}, "Agent 操作已拒绝")
 		return
 	}
@@ -225,16 +229,18 @@ func (h *AgentOperationHandler) resolve(c *gin.Context, approve bool) {
 		apiShared.Conflict(c, "Agent 操作状态已变化")
 		return
 	}
+	h.audit(c, operation.RuntimeID, userID, "agent.operation_approved", model.AuditOutcomeSucceeded, map[string]any{"operation_id": operation.OperationID})
 	deployment.Spec.Replicas = &parameters.Replicas
 	if _, err := h.client.Clientset().AppsV1().Deployments(parameters.Namespace).Update(c.Request.Context(), deployment, metav1.UpdateOptions{}); err != nil {
 		now := time.Now()
 		_, _ = h.store.UpdateAgentOperationStatus(operationID, model.AgentOperationApproved, model.AgentOperationFailed, agentOperationErrorSummary("执行 Deployment 扩缩容失败", err), nil, &now)
+		h.audit(c, operation.RuntimeID, userID, "agent.operation_failed", model.AuditOutcomeFailed, map[string]any{"operation_id": operation.OperationID, "capability": operation.Capability})
 		apiShared.K8sAPIError(c, "执行 Deployment 扩缩容失败")
 		return
 	}
 	now := time.Now()
 	_, _ = h.store.UpdateAgentOperationStatus(operationID, model.AgentOperationApproved, model.AgentOperationSucceeded, "", nil, &now)
-	h.audit(operation.RuntimeID, userID, "agent.operation_executed", map[string]any{"operation_id": operation.OperationID})
+	h.audit(c, operation.RuntimeID, userID, "agent.operation_succeeded", model.AuditOutcomeSucceeded, map[string]any{"operation_id": operation.OperationID, "capability": operation.Capability})
 	apiShared.SuccessWithMessage(c, gin.H{"operation_id": operation.OperationID, "status": model.AgentOperationSucceeded}, "Agent 操作已执行")
 }
 
@@ -268,6 +274,7 @@ func (h *AgentOperationHandler) resolveMaintenanceCleanup(c *gin.Context, operat
 		apiShared.Conflict(c, "Agent 操作状态已变化")
 		return
 	}
+	h.audit(c, operation.RuntimeID, userID, "agent.operation_approved", model.AuditOutcomeSucceeded, map[string]any{"operation_id": operation.OperationID, "capability": operation.Capability})
 	event.Status, event.DiagnosticSummary = model.AlertEventRemediating, "管理员已批准，正在执行固定清理配方"
 	_ = h.store.UpdateAlertEvent(event)
 	output, executeErr := h.maintenanceCleanupExecutor.Execute(c.Request.Context(), server, parameters.Recipe)
@@ -275,6 +282,7 @@ func (h *AgentOperationHandler) resolveMaintenanceCleanup(c *gin.Context, operat
 	if executeErr != nil {
 		message := maintenanceCleanupFailureSummary(output, executeErr)
 		_, _ = h.store.UpdateAgentOperationStatus(operation.OperationID, model.AgentOperationApproved, model.AgentOperationFailed, message, nil, &now)
+		h.audit(c, operation.RuntimeID, userID, "agent.operation_failed", model.AuditOutcomeFailed, map[string]any{"operation_id": operation.OperationID, "capability": operation.Capability})
 		event.Status, event.LastError = model.AlertEventFailed, message
 		_ = h.store.UpdateAlertEvent(event)
 		apiShared.Error(c, http.StatusBadGateway, apiShared.CodeInternalError, "执行固定清理配方失败")
@@ -283,7 +291,7 @@ func (h *AgentOperationHandler) resolveMaintenanceCleanup(c *gin.Context, operat
 	_, _ = h.store.UpdateAgentOperationStatus(operation.OperationID, model.AgentOperationApproved, model.AgentOperationSucceeded, "", nil, &now)
 	event.Status, event.DiagnosticSummary, event.LastError = model.AlertEventFiring, maintenance.CleanupCompletionSummary(parameters.Recipe, output), ""
 	_ = h.store.UpdateAlertEvent(event)
-	h.audit(operation.RuntimeID, userID, "agent.maintenance_cleanup_executed", map[string]any{"operation_id": operation.OperationID, "recipe": parameters.Recipe, "alert_id": parameters.AlertID})
+	h.audit(c, operation.RuntimeID, userID, "agent.operation_succeeded", model.AuditOutcomeSucceeded, map[string]any{"operation_id": operation.OperationID, "capability": operation.Capability, "recipe": parameters.Recipe, "alert_id": parameters.AlertID})
 	apiShared.SuccessWithMessage(c, gin.H{"operation_id": operation.OperationID, "status": model.AgentOperationSucceeded}, "固定清理配方已执行，请根据后续告警与指标确认恢复")
 }
 
@@ -327,20 +335,25 @@ func (h *AgentOperationHandler) resolveRegistryPullCheck(c *gin.Context, operati
 		apiShared.Conflict(c, "Agent 操作状态已变化")
 		return
 	}
+	h.audit(c, operation.RuntimeID, userID, "agent.operation_approved", model.AuditOutcomeSucceeded, map[string]any{"operation_id": operation.OperationID, "capability": operation.Capability})
 	if err := h.registryPullExecutor.Pull(c.Request.Context(), server, config.VerificationImage); err != nil {
 		now := time.Now()
 		_, _ = h.store.UpdateAgentOperationStatus(operation.OperationID, model.AgentOperationApproved, model.AgentOperationFailed, agentOperationErrorSummary("节点验证镜像拉取失败", err), nil, &now)
+		h.audit(c, operation.RuntimeID, userID, "agent.operation_failed", model.AuditOutcomeFailed, map[string]any{"operation_id": operation.OperationID, "capability": operation.Capability})
 		apiShared.Error(c, http.StatusBadGateway, apiShared.CodeInternalError, "节点验证镜像拉取失败")
 		return
 	}
 	now := time.Now()
 	_, _ = h.store.UpdateAgentOperationStatus(operation.OperationID, model.AgentOperationApproved, model.AgentOperationSucceeded, "", nil, &now)
-	h.audit(operation.RuntimeID, userID, "agent.operation_executed", map[string]any{"operation_id": operation.OperationID})
+	h.audit(c, operation.RuntimeID, userID, "agent.operation_succeeded", model.AuditOutcomeSucceeded, map[string]any{"operation_id": operation.OperationID, "capability": operation.Capability})
 	apiShared.SuccessWithMessage(c, gin.H{"operation_id": operation.OperationID, "status": model.AgentOperationSucceeded}, "节点验证镜像已拉取")
 }
 
 func (h *AgentOperationHandler) markOperationStale(c *gin.Context, operation *model.AgentOperation, message string) {
-	_, _ = h.store.UpdateAgentOperationStatus(operation.OperationID, model.AgentOperationPendingApproval, model.AgentOperationStale, message, nil, nil)
+	changed, _ := h.store.UpdateAgentOperationStatus(operation.OperationID, model.AgentOperationPendingApproval, model.AgentOperationStale, message, nil, nil)
+	if changed {
+		h.audit(c, operation.RuntimeID, 0, "agent.operation_stale", model.AuditOutcomeFailed, map[string]any{"operation_id": operation.OperationID})
+	}
 	apiShared.Conflict(c, message)
 }
 
@@ -352,11 +365,18 @@ func (h *AgentOperationHandler) runtimeExists(c *gin.Context, runtimeID uint) bo
 	return true
 }
 
-func (h *AgentOperationHandler) audit(runtimeID, userID uint, action string, detail map[string]any) {
-	encoded, err := json.Marshal(detail)
-	if err == nil {
-		_ = h.store.CreateAuditLog(&model.AuditLog{Action: action, ResourceType: "agent_runtime", ResourceID: runtimeID, UserID: userID, Detail: string(encoded), CreatedAt: time.Now()})
+func (h *AgentOperationHandler) audit(c *gin.Context, runtimeID, userID uint, action, outcome string, detail map[string]any) {
+	operationID, _ := detail["operation_id"].(string)
+	targetName := model.AuditTargetFallback("agent_runtime", runtimeID)
+	if runtime, err := h.store.GetRuntime(runtimeID); err == nil && runtime != nil {
+		targetName = runtime.Name
 	}
+	_ = auditservice.NewService(h.store).Record(auditservice.AuditEventInput{
+		Action: action, ResourceType: "agent_runtime", ResourceID: runtimeID, TargetName: targetName,
+		Actor:  auditservice.Actor{Type: model.AuditActorUser, ID: userID, Name: apiShared.Username(c)},
+		Source: model.AuditSourceAPI, Outcome: outcome, Summary: model.AuditSummaryFallback(action, "agent_runtime", runtimeID),
+		RequestID: apiShared.RequestID(c), OperationID: operationID, Metadata: detail,
+	})
 }
 
 func parseRuntimeID(c *gin.Context) (uint, bool) {

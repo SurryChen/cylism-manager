@@ -1,14 +1,15 @@
 package applicationapi
 
 import (
+	"context"
 	"errors"
 	"strings"
 
-	"context"
 	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/repository"
 	applicationservice "github.com/cylism/cylism-manager/internal/service/application"
+	auditservice "github.com/cylism/cylism-manager/internal/service/audit"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 	corev1 "k8s.io/api/core/v1"
@@ -30,6 +31,7 @@ type ApplicationHandler struct {
 	kubernetes       KubernetesAdapter
 	workflow         *applicationservice.ReleaseService
 	workloads        *applicationservice.WorkloadService
+	audit            auditservice.Repository
 }
 
 // applicationManagementRepository is the mutation surface used by the
@@ -91,6 +93,11 @@ type ApplicationHandlerDependencies interface {
 
 func (h *ApplicationHandler) WithDelegationSecret(secret []byte) *ApplicationHandler {
 	h.delegationSecret = append([]byte(nil), secret...)
+	return h
+}
+
+func (h *ApplicationHandler) WithAudit(logs auditservice.Repository) *ApplicationHandler {
+	h.audit = logs
 	return h
 }
 

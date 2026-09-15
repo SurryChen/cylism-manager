@@ -53,10 +53,15 @@ func TestNodeRegistryMirrorVerifyPersistsConnectionResult(t *testing.T) {
 		t.Fatal(err)
 	}
 	h.WithVerifier(func(_ context.Context, _ *model.NodeRegistryMirror, _ []byte) error { return nil })
+	h.WithAudit(s)
 
 	success := serve(r, newJSONRequest(http.MethodPost, "/api/node-registry-mirrors/1/verify", nil))
 	if success.Code != http.StatusOK || !strings.Contains(success.Body.String(), `"last_verify_status":"succeeded"`) {
 		t.Fatalf("unexpected successful verification: %s", success.Body.String())
+	}
+	logs, total, err := s.ListAuditLogsFiltered(model.AuditLogFilter{Action: "registry.mirror.verify", Limit: 20})
+	if err != nil || total != 1 || len(logs) != 1 || logs[0].ResourceType != "node_registry_mirror" || logs[0].Outcome != model.AuditOutcomeSucceeded || logs[0].TargetName != mirror.Name {
+		t.Fatalf("missing semantic mirror audit event: %#v total=%d err=%v", logs, total, err)
 	}
 
 	h.WithVerifier(func(_ context.Context, _ *model.NodeRegistryMirror, _ []byte) error {
@@ -65,6 +70,10 @@ func TestNodeRegistryMirrorVerifyPersistsConnectionResult(t *testing.T) {
 	failure := serve(r, newJSONRequest(http.MethodPost, "/api/node-registry-mirrors/1/verify", nil))
 	if failure.Code != http.StatusOK || !strings.Contains(failure.Body.String(), `"last_verify_status":"failed"`) || !strings.Contains(failure.Body.String(), "认证失败") {
 		t.Fatalf("unexpected failed verification: %s", failure.Body.String())
+	}
+	logs, total, err = s.ListAuditLogsFiltered(model.AuditLogFilter{Action: "registry.mirror.verify", Outcome: model.AuditOutcomeFailed, Limit: 20})
+	if err != nil || total != 1 || len(logs) != 1 || logs[0].Outcome != model.AuditOutcomeFailed {
+		t.Fatalf("missing failed mirror audit event: %#v total=%d err=%v", logs, total, err)
 	}
 }
 

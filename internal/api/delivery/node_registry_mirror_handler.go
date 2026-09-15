@@ -12,6 +12,7 @@ import (
 
 	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 	"github.com/cylism/cylism-manager/internal/model"
+	auditservice "github.com/cylism/cylism-manager/internal/service/audit"
 	registryservice "github.com/cylism/cylism-manager/internal/service/registry"
 	"github.com/gin-gonic/gin"
 	"github.com/google/go-containerregistry/pkg/authn"
@@ -28,6 +29,12 @@ type NodeRegistryMirrorHandler struct {
 	encKey           []byte
 	verifyConnection nodeRegistryMirrorVerifier
 	applyNode        registryservice.NodeMirrorApplier
+	audit            auditservice.Repository
+}
+
+func (h *NodeRegistryMirrorHandler) WithAudit(repository auditservice.Repository) *NodeRegistryMirrorHandler {
+	h.audit = repository
+	return h
 }
 
 type nodeRegistryMirrorVerifier func(context.Context, *model.NodeRegistryMirror, []byte) error
@@ -88,6 +95,7 @@ func (h *NodeRegistryMirrorHandler) Create(c *gin.Context) {
 		handleNodeRegistryMirrorSaveError(c, err, false)
 		return
 	}
+	h.recordAudit(c, "registry.mirror.create", mirror, model.AuditOutcomeSucceeded, "创建节点镜像源", nil)
 	apiShared.Success(c, apiShared.NodeRegistryMirrorDTO(mirror))
 }
 
@@ -107,6 +115,7 @@ func (h *NodeRegistryMirrorHandler) Update(c *gin.Context) {
 		handleNodeRegistryMirrorSaveError(c, err, true)
 		return
 	}
+	h.recordAudit(c, "registry.mirror.update", mirror, model.AuditOutcomeSucceeded, "更新节点镜像源", nil)
 	apiShared.Success(c, apiShared.NodeRegistryMirrorDTO(mirror))
 }
 
@@ -116,6 +125,7 @@ func (h *NodeRegistryMirrorHandler) Delete(c *gin.Context) {
 		apiShared.BadRequest(c, "镜像源 ID 无效")
 		return
 	}
+	mirror, _ := h.service.Get(id)
 	if err := h.service.Delete(id); err != nil {
 		if errorsIsRecordNotFound(err) {
 			apiShared.NotFound(c, "镜像源不存在")
@@ -126,6 +136,7 @@ func (h *NodeRegistryMirrorHandler) Delete(c *gin.Context) {
 		}
 		return
 	}
+	h.recordAudit(c, "registry.mirror.delete", mirror, model.AuditOutcomeSucceeded, "删除节点镜像源", nil)
 	apiShared.Success(c, gin.H{"id": id})
 }
 
@@ -139,6 +150,7 @@ func (h *NodeRegistryMirrorHandler) Verify(c *gin.Context) {
 		return h.verifyConnection(ctx, mirror, h.encKey)
 	})
 	if err != nil {
+		h.recordAudit(c, "registry.mirror.verify", mirror, model.AuditOutcomeFailed, "验证节点镜像源失败", map[string]any{"error": err.Error()})
 		if errorsIsRecordNotFound(err) {
 			apiShared.NotFound(c, "镜像源不存在")
 		} else {
@@ -146,6 +158,13 @@ func (h *NodeRegistryMirrorHandler) Verify(c *gin.Context) {
 		}
 		return
 	}
+	outcome, summary := model.AuditOutcomeSucceeded, "验证节点镜像源"
+	metadata := map[string]any(nil)
+	if mirror.LastVerifyStatus != "succeeded" {
+		outcome, summary = model.AuditOutcomeFailed, "验证节点镜像源失败"
+		metadata = map[string]any{"error": mirror.LastVerifyError}
+	}
+	h.recordAudit(c, "registry.mirror.verify", mirror, outcome, summary, metadata)
 	apiShared.Success(c, apiShared.NodeRegistryMirrorDTO(mirror))
 }
 
@@ -169,7 +188,23 @@ func (h *NodeRegistryMirrorHandler) Apply(c *gin.Context) {
 		handleNodeRegistryMirrorApplyError(c, err)
 		return
 	}
+	h.recordAudit(c, "registry.mirror.apply", mirror, model.AuditOutcomeAccepted, "提交节点镜像源应用任务", map[string]any{"server_ids": request.ServerIDs})
 	apiShared.SuccessWithMessage(c, apiShared.NodeRegistryMirrorDTO(mirror), "应用任务已提交")
+}
+
+func (h *NodeRegistryMirrorHandler) recordAudit(c *gin.Context, action string, mirror *model.NodeRegistryMirror, outcome, summary string, metadata map[string]any) {
+	if h == nil || h.audit == nil {
+		return
+	}
+	resourceID, targetName := uint(0), "节点镜像源"
+	if mirror != nil {
+		resourceID, targetName = mirror.ID, mirror.Name
+	}
+	_ = auditservice.NewService(h.audit).Record(auditservice.AuditEventInput{
+		Action: action, ResourceType: "node_registry_mirror", ResourceID: resourceID, TargetName: targetName,
+		Actor:  auditservice.Actor{Type: model.AuditActorUser, ID: apiShared.UserID(c), Name: apiShared.Username(c)},
+		Source: model.AuditSourceAPI, Outcome: outcome, Summary: summary, RequestID: apiShared.RequestID(c), Metadata: metadata,
+	})
 }
 
 func (h *NodeRegistryMirrorHandler) ApplyStatus(c *gin.Context) {

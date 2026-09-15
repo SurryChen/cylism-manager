@@ -124,6 +124,25 @@ func TestAgentRegistryPullCheckRequiresApprovalAndUsesConfiguredImage(t *testing
 	if approval.Code != http.StatusOK || calledImage != "registry.k8s.io/pause:3.10" {
 		t.Fatalf("pull approval: %d %s image=%q", approval.Code, approval.Body.String(), calledImage)
 	}
+	events, total, err := s.ListAuditLogsFiltered(model.AuditLogFilter{Limit: 20})
+	if err != nil || total != 3 {
+		t.Fatalf("expected requested, approved and succeeded events: %#v total=%d err=%v", events, total, err)
+	}
+	stages := map[string]bool{}
+	for _, event := range events {
+		if event.OperationID != response.OperationID {
+			t.Fatalf("event %q missing lifecycle operation ID: %#v", event.Action, event)
+		}
+		if event.Action == "agent.registry_pull_check_requested" && event.RequestID != "request_456" {
+			t.Fatalf("requested event missing request correlation: %#v", event)
+		}
+		stages[event.Action] = true
+	}
+	for _, action := range []string{"agent.registry_pull_check_requested", "agent.operation_approved", "agent.operation_succeeded"} {
+		if !stages[action] {
+			t.Fatalf("missing lifecycle stage %q: %#v", action, stages)
+		}
+	}
 }
 
 func TestAgentRegistryPullCheckPersistsSanitizedExecutionFailure(t *testing.T) {
@@ -166,6 +185,10 @@ func TestAgentRegistryPullCheckPersistsSanitizedExecutionFailure(t *testing.T) {
 	approval := serve(router, newJSONRequest(http.MethodPost, "/agent-operations/"+response.OperationID+"/approve", nil))
 	if approval.Code != http.StatusBadGateway {
 		t.Fatalf("approve: %d %s", approval.Code, approval.Body.String())
+	}
+	events, total, err := s.ListAuditLogsFiltered(model.AuditLogFilter{Action: "agent.operation_failed", Outcome: model.AuditOutcomeFailed, Limit: 20})
+	if err != nil || total != 1 || len(events) != 1 || events[0].OperationID != response.OperationID {
+		t.Fatalf("expected failed lifecycle audit: %#v total=%d err=%v", events, total, err)
 	}
 	operation, err := s.GetAgentOperation(response.OperationID)
 	if err != nil || operation.Status != model.AgentOperationFailed || !strings.Contains(operation.ErrorSummary, "pull timed out") || strings.Contains(operation.ErrorSummary, "not-for-history") {

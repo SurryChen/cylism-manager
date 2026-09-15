@@ -9,6 +9,7 @@ import (
 
 	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 	"github.com/cylism/cylism-manager/internal/model"
+	auditservice "github.com/cylism/cylism-manager/internal/service/audit"
 	"github.com/cylism/cylism-manager/internal/transport"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -186,17 +187,10 @@ func (h *K8sHandler) recordPodTerminalSession(c *gin.Context, namespace, name, c
 	if h.audit == nil {
 		return
 	}
-	detail, _ := json.Marshal(map[string]string{
-		"namespace": namespace,
-		"pod":       name,
-		"container": container,
-		"event":     "session_started",
-	})
-	_ = h.audit.CreateAuditLog(&model.AuditLog{
-		Action:       "terminal",
-		ResourceType: "pod",
-		UserID:       apiShared.UserID(c),
-		Detail:       string(detail),
+	_ = auditservice.NewService(h.audit).Record(auditservice.AuditEventInput{
+		Action: "workload.pod.terminal.start", ResourceType: "pod", TargetName: namespace + "/" + name,
+		Actor: apiShared.ActorFromContext(c), Source: model.AuditSourceAPI, Outcome: model.AuditOutcomeSucceeded,
+		Summary: "启动 Pod Terminal 会话", RequestID: apiShared.RequestID(c), Metadata: map[string]any{"namespace": namespace, "pod": name, "container": container},
 	})
 }
 

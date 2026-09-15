@@ -152,7 +152,8 @@ const navGroups = computed(() => [
     label: '记录与系统',
     to: '/audit',
     items: [
-      { label: '审计', to: '/audit', icon: FileText },
+      { label: '审计日志', to: '/audit', icon: FileText },
+      { label: '操作历史', to: '/operations', icon: FileText },
       { label: '系统设置', to: '/settings/system', icon: Layers3 },
     ],
   },

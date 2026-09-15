@@ -1,10 +1,53 @@
 package store
 
 import (
+	"path/filepath"
 	"testing"
 
 	"github.com/cylism/cylism-manager/internal/model"
+	"github.com/glebarez/sqlite"
+	"gorm.io/gorm"
 )
+
+type legacyAuditLog struct {
+	ID           uint `gorm:"primaryKey"`
+	Action       string
+	ResourceType string
+	ResourceID   uint
+	UserID       uint
+	Detail       string
+}
+
+func (legacyAuditLog) TableName() string { return "audit_logs" }
+
+func TestBackfillLegacyAuditLogsMakesEventsReadable(t *testing.T) {
+	dsn := filepath.Join(t.TempDir(), "audit-legacy.db")
+	legacy, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := legacy.AutoMigrate(&legacyAuditLog{}); err != nil {
+		t.Fatalf("create legacy audit schema: %v", err)
+	}
+	if err := legacy.Create(&legacyAuditLog{Action: "deploy", ResourceType: "application", ResourceID: 7, UserID: 3, Detail: `{"version":"1.2.3"}`}).Error; err != nil {
+		t.Fatalf("create legacy audit event: %v", err)
+	}
+
+	migrated, err := New(dsn)
+	if err != nil {
+		t.Fatalf("migrate legacy audit schema: %v", err)
+	}
+	var event model.AuditLog
+	if err := migrated.DB().First(&event, 1).Error; err != nil {
+		t.Fatalf("load migrated event: %v", err)
+	}
+	if event.Source != "legacy" || event.Outcome != model.AuditOutcomeSucceeded || event.ActorType != model.AuditActorUser {
+		t.Fatalf("legacy defaults not backfilled: %#v", event)
+	}
+	if event.Summary == "" || event.TargetName == "" {
+		t.Fatalf("legacy event must have readable fallback fields: %#v", event)
+	}
+}
 
 func TestBackfillRuntimeVersionsFromImageTags(t *testing.T) {
 	s, err := New(":memory:")

@@ -161,20 +161,45 @@ func (s *Store) CreateAuditLog(entry *model.AuditLog) error {
 }
 
 func (s *Store) ListAuditLogs(resourceType, action, keyword string, limit, offset int) ([]model.AuditLog, int64, error) {
+	return s.ListAuditLogsFiltered(model.AuditLogFilter{ResourceType: resourceType, Action: action, Keyword: keyword, Limit: limit, Offset: offset})
+}
+
+func (s *Store) ListAuditLogsFiltered(filter model.AuditLogFilter) ([]model.AuditLog, int64, error) {
 	var logs []model.AuditLog
 	var total int64
 	query := s.db.Model(&model.AuditLog{})
-	if resourceType != "" {
-		query = query.Where("resource_type = ?", resourceType)
+	if filter.ResourceType != "" {
+		query = query.Where("resource_type = ?", filter.ResourceType)
 	}
-	if action != "" {
-		query = query.Where("action = ?", action)
+	if filter.Action != "" {
+		query = query.Where("action = ?", filter.Action)
 	}
-	if keyword != "" {
-		query = query.Where("detail LIKE ?", "%"+keyword+"%")
+	if filter.Outcome != "" {
+		query = query.Where("outcome = ?", filter.Outcome)
 	}
-	query.Count(&total)
-	err := query.Order("created_at desc").Limit(limit).Offset(offset).Find(&logs).Error
+	if filter.Source != "" {
+		query = query.Where("source = ?", filter.Source)
+	}
+	if filter.ActorType != "" {
+		query = query.Where("actor_type = ?", filter.ActorType)
+	}
+	if filter.TargetName != "" {
+		query = query.Where("target_name LIKE ?", "%"+filter.TargetName+"%")
+	}
+	if filter.Keyword != "" {
+		keyword := "%" + filter.Keyword + "%"
+		query = query.Where("detail LIKE ? OR summary LIKE ? OR target_name LIKE ? OR actor_name LIKE ?", keyword, keyword, keyword, keyword)
+	}
+	if !filter.CreatedFrom.IsZero() {
+		query = query.Where("created_at >= ?", filter.CreatedFrom)
+	}
+	if !filter.CreatedTo.IsZero() {
+		query = query.Where("created_at < ?", filter.CreatedTo)
+	}
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	err := query.Order("created_at desc, id desc").Limit(filter.Limit).Offset(filter.Offset).Find(&logs).Error
 	return logs, total, err
 }
 
@@ -219,6 +244,27 @@ func (s *Store) ListOperationsByResource(resourceType string, resourceID uint) (
 	var logs []model.OperationLog
 	err := s.db.Where("resource_type = ? AND resource_id = ?", resourceType, resourceID).Order("created_at desc").Find(&logs).Error
 	return logs, err
+}
+
+func (s *Store) ListOperations(filter model.OperationLogFilter) ([]model.OperationLog, int64, error) {
+	var logs []model.OperationLog
+	var total int64
+	query := s.db.Model(&model.OperationLog{})
+	if filter.ResourceType != "" {
+		query = query.Where("resource_type = ?", filter.ResourceType)
+	}
+	if filter.Status != "" {
+		query = query.Where("status = ?", filter.Status)
+	}
+	if filter.Keyword != "" {
+		keyword := "%" + filter.Keyword + "%"
+		query = query.Where("step LIKE ? OR detail LIKE ?", keyword, keyword)
+	}
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	err := query.Order("created_at desc, id desc").Limit(filter.Limit).Offset(filter.Offset).Find(&logs).Error
+	return logs, total, err
 }
 
 func (s *Store) DeleteExpiredOperationLogs(retentionDays int) error {

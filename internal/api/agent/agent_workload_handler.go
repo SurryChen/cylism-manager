@@ -59,7 +59,6 @@ func (h *AgentHandler) WorkloadGet(w http.ResponseWriter, r *http.Request) {
 		writeAgentError(w, http.StatusBadGateway, "workload unavailable", true)
 		return
 	}
-	h.audit(instance, "agent.workload_get", map[string]string{"capability": model.AgentCapabilityWorkloadRead, "namespace": namespace, "kind": kind, "name": name})
 	writeAgentResponse(w, http.StatusOK, agentAPIResponse{Status: "ok", Data: data, Summary: "workload retrieved"})
 }
 
@@ -100,7 +99,6 @@ func (h *AgentHandler) WorkloadLogs(w http.ResponseWriter, r *http.Request) {
 	if truncated {
 		content = content[:agentLogLimit]
 	}
-	h.audit(instance, "agent.workload_logs", map[string]string{"capability": model.AgentCapabilityWorkloadLogs, "namespace": namespace, "pod": pod, "container": container, "previous": strconv.FormatBool(previous)})
 	writeAgentResponse(w, http.StatusOK, agentAPIResponse{Status: "ok", Data: map[string]any{"logs": redactAgentText(string(content)), "truncated": truncated, "previous": previous}, Summary: "workload logs retrieved"})
 }
 
@@ -127,7 +125,6 @@ func (h *AgentHandler) PodGet(w http.ResponseWriter, r *http.Request) {
 		writeAgentError(w, http.StatusBadGateway, "pod unavailable", true)
 		return
 	}
-	h.audit(instance, "agent.pod_get", map[string]string{"capability": model.AgentCapabilityWorkloadRead, "namespace": namespace, "name": name})
 	writeAgentResponse(w, http.StatusOK, agentAPIResponse{Status: "ok", Data: podDiagnosticSummary(pod), Summary: "pod status retrieved"})
 }
 
@@ -169,7 +166,6 @@ func (h *AgentHandler) EventList(w http.ResponseWriter, r *http.Request) {
 	for _, event := range matching {
 		data = append(data, map[string]any{"type": event.Type, "reason": event.Reason, "message": redactAgentText(truncateAgentText(event.Message, 1024)), "count": event.Count, "last_timestamp": eventTime(event).UTC().Format(time.RFC3339)})
 	}
-	h.audit(instance, "agent.event_list", map[string]string{"capability": model.AgentCapabilityEventsRead, "namespace": namespace, "kind": kind, "name": name})
 	writeAgentResponse(w, http.StatusOK, agentAPIResponse{Status: "ok", Data: data, Summary: "events retrieved"})
 }
 
@@ -199,7 +195,6 @@ func (h *AgentHandler) PVCGet(w http.ResponseWriter, r *http.Request) {
 	if storage := pvc.Spec.Resources.Requests.Storage(); storage != nil {
 		requests = storage.String()
 	}
-	h.audit(instance, "agent.pvc_get", map[string]string{"capability": model.AgentCapabilityStorageRead, "namespace": namespace, "name": name})
 	writeAgentResponse(w, http.StatusOK, agentAPIResponse{Status: "ok", Data: map[string]any{"name": pvc.Name, "namespace": pvc.Namespace, "phase": pvc.Status.Phase, "volume_name": pvc.Spec.VolumeName, "storage_class": stringValue(pvc.Spec.StorageClassName), "requested_storage": requests, "access_modes": pvc.Spec.AccessModes}, Summary: "persistent volume claim retrieved"})
 }
 
@@ -229,7 +224,6 @@ func (h *AgentHandler) NodeGet(w http.ResponseWriter, r *http.Request) {
 	for _, condition := range node.Status.Conditions {
 		conditions = append(conditions, map[string]string{"type": string(condition.Type), "status": string(condition.Status), "reason": condition.Reason, "message": redactAgentText(truncateAgentText(condition.Message, 512))})
 	}
-	h.audit(instance, "agent.node_get", map[string]string{"capability": model.AgentCapabilityClusterRead, "name": name})
 	writeAgentResponse(w, http.StatusOK, agentAPIResponse{Status: "ok", Data: map[string]any{"name": node.Name, "unschedulable": node.Spec.Unschedulable, "taints": node.Spec.Taints, "conditions": conditions, "allocatable": resourceListSummary(node.Status.Allocatable)}, Summary: "node status retrieved"})
 }
 
@@ -270,6 +264,6 @@ func (h *AgentHandler) DeploymentScale(w http.ResponseWriter, r *http.Request) {
 		writeAgentError(w, http.StatusInternalServerError, "operation persistence failed", true)
 		return
 	}
-	h.audit(instance, "agent.deployment_scale_requested", map[string]string{"capability": model.AgentCapabilityDeploymentScale, "namespace": request.Namespace, "name": request.Name, "operation_id": stored.OperationID})
+	h.audit(instance, "agent.deployment_scale_requested", map[string]string{"capability": model.AgentCapabilityDeploymentScale, "namespace": request.Namespace, "name": request.Name, "request_id": requestID, "operation_id": stored.OperationID})
 	writeAgentResponse(w, http.StatusAccepted, agentAPIResponse{Status: "pending_approval", OperationID: stored.OperationID, Summary: "deployment scale is pending approval"})
 }

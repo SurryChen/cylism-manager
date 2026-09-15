@@ -73,9 +73,9 @@ func (c *Container) BuildRouteDependencies() api.RouteDependencies {
 	loggingHandler := systemapi.NewLoggingHandlerWithComposedDependencies(c.Store, loggingDeps)
 	// Integration delegations are verified by the route middleware with JWTSecret;
 	// keep the handler's signing key aligned with that verifier.
-	applicationHandler := applicationapi.NewApplicationHandlerWithDependencies(c.Store, c.Services.ApplicationQuery, key, applicationapi.NewKubernetesAdapter(c.K8s)).WithDelegationSecret(c.Auth.JWTSecret)
+	applicationHandler := applicationapi.NewApplicationHandlerWithDependencies(c.Store, c.Services.ApplicationQuery, key, applicationapi.NewKubernetesAdapter(c.K8s)).WithDelegationSecret(c.Auth.JWTSecret).WithAudit(c.Store)
 	image := deliveryapi.NewImageRegistryHandler(c.Store, key)
-	nodeMirrors := deliveryapi.NewNodeRegistryMirrorHandlerWithDependencies(key, nodeMirrorApplier.Apply, c.Services.RegistryMirror)
+	nodeMirrors := deliveryapi.NewNodeRegistryMirrorHandlerWithDependencies(key, nodeMirrorApplier.Apply, c.Services.RegistryMirror).WithAudit(c.Store)
 	managed := deliveryapi.NewManagedOCIRegistryHandlerWithDependencies(c.Store, c.Adapters.Registry.ManagedResources, c.Adapters.Registry.ManagedStatus, nodeMirrorApplier.Apply, c.Services.RegistryManaged)
 	proxy := deliveryapi.NewRegistryProxyHandlerWithDependencies(c.Store, key, c.Adapters.Registry.ProxyResources, c.Adapters.Registry.ProxyDiagnostics, c.Services.RegistryProxy).WithReconciler(c.Services.RegistryProxyReconciler)
 	storageService := c.Services.Storage
@@ -84,9 +84,10 @@ func (c *Container) BuildRouteDependencies() api.RouteDependencies {
 	storageHandler.ConfigureStorageExecutor()
 	return api.RouteDependencies{
 		Auth: api.AuthDependencies{
-			Config:  c.Auth,
-			Audit:   apisShared.AuditMiddleware(c.Store),
-			Handler: authapi.NewAuthHandlerWithDependencies(c.Repositories.Users, c.Auth, c.Services.AuthTemporaryTokens),
+			Config:          c.Auth,
+			Audit:           apisShared.AuditMiddleware(c.Store),
+			AuditRepository: c.Store,
+			Handler:         authapi.NewAuthHandlerWithDependencies(c.Repositories.Users, c.Auth, c.Services.AuthTemporaryTokens).WithAudit(c.Store),
 		},
 		Application: api.ApplicationDependencies{Handler: applicationHandler},
 		RuntimeAgent: api.RuntimeAgentDependencies{
@@ -100,7 +101,7 @@ func (c *Container) BuildRouteDependencies() api.RouteDependencies {
 		Infrastructure: api.InfrastructureDependencies{
 			Network: networkHandler, Server: clusterapi.NewServerHandler(key, clusterService),
 			NetworkDiag: clusterapi.NewServerNetworkDiagnosticsHandler(c.Store, key),
-			Terminal:    clusterapi.NewServerTerminalHandler(c.Store, key),
+			Terminal:    clusterapi.NewServerTerminalHandler(c.Store, key).WithAudit(c.Store),
 			Site:        networkapi.NewSiteHandler(c.Store), Operation: systemapi.NewOperationHandler(c.Store),
 			Domain: networkapi.NewDomainHandlerWithDependencies(networkapi.NewDomainKubernetesAdapter(c.K8s), networkService),
 			Node:   clusterapi.NewNodeHandler(clusterService), NodeJoin: nodeJoin, Ingress: ingress,

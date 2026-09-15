@@ -41,7 +41,6 @@ func (h *AgentHandler) CapabilityStatus(w http.ResponseWriter, r *http.Request) 
 		}
 		status["namespaces"] = append(status["namespaces"].([]string), grant.Namespace)
 	}
-	h.audit(instance, "agent.capability_status", map[string]string{"action": "read"})
 	writeAgentResponse(w, http.StatusOK, agentAPIResponse{Status: "ok", Data: data, Summary: "capability status retrieved"})
 }
 
@@ -69,6 +68,5 @@ func (h *AgentHandler) ClusterStatus(w http.ResponseWriter, r *http.Request) {
 		writeAgentError(w, http.StatusBadGateway, "cluster status unavailable", true)
 		return
 	}
-	h.audit(instance, "agent.cluster_status", map[string]string{"capability": model.AgentCapabilityClusterRead})
 	writeAgentResponse(w, http.StatusOK, agentAPIResponse{Status: "ok", Data: map[string]any{"node_count": len(nodes.Items)}, Summary: "cluster status retrieved"})
 }

@@ -669,7 +669,15 @@ type AuditLogView struct {
 	Action       string    `json:"action"`
 	ResourceType string    `json:"resource_type"`
 	ResourceID   uint      `json:"resource_id"`
+	TargetName   string    `json:"target_name"`
 	UserID       uint      `json:"user_id"`
+	ActorType    string    `json:"actor_type"`
+	ActorName    string    `json:"actor_name"`
+	Source       string    `json:"source"`
+	Outcome      string    `json:"outcome"`
+	Summary      string    `json:"summary"`
+	RequestID    string    `json:"request_id,omitempty"`
+	OperationID  string    `json:"operation_id,omitempty"`
 	Detail       string    `json:"detail"`
 	CreatedAt    time.Time `json:"created_at"`
 }
@@ -746,7 +754,7 @@ func AlertEventsDTO(items []model.AlertEvent) []AlertEventView {
 	return out
 }
 func AuditLogDTO(log model.AuditLog) AuditLogView {
-	return AuditLogView{ID: log.ID, Action: log.Action, ResourceType: log.ResourceType, ResourceID: log.ResourceID, UserID: log.UserID, Detail: log.Detail, CreatedAt: log.CreatedAt}
+	return AuditLogView{ID: log.ID, Action: log.Action, ResourceType: log.ResourceType, ResourceID: log.ResourceID, TargetName: log.TargetName, UserID: log.UserID, ActorType: log.ActorType, ActorName: log.ActorName, Source: log.Source, Outcome: log.Outcome, Summary: log.Summary, RequestID: log.RequestID, OperationID: log.OperationID, Detail: log.Detail, CreatedAt: log.CreatedAt}
 }
 func AuditLogsDTO(items []model.AuditLog) []AuditLogView {
 	out := make([]AuditLogView, 0, len(items))
