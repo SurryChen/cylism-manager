@@ -74,7 +74,7 @@ bash scripts/deploy-platform.sh \
 ```text
 push dev
   → go test / go build / helm lint
-  → 构建并推送 GHCR 镜像
+  → 构建并推送阿里云 ACR 镜像
   → 签名调用测试环境 /api/platform/deployments
   → 平台自更新 Deployment 镜像
 ```
@@ -82,23 +82,30 @@ push dev
 dev 镜像会推送以下 tag：
 
 ```text
-ghcr.io/surrychen/cylism-manager:dev
-ghcr.io/surrychen/cylism-manager:dev-<short-sha>
-ghcr.io/surrychen/cylism-manager:<full-sha>
+crpi-c5u9bb8i5qxw1m72.cn-guangzhou.personal.cr.aliyuncs.com/surrychen/cylism-manager:dev
+crpi-c5u9bb8i5qxw1m72.cn-guangzhou.personal.cr.aliyuncs.com/surrychen/cylism-manager:dev-<short-sha>
+crpi-c5u9bb8i5qxw1m72.cn-guangzhou.personal.cr.aliyuncs.com/surrychen/cylism-manager:<full-sha>
 ```
 
 平台 Webhook 使用不可变的 `dev-<short-sha>` 镜像，方便定位测试环境当前运行的提交。
 
 启用前需要完成三件事：
 
-1. 测试环境 Deployment 已配置 GHCR 拉取权限，例如 `ghcr-pull-secret`。
+1. GitHub 仓库 Secrets 已配置阿里云 ACR 登录凭据：
+
+   ```text
+   ACR_USERNAME=阿里云 ACR 用户名
+   ACR_PASSWORD=阿里云 ACR 密码或访问凭证
+   ```
+
+   测试环境 Deployment 或节点也必须具备拉取该 ACR 私有镜像的凭据。
 2. 平台允许的镜像前缀包含：
 
    ```text
-   ghcr.io/surrychen/cylism-manager
+   crpi-c5u9bb8i5qxw1m72.cn-guangzhou.personal.cr.aliyuncs.com/surrychen/cylism-manager
    ```
 
-   新版本默认使用该前缀；如果旧数据库里保存过旧镜像仓库前缀，需要在平台发布设置中更新一次。
+   请在平台发布设置中加入该前缀；建议同时保留 `ghcr.io/surrychen/cylism-manager`，以便正式版本和 dev 版本都能通过 Webhook 校验。
 
 3. 在平台生成部署 Webhook Secret，并写入 GitHub 仓库 Secrets：
 
