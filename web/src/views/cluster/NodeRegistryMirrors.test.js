@@ -23,18 +23,6 @@ describe('Node registry mirrors view', () => {
         k8s_node_name: 'node-a',
         cluster_role: 'worker',
       }])
-      if (path === '/registry-proxies') return Promise.resolve([{
-        id: 2,
-        name: 'Kubernetes Registry',
-        registry: 'registry.k8s.io',
-        upstream_url: 'https://registry.k8s.io',
-        endpoint_host: '100.64.0.8',
-        node_port: 30501,
-        node_name: 'node-a',
-        cache_limit_gi: 2,
-        cleanup_interval_hours: 24,
-        status: 'ready',
-      }])
       return Promise.resolve([{
         id: 1,
         name: 'docker-hub-mirror',
@@ -50,17 +38,14 @@ describe('Node registry mirrors view', () => {
 
   afterEach(() => vi.useRealTimers())
 
-  it('configures a verification image and triggers mirror detection', async () => {
+  it('configures a verification image and triggers mirror detection without loading Proxy workloads', async () => {
     const wrapper = mount(NodeRegistryMirrors)
     await settle()
 
     expect(wrapper.text()).toContain('docker.io/library/busybox:1.36')
     expect(wrapper.text()).toContain('可用')
-    expect(wrapper.text()).toContain('registry.k8s.io')
-    expect(wrapper.text()).toContain('https://registry.k8s.io')
-
-    await wrapper.get('[data-testid="diagnose-registry-proxy-2"]').trigger('click')
-    expect(api.post).toHaveBeenCalledWith('/registry-proxies/2/diagnose')
+    expect(wrapper.text()).not.toContain('自建 Registry Proxy')
+    expect(api.get).not.toHaveBeenCalledWith('/registry-proxies', expect.anything())
 
     await wrapper.get('[data-testid="verify-node-registry-mirror-1"]').trigger('click')
     expect(api.post).toHaveBeenCalledWith('/node-registry-mirrors/1/verify')
@@ -93,59 +78,6 @@ describe('Node registry mirrors view', () => {
     expect(document.body.querySelector('.mirror-notice-modal')).not.toBeNull()
     expect(document.body.querySelector('.mirror-notice-modal').textContent).toContain('节点镜像源已保存')
     wrapper.unmount()
-  })
-
-  it('creates an independent Registry Proxy instance', async () => {
-    const wrapper = mount(NodeRegistryMirrors)
-    await settle()
-
-    await wrapper.get('[data-testid="create-registry-proxy"]').trigger('click')
-    expect(document.body.querySelector('.proxy-modal')?.closest('.overlay')?.parentElement).toBe(document.body)
-    const inputs = document.body.querySelectorAll('.proxy-modal input')
-    inputs[0].value = 'Kubernetes Registry'
-    inputs[0].dispatchEvent(new Event('input', { bubbles: true }))
-    inputs[1].value = 'registry.k8s.io'
-    inputs[1].dispatchEvent(new Event('input', { bubbles: true }))
-    inputs[3].value = '100.64.0.8'
-    inputs[3].dispatchEvent(new Event('input', { bubbles: true }))
-    const select = document.body.querySelector('.proxy-modal select')
-    select.value = 'node-a'
-    select.dispatchEvent(new Event('change', { bubbles: true }))
-    document.body.querySelector('.proxy-modal form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
-    await settle()
-
-    expect(api.post).toHaveBeenCalledWith('/registry-proxies', expect.objectContaining({
-      name: 'Kubernetes Registry',
-      registry: 'registry.k8s.io',
-      node_name: 'node-a',
-    }))
-  })
-
-  it('migrates a legacy Docker Hub proxy after confirmation', async () => {
-    api.get.mockImplementation(path => {
-      if (path === '/servers') return Promise.resolve([])
-      if (path === '/registry-proxies') return Promise.resolve([{
-        id: 1,
-        name: 'Docker Hub 代理',
-        registry: 'docker.io',
-        upstream_url: 'https://registry-1.docker.io',
-        resource_name: 'cylism-registry-proxy',
-        endpoint_host: '100.64.0.8',
-        node_port: 30500,
-        node_name: 'node-a',
-        cache_limit_gi: 2,
-        cleanup_interval_hours: 24,
-        status: 'ready',
-      }])
-      return Promise.resolve([])
-    })
-    const wrapper = mount(NodeRegistryMirrors)
-    await settle()
-
-    await wrapper.get('[data-testid="migrate-registry-proxy-1"]').trigger('click')
-    expect(wrapper.text()).toContain('代理会短暂中断')
-    await wrapper.get('[data-testid="confirm-registry-proxy-migration"]').trigger('click')
-    expect(api.post).toHaveBeenCalledWith('/registry-proxies/1/migrate-resource-name')
   })
 
   it('submits only selected cluster nodes and refreshes their apply status', async () => {
@@ -194,7 +126,6 @@ describe('Node registry mirrors view', () => {
     let statusSignal
     api.get.mockImplementation((path, options) => {
       if (path === '/servers') return Promise.resolve([])
-      if (path === '/registry-proxies') return Promise.resolve([])
       if (path === '/node-registry-mirrors') return Promise.resolve([{ id: 1, last_apply_status: 'applying', endpoints: '[]' }])
       if (path === '/node-registry-mirrors/1/apply-status') {
         statusSignal = options?.signal
@@ -207,5 +138,15 @@ describe('Node registry mirrors view', () => {
     await vi.advanceTimersByTimeAsync(2000)
     wrapper.unmount()
     expect(statusSignal?.aborted).toBe(true)
+  })
+
+  it('explains that application writes the complete enabled configuration', async () => {
+    const wrapper = mount(NodeRegistryMirrors)
+    await settle()
+    await wrapper.get('[data-testid="apply-node-registry-mirror-1"]').trigger('click')
+
+    expect(wrapper.text()).toContain('全部启用的镜像源规则')
+    expect(wrapper.text()).toContain('完整的 registries.yaml')
+    wrapper.unmount()
   })
 })

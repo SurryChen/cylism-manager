@@ -22,6 +22,20 @@ describe('ManagedOCIRegistries view', () => {
     wrapper.unmount()
   })
 
+  it('opens Registry Proxy management from its delivery workspace URL', async () => {
+    const { api } = await import('../api/index.js')
+    api.get.mockImplementation(path => Promise.resolve(path === '/registry-proxies' ? [{ id: 2, name: 'Kubernetes Registry 代理', registry: 'registry.k8s.io', upstream_url: 'https://registry.k8s.io', endpoint_host: '100.64.0.8', node_port: 30501, node_name: 'worker-a', cache_limit_gi: 2, cleanup_interval_hours: 24, status: 'ready' }] : path === '/servers' ? [] : path === '/managed-oci-registries/storage-preflight' ? { ready: true, data_nodes: [] } : []))
+    const originalHash = window.location.hash
+    window.location.hash = '#/delivery/registry?tab=registry-proxy'
+    const wrapper = mount(ManagedOCIRegistries)
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    expect(wrapper.text()).toContain('Kubernetes Registry 代理')
+    expect(api.get).toHaveBeenCalledWith('/registry-proxies', expect.objectContaining({ signal: expect.any(AbortSignal) }))
+    wrapper.unmount()
+    window.location.hash = originalHash
+  })
+
   it('offers known Kubernetes nodes when deploying a registry', async () => {
     const { api } = await import('../api/index.js')
     api.get.mockImplementation(path => Promise.resolve(path === '/servers' ? [{ id: 7, name: 'worker-1', host: '10.0.0.7', cluster_role: 'worker', k8s_node_name: 'worker-1.cluster.local' }] : path === '/managed-oci-registries/storage-preflight' ? { ready: true, storage_class_name: 'local-path', storage_classes: ['local-path'], data_nodes: ['node-a'] } : path === '/managed-oci-registries/pvcs' ? [{ name: 'registry-data', namespace: 'cylism-system', storage: '100Gi', storage_class_name: 'local-path', phase: 'Pending', access_modes: ['ReadWriteOnce'] }] : []))
@@ -75,13 +89,14 @@ describe('ManagedOCIRegistries view', () => {
     wrapper.unmount()
   })
 
-  it('uses infrastructure metrics and configuration panel without duplicating node mirror controls', async () => {
+  it('keeps infrastructure status inline and configuration in the edit modal without duplicating node mirror controls', async () => {
     const { api } = await import('../api/index.js')
     api.get.mockImplementation(path => Promise.resolve(path === '/servers' ? [{ id: 7, name: 'worker-1', host: '10.0.0.7', cluster_role: 'worker', k8s_node_name: 'node-a' }] : path === '/managed-oci-registries/storage-preflight' ? { ready: true, storage_class_name: 'local-path', storage_classes: ['local-path'], data_nodes: ['node-a'] } : path === '/managed-oci-registries/pvcs' ? [{ name: 'registry-data', namespace: 'cylism-system', storage: '10Gi', storage_class_name: 'local-path', phase: 'Bound', access_modes: ['ReadWriteOnce'] }] : [{ id: 1, endpoint: 'registry.internal', status: 'ready', data_node: 'node-a', pvc_name: 'registry-data', storage_size: '10Gi', storage_class_name: 'local-path', registry_image: 'registry:2', namespace: 'cylism-system', pull_username: 'cylism-pull', certificate_name: 'registry-cert', node_registry_mirror_id: 2 }]))
     const wrapper = mount(ManagedOCIRegistries)
     await new Promise(resolve => setTimeout(resolve, 0))
     expect(wrapper.findAll('.registry-overview .metric')).toHaveLength(3)
-    expect(wrapper.findAll('.registry-panel.card')).toHaveLength(1)
+    expect(wrapper.find('[data-testid="registry-configuration"]').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="edit-registry"]').text()).toContain('配置')
     expect(wrapper.text()).not.toContain('节点镜像配置')
     expect(wrapper.find('[data-testid="registry-node-table"]').exists()).toBe(false)
     wrapper.unmount()
@@ -142,7 +157,7 @@ describe('ManagedOCIRegistries view', () => {
     wrapper.unmount()
   })
 
-  it('loads repository and tag metadata only after opening the images tab', async () => {
+  it('loads repository and tag metadata in the self-hosted Registry workspace without a nested tab', async () => {
     const { api } = await import('../api/index.js')
     api.get.mockImplementation(path => Promise.resolve(
       path === '/managed-oci-registries/storage-preflight' ? { ready: true, storage_class_name: 'local-path', data_nodes: ['node-a'] }
@@ -153,10 +168,9 @@ describe('ManagedOCIRegistries view', () => {
     ))
     const wrapper = mount(ManagedOCIRegistries)
     await new Promise(resolve => setTimeout(resolve, 0))
-    expect(api.get).not.toHaveBeenCalledWith('/managed-oci-registries/1/catalog', expect.anything())
-    await wrapper.get('[data-testid="managed-registry-tab-images"]').trigger('click')
     await new Promise(resolve => setTimeout(resolve, 0))
     expect(wrapper.get('[data-testid="registry-catalog"]').text()).toContain('team/orders')
+    expect(wrapper.find('[data-testid="managed-registry-tab-images"]').exists()).toBe(false)
     expect(wrapper.get('[data-testid="registry-catalog"]').text()).not.toContain('镜像仓库')
     expect(wrapper.get('.registry-catalog-count').text()).toBe('1 个仓库')
     expect(wrapper.find('.registry-catalog .sr-only').exists()).toBe(false)
@@ -177,7 +191,6 @@ describe('ManagedOCIRegistries view', () => {
     })
     const wrapper = mount(ManagedOCIRegistries)
     await new Promise(resolve => setTimeout(resolve, 0))
-    await wrapper.get('[data-testid="managed-registry-tab-images"]').trigger('click')
     await new Promise(resolve => setTimeout(resolve, 0))
     const error = wrapper.get('[data-testid="registry-catalog-error"]')
     expect(error.classes()).toContain('card')
