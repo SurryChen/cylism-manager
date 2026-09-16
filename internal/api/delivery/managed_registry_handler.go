@@ -13,6 +13,7 @@ import (
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/repository"
 	security "github.com/cylism/cylism-manager/internal/security"
+	auditservice "github.com/cylism/cylism-manager/internal/service/audit"
 	registryservice "github.com/cylism/cylism-manager/internal/service/registry"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -26,6 +27,8 @@ type ManagedOCIRegistryHandler struct {
 	status    k8sclient.ManagedRegistryStatusReader
 	store     repository.ManagedRegistryRepository
 	applyNode registryservice.NodeMirrorApplier
+	catalog   *registryservice.ManagedRegistryCatalogService
+	audit     repository.AuditRepository
 }
 
 // ManagedOCIRegistryRequest is the HTTP payload for creating or updating the
@@ -56,8 +59,17 @@ type ManagedOCIRegistryApplyRequest struct {
 
 // NewManagedOCIRegistryHandlerWithDependencies uses the explicit registry
 // service and Kubernetes ports composed by Bootstrap.
-func NewManagedOCIRegistryHandlerWithDependencies(repo repository.ManagedRegistryRepository, resources k8sclient.ManagedRegistryResourceReconciler, status k8sclient.ManagedRegistryStatusReader, applyNode registryservice.NodeMirrorApplier, service *registryservice.ManagedRegistryService) *ManagedOCIRegistryHandler {
-	return &ManagedOCIRegistryHandler{service: service, resources: resources, status: status, store: repo, applyNode: applyNode}
+func NewManagedOCIRegistryHandlerWithDependencies(repo repository.ManagedRegistryRepository, resources k8sclient.ManagedRegistryResourceReconciler, status k8sclient.ManagedRegistryStatusReader, applyNode registryservice.NodeMirrorApplier, service *registryservice.ManagedRegistryService, catalog *registryservice.ManagedRegistryCatalogService) *ManagedOCIRegistryHandler {
+	handler := &ManagedOCIRegistryHandler{service: service, resources: resources, status: status, store: repo, applyNode: applyNode, catalog: catalog}
+	if audit, ok := repo.(repository.AuditRepository); ok {
+		handler.audit = audit
+	}
+	return handler
+}
+
+func (h *ManagedOCIRegistryHandler) WithCatalogService(catalog *registryservice.ManagedRegistryCatalogService) *ManagedOCIRegistryHandler {
+	h.catalog = catalog
+	return h
 }
 
 // WithResourceReconciler replaces only mutating registry convergence actions.
@@ -103,6 +115,182 @@ func (h *ManagedOCIRegistryHandler) Get(c *gin.Context) {
 	}
 	h.refreshStatus(c.Request.Context(), registry)
 	apiShared.Success(c, apiShared.ManagedOCIRegistryDTO(registry))
+}
+
+type managedRegistryCatalogTargetRequest struct {
+	Repository   string   `json:"repository"`
+	Tag          string   `json:"tag"`
+	Digest       string   `json:"digest"`
+	AffectedTags []string `json:"affected_tags"`
+	Confirm      bool     `json:"confirm"`
+}
+
+func (h *ManagedOCIRegistryHandler) ListCatalog(c *gin.Context) {
+	id, ok := h.catalogRegistryID(c)
+	if !ok {
+		return
+	}
+	page, err := h.catalog.ListRepositories(c.Request.Context(), id, c.Query("cursor"))
+	if err != nil {
+		h.catalogError(c, err, nil)
+		return
+	}
+	apiShared.Success(c, managedRegistryCatalogPageDTO(page))
+}
+
+func (h *ManagedOCIRegistryHandler) ListCatalogTags(c *gin.Context) {
+	id, ok := h.catalogRegistryID(c)
+	if !ok {
+		return
+	}
+	page, err := h.catalog.ListTags(c.Request.Context(), id, c.Query("repository"), c.Query("cursor"))
+	if err != nil {
+		h.catalogError(c, err, nil)
+		return
+	}
+	apiShared.Success(c, managedRegistryCatalogTagsPageDTO(page))
+}
+
+func (h *ManagedOCIRegistryHandler) PreflightCatalogTagDelete(c *gin.Context) {
+	id, ok := h.catalogRegistryID(c)
+	if !ok {
+		return
+	}
+	var request managedRegistryCatalogTargetRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		apiShared.BadRequest(c, "删除预检参数无效")
+		return
+	}
+	preflight, err := h.catalog.PreflightTagDelete(c.Request.Context(), id, request.Repository, request.Tag)
+	if err != nil {
+		h.catalogError(c, err, nil)
+		return
+	}
+	if len(preflight.References) > 0 {
+		h.recordCatalogAudit(c, "registry.catalog.tag.delete", preflight, model.AuditOutcomeDenied, "拒绝删除被引用镜像标签", nil)
+		apiShared.ErrorWithData(c, http.StatusConflict, apiShared.CodeConflict, "镜像仍被发布或上线模板引用", managedRegistryCatalogDeletePreflightDTO(preflight))
+		return
+	}
+	apiShared.Success(c, managedRegistryCatalogDeletePreflightDTO(preflight))
+}
+
+func (h *ManagedOCIRegistryHandler) DeleteCatalogTag(c *gin.Context) {
+	id, ok := h.catalogRegistryID(c)
+	if !ok {
+		return
+	}
+	var request managedRegistryCatalogTargetRequest
+	if err := c.ShouldBindJSON(&request); err != nil || !request.Confirm {
+		apiShared.BadRequest(c, "删除镜像标签必须明确确认")
+		return
+	}
+	preflight, err := h.catalog.DeleteTag(c.Request.Context(), id, registryservice.CatalogDeletePreflight{Repository: request.Repository, Tag: request.Tag, Digest: request.Digest, AffectedTags: request.AffectedTags})
+	if err != nil {
+		outcome, summary := model.AuditOutcomeFailed, "删除镜像标签失败"
+		if errors.Is(err, registryservice.ErrContentReferenced) || errors.Is(err, registryservice.ErrCatalogChanged) {
+			outcome, summary = model.AuditOutcomeDenied, "拒绝删除镜像标签"
+		}
+		h.recordCatalogAudit(c, "registry.catalog.tag.delete", preflight, outcome, summary, map[string]any{"reason": err.Error()})
+		h.catalogError(c, err, preflight)
+		return
+	}
+	h.recordCatalogAudit(c, "registry.catalog.tag.delete", preflight, model.AuditOutcomeSucceeded, "删除镜像标签", nil)
+	apiShared.SuccessWithMessage(c, managedRegistryCatalogDeletePreflightDTO(preflight), "镜像 manifest 已删除")
+}
+
+func (h *ManagedOCIRegistryHandler) PreflightCatalogRepositoryDelete(c *gin.Context) {
+	id, ok := h.catalogRegistryID(c)
+	if !ok {
+		return
+	}
+	var request managedRegistryCatalogTargetRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		apiShared.BadRequest(c, "删除预检参数无效")
+		return
+	}
+	preflight, err := h.catalog.PreflightRepositoryDelete(c.Request.Context(), id, request.Repository)
+	if err != nil {
+		h.catalogError(c, err, nil)
+		return
+	}
+	if len(preflight.References) > 0 {
+		h.recordCatalogAudit(c, "registry.catalog.repository.delete", preflight, model.AuditOutcomeDenied, "拒绝删除被引用镜像仓库", nil)
+		apiShared.ErrorWithData(c, http.StatusConflict, apiShared.CodeConflict, "镜像仓库仍被发布或上线模板引用", managedRegistryCatalogDeletePreflightDTO(preflight))
+		return
+	}
+	apiShared.Success(c, managedRegistryCatalogDeletePreflightDTO(preflight))
+}
+
+func (h *ManagedOCIRegistryHandler) DeleteCatalogRepository(c *gin.Context) {
+	id, ok := h.catalogRegistryID(c)
+	if !ok {
+		return
+	}
+	var request managedRegistryCatalogTargetRequest
+	if err := c.ShouldBindJSON(&request); err != nil || !request.Confirm {
+		apiShared.BadRequest(c, "删除镜像仓库必须明确确认")
+		return
+	}
+	preflight, err := h.catalog.DeleteRepository(c.Request.Context(), id, registryservice.CatalogDeletePreflight{Repository: request.Repository, AffectedTags: request.AffectedTags})
+	if err != nil {
+		outcome, summary := model.AuditOutcomeFailed, "删除镜像仓库失败"
+		if errors.Is(err, registryservice.ErrContentReferenced) || errors.Is(err, registryservice.ErrCatalogChanged) {
+			outcome, summary = model.AuditOutcomeDenied, "拒绝删除镜像仓库"
+		}
+		h.recordCatalogAudit(c, "registry.catalog.repository.delete", preflight, outcome, summary, map[string]any{"reason": err.Error()})
+		h.catalogError(c, err, preflight)
+		return
+	}
+	h.recordCatalogAudit(c, "registry.catalog.repository.delete", preflight, model.AuditOutcomeSucceeded, "删除镜像仓库", nil)
+	apiShared.SuccessWithMessage(c, managedRegistryCatalogDeletePreflightDTO(preflight), "镜像仓库已删除")
+}
+
+func (h *ManagedOCIRegistryHandler) catalogRegistryID(c *gin.Context) (uint, bool) {
+	id, err := apiShared.ParseID(c.Param("id"))
+	if err != nil {
+		apiShared.BadRequest(c, "制品库 ID 无效")
+		return 0, false
+	}
+	if h.catalog == nil {
+		apiShared.Error(c, http.StatusServiceUnavailable, apiShared.CodeInternalError, "制品库目录服务未初始化")
+		return 0, false
+	}
+	return id, true
+}
+
+func (h *ManagedOCIRegistryHandler) catalogError(c *gin.Context, err error, data any) {
+	if preflight, ok := data.(*registryservice.CatalogDeletePreflight); ok {
+		data = managedRegistryCatalogDeletePreflightDTO(preflight)
+	}
+	switch {
+	case errors.Is(err, registryservice.ErrContentReferenced):
+		apiShared.ErrorWithData(c, http.StatusConflict, apiShared.CodeConflict, "镜像仍被发布或上线模板引用", data)
+	case errors.Is(err, registryservice.ErrCatalogChanged):
+		apiShared.ErrorWithData(c, http.StatusConflict, apiShared.CodeConflict, "镜像目录已变化，请刷新后重试", data)
+	case errors.Is(err, registryservice.ErrCatalogUnavailable):
+		apiShared.Error(c, http.StatusServiceUnavailable, apiShared.CodeK8sUnavailable, "无法读取制品库目录，请检查制品库状态和凭据")
+	case errors.Is(err, gorm.ErrRecordNotFound):
+		apiShared.NotFound(c, "受管制品库不存在")
+	default:
+		apiShared.BadRequest(c, err.Error())
+	}
+}
+
+func (h *ManagedOCIRegistryHandler) recordCatalogAudit(c *gin.Context, action string, preflight *registryservice.CatalogDeletePreflight, outcome, summary string, metadata map[string]any) {
+	if h.audit == nil {
+		return
+	}
+	target := "受管制品库镜像"
+	if preflight != nil {
+		target = preflight.Repository
+		if metadata == nil {
+			metadata = map[string]any{}
+		}
+		metadata["digest"] = preflight.Digest
+		metadata["affected_tag_count"] = len(preflight.AffectedTags)
+		metadata["reference_count"] = len(preflight.References)
+	}
+	_ = auditservice.NewService(h.audit).Record(auditservice.AuditEventInput{Action: action, ResourceType: "managed_oci_registry", TargetName: target, Actor: auditservice.Actor{Type: model.AuditActorUser, ID: apiShared.UserID(c)}, Source: model.AuditSourceAPI, Outcome: outcome, Summary: summary, RequestID: apiShared.RequestID(c), Metadata: metadata})
 }
 
 // Repair reconciles every platform-owned Registry resource from the saved

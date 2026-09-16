@@ -32,7 +32,9 @@ func newTestNodeRegistryMirrorHandler(repo repository.NodeRegistryMirrorReposito
 }
 
 func newTestManagedOCIRegistryHandler(repo repository.ManagedRegistryRepository, encKey []byte, resources k8sclient.ManagedRegistryResourceReconciler, status k8sclient.ManagedRegistryStatusReader, apply registryservice.NodeMirrorApplier) *ManagedOCIRegistryHandler {
-	return NewManagedOCIRegistryHandlerWithDependencies(repo, resources, status, apply, registryservice.NewManagedRegistryService(repo, encKey))
+	managed := registryservice.NewManagedRegistryService(repo, encKey)
+	catalog, _ := repo.(repository.ManagedRegistryCatalogRepository)
+	return NewManagedOCIRegistryHandlerWithDependencies(repo, resources, status, apply, managed, registryservice.NewManagedRegistryCatalogService(catalog, managed))
 }
 
 func newTestRegistryProxyHandler(repo repository.RegistryProxyRepository, encKey []byte, resources k8sclient.RegistryProxyResourceReconciler, diagnostics k8sclient.RegistryProxyDiagnostics) *RegistryProxyHandler {

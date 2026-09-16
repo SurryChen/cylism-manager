@@ -97,3 +97,9 @@ func TestCatalogedAuditActionCoversResourceMutationDomains(t *testing.T) {
 		})
 	}
 }
+
+func TestCatalogDeletionUsesHandlerSpecificAudit(t *testing.T) {
+	if _, _, ok := catalogedAuditAction(http.MethodDelete, "/api/managed-oci-registries/:id/catalog/tags"); ok {
+		t.Fatal("catalog deletion must not duplicate the handler-specific audit event")
+	}
+}

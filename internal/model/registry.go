@@ -98,6 +98,16 @@ type ManagedOCIRegistry struct {
 	PVCPhase             string     `gorm:"-" json:"pvc_phase,omitempty"`
 }
 
+// ManagedRegistryContentReference is a durable application definition that
+// can require a manifest stored in the platform-managed Registry.
+// It deliberately contains only safe display data used by deletion preflight.
+type ManagedRegistryContentReference struct {
+	Kind   string `json:"kind"`
+	Name   string `json:"name"`
+	Image  string `json:"image"`
+	Digest string `json:"digest,omitempty"`
+}
+
 // RegistryProxy defines one platform-managed, non-persistent registry proxy.
 
 type RegistryProxy struct {

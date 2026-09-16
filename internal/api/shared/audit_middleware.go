@@ -67,7 +67,7 @@ func EnsureRequestID(c *gin.Context) string {
 
 func catalogedAuditAction(method, path string) (string, string, bool) {
 	// These paths write their own richer semantic event.
-	if strings.Contains(path, "/node-registry-mirrors") || strings.Contains(path, "/agent-capability-grants") {
+	if strings.Contains(path, "/node-registry-mirrors") || strings.Contains(path, "/agent-capability-grants") || strings.Contains(path, "/managed-oci-registries/:id/catalog") {
 		return "", "", false
 	}
 	resourceType := ""

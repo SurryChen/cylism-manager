@@ -11,7 +11,7 @@ describe('ManagedOCIRegistries view', () => {
     const wrapper = mount(ManagedOCIRegistries)
     await new Promise(resolve => setTimeout(resolve, 0))
     expect(wrapper.get('[data-testid="registry-empty"]').text()).toContain('尚未部署自托管制品库')
-    expect(wrapper.text()).toContain('由 Cylism 在集群中部署和管理')
+    expect(wrapper.text()).not.toContain('由 Cylism 在集群中部署和管理')
     expect(wrapper.findAll('[data-testid="deploy-registry"]')).toHaveLength(1)
     expect(wrapper.text()).not.toContain('交付中心')
     await wrapper.get('[data-testid="deploy-registry"]').trigger('click')
@@ -139,6 +139,52 @@ describe('ManagedOCIRegistries view', () => {
     document.body.querySelector('.registry-modal form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
     await new Promise(resolve => setTimeout(resolve, 0))
     expect(api.put).toHaveBeenCalledWith('/managed-oci-registries/1', expect.objectContaining({ verification_image: 'registry.internal:5443/cylism-manager:1.0.0' }))
+    wrapper.unmount()
+  })
+
+  it('loads repository and tag metadata only after opening the images tab', async () => {
+    const { api } = await import('../api/index.js')
+    api.get.mockImplementation(path => Promise.resolve(
+      path === '/managed-oci-registries/storage-preflight' ? { ready: true, storage_class_name: 'local-path', data_nodes: ['node-a'] }
+        : path === '/managed-oci-registries/pvcs' ? []
+          : path === '/managed-oci-registries/1/catalog' ? { repositories: ['team/orders'], next: '' }
+            : path === '/managed-oci-registries/1/catalog/tags?repository=team%2Forders' ? { repository: 'team/orders', tags: [{ name: 'v1', digest: 'sha256:abc123', pull_reference: 'team/orders:v1', platforms: ['linux/amd64'] }], next: '' }
+              : [{ id: 1, endpoint: 'registry.internal:5443', status: 'ready', data_node: 'node-a', pvc_name: 'registry-data', storage_size: '10Gi', registry_image: 'registry:2', namespace: 'cylism-system', pull_username: 'cylism-pull' }]
+    ))
+    const wrapper = mount(ManagedOCIRegistries)
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(api.get).not.toHaveBeenCalledWith('/managed-oci-registries/1/catalog', expect.anything())
+    await wrapper.get('[data-testid="managed-registry-tab-images"]').trigger('click')
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(wrapper.get('[data-testid="registry-catalog"]').text()).toContain('team/orders')
+    expect(wrapper.get('[data-testid="registry-catalog"]').text()).not.toContain('镜像仓库')
+    expect(wrapper.get('.registry-catalog-count').text()).toBe('1 个仓库')
+    expect(wrapper.find('.registry-catalog .sr-only').exists()).toBe(false)
+    await wrapper.get('.registry-repository-select').trigger('click')
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(wrapper.text()).toContain('v1')
+    expect(wrapper.text()).toContain('linux/amd64')
+    wrapper.unmount()
+  })
+
+  it('shows catalog failures as a compact retryable workspace state', async () => {
+    const { api } = await import('../api/index.js')
+    api.get.mockImplementation(path => {
+      if (path === '/managed-oci-registries/storage-preflight') return Promise.resolve({ ready: true, storage_class_name: 'local-path', data_nodes: ['node-a'] })
+      if (path === '/managed-oci-registries/pvcs') return Promise.resolve([])
+      if (path === '/managed-oci-registries/1/catalog') return Promise.reject(new Error('API 路径不存在'))
+      return Promise.resolve([{ id: 1, endpoint: 'registry.internal:5443', status: 'ready', data_node: 'node-a', pvc_name: 'registry-data', storage_size: '10Gi', registry_image: 'registry:2', namespace: 'cylism-system', pull_username: 'cylism-pull' }])
+    })
+    const wrapper = mount(ManagedOCIRegistries)
+    await new Promise(resolve => setTimeout(resolve, 0))
+    await wrapper.get('[data-testid="managed-registry-tab-images"]').trigger('click')
+    await new Promise(resolve => setTimeout(resolve, 0))
+    const error = wrapper.get('[data-testid="registry-catalog-error"]')
+    expect(error.classes()).toContain('card')
+    expect(error.get('.feedback-banner--warning').text()).toContain('暂时无法读取镜像目录')
+    expect(error.text()).not.toContain('API 路径不存在')
+    expect(error.text()).toContain('镜像目录内容暂不可展示')
+    expect(error.get('button').text()).toContain('重新尝试')
     wrapper.unmount()
   })
 })

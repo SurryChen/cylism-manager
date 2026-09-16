@@ -17,6 +17,8 @@ DELETE /api/k8s/persistent-volume-claims/:name/imports/:id/backup
 DELETE /api/k8s/secrets/:namespace/:name
 DELETE /api/k8s/services/:namespace/:name
 DELETE /api/managed-oci-registries/:id
+DELETE /api/managed-oci-registries/:id/catalog/repositories
+DELETE /api/managed-oci-registries/:id/catalog/tags
 DELETE /api/monitoring
 DELETE /api/monitoring/alerts
 DELETE /api/monitoring/alerts/silences/:id
@@ -114,6 +116,8 @@ GET /api/k8s/statefulsets/:namespace/:name
 GET /api/k8s/storage-classes
 GET /api/managed-oci-registries
 GET /api/managed-oci-registries/:id
+GET /api/managed-oci-registries/:id/catalog
+GET /api/managed-oci-registries/:id/catalog/tags
 GET /api/managed-oci-registries/certificates
 GET /api/managed-oci-registries/pvcs
 GET /api/managed-oci-registries/storage-preflight
@@ -229,6 +233,8 @@ POST /api/k8s/persistent-volume-migrations/:id/cleanup
 POST /api/k8s/secrets
 POST /api/managed-oci-registries
 POST /api/managed-oci-registries/:id/apply-node-access
+POST /api/managed-oci-registries/:id/catalog/repositories/preflight-delete
+POST /api/managed-oci-registries/:id/catalog/tags/preflight-delete
 POST /api/managed-oci-registries/:id/repair
 POST /api/monitoring/alerts/install
 POST /api/monitoring/alerts/notify
