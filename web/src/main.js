@@ -1,6 +1,7 @@
 import { createApp } from 'vue'
 import App from './App.vue'
 import router from './router'
+import SelectMenu from './components/SelectMenu.vue'
 import './styles/theme.css'
 import './styles/components.css'
 import { initializePalette } from './composables/usePalette.js'
@@ -8,6 +9,7 @@ import { initializePalette } from './composables/usePalette.js'
 initializePalette()
 const app = createApp(App)
 app.use(router)
+app.component('SelectMenu', SelectMenu)
 
 // 全局 Vue 错误处理：捕获未处理的渲染/生命周期异常
 app.config.errorHandler = (err, instance, info) => {

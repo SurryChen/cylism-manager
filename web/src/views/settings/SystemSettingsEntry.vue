@@ -23,10 +23,10 @@
           </div>
           <div class="form-group">
             <label class="form-label" for="platform-endpoint-certificate">TLS 证书</label>
-            <select id="platform-endpoint-certificate" v-model="endpointForm.certificate_name" class="form-select" :disabled="savingEndpoint" required>
+            <SelectMenu id="platform-endpoint-certificate" v-model="endpointForm.certificate_name" class="form-select" :disabled="savingEndpoint" required>
               <option value="">选择 default 命名空间中已就绪的证书</option>
               <option v-for="certificate in readyPlatformCertificates" :key="certificate.name" :value="certificate.name">{{ certificate.name }} · {{ certificate.domains.join(', ') }}</option>
-            </select>
+            </SelectMenu>
           </div>
         </div>
         <div class="endpoint-control-row">

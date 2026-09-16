@@ -86,38 +86,38 @@
             </div>
             <div class="form-group">
               <label class="form-label">更新时最大不可用</label>
-              <select v-model="form.maxUnavailable" class="form-select">
+              <SelectMenu v-model="form.maxUnavailable" class="form-select">
                 <option value="0">0（保持服务）</option>
                 <option value="1">1（允许短暂减少）</option>
-              </select>
+              </SelectMenu>
             </div>
           </div>
           <div class="form-group">
             <label class="form-label">更新时最大额外副本</label>
-            <select v-model="form.maxSurge" class="form-select">
+            <SelectMenu v-model="form.maxSurge" class="form-select">
               <option value="1">1（先启动新副本）</option>
               <option value="0">0（不额外扩容）</option>
               <option value="25%">25%（Kubernetes 默认）</option>
-            </select>
+            </SelectMenu>
           </div>
           <div v-if="isTraefik(editing)" class="form-group">
             <label class="form-label">入口请求读取超时</label>
-            <select v-model="form.traefikReadTimeoutMode" class="form-select" data-testid="traefik-read-timeout" @change="selectTraefikReadTimeout">
+            <SelectMenu v-model="form.traefikReadTimeoutMode" class="form-select" data-testid="traefik-read-timeout" @change="selectTraefikReadTimeout">
               <option value="">使用 Traefik 默认值（60 秒）</option>
               <option value="5m">5 分钟</option>
               <option value="30m">30 分钟（推荐）</option>
               <option value="1h">1 小时</option>
               <option value="custom">自定义</option>
-            </select>
+            </SelectMenu>
             <input v-if="form.traefikReadTimeoutMode === 'custom'" v-model.trim="form.traefikReadTimeout" class="form-input timeout-input" required placeholder="例如 15m" data-testid="traefik-custom-read-timeout" />
           </div>
           <div v-if="canPlace(editing)" class="form-group">
             <div class="config-section-title">节点调度</div>
             <label class="form-label">部署节点</label>
-            <select v-model="form.nodeName" class="form-select" data-testid="coredns-node-selector">
+            <SelectMenu v-model="form.nodeName" class="form-select" data-testid="coredns-node-selector">
               <option value="">不固定，由 Kubernetes 调度</option>
               <option v-for="node in schedulableNodes" :key="node.name" :value="node.name">{{ node.display_name || node.name }}</option>
-            </select>
+            </SelectMenu>
             <span class="form-hint">固定后所有副本都会调度到该节点，节点故障时可能影响服务。</span>
           </div>
           <p v-if="isStatic(editing)" class="baseline-hint">

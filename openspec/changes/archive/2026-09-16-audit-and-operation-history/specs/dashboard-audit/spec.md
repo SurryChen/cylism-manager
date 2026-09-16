@@ -27,6 +27,8 @@
 - **WHEN** Agent 成功执行普通 Pod、Event、DNS、Registry 或监控读取
 - **THEN** 系统不得为该普通读取创建默认审计事件
 
+## ADDED Requirements
+
 ### Requirement: 审计日志包含操作者
 系统 SHALL 将事件操作者表达为用户、Agent、系统或委托会话来源，并为后台认证用户保留 user_id 兼容字段。
 
@@ -41,8 +43,6 @@
 #### Scenario: Agent 自动化包含运行时身份
 - **WHEN** Agent 执行被审计的申请、批准、拒绝或操作结果
 - **THEN** 事件记录 actor_type=`agent`、关联 Runtime ID 和可读 Runtime 名称
-
-## ADDED Requirements
 
 ### Requirement: 审计日志查询与展示
 系统 SHALL 提供默认面向变更和安全事件的审计查询与展示，支持按结果、动作、目标、操作者、来源和关键词筛选。
@@ -60,6 +60,8 @@
 #### Scenario: 历史审计记录保持可查
 - **WHEN** 系统升级后查询既有 `audit_logs` 记录
 - **THEN** 系统为缺少新增字段的记录提供 legacy 来源、成功结果和基于原字段的可读回退值
+
+## MODIFIED Requirements
 
 ### Requirement: 高风险操作审计覆盖
 系统 SHALL 审计认证与委托、权限授予/撤销、敏感数据访问、资源创建/更新/删除、部署/回滚/扩缩容、镜像源验证、Terminal 会话以及 Agent 操作申请、批准、拒绝、执行和失败。

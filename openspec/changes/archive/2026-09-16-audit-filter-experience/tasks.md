@@ -14,4 +14,4 @@
 
 - [x] 3.1 Run focused Go and frontend tests.
 - [x] 3.2 Run frontend build, `go build ./...`, diff check, and OpenSpec validation.
-- [ ] 3.3 Run full `go test ./...`; the current environment still denies the pre-existing `httptest` listener in `internal/api/delivery`.
+- [x] 3.3 Run full `go test ./...`; the current environment completes the suite successfully.

@@ -24,10 +24,10 @@
     <div v-if="activeTab === 'ingressroute'" class="card">
       <div class="filter-bar" style="margin-bottom:var(--space-12)">
         <div class="filter-control"><label class="form-label">命名空间：</label>
-        <select v-model="filterNs" class="form-select">
+        <SelectMenu v-model="filterNs" class="form-select">
           <option value="">全部</option>
           <option v-for="ns in namespaces" :key="ns" :value="ns">{{ ns }}</option>
-        </select></div>
+        </SelectMenu></div>
       </div>
       <div v-if="routesLoading" class="empty-state">
         <span class="empty-text">加载 IngressRoute 中...</span>

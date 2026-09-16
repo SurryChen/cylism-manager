@@ -56,7 +56,7 @@
 
       <aside class="card dashboard-side-panel">
         <div class="card-header"><h2 class="card-title">快捷操作</h2><button class="icon-button dashboard-action-settings" type="button" title="编辑快捷操作" aria-label="编辑快捷操作" :aria-expanded="quickActionsEditing" @click="quickActionsEditing = true"><Settings2 :size="15" /></button></div>
-        <nav class="dashboard-action-list dashboard-card-scroll-region" aria-label="快捷操作" tabindex="0">
+        <nav class="dashboard-action-list" aria-label="快捷操作">
           <router-link v-for="action in visibleQuickActions" :key="action.id" class="dashboard-action-card" :class="{ 'dashboard-action-card-primary': action.id === 'deploy' }" :to="action.to"><span class="dashboard-action-icon">{{ action.icon }}</span><strong>{{ action.label }}</strong><span class="action-arrow">→</span></router-link>
         </nav>
       </aside>
@@ -79,7 +79,7 @@
             <div class="dashboard-trend-toolbar">
               <div class="dashboard-segmented" role="group" aria-label="资源类型"><button v-for="metric in trendMetrics" :key="metric.id" type="button" :class="{ active: selectedTrendMetricId === metric.id }" @click="selectTrendMetric(metric.id)">{{ metric.label }}</button></div>
               <div class="dashboard-segmented" role="group" aria-label="展示方式"><button type="button" :class="{ active: trendDisplayMode === 'average' }" @click="trendDisplayMode = 'average'">集群平均</button><button type="button" :class="{ active: trendDisplayMode === 'nodes' }" @click="trendDisplayMode = 'nodes'">按节点</button></div>
-              <select v-if="trendDisplayMode === 'nodes' && trendNodeOptions.length" v-model="selectedTrendNode" class="form-select dashboard-node-select" aria-label="选择节点"><option value="">全部节点</option><option v-for="node in trendNodeOptions" :key="node" :value="node">{{ node }}</option></select>
+              <SelectMenu v-if="trendDisplayMode === 'nodes' && trendNodeOptions.length" v-model="selectedTrendNode" class="form-select dashboard-node-select" aria-label="选择节点"><option value="">全部节点</option><option v-for="node in trendNodeOptions" :key="node" :value="node">{{ node }}</option></SelectMenu>
             </div>
           </template>
         </MetricTrendChart>
@@ -322,6 +322,7 @@ function resourceLabel(r) { const m = { server:'服务器',site:'站点',cert:'�
 
 .dashboard-main-grid { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(280px, 1fr) minmax(240px, .85fr); gap: 16px; align-items: stretch; }
 .dashboard-health-panel, .dashboard-application-panel, .dashboard-side-panel { min-width: 0; min-height: 0; overflow: hidden; }
+.dashboard-main-grid > .card > .card-header { min-height: 28px; margin-bottom: 14px; }
 .dashboard-health-panel { display: flex; flex-direction: column; }
 .dashboard-health-panel.is-loading { opacity: .86; }
 .cluster-status { font-size: 10px; font-weight: 600; }
@@ -332,38 +333,37 @@ function resourceLabel(r) { const m = { server:'服务器',site:'站点',cert:'�
 .dashboard-card-scroll-region { min-height: 0; overflow: auto; overscroll-behavior: contain; scrollbar-color: var(--border-strong) transparent; scrollbar-width: thin; }
 .dashboard-card-scroll-region::-webkit-scrollbar { width: 6px; height: 6px; }
 .dashboard-card-scroll-region::-webkit-scrollbar-thumb { border-radius: 999px; background: var(--border-strong); }
-.dashboard-overview-section { display: grid; flex: 1; align-content: center; gap: 8px; }
+.dashboard-overview-section { display: grid; flex: 1; min-height: 0; grid-template-rows: minmax(0, 1fr) auto; gap: 14px; }
 .dashboard-platform-section { margin-top: 22px; }
 .dashboard-overview-grid, .dashboard-platform-grid { display: grid; gap: 11px 24px; }
-.dashboard-overview-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.dashboard-overview-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); grid-template-rows: repeat(2, minmax(0, 1fr)); align-items: center; }
 .dashboard-platform-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .dashboard-overview-metric { display: grid; min-width: 0; gap: 5px; padding: 0; }
-.dashboard-overview-metric strong { overflow: hidden; color: var(--text-primary); font: 700 18px/1 var(--font-mono); font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }
-.dashboard-overview-metric span { overflow: hidden; color: var(--text-muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
-.dashboard-version strong { font-size: 14px; }
-.dashboard-cluster-health { display: flex; align-items: center; flex-wrap: wrap; gap: 7px 13px; margin-top: 8px; padding-top: 10px; border-top: 1px solid var(--border-muted); }
-.dashboard-cluster-health-heading, .dashboard-cluster-health-meta { display: flex; align-items: center; gap: 6px; color: var(--text-muted); font-size: 10px; }
+.dashboard-overview-metric strong { overflow: hidden; color: var(--text-primary); font: 700 20px/1 var(--font-mono); font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }
+.dashboard-overview-metric span { overflow: hidden; color: var(--text-muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.dashboard-version strong { font-size: 15px; }
+.dashboard-cluster-health { display: flex; align-items: center; flex-wrap: wrap; gap: 7px 13px; padding-top: 10px; border-top: 1px solid var(--border-muted); }
+.dashboard-cluster-health-heading, .dashboard-cluster-health-meta { display: flex; align-items: center; gap: 6px; color: var(--text-muted); font-size: 11px; }
 .dashboard-cluster-health-heading strong { color: var(--text-primary); font: 700 12px/1 var(--font-mono); }
 .dashboard-cluster-health-status { display: flex; flex-wrap: wrap; gap: 7px; }
-.dashboard-node-health-item { display: inline-flex; align-items: center; gap: 5px; color: var(--text-secondary); font-size: 10px; }
-.dashboard-node-health-item strong { color: var(--text-primary); font: 700 11px/1 var(--font-mono); }
+.dashboard-node-health-item { display: inline-flex; align-items: center; gap: 5px; color: var(--text-secondary); font-size: 11px; }
+.dashboard-node-health-item strong { color: var(--text-primary); font: 700 12px/1 var(--font-mono); }
 .dashboard-node-health-dot { width: 7px; height: 7px; flex: 0 0 auto; border-radius: 50%; background: var(--text-muted); }
 .dashboard-node-health-success .dashboard-node-health-dot { background: var(--success); }
 .dashboard-node-health-warning .dashboard-node-health-dot { background: var(--warning); }
 .dashboard-cluster-health-meta { flex-wrap: wrap; gap: 0; }
 .dashboard-cluster-health-meta span + span::before { content: '·'; margin: 0 6px; color: var(--text-muted); }
-.dashboard-application-panel { display: flex; min-width: 0; flex-direction: column; padding: 16px; }
-.dashboard-application-panel .card-header { margin-bottom: 12px; }
-.dashboard-application-content { display: flex; min-height: 0; flex: 1; flex-direction: column; padding-right: 4px; }
+.dashboard-application-panel { display: flex; min-width: 0; flex-direction: column; padding: var(--space-20); }
+.dashboard-application-content { display: flex; min-height: 0; flex: 1; flex-direction: column; }
 .application-summary-count { display: flex; align-items: baseline; gap: 6px; }
-.application-summary-count strong { color: var(--text-primary); font: 700 30px/1 var(--font-mono); }
-.application-summary-count span, .application-status-grid span, .application-latest-release > span:first-child { color: var(--text-muted); font-size: 10px; }
-.application-status-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-top: 20px; }
+.application-summary-count strong { color: var(--text-primary); font: 700 32px/1 var(--font-mono); }
+.application-summary-count span, .application-status-grid span, .application-latest-release > span:first-child { color: var(--text-muted); font-size: 11px; }
+.application-status-grid { display: grid; min-height: 0; flex: 1; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: repeat(2, minmax(0, 1fr)); gap: 8px 16px; margin: 14px 0; padding: 0; border: 0; }
 .application-status-grid div { display: grid; min-width: 0; gap: 5px; }
-.application-status-grid strong { color: var(--text-primary); font: 700 18px/1 var(--font-mono); }
-.application-latest-release { display: grid; gap: 5px; margin-top: auto; padding-top: 15px; }
-.application-latest-release strong, .application-latest-release span:not(:first-child) { overflow: hidden; color: var(--text-primary); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
-.application-latest-release span:not(:first-child) { color: var(--text-secondary); font-size: 10px; }
+.application-status-grid strong { color: var(--text-primary); font: 700 20px/1 var(--font-mono); }
+.application-latest-release { display: grid; gap: 5px; margin-top: 0; padding-top: 10px; border-top: 1px solid var(--border-muted); }
+.application-latest-release strong, .application-latest-release span:not(:first-child) { overflow: hidden; color: var(--text-primary); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.application-latest-release span:not(:first-child) { color: var(--text-secondary); font-size: 11px; }
 .dashboard-application-unavailable { display: flex; min-height: 100px; align-items: center; gap: 8px; color: var(--text-muted); font-size: 11px; }
 
 .dashboard-side-panel { display: flex; flex-direction: column; }
@@ -372,7 +372,7 @@ function resourceLabel(r) { const m = { server:'服务器',site:'站点',cert:'�
 .dashboard-action-card:last-child { border-bottom: 0; }
 .dashboard-action-card:hover { color: var(--action-primary); }
 .dashboard-action-card-primary { color: var(--action-primary); }
-.dashboard-action-settings { color: var(--text-muted); }
+.dashboard-action-settings { width: 28px; height: 28px; border-radius: 7px; color: var(--text-muted); }
 .dashboard-action-icon { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 7px; background: var(--surface-hover); font-size: 14px; }
 .dashboard-action-card strong { font-size: 12px; }
 .action-arrow { color: var(--text-muted); font-size: 14px; }
@@ -397,30 +397,30 @@ function resourceLabel(r) { const m = { server:'服务器',site:'站点',cert:'�
 .dashboard-node-select { min-height: 30px; width: auto; min-width: 120px; padding-top: 4px; padding-bottom: 4px; font-size: 11px; }
 
 .dashboard-activity-panel { display: flex; min-width: 0; flex-direction: column; padding: 16px; }
+.dashboard-activity-panel { overflow: hidden; }
 .dashboard-activity-panel .card-header { margin-bottom: 10px; }
 .panel-link { color: var(--action-primary); font-size: 11px; text-decoration: none; }
 .panel-link:hover { text-decoration: underline; }
-.attention-list { display: grid; grid-template-rows: repeat(4, minmax(32px, auto)); gap: 4px; }
-.attention-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 8px; align-items: center; padding: 8px 0; color: var(--text-primary); text-decoration: none; }
+.attention-list { display: grid; grid-template-rows: repeat(4, minmax(30px, auto)); gap: 3px; }
+.attention-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 8px; align-items: center; padding: 6px 0; color: var(--text-primary); text-decoration: none; }
 .attention-row:hover { color: var(--action-primary); }
 .attention-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-muted); }
 .attention-dot.is-danger { background: var(--danger); }.attention-dot.is-warning { background: var(--warning); }.attention-dot.is-success { background: var(--success); }.attention-dot.is-muted { background: var(--text-muted); }
-.attention-title { min-width: 0; overflow: hidden; color: var(--text-primary); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
-.attention-value { color: var(--text-primary); font: 700 11px/1 var(--font-mono); }
-.activity-heading { display: flex; align-items: center; justify-content: space-between; margin-top: 15px; padding-top: 12px; border-top: 1px solid var(--border-muted); color: var(--text-primary); font-size: 11px; }
+.attention-title { min-width: 0; overflow: hidden; color: var(--text-primary); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.attention-value { color: var(--text-primary); font: 700 12px/1 var(--font-mono); }
+.activity-heading { display: flex; align-items: center; justify-content: space-between; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border-muted); color: var(--text-primary); font-size: 12px; }
 .activity-list { display: grid; gap: 0; }
-.activity-row { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px; align-items: center; padding: 9px 0; color: var(--text-secondary); font-size: 10px; }
+.activity-row { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px; align-items: center; padding: 6px 0; color: var(--text-secondary); font-size: 11px; }
 .activity-row:last-child { border-bottom: 0; }
 .dashboard-empty-state { min-height: 72px; }
 
 /* Keep the desktop overview within the content viewport while preserving a natural
    scrolling layout for short windows and mobile screens. */
-@media (min-width: 961px) and (min-height: 700px) {
-  .dashboard-page { height: calc(100dvh - var(--topbar-height) - var(--shell-padding) - 36px); min-height: 0; grid-template-rows: auto minmax(220px, 250px) minmax(260px, 1fr); }
+@media (min-width: 961px) and (min-height: 800px) {
+  .dashboard-page { height: calc(100dvh - var(--topbar-height) - var(--shell-padding) - 36px); min-height: 0; grid-template-rows: auto minmax(280px, 290px) minmax(260px, 1fr); }
   .dashboard-main-grid, .dashboard-insights-grid { min-height: 0; }
   .dashboard-health-panel, .dashboard-application-panel, .dashboard-side-panel, .dashboard-activity-panel { height: 100%; }
-  .dashboard-side-panel { overflow: hidden; }
-  .dashboard-activity-panel { overflow: auto; }
+  .dashboard-side-panel, .dashboard-activity-panel { overflow: hidden; }
 }
 
 @media (max-width: 960px) {

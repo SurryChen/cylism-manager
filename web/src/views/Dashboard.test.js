@@ -64,10 +64,32 @@ describe('Dashboard view with K8s stats', () => {
     expect(dashboardSource).toContain('.dashboard-main-grid { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(280px, 1fr) minmax(240px, .85fr);')
     expect(dashboardSource).toContain('.dashboard-insights-grid { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(250px, .8fr);')
     expect(dashboardSource).toContain('height: calc(100dvh - var(--topbar-height) - var(--shell-padding) - 36px);')
-    expect(dashboardSource).toContain('grid-template-rows: auto minmax(220px, 250px) minmax(260px, 1fr);')
+    expect(dashboardSource).toContain('grid-template-rows: auto minmax(280px, 290px) minmax(260px, 1fr);')
+    expect(dashboardSource).toContain('@media (min-width: 961px) and (min-height: 800px)')
     expect(dashboardSource).toContain('align-items: stretch;')
     expect(dashboardSource).toContain('dashboard-card-scroll-region')
     expect(dashboardSource).toContain('overscroll-behavior: contain;')
+  })
+
+  it('keeps the default quick actions fully visible in the desktop first screen', () => {
+    expect(dashboardSource).toContain('<nav class="dashboard-action-list" aria-label="快捷操作">')
+    expect(dashboardSource).toContain('.dashboard-action-card { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; align-items: center; min-height: 44px;')
+    expect(dashboardSource).toContain('.dashboard-side-panel, .dashboard-activity-panel { overflow: hidden; }')
+  })
+
+  it('uses the expanded overview cards for readable operational summaries', () => {
+    expect(dashboardSource).toContain('.dashboard-main-grid > .card > .card-header { min-height: 28px; margin-bottom: 14px; }')
+    expect(dashboardSource).toContain('.dashboard-application-panel { display: flex; min-width: 0; flex-direction: column; padding: var(--space-20); }')
+    expect(dashboardSource).toContain('.dashboard-overview-section { display: grid; flex: 1; min-height: 0; grid-template-rows: minmax(0, 1fr) auto; gap: 14px; }')
+    expect(dashboardSource).toContain('.dashboard-overview-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); grid-template-rows: repeat(2, minmax(0, 1fr)); align-items: center; }')
+    expect(dashboardSource).toContain('.dashboard-overview-metric strong { overflow: hidden; color: var(--text-primary); font: 700 20px/1 var(--font-mono);')
+    expect(dashboardSource).toContain('.dashboard-overview-metric span { overflow: hidden; color: var(--text-muted); font-size: 11px;')
+    expect(dashboardSource).toContain('.application-status-grid { display: grid; min-height: 0; flex: 1; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: repeat(2, minmax(0, 1fr)); gap: 8px 16px; margin: 14px 0; padding: 0; border: 0; }')
+    expect(dashboardSource).toContain('.application-status-grid strong { color: var(--text-primary); font: 700 20px/1 var(--font-mono); }')
+    expect(dashboardSource).toContain('.attention-list { display: grid; grid-template-rows: repeat(4, minmax(30px, auto)); gap: 3px; }')
+    expect(dashboardSource).toContain('.attention-title { min-width: 0; overflow: hidden; color: var(--text-primary); font-size: 12px;')
+    expect(dashboardSource).toContain('.attention-value { color: var(--text-primary); font: 700 12px/1 var(--font-mono); }')
+    expect(dashboardSource).toContain('.dashboard-activity-panel { overflow: hidden; }')
   })
 
   it('renders page title', () => {
@@ -203,6 +225,8 @@ describe('Dashboard view with K8s stats', () => {
     expect(wrapper.text()).toContain('查看监控')
     expect(wrapper.text()).toContain('查看日志')
     expect(wrapper.text()).toContain('查看工作负载')
+    expect(wrapper.find('[aria-label="快捷操作"]').classes()).not.toContain('dashboard-card-scroll-region')
+    expect(wrapper.findAll('.dashboard-action-card')).toHaveLength(4)
   })
 
   it('lets users choose which quick actions appear and stores the preference locally', async () => {

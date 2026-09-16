@@ -1,21 +1,23 @@
 <template>
-  <div ref="root" class="select-menu" :class="{ 'is-open': open, 'is-disabled': disabled }">
+  <div ref="root" class="select-menu" :class="[rootClasses, { 'is-open': open, 'is-disabled': disabled }]" :style="$attrs.style">
     <button
       class="select-menu-trigger"
       type="button"
+      :id="id || undefined"
       :disabled="disabled"
       :aria-label="ariaLabel"
+      :aria-required="required || undefined"
       :aria-expanded="open"
       aria-haspopup="listbox"
       @click="toggle"
       @keydown="handleTriggerKeydown"
     >
-      <span class="select-menu-value" :class="{ 'is-placeholder': !selectedOption }">{{ selectedOption?.label || placeholder }}</span>
+      <span class="select-menu-value" :class="{ 'is-placeholder': !selectedOption }">{{ selectedOption?.triggerLabel || selectedOption?.label || effectivePlaceholder }}</span>
       <ChevronDown :size="14" aria-hidden="true" />
     </button>
-    <select class="select-menu-native" :value="modelValue" :aria-label="ariaLabel" tabindex="-1" aria-hidden="true" @change="selectNative">
-      <option v-if="placeholder" value="">{{ placeholder }}</option>
-      <option v-for="option in normalizedOptions" :key="String(option.value)" :value="option.value">{{ option.label }}</option>
+    <select v-bind="controlAttrs" :class="['select-menu-native', $attrs.class]" :value="modelValue" :aria-label="ariaLabel" :required="required" :disabled="disabled" tabindex="-1" aria-hidden="true" @change="selectNative">
+      <template v-if="hasOptionSlot"><slot /></template>
+      <template v-else><option v-if="effectivePlaceholder" value="">{{ effectivePlaceholder }}</option><option v-for="option in normalizedOptions" :key="String(option.value)" :value="option.value">{{ option.label }}</option></template>
     </select>
     <div v-if="open" class="select-menu-options" role="listbox" :aria-label="ariaLabel">
       <button
@@ -28,7 +30,7 @@
         :aria-selected="String(option.value) === String(modelValue)"
         @click="select(option.value)"
       >
-        <span>{{ option.label }}</span>
+        <span class="select-menu-option-copy"><span class="select-menu-option-label">{{ option.label }}</span><small v-if="option.description" class="select-menu-option-description">{{ option.description }}</small></span>
         <Check v-if="String(option.value) === String(modelValue)" :size="14" aria-hidden="true" />
       </button>
     </div>
@@ -36,21 +38,52 @@
 </template>
 
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, useAttrs, useSlots } from 'vue'
 import { Check, ChevronDown } from 'lucide-vue-next'
 
 const props = defineProps({
   modelValue: { type: [String, Number], default: '' },
   options: { type: Array, default: () => [] },
-  placeholder: { type: String, default: '请选择' },
+  placeholder: { type: String, default: '' },
   ariaLabel: { type: String, default: '选择' },
   disabled: { type: Boolean, default: false },
+  required: { type: Boolean, default: false },
+  id: { type: String, default: '' },
+  modelModifiers: { type: Object, default: () => ({}) },
 })
+defineOptions({ inheritAttrs: false })
 const emit = defineEmits(['update:modelValue', 'change'])
+const attrs = useAttrs()
+const slots = useSlots()
 const root = ref(null)
 const open = ref(false)
-const normalizedOptions = computed(() => props.options.map(option => typeof option === 'object' ? option : { value: option, label: String(option) }))
+const slotOptions = computed(() => flattenOptionNodes(slots.default?.()).map(node => ({
+  value: node.props?.value ?? '',
+  label: nodeText(node.children),
+  disabled: Boolean(node.props?.disabled),
+})))
+const hasOptionSlot = computed(() => slotOptions.value.length > 0)
+const normalizedOptions = computed(() => (props.options.length ? props.options : slotOptions.value.filter(option => !option.disabled)).map(option => typeof option === 'object' ? option : { value: option, label: String(option) }))
 const selectedOption = computed(() => normalizedOptions.value.find(option => String(option.value) === String(props.modelValue)))
+const effectivePlaceholder = computed(() => props.placeholder || slotOptions.value.find(option => option.disabled)?.label || '请选择')
+const controlAttrs = computed(() => {
+  const { class: ignoredClass, style: ignoredStyle, ...rest } = attrs
+  return rest
+})
+const rootClasses = computed(() => typeof attrs.class === 'string' ? attrs.class.split(/\s+/).filter(name => name && name !== 'form-select') : attrs.class)
+
+function flattenOptionNodes(nodes = []) {
+  return nodes.flatMap(node => {
+    if (node?.type === 'option') return [node]
+    return Array.isArray(node?.children) ? flattenOptionNodes(node.children) : []
+  })
+}
+
+function nodeText(children) {
+  if (typeof children === 'string') return children
+  if (!Array.isArray(children)) return ''
+  return children.map(child => typeof child === 'string' ? child : nodeText(child?.children)).join('')
+}
 
 function toggle() {
   if (!props.disabled) open.value = !open.value
@@ -62,7 +95,11 @@ function select(value) {
   open.value = false
 }
 
-function selectNative(event) { select(event.target.value) }
+function selectNative(event) {
+  const selected = normalizedOptions.value.find(option => String(option.value) === event.target.value)
+  const value = selected ? selected.value : event.target.value
+  select(props.modelModifiers.number && typeof value === 'string' && value !== '' ? Number(value) : value)
+}
 
 function handleTriggerKeydown(event) {
   if (event.key === 'Escape') { open.value = false; return }
@@ -91,7 +128,9 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocumentClick))
 .select-menu-options { position: absolute; z-index: 30; top: calc(100% + 5px); right: 0; left: 0; display: grid; max-height: 260px; gap: 2px; overflow-y: auto; padding: 5px; border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--surface-raised); box-shadow: var(--shadow); backdrop-filter: blur(24px) saturate(140%); }
 .select-menu-option { display: flex; width: 100%; min-width: 0; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 9px; border: 0; border-radius: 6px; background: transparent; color: var(--text-secondary); font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
 .select-menu-option:hover, .select-menu-option.is-selected { background: var(--surface-hover); color: var(--text-primary); }
-.select-menu-option span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.select-menu-option-copy { display: grid; min-width: 0; gap: 2px; }
+.select-menu-option-label, .select-menu-option-description { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.select-menu-option-description { color: var(--text-muted); font-size: 10px; font-weight: 400; }
 .select-menu-option svg { flex: 0 0 auto; color: var(--action-primary); }
 .is-disabled .select-menu-trigger { cursor: not-allowed; opacity: .5; }
 </style>

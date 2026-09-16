@@ -13,10 +13,10 @@
         </div>
         <div class="filter-control filter-control--push">
           <label class="form-label">命名空间：</label>
-          <select v-model="filterNs" class="form-select">
+          <SelectMenu v-model="filterNs" class="form-select">
             <option value="">全部</option>
             <option v-for="ns in namespaces" :key="ns" :value="ns">{{ ns }}</option>
-          </select>
+          </SelectMenu>
         </div>
       </div>
     </div>

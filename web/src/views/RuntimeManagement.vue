@@ -50,8 +50,8 @@
           </div>
           <form class="runtime-form" @submit.prevent="save">
           <label>名称<input v-model.trim="form.name" required pattern="[a-z0-9]([-a-z0-9]*[a-z0-9])?" placeholder="nanobot-main" :readonly="!!form.id" /></label>
-          <label>Runtime 类型<select v-model="form.runtime_type" :disabled="!!form.id" @change="onRuntimeTypeChange"><option v-for="definition in catalog" :key="definition.runtime_type" :value="definition.runtime_type">{{ definition.display_name || definition.runtime_type }}</option></select></label>
-          <label>部署方式<select v-model="form.deployment_mode" :disabled="!!form.id" @change="onDeploymentModeChange"><option value="managed">平台托管（当前集群）</option><option value="external">外部连接（其他机器）</option></select></label>
+          <label>Runtime 类型<SelectMenu v-model="form.runtime_type" :disabled="!!form.id" @change="onRuntimeTypeChange"><option v-for="definition in catalog" :key="definition.runtime_type" :value="definition.runtime_type">{{ definition.display_name || definition.runtime_type }}</option></SelectMenu></label>
+          <label>部署方式<SelectMenu v-model="form.deployment_mode" :disabled="!!form.id" @change="onDeploymentModeChange"><option value="managed">平台托管（当前集群）</option><option value="external">外部连接（其他机器）</option></SelectMenu></label>
           <label>镜像<input v-model.trim="form.image" :required="form.deployment_mode === 'managed'" placeholder="托管模式填写镜像地址" /></label>
           <label v-if="form.deployment_mode === 'external'">Runtime 连接地址<input v-model.trim="form.endpoint_url" required placeholder="https://agent.example.com" /></label>
           <div v-if="form.deployment_mode === 'external'" class="form-grid">
@@ -60,12 +60,12 @@
           </div>
           <div class="form-grid">
             <label>模型名称<input v-model.trim="form.model_name" placeholder="模型名称" /></label>
-            <label>模型协议<select v-model="form.api_style"><option v-for="protocol in supportedProtocols" :key="protocol" :value="protocol">{{ protocolLabel(protocol) }}</option></select></label>
+            <label>模型协议<SelectMenu v-model="form.api_style"><option v-for="protocol in supportedProtocols" :key="protocol" :value="protocol">{{ protocolLabel(protocol) }}</option></SelectMenu></label>
           </div>
           <label>模型 API 地址<input v-model.trim="form.model_base_url" placeholder="https://provider.example.com/v1" /></label>
           <label>模型 API Key <input v-model="form.api_key" type="password" :placeholder="form.api_key_configured ? '已配置，留空保持不变' : '填写后保存到 Kubernetes Secret'" autocomplete="new-password" /></label>
           <div class="form-grid"><label v-if="form.id">PVC 名称<input :value="form.pvc_name" readonly /></label><label>PVC 容量（Gi）<input v-model.number="form.storage" type="number" min="1" step="1" placeholder="10" :readonly="!!form.id" /></label></div>
-          <label v-if="form.deployment_mode === 'managed'">部署节点<select v-model="form.node_name" :disabled="!!form.id"><option value="">不限制（由调度器选择）</option><option v-for="node in nodes" :key="node" :value="node">{{ node }}</option></select></label>
+          <label v-if="form.deployment_mode === 'managed'">部署节点<SelectMenu v-model="form.node_name" :disabled="!!form.id"><option value="">不限制（由调度器选择）</option><option v-for="node in nodes" :key="node" :value="node">{{ node }}</option></SelectMenu></label>
             <div class="form-actions"><button type="button" class="btn" @click="cancelEdit">取消</button><button type="submit" class="btn btn-primary" :disabled="saving">{{ saving ? '保存中...' : '保存' }}</button></div>
           </form>
         </section>

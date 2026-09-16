@@ -103,7 +103,7 @@ describe('Applications view', () => {
     expect(wrapper.find('.btn-danger').attributes('disabled')).toBeUndefined()
   })
 
-  it('uses styled project and environment menus for the workspace context', async () => {
+  it('uses the shared select menu for the workspace context', async () => {
     const { api } = await import('../../api/index.js')
     api.get.mockImplementation((path) => {
       if (path === '/projects') return Promise.resolve([{ id: 1, name: 'commerce', environments: [{ id: 2, name: 'production', namespace: 'project-commerce-prod' }] }])
@@ -115,12 +115,14 @@ describe('Applications view', () => {
 
     expect(wrapper.findAll('.context-select')).toHaveLength(0)
     expect(wrapper.findAll('.workspace-picker')).toHaveLength(2)
-    expect(wrapper.get('[data-testid="workspace-project-trigger"]').text()).toContain('commerce')
-    expect(wrapper.get('[data-testid="workspace-environment-trigger"]').text()).toContain('production')
+    const [projectPicker, environmentPicker] = wrapper.findAll('.workspace-picker')
+    expect(projectPicker.get('.select-menu-trigger').text()).toContain('commerce')
+    expect(environmentPicker.get('.select-menu-trigger').text()).toContain('production')
 
-    await wrapper.get('[data-testid="workspace-project-trigger"]').trigger('click')
-    expect(wrapper.get('[data-testid="workspace-project-menu"]').text()).toContain('commerce')
-    expect(wrapper.get('[data-testid="workspace-project-menu"] .is-selected').text()).toContain('commerce')
+    await projectPicker.get('.select-menu-trigger').trigger('click')
+    expect(projectPicker.get('.select-menu-options').text()).toContain('commerce')
+    expect(projectPicker.get('.select-menu-option-description').text()).toContain('未设置项目说明')
+    expect(projectPicker.get('.select-menu-option.is-selected').text()).toContain('commerce')
   })
 
   it('shows application runtime summary and opens only the endpoint in a new tab', async () => {

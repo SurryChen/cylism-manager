@@ -23,7 +23,7 @@
     <div v-if="modal" class="overlay" @click.self="close"><div class="modal"><h2 class="modal-title">{{ editing ? '编辑受管域名' : '申请 HTTPS 域名' }}</h2><form @submit.prevent="save">
       <div class="form-group"><label class="form-label">域名</label><input v-model.trim="form.hostname" class="form-input" placeholder="api.example.com" required :disabled="!!editing" /></div>
       <div class="form-group"><label class="form-label">所属环境</label><input class="form-input" :value="currentEnvironment ? `${currentEnvironment.name} · ${currentEnvironment.namespace}` : '请先在顶部选择项目与环境'" disabled /></div>
-      <div class="form-group"><label class="form-label">ClusterIssuer</label><select v-model="form.issuer_ref" class="form-select" required><option value="" disabled>选择已就绪签发者</option><option v-for="issuer in issuers" :key="issuer.name" :value="issuer.name">{{ issuer.name }}</option></select></div>
+      <div class="form-group"><label class="form-label">ClusterIssuer</label><SelectMenu v-model="form.issuer_ref" class="form-select" required><option value="" disabled>选择已就绪签发者</option><option v-for="issuer in issuers" :key="issuer.name" :value="issuer.name">{{ issuer.name }}</option></SelectMenu></div>
       <div class="form-group"><label class="form-label">说明</label><input v-model.trim="form.description" class="form-input" placeholder="生产 API" /></div>
       <label class="check-row"><input v-model="form.enabled" type="checkbox" /> 启用此域名</label>
       <div class="modal-actions"><button type="button" class="btn" @click="close">取消</button><button class="btn btn-primary" :disabled="saving || !currentEnvironment || !issuers.length">{{ saving ? '提交中...' : '提交申请' }}</button></div>
@@ -31,7 +31,7 @@
 
     <div v-if="importModal" class="overlay" @click.self="closeImport"><div class="modal"><h2 class="modal-title">导入已有证书</h2><form @submit.prevent="importCertificate">
       <div class="form-group"><label class="form-label">所属环境</label><input class="form-input" :value="currentEnvironment ? `${currentEnvironment.name} · ${currentEnvironment.namespace}` : ''" disabled /></div>
-      <div class="form-group"><label class="form-label">Certificate</label><select v-model="importForm.certificate_name" class="form-select" required><option value="" disabled>{{ importCandidates.length ? '选择已有 Certificate' : '当前环境没有可导入证书' }}</option><option v-for="certificate in importCandidates" :key="certificate.name" :value="certificate.name">{{ certificate.name }} · {{ certificate.domains[0] }}</option></select></div>
+      <div class="form-group"><label class="form-label">Certificate</label><SelectMenu v-model="importForm.certificate_name" class="form-select" required><option value="" disabled>{{ importCandidates.length ? '选择已有 Certificate' : '当前环境没有可导入证书' }}</option><option v-for="certificate in importCandidates" :key="certificate.name" :value="certificate.name">{{ certificate.name }} · {{ certificate.domains[0] }}</option></SelectMenu></div>
       <div v-if="selectedImportCertificate" class="certificate-preview"><span>{{ selectedImportCertificate.domains[0] }}</span><small>{{ selectedImportCertificate.issuer_kind || 'ClusterIssuer' }} · {{ selectedImportCertificate.issuer }}</small><small>TLS Secret: {{ selectedImportCertificate.secret_name }}</small></div>
       <div class="form-group"><label class="form-label">说明</label><input v-model.trim="importForm.description" class="form-input" placeholder="导入已有证书" /></div>
       <label class="check-row"><input v-model="importForm.enabled" type="checkbox" /> 启用此域名</label>
@@ -41,7 +41,7 @@
 
     <div v-if="claimModal" class="overlay" @click.self="closeClaim"><div class="modal"><h2 class="modal-title">关联历史域名</h2><form @submit.prevent="claimDomain">
       <div class="form-group"><label class="form-label">所属环境</label><input class="form-input" :value="currentEnvironment ? `${currentEnvironment.name} · ${currentEnvironment.namespace}` : ''" disabled /></div>
-      <div class="form-group"><label class="form-label">历史域名</label><select v-model.number="claimForm.domain_id" class="form-select" required><option :value="0" disabled>{{ claimCandidates.length ? '选择未关联环境的历史域名' : '当前环境没有可关联的历史域名' }}</option><option v-for="domain in claimCandidates" :key="domain.id" :value="domain.id">{{ domain.hostname }}</option></select></div>
+      <div class="form-group"><label class="form-label">历史域名</label><SelectMenu v-model.number="claimForm.domain_id" class="form-select" required><option :value="0" disabled>{{ claimCandidates.length ? '选择未关联环境的历史域名' : '当前环境没有可关联的历史域名' }}</option><option v-for="domain in claimCandidates" :key="domain.id" :value="domain.id">{{ domain.hostname }}</option></SelectMenu></div>
       <div v-if="selectedClaimDomain" class="certificate-preview"><span>{{ selectedClaimDomain.hostname }}</span><small>Certificate: {{ selectedClaimDomain.certificate_name || '-' }}</small><small>TLS Secret: {{ selectedClaimDomain.tls_secret_name || '-' }}</small></div>
       <p class="form-hint">仅关联同命名空间且尚未绑定环境的历史记录，不会修改 Certificate、TLS Secret 或重新签发。</p>
       <div class="modal-actions"><button type="button" class="btn" @click="closeClaim">取消</button><button class="btn btn-primary" :disabled="saving || !claimForm.domain_id">{{ saving ? '关联中...' : '确认关联' }}</button></div>

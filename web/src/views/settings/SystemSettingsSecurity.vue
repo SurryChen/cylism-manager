@@ -24,12 +24,12 @@
         </div>
         <div class="form-group">
           <label class="form-label" for="temporary-token-ttl">有效期</label>
-          <select id="temporary-token-ttl" v-model.number="temporaryTokenForm.ttl_seconds" class="form-select">
+          <SelectMenu id="temporary-token-ttl" v-model.number="temporaryTokenForm.ttl_seconds" class="form-select">
             <option :value="3600">1 小时</option>
             <option :value="21600">6 小时</option>
             <option :value="86400">1 天</option>
             <option :value="604800">7 天</option>
-          </select>
+          </SelectMenu>
         </div>
       </div>
       <div class="settings-action-row">

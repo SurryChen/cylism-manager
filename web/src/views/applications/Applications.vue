@@ -3,34 +3,14 @@
     <PageHeader :title="pageMeta.title" :description="pageMeta.subtitle">
       <template #actions>
         <div v-if="section === 'workspace'" class="page-actions">
-          <div class="workspace-context" @click.stop>
+          <div class="workspace-context">
             <div class="workspace-picker">
               <span class="context-picker-label">项目</span>
-              <button data-testid="workspace-project-trigger" type="button" class="context-picker-trigger" :class="{ 'is-open': activeWorkspacePicker === 'project' }" :aria-expanded="activeWorkspacePicker === 'project'" aria-haspopup="listbox" @click="toggleWorkspacePicker('project')">
-                <span class="context-picker-value">{{ workspaceProject?.name || '选择项目' }}</span>
-                <ChevronDown :size="15" />
-              </button>
-              <div v-if="activeWorkspacePicker === 'project'" data-testid="workspace-project-menu" class="context-picker-menu" role="listbox" aria-label="项目">
-                <button v-for="project in projects" :key="project.id" type="button" class="context-picker-option" :class="{ 'is-selected': project.id === workspaceProjectID }" role="option" :aria-selected="project.id === workspaceProjectID" @click="selectWorkspaceProject(project.id)">
-                  <span><strong>{{ project.name }}</strong><small>{{ project.description || '未设置项目说明' }}</small></span>
-                  <Check v-if="project.id === workspaceProjectID" :size="15" />
-                </button>
-                <div v-if="!projects.length" class="context-picker-empty">暂无项目</div>
-              </div>
+              <SelectMenu data-testid="workspace-project-picker" class="context-picker-select" :model-value="workspaceProjectID" :options="workspaceProjectOptions" placeholder="选择项目" aria-label="项目" @update:model-value="selectWorkspaceProject" />
             </div>
             <div class="workspace-picker">
               <span class="context-picker-label">环境</span>
-              <button data-testid="workspace-environment-trigger" type="button" class="context-picker-trigger" :class="{ 'is-open': activeWorkspacePicker === 'environment' }" :aria-expanded="activeWorkspacePicker === 'environment'" aria-haspopup="listbox" :disabled="!workspaceProject" @click="toggleWorkspacePicker('environment')">
-                <span class="context-picker-value">{{ workspaceEnvironment ? `${workspaceEnvironment.name} · ${workspaceEnvironment.namespace}` : '选择环境' }}</span>
-                <ChevronDown :size="15" />
-              </button>
-              <div v-if="activeWorkspacePicker === 'environment'" data-testid="workspace-environment-menu" class="context-picker-menu context-picker-menu--environment" role="listbox" aria-label="环境">
-                <button v-for="environment in workspaceProject?.environments || []" :key="environment.id" type="button" class="context-picker-option" :class="{ 'is-selected': environment.id === workspaceEnvironmentID }" role="option" :aria-selected="environment.id === workspaceEnvironmentID" @click="selectWorkspaceEnvironment(environment.id)">
-                  <span><strong>{{ environment.name }}</strong><small>{{ environment.namespace }}</small></span>
-                  <Check v-if="environment.id === workspaceEnvironmentID" :size="15" />
-                </button>
-                <div v-if="!(workspaceProject?.environments || []).length" class="context-picker-empty">该项目暂无环境</div>
-              </div>
+              <SelectMenu data-testid="workspace-environment-picker" class="context-picker-select context-picker-select--environment" :model-value="workspaceEnvironmentID" :options="workspaceEnvironmentOptions" placeholder="选择环境" aria-label="环境" :disabled="!workspaceProject" @update:model-value="selectWorkspaceEnvironment" />
             </div>
           </div>
         </div>
@@ -93,7 +73,7 @@
     <div v-if="showProjectModal" class="overlay" @click.self="closeProjectModal"><div class="modal"><h2 class="modal-title">{{ editingProject ? '编辑项目' : '新建项目' }}</h2><form @submit.prevent="saveProject">
       <div class="form-group"><label class="form-label">项目名称</label><input v-model="projectForm.name" class="form-input" required placeholder="commerce" :disabled="editingProject && applicationCount(editingProject.id) > 0" /></div>
       <div class="form-group"><label class="form-label">说明</label><textarea v-model="projectForm.description" class="form-input form-textarea" placeholder="订单服务及其部署环境" /></div>
-      <div v-if="editingProject" class="form-group"><label class="form-label">默认镜像仓库</label><select v-model.number="projectForm.defaultImageRegistryID" class="form-select"><option :value="0">不设置默认仓库</option><option v-for="registry in projectRegistries(editingProject)" :key="registry.id" :value="registry.id">{{ registry.name }} · {{ registry.endpoint }}</option></select></div>
+      <div v-if="editingProject" class="form-group"><label class="form-label">默认镜像仓库</label><SelectMenu v-model.number="projectForm.defaultImageRegistryID" class="form-select"><option :value="0">不设置默认仓库</option><option v-for="registry in projectRegistries(editingProject)" :key="registry.id" :value="registry.id">{{ registry.name }} · {{ registry.endpoint }}</option></SelectMenu></div>
       <div class="modal-actions"><button type="button" class="btn" @click="closeProjectModal">取消</button><button class="btn btn-primary" :disabled="submitting">{{ submitting ? '保存中...' : editingProject ? '保存' : '创建项目' }}</button></div>
     </form></div></div>
 
@@ -108,7 +88,7 @@
     />
 
     <Teleport to="body"><div v-if="releaseApp" class="overlay" @click.self="releaseApp = null"><div class="modal release-modal"><h2 class="modal-title">发布 {{ releaseApp.name }}</h2><form @submit.prevent="createRelease">
-      <div v-if="releaseTemplates.length" class="form-group"><label class="form-label">上线模板</label><select v-model.number="releaseForm.template_id" class="form-select" required><option v-for="template in releaseTemplates" :key="template.id" :value="template.id">{{ template.name }}{{ template.is_default ? '（默认）' : '' }}</option></select></div>
+      <div v-if="releaseTemplates.length" class="form-group"><label class="form-label">上线模板</label><SelectMenu v-model.number="releaseForm.template_id" class="form-select" required><option v-for="template in releaseTemplates" :key="template.id" :value="template.id">{{ template.name }}{{ template.is_default ? '（默认）' : '' }}</option></SelectMenu></div>
       <div v-if="selectedReleaseTemplate" class="template-summary"><span>模板 v{{ selectedReleaseTemplate.revision }}</span><strong>{{ selectedReleaseTemplate.spec.image }}</strong><small>{{ selectedReleaseTemplate.spec.replicas }} 副本 · Service {{ selectedReleaseTemplate.spec.service?.port }}</small></div>
       <p v-else class="template-intro">当前应用尚未配置上线模板，请先在应用详情中创建模板。</p>
       <div class="form-group"><label class="form-label">版本号</label><input v-model.trim="releaseForm.version" class="form-input" required placeholder="1.4.2" pattern="[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}" :disabled="!releaseTemplates.length" /><p class="form-hint">平台将使用所选模板的镜像路径与此版本号组合最终镜像。</p></div>
@@ -120,7 +100,6 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Check, ChevronDown } from 'lucide-vue-next'
 import {
   createApplication as createApplicationRequest,
   createProject,
@@ -169,7 +148,6 @@ const globalDomains = ref([])
 const unassignedManagedDomains = ref([])
 const workspaceOverview = ref(null)
 const workspaceRegistries = ref([])
-const activeWorkspacePicker = ref('')
 const applicationsResource = useAsyncResource(({ signal }, scope = {}) => getApplications(scope, { signal }), [])
 const projectsResource = useAsyncResource(({ signal }) => getProjects({ signal }), [])
 const imageRegistriesResource = useAsyncResource(({ signal }, projectID) => getImageRegistries({ projectID }, { signal }), [])
@@ -211,6 +189,8 @@ const workspaceProjectID = computed(() => Number(route.query.project_id) || 0)
 const workspaceEnvironmentID = computed(() => Number(route.query.environment_id) || 0)
 const workspaceProject = computed(() => projects.value.find(item => item.id === workspaceProjectID.value) || null)
 const workspaceEnvironment = computed(() => workspaceProject.value?.environments?.find(item => item.id === workspaceEnvironmentID.value) || null)
+const workspaceProjectOptions = computed(() => projects.value.map(project => ({ value: project.id, label: project.name, description: project.description || '未设置项目说明' })))
+const workspaceEnvironmentOptions = computed(() => (workspaceProject.value?.environments || []).map(environment => ({ value: environment.id, label: environment.name, triggerLabel: `${environment.name} · ${environment.namespace}`, description: environment.namespace })))
 const workspaceReady = computed(() => !!workspaceProject.value && !!workspaceEnvironment.value)
 const certificateAlerts = computed(() => globalDomains.value.filter(domain => domain.certificate?.status !== 'Ready'))
 const unassignedDomains = computed(() => unassignedManagedDomains.value)
@@ -344,10 +324,8 @@ async function openHistoryRelease(item) { await router.push(`/applications/${ite
 async function openUnassignedDomains() { await router.push({ path: '/applications/domains', query: { ...route.query, unassigned: 'true' } }) }
 async function openProjectManagement() { await router.push('/applications/projects') }
 async function updateWorkspace(projectID, environmentID) { const query = {}; if (projectID) query.project_id = String(projectID); if (environmentID) query.environment_id = String(environmentID); if (projectID && environmentID) localStorage.setItem('cylism.application-workspace', JSON.stringify({ project_id: projectID, environment_id: environmentID })); await router.push({ path: '/applications', query }) }
-function closeWorkspacePicker() { activeWorkspacePicker.value = '' }
-function toggleWorkspacePicker(picker) { activeWorkspacePicker.value = activeWorkspacePicker.value === picker ? '' : picker }
-async function selectWorkspaceProject(value) { closeWorkspacePicker(); const projectID = Number(value) || 0; const project = projects.value.find(item => item.id === projectID); const environmentID = project?.environments?.length === 1 ? project.environments[0].id : 0; await updateWorkspace(projectID, environmentID) }
-async function selectWorkspaceEnvironment(value) { closeWorkspacePicker(); await updateWorkspace(workspaceProjectID.value, Number(value) || 0) }
+async function selectWorkspaceProject(value) { const projectID = Number(value) || 0; const project = projects.value.find(item => item.id === projectID); const environmentID = project?.environments?.length === 1 ? project.environments[0].id : 0; await updateWorkspace(projectID, environmentID) }
+async function selectWorkspaceEnvironment(value) { await updateWorkspace(workspaceProjectID.value, Number(value) || 0) }
 async function openDomains() { await router.push({ path: '/applications/domains', query: { project_id: workspaceProjectID.value, environment_id: workspaceEnvironmentID.value } }) }
 async function openRegistries() { await router.push({ path: '/applications/registries', query: { project_id: workspaceProjectID.value, environment_id: workspaceEnvironmentID.value } }) }
 async function openWorkspaceRelease(release) { await router.push(`/applications/${release.application_id}/releases/${release.id}`) }
@@ -381,5 +359,6 @@ watch(() => [props.section, route.query.project_id, route.query.environment_id],
 .environment-links,.registry-links { display:flex; flex-wrap:wrap; gap:6px; }.environment-link,.registry-link { display:grid; min-width:96px; padding:4px 6px; border:1px solid var(--border-muted); border-radius:var(--radius-control); background:var(--surface-subtle); line-height:1.25; }.environment-link strong,.registry-link { color:var(--text-primary); font-size:11px; }.environment-link small,.registry-link small { margin-top:2px; color:var(--text-muted); font-size:10px; }.registry-disabled { color:var(--danger)!important; }.confirm-copy { margin:0; color:var(--text-secondary); font-size:13px; }
 .overview-metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-bottom:var(--space-16)}.metric{display:grid;gap:4px;padding:12px;border:1px solid var(--border-muted);border-radius:var(--radius-control);background:var(--surface-subtle)}.metric span{color:var(--text-secondary);font-size:12px}.metric strong{font-size:22px}
 .page-actions{display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:8px}.workspace-context{display:flex;align-items:stretch;gap:8px}.workspace-picker{position:relative;display:grid;min-width:144px;gap:3px}.context-picker-label{padding-left:2px;color:var(--text-muted);font-size:10px;font-weight:700;line-height:1}.context-picker-trigger{display:flex;min-width:0;height:36px;align-items:center;gap:7px;padding:0 9px 0 10px;border:1px solid var(--border-muted);border-radius:var(--radius-control);background:var(--surface-raised);color:var(--text-primary);font:inherit;font-size:12px;text-align:left;cursor:pointer;transition:border-color .18s ease,background .18s ease,box-shadow .18s ease}.context-picker-trigger:hover:not(:disabled){border-color:var(--focus);background:var(--surface-hover)}.context-picker-trigger:focus-visible{outline:2px solid var(--focus);outline-offset:2px}.context-picker-trigger.is-open{border-color:var(--focus);box-shadow:0 0 0 2px color-mix(in srgb,var(--focus) 18%,transparent)}.context-picker-trigger:disabled{cursor:not-allowed;opacity:.55}.context-picker-value{min-width:0;overflow:hidden;flex:1;text-overflow:ellipsis;white-space:nowrap}.context-picker-trigger svg{flex:0 0 auto;color:var(--text-muted);transition:transform .18s ease}.context-picker-trigger.is-open svg{transform:rotate(180deg);color:var(--action-primary)}.context-picker-menu{position:absolute;z-index:25;top:calc(100% + 6px);left:0;display:grid;width:max-content;min-width:100%;max-width:min(310px,calc(100vw - 32px));gap:3px;padding:5px;border:1px solid var(--border);border-radius:var(--radius-control);background:var(--surface-raised);box-shadow:var(--shadow);backdrop-filter:blur(24px) saturate(140%)}.context-picker-menu--environment{min-width:230px}.context-picker-option{display:flex;min-width:0;align-items:center;justify-content:space-between;gap:18px;padding:8px;border:0;border-radius:6px;background:transparent;color:var(--text-primary);font:inherit;text-align:left;cursor:pointer}.context-picker-option:hover,.context-picker-option.is-selected{background:var(--surface-hover)}.context-picker-option span{display:grid;min-width:0;gap:2px}.context-picker-option strong,.context-picker-option small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.context-picker-option strong{font-size:12px}.context-picker-option small{color:var(--text-muted);font-size:10px}.context-picker-option svg{flex:0 0 auto;color:var(--action-primary)}.context-picker-empty{padding:9px 8px;color:var(--text-muted);font-size:11px}.workspace-metrics{grid-template-columns:repeat(4,minmax(0,1fr))}.workspace-section{min-width:0;padding:var(--space-16) 0;border-top:1px solid var(--border-muted)}.section-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:var(--space-12);margin-bottom:var(--space-12)}.section-heading h2{margin:0;font-size:15px}.section-heading p{margin:4px 0 0;color:var(--text-secondary);font-size:12px}.workspace-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:var(--space-16)}.compact-list{display:grid;gap:6px}.list-row{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;padding:8px;border:1px solid var(--border-muted);border-radius:var(--radius-control);background:var(--surface-subtle);color:var(--text-primary);font:inherit;text-align:left;cursor:pointer}.list-row:hover{background:var(--surface-raised)}.list-row span:first-child{display:grid;min-width:0;gap:2px}.list-row strong,.list-row small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.list-row small{color:var(--text-secondary);font-size:11px}.runtime-count,.release-state,.endpoint-more{display:block;margin-top:4px;font-size:10px}.endpoint-link{display:inline-block;max-width:260px;overflow:hidden;color:var(--action-primary);text-overflow:ellipsis;white-space:nowrap;text-decoration:none}.endpoint-link:hover{text-decoration:underline}.empty-inline{padding:14px 0;color:var(--text-muted);font-size:12px}
+.context-picker-select{min-width:0}.context-picker-select--environment{min-width:230px}:deep(.context-picker-select .select-menu-options){width:max-content;min-width:100%;max-width:min(310px,calc(100vw - 32px))}:deep(.context-picker-select--environment .select-menu-options){min-width:230px}
 @media (max-width:760px){.workspace-grid{grid-template-columns:1fr}.workspace-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}}@media (max-width:640px) { .page-header { align-items:stretch; flex-direction:column; }.page-header .btn { width:100%; }.page-actions{width:100%}.workspace-context{width:100%}.workspace-picker{flex:1;min-width:0}.context-picker-menu{max-width:calc(100vw - 32px)} }
 </style>

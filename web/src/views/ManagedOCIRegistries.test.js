@@ -52,7 +52,7 @@ describe('ManagedOCIRegistries view', () => {
     await wrapper.get('[data-testid="deploy-registry"]').trigger('click')
     await new Promise(resolve => setTimeout(resolve, 0))
     expect(api.get).toHaveBeenCalledWith('/managed-oci-registries/certificates?namespace=cylism-system', expect.objectContaining({ signal: expect.any(AbortSignal) }))
-    const certificateSelect = document.body.querySelector('.registry-certificate-select')
+    const certificateSelect = document.body.querySelector('.registry-certificate-select .select-menu-native')
     expect(certificateSelect.textContent).toContain('registry-cert')
 
     certificateSelect.value = 'registry-cert'

@@ -65,15 +65,15 @@
       <div v-if="podFiltersOpen" class="pod-filter-panel">
         <div class="filter-control">
           <label class="form-label" for="pod-filter-namespace">命名空间</label>
-          <select id="pod-filter-namespace" v-model="podNamespaceFilter" class="form-select pod-filter-namespace"><option value="">全部命名空间</option><option v-for="namespace in podNamespaces" :key="namespace" :value="namespace">{{ namespace }}</option></select>
+          <SelectMenu id="pod-filter-namespace" v-model="podNamespaceFilter" class="form-select pod-filter-namespace"><option value="">全部命名空间</option><option v-for="namespace in podNamespaces" :key="namespace" :value="namespace">{{ namespace }}</option></SelectMenu>
         </div>
         <div class="filter-control">
           <label class="form-label" for="pod-filter-node">所在服务器</label>
-          <select id="pod-filter-node" v-model="podNodeFilter" class="form-select pod-filter-node"><option value="">全部服务器</option><option value="__unscheduled__">未调度</option><option v-for="node in podNodes" :key="node.value" :value="node.value">{{ node.label }}</option></select>
+          <SelectMenu id="pod-filter-node" v-model="podNodeFilter" class="form-select pod-filter-node"><option value="">全部服务器</option><option value="__unscheduled__">未调度</option><option v-for="node in podNodes" :key="node.value" :value="node.value">{{ node.label }}</option></SelectMenu>
         </div>
         <div class="filter-control">
           <label class="form-label" for="pod-filter-status">状态</label>
-          <select id="pod-filter-status" v-model="podStatusFilter" class="form-select pod-filter-status"><option value="">全部状态</option><option v-for="status in podStatuses" :key="status" :value="status">{{ status }}</option></select>
+          <SelectMenu id="pod-filter-status" v-model="podStatusFilter" class="form-select pod-filter-status"><option value="">全部状态</option><option v-for="status in podStatuses" :key="status" :value="status">{{ status }}</option></SelectMenu>
         </div>
         <label class="checkbox-label pod-restarts-filter"><input v-model="podRestartsOnly" type="checkbox" /> 仅显示已重启</label>
       </div>
@@ -177,7 +177,7 @@
     <div v-if="imageDialog" class="modal-overlay" @click.self="imageDialog = null">
       <div class="modal"><div class="modal-body">
         <h3>更新镜像: {{ imageDialog.name }}</h3>
-        <p class="modal-copy">容器: <select v-model="imageDialog.container" class="form-select" style="width:auto;display:inline"><option v-for="img in imageDialog.images" :key="img" :value="img.split(':')[0]">{{ img }}</option></select></p>
+        <p class="modal-copy">容器: <SelectMenu v-model="imageDialog.container" class="form-select" style="width:auto;display:inline"><option v-for="img in imageDialog.images" :key="img" :value="img.split(':')[0]">{{ img }}</option></SelectMenu></p>
         <p class="modal-copy">新镜像: <input v-model="imageDialog.newImage" class="form-input" style="width:200px;display:inline" placeholder="nginx:1.25" /></p>
         <p v-if="imageError" class="form-error" role="alert">{{ imageError }}</p>
         <div class="btn-group" style="margin-top:var(--space-16)"><button class="btn btn-primary" :disabled="imageSubmitting" @click="doUpdateImage">{{ imageSubmitting ? '提交中...' : '确认' }}</button><button class="btn" :disabled="imageSubmitting" @click="imageDialog = null">取消</button></div>

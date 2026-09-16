@@ -6,12 +6,12 @@
     <FeedbackBanner v-if="error" tone="warning" :message="error" />
     <section class="card operation-card">
       <div class="operation-filters">
-        <select v-model="resourceType" class="form-select" aria-label="资源类型">
+        <SelectMenu v-model="resourceType" class="form-select" aria-label="资源类型">
           <option value="">全部资源</option><option value="application">应用</option><option value="server">服务器</option><option value="platform">平台</option>
-        </select>
-        <select v-model="status" class="form-select" aria-label="执行状态">
+        </SelectMenu>
+        <SelectMenu v-model="status" class="form-select" aria-label="执行状态">
           <option value="">全部状态</option><option value="running">执行中</option><option value="success">成功</option><option value="failed">失败</option>
-        </select>
+        </SelectMenu>
         <input v-model.trim="keyword" class="form-input" placeholder="搜索步骤或详情" @keydown.enter.prevent="load(true)" />
         <button class="btn btn-primary" @click="load(true)">筛选</button>
       </div>

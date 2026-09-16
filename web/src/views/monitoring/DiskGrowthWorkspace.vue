@@ -3,8 +3,8 @@
     <header class="disk-growth-heading">
       <div><h2>磁盘增长诊断</h2><p>按增长量定位节点目录与 PVC，帮助确认空间增长来源。</p></div>
       <div class="disk-growth-controls">
-        <label>时间范围<select v-model="range" class="form-select"><option v-for="item in ranges" :key="item.value" :value="item.value">{{ item.label }}</option></select></label>
-        <label>节点<select v-model="node" class="form-select"><option value="">全部节点</option><option v-for="item in readyNodes" :key="item.name" :value="item.name">{{ nodeLabel(item) }}</option></select></label>
+        <label>时间范围<SelectMenu v-model="range" class="form-select"><option v-for="item in ranges" :key="item.value" :value="item.value">{{ item.label }}</option></SelectMenu></label>
+        <label>节点<SelectMenu v-model="node" class="form-select"><option value="">全部节点</option><option v-for="item in readyNodes" :key="item.name" :value="item.name">{{ nodeLabel(item) }}</option></SelectMenu></label>
         <button class="icon-button" type="button" title="刷新磁盘诊断" aria-label="刷新磁盘诊断" :disabled="loading" @click="load"><RefreshCw :size="16" :class="{ 'is-spinning': loading }" /></button>
       </div>
     </header>
