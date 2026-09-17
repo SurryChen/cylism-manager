@@ -7,26 +7,31 @@
     <template v-if="activeWorkspace === 'registry'">
       <p v-if="pageError" class="form-error" role="alert">{{ pageError }}</p>
       <div v-if="!loaded" class="empty-state">正在读取制品库配置...</div>
-      <section v-else-if="!registry" class="registry-empty" data-testid="registry-empty">
+      <SurfaceCard v-else-if="!registry" class="registry-empty" data-testid="registry-empty">
         <Database :size="26" />
         <div><h2>尚未部署自托管制品库</h2><p>部署后，平台会创建受认证保护、使用持久化存储并通过集群入口提供服务的 OCI Registry。</p></div>
-      </section>
+      </SurfaceCard>
       <template v-else>
-        <section class="metric-grid registry-overview" data-testid="registry-summary">
-          <article class="metric registry-metric"><span>访问地址</span><strong class="registry-endpoint">{{ endpointURL(registry) }}</strong><small>{{ registry.insecure_http ? 'HTTP，凭据和镜像层以明文传输' : `HTTPS · ${registry.certificate_name || '未关联证书'}` }}</small></article>
-          <article class="metric registry-metric"><span>运行状态</span><strong><span class="badge" :class="statusBadgeClass(registry.status)"><i class="badge-dot"></i>{{ statusLabel(registry.status) }}</span></strong><small>{{ registry.last_error || 'Registry 工作负载状态已同步' }}</small></article>
-          <article class="metric registry-metric"><span>持久化存储</span><strong>{{ registry.pvc_name }}</strong><small>{{ registry.storage_class_name }} · {{ registry.storage_size }} · {{ registry.pvc_phase || '等待状态同步' }}</small></article>
+        <section class="registry-workspace-section registry-overview-section" data-testid="registry-overview-section">
+          <header class="registry-section-heading">
+            <div><h2>运行概览</h2><p>查看服务状态、存储与访问地址。</p></div>
+            <div class="registry-status-actions" aria-label="制品库操作"><button v-if="needsRepair" data-testid="repair-registry" class="btn" :disabled="repairing" @click="repairRegistry"><RefreshCw :size="16" :class="{ 'is-spinning': repairing }" /> {{ repairing ? '修复中...' : '修复' }}</button><button class="icon-button" title="刷新状态" aria-label="刷新状态" :disabled="refreshing" @click="load"><RefreshCw :size="17" :class="{ 'is-spinning': refreshing }" /></button><button data-testid="edit-registry" class="btn" @click="openEdit">配置</button><button class="btn btn-danger" @click="deleteOpen = true">删除</button></div>
+          </header>
+          <div class="metric-grid registry-overview" data-testid="registry-summary">
+            <SurfaceCard as="article" class="metric registry-metric"><span>访问地址</span><strong class="registry-endpoint">{{ endpointURL(registry) }}</strong><small>{{ registry.insecure_http ? 'HTTP，凭据和镜像层以明文传输' : `HTTPS · ${registry.certificate_name || '未关联证书'}` }}</small></SurfaceCard>
+            <SurfaceCard as="article" class="metric registry-metric"><span>运行状态</span><strong><span class="badge" :class="statusBadgeClass(registry.status)"><i class="badge-dot"></i>{{ statusLabel(registry.status) }}</span></strong><small>{{ registry.last_error || 'Registry 工作负载状态已同步' }}</small></SurfaceCard>
+            <SurfaceCard as="article" class="metric registry-metric"><span>持久化存储</span><strong>{{ registry.pvc_name }}</strong><small>{{ registry.storage_class_name }} · {{ registry.storage_size }} · {{ registry.pvc_phase || '等待状态同步' }}</small></SurfaceCard>
+          </div>
         </section>
-        <div class="registry-status-actions" aria-label="制品库操作"><button v-if="needsRepair" data-testid="repair-registry" class="btn" :disabled="repairing" @click="repairRegistry"><RefreshCw :size="16" :class="{ 'is-spinning': repairing }" /> {{ repairing ? '修复中...' : '修复' }}</button><button class="icon-button" title="刷新状态" aria-label="刷新状态" :disabled="refreshing" @click="load"><RefreshCw :size="17" :class="{ 'is-spinning': refreshing }" /></button><button data-testid="edit-registry" class="btn" @click="openEdit">配置</button><button class="btn btn-danger" @click="deleteOpen = true">删除</button></div>
 
         <section class="registry-catalog" data-testid="registry-catalog">
-        <div class="registry-catalog-toolbar"><label class="registry-search" aria-label="搜索仓库"><span class="registry-search-input"><Search :size="15" /><input v-model.trim="catalogQuery" class="form-input" placeholder="搜索仓库" /></span></label><span class="registry-catalog-count">{{ filteredRepositories.length }} 个仓库</span></div>
-        <section v-if="catalogError" class="card registry-catalog-state" data-testid="registry-catalog-error"><FeedbackBanner tone="warning"><span>暂时无法读取镜像目录，请稍后重试。</span><button class="btn btn-sm" :disabled="catalogLoading" @click="loadCatalog()"><RefreshCw :size="14" :class="{ 'is-spinning': catalogLoading }" /> 重新尝试</button></FeedbackBanner><EmptyState message="镜像目录内容暂不可展示" /></section>
+        <header class="registry-section-heading registry-catalog-heading"><div><h2>镜像目录</h2><p>浏览仓库、标签和拉取地址。</p></div><div class="registry-catalog-controls"><label class="registry-search" aria-label="搜索仓库"><span class="registry-search-input"><Search :size="15" /><input v-model.trim="catalogQuery" class="form-input" placeholder="搜索仓库" /></span></label><span class="registry-catalog-count">{{ filteredRepositories.length }} 个仓库</span></div></header>
+        <SurfaceCard v-if="catalogError" class="registry-catalog-state" data-testid="registry-catalog-error"><FeedbackBanner tone="warning"><span>暂时无法读取镜像目录，请稍后重试。</span><button class="btn btn-sm" :disabled="catalogLoading" @click="loadCatalog()"><RefreshCw :size="14" :class="{ 'is-spinning': catalogLoading }" /> 重新尝试</button></FeedbackBanner><EmptyState message="镜像目录内容暂不可展示" /></SurfaceCard>
         <EmptyState v-else-if="catalogLoading && !catalogRepositories.length" variant="loading" message="正在读取镜像目录..." />
         <EmptyState v-else-if="catalogLoaded && !filteredRepositories.length" message="制品库中暂无镜像" />
         <div v-else class="registry-catalog-grid">
-          <section class="card registry-repository-list"><div class="registry-list-heading"><h2>仓库</h2></div><div v-for="repository in filteredRepositories" :key="repository" class="registry-repository-row" :class="{ 'is-selected': selectedRepository === repository }"><button class="registry-repository-select" type="button" @click="selectRepository(repository)">{{ repository }}</button><button class="icon-button registry-row-icon" type="button" title="删除仓库" :aria-label="`删除仓库 ${repository}`" @click="prepareRepositoryDelete(repository)"><Trash2 :size="15" /></button></div><div v-if="catalogNext" class="registry-load-more"><button class="btn btn-sm" :disabled="catalogLoading" @click="loadCatalog(catalogNext)">加载更多</button></div></section>
-          <section class="card registry-tags-panel"><template v-if="!selectedRepository"><EmptyState message="选择一个仓库以查看标签" /></template><template v-else><header class="registry-list-heading"><div><h2>{{ selectedRepository }}</h2><p>{{ tags.length }} 个标签</p></div><button class="icon-button" title="刷新标签" aria-label="刷新标签" :disabled="tagsLoading" @click="loadTags(selectedRepository)"><RefreshCw :size="16" :class="{ 'is-spinning': tagsLoading }" /></button></header><EmptyState v-if="tagsLoading && !tags.length" variant="loading" message="正在读取标签..." /><EmptyState v-else-if="tagsLoaded && !tags.length" message="该仓库暂无标签" /><div v-else class="registry-tags-table"><div v-for="tag in tags" :key="tag.name" class="registry-tag-row"><div><strong>{{ tag.name }}</strong><code>{{ shortDigest(tag.digest) }}</code><small v-if="tag.platforms?.length">{{ tag.platforms.join(' · ') }}</small></div><div class="registry-tag-actions"><button class="icon-button" :title="`复制 ${tag.pull_reference}`" :aria-label="`复制 ${tag.pull_reference}`" @click="copyPullReference(tag.pull_reference)"><Copy :size="15" /></button><button class="icon-button danger-icon" :title="`删除标签 ${tag.name}`" :aria-label="`删除标签 ${tag.name}`" @click="prepareTagDelete(tag)"><Trash2 :size="15" /></button></div></div></div><div v-if="tagsNext" class="registry-load-more"><button class="btn btn-sm" :disabled="tagsLoading" @click="loadTags(selectedRepository, tagsNext)">加载更多</button></div></template></section>
+          <SurfaceCard as="section" padding="none" class="registry-repository-list"><div class="registry-list-heading"><h2>仓库</h2></div><div v-for="repository in filteredRepositories" :key="repository" class="registry-repository-row" :class="{ 'is-selected': selectedRepository === repository }"><button class="registry-repository-select" type="button" @click="selectRepository(repository)">{{ repository }}</button><button class="icon-button registry-row-icon" type="button" title="删除仓库" :aria-label="`删除仓库 ${repository}`" @click="prepareRepositoryDelete(repository)"><Trash2 :size="15" /></button></div><div v-if="catalogNext" class="registry-load-more"><button class="btn btn-sm" :disabled="catalogLoading" @click="loadCatalog(catalogNext)">加载更多</button></div></SurfaceCard>
+          <SurfaceCard as="section" padding="none" class="registry-tags-panel"><template v-if="!selectedRepository"><EmptyState message="选择一个仓库以查看标签" /></template><template v-else><header class="registry-list-heading"><div><h2>{{ selectedRepository }}</h2><p>{{ tags.length }} 个标签</p></div><button class="icon-button" title="刷新标签" aria-label="刷新标签" :disabled="tagsLoading" @click="loadTags(selectedRepository)"><RefreshCw :size="16" :class="{ 'is-spinning': tagsLoading }" /></button></header><EmptyState v-if="tagsLoading && !tags.length" variant="loading" message="正在读取标签..." /><EmptyState v-else-if="tagsLoaded && !tags.length" message="该仓库暂无标签" /><div v-else class="registry-tags-table"><div v-for="tag in tags" :key="tag.name" class="registry-tag-row"><div><strong>{{ tag.name }}</strong><code>{{ shortDigest(tag.digest) }}</code><small v-if="tag.platforms?.length">{{ tag.platforms.join(' · ') }}</small></div><div class="registry-tag-actions"><button class="icon-button" :title="`复制 ${tag.pull_reference}`" :aria-label="`复制 ${tag.pull_reference}`" @click="copyPullReference(tag.pull_reference)"><Copy :size="15" /></button><button class="icon-button danger-icon" :title="`删除标签 ${tag.name}`" :aria-label="`删除标签 ${tag.name}`" @click="prepareTagDelete(tag)"><Trash2 :size="15" /></button></div></div></div><div v-if="tagsNext" class="registry-load-more"><button class="btn btn-sm" :disabled="tagsLoading" @click="loadTags(selectedRepository, tagsNext)">加载更多</button></div></template></SurfaceCard>
         </div>
         </section>
       </template>
@@ -60,14 +65,16 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { AlertCircle, Copy, Database, Plus, RefreshCw, Search, Trash2 } from 'lucide-vue-next'
 import { createManagedRegistry, deleteManagedRegistry, deleteManagedRegistryRepository, deleteManagedRegistryTag, getManagedRegistryCatalog, getManagedRegistryCatalogTags, getManagedRegistryCertificates, getManagedRegistryResources, preflightManagedRegistryRepositoryDelete, preflightManagedRegistryTagDelete, repairManagedRegistry, updateManagedRegistry } from '../api/managed-oci-registries.js'
 import { useAsyncResource } from '../composables/useAsyncResource.js'
+import { useRoutedTab } from '../composables/useRoutedTab.js'
 import EmptyState from '../components/EmptyState.vue'
 import FeedbackBanner from '../components/FeedbackBanner.vue'
-import RegistryProxyWorkspace from '../components/RegistryProxyWorkspace.vue'
+import RegistryProxyWorkspace from './delivery/RegistryProxyWorkspace.vue'
 import SectionTabsHeader from '../components/SectionTabsHeader.vue'
+import SurfaceCard from '../components/SurfaceCard.vue'
 
 const registry = ref(null); const storagePreflight = ref(null); const pvcOptions = ref([]); const certificateOptions = ref([]); const certificateError = ref(''); const loaded = ref(false); const refreshing = ref(false); const repairing = ref(false); const pageError = ref(''); const actionError = ref(null); const showForm = ref(false); const deleteOpen = ref(false); const submitting = ref(false); const form = ref(newForm())
 const workspaceTabs = [{ id: 'registry', label: '自托管制品库' }, { id: 'registry-proxy', label: 'Registry Proxy' }]
-const activeWorkspace = ref(new URLSearchParams(window.location.hash.split('?')[1] || '').get('tab') === 'registry-proxy' ? 'registry-proxy' : 'registry')
+const { activeTab: activeWorkspace, selectTab: selectWorkspace } = useRoutedTab({ tabs: workspaceTabs, defaultTab: 'registry', path: '/delivery/registry' })
 const catalogRepositories = ref([]); const catalogNext = ref(''); const catalogLoading = ref(false); const catalogLoaded = ref(false); const catalogError = ref(''); const catalogQuery = ref(''); const selectedRepository = ref(''); const tags = ref([]); const tagsNext = ref(''); const tagsLoading = ref(false); const tagsLoaded = ref(false); const catalogDeleteTarget = ref(null); const catalogDeleting = ref(false)
 const registryResource = useAsyncResource(({ signal }) => getManagedRegistryResources({ signal }), null)
 const certificateResource = useAsyncResource(({ signal }) => getManagedRegistryCertificates('cylism-system', { signal }), null)
@@ -96,8 +103,7 @@ function pvcCreateLink() { const params = new URLSearchParams({ create: '1', nam
 async function save() { submitting.value = true; actionError.value = null; try { const payload = { ...form.value }; if (registry.value && !payload.pull_password) delete payload.pull_password; if (registry.value) await updateManagedRegistry(registry.value.id, payload); else await createManagedRegistry(payload); closeForm(); await load() } catch (err) { showActionError(registry.value ? '保存配置失败' : '部署失败', err, '保存制品库失败') } finally { submitting.value = false } }
 async function repairRegistry() { if (!registry.value) return; repairing.value = true; actionError.value = null; try { await repairManagedRegistry(registry.value.id); await load() } catch (err) { showActionError('修复制品库失败', err, '重新同步制品库资源失败') } finally { repairing.value = false } }
 async function deleteRegistry() { submitting.value = true; actionError.value = null; try { await deleteManagedRegistry(registry.value.id, { confirm: true }); deleteOpen.value = false; await load() } catch (err) { showActionError('删除制品库失败', err, '删除制品库失败') } finally { submitting.value = false } }
-function selectWorkspace(workspace) { activeWorkspace.value = workspace }
-async function loadCatalog(cursor = '') { if (!registry.value) return; catalogLoading.value = true; catalogError.value = ''; try { const page = await getManagedRegistryCatalog(registry.value.id, cursor); catalogRepositories.value = cursor ? [...catalogRepositories.value, ...(page.repositories || [])] : (page.repositories || []); catalogNext.value = page.next || ''; catalogLoaded.value = true } catch (err) { catalogError.value = err.message || '读取镜像目录失败' } finally { catalogLoading.value = false } }
+async function loadCatalog(cursor = '') { if (!registry.value) return; catalogLoading.value = true; catalogError.value = ''; try { const page = await getManagedRegistryCatalog(registry.value.id, cursor); catalogRepositories.value = cursor ? [...catalogRepositories.value, ...(page.repositories || [])] : (page.repositories || []); catalogNext.value = page.next || ''; catalogLoaded.value = true; if (!selectedRepository.value && catalogRepositories.value.length) await selectRepository(catalogRepositories.value[0]) } catch (err) { catalogError.value = err.message || '读取镜像目录失败' } finally { catalogLoading.value = false } }
 async function selectRepository(repository) { selectedRepository.value = repository; tags.value = []; tagsNext.value = ''; tagsLoaded.value = false; await loadTags(repository) }
 async function loadTags(repository, cursor = '') { if (!registry.value || !repository) return; tagsLoading.value = true; catalogError.value = ''; try { const page = await getManagedRegistryCatalogTags(registry.value.id, repository, cursor); tags.value = cursor ? [...tags.value, ...(page.tags || [])] : (page.tags || []); tagsNext.value = page.next || ''; tagsLoaded.value = true } catch (err) { catalogError.value = err.message || '读取镜像标签失败' } finally { tagsLoading.value = false } }
 function shortDigest(value) { return value ? `${value.slice(0, 19)}...` : '-' }
@@ -113,12 +119,16 @@ watch(() => selectedPVC.value?.bound_node, boundNode => { if (boundNode) form.va
 <style scoped>
 .section-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-16); }
 .section-heading p, .form-hint, .registry-empty p, .confirm-copy { margin: 4px 0 0; color: var(--text-secondary); font-size: 13px; }
-.registry-empty { display: flex; align-items: center; gap: 16px; margin-top: 28px; padding: 24px 0; border-top: 1px solid var(--border-muted); border-bottom: 1px solid var(--border-muted); }
+.registry-empty { display: flex; align-items: center; gap: var(--space-16); margin-top: var(--space-20); }
 .registry-empty h2 { margin: 0; font-size: 16px; }
 
-.registry-status-actions { display: flex; align-items: center; justify-content: flex-end; gap: var(--space-8); margin: 0 0 var(--space-20); }
-.registry-catalog { padding-top: var(--space-4); border-top: 1px solid var(--border-muted); }
-.registry-catalog-toolbar { display: flex; min-height: 48px; align-items: center; justify-content: space-between; gap: var(--space-16); margin-bottom: var(--space-16); padding-bottom: var(--space-12); border-bottom: 1px solid var(--border-muted); }
+.registry-workspace-section, .registry-catalog { margin-top: var(--space-20); }
+.registry-section-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-16); }
+.registry-section-heading h2 { margin: 0; font-size: 16px; }
+.registry-section-heading p { margin: 4px 0 0; color: var(--text-secondary); font-size: 12px; }
+.registry-status-actions, .registry-catalog-controls { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: var(--space-8); }
+.registry-overview { margin-top: var(--space-16); }
+.registry-catalog-heading { margin-bottom: var(--space-16); }
 .registry-search { display: block; width: min(360px, 100%); }
 .registry-search-input { display: flex; min-height: 36px; align-items: center; border: 1px solid var(--border-muted); border-radius: var(--radius-control); background: var(--surface-input); }
 .registry-search-input:focus-within { border-color: var(--focus); outline: 2px solid var(--focus); outline-offset: 2px; }
@@ -185,10 +195,10 @@ watch(() => selectedPVC.value?.bound_node, boundNode => { if (boundNode) form.va
   .resource-grid { grid-template-columns: 1fr; }
 }
 @media (max-width: 480px) {
-  .registry-catalog-toolbar { align-items: stretch; flex-direction: column; }
+  .registry-section-heading, .registry-catalog-controls { align-items: stretch; flex-direction: column; }
   .registry-catalog-count { text-align: right; }
   .registry-catalog-state :deep(.feedback-banner-content) { align-items: stretch; flex-direction: column; }
   .registry-catalog-state :deep(.feedback-banner .btn) { width: 100%; }
-  .registry-status-actions { justify-content: flex-start; flex-wrap: wrap; }
+  .registry-status-actions { justify-content: flex-start; }
 }
 </style>

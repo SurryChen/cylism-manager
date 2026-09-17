@@ -25,6 +25,8 @@ func registerDeliveryRoutes(r *gin.Engine, apiGroup *gin.RouterGroup, h delivery
 	nodeRegistryMirrors := apiGroup.Group("/node-registry-mirrors")
 	nodeRegistryMirrors.GET("", h.nodeMirrors.List)
 	nodeRegistryMirrors.POST("", h.nodeMirrors.Create)
+	nodeRegistryMirrors.POST("/inspect-actual-config", h.nodeMirrors.InspectActualConfig)
+	nodeRegistryMirrors.POST("/nodes/:id/restart-k3s", h.nodeMirrors.RestartNodeK3s)
 	nodeRegistryMirrors.PUT("/:id", h.nodeMirrors.Update)
 	nodeRegistryMirrors.DELETE("/:id", h.nodeMirrors.Delete)
 	nodeRegistryMirrors.POST("/:id/verify", h.nodeMirrors.Verify)

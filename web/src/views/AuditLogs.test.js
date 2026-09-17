@@ -40,9 +40,12 @@ describe('AuditLogs', () => {
     expect(wrapper.text()).toContain('审计日志')
     expect(wrapper.findAll('h1')).toHaveLength(1)
     expect(wrapper.find('.section-tabs-header').exists()).toBe(true)
+    expect(wrapper.get('.audit-card').findComponent({ name: 'SurfaceCard' }).exists()).toBe(true)
     expect(wrapper.get('[data-testid="audit-page-logs"]').text()).toBe('审计记录')
     expect(wrapper.text()).toContain('console.example.com')
     expect(wrapper.text()).toContain('发布平台版本')
+    expect(wrapper.findAll('.audit-card table')).toHaveLength(1)
+    expect(wrapper.findAll('.audit-row').every(row => !row.classes().includes('surface-card'))).toBe(true)
 
     await wrapper.get('.audit-search').setValue('console')
     await wrapper.get('[data-testid="audit-apply-filters"]').trigger('click')

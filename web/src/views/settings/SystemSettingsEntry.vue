@@ -7,7 +7,7 @@
       </div>
     </div>
 
-    <section class="card platform-endpoint-card">
+    <SurfaceCard class="platform-endpoint-card">
       <div class="card-header">
         <div>
           <h2 class="card-title">平台管理入口</h2>
@@ -68,7 +68,7 @@
       </div>
       <p v-if="endpointMessage" class="settings-copy platform-action-message">{{ endpointMessage }}</p>
       <p v-if="endpointError" class="settings-copy endpoint-error">{{ endpointError }}</p>
-    </section>
+    </SurfaceCard>
 
     <Teleport to="body">
       <div v-if="showDisableEndpointConfirmation" class="overlay" @click.self="showDisableEndpointConfirmation = false">
@@ -90,6 +90,7 @@ import { computed, onMounted, ref } from 'vue'
 import { adoptPlatformIngress as adoptPlatformIngressRequest, getPlatformCertificates, getPlatformEndpoint, reconcilePlatformEndpoint as reconcilePlatformEndpointRequest, updatePlatformEndpoint } from '../../api/settings.js'
 import { useAsyncResource } from '../../composables/useAsyncResource.js'
 import { formatDateTime } from '../../utils/formatters.js'
+import SurfaceCard from '../../components/SurfaceCard.vue'
 
 const platformEndpoint = ref({ endpoint: {}, state: 'not_configured', ingress_ready: false })
 const endpointForm = ref({ hostname: '', certificate_name: '' })

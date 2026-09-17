@@ -245,6 +245,8 @@ POST /api/monitoring/logs/install
 POST /api/monitoring/logs/query
 POST /api/monitoring/storage-migration
 POST /api/node-registry-mirrors
+POST /api/node-registry-mirrors/inspect-actual-config
+POST /api/node-registry-mirrors/nodes/:id/restart-k3s
 POST /api/node-registry-mirrors/:id/apply
 POST /api/node-registry-mirrors/:id/verify
 POST /api/nodes/:id/add

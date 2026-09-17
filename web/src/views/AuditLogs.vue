@@ -10,7 +10,7 @@
     </SectionTabsHeader>
     <FeedbackBanner v-if="error" tone="warning" :message="error" class="page-error" />
 
-    <div class="card audit-card">
+    <SurfaceCard class="audit-card">
       <div class="audit-filter-panel">
         <div class="audit-primary-filters">
           <label class="audit-search-field">
@@ -61,7 +61,7 @@
         <span class="pagination-status">{{ currentPage }} / {{ totalPages }}</span>
         <button class="btn btn-sm" :disabled="offset + pageSize >= total" @click="nextPage">下一页</button>
       </div>
-    </div>
+    </SurfaceCard>
 
     <BaseModal :open="advancedOpen" title="筛选审计日志" size="small" dialog-class="audit-filter-modal" @close="closeAdvancedFilters">
       <div class="audit-advanced-grid">
@@ -134,6 +134,7 @@ import EmptyState from '../components/EmptyState.vue'
 import FeedbackBanner from '../components/FeedbackBanner.vue'
 import SectionTabsHeader from '../components/SectionTabsHeader.vue'
 import SelectMenu from '../components/SelectMenu.vue'
+import SurfaceCard from '../components/SurfaceCard.vue'
 import { formatShortDateTime as formatTime } from '../utils/formatters.js'
 
 const pageSize = 20

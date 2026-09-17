@@ -31,6 +31,8 @@ func setupNodeRegistryMirrorRouter() (*gin.Engine, *store.Store, *NodeRegistryMi
 	{
 		mirrors.GET("", h.List)
 		mirrors.POST("", h.Create)
+		mirrors.POST("/inspect-actual-config", h.InspectActualConfig)
+		mirrors.POST("/nodes/:id/restart-k3s", h.RestartNodeK3s)
 		mirrors.POST("/:id/verify", h.Verify)
 		mirrors.PUT("/:id", h.Update)
 		mirrors.DELETE("/:id", h.Delete)
@@ -38,6 +40,89 @@ func setupNodeRegistryMirrorRouter() (*gin.Engine, *store.Store, *NodeRegistryMi
 		mirrors.GET("/:id/apply-status", h.ApplyStatus)
 	}
 	return r, s, h
+}
+
+type inspectionReaderFunc func(context.Context) (registryservice.NodeRegistryConfigInspection, error)
+
+func (f inspectionReaderFunc) Inspect(ctx context.Context) (registryservice.NodeRegistryConfigInspection, error) {
+	return f(ctx)
+}
+
+func (f inspectionReaderFunc) InspectNode(ctx context.Context, _ uint) (registryservice.NodeRegistryConfigInspection, error) {
+	return f(ctx)
+}
+
+type nodeInspectionReaderFunc struct {
+	inspect func(context.Context) (registryservice.NodeRegistryConfigInspection, error)
+	node    func(context.Context, uint) (registryservice.NodeRegistryConfigInspection, error)
+}
+
+func (f nodeInspectionReaderFunc) Inspect(ctx context.Context) (registryservice.NodeRegistryConfigInspection, error) {
+	return f.inspect(ctx)
+}
+func (f nodeInspectionReaderFunc) InspectNode(ctx context.Context, id uint) (registryservice.NodeRegistryConfigInspection, error) {
+	return f.node(ctx, id)
+}
+
+type nodeK3sRestarterFunc func(context.Context, uint) (registryservice.NodeK3sRestartResult, error)
+
+func (f nodeK3sRestarterFunc) Restart(ctx context.Context, id uint) (registryservice.NodeK3sRestartResult, error) {
+	return f(ctx, id)
+}
+
+func TestNodeRegistryMirrorActualConfigInspectionReturnsSafeSnapshotAndAuditSummary(t *testing.T) {
+	r, s, h := setupNodeRegistryMirrorRouter()
+	h.WithAudit(s).WithActualConfigInspector(inspectionReaderFunc(func(context.Context) (registryservice.NodeRegistryConfigInspection, error) {
+		return registryservice.NodeRegistryConfigInspection{Nodes: []registryservice.NodeRegistryConfigNode{{
+			ServerID: 3, Name: "worker-a", State: registryservice.NodeRegistryConfigStateDrifted,
+			Actual:  []registryservice.SafeRegistryConfig{{Registry: "docker.io", Endpoints: []string{"https://mirror.example.com"}, AuthConfigured: true}},
+			Changed: []string{"docker.io"},
+		}}}, nil
+	}))
+
+	response := serve(r, newJSONRequest(http.MethodPost, "/api/node-registry-mirrors/inspect-actual-config", nil))
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"state":"drifted"`) || strings.Contains(response.Body.String(), "secret") {
+		t.Fatalf("unexpected inspection response: %s", response.Body.String())
+	}
+	logs, total, err := s.ListAuditLogsFiltered(model.AuditLogFilter{Action: "registry.mirror.inspect-actual-config", Limit: 20})
+	if err != nil || total != 1 || len(logs) != 1 || logs[0].Outcome != model.AuditOutcomeSucceeded || strings.Contains(logs[0].Detail, "mirror.example.com") {
+		t.Fatalf("unexpected inspection audit: logs=%#v total=%d err=%v", logs, total, err)
+	}
+}
+
+func TestNodeRegistryMirrorActualConfigInspectionUnavailable(t *testing.T) {
+	r, _, _ := setupNodeRegistryMirrorRouter()
+	response := serve(r, newJSONRequest(http.MethodPost, "/api/node-registry-mirrors/inspect-actual-config", nil))
+	if response.Code != http.StatusServiceUnavailable || !strings.Contains(response.Body.String(), "检查通道未就绪") {
+		t.Fatalf("expected unavailable inspection response: %s", response.Body.String())
+	}
+}
+
+func TestNodeRegistryMirrorInspectsSelectedNodeAndRestartsWithSafeAudit(t *testing.T) {
+	r, s, h := setupNodeRegistryMirrorRouter()
+	h.WithAudit(s).WithActualConfigInspector(nodeInspectionReaderFunc{
+		inspect: func(context.Context) (registryservice.NodeRegistryConfigInspection, error) {
+			return registryservice.NodeRegistryConfigInspection{}, nil
+		},
+		node: func(_ context.Context, id uint) (registryservice.NodeRegistryConfigInspection, error) {
+			return registryservice.NodeRegistryConfigInspection{Nodes: []registryservice.NodeRegistryConfigNode{{ServerID: id, Name: "worker-a", State: "matching"}}}, nil
+		},
+	}).WithK3sRestarter(nodeK3sRestarterFunc(func(_ context.Context, id uint) (registryservice.NodeK3sRestartResult, error) {
+		return registryservice.NodeK3sRestartResult{ServerID: id, Service: "k3s.service", Status: registryservice.NodeK3sRestartStatusSucceeded, Detail: "K3s 服务已重启"}, nil
+	}))
+
+	inspection := serve(r, newJSONRequest(http.MethodPost, "/api/node-registry-mirrors/inspect-actual-config", gin.H{"server_id": 8}))
+	if inspection.Code != http.StatusOK || !strings.Contains(inspection.Body.String(), `"server_id":8`) {
+		t.Fatalf("unexpected inspection: %s", inspection.Body.String())
+	}
+	restart := serve(r, newJSONRequest(http.MethodPost, "/api/node-registry-mirrors/nodes/8/restart-k3s", nil))
+	if restart.Code != http.StatusOK || !strings.Contains(restart.Body.String(), `"service":"k3s.service"`) || strings.Contains(restart.Body.String(), "password") {
+		t.Fatalf("unexpected restart: %s", restart.Body.String())
+	}
+	logs, total, err := s.ListAuditLogsFiltered(model.AuditLogFilter{Action: "registry.mirror.restart-node-k3s", Limit: 20})
+	if err != nil || total != 1 || len(logs) != 1 || strings.Contains(logs[0].Detail, "k3s.service") {
+		t.Fatalf("unexpected restart audit: %#v total=%d err=%v", logs, total, err)
+	}
 }
 
 func TestNodeRegistryMirrorVerifyPersistsConnectionResult(t *testing.T) {

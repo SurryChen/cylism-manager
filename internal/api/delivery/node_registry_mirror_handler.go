@@ -25,11 +25,13 @@ import (
 // It retains request parsing, user context and HTTP error mapping; validation,
 // persistence and asynchronous application state live in MirrorService.
 type NodeRegistryMirrorHandler struct {
-	service          *registryservice.MirrorService
-	encKey           []byte
-	verifyConnection nodeRegistryMirrorVerifier
-	applyNode        registryservice.NodeMirrorApplier
-	audit            auditservice.Repository
+	service               *registryservice.MirrorService
+	encKey                []byte
+	verifyConnection      nodeRegistryMirrorVerifier
+	applyNode             registryservice.NodeMirrorApplier
+	actualConfigInspector registryservice.NodeRegistryConfigInspectionReader
+	k3sRestarter          registryservice.NodeK3sServiceRestarter
+	audit                 auditservice.Repository
 }
 
 func (h *NodeRegistryMirrorHandler) WithAudit(repository auditservice.Repository) *NodeRegistryMirrorHandler {
@@ -72,6 +74,18 @@ func (h *NodeRegistryMirrorHandler) WithVerifier(verifier nodeRegistryMirrorVeri
 
 func (h *NodeRegistryMirrorHandler) WithApplier(applier registryservice.NodeMirrorApplier) *NodeRegistryMirrorHandler {
 	h.applyNode = applier
+	return h
+}
+
+// WithActualConfigInspector attaches the bounded, read-only node inspection
+// service composed at bootstrap.
+func (h *NodeRegistryMirrorHandler) WithActualConfigInspector(inspector registryservice.NodeRegistryConfigInspectionReader) *NodeRegistryMirrorHandler {
+	h.actualConfigInspector = inspector
+	return h
+}
+
+func (h *NodeRegistryMirrorHandler) WithK3sRestarter(restarter registryservice.NodeK3sServiceRestarter) *NodeRegistryMirrorHandler {
+	h.k3sRestarter = restarter
 	return h
 }
 
@@ -190,6 +204,72 @@ func (h *NodeRegistryMirrorHandler) Apply(c *gin.Context) {
 	}
 	h.recordAudit(c, "registry.mirror.apply", mirror, model.AuditOutcomeAccepted, "提交节点镜像源应用任务", map[string]any{"server_ids": request.ServerIDs})
 	apiShared.SuccessWithMessage(c, apiShared.NodeRegistryMirrorDTO(mirror), "应用任务已提交")
+}
+
+// InspectActualConfig returns only a parsed, credential-free summary of the
+// fixed K3s registries.yaml target across managed cluster nodes.
+func (h *NodeRegistryMirrorHandler) InspectActualConfig(c *gin.Context) {
+	if h.actualConfigInspector == nil {
+		apiShared.Error(c, http.StatusServiceUnavailable, apiShared.CodeK8sUnavailable, "节点配置检查通道未就绪")
+		return
+	}
+	var request struct {
+		ServerID uint `json:"server_id"`
+	}
+	if c.Request.ContentLength > 0 {
+		if err := c.ShouldBindJSON(&request); err != nil {
+			apiShared.BadRequest(c, "节点选择无效")
+			return
+		}
+	}
+	var inspection registryservice.NodeRegistryConfigInspection
+	var err error
+	if request.ServerID == 0 {
+		inspection, err = h.actualConfigInspector.Inspect(c.Request.Context())
+	} else {
+		inspection, err = h.actualConfigInspector.InspectNode(c.Request.Context(), request.ServerID)
+	}
+	if err != nil {
+		h.recordAudit(c, "registry.mirror.inspect-actual-config", nil, model.AuditOutcomeFailed, "检查节点实际 Registry 配置失败", nil)
+		apiShared.DBError(c, "检查节点实际 Registry 配置失败")
+		return
+	}
+	counts := map[string]int{}
+	for _, node := range inspection.Nodes {
+		counts[node.State]++
+	}
+	h.recordAudit(c, "registry.mirror.inspect-actual-config", nil, model.AuditOutcomeSucceeded, "检查节点实际 Registry 配置", map[string]any{"node_count": len(inspection.Nodes), "state_counts": counts})
+	apiShared.Success(c, inspection)
+}
+
+func (h *NodeRegistryMirrorHandler) RestartNodeK3s(c *gin.Context) {
+	serverID, err := apiShared.ParseID(c.Param("id"))
+	if err != nil {
+		apiShared.BadRequest(c, "节点 ID 无效")
+		return
+	}
+	if h.k3sRestarter == nil {
+		apiShared.Error(c, http.StatusServiceUnavailable, apiShared.CodeK8sUnavailable, "节点 K3s 重启通道未就绪")
+		return
+	}
+	result, err := h.k3sRestarter.Restart(c.Request.Context(), serverID)
+	if err != nil {
+		apiShared.ValidationError(c, "节点不是可重启的集群节点")
+		return
+	}
+	outcome := model.AuditOutcomeSucceeded
+	if result.Status != registryservice.NodeK3sRestartStatusSucceeded {
+		outcome = model.AuditOutcomeFailed
+	}
+	h.recordNodeRestartAudit(c, serverID, outcome, result.Status)
+	apiShared.Success(c, result)
+}
+
+func (h *NodeRegistryMirrorHandler) recordNodeRestartAudit(c *gin.Context, serverID uint, outcome, status string) {
+	if h == nil || h.audit == nil {
+		return
+	}
+	_ = auditservice.NewService(h.audit).Record(auditservice.AuditEventInput{Action: "registry.mirror.restart-node-k3s", ResourceType: "server", ResourceID: serverID, TargetName: "节点 K3s 服务", Actor: auditservice.Actor{Type: model.AuditActorUser, ID: apiShared.UserID(c), Name: apiShared.Username(c)}, Source: model.AuditSourceAPI, Outcome: outcome, Summary: "重启节点 K3s 服务", RequestID: apiShared.RequestID(c), Metadata: map[string]any{"status": status}})
 }
 
 func (h *NodeRegistryMirrorHandler) recordAudit(c *gin.Context, action string, mirror *model.NodeRegistryMirror, outcome, summary string, metadata map[string]any) {

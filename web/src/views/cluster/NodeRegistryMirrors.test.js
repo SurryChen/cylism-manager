@@ -55,6 +55,17 @@ describe('Node registry mirrors view', () => {
     wrapper.unmount()
   })
 
+  it('links Proxy management to its canonical delivery workspace path', async () => {
+    const wrapper = mount(NodeRegistryMirrors)
+    await settle()
+
+    expect(wrapper.get('.page-header .btn-group a').attributes('href')).toBe('#/delivery/registry?tab=registry-proxy')
+    expect(wrapper.get('.page-header .btn-group a').classes()).toContain('proxy-management-link')
+    expect(wrapper.text()).not.toContain('规则总数')
+    expect(wrapper.find('.mirror-rule-card').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
   it('renders the mirror editor in the document body above the app navigation', async () => {
     const wrapper = mount(NodeRegistryMirrors)
     await settle()
@@ -114,7 +125,7 @@ describe('Node registry mirrors view', () => {
     await vi.advanceTimersByTimeAsync(2000)
     const applyStatusCall = api.get.mock.calls.find(([path]) => path === '/node-registry-mirrors/1/apply-status')
     expect(applyStatusCall[1]).toEqual(expect.objectContaining({ signal: expect.any(AbortSignal) }))
-    expect(wrapper.text()).toContain('worker-a: 成功 - 配置已写入')
+    expect(wrapper.text()).not.toContain('worker-a: 成功 - 配置已写入')
     const statusRequests = api.get.mock.calls.filter(([path]) => path === '/node-registry-mirrors/1/apply-status').length
     await vi.advanceTimersByTimeAsync(2000)
     expect(api.get.mock.calls.filter(([path]) => path === '/node-registry-mirrors/1/apply-status')).toHaveLength(statusRequests)
@@ -147,6 +158,47 @@ describe('Node registry mirrors view', () => {
 
     expect(wrapper.text()).toContain('全部启用的镜像源规则')
     expect(wrapper.text()).toContain('完整的 registries.yaml')
+    wrapper.unmount()
+  })
+
+  it('opens a node configuration dialog for a selected node and confirms a K3s restart', async () => {
+    api.post.mockImplementation(path => {
+      if (path === '/node-registry-mirrors/inspect-actual-config') return Promise.resolve({
+        inspected_at: '2026-09-17T04:00:00Z',
+        nodes: [{
+          server_id: 11,
+          name: 'worker-a',
+          state: 'drifted',
+          detail: '节点实际 Registry 配置与平台规则不一致',
+          expected: [{ registry: 'docker.io', endpoints: ['https://mirror.example.com'], auth_configured: true, insecure_skip_verify: false }],
+          actual: [{ registry: 'docker.io', endpoints: ['https://other.example.com'], auth_configured: true, insecure_skip_verify: false }],
+          changed: ['docker.io'],
+        }],
+      })
+      if (path === '/node-registry-mirrors/nodes/11/restart-k3s') return Promise.resolve({ status: 'succeeded', service: 'k3s.service', detail: 'K3s 服务已重启并恢复运行' })
+      return Promise.resolve({})
+    })
+    const wrapper = mount(NodeRegistryMirrors)
+    await settle()
+
+    await wrapper.get('[data-testid="open-node-config"]').trigger('click')
+    expect(document.body.querySelector('.node-config-modal')).not.toBeNull()
+    const select = document.body.querySelector('.node-config-modal select')
+    select.value = '11'
+    select.dispatchEvent(new Event('change'))
+    await settle()
+    document.body.querySelector('[data-testid="inspect-selected-node-config"]').click()
+    await settle()
+    expect(api.post).toHaveBeenCalledWith('/node-registry-mirrors/inspect-actual-config', { server_id: 11 })
+    expect(document.body.querySelector('.node-config-modal').textContent).toContain('worker-a')
+    expect(document.body.querySelector('.node-config-modal').textContent).toContain('变更 docker.io')
+    expect(document.body.querySelector('.node-config-modal').textContent).not.toContain('password')
+    document.body.querySelector('.config-detail-heading .btn-danger').click()
+    await settle()
+    expect(document.body.querySelector('.restart-confirm-modal')).not.toBeNull()
+    document.body.querySelector('[data-testid="confirm-restart-k3s"]').click()
+    await settle()
+    expect(api.post).toHaveBeenCalledWith('/node-registry-mirrors/nodes/11/restart-k3s')
     wrapper.unmount()
   })
 })

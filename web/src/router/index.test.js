@@ -27,4 +27,9 @@ describe('infrastructure route migration', () => {
     expect(router.currentRoute.value.fullPath).toBe(expectedPath)
   })
 
+  it('preserves Registry Proxy as a routed Tab URL', async () => {
+    await router.push('/delivery/registry?tab=registry-proxy')
+    expect(router.currentRoute.value.fullPath).toBe('/delivery/registry?tab=registry-proxy')
+  })
+
 })

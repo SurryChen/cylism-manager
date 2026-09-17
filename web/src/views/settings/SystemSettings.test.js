@@ -54,16 +54,19 @@ describe('SystemSettings view', () => {
     expect(wrapper.text()).toContain('安全与访问')
     expect(wrapper.text()).not.toContain('Tailscale')
     expect(wrapper.text()).not.toContain('平台自更新')
+    expect(wrapper.get('.temporary-token-card').findComponent({ name: 'SurfaceCard' }).exists()).toBe(true)
 
     await wrapper.get('[data-testid="system-settings-tab-entry"]').trigger('click')
     await nextTick()
     expect(wrapper.text()).toContain('平台管理入口')
     expect(wrapper.text()).not.toContain('临时登录秘钥')
+    expect(wrapper.get('.platform-endpoint-card').findComponent({ name: 'SurfaceCard' }).exists()).toBe(true)
 
     await wrapper.get('[data-testid="system-settings-tab-release"]').trigger('click')
     await nextTick()
     expect(wrapper.text()).toContain('平台自更新')
     expect(wrapper.text()).toContain('registry.example.com/cylism-manager:latest')
+    expect(wrapper.get('.platform-update-card').findComponent({ name: 'SurfaceCard' }).exists()).toBe(true)
     wrapper.unmount()
   })
 

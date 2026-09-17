@@ -4,7 +4,7 @@
       <template #actions><span class="operation-summary">共 {{ total }} 条</span></template>
     </SectionTabsHeader>
     <FeedbackBanner v-if="error" tone="warning" :message="error" />
-    <section class="card operation-card">
+    <SurfaceCard class="operation-card">
       <div class="operation-filters">
         <SelectMenu v-model="resourceType" class="form-select" aria-label="资源类型">
           <option value="">全部资源</option><option value="application">应用</option><option value="server">服务器</option><option value="platform">平台</option>
@@ -23,7 +23,7 @@
         </table>
       </div>
       <div v-if="total > pageSize" class="pagination"><button class="btn btn-sm" :disabled="offset === 0" @click="previous">上一页</button><span>{{ currentPage }} / {{ totalPages }}</span><button class="btn btn-sm" :disabled="offset + pageSize >= total" @click="next">下一页</button></div>
-    </section>
+    </SurfaceCard>
   </div>
 </template>
 
@@ -34,6 +34,7 @@ import { useAsyncResource } from '../composables/useAsyncResource.js'
 import EmptyState from '../components/EmptyState.vue'
 import FeedbackBanner from '../components/FeedbackBanner.vue'
 import SectionTabsHeader from '../components/SectionTabsHeader.vue'
+import SurfaceCard from '../components/SurfaceCard.vue'
 import { formatShortDateTime as formatTime } from '../utils/formatters.js'
 
 const pageSize = 20

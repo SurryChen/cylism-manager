@@ -7,7 +7,7 @@
       </div>
     </div>
 
-    <section class="card platform-update-card">
+    <SurfaceCard class="platform-update-card">
       <div class="card-header">
         <div>
           <h2 class="card-title">平台自更新</h2>
@@ -69,7 +69,7 @@
         </div>
       </div>
       <p v-else class="settings-copy">尚无平台发布记录。</p>
-    </section>
+    </SurfaceCard>
 
     <Teleport to="body">
       <div v-if="platformActionError" class="overlay platform-action-notice-overlay" @click.self="platformActionError = ''">
@@ -89,6 +89,7 @@ import { createPlatformRelease, generatePlatformWebhookSecret as generatePlatfor
 import { useActionState } from '../../composables/useActionState.js'
 import { useAsyncResource } from '../../composables/useAsyncResource.js'
 import { formatDateTime } from '../../utils/formatters.js'
+import SurfaceCard from '../../components/SurfaceCard.vue'
 
 const platform = ref({ webhook_configured: false, image_prefix: '', deployment: null, releases: [] })
 const platformImagePrefix = ref('')
