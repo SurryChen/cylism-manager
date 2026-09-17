@@ -13,21 +13,21 @@
     </div>
 
     <!-- Tab switcher -->
-    <div class="card section-gap">
+    <SurfaceCard as="div" class="section-gap">
       <div class="table-tabs">
         <button :class="['tab-btn', { 'tab-active': activeTab === 'ingressroute' }]" @click="activeTab = 'ingressroute'">IngressRoute</button>
         <button :class="['tab-btn', { 'tab-active': activeTab === 'ingress' }]" @click="activeTab = 'ingress'">标准 Ingress</button>
       </div>
-    </div>
+    </SurfaceCard>
 
     <!-- IngressRoute Tab -->
-    <div v-if="activeTab === 'ingressroute'" class="card">
+    <SurfaceCard v-if="activeTab === 'ingressroute'" as="div">
       <div class="filter-bar" style="margin-bottom:var(--space-12)">
         <div class="filter-control"><label class="form-label">命名空间：</label>
-        <select v-model="filterNs" class="form-select">
+        <SelectMenu v-model="filterNs" class="form-select">
           <option value="">全部</option>
           <option v-for="ns in namespaces" :key="ns" :value="ns">{{ ns }}</option>
-        </select></div>
+        </SelectMenu></div>
       </div>
       <div v-if="routesLoading" class="empty-state">
         <span class="empty-text">加载 IngressRoute 中...</span>
@@ -49,10 +49,10 @@
           </tbody>
         </table>
       </div>
-    </div>
+    </SurfaceCard>
 
     <!-- 标准 Ingress Tab -->
-    <div v-if="activeTab === 'ingress'" class="card">
+    <SurfaceCard v-if="activeTab === 'ingress'" as="div">
       <div class="filter-bar" style="margin-bottom:var(--space-12)"><button class="btn btn-primary" @click="showAddIngress = true">+ 添加 Ingress</button></div>
       <div v-if="ingressesLoading" class="empty-state">
         <span class="empty-text">加载 Ingress 中...</span>
@@ -75,7 +75,7 @@
           </tbody>
         </table>
       </div>
-    </div>
+    </SurfaceCard>
 
     <!-- Add Ingress modal -->
     <div v-if="showAddIngress" class="overlay" @click.self="showAddIngress = false">
@@ -111,6 +111,7 @@
 import { ref, onMounted, computed } from 'vue'
 import { createIngress as createIngressRequest, deleteIngress, deleteRoute, getIngressControllerStatus, getIngresses, getRoutes } from '../../api/sites.js'
 import { useAsyncResource } from '../../composables/useAsyncResource.js'
+import SurfaceCard from '../../components/SurfaceCard.vue'
 
 const controllerStatusCacheKey = 'cylism.ingress-controller.status'
 const controllerStatusCacheTtl = 60 * 1000

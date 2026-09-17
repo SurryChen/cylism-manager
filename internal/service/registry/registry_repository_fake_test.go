@@ -11,12 +11,13 @@ import (
 )
 
 type managedRegistryRepositoryFake struct {
-	registries []model.ManagedOCIRegistry
-	images     map[string]model.ImageRegistry
-	mirrors    map[string]model.NodeRegistryMirror
-	releases   int64
-	defaults   int64
-	created    struct {
+	registries        []model.ManagedOCIRegistry
+	images            map[string]model.ImageRegistry
+	mirrors           map[string]model.NodeRegistryMirror
+	releases          int64
+	defaults          int64
+	contentReferences []model.ManagedRegistryContentReference
+	created           struct {
 		registry model.ManagedOCIRegistry
 		image    model.ImageRegistry
 		mirror   model.NodeRegistryMirror
@@ -62,6 +63,9 @@ func (f *managedRegistryRepositoryFake) UpdateManagedOCIRegistry(registry *model
 func (f *managedRegistryRepositoryFake) DeleteManagedOCIRegistry(id uint) error { return nil }
 func (f *managedRegistryRepositoryFake) CountManagedOCIRegistryReferences(uint) (int64, int64, error) {
 	return f.releases, f.defaults, nil
+}
+func (f *managedRegistryRepositoryFake) ListManagedRegistryContentReferences() ([]model.ManagedRegistryContentReference, error) {
+	return append([]model.ManagedRegistryContentReference(nil), f.contentReferences...), nil
 }
 func (f *managedRegistryRepositoryFake) GetImageRegistryByEndpoint(endpoint string) (*model.ImageRegistry, error) {
 	item, ok := f.images[endpoint]

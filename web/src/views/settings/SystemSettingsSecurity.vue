@@ -7,7 +7,7 @@
       </div>
     </div>
 
-    <section class="card temporary-token-card">
+    <SurfaceCard class="temporary-token-card">
       <div class="card-header temporary-token-header">
         <div>
           <h2 class="card-title">临时登录秘钥</h2>
@@ -24,12 +24,12 @@
         </div>
         <div class="form-group">
           <label class="form-label" for="temporary-token-ttl">有效期</label>
-          <select id="temporary-token-ttl" v-model.number="temporaryTokenForm.ttl_seconds" class="form-select">
+          <SelectMenu id="temporary-token-ttl" v-model.number="temporaryTokenForm.ttl_seconds" class="form-select">
             <option :value="3600">1 小时</option>
             <option :value="21600">6 小时</option>
             <option :value="86400">1 天</option>
             <option :value="604800">7 天</option>
-          </select>
+          </SelectMenu>
         </div>
       </div>
       <div class="settings-action-row">
@@ -58,7 +58,7 @@
       </div>
       <p v-if="temporaryTokensError" class="settings-copy endpoint-error">{{ temporaryTokensError }}</p>
       <p v-else class="settings-copy">尚未生成临时登录秘钥。</p>
-    </section>
+    </SurfaceCard>
   </section>
 </template>
 
@@ -67,6 +67,7 @@ import { onMounted, ref } from 'vue'
 import { createTemporaryToken as createTemporaryTokenRequest, deleteTemporaryToken, getTemporaryTokens } from '../../api/settings.js'
 import { useAsyncResource } from '../../composables/useAsyncResource.js'
 import { formatDateTime } from '../../utils/formatters.js'
+import SurfaceCard from '../../components/SurfaceCard.vue'
 
 const temporaryTokens = ref([])
 const generatedTemporaryToken = ref('')

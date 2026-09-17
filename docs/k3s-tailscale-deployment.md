@@ -1,4 +1,14 @@
-# Cylism Manager 当前部署指南
+# Cylism Manager 部署指南（历史入口）
+
+本文档已拆分为面向公开用户的任务型文档：
+
+- [安装前置条件](installation/prerequisites.md)
+- [脚本安装](installation/install-script.md)
+- [Helm 安装](installation/install-helm.md)
+- [配置参考](operations/configuration.md)
+- [常见问题](operations/troubleshooting.md)
+
+以下内容保留为部署背景说明。它不再描述任何特定测试环境、私有镜像仓库或自动部署 Webhook。
 
 本文描述当前仓库的部署方式，适用于 Linux 主机、单节点 K3s 和已有 Tailscale tailnet。当前仓库提供两条路径：本地脚本直装，以及 GitHub Release + Helm Chart。它对应仓库中的 `scripts/`、`charts/`、`Dockerfile` 和 `k8s/platform-deployment.yaml` 的历史基线。
 
@@ -52,78 +62,27 @@ bash scripts/deploy-platform.sh --image <registry>/cylism-manager:<tag>
 GitHub tag `v*` 发布后，默认镜像会推送到 GitHub Container Registry：
 
 ```text
-ghcr.io/surrychen/cylism-manager:v1.2.3
+ghcr.io/<owner>/cylism-manager:<version>
 ```
 
 如果 GHCR 镜像是 Public，不需要配置镜像拉取账号密码。如果镜像是 Private，可以让脚本交互式创建或复用 imagePullSecret：
 
 ```bash
 bash scripts/deploy-platform.sh \
-  --image ghcr.io/surrychen/cylism-manager:v1.2.3 \
+  --image ghcr.io/<owner>/cylism-manager:<version> \
   --configure-ghcr-pull
 ```
 
 其中 GitHub Token 需要具备 `read:packages` 权限。脚本只会把它写入 Kubernetes Secret，不会写入仓库文件。
 
-## 4. 测试环境 dev 分支自动更新镜像
-
-测试环境可以使用 `dev` 分支自动部署。该流程只更新平台 Deployment 的镜像，不会自动应用 `k8s/platform-deployment.yaml`、RBAC、Service 或 Helm Chart 变更；这些清单变更仍需通过部署脚本或 Helm 手动升级。
-
-当前 GitHub Actions 的 dev 链路为：
-
-```text
-push dev
-  → go test / go build / helm lint
-  → 构建并推送 GHCR 镜像
-  → 签名调用测试环境 /api/platform/deployments
-  → 平台自更新 Deployment 镜像
-```
-
-dev 镜像会推送以下 tag：
-
-```text
-ghcr.io/surrychen/cylism-manager:dev
-ghcr.io/surrychen/cylism-manager:dev-<short-sha>
-ghcr.io/surrychen/cylism-manager:<full-sha>
-```
-
-平台 Webhook 使用不可变的 `dev-<short-sha>` 镜像，方便定位测试环境当前运行的提交。
-
-启用前需要完成三件事：
-
-1. 测试环境 Deployment 已配置 GHCR 拉取权限，例如 `ghcr-pull-secret`。
-2. 平台允许的镜像前缀包含：
-
-   ```text
-   ghcr.io/surrychen/cylism-manager
-   ```
-
-   新版本默认使用该前缀；如果旧数据库里保存过旧镜像仓库前缀，需要在平台发布设置中更新一次。
-
-3. 在平台生成部署 Webhook Secret，并写入 GitHub 仓库 Secrets：
-
-   ```text
-   CYLISM_DEV_DEPLOY_URL=https://你的测试环境域名/api/platform/deployments
-   CYLISM_DEV_DEPLOY_SECRET=平台生成的部署 Webhook Secret
-   CYLISM_DEV_DEPLOY_RESOLVE_IP=可选，GitHub Actions 访问该域名时强制解析到的 IP
-   ```
-
-   如果测试环境域名在 GitHub Actions 侧 DNS 不稳定，或者你想固定打到某个内网/公网入口，可以设置 `CYLISM_DEV_DEPLOY_RESOLVE_IP`。工作流会在发起请求时使用 `curl --resolve` 将该域名指向指定 IP，但仍保留原始域名用于 TLS/SNI 校验。
-
-配置完成后，推送 `dev` 分支即可触发测试环境镜像更新：
-
-```bash
-git push origin dev
-```
-
-## 5. Helm 发布包部署
+## 4. Helm 发布包部署
 
 GitHub tag `v*` 发布后，会生成 Helm Chart 包和部署压缩包。安装 Chart 时，默认复用现有 Secret 名称：
 
 ```bash
 helm upgrade --install cylism-manager \
-  oci://ghcr.io/surrychen/charts/cylism-manager \
-  --version 1.2.3 \
+  oci://ghcr.io/<owner>/charts/cylism-manager \
+  --version <version> \
   --namespace default
 ```
 
@@ -131,14 +90,14 @@ helm upgrade --install cylism-manager \
 
 ```bash
 helm upgrade --install cylism-manager \
-  oci://ghcr.io/surrychen/charts/cylism-manager \
-  --version 1.2.3 \
-  --set image.tag=v1.2.3
+  oci://ghcr.io/<owner>/charts/cylism-manager \
+  --version <version> \
+  --set image.tag=<version>
 ```
 
 如果集群里还没有 `cylism-secret`，可以让 Chart 直接创建，或者先用 `scripts/deploy-platform.sh` 交互式补齐。
 
-## 6. 首次访问与节点纳管
+## 5. 首次访问与节点纳管
 
 本地开发或首次验证可使用：
 
@@ -155,7 +114,7 @@ kubectl port-forward svc/cylism-manager 8080:8080
 
 平台使用 Kubernetes API 读取 Node、Workload、Service、ConfigMap、Secret、Ingress 等实时状态；SQLite 只保存平台元数据、凭据和审计记录。
 
-## 7. 常用检查
+## 6. 常用检查
 
 ```bash
 kubectl get pods -l app=cylism-manager

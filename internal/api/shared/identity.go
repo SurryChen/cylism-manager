@@ -1,6 +1,9 @@
 package shared
 
-import "github.com/gin-gonic/gin"
+import (
+	auditservice "github.com/cylism/cylism-manager/internal/service/audit"
+	"github.com/gin-gonic/gin"
+)
 
 // UserID returns the authenticated user ID attached by the auth middleware.
 // Missing or malformed context values intentionally resolve to zero so callers
@@ -39,6 +42,12 @@ func UserID(c *gin.Context) uint {
 // middleware, or an empty string when the context is unauthenticated.
 func Username(c *gin.Context) string {
 	return c.GetString("username")
+}
+
+// ActorFromContext converts the authenticated Gin identity into the narrow
+// audit service identity contract.
+func ActorFromContext(c *gin.Context) auditservice.Actor {
+	return auditservice.Actor{Type: "user", ID: UserID(c), Name: Username(c)}
 }
 
 // OptionalID parses an optional numeric query/route value. Empty values mean

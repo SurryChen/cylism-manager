@@ -11,6 +11,7 @@ import (
 	storageapi "github.com/cylism/cylism-manager/internal/api/infrastructure/storage"
 	runtimeapi "github.com/cylism/cylism-manager/internal/api/runtime"
 	systemapi "github.com/cylism/cylism-manager/internal/api/system"
+	auditservice "github.com/cylism/cylism-manager/internal/service/audit"
 	"github.com/gin-gonic/gin"
 )
 
@@ -27,9 +28,10 @@ type RouteDependencies struct {
 }
 
 type AuthDependencies struct {
-	Config  *authapi.AuthConfig
-	Audit   gin.HandlerFunc
-	Handler *authapi.AuthHandler
+	Config          *authapi.AuthConfig
+	Audit           gin.HandlerFunc
+	AuditRepository auditservice.Repository
+	Handler         *authapi.AuthHandler
 }
 
 type ApplicationDependencies struct {
@@ -104,9 +106,9 @@ func RegisterRoutes(r *gin.Engine, deps RouteDependencies) {
 	registerLoggingRoutes(apiGroup, deps.System.Logging)
 	registerAlertingRoutes(r, apiGroup, deps.System.Alerting)
 	if deps.Auth.Config != nil {
-		registerApplicationRoutes(r, apiGroup, deps.Application.Handler, deps.Auth.Config.JWTSecret, deps.Auth.Audit)
+		registerApplicationRoutes(r, apiGroup, deps.Application.Handler, deps.Auth.Config.JWTSecret, deps.Auth.Audit, deps.Auth.AuditRepository)
 	} else {
-		registerApplicationRoutes(r, apiGroup, deps.Application.Handler, nil, deps.Auth.Audit)
+		registerApplicationRoutes(r, apiGroup, deps.Application.Handler, nil, deps.Auth.Audit, deps.Auth.AuditRepository)
 	}
 	infra := deps.Infrastructure
 	registerInfrastructureRoutes(apiGroup, infra.Server, infra.NetworkDiag, infra.Terminal, infra.Site,

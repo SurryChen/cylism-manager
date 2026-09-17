@@ -19,6 +19,19 @@ export function createManagedRegistry(body, options) { return post('/managed-oci
 export function updateManagedRegistry(id, body, options) { return options === undefined ? api.put(`/managed-oci-registries/${encodeURIComponent(id)}`, body) : api.put(`/managed-oci-registries/${encodeURIComponent(id)}`, body, options) }
 export function repairManagedRegistry(id, options) { return post(`/managed-oci-registries/${encodeURIComponent(id)}/repair`, undefined, options) }
 export function deleteManagedRegistry(id, body, options) { return remove(`/managed-oci-registries/${encodeURIComponent(id)}`, body, options) }
+export function getManagedRegistryCatalog(id, cursor = '', options) {
+  const query = cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''
+  return api.get(`/managed-oci-registries/${encodeURIComponent(id)}/catalog${query}`, options)
+}
+export function getManagedRegistryCatalogTags(id, repository, cursor = '', options) {
+  const params = new URLSearchParams({ repository })
+  if (cursor) params.set('cursor', cursor)
+  return api.get(`/managed-oci-registries/${encodeURIComponent(id)}/catalog/tags?${params}`, options)
+}
+export function preflightManagedRegistryTagDelete(id, body, options) { return post(`/managed-oci-registries/${encodeURIComponent(id)}/catalog/tags/preflight-delete`, body, options) }
+export function deleteManagedRegistryTag(id, body, options) { return remove(`/managed-oci-registries/${encodeURIComponent(id)}/catalog/tags`, body, options) }
+export function preflightManagedRegistryRepositoryDelete(id, body, options) { return post(`/managed-oci-registries/${encodeURIComponent(id)}/catalog/repositories/preflight-delete`, body, options) }
+export function deleteManagedRegistryRepository(id, body, options) { return remove(`/managed-oci-registries/${encodeURIComponent(id)}/catalog/repositories`, body, options) }
 
 export function getManagedRegistryResources(options) {
   return Promise.all([

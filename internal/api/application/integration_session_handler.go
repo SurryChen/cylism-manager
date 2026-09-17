@@ -13,6 +13,7 @@ import (
 
 	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 	"github.com/cylism/cylism-manager/internal/model"
+	auditservice "github.com/cylism/cylism-manager/internal/service/audit"
 	"github.com/cylism/cylism-manager/internal/service/auth"
 	"github.com/gin-gonic/gin"
 )
@@ -207,5 +208,18 @@ func (h *ApplicationHandler) createIntegrationDelegation(c *gin.Context) {
 		apiShared.DBError(c, "签发委托失败")
 		return
 	}
+	h.recordIntegrationDelegation(c, session, capability[0])
 	apiShared.Success(c, gin.H{"token": delegation, "expires_in": int(auth.MaxDelegationTTL.Seconds())})
+}
+
+func (h *ApplicationHandler) recordIntegrationDelegation(c *gin.Context, session *model.IntegrationSession, capability string) {
+	if h == nil || h.audit == nil || session == nil {
+		return
+	}
+	_ = auditservice.NewService(h.audit).Record(auditservice.AuditEventInput{
+		Action: "application.delegation.create", ResourceType: "application", ResourceID: session.ApplicationID,
+		Actor: auditservice.Actor{Type: model.AuditActorUser, ID: session.UserID}, Source: model.AuditSourceDelegation,
+		Outcome: model.AuditOutcomeSucceeded, Summary: "签发受控保护台应用委托", RequestID: apiShared.RequestID(c),
+		Metadata: map[string]any{"project_id": session.ProjectID, "environment_id": session.EnvironmentID, "capability": capability},
+	})
 }

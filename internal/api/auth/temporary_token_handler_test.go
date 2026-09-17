@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -25,7 +26,7 @@ func TestTemporaryLoginIssuesNormalSessionAndCanBeRevoked(t *testing.T) {
 	if err := db.CreateUser(user); err != nil {
 		t.Fatal(err)
 	}
-	h := NewAuthHandlerWithTemporaryService(db, []byte("secret"), time.Hour, time.Hour, authservice.NewTemporaryTokenService(db, db))
+	h := NewAuthHandlerWithTemporaryService(db, []byte("secret"), time.Hour, time.Hour, authservice.NewTemporaryTokenService(db, db)).WithAudit(db)
 	r := gin.New()
 	r.POST("/create", func(c *gin.Context) { c.Set("user_id", user.ID); h.CreateTemporaryToken(c) })
 	r.POST("/login", h.TemporaryLogin)
@@ -68,5 +69,19 @@ func TestTemporaryLoginIssuesNormalSessionAndCanBeRevoked(t *testing.T) {
 	claims, err := coreauth.ParseToken([]byte("secret"), loginEnvelope.Data.AccessToken)
 	if err != nil || claims.UserID != user.ID {
 		t.Fatalf("claims = %#v, err=%v", claims, err)
+	}
+	events, total, err := db.ListAuditLogsFiltered(model.AuditLogFilter{Limit: 20})
+	if err != nil || total != 2 {
+		t.Fatalf("expected temporary token grant and exchange audits: %#v total=%d err=%v", events, total, err)
+	}
+	actions := map[string]bool{}
+	for _, event := range events {
+		if strings.Contains(event.Detail, envelope.Data.Token) {
+			t.Fatalf("temporary token leaked into audit detail: %#v", event)
+		}
+		actions[event.Action] = true
+	}
+	if !actions["auth.temporary_token.create"] || !actions["auth.temporary_login"] {
+		t.Fatalf("missing temporary token audit actions: %#v", actions)
 	}
 }

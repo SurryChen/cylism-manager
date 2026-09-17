@@ -44,7 +44,7 @@ describe('AlertingWorkspace', () => {
     expect(wrapper.text()).toContain('节点 CPU 使用率过高')
     expect(wrapper.text()).toContain('77.23%')
     expect(wrapper.text()).toContain('75%')
-    expect(wrapper.get('.alert-resolved').classes()).toContain('card')
+    expect(wrapper.get('.alert-resolved').classes()).toContain('surface-card')
     await wrapper.get('[title="告警设置"]').trigger('click')
     await flushPromises()
     const modal = document.body.querySelector('.alert-settings-modal')

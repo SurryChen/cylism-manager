@@ -10,11 +10,65 @@ import (
 
 func (s *Store) GetDashboardStats(daysBefore int) (*model.DashboardStats, error) {
 	stats := &model.DashboardStats{}
-	s.db.Model(&model.Server{}).Count(&stats.TotalServers)
-	s.db.Model(&model.Site{}).Count(&stats.TotalSites)
-	threshold := time.Now().Add(time.Duration(daysBefore) * 24 * time.Hour)
-	s.db.Model(&model.Cert{}).Where("status = ? AND valid_to <= ?", "issued", threshold).Count(&stats.ExpiringCerts)
+	if err := s.db.Model(&model.Server{}).Count(&stats.TotalServers).Error; err != nil {
+		return nil, err
+	}
+	if err := s.db.Model(&model.Site{}).Count(&stats.TotalSites).Error; err != nil {
+		return nil, err
+	}
+	now := time.Now()
+	threshold := now.Add(time.Duration(daysBefore) * 24 * time.Hour)
+	if err := s.db.Model(&model.Cert{}).Where("status = ? AND valid_to > ? AND valid_to <= ?", "issued", now, threshold).Count(&stats.ExpiringCerts).Error; err != nil {
+		return nil, err
+	}
+	if err := s.db.Model(&model.Cert{}).Where("status = ? AND valid_to <= ?", "issued", now).Count(&stats.ExpiredCerts).Error; err != nil {
+		return nil, err
+	}
 	return stats, nil
+}
+
+// GetDashboardApplicationSummary aggregates the latest release of each
+// application, so historical release attempts do not affect current state.
+func (s *Store) GetDashboardApplicationSummary() (*model.DashboardApplicationSummary, error) {
+	var applications []model.Application
+	if err := s.db.Select("id, name").Find(&applications).Error; err != nil {
+		return nil, err
+	}
+	var releases []model.Release
+	if err := s.db.Order("application_id asc, sequence desc, id desc").Find(&releases).Error; err != nil {
+		return nil, err
+	}
+	applicationNames := make(map[uint]string, len(applications))
+	for _, application := range applications {
+		applicationNames[application.ID] = application.Name
+	}
+	latestByApplication := make(map[uint]model.Release, len(applications))
+	for _, release := range releases {
+		if _, exists := latestByApplication[release.ApplicationID]; !exists {
+			latestByApplication[release.ApplicationID] = release
+		}
+	}
+	summary := &model.DashboardApplicationSummary{TotalApplications: int64(len(applications))}
+	var latest *model.Release
+	for _, release := range latestByApplication {
+		switch release.Status {
+		case model.ReleaseStatusSucceeded:
+			summary.SuccessfulApplications++
+		case model.ReleaseStatusValidating, model.ReleaseStatusApplying, model.ReleaseStatusWaitingReady, model.ReleaseStatusVerifying, model.ReleaseStatusRollingBack:
+			summary.ReleasingApplications++
+		case model.ReleaseStatusFailed, model.ReleaseStatusRolledBack:
+			summary.FailedApplications++
+		}
+		if latest == nil || release.CreatedAt.After(latest.CreatedAt) || (release.CreatedAt.Equal(latest.CreatedAt) && release.ID > latest.ID) {
+			copy := release
+			latest = &copy
+		}
+	}
+	summary.UnreleasedApplications = summary.TotalApplications - int64(len(latestByApplication))
+	if latest != nil {
+		summary.LatestRelease = &model.DashboardLatestRelease{ApplicationName: applicationNames[latest.ApplicationID], Version: latest.Version, Status: latest.Status, CreatedAt: latest.CreatedAt}
+	}
+	return summary, nil
 }
 
 func (s *Store) UpsertAlertEvent(event *model.AlertEvent) (*model.AlertEvent, error) {
@@ -107,20 +161,45 @@ func (s *Store) CreateAuditLog(entry *model.AuditLog) error {
 }
 
 func (s *Store) ListAuditLogs(resourceType, action, keyword string, limit, offset int) ([]model.AuditLog, int64, error) {
+	return s.ListAuditLogsFiltered(model.AuditLogFilter{ResourceType: resourceType, Action: action, Keyword: keyword, Limit: limit, Offset: offset})
+}
+
+func (s *Store) ListAuditLogsFiltered(filter model.AuditLogFilter) ([]model.AuditLog, int64, error) {
 	var logs []model.AuditLog
 	var total int64
 	query := s.db.Model(&model.AuditLog{})
-	if resourceType != "" {
-		query = query.Where("resource_type = ?", resourceType)
+	if filter.ResourceType != "" {
+		query = query.Where("resource_type = ?", filter.ResourceType)
 	}
-	if action != "" {
-		query = query.Where("action = ?", action)
+	if filter.Action != "" {
+		query = query.Where("action = ?", filter.Action)
 	}
-	if keyword != "" {
-		query = query.Where("detail LIKE ?", "%"+keyword+"%")
+	if filter.Outcome != "" {
+		query = query.Where("outcome = ?", filter.Outcome)
 	}
-	query.Count(&total)
-	err := query.Order("created_at desc").Limit(limit).Offset(offset).Find(&logs).Error
+	if filter.Source != "" {
+		query = query.Where("source = ?", filter.Source)
+	}
+	if filter.ActorType != "" {
+		query = query.Where("actor_type = ?", filter.ActorType)
+	}
+	if filter.TargetName != "" {
+		query = query.Where("target_name LIKE ?", "%"+filter.TargetName+"%")
+	}
+	if filter.Keyword != "" {
+		keyword := "%" + filter.Keyword + "%"
+		query = query.Where("detail LIKE ? OR summary LIKE ? OR target_name LIKE ? OR actor_name LIKE ?", keyword, keyword, keyword, keyword)
+	}
+	if !filter.CreatedFrom.IsZero() {
+		query = query.Where("created_at >= ?", filter.CreatedFrom)
+	}
+	if !filter.CreatedTo.IsZero() {
+		query = query.Where("created_at < ?", filter.CreatedTo)
+	}
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	err := query.Order("created_at desc, id desc").Limit(filter.Limit).Offset(filter.Offset).Find(&logs).Error
 	return logs, total, err
 }
 
@@ -165,6 +244,27 @@ func (s *Store) ListOperationsByResource(resourceType string, resourceID uint) (
 	var logs []model.OperationLog
 	err := s.db.Where("resource_type = ? AND resource_id = ?", resourceType, resourceID).Order("created_at desc").Find(&logs).Error
 	return logs, err
+}
+
+func (s *Store) ListOperations(filter model.OperationLogFilter) ([]model.OperationLog, int64, error) {
+	var logs []model.OperationLog
+	var total int64
+	query := s.db.Model(&model.OperationLog{})
+	if filter.ResourceType != "" {
+		query = query.Where("resource_type = ?", filter.ResourceType)
+	}
+	if filter.Status != "" {
+		query = query.Where("status = ?", filter.Status)
+	}
+	if filter.Keyword != "" {
+		keyword := "%" + filter.Keyword + "%"
+		query = query.Where("step LIKE ? OR detail LIKE ?", keyword, keyword)
+	}
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	err := query.Order("created_at desc, id desc").Limit(filter.Limit).Offset(filter.Offset).Find(&logs).Error
+	return logs, total, err
 }
 
 func (s *Store) DeleteExpiredOperationLogs(retentionDays int) error {

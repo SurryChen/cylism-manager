@@ -58,7 +58,7 @@ func (h *AgentHandler) MaintenanceCleanupRequest(w http.ResponseWriter, r *http.
 	}
 	event.OperationID, event.Status, event.DiagnosticSummary = stored.OperationID, model.AlertEventAwaitingApproval, "等待管理员审批固定清理配方"
 	_ = h.store.UpdateAlertEvent(event)
-	h.audit(instance, "agent.maintenance_cleanup_requested", map[string]string{"capability": model.AgentCapabilityMaintenanceCleanup, "alert_id": strconv.Itoa(int(event.ID)), "recipe": request.Recipe, "operation_id": stored.OperationID})
+	h.audit(instance, "agent.maintenance_cleanup_requested", map[string]string{"capability": model.AgentCapabilityMaintenanceCleanup, "alert_id": strconv.Itoa(int(event.ID)), "recipe": request.Recipe, "request_id": requestID, "operation_id": stored.OperationID})
 	writeAgentResponse(w, http.StatusAccepted, agentAPIResponse{Status: "pending_approval", OperationID: stored.OperationID, Summary: "maintenance cleanup requires approval"})
 }
 

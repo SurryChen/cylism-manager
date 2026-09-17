@@ -1,6 +1,6 @@
 .settings-page {
   display: grid;
-  gap: var(--space-16);
+  gap: var(--space-4);
 }
 
 .settings-page-description {

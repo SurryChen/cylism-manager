@@ -1,22 +1,27 @@
 <template>
-  <article class="card metric-trend-chart">
-    <div class="card-header">
+  <SurfaceCard as="article" class="metric-trend-chart">
+    <template #header>
       <div>
         <h2 class="card-title">{{ title }}</h2>
         <p v-if="subtitle" class="metric-trend-subtitle">{{ subtitle }}</p>
       </div>
-      <span v-if="Number.isFinite(threshold)" class="metric-trend-threshold">阈值 {{ threshold }}{{ unit }}</span>
-    </div>
+    </template>
+    <template #actions><div class="metric-trend-header-actions">
+        <slot name="actions" />
+        <span v-if="Number.isFinite(threshold)" class="metric-trend-threshold">阈值 {{ threshold }}{{ unit }}</span>
+    </div></template>
+    <div v-if="$slots.toolbar" class="metric-trend-toolbar"><slot name="toolbar" /></div>
     <div v-if="loading" class="metric-trend-empty">正在读取历史指标...</div>
     <div v-else-if="!hasData" class="metric-trend-empty">该时间范围内暂无指标</div>
     <div v-else class="metric-trend-canvas"><Line :data="chartData" :options="chartOptions" /></div>
-  </article>
+  </SurfaceCard>
 </template>
 
 <script setup>
 import { computed } from 'vue'
 import { Line } from 'vue-chartjs'
 import { Chart as ChartJS, CategoryScale, Filler, Legend, LineElement, LinearScale, PointElement, Tooltip } from 'chart.js'
+import SurfaceCard from '../../components/SurfaceCard.vue'
 
 ChartJS.register(CategoryScale, Filler, Legend, LineElement, LinearScale, PointElement, Tooltip)
 
@@ -92,7 +97,9 @@ function formatValue(value) {
 <style scoped>
 .metric-trend-chart { min-width: 0; }
 .metric-trend-subtitle { margin: 4px 0 0; color: var(--text-secondary); font-size: 11px; }
+.metric-trend-header-actions { display: flex; align-items: center; gap: 10px; }
 .metric-trend-threshold { color: var(--danger); font: 10px/1 var(--font-mono); }
+.metric-trend-toolbar { margin: -2px 0 12px; }
 .metric-trend-canvas { height: 220px; }
 .metric-trend-empty { display: flex; height: 220px; align-items: center; justify-content: center; color: var(--text-muted); font-size: 12px; }
 </style>

@@ -31,23 +31,69 @@
 - **THEN** 响应 body 必须是 `{"code": 0, "message": "ok", "data": ...}` 格式
 
 ### Requirement: 概览页引导与集群总览
-系统 SHALL 在概览页展示 tailnet 连接状态、control-plane 状态、集群资源总览、待激活服务器数和最近操作日志，并在关键前置条件缺失时展示引导卡片。
 
-#### Scenario: 缺少 tailnet 或 join token 引导
-- **WHEN** 系统检测到无法读取本机 tailnet 状态，或缺少 `k3s_join_token`
-- **THEN** 概览页显示引导卡片，提示用户前往“服务器”或“系统设置”完成配置
+系统 SHALL 在概览页展示面向运维用户的服务健康摘要、集群资源摘要、待关注事项、告警概览和最近操作预览。页面 SHALL 使用真实接口状态渲染，不得依赖固定的 Tailnet、control-plane 或静态在线状态文案；当某个数据源不可用时，页面应明确展示不可用状态并保留其他可用区块。
+
+#### Scenario: 展示服务健康摘要
+
+- **WHEN** 用户打开概览页且数据库概览请求成功
+- **THEN** 页面展示服务器、站点、证书风险和最近操作等真实统计，并使用明确的时间窗口和预览口径
 
 #### Scenario: 展示集群摘要
-- **WHEN** 用户打开概览页
-- **THEN** 页面展示节点数、命名空间数、工作负载数、服务数和异常节点数
+
+- **WHEN** 用户打开概览页且 Kubernetes 客户端可用
+- **THEN** 页面展示节点、命名空间、Deployment、Service、Pod 就绪情况和 K3s 版本；Pod 就绪按 `PodReady=True` 统计，节点版本不一致时明确提示多版本
+
+#### Scenario: 数据源部分不可用
+
+- **WHEN** 数据库、Kubernetes 或 Alertmanager 中任一数据源读取失败
+- **THEN** 对应区块显示不可用或部分不可用状态，不把失败显示为零值、空数据或健康状态，同时保留其他成功区块
+
+#### Scenario: 高风险事项可进入处理页面
+
+- **WHEN** 存在触发告警、即将到期或已过期证书、未就绪 Deployment 或未就绪 Pod
+- **THEN** 页面在待关注事项中展示风险数量和处理入口，用户可以跳转到告警、证书或 Kubernetes 详情页面
 
 ### Requirement: 高风险操作审计覆盖
-系统 SHALL 将导入服务器、更新 SSH 凭据、激活服务器、加入 worker、移除节点、查看 Secret 明文和启用扩展纳入审计日志。
+系统 SHALL 审计认证与委托、权限授予/撤销、敏感数据访问、资源创建/更新/删除、部署/回滚/扩缩容、镜像源验证、Terminal 会话以及 Agent 操作申请、批准、拒绝、执行和失败。
 
-#### Scenario: 激活服务器写审计
-- **WHEN** 已认证用户触发服务器激活检测
-- **THEN** 系统写入审计日志，包含 action、resource_type、resource_id、result 和 user_id
+#### Scenario: Agent 操作生命周期可关联
+- **WHEN** Agent 操作被申请、批准并最终执行
+- **THEN** 系统为每个重要阶段写入审计事件
+- **AND** 这些事件使用同一 operation_id 关联
 
-#### Scenario: 查看 Secret 明文写审计
-- **WHEN** 已认证用户在配置页面确认查看某 Secret 的明文值
-- **THEN** 系统写入一条查看敏感数据的审计日志
+#### Scenario: Terminal 会话启动被审计
+- **WHEN** 已认证用户启动 Pod Terminal 会话
+- **THEN** 系统记录 action=`workload.pod.terminal.start`、Pod 目标、用户和成功或失败结果
+
+### Requirement: 审计日志包含操作者
+系统 SHALL 将事件操作者表达为用户、Agent、系统或委托会话来源，并为后台认证用户保留 user_id 兼容字段。
+
+#### Scenario: 用户变更包含操作者与来源
+- **WHEN** 已认证用户执行被审计的变更
+- **THEN** 事件记录 actor_type=`user`、当前 user_id 和 source=`console` 或 `api`
+
+#### Scenario: 委托会话包含关联标识
+- **WHEN** 受保护控制台委托会话执行被审计的变更
+- **THEN** 事件记录 source=`delegation` 和 delegation/request 关联标识
+
+#### Scenario: Agent 自动化包含运行时身份
+- **WHEN** Agent 执行被审计的申请、批准、拒绝或操作结果
+- **THEN** 事件记录 actor_type=`agent`、关联 Runtime ID 和可读 Runtime 名称
+
+### Requirement: 审计日志查询与展示
+系统 SHALL 提供默认面向变更和安全事件的审计查询与展示，支持按结果、动作、目标、操作者、来源和关键词筛选。
+
+#### Scenario: 默认审计列表显示可读事件
+- **WHEN** 用户打开审计日志页面
+- **THEN** 系统按时间倒序展示时间、结果、动作、目标、操作者和摘要
+- **AND** 主列表不得以原始 JSON detail 作为主要信息
+
+#### Scenario: 查看审计事件详情
+- **WHEN** 用户打开一条审计事件详情
+- **THEN** 系统展示结构化元数据、来源、关联请求/操作标识和兼容的原始 detail
+- **AND** 已脱敏字段保持不可见
+
+#### Scenario: 历史审计记录保持可查
+- **WHEN** 系统升级后查询既有 `audit_logs` 记录
+- **THEN** 系统为缺少新增字段的记录提供 legacy 来源、成功结果和基于原字段的可读回退值

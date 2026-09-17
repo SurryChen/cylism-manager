@@ -7,7 +7,7 @@
       </div>
     </div>
 
-    <section class="card platform-endpoint-card">
+    <SurfaceCard class="platform-endpoint-card">
       <div class="card-header">
         <div>
           <h2 class="card-title">平台管理入口</h2>
@@ -23,10 +23,10 @@
           </div>
           <div class="form-group">
             <label class="form-label" for="platform-endpoint-certificate">TLS 证书</label>
-            <select id="platform-endpoint-certificate" v-model="endpointForm.certificate_name" class="form-select" :disabled="savingEndpoint" required>
+            <SelectMenu id="platform-endpoint-certificate" v-model="endpointForm.certificate_name" class="form-select" :disabled="savingEndpoint" required>
               <option value="">选择 default 命名空间中已就绪的证书</option>
               <option v-for="certificate in readyPlatformCertificates" :key="certificate.name" :value="certificate.name">{{ certificate.name }} · {{ certificate.domains.join(', ') }}</option>
-            </select>
+            </SelectMenu>
           </div>
         </div>
         <div class="endpoint-control-row">
@@ -68,7 +68,7 @@
       </div>
       <p v-if="endpointMessage" class="settings-copy platform-action-message">{{ endpointMessage }}</p>
       <p v-if="endpointError" class="settings-copy endpoint-error">{{ endpointError }}</p>
-    </section>
+    </SurfaceCard>
 
     <Teleport to="body">
       <div v-if="showDisableEndpointConfirmation" class="overlay" @click.self="showDisableEndpointConfirmation = false">
@@ -90,6 +90,7 @@ import { computed, onMounted, ref } from 'vue'
 import { adoptPlatformIngress as adoptPlatformIngressRequest, getPlatformCertificates, getPlatformEndpoint, reconcilePlatformEndpoint as reconcilePlatformEndpointRequest, updatePlatformEndpoint } from '../../api/settings.js'
 import { useAsyncResource } from '../../composables/useAsyncResource.js'
 import { formatDateTime } from '../../utils/formatters.js'
+import SurfaceCard from '../../components/SurfaceCard.vue'
 
 const platformEndpoint = ref({ endpoint: {}, state: 'not_configured', ingress_ready: false })
 const endpointForm = ref({ hostname: '', certificate_name: '' })

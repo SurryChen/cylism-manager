@@ -306,8 +306,9 @@ func (s *Store) GetCertBySite(siteID uint) (*model.Cert, error) {
 
 func (s *Store) ListExpiringCerts(daysBefore int) ([]model.Cert, error) {
 	var certs []model.Cert
-	threshold := time.Now().Add(time.Duration(daysBefore) * 24 * time.Hour)
-	err := s.db.Where("status = ? AND valid_to <= ?", "issued", threshold).Find(&certs).Error
+	now := time.Now()
+	threshold := now.Add(time.Duration(daysBefore) * 24 * time.Hour)
+	err := s.db.Where("status = ? AND valid_to > ? AND valid_to <= ?", "issued", now, threshold).Find(&certs).Error
 	return certs, err
 }
 

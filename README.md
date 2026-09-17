@@ -1,95 +1,62 @@
 # Cylism Manager
 
-Cylism Manager 是一个面向 Tailscale + 单节点 K3s 场景的基础设施控制台。
-它负责服务器纳管、K3s 资源管理、平台自更新、审计和一些常见运维能力。
+Cylism Manager 是面向 Tailscale + K3s 的基础设施控制台。它把服务器纳管、SSH 主机操作、Kubernetes 资源、制品库、证书与审计记录收敛到一个界面。
+
+> Cylism Manager 会访问 Kubernetes API、控制面 Tailscale socket，并使用受保护的 SSH 凭据操作主机。请只在受信任的控制面节点和 Kubernetes 集群中部署。
 
 ## 主要能力
 
-- 通过 Tailscale 发现和管理主机
-- 通过 SSH 完成服务器预检、加入集群和常见维护
-- 管理 K3s / Kubernetes 资源
-- 管理平台自身的发布与回滚
-- 提供 Web UI、REST API 和 Agent 通信能力
+- 通过 Tailscale 发现和管理主机。
+- 通过 SSH 完成服务器预检、纳管与常见维护操作。
+- 管理 K3s / Kubernetes 资源、存储、证书和集群组件。
+- 管理镜像仓库、制品库与 Registry Proxy。
+- 提供 Web UI、REST API、审计记录和受控 Agent 通信能力。
 
-## 产品定位
+## 文档与安装
 
-Cylism Manager 是一个面向 Tailscale + 单节点 K3s 场景的基础设施控制台。
-它把服务器纳管、SSH 操作、K3s 集群管理和 Kubernetes 资源可视化收敛到同一个界面，降低多机器混合网络环境下的运维复杂度。
+| 场景 | 文档 |
+| --- | --- |
+| 在线文档站 | `https://<owner>.github.io/cylism-manager/` |
+| 安装前置条件 | [docs/installation/prerequisites.md](docs/installation/prerequisites.md) |
+| 脚本安装 | [docs/installation/install-script.md](docs/installation/install-script.md) |
+| Helm 安装 | [docs/installation/install-helm.md](docs/installation/install-helm.md) |
+| 首次使用与服务器纳管 | [docs/getting-started.md](docs/getting-started.md) |
+| 安全边界与漏洞报告 | [docs/security.md](docs/security.md) / [SECURITY.md](SECURITY.md) |
 
-核心原则：
+当前公开支持的生产安装方式为 K3s 部署脚本和 Helm Chart；不提供 Docker Compose 生产安装路径。
 
-- Tailscale 负责组网与节点寻址
-- SSH 负责远程安装与主机级探测
-- Kubernetes API 负责集群内实时状态
-- 平台数据库只保存元数据、凭据、审计和缓存
+## 开发
+
+前置条件：Go 1.25+、Node.js 24+；可选 Docker、Helm 和 K3s 测试集群。
+
+```bash
+go test ./...
+go run ./cmd/platform
+
+npm --prefix web ci
+npm --prefix web run dev
+```
+
+构建全部二进制：
+
+```bash
+make build
+```
+
+贡献流程和完整验证命令见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
 ## 仓库结构
 
 - `cmd/`：Go 程序入口
 - `internal/`：后端核心实现
 - `web/`：Vue 3 前端
-- `k8s/`：当前部署清单
+- `k8s/`：Kubernetes 清单
 - `charts/`：Helm Chart
-- `scripts/`：部署和初始化脚本
-- `docs/`：部署、设计和迁移文档
-- `openspec/`：OpenSpec 变更与规范
+- `scripts/`：部署与初始化脚本
+- `docs/`：公开使用文档与历史设计记录
+- `openspec/`：OpenSpec 规范与变更记录
 - `config/`：示例配置
 
-## 快速开始
+## 许可证
 
-前置条件：
-
-- Go 1.22+
-- Node.js 22+
-- Docker
-- 可选：K3s / kubectl
-
-后端开发：
-
-```bash
-go test ./...
-go run ./cmd/platform
-```
-
-前端开发：
-
-```bash
-cd web
-npm install
-npm run dev
-```
-
-构建：
-
-```bash
-make build
-```
-
-## 部署
-
-推荐先看：
-
-- [docs/k3s-tailscale-deployment.md](docs/k3s-tailscale-deployment.md)
-
-常用脚本：
-
-- `scripts/deploy-platform.sh`：当前推荐的安装 / 升级脚本
-
-GitHub Release 会生成：
-
-- `cylism-manager-deploy-*.tar.gz`：部署包
-- `cylism-manager-*.tgz`：Helm Chart
-
-## 配置
-
-运行时配置主要通过环境变量和 Kubernetes Secret / ConfigMap 注入。
-示例配置可参考：
-
-- `config/config.example.yaml`
-
-敏感信息不要提交到仓库。
-
-## 文档入口
-
-- [docs/k3s-tailscale-deployment.md](docs/k3s-tailscale-deployment.md)
-- [docs/design/cylism-manager-k3s-infra-console.md](docs/design/cylism-manager-k3s-infra-console.md)
+本项目采用 [Apache License 2.0](LICENSE)。

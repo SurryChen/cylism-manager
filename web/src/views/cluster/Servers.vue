@@ -10,13 +10,13 @@
     <main class="server-content">
     <div v-if="serverListError" class="k8s-banner k8s-banner-warn section-gap">{{ serverListError }}</div>
     <template v-if="activeSection === 'configuration'">
-    <div class="card section-gap">
+    <SurfaceCard as="div" class="section-gap">
       <p class="section-copy">
         这里维护服务器台账、SSH 凭据与连通性。集群节点已经拆分到“集群节点”页面统一查看与操作。
       </p>
-    </div>
+    </SurfaceCard>
 
-    <div class="card">
+    <SurfaceCard as="div">
       <div v-if="servers.length === 0" class="empty-state">
         <span class="empty-icon">⬡</span><span class="empty-text">暂无服务器</span>
       </div>
@@ -58,37 +58,37 @@
           </tbody>
         </table>
       </div>
-    </div>
+    </SurfaceCard>
     <div v-if="unbindError" class="k8s-banner k8s-banner-warn section-gap">{{ unbindError }}</div>
     </template>
 
     <template v-else-if="activeSection === 'monitoring'">
-      <section class="card resource-overview section-gap">
+      <SurfaceCard class="resource-overview section-gap">
         <div><h2 class="resource-overview-title">资源概览</h2><p class="resource-overview-meta">{{ resourceSamplingLabel }}</p></div>
         <div class="btn-group"><button class="icon-button" title="刷新资源数据" aria-label="刷新资源数据" :disabled="resourceStatsLoading" @click="refreshResourceStats"><RefreshCw :size="16" :class="{ 'is-spinning': resourceStatsLoading }" /></button></div>
-      </section>
+      </SurfaceCard>
       <div v-if="servers.length === 0" class="empty-state"><span class="empty-icon">⬡</span><span class="empty-text">暂无服务器</span></div>
-      <div v-else class="card">
+      <SurfaceCard v-else as="div">
         <div v-if="resourceStatsError" class="k8s-banner k8s-banner-warn section-gap">{{ resourceStatsError }}</div>
         <div v-if="resourceStatsLoading && !resourceStats.length" class="empty-state"><span class="empty-text">正在采集服务器资源...</span></div>
         <div v-else class="table-wrap"><table class="data-table resource-table"><thead><tr><th>服务器</th><th>采集状态</th><th>CPU</th><th>内存</th><th>磁盘 /</th><th>负载</th><th>运行时间</th><th>采样时间</th></tr></thead><tbody><tr v-for="srv in servers" :key="srv.id" class="resource-row" @click="openStats(srv.id)"><td class="cell-primary">{{ srv.name }}<small class="cell-secondary">{{ srv.host }}</small></td><td><span class="badge" :class="resourceStatusClass(resourceFor(srv.id))">{{ resourceStatusLabel(resourceFor(srv.id)) }}</span><small v-if="resourceFor(srv.id)?.error" class="resource-error">{{ resourceFor(srv.id).error }}</small></td><td><div class="resource-metric"><strong>{{ formatPercent(resourceFor(srv.id)?.cpu_percent) }}</strong><span class="resource-meter"><i :class="resourceLevelClass(resourceFor(srv.id)?.cpu_percent)" :style="{ width: `${metricPercent(resourceFor(srv.id)?.cpu_percent)}%` }" /></span></div></td><td><div class="resource-metric"><strong>{{ formatMB(resourceFor(srv.id)?.memory_used_mb) }} / {{ formatMB(resourceFor(srv.id)?.memory_total_mb) }}</strong><span class="resource-meter"><i :class="resourceLevelClass(memPercent(resourceFor(srv.id)))" :style="{ width: `${metricPercent(memPercent(resourceFor(srv.id)))}%` }" /></span></div></td><td><div class="resource-metric"><strong>{{ resourceFor(srv.id)?.disk_used_gb ?? '-' }} / {{ resourceFor(srv.id)?.disk_total_gb ?? '-' }} GB</strong><span class="resource-meter"><i :class="resourceLevelClass(diskPercent(resourceFor(srv.id)))" :style="{ width: `${metricPercent(diskPercent(resourceFor(srv.id)))}%` }" /></span></div></td><td>{{ formatLoad(resourceFor(srv.id)) }}</td><td>{{ resourceFor(srv.id)?.uptime || '-' }}</td><td>{{ formatSampleTime(resourceFor(srv.id)?.sampled_at) }}</td></tr></tbody></table></div>
-      </div>
+      </SurfaceCard>
     </template>
 
     <template v-else>
-      <section class="card network-overview section-gap">
+      <SurfaceCard class="network-overview section-gap">
         <h2 class="network-overview-title">网络诊断</h2>
         <button class="icon-button" title="刷新网络诊断" aria-label="刷新网络诊断" :disabled="networkDiagnosticsLoading" @click="refreshNetworkDiagnostics"><RefreshCw :size="16" :class="{ 'is-spinning': networkDiagnosticsLoading }" /></button>
-      </section>
+      </SurfaceCard>
       <div v-if="networkDiagnosticsError" class="k8s-banner k8s-banner-warn section-gap">{{ networkDiagnosticsError }}，已保留上次成功结果</div>
       <div v-if="networkDiagnosticsLoading && !networkDiagnostics.servers.length" class="empty-state"><span class="empty-text">正在采集网络状态...</span></div>
       <div v-else-if="!networkDiagnostics.servers.length" class="empty-state"><span class="empty-icon">⬡</span><span class="empty-text">暂无诊断结果</span></div>
-      <section v-else class="card section-gap network-table-card">
+      <SurfaceCard v-else class="section-gap network-table-card">
         <div class="table-wrap"><table class="data-table network-table"><thead><tr><th>服务器</th><th>K3s 网络</th><th>Tailscale</th><th>Tailnet IP</th><th>UDP</th><th>IPv4</th><th>最近 DERP</th></tr></thead><tbody><tr v-for="diagnostic in networkDiagnostics.servers" :key="diagnostic.server_id"><td class="cell-primary">{{ diagnostic.name }}<small class="cell-secondary">{{ diagnostic.k8s_unit || '-' }}</small></td><td><span class="badge" :class="networkModeClass(diagnostic)">{{ networkModeLabel(diagnostic.network_mode) }}</span></td><td><span class="badge" :class="tailscaleStatusClass(diagnostic)">{{ tailscaleStatusLabel(diagnostic) }}</span></td><td>{{ diagnostic.tailscale?.tailnet_ip || '-' }}</td><td>{{ booleanLabel(diagnostic.tailscale?.udp) }}</td><td>{{ booleanLabel(diagnostic.tailscale?.ipv4) }}</td><td>{{ diagnostic.tailscale?.nearest_derp || '-' }}</td></tr></tbody></table></div>
-      </section>
-      <section v-if="networkDiagnostics.links.length" class="card network-table-card">
+      </SurfaceCard>
+      <SurfaceCard v-if="networkDiagnostics.links.length" class="network-table-card">
         <div class="table-wrap"><table class="data-table network-table"><thead><tr><th>源服务器</th><th>目标服务器</th><th>链路</th><th>延迟</th><th>DERP</th><th>状态</th></tr></thead><tbody><tr v-for="link in networkDiagnostics.links" :key="`${link.source_server_id}-${link.target_server_id}`"><td class="cell-primary">{{ diagnosticServerName(link.source_server_id) }}</td><td class="cell-primary">{{ diagnosticServerName(link.target_server_id) }}</td><td><span class="badge" :class="linkPathClass(link.path)">{{ linkPathLabel(link.path) }}</span></td><td>{{ link.latency_ms ? `${link.latency_ms} ms` : '-' }}</td><td>{{ link.derp_region || '-' }}</td><td>{{ linkErrorLabel(link.error_code) }}</td></tr></tbody></table></div>
-      </section>
+      </SurfaceCard>
     </template>
     </main>
 
@@ -105,7 +105,7 @@
             <div class="form-group"><label class="form-label">SSH 端口</label><input v-model.number="form.ssh_port" class="form-input" type="number" placeholder="22" /></div>
             <div class="form-group"><label class="form-label">SSH 用户</label><input v-model="form.ssh_user" class="form-input" placeholder="root" /></div>
           </div>
-          <div class="form-group"><label class="form-label">认证方式</label><select v-model="form.ssh_auth_type" class="form-select"><option value="password">密码</option><option value="key">密钥</option></select></div>
+          <div class="form-group"><label class="form-label">认证方式</label><SelectMenu v-model="form.ssh_auth_type" class="form-select"><option value="password">密码</option><option value="key">密钥</option></SelectMenu></div>
           <div class="form-group" v-if="form.ssh_auth_type === 'password'"><label class="form-label">SSH 密码</label><input v-model="form.ssh_password" class="form-input" type="password" placeholder="输入密码" /></div>
           <div class="form-group" v-if="form.ssh_auth_type === 'key'"><label class="form-label">SSH 密钥</label><textarea v-model="form.ssh_key" class="form-input textarea-input" placeholder="粘贴私钥内容" /></div>
           <p v-if="formError" class="form-error">{{ formError }}</p>
@@ -235,6 +235,7 @@ import { usePolling } from '../../composables/usePolling.js'
 import { formatClockTime as formatSampleTime } from '../../utils/formatters.js'
 import { RefreshCw } from 'lucide-vue-next'
 import SectionTabsHeader from '../../components/SectionTabsHeader.vue'
+import SurfaceCard from '../../components/SurfaceCard.vue'
 import ServerTerminal from './ServerTerminal.vue'
 
 const serversResource = useAsyncResource(({ signal }) => getServers({ signal }), [])

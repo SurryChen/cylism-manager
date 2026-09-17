@@ -4,15 +4,15 @@
       <h1 class="page-title">集群节点</h1>
     </div>
 
-    <div class="card section-gap">
+    <SurfaceCard as="div" class="section-gap">
       <p class="section-copy">
         节点状态直接来自当前 K3s 集群。新增工作节点请先在“服务器”页面补全 SSH 信息并完成加入集群。
       </p>
-    </div>
+    </SurfaceCard>
 
     <div v-if="error" class="k8s-banner k8s-banner-warn section-gap">⚠ {{ error }}</div>
 
-    <div class="card">
+    <SurfaceCard as="div">
       <div v-if="nodes.length === 0" class="empty-state">
         <span class="empty-icon">⬡</span><span class="empty-text">暂无 K8s 节点</span>
       </div>
@@ -55,7 +55,7 @@
           </tbody>
         </table>
       </div>
-    </div>
+    </SurfaceCard>
     <div v-if="rejoinError" class="k8s-banner k8s-banner-warn section-gap">{{ rejoinError }}</div>
 
     <div v-if="drainTarget" class="overlay" @click.self="closeDrain">
@@ -152,6 +152,7 @@ import {
   updateNodeLabels,
 } from '../../api/cluster.js'
 import { useAsyncResource } from '../../composables/useAsyncResource.js'
+import SurfaceCard from '../../components/SurfaceCard.vue'
 
 const nodes = ref([])
 const servers = ref([])

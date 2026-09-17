@@ -7,14 +7,14 @@
     </div>
     <div v-if="error" class="k8s-banner k8s-banner-warn section-gap">⚠ {{ error }}</div>
     <div v-if="namespaceConflicts.length" class="k8s-banner k8s-banner-warn section-gap"><strong>命名空间迁移待处理</strong><span v-for="conflict in namespaceConflicts" :key="conflict.namespace">{{ conflict.namespace }}：{{ conflict.environments.map(item => `项目 ${item.project_id} / ${item.name}`).join('、') }}</span></div>
-    <div v-if="showEnvironmentList" class="card">
+    <SurfaceCard v-if="showEnvironmentList" as="div">
       <div class="table-wrap"><table class="data-table"><thead><tr><th>环境</th><th>命名空间</th><th>状态</th><th>关联应用</th><th>操作</th></tr></thead><tbody><tr v-for="environment in environments" :key="environment.id"><td class="cell-primary">{{ environment.name }}</td><td>{{ environment.namespace }}</td><td><span class="badge" :class="namespaceStatusClass(environment.namespace_status)">{{ namespaceStatusLabel(environment.namespace_status) }}</span></td><td>{{ environmentApplicationCount(environment.id) }}</td><td class="action-cell"><div class="btn-group"><button v-if="needsNamespaceSync(environment)" class="icon-button" title="同步命名空间" :disabled="syncingEnvironmentID === environment.id" @click="syncNamespace(environment)"><RefreshCw :size="16" :class="{ 'is-spinning': syncingEnvironmentID === environment.id }" /></button><button class="btn btn-sm" :disabled="environmentHasApplications(environment.id)" :title="environmentHasApplications(environment.id) ? '已有应用时不可修改部署目标' : '编辑环境'" @click="openEnvironmentEditor(environment)">编辑</button><button class="btn btn-sm btn-danger" title="删除环境" @click="requestEnvironmentDelete(environment)">删除</button></div></td></tr></tbody></table></div>
-    </div>
+    </SurfaceCard>
 
     <div v-if="showEnvironmentModal" class="overlay" @click.self="closeEnvironmentModal"><div class="modal"><h2 class="modal-title">{{ editingEnvironment ? '编辑环境' : '新建环境' }}</h2><form @submit.prevent="saveEnvironment">
       <div class="form-group"><label class="form-label">环境名称</label><input v-model="environmentForm.name" class="form-input" required placeholder="production" :disabled="editingEnvironment && environmentHasApplications(editingEnvironment.id) && !editingEnvironment.namespace_conflict" /></div>
       <div class="form-group"><label class="form-label">命名空间</label><div v-if="environmentForm.namespace_mode === 'create'" class="namespace-input"><span class="namespace-prefix">project-</span><input v-model="namespaceSuffix" class="form-input" required placeholder="frontend-dev" :disabled="editingEnvironment && environmentHasApplications(editingEnvironment.id) && !editingEnvironment.namespace_conflict" /></div><input v-else v-model="environmentForm.namespace" class="form-input" required placeholder="existing-namespace" :disabled="editingEnvironment && environmentHasApplications(editingEnvironment.id) && !editingEnvironment.namespace_conflict" /></div>
-      <div class="form-group"><label class="form-label">命名空间来源</label><select v-model="environmentForm.namespace_mode" class="form-select" :disabled="editingEnvironment && environmentHasApplications(editingEnvironment.id) && !editingEnvironment.namespace_conflict"><option value="create">新建命名空间</option><option value="bind">绑定已有命名空间</option></select><p class="form-hint">新建命名空间固定使用 <code>project-</code> 前缀，请填写英文、数字或连字符后缀；绑定会确认目标 Namespace 已存在且可用。<span v-if="editingEnvironment?.namespace_conflict">迁移仅更新平台绑定，不迁移旧命名空间中的 Kubernetes 资源。</span></p></div>
+      <div class="form-group"><label class="form-label">命名空间来源</label><SelectMenu v-model="environmentForm.namespace_mode" class="form-select" :disabled="editingEnvironment && environmentHasApplications(editingEnvironment.id) && !editingEnvironment.namespace_conflict"><option value="create">新建命名空间</option><option value="bind">绑定已有命名空间</option></SelectMenu><p class="form-hint">新建命名空间固定使用 <code>project-</code> 前缀，请填写英文、数字或连字符后缀；绑定会确认目标 Namespace 已存在且可用。<span v-if="editingEnvironment?.namespace_conflict">迁移仅更新平台绑定，不迁移旧命名空间中的 Kubernetes 资源。</span></p></div>
       <div class="modal-actions"><button type="button" class="btn" @click="closeEnvironmentModal">取消</button><button class="btn btn-primary" :disabled="submitting">{{ submitting ? '保存中...' : editingEnvironment ? '保存' : '创建环境' }}</button></div>
     </form></div></div>
 
@@ -27,6 +27,7 @@ import { computed, ref, watch } from 'vue'
 import { ArrowLeft, RefreshCw } from 'lucide-vue-next'
 import { createProjectEnvironment, deleteProjectEnvironment, getProjectEnvironmentResources, syncProjectEnvironmentNamespace, updateProjectEnvironment } from '../../api/applications.js'
 import { useAsyncResource } from '../../composables/useAsyncResource.js'
+import SurfaceCard from '../../components/SurfaceCard.vue'
 
 const props = defineProps({ projectID: { type: String, required: true } })
 const projects = ref([])
