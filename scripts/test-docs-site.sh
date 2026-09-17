@@ -29,8 +29,10 @@ done
 
 grep -q 'mkdocs-material' requirements-docs.txt
 grep -q 'site_name: Cylism Manager' mkdocs.yml
+grep -q 'repo_url: https://github.com/SurryChen/cylism-manager' mkdocs.yml
 grep -q 'archive/\*\*' mkdocs.yml
 grep -q 'design/\*\*' mkdocs.yml
+grep -q 'assets/screenshots/README.md' mkdocs.yml
 grep -q '安装部署:' mkdocs.yml
 grep -q '使用指南:' mkdocs.yml
 grep -q '运维与排障:' mkdocs.yml
@@ -47,6 +49,11 @@ grep -q 'Apache License' LICENSE
 grep -q 'Go 1.25+' README.md
 grep -q '1440 x 900' docs/assets/screenshots/README.md
 grep -q '不得包含' docs/assets/screenshots/README.md
+
+if rg -q 'assets/screenshots/README.md' docs --glob '*.md' --glob '!assets/screenshots/README.md'; then
+  echo '公开文档不应链接到已排除的截图清单。' >&2
+  exit 1
+fi
 
 if grep -R -E 'crpi-c5u9bb8i5qxw1m72|CYLISM_DEV_DEPLOY|ACR_(USERNAME|PASSWORD)' \
   README.md docs --exclude-dir=archive; then

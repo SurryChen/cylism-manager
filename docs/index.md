@@ -38,4 +38,4 @@ kubectl port-forward svc/cylism-manager 8080:8080
 
 ## 产品截图
 
-截图会在经过脱敏审查后加入本页。需要准备的页面、尺寸和脱敏要求见[截图清单](assets/screenshots/README.md)。
+截图会在经过脱敏审查后加入本页。

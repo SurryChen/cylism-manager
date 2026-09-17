@@ -1,6 +1,7 @@
 site_name: Cylism Manager
 site_description: 面向 Tailscale 与 K3s 的基础设施控制台
 site_url: !ENV [SITE_URL, ""]
+repo_url: https://github.com/SurryChen/cylism-manager
 repo_name: cylism/cylism-manager
 edit_uri: edit/main/docs/
 
@@ -8,6 +9,7 @@ exclude_docs: |
   archive/**
   design/**
   k3s-tailscale-deployment.md
+  assets/screenshots/README.md
 
 theme:
   name: material
