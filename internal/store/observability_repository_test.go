@@ -49,6 +49,57 @@ func TestAlertAutomationPolicyIsSingleton(t *testing.T) {
 		t.Fatalf("unexpected singleton policy: %#v %v", policy, err)
 	}
 }
+
+func TestAuditLogPersistsStructuredEventFields(t *testing.T) {
+	s, err := New(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	event := &model.AuditLog{
+		Action:       "registry.mirror.verify",
+		ResourceType: "node_registry_mirror",
+		ResourceID:   5,
+		TargetName:   "GHCR mirror",
+		UserID:       2,
+		ActorType:    model.AuditActorUser,
+		ActorName:    "admin",
+		Source:       model.AuditSourceAPI,
+		Outcome:      model.AuditOutcomeSucceeded,
+		Summary:      "验证节点镜像源 GHCR mirror",
+		RequestID:    "req_123",
+		OperationID:  "op_123",
+		Detail:       `{"registry":"ghcr.io"}`,
+	}
+	if err := s.CreateAuditLog(event); err != nil {
+		t.Fatalf("create audit event: %v", err)
+	}
+	var stored model.AuditLog
+	if err := s.DB().First(&stored, event.ID).Error; err != nil {
+		t.Fatalf("load audit event: %v", err)
+	}
+	if stored.ActorName != "admin" || stored.Outcome != model.AuditOutcomeSucceeded || stored.OperationID != "op_123" || stored.TargetName != "GHCR mirror" {
+		t.Fatalf("structured audit fields were not persisted: %#v", stored)
+	}
+}
+
+func TestListAuditLogsFilteredMatchesStructuredAndLegacyFields(t *testing.T) {
+	s, err := New(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, event := range []*model.AuditLog{
+		{Action: "application.release", ResourceType: "application", ResourceID: 1, TargetName: "console", ActorName: "admin", ActorType: model.AuditActorUser, Source: model.AuditSourceAPI, Outcome: model.AuditOutcomeSucceeded, Summary: "发布 console", Detail: `{"version":"1"}`},
+		{Action: "application.release", ResourceType: "application", ResourceID: 2, TargetName: "worker", ActorName: "agent", ActorType: model.AuditActorAgent, Source: model.AuditSourceAgent, Outcome: model.AuditOutcomeFailed, Summary: "发布 worker", Detail: `{"reason":"failed"}`},
+	} {
+		if err := s.CreateAuditLog(event); err != nil {
+			t.Fatal(err)
+		}
+	}
+	logs, total, err := s.ListAuditLogsFiltered(model.AuditLogFilter{Outcome: model.AuditOutcomeFailed, ActorType: model.AuditActorAgent, Keyword: "worker", Limit: 20})
+	if err != nil || total != 1 || len(logs) != 1 || logs[0].TargetName != "worker" {
+		t.Fatalf("unexpected filtered audit logs: %#v total=%d err=%v", logs, total, err)
+	}
+}
 func TestSystemComponentConfigCRUD(t *testing.T) {
 	s, err := New(":memory:")
 	if err != nil {

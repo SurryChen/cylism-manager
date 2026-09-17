@@ -3,7 +3,7 @@
     <div class="page-header"><h1 class="page-title">服务发现</h1></div>
     <div v-if="error" class="k8s-banner k8s-banner-warn" style="margin-bottom:var(--space-16)">⚠ {{ error }}</div>
 
-    <div class="card">
+    <SurfaceCard as="div">
       <div v-if="services.length === 0" class="empty-state">
         <span class="empty-icon">⬡</span><span class="empty-text">暂无 Service</span>
       </div>
@@ -45,7 +45,7 @@
           </tbody>
         </table>
       </div>
-    </div>
+    </SurfaceCard>
   </div>
 </template>
 
@@ -53,6 +53,7 @@
 import { computed, ref, onMounted } from 'vue'
 import { getServiceDiscovery, getServiceEndpoints } from '../../api/kubernetes.js'
 import { useAsyncResource } from '../../composables/useAsyncResource.js'
+import SurfaceCard from '../../components/SurfaceCard.vue'
 
 const services = ref([])
 const loading = ref(true)

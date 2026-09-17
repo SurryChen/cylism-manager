@@ -50,7 +50,6 @@ func (h *AgentHandler) AlertGet(w http.ResponseWriter, r *http.Request) {
 		writeAgentError(w, http.StatusNotFound, "alert event not found", false)
 		return
 	}
-	h.audit(instance, "agent.alert_get", map[string]string{"capability": model.AgentCapabilityAlertRead, "alert_id": strconv.FormatUint(id, 10)})
 	writeAgentResponse(w, http.StatusOK, agentAPIResponse{Status: "ok", Data: agentAlertEventData(event), Summary: "alert event retrieved"})
 }
 
@@ -72,7 +71,6 @@ func (h *AgentHandler) AlertList(w http.ResponseWriter, r *http.Request) {
 		automationStatus, alertState := agentAlertEventStates(&event)
 		items = append(items, map[string]any{"id": event.ID, "alert_name": event.AlertName, "severity": event.Severity, "node": event.NodeName, "mount_point": event.MountPoint, "status": automationStatus, "automation_status": automationStatus, "alert_state": alertState, "starts_at": event.StartsAt, "updated_at": event.UpdatedAt, "diagnostic_summary": event.DiagnosticSummary, "operation_id": event.OperationID})
 	}
-	h.audit(instance, "agent.alert_list", map[string]string{"capability": model.AgentCapabilityAlertRead})
 	writeAgentResponse(w, http.StatusOK, agentAPIResponse{Status: "ok", Data: map[string]any{"events": items}, Summary: "recent alert events retrieved"})
 }
 
@@ -131,7 +129,6 @@ func (h *AgentHandler) MonitoringDiskGrowth(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	mounts := data["mounts"]
-	h.audit(instance, "agent.monitoring_disk_growth", map[string]string{"capability": model.AgentCapabilityMonitoringRead, "node": node, "range": rangeName})
 	writeAgentResponse(w, http.StatusOK, agentAPIResponse{Status: "ok", Data: map[string]any{"node": node, "range": rangeName, "mounts": mounts}, Summary: "disk growth retrieved"})
 }
 

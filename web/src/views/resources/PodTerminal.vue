@@ -9,7 +9,7 @@
 
         <div v-if="status === 'selecting'" class="container-picker">
           <p>该 Pod 包含多个容器，请选择要进入的容器。</p>
-          <select v-model="container" class="form-select" aria-label="选择容器"><option value="" disabled>选择容器</option><option v-for="item in containers" :key="item" :value="item">{{ item }}</option></select>
+          <SelectMenu v-model="container" class="form-select" aria-label="选择容器"><option value="" disabled>选择容器</option><option v-for="item in containers" :key="item" :value="item">{{ item }}</option></SelectMenu>
           <div class="modal-actions"><button class="btn" @click="close">取消</button><button class="btn btn-primary" :disabled="!container" @click="connect">进入终端</button></div>
         </div>
 

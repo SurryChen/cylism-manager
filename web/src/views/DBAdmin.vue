@@ -6,7 +6,7 @@
     </div>
     <div v-if="error" class="k8s-banner k8s-banner-warn section-gap">{{ error }}</div>
 
-    <div class="card section-gap">
+    <SurfaceCard as="div" class="section-gap">
       <div class="table-tabs">
         <button
           v-for="t in tables"
@@ -15,9 +15,9 @@
           @click="selectTable(t)"
         >{{ tableLabel(t) }}</button>
       </div>
-    </div>
+    </SurfaceCard>
 
-    <div class="card" v-if="currentTable">
+    <SurfaceCard v-if="currentTable" as="div">
       <div v-if="loading" class="empty-state"><span class="empty-text">加载中...</span></div>
       <div v-else-if="rows.length === 0" class="empty-state"><span class="empty-text">暂无数据</span></div>
       <div v-else>
@@ -50,7 +50,7 @@
           <button class="btn btn-sm" :disabled="page >= totalPages" @click="page++; fetchData()">下一页</button>
         </div>
       </div>
-    </div>
+    </SurfaceCard>
 
     <!-- 新增/编辑弹窗 -->
     <div v-if="showAdd || editTarget" class="overlay" @click.self="closeForm">
@@ -88,6 +88,7 @@
 <script setup>
 import { ref, computed, onMounted, reactive } from 'vue'
 import { createAdminTableRow, deleteAdminTableRow, getAdminTableRows, getAdminTables, updateAdminTableRow } from '../api/admin.js'
+import SurfaceCard from '../components/SurfaceCard.vue'
 import { useAsyncResource } from '../composables/useAsyncResource.js'
 
 const tables = ref([])

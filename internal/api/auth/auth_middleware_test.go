@@ -6,7 +6,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cylism/cylism-manager/internal/model"
 	coreauth "github.com/cylism/cylism-manager/internal/service/auth"
+	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/gin-gonic/gin"
 )
 
@@ -34,6 +36,29 @@ func TestJWTAuthMiddlewareAcceptsHeaderAndQueryToken(t *testing.T) {
 				t.Fatalf("status = %d, body=%s", resp.Code, resp.Body.String())
 			}
 		})
+	}
+}
+
+func TestDelegationAuthMiddlewareAuditsRejectedAuthentication(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	logs, err := store.New(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := gin.New()
+	r.Use(DelegationAuthMiddlewareWithAudit([]byte("secret"), logs))
+	r.GET("/", func(c *gin.Context) { c.Status(http.StatusNoContent) })
+
+	response := httptest.NewRecorder()
+	r.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/", nil))
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, body=%s", response.Code, response.Body.String())
+	}
+	events, total, err := logs.ListAuditLogsFiltered(model.AuditLogFilter{
+		Action: "application.delegation.authenticate", Outcome: model.AuditOutcomeDenied, Limit: 20,
+	})
+	if err != nil || total != 1 || len(events) != 1 || events[0].Source != "delegation" {
+		t.Fatalf("unexpected delegation denial audit: %#v total=%d err=%v", events, total, err)
 	}
 }
 

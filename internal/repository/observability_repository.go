@@ -18,6 +18,7 @@ type AlertRepository interface {
 type AuditRepository interface {
 	CreateAuditLog(*model.AuditLog) error
 	ListAuditLogs(string, string, string, int, int) ([]model.AuditLog, int64, error)
+	ListAuditLogsFiltered(model.AuditLogFilter) ([]model.AuditLog, int64, error)
 }
 
 type SystemComponentRepository interface {
@@ -52,6 +53,7 @@ type OperationLogRepository interface {
 	CreateOperationLog(*model.OperationLog) error
 	UpdateOperationLog(*model.OperationLog) error
 	ListOperationsByResource(string, uint) ([]model.OperationLog, error)
+	ListOperations(model.OperationLogFilter) ([]model.OperationLog, int64, error)
 	DeleteExpiredOperationLogs(int) error
 }
 
@@ -59,6 +61,7 @@ type OperationLogRepository interface {
 // the management dashboard.
 type DashboardRepository interface {
 	GetDashboardStats(int) (*model.DashboardStats, error)
+	GetDashboardApplicationSummary() (*model.DashboardApplicationSummary, error)
 	ListExpiringCerts(int) ([]model.Cert, error)
 	ListAuditLogs(string, string, string, int, int) ([]model.AuditLog, int64, error)
 }

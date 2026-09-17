@@ -91,9 +91,9 @@ describe('Workloads view', () => {
     const wrapper = mount(Workloads)
     await flush()
     await wrapper.find('.pod-filter-trigger').trigger('click')
-    await wrapper.find('.pod-filter-namespace').setValue('production')
-    await wrapper.find('.pod-filter-node').setValue('worker-a')
-    await wrapper.find('.pod-filter-status').setValue('Running')
+    await wrapper.find('.pod-filter-namespace .select-menu-native').setValue('production')
+    await wrapper.find('.pod-filter-node .select-menu-native').setValue('worker-a')
+    await wrapper.find('.pod-filter-status .select-menu-native').setValue('Running')
     await wrapper.find('.pod-restarts-filter input').setValue(true)
     await wrapper.find('.pod-search input').setValue('orders')
 

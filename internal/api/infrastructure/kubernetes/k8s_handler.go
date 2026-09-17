@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"sync"
 	"time"
 
 	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
@@ -29,6 +28,7 @@ type K8sHandler struct {
 	encKey             []byte
 	k8s                K8sResourceAdapter
 	storageService     *storageservice.Service
+	dashboardSummary   *DashboardSummaryService
 }
 
 // K8sResourceAdapter is the resource capability consumed by this HTTP API.
@@ -89,7 +89,7 @@ func NewK8sResourceAdapter(client *k8sclient.Client) K8sResourceAdapter {
 }
 
 func NewK8sHandlerWithAdapter(adapter K8sResourceAdapter, references repository.ResourceReferenceRepository, storageService *storageservice.Service, audit repository.AuditRepository) *K8sHandler {
-	return &K8sHandler{k8s: adapter, resourceReferences: references, storageService: storageService, audit: audit}
+	return &K8sHandler{k8s: adapter, resourceReferences: references, storageService: storageService, audit: audit, dashboardSummary: NewDashboardSummaryService(adapter, 5*time.Second)}
 }
 
 func NewK8sHandlerWithAdapterAndEncryption(references repository.ResourceReferenceRepository, storageService *storageservice.Service, encKey []byte, adapter K8sResourceAdapter, audit repository.AuditRepository) *K8sHandler {
@@ -157,81 +157,12 @@ func (h *K8sHandler) Dashboard(c *gin.Context) {
 		apiShared.K8sUnavailable(c)
 		return
 	}
-
-	ctx := c.Request.Context()
-	var nodeTotal, nsCount, podTotal, podReady, deployTotal, deployReady, svcTotal int
-	var version string
-	var group sync.WaitGroup
-	group.Add(5)
-
-	go func() {
-		defer group.Done()
-		nodes, err := h.k8s.ListNodeInfosContext(ctx)
-		if err != nil {
-			return
-		}
-		nodeTotal = len(nodes)
-		if nodeTotal > 0 {
-			version = nodes[0].Version
-		}
-	}()
-	go func() {
-		defer group.Done()
-		namespaces, err := h.k8s.CoreV1().Namespaces().List(ctx, metav1.ListOptions{})
-		if err == nil {
-			nsCount = len(namespaces.Items)
-		}
-	}()
-	go func() {
-		defer group.Done()
-		pods, err := h.k8s.CoreV1().Pods("").List(ctx, metav1.ListOptions{})
-		if err != nil {
-			return
-		}
-		podTotal = len(pods.Items)
-		for _, pod := range pods.Items {
-			if pod.Status.Phase == corev1.PodRunning {
-				podReady++
-			}
-		}
-	}()
-	go func() {
-		defer group.Done()
-		deployments, err := h.k8s.AppsV1().Deployments("").List(ctx, metav1.ListOptions{})
-		if err != nil {
-			return
-		}
-		deployTotal = len(deployments.Items)
-		for _, deployment := range deployments.Items {
-			replicas := int32(0)
-			if deployment.Spec.Replicas != nil {
-				replicas = *deployment.Spec.Replicas
-			}
-			if deployment.Status.ReadyReplicas == replicas {
-				deployReady++
-			}
-		}
-	}()
-	go func() {
-		defer group.Done()
-		services, err := h.k8s.CoreV1().Services("").List(ctx, metav1.ListOptions{})
-		if err == nil {
-			svcTotal = len(services.Items)
-		}
-	}()
-
-	group.Wait()
-
-	apiShared.Success(c, map[string]interface{}{
-		"nodes_total":       nodeTotal,
-		"pods_total":        podTotal,
-		"pods_ready":        podReady,
-		"deployments_total": deployTotal,
-		"deployments_ready": deployReady,
-		"services_total":    svcTotal,
-		"namespaces":        nsCount,
-		"version":           version,
-	})
+	data, err := h.dashboardSummary.Get(c.Request.Context())
+	if err != nil {
+		apiShared.Error(c, http.StatusOK, apiShared.CodeK8sAPIError, err.Error())
+		return
+	}
+	apiShared.Success(c, data)
 }
 
 // ==================== Namespace ====================

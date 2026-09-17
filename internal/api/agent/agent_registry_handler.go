@@ -39,7 +39,6 @@ func (h *AgentHandler) RegistryStatus(w http.ResponseWriter, r *http.Request) {
 		writeAgentError(w, http.StatusInternalServerError, "registry status unavailable", true)
 		return
 	}
-	h.audit(instance, "agent.registry_status", map[string]string{"capability": model.AgentCapabilityRegistryRead})
 	writeAgentResponse(w, http.StatusOK, agentAPIResponse{Status: "ok", Data: agentRegistryStatus(mirrors, proxies), Summary: "registry status retrieved"})
 }
 
@@ -79,7 +78,6 @@ func (h *AgentHandler) DNSStatus(w http.ResponseWriter, r *http.Request) {
 		writeAgentError(w, http.StatusInternalServerError, "DNS policy unavailable", true)
 		return
 	}
-	h.audit(instance, "agent.dns_status", map[string]string{"capability": model.AgentCapabilityDNSRead})
 	writeAgentResponse(w, http.StatusOK, agentAPIResponse{Status: "ok", Data: map[string]any{
 		"forwarding":    networkservice.ForwardTargets(configMap.Data["Corefile"]),
 		"active_policy": networkservice.PolicyPayload(policy),
@@ -120,7 +118,6 @@ func (h *AgentHandler) DNSResolve(w http.ResponseWriter, r *http.Request) {
 		data["summary"] = redactAgentText(truncateAgentText(config.Proxy.LastDiagnosticError, 256))
 		data["observed_at"] = config.Proxy.LastDiagnosticAt
 	}
-	h.audit(instance, "agent.dns_resolve", map[string]string{"capability": model.AgentCapabilityDNSRead, "name": name})
 	writeAgentResponse(w, http.StatusOK, agentAPIResponse{Status: "ok", Data: data, Summary: "managed DNS observation retrieved"})
 }
 
@@ -297,7 +294,7 @@ func (h *AgentHandler) RegistryNodePullCheck(w http.ResponseWriter, r *http.Requ
 		writeAgentError(w, http.StatusInternalServerError, "operation persistence failed", true)
 		return
 	}
-	h.audit(instance, "agent.registry_pull_check_requested", map[string]string{"capability": model.AgentCapabilityRegistryPullCheck, "node": request.Node, "registry": config.Registry, "operation_id": stored.OperationID})
+	h.audit(instance, "agent.registry_pull_check_requested", map[string]string{"capability": model.AgentCapabilityRegistryPullCheck, "node": request.Node, "registry": config.Registry, "request_id": requestID, "operation_id": stored.OperationID})
 	writeAgentResponse(w, http.StatusAccepted, agentAPIResponse{Status: "pending_approval", OperationID: stored.OperationID, Summary: "registry verification image pull is pending approval"})
 }
 

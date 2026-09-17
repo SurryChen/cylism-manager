@@ -7,8 +7,10 @@ import (
 	"time"
 
 	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
+	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/repository"
 	crypto "github.com/cylism/cylism-manager/internal/security"
+	auditservice "github.com/cylism/cylism-manager/internal/service/audit"
 	"github.com/cylism/cylism-manager/internal/transport"
 	"github.com/gin-gonic/gin"
 	"golang.org/x/crypto/ssh"
@@ -19,10 +21,16 @@ import (
 type ServerTerminalHandler struct {
 	store  repository.ServerRepository
 	encKey []byte
+	audit  auditservice.Repository
 }
 
 func NewServerTerminalHandler(st repository.ServerRepository, encKey []byte) *ServerTerminalHandler {
 	return &ServerTerminalHandler{store: st, encKey: encKey}
+}
+
+func (h *ServerTerminalHandler) WithAudit(logs auditservice.Repository) *ServerTerminalHandler {
+	h.audit = logs
+	return h
 }
 
 func (h *ServerTerminalHandler) Terminal(c *gin.Context) {
@@ -94,6 +102,7 @@ func (h *ServerTerminalHandler) Terminal(c *gin.Context) {
 	if err := session.Shell(); err != nil {
 		return
 	}
+	h.recordTerminalSession(c, server)
 
 	go func() {
 		for {
@@ -133,4 +142,15 @@ func (h *ServerTerminalHandler) Terminal(c *gin.Context) {
 			}
 		}
 	}
+}
+
+func (h *ServerTerminalHandler) recordTerminalSession(c *gin.Context, server *model.Server) {
+	if h == nil || h.audit == nil || server == nil {
+		return
+	}
+	_ = auditservice.NewService(h.audit).Record(auditservice.AuditEventInput{
+		Action: "server.terminal.start", ResourceType: "server", ResourceID: server.ID, TargetName: server.Name,
+		Actor: apiShared.ActorFromContext(c), Source: model.AuditSourceAPI, Outcome: model.AuditOutcomeSucceeded,
+		Summary: "启动服务器 Terminal 会话", RequestID: apiShared.RequestID(c), Metadata: map[string]any{"host": server.Host},
+	})
 }

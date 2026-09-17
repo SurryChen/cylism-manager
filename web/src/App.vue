@@ -21,7 +21,6 @@
           {{ group.label }}
         </router-link>
       </nav>
-      <div class="environment-status"><span class="status-indicator"></span><span>Production</span></div>
       <div class="topbar-actions">
         <div class="palette-picker">
           <button ref="paletteButton" class="icon-button" aria-label="选择配色" aria-haspopup="menu" :aria-expanded="paletteMenuOpen" @click="togglePaletteMenu">
@@ -67,7 +66,6 @@
         </section>
       </nav>
 
-      <div class="sidebar-status"><span class="status-indicator"></span><span>平台在线</span><small>4 agents connected</small></div>
     </aside>
 
     <div class="app-workspace" :class="{ 'app-workspace--wide': !showDesktopSidebar }">
@@ -77,7 +75,7 @@
     <div v-if="mobileNavOpen" class="drawer-scrim" @click="closeMobileNav"></div>
     <aside class="mobile-drawer" :class="{ 'is-open': mobileNavOpen }" data-testid="mobile-navigation" aria-label="移动导航">
       <div class="drawer-header"><span class="app-brand"><span class="brand-symbol"><Orbit /></span><strong>Cylism</strong></span><button class="icon-button" aria-label="关闭导航菜单" @click="closeMobileNav"><X :size="19" /></button></div>
-      <nav class="navigation-groups" aria-label="移动主导航">
+      <nav class="navigation-groups" :class="{ 'is-scrolling': mobileNavScrolling }" aria-label="移动主导航" @scroll="markMobileNavScrolling">
         <section v-for="group in navGroups" :key="group.label" class="navigation-group">
           <h2>{{ group.label }}</h2>
           <router-link v-for="item in group.items" :key="item.to" :to="item.to" class="sidebar-link" active-class="is-active" :class="{ 'is-active': isNavItemActive(item) }" @click="closeMobileNav"><component :is="item.icon" :size="17" /><span>{{ item.label }}</span></router-link>
@@ -98,10 +96,12 @@ import { usePalette } from './composables/usePalette.js'
 const router = useRouter()
 const route = useRoute()
 const mobileNavOpen = ref(false)
+const mobileNavScrolling = ref(false)
 const paletteMenuOpen = ref(false)
 const paletteButton = ref(null)
 const paletteMenu = ref(null)
 const paletteMenuStyle = ref({})
+let mobileNavScrollTimeout
 const { activePalette, selectPalette } = usePalette()
 const isLoginPage = computed(() => route.path === '/login')
 const showDesktopSidebar = computed(() => route.path !== '/')
@@ -154,7 +154,8 @@ const navGroups = computed(() => [
     label: '记录与系统',
     to: '/audit',
     items: [
-      { label: '审计', to: '/audit', icon: FileText },
+      { label: '审计日志', to: '/audit', icon: FileText },
+      { label: '操作历史', to: '/operations', icon: FileText },
       { label: '系统设置', to: '/settings/system', icon: Layers3 },
     ],
   },
@@ -225,12 +226,25 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  clearTimeout(mobileNavScrollTimeout)
   document.removeEventListener('click', closePaletteMenuOnOutsideClick)
   window.removeEventListener('resize', updatePaletteMenuPosition)
   window.removeEventListener('scroll', updatePaletteMenuPosition, true)
 })
 
+function markMobileNavScrolling() {
+  mobileNavScrolling.value = true
+  clearTimeout(mobileNavScrollTimeout)
+  mobileNavScrollTimeout = window.setTimeout(() => {
+    mobileNavScrolling.value = false
+  }, 600)
+}
+
 function openMobileNav() { mobileNavOpen.value = true }
-function closeMobileNav() { mobileNavOpen.value = false }
+function closeMobileNav() {
+  mobileNavOpen.value = false
+  mobileNavScrolling.value = false
+  clearTimeout(mobileNavScrollTimeout)
+}
 function logout() { clearTokens(); router.push('/login') }
 </script>

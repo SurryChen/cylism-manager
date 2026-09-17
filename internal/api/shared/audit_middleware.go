@@ -1,97 +1,220 @@
 package shared
 
 import (
-	"bytes"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
-	"io"
 	"net/http"
-	"regexp"
-	"strconv"
 	"strings"
-	"time"
 
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/repository"
 	security "github.com/cylism/cylism-manager/internal/security"
-	"github.com/cylism/cylism-manager/internal/service/auth"
+	auditservice "github.com/cylism/cylism-manager/internal/service/audit"
 	"github.com/gin-gonic/gin"
 )
 
-// AuditMiddleware records successful mutating API calls.
+const auditRequestIDKey = "audit_request_id"
+
+// AuditMiddleware establishes request correlation and writes an event only
+// for routes from the explicit high-risk resource catalog. Handler-specific
+// events take precedence for operations that need a richer target or detail.
 func AuditMiddleware(logs repository.AuditRepository) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if !isMutatingMethod(c.Request.Method) {
-			c.Next()
+		requestID := EnsureRequestID(c)
+		c.Next()
+		if logs == nil {
 			return
 		}
-		bodyBytes, _ := io.ReadAll(c.Request.Body)
-		c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
-		writer := &responseBodyWriter{ResponseWriter: c.Writer, body: &bytes.Buffer{}}
-		c.Writer = writer
-		start := time.Now()
-		c.Next()
-		if c.Writer.Status() >= 200 && c.Writer.Status() < 300 && logs != nil {
-			entry := &model.AuditLog{Action: inferAction(c.Request.Method, c.FullPath()), ResourceType: inferResourceType(c.FullPath()), ResourceID: extractResourceID(c.Param("id")), UserID: UserID(c), Detail: buildDetailForRequest(c, bodyBytes, writer.body.Bytes()), CreatedAt: start}
-			_ = logs.CreateAuditLog(entry)
+		action, resourceType, ok := catalogedAuditAction(c.Request.Method, c.FullPath())
+		if !ok {
+			return
+		}
+		outcome := model.AuditOutcomeSucceeded
+		if c.Writer.Status() >= http.StatusBadRequest {
+			outcome = model.AuditOutcomeFailed
+			if c.Writer.Status() == http.StatusUnauthorized || c.Writer.Status() == http.StatusForbidden {
+				outcome = model.AuditOutcomeDenied
+			}
+		}
+		source := model.AuditSourceAPI
+		if _, delegated := c.Get("delegation"); delegated {
+			source = "delegation"
+		}
+		_ = auditservice.NewService(logs).Record(auditservice.AuditEventInput{
+			Action: action, ResourceType: resourceType, ResourceID: extractRouteResourceID(c),
+			Actor: ActorFromContext(c), Source: source, Outcome: outcome,
+			TargetName: extractRouteTargetName(c, resourceType), Summary: model.AuditSummaryFallback(action, resourceType, extractRouteResourceID(c)), RequestID: requestID,
+			Metadata: map[string]any{"route": c.FullPath(), "method": c.Request.Method},
+		})
+	}
+}
+
+// EnsureRequestID makes an audit correlation ID available to handlers that
+// deliberately reject a request before the general audit middleware runs.
+func EnsureRequestID(c *gin.Context) string {
+	if requestID := RequestID(c); requestID != "" {
+		return requestID
+	}
+	requestID := strings.TrimSpace(c.GetHeader("X-Request-ID"))
+	if requestID == "" {
+		requestID = newAuditRequestID()
+	}
+	c.Set(auditRequestIDKey, requestID)
+	c.Header("X-Request-ID", requestID)
+	return requestID
+}
+
+func catalogedAuditAction(method, path string) (string, string, bool) {
+	// These paths write their own richer semantic event.
+	if strings.Contains(path, "/node-registry-mirrors") || strings.Contains(path, "/agent-capability-grants") || strings.Contains(path, "/managed-oci-registries/:id/catalog") {
+		return "", "", false
+	}
+	resourceType := ""
+	switch {
+	case strings.Contains(path, "/monitoring/alerts"):
+		resourceType = "alerting"
+	case strings.Contains(path, "/monitoring/logs"):
+		resourceType = "logging"
+	case strings.Contains(path, "/monitoring"):
+		resourceType = "monitoring"
+	case strings.Contains(path, "/persistent-volume"):
+		resourceType = "storage"
+	case strings.Contains(path, "/k8s/ingresses"):
+		resourceType = "ingress"
+	case strings.Contains(path, "/routes"):
+		resourceType = "ingress_route"
+	case strings.Contains(path, "/k8s/secrets"):
+		resourceType = "secret"
+	case strings.Contains(path, "/k8s/configmaps"):
+		resourceType = "configmap"
+	case strings.Contains(path, "/k8s/services"):
+		resourceType = "service"
+	case strings.Contains(path, "/k8s/deployments") || strings.Contains(path, "/k8s/statefulsets") || strings.Contains(path, "/k8s/daemonsets"):
+		resourceType = "workload"
+	case strings.Contains(path, "/k8s/namespaces"):
+		resourceType = "namespace"
+	case strings.Contains(path, "/certs"):
+		resourceType = "certificate"
+	case strings.Contains(path, "/chart-repositories"):
+		resourceType = "chart_repository"
+	case strings.Contains(path, "/platform"):
+		resourceType = "platform"
+	case strings.Contains(path, "/registry-proxy") || strings.Contains(path, "/registry-proxies"):
+		resourceType = "registry_proxy"
+	case strings.Contains(path, "/managed-oci-registries"):
+		resourceType = "managed_registry"
+	case strings.Contains(path, "/image-registries"):
+		resourceType = "image_registry"
+	case strings.Contains(path, "/system-components"):
+		resourceType = "system_component"
+	case strings.Contains(path, "/cluster-dns"):
+		resourceType = "cluster_dns"
+	case strings.Contains(path, "/tailscale"):
+		resourceType = "tailnet"
+	case strings.Contains(path, "/admin/tables"):
+		resourceType = "admin_record"
+	case strings.Contains(path, "/environments"):
+		resourceType = "environment"
+	case strings.Contains(path, "/projects"):
+		resourceType = "project"
+	case strings.Contains(path, "/applications"):
+		resourceType = "application"
+	case strings.Contains(path, "/servers"):
+		resourceType = "server"
+	case strings.Contains(path, "/sites"):
+		resourceType = "site"
+	case strings.Contains(path, "/domains"):
+		resourceType = "domain"
+	case strings.Contains(path, "/nodes"):
+		resourceType = "cluster_node"
+	case strings.Contains(path, "/runtimes"):
+		resourceType = "runtime"
+	default:
+		return "", "", false
+	}
+
+	if method == http.MethodGet && resourceType == "secret" && strings.Contains(path, "/:namespace/:name") {
+		return "secret.read", resourceType, true
+	}
+	operation := map[string]string{http.MethodPost: "create", http.MethodPut: "update", http.MethodPatch: "update", http.MethodDelete: "delete"}[method]
+	if operation == "" {
+		return "", "", false
+	}
+	switch {
+	case strings.Contains(path, "/rollback"):
+		operation = "rollback"
+	case strings.Contains(path, "/restarts") || strings.Contains(path, "/restart"):
+		operation = "restart"
+	case strings.Contains(path, "/scale"):
+		operation = "scale"
+	case strings.Contains(path, "/uninstall"):
+		operation = "uninstall"
+	case strings.Contains(path, "/install"):
+		operation = "install"
+	case strings.Contains(path, "/verify"):
+		operation = "verify"
+	case strings.Contains(path, "/apply"):
+		operation = "apply"
+	case strings.Contains(path, "/revert"):
+		operation = "revert"
+	case strings.Contains(path, "/repair"):
+		operation = "repair"
+	case strings.Contains(path, "/cleanup"):
+		operation = "cleanup"
+	case strings.Contains(path, "/migrate") || strings.Contains(path, "/migration"):
+		operation = "migrate"
+	case strings.Contains(path, "/restore"):
+		operation = "restore"
+	case strings.Contains(path, "/backup"):
+		operation = "backup"
+	case strings.Contains(path, "/releases"):
+		operation = "release"
+	case strings.Contains(path, "/deploy"):
+		operation = "deploy"
+	case strings.Contains(path, "/delegations") || strings.Contains(path, "/integration-handoffs"):
+		operation = "delegate"
+	case strings.Contains(path, "/sync-namespace"):
+		operation = "sync"
+	case strings.Contains(path, "/drain") || strings.Contains(path, "/rejoin") || strings.Contains(path, "/unbind"):
+		operation = "operate"
+	}
+	return resourceType + "." + operation, resourceType, true
+}
+
+func extractRouteResourceID(c *gin.Context) uint {
+	for _, key := range []string{"id", "projectID", "environmentID", "releaseID", "templateID"} {
+		if id, err := ParsePositiveID(c.Param(key)); err == nil && id != 0 {
+			return id
 		}
 	}
+	return 0
 }
 
-type responseBodyWriter struct {
-	gin.ResponseWriter
-	body *bytes.Buffer
-}
-
-func (w *responseBodyWriter) Write(b []byte) (int, error) {
-	w.body.Write(b)
-	return w.ResponseWriter.Write(b)
-}
-
-func isMutatingMethod(method string) bool {
-	switch method {
-	case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
-		return true
+func extractRouteTargetName(c *gin.Context, resourceType string) string {
+	if namespace, name := strings.TrimSpace(c.Param("namespace")), strings.TrimSpace(c.Param("name")); namespace != "" && name != "" {
+		return namespace + "/" + name
 	}
-	return false
-}
-
-func inferAction(method, path string) string {
-	pathActions := map[string]string{"deploy": "deploy", "issue": "issue", "renew": "renew", "revoke": "revoke", "reload": "reload", "generate": "generate", "import": "import"}
-	for keyword, action := range pathActions {
-		if matched, _ := regexp.MatchString(keyword, path); matched {
-			return action
+	for _, key := range []string{"name", "chart", "table", "provider", "id", "projectID", "environmentID", "releaseID", "templateID"} {
+		if value := strings.TrimSpace(c.Param(key)); value != "" {
+			return value
 		}
 	}
-	switch method {
-	case http.MethodPost:
-		return "create"
-	case http.MethodPut, http.MethodPatch:
-		return "update"
-	case http.MethodDelete:
-		return "delete"
-	}
-	return method
+	return model.AuditTargetFallback(resourceType, extractRouteResourceID(c))
 }
 
-func inferResourceType(path string) string {
-	checks := []struct {
-		pattern string
-		value   string
-	}{{"/servers", "server"}, {"/sites.*/(issue|renew|revoke)", "cert"}, {"/sites", "site"}, {"/nginx", "nginx"}, {"/applications", "application"}, {"/projects", "project"}}
-	for _, check := range checks {
-		if matched, _ := regexp.MatchString(check.pattern, path); matched {
-			return check.value
-		}
-	}
-	return "unknown"
+func RequestID(c *gin.Context) string {
+	value, _ := c.Get(auditRequestIDKey)
+	requestID, _ := value.(string)
+	return requestID
 }
 
-func extractResourceID(idStr string) uint {
-	id, err := strconv.ParseUint(idStr, 10, 64)
-	if err != nil {
-		return 0
+func newAuditRequestID() string {
+	bytes := make([]byte, 12)
+	if _, err := rand.Read(bytes); err != nil {
+		return "request-unavailable"
 	}
-	return uint(id)
+	return "req_" + hex.EncodeToString(bytes)
 }
 
 func buildDetail(method, path string, reqBody, respBody []byte) string {
@@ -100,21 +223,6 @@ func buildDetail(method, path string, reqBody, respBody []byte) string {
 		var body map[string]interface{}
 		if json.Unmarshal(reqBody, &body) == nil {
 			detail["request"] = redactAuditValue(body)
-		}
-	}
-	data, _ := json.Marshal(detail)
-	return string(data)
-}
-
-func buildDetailForRequest(c *gin.Context, reqBody, respBody []byte) string {
-	var detail map[string]interface{}
-	_ = json.Unmarshal([]byte(buildDetail(c.Request.Method, c.FullPath(), reqBody, respBody)), &detail)
-	if strings.Contains(c.FullPath(), "/configmaps/") && c.Request.Method == http.MethodPut {
-		detail["request"] = redactAuditValue(detail["request"])
-	}
-	if delegation, exists := c.Get("delegation"); exists {
-		if claims, ok := delegation.(*auth.DelegationClaims); ok {
-			detail["delegation_jti"] = claims.JTI
 		}
 	}
 	data, _ := json.Marshal(detail)

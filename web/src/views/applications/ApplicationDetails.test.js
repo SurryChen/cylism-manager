@@ -34,7 +34,7 @@ describe('ApplicationDetails view', () => {
     expect(wrapper.text()).toContain('标准生产配置')
     expect(wrapper.text()).toContain('api.example.com')
     expect(wrapper.text()).toContain('admin.example.com')
-    expect(wrapper.find('[aria-label="工作负载类型"]').element.value).toBe('deployment')
+    expect(wrapper.find('[aria-label="工作负载类型"].select-menu-native').element.value).toBe('deployment')
   })
 
   it('restarts the application from its latest successful release', async () => {
@@ -233,7 +233,7 @@ describe('ApplicationDetails view', () => {
     await addPortButton.trigger('click')
     const servicePorts = wrapper.findAll('.service-port-row')
     await servicePorts[0].find('[aria-label="Service 端口名称"]').setValue('proxy')
-    await servicePorts[0].find('[aria-label="传输协议"]').setValue('UDP')
+    wrapper.vm.templateForm.service.ports[0].protocol = 'UDP'
     await servicePorts[0].find('[aria-label="Service 端口"]').setValue(443)
     await servicePorts[0].find('[aria-label="Target Port"]').setValue(443)
     await servicePorts[1].find('[aria-label="Service 端口名称"]').setValue('api')

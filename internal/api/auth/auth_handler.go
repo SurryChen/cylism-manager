@@ -5,7 +5,9 @@ import (
 
 	"time"
 
+	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/repository"
+	auditservice "github.com/cylism/cylism-manager/internal/service/audit"
 	authservice "github.com/cylism/cylism-manager/internal/service/auth"
 	"github.com/gin-gonic/gin"
 )
@@ -26,6 +28,12 @@ type AuthHandler struct {
 	accessTokenTTL  time.Duration
 	refreshTokenTTL time.Duration
 	temporaryTokens *authservice.TemporaryTokenService
+	audit           auditservice.Repository
+}
+
+func (h *AuthHandler) WithAudit(repository auditservice.Repository) *AuthHandler {
+	h.audit = repository
+	return h
 }
 
 // NewAuthHandlerWithTemporaryService uses a service composed by Bootstrap.
@@ -57,20 +65,24 @@ func (h *AuthHandler) Login(c *gin.Context) {
 
 	user, err := h.users.GetUserByUsername(req.Username)
 	if err != nil || !authservice.CheckPassword(req.Password, user.PasswordHash) {
+		h.record(c, "auth.login", 0, req.Username, model.AuditOutcomeDenied, "登录失败", nil)
 		apiShared.Unauthorized(c, "用户名或密码错误")
 		return
 	}
 
 	accessToken, err := authservice.GenerateAccessToken(h.jwtSecret, user.ID, user.Username, h.accessTokenTTL)
 	if err != nil {
+		h.record(c, "auth.login", user.ID, user.Username, model.AuditOutcomeFailed, "签发登录令牌失败", nil)
 		apiShared.InternalError(c, "生成 token 失败")
 		return
 	}
 	refreshToken, err := authservice.GenerateRefreshToken(h.jwtSecret, user.ID, h.refreshTokenTTL)
 	if err != nil {
+		h.record(c, "auth.login", user.ID, user.Username, model.AuditOutcomeFailed, "签发刷新令牌失败", nil)
 		apiShared.InternalError(c, "生成 token 失败")
 		return
 	}
+	h.record(c, "auth.login", user.ID, user.Username, model.AuditOutcomeSucceeded, "用户登录", nil)
 
 	apiShared.Success(c, gin.H{
 		"access_token":  accessToken,
@@ -97,24 +109,39 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 	// 验证 refresh token
 	claims, err := authservice.ParseToken(h.jwtSecret, req.RefreshToken)
 	if err != nil {
+		h.record(c, "auth.token.refresh", 0, "", model.AuditOutcomeDenied, "刷新令牌被拒绝", nil)
 		apiShared.Unauthorized(c, "refresh token 无效或已过期")
 		return
 	}
 
 	accessToken, err := authservice.GenerateAccessToken(h.jwtSecret, claims.UserID, claims.Username, h.accessTokenTTL)
 	if err != nil {
+		h.record(c, "auth.token.refresh", claims.UserID, claims.Username, model.AuditOutcomeFailed, "签发访问令牌失败", nil)
 		apiShared.InternalError(c, "生成 token 失败")
 		return
 	}
 	refreshToken, err := authservice.GenerateRefreshToken(h.jwtSecret, claims.UserID, h.refreshTokenTTL)
 	if err != nil {
+		h.record(c, "auth.token.refresh", claims.UserID, claims.Username, model.AuditOutcomeFailed, "签发刷新令牌失败", nil)
 		apiShared.InternalError(c, "生成 token 失败")
 		return
 	}
+	h.record(c, "auth.token.refresh", claims.UserID, claims.Username, model.AuditOutcomeSucceeded, "刷新登录令牌", nil)
 
 	apiShared.Success(c, gin.H{
 		"access_token":  accessToken,
 		"refresh_token": refreshToken,
+	})
+}
+
+func (h *AuthHandler) record(c *gin.Context, action string, userID uint, username, outcome, summary string, metadata map[string]any) {
+	if h == nil || h.audit == nil {
+		return
+	}
+	_ = auditservice.NewService(h.audit).Record(auditservice.AuditEventInput{
+		Action: action, ResourceType: "identity", ResourceID: userID, TargetName: username,
+		Actor: auditservice.Actor{Type: model.AuditActorUser, ID: userID, Name: username}, Source: model.AuditSourceAPI,
+		Outcome: outcome, Summary: summary, RequestID: apiShared.RequestID(c), Metadata: metadata,
 	})
 }
 

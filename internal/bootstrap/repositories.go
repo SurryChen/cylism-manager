@@ -24,6 +24,7 @@ type Repositories struct {
 	Platform         repository.PlatformReleaseRepository
 	Mirror           repository.NodeRegistryMirrorRepository
 	Managed          repository.ManagedRegistryRepository
+	RegistryCatalog  repository.ManagedRegistryCatalogRepository
 	Proxy            repository.RegistryProxyRepository
 	Alerting         alertingservice.AutomationRepository
 	LoggingScope     repository.LoggingScopeRepository
@@ -34,7 +35,7 @@ func BuildRepositories(db *store.Store) Repositories {
 	return Repositories{
 		Store: db, Users: db, TemporaryToken: db, Cluster: db, Network: db,
 		DNSCredentials: db, StorageEnv: db, StorageRecords: db, Application: db,
-		Platform: db, Mirror: db, Managed: db, Proxy: db, Alerting: db,
+		Platform: db, Mirror: db, Managed: db, RegistryCatalog: db, Proxy: db, Alerting: db,
 		LoggingScope: db, SystemComponents: db,
 	}
 }

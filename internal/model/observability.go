@@ -1,6 +1,7 @@
 package model
 
 import (
+	"fmt"
 	"time"
 )
 
@@ -9,6 +10,25 @@ type DashboardStats struct {
 	TotalServers  int64 `json:"total_servers"`
 	TotalSites    int64 `json:"total_sites"`
 	ExpiringCerts int64 `json:"expiring_certs"`
+	ExpiredCerts  int64 `json:"expired_certs"`
+}
+
+// DashboardApplicationSummary is the current release state aggregated per
+// application for the operational dashboard.
+type DashboardApplicationSummary struct {
+	TotalApplications      int64
+	SuccessfulApplications int64
+	ReleasingApplications  int64
+	FailedApplications     int64
+	UnreleasedApplications int64
+	LatestRelease          *DashboardLatestRelease
+}
+
+type DashboardLatestRelease struct {
+	ApplicationName string
+	Version         string
+	Status          string
+	CreatedAt       time.Time
 }
 
 type AuditLog struct {
@@ -16,9 +36,71 @@ type AuditLog struct {
 	Action       string    `gorm:"size:64;index;not null" json:"action"`
 	ResourceType string    `gorm:"size:64;index;not null" json:"resource_type"`
 	ResourceID   uint      `gorm:"index" json:"resource_id"`
+	TargetName   string    `gorm:"size:256;index" json:"target_name"`
 	UserID       uint      `gorm:"index"`
+	ActorType    string    `gorm:"size:32;index" json:"actor_type"`
+	ActorName    string    `gorm:"size:128;index" json:"actor_name"`
+	Source       string    `gorm:"size:32;index" json:"source"`
+	Outcome      string    `gorm:"size:16;index" json:"outcome"`
+	Summary      string    `gorm:"size:512" json:"summary"`
+	RequestID    string    `gorm:"size:128;index" json:"request_id"`
+	OperationID  string    `gorm:"size:128;index" json:"operation_id"`
 	Detail       string    `gorm:"type:text" json:"detail"` // JSON
 	CreatedAt    time.Time `gorm:"index" json:"created_at"`
+}
+
+const (
+	AuditActorUser   = "user"
+	AuditActorAgent  = "agent"
+	AuditActorSystem = "system"
+
+	AuditSourceAPI        = "api"
+	AuditSourceAgent      = "agent"
+	AuditSourceDelegation = "delegation"
+	AuditSourceSystem     = "system"
+	AuditSourceLegacy     = "legacy"
+
+	AuditOutcomeSucceeded = "succeeded"
+	AuditOutcomeFailed    = "failed"
+	AuditOutcomeDenied    = "denied"
+	AuditOutcomeAccepted  = "accepted"
+)
+
+// AuditTargetFallback makes a pre-structured record understandable without
+// relying on its legacy JSON detail body.
+func AuditTargetFallback(resourceType string, resourceID uint) string {
+	if resourceID == 0 {
+		return resourceType
+	}
+	return fmt.Sprintf("%s #%d", resourceType, resourceID)
+}
+
+func AuditSummaryFallback(action, resourceType string, resourceID uint) string {
+	return fmt.Sprintf("执行 %s：%s", action, AuditTargetFallback(resourceType, resourceID))
+}
+
+// AuditLogFilter is the structured query contract for the audit timeline.
+type AuditLogFilter struct {
+	ResourceType string
+	Action       string
+	Outcome      string
+	Source       string
+	ActorType    string
+	TargetName   string
+	Keyword      string
+	CreatedFrom  time.Time
+	CreatedTo    time.Time
+	Limit        int
+	Offset       int
+}
+
+// OperationLogFilter is the global operation-history query contract.
+type OperationLogFilter struct {
+	ResourceType string
+	Status       string
+	Keyword      string
+	Limit        int
+	Offset       int
 }
 
 // UpstreamConfig 上游代理配置

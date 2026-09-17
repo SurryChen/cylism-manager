@@ -1,222 +1,233 @@
 <template>
   <div class="dashboard-page">
-    <div class="page-header">
-      <div><h1 class="page-title">服务健康度</h1><p class="page-subtitle">集中查看受管服务、证书风险与最近变更。</p></div>
+    <div class="page-header dashboard-header">
+      <div class="dashboard-title-block">
+        <h1 class="page-title">平台健康度</h1>
+      </div>
+      <router-link class="btn btn-primary dashboard-primary-action" to="/applications">部署服务</router-link>
     </div>
 
-    <section class="cluster-strip section-gap" :class="{ 'is-loading': k8sLoading }" :aria-busy="k8sLoading">
-      <div class="cluster-strip-heading"><strong>集群运行概况</strong></div>
-      <div class="cluster-strip-stats">
-        <div><strong>{{ k8sReadyMetric('deployments_ready', 'deployments_total') }}</strong><span>Deployments 就绪</span></div>
-        <div><strong>{{ k8sMetric('services_total') }}</strong><span>Services</span></div>
-        <div><strong class="metric-accent">{{ k8sMetric('nodes_total') }}</strong><span>节点</span></div>
-        <div><strong>{{ k8sMetric('namespaces') }}</strong><span>命名空间</span></div>
-        <div><strong class="metric-success">{{ k8sReadyMetric('pods_ready', 'pods_total') }}</strong><span>Pods 就绪</span></div>
-        <div><strong class="metric-version">{{ k8sMetric('version') }}</strong><span>K3s 版本</span></div>
-      </div>
+    <section class="dashboard-main-grid">
+      <SurfaceCard as="article" class="dashboard-health-panel" :class="{ 'is-loading': k8sLoading }" :aria-busy="k8sLoading">
+        <template #header><h2 class="card-title">集群概况</h2></template>
+        <template #actions><div class="dashboard-health-header"><span :class="`cluster-status cluster-status-${k8sStatusTone}`">{{ k8sStatusLabel }}</span><router-link class="panel-link" to="/servers">查看集群</router-link></div></template>
+        <section class="dashboard-overview-section" aria-label="集群资源">
+          <div class="dashboard-overview-grid">
+            <div class="dashboard-overview-metric"><strong>{{ k8sMetric('nodes_total') }}</strong><span>节点</span></div>
+            <div class="dashboard-overview-metric"><strong class="metric-success">{{ k8sReadyMetric('pods_ready', 'pods_total') }}</strong><span>Pods 就绪</span></div>
+            <div class="dashboard-overview-metric"><strong>{{ k8sReadyMetric('deployments_ready', 'deployments_total') }}</strong><span>Deployments 就绪</span></div>
+            <div class="dashboard-overview-metric"><strong>{{ k8sMetric('services_total') }}</strong><span>服务</span></div>
+            <div class="dashboard-overview-metric"><strong>{{ k8sMetric('namespaces') }}</strong><span>命名空间</span></div>
+            <div class="dashboard-overview-metric dashboard-version"><strong :title="k8sMetric('version')">{{ k8sMetric('version') }}</strong><span>Kubernetes 版本</span></div>
+          </div>
+          <div class="dashboard-cluster-health">
+            <div class="dashboard-cluster-health-heading"><span>节点健康</span><strong>{{ k8sReadyMetric('nodes_ready', 'nodes_total') }}</strong></div>
+            <div class="dashboard-cluster-health-status" role="list" aria-label="节点健康状态">
+              <div v-for="segment in nodeHealthSegments" :key="segment.key" class="dashboard-node-health-item" :class="`dashboard-node-health-${segment.tone}`" role="listitem">
+                <span class="dashboard-node-health-dot" aria-hidden="true"></span>
+                <span>{{ segment.label }}</span>
+                <strong>{{ segment.count }}</strong>
+              </div>
+            </div>
+            <div class="dashboard-cluster-health-meta"><span>{{ k8sMetric('control_plane_nodes') }} 控制面</span><span>{{ k8sMetric('worker_nodes') }} 工作节点</span><span>{{ k8sMetric('cpu_cores_total') }} vCPU · {{ k8sMemoryMetric() }}</span></div>
+          </div>
+        </section>
+      </SurfaceCard>
+
+      <SurfaceCard as="article" class="dashboard-application-panel" :class="{ 'is-loading': dashboardLoading && !applicationSummary }" :aria-busy="dashboardLoading">
+        <template #header><h2 class="card-title">应用情况</h2></template>
+        <template #actions><router-link class="panel-link" to="/applications">查看应用</router-link></template>
+        <div class="dashboard-application-content dashboard-card-scroll-region" tabindex="0">
+          <div v-if="dashboardSectionError('applications')" class="dashboard-application-unavailable"><span class="empty-icon">!</span><span>应用状态暂不可用</span></div>
+          <template v-else>
+            <div class="application-summary-count"><strong>{{ applicationMetric('total_applications') }}</strong><span>个应用</span></div>
+            <div class="application-status-grid">
+              <div><strong class="metric-success">{{ applicationMetric('successful_applications') }}</strong><span>运行正常</span></div>
+              <div><strong class="metric-accent">{{ applicationMetric('releasing_applications') }}</strong><span>发布中</span></div>
+              <div><strong :class="{ 'metric-warn': Number(applicationSummary?.failed_applications || 0) > 0 }">{{ applicationMetric('failed_applications') }}</strong><span>发布失败</span></div>
+              <div><strong>{{ applicationMetric('unreleased_applications') }}</strong><span>未发布</span></div>
+            </div>
+            <div class="application-latest-release">
+              <span>最近发布</span>
+              <template v-if="applicationSummary?.latest_release"><strong>{{ applicationSummary.latest_release.application_name }}</strong><span>{{ releaseStatusLabel(applicationSummary.latest_release.status) }}<template v-if="applicationSummary.latest_release.version"> · {{ applicationSummary.latest_release.version }}</template></span></template>
+              <span v-else>暂无发布记录</span>
+            </div>
+          </template>
+        </div>
+      </SurfaceCard>
+
+      <SurfaceCard as="aside" class="dashboard-side-panel">
+        <template #header><h2 class="card-title">快捷操作</h2></template>
+        <template #actions><button class="icon-button dashboard-action-settings" type="button" title="编辑快捷操作" aria-label="编辑快捷操作" :aria-expanded="quickActionsEditing" @click="quickActionsEditing = true"><Settings2 :size="15" /></button></template>
+        <nav class="dashboard-action-list" aria-label="快捷操作">
+          <router-link v-for="action in visibleQuickActions" :key="action.id" class="dashboard-action-card" :class="{ 'dashboard-action-card-primary': action.id === 'deploy' }" :to="action.to"><span class="dashboard-action-icon">{{ action.icon }}</span><strong>{{ action.label }}</strong><span class="action-arrow">→</span></router-link>
+        </nav>
+      </SurfaceCard>
+
+      <BaseModal :open="quickActionsEditing" title="配置快捷操作" size="small" @close="quickActionsEditing = false">
+        <div class="quick-actions-editor">
+          <div class="quick-actions-editor-header"><strong>显示入口</strong></div>
+          <label v-for="action in quickActions" :key="action.id" class="quick-action-option"><input type="checkbox" :checked="quickActionIds.includes(action.id)" :disabled="quickActionIds.length === 1 && quickActionIds.includes(action.id)" @change="toggleQuickAction(action.id)" /><span>{{ action.label }}</span></label>
+        </div>
+        <template #actions><button class="btn btn-primary" type="button" @click="quickActionsEditing = false">完成</button></template>
+      </BaseModal>
     </section>
 
-    <div class="metric-grid dashboard-metrics">
-      <div class="metric">
-        <div class="metric-value">{{ stats.total_servers || 0 }}</div>
-        <div class="metric-label">服务器</div>
-      </div>
-      <div class="metric">
-        <div class="metric-value">{{ stats.total_sites || 0 }}</div>
-        <div class="metric-label">站点</div>
-      </div>
-      <div class="metric">
-        <div class="metric-value metric-warn">{{ stats.expiring_certs || 0 }}</div>
-        <div class="metric-label">即将到期</div>
-      </div>
-      <div class="metric">
-        <div class="metric-value" :class="{ 'metric-warn': firingAlerts > 0 }">{{ alertMetricValue }}</div>
-        <div class="metric-label">触发告警</div>
-      </div>
-      <div class="metric">
-        <div class="metric-value" :class="{ 'metric-warn': notReadyDeployments > 0 }">{{ notReadyDeployments }}</div>
-        <div class="metric-label">未就绪应用</div>
-      </div>
-      <div class="metric">
-        <div class="metric-value">{{ recentLogs.length }}</div>
-        <div class="metric-label">最近操作</div>
-      </div>
-    </div>
-
-    <section class="card dashboard-actions-panel">
-      <div class="card-header">
-        <h2 class="card-title">常用入口</h2>
-        <span class="panel-caption">部署、更新、日志、监控</span>
-      </div>
-      <div class="dashboard-action-grid">
-        <router-link class="dashboard-action-card" to="/applications">
-          <span class="dashboard-action-icon">⧉</span>
-          <div>
-            <strong>部署 / 更新服务</strong>
-            <small>进入应用工作台，创建发布或调整现有服务。</small>
-          </div>
-        </router-link>
-        <router-link class="dashboard-action-card" to="/monitoring">
-          <span class="dashboard-action-icon">◔</span>
-          <div>
-            <strong>查看监控</strong>
-            <small>观察节点、工作负载和资源趋势。</small>
-          </div>
-        </router-link>
-        <router-link class="dashboard-action-card" to="/audit">
-          <span class="dashboard-action-icon">▦</span>
-          <div>
-            <strong>查看日志</strong>
-            <small>检索审计记录、筛选操作和查看详情。</small>
-          </div>
-        </router-link>
-        <router-link class="dashboard-action-card" to="/servers">
-          <span class="dashboard-action-icon">⌁</span>
-          <div>
-            <strong>服务器与集群</strong>
-            <small>查看节点、网络和基础设施状态。</small>
-          </div>
-        </router-link>
-      </div>
-    </section>
-
-    <section class="dashboard-attention-grid">
-      <article class="card dashboard-attention-panel">
-        <div class="card-header">
-          <h2 class="card-title">待关注事项</h2>
-          <span class="panel-caption">按风险排序</span>
-        </div>
-        <div class="attention-list">
-          <router-link v-for="item in attentionItems" :key="item.key" class="attention-row" :to="item.to">
-            <span class="attention-dot" :class="item.level"></span>
-            <span class="attention-copy">
-              <strong>{{ item.title }}</strong>
-              <small>{{ item.description }}</small>
-            </span>
-            <span class="attention-value">{{ item.value }}</span>
-          </router-link>
-        </div>
-      </article>
-
-      <article class="card dashboard-alert-panel">
-        <div class="card-header">
-          <h2 class="card-title">告警概览</h2>
-          <router-link class="panel-link" to="/monitoring?tab=alerts">进入告警</router-link>
-        </div>
-        <div v-if="alertOverview" class="alert-summary-grid">
-          <div><strong :class="{ 'metric-warn': firingAlerts > 0 }">{{ firingAlerts }}</strong><span>触发中</span></div>
-          <div><strong>{{ activeAlerts.length }}</strong><span>活跃告警</span></div>
-          <div><strong>{{ silencedAlerts }}</strong><span>已静默</span></div>
-        </div>
-        <div v-if="activeAlerts.length" class="alert-preview-list">
-          <router-link v-for="alert in activeAlerts.slice(0, 3)" :key="alert.fingerprint || alertTitle(alert)" class="alert-preview-row" to="/monitoring?tab=alerts">
-            <span class="badge" :class="alertSeverityBadge(alert)">{{ alertSeverityLabel(alert) }}</span>
-            <span><strong>{{ alertTitle(alert) }}</strong><small>{{ alertMeta(alert) }}</small></span>
-          </router-link>
-        </div>
-        <div v-else class="empty-state dashboard-alert-empty">
-          <span class="empty-icon">{{ alertOverview ? '✓' : '◌' }}</span>
-          <span class="empty-text">{{ alertOverview ? '当前没有触发中的告警' : (alertingError || '告警组件暂不可用') }}</span>
-        </div>
-      </article>
-    </section>
-
-    <div class="dashboard-workspace">
-      <section class="card dashboard-primary-panel">
-        <div class="card-header">
-          <h2 class="card-title">即将到期的证书</h2>
-          <span class="panel-caption">未来 30 天</span>
-        </div>
-        <div v-if="expiringCerts.length === 0" class="empty-state dashboard-empty-state">
-          <span class="empty-icon">✓</span>
-          <span class="empty-text">30 天内没有即将到期的证书</span>
-        </div>
-        <div v-else class="table-wrap">
-          <table class="data-table">
-            <thead><tr><th>域名</th><th>到期时间</th><th>状态</th></tr></thead>
-            <tbody>
-              <tr v-for="cert in expiringCerts" :key="cert.id">
-                <td>{{ cert.domains }}</td>
-                <td>{{ formatDate(cert.valid_to) }}</td>
-                <td><span class="badge badge-warn">即将到期</span></td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
+    <section class="dashboard-insights-grid">
+      <section class="dashboard-trends-panel">
+        <SurfaceCard v-if="trendError" as="div" class="dashboard-trends-empty"><template #header><h2 class="card-title">资源趋势</h2></template><template #actions><router-link class="panel-link" to="/monitoring">查看监控</router-link></template><div><span class="empty-icon">!</span><span class="empty-text">监控趋势暂不可用</span></div></SurfaceCard>
+        <MetricTrendChart v-else class="dashboard-trend-chart" title="资源趋势" :unit="selectedTrendMetric.unit" :loading="trendLoading" :series="selectedTrendSeries">
+          <template #actions><router-link class="panel-link" to="/monitoring">查看监控</router-link></template>
+          <template #toolbar>
+            <div class="dashboard-trend-toolbar">
+              <div class="dashboard-segmented" role="group" aria-label="资源类型"><button v-for="metric in trendMetrics" :key="metric.id" type="button" :class="{ active: selectedTrendMetricId === metric.id }" @click="selectTrendMetric(metric.id)">{{ metric.label }}</button></div>
+              <div class="dashboard-segmented" role="group" aria-label="展示方式"><button type="button" :class="{ active: trendDisplayMode === 'average' }" @click="trendDisplayMode = 'average'">集群平均</button><button type="button" :class="{ active: trendDisplayMode === 'nodes' }" @click="trendDisplayMode = 'nodes'">按节点</button></div>
+              <SelectMenu v-if="trendDisplayMode === 'nodes' && trendNodeOptions.length" v-model="selectedTrendNode" class="form-select dashboard-node-select" aria-label="选择节点"><option value="">全部节点</option><option v-for="node in trendNodeOptions" :key="node" :value="node">{{ node }}</option></SelectMenu>
+            </div>
+          </template>
+        </MetricTrendChart>
       </section>
 
-      <section class="card dashboard-activity-panel">
-        <div class="card-header"><h2 class="card-title">最近操作</h2></div>
-        <div v-if="recentLogs.length === 0" class="empty-state dashboard-empty-state">
-          <span class="empty-icon">⊙</span><span class="empty-text">暂无操作记录</span>
-        </div>
-        <div v-else class="table-wrap">
-          <table class="data-table">
-            <thead><tr><th>操作</th><th>资源</th><th>时间</th></tr></thead>
-            <tbody>
-              <tr v-for="log in recentLogs" :key="log.id">
-                <td><span class="badge" :class="actionBadge(log.action)">{{ actionLabel(log.action) }}</span></td>
-                <td>{{ resourceLabel(log.resource_type) }} #{{ log.resource_id }}</td>
-                <td>{{ formatTime(log.created_at) }}</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
-    </div>
+      <SurfaceCard as="aside" class="dashboard-activity-panel">
+        <template #header><h2 class="card-title">运行检查</h2></template>
+        <template #actions><router-link class="panel-link" to="/monitoring?tab=alerts">查看告警</router-link></template>
+        <div class="attention-list"><router-link v-for="item in runtimeChecks" :key="item.key" class="attention-row" :to="item.to"><span class="attention-dot" :class="item.level"></span><strong class="attention-title">{{ item.title }}</strong><span class="attention-value">{{ item.value }}</span></router-link></div>
+        <div class="activity-heading"><strong>最近操作</strong><router-link class="panel-link" to="/audit">查看全部</router-link></div>
+        <div v-if="dashboardError || dashboardSectionError('recent_logs')" class="empty-state dashboard-empty-state"><span class="empty-icon">!</span><span class="empty-text">操作记录暂不可用</span></div><div v-else-if="dashboardLoading" class="empty-state dashboard-empty-state"><span class="empty-text">正在读取...</span></div><div v-else-if="recentLogs.length === 0" class="empty-state dashboard-empty-state"><span class="empty-icon">⊙</span><span class="empty-text">暂无操作记录</span></div><div v-else class="activity-list"><div v-for="log in recentLogs.slice(0, 2)" :key="log.id" class="activity-row"><span class="badge" :class="actionBadge(log.action)">{{ actionLabel(log.action) }}</span><span>{{ resourceLabel(log.resource_type) }} #{{ log.resource_id }}</span></div></div>
+      </SurfaceCard>
+    </section>
   </div>
 </template>
 
 <script setup>
-import { computed, onMounted } from 'vue'
+import { computed, onMounted, ref } from 'vue'
+import { Settings2 } from 'lucide-vue-next'
 import { getAlertOverview, getDashboardOverview, getKubernetesDashboard } from '../api/dashboard.js'
+import { getMonitoringDashboard } from '../api/monitoring.js'
+import BaseModal from '../components/BaseModal.vue'
+import SurfaceCard from '../components/SurfaceCard.vue'
 import { useAsyncResource } from '../composables/useAsyncResource.js'
-import { formatShortDate as formatDate, formatShortDateTime as formatTime } from '../utils/formatters.js'
+import MetricTrendChart from './monitoring/MetricTrendChart.vue'
 
-const dashboard = useAsyncResource(getDashboardOverview, {})
+const dashboard = useAsyncResource(getDashboardOverview)
 const kubernetesDashboard = useAsyncResource(getKubernetesDashboard)
 const alerting = useAsyncResource(getAlertOverview)
+const monitoringDashboard = useAsyncResource(({ signal }) => getMonitoringDashboard('6h', { signal }))
+
+const quickActions = [
+  { id: 'deploy', label: '部署 / 更新服务', to: '/applications', icon: '⧉' },
+  { id: 'workloads', label: '查看工作负载', to: '/resources?tab=workloads', icon: '⌁' },
+  { id: 'monitoring', label: '查看监控', to: '/monitoring', icon: '◔' },
+  { id: 'audit', label: '查看日志', to: '/audit', icon: '▦' },
+]
+const defaultQuickActionIds = quickActions.map(action => action.id)
+const quickActionIds = ref([...defaultQuickActionIds])
+const quickActionsEditing = ref(false)
 
 const stats = computed(() => dashboard.data.value?.stats || {})
-const expiringCerts = computed(() => dashboard.data.value?.expiring_certs || [])
+const applicationSummary = computed(() => dashboard.data.value?.application_summary || null)
 const recentLogs = computed(() => dashboard.data.value?.recent_logs || [])
+const dashboardLoading = dashboard.loading
+const dashboardErrors = computed(() => dashboard.data.value?.errors || {})
+const dashboardError = computed(() => dashboard.error.value?.message || '')
 const k8sStats = kubernetesDashboard.data
 const k8sLoading = kubernetesDashboard.loading
+const k8sError = computed(() => kubernetesDashboard.error.value?.message || '')
+const k8sErrors = computed(() => k8sStats.value?.errors || {})
+const k8sStatusLabel = computed(() => {
+  if (k8sLoading.value || !k8sStats.value) return '读取中'
+  if (k8sError.value) return '不可用'
+  if (k8sStats.value?.partial) return '部分可用'
+  if (k8sStats.value && k8sStats.value.version_consistent === false) return '多版本'
+  return '运行正常'
+})
+const k8sStatusTone = computed(() => {
+  if (k8sLoading.value || !k8sStats.value) return 'loading'
+  return k8sError.value || k8sStats.value.partial || k8sStats.value.version_consistent === false ? 'warn' : 'ok'
+})
+const nodeHealthSegments = computed(() => {
+  if (k8sLoading.value || !k8sStats.value || k8sError.value) {
+    return [{ key: 'ready', label: 'Ready', count: '—', tone: 'muted' }]
+  }
+  const ready = Math.max(0, Number(k8sStats.value.nodes_ready || 0))
+  const total = Math.max(0, Number(k8sStats.value.nodes_total || 0))
+  const notReady = Math.max(0, total - ready)
+  const segments = [{ key: 'ready', label: 'Ready', count: ready, tone: 'success' }]
+  if (notReady > 0) segments.push({ key: 'not-ready', label: '异常', count: notReady, tone: 'warning' })
+  return segments
+})
 const alertOverview = alerting.data
+const alertingLoading = alerting.loading
 const alertingError = computed(() => alerting.error.value?.message || '')
 
-const activeAlerts = computed(() => alertOverview.value?.active || [])
 const firingAlerts = computed(() => Number(alertOverview.value?.firing || 0))
-const silencedAlerts = computed(() => Number(alertOverview.value?.silenced || 0))
 const alertMetricValue = computed(() => alertOverview.value ? firingAlerts.value : '-')
-const notReadyDeployments = computed(() => Math.max(0, Number(k8sStats.value?.deployments_total || 0) - Number(k8sStats.value?.deployments_ready || 0)))
-const notReadyPods = computed(() => Math.max(0, Number(k8sStats.value?.pods_total || 0) - Number(k8sStats.value?.pods_ready || 0)))
-const attentionItems = computed(() => {
-  const items = []
-  if (firingAlerts.value > 0) {
-    items.push({ key: 'alerts', level: 'is-danger', title: '存在触发中的告警', description: '优先进入告警页确认影响范围与处理建议。', value: firingAlerts.value, to: '/monitoring?tab=alerts' })
-  } else if (alertingError.value) {
-    items.push({ key: 'alerting-unavailable', level: 'is-muted', title: '告警组件暂不可用', description: '无法读取 Alertmanager 状态，可进入监控页重新检测。', value: '—', to: '/monitoring?tab=alerts' })
-  }
-  if (Number(stats.value.expiring_certs || 0) > 0) {
-    items.push({ key: 'certs', level: 'is-warning', title: '证书即将到期', description: '检查证书续期状态，避免入口访问中断。', value: stats.value.expiring_certs, to: '/network?tab=certificates' })
-  }
-  if (notReadyDeployments.value > 0) {
-    items.push({ key: 'deployments', level: 'is-warning', title: '有应用未完全就绪', description: 'Deployment Ready 数低于期望值，建议查看工作负载。', value: notReadyDeployments.value, to: '/resources?tab=workloads' })
-  }
-  if (notReadyPods.value > 0) {
-    items.push({ key: 'pods', level: 'is-warning', title: '有 Pod 未就绪', description: '可能存在拉取镜像、探针或调度问题。', value: notReadyPods.value, to: '/resources?tab=workloads' })
-  }
-  if (items.length === 0) {
-    items.push({ key: 'healthy', level: 'is-success', title: '当前暂无高优先级事项', description: '服务、证书和集群概况没有明显风险。', value: 'OK', to: '/applications' })
-  }
-  return items.slice(0, 4)
+const notReadyDeployments = computed(() => {
+  if (k8sLoading.value || !k8sStats.value || k8sSectionError('deployments')) return null
+  return Math.max(0, Number(k8sStats.value.deployments_total || 0) - Number(k8sStats.value.deployments_ready || 0))
 })
+const notReadyPods = computed(() => {
+  if (k8sLoading.value || !k8sStats.value || k8sSectionError('pods')) return null
+  return Math.max(0, Number(k8sStats.value.pods_total || 0) - Number(k8sStats.value.pods_ready || 0))
+})
+const trendLoading = monitoringDashboard.loading
+const trendError = computed(() => monitoringDashboard.error.value?.message || '')
+const trendMetrics = [
+  { id: 'cpu', label: 'CPU', unit: '%' },
+  { id: 'memory', label: '内存', unit: '%' },
+  { id: 'disk', label: '磁盘', unit: '%' },
+]
+const selectedTrendMetricId = ref('cpu')
+const trendDisplayMode = ref('nodes')
+const selectedTrendNode = ref('')
+const rawTrendSeries = computed(() => {
+  const trends = monitoringDashboard.data.value?.trends || {}
+  return Object.fromEntries(trendMetrics.map(metric => [metric.id, matrixToSeries(trends[metric.id])]))
+})
+const selectedTrendMetric = computed(() => trendMetrics.find(metric => metric.id === selectedTrendMetricId.value) || trendMetrics[0])
+const trendNodeOptions = computed(() => [...new Set((rawTrendSeries.value[selectedTrendMetricId.value] || []).map(series => series.label).filter(Boolean))])
+const selectedTrendSeries = computed(() => {
+  const series = rawTrendSeries.value[selectedTrendMetricId.value] || []
+  if (trendDisplayMode.value === 'nodes') return selectedTrendNode.value ? series.filter(item => item.label === selectedTrendNode.value) : series
+  return aggregateSeries(series, `集群 ${selectedTrendMetric.value.label} 平均`)
+})
+const runtimeChecks = computed(() => [
+  {
+    key: 'deployments',
+    level: readinessCheckLevel('deployments', notReadyDeployments.value),
+    title: 'Deployment 就绪',
+    value: k8sReadyMetric('deployments_ready', 'deployments_total'),
+    to: '/resources?tab=workloads',
+  },
+  {
+    key: 'pods',
+    level: readinessCheckLevel('pods', notReadyPods.value),
+    title: 'Pod 就绪',
+    value: k8sReadyMetric('pods_ready', 'pods_total'),
+    to: '/resources?tab=workloads',
+  },
+  {
+    key: 'alerts',
+    level: alertingLoading.value || alertingError.value ? 'is-muted' : firingAlerts.value > 0 ? 'is-danger' : 'is-success',
+    title: '告警',
+    value: alertingLoading.value || alertingError.value ? '—' : firingAlerts.value > 0 ? firingAlerts.value : '正常',
+    to: '/monitoring?tab=alerts',
+  },
+  {
+    key: 'certificates',
+    level: certificateCheckLevel(),
+    title: '证书',
+    value: certificateCheckValue(),
+    to: '/network?tab=certificates',
+  },
+])
 
 onMounted(() => {
+  loadQuickActions()
   void dashboard.refresh()
   void kubernetesDashboard.refresh()
   void alerting.refresh()
+  void monitoringDashboard.refresh()
 })
 
 function k8sMetric(key) {
@@ -228,47 +239,209 @@ function k8sReadyMetric(readyKey, totalKey) {
   if (k8sLoading.value || k8sStats.value?.[readyKey] === undefined || k8sStats.value?.[totalKey] === undefined) return '—'
   return `${k8sStats.value[readyKey]}/${k8sStats.value[totalKey]}`
 }
+function k8sMemoryMetric() {
+  if (k8sLoading.value || k8sStats.value?.memory_mb_total === undefined || k8sStats.value?.memory_mb_total === null) return '—'
+  const memoryMB = Number(k8sStats.value.memory_mb_total)
+  if (!Number.isFinite(memoryMB)) return '—'
+  return memoryMB >= 1024 ? `${(memoryMB / 1024).toFixed(1)} GiB` : `${memoryMB} MiB`
+}
+function readinessCheckLevel(section, notReady) {
+  if (k8sLoading.value || k8sSectionError(section) || notReady === null) return 'is-muted'
+  return notReady > 0 ? 'is-warning' : 'is-success'
+}
+function certificateCheckLevel() {
+  if (dashboardLoading.value || dashboardError.value || dashboardSectionError('expiring_certs')) return 'is-muted'
+  return Number(stats.value.expiring_certs || 0) > 0 ? 'is-warning' : 'is-success'
+}
+function certificateCheckValue() {
+  if (dashboardLoading.value || dashboardError.value || dashboardSectionError('expiring_certs')) return '—'
+  const expiring = Number(stats.value.expiring_certs || 0)
+  return expiring > 0 ? `${expiring} 风险` : '正常'
+}
+function applicationMetric(key) {
+  if (dashboardLoading.value || !applicationSummary.value || applicationSummary.value[key] === undefined) return '—'
+  return applicationSummary.value[key]
+}
+function releaseStatusLabel(status) {
+  const labels = {
+    draft: '草稿', validating: '校验中', applying: '发布中', waiting_ready: '等待就绪', verifying: '验证中',
+    succeeded: '已完成', failed: '失败', rolling_back: '回滚中', rolled_back: '已回滚',
+  }
+  return labels[status] || status
+}
+const visibleQuickActions = computed(() => quickActionIds.value.map(id => quickActions.find(action => action.id === id)).filter(Boolean))
+function loadQuickActions() {
+  try {
+    const saved = JSON.parse(window.localStorage.getItem('cylism.dashboard.quick-actions') || 'null')
+    const valid = Array.isArray(saved) ? saved.filter(id => defaultQuickActionIds.includes(id)) : []
+    if (valid.length) quickActionIds.value = [...new Set(valid)]
+  } catch { /* Ignore unavailable or malformed browser storage. */ }
+}
+function toggleQuickAction(id) {
+  const next = quickActionIds.value.includes(id) ? quickActionIds.value.filter(item => item !== id) : [...quickActionIds.value, id]
+  if (!next.length) return
+  quickActionIds.value = next
+  try { window.localStorage.setItem('cylism.dashboard.quick-actions', JSON.stringify(next)) } catch { /* Ignore unavailable browser storage. */ }
+}
+function selectTrendMetric(id) {
+  selectedTrendMetricId.value = id
+  selectedTrendNode.value = ''
+}
+function dashboardMetric(key) { return dashboard.data.value !== null && stats.value[key] !== undefined ? stats.value[key] : '—' }
+function dashboardSectionError(key) { return Boolean(dashboardErrors.value[key]) }
+function k8sSectionError(key) { return Boolean(k8sErrors.value[key]) || Boolean(k8sError.value) }
+
+function matrixToSeries(result) {
+  return (result?.result || []).map((item, index) => ({ label: metricNodeName(item.metric, index), values: (item.values || []).map(([timestamp, value]) => ({ timestamp: Number(timestamp), value: Number(value) })) }))
+}
+
+function metricNodeName(metric, index) {
+  if (metric?.node) return metric.node
+  return metric?.instance || `序列 ${index + 1}`
+}
+
+function aggregateSeries(series, label) {
+  const points = new Map()
+  for (const item of series) {
+    for (const point of item.values || []) {
+      const current = points.get(point.timestamp) || { sum: 0, count: 0 }
+      current.sum += Number(point.value)
+      current.count += 1
+      points.set(point.timestamp, current)
+    }
+  }
+  return [{ label, values: [...points.entries()].sort(([left], [right]) => left - right).map(([timestamp, point]) => ({ timestamp, value: point.sum / point.count })) }]
+}
 
 function actionBadge(a) { const m = { create:'badge-online',issue:'badge-online',renew:'badge-online',delete:'badge-danger',revoke:'badge-danger',deploy:'badge-deploying' }; return m[a]||'' }
 function actionLabel(a) { const m = { create:'创建',update:'更新',delete:'删除',deploy:'部署',issue:'签发',renew:'续期',revoke:'吊销',reload:'重载',generate:'生成' }; return m[a]||a }
 function resourceLabel(r) { const m = { server:'服务器',site:'站点',cert:'证书',nginx:'NGINX' }; return m[r]||r }
-function alertTitle(alert) { return alert?.annotations?.summary || alert?.labels?.alertname || '未命名告警' }
-function alertMeta(alert) {
-  const labels = alert?.labels || {}
-  return [labels.node, labels.namespace, labels.pod, labels.mountpoint].filter(Boolean).join(' · ') || '等待告警标签'
-}
-function alertSeverityLabel(alert) { return alert?.labels?.severity === 'critical' ? '严重' : '告警' }
-function alertSeverityBadge(alert) { return alert?.labels?.severity === 'critical' ? 'badge-danger' : 'badge-deploying' }
 </script>
 
 <style scoped>
-.dashboard-page { max-width: 1320px; margin: 0 auto; }
-.cluster-strip { display: flex; align-items: center; gap: 28px; min-height: 94px; padding: 18px 22px; border: 1px solid var(--border); border-radius: var(--radius-panel); background: var(--surface-glass); box-shadow: var(--shadow-soft); backdrop-filter: blur(22px) saturate(125%); }.cluster-strip.is-loading { opacity: .86; }
-.cluster-strip-heading { display: flex; min-width: 142px; flex-direction: column; gap: 5px; }.cluster-strip-heading strong { color: var(--text-primary); font-size: 13px; }
-.cluster-strip-stats { display: grid; width: 100%; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 14px; }.cluster-strip-stats > div { display: flex; min-width: 0; flex-direction: column; gap: 4px; padding-left: 16px; border-left: 1px solid var(--border-muted); }.cluster-strip-stats strong { overflow: hidden; color: var(--text-primary); font-size: 19px; font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }.cluster-strip-stats span { color: var(--text-muted); font-size: 10px; }
-.dashboard-metrics { grid-template-columns: repeat(6, minmax(0, 1fr)); }.dashboard-metrics .metric { min-height: 96px; padding: 16px 18px; }.dashboard-metrics .metric-value { font-size: 26px; }.dashboard-workspace, .dashboard-attention-grid { display: grid; grid-template-columns: minmax(0, 7fr) minmax(310px, 4fr); gap: var(--space-20); }.dashboard-attention-grid { margin-top: var(--space-20); }.dashboard-workspace { margin-top: var(--space-20); }.dashboard-primary-panel, .dashboard-activity-panel, .dashboard-attention-panel, .dashboard-alert-panel { min-width: 0; }.dashboard-workspace .card-header, .dashboard-attention-grid .card-header { align-items: flex-start; margin-bottom: 16px; }.panel-caption { padding: 5px 7px; border-radius: 5px; background: var(--warning-surface); color: var(--warning); font: 10px/1 var(--font-mono); }.panel-link { color: var(--action-primary); font-size: 12px; text-decoration: none; }.panel-link:hover { text-decoration: underline; }.dashboard-empty-state { min-height: 230px; }.metric-version { font-size: 15px !important; }
-.dashboard-actions-panel { display: grid; gap: 14px; padding: 18px 20px; }
-.dashboard-action-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
-.dashboard-action-card { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 12px; align-items: center; padding: 14px 15px; border: 1px solid var(--border-muted); border-radius: var(--radius-control); background: linear-gradient(180deg, var(--surface-raised), var(--surface-subtle)); color: var(--text-primary); text-decoration: none; transition: transform .15s ease, border-color .15s ease, box-shadow .15s ease; }
-.dashboard-action-card:hover { border-color: var(--border); box-shadow: var(--shadow-soft); transform: translateY(-1px); }
-.dashboard-action-icon { display: grid; place-items: center; width: 38px; height: 38px; border-radius: 12px; background: var(--surface-hover); color: var(--action-primary); font-size: 17px; }
-.dashboard-action-card strong { display: block; color: var(--text-primary); font-size: 13px; }
-.dashboard-action-card small { display: block; margin-top: 4px; color: var(--text-secondary); font-size: 12px; line-height: 1.45; }
-.attention-list { display: grid; gap: 8px; }
-.attention-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 12px 13px; border: 1px solid var(--border-muted); border-radius: var(--radius-control); background: var(--surface-subtle); color: var(--text-primary); text-decoration: none; }
-.attention-row:hover { border-color: var(--border); background: var(--surface-hover); }
-.attention-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--text-muted); box-shadow: 0 0 0 4px var(--surface-raised); }
+.dashboard-page { width: 100%; max-width: none; display: grid; gap: 18px; }
+.dashboard-header { align-items: center; margin-bottom: 0; }
+.dashboard-title-block { display: grid; gap: 5px; min-width: 0; }
+.dashboard-primary-action { flex: 0 0 auto; min-height: 36px; padding: 0 14px; text-decoration: none; }
+.dashboard-primary-action:hover, .dashboard-primary-action:focus-visible { text-decoration: none; }
+
+.dashboard-main-grid { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(280px, 1fr) minmax(240px, .85fr); gap: 16px; align-items: stretch; }
+.dashboard-health-panel, .dashboard-application-panel, .dashboard-side-panel { min-width: 0; min-height: 0; overflow: hidden; }
+.dashboard-main-grid > .surface-card > :deep(.surface-card-header) { min-height: 28px; margin-bottom: 14px; }
+.dashboard-health-panel { display: flex; flex-direction: column; }
+.dashboard-health-panel.is-loading { opacity: .86; }
+.cluster-status { font-size: 10px; font-weight: 600; }
+.cluster-status-ok { color: var(--success); }
+.cluster-status-warn { color: var(--warning); }
+.cluster-status-loading { color: var(--text-muted); }
+.dashboard-health-header { display: flex; align-items: center; gap: 12px; }
+.dashboard-card-scroll-region { min-height: 0; overflow: auto; overscroll-behavior: contain; scrollbar-color: var(--border-strong) transparent; scrollbar-width: thin; }
+.dashboard-card-scroll-region::-webkit-scrollbar { width: 6px; height: 6px; }
+.dashboard-card-scroll-region::-webkit-scrollbar-thumb { border-radius: 999px; background: var(--border-strong); }
+.dashboard-overview-section { display: grid; flex: 1; min-height: 0; grid-template-rows: minmax(0, 1fr) auto; gap: 14px; }
+.dashboard-platform-section { margin-top: 22px; }
+.dashboard-overview-grid, .dashboard-platform-grid { display: grid; gap: 11px 24px; }
+.dashboard-overview-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); grid-template-rows: repeat(2, minmax(0, 1fr)); align-items: center; }
+.dashboard-platform-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.dashboard-overview-metric { display: grid; min-width: 0; gap: 5px; padding: 0; }
+.dashboard-overview-metric strong { overflow: hidden; color: var(--text-primary); font: 700 20px/1 var(--font-mono); font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }
+.dashboard-overview-metric span { overflow: hidden; color: var(--text-muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.dashboard-version strong { font-size: 15px; }
+.dashboard-cluster-health { display: flex; align-items: center; flex-wrap: wrap; gap: 7px 13px; padding-top: 10px; border-top: 1px solid var(--border-muted); }
+.dashboard-cluster-health-heading, .dashboard-cluster-health-meta { display: flex; align-items: center; gap: 6px; color: var(--text-muted); font-size: 11px; }
+.dashboard-cluster-health-heading strong { color: var(--text-primary); font: 700 12px/1 var(--font-mono); }
+.dashboard-cluster-health-status { display: flex; flex-wrap: wrap; gap: 7px; }
+.dashboard-node-health-item { display: inline-flex; align-items: center; gap: 5px; color: var(--text-secondary); font-size: 11px; }
+.dashboard-node-health-item strong { color: var(--text-primary); font: 700 12px/1 var(--font-mono); }
+.dashboard-node-health-dot { width: 7px; height: 7px; flex: 0 0 auto; border-radius: 50%; background: var(--text-muted); }
+.dashboard-node-health-success .dashboard-node-health-dot { background: var(--success); }
+.dashboard-node-health-warning .dashboard-node-health-dot { background: var(--warning); }
+.dashboard-cluster-health-meta { flex-wrap: wrap; gap: 0; }
+.dashboard-cluster-health-meta span + span::before { content: '·'; margin: 0 6px; color: var(--text-muted); }
+.dashboard-application-panel { display: flex; min-width: 0; flex-direction: column; padding: var(--space-20); }
+.dashboard-application-content { display: flex; min-height: 0; flex: 1; flex-direction: column; }
+.application-summary-count { display: flex; align-items: baseline; gap: 6px; }
+.application-summary-count strong { color: var(--text-primary); font: 700 32px/1 var(--font-mono); }
+.application-summary-count span, .application-status-grid span, .application-latest-release > span:first-child { color: var(--text-muted); font-size: 11px; }
+.application-status-grid { display: grid; min-height: 0; flex: 1; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: repeat(2, minmax(0, 1fr)); gap: 8px 16px; margin: 14px 0; padding: 0; border: 0; }
+.application-status-grid div { display: grid; min-width: 0; gap: 5px; }
+.application-status-grid strong { color: var(--text-primary); font: 700 20px/1 var(--font-mono); }
+.application-latest-release { display: grid; gap: 5px; margin-top: 0; padding-top: 10px; border-top: 1px solid var(--border-muted); }
+.application-latest-release strong, .application-latest-release span:not(:first-child) { overflow: hidden; color: var(--text-primary); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.application-latest-release span:not(:first-child) { color: var(--text-secondary); font-size: 11px; }
+.dashboard-application-unavailable { display: flex; min-height: 100px; align-items: center; gap: 8px; color: var(--text-muted); font-size: 11px; }
+
+.dashboard-side-panel { display: flex; flex-direction: column; }
+.dashboard-action-list { display: grid; min-height: 0; flex: 1; gap: 2px; padding-right: 4px; }
+.dashboard-action-card { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; align-items: center; min-height: 44px; padding: 7px 4px; border-bottom: 1px solid var(--border-muted); color: var(--text-primary); text-decoration: none; }
+.dashboard-action-card:last-child { border-bottom: 0; }
+.dashboard-action-card:hover { color: var(--action-primary); }
+.dashboard-action-card-primary { color: var(--action-primary); }
+.dashboard-action-settings { width: 28px; height: 28px; border-radius: 7px; color: var(--text-muted); }
+.dashboard-action-icon { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 7px; background: var(--surface-hover); font-size: 14px; }
+.dashboard-action-card strong { font-size: 12px; }
+.action-arrow { color: var(--text-muted); font-size: 14px; }
+.quick-actions-editor { display: grid; gap: 7px; }
+.quick-actions-editor-header { display: flex; align-items: center; justify-content: space-between; padding-bottom: 7px; border-bottom: 1px solid var(--border-muted); color: var(--text-secondary); font-size: 11px; }
+.quick-action-option { display: flex; min-height: 34px; align-items: center; gap: 8px; padding: 0 2px; color: var(--text-secondary); font-size: 12px; }
+.quick-action-option input { accent-color: var(--action-primary); }
+
+.dashboard-insights-grid { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(250px, .8fr); gap: 16px; align-items: stretch; }
+.dashboard-insights-grid { min-height: 0; }
+.dashboard-trends-panel { display: flex; min-width: 0; min-height: 0; }
+.dashboard-trends-empty { display: flex; flex: 1; min-height: 220px; align-items: center; justify-content: center; gap: 8px; }
+:deep(.dashboard-trend-chart) { display: flex; flex: 1; min-height: 0; padding: 14px; flex-direction: column; }
+:deep(.dashboard-trend-chart .surface-card-header) { margin-bottom: 8px; }
+:deep(.dashboard-trend-chart .metric-trend-subtitle), :deep(.dashboard-trend-chart .metric-trend-threshold) { font-size: 9px; }
+:deep(.dashboard-trend-chart .metric-trend-canvas), :deep(.dashboard-trend-chart .metric-trend-empty) { height: auto; min-height: 0; flex: 1; }
+:deep(.dashboard-trend-chart .metric-trend-toolbar) { margin-top: 0; }
+.dashboard-trend-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.dashboard-segmented { display: inline-flex; padding: 2px; border: 1px solid var(--border-muted); border-radius: var(--radius-control); background: var(--surface-subtle); }
+.dashboard-segmented button { min-height: 26px; padding: 3px 9px; border: 0; border-radius: 5px; background: transparent; color: var(--text-secondary); cursor: pointer; font-size: 11px; }
+.dashboard-segmented button.active { background: var(--surface-raised); box-shadow: var(--shadow-soft); color: var(--action-primary); font-weight: 700; }
+.dashboard-node-select { min-height: 30px; width: auto; min-width: 120px; padding-top: 4px; padding-bottom: 4px; font-size: 11px; }
+
+.dashboard-activity-panel { display: flex; min-width: 0; flex-direction: column; padding: 16px; }
+.dashboard-activity-panel { overflow: hidden; }
+.dashboard-activity-panel :deep(.surface-card-header) { margin-bottom: 10px; }
+.panel-link { color: var(--action-primary); font-size: 11px; text-decoration: none; }
+.panel-link:hover { text-decoration: underline; }
+.attention-list { display: grid; grid-template-rows: repeat(4, minmax(30px, auto)); gap: 3px; }
+.attention-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 8px; align-items: center; padding: 6px 0; color: var(--text-primary); text-decoration: none; }
+.attention-row:hover { color: var(--action-primary); }
+.attention-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-muted); }
 .attention-dot.is-danger { background: var(--danger); }.attention-dot.is-warning { background: var(--warning); }.attention-dot.is-success { background: var(--success); }.attention-dot.is-muted { background: var(--text-muted); }
-.attention-copy { display: grid; min-width: 0; gap: 3px; }.attention-copy strong, .attention-copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.attention-copy strong { font-size: 13px; }.attention-copy small { color: var(--text-secondary); font-size: 12px; }
-.attention-value { color: var(--text-primary); font: 700 13px/1 var(--font-mono); }
-.alert-summary-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
-.alert-summary-grid div { display: grid; gap: 4px; padding: 12px; border: 1px solid var(--border-muted); border-radius: var(--radius-control); background: var(--surface-subtle); }
-.alert-summary-grid strong { color: var(--text-primary); font-size: 22px; font-variant-numeric: tabular-nums; }.alert-summary-grid span { color: var(--text-secondary); font-size: 11px; }
-.alert-preview-list { display: grid; gap: 8px; margin-top: 12px; }
-.alert-preview-row { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 10px; align-items: center; padding: 9px 0; color: var(--text-primary); text-decoration: none; border-top: 1px solid var(--border-muted); }
-.alert-preview-row span:last-child { display: grid; min-width: 0; gap: 3px; }.alert-preview-row strong, .alert-preview-row small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.alert-preview-row strong { font-size: 12px; }.alert-preview-row small { color: var(--text-secondary); font-size: 11px; }
-.dashboard-alert-empty { min-height: 130px; }
-@media (max-width: 960px) { .dashboard-workspace, .dashboard-attention-grid { grid-template-columns: 1fr; }.dashboard-activity-panel { min-height: 0; } }
-@media (max-width: 960px) { .dashboard-action-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-@media (max-width: 700px) { .cluster-strip { align-items: flex-start; flex-direction: column; gap: 16px; }.cluster-strip-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }.dashboard-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }.dashboard-metrics .metric { min-height: 88px; }.dashboard-workspace, .dashboard-attention-grid { gap: var(--space-16); }.dashboard-action-grid { grid-template-columns: 1fr; } }
+.attention-title { min-width: 0; overflow: hidden; color: var(--text-primary); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.attention-value { color: var(--text-primary); font: 700 12px/1 var(--font-mono); }
+.activity-heading { display: flex; align-items: center; justify-content: space-between; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border-muted); color: var(--text-primary); font-size: 12px; }
+.activity-list { display: grid; gap: 0; }
+.activity-row { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px; align-items: center; padding: 6px 0; color: var(--text-secondary); font-size: 11px; }
+.activity-row:last-child { border-bottom: 0; }
+.dashboard-empty-state { min-height: 72px; }
+
+/* Keep the desktop overview within the content viewport while preserving a natural
+   scrolling layout for short windows and mobile screens. */
+@media (min-width: 961px) and (min-height: 800px) {
+  .dashboard-page { height: calc(100dvh - var(--topbar-height) - var(--shell-padding) - 36px); min-height: 0; grid-template-rows: auto minmax(280px, 290px) minmax(260px, 1fr); }
+  .dashboard-main-grid, .dashboard-insights-grid { min-height: 0; }
+  .dashboard-health-panel, .dashboard-application-panel, .dashboard-side-panel, .dashboard-activity-panel { height: 100%; }
+  .dashboard-side-panel, .dashboard-activity-panel { overflow: hidden; }
+}
+
+@media (max-width: 960px) {
+  .dashboard-main-grid, .dashboard-insights-grid { grid-template-columns: 1fr; }
+}
+@media (min-width: 961px) and (max-width: 1200px) {
+  .dashboard-main-grid { grid-template-columns: minmax(0, 1.5fr) minmax(240px, .8fr); }
+  .dashboard-health-panel { grid-column: 1 / -1; }
+}
+@media (max-width: 640px) {
+  .dashboard-page { gap: 14px; }
+  .dashboard-header { align-items: flex-start; }
+  .dashboard-primary-action { align-self: flex-end; }
+  .dashboard-overview-metric strong { font-size: 16px; }
+  .dashboard-version strong { font-size: 12px; }
+  .dashboard-platform-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  :deep(.dashboard-trend-chart .metric-trend-canvas), :deep(.dashboard-trend-chart .metric-trend-empty) { height: 170px; }
+}
 </style>

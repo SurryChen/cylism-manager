@@ -112,6 +112,72 @@ func TestSiteCRUD(t *testing.T) {
 	}
 }
 
+func TestListExpiringCertsExcludesExpiredCertificates(t *testing.T) {
+	st := setupTestDB(t)
+	now := time.Now()
+	certs := []model.Cert{
+		{SiteID: 1, Domains: "expired.example.com", Status: "issued", ValidTo: now.Add(-time.Hour)},
+		{SiteID: 1, Domains: "soon.example.com", Status: "issued", ValidTo: now.Add(10 * 24 * time.Hour)},
+		{SiteID: 1, Domains: "later.example.com", Status: "issued", ValidTo: now.Add(60 * 24 * time.Hour)},
+	}
+	for i := range certs {
+		if err := st.CreateCert(&certs[i]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := st.ListExpiringCerts(30)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Domains != "soon.example.com" {
+		t.Fatalf("unexpected expiring certs: %#v", got)
+	}
+	stats, err := st.GetDashboardStats(30)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.ExpiringCerts != 1 || stats.ExpiredCerts != 1 {
+		t.Fatalf("unexpected cert stats: %#v", stats)
+	}
+}
+
+func TestDashboardApplicationSummaryUsesOnlyEachApplicationsLatestRelease(t *testing.T) {
+	st := setupTestDB(t)
+	applications := []model.Application{
+		{ProjectID: 1, EnvironmentID: 1, Name: "api", WorkloadKind: "deployment", CreatedBy: 1},
+		{ProjectID: 1, EnvironmentID: 2, Name: "worker", WorkloadKind: "deployment", CreatedBy: 1},
+		{ProjectID: 1, EnvironmentID: 3, Name: "web", WorkloadKind: "deployment", CreatedBy: 1},
+		{ProjectID: 1, EnvironmentID: 4, Name: "draft", WorkloadKind: "deployment", CreatedBy: 1},
+	}
+	for index := range applications {
+		if err := st.CreateApplication(&applications[index]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	releases := []model.Release{
+		{ApplicationID: applications[0].ID, Sequence: 1, Image: "registry.example/api:v1", DesiredSpec: "{}", Status: model.ReleaseStatusFailed, CreatedBy: 1},
+		{ApplicationID: applications[0].ID, Sequence: 2, Image: "registry.example/api:v2", Version: "v2", DesiredSpec: "{}", Status: model.ReleaseStatusSucceeded, CreatedBy: 1},
+		{ApplicationID: applications[1].ID, Sequence: 1, Image: "registry.example/worker:v1", DesiredSpec: "{}", Status: model.ReleaseStatusApplying, CreatedBy: 1},
+		{ApplicationID: applications[2].ID, Sequence: 1, Image: "registry.example/web:v1", DesiredSpec: "{}", Status: model.ReleaseStatusFailed, CreatedBy: 1},
+	}
+	for index := range releases {
+		if err := st.CreateRelease(&releases[index]); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	summary, err := st.GetDashboardApplicationSummary()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.TotalApplications != 4 || summary.SuccessfulApplications != 1 || summary.ReleasingApplications != 1 || summary.FailedApplications != 1 || summary.UnreleasedApplications != 1 {
+		t.Fatalf("unexpected application summary: %#v", summary)
+	}
+	if summary.LatestRelease == nil || summary.LatestRelease.ApplicationName != "web" || summary.LatestRelease.Status != model.ReleaseStatusFailed {
+		t.Fatalf("unexpected latest release: %#v", summary.LatestRelease)
+	}
+}
+
 func TestSiteDuplicateDomain(t *testing.T) {
 	st := setupTestDB(t)
 	server := &model.Server{Name: "s1", Host: "10.0.0.1"}

@@ -29,7 +29,7 @@ func TestLoginRefreshAndMe(t *testing.T) {
 	if err := db.CreateUser(user); err != nil {
 		t.Fatal(err)
 	}
-	h := NewAuthHandlerWithTemporaryService(db, []byte("secret"), time.Hour, 2*time.Hour, nil)
+	h := NewAuthHandlerWithTemporaryService(db, []byte("secret"), time.Hour, 2*time.Hour, nil).WithAudit(db)
 	r := gin.New()
 	r.POST("/login", h.Login)
 	r.POST("/refresh", h.Refresh)
@@ -69,6 +69,10 @@ func TestLoginRefreshAndMe(t *testing.T) {
 	if me.Code != http.StatusOK || !strings.Contains(me.Body.String(), `"username":"alice"`) {
 		t.Fatalf("me response = %d %s", me.Code, me.Body.String())
 	}
+	logs, total, err := db.ListAuditLogsFiltered(model.AuditLogFilter{Action: "auth.login", Outcome: model.AuditOutcomeSucceeded, Limit: 20})
+	if err != nil || total != 1 || len(logs) != 1 || logs[0].ActorName != "alice" {
+		t.Fatalf("expected successful login audit: %#v total=%d err=%v", logs, total, err)
+	}
 }
 
 func TestLoginRejectsInvalidCredentials(t *testing.T) {
@@ -83,7 +87,7 @@ func TestLoginRejectsInvalidCredentials(t *testing.T) {
 	if err := db.CreateUser(&model.User{Username: "alice", PasswordHash: hash}); err != nil {
 		t.Fatal(err)
 	}
-	h := NewAuthHandlerWithTemporaryService(db, []byte("secret"), time.Hour, time.Hour, nil)
+	h := NewAuthHandlerWithTemporaryService(db, []byte("secret"), time.Hour, time.Hour, nil).WithAudit(db)
 	r := gin.New()
 	r.POST("/login", h.Login)
 	req := httptest.NewRequest(http.MethodPost, "/login", bytes.NewBufferString(`{"username":"alice","password":"wrong"}`))
@@ -92,5 +96,9 @@ func TestLoginRejectsInvalidCredentials(t *testing.T) {
 	r.ServeHTTP(resp, req)
 	if resp.Code != http.StatusUnauthorized {
 		t.Fatalf("invalid login status = %d", resp.Code)
+	}
+	logs, total, err := db.ListAuditLogsFiltered(model.AuditLogFilter{Action: "auth.login", Outcome: model.AuditOutcomeDenied, Limit: 20})
+	if err != nil || total != 1 || len(logs) != 1 || logs[0].TargetName != "alice" {
+		t.Fatalf("expected denied login audit: %#v total=%d err=%v", logs, total, err)
 	}
 }

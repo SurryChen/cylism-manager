@@ -1,26 +1,26 @@
 <template>
   <section v-if="statusError" class="k8s-banner k8s-banner-warn section-gap" role="alert">{{ statusError }}</section>
 
-  <section v-if="!monitoringReady" class="card alerting-empty">
+  <SurfaceCard v-if="!monitoringReady" class="alerting-empty">
     <div class="empty-state"><span class="empty-icon">◌</span><span class="empty-text">等待 VictoriaMetrics 就绪后再启用告警</span></div>
-  </section>
+  </SurfaceCard>
 
-  <section v-else-if="loading && !status" class="card alerting-empty">
+  <SurfaceCard v-else-if="loading && !status" class="alerting-empty">
     <div class="empty-state"><span class="empty-icon">◌</span><span class="empty-text">正在读取告警状态...</span></div>
-  </section>
+  </SurfaceCard>
 
-  <section v-else-if="status?.state === 'not_installed'" class="card alerting-install-card">
-    <div class="card-header"><div><h2 class="card-title">告警尚未启用</h2><p class="status-copy">规则将在集群内每分钟评估，并通过 Alertmanager 汇总和通知。</p></div><span class="badge badge-offline">未安装</span></div>
+  <SurfaceCard v-else-if="status?.state === 'not_installed'" class="alerting-install-card">
+    <template #header><div><h2 class="card-title">告警尚未启用</h2><p class="status-copy">规则将在集群内每分钟评估，并通过 Alertmanager 汇总和通知。</p></div></template><template #actions><span class="badge badge-offline">未安装</span></template>
     <form class="alerting-form" @submit.prevent="install">
-      <div class="form-group"><label class="form-label">告警节点</label><select v-model="installForm.node_name" class="form-select" required><option value="" disabled>选择就绪节点</option><option v-for="node in readyNodes" :key="node.name" :value="node.name">{{ displayNode(node) }}</option></select><p class="form-hint">Alertmanager 的 1Gi 本地 PVC 会绑定到该节点。默认优先选择与指标数据节点不同的节点。</p></div>
+      <div class="form-group"><label class="form-label">告警节点</label><SelectMenu v-model="installForm.node_name" class="form-select" required><option value="" disabled>选择就绪节点</option><option v-for="node in readyNodes" :key="node.name" :value="node.name">{{ displayNode(node) }}</option></SelectMenu><p class="form-hint">Alertmanager 的 1Gi 本地 PVC 会绑定到该节点。默认优先选择与指标数据节点不同的节点。</p></div>
       <div class="form-group"><label class="form-label">飞书机器人地址</label><input v-model.trim="installForm.feishu_webhook_url" class="form-input" type="url" placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/..." /><p class="form-hint">可稍后在告警设置中填写。地址仅写入 Kubernetes Secret，不会再次展示。</p></div>
       <p v-if="installError" class="form-error" role="alert">{{ installError }}</p>
       <div class="modal-actions status-actions"><button class="btn btn-primary" :disabled="installing || !installForm.node_name">{{ installing ? '正在提交...' : '启用告警' }}</button><button class="btn" type="button" :disabled="installing" @click="refresh">重新检测</button></div>
     </form>
-  </section>
+  </SurfaceCard>
 
   <template v-else-if="status">
-    <section v-if="status.state !== 'ready'" class="card alerting-empty"><div class="empty-state"><span class="empty-icon">◌</span><span class="empty-text">{{ status.message || '等待告警组件就绪' }}</span></div></section>
+    <SurfaceCard v-if="status.state !== 'ready'" class="alerting-empty"><div class="empty-state"><span class="empty-icon">◌</span><span class="empty-text">{{ status.message || '等待告警组件就绪' }}</span></div></SurfaceCard>
 
     <template v-else>
       <section class="alert-summary metric-grid section-gap">
@@ -34,9 +34,9 @@
       <section class="automation-panel section-gap">
         <div class="automation-toggle"><div><strong>启用告警自动分析</strong><small>只开放固定的告警、指标和节点诊断接口</small></div><label class="automation-switch" aria-label="启用告警自动分析"><input v-model="automationPolicy.enabled" type="checkbox" /><span aria-hidden="true" /></label></div>
         <div class="automation-fields">
-          <label class="form-group"><span class="form-label">处理 Runtime</span><select v-model.number="automationPolicy.runtime_id" class="form-select" :disabled="!automationPolicy.enabled"><option :value="0" disabled>选择 Nanobot Runtime</option><option v-for="runtime in nanobotRuntimes" :key="runtime.id" :value="runtime.id">{{ runtime.name }} · {{ runtime.status }}</option></select></label>
-          <label class="form-group"><span class="form-label">最低严重程度</span><select v-model="automationPolicy.minimum_severity" class="form-select" :disabled="!automationPolicy.enabled"><option value="warning">警告</option><option value="critical">严重</option></select></label>
-          <label class="form-group"><span class="form-label">处置模式</span><select v-model="automationPolicy.mode" class="form-select" :disabled="!automationPolicy.enabled"><option value="report_only">仅生成报告</option><option value="diagnose_and_request_approval">诊断后可请求审批</option></select></label>
+          <label class="form-group"><span class="form-label">处理 Runtime</span><SelectMenu v-model.number="automationPolicy.runtime_id" class="form-select" :disabled="!automationPolicy.enabled"><option :value="0" disabled>选择 Nanobot Runtime</option><option v-for="runtime in nanobotRuntimes" :key="runtime.id" :value="runtime.id">{{ runtime.name }} · {{ runtime.status }}</option></SelectMenu></label>
+          <label class="form-group"><span class="form-label">最低严重程度</span><SelectMenu v-model="automationPolicy.minimum_severity" class="form-select" :disabled="!automationPolicy.enabled"><option value="warning">警告</option><option value="critical">严重</option></SelectMenu></label>
+          <label class="form-group"><span class="form-label">处置模式</span><SelectMenu v-model="automationPolicy.mode" class="form-select" :disabled="!automationPolicy.enabled"><option value="report_only">仅生成报告</option><option value="diagnose_and_request_approval">诊断后可请求审批</option></SelectMenu></label>
           <label class="form-group"><span class="form-label">重复分析冷却</span><div class="field-suffix"><input v-model.number="automationPolicy.cooldown_minutes" class="form-input" type="number" min="5" max="1440" :disabled="!automationPolicy.enabled" /><span>分钟</span></div></label>
         </div>
         <p v-if="automationNotice" class="automation-notice" :class="`is-${automationNotice.type}`" role="status">{{ automationNotice.text }}</p>
@@ -74,14 +74,14 @@
           <div class="alert-actions"><button v-if="alertTarget(alert)" class="icon-button" title="查看关联资源" aria-label="查看关联资源" @click="navigate(alert)"><ArrowUpRight :size="16" /></button><button class="icon-button" title="静默告警" aria-label="静默告警" @click="openSilence(alert)"><VolumeX :size="16" /></button></div>
         </article>
       </section>
-      <section v-else class="alerting-healthy card section-gap"><CheckCircle2 :size="20" /><div><strong>所有告警均已恢复</strong><small>当前 {{ status.rules?.filter(rule => rule.enabled).length || 0 }} 条规则正在评估。</small></div></section>
+      <SurfaceCard v-else class="alerting-healthy section-gap"><CheckCircle2 :size="20" /><div><strong>所有告警均已恢复</strong><small>当前 {{ status.rules?.filter(rule => rule.enabled).length || 0 }} 条规则正在评估。</small></div></SurfaceCard>
 
       <section v-if="overview.resolved.length" class="alert-section-heading section-gap"><div><h2>最近恢复</h2><p>仅保留 Alertmanager 当前可见的恢复事件</p></div></section>
-      <section v-if="overview.resolved.length" class="card table-wrap alert-resolved"><table class="data-table"><thead><tr><th>告警</th><th>对象</th><th>恢复时间</th></tr></thead><tbody><tr v-for="alert in overview.resolved" :key="alert.fingerprint || alertKey(alert)"><td class="cell-primary">{{ alert.annotations?.summary || alert.labels?.alertname || '-' }}</td><td>{{ alertTarget(alert) || '-' }}</td><td>{{ formatTime(alert.endsAt) }}</td></tr></tbody></table></section>
+      <SurfaceCard v-if="overview.resolved.length" class="table-wrap alert-resolved"><table class="data-table"><thead><tr><th>告警</th><th>对象</th><th>恢复时间</th></tr></thead><tbody><tr v-for="alert in overview.resolved" :key="alert.fingerprint || alertKey(alert)"><td class="cell-primary">{{ alert.annotations?.summary || alert.labels?.alertname || '-' }}</td><td>{{ alertTarget(alert) || '-' }}</td><td>{{ formatTime(alert.endsAt) }}</td></tr></tbody></table></SurfaceCard>
     </template>
   </template>
 
-  <div v-if="silencingAlert" class="overlay" @click.self="silencingAlert = null"><form class="modal alert-silence-modal" @submit.prevent="createSilence"><div class="card-header"><div><h2 class="modal-title">静默告警</h2><p class="status-copy">{{ silencingAlert.annotations?.summary || silencingAlert.labels?.alertname }}</p></div><button class="icon-button" type="button" title="关闭" aria-label="关闭" @click="silencingAlert = null"><X :size="16" /></button></div><div class="form-group"><label class="form-label">静默时长</label><select v-model.number="silenceForm.duration_minutes" class="form-select"><option :value="60">1 小时</option><option :value="240">4 小时</option><option :value="1440">24 小时</option></select></div><div class="form-group"><label class="form-label">说明</label><input v-model.trim="silenceForm.comment" class="form-input" maxlength="120" placeholder="计划维护" /></div><p v-if="silenceError" class="form-error" role="alert">{{ silenceError }}</p><div class="modal-actions"><button class="btn" type="button" @click="silencingAlert = null">取消</button><button class="btn btn-danger" :disabled="silencing" type="submit">{{ silencing ? '正在静默...' : '确认静默' }}</button></div></form></div>
+  <div v-if="silencingAlert" class="overlay" @click.self="silencingAlert = null"><form class="modal alert-silence-modal" @submit.prevent="createSilence"><div class="card-header"><div><h2 class="modal-title">静默告警</h2><p class="status-copy">{{ silencingAlert.annotations?.summary || silencingAlert.labels?.alertname }}</p></div><button class="icon-button" type="button" title="关闭" aria-label="关闭" @click="silencingAlert = null"><X :size="16" /></button></div><div class="form-group"><label class="form-label">静默时长</label><SelectMenu v-model.number="silenceForm.duration_minutes" class="form-select"><option :value="60">1 小时</option><option :value="240">4 小时</option><option :value="1440">24 小时</option></SelectMenu></div><div class="form-group"><label class="form-label">说明</label><input v-model.trim="silenceForm.comment" class="form-input" maxlength="120" placeholder="计划维护" /></div><p v-if="silenceError" class="form-error" role="alert">{{ silenceError }}</p><div class="modal-actions"><button class="btn" type="button" @click="silencingAlert = null">取消</button><button class="btn btn-danger" :disabled="silencing" type="submit">{{ silencing ? '正在静默...' : '确认静默' }}</button></div></form></div>
 
   <Teleport to="body">
     <div v-if="settingsOpen" class="overlay alert-settings-overlay" @click.self="settingsOpen = false">
@@ -100,7 +100,7 @@
           <label class="check-row"><input v-model="settingsForm.email.enabled" type="checkbox" /> 配置 SMTP 邮件通知</label>
           <div v-if="settingsForm.email.enabled" class="email-fields">
             <div class="form-row"><div class="form-group"><label class="form-label">SMTP 主机</label><input v-model.trim="settingsForm.email.smtp_host" class="form-input" required placeholder="smtp.example.com" /></div><div class="form-group"><label class="form-label">端口</label><input v-model.number="settingsForm.email.smtp_port" class="form-input" type="number" min="1" max="65535" required /></div></div>
-            <div class="form-row"><div class="form-group"><label class="form-label">TLS 模式</label><select v-model="settingsForm.email.tls_mode" class="form-select"><option value="starttls">STARTTLS (587)</option><option value="tls">TLS (465)</option></select></div><div class="form-group"><label class="form-label">SMTP 用户名</label><input v-model.trim="settingsForm.email.username" class="form-input" /></div></div>
+            <div class="form-row"><div class="form-group"><label class="form-label">TLS 模式</label><SelectMenu v-model="settingsForm.email.tls_mode" class="form-select"><option value="starttls">STARTTLS (587)</option><option value="tls">TLS (465)</option></SelectMenu></div><div class="form-group"><label class="form-label">SMTP 用户名</label><input v-model.trim="settingsForm.email.username" class="form-input" /></div></div>
             <div class="form-group"><label class="form-label">SMTP 密码</label><input v-model="settingsForm.email.password" class="form-input" type="password" /><p class="form-hint">账号认证可留空；填写用户名时必须同时填写密码。</p></div>
             <div class="form-row"><div class="form-group"><label class="form-label">发件人</label><input v-model.trim="settingsForm.email.from" class="form-input" type="email" required placeholder="alerts@example.com" /></div><div class="form-group"><label class="form-label">收件人</label><input v-model.trim="settingsForm.email.to" class="form-input" required placeholder="ops@example.com, admin@example.com" /></div></div>
           </div>
@@ -147,6 +147,7 @@ import {
 } from '../../api/alerting.js'
 import { useAsyncResource } from '../../composables/useAsyncResource.js'
 import { formatDateTime as formatTime } from '../../utils/formatters.js'
+import SurfaceCard from '../../components/SurfaceCard.vue'
 
 const props = defineProps({ nodes: { type: Array, default: () => [] }, monitoringReady: Boolean, metricsNodeName: { type: String, default: '' } })
 const emit = defineEmits(['navigate'])

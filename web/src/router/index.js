@@ -5,6 +5,7 @@ const Dashboard = () => import('../views/Dashboard.vue')
 const Servers = () => import('../views/cluster/Servers.vue')
 const CertificateOperations = () => import('../views/network/CertificateOperations.vue')
 const AuditLogs = () => import('../views/AuditLogs.vue')
+const OperationHistory = () => import('../views/OperationHistory.vue')
 const Login = () => import('../views/Login.vue')
 const DBAdmin = () => import('../views/DBAdmin.vue')
 const SystemSettings = () => import('../views/settings/SystemSettings.vue')
@@ -55,6 +56,7 @@ const routes = [
   { path: '/network/certificates/:namespace/:name', component: CertificateOperations, props: true },
   { path: '/settings/system', component: SystemSettings },
   { path: '/audit', component: AuditLogs },
+  { path: '/operations', component: OperationHistory },
   { path: '/db-admin', component: DBAdmin },
 ]
 
