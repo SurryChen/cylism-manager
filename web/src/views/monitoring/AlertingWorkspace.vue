@@ -1,26 +1,26 @@
 <template>
   <section v-if="statusError" class="k8s-banner k8s-banner-warn section-gap" role="alert">{{ statusError }}</section>
 
-  <section v-if="!monitoringReady" class="card alerting-empty">
+  <SurfaceCard v-if="!monitoringReady" class="alerting-empty">
     <div class="empty-state"><span class="empty-icon">◌</span><span class="empty-text">等待 VictoriaMetrics 就绪后再启用告警</span></div>
-  </section>
+  </SurfaceCard>
 
-  <section v-else-if="loading && !status" class="card alerting-empty">
+  <SurfaceCard v-else-if="loading && !status" class="alerting-empty">
     <div class="empty-state"><span class="empty-icon">◌</span><span class="empty-text">正在读取告警状态...</span></div>
-  </section>
+  </SurfaceCard>
 
-  <section v-else-if="status?.state === 'not_installed'" class="card alerting-install-card">
-    <div class="card-header"><div><h2 class="card-title">告警尚未启用</h2><p class="status-copy">规则将在集群内每分钟评估，并通过 Alertmanager 汇总和通知。</p></div><span class="badge badge-offline">未安装</span></div>
+  <SurfaceCard v-else-if="status?.state === 'not_installed'" class="alerting-install-card">
+    <template #header><div><h2 class="card-title">告警尚未启用</h2><p class="status-copy">规则将在集群内每分钟评估，并通过 Alertmanager 汇总和通知。</p></div></template><template #actions><span class="badge badge-offline">未安装</span></template>
     <form class="alerting-form" @submit.prevent="install">
       <div class="form-group"><label class="form-label">告警节点</label><SelectMenu v-model="installForm.node_name" class="form-select" required><option value="" disabled>选择就绪节点</option><option v-for="node in readyNodes" :key="node.name" :value="node.name">{{ displayNode(node) }}</option></SelectMenu><p class="form-hint">Alertmanager 的 1Gi 本地 PVC 会绑定到该节点。默认优先选择与指标数据节点不同的节点。</p></div>
       <div class="form-group"><label class="form-label">飞书机器人地址</label><input v-model.trim="installForm.feishu_webhook_url" class="form-input" type="url" placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/..." /><p class="form-hint">可稍后在告警设置中填写。地址仅写入 Kubernetes Secret，不会再次展示。</p></div>
       <p v-if="installError" class="form-error" role="alert">{{ installError }}</p>
       <div class="modal-actions status-actions"><button class="btn btn-primary" :disabled="installing || !installForm.node_name">{{ installing ? '正在提交...' : '启用告警' }}</button><button class="btn" type="button" :disabled="installing" @click="refresh">重新检测</button></div>
     </form>
-  </section>
+  </SurfaceCard>
 
   <template v-else-if="status">
-    <section v-if="status.state !== 'ready'" class="card alerting-empty"><div class="empty-state"><span class="empty-icon">◌</span><span class="empty-text">{{ status.message || '等待告警组件就绪' }}</span></div></section>
+    <SurfaceCard v-if="status.state !== 'ready'" class="alerting-empty"><div class="empty-state"><span class="empty-icon">◌</span><span class="empty-text">{{ status.message || '等待告警组件就绪' }}</span></div></SurfaceCard>
 
     <template v-else>
       <section class="alert-summary metric-grid section-gap">
@@ -74,10 +74,10 @@
           <div class="alert-actions"><button v-if="alertTarget(alert)" class="icon-button" title="查看关联资源" aria-label="查看关联资源" @click="navigate(alert)"><ArrowUpRight :size="16" /></button><button class="icon-button" title="静默告警" aria-label="静默告警" @click="openSilence(alert)"><VolumeX :size="16" /></button></div>
         </article>
       </section>
-      <section v-else class="alerting-healthy card section-gap"><CheckCircle2 :size="20" /><div><strong>所有告警均已恢复</strong><small>当前 {{ status.rules?.filter(rule => rule.enabled).length || 0 }} 条规则正在评估。</small></div></section>
+      <SurfaceCard v-else class="alerting-healthy section-gap"><CheckCircle2 :size="20" /><div><strong>所有告警均已恢复</strong><small>当前 {{ status.rules?.filter(rule => rule.enabled).length || 0 }} 条规则正在评估。</small></div></SurfaceCard>
 
       <section v-if="overview.resolved.length" class="alert-section-heading section-gap"><div><h2>最近恢复</h2><p>仅保留 Alertmanager 当前可见的恢复事件</p></div></section>
-      <section v-if="overview.resolved.length" class="card table-wrap alert-resolved"><table class="data-table"><thead><tr><th>告警</th><th>对象</th><th>恢复时间</th></tr></thead><tbody><tr v-for="alert in overview.resolved" :key="alert.fingerprint || alertKey(alert)"><td class="cell-primary">{{ alert.annotations?.summary || alert.labels?.alertname || '-' }}</td><td>{{ alertTarget(alert) || '-' }}</td><td>{{ formatTime(alert.endsAt) }}</td></tr></tbody></table></section>
+      <SurfaceCard v-if="overview.resolved.length" class="table-wrap alert-resolved"><table class="data-table"><thead><tr><th>告警</th><th>对象</th><th>恢复时间</th></tr></thead><tbody><tr v-for="alert in overview.resolved" :key="alert.fingerprint || alertKey(alert)"><td class="cell-primary">{{ alert.annotations?.summary || alert.labels?.alertname || '-' }}</td><td>{{ alertTarget(alert) || '-' }}</td><td>{{ formatTime(alert.endsAt) }}</td></tr></tbody></table></SurfaceCard>
     </template>
   </template>
 
@@ -147,6 +147,7 @@ import {
 } from '../../api/alerting.js'
 import { useAsyncResource } from '../../composables/useAsyncResource.js'
 import { formatDateTime as formatTime } from '../../utils/formatters.js'
+import SurfaceCard from '../../components/SurfaceCard.vue'
 
 const props = defineProps({ nodes: { type: Array, default: () => [] }, monitoringReady: Boolean, metricsNodeName: { type: String, default: '' } })
 const emit = defineEmits(['navigate'])

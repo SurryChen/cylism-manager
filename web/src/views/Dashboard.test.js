@@ -78,7 +78,7 @@ describe('Dashboard view with K8s stats', () => {
   })
 
   it('uses the expanded overview cards for readable operational summaries', () => {
-    expect(dashboardSource).toContain('.dashboard-main-grid > .card > .card-header { min-height: 28px; margin-bottom: 14px; }')
+    expect(dashboardSource).toContain('.dashboard-main-grid > .surface-card > :deep(.surface-card-header) { min-height: 28px; margin-bottom: 14px; }')
     expect(dashboardSource).toContain('.dashboard-application-panel { display: flex; min-width: 0; flex-direction: column; padding: var(--space-20); }')
     expect(dashboardSource).toContain('.dashboard-overview-section { display: grid; flex: 1; min-height: 0; grid-template-rows: minmax(0, 1fr) auto; gap: 14px; }')
     expect(dashboardSource).toContain('.dashboard-overview-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); grid-template-rows: repeat(2, minmax(0, 1fr)); align-items: center; }')

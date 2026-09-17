@@ -16,4 +16,4 @@
 - [x] 3.1 Run focused frontend API and view tests after each task group.
 - [x] 3.2 Run full frontend tests and `npm run build`.
 - [x] 3.3 Run `go test ./...`, `go build ./...`, `git diff --check`, and `openspec validate relocate-registry-proxy-management --strict`.
-- [ ] 3.4 Present verification results and obtain approval before archiving.
+- [x] 3.4 Present verification results and obtain approval before archiving.

@@ -15,7 +15,7 @@
     </nav>
 
     <!-- Deployments -->
-    <div v-if="activeTab === 'deployments'" class="card">
+    <SurfaceCard v-if="activeTab === 'deployments'" as="div">
       <div v-if="deployments.length === 0" class="empty-state">
         <span class="empty-icon">⬡</span><span class="empty-text">暂无 Deployment</span>
       </div>
@@ -50,10 +50,10 @@
           </tbody>
         </table>
       </div>
-    </div>
+    </SurfaceCard>
 
     <!-- Pods -->
-    <div v-if="activeTab === 'pods'" class="card">
+    <SurfaceCard v-if="activeTab === 'pods'" as="div">
       <div class="pod-list-header">
         <div><h2>Pod 实例</h2><p>查看实例运行状态、所在服务器与重启情况</p></div>
         <div class="pod-list-tools">
@@ -111,12 +111,12 @@
           </tbody>
         </table>
       </div>
-    </div>
+    </SurfaceCard>
 
     <PodTerminal v-if="terminalPod" :pod="terminalPod" @close="terminalPod = null" />
 
     <!-- StatefulSets -->
-    <div v-if="activeTab === 'statefulsets'" class="card">
+    <SurfaceCard v-if="activeTab === 'statefulsets'" as="div">
       <div v-if="statefulsets.length === 0" class="empty-state">
         <span class="empty-icon">⬡</span><span class="empty-text">暂无 StatefulSet</span>
       </div>
@@ -142,10 +142,10 @@
           </tbody>
         </table>
       </div>
-    </div>
+    </SurfaceCard>
 
     <!-- DaemonSets -->
-    <div v-if="activeTab === 'daemonsets'" class="card">
+    <SurfaceCard v-if="activeTab === 'daemonsets'" as="div">
       <div v-if="daemonsets.length === 0" class="empty-state">
         <span class="empty-icon">⬡</span><span class="empty-text">暂无 DaemonSet</span>
       </div>
@@ -161,7 +161,7 @@
           </tbody>
         </table>
       </div>
-    </div>
+    </SurfaceCard>
 
     <!-- Scale Dialog -->
     <div v-if="scaleDialog" class="modal-overlay" @click.self="scaleDialog = null">
@@ -204,6 +204,7 @@ import { computed, ref, onMounted, onErrorCaptured } from 'vue'
 import { Box, Database, Filter, Layers3, Network, RefreshCw, RotateCcw, Search, SquareTerminal, X } from 'lucide-vue-next'
 import { getWorkloadDaemonSets, getWorkloadDeploymentPods, getWorkloadDeploymentRevisions, getWorkloadDeployments, getWorkloadPods, getWorkloadServers, getWorkloadStatefulSets, rollbackWorkload, scaleWorkload, updateWorkloadImage } from '../../api/kubernetes.js'
 import { useAsyncResource } from '../../composables/useAsyncResource.js'
+import SurfaceCard from '../../components/SurfaceCard.vue'
 import PodTerminal from './PodTerminal.vue'
 
 const activeTab = ref('pods')

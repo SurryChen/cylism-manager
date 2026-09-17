@@ -45,6 +45,13 @@ describe('SurfaceCard', () => {
     expect(wrapper.attributes('tabindex')).toBeUndefined()
   })
 
+  it('preserves aside semantics for complementary content panels', () => {
+    const wrapper = mount(SurfaceCard, { props: { as: 'aside' } })
+
+    expect(wrapper.element.tagName).toBe('ASIDE')
+    expect(source).toContain("['section', 'article', 'aside', 'div']")
+  })
+
   it('uses the shared glass surface tokens and respects reduced motion', () => {
     expect(source).toContain('background: var(--surface-glass)')
     expect(source).toContain('border: 1px solid var(--border)')

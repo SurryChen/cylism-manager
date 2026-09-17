@@ -11,7 +11,7 @@
     <div v-if="error" class="k8s-banner k8s-banner-warn section-gap">{{ error }}</div>
     <div v-if="componentActionError" class="k8s-banner k8s-banner-warn section-gap">{{ componentActionError }}</div>
 
-    <div v-if="loaded" class="card section-gap">
+    <SurfaceCard v-if="loaded" as="div" class="section-gap">
       <div class="table-wrap">
         <table class="data-table system-component-table">
           <thead>
@@ -70,7 +70,7 @@
           </tbody>
         </table>
       </div>
-    </div>
+    </SurfaceCard>
 
     <div v-if="modal" class="overlay" @click.self="close">
       <div class="modal">
@@ -138,6 +138,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { getClusterNodes, getSystemComponents, revertSystemComponent, updateSystemComponent } from '../../api/system-components.js'
 import { useAsyncResource } from '../../composables/useAsyncResource.js'
+import SurfaceCard from '../../components/SurfaceCard.vue'
 
 const items = ref([])
 const loaded = ref(false)

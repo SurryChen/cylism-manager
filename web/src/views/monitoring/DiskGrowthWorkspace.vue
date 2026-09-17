@@ -12,8 +12,8 @@
     <div v-if="error" class="k8s-banner k8s-banner-warn section-gap">{{ error }}</div>
     <div v-if="warning" class="k8s-banner k8s-banner-warn section-gap">{{ warning }}</div>
     <section class="disk-growth-grid section-gap" :aria-busy="loading">
-      <article class="card"><div class="card-header"><div><h2 class="card-title">节点挂载点</h2><p>可用空间减少最多的挂载点</p></div><span class="badge badge-offline">{{ rows.mounts.length }} 项</span></div><GrowthTable :rows="rows.mounts" empty="所选时间内没有可识别的节点磁盘增长" /></article>
-      <article class="card"><div class="card-header"><div><h2 class="card-title">存储卷</h2><p>PVC 增长量及当前挂载 Pod</p></div><span class="badge badge-offline">{{ rows.pvcs.length }} 项</span></div><GrowthTable :rows="rows.pvcs" kind="pvc" empty="所选时间内没有 PVC 使用量增长" /></article>
+      <SurfaceCard as="article"><template #header><div><h2 class="card-title">节点挂载点</h2><p>可用空间减少最多的挂载点</p></div></template><template #actions><span class="badge badge-offline">{{ rows.mounts.length }} 项</span></template><GrowthTable :rows="rows.mounts" empty="所选时间内没有可识别的节点磁盘增长" /></SurfaceCard>
+      <SurfaceCard as="article"><template #header><div><h2 class="card-title">存储卷</h2><p>PVC 增长量及当前挂载 Pod</p></div></template><template #actions><span class="badge badge-offline">{{ rows.pvcs.length }} 项</span></template><GrowthTable :rows="rows.pvcs" kind="pvc" empty="所选时间内没有 PVC 使用量增长" /></SurfaceCard>
     </section>
   </section>
 </template>
@@ -24,6 +24,7 @@ import { RefreshCw } from 'lucide-vue-next'
 import { getDiskGrowth } from '../../api/monitoring.js'
 import { useAsyncResource } from '../../composables/useAsyncResource.js'
 import { formatBytes } from '../../utils/formatters.js'
+import SurfaceCard from '../../components/SurfaceCard.vue'
 
 const props = defineProps({ nodes: { type: Array, default: () => [] } })
 

@@ -13,8 +13,8 @@
 
     <main class="runtime-content">
       <div class="runtime-layout">
-      <article class="card runtime-list-card">
-        <div class="card-header"><div><h2 class="card-title">助手实例</h2><p>默认部署到 cylism-assistant 命名空间</p></div><span class="badge badge-offline">{{ runtimes.length }} 个</span></div>
+      <SurfaceCard as="article" class="runtime-list-card">
+        <template #header><div><h2 class="card-title">助手实例</h2><p>默认部署到 cylism-assistant 命名空间</p></div></template><template #actions><span class="badge badge-offline">{{ runtimes.length }} 个</span></template>
         <div v-if="loading" class="empty-state">正在读取助手实例...</div>
         <div v-else-if="!runtimes.length" class="empty-state"><Bot :size="26" class="empty-icon" /><span class="empty-text">还没有 Agent 助手</span></div>
         <button v-for="item in runtimes" :key="item.id" class="runtime-item" :class="{ 'is-selected': selected?.id === item.id }" @click="select(item)">
@@ -22,10 +22,10 @@
           <span class="runtime-item-main"><strong>{{ item.name }}</strong><small>{{ item.runtime_type }} · {{ item.namespace }}</small></span>
           <span class="runtime-item-status">{{ statusLabel(item.status) }}</span>
         </button>
-      </article>
+      </SurfaceCard>
 
-      <article class="card runtime-detail-card">
-        <div class="card-header"><div><h2 class="card-title">助手详情</h2><p v-if="selected">{{ selected.image }}</p></div></div>
+      <SurfaceCard as="article" class="runtime-detail-card">
+        <template #header><div><h2 class="card-title">助手详情</h2><p v-if="selected">{{ selected.image }}</p></div></template>
         <div v-if="selected" class="runtime-detail">
           <div class="runtime-status-banner"><span class="runtime-dot" :class="`status-${selected.status}`"></span><strong>{{ statusLabel(selected.status) }}</strong><span>{{ selected.health_detail || '尚未执行健康检查' }}</span></div>
           <dl class="runtime-facts"><div><dt>类型</dt><dd>{{ selected.runtime_type }}</dd></div><div><dt>部署方式</dt><dd>{{ selected.deployment_mode === 'external' ? '外部连接' : '平台托管' }}</dd></div><div><dt>命名空间</dt><dd>{{ selected.namespace }}</dd></div><div><dt>版本</dt><dd>{{ displayVersion(selected) }}</dd></div><div><dt>连接地址</dt><dd>{{ selected.endpoint_url || '-' }}</dd></div><div v-if="selected.deployment_mode !== 'external'"><dt>PVC</dt><dd>{{ selected.pvc_name }} · {{ selected.storage }}</dd></div><div><dt>模型</dt><dd>{{ selected.model_name || '-' }} · {{ selected.api_style }}</dd></div></dl>
@@ -37,7 +37,7 @@
           </section>
         </div>
         <div v-else class="empty-state"><Bot :size="26" class="empty-icon" /><span class="empty-text">选择一个助手实例查看详情</span></div>
-      </article>
+      </SurfaceCard>
     </div>
     </main>
 
@@ -150,6 +150,7 @@ import {
 import { useAsyncResource } from '../composables/useAsyncResource.js'
 import ChatDrawer from './runtime/ChatDrawer.vue'
 import SectionTabsHeader from '../components/SectionTabsHeader.vue'
+import SurfaceCard from '../components/SurfaceCard.vue'
 
 const runtimes = ref([])
 const catalog = ref([])

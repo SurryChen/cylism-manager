@@ -4,7 +4,7 @@
       <h1 class="page-title">资源浏览</h1>
     </div>
 
-    <div class="card section-gap">
+    <SurfaceCard as="div" class="section-gap">
       <div class="filter-bar">
         <div class="table-tabs">
           <button :class="['tab-btn', { 'tab-active': activeTab==='pods' }]" @click="activeTab='pods'">Pods</button>
@@ -19,12 +19,12 @@
           </SelectMenu>
         </div>
       </div>
-    </div>
+    </SurfaceCard>
 
     <div v-if="k8sError" class="k8s-banner k8s-banner-warn">⚠ {{ k8sError }}</div>
 
     <!-- Pods Tab -->
-    <div v-if="activeTab==='pods'" class="card">
+    <SurfaceCard v-if="activeTab==='pods'" as="div">
       <div v-if="pods.length===0" class="empty-state">
         <span class="empty-icon">▤</span><span class="empty-text">暂无 Pod</span>
       </div>
@@ -44,10 +44,10 @@
           </tbody>
         </table>
       </div>
-    </div>
+    </SurfaceCard>
 
     <!-- Services Tab -->
-    <div v-if="activeTab==='services'" class="card">
+    <SurfaceCard v-if="activeTab==='services'" as="div">
       <div v-if="services.length===0" class="empty-state">
         <span class="empty-icon">◎</span><span class="empty-text">暂无 Service</span>
       </div>
@@ -68,10 +68,10 @@
           </tbody>
         </table>
       </div>
-    </div>
+    </SurfaceCard>
 
     <!-- Deployments Tab -->
-    <div v-if="activeTab==='deployments'" class="card">
+    <SurfaceCard v-if="activeTab==='deployments'" as="div">
       <div v-if="deployments.length===0" class="empty-state">
         <span class="empty-icon">▥</span><span class="empty-text">暂无 Deployment</span>
       </div>
@@ -89,7 +89,7 @@
           </tbody>
         </table>
       </div>
-    </div>
+    </SurfaceCard>
 
     <!-- Service Detail Modal -->
     <div v-if="serviceDetail" class="overlay" @click.self="serviceDetail=null">
@@ -115,6 +115,7 @@
 import { ref, onMounted, computed, watch } from 'vue'
 import { getResourceInventory, getResourceService } from '../../api/kubernetes.js'
 import { useAsyncResource } from '../../composables/useAsyncResource.js'
+import SurfaceCard from '../../components/SurfaceCard.vue'
 
 const activeTab = ref('pods')
 const filterNs = ref('')

@@ -12,7 +12,7 @@
 import { computed } from 'vue'
 
 const props = defineProps({
-  as: { type: String, default: 'section', validator: value => ['section', 'article', 'div'].includes(value) },
+  as: { type: String, default: 'section', validator: value => ['section', 'article', 'aside', 'div'].includes(value) },
   padding: { type: String, default: 'md', validator: value => ['none', 'sm', 'md'].includes(value) },
   interactive: { type: Boolean, default: false },
 })

@@ -8,8 +8,9 @@
     </div>
 
     <section class="dashboard-main-grid">
-      <article class="card dashboard-health-panel" :class="{ 'is-loading': k8sLoading }" :aria-busy="k8sLoading">
-        <div class="card-header"><h2 class="card-title">集群概况</h2><div class="dashboard-health-header"><span :class="`cluster-status cluster-status-${k8sStatusTone}`">{{ k8sStatusLabel }}</span><router-link class="panel-link" to="/servers">查看集群</router-link></div></div>
+      <SurfaceCard as="article" class="dashboard-health-panel" :class="{ 'is-loading': k8sLoading }" :aria-busy="k8sLoading">
+        <template #header><h2 class="card-title">集群概况</h2></template>
+        <template #actions><div class="dashboard-health-header"><span :class="`cluster-status cluster-status-${k8sStatusTone}`">{{ k8sStatusLabel }}</span><router-link class="panel-link" to="/servers">查看集群</router-link></div></template>
         <section class="dashboard-overview-section" aria-label="集群资源">
           <div class="dashboard-overview-grid">
             <div class="dashboard-overview-metric"><strong>{{ k8sMetric('nodes_total') }}</strong><span>节点</span></div>
@@ -31,10 +32,11 @@
             <div class="dashboard-cluster-health-meta"><span>{{ k8sMetric('control_plane_nodes') }} 控制面</span><span>{{ k8sMetric('worker_nodes') }} 工作节点</span><span>{{ k8sMetric('cpu_cores_total') }} vCPU · {{ k8sMemoryMetric() }}</span></div>
           </div>
         </section>
-      </article>
+      </SurfaceCard>
 
-      <article class="card dashboard-application-panel" :class="{ 'is-loading': dashboardLoading && !applicationSummary }" :aria-busy="dashboardLoading">
-        <div class="card-header"><h2 class="card-title">应用情况</h2><router-link class="panel-link" to="/applications">查看应用</router-link></div>
+      <SurfaceCard as="article" class="dashboard-application-panel" :class="{ 'is-loading': dashboardLoading && !applicationSummary }" :aria-busy="dashboardLoading">
+        <template #header><h2 class="card-title">应用情况</h2></template>
+        <template #actions><router-link class="panel-link" to="/applications">查看应用</router-link></template>
         <div class="dashboard-application-content dashboard-card-scroll-region" tabindex="0">
           <div v-if="dashboardSectionError('applications')" class="dashboard-application-unavailable"><span class="empty-icon">!</span><span>应用状态暂不可用</span></div>
           <template v-else>
@@ -52,14 +54,15 @@
             </div>
           </template>
         </div>
-      </article>
+      </SurfaceCard>
 
-      <aside class="card dashboard-side-panel">
-        <div class="card-header"><h2 class="card-title">快捷操作</h2><button class="icon-button dashboard-action-settings" type="button" title="编辑快捷操作" aria-label="编辑快捷操作" :aria-expanded="quickActionsEditing" @click="quickActionsEditing = true"><Settings2 :size="15" /></button></div>
+      <SurfaceCard as="aside" class="dashboard-side-panel">
+        <template #header><h2 class="card-title">快捷操作</h2></template>
+        <template #actions><button class="icon-button dashboard-action-settings" type="button" title="编辑快捷操作" aria-label="编辑快捷操作" :aria-expanded="quickActionsEditing" @click="quickActionsEditing = true"><Settings2 :size="15" /></button></template>
         <nav class="dashboard-action-list" aria-label="快捷操作">
           <router-link v-for="action in visibleQuickActions" :key="action.id" class="dashboard-action-card" :class="{ 'dashboard-action-card-primary': action.id === 'deploy' }" :to="action.to"><span class="dashboard-action-icon">{{ action.icon }}</span><strong>{{ action.label }}</strong><span class="action-arrow">→</span></router-link>
         </nav>
-      </aside>
+      </SurfaceCard>
 
       <BaseModal :open="quickActionsEditing" title="配置快捷操作" size="small" @close="quickActionsEditing = false">
         <div class="quick-actions-editor">
@@ -72,7 +75,7 @@
 
     <section class="dashboard-insights-grid">
       <section class="dashboard-trends-panel">
-        <div v-if="trendError" class="card dashboard-trends-empty"><div class="card-header"><h2 class="card-title">资源趋势</h2><router-link class="panel-link" to="/monitoring">查看监控</router-link></div><div><span class="empty-icon">!</span><span class="empty-text">监控趋势暂不可用</span></div></div>
+        <SurfaceCard v-if="trendError" as="div" class="dashboard-trends-empty"><template #header><h2 class="card-title">资源趋势</h2></template><template #actions><router-link class="panel-link" to="/monitoring">查看监控</router-link></template><div><span class="empty-icon">!</span><span class="empty-text">监控趋势暂不可用</span></div></SurfaceCard>
         <MetricTrendChart v-else class="dashboard-trend-chart" title="资源趋势" :unit="selectedTrendMetric.unit" :loading="trendLoading" :series="selectedTrendSeries">
           <template #actions><router-link class="panel-link" to="/monitoring">查看监控</router-link></template>
           <template #toolbar>
@@ -85,12 +88,13 @@
         </MetricTrendChart>
       </section>
 
-      <aside class="card dashboard-activity-panel">
-        <div class="card-header"><h2 class="card-title">运行检查</h2><router-link class="panel-link" to="/monitoring?tab=alerts">查看告警</router-link></div>
+      <SurfaceCard as="aside" class="dashboard-activity-panel">
+        <template #header><h2 class="card-title">运行检查</h2></template>
+        <template #actions><router-link class="panel-link" to="/monitoring?tab=alerts">查看告警</router-link></template>
         <div class="attention-list"><router-link v-for="item in runtimeChecks" :key="item.key" class="attention-row" :to="item.to"><span class="attention-dot" :class="item.level"></span><strong class="attention-title">{{ item.title }}</strong><span class="attention-value">{{ item.value }}</span></router-link></div>
         <div class="activity-heading"><strong>最近操作</strong><router-link class="panel-link" to="/audit">查看全部</router-link></div>
         <div v-if="dashboardError || dashboardSectionError('recent_logs')" class="empty-state dashboard-empty-state"><span class="empty-icon">!</span><span class="empty-text">操作记录暂不可用</span></div><div v-else-if="dashboardLoading" class="empty-state dashboard-empty-state"><span class="empty-text">正在读取...</span></div><div v-else-if="recentLogs.length === 0" class="empty-state dashboard-empty-state"><span class="empty-icon">⊙</span><span class="empty-text">暂无操作记录</span></div><div v-else class="activity-list"><div v-for="log in recentLogs.slice(0, 2)" :key="log.id" class="activity-row"><span class="badge" :class="actionBadge(log.action)">{{ actionLabel(log.action) }}</span><span>{{ resourceLabel(log.resource_type) }} #{{ log.resource_id }}</span></div></div>
-      </aside>
+      </SurfaceCard>
     </section>
   </div>
 </template>
@@ -101,6 +105,7 @@ import { Settings2 } from 'lucide-vue-next'
 import { getAlertOverview, getDashboardOverview, getKubernetesDashboard } from '../api/dashboard.js'
 import { getMonitoringDashboard } from '../api/monitoring.js'
 import BaseModal from '../components/BaseModal.vue'
+import SurfaceCard from '../components/SurfaceCard.vue'
 import { useAsyncResource } from '../composables/useAsyncResource.js'
 import MetricTrendChart from './monitoring/MetricTrendChart.vue'
 
@@ -322,7 +327,7 @@ function resourceLabel(r) { const m = { server:'服务器',site:'站点',cert:'�
 
 .dashboard-main-grid { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(280px, 1fr) minmax(240px, .85fr); gap: 16px; align-items: stretch; }
 .dashboard-health-panel, .dashboard-application-panel, .dashboard-side-panel { min-width: 0; min-height: 0; overflow: hidden; }
-.dashboard-main-grid > .card > .card-header { min-height: 28px; margin-bottom: 14px; }
+.dashboard-main-grid > .surface-card > :deep(.surface-card-header) { min-height: 28px; margin-bottom: 14px; }
 .dashboard-health-panel { display: flex; flex-direction: column; }
 .dashboard-health-panel.is-loading { opacity: .86; }
 .cluster-status { font-size: 10px; font-weight: 600; }
@@ -386,7 +391,7 @@ function resourceLabel(r) { const m = { server:'服务器',site:'站点',cert:'�
 .dashboard-trends-panel { display: flex; min-width: 0; min-height: 0; }
 .dashboard-trends-empty { display: flex; flex: 1; min-height: 220px; align-items: center; justify-content: center; gap: 8px; }
 :deep(.dashboard-trend-chart) { display: flex; flex: 1; min-height: 0; padding: 14px; flex-direction: column; }
-:deep(.dashboard-trend-chart .card-header) { margin-bottom: 8px; }
+:deep(.dashboard-trend-chart .surface-card-header) { margin-bottom: 8px; }
 :deep(.dashboard-trend-chart .metric-trend-subtitle), :deep(.dashboard-trend-chart .metric-trend-threshold) { font-size: 9px; }
 :deep(.dashboard-trend-chart .metric-trend-canvas), :deep(.dashboard-trend-chart .metric-trend-empty) { height: auto; min-height: 0; flex: 1; }
 :deep(.dashboard-trend-chart .metric-trend-toolbar) { margin-top: 0; }
@@ -398,7 +403,7 @@ function resourceLabel(r) { const m = { server:'服务器',site:'站点',cert:'�
 
 .dashboard-activity-panel { display: flex; min-width: 0; flex-direction: column; padding: 16px; }
 .dashboard-activity-panel { overflow: hidden; }
-.dashboard-activity-panel .card-header { margin-bottom: 10px; }
+.dashboard-activity-panel :deep(.surface-card-header) { margin-bottom: 10px; }
 .panel-link { color: var(--action-primary); font-size: 11px; text-decoration: none; }
 .panel-link:hover { text-decoration: underline; }
 .attention-list { display: grid; grid-template-rows: repeat(4, minmax(30px, auto)); gap: 3px; }

@@ -13,18 +13,18 @@
     <main class="monitoring-content">
       <FeedbackBanner v-if="error" tone="warning" :message="error" class="section-gap" />
 
-      <section v-if="loaded && status?.state === 'not_installed'" class="card monitoring-install-card">
-        <div class="card-header"><div><h2 class="card-title">VictoriaMetrics 未安装</h2><p class="status-copy">选择数据节点和容量后，平台将创建并管理专用存储卷及节点采集组件。</p></div><span class="badge badge-offline">未安装</span></div>
+      <SurfaceCard v-if="loaded && status?.state === 'not_installed'" class="monitoring-install-card">
+        <template #header><div><h2 class="card-title">VictoriaMetrics 未安装</h2><p class="status-copy">选择数据节点和容量后，平台将创建并管理专用存储卷及节点采集组件。</p></div></template><template #actions><span class="badge badge-offline">未安装</span></template>
         <form class="install-form" @submit.prevent="install">
           <div class="form-group"><label class="form-label">数据节点</label><SelectMenu v-model="form.node_name" class="form-select" required><option value="" disabled>选择就绪节点</option><option v-for="node in readyNodes" :key="node.name" :value="node.name">{{ displayNode(node) }}</option></SelectMenu><p class="form-hint">将使用 kubernetes.io/hostname 标签约束 VictoriaMetrics 到所选节点。</p></div>
           <div class="form-row"><div class="form-group"><label class="form-label">存储容量</label><input v-model.trim="form.storage" class="form-input" required placeholder="10Gi" /></div><div class="form-group"><label class="form-label">StorageClass</label><SelectMenu v-model="form.storage_class_name" class="form-select"><option value="">使用集群默认 StorageClass</option><option v-for="item in storageClasses" :key="item.name" :value="item.name">{{ item.name }}{{ item.is_default ? '（默认）' : '' }}</option></SelectMenu></div><div class="form-group"><label class="form-label">指标保留天数</label><input v-model.number="form.retention_days" class="form-input" type="number" min="1" max="365" required /></div></div>
           <p class="form-hint">平台会自动创建名为 <code>cylism-victoria-metrics-data</code> 的 PVC。安装后存储卷仅由监控组件管理，卸载不会删除数据。</p>
           <div class="modal-actions status-actions"><button class="btn btn-primary" :disabled="installing || !form.node_name">{{ installing ? '正在提交...' : '安装监控' }}</button><button type="button" class="btn" :disabled="installing" @click="refresh">重新检测</button></div>
         </form>
-      </section>
+      </SurfaceCard>
 
       <template v-else-if="loaded && status">
-        <section v-if="!metricsAvailable" class="card wait-card"><EmptyState variant="loading" icon="◌" :message="status.message || '等待 VictoriaMetrics 存储实例就绪'" /></section>
+        <SurfaceCard v-if="!metricsAvailable" class="wait-card"><EmptyState variant="loading" icon="◌" :message="status.message || '等待 VictoriaMetrics 存储实例就绪'" /></SurfaceCard>
 
         <template v-else-if="activeTab === 'overview'">
           <section class="metric-grid monitoring-summary section-gap">
@@ -46,7 +46,7 @@
 
         <template v-else-if="activeTab === 'workloads'">
           <SectionHeading title="工作负载资源" description="按当前资源使用排序，定位最需要排查的 Pod" class="monitoring-section-heading section-gap"><template #actions><button class="icon-button" title="刷新工作负载指标" aria-label="刷新工作负载指标" :disabled="workloadsLoading" @click="loadWorkloads"><RefreshCw :size="16" :class="{ 'is-spinning': workloadsLoading }" /></button></template></SectionHeading>
-          <section class="monitoring-workload-grid"><article class="card"><div class="card-header"><div><h2 class="card-title">CPU 使用最高</h2><p class="status-copy">最近 5 分钟平均</p></div></div><WorkloadTable :rows="workloads.cpu" unit="m" :loading="workloadsLoading" /></article><article class="card"><div class="card-header"><div><h2 class="card-title">内存使用最高</h2><p class="status-copy">工作集内存</p></div></div><WorkloadTable :rows="workloads.memory" unit="MiB" :loading="workloadsLoading" /></article></section>
+          <section class="monitoring-workload-grid"><SurfaceCard as="article"><template #header><div><h2 class="card-title">CPU 使用最高</h2><p class="status-copy">最近 5 分钟平均</p></div></template><WorkloadTable :rows="workloads.cpu" unit="m" :loading="workloadsLoading" /></SurfaceCard><SurfaceCard as="article"><template #header><div><h2 class="card-title">内存使用最高</h2><p class="status-copy">工作集内存</p></div></template><WorkloadTable :rows="workloads.memory" unit="MiB" :loading="workloadsLoading" /></SurfaceCard></section>
         </template>
 
         <DiskGrowthWorkspace v-else-if="activeTab === 'disk'" :nodes="nodes" />
@@ -81,6 +81,7 @@ import { useRoutedTab } from '../composables/useRoutedTab.js'
 import EmptyState from '../components/EmptyState.vue'
 import FeedbackBanner from '../components/FeedbackBanner.vue'
 import SectionHeading from '../components/SectionHeading.vue'
+import SurfaceCard from '../components/SurfaceCard.vue'
 import AlertingWorkspace from './monitoring/AlertingWorkspace.vue'
 import DiskGrowthWorkspace from './monitoring/DiskGrowthWorkspace.vue'
 import LoggingWorkspace from './monitoring/LoggingWorkspace.vue'

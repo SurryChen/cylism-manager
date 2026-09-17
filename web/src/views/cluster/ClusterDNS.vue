@@ -16,7 +16,7 @@
         <article class="metric dns-summary-item"><span>CoreDNS</span><strong>{{ readyPods }}/{{ data.pods?.length || 0 }} 就绪</strong></article>
       </section>
 
-      <section class="card section-gap">
+      <SurfaceCard class="section-gap">
         <SectionHeading title="外部 DNS 上游" description="仅接受 IP 地址。保存时只替换 CoreDNS 根域的 forward 指令，其余 Corefile 保持不变。">
           <template #actions>
             <button class="btn btn-sm" :disabled="saving || inheritedDNS" @click="openResetConfirm">恢复宿主机 DNS</button>
@@ -34,22 +34,22 @@
             <button class="btn btn-primary" :disabled="saving">{{ saving ? '应用中...' : '验证并应用' }}</button>
           </div>
         </form>
-      </section>
+      </SurfaceCard>
 
-      <section class="card section-gap">
+      <SurfaceCard class="section-gap">
         <SectionHeading title="CoreDNS 副本" description="用于确认策略实际覆盖的 DNS 工作负载。" />
         <div v-if="data.pods?.length" class="pod-list">
           <div v-for="pod in data.pods" :key="pod.name" class="pod-row"><strong>{{ pod.name }}</strong><span>{{ pod.node || '-' }}</span><span>{{ pod.ip || '-' }}</span><span class="badge" :class="pod.ready ? 'badge-online' : 'badge-danger'">{{ pod.ready ? '就绪' : '未就绪' }}</span></div>
         </div>
         <EmptyState v-else message="未发现 CoreDNS Pod" />
-      </section>
+      </SurfaceCard>
 
-      <section v-if="data.history?.length" class="card section-gap">
+      <SurfaceCard v-if="data.history?.length" class="section-gap">
         <SectionHeading title="策略历史" description="回滚会以选中版本的上游创建一个新的策略版本。" />
         <div class="history-list">
           <div v-for="policy in data.history" :key="policy.revision" class="history-row"><div><strong>版本 {{ policy.revision }}</strong><small>{{ policy.resolvers?.join('，') }}</small></div><button class="btn btn-sm" :disabled="saving || policy.revision === data.active_policy?.revision" @click="rollback(policy)">{{ policy.revision === data.active_policy?.revision ? '当前版本' : '回滚到此版本' }}</button></div>
         </div>
-      </section>
+      </SurfaceCard>
     </template>
 
     <BaseModal :open="confirming" title="应用集群 DNS 策略" size="small" @close="confirming = false">
@@ -80,6 +80,7 @@ import EmptyState from '../../components/EmptyState.vue'
 import FeedbackBanner from '../../components/FeedbackBanner.vue'
 import PageHeader from '../../components/PageHeader.vue'
 import SectionHeading from '../../components/SectionHeading.vue'
+import SurfaceCard from '../../components/SurfaceCard.vue'
 
 const data = ref({ forwarding: [], pods: [], history: [], active_policy: null })
 const resolvers = ref([''])

@@ -5,14 +5,14 @@
     <div v-if="detailError" class="k8s-banner k8s-banner-warn page-error">{{ detailError }}</div>
     <div v-if="mutationError" class="k8s-banner k8s-banner-warn page-error">{{ mutationError }}</div>
 
-    <div class="card section-gap">
+    <SurfaceCard as="div" class="section-gap">
       <div class="table-tabs">
         <button :class="['tab-btn', { 'tab-active': activeTab === 'configmaps' }]" @click="selectTab('configmaps')">ConfigMaps</button>
         <button :class="['tab-btn', { 'tab-active': activeTab === 'secrets' }]" @click="selectTab('secrets')">Secrets</button>
       </div>
-    </div>
+    </SurfaceCard>
 
-    <div class="card">
+    <SurfaceCard as="div">
       <div v-if="loadingTab" class="empty-state"><span class="empty-text">加载中...</span></div>
       <div v-else-if="resources.length === 0" class="empty-state"><span class="empty-text">暂无 {{ activeTab === 'configmaps' ? 'ConfigMap' : 'Secret' }}</span></div>
       <div v-else class="table-wrap">
@@ -37,7 +37,7 @@
           </tbody>
         </table>
       </div>
-    </div>
+    </SurfaceCard>
 
     <Teleport to="body"><div v-if="showEditor" class="overlay" @click.self="closeEditor"><div class="modal resource-modal"><h2 class="modal-title">{{ editing ? '编辑' : '新建' }} {{ resourceKind }}</h2><p class="form-hint">{{ activeTab === 'secrets' ? 'Secret 值不会再次显示；编辑时留空会保留对应 key 的当前值。' : '修改会立即影响引用该 ConfigMap 的工作负载。' }}</p><form @submit.prevent="saveResource">
       <div class="form-row"><div class="form-group"><label class="form-label">命名空间</label><SelectMenu v-if="namespaces.length" v-model="resourceForm.namespace" class="form-select" required><option value="" disabled>选择命名空间</option><option v-for="namespace in namespaces" :key="namespace.name" :value="namespace.name">{{ namespace.name }}</option></SelectMenu><input v-else v-model.trim="resourceForm.namespace" class="form-input" required /></div><div class="form-group"><label class="form-label">名称</label><input v-model.trim="resourceForm.name" class="form-input" required :disabled="editing" placeholder="app-config" /></div></div>
@@ -52,6 +52,7 @@ import { computed, onMounted, ref } from 'vue'
 import { Pencil, Plus, Trash2 } from 'lucide-vue-next'
 import { createConfigMap, createSecret, deleteConfigMap, deleteSecret, getConfigMap, getConfigMaps, getNamespaceNames, getSecrets, updateConfigMap, updateSecret } from '../../api/kubernetes.js'
 import { useAsyncResource } from '../../composables/useAsyncResource.js'
+import SurfaceCard from '../../components/SurfaceCard.vue'
 
 const activeTab = ref('configmaps')
 const configmaps = ref([])

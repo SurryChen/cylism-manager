@@ -1,26 +1,27 @@
 <template>
-  <article class="card metric-trend-chart">
-    <div class="card-header">
+  <SurfaceCard as="article" class="metric-trend-chart">
+    <template #header>
       <div>
         <h2 class="card-title">{{ title }}</h2>
         <p v-if="subtitle" class="metric-trend-subtitle">{{ subtitle }}</p>
       </div>
-      <div class="metric-trend-header-actions">
+    </template>
+    <template #actions><div class="metric-trend-header-actions">
         <slot name="actions" />
         <span v-if="Number.isFinite(threshold)" class="metric-trend-threshold">阈值 {{ threshold }}{{ unit }}</span>
-      </div>
-    </div>
+    </div></template>
     <div v-if="$slots.toolbar" class="metric-trend-toolbar"><slot name="toolbar" /></div>
     <div v-if="loading" class="metric-trend-empty">正在读取历史指标...</div>
     <div v-else-if="!hasData" class="metric-trend-empty">该时间范围内暂无指标</div>
     <div v-else class="metric-trend-canvas"><Line :data="chartData" :options="chartOptions" /></div>
-  </article>
+  </SurfaceCard>
 </template>
 
 <script setup>
 import { computed } from 'vue'
 import { Line } from 'vue-chartjs'
 import { Chart as ChartJS, CategoryScale, Filler, Legend, LineElement, LinearScale, PointElement, Tooltip } from 'chart.js'
+import SurfaceCard from '../../components/SurfaceCard.vue'
 
 ChartJS.register(CategoryScale, Filler, Legend, LineElement, LinearScale, PointElement, Tooltip)
 

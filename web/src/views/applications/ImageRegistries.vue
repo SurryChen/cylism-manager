@@ -4,9 +4,9 @@
     <div class="page-header"><div><h1 class="page-title">镜像仓库</h1><p class="page-subtitle">维护全局仓库、凭据、连通状态与项目授权</p></div><button class="btn btn-primary" @click="openCreate">+ 新建镜像仓库</button></div>
     <div v-if="error" class="k8s-banner k8s-banner-warn section-gap">⚠ {{ error }}</div>
 
-    <div v-if="loaded && registries.length > 0" class="card section-gap"><div class="table-wrap"><table class="data-table"><thead><tr><th>名称</th><th>地址</th><th>验证镜像</th><th>认证</th><th>项目授权</th><th>状态</th><th>检测结果</th><th>操作</th></tr></thead><tbody>
+    <SurfaceCard v-if="loaded && registries.length > 0" as="div" class="section-gap"><div class="table-wrap"><table class="data-table"><thead><tr><th>名称</th><th>地址</th><th>验证镜像</th><th>认证</th><th>项目授权</th><th>状态</th><th>检测结果</th><th>操作</th></tr></thead><tbody>
       <tr v-for="registry in registries" :key="registry.id"><td class="cell-primary">{{ registry.name }}</td><td>{{ registry.endpoint }}</td><td class="verification-image">{{ registry.verification_image || '-' }}</td><td><span>{{ authLabel(registry.auth_type) }}</span><small v-if="registry.credential_configured" class="credential-state">凭据已配置</small></td><td><span v-if="registry.projects?.length">{{ registry.projects.map(project => project.name).join('、') }}</span><span v-else>-</span></td><td><span class="badge" :class="registry.enabled ? 'badge-online' : 'badge-offline'">{{ registry.enabled ? '已启用' : '已停用' }}</span></td><td><div class="verification-result"><span class="badge" :class="verificationBadge(registry.last_verify_status)">{{ verificationLabel(registry.last_verify_status) }}</span><small v-if="registry.last_verified_at">{{ formatTime(registry.last_verified_at) }}</small><small v-if="registry.last_verify_error" class="verification-error">{{ registry.last_verify_error }}</small></div></td><td class="action-cell"><div class="btn-group"><button class="icon-button" title="检测镜像仓库" :aria-label="`检测 ${registry.name}`" :disabled="verifyingID === registry.id" @click="verifyRegistry(registry)"><RefreshCw :size="16" :class="{ 'is-spinning': verifyingID === registry.id }" /></button><button class="btn btn-sm" @click="openEdit(registry)">编辑</button><button class="btn btn-sm btn-danger" title="删除镜像仓库" @click="deleteTarget = registry">删除</button></div></td></tr>
-    </tbody></table></div></div>
+    </tbody></table></div></SurfaceCard>
 
     <div v-if="showModal" class="overlay" @click.self="closeModal"><div class="modal registry-modal"><h2 class="modal-title">{{ editingRegistry ? '编辑镜像仓库' : '新建镜像仓库' }}</h2><form @submit.prevent="saveRegistry">
       <div class="form-group"><label class="form-label">名称</label><input v-model.trim="form.name" class="form-input" required placeholder="commerce-harbor" /></div>
@@ -29,6 +29,7 @@ import { ArrowLeft, RefreshCw } from 'lucide-vue-next'
 import { useRoute, useRouter } from 'vue-router'
 import { createImageRegistry, deleteImageRegistry, getImageRegistryResources, updateImageRegistry, verifyImageRegistry } from '../../api/image-registries.js'
 import { useAsyncResource } from '../../composables/useAsyncResource.js'
+import SurfaceCard from '../../components/SurfaceCard.vue'
 import { formatDateTime as formatTime } from '../../utils/formatters.js'
 
 const registries = ref([])

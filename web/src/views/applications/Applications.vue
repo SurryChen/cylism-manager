@@ -29,11 +29,11 @@
           <div class="metric"><span>应用</span><strong>{{ applications.length }}</strong></div><div class="metric"><span>运行中</span><strong>{{ workspaceRuntimeCounts.running }}</strong></div><div class="metric"><span>发布中</span><strong>{{ workspaceRuntimeCounts.deploying }}</strong></div><div class="metric"><span>异常服务</span><strong>{{ workspaceRuntimeCounts.attention }}</strong></div>
         </div>
         <section class="workspace-section"><SectionHeading title="应用" description="当前环境中的服务与入口"><template #actions><button class="btn btn-sm btn-primary" @click="openCreateApplication">创建应用</button></template></SectionHeading>
-      <div v-if="applicationsLoaded && applications.length > 0" class="card">
+      <SurfaceCard v-if="applicationsLoaded && applications.length > 0" as="div">
         <div class="table-wrap"><table class="data-table"><thead><tr><th>应用</th><th>运行状态</th><th>运行版本</th><th>最近发布</th><th>访问地址</th><th>操作</th></tr></thead><tbody>
           <tr v-for="app in applications" :key="app.id" class="clickable" @click="openDetails(app)"><td class="cell-primary">{{ app.name }}<small>{{ app.workload_kind === 'statefulset' ? 'StatefulSet' : 'Deployment' }}</small></td><td><span class="badge" :class="runtimeBadge(app.runtime?.status)">{{ runtimeLabel(app.runtime?.status) }}</span><small v-if="app.runtime?.total_pods" class="runtime-count">{{ app.runtime.ready_pods }}/{{ app.runtime.total_pods }} Pods</small></td><td>{{ app.active_release?.version || '-' }}</td><td>{{ app.latest_release ? formatTime(app.latest_release.created_at) : '-' }}<small v-if="app.latest_release" :class="['release-state', releaseBadge(app.latest_release.status)]">{{ releaseLabel(app.latest_release.status) }}</small></td><td><a v-if="app.endpoint_url" class="endpoint-link" :href="app.endpoint_url" target="_blank" rel="noopener noreferrer" @click.stop>{{ app.endpoint_url }}</a><span v-else-if="app.endpoint_access_mode === 'protected_console'" class="endpoint-protected">受保护控制台（请在详情页打开）</span><small v-if="app.endpoint_count > 1" class="endpoint-more">另有 {{ app.endpoint_count - 1 }} 个地址</small><span v-else-if="!app.endpoint_url && app.endpoint_access_mode !== 'protected_console'">集群内</span></td><td><button class="btn btn-sm" @click.stop="openRelease(app)">发布版本</button></td></tr>
         </tbody></table></div>
-      </div>
+      </SurfaceCard>
       <EmptyState v-else-if="applicationsLoaded" message="当前项目与环境下还没有应用" /></section>
         <div class="workspace-grid">
           <section class="workspace-section"><div class="section-heading"><div><h2>最近发布</h2><p>仅显示当前环境的最新 8 次发布</p></div></div><div v-if="workspaceRecentReleases.length" class="compact-list"><button v-for="release in workspaceRecentReleases" :key="release.id" class="list-row" @click="openWorkspaceRelease(release)"><span><strong>{{ release.application_name }}</strong><small>#{{ release.sequence }} · {{ release.image }} · {{ formatTime(release.created_at) }}</small></span><span class="badge" :class="releaseBadge(release.status)">{{ releaseLabel(release.status) }}</span></button></div><div v-else class="empty-inline">暂无发布记录</div></section>
@@ -44,24 +44,24 @@
     </template>
 
     <template v-else-if="section === 'projects'">
-      <div v-if="projectsLoaded && projects.length > 0" class="card">
+      <SurfaceCard v-if="projectsLoaded && projects.length > 0" as="div">
         <div class="table-wrap"><table class="data-table"><thead><tr><th>项目</th><th>说明</th><th>默认镜像仓库</th><th>已授权镜像仓库</th><th>环境与命名空间</th><th>已关联应用</th><th>操作</th></tr></thead><tbody>
           <tr v-for="project in projects" :key="project.id" class="clickable" @click="openProjectEnvironments(project)"><td class="cell-primary">{{ project.name }}</td><td>{{ project.description || '-' }}</td><td>{{ project.default_image_registry?.name || '-' }}</td><td><div v-if="authorizedProjectRegistries(project).length" class="registry-links"><span v-for="registry in authorizedProjectRegistries(project)" :key="registry.id" class="registry-link">{{ registry.name }}<small :class="registry.enabled ? '' : 'registry-disabled'">{{ registry.enabled ? registry.endpoint : '已停用' }}</small></span></div><span v-else>-</span></td><td><div v-if="project.environments?.length" class="environment-links"><span v-for="environment in project.environments" :key="environment.id" class="environment-link"><strong>{{ environment.name }}</strong><small>{{ environment.namespace }}</small></span></div><span v-else>-</span></td><td>{{ applicationCount(project.id) }}</td><td class="action-cell" @click.stop><div class="btn-group"><button class="btn btn-sm" @click="openProjectEditor(project)">编辑</button><button class="btn btn-sm" @click="openProjectEnvironments(project)">管理环境</button><button class="btn btn-sm btn-danger" title="删除项目" @click="requestProjectDelete(project)">删除</button></div></td></tr>
         </tbody></table></div>
-      </div>
+      </SurfaceCard>
     </template>
 
     <template v-else>
       <div v-if="section === 'overview' && releaseHistoryLoaded" class="overview-metrics">
         <div class="metric"><span>跨项目应用</span><strong>{{ applications.length }}</strong></div><div class="metric"><span>失败发布</span><strong>{{ releaseHistory.filter(item => item.status === 'failed').length }}</strong></div><div class="metric"><span>证书告警</span><strong>{{ certificateAlerts.length }}</strong></div>
       </div>
-      <section v-if="section === 'overview' && certificateAlerts.length" class="card section-gap"><div class="table-wrap"><table class="data-table"><thead><tr><th>域名</th><th>环境</th><th>证书状态</th><th>原因</th></tr></thead><tbody><tr v-for="domain in certificateAlerts" :key="domain.id"><td class="cell-primary">{{ domain.hostname }}</td><td>{{ domain.namespace || '-' }}</td><td><span class="badge badge-danger">{{ domain.certificate?.status || '未就绪' }}</span></td><td>{{ domain.certificate?.reason || domain.certificate_error || '-' }}</td></tr></tbody></table></div></section>
+      <SurfaceCard v-if="section === 'overview' && certificateAlerts.length" class="section-gap"><div class="table-wrap"><table class="data-table"><thead><tr><th>域名</th><th>环境</th><th>证书状态</th><th>原因</th></tr></thead><tbody><tr v-for="domain in certificateAlerts" :key="domain.id"><td class="cell-primary">{{ domain.hostname }}</td><td>{{ domain.namespace || '-' }}</td><td><span class="badge badge-danger">{{ domain.certificate?.status || '未就绪' }}</span></td><td>{{ domain.certificate?.reason || domain.certificate_error || '-' }}</td></tr></tbody></table></div></SurfaceCard>
       <section v-if="section === 'overview' && unassignedDomains.length" class="k8s-banner k8s-banner-warn section-gap"><span>有 {{ unassignedDomains.length }} 个历史受管域名尚未归属环境，不能用于发布。</span><button class="btn btn-sm" @click="openUnassignedDomains">处理域名归属</button></section>
-      <div v-if="releaseHistoryLoaded && releaseHistory.length > 0" class="card">
+      <SurfaceCard v-if="releaseHistoryLoaded && releaseHistory.length > 0" as="div">
         <div class="table-wrap"><table class="data-table"><thead><tr><th>应用</th><th>环境</th><th>版本</th><th>镜像</th><th>状态</th><th>时间</th></tr></thead><tbody>
           <tr v-for="item in releaseHistory" :key="item.id" class="clickable" @click="openHistoryRelease(item)"><td class="cell-primary">{{ item.application.name }}</td><td>{{ item.application.environment?.name || '-' }}</td><td>#{{ item.sequence }}</td><td>{{ item.image }}</td><td><span class="badge" :class="releaseBadge(item.status)">{{ item.status }}</span></td><td>{{ formatTime(item.created_at) }}</td></tr>
         </tbody></table></div>
-      </div>
+      </SurfaceCard>
     </template>
 
     <div v-if="showCreate" class="overlay" @click.self="showCreate = false"><div class="modal"><h2 class="modal-title">创建应用</h2><form @submit.prevent="createApplication">
@@ -120,6 +120,7 @@ import EmptyState from '../../components/EmptyState.vue'
 import FeedbackBanner from '../../components/FeedbackBanner.vue'
 import PageHeader from '../../components/PageHeader.vue'
 import SectionHeading from '../../components/SectionHeading.vue'
+import SurfaceCard from '../../components/SurfaceCard.vue'
 import { formatDateTime as formatTime } from '../../utils/formatters.js'
 
 const props = defineProps({ section: { type: String, default: 'workspace' } })

@@ -20,4 +20,4 @@
 - [x] 3.1 Run `go test ./...` and `go build ./...`.
 - [x] 3.2 Run the complete frontend test suite and `npm run build`.
 - [x] 3.3 Run `git diff --check` and `openspec validate improve-node-registry-mirror-workspace --strict`.
-- [ ] 3.4 Present all verification results and obtain approval before archiving.
+- [x] 3.4 Present all verification results and obtain approval before archiving.

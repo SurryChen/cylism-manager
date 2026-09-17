@@ -1,12 +1,41 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import App from './App.vue'
 import router from './router'
 
 const themeCss = readFileSync(resolve(process.cwd(), 'src/styles/theme.css'), 'utf8')
 const componentsCss = readFileSync(resolve(process.cwd(), 'src/styles/components.css'), 'utf8')
+const legacyCardConsumers = [
+  'views/Dashboard.vue',
+  'views/DBAdmin.vue',
+  'views/Monitoring.vue',
+  'views/RuntimeManagement.vue',
+  'views/applications/ApplicationDetails.vue',
+  'views/applications/Applications.vue',
+  'views/applications/Domains.vue',
+  'views/applications/ImageRegistries.vue',
+  'views/applications/ProjectEnvironments.vue',
+  'views/applications/ReleaseDetails.vue',
+  'views/cluster/ChartRepositories.vue',
+  'views/cluster/Cluster.vue',
+  'views/cluster/ClusterDNS.vue',
+  'views/cluster/PersistentVolumes.vue',
+  'views/cluster/Servers.vue',
+  'views/cluster/SystemComponents.vue',
+  'views/monitoring/AlertingWorkspace.vue',
+  'views/monitoring/DiskGrowthWorkspace.vue',
+  'views/monitoring/LoggingWorkspace.vue',
+  'views/monitoring/MetricTrendChart.vue',
+  'views/network/CertificateOperations.vue',
+  'views/network/Certificates.vue',
+  'views/network/Sites.vue',
+  'views/resources/Configs.vue',
+  'views/resources/Resources.vue',
+  'views/resources/Services.vue',
+  'views/resources/Workloads.vue',
+].map(path => readFileSync(resolve(process.cwd(), 'src', path), 'utf8'))
 
 async function mountApp(path = '/') {
   localStorage.setItem('access_token', 'test-token')
@@ -27,6 +56,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  vi.useRealTimers()
   document.documentElement.removeAttribute('data-palette')
 })
 
@@ -145,6 +175,31 @@ describe('Glass UI application shell', () => {
     expect(wrapper.get('[data-testid="mobile-navigation"]').classes()).not.toContain('is-open')
   })
 
+  it('keeps long mobile navigation lists scrollable within the drawer', () => {
+    expect(themeCss).toMatch(/\.mobile-drawer \.navigation-groups\s*\{[^}]*flex:\s*1[^}]*min-height:\s*0[^}]*overflow-y:\s*auto/)
+  })
+
+  it('shows the mobile drawer scrollbar only while its navigation is scrolling', async () => {
+    vi.useFakeTimers()
+    const wrapper = await mountApp()
+    const navigation = wrapper.get('[data-testid="mobile-navigation"] .navigation-groups')
+
+    expect(navigation.classes()).not.toContain('is-scrolling')
+
+    await navigation.trigger('scroll')
+    expect(navigation.classes()).toContain('is-scrolling')
+
+    await vi.advanceTimersByTimeAsync(600)
+    expect(navigation.classes()).not.toContain('is-scrolling')
+  })
+
+  it('keeps the mobile drawer scrollbar transparent until navigation is scrolling', () => {
+    expect(themeCss).toMatch(/\.mobile-drawer \.navigation-groups\s*\{[^}]*scrollbar-color:\s*transparent transparent/)
+    expect(themeCss).toMatch(/\.mobile-drawer \.navigation-groups\.is-scrolling\s*\{[^}]*scrollbar-color:\s*var\(--text-muted\) transparent/)
+    expect(themeCss).toMatch(/\.mobile-drawer \.navigation-groups::-webkit-scrollbar-thumb\s*\{[^}]*background:\s*transparent/)
+    expect(themeCss).toMatch(/\.mobile-drawer \.navigation-groups\.is-scrolling::-webkit-scrollbar-thumb\s*\{[^}]*background:\s*var\(--text-muted\)/)
+  })
+
   it('uses the Direction 05 薄荷玻璃 palette and an unframed desktop top bar', async () => {
     const wrapper = await mountApp()
 
@@ -177,5 +232,24 @@ describe('Glass UI application shell', () => {
     expect(themeCss).toContain('.topbar-nav-link { display: inline-flex; align-self: center; min-height: 34px;')
     expect(themeCss).toContain('.topbar-nav-link:hover { border-color: var(--border);')
     expect(themeCss).toContain('@media (max-width: 840px) { .app-workspace { width: 100%; min-width: 0; max-width: 100%;')
+  })
+
+  it('keeps text buttons on one line when an operational table is constrained', () => {
+    expect(componentsCss).toMatch(/\.btn\s*\{[^}]*white-space:\s*nowrap/)
+  })
+
+  it('keeps compact status badges on one line when an operational table is constrained', () => {
+    expect(componentsCss).toMatch(/\.badge\s*\{[^}]*white-space:\s*nowrap/)
+  })
+
+  it('does not retain legacy card outer containers in operational views', () => {
+    expect(legacyCardConsumers.join('\n')).not.toMatch(/class=["'](?:[^"']*\s)?card(?:\s|["'])/)
+  })
+
+  it('retires the legacy card surface while retaining metric, modal, and banner styling', () => {
+    expect(componentsCss).not.toMatch(/\.card(?:[\s,{:]|$)/)
+    expect(componentsCss).toMatch(/\.metric(?:[\s,{:]|$)/)
+    expect(componentsCss).toMatch(/\.modal(?:[\s,{:]|$)/)
+    expect(componentsCss).toMatch(/\.k8s-banner(?:[\s,{:]|$)/)
   })
 })

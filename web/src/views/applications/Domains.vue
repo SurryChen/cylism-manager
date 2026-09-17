@@ -6,7 +6,7 @@
       <div class="page-actions"><button class="btn" @click="openClaim">关联历史域名</button><button class="btn" @click="openImport">导入已有证书</button><button class="btn btn-primary" @click="openCreate">+ 申请 HTTPS 域名</button></div>
     </div>
     <div v-if="error" class="k8s-banner k8s-banner-warn section-gap">{{ error }}</div>
-    <section v-if="loaded && domains.length" class="card section-gap">
+    <SurfaceCard v-if="loaded && domains.length" class="section-gap">
       <div class="table-wrap"><table class="data-table"><thead><tr><th>域名</th><th>命名空间</th><th>签发者</th><th>证书状态</th><th>TLS Secret</th><th>续期时间</th><th>入口</th><th></th></tr></thead><tbody>
         <tr v-for="domain in domains" :key="domain.id">
           <td class="cell-primary">{{ domain.hostname }}<small v-if="domain.certificate_ownership === 'imported'" class="cell-secondary">导入证书</small><small v-if="domain.description" class="cell-secondary">{{ domain.description }}</small></td>
@@ -16,7 +16,7 @@
           <td class="action-cell"><div class="btn-group"><button v-if="domain.namespace && domain.certificate_ownership !== 'imported'" class="btn btn-sm" @click="retry(domain)">重试签发</button><button v-if="domain.certificate_name" class="btn btn-sm" @click="openOperations(domain)">签发过程</button><button class="btn btn-sm" @click="openEdit(domain)">编辑</button><button class="btn btn-sm btn-danger" :disabled="domain.application_count > 0" @click="remove(domain)">删除</button></div></td>
         </tr>
       </tbody></table></div>
-    </section>
+    </SurfaceCard>
     <div v-else-if="loaded" class="empty-state"><span class="empty-text">尚未申请受管 HTTPS 域名</span></div>
     <p v-if="loaded" class="dns-note">证书签发会自动完成 ACME DNS-01 TXT 验证。业务 A、AAAA 或 CNAME 记录仍需指向集群公网入口。</p>
 
@@ -57,6 +57,7 @@ import { getProjects } from '../../api/applications.js'
 import { claimManagedDomain, createManagedDomain, deleteManagedDomain, getClaimableDomains, getDomainOptions, getImportableCertificates, getManagedDomains, importManagedDomainCertificate, retryManagedDomainCertificate, updateManagedDomain } from '../../api/domains.js'
 import { useAsyncResource } from '../../composables/useAsyncResource.js'
 import { usePolling } from '../../composables/usePolling.js'
+import SurfaceCard from '../../components/SurfaceCard.vue'
 import { formatDateTime as formatDate } from '../../utils/formatters.js'
 
 const router = useRouter()

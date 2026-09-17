@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import NodeRegistryMirrors from './NodeRegistryMirrors.vue'
+import SurfaceCard from '../../components/SurfaceCard.vue'
 import { api } from '../../api/index.js'
 
 vi.mock('../../api/index.js', () => ({
@@ -37,6 +38,16 @@ describe('Node registry mirrors view', () => {
   })
 
   afterEach(() => vi.useRealTimers())
+
+  it('renders the mirror-rule workspace through the shared surface card', async () => {
+    const wrapper = mount(NodeRegistryMirrors)
+    await settle()
+
+    const workspace = wrapper.getComponent(SurfaceCard)
+    expect(workspace.attributes('data-testid')).toBe('node-registry-mirror-workspace')
+    expect(workspace.find('.mirror-rule-list').exists()).toBe(true)
+    wrapper.unmount()
+  })
 
   it('configures a verification image and triggers mirror detection without loading Proxy workloads', async () => {
     const wrapper = mount(NodeRegistryMirrors)

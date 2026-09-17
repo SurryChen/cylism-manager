@@ -28,4 +28,4 @@
 
 - [x] 5.1 Run the complete frontend test suite and `npm run build`.
 - [x] 5.2 Run `go test ./...`, `go build ./...`, `openspec validate add-glass-surface-card --strict`, and `git diff --check`.
-- [ ] 5.3 Present verification results and obtain approval before archiving.
+- [x] 5.3 Present verification results and obtain approval before archiving.
