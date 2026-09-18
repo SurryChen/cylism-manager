@@ -35,10 +35,10 @@ kubectl -n cylism-system rollout status deployment/cylism-manager
 
 ## 数据持久化与备份
 
-SQLite 默认位于容器内 `/data/cylism.db`，由控制面宿主机目录挂载提供持久化。备份应在维护窗口内进行，并包含：
+SQLite 默认位于容器内 `/data/cylism.db`，由 PersistentVolumeClaim 提供持久化。备份应在维护窗口内进行，并包含：
 
-1. 对 `data.hostPath` 目录做文件系统快照或一致性备份。
+1. 对 Manager PVC 做存储卷快照或一致性备份。
 2. 记录正在运行的镜像 tag、Helm revision 或部署清单版本。
 3. 单独备份 Secret 的管理系统记录，不要将解密后的 Secret 导出到普通文件。
 
-恢复前先停止或缩容 Manager，确认备份与目标版本兼容后恢复数据目录，再重新部署应用。
+恢复前先停止或缩容 Manager，确认备份与目标版本兼容后恢复 PVC 数据，再重新部署应用。

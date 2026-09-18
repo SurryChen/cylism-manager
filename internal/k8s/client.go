@@ -44,6 +44,19 @@ func (c *Client) CreateNamespace(ctx context.Context, namespace *corev1.Namespac
 // not depend on the concrete Kubernetes client type.
 func (c *Client) KubernetesAvailable() bool { return c != nil && c.Clientset != nil }
 
+// ServerVersionContext returns the API server version used for optional
+// distribution-specific capabilities.
+func (c *Client) ServerVersionContext(ctx context.Context) (string, error) {
+	if c == nil || c.Clientset == nil {
+		return "", fmt.Errorf("Kubernetes client 未初始化")
+	}
+	version, err := c.Clientset.Discovery().ServerVersion()
+	if err != nil {
+		return "", err
+	}
+	return version.GitVersion, nil
+}
+
 // NewClient 创建 K8s 客户端，支持 InCluster（生产）和 kubeconfig（开发）双模式
 func NewClient() (*Client, error) {
 	// 1. 优先尝试 InClusterConfig（Pod 内自动注入 ServiceAccount）

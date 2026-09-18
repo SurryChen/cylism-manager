@@ -18,7 +18,7 @@ type ServerRepository interface {
 }
 
 // NodeJoinRepository is the durable input required by the worker join
-// progress stream: server credentials plus the two installation settings.
+// progress stream: server credentials plus the K3s installation token.
 type NodeJoinRepository interface {
 	ServerRepository
 	GetSystemConfig(string) (string, error)

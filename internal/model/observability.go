@@ -115,7 +115,7 @@ type OperationLog struct {
 	CreatedAt    time.Time `gorm:"index" json:"created_at"`
 }
 
-// SystemConfig 系统配置（加密存储敏感信息如 Tailscale Auth Key）
+// SystemConfig 系统配置（加密存储敏感配置）
 
 type SystemConfig struct {
 	ID    uint   `gorm:"primaryKey" json:"-"`

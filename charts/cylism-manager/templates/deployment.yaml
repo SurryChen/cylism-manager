@@ -6,6 +6,8 @@ metadata:
     {{- include "cylism-manager.labels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.replicaCount }}
+  strategy:
+    type: {{ .Values.strategy.type | quote }}
   selector:
     matchLabels:
       {{- include "cylism-manager.selectorLabels" . | nindent 6 }}
@@ -35,13 +37,8 @@ spec:
       {{- end }}
       volumes:
         - name: data
-          hostPath:
-            path: {{ .Values.data.hostPath | quote }}
-            type: DirectoryOrCreate
-        - name: tailscale-socket
-          hostPath:
-            path: {{ .Values.tailscale.hostPath | quote }}
-            type: DirectoryOrCreate
+          persistentVolumeClaim:
+            claimName: {{ include "cylism-manager.dataClaimName" . }}
         - name: ssh-key
           secret:
             secretName: {{ .Values.ssh.existingSecret | quote }}
@@ -56,8 +53,6 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /data
-            - name: tailscale-socket
-              mountPath: /run/tailscale
             - name: ssh-key
               mountPath: /root/.ssh
               readOnly: true

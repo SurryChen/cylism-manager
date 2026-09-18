@@ -104,6 +104,7 @@ GET /api/k8s/persistent-volume-claims/:name/imports
 GET /api/k8s/persistent-volume-claims/usage
 GET /api/k8s/persistent-volume-migrations
 GET /api/k8s/persistent-volume-migrations/:id
+GET /api/k8s/platform
 GET /api/k8s/pods
 GET /api/k8s/pods/:namespace/:name/terminal
 GET /api/k8s/secrets
@@ -170,8 +171,6 @@ GET /api/sites
 GET /api/sites/:id
 GET /api/system-components
 GET /api/system/crds
-GET /api/tailscale/install-script
-GET /api/tailscale/status
 GET /api/workspace/overview
 GET /health
 GET /internal/runtime-tools/v1/cylism-cli/linux-amd64
@@ -287,7 +286,6 @@ POST /api/servers/:id/probe
 POST /api/servers/:id/unbind
 POST /api/sites
 POST /api/system-components/:chart/revert
-POST /api/tailscale/init
 PUT /api/admin/tables/:table/:id
 PUT /api/applications/:id/capabilities
 PUT /api/applications/:id/deployment-templates/:templateID

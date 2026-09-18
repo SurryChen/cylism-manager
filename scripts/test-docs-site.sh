@@ -47,6 +47,9 @@ grep -q "if: github.ref == 'refs/heads/main'" .github/workflows/docs-pages.yml
 grep -q 'mkdocs build --strict' CONTRIBUTING.md
 grep -q 'Apache License' LICENSE
 grep -q 'Go 1.25+' README.md
+grep -q 'https://surrychen.github.io/cylism-manager/' README.md
+grep -q 'actions/workflows/docs-pages.yml/badge.svg' README.md
+grep -q 'license-Apache--2.0' README.md
 grep -q '1440 x 900' docs/assets/screenshots/README.md
 grep -q '不得包含' docs/assets/screenshots/README.md
 

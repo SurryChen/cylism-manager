@@ -1,5 +1,5 @@
 site_name: Cylism Manager
-site_description: 面向 Tailscale 与 K3s 的基础设施控制台
+site_description: 面向 Kubernetes 的基础设施控制台，提供可选 K3s 兼容优化
 site_url: !ENV [SITE_URL, ""]
 repo_url: https://github.com/SurryChen/cylism-manager
 repo_name: cylism/cylism-manager
@@ -43,6 +43,7 @@ nav:
       - 前置条件: installation/prerequisites.md
       - 脚本安装: installation/install-script.md
       - Helm 安装: installation/install-helm.md
+      - K3s 兼容性: installation/k3s-compatibility.md
   - 使用指南:
       - 首次登录与服务器纳管: getting-started.md
       - 配置参考: operations/configuration.md

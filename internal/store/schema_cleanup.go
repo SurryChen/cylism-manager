@@ -25,6 +25,9 @@ func cleanupLegacySchema(db *gorm.DB) error {
 	if err := removeObsoleteAssistantSchema(db); err != nil {
 		return err
 	}
+	if err := removeObsoleteTailscaleConfig(db); err != nil {
+		return err
+	}
 	if err := removeObsoleteManagedOCIRegistrySchema(db); err != nil {
 		return err
 	}
@@ -32,6 +35,13 @@ func cleanupLegacySchema(db *gorm.DB) error {
 		return db.Migrator().DropTable("managed_documents")
 	}
 	return nil
+}
+
+func removeObsoleteTailscaleConfig(db *gorm.DB) error {
+	if !db.Migrator().HasTable("system_configs") {
+		return nil
+	}
+	return db.Where("key = ?", "tailscale_auth_key").Delete(&model.SystemConfig{}).Error
 }
 
 func removeObsoleteApplicationStackSchema(db *gorm.DB) error {

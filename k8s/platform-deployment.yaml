@@ -16,6 +16,8 @@ metadata:
   name: cylism-manager
 spec:
   replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: cylism-manager
@@ -24,22 +26,11 @@ spec:
       labels:
         app: cylism-manager
     spec:
-      nodeSelector:
-        kubernetes.io/hostname: iz7xvf5nfpb7zibg0fq3zfz
-      tolerations:
-        - key: "node-role.kubernetes.io/control-plane"
-          operator: "Exists"
-          effect: "NoSchedule"
       serviceAccountName: cylism-manager
       volumes:
         - name: data
-          hostPath:
-            path: /data/cylism-manager
-            type: DirectoryOrCreate
-        - name: tailscale-socket
-          hostPath:
-            path: /run/tailscale
-            type: DirectoryOrCreate
+          persistentVolumeClaim:
+            claimName: cylism-manager-data
         - name: ssh-key
           secret:
             secretName: cylism-ssh-key
@@ -53,8 +44,6 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /data
-            - name: tailscale-socket
-              mountPath: /run/tailscale
             - name: ssh-key
               mountPath: /root/.ssh
               readOnly: true
@@ -125,6 +114,17 @@ spec:
                   name: cylism-config
                   key: operation-log-retention-days
                   optional: true
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: cylism-manager-data
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
 ---
 apiVersion: v1
 kind: ServiceAccount

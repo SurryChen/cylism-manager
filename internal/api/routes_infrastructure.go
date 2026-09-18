@@ -9,7 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func registerInfrastructureRoutes(apiGroup *gin.RouterGroup, server *clusterapi.ServerHandler, networkDiag *clusterapi.ServerNetworkDiagnosticsHandler, terminal *clusterapi.ServerTerminalHandler, site *networkapi.SiteHandler, operations *systemapi.OperationHandler, domain *networkapi.DomainHandler, node *clusterapi.NodeHandler, join *clusterapi.NodeJoinProgressHandler, ingress *networkapi.IngressHandler, cert *networkapi.CertHandler, k8sHandler *kubernetesapi.K8sHandler, storage *storageapi.StorageHandler, network *networkapi.NetworkHandler, tailscale *systemapi.TailscaleHandler, crd *kubernetesapi.CRDHandler, audit *systemapi.AuditHandler, dbAdmin *systemapi.DBAdminHandler) {
+func registerInfrastructureRoutes(apiGroup *gin.RouterGroup, server *clusterapi.ServerHandler, networkDiag *clusterapi.ServerNetworkDiagnosticsHandler, terminal *clusterapi.ServerTerminalHandler, site *networkapi.SiteHandler, operations *systemapi.OperationHandler, domain *networkapi.DomainHandler, node *clusterapi.NodeHandler, join *clusterapi.NodeJoinProgressHandler, ingress *networkapi.IngressHandler, cert *networkapi.CertHandler, k8sHandler *kubernetesapi.K8sHandler, platform *kubernetesapi.ClusterPlatformHandler, storage *storageapi.StorageHandler, network *networkapi.NetworkHandler, crd *kubernetesapi.CRDHandler, audit *systemapi.AuditHandler, dbAdmin *systemapi.DBAdminHandler) {
 	servers := apiGroup.Group("/servers")
 	servers.POST("", server.Create)
 	servers.GET("", server.List)
@@ -86,12 +86,7 @@ func registerInfrastructureRoutes(apiGroup *gin.RouterGroup, server *clusterapi.
 	certs.GET("/:namespace/:name/operations", cert.ListOperations)
 	certs.DELETE("/:namespace/:name", cert.DeleteCert)
 
-	registerK8sRoutes(apiGroup, k8sHandler, storage, network)
-
-	tailscaleGroup := apiGroup.Group("/tailscale")
-	tailscaleGroup.POST("/init", tailscale.Init)
-	tailscaleGroup.GET("/status", tailscale.Status)
-	tailscaleGroup.GET("/install-script", tailscale.InstallScript)
+	registerK8sRoutes(apiGroup, k8sHandler, platform, storage, network)
 	apiGroup.GET("/system/crds", crd.CheckCRDs)
 	apiGroup.GET("/audit-logs", audit.List)
 
@@ -103,8 +98,9 @@ func registerInfrastructureRoutes(apiGroup *gin.RouterGroup, server *clusterapi.
 	admin.DELETE("/:table/:id", dbAdmin.DeleteRecord)
 }
 
-func registerK8sRoutes(apiGroup *gin.RouterGroup, h *kubernetesapi.K8sHandler, storage *storageapi.StorageHandler, network *networkapi.NetworkHandler) {
+func registerK8sRoutes(apiGroup *gin.RouterGroup, h *kubernetesapi.K8sHandler, platform *kubernetesapi.ClusterPlatformHandler, storage *storageapi.StorageHandler, network *networkapi.NetworkHandler) {
 	g := apiGroup.Group("/k8s")
+	g.GET("/platform", platform.Get)
 	g.GET("/dashboard", h.Dashboard)
 	g.GET("/namespaces", h.ListNamespaces)
 	g.GET("/namespace-names", h.ListNamespaceNames)

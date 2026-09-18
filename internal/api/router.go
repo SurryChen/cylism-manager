@@ -69,8 +69,8 @@ type InfrastructureDependencies struct {
 	Ingress     *networkapi.IngressHandler
 	Certificate *networkapi.CertHandler
 	K8s         *kubernetesapi.K8sHandler
+	Platform    *kubernetesapi.ClusterPlatformHandler
 	Storage     *storageapi.StorageHandler
-	Tailscale   *systemapi.TailscaleHandler
 	CRD         *kubernetesapi.CRDHandler
 	AuditLog    *systemapi.AuditHandler
 	DBAdmin     *systemapi.DBAdminHandler
@@ -113,5 +113,5 @@ func RegisterRoutes(r *gin.Engine, deps RouteDependencies) {
 	infra := deps.Infrastructure
 	registerInfrastructureRoutes(apiGroup, infra.Server, infra.NetworkDiag, infra.Terminal, infra.Site,
 		infra.Operation, infra.Domain, infra.Node, infra.NodeJoin, infra.Ingress, infra.Certificate,
-		infra.K8s, infra.Storage, infra.Network, infra.Tailscale, infra.CRD, infra.AuditLog, infra.DBAdmin)
+		infra.K8s, infra.Platform, infra.Storage, infra.Network, infra.CRD, infra.AuditLog, infra.DBAdmin)
 }

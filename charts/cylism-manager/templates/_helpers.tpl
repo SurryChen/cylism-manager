@@ -45,6 +45,10 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- default "cylism-config" .Values.config.existingConfigMap -}}
 {{- end -}}
 
+{{- define "cylism-manager.dataClaimName" -}}
+{{- default (printf "%s-data" (include "cylism-manager.fullname" .)) .Values.data.existingClaim -}}
+{{- end -}}
+
 {{- define "cylism-manager.image" -}}
 {{- $tag := default .Chart.AppVersion .Values.image.tag -}}
 {{- printf "%s:%s" .Values.image.repository $tag -}}

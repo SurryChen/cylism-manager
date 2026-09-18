@@ -1,5 +1,10 @@
 replicaCount: 1
 
+# SQLite uses a single writer. Recreate prevents old and new Pods from
+# independently writing different database volumes during an upgrade.
+strategy:
+  type: Recreate
+
 image:
   repository: ghcr.io/surrychen/cylism-manager
   tag: ""
@@ -18,16 +23,15 @@ service:
   port: 8080
 
 nodeSelector: {}
-tolerations:
-  - key: node-role.kubernetes.io/control-plane
-    operator: Exists
-    effect: NoSchedule
+tolerations: []
 affinity: {}
 
 data:
-  hostPath: /data/cylism-manager
-tailscale:
-  hostPath: /run/tailscale
+  existingClaim: ""
+  storageClass: ""
+  size: 5Gi
+  accessModes:
+    - ReadWriteOnce
 ssh:
   existingSecret: cylism-ssh-key
 

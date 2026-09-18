@@ -46,13 +46,8 @@ const resourceStats = () => [
 
 const diagnostics = () => ({
   servers: [
-    { server_id: 1, name: 'test-srv', k8s_unit: 'k3s', network_mode: 'k3s_embedded_tailscale', tailscale: { installed: true, online: true, tailnet_ip: '100.101.102.1', udp: true, ipv4: true, nearest_derp: 'tok' } },
-    { server_id: 2, name: 'cluster-srv', network_mode: 'external_tailscale', tailscale: { installed: true, online: true, tailnet_ip: '100.101.102.2', udp: false, ipv4: true } },
-  ],
-  links: [
-    { source_server_id: 1, target_server_id: 2, path: 'direct', latency_ms: 18 },
-    { source_server_id: 2, target_server_id: 1, path: 'derp', derp_region: 'tok', latency_ms: 126 },
-    { source_server_id: 1, target_server_id: 3, path: 'unreachable', error_code: 'ping_timeout' },
+    { server_id: 1, name: 'test-srv', k8s_unit: 'k3s', k3s_vpn: { configured: true, provider: 'tailscale' } },
+    { server_id: 2, name: 'cluster-srv', k8s_unit: '', k3s_vpn: { configured: false }, error_code: 'ssh_unreachable' },
   ],
 })
 
@@ -155,15 +150,15 @@ describe('Servers view', () => {
     await nextTick()
 
     expect(getServerNetworkDiagnostics).toHaveBeenCalledWith(expect.objectContaining({ signal: expect.any(AbortSignal) }))
-    expect(wrapper.text()).toContain('K3s 内建 Tailscale')
-    expect(wrapper.text()).toContain('UDP 直连')
-    expect(wrapper.text()).toContain('DERP 中继')
-    expect(wrapper.text()).toContain('不可达')
+    expect(wrapper.text()).toContain('K3s VPN 兼容性')
+    expect(wrapper.text()).toContain('VPN 兼容')
+    expect(wrapper.text()).toContain('Tailscale')
+    expect(wrapper.text()).toContain('采集失败')
     getServerNetworkDiagnostics.mockRejectedValueOnce(new Error('connection failed'))
     await wrapper.find('.icon-button[title="刷新网络诊断"]').trigger('click')
     await flush()
     expect(wrapper.text()).toContain('网络诊断请求失败')
-    expect(wrapper.text()).toContain('K3s 内建 Tailscale')
+    expect(wrapper.text()).toContain('K3s VPN 兼容性')
     wrapper.unmount()
   })
 

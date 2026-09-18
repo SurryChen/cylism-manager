@@ -17,9 +17,10 @@ import (
 // It is kept as a transport adapter; cluster lifecycle decisions stay in the
 // cluster service and the SSH operations use the shared infrastructure client.
 type NodeJoinProgressHandler struct {
-	store  repository.NodeJoinRepository
-	encKey []byte
-	k8s    NodeJoinAdapter
+	store    repository.NodeJoinRepository
+	encKey   []byte
+	k8s      NodeJoinAdapter
+	platform k3sPlatformReader
 }
 
 // NodeJoinAdapter is the single Kubernetes read required by the websocket
@@ -27,6 +28,10 @@ type NodeJoinProgressHandler struct {
 // client surface.
 type NodeJoinAdapter interface {
 	GetNodeInfoContext(context.Context, string) (*k8s.NodeInfo, error)
+}
+
+type k3sPlatformReader interface {
+	ServerVersionContext(context.Context) (string, error)
 }
 
 // NewNodeJoinAdapter narrows the Kubernetes dependency required by the join
@@ -39,7 +44,21 @@ func NewNodeJoinProgressHandler(st repository.NodeJoinRepository, encKey []byte,
 	return &NodeJoinProgressHandler{store: st, encKey: append([]byte(nil), encKey...), k8s: client}
 }
 
+func (h *NodeJoinProgressHandler) WithPlatformReader(reader k3sPlatformReader) *NodeJoinProgressHandler {
+	h.platform = reader
+	return h
+}
+
 func (h *NodeJoinProgressHandler) JoinProgress(c *gin.Context) {
+	if h.platform == nil {
+		apiShared.Error(c, 503, apiShared.CodeK8sUnavailable, "无法确认当前集群是否为 K3s")
+		return
+	}
+	version, platformErr := h.platform.ServerVersionContext(c.Request.Context())
+	if platformErr != nil || !strings.Contains(strings.ToLower(version), "k3s") {
+		apiShared.Error(c, 409, apiShared.CodeConflict, "当前集群不是已识别的 K3s，不能执行节点加入")
+		return
+	}
 	id, err := apiShared.ParsePositiveID(c.Param("id"))
 	if err != nil {
 		return
@@ -58,7 +77,7 @@ func (h *NodeJoinProgressHandler) JoinProgress(c *gin.Context) {
 	go func() {
 		defer conn.Close()
 		ctx := c.Request.Context()
-		total, index := 12, 0
+		total, index := 9, 0
 		now := func() string { return time.Now().Format(time.RFC3339) }
 		aborted := func() bool {
 			select {
@@ -120,40 +139,6 @@ func (h *NodeJoinProgressHandler) JoinProgress(c *gin.Context) {
 		}
 
 		index++
-		if !send("check_tailscale", "检测 Tailscale", transport.WSStatusRunning, "检测中...") {
-			return
-		}
-		if _, lookupErr := transport.SSHExecContext(ctx, 20*time.Second, append(sshArgs, "which tailscale")); lookupErr != nil {
-			if !send("check_tailscale", "安装 Tailscale", transport.WSStatusRunning, "未安装，正在安装...") {
-				return
-			}
-			if out, installErr := transport.SSHExecContext(ctx, 120*time.Second, append(sshArgs, "curl -fsSL https://tailscale.com/install.sh | sh")); installErr != nil {
-				fail("check_tailscale", "安装 Tailscale", fmt.Sprintf("失败: %v — %s", installErr, out))
-				return
-			}
-		}
-		if !send("check_tailscale", "检测 Tailscale", transport.WSStatusSuccess, "已就绪") {
-			return
-		}
-
-		index++
-		if !send("register_tailscale", "注册 Tailscale", transport.WSStatusRunning, "正在注册...") {
-			return
-		}
-		authKey, _ := h.store.GetSystemConfig("tailscale_auth_key")
-		if authKey == "" {
-			fail("register_tailscale", "注册 Tailscale", "Auth Key 未配置")
-			return
-		}
-		if out, upErr := transport.SSHExecContext(ctx, 60*time.Second, append(sshArgs, "tailscale", "up", "--reset", "--auth-key="+authKey, "--accept-routes")); upErr != nil {
-			fail("register_tailscale", "注册 Tailscale", fmt.Sprintf("失败: %v — %s", upErr, out))
-			return
-		}
-		if !send("register_tailscale", "注册 Tailscale", transport.WSStatusSuccess, "已注册") {
-			return
-		}
-
-		index++
 		if !send("install_k3s_agent", "安装 k3s-agent", transport.WSStatusRunning, "正在安装...") {
 			return
 		}
@@ -170,7 +155,7 @@ func (h *NodeJoinProgressHandler) JoinProgress(c *gin.Context) {
 			fail("install_k3s_agent", "安装 k3s-agent", "Token/IP 不可用")
 			return
 		}
-		install := fmt.Sprintf(`curl -sfL https://get.k3s.io | K3S_URL='https://%s:6443' K3S_TOKEN='%s' sh -`, shellEscape(controlIP), shellEscape(token))
+		install := k3sAgentInstallCommand(controlIP, token)
 		if out, installErr := transport.SSHExecContext(ctx, 180*time.Second, append(sshArgs, install)); installErr != nil {
 			fail("install_k3s_agent", "安装 k3s-agent", fmt.Sprintf("失败: %v — %s", installErr, out))
 			return
@@ -229,3 +214,7 @@ func (h *NodeJoinProgressHandler) JoinProgress(c *gin.Context) {
 }
 
 func shellEscape(value string) string { return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'" }
+
+func k3sAgentInstallCommand(controlAddress, token string) string {
+	return fmt.Sprintf(`curl -sfL https://get.k3s.io | K3S_URL=%s K3S_TOKEN=%s sh -`, shellEscape("https://"+controlAddress+":6443"), shellEscape(token))
+}
