@@ -2,19 +2,19 @@
 
 # Cylism Manager
 
-**Put the scattered, easy-to-forget parts of self-hosting in one place.**
+**A management dashboard for personal servers, Kubernetes clusters, and self-hosted services.**
 
 [![Build](https://github.com/SurryChen/cylism-manager/actions/workflows/docker-image.yml/badge.svg?branch=main)](https://github.com/SurryChen/cylism-manager/actions/workflows/docker-image.yml)
-[![Docs](https://img.shields.io/badge/docs-GitHub%20Pages-222?logo=github)](https://surrychen.github.io/cylism-manager/)
+[![Docs](https://github.com/SurryChen/cylism-manager/actions/workflows/docs-pages.yml/badge.svg?branch=main)](https://surrychen.github.io/cylism-manager/)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 [简体中文](README.md) · [Documentation](https://surrychen.github.io/cylism-manager/) · [Get started](docs/getting-started.md) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md)
 
 </div>
 
-After a small cluster has been running for a while, machines live in SSH, resources live in `kubectl`, and releases, domains, certificates, and logs end up in different places.
+I run a few Linux servers, a K3s cluster, and some services on it. None of this is especially large, but looking after it still means SSH for machines, `kubectl` for resources, then separate places for releases, domains, certificates, and logs.
 
-Cylism Manager is a self-hosted workspace for personal projects, small services, and homelabs. It brings SSH-reachable Linux servers, Kubernetes clusters, and the services running on them into one interface, so daily maintenance involves less context switching.
+I built Cylism Manager as a self-hosted dashboard for that routine work. It is not meant to hide the command line; it is meant to make the things I check and do most often easier to find.
 
 <p align="center">
   <a href="docs/assets/screenshots/platform-overview.png">
@@ -22,41 +22,33 @@ Cylism Manager is a self-hosted workspace for personal projects, small services,
   </a>
 </p>
 
-## What it helps with
+## What it does today
 
-**See what is happening first.**
+- Shows the state of managed hosts, nodes, services, and recent operations
+- Runs host preflight checks and basic maintenance through SSH
+- Lets you inspect and manage common Kubernetes resources
+- Tracks images, deployments, and application releases
+- Configures service domains and certificates
 
-Check servers, nodes, services, and recent operations so you can find the part that actually needs attention.
+It is aimed at a few servers and a small cluster. For complex debugging, fleet operations, or low-level cluster configuration, SSH, `kubectl`, and the usual tools are still the better place to work.
 
-**Then take action.**
-
-Run SSH preflight and maintenance operations, and handle common Kubernetes resources from the same interface.
-
-**Finally, ship the service.**
-
-Manage images and release history, deploy applications, and configure domains and certificates so services are reachable.
-
-## What it is not
-
-It is not a multi-tenant cloud platform, and it does not try to replace every Kubernetes tool with another abstraction layer. It is for people with a few servers, a K3s or Kubernetes cluster, and a desire to keep their own services easier to run.
-
-Kubernetes is the baseline. K3s is an optional optimization. Tailscale and other VPNs remain managed outside Manager; it does not install, authenticate, register, or upgrade them.
+Kubernetes is the baseline. K3s gets extra support for node joining and `vpn-auth` diagnostics. Tailscale and other VPNs stay managed outside Manager; it does not install, register, or upgrade them.
 
 > [!WARNING]
 > Manager is not a read-only dashboard. It needs Kubernetes management permissions and holds protected SSH credentials. Deploy it only in a cluster you trust, and read the [security policy](SECURITY.md).
 
-## Getting started
+## Install
 
 Read the [installation prerequisites](docs/installation/prerequisites.md) first. The cluster needs PVC storage, and you need an SSH private key for the servers you intend to manage.
 
-- Want to get it running quickly? Use the [deployment script](docs/installation/install-script.md).
-- Already use Helm? Start with the [Helm Chart](docs/installation/install-helm.md).
-- Want to understand the first login and server workflow? Read the [getting started guide](docs/getting-started.md).
-- Want the complete guide? Visit the [documentation site](https://surrychen.github.io/cylism-manager/).
+- [Deployment script](docs/installation/install-script.md): interactive initial setup.
+- [Helm Chart](docs/installation/install-helm.md): environments already managed with Helm values.
+- [Getting started guide](docs/getting-started.md): first login and server onboarding.
+- [Documentation site](https://surrychen.github.io/cylism-manager/): complete reference.
 
 ### Deployment script
 
-Suitable for a single-node control plane or an interactive initial setup:
+For a single-node control plane or an interactive initial setup:
 
 ```bash
 git clone https://github.com/SurryChen/cylism-manager.git
@@ -71,7 +63,7 @@ bash scripts/deploy-platform.sh \
 
 ### Helm Chart
 
-Suitable when applications are already managed through Helm values. Create the required Secrets first as described in the [Helm installation guide](docs/installation/install-helm.md):
+Create the required Secrets first as described in the [Helm installation guide](docs/installation/install-helm.md):
 
 ```bash
 helm upgrade --install cylism-manager charts/cylism-manager \
@@ -83,7 +75,7 @@ helm upgrade --install cylism-manager charts/cylism-manager \
   --set ssh.existingSecret=cylism-ssh-key
 ```
 
-## A few operating notes
+## Operating notes
 
 - Manager stores its SQLite state in a PVC. Back up the PVC before upgrades, and do not delete it during a normal upgrade.
 - SQLite has a single writer. The Deployment uses `Recreate`, so upgrades have a short period of unavailability.

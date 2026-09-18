@@ -2,19 +2,19 @@
 
 # Cylism Manager
 
-**把自托管里那些零碎、容易忘、却总得处理的事，放到一个地方。**
+**给个人服务器、Kubernetes 集群和自托管服务用的管理面板。**
 
 [![Build](https://github.com/SurryChen/cylism-manager/actions/workflows/docker-image.yml/badge.svg?branch=main)](https://github.com/SurryChen/cylism-manager/actions/workflows/docker-image.yml)
-[![Docs](https://img.shields.io/badge/docs-GitHub%20Pages-222?logo=github)](https://surrychen.github.io/cylism-manager/)
+[![Docs](https://github.com/SurryChen/cylism-manager/actions/workflows/docs-pages.yml/badge.svg?branch=main)](https://surrychen.github.io/cylism-manager/)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 [English](README.en.md) · [在线文档](https://surrychen.github.io/cylism-manager/) · [快速开始](docs/getting-started.md) · [参与贡献](CONTRIBUTING.md) · [安全说明](SECURITY.md)
 
 </div>
 
-一套小集群运行久了，机器在 SSH 里，资源在 `kubectl` 里，发布、域名、证书和日志又散在不同入口。
+我维护的东西不算多：几台 Linux 服务器、一个 K3s 集群，以及跑在上面的一些服务。但时间久了，查机器要 SSH，查资源要开 `kubectl`，发布、域名、证书和日志又各有入口。
 
-Cylism Manager 是我为个人项目、小型服务和 homelab 做的一个自托管工作台。它把可通过 SSH 访问的 Linux 服务器、Kubernetes 集群和正在运行的服务放到同一个界面里，让日常维护少一些来回切换。
+所以做了 Cylism Manager。它是给自己用的自托管面板，用来集中处理这些日常维护工作；不是为了把命令行藏起来，而是少记一些位置、少开几个终端。
 
 <p align="center">
   <a href="docs/assets/screenshots/platform-overview.png">
@@ -22,41 +22,33 @@ Cylism Manager 是我为个人项目、小型服务和 homelab 做的一个自�
   </a>
 </p>
 
-## 它现在能帮上什么
+## 目前能做什么
 
-**先知道发生了什么。**
+- 查看纳管主机、节点、服务和近期操作的状态
+- 通过 SSH 做主机预检和基础维护
+- 查看和管理常见的 Kubernetes 资源
+- 管理镜像、部署记录和应用发布
+- 配置服务域名与证书
 
-看服务器、节点、服务和近期操作，先定位真正需要处理的地方。
+它适合维护几台服务器和一个小集群的场景。复杂排障、批量运维或集群底层配置，还是直接用 SSH、`kubectl` 和现有工具更合适。
 
-**再动手处理。**
-
-通过 SSH 做主机预检和维护，也可以在界面里处理常见的 Kubernetes 资源。
-
-**最后把服务发出去。**
-
-管理镜像和发布记录，部署应用，配置域名与证书，让服务真正可访问。
-
-## 它不是
-
-它不是多租户云平台，也不是用来替代所有 Kubernetes 工具的抽象层。它更适合拥有几台服务器、一个 K3s 或 Kubernetes 集群，并且希望把自己的服务维持得更轻松的人。
-
-Kubernetes 是基础能力，K3s 只是额外优化。Tailscale 和其他 VPN 由外部系统维护，Manager 不负责安装、认证、注册或升级它们。
+Kubernetes 是基础能力，K3s 有额外的节点加入和 `vpn-auth` 诊断支持。Tailscale 和其他 VPN 仍由外部系统管理，Manager 不会安装、注册或升级它们。
 
 > [!WARNING]
 > Manager 不是只读仪表盘。它需要 Kubernetes 管理权限，也会持有受保护的 SSH 凭据。请只在你信任的集群中部署，并阅读[安全说明](SECURITY.md)。
 
-## 开始使用
+## 安装
 
 先阅读[安装前置条件](docs/installation/prerequisites.md)，确认集群有可用的 PVC 存储，并准备好用于纳管服务器的 SSH 私钥。
 
-- 想快速跑起来：[部署脚本](docs/installation/install-script.md)
-- 已有 Helm 工作流：[Helm Chart](docs/installation/install-helm.md)
-- 想先了解第一次登录和纳管流程：[快速开始](docs/getting-started.md)
-- 想看完整说明：[在线文档](https://surrychen.github.io/cylism-manager/)
+- [部署脚本](docs/installation/install-script.md)：适合交互式初始化
+- [Helm Chart](docs/installation/install-helm.md)：适合已有 Helm 工作流的环境
+- [快速开始](docs/getting-started.md)：第一次登录和纳管流程
+- [在线文档](https://surrychen.github.io/cylism-manager/)：完整说明
 
 ### 部署脚本
 
-适合单节点控制面或希望交互式初始化的环境：
+适合单节点控制面或交互式初始化：
 
 ```bash
 git clone https://github.com/SurryChen/cylism-manager.git
@@ -71,7 +63,7 @@ bash scripts/deploy-platform.sh \
 
 ### Helm Chart
 
-适合已经通过 Helm values 管理应用的环境。请先按[Helm 安装指南](docs/installation/install-helm.md)创建 Secret：
+请先按 [Helm 安装指南](docs/installation/install-helm.md) 创建 Secret：
 
 ```bash
 helm upgrade --install cylism-manager charts/cylism-manager \
@@ -83,7 +75,7 @@ helm upgrade --install cylism-manager charts/cylism-manager \
   --set ssh.existingSecret=cylism-ssh-key
 ```
 
-## 几个重要的运行说明
+## 运行说明
 
 - Manager 的 SQLite 数据保存在 PVC 中。升级前请备份 PVC，正常升级不要删除它。
 - SQLite 是单写入数据库，Deployment 使用 `Recreate` 策略，升级时会有短暂不可用。
