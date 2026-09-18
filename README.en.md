@@ -2,7 +2,7 @@
 
 # Cylism Manager
 
-**Kubernetes-compatible infrastructure control plane for operators who manage servers, clusters, delivery, and certificates together.**
+**Put the scattered, easy-to-forget parts of self-hosting in one place.**
 
 [![Build](https://github.com/SurryChen/cylism-manager/actions/workflows/docker-image.yml/badge.svg?branch=main)](https://github.com/SurryChen/cylism-manager/actions/workflows/docker-image.yml)
 [![Docs](https://img.shields.io/badge/docs-GitHub%20Pages-222?logo=github)](https://surrychen.github.io/cylism-manager/)
@@ -12,52 +12,51 @@
 
 </div>
 
+After a small cluster has been running for a while, machines live in SSH, resources live in `kubectl`, and releases, domains, certificates, and logs end up in different places.
+
+Cylism Manager is a self-hosted workspace for personal projects, small services, and homelabs. It brings SSH-reachable Linux servers, Kubernetes clusters, and the services running on them into one interface, so daily maintenance involves less context switching.
+
 <p align="center">
   <a href="docs/assets/screenshots/platform-overview.png">
     <img src="docs/assets/screenshots/platform-overview.png" alt="Cylism Manager platform health overview" width="1200">
   </a>
 </p>
 
-Cylism Manager brings host operations, Kubernetes resources, artifact delivery, certificates, and audit history into one operator-focused Web UI. Kubernetes-compatible APIs are the baseline; K3s receives targeted enhancements when it is detected.
+## What it helps with
+
+**See what is happening first.**
+
+Check servers, nodes, services, and recent operations so you can find the part that actually needs attention.
+
+**Then take action.**
+
+Run SSH preflight and maintenance operations, and handle common Kubernetes resources from the same interface.
+
+**Finally, ship the service.**
+
+Manage images and release history, deploy applications, and configure domains and certificates so services are reachable.
+
+## What it is not
+
+It is not a multi-tenant cloud platform, and it does not try to replace every Kubernetes tool with another abstraction layer. It is for people with a few servers, a K3s or Kubernetes cluster, and a desire to keep their own services easier to run.
+
+Kubernetes is the baseline. K3s is an optional optimization. Tailscale and other VPNs remain managed outside Manager; it does not install, authenticate, register, or upgrade them.
 
 > [!WARNING]
-> This is an active control plane, not a read-only dashboard. It holds Kubernetes permissions and protected SSH credentials. Deploy it only in a trusted cluster and follow the [security guidance](SECURITY.md).
+> Manager is not a read-only dashboard. It needs Kubernetes management permissions and holds protected SSH credentials. Deploy it only in a cluster you trust, and read the [security policy](SECURITY.md).
 
-## Start here
+## Getting started
 
-| You want to... | Go to |
-| --- | --- |
-| Check whether the platform fits the environment | [Requirements and security boundary](docs/installation/prerequisites.md) |
-| Install on a control-plane or single-node environment | [Deployment script](docs/installation/install-script.md) |
-| Install through an existing release process | [Helm Chart](docs/installation/install-helm.md) |
-| Log in and manage the first server | [First-use guide](docs/getting-started.md) |
-| Configure retention, credentials, and public access | [Configuration reference](docs/operations/configuration.md) |
-| Diagnose an installation or daily operation | [Operations and troubleshooting](docs/operations/operations.md) |
-| Read the full documentation site | [surrychen.github.io/cylism-manager](https://surrychen.github.io/cylism-manager/) |
+Read the [installation prerequisites](docs/installation/prerequisites.md) first. The cluster needs PVC storage, and you need an SSH private key for the servers you intend to manage.
 
-## Why Cylism Manager
-
-- **Operate hosts and cluster resources together.** Run SSH preflight checks and maintenance operations alongside workloads, Services, storage, certificates, and cluster components.
-- **Keep delivery close to operations.** Manage image registries, self-hosted artifact registries, Registry Proxy instances, and platform releases from the same interface.
-- **Make changes traceable.** The Web UI and REST API record audit history for operator actions; Agent communication is controlled rather than exposed as an unauthenticated host shell.
-- **Use Kubernetes as the common contract.** It works against Kubernetes-compatible APIs instead of requiring a specific distribution.
-
-## Platform compatibility
-
-| Area | Behavior |
-| --- | --- |
-| Kubernetes | The baseline platform. Manager uses the Kubernetes API and stores its SQLite state in a PersistentVolumeClaim (PVC). |
-| K3s | Optional enhancements. K3s agent-node joining and `vpn-auth` compatibility diagnostics are enabled only after K3s is detected. |
-| Tailscale and other VPNs | Externally managed. Manager does not install, authenticate, register, upgrade, or mount any external VPN service. |
-| Server access | Operators provide a reachable SSH address, user, and protected credential. The address may be private networking, DNS, or another externally managed network path. |
-
-## Install
-
-Choose one supported production path. Both require a Kubernetes-compatible cluster, a suitable StorageClass for the Manager PVC, and an SSH private key for hosts you intend to manage. Read the [prerequisites](docs/installation/prerequisites.md) before applying either command.
+- Want to get it running quickly? Use the [deployment script](docs/installation/install-script.md).
+- Already use Helm? Start with the [Helm Chart](docs/installation/install-helm.md).
+- Want to understand the first login and server workflow? Read the [getting started guide](docs/getting-started.md).
+- Want the complete guide? Visit the [documentation site](https://surrychen.github.io/cylism-manager/).
 
 ### Deployment script
 
-Suitable for a single-node control plane or an interactive initial setup. The script creates or reuses required Secrets and waits for the rollout.
+Suitable for a single-node control plane or an interactive initial setup:
 
 ```bash
 git clone https://github.com/SurryChen/cylism-manager.git
@@ -70,11 +69,9 @@ bash scripts/deploy-platform.sh \
   --verify-image-pull
 ```
 
-Continue with the [script installation guide](docs/installation/install-script.md) for private images, existing Secrets, backups, upgrades, and rollback checks.
-
 ### Helm Chart
 
-Suitable when Kubernetes applications are managed through Helm values and a controlled release process.
+Suitable when applications are already managed through Helm values. Create the required Secrets first as described in the [Helm installation guide](docs/installation/install-helm.md):
 
 ```bash
 helm upgrade --install cylism-manager charts/cylism-manager \
@@ -86,27 +83,16 @@ helm upgrade --install cylism-manager charts/cylism-manager \
   --set ssh.existingSecret=cylism-ssh-key
 ```
 
-Create the required Secrets before this command. See the [Helm installation guide](docs/installation/install-helm.md) for a complete, production-safe example and PVC configuration.
+## A few operating notes
 
-## What it manages
-
-| Workspace | Examples |
-| --- | --- |
-| Servers and cluster | SSH preflight, server lifecycle operations, nodes, workloads, Services, ConfigMaps, Secrets, PVCs, and system components |
-| Delivery | Image registries, self-hosted OCI registries, Registry Proxy, application releases, and platform image updates |
-| Network and security | Managed domains, Ingress endpoints, certificates, certificate issuers, and DNS challenge integrations |
-| Operations | Audit history, platform release history, health information, configuration, and diagnostics |
-
-## Scope and operating model
-
-- Manager intentionally receives broad Kubernetes permissions so it can reconcile the resources above. It is not designed as a namespace-only, read-only, or strict multi-tenant control plane.
-- SQLite is a single-writer database. The Manager Deployment uses the `Recreate` strategy so upgrades briefly stop the old Pod before starting the new one against the PVC.
-- Back up the Manager PVC before upgrades or destructive operations. Do not delete the PVC as part of a normal upgrade.
-- K3s support is additive. A standard Kubernetes environment can use the common resource and operations features without K3s or Tailscale.
+- Manager stores its SQLite state in a PVC. Back up the PVC before upgrades, and do not delete it during a normal upgrade.
+- SQLite has a single writer. The Deployment uses `Recreate`, so upgrades have a short period of unavailability.
+- Manager needs broad Kubernetes permissions and is not intended for shared clusters that only allow namespace-scoped read access.
+- K3s node joining and `vpn-auth` diagnostics appear only when K3s is detected; standard Kubernetes environments can still use the common features.
 
 ## Development
 
-Prerequisites: Go 1.25+, Node.js 24+, and npm. Docker, Helm, Python 3.10+, and a Kubernetes test cluster are optional depending on the change.
+You need Go 1.25+, Node.js 24+, and npm. Docker, Helm, Python 3.10+, and a Kubernetes test cluster are optional depending on the change.
 
 ```bash
 go test ./...
@@ -116,26 +102,7 @@ npm --prefix web ci
 npm --prefix web run dev
 ```
 
-Build the project with:
-
-```bash
-make build
-```
-
-Read [CONTRIBUTING.md](CONTRIBUTING.md) for the OpenSpec change process, review expectations, and the full verification set.
-
-## Project layout
-
-```text
-cmd/        Go program entry points
-internal/   API, services, data store, and Kubernetes integration
-web/        Vue 3 management interface
-k8s/        Static Kubernetes manifest
-charts/     Helm Chart
-scripts/    Installation and deployment helpers
-docs/       Public documentation and historical design material
-openspec/   Change specifications and archived decisions
-```
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full verification commands and OpenSpec change process.
 
 ## License
 

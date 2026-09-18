@@ -2,7 +2,7 @@
 
 # Cylism Manager
 
-**面向运维人员的 Kubernetes 兼容基础设施控制台，将服务器、集群、交付和证书管理收敛到一处。**
+**把自托管里那些零碎、容易忘、却总得处理的事，放到一个地方。**
 
 [![Build](https://github.com/SurryChen/cylism-manager/actions/workflows/docker-image.yml/badge.svg?branch=main)](https://github.com/SurryChen/cylism-manager/actions/workflows/docker-image.yml)
 [![Docs](https://img.shields.io/badge/docs-GitHub%20Pages-222?logo=github)](https://surrychen.github.io/cylism-manager/)
@@ -12,52 +12,51 @@
 
 </div>
 
+一套小集群运行久了，机器在 SSH 里，资源在 `kubectl` 里，发布、域名、证书和日志又散在不同入口。
+
+Cylism Manager 是我为个人项目、小型服务和 homelab 做的一个自托管工作台。它把可通过 SSH 访问的 Linux 服务器、Kubernetes 集群和正在运行的服务放到同一个界面里，让日常维护少一些来回切换。
+
 <p align="center">
   <a href="docs/assets/screenshots/platform-overview.png">
     <img src="docs/assets/screenshots/platform-overview.png" alt="Cylism Manager 平台健康度概览" width="1200">
   </a>
 </p>
 
-Cylism Manager 将主机操作、Kubernetes 资源、制品交付、证书和审计记录集中到一个面向运维的 Web UI。Kubernetes 兼容 API 是基础能力；识别到 K3s 后，平台会启用针对性的优化。
+## 它现在能帮上什么
+
+**先知道发生了什么。**
+
+看服务器、节点、服务和近期操作，先定位真正需要处理的地方。
+
+**再动手处理。**
+
+通过 SSH 做主机预检和维护，也可以在界面里处理常见的 Kubernetes 资源。
+
+**最后把服务发出去。**
+
+管理镜像和发布记录，部署应用，配置域名与证书，让服务真正可访问。
+
+## 它不是
+
+它不是多租户云平台，也不是用来替代所有 Kubernetes 工具的抽象层。它更适合拥有几台服务器、一个 K3s 或 Kubernetes 集群，并且希望把自己的服务维持得更轻松的人。
+
+Kubernetes 是基础能力，K3s 只是额外优化。Tailscale 和其他 VPN 由外部系统维护，Manager 不负责安装、认证、注册或升级它们。
 
 > [!WARNING]
-> 这是一套具备实际控制能力的平台，而不是只读仪表盘。它持有 Kubernetes 权限和受保护的 SSH 凭据；仅应部署在受信任的集群中，并遵循[安全说明](SECURITY.md)。
+> Manager 不是只读仪表盘。它需要 Kubernetes 管理权限，也会持有受保护的 SSH 凭据。请只在你信任的集群中部署，并阅读[安全说明](SECURITY.md)。
 
-## 从这里开始
+## 开始使用
 
-| 你希望... | 前往 |
-| --- | --- |
-| 确认平台是否适合当前环境 | [前置条件与安全边界](docs/installation/prerequisites.md) |
-| 在控制面或单节点环境安装 | [部署脚本](docs/installation/install-script.md) |
-| 使用既有发布流程安装 | [Helm Chart](docs/installation/install-helm.md) |
-| 登录并纳管第一台服务器 | [首次使用指南](docs/getting-started.md) |
-| 配置保留策略、凭据和公开入口 | [配置参考](docs/operations/configuration.md) |
-| 排查安装或日常运维问题 | [运维与故障排查](docs/operations/operations.md) |
-| 阅读完整文档站 | [surrychen.github.io/cylism-manager](https://surrychen.github.io/cylism-manager/) |
+先阅读[安装前置条件](docs/installation/prerequisites.md)，确认集群有可用的 PVC 存储，并准备好用于纳管服务器的 SSH 私钥。
 
-## 为什么选择 Cylism Manager
-
-- **统一管理主机与集群资源。** 在同一个工作台中执行 SSH 预检和维护操作，并管理工作负载、Service、存储、证书和集群组件。
-- **让交付贴近运维。** 从同一界面管理镜像仓库、自托管制品库、Registry Proxy 实例和平台版本发布。
-- **让变更可追溯。** Web UI 与 REST API 会记录运维操作的审计历史；Agent 通信受到控制，而不是暴露未经认证的主机 Shell。
-- **以 Kubernetes 作为通用契约。** 平台基于 Kubernetes 兼容 API 工作，不绑定某个特定发行版。
-
-## 平台兼容性
-
-| 范围 | 行为 |
-| --- | --- |
-| Kubernetes | 基础平台。Manager 通过 Kubernetes API 工作，并将 SQLite 状态存储在 PersistentVolumeClaim（PVC）中。 |
-| K3s | 可选优化。仅在识别到 K3s 后，才启用 K3s Agent 节点加入和 `vpn-auth` 兼容诊断。 |
-| Tailscale 与其他 VPN | 由外部系统管理。Manager 不安装、认证、注册、升级或挂载任何外部 VPN 服务。 |
-| 服务器访问 | 操作员提供可达的 SSH 地址、用户和受保护凭据；地址可以来自私有网络、DNS 或其他外部维护的网络路径。 |
-
-## 安装
-
-请选择一种受支持的生产安装方式。两者都需要 Kubernetes 兼容集群、可为 Manager PVC 提供存储的 StorageClass，以及用于纳管服务器的 SSH 私钥。执行命令前请先阅读[前置条件](docs/installation/prerequisites.md)。
+- 想快速跑起来：[部署脚本](docs/installation/install-script.md)
+- 已有 Helm 工作流：[Helm Chart](docs/installation/install-helm.md)
+- 想先了解第一次登录和纳管流程：[快速开始](docs/getting-started.md)
+- 想看完整说明：[在线文档](https://surrychen.github.io/cylism-manager/)
 
 ### 部署脚本
 
-适合单节点控制面或需要交互式初始化的环境。脚本会创建或复用所需 Secret，并等待 Deployment 完成 rollout。
+适合单节点控制面或希望交互式初始化的环境：
 
 ```bash
 git clone https://github.com/SurryChen/cylism-manager.git
@@ -70,11 +69,9 @@ bash scripts/deploy-platform.sh \
   --verify-image-pull
 ```
 
-私有镜像、已有 Secret、备份、升级与回退检查请继续阅读[脚本安装指南](docs/installation/install-script.md)。
-
 ### Helm Chart
 
-适合已经通过 Helm values 和受控发布流程管理 Kubernetes 应用的环境。
+适合已经通过 Helm values 管理应用的环境。请先按[Helm 安装指南](docs/installation/install-helm.md)创建 Secret：
 
 ```bash
 helm upgrade --install cylism-manager charts/cylism-manager \
@@ -86,27 +83,16 @@ helm upgrade --install cylism-manager charts/cylism-manager \
   --set ssh.existingSecret=cylism-ssh-key
 ```
 
-请在执行前创建所需 Secret。完整且适合生产环境的示例与 PVC 配置请见 [Helm 安装指南](docs/installation/install-helm.md)。
+## 几个重要的运行说明
 
-## 管理范围
-
-| 工作区 | 示例 |
-| --- | --- |
-| 服务器与集群 | SSH 预检、服务器生命周期操作、节点、工作负载、Service、ConfigMap、Secret、PVC 与系统组件 |
-| 交付 | 镜像仓库、自托管 OCI 制品库、Registry Proxy、应用发布和平台镜像更新 |
-| 网络与安全 | 受管域名、Ingress 入口、证书、证书签发器和 DNS Challenge 集成 |
-| 运维 | 审计历史、平台发布历史、健康信息、配置与诊断 |
-
-## 范围与运行模型
-
-- Manager 有意获得较广的 Kubernetes 权限，以协调上述资源；它不适用于仅 Namespace 级、只读或严格多租户隔离的控制面场景。
-- SQLite 是单写入数据库。Manager Deployment 使用 `Recreate` 策略，升级时会短暂停止旧 Pod，再在 PVC 上启动新 Pod。
-- 升级或执行破坏性操作前请备份 Manager PVC。常规升级过程中不要删除 PVC。
-- K3s 支持是增量优化。标准 Kubernetes 环境无需 K3s 或 Tailscale，也可以使用通用资源与运维能力。
+- Manager 的 SQLite 数据保存在 PVC 中。升级前请备份 PVC，正常升级不要删除它。
+- SQLite 是单写入数据库，Deployment 使用 `Recreate` 策略，升级时会有短暂不可用。
+- Manager 需要较广的 Kubernetes 权限，不适合只允许 Namespace 级只读访问的共享集群。
+- K3s 的节点加入和 `vpn-auth` 诊断只有在识别到 K3s 后才会出现；普通 Kubernetes 环境仍可使用通用功能。
 
 ## 开发
 
-前置条件：Go 1.25+、Node.js 24+ 与 npm。Docker、Helm、Python 3.10+ 和 Kubernetes 测试集群按变更范围选用。
+需要 Go 1.25+、Node.js 24+ 和 npm。根据改动范围，可以额外使用 Docker、Helm、Python 3.10+ 或 Kubernetes 测试集群。
 
 ```bash
 go test ./...
@@ -116,26 +102,7 @@ npm --prefix web ci
 npm --prefix web run dev
 ```
 
-构建项目：
-
-```bash
-make build
-```
-
-OpenSpec 变更流程、审查要求和完整验证集请阅读 [CONTRIBUTING.md](CONTRIBUTING.md)。
-
-## 项目结构
-
-```text
-cmd/        Go 程序入口
-internal/   API、服务、数据存储和 Kubernetes 集成
-web/        Vue 3 管理界面
-k8s/        静态 Kubernetes 清单
-charts/     Helm Chart
-scripts/    安装与部署辅助脚本
-docs/       公开使用文档与历史设计材料
-openspec/   变更规范与归档决策
-```
+完整验证命令和 OpenSpec 变更流程见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
 ## 许可证
 
