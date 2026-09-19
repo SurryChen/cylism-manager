@@ -12,9 +12,7 @@
 
 </div>
 
-I run a few Linux servers, a K3s cluster, and some services on it. None of this is especially large, but looking after it still means SSH for machines, `kubectl` for resources, then separate places for releases, domains, certificates, and logs.
-
-I built Cylism Manager as a self-hosted dashboard for that routine work. It is not meant to hide the command line; it is meant to make the things I check and do most often easier to find.
+Cylism Manager is a dashboard for managing Linux servers, Kubernetes clusters, and self-hosted services.
 
 <p align="center">
   <a href="docs/assets/screenshots/platform-overview.png">
@@ -30,16 +28,9 @@ I built Cylism Manager as a self-hosted dashboard for that routine work. It is n
 - Tracks images, deployments, and application releases
 - Configures service domains and certificates
 
-It is aimed at a few servers and a small cluster. For complex debugging, fleet operations, or low-level cluster configuration, SSH, `kubectl`, and the usual tools are still the better place to work.
-
-Kubernetes is the baseline. K3s gets extra support for node joining and `vpn-auth` diagnostics. Tailscale and other VPNs stay managed outside Manager; it does not install, register, or upgrade them.
-
-> [!WARNING]
-> Manager is not a read-only dashboard. It needs Kubernetes management permissions and holds protected SSH credentials. Deploy it only in a cluster you trust, and read the [security policy](SECURITY.md).
-
 ## Install
 
-Read the [installation prerequisites](docs/installation/prerequisites.md) first. The cluster needs PVC storage, and you need an SSH private key for the servers you intend to manage.
+You can install it with the deployment script or Helm Chart. Installation requires an accessible Kubernetes or K3s cluster. Platform data is stored in a PVC created during installation by default; with Helm, you can specify a StorageClass or use an existing PVC.
 
 - [Deployment script](docs/installation/install-script.md): interactive initial setup.
 - [Helm Chart](docs/installation/install-helm.md): environments already managed with Helm values.
@@ -79,8 +70,6 @@ helm upgrade --install cylism-manager charts/cylism-manager \
 
 - Manager stores its SQLite state in a PVC. Back up the PVC before upgrades, and do not delete it during a normal upgrade.
 - SQLite has a single writer. The Deployment uses `Recreate`, so upgrades have a short period of unavailability.
-- Manager needs broad Kubernetes permissions and is not intended for shared clusters that only allow namespace-scoped read access.
-- K3s node joining and `vpn-auth` diagnostics appear only when K3s is detected; standard Kubernetes environments can still use the common features.
 
 ## Development
 

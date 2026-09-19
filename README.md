@@ -12,9 +12,7 @@
 
 </div>
 
-我维护的东西不算多：几台 Linux 服务器、一个 K3s 集群，以及跑在上面的一些服务。但时间久了，查机器要 SSH，查资源要开 `kubectl`，发布、域名、证书和日志又各有入口。
-
-所以做了 Cylism Manager。它是给自己用的自托管面板，用来集中处理这些日常维护工作；不是为了把命令行藏起来，而是少记一些位置、少开几个终端。
+Cylism Manager 是一个用于管理 Linux 服务器、Kubernetes 集群和自托管服务的面板。
 
 <p align="center">
   <a href="docs/assets/screenshots/platform-overview.png">
@@ -30,16 +28,9 @@
 - 管理镜像、部署记录和应用发布
 - 配置服务域名与证书
 
-它适合维护几台服务器和一个小集群的场景。复杂排障、批量运维或集群底层配置，还是直接用 SSH、`kubectl` 和现有工具更合适。
-
-Kubernetes 是基础能力，K3s 有额外的节点加入和 `vpn-auth` 诊断支持。Tailscale 和其他 VPN 仍由外部系统管理，Manager 不会安装、注册或升级它们。
-
-> [!WARNING]
-> Manager 不是只读仪表盘。它需要 Kubernetes 管理权限，也会持有受保护的 SSH 凭据。请只在你信任的集群中部署，并阅读[安全说明](SECURITY.md)。
-
 ## 安装
 
-先阅读[安装前置条件](docs/installation/prerequisites.md)，确认集群有可用的 PVC 存储，并准备好用于纳管服务器的 SSH 私钥。
+支持部署脚本和 Helm Chart。安装需要一个可访问的 Kubernetes 或 K3s 集群。平台数据默认保存到安装时创建的 PVC；使用 Helm 时，也可以指定 StorageClass 或已有 PVC。
 
 - [部署脚本](docs/installation/install-script.md)：适合交互式初始化
 - [Helm Chart](docs/installation/install-helm.md)：适合已有 Helm 工作流的环境
@@ -79,8 +70,6 @@ helm upgrade --install cylism-manager charts/cylism-manager \
 
 - Manager 的 SQLite 数据保存在 PVC 中。升级前请备份 PVC，正常升级不要删除它。
 - SQLite 是单写入数据库，Deployment 使用 `Recreate` 策略，升级时会有短暂不可用。
-- Manager 需要较广的 Kubernetes 权限，不适合只允许 Namespace 级只读访问的共享集群。
-- K3s 的节点加入和 `vpn-auth` 诊断只有在识别到 K3s 后才会出现；普通 Kubernetes 环境仍可使用通用功能。
 
 ## 开发
 
