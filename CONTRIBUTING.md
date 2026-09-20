@@ -5,8 +5,7 @@
 ## 开发环境
 
 - Go 1.25+
-- Node.js 24+
-- Python 3.10+，用于 MkDocs 文档站
+- Node.js 24+，用于 VitePress 文档站
 - 可选：Docker、Helm、可访问的 K3s 测试集群
 
 安装前端依赖：
@@ -36,7 +35,8 @@ go build ./...
 npm --prefix web test
 npm --prefix web run build
 bash scripts/test-docs-site.sh
-python -m mkdocs build --strict
+npm ci --prefix docs
+npm run build --prefix docs
 git diff --check
 ```
 

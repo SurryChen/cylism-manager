@@ -182,6 +182,7 @@ describe('Glass UI application shell', () => {
   it('shows the mobile drawer scrollbar only while its navigation is scrolling', async () => {
     vi.useFakeTimers()
     const wrapper = await mountApp()
+    document.body.append(wrapper.element)
     const navigation = wrapper.get('[data-testid="mobile-navigation"] .navigation-groups')
 
     expect(navigation.classes()).not.toContain('is-scrolling')
@@ -189,15 +190,33 @@ describe('Glass UI application shell', () => {
     await navigation.trigger('scroll')
     expect(navigation.classes()).toContain('is-scrolling')
 
-    await vi.advanceTimersByTimeAsync(600)
+    await vi.advanceTimersByTimeAsync(700)
     expect(navigation.classes()).not.toContain('is-scrolling')
+    wrapper.unmount()
   })
 
-  it('keeps the mobile drawer scrollbar transparent until navigation is scrolling', () => {
-    expect(themeCss).toMatch(/\.mobile-drawer \.navigation-groups\s*\{[^}]*scrollbar-color:\s*transparent transparent/)
-    expect(themeCss).toMatch(/\.mobile-drawer \.navigation-groups\.is-scrolling\s*\{[^}]*scrollbar-color:\s*var\(--text-muted\) transparent/)
-    expect(themeCss).toMatch(/\.mobile-drawer \.navigation-groups::-webkit-scrollbar-thumb\s*\{[^}]*background:\s*transparent/)
-    expect(themeCss).toMatch(/\.mobile-drawer \.navigation-groups\.is-scrolling::-webkit-scrollbar-thumb\s*\{[^}]*background:\s*var\(--text-muted\)/)
+  it('installs transient scrollbar handling for document and nested scroll targets', async () => {
+    vi.useFakeTimers()
+    const wrapper = await mountApp()
+    const scrollRegion = document.createElement('div')
+    document.body.append(scrollRegion)
+
+    document.dispatchEvent(new Event('scroll'))
+    scrollRegion.dispatchEvent(new Event('scroll'))
+
+    expect(document.documentElement.classList).toContain('is-scrolling')
+    expect(scrollRegion.classList).toContain('is-scrolling')
+
+    wrapper.unmount()
+    expect(document.documentElement.classList).not.toContain('is-scrolling')
+    expect(scrollRegion.classList).not.toContain('is-scrolling')
+  })
+
+  it('keeps scrollbars transparent until a scroll target is active', () => {
+    expect(themeCss).toMatch(/\*\s*\{[^}]*scrollbar-color:\s*transparent transparent/)
+    expect(themeCss).toMatch(/\.is-scrolling\s*\{[^}]*scrollbar-color:\s*var\(--text-muted\) transparent/)
+    expect(themeCss).toMatch(/::-webkit-scrollbar-thumb\s*\{[^}]*background:\s*transparent/)
+    expect(themeCss).toMatch(/\.is-scrolling::-webkit-scrollbar-thumb\s*\{[^}]*background:\s*var\(--text-muted\)/)
   })
 
   it('uses the Direction 05 薄荷玻璃 palette and an unframed desktop top bar', async () => {

@@ -32,6 +32,13 @@ Manager 使用 Kubernetes ClusterRole 管理节点、工作负载、Service、Se
 | npm | 与 Node.js 匹配的版本 |
 | Docker | 可选，用于镜像构建验证 |
 | Helm | 可选，用于 Chart 验证与安装 |
-| Python | 3.10+，仅用于构建文档站 |
+| Python | 仅在运行项目中的辅助脚本时需要 |
+
+如果要在本地预览或构建这套文档，只需要 Node.js 24+ 和 npm：
+
+```bash
+npm ci --prefix docs
+npm run dev --prefix docs
+```
 
 继续前，请选择[脚本安装](install-script.md)或[Helm 安装](install-helm.md)。
