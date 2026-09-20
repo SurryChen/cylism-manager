@@ -28,9 +28,7 @@ helm upgrade --install cylism-manager charts/cylism-manager \
   --set image.repository=ghcr.io/<owner>/cylism-manager \
   --set image.tag=<version> \
   --set secrets.existingSecret=cylism-secret \
-  --set ssh.existingSecret=cylism-ssh-key \
-  --set data.hostPath=/data/cylism-manager \
-  --set tailscale.hostPath=/run/tailscale
+  --set ssh.existingSecret=cylism-ssh-key
 ```
 
 如果通过 OCI Registry 安装 Release Chart，将 `charts/cylism-manager` 替换为项目 Release 中给出的 OCI Chart 地址和版本。
@@ -44,14 +42,11 @@ image:
   repository: ghcr.io/<owner>/cylism-manager
   tag: <version>
 
-nodeSelector:
-  kubernetes.io/hostname: <control-plane-node>
-
 data:
-  hostPath: /data/cylism-manager
-
-tailscale:
-  hostPath: /run/tailscale
+  storageClass: <storage-class> # 留空时使用集群默认 StorageClass
+  size: 5Gi
+  # 已有 PVC 时设置 existingClaim，Chart 不会新建 PVC。
+  # existingClaim: cylism-manager-data
 
 ssh:
   existingSecret: cylism-ssh-key
@@ -86,4 +81,6 @@ helm -n cylism-system history cylism-manager
 helm -n cylism-system rollback cylism-manager <revision>
 ```
 
-回退 Chart 不会自动回退 SQLite 数据。升级前应备份 `data.hostPath` 对应的控制面目录。
+回退 Chart 不会自动回退 SQLite 数据。升级前应备份 Manager PVC 中的数据，并在现有 hostPath 安装迁移前将数据库复制到新 PVC。
+
+Manager 使用 SQLite 单写入数据库，Chart 默认采用 `Recreate` 更新策略：升级时会先停止旧 Pod，再启动新 Pod，避免两个版本分别写入不同的数据卷。请为升级安排短暂维护窗口。

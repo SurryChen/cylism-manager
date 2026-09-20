@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	coreauth "github.com/cylism/cylism-manager/internal/service/auth"
 	"github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
+	coreauth "github.com/cylism/cylism-manager/internal/service/auth"
 	"github.com/gin-gonic/gin"
 )
 
@@ -124,7 +124,7 @@ func TestBuildRouteDependenciesComposesAllHandlerGroups(t *testing.T) {
 		t.Fatal("expected delivery handlers composed by bootstrap")
 	}
 	infra := deps.Infrastructure
-	if infra.Network != deps.RuntimeAgent.Network || infra.Server == nil || infra.NetworkDiag == nil || infra.Terminal == nil || infra.Site == nil || infra.Operation == nil || infra.Domain == nil || infra.Node == nil || infra.NodeJoin == nil || infra.Ingress == nil || infra.Certificate == nil || infra.K8s == nil || infra.Storage == nil || infra.Tailscale == nil || infra.CRD == nil || infra.AuditLog == nil || infra.DBAdmin == nil {
+	if infra.Network != deps.RuntimeAgent.Network || infra.Server == nil || infra.NetworkDiag == nil || infra.Terminal == nil || infra.Site == nil || infra.Operation == nil || infra.Domain == nil || infra.Node == nil || infra.NodeJoin == nil || infra.Ingress == nil || infra.Certificate == nil || infra.K8s == nil || infra.Platform == nil || infra.Storage == nil || infra.CRD == nil || infra.AuditLog == nil || infra.DBAdmin == nil {
 		t.Fatal("expected infrastructure handlers composed by bootstrap")
 	}
 	if deps.System.Dashboard == nil || deps.System.Monitoring == nil || deps.System.Alerting == nil || deps.System.Logging == nil {

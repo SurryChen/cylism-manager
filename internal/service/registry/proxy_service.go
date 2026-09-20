@@ -242,8 +242,8 @@ func ValidateProxyInput(input ProxyInput) error {
 	if registry != "docker.io" && !strings.EqualFold(upstream.Hostname(), registry) {
 		return errors.New("非 Docker Hub 代理的上游地址必须与 Registry 域名一致")
 	}
-	if strings.TrimSpace(input.NodeName) == "" || !PrivateOrTailnetIP(strings.TrimSpace(input.EndpointHost)) {
-		return errors.New("代理地址必须是节点间可访问的私网或 Tailscale IP")
+	if strings.TrimSpace(input.NodeName) == "" || !PrivateOrSharedAddressIP(strings.TrimSpace(input.EndpointHost)) {
+		return errors.New("代理地址必须是节点间可访问的私网或共享地址")
 	}
 	if input.NodePort < 30000 || input.NodePort > 32767 {
 		return errors.New("NodePort 必须在 30000 到 32767 之间")
@@ -337,7 +337,7 @@ func ProxyDNSServers(proxy *model.RegistryProxy) []string {
 	return servers
 }
 
-func PrivateOrTailnetIP(value string) bool {
+func PrivateOrSharedAddressIP(value string) bool {
 	ip := net.ParseIP(value)
 	if ip == nil || ip.IsLoopback() {
 		return false
@@ -345,6 +345,6 @@ func PrivateOrTailnetIP(value string) bool {
 	if ip.IsPrivate() {
 		return true
 	}
-	_, tailnet, _ := net.ParseCIDR("100.64.0.0/10")
-	return tailnet.Contains(ip)
+	_, sharedAddress, _ := net.ParseCIDR("100.64.0.0/10")
+	return sharedAddress.Contains(ip)
 }

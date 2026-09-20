@@ -110,8 +110,6 @@ func catalogedAuditAction(method, path string) (string, string, bool) {
 		resourceType = "system_component"
 	case strings.Contains(path, "/cluster-dns"):
 		resourceType = "cluster_dns"
-	case strings.Contains(path, "/tailscale"):
-		resourceType = "tailnet"
 	case strings.Contains(path, "/admin/tables"):
 		resourceType = "admin_record"
 	case strings.Contains(path, "/environments"):

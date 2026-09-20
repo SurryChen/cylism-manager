@@ -77,17 +77,14 @@
 
     <template v-else>
       <SurfaceCard class="network-overview section-gap">
-        <h2 class="network-overview-title">网络诊断</h2>
+        <h2 class="network-overview-title">K3s VPN 兼容性</h2>
         <button class="icon-button" title="刷新网络诊断" aria-label="刷新网络诊断" :disabled="networkDiagnosticsLoading" @click="refreshNetworkDiagnostics"><RefreshCw :size="16" :class="{ 'is-spinning': networkDiagnosticsLoading }" /></button>
       </SurfaceCard>
       <div v-if="networkDiagnosticsError" class="k8s-banner k8s-banner-warn section-gap">{{ networkDiagnosticsError }}，已保留上次成功结果</div>
       <div v-if="networkDiagnosticsLoading && !networkDiagnostics.servers.length" class="empty-state"><span class="empty-text">正在采集网络状态...</span></div>
       <div v-else-if="!networkDiagnostics.servers.length" class="empty-state"><span class="empty-icon">⬡</span><span class="empty-text">暂无诊断结果</span></div>
       <SurfaceCard v-else class="section-gap network-table-card">
-        <div class="table-wrap"><table class="data-table network-table"><thead><tr><th>服务器</th><th>K3s 网络</th><th>Tailscale</th><th>Tailnet IP</th><th>UDP</th><th>IPv4</th><th>最近 DERP</th></tr></thead><tbody><tr v-for="diagnostic in networkDiagnostics.servers" :key="diagnostic.server_id"><td class="cell-primary">{{ diagnostic.name }}<small class="cell-secondary">{{ diagnostic.k8s_unit || '-' }}</small></td><td><span class="badge" :class="networkModeClass(diagnostic)">{{ networkModeLabel(diagnostic.network_mode) }}</span></td><td><span class="badge" :class="tailscaleStatusClass(diagnostic)">{{ tailscaleStatusLabel(diagnostic) }}</span></td><td>{{ diagnostic.tailscale?.tailnet_ip || '-' }}</td><td>{{ booleanLabel(diagnostic.tailscale?.udp) }}</td><td>{{ booleanLabel(diagnostic.tailscale?.ipv4) }}</td><td>{{ diagnostic.tailscale?.nearest_derp || '-' }}</td></tr></tbody></table></div>
-      </SurfaceCard>
-      <SurfaceCard v-if="networkDiagnostics.links.length" class="network-table-card">
-        <div class="table-wrap"><table class="data-table network-table"><thead><tr><th>源服务器</th><th>目标服务器</th><th>链路</th><th>延迟</th><th>DERP</th><th>状态</th></tr></thead><tbody><tr v-for="link in networkDiagnostics.links" :key="`${link.source_server_id}-${link.target_server_id}`"><td class="cell-primary">{{ diagnosticServerName(link.source_server_id) }}</td><td class="cell-primary">{{ diagnosticServerName(link.target_server_id) }}</td><td><span class="badge" :class="linkPathClass(link.path)">{{ linkPathLabel(link.path) }}</span></td><td>{{ link.latency_ms ? `${link.latency_ms} ms` : '-' }}</td><td>{{ link.derp_region || '-' }}</td><td>{{ linkErrorLabel(link.error_code) }}</td></tr></tbody></table></div>
+        <div class="table-wrap"><table class="data-table network-table"><thead><tr><th>服务器</th><th>K3s 单元</th><th>VPN 兼容</th><th>服务商</th><th>采集状态</th></tr></thead><tbody><tr v-for="diagnostic in networkDiagnostics.servers" :key="diagnostic.server_id"><td class="cell-primary">{{ diagnostic.name }}</td><td>{{ diagnostic.k8s_unit || '-' }}</td><td><span class="badge" :class="vpnCompatibilityClass(diagnostic)">{{ vpnCompatibilityLabel(diagnostic) }}</span></td><td>{{ vpnProviderLabel(diagnostic.k3s_vpn?.provider) }}</td><td><span class="badge" :class="diagnosticStatusClass(diagnostic)">{{ diagnosticStatusLabel(diagnostic) }}</span></td></tr></tbody></table></div>
       </SurfaceCard>
     </template>
     </main>
@@ -257,9 +254,8 @@ const networkDiagnosticsResource = useAsyncResource(async ({ signal }) => {
   const result = await getServerNetworkDiagnostics({ signal })
   return {
     servers: Array.isArray(result?.servers) ? result.servers : [],
-    links: Array.isArray(result?.links) ? result.links : [],
   }
-}, { servers: [], links: [] })
+}, { servers: [] })
 const networkDiagnostics = networkDiagnosticsResource.data
 const networkDiagnosticsLoading = networkDiagnosticsResource.loading
 const networkDiagnosticsError = computed(() => networkDiagnosticsResource.error.value ? '网络诊断请求失败' : '')
@@ -305,7 +301,6 @@ const cpuChartData = computed(() => chartRingData(statsData.value.cpu_percent, '
 const memChartData = computed(() => chartRingData(memPercent(statsData.value), 'Mem'))
 const diskChartData = computed(() => chartRingData(diskPercent(statsData.value), 'Disk'))
 const resourceStatsByServerID = computed(() => new Map(resourceStats.value.map(stats => [Number(stats.server_id), stats])))
-const networkDiagnosticsByServerID = computed(() => new Map(networkDiagnostics.value.servers.map(diagnostic => [Number(diagnostic.server_id), diagnostic])))
 const resourceSamplingLabel = computed(() => {
   if (resourceStatsLoading.value) return '正在采集资源数据...'
   if (!resourceStatsUpdatedAt.value) return '进入此视图后开始采集'
@@ -359,17 +354,11 @@ async function refreshNetworkDiagnostics() {
   await networkDiagnosticsResource.refresh()
 }
 
-function networkModeLabel(mode) {
-  return ({ k3s_embedded_tailscale: 'K3s 内建 Tailscale', external_tailscale: '外部 Tailscale', standard_network: '标准网络', unknown: '未知' })[mode] || '未知'
-}
-function networkModeClass(diagnostic) { return diagnostic.error_code ? 'badge-danger' : diagnostic.network_mode === 'k3s_embedded_tailscale' ? 'badge-online' : diagnostic.network_mode === 'external_tailscale' ? 'badge-deploying' : 'badge-offline' }
-function tailscaleStatusLabel(diagnostic) { if (!diagnostic.tailscale?.installed) return '未安装'; return diagnostic.tailscale.online ? '在线' : '未连接' }
-function tailscaleStatusClass(diagnostic) { return diagnostic.tailscale?.online ? 'badge-online' : diagnostic.tailscale?.installed ? 'badge-deploying' : 'badge-offline' }
-function booleanLabel(value) { return value === true ? '可用' : value === false ? '不可用' : '-' }
-function diagnosticServerName(serverID) { return networkDiagnosticsByServerID.value.get(Number(serverID))?.name || '-' }
-function linkPathLabel(path) { return ({ direct: 'UDP 直连', derp: 'DERP 中继', unreachable: '不可达', unknown: '未知' })[path] || '未知' }
-function linkPathClass(path) { return path === 'direct' ? 'badge-online' : path === 'derp' ? 'badge-deploying' : path === 'unreachable' ? 'badge-danger' : 'badge-offline' }
-function linkErrorLabel(code) { return ({ ping_timeout: '超时', ping_failed: '探测失败', ping_unclassified: '未识别', invalid_target: '目标无效' })[code] || (code ? '异常' : '正常') }
+function vpnCompatibilityLabel(diagnostic) { return diagnostic.k3s_vpn?.configured ? '已配置' : '未配置' }
+function vpnCompatibilityClass(diagnostic) { return diagnostic.error_code ? 'badge-danger' : diagnostic.k3s_vpn?.configured ? 'badge-online' : 'badge-offline' }
+function vpnProviderLabel(provider) { return ({ tailscale: 'Tailscale', other: '其他兼容服务', unknown: '已配置（未识别）' })[provider] || '-' }
+function diagnosticStatusLabel(diagnostic) { return diagnostic.error_code ? '采集失败' : '已采集' }
+function diagnosticStatusClass(diagnostic) { return diagnostic.error_code ? 'badge-danger' : 'badge-online' }
 
 function stopResourcePolling() {
   resourcePolling.stop()

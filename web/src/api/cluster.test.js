@@ -4,6 +4,7 @@ import {
   drainNode,
   forceDrainNode,
   getClusterInventory,
+  getClusterPlatform,
   getNodeDrainPlan,
   getNodeLabels,
   getNodeRemovalCheck,
@@ -24,6 +25,12 @@ describe('cluster api', () => {
     getClusterInventory(options)
     expect(api.get).toHaveBeenNthCalledWith(1, '/nodes', options)
     expect(api.get).toHaveBeenNthCalledWith(2, '/servers', options)
+  })
+
+  it('loads the connected cluster platform identity', () => {
+    const options = { signal: new AbortController().signal }
+    getClusterPlatform(options)
+    expect(api.get).toHaveBeenCalledWith('/k8s/platform', options)
   })
 
   it('uses the existing node workflow endpoints and forwards request options', () => {

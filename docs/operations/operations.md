@@ -8,7 +8,7 @@ kubectl -n cylism-system logs deployment/cylism-manager --tail=200
 kubectl get nodes -o wide
 ```
 
-重点关注 Pod 重启次数、Readiness 状态、镜像拉取错误、权限拒绝和 Tailscale socket 挂载失败。
+重点关注 Pod 重启次数、Readiness 状态、镜像拉取错误、权限拒绝和 PVC 挂载失败。
 
 ## 变更前检查
 
@@ -23,7 +23,9 @@ kubectl get nodes -o wide
 
 - 脚本安装：使用新镜像 tag 重跑部署脚本，保留它创建的部署前备份。
 - Helm 安装：更新 values 中的镜像 tag，执行 `helm upgrade`，再用 `helm history` 确认 revision。
-- 任何升级完成后：检查 rollout、登录、Tailscale 状态、至少一个服务器预检和必要的 Kubernetes 资源读取。
+- 任何升级完成后：检查 rollout、登录、PVC 绑定状态、至少一个服务器预检和必要的 Kubernetes 资源读取。
+
+Manager 使用 SQLite 单写入数据库。平台 Deployment 采用 `Recreate` 更新策略，升级期间会有短暂不可用；不要将多个副本连接到不同的数据卷。
 
 ## 日志与审计
 

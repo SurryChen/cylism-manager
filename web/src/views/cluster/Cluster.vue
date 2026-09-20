@@ -6,7 +6,8 @@
 
     <SurfaceCard as="div" class="section-gap">
       <p class="section-copy">
-        节点状态直接来自当前 K3s 集群。新增工作节点请先在“服务器”页面补全 SSH 信息并完成加入集群。
+        节点状态直接来自已连接的 Kubernetes 集群。当前平台：<strong>{{ platformLabel }}</strong><template v-if="platform.version"> · {{ platform.version }}</template>。
+        <template v-if="platform.distribution === 'k3s'">K3s 集群支持工作节点加入流程；</template>服务器绑定和节点维护适用于 Kubernetes 兼容集群。
       </p>
     </SurfaceCard>
 
@@ -144,6 +145,7 @@ import {
   drainNode,
   forceDrainNode,
   getClusterInventory,
+  getClusterPlatform,
   getNodeDrainPlan,
   getNodeLabels,
   getNodeRemovalCheck,
@@ -174,6 +176,7 @@ const labelsTarget = ref(null)
 const labelDraft = ref([])
 const savingLabels = ref(false)
 const clusterResource = useAsyncResource(({ signal }) => getClusterInventory({ signal }), [[], []])
+const platformResource = useAsyncResource(({ signal }) => getClusterPlatform({ signal }), { distribution: 'unknown', version: '' })
 const drainPlanResource = useAsyncResource(({ signal }, nodeName) => getNodeDrainPlan(nodeName, { signal }), null)
 const labelsResource = useAsyncResource(({ signal }, nodeName) => getNodeLabels(nodeName, { signal }), null)
 const removalCheckResource = useAsyncResource(({ signal }, nodeName) => getNodeRemovalCheck(nodeName, { signal }), null)
@@ -184,6 +187,8 @@ const removeError = ref('')
 const rejoinError = ref('')
 
 const serverLookup = computed(() => servers.value)
+const platform = computed(() => platformResource.data.value || { distribution: 'unknown', version: '' })
+const platformLabel = computed(() => ({ k3s: 'K3s', kubernetes: 'Kubernetes', unknown: '未识别' })[platform.value.distribution] || '未识别')
 const systemLabelEntries = computed(() => {
   if (!labelsTarget.value) return []
   const protectedKeys = new Set(labelsTarget.value.protectedKeys || [])
@@ -196,7 +201,7 @@ onMounted(() => {
 
 async function fetchData() {
   error.value = ''
-  const result = await clusterResource.refresh()
+  const [result] = await Promise.all([clusterResource.refresh(), platformResource.refresh()])
   if (result) {
     const [nodeList, serverList] = result
     nodes.value = nodeList || []

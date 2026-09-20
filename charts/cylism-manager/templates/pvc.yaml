@@ -1,0 +1,17 @@
+{{- if not .Values.data.existingClaim }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "cylism-manager.dataClaimName" . }}
+  labels:
+    {{- include "cylism-manager.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    {{- toYaml .Values.data.accessModes | nindent 4 }}
+  resources:
+    requests:
+      storage: {{ .Values.data.size | quote }}
+  {{- with .Values.data.storageClass }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+{{- end }}

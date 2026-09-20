@@ -152,3 +152,32 @@ func TestObsoleteAssistantSchemaIsRemoved(t *testing.T) {
 		t.Fatal("legacy assistant default provider config must be removed")
 	}
 }
+
+func TestObsoleteTailscaleAuthKeyIsRemoved(t *testing.T) {
+	dsn := filepath.Join(t.TempDir(), "store.db")
+	st, err := New(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.DB().Exec("INSERT INTO system_configs (key, value) VALUES (?, ?), (?, ?)", "tailscale_auth_key", "tskey-auth-secret", "retained_key", "retained-value").Error; err != nil {
+		t.Fatal(err)
+	}
+
+	migrated, err := New(dsn)
+	if err != nil {
+		t.Fatalf("remove obsolete Tailscale config: %v", err)
+	}
+	if _, err := New(dsn); err != nil {
+		t.Fatalf("obsolete config cleanup must be idempotent: %v", err)
+	}
+	var obsoleteCount, retainedCount int64
+	if err := migrated.DB().Table("system_configs").Where("key = ?", "tailscale_auth_key").Count(&obsoleteCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := migrated.DB().Table("system_configs").Where("key = ?", "retained_key").Count(&retainedCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if obsoleteCount != 0 || retainedCount != 1 {
+		t.Fatalf("unexpected cleanup result: obsolete=%d retained=%d", obsoleteCount, retainedCount)
+	}
+}

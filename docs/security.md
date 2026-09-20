@@ -5,11 +5,12 @@
 Cylism Manager 旨在执行真实的基础设施管理动作，因此需要高权限：
 
 - Kubernetes ClusterRole 可读取和管理多类集群资源。
-- 控制面宿主机的 Tailscale socket 允许平台读取 tailnet 状态并发起本地 Tailscale API 调用。
 - SSH 私钥允许平台连接已配置的受管服务器。
 - SQLite 数据库存储平台元数据、审计信息和受保护的配置数据。
 
-只应在受信任的控制面节点和受控 Kubernetes 集群中部署它。限制可创建 Pod、读取 Secret、访问控制面文件系统和修改平台 Deployment 的人员与自动化身份。
+只应在受信任的 Kubernetes 集群中部署它。限制可创建 Pod、读取 Secret、访问持久化卷和修改平台 Deployment 的人员与自动化身份。
+
+平台不安装、注册、认证或管理 Tailscale，也不访问其宿主机 socket。若操作员将 Tailscale 用作主机间连通层，需自行维护该网络及访问控制；平台只会使用已配置的 SSH 管理地址。对于启用 `vpn-auth` 的 K3s 单元，平台仅展示不含凭据的只读兼容状态。
 
 ## Secret 管理
 

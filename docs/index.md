@@ -1,41 +1,31 @@
+---
+pageClass: doc-home
+---
+
 # Cylism Manager
 
-Cylism Manager 是面向 **Tailscale + K3s** 场景的基础设施控制台。它把服务器纳管、SSH 主机操作、Kubernetes 资源管理、制品库、证书和审计记录收敛到一个界面。
+Cylism Manager 将服务器、Kubernetes 集群、应用交付和运维记录放在同一个工作台。本文档按实际管理对象组织：先在概览识别风险，再进入对应产品域处理。
 
-> 这不是只读仪表盘。部署后的 Manager 需要访问 Kubernetes API、控制面宿主机的 Tailscale socket，并使用受保护的 SSH 凭据操作受管主机。请先阅读[前置条件](installation/prerequisites.md)和[安全说明](security.md)。
+> 平台会通过 Kubernetes API 和受保护的 SSH 凭据执行真实管理操作。部署前请阅读[前置条件](installation/prerequisites.md)和[安全说明](security.md)。
 
-## 适用场景
+## 概览
 
-- 控制面节点已加入 Tailscale tailnet，计划纳管同一 tailnet 中的 Linux 主机。
-- 使用 K3s 或兼容 Kubernetes 集群，且能够接受平台以 ClusterRole 管理受控资源。
-- 希望在同一平台查看服务器、节点、Kubernetes 资源、应用、证书、镜像仓库与审计记录。
+概览用于判断下一步该处理什么：平台健康展示集群与核心组件状态；待处理告警突出持续风险；近期发布帮助确认变更影响；关键操作帮助追溯正在执行或刚完成的管理动作。
 
-## 不适用场景
+<figure class="documentation-screenshot">
+  <img src="./assets/screenshots/overview/dashboard.png" alt="平台概览：平台健康、应用状态、资源趋势和运行检查" />
+  <figcaption>平台概览：平台健康、待处理告警、近期发布与关键操作。</figcaption>
+</figure>
 
-- 需要严格多租户隔离或只授予 Namespace 级只读权限的共享集群。
-- 没有可保护 SSH 私钥、Kubernetes Secret 或控制面宿主机数据目录的环境。
-- 希望通过 Docker Compose 获得受支持的生产安装路径。当前公开支持的路径仅为 K3s 部署脚本和 Helm Chart。
+## 产品文档
 
-## 选择安装方式
+- [应用交付](application-delivery/projects-and-environments.md)：项目、环境、应用、发布和访问地址。
+- [制品与供应链](supply-chain/managed-registry.md)：平台制品库、代理、节点镜像源和 Chart 来源。
+- [资源与平台](platform/servers-and-terminal.md)：服务器、集群、Kubernetes、网络、证书和存储。
+- [可观测与运维](operations/metrics.md)：指标、日志、告警、磁盘趋势和故障处理。
+- [治理与系统](governance/audit-logs.md)：审计、操作历史、系统设置、数据与安全边界。
+- [自动化助手](automation/agent-assistant.md)：Agent 管理、授权和自动化执行记录。
 
-| 场景 | 推荐方式 | 入口 |
-| --- | --- | --- |
-| 单节点控制面或希望交互式初始化 Secret | 部署脚本 | [脚本安装](installation/install-script.md) |
-| 已有 Helm 流程或需要声明式 values | Helm Chart | [Helm 安装](installation/install-helm.md) |
-| 贡献代码或验证修改 | 本地开发 | [开发与贡献](development/contributing.md) |
+## 开始使用
 
-## 首次成功标准
-
-完成安装后，应能执行以下检查：
-
-```bash
-kubectl get pods -l app.kubernetes.io/component=manager
-kubectl get svc
-kubectl port-forward svc/cylism-manager 8080:8080
-```
-
-然后在浏览器打开 `http://127.0.0.1:8080`，使用部署时设置的管理员账户登录。接下来按照[快速开始](getting-started.md)确认 Tailscale 状态并纳管第一台服务器。
-
-## 产品截图
-
-截图会在经过脱敏审查后加入本页。
+首次部署请从[快速开始](getting-started.md)进入；已有部署流程可选择[脚本安装](installation/install-script.md)或 [Helm 安装](installation/install-helm.md)。

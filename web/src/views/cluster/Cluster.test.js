@@ -7,6 +7,7 @@ const { get, patch } = vi.hoisted(() => ({ get: vi.fn(), patch: vi.fn(() => Prom
 get.mockImplementation(path => {
   if (path === '/nodes') return Promise.resolve([{ name: 'worker-a', ready: true, roles: 'worker', cpu_cores: 2, memory_mb: 2048 }])
   if (path === '/servers') return Promise.resolve([{ name: '应用节点', k8s_node_name: 'worker-a' }])
+  if (path === '/k8s/platform') return Promise.resolve({ distribution: 'k3s', version: 'v1.31.2+k3s1' })
   if (path === '/nodes/worker-a/labels') return Promise.resolve({ name: 'worker-a', labels: { 'kubernetes.io/hostname': 'worker-a', team: 'platform' }, protected_keys: ['kubernetes.io/hostname'] })
   return Promise.resolve([])
 })
@@ -19,6 +20,7 @@ describe('Cluster view', () => {
     await new Promise(resolve => setTimeout(resolve, 0))
 
     expect(wrapper.text()).toContain('应用节点')
+    expect(wrapper.text()).toContain('当前平台：K3s')
     await wrapper.get('[data-testid="manage-labels-worker-a"]').trigger('click')
     await new Promise(resolve => setTimeout(resolve, 0))
 
@@ -86,5 +88,29 @@ describe('Cluster view', () => {
     expect(wrapper.find('.label-editor-row input').element.value).toBe('team')
     expect(wrapper.findAll('.label-editor-row input')[1].element.value).toBe('latest')
     wrapper.unmount()
+  })
+
+  it('renders Kubernetes and unavailable platform identities without exposing K3s-only guidance', async () => {
+    get.mockImplementation(path => {
+      if (path === '/nodes' || path === '/servers') return Promise.resolve([])
+      if (path === '/k8s/platform') return Promise.resolve({ distribution: 'kubernetes', version: 'v1.31.2' })
+      return Promise.resolve([])
+    })
+    const kubernetes = mount(Cluster)
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(kubernetes.text()).toContain('当前平台：Kubernetes')
+    expect(kubernetes.text()).not.toContain('K3s 集群支持工作节点加入流程')
+    kubernetes.unmount()
+
+    get.mockImplementation(path => {
+      if (path === '/nodes' || path === '/servers') return Promise.resolve([])
+      if (path === '/k8s/platform') return Promise.resolve({ distribution: 'unknown', reason: 'unavailable' })
+      return Promise.resolve([])
+    })
+    const unavailable = mount(Cluster)
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(unavailable.text()).toContain('当前平台：未识别')
+    expect(unavailable.text()).not.toContain('K3s 集群支持工作节点加入流程')
+    unavailable.unmount()
   })
 })

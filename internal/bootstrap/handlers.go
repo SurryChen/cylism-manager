@@ -56,7 +56,7 @@ func (c *Container) BuildRouteDependencies() api.RouteDependencies {
 	clusterService := c.Services.Cluster
 	clusterDNS := networkapi.NewClusterDNSHandlerWithAdapter(c.Store, networkapi.NewClusterDNSAdapter(c.K8s))
 	ingress := networkapi.NewIngressHandler(networkService)
-	nodeJoin := clusterapi.NewNodeJoinProgressHandler(c.Store, key, clusterapi.NewNodeJoinAdapter(c.K8s))
+	nodeJoin := clusterapi.NewNodeJoinProgressHandler(c.Store, key, clusterapi.NewNodeJoinAdapter(c.K8s)).WithPlatformReader(c.K8s)
 	networkHandler := networkapi.NewNetworkHandler(networkService, networkapi.NetworkHandler{
 		DNSStatus: clusterDNS.Status, DNSApply: clusterDNS.Apply, DNSReset: clusterDNS.Reset, DNSRollback: clusterDNS.Rollback,
 	})
@@ -109,7 +109,8 @@ func (c *Container) BuildRouteDependencies() api.RouteDependencies {
 			Node:   clusterapi.NewNodeHandler(clusterService), NodeJoin: nodeJoin, Ingress: ingress,
 			Certificate: networkapi.NewCertHandlerWithComposedDependencies(c.Store, key, networkService, networkapi.NewCertificateKubernetesAdapter(c.K8s)),
 			K8s:         kubernetesapi.NewK8sHandlerWithAdapterAndEncryption(c.Store, storageService, key, kubernetesapi.NewK8sResourceAdapter(c.K8s), c.Store),
-			Storage:     storageHandler, Tailscale: systemapi.NewTailscaleHandler(c.Store, key),
+			Platform:    kubernetesapi.NewClusterPlatformHandler(c.K8s),
+			Storage:     storageHandler,
 			CRD: kubernetesapi.NewCRDHandler(), AuditLog: systemapi.NewAuditHandler(c.Store), DBAdmin: systemapi.NewDBAdminHandler(c.Store),
 		},
 		System: api.SystemDependencies{

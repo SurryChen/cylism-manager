@@ -2,22 +2,20 @@
 
 ## 基础环境
 
-- 一台 Linux 控制面主机，已加入目标 Tailscale tailnet。
-- 一个可访问的 K3s 或兼容 Kubernetes 集群；执行安装的账户必须能创建 Namespace、Deployment、Service、Secret、ConfigMap、ServiceAccount、ClusterRole 和 ClusterRoleBinding。
+- 一个可访问的 Kubernetes 或 K3s 集群；执行安装的账户必须能创建 Namespace、Deployment、Service、Secret、ConfigMap、PersistentVolumeClaim、ServiceAccount、ClusterRole 和 ClusterRoleBinding。
 - `kubectl` 可访问集群，或控制面存在可用的 `k3s kubectl`。
 - 用于拉取平台镜像的镜像仓库访问权限；公开镜像不需要 imagePullSecret。
 - 用于纳管其他主机的 SSH 私钥。私钥只能以 Kubernetes Secret 挂载，不得提交到仓库。
 
-## 控制面节点要求
+## 持久化与权限要求
 
-默认安装会把以下宿主机目录挂载到 Manager Pod：
+默认安装会为 SQLite 数据创建 PersistentVolumeClaim：
 
-| 目录 | 用途 | 风险与保护要求 |
+| 资源 | 用途 | 风险与保护要求 |
 | --- | --- | --- |
-| `/data/cylism-manager` | SQLite 数据库、平台状态 | 纳入主机备份；限制节点与文件系统访问权限。 |
-| `/run/tailscale` | `tailscaled` socket | 可代表该节点调用 Tailscale 本地 API；仅允许可信 Manager Pod 挂载。 |
+| PVC | SQLite 数据库、平台状态 | 需要可用的默认 StorageClass，或在 Helm values 中指定 StorageClass / 已有 Claim；纳入存储卷备份策略。 |
 
-Manager 还使用 Kubernetes ClusterRole 管理节点、工作负载、Service、Secret、ConfigMap、证书及相关资源，并可能通过 SSH 连接受管服务器。请将它部署在受信任的控制面节点，避免与不受信任的工作负载共用节点访问权限。
+Manager 使用 Kubernetes ClusterRole 管理节点、工作负载、Service、Secret、ConfigMap、证书及相关资源，并可能通过 SSH 连接受管服务器。请限制可创建 Pod、读取 Secret 和修改平台 Deployment 的人员与自动化身份。
 
 ## Kubernetes 依赖
 
@@ -34,6 +32,13 @@ Manager 还使用 Kubernetes ClusterRole 管理节点、工作负载、Service�
 | npm | 与 Node.js 匹配的版本 |
 | Docker | 可选，用于镜像构建验证 |
 | Helm | 可选，用于 Chart 验证与安装 |
-| Python | 3.10+，仅用于构建文档站 |
+| Python | 仅在运行项目中的辅助脚本时需要 |
+
+如果要在本地预览或构建这套文档，只需要 Node.js 24+ 和 npm：
+
+```bash
+npm ci --prefix docs
+npm run dev --prefix docs
+```
 
 继续前，请选择[脚本安装](install-script.md)或[Helm 安装](install-helm.md)。

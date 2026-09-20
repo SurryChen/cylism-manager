@@ -176,7 +176,7 @@ const resourceOptions = [
   { value: 'namespace', label: '命名空间' }, { value: 'storage', label: '存储' }, { value: 'monitoring', label: '监控' },
   { value: 'logging', label: '日志' }, { value: 'alerting', label: '告警' }, { value: 'identity', label: '身份认证' },
   { value: 'delegation', label: '委托' }, { value: 'temporary_token', label: '临时令牌' }, { value: 'cluster_dns', label: '集群 DNS' },
-  { value: 'system_component', label: '系统组件' }, { value: 'tailnet', label: 'Tailnet' }, { value: 'admin_record', label: '管理记录' }, { value: 'ingress_route', label: 'Ingress 路由' },
+  { value: 'system_component', label: '系统组件' }, { value: 'admin_record', label: '管理记录' }, { value: 'ingress_route', label: 'Ingress 路由' },
 ]
 const outcomeOptions = [{ value: 'succeeded', label: '成功' }, { value: 'failed', label: '失败' }, { value: 'denied', label: '已拒绝' }, { value: 'accepted', label: '已受理' }]
 const sourceOptions = [{ value: 'api', label: '平台操作' }, { value: 'agent', label: 'Agent' }, { value: 'delegation', label: '委托' }, { value: 'system', label: '系统' }, { value: 'legacy', label: '历史记录' }]
