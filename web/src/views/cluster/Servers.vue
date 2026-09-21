@@ -75,18 +75,6 @@
       </SurfaceCard>
     </template>
 
-    <template v-else>
-      <SurfaceCard class="network-overview section-gap">
-        <h2 class="network-overview-title">K3s VPN 兼容性</h2>
-        <button class="icon-button" title="刷新网络诊断" aria-label="刷新网络诊断" :disabled="networkDiagnosticsLoading" @click="refreshNetworkDiagnostics"><RefreshCw :size="16" :class="{ 'is-spinning': networkDiagnosticsLoading }" /></button>
-      </SurfaceCard>
-      <div v-if="networkDiagnosticsError" class="k8s-banner k8s-banner-warn section-gap">{{ networkDiagnosticsError }}，已保留上次成功结果</div>
-      <div v-if="networkDiagnosticsLoading && !networkDiagnostics.servers.length" class="empty-state"><span class="empty-text">正在采集网络状态...</span></div>
-      <div v-else-if="!networkDiagnostics.servers.length" class="empty-state"><span class="empty-icon">⬡</span><span class="empty-text">暂无诊断结果</span></div>
-      <SurfaceCard v-else class="section-gap network-table-card">
-        <div class="table-wrap"><table class="data-table network-table"><thead><tr><th>服务器</th><th>K3s 单元</th><th>VPN 兼容</th><th>服务商</th><th>采集状态</th></tr></thead><tbody><tr v-for="diagnostic in networkDiagnostics.servers" :key="diagnostic.server_id"><td class="cell-primary">{{ diagnostic.name }}</td><td>{{ diagnostic.k8s_unit || '-' }}</td><td><span class="badge" :class="vpnCompatibilityClass(diagnostic)">{{ vpnCompatibilityLabel(diagnostic) }}</span></td><td>{{ vpnProviderLabel(diagnostic.k3s_vpn?.provider) }}</td><td><span class="badge" :class="diagnosticStatusClass(diagnostic)">{{ diagnosticStatusLabel(diagnostic) }}</span></td></tr></tbody></table></div>
-      </SurfaceCard>
-    </template>
     </main>
 
     <!-- Add Server modal -->
@@ -217,7 +205,6 @@ import { computed, ref, shallowRef, onMounted, onUnmounted, watch } from 'vue'
 import {
   createServer,
   deleteServer as deleteServerRequest,
-  getServerNetworkDiagnostics,
   getServerResourceStats,
   getServers,
   getServerStats,
@@ -243,22 +230,12 @@ const activeSection = ref('configuration')
 const sections = [
   { id: 'configuration', label: '基本配置' },
   { id: 'monitoring', label: '资源监控' },
-  { id: 'network-diagnostics', label: '网络诊断' },
 ]
 const resourceStatsResource = useAsyncResource(({ signal }) => getServerResourceStats({ signal }), [])
 const resourceStats = resourceStatsResource.data
 const resourceStatsLoading = resourceStatsResource.loading
 const resourceStatsError = computed(() => resourceStatsResource.error.value ? '资源数据刷新失败，已保留上次成功结果' : '')
 const resourceStatsUpdatedAt = ref('')
-const networkDiagnosticsResource = useAsyncResource(async ({ signal }) => {
-  const result = await getServerNetworkDiagnostics({ signal })
-  return {
-    servers: Array.isArray(result?.servers) ? result.servers : [],
-  }
-}, { servers: [] })
-const networkDiagnostics = networkDiagnosticsResource.data
-const networkDiagnosticsLoading = networkDiagnosticsResource.loading
-const networkDiagnosticsError = computed(() => networkDiagnosticsResource.error.value ? '网络诊断请求失败' : '')
 const showAdd = ref(false)
 const editingId = ref(null)
 const deleteTarget = ref(null)
@@ -331,7 +308,6 @@ onUnmounted(() => {
 
 watch(activeSection, (section) => {
   syncResourcePolling()
-  if (section === 'network-diagnostics') refreshNetworkDiagnostics()
 })
 
 async function fetchServers() { await serversResource.refresh() }
@@ -349,16 +325,6 @@ async function refreshResourceStats() {
     resourceStatsUpdatedAt.value = new Date().toISOString()
   }
 }
-
-async function refreshNetworkDiagnostics() {
-  await networkDiagnosticsResource.refresh()
-}
-
-function vpnCompatibilityLabel(diagnostic) { return diagnostic.k3s_vpn?.configured ? '已配置' : '未配置' }
-function vpnCompatibilityClass(diagnostic) { return diagnostic.error_code ? 'badge-danger' : diagnostic.k3s_vpn?.configured ? 'badge-online' : 'badge-offline' }
-function vpnProviderLabel(provider) { return ({ tailscale: 'Tailscale', other: '其他兼容服务', unknown: '已配置（未识别）' })[provider] || '-' }
-function diagnosticStatusLabel(diagnostic) { return diagnostic.error_code ? '采集失败' : '已采集' }
-function diagnosticStatusClass(diagnostic) { return diagnostic.error_code ? 'badge-danger' : 'badge-online' }
 
 function stopResourcePolling() {
   resourcePolling.stop()
@@ -562,10 +528,6 @@ function resetForm() { form.value = { name: '', host: '', ssh_port: 22, ssh_user
 .resource-overview { display: flex; align-items: center; justify-content: space-between; gap: var(--space-16); }
 .resource-overview-title { margin: 0; color: var(--text-primary); font-size: 16px; }
 .resource-overview-meta { margin: 4px 0 0; color: var(--text-muted); font-size: 11px; }
-.network-overview { display: flex; align-items: center; justify-content: space-between; gap: var(--space-16); }
-.network-overview-title { margin: 0; color: var(--text-primary); font-size: 16px; }
-.network-table-card { margin-top: var(--space-16); }
-.network-table td { white-space: nowrap; }
 .resource-row { cursor: pointer; }
 .resource-row:hover { background: var(--surface-hover); }
 .resource-metric { display: grid; min-width: 130px; gap: 6px; }
@@ -577,7 +539,6 @@ function resetForm() { form.value = { name: '', host: '', ssh_port: 22, ssh_user
 .resource-error { display: block; max-width: 170px; margin-top: 3px; overflow: hidden; color: var(--danger); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 @media (max-width: 640px) {
   .resource-overview { align-items: flex-start; }
-  .network-overview { align-items: flex-start; }
   .resource-metric { min-width: 116px; }
 }
 

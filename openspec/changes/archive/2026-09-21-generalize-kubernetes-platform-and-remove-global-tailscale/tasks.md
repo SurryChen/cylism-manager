@@ -33,4 +33,4 @@
 
 - [x] 6.1 Run `gofmt` and focused backend/frontend/chart/documentation tests after each completed task group.
 - [x] 6.2 Run `go test ./...`, `go build ./...`, `npm --prefix web test`, `npm --prefix web run build`, strict documentation checks, `openspec validate generalize-kubernetes-platform-and-remove-global-tailscale --strict`, and `git diff --check`.
-- [ ] 6.3 Present the breaking-change migration note and complete verification results for approval before archiving.
+- [x] 6.3 Present the breaking-change migration note and complete verification results for approval before archiving.

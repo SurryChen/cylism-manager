@@ -47,8 +47,7 @@ func platformIdentityResponse(distribution, version, reason string) gin.H {
 		"version":      version,
 		"reason":       reason,
 		"capabilities": gin.H{
-			"k3s_node_join":       isK3s,
-			"k3s_vpn_diagnostics": isK3s,
+			"k3s_node_join": isK3s,
 		},
 	}
 }

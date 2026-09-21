@@ -111,10 +111,6 @@ func (s *NodeRegistryConfigInspector) inspect(ctx context.Context, selectedServe
 		group.Add(1)
 		go func(node *NodeRegistryConfigNode, server model.Server) {
 			defer group.Done()
-			if server.SSHAuthType != "key" || strings.TrimSpace(server.SSHKey) == "" {
-				node.State, node.Detail = NodeRegistryConfigStateUnsupported, "需要已配置的 SSH 密钥认证"
-				return
-			}
 			semaphore <- struct{}{}
 			defer func() { <-semaphore }()
 			output, executeErr := s.ssh.Execute(ctx, 30*time.Second, &server, nodeRegistryConfigInspectCommand())

@@ -30,9 +30,6 @@ func (s *NodeMirrorApplierService) Apply(ctx context.Context, server *model.Serv
 	if server == nil {
 		return "failed", "节点不可用"
 	}
-	if server.SSHAuthType != "key" || strings.TrimSpace(server.SSHKey) == "" {
-		return "skipped", "需要已配置的 SSH 密钥认证"
-	}
 	payload := base64.StdEncoding.EncodeToString(content)
 	out, err := s.ssh.Execute(ctx, 90*time.Second, server, nodeRegistryMirrorApplyCommand(payload))
 	if err != nil {

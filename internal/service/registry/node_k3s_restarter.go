@@ -52,9 +52,6 @@ func (s *NodeK3sRestarter) Restart(ctx context.Context, serverID uint) (NodeK3sR
 		if strings.TrimSpace(server.ClusterRole) == "" {
 			return NodeK3sRestartResult{}, fmt.Errorf("节点不是可重启的集群节点")
 		}
-		if server.SSHAuthType != "key" || strings.TrimSpace(server.SSHKey) == "" {
-			return NodeK3sRestartResult{ServerID: serverID, Status: NodeK3sRestartStatusUnsupported, Detail: "需要已配置的 SSH 密钥认证"}, nil
-		}
 		if s.ssh == nil {
 			return NodeK3sRestartResult{ServerID: serverID, Status: NodeK3sRestartStatusFailed, Detail: "节点 SSH 重启通道不可用"}, nil
 		}

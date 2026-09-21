@@ -25,14 +25,14 @@ func TestNodeRegistryMirrorApplyCommandDetectsServiceAndReportsRestartFailure(t 
 	}
 }
 
-func TestNodeMirrorApplierSkipsServersWithoutKeyAuth(t *testing.T) {
+func TestNodeMirrorApplierSupportsPasswordAuthenticatedServers(t *testing.T) {
 	called := false
 	applier := NewNodeMirrorApplier(SSHExecutorFunc(func(context.Context, time.Duration, *model.Server, string) ([]byte, error) {
 		called = true
 		return nil, nil
 	}))
-	status, detail := applier.Apply(context.Background(), &model.Server{SSHAuthType: "password"}, []byte("config"))
-	if status != "skipped" || detail != "需要已配置的 SSH 密钥认证" || called {
+	status, detail := applier.Apply(context.Background(), &model.Server{SSHAuthType: "password", SSHPassword: "encrypted-password"}, []byte("config"))
+	if status != "success" || detail != "" || !called {
 		t.Fatalf("status=%q detail=%q called=%v", status, detail, called)
 	}
 }

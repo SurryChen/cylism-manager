@@ -16,7 +16,7 @@ type ServerMetricsInspector struct{ EncKey []byte }
 
 func (i ServerMetricsInspector) ResourceStats(ctx context.Context, server *model.Server) (map[string]interface{}, error) {
 	command := "echo 'CPU:' $(top -bn1 | awk '/^%Cpu|^CPU:/{print 100-$8}');echo 'CPU_CORES:' $(nproc);echo 'MEM:' $(free -m | awk '/^Mem:/{print $2,$3,$7}');echo 'DISK:' $(df -BG / | awk 'NR==2{print $2,$3,$4,$5}' | sed 's/G//g');echo 'LOAD:' $(cat /proc/loadavg | awk '{print $1,$2,$3}');echo 'UP:' $(uptime -p | sed 's/up //')"
-	out, err := transport.SSHExecContext(ctx, 5*time.Second, append(transport.BuildSSHArgs(server, i.EncKey, server.Host), command))
+	out, err := transport.SSHExecServerContext(ctx, 5*time.Second, server, i.EncKey, command)
 	if err != nil {
 		return nil, err
 	}

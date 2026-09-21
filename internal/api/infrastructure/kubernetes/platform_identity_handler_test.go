@@ -45,7 +45,6 @@ func TestClusterPlatformHandlerClassifiesClusterAndCapabilities(t *testing.T) {
 			for _, expected := range []string{
 				`"distribution":"` + tt.wantDistribution + `"`,
 				`"k3s_node_join":` + map[bool]string{true: "true", false: "false"}[tt.wantK3sCapability],
-				`"k3s_vpn_diagnostics":` + map[bool]string{true: "true", false: "false"}[tt.wantK3sCapability],
 			} {
 				if !strings.Contains(body, expected) {
 					t.Fatalf("response missing %s: %s", expected, body)
@@ -56,6 +55,9 @@ func TestClusterPlatformHandlerClassifiesClusterAndCapabilities(t *testing.T) {
 			}
 			if strings.Contains(body, "10.0.0.1") {
 				t.Fatalf("response leaked discovery error: %s", body)
+			}
+			if strings.Contains(body, "k3s_vpn_diagnostics") {
+				t.Fatalf("response exposes removed VPN diagnostics capability: %s", body)
 			}
 		})
 	}

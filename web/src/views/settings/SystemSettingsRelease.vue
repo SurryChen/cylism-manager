@@ -118,7 +118,9 @@ async function refresh({ syncForm = false } = {}) {
   platformReadError.value = ''
   const result = await platformResource.refresh()
   if (!result) {
-    platformReadError.value = platformResource.error.value?.message || '读取平台发布状态失败'
+    if (platformResource.error.value) {
+      platformReadError.value = platformResource.error.value.message || '读取平台发布状态失败'
+    }
     return
   }
   platform.value = result

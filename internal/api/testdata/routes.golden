@@ -165,7 +165,6 @@ GET /api/servers
 GET /api/servers/:id
 GET /api/servers/:id/stats
 GET /api/servers/:id/terminal
-GET /api/servers/network-diagnostics
 GET /api/servers/resource-stats
 GET /api/sites
 GET /api/sites/:id

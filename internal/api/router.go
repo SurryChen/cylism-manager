@@ -59,7 +59,6 @@ type DeliveryDependencies struct {
 type InfrastructureDependencies struct {
 	Network     *networkapi.NetworkHandler
 	Server      *clusterapi.ServerHandler
-	NetworkDiag *clusterapi.ServerNetworkDiagnosticsHandler
 	Terminal    *clusterapi.ServerTerminalHandler
 	Site        *networkapi.SiteHandler
 	Operation   *systemapi.OperationHandler
@@ -111,7 +110,7 @@ func RegisterRoutes(r *gin.Engine, deps RouteDependencies) {
 		registerApplicationRoutes(r, apiGroup, deps.Application.Handler, nil, deps.Auth.Audit, deps.Auth.AuditRepository)
 	}
 	infra := deps.Infrastructure
-	registerInfrastructureRoutes(apiGroup, infra.Server, infra.NetworkDiag, infra.Terminal, infra.Site,
+	registerInfrastructureRoutes(apiGroup, infra.Server, infra.Terminal, infra.Site,
 		infra.Operation, infra.Domain, infra.Node, infra.NodeJoin, infra.Ingress, infra.Certificate,
 		infra.K8s, infra.Platform, infra.Storage, infra.Network, infra.CRD, infra.AuditLog, infra.DBAdmin)
 }

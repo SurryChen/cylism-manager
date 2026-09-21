@@ -124,7 +124,7 @@ func (h *StorageHandler) ListPersistentVolumeClaimUsage(c *gin.Context) {
 
 func readLocalPersistentVolumeUsage(ctx context.Context, server *model.Server, localPath string, encKey []byte) (int64, error) {
 	command := "sudo -n du -sb -- " + storageShellQuote(localPath)
-	output, err := transport.SSHExecContext(ctx, 12*time.Second, append(transport.BuildSSHArgs(server, encKey, server.Host), command))
+	output, err := transport.SSHExecServerContext(ctx, 12*time.Second, server, encKey, command)
 	if err != nil {
 		return 0, err
 	}

@@ -11,4 +11,4 @@
 ## 3. Verification
 
 - [x] 3.1 Run the focused composable and root-application tests, then `npm --prefix web test` and `npm --prefix web run build`.
-- [ ] 3.2 Manually verify desktop document scrolling, nested modal/table scrolling, and mobile drawer scrolling; confirm no layout shift and no console errors.
+- [x] 3.2 Manually verify desktop document scrolling, nested modal/table scrolling, and mobile drawer scrolling; confirm no layout shift and no console errors.

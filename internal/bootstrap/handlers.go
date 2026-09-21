@@ -38,7 +38,7 @@ func (c *Container) BuildRouteDependencies() api.RouteDependencies {
 	}
 	agentAdapter := agentapi.NewKubernetesAdapter(c.K8s)
 	maintenanceSSH := maintenance.SSHExecutorFunc(func(ctx context.Context, timeout time.Duration, server *model.Server, command string) ([]byte, error) {
-		return transport.SSHExecContext(ctx, timeout, append(transport.BuildSSHArgs(server, key, server.Host), command))
+		return transport.SSHExecServerContext(ctx, timeout, server, key, command)
 	})
 	diskInspection := maintenance.NewDiskInspectionService(maintenanceSSH)
 	cleanup := maintenance.NewCleanupService(maintenanceSSH)
@@ -102,16 +102,15 @@ func (c *Container) BuildRouteDependencies() api.RouteDependencies {
 		},
 		Infrastructure: api.InfrastructureDependencies{
 			Network: networkHandler, Server: clusterapi.NewServerHandler(key, clusterService),
-			NetworkDiag: clusterapi.NewServerNetworkDiagnosticsHandler(c.Store, key),
-			Terminal:    clusterapi.NewServerTerminalHandler(c.Store, key).WithAudit(c.Store),
-			Site:        networkapi.NewSiteHandler(c.Store), Operation: systemapi.NewOperationHandler(c.Store),
+			Terminal: clusterapi.NewServerTerminalHandler(c.Store, key).WithAudit(c.Store),
+			Site:     networkapi.NewSiteHandler(c.Store), Operation: systemapi.NewOperationHandler(c.Store),
 			Domain: networkapi.NewDomainHandlerWithDependencies(networkapi.NewDomainKubernetesAdapter(c.K8s), networkService),
 			Node:   clusterapi.NewNodeHandler(clusterService), NodeJoin: nodeJoin, Ingress: ingress,
 			Certificate: networkapi.NewCertHandlerWithComposedDependencies(c.Store, key, networkService, networkapi.NewCertificateKubernetesAdapter(c.K8s)),
 			K8s:         kubernetesapi.NewK8sHandlerWithAdapterAndEncryption(c.Store, storageService, key, kubernetesapi.NewK8sResourceAdapter(c.K8s), c.Store),
 			Platform:    kubernetesapi.NewClusterPlatformHandler(c.K8s),
 			Storage:     storageHandler,
-			CRD: kubernetesapi.NewCRDHandler(), AuditLog: systemapi.NewAuditHandler(c.Store), DBAdmin: systemapi.NewDBAdminHandler(c.Store),
+			CRD:         kubernetesapi.NewCRDHandler(), AuditLog: systemapi.NewAuditHandler(c.Store), DBAdmin: systemapi.NewDBAdminHandler(c.Store),
 		},
 		System: api.SystemDependencies{
 			Dashboard: systemapi.NewDashboardHandler(c.Store), Monitoring: monitoringHandler,

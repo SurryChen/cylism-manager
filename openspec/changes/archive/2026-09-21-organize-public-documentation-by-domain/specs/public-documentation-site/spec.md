@@ -16,6 +16,18 @@ The documentation site MUST expose product-domain navigation for 概览、应用
 - **THEN** the Helm installation page remains reachable at that URL
 - **AND THEN** the page provides a route back to the product documentation home
 
+### Requirement: Documentation quality checks
+
+The repository MUST retain automated checks for documentation structure and public-content safety. The check MUST validate required product-domain files, navigation entries, screenshot placeholder asset-path conventions, excluded paths and successful VitePress configuration.
+
+#### Scenario: Product documentation regression check
+
+- **WHEN** the documentation check script runs
+- **THEN** it fails if an approved product-domain page, navigation entry or placeholder contract is missing
+- **AND THEN** it continues to reject excluded internal material and unsafe public content
+
+## ADDED Requirements
+
 ### Requirement: Product-domain documentation coverage
 
 The documentation site MUST provide Chinese operator documentation for every page in the approved seven-domain directory. Each product page MUST state its purpose and boundary, UI entry point, prerequisites, key operations, operational risks and related pages. Composite pages MUST cover their listed sub-capabilities as headings rather than inventing standalone pages.
@@ -41,13 +53,3 @@ The documentation theme MUST provide a visible, accessible `ScreenshotPlaceholde
 - **WHEN** a visitor opens a product page with an unreplaced screenshot placeholder
 - **THEN** the page displays the intended screenshot title and description
 - **AND THEN** it identifies the suggested screenshot asset path as a placeholder rather than an actual product screenshot
-
-### Requirement: Documentation quality checks
-
-The repository MUST retain automated checks for documentation structure and public-content safety. The check MUST validate required product-domain files, navigation entries, screenshot placeholder asset-path conventions, excluded paths and successful VitePress configuration.
-
-#### Scenario: Product documentation regression check
-
-- **WHEN** the documentation check script runs
-- **THEN** it fails if an approved product-domain page, navigation entry or placeholder contract is missing
-- **AND THEN** it continues to reject excluded internal material and unsafe public content

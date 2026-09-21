@@ -90,6 +90,40 @@ describe('SystemSettings view', () => {
     wrapper.unmount()
   })
 
+  it('does not show an error when a newer platform status refresh supersedes an older request', async () => {
+    vi.useFakeTimers()
+    route.query.tab = 'release'
+    let rejectInitialRequest
+    api.get
+      .mockImplementationOnce((path, options) => {
+        expect(path).toBe('/platform/status')
+        return new Promise((resolve, reject) => {
+          rejectInitialRequest = reject
+          options.signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true })
+        })
+      })
+      .mockImplementationOnce(path => {
+        expect(path).toBe('/platform/status')
+        return Promise.resolve({
+          webhook_configured: true,
+          image_prefix: 'registry.example.com/cylism-manager',
+          deployment: { image: 'registry.example.com/cylism-manager:stable', ready_replicas: 1, desired_replicas: 1 },
+          releases: [],
+        })
+      })
+
+    const wrapper = mount(SystemSettings, { global: { stubs: { Teleport: true } } })
+    await nextTick()
+    await vi.advanceTimersByTimeAsync(15000)
+    await nextTick()
+
+    expect(rejectInitialRequest).toBeTypeOf('function')
+    expect(api.get).toHaveBeenCalledTimes(2)
+    expect(wrapper.text()).toContain('registry.example.com/cylism-manager:stable')
+    expect(wrapper.text()).not.toContain('读取平台发布状态失败')
+    wrapper.unmount()
+  })
+
   it('shows manual platform update errors in a dialog', async () => {
     api.post.mockRejectedValueOnce(new Error('平台镜像不属于允许的仓库前缀'))
     const wrapper = mount(SystemSettings, { global: { stubs: { Teleport: true } } })

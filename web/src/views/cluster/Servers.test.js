@@ -5,7 +5,6 @@ import Servers from './Servers.vue'
 import {
   createServer,
   deleteServer,
-  getServerNetworkDiagnostics,
   getServerResourceStats,
   getServers,
   getServerStats,
@@ -19,7 +18,6 @@ import {
 vi.mock('../../api/servers.js', () => ({
   createServer: vi.fn(),
   deleteServer: vi.fn(),
-  getServerNetworkDiagnostics: vi.fn(),
   getServerResourceStats: vi.fn(),
   getServers: vi.fn(),
   getServerStats: vi.fn(),
@@ -44,13 +42,6 @@ const resourceStats = () => [
   { server_id: 2, status: 'unreachable', error: 'SSH connection timed out', sampled_at: '2026-08-03T09:00:00Z' },
 ]
 
-const diagnostics = () => ({
-  servers: [
-    { server_id: 1, name: 'test-srv', k8s_unit: 'k3s', k3s_vpn: { configured: true, provider: 'tailscale' } },
-    { server_id: 2, name: 'cluster-srv', k8s_unit: '', k3s_vpn: { configured: false }, error_code: 'ssh_unreachable' },
-  ],
-})
-
 function flush() {
   return new Promise(resolve => setTimeout(resolve, 0))
 }
@@ -61,7 +52,6 @@ beforeEach(() => {
   vi.clearAllMocks()
   getServers.mockResolvedValue(servers())
   getServerResourceStats.mockResolvedValue(resourceStats())
-  getServerNetworkDiagnostics.mockResolvedValue(diagnostics())
   getServerStats.mockResolvedValue({})
   createServer.mockResolvedValue({})
   updateServer.mockResolvedValue({})
@@ -77,7 +67,8 @@ describe('Servers view', () => {
     const wrapper = mount(Servers, { global: { stubs: { RouterLink: true } } })
     expect(wrapper.text()).toContain('服务器')
     expect(wrapper.text()).toContain('集群节点已经拆分到“集群节点”页面')
-    expect(wrapper.findAll('.section-tab')).toHaveLength(3)
+    expect(wrapper.findAll('.section-tab')).toHaveLength(2)
+    expect(wrapper.text()).not.toContain('网络诊断')
     expect(wrapper.find('.server-content').exists()).toBe(true)
   })
 
@@ -140,26 +131,6 @@ describe('Servers view', () => {
     await vi.advanceTimersByTimeAsync(10000)
     expect(getServerResourceStats.mock.calls).toHaveLength(mountedRequests)
     vi.useRealTimers()
-  })
-
-  it('shows network diagnostics and keeps failures local', async () => {
-    const wrapper = mount(Servers, { global: { stubs: { RouterLink: true } } })
-    await flush()
-    await wrapper.findAll('.section-tab').find(button => button.text().includes('网络诊断')).trigger('click')
-    await flush()
-    await nextTick()
-
-    expect(getServerNetworkDiagnostics).toHaveBeenCalledWith(expect.objectContaining({ signal: expect.any(AbortSignal) }))
-    expect(wrapper.text()).toContain('K3s VPN 兼容性')
-    expect(wrapper.text()).toContain('VPN 兼容')
-    expect(wrapper.text()).toContain('Tailscale')
-    expect(wrapper.text()).toContain('采集失败')
-    getServerNetworkDiagnostics.mockRejectedValueOnce(new Error('connection failed'))
-    await wrapper.find('.icon-button[title="刷新网络诊断"]').trigger('click')
-    await flush()
-    expect(wrapper.text()).toContain('网络诊断请求失败')
-    expect(wrapper.text()).toContain('K3s VPN 兼容性')
-    wrapper.unmount()
   })
 
   it('manually unbinds a server without deleting its Kubernetes node', async () => {

@@ -31,9 +31,9 @@ func TestNodeK3sRestarterUsesFixedK3sServiceCommand(t *testing.T) {
 	}
 }
 
-func TestNodeK3sRestarterRejectsUnsupportedNodesAndRedactsRemoteFailure(t *testing.T) {
+func TestNodeK3sRestarterSupportsPasswordNodesAndRedactsRemoteFailure(t *testing.T) {
 	repo := &configInspectorRepositoryFake{servers: []model.Server{
-		{ID: 1, Name: "unsupported", ClusterRole: "worker", SSHAuthType: "password"},
+		{ID: 1, Name: "password-node", ClusterRole: "worker", SSHAuthType: "password", SSHPassword: "encrypted-password"},
 		{ID: 2, Name: "worker-b", ClusterRole: "worker", SSHAuthType: "key", SSHKey: "key"},
 		{ID: 3, Name: "standalone", SSHAuthType: "key", SSHKey: "key"},
 	}}
@@ -43,7 +43,7 @@ func TestNodeK3sRestarterRejectsUnsupportedNodesAndRedactsRemoteFailure(t *testi
 		return []byte("password: should-not-leak"), errors.New("exit status 1")
 	}))
 	unsupported, err := restarter.Restart(context.Background(), 1)
-	if err != nil || unsupported.Status != NodeK3sRestartStatusUnsupported || calls != 0 {
+	if err != nil || unsupported.Status != NodeK3sRestartStatusFailed || calls != 1 {
 		t.Fatalf("result=%#v err=%v calls=%d", unsupported, err, calls)
 	}
 	failed, err := restarter.Restart(context.Background(), 2)
