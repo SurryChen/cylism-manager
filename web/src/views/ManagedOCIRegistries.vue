@@ -1,7 +1,7 @@
 <template>
   <div class="page-shell registry-page">
     <SectionTabsHeader title="制品库" :tabs="workspaceTabs" :active-tab="activeWorkspace" test-id-prefix="managed-registry-workspace" @select="selectWorkspace">
-      <template #actions><button v-if="activeWorkspace === 'registry' && !registry" data-testid="deploy-registry" class="btn btn-primary" :disabled="!loaded" @click="openCreate"><Plus :size="16" /> 部署制品库</button></template>
+      <template v-if="activeWorkspace === 'registry' && !registry" #actions><button data-testid="deploy-registry" class="btn btn-primary" :disabled="!loaded" @click="openCreate"><Plus :size="16" /> 部署制品库</button></template>
     </SectionTabsHeader>
 
     <template v-if="activeWorkspace === 'registry'">
@@ -12,31 +12,28 @@
         <div><h2>尚未部署自托管制品库</h2><p>部署后，平台会创建受认证保护、使用持久化存储并通过集群入口提供服务的 OCI Registry。</p></div>
       </SurfaceCard>
       <template v-else>
-        <section class="registry-workspace-section registry-overview-section" data-testid="registry-overview-section">
-          <header class="registry-section-heading">
-            <div><h2>运行概览</h2><p>查看服务状态、存储与访问地址。</p></div>
-            <div class="registry-status-actions" aria-label="制品库操作"><button v-if="needsRepair" data-testid="repair-registry" class="btn" :disabled="repairing" @click="repairRegistry"><RefreshCw :size="16" :class="{ 'is-spinning': repairing }" /> {{ repairing ? '修复中...' : '修复' }}</button><button class="icon-button" title="刷新状态" aria-label="刷新状态" :disabled="refreshing" @click="load"><RefreshCw :size="17" :class="{ 'is-spinning': refreshing }" /></button><button data-testid="edit-registry" class="btn" @click="openEdit">配置</button><button class="btn btn-danger" @click="deleteOpen = true">删除</button></div>
-          </header>
-          <div class="metric-grid registry-overview" data-testid="registry-summary">
-            <SurfaceCard as="article" class="metric registry-metric"><span>访问地址</span><strong class="registry-endpoint">{{ endpointURL(registry) }}</strong><small>{{ registry.insecure_http ? 'HTTP，凭据和镜像层以明文传输' : `HTTPS · ${registry.certificate_name || '未关联证书'}` }}</small></SurfaceCard>
-            <SurfaceCard as="article" class="metric registry-metric"><span>运行状态</span><strong><span class="badge" :class="statusBadgeClass(registry.status)"><i class="badge-dot"></i>{{ statusLabel(registry.status) }}</span></strong><small>{{ registry.last_error || 'Registry 工作负载状态已同步' }}</small></SurfaceCard>
-            <SurfaceCard as="article" class="metric registry-metric"><span>持久化存储</span><strong>{{ registry.pvc_name }}</strong><small>{{ registry.storage_class_name }} · {{ registry.storage_size }} · {{ registry.pvc_phase || '等待状态同步' }}</small></SurfaceCard>
-          </div>
-        </section>
-
         <section class="registry-catalog" data-testid="registry-catalog">
-        <header class="registry-section-heading registry-catalog-heading"><div><h2>镜像目录</h2><p>浏览仓库、标签和拉取地址。</p></div><div class="registry-catalog-controls"><label class="registry-search" aria-label="搜索仓库"><span class="registry-search-input"><Search :size="15" /><input v-model.trim="catalogQuery" class="form-input" placeholder="搜索仓库" /></span></label><span class="registry-catalog-count">{{ filteredRepositories.length }} 个仓库</span></div></header>
-        <SurfaceCard v-if="catalogError" class="registry-catalog-state" data-testid="registry-catalog-error"><FeedbackBanner tone="warning"><span>暂时无法读取镜像目录，请稍后重试。</span><button class="btn btn-sm" :disabled="catalogLoading" @click="loadCatalog()"><RefreshCw :size="14" :class="{ 'is-spinning': catalogLoading }" /> 重新尝试</button></FeedbackBanner><EmptyState message="镜像目录内容暂不可展示" /></SurfaceCard>
-        <EmptyState v-else-if="catalogLoading && !catalogRepositories.length" variant="loading" message="正在读取镜像目录..." />
-        <EmptyState v-else-if="catalogLoaded && !filteredRepositories.length" message="制品库中暂无镜像" />
-        <div v-else class="registry-catalog-grid">
-          <SurfaceCard as="section" padding="none" class="registry-repository-list"><div class="registry-list-heading"><h2>仓库</h2></div><div v-for="repository in filteredRepositories" :key="repository" class="registry-repository-row" :class="{ 'is-selected': selectedRepository === repository }"><button class="registry-repository-select" type="button" @click="selectRepository(repository)">{{ repository }}</button><button class="icon-button registry-row-icon" type="button" title="删除仓库" :aria-label="`删除仓库 ${repository}`" @click="prepareRepositoryDelete(repository)"><Trash2 :size="15" /></button></div><div v-if="catalogNext" class="registry-load-more"><button class="btn btn-sm" :disabled="catalogLoading" @click="loadCatalog(catalogNext)">加载更多</button></div></SurfaceCard>
-          <SurfaceCard as="section" padding="none" class="registry-tags-panel"><template v-if="!selectedRepository"><EmptyState message="选择一个仓库以查看标签" /></template><template v-else><header class="registry-list-heading"><div><h2>{{ selectedRepository }}</h2><p>{{ tags.length }} 个标签</p></div><button class="icon-button" title="刷新标签" aria-label="刷新标签" :disabled="tagsLoading" @click="loadTags(selectedRepository)"><RefreshCw :size="16" :class="{ 'is-spinning': tagsLoading }" /></button></header><EmptyState v-if="tagsLoading && !tags.length" variant="loading" message="正在读取标签..." /><EmptyState v-else-if="tagsLoaded && !tags.length" message="该仓库暂无标签" /><div v-else class="registry-tags-table"><div v-for="tag in tags" :key="tag.name" class="registry-tag-row"><div><strong>{{ tag.name }}</strong><code>{{ shortDigest(tag.digest) }}</code><small v-if="tag.platforms?.length">{{ tag.platforms.join(' · ') }}</small></div><div class="registry-tag-actions"><button class="icon-button" :title="`复制 ${tag.pull_reference}`" :aria-label="`复制 ${tag.pull_reference}`" @click="copyPullReference(tag.pull_reference)"><Copy :size="15" /></button><button class="icon-button danger-icon" :title="`删除标签 ${tag.name}`" :aria-label="`删除标签 ${tag.name}`" @click="prepareTagDelete(tag)"><Trash2 :size="15" /></button></div></div></div><div v-if="tagsNext" class="registry-load-more"><button class="btn btn-sm" :disabled="tagsLoading" @click="loadTags(selectedRepository, tagsNext)">加载更多</button></div></template></SurfaceCard>
-        </div>
+          <SurfaceCard padding="none" class="registry-catalog-card">
+            <div class="registry-catalog-toolbar"><label class="registry-search-field"><Search :size="15" aria-hidden="true" /><input v-model.trim="catalogQuery" class="form-input registry-search" aria-label="搜索仓库" placeholder="搜索仓库" /></label><div class="registry-catalog-controls"><span class="registry-catalog-count">{{ filteredRepositories.length }} 个仓库</span><div class="registry-management-actions" aria-label="制品库操作"><button v-if="needsRepair" data-testid="repair-registry" class="btn" :disabled="repairing" @click="repairRegistry"><RefreshCw :size="16" :class="{ 'is-spinning': repairing }" /> {{ repairing ? '修复中...' : '修复' }}</button><button data-testid="open-registry-overview" class="btn" type="button" @click="showOverview = true">查看运行概览</button><button class="icon-button registry-catalog-refresh" type="button" title="刷新制品库" aria-label="刷新制品库" :disabled="refreshing || catalogLoading" @click="refreshWorkspace"><RefreshCw :size="15" :class="{ 'is-spinning': refreshing || catalogLoading }" /></button><button data-testid="edit-registry" class="btn" @click="openEdit">配置</button><button class="btn btn-danger" @click="deleteOpen = true">删除</button></div></div></div>
+            <div v-if="catalogError" class="registry-catalog-state" data-testid="registry-catalog-error"><FeedbackBanner tone="warning"><span>暂时无法读取镜像目录，请稍后重试。</span><button class="btn btn-sm" :disabled="catalogLoading" @click="loadCatalog()"><RefreshCw :size="14" :class="{ 'is-spinning': catalogLoading }" /> 重新尝试</button></FeedbackBanner><EmptyState message="镜像目录内容暂不可展示" /></div>
+            <EmptyState v-else-if="catalogLoading && !catalogRepositories.length" variant="loading" message="正在读取镜像目录..." />
+            <EmptyState v-else-if="catalogLoaded && !filteredRepositories.length" message="制品库中暂无镜像" />
+            <div v-else class="table-wrap"><table class="data-table registry-catalog-table"><thead><tr><th>仓库</th><th>标签</th><th>摘要</th><th class="action-cell">操作</th></tr></thead><tbody><template v-for="repository in filteredRepositories" :key="repository"><tr v-if="!tagLoadedByRepository[repository]" class="registry-table-state"><td>{{ repository }}</td><td colspan="3">正在读取标签...</td></tr><tr v-else-if="!(tagsByRepository[repository] || []).length" class="registry-flat-row registry-empty-row"><td>{{ repository }}</td><td colspan="2">该仓库暂无标签</td><td class="action-cell"><button class="icon-button danger-icon" type="button" :title="`删除仓库 ${repository}`" :aria-label="`删除仓库 ${repository}`" @click="prepareRepositoryDelete(repository)"><Trash2 :size="15" /></button></td></tr><tr v-for="tag in tagsByRepository[repository] || []" :key="`${repository}:${tag.name}`" class="registry-flat-row"><td class="registry-repository-cell">{{ repository }}</td><td>{{ tag.name }}</td><td><div class="registry-digest-cell"><code class="registry-digest" tabindex="0" :aria-label="tag.digest" @mouseenter="showDigestTooltip(tag.digest, $event)" @mousemove="moveDigestTooltip" @mouseleave="hideDigestTooltip" @focus="showDigestTooltip(tag.digest, $event)" @blur="hideDigestTooltip">{{ shortDigest(tag.digest) }}</code><button class="icon-button registry-digest-copy" type="button" :title="`复制摘要 ${tag.digest}`" :aria-label="`复制摘要 ${tag.digest}`" @click="copyDigest(tag.digest)"><Copy :size="15" /></button></div></td><td class="action-cell"><div class="registry-tag-actions"><button class="icon-button" type="button" :title="`复制 ${tag.pull_reference}`" :aria-label="`复制 ${tag.pull_reference}`" @click="copyPullReference(tag.pull_reference)"><Copy :size="15" /></button><button class="icon-button danger-icon" type="button" :title="`删除标签 ${tag.name}`" :aria-label="`删除标签 ${tag.name}`" @click="prepareTagDelete(repository, tag)"><Trash2 :size="15" /></button></div></td></tr><tr v-if="tagNextByRepository[repository]" class="registry-table-more"><td colspan="4"><button class="btn btn-sm" :disabled="tagLoadingByRepository[repository]" @click="loadTags(repository, tagNextByRepository[repository])">加载 {{ repository }} 的更多标签</button></td></tr></template><tr v-if="catalogNext" class="registry-table-more"><td colspan="4"><button class="btn btn-sm" :disabled="catalogLoading" @click="loadCatalog(catalogNext)">加载更多仓库</button></td></tr></tbody></table></div>
+          </SurfaceCard>
         </section>
       </template>
     </template>
     <RegistryProxyWorkspace v-else />
+
+    <Teleport to="body"><div v-if="digestTooltip" class="registry-digest-tooltip" role="tooltip" :style="{ left: `${digestTooltip.x}px`, top: `${digestTooltip.y}px` }">{{ digestTooltip.text }}</div></Teleport>
+
+    <BaseModal :open="showOverview" title="运行概览" size="medium" data-testid="registry-overview-modal" @close="showOverview = false">
+      <dl class="registry-overview-list">
+        <div><dt>访问地址</dt><dd><code class="registry-endpoint">{{ endpointURL(registry) }}</code><small>{{ registry.insecure_http ? 'HTTP，凭据和镜像层以明文传输' : `HTTPS · ${registry.certificate_name || '未关联证书'}` }}</small></dd></div>
+        <div><dt>运行状态</dt><dd><span class="badge" :class="statusBadgeClass(registry.status)"><i class="badge-dot"></i>{{ statusLabel(registry.status) }}</span><small>{{ registry.last_error || 'Registry 工作负载状态已同步' }}</small></dd></div>
+        <div><dt>持久化存储</dt><dd><strong>{{ registry.pvc_name }}</strong><small>{{ registry.storage_class_name }} · {{ registry.storage_size }} · {{ registry.pvc_phase || '等待状态同步' }}</small></dd></div>
+      </dl>
+    </BaseModal>
 
     <Teleport to="body"><div v-if="showForm" class="overlay registry-overlay" @click.self="closeForm"><div class="modal registry-modal"><h2 class="modal-title">{{ registry ? '编辑制品库' : '部署制品库' }}</h2><form @submit.prevent="save">
       <div class="form-group"><label class="form-label">名称</label><input v-model.trim="form.name" class="form-input" required placeholder="平台制品库" /></div>
@@ -66,16 +63,17 @@ import { AlertCircle, Copy, Database, Plus, RefreshCw, Search, Trash2 } from 'lu
 import { createManagedRegistry, deleteManagedRegistry, deleteManagedRegistryRepository, deleteManagedRegistryTag, getManagedRegistryCatalog, getManagedRegistryCatalogTags, getManagedRegistryCertificates, getManagedRegistryResources, preflightManagedRegistryRepositoryDelete, preflightManagedRegistryTagDelete, repairManagedRegistry, updateManagedRegistry } from '../api/managed-oci-registries.js'
 import { useAsyncResource } from '../composables/useAsyncResource.js'
 import { useRoutedTab } from '../composables/useRoutedTab.js'
+import BaseModal from '../components/BaseModal.vue'
 import EmptyState from '../components/EmptyState.vue'
 import FeedbackBanner from '../components/FeedbackBanner.vue'
 import RegistryProxyWorkspace from './delivery/RegistryProxyWorkspace.vue'
 import SectionTabsHeader from '../components/SectionTabsHeader.vue'
 import SurfaceCard from '../components/SurfaceCard.vue'
 
-const registry = ref(null); const storagePreflight = ref(null); const pvcOptions = ref([]); const certificateOptions = ref([]); const certificateError = ref(''); const loaded = ref(false); const refreshing = ref(false); const repairing = ref(false); const pageError = ref(''); const actionError = ref(null); const showForm = ref(false); const deleteOpen = ref(false); const submitting = ref(false); const form = ref(newForm())
+const registry = ref(null); const storagePreflight = ref(null); const pvcOptions = ref([]); const certificateOptions = ref([]); const certificateError = ref(''); const loaded = ref(false); const refreshing = ref(false); const repairing = ref(false); const pageError = ref(''); const actionError = ref(null); const showOverview = ref(false); const showForm = ref(false); const deleteOpen = ref(false); const submitting = ref(false); const form = ref(newForm())
 const workspaceTabs = [{ id: 'registry', label: '自托管制品库' }, { id: 'registry-proxy', label: 'Registry Proxy' }]
 const { activeTab: activeWorkspace, selectTab: selectWorkspace } = useRoutedTab({ tabs: workspaceTabs, defaultTab: 'registry', path: '/delivery/registry' })
-const catalogRepositories = ref([]); const catalogNext = ref(''); const catalogLoading = ref(false); const catalogLoaded = ref(false); const catalogError = ref(''); const catalogQuery = ref(''); const selectedRepository = ref(''); const tags = ref([]); const tagsNext = ref(''); const tagsLoading = ref(false); const tagsLoaded = ref(false); const catalogDeleteTarget = ref(null); const catalogDeleting = ref(false)
+const catalogRepositories = ref([]); const catalogNext = ref(''); const catalogLoading = ref(false); const catalogLoaded = ref(false); const catalogError = ref(''); const catalogQuery = ref(''); const tagsByRepository = ref({}); const tagNextByRepository = ref({}); const tagLoadingByRepository = ref({}); const tagLoadedByRepository = ref({}); const catalogDeleteTarget = ref(null); const catalogDeleting = ref(false); const digestTooltip = ref(null)
 const registryResource = useAsyncResource(({ signal }) => getManagedRegistryResources({ signal }), null)
 const certificateResource = useAsyncResource(({ signal }) => getManagedRegistryCertificates('cylism-system', { signal }), null)
 const pvcOptionsLoading = registryResource.loading
@@ -91,6 +89,7 @@ function statusLabel(status) { return ({ ready: '就绪', deploying: '部署中'
 function statusBadgeClass(status) { return status === 'ready' ? 'badge-online' : status === 'failed' || status === 'degraded' || status === 'migration_required' ? 'badge-danger' : 'badge-deploying' }
 function showActionError(title, err, fallback) { actionError.value = { title, message: err.message || fallback } }
 async function load() { refreshing.value = true; pageError.value = ''; const result = await registryResource.refresh(); if (result !== undefined) { const [registries, preflight, pvcs] = result; registry.value = registries?.[0] || null; storagePreflight.value = preflight; pvcOptions.value = pvcs || []; if (registry.value && !catalogLoaded.value) await loadCatalog() } else if (registryResource.error.value) pageError.value = registryResource.error.value.message || '加载制品库失败'; loaded.value = true; refreshing.value = false }
+async function refreshWorkspace() { await Promise.all([load(), loadCatalog()]) }
 function openCreate() { actionError.value = null; form.value = newForm(); showForm.value = true }
 function openEdit() { actionError.value = null; const item = registry.value; form.value = { ...newForm(), name: item.name, endpoint: item.endpoint, verification_image: item.verification_image || '', registry_image: item.registry_image, data_node: item.data_node, pvc_name: item.pvc_name, cpu_request: item.cpu_request, cpu_limit: item.cpu_limit, memory_request: item.memory_request, memory_limit: item.memory_limit, insecure_http: item.insecure_http, confirm_insecure_http: item.insecure_http, certificate_name: item.certificate_name, pull_username: item.pull_username }; showForm.value = true }
 function closeForm() { showForm.value = false; form.value = newForm(); certificateOptions.value = []; certificateError.value = '' }
@@ -103,14 +102,17 @@ function pvcCreateLink() { const params = new URLSearchParams({ create: '1', nam
 async function save() { submitting.value = true; actionError.value = null; try { const payload = { ...form.value }; if (registry.value && !payload.pull_password) delete payload.pull_password; if (registry.value) await updateManagedRegistry(registry.value.id, payload); else await createManagedRegistry(payload); closeForm(); await load() } catch (err) { showActionError(registry.value ? '保存配置失败' : '部署失败', err, '保存制品库失败') } finally { submitting.value = false } }
 async function repairRegistry() { if (!registry.value) return; repairing.value = true; actionError.value = null; try { await repairManagedRegistry(registry.value.id); await load() } catch (err) { showActionError('修复制品库失败', err, '重新同步制品库资源失败') } finally { repairing.value = false } }
 async function deleteRegistry() { submitting.value = true; actionError.value = null; try { await deleteManagedRegistry(registry.value.id, { confirm: true }); deleteOpen.value = false; await load() } catch (err) { showActionError('删除制品库失败', err, '删除制品库失败') } finally { submitting.value = false } }
-async function loadCatalog(cursor = '') { if (!registry.value) return; catalogLoading.value = true; catalogError.value = ''; try { const page = await getManagedRegistryCatalog(registry.value.id, cursor); catalogRepositories.value = cursor ? [...catalogRepositories.value, ...(page.repositories || [])] : (page.repositories || []); catalogNext.value = page.next || ''; catalogLoaded.value = true; if (!selectedRepository.value && catalogRepositories.value.length) await selectRepository(catalogRepositories.value[0]) } catch (err) { catalogError.value = err.message || '读取镜像目录失败' } finally { catalogLoading.value = false } }
-async function selectRepository(repository) { selectedRepository.value = repository; tags.value = []; tagsNext.value = ''; tagsLoaded.value = false; await loadTags(repository) }
-async function loadTags(repository, cursor = '') { if (!registry.value || !repository) return; tagsLoading.value = true; catalogError.value = ''; try { const page = await getManagedRegistryCatalogTags(registry.value.id, repository, cursor); tags.value = cursor ? [...tags.value, ...(page.tags || [])] : (page.tags || []); tagsNext.value = page.next || ''; tagsLoaded.value = true } catch (err) { catalogError.value = err.message || '读取镜像标签失败' } finally { tagsLoading.value = false } }
+async function loadCatalog(cursor = '') { if (!registry.value) return; catalogLoading.value = true; catalogError.value = ''; try { const page = await getManagedRegistryCatalog(registry.value.id, cursor); const repositories = page.repositories || []; if (cursor) catalogRepositories.value = [...catalogRepositories.value, ...repositories]; else { catalogRepositories.value = repositories; tagsByRepository.value = {}; tagNextByRepository.value = {}; tagLoadedByRepository.value = {} } catalogNext.value = page.next || ''; catalogLoaded.value = true; await Promise.all(repositories.map(repository => loadTags(repository))) } catch (err) { catalogError.value = err.message || '读取镜像目录失败' } finally { catalogLoading.value = false } }
+async function loadTags(repository, cursor = '') { if (!registry.value || !repository) return; tagLoadingByRepository.value = { ...tagLoadingByRepository.value, [repository]: true }; catalogError.value = ''; try { const page = await getManagedRegistryCatalogTags(registry.value.id, repository, cursor); const currentTags = tagsByRepository.value[repository] || []; tagsByRepository.value = { ...tagsByRepository.value, [repository]: cursor ? [...currentTags, ...(page.tags || [])] : (page.tags || []) }; tagNextByRepository.value = { ...tagNextByRepository.value, [repository]: page.next || '' }; tagLoadedByRepository.value = { ...tagLoadedByRepository.value, [repository]: true } } catch (err) { catalogError.value = err.message || '读取镜像标签失败' } finally { tagLoadingByRepository.value = { ...tagLoadingByRepository.value, [repository]: false } } }
 function shortDigest(value) { return value ? `${value.slice(0, 19)}...` : '-' }
+function showDigestTooltip(text, event) { if (!text) return; digestTooltip.value = { text, x: 12, y: 12 }; moveDigestTooltip(event) }
+function moveDigestTooltip(event) { if (!digestTooltip.value || typeof window === 'undefined') return; const x = Number.isFinite(event?.clientX) ? event.clientX : 12; const y = Number.isFinite(event?.clientY) ? event.clientY : 12; digestTooltip.value = { ...digestTooltip.value, x: Math.min(x + 14, Math.max(12, window.innerWidth - 432)), y: Math.min(y + 16, Math.max(12, window.innerHeight - 252)) } }
+function hideDigestTooltip() { digestTooltip.value = null }
+async function copyDigest(digest) { try { await navigator.clipboard?.writeText(digest) } catch { actionError.value = { title: '复制失败', message: '浏览器未授权访问剪贴板。' } } }
 async function copyPullReference(reference) { try { await navigator.clipboard?.writeText(`${registry.value.endpoint}/${reference}`) } catch { actionError.value = { title: '复制失败', message: '浏览器未授权访问剪贴板。' } } }
-async function prepareTagDelete(tag) { try { catalogDeleteTarget.value = await preflightManagedRegistryTagDelete(registry.value.id, { repository: selectedRepository.value, tag: tag.name }) } catch (err) { showActionError('无法删除镜像标签', err, '读取删除影响失败') } }
+async function prepareTagDelete(repository, tag) { try { catalogDeleteTarget.value = await preflightManagedRegistryTagDelete(registry.value.id, { repository, tag: tag.name }) } catch (err) { showActionError('无法删除镜像标签', err, '读取删除影响失败') } }
 async function prepareRepositoryDelete(repository) { try { catalogDeleteTarget.value = await preflightManagedRegistryRepositoryDelete(registry.value.id, { repository }) } catch (err) { showActionError('无法删除镜像仓库', err, '读取删除影响失败') } }
-async function confirmCatalogDelete() { const target = catalogDeleteTarget.value; if (!target) return; catalogDeleting.value = true; try { const payload = { repository: target.repository, digest: target.digest, affected_tags: target.affected_tags, confirm: true }; if (target.tag) { payload.tag = target.tag; await deleteManagedRegistryTag(registry.value.id, payload) } else await deleteManagedRegistryRepository(registry.value.id, payload); catalogDeleteTarget.value = null; if (target.tag) await loadTags(target.repository); else { selectedRepository.value = ''; tags.value = []; await loadCatalog() } } catch (err) { showActionError('删除镜像失败', err, '删除镜像失败，请刷新后重试') } finally { catalogDeleting.value = false } }
+async function confirmCatalogDelete() { const target = catalogDeleteTarget.value; if (!target) return; catalogDeleting.value = true; try { const payload = { repository: target.repository, digest: target.digest, affected_tags: target.affected_tags, confirm: true }; if (target.tag) { payload.tag = target.tag; await deleteManagedRegistryTag(registry.value.id, payload); await loadTags(target.repository) } else { await deleteManagedRegistryRepository(registry.value.id, payload); await loadCatalog() } catalogDeleteTarget.value = null } catch (err) { showActionError('删除镜像失败', err, '删除镜像失败，请刷新后重试') } finally { catalogDeleting.value = false } }
 onMounted(load)
 watch([showForm, () => form.value.insecure_http], loadCertificates)
 watch(() => selectedPVC.value?.bound_node, boundNode => { if (boundNode) form.value.data_node = boundNode })
@@ -122,40 +124,31 @@ watch(() => selectedPVC.value?.bound_node, boundNode => { if (boundNode) form.va
 .registry-empty { display: flex; align-items: center; gap: var(--space-16); margin-top: var(--space-20); }
 .registry-empty h2 { margin: 0; font-size: 16px; }
 
-.registry-workspace-section, .registry-catalog { margin-top: var(--space-20); }
-.registry-section-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-16); }
-.registry-section-heading h2 { margin: 0; font-size: 16px; }
-.registry-section-heading p { margin: 4px 0 0; color: var(--text-secondary); font-size: 12px; }
-.registry-status-actions, .registry-catalog-controls { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: var(--space-8); }
-.registry-overview { margin-top: var(--space-16); }
-.registry-catalog-heading { margin-bottom: var(--space-16); }
-.registry-search { display: block; width: min(360px, 100%); }
-.registry-search-input { display: flex; min-height: 36px; align-items: center; border: 1px solid var(--border-muted); border-radius: var(--radius-control); background: var(--surface-input); }
-.registry-search-input:focus-within { border-color: var(--focus); outline: 2px solid var(--focus); outline-offset: 2px; }
-.registry-search-input svg { flex: 0 0 auto; margin-left: 10px; color: var(--text-muted); }
-.registry-search .form-input { min-height: 34px; padding: 8px 10px; border: 0; outline: 0; background: transparent; font-size: 12px; }
+.registry-catalog-controls, .registry-management-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: var(--space-8); }
+.registry-catalog { margin-top: var(--space-20); }
+.registry-catalog-card { min-height: 300px; }
+.registry-catalog-toolbar { display: flex; align-items: center; justify-content: space-between; gap: var(--space-16); min-height: 62px; padding: 12px var(--space-16); }
+.registry-search-field { display: flex; min-width: 0; align-items: center; gap: 8px; color: var(--text-muted); }
+.registry-search-field:focus-within { color: var(--action-primary); }
+.registry-search-field .registry-search { width: min(360px, 46vw); min-height: 36px; padding: 7px 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; outline: 0; font-size: 12px; }
+.registry-search-field .registry-search:focus, .registry-search-field .registry-search:focus-visible { box-shadow: none; outline: 0; }
 .registry-catalog-count { color: var(--text-secondary); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.registry-catalog-state { min-height: 300px; padding: var(--space-16); }
+.registry-catalog-refresh { width: 34px; height: 34px; }
+.registry-catalog-state { min-height: 270px; padding: var(--space-16); }
 .registry-catalog-state :deep(.feedback-banner) { align-items: center; margin-bottom: 0; }
 .registry-catalog-state :deep(.feedback-banner-content) { display: flex; width: 100%; min-width: 0; align-items: center; justify-content: space-between; gap: var(--space-12); }
-.registry-catalog-state :deep(.empty-state) { min-height: 206px; }
-.registry-catalog-grid { display: grid; grid-template-columns: minmax(220px, .75fr) minmax(0, 1.7fr); gap: var(--space-16); align-items: start; }
-.registry-repository-list, .registry-tags-panel { min-height: 300px; padding: 0; overflow: hidden; }
-.registry-list-heading { display: flex; align-items: center; justify-content: space-between; min-height: 56px; padding: 12px 16px; border-bottom: 1px solid var(--border-muted); }
-.registry-list-heading h2 { margin: 0; font-size: 14px; }
-.registry-list-heading p { margin: 3px 0 0; color: var(--text-muted); font-size: 11px; }
-.registry-repository-row { display: flex; align-items: stretch; min-width: 0; border-bottom: 1px solid var(--border-muted); }
-.registry-repository-row.is-selected { background: var(--surface-subtle); box-shadow: inset 2px 0 0 var(--action-primary); }
-.registry-repository-select { min-width: 0; flex: 1; padding: 11px 12px 11px 16px; border: 0; background: transparent; color: var(--text-primary); font: inherit; font-family: var(--font-mono); font-size: 12px; overflow-wrap: anywhere; text-align: left; cursor: pointer; }
-.registry-repository-select:hover { color: var(--action-primary); }
-.registry-row-icon { align-self: center; margin-right: 7px; }
-.registry-load-more { display: flex; justify-content: center; padding: 12px; }
-.registry-tags-table { display: grid; }
-.registry-tag-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-width: 0; padding: 12px 16px; border-bottom: 1px solid var(--border-muted); }
-.registry-tag-row > div:first-child { display: grid; min-width: 0; gap: 4px; }
-.registry-tag-row strong { font-size: 13px; }
-.registry-tag-row code { color: var(--text-secondary); font-size: 11px; overflow-wrap: anywhere; }
-.registry-tag-row small { color: var(--text-muted); font-size: 11px; }
+.registry-catalog-state :deep(.empty-state), .registry-catalog-card > :deep(.empty-state) { min-height: 206px; }
+.registry-catalog-card > .table-wrap { padding: 0 var(--space-16); }
+.registry-catalog-table { min-width: 720px; }
+.registry-catalog-table th:last-child, .registry-catalog-table td:last-child { width: 1%; }
+.registry-repository-cell { max-width: 360px; color: var(--text-primary); font-family: var(--font-mono); overflow-wrap: anywhere; }
+.registry-digest-cell { display: flex; min-width: 0; align-items: center; gap: 4px; }
+.registry-digest { display: inline-block; min-width: 0; max-width: 300px; overflow: hidden; color: var(--text-secondary); font-size: 11px; text-overflow: ellipsis; vertical-align: middle; white-space: nowrap; cursor: default; }
+.registry-digest:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.registry-digest-copy { flex: 0 0 auto; }
+.registry-digest-tooltip { position: fixed; z-index: 1500; max-width: min(420px, calc(100vw - 24px)); max-height: min(240px, calc(100vh - 24px)); padding: 9px 11px; overflow: auto; border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--surface-raised); box-shadow: var(--shadow-soft); color: var(--text-primary); font: 12px/1.5 var(--font-mono); overflow-wrap: anywhere; pointer-events: none; }
+.registry-table-state td, .registry-empty-row td { color: var(--text-muted); }
+.registry-table-more td { padding: 12px; text-align: center; }
 .registry-tag-actions { display: flex; flex: 0 0 auto; gap: 4px; }
 .danger-icon { color: var(--danger); }
 .registry-delete-modal { width: min(480px, calc(100vw - 32px)); }
@@ -164,11 +157,11 @@ watch(() => selectedPVC.value?.bound_node, boundNode => { if (boundNode) form.va
 .registry-impact code { overflow-wrap: anywhere; }
 .registry-impact.is-blocked { border-color: var(--danger); background: var(--danger-surface); color: var(--danger); }
 
-.registry-overview { margin-bottom: var(--space-16); }
-.registry-metric { display: grid; min-width: 0; min-height: 126px; align-content: start; gap: 8px; }
-.registry-metric > span { color: var(--text-muted); font-size: 11px; }
-.registry-metric strong { min-width: 0; color: var(--text-primary); font-size: 15px; line-height: 1.35; overflow-wrap: anywhere; }
-.registry-metric small { color: var(--text-secondary); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+.registry-overview-list { display: grid; gap: var(--space-16); margin: 0; }
+.registry-overview-list > div { display: grid; grid-template-columns: 112px minmax(0, 1fr); gap: var(--space-16); }
+.registry-overview-list dt { color: var(--text-muted); font-size: 12px; }
+.registry-overview-list dd { display: grid; min-width: 0; gap: 5px; margin: 0; color: var(--text-primary); font-size: 13px; }
+.registry-overview-list small { color: var(--text-secondary); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
 .registry-endpoint { color: var(--action-primary) !important; font-family: var(--font-mono); }
 
 .volume-heading { display: flex; align-items: center; gap: 8px; }
@@ -191,14 +184,16 @@ watch(() => selectedPVC.value?.bound_node, boundNode => { if (boundNode) form.va
 @keyframes spin { to { transform: rotate(360deg); } }
 
 @media (max-width: 760px) {
-  .registry-catalog-grid { grid-template-columns: 1fr; }
   .resource-grid { grid-template-columns: 1fr; }
 }
 @media (max-width: 480px) {
-  .registry-section-heading, .registry-catalog-controls { align-items: stretch; flex-direction: column; }
+  .registry-catalog-toolbar { align-items: stretch; flex-direction: column; }
+  .registry-search-field .registry-search { width: 100%; }
+  .registry-catalog-controls { justify-content: flex-end; }
   .registry-catalog-count { text-align: right; }
   .registry-catalog-state :deep(.feedback-banner-content) { align-items: stretch; flex-direction: column; }
   .registry-catalog-state :deep(.feedback-banner .btn) { width: 100%; }
   .registry-status-actions { justify-content: flex-start; }
+  .registry-overview-list > div { grid-template-columns: 1fr; gap: 5px; }
 }
 </style>

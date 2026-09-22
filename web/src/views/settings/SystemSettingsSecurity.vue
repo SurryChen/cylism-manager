@@ -1,23 +1,55 @@
 <template>
   <section class="settings-section">
-    <div class="section-heading">
-      <div>
-        <h2 class="section-title">安全与访问</h2>
-        <p class="settings-copy">临时登录秘钥用于短期共享访问。</p>
-      </div>
-    </div>
+    <WorkspaceHeader title="安全与访问" description="临时登录秘钥用于短期共享访问。" />
 
     <SurfaceCard class="temporary-token-card">
-      <div class="card-header temporary-token-header">
-        <div>
-          <h2 class="card-title">临时登录秘钥</h2>
-          <p class="settings-copy">
-            生成可分享给其他人的临时登录凭据。秘钥只在生成时显示一次，可随时撤销。
-          </p>
-        </div>
-        <span class="badge temporary-token-badge">安全管理</span>
+      <div class="temporary-token-toolbar">
+        <button class="btn btn-primary" type="button" data-testid="temporary-token-open-create" @click="openTemporaryTokenCreate">
+          生成临时秘钥
+        </button>
       </div>
-      <div class="form-row">
+      <section v-if="temporaryTokens.length" class="temporary-token-table" aria-label="临时登录秘钥列表">
+        <header class="temporary-token-table-header">
+          <span>备注</span>
+          <span>创建时间</span>
+          <span>到期时间</span>
+          <span>生效状态</span>
+          <span>操作</span>
+        </header>
+        <div v-for="item in temporaryTokens" :key="item.id" class="temporary-token-row">
+          <strong class="temporary-token-note">{{ item.label || '未命名秘钥' }}</strong>
+          <time class="temporary-token-date" :datetime="item.created_at">{{ formatDateTime(item.created_at) }}</time>
+          <time class="temporary-token-date" :datetime="item.expires_at">{{ formatDateTime(item.expires_at) }}</time>
+          <span class="badge" :class="item.status === 'active' ? 'badge-online' : item.status === 'expired' ? 'badge-offline' : 'badge-danger'">
+            {{ item.status === 'active' ? '生效中' : item.status === 'expired' ? '已过期' : '已撤销' }}
+          </span>
+          <span class="temporary-token-action">
+            <button class="btn btn-sm btn-danger" :disabled="item.status !== 'active' || revokingTemporaryToken === item.id" @click="revokeTemporaryToken(item)">
+              {{ revokingTemporaryToken === item.id ? '撤销中...' : '撤销' }}
+            </button>
+          </span>
+        </div>
+      </section>
+      <p v-if="temporaryTokensError" class="settings-copy endpoint-error">{{ temporaryTokensError }}</p>
+      <p v-else-if="temporaryTokens.length === 0" class="settings-copy temporary-token-empty">尚未生成临时登录秘钥。</p>
+    </SurfaceCard>
+
+    <BaseModal
+      :open="showTemporaryTokenCreate"
+      :title="generatedTemporaryToken ? '临时秘钥已生成' : '生成临时秘钥'"
+      size="small"
+      :show-close="!creatingTemporaryToken"
+      :close-on-overlay="!creatingTemporaryToken"
+      :close-on-escape="!creatingTemporaryToken"
+      dialog-class="temporary-token-create-modal"
+      data-testid="temporary-token-create-modal"
+      @close="closeTemporaryTokenCreate"
+    >
+      <div v-if="generatedTemporaryToken" class="secret-once temporary-token-secret">
+        <strong>仅显示一次，请立即复制</strong>
+        <code data-testid="temporary-token-generated-secret">{{ generatedTemporaryToken }}</code>
+      </div>
+      <form v-else id="temporary-token-create-form" class="temporary-token-create-form" @submit.prevent="createTemporaryToken">
         <div class="form-group">
           <label class="form-label" for="temporary-token-label">备注</label>
           <input id="temporary-token-label" v-model.trim="temporaryTokenForm.label" class="form-input" placeholder="例如：供应商临时访问" />
@@ -31,34 +63,21 @@
             <option :value="604800">7 天</option>
           </SelectMenu>
         </div>
-      </div>
-      <div class="settings-action-row">
-        <button class="btn btn-sm btn-primary" :disabled="creatingTemporaryToken" @click="createTemporaryToken">
-          {{ creatingTemporaryToken ? '生成中...' : '生成临时秘钥' }}
-        </button>
-      </div>
-      <div v-if="generatedTemporaryToken" class="secret-once temporary-token-secret">
-        <strong>仅显示一次，请立即复制</strong>
-        <code>{{ generatedTemporaryToken }}</code>
-        <button class="btn btn-sm" @click="copyTemporaryToken">复制</button>
-      </div>
-      <div v-if="temporaryTokens.length" class="temporary-token-list">
-        <div v-for="item in temporaryTokens" :key="item.id" class="temporary-token-row">
-          <div>
-            <strong>{{ item.label || '未命名秘钥' }}</strong>
-            <small>创建于 {{ formatDateTime(item.created_at) }} · 到期 {{ formatDateTime(item.expires_at) }}</small>
-            <span class="badge" :class="item.status === 'active' ? 'badge-online' : item.status === 'expired' ? 'badge-offline' : 'badge-danger'">
-              {{ item.status === 'active' ? '生效中' : item.status === 'expired' ? '已过期' : '已撤销' }}
-            </span>
-          </div>
-          <button v-if="item.status === 'active'" class="btn btn-sm btn-danger" :disabled="revokingTemporaryToken === item.id" @click="revokeTemporaryToken(item)">
-            {{ revokingTemporaryToken === item.id ? '撤销中...' : '撤销' }}
+        <p v-if="temporaryTokenCreateError" class="settings-copy endpoint-error">{{ temporaryTokenCreateError }}</p>
+      </form>
+      <template #actions>
+        <template v-if="generatedTemporaryToken">
+          <button class="btn btn-sm" type="button" @click="copyTemporaryToken">复制</button>
+          <button class="btn btn-sm btn-primary" type="button" data-testid="temporary-token-create-close" @click="closeTemporaryTokenCreate">完成</button>
+        </template>
+        <template v-else>
+          <button class="btn btn-sm" type="button" :disabled="creatingTemporaryToken" @click="closeTemporaryTokenCreate">取消</button>
+          <button class="btn btn-sm btn-primary" type="button" data-testid="temporary-token-create-submit" :disabled="creatingTemporaryToken" @click="createTemporaryToken">
+            {{ creatingTemporaryToken ? '生成中...' : '生成临时秘钥' }}
           </button>
-        </div>
-      </div>
-      <p v-if="temporaryTokensError" class="settings-copy endpoint-error">{{ temporaryTokensError }}</p>
-      <p v-else class="settings-copy">尚未生成临时登录秘钥。</p>
-    </SurfaceCard>
+        </template>
+      </template>
+    </BaseModal>
   </section>
 </template>
 
@@ -67,14 +86,18 @@ import { onMounted, ref } from 'vue'
 import { createTemporaryToken as createTemporaryTokenRequest, deleteTemporaryToken, getTemporaryTokens } from '../../api/settings.js'
 import { useAsyncResource } from '../../composables/useAsyncResource.js'
 import { formatDateTime } from '../../utils/formatters.js'
+import BaseModal from '../../components/BaseModal.vue'
 import SurfaceCard from '../../components/SurfaceCard.vue'
+import WorkspaceHeader from '../../components/WorkspaceHeader.vue'
 
 const temporaryTokens = ref([])
 const generatedTemporaryToken = ref('')
 const temporaryTokensError = ref('')
+const temporaryTokenCreateError = ref('')
 const creatingTemporaryToken = ref(false)
 const revokingTemporaryToken = ref(0)
 const temporaryTokenForm = ref({ label: '', ttl_seconds: 3600 })
+const showTemporaryTokenCreate = ref(false)
 const temporaryTokensResource = useAsyncResource(({ signal }) => getTemporaryTokens({ signal }), [])
 
 onMounted(() => {
@@ -90,17 +113,32 @@ async function refresh() {
 
 async function createTemporaryToken() {
   creatingTemporaryToken.value = true
-  temporaryTokensError.value = ''
+  temporaryTokenCreateError.value = ''
   try {
-    const result = await createTemporaryTokenRequest(temporaryTokenForm.value)
+    const result = await createTemporaryTokenRequest({ ...temporaryTokenForm.value })
     generatedTemporaryToken.value = result.token
     temporaryTokenForm.value.label = ''
     await refresh()
   } catch (e) {
-    temporaryTokensError.value = e.message || '生成临时登录秘钥失败'
+    temporaryTokenCreateError.value = e.message || '生成临时登录秘钥失败'
   } finally {
     creatingTemporaryToken.value = false
   }
+}
+
+function openTemporaryTokenCreate() {
+  generatedTemporaryToken.value = ''
+  temporaryTokenCreateError.value = ''
+  temporaryTokenForm.value = { label: '', ttl_seconds: 3600 }
+  showTemporaryTokenCreate.value = true
+}
+
+function closeTemporaryTokenCreate() {
+  if (creatingTemporaryToken.value) return
+  showTemporaryTokenCreate.value = false
+  generatedTemporaryToken.value = ''
+  temporaryTokenCreateError.value = ''
+  temporaryTokenForm.value = { label: '', ttl_seconds: 3600 }
 }
 
 async function revokeTemporaryToken(item) {

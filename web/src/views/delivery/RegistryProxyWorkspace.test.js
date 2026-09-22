@@ -32,18 +32,22 @@ describe('RegistryProxyWorkspace', () => {
     await new Promise(resolve => setTimeout(resolve, 0))
 
     expect(wrapper.text()).toContain('Docker Hub 代理')
-    expect(wrapper.get('.proxy-instance').findComponent({ name: 'SurfaceCard' }).exists()).toBe(true)
-    expect(wrapper.get('.proxy-instance').classes()).toContain('metric')
-    expect(wrapper.get('.proxy-properties').exists()).toBe(true)
-    expect(wrapper.find('.workspace-heading h2').exists()).toBe(false)
-    const connectivity = wrapper.get('.proxy-connectivity')
-    expect(connectivity.text()).toContain('上游连通性')
-    expect(connectivity.text()).toContain('出网正常')
-    expect(connectivity.text()).toContain('代理 Pod 可访问上游 Registry')
-    expect(connectivity.classes()).toContain('is-healthy')
+    const catalog = wrapper.get('.proxy-list-card')
+    expect(catalog.findComponent({ name: 'SurfaceCard' }).exists()).toBe(true)
+    expect(catalog.get('.proxy-list-toolbar').text()).toContain('1 个代理')
+    expect(wrapper.find('.proxy-instance').exists()).toBe(false)
+    expect(wrapper.find('.workspace-heading').exists()).toBe(false)
+    expect(catalog.get('thead').text()).toContain('代理名称')
+    expect(catalog.get('thead').text()).toContain('Registry')
+    expect(catalog.get('thead').text()).toContain('上游')
+    expect(catalog.get('thead').text()).toContain('节点入口')
+    expect(catalog.get('thead').text()).toContain('连通性')
+    expect(catalog.get('.proxy-connectivity').text()).toContain('出网正常')
+    expect(catalog.get('.proxy-connectivity').attributes('title')).toContain('代理 Pod 可访问上游 Registry')
     expect(wrapper.find('.proxy-error').exists()).toBe(false)
     await wrapper.get('[data-testid="create-registry-proxy"]').trigger('click')
     expect(document.body.querySelector('.proxy-modal')).not.toBeNull()
+    expect(document.body.querySelector('.proxy-modal').textContent).toContain('DNS 服务器')
     wrapper.unmount()
   })
 
@@ -78,6 +82,35 @@ describe('RegistryProxyWorkspace', () => {
     await wrapper.get('[data-testid="confirm-registry-proxy-migration"]').trigger('click')
 
     expect(api.post).toHaveBeenCalledWith('/registry-proxies/1/migrate-resource-name')
+    wrapper.unmount()
+  })
+
+  it('saves DNS from the proxy configuration modal', async () => {
+    api.get.mockImplementation(path => Promise.resolve(path === '/servers' ? [{ id: 2, name: 'worker-a', cluster_role: 'worker', k8s_node_name: 'worker-a' }] : [{
+      id: 1,
+      name: 'Docker Hub 代理',
+      registry: 'docker.io',
+      upstream_url: 'https://registry-1.docker.io',
+      endpoint_host: '100.64.0.8',
+      node_port: 30500,
+      node_name: 'worker-a',
+      cache_limit_gi: 2,
+      cleanup_interval_hours: 24,
+      dns_servers: ['8.8.8.8'],
+      status: 'ready',
+    }]))
+    api.put.mockResolvedValue({})
+    const wrapper = mount(RegistryProxyWorkspace)
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    await wrapper.get('[data-testid="edit-registry-proxy-1"]').trigger('click')
+    const dnsInput = document.body.querySelector('input[placeholder^="留空使用集群 DNS"]')
+    dnsInput.value = '1.1.1.1, 8.8.4.4'
+    dnsInput.dispatchEvent(new Event('input', { bubbles: true }))
+    document.body.querySelector('.proxy-modal form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    expect(api.put).toHaveBeenCalledWith('/registry-proxies/1', expect.objectContaining({ dns_servers: ['1.1.1.1', '8.8.4.4'] }))
     wrapper.unmount()
   })
 })

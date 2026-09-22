@@ -1,70 +1,97 @@
 <template>
   <section class="settings-section">
-    <div class="section-heading">
-      <div>
-        <h2 class="section-title">平台入口</h2>
-        <p class="settings-copy">管理域名、TLS 证书和 Ingress 现在集中在这里。</p>
-      </div>
-    </div>
+    <WorkspaceHeader title="平台入口" description="管理域名、TLS 证书和 Ingress 现在集中在这里。" />
 
-    <SurfaceCard class="platform-endpoint-card">
-      <div class="card-header">
-        <div>
-          <h2 class="card-title">平台管理入口</h2>
-          <p class="settings-copy">选择网络证书页中已就绪的证书；平台只维护 default 命名空间的 HTTPS Ingress。</p>
-        </div>
-        <span class="badge" :class="endpointBadgeClass">{{ endpointStateLabel }}</span>
-      </div>
-      <form class="platform-endpoint-form" @submit.prevent="savePlatformEndpoint">
-        <div class="form-row">
-          <div class="form-group">
-            <label class="form-label" for="platform-endpoint-hostname">管理域名</label>
+    <SurfaceCard class="platform-entry-card">
+      <div class="platform-entry-table">
+        <header class="platform-entry-table-header">
+          <span>配置名</span>
+          <span>配置值</span>
+          <span>操作</span>
+        </header>
+
+        <form v-if="editingEndpoint" class="platform-entry-row platform-entry-edit-row" @submit.prevent="savePlatformEndpoint">
+          <span class="platform-entry-name">域名绑定</span>
+          <div class="platform-entry-edit-fields">
             <input id="platform-endpoint-hostname" v-model.trim="endpointForm.hostname" class="form-input" :disabled="savingEndpoint" required placeholder="console.example.com" />
-          </div>
-          <div class="form-group">
-            <label class="form-label" for="platform-endpoint-certificate">TLS 证书</label>
             <SelectMenu id="platform-endpoint-certificate" v-model="endpointForm.certificate_name" class="form-select" :disabled="savingEndpoint" required>
               <option value="">选择 default 命名空间中已就绪的证书</option>
               <option v-for="certificate in readyPlatformCertificates" :key="certificate.name" :value="certificate.name">{{ certificate.name }} · {{ certificate.domains.join(', ') }}</option>
             </SelectMenu>
           </div>
+          <span class="platform-entry-actions">
+            <button class="btn btn-sm btn-primary" :disabled="savingEndpoint" type="submit">{{ savingEndpoint ? '保存中...' : '保存' }}</button>
+            <button class="btn btn-sm" :disabled="savingEndpoint" type="button" @click="cancelEndpointEdit">取消</button>
+          </span>
+        </form>
+
+        <div v-else class="platform-entry-row domain-binding-row">
+          <span class="platform-entry-name">域名绑定</span>
+          <span class="platform-entry-value">
+            <a v-if="platformEndpoint.url" :href="platformEndpoint.url" target="_blank" rel="noopener">{{ platformEndpoint.endpoint?.hostname || platformEndpoint.url }}</a>
+            <span v-else>{{ platformEndpoint.endpoint?.hostname || '尚未配置' }}</span>
+            <small v-if="platformEndpoint.certificate?.name || platformEndpoint.endpoint?.certificate_name">TLS：{{ platformEndpoint.certificate?.name || platformEndpoint.endpoint.certificate_name }}</small>
+          </span>
+          <span class="platform-entry-actions">
+            <button class="btn btn-sm" type="button" @click="beginEndpointEdit">修改</button>
+            <button class="btn btn-sm btn-danger" type="button" :disabled="!platformEndpoint.endpoint?.enabled || savingEndpoint" @click="showDisableEndpointConfirmation = true">停用</button>
+          </span>
         </div>
-        <div class="endpoint-control-row">
-          <p class="settings-copy">保存后将创建或同步平台 Ingress，并使用所选证书的 TLS Secret。</p>
-          <div class="settings-action-row">
-            <a v-if="platformEndpoint.url && platformEndpoint.state === 'ready'" class="btn btn-sm" :href="platformEndpoint.url" target="_blank" rel="noopener">打开入口</a>
-            <button v-if="platformEndpoint.endpoint?.enabled && !platformEndpoint.ingress_ready" class="btn btn-sm" type="button" :disabled="adoptingEndpoint || syncingEndpoint || savingEndpoint" @click="adoptPlatformIngress">{{ adoptingEndpoint ? '接管中...' : '接管现有 Ingress' }}</button>
-            <button v-if="platformEndpoint.endpoint?.hostname" class="btn btn-sm" type="button" :disabled="syncingEndpoint || savingEndpoint" @click="reconcilePlatformEndpoint">{{ syncingEndpoint ? '同步中...' : '重新同步' }}</button>
-            <button v-if="platformEndpoint.endpoint?.enabled" class="btn btn-sm btn-danger" type="button" :disabled="savingEndpoint" @click="showDisableEndpointConfirmation = true">停用入口</button>
-            <button class="btn btn-sm btn-primary" :disabled="savingEndpoint" type="submit">{{ savingEndpoint ? '保存中...' : '保存入口' }}</button>
-          </div>
+
+        <div class="platform-entry-row">
+          <span class="platform-entry-name">入口状态</span>
+          <span class="platform-entry-value"><span class="badge" :class="endpointBadgeClass">{{ endpointStateLabel }}</span></span>
+          <span class="platform-entry-actions">
+            <button v-if="platformEndpoint.endpoint?.enabled && !platformEndpoint.ingress_ready" class="btn btn-sm" type="button" :disabled="adoptingEndpoint || syncingEndpoint || savingEndpoint" @click="adoptPlatformIngress">{{ adoptingEndpoint ? '接管中...' : '接管 Ingress' }}</button>
+            <button class="btn btn-sm" type="button" :disabled="syncingEndpoint || savingEndpoint" @click="reconcilePlatformEndpoint">{{ syncingEndpoint ? '同步中...' : '重新同步' }}</button>
+          </span>
         </div>
-      </form>
-      <div v-if="platformEndpoint.endpoint?.hostname" class="platform-endpoint-status">
-        <span class="detail-label">HTTPS 地址</span>
-        <a v-if="platformEndpoint.url" :href="platformEndpoint.url" target="_blank" rel="noopener">{{ platformEndpoint.url }}</a>
-        <span v-else>-</span>
-        <span class="detail-label">Ingress</span>
-        <span v-if="platformEndpoint.ingress">{{ platformEndpoint.ingress.namespace }}/{{ platformEndpoint.ingress.name }}<template v-if="platformEndpoint.ingress.ingress_class"> · {{ platformEndpoint.ingress.ingress_class }}</template></span>
-        <span v-else>等待同步</span>
-        <template v-if="platformEndpoint.ingress">
-          <span class="detail-label">Ingress 路由</span>
-          <code>{{ platformEndpoint.ingress.hostname || '-' }}{{ platformEndpoint.ingress.path || '/' }} -> {{ platformEndpoint.ingress.service_name || '-' }}:{{ platformEndpoint.ingress.service_port || '-' }}</code>
-          <span class="detail-label">Ingress TLS Secret</span>
-          <code>{{ platformEndpoint.ingress.tls_secret_name || '-' }}</code>
-        </template>
-        <span class="detail-label">TLS 证书</span>
-        <span>{{ platformEndpoint.certificate?.name || platformEndpoint.endpoint.certificate_name }} · {{ platformEndpoint.certificate?.status || '等待读取' }}<template v-if="platformEndpoint.certificate?.reason"> · {{ platformEndpoint.certificate.reason }}</template></span>
+
+        <div class="platform-entry-row">
+          <span class="platform-entry-name">HTTPS 地址</span>
+          <a v-if="platformEndpoint.url" class="platform-entry-value" :href="platformEndpoint.url" target="_blank" rel="noopener">{{ platformEndpoint.url }}</a>
+          <span v-else class="platform-entry-value">-</span>
+          <span class="platform-entry-actions"><a v-if="platformEndpoint.url && platformEndpoint.state === 'ready'" class="btn btn-sm" :href="platformEndpoint.url" target="_blank" rel="noopener">打开入口</a><span v-else class="settings-table-empty">-</span></span>
+        </div>
+
+        <div class="platform-entry-row">
+          <span class="platform-entry-name">Ingress</span>
+          <span class="platform-entry-value" v-if="platformEndpoint.ingress">{{ platformEndpoint.ingress.namespace }}/{{ platformEndpoint.ingress.name }}<template v-if="platformEndpoint.ingress.ingress_class"> · {{ platformEndpoint.ingress.ingress_class }}</template></span>
+          <span class="platform-entry-value" v-else>等待同步</span>
+          <span class="settings-table-empty">-</span>
+        </div>
+        <div v-if="platformEndpoint.ingress" class="platform-entry-row">
+          <span class="platform-entry-name">Ingress 路由</span>
+          <code class="platform-entry-value">{{ platformEndpoint.ingress.hostname || '-' }}{{ platformEndpoint.ingress.path || '/' }} -> {{ platformEndpoint.ingress.service_name || '-' }}:{{ platformEndpoint.ingress.service_port || '-' }}</code>
+          <span class="settings-table-empty">-</span>
+        </div>
+        <div v-if="platformEndpoint.ingress" class="platform-entry-row">
+          <span class="platform-entry-name">Ingress TLS Secret</span>
+          <code class="platform-entry-value">{{ platformEndpoint.ingress.tls_secret_name || '-' }}</code>
+          <span class="settings-table-empty">-</span>
+        </div>
+        <div class="platform-entry-row">
+          <span class="platform-entry-name">TLS 证书状态</span>
+          <span class="platform-entry-value">{{ platformEndpoint.certificate?.name || platformEndpoint.endpoint?.certificate_name || '-' }} · {{ platformEndpoint.certificate?.status || '等待读取' }}<template v-if="platformEndpoint.certificate?.reason"> · {{ platformEndpoint.certificate.reason }}</template></span>
+          <span class="settings-table-empty">-</span>
+        </div>
         <template v-if="platformEndpoint.certificate">
-          <span class="detail-label">证书到期时间</span>
-          <span>{{ formatDateTime(platformEndpoint.certificate.expiry_date) }}</span>
-          <span class="detail-label">下次续期时间</span>
-          <span>{{ formatDateTime(platformEndpoint.certificate.renewal_time) }}</span>
+          <div class="platform-entry-row">
+            <span class="platform-entry-name">证书到期时间</span>
+            <span class="platform-entry-value">{{ formatDateTime(platformEndpoint.certificate.expiry_date) }}</span>
+            <span class="settings-table-empty">-</span>
+          </div>
+          <div class="platform-entry-row">
+            <span class="platform-entry-name">下次续期时间</span>
+            <span class="platform-entry-value">{{ formatDateTime(platformEndpoint.certificate.renewal_time) }}</span>
+            <span class="settings-table-empty">-</span>
+          </div>
         </template>
-        <template v-if="platformEndpoint.certificate_error">
-          <span class="detail-label">协调错误</span>
-          <span class="endpoint-error-text">{{ platformEndpoint.certificate_error }}</span>
-        </template>
+        <div v-if="platformEndpoint.certificate_error" class="platform-entry-row">
+          <span class="platform-entry-name">协调错误</span>
+          <span class="platform-entry-value endpoint-error-text">{{ platformEndpoint.certificate_error }}</span>
+          <span class="settings-table-empty">-</span>
+        </div>
       </div>
       <p v-if="endpointMessage" class="settings-copy platform-action-message">{{ endpointMessage }}</p>
       <p v-if="endpointError" class="settings-copy endpoint-error">{{ endpointError }}</p>
@@ -91,6 +118,7 @@ import { adoptPlatformIngress as adoptPlatformIngressRequest, getPlatformCertifi
 import { useAsyncResource } from '../../composables/useAsyncResource.js'
 import { formatDateTime } from '../../utils/formatters.js'
 import SurfaceCard from '../../components/SurfaceCard.vue'
+import WorkspaceHeader from '../../components/WorkspaceHeader.vue'
 
 const platformEndpoint = ref({ endpoint: {}, state: 'not_configured', ingress_ready: false })
 const endpointForm = ref({ hostname: '', certificate_name: '' })
@@ -100,6 +128,7 @@ const endpointError = ref('')
 const savingEndpoint = ref(false)
 const syncingEndpoint = ref(false)
 const adoptingEndpoint = ref(false)
+const editingEndpoint = ref(false)
 const showDisableEndpointConfirmation = ref(false)
 const endpointResource = useAsyncResource(async ({ signal }) => Promise.allSettled([
   getPlatformEndpoint({ signal }),
@@ -140,8 +169,26 @@ async function savePlatformEndpoint() {
   endpointError.value = ''
   try {
     syncEndpoint(await updatePlatformEndpoint({ ...endpointForm.value, enabled: true }))
+    editingEndpoint.value = false
     endpointMessage.value = '平台入口已保存，正在同步 Ingress。'
   } catch (e) { endpointError.value = e.message || '保存平台入口失败' } finally { savingEndpoint.value = false }
+}
+
+function beginEndpointEdit() {
+  endpointForm.value = {
+    hostname: platformEndpoint.value.endpoint?.hostname || '',
+    certificate_name: platformEndpoint.value.endpoint?.certificate_name || '',
+  }
+  editingEndpoint.value = true
+  endpointMessage.value = ''
+  endpointError.value = ''
+}
+
+function cancelEndpointEdit() {
+  editingEndpoint.value = false
+  endpointError.value = ''
+  endpointMessage.value = ''
+  syncEndpoint(platformEndpoint.value)
 }
 
 async function disablePlatformEndpoint() {

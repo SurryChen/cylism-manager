@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { nextTick, reactive } from 'vue'
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 import SystemSettings from './SystemSettings.vue'
+import SystemSettingsSecurity from './SystemSettingsSecurity.vue'
 import { api } from '../../api/index.js'
 
 const route = reactive({ path: '/settings/system', query: reactive({}) })
@@ -52,21 +53,89 @@ describe('SystemSettings view', () => {
     expect(wrapper.get('.section-tabs-header').find('h1').text()).toBe('系统设置')
     expect(wrapper.find('.page-header').exists()).toBe(false)
     expect(wrapper.text()).toContain('安全与访问')
+    expect(wrapper.get('.workspace-header h2').text()).toBe('安全与访问')
     expect(wrapper.text()).not.toContain('Tailscale')
     expect(wrapper.text()).not.toContain('平台自更新')
     expect(wrapper.get('.temporary-token-card').findComponent({ name: 'SurfaceCard' }).exists()).toBe(true)
 
     await wrapper.get('[data-testid="system-settings-tab-entry"]').trigger('click')
     await nextTick()
-    expect(wrapper.text()).toContain('平台管理入口')
+    expect(wrapper.get('.workspace-header h2').text()).toBe('平台入口')
+    expect(wrapper.find('.workspace-header-actions').exists()).toBe(false)
+    expect(wrapper.find('.platform-entry-card .card-title').exists()).toBe(false)
+    expect(wrapper.find('.platform-entry-card .surface-card-actions').exists()).toBe(false)
+    expect(wrapper.get('.platform-entry-table-header').text()).toContain('配置名')
+    expect(wrapper.get('.platform-entry-table-header').text()).toContain('配置值')
+    expect(wrapper.get('.platform-entry-table-header').text()).toContain('操作')
+    expect(wrapper.get('.platform-entry-row.domain-binding-row').text()).toContain('修改')
+    expect(wrapper.get('.platform-entry-row.domain-binding-row').text()).toContain('停用')
     expect(wrapper.text()).not.toContain('临时登录秘钥')
-    expect(wrapper.get('.platform-endpoint-card').findComponent({ name: 'SurfaceCard' }).exists()).toBe(true)
+    expect(wrapper.get('.platform-entry-card').findComponent({ name: 'SurfaceCard' }).exists()).toBe(true)
 
     await wrapper.get('[data-testid="system-settings-tab-release"]').trigger('click')
     await nextTick()
-    expect(wrapper.text()).toContain('平台自更新')
+    expect(wrapper.get('.workspace-header h2').text()).toBe('发布与更新')
+    expect(wrapper.find('.workspace-header-actions').exists()).toBe(false)
+    expect(wrapper.findAll('.platform-release-layout > .surface-card')).toHaveLength(2)
+    expect(wrapper.find('.platform-release-config-card .card-title').exists()).toBe(false)
+    expect(wrapper.get('.platform-release-config-header').text()).toContain('配置名')
+    expect(wrapper.get('.platform-release-config-header').text()).toContain('配置值')
+    expect(wrapper.get('.platform-release-config-header').text()).toContain('操作')
+    expect(wrapper.get('.platform-release-history-header').text()).toContain('发布方式')
+    expect(wrapper.get('.platform-release-history-header').text()).toContain('镜像 / Tag')
     expect(wrapper.text()).toContain('registry.example.com/cylism-manager:latest')
-    expect(wrapper.get('.platform-update-card').findComponent({ name: 'SurfaceCard' }).exists()).toBe(true)
+    expect(wrapper.get('.platform-release-config-card').findComponent({ name: 'SurfaceCard' }).exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('renders temporary tokens as a compact list and only shows the empty state when no token exists', async () => {
+    api.get.mockResolvedValueOnce([
+      { id: 'revoked-1', label: '供应商临时访问', status: 'revoked', created_at: '2026-09-02T09:24:26Z', expires_at: '2026-09-09T09:24:26Z' },
+      { id: 'active-2', label: '部署机器人', status: 'active', created_at: '2026-09-02T09:23:24Z', expires_at: '2026-09-09T09:23:24Z' },
+    ])
+    const wrapper = mount(SystemSettingsSecurity)
+    await flushPromises()
+
+    expect(wrapper.text()).not.toContain('安全管理')
+    expect(wrapper.find('.temporary-token-card .card-header').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="temporary-token-open-create"]').text()).toBe('生成临时秘钥')
+    expect(wrapper.find('[data-testid="temporary-token-create-modal"]').exists()).toBe(false)
+    expect(wrapper.find('.temporary-token-list-title').exists()).toBe(false)
+    expect(wrapper.find('.temporary-token-list-count').exists()).toBe(false)
+    expect(wrapper.get('.temporary-token-table-header').text()).toContain('备注')
+    expect(wrapper.get('.temporary-token-table-header').text()).toContain('创建时间')
+    expect(wrapper.get('.temporary-token-table-header').text()).toContain('到期时间')
+    expect(wrapper.get('.temporary-token-table-header').text()).toContain('生效状态')
+    expect(wrapper.get('.temporary-token-table-header').text()).toContain('操作')
+    expect(wrapper.findAll('.temporary-token-row')).toHaveLength(2)
+    const revokeButtons = wrapper.findAll('.temporary-token-action button')
+    expect(revokeButtons).toHaveLength(2)
+    expect(revokeButtons[0].attributes('disabled')).toBeDefined()
+    expect(revokeButtons[1].attributes('disabled')).toBeUndefined()
+    expect(wrapper.text()).toContain('供应商临时访问')
+    expect(wrapper.text()).toContain('部署机器人')
+    expect(wrapper.find('.temporary-token-empty').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('creates a temporary token in a dialog and only reveals the secret there', async () => {
+    api.post.mockResolvedValueOnce({ token: 'temporary-token-once' })
+    const wrapper = mount(SystemSettingsSecurity)
+    await flushPromises()
+
+    await wrapper.get('[data-testid="temporary-token-open-create"]').trigger('click')
+    expect(wrapper.get('[data-testid="temporary-token-create-modal"]').text()).toContain('生成临时秘钥')
+    await wrapper.get('#temporary-token-label').setValue('供应商临时访问')
+    await wrapper.get('[data-testid="temporary-token-create-submit"]').trigger('click')
+    await flushPromises()
+
+    expect(api.post).toHaveBeenCalledWith('/auth/temporary-tokens', { label: '供应商临时访问', ttl_seconds: 3600 })
+    expect(wrapper.get('[data-testid="temporary-token-create-modal"]').text()).toContain('仅显示一次，请立即复制')
+    expect(wrapper.get('[data-testid="temporary-token-generated-secret"]').text()).toBe('temporary-token-once')
+    expect(wrapper.get('.temporary-token-card').text()).not.toContain('temporary-token-once')
+
+    await wrapper.get('[data-testid="temporary-token-create-close"]').trigger('click')
+    expect(wrapper.find('[data-testid="temporary-token-create-modal"]').exists()).toBe(false)
     wrapper.unmount()
   })
 
@@ -76,17 +145,20 @@ describe('SystemSettings view', () => {
     await wrapper.get('[data-testid="system-settings-tab-release"]').trigger('click')
     await nextTick()
 
+    await wrapper.get('[data-testid="platform-manual-update-open"]').trigger('click')
     await wrapper.get('[data-testid="platform-manual-image"]').setValue('registry.example.com/cylism-manager:latest')
     await wrapper.get('[data-testid="platform-manual-update"]').trigger('click')
     expect(wrapper.text()).toContain('平台更新已提交')
 
+    await wrapper.get('[data-testid="platform-image-prefix-open"]').trigger('click')
     await wrapper.get('[data-testid="platform-image-prefix"]').setValue('registry.example.com/cylism-manager\noci-registry.example.com/cylism-manager')
     await wrapper.get('[data-testid="platform-image-prefix-save"]').trigger('click')
     expect(api.put).toHaveBeenCalledWith('/platform/image-prefix', { image_prefix: 'registry.example.com/cylism-manager\noci-registry.example.com/cylism-manager' })
 
     await wrapper.get('[data-testid="generate-platform-webhook-secret"]').trigger('click')
-    await nextTick()
-    expect(wrapper.text()).toContain('generated-secret')
+    await wrapper.get('[data-testid="platform-webhook-generate-confirm"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-testid="platform-webhook-generated-secret"]').text()).toBe('generated-secret')
     wrapper.unmount()
   })
 
@@ -130,6 +202,7 @@ describe('SystemSettings view', () => {
     await nextTick()
     await wrapper.get('[data-testid="system-settings-tab-release"]').trigger('click')
     await nextTick()
+    await wrapper.get('[data-testid="platform-manual-update-open"]').trigger('click')
     await wrapper.get('[data-testid="platform-manual-image"]').setValue('oci-registry.crazycoding.top/cylism-manager:1.0.0')
     await wrapper.get('[data-testid="platform-manual-update"]').trigger('click')
     await nextTick()
@@ -149,9 +222,10 @@ describe('SystemSettings view', () => {
     await nextTick()
     api.post.mockRejectedValueOnce(new Error('Webhook 服务不可用'))
     await wrapper.get('[data-testid="generate-platform-webhook-secret"]').trigger('click')
-    await nextTick()
+    await wrapper.get('[data-testid="platform-webhook-generate-confirm"]').trigger('click')
+    await flushPromises()
     expect(wrapper.text()).toContain('Webhook 服务不可用')
-    expect(wrapper.get('[data-testid="generate-platform-webhook-secret"]').attributes('disabled')).toBeUndefined()
+    expect(wrapper.get('[data-testid="platform-webhook-generate-confirm"]').attributes('disabled')).toBeUndefined()
     wrapper.unmount()
   })
 
@@ -159,9 +233,10 @@ describe('SystemSettings view', () => {
     const wrapper = mount(SystemSettings, { global: { stubs: { Teleport: true } } })
     await nextTick()
     api.post.mockRejectedValueOnce(new Error('临时秘钥创建失败'))
-    await wrapper.findAll('button').find(button => button.text() === '生成临时秘钥').trigger('click')
-    await nextTick()
-    expect(wrapper.text()).toContain('临时秘钥创建失败')
+    await wrapper.get('[data-testid="temporary-token-open-create"]').trigger('click')
+    await wrapper.get('[data-testid="temporary-token-create-submit"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-testid="temporary-token-create-modal"]').text()).toContain('临时秘钥创建失败')
     wrapper.unmount()
   })
 
@@ -170,6 +245,7 @@ describe('SystemSettings view', () => {
     const wrapper = mount(SystemSettings, { global: { stubs: { Teleport: true } } })
     await vi.advanceTimersByTimeAsync(0)
     await wrapper.get('[data-testid="system-settings-tab-entry"]').trigger('click')
+    await wrapper.get('.domain-binding-row button').trigger('click')
     const hostname = wrapper.get('#platform-endpoint-hostname')
     await hostname.setValue('draft.example.com')
 

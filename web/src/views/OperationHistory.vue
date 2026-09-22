@@ -4,16 +4,24 @@
       <template #actions><span class="operation-summary">共 {{ total }} 条</span></template>
     </SectionTabsHeader>
     <FeedbackBanner v-if="error" tone="warning" :message="error" />
-    <SurfaceCard class="operation-card">
-      <div class="operation-filters">
+    <WorkspaceHeader title="执行记录" description="查看异步操作流程的执行步骤与结果。" />
+    <SurfaceCard class="operation-card" padding="none">
+      <div class="operation-table-toolbar">
+        <div class="operation-filters">
+          <label class="operation-search-field">
+            <Search :size="15" aria-hidden="true" />
+            <span class="sr-only">关键字</span>
+            <input v-model.trim="keyword" class="form-input operation-search" placeholder="搜索步骤或详情" @keydown.enter.prevent="load(true)" />
+          </label>
         <SelectMenu v-model="resourceType" class="form-select" aria-label="资源类型">
           <option value="">全部资源</option><option value="application">应用</option><option value="server">服务器</option><option value="platform">平台</option>
         </SelectMenu>
         <SelectMenu v-model="status" class="form-select" aria-label="执行状态">
           <option value="">全部状态</option><option value="running">执行中</option><option value="success">成功</option><option value="failed">失败</option>
         </SelectMenu>
-        <input v-model.trim="keyword" class="form-input" placeholder="搜索步骤或详情" @keydown.enter.prevent="load(true)" />
         <button class="btn btn-primary" @click="load(true)">筛选</button>
+        <button class="icon-button operation-reset" type="button" title="重置筛选" aria-label="重置筛选" @click="resetFilters"><RotateCcw :size="15" /></button>
+        </div>
       </div>
       <EmptyState v-if="loading" variant="loading" message="加载中..." />
       <EmptyState v-else-if="operations.length === 0" message="暂无操作历史" />
@@ -29,12 +37,14 @@
 
 <script setup>
 import { computed, onMounted, ref } from 'vue'
+import { RotateCcw, Search } from 'lucide-vue-next'
 import { getOperations } from '../api/operations.js'
 import { useAsyncResource } from '../composables/useAsyncResource.js'
 import EmptyState from '../components/EmptyState.vue'
 import FeedbackBanner from '../components/FeedbackBanner.vue'
 import SectionTabsHeader from '../components/SectionTabsHeader.vue'
 import SurfaceCard from '../components/SurfaceCard.vue'
+import WorkspaceHeader from '../components/WorkspaceHeader.vue'
 import { formatShortDateTime as formatTime } from '../utils/formatters.js'
 
 const pageSize = 20
@@ -64,6 +74,12 @@ async function load(reset = false) {
   operations.value = result.operations || []
   total.value = result.total || 0
 }
+async function resetFilters() {
+  resourceType.value = ''
+  status.value = ''
+  keyword.value = ''
+  await load(true)
+}
 async function previous() { offset.value = Math.max(0, offset.value - pageSize); await load() }
 async function next() { offset.value += pageSize; await load() }
 function resourceLabel(value) { return ({ application: '应用', server: '服务器', platform: '平台' })[value] || value }
@@ -74,7 +90,18 @@ function statusClass(value) { return ({ running: 'badge-deploying', success: 'ba
 <style scoped>
 .operation-page { display: grid; gap: var(--space-4); }
 .operation-summary { color: var(--text-secondary); font-size: 13px; }
-.operation-card { display: grid; gap: var(--space-16); }
-.operation-filters { display: grid; grid-template-columns: 180px 140px minmax(180px, 1fr) auto; gap: 10px; }
-@media (max-width: 760px) { .operation-filters { grid-template-columns: 1fr; } }
+.operation-card { display: block; }
+.operation-table-toolbar { padding: 14px var(--space-20); }
+.operation-filters { display: grid; grid-template-columns: minmax(220px, 1fr) 150px 130px auto 34px; gap: 8px; align-items: center; }
+.operation-search-field { display: flex; min-width: 0; align-items: center; gap: 8px; min-height: 36px; color: var(--text-muted); }
+.operation-search-field:focus-within { color: var(--action-primary); }
+.operation-search { flex: 1; min-width: 0; min-height: 36px; padding: 7px 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; outline: 0; }
+.operation-search:focus, .operation-search:focus-visible { box-shadow: none; outline: 0; }
+.operation-filters :deep(.select-menu-trigger) { min-height: 36px; }
+.operation-reset { width: 34px; height: 34px; }
+.operation-card > .empty-state { padding: var(--space-24); }
+.operation-card > .table-wrap { padding: 0 var(--space-20); }
+.operation-card > .pagination { padding: 0 var(--space-20) var(--space-16); }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+@media (max-width: 760px) { .operation-table-toolbar { padding: 12px 14px; }.operation-filters { grid-template-columns: 1fr; }.operation-card > .table-wrap, .operation-card > .pagination { padding-right: 14px; padding-left: 14px; } }
 </style>

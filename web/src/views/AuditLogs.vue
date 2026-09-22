@@ -9,9 +9,10 @@
       </template>
     </SectionTabsHeader>
     <FeedbackBanner v-if="error" tone="warning" :message="error" class="page-error" />
+    <WorkspaceHeader title="审计记录" description="查看平台关键操作及其执行结果。" />
 
-    <SurfaceCard class="audit-card">
-      <div class="audit-filter-panel">
+    <SurfaceCard class="audit-card" padding="none">
+      <div class="audit-table-toolbar">
         <div class="audit-primary-filters">
           <label class="audit-search-field">
             <Search :size="15" aria-hidden="true" />
@@ -135,6 +136,7 @@ import FeedbackBanner from '../components/FeedbackBanner.vue'
 import SectionTabsHeader from '../components/SectionTabsHeader.vue'
 import SelectMenu from '../components/SelectMenu.vue'
 import SurfaceCard from '../components/SurfaceCard.vue'
+import WorkspaceHeader from '../components/WorkspaceHeader.vue'
 import { formatShortDateTime as formatTime } from '../utils/formatters.js'
 
 const pageSize = 20
@@ -388,17 +390,13 @@ function formatDetailValue(value) {
 }
 
 .audit-card {
-  display: grid;
-  gap: var(--space-16);
+  display: block;
 }
 
-.audit-filter-panel {
+.audit-table-toolbar {
   display: grid;
   gap: 10px;
-  padding: 14px;
-  border: 1px solid var(--border-muted);
-  border-radius: var(--radius-control);
-  background: var(--surface-subtle);
+  padding: 14px var(--space-20);
 }
 
 .audit-primary-filters { display: grid; grid-template-columns: minmax(220px, 1fr) 130px 150px auto auto 34px; gap: 8px; align-items: center; }
@@ -427,6 +425,9 @@ function formatDetailValue(value) {
 .audit-reset { width: 34px; height: 34px; }
 .audit-active-filters { margin: 10px 0 0; }
 .active-filters-label { color: var(--text-muted); font-size: 11px; }
+.audit-card > .empty-state { padding: var(--space-24); }
+.audit-card > .table-wrap { padding: 0 var(--space-20); }
+.audit-card > .pagination { padding: 0 var(--space-20) var(--space-16); }
 .audit-advanced-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 12px; }
 .audit-field-wide { grid-column: 1 / -1; }
 .audit-filter-modal { width: min(560px, calc(100vw - 32px)); }
@@ -520,6 +521,9 @@ function formatDetailValue(value) {
   .audit-primary-filters .audit-filter-trigger { grid-column: 1; }
   .audit-primary-filters .btn-primary { grid-column: 2; grid-row: 2; padding: 0 8px; }
   .audit-reset { grid-column: 2; grid-row: 3; }
+  .audit-table-toolbar { padding: 12px 14px; }
+  .audit-card > .table-wrap { padding-right: 14px; padding-left: 14px; }
+  .audit-card > .pagination { padding-right: 14px; padding-left: 14px; }
 
   .audit-detail-grid {
     grid-template-columns: 1fr;
