@@ -64,7 +64,8 @@ describe('Infrastructure aggregation hubs', () => {
 
   it('switches flattened cluster views from the header', async () => {
     const wrapper = await mountHub(ClusterHub, '/cluster?tab=nodes')
-    expect(wrapper.get('.hub-content').classes()).toContain('hub-content--nodes')
+    expect(wrapper.get('.hub-content').classes()).not.toContain('hub-content--nodes')
+    expect(readFileSync(resolve(process.cwd(), 'src/views/cluster/ClusterHub.vue'), 'utf8')).toContain('margin-top: var(--tabbed-page-content-gap)')
     await wrapper.get('[data-testid="cluster-tab-chart-repositories"]').trigger('click')
     await flushPromises()
     expect(wrapper.text()).toContain('Chart 内容')

@@ -20,7 +20,7 @@ describe('Cluster view', () => {
     await new Promise(resolve => setTimeout(resolve, 0))
 
     expect(wrapper.text()).toContain('应用节点')
-    expect(wrapper.text()).toContain('当前平台：K3s')
+    expect(wrapper.get('.tabbed-workspace-toolbar').text()).toContain('K3s')
     await wrapper.get('[data-testid="manage-labels-worker-a"]').trigger('click')
     await new Promise(resolve => setTimeout(resolve, 0))
 
@@ -41,6 +41,7 @@ describe('Cluster view', () => {
     await new Promise(resolve => setTimeout(resolve, 0))
 
     expect(wrapper.text()).toContain('集群连接失败')
+    expect(wrapper.get('[role="dialog"]').text()).toContain('集群连接失败')
   })
 
   it('keeps the labels modal open and scopes a save failure to it', async () => {
@@ -98,7 +99,7 @@ describe('Cluster view', () => {
     })
     const kubernetes = mount(Cluster)
     await new Promise(resolve => setTimeout(resolve, 0))
-    expect(kubernetes.text()).toContain('当前平台：Kubernetes')
+    expect(kubernetes.get('.tabbed-workspace-toolbar').text()).toContain('Kubernetes')
     expect(kubernetes.text()).not.toContain('K3s 集群支持工作节点加入流程')
     kubernetes.unmount()
 
@@ -109,7 +110,7 @@ describe('Cluster view', () => {
     })
     const unavailable = mount(Cluster)
     await new Promise(resolve => setTimeout(resolve, 0))
-    expect(unavailable.text()).toContain('当前平台：未识别')
+    expect(unavailable.get('.tabbed-workspace-toolbar').text()).toContain('未识别')
     expect(unavailable.text()).not.toContain('K3s 集群支持工作节点加入流程')
     unavailable.unmount()
   })

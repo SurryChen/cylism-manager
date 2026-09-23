@@ -121,11 +121,11 @@ watch(() => selectedPVC.value?.bound_node, boundNode => { if (boundNode) form.va
 <style scoped>
 .section-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-16); }
 .section-heading p, .form-hint, .registry-empty p, .confirm-copy { margin: 4px 0 0; color: var(--text-secondary); font-size: 13px; }
-.registry-empty { display: flex; align-items: center; gap: var(--space-16); margin-top: var(--space-20); }
+.registry-empty { display: flex; align-items: center; gap: var(--space-16); margin-top: var(--tabbed-page-content-gap); }
 .registry-empty h2 { margin: 0; font-size: 16px; }
 
 .registry-catalog-controls, .registry-management-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: var(--space-8); }
-.registry-catalog { margin-top: var(--space-20); }
+.registry-catalog { margin-top: var(--tabbed-page-content-gap); }
 .registry-catalog-card { min-height: 300px; }
 .registry-catalog-toolbar { display: flex; align-items: center; justify-content: space-between; gap: var(--space-16); min-height: 62px; padding: 12px var(--space-16); }
 .registry-search-field { display: flex; min-width: 0; align-items: center; gap: 8px; color: var(--text-muted); }

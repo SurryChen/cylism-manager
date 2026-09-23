@@ -1,7 +1,5 @@
 <template>
   <section class="settings-section">
-    <WorkspaceHeader title="安全与访问" description="临时登录秘钥用于短期共享访问。" />
-
     <SurfaceCard class="temporary-token-card">
       <div class="temporary-token-toolbar">
         <button class="btn btn-primary" type="button" data-testid="temporary-token-open-create" @click="openTemporaryTokenCreate">
@@ -88,7 +86,6 @@ import { useAsyncResource } from '../../composables/useAsyncResource.js'
 import { formatDateTime } from '../../utils/formatters.js'
 import BaseModal from '../../components/BaseModal.vue'
 import SurfaceCard from '../../components/SurfaceCard.vue'
-import WorkspaceHeader from '../../components/WorkspaceHeader.vue'
 
 const temporaryTokens = ref([])
 const generatedTemporaryToken = ref('')

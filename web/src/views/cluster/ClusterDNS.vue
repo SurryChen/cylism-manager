@@ -1,56 +1,58 @@
 <template>
   <div>
-    <PageHeader title="集群 DNS" description="统一管理 CoreDNS 的外部解析上游；副本数和调度仍在系统组件中管理">
+    <TabbedWorkspaceCard class="dns-workspace dns-runtime-workspace">
       <template #actions>
-        <button class="btn btn-primary" :disabled="loading" @click="load">刷新</button>
+        <button class="btn btn-primary" data-testid="open-dns-config" :disabled="!loaded" @click="openConfig">配置 DNS 上游</button>
+        <button class="icon-button" type="button" title="刷新 CoreDNS 状态" aria-label="刷新 CoreDNS 状态" :disabled="loading" @click="load"><RefreshCw :size="16" :class="{ 'is-spinning': loading }" /></button>
       </template>
-    </PageHeader>
-
-    <FeedbackBanner v-if="error" tone="warning" :message="error" class="section-gap" />
-    <FeedbackBanner v-if="actionError" tone="warning" :message="actionError" class="section-gap" />
-
-    <template v-if="loaded">
-      <section class="dns-summary metric-grid section-gap" aria-label="集群 DNS 状态">
-        <article class="metric dns-summary-item"><span>当前转发</span><strong>{{ forwardingText }}</strong></article>
-        <article class="metric dns-summary-item"><span>平台策略</span><strong>{{ data.active_policy?.resolvers?.length ? `版本 ${data.active_policy.revision}` : '继承宿主机 DNS' }}</strong></article>
-        <article class="metric dns-summary-item"><span>CoreDNS</span><strong>{{ readyPods }}/{{ data.pods?.length || 0 }} 就绪</strong></article>
-      </section>
-
-      <SurfaceCard class="section-gap">
-        <SectionHeading title="外部 DNS 上游" description="仅接受 IP 地址。保存时只替换 CoreDNS 根域的 forward 指令，其余 Corefile 保持不变。">
-          <template #actions>
-            <button class="btn btn-sm" :disabled="saving || inheritedDNS" @click="openResetConfirm">恢复宿主机 DNS</button>
-          </template>
-        </SectionHeading>
-        <form class="dns-form" @submit.prevent="openConfirm">
-          <div v-for="(_, index) in resolvers" :key="index" class="resolver-row">
-            <span class="resolver-index">{{ index + 1 }}</span>
-            <input v-model.trim="resolvers[index]" class="form-input" inputmode="decimal" placeholder="例如 223.5.5.5" :aria-label="`DNS 上游 ${index + 1}`" />
-            <button v-if="resolvers.length > 1" type="button" class="icon-btn" :aria-label="`移除 DNS 上游 ${index + 1}`" @click="resolvers.splice(index, 1)">×</button>
-          </div>
-          <p v-if="inheritedDNS" class="form-hint inherited-hint">当前未配置外部 DNS，CoreDNS 使用各节点宿主机的 DNS 配置。</p>
-          <div class="dns-actions">
-            <button v-if="resolvers.length < 3" type="button" class="btn btn-sm" @click="resolvers.push('')">添加备用上游</button>
-            <button class="btn btn-primary" :disabled="saving">{{ saving ? '应用中...' : '验证并应用' }}</button>
-          </div>
-        </form>
-      </SurfaceCard>
-
-      <SurfaceCard class="section-gap">
-        <SectionHeading title="CoreDNS 副本" description="用于确认策略实际覆盖的 DNS 工作负载。" />
-        <div v-if="data.pods?.length" class="pod-list">
-          <div v-for="pod in data.pods" :key="pod.name" class="pod-row"><strong>{{ pod.name }}</strong><span>{{ pod.node || '-' }}</span><span>{{ pod.ip || '-' }}</span><span class="badge" :class="pod.ready ? 'badge-online' : 'badge-danger'">{{ pod.ready ? '就绪' : '未就绪' }}</span></div>
+      <template v-if="loaded">
+        <div v-if="data.pods?.length" class="table-wrap">
+          <table class="data-table dns-pod-table">
+            <thead><tr><th>Pod</th><th>节点</th><th>Pod IP</th><th>状态</th></tr></thead>
+            <tbody><tr v-for="pod in data.pods" :key="pod.name"><td class="cell-primary">{{ pod.name }}</td><td>{{ pod.node || '-' }}</td><td>{{ pod.ip || '-' }}</td><td><span class="badge" :class="pod.ready ? 'badge-online' : 'badge-danger'">{{ pod.ready ? '就绪' : '未就绪' }}</span></td></tr></tbody>
+          </table>
         </div>
         <EmptyState v-else message="未发现 CoreDNS Pod" />
-      </SurfaceCard>
+      </template>
+      <EmptyState v-else variant="loading" message="正在读取 CoreDNS 状态" />
+    </TabbedWorkspaceCard>
 
-      <SurfaceCard v-if="data.history?.length" class="section-gap">
-        <SectionHeading title="策略历史" description="回滚会以选中版本的上游创建一个新的策略版本。" />
-        <div class="history-list">
-          <div v-for="policy in data.history" :key="policy.revision" class="history-row"><div><strong>版本 {{ policy.revision }}</strong><small>{{ policy.resolvers?.join('，') }}</small></div><button class="btn btn-sm" :disabled="saving || policy.revision === data.active_policy?.revision" @click="rollback(policy)">{{ policy.revision === data.active_policy?.revision ? '当前版本' : '回滚到此版本' }}</button></div>
+    <TabbedWorkspaceCard v-if="loaded && data.history?.length" class="dns-workspace dns-history-workspace">
+      <div class="table-wrap">
+        <table class="data-table dns-history-table">
+          <thead><tr><th>版本</th><th>DNS 上游</th><th>创建时间</th><th>状态</th><th>操作</th></tr></thead>
+          <tbody>
+            <tr v-for="policy in data.history" :key="policy.revision">
+              <td class="cell-primary">版本 {{ policy.revision }}</td>
+              <td><span class="dns-upstream-value" :title="policy.resolvers?.join('，') || '继承宿主机 DNS'">{{ policy.resolvers?.join('，') || '继承宿主机 DNS' }}</span></td>
+              <td>{{ formatTime(policy.created_at) }}</td>
+              <td><span class="badge" :class="policy.revision === data.active_policy?.revision ? 'badge-online' : 'badge-offline'">{{ policy.revision === data.active_policy?.revision ? '当前' : '历史' }}</span></td>
+              <td><button class="btn btn-sm" :disabled="saving || policy.revision === data.active_policy?.revision" @click="rollback(policy)">{{ policy.revision === data.active_policy?.revision ? '当前版本' : '回滚' }}</button></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </TabbedWorkspaceCard>
+
+    <ErrorNoticeModal :open="Boolean(pageError)" :message="pageError" @close="dismissPageError" />
+
+    <BaseModal :open="configuring" title="配置 DNS 上游" size="medium" @close="closeConfig">
+      <form id="dns-config-form" class="dns-form" @submit.prevent="openConfirm">
+        <div v-for="(_, index) in resolvers" :key="index" class="resolver-row">
+          <label class="resolver-label" :for="`dns-resolver-${index}`">DNS 上游 {{ index + 1 }}</label>
+          <input :id="`dns-resolver-${index}`" v-model.trim="resolvers[index]" class="form-input" inputmode="decimal" placeholder="例如 223.5.5.5" :aria-label="`DNS 上游 ${index + 1}`" />
+          <button v-if="resolvers.length > 1" type="button" class="icon-btn" :aria-label="`移除 DNS 上游 ${index + 1}`" @click="resolvers.splice(index, 1)">×</button>
         </div>
-      </SurfaceCard>
-    </template>
+        <button v-if="resolvers.length < 3" type="button" class="btn btn-sm add-resolver-button" @click="resolvers.push('')">添加备用上游</button>
+        <p class="dns-form-status"><span class="badge" :class="inheritedDNS ? 'badge-offline' : 'badge-online'">{{ inheritedDNS ? '继承宿主机 DNS' : '平台 DNS 策略' }}</span><span>仅支持 IP 地址；保存时仅替换 CoreDNS 根域的转发规则。</span></p>
+        <FeedbackBanner v-if="configError" tone="warning" :message="configError" />
+      </form>
+      <template #actions>
+        <button class="btn" :disabled="saving || inheritedDNS" @click="openResetConfirm">恢复宿主机 DNS</button>
+        <button class="btn" @click="closeConfig">取消</button>
+        <button class="btn btn-primary" type="submit" form="dns-config-form" data-testid="save-dns-config" :disabled="saving">验证并应用</button>
+      </template>
+    </BaseModal>
 
     <BaseModal :open="confirming" title="应用集群 DNS 策略" size="small" @close="confirming = false">
       <p class="confirm-copy">CoreDNS 将改用：{{ normalizedResolvers.join('，') }}。此操作影响所有通过集群 DNS 解析的工作负载。</p>
@@ -73,14 +75,14 @@
 
 <script setup>
 import { computed, onMounted, ref } from 'vue'
+import { RefreshCw } from 'lucide-vue-next'
 import { deleteClusterDNS, getClusterDNS, rollbackClusterDNS, updateClusterDNS } from '../../api/cluster-dns.js'
 import { useAsyncResource } from '../../composables/useAsyncResource.js'
 import BaseModal from '../../components/BaseModal.vue'
 import EmptyState from '../../components/EmptyState.vue'
+import ErrorNoticeModal from '../../components/ErrorNoticeModal.vue'
 import FeedbackBanner from '../../components/FeedbackBanner.vue'
-import PageHeader from '../../components/PageHeader.vue'
-import SectionHeading from '../../components/SectionHeading.vue'
-import SurfaceCard from '../../components/SurfaceCard.vue'
+import TabbedWorkspaceCard from '../../components/TabbedWorkspaceCard.vue'
 
 const data = ref({ forwarding: [], pods: [], history: [], active_policy: null })
 const resolvers = ref([''])
@@ -89,19 +91,25 @@ const saving = ref(false)
 const loaded = ref(false)
 const error = ref('')
 const actionError = ref('')
+const configError = ref('')
+const configuring = ref(false)
 const confirming = ref(false)
 const resetConfirming = ref(false)
 const dnsResource = useAsyncResource(({ signal }) => getClusterDNS({ signal }), null)
+const pageError = computed(() => error.value || ((!confirming.value && !resetConfirming.value) ? actionError.value : ''))
+
+function dismissPageError() {
+  if (error.value) error.value = ''
+  else actionError.value = ''
+}
 
 const normalizedResolvers = computed(() => resolvers.value.map(value => value.trim()).filter(Boolean))
-const forwardingText = computed(() => data.value.forwarding?.join('，') || '未识别')
-const readyPods = computed(() => (data.value.pods || []).filter(pod => pod.ready).length)
 const inheritedDNS = computed(() => !(data.value.active_policy?.resolvers?.length) && data.value.forwarding?.length === 1 && data.value.forwarding[0] === '/etc/resolv.conf')
 
 async function load() {
+  loading.value = true
   error.value = ''
   const result = await dnsResource.refresh()
-  loading.value = dnsResource.loading.value
   if (result) {
     data.value = result || { forwarding: [], pods: [], history: [], active_policy: null }
     const inherited = data.value.forwarding?.length === 1 && data.value.forwarding[0] === '/etc/resolv.conf'
@@ -115,14 +123,33 @@ async function load() {
 function openConfirm() {
   const malformed = normalizedResolvers.value.some(value => !/^([0-9]{1,3}\.){3}[0-9]{1,3}$|:/.test(value))
   if (!normalizedResolvers.value.length || malformed) {
-    error.value = '请填写有效的 DNS IP 地址'
+    configError.value = '请填写有效的 DNS IP 地址'
     return
   }
+  configError.value = ''
+  configuring.value = false
   confirming.value = true
 }
 
+function openConfig() {
+  configError.value = ''
+  configuring.value = true
+}
+
+function closeConfig() {
+  configuring.value = false
+  configError.value = ''
+}
+
 function openResetConfirm() {
+  closeConfig()
   resetConfirming.value = true
+}
+
+function formatTime(value) {
+  if (!value) return '-'
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString('zh-CN', { hour12: false })
 }
 
 async function apply() {
@@ -171,27 +198,17 @@ onMounted(load)
 </script>
 
 <style scoped>
-.page-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
-.dns-summary { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-.dns-summary-item { min-height: 96px; gap: 6px; padding: 16px 18px; }
-.dns-summary-item span, .dns-summary-item strong, .history-row small { display: block; }
-.dns-summary-item span, .history-row small { color: var(--text-secondary); font-size: 12px; }
-.dns-summary-item strong { overflow-wrap: anywhere; font-size: 17px; line-height: 1.35; }
-.section-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
-.section-heading h2 { margin: 0; font-size: 15px; }
-.section-heading p { margin: 5px 0 0; color: var(--text-secondary); font-size: 13px; line-height: 1.5; }
-.dns-form { max-width: 560px; }
+.dns-history-workspace { margin-top: var(--space-12); }
+.dns-form { padding: 0; }
 .resolver-row { display: flex; align-items: center; gap: 8px; margin-bottom: 9px; }
-.resolver-index { width: 22px; color: var(--text-secondary); font-size: 12px; text-align: center; }
+.resolver-label { width: 78px; flex: 0 0 78px; color: var(--text-secondary); font-size: 12px; }
 .resolver-row .form-input { flex: 1; }
 .icon-btn { width: 32px; height: 32px; border: 0; background: transparent; color: var(--text-secondary); font-size: 22px; cursor: pointer; }
-.dns-actions { display: flex; gap: 8px; margin-top: 14px; }
-.inherited-hint { margin: 10px 0 0; }
-.pod-list, .history-list { border-top: 1px solid var(--border); }
-.pod-row, .history-row { display: grid; align-items: center; gap: 12px; padding: 11px 0; border-bottom: 1px solid var(--border); }
-.pod-row { grid-template-columns: minmax(0, 2fr) minmax(0, 1.5fr) minmax(0, 1fr) auto; }
-.history-row { grid-template-columns: 1fr auto; }
-.pod-row span { color: var(--text-secondary); overflow-wrap: anywhere; }
-.history-row small { margin-top: 3px; }
-@media (max-width: 640px) { .page-header { flex-direction: column; } .page-header .btn { width: 100%; } .dns-summary { grid-template-columns: 1fr; } .pod-row { grid-template-columns: 1fr auto; } .pod-row span { display: none; } }
+.add-resolver-button { margin-left: 86px; }
+.dns-form-status { display: flex; align-items: center; gap: var(--space-8); margin: var(--space-12) 0 0; color: var(--text-secondary); font-size: 12px; }
+.dns-upstream-value { display: block; overflow: hidden; max-width: 360px; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 640px) {
+  .dns-form-status { align-items: flex-start; flex-direction: column; }
+  .dns-pod-table th:nth-child(2), .dns-pod-table td:nth-child(2), .dns-pod-table th:nth-child(3), .dns-pod-table td:nth-child(3), .dns-history-table th:nth-child(3), .dns-history-table td:nth-child(3), .dns-history-table th:nth-child(4), .dns-history-table td:nth-child(4) { display: none; }
+}
 </style>

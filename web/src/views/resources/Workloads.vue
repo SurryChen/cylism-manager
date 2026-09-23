@@ -1,37 +1,40 @@
 <template>
   <div>
-    <div class="page-header">
-      <h1 class="page-title">工作负载</h1>
-      <button class="icon-button" title="刷新工作负载" aria-label="刷新工作负载" :disabled="loading" @click="fetchData"><RefreshCw :size="16" :class="{ 'is-spinning': loading }" /></button>
-    </div>
     <div v-if="error" class="k8s-banner k8s-banner-warn" style="margin-bottom:var(--space-16)">⚠ {{ error }}</div>
     <div v-if="detailError" class="k8s-banner k8s-banner-warn" style="margin-bottom:var(--space-16)">⚠ {{ detailError }}</div>
 
-    <nav class="resource-switcher section-gap" aria-label="工作负载资源类型">
-      <button :class="['resource-tab', { 'resource-tab-active': activeTab === 'pods' }]" :aria-selected="activeTab === 'pods'" @click="selectTab('pods')"><Box :size="16" /><span>Pods<small>实例</small></span><strong>{{ pods.length }}</strong></button>
-      <button :class="['resource-tab', { 'resource-tab-active': activeTab === 'deployments' }]" :aria-selected="activeTab === 'deployments'" @click="selectTab('deployments')"><Layers3 :size="16" /><span>Deployments<small>无状态服务</small></span><strong>{{ deployments.length }}</strong></button>
-      <button :class="['resource-tab', { 'resource-tab-active': activeTab === 'statefulsets' }]" :aria-selected="activeTab === 'statefulsets'" @click="selectTab('statefulsets')"><Database :size="16" /><span>StatefulSets<small>有状态服务</small></span><strong>{{ statefulsets.length }}</strong></button>
-      <button :class="['resource-tab', { 'resource-tab-active': activeTab === 'daemonsets' }]" :aria-selected="activeTab === 'daemonsets'" @click="selectTab('daemonsets')"><Network :size="16" /><span>DaemonSets<small>节点服务</small></span><strong>{{ daemonsets.length }}</strong></button>
-    </nav>
+    <SurfaceCard as="section" class="workloads-card">
+      <div class="workloads-toolbar">
+        <SelectMenu v-model="activeTab" class="workload-type-select" aria-label="资源类型" :options="workloadTypeOptions" @change="selectTab" />
+        <div class="workloads-toolbar-actions">
+          <template v-if="activeTab === 'pods'">
+            <label class="pod-search"><Search :size="16" /><span class="sr-only">搜索 Pod 名称</span><input v-model.trim="podNameFilter" placeholder="搜索 Pod 名称" aria-label="搜索 Pod 名称" /></label>
+            <button :class="['btn btn-sm pod-filter-trigger', { 'is-active': podFiltersOpen || hasPodFilters }]" :aria-expanded="podFiltersOpen" @click="podFiltersOpen = !podFiltersOpen"><Filter :size="15" />筛选<span v-if="activePodFilterCount" class="filter-count">{{ activePodFilterCount }}</span></button>
+            <button v-if="hasPodFilters" class="icon-button" title="重置 Pod 筛选" aria-label="重置 Pod 筛选" @click="resetPodFilters"><RotateCcw :size="15" /></button>
+          </template>
+          <button class="icon-button" title="刷新工作负载" aria-label="刷新工作负载" :disabled="loading" @click="fetchData"><RefreshCw :size="16" :class="{ 'is-spinning': loading }" /></button>
+        </div>
+      </div>
 
     <!-- Deployments -->
-    <SurfaceCard v-if="activeTab === 'deployments'" as="div">
+    <div v-if="activeTab === 'deployments'" class="workload-table-region">
       <div v-if="deployments.length === 0" class="empty-state">
         <span class="empty-icon">⬡</span><span class="empty-text">暂无 Deployment</span>
       </div>
       <div v-else class="table-wrap">
-        <table class="data-table">
+        <table class="data-table deployment-table">
+          <colgroup><col class="deployment-name-column" /><col class="deployment-namespace-column" /><col class="deployment-replicas-column" /><col class="deployment-image-column" /><col class="deployment-mounts-column" /><col class="deployment-cpu-column" /><col class="deployment-memory-column" /><col class="deployment-age-column" /><col class="deployment-actions-column" /></colgroup>
           <thead><tr><th>名称</th><th>命名空间</th><th>副本</th><th>镜像</th><th>挂载</th><th>CPU</th><th>内存</th><th>年龄</th><th></th></tr></thead>
           <tbody>
             <template v-for="d in safeDeployments" :key="d.namespace + '/' + d.name">
               <tr @click="toggleDeployExpand(d)" class="clickable">
-                <td class="cell-primary">{{ d.name }}</td><td>{{ d.namespace }}</td>
+                <td class="cell-primary"><OverflowTooltip :text="d.name" /></td><td><OverflowTooltip :text="d.namespace" /></td>
                 <td><span :class="d.ready === d.replicas ? 'status-success' : 'status-warning'">{{ d.ready }}/{{ d.replicas }}</span></td>
-                <td>{{ d.images?.[0] || '-' }}</td>
-                <td><div v-if="d.volume_mounts?.length" class="volume-mount-list"><span v-for="mount in d.volume_mounts" :key="`${mount.claim_name}-${mount.mount_path}`" class="volume-mount">{{ mount.claim_name }} -> {{ mount.mount_path }}</span></div><span v-else>-</span></td>
+                <td><OverflowTooltip class="deployment-image" :text="d.images?.[0] || '-'" /></td>
+                <td><OverflowTooltip class="deployment-mounts" :text="formatVolumeMounts(d.volume_mounts)" /></td>
                 <td>{{ d.cpu || '-' }}</td><td>{{ d.memory || '-' }}</td><td>{{ d.age }}</td>
                 <td>
-                  <div class="btn-group action-cell" @click.stop>
+                  <div class="btn-group action-cell deployment-row-actions" @click.stop>
                     <button class="btn btn-sm" @click="openScaleDialog(d)">扩缩</button>
                     <button class="btn btn-sm" @click="openImageDialog(d)">镜像</button>
                     <button class="btn btn-sm" @click="openRollbackDialog(d)">回滚</button>
@@ -50,18 +53,10 @@
           </tbody>
         </table>
       </div>
-    </SurfaceCard>
+    </div>
 
     <!-- Pods -->
-    <SurfaceCard v-if="activeTab === 'pods'" as="div">
-      <div class="pod-list-header">
-        <div><h2>Pod 实例</h2><p>查看实例运行状态、所在服务器与重启情况</p></div>
-        <div class="pod-list-tools">
-          <label class="pod-search"><Search :size="16" /><span class="sr-only">搜索 Pod 名称</span><input v-model.trim="podNameFilter" placeholder="搜索 Pod 名称" aria-label="搜索 Pod 名称" /></label>
-          <button :class="['btn btn-sm pod-filter-trigger', { 'is-active': podFiltersOpen || hasPodFilters }]" :aria-expanded="podFiltersOpen" @click="podFiltersOpen = !podFiltersOpen"><Filter :size="15" />筛选<span v-if="activePodFilterCount" class="filter-count">{{ activePodFilterCount }}</span></button>
-          <button v-if="hasPodFilters" class="icon-button" title="重置 Pod 筛选" aria-label="重置 Pod 筛选" @click="resetPodFilters"><RotateCcw :size="15" /></button>
-        </div>
-      </div>
+    <div v-if="activeTab === 'pods'" class="workload-table-region">
       <div v-if="podFiltersOpen" class="pod-filter-panel">
         <div class="filter-control">
           <label class="form-label" for="pod-filter-namespace">命名空间</label>
@@ -85,7 +80,6 @@
         <button v-if="podNameFilter" class="filter-chip" @click="clearPodFilter('name')">名称: {{ podNameFilter }}<X :size="13" /></button>
         <button v-if="podRestartsOnly" class="filter-chip" @click="clearPodFilter('restarts')">已重启<X :size="13" /></button>
       </div>
-      <div v-if="pods.length > 0" class="pod-result-summary">显示 <strong>{{ safePods.length }}</strong> / {{ pods.length }} 个 Pod</div>
       <div v-if="pods.length === 0" class="empty-state">
         <span class="empty-icon">⬡</span><span class="empty-text">暂无 Pod</span>
       </div>
@@ -111,12 +105,12 @@
           </tbody>
         </table>
       </div>
-    </SurfaceCard>
+    </div>
 
     <PodTerminal v-if="terminalPod" :pod="terminalPod" @close="terminalPod = null" />
 
     <!-- StatefulSets -->
-    <SurfaceCard v-if="activeTab === 'statefulsets'" as="div">
+    <div v-if="activeTab === 'statefulsets'" class="workload-table-region">
       <div v-if="statefulsets.length === 0" class="empty-state">
         <span class="empty-icon">⬡</span><span class="empty-text">暂无 StatefulSet</span>
       </div>
@@ -142,10 +136,10 @@
           </tbody>
         </table>
       </div>
-    </SurfaceCard>
+    </div>
 
     <!-- DaemonSets -->
-    <SurfaceCard v-if="activeTab === 'daemonsets'" as="div">
+    <div v-if="activeTab === 'daemonsets'" class="workload-table-region">
       <div v-if="daemonsets.length === 0" class="empty-state">
         <span class="empty-icon">⬡</span><span class="empty-text">暂无 DaemonSet</span>
       </div>
@@ -161,6 +155,7 @@
           </tbody>
         </table>
       </div>
+    </div>
     </SurfaceCard>
 
     <!-- Scale Dialog -->
@@ -201,9 +196,11 @@
 
 <script setup>
 import { computed, ref, onMounted, onErrorCaptured } from 'vue'
-import { Box, Database, Filter, Layers3, Network, RefreshCw, RotateCcw, Search, SquareTerminal, X } from 'lucide-vue-next'
+import { Filter, RefreshCw, RotateCcw, Search, SquareTerminal, X } from 'lucide-vue-next'
 import { getWorkloadDaemonSets, getWorkloadDeploymentPods, getWorkloadDeploymentRevisions, getWorkloadDeployments, getWorkloadPods, getWorkloadServers, getWorkloadStatefulSets, rollbackWorkload, scaleWorkload, updateWorkloadImage } from '../../api/kubernetes.js'
 import { useAsyncResource } from '../../composables/useAsyncResource.js'
+import OverflowTooltip from '../../components/OverflowTooltip.vue'
+import SelectMenu from '../../components/SelectMenu.vue'
 import SurfaceCard from '../../components/SurfaceCard.vue'
 import PodTerminal from './PodTerminal.vue'
 
@@ -248,6 +245,12 @@ const rollbackDialog = ref(null)
 const safeDeployments = computed(() => (deployments.value || []).filter(d => d != null))
 const safeStatefulsets = computed(() => (statefulsets.value || []).filter(s => s != null))
 const safeDaemonsets = computed(() => (daemonsets.value || []).filter(d => d != null))
+const workloadTypeOptions = computed(() => [
+  { value: 'pods', label: `Pods（${pods.value.length}）` },
+  { value: 'deployments', label: `Deployments（${deployments.value.length}）` },
+  { value: 'statefulsets', label: `StatefulSets（${statefulsets.value.length}）` },
+  { value: 'daemonsets', label: `DaemonSets（${daemonsets.value.length}）` },
+])
 const serverNamesByNode = computed(() => new Map(
   (servers.value || [])
     .filter(server => server?.k8s_node_name && server?.name)
@@ -309,6 +312,11 @@ function displayServerName(nodeName) {
 
 function hasMappedServer(nodeName) {
   return Boolean(nodeName && serverNamesByNode.value.has(nodeName.toLowerCase()))
+}
+
+function formatVolumeMounts(mounts) {
+  if (!mounts?.length) return '-'
+  return mounts.map(mount => `${mount.claim_name} -> ${mount.mount_path}`).join('；')
 }
 
 function podStatusClass(status) {
@@ -439,23 +447,27 @@ function openStsScaleDialog(s) {
 </script>
 
 <style scoped>
-.page-header { align-items: center; }
-.resource-switcher { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; padding-bottom: var(--space-16); border-bottom: 1px solid var(--border-muted); }
-.resource-tab { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; min-height: 64px; padding: 10px 12px; border: 1px solid transparent; border-radius: var(--radius-control); background: transparent; color: var(--text-secondary); text-align: left; cursor: pointer; transition: background .18s ease, border-color .18s ease, color .18s ease; }
-.resource-tab:hover { background: var(--surface-subtle); color: var(--text-primary); }.resource-tab-active { border-color: var(--border); background: var(--surface-raised); color: var(--action-primary); box-shadow: var(--shadow-soft); }.resource-tab span { display: grid; gap: 3px; min-width: 0; font-size: 12px; font-weight: 700; }.resource-tab small { overflow: hidden; color: var(--text-muted); font-size: 10px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }.resource-tab strong { display: grid; min-width: 24px; min-height: 24px; place-items: center; border-radius: 50%; background: var(--surface-subtle); color: var(--text-secondary); font: 11px/1 var(--font-mono); }.resource-tab-active strong { background: var(--action-primary); color: var(--action-contrast); }
+.workloads-card { margin-top: var(--space-20); }
+.workloads-toolbar { display: flex; align-items: center; justify-content: space-between; gap: var(--space-16); margin-bottom: var(--space-16); }
+.workload-type-select { width: min(250px, 100%); }
+.workloads-toolbar-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin-left: auto; }
+.deployment-table { min-width: 1250px; table-layout: fixed; }
+.deployment-name-column { width: 170px; }.deployment-namespace-column { width: 130px; }.deployment-replicas-column { width: 70px; }.deployment-image-column { width: 330px; }.deployment-mounts-column { width: 210px; }.deployment-cpu-column { width: 55px; }.deployment-memory-column { width: 60px; }.deployment-age-column { width: 65px; }.deployment-actions-column { width: 160px; }
+.deployment-table td { white-space: nowrap; }
+.deployment-image, .deployment-mounts { font: 11px/1.45 var(--font-mono); }
+.deployment-row-actions { min-width: 160px; flex-wrap: nowrap; }
 .clickable { cursor: pointer; }
 .pod-row td { padding: 4px 12px; border-bottom: 0; background: var(--surface-subtle); }
 .pod-subrow { display: flex; align-items: center; gap: 8px; padding: 6px 0; font-size: 11px; color: var(--text-secondary); }
 .pod-subrow .badge { font-size: 9px; }
 .node-name { display: block; margin-top: 3px; color: var(--text-muted); font-size: 10px; font-family: var(--font-mono); }
-.pod-list-header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-16); margin-bottom: var(--space-16); }.pod-list-header h2 { margin: 0; color: var(--text-primary); font-size: 15px; }.pod-list-header p { margin: 5px 0 0; color: var(--text-secondary); font-size: 12px; }.pod-list-tools { display: flex; align-items: center; gap: 8px; }.pod-search { display: flex; width: min(260px, 28vw); min-width: 180px; align-items: center; gap: 8px; min-height: 34px; padding: 0 10px; border: 1px solid var(--border-muted); border-radius: var(--radius-control); background: var(--surface-input); color: var(--text-muted); }.pod-search:focus-within { border-color: var(--focus); outline: 2px solid var(--focus); outline-offset: 2px; }.pod-search input { width: 100%; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--text-primary); font: inherit; font-size: 12px; }.pod-search input::placeholder { color: var(--text-muted); }.pod-filter-trigger { gap: 5px; }.pod-filter-trigger.is-active { border-color: var(--action-primary); color: var(--action-primary); }.filter-count { display: grid; min-width: 16px; height: 16px; place-items: center; border-radius: 50%; background: var(--action-primary); color: var(--action-contrast); font: 9px/1 var(--font-mono); }
-.pod-filter-panel { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) auto; align-items: end; gap: var(--space-12); margin-bottom: var(--space-12); padding: var(--space-16); border: 1px solid var(--border-muted); border-radius: var(--radius-control); background: var(--surface-subtle); }.pod-filter-panel .form-label { margin-bottom: 6px; }.pod-restarts-filter { min-height: 38px; white-space: nowrap; }.active-filters { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-bottom: var(--space-12); color: var(--text-muted); font-size: 11px; }.filter-chip { display: inline-flex; align-items: center; gap: 4px; padding: 4px 6px 4px 8px; border: 1px solid var(--border-muted); border-radius: var(--radius-control); background: var(--surface-subtle); color: var(--text-secondary); font-size: 11px; cursor: pointer; }.filter-chip:hover { border-color: var(--action-primary); color: var(--action-primary); }.pod-result-summary { margin-bottom: var(--space-8); color: var(--text-muted); font-size: 11px; }.pod-result-summary strong { color: var(--text-secondary); font-family: var(--font-mono); }
+.pod-search { display: flex; width: min(260px, 28vw); min-width: 180px; align-items: center; gap: 8px; min-height: 34px; padding: 0 10px; border: 1px solid var(--border-muted); border-radius: var(--radius-control); background: var(--surface-input); color: var(--text-muted); }.pod-search:focus-within { border-color: var(--focus); outline: 2px solid var(--focus); outline-offset: 2px; }.pod-search input { width: 100%; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--text-primary); font: inherit; font-size: 12px; }.pod-search input::placeholder { color: var(--text-muted); }.pod-filter-trigger { gap: 5px; }.pod-filter-trigger.is-active { border-color: var(--action-primary); color: var(--action-primary); }.filter-count { display: grid; min-width: 16px; height: 16px; place-items: center; border-radius: 50%; background: var(--action-primary); color: var(--action-contrast); font: 9px/1 var(--font-mono); }
+.pod-filter-panel { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) auto; align-items: end; gap: var(--space-12); margin-bottom: var(--space-12); padding: var(--space-16); border: 1px solid var(--border-muted); border-radius: var(--radius-control); background: var(--surface-subtle); }.pod-filter-panel .form-label { margin-bottom: 6px; }.pod-restarts-filter { min-height: 38px; white-space: nowrap; }.active-filters { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-bottom: var(--space-12); color: var(--text-muted); font-size: 11px; }.filter-chip { display: inline-flex; align-items: center; gap: 4px; padding: 4px 6px 4px 8px; border: 1px solid var(--border-muted); border-radius: var(--radius-control); background: var(--surface-subtle); color: var(--text-secondary); font-size: 11px; cursor: pointer; }.filter-chip:hover { border-color: var(--action-primary); color: var(--action-primary); }
 .pod-filter-empty { min-height: 150px; }
 .pod-list-row .cell-primary small { display: block; margin-top: 3px; color: var(--text-muted); font: 10px/1 var(--font-mono); }.server-name { color: var(--text-primary); font-weight: 600; }.restart-warning { color: var(--warning); font-weight: 700; }.pod-terminal-action { width: 30px; height: 30px; }.is-spinning { animation: spin .8s linear infinite; }@keyframes spin { to { transform: rotate(360deg); } }.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
-.volume-mount-list { display: grid; gap: 4px; min-width: 180px; max-width: 300px; }.volume-mount { overflow-wrap: anywhere; color: var(--text-secondary); font: 11px/1.45 var(--font-mono); }
 .modal-overlay { position: fixed; z-index: 200; inset: 0; display: flex; align-items: center; justify-content: center; background: var(--overlay); backdrop-filter: blur(3px); }
 .modal { min-width: 380px; max-width: 520px; padding: var(--space-20); border: 1px solid var(--border); border-radius: var(--radius-panel); background: var(--surface-raised); box-shadow: var(--shadow); }
 .modal-body h3 { margin: 0 0 var(--space-12); color: var(--text-primary); font-size: 15px; }
-@media (max-width: 780px) { .resource-switcher { grid-template-columns: repeat(2, minmax(0, 1fr)); }.pod-list-header { align-items: stretch; flex-direction: column; }.pod-list-tools { flex-wrap: wrap; }.pod-search { width: 100%; max-width: none; }.pod-filter-panel { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-@media (max-width: 640px) { .resource-tab { min-height: 54px; gap: 7px; padding: 8px; }.resource-tab small { display: none; }.pod-filter-panel { grid-template-columns: 1fr; }.pod-restarts-filter { min-height: auto; } }
+@media (max-width: 780px) { .workloads-toolbar { align-items: stretch; flex-direction: column; }.workloads-toolbar-actions { flex-wrap: wrap; margin-left: 0; }.pod-search { width: 100%; max-width: none; }.pod-filter-panel { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 640px) { .workloads-toolbar-actions { justify-content: stretch; }.pod-search { flex: 1 1 100%; }.pod-filter-panel { grid-template-columns: 1fr; }.pod-restarts-filter { min-height: auto; } }
 </style>

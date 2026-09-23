@@ -1,7 +1,5 @@
 <template>
   <section class="settings-section">
-    <WorkspaceHeader title="平台入口" description="管理域名、TLS 证书和 Ingress 现在集中在这里。" />
-
     <SurfaceCard class="platform-entry-card">
       <div class="platform-entry-table">
         <header class="platform-entry-table-header">
@@ -118,7 +116,6 @@ import { adoptPlatformIngress as adoptPlatformIngressRequest, getPlatformCertifi
 import { useAsyncResource } from '../../composables/useAsyncResource.js'
 import { formatDateTime } from '../../utils/formatters.js'
 import SurfaceCard from '../../components/SurfaceCard.vue'
-import WorkspaceHeader from '../../components/WorkspaceHeader.vue'
 
 const platformEndpoint = ref({ endpoint: {}, state: 'not_configured', ingress_ready: false })
 const endpointForm = ref({ hostname: '', certificate_name: '' })

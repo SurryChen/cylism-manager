@@ -9,7 +9,6 @@
       </template>
     </SectionTabsHeader>
     <FeedbackBanner v-if="error" tone="warning" :message="error" class="page-error" />
-    <WorkspaceHeader title="审计记录" description="查看平台关键操作及其执行结果。" />
 
     <SurfaceCard class="audit-card" padding="none">
       <div class="audit-table-toolbar">
@@ -27,8 +26,8 @@
             <span class="sr-only">资源</span>
             <SelectMenu v-model="filterType" :options="resourceOptions" placeholder="全部资源" aria-label="资源" />
           </label>
-          <button class="btn btn-sm audit-filter-trigger" :class="{ 'is-active': advancedOpen || activeAdvancedCount }" type="button" data-testid="audit-open-filters" :aria-expanded="advancedOpen" @click="openAdvancedFilters"><Filter :size="15" />筛选<span v-if="activeAdvancedCount" class="filter-count">{{ activeAdvancedCount }}</span></button>
-          <button data-testid="audit-apply-filters" class="btn btn-sm btn-primary" type="button" @click="applyFilters">应用</button>
+          <button class="btn audit-filter-trigger" :class="{ 'is-active': advancedOpen || activeAdvancedCount }" type="button" data-testid="audit-open-filters" :aria-expanded="advancedOpen" @click="openAdvancedFilters"><Filter :size="15" />筛选<span v-if="activeAdvancedCount" class="filter-count">{{ activeAdvancedCount }}</span></button>
+          <button data-testid="audit-apply-filters" class="btn btn-primary" type="button" @click="applyFilters">应用</button>
           <button data-testid="audit-reset-filters" class="icon-button audit-reset" type="button" title="重置筛选" aria-label="重置筛选" @click="resetFilters"><RotateCcw :size="15" /></button>
         </div>
         <div v-if="activeFilters.length" class="active-filters audit-active-filters">
@@ -136,7 +135,6 @@ import FeedbackBanner from '../components/FeedbackBanner.vue'
 import SectionTabsHeader from '../components/SectionTabsHeader.vue'
 import SelectMenu from '../components/SelectMenu.vue'
 import SurfaceCard from '../components/SurfaceCard.vue'
-import WorkspaceHeader from '../components/WorkspaceHeader.vue'
 import { formatShortDateTime as formatTime } from '../utils/formatters.js'
 
 const pageSize = 20
@@ -351,7 +349,7 @@ function formatDetailValue(value) {
 <style scoped>
 .audit-page {
   display: grid;
-  gap: var(--space-4);
+  gap: var(--tabbed-page-content-gap);
 }
 
 /* Keep labels available to assistive technology without adding visual layout noise. */
@@ -399,10 +397,10 @@ function formatDetailValue(value) {
   padding: 14px var(--space-20);
 }
 
-.audit-primary-filters { display: grid; grid-template-columns: minmax(220px, 1fr) 130px 150px auto auto 34px; gap: 8px; align-items: center; }
-.audit-search-field { display: flex; min-width: 0; align-items: center; gap: 8px; min-height: 36px; padding: 0 10px; border-radius: var(--radius-control); background: transparent; color: var(--text-muted); }
+.audit-primary-filters { display: grid; grid-template-columns: minmax(220px, 1fr) 130px 150px auto auto var(--button-height); gap: 8px; align-items: center; }
+.audit-search-field { display: flex; min-width: 0; align-items: center; gap: 8px; min-height: var(--button-height); padding: 0 10px; border-radius: var(--radius-control); background: transparent; color: var(--text-muted); }
 .audit-search-field:focus-within { color: var(--action-primary); }
-.audit-search-field .audit-search { flex: 1; min-width: 0; min-height: 36px; padding: 7px 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; outline: 0; }
+.audit-search-field .audit-search { flex: 1; min-width: 0; min-height: var(--button-height); padding: 7px 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; outline: 0; }
 .audit-search-field .audit-search:focus, .audit-search-field .audit-search:focus-visible { box-shadow: none; outline: 0; }
 
 .audit-filter-group {
@@ -417,12 +415,12 @@ function formatDetailValue(value) {
   border-radius: 10px;
 }
 
-.audit-filter-group :deep(.select-menu-trigger) { min-height: 36px; }
+.audit-filter-group :deep(.select-menu-trigger) { min-height: var(--button-height); }
 
 .audit-filter-trigger { display: inline-flex; align-items: center; justify-content: center; gap: 6px; white-space: nowrap; }
 .audit-filter-trigger.is-active { border-color: var(--action-primary); color: var(--action-primary); }
 .filter-count { display: inline-grid; min-width: 17px; height: 17px; place-items: center; padding: 0 4px; border-radius: 99px; background: var(--action-primary); color: var(--surface); font-size: 10px; }
-.audit-reset { width: 34px; height: 34px; }
+.audit-reset { width: var(--button-height); height: var(--button-height); }
 .audit-active-filters { margin: 10px 0 0; }
 .active-filters-label { color: var(--text-muted); font-size: 11px; }
 .audit-card > .empty-state { padding: var(--space-24); }
@@ -515,7 +513,7 @@ function formatDetailValue(value) {
     flex-direction: column;
   }
 
-  .audit-primary-filters { grid-template-columns: minmax(0, 1fr) 34px; }
+  .audit-primary-filters { grid-template-columns: minmax(0, 1fr) var(--button-height); }
   .audit-search-field { grid-column: 1 / -1; }
   .audit-primary-filters .audit-filter-group { min-width: 0; }
   .audit-primary-filters .audit-filter-trigger { grid-column: 1; }

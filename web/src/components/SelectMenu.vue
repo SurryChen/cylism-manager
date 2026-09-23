@@ -117,7 +117,7 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocumentClick))
 
 <style scoped>
 .select-menu { position: relative; min-width: 0; }
-.select-menu-trigger { display: flex; width: 100%; min-height: 36px; align-items: center; justify-content: space-between; gap: 8px; padding: 7px 10px; border: 1px solid var(--border-muted); border-radius: var(--radius-control); background: var(--surface-input); color: var(--text-primary); font: inherit; font-size: 12px; text-align: left; cursor: pointer; transition: border-color .18s ease, background .18s ease, box-shadow .18s ease; }
+.select-menu-trigger { display: flex; width: 100%; min-height: var(--button-height); align-items: center; justify-content: space-between; gap: 8px; padding: 7px 10px; border: 1px solid var(--border-muted); border-radius: var(--radius-control); background: var(--surface-input); color: var(--text-primary); font: inherit; font-size: 12px; text-align: left; cursor: pointer; transition: border-color .18s ease, background .18s ease, box-shadow .18s ease; }
 .select-menu-trigger:hover { border-color: var(--action-primary); background: var(--surface-hover); }
 .select-menu-trigger:focus-visible, .select-menu.is-open .select-menu-trigger { outline: 2px solid var(--focus); outline-offset: 1px; border-color: var(--action-primary); }
 .select-menu-trigger svg { flex: 0 0 auto; color: var(--text-muted); transition: transform .18s ease; }

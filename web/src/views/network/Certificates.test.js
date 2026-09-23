@@ -32,20 +32,24 @@ describe('Certificates view', () => {
     api.delete.mockResolvedValue({})
   })
 
-  it('shows issuer operations and DNS provider status', async () => {
+  it('keeps issuance configuration out of the certificate list until requested', async () => {
     const wrapper = mount(Certificates)
     await settle()
 
     expect(wrapper.text()).toContain('api-example-tls')
+    expect(wrapper.text()).not.toContain('broken-issuer')
+    await wrapper.get('[data-testid="open-issuance-config"]').trigger('click')
     expect(wrapper.text()).toContain('letsencrypt-dns')
+    expect(wrapper.text()).toContain('broken-issuer')
     expect(wrapper.text()).toContain('不可用')
+    await wrapper.get('[role="tab"]:nth-child(3)').trigger('click')
     expect(wrapper.text()).toContain('阿里云 DNS')
   })
 
   it('creates a certificate with the selected issuer reference and kind', async () => {
     const wrapper = mount(Certificates)
     await settle()
-    await wrapper.get('.page-header .btn-primary').trigger('click')
+    await wrapper.get('[data-testid="add-certificate"]').trigger('click')
     await wrapper.get('input[placeholder="my-cert"]').setValue('shop-cert')
     await wrapper.get('input[placeholder="default"]').setValue('production')
     await wrapper.get('input[placeholder="example.com,*.example.com"]').setValue('shop.example.com,*.shop.example.com')

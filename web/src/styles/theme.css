@@ -3,7 +3,7 @@
   --font-mono: "SFMono-Regular", Menlo, Monaco, Consolas, monospace;
   --space-4: 4px; --space-8: 8px; --space-12: 12px; --space-16: 16px; --space-20: 20px; --space-24: 24px; --space-32: 32px; --space-40: 40px;
   --radius-control: 8px; --radius-panel: 14px; --sidebar-width: 244px; --shell-gap: 18px; --shell-padding: 16px; --topbar-height: 62px;
-  --page-header-inline-gap: var(--space-16); --page-header-height: 64px; --page-header-title-size: 25px; --page-header-content-offset: var(--space-16); --tabbed-page-header-height: var(--page-header-height); --tabbed-page-header-title-size: var(--page-header-title-size); --tabbed-page-header-content-offset: var(--page-header-content-offset); --page-header-motion-duration: 180ms; --table-header-font-size: 10px; --button-height: 36px; --button-font-size: 12px; --button-padding: 8px 12px;
+  --page-header-inline-gap: var(--space-16); --page-header-height: 64px; --page-header-title-size: 25px; --page-header-content-offset: var(--space-16); --tabbed-page-header-height: var(--page-header-height); --tabbed-page-header-title-size: var(--page-header-title-size); --tabbed-page-header-content-offset: var(--page-header-content-offset); --tabbed-page-content-gap: var(--space-4); --page-header-motion-duration: 180ms; --table-header-font-size: 10px; --button-height: 36px; --table-action-icon-button-size: 28px; --button-font-size: 12px; --button-padding: 8px 12px;
   --terminal-background: #ffffff; --terminal-foreground: #17212b; --terminal-cursor: #1769aa; --terminal-selection: #cfe4f8;
 }
 
@@ -37,3 +37,5 @@
 @media (max-width: 840px) { .app-workspace { width: 100%; min-width: 0; max-width: 100%; overflow-x: clip; }.app-content { width: 100%; min-width: 0; max-width: 100%; overflow-x: clip; } }
 
 .sidebar-link { transition: background .18s ease, color .18s ease, border-color .18s ease, transform .18s ease, box-shadow .18s ease; }
+.icon-button { width: var(--button-height); height: var(--button-height); }
+.icon-button--table { width: var(--table-action-icon-button-size); height: var(--table-action-icon-button-size); border-radius: var(--radius-control); }

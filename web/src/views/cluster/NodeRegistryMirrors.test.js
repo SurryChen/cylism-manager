@@ -49,6 +49,16 @@ describe('Node registry mirrors view', () => {
     wrapper.unmount()
   })
 
+  it('presents a loading failure in the shared error dialog', async () => {
+    api.get.mockImplementation(path => path === '/servers' ? Promise.resolve([]) : Promise.reject(new Error('镜像源读取失败')))
+    const wrapper = mount(NodeRegistryMirrors)
+    await settle()
+
+    expect(wrapper.get('[role="dialog"]').text()).toContain('镜像源读取失败')
+    expect(wrapper.find('.k8s-banner').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
   it('keeps mirror table rows compact and exposes long values on hover', async () => {
     const wrapper = mount(NodeRegistryMirrors)
     await settle()

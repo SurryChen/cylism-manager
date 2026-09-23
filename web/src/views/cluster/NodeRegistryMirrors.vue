@@ -1,23 +1,13 @@
 <template>
   <div>
-    <div class="page-header">
-      <div>
-        <h1 class="page-title">节点镜像源</h1>
-        <p class="page-subtitle">管理期望的 K3s 镜像规则，按需检查节点当前配置</p>
-      </div>
-    </div>
-
-    <div v-if="mirrorError" class="k8s-banner k8s-banner-warn section-gap">{{ mirrorError }}</div>
-    <div v-if="serverError" class="k8s-banner k8s-banner-warn section-gap">{{ serverError }}</div>
-    <div v-if="pollingError" class="k8s-banner k8s-banner-warn section-gap">{{ pollingError }}</div>
-    <div v-if="mutationError" class="k8s-banner k8s-banner-warn section-gap">{{ mutationError }}</div>
-
-    <SurfaceCard as="section" class="rule-workspace section-gap" data-testid="node-registry-mirror-workspace" aria-labelledby="mirror-rules-heading">
-      <template #header><div class="mirror-rules-heading"><h2 id="mirror-rules-heading">镜像源规则</h2><p>下发时会将全部已启用规则写入选定节点，并重启对应 K3s 服务。</p></div></template>
+    <TabbedWorkspaceCard class="rule-workspace" data-testid="node-registry-mirror-workspace">
+      <template #meta><span>{{ enabledMirrorCount }} 条已启用规则</span></template>
       <template #actions><div class="btn-group workspace-actions"><button class="btn" data-testid="open-node-config" @click="openNodeConfig">查看节点配置</button><a class="btn proxy-management-link" href="#/delivery/registry?tab=registry-proxy">管理 Registry Proxy</a><button class="btn btn-primary" @click="openCreate">+ 新建镜像源</button></div></template>
       <div v-if="loaded && mirrors.length" class="table-wrap"><table class="data-table mirror-rule-list"><colgroup><col class="mirror-name-column" /><col class="mirror-registry-column" /><col class="mirror-endpoint-column" /><col class="mirror-verify-column" /><col class="mirror-status-column" /><col class="mirror-apply-column" /><col class="mirror-actions-column" /></colgroup><thead><tr><th>名称</th><th>Registry</th><th>镜像地址</th><th>验证状态</th><th>状态</th><th>最近应用</th><th>操作</th></tr></thead><tbody><tr v-for="mirror in mirrors" :key="mirror.id"><td class="cell-primary"><span class="mirror-cell-truncate mirror-name" tabindex="0" :aria-label="mirrorNameTooltip(mirror)" @mouseenter="showMirrorTooltip(mirrorNameTooltip(mirror), $event)" @mousemove="moveMirrorTooltip" @mouseleave="hideMirrorTooltip" @focus="showMirrorTooltip(mirrorNameTooltip(mirror), $event)" @blur="hideMirrorTooltip">{{ mirror.name }}</span></td><td><span class="mirror-cell-truncate mirror-registry" tabindex="0" :aria-label="mirror.registry" @mouseenter="showMirrorTooltip(mirror.registry, $event)" @mousemove="moveMirrorTooltip" @mouseleave="hideMirrorTooltip" @focus="showMirrorTooltip(mirror.registry, $event)" @blur="hideMirrorTooltip">{{ mirror.registry }}</span></td><td><span class="mirror-cell-truncate mirror-endpoints" tabindex="0" :aria-label="endpointText(mirror)" @mouseenter="showMirrorTooltip(endpointText(mirror), $event)" @mousemove="moveMirrorTooltip" @mouseleave="hideMirrorTooltip" @focus="showMirrorTooltip(endpointText(mirror), $event)" @blur="hideMirrorTooltip">{{ endpointText(mirror) }}</span></td><td><span class="badge" :class="verificationClass(mirror.last_verify_status)">{{ verificationLabel(mirror.last_verify_status) }}</span></td><td><span class="badge" :class="mirror.enabled ? 'badge-online' : 'badge-offline'">{{ mirror.enabled ? '已启用' : '已停用' }}</span></td><td><button v-if="mirror.node_statuses?.length" class="btn btn-sm" @click="openApplyRecords(mirror)">查看记录</button><span v-else>-</span></td><td><div class="row-actions"><button class="btn btn-sm" :data-testid="`verify-node-registry-mirror-${mirror.id}`" :disabled="verifyingID === mirror.id" @click="verifyMirror(mirror)">{{ verifyingID === mirror.id ? '检测中...' : '检测' }}</button><button class="btn btn-sm btn-primary" :data-testid="`apply-node-registry-mirror-${mirror.id}`" :disabled="isApplying(mirror.id)" @click="openApply(mirror)">{{ isApplying(mirror.id) ? '应用中...' : '选择节点应用' }}</button><button class="btn btn-sm" :data-testid="`edit-node-registry-mirror-${mirror.id}`" @click="openEdit(mirror)">编辑</button><button class="btn btn-sm btn-danger" @click="deleteTarget = mirror">删除</button></div></td></tr></tbody></table></div>
       <p v-else-if="loaded" class="empty-inline">还没有镜像规则。新建规则后，可选择节点下发。</p>
-    </SurfaceCard>
+    </TabbedWorkspaceCard>
+
+    <ErrorNoticeModal :open="Boolean(pageError)" :title="pageErrorTitle" :message="pageError" @close="dismissPageError" />
 
     <Teleport to="body"><div v-if="mirrorTooltip" class="mirror-value-tooltip" role="tooltip" :style="{ left: `${mirrorTooltip.x}px`, top: `${mirrorTooltip.y}px` }">{{ mirrorTooltip.text }}</div></Teleport>
 
@@ -102,7 +92,8 @@ import { getServers } from '../../api/servers.js'
 import { createNodeRegistryMirror, applyNodeRegistryMirror, deleteNodeRegistryMirror, getNodeRegistryMirrorApplyStatus, getNodeRegistryMirrors, inspectActualNodeRegistryConfiguration, restartNodeK3sService, updateNodeRegistryMirror, verifyNodeRegistryMirror } from '../../api/node-registry-mirrors.js'
 import { useAsyncResource } from '../../composables/useAsyncResource.js'
 import { usePolling } from '../../composables/usePolling.js'
-import SurfaceCard from '../../components/SurfaceCard.vue'
+import ErrorNoticeModal from '../../components/ErrorNoticeModal.vue'
+import TabbedWorkspaceCard from '../../components/TabbedWorkspaceCard.vue'
 
 const mirrors = ref([])
 const loaded = ref(false)
@@ -128,6 +119,13 @@ const detailNode = ref(null)
 const nodeConfigOpen = ref(false)
 const selectedConfigServerID = ref(0)
 const restartTarget = ref(null)
+const pageError = computed(() => mutationError.value || pollingError.value || serverError.value || mirrorError.value)
+const pageErrorTitle = computed(() => {
+  if (mutationError.value) return '镜像源操作失败'
+  if (pollingError.value) return '读取应用进度失败'
+  if (serverError.value) return '加载集群节点失败'
+  return '加载节点镜像源失败'
+})
 const restartingNode = ref(false)
 const recordsTarget = ref(null)
 const mirrorTooltip = ref(null)
@@ -154,6 +152,7 @@ const applyPolling = usePolling(async () => {
 }, { interval: 2000 })
 
 const clusterServers = computed(() => servers.value.filter(server => server.cluster_role))
+const enabledMirrorCount = computed(() => mirrors.value.filter(mirror => mirror.enabled).length)
 const inspectionTime = computed(() => inspection.value?.inspected_at ? new Date(inspection.value.inspected_at).toLocaleString('zh-CN', { hour12: false }) : '')
 
 function blank() {
@@ -211,6 +210,13 @@ function applyStatusLabel(status) { return { pending: '等待中', applying: '�
 
 function isApplying(mirrorID) {
   return activeApplyIDs.value.includes(mirrorID)
+}
+
+function dismissPageError() {
+  if (mutationError.value) mutationError.value = ''
+  else if (pollingError.value) pollingError.value = ''
+  else if (serverError.value) serverError.value = ''
+  else mirrorError.value = ''
 }
 
 async function load() {
@@ -368,9 +374,8 @@ onBeforeUnmount(stopApplyPolling)
 </script>
 
 <style scoped>
-.page-header { display:flex; justify-content:space-between; gap:var(--space-16); }
 .proxy-management-link { text-decoration:none; }
-.mirror-rules-heading h2 { margin:0; font-size:17px; }.mirror-rules-heading p, .inspection-time { margin:5px 0 0; color:var(--text-muted); font-size:12px; }
+.inspection-time { margin:5px 0 0; color:var(--text-muted); font-size:12px; }
 .mirror-rule-list { min-width:1190px; table-layout:fixed; }.mirror-name-column { width:220px; }.mirror-registry-column { width:170px; }.mirror-endpoint-column { width:260px; }.mirror-verify-column { width:88px; }.mirror-status-column { width:78px; }.mirror-apply-column { width:96px; }.mirror-actions-column { width:278px; }.mirror-rule-list td { height:54px; padding-top:10px; padding-bottom:10px; vertical-align:middle; white-space:nowrap; }.mirror-cell-truncate { display:block; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; cursor:default; }.mirror-cell-truncate:focus-visible { outline:2px solid var(--focus); outline-offset:2px; }.mirror-value-tooltip { position:fixed; z-index:1500; max-width:min(420px,calc(100vw - 24px)); max-height:min(240px,calc(100vh - 24px)); overflow:auto; padding:9px 11px; border:1px solid var(--border); border-radius:var(--radius-control); background:var(--surface-raised); box-shadow:var(--shadow-soft); color:var(--text-primary); font-size:12px; line-height:1.5; pointer-events:none; white-space:pre-wrap; overflow-wrap:anywhere; }.row-actions { display:flex; flex-wrap:nowrap; align-items:center; gap:6px; white-space:nowrap; }
 .node-config-modal { width:min(800px,calc(100vw - 32px)); }.drawer-header { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }.drawer-header .modal-title { margin-bottom:4px; }.drawer-header p { margin:0; color:var(--text-secondary); font-size:12px; }.node-config-controls { display:flex; align-items:flex-end; gap:12px; margin:var(--space-16) 0; }.node-config-controls .form-group { flex:1; margin:0; }.node-observation-list { display:grid; gap:6px; margin-top:var(--space-12); }.node-observation-row { display:flex; width:100%; align-items:center; justify-content:space-between; gap:12px; padding:11px 12px; border:1px solid var(--border-muted); border-radius:var(--radius-control); background:var(--surface-subtle); color:var(--text-primary); font:inherit; text-align:left; cursor:pointer; }.node-observation-row:hover, .node-observation-row.selected { border-color:var(--focus); background:var(--surface-raised); }.node-observation-row > span:first-child { display:grid; min-width:0; gap:3px; }.node-observation-row small { overflow:hidden; color:var(--text-secondary); font-size:11px; text-overflow:ellipsis; white-space:nowrap; }.config-detail { margin-top:var(--space-16); padding-top:var(--space-16); border-top:1px solid var(--border-muted); }.config-detail-heading { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }.config-detail-heading h3 { margin:0; font-size:15px; }.config-detail-heading p { margin:4px 0 0; color:var(--text-secondary); font-size:12px; }.config-diff { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; margin-top:var(--space-16); }.config-diff h3 { margin:0 0 8px; font-size:13px; }.config-diff dl { margin:0; border-top:1px solid var(--border-muted); }.config-diff dl > div { padding:10px 0; border-bottom:1px solid var(--border-muted); }.config-diff dt { font-weight:600; overflow-wrap:anywhere; }.config-diff dd { display:grid; gap:4px; margin:5px 0 0; color:var(--text-secondary); font-size:12px; overflow-wrap:anywhere; }.config-diff small { color:var(--text-muted); }.empty-inline { color:var(--text-muted); font-size:13px; }.records-modal { width:min(560px,calc(100vw - 32px)); }.apply-record-list { display:grid; gap:0; border-top:1px solid var(--border-muted); }.apply-record-list > div { display:grid; grid-template-columns:minmax(120px,1fr) auto; gap:8px 12px; padding:12px 0; border-bottom:1px solid var(--border-muted); }.apply-record-list small { grid-column:1 / -1; color:var(--text-secondary); font-size:12px; overflow-wrap:anywhere; }
 .mirror-overlay { align-items: flex-start; overflow-y: auto; padding: 72px 16px 24px; }
@@ -383,5 +388,5 @@ onBeforeUnmount(stopApplyPolling)
 .node-option span { display:grid; gap:3px; min-width:0; }.node-option small { color:var(--text-secondary); font-size:11px; overflow-wrap:anywhere; }
 .form-hint, .confirm-copy { color:var(--text-muted); font-size:12px; }
 .check-row { display:flex; gap:8px; margin:12px 0; color:var(--text-secondary); font-size:13px; }
-@media (max-width:640px) { .page-header, .section-heading, .node-config-controls { flex-direction:column; align-items:stretch; } .rule-workspace :deep(.surface-card-header) { flex-direction:column; }.rule-workspace :deep(.surface-card-actions) { width:100%; }.workspace-actions { width:100%; }.workspace-actions .btn { flex:1; }.page-header .btn, .node-config-controls .btn { width:100%; }.config-diff { grid-template-columns:1fr; }.config-detail-heading { flex-direction:column; }.config-detail-heading .btn { width:100%; } }
+@media (max-width:640px) { .section-heading, .node-config-controls { flex-direction:column; align-items:stretch; }.workspace-actions { width:100%; }.workspace-actions .btn { flex:1; }.node-config-controls .btn { width:100%; }.config-diff { grid-template-columns:1fr; }.config-detail-heading { flex-direction:column; }.config-detail-heading .btn { width:100%; } }
 </style>

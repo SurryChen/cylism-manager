@@ -39,9 +39,18 @@ describe('SystemComponents', () => {
     expect(wrapper.text()).toContain('coredns')
     expect(wrapper.text()).toContain('traefik')
     expect(wrapper.text()).toContain('1/1 就绪')
-    expect(wrapper.text()).toContain('自动调度')
+    expect(wrapper.get('.system-component-table .badge-online').attributes('title')).toContain('自动调度')
     expect(wrapper.text()).not.toContain('发现同名 Deployment')
     expect(wrapper.text()).not.toContain('rancher/mirrored-coredns')
+  })
+
+  it('presents a loading failure in the shared error dialog', async () => {
+    apiMocks.get.mockRejectedValueOnce(new Error('系统组件读取失败'))
+    const wrapper = mount(SystemComponents)
+    await flushPromises()
+
+    expect(wrapper.get('[role="dialog"]').text()).toContain('系统组件读取失败')
+    expect(wrapper.find('.k8s-banner').exists()).toBe(false)
   })
 
   it('applies safe rollout baseline for coredns and saves', async () => {
@@ -83,15 +92,15 @@ describe('SystemComponents', () => {
     expect(apiMocks.post).toHaveBeenCalledWith('/system-components/coredns/revert')
   })
 
-  it('marks embedded servicelb as running and hides configuration', async () => {
+  it('marks embedded servicelb as running and disables configuration', async () => {
     apiMocks.get.mockResolvedValue([
       item({ chart_name: 'servicelb', deployment: null, deployment_error: 'deployments.apps "servicelb" not found', lb_active: true, controller_mode: 'embedded', capabilities: { configure: false, node_placement: false, rollout: false, restore: false } }),
     ])
     const wrapper = mount(SystemComponents)
     await flushPromises()
     expect(wrapper.text()).toContain('运行中')
-    expect(wrapper.text()).toContain('由 K3s 内置控制器提供')
-    expect(wrapper.findAll('button').some(button => button.text() === '配置')).toBe(false)
+    expect(wrapper.get('.mode-embedded').attributes('title')).toContain('由 K3s 内置控制器提供')
+    expect(wrapper.findAll('button').find(button => button.text() === '配置').attributes('disabled')).toBeDefined()
   })
 
   it('shows a warning when saved values did not take effect', async () => {
@@ -101,7 +110,7 @@ describe('SystemComponents', () => {
     const wrapper = mount(SystemComponents)
     await flushPromises()
     expect(wrapper.text()).toContain('已保存未生效')
-    expect(wrapper.text()).toContain('配置与实际状态不一致，请重新保存')
+    expect(wrapper.get('.badge-danger').attributes('title')).toContain('配置与实际状态不一致，请重新保存')
   })
 
   it('does not offer a generic double-replica baseline for an unsupported static component', async () => {
@@ -111,7 +120,7 @@ describe('SystemComponents', () => {
     const wrapper = mount(SystemComponents)
     await flushPromises()
     expect(wrapper.text()).toContain('K3s 静态组件')
-    expect(wrapper.text()).toContain('副本由 K3s 管理')
+    expect(wrapper.get('.badge-offline').attributes('title')).toContain('副本由 K3s 管理')
     await wrapper.findAll('button').find(button => button.text() === '配置').trigger('click')
     expect(wrapper.find('[data-testid="coredns-node-selector"]').exists()).toBe(false)
     expect(wrapper.findAll('.modal-actions button').some(button => button.text() === '高可用滚动基线')).toBe(false)
@@ -125,7 +134,7 @@ describe('SystemComponents', () => {
     await flushPromises()
     expect(wrapper.text()).toContain('待确认')
     expect(wrapper.text()).toContain('控制源未识别')
-    expect(wrapper.findAll('button').some(button => button.text() === '配置')).toBe(false)
+    expect(wrapper.findAll('button').find(button => button.text() === '配置').attributes('disabled')).toBeDefined()
   })
 
   it('does not call a HelmChart component uninstalled when its chart exists without an exact Deployment name', async () => {
@@ -206,7 +215,7 @@ describe('SystemComponents', () => {
     ])
     const wrapper = mount(SystemComponents)
     await flushPromises()
-    expect(wrapper.text()).toContain('读取超时 30m，等待生效')
+    expect(wrapper.get('.system-component-table td:nth-child(5) .badge').attributes('title')).toContain('读取超时 30m，等待生效')
     await wrapper.findAll('button').find(button => button.text() === '配置').trigger('click')
     expect(wrapper.find('[data-testid="traefik-read-timeout"]').exists()).toBe(true)
   })

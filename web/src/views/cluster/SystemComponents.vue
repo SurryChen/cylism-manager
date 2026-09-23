@@ -1,76 +1,61 @@
 <template>
   <div>
-    <div class="page-header">
-      <div>
-        <h1 class="page-title">系统组件</h1>
-        <p class="page-subtitle">依据集群实际控制源管理 K3s 内置组件，避免 Helm 与静态清单相互覆盖</p>
-      </div>
-      <button class="btn btn-primary" :disabled="loading" @click="load">刷新</button>
-    </div>
-
-    <div v-if="error" class="k8s-banner k8s-banner-warn section-gap">{{ error }}</div>
-    <div v-if="componentActionError" class="k8s-banner k8s-banner-warn section-gap">{{ componentActionError }}</div>
-
-    <SurfaceCard v-if="loaded" as="div" class="section-gap">
+    <TabbedWorkspaceCard v-if="loaded" class="system-component-workspace">
+      <template #actions>
+        <button class="icon-button" type="button" title="刷新系统组件" aria-label="刷新系统组件" :disabled="loading" @click="load">
+          <RefreshCw :size="16" :class="{ 'is-spinning': loading }" />
+        </button>
+      </template>
       <div class="table-wrap">
         <table class="data-table system-component-table">
           <thead>
-            <tr><th>组件</th><th>控制方式</th><th>运行状态</th><th>配置</th><th>操作</th></tr>
+            <tr><th>组件</th><th>命名空间</th><th>控制方式</th><th>运行状态</th><th>配置状态</th><th>操作</th></tr>
           </thead>
           <tbody>
             <tr v-for="item in items" :key="item.chart_name">
+              <td class="cell-primary">{{ item.chart_name }}</td>
+              <td>{{ item.namespace }}</td>
               <td>
-                <strong class="cell-primary">{{ item.chart_name }}</strong>
-                <small class="cell-secondary">{{ item.namespace }}</small>
-              </td>
-              <td>
-                <span class="mode-label" :class="`mode-${item.controller_mode || 'unknown'}`">{{ controllerModeText(item.controller_mode) }}</span>
-                <small v-if="isEmbedded(item)" class="cell-secondary">由 K3s 内置控制器提供</small>
+                <span class="mode-label" :class="`mode-${item.controller_mode || 'unknown'}`" :title="controllerModeDetail(item)">{{ controllerModeText(item.controller_mode) }}</span>
               </td>
               <td>
                 <template v-if="item.deployment">
-                  <span class="badge" :class="deploymentReady(item) ? 'badge-online' : 'badge-offline'">
+                  <span class="badge" :class="deploymentReady(item) ? 'badge-online' : 'badge-offline'" :title="runtimeDetail(item)">
                     {{ item.deployment.ready_replicas }}/{{ item.deployment.replicas }} 就绪
                   </span>
-                  <small v-if="item.deployment.fixed_node" class="cell-secondary">固定节点：{{ item.deployment.fixed_node }}</small>
-                  <small v-else-if="isStatic(item)" class="cell-secondary">自动调度</small>
                 </template>
                 <template v-else-if="item.workload">
-                  <span class="badge" :class="workloadReady(item) ? 'badge-online' : 'badge-offline'">
+                  <span class="badge" :class="workloadReady(item) ? 'badge-online' : 'badge-offline'" :title="runtimeDetail(item)">
                     {{ item.workload.ready }}/{{ item.workload.desired }} 就绪
                   </span>
-                  <small class="cell-secondary">{{ item.workload.kind }}：{{ item.workload.name }}</small>
                 </template>
                 <template v-else-if="item.controller_mode === 'helm_chart'">
-                  <span class="badge" :class="item.chart_failed ? 'badge-danger' : item.chart_ready ? 'badge-online' : 'badge-warn'">
+                  <span class="badge" :class="item.chart_failed ? 'badge-danger' : item.chart_ready ? 'badge-online' : 'badge-warn'" :title="runtimeDetail(item)">
                     {{ item.chart_failed ? '安装失败' : item.chart_ready ? '已安装' : '安装中' }}
                   </span>
-                  <small class="cell-secondary">由 Helm 控制器管理</small>
                 </template>
                 <template v-else>
-                  <span class="badge" :class="isEmbedded(item) ? 'badge-online' : isMissing(item) ? 'badge-offline' : 'badge-danger'">
+                  <span class="badge" :class="isEmbedded(item) ? 'badge-online' : isMissing(item) ? 'badge-offline' : 'badge-danger'" :title="runtimeDetail(item)">
                     {{ isEmbedded(item) ? '运行中' : isMissing(item) ? '未安装' : '待确认' }}
                   </span>
                 </template>
               </td>
               <td>
-                <span class="badge" :class="configBadgeClass(item)">{{ configBadgeText(item) }}</span>
-                <small v-if="isTraefik(item)" class="cell-secondary">{{ traefikTimeoutStatus(item) }}</small>
-                <small v-if="configNeedsAttention(item)" class="detail">{{ configIssueText(item) }}</small>
-                <small v-if="item.availability?.description" class="cell-secondary">{{ item.availability.description }}</small>
-                <small v-if="item.last_applied_at" class="cell-secondary">应用于 {{ formatTime(item.last_applied_at) }}</small>
+                <span class="badge" :class="configBadgeClass(item)" :title="configurationDetail(item)">{{ configBadgeText(item) }}</span>
               </td>
               <td>
                 <div class="btn-group">
-                  <button v-if="canConfigure(item)" class="btn btn-sm" @click="edit(item)">配置</button>
-                  <button v-if="item.has_config && canRestore(item)" class="btn btn-sm btn-danger" @click="revert(item)">恢复默认</button>
+                  <button class="btn btn-sm" :disabled="!canConfigure(item)" @click="edit(item)">配置</button>
+                  <button class="btn btn-sm btn-danger" :disabled="!item.has_config || !canRestore(item)" @click="revert(item)">恢复默认</button>
                 </div>
               </td>
             </tr>
           </tbody>
         </table>
       </div>
-    </SurfaceCard>
+    </TabbedWorkspaceCard>
+
+    <ErrorNoticeModal :open="Boolean(pageError)" :title="pageErrorTitle" :message="pageError" @close="dismissPageError" />
 
     <div v-if="modal" class="overlay" @click.self="close">
       <div class="modal">
@@ -136,9 +121,11 @@
 
 <script setup>
 import { computed, onMounted, ref } from 'vue'
+import { RefreshCw } from 'lucide-vue-next'
 import { getClusterNodes, getSystemComponents, revertSystemComponent, updateSystemComponent } from '../../api/system-components.js'
 import { useAsyncResource } from '../../composables/useAsyncResource.js'
-import SurfaceCard from '../../components/SurfaceCard.vue'
+import ErrorNoticeModal from '../../components/ErrorNoticeModal.vue'
+import TabbedWorkspaceCard from '../../components/TabbedWorkspaceCard.vue'
 
 const items = ref([])
 const loaded = ref(false)
@@ -149,6 +136,8 @@ const saving = ref(false)
 const error = ref('')
 const componentFormError = ref('')
 const componentActionError = ref('')
+const pageError = computed(() => componentActionError.value || error.value)
+const pageErrorTitle = computed(() => componentActionError.value ? '组件操作失败' : '加载系统组件失败')
 const form = ref(blankForm())
 const nodes = ref([])
 const schedulableNodes = computed(() => nodes.value.filter(node => node.ready && !node.evicted))
@@ -159,6 +148,11 @@ const componentResource = useAsyncResource(async ({ signal }) => {
 
 function blankForm() {
   return { replicas: null, maxUnavailable: '0', maxSurge: '1', nodeName: '', traefikReadTimeout: '', traefikReadTimeoutMode: '' }
+}
+
+function dismissPageError() {
+  if (componentActionError.value) componentActionError.value = ''
+  else error.value = ''
 }
 
 async function load() {
@@ -266,6 +260,30 @@ function controllerModeText(mode) {
     unknown: '待确认',
   }
   return labels[mode] || labels.unknown
+}
+
+function controllerModeDetail(item) {
+  if (isEmbedded(item)) return '由 K3s 内置控制器提供'
+  if (isStatic(item)) return '由 K3s 静态清单控制'
+  if (item?.controller_mode === 'helm_chart') return '由 Helm 控制器管理'
+  return '未识别组件控制来源'
+}
+
+function runtimeDetail(item) {
+  if (item?.deployment?.fixed_node) return `固定节点：${item.deployment.fixed_node}`
+  if (item?.deployment && isStatic(item)) return '由 Kubernetes 自动调度'
+  if (item?.workload) return `${item.workload.kind}：${item.workload.name}`
+  if (isEmbedded(item)) return '由 K3s 内置控制器提供'
+  return ''
+}
+
+function configurationDetail(item) {
+  const details = []
+  if (isTraefik(item)) details.push(traefikTimeoutStatus(item))
+  if (configNeedsAttention(item)) details.push(configIssueText(item))
+  if (item?.availability?.description) details.push(item.availability.description)
+  if (item?.last_applied_at) details.push(`应用于 ${formatTime(item.last_applied_at)}`)
+  return details.join('\n')
 }
 
 function modalDescription(item) {
@@ -390,27 +408,23 @@ onMounted(load)
 </script>
 
 <style scoped>
-.page-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
 .system-component-table th, .system-component-table td { vertical-align: middle; }
-.system-component-table th:nth-child(1) { width: 20%; }
-.system-component-table th:nth-child(2) { width: 18%; }
-.system-component-table th:nth-child(3) { width: 20%; }
-.system-component-table th:nth-child(4) { width: 25%; }
-.system-component-table th:nth-child(5) { width: 17%; }
-.mode-label { display: inline-block; padding: 4px 8px; border-radius: 999px; background: var(--surface-subtle); color: var(--text-secondary); font-size: 12px; line-height: 1.2; white-space: nowrap; }
+.system-component-table th:nth-child(1) { width: 16%; }
+.system-component-table th:nth-child(2) { width: 14%; }
+.system-component-table th:nth-child(3) { width: 16%; }
+.system-component-table th:nth-child(4) { width: 16%; }
+.system-component-table th:nth-child(5) { width: 18%; }
+.system-component-table th:nth-child(6) { width: 20%; }
+.mode-label { display: inline-flex; align-items: center; padding: 4px 7px; border-radius: 5px; background: var(--surface-subtle); color: var(--text-secondary); font: 10px/1 var(--font-mono); white-space: nowrap; }
 .mode-static_deployment { color: var(--text-primary); background: color-mix(in srgb, var(--action-primary) 12%, var(--surface-subtle)); }
 .mode-helm_chart { color: var(--text-primary); background: color-mix(in srgb, var(--focus) 12%, var(--surface-subtle)); }
 .mode-embedded { color: var(--text-primary); background: color-mix(in srgb, var(--action-primary) 12%, var(--surface-subtle)); }
 .mode-unknown { color: var(--warning); background: color-mix(in srgb, var(--warning) 14%, var(--surface-subtle)); }
-.detail { display: block; max-width: 220px; color: var(--danger); overflow-wrap: anywhere; }
-.cell-secondary { display: block; }
 .config-section-title { margin: 20px 0 10px; color: var(--text-primary); font-size: 13px; font-weight: 600; }
 .config-section-title:first-child { margin-top: 0; }
 .baseline-hint { margin: 12px 0 0; padding: 9px 11px; border-radius: var(--radius-control); background: var(--surface-subtle); color: var(--text-secondary); font-size: 12px; line-height: 1.5; }
 .timeout-input { margin-top: var(--space-8); }
 @media (max-width: 640px) {
-  .page-header { flex-direction: column; }
-  .page-header .btn { width: 100%; }
-  .system-component-table th:nth-child(2), .system-component-table td:nth-child(2) { display: none; }
+  .system-component-table th:nth-child(2), .system-component-table td:nth-child(2), .system-component-table th:nth-child(3), .system-component-table td:nth-child(3) { display: none; }
 }
 </style>

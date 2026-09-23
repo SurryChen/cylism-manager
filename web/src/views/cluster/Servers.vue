@@ -1,26 +1,19 @@
 <template>
   <div>
-    <SectionTabsHeader title="服务器" :tabs="sections" :active-tab="activeSection" @select="activeSection = $event">
-      <template #actions>
-        <button class="icon-button" title="刷新服务器列表" aria-label="刷新服务器列表" :disabled="serversLoading" @click="fetchServers"><RefreshCw :size="16" :class="{ 'is-spinning': serversLoading }" /></button>
-        <button class="btn btn-primary" @click="showAdd = true">+ 添加服务器</button>
-      </template>
-    </SectionTabsHeader>
+    <SectionTabsHeader title="服务器" :tabs="sections" :active-tab="activeSection" @select="activeSection = $event" />
 
     <main class="server-content">
     <div v-if="serverListError" class="k8s-banner k8s-banner-warn section-gap">{{ serverListError }}</div>
     <template v-if="activeSection === 'configuration'">
-    <SurfaceCard as="div" class="section-gap">
-      <p class="section-copy">
-        这里维护服务器台账、SSH 凭据与连通性。集群节点已经拆分到“集群节点”页面统一查看与操作。
-      </p>
-    </SurfaceCard>
-
-    <SurfaceCard as="div">
+    <SurfaceCard as="div" padding="none" class="server-configuration-card">
+      <div class="server-list-toolbar">
+        <button class="icon-button" title="刷新服务器列表" aria-label="刷新服务器列表" :disabled="serversLoading" @click="fetchServers"><RefreshCw :size="16" :class="{ 'is-spinning': serversLoading }" /></button>
+        <button data-testid="add-server" class="btn btn-primary" @click="showAdd = true"><Plus :size="16" /> 添加服务器</button>
+      </div>
       <div v-if="servers.length === 0" class="empty-state">
         <span class="empty-icon">⬡</span><span class="empty-text">暂无服务器</span>
       </div>
-      <div v-else class="table-wrap">
+      <div v-else class="table-wrap server-table-wrap">
         <table class="data-table">
           <thead>
             <tr>
@@ -34,8 +27,9 @@
               <td>{{ srv.ssh_user || 'root' }}</td>
               <td>{{ srv.ssh_auth_type === 'key' ? '密钥' : '密码' }}</td>
               <td>
-                <button class="btn btn-sm" @click="probeServer(srv.id)" :disabled="probingId === srv.id">
-                  {{ probingId === srv.id ? '...' : '🔍' }}
+                <button class="icon-button icon-button--table" type="button" :title="`检测 ${srv.name} 的 SSH 连通性`" :aria-label="`检测 ${srv.name} 的 SSH 连通性`" :disabled="probingId === srv.id" @click="probeServer(srv.id)">
+                  <LoaderCircle v-if="probingId === srv.id" :size="14" class="is-spinning" />
+                  <Search v-else :size="14" />
                 </button>
               </td>
 
@@ -51,7 +45,7 @@
                   <button v-if="!srv.cluster_role" class="btn btn-sm" @click="startEdit(srv)">编辑</button>
                   <button v-if="!srv.cluster_role" class="btn btn-sm btn-danger" @click="confirmDelete(srv)">删除</button>
                   <button v-if="srv.cluster_role || srv.k8s_node_name" class="btn btn-sm btn-danger" :disabled="unbindingId === srv.id" @click="unbindServer(srv)">{{ unbindingId === srv.id ? '解绑中...' : '解除绑定' }}</button>
-                  <button class="btn btn-sm" @click="openTerminal(srv.id)">💻</button>
+                  <button class="icon-button icon-button--table" type="button" :title="`打开 ${srv.name} 的终端`" :aria-label="`打开 ${srv.name} 的终端`" @click="openTerminal(srv.id)"><Terminal :size="14" /></button>
                 </div>
               </td>
             </tr>
@@ -63,15 +57,15 @@
     </template>
 
     <template v-else-if="activeSection === 'monitoring'">
-      <SurfaceCard class="resource-overview section-gap">
-        <div><h2 class="resource-overview-title">资源概览</h2><p class="resource-overview-meta">{{ resourceSamplingLabel }}</p></div>
-        <div class="btn-group"><button class="icon-button" title="刷新资源数据" aria-label="刷新资源数据" :disabled="resourceStatsLoading" @click="refreshResourceStats"><RefreshCw :size="16" :class="{ 'is-spinning': resourceStatsLoading }" /></button></div>
-      </SurfaceCard>
-      <div v-if="servers.length === 0" class="empty-state"><span class="empty-icon">⬡</span><span class="empty-text">暂无服务器</span></div>
-      <SurfaceCard v-else as="div">
-        <div v-if="resourceStatsError" class="k8s-banner k8s-banner-warn section-gap">{{ resourceStatsError }}</div>
-        <div v-if="resourceStatsLoading && !resourceStats.length" class="empty-state"><span class="empty-text">正在采集服务器资源...</span></div>
-        <div v-else class="table-wrap"><table class="data-table resource-table"><thead><tr><th>服务器</th><th>采集状态</th><th>CPU</th><th>内存</th><th>磁盘 /</th><th>负载</th><th>运行时间</th><th>采样时间</th></tr></thead><tbody><tr v-for="srv in servers" :key="srv.id" class="resource-row" @click="openStats(srv.id)"><td class="cell-primary">{{ srv.name }}<small class="cell-secondary">{{ srv.host }}</small></td><td><span class="badge" :class="resourceStatusClass(resourceFor(srv.id))">{{ resourceStatusLabel(resourceFor(srv.id)) }}</span><small v-if="resourceFor(srv.id)?.error" class="resource-error">{{ resourceFor(srv.id).error }}</small></td><td><div class="resource-metric"><strong>{{ formatPercent(resourceFor(srv.id)?.cpu_percent) }}</strong><span class="resource-meter"><i :class="resourceLevelClass(resourceFor(srv.id)?.cpu_percent)" :style="{ width: `${metricPercent(resourceFor(srv.id)?.cpu_percent)}%` }" /></span></div></td><td><div class="resource-metric"><strong>{{ formatMB(resourceFor(srv.id)?.memory_used_mb) }} / {{ formatMB(resourceFor(srv.id)?.memory_total_mb) }}</strong><span class="resource-meter"><i :class="resourceLevelClass(memPercent(resourceFor(srv.id)))" :style="{ width: `${metricPercent(memPercent(resourceFor(srv.id)))}%` }" /></span></div></td><td><div class="resource-metric"><strong>{{ resourceFor(srv.id)?.disk_used_gb ?? '-' }} / {{ resourceFor(srv.id)?.disk_total_gb ?? '-' }} GB</strong><span class="resource-meter"><i :class="resourceLevelClass(diskPercent(resourceFor(srv.id)))" :style="{ width: `${metricPercent(diskPercent(resourceFor(srv.id)))}%` }" /></span></div></td><td>{{ formatLoad(resourceFor(srv.id)) }}</td><td>{{ resourceFor(srv.id)?.uptime || '-' }}</td><td>{{ formatSampleTime(resourceFor(srv.id)?.sampled_at) }}</td></tr></tbody></table></div>
+      <SurfaceCard as="div" padding="none" class="resource-monitoring-card">
+        <div class="resource-monitoring-toolbar">
+          <span class="resource-monitoring-meta">{{ resourceSamplingLabel }}</span>
+          <button class="icon-button" title="刷新资源数据" aria-label="刷新资源数据" :disabled="resourceStatsLoading" @click="refreshResourceStats"><RefreshCw :size="16" :class="{ 'is-spinning': resourceStatsLoading }" /></button>
+        </div>
+        <div v-if="resourceStatsError" class="k8s-banner k8s-banner-warn">{{ resourceStatsError }}</div>
+        <div v-if="servers.length === 0" class="empty-state"><span class="empty-icon">⬡</span><span class="empty-text">暂无服务器</span></div>
+        <div v-else-if="resourceStatsLoading && !resourceStats.length" class="empty-state"><span class="empty-text">正在采集服务器资源...</span></div>
+        <div v-else class="table-wrap resource-table-wrap"><table class="data-table resource-table"><thead><tr><th>服务器</th><th>主机</th><th>采集状态</th><th>CPU</th><th>内存</th><th>磁盘 /</th><th>负载 (1 分钟)</th><th>运行时间</th><th class="action-cell">操作</th></tr></thead><tbody><tr v-for="srv in servers" :key="srv.id" class="resource-row"><td class="cell-primary resource-server-name">{{ srv.name }}</td><td class="resource-server-host">{{ srv.host }}</td><td><span class="badge" :class="resourceStatusClass(resourceFor(srv.id))">{{ resourceStatusLabel(resourceFor(srv.id)) }}</span><small v-if="resourceFor(srv.id)?.error" class="resource-error">{{ resourceFor(srv.id).error }}</small></td><td><div class="resource-metric"><strong>{{ formatPercent(resourceFor(srv.id)?.cpu_percent) }}</strong><span class="resource-meter"><i :class="resourceLevelClass(resourceFor(srv.id)?.cpu_percent)" :style="{ width: `${metricPercent(resourceFor(srv.id)?.cpu_percent)}%` }" /></span></div></td><td><div class="resource-metric"><strong>{{ formatMB(resourceFor(srv.id)?.memory_used_mb) }} / {{ formatMB(resourceFor(srv.id)?.memory_total_mb) }}</strong><span class="resource-meter"><i :class="resourceLevelClass(memPercent(resourceFor(srv.id)))" :style="{ width: `${metricPercent(memPercent(resourceFor(srv.id)))}%` }" /></span></div></td><td><div class="resource-metric"><strong>{{ resourceFor(srv.id)?.disk_used_gb ?? '-' }} / {{ resourceFor(srv.id)?.disk_total_gb ?? '-' }} GB</strong><span class="resource-meter"><i :class="resourceLevelClass(diskPercent(resourceFor(srv.id)))" :style="{ width: `${metricPercent(diskPercent(resourceFor(srv.id)))}%` }" /></span></div></td><td>{{ formatLoad(resourceFor(srv.id)) }}</td><td>{{ formatUptime(resourceFor(srv.id)?.uptime) }}</td><td class="action-cell"><button class="icon-button icon-button--table" type="button" :data-testid="`view-resource-stats-${srv.id}`" :title="`查看 ${srv.name} 的资源详情`" :aria-label="`查看 ${srv.name} 的资源详情`" @click="openStats(srv.id)"><ChartNoAxesColumnIncreasing :size="14" /></button></td></tr></tbody></table></div>
       </SurfaceCard>
     </template>
 
@@ -217,7 +211,7 @@ import {
 import { useAsyncResource } from '../../composables/useAsyncResource.js'
 import { usePolling } from '../../composables/usePolling.js'
 import { formatClockTime as formatSampleTime } from '../../utils/formatters.js'
-import { RefreshCw } from 'lucide-vue-next'
+import { ChartNoAxesColumnIncreasing, LoaderCircle, Plus, RefreshCw, Search, Terminal } from 'lucide-vue-next'
 import SectionTabsHeader from '../../components/SectionTabsHeader.vue'
 import SurfaceCard from '../../components/SurfaceCard.vue'
 import ServerTerminal from './ServerTerminal.vue'
@@ -319,6 +313,16 @@ function resourceLevelClass(value) { const percent = metricPercent(value); retur
 function resourceStatusClass(stats) { return stats?.status === 'ready' ? 'badge-online' : stats?.status === 'unreachable' ? 'badge-danger' : 'badge-deploying' }
 function resourceStatusLabel(stats) { return stats?.status === 'ready' ? '已采集' : stats?.status === 'unreachable' ? '不可达' : '等待采集' }
 function formatLoad(stats) { if (!stats?.load_1m && stats?.load_1m !== 0) return '-'; const cores = Number(stats.cpu_cores) || 0; return cores ? `${Number(stats.load_1m).toFixed(2)} / ${cores} 核` : Number(stats.load_1m).toFixed(2) }
+function formatUptime(value) {
+  if (!value) return '-'
+  const labels = { week: '周', day: '天', hour: '小时', minute: '分钟' }
+  const parts = []
+  for (const match of String(value).matchAll(/(\d+)\s*(weeks?|days?|hours?|minutes?)/gi)) {
+    const unit = match[2].replace(/s$/i, '')
+    if (labels[unit]) parts.push(`${match[1]}${labels[unit]}`)
+  }
+  return parts.length ? parts.slice(0, 2).join('') : value
+}
 async function refreshResourceStats() {
   const result = await resourceStatsResource.refresh()
   if (result !== undefined) {
@@ -524,13 +528,17 @@ function resetForm() { form.value = { name: '', host: '', ssh_port: 22, ssh_user
   font-size: 12px;
   color: var(--text-secondary);
 }
-.server-content { margin-top: var(--space-20); }
-.resource-overview { display: flex; align-items: center; justify-content: space-between; gap: var(--space-16); }
-.resource-overview-title { margin: 0; color: var(--text-primary); font-size: 16px; }
-.resource-overview-meta { margin: 4px 0 0; color: var(--text-muted); font-size: 11px; }
-.resource-row { cursor: pointer; }
-.resource-row:hover { background: var(--surface-hover); }
-.resource-metric { display: grid; min-width: 130px; gap: 6px; }
+.server-content { margin-top: var(--tabbed-page-content-gap); }
+.server-list-toolbar { display: flex; min-height: 62px; align-items: center; justify-content: flex-end; gap: var(--space-8); padding: 12px var(--space-16); }
+.server-table-wrap { padding: 0 var(--space-16); }
+.resource-monitoring-toolbar { display: flex; min-height: 62px; align-items: center; justify-content: flex-end; gap: var(--space-8); padding: 12px var(--space-16); }
+.resource-monitoring-meta { color: var(--text-muted); font-size: 11px; }
+.resource-monitoring-card > .k8s-banner { margin: 0 var(--space-16) var(--space-12); }
+.resource-table-wrap { padding: 0 var(--space-16); }
+.resource-table td { padding-top: 10px; padding-bottom: 10px; }
+.resource-server-name, .resource-server-host { white-space: nowrap; }
+.resource-server-host { color: var(--text-secondary); font-size: 11px; }
+.resource-metric { display: grid; min-width: 130px; gap: 4px; }
 .resource-metric strong { color: var(--text-secondary); font-size: 11px; font-weight: 600; white-space: nowrap; }
 .resource-meter { display: block; width: 100%; height: 4px; overflow: hidden; border-radius: 2px; background: var(--surface-subtle); }
 .resource-meter i { display: block; height: 100%; border-radius: inherit; background: var(--success); }
@@ -538,7 +546,7 @@ function resetForm() { form.value = { name: '', host: '', ssh_port: 22, ssh_user
 .resource-meter i.is-danger { background: var(--danger); }
 .resource-error { display: block; max-width: 170px; margin-top: 3px; overflow: hidden; color: var(--danger); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 @media (max-width: 640px) {
-  .resource-overview { align-items: flex-start; }
+  .resource-monitoring-toolbar { align-items: flex-end; flex-direction: column; }
   .resource-metric { min-width: 116px; }
 }
 

@@ -4,7 +4,6 @@
       <template #actions><span class="operation-summary">共 {{ total }} 条</span></template>
     </SectionTabsHeader>
     <FeedbackBanner v-if="error" tone="warning" :message="error" />
-    <WorkspaceHeader title="执行记录" description="查看异步操作流程的执行步骤与结果。" />
     <SurfaceCard class="operation-card" padding="none">
       <div class="operation-table-toolbar">
         <div class="operation-filters">
@@ -44,7 +43,6 @@ import EmptyState from '../components/EmptyState.vue'
 import FeedbackBanner from '../components/FeedbackBanner.vue'
 import SectionTabsHeader from '../components/SectionTabsHeader.vue'
 import SurfaceCard from '../components/SurfaceCard.vue'
-import WorkspaceHeader from '../components/WorkspaceHeader.vue'
 import { formatShortDateTime as formatTime } from '../utils/formatters.js'
 
 const pageSize = 20

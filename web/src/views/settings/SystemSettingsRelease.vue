@@ -1,7 +1,5 @@
 <template>
   <section class="settings-section">
-    <WorkspaceHeader title="发布与更新" description="这里负责平台镜像、允许前缀、Webhook 和发布历史。" />
-
     <div class="platform-release-layout">
       <SurfaceCard class="platform-release-config-card">
         <div class="platform-release-config-table">
@@ -123,7 +121,6 @@ import { useAsyncResource } from '../../composables/useAsyncResource.js'
 import { formatDateTime } from '../../utils/formatters.js'
 import BaseModal from '../../components/BaseModal.vue'
 import SurfaceCard from '../../components/SurfaceCard.vue'
-import WorkspaceHeader from '../../components/WorkspaceHeader.vue'
 
 const platform = ref({ webhook_configured: false, image_prefix: '', deployment: null, releases: [] })
 const platformImagePrefix = ref('')

@@ -17,7 +17,7 @@ describe('OperationHistory', () => {
     expect(wrapper.text()).toContain('操作历史')
     expect(wrapper.findAll('h1')).toHaveLength(1)
     expect(wrapper.find('.section-tabs-header').exists()).toBe(true)
-    expect(wrapper.get('.workspace-header h2').text()).toBe('执行记录')
+    expect(wrapper.find('.workspace-header').exists()).toBe(false)
     expect(wrapper.get('.operation-card').findComponent({ name: 'SurfaceCard' }).exists()).toBe(true)
     expect(wrapper.get('.operation-card').classes()).toContain('surface-card--padding-none')
     expect(wrapper.find('.operation-table-toolbar').exists()).toBe(true)

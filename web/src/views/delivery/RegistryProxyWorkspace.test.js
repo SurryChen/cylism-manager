@@ -44,6 +44,12 @@ describe('RegistryProxyWorkspace', () => {
     expect(catalog.get('thead').text()).toContain('连通性')
     expect(catalog.get('.proxy-connectivity').text()).toContain('出网正常')
     expect(catalog.get('.proxy-connectivity').attributes('title')).toContain('代理 Pod 可访问上游 Registry')
+    const upstream = catalog.findAll('.overflow-tooltip-trigger')[2]
+    Object.defineProperties(upstream.element, { clientWidth: { configurable: true, value: 80 }, scrollWidth: { configurable: true, value: 240 } })
+    await upstream.trigger('mouseenter', { clientX: 80, clientY: 120 })
+    expect(document.body.querySelector('.overflow-tooltip-content')?.textContent).toBe('https://registry-1.docker.io')
+    await upstream.trigger('mouseleave')
+    expect(document.body.querySelector('.overflow-tooltip-content')).toBeNull()
     expect(wrapper.find('.proxy-error').exists()).toBe(false)
     await wrapper.get('[data-testid="create-registry-proxy"]').trigger('click')
     expect(document.body.querySelector('.proxy-modal')).not.toBeNull()

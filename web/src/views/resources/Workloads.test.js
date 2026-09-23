@@ -32,6 +32,10 @@ function flush() {
   return new Promise(resolve => setTimeout(resolve, 0))
 }
 
+async function selectWorkloadType(wrapper, value) {
+  await wrapper.find('.workload-type-select .select-menu-native').setValue(value)
+}
+
 beforeEach(() => {
   document.body.innerHTML = ''
   vi.clearAllMocks()
@@ -56,7 +60,7 @@ describe('Workloads view', () => {
     expect(getWorkloadStatefulSets).toHaveBeenCalledWith(expect.objectContaining({ signal: expect.any(AbortSignal) }))
     expect(getWorkloadDaemonSets).toHaveBeenCalledWith(expect.objectContaining({ signal: expect.any(AbortSignal) }))
     expect(getWorkloadPods).toHaveBeenCalledWith(expect.objectContaining({ signal: expect.any(AbortSignal) }))
-    expect(wrapper.findAll('.resource-tab')).toHaveLength(4)
+    expect(wrapper.findAll('.workload-type-select option').map(option => option.element.value)).toEqual(['', 'pods', 'deployments', 'statefulsets', 'daemonsets'])
     expect(wrapper.text()).toContain('暂无 Pod')
     wrapper.unmount()
   })
@@ -66,8 +70,10 @@ describe('Workloads view', () => {
     const wrapper = mount(Workloads)
     await flush()
     await flush()
-    await wrapper.findAll('.resource-tab')[1].trigger('click')
+    await selectWorkloadType(wrapper, 'deployments')
     expect(wrapper.text()).toContain('api')
+    expect(wrapper.find('.deployment-table').exists()).toBe(true)
+    expect(wrapper.find('.deployment-row-actions').exists()).toBe(true)
 
     getWorkloadDeployments.mockRejectedValueOnce(new Error('Deployment 刷新失败'))
     await wrapper.find('.icon-button[title="刷新工作负载"]').trigger('click')
@@ -114,7 +120,7 @@ describe('Workloads view', () => {
     getWorkloadDeploymentPods.mockImplementation((_namespace, name) => name === 'first' ? first : Promise.resolve([{ name: 'second-pod', status: 'Running', node: 'worker' }]))
     const wrapper = mount(Workloads)
     await flush()
-    await wrapper.findAll('.resource-tab')[1].trigger('click')
+    await selectWorkloadType(wrapper, 'deployments')
     const rows = wrapper.findAll('tbody > tr').filter(row => row.classes('clickable'))
     await rows[0].trigger('click')
     await rows[1].trigger('click')
@@ -132,7 +138,7 @@ describe('Workloads view', () => {
     scaleWorkload.mockRejectedValueOnce(new Error('扩缩容被拒绝'))
     const wrapper = mount(Workloads)
     await flush()
-    await wrapper.findAll('.resource-tab')[1].trigger('click')
+    await selectWorkloadType(wrapper, 'deployments')
     await wrapper.find('.action-cell .btn').trigger('click')
     await wrapper.find('.modal .btn-primary').trigger('click')
     await flush()
@@ -147,7 +153,7 @@ describe('Workloads view', () => {
     getWorkloadDeployments.mockResolvedValue([{ name: 'api', namespace: 'default', replicas: 1, ready: 1, images: ['nginx:1.0'] }])
     const wrapper = mount(Workloads)
     await flush()
-    await wrapper.findAll('.resource-tab')[1].trigger('click')
+    await selectWorkloadType(wrapper, 'deployments')
     await wrapper.find('.action-cell .btn').trigger('click')
     await wrapper.find('.modal .btn-primary').trigger('click')
     await flush()
@@ -164,7 +170,7 @@ describe('Workloads view', () => {
     updateWorkloadImage.mockRejectedValueOnce(new Error('镜像地址无效'))
     const wrapper = mount(Workloads)
     await flush()
-    await wrapper.findAll('.resource-tab')[1].trigger('click')
+    await selectWorkloadType(wrapper, 'deployments')
     await wrapper.find('.action-cell .btn:nth-child(2)').trigger('click')
     await wrapper.find('.modal .btn-primary').trigger('click')
     await flush()
@@ -180,7 +186,7 @@ describe('Workloads view', () => {
     rollbackWorkload.mockRejectedValueOnce(new Error('回滚失败'))
     const wrapper = mount(Workloads)
     await flush()
-    await wrapper.findAll('.resource-tab')[1].trigger('click')
+    await selectWorkloadType(wrapper, 'deployments')
     await wrapper.find('.action-cell .btn:nth-child(3)').trigger('click')
     await flush()
     await wrapper.find('.modal .btn-sm').trigger('click')
@@ -201,7 +207,7 @@ describe('Workloads view', () => {
     })
     const wrapper = mount(Workloads)
     await flush()
-    await wrapper.findAll('.resource-tab')[1].trigger('click')
+    await selectWorkloadType(wrapper, 'deployments')
     await wrapper.find('tbody > tr.clickable').trigger('click')
     wrapper.unmount()
     resolveDetails([{ name: 'api-pod', status: 'Running', node: 'worker' }])

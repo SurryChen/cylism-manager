@@ -1,19 +1,8 @@
 <template>
   <div>
-    <div class="page-header">
-      <h1 class="page-title">集群节点</h1>
-    </div>
-
-    <SurfaceCard as="div" class="section-gap">
-      <p class="section-copy">
-        节点状态直接来自已连接的 Kubernetes 集群。当前平台：<strong>{{ platformLabel }}</strong><template v-if="platform.version"> · {{ platform.version }}</template>。
-        <template v-if="platform.distribution === 'k3s'">K3s 集群支持工作节点加入流程；</template>服务器绑定和节点维护适用于 Kubernetes 兼容集群。
-      </p>
-    </SurfaceCard>
-
-    <div v-if="error" class="k8s-banner k8s-banner-warn section-gap">⚠ {{ error }}</div>
-
-    <SurfaceCard as="div">
+    <TabbedWorkspaceCard class="cluster-node-workspace">
+      <template #meta><span>{{ platformLabel }}<template v-if="platform.version"> · {{ platform.version }}</template></span></template>
+      <template #actions><button class="icon-button" type="button" title="刷新节点列表" aria-label="刷新节点列表" :disabled="loading" @click="fetchData"><RefreshCw :size="16" :class="{ 'is-spinning': loading }" /></button></template>
       <div v-if="nodes.length === 0" class="empty-state">
         <span class="empty-icon">⬡</span><span class="empty-text">暂无 K8s 节点</span>
       </div>
@@ -21,7 +10,7 @@
         <table class="data-table">
           <thead>
             <tr>
-              <th>节点名</th><th>状态</th><th>角色</th><th>K8s 版本</th><th>IP</th><th>映射服务器</th><th>CPU</th><th>内存</th><th></th>
+              <th>节点名</th><th>状态</th><th>角色</th><th>K8s 版本</th><th>IP</th><th>映射服务器</th><th>CPU</th><th>内存</th><th class="action-cell">操作</th>
             </tr>
           </thead>
           <tbody>
@@ -56,8 +45,8 @@
           </tbody>
         </table>
       </div>
-    </SurfaceCard>
-    <div v-if="rejoinError" class="k8s-banner k8s-banner-warn section-gap">{{ rejoinError }}</div>
+    </TabbedWorkspaceCard>
+    <ErrorNoticeModal :open="Boolean(pageError)" :title="pageErrorTitle" :message="pageError" @close="dismissPageError" />
 
     <div v-if="drainTarget" class="overlay" @click.self="closeDrain">
       <div class="modal">
@@ -154,7 +143,9 @@ import {
   updateNodeLabels,
 } from '../../api/cluster.js'
 import { useAsyncResource } from '../../composables/useAsyncResource.js'
-import SurfaceCard from '../../components/SurfaceCard.vue'
+import ErrorNoticeModal from '../../components/ErrorNoticeModal.vue'
+import TabbedWorkspaceCard from '../../components/TabbedWorkspaceCard.vue'
+import { RefreshCw } from 'lucide-vue-next'
 
 const nodes = ref([])
 const servers = ref([])
@@ -189,6 +180,9 @@ const rejoinError = ref('')
 const serverLookup = computed(() => servers.value)
 const platform = computed(() => platformResource.data.value || { distribution: 'unknown', version: '' })
 const platformLabel = computed(() => ({ k3s: 'K3s', kubernetes: 'Kubernetes', unknown: '未识别' })[platform.value.distribution] || '未识别')
+const loading = computed(() => clusterResource.loading.value || platformResource.loading.value)
+const pageError = computed(() => rejoinError.value || error.value)
+const pageErrorTitle = computed(() => rejoinError.value ? '节点操作失败' : '加载节点失败')
 const systemLabelEntries = computed(() => {
   if (!labelsTarget.value) return []
   const protectedKeys = new Set(labelsTarget.value.protectedKeys || [])
@@ -232,6 +226,11 @@ function nodeHealthClass(node) {
   if (node.evicted) return 'badge-warn'
   if (node.health_state === 'failed') return 'badge-danger'
   return node.ready ? 'badge-online' : 'badge-offline'
+}
+
+function dismissPageError() {
+  if (rejoinError.value) rejoinError.value = ''
+  else error.value = ''
 }
 
 function canForceDrain(node) {
@@ -410,11 +409,5 @@ function closeRemove() {
 </script>
 
 <style scoped>
-.section-copy {
-  margin: 0;
-  color: var(--text-secondary);
-  font-size: 13px;
-  line-height: 1.6;
-}
 .modal-copy{margin:0;color:var(--text-secondary);font-size:13px;line-height:1.6}.drain-summary{display:flex;gap:8px;flex-wrap:wrap;margin-top:16px}.drain-summary span{padding:5px 7px;border-radius:var(--radius-control);background:var(--surface-subtle);color:var(--text-secondary);font-size:11px}.drain-pods,.drain-warning,.drain-blockers{display:grid;gap:6px;margin-top:16px;padding:10px;border-radius:var(--radius-control);font-size:12px}.drain-pods{max-height:132px;overflow:auto;background:var(--surface-subtle);color:var(--text-secondary)}.drain-warning{background:var(--warning-surface);color:var(--warning)}.drain-blockers{background:var(--danger-surface);color:var(--danger)}.drain-pods small,.drain-warning small,.drain-blockers small{overflow-wrap:anywhere}.check-row{display:flex;align-items:center;gap:8px;margin-top:4px;color:var(--text-primary);font-size:12px}.force-drain-modal,.result-modal,.labels-modal{width:min(580px,calc(100vw - 32px))}.force-ack{margin-top:16px}.compact-field{margin-top:16px}.labels-section{display:grid;gap:8px;margin-top:18px}.labels-heading{display:flex;align-items:center;justify-content:space-between;gap:12px}.labels-readonly,.label-editor-list{display:grid;gap:6px}.labels-readonly{max-height:180px;overflow:auto;padding:10px;border:1px solid var(--border-muted);border-radius:var(--radius-control);background:var(--surface-subtle)}.labels-readonly>div{display:grid;grid-template-columns:minmax(0,1fr) minmax(100px,1fr);gap:12px;font-size:12px}.labels-readonly code,.labels-readonly span{overflow-wrap:anywhere}.labels-readonly span{color:var(--text-secondary)}.label-editor-row{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) auto;gap:8px}.empty-inline{margin:0;color:var(--text-muted);font-size:12px}@media(max-width:600px){.label-editor-row,.labels-readonly>div{grid-template-columns:1fr}.label-editor-row .btn{width:100%}}
 </style>

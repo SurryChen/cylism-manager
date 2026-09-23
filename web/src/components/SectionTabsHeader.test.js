@@ -41,6 +41,7 @@ describe('SectionTabsHeader', () => {
     expect(themeCss).toContain('--page-header-height: 64px')
     expect(themeCss).toContain('--tabbed-page-header-title-size: var(--page-header-title-size)')
     expect(themeCss).toContain('--tabbed-page-header-content-offset: var(--page-header-content-offset)')
+    expect(themeCss).toContain('--tabbed-page-content-gap: var(--space-4)')
     expect(sectionTabsSource).toContain('height: var(--tabbed-page-header-height)')
     expect(sectionTabsSource).toContain('margin: 0 0 23px; font-size: var(--tabbed-page-header-title-size)')
     expect(sectionTabsSource).toContain('bottom: 11px; left: 0; height: 1px')
