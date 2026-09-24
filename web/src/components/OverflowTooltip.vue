@@ -1,5 +1,5 @@
 <template>
-  <span ref="trigger" class="overflow-tooltip-trigger" tabindex="0" :aria-label="text" @mouseenter="show" @mousemove="move" @mouseleave="hide" @focus="show" @blur="hide">
+  <span v-bind="$attrs" ref="trigger" class="overflow-tooltip-trigger" tabindex="0" :aria-label="text" @mouseenter="show" @mousemove="move" @mouseleave="hide" @focus="show" @blur="hide">
     <slot>{{ text }}</slot>
   </span>
   <Teleport to="body">
@@ -9,6 +9,8 @@
 
 <script setup>
 import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+
+defineOptions({ inheritAttrs: false })
 
 defineProps({
   text: { type: String, default: '' },

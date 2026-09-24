@@ -21,6 +21,7 @@ import SurfaceCard from './SurfaceCard.vue'
 .tabbed-workspace-context { color: var(--text-muted); font-size: 11px; }
 .tabbed-workspace-context :deep(h2) { margin: 0; color: var(--text-primary); font-size: 15px; }
 .tabbed-workspace-actions { margin-left: auto; justify-content: flex-end; }
+.tabbed-workspace-actions :deep(.btn) { min-height: var(--button-height); padding: var(--button-padding); font-size: var(--button-font-size); }
 .tabbed-workspace-card :deep(.table-wrap) { padding: 0 var(--space-16); }
 .tabbed-workspace-card :deep(.empty-state) { padding: 0 var(--space-16); }
 @media (max-width: 640px) { .tabbed-workspace-toolbar { align-items: stretch; flex-direction: column; }.tabbed-workspace-context { width: 100%; }.tabbed-workspace-actions { width: 100%; margin-left: 0; justify-content: flex-end; } }

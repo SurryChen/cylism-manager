@@ -1,11 +1,36 @@
 <template>
-  <div>
-    <div class="page-header section-page-header"><h1 class="page-title">存储卷</h1><button class="btn btn-primary" @click="openCreate">+ 创建存储卷</button></div>
+  <div class="storage-page" @click="advancedFiltersOpen = false">
+    <SectionTabsHeader title="存储卷" :tabs="pageTabs" active-tab="claims" test-id-prefix="storage-page" />
     <div v-if="error" class="k8s-banner k8s-banner-warn section-gap">{{ error }}</div>
     <div v-if="workflowError && (showCreate || deleteTarget || migrationTarget || cleanupTarget || backupTarget || importTarget)" class="k8s-banner k8s-banner-warn section-gap">{{ workflowError }}</div>
-    <section class="storage-context"><div class="storage-picker"><span class="context-picker-label">命名空间</span><SelectMenu v-model="namespaceFilter" data-testid="storage-namespace-filter" class="form-select"><option value="">全部命名空间</option><option v-for="namespace in namespaces" :key="namespace" :value="namespace">{{ namespace }}</option></SelectMenu></div><div class="storage-picker"><span class="context-picker-label">项目</span><SelectMenu v-model.number="projectID" data-testid="storage-project-filter" class="form-select"><option :value="0">全部项目</option><option v-for="project in projects" :key="project.id" :value="project.id">{{ project.name }}</option></SelectMenu></div><div class="storage-picker"><span class="context-picker-label">环境</span><SelectMenu v-model.number="environmentID" data-testid="storage-environment-filter" class="form-select" :disabled="!selectedProject"><option :value="0">全部环境</option><option v-for="environment in selectedProject?.environments || []" :key="environment.id" :value="environment.id">{{ environment.name }} · {{ environment.namespace }}</option></SelectMenu></div><div class="storage-picker"><span class="context-picker-label">状态</span><SelectMenu v-model="phaseFilter" data-testid="storage-phase-filter" class="form-select"><option value="">全部状态</option><option v-for="phase in phases" :key="phase" :value="phase">{{ phase }}</option></SelectMenu></div><div class="storage-picker"><span class="context-picker-label">StorageClass</span><SelectMenu v-model="storageClassFilter" data-testid="storage-class-filter" class="form-select"><option value="">全部 StorageClass</option><option v-for="storageClass in claimStorageClasses" :key="storageClass" :value="storageClass">{{ storageClass }}</option></SelectMenu></div><button v-if="hasFilters" class="icon-button" title="重置筛选" aria-label="重置筛选" @click="resetFilters"><RotateCcw :size="16" /></button></section>
+    <TabbedWorkspaceCard class="storage-workspace">
+      <template #meta>
+        <section class="storage-context" aria-label="存储卷筛选">
+          <div class="storage-picker"><span class="context-picker-label">命名空间</span><SelectMenu v-model="namespaceFilter" data-testid="storage-namespace-filter" class="form-select"><option value="">全部命名空间</option><option v-for="namespace in namespaces" :key="namespace" :value="namespace">{{ namespace }}</option></SelectMenu></div>
+          <div class="storage-picker"><span class="context-picker-label">项目</span><SelectMenu v-model.number="projectID" data-testid="storage-project-filter" class="form-select"><option :value="0">全部项目</option><option v-for="project in projects" :key="project.id" :value="project.id">{{ project.name }}</option></SelectMenu></div>
+          <div class="storage-picker"><span class="context-picker-label">环境</span><SelectMenu v-model.number="environmentID" data-testid="storage-environment-filter" class="form-select" :disabled="!selectedProject"><option :value="0">全部环境</option><option v-for="environment in selectedProject?.environments || []" :key="environment.id" :value="environment.id">{{ environment.name }} · {{ environment.namespace }}</option></SelectMenu></div>
+        </section>
+      </template>
+      <template #actions>
+        <div class="storage-filter-control" @click.stop>
+          <button class="btn" :class="{ 'is-active': activeSecondaryFilterCount }" type="button" data-testid="storage-open-filters" :aria-expanded="advancedFiltersOpen" aria-controls="storage-secondary-filters" @click="advancedFiltersOpen = !advancedFiltersOpen"><Filter :size="15" />筛选<span v-if="activeSecondaryFilterCount" class="filter-count">{{ activeSecondaryFilterCount }}</span></button>
+          <div v-if="advancedFiltersOpen" id="storage-secondary-filters" class="storage-filter-popover" @click.stop>
+            <label class="storage-filter-field"><span class="form-label">状态</span><SelectMenu v-model="phaseFilter" data-testid="storage-phase-filter" class="form-select"><option value="">全部状态</option><option v-for="phase in phases" :key="phase" :value="phase">{{ phase }}</option></SelectMenu></label>
+            <label class="storage-filter-field"><span class="form-label">StorageClass</span><SelectMenu v-model="storageClassFilter" data-testid="storage-class-filter" class="form-select"><option value="">全部 StorageClass</option><option v-for="storageClass in claimStorageClasses" :key="storageClass" :value="storageClass">{{ storageClass }}</option></SelectMenu></label>
+          </div>
+        </div>
+        <button v-if="hasFilters" class="icon-button" type="button" title="重置筛选" aria-label="重置筛选" @click="resetFilters"><RotateCcw :size="16" /></button>
+        <button class="icon-button" type="button" title="刷新已用空间" aria-label="刷新已用空间" :disabled="usageLoading" @click="loadUsage"><RefreshCw :size="16" :class="{ 'is-spinning': usageLoading }" /></button>
+        <button class="btn btn-primary" type="button" @click="openCreate">创建存储卷</button>
+      </template>
     <div v-if="loaded && !filteredClaims.length" class="empty-state"><span class="empty-icon">▣</span><span class="empty-text">没有匹配筛选条件的存储卷</span></div>
-    <SurfaceCard v-else-if="filteredClaims.length" as="div"><div class="table-wrap"><table class="data-table"><thead><tr><th>存储卷</th><th>命名空间</th><th>归属</th><th>容量</th><th>已用空间 <button class="usage-refresh" :disabled="usageLoading" title="刷新已用空间" @click="loadUsage">{{ usageLoading ? '读取中' : '刷新' }}</button></th><th>StorageClass</th><th>状态</th><th>绑定节点</th><th>数据回收</th><th>引用</th><th>操作</th></tr></thead><tbody><tr v-for="claim in filteredClaims" :key="claim.namespace + '/' + claim.name"><td class="cell-primary">{{ claim.name }}<small v-if="migrationFor(claim)?.target_pvc_name" class="node-meta">迁移目标：{{ migrationFor(claim).target_pvc_name }}</small></td><td>{{ claim.namespace }}</td><td><span class="badge" :class="claim.owner_type === 'infrastructure' ? 'badge-deploying' : (claim.managed ? 'badge-online' : 'badge-offline')">{{ claim.owner_type === 'infrastructure' ? '基础设施' : (claim.managed ? '平台托管' : '外部创建') }}</span><small v-if="claim.owner_name" class="node-meta">{{ claim.owner_name }}</small><small v-else-if="claim.environment_name" class="node-meta">{{ claim.project_name }} · {{ claim.environment_name }}</small></td><td>{{ claim.storage || '-' }}</td><td><span v-if="usageFor(claim)?.status === 'available'">{{ formatBytes(usageFor(claim).used_bytes) }}<small class="node-meta">{{ usagePercent(usageFor(claim)) }}</small></span><small v-else class="node-meta" :title="usageFor(claim)?.message">{{ usageFor(claim)?.message || (usageLoading ? '读取中...' : '暂不可用') }}</small></td><td>{{ claim.storage_class_name || '默认 StorageClass' }}</td><td><span class="badge" :class="claim.phase === 'Bound' ? 'badge-online' : 'badge-deploying'">{{ claim.phase || 'Pending' }}</span><small v-if="migrationFor(claim)" class="migration-status">{{ migrationLabel(migrationFor(claim).status) }}</small></td><td><span v-if="claim.bound_node_display_name">{{ claim.bound_node_display_name }}<small class="node-meta">{{ claim.bound_node }}</small></span><span v-else-if="claim.wait_for_first_consumer">首次挂载时决定</span><span v-else>-</span></td><td><span class="badge" :class="claim.reclaim_policy === 'Delete' ? 'badge-danger' : 'badge-offline'">{{ claim.reclaim_policy || '-' }}</span></td><td>{{ claim.references?.join('、') || '-' }}</td><td><a v-if="claim.owner_type === 'infrastructure'" class="btn btn-sm monitoring-link" :href="infrastructureLink(claim)">{{ infrastructureActionLabel(claim) }}</a><div v-else-if="claim.managed" class="btn-group"><button v-if="hasManagedEnvironment(claim) && claim.is_local && claim.bound_node && !migrationFor(claim)" class="btn btn-sm" @click="openMigration(claim)">迁移</button><button v-if="hasManagedEnvironment(claim) && claim.is_local && claim.bound_node && !migrationFor(claim)" data-testid="open-directory-import" class="btn btn-sm" @click="openImport(claim)">导入目录</button><button v-if="hasManagedEnvironment(claim) && claim.is_local && claim.bound_node" class="btn btn-sm" @click="openBackup(claim)">备份</button><button v-if="migrationFor(claim)?.status === 'cleanup_pending'" class="btn btn-sm btn-danger" @click="requestCleanup(migrationFor(claim))">清理源卷</button><button class="icon-button danger-action" title="删除存储卷" :disabled="claim.references?.length || !!migrationFor(claim)" @click="requestDelete(claim)"><Trash2 :size="16" /></button></div><span v-else>-</span></td></tr></tbody></table></div></SurfaceCard>
+      <div v-else class="table-wrap">
+        <table class="data-table storage-table">
+          <thead><tr><th>存储卷</th><th>命名空间</th><th>归属</th><th>容量</th><th>已用空间</th><th>StorageClass</th><th>状态</th><th>绑定节点</th><th>引用</th><th>操作</th></tr></thead>
+          <tbody><tr v-for="claim in filteredClaims" :key="claim.namespace + '/' + claim.name"><td class="cell-primary"><span class="storage-cell-text" :title="claim.name">{{ claim.name }}</span></td><td><span class="storage-cell-text" :title="claim.namespace">{{ claim.namespace }}</span></td><td><span class="badge" :class="claim.owner_type === 'infrastructure' ? 'badge-deploying' : (claim.managed ? 'badge-online' : 'badge-offline')" :title="ownerDetail(claim)">{{ claim.owner_type === 'infrastructure' ? '基础设施' : (claim.managed ? '平台托管' : '外部创建') }}</span></td><td>{{ claim.storage || '-' }}</td><td><span v-if="usageFor(claim)?.status === 'available'" :title="usageDetail(usageFor(claim))">{{ formatBytes(usageFor(claim).used_bytes) }}</span><span v-else class="storage-cell-text" :title="usageFor(claim)?.message">{{ usageFor(claim)?.message || (usageLoading ? '读取中...' : '暂不可用') }}</span></td><td><span class="storage-cell-text" :title="claim.storage_class_name || '默认 StorageClass'">{{ claim.storage_class_name || '默认 StorageClass' }}</span></td><td><span class="badge" :class="claim.phase === 'Bound' ? 'badge-online' : 'badge-deploying'" :title="migrationFor(claim) ? migrationLabel(migrationFor(claim).status) : claim.phase || 'Pending'">{{ claim.phase || 'Pending' }}</span></td><td><span v-if="claim.bound_node_display_name" class="storage-cell-text" :title="claim.bound_node">{{ claim.bound_node_display_name }}</span><span v-else-if="claim.wait_for_first_consumer">首次挂载时决定</span><span v-else>-</span></td><td><span class="storage-cell-text" :title="claim.references?.join('、') || '无引用'">{{ referenceLabel(claim) }}</span></td><td><a v-if="claim.owner_type === 'infrastructure'" class="btn btn-sm monitoring-link" :href="infrastructureLink(claim)">{{ infrastructureActionLabel(claim) }}</a><div v-else-if="claim.managed" class="btn-group"><button v-if="hasManagedEnvironment(claim) && claim.is_local && claim.bound_node && !migrationFor(claim)" class="btn btn-sm" @click="openMigration(claim)">迁移</button><button v-if="hasManagedEnvironment(claim) && claim.is_local && claim.bound_node && !migrationFor(claim)" data-testid="open-directory-import" class="btn btn-sm" @click="openImport(claim)">导入目录</button><button v-if="hasManagedEnvironment(claim) && claim.is_local && claim.bound_node" class="btn btn-sm" @click="openBackup(claim)">备份</button><button v-if="migrationFor(claim)?.status === 'cleanup_pending'" class="btn btn-sm btn-danger" @click="requestCleanup(migrationFor(claim))">清理源卷</button><button class="icon-button danger-action" title="删除存储卷" :disabled="claim.references?.length || !!migrationFor(claim)" @click="requestDelete(claim)"><Trash2 :size="16" /></button></div><span v-else>-</span></td></tr></tbody>
+        </table>
+      </div>
+    </TabbedWorkspaceCard>
 
     <div v-if="showCreate" class="overlay" @click.self="showCreate = false"><div class="modal"><h2 class="modal-title">创建存储卷</h2><form @submit.prevent="createClaim"><div class="form-group"><label class="form-label">命名空间</label><SelectMenu v-model="form.namespace" data-testid="storage-create-namespace" class="form-select" required><option value="" disabled>选择目标命名空间</option><option v-if="form.namespace&&!namespaces.includes(form.namespace)" :value="form.namespace">{{ form.namespace }}（尚未创建）</option><option v-for="namespace in namespaces" :key="namespace" :value="namespace">{{ namespace }}</option></SelectMenu><p class="form-hint">存储卷属于命名空间。应用挂载时需与该存储卷位于同一命名空间。</p><div v-if="form.namespace&&!namespaces.includes(form.namespace)" class="form-hint namespace-create-hint"><span>该命名空间尚不存在。</span><button type="button" data-testid="create-missing-namespace" class="btn btn-sm" :disabled="saving" @click="createNamespace">创建命名空间</button></div></div><div class="form-group"><label class="form-label">名称</label><input v-model.trim="form.name" class="form-input" required pattern="[a-z0-9]([-a-z0-9]*[a-z0-9])?" placeholder="karakeep-data" /></div><div class="form-group"><label class="form-label">容量</label><div class="quantity-input"><input v-model.number="form.storage_value" data-testid="storage-capacity-value" type="number" min="1" step="1" class="form-input" required placeholder="5" /><SelectMenu v-model="form.storage_unit" data-testid="storage-capacity-unit" class="form-select"><option value="Mi">Mi</option><option value="Gi">Gi</option><option value="Ti">Ti</option></SelectMenu></div><p class="form-hint">首期仅支持 ReadWriteOnce，挂载该卷的应用只能运行一个副本。</p></div><div class="form-group"><label class="form-label">StorageClass</label><SelectMenu v-model="form.storage_class_name" data-testid="storage-create-storage-class" class="form-select"><option value="">使用默认 StorageClass</option><option v-for="item in storageClasses" :key="item.name" :value="item.name">{{ item.name }}{{ item.is_default ? '（默认）' : '' }} · {{ item.volume_binding_mode || 'Immediate' }}</option></SelectMenu></div><div class="modal-actions"><button type="button" class="btn" @click="showCreate = false">取消</button><button class="btn btn-primary" :disabled="saving || !validStorage || !namespaces.includes(form.namespace)">{{ saving ? '创建中...' : '创建存储卷' }}</button></div></form></div></div>
     <div v-if="deleteTarget" class="overlay" @click.self="deleteTarget = null"><div class="modal"><h2 class="modal-title">删除存储卷</h2><p class="confirm-copy">将删除 PVC“{{ deleteTarget.name }}”。{{ deleteTarget.reclaim_policy === 'Delete' ? '该 PV 的回收策略为 Delete，底层数据可能一并被清除。' : '底层数据的保留行为由 PV 回收策略决定。' }}</p><div class="modal-actions"><button class="btn" @click="deleteTarget = null">取消</button><button class="btn btn-danger" :disabled="saving" @click="deleteClaim">确认删除</button></div></div></div>
@@ -18,8 +43,9 @@
 
 <script setup>
 import { computed, onUnmounted, ref, watch } from 'vue'
-import { RotateCcw, Trash2 } from 'lucide-vue-next'
-import SurfaceCard from '../../components/SurfaceCard.vue'
+import { Filter, RefreshCw, RotateCcw, Trash2 } from 'lucide-vue-next'
+import SectionTabsHeader from '../../components/SectionTabsHeader.vue'
+import TabbedWorkspaceCard from '../../components/TabbedWorkspaceCard.vue'
 import { getProjects } from '../../api/applications.js'
 import {
   cleanupPersistentVolumeMigration,
@@ -41,6 +67,7 @@ import { usePolling } from '../../composables/usePolling.js'
 import { formatBytes } from '../../utils/formatters.js'
 
 const projects = ref([])
+const pageTabs = [{ id: 'claims', label: '存储卷' }]
 const claims = ref([])
 const usage = ref([])
 const usageLoading = ref(false)
@@ -56,6 +83,7 @@ const environmentID = ref(0)
 const namespaceFilter = ref('')
 const phaseFilter = ref('')
 const storageClassFilter = ref('')
+const advancedFiltersOpen = ref(false)
 const loaded = ref(false)
 const error = ref('')
 const workflowError = ref('')
@@ -91,6 +119,7 @@ const filteredClaims = computed(() => claims.value.filter(claim => {
   return !storageClassFilter.value || claim.storage_class_name === storageClassFilter.value
 }))
 const hasFilters = computed(() => Boolean(namespaceFilter.value || projectID.value || environmentID.value || phaseFilter.value || storageClassFilter.value))
+const activeSecondaryFilterCount = computed(() => Number(Boolean(phaseFilter.value)) + Number(Boolean(storageClassFilter.value)))
 
 function newClaimForm() { return { namespace: namespaceFilter.value || namespaces.value[0] || '', name: '', storage_value: 5, storage_unit: 'Gi', storage_class_name: '' } }
 function resetFilters() { namespaceFilter.value = ''; projectID.value = 0; environmentID.value = 0; phaseFilter.value = ''; storageClassFilter.value = '' }
@@ -99,7 +128,9 @@ function claimEnvironmentID(claim) { return Number(claim?.environment_id) || 0 }
 function infrastructureLink(claim) { return claim.owner === 'oci-registry' ? '#/delivery/registry' : '#/monitoring' }
 function infrastructureActionLabel(claim) { return claim.owner === 'oci-registry' ? '查看制品库' : '查看监控' }
 function usageFor(claim) { return usage.value.find(item => item.namespace === claim.namespace && item.name === claim.name) }
-function usagePercent(item) { const capacity = Number(item?.capacity_bytes) || 0; if (!capacity) return '已用容量'; return `${Math.min(100, Math.round((Number(item.used_bytes) / capacity) * 100))}% / 请求容量` }
+function ownerDetail(claim) { return claim.owner_name || [claim.project_name, claim.environment_name].filter(Boolean).join(' · ') || '未关联应用环境' }
+function usageDetail(item) { const capacity = Number(item?.capacity_bytes) || 0; if (!capacity) return `已用 ${formatBytes(item?.used_bytes)}`; return `已用 ${formatBytes(item.used_bytes)} / ${formatBytes(capacity)}（${Math.min(100, Math.round((Number(item.used_bytes) / capacity) * 100))}%）` }
+function referenceLabel(claim) { const count = claim.references?.length || 0; return count ? `${count} 个引用` : '-' }
 async function loadProjects() { try { projects.value = await getProjects() || [] } catch (e) { error.value = e.message || '加载项目失败' } }
 async function loadClaims() {
   loaded.value = false
@@ -163,5 +194,47 @@ loadClaims()
 </script>
 
 <style scoped>
-.storage-context{display:flex;align-items:flex-end;flex-wrap:wrap;gap:8px;margin-bottom:var(--space-16);padding:0 0 var(--space-16);border:0;border-bottom:1px solid var(--border-muted);background:transparent}.storage-picker{display:grid;min-width:118px;flex:0 1 152px;gap:3px}.context-picker-label{padding-left:2px;color:var(--text-muted);font-size:10px;font-weight:700;line-height:1}.storage-context .form-select{height:34px;padding:0 28px 0 9px;border-color:var(--border-muted);background:var(--surface-subtle);font-size:12px}.storage-context .form-select:hover:not(:disabled){border-color:var(--focus);background:var(--surface-hover)}.storage-context>.icon-button{width:34px;height:34px;margin-bottom:0}.quantity-input{display:grid;grid-template-columns:minmax(0,1fr) 88px;gap:6px}.node-meta,.migration-status{display:block;margin-top:2px;color:var(--text-muted);font:10px/1 var(--font-mono)}.usage-refresh{margin-left:4px;padding:0;border:0;background:transparent;color:var(--link);font:inherit;font-weight:600;cursor:pointer}.usage-refresh:disabled{color:var(--text-muted);cursor:default}.monitoring-link{text-decoration:none}.danger-action{color:var(--danger)}.confirm-copy{margin:0;color:var(--text-secondary);font-size:13px;line-height:1.6}.check-row{display:flex;align-items:flex-start;gap:8px;margin:12px 0;color:var(--text-secondary);font-size:12px;line-height:1.5}.namespace-create-hint{display:flex;align-items:center;gap:8px}.modal-wide{width:min(620px,calc(100vw - 32px))}.backup-list,.import-list{display:grid;gap:6px;margin:12px 0}.backup-row,.import-row{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:8px;padding:8px;border:1px solid var(--border-muted);border-radius:var(--radius-control);background:var(--surface-subtle);font-size:11px}.backup-row span,.import-row span,.import-row small{overflow-wrap:anywhere}.backup-row small,.import-row small{color:var(--text-muted)}.import-row>div{display:grid;gap:3px}.import-row strong{font-size:12px}@media(max-width:640px){.storage-context{display:grid;grid-template-columns:1fr}.storage-picker{min-width:0;max-width:none}.backup-row,.import-row{grid-template-columns:1fr}}
+.storage-workspace { margin-top: var(--space-20); }
+.storage-workspace :deep(.surface-card) { overflow: visible; }
+.storage-workspace :deep(.tabbed-workspace-toolbar) { align-items: flex-end; }
+.storage-context { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 8px; width: 472px; margin: 0; padding: 0; border: 0; background: transparent; }
+.storage-picker { display: grid; min-width: 118px; flex: 0 1 152px; gap: 3px; }
+.context-picker-label { padding-left: 2px; color: var(--text-muted); font-size: 10px; font-weight: 700; line-height: 1; }
+.storage-context .form-select { height: var(--button-height); min-height: var(--button-height); padding: 0 28px 0 9px; border-color: var(--border-muted); background: var(--surface-subtle); font-size: var(--button-font-size); }
+.storage-context .form-select:hover:not(:disabled) { border-color: var(--focus); background: var(--surface-hover); }
+.storage-filter-control { position: relative; z-index: 2; }
+.storage-filter-popover { position: absolute; z-index: 40; top: calc(100% + 8px); right: 0; display: grid; width: 244px; gap: 12px; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius-panel); background: var(--surface-raised); box-shadow: var(--shadow); }
+.storage-filter-field { display: grid; gap: 5px; min-width: 0; }
+.storage-filter-field .form-label { margin: 0; font-size: 11px; }
+.storage-filter-popover :deep(.select-menu-options) { z-index: 50; }
+.quantity-input { display: grid; grid-template-columns: minmax(0, 1fr) 88px; gap: 6px; }
+.monitoring-link { text-decoration: none; }
+.danger-action { color: var(--danger); }
+.confirm-copy { margin: 0; color: var(--text-secondary); font-size: 13px; line-height: 1.6; }
+.check-row { display: flex; align-items: flex-start; gap: 8px; margin: 12px 0; color: var(--text-secondary); font-size: 12px; line-height: 1.5; }
+.namespace-create-hint { display: flex; align-items: center; gap: 8px; }
+.modal-wide { width: min(620px, calc(100vw - 32px)); }
+.backup-list, .import-list { display: grid; gap: 6px; margin: 12px 0; }
+.backup-row, .import-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; padding: 8px; border: 1px solid var(--border-muted); border-radius: var(--radius-control); background: var(--surface-subtle); font-size: 11px; }
+.backup-row span, .import-row span, .import-row small { overflow-wrap: anywhere; }
+.backup-row small, .import-row small { color: var(--text-muted); }
+.import-row > div { display: grid; gap: 3px; }
+.import-row strong { font-size: 12px; }
+.storage-table { min-width: 1230px; table-layout: fixed; }
+.storage-table th, .storage-table td { padding-top: 7px; padding-bottom: 7px; }
+.storage-table td { line-height: 16px; white-space: nowrap; }
+.storage-table th:nth-child(1), .storage-table td:nth-child(1) { width: 148px; }
+.storage-table th:nth-child(2), .storage-table td:nth-child(2) { width: 118px; }
+.storage-table th:nth-child(3), .storage-table td:nth-child(3) { width: 90px; }
+.storage-table th:nth-child(4), .storage-table td:nth-child(4) { width: 72px; }
+.storage-table th:nth-child(5), .storage-table td:nth-child(5) { width: 92px; }
+.storage-table th:nth-child(6), .storage-table td:nth-child(6) { width: 146px; }
+.storage-table th:nth-child(7), .storage-table td:nth-child(7) { width: 82px; }
+.storage-table th:nth-child(8), .storage-table td:nth-child(8) { width: 132px; }
+.storage-table th:nth-child(9), .storage-table td:nth-child(9) { width: 82px; }
+.storage-table th:last-child, .storage-table td:last-child { width: 190px; }
+.storage-cell-text { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.filter-count { display: inline-flex; min-width: 16px; height: 16px; align-items: center; justify-content: center; border-radius: 50%; background: var(--action-primary); color: var(--action-contrast); font-size: 10px; line-height: 1; }
+@media (max-width: 1100px) { .storage-picker { flex-basis: 118px; } }
+@media (max-width: 640px) { .storage-context { display: grid; width: 100%; grid-template-columns: 1fr; }.storage-picker { min-width: 0; max-width: none; }.storage-filter-popover { width: min(244px, calc(100vw - 32px)); }.backup-row, .import-row { grid-template-columns: 1fr; } }
 </style>

@@ -24,10 +24,25 @@ function mockInventory(overrides = {}) {
 async function settle() { await new Promise(resolve => setTimeout(resolve, 0)) }
 
 describe('PersistentVolumes view', () => {
-  it('uses the shared section title bar', () => {
+  it('uses the shared single-tab page header', () => {
     const wrapper = mount(PersistentVolumes)
-    expect(wrapper.get('.section-page-header').find('h1').text()).toBe('存储卷')
-    expect(wrapper.find('.section-page-header .page-subtitle').exists()).toBe(false)
+    expect(wrapper.get('.section-tabs-header').find('h1').text()).toBe('存储卷')
+    expect(wrapper.findAll('.section-tab')).toHaveLength(1)
+    expect(wrapper.get('.section-tab').text()).toBe('存储卷')
+    expect(wrapper.get('.section-tab').classes()).toContain('is-active')
+    expect(wrapper.find('.storage-workspace').exists()).toBe(true)
+    expect(wrapper.find('thead').text()).not.toContain('数据回收')
+  })
+
+  it('keeps secondary filters in a compact toolbar popover', async () => {
+    const wrapper = mount(PersistentVolumes)
+
+    expect(wrapper.find('[data-testid="storage-open-filters"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="storage-phase-filter"]').exists()).toBe(false)
+    await wrapper.get('[data-testid="storage-open-filters"]').trigger('click')
+    expect(wrapper.find('[data-testid="storage-phase-filter"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="storage-class-filter"]').exists()).toBe(true)
+    expect(wrapper.find('.base-modal').exists()).toBe(false)
   })
 
   it('loads the cluster PVC inventory without requiring an application environment', async () => {
@@ -182,7 +197,7 @@ describe('PersistentVolumes view', () => {
     await settle()
 
     expect(wrapper.text()).toContain('基础设施')
-    expect(wrapper.text()).toContain('VictoriaMetrics')
+    expect(wrapper.get('[title="VictoriaMetrics"]').exists()).toBe(true)
     expect(wrapper.text()).toContain('查看监控')
     expect(wrapper.find('[title="删除存储卷"]').exists()).toBe(false)
     expect(wrapper.get('.monitoring-link').classes()).toContain('monitoring-link')
@@ -211,6 +226,7 @@ describe('PersistentVolumes view', () => {
 
     expect(api.get).toHaveBeenCalledWith('/k8s/persistent-volume-claims/usage', expect.objectContaining({ signal: expect.any(AbortSignal) }))
     expect(wrapper.text()).toContain('1.0 GiB')
-    expect(wrapper.text()).toContain('20% / 请求容量')
+    expect(wrapper.text()).not.toContain('请求容量')
+    expect(wrapper.get('[title="已用 1.0 GiB / 5.0 GiB（20%）"]').exists()).toBe(true)
   })
 })

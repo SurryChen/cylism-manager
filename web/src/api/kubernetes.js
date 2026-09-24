@@ -42,8 +42,8 @@ export function updateWorkloadImage(namespace, name, payload, options) {
 export function rollbackWorkload(namespace, name, revision, options) {
   return post(`/k8s/deployments/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/rollback`, { revision }, options)
 }
-export function getConfigMaps(options) { return get('/k8s/configmaps?usage=false', options) }
-export function getSecrets(options) { return get('/k8s/secrets?usage=false', options) }
+export function getConfigMaps(options) { return get('/k8s/configmaps', options) }
+export function getSecrets(options) { return get('/k8s/secrets', options) }
 export function getConfigMapsForNamespace(namespace, options) {
   return get(`/k8s/configmaps?namespace=${encodeURIComponent(namespace || '')}&usage=false`, options)
 }
@@ -81,8 +81,8 @@ export function getResourceService(namespace, name, options) {
   return api.get(`/k8s/services/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`, options)
 }
 
-export function getServiceDiscovery(options) {
-  return api.get('/k8s/services', options)
+export function getServiceDiscovery(namespace = '', options) {
+  return api.get(`/k8s/services${namespaceQuery(namespace)}`, options)
 }
 
 export function getServiceEndpoints(namespace, name, options) {
