@@ -12,8 +12,8 @@
       <SurfaceCard padding="none" class="certificate-card">
         <div class="certificate-toolbar">
           <div class="certificate-toolbar-actions">
-            <button class="btn" data-testid="open-issuance-config" @click="showIssuanceConfig = true">签发配置</button>
-            <button class="btn btn-primary" data-testid="add-certificate" @click="showCertificate = true">+ 添加证书</button>
+            <button class="btn" data-testid="open-issuance-config" @click="openIssuanceConfig">签发配置</button>
+            <button class="btn btn-primary" data-testid="add-certificate" @click="openCertificate">+ 添加证书</button>
           </div>
         </div>
 
@@ -41,31 +41,34 @@
 
     <BaseModal :open="showIssuanceConfig" title="签发配置" size="large" @close="showIssuanceConfig = false">
       <div class="table-tabs issuance-tabs" role="tablist" aria-label="签发配置">
-        <button class="tab-btn" :class="{ 'tab-active': issuanceConfigTab === 'issuers' }" role="tab" :aria-selected="issuanceConfigTab === 'issuers'" @click="issuanceConfigTab = 'issuers'">签发者</button>
-        <button class="tab-btn" :class="{ 'tab-active': issuanceConfigTab === 'credentials' }" role="tab" :aria-selected="issuanceConfigTab === 'credentials'" @click="issuanceConfigTab = 'credentials'">DNS 凭据</button>
-        <button class="tab-btn" :class="{ 'tab-active': issuanceConfigTab === 'providers' }" role="tab" :aria-selected="issuanceConfigTab === 'providers'" @click="issuanceConfigTab = 'providers'">Provider 状态</button>
+        <button class="tab-btn" :class="{ 'tab-active': issuanceConfigTab === 'issuers' }" role="tab" :aria-selected="issuanceConfigTab === 'issuers'" @click="selectIssuanceConfigTab('issuers')">签发者</button>
+        <button class="tab-btn" :class="{ 'tab-active': issuanceConfigTab === 'credentials' }" role="tab" :aria-selected="issuanceConfigTab === 'credentials'" @click="selectIssuanceConfigTab('credentials')">DNS 凭据</button>
+        <button class="tab-btn" :class="{ 'tab-active': issuanceConfigTab === 'providers' }" role="tab" :aria-selected="issuanceConfigTab === 'providers'" @click="selectIssuanceConfigTab('providers')">Provider 状态</button>
       </div>
 
       <div v-if="issuanceConfigTab === 'issuers'" class="issuance-config-content">
         <div class="config-toolbar"><span class="section-count">{{ issuers.length }} 项</span><button class="btn btn-primary" @click="openIssuer()">+ 新增签发者</button></div>
-        <div v-if="issuers.length" class="table-wrap"><table class="data-table"><thead><tr><th>名称</th><th>模式</th><th>Provider</th><th>类型</th><th>状态</th><th class="action-cell">操作</th></tr></thead><tbody><tr v-for="issuer in issuers" :key="issuerKey(issuer)"><td class="cell-primary"><OverflowTooltip :text="issuer.name" /><small class="cell-secondary">{{ issuer.namespace || '集群级' }}</small></td><td>{{ issuerModeLabel(issuer.mode) }}</td><td><OverflowTooltip :text="providerName(issuer.dns_provider)" /></td><td>{{ issuer.kind }}</td><td><span class="badge" :class="issuer.ready ? 'badge-online' : 'badge-danger'">{{ issuer.ready ? '就绪' : '不可用' }}</span><small v-if="issuer.reason" class="cell-secondary">{{ issuer.reason }}</small></td><td class="action-cell"><div class="certificate-row-actions"><button class="btn btn-sm" @click="openIssuer(issuer)">编辑</button><button class="btn btn-sm btn-danger" @click="deleteIssuer(issuer)">删除</button></div></td></tr></tbody></table></div>
+        <div v-if="issuersLoading" class="empty-state config-empty"><span class="empty-text">正在读取签发者...</span></div>
+        <div v-else-if="issuers.length" class="table-wrap"><table class="data-table"><thead><tr><th>名称</th><th>模式</th><th>Provider</th><th>类型</th><th>状态</th><th class="action-cell">操作</th></tr></thead><tbody><tr v-for="issuer in issuers" :key="issuerKey(issuer)"><td class="cell-primary"><OverflowTooltip :text="issuer.name" /><small class="cell-secondary">{{ issuer.namespace || '集群级' }}</small></td><td>{{ issuerModeLabel(issuer.mode) }}</td><td><OverflowTooltip :text="providerName(issuer.dns_provider)" /></td><td>{{ issuer.kind }}</td><td><span class="badge" :class="issuer.ready ? 'badge-online' : 'badge-danger'">{{ issuer.ready ? '就绪' : '不可用' }}</span><small v-if="issuer.reason" class="cell-secondary">{{ issuer.reason }}</small></td><td class="action-cell"><div class="certificate-row-actions"><button class="btn btn-sm" @click="openIssuer(issuer)">编辑</button><button class="btn btn-sm btn-danger" @click="deleteIssuer(issuer)">删除</button></div></td></tr></tbody></table></div>
         <div v-else class="empty-state config-empty"><span class="empty-text">尚未配置签发者</span></div>
       </div>
 
       <div v-else-if="issuanceConfigTab === 'credentials'" class="issuance-config-content">
         <div class="config-toolbar"><span class="section-count">{{ credentials.length }} 项</span><button class="btn btn-primary" @click="openCredential()">+ 新增 DNS 凭据</button></div>
-        <div v-if="credentials.length" class="table-wrap"><table class="data-table"><thead><tr><th>名称</th><th>Provider</th><th>命名空间</th><th>已配置字段</th><th>状态</th><th class="action-cell">操作</th></tr></thead><tbody><tr v-for="credential in credentials" :key="credential.id"><td class="cell-primary"><OverflowTooltip :text="credential.name" /></td><td><OverflowTooltip :text="providerName(credential.provider)" /></td><td><OverflowTooltip :text="credential.namespace" /></td><td><OverflowTooltip :text="configuredFieldLabels(credential).join('、') || '-'" /></td><td><span class="badge" :class="credential.enabled ? 'badge-online' : 'badge-offline'">{{ credential.enabled ? '启用' : '停用' }}</span></td><td class="action-cell"><div class="certificate-row-actions"><button class="btn btn-sm" @click="openCredential(credential)">编辑</button><button class="btn btn-sm btn-danger" @click="deleteCredential(credential)">删除</button></div></td></tr></tbody></table></div>
+        <div v-if="credentialsLoading" class="empty-state config-empty"><span class="empty-text">正在读取 DNS 凭据...</span></div>
+        <div v-else-if="credentials.length" class="table-wrap"><table class="data-table"><thead><tr><th>名称</th><th>Provider</th><th>命名空间</th><th>已配置字段</th><th>状态</th><th class="action-cell">操作</th></tr></thead><tbody><tr v-for="credential in credentials" :key="credential.id"><td class="cell-primary"><OverflowTooltip :text="credential.name" /></td><td><OverflowTooltip :text="providerName(credential.provider)" /></td><td><OverflowTooltip :text="credential.namespace" /></td><td><OverflowTooltip :text="configuredFieldLabels(credential).join('、') || '-'" /></td><td><span class="badge" :class="credential.enabled ? 'badge-online' : 'badge-offline'">{{ credential.enabled ? '启用' : '停用' }}</span></td><td class="action-cell"><div class="certificate-row-actions"><button class="btn btn-sm" @click="openCredential(credential)">编辑</button><button class="btn btn-sm btn-danger" @click="deleteCredential(credential)">删除</button></div></td></tr></tbody></table></div>
         <div v-else class="empty-state config-empty"><span class="empty-text">尚未配置 DNS 凭据</span></div>
       </div>
 
       <div v-else class="issuance-config-content provider-list">
-        <div v-if="providers.length" class="provider-grid"><article v-for="provider in providers" :key="provider.id" class="provider-row"><div><strong>{{ provider.name }}</strong><p class="status-copy">{{ provider.description }}</p><p class="status-copy">{{ provider.status?.message }}</p></div><div class="provider-row-actions"><span class="badge" :class="provider.status?.ready ? 'badge-online' : provider.status?.state === 'installing' ? 'badge-deploying' : 'badge-offline'">{{ providerStatusLabel(provider) }}</span><button v-if="provider.webhook && provider.status?.state === 'not_installed'" class="btn btn-sm" :disabled="installingProvider === provider.id" @click="installProvider(provider.id)">{{ installingProvider === provider.id ? '安装中...' : '安装 Webhook' }}</button><button v-else class="btn btn-sm" @click="refresh">刷新</button></div></article></div>
+        <div v-if="providersLoading" class="empty-state config-empty"><span class="empty-text">正在读取 Provider 状态...</span></div>
+        <div v-else-if="providers.length" class="provider-grid"><article v-for="provider in providers" :key="provider.id" class="provider-row"><div><strong>{{ provider.name }}</strong><p class="status-copy">{{ provider.description }}</p><p class="status-copy">{{ provider.status?.message }}</p></div><div class="provider-row-actions"><span class="badge" :class="provider.status?.ready ? 'badge-online' : provider.status?.state === 'installing' ? 'badge-deploying' : 'badge-offline'">{{ providerStatusLabel(provider) }}</span><button v-if="provider.webhook && provider.status?.state === 'not_installed'" class="btn btn-sm" :disabled="installingProvider === provider.id" @click="installProvider(provider.id)">{{ installingProvider === provider.id ? '安装中...' : '安装 Webhook' }}</button><button v-else class="btn btn-sm" @click="loadProviders">刷新</button></div></article></div>
         <div v-else class="empty-state config-empty"><span class="empty-text">尚未发现 DNS Provider</span></div>
       </div>
     </BaseModal>
 
     <BaseModal :open="showCertificate" title="添加证书" @close="showCertificate = false">
-      <form @submit.prevent="createCertificate"><div class="form-row"><div class="form-group"><label class="form-label">名称</label><input v-model.trim="certificateForm.name" class="form-input" placeholder="my-cert" required /></div><div class="form-group"><label class="form-label">命名空间</label><input v-model.trim="certificateForm.namespace" class="form-input" placeholder="default" required /></div></div><div class="form-group"><label class="form-label">域名</label><input v-model="certificateForm.domains" class="form-input" placeholder="example.com,*.example.com" required /></div><div class="form-group"><label class="form-label">签发者</label><SelectMenu v-model="certificateForm.issuer" class="form-select" required><option value="" disabled>选择可用签发者</option><option v-for="issuer in availableIssuers" :key="issuerKey(issuer)" :value="issuerKey(issuer)">{{ issuer.kind }} · {{ issuer.name }}</option></SelectMenu></div><div class="modal-actions"><button type="button" class="btn" @click="showCertificate = false">取消</button><button class="btn btn-primary" :disabled="submitting || !availableIssuers.length">创建证书</button></div></form>
+      <form @submit.prevent="createCertificate"><div class="form-row"><div class="form-group"><label class="form-label">名称</label><input v-model.trim="certificateForm.name" class="form-input" placeholder="my-cert" required /></div><div class="form-group"><label class="form-label">命名空间</label><input v-model.trim="certificateForm.namespace" class="form-input" placeholder="default" required /></div></div><div class="form-group"><label class="form-label">域名</label><input v-model="certificateForm.domains" class="form-input" placeholder="example.com,*.example.com" required /></div><div class="form-group"><label class="form-label">签发者</label><SelectMenu v-model="certificateForm.issuer" class="form-select" required :disabled="issuersLoading"><option value="" disabled>{{ issuersLoading ? '正在读取可用签发者...' : '选择可用签发者' }}</option><option v-for="issuer in availableIssuers" :key="issuerKey(issuer)" :value="issuerKey(issuer)">{{ issuer.kind }} · {{ issuer.name }}</option></SelectMenu></div><div class="modal-actions"><button type="button" class="btn" @click="showCertificate = false">取消</button><button class="btn btn-primary" :disabled="submitting || issuersLoading || !availableIssuers.length">创建证书</button></div></form>
     </BaseModal>
 
     <BaseModal :open="showIssuer" :title="editingIssuer ? '编辑签发者' : '新增签发者'" @close="showIssuer = false">
@@ -86,7 +89,7 @@ import BaseModal from '../../components/BaseModal.vue'
 import OverflowTooltip from '../../components/OverflowTooltip.vue'
 import SelectMenu from '../../components/SelectMenu.vue'
 import SurfaceCard from '../../components/SurfaceCard.vue'
-import { createCertificate as createCertificateRequest, createDNSCredential, createIssuer, deleteCertificate as removeCertificate, deleteDNSCredential, deleteIssuer as removeIssuer, getCertificateResources, getCertificateStatus, installCertificateManager, installDNSProvider, updateDNSCredential, updateIssuer } from '../../api/certificates.js'
+import { createCertificate as createCertificateRequest, createDNSCredential, createIssuer, deleteCertificate as removeCertificate, deleteDNSCredential, deleteIssuer as removeIssuer, getCertificateIssuers, getCertificates, getCertificateStatus, getDNSCredentials, getDNSProviders, installCertificateManager, installDNSProvider, updateDNSCredential, updateIssuer } from '../../api/certificates.js'
 import { useAsyncResource } from '../../composables/useAsyncResource.js'
 
 const router = useRouter()
@@ -123,14 +126,23 @@ const eligibleCredentials = computed(() => credentials.value.filter(credential =
 const certificateResource = useAsyncResource(async ({ signal }) => {
   const currentStatus = await getCertificateStatus({ signal })
   if (currentStatus?.state !== 'ready') return { status: currentStatus, resources: null }
-  return { status: currentStatus, resources: await getCertificateResources({ signal }) }
+  return { status: currentStatus, certificates: await getCertificates({ signal }) }
 }, null)
+const issuersResource = useAsyncResource(({ signal }) => getCertificateIssuers({ signal }), [])
+const credentialsResource = useAsyncResource(({ signal }) => getDNSCredentials({ signal }), [])
+const providersResource = useAsyncResource(({ signal }) => getDNSProviders({ signal }), [])
+const issuersLoading = issuersResource.loading
+const credentialsLoading = credentialsResource.loading
+const providersLoading = providersResource.loading
 
 onMounted(refresh)
 watch(() => certificateForm.value.namespace, () => {
   if (!availableIssuers.value.some(issuer => issuerKey(issuer) === certificateForm.value.issuer)) certificateForm.value.issuer = availableIssuers.value[0] ? issuerKey(availableIssuers.value[0]) : ''
 })
 watch(() => issuerForm.value.dns_provider, () => { issuerForm.value.credential_id = 0 })
+watch(() => issuerForm.value.mode, mode => {
+  if (showIssuer.value && mode === 'acme_dns01') void Promise.all([loadCredentials(), loadProviders()])
+})
 
 async function refresh() {
   statusError.value = ''
@@ -139,12 +151,8 @@ async function refresh() {
   const result = await certificateResource.refresh()
   if (result) {
     status.value = result.status
-    if (result.resources) {
-      const [certificates, certificateIssuers, dnsCredentials, dnsProviders] = result.resources
-      certs.value = certificates || []
-      issuers.value = certificateIssuers || []
-      credentials.value = dnsCredentials || []
-      providers.value = dnsProviders || []
+    if (result.certificates) {
+      certs.value = result.certificates || []
       applyCreateQuery()
     }
   } else if (certificateResource.error.value) {
@@ -153,17 +161,23 @@ async function refresh() {
   loaded.value = true
 }
 
+async function loadIssuers() { resourceError.value = ''; const result = await issuersResource.refresh(); if (result !== undefined) issuers.value = result || []; else if (issuersResource.error.value) resourceError.value = issuersResource.error.value.message || '读取签发者失败' }
+async function loadCredentials() { resourceError.value = ''; const result = await credentialsResource.refresh(); if (result !== undefined) credentials.value = result || []; else if (credentialsResource.error.value) resourceError.value = credentialsResource.error.value.message || '读取 DNS 凭据失败' }
+async function loadProviders() { resourceError.value = ''; const result = await providersResource.refresh(); if (result !== undefined) providers.value = result || []; else if (providersResource.error.value) resourceError.value = providersResource.error.value.message || '读取 DNS Provider 失败' }
+async function openCertificate() { showCertificate.value = true; await loadIssuers() }
+async function openIssuanceConfig() { showIssuanceConfig.value = true; issuanceConfigTab.value = 'issuers'; await loadIssuers() }
+async function selectIssuanceConfigTab(tab) { issuanceConfigTab.value = tab; if (tab === 'issuers') await loadIssuers(); else if (tab === 'credentials') await loadCredentials(); else await loadProviders() }
 async function installCertManager() { mutationError.value = ''; try { await installCertificateManager(); await refresh() } catch (err) { mutationError.value = err.message || '安装失败' } }
-async function installProvider(id) { installingProvider.value = id; mutationError.value = ''; try { await installDNSProvider(id); await refresh() } catch (err) { mutationError.value = err.message || '安装 Provider 失败' } finally { installingProvider.value = '' } }
+async function installProvider(id) { installingProvider.value = id; mutationError.value = ''; try { await installDNSProvider(id); await loadProviders() } catch (err) { mutationError.value = err.message || '安装 Provider 失败' } finally { installingProvider.value = '' } }
 async function createCertificate() { const issuer = availableIssuers.value.find(item => issuerKey(item) === certificateForm.value.issuer); if (!issuer) return; submitting.value = true; mutationError.value = ''; try { await createCertificateRequest({ name: certificateForm.value.name, namespace: certificateForm.value.namespace, domains: certificateForm.value.domains.split(',').map(item => item.trim()).filter(Boolean), issuer_ref: issuer.name, issuer_kind: issuer.kind }); showCertificate.value = false; await refresh() } catch (err) { mutationError.value = err.message || '创建证书失败' } finally { submitting.value = false } }
-function openIssuer(item = null) { showIssuanceConfig.value = false; editingIssuer.value = item; issuerForm.value = item ? { name: item.name, namespace: item.namespace || '', kind: item.kind, mode: item.mode || 'acme_http01', email: item.email || '', ingress_class: 'traefik', dns_provider: item.dns_provider || '', credential_id: 0 } : newIssuer(); showIssuer.value = true }
-async function saveIssuer() { submitting.value = true; mutationError.value = ''; try { if (editingIssuer.value) await updateIssuer(issuerForm.value.kind, issuerForm.value.namespace, issuerForm.value.name, issuerForm.value); else await createIssuer(issuerForm.value); showIssuer.value = false; await refresh() } catch (err) { mutationError.value = err.message || '保存签发者失败' } finally { submitting.value = false } }
-async function deleteIssuer(item) { if (!window.confirm(`删除签发者 ${item.name}？`)) return; mutationError.value = ''; try { await removeIssuer(item.kind, item.namespace, item.name); await refresh() } catch (err) { mutationError.value = err.message || '删除签发者失败' } }
-function openCredential(item = null) { showIssuanceConfig.value = false; editingCredential.value = item; credentialForm.value = item ? { name: item.name, provider: item.provider, namespace: item.namespace, values: {}, enabled: item.enabled } : newCredential(); showCredential.value = true }
-async function saveCredential() { submitting.value = true; mutationError.value = ''; try { const values = { ...credentialForm.value.values }; Object.keys(values).forEach(key => { if (!values[key]) delete values[key] }); const body = { ...credentialForm.value, values }; if (editingCredential.value) await updateDNSCredential(editingCredential.value.id, body); else await createDNSCredential(body); showCredential.value = false; await refresh() } catch (err) { mutationError.value = err.message || '保存 DNS 凭据失败' } finally { submitting.value = false } }
-async function deleteCredential(item) { if (!window.confirm(`删除 DNS 凭据 ${item.name}？`)) return; mutationError.value = ''; try { await deleteDNSCredential(item.id); await refresh() } catch (err) { mutationError.value = err.message || '删除 DNS 凭据失败' } }
+async function openIssuer(item = null) { showIssuanceConfig.value = false; editingIssuer.value = item; issuerForm.value = item ? { name: item.name, namespace: item.namespace || '', kind: item.kind, mode: item.mode || 'acme_http01', email: item.email || '', ingress_class: 'traefik', dns_provider: item.dns_provider || '', credential_id: 0 } : newIssuer(); showIssuer.value = true; if (issuerForm.value.mode === 'acme_dns01') await Promise.all([loadCredentials(), loadProviders()]) }
+async function saveIssuer() { submitting.value = true; mutationError.value = ''; try { if (editingIssuer.value) await updateIssuer(issuerForm.value.kind, issuerForm.value.namespace, issuerForm.value.name, issuerForm.value); else await createIssuer(issuerForm.value); showIssuer.value = false; await loadIssuers() } catch (err) { mutationError.value = err.message || '保存签发者失败' } finally { submitting.value = false } }
+async function deleteIssuer(item) { if (!window.confirm(`删除签发者 ${item.name}？`)) return; mutationError.value = ''; try { await removeIssuer(item.kind, item.namespace, item.name); await loadIssuers() } catch (err) { mutationError.value = err.message || '删除签发者失败' } }
+async function openCredential(item = null) { showIssuanceConfig.value = false; editingCredential.value = item; credentialForm.value = item ? { name: item.name, provider: item.provider, namespace: item.namespace, values: {}, enabled: item.enabled } : newCredential(); showCredential.value = true; await loadProviders() }
+async function saveCredential() { submitting.value = true; mutationError.value = ''; try { const values = { ...credentialForm.value.values }; Object.keys(values).forEach(key => { if (!values[key]) delete values[key] }); const body = { ...credentialForm.value, values }; if (editingCredential.value) await updateDNSCredential(editingCredential.value.id, body); else await createDNSCredential(body); showCredential.value = false; await loadCredentials() } catch (err) { mutationError.value = err.message || '保存 DNS 凭据失败' } finally { submitting.value = false } }
+async function deleteCredential(item) { if (!window.confirm(`删除 DNS 凭据 ${item.name}？`)) return; mutationError.value = ''; try { await deleteDNSCredential(item.id); await loadCredentials() } catch (err) { mutationError.value = err.message || '删除 DNS 凭据失败' } }
 async function deleteCertificate(cert) { if (!window.confirm(`删除证书 ${cert.name}？`)) return; mutationError.value = ''; try { await removeCertificate(cert.namespace, cert.name); await refresh() } catch (err) { mutationError.value = err.message || '删除证书失败' } }
-function applyCreateQuery() { if (createQueryHandled.value || typeof window === 'undefined' || !ready.value) return; const query = new URLSearchParams(window.location.hash.split('?')[1] || ''); if (query.get('create') !== '1') return; createQueryHandled.value = true; certificateForm.value = { ...newCertificate(), name: query.get('name') || '', namespace: query.get('namespace') || 'cylism-system', domains: query.get('domains') || '' }; showCertificate.value = true }
+function applyCreateQuery() { if (createQueryHandled.value || typeof window === 'undefined' || !ready.value) return; const query = new URLSearchParams(window.location.hash.split('?')[1] || ''); if (query.get('create') !== '1') return; createQueryHandled.value = true; certificateForm.value = { ...newCertificate(), name: query.get('name') || '', namespace: query.get('namespace') || 'cylism-system', domains: query.get('domains') || '' }; showCertificate.value = true; void loadIssuers() }
 function issuerKey(issuer) { return `${issuer.kind}/${issuer.namespace || '_'}/${issuer.name}` }
 function providerName(id) { return providers.value.find(provider => provider.id === id)?.name || id || '-' }
 function providerStatusLabel(provider) { return provider.status?.ready ? '已就绪' : ({ not_installed: '未安装', installing: '安装中' }[provider.status?.state] || '不可用') }

@@ -15,7 +15,9 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
+	metadatafake "k8s.io/client-go/metadata/fake"
 )
 
 type resourceReferenceFake struct{ references []model.ResourceReference }
@@ -213,6 +215,31 @@ func TestLightweightServiceListSkipsEndpointLookups(t *testing.T) {
 		if action.GetResource().Resource == "endpointslices" || action.GetResource().Resource == "endpoints" {
 			t.Fatalf("lightweight service list must not query endpoints: %#v", action)
 		}
+	}
+}
+
+func TestSecretMetadataListUsesPagedMetadataResponse(t *testing.T) {
+	metadataScheme := metadatafake.NewTestScheme()
+	metadataScheme.AddKnownTypeWithName(schema.GroupVersionKind{Version: "v1", Kind: "Secret"}, &metav1.PartialObjectMetadata{})
+	metadataClient := metadatafake.NewSimpleMetadataClient(metadataScheme, &metav1.PartialObjectMetadata{
+		TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: "Secret"},
+		ObjectMeta: metav1.ObjectMeta{Name: "db-password", Namespace: "apps"},
+	})
+	typedClient := k8sfake.NewSimpleClientset(&corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "db-password", Namespace: "apps"},
+		Data:       map[string][]byte{"password": []byte("must-not-be-returned")},
+	})
+	client := &k8sclient.Client{Clientset: typedClient, MetadataClient: metadataClient}
+
+	response := serve(setupK8sTestRouter(client), httptest.NewRequest(http.MethodGet, "/api/k8s/secrets?namespace=apps&metadata=true&limit=50", nil))
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"items":[{"name":"db-password","namespace":"apps"`) {
+		t.Fatalf("unexpected metadata response: %s", response.Body.String())
+	}
+	if strings.Contains(response.Body.String(), "must-not-be-returned") || strings.Contains(response.Body.String(), `"type":`) || strings.Contains(response.Body.String(), `"keys":`) {
+		t.Fatalf("metadata response exposed Secret details: %s", response.Body.String())
+	}
+	if actions := typedClient.Actions(); len(actions) != 0 {
+		t.Fatalf("metadata endpoint must not use typed Secret API: %#v", actions)
 	}
 }
 

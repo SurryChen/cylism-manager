@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { api } from './index.js'
-import { getLightweightServiceDiscovery, getResourceInventory, getResourceService, getWorkloadDeploymentPods, getConfigMap, getConfigMapsForNamespace } from './kubernetes.js'
+import { getLightweightServiceDiscovery, getResourceInventory, getResourceService, getWorkloadDeploymentPods, getConfigMap, getConfigMapsForNamespace, getSecretMetadataPage } from './kubernetes.js'
 
 vi.mock('./index.js', () => ({ api: { get: vi.fn() } }))
 
@@ -35,5 +35,11 @@ describe('kubernetes api', () => {
     expect(api.get).toHaveBeenNthCalledWith(1, '/k8s/deployments/team%2Fa/api%2Fservice/pods', options)
     expect(api.get).toHaveBeenNthCalledWith(2, '/k8s/configmaps/team%2Fa/app%2Fconfig', options)
     expect(api.get).toHaveBeenNthCalledWith(3, '/k8s/configmaps?namespace=team%2Fa&usage=false', options)
+  })
+
+  it('loads a paged metadata-only Secret inventory', () => {
+    const options = { signal: new AbortController().signal }
+    getSecretMetadataPage('team/a', { continueToken: 'page/2', ...options })
+    expect(api.get).toHaveBeenCalledWith('/k8s/secrets?namespace=team%2Fa&metadata=true&limit=50&continue=page%2F2', options)
   })
 })

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"time"
 
 	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
@@ -61,6 +62,7 @@ type K8sResourceAdapter interface {
 	UpdateConfigMapContext(context.Context, k8sclient.ConfigMapMutation) (*k8sclient.ConfigMapDetail, error)
 	DeleteConfigMapContext(context.Context, string, string) error
 	ListSecretsMetadataContext(context.Context, string) ([]k8sclient.SecretInfo, error)
+	ListSecretsMetadataPageContext(context.Context, string, int64, string) (k8sclient.SecretMetadataPage, error)
 	ListSecretsContext(context.Context, string) ([]k8sclient.SecretInfo, error)
 	GetSecretContext(context.Context, string, string) (*k8sclient.SecretDetail, error)
 	CreateOpaqueSecretContext(context.Context, k8sclient.OpaqueSecretMutation) (*k8sclient.SecretInfo, error)
@@ -808,6 +810,31 @@ func (h *K8sHandler) ListSecrets(c *gin.Context) {
 		return
 	}
 	ns := c.Query("namespace")
+	if c.Query("metadata") == "true" {
+		limit := int64(50)
+		if rawLimit := c.Query("limit"); rawLimit != "" {
+			parsed, parseErr := strconv.ParseInt(rawLimit, 10, 64)
+			if parseErr != nil || parsed < 1 {
+				apiShared.Error(c, http.StatusBadRequest, apiShared.CodeBadRequest, "limit 必须是正整数")
+				return
+			}
+			if parsed < 200 {
+				limit = parsed
+			} else {
+				limit = 200
+			}
+		}
+		page, err := h.k8s.ListSecretsMetadataPageContext(c.Request.Context(), ns, limit, c.Query("continue"))
+		if err != nil {
+			apiShared.Error(c, http.StatusOK, apiShared.CodeK8sAPIError, err.Error())
+			return
+		}
+		if page.Items == nil {
+			page.Items = []k8sclient.SecretMetadataInfo{}
+		}
+		apiShared.Success(c, page)
+		return
+	}
 	var result []k8sclient.SecretInfo
 	var err error
 	if c.Query("usage") == "false" {

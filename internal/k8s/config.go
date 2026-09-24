@@ -7,6 +7,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
 // WorkloadRef 工作负载引用
@@ -45,6 +46,24 @@ type SecretInfo struct {
 	UsedBy    []WorkloadRef `json:"used_by"`
 	Age       string        `json:"age"`
 }
+
+// SecretMetadataInfo is the safe, lightweight representation used by the
+// inventory page. It deliberately excludes Secret type, keys, and data.
+type SecretMetadataInfo struct {
+	Name      string `json:"name"`
+	Namespace string `json:"namespace"`
+	Age       string `json:"age"`
+}
+
+// SecretMetadataPage is a page of Secret inventory records. The Kubernetes
+// continuation token remains opaque to callers and is only valid for the
+// matching namespace and list query.
+type SecretMetadataPage struct {
+	Items    []SecretMetadataInfo `json:"items"`
+	Continue string               `json:"continue,omitempty"`
+}
+
+var secretGVR = schema.GroupVersionResource{Version: "v1", Resource: "secrets"}
 
 // SecretDetail Secret 详情（含 base64 value）
 type SecretDetail struct {
@@ -169,10 +188,43 @@ func (c *Client) ListSecretsContext(ctx context.Context, ns string) ([]SecretInf
 	return c.listSecretsContext(ctx, ns, true)
 }
 
-// ListSecretsMetadata lists only resource metadata and keys. Secret values
-// and workload scans are intentionally excluded from this inventory path.
+// ListSecretsMetadata lists Secret display data without workload scans. It is
+// retained for existing callers that need Secret type and key names.
 func (c *Client) ListSecretsMetadataContext(ctx context.Context, ns string) ([]SecretInfo, error) {
 	return c.listSecretsContext(ctx, ns, false)
+}
+
+// ListSecretsMetadataPageContext requests Kubernetes PartialObjectMetadata,
+// so the API server does not serialize Secret data for the inventory page.
+func (c *Client) ListSecretsMetadataPageContext(ctx context.Context, ns string, limit int64, continueToken string) (SecretMetadataPage, error) {
+	if limit < 1 {
+		limit = 50
+	}
+	metadataClient, err := c.metadataClient()
+	if err != nil {
+		return SecretMetadataPage{}, err
+	}
+	resource := metadataClient.Resource(secretGVR)
+	options := metav1.ListOptions{Limit: limit, Continue: continueToken}
+	var list *metav1.PartialObjectMetadataList
+	if ns == "" {
+		list, err = resource.List(ctx, options)
+	} else {
+		list, err = resource.Namespace(ns).List(ctx, options)
+	}
+	if err != nil {
+		return SecretMetadataPage{}, fmt.Errorf("list secret metadata: %w", err)
+	}
+
+	items := make([]SecretMetadataInfo, 0, len(list.Items))
+	for _, secret := range list.Items {
+		items = append(items, SecretMetadataInfo{
+			Name:      secret.Name,
+			Namespace: secret.Namespace,
+			Age:       timeAgo(secret.CreationTimestamp.Time),
+		})
+	}
+	return SecretMetadataPage{Items: items, Continue: list.Continue}, nil
 }
 
 func (c *Client) listSecretsContext(ctx context.Context, ns string, includeUsage bool) ([]SecretInfo, error) {

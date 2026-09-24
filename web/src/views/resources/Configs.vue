@@ -6,7 +6,8 @@
           <button :class="['tab-btn', { 'tab-active': activeTab === 'configmaps' }]" type="button" role="tab" :aria-selected="activeTab === 'configmaps'" @click="selectTab('configmaps')">ConfigMaps</button>
           <button :class="['tab-btn', { 'tab-active': activeTab === 'secrets' }]" type="button" role="tab" :aria-selected="activeTab === 'secrets'" @click="selectTab('secrets')">Secrets</button>
         </div>
-        <span class="resource-count">{{ resources.length }} 条</span>
+        <SelectMenu v-if="activeTab === 'secrets'" v-model="secretNamespace" class="secret-namespace-filter" aria-label="筛选 Secret 命名空间" @change="selectTab('secrets')"><option value="">全部命名空间</option><option v-for="item in namespaces" :key="item.name" :value="item.name">{{ item.name }}</option></SelectMenu>
+        <span class="resource-count">{{ resourceCountLabel }}</span>
       </template>
       <template #actions>
         <button class="icon-button" type="button" title="刷新配置" aria-label="刷新配置" :disabled="loadingTab" @click="selectTab(activeTab)"><RefreshCw :size="16" :class="{ 'is-spinning': loadingTab }" /></button>
@@ -17,22 +18,23 @@
       <EmptyState v-else-if="!resources.length" :message="`暂无 ${activeTab === 'configmaps' ? 'ConfigMap' : 'Secret'}`" />
       <div v-else class="table-wrap config-table-wrap">
         <table class="data-table config-table">
-          <thead><tr><th>名称</th><th>命名空间</th><th v-if="activeTab === 'secrets'">类型</th><th>键数量</th><th>年龄</th><th class="action-cell">操作</th></tr></thead>
+          <thead><tr><th>名称</th><th>命名空间</th><th v-if="activeTab === 'configmaps'">键数量</th><th>年龄</th><th class="action-cell">操作</th></tr></thead>
           <tbody><tr v-for="resource in resources" :key="resourceKey(resource)">
             <td class="cell-primary"><OverflowTooltip class="config-cell-truncate" :text="resource.name || '-'" /></td>
             <td><OverflowTooltip class="config-cell-truncate" :text="resource.namespace || '-'" /></td>
-            <td v-if="activeTab === 'secrets'"><OverflowTooltip class="config-cell-truncate" :text="resource.type || '-'" /></td>
-            <td>{{ keyCount(resource) }}</td><td>{{ resource.age || '-' }}</td>
-            <td class="action-cell"><div class="config-row-actions"><button class="btn btn-sm" type="button" :data-testid="`view-config-resource-${resourceKey(resource)}`" @click="openDetail(resource)">查看</button><button class="icon-button" type="button" title="编辑资源" aria-label="编辑资源" :disabled="!isEditable(resource)" @click="openEdit(resource)"><Pencil :size="16" /></button><button class="icon-button danger" type="button" title="删除资源" aria-label="删除资源" :disabled="!isEditable(resource)" @click="removeResource(resource)"><Trash2 :size="16" /></button></div></td>
+            <td v-if="activeTab === 'configmaps'">{{ keyCount(resource) }}</td><td>{{ resource.age || '-' }}</td>
+            <td class="action-cell"><div class="config-row-actions"><button class="btn btn-sm" type="button" :data-testid="`view-config-resource-${resourceKey(resource)}`" @click="openDetail(resource)">查看</button><button class="icon-button" type="button" title="编辑资源" aria-label="编辑资源" @click="openEdit(resource)"><Pencil :size="16" /></button><button class="icon-button danger" type="button" title="删除资源" aria-label="删除资源" @click="removeResource(resource)"><Trash2 :size="16" /></button></div></td>
           </tr></tbody>
         </table>
       </div>
+      <div v-if="activeTab === 'secrets' && secretContinue" class="secret-pagination"><button class="btn" type="button" :disabled="loadingTab" @click="loadMoreSecrets">{{ loadingTab ? '正在读取...' : '加载更多' }}</button></div>
     </TabbedWorkspaceCard>
 
     <BaseModal :open="showDetail" :title="detailTitle" size="large" @close="closeDetail">
       <div v-if="selectedResource" class="config-detail">
         <div v-if="detailLoading" class="detail-empty">正在读取配置详情...</div>
         <template v-else>
+          <section v-if="activeTab === 'secrets'" class="detail-section secret-summary"><h3>基本信息</h3><dl><div><dt>类型</dt><dd>{{ detail?.type || '-' }}</dd></div><div><dt>键数量</dt><dd>{{ detailItems.length }}</dd></div></dl></section>
           <section class="detail-section"><h3>数据项</h3><div class="table-wrap detail-table-wrap"><table class="data-table detail-table"><thead><tr><th>键</th><th>值</th></tr></thead><tbody><tr v-for="item in detailItems" :key="item.key"><td class="cell-primary"><OverflowTooltip class="detail-cell" :text="item.key" /></td><td><OverflowTooltip class="detail-cell detail-code" :text="item.value" /></td></tr><tr v-if="!detailItems.length"><td colspan="2" class="detail-empty-cell">暂无数据项</td></tr></tbody></table></div></section>
           <section class="detail-section"><h3>引用工作负载</h3><div v-if="references.length" class="table-wrap detail-table-wrap"><table class="data-table detail-table"><thead><tr><th>类型</th><th>名称</th><th>命名空间</th></tr></thead><tbody><tr v-for="reference in references" :key="`${reference.kind}/${reference.namespace}/${reference.name}`"><td>{{ reference.kind || '-' }}</td><td class="cell-primary"><OverflowTooltip class="detail-cell" :text="reference.name || '-'" /></td><td><OverflowTooltip class="detail-cell" :text="reference.namespace || selectedResource.namespace || '-'" /></td></tr></tbody></table></div><p v-else class="detail-empty-copy">暂无工作负载引用</p></section>
         </template>
@@ -54,7 +56,7 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { Pencil, Plus, RefreshCw, Trash2 } from 'lucide-vue-next'
-import { createConfigMap, createSecret, deleteConfigMap, deleteSecret, getConfigMap, getConfigMapsForNamespace, getNamespaceNames, getSecret, getSecretsForNamespace, updateConfigMap, updateSecret } from '../../api/kubernetes.js'
+import { createConfigMap, createSecret, deleteConfigMap, deleteSecret, getConfigMap, getConfigMapsForNamespace, getNamespaceNames, getSecret, getSecretMetadataPage, updateConfigMap, updateSecret } from '../../api/kubernetes.js'
 import { useAsyncResource } from '../../composables/useAsyncResource.js'
 import BaseModal from '../../components/BaseModal.vue'
 import EmptyState from '../../components/EmptyState.vue'
@@ -67,7 +69,9 @@ const activeTab = ref('configmaps')
 const configmaps = ref([])
 const secrets = ref([])
 const namespaces = ref([])
-const listResource = useAsyncResource(({ signal }, tab) => tab === 'configmaps' ? getConfigMapsForNamespace('', { signal }) : getSecretsForNamespace('', { signal }), null)
+const secretNamespace = ref('')
+const secretContinue = ref('')
+const listResource = useAsyncResource(({ signal }, tab, continueToken = '') => tab === 'configmaps' ? getConfigMapsForNamespace('', { signal }) : getSecretMetadataPage(secretNamespace.value, { continueToken, signal }), null)
 const detailResource = useAsyncResource(({ signal }, tab, namespace, name) => tab === 'configmaps' ? getConfigMap(namespace, name, { signal }) : getSecret(namespace, name, { signal }), null)
 const loadingTab = listResource.loading
 const namespacesLoading = ref(false)
@@ -83,6 +87,7 @@ const editing = ref(false)
 const resourceForm = ref(newResourceForm())
 
 const resources = computed(() => activeTab.value === 'configmaps' ? configmaps.value : secrets.value)
+const resourceCountLabel = computed(() => activeTab.value === 'secrets' ? `本页 ${resources.value.length} 条` : `${resources.value.length} 条`)
 const resourceKind = computed(() => activeTab.value === 'configmaps' ? 'ConfigMap' : 'Opaque Secret')
 const detailLoading = detailResource.loading
 const detailTitle = computed(() => selectedResource.value ? `${activeTab.value === 'configmaps' ? 'ConfigMap' : 'Secret'} · ${selectedResource.value.namespace}/${selectedResource.value.name}` : '配置详情')
@@ -97,7 +102,6 @@ const errorTitle = computed(() => mutationError.value ? '操作失败' : detailE
 
 function newResourceForm() { return { namespace: '', name: '', data: [{ key: '', value: '' }] } }
 function resourceKey(resource) { return `${resource.namespace}/${resource.name}` }
-function isEditable(resource) { return activeTab.value === 'configmaps' || resource.type === 'Opaque' }
 function keyCount(resource) { return resource.keys_count ?? resource.keys?.length ?? 0 }
 function dataMap() { return resourceForm.value.data.reduce((result, item) => { if (item.key) result[item.key] = item.value; return result }, {}) }
 function addDataItem() { resourceForm.value.data.push({ key: '', value: '' }) }
@@ -113,10 +117,23 @@ async function selectTab(tab) {
   activeTab.value = tab
   closeDetail()
   listError.value = ''
+  if (tab === 'secrets') {
+    secretContinue.value = ''
+    secrets.value = []
+    if (!namespaces.value.length && !namespacesLoading.value) void loadNamespaces()
+  }
   const result = await listResource.refresh(tab)
   if (!result) { if (listResource.error.value) listError.value = listResource.error.value.message || '加载失败，请检查集群连接'; return }
   if (tab === 'configmaps') configmaps.value = result || []
-  else secrets.value = result || []
+  else { secrets.value = result.items || []; secretContinue.value = result.continue || '' }
+}
+async function loadMoreSecrets() {
+  if (!secretContinue.value || loadingTab.value) return
+  listError.value = ''
+  const result = await listResource.refresh('secrets', secretContinue.value)
+  if (!result) { if (listResource.error.value) listError.value = listResource.error.value.message || '加载失败，请检查集群连接'; return }
+  secrets.value = [...secrets.value, ...(result.items || [])]
+  secretContinue.value = result.continue || ''
 }
 async function openDetail(resource) {
   selectedResource.value = resource
@@ -144,7 +161,12 @@ async function openEdit(resource) {
     const loaded = await detailResource.refresh('configmaps', resource.namespace, resource.name)
     if (!loaded) { detailError.value = detailResource.error.value?.message || '读取 ConfigMap 失败'; return }
     resourceForm.value.data = Object.entries(loaded.data || {}).map(([key, value]) => ({ key, value }))
-  } else resourceForm.value.data = (resource.keys || []).map(key => ({ key, value: '' }))
+  } else {
+    const loaded = await detailResource.refresh('secrets', resource.namespace, resource.name)
+    if (!loaded) { detailError.value = detailResource.error.value?.message || '读取 Secret 失败'; return }
+    if (loaded.type !== 'Opaque') { mutationError.value = '仅支持编辑 Opaque Secret'; return }
+    resourceForm.value.data = Object.keys(loaded.data || {}).map(key => ({ key, value: '' }))
+  }
   if (!resourceForm.value.data.length) addDataItem()
   showEditor.value = true
 }
@@ -162,15 +184,26 @@ async function saveResource() {
   } catch (cause) { mutationError.value = cause.message || '保存资源失败' } finally { saving.value = false }
 }
 async function removeResource(resource) {
-  if (!window.confirm(`删除 ${resource.name} 后无法恢复，是否继续？`)) return
   mutationError.value = ''
-  try { if (activeTab.value === 'configmaps') await deleteConfigMap(resource.namespace, resource.name); else await deleteSecret(resource.namespace, resource.name); await selectTab(activeTab.value) } catch (cause) { mutationError.value = cause.message || '删除资源失败' }
+  try {
+    if (activeTab.value === 'secrets') {
+      const loaded = await detailResource.refresh('secrets', resource.namespace, resource.name)
+      if (!loaded) { detailError.value = detailResource.error.value?.message || '读取 Secret 失败'; return }
+      if (loaded.type !== 'Opaque') { mutationError.value = '仅支持删除 Opaque Secret'; return }
+    }
+    if (!window.confirm(`删除 ${resource.name} 后无法恢复，是否继续？`)) return
+    if (activeTab.value === 'configmaps') await deleteConfigMap(resource.namespace, resource.name)
+    else await deleteSecret(resource.namespace, resource.name)
+    await selectTab(activeTab.value)
+  } catch (cause) { mutationError.value = cause.message || '删除资源失败' }
 }
 </script>
 
 <style scoped>
 .configs-workspace { margin-top: var(--space-20); }
 .resource-count { color: var(--text-secondary); font-size: 12px; font-variant-numeric: tabular-nums; }
+.secret-namespace-filter { width: 156px; flex: 0 0 156px; }
+.secret-namespace-filter :deep(.select-menu) { width: 100%; }
 .config-table { min-width: 760px; table-layout: fixed; }
 .config-cell-truncate { max-width: 180px; }
 .action-cell { white-space: nowrap; }
@@ -179,6 +212,7 @@ async function removeResource(resource) {
 .config-detail { display: grid; gap: var(--space-20); }
 .detail-section { display: grid; gap: var(--space-8); }
 .detail-section h3 { margin: 0; color: var(--text-primary); font-size: 13px; }
+.secret-summary dl { display: flex; gap: var(--space-24); margin: 0; }.secret-summary dl > div { display: grid; gap: 4px; }.secret-summary dt { color: var(--text-muted); font-size: 12px; }.secret-summary dd { margin: 0; color: var(--text-primary); font-size: 13px; }
 .detail-table-wrap { padding: 0; }
 .detail-table { min-width: 500px; table-layout: fixed; }
 .detail-cell { max-width: 300px; }
@@ -192,5 +226,6 @@ async function removeResource(resource) {
 .resource-heading .form-label { margin: 0; }
 .key-value-list { display: grid; gap: 8px; }
 .key-value-row { display: grid; grid-template-columns: minmax(0, .8fr) minmax(0, 1.4fr) 30px; gap: 8px; padding: 8px; border: 1px solid var(--border-muted); border-radius: var(--radius-control); background: var(--surface-subtle); }
-@media(max-width:640px) { .config-row-actions { justify-content:flex-start; }.key-value-row { grid-template-columns:1fr 1fr 30px; } }
+.secret-pagination { display: flex; justify-content: center; padding-top: var(--space-16); }
+@media(max-width:640px) { .secret-namespace-filter { width: min(100%, 220px); flex-basis: min(100%, 220px); }.config-row-actions { justify-content:flex-start; }.key-value-row { grid-template-columns:1fr 1fr 30px; } }
 </style>

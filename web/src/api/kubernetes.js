@@ -50,6 +50,11 @@ export function getConfigMapsForNamespace(namespace, options) {
 export function getSecretsForNamespace(namespace, options) {
   return get(`/k8s/secrets?namespace=${encodeURIComponent(namespace || '')}&usage=false`, options)
 }
+export function getSecretMetadataPage(namespace, { limit = 50, continueToken = '', ...options } = {}) {
+  const query = new URLSearchParams({ namespace: namespace || '', metadata: 'true', limit: String(limit) })
+  if (continueToken) query.set('continue', continueToken)
+  return get(`/k8s/secrets?${query.toString()}`, options)
+}
 export function getNamespaceNames(options) { return get('/k8s/namespace-names', options) }
 export function getConfigMap(namespace, name, options) {
   return get(`/k8s/configmaps/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`, options)

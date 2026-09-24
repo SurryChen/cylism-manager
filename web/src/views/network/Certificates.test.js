@@ -32,18 +32,45 @@ describe('Certificates view', () => {
     api.delete.mockResolvedValue({})
   })
 
-  it('keeps issuance configuration out of the certificate list until requested', async () => {
+  it('loads only certificate inventory on mount', async () => {
     const wrapper = mount(Certificates)
     await settle()
 
     expect(wrapper.text()).toContain('api-example-tls')
+    expect(api.get).toHaveBeenCalledWith('/certs/status', expect.anything())
+    expect(api.get).toHaveBeenCalledWith('/certs', expect.anything())
+    expect(api.get).not.toHaveBeenCalledWith('/certs/issuers', expect.anything())
+    expect(api.get).not.toHaveBeenCalledWith('/certs/dns-credentials', expect.anything())
+    expect(api.get).not.toHaveBeenCalledWith('/certs/dns-providers', expect.anything())
+  })
+
+  it('loads issuance configuration only after it is opened', async () => {
+    const wrapper = mount(Certificates)
+    await settle()
+
     expect(wrapper.text()).not.toContain('broken-issuer')
     await wrapper.get('[data-testid="open-issuance-config"]').trigger('click')
+    await settle()
     expect(wrapper.text()).toContain('letsencrypt-dns')
     expect(wrapper.text()).toContain('broken-issuer')
     expect(wrapper.text()).toContain('不可用')
+    expect(api.get).toHaveBeenCalledWith('/certs/issuers', expect.anything())
+    expect(api.get).not.toHaveBeenCalledWith('/certs/dns-credentials', expect.anything())
+    expect(api.get).not.toHaveBeenCalledWith('/certs/dns-providers', expect.anything())
     await wrapper.get('[role="tab"]:nth-child(3)').trigger('click')
+    await settle()
     expect(wrapper.text()).toContain('阿里云 DNS')
+    expect(api.get).toHaveBeenCalledWith('/certs/dns-providers', expect.anything())
+  })
+
+  it('loads issuers when the certificate form is opened', async () => {
+    const wrapper = mount(Certificates)
+    await settle()
+
+    await wrapper.get('[data-testid="add-certificate"]').trigger('click')
+    await settle()
+
+    expect(api.get).toHaveBeenCalledWith('/certs/issuers', expect.anything())
   })
 
   it('creates a certificate with the selected issuer reference and kind', async () => {
