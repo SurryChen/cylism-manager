@@ -63,6 +63,14 @@ type PersistentVolumeClaimInfo struct {
 	CreationTimestamp    string   `json:"created_at,omitempty"`
 }
 
+// PersistentVolumeClaimReference identifies a claim without requiring a
+// cluster-wide inventory read. It is used by the usage collector, which only
+// needs the rows currently rendered in the UI.
+type PersistentVolumeClaimReference struct {
+	Namespace string
+	Name      string
+}
+
 type StorageClassInfo struct {
 	Name              string `json:"name"`
 	Provisioner       string `json:"provisioner"`
@@ -145,6 +153,41 @@ func (c *Client) ListPVCsContext(ctx context.Context, namespace string) ([]Persi
 		}
 		return result[i].Name < result[j].Name
 	})
+	return result, nil
+}
+
+// ListPVCUsageInfosContext resolves only the PVC/PV pairs requested by the
+// caller. StorageClass metadata is deliberately omitted because it is not
+// needed to collect local directory usage.
+func (c *Client) ListPVCUsageInfosContext(ctx context.Context, references []PersistentVolumeClaimReference) ([]PersistentVolumeClaimInfo, error) {
+	if c == nil || c.Clientset == nil {
+		return nil, fmt.Errorf("Kubernetes 存储客户端未初始化")
+	}
+	if ctx == nil {
+		return nil, fmt.Errorf("Kubernetes 请求上下文不能为空")
+	}
+	result := make([]PersistentVolumeClaimInfo, 0, len(references))
+	for _, reference := range references {
+		namespace, name := strings.TrimSpace(reference.Namespace), strings.TrimSpace(reference.Name)
+		if namespace == "" || name == "" {
+			continue
+		}
+		claim, err := c.Clientset.CoreV1().PersistentVolumeClaims(namespace).Get(ctx, name, metav1.GetOptions{})
+		if apierrors.IsNotFound(err) {
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("get persistentvolumeclaim %s/%s: %w", namespace, name, err)
+		}
+		var volume *corev1.PersistentVolume
+		if claim.Spec.VolumeName != "" {
+			volume, err = c.Clientset.CoreV1().PersistentVolumes().Get(ctx, claim.Spec.VolumeName, metav1.GetOptions{})
+			if err != nil && !apierrors.IsNotFound(err) {
+				return nil, fmt.Errorf("get persistentvolume %s: %w", claim.Spec.VolumeName, err)
+			}
+		}
+		result = append(result, pvcInfoFromResources(claim, nil, volume))
+	}
 	return result, nil
 }
 

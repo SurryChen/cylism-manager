@@ -30,6 +30,7 @@
           <tbody><tr v-for="claim in filteredClaims" :key="claim.namespace + '/' + claim.name"><td class="cell-primary"><span class="storage-cell-text" :title="claim.name">{{ claim.name }}</span></td><td><span class="storage-cell-text" :title="claim.namespace">{{ claim.namespace }}</span></td><td><span class="badge" :class="claim.owner_type === 'infrastructure' ? 'badge-deploying' : (claim.managed ? 'badge-online' : 'badge-offline')" :title="ownerDetail(claim)">{{ claim.owner_type === 'infrastructure' ? '基础设施' : (claim.managed ? '平台托管' : '外部创建') }}</span></td><td>{{ claim.storage || '-' }}</td><td><span v-if="usageFor(claim)?.status === 'available'" :title="usageDetail(usageFor(claim))">{{ formatBytes(usageFor(claim).used_bytes) }}</span><span v-else class="storage-cell-text" :title="usageFor(claim)?.message">{{ usageFor(claim)?.message || (usageLoading ? '读取中...' : '暂不可用') }}</span></td><td><span class="storage-cell-text" :title="claim.storage_class_name || '默认 StorageClass'">{{ claim.storage_class_name || '默认 StorageClass' }}</span></td><td><span class="badge" :class="claim.phase === 'Bound' ? 'badge-online' : 'badge-deploying'" :title="migrationFor(claim) ? migrationLabel(migrationFor(claim).status) : claim.phase || 'Pending'">{{ claim.phase || 'Pending' }}</span></td><td><span v-if="claim.bound_node_display_name" class="storage-cell-text" :title="claim.bound_node">{{ claim.bound_node_display_name }}</span><span v-else-if="claim.wait_for_first_consumer">首次挂载时决定</span><span v-else>-</span></td><td><span class="storage-cell-text" :title="claim.references?.join('、') || '无引用'">{{ referenceLabel(claim) }}</span></td><td><a v-if="claim.owner_type === 'infrastructure'" class="btn btn-sm monitoring-link" :href="infrastructureLink(claim)">{{ infrastructureActionLabel(claim) }}</a><div v-else-if="claim.managed" class="btn-group"><button v-if="hasManagedEnvironment(claim) && claim.is_local && claim.bound_node && !migrationFor(claim)" class="btn btn-sm" @click="openMigration(claim)">迁移</button><button v-if="hasManagedEnvironment(claim) && claim.is_local && claim.bound_node && !migrationFor(claim)" data-testid="open-directory-import" class="btn btn-sm" @click="openImport(claim)">导入目录</button><button v-if="hasManagedEnvironment(claim) && claim.is_local && claim.bound_node" class="btn btn-sm" @click="openBackup(claim)">备份</button><button v-if="migrationFor(claim)?.status === 'cleanup_pending'" class="btn btn-sm btn-danger" @click="requestCleanup(migrationFor(claim))">清理源卷</button><button class="icon-button danger-action" title="删除存储卷" :disabled="claim.references?.length || !!migrationFor(claim)" @click="requestDelete(claim)"><Trash2 :size="16" /></button></div><span v-else>-</span></td></tr></tbody>
         </table>
       </div>
+      <div v-if="total > pageSize" class="pagination storage-pagination"><button class="btn btn-sm" type="button" :disabled="page === 1 || !loaded" @click="previousPage">上一页</button><span class="pagination-status">{{ page }} / {{ totalPages }}</span><button class="btn btn-sm" type="button" :disabled="page >= totalPages || !loaded" @click="nextPage">下一页</button></div>
     </TabbedWorkspaceCard>
 
     <div v-if="showCreate" class="overlay" @click.self="showCreate = false"><div class="modal"><h2 class="modal-title">创建存储卷</h2><form @submit.prevent="createClaim"><div class="form-group"><label class="form-label">命名空间</label><SelectMenu v-model="form.namespace" data-testid="storage-create-namespace" class="form-select" required><option value="" disabled>选择目标命名空间</option><option v-if="form.namespace&&!namespaces.includes(form.namespace)" :value="form.namespace">{{ form.namespace }}（尚未创建）</option><option v-for="namespace in namespaces" :key="namespace" :value="namespace">{{ namespace }}</option></SelectMenu><p class="form-hint">存储卷属于命名空间。应用挂载时需与该存储卷位于同一命名空间。</p><div v-if="form.namespace&&!namespaces.includes(form.namespace)" class="form-hint namespace-create-hint"><span>该命名空间尚不存在。</span><button type="button" data-testid="create-missing-namespace" class="btn btn-sm" :disabled="saving" @click="createNamespace">创建命名空间</button></div></div><div class="form-group"><label class="form-label">名称</label><input v-model.trim="form.name" class="form-input" required pattern="[a-z0-9]([-a-z0-9]*[a-z0-9])?" placeholder="karakeep-data" /></div><div class="form-group"><label class="form-label">容量</label><div class="quantity-input"><input v-model.number="form.storage_value" data-testid="storage-capacity-value" type="number" min="1" step="1" class="form-input" required placeholder="5" /><SelectMenu v-model="form.storage_unit" data-testid="storage-capacity-unit" class="form-select"><option value="Mi">Mi</option><option value="Gi">Gi</option><option value="Ti">Ti</option></SelectMenu></div><p class="form-hint">首期仅支持 ReadWriteOnce，挂载该卷的应用只能运行一个副本。</p></div><div class="form-group"><label class="form-label">StorageClass</label><SelectMenu v-model="form.storage_class_name" data-testid="storage-create-storage-class" class="form-select"><option value="">使用默认 StorageClass</option><option v-for="item in storageClasses" :key="item.name" :value="item.name">{{ item.name }}{{ item.is_default ? '（默认）' : '' }} · {{ item.volume_binding_mode || 'Immediate' }}</option></SelectMenu></div><div class="modal-actions"><button type="button" class="btn" @click="showCreate = false">取消</button><button class="btn btn-primary" :disabled="saving || !validStorage || !namespaces.includes(form.namespace)">{{ saving ? '创建中...' : '创建存储卷' }}</button></div></form></div></div>
@@ -47,6 +48,9 @@ import { Filter, RefreshCw, RotateCcw, Trash2 } from 'lucide-vue-next'
 import SectionTabsHeader from '../../components/SectionTabsHeader.vue'
 import TabbedWorkspaceCard from '../../components/TabbedWorkspaceCard.vue'
 import { getProjects } from '../../api/applications.js'
+import { getClusterNodes } from '../../api/cluster.js'
+import { getNamespaceNames } from '../../api/kubernetes.js'
+import { getServers } from '../../api/servers.js'
 import {
   cleanupPersistentVolumeMigration,
   createNamespace as createNamespaceRequest,
@@ -59,6 +63,8 @@ import {
   getPersistentVolumeBackups,
   getPersistentVolumeImports,
   getPersistentVolumeInventory,
+  getPersistentVolumeMigrations,
+  getPersistentVolumeStorageClasses,
   getPersistentVolumeUsage,
   restorePersistentVolumeBackup,
 } from '../../api/storage.js'
@@ -78,6 +84,9 @@ const backupServers = ref([])
 const backups = ref([])
 const imports = ref([])
 const namespaces = ref([])
+const total = ref(0)
+const page = ref(1)
+const pageSize = 20
 const projectID = ref(0)
 const environmentID = ref(0)
 const namespaceFilter = ref('')
@@ -102,8 +111,13 @@ const migrationPolling = usePolling(loadClaims, { interval: 2500 })
 const backupPolling = usePolling(refreshBackups, { interval: 2500 })
 const importPolling = usePolling(refreshImports, { interval: 2500 })
 const createQueryHandled = ref(false)
-const inventoryResource = useAsyncResource(({ signal }) => getPersistentVolumeInventory({ signal }), null)
-const usageResource = useAsyncResource(({ signal }) => getPersistentVolumeUsage({ signal }), [])
+const inventoryResource = useAsyncResource(({ signal }, filters) => getPersistentVolumeInventory(filters, { signal }), null)
+const usageResource = useAsyncResource(({ signal }, targetClaims) => getPersistentVolumeUsage(targetClaims, { signal }), [])
+const migrationsResource = useAsyncResource(({ signal }) => getPersistentVolumeMigrations({ signal }), [])
+const storageClassesResource = useAsyncResource(({ signal }) => getPersistentVolumeStorageClasses({ signal }), [])
+const nodesResource = useAsyncResource(({ signal }) => getClusterNodes({ signal }), [])
+const serversResource = useAsyncResource(({ signal }) => getServers({ signal }), [])
+const namespacesResource = useAsyncResource(({ signal }) => getNamespaceNames({ signal }), [])
 const backupsResource = useAsyncResource(({ signal }, name, targetEnvironmentID) => getPersistentVolumeBackups(name, targetEnvironmentID, { signal }), [])
 const importsResource = useAsyncResource(({ signal }, name, targetEnvironmentID) => getPersistentVolumeImports(name, targetEnvironmentID, { signal }), [])
 const selectedProject = computed(() => projects.value.find(project => project.id === projectID.value) || null)
@@ -112,14 +126,12 @@ const migrationNodes = computed(() => nodes.value.filter(node => node.name && no
 const phases = computed(() => [...new Set(claims.value.map(claim => claim.phase).filter(Boolean))].sort())
 const claimStorageClasses = computed(() => [...new Set(claims.value.map(claim => claim.storage_class_name).filter(Boolean))].sort())
 const filteredClaims = computed(() => claims.value.filter(claim => {
-  if (namespaceFilter.value && claim.namespace !== namespaceFilter.value) return false
-  if (projectID.value && claim.project_id !== projectID.value) return false
-  if (environmentID.value && claim.environment_id !== environmentID.value) return false
   if (phaseFilter.value && claim.phase !== phaseFilter.value) return false
   return !storageClassFilter.value || claim.storage_class_name === storageClassFilter.value
 }))
 const hasFilters = computed(() => Boolean(namespaceFilter.value || projectID.value || environmentID.value || phaseFilter.value || storageClassFilter.value))
 const activeSecondaryFilterCount = computed(() => Number(Boolean(phaseFilter.value)) + Number(Boolean(storageClassFilter.value)))
+const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize)))
 
 function newClaimForm() { return { namespace: namespaceFilter.value || namespaces.value[0] || '', name: '', storage_value: 5, storage_unit: 'Gi', storage_class_name: '' } }
 function resetFilters() { namespaceFilter.value = ''; projectID.value = 0; environmentID.value = 0; phaseFilter.value = ''; storageClassFilter.value = '' }
@@ -135,27 +147,32 @@ async function loadProjects() { try { projects.value = await getProjects() || []
 async function loadClaims() {
   loaded.value = false
   error.value = ''
-  const result = await inventoryResource.refresh()
+  const result = await inventoryResource.refresh({ page: page.value, size: pageSize, namespace: namespaceFilter.value, project_id: projectID.value || undefined, environment_id: environmentID.value || undefined })
   if (!result) {
     error.value = inventoryResource.error.value?.message || '加载存储卷失败'
     loaded.value = true
     return
   }
-  const [items, classes, tasks, clusterNodes, servers, namespaceList] = result
-  claims.value = items || []
-  storageClasses.value = classes || []
-  migrations.value = tasks || []
-  nodes.value = clusterNodes || []
-  backupServers.value = servers || []
-  namespaces.value = (namespaceList || []).map(item => item.name).filter(Boolean).sort()
+  const inventory = Array.isArray(result) ? { items: result, total: result.length } : result
+  claims.value = inventory.items || []
+  total.value = inventory.total || 0
+  namespaces.value = [...new Set([...namespaces.value, ...claims.value.map(item => item.namespace).filter(Boolean)])].sort()
   applyCreateQuery()
   loaded.value = true
-  syncMigrationPolling()
+  void loadMigrations()
   void loadUsage()
 }
-async function loadUsage() { usageLoading.value = true; const result = await usageResource.refresh(); if (result) usage.value = result || []; else usage.value = []; usageLoading.value = false }
-function openCreate() { workflowError.value = ''; form.value = newClaimForm(); showCreate.value = true }
-function applyCreateQuery() { if (createQueryHandled.value || typeof window === 'undefined') return; const query = new URLSearchParams(window.location.hash.split('?')[1] || ''); if (query.get('create') !== '1') return; createQueryHandled.value = true; const storage = query.get('storage') || '100Gi'; const matched = storage.match(/^(\d+)(Mi|Gi|Ti)$/); form.value = { namespace: query.get('namespace') || newClaimForm().namespace, name: query.get('name') || '', storage_value: matched ? Number(matched[1]) : 100, storage_unit: matched ? matched[2] : 'Gi', storage_class_name: query.get('storage_class_name') || 'local-path' }; showCreate.value = true }
+async function loadUsage() { usageLoading.value = true; const result = await usageResource.refresh(claims.value.map(claim => ({ namespace: claim.namespace, name: claim.name }))); if (result) usage.value = result || []; else usage.value = []; usageLoading.value = false }
+async function loadMigrations() { const result = await migrationsResource.refresh(); if (result) { migrations.value = result || []; syncMigrationPolling() } }
+async function loadCreateOptions() {
+  const [classes, namespaceList] = await Promise.all([storageClassesResource.refresh(), namespacesResource.refresh()])
+  if (classes) storageClasses.value = classes || []
+  if (namespaceList) namespaces.value = namespaceList.map(item => item.name).filter(Boolean).sort()
+}
+async function loadNodes() { const result = await nodesResource.refresh(); if (result) nodes.value = result || [] }
+async function loadServers() { const result = await serversResource.refresh(); if (result) backupServers.value = result || [] }
+async function openCreate() { workflowError.value = ''; form.value = newClaimForm(); showCreate.value = true; void loadCreateOptions() }
+function applyCreateQuery() { if (createQueryHandled.value || typeof window === 'undefined') return; const query = new URLSearchParams(window.location.hash.split('?')[1] || ''); if (query.get('create') !== '1') return; createQueryHandled.value = true; const storage = query.get('storage') || '100Gi'; const matched = storage.match(/^(\d+)(Mi|Gi|Ti)$/); form.value = { namespace: query.get('namespace') || newClaimForm().namespace, name: query.get('name') || '', storage_value: matched ? Number(matched[1]) : 100, storage_unit: matched ? matched[2] : 'Gi', storage_class_name: query.get('storage_class_name') || 'local-path' }; showCreate.value = true; void loadCreateOptions() }
 async function createNamespace() { if (!form.value.namespace || namespaces.value.includes(form.value.namespace)) return; saving.value = true; workflowError.value = ''; try { await createNamespaceRequest({ name: form.value.namespace }); namespaces.value = [...namespaces.value, form.value.namespace].sort() } catch (e) { workflowError.value = e.message || '创建命名空间失败' } finally { saving.value = false } }
 async function createClaim() { if (!validStorage.value) return; saving.value = true; workflowError.value = ''; try { const { storage_value, storage_unit, ...claim } = form.value; await createPersistentVolumeClaim({ ...claim, storage: `${storage_value}${storage_unit}` }); showCreate.value = false; await loadClaims() } catch (e) { workflowError.value = e.message || '创建存储卷失败' } finally { saving.value = false } }
 function requestDelete(claim) { workflowError.value = ''; deleteTarget.value = claim }
@@ -164,7 +181,7 @@ function migrationLabel(status) { return ({ pending: '等待预检', preflight: 
 function migrationRunning(task) { return !['cleanup_pending', 'failed', 'rolled_back', 'cleaned'].includes(task.status) }
 function syncMigrationPolling() { if (migrations.value.some(migrationRunning)) migrationPolling.start(); else migrationPolling.stop() }
 function stopMigrationPolling() { migrationPolling.stop() }
-function openMigration(claim) { workflowError.value = ''; migrationTarget.value = claim; migrationNode.value = '' }
+async function openMigration(claim) { workflowError.value = ''; migrationTarget.value = claim; migrationNode.value = ''; await loadNodes() }
 async function createMigration() { if (!migrationTarget.value || !migrationNode.value) return; saving.value = true; workflowError.value = ''; try { await createPersistentVolumeMigration(migrationTarget.value.name, { environment_id: claimEnvironmentID(migrationTarget.value), target_node_name: migrationNode.value }); migrationTarget.value = null; await loadClaims() } catch (e) { workflowError.value = e.message || '创建存储卷迁移失败' } finally { saving.value = false } }
 function requestCleanup(migration) { workflowError.value = ''; cleanupTarget.value = migration }
 async function cleanupMigration() { if (!cleanupTarget.value) return; saving.value = true; workflowError.value = ''; try { await cleanupPersistentVolumeMigration(cleanupTarget.value.id); cleanupTarget.value = null; await loadClaims() } catch (e) { workflowError.value = e.message || '清理源存储卷失败' } finally { saving.value = false } }
@@ -172,7 +189,7 @@ function backupRunning(backup) { return ['accepted', 'running'].includes(backup.
 function syncBackupPolling() { if (backupTarget.value && backups.value.some(backupRunning)) backupPolling.start(); else backupPolling.stop() }
 function stopBackupPolling() { backupPolling.stop() }
 async function refreshBackups() { const target = backupTarget.value; if (!target) return; const targetEnvironmentID = claimEnvironmentID(target); const result = await backupsResource.refresh(target.name, targetEnvironmentID); if (!backupTarget.value || backupTarget.value.name !== target.name || claimEnvironmentID(backupTarget.value) !== targetEnvironmentID) return; if (result) { backups.value = result || []; syncBackupPolling() } else { workflowError.value = backupsResource.error.value?.message || '读取备份记录失败'; stopBackupPolling() } }
-async function openBackup(claim) { workflowError.value = ''; backupTarget.value = claim; backupForm.value = { backup_server_id: backupServers.value[0]?.id || 0, backup_root: '/data/cylism-backups' }; await refreshBackups() }
+async function openBackup(claim) { workflowError.value = ''; backupTarget.value = claim; await loadServers(); backupForm.value = { backup_server_id: backupServers.value[0]?.id || 0, backup_root: '/data/cylism-backups' }; await refreshBackups() }
 async function createBackup() { if (!backupTarget.value) return; saving.value = true; workflowError.value = ''; try { await createPersistentVolumeBackup(backupTarget.value.name, { environment_id: claimEnvironmentID(backupTarget.value), ...backupForm.value }); await refreshBackups() } catch (e) { workflowError.value = e.message || '创建备份失败' } finally { saving.value = false } }
 async function restoreBackup(backup) { if (!backupTarget.value || !window.confirm('恢复会覆盖当前 PVC 数据，并短暂停止引用它的工作负载，确定继续吗？')) return; saving.value = true; workflowError.value = ''; try { await restorePersistentVolumeBackup(backupTarget.value.name, backup.id, { environment_id: claimEnvironmentID(backupTarget.value), confirm_data_replace: true }); await refreshBackups() } catch (e) { workflowError.value = e.message || '恢复备份失败' } finally { saving.value = false } }
 function importRunning(task) { return !['succeeded', 'failed'].includes(task.status) }
@@ -180,15 +197,18 @@ function importLabel(status) { return ({ pending: '等待执行', preflight: '�
 function syncImportPolling() { if (importTarget.value && imports.value.some(importRunning)) importPolling.start(); else importPolling.stop() }
 function stopImportPolling() { importPolling.stop() }
 async function refreshImports() { const target = importTarget.value; if (!target) return; const targetEnvironmentID = claimEnvironmentID(target); const result = await importsResource.refresh(target.name, targetEnvironmentID); if (!importTarget.value || importTarget.value.name !== target.name || claimEnvironmentID(importTarget.value) !== targetEnvironmentID) return; if (result) { imports.value = result || []; syncImportPolling() } else { workflowError.value = importsResource.error.value?.message || '读取目录导入记录失败'; stopImportPolling() } }
-async function openImport(claim) { workflowError.value = ''; importTarget.value = claim; importForm.value = { source_server_id: backupServers.value[0]?.id || 0, source_path: '', confirm_data_replace: false }; await refreshImports() }
+async function openImport(claim) { workflowError.value = ''; importTarget.value = claim; await loadServers(); importForm.value = { source_server_id: backupServers.value[0]?.id || 0, source_path: '', confirm_data_replace: false }; await refreshImports() }
 async function createImport() { if (!importTarget.value) return; saving.value = true; workflowError.value = ''; try { await createPersistentVolumeImport(importTarget.value.name, { environment_id: claimEnvironmentID(importTarget.value), ...importForm.value }); await refreshImports() } catch (e) { workflowError.value = e.message || '创建目录导入失败' } finally { saving.value = false } }
 async function deleteImportBackup(task) { if (!importTarget.value || !window.confirm('删除后无法通过平台恢复本次导入前的数据，确定删除本地归档吗？')) return; saving.value = true; workflowError.value = ''; try { await deletePersistentVolumeImportBackup(importTarget.value.name, task.id, { environment_id: claimEnvironmentID(importTarget.value) }); await refreshImports() } catch (e) { workflowError.value = e.message || '删除导入备份失败' } finally { saving.value = false } }
 async function deleteClaim() { if (!deleteTarget.value) return; saving.value = true; workflowError.value = ''; try { await deletePersistentVolumeClaim(deleteTarget.value.name, { environment_id: claimEnvironmentID(deleteTarget.value), namespace: deleteTarget.value.namespace, confirm_data_delete: true }); deleteTarget.value = null; await loadClaims() } catch (e) { workflowError.value = e.message || '删除存储卷失败' } finally { saving.value = false } }
 
 watch(projectID, () => { const environments = selectedProject.value?.environments || []; if (!environments.some(item => item.id === environmentID.value)) environmentID.value = 0 })
+watch([namespaceFilter, projectID, environmentID], () => { page.value = 1; void loadClaims() })
 watch(backupTarget, target => { if (!target) { backupsResource.cancel(); stopBackupPolling() } })
 watch(importTarget, target => { if (!target) { importsResource.cancel(); stopImportPolling() } })
 onUnmounted(() => { stopMigrationPolling(); stopBackupPolling(); stopImportPolling(); backupsResource.cancel(); importsResource.cancel() })
+async function previousPage() { page.value = Math.max(1, page.value - 1); await loadClaims() }
+async function nextPage() { page.value += 1; await loadClaims() }
 loadProjects()
 loadClaims()
 </script>
@@ -233,6 +253,7 @@ loadClaims()
 .storage-table th:nth-child(8), .storage-table td:nth-child(8) { width: 132px; }
 .storage-table th:nth-child(9), .storage-table td:nth-child(9) { width: 82px; }
 .storage-table th:last-child, .storage-table td:last-child { width: 190px; }
+.storage-pagination { display: flex; align-items: center; justify-content: center; gap: 10px; padding: var(--space-16) 0 0; }
 .storage-cell-text { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .filter-count { display: inline-flex; min-width: 16px; height: 16px; align-items: center; justify-content: center; border-radius: 50%; background: var(--action-primary); color: var(--action-contrast); font-size: 10px; line-height: 1; }
 @media (max-width: 1100px) { .storage-picker { flex-basis: 118px; } }

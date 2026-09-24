@@ -1,17 +1,29 @@
 import { api } from './index.js'
 
-export function getPersistentVolumeInventory(options) {
-  return Promise.all([
-    api.get('/k8s/persistent-volume-claims', options),
-    api.get('/k8s/storage-classes', options),
-    api.get('/k8s/persistent-volume-migrations', options),
-    api.get('/nodes', options),
-    api.get('/servers', options),
-    api.get('/k8s/namespace-names', options),
-  ])
+function queryPath(path, params = {}) {
+  const query = new URLSearchParams()
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== '') query.set(key, String(value))
+  })
+  const value = query.toString()
+  return value ? `${path}?${value}` : path
 }
 
-export function getPersistentVolumeUsage(options) { return api.get('/k8s/persistent-volume-claims/usage', options) }
+// The one-argument form remains available for existing list consumers.
+export function getPersistentVolumeInventory(params = {}, options) {
+  if (params?.signal && options === undefined) return api.get('/k8s/persistent-volume-claims', params)
+  return api.get(queryPath('/k8s/persistent-volume-claims', params), options)
+}
+
+export function getPersistentVolumeUsage(claims = [], options) {
+  if (claims?.signal && options === undefined) return api.get('/k8s/persistent-volume-claims/usage', claims)
+  const query = new URLSearchParams()
+  claims.forEach(claim => query.append('claim', `${claim.namespace}/${claim.name}`))
+  const suffix = query.toString()
+  return api.get(`/k8s/persistent-volume-claims/usage${suffix ? `?${suffix}` : ''}`, options)
+}
+export function getPersistentVolumeStorageClasses(options) { return api.get('/k8s/storage-classes', options) }
+export function getPersistentVolumeMigrations(options) { return api.get('/k8s/persistent-volume-migrations', options) }
 export function getPersistentVolumeBackups(name, environmentID, options) { return api.get(`/k8s/persistent-volume-claims/${encodeURIComponent(name)}/backups?environment_id=${encodeURIComponent(environmentID)}`, options) }
 export function getPersistentVolumeImports(name, environmentID, options) { return api.get(`/k8s/persistent-volume-claims/${encodeURIComponent(name)}/imports?environment_id=${encodeURIComponent(environmentID)}`, options) }
 

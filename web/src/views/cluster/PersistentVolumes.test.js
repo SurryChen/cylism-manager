@@ -10,8 +10,8 @@ function mockInventory(overrides = {}) {
   return path => {
     if (path === '/projects') return Promise.resolve([{ id: 1, name: 'knowledge', environments: [{ id: 2, name: 'production', namespace: 'project-knowledge-prod' }] }])
     if (path === '/k8s/namespace-names') return Promise.resolve(overrides.namespaces || [{ name: 'default' }, { name: 'project-knowledge-prod' }])
-    if (path === '/k8s/persistent-volume-claims') return Promise.resolve(overrides.claims || [])
-    if (path === '/k8s/persistent-volume-claims/usage') return Promise.resolve(overrides.usage || [])
+    if (path.startsWith('/k8s/persistent-volume-claims?')) return Promise.resolve({ items: overrides.claims || [], total: (overrides.claims || []).length })
+    if (path.startsWith('/k8s/persistent-volume-claims/usage')) return Promise.resolve(overrides.usage || [])
     if (path === '/k8s/storage-classes') return Promise.resolve([{ name: 'local-path', is_default: true, volume_binding_mode: 'WaitForFirstConsumer' }])
     if (path === '/k8s/persistent-volume-migrations') return Promise.resolve([])
     if (path === '/nodes') return Promise.resolve([])
@@ -51,7 +51,7 @@ describe('PersistentVolumes view', () => {
     const wrapper = mount(PersistentVolumes)
     await settle()
 
-    expect(api.get).toHaveBeenCalledWith('/k8s/persistent-volume-claims', expect.objectContaining({ signal: expect.any(AbortSignal) }))
+    expect(api.get).toHaveBeenCalledWith('/k8s/persistent-volume-claims?page=1&size=20', expect.objectContaining({ signal: expect.any(AbortSignal) }))
     expect(wrapper.text()).toContain('manual-data')
     expect(wrapper.text()).toContain('外部创建')
   })
@@ -64,6 +64,7 @@ describe('PersistentVolumes view', () => {
     await settle()
 
     await wrapper.get('.btn-primary').trigger('click')
+    await settle()
     await wrapper.get('[data-testid="storage-create-namespace"]').setValue('default')
     await wrapper.get('input[placeholder="karakeep-data"]').setValue('karakeep-data')
     await wrapper.get('[data-testid="storage-capacity-value"]').setValue('8')
@@ -108,7 +109,7 @@ describe('PersistentVolumes view', () => {
     window.location.hash = ''
   })
 
-  it('uses project and environment as optional filters', async () => {
+  it('sends project and environment filters to the PVC inventory endpoint', async () => {
     const { api } = await import('../../api/index.js')
     api.get.mockImplementation(mockInventory({ claims: [
       { name: 'manual-data', namespace: 'default', managed: false, phase: 'Bound' },
@@ -120,11 +121,10 @@ describe('PersistentVolumes view', () => {
     expect(wrapper.text()).toContain('manual-data')
     await wrapper.get('[data-testid="storage-project-filter"]').setValue('1')
     await settle()
-    expect(wrapper.text()).not.toContain('manual-data')
-    expect(wrapper.text()).toContain('app-data')
+    expect(api.get).toHaveBeenCalledWith('/k8s/persistent-volume-claims?page=1&size=20&project_id=1', expect.objectContaining({ signal: expect.any(AbortSignal) }))
     await wrapper.get('[data-testid="storage-environment-filter"]').setValue('2')
     await settle()
-    expect(wrapper.text()).toContain('production')
+    expect(api.get).toHaveBeenCalledWith('/k8s/persistent-volume-claims?page=1&size=20&project_id=1&environment_id=2', expect.objectContaining({ signal: expect.any(AbortSignal) }))
   })
 
   it('keeps host-directory import limited to a managed environment claim', async () => {
@@ -138,6 +138,7 @@ describe('PersistentVolumes view', () => {
     await settle()
 
     await wrapper.get('[data-testid="open-directory-import"]').trigger('click')
+    await settle()
     await wrapper.get('[data-testid="import-source-server"]').setValue('8')
     await wrapper.get('[data-testid="import-source-path"]').setValue('/data/legacy/karakeep')
     await wrapper.get('[data-testid="import-confirm-replace"]').setValue(true)
@@ -158,6 +159,7 @@ describe('PersistentVolumes view', () => {
     const wrapper = mount(PersistentVolumes)
     await settle()
     await wrapper.get('[data-testid="open-directory-import"]').trigger('click')
+    await settle()
     await wrapper.get('[data-testid="import-source-server"]').setValue('8')
     await wrapper.get('[data-testid="import-source-path"]').setValue('/data/legacy/karakeep')
     await wrapper.get('.import-form').trigger('submit')
@@ -224,7 +226,7 @@ describe('PersistentVolumes view', () => {
     await settle()
     await settle()
 
-    expect(api.get).toHaveBeenCalledWith('/k8s/persistent-volume-claims/usage', expect.objectContaining({ signal: expect.any(AbortSignal) }))
+    expect(api.get).toHaveBeenCalledWith('/k8s/persistent-volume-claims/usage?claim=project-knowledge-prod%2Fkarakeep-data', expect.objectContaining({ signal: expect.any(AbortSignal) }))
     expect(wrapper.text()).toContain('1.0 GiB')
     expect(wrapper.text()).not.toContain('请求容量')
     expect(wrapper.get('[title="已用 1.0 GiB / 5.0 GiB（20%）"]').exists()).toBe(true)

@@ -28,6 +28,10 @@ func (f *fakeK8s) ListPVCsContext(ctx context.Context, ns string) ([]k8sclient.P
 	}
 	return f.ListPVCs(ns)
 }
+
+func (f *fakeK8s) ListPVCUsageInfosContext(_ context.Context, _ []k8sclient.PersistentVolumeClaimReference) ([]k8sclient.PersistentVolumeClaimInfo, error) {
+	return nil, nil
+}
 func (f *fakeK8s) ListManagedPVCs(ns string, id uint) ([]k8sclient.PersistentVolumeClaimInfo, error) {
 	return []k8sclient.PersistentVolumeClaimInfo{{Namespace: ns, EnvironmentID: id}}, nil
 }

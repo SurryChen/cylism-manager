@@ -12,10 +12,29 @@ import (
 	storageservice "github.com/cylism/cylism-manager/internal/service/storage"
 	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/gin-gonic/gin"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
 )
+
+type countingPVCWorkloads struct {
+	deploymentCalls  int
+	statefulSetCalls int
+}
+
+func (w *countingPVCWorkloads) NamespaceExists(context.Context, string) error { return nil }
+func (w *countingPVCWorkloads) GetDeployment(context.Context, string, string) (*appsv1.Deployment, error) {
+	return nil, nil
+}
+func (w *countingPVCWorkloads) ListDeployments(context.Context, string) ([]appsv1.Deployment, error) {
+	w.deploymentCalls++
+	return nil, nil
+}
+func (w *countingPVCWorkloads) ListStatefulSets(context.Context, string) ([]appsv1.StatefulSet, error) {
+	w.statefulSetCalls++
+	return nil, nil
+}
 
 func TestPersistentVolumeClaimsAreScopedToEnvironment(t *testing.T) {
 	st, err := store.New(":memory:")
@@ -67,6 +86,34 @@ func TestPersistentVolumeClaimsListClusterInventoryWithoutEnvironment(t *testing
 	response := serve(r, httptest.NewRequest(http.MethodGet, "/api/k8s/persistent-volume-claims", nil))
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "manual-data") || !strings.Contains(response.Body.String(), "project_name") {
 		t.Fatalf("unexpected cluster PVC inventory: %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestPersistentVolumeClaimListBatchesWorkloadReferencesByNamespace(t *testing.T) {
+	workloads := &countingPVCWorkloads{}
+	h := &StorageHandler{workloads: workloads}
+	h.pvcResponses(context.Background(), []k8sclient.PersistentVolumeClaimInfo{
+		{Name: "one", Namespace: "default"},
+		{Name: "two", Namespace: "default"},
+		{Name: "three", Namespace: "project-a"},
+	})
+	if workloads.deploymentCalls != 2 || workloads.statefulSetCalls != 2 {
+		t.Fatalf("expected one workload scan per namespace, deployments=%d statefulsets=%d", workloads.deploymentCalls, workloads.statefulSetCalls)
+	}
+}
+
+func TestPersistentVolumeClaimsListReturnsPageEnvelopeWhenRequested(t *testing.T) {
+	client := &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(
+		&corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: "one", Namespace: "default"}},
+		&corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: "two", Namespace: "default"}},
+	)}
+	pvc, migration, workloads := NewPVCAdapters(client)
+	h := NewStorageHandlerWithDependencies(storageservice.NewService(client, nil), nil, nil, pvc, migration, workloads)
+	r := gin.New()
+	r.GET("/api/k8s/persistent-volume-claims", h.ListPersistentVolumeClaims)
+	response := serve(r, httptest.NewRequest(http.MethodGet, "/api/k8s/persistent-volume-claims?page=1&size=1", nil))
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"total":2`) || !strings.Contains(response.Body.String(), `"items":[`) {
+		t.Fatalf("unexpected paged PVC inventory: %d %s", response.Code, response.Body.String())
 	}
 }
 

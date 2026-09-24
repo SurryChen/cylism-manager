@@ -19,21 +19,16 @@ vi.mock('./index.js', () => ({
 }))
 
 describe('storage api', () => {
-  it('loads the complete persistent volume inventory with one signal', () => {
+  it('loads a paginated persistent volume inventory with one signal', () => {
     const options = { signal: new AbortController().signal }
-    getPersistentVolumeInventory(options)
-    expect(api.get).toHaveBeenNthCalledWith(1, '/k8s/persistent-volume-claims', options)
-    expect(api.get).toHaveBeenNthCalledWith(2, '/k8s/storage-classes', options)
-    expect(api.get).toHaveBeenNthCalledWith(3, '/k8s/persistent-volume-migrations', options)
-    expect(api.get).toHaveBeenNthCalledWith(4, '/nodes', options)
-    expect(api.get).toHaveBeenNthCalledWith(5, '/servers', options)
-    expect(api.get).toHaveBeenNthCalledWith(6, '/k8s/namespace-names', options)
+    getPersistentVolumeInventory({ page: 2, size: 20, namespace: 'default' }, options)
+    expect(api.get).toHaveBeenCalledWith('/k8s/persistent-volume-claims?page=2&size=20&namespace=default', options)
   })
 
-  it('forwards options to usage requests', () => {
+  it('loads usage only for the displayed persistent volumes', () => {
     const options = { signal: new AbortController().signal }
-    getPersistentVolumeUsage(options)
-    expect(api.get).toHaveBeenCalledWith('/k8s/persistent-volume-claims/usage', options)
+    getPersistentVolumeUsage([{ namespace: 'default', name: 'data' }], options)
+    expect(api.get).toHaveBeenCalledWith('/k8s/persistent-volume-claims/usage?claim=default%2Fdata', options)
   })
 
   it('uses the existing persistent volume mutation endpoints and forwards request options', () => {

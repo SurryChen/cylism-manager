@@ -36,7 +36,7 @@ func (h *StorageHandler) ListPersistentVolumeClaimUsage(c *gin.Context) {
 		storageK8sUnavailable(c)
 		return
 	}
-	claims, err := h.pvc.ListPVCsContext(c.Request.Context(), strings.TrimSpace(c.Query("namespace")))
+	claims, err := h.pvcUsageClaims(c.Request.Context(), c.QueryArray("claim"), strings.TrimSpace(c.Query("namespace")))
 	if err != nil {
 		apiShared.Error(c, http.StatusOK, apiShared.CodeK8sAPIError, err.Error())
 		return
@@ -120,6 +120,27 @@ func (h *StorageHandler) ListPersistentVolumeClaimUsage(c *gin.Context) {
 	waitGroup.Wait()
 
 	apiShared.Success(c, responses)
+}
+
+func (h *StorageHandler) pvcUsageClaims(ctx context.Context, rawReferences []string, namespace string) ([]k8sclient.PersistentVolumeClaimInfo, error) {
+	if len(rawReferences) == 0 {
+		return h.pvc.ListPVCsContext(ctx, namespace)
+	}
+	if len(rawReferences) > 100 {
+		return nil, errors.New("单次最多读取 100 个存储卷")
+	}
+	references := make([]k8sclient.PersistentVolumeClaimReference, 0, len(rawReferences))
+	for _, rawReference := range rawReferences {
+		parts := strings.SplitN(strings.TrimSpace(rawReference), "/", 2)
+		if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" {
+			return nil, errors.New("存储卷标识无效")
+		}
+		if namespace != "" && namespace != parts[0] {
+			return nil, errors.New("存储卷命名空间不匹配")
+		}
+		references = append(references, k8sclient.PersistentVolumeClaimReference{Namespace: parts[0], Name: parts[1]})
+	}
+	return h.pvc.ListPVCUsageInfosContext(ctx, references)
 }
 
 func readLocalPersistentVolumeUsage(ctx context.Context, server *model.Server, localPath string, encKey []byte) (int64, error) {

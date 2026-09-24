@@ -77,6 +77,9 @@ func NewPVCAdapters(client *k8sclient.Client) (PVCRepositoryAdapter, PVCMigratio
 func (r clientPVCReconciler) ListPVCsContext(ctx context.Context, ns string) ([]k8sclient.PersistentVolumeClaimInfo, error) {
 	return r.client.ListPVCsContext(ctx, ns)
 }
+func (r clientPVCReconciler) ListPVCUsageInfosContext(ctx context.Context, references []k8sclient.PersistentVolumeClaimReference) ([]k8sclient.PersistentVolumeClaimInfo, error) {
+	return r.client.ListPVCUsageInfosContext(ctx, references)
+}
 func (r clientPVCReconciler) ListManagedPVCsContext(ctx context.Context, ns string, id uint) ([]k8sclient.PersistentVolumeClaimInfo, error) {
 	return r.client.ListManagedPVCsContext(ctx, ns, id)
 }

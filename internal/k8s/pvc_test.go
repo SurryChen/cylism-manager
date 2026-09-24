@@ -127,6 +127,25 @@ func TestListPVCsBatchesPersistentVolumeAndStorageClassLookups(t *testing.T) {
 	}
 }
 
+func TestListPVCUsageInfosReadsOnlyRequestedPVCPairs(t *testing.T) {
+	clientset := k8sfake.NewSimpleClientset(
+		&corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: "one", Namespace: "default"}, Spec: corev1.PersistentVolumeClaimSpec{VolumeName: "pv-one"}},
+		&corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: "other", Namespace: "default"}, Spec: corev1.PersistentVolumeClaimSpec{VolumeName: "pv-other"}},
+		&corev1.PersistentVolume{ObjectMeta: metav1.ObjectMeta{Name: "pv-one"}},
+		&corev1.PersistentVolume{ObjectMeta: metav1.ObjectMeta{Name: "pv-other"}},
+	)
+	listCalls := 0
+	clientset.PrependReactor("list", "persistentvolumeclaims", func(k8stesting.Action) (bool, runtime.Object, error) { listCalls++; return false, nil, nil })
+	clientset.PrependReactor("list", "persistentvolumes", func(k8stesting.Action) (bool, runtime.Object, error) { listCalls++; return false, nil, nil })
+	infos, err := (&Client{Clientset: clientset}).ListPVCUsageInfosContext(context.Background(), []PersistentVolumeClaimReference{{Namespace: "default", Name: "one"}})
+	if err != nil || len(infos) != 1 || infos[0].Name != "one" {
+		t.Fatalf("unexpected targeted usage info: %#v err=%v", infos, err)
+	}
+	if listCalls != 0 {
+		t.Fatalf("expected targeted usage lookup to avoid inventory lists, got %d", listCalls)
+	}
+}
+
 func TestListPVCsRejectsMissingClientOrContext(t *testing.T) {
 	client := &Client{Clientset: k8sfake.NewSimpleClientset()}
 	if _, err := client.ListPVCsContext(nil, ""); err == nil || !strings.Contains(err.Error(), "上下文") {
