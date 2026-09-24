@@ -104,6 +104,8 @@ describe('SystemSettings view', () => {
     expect(wrapper.get('.temporary-token-table-header').text()).toContain('到期时间')
     expect(wrapper.get('.temporary-token-table-header').text()).toContain('生效状态')
     expect(wrapper.get('.temporary-token-table-header').text()).toContain('操作')
+    expect(wrapper.get('.temporary-token-table').find('table.data-table').exists()).toBe(true)
+    expect(wrapper.get('.temporary-token-row').find('td').exists()).toBe(true)
     expect(wrapper.findAll('.temporary-token-row')).toHaveLength(2)
     const revokeButtons = wrapper.findAll('.temporary-token-action button')
     expect(revokeButtons).toHaveLength(2)

@@ -33,11 +33,11 @@ describe('Services view', () => {
     expect(wrapper.find('[aria-label="刷新服务"]').exists()).toBe(true)
   })
 
-  it('renders compact service columns and endpoint status', async () => {
+  it('renders a lightweight service list without endpoint status', async () => {
     const wrapper = await mountLoaded()
+    expect(api.get).toHaveBeenCalledWith('/k8s/services?endpoint_count=false', expect.objectContaining({ signal: expect.any(AbortSignal) }))
     expect(wrapper.text()).toContain('Cluster IP')
-    expect(wrapper.text()).toContain('2 就绪')
-    expect(wrapper.text()).toContain('无端点')
+    expect(wrapper.findAll('th').map(cell => cell.text())).not.toContain('端点')
     expect(wrapper.text()).toContain('查看端点')
   })
 

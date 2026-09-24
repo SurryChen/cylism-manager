@@ -6,28 +6,34 @@
           生成临时秘钥
         </button>
       </div>
-      <section v-if="temporaryTokens.length" class="temporary-token-table" aria-label="临时登录秘钥列表">
-        <header class="temporary-token-table-header">
-          <span>备注</span>
-          <span>创建时间</span>
-          <span>到期时间</span>
-          <span>生效状态</span>
-          <span>操作</span>
-        </header>
-        <div v-for="item in temporaryTokens" :key="item.id" class="temporary-token-row">
-          <strong class="temporary-token-note">{{ item.label || '未命名秘钥' }}</strong>
-          <time class="temporary-token-date" :datetime="item.created_at">{{ formatDateTime(item.created_at) }}</time>
-          <time class="temporary-token-date" :datetime="item.expires_at">{{ formatDateTime(item.expires_at) }}</time>
-          <span class="badge" :class="item.status === 'active' ? 'badge-online' : item.status === 'expired' ? 'badge-offline' : 'badge-danger'">
-            {{ item.status === 'active' ? '生效中' : item.status === 'expired' ? '已过期' : '已撤销' }}
-          </span>
-          <span class="temporary-token-action">
-            <button class="btn btn-sm btn-danger" :disabled="item.status !== 'active' || revokingTemporaryToken === item.id" @click="revokeTemporaryToken(item)">
-              {{ revokingTemporaryToken === item.id ? '撤销中...' : '撤销' }}
-            </button>
-          </span>
-        </div>
-      </section>
+      <div v-if="temporaryTokens.length" class="table-wrap temporary-token-table">
+        <table class="data-table" aria-label="临时登录秘钥列表">
+          <thead class="temporary-token-table-header">
+            <tr>
+              <th>备注</th>
+              <th>创建时间</th>
+              <th>到期时间</th>
+              <th>生效状态</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="item in temporaryTokens" :key="item.id" class="temporary-token-row">
+              <td><span class="temporary-token-note">{{ item.label || '未命名秘钥' }}</span></td>
+              <td><time class="temporary-token-date" :datetime="item.created_at">{{ formatDateTime(item.created_at) }}</time></td>
+              <td><time class="temporary-token-date" :datetime="item.expires_at">{{ formatDateTime(item.expires_at) }}</time></td>
+              <td><span class="badge" :class="item.status === 'active' ? 'badge-online' : item.status === 'expired' ? 'badge-offline' : 'badge-danger'">
+                {{ item.status === 'active' ? '生效中' : item.status === 'expired' ? '已过期' : '已撤销' }}
+              </span></td>
+              <td class="temporary-token-action">
+                <button class="btn btn-sm btn-danger" :disabled="item.status !== 'active' || revokingTemporaryToken === item.id" @click="revokeTemporaryToken(item)">
+                  {{ revokingTemporaryToken === item.id ? '撤销中...' : '撤销' }}
+                </button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
       <p v-if="temporaryTokensError" class="settings-copy endpoint-error">{{ temporaryTokensError }}</p>
       <p v-else-if="temporaryTokens.length === 0" class="settings-copy temporary-token-empty">尚未生成临时登录秘钥。</p>
     </SurfaceCard>

@@ -197,6 +197,25 @@ func TestDashboardUsesLightweightClusterLists(t *testing.T) {
 	}
 }
 
+func TestLightweightServiceListSkipsEndpointLookups(t *testing.T) {
+	client := &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(
+		&corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "web", Namespace: "default"}, Spec: corev1.ServiceSpec{ClusterIP: "10.43.0.10"}},
+	)}
+
+	response := serve(setupK8sTestRouter(client), httptest.NewRequest(http.MethodGet, "/api/k8s/services?endpoint_count=false", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", response.Code, response.Body.String())
+	}
+	if strings.Contains(response.Body.String(), "endpoint_count") {
+		t.Fatalf("lightweight response must not include endpoint_count: %s", response.Body.String())
+	}
+	for _, action := range client.Clientset.(*k8sfake.Clientset).Actions() {
+		if action.GetResource().Resource == "endpointslices" || action.GetResource().Resource == "endpoints" {
+			t.Fatalf("lightweight service list must not query endpoints: %#v", action)
+		}
+	}
+}
+
 func TestDashboardUsesPodReadyAndCachesClusterSummary(t *testing.T) {
 	client := &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(
 		&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node-a"}, Status: corev1.NodeStatus{NodeInfo: corev1.NodeSystemInfo{KubeletVersion: "v1.32.1"}}},

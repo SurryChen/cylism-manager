@@ -54,6 +54,9 @@ export function getNamespaceNames(options) { return get('/k8s/namespace-names', 
 export function getConfigMap(namespace, name, options) {
   return get(`/k8s/configmaps/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`, options)
 }
+export function getSecret(namespace, name, options) {
+  return get(`/k8s/secrets/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`, options)
+}
 export function createConfigMap(payload, options) { return post('/k8s/configmaps', payload, options) }
 export function updateConfigMap(namespace, name, payload, options) {
   return put(`/k8s/configmaps/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`, payload, options)
@@ -83,6 +86,13 @@ export function getResourceService(namespace, name, options) {
 
 export function getServiceDiscovery(namespace = '', options) {
   return api.get(`/k8s/services${namespaceQuery(namespace)}`, options)
+}
+
+export function getLightweightServiceDiscovery(namespace = '', options) {
+  const query = namespace
+    ? `?namespace=${encodeURIComponent(namespace)}&endpoint_count=false`
+    : '?endpoint_count=false'
+  return get(`/k8s/services${query}`, options)
 }
 
 export function getServiceEndpoints(namespace, name, options) {

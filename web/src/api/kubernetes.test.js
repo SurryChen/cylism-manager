@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { api } from './index.js'
-import { getResourceInventory, getResourceService, getWorkloadDeploymentPods, getConfigMap, getConfigMapsForNamespace } from './kubernetes.js'
+import { getLightweightServiceDiscovery, getResourceInventory, getResourceService, getWorkloadDeploymentPods, getConfigMap, getConfigMapsForNamespace } from './kubernetes.js'
 
 vi.mock('./index.js', () => ({ api: { get: vi.fn() } }))
 
@@ -19,6 +19,12 @@ describe('kubernetes api', () => {
     const options = { signal: new AbortController().signal }
     getResourceService('team/a', 'api/service', options)
     expect(api.get).toHaveBeenCalledWith('/k8s/services/team%2Fa/api%2Fservice', options)
+  })
+
+  it('loads Service inventory without endpoint counts', () => {
+    const options = { signal: new AbortController().signal }
+    getLightweightServiceDiscovery('', options)
+    expect(api.get).toHaveBeenCalledWith('/k8s/services?endpoint_count=false', options)
   })
 
   it('encodes workload and config resource segments', () => {

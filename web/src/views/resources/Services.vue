@@ -18,14 +18,13 @@
       <EmptyState v-else-if="!filteredServices.length" :message="namespace ? '当前命名空间暂无 Service' : '暂无 Service'" />
       <div v-else class="table-wrap service-table-wrap">
         <table class="data-table service-table">
-          <thead><tr><th>名称</th><th>命名空间</th><th>类型</th><th>Cluster IP</th><th>端口</th><th>端点</th><th>年龄</th><th class="action-cell">操作</th></tr></thead>
+          <thead><tr><th>名称</th><th>命名空间</th><th>类型</th><th>Cluster IP</th><th>端口</th><th>年龄</th><th class="action-cell">操作</th></tr></thead>
           <tbody><tr v-for="service in filteredServices" :key="serviceKey(service)">
             <td class="cell-primary"><OverflowTooltip class="service-cell-truncate" :text="service.name || '-'" /></td>
             <td><OverflowTooltip class="service-cell-truncate" :text="service.namespace || '-'" /></td>
             <td><span class="badge badge-online">{{ service.type || '-' }}</span></td>
             <td><OverflowTooltip class="service-cell-truncate service-code-cell" :text="service.cluster_ip || '-'" /></td>
             <td><OverflowTooltip class="service-cell-truncate service-code-cell" :text="formatPorts(service.ports)" /></td>
-            <td><span class="badge" :class="service.endpoint_count > 0 ? 'badge-online' : 'badge-danger'">{{ service.endpoint_count > 0 ? `${service.endpoint_count} 就绪` : '无端点' }}</span></td>
             <td>{{ service.age || '-' }}</td>
             <td class="action-cell"><button class="btn btn-sm" type="button" :data-testid="`view-service-endpoints-${serviceKey(service)}`" @click="openEndpoints(service)">查看端点</button></td>
           </tr></tbody>
@@ -54,7 +53,7 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { RefreshCw } from 'lucide-vue-next'
-import { getServiceDiscovery, getServiceEndpoints } from '../../api/kubernetes.js'
+import { getLightweightServiceDiscovery, getServiceEndpoints } from '../../api/kubernetes.js'
 import { useAsyncResource } from '../../composables/useAsyncResource.js'
 import BaseModal from '../../components/BaseModal.vue'
 import EmptyState from '../../components/EmptyState.vue'
@@ -71,7 +70,7 @@ const showEndpoints = ref(false)
 const endpointSlices = ref([])
 const endpointLoading = ref(false)
 const endpointError = ref('')
-const servicesResource = useAsyncResource(({ signal }) => getServiceDiscovery('', { signal }), [])
+const servicesResource = useAsyncResource(({ signal }) => getLightweightServiceDiscovery('', { signal }), [])
 
 const loading = servicesResource.loading
 const namespaces = computed(() => [...new Set(services.value.map(item => item?.namespace).filter(Boolean))].sort())

@@ -309,36 +309,13 @@
 
 .temporary-token-table {
   margin-top: var(--space-16);
-  overflow-x: auto;
-}
-
-.temporary-token-table-header,
-.temporary-token-row {
-  display: grid;
-  min-width: 720px;
-  grid-template-columns: minmax(140px, 1.35fr) minmax(145px, 1fr) minmax(145px, 1fr) 88px 56px;
-  align-items: center;
-  gap: 14px;
-}
-
-.temporary-token-table-header {
-  padding: 10px 0;
-  border-bottom: 1px solid var(--border-muted);
-  color: var(--text-muted);
-  font-size: var(--table-header-font-size);
-  font-weight: 700;
-  letter-spacing: .06em;
-}
-
-.temporary-token-row {
-  padding: 12px 0;
-  border-bottom: 1px solid var(--border-muted);
 }
 
 .temporary-token-note {
   min-width: 0;
   color: var(--text-primary);
   font-size: 12px;
+  font-weight: 400;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -355,9 +332,7 @@
 }
 
 .temporary-token-action {
-  display: flex;
-  align-items: center;
-  justify-content: flex-start;
+  min-width: 72px;
 }
 
 .temporary-token-empty {
@@ -402,17 +377,6 @@
   .platform-entry-actions {
     align-items: stretch;
     flex-direction: column;
-  }
-
-  .temporary-token-table-header,
-  .temporary-token-row {
-    min-width: 0;
-    grid-template-columns: minmax(72px, 1fr) 72px 72px 52px 52px;
-    gap: 8px;
-  }
-
-  .temporary-token-table-header {
-    font-size: var(--table-header-font-size);
   }
 
   .temporary-token-date {

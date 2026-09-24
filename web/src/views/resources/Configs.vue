@@ -17,13 +17,13 @@
       <EmptyState v-else-if="!resources.length" :message="`暂无 ${activeTab === 'configmaps' ? 'ConfigMap' : 'Secret'}`" />
       <div v-else class="table-wrap config-table-wrap">
         <table class="data-table config-table">
-          <thead><tr><th>名称</th><th>命名空间</th><th v-if="activeTab === 'secrets'">类型</th><th>键数量</th><th>引用数量</th><th>年龄</th><th class="action-cell">操作</th></tr></thead>
+          <thead><tr><th>名称</th><th>命名空间</th><th v-if="activeTab === 'secrets'">类型</th><th>键数量</th><th>年龄</th><th class="action-cell">操作</th></tr></thead>
           <tbody><tr v-for="resource in resources" :key="resourceKey(resource)">
             <td class="cell-primary"><OverflowTooltip class="config-cell-truncate" :text="resource.name || '-'" /></td>
             <td><OverflowTooltip class="config-cell-truncate" :text="resource.namespace || '-'" /></td>
             <td v-if="activeTab === 'secrets'"><OverflowTooltip class="config-cell-truncate" :text="resource.type || '-'" /></td>
-            <td>{{ keyCount(resource) }}</td><td>{{ referenceCount(resource) }}</td><td>{{ resource.age || '-' }}</td>
-            <td class="action-cell"><div class="config-row-actions"><button class="btn btn-sm" type="button" :data-testid="`view-config-resource-${resourceKey(resource)}`" @click="openDetail(resource)">查看</button><button class="icon-button" type="button" title="编辑资源" aria-label="编辑资源" :disabled="!isEditable(resource)" @click="openEdit(resource)"><Pencil :size="16" /></button><button class="icon-button danger" type="button" title="删除资源" aria-label="删除资源" :disabled="!isEditable(resource) || referenceCount(resource) > 0" @click="removeResource(resource)"><Trash2 :size="16" /></button></div></td>
+            <td>{{ keyCount(resource) }}</td><td>{{ resource.age || '-' }}</td>
+            <td class="action-cell"><div class="config-row-actions"><button class="btn btn-sm" type="button" :data-testid="`view-config-resource-${resourceKey(resource)}`" @click="openDetail(resource)">查看</button><button class="icon-button" type="button" title="编辑资源" aria-label="编辑资源" :disabled="!isEditable(resource)" @click="openEdit(resource)"><Pencil :size="16" /></button><button class="icon-button danger" type="button" title="删除资源" aria-label="删除资源" :disabled="!isEditable(resource)" @click="removeResource(resource)"><Trash2 :size="16" /></button></div></td>
           </tr></tbody>
         </table>
       </div>
@@ -42,7 +42,7 @@
     <BaseModal :open="showEditor" :title="`${editing ? '编辑' : '新建'} ${resourceKind}`" size="large" @close="closeEditor">
       <p class="form-hint">{{ activeTab === 'secrets' ? 'Secret 值不会再次显示；编辑时留空会保留对应 key 的当前值。' : '修改会立即影响引用该 ConfigMap 的工作负载。' }}</p>
       <form class="resource-modal" @submit.prevent="saveResource">
-        <div class="form-row"><div class="form-group"><label class="form-label">命名空间</label><SelectMenu v-if="namespaces.length" v-model="resourceForm.namespace" class="form-select" required><option value="" disabled>选择命名空间</option><option v-for="item in namespaces" :key="item.name" :value="item.name">{{ item.name }}</option></SelectMenu><input v-else v-model.trim="resourceForm.namespace" class="form-input" required /></div><div class="form-group"><label class="form-label">名称</label><input v-model.trim="resourceForm.name" class="form-input" required :disabled="editing" placeholder="app-config" /></div></div>
+        <div class="form-row"><div class="form-group"><label class="form-label">命名空间</label><input v-if="namespacesLoading" class="form-input" value="" placeholder="正在读取命名空间..." disabled /><SelectMenu v-else-if="namespaces.length" v-model="resourceForm.namespace" class="form-select" required><option value="" disabled>选择命名空间</option><option v-for="item in namespaces" :key="item.name" :value="item.name">{{ item.name }}</option></SelectMenu><input v-else v-model.trim="resourceForm.namespace" class="form-input" required /></div><div class="form-group"><label class="form-label">名称</label><input v-model.trim="resourceForm.name" class="form-input" required :disabled="editing" placeholder="app-config" /></div></div>
         <div class="form-group"><div class="resource-heading"><label class="form-label">数据项</label><button type="button" class="btn btn-sm" @click="addDataItem">+ 添加数据项</button></div><div class="key-value-list"><div v-for="(item, index) in resourceForm.data" :key="index" class="key-value-row"><input v-model.trim="item.key" class="form-input" required placeholder="Key" /><input v-model="item.value" :type="activeTab === 'secrets' ? 'password' : 'text'" class="form-input" :required="!editing || activeTab === 'configmaps'" :placeholder="activeTab === 'secrets' && editing ? '留空保持不变' : '值'" /><button type="button" class="icon-button" title="移除数据项" aria-label="移除数据项" @click="removeDataItem(index)"><Trash2 :size="16" /></button></div></div></div>
       </form>
       <template #actions><button type="button" class="btn" @click="closeEditor">取消</button><button class="btn btn-primary" :disabled="saving" type="button" @click="saveResource">{{ saving ? '保存中...' : '保存' }}</button></template>
@@ -54,7 +54,7 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { Pencil, Plus, RefreshCw, Trash2 } from 'lucide-vue-next'
-import { createConfigMap, createSecret, deleteConfigMap, deleteSecret, getConfigMap, getConfigMaps, getNamespaceNames, getSecrets, updateConfigMap, updateSecret } from '../../api/kubernetes.js'
+import { createConfigMap, createSecret, deleteConfigMap, deleteSecret, getConfigMap, getConfigMapsForNamespace, getNamespaceNames, getSecret, getSecretsForNamespace, updateConfigMap, updateSecret } from '../../api/kubernetes.js'
 import { useAsyncResource } from '../../composables/useAsyncResource.js'
 import BaseModal from '../../components/BaseModal.vue'
 import EmptyState from '../../components/EmptyState.vue'
@@ -67,9 +67,10 @@ const activeTab = ref('configmaps')
 const configmaps = ref([])
 const secrets = ref([])
 const namespaces = ref([])
-const listResource = useAsyncResource(({ signal }, tab) => tab === 'configmaps' ? getConfigMaps({ signal }) : getSecrets({ signal }), null)
-const detailResource = useAsyncResource(({ signal }, namespace, name) => getConfigMap(namespace, name, { signal }), null)
+const listResource = useAsyncResource(({ signal }, tab) => tab === 'configmaps' ? getConfigMapsForNamespace('', { signal }) : getSecretsForNamespace('', { signal }), null)
+const detailResource = useAsyncResource(({ signal }, tab, namespace, name) => tab === 'configmaps' ? getConfigMap(namespace, name, { signal }) : getSecret(namespace, name, { signal }), null)
 const loadingTab = listResource.loading
+const namespacesLoading = ref(false)
 const saving = ref(false)
 const listError = ref('')
 const detailError = ref('')
@@ -87,10 +88,10 @@ const detailLoading = detailResource.loading
 const detailTitle = computed(() => selectedResource.value ? `${activeTab.value === 'configmaps' ? 'ConfigMap' : 'Secret'} · ${selectedResource.value.namespace}/${selectedResource.value.name}` : '配置详情')
 const detailItems = computed(() => {
   if (!selectedResource.value) return []
-  if (activeTab.value === 'secrets') return (selectedResource.value.keys || []).map(key => ({ key, value: '已隐藏' }))
+  if (activeTab.value === 'secrets') return Object.keys(detail.value?.data || {}).map(key => ({ key, value: '已隐藏' }))
   return Object.entries(detail.value?.data || {}).map(([key, value]) => ({ key, value: String(value ?? '') }))
 })
-const references = computed(() => selectedResource.value?.used_by || [])
+const references = computed(() => detail.value?.used_by || [])
 const activeError = computed(() => mutationError.value || detailError.value || listError.value)
 const errorTitle = computed(() => mutationError.value ? '操作失败' : detailError.value ? '读取详情失败' : '读取配置失败')
 
@@ -98,14 +99,16 @@ function newResourceForm() { return { namespace: '', name: '', data: [{ key: '',
 function resourceKey(resource) { return `${resource.namespace}/${resource.name}` }
 function isEditable(resource) { return activeTab.value === 'configmaps' || resource.type === 'Opaque' }
 function keyCount(resource) { return resource.keys_count ?? resource.keys?.length ?? 0 }
-function referenceCount(resource) { return (resource.used_by || []).length }
 function dataMap() { return resourceForm.value.data.reduce((result, item) => { if (item.key) result[item.key] = item.value; return result }, {}) }
 function addDataItem() { resourceForm.value.data.push({ key: '', value: '' }) }
 function removeDataItem(index) { resourceForm.value.data.splice(index, 1); if (!resourceForm.value.data.length) addDataItem() }
 function clearErrors() { listError.value = ''; detailError.value = ''; mutationError.value = '' }
 
-onMounted(async () => { await Promise.all([loadNamespaces(), selectTab('configmaps')]) })
-async function loadNamespaces() { try { namespaces.value = await getNamespaceNames() || [] } catch (_) { namespaces.value = [] } }
+onMounted(() => { void selectTab('configmaps') })
+async function loadNamespaces() {
+  namespacesLoading.value = true
+  try { namespaces.value = await getNamespaceNames() || [] } catch (_) { namespaces.value = [] } finally { namespacesLoading.value = false }
+}
 async function selectTab(tab) {
   activeTab.value = tab
   closeDetail()
@@ -120,19 +123,25 @@ async function openDetail(resource) {
   detail.value = null
   detailError.value = ''
   showDetail.value = true
-  if (activeTab.value !== 'configmaps') return
-  const loaded = await detailResource.refresh(resource.namespace, resource.name)
+  const tab = activeTab.value
+  const loaded = await detailResource.refresh(tab, resource.namespace, resource.name)
   if (loaded && selectedResource.value === resource) detail.value = loaded
-  else if (detailResource.error.value) detailError.value = detailResource.error.value.message || '读取 ConfigMap 失败'
+  else if (detailResource.error.value) detailError.value = detailResource.error.value.message || `读取${tab === 'configmaps' ? 'ConfigMap' : 'Secret'}失败`
 }
 function closeDetail() { detailResource.cancel(); showDetail.value = false; selectedResource.value = null; detail.value = null; detailError.value = '' }
-function openCreate() { editing.value = false; resourceForm.value = newResourceForm(); if (namespaces.value.length === 1) resourceForm.value.namespace = namespaces.value[0].name; showEditor.value = true }
+async function openCreate() {
+  editing.value = false
+  resourceForm.value = newResourceForm()
+  showEditor.value = true
+  await loadNamespaces()
+  if (namespaces.value.length === 1) resourceForm.value.namespace = namespaces.value[0].name
+}
 async function openEdit(resource) {
   editing.value = true
   resourceForm.value = { namespace: resource.namespace, name: resource.name, data: [] }
   detailError.value = ''
   if (activeTab.value === 'configmaps') {
-    const loaded = await detailResource.refresh(resource.namespace, resource.name)
+    const loaded = await detailResource.refresh('configmaps', resource.namespace, resource.name)
     if (!loaded) { detailError.value = detailResource.error.value?.message || '读取 ConfigMap 失败'; return }
     resourceForm.value.data = Object.entries(loaded.data || {}).map(([key, value]) => ({ key, value }))
   } else resourceForm.value.data = (resource.keys || []).map(key => ({ key, value: '' }))

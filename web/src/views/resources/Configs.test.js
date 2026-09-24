@@ -8,9 +8,10 @@ vi.mock('../../api/index.js', () => ({
   api: {
     get: vi.fn().mockImplementation(url => {
       if (url === '/k8s/namespace-names') return Promise.resolve([])
-      if (url === '/k8s/configmaps') return Promise.resolve([{ name: 'app-config', namespace: 'default', keys_count: 3, used_by: [{ kind: 'Deployment', name: 'web', namespace: 'default' }], age: '7d' }])
-      if (url === '/k8s/secrets') return Promise.resolve([{ name: 'db-pass', namespace: 'default', type: 'Opaque', keys_count: 1, keys: ['password'], used_by: [], age: '3d' }])
-      if (url === '/k8s/configmaps/default/app-config') return Promise.resolve({ data: { key1: 'val1' } })
+      if (url === '/k8s/configmaps?namespace=&usage=false') return Promise.resolve([{ name: 'app-config', namespace: 'default', keys_count: 3, age: '7d' }])
+      if (url === '/k8s/secrets?namespace=&usage=false') return Promise.resolve([{ name: 'db-pass', namespace: 'default', type: 'Opaque', keys_count: 1, keys: ['password'], age: '3d' }])
+      if (url === '/k8s/configmaps/default/app-config') return Promise.resolve({ data: { key1: 'val1' }, used_by: [{ kind: 'Deployment', name: 'web', namespace: 'default' }] })
+      if (url === '/k8s/secrets/default/db-pass') return Promise.resolve({ data: { password: '[REDACTED]' }, used_by: [{ kind: 'StatefulSet', name: 'database', namespace: 'default' }] })
       return Promise.resolve([])
     }),
     post: vi.fn(), put: vi.fn(), delete: vi.fn()
@@ -38,13 +39,13 @@ describe('Configs view', () => {
     expect(createButton.classes()).not.toContain('btn-sm')
   })
 
-  it('loads ConfigMaps with reference metadata on mount', async () => {
+  it('loads only lightweight ConfigMap metadata on mount', async () => {
     const wrapper = await mountLoaded()
-    expect(api.get).toHaveBeenCalledWith('/k8s/configmaps', expect.objectContaining({ signal: expect.any(AbortSignal) }))
+    expect(api.get).toHaveBeenCalledWith('/k8s/configmaps?namespace=&usage=false', expect.objectContaining({ signal: expect.any(AbortSignal) }))
+    expect(api.get).not.toHaveBeenCalledWith('/k8s/namespace-names')
     expect(wrapper.text()).toContain('键数量')
-    expect(wrapper.text()).toContain('引用数量')
+    expect(wrapper.text()).not.toContain('引用数量')
     expect(wrapper.text()).toContain('3')
-    expect(wrapper.text()).toContain('1')
   })
 
   it('loads Secrets when switching tabs', async () => {
@@ -52,7 +53,7 @@ describe('Configs view', () => {
     await wrapper.findAll('.tab-btn')[1].trigger('click')
     await Promise.resolve()
     await nextTick()
-    expect(api.get).toHaveBeenCalledWith('/k8s/secrets', expect.objectContaining({ signal: expect.any(AbortSignal) }))
+    expect(api.get).toHaveBeenCalledWith('/k8s/secrets?namespace=&usage=false', expect.objectContaining({ signal: expect.any(AbortSignal) }))
     expect(wrapper.text()).toContain('db-pass')
   })
 
@@ -64,5 +65,32 @@ describe('Configs view', () => {
     expect(wrapper.text()).toContain('ConfigMap · default/app-config')
     expect(wrapper.text()).toContain('key1')
     expect(wrapper.text()).toContain('引用工作负载')
+    expect(wrapper.text()).toContain('web')
+  })
+
+  it('loads Secret keys and references only when details are opened', async () => {
+    const wrapper = await mountLoaded()
+    await wrapper.findAll('.tab-btn')[1].trigger('click')
+    await Promise.resolve()
+    await nextTick()
+
+    await wrapper.find('[data-testid="view-config-resource-default/db-pass"]').trigger('click')
+    await Promise.resolve()
+    await nextTick()
+
+    expect(api.get).toHaveBeenCalledWith('/k8s/secrets/default/db-pass', expect.objectContaining({ signal: expect.any(AbortSignal) }))
+    expect(wrapper.text()).toContain('StatefulSet')
+    expect(wrapper.text()).toContain('database')
+  })
+
+  it('loads namespace options when the create form opens', async () => {
+    const wrapper = await mountLoaded()
+    expect(api.get).not.toHaveBeenCalledWith('/k8s/namespace-names')
+
+    await wrapper.get('[data-testid="create-config-resource"]').trigger('click')
+    await Promise.resolve()
+    await nextTick()
+
+    expect(api.get).toHaveBeenCalledWith('/k8s/namespace-names')
   })
 })

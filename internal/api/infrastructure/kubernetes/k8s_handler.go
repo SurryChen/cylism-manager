@@ -41,6 +41,7 @@ type K8sResourceAdapter interface {
 	ListNodeInfosContext(context.Context) ([]k8sclient.NodeInfo, error)
 	ListDeploymentsContext(context.Context, string) ([]k8sclient.DeploymentInfo, error)
 	ListServicesContext(context.Context, string) ([]k8sclient.ServiceEndpointInfo, error)
+	ListServicesMetadataContext(context.Context, string) ([]k8sclient.ServiceInfo, error)
 	ListDeploymentPodsContext(context.Context, string, string) ([]k8sclient.PodRef, error)
 	GetDeploymentContext(context.Context, string, string) (*k8sclient.DeploymentInfo, error)
 	ListDeploymentRevisionsContext(context.Context, string, string) ([]k8sclient.RevisionInfo, error)
@@ -635,6 +636,18 @@ func (h *K8sHandler) ListServicesV2(c *gin.Context) {
 		return
 	}
 	ns := c.Query("namespace")
+	if c.Query("endpoint_count") == "false" {
+		result, err := h.k8s.ListServicesMetadataContext(c.Request.Context(), ns)
+		if err != nil {
+			apiShared.Error(c, http.StatusOK, apiShared.CodeK8sAPIError, err.Error())
+			return
+		}
+		if result == nil {
+			result = []k8sclient.ServiceInfo{}
+		}
+		apiShared.Success(c, result)
+		return
+	}
 	result, err := h.k8s.ListServicesContext(c.Request.Context(), ns)
 	if err != nil {
 		apiShared.Error(c, http.StatusOK, apiShared.CodeK8sAPIError, err.Error())
