@@ -124,9 +124,15 @@ const readyProviders = computed(() => providers.value.filter(provider => provide
 const credentialFields = computed(() => providers.value.find(provider => provider.id === credentialForm.value.provider)?.fields || [])
 const eligibleCredentials = computed(() => credentials.value.filter(credential => credential.enabled && credential.provider === issuerForm.value.dns_provider && (issuerForm.value.kind === 'ClusterIssuer' || credential.namespace === issuerForm.value.namespace)))
 const certificateResource = useAsyncResource(async ({ signal }) => {
-  const currentStatus = await getCertificateStatus({ signal })
-  if (currentStatus?.state !== 'ready') return { status: currentStatus, resources: null }
-  return { status: currentStatus, certificates: await getCertificates({ signal }) }
+  const [statusResult, certificatesResult] = await Promise.allSettled([
+    getCertificateStatus({ signal }),
+    getCertificates({ signal }),
+  ])
+  if (statusResult.status === 'rejected') throw statusResult.reason
+  const currentStatus = statusResult.value
+  if (currentStatus?.state !== 'ready') return { status: currentStatus, certificates: null }
+  if (certificatesResult.status === 'rejected') throw certificatesResult.reason
+  return { status: currentStatus, certificates: certificatesResult.value }
 }, null)
 const issuersResource = useAsyncResource(({ signal }) => getCertificateIssuers({ signal }), [])
 const credentialsResource = useAsyncResource(({ signal }) => getDNSCredentials({ signal }), [])

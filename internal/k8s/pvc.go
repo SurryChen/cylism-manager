@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -473,17 +474,32 @@ func (c *Client) pvcInfos(ctx context.Context, claims []corev1.PersistentVolumeC
 	if len(claims) == 0 {
 		return []PersistentVolumeClaimInfo{}, nil
 	}
-	storageClasses, err := c.Clientset.StorageV1().StorageClasses().List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("list storageclasses: %w", err)
+	var (
+		storageClasses    *storagev1.StorageClassList
+		volumes           *corev1.PersistentVolumeList
+		storageClassesErr error
+		volumesErr        error
+		waitGroup         sync.WaitGroup
+	)
+	waitGroup.Add(2)
+	go func() {
+		defer waitGroup.Done()
+		storageClasses, storageClassesErr = c.Clientset.StorageV1().StorageClasses().List(ctx, metav1.ListOptions{})
+	}()
+	go func() {
+		defer waitGroup.Done()
+		volumes, volumesErr = c.Clientset.CoreV1().PersistentVolumes().List(ctx, metav1.ListOptions{})
+	}()
+	waitGroup.Wait()
+	if storageClassesErr != nil {
+		return nil, fmt.Errorf("list storageclasses: %w", storageClassesErr)
+	}
+	if volumesErr != nil {
+		return nil, fmt.Errorf("list persistentvolumes: %w", volumesErr)
 	}
 	classesByName := make(map[string]*storagev1.StorageClass, len(storageClasses.Items))
 	for index := range storageClasses.Items {
 		classesByName[storageClasses.Items[index].Name] = &storageClasses.Items[index]
-	}
-	volumes, err := c.Clientset.CoreV1().PersistentVolumes().List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("list persistentvolumes: %w", err)
 	}
 	volumesByName := make(map[string]*corev1.PersistentVolume, len(volumes.Items))
 	for index := range volumes.Items {

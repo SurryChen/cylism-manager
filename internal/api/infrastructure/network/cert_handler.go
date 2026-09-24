@@ -93,7 +93,8 @@ func (h *CertHandler) Install(c *gin.Context) {
 
 // ListCerts 列出所有 Certificate
 func (h *CertHandler) ListCerts(c *gin.Context) {
-	if !h.requireReady(c) {
+	if h.k8s == nil || !h.k8s.KubernetesAvailable() {
+		certK8sUnavailable(c)
 		return
 	}
 	certs, err := h.network.ListCertificatesContext(c.Request.Context())

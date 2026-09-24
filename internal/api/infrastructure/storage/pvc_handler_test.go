@@ -5,7 +5,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	k8sclient "github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
@@ -19,20 +21,63 @@ import (
 )
 
 type countingPVCWorkloads struct {
+	mu               sync.Mutex
 	deploymentCalls  int
 	statefulSetCalls int
+	namespaces       map[string]struct{}
 }
 
 func (w *countingPVCWorkloads) NamespaceExists(context.Context, string) error { return nil }
 func (w *countingPVCWorkloads) GetDeployment(context.Context, string, string) (*appsv1.Deployment, error) {
 	return nil, nil
 }
-func (w *countingPVCWorkloads) ListDeployments(context.Context, string) ([]appsv1.Deployment, error) {
+
+func (w *countingPVCWorkloads) ListDeployments(_ context.Context, namespace string) ([]appsv1.Deployment, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	w.deploymentCalls++
+	if w.namespaces == nil {
+		w.namespaces = make(map[string]struct{})
+	}
+	w.namespaces[namespace] = struct{}{}
 	return nil, nil
 }
-func (w *countingPVCWorkloads) ListStatefulSets(context.Context, string) ([]appsv1.StatefulSet, error) {
+func (w *countingPVCWorkloads) ListStatefulSets(_ context.Context, namespace string) ([]appsv1.StatefulSet, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	w.statefulSetCalls++
+	if w.namespaces == nil {
+		w.namespaces = make(map[string]struct{})
+	}
+	w.namespaces[namespace] = struct{}{}
+	return nil, nil
+}
+
+func (w *countingPVCWorkloads) calls() (int, int, map[string]struct{}) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	namespaces := make(map[string]struct{}, len(w.namespaces))
+	for namespace := range w.namespaces {
+		namespaces[namespace] = struct{}{}
+	}
+	return w.deploymentCalls, w.statefulSetCalls, namespaces
+}
+
+type blockingPVCWorkloads struct {
+	started chan string
+	release <-chan struct{}
+}
+
+func (w *blockingPVCWorkloads) NamespaceExists(context.Context, string) error { return nil }
+func (w *blockingPVCWorkloads) GetDeployment(context.Context, string, string) (*appsv1.Deployment, error) {
+	return nil, nil
+}
+func (w *blockingPVCWorkloads) ListDeployments(_ context.Context, namespace string) ([]appsv1.Deployment, error) {
+	w.started <- namespace
+	<-w.release
+	return nil, nil
+}
+func (w *blockingPVCWorkloads) ListStatefulSets(context.Context, string) ([]appsv1.StatefulSet, error) {
 	return nil, nil
 }
 
@@ -97,8 +142,57 @@ func TestPersistentVolumeClaimListBatchesWorkloadReferencesByNamespace(t *testin
 		{Name: "two", Namespace: "default"},
 		{Name: "three", Namespace: "project-a"},
 	})
-	if workloads.deploymentCalls != 2 || workloads.statefulSetCalls != 2 {
-		t.Fatalf("expected one workload scan per namespace, deployments=%d statefulsets=%d", workloads.deploymentCalls, workloads.statefulSetCalls)
+	deployments, statefulSets, _ := workloads.calls()
+	if deployments != 2 || statefulSets != 2 {
+		t.Fatalf("expected one workload scan per namespace, deployments=%d statefulsets=%d", deployments, statefulSets)
+	}
+}
+
+func TestPersistentVolumeClaimListScansNamespacesConcurrently(t *testing.T) {
+	release := make(chan struct{})
+	workloads := &blockingPVCWorkloads{started: make(chan string, 2), release: release}
+	h := &StorageHandler{workloads: workloads}
+	done := make(chan struct{})
+	go func() {
+		h.pvcResponses(context.Background(), []k8sclient.PersistentVolumeClaimInfo{
+			{Name: "one", Namespace: "default"},
+			{Name: "two", Namespace: "project-a"},
+		})
+		close(done)
+	}()
+	for range 2 {
+		select {
+		case <-workloads.started:
+		case <-time.After(time.Second):
+			close(release)
+			t.Fatal("expected workload scans for distinct namespaces to start concurrently")
+		}
+	}
+	close(release)
+	<-done
+}
+
+func TestPersistentVolumeClaimListEnrichesOnlyTheRequestedPage(t *testing.T) {
+	workloads := &countingPVCWorkloads{}
+	client := &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(
+		&corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: "first", Namespace: "default"}},
+		&corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: "second", Namespace: "project-a"}},
+	)}
+	pvc, migration, _ := NewPVCAdapters(client)
+	h := NewStorageHandlerWithDependencies(storageservice.NewService(client, nil), nil, nil, pvc, migration, workloads)
+	r := gin.New()
+	r.GET("/api/k8s/persistent-volume-claims", h.ListPersistentVolumeClaims)
+
+	response := serve(r, httptest.NewRequest(http.MethodGet, "/api/k8s/persistent-volume-claims?page=1&size=1", nil))
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"total":2`) || !strings.Contains(response.Body.String(), `"name":"first"`) {
+		t.Fatalf("unexpected paginated inventory: %d %s", response.Code, response.Body.String())
+	}
+	deployments, statefulSets, namespaces := workloads.calls()
+	if deployments != 1 || statefulSets != 1 {
+		t.Fatalf("expected one namespace to be enriched, deployments=%d statefulsets=%d", deployments, statefulSets)
+	}
+	if _, found := namespaces["default"]; !found || len(namespaces) != 1 {
+		t.Fatalf("expected only the visible namespace to be scanned, got %#v", namespaces)
 	}
 }
 

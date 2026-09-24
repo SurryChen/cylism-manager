@@ -2,15 +2,21 @@ package k8s
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/kubernetes"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
+	"k8s.io/client-go/rest"
 	k8stesting "k8s.io/client-go/testing"
 )
 
@@ -124,6 +130,51 @@ func TestListPVCsBatchesPersistentVolumeAndStorageClassLookups(t *testing.T) {
 	}
 	if getCalls != 0 {
 		t.Fatalf("expected inventory to use list calls rather than per-PVC gets, got %d gets", getCalls)
+	}
+}
+
+func TestListPVCsLoadsPersistentVolumesAndStorageClassesConcurrently(t *testing.T) {
+	started := make(chan string, 2)
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/persistentvolumeclaims":
+			_ = json.NewEncoder(w).Encode(&corev1.PersistentVolumeClaimList{Items: []corev1.PersistentVolumeClaim{{ObjectMeta: metav1.ObjectMeta{Name: "one", Namespace: "default"}}}})
+		case "/api/v1/persistentvolumes":
+			started <- r.URL.Path
+			<-release
+			_ = json.NewEncoder(w).Encode(&corev1.PersistentVolumeList{})
+		case "/apis/storage.k8s.io/v1/storageclasses":
+			started <- r.URL.Path
+			<-release
+			_ = json.NewEncoder(w).Encode(&storagev1.StorageClassList{})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	clientset, err := kubernetes.NewForConfig(&rest.Config{Host: server.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := (&Client{Clientset: clientset}).ListPVCsContext(context.Background(), "")
+		done <- err
+	}()
+	for range 2 {
+		select {
+		case <-started:
+		case <-time.After(time.Second):
+			close(release)
+			t.Fatal("expected PersistentVolume and StorageClass list requests to run concurrently")
+		}
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
 	}
 }
 

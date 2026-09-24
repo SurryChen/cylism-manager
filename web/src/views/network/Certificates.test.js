@@ -44,6 +44,24 @@ describe('Certificates view', () => {
     expect(api.get).not.toHaveBeenCalledWith('/certs/dns-providers', expect.anything())
   })
 
+  it('starts the certificate request before the status check completes', async () => {
+    let resolveStatus
+    api.get.mockImplementation(path => {
+      if (path === '/certs/status') return new Promise(resolve => { resolveStatus = resolve })
+      if (path === '/certs') return Promise.resolve([])
+      return Promise.resolve([])
+    })
+
+    const wrapper = mount(Certificates)
+
+    expect(api.get).toHaveBeenCalledWith('/certs/status', expect.anything())
+    expect(api.get).toHaveBeenCalledWith('/certs', expect.anything())
+
+    resolveStatus({ state: 'ready', message: 'cert-manager 已就绪' })
+    await settle()
+    wrapper.unmount()
+  })
+
   it('loads issuance configuration only after it is opened', async () => {
     const wrapper = mount(Certificates)
     await settle()
@@ -105,17 +123,19 @@ describe('Certificates view', () => {
     window.location.hash = ''
   })
 
-  it('shows setup status without loading certificate resources when cert-manager is absent', async () => {
+  it('shows setup status when cert-manager is absent even if the parallel certificate request fails', async () => {
     api.get.mockImplementation(path => {
       if (path === '/certs/status') return Promise.resolve({ state: 'not_installed', message: '未检测到完整的 cert-manager CRD', installer_available: true })
-      return Promise.reject(new Error(`unexpected request: ${path}`))
+      if (path === '/certs') return Promise.reject(new Error('cert-manager resource is unavailable'))
+      return Promise.resolve([])
     })
     const wrapper = mount(Certificates)
     await settle()
 
     expect(wrapper.text()).toContain('cert-manager 未安装')
     expect(wrapper.text()).toContain('安装 cert-manager')
-    expect(api.get).not.toHaveBeenCalledWith('/certs')
+    expect(wrapper.text()).not.toContain('cert-manager resource is unavailable')
+    expect(api.get).toHaveBeenCalledWith('/certs', expect.anything())
     expect(api.get).not.toHaveBeenCalledWith('/certs/issuers')
   })
 

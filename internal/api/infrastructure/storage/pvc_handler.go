@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"sync"
 
 	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 	k8sclient "github.com/cylism/cylism-manager/internal/k8s"
@@ -15,6 +16,7 @@ import (
 	applicationservice "github.com/cylism/cylism-manager/internal/service/application"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
+	appsv1 "k8s.io/api/apps/v1"
 )
 
 type persistentVolumeClaimRequest struct {
@@ -56,22 +58,22 @@ func (h *StorageHandler) ListPersistentVolumeClaims(c *gin.Context) {
 		apiShared.Error(c, http.StatusOK, apiShared.CodeK8sAPIError, err.Error())
 		return
 	}
-	responses := h.pvcResponses(c.Request.Context(), claims)
 	_, hasPage := c.GetQuery("page")
 	_, hasSize := c.GetQuery("size")
 	if !hasPage && !hasSize {
-		apiShared.Success(c, responses)
+		apiShared.Success(c, h.pvcResponses(c.Request.Context(), claims))
 		return
 	}
 	page, size, offset := apiShared.Pagination(c)
+	if offset > len(claims) {
+		offset = len(claims)
+	}
 	end := offset + size
-	if offset > len(responses) {
-		offset = len(responses)
+	if end > len(claims) {
+		end = len(claims)
 	}
-	if end > len(responses) {
-		end = len(responses)
-	}
-	apiShared.Success(c, gin.H{"items": responses[offset:end], "total": len(responses), "page": page, "size": size})
+	responses := h.pvcResponses(c.Request.Context(), claims[offset:end])
+	apiShared.Success(c, gin.H{"items": responses, "total": len(claims), "page": page, "size": size})
 }
 
 // listPVCs keeps the Kubernetes read as narrow as the active scope permits.
@@ -356,29 +358,79 @@ func (h *StorageHandler) pvcReferenceIndex(ctx context.Context, claims []k8sclie
 	}
 
 	if h.workloads != nil {
-		namespaces := make(map[string]struct{})
+		claimsByNamespace := make(map[string][]k8sclient.PersistentVolumeClaimInfo)
 		for _, claim := range claims {
-			namespaces[claim.Namespace] = struct{}{}
+			claimsByNamespace[claim.Namespace] = append(claimsByNamespace[claim.Namespace], claim)
 		}
-		for namespace := range namespaces {
-			if deployments, err := h.workloads.ListDeployments(ctx, namespace); err == nil {
-				for index := range deployments {
-					for _, claim := range claims {
-						if claim.Namespace == namespace && k8sclient.DeploymentReferencesPVC(&deployments[index], claim.Name) {
-							add(namespace, claim.Name, "工作负载："+deployments[index].Name)
-						}
+		for key, values := range h.pvcWorkloadReferenceIndex(ctx, claimsByNamespace) {
+			for _, value := range values {
+				references[key] = append(references[key], value)
+			}
+		}
+	}
+	return references
+}
+
+const maxConcurrentPVCReferenceRequests = 4
+
+func (h *StorageHandler) pvcWorkloadReferenceIndex(ctx context.Context, claimsByNamespace map[string][]k8sclient.PersistentVolumeClaimInfo) map[string][]string {
+	references := make(map[string][]string)
+	if len(claimsByNamespace) == 0 {
+		return references
+	}
+	type namespaceReferences map[string][]string
+	results := make(chan namespaceReferences, len(claimsByNamespace))
+	requests := make(chan struct{}, maxConcurrentPVCReferenceRequests)
+	var waitGroup sync.WaitGroup
+	for namespace, claims := range claimsByNamespace {
+		waitGroup.Add(1)
+		go func(namespace string, claims []k8sclient.PersistentVolumeClaimInfo) {
+			defer waitGroup.Done()
+			var deployments []appsv1.Deployment
+			var statefulSets []appsv1.StatefulSet
+			var resourceWaitGroup sync.WaitGroup
+			resourceWaitGroup.Add(2)
+			go func() {
+				defer resourceWaitGroup.Done()
+				requests <- struct{}{}
+				defer func() { <-requests }()
+				deployments, _ = h.workloads.ListDeployments(ctx, namespace)
+			}()
+			go func() {
+				defer resourceWaitGroup.Done()
+				requests <- struct{}{}
+				defer func() { <-requests }()
+				statefulSets, _ = h.workloads.ListStatefulSets(ctx, namespace)
+			}()
+			resourceWaitGroup.Wait()
+
+			result := make(namespaceReferences)
+			add := func(name, reference string) {
+				key := pvcReferenceKey(namespace, name)
+				result[key] = append(result[key], reference)
+			}
+			for index := range deployments {
+				for _, claim := range claims {
+					if k8sclient.DeploymentReferencesPVC(&deployments[index], claim.Name) {
+						add(claim.Name, "工作负载："+deployments[index].Name)
 					}
 				}
 			}
-			if statefulSets, err := h.workloads.ListStatefulSets(ctx, namespace); err == nil {
-				for index := range statefulSets {
-					for _, claim := range claims {
-						if claim.Namespace == namespace && k8sclient.StatefulSetReferencesPVC(&statefulSets[index], claim.Name) {
-							add(namespace, claim.Name, "工作负载："+statefulSets[index].Name)
-						}
+			for index := range statefulSets {
+				for _, claim := range claims {
+					if k8sclient.StatefulSetReferencesPVC(&statefulSets[index], claim.Name) {
+						add(claim.Name, "工作负载："+statefulSets[index].Name)
 					}
 				}
 			}
+			results <- result
+		}(namespace, claims)
+	}
+	waitGroup.Wait()
+	close(results)
+	for result := range results {
+		for key, values := range result {
+			references[key] = append(references[key], values...)
 		}
 	}
 	return references
