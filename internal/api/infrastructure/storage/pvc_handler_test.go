@@ -141,7 +141,7 @@ func TestPersistentVolumeClaimListBatchesWorkloadReferencesByNamespace(t *testin
 		{Name: "one", Namespace: "default"},
 		{Name: "two", Namespace: "default"},
 		{Name: "three", Namespace: "project-a"},
-	})
+	}, true)
 	deployments, statefulSets, _ := workloads.calls()
 	if deployments != 2 || statefulSets != 2 {
 		t.Fatalf("expected one workload scan per namespace, deployments=%d statefulsets=%d", deployments, statefulSets)
@@ -157,7 +157,7 @@ func TestPersistentVolumeClaimListScansNamespacesConcurrently(t *testing.T) {
 		h.pvcResponses(context.Background(), []k8sclient.PersistentVolumeClaimInfo{
 			{Name: "one", Namespace: "default"},
 			{Name: "two", Namespace: "project-a"},
-		})
+		}, true)
 		close(done)
 	}()
 	for range 2 {
@@ -188,11 +188,32 @@ func TestPersistentVolumeClaimListEnrichesOnlyTheRequestedPage(t *testing.T) {
 		t.Fatalf("unexpected paginated inventory: %d %s", response.Code, response.Body.String())
 	}
 	deployments, statefulSets, namespaces := workloads.calls()
-	if deployments != 1 || statefulSets != 1 {
-		t.Fatalf("expected one namespace to be enriched, deployments=%d statefulsets=%d", deployments, statefulSets)
+	if deployments != 0 || statefulSets != 0 {
+		t.Fatalf("expected inventory to skip workload reference scans, deployments=%d statefulsets=%d", deployments, statefulSets)
 	}
-	if _, found := namespaces["default"]; !found || len(namespaces) != 1 {
-		t.Fatalf("expected only the visible namespace to be scanned, got %#v", namespaces)
+	if len(namespaces) != 0 {
+		t.Fatalf("expected no namespaces to be scanned, got %#v", namespaces)
+	}
+}
+
+func TestPersistentVolumeClaimReferencesAreLoadedSeparately(t *testing.T) {
+	workloads := &countingPVCWorkloads{}
+	client := &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(
+		&corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: "first", Namespace: "default"}},
+		&corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: "second", Namespace: "project-a"}},
+	)}
+	pvc, migration, _ := NewPVCAdapters(client)
+	h := NewStorageHandlerWithDependencies(storageservice.NewService(client, nil), nil, nil, pvc, migration, workloads)
+	r := gin.New()
+	r.GET("/api/k8s/persistent-volume-claims/references", h.ListPersistentVolumeClaimReferences)
+
+	response := serve(r, httptest.NewRequest(http.MethodGet, "/api/k8s/persistent-volume-claims/references?claim=default/first&claim=project-a/second", nil))
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"namespace":"default","name":"first","references":[]`) || !strings.Contains(response.Body.String(), `"namespace":"project-a","name":"second","references":[]`) {
+		t.Fatalf("unexpected PVC references response: %d %s", response.Code, response.Body.String())
+	}
+	deployments, statefulSets, namespaces := workloads.calls()
+	if deployments != 2 || statefulSets != 2 || len(namespaces) != 2 {
+		t.Fatalf("expected one workload scan per requested namespace, deployments=%d statefulsets=%d namespaces=%#v", deployments, statefulSets, namespaces)
 	}
 }
 

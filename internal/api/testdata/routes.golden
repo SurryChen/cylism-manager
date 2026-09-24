@@ -101,6 +101,7 @@ GET /api/k8s/namespaces
 GET /api/k8s/persistent-volume-claims
 GET /api/k8s/persistent-volume-claims/:name/backups
 GET /api/k8s/persistent-volume-claims/:name/imports
+GET /api/k8s/persistent-volume-claims/references
 GET /api/k8s/persistent-volume-claims/usage
 GET /api/k8s/persistent-volume-migrations
 GET /api/k8s/persistent-volume-migrations/:id

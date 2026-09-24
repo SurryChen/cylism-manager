@@ -137,6 +137,7 @@ func registerK8sRoutes(apiGroup *gin.RouterGroup, h *kubernetesapi.K8sHandler, p
 	g.DELETE("/secrets/:namespace/:name", h.DeleteOpaqueSecret)
 	g.GET("/storage-classes", storage.ListStorageClasses)
 	g.GET("/persistent-volume-claims", storage.ListPersistentVolumeClaims)
+	g.GET("/persistent-volume-claims/references", storage.ListPersistentVolumeClaimReferences)
 	g.GET("/persistent-volume-claims/usage", storage.ListPersistentVolumeClaimUsage)
 	g.POST("/persistent-volume-claims", storage.CreatePersistentVolumeClaim)
 	g.GET("/persistent-volume-migrations", storage.ListPersistentVolumeMigrations)

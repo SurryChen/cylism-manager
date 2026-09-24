@@ -11,6 +11,7 @@ function mockInventory(overrides = {}) {
     if (path === '/projects') return Promise.resolve([{ id: 1, name: 'knowledge', environments: [{ id: 2, name: 'production', namespace: 'project-knowledge-prod' }] }])
     if (path === '/k8s/namespace-names') return Promise.resolve(overrides.namespaces || [{ name: 'default' }, { name: 'project-knowledge-prod' }])
     if (path.startsWith('/k8s/persistent-volume-claims?')) return Promise.resolve({ items: overrides.claims || [], total: (overrides.claims || []).length })
+	if (path.startsWith('/k8s/persistent-volume-claims/references')) return Promise.resolve(overrides.references || [])
     if (path.startsWith('/k8s/persistent-volume-claims/usage')) return Promise.resolve(overrides.usage || [])
     if (path === '/k8s/storage-classes') return Promise.resolve([{ name: 'local-path', is_default: true, volume_binding_mode: 'WaitForFirstConsumer' }])
     if (path === '/k8s/persistent-volume-migrations') return Promise.resolve([])
@@ -52,6 +53,7 @@ describe('PersistentVolumes view', () => {
     await settle()
 
     expect(api.get).toHaveBeenCalledWith('/k8s/persistent-volume-claims?page=1&size=20', expect.objectContaining({ signal: expect.any(AbortSignal) }))
+	    expect(api.get).toHaveBeenCalledWith('/k8s/persistent-volume-claims/references?claim=default%2Fmanual-data', expect.objectContaining({ signal: expect.any(AbortSignal) }))
     expect(wrapper.text()).toContain('manual-data')
     expect(wrapper.text()).toContain('外部创建')
   })

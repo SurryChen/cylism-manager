@@ -37,6 +37,12 @@ type persistentVolumeClaimResponse struct {
 	EnvironmentName      string   `json:"environment_name,omitempty"`
 }
 
+type persistentVolumeClaimReferencesResponse struct {
+	Namespace  string   `json:"namespace"`
+	Name       string   `json:"name"`
+	References []string `json:"references"`
+}
+
 func (h *StorageHandler) ListPersistentVolumeClaims(c *gin.Context) {
 	if h == nil || h.pvc == nil || h.Service == nil {
 		storageK8sUnavailable(c)
@@ -61,7 +67,7 @@ func (h *StorageHandler) ListPersistentVolumeClaims(c *gin.Context) {
 	_, hasPage := c.GetQuery("page")
 	_, hasSize := c.GetQuery("size")
 	if !hasPage && !hasSize {
-		apiShared.Success(c, h.pvcResponses(c.Request.Context(), claims))
+		apiShared.Success(c, h.pvcResponses(c.Request.Context(), claims, false))
 		return
 	}
 	page, size, offset := apiShared.Pagination(c)
@@ -72,8 +78,36 @@ func (h *StorageHandler) ListPersistentVolumeClaims(c *gin.Context) {
 	if end > len(claims) {
 		end = len(claims)
 	}
-	responses := h.pvcResponses(c.Request.Context(), claims[offset:end])
+	responses := h.pvcResponses(c.Request.Context(), claims[offset:end], false)
 	apiShared.Success(c, gin.H{"items": responses, "total": len(claims), "page": page, "size": size})
+}
+
+// ListPersistentVolumeClaimReferences reads workload and template references
+// independently of the inventory so slow Kubernetes reads do not delay it.
+func (h *StorageHandler) ListPersistentVolumeClaimReferences(c *gin.Context) {
+	if h == nil || h.pvc == nil {
+		storageK8sUnavailable(c)
+		return
+	}
+	claims, err := h.pvcUsageClaims(c.Request.Context(), c.QueryArray("claim"), strings.TrimSpace(c.Query("namespace")))
+	if err != nil {
+		apiShared.Error(c, http.StatusOK, apiShared.CodeK8sAPIError, err.Error())
+		return
+	}
+	references := h.pvcReferenceIndex(c.Request.Context(), claims)
+	responses := make([]persistentVolumeClaimReferencesResponse, 0, len(claims))
+	for _, claim := range claims {
+		claimReferences := references[pvcReferenceKey(claim.Namespace, claim.Name)]
+		if claimReferences == nil {
+			claimReferences = []string{}
+		}
+		responses = append(responses, persistentVolumeClaimReferencesResponse{
+			Namespace:  claim.Namespace,
+			Name:       claim.Name,
+			References: claimReferences,
+		})
+	}
+	apiShared.Success(c, responses)
 }
 
 // listPVCs keeps the Kubernetes read as narrow as the active scope permits.
@@ -260,7 +294,7 @@ func (h *StorageHandler) pvcRequestNamespace(ctx context.Context, request persis
 }
 
 func (h *StorageHandler) pvcResponse(ctx context.Context, claim *k8sclient.PersistentVolumeClaimInfo) persistentVolumeClaimResponse {
-	responses := h.pvcResponses(ctx, []k8sclient.PersistentVolumeClaimInfo{*claim})
+	responses := h.pvcResponses(ctx, []k8sclient.PersistentVolumeClaimInfo{*claim}, true)
 	if len(responses) == 0 {
 		return persistentVolumeClaimResponse{PersistentVolumeClaimInfo: *claim}
 	}
@@ -271,7 +305,7 @@ func pvcReferenceKey(namespace, name string) string { return namespace + "\x00" 
 
 // pvcResponses batches all list-only enrichment. The prior implementation
 // repeated database and workload scans for every PVC in an inventory.
-func (h *StorageHandler) pvcResponses(ctx context.Context, claims []k8sclient.PersistentVolumeClaimInfo) []persistentVolumeClaimResponse {
+func (h *StorageHandler) pvcResponses(ctx context.Context, claims []k8sclient.PersistentVolumeClaimInfo, includeReferences bool) []persistentVolumeClaimResponse {
 	responses := make([]persistentVolumeClaimResponse, len(claims))
 	for index := range claims {
 		responses[index] = persistentVolumeClaimResponse{PersistentVolumeClaimInfo: claims[index]}
@@ -304,7 +338,10 @@ func (h *StorageHandler) pvcResponses(ctx context.Context, claims []k8sclient.Pe
 		}
 	}
 
-	references := h.pvcReferenceIndex(ctx, claims)
+	var references map[string][]string
+	if includeReferences {
+		references = h.pvcReferenceIndex(ctx, claims)
+	}
 	for index := range responses {
 		claim := &responses[index].PersistentVolumeClaimInfo
 		responses[index].BoundNodeDisplayName = serversByNode[claim.BoundNode]
@@ -313,7 +350,9 @@ func (h *StorageHandler) pvcResponses(ctx context.Context, claims []k8sclient.Pe
 			responses[index].EnvironmentName = environment.Name
 			responses[index].ProjectName = projects[environment.ProjectID]
 		}
-		responses[index].References = references[pvcReferenceKey(claim.Namespace, claim.Name)]
+		if includeReferences {
+			responses[index].References = references[pvcReferenceKey(claim.Namespace, claim.Name)]
+		}
 	}
 	return responses
 }

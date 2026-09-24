@@ -22,6 +22,13 @@ export function getPersistentVolumeUsage(claims = [], options) {
   const suffix = query.toString()
   return api.get(`/k8s/persistent-volume-claims/usage${suffix ? `?${suffix}` : ''}`, options)
 }
+
+export function getPersistentVolumeReferences(claims = [], options) {
+  const query = new URLSearchParams()
+  claims.forEach(claim => query.append('claim', `${claim.namespace}/${claim.name}`))
+  const suffix = query.toString()
+  return api.get(`/k8s/persistent-volume-claims/references${suffix ? `?${suffix}` : ''}`, options)
+}
 export function getPersistentVolumeStorageClasses(options) { return api.get('/k8s/storage-classes', options) }
 export function getPersistentVolumeMigrations(options) { return api.get('/k8s/persistent-volume-migrations', options) }
 export function getPersistentVolumeBackups(name, environmentID, options) { return api.get(`/k8s/persistent-volume-claims/${encodeURIComponent(name)}/backups?environment_id=${encodeURIComponent(environmentID)}`, options) }

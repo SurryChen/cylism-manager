@@ -10,6 +10,7 @@ import {
   deletePersistentVolumeClaim,
   deletePersistentVolumeImportBackup,
   getPersistentVolumeInventory,
+	getPersistentVolumeReferences,
   getPersistentVolumeUsage,
   restorePersistentVolumeBackup,
 } from './storage.js'
@@ -29,6 +30,12 @@ describe('storage api', () => {
     const options = { signal: new AbortController().signal }
     getPersistentVolumeUsage([{ namespace: 'default', name: 'data' }], options)
     expect(api.get).toHaveBeenCalledWith('/k8s/persistent-volume-claims/usage?claim=default%2Fdata', options)
+  })
+
+  it('loads references only for the displayed persistent volumes', () => {
+    const options = { signal: new AbortController().signal }
+    getPersistentVolumeReferences([{ namespace: 'default', name: 'data' }], options)
+    expect(api.get).toHaveBeenCalledWith('/k8s/persistent-volume-claims/references?claim=default%2Fdata', options)
   })
 
   it('uses the existing persistent volume mutation endpoints and forwards request options', () => {
