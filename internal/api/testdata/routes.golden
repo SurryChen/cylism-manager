@@ -235,6 +235,7 @@ POST /api/managed-oci-registries/:id/apply-node-access
 POST /api/managed-oci-registries/:id/catalog/repositories/preflight-delete
 POST /api/managed-oci-registries/:id/catalog/tags/preflight-delete
 POST /api/managed-oci-registries/:id/repair
+POST /api/managed-oci-registries/:id/refresh-status
 POST /api/monitoring/alerts/install
 POST /api/monitoring/alerts/notify
 POST /api/monitoring/alerts/silences

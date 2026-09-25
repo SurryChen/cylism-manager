@@ -89,7 +89,7 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Activity, Bot, Boxes, Check, FileText, FolderKanban, HardDrive, History, LayoutDashboard, Layers3, LogOut, Menu, Orbit, PackagePlus, Palette, Route, Server, Settings, Waypoints, X } from 'lucide-vue-next'
+import { Activity, Bot, Boxes, Check, Cloud, FileText, FolderKanban, HardDrive, History, LayoutDashboard, Layers3, LogOut, Menu, Orbit, PackagePlus, Palette, Route, Server, Settings, Waypoints, X } from 'lucide-vue-next'
 import { clearTokens } from './api/index.js'
 import { usePalette } from './composables/usePalette.js'
 import { useTransientScrollbarVisibility } from './composables/useTransientScrollbarVisibility.js'
@@ -128,6 +128,12 @@ const navGroups = computed(() => [
     ],
   },
   {
+    id: 'cloud-services',
+    label: '云服务',
+    to: '/cloud-services/registry',
+    items: [{ label: '制品库', to: '/cloud-services/registry', icon: Cloud }],
+  },
+  {
     id: 'infrastructure',
     label: '基础设施',
     to: '/servers',
@@ -139,14 +145,6 @@ const navGroups = computed(() => [
       { label: '存储', to: '/storage', icon: HardDrive },
       { label: '监控', to: '/monitoring', icon: Activity },
       { label: 'Agent 助手', to: '/runtimes', icon: Bot },
-    ],
-  },
-  {
-    id: 'delivery',
-    label: '交付中心',
-    to: '/delivery/registry',
-    items: [
-      { label: '制品库', to: '/delivery/registry', icon: Boxes },
     ],
   },
   {

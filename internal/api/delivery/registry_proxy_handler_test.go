@@ -80,6 +80,26 @@ func TestRegistryProxyOutboundProxyIsEncryptedAndDiagnosticIsBounded(t *testing.
 	}
 }
 
+func TestRegistryProxyListReturnsPersistedStatusSnapshot(t *testing.T) {
+	st, err := store.New(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxy := &model.RegistryProxy{Name: "Docker Hub", Registry: "docker.io", ResourceName: "cylism-registry-proxy-1", NodeName: "node-a", EndpointHost: "100.64.0.8", NodePort: 30500, CacheLimitGi: 2, CleanupIntervalHours: 24, Status: "ready"}
+	if err := st.SaveRegistryProxy(proxy); err != nil {
+		t.Fatal(err)
+	}
+	handler := newTestRegistryProxyHandler(st, nil, k8sclient.NewRegistryProxyReconciler(&k8sclient.Client{Clientset: k8sfake.NewSimpleClientset()}), nil)
+	router := gin.New()
+	router.GET("/api/registry-proxies", handler.List)
+
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/registry-proxies", nil))
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"status":"ready"`) {
+		t.Fatalf("list must return the persisted snapshot: %d %s", response.Code, response.Body.String())
+	}
+}
+
 type fakeRegistryProxyReconciler struct{}
 
 func (fakeRegistryProxyReconciler) Available() bool                          { return true }

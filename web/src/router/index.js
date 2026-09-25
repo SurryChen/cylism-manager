@@ -26,6 +26,8 @@ const ManagedOCIRegistries = () => import('../views/ManagedOCIRegistries.vue')
 const routes = [
   { path: '/login', component: Login, meta: { public: true } },
   { path: '/', component: Dashboard },
+  { path: '/cloud-services', redirect: '/cloud-services/registry' },
+  { path: '/cloud-services/registry', component: ManagedOCIRegistries },
   { path: '/applications', component: Applications, props: { section: 'workspace' } },
   { path: '/applications/projects', component: Applications, props: { section: 'projects' } },
   { path: '/applications/projects/:projectID', component: ProjectEnvironments, props: true },
@@ -44,7 +46,7 @@ const routes = [
   { path: '/storage', component: PersistentVolumes },
   { path: '/monitoring', component: Monitoring },
   { path: '/runtimes', component: RuntimeManagement },
-  { path: '/delivery/registry', component: ManagedOCIRegistries },
+  { path: '/delivery/registry', redirect: to => ({ path: '/cloud-services/registry', query: to.query }) },
   { path: '/resources', component: ResourceHub },
   { path: '/workloads', redirect: { path: '/resources', query: { tab: 'workloads' } } },
   { path: '/services', redirect: { path: '/resources', query: { tab: 'services' } } },

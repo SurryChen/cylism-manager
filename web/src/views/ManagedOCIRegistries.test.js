@@ -1,15 +1,20 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import ManagedOCIRegistries from './ManagedOCIRegistries.vue'
 
 vi.mock('../api/index.js', () => ({ api: { get: vi.fn(), post: vi.fn(), put: vi.fn(), delete: vi.fn() } }))
 
+afterEach(async () => {
+  await new Promise(resolve => setTimeout(resolve, 0))
+  vi.clearAllMocks()
+})
+
 function registryRouter() {
   return createRouter({
     history: createMemoryHistory(),
     routes: [
-      { path: '/delivery/registry', component: ManagedOCIRegistries },
+      { path: '/cloud-services/registry', component: ManagedOCIRegistries },
     ],
   })
 }
@@ -38,7 +43,10 @@ describe('ManagedOCIRegistries view', () => {
     expect(wrapper.text()).not.toContain('由 Cylism 在集群中部署和管理')
     expect(wrapper.findAll('[data-testid="deploy-registry"]')).toHaveLength(1)
     expect(wrapper.text()).not.toContain('交付中心')
+    expect(api.get).not.toHaveBeenCalledWith('/managed-oci-registries/storage-preflight', expect.anything())
+    expect(api.get).not.toHaveBeenCalledWith('/managed-oci-registries/pvcs', expect.anything())
     await wrapper.get('[data-testid="deploy-registry"]').trigger('click')
+    await new Promise(resolve => setTimeout(resolve, 0))
     expect(document.body.querySelector('.registry-modal')).not.toBeNull()
     expect(document.body.querySelector('.registry-modal').textContent).toContain('local-path')
     expect(document.body.querySelector('.registry-pvc-select').textContent).toContain('registry-data')
@@ -46,35 +54,36 @@ describe('ManagedOCIRegistries view', () => {
     wrapper.unmount()
   })
 
-  it('opens Registry Proxy management from its canonical delivery workspace query URL', async () => {
+  it('opens Registry Proxy management from its canonical cloud services workspace query URL', async () => {
     const { api } = await import('../api/index.js')
     api.get.mockImplementation(path => Promise.resolve(path === '/registry-proxies' ? [{ id: 2, name: 'Kubernetes Registry 代理', registry: 'registry.k8s.io', upstream_url: 'https://registry.k8s.io', endpoint_host: '100.64.0.8', node_port: 30501, node_name: 'worker-a', cache_limit_gi: 2, cleanup_interval_hours: 24, status: 'ready' }] : path === '/servers' ? [] : path === '/managed-oci-registries/storage-preflight' ? { ready: true, data_nodes: [] } : []))
-    const { router, wrapper } = await mountRegistryAt('/delivery/registry?tab=registry-proxy')
+    const { router, wrapper } = await mountRegistryAt('/cloud-services/registry?tab=registry-proxy')
     await new Promise(resolve => setTimeout(resolve, 0))
 
     expect(wrapper.text()).toContain('Kubernetes Registry 代理')
-    expect(router.currentRoute.value.fullPath).toBe('/delivery/registry?tab=registry-proxy')
+    expect(router.currentRoute.value.fullPath).toBe('/cloud-services/registry?tab=registry-proxy')
     expect(api.get).toHaveBeenCalledWith('/registry-proxies', expect.objectContaining({ signal: expect.any(AbortSignal) }))
+    expect(api.get).not.toHaveBeenCalledWith('/managed-oci-registries', expect.anything())
     wrapper.unmount()
   })
 
-  it('navigates tabs through their canonical delivery workspace paths', async () => {
+  it('navigates tabs through their canonical cloud services workspace paths', async () => {
     const { api } = await import('../api/index.js')
     api.get.mockResolvedValue([])
-    const { router, wrapper } = await mountRegistryAt('/delivery/registry?tab=registry')
+    const { router, wrapper } = await mountRegistryAt('/cloud-services/registry?tab=registry')
     await new Promise(resolve => setTimeout(resolve, 0))
 
     await wrapper.get('[data-testid="managed-registry-workspace-registry-proxy"]').trigger('click')
     await new Promise(resolve => setTimeout(resolve, 0))
 
-    expect(router.currentRoute.value.fullPath).toBe('/delivery/registry?tab=registry-proxy')
+    expect(router.currentRoute.value.fullPath).toBe('/cloud-services/registry?tab=registry-proxy')
     wrapper.unmount()
   })
 
   it('restores the self-hosted Registry workspace through browser history', async () => {
     const { api } = await import('../api/index.js')
     api.get.mockResolvedValue([])
-    const { router, wrapper } = await mountRegistryAt('/delivery/registry?tab=registry')
+    const { router, wrapper } = await mountRegistryAt('/cloud-services/registry?tab=registry')
     await new Promise(resolve => setTimeout(resolve, 0))
 
     await wrapper.get('[data-testid="managed-registry-workspace-registry-proxy"]').trigger('click')
@@ -82,7 +91,7 @@ describe('ManagedOCIRegistries view', () => {
     router.back()
     await new Promise(resolve => setTimeout(resolve, 0))
 
-    expect(router.currentRoute.value.fullPath).toBe('/delivery/registry?tab=registry')
+    expect(router.currentRoute.value.fullPath).toBe('/cloud-services/registry?tab=registry')
     expect(wrapper.get('[data-testid="managed-registry-workspace-registry"]').classes()).toContain('is-active')
     wrapper.unmount()
   })
@@ -93,6 +102,7 @@ describe('ManagedOCIRegistries view', () => {
     const wrapper = mountRegistry()
     await new Promise(resolve => setTimeout(resolve, 0))
     await wrapper.get('[data-testid="deploy-registry"]').trigger('click')
+    await new Promise(resolve => setTimeout(resolve, 0))
     expect(document.body.querySelector('.registry-data-node-select').textContent).toContain('node-a')
     expect(document.body.querySelector('.registry-pvc-select').textContent).toContain('local-path')
     wrapper.unmount()
@@ -104,6 +114,7 @@ describe('ManagedOCIRegistries view', () => {
     const wrapper = mountRegistry()
     await new Promise(resolve => setTimeout(resolve, 0))
     await wrapper.get('[data-testid="deploy-registry"]').trigger('click')
+    await new Promise(resolve => setTimeout(resolve, 0))
     const modal = document.body.querySelector('.registry-modal')
     expect([...modal.querySelectorAll('button')].find(button => button.textContent.includes('开始部署')).disabled).toBe(true)
     wrapper.unmount()
@@ -115,6 +126,7 @@ describe('ManagedOCIRegistries view', () => {
     const wrapper = mountRegistry()
     await new Promise(resolve => setTimeout(resolve, 0))
     await wrapper.get('[data-testid="deploy-registry"]').trigger('click')
+    await new Promise(resolve => setTimeout(resolve, 0))
     await new Promise(resolve => setTimeout(resolve, 0))
     expect(api.get).toHaveBeenCalledWith('/managed-oci-registries/certificates?namespace=cylism-system', expect.objectContaining({ signal: expect.any(AbortSignal) }))
     const certificateSelect = document.body.querySelector('.registry-certificate-select .select-menu-native')
@@ -210,6 +222,7 @@ describe('ManagedOCIRegistries view', () => {
     const wrapper = mountRegistry()
     await new Promise(resolve => setTimeout(resolve, 0))
     await wrapper.get('[data-testid="edit-registry"]').trigger('click')
+    await new Promise(resolve => setTimeout(resolve, 0))
     const input = document.body.querySelector('input[placeholder="registry.internal:5443/cylism-manager:1.0.0"]')
     expect(input).not.toBeNull()
     expect(input.value).toBe('registry.internal:5443/cylism-manager:1.0.0')

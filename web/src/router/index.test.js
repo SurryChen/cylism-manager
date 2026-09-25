@@ -27,9 +27,18 @@ describe('infrastructure route migration', () => {
     expect(router.currentRoute.value.fullPath).toBe(expectedPath)
   })
 
-  it('preserves Registry Proxy as a routed Tab URL', async () => {
+  it('moves the Registry Proxy tab URL into cloud services while preserving its tab query', async () => {
     await router.push('/delivery/registry?tab=registry-proxy')
-    expect(router.currentRoute.value.fullPath).toBe('/delivery/registry?tab=registry-proxy')
+    expect(router.currentRoute.value.fullPath).toBe('/cloud-services/registry?tab=registry-proxy')
+  })
+
+  it('loads the registry workspace from its cloud services route on demand', async () => {
+    const registryRoute = router.getRoutes().find(route => route.path === '/cloud-services/registry')
+    expect(registryRoute).toBeDefined()
+
+    await router.push('/cloud-services/registry')
+
+    expect(router.currentRoute.value.path).toBe('/cloud-services/registry')
   })
 
 })

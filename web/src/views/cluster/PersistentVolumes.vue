@@ -142,7 +142,7 @@ function claimKey(claim) { return `${claim.namespace}/${claim.name}` }
 function resetFilters() { namespaceFilter.value = ''; projectID.value = 0; environmentID.value = 0; phaseFilter.value = ''; storageClassFilter.value = '' }
 function hasManagedEnvironment(claim) { return claim.managed && Number(claim.environment_id) > 0 }
 function claimEnvironmentID(claim) { return Number(claim?.environment_id) || 0 }
-function infrastructureLink(claim) { return claim.owner === 'oci-registry' ? '#/delivery/registry' : '#/monitoring' }
+function infrastructureLink(claim) { return claim.owner === 'oci-registry' ? '#/cloud-services/registry' : '#/monitoring' }
 function infrastructureActionLabel(claim) { return claim.owner === 'oci-registry' ? '查看制品库' : '查看监控' }
 function usageFor(claim) { return usage.value.find(item => item.namespace === claim.namespace && item.name === claim.name) }
 function ownerDetail(claim) { return claim.owner_name || [claim.project_name, claim.environment_name].filter(Boolean).join(' · ') || '未关联应用环境' }

@@ -101,7 +101,6 @@ func (h *RegistryProxyHandler) List(c *gin.Context) {
 		return
 	}
 	for index := range proxies {
-		h.refreshStatus(c.Request.Context(), &proxies[index])
 		h.redactProxy(&proxies[index])
 	}
 	views := make([]apiShared.RegistryProxyView, 0, len(proxies))

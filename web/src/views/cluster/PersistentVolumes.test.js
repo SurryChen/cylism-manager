@@ -234,7 +234,7 @@ describe('PersistentVolumes view', () => {
 
     const link = wrapper.get('.monitoring-link')
     expect(link.text()).toBe('查看制品库')
-    expect(link.attributes('href')).toBe('#/delivery/registry')
+    expect(link.attributes('href')).toBe('#/cloud-services/registry')
   })
 
   it('loads local PVC usage without blocking the inventory', async () => {

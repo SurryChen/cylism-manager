@@ -88,11 +88,11 @@ describe('Node registry mirrors view', () => {
     wrapper.unmount()
   })
 
-  it('links Proxy management to its canonical delivery workspace path', async () => {
+  it('links Proxy management to its canonical cloud services workspace path', async () => {
     const wrapper = mount(NodeRegistryMirrors)
     await settle()
 
-    expect(wrapper.get('.workspace-actions a').attributes('href')).toBe('#/delivery/registry?tab=registry-proxy')
+    expect(wrapper.get('.workspace-actions a').attributes('href')).toBe('#/cloud-services/registry?tab=registry-proxy')
     expect(wrapper.get('.workspace-actions a').classes()).toContain('proxy-management-link')
     expect(wrapper.find('.page-header .btn-group').exists()).toBe(false)
     expect(wrapper.text()).not.toContain('规则总数')

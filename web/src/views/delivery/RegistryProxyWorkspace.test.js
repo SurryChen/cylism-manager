@@ -51,9 +51,12 @@ describe('RegistryProxyWorkspace', () => {
     await upstream.trigger('mouseleave')
     expect(document.body.querySelector('.overflow-tooltip-content')).toBeNull()
     expect(wrapper.find('.proxy-error').exists()).toBe(false)
+    expect(api.get).not.toHaveBeenCalledWith('/servers', expect.anything())
     await wrapper.get('[data-testid="create-registry-proxy"]').trigger('click')
+    await new Promise(resolve => setTimeout(resolve, 0))
     expect(document.body.querySelector('.proxy-modal')).not.toBeNull()
     expect(document.body.querySelector('.proxy-modal').textContent).toContain('DNS 服务器')
+    expect(api.get).toHaveBeenCalledWith('/servers', expect.objectContaining({ signal: expect.any(AbortSignal) }))
     wrapper.unmount()
   })
 

@@ -49,6 +49,7 @@ type BackgroundConfig struct {
 	OperationLogRetentionDays        int
 	OperationLogCleanupInterval      time.Duration
 	PlatformReconcileInterval        time.Duration
+	ManagedRegistryReconcileInterval time.Duration
 	RegistryProxyReconcileInterval   time.Duration
 	SystemComponentReconcileInterval time.Duration
 }
@@ -62,6 +63,9 @@ func (c BackgroundConfig) normalized() BackgroundConfig {
 	}
 	if c.RegistryProxyReconcileInterval <= 0 {
 		c.RegistryProxyReconcileInterval = time.Minute
+	}
+	if c.ManagedRegistryReconcileInterval <= 0 {
+		c.ManagedRegistryReconcileInterval = time.Minute
 	}
 	if c.SystemComponentReconcileInterval <= 0 {
 		c.SystemComponentReconcileInterval = 5 * time.Minute
@@ -148,6 +152,15 @@ func (c *Container) StartBackground(parent context.Context, config BackgroundCon
 			runPeriodic(ctx, config.RegistryProxyReconcileInterval, func(ctx context.Context) {
 				if err := c.Services.RegistryProxyReconciler.Reconcile(ctx); err != nil {
 					log.Printf("镜像代理后台协调失败: %v", err)
+				}
+			})
+		})
+	}
+	if c.Services.RegistryManagedStatus != nil {
+		tasks.Go(func(ctx context.Context) {
+			runPeriodic(ctx, config.ManagedRegistryReconcileInterval, func(ctx context.Context) {
+				if err := c.Services.RegistryManagedStatus.Reconcile(ctx); err != nil {
+					log.Printf("受管制品库后台状态同步失败: %v", err)
 				}
 			})
 		})

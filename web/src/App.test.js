@@ -82,6 +82,15 @@ describe('Glass UI application shell', () => {
     expect(wrapper.get('.app-workspace').classes()).toContain('app-workspace--wide')
   })
 
+  it('places the Registry workspace in the cloud services sidebar and removes delivery from top navigation', async () => {
+    const wrapper = await mountApp('/cloud-services/registry')
+
+    expect(wrapper.get('[data-testid="primary-navigation"]').get('[aria-current="page"]').text()).toContain('云服务')
+    expect(wrapper.get('[data-testid="primary-navigation"]').text()).not.toContain('交付中心')
+    expect(wrapper.get('[data-testid="desktop-navigation"]').get('.sidebar-link.is-active').text()).toContain('制品库')
+    expect(wrapper.get('.app-workspace').classes()).not.toContain('app-workspace--wide')
+  })
+
   it('shows infrastructure secondary navigation for infrastructure routes while preserving all mobile destinations', async () => {
     const wrapper = await mountApp('/servers')
     const navigation = wrapper.get('[data-testid="desktop-navigation"]')

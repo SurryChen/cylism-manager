@@ -30,6 +30,7 @@ type Services struct {
 	PlatformRelease         *platformservice.ReleaseService
 	RegistryMirror          *registryservice.MirrorService
 	RegistryManaged         *registryservice.ManagedRegistryService
+	RegistryManagedStatus   *registryservice.ManagedRegistryStatusReconciler
 	RegistryCatalog         *registryservice.ManagedRegistryCatalogService
 	RegistryProxy           *registryservice.ProxyService
 	RegistryProxyReconciler *registryservice.ProxyReconciler
@@ -61,6 +62,7 @@ func BuildServices(repos Repositories, client *k8s.Client, adapters KubernetesAd
 	var platformRelease *platformservice.ReleaseService
 	var registryMirror *registryservice.MirrorService
 	var registryManaged *registryservice.ManagedRegistryService
+	var registryManagedStatus *registryservice.ManagedRegistryStatusReconciler
 	var registryCatalog *registryservice.ManagedRegistryCatalogService
 	var registryProxy *registryservice.ProxyService
 	var registryProxyReconciler *registryservice.ProxyReconciler
@@ -72,6 +74,7 @@ func BuildServices(repos Repositories, client *k8s.Client, adapters KubernetesAd
 	}
 	if repos.Managed != nil {
 		registryManaged = registryservice.NewManagedRegistryService(repos.Managed, encKey)
+		registryManagedStatus = registryservice.NewManagedRegistryStatusReconciler(registryManaged, adapters.Registry.ManagedStatus)
 	}
 	if repos.RegistryCatalog != nil && registryManaged != nil {
 		registryCatalog = registryservice.NewManagedRegistryCatalogService(repos.RegistryCatalog, registryManaged)
@@ -119,6 +122,7 @@ func BuildServices(repos Repositories, client *k8s.Client, adapters KubernetesAd
 		PlatformRelease:         platformRelease,
 		RegistryMirror:          registryMirror,
 		RegistryManaged:         registryManaged,
+		RegistryManagedStatus:   registryManagedStatus,
 		RegistryCatalog:         registryCatalog,
 		RegistryProxy:           registryProxy,
 		RegistryProxyReconciler: registryProxyReconciler,

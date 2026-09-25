@@ -18,6 +18,7 @@ export function getManagedRegistryCertificates(namespace, options) { return api.
 export function createManagedRegistry(body, options) { return post('/managed-oci-registries', body, options) }
 export function updateManagedRegistry(id, body, options) { return options === undefined ? api.put(`/managed-oci-registries/${encodeURIComponent(id)}`, body) : api.put(`/managed-oci-registries/${encodeURIComponent(id)}`, body, options) }
 export function repairManagedRegistry(id, options) { return post(`/managed-oci-registries/${encodeURIComponent(id)}/repair`, undefined, options) }
+export function refreshManagedRegistryStatus(id, options) { return post(`/managed-oci-registries/${encodeURIComponent(id)}/refresh-status`, undefined, options) }
 export function deleteManagedRegistry(id, body, options) { return remove(`/managed-oci-registries/${encodeURIComponent(id)}`, body, options) }
 export function getManagedRegistryCatalog(id, cursor = '', options) {
   const query = cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''

@@ -35,6 +35,7 @@ func registerDeliveryRoutes(r *gin.Engine, apiGroup *gin.RouterGroup, h delivery
 
 	managedOCIRegistries := apiGroup.Group("/managed-oci-registries")
 	managedOCIRegistries.GET("", h.managed.List)
+	managedOCIRegistries.POST("/:id/refresh-status", h.managed.RefreshStatus)
 	managedOCIRegistries.GET("/storage-preflight", h.managed.StoragePreflight)
 	managedOCIRegistries.GET("/pvcs", h.managed.ListEligiblePVCs)
 	managedOCIRegistries.GET("/certificates", h.managed.ListMatchingCertificates)
