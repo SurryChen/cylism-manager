@@ -139,6 +139,7 @@ describe('PersistentVolumes view', () => {
     const wrapper = mount(PersistentVolumes)
     await settle()
 
+    await wrapper.get('[aria-label="更多存储卷操作"]').trigger('click')
     await wrapper.get('[data-testid="open-directory-import"]').trigger('click')
     await settle()
     await wrapper.get('[data-testid="import-source-server"]').setValue('8')
@@ -151,6 +152,22 @@ describe('PersistentVolumes view', () => {
     })
   })
 
+  it('keeps managed volume actions compact until the more menu is opened', async () => {
+    const { api } = await import('../../api/index.js')
+    api.get.mockImplementation(mockInventory({
+      claims: [{ name: 'karakeep-data', namespace: 'project-knowledge-prod', managed: true, environment_id: 2, phase: 'Bound', is_local: true, bound_node: 'node-a' }],
+    }))
+    const wrapper = mount(PersistentVolumes)
+    await settle()
+
+    expect(wrapper.get('.claim-actions').text()).toBe('备份')
+    expect(wrapper.find('[data-testid="open-directory-import"]').exists()).toBe(false)
+    await wrapper.get('[aria-label="更多存储卷操作"]').trigger('click')
+    expect(wrapper.get('.claim-action-menu-items').text()).toContain('迁移')
+    expect(wrapper.get('.claim-action-menu-items').text()).toContain('导入目录')
+    expect(wrapper.get('.claim-action-menu-items').text()).toContain('删除')
+  })
+
   it('keeps the directory import form open when starting an import fails', async () => {
     const { api } = await import('../../api/index.js')
     api.get.mockImplementation(mockInventory({
@@ -160,6 +177,7 @@ describe('PersistentVolumes view', () => {
     api.post.mockRejectedValueOnce(new Error('源目录不可访问'))
     const wrapper = mount(PersistentVolumes)
     await settle()
+    await wrapper.get('[aria-label="更多存储卷操作"]').trigger('click')
     await wrapper.get('[data-testid="open-directory-import"]').trigger('click')
     await settle()
     await wrapper.get('[data-testid="import-source-server"]').setValue('8')
@@ -187,6 +205,7 @@ describe('PersistentVolumes view', () => {
     })
     const wrapper = mount(PersistentVolumes)
     await settle()
+    await wrapper.get('[aria-label="更多存储卷操作"]').trigger('click')
     await wrapper.get('[data-testid="open-directory-import"]').trigger('click')
     await settle()
     wrapper.unmount()
