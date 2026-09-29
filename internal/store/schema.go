@@ -19,6 +19,7 @@ func migrateSchema(db *gorm.DB) error {
 		&model.ImageRegistry{}, &model.NodeRegistryMirror{}, &model.NodeRegistryMirrorNode{},
 		&model.ManagedOCIRegistry{}, &model.RegistryProxy{}, &model.ClusterDNSPolicy{},
 		&model.ChartRepository{}, &model.DNSCredential{}, &model.ManagedDomain{},
+        &model.CloudConnection{},
 		&model.Release{}, &model.ReleaseOperation{}, &model.PersistentVolumeMigration{},
 		&model.PersistentVolumeBackup{}, &model.HostDirectoryPVCImport{},
 		&model.SystemComponentConfig{},

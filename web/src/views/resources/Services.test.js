@@ -44,9 +44,13 @@ describe('Services view', () => {
   it('filters services by namespace', async () => {
     const wrapper = await mountLoaded()
     await wrapper.find('.service-namespace-filter .select-menu-trigger').trigger('click')
-    await wrapper.findAll('.select-menu-option').find(option => option.text() === 'monitoring').trigger('click')
+    document.body.querySelectorAll('.select-menu-option').forEach(option => {
+      if (option.textContent === 'monitoring') option.click()
+    })
+    await nextTick()
     expect(wrapper.text()).toContain('metrics')
     expect(wrapper.text()).not.toContain('web-svc')
+    wrapper.unmount()
   })
 
   it('opens endpoint details in a modal', async () => {

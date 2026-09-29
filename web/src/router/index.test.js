@@ -41,4 +41,11 @@ describe('infrastructure route migration', () => {
     expect(router.currentRoute.value.path).toBe('/cloud-services/registry')
   })
 
+  it.each(['/cloud-services/domains', '/cloud-services/object-storage'])('loads %s from cloud services', async path => {
+    const resourceRoute = router.getRoutes().find(route => route.path === path)
+    expect(resourceRoute).toBeDefined()
+    await router.push(path)
+    expect(router.currentRoute.value.path).toBe(path)
+  })
+
 })

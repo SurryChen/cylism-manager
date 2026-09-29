@@ -1,6 +1,7 @@
 package api
 
 import (
+	cloudapi "github.com/cylism/cylism-manager/internal/api/cloud"
 	"github.com/cylism/cylism-manager/internal/api/delivery"
 	"github.com/gin-gonic/gin"
 )
@@ -11,6 +12,7 @@ type deliveryRouteHandlers struct {
 	managed     *delivery.ManagedOCIRegistryHandler
 	proxy       *delivery.RegistryProxyHandler
 	chart       *delivery.ChartRepositoryHandler
+	cloud       *cloudapi.Handler
 	platform    *delivery.PlatformHandler
 }
 
@@ -70,6 +72,28 @@ func registerDeliveryRoutes(r *gin.Engine, apiGroup *gin.RouterGroup, h delivery
 	chartRepositories.PUT("/:id", h.chart.Update)
 	chartRepositories.DELETE("/:id", h.chart.Delete)
 	chartRepositories.POST("/:id/verify", h.chart.Verify)
+
+	connections := apiGroup.Group("/cloud/connections")
+	apiGroup.GET("/cloud/providers", h.cloud.ListProviders)
+	connections.GET("", h.cloud.ListConnections)
+	connections.POST("", h.cloud.CreateConnection)
+	connections.PUT("/:id", h.cloud.UpdateConnection)
+	connections.DELETE("/:id", h.cloud.DeleteConnection)
+	connections.POST("/:id/validate", h.cloud.ValidateConnection)
+	connections.GET("/:id/permissions", h.cloud.InspectPermissions)
+	connections.GET("/:id/dns/zones", h.cloud.ListZones)
+	connections.GET("/:id/dns/records", h.cloud.ListRecords)
+	connections.POST("/:id/dns/records", h.cloud.CreateRecord)
+	connections.PUT("/:id/dns/records/:recordID", h.cloud.UpdateRecord)
+	connections.DELETE("/:id/dns/records/:recordID", h.cloud.DeleteRecord)
+	connections.GET("/:id/object-storage/containers", h.cloud.ListContainers)
+	connections.POST("/:id/object-storage/containers", h.cloud.CreateContainer)
+	connections.PUT("/:id/object-storage/containers/:container", h.cloud.UpdateContainer)
+	connections.DELETE("/:id/object-storage/containers/:container", h.cloud.DeleteContainer)
+	connections.GET("/:id/object-storage/containers/:container/objects", h.cloud.ListObjects)
+	connections.POST("/:id/object-storage/containers/:container/objects", h.cloud.UploadObject)
+	connections.GET("/:id/object-storage/containers/:container/object", h.cloud.DownloadObject)
+	connections.DELETE("/:id/object-storage/containers/:container/object", h.cloud.DeleteObject)
 
 	platform := apiGroup.Group("/platform")
 	platform.GET("/status", h.platform.Status)

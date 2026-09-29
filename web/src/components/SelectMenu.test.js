@@ -1,16 +1,18 @@
 import { describe, expect, it } from 'vitest'
 import { mount } from '@vue/test-utils'
-import { defineComponent, ref } from 'vue'
+import { defineComponent, nextTick, ref } from 'vue'
 import SelectMenu from './SelectMenu.vue'
 
 describe('SelectMenu', () => {
   it('opens, selects an option, and emits a model update', async () => {
     const wrapper = mount(SelectMenu, { props: { modelValue: '', placeholder: '全部结果', options: [{ value: 'ok', label: '成功' }] } })
     await wrapper.get('.select-menu-trigger').trigger('click')
-    await wrapper.get('.select-menu-option').trigger('click')
+    document.body.querySelector('.select-menu-option').click()
+    await nextTick()
     expect(wrapper.emitted('update:modelValue')[0]).toEqual(['ok'])
     expect(wrapper.emitted('change')[0]).toEqual(['ok'])
-    expect(wrapper.find('.select-menu-options').exists()).toBe(false)
+    expect(document.body.querySelector('.select-menu-options')).toBeNull()
+    wrapper.unmount()
   })
 
   it('preserves numeric values when changed through the native form control', async () => {
@@ -65,7 +67,38 @@ describe('SelectMenu', () => {
 
     expect(wrapper.get('.select-menu-trigger').text()).toContain('线上环境 · project-freedom-proxy')
     await wrapper.get('.select-menu-trigger').trigger('click')
-    expect(wrapper.get('.select-menu-option-label').text()).toBe('线上环境')
-    expect(wrapper.get('.select-menu-option-description').text()).toBe('project-freedom-proxy')
+    expect(document.body.querySelector('.select-menu-option-label').textContent).toBe('线上环境')
+    expect(document.body.querySelector('.select-menu-option-description').textContent).toBe('project-freedom-proxy')
+    wrapper.unmount()
+  })
+
+  it('keeps unavailable options visible but not selectable', async () => {
+    const wrapper = mount(SelectMenu, {
+      props: { modelValue: 'aliyun', options: [{ value: 'aliyun', label: '阿里云' }, { value: 'tencent', label: '腾讯云（待接入）', disabled: true }] },
+    })
+    await wrapper.get('.select-menu-trigger').trigger('click')
+
+    const unavailable = document.body.querySelector('.select-menu-option:nth-child(2)')
+    expect(unavailable.disabled).toBe(true)
+    unavailable.click()
+    await nextTick()
+    expect(wrapper.emitted('update:modelValue')).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('places the menu above a higher-z-index dialog overlay', async () => {
+    const overlay = document.createElement('div')
+    overlay.className = 'overlay'
+    overlay.style.zIndex = '3000'
+    document.body.appendChild(overlay)
+    const wrapper = mount(SelectMenu, {
+      props: { modelValue: 'a', options: [{ value: 'a', label: 'A' }] },
+      attachTo: overlay,
+    })
+    await wrapper.get('.select-menu-trigger').trigger('click')
+    await nextTick()
+    expect(document.body.querySelector('.select-menu-options').style.zIndex).toBe('3001')
+    wrapper.unmount()
+    overlay.remove()
   })
 })

@@ -90,3 +90,19 @@ func TestRegisterRoutesDoesNotFallbackUnknownAPI(t *testing.T) {
 		t.Fatalf("status = %d, want 404", resp.Code)
 	}
 }
+
+func TestCloudPermissionRouteRequiresAuthentication(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	container, err := bootstrap.NewContainer(bootstrap.Config{DBPath: "file:router-cloud-permissions?mode=memory&cache=shared", EncryptionKey: make([]byte, 32), JWTSecret: []byte("router-cloud-permissions-secret")})
+	if err != nil {
+		t.Fatalf("create container: %v", err)
+	}
+	api.RegisterRoutes(r, container.BuildRouteDependencies())
+	req := httptest.NewRequest(http.MethodGet, "/api/cloud/connections/1/permissions", nil)
+	resp := httptest.NewRecorder()
+	r.ServeHTTP(resp, req)
+	if resp.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401: %s", resp.Code, resp.Body.String())
+	}
+}

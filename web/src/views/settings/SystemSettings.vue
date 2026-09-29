@@ -16,6 +16,7 @@ import SectionTabsHeader from '../../components/SectionTabsHeader.vue'
 import SystemSettingsSecurity from './SystemSettingsSecurity.vue'
 import SystemSettingsEntry from './SystemSettingsEntry.vue'
 import SystemSettingsRelease from './SystemSettingsRelease.vue'
+import SystemSettingsCloudProviders from './SystemSettingsCloudProviders.vue'
 import { usePolling } from '../../composables/usePolling.js'
 import { useRoutedTab } from '../../composables/useRoutedTab.js'
 
@@ -24,6 +25,7 @@ const tabs = [
   { id: 'security', label: '安全与访问', component: SystemSettingsSecurity },
   { id: 'entry', label: '平台入口', component: SystemSettingsEntry },
   { id: 'release', label: '发布与更新', component: SystemSettingsRelease },
+  { id: 'cloud', label: '云提供商', component: SystemSettingsCloudProviders },
 ]
 const { activeTab, selectTab } = useRoutedTab({ tabs, defaultTab: 'security', path: '/settings/system' })
 const activeComponent = computed(() => tabs.find(tab => tab.id === activeTab.value)?.component || SystemSettingsSecurity)

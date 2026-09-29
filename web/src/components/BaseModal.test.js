@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { mount } from '@vue/test-utils'
 import BaseModal from './BaseModal.vue'
+import SelectMenu from './SelectMenu.vue'
 
 const mountModal = props => mount(BaseModal, {
   props,
@@ -40,5 +41,18 @@ describe('BaseModal', () => {
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
 
     expect(wrapper.emitted('close')).toBeUndefined()
+  })
+
+  it('renders a dropdown menu outside the scrollable dialog body', async () => {
+    const wrapper = mount(BaseModal, {
+      props: { open: true, title: '设置' },
+      slots: { default: SelectMenu },
+      attachTo: document.body,
+    })
+
+    await wrapper.get('.select-menu-trigger').trigger('click')
+    expect(document.body.querySelector(':scope > .select-menu-options')).not.toBeNull()
+    expect(wrapper.find('.base-modal-body .select-menu-options').exists()).toBe(false)
+    wrapper.unmount()
   })
 })

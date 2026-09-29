@@ -22,12 +22,16 @@ const ResourceHub = () => import('../views/resources/ResourceHub.vue')
 const NetworkHub = () => import('../views/network/NetworkHub.vue')
 const RuntimeManagement = () => import('../views/RuntimeManagement.vue')
 const ManagedOCIRegistries = () => import('../views/ManagedOCIRegistries.vue')
+const DomainManagement = () => import('../views/cloud/DomainManagement.vue')
+const ObjectStorage = () => import('../views/cloud/ObjectStorage.vue')
 
 const routes = [
   { path: '/login', component: Login, meta: { public: true } },
   { path: '/', component: Dashboard },
   { path: '/cloud-services', redirect: '/cloud-services/registry' },
   { path: '/cloud-services/registry', component: ManagedOCIRegistries },
+  { path: '/cloud-services/domains', component: DomainManagement },
+  { path: '/cloud-services/object-storage', component: ObjectStorage },
   { path: '/applications', component: Applications, props: { section: 'workspace' } },
   { path: '/applications/projects', component: Applications, props: { section: 'projects' } },
   { path: '/applications/projects/:projectID', component: ProjectEnvironments, props: true },

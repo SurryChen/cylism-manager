@@ -339,6 +339,200 @@
   margin-top: var(--space-16);
 }
 
+.cloud-provider-table {
+  display: grid;
+}
+
+.cloud-provider-toolbar {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.cloud-provider-table-header,
+.cloud-provider-row {
+  display: grid;
+  grid-template-columns: minmax(132px, .8fr) minmax(150px, 1.1fr) 84px minmax(196px, auto);
+  align-items: center;
+  gap: var(--space-16);
+}
+
+.cloud-provider-table-header {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border-muted);
+  color: var(--text-muted);
+  font-size: var(--table-header-font-size);
+  font-weight: 700;
+  letter-spacing: .06em;
+}
+
+.cloud-provider-row {
+  min-height: 54px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border-muted);
+  font-size: 12px;
+}
+
+.cloud-provider-row:last-child {
+  border-bottom: 0;
+}
+
+.cloud-provider-name {
+  color: var(--text-secondary);
+}
+
+.cloud-provider-value {
+  min-width: 0;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+.cloud-provider-value small {
+  display: block;
+  margin-top: 4px;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.cloud-provider-row--message {
+  color: var(--text-secondary);
+}
+
+.cloud-provider-row--message {
+  grid-template-columns: minmax(0, 1fr);
+  margin: 0;
+}
+
+.cloud-provider-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.cloud-permission-view {
+  display: grid;
+  gap: var(--space-16);
+  min-height: 120px;
+  font-size: 12px;
+}
+
+.cloud-permission-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-12);
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.cloud-permission-identity {
+  display: grid;
+  gap: 6px;
+  padding-bottom: var(--space-16);
+  border-bottom: 1px solid var(--border-muted);
+  color: var(--text-secondary);
+}
+
+.cloud-permission-identity strong {
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.cloud-permission-policies {
+  display: grid;
+  gap: 0;
+}
+
+.cloud-permission-policies h3 {
+  margin: 0 0 6px;
+  font-size: 12px;
+}
+
+.cloud-permission-policy {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-12);
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border-muted);
+}
+
+.cloud-permission-policy span {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.cloud-permission-policy strong {
+  color: var(--text-primary);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.cloud-permission-policy small,
+.cloud-permission-message,
+.cloud-permission-caveat {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.cloud-permission-caveat {
+  padding-top: var(--space-12);
+  border-top: 1px solid var(--border-muted);
+}
+
+.cloud-provider-form {
+  display: grid;
+  gap: var(--space-16);
+}
+
+.cloud-provider-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-12);
+}
+
+.cloud-provider-form-grid--identity {
+  padding-bottom: var(--space-4);
+  border-bottom: 1px solid var(--border-muted);
+}
+
+.cloud-provider-field-hint,
+.cloud-provider-form-section-heading p {
+  display: block;
+  margin: 6px 0 0;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.cloud-provider-form-section {
+  display: grid;
+  gap: var(--space-12);
+  padding-top: var(--space-4);
+}
+
+.cloud-provider-form-section-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-12);
+}
+
+.cloud-provider-form-section-heading h3 {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.cloud-provider-form .form-group {
+  margin: 0;
+}
+
 @media (max-width: 700px) {
   .settings-grid {
     grid-template-columns: 1fr;
@@ -390,4 +584,22 @@
     padding-inline: 6px;
     font-size: 11px;
   }
+
+  .cloud-provider-table {
+    overflow-x: auto;
+  }
+
+  .cloud-provider-table-header,
+  .cloud-provider-row {
+    min-width: 640px;
+  }
+
+  .cloud-provider-row--message {
+    min-width: 0;
+  }
+
+  .cloud-provider-form-grid {
+    grid-template-columns: 1fr;
+  }
+
 }

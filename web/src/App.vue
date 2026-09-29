@@ -131,7 +131,11 @@ const navGroups = computed(() => [
     id: 'cloud-services',
     label: '云服务',
     to: '/cloud-services/registry',
-    items: [{ label: '制品库', to: '/cloud-services/registry', icon: Cloud }],
+    items: [
+      { label: '制品库', to: '/cloud-services/registry', icon: Cloud },
+      { label: '域名管理', to: '/cloud-services/domains', icon: Waypoints },
+      { label: '对象存储', to: '/cloud-services/object-storage', icon: HardDrive },
+    ],
   },
   {
     id: 'infrastructure',

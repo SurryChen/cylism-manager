@@ -120,9 +120,11 @@ describe('Applications view', () => {
     expect(environmentPicker.get('.select-menu-trigger').text()).toContain('production')
 
     await projectPicker.get('.select-menu-trigger').trigger('click')
-    expect(projectPicker.get('.select-menu-options').text()).toContain('commerce')
-    expect(projectPicker.get('.select-menu-option-description').text()).toContain('未设置项目说明')
-    expect(projectPicker.get('.select-menu-option.is-selected').text()).toContain('commerce')
+    const menu = document.body.querySelector('.select-menu-options[aria-label="项目"]')
+    expect(menu.textContent).toContain('commerce')
+    expect(menu.querySelector('.select-menu-option-description').textContent).toContain('未设置项目说明')
+    expect(menu.querySelector('.select-menu-option.is-selected').textContent).toContain('commerce')
+    wrapper.unmount()
   })
 
   it('shows application runtime summary and opens only the endpoint in a new tab', async () => {

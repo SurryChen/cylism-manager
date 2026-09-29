@@ -116,8 +116,10 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 
 .base-modal-body {
   min-width: 0;
+  min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
+  padding: var(--space-4);
 }
 
 .base-modal-close {

@@ -4,6 +4,7 @@ import (
 	agentapi "github.com/cylism/cylism-manager/internal/api/agent"
 	applicationapi "github.com/cylism/cylism-manager/internal/api/application"
 	authapi "github.com/cylism/cylism-manager/internal/api/auth"
+	cloudapi "github.com/cylism/cylism-manager/internal/api/cloud"
 	deliveryapi "github.com/cylism/cylism-manager/internal/api/delivery"
 	clusterapi "github.com/cylism/cylism-manager/internal/api/infrastructure/cluster"
 	kubernetesapi "github.com/cylism/cylism-manager/internal/api/infrastructure/kubernetes"
@@ -54,6 +55,7 @@ type DeliveryDependencies struct {
 	Managed     *deliveryapi.ManagedOCIRegistryHandler
 	Proxy       *deliveryapi.RegistryProxyHandler
 	Chart       *deliveryapi.ChartRepositoryHandler
+	Cloud       *cloudapi.Handler
 }
 
 type InfrastructureDependencies struct {
@@ -99,7 +101,7 @@ func RegisterRoutes(r *gin.Engine, deps RouteDependencies) {
 	registerDashboardRoutes(apiGroup, deps.System.Dashboard)
 	registerDeliveryRoutes(r, apiGroup, deliveryRouteHandlers{
 		image: deps.Delivery.Image, nodeMirrors: deps.Delivery.NodeMirrors, managed: deps.Delivery.Managed,
-		proxy: deps.Delivery.Proxy, chart: deps.Delivery.Chart, platform: deps.Delivery.Platform,
+		proxy: deps.Delivery.Proxy, chart: deps.Delivery.Chart, cloud: deps.Delivery.Cloud, platform: deps.Delivery.Platform,
 	})
 	registerMonitoringRoutes(apiGroup, deps.System.Monitoring)
 	registerLoggingRoutes(apiGroup, deps.System.Logging)

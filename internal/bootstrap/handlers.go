@@ -6,6 +6,7 @@ import (
 	agentapi "github.com/cylism/cylism-manager/internal/api/agent"
 	applicationapi "github.com/cylism/cylism-manager/internal/api/application"
 	authapi "github.com/cylism/cylism-manager/internal/api/auth"
+	cloudapi "github.com/cylism/cylism-manager/internal/api/cloud"
 	deliveryapi "github.com/cylism/cylism-manager/internal/api/delivery"
 	clusterapi "github.com/cylism/cylism-manager/internal/api/infrastructure/cluster"
 	kubernetesapi "github.com/cylism/cylism-manager/internal/api/infrastructure/kubernetes"
@@ -17,6 +18,8 @@ import (
 	"github.com/cylism/cylism-manager/internal/model"
 	runtimepkg "github.com/cylism/cylism-manager/internal/runtime"
 	runtimeidentity "github.com/cylism/cylism-manager/internal/runtime/identity"
+	cloudservice "github.com/cylism/cylism-manager/internal/service/cloud"
+	aliyunprovider "github.com/cylism/cylism-manager/internal/service/cloud/providers/aliyun"
 	maintenance "github.com/cylism/cylism-manager/internal/service/maintenance"
 	alertingservice "github.com/cylism/cylism-manager/internal/service/observability/alerting"
 	monitoringservice "github.com/cylism/cylism-manager/internal/service/observability/monitoring"
@@ -77,6 +80,7 @@ func (c *Container) BuildRouteDependencies() api.RouteDependencies {
 	// keep the handler's signing key aligned with that verifier.
 	applicationHandler := applicationapi.NewApplicationHandlerWithDependencies(c.Store, c.Services.ApplicationQuery, key, applicationapi.NewKubernetesAdapter(c.K8s)).WithDelegationSecret(c.Auth.JWTSecret).WithAudit(c.Store)
 	image := deliveryapi.NewImageRegistryHandler(c.Store, key)
+	cloud := cloudapi.NewHandler(cloudservice.NewService(c.Store, key, cloudservice.ProviderRegistry{"aliyun": aliyunprovider.NewProvider}), c.Store)
 	nodeMirrors := deliveryapi.NewNodeRegistryMirrorHandlerWithDependencies(key, nodeMirrorApplier.Apply, c.Services.RegistryMirror).WithActualConfigInspector(nodeRegistryConfigInspector).WithK3sRestarter(nodeK3sRestarter).WithAudit(c.Store)
 	managed := deliveryapi.NewManagedOCIRegistryHandlerWithDependencies(c.Store, c.Adapters.Registry.ManagedResources, c.Adapters.Registry.ManagedStatus, nodeMirrorApplier.Apply, c.Services.RegistryManaged, c.Services.RegistryCatalog)
 	proxy := deliveryapi.NewRegistryProxyHandlerWithDependencies(c.Store, key, c.Adapters.Registry.ProxyResources, c.Adapters.Registry.ProxyDiagnostics, c.Services.RegistryProxy).WithReconciler(c.Services.RegistryProxyReconciler)
@@ -98,7 +102,7 @@ func (c *Container) BuildRouteDependencies() api.RouteDependencies {
 		},
 		Delivery: api.DeliveryDependencies{
 			Platform: platform, Image: image, NodeMirrors: nodeMirrors, Managed: managed,
-			Proxy: proxy, Chart: deliveryapi.NewChartRepositoryHandler(c.Store),
+			Proxy: proxy, Chart: deliveryapi.NewChartRepositoryHandler(c.Store), Cloud: cloud,
 		},
 		Infrastructure: api.InfrastructureDependencies{
 			Network: networkHandler, Server: clusterapi.NewServerHandler(key, clusterService),
