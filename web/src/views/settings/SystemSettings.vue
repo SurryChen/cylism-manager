@@ -11,13 +11,12 @@
 </template>
 
 <script setup>
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import SectionTabsHeader from '../../components/SectionTabsHeader.vue'
 import SystemSettingsSecurity from './SystemSettingsSecurity.vue'
 import SystemSettingsEntry from './SystemSettingsEntry.vue'
 import SystemSettingsRelease from './SystemSettingsRelease.vue'
 import SystemSettingsCloudProviders from './SystemSettingsCloudProviders.vue'
-import { usePolling } from '../../composables/usePolling.js'
 import { useRoutedTab } from '../../composables/useRoutedTab.js'
 
 const activeView = ref(null)
@@ -29,14 +28,6 @@ const tabs = [
 ]
 const { activeTab, selectTab } = useRoutedTab({ tabs, defaultTab: 'security', path: '/settings/system' })
 const activeComponent = computed(() => tabs.find(tab => tab.id === activeTab.value)?.component || SystemSettingsSecurity)
-const refreshPolling = usePolling(() => activeView.value?.refresh?.(), { interval: 15000 })
-
-onMounted(() => {
-  refreshPolling.start()
-})
-
-onBeforeUnmount(refreshPolling.stop)
-
 watch(activeTab, async () => {
   await nextTick()
   activeView.value?.refresh?.()

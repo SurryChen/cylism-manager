@@ -82,7 +82,6 @@ type ContainerInput struct {
 type Provider interface{}
 
 type DNSProvider interface {
-	ValidateDNS(context.Context) error
 	ListZones(context.Context) ([]DNSZone, error)
 	ListRecords(context.Context, string, int, int) (DNSRecordPage, error)
 	CreateRecord(context.Context, string, DNSRecordInput) (DNSRecord, error)
@@ -91,7 +90,6 @@ type DNSProvider interface {
 }
 
 type ObjectStorageProvider interface {
-	ValidateObjectStorage(context.Context) error
 	ListContainers(context.Context) ([]Container, error)
 	CreateContainer(context.Context, ContainerInput) (Container, error)
 	UpdateContainer(context.Context, string, ContainerInput) (Container, error)
@@ -101,6 +99,17 @@ type ObjectStorageProvider interface {
 	UploadObject(context.Context, string, string, io.Reader, int64, string) (Object, error)
 	DownloadObject(context.Context, string, string) (ObjectDownload, error)
 	DeleteObject(context.Context, string, string) error
+}
+
+type StorageRegionProvider interface {
+	SetStorageRegion(string) error
+}
+
+func setStorageRegion(provider ObjectStorageProvider, region string) error {
+	if regional, ok := provider.(StorageRegionProvider); ok {
+		return regional.SetStorageRegion(region)
+	}
+	return nil
 }
 
 type ProviderFactory func(credentials, configuration string) (Provider, error)
@@ -171,36 +180,6 @@ func (s *Service) SaveConnection(connection *model.CloudConnection, credentials 
 }
 func (s *Service) DeleteConnection(id uint) error { return s.repository.DeleteCloudConnection(id) }
 
-func (s *Service) Validate(ctx context.Context, id uint) (*model.CloudConnection, error) {
-	connection, provider, err := s.provider(id)
-	if err != nil {
-		return nil, err
-	}
-	dnsStatus, storageStatus, detail := "disabled", "disabled", ""
-	if _, ok := provider.(DNSProvider); ok {
-		dnsStatus = "ready"
-		p := provider.(DNSProvider)
-		if err := p.ValidateDNS(ctx); err != nil {
-			dnsStatus, detail = "failed", safeProviderError(err).Error()
-		}
-	}
-	if _, ok := provider.(ObjectStorageProvider); ok {
-		storageStatus = "ready"
-		p := provider.(ObjectStorageProvider)
-		if err := p.ValidateObjectStorage(ctx); err != nil {
-			storageStatus = "failed"
-			if detail == "" {
-				detail = safeProviderError(err).Error()
-			}
-		}
-	}
-	now := time.Now().UTC()
-	if err := s.repository.UpdateCloudConnectionValidation(id, dnsStatus, storageStatus, detail, now); err != nil {
-		return nil, err
-	}
-	connection.DNSStatus, connection.ObjectStorageStatus, connection.LastValidationError, connection.LastValidationAt = dnsStatus, storageStatus, detail, &now
-	return connection, nil
-}
 func (s *Service) ListZones(ctx context.Context, id uint) ([]DNSZone, error) {
 	_, p, err := s.dnsProvider(id)
 	if err != nil {
@@ -266,6 +245,12 @@ func (s *Service) CreateContainer(ctx context.Context, id uint, input ContainerI
 	if err != nil {
 		return Container{}, err
 	}
+	if _, regional := p.(StorageRegionProvider); regional && strings.TrimSpace(input.Region) == "" {
+		return Container{}, errors.New("存储地域必填")
+	}
+	if err := setStorageRegion(p, input.Region); err != nil {
+		return Container{}, err
+	}
 	return p.CreateContainer(ctx, input)
 }
 func (s *Service) UpdateContainer(ctx context.Context, id uint, name string, input ContainerInput) (Container, error) {
@@ -276,14 +261,20 @@ func (s *Service) UpdateContainer(ctx context.Context, id uint, name string, inp
 	if err != nil {
 		return Container{}, err
 	}
+	if err := setStorageRegion(p, input.Region); err != nil {
+		return Container{}, err
+	}
 	return p.UpdateContainer(ctx, name, input)
 }
-func (s *Service) DeleteContainer(ctx context.Context, id uint, name string, confirmed bool) error {
+func (s *Service) DeleteContainer(ctx context.Context, id uint, name string, confirmed bool, region string) error {
 	if !confirmed {
 		return errors.New("请确认删除存储容器")
 	}
 	_, p, err := s.objectStorageProvider(id)
 	if err != nil {
+		return err
+	}
+	if err := setStorageRegion(p, region); err != nil {
 		return err
 	}
 	empty, err := p.ContainerEmpty(ctx, name)
@@ -295,14 +286,17 @@ func (s *Service) DeleteContainer(ctx context.Context, id uint, name string, con
 	}
 	return p.DeleteContainer(ctx, name)
 }
-func (s *Service) ListObjects(ctx context.Context, id uint, container, prefix, token string) (ObjectPage, error) {
+func (s *Service) ListObjects(ctx context.Context, id uint, container, prefix, token, region string) (ObjectPage, error) {
 	_, p, err := s.objectStorageProvider(id)
 	if err != nil {
 		return ObjectPage{}, err
 	}
+	if err := setStorageRegion(p, region); err != nil {
+		return ObjectPage{}, err
+	}
 	return p.ListObjects(ctx, container, prefix, token)
 }
-func (s *Service) UploadObject(ctx context.Context, id uint, container, key string, body io.Reader, size int64, contentType string) (Object, error) {
+func (s *Service) UploadObject(ctx context.Context, id uint, container, key string, body io.Reader, size int64, contentType, region string) (Object, error) {
 	if size < 0 || size > 1024*1024*1024 {
 		return Object{}, errors.New("文件大小超出 1GiB 限制")
 	}
@@ -310,21 +304,30 @@ func (s *Service) UploadObject(ctx context.Context, id uint, container, key stri
 	if err != nil {
 		return Object{}, err
 	}
+	if err := setStorageRegion(p, region); err != nil {
+		return Object{}, err
+	}
 	return p.UploadObject(ctx, container, key, body, size, contentType)
 }
-func (s *Service) DownloadObject(ctx context.Context, id uint, container, key string) (ObjectDownload, error) {
+func (s *Service) DownloadObject(ctx context.Context, id uint, container, key, region string) (ObjectDownload, error) {
 	_, p, err := s.objectStorageProvider(id)
 	if err != nil {
 		return ObjectDownload{}, err
 	}
+	if err := setStorageRegion(p, region); err != nil {
+		return ObjectDownload{}, err
+	}
 	return p.DownloadObject(ctx, container, key)
 }
-func (s *Service) DeleteObject(ctx context.Context, id uint, container, key string, confirmed bool) error {
+func (s *Service) DeleteObject(ctx context.Context, id uint, container, key string, confirmed bool, region string) error {
 	if !confirmed {
 		return errors.New("请确认删除对象")
 	}
 	_, p, err := s.objectStorageProvider(id)
 	if err != nil {
+		return err
+	}
+	if err := setStorageRegion(p, region); err != nil {
 		return err
 	}
 	return p.DeleteObject(ctx, container, key)

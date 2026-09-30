@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strings"
 
 	"github.com/aliyun/alibaba-cloud-sdk-go/sdk/requests"
@@ -28,12 +29,16 @@ type ObjectPage = cloudservice.ObjectPage
 type ObjectDownload = cloudservice.ObjectDownload
 
 type aliyunProvider struct {
-	dns    *alidns.Client
-	oss    *oss.Client
-	caller callerIdentityClient
-	ram    ramPolicyClient
-	region string
+	dns             *alidns.Client
+	oss             *oss.Client
+	caller          callerIdentityClient
+	ram             ramPolicyClient
+	region          string
+	accessKeyID     string
+	accessKeySecret string
 }
+
+var storageRegionPattern = regexp.MustCompile(`^[a-z]{2}-[a-z0-9]+(?:-[a-z0-9]+)*$`)
 
 type callerIdentityClient interface {
 	GetCallerIdentity(*sts.GetCallerIdentityRequest) (*sts.GetCallerIdentityResponse, error)
@@ -56,16 +61,20 @@ func NewProvider(credentialsJSON, configurationJSON string) (Provider, error) {
 	var configuration struct {
 		Region string `json:"region"`
 	}
-	if err := json.Unmarshal([]byte(configurationJSON), &configuration); err != nil {
-		return nil, fmt.Errorf("解析阿里云配置: %w", err)
+	if strings.TrimSpace(configurationJSON) != "" {
+		if err := json.Unmarshal([]byte(configurationJSON), &configuration); err != nil {
+			return nil, fmt.Errorf("解析阿里云配置: %w", err)
+		}
 	}
 	accessKeyID, accessKeySecret, region := strings.TrimSpace(credentials.AccessKeyID), strings.TrimSpace(credentials.AccessKeySecret), strings.TrimSpace(configuration.Region)
 	if accessKeyID == "" || accessKeySecret == "" {
 		return nil, fmt.Errorf("AccessKey ID 和 AccessKey Secret 必填")
 	}
-	region = strings.TrimSpace(region)
 	if region == "" {
-		return nil, fmt.Errorf("默认区域不能为空")
+		region = "cn-hangzhou"
+	}
+	if !storageRegionPattern.MatchString(region) {
+		return nil, fmt.Errorf("存储地域格式无效")
 	}
 	dns, err := alidns.NewClientWithAccessKey(region, accessKeyID, accessKeySecret)
 	if err != nil {
@@ -83,16 +92,23 @@ func NewProvider(credentialsJSON, configurationJSON string) (Provider, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &aliyunProvider{dns: dns, oss: client, caller: caller, ram: ramClient, region: region}, nil
+	return &aliyunProvider{dns: dns, oss: client, caller: caller, ram: ramClient, region: region, accessKeyID: accessKeyID, accessKeySecret: accessKeySecret}, nil
 }
 
-func (p *aliyunProvider) ValidateDNS(ctx context.Context) error {
-	_, err := p.ListZones(ctx)
-	return err
-}
-func (p *aliyunProvider) ValidateObjectStorage(ctx context.Context) error {
-	_, err := p.oss.ListBuckets(oss.WithContext(ctx))
-	return err
+func (p *aliyunProvider) SetStorageRegion(region string) error {
+	region = strings.TrimSpace(region)
+	if region == "" || region == p.region {
+		return nil
+	}
+	if !storageRegionPattern.MatchString(region) {
+		return fmt.Errorf("存储地域格式无效")
+	}
+	client, err := oss.New("https://oss-"+region+".aliyuncs.com", p.accessKeyID, p.accessKeySecret, oss.Region(region), oss.Timeout(10, 60))
+	if err != nil {
+		return err
+	}
+	p.oss, p.region = client, region
+	return nil
 }
 
 func (p *aliyunProvider) ListZones(_ context.Context) ([]DNSZone, error) {
@@ -172,7 +188,7 @@ func (p *aliyunProvider) ListContainers(ctx context.Context) ([]Container, error
 	}
 	items := make([]Container, 0, len(response.Buckets))
 	for _, bucket := range response.Buckets {
-		items = append(items, Container{Name: bucket.Name, Region: firstNonEmpty(bucket.Region, bucket.Location), StorageClass: bucket.StorageClass, CreatedAt: bucket.CreationDate})
+		items = append(items, Container{Name: bucket.Name, Region: bucketRegion(bucket.Region, bucket.Location), StorageClass: bucket.StorageClass, CreatedAt: bucket.CreationDate})
 	}
 	return items, nil
 }
@@ -269,6 +285,10 @@ func (p *aliyunProvider) DeleteObject(ctx context.Context, bucketName, key strin
 
 func (p *aliyunProvider) setVersioning(ctx context.Context, name, status string) error {
 	return p.oss.SetBucketVersioning(name, oss.VersioningConfig{Status: status}, oss.WithContext(ctx))
+}
+
+func bucketRegion(region, location string) string {
+	return strings.TrimPrefix(firstNonEmpty(region, location), "oss-")
 }
 func dnsRecord(record alidns.Record) DNSRecord {
 	return DNSRecord{ID: record.RecordId, RR: record.RR, Type: record.Type, Line: record.Line, Value: record.Value, TTL: record.TTL, Priority: record.Priority, Enabled: strings.EqualFold(record.Status, "enable") || strings.EqualFold(record.Status, "enabled")}

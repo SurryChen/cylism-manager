@@ -100,21 +100,6 @@ func (h *Handler) DeleteConnection(c *gin.Context) {
 	h.record(c, "cloud.connection.delete", id, "云连接", model.AuditOutcomeSucceeded, "删除云连接")
 	apiShared.Success(c, gin.H{"id": id})
 }
-func (h *Handler) ValidateConnection(c *gin.Context) {
-	id, ok := connectionID(c)
-	if !ok {
-		return
-	}
-	item, err := h.service.Validate(c.Request.Context(), id)
-	if err != nil {
-		providerError(c, err)
-		h.record(c, "cloud.connection.validate", id, "云连接", model.AuditOutcomeFailed, "校验云连接失败")
-		return
-	}
-	h.record(c, "cloud.connection.validate", id, item.Name, model.AuditOutcomeSucceeded, "校验云连接")
-	apiShared.Success(c, item)
-}
-
 func (h *Handler) InspectPermissions(c *gin.Context) {
 	id, ok := connectionID(c)
 	if !ok {
@@ -266,7 +251,7 @@ func (h *Handler) DeleteContainer(c *gin.Context) {
 	}
 	var request confirmRequest
 	_ = c.ShouldBindJSON(&request)
-	if err := h.service.DeleteContainer(c.Request.Context(), id, c.Param("container"), request.Confirm); err != nil {
+	if err := h.service.DeleteContainer(c.Request.Context(), id, c.Param("container"), request.Confirm, c.Query("region")); err != nil {
 		validation(c, err)
 		h.record(c, "cloud.object_storage.container.delete", id, c.Param("container"), model.AuditOutcomeFailed, "删除存储容器失败")
 		return
@@ -280,7 +265,7 @@ func (h *Handler) ListObjects(c *gin.Context) {
 	if !ok {
 		return
 	}
-	items, err := h.service.ListObjects(c.Request.Context(), id, c.Param("container"), c.Query("prefix"), c.Query("token"))
+	items, err := h.service.ListObjects(c.Request.Context(), id, c.Param("container"), c.Query("prefix"), c.Query("token"), c.Query("region"))
 	if err != nil {
 		providerError(c, err)
 		return
@@ -302,7 +287,7 @@ func (h *Handler) UploadObject(c *gin.Context) {
 	if key == "" {
 		key = header.Filename
 	}
-	item, err := h.service.UploadObject(c.Request.Context(), id, c.Param("container"), key, io.LimitReader(file, 1024*1024*1024+1), header.Size, header.Header.Get("Content-Type"))
+	item, err := h.service.UploadObject(c.Request.Context(), id, c.Param("container"), key, io.LimitReader(file, 1024*1024*1024+1), header.Size, header.Header.Get("Content-Type"), c.Query("region"))
 	if err != nil {
 		validation(c, err)
 		return
@@ -316,7 +301,7 @@ func (h *Handler) DownloadObject(c *gin.Context) {
 		return
 	}
 	key := c.Query("key")
-	item, err := h.service.DownloadObject(c.Request.Context(), id, c.Param("container"), key)
+	item, err := h.service.DownloadObject(c.Request.Context(), id, c.Param("container"), key, c.Query("region"))
 	if err != nil {
 		providerError(c, err)
 		return
@@ -338,7 +323,7 @@ func (h *Handler) DeleteObject(c *gin.Context) {
 		apiShared.BadRequest(c, "对象删除请求无效")
 		return
 	}
-	if err := h.service.DeleteObject(c.Request.Context(), id, c.Param("container"), request.Key, request.Confirm); err != nil {
+	if err := h.service.DeleteObject(c.Request.Context(), id, c.Param("container"), request.Key, request.Confirm, c.Query("region")); err != nil {
 		validation(c, err)
 		h.record(c, "cloud.object_storage.object.delete", id, c.Param("container")+"/"+request.Key, model.AuditOutcomeFailed, "删除对象失败")
 		return

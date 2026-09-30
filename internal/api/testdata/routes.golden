@@ -224,7 +224,6 @@ POST /api/cloud/connections
 POST /api/cloud/connections/:id/dns/records
 POST /api/cloud/connections/:id/object-storage/containers
 POST /api/cloud/connections/:id/object-storage/containers/:container/objects
-POST /api/cloud/connections/:id/validate
 POST /api/cluster-dns
 POST /api/cluster-dns/history/:revision/rollback
 POST /api/domains

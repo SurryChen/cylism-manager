@@ -17,10 +17,9 @@
         <template v-else-if="connections.length">
           <div v-for="item in connections" :key="item.id" class="cloud-provider-row" :data-testid="'cloud-provider-card-' + item.id">
             <span class="cloud-provider-name">{{ item.name }}</span>
-            <span class="cloud-provider-value">{{ providerLabel(item.provider) }}<small>{{ credentialState(item) }} · {{ validationState(item) }}</small></span>
+            <span class="cloud-provider-value">{{ providerLabel(item.provider) }}<small>{{ credentialState(item) }}</small></span>
             <span><span class="badge" :class="statusBadgeClass(item)">{{ connectionState(item) }}</span></span>
             <span class="cloud-provider-actions">
-              <button class="btn btn-sm" type="button" :disabled="saving" @click="validate(item)">校验连接</button>
               <button v-if="item.provider === 'aliyun'" class="btn btn-sm" type="button" :data-testid="'cloud-provider-permissions-' + item.id" @click="openPermissions(item)">查看权限</button>
               <button class="btn btn-sm" type="button" @click="openEdit(item)">编辑</button>
               <button class="btn btn-sm btn-danger" type="button" @click="remove(item)">删除</button>
@@ -55,15 +54,6 @@
             <div v-for="field in credentialFields" :key="field.key" class="form-group">
               <label class="form-label" :for="'cloud-provider-credential-' + field.key">{{ field.label }}</label>
               <input :id="'cloud-provider-credential-' + field.key" v-model="credentialValues[field.key]" class="form-input" :type="field.type" autocomplete="new-password" :disabled="saving" :required="field.required && !editing" :placeholder="editing ? '留空表示保留已保存值' : field.placeholder" />
-            </div>
-          </div>
-        </section>
-        <section class="cloud-provider-form-section">
-          <div class="cloud-provider-form-section-heading"><div><h3>连接配置</h3><p>选择该供应商的默认地域或访问地址。</p></div></div>
-          <div class="cloud-provider-form-grid">
-            <div v-for="field in configurationFields" :key="field.key" class="form-group">
-              <label class="form-label" :for="'cloud-provider-config-' + field.key">{{ field.label }}</label>
-              <input :id="'cloud-provider-config-' + field.key" v-model="configurationValues[field.key]" class="form-input" :type="field.type" :disabled="saving" :required="field.required" :placeholder="field.placeholder" />
             </div>
           </div>
         </section>
@@ -110,7 +100,7 @@
 
 <script setup>
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
-import { createCloudConnection, deleteCloudConnection, getCloudConnectionPermissions, getCloudConnections, getCloudProviders, updateCloudConnection, validateCloudConnection } from '../../api/cloud-resources.js'
+import { createCloudConnection, deleteCloudConnection, getCloudConnectionPermissions, getCloudConnections, getCloudProviders, updateCloudConnection } from '../../api/cloud-resources.js'
 import BaseModal from '../../components/BaseModal.vue'
 import SelectMenu from '../../components/SelectMenu.vue'
 import SurfaceCard from '../../components/SurfaceCard.vue'
@@ -128,9 +118,8 @@ const permissionError = ref('')
 let permissionController = null
 const providers = ref([])
 const credentialValues = reactive({})
-const configurationValues = reactive({})
 const fallbackProviders = [
-  { id: 'aliyun', name: '阿里云', description: 'Alibaba Cloud DNS 与 OSS', implemented: true, capabilities: ['dns', 'object_storage'], credential_fields: [{ key: 'access_key_id', label: 'AccessKey ID', type: 'text', required: true }, { key: 'access_key_secret', label: 'AccessKey Secret', type: 'password', required: true }], configuration_fields: [{ key: 'region', label: '默认地域', type: 'text', placeholder: '例如 cn-hangzhou', required: true }] },
+  { id: 'aliyun', name: '阿里云', description: 'Alibaba Cloud DNS 与 OSS', implemented: true, capabilities: ['dns', 'object_storage'], credential_fields: [{ key: 'access_key_id', label: 'AccessKey ID', type: 'text', required: true }, { key: 'access_key_secret', label: 'AccessKey Secret', type: 'password', required: true }], configuration_fields: [] },
   { id: 'tencent', name: '腾讯云', description: 'Tencent Cloud DNSPod 与 COS', implemented: false, capabilities: ['dns', 'object_storage'], credential_fields: [], configuration_fields: [] },
   { id: 'cloudcone', name: 'CloudCone', description: 'CloudCone API 与 S3 兼容对象存储', implemented: false, capabilities: ['object_storage'], credential_fields: [], configuration_fields: [] },
 ]
@@ -140,12 +129,10 @@ const assign = value => Object.assign(form, value)
 const currentProvider = computed(() => providers.value.find(item => item.id === form.provider))
 const providerOptions = computed(() => providers.value.map(item => ({ value: item.id, label: item.name + (item.implemented ? '' : '（待接入）'), disabled: !item.implemented })))
 const credentialFields = computed(() => currentProvider.value?.credential_fields || [])
-const configurationFields = computed(() => currentProvider.value?.configuration_fields || [])
 const providerLabel = provider => providers.value.find(item => item.id === provider)?.name || provider
-const connectionState = item => item.last_validation_error ? '异常' : (item.credential_configured ? '已接入' : '待配置')
-const statusBadgeClass = item => item.last_validation_error ? 'badge-danger' : (item.credential_configured ? 'badge-online' : 'badge-warn')
+const connectionState = item => item.credential_configured ? '已配置' : '待配置'
+const statusBadgeClass = item => item.credential_configured ? 'badge-online' : 'badge-warn'
 const credentialState = item => item.credential_configured ? '凭据已配置' : '凭据待配置'
-const validationState = item => item.last_validation_error ? '连接校验失败' : (item.last_validation_at ? '连接已校验' : '尚未校验连接')
 const permissionStatusLabel = status => ({ complete: '查询完整', partial: '部分可读', unavailable: '无法读取', unsupported: '暂不支持' })[status] || '查询异常'
 const permissionStatusClass = status => status === 'complete' ? 'badge-online' : 'badge-warn'
 function formatInspectionTime(value) { const date = new Date(value); return Number.isNaN(date.getTime()) ? '' : date.toLocaleString('zh-CN') }
@@ -171,29 +158,25 @@ async function loadPermissions() {
 async function refresh() { loading.value = true; error.value = ''; try { connections.value = await getCloudConnections() } catch (err) { error.value = err.message || '读取云连接失败' } finally { loading.value = false } }
 function clearValues(target) { Object.keys(target).forEach(key => delete target[key]) }
 function selectProvider() {
-  clearValues(credentialValues); clearValues(configurationValues)
-  if (form.provider === 'aliyun') configurationValues.region = 'cn-hangzhou'
-  if (form.provider === 'tencent') configurationValues.region = 'ap-guangzhou'
+  clearValues(credentialValues)
 }
 function openCreate() { editing.value = null; assign(defaults()); selectProvider(); formOpen.value = true }
 function openEdit(item) {
   editing.value = item
   assign({ ...defaults(), ...item })
-  clearValues(credentialValues); clearValues(configurationValues)
-  try { Object.assign(configurationValues, JSON.parse(item.configuration || '{}')) } catch (_) { }
+  clearValues(credentialValues)
   formOpen.value = true
 }
 function closeForm() { if (saving.value) return; formOpen.value = false }
 async function save() {
   saving.value = true
   try {
-    const body = { ...form, credentials: JSON.stringify(credentialValues), configuration: JSON.stringify(configurationValues) }
+    const body = { ...form, credentials: JSON.stringify(credentialValues), configuration: editing.value?.configuration || '{}' }
     if (editing.value && !Object.values(credentialValues).some(Boolean)) delete body.credentials
     if (editing.value) await updateCloudConnection(editing.value.id, body); else await createCloudConnection(body)
     formOpen.value = false; await refresh()
   } catch (err) { error.value = err.message || '保存云连接失败' } finally { saving.value = false }
 }
-async function validate(item) { saving.value = true; try { await validateCloudConnection(item.id); await refresh() } catch (err) { error.value = err.message || '校验云连接失败' } finally { saving.value = false } }
 async function remove(item) { if (!window.confirm('删除云连接 ' + item.name + '？')) return; try { await deleteCloudConnection(item.id); await refresh() } catch (err) { error.value = err.message || '删除云连接失败' } }
 onMounted(async () => {
   try { providers.value = await getCloudProviders() } catch (err) { providers.value = fallbackProviders }

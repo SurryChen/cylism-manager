@@ -16,6 +16,9 @@ func TestProviderCatalogIncludesCommonProviders(t *testing.T) {
 	if !byID["aliyun"].Implemented || len(byID["aliyun"].CredentialFields) == 0 {
 		t.Fatalf("aliyun catalog entry = %#v", byID["aliyun"])
 	}
+	if len(byID["aliyun"].ConfigurationFields) != 0 {
+		t.Fatalf("account catalog must not expose storage region: %#v", byID["aliyun"].ConfigurationFields)
+	}
 	if byID["tencent"].Implemented || byID["cloudcone"].Implemented {
 		t.Fatal("unregistered providers must be marked unavailable")
 	}

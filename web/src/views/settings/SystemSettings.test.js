@@ -3,6 +3,7 @@ import { nextTick, reactive } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
 import SystemSettings from './SystemSettings.vue'
 import SystemSettingsSecurity from './SystemSettingsSecurity.vue'
+import SystemSettingsRelease from './SystemSettingsRelease.vue'
 import { api } from '../../api/index.js'
 
 const route = reactive({ path: '/settings/system', query: reactive({}) })
@@ -43,6 +44,23 @@ beforeEach(() => {
 })
 
 describe('SystemSettings view', () => {
+  it('loads settings without starting a periodic refresh', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    const wrapper = mount(SystemSettings, { global: { stubs: { Teleport: true } } })
+    try {
+      await flushPromises()
+      const initialRequests = api.get.mock.calls.length
+      expect(initialRequests).toBeGreaterThan(0)
+
+      vi.advanceTimersByTime(30000)
+      await flushPromises()
+      expect(api.get.mock.calls).toHaveLength(initialRequests)
+    } finally {
+      wrapper.unmount()
+      vi.useRealTimers()
+    }
+  })
+
   it('shows tabbed settings sections', async () => {
     const wrapper = mount(SystemSettings, { global: { stubs: { Teleport: true } } })
     await nextTick()
@@ -162,7 +180,6 @@ describe('SystemSettings view', () => {
   })
 
   it('does not show an error when a newer platform status refresh supersedes an older request', async () => {
-    vi.useFakeTimers()
     route.query.tab = 'release'
     let rejectInitialRequest
     api.get
@@ -185,7 +202,7 @@ describe('SystemSettings view', () => {
 
     const wrapper = mount(SystemSettings, { global: { stubs: { Teleport: true } } })
     await nextTick()
-    await vi.advanceTimersByTimeAsync(15000)
+    await wrapper.getComponent(SystemSettingsRelease).vm.refresh()
     await nextTick()
 
     expect(rejectInitialRequest).toBeTypeOf('function')

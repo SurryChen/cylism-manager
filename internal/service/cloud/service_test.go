@@ -5,7 +5,6 @@ import (
 	"errors"
 	"io"
 	"testing"
-	"time"
 
 	"github.com/cylism/cylism-manager/internal/model"
 	security "github.com/cylism/cylism-manager/internal/security"
@@ -31,14 +30,14 @@ func (r *fakeRepository) UpdateCloudConnection(item *model.CloudConnection) erro
 	return nil
 }
 func (r *fakeRepository) DeleteCloudConnection(uint) error { return nil }
-func (r *fakeRepository) UpdateCloudConnectionValidation(uint, string, string, string, time.Time) error {
-	return nil
+
+type fakeProvider struct {
+	deleteCalled bool
+	region       string
 }
 
-type fakeProvider struct{ deleteCalled bool }
+func (p *fakeProvider) SetStorageRegion(region string) error { p.region = region; return nil }
 
-func (p *fakeProvider) ValidateDNS(context.Context) error            { return nil }
-func (p *fakeProvider) ValidateObjectStorage(context.Context) error  { return nil }
 func (p *fakeProvider) ListZones(context.Context) ([]DNSZone, error) { return nil, nil }
 func (p *fakeProvider) ListRecords(context.Context, string, int, int) (DNSRecordPage, error) {
 	return DNSRecordPage{}, nil
@@ -102,6 +101,20 @@ func TestServiceRequiresConfirmationForRecordDelete(t *testing.T) {
 	}
 	if !provider.deleteCalled {
 		t.Fatal("confirmed delete must reach provider")
+	}
+}
+
+func TestObjectStorageUsesRegionForEachOperation(t *testing.T) {
+	provider := &fakeProvider{}
+	service := newTestService(t, &model.CloudConnection{ID: 1, Provider: "example"}, provider)
+	if _, err := service.CreateContainer(context.Background(), 1, ContainerInput{Name: "assets"}); err == nil {
+		t.Fatal("regional object storage requires an explicit creation region")
+	}
+	if _, err := service.CreateContainer(context.Background(), 1, ContainerInput{Name: "assets", Region: "cn-shanghai"}); err != nil || provider.region != "cn-shanghai" {
+		t.Fatalf("create region = %q, err = %v", provider.region, err)
+	}
+	if _, err := service.ListObjects(context.Background(), 1, "assets", "", "", "cn-beijing"); err != nil || provider.region != "cn-beijing" {
+		t.Fatalf("list region = %q, err = %v", provider.region, err)
 	}
 }
 

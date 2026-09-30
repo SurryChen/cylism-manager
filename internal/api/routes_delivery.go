@@ -79,7 +79,6 @@ func registerDeliveryRoutes(r *gin.Engine, apiGroup *gin.RouterGroup, h delivery
 	connections.POST("", h.cloud.CreateConnection)
 	connections.PUT("/:id", h.cloud.UpdateConnection)
 	connections.DELETE("/:id", h.cloud.DeleteConnection)
-	connections.POST("/:id/validate", h.cloud.ValidateConnection)
 	connections.GET("/:id/permissions", h.cloud.InspectPermissions)
 	connections.GET("/:id/dns/zones", h.cloud.ListZones)
 	connections.GET("/:id/dns/records", h.cloud.ListRecords)

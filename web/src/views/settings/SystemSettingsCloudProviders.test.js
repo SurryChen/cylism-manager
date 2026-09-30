@@ -9,7 +9,6 @@ const cloud = vi.hoisted(() => ({
   getCloudProviders: vi.fn(),
   getCloudConnectionPermissions: vi.fn(),
   updateCloudConnection: vi.fn(),
-  validateCloudConnection: vi.fn(),
 }))
 
 vi.mock('../../api/cloud-resources.js', () => cloud)
@@ -18,7 +17,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   cloud.getCloudConnections.mockResolvedValue([{ id: 4, name: '生产连接', provider: 'aliyun', dns_enabled: true, object_storage_enabled: true, credential_configured: true }])
   cloud.getCloudProviders.mockResolvedValue([
-    { id: 'aliyun', name: '阿里云', description: 'Alibaba Cloud DNS 与 OSS', implemented: true, capabilities: ['dns', 'object_storage'], credential_fields: [{ key: 'access_key_id', label: 'AccessKey ID', type: 'text', required: true }, { key: 'access_key_secret', label: 'AccessKey Secret', type: 'password', required: true }], configuration_fields: [{ key: 'region', label: '默认地域', type: 'text', required: true }] },
+    { id: 'aliyun', name: '阿里云', description: 'Alibaba Cloud DNS 与 OSS', implemented: true, capabilities: ['dns', 'object_storage'], credential_fields: [{ key: 'access_key_id', label: 'AccessKey ID', type: 'text', required: true }, { key: 'access_key_secret', label: 'AccessKey Secret', type: 'password', required: true }], configuration_fields: [] },
     { id: 'tencent', name: '腾讯云', description: 'Tencent Cloud DNSPod 与 COS', implemented: false, capabilities: ['dns', 'object_storage'], credential_fields: [], configuration_fields: [] },
     { id: 'cloudcone', name: 'CloudCone', description: 'CloudCone API 与 S3 兼容对象存储', implemented: false, capabilities: ['object_storage'], credential_fields: [], configuration_fields: [] },
   ])
@@ -37,10 +36,12 @@ describe('SystemSettingsCloudProviders', () => {
     const row = wrapper.get('[data-testid=cloud-provider-card-4]')
     expect(row.text()).toContain('生产连接')
     expect(row.text()).toContain('阿里云')
-    expect(row.text()).toContain('已接入')
+    expect(row.text()).toContain('已配置')
     expect(wrapper.get('.cloud-provider-table-header').text()).toContain('连接名')
     expect(wrapper.get('.cloud-provider-table-header').text()).toContain('操作')
     expect(wrapper.text()).not.toContain('服务能力')
+    expect(wrapper.text()).not.toContain('校验连接')
+    expect(wrapper.text()).not.toContain('尚未校验')
     expect(wrapper.text()).not.toContain('access_key_secret')
   })
 
@@ -49,6 +50,8 @@ describe('SystemSettingsCloudProviders', () => {
     await flushPromises()
 
     await wrapper.get('[data-testid=cloud-provider-open-create]').trigger('click')
+    expect(wrapper.text()).not.toContain('默认地域')
+    expect(wrapper.text()).not.toContain('连接配置')
     const fields = wrapper.findAll('input.form-input')
     await fields[0].setValue('测试连接')
     await wrapper.get('#cloud-provider-credential-access_key_id').setValue('id')
@@ -60,8 +63,21 @@ describe('SystemSettingsCloudProviders', () => {
       name: '测试连接',
       provider: 'aliyun',
       credentials: '{"access_key_id":"id","access_key_secret":"secret"}',
-      configuration: '{"region":"cn-hangzhou"}',
+      configuration: '{}',
     }))
+  })
+
+  it('preserves legacy storage configuration when editing account credentials', async () => {
+    cloud.getCloudConnections.mockResolvedValue([{ id: 4, name: '生产连接', provider: 'aliyun', configuration: '{"region":"cn-guangzhou"}', credential_configured: true }])
+    const wrapper = mount(SystemSettingsCloudProviders)
+    await flushPromises()
+
+    await wrapper.get('[data-testid=cloud-provider-card-4]').findAll('button').find(button => button.text() === '编辑').trigger('click')
+    expect(wrapper.text()).not.toContain('默认地域')
+    await wrapper.get('[data-testid=cloud-provider-save]').trigger('click')
+    await flushPromises()
+
+    expect(cloud.updateCloudConnection).toHaveBeenCalledWith(4, expect.objectContaining({ configuration: '{"region":"cn-guangzhou"}' }))
   })
 
   it('guides users to add a provider when no connection exists', async () => {

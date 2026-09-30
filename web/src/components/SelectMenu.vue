@@ -97,13 +97,23 @@ function toggle() {
 function positionMenu() {
   if (!root.value) return
   const rect = root.value.getBoundingClientRect()
-  const width = rect.width || root.value.offsetWidth
+  const triggerWidth = rect.width || root.value.offsetWidth
   const height = menu.value?.offsetHeight || 260
   const below = rect.bottom + 5
   const top = below + height <= window.innerHeight - 8 ? below : Math.max(8, rect.top - height - 5)
   const overlay = root.value.closest('.overlay')
   const overlayZ = overlay ? Number.parseInt(window.getComputedStyle(overlay).zIndex, 10) : 0
-  menuStyle.value = { top: `${top}px`, left: `${rect.left}px`, width: `${width}px`, zIndex: String(Math.max(1300, (overlayZ || 0) + 1)) }
+  const viewportWidth = window.innerWidth || 1280
+  const maxWidth = Math.max(160, Math.min(420, viewportWidth - 16))
+  const left = Math.max(8, Math.min(rect.left, viewportWidth - maxWidth - 8))
+  menuStyle.value = {
+    top: `${top}px`,
+    left: `${left}px`,
+    minWidth: `${triggerWidth}px`,
+    maxWidth: `${maxWidth}px`,
+    width: 'max-content',
+    zIndex: String(Math.max(1300, (overlayZ || 0) + 1)),
+  }
 }
 
 function select(value, disabled = false) {
@@ -157,7 +167,7 @@ onBeforeUnmount(() => {
 .select-menu-value { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .select-menu-value.is-placeholder { color: var(--text-muted); }
 .select-menu-native { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
-.select-menu-options { position: fixed; z-index: 1300; display: grid; max-height: 260px; gap: 2px; overflow-y: auto; padding: 5px; border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--surface-raised); box-shadow: var(--shadow); backdrop-filter: blur(24px) saturate(140%); }
+.select-menu-options { position: fixed; z-index: 1300; display: grid; width: max-content; max-height: 260px; gap: 2px; overflow-y: auto; padding: 5px; border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--surface-raised); box-shadow: var(--shadow); backdrop-filter: blur(24px) saturate(140%); }
 .select-menu-option { display: flex; width: 100%; min-width: 0; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 9px; border: 0; border-radius: 6px; background: transparent; color: var(--text-secondary); font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
 .select-menu-option:hover, .select-menu-option.is-selected { background: var(--surface-hover); color: var(--text-primary); }
 .select-menu-option:disabled { cursor: not-allowed; opacity: .55; }

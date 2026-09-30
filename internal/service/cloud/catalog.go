@@ -30,7 +30,6 @@ var providerSpecs = []ProviderSpec{
 			{Key: "access_key_id", Label: "AccessKey ID", Type: "text", Required: true},
 			{Key: "access_key_secret", Label: "AccessKey Secret", Type: "password", Required: true},
 		},
-		ConfigurationFields: []ProviderField{{Key: "region", Label: "默认地域", Type: "text", Placeholder: "例如 cn-hangzhou", Required: true}},
 	},
 	{
 		ID: "tencent", Name: "腾讯云", Description: "Tencent Cloud DNSPod 与 COS",
@@ -39,7 +38,6 @@ var providerSpecs = []ProviderSpec{
 			{Key: "secret_id", Label: "SecretId", Type: "text", Required: true},
 			{Key: "secret_key", Label: "SecretKey", Type: "password", Required: true},
 		},
-		ConfigurationFields: []ProviderField{{Key: "region", Label: "默认地域", Type: "text", Placeholder: "例如 ap-guangzhou", Required: true}},
 	},
 	{
 		ID: "cloudcone", Name: "CloudCone", Description: "CloudCone API 与 S3 兼容对象存储",

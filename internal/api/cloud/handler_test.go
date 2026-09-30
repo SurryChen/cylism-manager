@@ -6,7 +6,6 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/cylism/cylism-manager/internal/model"
 	cloudservice "github.com/cylism/cylism-manager/internal/service/cloud"
@@ -93,9 +92,6 @@ func (r *handlerRepository) UpdateCloudConnection(item *model.CloudConnection) e
 	return nil
 }
 func (r *handlerRepository) DeleteCloudConnection(uint) error { return nil }
-func (r *handlerRepository) UpdateCloudConnectionValidation(uint, string, string, string, time.Time) error {
-	return nil
-}
 
 func testService(t *testing.T) (*cloudservice.Service, *handlerRepository) {
 	t.Helper()
@@ -110,7 +106,6 @@ func (*testProvider) InspectPermissions(context.Context) cloudservice.Permission
 	return cloudservice.PermissionInspection{Status: "complete", Policies: []cloudservice.AssignedPolicy{{Name: "AliyunDNSFullAccess", Source: "direct"}}}
 }
 
-func (*testProvider) ValidateDNS(context.Context) error                         { return nil }
 func (*testProvider) ListZones(context.Context) ([]cloudservice.DNSZone, error) { return nil, nil }
 func (*testProvider) ListRecords(context.Context, string, int, int) (cloudservice.DNSRecordPage, error) {
 	return cloudservice.DNSRecordPage{}, nil

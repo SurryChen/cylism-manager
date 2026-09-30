@@ -15,6 +15,20 @@ describe('SelectMenu', () => {
     wrapper.unmount()
   })
 
+  it('lets the option menu grow beyond a narrow trigger', async () => {
+    const wrapper = mount(SelectMenu, {
+      props: { modelValue: 'aliyun', options: [{ value: 'aliyun', label: '阿里云 · aliyun' }] },
+    })
+
+    await wrapper.get('.select-menu-trigger').trigger('click')
+
+    const menu = document.body.querySelector('.select-menu-options')
+    expect(menu.style.width).toBe('max-content')
+    expect(menu.style.minWidth).toBe('0px')
+    expect(menu.style.maxWidth).toBe('420px')
+    wrapper.unmount()
+  })
+
   it('preserves numeric values when changed through the native form control', async () => {
     const wrapper = mount(SelectMenu, { props: { modelValue: 0, options: [{ value: 0, label: '全部' }, { value: 500, label: '500 条' }] } })
 
