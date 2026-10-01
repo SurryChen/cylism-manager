@@ -303,7 +303,7 @@ is_cylism_ghcr_image() {
   esac
 }
 verify_image_pull() {
-  [[ "$VERIFY_IMAGE_PULL" =~ ^([Yy]|true|TRUE|1)$ ]] || return
+  [[ "$VERIFY_IMAGE_PULL" =~ ^([Yy]|true|TRUE|1)$ ]] || return 0
   local check_pod="cylism-image-pull-check-$(date +%s)-$$"
 
   echo "验证 Kubernetes 是否可以拉取镜像: $IMAGE"
