@@ -39,10 +39,6 @@ spec:
         - name: data
           persistentVolumeClaim:
             claimName: {{ include "cylism-manager.dataClaimName" . }}
-        - name: ssh-key
-          secret:
-            secretName: {{ .Values.ssh.existingSecret | quote }}
-            defaultMode: 0600
       containers:
         - name: platform
           image: {{ include "cylism-manager.image" . | quote }}
@@ -53,9 +49,6 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /data
-            - name: ssh-key
-              mountPath: /root/.ssh
-              readOnly: true
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           livenessProbe:

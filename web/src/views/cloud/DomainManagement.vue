@@ -113,7 +113,7 @@ async function refresh() {
   try {
     connections.value = await getCloudConnections()
     connectionID.value = connections.value[0]?.id || 0
-    if (connectionID.value) await loadZones()
+    if (connectionID.value) void loadZones()
   } catch (err) {
     connectionsFailed.value = true
     showError(err, '读取云连接失败', '读取云连接失败，请稍后重试。')
@@ -134,7 +134,7 @@ async function loadZones() {
   try {
     zones.value = await getCloudZones(connectionID.value)
     zone.value = zones.value[0]?.name || ''
-    if (zone.value) await loadRecords()
+    if (zone.value) void loadRecords()
   } catch (err) {
     zonesFailed.value = true
     showError(err, '读取域名失败', '读取域名失败，请稍后重试。')

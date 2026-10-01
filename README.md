@@ -48,7 +48,6 @@ cd cylism-manager
 bash scripts/deploy-platform.sh \
   --image ghcr.io/surrychen/cylism-manager:latest \
   --namespace cylism-system \
-  --ssh-key ~/.ssh/id_ed25519 \
   --verify-image-pull
 ```
 
@@ -62,8 +61,7 @@ helm upgrade --install cylism-manager charts/cylism-manager \
   --create-namespace \
   --set image.repository=ghcr.io/surrychen/cylism-manager \
   --set image.tag=latest \
-  --set secrets.existingSecret=cylism-secret \
-  --set ssh.existingSecret=cylism-ssh-key
+  --set secrets.existingSecret=cylism-secret
 ```
 
 ## 运行说明

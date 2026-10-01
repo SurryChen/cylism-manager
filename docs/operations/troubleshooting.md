@@ -7,7 +7,7 @@ kubectl -n cylism-system describe pod -l app.kubernetes.io/component=manager
 kubectl -n cylism-system logs deployment/cylism-manager --previous
 ```
 
-依次检查：镜像是否可拉取、`cylism-secret` 是否包含三个必需键、`encryption-key` 是否为 32 字节、`cylism-ssh-key` 是否存在，以及 Manager PVC 是否已绑定并可挂载。
+依次检查：镜像是否可拉取、`cylism-secret` 是否包含三个必需键、`encryption-key` 是否为 32 字节，以及 Manager PVC 是否已绑定并可挂载。
 
 ## 镜像拉取失败
 

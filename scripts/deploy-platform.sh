@@ -10,7 +10,6 @@ DEPLOYMENT="${DEPLOYMENT:-cylism-manager}"
 CONTAINER="${CONTAINER:-platform}"
 IMAGE="${CYLISM_IMAGE:-}"
 NODE_NAME="${CYLISM_NODE_NAME:-}"
-SSH_KEY_PATH="${CYLISM_SSH_KEY_PATH:-${HOME:-}/.ssh/id_ed25519}"
 IMAGE_PULL_SECRET="${CYLISM_IMAGE_PULL_SECRET:-}"
 GHCR_USERNAME="${CYLISM_GHCR_USERNAME:-}"
 GHCR_TOKEN="${CYLISM_GHCR_TOKEN:-}"
@@ -25,7 +24,6 @@ Usage: scripts/deploy-platform.sh [options]
   --image IMAGE              Image reference (prompted if omitted)
   --namespace NAME           Kubernetes namespace (default: default)
   --node NAME                Node selector for a fresh deployment
-  --ssh-key PATH             SSH private key used by the Manager
   --image-pull-secret NAME   Existing imagePullSecret name
   --ghcr-username NAME       GitHub username for private GHCR image pulls
   --ghcr-token TOKEN         GitHub token for private GHCR image pulls
@@ -51,7 +49,6 @@ while [ "$#" -gt 0 ]; do
     --image) IMAGE="${2:?--image 需要参数}"; shift 2 ;;
     --namespace) NAMESPACE="${2:?--namespace 需要参数}"; shift 2 ;;
     --node) NODE_NAME="${2:?--node 需要参数}"; shift 2 ;;
-    --ssh-key) SSH_KEY_PATH="${2:?--ssh-key 需要参数}"; shift 2 ;;
     --image-pull-secret) IMAGE_PULL_SECRET="${2:?--image-pull-secret 需要参数}"; shift 2 ;;
     --ghcr-username) GHCR_USERNAME="${2:?--ghcr-username 需要参数}"; shift 2 ;;
     --ghcr-token) GHCR_TOKEN="${2:?--ghcr-token 需要参数}"; shift 2 ;;
@@ -170,7 +167,6 @@ create_predeploy_backup() {
   backup_if_exists rolebinding "$DEPLOYMENT" "rolebinding-$DEPLOYMENT.yaml"
   backup_if_exists configmap cylism-config "configmap-cylism-config.yaml"
   backup_secret_keys_if_exists cylism-secret "secret-cylism-secret-keys.txt"
-  backup_secret_keys_if_exists cylism-ssh-key "secret-cylism-ssh-key-keys.txt"
   if [ -n "$IMAGE_PULL_SECRET" ]; then
     backup_secret_keys_if_exists "$IMAGE_PULL_SECRET" "secret-$IMAGE_PULL_SECRET-keys.txt"
   fi
@@ -299,19 +295,13 @@ admin_user="$(read_config admin-user)"; admin_user="${admin_user:-admin}"
 access_ttl="$(read_config access-token-ttl)"; access_ttl="${access_ttl:-7200}"
 refresh_ttl="$(read_config refresh-token-ttl)"; refresh_ttl="${refresh_ttl:-604800}"
 retention_days="$(read_config operation-log-retention-days)"; retention_days="${retention_days:-30}"
-{
-  echo 'apiVersion: v1'
-  echo 'kind: ConfigMap'
-  echo 'metadata:'
-  echo '  name: cylism-config'
-  printf '  namespace: %s\n' "$NAMESPACE"
-  echo 'data:'
-  printf '  admin-user: %s\n' "$admin_user"
-  printf '  public-url: %s\n' "$public_url"
-  printf '  access-token-ttl: %s\n' "$access_ttl"
-  printf '  refresh-token-ttl: %s\n' "$refresh_ttl"
-  printf '  operation-log-retention-days: %s\n' "$retention_days"
-} | k apply -f - >/dev/null
+k -n "$NAMESPACE" create configmap cylism-config \
+  --from-literal="admin-user=$admin_user" \
+  --from-literal="public-url=$public_url" \
+  --from-literal="access-token-ttl=$access_ttl" \
+  --from-literal="refresh-token-ttl=$refresh_ttl" \
+  --from-literal="operation-log-retention-days=$retention_days" \
+  --dry-run=client -o yaml | k apply -f - >/dev/null
 
 current_image=""
 if [ -z "$IMAGE" ]; then
@@ -366,16 +356,12 @@ fi
 
 verify_image_pull
 
-if ! k -n "$NAMESPACE" get secret cylism-ssh-key >/dev/null 2>&1; then
-  [ -f "$SSH_KEY_PATH" ] || die "找不到 SSH 私钥 $SSH_KEY_PATH，请使用 --ssh-key 指定路径"
-  echo "创建 cylism-ssh-key（仅首次执行）..."
-  k -n "$NAMESPACE" create secret generic cylism-ssh-key --from-file=id_ed25519="$SSH_KEY_PATH" --dry-run=client -o yaml | k apply -f - >/dev/null
-else
-  echo "复用现有 cylism-ssh-key。"
-fi
-
 echo "应用 Kubernetes 清单..."
 k -n "$NAMESPACE" apply -f "$MANIFEST" >/dev/null
+# The static manifest is namespace-agnostic, but ClusterRoleBinding subjects
+# are cluster-scoped and must follow the selected deployment namespace.
+k patch clusterrolebinding cylism-manager --type merge \
+  -p "{\"subjects\":[{\"kind\":\"ServiceAccount\",\"name\":\"cylism-manager\",\"namespace\":\"$NAMESPACE\"}]}" >/dev/null
 k -n "$NAMESPACE" set image "deployment/$DEPLOYMENT" "$CONTAINER=$IMAGE" >/dev/null
 if [ -n "$IMAGE_PULL_SECRET" ]; then
   k -n "$NAMESPACE" patch deployment "$DEPLOYMENT" --type merge -p "{\"spec\":{\"template\":{\"spec\":{\"imagePullSecrets\":[{\"name\":\"$IMAGE_PULL_SECRET\"}]}}}}" >/dev/null

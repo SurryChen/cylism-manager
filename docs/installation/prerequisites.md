@@ -5,7 +5,7 @@
 - 一个可访问的 Kubernetes 或 K3s 集群；执行安装的账户必须能创建 Namespace、Deployment、Service、Secret、ConfigMap、PersistentVolumeClaim、ServiceAccount、ClusterRole 和 ClusterRoleBinding。
 - `kubectl` 可访问集群，或控制面存在可用的 `k3s kubectl`。
 - 用于拉取平台镜像的镜像仓库访问权限；公开镜像不需要 imagePullSecret。
-- 用于纳管其他主机的 SSH 私钥。私钥只能以 Kubernetes Secret 挂载，不得提交到仓库。
+- 如果要纳管其他主机，准备对应的 SSH 私钥。仅部署 Manager 到 Kubernetes/K3s 时不需要；私钥只能以 Kubernetes Secret 挂载，不得提交到仓库。
 
 ## 持久化与权限要求
 

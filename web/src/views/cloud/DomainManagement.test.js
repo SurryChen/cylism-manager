@@ -35,6 +35,28 @@ describe('DomainManagement', () => {
     expect(wrapper.get('[data-testid="domain-management-tab-records"]').classes()).toContain('is-active')
   })
 
+  it('keeps connection, zone, and record loading states independent', async () => {
+    let resolveZones
+    cloud.getCloudZones.mockReturnValueOnce(new Promise(resolve => { resolveZones = resolve }))
+    const wrapper = mount(DomainManagement)
+    await flushPromises()
+
+    expect(wrapper.text()).not.toContain('正在读取云连接')
+    expect(wrapper.text()).toContain('正在读取域名')
+
+    let resolveRecords
+    cloud.getCloudDNSRecords.mockReturnValueOnce(new Promise(resolve => { resolveRecords = resolve }))
+    resolveZones([{ name: 'example.com' }])
+    await flushPromises()
+
+    expect(wrapper.text()).not.toContain('正在读取域名')
+    expect(wrapper.text()).toContain('正在读取 DNS 记录')
+
+    resolveRecords({ records: [] })
+    await flushPromises()
+    wrapper.unmount()
+  })
+
   it('manages DNS records from the dedicated page', async () => {
     const wrapper = mount(DomainManagement)
     await flushPromises()
