@@ -12,10 +12,6 @@ ACTION="install"
 IMAGE="${CYLISM_IMAGE:-}"
 NODE_NAME="${CYLISM_NODE_NAME:-}"
 HTTPS_IP="${CYLISM_HTTPS_IP:-}"
-IMAGE_PULL_SECRET="${CYLISM_IMAGE_PULL_SECRET:-}"
-GHCR_USERNAME="${CYLISM_GHCR_USERNAME:-}"
-GHCR_TOKEN="${CYLISM_GHCR_TOKEN:-}"
-CONFIGURE_GHCR_PULL_SECRET="${CYLISM_CONFIGURE_GHCR_PULL_SECRET:-}"
 VERIFY_IMAGE_PULL="${CYLISM_VERIFY_IMAGE_PULL:-}"
 BACKUP_DIR="${CYLISM_BACKUP_DIR:-}"
 SKIP_BACKUP="${CYLISM_SKIP_BACKUP:-}"
@@ -30,15 +26,11 @@ esac
 usage() {
   cat <<'EOF'
 Usage: scripts/deploy-platform.sh [install|uninstall] [options]
-  --image IMAGE              Image reference (default: ghcr.io/surrychen/cylism-manager:latest)
+  --image IMAGE              Public image reference (default: ghcr.io/surrychen/cylism-manager:latest)
   --namespace NAME           Kubernetes namespace (default: cylism-system)
   --node NAME                Node selector for a fresh deployment
   --https-ip IP              Create a temporary self-signed HTTPS Ingress for this IP
-  --image-pull-secret NAME   Existing imagePullSecret name
-  --ghcr-username NAME       GitHub username for private GHCR image pulls
-  --ghcr-token TOKEN         GitHub token for private GHCR image pulls
-  --configure-ghcr-pull      Create/reuse an imagePullSecret for private GHCR
-  --verify-image-pull        Verify Kubernetes can pull the target image first
+  --verify-image-pull        Verify Kubernetes can pull the public image first
   --backup-dir DIR           Save pre-deploy resource backups under DIR
   --skip-backup              Do not create pre-deploy resource backups
   --purge-data               With uninstall, also delete the PVC and cylism-secret
@@ -62,10 +54,6 @@ while [ "$#" -gt 0 ]; do
     --namespace) NAMESPACE="${2:?--namespace 需要参数}"; shift 2 ;;
     --node) NODE_NAME="${2:?--node 需要参数}"; shift 2 ;;
     --https-ip) HTTPS_IP="${2:?--https-ip 需要参数}"; shift 2 ;;
-    --image-pull-secret) IMAGE_PULL_SECRET="${2:?--image-pull-secret 需要参数}"; shift 2 ;;
-    --ghcr-username) GHCR_USERNAME="${2:?--ghcr-username 需要参数}"; shift 2 ;;
-    --ghcr-token) GHCR_TOKEN="${2:?--ghcr-token 需要参数}"; shift 2 ;;
-    --configure-ghcr-pull) CONFIGURE_GHCR_PULL_SECRET="true"; shift ;;
     --verify-image-pull) VERIFY_IMAGE_PULL="true"; shift ;;
     --backup-dir) BACKUP_DIR="${2:?--backup-dir 需要参数}"; shift 2 ;;
     --skip-backup) SKIP_BACKUP="true"; shift ;;
@@ -279,9 +267,6 @@ create_predeploy_backup() {
   backup_if_exists rolebinding "$DEPLOYMENT" "rolebinding-$DEPLOYMENT.yaml"
   backup_if_exists configmap cylism-config "configmap-cylism-config.yaml"
   backup_secret_keys_if_exists cylism-secret "secret-cylism-secret-keys.txt"
-  if [ -n "$IMAGE_PULL_SECRET" ]; then
-    backup_secret_keys_if_exists "$IMAGE_PULL_SECRET" "secret-$IMAGE_PULL_SECRET-keys.txt"
-  fi
   echo "部署前备份目录: $BACKUP_DIR"
   echo "Secret 仅备份 key 名称，不导出敏感值。"
 }
@@ -317,26 +302,12 @@ is_cylism_ghcr_image() {
     *) return 1 ;;
   esac
 }
-image_uses_ghcr() {
-  case "$1" in
-    ghcr.io/*) return 0 ;;
-    *) return 1 ;;
-  esac
-}
 verify_image_pull() {
   [[ "$VERIFY_IMAGE_PULL" =~ ^([Yy]|true|TRUE|1)$ ]] || return
   local check_pod="cylism-image-pull-check-$(date +%s)-$$"
-  local overrides=''
-  if [ -n "$IMAGE_PULL_SECRET" ]; then
-    overrides="{\"spec\":{\"imagePullSecrets\":[{\"name\":\"$IMAGE_PULL_SECRET\"}]}}"
-  fi
 
   echo "验证 Kubernetes 是否可以拉取镜像: $IMAGE"
-  if [ -n "$overrides" ]; then
-    k -n "$NAMESPACE" run "$check_pod" --image="$IMAGE" --restart=Never --overrides="$overrides" --command -- sh -c 'sleep 5' >/dev/null
-  else
-    k -n "$NAMESPACE" run "$check_pod" --image="$IMAGE" --restart=Never --command -- sh -c 'sleep 5' >/dev/null
-  fi
+  k -n "$NAMESPACE" run "$check_pod" --image="$IMAGE" --restart=Never --command -- sh -c 'sleep 5' >/dev/null
 
   local i image_id waiting_reason waiting_message
   for i in $(seq 1 30); do
@@ -439,40 +410,6 @@ if [ -z "$IMAGE" ]; then
 fi
 [ -n "$IMAGE" ] || die "镜像地址不能为空"
 
-if [ -z "$IMAGE_PULL_SECRET" ] && image_uses_ghcr "$IMAGE"; then
-  existing_pull_secret="$(k -n "$NAMESPACE" get deployment "$DEPLOYMENT" -o jsonpath='{.spec.template.spec.imagePullSecrets[0].name}' 2>/dev/null || true)"
-  IMAGE_PULL_SECRET="$existing_pull_secret"
-  if [ -z "$IMAGE_PULL_SECRET" ]; then
-    configure_answer="$CONFIGURE_GHCR_PULL_SECRET"
-    if [ -z "$configure_answer" ]; then
-      read -r -p "GHCR 镜像如果是私有，需要 imagePullSecret。是否现在配置？[y/N] " configure_answer
-    fi
-    if [[ "$configure_answer" =~ ^([Yy]|true|TRUE|1)$ ]]; then
-      IMAGE_PULL_SECRET="${CYLISM_IMAGE_PULL_SECRET_NAME:-ghcr-pull-secret}"
-      if k -n "$NAMESPACE" get secret "$IMAGE_PULL_SECRET" >/dev/null 2>&1; then
-        echo "复用现有 imagePullSecret: $IMAGE_PULL_SECRET"
-      else
-        [ -n "$GHCR_USERNAME" ] || read -r -p "GitHub 用户名: " GHCR_USERNAME
-        if [ -z "$GHCR_TOKEN" ]; then
-          read -r -s -p "GitHub Token（需要 read:packages 权限，不会回显）: " GHCR_TOKEN; echo
-        fi
-        [ -n "$GHCR_USERNAME" ] || die "GitHub 用户名不能为空"
-        [ -n "$GHCR_TOKEN" ] || die "GitHub Token 不能为空"
-        k -n "$NAMESPACE" create secret docker-registry "$IMAGE_PULL_SECRET" \
-          --docker-server=ghcr.io \
-          --docker-username="$GHCR_USERNAME" \
-          --docker-password="$GHCR_TOKEN" \
-          --dry-run=client -o yaml | k apply -f - >/dev/null
-        echo "已创建 imagePullSecret: $IMAGE_PULL_SECRET"
-      fi
-    else
-      echo "未配置 imagePullSecret；GHCR 镜像需要设置为 Public，或后续 Pod 可能无法拉取镜像。"
-    fi
-  else
-    echo "复用现有 imagePullSecret: $IMAGE_PULL_SECRET"
-  fi
-fi
-
 verify_image_pull
 
 echo "应用 Kubernetes 清单..."
@@ -482,9 +419,6 @@ k -n "$NAMESPACE" apply -f "$MANIFEST" >/dev/null
 k patch clusterrolebinding cylism-manager --type merge \
   -p "{\"subjects\":[{\"kind\":\"ServiceAccount\",\"name\":\"cylism-manager\",\"namespace\":\"$NAMESPACE\"}]}" >/dev/null
 k -n "$NAMESPACE" set image "deployment/$DEPLOYMENT" "$CONTAINER=$IMAGE" >/dev/null
-if [ -n "$IMAGE_PULL_SECRET" ]; then
-  k -n "$NAMESPACE" patch deployment "$DEPLOYMENT" --type merge -p "{\"spec\":{\"template\":{\"spec\":{\"imagePullSecrets\":[{\"name\":\"$IMAGE_PULL_SECRET\"}]}}}}" >/dev/null
-fi
 
 if [ -z "$NODE_NAME" ]; then NODE_NAME="$(k -n "$NAMESPACE" get deployment "$DEPLOYMENT" -o jsonpath='{.spec.template.spec.nodeSelector.kubernetes\.io/hostname}' 2>/dev/null || true)"; fi
 if [ -z "$NODE_NAME" ]; then
@@ -508,7 +442,6 @@ echo "Deployment: $DEPLOYMENT"
 echo "容器: $CONTAINER"
 echo "配置来源: cylism-secret / cylism-config"
 echo "数据库路径: /data/cylism.db"
-echo "imagePullSecret: ${IMAGE_PULL_SECRET:-未配置}"
 echo "节点选择: ${NODE_NAME:-未设置}"
 if [[ ! "$SKIP_BACKUP" =~ ^([Yy]|true|TRUE|1)$ ]]; then
   echo "部署前备份目录: $BACKUP_DIR"

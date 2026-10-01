@@ -37,8 +37,6 @@ bash scripts/deploy-platform.sh
 4. 创建或复用 `cylism-secret` 和 `cylism-config`。
 5. 询问或生成 `encryption-key`、`jwt-secret` 和管理员密码，并等待 Deployment rollout 完成。
 
-私有 GHCR 镜像可附加 `--configure-ghcr-pull`，脚本会交互创建或复用 imagePullSecret。Token 仅写入 Kubernetes Secret。
-
 卸载部署资源（默认保留 PVC 和 `cylism-secret`）：
 
 ```bash
@@ -59,13 +57,11 @@ bash scripts/deploy-platform.sh --help
 
 | 参数 | 用途 |
 | --- | --- |
-| `--image` | 指定平台镜像。 |
+| `--image` | 指定公开平台镜像。 |
 | `--namespace` | 目标 Namespace，默认 `cylism-system`。 |
 | `--node` | 新安装时指定控制面节点选择器。 |
 | `--https-ip` | 为指定 IPv4 地址创建临时自签 HTTPS 入口。 |
-| `--image-pull-secret` | 使用已有镜像拉取 Secret。 |
-| `--configure-ghcr-pull` | 交互创建或复用 GHCR 拉取 Secret。 |
-| `--verify-image-pull` | 部署前创建临时 Pod 验证镜像可拉取。 |
+| `--verify-image-pull` | 部署前创建临时 Pod 验证公开镜像可拉取。 |
 | `--backup-dir` | 指定部署前备份目录。 |
 | `--skip-backup` | 跳过部署前备份；仅在已有可靠备份时使用。 |
 | `--purge-data` | 卸载时同时删除 PVC 和 `cylism-secret`，默认不删除。 |

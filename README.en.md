@@ -45,11 +45,7 @@ For a single-node control plane or an interactive initial setup:
 git clone https://github.com/SurryChen/cylism-manager.git
 cd cylism-manager
 
-bash scripts/deploy-platform.sh \
-  --image ghcr.io/surrychen/cylism-manager:latest \
-  --namespace cylism-system \
-  --ssh-key ~/.ssh/id_ed25519 \
-  --verify-image-pull
+bash scripts/deploy-platform.sh
 ```
 
 ### Helm Chart
