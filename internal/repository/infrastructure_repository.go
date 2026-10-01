@@ -11,6 +11,7 @@ import (
 type ServerRepository interface {
 	CreateServer(*model.Server) error
 	GetServer(uint) (*model.Server, error)
+	GetServerByHost(string) (*model.Server, error)
 	ListServers() ([]model.Server, error)
 	UpdateServer(*model.Server) error
 	DeleteServer(uint) error

@@ -12,6 +12,7 @@ type ServerView struct {
 	ID          uint   `json:"id"`
 	Name        string `json:"name"`
 	Host        string `json:"host"`
+	Hostname    string `json:"hostname"`
 	SSHPort     int    `json:"ssh_port"`
 	SSHUser     string `json:"ssh_user"`
 	SSHAuthType string `json:"ssh_auth_type"`
@@ -23,7 +24,7 @@ func ServerDTO(server *model.Server) *ServerView {
 	if server == nil {
 		return nil
 	}
-	return &ServerView{ID: server.ID, Name: server.Name, Host: server.Host, SSHPort: server.SSHPort, SSHUser: server.SSHUser, SSHAuthType: server.SSHAuthType, ClusterRole: server.ClusterRole, K8sNodeName: server.K8sNodeName}
+	return &ServerView{ID: server.ID, Name: server.Name, Host: server.Host, Hostname: server.Hostname, SSHPort: server.SSHPort, SSHUser: server.SSHUser, SSHAuthType: server.SSHAuthType, ClusterRole: server.ClusterRole, K8sNodeName: server.K8sNodeName}
 }
 
 func ServersDTO(servers []model.Server) []ServerView {

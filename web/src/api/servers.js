@@ -45,8 +45,12 @@ export function deleteServer(serverID, options) {
   return remove(serverPath(serverID), options)
 }
 
-export function probeServer(serverID, options) {
-  return post(`${serverPath(serverID)}/probe`, undefined, options)
+export function probeServer(serverID, body, options) {
+  return post(`${serverPath(serverID)}/probe`, body, options)
+}
+
+export function resolveServerHostname(serverID, body, options) {
+  return post(serverID == null ? '/servers/hostname' : `${serverPath(serverID)}/hostname`, body, options)
 }
 
 export function preimportServer(serverID, options) {

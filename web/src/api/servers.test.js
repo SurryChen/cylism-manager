@@ -8,6 +8,7 @@ import {
   importServerToCluster,
   preimportServer,
   probeServer,
+  resolveServerHostname,
   unbindServer,
   updateServer,
 } from './servers.js'
@@ -36,7 +37,9 @@ describe('servers API', () => {
     createServer(body, options)
     updateServer('server/a', body, options)
     deleteServer('server/a', options)
-    probeServer('server/a', options)
+    probeServer('server/a', body, options)
+    resolveServerHostname('server/a', body, options)
+    resolveServerHostname(null, body, options)
     preimportServer('server/a', options)
     importServerToCluster('server/a', body, options)
     unbindServer('server/a', options)
@@ -44,9 +47,11 @@ describe('servers API', () => {
     expect(api.post).toHaveBeenNthCalledWith(1, '/servers', body, options)
     expect(api.put).toHaveBeenCalledWith('/servers/server%2Fa', body, options)
     expect(api.delete).toHaveBeenNthCalledWith(1, '/servers/server%2Fa', undefined, options)
-    expect(api.post).toHaveBeenNthCalledWith(2, '/servers/server%2Fa/probe', undefined, options)
-    expect(api.post).toHaveBeenNthCalledWith(3, '/nodes/server%2Fa/preimport', undefined, options)
-    expect(api.post).toHaveBeenNthCalledWith(4, '/nodes/server%2Fa/import', body, options)
-    expect(api.post).toHaveBeenNthCalledWith(5, '/servers/server%2Fa/unbind', undefined, options)
+    expect(api.post).toHaveBeenNthCalledWith(2, '/servers/server%2Fa/probe', body, options)
+    expect(api.post).toHaveBeenNthCalledWith(3, '/servers/server%2Fa/hostname', body, options)
+    expect(api.post).toHaveBeenNthCalledWith(4, '/servers/hostname', body, options)
+    expect(api.post).toHaveBeenNthCalledWith(5, '/nodes/server%2Fa/preimport', undefined, options)
+    expect(api.post).toHaveBeenNthCalledWith(6, '/nodes/server%2Fa/import', body, options)
+    expect(api.post).toHaveBeenNthCalledWith(7, '/servers/server%2Fa/unbind', undefined, options)
   })
 })

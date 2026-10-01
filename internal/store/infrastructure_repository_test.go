@@ -1,6 +1,8 @@
 package store
 
 import (
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -60,6 +62,71 @@ func TestServerCRUD(t *testing.T) {
 	_, err = s.GetServer(server.ID)
 	if err == nil {
 		t.Error("expected error after delete")
+	}
+}
+
+func TestServerHostCanBeReusedAfterDeletion(t *testing.T) {
+	s := setupTestDB(t)
+	first := &model.Server{Name: "first", Host: "10.0.0.1"}
+	if err := s.CreateServer(first); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CreateServer(&model.Server{Name: "duplicate", Host: first.Host}); err == nil {
+		t.Fatal("active servers must have unique hosts")
+	}
+	if err := s.DeleteServer(first.ID); err != nil {
+		t.Fatal(err)
+	}
+	replacement := &model.Server{Name: "replacement", Host: first.Host}
+	if err := s.CreateServer(replacement); err != nil {
+		t.Fatalf("reuse deleted server host: %v", err)
+	}
+	servers, err := s.ListServers()
+	if err != nil || len(servers) != 1 || servers[0].ID != replacement.ID {
+		t.Fatalf("expected only replacement server, got %#v, err=%v", servers, err)
+	}
+}
+
+func TestServerHostIndexMigrationPreservesDeletedServer(t *testing.T) {
+	dsn := filepath.Join(t.TempDir(), "servers.db")
+	legacy, err := New(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := legacy.DB().Migrator().DropIndex(&model.Server{}, "idx_servers_active_host"); err != nil {
+		t.Fatal(err)
+	}
+	if err := legacy.DB().Exec("CREATE UNIQUE INDEX idx_servers_host ON servers(host)").Error; err != nil {
+		t.Fatal(err)
+	}
+	deleted := &model.Server{Name: "old", Host: "10.0.0.1"}
+	if err := legacy.CreateServer(deleted); err != nil {
+		t.Fatal(err)
+	}
+	if err := legacy.DeleteServer(deleted.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	migrated, err := New(dsn)
+	if err != nil {
+		t.Fatalf("migrate old host index: %v", err)
+	}
+	if migrated.DB().Migrator().HasIndex(&model.Server{}, "idx_servers_host") {
+		t.Fatal("old global host index still exists")
+	}
+	var indexSQL string
+	if err := migrated.DB().Raw("SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'idx_servers_active_host'").Scan(&indexSQL).Error; err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.ToLower(indexSQL), "where deleted_at is null") {
+		t.Fatalf("expected partial unique index, got %q", indexSQL)
+	}
+	if err := migrated.CreateServer(&model.Server{Name: "new", Host: deleted.Host}); err != nil {
+		t.Fatalf("reuse host from legacy deleted server: %v", err)
+	}
+	var preserved model.Server
+	if err := migrated.DB().Unscoped().First(&preserved, deleted.ID).Error; err != nil || !preserved.DeletedAt.Valid {
+		t.Fatalf("deleted server history was not preserved: %#v, err=%v", preserved, err)
 	}
 }
 

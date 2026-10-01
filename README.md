@@ -73,12 +73,14 @@ helm upgrade --install cylism-manager charts/cylism-manager \
 需要 Go 1.25+、Node.js 24+ 和 npm。根据改动范围，可以额外使用 Docker、Helm、Python 3.10+ 或 Kubernetes 测试集群。
 
 ```bash
-go test ./...
-go run ./cmd/platform
-
-npm --prefix web ci
-npm --prefix web run dev
+scripts/local-dev.sh api
+# 另开一个终端
+scripts/local-dev.sh web
 ```
+
+脚本在缺少本地配置时创建 `config/config.yaml` 和本地 SQLite 数据目录，Web 依赖缺失时运行 `npm ci`。已有配置和数据库不会被覆盖。API 默认监听 `127.0.0.1:8080`，Web 默认将 `/api` 代理到该地址；两条命令都在前台运行。首次登录用户名为 `admin`，密码见本地配置的 `auth.admin_password`。
+
+只准备环境可运行 `scripts/local-dev.sh init`。Web 连接远端 API 时使用 `scripts/local-dev.sh web --remote https://example.com`。不连接 Kubernetes 时，集群功能会降级。
 
 完整验证命令和 OpenSpec 变更流程见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 

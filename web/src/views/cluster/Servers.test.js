@@ -8,9 +8,8 @@ import {
   getServerResourceStats,
   getServers,
   getServerStats,
-  importServerToCluster,
-  preimportServer,
   probeServer,
+  resolveServerHostname,
   unbindServer,
   updateServer,
 } from '../../api/servers.js'
@@ -21,9 +20,8 @@ vi.mock('../../api/servers.js', () => ({
   getServerResourceStats: vi.fn(),
   getServers: vi.fn(),
   getServerStats: vi.fn(),
-  importServerToCluster: vi.fn(),
-  preimportServer: vi.fn(),
   probeServer: vi.fn(),
+  resolveServerHostname: vi.fn(),
   unbindServer: vi.fn(),
   updateServer: vi.fn(),
 }))
@@ -33,8 +31,8 @@ vi.mock('../../utils/terminalRuntime.js', () => ({
 }))
 
 const servers = () => [
-  { id: 1, name: 'test-srv', host: '10.0.0.1', ssh_user: 'root', ssh_auth_type: 'password', ssh_port: 22, cluster_role: '', k8s_node_name: '' },
-  { id: 2, name: 'cluster-srv', host: '10.0.0.2', ssh_user: 'root', ssh_auth_type: 'password', ssh_port: 22, cluster_role: 'worker', k8s_node_name: 'worker-a' },
+  { id: 1, name: 'test-srv', host: '10.0.0.1', hostname: 'cloudzone.cylism.com', ssh_user: 'root', ssh_auth_type: 'password', ssh_port: 22, cluster_role: '', k8s_node_name: '' },
+  { id: 2, name: 'cluster-srv', host: '10.0.0.2', hostname: 'worker-a', ssh_user: 'root', ssh_auth_type: 'password', ssh_port: 22, cluster_role: 'worker', k8s_node_name: 'worker-a' },
 ]
 
 const resourceStats = () => [
@@ -56,9 +54,8 @@ beforeEach(() => {
   createServer.mockResolvedValue({})
   updateServer.mockResolvedValue({})
   deleteServer.mockResolvedValue({ message: 'ok' })
-  preimportServer.mockResolvedValue({ node_name: 'worker-a', role: 'worker' })
-  importServerToCluster.mockResolvedValue({})
   probeServer.mockResolvedValue({ reachable: true, latency_ms: 4 })
+  resolveServerHostname.mockResolvedValue({ hostname: 'cloudzone.cylism.com' })
   unbindServer.mockResolvedValue({})
 })
 
@@ -83,9 +80,167 @@ describe('Servers view', () => {
     expect(getServers).toHaveBeenCalledWith(expect.objectContaining({ signal: expect.any(AbortSignal) }))
     expect(wrapper.text()).toContain('test-srv')
     expect(wrapper.text()).toContain('10.0.0.1')
-    expect(wrapper.text()).toContain('未加入')
-    expect(wrapper.get('[title="检测 test-srv 的 SSH 连通性"]').classes()).toContain('icon-button--table')
+    expect(wrapper.get('.server-configuration-card thead').text()).not.toContain('集群状态')
+    expect(wrapper.findAll('.server-configuration-card tbody tr')).toHaveLength(2)
+    expect(wrapper.text()).not.toContain('导入集群')
+    expect(wrapper.get('.server-configuration-card thead').text()).toContain('操作')
+    expect(wrapper.get('.server-configuration-card thead').text()).toContain('主机名')
+    expect(wrapper.get('.server-configuration-card thead').text()).not.toContain('节点名')
+    expect(wrapper.text()).toContain('cloudzone.cylism.com')
+    expect(wrapper.find('[title="刷新 test-srv 的主机名"]').exists()).toBe(false)
+    expect(wrapper.get('.server-configuration-card thead').text()).not.toContain('SSH 连通')
+    expect(wrapper.get('[title="编辑 test-srv"]').classes()).toContain('icon-button--table')
+    expect(wrapper.get('[title="删除 test-srv"]').classes()).toContain('icon-button--table')
+    expect(wrapper.get('[title="解除 cluster-srv 的集群绑定"]').classes()).toContain('icon-button--table')
     expect(wrapper.get('[title="打开 test-srv 的终端"]').classes()).toContain('icon-button--table')
+    expect(wrapper.find('[title="检测 test-srv 的 SSH 连通性"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('only reloads saved hostnames when refreshing the list', async () => {
+    const wrapper = mount(Servers, { global: { stubs: { RouterLink: true } } })
+    await flush()
+    const changed = servers()
+    changed[0].hostname = 'new-host.example'
+    getServers.mockResolvedValueOnce(changed)
+    await wrapper.get('[title="刷新服务器列表"]').trigger('click')
+    await flush()
+
+    expect(wrapper.text()).toContain('new-host.example')
+    expect(getServers).toHaveBeenCalledTimes(2)
+    wrapper.unmount()
+  })
+
+  it('shows a hostname lookup failure only after an explicit request', async () => {
+    resolveServerHostname.mockRejectedValueOnce(new Error('SSH 认证失败'))
+    const wrapper = mount(Servers, { global: { stubs: { RouterLink: true } } })
+    await flush()
+    await wrapper.get('[title="编辑 test-srv"]').trigger('click')
+    expect(wrapper.get('#server-hostname').element.value).toBe('cloudzone.cylism.com')
+    expect(wrapper.get('#server-hostname').attributes('readonly')).toBeDefined()
+    expect(resolveServerHostname).not.toHaveBeenCalled()
+    await wrapper.get('[title="自动获取机器名"]').trigger('click')
+    await flush()
+
+    expect(wrapper.text()).toContain('SSH 认证失败')
+    expect(wrapper.get('#server-hostname').element.value).toBe('cloudzone.cylism.com')
+    await wrapper.get('form').trigger('submit')
+    await flush()
+
+    expect(wrapper.find('.modal').exists()).toBe(false)
+    expect(updateServer).toHaveBeenCalledWith(1, expect.objectContaining({ hostname: 'cloudzone.cylism.com' }))
+    expect(resolveServerHostname).toHaveBeenCalledTimes(1)
+    wrapper.unmount()
+  })
+
+  it('edits a cluster-bound server without clearing its stored SSH credentials', async () => {
+    const wrapper = mount(Servers, { global: { stubs: { RouterLink: true } } })
+    await flush()
+    await wrapper.get('[title="编辑 cluster-srv"]').trigger('click')
+    expect(wrapper.text()).toContain('编辑服务器')
+    expect(wrapper.get('input[placeholder="留空保持原密码"]').element.value).toBe('')
+    expect(wrapper.find('input[placeholder="我的服务器"]').exists()).toBe(false)
+    await wrapper.get('form').trigger('submit')
+    await flush()
+
+    expect(updateServer).toHaveBeenCalledWith(2, {
+      host: '10.0.0.2',
+      ssh_port: 22,
+      ssh_user: 'root',
+      ssh_auth_type: 'password',
+      hostname: 'worker-a',
+    })
+    expect(wrapper.find('input[placeholder="我的服务器"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('prompts for automatic machine-name lookup before adding', async () => {
+    const wrapper = mount(Servers, { global: { stubs: { RouterLink: true } } })
+    await flush()
+    await wrapper.get('[data-testid="add-server"]').trigger('click')
+    expect(wrapper.find('input[placeholder="我的服务器"]').exists()).toBe(false)
+    await wrapper.get('input[placeholder="192.168.1.100"]').setValue('10.0.0.9')
+    await wrapper.get('form').trigger('submit')
+    await flush()
+
+    expect(wrapper.text()).toContain('请先点击“自动获取”获取机器名')
+    expect(createServer).not.toHaveBeenCalled()
+    expect(resolveServerHostname).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('automatically gets a machine name from draft SSH settings and saves it', async () => {
+    const wrapper = mount(Servers, { global: { stubs: { RouterLink: true } } })
+    await flush()
+    await wrapper.get('[data-testid="add-server"]').trigger('click')
+    await wrapper.get('input[placeholder="192.168.1.100"]').setValue('10.0.0.9')
+    await wrapper.get('input[placeholder="输入密码"]').setValue('secret')
+    await wrapper.get('[title="自动获取机器名"]').trigger('click')
+    await flush()
+
+    expect(resolveServerHostname).toHaveBeenCalledWith(null, expect.objectContaining({ host: '10.0.0.9', ssh_password: 'secret' }))
+    expect(wrapper.get('#server-hostname').element.value).toBe('cloudzone.cylism.com')
+    await wrapper.get('form').trigger('submit')
+    await flush()
+    expect(createServer).toHaveBeenCalledWith(expect.objectContaining({ hostname: 'cloudzone.cylism.com' }))
+    expect(resolveServerHostname).toHaveBeenCalledTimes(1)
+    wrapper.unmount()
+  })
+
+  it('directs duplicate hosts to their existing server record', async () => {
+    const wrapper = mount(Servers, { global: { stubs: { RouterLink: true } } })
+    await flush()
+    await wrapper.get('[data-testid="add-server"]').trigger('click')
+    await wrapper.get('input[placeholder="192.168.1.100"]').setValue('10.0.0.1')
+    await wrapper.get('[title="自动获取机器名"]').trigger('click')
+    await flush()
+    await wrapper.get('form').trigger('submit')
+    await flush()
+
+    expect(wrapper.text()).toContain('该主机已添加，请编辑已有服务器')
+    expect(createServer).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('clears a resolved machine name when connection details change', async () => {
+    const wrapper = mount(Servers, { global: { stubs: { RouterLink: true } } })
+    await flush()
+    await wrapper.get('[title="编辑 test-srv"]').trigger('click')
+    await wrapper.get('input[placeholder="192.168.1.100"]').setValue('10.0.0.10')
+    expect(wrapper.get('#server-hostname').element.value).toBe('')
+    await wrapper.get('[title="自动获取机器名"]').trigger('click')
+    await flush()
+    expect(resolveServerHostname).toHaveBeenCalledWith(1, expect.objectContaining({ host: '10.0.0.10' }))
+    expect(wrapper.get('#server-hostname').element.value).toBe('cloudzone.cylism.com')
+    await wrapper.get('input[placeholder="留空保持原密码"]').setValue('new-secret')
+    expect(wrapper.get('#server-hostname').element.value).toBe('')
+    await wrapper.get('form').trigger('submit')
+    await flush()
+    expect(updateServer).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('请先点击“自动获取”获取机器名')
+    await wrapper.get('[title="自动获取机器名"]').trigger('click')
+    await flush()
+    await wrapper.get('form').trigger('submit')
+    await flush()
+    expect(updateServer).toHaveBeenCalledWith(1, expect.objectContaining({ hostname: 'cloudzone.cylism.com', ssh_password: 'new-secret' }))
+    expect(resolveServerHostname).toHaveBeenCalledTimes(2)
+    wrapper.unmount()
+  })
+
+  it('tests the current edit form without saving and shows the result in the form', async () => {
+    const wrapper = mount(Servers, { global: { stubs: { RouterLink: true } } })
+    await flush()
+    await wrapper.get('[title="编辑 test-srv"]').trigger('click')
+    await wrapper.get('input[placeholder="192.168.1.100"]').setValue('10.0.0.9')
+    await wrapper.get('input[placeholder="留空保持原密码"]').setValue('new-password')
+    await wrapper.findAll('button').find(button => button.text() === '测试连接').trigger('click')
+    await flush()
+
+    expect(probeServer).toHaveBeenCalledWith(1, expect.objectContaining({ host: '10.0.0.9', ssh_password: 'new-password' }))
+    expect(updateServer).not.toHaveBeenCalled()
+    expect(wrapper.get('.server-probe-result').text()).toContain('连接成功')
+    await wrapper.get('input[placeholder="192.168.1.100"]').setValue('10.0.0.10')
+    expect(wrapper.find('.server-probe-result').exists()).toBe(false)
     wrapper.unmount()
   })
 
@@ -94,13 +249,14 @@ describe('Servers view', () => {
     const wrapper = mount(Servers, { global: { stubs: { RouterLink: true } } })
     await flush()
     await wrapper.get('[data-testid="add-server"]').trigger('click')
-    await wrapper.get('input[placeholder="我的服务器"]').setValue('edge-a')
     await wrapper.get('input[placeholder="192.168.1.100"]').setValue('10.0.0.9')
+    await wrapper.get('[title="自动获取机器名"]').trigger('click')
+    await flush()
     await wrapper.get('form').trigger('submit')
     await flush()
 
     expect(wrapper.text()).toContain('SSH 凭据无效')
-    expect(wrapper.find('input[placeholder="我的服务器"]').exists()).toBe(true)
+    expect(wrapper.find('input[placeholder="我的服务器"]').exists()).toBe(false)
     wrapper.unmount()
   })
 
@@ -154,7 +310,7 @@ describe('Servers view', () => {
     const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
     const wrapper = mount(Servers, { global: { stubs: { RouterLink: true } } })
     await flush()
-    await wrapper.findAll('button').find(button => button.text() === '解除绑定').trigger('click')
+    await wrapper.get('[title="解除 cluster-srv 的集群绑定"]').trigger('click')
     await flush()
 
     expect(confirm).toHaveBeenCalled()

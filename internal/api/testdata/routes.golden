@@ -298,9 +298,11 @@ POST /api/runtimes/:id/deploy
 POST /api/runtimes/:id/health-check
 POST /api/runtimes/:id/uninstall
 POST /api/servers
+POST /api/servers/:id/hostname
 POST /api/servers/:id/precheck
 POST /api/servers/:id/probe
 POST /api/servers/:id/unbind
+POST /api/servers/hostname
 POST /api/sites
 POST /api/system-components/:chart/revert
 PUT /api/admin/tables/:table/:id

@@ -12,6 +12,7 @@ import (
 func registerInfrastructureRoutes(apiGroup *gin.RouterGroup, server *clusterapi.ServerHandler, terminal *clusterapi.ServerTerminalHandler, site *networkapi.SiteHandler, operations *systemapi.OperationHandler, domain *networkapi.DomainHandler, node *clusterapi.NodeHandler, join *clusterapi.NodeJoinProgressHandler, ingress *networkapi.IngressHandler, cert *networkapi.CertHandler, k8sHandler *kubernetesapi.K8sHandler, platform *kubernetesapi.ClusterPlatformHandler, storage *storageapi.StorageHandler, network *networkapi.NetworkHandler, crd *kubernetesapi.CRDHandler, audit *systemapi.AuditHandler, dbAdmin *systemapi.DBAdminHandler) {
 	servers := apiGroup.Group("/servers")
 	servers.POST("", server.Create)
+	servers.POST("/hostname", server.ResolveHostname)
 	servers.GET("", server.List)
 	servers.GET("/resource-stats", server.ResourceStats)
 	servers.GET("/:id", server.Get)
@@ -19,6 +20,7 @@ func registerInfrastructureRoutes(apiGroup *gin.RouterGroup, server *clusterapi.
 	servers.DELETE("/:id", server.Delete)
 	servers.POST("/:id/unbind", server.Unbind)
 	servers.POST("/:id/probe", server.Probe)
+	servers.POST("/:id/hostname", server.ResolveHostname)
 	servers.POST("/:id/precheck", server.Precheck)
 	servers.GET("/:id/stats", server.Stats)
 	servers.GET("/:id/terminal", terminal.Terminal)

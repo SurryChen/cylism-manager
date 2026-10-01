@@ -116,6 +116,10 @@ func (s *Service) GetServer(id uint) (*model.Server, error) {
 	return s.servers.GetServer(id)
 }
 
+func (s *Service) GetServerByHost(host string) (*model.Server, error) {
+	return s.servers.GetServerByHost(host)
+}
+
 func (s *Service) UpdateServer(server *model.Server) error {
 	return s.servers.UpdateServer(server)
 }
@@ -144,6 +148,11 @@ func (s *Service) ProbeServerContext(ctx context.Context, id uint) (*ProbeResult
 	if err != nil {
 		return nil, err
 	}
+	return s.ProbeServerConfigContext(ctx, server)
+}
+
+// ProbeServerConfigContext checks connection details without persisting them.
+func (s *Service) ProbeServerConfigContext(ctx context.Context, server *model.Server) (*ProbeResult, error) {
 	if s.inspector == nil {
 		return nil, fmt.Errorf("服务器检查器未配置")
 	}
@@ -154,6 +163,17 @@ func (s *Service) ProbeServerContext(ctx context.Context, id uint) (*ProbeResult
 		Error:     errorMessage,
 		LatencyMS: time.Since(startedAt).Milliseconds(),
 	}, nil
+}
+
+func (s *Service) ServerHostnameContext(ctx context.Context, server *model.Server) (string, error) {
+	if s.importer == nil {
+		return "", fmt.Errorf("服务器主机名检查器未配置")
+	}
+	hostname, err := s.importer.Hostname(ctx, server)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(hostname), nil
 }
 
 func (s *Service) PrecheckServerContext(ctx context.Context, id uint) (*PrecheckResult, error) {
