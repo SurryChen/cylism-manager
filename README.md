@@ -45,11 +45,10 @@ Cylism Manager 是一个用于管理 Linux 服务器、Kubernetes 集群和自�
 git clone https://github.com/SurryChen/cylism-manager.git
 cd cylism-manager
 
-bash scripts/deploy-platform.sh \
-  --image ghcr.io/surrychen/cylism-manager:latest \
-  --namespace cylism-system \
-  --verify-image-pull
+bash scripts/deploy-platform.sh
 ```
+
+脚本默认使用 GHCR 镜像和 `cylism-system` 命名空间，并交互询问 HTTPS IP。输入 IP 后会通过 K3s Traefik 创建一个 30 天有效的临时自签 HTTPS 入口；也可以执行 `bash scripts/deploy-platform.sh uninstall` 清理部署资源。PVC 和 `cylism-secret` 默认保留，使用 `--purge-data` 才会删除。
 
 ### Helm Chart
 

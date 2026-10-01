@@ -5,11 +5,13 @@ set -Eeuo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MANIFEST="${MANIFEST:-$ROOT_DIR/k8s/platform-deployment.yaml}"
 DEFAULT_IMAGE="${CYLISM_DEFAULT_IMAGE:-ghcr.io/surrychen/cylism-manager:latest}"
-NAMESPACE="${NAMESPACE:-default}"
+NAMESPACE="${NAMESPACE:-cylism-system}"
 DEPLOYMENT="${DEPLOYMENT:-cylism-manager}"
 CONTAINER="${CONTAINER:-platform}"
+ACTION="install"
 IMAGE="${CYLISM_IMAGE:-}"
 NODE_NAME="${CYLISM_NODE_NAME:-}"
+HTTPS_IP="${CYLISM_HTTPS_IP:-}"
 IMAGE_PULL_SECRET="${CYLISM_IMAGE_PULL_SECRET:-}"
 GHCR_USERNAME="${CYLISM_GHCR_USERNAME:-}"
 GHCR_TOKEN="${CYLISM_GHCR_TOKEN:-}"
@@ -17,13 +19,21 @@ CONFIGURE_GHCR_PULL_SECRET="${CYLISM_CONFIGURE_GHCR_PULL_SECRET:-}"
 VERIFY_IMAGE_PULL="${CYLISM_VERIFY_IMAGE_PULL:-}"
 BACKUP_DIR="${CYLISM_BACKUP_DIR:-}"
 SKIP_BACKUP="${CYLISM_SKIP_BACKUP:-}"
+PURGE_DATA="${CYLISM_PURGE_DATA:-}"
+ASSUME_YES="${CYLISM_ASSUME_YES:-}"
+
+case "${1:-}" in
+  install) ACTION="install"; shift ;;
+  uninstall|remove) ACTION="uninstall"; shift ;;
+esac
 
 usage() {
   cat <<'EOF'
-Usage: scripts/deploy-platform.sh [options]
-  --image IMAGE              Image reference (prompted if omitted)
-  --namespace NAME           Kubernetes namespace (default: default)
+Usage: scripts/deploy-platform.sh [install|uninstall] [options]
+  --image IMAGE              Image reference (default: ghcr.io/surrychen/cylism-manager:latest)
+  --namespace NAME           Kubernetes namespace (default: cylism-system)
   --node NAME                Node selector for a fresh deployment
+  --https-ip IP              Create a temporary self-signed HTTPS Ingress for this IP
   --image-pull-secret NAME   Existing imagePullSecret name
   --ghcr-username NAME       GitHub username for private GHCR image pulls
   --ghcr-token TOKEN         GitHub token for private GHCR image pulls
@@ -31,7 +41,9 @@ Usage: scripts/deploy-platform.sh [options]
   --verify-image-pull        Verify Kubernetes can pull the target image first
   --backup-dir DIR           Save pre-deploy resource backups under DIR
   --skip-backup              Do not create pre-deploy resource backups
-  --manifest PATH            Kubernetes manifest path
+  --purge-data               With uninstall, also delete the PVC and cylism-secret
+  --yes                      Skip uninstall confirmation
+  --manifest PATH            Kubernetes manifest path (install only)
   -h, --help                 Show this help
 
 Existing cylism-secret values are reused. Missing values are generated or
@@ -49,6 +61,7 @@ while [ "$#" -gt 0 ]; do
     --image) IMAGE="${2:?--image 需要参数}"; shift 2 ;;
     --namespace) NAMESPACE="${2:?--namespace 需要参数}"; shift 2 ;;
     --node) NODE_NAME="${2:?--node 需要参数}"; shift 2 ;;
+    --https-ip) HTTPS_IP="${2:?--https-ip 需要参数}"; shift 2 ;;
     --image-pull-secret) IMAGE_PULL_SECRET="${2:?--image-pull-secret 需要参数}"; shift 2 ;;
     --ghcr-username) GHCR_USERNAME="${2:?--ghcr-username 需要参数}"; shift 2 ;;
     --ghcr-token) GHCR_TOKEN="${2:?--ghcr-token 需要参数}"; shift 2 ;;
@@ -56,16 +69,24 @@ while [ "$#" -gt 0 ]; do
     --verify-image-pull) VERIFY_IMAGE_PULL="true"; shift ;;
     --backup-dir) BACKUP_DIR="${2:?--backup-dir 需要参数}"; shift 2 ;;
     --skip-backup) SKIP_BACKUP="true"; shift ;;
+    --purge-data) PURGE_DATA="true"; shift ;;
+    --yes) ASSUME_YES="true"; shift ;;
     --manifest) MANIFEST="${2:?--manifest 需要参数}"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) die "未知参数: $1（使用 --help 查看用法）" ;;
   esac
 done
 
-need_cmd base64
-need_cmd openssl
-need_cmd curl
-[ -f "$MANIFEST" ] || die "找不到 Kubernetes 清单: $MANIFEST"
+if [ "$ACTION" = "install" ] && [ -z "$HTTPS_IP" ]; then
+  read -r -p "请输入 HTTPS 访问的服务器公网 IPv4（回车跳过）: " HTTPS_IP
+fi
+
+if [ "$ACTION" = "install" ]; then
+  need_cmd base64
+  need_cmd openssl
+  need_cmd curl
+  [ -f "$MANIFEST" ] || die "找不到 Kubernetes 清单: $MANIFEST"
+fi
 
 probe_kubectl() {
   "$@" get nodes >/dev/null 2>&1
@@ -131,7 +152,98 @@ select_kubectl() {
 select_kubectl
 k() { "${KUBECTL[@]}" "$@"; }
 echo "使用 Kubernetes 命令: ${KUBECTL[*]}"
-k get namespace "$NAMESPACE" >/dev/null 2>&1 || k create namespace "$NAMESPACE" >/dev/null
+if [ "$ACTION" = "install" ]; then
+  k get namespace "$NAMESPACE" >/dev/null 2>&1 || k create namespace "$NAMESPACE" >/dev/null
+fi
+
+configure_https_ingress() {
+  [ -n "$HTTPS_IP" ] || return 0
+  [[ "$HTTPS_IP" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || die "--https-ip 必须是 IPv4 地址"
+  IFS='.' read -r -a ip_octets <<< "$HTTPS_IP"
+  for octet in "${ip_octets[@]}"; do
+    [ "$octet" -le 255 ] || die "--https-ip 不是有效的 IPv4 地址: $HTTPS_IP"
+  done
+  k -n kube-system get service traefik >/dev/null 2>&1 || die "未检测到 K3s Traefik，无法创建 HTTPS 入口"
+  traefik_https_port="$(k -n kube-system get service traefik -o jsonpath='{.spec.ports[?(@.port==443)].port}' 2>/dev/null || true)"
+  [ "$traefik_https_port" = "443" ] || die "Traefik Service 未暴露 443 端口"
+
+  local tls_dir
+  tls_dir="$(mktemp -d)"
+  openssl req -x509 -nodes -newkey rsa:2048 -days 30 \
+    -keyout "$tls_dir/tls.key" \
+    -out "$tls_dir/tls.crt" \
+    -subj "/CN=$HTTPS_IP" \
+    -addext "subjectAltName = IP:$HTTPS_IP" >/dev/null 2>&1
+  k -n "$NAMESPACE" create secret tls cylism-manager-tls \
+    --cert="$tls_dir/tls.crt" --key="$tls_dir/tls.key" \
+    --dry-run=client -o yaml | k apply -f - >/dev/null
+  rm -rf "$tls_dir"
+
+  cat <<EOF | k -n "$NAMESPACE" apply -f - >/dev/null
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: cylism-manager
+spec:
+  ingressClassName: traefik
+  tls:
+    - secretName: cylism-manager-tls
+  rules:
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: cylism-manager
+                port:
+                  number: 8080
+EOF
+  echo "已配置临时 HTTPS 入口: https://$HTTPS_IP（自签证书有效期 30 天）"
+}
+
+uninstall_platform() {
+  if ! k get namespace "$NAMESPACE" >/dev/null 2>&1; then
+    echo "命名空间 $NAMESPACE 不存在，无需卸载。"
+    return 0
+  fi
+  if [[ ! "$ASSUME_YES" =~ ^([Yy]|true|TRUE|1)$ ]]; then
+    read -r -p "确认卸载 Cylism Manager（默认保留 PVC 和核心 Secret）？[y/N] " answer
+    [[ "$answer" =~ ^([Yy]|yes|YES)$ ]] || die "已取消卸载。"
+  fi
+
+  echo "清理 $NAMESPACE 中的 Manager 资源..."
+  k -n "$NAMESPACE" delete \
+    deployment/"$DEPLOYMENT" \
+    service/"$DEPLOYMENT" \
+    ingress/"$DEPLOYMENT" \
+    serviceaccount/"$DEPLOYMENT" \
+    role/"$DEPLOYMENT" \
+    rolebinding/"$DEPLOYMENT" \
+    configmap/cylism-config \
+    secret/cylism-manager-tls \
+    secret/cylism-ssh-key \
+    --ignore-not-found >/dev/null
+  k delete \
+    clusterrolebinding/cylism-manager \
+    clusterrole/cylism-manager \
+    clusterrolebinding/cylism-alidns-webhook-solver \
+    clusterrole/cylism-alidns-webhook-solver \
+    --ignore-not-found >/dev/null
+
+  if [[ "$PURGE_DATA" =~ ^([Yy]|true|TRUE|1)$ ]]; then
+    echo "删除 PVC 和核心 Secret..."
+    k -n "$NAMESPACE" delete pvc/cylism-manager-data secret/cylism-secret --ignore-not-found >/dev/null
+  else
+    echo "已保留 PVC cylism-manager-data 和 Secret cylism-secret。"
+  fi
+  echo "卸载完成；命名空间 $NAMESPACE 未删除。"
+}
+
+if [ "$ACTION" = "uninstall" ]; then
+  uninstall_platform
+  exit 0
+fi
 
 backup_if_exists() {
   local resource="$1"
@@ -290,7 +402,14 @@ read_config() {
   k -n "$NAMESPACE" get configmap cylism-config -o "jsonpath={.data['$1']}" 2>/dev/null || true
 }
 public_url="$(read_config public-url)"
-if [ -z "$public_url" ]; then read -r -p "公开访问地址（可留空）: " public_url; fi
+if [ -z "$public_url" ]; then
+  if [ -n "$HTTPS_IP" ]; then
+    public_url="https://$HTTPS_IP"
+    echo "使用 HTTPS 公开访问地址: $public_url"
+  else
+    read -r -p "公开访问地址（可留空）: " public_url
+  fi
+fi
 admin_user="$(read_config admin-user)"; admin_user="${admin_user:-admin}"
 access_ttl="$(read_config access-token-ttl)"; access_ttl="${access_ttl:-7200}"
 refresh_ttl="$(read_config refresh-token-ttl)"; refresh_ttl="${refresh_ttl:-604800}"
@@ -381,6 +500,7 @@ k -n "$NAMESPACE" rollout restart "deployment/$DEPLOYMENT" >/dev/null
 
 echo "等待 $DEPLOYMENT rollout..."
 k -n "$NAMESPACE" rollout status "deployment/$DEPLOYMENT" --timeout=180s
+configure_https_ingress
 echo "部署完成: $IMAGE"
 echo "管理员用户名: $admin_user（已有数据库不会因本次部署改变密码）"
 echo "命名空间: $NAMESPACE"
