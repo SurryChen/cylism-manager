@@ -37,6 +37,37 @@ func (s *Store) CreateClusterDNSPolicy(policy *model.ClusterDNSPolicy) error {
 	})
 }
 
+func (s *Store) GetActiveClusterDNSPolicyForCluster(clusterID uint) (*model.ClusterDNSPolicy, error) {
+	var policy model.ClusterDNSPolicy
+	err := s.db.Where("cluster_id = ? AND active = ?", clusterID, true).Order("revision desc").First(&policy).Error
+	return &policy, err
+}
+
+func (s *Store) ListClusterDNSPoliciesForCluster(clusterID uint, limit int) ([]model.ClusterDNSPolicy, error) {
+	if limit < 1 || limit > 50 {
+		limit = 20
+	}
+	var policies []model.ClusterDNSPolicy
+	err := s.db.Where("cluster_id = ?", clusterID).Order("revision desc").Limit(limit).Find(&policies).Error
+	return policies, err
+}
+
+func (s *Store) CreateClusterDNSPolicyForCluster(policy *model.ClusterDNSPolicy, clusterID uint) error {
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		var maxRevision uint
+		// Revision remains globally unique for compatibility with existing
+		// databases; policies are still active and listed per cluster.
+		if err := tx.Model(&model.ClusterDNSPolicy{}).Select("COALESCE(MAX(revision), 0)").Scan(&maxRevision).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&model.ClusterDNSPolicy{}).Where("cluster_id = ? AND active = ?", clusterID, true).Update("active", false).Error; err != nil {
+			return err
+		}
+		policy.ClusterID, policy.Revision, policy.Active = clusterID, maxRevision+1, true
+		return tx.Create(policy).Error
+	})
+}
+
 // GetEnvironmentByID is shared infrastructure read state: PVC, domain and
 // certificate workflows need the namespace but do not own Environment writes.
 func (s *Store) GetEnvironmentByID(environmentID uint) (*model.Environment, error) {
@@ -76,7 +107,7 @@ func (s *Store) UpdateServer(server *model.Server) error {
 
 func (s *Store) UnbindServersFromClusterNode(nodeName string) error {
 	return s.db.Model(&model.Server{}).
-		Where("k8s_node_name = ?", nodeName).
+		Where("k8s_node_name = ? AND cluster_id IS NULL", nodeName).
 		Updates(map[string]interface{}{
 			"cluster_role":  "",
 			"k8s_node_name": "",

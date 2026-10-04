@@ -51,6 +51,25 @@ ensure_web_dependencies() {
   fi
 }
 
+ensure_agent_binary() {
+  local binary_path="${CYLISM_CLUSTER_AGENT_BINARY:-$root_dir/bin/cylism-cluster-agent-linux-amd64}"
+  if [[ -f "$binary_path" && -x "$binary_path" ]]; then
+    export CYLISM_CLUSTER_AGENT_BINARY="$binary_path"
+    printf '使用 cluster-agent：%s\n' "$binary_path"
+    return
+  fi
+  if [[ -n "${CYLISM_CLUSTER_AGENT_BINARY:-}" ]]; then
+    printf '指定的 CYLISM_CLUSTER_AGENT_BINARY 不存在或不可执行：%s\n' "$binary_path" >&2
+    exit 1
+  fi
+  mkdir -p "$root_dir/bin"
+  printf '正在编译 cluster-agent（linux/amd64）...\n'
+  GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -o "$binary_path" ./cmd/cluster-agent
+  chmod 0755 "$binary_path"
+  export CYLISM_CLUSTER_AGENT_BINARY="$binary_path"
+  printf '已编译 cluster-agent：%s\n' "$binary_path"
+}
+
 case "${1:-}" in
   init)
     [[ $# -eq 1 ]] || { usage >&2; exit 2; }
@@ -63,6 +82,7 @@ case "${1:-}" in
     [[ $# -eq 1 ]] || { usage >&2; exit 2; }
     require_command go
     ensure_config
+    ensure_agent_binary
     mkdir -p "$root_dir/data"
     printf '启动 API：http://127.0.0.1:${SERVER_PORT:-8080}\n'
     exec go run ./cmd/platform

@@ -39,6 +39,12 @@ type ClusterDNSRepository interface {
 	CreateClusterDNSPolicy(*model.ClusterDNSPolicy) error
 }
 
+type ClusterScopedDNSRepository interface {
+	GetActiveClusterDNSPolicyForCluster(uint) (*model.ClusterDNSPolicy, error)
+	ListClusterDNSPoliciesForCluster(uint, int) ([]model.ClusterDNSPolicy, error)
+	CreateClusterDNSPolicyForCluster(*model.ClusterDNSPolicy, uint) error
+}
+
 // SiteRepository owns legacy server-backed site and certificate records.
 type SiteRepository interface {
 	CreateSite(*model.Site) error

@@ -8,7 +8,7 @@ import (
 // migrateSchema creates and updates the current persistence schema.
 func migrateSchema(db *gorm.DB) error {
 	return db.AutoMigrate(
-		&model.Server{}, &model.Site{}, &model.Cert{}, &model.AuditLog{},
+		&model.Cluster{}, &model.ClusterDeployment{}, &model.ClusterDeploymentLog{}, &model.AccessCA{}, &model.AccessCertificate{}, &model.Server{}, &model.Site{}, &model.Cert{}, &model.AuditLog{},
 		&model.OperationLog{}, &model.User{}, &model.TemporaryLoginToken{},
 		&model.SystemConfig{}, &model.RuntimeInstance{}, &model.AgentCapabilityGrant{},
 		&model.AgentOperation{}, &model.AlertEvent{}, &model.AlertAutomationPolicy{},
@@ -19,7 +19,7 @@ func migrateSchema(db *gorm.DB) error {
 		&model.ImageRegistry{}, &model.NodeRegistryMirror{}, &model.NodeRegistryMirrorNode{},
 		&model.ManagedOCIRegistry{}, &model.RegistryProxy{}, &model.ClusterDNSPolicy{},
 		&model.ChartRepository{}, &model.DNSCredential{}, &model.ManagedDomain{},
-        &model.CloudConnection{},
+		&model.CloudConnection{},
 		&model.Release{}, &model.ReleaseOperation{}, &model.PersistentVolumeMigration{},
 		&model.PersistentVolumeBackup{}, &model.HostDirectoryPVCImport{},
 		&model.SystemComponentConfig{},

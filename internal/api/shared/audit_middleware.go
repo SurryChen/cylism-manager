@@ -72,6 +72,8 @@ func catalogedAuditAction(method, path string) (string, string, bool) {
 	}
 	resourceType := ""
 	switch {
+	case strings.Contains(path, "/access-certificates"):
+		resourceType = "access_certificate"
 	case strings.Contains(path, "/monitoring/alerts"):
 		resourceType = "alerting"
 	case strings.Contains(path, "/monitoring/logs"):
@@ -120,6 +122,8 @@ func catalogedAuditAction(method, path string) (string, string, bool) {
 		resourceType = "application"
 	case strings.Contains(path, "/servers"):
 		resourceType = "server"
+	case strings.Contains(path, "/clusters"):
+		resourceType = "cluster"
 	case strings.Contains(path, "/sites"):
 		resourceType = "site"
 	case strings.Contains(path, "/domains"):
@@ -166,6 +170,8 @@ func catalogedAuditAction(method, path string) (string, string, bool) {
 		operation = "restore"
 	case strings.Contains(path, "/backup"):
 		operation = "backup"
+	case strings.Contains(path, "/revoke"):
+		operation = "revoke"
 	case strings.Contains(path, "/releases"):
 		operation = "release"
 	case strings.Contains(path, "/deploy"):

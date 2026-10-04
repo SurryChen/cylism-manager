@@ -7,6 +7,7 @@ import (
 	"net"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
 	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
@@ -28,9 +29,15 @@ const (
 var coreDNSForwardPattern = regexp.MustCompile(`(?m)^(\s*forward\s+\.\s+)([^\n{]+)(\{[^\n]*\})?\s*$`)
 
 type ClusterDNSHandler struct {
-	store repository.ClusterDNSRepository
-	k8s   ClusterDNSAdapter
+	store          repository.ClusterDNSRepository
+	k8s            ClusterDNSAdapter
+	adapterFactory ClusterDNSAdapterFactory
 }
+
+// ClusterDNSAdapterFactory resolves the Kubernetes API for a logical
+// cluster. The empty query parameter keeps the legacy single-cluster mode
+// working while cluster detail pages opt into Agent access explicitly.
+type ClusterDNSAdapterFactory func(context.Context, uint) (ClusterDNSAdapter, error)
 
 // ClusterDNSAdapter is the minimal Kubernetes capability required by this
 // handler. The concrete client is composed by bootstrap, keeping transport
@@ -72,31 +79,93 @@ func NewClusterDNSHandlerWithAdapter(s repository.ClusterDNSRepository, adapter 
 	return &ClusterDNSHandler{store: s, k8s: adapter}
 }
 
+func (h *ClusterDNSHandler) WithAdapterFactory(factory ClusterDNSAdapterFactory) *ClusterDNSHandler {
+	h.adapterFactory = factory
+	return h
+}
+
+func (h *ClusterDNSHandler) adapterForContext(c *gin.Context) (ClusterDNSAdapter, error) {
+	value := strings.TrimSpace(c.Query("cluster_id"))
+	if value == "" {
+		return h.k8s, nil
+	}
+	id, err := strconv.ParseUint(value, 10, 32)
+	if err != nil || id == 0 {
+		return nil, fmt.Errorf("集群 ID 无效")
+	}
+	if h.adapterFactory == nil {
+		return nil, fmt.Errorf("集群 Agent 访问未配置")
+	}
+	return h.adapterFactory(c.Request.Context(), uint(id))
+}
+
+func requestedClusterID(c *gin.Context) uint {
+	value := strings.TrimSpace(c.Query("cluster_id"))
+	if value == "" {
+		return 0
+	}
+	id, _ := strconv.ParseUint(value, 10, 32)
+	return uint(id)
+}
+
+func (h *ClusterDNSHandler) activePolicy(clusterID uint) (*model.ClusterDNSPolicy, error) {
+	if clusterID != 0 {
+		if repo, ok := h.store.(repository.ClusterScopedDNSRepository); ok {
+			return repo.GetActiveClusterDNSPolicyForCluster(clusterID)
+		}
+	}
+	return h.store.GetActiveClusterDNSPolicy()
+}
+
+func (h *ClusterDNSHandler) policies(clusterID uint, limit int) ([]model.ClusterDNSPolicy, error) {
+	if clusterID != 0 {
+		if repo, ok := h.store.(repository.ClusterScopedDNSRepository); ok {
+			return repo.ListClusterDNSPoliciesForCluster(clusterID, limit)
+		}
+	}
+	return h.store.ListClusterDNSPolicies(limit)
+}
+
+func (h *ClusterDNSHandler) createPolicy(policy *model.ClusterDNSPolicy, clusterID uint) error {
+	if clusterID != 0 {
+		if repo, ok := h.store.(repository.ClusterScopedDNSRepository); ok {
+			return repo.CreateClusterDNSPolicyForCluster(policy, clusterID)
+		}
+	}
+	return h.store.CreateClusterDNSPolicy(policy)
+}
+
 type clusterDNSPolicyRequest struct {
 	Resolvers []string `json:"resolvers"`
 }
 
 func (h *ClusterDNSHandler) Status(c *gin.Context) {
-	if h.k8s == nil || !h.k8s.KubernetesAvailable() {
+	adapter, err := h.adapterForContext(c)
+	if err != nil {
+		apiShared.K8sAPIError(c, err.Error())
+		return
+	}
+	if adapter == nil || !adapter.KubernetesAvailable() {
 		apiShared.K8sUnavailable(c)
 		return
 	}
-	configMap, err := h.k8s.GetCoreDNSConfig(c.Request.Context())
+	configMap, err := adapter.GetCoreDNSConfig(c.Request.Context())
 	if err != nil {
 		apiShared.K8sAPIError(c, "读取 CoreDNS 配置失败")
 		return
 	}
-	policy, err := h.store.GetActiveClusterDNSPolicy()
+	clusterID := requestedClusterID(c)
+	policy, err := h.activePolicy(clusterID)
 	if err != nil && !apierrors.IsNotFound(err) && !strings.Contains(err.Error(), "record not found") {
 		apiShared.DBError(c, "读取 DNS 策略失败")
 		return
 	}
-	history, err := h.store.ListClusterDNSPolicies(20)
+	history, err := h.policies(clusterID, 20)
 	if err != nil {
 		apiShared.DBError(c, "读取 DNS 策略历史失败")
 		return
 	}
-	pods, err := h.k8s.ListCoreDNSPods(c.Request.Context())
+	pods, err := adapter.ListCoreDNSPods(c.Request.Context())
 	if err != nil {
 		apiShared.K8sAPIError(c, "读取 CoreDNS Pod 状态失败")
 		return
@@ -115,7 +184,12 @@ func (h *ClusterDNSHandler) Status(c *gin.Context) {
 }
 
 func (h *ClusterDNSHandler) Apply(c *gin.Context) {
-	if h.k8s == nil || !h.k8s.KubernetesAvailable() {
+	adapter, err := h.adapterForContext(c)
+	if err != nil {
+		apiShared.K8sAPIError(c, err.Error())
+		return
+	}
+	if adapter == nil || !adapter.KubernetesAvailable() {
 		apiShared.K8sUnavailable(c)
 		return
 	}
@@ -129,7 +203,7 @@ func (h *ClusterDNSHandler) Apply(c *gin.Context) {
 		apiShared.ValidationError(c, err.Error())
 		return
 	}
-	policy, err := h.applyResolvers(c, resolvers)
+	policy, err := h.applyResolvers(c, adapter, resolvers)
 	if err != nil {
 		apiShared.K8sAPIError(c, err.Error())
 		return
@@ -141,11 +215,16 @@ func (h *ClusterDNSHandler) Apply(c *gin.Context) {
 // is persisted as an inherited policy so the UI can distinguish reset from
 // an unavailable or unmanaged CoreDNS configuration.
 func (h *ClusterDNSHandler) Reset(c *gin.Context) {
-	if h.k8s == nil || !h.k8s.KubernetesAvailable() {
+	adapter, err := h.adapterForContext(c)
+	if err != nil {
+		apiShared.K8sAPIError(c, err.Error())
+		return
+	}
+	if adapter == nil || !adapter.KubernetesAvailable() {
 		apiShared.K8sUnavailable(c)
 		return
 	}
-	policy, err := h.applyResolvers(c, nil)
+	policy, err := h.applyResolvers(c, adapter, nil)
 	if err != nil {
 		apiShared.K8sAPIError(c, err.Error())
 		return
@@ -153,8 +232,8 @@ func (h *ClusterDNSHandler) Reset(c *gin.Context) {
 	apiShared.SuccessWithMessage(c, policyPayload(policy), "已恢复使用各节点宿主机 DNS")
 }
 
-func (h *ClusterDNSHandler) applyResolvers(c *gin.Context, resolvers []string) (*model.ClusterDNSPolicy, error) {
-	configMap, err := h.k8s.GetCoreDNSConfig(c.Request.Context())
+func (h *ClusterDNSHandler) applyResolvers(c *gin.Context, adapter ClusterDNSAdapter, resolvers []string) (*model.ClusterDNSPolicy, error) {
+	configMap, err := adapter.GetCoreDNSConfig(c.Request.Context())
 	if err != nil {
 		return nil, fmt.Errorf("读取 CoreDNS 配置失败")
 	}
@@ -164,7 +243,7 @@ func (h *ClusterDNSHandler) applyResolvers(c *gin.Context, resolvers []string) (
 	}
 	previous := configMap.Data["Corefile"]
 	configMap.Data["Corefile"] = updated
-	if _, err := h.k8s.UpdateCoreDNSConfig(c.Request.Context(), configMap); err != nil {
+	if _, err := adapter.UpdateCoreDNSConfig(c.Request.Context(), configMap); err != nil {
 		return nil, fmt.Errorf("更新 CoreDNS 配置失败")
 	}
 	encodedResolvers := resolvers
@@ -173,17 +252,26 @@ func (h *ClusterDNSHandler) applyResolvers(c *gin.Context, resolvers []string) (
 	}
 	encoded, _ := json.Marshal(encodedResolvers)
 	policy := &model.ClusterDNSPolicy{Resolvers: string(encoded), CreatedBy: apiShared.UserID(c)}
-	if err := h.store.CreateClusterDNSPolicy(policy); err != nil {
+	if err := h.createPolicy(policy, requestedClusterID(c)); err != nil {
 		configMap.Data["Corefile"] = previous
-		_, _ = h.k8s.UpdateCoreDNSConfig(c.Request.Context(), configMap)
+		_, _ = adapter.UpdateCoreDNSConfig(c.Request.Context(), configMap)
 		return nil, fmt.Errorf("保存 DNS 策略历史失败")
 	}
 	return policy, nil
 }
 
 func (h *ClusterDNSHandler) Rollback(c *gin.Context) {
+	adapter, err := h.adapterForContext(c)
+	if err != nil {
+		apiShared.K8sAPIError(c, err.Error())
+		return
+	}
+	if adapter == nil || !adapter.KubernetesAvailable() {
+		apiShared.K8sUnavailable(c)
+		return
+	}
 	revision := strings.TrimSpace(c.Param("revision"))
-	history, err := h.store.ListClusterDNSPolicies(50)
+	history, err := h.policies(requestedClusterID(c), 50)
 	if err != nil {
 		apiShared.DBError(c, "读取 DNS 策略历史失败")
 		return
@@ -197,7 +285,7 @@ func (h *ClusterDNSHandler) Rollback(c *gin.Context) {
 			break
 		}
 		if len(resolvers) == 0 {
-			applied, applyErr := h.applyResolvers(c, nil)
+			applied, applyErr := h.applyResolvers(c, adapter, nil)
 			if applyErr != nil {
 				apiShared.K8sAPIError(c, applyErr.Error())
 				return
@@ -209,7 +297,7 @@ func (h *ClusterDNSHandler) Rollback(c *gin.Context) {
 		if normalizeErr != nil {
 			break
 		}
-		applied, applyErr := h.applyResolvers(c, resolvers)
+		applied, applyErr := h.applyResolvers(c, adapter, resolvers)
 		if applyErr != nil {
 			apiShared.K8sAPIError(c, applyErr.Error())
 			return

@@ -19,7 +19,6 @@ const legacyCardConsumers = [
   'views/applications/ProjectEnvironments.vue',
   'views/applications/ReleaseDetails.vue',
   'views/cluster/ChartRepositories.vue',
-  'views/cluster/Cluster.vue',
   'views/cluster/ClusterDNS.vue',
   'views/cluster/PersistentVolumes.vue',
   'views/cluster/Servers.vue',

@@ -138,6 +138,14 @@ func newClientFromRestConfig(config *rest.Config) (*Client, error) {
 	}, nil
 }
 
+// NewClientFromRestConfig builds a typed, dynamic and metadata Kubernetes
+// client from an already prepared REST configuration. Cluster-agent access
+// uses this entry point so callers can provide a per-cluster mTLS transport
+// without changing the process-wide local client.
+func NewClientFromRestConfig(config *rest.Config) (*Client, error) {
+	return newClientFromRestConfig(config)
+}
+
 // withContext returns an isolated client view carrying the caller's
 // cancellation boundary. The underlying clients are immutable handles, so
 // cloning avoids mutating the shared process client while allowing legacy

@@ -31,6 +31,7 @@ type NodeRegistryMirrorHandler struct {
 	applyNode             registryservice.NodeMirrorApplier
 	actualConfigInspector registryservice.NodeRegistryConfigInspectionReader
 	k3sRestarter          registryservice.NodeK3sServiceRestarter
+	configSyncer          registryservice.NodeRegistryConfigSyncer
 	audit                 auditservice.Repository
 }
 
@@ -86,6 +87,11 @@ func (h *NodeRegistryMirrorHandler) WithActualConfigInspector(inspector registry
 
 func (h *NodeRegistryMirrorHandler) WithK3sRestarter(restarter registryservice.NodeK3sServiceRestarter) *NodeRegistryMirrorHandler {
 	h.k3sRestarter = restarter
+	return h
+}
+
+func (h *NodeRegistryMirrorHandler) WithConfigSyncer(syncer registryservice.NodeRegistryConfigSyncer) *NodeRegistryMirrorHandler {
+	h.configSyncer = syncer
 	return h
 }
 
@@ -214,7 +220,8 @@ func (h *NodeRegistryMirrorHandler) InspectActualConfig(c *gin.Context) {
 		return
 	}
 	var request struct {
-		ServerID uint `json:"server_id"`
+		ServerID  uint `json:"server_id"`
+		ClusterID uint `json:"cluster_id"`
 	}
 	if c.Request.ContentLength > 0 {
 		if err := c.ShouldBindJSON(&request); err != nil {
@@ -224,7 +231,13 @@ func (h *NodeRegistryMirrorHandler) InspectActualConfig(c *gin.Context) {
 	}
 	var inspection registryservice.NodeRegistryConfigInspection
 	var err error
-	if request.ServerID == 0 {
+	if request.ServerID == 0 && request.ClusterID != 0 {
+		if clusterReader, ok := h.actualConfigInspector.(registryservice.NodeRegistryConfigClusterReader); ok {
+			inspection, err = clusterReader.InspectCluster(c.Request.Context(), request.ClusterID)
+		} else {
+			inspection, err = h.actualConfigInspector.Inspect(c.Request.Context())
+		}
+	} else if request.ServerID == 0 {
 		inspection, err = h.actualConfigInspector.Inspect(c.Request.Context())
 	} else {
 		inspection, err = h.actualConfigInspector.InspectNode(c.Request.Context(), request.ServerID)
@@ -240,6 +253,113 @@ func (h *NodeRegistryMirrorHandler) InspectActualConfig(c *gin.Context) {
 	}
 	h.recordAudit(c, "registry.mirror.inspect-actual-config", nil, model.AuditOutcomeSucceeded, "检查节点实际 Registry 配置", map[string]any{"node_count": len(inspection.Nodes), "state_counts": counts})
 	apiShared.Success(c, inspection)
+}
+
+// SyncActualConfig copies the complete registries.yaml from one managed node
+// to selected nodes, preserving credentials and the source node's exact file.
+func (h *NodeRegistryMirrorHandler) SyncActualConfig(c *gin.Context) {
+	if h.configSyncer == nil {
+		apiShared.Error(c, http.StatusServiceUnavailable, apiShared.CodeK8sUnavailable, "节点配置同步通道未就绪")
+		return
+	}
+	var request struct {
+		ClusterID       uint   `json:"cluster_id"`
+		SourceServerID  uint   `json:"source_server_id"`
+		TargetServerIDs []uint `json:"target_server_ids"`
+	}
+	if err := c.ShouldBindJSON(&request); err != nil || request.SourceServerID == 0 || len(request.TargetServerIDs) == 0 {
+		apiShared.BadRequest(c, "请选择源节点和至少一个目标节点")
+		return
+	}
+	servers, err := h.service.ListServers()
+	if err != nil {
+		apiShared.DBError(c, "读取集群节点失败")
+		return
+	}
+	byID := make(map[uint]*model.Server, len(servers))
+	for index := range servers {
+		server := &servers[index]
+		if server.ClusterRole != "" && (request.ClusterID == 0 || (server.ClusterID != nil && *server.ClusterID == request.ClusterID)) {
+			byID[server.ID] = server
+		}
+	}
+	source := byID[request.SourceServerID]
+	if source == nil {
+		apiShared.ValidationError(c, "源节点不是当前集群节点")
+		return
+	}
+	targets := make([]*model.Server, 0, len(request.TargetServerIDs))
+	seen := map[uint]bool{}
+	for _, id := range request.TargetServerIDs {
+		if seen[id] || id == request.SourceServerID {
+			continue
+		}
+		seen[id] = true
+		if target := byID[id]; target != nil {
+			targets = append(targets, target)
+		} else {
+			apiShared.ValidationError(c, "目标节点不是当前集群节点")
+			return
+		}
+	}
+	if len(targets) == 0 {
+		apiShared.BadRequest(c, "至少选择一个不同于源节点的目标节点")
+		return
+	}
+	results, err := h.configSyncer.Sync(c.Request.Context(), source, targets)
+	if err != nil {
+		h.recordAudit(c, "registry.mirror.sync-config", nil, model.AuditOutcomeFailed, "同步节点镜像源配置失败", nil)
+		apiShared.DBError(c, err.Error())
+		return
+	}
+	h.recordAudit(c, "registry.mirror.sync-config", nil, model.AuditOutcomeSucceeded, "同步节点镜像源配置", map[string]any{"source_server_id": request.SourceServerID, "target_count": len(targets)})
+	apiShared.Success(c, gin.H{"source_server_id": request.SourceServerID, "results": results})
+}
+
+// UpdateActualConfig edits the normalized mirror settings on selected nodes.
+// Existing node credentials are retained by the service when possible.
+func (h *NodeRegistryMirrorHandler) UpdateActualConfig(c *gin.Context) {
+	if h.configSyncer == nil {
+		apiShared.Error(c, http.StatusServiceUnavailable, apiShared.CodeK8sUnavailable, "节点配置编辑通道未就绪")
+		return
+	}
+	var request struct {
+		ClusterID uint                                 `json:"cluster_id"`
+		ServerIDs []uint                               `json:"server_ids"`
+		Configs   []registryservice.SafeRegistryConfig `json:"configs"`
+	}
+	if err := c.ShouldBindJSON(&request); err != nil || len(request.ServerIDs) == 0 || len(request.Configs) == 0 {
+		apiShared.BadRequest(c, "请选择节点并配置至少一个镜像源")
+		return
+	}
+	servers, err := h.service.ListServers()
+	if err != nil {
+		apiShared.DBError(c, "读取集群节点失败")
+		return
+	}
+	byID := map[uint]*model.Server{}
+	for index := range servers {
+		server := &servers[index]
+		if server.ClusterRole != "" && (request.ClusterID == 0 || (server.ClusterID != nil && *server.ClusterID == request.ClusterID)) {
+			byID[server.ID] = server
+		}
+	}
+	targets := make([]*model.Server, 0, len(request.ServerIDs))
+	for _, id := range request.ServerIDs {
+		if server := byID[id]; server != nil {
+			targets = append(targets, server)
+		} else {
+			apiShared.ValidationError(c, "存在不属于当前集群的节点")
+			return
+		}
+	}
+	results, err := h.configSyncer.Update(c.Request.Context(), targets, request.Configs)
+	if err != nil {
+		apiShared.DBError(c, err.Error())
+		return
+	}
+	h.recordAudit(c, "registry.mirror.update-config", nil, model.AuditOutcomeSucceeded, "编辑节点镜像源配置", map[string]any{"server_count": len(targets)})
+	apiShared.Success(c, gin.H{"results": results})
 }
 
 func (h *NodeRegistryMirrorHandler) RestartNodeK3s(c *gin.Context) {

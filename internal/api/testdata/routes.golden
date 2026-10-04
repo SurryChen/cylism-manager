@@ -1,3 +1,4 @@
+DELETE /api/access-certificates/:id
 DELETE /api/admin/tables/:table/:id
 DELETE /api/applications/:id/deployment-templates/:templateID
 DELETE /api/applications/:id/endpoints/:endpointID
@@ -11,6 +12,7 @@ DELETE /api/cloud/connections/:id/dns/records/:recordID
 DELETE /api/cloud/connections/:id/object-storage/containers/:container
 DELETE /api/cloud/connections/:id/object-storage/containers/:container/object
 DELETE /api/cluster-dns
+DELETE /api/clusters/:id
 DELETE /api/domains/:id
 DELETE /api/image-registries/:id
 DELETE /api/k8s/configmaps/:namespace/:name
@@ -35,6 +37,10 @@ DELETE /api/routes/:namespace/:name
 DELETE /api/runtimes/:id/chat/sessions/:sid
 DELETE /api/servers/:id
 DELETE /api/sites/:id
+GET /api/access-certificates
+GET /api/access-certificates/:id
+GET /api/access-certificates/ca
+GET /api/access-certificates/crl
 GET /api/admin/tables
 GET /api/admin/tables/:table
 GET /api/agent/v1/alerts/get
@@ -77,14 +83,18 @@ GET /api/certs/issuers
 GET /api/certs/status
 GET /api/chart-repositories
 GET /api/cloud/connections
-GET /api/cloud/providers
 GET /api/cloud/connections/:id/dns/records
 GET /api/cloud/connections/:id/dns/zones
 GET /api/cloud/connections/:id/object-storage/containers
 GET /api/cloud/connections/:id/object-storage/containers/:container/object
 GET /api/cloud/connections/:id/object-storage/containers/:container/objects
 GET /api/cloud/connections/:id/permissions
+GET /api/cloud/providers
 GET /api/cluster-dns
+GET /api/clusters
+GET /api/clusters/:id
+GET /api/clusters/:id/deployments
+GET /api/clusters/:id/deployments/:deploymentID/logs
 GET /api/dashboard
 GET /api/domains
 GET /api/domains/:id/operations
@@ -193,6 +203,9 @@ PATCH /api/k8s/namespaces/:name
 PATCH /api/k8s/statefulsets/:namespace/:name/scale
 PATCH /api/nodes/:id/labels
 PATCH /api/runtimes/:id/chat/sessions/:sid
+POST /api/access-certificates
+POST /api/access-certificates/:id/revoke
+POST /api/access-certificates/ca
 POST /api/admin/tables/:table
 POST /api/agent-operations/:operationID/approve
 POST /api/agent-operations/:operationID/reject
@@ -226,6 +239,11 @@ POST /api/cloud/connections/:id/object-storage/containers
 POST /api/cloud/connections/:id/object-storage/containers/:container/objects
 POST /api/cluster-dns
 POST /api/cluster-dns/history/:revision/rollback
+POST /api/clusters
+POST /api/clusters/:id/adoptions
+POST /api/clusters/:id/agent-operations
+POST /api/clusters/:id/deployments
+POST /api/clusters/:id/nodes/:serverID/uninstall
 POST /api/domains
 POST /api/domains/:id/certificate
 POST /api/domains/:id/claim
@@ -261,6 +279,7 @@ POST /api/monitoring/logs/install
 POST /api/monitoring/logs/query
 POST /api/monitoring/storage-migration
 POST /api/node-registry-mirrors
+POST /api/node-registry-mirrors/sync-actual-config
 POST /api/node-registry-mirrors/:id/apply
 POST /api/node-registry-mirrors/:id/verify
 POST /api/node-registry-mirrors/inspect-actual-config
@@ -316,6 +335,7 @@ PUT /api/chart-repositories/:id
 PUT /api/cloud/connections/:id
 PUT /api/cloud/connections/:id/dns/records/:recordID
 PUT /api/cloud/connections/:id/object-storage/containers/:container
+PUT /api/clusters/:id
 PUT /api/domains/:id
 PUT /api/image-registries/:id
 PUT /api/integrations/applications/:id/configmaps/:configMapID
@@ -327,6 +347,7 @@ PUT /api/monitoring/alerts/automation-policy
 PUT /api/monitoring/alerts/config
 PUT /api/monitoring/logs/config
 PUT /api/node-registry-mirrors/:id
+PUT /api/node-registry-mirrors/actual-config
 PUT /api/platform/endpoint
 PUT /api/platform/image-prefix
 PUT /api/projects/:projectID

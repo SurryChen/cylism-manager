@@ -14,8 +14,8 @@ describe('infrastructure route migration', () => {
   })
 
   it.each([
-    ['/cluster/registry-mirrors', '/cluster?tab=registry-mirrors'],
-    ['/cluster/chart-repositories', '/cluster?tab=chart-repositories'],
+    ['/cluster/registry-mirrors', '/cluster'],
+    ['/cluster/chart-repositories', '/cluster'],
     ['/workloads', '/resources?tab=workloads'],
     ['/services', '/resources?tab=services'],
     ['/configs', '/resources?tab=configs'],
@@ -39,6 +39,12 @@ describe('infrastructure route migration', () => {
     await router.push('/cloud-services/registry')
 
     expect(router.currentRoute.value.path).toBe('/cloud-services/registry')
+  })
+
+  it('opens a cluster detail route separately from the cluster tabs', async () => {
+    await router.push('/cluster/42')
+    expect(router.currentRoute.value.params.clusterID).toBe('42')
+    expect(router.currentRoute.value.path).toBe('/cluster/42')
   })
 
   it.each(['/cloud-services/domains', '/cloud-services/object-storage'])('loads %s from cloud services', async path => {

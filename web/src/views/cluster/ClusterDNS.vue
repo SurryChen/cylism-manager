@@ -84,6 +84,7 @@ import ErrorNoticeModal from '../../components/ErrorNoticeModal.vue'
 import FeedbackBanner from '../../components/FeedbackBanner.vue'
 import TabbedWorkspaceCard from '../../components/TabbedWorkspaceCard.vue'
 
+const props = defineProps({ clusterID: { type: [String, Number], default: '' } })
 const data = ref({ forwarding: [], pods: [], history: [], active_policy: null })
 const resolvers = ref([''])
 const loading = ref(false)
@@ -95,7 +96,7 @@ const configError = ref('')
 const configuring = ref(false)
 const confirming = ref(false)
 const resetConfirming = ref(false)
-const dnsResource = useAsyncResource(({ signal }) => getClusterDNS({ signal }), null)
+const dnsResource = useAsyncResource(({ signal }) => getClusterDNS({ signal }, props.clusterID), null)
 const pageError = computed(() => error.value || ((!confirming.value && !resetConfirming.value) ? actionError.value : ''))
 
 function dismissPageError() {
@@ -156,7 +157,7 @@ async function apply() {
   saving.value = true
   actionError.value = ''
   try {
-    await updateClusterDNS({ resolvers: normalizedResolvers.value })
+    await updateClusterDNS({ resolvers: normalizedResolvers.value }, undefined, props.clusterID)
     confirming.value = false
     await load()
   } catch (err) {
@@ -170,7 +171,7 @@ async function reset() {
   saving.value = true
   actionError.value = ''
   try {
-    await deleteClusterDNS()
+    await deleteClusterDNS(undefined, props.clusterID)
     resetConfirming.value = false
     await load()
   } catch (err) {
@@ -185,7 +186,7 @@ async function rollback(policy) {
   saving.value = true
   actionError.value = ''
   try {
-    await rollbackClusterDNS(policy.revision)
+    await rollbackClusterDNS(policy.revision, undefined, props.clusterID)
     await load()
   } catch (err) {
     actionError.value = err.message || '回滚 DNS 策略失败'

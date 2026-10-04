@@ -33,6 +33,7 @@ async function mountHub(Component, path) {
       plugins: [router],
       stubs: {
         Cluster: { template: '<div>节点内容</div>' },
+        AccessCertificates: { template: '<div>访问证书内容</div>' },
         NodeRegistryMirrors: { template: '<div>镜像源内容</div>' },
         ClusterDNS: { template: '<div>DNS 内容</div>' },
         ChartRepositories: { template: '<div>Chart 内容</div>' },
@@ -49,10 +50,16 @@ async function mountHub(Component, path) {
 describe('Infrastructure aggregation hubs', () => {
   beforeEach(() => { document.body.innerHTML = '' })
 
-  it('opens the requested flattened cluster view', async () => {
+  it('shows cluster records and access certificates in the hub', async () => {
     const wrapper = await mountHub(ClusterHub, '/cluster?tab=registry-mirrors')
-    expect(wrapper.get('[data-testid="cluster-tab-registry-mirrors"]').classes()).toContain('is-active')
-    expect(wrapper.text()).toContain('镜像源内容')
+    expect(wrapper.findAll('[data-testid^="cluster-tab-"]').map(tab => tab.text())).toEqual(['列表', '访问证书'])
+  })
+
+  it('places the cluster list first and selects it by default', async () => {
+    const wrapper = await mountHub(ClusterHub, '/cluster')
+    const tabs = wrapper.findAll('[data-testid^="cluster-tab-"]')
+    expect(tabs[0].text()).toBe('列表')
+    expect(tabs[0].classes()).toContain('is-active')
   })
 
   it('loads tab contents asynchronously', () => {
@@ -62,19 +69,18 @@ describe('Infrastructure aggregation hubs', () => {
     }
   })
 
-  it('switches flattened cluster views from the header', async () => {
-    const wrapper = await mountHub(ClusterHub, '/cluster?tab=nodes')
+  it('switches cluster records and access certificates from the header', async () => {
+    const wrapper = await mountHub(ClusterHub, '/cluster?tab=access-certificates')
     expect(wrapper.get('.hub-content').classes()).not.toContain('hub-content--nodes')
     expect(readFileSync(resolve(process.cwd(), 'src/views/cluster/ClusterHub.vue'), 'utf8')).toContain('margin-top: var(--tabbed-page-content-gap)')
-    await wrapper.get('[data-testid="cluster-tab-chart-repositories"]').trigger('click')
+    await wrapper.get('[data-testid="cluster-tab-list"]').trigger('click')
     await flushPromises()
-    expect(wrapper.text()).toContain('Chart 内容')
+    expect(wrapper.get('[data-testid="cluster-tab-list"]').classes()).toContain('is-active')
   })
 
-  it('opens the Cluster DNS policy surface from the cluster hub', async () => {
+  it('does not expose cluster-scoped settings from the global hub', async () => {
     const wrapper = await mountHub(ClusterHub, '/cluster?tab=dns')
-    expect(wrapper.get('[data-testid="cluster-tab-dns"]').classes()).toContain('is-active')
-    expect(wrapper.text()).toContain('DNS 内容')
+    expect(wrapper.find('[data-testid="cluster-tab-dns"]').exists()).toBe(false)
   })
 
   it('uses a compact title and text navigation bar instead of a framed switcher', async () => {

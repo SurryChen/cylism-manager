@@ -14,6 +14,7 @@ import (
 )
 
 var ErrNodeBindingCleanup = errors.New("节点已从集群移除，但解除服务器绑定失败")
+var ErrServerAssigned = errors.New("服务器已归属集群，不能直接删除或解除绑定")
 
 // NodeAdapter is the cluster-resource boundary used by server and node
 // workflows. The production adapter is the K8s client; tests provide a small
@@ -125,6 +126,13 @@ func (s *Service) UpdateServer(server *model.Server) error {
 }
 
 func (s *Service) DeleteServer(id uint) error {
+	server, err := s.servers.GetServer(id)
+	if err != nil {
+		return err
+	}
+	if server.ClusterID != nil {
+		return ErrServerAssigned
+	}
 	return s.servers.DeleteServer(id)
 }
 
@@ -134,6 +142,9 @@ func (s *Service) UnbindServer(id uint) (*model.Server, error) {
 	server, err := s.servers.GetServer(id)
 	if err != nil {
 		return nil, err
+	}
+	if server.ClusterID != nil {
+		return nil, ErrServerAssigned
 	}
 	server.ClusterRole = ""
 	server.K8sNodeName = ""

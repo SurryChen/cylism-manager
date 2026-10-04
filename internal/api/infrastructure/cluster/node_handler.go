@@ -1,8 +1,10 @@
 package cluster
 
 import (
+	"context"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 
 	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
@@ -14,14 +16,52 @@ import (
 
 // NodeHandler maps node resource requests onto Cluster Service operations.
 type NodeHandler struct {
-	cluster *cluster.Service
+	cluster        *cluster.Service
+	adapterFactory NodeAdapterFactory
 }
+
+// NodeAdapterFactory provides cluster-scoped node reads through
+// cluster-agent. Mutating node workflows continue to use the existing
+// ClusterService until their API is made cluster-aware.
+type NodeAdapterFactory func(context.Context, uint) (cluster.NodeAdapter, error)
 
 func NewNodeHandler(service *cluster.Service) *NodeHandler {
 	return &NodeHandler{cluster: service}
 }
 
+func (h *NodeHandler) WithAdapterFactory(factory NodeAdapterFactory) *NodeHandler {
+	h.adapterFactory = factory
+	return h
+}
+
 func (h *NodeHandler) ListNode(c *gin.Context) {
+	if value := strings.TrimSpace(c.Query("cluster_id")); value != "" {
+		id, err := strconv.ParseUint(value, 10, 32)
+		if err != nil || id == 0 {
+			apiShared.BadRequest(c, "集群 ID 无效")
+			return
+		}
+		if h.adapterFactory == nil {
+			apiShared.Error(c, http.StatusBadGateway, apiShared.CodeK8sAPIError, "集群 Agent 访问未配置")
+			return
+		}
+		adapter, err := h.adapterFactory(c.Request.Context(), uint(id))
+		if err != nil {
+			apiShared.Error(c, http.StatusBadGateway, apiShared.CodeK8sAPIError, err.Error())
+			return
+		}
+		if adapter == nil {
+			apiShared.K8sUnavailable(c)
+			return
+		}
+		nodes, err := adapter.ListNodeInfosContext(c.Request.Context())
+		if err != nil {
+			writeClusterError(c, err, http.StatusOK, apiShared.CodeK8sAPIError)
+			return
+		}
+		apiShared.Success(c, nodes)
+		return
+	}
 	nodes, err := h.cluster.ListNodesContext(c.Request.Context())
 	if err != nil {
 		writeClusterError(c, err, http.StatusOK, apiShared.CodeK8sAPIError)

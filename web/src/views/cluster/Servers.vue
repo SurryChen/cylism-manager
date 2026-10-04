@@ -30,8 +30,8 @@
               <td class="action-cell">
                 <div class="btn-group action-cell">
                   <button class="icon-button icon-button--table" type="button" :title="`编辑 ${srv.name}`" :aria-label="`编辑 ${srv.name}`" @click="startEdit(srv)"><Pencil :size="14" /></button>
-                  <button v-if="!srv.cluster_role" class="icon-button icon-button--table" type="button" :title="`删除 ${srv.name}`" :aria-label="`删除 ${srv.name}`" @click="confirmDelete(srv)"><Trash2 :size="14" /></button>
-                  <button v-if="srv.cluster_role || srv.k8s_node_name" class="icon-button icon-button--table" type="button" :title="`解除 ${srv.name} 的集群绑定`" :aria-label="`解除 ${srv.name} 的集群绑定`" :disabled="unbindingId === srv.id" @click="unbindServer(srv)"><LoaderCircle v-if="unbindingId === srv.id" :size="14" class="is-spinning" /><Unlink2 v-else :size="14" /></button>
+                  <button v-if="!srv.cluster_role && !srv.cluster_id" class="icon-button icon-button--table" type="button" :title="`删除 ${srv.name}`" :aria-label="`删除 ${srv.name}`" @click="confirmDelete(srv)"><Trash2 :size="14" /></button>
+                  <button v-if="!srv.cluster_id && (srv.cluster_role || srv.k8s_node_name)" class="icon-button icon-button--table" type="button" :title="`解除 ${srv.name} 的集群绑定`" :aria-label="`解除 ${srv.name} 的集群绑定`" :disabled="unbindingId === srv.id" @click="unbindServer(srv)"><LoaderCircle v-if="unbindingId === srv.id" :size="14" class="is-spinning" /><Unlink2 v-else :size="14" /></button>
                   <button class="icon-button icon-button--table" type="button" :title="`打开 ${srv.name} 的终端`" :aria-label="`打开 ${srv.name} 的终端`" @click="openTerminal(srv.id)"><Terminal :size="14" /></button>
                 </div>
               </td>

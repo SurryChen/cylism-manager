@@ -231,6 +231,10 @@ func (h *ServerHandler) Delete(c *gin.Context) {
 		return
 	}
 	if err := h.cluster.DeleteServer(id); err != nil {
+		if errors.Is(err, cluster.ErrServerAssigned) {
+			apiShared.Conflict(c, err.Error())
+			return
+		}
 		apiShared.InternalError(c, err.Error())
 		return
 	}
@@ -245,6 +249,10 @@ func (h *ServerHandler) Unbind(c *gin.Context) {
 	}
 	server, err := h.cluster.UnbindServer(id)
 	if err != nil {
+		if errors.Is(err, cluster.ErrServerAssigned) {
+			apiShared.Conflict(c, err.Error())
+			return
+		}
 		if !errors.Is(err, gorm.ErrRecordNotFound) {
 			apiShared.InternalError(c, err.Error())
 			return

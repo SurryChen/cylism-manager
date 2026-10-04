@@ -18,6 +18,7 @@ const Domains = () => import('../views/applications/Domains.vue')
 const Monitoring = () => import('../views/Monitoring.vue')
 const PersistentVolumes = () => import('../views/cluster/PersistentVolumes.vue')
 const ClusterHub = () => import('../views/cluster/ClusterHub.vue')
+const ClusterDetail = () => import('../views/cluster/ClusterDetail.vue')
 const ResourceHub = () => import('../views/resources/ResourceHub.vue')
 const NetworkHub = () => import('../views/network/NetworkHub.vue')
 const RuntimeManagement = () => import('../views/RuntimeManagement.vue')
@@ -43,9 +44,10 @@ const routes = [
   { path: '/applications/:applicationID', component: ApplicationDetails, props: true },
   { path: '/servers', component: Servers },
   { path: '/cluster', component: ClusterHub },
-  { path: '/cluster/registry-mirrors', redirect: { path: '/cluster', query: { tab: 'registry-mirrors' } } },
-  { path: '/cluster/chart-repositories', redirect: { path: '/cluster', query: { tab: 'chart-repositories' } } },
-  { path: '/cluster/system-components', redirect: { path: '/cluster', query: { tab: 'system-components' } } },
+  { path: '/cluster/:clusterID', component: ClusterDetail, props: true },
+  { path: '/cluster/registry-mirrors', redirect: '/cluster' },
+  { path: '/cluster/chart-repositories', redirect: '/cluster' },
+  { path: '/cluster/system-components', redirect: '/cluster' },
   { path: '/cluster/storage', redirect: '/storage' },
   { path: '/storage', component: PersistentVolumes },
   { path: '/monitoring', component: Monitoring },

@@ -29,6 +29,7 @@ type LocationConfig struct {
 // ClusterDNSPolicy stores a versioned cluster DNS resolver policy.
 type ClusterDNSPolicy struct {
 	ID        uint      `gorm:"primaryKey" json:"id"`
+	ClusterID uint      `gorm:"index;not null;default:0" json:"cluster_id"`
 	Resolvers string    `gorm:"type:text;not null" json:"resolvers"`
 	Revision  uint      `gorm:"uniqueIndex;not null" json:"revision"`
 	Active    bool      `gorm:"not null;default:true" json:"active"`

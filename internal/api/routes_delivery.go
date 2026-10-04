@@ -28,6 +28,8 @@ func registerDeliveryRoutes(r *gin.Engine, apiGroup *gin.RouterGroup, h delivery
 	nodeRegistryMirrors.GET("", h.nodeMirrors.List)
 	nodeRegistryMirrors.POST("", h.nodeMirrors.Create)
 	nodeRegistryMirrors.POST("/inspect-actual-config", h.nodeMirrors.InspectActualConfig)
+	nodeRegistryMirrors.POST("/sync-actual-config", h.nodeMirrors.SyncActualConfig)
+	nodeRegistryMirrors.PUT("/actual-config", h.nodeMirrors.UpdateActualConfig)
 	nodeRegistryMirrors.POST("/nodes/:id/restart-k3s", h.nodeMirrors.RestartNodeK3s)
 	nodeRegistryMirrors.PUT("/:id", h.nodeMirrors.Update)
 	nodeRegistryMirrors.DELETE("/:id", h.nodeMirrors.Delete)

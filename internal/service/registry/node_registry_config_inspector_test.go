@@ -58,6 +58,9 @@ func TestNodeRegistryConfigInspectorSanitizesAndMatchesConfig(t *testing.T) {
 	if got := result.Nodes[0].Actual[0].Endpoints; len(got) != 1 || got[0] != "https://mirror.example.com" {
 		t.Fatalf("unsafe endpoints: %#v", got)
 	}
+	if got := result.Nodes[0].Actual[0].AuthUsername; got != "robot" {
+		t.Fatalf("auth username was not retained safely: %q", got)
+	}
 	if strings.Contains(command, "secret") || !strings.Contains(command, "/etc/rancher/k3s/registries.yaml") || strings.Contains(command, "user:") {
 		t.Fatalf("unexpected read command: %q", command)
 	}

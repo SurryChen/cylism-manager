@@ -20,6 +20,7 @@ type Server struct {
 	SSHKeyPassphrase string         `gorm:"type:text" json:"-"`
 	SSHKeyHash       string         `gorm:"size:64" json:"-"`
 	ClusterRole      string         `gorm:"size:32" json:"cluster_role"`
+	ClusterID        *uint          `gorm:"index" json:"cluster_id,omitempty"`
 	K8sNodeName      string         `gorm:"size:256" json:"k8s_node_name"`
 	CreatedAt        time.Time      `json:"created_at"`
 	UpdatedAt        time.Time      `json:"updated_at"`

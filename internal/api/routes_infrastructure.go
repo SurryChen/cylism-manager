@@ -9,7 +9,27 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func registerInfrastructureRoutes(apiGroup *gin.RouterGroup, server *clusterapi.ServerHandler, terminal *clusterapi.ServerTerminalHandler, site *networkapi.SiteHandler, operations *systemapi.OperationHandler, domain *networkapi.DomainHandler, node *clusterapi.NodeHandler, join *clusterapi.NodeJoinProgressHandler, ingress *networkapi.IngressHandler, cert *networkapi.CertHandler, k8sHandler *kubernetesapi.K8sHandler, platform *kubernetesapi.ClusterPlatformHandler, storage *storageapi.StorageHandler, network *networkapi.NetworkHandler, crd *kubernetesapi.CRDHandler, audit *systemapi.AuditHandler, dbAdmin *systemapi.DBAdminHandler) {
+func registerInfrastructureRoutes(apiGroup *gin.RouterGroup, catalog *clusterapi.CatalogHandler, accessCert *clusterapi.AccessCertificateHandler, deployment *clusterapi.DeploymentHandler, server *clusterapi.ServerHandler, terminal *clusterapi.ServerTerminalHandler, site *networkapi.SiteHandler, operations *systemapi.OperationHandler, domain *networkapi.DomainHandler, node *clusterapi.NodeHandler, join *clusterapi.NodeJoinProgressHandler, ingress *networkapi.IngressHandler, cert *networkapi.CertHandler, k8sHandler *kubernetesapi.K8sHandler, platform *kubernetesapi.ClusterPlatformHandler, storage *storageapi.StorageHandler, network *networkapi.NetworkHandler, crd *kubernetesapi.CRDHandler, audit *systemapi.AuditHandler, dbAdmin *systemapi.DBAdminHandler) {
+	access := apiGroup.Group("/access-certificates")
+	access.GET("/ca", accessCert.CA)
+	access.POST("/ca", accessCert.InitializeCA)
+	access.GET("/crl", accessCert.CRL)
+	access.GET("", accessCert.List)
+	access.POST("", accessCert.Issue)
+	access.GET("/:id", accessCert.Certificate)
+	access.POST("/:id/revoke", accessCert.Revoke)
+	access.DELETE("/:id", accessCert.Delete)
+	apiGroup.GET("/clusters", catalog.List)
+	apiGroup.POST("/clusters", catalog.Create)
+	apiGroup.GET("/clusters/:id", catalog.Get)
+	apiGroup.PUT("/clusters/:id", catalog.Update)
+	apiGroup.DELETE("/clusters/:id", catalog.Delete)
+	apiGroup.POST("/clusters/:id/deployments", deployment.Start)
+	apiGroup.POST("/clusters/:id/adoptions", deployment.Adopt)
+	apiGroup.POST("/clusters/:id/agent-operations", deployment.AgentOperation)
+	apiGroup.GET("/clusters/:id/deployments", deployment.List)
+	apiGroup.GET("/clusters/:id/deployments/:deploymentID/logs", deployment.Logs)
+	apiGroup.POST("/clusters/:id/nodes/:serverID/uninstall", deployment.Uninstall)
 	servers := apiGroup.Group("/servers")
 	servers.POST("", server.Create)
 	servers.POST("/hostname", server.ResolveHostname)

@@ -106,3 +106,21 @@ func TestCloudPermissionRouteRequiresAuthentication(t *testing.T) {
 		t.Fatalf("status = %d, want 401: %s", resp.Code, resp.Body.String())
 	}
 }
+
+func TestAccessCertificateRoutesRequireAuthentication(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	container, err := bootstrap.NewContainer(bootstrap.Config{DBPath: "file:router-access-certificates?mode=memory&cache=shared", EncryptionKey: make([]byte, 32), JWTSecret: []byte("router-access-certificates-secret")})
+	if err != nil {
+		t.Fatalf("create container: %v", err)
+	}
+	api.RegisterRoutes(r, container.BuildRouteDependencies())
+	for _, path := range []string{"/api/access-certificates", "/api/access-certificates/ca"} {
+		request := httptest.NewRequest(http.MethodPost, path, nil)
+		response := httptest.NewRecorder()
+		r.ServeHTTP(response, request)
+		if response.Code != http.StatusUnauthorized {
+			t.Fatalf("%s = %d, want 401", path, response.Code)
+		}
+	}
+}

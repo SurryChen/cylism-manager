@@ -1,0 +1,45 @@
+import { api } from './index.js'
+
+export function getClusters(options) {
+  return api.get('/clusters', options)
+}
+
+export function getCluster(clusterID, options) {
+  return api.get(`/clusters/${encodeURIComponent(clusterID)}`, options)
+}
+
+export function createCluster(name, distribution) {
+  return api.post('/clusters', { name, distribution })
+}
+
+export function updateCluster(clusterID, name) {
+  return api.put(`/clusters/${encodeURIComponent(clusterID)}`, { name })
+}
+
+export function deleteCluster(clusterID) {
+  return api.delete(`/clusters/${encodeURIComponent(clusterID)}`)
+}
+
+export function uninstallClusterNode(clusterID, serverID) {
+  return api.post(`/clusters/${encodeURIComponent(clusterID)}/nodes/${encodeURIComponent(serverID)}/uninstall`)
+}
+
+export function adoptClusterNode(clusterID, serverID, role, address) {
+  return api.post(`/clusters/${encodeURIComponent(clusterID)}/adoptions`, { server_id: Number(serverID), role, address })
+}
+
+export function getClusterDeployments(clusterID, options) {
+  return api.get(`/clusters/${encodeURIComponent(clusterID)}/deployments`, options)
+}
+
+export function getClusterDeploymentLogs(clusterID, deploymentID, after = 0, options) {
+  return api.get(`/clusters/${encodeURIComponent(clusterID)}/deployments/${encodeURIComponent(deploymentID)}/logs?after=${after}`, options)
+}
+
+export function startClusterDeployment(clusterID, serverID, role, mirror, address) {
+  return api.post(`/clusters/${encodeURIComponent(clusterID)}/deployments`, { server_id: Number(serverID), role, mirror, address })
+}
+
+export function startClusterAgentOperation(clusterID, serverID, operation) {
+  return api.post(`/clusters/${encodeURIComponent(clusterID)}/agent-operations`, { server_id: Number(serverID), operation })
+}

@@ -17,6 +17,7 @@ type ServerView struct {
 	SSHUser     string `json:"ssh_user"`
 	SSHAuthType string `json:"ssh_auth_type"`
 	ClusterRole string `json:"cluster_role"`
+	ClusterID   *uint  `json:"cluster_id,omitempty"`
 	K8sNodeName string `json:"k8s_node_name"`
 }
 
@@ -24,7 +25,7 @@ func ServerDTO(server *model.Server) *ServerView {
 	if server == nil {
 		return nil
 	}
-	return &ServerView{ID: server.ID, Name: server.Name, Host: server.Host, Hostname: server.Hostname, SSHPort: server.SSHPort, SSHUser: server.SSHUser, SSHAuthType: server.SSHAuthType, ClusterRole: server.ClusterRole, K8sNodeName: server.K8sNodeName}
+	return &ServerView{ID: server.ID, Name: server.Name, Host: server.Host, Hostname: server.Hostname, SSHPort: server.SSHPort, SSHUser: server.SSHUser, SSHAuthType: server.SSHAuthType, ClusterRole: server.ClusterRole, ClusterID: server.ClusterID, K8sNodeName: server.K8sNodeName}
 }
 
 func ServersDTO(servers []model.Server) []ServerView {

@@ -2,6 +2,9 @@ package registry
 
 import (
 	"context"
+	"crypto/md5"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -29,28 +32,40 @@ type NodeRegistryConfigInspectionReader interface {
 	InspectNode(context.Context, uint) (NodeRegistryConfigInspection, error)
 }
 
+// NodeRegistryConfigClusterReader is an optional extension used by the
+// cluster-scoped UI. Keeping it separate preserves the small inspection
+// contract used by existing adapters and tests.
+type NodeRegistryConfigClusterReader interface {
+	InspectCluster(context.Context, uint) (NodeRegistryConfigInspection, error)
+}
+
 type NodeRegistryConfigInspection struct {
 	InspectedAt time.Time                `json:"inspected_at"`
 	Nodes       []NodeRegistryConfigNode `json:"nodes"`
 }
 
 type NodeRegistryConfigNode struct {
-	ServerID uint                 `json:"server_id"`
-	Name     string               `json:"name"`
-	State    string               `json:"state"`
-	Detail   string               `json:"detail,omitempty"`
-	Expected []SafeRegistryConfig `json:"expected,omitempty"`
-	Actual   []SafeRegistryConfig `json:"actual,omitempty"`
-	Missing  []string             `json:"missing,omitempty"`
-	Extra    []string             `json:"extra,omitempty"`
-	Changed  []string             `json:"changed,omitempty"`
+	ServerID  uint                 `json:"server_id"`
+	Name      string               `json:"name"`
+	State     string               `json:"state"`
+	Detail    string               `json:"detail,omitempty"`
+	Expected  []SafeRegistryConfig `json:"expected,omitempty"`
+	Actual    []SafeRegistryConfig `json:"actual,omitempty"`
+	Missing   []string             `json:"missing,omitempty"`
+	Extra     []string             `json:"extra,omitempty"`
+	Changed   []string             `json:"changed,omitempty"`
+	ConfigMD5 string               `json:"config_md5"`
 }
 
 // SafeRegistryConfig intentionally contains no credential values or URL userinfo.
+// AuthUsername is safe to display; AuthCredential is accepted only for update
+// requests and is never populated by inspection responses.
 type SafeRegistryConfig struct {
 	Registry           string   `json:"registry"`
 	Endpoints          []string `json:"endpoints"`
 	AuthConfigured     bool     `json:"auth_configured"`
+	AuthUsername       string   `json:"auth_username,omitempty"`
+	AuthCredential     string   `json:"auth_credential,omitempty"`
 	InsecureSkipVerify bool     `json:"insecure_skip_verify"`
 }
 
@@ -65,7 +80,14 @@ func NewNodeRegistryConfigInspector(repository repository.NodeRegistryMirrorRepo
 }
 
 func (s *NodeRegistryConfigInspector) Inspect(ctx context.Context) (NodeRegistryConfigInspection, error) {
-	return s.inspect(ctx, 0)
+	return s.inspect(ctx, 0, 0)
+}
+
+func (s *NodeRegistryConfigInspector) InspectCluster(ctx context.Context, clusterID uint) (NodeRegistryConfigInspection, error) {
+	if clusterID == 0 {
+		return NodeRegistryConfigInspection{}, fmt.Errorf("集群 ID 无效")
+	}
+	return s.inspect(ctx, 0, clusterID)
 }
 
 // InspectNode limits inspection to one managed cluster node. The ID is only a
@@ -74,10 +96,10 @@ func (s *NodeRegistryConfigInspector) InspectNode(ctx context.Context, serverID 
 	if serverID == 0 {
 		return NodeRegistryConfigInspection{}, fmt.Errorf("节点 ID 无效")
 	}
-	return s.inspect(ctx, serverID)
+	return s.inspect(ctx, serverID, 0)
 }
 
-func (s *NodeRegistryConfigInspector) inspect(ctx context.Context, selectedServerID uint) (NodeRegistryConfigInspection, error) {
+func (s *NodeRegistryConfigInspector) inspect(ctx context.Context, selectedServerID, clusterID uint) (NodeRegistryConfigInspection, error) {
 	if s == nil || s.repository == nil {
 		return NodeRegistryConfigInspection{}, fmt.Errorf("节点镜像源检查服务不可用")
 	}
@@ -92,7 +114,7 @@ func (s *NodeRegistryConfigInspector) inspect(ctx context.Context, selectedServe
 	expected := expectedRegistryConfigs(mirrors)
 	result := NodeRegistryConfigInspection{InspectedAt: s.now().UTC(), Nodes: make([]NodeRegistryConfigNode, 0)}
 	for _, server := range servers {
-		if strings.TrimSpace(server.ClusterRole) != "" && (selectedServerID == 0 || selectedServerID == server.ID) {
+		if strings.TrimSpace(server.ClusterRole) != "" && (clusterID == 0 || (server.ClusterID != nil && *server.ClusterID == clusterID)) && (selectedServerID == 0 || selectedServerID == server.ID) {
 			result.Nodes = append(result.Nodes, NodeRegistryConfigNode{ServerID: server.ID, Name: server.Name, Expected: expected})
 		}
 	}
@@ -124,11 +146,31 @@ func (s *NodeRegistryConfigInspector) inspect(ctx context.Context, selectedServe
 				return
 			}
 			node.Actual = actual
+			node.ConfigMD5 = registryConfigMD5(output)
 			classifyRegistryConfig(node)
 		}(&result.Nodes[i], findServer(servers, result.Nodes[i].ServerID))
 	}
 	group.Wait()
 	return result, nil
+}
+
+func safeRegistryConfigMD5(configs []SafeRegistryConfig) string {
+	value, _ := json.Marshal(configs)
+	sum := md5.Sum(value)
+	return hex.EncodeToString(sum[:])
+}
+
+func registryConfigMD5(raw []byte) string {
+	var config k3sRegistriesConfig
+	if len(strings.TrimSpace(string(raw))) == 0 {
+		return safeRegistryConfigMD5(nil)
+	}
+	if err := yaml.Unmarshal(raw, &config); err != nil {
+		return safeRegistryConfigMD5(nil)
+	}
+	value, _ := json.Marshal(config)
+	sum := md5.Sum(value)
+	return hex.EncodeToString(sum[:])
 }
 
 func findServer(servers []model.Server, id uint) model.Server {
@@ -142,7 +184,9 @@ func findServer(servers []model.Server, id uint) model.Server {
 
 func nodeRegistryConfigInspectCommand() string {
 	return `target="/etc/rancher/k3s/registries.yaml"
-if sudo -n test -f "$target"; then
+if [ "$(id -u)" -eq 0 ] && [ -f "$target" ]; then
+  cat "$target"
+elif sudo -n test -f "$target"; then
   sudo -n cat "$target"
 fi`
 }
@@ -184,6 +228,9 @@ func parseSafeRegistryConfigs(raw []byte) ([]SafeRegistryConfig, error) {
 		entry := SafeRegistryConfig{Registry: registry, Endpoints: normalizedEndpoints(mirror.Endpoint)}
 		if defined, ok := config.Configs[registry]; ok {
 			entry.AuthConfigured = defined.Auth != nil && (strings.TrimSpace(defined.Auth.Username) != "" || strings.TrimSpace(defined.Auth.Password) != "" || strings.TrimSpace(defined.Auth.Token) != "")
+			if defined.Auth != nil {
+				entry.AuthUsername = strings.TrimSpace(defined.Auth.Username)
+			}
 			entry.InsecureSkipVerify = defined.TLS != nil && defined.TLS.InsecureSkipVerify
 		}
 		configs = append(configs, entry)

@@ -127,6 +127,7 @@ import { useAsyncResource } from '../../composables/useAsyncResource.js'
 import ErrorNoticeModal from '../../components/ErrorNoticeModal.vue'
 import TabbedWorkspaceCard from '../../components/TabbedWorkspaceCard.vue'
 
+const props = defineProps({ clusterID: { type: [String, Number], default: '' } })
 const items = ref([])
 const loaded = ref(false)
 const loading = ref(false)
@@ -142,7 +143,7 @@ const form = ref(blankForm())
 const nodes = ref([])
 const schedulableNodes = computed(() => nodes.value.filter(node => node.ready && !node.evicted))
 const componentResource = useAsyncResource(async ({ signal }) => {
-  const [items, nodeList] = await Promise.all([getSystemComponents({ signal }), getClusterNodes({ signal })])
+  const [items, nodeList] = await Promise.all([getSystemComponents({ signal }, props.clusterID), getClusterNodes({ signal }, props.clusterID)])
   return { items, nodeList }
 }, null)
 
@@ -383,7 +384,7 @@ async function save() {
   try {
     const payload = { values_content: renderValues(form.value) }
     if (isTraefik(editing.value)) payload.traefik_read_timeout = form.value.traefikReadTimeout
-    await updateSystemComponent(editing.value.chart_name, payload)
+    await updateSystemComponent(editing.value.chart_name, payload, undefined, props.clusterID)
     close()
     await load()
   } catch (err) {
@@ -397,7 +398,7 @@ async function revert(item) {
   if (!window.confirm(`恢复 ${item.chart_name} 为默认配置？${isStatic(item) ? '将重置平台受控的 Deployment 字段。' : '将删除 HelmChartConfig。'}`)) return
   componentActionError.value = ''
   try {
-    await revertSystemComponent(item.chart_name)
+    await revertSystemComponent(item.chart_name, undefined, props.clusterID)
     await load()
   } catch (err) {
     componentActionError.value = err.message || '恢复默认配置失败'

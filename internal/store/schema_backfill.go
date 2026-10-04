@@ -9,6 +9,8 @@ import (
 	"gorm.io/gorm"
 )
 
+const accessCertificateUsageBackfillKey = "migration.access_certificate_usage.v1"
+
 // backfillData applies idempotent data upgrades after the schema is ready.
 func (s *Store) backfillData() error {
 	if err := s.backfillAuditLogs(); err != nil {
@@ -23,7 +25,49 @@ func (s *Store) backfillData() error {
 	if err := s.backfillRuntimeVersions(); err != nil {
 		return err
 	}
+	if err := s.backfillAccessCertificateUsage(); err != nil {
+		return err
+	}
 	return s.ReconcileEnvironmentNamespaceUniqueness()
+}
+
+// Older databases did not record certificate usage. The latest non-revoked
+// certificate is the best representation of the certificate installed by the
+// last successful deployment; subsequent upgrades maintain this flag exactly.
+func (s *Store) backfillAccessCertificateUsage() error {
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		var marker model.SystemConfig
+		markerErr := tx.Where("key = ?", accessCertificateUsageBackfillKey).First(&marker).Error
+		if markerErr == nil {
+			return nil
+		}
+		if !errors.Is(markerErr, gorm.ErrRecordNotFound) {
+			return markerErr
+		}
+		var clusters []model.Cluster
+		if err := tx.Find(&clusters).Error; err != nil {
+			return err
+		}
+		for _, cluster := range clusters {
+			for _, kind := range []string{"agent_server", "platform_client"} {
+				var item model.AccessCertificate
+				err := tx.Where("cluster_id = ? AND kind = ? AND revoked_at IS NULL", cluster.ID, kind).Order("created_at desc, id desc").First(&item).Error
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					continue
+				}
+				if err != nil {
+					return err
+				}
+				if err := tx.Model(&model.AccessCertificate{}).Where("cluster_id = ? AND kind = ?", cluster.ID, kind).Update("in_use", false).Error; err != nil {
+					return err
+				}
+				if err := tx.Model(&item).Update("in_use", true).Error; err != nil {
+					return err
+				}
+			}
+		}
+		return tx.Create(&model.SystemConfig{Key: accessCertificateUsageBackfillKey, Value: "completed"}).Error
+	})
 }
 
 func (s *Store) backfillAuditLogs() error {

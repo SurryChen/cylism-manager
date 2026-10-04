@@ -15,11 +15,13 @@ import (
 	runtimeapi "github.com/cylism/cylism-manager/internal/api/runtime"
 	apisShared "github.com/cylism/cylism-manager/internal/api/shared"
 	systemapi "github.com/cylism/cylism-manager/internal/api/system"
+	"github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
 	runtimepkg "github.com/cylism/cylism-manager/internal/runtime"
 	runtimeidentity "github.com/cylism/cylism-manager/internal/runtime/identity"
 	cloudservice "github.com/cylism/cylism-manager/internal/service/cloud"
 	aliyunprovider "github.com/cylism/cylism-manager/internal/service/cloud/providers/aliyun"
+	clusterpkg "github.com/cylism/cylism-manager/internal/service/cluster"
 	maintenance "github.com/cylism/cylism-manager/internal/service/maintenance"
 	alertingservice "github.com/cylism/cylism-manager/internal/service/observability/alerting"
 	monitoringservice "github.com/cylism/cylism-manager/internal/service/observability/monitoring"
@@ -48,7 +50,7 @@ func (c *Container) BuildRouteDependencies() api.RouteDependencies {
 	registrySSH := registryservice.SSHExecutorFunc(maintenanceSSH)
 	registryVerifier := registryservice.NewNodeVerifierService(registrySSH)
 	registryPull := registryservice.NewNodePullService(registrySSH)
-	nodeMirrorApplier := registryservice.NewNodeMirrorApplier(registrySSH)
+	nodeMirrorApplier := registryservice.NewNodeMirrorApplierWithRepository(registrySSH, c.Repositories.Mirror)
 	nodeRegistryConfigInspector := registryservice.NewNodeRegistryConfigInspector(c.Repositories.Mirror, registrySSH)
 	nodeK3sRestarter := registryservice.NewNodeK3sServiceRestarter(c.Repositories.Mirror, registrySSH)
 	agent := agentapi.NewAgentHandlerWithKubernetesAdapter(c.Store, agentAdapter, authenticator).WithMonitoringDiskGrowth(monitoring).WithRegistryVerifier(registryVerifier).WithMaintenanceInspector(diskInspection)
@@ -57,7 +59,15 @@ func (c *Container) BuildRouteDependencies() api.RouteDependencies {
 	platform := deliveryapi.NewPlatformHandlerWithDependencies(c.Store, deliveryapi.NewPlatformKubernetesAdapter(c.K8s), c.Services.PlatformRelease)
 	networkService := c.Services.Network
 	clusterService := c.Services.Cluster
-	clusterDNS := networkapi.NewClusterDNSHandlerWithAdapter(c.Store, networkapi.NewClusterDNSAdapter(c.K8s))
+	accessCertificates := clusterapi.NewAccessCertificateHandler(c.Store, key)
+	agentFactory := newClusterAgentClientFactory(c.Store, accessCertificates.Service())
+	clusterDNS := networkapi.NewClusterDNSHandlerWithAdapter(c.Store, networkapi.NewClusterDNSAdapter(c.K8s)).WithAdapterFactory(func(ctx context.Context, clusterID uint) (networkapi.ClusterDNSAdapter, error) {
+		client, err := agentFactory.Client(ctx, clusterID)
+		if err != nil {
+			return nil, err
+		}
+		return networkapi.NewClusterDNSAdapter(client), nil
+	})
 	ingress := networkapi.NewIngressHandler(networkService)
 	nodeJoin := clusterapi.NewNodeJoinProgressHandler(c.Store, key, clusterapi.NewNodeJoinAdapter(c.K8s)).WithPlatformReader(c.K8s)
 	networkHandler := networkapi.NewNetworkHandler(networkService, networkapi.NetworkHandler{
@@ -76,18 +86,26 @@ func (c *Container) BuildRouteDependencies() api.RouteDependencies {
 	loggingDeps.QueryService = c.Services.LoggingQuery
 	loggingDeps.ComponentService = c.Services.LoggingComponent
 	loggingHandler := systemapi.NewLoggingHandlerWithComposedDependencies(c.Store, loggingDeps)
+	componentHandler := c.componentHandler().WithAdapterFactory(func(ctx context.Context, clusterID uint) (systemapi.SystemComponentAdapter, error) {
+		client, err := agentFactory.Client(ctx, clusterID)
+		if err != nil {
+			return nil, err
+		}
+		return k8s.SystemComponentKubernetesAdapter{Client: client}, nil
+	})
 	// Integration delegations are verified by the route middleware with JWTSecret;
 	// keep the handler's signing key aligned with that verifier.
 	applicationHandler := applicationapi.NewApplicationHandlerWithDependencies(c.Store, c.Services.ApplicationQuery, key, applicationapi.NewKubernetesAdapter(c.K8s)).WithDelegationSecret(c.Auth.JWTSecret).WithAudit(c.Store)
 	image := deliveryapi.NewImageRegistryHandler(c.Store, key)
 	cloud := cloudapi.NewHandler(cloudservice.NewService(c.Store, key, cloudservice.ProviderRegistry{"aliyun": aliyunprovider.NewProvider}), c.Store)
-	nodeMirrors := deliveryapi.NewNodeRegistryMirrorHandlerWithDependencies(key, nodeMirrorApplier.Apply, c.Services.RegistryMirror).WithActualConfigInspector(nodeRegistryConfigInspector).WithK3sRestarter(nodeK3sRestarter).WithAudit(c.Store)
+	nodeMirrors := deliveryapi.NewNodeRegistryMirrorHandlerWithDependencies(key, nodeMirrorApplier.Apply, c.Services.RegistryMirror).WithActualConfigInspector(nodeRegistryConfigInspector).WithK3sRestarter(nodeK3sRestarter).WithConfigSyncer(nodeMirrorApplier).WithAudit(c.Store)
 	managed := deliveryapi.NewManagedOCIRegistryHandlerWithDependencies(c.Store, c.Adapters.Registry.ManagedResources, c.Adapters.Registry.ManagedStatus, nodeMirrorApplier.Apply, c.Services.RegistryManaged, c.Services.RegistryCatalog)
 	proxy := deliveryapi.NewRegistryProxyHandlerWithDependencies(c.Store, key, c.Adapters.Registry.ProxyResources, c.Adapters.Registry.ProxyDiagnostics, c.Services.RegistryProxy).WithReconciler(c.Services.RegistryProxyReconciler)
 	storageService := c.Services.Storage
 	pvcAdapter, pvcMigration, pvcWorkloads := storageapi.NewPVCAdapters(c.K8s)
 	storageHandler := storageapi.NewStorageHandlerWithDependencies(storageService, c.Store, key, pvcAdapter, pvcMigration, pvcWorkloads)
 	storageHandler.ConfigureStorageExecutor()
+	deployment := clusterapi.NewDeploymentHandler(c.Store, key).WithAgentCertificateIssuer(accessCertificates.Service())
 	return api.RouteDependencies{
 		Auth: api.AuthDependencies{
 			Config:          c.Auth,
@@ -98,18 +116,24 @@ func (c *Container) BuildRouteDependencies() api.RouteDependencies {
 		Application: api.ApplicationDependencies{Handler: applicationHandler},
 		RuntimeAgent: api.RuntimeAgentDependencies{
 			Artifact: artifact, Agent: agent, Runtime: runtimeHandler, AgentOp: agentOp,
-			Components: c.componentHandler(), Network: networkHandler,
+			Components: componentHandler, Network: networkHandler,
 		},
 		Delivery: api.DeliveryDependencies{
 			Platform: platform, Image: image, NodeMirrors: nodeMirrors, Managed: managed,
 			Proxy: proxy, Chart: deliveryapi.NewChartRepositoryHandler(c.Store), Cloud: cloud,
 		},
 		Infrastructure: api.InfrastructureDependencies{
-			Network: networkHandler, Server: clusterapi.NewServerHandler(key, clusterService),
+			Network: networkHandler, Catalog: clusterapi.NewCatalogHandler(c.Store), AccessCert: accessCertificates, Deployment: deployment, Server: clusterapi.NewServerHandler(key, clusterService),
 			Terminal: clusterapi.NewServerTerminalHandler(c.Store, key).WithAudit(c.Store),
 			Site:     networkapi.NewSiteHandler(c.Store), Operation: systemapi.NewOperationHandler(c.Store),
 			Domain: networkapi.NewDomainHandlerWithDependencies(networkapi.NewDomainKubernetesAdapter(c.K8s), networkService),
-			Node:   clusterapi.NewNodeHandler(clusterService), NodeJoin: nodeJoin, Ingress: ingress,
+			Node: clusterapi.NewNodeHandler(clusterService).WithAdapterFactory(func(ctx context.Context, clusterID uint) (clusterpkg.NodeAdapter, error) {
+				client, err := agentFactory.Client(ctx, clusterID)
+				if err != nil {
+					return nil, err
+				}
+				return client, nil
+			}), NodeJoin: nodeJoin, Ingress: ingress,
 			Certificate: networkapi.NewCertHandlerWithComposedDependencies(c.Store, key, networkService, networkapi.NewCertificateKubernetesAdapter(c.K8s)),
 			K8s:         kubernetesapi.NewK8sHandlerWithAdapterAndEncryption(c.Store, storageService, key, kubernetesapi.NewK8sResourceAdapter(c.K8s), c.Store),
 			Platform:    kubernetesapi.NewClusterPlatformHandler(c.K8s),
