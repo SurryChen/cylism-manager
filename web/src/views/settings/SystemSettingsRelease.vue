@@ -1,6 +1,9 @@
 <template>
   <section class="settings-section">
-    <div class="platform-release-layout">
+    <FeedbackBanner v-if="capabilityError" tone="warning" :message="capabilityError" />
+    <SurfaceCard v-if="capability === null && !capabilityError"><EmptyState variant="loading" message="正在检查平台运行环境" /></SurfaceCard>
+    <SurfaceCard v-else-if="capability && !capability.supported"><EmptyState :message="capability.reason || '平台未部署在 Kubernetes 集群内，暂不支持发布与更新'" /></SurfaceCard>
+    <div v-else-if="capability?.supported" class="platform-release-layout">
       <SurfaceCard class="platform-release-config-card">
         <div class="platform-release-config-table">
           <header class="platform-release-config-header">
@@ -115,12 +118,17 @@
 
 <script setup>
 import { onMounted, ref } from 'vue'
-import { createPlatformRelease, generatePlatformWebhookSecret as generatePlatformWebhookSecretRequest, getPlatformStatus, rollbackPlatformRelease as rollbackPlatformReleaseRequest, updatePlatformImagePrefix } from '../../api/settings.js'
+import { createPlatformRelease, generatePlatformWebhookSecret as generatePlatformWebhookSecretRequest, getPlatformCapabilities, getPlatformStatus, rollbackPlatformRelease as rollbackPlatformReleaseRequest, updatePlatformImagePrefix } from '../../api/settings.js'
 import { useActionState } from '../../composables/useActionState.js'
 import { useAsyncResource } from '../../composables/useAsyncResource.js'
 import { formatDateTime } from '../../utils/formatters.js'
 import BaseModal from '../../components/BaseModal.vue'
 import SurfaceCard from '../../components/SurfaceCard.vue'
+import EmptyState from '../../components/EmptyState.vue'
+import FeedbackBanner from '../../components/FeedbackBanner.vue'
+
+const capability = ref(null)
+const capabilityError = ref('')
 
 const platform = ref({ webhook_configured: false, image_prefix: '', deployment: null, releases: [] })
 const platformImagePrefix = ref('')
@@ -148,6 +156,15 @@ onMounted(() => {
 
 async function refresh({ syncForm = false } = {}) {
   platformReadError.value = ''
+  capabilityError.value = ''
+  try {
+    capability.value = await getPlatformCapabilities()
+  } catch (error) {
+    capability.value = null
+    capabilityError.value = error.message || '检查平台运行环境失败'
+    return
+  }
+  if (!capability.value?.supported) return
   const result = await platformResource.refresh()
   if (!result) {
     if (platformResource.error.value) {

@@ -77,6 +77,41 @@ func TestPlatformWebhookRejectsInvalidSignature(t *testing.T) {
 	}
 }
 
+func TestPlatformOutsideClusterRejectsOperationsBeforeKubernetesAccess(t *testing.T) {
+	handler := newTestPlatformHandler(nil, []byte("01234567890123456789012345678901"), nil).WithInCluster(false)
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	platform := router.Group("/api/platform")
+	platform.GET("/capabilities", handler.Capabilities)
+	platform.Use(handler.RequireInCluster)
+	platform.GET("/status", handler.Status)
+	platform.GET("/endpoint", handler.EndpointStatus)
+	platform.POST("/releases", handler.ManualUpdate)
+	platform.PUT("/endpoint", handler.UpdateEndpoint)
+	router.POST("/api/platform/deployments", handler.Webhook)
+
+	for _, tc := range []struct {
+		method, path string
+		status       int
+	}{
+		{http.MethodGet, "/api/platform/capabilities", http.StatusOK},
+		{http.MethodGet, "/api/platform/status", http.StatusNotImplemented},
+		{http.MethodGet, "/api/platform/endpoint", http.StatusNotImplemented},
+		{http.MethodPost, "/api/platform/releases", http.StatusNotImplemented},
+		{http.MethodPut, "/api/platform/endpoint", http.StatusNotImplemented},
+		{http.MethodPost, "/api/platform/deployments", http.StatusNotImplemented},
+	} {
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, httptest.NewRequest(tc.method, tc.path, nil))
+		if response.Code != tc.status {
+			t.Errorf("%s %s: got %d, want %d: %s", tc.method, tc.path, response.Code, tc.status, response.Body.String())
+		}
+		if tc.status == http.StatusNotImplemented && !strings.Contains(response.Body.String(), platformOutsideClusterMessage) {
+			t.Errorf("%s %s: missing unsupported reason: %s", tc.method, tc.path, response.Body.String())
+		}
+	}
+}
+
 func TestPlatformManualUpdateAcceptsAuthenticatedTag(t *testing.T) {
 	client := platformTestClient()
 	secretKey := []byte("01234567890123456789012345678901")

@@ -40,6 +40,8 @@ describe('ManagedOCIRegistries view', () => {
     expect(emptyRegistry.findComponent({ name: 'SurfaceCard' }).exists()).toBe(true)
     expect(emptyRegistry.classes()).toContain('surface-card')
     expect(emptyRegistry.text()).toContain('尚未部署自托管制品库')
+    expect(emptyRegistry.findComponent({ name: 'EmptyState' }).exists()).toBe(true)
+    expect(emptyRegistry.find('h2, svg').exists()).toBe(false)
     expect(wrapper.text()).not.toContain('由 Cylism 在集群中部署和管理')
     expect(wrapper.findAll('[data-testid="deploy-registry"]')).toHaveLength(1)
     expect(wrapper.text()).not.toContain('交付中心')

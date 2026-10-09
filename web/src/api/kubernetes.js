@@ -103,3 +103,40 @@ export function getLightweightServiceDiscovery(namespace = '', options) {
 export function getServiceEndpoints(namespace, name, options) {
   return api.get(`/k8s/services/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/endpoints`, options)
 }
+
+// Resource pages use a cluster-bound API so no request can silently fall back
+// to the platform's local Kubernetes client.
+export function createClusterKubernetesApi(clusterID) {
+  if (!/^[1-9]\d*$/.test(String(clusterID))) throw new Error('集群 ID 无效')
+  const base = `/clusters/${clusterID}/k8s`
+  const path = (resource, namespace, name) => `${base}/${resource}/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}`
+  return {
+    getWorkloadDeployments: options => api.get(`${base}/deployments`, options),
+    getWorkloadStatefulSets: options => api.get(`${base}/statefulsets`, options),
+    getWorkloadDaemonSets: options => api.get(`${base}/daemonsets`, options),
+    getWorkloadPods: options => api.get(`${base}/pods`, options),
+    getWorkloadServers: async options => (await api.get('/servers', options)).filter(server => Number(server.cluster_id) === Number(clusterID)),
+    getWorkloadDeploymentPods: (namespace, name, options) => api.get(`${path('deployments', namespace, name)}/pods`, options),
+    getWorkloadDeploymentRevisions: (namespace, name, options) => api.get(`${path('deployments', namespace, name)}/revisions`, options),
+    scaleWorkload: (kind, namespace, name, replicas) => api.patch(`${path(kind === 'statefulset' ? 'statefulsets' : 'deployments', namespace, name)}/scale`, { replicas }),
+    updateWorkloadImage: (namespace, name, payload) => api.patch(`${path('deployments', namespace, name)}/image`, payload),
+    rollbackWorkload: (namespace, name, revision) => api.post(`${path('deployments', namespace, name)}/rollback`, { revision }),
+    getLightweightServiceDiscovery: (namespace = '', options) => api.get(`${base}/services${namespace ? `?namespace=${encodeURIComponent(namespace)}&endpoint_count=false` : '?endpoint_count=false'}`, options),
+    getServiceEndpoints: (namespace, name, options) => api.get(`${path('services', namespace, name)}/endpoints`, options),
+    getConfigMapsForNamespace: (namespace, options) => api.get(`${base}/configmaps?namespace=${encodeURIComponent(namespace || '')}&usage=false`, options),
+    getSecretMetadataPage: (namespace, { limit = 50, continueToken = '', ...options } = {}) => {
+      const query = new URLSearchParams({ namespace: namespace || '', metadata: 'true', limit: String(limit) })
+      if (continueToken) query.set('continue', continueToken)
+      return api.get(`${base}/secrets?${query}`, options)
+    },
+    getNamespaceNames: options => api.get(`${base}/namespace-names`, options),
+    getConfigMap: (namespace, name, options) => api.get(path('configmaps', namespace, name), options),
+    getSecret: (namespace, name, options) => api.get(path('secrets', namespace, name), options),
+    createConfigMap: (payload, options) => api.post(`${base}/configmaps`, payload, options),
+    updateConfigMap: (namespace, name, payload, options) => api.put(path('configmaps', namespace, name), payload, options),
+    deleteConfigMap: (namespace, name, options) => api.delete(path('configmaps', namespace, name), undefined, options),
+    createSecret: (payload, options) => api.post(`${base}/secrets`, payload, options),
+    updateSecret: (namespace, name, payload, options) => api.put(path('secrets', namespace, name), payload, options),
+    deleteSecret: (namespace, name, options) => api.delete(path('secrets', namespace, name), undefined, options),
+  }
+}

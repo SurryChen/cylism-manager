@@ -82,3 +82,7 @@ func NewNetworkHandler(service *networkservice.Service, h NetworkHandler) *Netwo
 	h.Service = service
 	return &h
 }
+
+func (h *NetworkHandler) ForCluster(client *k8sclient.Client) *NetworkHandler {
+	return &NetworkHandler{Service: networkservice.NewService(nil).WithStandardIngressAdapter(client)}
+}

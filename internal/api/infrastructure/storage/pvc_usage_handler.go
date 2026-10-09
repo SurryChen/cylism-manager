@@ -46,6 +46,9 @@ func (h *StorageHandler) ListPersistentVolumeClaimUsage(c *gin.Context) {
 	if h.store != nil {
 		if servers, listErr := h.store.ListServers(); listErr == nil {
 			for _, server := range servers {
+				if h.clusterID != 0 && (server.ClusterID == nil || *server.ClusterID != h.clusterID) {
+					continue
+				}
 				if nodeName := strings.TrimSpace(server.K8sNodeName); nodeName != "" {
 					serversByNode[nodeName] = server
 				}

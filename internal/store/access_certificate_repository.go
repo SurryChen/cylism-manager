@@ -51,17 +51,24 @@ func (s *Store) CreateAccessCertificate(item *model.AccessCertificate) error {
 }
 
 func (s *Store) MarkAccessCertificateInUse(id uint, inUse bool) error {
+	var item model.AccessCertificate
+	if err := s.db.First(&item, id).Error; err != nil {
+		return err
+	}
 	return s.db.Transaction(func(tx *gorm.DB) error {
-		var item model.AccessCertificate
-		if err := tx.First(&item, id).Error; err != nil {
-			return err
+		result := tx.Model(&model.AccessCertificate{}).Where("id = ?", id).Update("in_use", inUse)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return gorm.ErrRecordNotFound
 		}
 		if inUse {
-			if err := tx.Model(&model.AccessCertificate{}).Where("cluster_id = ? AND kind = ? AND id <> ?", item.ClusterID, item.Kind, id).Update("in_use", false).Error; err != nil {
+			if err := tx.Model(&model.AccessCertificate{}).Where("cluster_id = ? AND kind = ? AND id <> ? AND in_use = ?", item.ClusterID, item.Kind, id, true).Update("in_use", false).Error; err != nil {
 				return err
 			}
 		}
-		return tx.Model(&model.AccessCertificate{}).Where("id = ?", id).Update("in_use", inUse).Error
+		return nil
 	})
 }
 

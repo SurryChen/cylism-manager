@@ -14,17 +14,23 @@
     <EmptyState v-else-if="!clusters.length && !error" message="暂无集群" />
     <div v-else-if="clusters.length" class="table-wrap">
       <table class="data-table">
-        <thead><tr><th>集群名称</th><th>类型</th><th>状态</th><th>创建时间</th><th class="action-cell">操作</th></tr></thead>
+        <thead><tr><th>集群名称</th><th>类型</th><th>状态</th><th>创建时间</th><th class="cluster-action-heading cluster-operation-column">集群操作</th><th class="cluster-action-heading cluster-maintenance-column">信息维护</th></tr></thead>
         <tbody>
           <tr v-for="cluster in clusters" :key="cluster.id">
             <td class="cell-primary"><RouterLink class="cluster-name-link" :to="`/cluster/${cluster.id}`">{{ cluster.name }}</RouterLink></td>
             <td>{{ distributionLabel(cluster.distribution) }}</td>
             <td><span class="badge" :class="statusClass(cluster.status)">{{ statusLabel(cluster.status) }}</span></td>
             <td>{{ formatTime(cluster.created_at) }}</td>
-            <td class="action-cell"><div class="cluster-row-actions">
-              <button class="icon-button icon-button--table" type="button" :title="`编辑 ${cluster.name}`" :aria-label="`编辑 ${cluster.name}`" @click="openEdit(cluster)"><Pencil :size="14" /></button>
-              <button class="icon-button icon-button--table" type="button" :title="`删除 ${cluster.name}`" :aria-label="`删除 ${cluster.name}`" @click="openDelete(cluster)"><Trash2 :size="14" /></button>
-              <RouterLink class="icon-button icon-button--table" :to="`/cluster/${cluster.id}`" :title="`打开 ${cluster.name}`" :aria-label="`打开 ${cluster.name}`"><ArrowRight :size="14" /></RouterLink>
+            <td class="cluster-operation-column"><div class="cluster-row-actions">
+              <IconActionTooltip :text="`查看 ${cluster.name} 的 Kubernetes 资源`"><RouterLink class="icon-button icon-button--table" :to="`/cluster/${cluster.id}/resources`" :aria-label="`查看 ${cluster.name} 的 Kubernetes 资源`"><Boxes :size="14" /></RouterLink></IconActionTooltip>
+              <IconActionTooltip :text="`查看 ${cluster.name} 的网络访问`"><RouterLink class="icon-button icon-button--table" :to="`/cluster/${cluster.id}/network`" :aria-label="`查看 ${cluster.name} 的网络访问`"><Route :size="14" /></RouterLink></IconActionTooltip>
+              <IconActionTooltip :text="`查看 ${cluster.name} 的存储卷`"><RouterLink class="icon-button icon-button--table" :to="`/cluster/${cluster.id}/storage`" :aria-label="`查看 ${cluster.name} 的存储卷`"><HardDrive :size="14" /></RouterLink></IconActionTooltip>
+              <IconActionTooltip :text="`查看 ${cluster.name} 的监控`"><RouterLink class="icon-button icon-button--table" :to="`/cluster/${cluster.id}/monitoring`" :aria-label="`查看 ${cluster.name} 的监控`"><Activity :size="14" /></RouterLink></IconActionTooltip>
+              <IconActionTooltip :text="`集群运维：${cluster.name}`"><RouterLink class="icon-button icon-button--table" :to="`/cluster/${cluster.id}`" :aria-label="`集群运维：${cluster.name}`"><ArrowRight :size="14" /></RouterLink></IconActionTooltip>
+            </div></td>
+            <td class="cluster-maintenance-column"><div class="cluster-row-actions">
+              <IconActionTooltip :text="`修改 ${cluster.name} 的集群信息`"><button class="icon-button icon-button--table" type="button" :aria-label="`编辑 ${cluster.name}`" @click="openEdit(cluster)"><Pencil :size="14" /></button></IconActionTooltip>
+              <IconActionTooltip :text="`删除集群 ${cluster.name}`"><button class="icon-button icon-button--table" type="button" :aria-label="`删除 ${cluster.name}`" @click="openDelete(cluster)"><Trash2 :size="14" /></button></IconActionTooltip>
             </div></td>
           </tr>
         </tbody>
@@ -67,12 +73,13 @@
 <script setup>
 import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { ArrowRight, Pencil, RefreshCw, Trash2 } from 'lucide-vue-next'
+import { Activity, ArrowRight, Boxes, HardDrive, Pencil, RefreshCw, Route, Trash2 } from 'lucide-vue-next'
 import { createCluster, deleteCluster, getClusters, updateCluster } from '../../api/clusters.js'
 import { useAsyncResource } from '../../composables/useAsyncResource.js'
 import BaseModal from '../../components/BaseModal.vue'
 import EmptyState from '../../components/EmptyState.vue'
 import FeedbackBanner from '../../components/FeedbackBanner.vue'
+import IconActionTooltip from '../../components/IconActionTooltip.vue'
 import SelectMenu from '../../components/SelectMenu.vue'
 import SurfaceCard from '../../components/SurfaceCard.vue'
 import { formatShortDateTime as formatTime } from '../../utils/formatters.js'
@@ -187,7 +194,11 @@ function statusClass(value) {
 .cluster-name-link { color: var(--text-primary); font-weight: 700; text-decoration: none; }
 .cluster-name-link:hover { color: var(--action-primary); text-decoration: underline; }
 .cluster-name-link:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
-.cluster-row-actions { display: flex; justify-content: flex-end; gap: 4px; }
+.cluster-row-actions { display: flex; justify-content: flex-start; gap: 4px; }
+.data-table .cluster-action-heading { text-align: left; }
+.data-table .cluster-operation-column { width: 176px; white-space: nowrap; }
+.data-table .cluster-maintenance-column { width: 102px; text-align: right; white-space: nowrap; }
+.cluster-maintenance-column .cluster-row-actions { justify-content: flex-end; }
 .cluster-list-card > .table-wrap { padding: 0 var(--space-20) var(--space-12); }
 .cluster-list-error { margin: 0 var(--space-20) var(--space-12); }
 .cluster-type-hint { margin: 6px 0 0; color: var(--text-muted); font-size: 11px; }

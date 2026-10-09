@@ -148,6 +148,61 @@ func (s *Store) DeleteDNSCredential(id uint) error {
 	return s.db.Delete(&model.DNSCredential{}, id).Error
 }
 
+// ClusterDNSCredentials keeps credentials for one cluster separate from legacy records.
+func (s *Store) ClusterDNSCredentials(clusterID uint) *ClusterDNSCredentialStore {
+	return &ClusterDNSCredentialStore{db: s.db, clusterID: clusterID}
+}
+
+type ClusterDNSCredentialStore struct {
+	db        *gorm.DB
+	clusterID uint
+}
+
+func (s *ClusterDNSCredentialStore) ListDNSCredentials() ([]model.DNSCredential, error) {
+	var credentials []model.DNSCredential
+	err := s.db.Where("cluster_id = ?", s.clusterID).Order("created_at desc").Find(&credentials).Error
+	for index := range credentials {
+		credentials[index].SecretConfigured = credentials[index].EncryptedValues != ""
+	}
+	return credentials, err
+}
+
+func (s *ClusterDNSCredentialStore) GetDNSCredential(id uint) (*model.DNSCredential, error) {
+	var credential model.DNSCredential
+	if err := s.db.Where("cluster_id = ?", s.clusterID).First(&credential, id).Error; err != nil {
+		return nil, err
+	}
+	credential.SecretConfigured = credential.EncryptedValues != ""
+	return &credential, nil
+}
+
+func (s *ClusterDNSCredentialStore) CreateDNSCredential(credential *model.DNSCredential) error {
+	credential.ClusterID = s.clusterID
+	return s.db.Create(credential).Error
+}
+
+func (s *ClusterDNSCredentialStore) UpdateDNSCredential(credential *model.DNSCredential) error {
+	if credential.ClusterID != s.clusterID {
+		return gorm.ErrRecordNotFound
+	}
+	result := s.db.Model(&model.DNSCredential{}).Where("id = ? AND cluster_id = ?", credential.ID, s.clusterID).Updates(map[string]interface{}{
+		"name": credential.Name, "provider": credential.Provider, "namespace": credential.Namespace,
+		"encrypted_values": credential.EncryptedValues, "secret_name": credential.SecretName,
+		"enabled": credential.Enabled,
+	})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
+}
+
+func (s *ClusterDNSCredentialStore) DeleteDNSCredential(id uint) error {
+	return s.db.Where("id = ? AND cluster_id = ?", id, s.clusterID).Delete(&model.DNSCredential{}).Error
+}
+
 func (s *Store) CreateManagedDomain(domain *model.ManagedDomain) error {
 	return s.db.Create(domain).Error
 }

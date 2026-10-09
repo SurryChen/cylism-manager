@@ -1,8 +1,9 @@
 <template>
   <div>
-    <SectionTabsHeader title="集群监控" :tabs="tabs" :active-tab="activeTab" test-id-prefix="monitoring-tab" @select="selectTab">
+    <RouterLink class="back-link" to="/cluster?tab=list"><ArrowLeft :size="16" />返回集群列表</RouterLink>
+    <SectionTabsHeader :title="clusterName || '集群监控'" :tabs="tabs" :active-tab="activeTab" test-id-prefix="monitoring-tab" @select="selectTab">
       <template #actions>
-        <div v-if="status?.state !== 'not_installed'" class="btn-group">
+        <div v-if="agentAvailable && loaded && status && status.state !== 'not_installed'" class="btn-group">
           <button class="icon-button" title="监控设置" aria-label="监控设置" @click="openMonitoringSettings"><Settings2 :size="16" /></button>
           <button class="btn" @click="refresh">刷新</button>
           <button class="btn btn-danger" @click="confirmUninstall = true">卸载</button>
@@ -10,10 +11,13 @@
       </template>
     </SectionTabsHeader>
 
+    <ClusterAgentGate :key="`${clusterID}-${activeTab}`" :cluster-id="clusterID" @ready="handleAgentReady">
     <main class="monitoring-content">
       <FeedbackBanner v-if="error" tone="warning" :message="error" class="section-gap" />
 
-      <SurfaceCard v-if="loaded && status?.state === 'not_installed'" class="monitoring-install-card">
+      <LoggingWorkspace v-if="loaded && activeTab === 'logs'" :cluster-id="clusterID" :nodes="nodes" :storage-classes="storageClasses" />
+
+      <SurfaceCard v-else-if="loaded && status?.state === 'not_installed'" class="monitoring-install-card">
         <template #header><div><h2 class="card-title">VictoriaMetrics 未安装</h2><p class="status-copy">选择数据节点和容量后，平台将创建并管理专用存储卷及节点采集组件。</p></div></template><template #actions><span class="badge badge-offline">未安装</span></template>
         <form class="install-form" @submit.prevent="install">
           <div class="form-group"><label class="form-label">数据节点</label><SelectMenu v-model="form.node_name" class="form-select" required><option value="" disabled>选择就绪节点</option><option v-for="node in readyNodes" :key="node.name" :value="node.name">{{ displayNode(node) }}</option></SelectMenu><p class="form-hint">将使用 kubernetes.io/hostname 标签约束 VictoriaMetrics 到所选节点。</p></div>
@@ -49,11 +53,11 @@
           <section class="monitoring-workload-grid"><SurfaceCard as="article"><template #header><div><h2 class="card-title">CPU 使用最高</h2><p class="status-copy">最近 5 分钟平均</p></div></template><WorkloadTable :rows="workloads.cpu" unit="m" :loading="workloadsLoading" /></SurfaceCard><SurfaceCard as="article"><template #header><div><h2 class="card-title">内存使用最高</h2><p class="status-copy">工作集内存</p></div></template><WorkloadTable :rows="workloads.memory" unit="MiB" :loading="workloadsLoading" /></SurfaceCard></section>
         </template>
 
-        <DiskGrowthWorkspace v-else-if="activeTab === 'disk'" :nodes="nodes" />
-        <LoggingWorkspace v-else-if="activeTab === 'logs'" :nodes="nodes" :storage-classes="storageClasses" />
-        <AlertingWorkspace v-else-if="activeTab === 'alerts'" :nodes="nodes" :monitoring-ready="metricsAvailable" :metrics-node-name="status.node_name" @navigate="navigateFromAlert" />
+        <DiskGrowthWorkspace v-else-if="activeTab === 'disk'" :cluster-id="clusterID" :nodes="nodes" />
+        <AlertingWorkspace v-else-if="activeTab === 'alerts'" :cluster-id="clusterID" :nodes="nodes" :monitoring-ready="metricsAvailable" :metrics-node-name="status.node_name" @navigate="navigateFromAlert" />
       </template>
     </main>
+    </ClusterAgentGate>
 
     <Teleport to="body">
       <div v-if="monitoringSettingsOpen" class="overlay monitoring-settings-overlay" @click.self="monitoringSettingsOpen = false">
@@ -73,12 +77,14 @@
 
 <script setup>
 import { computed, defineComponent, h, onMounted, onUnmounted, ref, watch } from 'vue'
-import { ChevronDown, RefreshCw, Settings2, X } from 'lucide-vue-next'
+import { ArrowLeft, ChevronDown, RefreshCw, Settings2, X } from 'lucide-vue-next'
+import { getCluster } from '../api/clusters.js'
 import { getMonitoringDashboard, getMonitoringNodes, getMonitoringStatus, getMonitoringTargets, getStorageClasses, installMonitoring, migrateMonitoringStorage, queryMonitoring, uninstallMonitoring } from '../api/monitoring.js'
 import { useAsyncResource } from '../composables/useAsyncResource.js'
 import { usePolling } from '../composables/usePolling.js'
 import { useRoutedTab } from '../composables/useRoutedTab.js'
 import EmptyState from '../components/EmptyState.vue'
+import ClusterAgentGate from '../components/ClusterAgentGate.vue'
 import FeedbackBanner from '../components/FeedbackBanner.vue'
 import SectionHeading from '../components/SectionHeading.vue'
 import SurfaceCard from '../components/SurfaceCard.vue'
@@ -95,12 +101,16 @@ const tabs = [
   { id: 'logs', label: '日志' },
   { id: 'alerts', label: '告警' },
 ]
+const props = defineProps({ clusterID: { type: String, default: '' } })
+const requestOptions = signal => props.clusterID ? { clusterID: props.clusterID, ...(signal ? { signal } : {}) } : signal ? { signal } : undefined
 const trendRanges = ['1h', '6h', '24h', '7d']
 const status = ref(null)
+const clusterName = ref('')
 const nodes = ref([])
 const storageClasses = ref([])
-const { activeTab, selectTab } = useRoutedTab({ tabs, defaultTab: 'overview', path: '/monitoring' })
+const { activeTab, selectTab } = useRoutedTab({ tabs, defaultTab: 'overview' })
 const loaded = ref(false)
+const agentAvailable = ref(!props.clusterID)
 const statusError = ref('')
 const trendError = ref('')
 const queryError = ref('')
@@ -126,20 +136,20 @@ const form = ref({ node_name: '', storage: '10Gi', storage_class_name: '', reten
 const settingsForm = ref({ retention_days: 14 })
 const migrationForm = ref({ storage: '10Gi', storage_class_name: '' })
 const monitoringStateResource = useAsyncResource(({ signal }) => Promise.all([
-  getMonitoringStatus({ signal }),
-  getMonitoringNodes({ signal }),
-  getStorageClasses({ signal }),
+  getMonitoringStatus(requestOptions(signal)),
+  getMonitoringNodes(requestOptions(signal)),
+  getStorageClasses(requestOptions(signal)),
 ]), null)
-const monitoringTargetsResource = useAsyncResource(({ signal }) => getMonitoringTargets({ signal }))
-const monitoringTrendsResource = useAsyncResource(({ signal }, range) => getMonitoringDashboard(range, { signal }))
+const monitoringTargetsResource = useAsyncResource(({ signal }) => getMonitoringTargets(requestOptions(signal)))
+const monitoringTrendsResource = useAsyncResource(({ signal }, range) => getMonitoringDashboard(range, requestOptions(signal)))
 const monitoringWorkloadsResource = useAsyncResource(async ({ signal }) => {
   const [cpu, memory] = await Promise.all([
-    queryMonitoring('topk(12, sum by (namespace, pod) (rate(container_cpu_usage_seconds_total{container!="",image!=""}[5m])) * 1000)', { signal }),
-    queryMonitoring('topk(12, sum by (namespace, pod) (container_memory_working_set_bytes{container!="",image!=""}) / 1024 / 1024)', { signal }),
+    queryMonitoring('topk(12, sum by (namespace, pod) (rate(container_cpu_usage_seconds_total{container!="",image!=""}[5m])) * 1000)', requestOptions(signal)),
+    queryMonitoring('topk(12, sum by (namespace, pod) (container_memory_working_set_bytes{container!="",image!=""}) / 1024 / 1024)', requestOptions(signal)),
   ])
   return { cpu, memory }
 })
-const monitoringQueryResource = useAsyncResource(({ signal }, queryText) => queryMonitoring(queryText, { signal }))
+const monitoringQueryResource = useAsyncResource(({ signal }, queryText) => queryMonitoring(queryText, requestOptions(signal)))
 const targetsLoading = monitoringTargetsResource.loading
 const trendsLoading = monitoringTrendsResource.loading
 const workloadsLoading = monitoringWorkloadsResource.loading
@@ -200,14 +210,43 @@ const WorkloadTable = defineComponent({
 })
 
 onMounted(async () => {
-  await refresh()
+  if (props.clusterID) void loadClusterName(props.clusterID)
 })
+watch(() => props.clusterID, () => {
+  clusterName.value = ''
+  if (props.clusterID) void loadClusterName(props.clusterID)
+  monitoringStateResource.cancel()
+  monitoringTargetsResource.cancel()
+  monitoringTrendsResource.cancel()
+  monitoringWorkloadsResource.cancel()
+  monitoringQueryResource.cancel()
+  status.value = null
+  nodes.value = []
+  storageClasses.value = []
+  loaded.value = false
+  targets.value = null
+  nodeTrends.value = { cpu: [], memory: [], disk: [], network: [] }
+  workloads.value = { cpu: [], memory: [] }
+})
+
+async function loadClusterName(id) {
+  try {
+    const cluster = await getCluster(id)
+    if (id === props.clusterID) clusterName.value = cluster?.name || ''
+  } catch { /* Monitoring remains usable when cluster metadata is unavailable. */ }
+}
 onUnmounted(migrationPolling.stop)
 watch([activeTab, trendRange], async () => {
   if (activeTab.value !== 'overview') monitoringTrendsResource.cancel()
   if (activeTab.value !== 'workloads') monitoringWorkloadsResource.cancel()
-  if (metricsAvailable.value) await loadActiveData()
+  if (!props.clusterID && metricsAvailable.value) await loadActiveData()
 })
+watch([() => props.clusterID, activeTab], () => { agentAvailable.value = !props.clusterID })
+
+function handleAgentReady() {
+  agentAvailable.value = true
+  void refresh()
+}
 
 async function refresh() {
   statusError.value = ''
@@ -238,20 +277,20 @@ function nodeDisplayName(name) { return nodes.value.find(node => node.name === n
 async function install() {
   installing.value = true
   mutationError.value = ''
-  try { status.value = await installMonitoring(form.value); await refresh() } catch (e) { mutationError.value = e.message || '安装 VictoriaMetrics 失败' } finally { installing.value = false }
+  try { status.value = await installMonitoring(form.value, requestOptions()); await refresh() } catch (e) { mutationError.value = e.message || '安装 VictoriaMetrics 失败' } finally { installing.value = false }
 }
 
 async function uninstall() {
   uninstalling.value = true
   mutationError.value = ''
-  try { await uninstallMonitoring(); confirmUninstall.value = false; targets.value = null; queryResult.value = ''; await refresh() } catch (e) { mutationError.value = e.message || '卸载 VictoriaMetrics 失败' } finally { uninstalling.value = false }
+  try { await uninstallMonitoring(requestOptions()); confirmUninstall.value = false; targets.value = null; queryResult.value = ''; await refresh() } catch (e) { mutationError.value = e.message || '卸载 VictoriaMetrics 失败' } finally { uninstalling.value = false }
 }
 
 async function syncConfiguration() {
   syncing.value = true
   mutationError.value = ''
   try {
-    await installMonitoring({ node_name: status.value.node_name, retention_days: status.value.retention_days })
+    await installMonitoring({ node_name: status.value.node_name, retention_days: status.value.retention_days }, requestOptions())
     await refresh()
   } catch (e) { mutationError.value = e.message || '同步采集配置失败' } finally { syncing.value = false }
 }
@@ -271,7 +310,7 @@ async function saveMonitoringConfig() {
     await installMonitoring({
       node_name: status.value.node_name,
       retention_days: settingsForm.value.retention_days,
-    })
+    }, requestOptions())
     monitoringSettingsOpen.value = false
     await refresh()
   } catch (e) { mutationError.value = e.message || '更新监控运行配置失败' } finally { monitoringSettingsSaving.value = false }
@@ -283,7 +322,7 @@ async function migrateLegacyStorage() {
   migrating.value = true
   mutationError.value = ''
   try {
-    status.value = await migrateMonitoringStorage(migrationForm.value)
+    status.value = await migrateMonitoringStorage(migrationForm.value, requestOptions())
     await refresh()
   } catch (e) { mutationError.value = e.message || '迁移 VictoriaMetrics 存储失败' } finally { migrating.value = false }
 }
@@ -361,5 +400,6 @@ async function runQuery(queryText) {
 </script>
 
 <style scoped>
+.back-link { display: inline-flex; width: fit-content; align-items: center; gap: 6px; margin-bottom: var(--space-16); color: var(--text-secondary); font-size: 13px; font-weight: 600; text-decoration: none; }
 .monitoring-content { margin-top: var(--space-20); }.status-copy,.metric small,.form-hint,.confirm-copy,.monitoring-section-heading p,.drawer-header p,.drawer-section-heading p{margin:5px 0 0;color:var(--text-secondary);font-size:12px}.install-form{margin-top:var(--space-20)}.status-actions{justify-content:flex-start;margin-top:var(--space-16)}.monitoring-summary{grid-template-columns:repeat(5,minmax(0,1fr))}.metric{display:grid;min-width:0;gap:5px;padding:14px;border:1px solid var(--border-muted);border-radius:var(--radius-control);background:var(--surface-subtle)}.metric>span{color:var(--text-secondary);font-size:11px}.metric strong{min-width:0;font-size:18px}.metric small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.metric-code{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--font-mono);font-size:13px!important}.monitoring-section-heading{display:flex;align-items:center;justify-content:space-between;gap:var(--space-16)}.monitoring-section-heading h2{margin:0;color:var(--text-primary);font-size:16px}.range-select{display:flex;align-items:center;gap:8px;color:var(--text-secondary);font-size:11px;font-weight:700;white-space:nowrap}.trend-range-select{width:148px;min-height:34px;padding:6px 28px 6px 9px;font-size:11px}.monitoring-trend-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--space-16)}.monitoring-workload-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--space-16)}.target-list{display:grid;gap:7px;margin-top:var(--space-16)}.target-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid var(--border-muted)}.target-row:last-child{border-bottom:0}.target-row span:first-child{display:grid;min-width:0;gap:2px}.target-row strong,.target-row small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.target-row small{color:var(--text-secondary);font:11px/1.3 var(--font-mono)}.diagnostic-copy{margin:0 0 var(--space-16);color:var(--text-secondary);font-size:12px;line-height:1.6}.query-presets{display:flex;flex-wrap:wrap;gap:6px;margin-top:var(--space-16)}.query-form{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;margin-top:var(--space-16)}.query-result{max-height:360px;overflow:auto;margin:var(--space-16) 0 0;padding:12px;border:1px solid var(--border-muted);border-radius:var(--radius-control);background:var(--surface-subtle);color:var(--text-primary);font:11px/1.5 var(--font-mono)}.empty-inline{padding:16px 0;color:var(--text-muted);font-size:12px}.wait-card .empty-state{min-height:140px}.trend-controls{display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:8px}.trend-node-picker{position:relative}.trend-node-trigger{display:inline-flex;min-height:34px;align-items:center;gap:6px;padding:0 9px;border:1px solid var(--border-muted);border-radius:var(--radius-control);background:var(--surface-raised);color:var(--text-secondary);font-size:11px;font-weight:700;cursor:pointer}.trend-node-trigger:hover{background:var(--surface-hover);color:var(--text-primary)}.trend-node-menu{position:absolute;z-index:30;top:calc(100% + 6px);right:0;display:grid;min-width:210px;max-height:280px;overflow:auto;padding:7px;border:1px solid var(--border);border-radius:var(--radius-control);background:var(--surface-raised);box-shadow:var(--shadow)}.trend-node-menu-actions{display:flex;justify-content:flex-end;gap:10px;padding:5px 5px 8px;border-bottom:1px solid var(--border-muted)}.trend-node-menu-actions button{padding:0;border:0;background:transparent;color:var(--action-primary);font-size:11px;font-weight:700;cursor:pointer}.trend-node-option{display:flex;min-height:32px;align-items:center;gap:7px;padding:0 6px;color:var(--text-secondary);font-size:11px;cursor:pointer}.trend-node-option:hover{background:var(--surface-hover);color:var(--text-primary)}.trend-node-option input{margin:0}.monitoring-settings-overlay{z-index:1300;align-items:center;justify-content:center;padding:var(--space-16)}.monitoring-settings-drawer{display:flex;width:min(720px,100%);max-height:calc(100dvh - 32px);padding:var(--space-20);flex-direction:column;overflow:auto;overscroll-behavior:contain;border-radius:var(--radius-panel);background:var(--surface-raised);box-shadow:var(--shadow)}.drawer-header,.drawer-section-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}.drawer-header h2,.drawer-section-heading h3{margin:0;color:var(--text-primary);font-size:16px}.drawer-section{padding:var(--space-20) 0;border-bottom:1px solid var(--border-muted)}.drawer-section:last-child{border-bottom:0}.settings-field{display:grid;gap:3px;padding:var(--space-16) 0 0}.settings-field>span{color:var(--text-secondary);font-size:11px}.settings-field strong{font-size:13px}.settings-field small{color:var(--text-muted);font:10px/1.4 var(--font-mono)}.settings-retention{display:grid;gap:6px;margin-top:var(--space-16)}.drawer-actions{margin-top:var(--space-16)}@media(max-width:960px){.monitoring-summary{grid-template-columns:repeat(3,minmax(0,1fr))}}@media(max-width:760px){.monitoring-trend-grid,.monitoring-workload-grid{grid-template-columns:1fr}.monitoring-summary{grid-template-columns:repeat(2,minmax(0,1fr))}.query-form{grid-template-columns:1fr}.query-form .btn{width:100%}.trend-controls{justify-content:flex-start}}@media(max-width:440px){.monitoring-summary{grid-template-columns:1fr}.monitoring-section-heading{align-items:flex-start;flex-direction:column}.range-select{align-items:flex-start;flex-direction:column}.trend-range-select{width:100%}.trend-node-menu{right:auto;left:0;min-width:min(240px,calc(100vw - 32px))}}
 </style>

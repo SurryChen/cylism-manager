@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { api } from './index.js'
-import { getLightweightServiceDiscovery, getResourceInventory, getResourceService, getWorkloadDeploymentPods, getConfigMap, getConfigMapsForNamespace, getSecretMetadataPage } from './kubernetes.js'
+import { getLightweightServiceDiscovery, getResourceInventory, getResourceService, getWorkloadDeploymentPods, getConfigMap, getConfigMapsForNamespace, getSecretMetadataPage, createClusterKubernetesApi } from './kubernetes.js'
 
 vi.mock('./index.js', () => ({ api: { get: vi.fn() } }))
 
@@ -41,5 +41,17 @@ describe('kubernetes api', () => {
     const options = { signal: new AbortController().signal }
     getSecretMetadataPage('team/a', { continueToken: 'page/2', ...options })
     expect(api.get).toHaveBeenCalledWith('/k8s/secrets?namespace=team%2Fa&metadata=true&limit=50&continue=page%2F2', options)
+  })
+
+  it('routes cluster resource reads through the selected cluster', () => {
+    const options = { signal: new AbortController().signal }
+    const cluster = createClusterKubernetesApi(2)
+    cluster.getWorkloadPods(options)
+    cluster.getServiceEndpoints('team/a', 'api/service', options)
+    cluster.getSecretMetadataPage('team/a', { continueToken: 'page/2', ...options })
+    expect(api.get).toHaveBeenNthCalledWith(1, '/clusters/2/k8s/pods', options)
+    expect(api.get).toHaveBeenNthCalledWith(2, '/clusters/2/k8s/services/team%2Fa/api%2Fservice/endpoints', options)
+    expect(api.get).toHaveBeenNthCalledWith(3, '/clusters/2/k8s/secrets?namespace=team%2Fa&metadata=true&limit=50&continue=page%2F2', options)
+    expect(() => createClusterKubernetesApi('bad')).toThrow('集群 ID 无效')
   })
 })

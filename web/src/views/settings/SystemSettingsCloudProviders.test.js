@@ -37,6 +37,7 @@ describe('SystemSettingsCloudProviders', () => {
     expect(row.text()).toContain('生产连接')
     expect(row.text()).toContain('阿里云')
     expect(row.text()).toContain('已配置')
+    expect(row.find('.cloud-provider-value').text()).toBe('阿里云')
     expect(wrapper.get('.cloud-provider-table-header').text()).toContain('连接名')
     expect(wrapper.get('.cloud-provider-table-header').text()).toContain('操作')
     expect(wrapper.text()).not.toContain('服务能力')

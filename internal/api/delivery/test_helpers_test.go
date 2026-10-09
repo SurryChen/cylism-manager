@@ -24,7 +24,7 @@ func responseID(t *testing.T, body []byte) uint {
 }
 
 func newTestPlatformHandler(store repository.PlatformEndpointRepository, encKey []byte, client platformKubernetes) *PlatformHandler {
-	return NewPlatformHandlerWithDependencies(store, client, platformservice.NewReleaseService(store, encKey, client))
+	return NewPlatformHandlerWithDependencies(store, client, platformservice.NewReleaseService(store, encKey, client)).WithInCluster(true)
 }
 
 func newTestNodeRegistryMirrorHandler(repo repository.NodeRegistryMirrorRepository, encKey []byte, apply registryservice.NodeMirrorApplier) *NodeRegistryMirrorHandler {

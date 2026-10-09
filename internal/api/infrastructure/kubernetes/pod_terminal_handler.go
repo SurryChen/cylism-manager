@@ -14,6 +14,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/remotecommand"
 
 	"github.com/gin-gonic/gin"
@@ -114,7 +115,9 @@ func (h *K8sHandler) PodTerminal(c *gin.Context) {
 			TTY:       true,
 		}, scheme.ParameterCodec)
 
-	executor, err := remotecommand.NewSPDYExecutor(h.k8s.KubeConfig(), http.MethodPost, request.URL())
+	streamConfig := rest.CopyConfig(h.k8s.KubeConfig())
+	streamConfig.Timeout = 0
+	executor, err := remotecommand.NewSPDYExecutor(streamConfig, http.MethodPost, request.URL())
 	if err != nil {
 		writePodTerminalError(conn, err)
 		return

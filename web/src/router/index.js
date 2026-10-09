@@ -16,7 +16,7 @@ const ReleaseDetails = () => import('../views/applications/ReleaseDetails.vue')
 const ImageRegistries = () => import('../views/applications/ImageRegistries.vue')
 const Domains = () => import('../views/applications/Domains.vue')
 const Monitoring = () => import('../views/Monitoring.vue')
-const PersistentVolumes = () => import('../views/cluster/PersistentVolumes.vue')
+const ClusterStorage = () => import('../views/cluster/ClusterStorage.vue')
 const ClusterHub = () => import('../views/cluster/ClusterHub.vue')
 const ClusterDetail = () => import('../views/cluster/ClusterDetail.vue')
 const ResourceHub = () => import('../views/resources/ResourceHub.vue')
@@ -44,24 +44,29 @@ const routes = [
   { path: '/applications/:applicationID', component: ApplicationDetails, props: true },
   { path: '/servers', component: Servers },
   { path: '/cluster', component: ClusterHub },
+  { path: '/cluster/:clusterID/resources', component: ResourceHub, props: true },
+  { path: '/cluster/:clusterID/network', component: NetworkHub, props: true },
+  { path: '/cluster/:clusterID/network/certificates/:namespace/:name', component: CertificateOperations, props: true },
+  { path: '/cluster/:clusterID/storage', component: ClusterStorage, props: true },
+  { path: '/cluster/:clusterID/monitoring', component: Monitoring, props: true },
   { path: '/cluster/:clusterID', component: ClusterDetail, props: true },
   { path: '/cluster/registry-mirrors', redirect: '/cluster' },
   { path: '/cluster/chart-repositories', redirect: '/cluster' },
   { path: '/cluster/system-components', redirect: '/cluster' },
-  { path: '/cluster/storage', redirect: '/storage' },
-  { path: '/storage', component: PersistentVolumes },
-  { path: '/monitoring', component: Monitoring },
+  { path: '/cluster/storage', redirect: '/cluster?tab=list' },
+  { path: '/storage', redirect: '/cluster?tab=list' },
+  { path: '/monitoring', redirect: '/cluster?tab=list' },
   { path: '/runtimes', component: RuntimeManagement },
   { path: '/delivery/registry', redirect: to => ({ path: '/cloud-services/registry', query: to.query }) },
-  { path: '/resources', component: ResourceHub },
+  { path: '/resources', redirect: '/cluster?tab=list' },
   { path: '/workloads', redirect: { path: '/resources', query: { tab: 'workloads' } } },
   { path: '/services', redirect: { path: '/resources', query: { tab: 'services' } } },
   { path: '/configs', redirect: { path: '/resources', query: { tab: 'configs' } } },
-  { path: '/network', component: NetworkHub },
-  { path: '/routes', redirect: { path: '/network', query: { tab: 'routes' } } },
-  { path: '/certs', redirect: { path: '/network', query: { tab: 'certificates' } } },
-  { path: '/certs/:namespace/:name', redirect: to => `/network/certificates/${to.params.namespace}/${to.params.name}` },
-  { path: '/network/certificates/:namespace/:name', component: CertificateOperations, props: true },
+  { path: '/network', redirect: '/cluster?tab=list' },
+  { path: '/routes', redirect: '/cluster?tab=list' },
+  { path: '/certs', redirect: '/cluster?tab=list' },
+  { path: '/certs/:namespace/:name', redirect: '/cluster?tab=list' },
+  { path: '/network/certificates/:namespace/:name', redirect: '/cluster?tab=list' },
   { path: '/settings/system', component: SystemSettings },
   { path: '/audit', component: AuditLogs },
   { path: '/operations', component: OperationHistory },

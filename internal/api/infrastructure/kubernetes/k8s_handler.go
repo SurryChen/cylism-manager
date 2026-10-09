@@ -30,6 +30,8 @@ type K8sHandler struct {
 	k8s                K8sResourceAdapter
 	storageService     *storageservice.Service
 	dashboardSummary   *DashboardSummaryService
+	clusterClient      func(context.Context, uint) (*k8sclient.Client, error)
+	scopedClient       *k8sclient.Client
 }
 
 // K8sResourceAdapter is the resource capability consumed by this HTTP API.
@@ -104,6 +106,32 @@ func NewK8sHandlerWithAdapterAndEncryption(references repository.ResourceReferen
 // StorageService exposes the composed storage service to the infrastructure
 // router; callers must still use the service API rather than handler helpers.
 func (h *K8sHandler) StorageService() *storageservice.Service { return h.storageService }
+
+// WithClusterClientFactory enables request-scoped resource access through a cluster Agent.
+func (h *K8sHandler) WithClusterClientFactory(factory func(context.Context, uint) (*k8sclient.Client, error)) *K8sHandler {
+	h.clusterClient = factory
+	return h
+}
+
+func (h *K8sHandler) ForCluster(ctx context.Context, clusterID uint) (*K8sHandler, error) {
+	if h.clusterClient == nil {
+		return nil, fmt.Errorf("集群 Agent 访问未配置")
+	}
+	client, err := h.clusterClient(ctx, clusterID)
+	if err != nil {
+		return nil, err
+	}
+	scoped := *h
+	scoped.scopedClient = client
+	scoped.k8s = NewK8sResourceAdapter(client)
+	// Application references currently have no cluster identity. They must not
+	// block mutations in another cluster with the same namespace and name.
+	scoped.resourceReferences = nil
+	scoped.dashboardSummary = NewDashboardSummaryService(scoped.k8s, 5*time.Second)
+	return &scoped, nil
+}
+
+func (h *K8sHandler) ClusterClient() *k8sclient.Client { return h.scopedClient }
 
 type NamespaceSummary struct {
 	Name             string            `json:"name"`

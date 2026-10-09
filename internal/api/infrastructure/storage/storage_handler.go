@@ -25,6 +25,15 @@ type StorageHandler struct {
 	workloads PVCWorkloadReader
 	encKey    []byte
 	Service   *storage.Service
+	clusterID uint
+}
+
+// ForCluster uses only the selected Agent's Kubernetes client. Application
+// environments and durable jobs have no cluster identity yet.
+func (h *StorageHandler) ForCluster(client *k8sclient.Client, clusterID uint) *StorageHandler {
+	pvc, migration, workloads := NewPVCAdapters(client)
+	return &StorageHandler{clusterID: clusterID, store: h.store, encKey: h.encKey, pvc: pvc, migration: migration, workloads: workloads,
+		Service: storage.NewService(pvc, nil)}
 }
 
 // PVCRepositoryAdapter owns PVC CRUD and StorageClass queries. It is also the

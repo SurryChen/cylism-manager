@@ -25,6 +25,7 @@ describe('ClusterDetail', () => {
     get.mockReset()
     post.mockReset()
     get.mockImplementation(path => {
+      if (path.endsWith('/agent-status')) return Promise.resolve({ state: 'ready' })
       if (path === '/clusters/9') return Promise.resolve(cluster)
       if (path === '/servers') return Promise.resolve([server])
       return Promise.resolve([])
@@ -101,7 +102,7 @@ describe('ClusterDetail', () => {
     get.mockImplementation(path => {
       if (path === '/clusters/9') return Promise.resolve(cluster)
       if (path === '/servers') return Promise.resolve([server])
-      if (path === '/clusters/9/deployments') return Promise.resolve(tasks)
+      if (path === '/clusters/9/deployments?limit=10&offset=0') return Promise.resolve({ items: tasks, total: tasks.length })
       if (path.includes('/logs')) return Promise.resolve([{ id: 11, created_at: '2026-10-02T08:00:00Z', message: '开始部署控制平面' }])
       return Promise.resolve([])
     })
@@ -131,10 +132,10 @@ describe('ClusterDetail', () => {
     get.mockImplementation(path => {
       if (path === '/clusters/9') return Promise.resolve(cluster)
       if (path === '/servers') return Promise.resolve([server])
-      if (path === '/clusters/9/deployments') return Promise.resolve([
+      if (path === '/clusters/9/deployments?limit=10&offset=0') return Promise.resolve({ items: [
         { id: 8, server_id: 3, role: 'control-plane', actor_name: 'alice', status: 'failed' },
         { id: 7, server_id: 3, role: 'control-plane', actor_name: 'admin', status: 'success' },
-      ])
+      ], total: 2 })
       if (path.includes('/deployments/8/logs')) return Promise.resolve([{ id: 15, message: '部署失败' }])
       if (path.includes('/deployments/7/logs')) return Promise.resolve([{ id: 12, message: '安装成功' }])
       return Promise.resolve([])
@@ -163,13 +164,77 @@ describe('ClusterDetail', () => {
     wrapper.unmount()
   })
 
+  it('loads cluster tasks one page at a time', async () => {
+    const tasks = Array.from({ length: 17 }, (_, index) => ({ id: 17 - index, server_id: 3, status: 'success' }))
+    get.mockImplementation(path => {
+      if (path === '/clusters/9') return Promise.resolve({ ...cluster, control_server_id: 3, status: 'ready' })
+      if (path === '/servers') return Promise.resolve([{ ...server, cluster_id: 9, cluster_role: 'control-plane' }])
+      if (path === '/clusters/9/deployments?limit=10&offset=0') return Promise.resolve({ items: tasks.slice(0, 10), total: 17, latest_agent_task: { id: 1, operation: 'agent-install', server_id: 3, status: 'success' }, running: false })
+      if (path === '/clusters/9/deployments?limit=10&offset=10') return Promise.resolve({ items: tasks.slice(10), total: 17, latest_agent_task: { id: 1, operation: 'agent-install', server_id: 3, status: 'success' }, running: false })
+      return Promise.resolve([])
+    })
+    const wrapper = await mountDetail('9', '?tab=tasks')
+    await flushPromises()
+    expect(wrapper.findAll('.data-table tbody tr')).toHaveLength(10)
+    expect(wrapper.get('.task-pagination').text()).toContain('1 / 2 · 共 17 条')
+    await wrapper.get('.task-pagination button:last-child').trigger('click')
+    await flushPromises()
+    expect(get).toHaveBeenCalledWith('/clusters/9/deployments?limit=10&offset=10', undefined)
+    expect(wrapper.findAll('.data-table tbody tr')).toHaveLength(7)
+    expect(wrapper.text()).toContain('#1')
+    expect(wrapper.get('.task-pagination').text()).toContain('2 / 2')
+    await wrapper.findAll('.section-tab').find(tab => tab.text() === 'Agent 管理').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('.agent-management-toolbar .badge').text()).toBe('已配置')
+    wrapper.unmount()
+  })
+
+  it('passes the selected cluster to DNS and system component requests', async () => {
+    get.mockImplementation(path => {
+      if (path === '/clusters/9/agent-status') return Promise.resolve({ state: 'ready' })
+      if (path === '/clusters/9') return Promise.resolve(cluster)
+      if (path === '/servers') return Promise.resolve([server])
+      if (path === '/cluster-dns?cluster_id=9') return Promise.resolve({ forwarding: [], pods: [], history: [], active_policy: null })
+      return Promise.resolve([])
+    })
+    const wrapper = await mountDetail()
+    await flushPromises()
+    await wrapper.findAll('.section-tab').find(tab => tab.text() === '集群 DNS').trigger('click')
+    await flushPromises()
+    await vi.waitFor(() => expect(get).toHaveBeenCalledWith('/cluster-dns?cluster_id=9', expect.objectContaining({ signal: expect.any(AbortSignal) })))
+    await wrapper.findAll('.section-tab').find(tab => tab.text() === '系统组件').trigger('click')
+    await flushPromises()
+    await vi.waitFor(() => expect(get).toHaveBeenCalledWith('/system-components?cluster_id=9', expect.objectContaining({ signal: expect.any(AbortSignal) })))
+    expect(get).toHaveBeenCalledWith('/nodes?cluster_id=9', expect.objectContaining({ signal: expect.any(AbortSignal) }))
+    wrapper.unmount()
+  })
+
+  it('keeps Agent management available while gated tabs wait for Agent', async () => {
+    get.mockImplementation(path => {
+      if (path === '/clusters/9/agent-status') return Promise.resolve({ state: 'unreachable' })
+      if (path === '/clusters/9') return Promise.resolve({ ...cluster, control_server_id: 3 })
+      if (path === '/servers') return Promise.resolve([{ ...server, cluster_id: 9, cluster_role: 'control-plane' }])
+      return Promise.resolve([])
+    })
+    const wrapper = await mountDetail()
+    await flushPromises()
+    await wrapper.findAll('.section-tab').find(tab => tab.text() === '集群 DNS').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('Agent 尚未安装或当前无法连接')
+    expect(get.mock.calls.some(([path]) => path === '/cluster-dns?cluster_id=9')).toBe(false)
+    await wrapper.findAll('.section-tab').find(tab => tab.text() === 'Agent 管理').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('部署 Agent')
+    wrapper.unmount()
+  })
+
   it('refreshes an open log modal when a running task receives new output', async () => {
     let status = 'running'
     let messages = [{ id: 1, message: '开始部署' }]
     get.mockImplementation(path => {
       if (path === '/clusters/9') return Promise.resolve(cluster)
       if (path === '/servers') return Promise.resolve([server])
-      if (path === '/clusters/9/deployments') return Promise.resolve([{ id: 7, server_id: 3, role: 'control-plane', status }])
+      if (path === '/clusters/9/deployments?limit=10&offset=0') return Promise.resolve({ items: [{ id: 7, server_id: 3, role: 'control-plane', status }], total: 1 })
       if (path.includes('/logs')) return Promise.resolve(messages)
       return Promise.resolve([])
     })
@@ -232,7 +297,7 @@ describe('ClusterDetail', () => {
     get.mockImplementation(path => {
       if (path === '/clusters/9') return Promise.resolve(cluster)
       if (path === '/servers') return Promise.resolve([server])
-      if (path === '/clusters/9/deployments') return Promise.resolve([{ id: 11, operation: 'uninstall', role: 'worker', server_id: 3, status: 'success' }])
+      if (path === '/clusters/9/deployments?limit=10&offset=0') return Promise.resolve({ items: [{ id: 11, operation: 'uninstall', role: 'worker', server_id: 3, status: 'success' }], total: 1 })
       return Promise.resolve([])
     })
     const wrapper = await mountDetail('9', '?tab=tasks')
@@ -260,7 +325,7 @@ describe('ClusterDetail', () => {
     get.mockImplementation(path => {
       if (path === '/clusters/9') return Promise.resolve(cluster)
       if (path === '/servers') return Promise.resolve([server])
-      if (path === '/clusters/9/deployments') return Promise.resolve([{ id: 12, operation: 'adopt', role: 'control-plane', server_id: 3, status: 'success' }])
+      if (path === '/clusters/9/deployments?limit=10&offset=0') return Promise.resolve({ items: [{ id: 12, operation: 'adopt', role: 'control-plane', server_id: 3, status: 'success' }], total: 1 })
       return Promise.resolve([])
     })
     const wrapper = await mountDetail('9', '?tab=tasks')

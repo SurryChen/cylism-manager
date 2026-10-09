@@ -1,13 +1,66 @@
 package cluster
 
 import (
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"strings"
 	"testing"
 
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/store"
+	"github.com/gin-gonic/gin"
 )
+
+func TestClusterDeploymentListPaginatesWithinCluster(t *testing.T) {
+	st, err := store.New(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, cluster := range []model.Cluster{
+		{Name: "one", Distribution: "k3s", Status: "draft"},
+		{Name: "two", Distribution: "k3s", Status: "draft"},
+	} {
+		if err := st.DB().Create(&cluster).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i := 0; i < 23; i++ {
+		operation, status := "deploy", "success"
+		if i == 0 {
+			operation = "agent-install"
+		}
+		if i == 1 {
+			status = "running"
+		}
+		if err := st.DB().Create(&model.ClusterDeployment{ClusterID: 1, ServerID: 1, Operation: operation, Status: status}).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := st.DB().Create(&model.ClusterDeployment{ClusterID: 2, ServerID: 1, Status: "success"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	router := gin.New()
+	router.GET("/clusters/:id/deployments", NewDeploymentHandler(st, nil).List)
+	response := serve(router, newJSONRequest(http.MethodGet, "/clusters/1/deployments?limit=20&offset=20", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("list status = %d: %s", response.Code, response.Body.String())
+	}
+	var body struct {
+		Data struct {
+			Items           []model.ClusterDeployment `json:"items"`
+			Total           int64                     `json:"total"`
+			LatestAgentTask *model.ClusterDeployment  `json:"latest_agent_task"`
+			Running         bool                      `json:"running"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Data.Total != 23 || len(body.Data.Items) != 3 || body.Data.Items[0].ClusterID != 1 || body.Data.Items[0].ID <= body.Data.Items[2].ID || body.Data.LatestAgentTask == nil || body.Data.LatestAgentTask.Operation != "agent-install" || !body.Data.Running {
+		t.Fatalf("unexpected page: %#v", body.Data)
+	}
+}
 
 func TestK3sInstallCommandUsesSelectedSourceAndClusterCredentials(t *testing.T) {
 	control := k3sInstallCommand("control-plane", "official", "10.0.0.1", "")

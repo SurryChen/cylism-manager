@@ -134,6 +134,33 @@ func TestPersistentVolumeClaimsListClusterInventoryWithoutEnvironment(t *testing
 	}
 }
 
+func TestClusterPersistentVolumeClaimsUseSelectedClient(t *testing.T) {
+	first := &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(
+		&corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: "first-only", Namespace: "default"}},
+	)}
+	second := &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(
+		&corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: "second-only", Namespace: "default"}},
+	)}
+	h := (&StorageHandler{}).ForCluster(first, 1)
+	r := gin.New()
+	r.GET("/claims", h.ListPersistentVolumeClaims)
+	response := serve(r, httptest.NewRequest(http.MethodGet, "/claims", nil))
+	if !strings.Contains(response.Body.String(), "first-only") || strings.Contains(response.Body.String(), "second-only") {
+		t.Fatalf("wrong cluster PVC inventory: %s", response.Body.String())
+	}
+	other := (&StorageHandler{}).ForCluster(second, 2)
+	r2 := gin.New()
+	r2.GET("/claims", other.ListPersistentVolumeClaims)
+	response = serve(r2, httptest.NewRequest(http.MethodGet, "/claims", nil))
+	if !strings.Contains(response.Body.String(), "second-only") || strings.Contains(response.Body.String(), "first-only") {
+		t.Fatalf("wrong cluster PVC inventory: %s", response.Body.String())
+	}
+	response = serve(r2, httptest.NewRequest(http.MethodGet, "/claims?environment_id=1", nil))
+	if !strings.Contains(response.Body.String(), "集群存储卷暂不支持") {
+		t.Fatalf("environment filter must be rejected: %s", response.Body.String())
+	}
+}
+
 func TestPersistentVolumeClaimListBatchesWorkloadReferencesByNamespace(t *testing.T) {
 	workloads := &countingPVCWorkloads{}
 	h := &StorageHandler{workloads: workloads}

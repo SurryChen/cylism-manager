@@ -34,8 +34,10 @@
       <FeedbackBanner v-if="topologyError" class="topology-error" tone="warning" :message="topologyError" />
       <div v-if="deployments.length" class="table-wrap"><table class="data-table"><thead><tr><th>任务</th><th>服务器</th><th>状态</th><th>开始时间</th><th>操作</th></tr></thead><tbody><tr v-for="task in deployments" :key="task.id"><td><span class="cell-primary">#{{ task.id }} · {{ taskLabel(task) }}</span><span class="cell-secondary">{{ taskDescription(task) }}</span></td><td>{{ serverName(task.server_id) }}</td><td><span class="badge" :class="deploymentStatusClass(task.status)">{{ deploymentStatusLabel(task.status) }}</span></td><td>{{ formatTime(task.created_at) }}</td><td><button class="btn btn-sm" type="button" :aria-label="`查看任务 #${task.id} 日志`" aria-haspopup="dialog" @click="selectDeployment(task)">查看日志</button></td></tr></tbody></table></div>
       <EmptyState v-else-if="!topologyLoading" message="暂无集群任务" />
+      <div v-if="taskTotal" class="pagination task-pagination"><button class="btn btn-sm" type="button" :disabled="taskOffset === 0 || topologyLoading" @click="changeTaskPage(-1)">上一页</button><span>{{ taskPage }} / {{ taskPageCount }} · 共 {{ taskTotal }} 条</span><button class="btn btn-sm" type="button" :disabled="taskOffset + taskPageSize >= taskTotal || topologyLoading" @click="changeTaskPage(1)">下一页</button></div>
     </SurfaceCard>
-    <component v-else-if="cluster && scopedComponent" :is="scopedComponent" :cluster-id="props.clusterID" :cluster="cluster" :control-node="controlNode" :deployments="deployments" :running-deployment="runningDeployment" class="cluster-detail-content cluster-scoped-view" @operation-started="handleAgentOperationStarted" />
+    <ClusterAgentGate v-else-if="cluster && agentRequiredTab" :key="`${props.clusterID}-${activeTab}`" :cluster-id="props.clusterID"><component :is="scopedComponent" :cluster-id="props.clusterID" class="cluster-detail-content cluster-scoped-view" /></ClusterAgentGate>
+    <component v-else-if="cluster && scopedComponent" :is="scopedComponent" :cluster-id="props.clusterID" :cluster="cluster" :control-node="controlNode" :deployments="latestDeployments" :running-deployment="runningDeployment" class="cluster-detail-content cluster-scoped-view" @operation-started="handleAgentOperationStarted" />
     <BaseModal :open="Boolean(selectedDeployment)" :title="selectedDeployment ? `任务 #${selectedDeployment.id} · 执行日志` : '执行日志'" size="large" dialog-class="cluster-log-modal" @close="closeLogs">
       <div v-if="selectedDeployment" class="deployment-log-meta"><span>{{ taskLabel(selectedDeployment) }} · {{ serverName(selectedDeployment.server_id) }}</span><span class="badge" :class="deploymentStatusClass(selectedDeployment.status)">{{ deploymentStatusLabel(selectedDeployment.status) }}</span></div>
       <div v-if="selectedDeployment" class="deployment-log-content">
@@ -87,6 +89,7 @@ import SelectMenu from '../../components/SelectMenu.vue'
 import SurfaceCard from '../../components/SurfaceCard.vue'
 import { formatShortDateTime as formatTime } from '../../utils/formatters.js'
 import AgentManagement from './AgentManagement.vue'
+import ClusterAgentGate from '../../components/ClusterAgentGate.vue'
 
 const props = defineProps({ clusterID: { type: String, required: true } })
 const NodeRegistryMirrors = defineAsyncComponent(() => import('./NodeRegistryMirrors.vue'))
@@ -103,12 +106,20 @@ const tabs = [
   { id: 'system-components', label: '系统组件', component: SystemComponents },
 ]
 const { activeTab, selectTab } = useRoutedTab({ tabs, defaultTab: 'topology' })
+const agentRequiredTab = computed(() => ['dns', 'system-components'].includes(activeTab.value))
 const cluster = ref(null)
 const error = ref('')
 const resource = useAsyncResource(({ signal }, id) => getCluster(id, { signal }), null)
 const loading = resource.loading
 const servers = ref([])
 const deployments = ref([])
+const latestDeployments = ref([])
+const taskRunning = ref(false)
+const taskPageSize = 10
+const taskOffset = ref(0)
+const taskTotal = ref(0)
+const taskPage = computed(() => Math.floor(taskOffset.value / taskPageSize) + 1)
+const taskPageCount = computed(() => Math.max(1, Math.ceil(taskTotal.value / taskPageSize)))
 const selectedServerID = ref('')
 const controlAddress = ref('')
 const selectedDeploymentID = ref('')
@@ -140,7 +151,7 @@ const serverOptions = computed(() => servers.value.filter(server => !server.clus
 const selectedServer = computed(() => servers.value.find(server => String(server.id) === selectedServerID.value))
 const adoptSelectedServer = computed(() => servers.value.find(server => String(server.id) === adoptServerID.value))
 const selectedDeployment = computed(() => deployments.value.find(item => String(item.id) === String(selectedDeploymentID.value)))
-const runningDeployment = computed(() => deployments.value.some(item => item.status === 'running'))
+const runningDeployment = computed(() => taskRunning.value)
 const scopedComponent = computed(() => tabs.find(item => item.id === activeTab.value)?.component || null)
 
 watch(() => props.clusterID, async id => {
@@ -151,6 +162,10 @@ watch(() => props.clusterID, async id => {
   cluster.value = null
   servers.value = []
   deployments.value = []
+  latestDeployments.value = []
+  taskRunning.value = false
+  taskOffset.value = 0
+  taskTotal.value = 0
   logs.value = []
   selectedServerID.value = ''
   controlAddress.value = ''
@@ -165,14 +180,25 @@ watch(() => props.clusterID, async id => {
 }, { immediate: true })
 
 watch(activeTab, tab => {
-  if (tab === 'tasks' && cluster.value) void loadTopology()
-  else if (tab !== 'tasks') closeLogs()
+  taskOffset.value = 0
+  if (tab !== 'tasks') closeLogs()
+  if (['tasks', 'topology', 'agent'].includes(tab) && cluster.value) {
+    topologyRequestID += 1
+    topologyLoading.value = false
+    void loadTopology()
+  }
 })
 
 onBeforeUnmount(() => { stopPolling(); topologyRequestID += 1; logRequestID += 1 })
 
 function stopPolling() { if (pollingTimer) clearTimeout(pollingTimer); pollingTimer = undefined }
-function schedulePoll() { stopPolling(); if (runningDeployment.value) pollingTimer = setTimeout(() => { void loadTopology() }, 1500) }
+function schedulePoll() { stopPolling(); if (activeTab.value === 'tasks' || runningDeployment.value) pollingTimer = setTimeout(() => { void loadTopology() }, activeTab.value === 'tasks' ? 5000 : 1500) }
+
+async function changeTaskPage(direction) {
+  closeLogs()
+  taskOffset.value = Math.max(0, taskOffset.value + direction * taskPageSize)
+  await loadTopology()
+}
 
 async function loadTopology() {
   if (!cluster.value || topologyLoading.value) return
@@ -181,11 +207,14 @@ async function loadTopology() {
   topologyLoading.value = true
   topologyError.value = ''
   try {
-    const [clusterResult, serverResult, deploymentResult] = await Promise.all([getCluster(requestedClusterID), getServers(), getClusterDeployments(requestedClusterID)])
+    const [clusterResult, serverResult, deploymentResult] = await Promise.all([getCluster(requestedClusterID), getServers(), getClusterDeployments(requestedClusterID, { limit: taskPageSize, offset: taskOffset.value })])
     if (requestID !== topologyRequestID) return
     cluster.value = clusterResult
     servers.value = serverResult || []
-    deployments.value = deploymentResult || []
+    deployments.value = deploymentResult?.items || []
+    taskTotal.value = deploymentResult?.total || 0
+    latestDeployments.value = deploymentResult?.latest_agent_task ? [deploymentResult.latest_agent_task] : []
+    taskRunning.value = Boolean(deploymentResult?.running)
     if (activeTab.value === 'tasks') {
       if (selectedDeploymentID.value && !deployments.value.some(item => String(item.id) === selectedDeploymentID.value)) {
         closeLogs()
@@ -241,6 +270,7 @@ async function confirmUninstall() {
   finally { uninstalling.value = false }
 }
 async function handleAgentOperationStarted() {
+  taskOffset.value = 0
   await selectTab('tasks')
   await loadTopology()
 }
@@ -345,6 +375,7 @@ function statusClass(value) {
 .deployment-log-meta { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; color: var(--text-secondary); font-size: 12px; }
 .deployment-log-content { display: grid; gap: 12px; }
 .deployment-log { min-height: 180px; max-height: min(58dvh, 580px); overflow: auto; border: 1px solid var(--border-muted); border-radius: var(--radius-control); padding: 12px; background: var(--surface-subtle); color: var(--text-secondary); font: 11px/1.6 var(--font-mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+.task-pagination { padding: 0 var(--space-20) var(--space-16); color: var(--text-secondary); font-size: 12px; }
 @media (max-width: 640px) {
   .cluster-detail-content > .table-wrap { padding-right: 14px; padding-left: 14px; }
   .cluster-deployment-toolbar, .cluster-topology { padding-right: 14px; padding-left: 14px; }

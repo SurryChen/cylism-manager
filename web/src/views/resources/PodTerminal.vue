@@ -34,6 +34,7 @@ import { loadTerminalRuntime } from '../../utils/terminalRuntime.js'
 
 const props = defineProps({
   pod: { type: Object, required: true },
+  clusterId: { type: String, default: '' },
 })
 const emit = defineEmits(['close'])
 
@@ -109,7 +110,8 @@ async function openTerminal() {
   const name = encodeURIComponent(props.pod.name)
   const selectedContainer = encodeURIComponent(container.value)
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
-  const ws = new WebSocket(`${protocol}//${location.host}/api/k8s/pods/${namespace}/${name}/terminal?container=${selectedContainer}&token=${encodeURIComponent(token)}`)
+  const resourcePath = props.clusterId ? `/api/clusters/${encodeURIComponent(props.clusterId)}/k8s` : '/api/k8s'
+  const ws = new WebSocket(`${protocol}//${location.host}${resourcePath}/pods/${namespace}/${name}/terminal?container=${selectedContainer}&token=${encodeURIComponent(token)}`)
   ws.binaryType = 'arraybuffer'
 
   ws.onopen = () => {

@@ -1,7 +1,9 @@
 package kubernetes
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -77,6 +79,40 @@ func setupK8sTestRouter(clients ...*k8sclient.Client) *gin.Engine {
 		g.GET("/ingress-controller", h.GetIngressController)
 	}
 	return r
+}
+
+func TestClusterHandlerUsesOnlySelectedAgentClient(t *testing.T) {
+	platform := &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "platform-pod", Namespace: "default"}})}
+	first := &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "first-pod", Namespace: "default"}})}
+	second := &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "second-pod", Namespace: "default"}})}
+	h := NewK8sHandlerWithAdapter(NewK8sResourceAdapter(platform), nil, nil, nil).WithClusterClientFactory(func(_ context.Context, id uint) (*k8sclient.Client, error) {
+		switch id {
+		case 1:
+			return first, nil
+		case 2:
+			return second, nil
+		default:
+			return nil, fmt.Errorf("集群不存在")
+		}
+	})
+	for _, tc := range []struct {
+		id   uint
+		want string
+	}{{1, "first-pod"}, {2, "second-pod"}} {
+		scoped, err := h.ForCluster(context.Background(), tc.id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		r := gin.New()
+		r.GET("/pods", scoped.ListPods)
+		response := serve(r, httptest.NewRequest(http.MethodGet, "/pods", nil))
+		if !strings.Contains(response.Body.String(), tc.want) || strings.Contains(response.Body.String(), "platform-pod") {
+			t.Fatalf("cluster %d returned wrong pods: %s", tc.id, response.Body.String())
+		}
+	}
+	if _, err := h.ForCluster(context.Background(), 3); err == nil {
+		t.Fatal("missing cluster must not fall back to platform client")
+	}
 }
 
 func jsonBody(obj interface{}) io.Reader {

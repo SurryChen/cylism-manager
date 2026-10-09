@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	sdkerrors "github.com/aliyun/alibaba-cloud-sdk-go/sdk/errors"
 	"github.com/aliyun/alibaba-cloud-sdk-go/services/ram"
 	"github.com/aliyun/alibaba-cloud-sdk-go/services/sts"
 )
@@ -152,6 +153,23 @@ func TestInspectPermissionsHandlesIdentityFailure(t *testing.T) {
 	provider := &aliyunProvider{caller: fakeCallerClient{err: errors.New("invalid secret-value")}}
 	result := provider.InspectPermissions(context.Background())
 	if result.Status != "unavailable" || result.Identity != nil || strings.Contains(result.Message, "secret-value") {
+		t.Fatalf("inspection = %#v", result)
+	}
+}
+
+func TestInspectPermissionsReportsSTSCodeWithoutLeakingProviderMessage(t *testing.T) {
+	err := sdkerrors.NewServerError(403, `{"Code":"InvalidAccessKeyId.NotFound","Message":"secret-value","RequestId":"request-123"}`, "")
+	provider := &aliyunProvider{caller: fakeCallerClient{err: err}, ram: fakeRAMClient{}}
+	result := provider.InspectPermissions(context.Background())
+	if result.Status != "unavailable" || !strings.Contains(result.Message, "InvalidAccessKeyId.NotFound") || !strings.Contains(result.Message, "request-123") || strings.Contains(result.Message, "secret-value") {
+		t.Fatalf("inspection = %#v", result)
+	}
+}
+
+func TestInspectPermissionsDistinguishesNetworkFailure(t *testing.T) {
+	provider := &aliyunProvider{caller: fakeCallerClient{err: errors.New("dial secret-value")}, ram: fakeRAMClient{}}
+	result := provider.InspectPermissions(context.Background())
+	if result.Status != "unavailable" || !strings.Contains(result.Message, "网络") || strings.Contains(result.Message, "secret-value") {
 		t.Fatalf("inspection = %#v", result)
 	}
 }

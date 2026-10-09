@@ -218,7 +218,7 @@ const runtimeChecks = computed(() => [
     level: certificateCheckLevel(),
     title: '证书',
     value: certificateCheckValue(),
-    to: '/network?tab=certificates',
+    to: '/cluster?tab=list',
   },
 ])
 

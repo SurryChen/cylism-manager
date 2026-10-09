@@ -11,6 +11,10 @@ async function mountList() {
   const router = createRouter({ history: createMemoryHistory(), routes: [
     { path: '/cluster', component: { template: '<div />' } },
     { path: '/cluster/:clusterID', component: { template: '<div />' } },
+    { path: '/cluster/:clusterID/resources', component: { template: '<div />' } },
+    { path: '/cluster/:clusterID/network', component: { template: '<div />' } },
+    { path: '/cluster/:clusterID/storage', component: { template: '<div />' } },
+    { path: '/cluster/:clusterID/monitoring', component: { template: '<div />' } },
   ] })
   await router.push('/cluster')
   await router.isReady()
@@ -35,6 +39,30 @@ describe('ClusterList', () => {
     expect(wrapper.text()).toContain('K8s')
     expect(wrapper.text()).toContain('共 2 个集群')
     expect(wrapper.get('.cluster-name-link').attributes('href')).toBe('/cluster/1')
+    expect(wrapper.get('[aria-label="查看 生产集群 的 Kubernetes 资源"]').attributes('href')).toBe('/cluster/1/resources')
+    expect(wrapper.get('[aria-label="查看 生产集群 的网络访问"]').attributes('href')).toBe('/cluster/1/network')
+    expect(wrapper.get('[aria-label="查看 生产集群 的存储卷"]').attributes('href')).toBe('/cluster/1/storage')
+    expect(wrapper.get('[aria-label="查看 生产集群 的监控"]').attributes('href')).toBe('/cluster/1/monitoring')
+    expect(wrapper.findAll('thead th').slice(-2).map(cell => cell.text())).toEqual(['集群操作', '信息维护'])
+    expect(wrapper.findAll('tbody tr:first-child .cluster-operation-column .icon-button')).toHaveLength(5)
+    expect(wrapper.findAll('tbody tr:first-child .cluster-maintenance-column .icon-button')).toHaveLength(2)
+    expect(wrapper.get('[aria-label="集群运维：生产集群"]').attributes('href')).toBe('/cluster/1')
+    const hints = [
+      '查看 生产集群 的 Kubernetes 资源',
+      '查看 生产集群 的网络访问',
+      '查看 生产集群 的存储卷',
+      '查看 生产集群 的监控',
+      '集群运维：生产集群',
+      '修改 生产集群 的集群信息',
+      '删除集群 生产集群',
+    ]
+    const actions = wrapper.findAll('tbody tr:first-child .icon-action-tooltip')
+    for (const [index, action] of actions.entries()) {
+      await action.trigger('mouseenter', { clientX: 100, clientY: 100 })
+      expect(document.body.querySelector('[role="tooltip"]')?.textContent).toBe(hints[index])
+      await action.trigger('mouseleave')
+      expect(document.body.querySelector('[role="tooltip"]')).toBeNull()
+    }
   })
 
   it('shows an empty state when no clusters are registered', async () => {

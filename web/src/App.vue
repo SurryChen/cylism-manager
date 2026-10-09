@@ -89,7 +89,7 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Activity, Bot, Boxes, Check, Cloud, FileText, FolderKanban, HardDrive, History, LayoutDashboard, Layers3, LogOut, Menu, Orbit, PackagePlus, Palette, Route, Server, Settings, Waypoints, X } from 'lucide-vue-next'
+import { Bot, Boxes, Check, Cloud, FileText, FolderKanban, HardDrive, History, LayoutDashboard, Layers3, LogOut, Menu, Orbit, PackagePlus, Palette, Server, Settings, Waypoints, X } from 'lucide-vue-next'
 import { clearTokens } from './api/index.js'
 import { usePalette } from './composables/usePalette.js'
 import { useTransientScrollbarVisibility } from './composables/useTransientScrollbarVisibility.js'
@@ -135,6 +135,7 @@ const navGroups = computed(() => [
       { label: '制品库', to: '/cloud-services/registry', icon: Cloud },
       { label: '域名管理', to: '/cloud-services/domains', icon: Waypoints },
       { label: '对象存储', to: '/cloud-services/object-storage', icon: HardDrive },
+      { label: 'Agent 助手', to: '/runtimes', icon: Bot },
     ],
   },
   {
@@ -144,11 +145,6 @@ const navGroups = computed(() => [
     items: [
       { label: '服务器', to: '/servers', icon: Server },
       { label: '集群', to: '/cluster', icon: Waypoints },
-      { label: 'Kubernetes 资源', to: '/resources', icon: Boxes },
-      { label: '网络访问', to: '/network', icon: Route },
-      { label: '存储', to: '/storage', icon: HardDrive },
-      { label: '监控', to: '/monitoring', icon: Activity },
-      { label: 'Agent 助手', to: '/runtimes', icon: Bot },
     ],
   },
   {

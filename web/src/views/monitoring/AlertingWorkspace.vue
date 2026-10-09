@@ -1,4 +1,5 @@
 <template>
+  <FeedbackBanner v-if="clusterId" class="section-gap" tone="warning" message="平台不在当前集群内时，告警通知回调无法送达；告警查看和静默仍可使用。" />
   <section v-if="statusError" class="k8s-banner k8s-banner-warn section-gap" role="alert">{{ statusError }}</section>
 
   <SurfaceCard v-if="!monitoringReady" class="alerting-empty">
@@ -30,8 +31,8 @@
         <article class="metric"><span>通知渠道</span><strong><span class="badge" :class="status.notification_configured ? 'badge-online' : 'badge-offline'">{{ status.notification_configured ? '已配置' : '未配置' }}</span></strong><small>{{ status.node_name || '-' }}</small></article>
       </section>
 
-      <section class="alert-section-heading section-gap"><div><h2>自动处置</h2><p>告警先由指定 Nanobot 生成诊断报告；清理动作始终需要人工审批。</p></div></section>
-      <section class="automation-panel section-gap">
+      <section v-if="!clusterId" class="alert-section-heading section-gap"><div><h2>自动处置</h2><p>告警先由指定 Nanobot 生成诊断报告；清理动作始终需要人工审批。</p></div></section>
+      <section v-if="!clusterId" class="automation-panel section-gap">
         <div class="automation-toggle"><div><strong>启用告警自动分析</strong><small>只开放固定的告警、指标和节点诊断接口</small></div><label class="automation-switch" aria-label="启用告警自动分析"><input v-model="automationPolicy.enabled" type="checkbox" /><span aria-hidden="true" /></label></div>
         <div class="automation-fields">
           <label class="form-group"><span class="form-label">处理 Runtime</span><SelectMenu v-model.number="automationPolicy.runtime_id" class="form-select" :disabled="!automationPolicy.enabled"><option :value="0" disabled>选择 Nanobot Runtime</option><option v-for="runtime in nanobotRuntimes" :key="runtime.id" :value="runtime.id">{{ runtime.name }} · {{ runtime.status }}</option></SelectMenu></label>
@@ -43,7 +44,7 @@
         <div class="automation-footer"><small>不会授予 Shell、SSH、kubectl 或任意命令执行权限。</small><button class="btn btn-primary" :disabled="automationSaving || (automationPolicy.enabled && !automationPolicy.runtime_id)" @click="saveAutomationPolicy">{{ automationSaving ? '保存中...' : '保存自动处置策略' }}</button></div>
       </section>
 
-      <section v-if="automationEvents.length" class="automation-events section-gap">
+      <section v-if="!clusterId && automationEvents.length" class="automation-events section-gap">
         <div class="alert-section-heading"><div><h2>自动处置事件</h2><p>诊断、审批、执行与复测状态以持久化事件为准。</p></div></div>
         <div class="event-list">
           <article v-for="event in automationEvents" :key="event.id" class="event-row">
@@ -127,7 +128,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import DOMPurify from 'dompurify'
 import MarkdownIt from 'markdown-it'
 import taskLists from 'markdown-it-task-lists'
@@ -146,10 +147,12 @@ import {
   testAlertingNotification,
 } from '../../api/alerting.js'
 import { useAsyncResource } from '../../composables/useAsyncResource.js'
+import FeedbackBanner from '../../components/FeedbackBanner.vue'
 import { formatDateTime as formatTime } from '../../utils/formatters.js'
 import SurfaceCard from '../../components/SurfaceCard.vue'
 
-const props = defineProps({ nodes: { type: Array, default: () => [] }, monitoringReady: Boolean, metricsNodeName: { type: String, default: '' } })
+const props = defineProps({ clusterId: { type: String, default: '' }, nodes: { type: Array, default: () => [] }, monitoringReady: Boolean, metricsNodeName: { type: String, default: '' } })
+const requestOptions = signal => props.clusterId ? { clusterID: props.clusterId, ...(signal ? { signal } : {}) } : signal ? { signal } : undefined
 const emit = defineEmits(['navigate'])
 
 const status = ref(null)
@@ -175,8 +178,9 @@ const automationPolicy = ref(blankAutomationPolicy())
 const automationEvents = ref([])
 const runtimes = ref([])
 const reportMarkdown = new MarkdownIt({ breaks: true, html: false, linkify: true }).use(taskLists, { enabled: true })
-const statusResource = useAsyncResource(({ signal }) => getAlertingStatus({ signal }), null)
+const statusResource = useAsyncResource(({ signal }) => getAlertingStatus(requestOptions(signal)), null)
 const alertResource = useAsyncResource(async ({ signal }) => {
+  if (props.clusterId) return { overviewResult: await getAlertingOverview(requestOptions(signal)), policy: null, events: [], runtimeItems: [] }
   const [overviewResult, policy, events, runtimeItems] = await Promise.all([
     getAlertingOverview({ signal }),
     getAlertingAutomationPolicy({ signal }),
@@ -191,6 +195,7 @@ const readyNodes = computed(() => props.nodes.filter(node => node.ready))
 const sortedAlerts = computed(() => [...overview.value.active].sort((left, right) => severityWeight(left) - severityWeight(right)))
 
 onMounted(() => { refresh() })
+watch(() => props.clusterId, () => { status.value = null; overview.value = { active: [], resolved: [], firing: 0, silenced: 0 }; void refresh() })
 
 async function refresh() {
   if (!props.monitoringReady) return
@@ -233,7 +238,7 @@ function renderReportMarkdown(content) {
 async function install() {
   installing.value = true
   installError.value = ''
-  try { await installAlerting(installForm.value); await refresh() } catch (error) { installError.value = error.message || '启用告警失败' } finally { installing.value = false }
+  try { await installAlerting(installForm.value, requestOptions()); await refresh() } catch (error) { installError.value = error.message || '启用告警失败' } finally { installing.value = false }
 }
 function navigate(alert) { emit('navigate', { tab: alert.labels?.node ? 'nodes' : 'workloads', node: alert.labels?.node || '' }) }
 function openSilence(alert) { silencingAlert.value = alert; silenceForm.value = { duration_minutes: 240, comment: '' } }
@@ -244,7 +249,7 @@ function alertMatchers(alert) {
 async function createSilence() {
   silencing.value = true
   silenceError.value = ''
-  try { await createAlertingSilence({ ...silenceForm.value, matchers: alertMatchers(silencingAlert.value) }); silencingAlert.value = null; await refresh() } catch (error) { silenceError.value = error.message || '静默告警失败' } finally { silencing.value = false }
+  try { await createAlertingSilence({ ...silenceForm.value, matchers: alertMatchers(silencingAlert.value) }, requestOptions()); silencingAlert.value = null; await refresh() } catch (error) { silenceError.value = error.message || '静默告警失败' } finally { silencing.value = false }
 }
 function blankEmail() { return { enabled: false, smtp_host: '', smtp_port: 587, username: '', password: '', from: '', to: '', tls_mode: 'starttls' } }
 function defaultNotificationPolicy() { return { group_wait_seconds: 30, group_interval_minutes: 5, repeat_interval_minutes: 240 } }
@@ -272,17 +277,17 @@ async function openSettings() {
   settingsError.value = ''
   settingsForm.value = { feishu_webhook_url: '', email: blankEmail(), notification_policy: { ...(status.value?.notification_policy || defaultNotificationPolicy()) }, rules: (status.value?.rules || []).map(rule => ({ ...rule })) }
   settingsOpen.value = true
-  try { await getAlertingSilences() } catch { /* The active-alert view remains usable when only silence history is unavailable. */ }
+  try { await getAlertingSilences(requestOptions()) } catch { /* The active-alert view remains usable when only silence history is unavailable. */ }
 }
 async function testNotification(channel) {
   testingChannel.value = channel
   notificationError.value = ''
-  try { await testAlertingNotification(channel) } catch (error) { notificationError.value = error.message || '测试通知失败' } finally { testingChannel.value = '' }
+  try { await testAlertingNotification(channel, requestOptions()) } catch (error) { notificationError.value = error.message || '测试通知失败' } finally { testingChannel.value = '' }
 }
 async function saveSettings() {
   saving.value = true
   settingsError.value = ''
-  try { await saveAlertingConfig(settingsForm.value); settingsOpen.value = false; await refresh() } catch (error) { settingsError.value = error.message || '保存告警设置失败' } finally { saving.value = false }
+  try { await saveAlertingConfig(settingsForm.value, requestOptions()); settingsOpen.value = false; await refresh() } catch (error) { settingsError.value = error.message || '保存告警设置失败' } finally { saving.value = false }
 }
 
 defineExpose({ refresh })

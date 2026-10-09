@@ -17,7 +17,7 @@ vi.mock('./monitoring/MetricTrendChart.vue', () => ({
 function monitoringRouter() {
   return createRouter({
     history: createMemoryHistory(),
-    routes: [{ path: '/monitoring', component: Monitoring }],
+    routes: [{ path: '/monitoring', component: Monitoring }, { path: '/cluster/:clusterID/monitoring', component: Monitoring, props: true }],
   })
 }
 
@@ -27,7 +27,7 @@ async function mountMonitoring(path = '/monitoring') {
   await router.isReady()
   return {
     router,
-    wrapper: mount(Monitoring, { global: { plugins: [router] } }),
+    wrapper: mount(Monitoring, { props: { clusterID: router.currentRoute.value.params.clusterID || '' }, global: { plugins: [router] } }),
   }
 }
 
@@ -35,13 +35,45 @@ beforeEach(() => {
   apiMocks.get.mockReset()
   apiMocks.post.mockReset()
   apiMocks.get.mockImplementation(path => {
+    if (path.endsWith('/agent-status')) return Promise.resolve({ state: 'ready' })
     if (path === '/monitoring/status') return Promise.resolve({ state: 'not_installed', message: '尚未安装 VictoriaMetrics' })
+    if (path === '/monitoring/logs/status') return Promise.resolve({ state: 'not_installed' })
     if (path === '/nodes') return Promise.resolve([{ name: 'node-a', ready: true }])
     return Promise.resolve({})
   })
 })
 
 describe('Monitoring view', () => {
+  it('loads the selected cluster over its Agent-backed monitoring routes', async () => {
+    apiMocks.get.mockImplementation(path => {
+      if (path === '/clusters/2/agent-status') return Promise.resolve({ state: 'ready' })
+      if (path === '/clusters/2') return Promise.resolve({ name: '生产集群' })
+      if (path === '/clusters/2/monitoring/status') return Promise.resolve({ state: 'not_installed' })
+      if (path === '/nodes?cluster_id=2') return Promise.resolve([{ name: 'node-a', ready: true }])
+      return Promise.resolve([])
+    })
+    const { wrapper } = await mountMonitoring('/cluster/2/monitoring')
+    await flushPromises()
+    expect(wrapper.get('.section-tabs-header h1').text()).toBe('生产集群')
+    expect(wrapper.get('.back-link').attributes('href')).toBe('/cluster?tab=list')
+    expect(apiMocks.get).toHaveBeenCalledWith('/clusters/2/monitoring/status', expect.objectContaining({ clusterID: '2' }))
+    expect(apiMocks.get).toHaveBeenCalledWith('/nodes?cluster_id=2', expect.objectContaining({ clusterID: '2' }))
+    expect(apiMocks.get.mock.calls.some(([path]) => path === '/monitoring/status')).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('does not load monitoring resources while Agent is unavailable', async () => {
+    apiMocks.get.mockImplementation(path => {
+      if (path === '/clusters/2') return Promise.resolve({ name: '生产集群' })
+      if (path === '/clusters/2/agent-status') return Promise.resolve({ state: 'unreachable' })
+      return Promise.resolve([])
+    })
+    const { wrapper } = await mountMonitoring('/cluster/2/monitoring')
+    await flushPromises()
+    expect(wrapper.text()).toContain('Agent 尚未安装或当前无法连接')
+    expect(apiMocks.get.mock.calls.some(([path]) => path === '/clusters/2/monitoring/status')).toBe(false)
+  })
+
   it('uses the shared monitoring workspace header', async () => {
     const { wrapper } = await mountMonitoring()
     expect(wrapper.get('.section-tabs-header').find('h1').text()).toBe('集群监控')
@@ -59,6 +91,16 @@ describe('Monitoring view', () => {
     expect(wrapper.text()).toContain('重新检测')
     expect(wrapper.find('select').text()).toContain('node-a')
     expect(wrapper.find('input[placeholder="10Gi"]').element.value).toBe('10Gi')
+  })
+
+  it('shows the logging installer on its own tab when metrics are absent', async () => {
+    const { wrapper } = await mountMonitoring()
+    await flushPromises()
+    await wrapper.findAll('.section-tab').find(tab => tab.text() === '日志').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('容器日志未启用')
+    expect(wrapper.text()).not.toContain('VictoriaMetrics 未安装')
+    wrapper.unmount()
   })
 
   it('shows historical node trends in the overview and filters selected nodes', async () => {

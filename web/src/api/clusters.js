@@ -8,6 +8,10 @@ export function getCluster(clusterID, options) {
   return api.get(`/clusters/${encodeURIComponent(clusterID)}`, options)
 }
 
+export function getClusterAgentStatus(clusterID, options) {
+  return api.get(`/clusters/${encodeURIComponent(clusterID)}/agent-status`, options)
+}
+
 export function createCluster(name, distribution) {
   return api.post('/clusters', { name, distribution })
 }
@@ -28,8 +32,8 @@ export function adoptClusterNode(clusterID, serverID, role, address) {
   return api.post(`/clusters/${encodeURIComponent(clusterID)}/adoptions`, { server_id: Number(serverID), role, address })
 }
 
-export function getClusterDeployments(clusterID, options) {
-  return api.get(`/clusters/${encodeURIComponent(clusterID)}/deployments`, options)
+export function getClusterDeployments(clusterID, { limit = 20, offset = 0 } = {}, options) {
+  return api.get(`/clusters/${encodeURIComponent(clusterID)}/deployments?limit=${limit}&offset=${offset}`, options)
 }
 
 export function getClusterDeploymentLogs(clusterID, deploymentID, after = 0, options) {

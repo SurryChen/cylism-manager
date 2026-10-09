@@ -34,7 +34,9 @@ type clusterDeploymentStore interface {
 	StartClusterUninstall(uint, uint) (*model.ClusterDeployment, error)
 	FinishClusterUninstall(*model.ClusterDeployment, bool) error
 	GetClusterDeployment(uint, uint) (*model.ClusterDeployment, error)
-	ListClusterDeployments(uint) ([]model.ClusterDeployment, error)
+	ListClusterDeployments(uint, int, int) ([]model.ClusterDeployment, int64, error)
+	LatestClusterAgentDeployment(uint) (*model.ClusterDeployment, error)
+	ClusterHasRunningDeployment(uint) (bool, error)
 	ListClusterDeploymentLogs(uint, uint) ([]model.ClusterDeploymentLog, error)
 	AppendClusterDeploymentLog(uint, string) error
 	FinishClusterDeployment(*model.ClusterDeployment, bool, string, string, string) error
@@ -445,12 +447,23 @@ func (h *DeploymentHandler) List(c *gin.Context) {
 		apiShared.InternalError(c, "读取集群失败")
 		return
 	}
-	items, err := h.store.ListClusterDeployments(clusterID)
+	limit, offset := apiShared.LimitOffset(c, 20, 100)
+	items, total, err := h.store.ListClusterDeployments(clusterID, limit, offset)
 	if err != nil {
 		apiShared.InternalError(c, "读取部署记录失败")
 		return
 	}
-	apiShared.Success(c, items)
+	latestAgent, err := h.store.LatestClusterAgentDeployment(clusterID)
+	if err != nil {
+		apiShared.InternalError(c, "读取 Agent 任务状态失败")
+		return
+	}
+	running, err := h.store.ClusterHasRunningDeployment(clusterID)
+	if err != nil {
+		apiShared.InternalError(c, "读取任务状态失败")
+		return
+	}
+	apiShared.Success(c, gin.H{"items": items, "total": total, "latest_agent_task": latestAgent, "running": running})
 }
 
 func (h *DeploymentHandler) Logs(c *gin.Context) {

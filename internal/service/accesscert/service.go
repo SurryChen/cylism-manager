@@ -96,7 +96,7 @@ func (s *Service) PlatformClientTLS(clusterID uint) (ClientTLSMaterial, error) {
 			return ClientTLSMaterial{}, err
 		}
 	}
-	if usage, ok := s.repo.(usageRepository); ok {
+	if usage, ok := s.repo.(usageRepository); ok && !item.InUse {
 		if err := usage.MarkAccessCertificateInUse(item.ID, true); err != nil {
 			return ClientTLSMaterial{}, err
 		}

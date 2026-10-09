@@ -1,5 +1,28 @@
 import { api } from './index.js'
 
+function clusterStoragePath(clusterID, path) {
+  return `/clusters/${encodeURIComponent(clusterID)}/k8s${path}`
+}
+
+export function getClusterPersistentVolumeInventory(clusterID, params = {}, options) {
+  return api.get(queryPath(clusterStoragePath(clusterID, '/persistent-volume-claims'), params), options)
+}
+export function getClusterPersistentVolumeReferences(clusterID, claims, options) {
+  const query = new URLSearchParams()
+  claims.forEach(claim => query.append('claim', `${claim.namespace}/${claim.name}`))
+  return api.get(`${clusterStoragePath(clusterID, '/persistent-volume-claims/references')}?${query}`, options)
+}
+export function getClusterPersistentVolumeUsage(clusterID, claims, options) {
+  const query = new URLSearchParams()
+  claims.forEach(claim => query.append('claim', `${claim.namespace}/${claim.name}`))
+  return api.get(`${clusterStoragePath(clusterID, '/persistent-volume-claims/usage')}?${query}`, options)
+}
+export function getClusterStorageClasses(clusterID, options) { return api.get(clusterStoragePath(clusterID, '/storage-classes'), options) }
+export function getClusterStorageNamespaces(clusterID, options) { return api.get(clusterStoragePath(clusterID, '/namespace-names'), options) }
+export function createClusterStorageNamespace(clusterID, name) { return api.post(clusterStoragePath(clusterID, '/namespaces'), { name }) }
+export function createClusterPersistentVolumeClaim(clusterID, body) { return api.post(clusterStoragePath(clusterID, '/persistent-volume-claims'), body) }
+export function deleteClusterPersistentVolumeClaim(clusterID, name, body) { return api.delete(clusterStoragePath(clusterID, `/persistent-volume-claims/${encodeURIComponent(name)}`), body) }
+
 function queryPath(path, params = {}) {
   const query = new URLSearchParams()
   Object.entries(params).forEach(([key, value]) => {

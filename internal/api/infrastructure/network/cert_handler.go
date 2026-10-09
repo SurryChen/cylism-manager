@@ -20,10 +20,11 @@ import (
 
 // CertHandler Certificate 管理的 HTTP handler
 type CertHandler struct {
-	store   repository.CertificateRepository
-	encKey  []byte
-	network *networkservice.Service
-	k8s     CertificateKubernetesAdapter
+	store              repository.CertificateRepository
+	encKey             []byte
+	network            *networkservice.Service
+	k8s                CertificateKubernetesAdapter
+	clusterCredentials func(uint) networkservice.DNSCredentialStore
 }
 
 type CertificateKubernetesAdapter interface {
@@ -52,6 +53,20 @@ type DNSCredentialRequest struct {
 // service and cert-manager port from Bootstrap without creating fallbacks.
 func NewCertHandlerWithComposedDependencies(st repository.CertificateRepository, encKey []byte, network *networkservice.Service, client CertificateKubernetesAdapter) *CertHandler {
 	return &CertHandler{store: st, encKey: append([]byte(nil), encKey...), network: network, k8s: client}
+}
+
+func (h *CertHandler) WithClusterCredentialStoreFactory(factory func(uint) networkservice.DNSCredentialStore) *CertHandler {
+	h.clusterCredentials = factory
+	return h
+}
+
+func (h *CertHandler) ForCluster(client *k8s.Client, clusterID uint) (*CertHandler, error) {
+	if h.clusterCredentials == nil {
+		return nil, fmt.Errorf("集群 DNS 凭据存储未配置")
+	}
+	service := networkservice.NewService(nil, h.clusterCredentials(clusterID)).
+		WithCertificateAdapter(client).WithDNSAdapter(client)
+	return NewCertHandlerWithComposedDependencies(h.store, h.encKey, service, client), nil
 }
 
 // Status reports cert-manager prerequisites before certificate resources are queried.
@@ -487,7 +502,7 @@ func (h *CertHandler) dnsCredentialFromRequest(req dnsCredentialRequest, current
 	}
 	credential := &model.DNSCredential{Name: name, Provider: providerID, Namespace: namespace, Enabled: true, EncryptedValues: encrypted}
 	if current != nil {
-		credential.ID, credential.CreatedBy, credential.CreatedAt, credential.SecretName = current.ID, current.CreatedBy, current.CreatedAt, current.SecretName
+		credential.ID, credential.ClusterID, credential.CreatedBy, credential.CreatedAt, credential.SecretName = current.ID, current.ClusterID, current.CreatedBy, current.CreatedAt, current.SecretName
 		credential.Enabled = current.Enabled
 		if req.Enabled != nil {
 			credential.Enabled = *req.Enabled

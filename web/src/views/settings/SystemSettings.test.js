@@ -19,13 +19,7 @@ vi.mock('vue-router', () => ({
 
 vi.mock('../../api/index.js', () => ({
   api: {
-    get: vi.fn(path => {
-      if (path === '/auth/temporary-tokens') return Promise.resolve([])
-      if (path === '/platform/status') return Promise.resolve({ webhook_configured: true, image_prefix: 'registry.example.com/cylism-manager', deployment: { image: 'registry.example.com/cylism-manager:latest', ready_replicas: 1 }, releases: [{ id: 3, source: 'github', status: 'succeeded', image: 'registry.example.com/cylism-manager:latest', commit_sha: 'aabbccddeeff00112233445566778899', created_at: '2026-08-01T12:00:00Z' }] })
-      if (path === '/platform/endpoint') return Promise.resolve({ endpoint: { hostname: 'console.example.com', certificate_name: 'console-example-com', enabled: true }, url: 'https://console.example.com', state: 'ready', ingress_ready: true, ingress: { namespace: 'default', name: 'cylism-ingress', ingress_class: 'traefik', hostname: 'console.example.com', path: '/', service_name: 'cylism-manager', service_port: '8080', tls_secret_name: 'console-example-com-tls' }, certificate: { name: 'console-example-com', status: 'Ready', expiry_date: '2026-10-01T12:00:00Z', renewal_time: '2026-09-01T12:00:00Z' } })
-      if (path === '/certs') return Promise.resolve([{ name: 'console-example-com', namespace: 'default', status: 'Ready', domains: ['console.example.com'] }])
-      return Promise.resolve({ initialized: true, ip: '100.88.0.1', online: true })
-    }),
+    get: vi.fn(),
     post: vi.fn().mockResolvedValue({ secret: 'generated-secret' }),
     put: vi.fn().mockResolvedValue({}),
     delete: vi.fn().mockResolvedValue({}),
@@ -37,7 +31,15 @@ beforeEach(() => {
   vi.useRealTimers()
   route.query.tab = undefined
   routerPush.mockClear()
-  api.get.mockClear()
+  api.get.mockReset()
+  api.get.mockImplementation(path => {
+    if (path === '/auth/temporary-tokens') return Promise.resolve([])
+    if (path === '/platform/capabilities') return Promise.resolve({ in_cluster: true, supported: true })
+    if (path === '/platform/status') return Promise.resolve({ webhook_configured: true, image_prefix: 'registry.example.com/cylism-manager', deployment: { image: 'registry.example.com/cylism-manager:latest', ready_replicas: 1 }, releases: [{ id: 3, source: 'github', status: 'succeeded', image: 'registry.example.com/cylism-manager:latest', commit_sha: 'aabbccddeeff00112233445566778899', created_at: '2026-08-01T12:00:00Z' }] })
+    if (path === '/platform/endpoint') return Promise.resolve({ endpoint: { hostname: 'console.example.com', certificate_name: 'console-example-com', enabled: true }, url: 'https://console.example.com', state: 'ready', ingress_ready: true, ingress: { namespace: 'default', name: 'cylism-ingress', ingress_class: 'traefik', hostname: 'console.example.com', path: '/', service_name: 'cylism-manager', service_port: '8080', tls_secret_name: 'console-example-com-tls' }, certificate: { name: 'console-example-com', status: 'Ready', expiry_date: '2026-10-01T12:00:00Z', renewal_time: '2026-09-01T12:00:00Z' } })
+    if (path === '/certs') return Promise.resolve([{ name: 'console-example-com', namespace: 'default', status: 'Ready', domains: ['console.example.com'] }])
+    return Promise.resolve({ initialized: true, ip: '100.88.0.1', online: true })
+  })
   api.post.mockClear()
   api.put.mockClear()
   api.delete.mockClear()
@@ -100,6 +102,24 @@ describe('SystemSettings view', () => {
     expect(wrapper.get('.platform-release-history-header').text()).toContain('镜像 / Tag')
     expect(wrapper.text()).toContain('registry.example.com/cylism-manager:latest')
     expect(wrapper.get('.platform-release-config-card').findComponent({ name: 'SurfaceCard' }).exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('shows unsupported state outside Kubernetes without reading platform resources', async () => {
+    api.get.mockImplementation(path => path === '/platform/capabilities'
+      ? Promise.resolve({ in_cluster: false, supported: false, reason: '平台未部署在 Kubernetes 集群内，暂不支持平台入口配置及发布与更新' })
+      : Promise.resolve([]))
+    const wrapper = mount(SystemSettings, { global: { stubs: { Teleport: true } } })
+    await wrapper.get('[data-testid="system-settings-tab-entry"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('暂不支持平台入口配置及发布与更新')
+    expect(wrapper.find('.platform-entry-table').exists()).toBe(false)
+    await wrapper.get('[data-testid="system-settings-tab-release"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.platform-release-layout').exists()).toBe(false)
+    expect(api.get.mock.calls.map(([path]) => path)).not.toContain('/platform/endpoint')
+    expect(api.get.mock.calls.map(([path]) => path)).not.toContain('/platform/status')
+    expect(api.get.mock.calls.map(([path]) => path)).not.toContain('/certs')
     wrapper.unmount()
   })
 
@@ -182,23 +202,25 @@ describe('SystemSettings view', () => {
   it('does not show an error when a newer platform status refresh supersedes an older request', async () => {
     route.query.tab = 'release'
     let rejectInitialRequest
-    api.get
-      .mockImplementationOnce((path, options) => {
-        expect(path).toBe('/platform/status')
+    let statusReads = 0
+    api.get.mockImplementation((path, options) => {
+      if (path === '/platform/capabilities') return Promise.resolve({ in_cluster: true, supported: true })
+      if (path === '/platform/status' && statusReads++ === 0) {
         return new Promise((resolve, reject) => {
           rejectInitialRequest = reject
           options.signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true })
         })
-      })
-      .mockImplementationOnce(path => {
-        expect(path).toBe('/platform/status')
+      }
+      if (path === '/platform/status') {
         return Promise.resolve({
           webhook_configured: true,
           image_prefix: 'registry.example.com/cylism-manager',
           deployment: { image: 'registry.example.com/cylism-manager:stable', ready_replicas: 1, desired_replicas: 1 },
           releases: [],
         })
-      })
+      }
+      return Promise.resolve({})
+    })
 
     const wrapper = mount(SystemSettings, { global: { stubs: { Teleport: true } } })
     await nextTick()
@@ -206,7 +228,7 @@ describe('SystemSettings view', () => {
     await nextTick()
 
     expect(rejectInitialRequest).toBeTypeOf('function')
-    expect(api.get).toHaveBeenCalledTimes(2)
+    expect(api.get.mock.calls.filter(([path]) => path === '/platform/status')).toHaveLength(2)
     expect(wrapper.text()).toContain('registry.example.com/cylism-manager:stable')
     expect(wrapper.text()).not.toContain('读取平台发布状态失败')
     wrapper.unmount()
@@ -275,14 +297,15 @@ describe('SystemSettings view', () => {
   })
 
   it('shows a local error when the active settings read fails', async () => {
-    api.get.mockImplementation(path => path === '/platform/status'
-      ? Promise.reject(new Error('设置服务不可用'))
-      : Promise.resolve({}))
+    api.get.mockImplementation(path => {
+      if (path === '/platform/capabilities') return Promise.resolve({ in_cluster: true, supported: true })
+      if (path === '/platform/status') return Promise.reject(new Error('设置服务不可用'))
+      return Promise.resolve({})
+    })
     const wrapper = mount(SystemSettings, { global: { stubs: { Teleport: true } } })
     await nextTick()
     await wrapper.get('[data-testid="system-settings-tab-release"]').trigger('click')
-    await nextTick()
-    await nextTick()
+    await flushPromises()
 
     expect(wrapper.text()).toContain('设置服务不可用')
   })

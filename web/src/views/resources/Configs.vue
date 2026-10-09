@@ -56,7 +56,7 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { Pencil, Plus, RefreshCw, Trash2 } from 'lucide-vue-next'
-import { createConfigMap, createSecret, deleteConfigMap, deleteSecret, getConfigMap, getConfigMapsForNamespace, getNamespaceNames, getSecret, getSecretMetadataPage, updateConfigMap, updateSecret } from '../../api/kubernetes.js'
+import * as legacyK8s from '../../api/kubernetes.js'
 import { useAsyncResource } from '../../composables/useAsyncResource.js'
 import BaseModal from '../../components/BaseModal.vue'
 import EmptyState from '../../components/EmptyState.vue'
@@ -64,6 +64,9 @@ import ErrorNoticeModal from '../../components/ErrorNoticeModal.vue'
 import OverflowTooltip from '../../components/OverflowTooltip.vue'
 import SelectMenu from '../../components/SelectMenu.vue'
 import TabbedWorkspaceCard from '../../components/TabbedWorkspaceCard.vue'
+
+const { clusterId = '' } = defineProps({ clusterId: { type: String, default: '' } })
+const { createConfigMap, createSecret, deleteConfigMap, deleteSecret, getConfigMap, getConfigMapsForNamespace, getNamespaceNames, getSecret, getSecretMetadataPage, updateConfigMap, updateSecret } = clusterId ? legacyK8s.createClusterKubernetesApi(clusterId) : legacyK8s
 
 const activeTab = ref('configmaps')
 const configmaps = ref([])
@@ -200,7 +203,6 @@ async function removeResource(resource) {
 </script>
 
 <style scoped>
-.configs-workspace { margin-top: var(--space-20); }
 .resource-count { color: var(--text-secondary); font-size: 12px; font-variant-numeric: tabular-nums; }
 .secret-namespace-filter { width: 156px; flex: 0 0 156px; }
 .secret-namespace-filter :deep(.select-menu) { width: 100%; }

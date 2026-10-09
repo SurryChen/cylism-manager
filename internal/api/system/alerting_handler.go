@@ -259,6 +259,9 @@ func (h *AlertingHandler) DeleteSilence(c *gin.Context) {
 		return
 	}
 	id := strings.TrimSpace(c.Param("id"))
+	if silenceID := strings.TrimSpace(c.Param("silenceID")); silenceID != "" {
+		id = silenceID
+	}
 	if id == "" || len(id) > 128 {
 		apiShared.ValidationError(c, "静默 ID 无效")
 		return

@@ -30,7 +30,7 @@
                 <td><OverflowTooltip :text="cert.secret_name || '-'" /></td>
                 <td>{{ formatDate(cert.renewal_time) }}</td>
                 <td><span class="badge" :class="cert.status === 'Ready' ? 'badge-online' : cert.status === 'Failed' ? 'badge-danger' : 'badge-deploying'">{{ certificateStatusLabel(cert.status) }}</span></td>
-                <td class="action-cell"><div class="certificate-row-actions"><button class="btn btn-sm" @click="router.push(`/network/certificates/${cert.namespace}/${cert.name}`)">签发过程</button><button class="btn btn-sm btn-danger" @click="deleteCertificate(cert)">删除</button></div></td>
+                <td class="action-cell"><div class="certificate-row-actions"><button class="btn btn-sm" @click="router.push(`/cluster/${clusterId}/network/certificates/${encodeURIComponent(cert.namespace)}/${encodeURIComponent(cert.name)}`)">签发过程</button><button class="btn btn-sm btn-danger" @click="deleteCertificate(cert)">删除</button></div></td>
               </tr>
             </tbody>
           </table>
@@ -93,6 +93,7 @@ import { createCertificate as createCertificateRequest, createDNSCredential, cre
 import { useAsyncResource } from '../../composables/useAsyncResource.js'
 
 const router = useRouter()
+const props = defineProps({ clusterId: { type: [String, Number], required: true } })
 const certs = ref([])
 const issuers = ref([])
 const credentials = ref([])
@@ -125,8 +126,8 @@ const credentialFields = computed(() => providers.value.find(provider => provide
 const eligibleCredentials = computed(() => credentials.value.filter(credential => credential.enabled && credential.provider === issuerForm.value.dns_provider && (issuerForm.value.kind === 'ClusterIssuer' || credential.namespace === issuerForm.value.namespace)))
 const certificateResource = useAsyncResource(async ({ signal }) => {
   const [statusResult, certificatesResult] = await Promise.allSettled([
-    getCertificateStatus({ signal }),
-    getCertificates({ signal }),
+    getCertificateStatus({ signal }, props.clusterId),
+    getCertificates({ signal }, props.clusterId),
   ])
   if (statusResult.status === 'rejected') throw statusResult.reason
   const currentStatus = statusResult.value
@@ -134,9 +135,9 @@ const certificateResource = useAsyncResource(async ({ signal }) => {
   if (certificatesResult.status === 'rejected') throw certificatesResult.reason
   return { status: currentStatus, certificates: certificatesResult.value }
 }, null)
-const issuersResource = useAsyncResource(({ signal }) => getCertificateIssuers({ signal }), [])
-const credentialsResource = useAsyncResource(({ signal }) => getDNSCredentials({ signal }), [])
-const providersResource = useAsyncResource(({ signal }) => getDNSProviders({ signal }), [])
+const issuersResource = useAsyncResource(({ signal }) => getCertificateIssuers({ signal }, props.clusterId), [])
+const credentialsResource = useAsyncResource(({ signal }) => getDNSCredentials({ signal }, props.clusterId), [])
+const providersResource = useAsyncResource(({ signal }) => getDNSProviders({ signal }, props.clusterId), [])
 const issuersLoading = issuersResource.loading
 const credentialsLoading = credentialsResource.loading
 const providersLoading = providersResource.loading
@@ -173,16 +174,16 @@ async function loadProviders() { resourceError.value = ''; const result = await 
 async function openCertificate() { showCertificate.value = true; await loadIssuers() }
 async function openIssuanceConfig() { showIssuanceConfig.value = true; issuanceConfigTab.value = 'issuers'; await loadIssuers() }
 async function selectIssuanceConfigTab(tab) { issuanceConfigTab.value = tab; if (tab === 'issuers') await loadIssuers(); else if (tab === 'credentials') await loadCredentials(); else await loadProviders() }
-async function installCertManager() { mutationError.value = ''; try { await installCertificateManager(); await refresh() } catch (err) { mutationError.value = err.message || '安装失败' } }
-async function installProvider(id) { installingProvider.value = id; mutationError.value = ''; try { await installDNSProvider(id); await loadProviders() } catch (err) { mutationError.value = err.message || '安装 Provider 失败' } finally { installingProvider.value = '' } }
-async function createCertificate() { const issuer = availableIssuers.value.find(item => issuerKey(item) === certificateForm.value.issuer); if (!issuer) return; submitting.value = true; mutationError.value = ''; try { await createCertificateRequest({ name: certificateForm.value.name, namespace: certificateForm.value.namespace, domains: certificateForm.value.domains.split(',').map(item => item.trim()).filter(Boolean), issuer_ref: issuer.name, issuer_kind: issuer.kind }); showCertificate.value = false; await refresh() } catch (err) { mutationError.value = err.message || '创建证书失败' } finally { submitting.value = false } }
+async function installCertManager() { mutationError.value = ''; try { await installCertificateManager(undefined, props.clusterId); await refresh() } catch (err) { mutationError.value = err.message || '安装失败' } }
+async function installProvider(id) { installingProvider.value = id; mutationError.value = ''; try { await installDNSProvider(id, undefined, props.clusterId); await loadProviders() } catch (err) { mutationError.value = err.message || '安装 Provider 失败' } finally { installingProvider.value = '' } }
+async function createCertificate() { const issuer = availableIssuers.value.find(item => issuerKey(item) === certificateForm.value.issuer); if (!issuer) return; submitting.value = true; mutationError.value = ''; try { await createCertificateRequest({ name: certificateForm.value.name, namespace: certificateForm.value.namespace, domains: certificateForm.value.domains.split(',').map(item => item.trim()).filter(Boolean), issuer_ref: issuer.name, issuer_kind: issuer.kind }, undefined, props.clusterId); showCertificate.value = false; await refresh() } catch (err) { mutationError.value = err.message || '创建证书失败' } finally { submitting.value = false } }
 async function openIssuer(item = null) { showIssuanceConfig.value = false; editingIssuer.value = item; issuerForm.value = item ? { name: item.name, namespace: item.namespace || '', kind: item.kind, mode: item.mode || 'acme_http01', email: item.email || '', ingress_class: 'traefik', dns_provider: item.dns_provider || '', credential_id: 0 } : newIssuer(); showIssuer.value = true; if (issuerForm.value.mode === 'acme_dns01') await Promise.all([loadCredentials(), loadProviders()]) }
-async function saveIssuer() { submitting.value = true; mutationError.value = ''; try { if (editingIssuer.value) await updateIssuer(issuerForm.value.kind, issuerForm.value.namespace, issuerForm.value.name, issuerForm.value); else await createIssuer(issuerForm.value); showIssuer.value = false; await loadIssuers() } catch (err) { mutationError.value = err.message || '保存签发者失败' } finally { submitting.value = false } }
-async function deleteIssuer(item) { if (!window.confirm(`删除签发者 ${item.name}？`)) return; mutationError.value = ''; try { await removeIssuer(item.kind, item.namespace, item.name); await loadIssuers() } catch (err) { mutationError.value = err.message || '删除签发者失败' } }
+async function saveIssuer() { submitting.value = true; mutationError.value = ''; try { if (editingIssuer.value) await updateIssuer(issuerForm.value.kind, issuerForm.value.namespace, issuerForm.value.name, issuerForm.value, undefined, props.clusterId); else await createIssuer(issuerForm.value, undefined, props.clusterId); showIssuer.value = false; await loadIssuers() } catch (err) { mutationError.value = err.message || '保存签发者失败' } finally { submitting.value = false } }
+async function deleteIssuer(item) { if (!window.confirm(`删除签发者 ${item.name}？`)) return; mutationError.value = ''; try { await removeIssuer(item.kind, item.namespace, item.name, undefined, props.clusterId); await loadIssuers() } catch (err) { mutationError.value = err.message || '删除签发者失败' } }
 async function openCredential(item = null) { showIssuanceConfig.value = false; editingCredential.value = item; credentialForm.value = item ? { name: item.name, provider: item.provider, namespace: item.namespace, values: {}, enabled: item.enabled } : newCredential(); showCredential.value = true; await loadProviders() }
-async function saveCredential() { submitting.value = true; mutationError.value = ''; try { const values = { ...credentialForm.value.values }; Object.keys(values).forEach(key => { if (!values[key]) delete values[key] }); const body = { ...credentialForm.value, values }; if (editingCredential.value) await updateDNSCredential(editingCredential.value.id, body); else await createDNSCredential(body); showCredential.value = false; await loadCredentials() } catch (err) { mutationError.value = err.message || '保存 DNS 凭据失败' } finally { submitting.value = false } }
-async function deleteCredential(item) { if (!window.confirm(`删除 DNS 凭据 ${item.name}？`)) return; mutationError.value = ''; try { await deleteDNSCredential(item.id); await loadCredentials() } catch (err) { mutationError.value = err.message || '删除 DNS 凭据失败' } }
-async function deleteCertificate(cert) { if (!window.confirm(`删除证书 ${cert.name}？`)) return; mutationError.value = ''; try { await removeCertificate(cert.namespace, cert.name); await refresh() } catch (err) { mutationError.value = err.message || '删除证书失败' } }
+async function saveCredential() { submitting.value = true; mutationError.value = ''; try { const values = { ...credentialForm.value.values }; Object.keys(values).forEach(key => { if (!values[key]) delete values[key] }); const body = { ...credentialForm.value, values }; if (editingCredential.value) await updateDNSCredential(editingCredential.value.id, body, undefined, props.clusterId); else await createDNSCredential(body, undefined, props.clusterId); showCredential.value = false; await loadCredentials() } catch (err) { mutationError.value = err.message || '保存 DNS 凭据失败' } finally { submitting.value = false } }
+async function deleteCredential(item) { if (!window.confirm(`删除 DNS 凭据 ${item.name}？`)) return; mutationError.value = ''; try { await deleteDNSCredential(item.id, undefined, props.clusterId); await loadCredentials() } catch (err) { mutationError.value = err.message || '删除 DNS 凭据失败' } }
+async function deleteCertificate(cert) { if (!window.confirm(`删除证书 ${cert.name}？`)) return; mutationError.value = ''; try { await removeCertificate(cert.namespace, cert.name, undefined, props.clusterId); await refresh() } catch (err) { mutationError.value = err.message || '删除证书失败' } }
 function applyCreateQuery() { if (createQueryHandled.value || typeof window === 'undefined' || !ready.value) return; const query = new URLSearchParams(window.location.hash.split('?')[1] || ''); if (query.get('create') !== '1') return; createQueryHandled.value = true; certificateForm.value = { ...newCertificate(), name: query.get('name') || '', namespace: query.get('namespace') || 'cylism-system', domains: query.get('domains') || '' }; showCertificate.value = true; void loadIssuers() }
 function issuerKey(issuer) { return `${issuer.kind}/${issuer.namespace || '_'}/${issuer.name}` }
 function providerName(id) { return providers.value.find(provider => provider.id === id)?.name || id || '-' }
@@ -197,8 +198,9 @@ function newCredential() { return { name: '', provider: providers.value[0]?.id |
 </script>
 
 <style scoped>
-.certificates-workspace { padding-top: var(--tabbed-page-content-gap); }
-.certificate-status-card, .certificate-card, .k8s-banner { margin-top: var(--space-20); }
+.certificates-workspace { min-width: 0; }
+.certificate-status-card, .certificate-card, .k8s-banner { margin-top: 0; }
+.k8s-banner + .certificate-card { margin-top: var(--space-20); }
 .status-copy, .cell-secondary { display: block; margin: 4px 0 0; color: var(--text-secondary); font-size: 11px; }
 .status-actions { justify-content: flex-start; margin-top: var(--space-16); }
 .certificate-card { min-height: 260px; }

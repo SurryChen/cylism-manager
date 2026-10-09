@@ -1,15 +1,58 @@
 package cluster
 
 import (
+	"context"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 
+	"github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/gin-gonic/gin"
+	"k8s.io/apimachinery/pkg/runtime"
+	k8sfake "k8s.io/client-go/kubernetes/fake"
+	ktesting "k8s.io/client-go/testing"
 )
+
+func TestCatalogAgentStatusSeparatesMissingControlPlaneAndConnectionFailure(t *testing.T) {
+	st, err := store.New(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cluster := model.Cluster{Name: "测试集群", Distribution: "k3s", Status: "draft"}
+	if err := st.DB().Create(&cluster).Error; err != nil {
+		t.Fatal(err)
+	}
+	handler := NewCatalogHandler(st)
+	r := gin.New()
+	r.GET("/api/clusters/:id/agent-status", handler.AgentStatus)
+	path := "/api/clusters/" + strconv.FormatUint(uint64(cluster.ID), 10) + "/agent-status"
+	response := serve(r, newJSONRequest(http.MethodGet, path, nil))
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"state":"no_control_plane"`) {
+		t.Fatalf("no control plane = %d %s", response.Code, response.Body.String())
+	}
+	serverID := uint(7)
+	if err := st.DB().Model(&cluster).Update("control_server_id", serverID).Error; err != nil {
+		t.Fatal(err)
+	}
+	handler.WithAgentClientFactory(func(context.Context, uint) (*k8s.Client, error) { return nil, errors.New("访问证书缺失") })
+	response = serve(r, newJSONRequest(http.MethodGet, path, nil))
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"state":"certificate_error"`) {
+		t.Fatalf("certificate error = %d %s", response.Code, response.Body.String())
+	}
+	clientset := k8sfake.NewSimpleClientset()
+	clientset.PrependReactor("list", "namespaces", func(ktesting.Action) (bool, runtime.Object, error) {
+		return true, nil, errors.New("dial tcp 127.0.0.1:9443: connect: connection refused")
+	})
+	handler.WithAgentClientFactory(func(context.Context, uint) (*k8s.Client, error) { return &k8s.Client{Clientset: clientset}, nil })
+	response = serve(r, newJSONRequest(http.MethodGet, path, nil))
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"state":"unreachable"`) {
+		t.Fatalf("unreachable = %d %s", response.Code, response.Body.String())
+	}
+}
 
 type failingCatalog struct{}
 

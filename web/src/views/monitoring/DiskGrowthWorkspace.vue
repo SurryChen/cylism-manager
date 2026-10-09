@@ -26,7 +26,7 @@ import { useAsyncResource } from '../../composables/useAsyncResource.js'
 import { formatBytes } from '../../utils/formatters.js'
 import SurfaceCard from '../../components/SurfaceCard.vue'
 
-const props = defineProps({ nodes: { type: Array, default: () => [] } })
+const props = defineProps({ clusterId: { type: String, default: '' }, nodes: { type: Array, default: () => [] } })
 
 const ranges = [
   { value: '1h', label: '最近 1 小时' },
@@ -39,7 +39,7 @@ const node = ref('')
 const error = ref('')
 const warning = ref('')
 const rows = ref({ mounts: [], pvcs: [] })
-const diskGrowthResource = useAsyncResource(({ signal }, filters) => getDiskGrowth(filters, { signal }), null)
+const diskGrowthResource = useAsyncResource(({ signal }, filters) => getDiskGrowth(filters, props.clusterId ? { signal, clusterID: props.clusterId } : { signal }), null)
 const loading = diskGrowthResource.loading
 const readyNodes = computed(() => props.nodes.filter(item => item.ready))
 
@@ -59,6 +59,7 @@ const GrowthTable = defineComponent({
 
 onMounted(load)
 watch([range, node], load)
+watch(() => props.clusterId, () => { rows.value = { mounts: [], pvcs: [] }; void load() })
 
 function nodeLabel(item) { return item.display_name || item.name }
 function warningText(warnings) {

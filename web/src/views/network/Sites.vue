@@ -108,7 +108,8 @@ import OverflowTooltip from '../../components/OverflowTooltip.vue'
 import SelectMenu from '../../components/SelectMenu.vue'
 import SurfaceCard from '../../components/SurfaceCard.vue'
 
-const controllerStatusCacheKey = 'cylism.ingress-controller.status'
+const props = defineProps({ clusterId: { type: [String, Number], default: '' } })
+const controllerStatusCacheKey = `cylism.ingress-controller.status.${props.clusterId}`
 const controllerStatusCacheTtl = 60 * 1000
 
 const controllerStatus = ref(getCachedControllerStatus()?.status || null)
@@ -119,8 +120,8 @@ const error = ref('')
 const deleteIngressTarget = ref(null)
 const showAddIngress = ref(false)
 const ingressForm = ref(newIngressForm())
-const ingressesResource = useAsyncResource(({ signal }) => getIngresses({ signal }), [])
-const controllerResource = useAsyncResource(({ signal }) => getIngressControllerStatus({ signal }), null)
+const ingressesResource = useAsyncResource(({ signal }) => getIngresses({ signal }, props.clusterId), [])
+const controllerResource = useAsyncResource(({ signal }) => getIngressControllerStatus({ signal }, props.clusterId), null)
 
 const ingressNamespaces = computed(() => [...new Set(ingresses.value.map(ingress => ingress.namespace).filter(Boolean))].sort())
 const filteredIngresses = computed(() => (
@@ -194,7 +195,7 @@ function confirmDeleteIngress(ingress) {
 async function removeIngress() {
   if (!deleteIngressTarget.value) return
   try {
-    await deleteIngress(deleteIngressTarget.value.namespace, deleteIngressTarget.value.name)
+    await deleteIngress(deleteIngressTarget.value.namespace, deleteIngressTarget.value.name, undefined, props.clusterId)
     deleteIngressTarget.value = null
     await fetchIngresses()
   } catch (err) {
@@ -204,7 +205,7 @@ async function removeIngress() {
 
 async function createIngress() {
   try {
-    await createIngressRequest(ingressForm.value)
+    await createIngressRequest(ingressForm.value, undefined, props.clusterId)
     showAddIngress.value = false
     ingressForm.value = newIngressForm()
     await fetchIngresses()
@@ -215,10 +216,11 @@ async function createIngress() {
 </script>
 
 <style scoped>
-.sites-workspace { padding-top: var(--tabbed-page-content-gap); }
+.sites-workspace { min-width: 0; }
 .k8s-banner, .controller-banner { margin-top: var(--space-20); }
 .controller-banner { padding: 12px 16px; border: 1px solid var(--warning); border-radius: var(--radius-control); background: var(--warning-surface); color: var(--warning); font-size: 12px; }
-.ingress-card { margin-top: var(--space-20); min-height: 260px; }
+.ingress-card { min-height: 260px; }
+.controller-banner + .ingress-card, .k8s-banner + .ingress-card { margin-top: var(--space-20); }
 .ingress-toolbar { display: flex; min-height: 62px; align-items: center; justify-content: space-between; gap: var(--space-12); padding: 12px var(--space-16); }
 .ingress-toolbar-actions { display: flex; min-width: 0; align-items: center; justify-content: flex-end; gap: 8px; }
 .ingress-filter-control { width: 156px; flex: 0 0 156px; }

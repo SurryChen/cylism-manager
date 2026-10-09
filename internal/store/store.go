@@ -1,6 +1,8 @@
 package store
 
 import (
+	"strings"
+
 	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
 )
@@ -12,12 +14,21 @@ type Store struct {
 
 // New 创建新的 Store 实例，自动迁移所有模型
 func New(dsn string) (*Store, error) {
+	separator := "?"
+	if strings.Contains(dsn, "?") {
+		separator = "&"
+	}
+	// The driver applies these pragmas to every pooled connection.
+	dsn += separator + "_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)"
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	if err != nil {
 		return nil, err
 	}
 
 	if err := migrateSchema(db); err != nil {
+		return nil, err
+	}
+	if err := db.Exec("DROP INDEX IF EXISTS idx_dns_credentials_name").Error; err != nil {
 		return nil, err
 	}
 	if err := cleanupLegacySchema(db); err != nil {

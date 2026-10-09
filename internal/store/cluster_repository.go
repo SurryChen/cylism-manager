@@ -295,10 +295,33 @@ func (s *Store) FinishClusterUninstall(task *model.ClusterDeployment, success bo
 	})
 }
 
-func (s *Store) ListClusterDeployments(clusterID uint) ([]model.ClusterDeployment, error) {
-	var items []model.ClusterDeployment
-	err := s.db.Where("cluster_id = ?", clusterID).Order("id desc").Find(&items).Error
-	return items, err
+func (s *Store) ListClusterDeployments(clusterID uint, limit, offset int) ([]model.ClusterDeployment, int64, error) {
+	items := make([]model.ClusterDeployment, 0)
+	query := s.db.Model(&model.ClusterDeployment{}).Where("cluster_id = ?", clusterID)
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	err := query.Order("id desc").Limit(limit).Offset(offset).Find(&items).Error
+	return items, total, err
+}
+
+func (s *Store) LatestClusterAgentDeployment(clusterID uint) (*model.ClusterDeployment, error) {
+	var task model.ClusterDeployment
+	err := s.db.Where("cluster_id = ? AND operation LIKE ?", clusterID, "agent-%").Order("id desc").First(&task).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &task, nil
+}
+
+func (s *Store) ClusterHasRunningDeployment(clusterID uint) (bool, error) {
+	var count int64
+	err := s.db.Model(&model.ClusterDeployment{}).Where("cluster_id = ? AND status = ?", clusterID, "running").Count(&count).Error
+	return count > 0, err
 }
 
 func (s *Store) GetClusterDeployment(clusterID, deploymentID uint) (*model.ClusterDeployment, error) {

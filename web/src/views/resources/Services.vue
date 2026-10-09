@@ -53,7 +53,7 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { RefreshCw } from 'lucide-vue-next'
-import { getLightweightServiceDiscovery, getServiceEndpoints } from '../../api/kubernetes.js'
+import * as legacyK8s from '../../api/kubernetes.js'
 import { useAsyncResource } from '../../composables/useAsyncResource.js'
 import BaseModal from '../../components/BaseModal.vue'
 import EmptyState from '../../components/EmptyState.vue'
@@ -61,6 +61,9 @@ import ErrorNoticeModal from '../../components/ErrorNoticeModal.vue'
 import OverflowTooltip from '../../components/OverflowTooltip.vue'
 import SelectMenu from '../../components/SelectMenu.vue'
 import TabbedWorkspaceCard from '../../components/TabbedWorkspaceCard.vue'
+
+const { clusterId = '' } = defineProps({ clusterId: { type: String, default: '' } })
+const { getLightweightServiceDiscovery, getServiceEndpoints } = clusterId ? legacyK8s.createClusterKubernetesApi(clusterId) : legacyK8s
 
 const services = ref([])
 const namespace = ref('')
@@ -117,7 +120,6 @@ function closeEndpoints() {
 </script>
 
 <style scoped>
-.services-workspace { margin-top: var(--space-20); }
 .resource-count { color: var(--text-secondary); font-size: 12px; font-variant-numeric: tabular-nums; }
 .service-namespace-filter { width: 156px; flex: 0 0 156px; }.service-namespace-filter :deep(.select-menu) { width: 100%; }
 .service-table { min-width: 920px; table-layout: fixed; }.service-cell-truncate { max-width: 170px; }.service-code-cell { color: var(--text-secondary); font-family: var(--font-mono); font-size: 11px; }.action-cell { white-space: nowrap; }.service-detail { display: grid; gap: var(--space-16); }.service-detail-field { display: grid; grid-template-columns: 84px minmax(0, 1fr); gap: var(--space-12); align-items: start; color: var(--text-secondary); font-size: 12px; }.service-detail-field > span { color: var(--text-muted); font-weight: 700; }.service-selector { color: var(--text-primary); font-family: var(--font-mono); font-size: 11px; }.endpoint-empty { padding: var(--space-24) 0; color: var(--text-muted); font-size: 12px; text-align: center; }.endpoint-error { color: var(--danger); }.endpoint-slice { display: grid; gap: var(--space-8); }.endpoint-slice-heading { display: flex; align-items: baseline; gap: var(--space-8); color: var(--text-secondary); font-size: 11px; }.endpoint-slice-heading strong { color: var(--text-primary); font-size: 12px; }.endpoint-table-wrap { padding: 0; }.endpoint-table { min-width: 560px; table-layout: fixed; }

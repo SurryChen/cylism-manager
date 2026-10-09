@@ -22,7 +22,7 @@
           </thead>
           <tbody>
             <tr v-for="srv in servers" :key="srv.id">
-              <td class="cell-primary">{{ srv.name }}</td>
+              <td>{{ srv.name }}</td>
               <td>{{ srv.host }}</td>
               <td>{{ srv.ssh_user || 'root' }}</td>
               <td>{{ srv.ssh_auth_type === 'key' ? '密钥' : '密码' }}</td>
@@ -52,7 +52,7 @@
         <div v-if="resourceStatsError" class="k8s-banner k8s-banner-warn">{{ resourceStatsError }}</div>
         <div v-if="servers.length === 0" class="empty-state"><span class="empty-icon">⬡</span><span class="empty-text">暂无服务器</span></div>
         <div v-else-if="resourceStatsLoading && !resourceStats.length" class="empty-state"><span class="empty-text">正在采集服务器资源...</span></div>
-        <div v-else class="table-wrap resource-table-wrap"><table class="data-table resource-table"><thead><tr><th>服务器</th><th>主机</th><th>采集状态</th><th>CPU</th><th>内存</th><th>磁盘 /</th><th>负载 (1 分钟)</th><th>运行时间</th><th class="action-cell">操作</th></tr></thead><tbody><tr v-for="srv in servers" :key="srv.id" class="resource-row"><td class="cell-primary resource-server-name">{{ srv.name }}</td><td class="resource-server-host">{{ srv.host }}</td><td><span class="badge" :class="resourceStatusClass(resourceFor(srv.id))">{{ resourceStatusLabel(resourceFor(srv.id)) }}</span><small v-if="resourceFor(srv.id)?.error" class="resource-error">{{ resourceFor(srv.id).error }}</small></td><td><div class="resource-metric"><strong>{{ formatPercent(resourceFor(srv.id)?.cpu_percent) }}</strong><span class="resource-meter"><i :class="resourceLevelClass(resourceFor(srv.id)?.cpu_percent)" :style="{ width: `${metricPercent(resourceFor(srv.id)?.cpu_percent)}%` }" /></span></div></td><td><div class="resource-metric"><strong>{{ formatMB(resourceFor(srv.id)?.memory_used_mb) }} / {{ formatMB(resourceFor(srv.id)?.memory_total_mb) }}</strong><span class="resource-meter"><i :class="resourceLevelClass(memPercent(resourceFor(srv.id)))" :style="{ width: `${metricPercent(memPercent(resourceFor(srv.id)))}%` }" /></span></div></td><td><div class="resource-metric"><strong>{{ resourceFor(srv.id)?.disk_used_gb ?? '-' }} / {{ resourceFor(srv.id)?.disk_total_gb ?? '-' }} GB</strong><span class="resource-meter"><i :class="resourceLevelClass(diskPercent(resourceFor(srv.id)))" :style="{ width: `${metricPercent(diskPercent(resourceFor(srv.id)))}%` }" /></span></div></td><td>{{ formatLoad(resourceFor(srv.id)) }}</td><td>{{ formatUptime(resourceFor(srv.id)?.uptime) }}</td><td class="action-cell"><button class="icon-button icon-button--table" type="button" :data-testid="`view-resource-stats-${srv.id}`" :title="`查看 ${srv.name} 的资源详情`" :aria-label="`查看 ${srv.name} 的资源详情`" @click="openStats(srv.id)"><ChartNoAxesColumnIncreasing :size="14" /></button></td></tr></tbody></table></div>
+        <div v-else class="table-wrap resource-table-wrap"><table class="data-table resource-table"><thead><tr><th>服务器</th><th>主机</th><th>采集状态</th><th>CPU</th><th>内存</th><th>磁盘 /</th><th>负载 (1 分钟)</th><th>运行时间</th><th class="action-cell">操作</th></tr></thead><tbody><tr v-for="srv in servers" :key="srv.id" class="resource-row"><td class="resource-server-name">{{ srv.name }}</td><td class="resource-server-host">{{ srv.host }}</td><td><span class="badge" :class="resourceStatusClass(resourceFor(srv.id))">{{ resourceStatusLabel(resourceFor(srv.id)) }}</span><small v-if="resourceFor(srv.id)?.error" class="resource-error">{{ resourceFor(srv.id).error }}</small></td><td><div class="resource-metric"><strong>{{ formatPercent(resourceFor(srv.id)?.cpu_percent) }}</strong><span class="resource-meter"><i :class="resourceLevelClass(resourceFor(srv.id)?.cpu_percent)" :style="{ width: `${metricPercent(resourceFor(srv.id)?.cpu_percent)}%` }" /></span></div></td><td><div class="resource-metric"><strong>{{ formatMB(resourceFor(srv.id)?.memory_used_mb) }} / {{ formatMB(resourceFor(srv.id)?.memory_total_mb) }}</strong><span class="resource-meter"><i :class="resourceLevelClass(memPercent(resourceFor(srv.id)))" :style="{ width: `${metricPercent(memPercent(resourceFor(srv.id)))}%` }" /></span></div></td><td><div class="resource-metric"><strong>{{ resourceFor(srv.id)?.disk_used_gb ?? '-' }} / {{ resourceFor(srv.id)?.disk_total_gb ?? '-' }} GB</strong><span class="resource-meter"><i :class="resourceLevelClass(diskPercent(resourceFor(srv.id)))" :style="{ width: `${metricPercent(diskPercent(resourceFor(srv.id)))}%` }" /></span></div></td><td>{{ formatLoad(resourceFor(srv.id)) }}</td><td>{{ formatUptime(resourceFor(srv.id)?.uptime) }}</td><td class="action-cell"><button class="icon-button icon-button--table" type="button" :data-testid="`view-resource-stats-${srv.id}`" :title="`查看 ${srv.name} 的资源详情`" :aria-label="`查看 ${srv.name} 的资源详情`" @click="openStats(srv.id)"><ChartNoAxesColumnIncreasing :size="14" /></button></td></tr></tbody></table></div>
       </SurfaceCard>
     </template>
 
@@ -63,6 +63,7 @@
       <div class="modal">
         <h2 class="modal-title">{{ editingId ? '编辑服务器' : '添加服务器' }}</h2>
         <form @submit.prevent="addServer">
+          <div class="form-group"><label class="form-label" for="server-name">名称</label><input id="server-name" v-model.trim="form.name" class="form-input" placeholder="留空使用主机 IP" /></div>
           <div class="form-group"><label class="form-label">主机</label><input v-model="form.host" class="form-input" placeholder="192.168.1.100" required /></div>
           <div class="form-row">
             <div class="form-group"><label class="form-label">SSH 端口</label><input v-model.number="form.ssh_port" class="form-input" type="number" placeholder="22" /></div>
@@ -225,7 +226,7 @@ const chartOptions = {
 
 
 
-const emptyForm = () => ({ host: '', ssh_port: 22, ssh_user: 'root', ssh_auth_type: 'password', ssh_password: '', ssh_key: '', hostname: '' })
+const emptyForm = () => ({ name: '', host: '', ssh_port: 22, ssh_user: 'root', ssh_auth_type: 'password', ssh_password: '', ssh_key: '', hostname: '' })
 const form = ref(emptyForm())
 const connectionSnapshot = (value) => JSON.stringify([value.host, value.ssh_port, value.ssh_user, value.ssh_auth_type, value.ssh_password, value.ssh_key])
 let hostnameConnectionSnapshot = connectionSnapshot(form.value)
@@ -323,6 +324,7 @@ function startEdit(srv) {
   editingId.value = srv.id
   probeResult.value = null
   const nextForm = {
+    name: srv.name === srv.host ? '' : srv.name,
     host: srv.host,
     ssh_port: srv.ssh_port || 22,
     ssh_user: srv.ssh_user || 'root',

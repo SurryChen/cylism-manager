@@ -17,7 +17,7 @@
         <template v-else-if="connections.length">
           <div v-for="item in connections" :key="item.id" class="cloud-provider-row" :data-testid="'cloud-provider-card-' + item.id">
             <span class="cloud-provider-name">{{ item.name }}</span>
-            <span class="cloud-provider-value">{{ providerLabel(item.provider) }}<small>{{ credentialState(item) }}</small></span>
+            <span class="cloud-provider-value">{{ providerLabel(item.provider) }}</span>
             <span><span class="badge" :class="statusBadgeClass(item)">{{ connectionState(item) }}</span></span>
             <span class="cloud-provider-actions">
               <button v-if="item.provider === 'aliyun'" class="btn btn-sm" type="button" :data-testid="'cloud-provider-permissions-' + item.id" @click="openPermissions(item)">查看权限</button>
@@ -132,7 +132,6 @@ const credentialFields = computed(() => currentProvider.value?.credential_fields
 const providerLabel = provider => providers.value.find(item => item.id === provider)?.name || provider
 const connectionState = item => item.credential_configured ? '已配置' : '待配置'
 const statusBadgeClass = item => item.credential_configured ? 'badge-online' : 'badge-warn'
-const credentialState = item => item.credential_configured ? '凭据已配置' : '凭据待配置'
 const permissionStatusLabel = status => ({ complete: '查询完整', partial: '部分可读', unavailable: '无法读取', unsupported: '暂不支持' })[status] || '查询异常'
 const permissionStatusClass = status => status === 'complete' ? 'badge-online' : 'badge-warn'
 function formatInspectionTime(value) { const date = new Date(value); return Number.isNaN(date.getTime()) ? '' : date.toLocaleString('zh-CN') }

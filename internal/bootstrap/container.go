@@ -16,6 +16,7 @@ import (
 	"github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/gin-gonic/gin"
+	"k8s.io/client-go/rest"
 )
 
 // Config contains process-level dependencies and authentication settings.
@@ -34,6 +35,7 @@ type Container struct {
 	Store        *store.Store
 	Repositories Repositories
 	K8s          *k8s.Client
+	InCluster    bool
 	Adapters     KubernetesAdapters
 	Services     Services
 	Auth         *authapi.AuthConfig
@@ -80,6 +82,7 @@ func NewContainer(cfg Config) (*Container, error) {
 	if err != nil {
 		return nil, err
 	}
+	_, inClusterErr := rest.InClusterConfig()
 	client, err := NewKubernetesClient()
 	if err != nil {
 		log.Printf("WARNING: K8s 客户端不可用: %v（集群相关功能将降级）", err)
@@ -89,6 +92,7 @@ func NewContainer(cfg Config) (*Container, error) {
 		Store:        db,
 		Repositories: repos,
 		K8s:          client,
+		InCluster:    inClusterErr == nil,
 		Adapters:     BuildKubernetesAdapters(client),
 		encKey:       append([]byte(nil), cfg.EncryptionKey...),
 		Auth: &authapi.AuthConfig{
@@ -140,7 +144,7 @@ func (c *Container) StartBackground(parent context.Context, config BackgroundCon
 	tasks := newBackgroundTasks(parent)
 	c.background = tasks
 
-	if c.Services.PlatformRelease != nil {
+	if c.InCluster && c.Services.PlatformRelease != nil {
 		tasks.Go(func(ctx context.Context) {
 			runPeriodic(ctx, config.PlatformReconcileInterval, func(ctx context.Context) {
 				c.Services.PlatformRelease.ReconcileLatest(ctx)

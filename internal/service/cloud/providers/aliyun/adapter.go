@@ -9,6 +9,8 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/aliyun/alibaba-cloud-sdk-go/sdk"
+	sdkcredentials "github.com/aliyun/alibaba-cloud-sdk-go/sdk/auth/credentials"
 	"github.com/aliyun/alibaba-cloud-sdk-go/sdk/requests"
 	"github.com/aliyun/alibaba-cloud-sdk-go/services/alidns"
 	"github.com/aliyun/alibaba-cloud-sdk-go/services/ram"
@@ -76,7 +78,9 @@ func NewProvider(credentialsJSON, configurationJSON string) (Provider, error) {
 	if !storageRegionPattern.MatchString(region) {
 		return nil, fmt.Errorf("存储地域格式无效")
 	}
-	dns, err := alidns.NewClientWithAccessKey(region, accessKeyID, accessKeySecret)
+	config := sdk.NewConfig().WithScheme("HTTPS")
+	credential := sdkcredentials.NewAccessKeyCredential(accessKeyID, accessKeySecret)
+	dns, err := alidns.NewClientWithOptions(region, config, credential)
 	if err != nil {
 		return nil, err
 	}
@@ -84,11 +88,11 @@ func NewProvider(credentialsJSON, configurationJSON string) (Provider, error) {
 	if err != nil {
 		return nil, err
 	}
-	caller, err := sts.NewClientWithAccessKey(region, accessKeyID, accessKeySecret)
+	caller, err := sts.NewClientWithOptions(region, config, credential)
 	if err != nil {
 		return nil, err
 	}
-	ramClient, err := ram.NewClientWithAccessKey(region, accessKeyID, accessKeySecret)
+	ramClient, err := ram.NewClientWithOptions(region, config, credential)
 	if err != nil {
 		return nil, err
 	}

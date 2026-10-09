@@ -107,7 +107,7 @@
       </div>
     </div>
 
-    <PodTerminal v-if="terminalPod" :pod="terminalPod" @close="terminalPod = null" />
+    <PodTerminal v-if="terminalPod" :pod="terminalPod" :cluster-id="clusterId" @close="terminalPod = null" />
 
     <!-- StatefulSets -->
     <div v-if="activeTab === 'statefulsets'" class="workload-table-region">
@@ -197,12 +197,15 @@
 <script setup>
 import { computed, ref, onMounted, onErrorCaptured } from 'vue'
 import { Filter, RefreshCw, RotateCcw, Search, SquareTerminal, X } from 'lucide-vue-next'
-import { getWorkloadDaemonSets, getWorkloadDeploymentPods, getWorkloadDeploymentRevisions, getWorkloadDeployments, getWorkloadPods, getWorkloadServers, getWorkloadStatefulSets, rollbackWorkload, scaleWorkload, updateWorkloadImage } from '../../api/kubernetes.js'
+import * as legacyK8s from '../../api/kubernetes.js'
 import { useAsyncResource } from '../../composables/useAsyncResource.js'
 import OverflowTooltip from '../../components/OverflowTooltip.vue'
 import SelectMenu from '../../components/SelectMenu.vue'
 import SurfaceCard from '../../components/SurfaceCard.vue'
 import PodTerminal from './PodTerminal.vue'
+
+const { clusterId = '' } = defineProps({ clusterId: { type: String, default: '' } })
+const { getWorkloadDaemonSets, getWorkloadDeploymentPods, getWorkloadDeploymentRevisions, getWorkloadDeployments, getWorkloadPods, getWorkloadServers, getWorkloadStatefulSets, rollbackWorkload, scaleWorkload, updateWorkloadImage } = clusterId ? legacyK8s.createClusterKubernetesApi(clusterId) : legacyK8s
 
 const activeTab = ref('pods')
 const deployments = ref([])
@@ -447,7 +450,6 @@ function openStsScaleDialog(s) {
 </script>
 
 <style scoped>
-.workloads-card { margin-top: var(--space-20); }
 .workloads-toolbar { display: flex; align-items: center; justify-content: space-between; gap: var(--space-16); margin-bottom: var(--space-16); }
 .workload-type-select { width: min(250px, 100%); }
 .workloads-toolbar-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin-left: auto; }

@@ -149,6 +149,39 @@ func TestIssueRejectsWeakAgentKey(t *testing.T) {
 	}
 }
 
+type countingUsageStore struct {
+	*store.Store
+	marks int
+}
+
+func (s *countingUsageStore) MarkAccessCertificateInUse(id uint, inUse bool) error {
+	s.marks++
+	return s.Store.MarkAccessCertificateInUse(id, inUse)
+}
+
+func TestPlatformClientTLSDoesNotRemarkActiveCertificate(t *testing.T) {
+	st, err := store.New(filepath.Join(t.TempDir(), "access.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := &countingUsageStore{Store: st}
+	service := NewService(repo, []byte("12345678901234567890123456789012"))
+	if _, err := service.InitializeCA(); err != nil {
+		t.Fatal(err)
+	}
+	first, err := service.PlatformClientTLS(7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := service.PlatformClientTLS(7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.CertificatePEM != second.CertificatePEM || repo.marks != 1 {
+		t.Fatalf("repeated read changed certificate or usage state: marks=%d", repo.marks)
+	}
+}
+
 func mustParseCertificate(t *testing.T, value string) *x509.Certificate {
 	t.Helper()
 	block, _ := pem.Decode([]byte(value))

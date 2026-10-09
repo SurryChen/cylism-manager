@@ -40,7 +40,8 @@ type ClusterDNSPolicy struct {
 // DNSCredential stores encrypted provider credentials for DNS challenges.
 type DNSCredential struct {
 	ID               uint      `gorm:"primaryKey" json:"id"`
-	Name             string    `gorm:"size:128;uniqueIndex;not null" json:"name"`
+	ClusterID        uint      `gorm:"uniqueIndex:idx_dns_credential_cluster_name;not null;default:0" json:"cluster_id"`
+	Name             string    `gorm:"size:128;uniqueIndex:idx_dns_credential_cluster_name;not null" json:"name"`
 	Provider         string    `gorm:"size:32;not null" json:"provider"`
 	Namespace        string    `gorm:"size:128;not null" json:"namespace"`
 	EncryptedValues  string    `gorm:"type:text" json:"-"`

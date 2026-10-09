@@ -1,11 +1,15 @@
 package api
 
 import (
+	"strconv"
+
 	clusterapi "github.com/cylism/cylism-manager/internal/api/infrastructure/cluster"
 	kubernetesapi "github.com/cylism/cylism-manager/internal/api/infrastructure/kubernetes"
 	networkapi "github.com/cylism/cylism-manager/internal/api/infrastructure/network"
 	storageapi "github.com/cylism/cylism-manager/internal/api/infrastructure/storage"
+	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 	systemapi "github.com/cylism/cylism-manager/internal/api/system"
+	k8sclient "github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/gin-gonic/gin"
 )
 
@@ -22,6 +26,7 @@ func registerInfrastructureRoutes(apiGroup *gin.RouterGroup, catalog *clusterapi
 	apiGroup.GET("/clusters", catalog.List)
 	apiGroup.POST("/clusters", catalog.Create)
 	apiGroup.GET("/clusters/:id", catalog.Get)
+	apiGroup.GET("/clusters/:id/agent-status", catalog.AgentStatus)
 	apiGroup.PUT("/clusters/:id", catalog.Update)
 	apiGroup.DELETE("/clusters/:id", catalog.Delete)
 	apiGroup.POST("/clusters/:id/deployments", deployment.Start)
@@ -108,6 +113,7 @@ func registerInfrastructureRoutes(apiGroup *gin.RouterGroup, catalog *clusterapi
 	certs.DELETE("/:namespace/:name", cert.DeleteCert)
 
 	registerK8sRoutes(apiGroup, k8sHandler, platform, storage, network)
+	registerClusterK8sRoutes(apiGroup, k8sHandler, network, cert, storage)
 	apiGroup.GET("/system/crds", crd.CheckCRDs)
 	apiGroup.GET("/audit-logs", audit.List)
 
@@ -117,6 +123,105 @@ func registerInfrastructureRoutes(apiGroup *gin.RouterGroup, catalog *clusterapi
 	admin.POST("/:table", dbAdmin.CreateRecord)
 	admin.PUT("/:table/:id", dbAdmin.UpdateRecord)
 	admin.DELETE("/:table/:id", dbAdmin.DeleteRecord)
+}
+
+func registerClusterK8sRoutes(apiGroup *gin.RouterGroup, h *kubernetesapi.K8sHandler, network *networkapi.NetworkHandler, cert *networkapi.CertHandler, storage *storageapi.StorageHandler) {
+	g := apiGroup.Group("/clusters/:id/k8s")
+	g.Use(func(c *gin.Context) {
+		id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+		if err != nil || id == 0 {
+			apiShared.BadRequest(c, "集群 ID 无效")
+			c.Abort()
+			return
+		}
+		scoped, err := h.ForCluster(c.Request.Context(), uint(id))
+		if err != nil {
+			apiShared.BadRequest(c, err.Error())
+			c.Abort()
+			return
+		}
+		c.Set("clusterK8sHandler", scoped)
+		c.Set("clusterK8sClient", scoped.ClusterClient())
+	})
+	bind := func(method func(*kubernetesapi.K8sHandler, *gin.Context)) gin.HandlerFunc {
+		return func(c *gin.Context) {
+			method(c.MustGet("clusterK8sHandler").(*kubernetesapi.K8sHandler), c)
+		}
+	}
+	bindNetwork := func(method func(*networkapi.NetworkHandler, *gin.Context)) gin.HandlerFunc {
+		return func(c *gin.Context) {
+			method(network.ForCluster(c.MustGet("clusterK8sClient").(*k8sclient.Client)), c)
+		}
+	}
+	bindCert := func(method func(*networkapi.CertHandler, *gin.Context)) gin.HandlerFunc {
+		return func(c *gin.Context) {
+			id, _ := strconv.ParseUint(c.Param("id"), 10, 32)
+			scoped, err := cert.ForCluster(c.MustGet("clusterK8sClient").(*k8sclient.Client), uint(id))
+			if err != nil {
+				apiShared.BadRequest(c, err.Error())
+				return
+			}
+			method(scoped, c)
+		}
+	}
+	bindStorage := func(method func(*storageapi.StorageHandler, *gin.Context)) gin.HandlerFunc {
+		return func(c *gin.Context) {
+			id, _ := strconv.ParseUint(c.Param("id"), 10, 32)
+			method(storage.ForCluster(c.MustGet("clusterK8sClient").(*k8sclient.Client), uint(id)), c)
+		}
+	}
+	g.GET("/ingresses", bindNetwork((*networkapi.NetworkHandler).ListStandardIngresses))
+	g.POST("/ingresses", bindNetwork((*networkapi.NetworkHandler).CreateStandardIngress))
+	g.DELETE("/ingresses/:namespace/:name", bindNetwork((*networkapi.NetworkHandler).DeleteStandardIngress))
+	g.GET("/ingress-controller", bindNetwork((*networkapi.NetworkHandler).StandardIngressController))
+	g.GET("/certs/status", bindCert((*networkapi.CertHandler).Status))
+	g.POST("/certs/install", bindCert((*networkapi.CertHandler).Install))
+	g.GET("/certs", bindCert((*networkapi.CertHandler).ListCerts))
+	g.POST("/certs", bindCert((*networkapi.CertHandler).CreateCert))
+	g.GET("/certs/issuers", bindCert((*networkapi.CertHandler).ListIssuers))
+	g.POST("/certs/issuers", bindCert((*networkapi.CertHandler).CreateIssuer))
+	g.PUT("/certs/issuers/:kind/:namespace/:name", bindCert((*networkapi.CertHandler).UpdateIssuer))
+	g.DELETE("/certs/issuers/:kind/:namespace/:name", bindCert((*networkapi.CertHandler).DeleteIssuer))
+	g.GET("/certs/dns-credentials", bindCert((*networkapi.CertHandler).ListDNSCredentials))
+	g.POST("/certs/dns-credentials", bindCert((*networkapi.CertHandler).CreateDNSCredential))
+	g.PUT("/certs/dns-credentials/:id", bindCert((*networkapi.CertHandler).UpdateDNSCredential))
+	g.DELETE("/certs/dns-credentials/:id", bindCert((*networkapi.CertHandler).DeleteDNSCredential))
+	g.GET("/certs/dns-providers", bindCert((*networkapi.CertHandler).ListDNSProviders))
+	g.GET("/certs/dns-providers/:provider/status", bindCert((*networkapi.CertHandler).DNSProviderStatus))
+	g.POST("/certs/dns-providers/:provider/install", bindCert((*networkapi.CertHandler).InstallDNSProvider))
+	g.GET("/certs/:namespace/:name/operations", bindCert((*networkapi.CertHandler).ListOperations))
+	g.DELETE("/certs/:namespace/:name", bindCert((*networkapi.CertHandler).DeleteCert))
+	g.GET("/storage-classes", bindStorage((*storageapi.StorageHandler).ListStorageClasses))
+	g.GET("/persistent-volume-claims", bindStorage((*storageapi.StorageHandler).ListPersistentVolumeClaims))
+	g.GET("/persistent-volume-claims/references", bindStorage((*storageapi.StorageHandler).ListPersistentVolumeClaimReferences))
+	g.GET("/persistent-volume-claims/usage", bindStorage((*storageapi.StorageHandler).ListPersistentVolumeClaimUsage))
+	g.POST("/persistent-volume-claims", bindStorage((*storageapi.StorageHandler).CreatePersistentVolumeClaim))
+	g.DELETE("/persistent-volume-claims/:name", bindStorage((*storageapi.StorageHandler).DeletePersistentVolumeClaim))
+	g.POST("/namespaces", bind((*kubernetesapi.K8sHandler).CreateNamespace))
+	g.GET("/namespace-names", bind((*kubernetesapi.K8sHandler).ListNamespaceNames))
+	g.GET("/pods", bind((*kubernetesapi.K8sHandler).ListPods))
+	g.GET("/pods/:namespace/:name/terminal", bind((*kubernetesapi.K8sHandler).PodTerminal))
+	g.GET("/deployments", bind((*kubernetesapi.K8sHandler).ListDeployments))
+	g.GET("/deployments/:namespace/:name/pods", bind((*kubernetesapi.K8sHandler).ListDeploymentPods))
+	g.GET("/deployments/:namespace/:name/revisions", bind((*kubernetesapi.K8sHandler).ListDeploymentRevisions))
+	g.PATCH("/deployments/:namespace/:name/scale", bind((*kubernetesapi.K8sHandler).ScaleDeployment))
+	g.PATCH("/deployments/:namespace/:name/image", bind((*kubernetesapi.K8sHandler).UpdateDeploymentImage))
+	g.POST("/deployments/:namespace/:name/rollback", bind((*kubernetesapi.K8sHandler).RollbackDeployment))
+	g.GET("/statefulsets", bind((*kubernetesapi.K8sHandler).ListStatefulSets))
+	g.PATCH("/statefulsets/:namespace/:name/scale", bind((*kubernetesapi.K8sHandler).ScaleStatefulSet))
+	g.GET("/daemonsets", bind((*kubernetesapi.K8sHandler).ListDaemonSets))
+	g.GET("/services", bind((*kubernetesapi.K8sHandler).ListServicesV2))
+	g.GET("/services/:namespace/:name/endpoints", bind((*kubernetesapi.K8sHandler).GetServiceEndpoints))
+	g.GET("/configmaps", bind((*kubernetesapi.K8sHandler).ListConfigMaps))
+	g.POST("/configmaps", bind((*kubernetesapi.K8sHandler).CreateConfigMap))
+	g.GET("/configmaps/:namespace/:name", bind((*kubernetesapi.K8sHandler).GetConfigMap))
+	g.PUT("/configmaps/:namespace/:name", bind((*kubernetesapi.K8sHandler).UpdateConfigMap))
+	g.DELETE("/configmaps/:namespace/:name", bind((*kubernetesapi.K8sHandler).DeleteConfigMap))
+	g.GET("/secrets", bind((*kubernetesapi.K8sHandler).ListSecrets))
+	g.POST("/secrets", bind((*kubernetesapi.K8sHandler).CreateOpaqueSecret))
+	g.GET("/secrets/:namespace/:name", bind((*kubernetesapi.K8sHandler).GetSecret))
+	g.PUT("/secrets/:namespace/:name", bind((*kubernetesapi.K8sHandler).UpdateOpaqueSecret))
+	g.DELETE("/secrets/:namespace/:name", bind((*kubernetesapi.K8sHandler).DeleteOpaqueSecret))
 }
 
 func registerK8sRoutes(apiGroup *gin.RouterGroup, h *kubernetesapi.K8sHandler, platform *kubernetesapi.ClusterPlatformHandler, storage *storageapi.StorageHandler, network *networkapi.NetworkHandler) {

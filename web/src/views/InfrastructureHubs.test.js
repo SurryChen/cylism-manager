@@ -1,11 +1,14 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import ClusterHub from './cluster/ClusterHub.vue'
 import ResourceHub from './resources/ResourceHub.vue'
 import NetworkHub from './network/NetworkHub.vue'
+import { getClusterAgentStatus } from '../api/clusters.js'
+
+vi.mock('../api/clusters.js', () => ({ getCluster: vi.fn(async id => ({ id: Number(id), name: '生产集群' })), getClusterAgentStatus: vi.fn(async () => ({ state: 'ready' })) }))
 
 const hubSources = [
   'resources/ResourceHub.vue',
@@ -18,17 +21,18 @@ function routerFor(path) {
     history: createMemoryHistory(),
     routes: [
       { path: '/cluster', component: ClusterHub },
-      { path: '/resources', component: ResourceHub },
-      { path: '/network', component: NetworkHub },
+      { path: '/cluster/:clusterID/resources', component: ResourceHub, props: true },
+      { path: '/cluster/:clusterID/network', component: NetworkHub, props: true },
     ],
   })
 }
 
-async function mountHub(Component, path) {
+async function mountHub(Component, path, props) {
   const router = routerFor(path)
   await router.push(path)
   await router.isReady()
   return mount(Component, {
+    props: props || (Component === NetworkHub ? { clusterID: '2' } : undefined),
     global: {
       plugins: [router],
       stubs: {
@@ -48,7 +52,7 @@ async function mountHub(Component, path) {
 }
 
 describe('Infrastructure aggregation hubs', () => {
-  beforeEach(() => { document.body.innerHTML = '' })
+  beforeEach(() => { document.body.innerHTML = ''; getClusterAgentStatus.mockResolvedValue({ state: 'ready' }) })
 
   it('shows cluster records and access certificates in the hub', async () => {
     const wrapper = await mountHub(ClusterHub, '/cluster?tab=registry-mirrors')
@@ -64,7 +68,7 @@ describe('Infrastructure aggregation hubs', () => {
 
   it('loads tab contents asynchronously', () => {
     for (const source of hubSources) {
-      expect(source).toContain("import { computed, defineAsyncComponent } from 'vue'")
+      expect(source).toContain('defineAsyncComponent')
       expect(source).toContain('defineAsyncComponent(() => import(')
     }
   })
@@ -83,14 +87,16 @@ describe('Infrastructure aggregation hubs', () => {
     expect(wrapper.find('[data-testid="cluster-tab-dns"]').exists()).toBe(false)
   })
 
-  it('uses a compact title and text navigation bar instead of a framed switcher', async () => {
-    const wrapper = await mountHub(ResourceHub, '/resources')
-    expect(wrapper.get('.hub-header').find('h1').text()).toBe('Kubernetes 资源')
-    expect(wrapper.get('.hub-tabs').classes()).not.toContain('card')
+  it('shows the selected cluster and a way back to the list', async () => {
+    const wrapper = await mountHub(ResourceHub, '/cluster/2/resources', { clusterID: '2' })
+    await flushPromises()
+    expect(wrapper.get('.section-tabs-header h1').text()).toBe('生产集群')
+    expect(wrapper.get('.back-link').attributes('href')).toBe('/cluster?tab=list')
+    expect(wrapper.text()).not.toContain('集群详情')
   })
 
   it('opens workloads by default and can switch to resource configuration', async () => {
-    const wrapper = await mountHub(ResourceHub, '/resources')
+    const wrapper = await mountHub(ResourceHub, '/cluster/2/resources')
     expect(wrapper.get('[data-testid="resource-tab-workloads"]').classes()).toContain('is-active')
     await wrapper.get('[data-testid="resource-tab-configs"]').trigger('click')
     await flushPromises()
@@ -98,8 +104,21 @@ describe('Infrastructure aggregation hubs', () => {
     expect(wrapper.vm.$route.query.tab).toBe('configs')
   })
 
+  it('shows Agent guidance across resource tabs without mounting resource content', async () => {
+    getClusterAgentStatus.mockResolvedValue({ state: 'unreachable' })
+    const wrapper = await mountHub(ResourceHub, '/cluster/2/resources', { clusterID: '2' })
+    await flushPromises()
+    expect(wrapper.text()).toContain('Agent 尚未安装或当前无法连接')
+    await wrapper.get('[data-testid="resource-tab-configs"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('前往 Agent 管理')
+    expect(wrapper.text()).not.toContain('配置内容')
+    wrapper.unmount()
+  })
+
   it('opens the requested network certificate tab', async () => {
-    const wrapper = await mountHub(NetworkHub, '/network?tab=certificates')
+    const wrapper = await mountHub(NetworkHub, '/cluster/2/network?tab=certificates')
+    await flushPromises()
     expect(wrapper.get('[data-testid="network-tab-certificates"]').classes()).toContain('is-active')
     expect(wrapper.text()).toContain('证书内容')
   })

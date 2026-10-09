@@ -1,6 +1,11 @@
 package cloud
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/aliyun/alibaba-cloud-sdk-go/services/ram"
+	"github.com/aliyun/alibaba-cloud-sdk-go/services/sts"
+)
 
 func TestNewProviderDoesNotRequireAccountRegion(t *testing.T) {
 	provider, err := NewProvider(`{"access_key_id":"id","access_key_secret":"secret"}`, `{}`)
@@ -9,6 +14,16 @@ func TestNewProviderDoesNotRequireAccountRegion(t *testing.T) {
 	}
 	if provider.(*aliyunProvider).region != "cn-hangzhou" {
 		t.Fatalf("unexpected fallback storage region: %q", provider.(*aliyunProvider).region)
+	}
+	aliyun := provider.(*aliyunProvider)
+	for name, scheme := range map[string]string{
+		"DNS": aliyun.dns.GetConfig().Scheme,
+		"STS": aliyun.caller.(*sts.Client).GetConfig().Scheme,
+		"RAM": aliyun.ram.(*ram.Client).GetConfig().Scheme,
+	} {
+		if scheme != "HTTPS" {
+			t.Errorf("%s scheme = %q, want HTTPS", name, scheme)
+		}
 	}
 }
 

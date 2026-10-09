@@ -2,6 +2,8 @@ package cloud
 
 import (
 	"context"
+	"errors"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -24,8 +26,12 @@ func (p *aliyunProvider) InspectPermissions(ctx context.Context) cloudservice.Pe
 		return result
 	}
 	identity, err := p.caller.GetCallerIdentity(sts.CreateGetCallerIdentityRequest())
-	if err != nil || identity == nil {
-		result.Message = "无法识别 AccessKey 对应身份，请检查密钥是否有效"
+	if err != nil {
+		result.Message = callerIdentityErrorMessage(err)
+		return result
+	}
+	if identity == nil {
+		result.Message = "阿里云 STS 未返回调用身份，请稍后重试"
 		return result
 	}
 	result.Identity = &cloudservice.PermissionIdentity{Type: identity.IdentityType, ARN: identity.Arn}
@@ -103,6 +109,34 @@ func (p *aliyunProvider) InspectPermissions(ctx context.Context) cloudservice.Pe
 		result.Message = "部分 RAM 授权信息无法读取，请检查 " + strings.Join(missing, "、") + " 权限"
 	}
 	return result
+}
+
+var aliyunDiagnosticID = regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`)
+
+func callerIdentityErrorMessage(err error) string {
+	message := "阿里云 STS 身份查询失败，请检查平台到 STS 的网络、DNS、代理及系统时间"
+	var coded interface{ ErrorCode() string }
+	if errors.As(err, &coded) {
+		code := coded.ErrorCode()
+		switch {
+		case strings.EqualFold(code, "InvalidProtocol.NeedSsl"):
+			message = "阿里云 STS 要求 HTTPS，请重启平台 API 以使用更新后的连接配置"
+		case strings.Contains(strings.ToLower(code), "accesskey"), strings.Contains(strings.ToLower(code), "signature"):
+			message = "阿里云拒绝 AccessKey 认证，请核对 AccessKey ID 和 Secret 是否匹配、有效"
+		case strings.Contains(strings.ToLower(code), "denied"), strings.Contains(strings.ToLower(code), "forbidden"), strings.Contains(strings.ToLower(code), "permission"):
+			message = "阿里云拒绝 STS 身份查询，请检查该身份的访问限制"
+		default:
+			message = "阿里云 STS 身份查询失败，请根据错误码检查服务状态、地域和请求时间"
+		}
+		if aliyunDiagnosticID.MatchString(code) {
+			message += "；错误码：" + code
+		}
+	}
+	var requested interface{ RequestId() string }
+	if errors.As(err, &requested) && aliyunDiagnosticID.MatchString(requested.RequestId()) {
+		message += "；RequestId：" + requested.RequestId()
+	}
+	return message
 }
 
 func ramUserName(identity *sts.GetCallerIdentityResponse) (string, bool) {

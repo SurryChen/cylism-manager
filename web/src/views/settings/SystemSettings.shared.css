@@ -386,13 +386,6 @@
   overflow-wrap: anywhere;
 }
 
-.cloud-provider-value small {
-  display: block;
-  margin-top: 4px;
-  color: var(--text-secondary);
-  font-size: 11px;
-}
-
 .cloud-provider-row--message {
   color: var(--text-secondary);
 }

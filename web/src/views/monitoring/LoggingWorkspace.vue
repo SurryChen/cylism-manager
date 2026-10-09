@@ -35,9 +35,9 @@
           <label v-if="queryForm.range === 'custom'" class="form-group"><span class="form-label">开始时间</span><input v-model="queryForm.start_time" class="form-input" data-testid="log-start-time" type="datetime-local" step="1" required /></label>
           <label v-if="queryForm.range === 'custom'" class="form-group"><span class="form-label">结束时间</span><input v-model="queryForm.end_time" class="form-input" data-testid="log-end-time" type="datetime-local" step="1" required /></label>
           <label class="form-group"><span class="form-label">返回条数</span><SelectMenu v-model.number="queryForm.limit" class="form-select" data-testid="log-result-limit"><option :value="50">50 条</option><option :value="100">100 条</option><option :value="200">200 条</option><option :value="500">500 条</option></SelectMenu></label>
-          <label class="form-group"><span class="form-label">项目</span><SelectMenu v-model.number="queryForm.project_id" class="form-select"><option :value="0">全部项目</option><option v-for="project in projects" :key="project.id" :value="project.id">{{ project.name }}</option></SelectMenu></label>
-          <label class="form-group"><span class="form-label">环境</span><SelectMenu v-model.number="queryForm.environment_id" class="form-select"><option :value="0">全部环境</option><option v-for="environment in scopedEnvironments" :key="environment.id" :value="environment.id">{{ environment.name }}</option></SelectMenu></label>
-          <label class="form-group"><span class="form-label">应用</span><SelectMenu v-model.number="queryForm.application_id" class="form-select"><option :value="0">全部应用</option><option v-for="application in scopedApplications" :key="application.id" :value="application.id">{{ application.name }}</option></SelectMenu></label>
+          <label v-if="!clusterId" class="form-group"><span class="form-label">项目</span><SelectMenu v-model.number="queryForm.project_id" class="form-select"><option :value="0">全部项目</option><option v-for="project in projects" :key="project.id" :value="project.id">{{ project.name }}</option></SelectMenu></label>
+          <label v-if="!clusterId" class="form-group"><span class="form-label">环境</span><SelectMenu v-model.number="queryForm.environment_id" class="form-select"><option :value="0">全部环境</option><option v-for="environment in scopedEnvironments" :key="environment.id" :value="environment.id">{{ environment.name }}</option></SelectMenu></label>
+          <label v-if="!clusterId" class="form-group"><span class="form-label">应用</span><SelectMenu v-model.number="queryForm.application_id" class="form-select"><option :value="0">全部应用</option><option v-for="application in scopedApplications" :key="application.id" :value="application.id">{{ application.name }}</option></SelectMenu></label>
           <label class="form-group"><span class="form-label">命名空间</span><SelectMenu v-model="queryForm.namespace" class="form-select"><option value="">全部命名空间</option><option v-for="namespace in namespaceOptions" :key="namespace" :value="namespace">{{ namespace }}</option></SelectMenu></label>
           <label class="form-group"><span class="form-label">Pod</span><SelectMenu v-model="queryForm.pod" class="form-select"><option value="">全部 Pod</option><option v-for="pod in scopedPods" :key="`${pod.namespace}/${pod.name}`" :value="pod.name">{{ pod.name }}</option></SelectMenu></label>
           <label class="form-group"><span class="form-label">容器</span><SelectMenu v-model="queryForm.container" class="form-select"><option value="">全部容器</option><option v-for="container in containerOptions" :key="container" :value="container">{{ container }}</option></SelectMenu></label>
@@ -69,7 +69,8 @@ import { useAsyncResource } from '../../composables/useAsyncResource.js'
 import SurfaceCard from '../../components/SurfaceCard.vue'
 import { formatDateTime as formatTime } from '../../utils/formatters.js'
 
-const props = defineProps({ nodes: { type: Array, default: () => [] }, storageClasses: { type: Array, default: () => [] } })
+const props = defineProps({ clusterId: { type: String, default: '' }, nodes: { type: Array, default: () => [] }, storageClasses: { type: Array, default: () => [] } })
+const requestOptions = signal => props.clusterId ? { clusterID: props.clusterId, ...(signal ? { signal } : {}) } : signal ? { signal } : undefined
 
 const status = ref(null)
 const statusError = ref('')
@@ -94,12 +95,12 @@ const projects = ref([])
 const installForm = ref({ node_name: '', storage: '10Gi', storage_class_name: '', retention_days: 14 })
 const settingsForm = ref({ retention_days: 14 })
 const queryForm = ref({ range: '1h', start_time: '', end_time: '', limit: 200, keyword: '', project_id: 0, environment_id: 0, application_id: 0, namespace: '', pod: '', container: '', node: '' })
-const statusResource = useAsyncResource(({ signal }) => getLoggingStatus({ signal }), null)
+const statusResource = useAsyncResource(({ signal }) => getLoggingStatus(requestOptions(signal)), null)
 const filtersResource = useAsyncResource(async ({ signal }) => {
-  const [filters, apps, projectList] = await Promise.all([getLoggingFilters({ signal }), getApplications({}, { signal }), getProjects({ signal })])
+  const [filters, apps, projectList] = await Promise.all([getLoggingFilters(requestOptions(signal)), props.clusterId ? [] : getApplications({}, { signal }), props.clusterId ? [] : getProjects({ signal })])
   return { filters, apps, projectList }
 }, null)
-const queryResource = useAsyncResource(({ signal }, payload) => requestLogs(payload, { signal }), null)
+const queryResource = useAsyncResource(({ signal }, payload) => requestLogs(payload, requestOptions(signal)), null)
 
 const readyNodes = computed(() => props.nodes.filter(node => node.ready))
 const logsAvailable = computed(() => Number(status.value?.loki_ready) > 0)
@@ -126,6 +127,7 @@ const containerOptions = computed(() => {
 })
 
 onMounted(refresh)
+watch(() => props.clusterId, () => { status.value = null; lines.value = []; queried.value = false; void refresh() })
 
 watch(() => queryForm.value.project_id, () => { queryForm.value.environment_id = 0; queryForm.value.application_id = 0 })
 watch(() => queryForm.value.environment_id, () => { queryForm.value.application_id = 0 })
@@ -163,7 +165,7 @@ async function loadFilters() {
 async function install() {
   installing.value = true
   installError.value = ''
-  try { status.value = await installLogging(installForm.value); await refresh() } catch (e) { installError.value = e.message || '启用日志采集失败' } finally { installing.value = false }
+  try { status.value = await installLogging(installForm.value, requestOptions()); await refresh() } catch (e) { installError.value = e.message || '启用日志采集失败' } finally { installing.value = false }
 }
 
 async function queryLogs() {
@@ -202,12 +204,12 @@ function openSettings() { settingsForm.value = { retention_days: status.value?.r
 async function saveSettings() {
   saving.value = true
   settingsError.value = ''
-  try { status.value = await saveLoggingConfig({ node_name: status.value.node_name, retention_days: settingsForm.value.retention_days }); settingsOpen.value = false; await refresh() } catch (e) { settingsError.value = e.message || '保存日志设置失败' } finally { saving.value = false }
+  try { status.value = await saveLoggingConfig({ node_name: status.value.node_name, retention_days: settingsForm.value.retention_days }, requestOptions()); settingsOpen.value = false; await refresh() } catch (e) { settingsError.value = e.message || '保存日志设置失败' } finally { saving.value = false }
 }
 async function uninstall() {
   uninstalling.value = true
   uninstallError.value = ''
-  try { await uninstallLogging(); confirmUninstall.value = false; lines.value = []; queried.value = false; await refresh() } catch (e) { uninstallError.value = e.message || '卸载日志采集失败' } finally { uninstalling.value = false }
+  try { await uninstallLogging(requestOptions()); confirmUninstall.value = false; lines.value = []; queried.value = false; await refresh() } catch (e) { uninstallError.value = e.message || '卸载日志采集失败' } finally { uninstalling.value = false }
 }
 function lineContext(labels = {}) { return [labels.namespace, labels.pod, labels.container].filter(Boolean).join(' / ') || '容器日志' }
 </script>

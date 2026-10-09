@@ -97,6 +97,8 @@ func registerDeliveryRoutes(r *gin.Engine, apiGroup *gin.RouterGroup, h delivery
 	connections.DELETE("/:id/object-storage/containers/:container/object", h.cloud.DeleteObject)
 
 	platform := apiGroup.Group("/platform")
+	platform.GET("/capabilities", h.platform.Capabilities)
+	platform.Use(h.platform.RequireInCluster)
 	platform.GET("/status", h.platform.Status)
 	platform.GET("/endpoint", h.platform.EndpointStatus)
 	platform.PUT("/endpoint", h.platform.UpdateEndpoint)

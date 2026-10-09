@@ -20,6 +20,20 @@ beforeEach(() => {
 })
 
 describe('AlertingWorkspace', () => {
+  it('loads cluster alerts without querying the global automation policy', async () => {
+    apiMocks.get.mockImplementation(path => {
+      if (path === '/clusters/2/monitoring/alerts/status') return Promise.resolve({ state: 'ready', rules: [] })
+      if (path === '/clusters/2/monitoring/alerts/overview') return Promise.resolve({ active: [], resolved: [], firing: 0, silenced: 0 })
+      return Promise.resolve({})
+    })
+    const wrapper = mount(AlertingWorkspace, { props: { clusterId: '2', monitoringReady: true, nodes: [] } })
+    await flushPromises()
+    expect(apiMocks.get).toHaveBeenCalledWith('/clusters/2/monitoring/alerts/overview', expect.objectContaining({ clusterID: '2' }))
+    expect(apiMocks.get.mock.calls.some(([path]) => path.includes('automation-policy'))).toBe(false)
+    expect(wrapper.text()).not.toContain('自动处置')
+    wrapper.unmount()
+  })
+
   it('guides the user to install alerting when it is not installed', async () => {
     apiMocks.get.mockResolvedValue({ state: 'not_installed', message: '尚未启用集群告警' })
     const wrapper = mount(AlertingWorkspace, { props: { nodes: [{ name: 'node-a', ready: true }], monitoringReady: true, metricsNodeName: 'node-b' } })

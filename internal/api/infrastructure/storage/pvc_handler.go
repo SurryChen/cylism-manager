@@ -59,6 +59,10 @@ func (h *StorageHandler) ListPersistentVolumeClaims(c *gin.Context) {
 		apiShared.BadRequest(c, "项目 ID 无效")
 		return
 	}
+	if h.clusterID != 0 && (environmentID != 0 || projectID != 0) {
+		apiShared.BadRequest(c, "集群存储卷暂不支持按应用环境筛选")
+		return
+	}
 	claims, err := h.listPVCs(c.Request.Context(), namespace, environmentID, projectID)
 	if err != nil {
 		apiShared.Error(c, http.StatusOK, apiShared.CodeK8sAPIError, err.Error())
@@ -157,13 +161,17 @@ func (h *StorageHandler) CreatePersistentVolumeClaim(c *gin.Context) {
 		storageK8sUnavailable(c)
 		return
 	}
-	if h.store == nil {
+	if h.store == nil && h.clusterID == 0 {
 		apiShared.InternalError(c, "数据存储未初始化")
 		return
 	}
 	var request persistentVolumeClaimRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
 		apiShared.BadRequest(c, "名称和容量必填")
+		return
+	}
+	if h.clusterID != 0 && request.EnvironmentID != 0 {
+		apiShared.BadRequest(c, "集群存储卷暂不支持关联应用环境")
 		return
 	}
 	namespace, err := h.Service.ResolveNamespace(request.Namespace, request.EnvironmentID)
@@ -189,13 +197,17 @@ func (h *StorageHandler) DeletePersistentVolumeClaim(c *gin.Context) {
 		storageK8sUnavailable(c)
 		return
 	}
-	if h.store == nil {
+	if h.store == nil && h.clusterID == 0 {
 		apiShared.InternalError(c, "数据存储未初始化")
 		return
 	}
 	var request persistentVolumeClaimRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
 		apiShared.BadRequest(c, "删除请求无效")
+		return
+	}
+	if h.clusterID != 0 && request.EnvironmentID != 0 {
+		apiShared.BadRequest(c, "集群存储卷暂不支持关联应用环境")
 		return
 	}
 	namespace, err := h.Service.ResolveNamespace(request.Namespace, request.EnvironmentID)
@@ -320,18 +332,23 @@ func (h *StorageHandler) pvcResponses(ctx context.Context, claims []k8sclient.Pe
 	if h.store != nil {
 		if servers, err := h.store.ListServers(); err == nil {
 			for _, server := range servers {
+				if h.clusterID != 0 && (server.ClusterID == nil || *server.ClusterID != h.clusterID) {
+					continue
+				}
 				serversByNode[server.K8sNodeName] = server.Name
 			}
 		}
-		for _, claim := range claims {
-			if claim.EnvironmentID == 0 || environments[claim.EnvironmentID] != nil {
-				continue
-			}
-			if environment, err := h.store.GetEnvironmentByID(claim.EnvironmentID); err == nil {
-				environments[claim.EnvironmentID] = environment
-				if _, found := projects[environment.ProjectID]; !found {
-					if project, projectErr := h.store.GetProject(environment.ProjectID); projectErr == nil {
-						projects[environment.ProjectID] = project.Name
+		if h.clusterID == 0 {
+			for _, claim := range claims {
+				if claim.EnvironmentID == 0 || environments[claim.EnvironmentID] != nil {
+					continue
+				}
+				if environment, err := h.store.GetEnvironmentByID(claim.EnvironmentID); err == nil {
+					environments[claim.EnvironmentID] = environment
+					if _, found := projects[environment.ProjectID]; !found {
+						if project, projectErr := h.store.GetProject(environment.ProjectID); projectErr == nil {
+							projects[environment.ProjectID] = project.Name
+						}
 					}
 				}
 			}
@@ -364,7 +381,7 @@ func (h *StorageHandler) pvcReferenceIndex(ctx context.Context, claims []k8sclie
 		references[key] = append(references[key], reference)
 	}
 
-	if h.store != nil {
+	if h.store != nil && h.clusterID == 0 {
 		environmentClaims := make(map[uint][]k8sclient.PersistentVolumeClaimInfo)
 		for _, claim := range claims {
 			if claim.EnvironmentID != 0 {
@@ -477,7 +494,7 @@ func (h *StorageHandler) pvcWorkloadReferenceIndex(ctx context.Context, claimsBy
 
 func (h *StorageHandler) pvcReferences(ctx context.Context, environmentID uint, namespace, claimName string) []string {
 	references := make([]string, 0)
-	if h.store != nil {
+	if h.store != nil && h.clusterID == 0 {
 		if applications, err := h.store.ListApplications(0, environmentID); err == nil {
 			for _, app := range applications {
 				if templates, err := h.store.ListApplicationDeploymentTemplates(app.ID); err == nil {

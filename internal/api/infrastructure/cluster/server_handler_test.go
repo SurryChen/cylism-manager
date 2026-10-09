@@ -77,6 +77,15 @@ func TestServerNameDefaultsToHostAndFollowsHostChanges(t *testing.T) {
 	if err != nil || response.Code != http.StatusOK || server.Name != "自定义名称" || server.Host != "10.0.0.13" {
 		t.Fatalf("custom server = %#v, response = %d %s, err = %v", server, response.Code, response.Body.String(), err)
 	}
+
+	request = httptest.NewRequest(http.MethodPut, "/api/servers/1", strings.NewReader(`{"name":"  "}`))
+	request.Header.Set("Content-Type", "application/json")
+	response = httptest.NewRecorder()
+	r.ServeHTTP(response, request)
+	server, err = st.GetServer(1)
+	if err != nil || response.Code != http.StatusOK || server.Name != "10.0.0.13" {
+		t.Fatalf("cleared server name = %#v, response = %d %s, err = %v", server, response.Code, response.Body.String(), err)
+	}
 }
 
 func TestDuplicateServerHostReturnsActionableMessage(t *testing.T) {

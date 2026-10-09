@@ -89,6 +89,7 @@ describe('Servers view', () => {
     expect(wrapper.text()).toContain('cloudzone.cylism.com')
     expect(wrapper.find('[title="刷新 test-srv 的主机名"]').exists()).toBe(false)
     expect(wrapper.get('.server-configuration-card thead').text()).not.toContain('SSH 连通')
+    expect(wrapper.get('.server-configuration-card tbody td').classes()).not.toContain('cell-primary')
     expect(wrapper.get('[title="编辑 test-srv"]').classes()).toContain('icon-button--table')
     expect(wrapper.get('[title="删除 test-srv"]').classes()).toContain('icon-button--table')
     expect(wrapper.get('[title="解除 cluster-srv 的集群绑定"]').classes()).toContain('icon-button--table')
@@ -139,18 +140,38 @@ describe('Servers view', () => {
     await wrapper.get('[title="编辑 cluster-srv"]').trigger('click')
     expect(wrapper.text()).toContain('编辑服务器')
     expect(wrapper.get('input[placeholder="留空保持原密码"]').element.value).toBe('')
-    expect(wrapper.find('input[placeholder="我的服务器"]').exists()).toBe(false)
+    expect(wrapper.get('#server-name').element.value).toBe('cluster-srv')
     await wrapper.get('form').trigger('submit')
     await flush()
 
     expect(updateServer).toHaveBeenCalledWith(2, {
+      name: 'cluster-srv',
       host: '10.0.0.2',
       ssh_port: 22,
       ssh_user: 'root',
       ssh_auth_type: 'password',
       hostname: 'worker-a',
     })
-    expect(wrapper.find('input[placeholder="我的服务器"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('saves an optional server name when creating and editing', async () => {
+    const wrapper = mount(Servers, { global: { stubs: { RouterLink: true } } })
+    await flush()
+    await wrapper.get('[data-testid="add-server"]').trigger('click')
+    await wrapper.get('#server-name').setValue('  应用服务器  ')
+    await wrapper.get('input[placeholder="192.168.1.100"]').setValue('10.0.0.9')
+    await wrapper.get('[title="自动获取机器名"]').trigger('click')
+    await flush()
+    await wrapper.get('form').trigger('submit')
+    await flush()
+    expect(createServer).toHaveBeenCalledWith(expect.objectContaining({ name: '应用服务器', host: '10.0.0.9' }))
+
+    await wrapper.get('[title="编辑 test-srv"]').trigger('click')
+    await wrapper.get('#server-name').setValue('')
+    await wrapper.get('form').trigger('submit')
+    await flush()
+    expect(updateServer).toHaveBeenCalledWith(1, expect.objectContaining({ name: '', host: '10.0.0.1' }))
     wrapper.unmount()
   })
 
@@ -158,7 +179,7 @@ describe('Servers view', () => {
     const wrapper = mount(Servers, { global: { stubs: { RouterLink: true } } })
     await flush()
     await wrapper.get('[data-testid="add-server"]').trigger('click')
-    expect(wrapper.find('input[placeholder="我的服务器"]').exists()).toBe(false)
+    expect(wrapper.get('#server-name').element.value).toBe('')
     await wrapper.get('input[placeholder="192.168.1.100"]').setValue('10.0.0.9')
     await wrapper.get('form').trigger('submit')
     await flush()
@@ -256,7 +277,7 @@ describe('Servers view', () => {
     await flush()
 
     expect(wrapper.text()).toContain('SSH 凭据无效')
-    expect(wrapper.find('input[placeholder="我的服务器"]').exists()).toBe(false)
+    expect(wrapper.get('#server-name').element.value).toBe('')
     wrapper.unmount()
   })
 
@@ -270,6 +291,7 @@ describe('Servers view', () => {
     expect(getServerResourceStats).toHaveBeenCalledWith(expect.objectContaining({ signal: expect.any(AbortSignal) }))
     const monitoringCard = wrapper.get('.resource-monitoring-card')
     expect(monitoringCard.findComponent({ name: 'SurfaceCard' }).exists()).toBe(true)
+    expect(monitoringCard.get('.resource-server-name').classes()).not.toContain('cell-primary')
     expect(wrapper.text()).not.toContain('资源概览')
     expect(monitoringCard.get('.resource-monitoring-meta').text()).toContain('每 10 秒自动刷新')
     expect(monitoringCard.get('[title="刷新资源数据"]').exists()).toBe(true)

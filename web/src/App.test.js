@@ -90,6 +90,16 @@ describe('Glass UI application shell', () => {
     expect(wrapper.get('.app-workspace').classes()).not.toContain('app-workspace--wide')
   })
 
+  it('places the Agent assistant in cloud services navigation', async () => {
+    const wrapper = await mountApp('/runtimes')
+    const navigation = wrapper.get('[data-testid="desktop-navigation"]')
+
+    expect(wrapper.get('[data-testid="primary-navigation"]').get('[aria-current="page"]').text()).toContain('云服务')
+    expect(navigation.get('.sidebar-link.is-active').text()).toContain('Agent 助手')
+    expect(navigation.text()).not.toContain('服务器')
+    expect(wrapper.get('[data-testid="mobile-navigation"]').text()).toContain('Agent 助手')
+  })
+
   it('shows infrastructure secondary navigation for infrastructure routes while preserving all mobile destinations', async () => {
     const wrapper = await mountApp('/servers')
     const navigation = wrapper.get('[data-testid="desktop-navigation"]')
@@ -99,11 +109,10 @@ describe('Glass UI application shell', () => {
     expect(navigation.find('.sidebar-context').exists()).toBe(false)
     expect(navigation.text()).toContain('服务器')
     expect(navigation.text()).toContain('集群')
-    expect(navigation.text()).toContain('Kubernetes 资源')
-    expect(navigation.text()).toContain('网络访问')
-    expect(navigation.text()).toContain('存储')
-    expect(navigation.text()).toContain('监控')
-    expect(navigation.text()).toContain('Agent 助手')
+    expect(navigation.text()).not.toContain('网络访问')
+    expect(navigation.text()).not.toContain('存储卷')
+    expect(navigation.text()).not.toContain('监控')
+    expect(navigation.text()).not.toContain('Agent 助手')
     expect(navigation.text()).not.toContain('节点镜像源')
     expect(navigation.text()).not.toContain('Chart 仓库')
     expect(navigation.text()).not.toContain('工作负载')

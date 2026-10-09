@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	agentapi "github.com/cylism/cylism-manager/internal/api/agent"
 	applicationapi "github.com/cylism/cylism-manager/internal/api/application"
 	authapi "github.com/cylism/cylism-manager/internal/api/auth"
@@ -81,10 +82,11 @@ type InfrastructureDependencies struct {
 }
 
 type SystemDependencies struct {
-	Dashboard  *systemapi.DashboardHandler
-	Monitoring *systemapi.MonitoringHandler
-	Alerting   *systemapi.AlertingHandler
-	Logging    *systemapi.LoggingHandler
+	Dashboard            *systemapi.DashboardHandler
+	Monitoring           *systemapi.MonitoringHandler
+	Alerting             *systemapi.AlertingHandler
+	Logging              *systemapi.LoggingHandler
+	ClusterObservability func(context.Context, uint) (*systemapi.MonitoringHandler, *systemapi.LoggingHandler, *systemapi.AlertingHandler, error)
 }
 
 // RegisterRoutes binds all HTTP/WebSocket routes using the fully composed
@@ -109,6 +111,9 @@ func RegisterRoutes(r *gin.Engine, deps RouteDependencies) {
 	registerMonitoringRoutes(apiGroup, deps.System.Monitoring)
 	registerLoggingRoutes(apiGroup, deps.System.Logging)
 	registerAlertingRoutes(r, apiGroup, deps.System.Alerting)
+	if deps.System.ClusterObservability != nil {
+		registerClusterObservabilityRoutes(apiGroup, deps.System.ClusterObservability)
+	}
 	if deps.Auth.Config != nil {
 		registerApplicationRoutes(r, apiGroup, deps.Application.Handler, deps.Auth.Config.JWTSecret, deps.Auth.Audit, deps.Auth.AuditRepository)
 	} else {

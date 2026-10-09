@@ -1,6 +1,9 @@
 <template>
   <section class="settings-section">
-    <SurfaceCard class="platform-entry-card">
+    <FeedbackBanner v-if="capabilityError" tone="warning" :message="capabilityError" />
+    <SurfaceCard v-if="capability === null && !capabilityError" class="platform-entry-card"><EmptyState variant="loading" message="正在检查平台运行环境" /></SurfaceCard>
+    <SurfaceCard v-else-if="capability && !capability.supported" class="platform-entry-card"><EmptyState :message="capability.reason || '平台未部署在 Kubernetes 集群内，暂不支持平台入口配置'" /></SurfaceCard>
+    <SurfaceCard v-else-if="capability?.supported" class="platform-entry-card">
       <div class="platform-entry-table">
         <header class="platform-entry-table-header">
           <span>配置名</span>
@@ -112,10 +115,15 @@
 
 <script setup>
 import { computed, onMounted, ref } from 'vue'
-import { adoptPlatformIngress as adoptPlatformIngressRequest, getPlatformCertificates, getPlatformEndpoint, reconcilePlatformEndpoint as reconcilePlatformEndpointRequest, updatePlatformEndpoint } from '../../api/settings.js'
+import { adoptPlatformIngress as adoptPlatformIngressRequest, getPlatformCapabilities, getPlatformCertificates, getPlatformEndpoint, reconcilePlatformEndpoint as reconcilePlatformEndpointRequest, updatePlatformEndpoint } from '../../api/settings.js'
 import { useAsyncResource } from '../../composables/useAsyncResource.js'
 import { formatDateTime } from '../../utils/formatters.js'
 import SurfaceCard from '../../components/SurfaceCard.vue'
+import EmptyState from '../../components/EmptyState.vue'
+import FeedbackBanner from '../../components/FeedbackBanner.vue'
+
+const capability = ref(null)
+const capabilityError = ref('')
 
 const platformEndpoint = ref({ endpoint: {}, state: 'not_configured', ingress_ready: false })
 const endpointForm = ref({ hostname: '', certificate_name: '' })
@@ -142,6 +150,15 @@ onMounted(() => {
 
 async function refresh({ syncForm = false } = {}) {
   endpointError.value = ''
+  capabilityError.value = ''
+  try {
+    capability.value = await getPlatformCapabilities()
+  } catch (error) {
+    capability.value = null
+    capabilityError.value = error.message || '检查平台运行环境失败'
+    return
+  }
+  if (!capability.value?.supported) return
   const results = await endpointResource.refresh()
   if (!results) return
   const [endpointResult, certificatesResult] = results

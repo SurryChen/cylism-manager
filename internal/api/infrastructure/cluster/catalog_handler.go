@@ -1,15 +1,19 @@
 package cluster
 
 import (
+	"context"
 	"errors"
+	"net"
 	"strings"
 	"time"
 
 	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
+	"github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 type ClusterCatalog interface {
@@ -22,7 +26,66 @@ type ClusterCatalog interface {
 }
 
 type CatalogHandler struct {
-	catalog ClusterCatalog
+	catalog     ClusterCatalog
+	agentClient func(context.Context, uint) (*k8s.Client, error)
+}
+
+func (h *CatalogHandler) WithAgentClientFactory(factory func(context.Context, uint) (*k8s.Client, error)) *CatalogHandler {
+	h.agentClient = factory
+	return h
+}
+
+func (h *CatalogHandler) AgentStatus(c *gin.Context) {
+	id, err := apiShared.ParsePositiveID(c.Param("id"))
+	if err != nil {
+		apiShared.BadRequest(c, "集群 ID 无效")
+		return
+	}
+	cluster, err := h.catalog.GetCluster(id)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		apiShared.NotFound(c, "集群不存在")
+		return
+	}
+	if err != nil {
+		apiShared.InternalError(c, "读取集群失败")
+		return
+	}
+	if cluster.ControlServerID == nil {
+		apiShared.Success(c, gin.H{"state": "no_control_plane", "message": "当前集群尚未添加控制平面节点"})
+		return
+	}
+	if h.agentClient == nil {
+		apiShared.Success(c, gin.H{"state": "unavailable", "message": "Agent 访问未配置"})
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+	defer cancel()
+	client, err := h.agentClient(ctx, id)
+	if err != nil {
+		state := "configuration_error"
+		if strings.Contains(err.Error(), "证书") || strings.Contains(err.Error(), "访问 CA") {
+			state = "certificate_error"
+		}
+		apiShared.Success(c, gin.H{"state": state, "message": err.Error()})
+		return
+	}
+	if client == nil || client.Clientset == nil {
+		apiShared.Success(c, gin.H{"state": "configuration_error", "message": "Agent 客户端未就绪"})
+		return
+	}
+	_, err = client.Clientset.CoreV1().Namespaces().List(ctx, metav1.ListOptions{Limit: 1})
+	if err != nil {
+		state := "kubernetes_unavailable"
+		var networkError net.Error
+		if strings.Contains(err.Error(), "x509:") || strings.Contains(err.Error(), "certificate") || strings.Contains(err.Error(), "Unauthorized") {
+			state = "certificate_error"
+		} else if errors.As(err, &networkError) || strings.Contains(err.Error(), "connection refused") || strings.Contains(err.Error(), "no route to host") {
+			state = "unreachable"
+		}
+		apiShared.Success(c, gin.H{"state": state, "message": err.Error()})
+		return
+	}
+	apiShared.Success(c, gin.H{"state": "ready"})
 }
 
 type clusterSummary struct {

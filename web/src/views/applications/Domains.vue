@@ -13,7 +13,7 @@
           <td>{{ domain.namespace || '未绑定' }}</td><td>{{ domain.issuer_ref || '-' }}</td>
           <td><span class="badge" :class="certificateClass(domain)">{{ certificateLabel(domain) }}</span><small v-if="certificateReason(domain)" class="cell-secondary">{{ certificateReason(domain) }}</small></td>
           <td>{{ domain.tls_secret_name || '-' }}</td><td>{{ formatDate(domain.certificate?.renewal_time) }}</td><td>{{ domain.application_count || 0 }}</td>
-          <td class="action-cell"><div class="btn-group"><button v-if="domain.namespace && domain.certificate_ownership !== 'imported'" class="btn btn-sm" @click="retry(domain)">重试签发</button><button v-if="domain.certificate_name" class="btn btn-sm" @click="openOperations(domain)">签发过程</button><button class="btn btn-sm" @click="openEdit(domain)">编辑</button><button class="btn btn-sm btn-danger" :disabled="domain.application_count > 0" @click="remove(domain)">删除</button></div></td>
+          <td class="action-cell"><div class="btn-group"><button v-if="domain.namespace && domain.certificate_ownership !== 'imported'" class="btn btn-sm" @click="retry(domain)">重试签发</button><button v-if="domain.certificate_name" class="btn btn-sm" @click="openOperations">到集群查看</button><button class="btn btn-sm" @click="openEdit(domain)">编辑</button><button class="btn btn-sm btn-danger" :disabled="domain.application_count > 0" @click="remove(domain)">删除</button></div></td>
         </tr>
       </tbody></table></div>
     </SurfaceCard>
@@ -99,7 +99,7 @@ async function save(){ saving.value = true; error.value = ''; try { if(editing.v
 async function importCertificate(){ saving.value = true; error.value = ''; try { await importManagedDomainCertificate(importForm.value); closeImport(); await load() } catch(e) { error.value = e.message || '导入已有证书失败' } finally { saving.value = false } }
 async function claimDomain(){ saving.value = true; error.value = ''; try { await claimManagedDomain(claimForm.value.domain_id, { environment_id: environmentID.value }); closeClaim(); await load() } catch(e) { error.value = e.message || '关联历史域名失败' } finally { saving.value = false } }
 async function retry(domain){ error.value = ''; try { await retryManagedDomainCertificate(domain.id); await load() } catch(e) { error.value = e.message || '重新申请证书失败' } }
-function openOperations(domain){ router.push(`/certs/${domain.namespace}/${domain.certificate_name}`) }
+function openOperations(){ router.push('/cluster?tab=list') }
 async function remove(domain){ if(domain.application_count > 0) return; const suffix = domain.certificate_ownership === 'imported' ? '平台域名记录？原 Certificate 和 TLS Secret 会保留。' : '及其 Certificate？'; if(!window.confirm(`删除受管域名 ${domain.hostname} ${suffix}`)) return; try { await deleteManagedDomain(domain.id); await load() } catch(e) { error.value = e.message || '删除受管域名失败' } }
 function certificateLabel(domain){ if(!domain.namespace) return '未绑定'; return domain.certificate?.status === 'Ready' ? '已就绪' : domain.certificate?.status === 'Failed' ? '签发失败' : '签发中' }
 function certificateClass(domain){ return certificateLabel(domain) === '已就绪' ? 'badge-online' : certificateLabel(domain) === '签发失败' ? 'badge-danger' : 'badge-deploying' }

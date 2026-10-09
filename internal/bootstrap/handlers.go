@@ -23,6 +23,7 @@ import (
 	aliyunprovider "github.com/cylism/cylism-manager/internal/service/cloud/providers/aliyun"
 	clusterpkg "github.com/cylism/cylism-manager/internal/service/cluster"
 	maintenance "github.com/cylism/cylism-manager/internal/service/maintenance"
+	networkservice "github.com/cylism/cylism-manager/internal/service/network"
 	alertingservice "github.com/cylism/cylism-manager/internal/service/observability/alerting"
 	monitoringservice "github.com/cylism/cylism-manager/internal/service/observability/monitoring"
 	registryservice "github.com/cylism/cylism-manager/internal/service/registry"
@@ -56,7 +57,7 @@ func (c *Container) BuildRouteDependencies() api.RouteDependencies {
 	agent := agentapi.NewAgentHandlerWithKubernetesAdapter(c.Store, agentAdapter, authenticator).WithMonitoringDiskGrowth(monitoring).WithRegistryVerifier(registryVerifier).WithMaintenanceInspector(diskInspection)
 	agentOp := agentapi.NewAgentOperationHandlerWithKubernetesAdapter(c.Store, agentAdapter).WithRegistryPullExecutor(registryPull).WithMaintenanceCleanupExecutor(cleanup)
 	runtimeHandler := runtimeapi.NewRuntimeHandlerWithDependencies(c.Store, key, c.Services.RuntimeManager, c.Services.RuntimeRegistry)
-	platform := deliveryapi.NewPlatformHandlerWithDependencies(c.Store, deliveryapi.NewPlatformKubernetesAdapter(c.K8s), c.Services.PlatformRelease)
+	platform := deliveryapi.NewPlatformHandlerWithDependencies(c.Store, deliveryapi.NewPlatformKubernetesAdapter(c.K8s), c.Services.PlatformRelease).WithInCluster(c.InCluster)
 	networkService := c.Services.Network
 	clusterService := c.Services.Cluster
 	accessCertificates := clusterapi.NewAccessCertificateHandler(c.Store, key)
@@ -123,7 +124,7 @@ func (c *Container) BuildRouteDependencies() api.RouteDependencies {
 			Proxy: proxy, Chart: deliveryapi.NewChartRepositoryHandler(c.Store), Cloud: cloud,
 		},
 		Infrastructure: api.InfrastructureDependencies{
-			Network: networkHandler, Catalog: clusterapi.NewCatalogHandler(c.Store), AccessCert: accessCertificates, Deployment: deployment, Server: clusterapi.NewServerHandler(key, clusterService),
+			Network: networkHandler, Catalog: clusterapi.NewCatalogHandler(c.Store).WithAgentClientFactory(agentFactory.Client), AccessCert: accessCertificates, Deployment: deployment, Server: clusterapi.NewServerHandler(key, clusterService),
 			Terminal: clusterapi.NewServerTerminalHandler(c.Store, key).WithAudit(c.Store),
 			Site:     networkapi.NewSiteHandler(c.Store), Operation: systemapi.NewOperationHandler(c.Store),
 			Domain: networkapi.NewDomainHandlerWithDependencies(networkapi.NewDomainKubernetesAdapter(c.K8s), networkService),
@@ -134,15 +135,20 @@ func (c *Container) BuildRouteDependencies() api.RouteDependencies {
 				}
 				return client, nil
 			}), NodeJoin: nodeJoin, Ingress: ingress,
-			Certificate: networkapi.NewCertHandlerWithComposedDependencies(c.Store, key, networkService, networkapi.NewCertificateKubernetesAdapter(c.K8s)),
-			K8s:         kubernetesapi.NewK8sHandlerWithAdapterAndEncryption(c.Store, storageService, key, kubernetesapi.NewK8sResourceAdapter(c.K8s), c.Store),
-			Platform:    kubernetesapi.NewClusterPlatformHandler(c.K8s),
-			Storage:     storageHandler,
-			CRD:         kubernetesapi.NewCRDHandler(), AuditLog: systemapi.NewAuditHandler(c.Store), DBAdmin: systemapi.NewDBAdminHandler(c.Store),
+			Certificate: networkapi.NewCertHandlerWithComposedDependencies(c.Store, key, networkService, networkapi.NewCertificateKubernetesAdapter(c.K8s)).WithClusterCredentialStoreFactory(func(clusterID uint) networkservice.DNSCredentialStore {
+				return c.Store.ClusterDNSCredentials(clusterID)
+			}),
+			K8s:      kubernetesapi.NewK8sHandlerWithAdapterAndEncryption(c.Store, storageService, key, kubernetesapi.NewK8sResourceAdapter(c.K8s), c.Store).WithClusterClientFactory(agentFactory.Client),
+			Platform: kubernetesapi.NewClusterPlatformHandler(c.K8s),
+			Storage:  storageHandler,
+			CRD:      kubernetesapi.NewCRDHandler(), AuditLog: systemapi.NewAuditHandler(c.Store), DBAdmin: systemapi.NewDBAdminHandler(c.Store),
 		},
 		System: api.SystemDependencies{
 			Dashboard: systemapi.NewDashboardHandler(c.Store), Monitoring: monitoringHandler,
 			Alerting: alertingHandler, Logging: loggingHandler,
+			ClusterObservability: func(ctx context.Context, clusterID uint) (*systemapi.MonitoringHandler, *systemapi.LoggingHandler, *systemapi.AlertingHandler, error) {
+				return c.clusterObservability(ctx, clusterID, agentFactory)
+			},
 		},
 	}
 }

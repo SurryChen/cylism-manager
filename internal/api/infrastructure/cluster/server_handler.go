@@ -123,7 +123,7 @@ func (h *ServerHandler) Update(c *gin.Context) {
 		return
 	}
 	if value, ok := updates["name"].(string); ok {
-		server.Name = value
+		server.Name = strings.TrimSpace(value)
 	}
 	if value, ok := updates["host"].(string); ok {
 		value = strings.TrimSpace(value)
@@ -135,6 +135,9 @@ func (h *ServerHandler) Update(c *gin.Context) {
 			server.Name = value
 		}
 		server.Host = value
+	}
+	if server.Name == "" {
+		server.Name = server.Host
 	}
 	if value, ok := updates["ssh_password"].(string); ok {
 		server.SSHPassword, _ = crypto.Encrypt(h.encKey, value)
