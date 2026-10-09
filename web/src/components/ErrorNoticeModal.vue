@@ -1,5 +1,5 @@
 <template>
-  <BaseModal :open="open" :title="title" size="small" @close="emit('close')">
+  <BaseModal :open="open" :title="title" size="small" :teleport="teleport" @close="emit('close')">
     <div class="error-notice" role="alert">
       <CircleAlert :size="18" aria-hidden="true" />
       <p>{{ message }}</p>
@@ -18,6 +18,7 @@ defineProps({
   open: { type: Boolean, default: false },
   title: { type: String, default: '操作失败' },
   message: { type: String, required: true },
+  teleport: { type: Boolean, default: false },
 })
 
 const emit = defineEmits(['close'])

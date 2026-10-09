@@ -10,6 +10,7 @@ import (
 
 	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 	k8sclient "github.com/cylism/cylism-manager/internal/k8s"
+	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/repository"
 	storageservice "github.com/cylism/cylism-manager/internal/service/storage"
 	corev1 "k8s.io/api/core/v1"
@@ -32,6 +33,19 @@ type K8sHandler struct {
 	dashboardSummary   *DashboardSummaryService
 	clusterClient      func(context.Context, uint) (*k8sclient.Client, error)
 	scopedClient       *k8sclient.Client
+}
+
+type clusterResourceReferenceRepository interface {
+	ListResourceReferencesForCluster(uint, string, string, string) ([]model.ResourceReference, error)
+}
+
+type scopedResourceReferences struct {
+	repository clusterResourceReferenceRepository
+	clusterID  uint
+}
+
+func (s scopedResourceReferences) ListResourceReferences(namespace, sourceType, name string) ([]model.ResourceReference, error) {
+	return s.repository.ListResourceReferencesForCluster(s.clusterID, namespace, sourceType, name)
 }
 
 // K8sResourceAdapter is the resource capability consumed by this HTTP API.
@@ -124,9 +138,11 @@ func (h *K8sHandler) ForCluster(ctx context.Context, clusterID uint) (*K8sHandle
 	scoped := *h
 	scoped.scopedClient = client
 	scoped.k8s = NewK8sResourceAdapter(client)
-	// Application references currently have no cluster identity. They must not
-	// block mutations in another cluster with the same namespace and name.
-	scoped.resourceReferences = nil
+	if references, ok := h.resourceReferences.(clusterResourceReferenceRepository); ok {
+		scoped.resourceReferences = scopedResourceReferences{repository: references, clusterID: clusterID}
+	} else {
+		scoped.resourceReferences = nil
+	}
 	scoped.dashboardSummary = NewDashboardSummaryService(scoped.k8s, 5*time.Second)
 	return &scoped, nil
 }

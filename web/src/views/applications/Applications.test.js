@@ -4,7 +4,7 @@ import { nextTick, reactive } from 'vue'
 import Applications from './Applications.vue'
 
 vi.mock('../../api/index.js', () => ({
-  api: { get: vi.fn().mockResolvedValue([]), post: vi.fn().mockResolvedValue({ id: 1 }) }
+  api: { get: vi.fn().mockResolvedValue([]), post: vi.fn().mockResolvedValue({ id: 1 }), delete: vi.fn().mockResolvedValue({}) }
 }))
 const route = reactive({ query: { project_id: '1', environment_id: '2' } })
 vi.mock('vue-router', () => ({ useRouter: () => ({ push: vi.fn() }), useRoute: () => route }))
@@ -17,9 +17,60 @@ beforeEach(async () => {
   api.get.mockResolvedValue([])
   api.post.mockReset()
   api.post.mockResolvedValue({ id: 1 })
+  api.delete.mockReset()
+  api.delete.mockResolvedValue({})
 })
 
 describe('Applications view', () => {
+  it('shows a dismissible dialog when deleting an associated project fails', async () => {
+    const { api } = await import('../../api/index.js')
+    api.get.mockImplementation(path => path === '/projects' ? Promise.resolve([{ id: 1, name: '测试', slug: 'test', environments: [{ id: 2, name: 'production' }] }]) : Promise.resolve([]))
+    api.delete.mockRejectedValueOnce(new Error('项目仍关联环境或应用，无法删除'))
+    const wrapper = mount(Applications, { props: { section: 'projects' } })
+    await flushPromises()
+
+    await wrapper.get('[title="删除项目"]').trigger('click')
+    await wrapper.get('[data-testid="confirm-dialog-confirm"]').trigger('click')
+    await flushPromises()
+
+    expect(document.body.querySelector('.error-notice')?.textContent).toContain('项目仍关联环境或应用，无法删除')
+    expect(wrapper.find('[data-testid="applications-mutation-error"]').exists()).toBe(false)
+    document.body.querySelector('[data-testid="dismiss-error-notice"]').click()
+    await nextTick()
+    expect(document.body.querySelector('.error-notice')).toBeNull()
+    expect(wrapper.find('[data-testid="confirm-dialog-confirm"]').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('requires a project English name when creating a project', async () => {
+    const { api } = await import('../../api/index.js')
+    const wrapper = mount(Applications, { props: { section: 'projects' } })
+    await flushPromises()
+
+    await wrapper.findAll('button').find(button => button.text().includes('新建项目')).trigger('click')
+    await wrapper.get('input[placeholder="commerce"]').setValue('commerce')
+    await wrapper.get('.modal input[title="仅支持小写英文字母、数字和连字符，最长 40 位"]').setValue('shop')
+    await wrapper.get('.modal form').trigger('submit')
+    await flushPromises()
+
+    expect(api.post).toHaveBeenCalledWith('/projects', { name: 'commerce', slug: 'shop', description: '' })
+    wrapper.unmount()
+  })
+
+  it('asks to bind legacy environments before loading cluster runtime', async () => {
+    const { api } = await import('../../api/index.js')
+    api.get.mockImplementation(path => {
+      if (path === '/projects') return Promise.resolve([{ id: 1, name: 'commerce', environments: [{ id: 2, name: 'production', cluster_id: 0, namespace: 'commerce-prod' }] }])
+      return Promise.resolve([])
+    })
+    const wrapper = mount(Applications)
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('当前环境尚未绑定集群')
+    expect(api.get).not.toHaveBeenCalledWith('/workspace/overview?project_id=1&environment_id=2', expect.anything())
+    wrapper.unmount()
+  })
+
   it('keeps the latest workspace data when the route context changes during a request', async () => {
     let resolveFirstWorkspace
     const firstWorkspace = new Promise(resolve => { resolveFirstWorkspace = resolve })
@@ -76,28 +127,28 @@ describe('Applications view', () => {
     expect(wrapper.find('.card').exists()).toBe(false)
   })
 
-  it('shows a cross-project global overview section', async () => {
-    const wrapper = mount(Applications, { props: { section: 'overview' } })
-    await new Promise(resolve => setTimeout(resolve, 0))
-
-    expect(wrapper.find('.page-title').text()).toBe('全局概览')
-    expect(wrapper.text()).not.toContain('暂无发布记录')
-    expect(wrapper.find('.card').exists()).toBe(false)
-  })
-
-  it('shows each project with its environments and namespaces', async () => {
+  it('shows each project once and leaves environment details to the project page', async () => {
     const { api } = await import('../../api/index.js')
     api.get.mockImplementation((path) => {
       if (path === '/projects') {
-        return Promise.resolve([{ id: 1, name: 'commerce', environments: [{ id: 2, name: 'production', namespace: 'commerce-prod' }] }])
+        return Promise.resolve([{ id: 1, name: 'commerce', slug: 'commerce', default_image_registry: { name: 'hidden-default' }, environments: [
+          { id: 2, name: 'production', cluster_id: 7, namespace: 'commerce-prod' },
+          { id: 3, name: 'staging', cluster_id: 8, namespace: 'commerce-stage' },
+        ] }])
       }
+      if (path === '/clusters') return Promise.resolve([{ id: 7, name: '国内' }, { id: 8, name: '海外' }])
       return Promise.resolve([{ id: 3, project_id: 1, environment_id: 2, name: 'order-api' }])
     })
     const wrapper = mount(Applications, { props: { section: 'projects' } })
     await new Promise(resolve => setTimeout(resolve, 0))
 
-    expect(wrapper.text()).toContain('production')
-    expect(wrapper.text()).toContain('commerce-prod')
+    expect(wrapper.findAll('th').map(th => th.text())).toEqual(['项目', '英文名', '说明', '已关联应用', '操作'])
+    const rows = wrapper.findAll('tbody tr')
+    expect(rows).toHaveLength(1)
+    expect(rows[0].findAll('td').map(cell => cell.text())).toEqual(['commerce', 'commerce', '-', '1', '编辑管理环境删除'])
+    expect(wrapper.text()).not.toContain('production')
+    expect(wrapper.text()).not.toContain('commerce-prod')
+    expect(wrapper.text()).not.toContain('hidden-default')
     expect(wrapper.text()).toContain('编辑')
     expect(wrapper.text()).toContain('删除')
     expect(wrapper.find('.btn-danger').attributes('disabled')).toBeUndefined()

@@ -118,7 +118,7 @@ describe('ClusterList', () => {
     await wrapper.get('#create-cluster-form').trigger('submit')
     await flushPromises()
 
-    expect(wrapper.get('[role="dialog"]').text()).toContain('集群名称已存在')
+    expect(document.body.textContent).toContain('集群名称已存在')
   })
 
   it('edits a cluster name and blocks deletion errors in the confirmation dialog', async () => {
@@ -137,7 +137,7 @@ describe('ClusterList', () => {
     await wrapper.get('[role="dialog"] .btn-danger').trigger('click')
     await flushPromises()
     expect(remove).toHaveBeenCalledWith('/clusters/1')
-    expect(wrapper.get('[role="dialog"]').text()).toContain('请先卸载集群中的全部节点')
+    expect(document.body.textContent).toContain('请先卸载集群中的全部节点')
     expect(wrapper.findAll('tbody tr')).toHaveLength(1)
   })
 })

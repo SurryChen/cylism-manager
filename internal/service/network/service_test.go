@@ -161,9 +161,6 @@ func (f fakeDomainStore) GetManagedDomainByHostname(string) (*model.ManagedDomai
 func (f fakeDomainStore) ListUnassignedManagedDomains() ([]model.ManagedDomain, error) {
 	return nil, nil
 }
-func (f fakeDomainStore) ListClaimableManagedDomains(string) ([]model.ManagedDomain, error) {
-	return nil, nil
-}
 func (f fakeDomainStore) CountApplicationEndpointsByDomain(uint) (int64, error) { return 0, nil }
 
 func (f fakeDomainStore) GetEnvironmentByID(uint) (*model.Environment, error) {

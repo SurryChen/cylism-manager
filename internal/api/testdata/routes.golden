@@ -148,7 +148,8 @@ GET /api/clusters/:id/monitoring/targets
 GET /api/dashboard
 GET /api/domains
 GET /api/domains/:id/operations
-GET /api/domains/claimable
+GET /api/domains/dns-options
+GET /api/domains/importable-cloud-domains
 GET /api/domains/importable-certificates
 GET /api/image-registries
 GET /api/integrations/applications/:id/configmaps
@@ -318,7 +319,7 @@ POST /api/clusters/:id/monitoring/storage-migration
 POST /api/clusters/:id/nodes/:serverID/uninstall
 POST /api/domains
 POST /api/domains/:id/certificate
-POST /api/domains/:id/claim
+POST /api/domains/:id/dns
 POST /api/domains/import
 POST /api/image-registries
 POST /api/image-registries/:id/verify

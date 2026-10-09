@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
 import { api } from './index.js'
 import {
-  claimManagedDomain,
   createManagedDomain,
   deleteManagedDomain,
+  getClusterDomainOptions,
   getDomainOptions,
   getManagedDomains,
   importManagedDomainCertificate,
@@ -24,6 +24,8 @@ describe('domains api', () => {
     const options = { signal: new AbortController().signal }
     getDomainOptions(options)
     expect(api.get).toHaveBeenCalledWith('/certs/issuers', options)
+    getClusterDomainOptions(7, options)
+    expect(api.get).toHaveBeenCalledWith('/clusters/7/k8s/certs/issuers', options)
   })
 
   it('owns managed domain mutations with encoded identifiers', () => {
@@ -32,15 +34,13 @@ describe('domains api', () => {
     createManagedDomain(body, options)
     updateManagedDomain('domain/1', body, options)
     importManagedDomainCertificate({ certificate_name: 'existing' }, options)
-    claimManagedDomain('domain/1', { environment_id: 2 }, options)
     retryManagedDomainCertificate('domain/1', options)
     deleteManagedDomain('domain/1', options)
 
     expect(api.post).toHaveBeenNthCalledWith(1, '/domains', body, options)
     expect(api.put).toHaveBeenCalledWith('/domains/domain%2F1', body, options)
     expect(api.post).toHaveBeenNthCalledWith(2, '/domains/import', { certificate_name: 'existing' }, options)
-    expect(api.post).toHaveBeenNthCalledWith(3, '/domains/domain%2F1/claim', { environment_id: 2 }, options)
-    expect(api.post).toHaveBeenNthCalledWith(4, '/domains/domain%2F1/certificate', undefined, options)
+    expect(api.post).toHaveBeenNthCalledWith(3, '/domains/domain%2F1/certificate', undefined, options)
     expect(api.delete).toHaveBeenCalledWith('/domains/domain%2F1', undefined, options)
   })
 })

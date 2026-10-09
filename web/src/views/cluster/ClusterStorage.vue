@@ -46,15 +46,14 @@
         <div class="form-group"><label class="form-label" for="pvc-name">名称</label><input id="pvc-name" v-model.trim="form.name" class="form-input" required pattern="[a-z0-9]([-a-z0-9]*[a-z0-9])?" /></div>
         <div class="form-group"><label class="form-label" for="pvc-size">容量</label><div class="size-control"><input id="pvc-size" v-model.number="form.size" type="number" min="1" class="form-input" required /><SelectMenu v-model="form.unit" aria-label="容量单位"><option value="Mi">Mi</option><option value="Gi">Gi</option><option value="Ti">Ti</option></SelectMenu></div></div>
         <div class="form-group"><label class="form-label" for="pvc-class">StorageClass</label><SelectMenu id="pvc-class" v-model="form.storageClass"><option value="">使用默认 StorageClass</option><option v-for="item in storageClasses" :key="item.name" :value="item.name">{{ item.name }}</option></SelectMenu></div>
-        <FeedbackBanner v-if="actionError" tone="warning" :message="actionError" />
       </form>
       <template #actions><button class="btn" :disabled="saving" @click="creating = false">取消</button><button class="btn btn-primary" type="submit" form="cluster-create-pvc" :disabled="saving || !form.namespace || !form.name || form.size < 1">{{ saving ? '创建中...' : '创建存储卷' }}</button></template>
     </BaseModal>
     <BaseModal :open="Boolean(deleteTarget)" title="删除存储卷" @close="deleteTarget = null">
       <p>确定删除 {{ deleteTarget?.namespace }}/{{ deleteTarget?.name }} 吗？底层数据是否删除取决于 PV 的回收策略。</p>
-      <FeedbackBanner v-if="actionError" tone="warning" :message="actionError" />
       <template #actions><button class="btn" :disabled="saving" @click="deleteTarget = null">取消</button><button class="btn btn-danger" :disabled="saving" @click="removeClaim">确认删除</button></template>
     </BaseModal>
+    <ErrorNoticeModal :open="Boolean(actionError)" :message="actionError" teleport @close="actionError = ''" />
   </div>
 </template>
 
@@ -66,6 +65,7 @@ import { createClusterPersistentVolumeClaim, deleteClusterPersistentVolumeClaim,
 import BaseModal from '../../components/BaseModal.vue'
 import ClusterAgentGate from '../../components/ClusterAgentGate.vue'
 import EmptyState from '../../components/EmptyState.vue'
+import ErrorNoticeModal from '../../components/ErrorNoticeModal.vue'
 import FeedbackBanner from '../../components/FeedbackBanner.vue'
 import SectionTabsHeader from '../../components/SectionTabsHeader.vue'
 import SelectMenu from '../../components/SelectMenu.vue'

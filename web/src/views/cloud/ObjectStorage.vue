@@ -70,6 +70,7 @@
     </BaseModal>
 
     <ConfirmDialog :open="Boolean(confirmTarget)" :title="confirmTarget?.type === 'container' ? '删除存储容器' : '删除对象'" :message="confirmMessage" confirm-text="删除" :busy="deleting" busy-text="删除中..." @cancel="confirmTarget = null" @close="confirmTarget = null" @confirm="confirmDelete" />
+    <ErrorNoticeModal :open="Boolean(actionError)" :message="actionError" teleport @close="actionError = ''" />
   </section>
 </template>
 
@@ -80,6 +81,7 @@ import { createCloudContainer, deleteCloudContainer, deleteCloudObject, download
 import BaseModal from '../../components/BaseModal.vue'
 import ConfirmDialog from '../../components/ConfirmDialog.vue'
 import EmptyState from '../../components/EmptyState.vue'
+import ErrorNoticeModal from '../../components/ErrorNoticeModal.vue'
 import FeedbackBanner from '../../components/FeedbackBanner.vue'
 import SectionTabsHeader from '../../components/SectionTabsHeader.vue'
 import SelectMenu from '../../components/SelectMenu.vue'
@@ -90,7 +92,7 @@ const providerNames = { aliyun: '阿里云', tencent: '腾讯云', cloudcone: 'C
 const aclOptions = [{ value: 'private', label: 'private（私有）' }, { value: 'public-read', label: 'public-read（公开读）' }]
 const versioningOptions = [{ value: '', label: '不修改版本控制' }, { value: 'Enabled', label: 'Enabled（启用）' }, { value: 'Suspended', label: 'Suspended（暂停）' }]
 const connections = ref([]); const connectionID = ref(0); const containers = ref([]); const container = ref(''); const prefix = ref(''); const objects = ref([])
-const loading = ref(true); const containersLoading = ref(false); const objectsLoading = ref(false); const error = ref(''); const objectsError = ref(''); const uploading = ref(false)
+const loading = ref(true); const containersLoading = ref(false); const objectsLoading = ref(false); const error = ref(''); const objectsError = ref(''); const actionError = ref(''); const uploading = ref(false)
 let containersRequest = 0
 const containerFormOpen = ref(false); const editingContainer = ref(null); const confirmTarget = ref(null); const deleting = ref(false)
 const newContainer = () => ({ name: '', region: '', acl: 'private', versioning: '' }); const containerForm = reactive(newContainer())
@@ -104,14 +106,14 @@ async function refresh() { loading.value = true; error.value = ''; try { connect
 async function loadContainers() { const request = ++containersRequest; container.value = ''; objects.value = []; containers.value = []; containersLoading.value = true; error.value = ''; try { const items = await getCloudContainers(connectionID.value); if (request === containersRequest) containers.value = items } catch (err) { if (request === containersRequest) error.value = err.message || '读取存储容器失败' } finally { if (request === containersRequest) containersLoading.value = false } }
 function openContainer(item) { editingContainer.value = item || null; Object.assign(containerForm, item ? { ...newContainer(), ...item } : newContainer()); containerFormOpen.value = true }
 function closeContainerForm() { if (!deleting.value) containerFormOpen.value = false }
-async function saveContainer() { if (!containerForm.name || (!editingContainer.value && !containerForm.region)) { error.value = '请完整填写容器名称和存储地域'; return }; try { if (editingContainer.value) await updateCloudContainer(connectionID.value, editingContainer.value.name, { ...containerForm }); else await createCloudContainer(connectionID.value, { ...containerForm }); containerFormOpen.value = false; await loadContainers() } catch (err) { error.value = err.message || '保存存储容器失败' } }
+async function saveContainer() { if (!containerForm.name || (!editingContainer.value && !containerForm.region)) { actionError.value = '请完整填写容器名称和存储地域'; return }; try { if (editingContainer.value) await updateCloudContainer(connectionID.value, editingContainer.value.name, { ...containerForm }); else await createCloudContainer(connectionID.value, { ...containerForm }); containerFormOpen.value = false; await loadContainers() } catch (err) { actionError.value = err.message || '保存存储容器失败' } }
 function requestDeleteContainer(item) { confirmTarget.value = { type: 'container', item } }
 function requestDeleteObject(item) { confirmTarget.value = { type: 'object', item } }
-async function confirmDelete() { if (!confirmTarget.value) return; deleting.value = true; const target = confirmTarget.value; try { if (target.type === 'container') { await deleteCloudContainer(connectionID.value, target.item.name, { confirm: true }, target.item.region); if (container.value === target.item.name) closeObjects(); await loadContainers() } else { await deleteCloudObject(connectionID.value, container.value, { key: target.item.key, confirm: true }, containerRegion.value); await loadObjects() }; confirmTarget.value = null } catch (err) { error.value = err.message || (target.type === 'container' ? '删除存储容器失败' : '删除对象失败') } finally { deleting.value = false } }
+async function confirmDelete() { if (!confirmTarget.value) return; deleting.value = true; const target = confirmTarget.value; try { if (target.type === 'container') { await deleteCloudContainer(connectionID.value, target.item.name, { confirm: true }, target.item.region); if (container.value === target.item.name) closeObjects(); await loadContainers() } else { await deleteCloudObject(connectionID.value, container.value, { key: target.item.key, confirm: true }, containerRegion.value); await loadObjects() }; confirmTarget.value = null } catch (err) { actionError.value = err.message || (target.type === 'container' ? '删除存储容器失败' : '删除对象失败') } finally { deleting.value = false } }
 function closeObjects() { container.value = ''; prefix.value = ''; objects.value = []; objectsError.value = '' }
 async function openObjects(item) { container.value = item.name; prefix.value = ''; await loadObjects() }
 async function loadObjects() { if (!container.value) return; objectsLoading.value = true; objectsError.value = ''; try { objects.value = (await getCloudObjects(connectionID.value, container.value, { prefix: prefix.value, region: containerRegion.value })).objects || [] } catch (err) { objectsError.value = err.message || '读取对象失败' } finally { objectsLoading.value = false } }
-async function uploadObject(event) { const file = event.target.files?.[0]; if (!file || !container.value || uploading.value) return; uploading.value = true; const form = new FormData(); form.append('file', file); form.append('key', prefix.value + file.name); try { await uploadCloudObject(connectionID.value, container.value, form, containerRegion.value); await loadObjects() } catch (err) { objectsError.value = err.message || '上传对象失败' } finally { uploading.value = false; event.target.value = '' } }
+async function uploadObject(event) { const file = event.target.files?.[0]; if (!file || !container.value || uploading.value) return; uploading.value = true; const form = new FormData(); form.append('file', file); form.append('key', prefix.value + file.name); try { await uploadCloudObject(connectionID.value, container.value, form, containerRegion.value); await loadObjects() } catch (err) { actionError.value = err.message || '上传对象失败' } finally { uploading.value = false; event.target.value = '' } }
 const downloadURL = key => downloadCloudObjectURL(connectionID.value, container.value, key, containerRegion.value)
 onMounted(refresh)
 </script>

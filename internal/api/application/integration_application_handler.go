@@ -144,7 +144,7 @@ func (h *ApplicationHandler) IntegrationDiscoverApplications(c *gin.Context) {
 		apiShared.DBError(c, err.Error())
 		return
 	}
-	runtimes := h.queries.ApplicationRuntimeInfos(c.Request.Context(), h.kubernetes, filtered, releases)
+	runtimes := h.runtimeInfos(c.Request.Context(), filtered, releases)
 	infos := make([]applicationDiscoveryInfo, 0, len(filtered))
 	for _, app := range filtered {
 		infos = append(infos, applicationDiscoveryInfoFromModel(app, runtimes[app.ID]))
@@ -162,7 +162,7 @@ func (h *ApplicationHandler) IntegrationGetApplicationRuntime(c *gin.Context) {
 		apiShared.DBError(c, err.Error())
 		return
 	}
-	apiShared.Success(c, h.queries.ApplicationRuntimeInfos(c.Request.Context(), h.kubernetes, []model.Application{*app}, map[uint][]model.Release{app.ID: releases})[app.ID])
+	apiShared.Success(c, h.runtimeInfos(c.Request.Context(), []model.Application{*app}, map[uint][]model.Release{app.ID: releases})[app.ID])
 }
 
 func (h *ApplicationHandler) IntegrationListManagedConfigMaps(c *gin.Context) {

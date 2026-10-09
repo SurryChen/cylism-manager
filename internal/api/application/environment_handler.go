@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -16,9 +17,24 @@ import (
 )
 
 type environmentRequest struct {
-	Name          string `json:"name"`
-	Namespace     string `json:"namespace"`
-	NamespaceMode string `json:"namespace_mode"`
+	Name      string `json:"name"`
+	ClusterID uint   `json:"cluster_id"`
+}
+
+var namespaceSegmentPattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$`)
+
+func generatedEnvironmentNamespace(project *model.Project, name string) (string, error) {
+	if project.Slug == "" {
+		return "", fmt.Errorf("请先编辑项目，设置项目英文名")
+	}
+	if !namespaceSegmentPattern.MatchString(name) {
+		return "", fmt.Errorf("环境名称只能使用小写英文字母、数字和连字符，且不能以连字符开头或结尾")
+	}
+	namespace := "project-" + project.Slug + "-" + name
+	if len(namespace) > 63 {
+		return "", fmt.Errorf("项目英文名和环境名称组合后不能超过 63 位")
+	}
+	return namespace, nil
 }
 
 func (h *ApplicationHandler) ListEnvironments(c *gin.Context) {
@@ -39,11 +55,16 @@ func (h *ApplicationHandler) ListEnvironments(c *gin.Context) {
 	}
 	conflictNamespaces := make(map[string]struct{}, len(conflicts))
 	for _, conflict := range conflicts {
-		conflictNamespaces[conflict.Namespace] = struct{}{}
+		conflictNamespaces[fmt.Sprintf("%d/%s", conflict.ClusterID, conflict.Namespace)] = struct{}{}
 	}
 	for index := range environments {
-		environments[index].NamespaceStatus = environmentNamespaceStatus(c.Request.Context(), h.namespaces(), environments[index].Namespace)
-		_, environments[index].NamespaceConflict = conflictNamespaces[environments[index].Namespace]
+		scoped, scopeErr := h.forCluster(c.Request.Context(), environments[index].ClusterID)
+		if scopeErr == nil {
+			environments[index].NamespaceStatus = environmentNamespaceStatus(c.Request.Context(), scoped.namespaces(), environments[index].Namespace)
+		} else {
+			environments[index].NamespaceStatus = "unknown"
+		}
+		_, environments[index].NamespaceConflict = conflictNamespaces[fmt.Sprintf("%d/%s", environments[index].ClusterID, environments[index].Namespace)]
 	}
 	apiShared.Success(c, apiShared.EnvironmentsDTO(environments))
 }
@@ -54,34 +75,40 @@ func (h *ApplicationHandler) CreateEnvironment(c *gin.Context) {
 		apiShared.BadRequest(c, "项目 ID 无效")
 		return
 	}
-	if _, err := h.queries.GetProject(projectID); err != nil {
+	project, err := h.queries.GetProject(projectID)
+	if err != nil {
 		apiShared.NotFound(c, "项目不存在")
 		return
 	}
 	var req environmentRequest
-	if err := c.ShouldBindJSON(&req); err != nil || strings.TrimSpace(req.Name) == "" || strings.TrimSpace(req.Namespace) == "" {
-		apiShared.BadRequest(c, "环境名称和命名空间必填")
+	if err := c.ShouldBindJSON(&req); err != nil || strings.TrimSpace(req.Name) == "" {
+		apiShared.BadRequest(c, "环境名称必填")
 		return
 	}
-	mode, err := normalizeEnvironmentNamespaceMode(req.NamespaceMode)
+	name := strings.TrimSpace(req.Name)
+	namespace, err := generatedEnvironmentNamespace(project, name)
 	if err != nil {
 		apiShared.ValidationError(c, err.Error())
 		return
 	}
-	if h.kubernetes == nil || !h.kubernetes.KubernetesAvailable() {
+	scoped, scopeErr := h.forCluster(c.Request.Context(), req.ClusterID)
+	if scopeErr != nil {
+		apiShared.ValidationError(c, scopeErr.Error())
+		return
+	}
+	if scoped.kubernetes == nil || !scoped.kubernetes.KubernetesAvailable() {
 		apiShared.K8sUnavailable(c)
 		return
 	}
-	name, namespace := strings.TrimSpace(req.Name), strings.TrimSpace(req.Namespace)
-	if err := h.applications.EnsureNamespaceAvailable(namespace, 0); err != nil {
+	if err := h.applications.EnsureNamespaceAvailable(namespace, 0, req.ClusterID); err != nil {
 		handleEnvironmentNamespaceError(c, err)
 		return
 	}
-	if err := ensureEnvironmentNamespace(c.Request.Context(), h.namespaces(), projectID, namespace, mode, false); err != nil {
+	if err := ensureEnvironmentNamespace(c.Request.Context(), scoped.namespaces(), projectID, namespace, false); err != nil {
 		apiShared.ValidationError(c, err.Error())
 		return
 	}
-	environment := &model.Environment{ProjectID: projectID, Name: name, Namespace: namespace, NamespaceStatus: "active"}
+	environment := &model.Environment{ProjectID: projectID, ClusterID: req.ClusterID, Name: name, Namespace: namespace, NamespaceStatus: "active"}
 	if err := h.applications.CreateEnvironment(environment); err != nil {
 		if handleEnvironmentNamespaceError(c, err) {
 			return
@@ -98,8 +125,8 @@ func (h *ApplicationHandler) UpdateEnvironment(c *gin.Context) {
 		return
 	}
 	var req environmentRequest
-	if err := c.ShouldBindJSON(&req); err != nil || strings.TrimSpace(req.Name) == "" || strings.TrimSpace(req.Namespace) == "" {
-		apiShared.BadRequest(c, "环境名称和命名空间必填")
+	if err := c.ShouldBindJSON(&req); err != nil || strings.TrimSpace(req.Name) == "" {
+		apiShared.BadRequest(c, "环境名称必填")
 		return
 	}
 	environment, err := h.queries.ResolveEnvironment(projectID, environmentID)
@@ -107,45 +134,65 @@ func (h *ApplicationHandler) UpdateEnvironment(c *gin.Context) {
 		apiShared.NotFound(c, "环境不存在")
 		return
 	}
-	name, namespace := strings.TrimSpace(req.Name), strings.TrimSpace(req.Namespace)
-	if environment.Name != name || environment.Namespace != namespace {
+	name, namespace := strings.TrimSpace(req.Name), environment.Namespace
+	if name != environment.Name {
+		project, projectErr := h.queries.GetProject(projectID)
+		if projectErr != nil {
+			apiShared.NotFound(c, "项目不存在")
+			return
+		}
+		namespace, err = generatedEnvironmentNamespace(project, name)
+		if err != nil {
+			apiShared.ValidationError(c, err.Error())
+			return
+		}
+	}
+	clusterID := req.ClusterID
+	if clusterID == 0 {
+		clusterID = environment.ClusterID
+	}
+	if clusterID == 0 && h.clusterClient != nil {
+		apiShared.ValidationError(c, "请先为环境选择集群")
+		return
+	}
+	if clusterID != environment.ClusterID && environment.ClusterID != 0 {
+		apiShared.Conflict(c, "环境已绑定集群，不能直接变更部署目标，请新建环境")
+		return
+	}
+	scoped, scopeErr := h.forCluster(c.Request.Context(), clusterID)
+	if scopeErr != nil {
+		apiShared.ValidationError(c, scopeErr.Error())
+		return
+	}
+	if environment.Name != name || environment.Namespace != namespace || environment.ClusterID != clusterID {
 		applicationCount, err := h.applications.CountEnvironmentApplications(environmentID)
 		if err != nil {
 			apiShared.DBError(c, err.Error())
 			return
 		}
-		namespaceConflict, err := h.applications.IsEnvironmentNamespaceConflicted(environment.Namespace)
-		if err != nil {
-			apiShared.DBError(c, err.Error())
-			return
-		}
-		if applicationCount > 0 && !namespaceConflict {
+		if applicationCount > 0 && (environment.Name != name || environment.Namespace != namespace) {
 			apiShared.Conflict(c, "环境已有应用，不能修改名称或命名空间")
 			return
 		}
-		if environment.Namespace != namespace {
-			mode, err := normalizeEnvironmentNamespaceMode(req.NamespaceMode)
-			if err != nil {
-				apiShared.ValidationError(c, err.Error())
-				return
-			}
-			if h.kubernetes == nil || !h.kubernetes.KubernetesAvailable() {
+		if environment.Namespace != namespace || environment.ClusterID != clusterID {
+			if scoped.kubernetes == nil || !scoped.kubernetes.KubernetesAvailable() {
 				apiShared.K8sUnavailable(c)
 				return
 			}
-			if err := h.applications.EnsureNamespaceAvailable(namespace, environment.ID); err != nil {
+			if err := h.applications.EnsureNamespaceAvailable(namespace, environment.ID, clusterID); err != nil {
 				handleEnvironmentNamespaceError(c, err)
 				return
 			}
-			if err := ensureEnvironmentNamespace(c.Request.Context(), h.namespaces(), projectID, namespace, mode, false); err != nil {
+			if err := ensureEnvironmentNamespace(c.Request.Context(), scoped.namespaces(), projectID, namespace, false); err != nil {
 				apiShared.ValidationError(c, err.Error())
 				return
 			}
 		}
 	}
 	environment.Name = name
+	environment.ClusterID = clusterID
 	environment.Namespace = namespace
-	environment.NamespaceStatus = environmentNamespaceStatus(c.Request.Context(), h.namespaces(), namespace)
+	environment.NamespaceStatus = environmentNamespaceStatus(c.Request.Context(), scoped.namespaces(), namespace)
 	if err := h.applications.UpdateEnvironment(environment); err != nil {
 		if handleEnvironmentNamespaceError(c, err) {
 			return
@@ -166,19 +213,24 @@ func (h *ApplicationHandler) SyncEnvironmentNamespace(c *gin.Context) {
 		apiShared.NotFound(c, "环境不存在")
 		return
 	}
-	if h.kubernetes == nil || !h.kubernetes.KubernetesAvailable() {
+	scoped, scopeErr := h.forCluster(c.Request.Context(), environment.ClusterID)
+	if scopeErr != nil {
+		apiShared.ValidationError(c, scopeErr.Error())
+		return
+	}
+	if scoped.kubernetes == nil || !scoped.kubernetes.KubernetesAvailable() {
 		apiShared.K8sUnavailable(c)
 		return
 	}
-	if err := h.applications.EnsureNamespaceAvailable(environment.Namespace, environment.ID); err != nil {
+	if err := h.applications.EnsureNamespaceAvailable(environment.Namespace, environment.ID, environment.ClusterID); err != nil {
 		handleEnvironmentNamespaceError(c, err)
 		return
 	}
-	if err := ensureEnvironmentNamespace(c.Request.Context(), h.namespaces(), projectID, environment.Namespace, "create", true); err != nil {
+	if err := ensureEnvironmentNamespace(c.Request.Context(), scoped.namespaces(), projectID, environment.Namespace, true); err != nil {
 		apiShared.ValidationError(c, err.Error())
 		return
 	}
-	environment.NamespaceStatus = environmentNamespaceStatus(c.Request.Context(), h.namespaces(), environment.Namespace)
+	environment.NamespaceStatus = environmentNamespaceStatus(c.Request.Context(), scoped.namespaces(), environment.Namespace)
 	apiShared.SuccessWithMessage(c, apiShared.EnvironmentDTO(environment), "命名空间已同步")
 }
 
@@ -216,18 +268,7 @@ func (h *ApplicationHandler) DeleteEnvironment(c *gin.Context) {
 	apiShared.Success(c, gin.H{"id": environmentID})
 }
 
-func normalizeEnvironmentNamespaceMode(value string) (string, error) {
-	switch strings.TrimSpace(value) {
-	case "", "create":
-		return "create", nil
-	case "bind":
-		return "bind", nil
-	default:
-		return "", fmt.Errorf("命名空间方式仅支持新建或绑定")
-	}
-}
-
-func ensureEnvironmentNamespace(ctx context.Context, client NamespaceClient, projectID uint, namespace, mode string, allowExisting bool) error {
+func ensureEnvironmentNamespace(ctx context.Context, client NamespaceClient, projectID uint, namespace string, allowExisting bool) error {
 	if isSystemNamespace(namespace) {
 		return fmt.Errorf("系统命名空间 %q 不能绑定为应用环境", namespace)
 	}
@@ -239,12 +280,12 @@ func ensureEnvironmentNamespace(ctx context.Context, client NamespaceClient, pro
 		if existing.Status.Phase != "" && existing.Status.Phase != corev1.NamespaceActive {
 			return fmt.Errorf("命名空间 %q 未就绪", namespace)
 		}
-		if mode == "create" && !allowExisting {
-			return fmt.Errorf("命名空间 %q 已存在，请选择绑定已有命名空间", namespace)
-		}
 		labels := existing.GetLabels()
 		owner := strings.TrimSpace(labels["cylism.io/project-id"])
 		project := strconv.FormatUint(uint64(projectID), 10)
+		if !allowExisting && owner != project {
+			return fmt.Errorf("命名空间 %q 已存在，不能自动创建", namespace)
+		}
 		if owner != "" && owner != project {
 			return fmt.Errorf("命名空间 %q 已属于项目 %s，不能绑定到当前项目", namespace, owner)
 		}
@@ -263,9 +304,6 @@ func ensureEnvironmentNamespace(ctx context.Context, client NamespaceClient, pro
 	}
 	if !apierrors.IsNotFound(err) {
 		return fmt.Errorf("检查命名空间: %w", err)
-	}
-	if mode == "bind" {
-		return fmt.Errorf("命名空间 %q 不存在，无法绑定", namespace)
 	}
 	_, err = client.CreateNamespace(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: namespace, Labels: map[string]string{
 		"app.kubernetes.io/managed-by": "cylism-manager",

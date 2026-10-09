@@ -34,7 +34,7 @@
       </div>
     </TabbedWorkspaceCard>
 
-    <ErrorNoticeModal :open="Boolean(pageError)" :message="pageError" @close="dismissPageError" />
+    <ErrorNoticeModal :open="Boolean(pageError)" :message="pageError" teleport @close="dismissPageError" />
 
     <BaseModal :open="configuring" title="配置 DNS 上游" size="medium" @close="closeConfig">
       <form id="dns-config-form" class="dns-form" @submit.prevent="openConfirm">
@@ -45,7 +45,6 @@
         </div>
         <button v-if="resolvers.length < 3" type="button" class="btn btn-sm add-resolver-button" @click="resolvers.push('')">添加备用上游</button>
         <p class="dns-form-status"><span class="badge" :class="inheritedDNS ? 'badge-offline' : 'badge-online'">{{ inheritedDNS ? '继承宿主机 DNS' : '平台 DNS 策略' }}</span><span>仅支持 IP 地址；保存时仅替换 CoreDNS 根域的转发规则。</span></p>
-        <FeedbackBanner v-if="configError" tone="warning" :message="configError" />
       </form>
       <template #actions>
         <button class="btn" :disabled="saving || inheritedDNS" @click="openResetConfirm">恢复宿主机 DNS</button>
@@ -56,7 +55,6 @@
 
     <BaseModal :open="confirming" title="应用集群 DNS 策略" size="small" @close="confirming = false">
       <p class="confirm-copy">CoreDNS 将改用：{{ normalizedResolvers.join('，') }}。此操作影响所有通过集群 DNS 解析的工作负载。</p>
-      <FeedbackBanner v-if="actionError" tone="warning" :message="actionError" />
       <template #actions>
         <button class="btn" @click="confirming = false">取消</button>
         <button class="btn btn-primary" :disabled="saving" @click="apply">确认应用</button>
@@ -64,7 +62,6 @@
     </BaseModal>
     <BaseModal :open="resetConfirming" title="恢复宿主机 DNS" size="small" @close="resetConfirming = false">
       <p class="confirm-copy">CoreDNS 将恢复为 <code>/etc/resolv.conf</code>，由各节点宿主机决定外部 DNS。此操作影响所有通过集群 DNS 解析的工作负载。</p>
-      <FeedbackBanner v-if="actionError" tone="warning" :message="actionError" />
       <template #actions>
         <button class="btn" @click="resetConfirming = false">取消</button>
         <button class="btn btn-primary" :disabled="saving" @click="reset">确认恢复</button>
@@ -81,7 +78,6 @@ import { useAsyncResource } from '../../composables/useAsyncResource.js'
 import BaseModal from '../../components/BaseModal.vue'
 import EmptyState from '../../components/EmptyState.vue'
 import ErrorNoticeModal from '../../components/ErrorNoticeModal.vue'
-import FeedbackBanner from '../../components/FeedbackBanner.vue'
 import TabbedWorkspaceCard from '../../components/TabbedWorkspaceCard.vue'
 
 const props = defineProps({ clusterId: { type: [String, Number], default: '' } })
@@ -97,11 +93,12 @@ const configuring = ref(false)
 const confirming = ref(false)
 const resetConfirming = ref(false)
 const dnsResource = useAsyncResource(({ signal }) => getClusterDNS({ signal }, props.clusterId), null)
-const pageError = computed(() => error.value || ((!confirming.value && !resetConfirming.value) ? actionError.value : ''))
+const pageError = computed(() => actionError.value || configError.value || error.value)
 
 function dismissPageError() {
-  if (error.value) error.value = ''
-  else actionError.value = ''
+  if (actionError.value) actionError.value = ''
+  else if (configError.value) configError.value = ''
+  else error.value = ''
 }
 
 const normalizedResolvers = computed(() => resolvers.value.map(value => value.trim()).filter(Boolean))

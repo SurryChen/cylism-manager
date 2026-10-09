@@ -124,6 +124,7 @@ export function createClusterKubernetesApi(clusterID) {
     getLightweightServiceDiscovery: (namespace = '', options) => api.get(`${base}/services${namespace ? `?namespace=${encodeURIComponent(namespace)}&endpoint_count=false` : '?endpoint_count=false'}`, options),
     getServiceEndpoints: (namespace, name, options) => api.get(`${path('services', namespace, name)}/endpoints`, options),
     getConfigMapsForNamespace: (namespace, options) => api.get(`${base}/configmaps?namespace=${encodeURIComponent(namespace || '')}&usage=false`, options),
+    getSecretsForNamespace: (namespace, options) => api.get(`${base}/secrets?namespace=${encodeURIComponent(namespace || '')}&usage=false`, options),
     getSecretMetadataPage: (namespace, { limit = 50, continueToken = '', ...options } = {}) => {
       const query = new URLSearchParams({ namespace: namespace || '', metadata: 'true', limit: String(limit) })
       if (continueToken) query.set('continue', continueToken)

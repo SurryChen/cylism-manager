@@ -2,6 +2,7 @@ package network
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 	"github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
+	cloudservice "github.com/cylism/cylism-manager/internal/service/cloud"
 	networkservice "github.com/cylism/cylism-manager/internal/service/network"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -19,8 +21,11 @@ import (
 )
 
 type DomainHandler struct {
-	network *networkservice.Service
-	k8s     DomainKubernetesAdapter
+	network       *networkservice.Service
+	k8s           DomainKubernetesAdapter
+	clusterClient func(context.Context, uint) (*k8s.Client, error)
+	cloud         domainCloudDNS
+	servers       domainServerReader
 }
 
 type DomainKubernetesAdapter interface {
@@ -63,22 +68,24 @@ func (a clientDomainAdapter) ListIssuersContext(ctx context.Context) ([]k8s.Issu
 }
 
 type domainRequest struct {
-	Hostname      string `json:"hostname"`
-	EnvironmentID uint   `json:"environment_id"`
-	IssuerRef     string `json:"issuer_ref"`
-	Description   string `json:"description"`
-	Enabled       bool   `json:"enabled"`
+	Hostname          string `json:"hostname"`
+	EnvironmentID     uint   `json:"environment_id"`
+	IssuerRef         string `json:"issuer_ref"`
+	Description       string `json:"description"`
+	Enabled           bool   `json:"enabled"`
+	CloudConnectionID uint   `json:"cloud_connection_id"`
+	DNSZone           string `json:"dns_zone"`
+	NodeIDs           []uint `json:"node_ids"`
 }
 
 type importCertificateRequest struct {
-	EnvironmentID   uint   `json:"environment_id"`
-	CertificateName string `json:"certificate_name"`
-	Description     string `json:"description"`
-	Enabled         bool   `json:"enabled"`
-}
-
-type claimDomainRequest struct {
-	EnvironmentID uint `json:"environment_id"`
+	EnvironmentID     uint   `json:"environment_id"`
+	CertificateName   string `json:"certificate_name"`
+	Description       string `json:"description"`
+	Enabled           bool   `json:"enabled"`
+	CloudConnectionID uint   `json:"cloud_connection_id"`
+	DNSZone           string `json:"dns_zone"`
+	NodeIDs           []uint `json:"node_ids"`
 }
 
 type ManagedDomainInfo struct {
@@ -98,12 +105,60 @@ type ManagedDomainInfo struct {
 	Certificate          *k8s.CertInfo `json:"certificate,omitempty"`
 	CertificateError     string        `json:"certificate_error,omitempty"`
 	ApplicationCount     int64         `json:"application_count"`
+	CloudConnectionID    uint          `json:"cloud_connection_id"`
+	DNSZone              string        `json:"dns_zone"`
+	DNSNodeIDs           []uint        `json:"dns_node_ids"`
+	DNSAddresses         []string      `json:"dns_addresses"`
+	DNSStatus            string        `json:"dns_status"`
+	DNSError             string        `json:"dns_error"`
 }
 
 // NewDomainHandlerWithDependencies uses the already configured network
 // service and the narrow Kubernetes port supplied by Bootstrap.
 func NewDomainHandlerWithDependencies(adapter DomainKubernetesAdapter, service *networkservice.Service) *DomainHandler {
 	return &DomainHandler{k8s: adapter, network: service}
+}
+
+func (h *DomainHandler) WithClusterClientFactory(factory func(context.Context, uint) (*k8s.Client, error)) *DomainHandler {
+	h.clusterClient = factory
+	return h
+}
+
+func (h *DomainHandler) WithCloudDNS(cloud *cloudservice.Service, servers domainServerReader) *DomainHandler {
+	h.cloud, h.servers = cloud, servers
+	return h
+}
+
+func (h *DomainHandler) forEnvironment(ctx context.Context, environment *model.Environment) (*DomainHandler, error) {
+	if h.clusterClient == nil {
+		return h, nil
+	}
+	if environment == nil || environment.ClusterID == 0 {
+		return nil, fmt.Errorf("环境尚未绑定集群")
+	}
+	client, err := h.clusterClient(ctx, environment.ClusterID)
+	if err != nil {
+		return nil, fmt.Errorf("连接环境所属集群失败: %w", err)
+	}
+	scoped := *h
+	scoped.k8s = NewDomainKubernetesAdapter(client)
+	scoped.network = h.network.ForCluster(client)
+	scoped.clusterClient = nil
+	return &scoped, nil
+}
+
+func (h *DomainHandler) forDomain(ctx context.Context, domain *model.ManagedDomain) (*DomainHandler, error) {
+	if h.clusterClient == nil {
+		return h, nil
+	}
+	if domain == nil || domain.EnvironmentID == 0 {
+		return nil, fmt.Errorf("域名尚未关联集群环境")
+	}
+	environment, err := h.domainEnvironment(domain.EnvironmentID)
+	if err != nil {
+		return nil, err
+	}
+	return h.forEnvironment(ctx, environment)
 }
 
 func (h *DomainHandler) List(c *gin.Context) {
@@ -148,6 +203,11 @@ func (h *DomainHandler) Create(c *gin.Context) {
 		apiShared.ValidationError(c, err.Error())
 		return
 	}
+	h, err = h.forEnvironment(c.Request.Context(), environment)
+	if err != nil {
+		apiShared.ValidationError(c, err.Error())
+		return
+	}
 	domain, err := domainFromRequest(req, nil, environment)
 	if err != nil {
 		apiShared.ValidationError(c, err.Error())
@@ -157,6 +217,16 @@ func (h *DomainHandler) Create(c *gin.Context) {
 		apiShared.ValidationError(c, err.Error())
 		return
 	}
+	if h.cloud != nil {
+		if err := h.prepareCloudDomain(c.Request.Context(), domain, environment, req.CloudConnectionID, req.DNSZone, req.NodeIDs, true); err != nil {
+			apiShared.ValidationError(c, err.Error())
+			return
+		}
+		if err := h.checkAvailableCloudRecord(c.Request.Context(), domain); err != nil {
+			apiShared.ValidationError(c, err.Error())
+			return
+		}
+	}
 	if err := h.network.CreateManagedDomain(domain); err != nil {
 		apiShared.Conflict(c, "域名已存在")
 		return
@@ -165,6 +235,12 @@ func (h *DomainHandler) Create(c *gin.Context) {
 	if err := h.network.UpdateManagedDomain(domain); err != nil {
 		apiShared.DBError(c, err.Error())
 		return
+	}
+	if h.cloud != nil {
+		if err := h.syncDNS(c.Request.Context(), domain); err != nil {
+			apiShared.SuccessWithMessage(c, h.DomainInfo(c.Request.Context(), domain), "域名已保存，但 DNS 解析失败，请在列表中重试："+err.Error())
+			return
+		}
 	}
 	info := h.DomainInfo(c.Request.Context(), domain)
 	if err := h.ensureManagedDomainCertificate(c.Request.Context(), domain); err != nil {
@@ -183,6 +259,11 @@ func (h *DomainHandler) ListImportableCertificates(c *gin.Context) {
 		return
 	}
 	environment, err := h.domainEnvironment(environmentID)
+	if err != nil {
+		apiShared.ValidationError(c, err.Error())
+		return
+	}
+	h, err = h.forEnvironment(c.Request.Context(), environment)
 	if err != nil {
 		apiShared.ValidationError(c, err.Error())
 		return
@@ -206,29 +287,6 @@ func (h *DomainHandler) ListImportableCertificates(c *gin.Context) {
 	apiShared.Success(c, candidates)
 }
 
-func (h *DomainHandler) ListClaimable(c *gin.Context) {
-	environmentID, err := apiShared.OptionalID(strings.TrimSpace(c.Query("environment_id")))
-	if err != nil || environmentID == 0 {
-		apiShared.BadRequest(c, "环境 ID 必填且必须有效")
-		return
-	}
-	environment, err := h.domainEnvironment(environmentID)
-	if err != nil {
-		apiShared.ValidationError(c, err.Error())
-		return
-	}
-	domains, err := h.network.ListClaimableManagedDomains(environment.Namespace)
-	if err != nil {
-		apiShared.DBError(c, err.Error())
-		return
-	}
-	result := make([]ManagedDomainInfo, 0, len(domains))
-	for index := range domains {
-		result = append(result, h.DomainInfo(c.Request.Context(), &domains[index]))
-	}
-	apiShared.Success(c, result)
-}
-
 func (h *DomainHandler) ImportCertificate(c *gin.Context) {
 	var req importCertificateRequest
 	if err := c.ShouldBindJSON(&req); err != nil || strings.TrimSpace(req.CertificateName) == "" {
@@ -236,6 +294,11 @@ func (h *DomainHandler) ImportCertificate(c *gin.Context) {
 		return
 	}
 	environment, err := h.domainEnvironment(req.EnvironmentID)
+	if err != nil {
+		apiShared.ValidationError(c, err.Error())
+		return
+	}
+	h, err = h.forEnvironment(c.Request.Context(), environment)
 	if err != nil {
 		apiShared.ValidationError(c, err.Error())
 		return
@@ -262,54 +325,57 @@ func (h *DomainHandler) ImportCertificate(c *gin.Context) {
 		issuerKind = "ClusterIssuer"
 	}
 	hostname := strings.ToLower(certificate.Domains[0])
-	if existing, err := h.network.GetManagedDomainByHostname(hostname); err == nil {
-		if existing.EnvironmentID == 0 && existing.Namespace == environment.Namespace {
-			apiShared.Conflict(c, "域名存在未关联的历史记录，请使用“关联历史域名”")
+	var existingRecords []cloudservice.DNSRecord
+	if h.cloud != nil {
+		existingRecords, err = h.prepareImportDNS(c.Request.Context(), environment, hostname, req.CloudConnectionID, req.DNSZone, req.NodeIDs)
+		if err != nil {
+			apiShared.ValidationError(c, err.Error())
 			return
 		}
-		apiShared.Conflict(c, "域名已被平台管理")
-		return
-	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+	}
+	existing, err := h.network.GetManagedDomainByHostname(hostname)
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 		apiShared.DBError(c, err.Error())
 		return
 	}
-	domain := &model.ManagedDomain{Hostname: hostname, EnvironmentID: environment.ID, Namespace: environment.Namespace, CertificateName: certificate.Name, TLSSecretName: certificate.SecretName, IssuerRef: certificate.Issuer, IssuerKind: issuerKind, CertificateOwnership: "imported", Description: strings.TrimSpace(req.Description), Enabled: req.Enabled}
-	if err := h.network.CreateManagedDomain(domain); err != nil {
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		existing = nil
+	}
+	if existing != nil && (existing.EnvironmentID != 0 || existing.Namespace != environment.Namespace) {
 		apiShared.Conflict(c, "域名已被平台管理")
 		return
+	}
+	domain := existing
+	if domain == nil {
+		domain = &model.ManagedDomain{Hostname: hostname}
+	}
+	domain.EnvironmentID, domain.Namespace = environment.ID, environment.Namespace
+	domain.CertificateName, domain.TLSSecretName = certificate.Name, certificate.SecretName
+	domain.IssuerRef, domain.IssuerKind, domain.CertificateOwnership = certificate.Issuer, issuerKind, "imported"
+	domain.Description, domain.Enabled = strings.TrimSpace(req.Description), req.Enabled
+	if h.cloud != nil {
+		if err := h.prepareCloudDomain(c.Request.Context(), domain, environment, req.CloudConnectionID, req.DNSZone, req.NodeIDs, false); err != nil {
+			apiShared.ValidationError(c, err.Error())
+			return
+		}
+		domain.DNSRecords = encodeDNSRecords(existingRecords)
+	}
+	if existing == nil {
+		if err := h.network.CreateManagedDomain(domain); err != nil {
+			apiShared.Conflict(c, "域名已被平台管理")
+			return
+		}
+	} else if err := h.network.UpdateManagedDomain(domain); err != nil {
+		apiShared.DBError(c, err.Error())
+		return
+	}
+	if h.cloud != nil {
+		if err := h.syncDNS(c.Request.Context(), domain); err != nil {
+			apiShared.SuccessWithMessage(c, h.DomainInfo(c.Request.Context(), domain), "域名已导入，但 DNS 解析更新失败，可在列表中重试："+err.Error())
+			return
+		}
 	}
 	apiShared.SuccessWithMessage(c, h.DomainInfo(c.Request.Context(), domain), "已接管现有证书，Certificate 与 TLS Secret 保持原样")
-}
-
-func (h *DomainHandler) Claim(c *gin.Context) {
-	domain, ok := h.managedDomain(c)
-	if !ok {
-		return
-	}
-	var req claimDomainRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		apiShared.BadRequest(c, "域名关联定义无效")
-		return
-	}
-	environment, err := h.domainEnvironment(req.EnvironmentID)
-	if err != nil {
-		apiShared.ValidationError(c, err.Error())
-		return
-	}
-	if domain.EnvironmentID != 0 {
-		apiShared.Conflict(c, "域名已关联环境")
-		return
-	}
-	if domain.Namespace == "" || domain.Namespace != environment.Namespace {
-		apiShared.Conflict(c, "历史域名命名空间与目标环境不一致，不能关联")
-		return
-	}
-	domain.EnvironmentID = environment.ID
-	if err := h.network.UpdateManagedDomain(domain); err != nil {
-		apiShared.DBError(c, err.Error())
-		return
-	}
-	apiShared.SuccessWithMessage(c, h.DomainInfo(c.Request.Context(), domain), "已关联历史域名，Certificate 与 TLS Secret 保持原样")
 }
 
 func (h *DomainHandler) Update(c *gin.Context) {
@@ -333,10 +399,28 @@ func (h *DomainHandler) Update(c *gin.Context) {
 		apiShared.ValidationError(c, err.Error())
 		return
 	}
+	if current.EnvironmentID != 0 && current.EnvironmentID != environment.ID {
+		previous, previousErr := h.domainEnvironment(current.EnvironmentID)
+		if previousErr != nil || previous.ClusterID != environment.ClusterID {
+			apiShared.Conflict(c, "域名不能直接迁移到其他集群")
+			return
+		}
+	}
+	h, err = h.forEnvironment(c.Request.Context(), environment)
+	if err != nil {
+		apiShared.ValidationError(c, err.Error())
+		return
+	}
 	domain, err := domainFromRequest(req, current, environment)
 	if err != nil {
 		apiShared.ValidationError(c, err.Error())
 		return
+	}
+	if h.cloud != nil && current.CloudConnectionID != 0 {
+		if err := h.prepareCloudDomain(c.Request.Context(), domain, environment, current.CloudConnectionID, current.DNSZone, req.NodeIDs, false); err != nil {
+			apiShared.ValidationError(c, err.Error())
+			return
+		}
 	}
 	if !isImportedDomain(domain) {
 		if err := h.validateManagedDomainPrerequisites(c.Request.Context(), domain); err != nil {
@@ -348,6 +432,12 @@ func (h *DomainHandler) Update(c *gin.Context) {
 	if err := h.network.UpdateManagedDomain(domain); err != nil {
 		apiShared.Conflict(c, "域名已存在")
 		return
+	}
+	if h.cloud != nil && domain.CloudConnectionID != 0 {
+		if err := h.syncDNS(c.Request.Context(), domain); err != nil {
+			apiShared.SuccessWithMessage(c, h.DomainInfo(c.Request.Context(), domain), "域名已更新，但 DNS 解析更新失败，可重试："+err.Error())
+			return
+		}
 	}
 	info := h.DomainInfo(c.Request.Context(), domain)
 	if isImportedDomain(domain) {
@@ -365,6 +455,12 @@ func (h *DomainHandler) Update(c *gin.Context) {
 func (h *DomainHandler) RetryCertificate(c *gin.Context) {
 	domain, ok := h.managedDomain(c)
 	if !ok {
+		return
+	}
+	var err error
+	h, err = h.forDomain(c.Request.Context(), domain)
+	if err != nil {
+		apiShared.ValidationError(c, err.Error())
 		return
 	}
 	if isImportedDomain(domain) {
@@ -387,6 +483,12 @@ func (h *DomainHandler) ListOperations(c *gin.Context) {
 	if !ok {
 		return
 	}
+	var err error
+	h, err = h.forDomain(c.Request.Context(), domain)
+	if err != nil {
+		apiShared.ValidationError(c, err.Error())
+		return
+	}
 	if h.k8s == nil || domain.Namespace == "" || domain.CertificateName == "" {
 		apiShared.ValidationError(c, "域名尚未绑定证书")
 		return
@@ -403,6 +505,18 @@ func (h *DomainHandler) Delete(c *gin.Context) {
 	domain, ok := h.managedDomain(c)
 	if !ok {
 		return
+	}
+	if h.clusterClient != nil && domain.EnvironmentID == 0 {
+		apiShared.ValidationError(c, "历史域名尚未关联集群环境，请先关联后删除")
+		return
+	}
+	if domain.EnvironmentID != 0 {
+		var scopeErr error
+		h, scopeErr = h.forDomain(c.Request.Context(), domain)
+		if scopeErr != nil {
+			apiShared.ValidationError(c, scopeErr.Error())
+			return
+		}
 	}
 	count, err := h.network.CountApplicationEndpointsByDomain(domain.ID)
 	if err != nil {
@@ -421,6 +535,23 @@ func (h *DomainHandler) Delete(c *gin.Context) {
 		if domain.TLSSecretName != "" {
 			if err := h.k8s.DeleteTLSSecret(c.Request.Context(), domain.Namespace, domain.TLSSecretName); err != nil && !apierrors.IsNotFound(err) {
 				apiShared.Error(c, http.StatusBadRequest, apiShared.CodeK8sAPIError, "删除域名 TLS Secret: "+err.Error())
+				return
+			}
+		}
+	}
+	if h.cloud != nil && domain.CloudConnectionID != 0 && !isImportedDomain(domain) {
+		records := decodeDNSRecords(domain.DNSRecords)
+		for len(records) > 0 {
+			record := records[0]
+			if err := h.cloud.DeleteRecord(c.Request.Context(), domain.CloudConnectionID, record.ID, true); err != nil {
+				apiShared.ValidationError(c, "删除云 DNS 记录失败: "+err.Error())
+				return
+			}
+			records = records[1:]
+			encoded, _ := json.Marshal(records)
+			domain.DNSRecords = string(encoded)
+			if err := h.network.UpdateManagedDomain(domain); err != nil {
+				apiShared.DBError(c, "保存 DNS 清理进度失败: "+err.Error())
 				return
 			}
 		}
@@ -458,6 +589,15 @@ func (h *DomainHandler) domainEnvironment(environmentID uint) (*model.Environmen
 }
 
 func (h *DomainHandler) DomainInfo(ctx context.Context, domain *model.ManagedDomain) ManagedDomainInfo {
+	if h.clusterClient != nil {
+		scoped, err := h.forDomain(ctx, domain)
+		if err != nil {
+			info := ManagedDomainInfoFor(ctx, domain, nil, h.network)
+			info.CertificateError = err.Error()
+			return info
+		}
+		h = scoped
+	}
 	return ManagedDomainInfoFor(ctx, domain, h.k8s, h.network)
 }
 
@@ -473,7 +613,11 @@ func ManagedDomainInfoFor(ctx context.Context, domain *model.ManagedDomain, clie
 	if domain == nil {
 		return ManagedDomainInfo{}
 	}
-	view := ManagedDomainInfo{ID: domain.ID, Hostname: domain.Hostname, EnvironmentID: domain.EnvironmentID, Namespace: domain.Namespace, CertificateName: domain.CertificateName, TLSSecretName: domain.TLSSecretName, IssuerRef: domain.IssuerRef, IssuerKind: domain.IssuerKind, CertificateOwnership: domain.CertificateOwnership, Description: domain.Description, Enabled: domain.Enabled, CreatedAt: domain.CreatedAt, UpdatedAt: domain.UpdatedAt}
+	view := ManagedDomainInfo{ID: domain.ID, Hostname: domain.Hostname, EnvironmentID: domain.EnvironmentID, Namespace: domain.Namespace, CertificateName: domain.CertificateName, TLSSecretName: domain.TLSSecretName, IssuerRef: domain.IssuerRef, IssuerKind: domain.IssuerKind, CertificateOwnership: domain.CertificateOwnership, CloudConnectionID: domain.CloudConnectionID, DNSZone: domain.DNSZone, DNSStatus: domain.DNSStatus, DNSError: domain.DNSError, Description: domain.Description, Enabled: domain.Enabled, CreatedAt: domain.CreatedAt, UpdatedAt: domain.UpdatedAt}
+	_ = json.Unmarshal([]byte(domain.DNSNodeIDs), &view.DNSNodeIDs)
+	for _, record := range decodeDNSRecords(domain.DNSRecords) {
+		view.DNSAddresses = append(view.DNSAddresses, record.Value)
+	}
 	if references != nil {
 		if count, err := references.CountApplicationEndpointsByDomain(domain.ID); err == nil {
 			view.ApplicationCount = count

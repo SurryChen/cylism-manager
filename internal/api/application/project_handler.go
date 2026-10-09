@@ -1,6 +1,8 @@
 package applicationapi
 
 import (
+	"strings"
+
 	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/gin-gonic/gin"
@@ -8,6 +10,7 @@ import (
 
 type projectRequest struct {
 	Name                   string `json:"name"`
+	Slug                   string `json:"slug"`
 	Description            string `json:"description"`
 	DefaultImageRegistryID *uint  `json:"default_image_registry_id"`
 }
@@ -23,17 +26,21 @@ func (h *ApplicationHandler) ListProjects(c *gin.Context) {
 
 func (h *ApplicationHandler) CreateProject(c *gin.Context) {
 	var req projectRequest
-	if err := c.ShouldBindJSON(&req); err != nil || req.Name == "" {
+	if err := c.ShouldBindJSON(&req); err != nil || strings.TrimSpace(req.Name) == "" {
 		apiShared.BadRequest(c, "项目名称必填")
+		return
+	}
+	if !namespaceSegmentPattern.MatchString(req.Slug) || len(req.Slug) > 40 {
+		apiShared.ValidationError(c, "项目英文名只能使用小写英文字母、数字和连字符，且不能以连字符开头或结尾，最长 40 位")
 		return
 	}
 	if req.DefaultImageRegistryID != nil && *req.DefaultImageRegistryID != 0 {
 		apiShared.BadRequest(c, "请在项目创建后设置默认镜像仓库")
 		return
 	}
-	project := &model.Project{Name: req.Name, Description: req.Description, OwnerID: apiShared.UserID(c)}
+	project := &model.Project{Name: strings.TrimSpace(req.Name), Slug: req.Slug, Description: req.Description, OwnerID: apiShared.UserID(c)}
 	if err := h.applications.CreateProject(project); err != nil {
-		apiShared.Conflict(c, "项目名称已存在")
+		apiShared.Conflict(c, "项目名称或英文名已存在")
 		return
 	}
 	apiShared.Success(c, apiShared.ProjectDTO(project))
@@ -46,7 +53,7 @@ func (h *ApplicationHandler) UpdateProject(c *gin.Context) {
 		return
 	}
 	var req projectRequest
-	if err := c.ShouldBindJSON(&req); err != nil || req.Name == "" {
+	if err := c.ShouldBindJSON(&req); err != nil || strings.TrimSpace(req.Name) == "" {
 		apiShared.BadRequest(c, "项目名称必填")
 		return
 	}
@@ -54,6 +61,24 @@ func (h *ApplicationHandler) UpdateProject(c *gin.Context) {
 	if err != nil {
 		apiShared.NotFound(c, "项目不存在")
 		return
+	}
+	if req.Slug == "" && project.Slug != "" {
+		req.Slug = project.Slug
+	}
+	if req.Slug != "" && (!namespaceSegmentPattern.MatchString(req.Slug) || len(req.Slug) > 40) {
+		apiShared.ValidationError(c, "项目英文名只能使用小写英文字母、数字和连字符，且不能以连字符开头或结尾，最长 40 位")
+		return
+	}
+	if project.Slug != "" && project.Slug != req.Slug {
+		count, countErr := h.applications.CountProjectEnvironments(projectID)
+		if countErr != nil {
+			apiShared.DBError(c, countErr.Error())
+			return
+		}
+		if count > 0 {
+			apiShared.Conflict(c, "项目已有环境，不能修改英文名")
+			return
+		}
 	}
 	if project.Name != req.Name {
 		applicationCount, err := h.applications.CountProjectApplications(projectID)
@@ -66,7 +91,8 @@ func (h *ApplicationHandler) UpdateProject(c *gin.Context) {
 			return
 		}
 	}
-	project.Name = req.Name
+	project.Name = strings.TrimSpace(req.Name)
+	project.Slug = req.Slug
 	project.Description = req.Description
 	if req.DefaultImageRegistryID != nil {
 		if *req.DefaultImageRegistryID == 0 {
@@ -81,7 +107,7 @@ func (h *ApplicationHandler) UpdateProject(c *gin.Context) {
 		}
 	}
 	if err := h.applications.UpdateProject(project); err != nil {
-		apiShared.Conflict(c, "项目名称已存在")
+		apiShared.Conflict(c, "项目名称或英文名已存在")
 		return
 	}
 	apiShared.Success(c, apiShared.ProjectDTO(project))

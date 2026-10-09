@@ -38,6 +38,7 @@ type applicationDiscoveryInfo struct {
 
 type applicationEnvironmentInfo struct {
 	ID        uint   `json:"id"`
+	ClusterID uint   `json:"cluster_id"`
 	Name      string `json:"name"`
 	Namespace string `json:"namespace"`
 }
@@ -103,7 +104,7 @@ func (h *ApplicationHandler) DiscoverApplications(c *gin.Context) {
 		apiShared.DBError(c, err.Error())
 		return
 	}
-	runtimes := h.queries.ApplicationRuntimeInfos(c.Request.Context(), h.kubernetes, applications, releases)
+	runtimes := h.runtimeInfos(c.Request.Context(), applications, releases)
 	infos := make([]applicationDiscoveryInfo, 0, len(applications))
 	for _, app := range applications {
 		infos = append(infos, applicationDiscoveryInfoFromModel(app, runtimes[app.ID]))
@@ -127,7 +128,7 @@ func (h *ApplicationHandler) GetApplicationRuntime(c *gin.Context) {
 		apiShared.DBError(c, err.Error())
 		return
 	}
-	runtime := h.queries.ApplicationRuntimeInfos(c.Request.Context(), h.kubernetes, []model.Application{*app}, map[uint][]model.Release{applicationID: releases})[applicationID]
+	runtime := h.runtimeInfos(c.Request.Context(), []model.Application{*app}, map[uint][]model.Release{applicationID: releases})[applicationID]
 	apiShared.Success(c, runtime)
 }
 
@@ -160,7 +161,7 @@ func applicationDiscoveryInfoFromModel(app model.Application, runtime applicatio
 	capabilities := append([]string{}, app.Capabilities...)
 	return applicationDiscoveryInfo{
 		ID: app.ID, ProjectID: app.ProjectID, EnvironmentID: app.EnvironmentID, Name: app.Name, WorkloadKind: app.WorkloadKind, Capabilities: capabilities,
-		Environment: applicationEnvironmentInfo{ID: app.Environment.ID, Name: app.Environment.Name, Namespace: app.Environment.Namespace}, Endpoints: endpoints, Runtime: runtime,
+		Environment: applicationEnvironmentInfo{ID: app.Environment.ID, ClusterID: app.Environment.ClusterID, Name: app.Environment.Name, Namespace: app.Environment.Namespace}, Endpoints: endpoints, Runtime: runtime,
 	}
 }
 

@@ -96,7 +96,7 @@ func (c *Container) BuildRouteDependencies() api.RouteDependencies {
 	})
 	// Integration delegations are verified by the route middleware with JWTSecret;
 	// keep the handler's signing key aligned with that verifier.
-	applicationHandler := applicationapi.NewApplicationHandlerWithDependencies(c.Store, c.Services.ApplicationQuery, key, applicationapi.NewKubernetesAdapter(c.K8s)).WithDelegationSecret(c.Auth.JWTSecret).WithAudit(c.Store)
+	applicationHandler := applicationapi.NewApplicationHandlerWithDependencies(c.Store, c.Services.ApplicationQuery, key, applicationapi.NewKubernetesAdapter(c.K8s)).WithClusterClientFactory(agentFactory.Client).WithDelegationSecret(c.Auth.JWTSecret).WithAudit(c.Store)
 	image := deliveryapi.NewImageRegistryHandler(c.Store, key)
 	cloud := cloudapi.NewHandler(cloudservice.NewService(c.Store, key, cloudservice.ProviderRegistry{"aliyun": aliyunprovider.NewProvider}), c.Store)
 	nodeMirrors := deliveryapi.NewNodeRegistryMirrorHandlerWithDependencies(key, nodeMirrorApplier.Apply, c.Services.RegistryMirror).WithActualConfigInspector(nodeRegistryConfigInspector).WithK3sRestarter(nodeK3sRestarter).WithConfigSyncer(nodeMirrorApplier).WithAudit(c.Store)
@@ -127,7 +127,7 @@ func (c *Container) BuildRouteDependencies() api.RouteDependencies {
 			Network: networkHandler, Catalog: clusterapi.NewCatalogHandler(c.Store).WithAgentClientFactory(agentFactory.Client), AccessCert: accessCertificates, Deployment: deployment, Server: clusterapi.NewServerHandler(key, clusterService),
 			Terminal: clusterapi.NewServerTerminalHandler(c.Store, key).WithAudit(c.Store),
 			Site:     networkapi.NewSiteHandler(c.Store), Operation: systemapi.NewOperationHandler(c.Store),
-			Domain: networkapi.NewDomainHandlerWithDependencies(networkapi.NewDomainKubernetesAdapter(c.K8s), networkService),
+			Domain: networkapi.NewDomainHandlerWithDependencies(networkapi.NewDomainKubernetesAdapter(c.K8s), networkService).WithClusterClientFactory(agentFactory.Client).WithCloudDNS(cloudservice.NewService(c.Store, key, cloudservice.ProviderRegistry{"aliyun": aliyunprovider.NewProvider}), c.Store),
 			Node: clusterapi.NewNodeHandler(clusterService).WithAdapterFactory(func(ctx context.Context, clusterID uint) (clusterpkg.NodeAdapter, error) {
 				client, err := agentFactory.Client(ctx, clusterID)
 				if err != nil {

@@ -185,7 +185,7 @@ describe('PersistentVolumes view', () => {
     await wrapper.get('.import-form').trigger('submit')
     await settle()
 
-    expect(wrapper.text()).toContain('源目录不可访问')
+    expect(document.body.querySelector('.error-notice')?.textContent).toContain('源目录不可访问')
     expect(wrapper.get('[data-testid="import-source-path"]').exists()).toBe(true)
     wrapper.unmount()
   })

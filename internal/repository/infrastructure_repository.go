@@ -68,7 +68,6 @@ type NetworkRepository interface {
 	GetManagedDomainByHostname(string) (*model.ManagedDomain, error)
 	ListManagedDomains(...uint) ([]model.ManagedDomain, error)
 	ListUnassignedManagedDomains() ([]model.ManagedDomain, error)
-	ListClaimableManagedDomains(string) ([]model.ManagedDomain, error)
 	CreateManagedDomain(*model.ManagedDomain) error
 	UpdateManagedDomain(*model.ManagedDomain) error
 	DeleteManagedDomain(uint) error

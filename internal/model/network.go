@@ -65,6 +65,12 @@ type ManagedDomain struct {
 	IssuerRef            string    `gorm:"size:128" json:"issuer_ref"`
 	IssuerKind           string    `gorm:"size:32;default:ClusterIssuer" json:"issuer_kind"`
 	CertificateOwnership string    `gorm:"size:16;default:managed;not null" json:"certificate_ownership"`
+	CloudConnectionID    uint      `gorm:"index" json:"cloud_connection_id"`
+	DNSZone              string    `gorm:"size:253" json:"dns_zone"`
+	DNSRecords           string    `gorm:"type:text" json:"-"`
+	DNSNodeIDs           string    `gorm:"type:text" json:"-"`
+	DNSStatus            string    `gorm:"size:32" json:"dns_status"`
+	DNSError             string    `gorm:"size:512" json:"dns_error"`
 	Description          string    `gorm:"size:512" json:"description"`
 	Enabled              bool      `gorm:"default:true;not null" json:"enabled"`
 	CreatedAt            time.Time `json:"created_at"`

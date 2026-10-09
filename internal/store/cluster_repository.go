@@ -12,6 +12,7 @@ import (
 
 var ErrClusterDeploymentConflict = errors.New("cluster deployment conflict")
 var ErrClusterHasNodes = errors.New("cluster has nodes or active tasks")
+var ErrClusterHasEnvironments = errors.New("cluster has application environments")
 
 // StartClusterAgentOperation creates an agent maintenance task for the
 // cluster control plane. Agent operations do not change node ownership.
@@ -104,7 +105,7 @@ func (s *Store) DeleteCluster(id uint) error {
 		if err := tx.First(&cluster, id).Error; err != nil {
 			return err
 		}
-		var nodes, running int64
+		var nodes, running, environments int64
 		if err := tx.Model(&model.Server{}).Where("cluster_id = ?", id).Count(&nodes).Error; err != nil {
 			return err
 		}
@@ -113,6 +114,12 @@ func (s *Store) DeleteCluster(id uint) error {
 		}
 		if nodes > 0 || running > 0 || cluster.ControlServerID != nil {
 			return ErrClusterHasNodes
+		}
+		if err := tx.Model(&model.Environment{}).Where("cluster_id = ?", id).Count(&environments).Error; err != nil {
+			return err
+		}
+		if environments > 0 {
+			return ErrClusterHasEnvironments
 		}
 		if err := tx.Model(&model.AccessCertificate{}).Where("cluster_id = ? AND revoked_at IS NULL", id).Updates(map[string]any{"revoked_at": time.Now().UTC(), "in_use": false}).Error; err != nil {
 			return err

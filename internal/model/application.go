@@ -13,6 +13,7 @@ import (
 type Project struct {
 	ID                     uint           `gorm:"primaryKey" json:"id"`
 	Name                   string         `gorm:"size:128;uniqueIndex;not null" json:"name"`
+	Slug                   string         `gorm:"size:40;uniqueIndex:idx_projects_slug,where:slug <> ''" json:"slug"`
 	Description            string         `gorm:"size:512" json:"description"`
 	DefaultImageRegistryID *uint          `gorm:"index" json:"default_image_registry_id,omitempty"`
 	OwnerID                uint           `gorm:"index;not null" json:"owner_id"`
@@ -26,6 +27,7 @@ type Project struct {
 type Environment struct {
 	ID                uint      `gorm:"primaryKey" json:"id"`
 	ProjectID         uint      `gorm:"uniqueIndex:idx_project_environment;not null" json:"project_id"`
+	ClusterID         uint      `gorm:"index;not null;default:0" json:"cluster_id"`
 	Name              string    `gorm:"size:64;uniqueIndex:idx_project_environment;not null" json:"name"`
 	Namespace         string    `gorm:"size:128;not null" json:"namespace"`
 	NamespaceStatus   string    `gorm:"-" json:"namespace_status,omitempty"`
@@ -44,17 +46,19 @@ type ResourceReference struct {
 
 // NamespaceConflictError indicates that another environment already owns a Namespace.
 type NamespaceConflictError struct {
+	ClusterID     uint
 	Namespace     string
 	EnvironmentID uint
 	ProjectID     uint
 }
 
 func (e *NamespaceConflictError) Error() string {
-	return fmt.Sprintf("命名空间 %q 已被项目 %d 的环境 %d 绑定", e.Namespace, e.ProjectID, e.EnvironmentID)
+	return fmt.Sprintf("集群 %d 的命名空间 %q 已被项目 %d 的环境 %d 绑定", e.ClusterID, e.Namespace, e.ProjectID, e.EnvironmentID)
 }
 
 // NamespaceConflict groups legacy duplicate bindings for an operator-directed migration.
 type NamespaceConflict struct {
+	ClusterID    uint          `json:"cluster_id"`
 	Namespace    string        `json:"namespace"`
 	Environments []Environment `json:"environments"`
 }

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -91,6 +92,31 @@ func TestIssuerObjectRendersHTTP01AndAliDNS(t *testing.T) {
 	solvers, ok, _ = unstructured.NestedSlice(dnsIssuer.Object, "spec", "acme", "solvers")
 	if !ok || solvers[0].(map[string]interface{})["dns01"] == nil {
 		t.Fatalf("missing DNS-01 solver: %#v", dnsIssuer.Object)
+	}
+}
+
+func TestUpdateIssuerPreservesResourceVersionAndMetadata(t *testing.T) {
+	current, err := issuerObject(IssuerRequest{Name: "cylism-alidns-certificates", Kind: "ClusterIssuer", Mode: "acme_dns01", DNSProvider: "alidns", Email: "old@example.com", CredentialSecretName: "cylism-dns-alidns-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	current.SetResourceVersion("17")
+	current.SetLabels(map[string]string{"owner": "platform"})
+	client := &Client{DynamicClient: fake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{clusterIssuerGVR: "ClusterIssuerList"}, current)}
+	_, err = client.UpdateIssuerContext(context.Background(), IssuerRequest{Name: current.GetName(), Kind: "ClusterIssuer", Mode: "acme_dns01", DNSProvider: "alidns", Email: "new@example.com", CredentialSecretName: "cylism-dns-alidns-2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated, err := client.DynamicClient.Resource(clusterIssuerGVR).Get(context.Background(), current.GetName(), metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.GetResourceVersion() != "17" || updated.GetLabels()["owner"] != "platform" {
+		t.Fatalf("update discarded resource metadata: %#v", updated.Object["metadata"])
+	}
+	info := issuerToInfo(updated, "ClusterIssuer")
+	if info.Email != "new@example.com" || info.CredentialSecretName != "cylism-dns-alidns-2" {
+		t.Fatalf("issuer configuration was not updated: %#v", info)
 	}
 }
 

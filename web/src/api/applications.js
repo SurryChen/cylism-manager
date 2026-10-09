@@ -1,5 +1,5 @@
 import { api } from './index.js'
-import { getConfigMapsForNamespace, getSecretsForNamespace } from './kubernetes.js'
+import { createClusterKubernetesApi } from './kubernetes.js'
 
 function queryString(params) {
   const query = new URLSearchParams()
@@ -76,12 +76,12 @@ export function getApplicationEndpoints(applicationID, options) {
   return api.get(`/applications/${segment(applicationID)}/endpoints`, options)
 }
 
-export function getApplicationConfigResources(namespace, options) {
-  return getConfigMapsForNamespace(namespace, options)
+export function getApplicationConfigResources(clusterID, namespace, options) {
+  return createClusterKubernetesApi(clusterID).getConfigMapsForNamespace(namespace, options)
 }
 
-export function getApplicationSecretResources(namespace, options) {
-  return getSecretsForNamespace(namespace, options)
+export function getApplicationSecretResources(clusterID, namespace, options) {
+  return createClusterKubernetesApi(clusterID).getSecretsForNamespace(namespace, options)
 }
 
 export function createApplication({ projectID, environmentID, name }, options) {

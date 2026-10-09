@@ -11,6 +11,7 @@ import {
   deleteEndpoint,
   deleteProject,
   getApplicationConfigResources,
+  getApplicationSecretResources,
   getApplicationEndpoints,
   getApplicationRelease,
   getApplications,
@@ -55,9 +56,11 @@ describe('applications API', () => {
   it('builds application detail read endpoints', () => {
     const options = { signal: new AbortController().signal }
     getApplicationEndpoints(7, options)
-    getApplicationConfigResources('team/ns', options)
+    getApplicationConfigResources(2, 'team/ns', options)
+    getApplicationSecretResources(2, 'team/ns', options)
     expect(api.get).toHaveBeenNthCalledWith(1, '/applications/7/endpoints', options)
-    expect(api.get).toHaveBeenNthCalledWith(2, '/k8s/configmaps?namespace=team%2Fns&usage=false', options)
+    expect(api.get).toHaveBeenNthCalledWith(2, '/clusters/2/k8s/configmaps?namespace=team%2Fns&usage=false', options)
+    expect(api.get).toHaveBeenNthCalledWith(3, '/clusters/2/k8s/secrets?namespace=team%2Fns&usage=false', options)
   })
 
   it('keeps application mutation contracts in the domain module', () => {

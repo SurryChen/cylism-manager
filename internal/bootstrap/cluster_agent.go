@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/url"
 	"strings"
+	"sync"
 
 	"github.com/cylism/cylism-manager/internal/clusteragent"
 	"github.com/cylism/cylism-manager/internal/k8s"
@@ -18,8 +19,9 @@ import (
 // Client handles are cheap and share the underlying HTTP transport for the
 // duration of the request; certificates remain encrypted at rest in Store.
 type clusterAgentClientFactory struct {
-	store *store.Store
-	certs *accesscert.Service
+	store  *store.Store
+	certs  *accesscert.Service
+	certMu sync.Mutex
 }
 
 func newClusterAgentClientFactory(st *store.Store, certs *accesscert.Service) *clusterAgentClientFactory {
@@ -52,7 +54,9 @@ func (f *clusterAgentClientFactory) Client(ctx context.Context, clusterID uint) 
 	if endpoint == "" {
 		return nil, fmt.Errorf("未配置控制平面地址")
 	}
+	f.certMu.Lock()
 	material, err := f.certs.PlatformClientTLS(clusterID)
+	f.certMu.Unlock()
 	if err != nil {
 		if strings.Contains(strings.ToLower(err.Error()), "record not found") {
 			return nil, fmt.Errorf("请先在访问证书页面创建访问 CA")

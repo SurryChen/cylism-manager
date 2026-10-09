@@ -52,7 +52,7 @@ func (s *Store) CreateEnvironment(environment *model.Environment) error {
 		return errors.New("environment is required")
 	}
 	return s.db.Transaction(func(tx *gorm.DB) error {
-		if err := ensureNamespaceAvailable(tx, environment.Namespace, 0); err != nil {
+		if err := ensureNamespaceAvailable(tx, environment.ClusterID, environment.Namespace, 0); err != nil {
 			return err
 		}
 		return tx.Create(environment).Error
@@ -76,7 +76,7 @@ func (s *Store) UpdateEnvironment(environment *model.Environment) error {
 		return errors.New("environment is required")
 	}
 	err := s.db.Transaction(func(tx *gorm.DB) error {
-		if err := ensureNamespaceAvailable(tx, environment.Namespace, environment.ID); err != nil {
+		if err := ensureNamespaceAvailable(tx, environment.ClusterID, environment.Namespace, environment.ID); err != nil {
 			return err
 		}
 		return tx.Save(environment).Error
@@ -95,18 +95,22 @@ func (s *Store) DeleteEnvironment(id uint) error {
 }
 
 // EnsureNamespaceAvailable validates an intended namespace binding before Kubernetes is mutated.
-func (s *Store) EnsureNamespaceAvailable(namespace string, excludeEnvironmentID uint) error {
-	return ensureNamespaceAvailable(s.db, namespace, excludeEnvironmentID)
+func (s *Store) EnsureNamespaceAvailable(namespace string, excludeEnvironmentID uint, clusterID ...uint) error {
+	var id uint
+	if len(clusterID) > 0 {
+		id = clusterID[0]
+	}
+	return ensureNamespaceAvailable(s.db, id, namespace, excludeEnvironmentID)
 }
 
-func ensureNamespaceAvailable(db *gorm.DB, namespace string, excludeEnvironmentID uint) error {
+func ensureNamespaceAvailable(db *gorm.DB, clusterID uint, namespace string, excludeEnvironmentID uint) error {
 	var existing model.Environment
-	query := db.Where("namespace = ?", namespace)
+	query := db.Where("cluster_id = ? AND namespace = ?", clusterID, namespace)
 	if excludeEnvironmentID != 0 {
 		query = query.Where("id <> ?", excludeEnvironmentID)
 	}
 	if err := query.Order("id asc").First(&existing).Error; err == nil {
-		return &model.NamespaceConflictError{Namespace: namespace, EnvironmentID: existing.ID, ProjectID: existing.ProjectID}
+		return &model.NamespaceConflictError{ClusterID: clusterID, Namespace: namespace, EnvironmentID: existing.ID, ProjectID: existing.ProjectID}
 	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return err
 	}
@@ -115,34 +119,41 @@ func ensureNamespaceAvailable(db *gorm.DB, namespace string, excludeEnvironmentI
 
 // ListEnvironmentNamespaceConflicts returns duplicate legacy namespace bindings.
 func (s *Store) ListEnvironmentNamespaceConflicts() ([]model.NamespaceConflict, error) {
-	type duplicate struct{ Namespace string }
+	type duplicate struct {
+		ClusterID uint
+		Namespace string
+	}
 	var duplicates []duplicate
 	if err := s.db.Model(&model.Environment{}).
-		Select("namespace").
+		Select("cluster_id, namespace").
 		Where("namespace <> ''").
-		Group("namespace").
+		Group("cluster_id, namespace").
 		Having("COUNT(*) > 1").
-		Order("namespace asc").
+		Order("cluster_id asc, namespace asc").
 		Find(&duplicates).Error; err != nil {
 		return nil, err
 	}
 	conflicts := make([]model.NamespaceConflict, 0, len(duplicates))
 	for _, duplicate := range duplicates {
 		var environments []model.Environment
-		if err := s.db.Where("namespace = ?", duplicate.Namespace).Order("project_id asc, id asc").Find(&environments).Error; err != nil {
+		if err := s.db.Where("cluster_id = ? AND namespace = ?", duplicate.ClusterID, duplicate.Namespace).Order("project_id asc, id asc").Find(&environments).Error; err != nil {
 			return nil, err
 		}
 		for index := range environments {
 			environments[index].NamespaceConflict = true
 		}
-		conflicts = append(conflicts, model.NamespaceConflict{Namespace: duplicate.Namespace, Environments: environments})
+		conflicts = append(conflicts, model.NamespaceConflict{ClusterID: duplicate.ClusterID, Namespace: duplicate.Namespace, Environments: environments})
 	}
 	return conflicts, nil
 }
 
-func (s *Store) IsEnvironmentNamespaceConflicted(namespace string) (bool, error) {
+func (s *Store) IsEnvironmentNamespaceConflicted(namespace string, clusterID ...uint) (bool, error) {
+	var id uint
+	if len(clusterID) > 0 {
+		id = clusterID[0]
+	}
 	var count int64
-	if err := s.db.Model(&model.Environment{}).Where("namespace = ?", namespace).Count(&count).Error; err != nil {
+	if err := s.db.Model(&model.Environment{}).Where("cluster_id = ? AND namespace = ?", id, namespace).Count(&count).Error; err != nil {
 		return false, err
 	}
 	return count > 1, nil
@@ -150,11 +161,14 @@ func (s *Store) IsEnvironmentNamespaceConflicted(namespace string) (bool, error)
 
 // ReconcileEnvironmentNamespaceUniqueness creates the database backstop only after legacy duplicates are resolved.
 func (s *Store) ReconcileEnvironmentNamespaceUniqueness() error {
+	if err := s.db.Exec("DROP INDEX IF EXISTS idx_environments_namespace_unique").Error; err != nil {
+		return err
+	}
 	conflicts, err := s.ListEnvironmentNamespaceConflicts()
 	if err != nil || len(conflicts) > 0 {
 		return err
 	}
-	return s.db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_environments_namespace_unique ON environments(namespace)").Error
+	return s.db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_environments_cluster_namespace_unique ON environments(cluster_id, namespace)").Error
 }
 
 func (s *Store) CountEnvironmentApplications(environmentID uint) (int64, error) {
@@ -350,6 +364,14 @@ type fileMountReferenceSpec struct {
 // ListResourceReferences finds application templates and releases that mount
 // a named resource in the requested environment.
 func (s *Store) ListResourceReferences(namespace, sourceType, sourceName string) ([]model.ResourceReference, error) {
+	return s.listResourceReferences(nil, namespace, sourceType, sourceName)
+}
+
+func (s *Store) ListResourceReferencesForCluster(clusterID uint, namespace, sourceType, sourceName string) ([]model.ResourceReference, error) {
+	return s.listResourceReferences(&clusterID, namespace, sourceType, sourceName)
+}
+
+func (s *Store) listResourceReferences(clusterID *uint, namespace, sourceType, sourceName string) ([]model.ResourceReference, error) {
 	var applications []model.Application
 	if err := s.db.Preload("Environment").Find(&applications).Error; err != nil {
 		return nil, err
@@ -357,7 +379,7 @@ func (s *Store) ListResourceReferences(namespace, sourceType, sourceName string)
 	applicationByID := make(map[uint]model.Application)
 	applicationIDs := make([]uint, 0, len(applications))
 	for _, app := range applications {
-		if app.Environment.Namespace == namespace {
+		if app.Environment.Namespace == namespace && (clusterID == nil || app.Environment.ClusterID == *clusterID) {
 			applicationByID[app.ID] = app
 			applicationIDs = append(applicationIDs, app.ID)
 		}

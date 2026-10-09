@@ -28,6 +28,39 @@ func (f resourceReferenceFake) ListResourceReferences(namespace, sourceType, sou
 	return f.references, nil
 }
 
+type clusterResourceReferenceFake struct{ resourceReferenceFake }
+
+func (f clusterResourceReferenceFake) ListResourceReferencesForCluster(clusterID uint, namespace, sourceType, sourceName string) ([]model.ResourceReference, error) {
+	if clusterID == 1 {
+		return f.references, nil
+	}
+	return nil, nil
+}
+
+func TestClusterResourceReferencesUseSelectedCluster(t *testing.T) {
+	reference := model.ResourceReference{ApplicationID: 1, ApplicationName: "orders"}
+	h := NewK8sHandlerWithAdapter(nil, clusterResourceReferenceFake{resourceReferenceFake{references: []model.ResourceReference{reference}}}, nil, nil)
+	h.WithClusterClientFactory(func(context.Context, uint) (*k8sclient.Client, error) {
+		return &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset()}, nil
+	})
+	first, err := h.ForCluster(t.Context(), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := h.ForCluster(t.Context(), 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstReferenced, err := first.resourceIsReferenced("commerce", "configmap", "shared")
+	if err != nil || !firstReferenced {
+		t.Fatalf("cluster 1 reference = %t, err=%v", firstReferenced, err)
+	}
+	secondReferenced, err := second.resourceIsReferenced("commerce", "configmap", "shared")
+	if err != nil || secondReferenced {
+		t.Fatalf("cluster 2 reference = %t, err=%v", secondReferenced, err)
+	}
+}
+
 func setupK8sTestRouter(clients ...*k8sclient.Client) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()

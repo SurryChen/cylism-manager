@@ -228,6 +228,10 @@ func (h *CatalogHandler) Delete(c *gin.Context) {
 		apiShared.Conflict(c, "请先卸载集群中的全部节点，等待任务结束后再删除集群")
 		return
 	}
+	if errors.Is(err, store.ErrClusterHasEnvironments) {
+		apiShared.Conflict(c, "集群仍被项目环境使用，请先删除相关环境")
+		return
+	}
 	if err != nil {
 		apiShared.InternalError(c, "删除集群失败")
 		return

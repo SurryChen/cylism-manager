@@ -4,7 +4,7 @@
       <h1 class="page-title">数据管理</h1>
       <button class="btn btn-primary" @click="showAdd = true" :disabled="!currentTable">+ 新增记录</button>
     </div>
-    <div v-if="error" class="k8s-banner k8s-banner-warn section-gap">{{ error }}</div>
+    <div v-if="readError" class="k8s-banner k8s-banner-warn section-gap">{{ readError }}</div>
 
     <SurfaceCard as="div" class="section-gap">
       <div class="table-tabs">
@@ -82,6 +82,7 @@
         </div>
       </div>
     </div>
+    <ErrorNoticeModal :open="Boolean(actionError)" :message="actionError" teleport @close="actionError = ''" />
   </div>
 </template>
 
@@ -89,6 +90,7 @@
 import { ref, computed, onMounted, reactive } from 'vue'
 import { createAdminTableRow, deleteAdminTableRow, getAdminTableRows, getAdminTables, updateAdminTableRow } from '../api/admin.js'
 import SurfaceCard from '../components/SurfaceCard.vue'
+import ErrorNoticeModal from '../components/ErrorNoticeModal.vue'
 import { useAsyncResource } from '../composables/useAsyncResource.js'
 
 const tables = ref([])
@@ -99,7 +101,8 @@ const loading = ref(false)
 const page = ref(1)
 const size = 20
 const total = ref(0)
-const error = ref('')
+const readError = ref('')
+const actionError = ref('')
 const sort = ref('id')
 const order = ref('desc')
 const showAdd = ref(false)
@@ -118,10 +121,10 @@ function tableLabel(t) { return tableLabels[t] || t }
 onMounted(loadTables)
 
 async function loadTables() {
-  error.value = ''
+  readError.value = ''
   const data = await tablesResource.refresh()
   if (data) tables.value = data.tables || []
-  else if (tablesResource.error.value) error.value = tablesResource.error.value.message || '加载数据表失败'
+  else if (tablesResource.error.value) readError.value = tablesResource.error.value.message || '加载数据表失败'
 }
 
 async function selectTable(name) {
@@ -134,7 +137,7 @@ async function selectTable(name) {
 
 async function fetchData() {
   if (!currentTable.value) return
-  error.value = ''
+  readError.value = ''
   loading.value = true
   const data = await rowsResource.refresh(currentTable.value, { page: page.value, size, sort: sort.value, order: order.value })
   if (data) {
@@ -142,7 +145,7 @@ async function fetchData() {
     rows.value = data.rows || []
     total.value = data.total || 0
   } else if (rowsResource.error.value) {
-    error.value = rowsResource.error.value.message || '加载数据失败'
+    readError.value = rowsResource.error.value.message || '加载数据失败'
   }
   loading.value = false
 }
@@ -186,7 +189,7 @@ async function submitForm() {
     }
     closeForm()
     fetchData()
-  } catch (e) { error.value = e.message || '保存记录失败' }
+  } catch (e) { actionError.value = e.message || '保存记录失败' }
 }
 
 function confirmDel(row) { deleteTarget.value = row }
@@ -196,6 +199,6 @@ async function doDelete() {
     await deleteAdminTableRow(currentTable.value, deleteTarget.value.id)
     deleteTarget.value = null
     fetchData()
-  } catch (e) { error.value = e.message || '删除记录失败' }
+  } catch (e) { actionError.value = e.message || '删除记录失败' }
 }
 </script>

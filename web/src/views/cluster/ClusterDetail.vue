@@ -52,12 +52,10 @@
         <div v-if="deploymentRole === 'control-plane'" class="deployment-form-field"><label for="adoption-address">控制平面连接地址</label><input id="adoption-address" v-model.trim="adoptAddress" class="form-input" :placeholder="adoptSelectedServer?.host || 'IP 或域名'" /></div>
       </div>
       <p class="deployment-hint">将通过 SSH 核对 K3s 服务、主机名和集群节点列表，不会安装或修改目标机器。先纳管控制平面，再逐个纳管工作节点。</p>
-      <FeedbackBanner v-if="adoptError" tone="warning" :message="adoptError" />
       <template #actions><button class="btn" type="button" :disabled="adopting" @click="closeAdoption">取消</button><button class="btn btn-primary" type="button" :disabled="!adoptServerID || adopting" @click="startAdoption">{{ adopting ? '启动中...' : '开始纳管' }}</button></template>
     </BaseModal>
     <BaseModal :open="Boolean(uninstallTarget)" title="卸载 K3s 节点" size="small" @close="closeUninstall">
       <p>将在“{{ nodeDisplayName(uninstallTarget || {}) }}”上通过 SSH 执行 K3s 官方卸载脚本。该操作会删除节点上的 K3s 服务和本地集群数据。</p>
-      <FeedbackBanner v-if="uninstallError" tone="warning" :message="uninstallError" />
       <template #actions><button class="btn" type="button" :disabled="uninstalling" @click="closeUninstall">取消</button><button class="btn btn-danger" type="button" :disabled="uninstalling" @click="confirmUninstall">{{ uninstalling ? '启动中...' : '确认卸载' }}</button></template>
     </BaseModal>
     <BaseModal :open="deploymentOpen" :title="deploymentRole === 'control-plane' ? '部署 K3s 控制平面' : '添加 K3s 工作节点'" :show-close="!submitting" :close-on-overlay="!submitting" :close-on-escape="!submitting" @close="closeDeployment">
@@ -67,9 +65,9 @@
         <div class="deployment-form-field"><label for="deployment-mirror">安装源</label><SelectMenu id="deployment-mirror" v-model="mirror" :options="mirrorOptions" aria-label="安装源" /></div>
       </div>
       <p class="deployment-hint">将在选中的服务器上通过 SSH 安装 K3s。服务器只能归属一个集群。<RouterLink v-if="!serverOptions.length" to="/servers">前往添加服务器</RouterLink></p>
-      <FeedbackBanner v-if="submitError" tone="warning" :message="submitError" />
       <template #actions><button class="btn" type="button" :disabled="submitting" @click="closeDeployment">取消</button><button class="btn btn-primary" type="button" :disabled="!selectedServerID || submitting" @click="startDeployment">{{ submitting ? '启动中...' : deploymentRole === 'control-plane' ? '部署控制平面' : '添加工作节点' }}</button></template>
     </BaseModal>
+    <ErrorNoticeModal :open="Boolean(operationError)" :message="operationError" teleport @close="clearOperationErrors" />
   </div>
 </template>
 
@@ -83,6 +81,7 @@ import { useAsyncResource } from '../../composables/useAsyncResource.js'
 import { useRoutedTab } from '../../composables/useRoutedTab.js'
 import BaseModal from '../../components/BaseModal.vue'
 import EmptyState from '../../components/EmptyState.vue'
+import ErrorNoticeModal from '../../components/ErrorNoticeModal.vue'
 import FeedbackBanner from '../../components/FeedbackBanner.vue'
 import SectionTabsHeader from '../../components/SectionTabsHeader.vue'
 import SelectMenu from '../../components/SelectMenu.vue'
@@ -139,6 +138,8 @@ const adoptError = ref('')
 const adopting = ref(false)
 const uninstallTarget = ref(null)
 const uninstallError = ref('')
+const operationError = computed(() => adoptError.value || uninstallError.value || submitError.value)
+function clearOperationErrors() { adoptError.value = ''; uninstallError.value = ''; submitError.value = '' }
 const uninstalling = ref(false)
 let pollingTimer
 let topologyRequestID = 0

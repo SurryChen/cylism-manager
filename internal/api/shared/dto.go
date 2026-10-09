@@ -225,6 +225,7 @@ func RuntimesDTO(items []model.RuntimeInstance) []RuntimeView {
 type ProjectView struct {
 	ID                     uint               `json:"id"`
 	Name                   string             `json:"name"`
+	Slug                   string             `json:"slug"`
 	Description            string             `json:"description"`
 	DefaultImageRegistryID *uint              `json:"default_image_registry_id,omitempty"`
 	OwnerID                uint               `json:"owner_id"`
@@ -236,6 +237,7 @@ type ProjectView struct {
 type EnvironmentView struct {
 	ID                uint      `json:"id"`
 	ProjectID         uint      `json:"project_id"`
+	ClusterID         uint      `json:"cluster_id"`
 	Name              string    `json:"name"`
 	Namespace         string    `json:"namespace"`
 	NamespaceStatus   string    `json:"namespace_status,omitempty"`
@@ -280,7 +282,7 @@ func EnvironmentDTO(e *model.Environment) *EnvironmentView {
 	if e == nil {
 		return nil
 	}
-	return &EnvironmentView{ID: e.ID, ProjectID: e.ProjectID, Name: e.Name, Namespace: e.Namespace, NamespaceStatus: e.NamespaceStatus, NamespaceConflict: e.NamespaceConflict, CreatedAt: e.CreatedAt, UpdatedAt: e.UpdatedAt}
+	return &EnvironmentView{ID: e.ID, ProjectID: e.ProjectID, ClusterID: e.ClusterID, Name: e.Name, Namespace: e.Namespace, NamespaceStatus: e.NamespaceStatus, NamespaceConflict: e.NamespaceConflict, CreatedAt: e.CreatedAt, UpdatedAt: e.UpdatedAt}
 }
 func EnvironmentsDTO(items []model.Environment) []EnvironmentView {
 	out := make([]EnvironmentView, 0, len(items))
@@ -293,7 +295,7 @@ func ProjectDTO(p *model.Project) *ProjectView {
 	if p == nil {
 		return nil
 	}
-	v := &ProjectView{ID: p.ID, Name: p.Name, Description: p.Description, DefaultImageRegistryID: p.DefaultImageRegistryID, OwnerID: p.OwnerID, CreatedAt: p.CreatedAt, UpdatedAt: p.UpdatedAt}
+	v := &ProjectView{ID: p.ID, Name: p.Name, Slug: p.Slug, Description: p.Description, DefaultImageRegistryID: p.DefaultImageRegistryID, OwnerID: p.OwnerID, CreatedAt: p.CreatedAt, UpdatedAt: p.UpdatedAt}
 	if len(p.Environments) > 0 {
 		v.Environments = EnvironmentsDTO(p.Environments)
 	}

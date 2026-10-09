@@ -44,7 +44,6 @@
 
   <BaseModal :open="createCAOpen" title="创建访问 CA" size="small" @close="createCAOpen = false">
     <p>将生成平台与集群 Agent 使用的信任根。CA 私钥加密保存在平台数据库中。</p>
-    <FeedbackBanner v-if="actionError" tone="warning" :message="actionError" />
     <template #actions><button class="btn" type="button" :disabled="saving" @click="createCAOpen = false">取消</button><button class="btn btn-primary" type="button" :disabled="saving" @click="createCA">{{ saving ? '创建中...' : '创建 CA' }}</button></template>
   </BaseModal>
 
@@ -53,22 +52,20 @@
       <div class="form-group"><label class="form-label" for="access-cluster">集群</label><SelectMenu id="access-cluster" v-model="form.cluster_id" :options="clusterOptions" placeholder="请选择集群" aria-label="集群" /></div>
       <div class="form-group"><label class="form-label" for="access-kind">证书用途</label><SelectMenu id="access-kind" v-model="form.kind" :options="kindOptions" aria-label="证书用途" /></div>
       <div v-if="form.kind === 'agent_server'" class="form-group"><label class="form-label" for="access-csr">Agent 证书签名请求（PEM）</label><textarea id="access-csr" v-model.trim="form.csr" class="form-input access-csr-input" spellcheck="false" placeholder="-----BEGIN CERTIFICATE REQUEST-----" required /></div>
-      <FeedbackBanner v-if="actionError" tone="warning" :message="actionError" />
     </form>
     <template #actions><button class="btn" type="button" :disabled="saving" @click="closeIssue">取消</button><button class="btn btn-primary" type="submit" form="issue-access-certificate" :disabled="saving || !form.cluster_id || (form.kind === 'agent_server' && !form.csr.trim())">{{ saving ? '签发中...' : '签发' }}</button></template>
   </BaseModal>
 
   <BaseModal :open="Boolean(revokeTarget)" title="吊销访问证书" size="small" @close="revokeTarget = null">
     <p>吊销 {{ clusterName(revokeTarget?.cluster_id) }} 的{{ revokeTarget?.kind === 'agent_server' ? 'Agent 服务端' : '平台客户端' }}证书？</p>
-    <FeedbackBanner v-if="actionError" tone="warning" :message="actionError" />
     <template #actions><button class="btn" type="button" :disabled="saving" @click="revokeTarget = null">取消</button><button class="btn btn-danger" type="button" :disabled="saving" @click="revoke">{{ saving ? '吊销中...' : '确认吊销' }}</button></template>
   </BaseModal>
 
   <BaseModal :open="Boolean(deleteTarget)" title="删除未使用证书" size="small" @close="deleteTarget = null">
     <p>确定删除 {{ clusterName(deleteTarget?.cluster_id) }} 的{{ deleteTarget?.kind === 'agent_server' ? 'Agent 服务端' : '平台客户端' }}证书？删除后无法恢复。</p>
-    <FeedbackBanner v-if="actionError" tone="warning" :message="actionError" />
     <template #actions><button class="btn" type="button" :disabled="saving" @click="deleteTarget = null">取消</button><button class="btn btn-danger" type="button" :disabled="saving" @click="removeCertificate">{{ saving ? '删除中...' : '确认删除' }}</button></template>
   </BaseModal>
+  <ErrorNoticeModal :open="Boolean(actionError)" :message="actionError" teleport @close="actionError = ''" />
 </template>
 
 <script setup>
@@ -78,6 +75,7 @@ import { deleteAccessCertificate, getAccessCA, getAccessCertificatePEM, getAcces
 import { getClusters } from '../../api/clusters.js'
 import BaseModal from '../../components/BaseModal.vue'
 import EmptyState from '../../components/EmptyState.vue'
+import ErrorNoticeModal from '../../components/ErrorNoticeModal.vue'
 import FeedbackBanner from '../../components/FeedbackBanner.vue'
 import SelectMenu from '../../components/SelectMenu.vue'
 import SurfaceCard from '../../components/SurfaceCard.vue'
@@ -174,12 +172,12 @@ function download(name, contents) {
 
 async function downloadCertificate(item) {
   try { const result = await getAccessCertificatePEM(item.id); download(`cluster-${item.cluster_id}-${item.kind}.crt`, result.certificate_pem) }
-  catch (err) { error.value = err.message || '下载访问证书失败' }
+  catch (err) { actionError.value = err.message || '下载访问证书失败' }
 }
 
 async function downloadCRL() {
   try { const result = await getAccessCRL(); download('cylism-access.crl', result.crl_pem) }
-  catch (err) { error.value = err.message || '下载吊销列表失败' }
+  catch (err) { actionError.value = err.message || '下载吊销列表失败' }
 }
 </script>
 

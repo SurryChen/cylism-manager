@@ -1,11 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
-import { reactive } from 'vue'
 import ImageRegistries from './ImageRegistries.vue'
-
-const route = reactive({ query: { project_id: '1', environment_id: '2' } })
-const router = { push: vi.fn() }
-vi.mock('vue-router', () => ({ useRoute: () => route, useRouter: () => router }))
 
 vi.mock('../../api/index.js', () => ({
   api: {
@@ -20,19 +15,12 @@ vi.mock('../../api/index.js', () => ({
 }))
 
 describe('ImageRegistries view', () => {
-	it('returns to the workspace with the current project and environment', async () => {
-		router.push.mockClear()
-		const wrapper = mount(ImageRegistries)
-		await wrapper.get('.back-link').trigger('click')
-
-		expect(router.push).toHaveBeenCalledWith({ path: '/applications', query: { project_id: '1', environment_id: '2' } })
-	})
-
   it('keeps the registry list unframed before any registry is configured', async () => {
     const wrapper = mount(ImageRegistries)
     await new Promise(resolve => setTimeout(resolve, 0))
 
     expect(wrapper.find('.page-title').text()).toBe('镜像仓库')
+    expect(wrapper.text()).not.toContain('返回工作台')
     expect(wrapper.text()).toContain('新建镜像仓库')
     expect(wrapper.text()).not.toContain('暂无镜像仓库')
     expect(wrapper.find('.card').exists()).toBe(false)
@@ -118,6 +106,7 @@ describe('ImageRegistries view', () => {
 
     expect(wrapper.find('.registry-modal').exists()).toBe(true)
     expect(wrapper.get('input[placeholder="commerce-harbor"]').element.value).toBe('commerce-harbor')
-    expect(wrapper.text()).toContain('仓库认证失败')
+    expect(document.body.querySelector('.error-notice')?.textContent).toContain('仓库认证失败')
+    wrapper.unmount()
   })
 })

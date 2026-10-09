@@ -48,7 +48,6 @@
         <SelectMenu id="cluster-distribution" v-model="distribution" :options="distributionOptions" placeholder="请选择集群类型" aria-label="集群类型" required />
         <p class="cluster-type-hint">目前仅支持 K3s；K8s 将在后续开放。</p>
       </div>
-      <FeedbackBanner v-if="createError" tone="warning" :message="createError" />
     </form>
     <template #actions>
       <button class="btn" type="button" :disabled="saving" @click="closeCreate">取消</button>
@@ -59,25 +58,25 @@
     <form id="edit-cluster-form" @submit.prevent="saveEdit">
       <div class="form-group"><label class="form-label" for="edit-cluster-name">集群名称</label><input id="edit-cluster-name" v-model.trim="editName" class="form-input" maxlength="128" required /></div>
       <p class="cluster-type-hint">集群类型创建后不可更改。</p>
-      <FeedbackBanner v-if="editError" tone="warning" :message="editError" />
     </form>
     <template #actions><button class="btn" type="button" :disabled="savingEdit" @click="closeEdit">取消</button><button class="btn btn-primary" type="submit" form="edit-cluster-form" :disabled="savingEdit || !editName.trim()">{{ savingEdit ? '保存中...' : '保存修改' }}</button></template>
   </BaseModal>
   <BaseModal :open="Boolean(deletingCluster)" title="删除集群" size="small" @close="closeDelete">
     <p>确定删除集群“{{ deletingCluster?.name }}”吗？请先在集群拓扑中卸载全部节点。任务审计记录会保留。</p>
-    <FeedbackBanner v-if="deleteError" tone="warning" :message="deleteError" />
     <template #actions><button class="btn" type="button" :disabled="deleting" @click="closeDelete">取消</button><button class="btn btn-danger" type="button" :disabled="deleting" @click="confirmDelete">{{ deleting ? '删除中...' : '删除集群' }}</button></template>
   </BaseModal>
+  <ErrorNoticeModal :open="Boolean(actionError)" :message="actionError" teleport @close="clearActionErrors" />
 </template>
 
 <script setup>
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { Activity, ArrowRight, Boxes, HardDrive, Pencil, RefreshCw, Route, Trash2 } from 'lucide-vue-next'
 import { createCluster, deleteCluster, getClusters, updateCluster } from '../../api/clusters.js'
 import { useAsyncResource } from '../../composables/useAsyncResource.js'
 import BaseModal from '../../components/BaseModal.vue'
 import EmptyState from '../../components/EmptyState.vue'
+import ErrorNoticeModal from '../../components/ErrorNoticeModal.vue'
 import FeedbackBanner from '../../components/FeedbackBanner.vue'
 import IconActionTooltip from '../../components/IconActionTooltip.vue'
 import SelectMenu from '../../components/SelectMenu.vue'
@@ -102,6 +101,8 @@ const editError = ref('')
 const savingEdit = ref(false)
 const deletingCluster = ref(null)
 const deleteError = ref('')
+const actionError = computed(() => createError.value || editError.value || deleteError.value)
+function clearActionErrors() { createError.value = ''; editError.value = ''; deleteError.value = '' }
 const deleting = ref(false)
 const router = useRouter()
 const resource = useAsyncResource(({ signal }) => getClusters({ signal }), [])

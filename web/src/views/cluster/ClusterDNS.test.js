@@ -55,7 +55,7 @@ describe('ClusterDNS view', () => {
     await wrapper.get('.base-modal-actions .btn-primary').trigger('click')
     await flushPromises()
     expect(wrapper.find('.modal').exists()).toBe(true)
-    expect(wrapper.text()).toContain('CoreDNS 更新失败')
+    expect(document.body.textContent).toContain('CoreDNS 更新失败')
   })
 
   it('retains the last successful data after a failed refresh', async () => {
@@ -65,8 +65,7 @@ describe('ClusterDNS view', () => {
     await wrapper.get('[aria-label="刷新 CoreDNS 状态"]').trigger('click')
     await flushPromises()
     expect(wrapper.text()).toContain('223.5.5.5')
-    expect(wrapper.text()).toContain('刷新失败')
-    expect(wrapper.get('[role="dialog"]').text()).toContain('刷新失败')
+    expect([...document.body.querySelectorAll('[role="alert"]')].some(alert => alert.textContent.includes('刷新失败'))).toBe(true)
   })
 
   it('renders the newest refresh result when an older request resolves later', async () => {

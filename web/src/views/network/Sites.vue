@@ -1,6 +1,6 @@
 <template>
   <section class="sites-workspace">
-    <div v-if="error" class="k8s-banner k8s-banner-warn">{{ error }}</div>
+    <div v-if="readError" class="k8s-banner k8s-banner-warn">{{ readError }}</div>
 
     <div
       v-if="controllerStatus && !controllerStatus.running"
@@ -95,6 +95,7 @@
       <p class="modal-copy">确定删除 <strong>{{ deleteIngressTarget?.name }}</strong>？</p>
       <template #actions><button class="btn" @click="deleteIngressTarget = null">取消</button><button class="btn btn-danger" @click="removeIngress">确认删除</button></template>
     </BaseModal>
+    <ErrorNoticeModal :open="Boolean(actionError)" :message="actionError" teleport @close="actionError = ''" />
   </section>
 </template>
 
@@ -104,6 +105,7 @@ import { RefreshCw } from 'lucide-vue-next'
 import { createIngress as createIngressRequest, deleteIngress, getIngressControllerStatus, getIngresses } from '../../api/sites.js'
 import { useAsyncResource } from '../../composables/useAsyncResource.js'
 import BaseModal from '../../components/BaseModal.vue'
+import ErrorNoticeModal from '../../components/ErrorNoticeModal.vue'
 import OverflowTooltip from '../../components/OverflowTooltip.vue'
 import SelectMenu from '../../components/SelectMenu.vue'
 import SurfaceCard from '../../components/SurfaceCard.vue'
@@ -116,7 +118,8 @@ const controllerStatus = ref(getCachedControllerStatus()?.status || null)
 const ingresses = ref([])
 const filterNamespace = ref('')
 const ingressesLoading = ref(true)
-const error = ref('')
+const readError = ref('')
+const actionError = ref('')
 const deleteIngressTarget = ref(null)
 const showAddIngress = ref(false)
 const ingressForm = ref(newIngressForm())
@@ -155,13 +158,13 @@ async function fetchControllerStatus() {
 
 async function fetchIngresses() {
   ingressesLoading.value = true
-  error.value = ''
+  readError.value = ''
   try {
     const result = await ingressesResource.refresh()
     if (result !== undefined) ingresses.value = result || []
     else throw ingressesResource.error.value || new Error('加载 Ingress 失败')
   } catch (err) {
-    error.value = err.message || '加载 Ingress 失败'
+    readError.value = err.message || '加载 Ingress 失败'
   } finally {
     ingressesLoading.value = false
   }
@@ -199,7 +202,7 @@ async function removeIngress() {
     deleteIngressTarget.value = null
     await fetchIngresses()
   } catch (err) {
-    error.value = err.message || '删除 Ingress 失败'
+    actionError.value = err.message || '删除 Ingress 失败'
   }
 }
 
@@ -210,7 +213,7 @@ async function createIngress() {
     ingressForm.value = newIngressForm()
     await fetchIngresses()
   } catch (err) {
-    error.value = err.message || '创建 Ingress 失败'
+    actionError.value = err.message || '创建 Ingress 失败'
   }
 }
 </script>

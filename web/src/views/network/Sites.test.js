@@ -46,7 +46,7 @@ describe('Sites view', () => {
     await wrapper.findAll('.modal-actions .btn-danger').find(button => button.text() === '确认删除').trigger('click')
     await flushPromises()
 
-    expect(wrapper.text()).toContain('Ingress 仍被引用')
+    expect(document.body.querySelector('[role="alert"]')?.textContent).toContain('Ingress 仍被引用')
     expect(wrapper.text()).toContain('确定删除')
   })
 })

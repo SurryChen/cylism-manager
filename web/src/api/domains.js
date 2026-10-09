@@ -19,11 +19,13 @@ export function getManagedDomains({ environmentID, unassigned = false } = {}, op
 }
 
 export function getDomainOptions(options) { return api.get('/certs/issuers', options) }
+export function getClusterDomainOptions(clusterID, options) { return api.get(`/clusters/${segment(clusterID)}/k8s/certs/issuers`, options) }
 export function getImportableCertificates(environmentID, options) { return api.get(`/domains/importable-certificates${queryString({ environment_id: environmentID })}`, options) }
-export function getClaimableDomains(environmentID, options) { return api.get(`/domains/claimable${queryString({ environment_id: environmentID })}`, options) }
+export function getDomainDNSOptions(environmentID, options) { return api.get(`/domains/dns-options${queryString({ environment_id: environmentID })}`, options) }
+export function getImportableCloudDomains(environmentID, options) { return api.get(`/domains/importable-cloud-domains${queryString({ environment_id: environmentID })}`, options) }
+export function retryManagedDomainDNS(id, options) { return post(`/domains/${segment(id)}/dns`, undefined, options) }
 export function createManagedDomain(body, options) { return post('/domains', body, options) }
 export function updateManagedDomain(id, body, options) { return put(`/domains/${segment(id)}`, body, options) }
 export function importManagedDomainCertificate(body, options) { return post('/domains/import', body, options) }
-export function claimManagedDomain(id, body, options) { return post(`/domains/${segment(id)}/claim`, body, options) }
 export function retryManagedDomainCertificate(id, options) { return post(`/domains/${segment(id)}/certificate`, undefined, options) }
 export function deleteManagedDomain(id, options) { return remove(`/domains/${segment(id)}`, options) }

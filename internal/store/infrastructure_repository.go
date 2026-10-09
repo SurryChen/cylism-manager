@@ -223,12 +223,6 @@ func (s *Store) ListUnassignedManagedDomains() ([]model.ManagedDomain, error) {
 	return domains, err
 }
 
-func (s *Store) ListClaimableManagedDomains(namespace string) ([]model.ManagedDomain, error) {
-	var domains []model.ManagedDomain
-	err := s.db.Where("environment_id = 0 AND namespace = ?", namespace).Order("hostname asc").Find(&domains).Error
-	return domains, err
-}
-
 func (s *Store) GetManagedDomain(id uint) (*model.ManagedDomain, error) {
 	var domain model.ManagedDomain
 	err := s.db.First(&domain, id).Error

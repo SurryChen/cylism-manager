@@ -3,10 +3,12 @@ package network
 import (
 	"context"
 	"net/http"
+	"strings"
 	"testing"
 
 	k8sclient "github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
+	cloudservice "github.com/cylism/cylism-manager/internal/service/cloud"
 	networkservice "github.com/cylism/cylism-manager/internal/service/network"
 	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/gin-gonic/gin"
@@ -82,13 +84,14 @@ func TestDomainHandlerImportsExistingCertificateWithoutTakingOwnership(t *testin
 	}
 }
 
-func TestDomainHandlerClaimBindsMatchingLegacyDomainToEnvironment(t *testing.T) {
+func TestDomainHandlerImportReusesMatchingLegacyDomain(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	s, err := store.New(":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.CreateEnvironment(&model.Environment{ProjectID: 1, Name: "production", Namespace: "commerce-prod"}); err != nil {
+	clusterID := uint(7)
+	if err := s.CreateEnvironment(&model.Environment{ProjectID: 1, Name: "production", Namespace: "commerce-prod", ClusterID: clusterID}); err != nil {
 		t.Fatal(err)
 	}
 	legacy := &model.ManagedDomain{
@@ -103,15 +106,28 @@ func TestDomainHandlerClaimBindsMatchingLegacyDomainToEnvironment(t *testing.T) 
 	if err := s.CreateManagedDomain(legacy); err != nil {
 		t.Fatal(err)
 	}
+	certificate := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "cert-manager.io/v1", "kind": "Certificate",
+		"metadata": map[string]interface{}{"name": "legacy-api", "namespace": "commerce-prod"},
+		"spec":     map[string]interface{}{"dnsNames": []interface{}{"api.example.com"}, "secretName": "legacy-api-tls", "issuerRef": map[string]interface{}{"name": "legacy-dns", "kind": "ClusterIssuer"}},
+	}}
+	client := &k8sclient.Client{DynamicClient: fake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{{Group: "cert-manager.io", Version: "v1", Resource: "certificates"}: "CertificateList"}, certificate)}
+	cloud := &fakeDomainCloud{records: []cloudservice.DNSRecord{{ID: "existing", RR: "api", Type: "A", Value: "203.0.113.33"}}}
 	router := gin.New()
-	handler := NewDomainHandlerWithDependencies(nil, networkservice.NewService(s, s))
-	router.POST("/api/domains/:id/claim", handler.Claim)
-	response := serve(router, newJSONRequest(http.MethodPost, "/api/domains/1/claim", gin.H{"environment_id": 1}))
+	handler := NewDomainHandlerWithDependencies(NewDomainKubernetesAdapter(client), networkservice.NewService(s, s).WithCertificateAdapter(client)).WithCloudDNS(nil, fakeDomainServers{{ID: 2, Host: "203.0.113.12", ClusterID: &clusterID}})
+	handler.cloud = cloud
+	router.GET("/api/domains/importable-cloud-domains", handler.ListImportableCloudDomains)
+	router.POST("/api/domains/import", handler.ImportCertificate)
+	candidates := serve(router, newJSONRequest(http.MethodGet, "/api/domains/importable-cloud-domains?environment_id=1", nil))
+	if candidates.Code != http.StatusOK || !strings.Contains(candidates.Body.String(), "api.example.com") {
+		t.Fatalf("legacy import candidate = %d: %s", candidates.Code, candidates.Body.String())
+	}
+	response := serve(router, newJSONRequest(http.MethodPost, "/api/domains/import", gin.H{"environment_id": 1, "certificate_name": "legacy-api", "enabled": true, "cloud_connection_id": 3, "dns_zone": "example.com", "node_ids": []uint{2}}))
 	if response.Code != http.StatusOK {
-		t.Fatalf("claim status = %d: %s", response.Code, response.Body.String())
+		t.Fatalf("import status = %d: %s", response.Code, response.Body.String())
 	}
 	domain, err := s.GetManagedDomain(legacy.ID)
-	if err != nil || domain.EnvironmentID != 1 || domain.CertificateOwnership != "managed" {
-		t.Fatalf("unexpected recovered domain: %#v, err=%v", domain, err)
+	if err != nil || domain.EnvironmentID != 1 || domain.CertificateOwnership != "imported" || domain.CertificateName != "legacy-api" || domain.TLSSecretName != "legacy-api-tls" || domain.DNSStatus != "ready" || cloud.creates != 1 {
+		t.Fatalf("unexpected imported legacy domain: %#v, err=%v, cloud creates=%d", domain, err, cloud.creates)
 	}
 }

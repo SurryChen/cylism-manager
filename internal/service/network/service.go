@@ -17,7 +17,6 @@ type DomainStore interface {
 	GetManagedDomainByHostname(hostname string) (*model.ManagedDomain, error)
 	ListManagedDomains(environmentID ...uint) ([]model.ManagedDomain, error)
 	ListUnassignedManagedDomains() ([]model.ManagedDomain, error)
-	ListClaimableManagedDomains(namespace string) ([]model.ManagedDomain, error)
 	CreateManagedDomain(domain *model.ManagedDomain) error
 	UpdateManagedDomain(domain *model.ManagedDomain) error
 	DeleteManagedDomain(id uint) error
@@ -133,6 +132,12 @@ func (s *Service) WithDNSAdapter(adapter DNSAdapter) *Service {
 func (s *Service) WithCertificateAdapter(adapter CertificateAdapter) *Service {
 	s.cert = adapter
 	return s
+}
+
+func (s *Service) ForCluster(client *k8sclient.Client) *Service {
+	scoped := *s
+	scoped.cert = client
+	return &scoped
 }
 
 func (s *Service) WithStandardIngressAdapter(adapter StandardIngressAdapter) *Service {
@@ -403,13 +408,6 @@ func (s *Service) ListUnassignedManagedDomains() ([]model.ManagedDomain, error) 
 	return s.domains.ListUnassignedManagedDomains()
 }
 
-func (s *Service) ListClaimableManagedDomains(namespace string) ([]model.ManagedDomain, error) {
-	if s.domains == nil {
-		return nil, errors.New("数据存储未初始化")
-	}
-	return s.domains.ListClaimableManagedDomains(strings.TrimSpace(namespace))
-}
-
 func (s *Service) CreateManagedDomain(domain *model.ManagedDomain) error {
 	if s.domains == nil {
 		return errors.New("数据存储未初始化")
@@ -494,6 +492,8 @@ func BuildManagedDomain(input DomainInput, current *model.ManagedDomain, environ
 	}
 	if current != nil {
 		domain.ID, domain.CreatedAt, domain.CertificateOwnership = current.ID, current.CreatedAt, current.CertificateOwnership
+		domain.CloudConnectionID, domain.DNSZone, domain.DNSRecords, domain.DNSNodeIDs = current.CloudConnectionID, current.DNSZone, current.DNSRecords, current.DNSNodeIDs
+		domain.DNSStatus, domain.DNSError = current.DNSStatus, current.DNSError
 		if current.CertificateOwnership == "imported" {
 			domain.IssuerRef, domain.IssuerKind = current.IssuerRef, current.IssuerKind
 		}

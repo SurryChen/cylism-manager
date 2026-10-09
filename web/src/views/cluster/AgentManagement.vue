@@ -7,7 +7,6 @@
       </div>
       <span class="badge" :class="statusClass">{{ statusLabel }}</span>
     </div>
-    <FeedbackBanner v-if="error" class="agent-feedback" tone="warning" :message="error" />
     <EmptyState v-if="!controlNode" message="当前集群还没有控制平面，无法管理 Agent" />
     <template v-else>
       <div class="agent-management-body">
@@ -40,6 +39,7 @@
       </div>
     </template>
   </SurfaceCard>
+  <ErrorNoticeModal :open="Boolean(error)" :message="error" teleport @close="error = ''" />
 </template>
 
 <script setup>
@@ -47,7 +47,7 @@ import { computed, ref } from 'vue'
 import { ServerCog } from 'lucide-vue-next'
 import { startClusterAgentOperation } from '../../api/clusters.js'
 import EmptyState from '../../components/EmptyState.vue'
-import FeedbackBanner from '../../components/FeedbackBanner.vue'
+import ErrorNoticeModal from '../../components/ErrorNoticeModal.vue'
 import SurfaceCard from '../../components/SurfaceCard.vue'
 
 const props = defineProps({
@@ -94,7 +94,6 @@ function taskStatusClass(status) { return ({ running: 'badge-deploying', success
 .agent-management-toolbar { display: flex; min-height: 70px; align-items: center; justify-content: space-between; gap: 16px; padding: 14px var(--space-20); border-bottom: 1px solid var(--border-muted); }
 .agent-management-toolbar > div { display: grid; gap: 4px; }
 .agent-management-toolbar strong { font-size: 14px; }
-.agent-feedback { margin: var(--space-12) var(--space-20) 0; }
 .agent-management-body { display: grid; gap: 20px; padding: var(--space-20); }
 .agent-host-summary { display: flex; align-items: center; gap: 12px; }
 .agent-host-icon { display: grid; width: 44px; height: 44px; place-items: center; border-radius: var(--radius-control); background: var(--surface-hover); color: var(--action-primary); }

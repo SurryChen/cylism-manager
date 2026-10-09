@@ -6,13 +6,13 @@ import ApplicationDetails from './ApplicationDetails.vue'
 vi.mock('../../api/index.js', () => ({
   api: {
     get: vi.fn(path => {
-      if (path === '/applications/1') return Promise.resolve({ application: { id: 1, project_id: 2, environment_id: 3, name: 'order-api', workload_kind: 'deployment', capabilities: ['hysteria2'], project: { name: 'commerce' }, environment: { name: 'production', namespace: 'commerce-prod' } }, releases: [{ id: 3, sequence: 2, image: 'registry.example.com/order-api:2.0.0', status: 'succeeded' }] })
+      if (path === '/applications/1') return Promise.resolve({ application: { id: 1, project_id: 2, environment_id: 3, name: 'order-api', workload_kind: 'deployment', capabilities: ['hysteria2'], project: { name: 'commerce' }, environment: { name: 'production', cluster_id: 2, namespace: 'commerce-prod' } }, releases: [{ id: 3, sequence: 2, image: 'registry.example.com/order-api:2.0.0', status: 'succeeded' }] })
       if (path === '/applications/1/deployment-templates') return Promise.resolve([{ id: 4, name: '标准生产配置', enabled: true, is_default: true, revision: 2, spec: { image: 'registry.example.com/order-api', replicas: 2, container_port: 8080, service: { port: 80 } } }])
       if (path === '/applications/1/endpoints') return Promise.resolve([{ id: 7, domain_id: 4, domain: 'api.example.com', path: '/', service_port: 80, tls_enabled: true, access_mode: 'protected_console' }, { id: 8, domain_id: 5, domain: 'admin.example.com', path: '/console', service_port: 80, tls_enabled: false, access_mode: 'public' }])
       if (path === '/domains?environment_id=3') return Promise.resolve([{ id: 4, hostname: 'api.example.com', enabled: true, certificate: { status: 'Ready' } }, { id: 5, hostname: 'admin.example.com', enabled: true, certificate: { status: 'Ready' } }])
-      if (path === '/k8s/configmaps?namespace=commerce-prod&usage=false') return Promise.resolve([])
+      if (path === '/clusters/2/k8s/configmaps?namespace=commerce-prod&usage=false') return Promise.resolve([])
       if (path === '/k8s/configmaps/commerce-prod/app-config') return Promise.resolve({ data: { 'config.yaml': 'port: 8080' } })
-      if (path === '/k8s/secrets?namespace=commerce-prod&usage=false') return Promise.resolve([{ name: 'edge-tls', keys: ['tls.crt', 'tls.key'], type: 'kubernetes.io/tls' }])
+      if (path === '/clusters/2/k8s/secrets?namespace=commerce-prod&usage=false') return Promise.resolve([{ name: 'edge-tls', keys: ['tls.crt', 'tls.key'], type: 'kubernetes.io/tls' }])
       return Promise.resolve([])
     }),
     post: vi.fn(), put: vi.fn(), delete: vi.fn(),
@@ -90,7 +90,8 @@ describe('ApplicationDetails view', () => {
     await wrapper.find('.section-actions .btn').trigger('click')
 
     expect(api.put).toHaveBeenCalledWith('/applications/1/capabilities', { capabilities: [] })
-    expect(wrapper.text()).toContain('能力标签格式无效')
+    expect(document.body.querySelector('.error-notice')?.textContent).toContain('能力标签格式无效')
+    wrapper.unmount()
   })
 
   it('opens a bound application endpoint through a handoff', async () => {

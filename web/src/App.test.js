@@ -152,9 +152,17 @@ describe('Glass UI application shell', () => {
     expect(navigation.text()).toContain('项目与环境')
     expect(navigation.text()).toContain('镜像仓库')
     expect(navigation.text()).toContain('工作台')
-    expect(navigation.text()).toContain('全局概览')
+    expect(navigation.text()).not.toContain('全局概览')
     expect(navigation.text()).not.toContain('应用栈')
     expect(navigation.get('.sidebar-link.is-active').text()).toContain('工作台')
+  })
+
+  it('redirects retired application overview routes to the workspace', async () => {
+    await mountApp('/applications/overview')
+    expect(router.currentRoute.value.path).toBe('/applications')
+
+    await router.push('/applications/releases')
+    expect(router.currentRoute.value.path).toBe('/applications')
   })
 
   it('keeps domain drill-down routes in the application navigation group', async () => {

@@ -42,9 +42,9 @@ type ApplicationManagementRepository interface {
 	CreateEnvironment(*model.Environment) error
 	UpdateEnvironment(*model.Environment) error
 	DeleteEnvironment(uint) error
-	EnsureNamespaceAvailable(string, uint) error
+	EnsureNamespaceAvailable(string, uint, ...uint) error
 	ListEnvironmentNamespaceConflicts() ([]model.NamespaceConflict, error)
-	IsEnvironmentNamespaceConflicted(string) (bool, error)
+	IsEnvironmentNamespaceConflicted(string, ...uint) (bool, error)
 	CountEnvironmentApplications(uint) (int64, error)
 
 	CreateApplication(*model.Application) error

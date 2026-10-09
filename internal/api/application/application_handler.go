@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
+	"github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/repository"
 	applicationservice "github.com/cylism/cylism-manager/internal/service/application"
@@ -29,6 +30,7 @@ type ApplicationHandler struct {
 	encKey           []byte
 	delegationSecret []byte
 	kubernetes       KubernetesAdapter
+	clusterClient    func(context.Context, uint) (*k8s.Client, error)
 	workflow         *applicationservice.ReleaseService
 	workloads        *applicationservice.WorkloadService
 	audit            auditservice.Repository
@@ -49,9 +51,9 @@ type applicationManagementRepository interface {
 	CreateEnvironment(*model.Environment) error
 	UpdateEnvironment(*model.Environment) error
 	DeleteEnvironment(uint) error
-	EnsureNamespaceAvailable(string, uint) error
+	EnsureNamespaceAvailable(string, uint, ...uint) error
 	ListEnvironmentNamespaceConflicts() ([]model.NamespaceConflict, error)
-	IsEnvironmentNamespaceConflicted(string) (bool, error)
+	IsEnvironmentNamespaceConflicted(string, ...uint) (bool, error)
 	CountEnvironmentApplications(uint) (int64, error)
 	CreateApplication(*model.Application) error
 	UpdateApplication(*model.Application) error
@@ -268,7 +270,11 @@ func (h *ApplicationHandler) CreateApplication(c *gin.Context) {
 		apiShared.ValidationError(c, "环境不属于所选项目")
 		return
 	}
-	if err := h.applications.EnsureNamespaceAvailable(environment.Namespace, environment.ID); err != nil {
+	if h.clusterClient != nil && environment.ClusterID == 0 {
+		apiShared.ValidationError(c, "环境尚未绑定集群")
+		return
+	}
+	if err := h.applications.EnsureNamespaceAvailable(environment.Namespace, environment.ID, environment.ClusterID); err != nil {
 		apiShared.Conflict(c, "环境命名空间存在冲突，请先完成迁移")
 		return
 	}

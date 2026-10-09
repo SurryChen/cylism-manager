@@ -9,6 +9,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/dynamic"
 )
 
 var certGVR = schema.GroupVersionResource{
@@ -207,21 +208,24 @@ func (c *Client) applyIssuer(ctx context.Context, request IssuerRequest, update 
 	if err != nil {
 		return nil, err
 	}
-	var applied *unstructured.Unstructured
+	var resource dynamic.ResourceInterface
 	if request.Kind == "Issuer" {
-		resource := dynamicClient.Resource(issuerGVR).Namespace(request.Namespace)
-		if update {
-			applied, err = resource.Update(ctx, object, metav1.UpdateOptions{})
-		} else {
-			applied, err = resource.Create(ctx, object, metav1.CreateOptions{})
-		}
+		resource = dynamicClient.Resource(issuerGVR).Namespace(request.Namespace)
 	} else {
-		resource := dynamicClient.Resource(clusterIssuerGVR)
-		if update {
-			applied, err = resource.Update(ctx, object, metav1.UpdateOptions{})
-		} else {
-			applied, err = resource.Create(ctx, object, metav1.CreateOptions{})
+		resource = dynamicClient.Resource(clusterIssuerGVR)
+	}
+	var applied *unstructured.Unstructured
+	if update {
+		current, getErr := resource.Get(ctx, request.Name, metav1.GetOptions{})
+		if getErr != nil {
+			return nil, getErr
 		}
+		spec := object.Object["spec"]
+		object = current.DeepCopy()
+		object.Object["spec"] = spec
+		applied, err = resource.Update(ctx, object, metav1.UpdateOptions{})
+	} else {
+		applied, err = resource.Create(ctx, object, metav1.CreateOptions{})
 	}
 	if err != nil {
 		return nil, err

@@ -6,7 +6,7 @@
       <div class="btn-group"><button class="btn" :disabled="restarting || !releases.length" @click="openRestartConfirmation"><RefreshCw :size="14" :class="{ 'is-spinning': restarting }" />{{ restarting ? '重启中...' : '重启应用' }}</button><button class="btn btn-primary" @click="openTemplateEditor()">新建上线模板</button></div>
     </div>
     <div v-if="readError" data-testid="application-detail-read-error" class="k8s-banner k8s-banner-warn section-gap">{{ readError }}</div>
-    <div v-if="mutationError" data-testid="application-detail-mutation-error" class="k8s-banner k8s-banner-warn section-gap">{{ mutationError }}</div>
+    <ErrorNoticeModal :open="Boolean(mutationError)" :message="mutationError" teleport @close="mutationError = ''" />
 
     <section v-if="application" class="detail-section capability-section">
       <div class="section-heading"><div><h2>能力标签</h2><p>用于让受权管理台发现应用；标签不影响模板、发布或 Kubernetes 资源。</p></div><button class="btn btn-sm" @click="addCapability">添加标签</button></div>
@@ -83,8 +83,10 @@ import {
 } from '../../api/applications.js'
 import { getManagedDomains } from '../../api/domains.js'
 import { useAsyncResource } from '../../composables/useAsyncResource.js'
-import { getPersistentVolumeInventory } from '../../api/storage.js'
+import { getClusterPersistentVolumeInventory } from '../../api/storage.js'
+import { getClusterNodes, getClusterServers } from '../../api/cluster.js'
 import SurfaceCard from '../../components/SurfaceCard.vue'
+import ErrorNoticeModal from '../../components/ErrorNoticeModal.vue'
 import { formatDateTime as formatTime } from '../../utils/formatters.js'
 
 const QuantityInput = defineComponent({
@@ -134,17 +136,22 @@ const endpointForm = ref(newEndpointForm())
 const applicationResource = useAsyncResource(async ({ signal }) => {
   const result = await getApplication(props.applicationID, { signal })
   const namespace = result.application?.environment?.namespace || ''
+  const clusterID = result.application?.environment?.cluster_id
   const [loadedTemplates, loadedEndpoints, loadedDomains, loadedRegistries, configmaps, secrets] = await Promise.all([
     getDeploymentTemplates(props.applicationID, { signal }),
     getApplicationEndpoints(props.applicationID, { signal }),
     getManagedDomains({ environmentID: result.application?.environment_id }, { signal }),
     getImageRegistries({ projectID: result.application?.project_id }, { signal }),
-    getApplicationConfigResources(namespace, { signal }),
-    getApplicationSecretResources(namespace, { signal }),
+    clusterID ? getApplicationConfigResources(clusterID, namespace, { signal }) : Promise.resolve([]),
+    clusterID ? getApplicationSecretResources(clusterID, namespace, { signal }) : Promise.resolve([]),
   ])
   return { result, loadedTemplates, loadedEndpoints, loadedDomains, loadedRegistries, configmaps, secrets }
 }, null)
-const storageResource = useAsyncResource(({ signal }) => getPersistentVolumeInventory({ signal }), null)
+const storageResource = useAsyncResource(({ signal }, clusterID, namespace) => Promise.all([
+  getClusterPersistentVolumeInventory(clusterID, { namespace }, { signal }),
+  getClusterNodes({ signal }, clusterID),
+  getClusterServers({ signal }),
+]), null)
 
 const readyDomains = computed(() => domains.value.filter(domain => domain.enabled && domain.certificate?.status === 'Ready'))
 const endpointServicePorts = computed(() => {
@@ -217,11 +224,13 @@ async function loadStorageResources() {
   if (storageResourcesLoaded.value || storageResourcesLoading.value || !application.value) return
   storageResourcesLoading.value = true
   try {
-    const result = await storageResource.refresh()
+    const clusterID = application.value.environment?.cluster_id
+    if (!clusterID) return
+    const result = await storageResource.refresh(clusterID, application.value.environment?.namespace)
     if (!result) return
-    const [items, , , clusterNodesResult, servers] = result
+    const [items, clusterNodesResult, servers] = result
     persistentVolumeClaims.value = items || []
-    const serverNames = new Map((servers || []).filter(server => server.k8s_node_name).map(server => [server.k8s_node_name, server.name]))
+    const serverNames = new Map((servers || []).filter(server => Number(server.cluster_id) === Number(clusterID) && server.k8s_node_name).map(server => [server.k8s_node_name, server.name]))
     clusterNodes.value = (clusterNodesResult || []).map(node => ({ name: node.name, display_name: serverNames.get(node.name) || node.name }))
     storageResourcesLoaded.value = true
   } finally { storageResourcesLoading.value = false }
@@ -253,7 +262,7 @@ function addVolume() { const claim = persistentVolumeClaims.value[0]; if (claim)
 function removeVolume(index) { templateForm.value.volumes.splice(index, 1) }
 function addFileMount() { templateForm.value.file_mounts.push({ source_type: 'application_config', source_name: '', key: '', mount_path: '' }) }
 function removeFileMount(index) { templateForm.value.file_mounts.splice(index, 1) }
-async function openResourceManagement() { await router.push('/resources?tab=configs') }
+async function openResourceManagement() { await router.push(`/cluster/${application.value.environment.cluster_id}/resources?tab=configs`) }
 async function openCertificateManagement() { await router.push('/domains') }
 function addServicePort() { const ports = templateForm.value.service.ports; ports.push(newServicePort(ports.length + 1, templateForm.value.container_port)) }
 function removeServicePort(index) { if (templateForm.value.service.ports.length > 1) templateForm.value.service.ports.splice(index, 1) }

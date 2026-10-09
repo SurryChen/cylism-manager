@@ -57,9 +57,60 @@ func TestEnvironmentNamespaceIsGloballyUnique(t *testing.T) {
 	}
 }
 
+func TestEnvironmentNamespaceIsUniqueWithinCluster(t *testing.T) {
+	st := setupTestDB(t)
+	if err := st.db.Exec("CREATE UNIQUE INDEX idx_environments_namespace_unique ON environments(namespace)").Error; err != nil {
+		t.Fatal(err)
+	}
+	first := &model.Environment{ProjectID: 1, ClusterID: 1, Name: "production", Namespace: "commerce"}
+	if err := st.CreateEnvironment(first); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.ReconcileEnvironmentNamespaceUniqueness(); err != nil {
+		t.Fatalf("replace legacy namespace index: %v", err)
+	}
+	second := &model.Environment{ProjectID: 2, ClusterID: 2, Name: "production", Namespace: "commerce"}
+	if err := st.CreateEnvironment(second); err != nil {
+		t.Fatalf("same namespace in another cluster should be allowed: %v", err)
+	}
+	duplicate := &model.Environment{ProjectID: 3, ClusterID: 1, Name: "production", Namespace: "commerce"}
+	var conflict *model.NamespaceConflictError
+	if err := st.CreateEnvironment(duplicate); !errors.As(err, &conflict) || conflict.ClusterID != 1 {
+		t.Fatalf("expected a conflict in cluster 1, got %v", err)
+	}
+}
+
+func TestResourceReferencesAreScopedToCluster(t *testing.T) {
+	st := setupTestDB(t)
+	for clusterID := uint(1); clusterID <= 2; clusterID++ {
+		environment := &model.Environment{ProjectID: clusterID, ClusterID: clusterID, Name: "production", Namespace: "commerce"}
+		if err := st.CreateEnvironment(environment); err != nil {
+			t.Fatal(err)
+		}
+		app := &model.Application{ProjectID: clusterID, EnvironmentID: environment.ID, Name: "orders", WorkloadKind: "deployment"}
+		if err := st.CreateApplication(app); err != nil {
+			t.Fatal(err)
+		}
+		if clusterID == 1 {
+			template := &model.ApplicationDeploymentTemplate{ApplicationID: app.ID, Name: "standard", Spec: `{"file_mounts":[{"source_type":"configmap","source_name":"shared"}]}`, Revision: 1}
+			if err := st.db.Create(template).Error; err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	first, err := st.ListResourceReferencesForCluster(1, "commerce", "configmap", "shared")
+	if err != nil || len(first) != 1 {
+		t.Fatalf("expected cluster 1 reference, got %#v, err=%v", first, err)
+	}
+	second, err := st.ListResourceReferencesForCluster(2, "commerce", "configmap", "shared")
+	if err != nil || len(second) != 0 {
+		t.Fatalf("cluster 2 must not inherit cluster 1 references: %#v, err=%v", second, err)
+	}
+}
+
 func TestReconcileEnvironmentNamespaceUniquenessWaitsForLegacyConflicts(t *testing.T) {
 	st := setupTestDB(t)
-	if err := st.db.Exec("DROP INDEX IF EXISTS idx_environments_namespace_unique").Error; err != nil {
+	if err := st.db.Exec("DROP INDEX IF EXISTS idx_environments_cluster_namespace_unique").Error; err != nil {
 		t.Fatal(err)
 	}
 	if err := st.db.Exec("INSERT INTO environments (project_id, name, namespace, created_at, updated_at) VALUES (1, 'one', 'shared', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP), (2, 'two', 'shared', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)").Error; err != nil {

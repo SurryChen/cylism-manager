@@ -6,7 +6,8 @@ vi.mock('../../api/index.js', () => ({
   api: {
     get: vi.fn().mockImplementation((path) => {
       if (path === '/projects') return Promise.resolve([{ id: 1, name: 'commerce', description: '订单服务' }])
-      if (path === '/projects/1/environments') return Promise.resolve([{ id: 2, name: 'production', namespace: 'commerce-prod', namespace_status: 'active' }])
+      if (path === '/clusters') return Promise.resolve([{ id: 1, name: '生产集群' }])
+      if (path === '/projects/1/environments') return Promise.resolve([{ id: 2, name: 'production', cluster_id: 1, namespace: 'commerce-prod', namespace_status: 'active' }])
       if (path === '/applications') return Promise.resolve([{ id: 3, environment_id: 2, name: 'order-api' }])
       return Promise.resolve([])
     }),
@@ -28,6 +29,7 @@ describe('ProjectEnvironments view', () => {
     expect(wrapper.find('.page-title').text()).toBe('commerce 的环境')
     expect(wrapper.text()).toContain('production')
     expect(wrapper.text()).toContain('commerce-prod')
+	    expect(wrapper.text()).toContain('生产集群')
 	    expect(wrapper.text()).toContain('就绪')
     expect(wrapper.text()).toContain('关联应用')
     expect(wrapper.text()).toContain('新建环境')
@@ -57,10 +59,10 @@ describe('ProjectEnvironments view', () => {
     const { api } = await import('../../api/index.js')
     api.get.mockImplementation((path) => {
       if (path === '/projects') return Promise.resolve([{ id: 1, name: 'commerce' }])
-      if (path === '/projects/1/environments') return Promise.resolve([{ id: 2, name: 'development', namespace: 'dev', namespace_status: 'missing' }])
+      if (path === '/projects/1/environments') return Promise.resolve([{ id: 2, name: 'development', cluster_id: 1, namespace: 'dev', namespace_status: 'missing' }])
       return Promise.resolve([])
     })
-    api.post.mockResolvedValue({ id: 2, name: 'development', namespace: 'dev', namespace_status: 'active' })
+    api.post.mockResolvedValue({ id: 2, name: 'development', cluster_id: 1, namespace: 'dev', namespace_status: 'active' })
     const wrapper = mount(ProjectEnvironments, { props: { projectID: '1' }, global: { stubs: { RouterLink: { template: '<a><slot /></a>' } } } })
     await new Promise(resolve => setTimeout(resolve, 0))
 
@@ -71,10 +73,11 @@ describe('ProjectEnvironments view', () => {
     expect(wrapper.text()).toContain('就绪')
   })
 
-  it('uses a fixed project prefix while the operator enters the namespace suffix', async () => {
+  it('previews the generated namespace and submits only the environment name and cluster', async () => {
     const { api } = await import('../../api/index.js')
     api.get.mockImplementation((path) => {
-      if (path === '/projects') return Promise.resolve([{ id: 1, name: 'commerce' }])
+      if (path === '/projects') return Promise.resolve([{ id: 1, name: '电商', slug: 'commerce' }])
+      if (path === '/clusters') return Promise.resolve([{ id: 1, name: '生产集群' }])
       if (path === '/projects/1/environments') return Promise.resolve([])
       return Promise.resolve([])
     })
@@ -82,15 +85,33 @@ describe('ProjectEnvironments view', () => {
     await new Promise(resolve => setTimeout(resolve, 0))
 
     await wrapper.get('.page-header .btn-primary').trigger('click')
-    const namespace = wrapper.get('input[placeholder="frontend-dev"]')
-    expect(wrapper.find('.namespace-prefix').text()).toBe('project-')
-    expect(namespace.element.value).toBe('')
-
-    await namespace.setValue('frontend-dev')
+    expect(wrapper.find('input[placeholder="frontend-dev"]').exists()).toBe(false)
+    expect(wrapper.get('input[disabled][value="project-commerce-production"]').exists()).toBe(true)
+    await wrapper.get('input[placeholder="production"]').setValue('development')
+    expect(wrapper.get('input[disabled][value="project-commerce-development"]').exists()).toBe(true)
     await wrapper.get('form').trigger('submit')
     expect(api.post).toHaveBeenCalledWith('/projects/1/environments', {
-      name: 'production', namespace: 'project-frontend-dev', namespace_mode: 'create',
+      name: 'development', cluster_id: 1,
     })
+  })
+
+  it('keeps a legacy environment namespace when its name is unchanged', async () => {
+    const { api } = await import('../../api/index.js')
+    api.get.mockImplementation(path => {
+      if (path === '/projects') return Promise.resolve([{ id: 1, name: '旧项目' }])
+      if (path === '/clusters') return Promise.resolve([{ id: 1, name: '生产集群' }])
+      if (path === '/projects/1/environments') return Promise.resolve([{ id: 2, name: '生产环境', cluster_id: 1, namespace: 'legacy-prod' }])
+      return Promise.resolve([])
+    })
+    const wrapper = mount(ProjectEnvironments, { props: { projectID: '1' }, global: { stubs: { RouterLink: { template: '<a><slot /></a>' } } } })
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    await wrapper.findAll('button').find(button => button.text() === '编辑').trigger('click')
+    expect(wrapper.get('input[placeholder="production"]').attributes('pattern')).toBeUndefined()
+    expect(wrapper.get('input[disabled][value="legacy-prod"]').exists()).toBe(true)
+    await wrapper.get('form').trigger('submit')
+    expect(api.put).toHaveBeenCalledWith('/projects/1/environments/2', { name: '生产环境', cluster_id: 1 })
+    wrapper.unmount()
   })
 
   it('cancels the active project read when the view unmounts', async () => {
@@ -137,7 +158,8 @@ describe('ProjectEnvironments view', () => {
   it('keeps an environment form open when saving fails', async () => {
     const { api } = await import('../../api/index.js')
     api.get.mockImplementation((path) => {
-      if (path === '/projects') return Promise.resolve([{ id: 1, name: 'commerce' }])
+      if (path === '/projects') return Promise.resolve([{ id: 1, name: 'commerce', slug: 'commerce' }])
+      if (path === '/clusters') return Promise.resolve([{ id: 1, name: '生产集群' }])
       if (path === '/projects/1/environments') return Promise.resolve([])
       return Promise.resolve([])
     })
@@ -145,10 +167,10 @@ describe('ProjectEnvironments view', () => {
     const wrapper = mount(ProjectEnvironments, { props: { projectID: '1' }, global: { stubs: { RouterLink: { template: '<a><slot /></a>' } } } })
     await new Promise(resolve => setTimeout(resolve, 0))
     await wrapper.get('.page-header .btn-primary').trigger('click')
-    await wrapper.get('input[placeholder="frontend-dev"]').setValue('commerce-prod')
     await wrapper.get('form').trigger('submit')
     await new Promise(resolve => setTimeout(resolve, 0))
     expect(wrapper.find('.modal').exists()).toBe(true)
-    expect(wrapper.text()).toContain('命名空间已被占用')
+    expect(document.body.querySelector('.error-notice')?.textContent).toContain('命名空间已被占用')
+    wrapper.unmount()
   })
 })

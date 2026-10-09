@@ -4,7 +4,7 @@ import ErrorNoticeModal from './ErrorNoticeModal.vue'
 
 describe('ErrorNoticeModal', () => {
   it('presents an error message and can be dismissed', async () => {
-    const wrapper = mount(ErrorNoticeModal, { props: { open: true, title: '加载失败', message: '无法读取集群状态' } })
+    const wrapper = mount(ErrorNoticeModal, { props: { open: true, title: '加载失败', message: '无法读取集群状态' }, global: { stubs: { Teleport: true } } })
 
     expect(wrapper.get('[role="dialog"]').text()).toContain('加载失败')
     expect(wrapper.get('[role="alert"]').text()).toContain('无法读取集群状态')

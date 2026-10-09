@@ -40,7 +40,6 @@
         </table>
       </div>
     </SurfaceCard>
-    <div v-if="unbindError" class="k8s-banner k8s-banner-warn section-gap">{{ unbindError }}</div>
     </template>
 
     <template v-else-if="activeSection === 'monitoring'">
@@ -129,6 +128,7 @@
     <div v-if="deleteTarget" class="overlay" @click.self="deleteTarget = null">
       <div class="modal"><h2 class="modal-title">删除服务器</h2><p class="modal-copy">确定删除 <strong>{{ deleteTarget.name }}</strong> 吗？</p><p v-if="deleteError" class="form-error">{{ deleteError }}</p><div class="modal-actions"><button class="btn" :disabled="deletingServer" @click="deleteTarget = null">取消</button><button class="btn btn-danger" :disabled="deletingServer" @click="deleteServer">{{ deletingServer ? '删除中...' : '确认删除' }}</button></div></div>
     </div>
+    <ErrorNoticeModal :open="Boolean(unbindError)" :message="unbindError" teleport @close="unbindError = ''" />
   </div>
 </template>
 
@@ -151,6 +151,7 @@ import { formatClockTime as formatSampleTime } from '../../utils/formatters.js'
 import { ChartNoAxesColumnIncreasing, LoaderCircle, Pencil, Plus, RefreshCw, Terminal, Trash2, Unlink2 } from 'lucide-vue-next'
 import SectionTabsHeader from '../../components/SectionTabsHeader.vue'
 import SurfaceCard from '../../components/SurfaceCard.vue'
+import ErrorNoticeModal from '../../components/ErrorNoticeModal.vue'
 import ServerTerminal from './ServerTerminal.vue'
 
 const serversResource = useAsyncResource(({ signal }) => getServers({ signal }), [])

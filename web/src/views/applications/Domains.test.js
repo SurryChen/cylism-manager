@@ -14,8 +14,9 @@ beforeEach(() => {
   vi.clearAllMocks()
   api.get.mockImplementation(path => {
     if (path === '/domains?environment_id=2') return Promise.resolve([{ id: 1, environment_id: 2, hostname: 'api.example.com', namespace: 'production', issuer_ref: 'letsencrypt-prod', tls_secret_name: 'cylism-domain-1-tls', certificate_name: 'cylism-domain-1', certificate: { status: 'Ready', renewal_time: '2026-10-01T00:00:00Z' }, application_count: 0 }])
-    if (path === '/projects') return Promise.resolve([{ id: 1, environments: [{ id: 2, name: 'production', namespace: 'production' }] }])
-    if (path === '/certs/issuers') return Promise.resolve([{ name: 'letsencrypt-prod', kind: 'ClusterIssuer', ready: true }])
+    if (path === '/projects') return Promise.resolve([{ id: 1, environments: [{ id: 2, name: 'production', namespace: 'production', cluster_id: 7 }] }])
+    if (path === '/clusters/7/k8s/certs/issuers') return Promise.resolve([{ name: 'letsencrypt-prod', kind: 'ClusterIssuer', ready: true }])
+    if (path === '/domains/dns-options?environment_id=2') return Promise.resolve({ connections: [{ id: 3, name: 'Cloud', zones: [{ name: 'example.com' }] }], nodes: [{ id: 5, name: 'node-a', ip: '203.0.113.5' }] })
     return Promise.resolve([])
   })
 })
@@ -28,6 +29,7 @@ describe('Domains view', () => {
     expect(wrapper.text()).toContain('api.example.com')
     expect(wrapper.text()).toContain('已就绪')
     expect(wrapper.text()).toContain('cylism-domain-1-tls')
+    expect(wrapper.text()).not.toContain('关联历史域名')
   })
 
   it('loads ready ClusterIssuers before creating a domain in the selected environment', async () => {
@@ -35,9 +37,22 @@ describe('Domains view', () => {
     await new Promise(resolve => setTimeout(resolve, 20))
     await wrapper.get('.btn-primary').trigger('click')
     await nextTick()
-    expect(api.get).toHaveBeenCalledWith('/certs/issuers', undefined)
-    expect(wrapper.text()).toContain('申请 HTTPS 域名')
+    expect(api.get).toHaveBeenCalledWith('/clusters/7/k8s/certs/issuers', undefined)
+    expect(wrapper.text()).toContain('新建域名')
+    expect(wrapper.text()).toContain('example.com')
     expect(wrapper.text()).toContain('letsencrypt-prod')
+  })
+
+  it('creates DNS and certificate bindings from the selected zone and nodes', async () => {
+    api.post.mockResolvedValue({})
+    const wrapper = mount(Domains)
+    await new Promise(resolve => setTimeout(resolve, 20))
+    await wrapper.get('.domain-toolbar .btn-primary').trigger('click')
+    await new Promise(resolve => setTimeout(resolve, 20))
+    await wrapper.get('input[placeholder="api"]').setValue('orders')
+    await wrapper.get('.modal form').trigger('submit')
+    await new Promise(resolve => setTimeout(resolve, 20))
+    expect(api.post).toHaveBeenCalledWith('/domains', expect.objectContaining({ hostname: 'orders.example.com', cloud_connection_id: 3, dns_zone: 'example.com', node_ids: [5] }))
   })
 
   it('shows transient certificate states as issuing and refreshes them', async () => {
