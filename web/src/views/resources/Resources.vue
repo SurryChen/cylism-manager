@@ -1,6 +1,6 @@
 <template>
   <div>
-    <div class="page-header">
+    <div class="page-header sticky-page-header">
       <h1 class="page-title">资源浏览</h1>
     </div>
 

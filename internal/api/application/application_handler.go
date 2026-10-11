@@ -56,6 +56,7 @@ type applicationManagementRepository interface {
 	IsEnvironmentNamespaceConflicted(string, ...uint) (bool, error)
 	CountEnvironmentApplications(uint) (int64, error)
 	CreateApplication(*model.Application) error
+	DeleteUnreleasedApplication(uint) error
 	UpdateApplication(*model.Application) error
 	ReplaceApplicationCapabilities(uint, []string) (*model.Application, error)
 	GetLatestSuccessfulRelease(uint) (*model.Release, error)
@@ -67,6 +68,13 @@ type applicationManagementRepository interface {
 	UpdateApplicationDeploymentTemplateIfRevision(*model.ApplicationDeploymentTemplate, uint) error
 	DeleteApplicationDeploymentTemplate(uint, uint) error
 	SetDefaultApplicationDeploymentTemplate(uint, uint) error
+	ListApplicationCatalogItems() ([]model.ApplicationCatalogItem, error)
+	ListApplicationCatalogInstallations(uint, uint) ([]model.ApplicationCatalogInstallation, error)
+	GetApplicationCatalogItem(uint) (*model.ApplicationCatalogItem, error)
+	CreateApplicationCatalogItem(*model.ApplicationCatalogItem) error
+	UpdateApplicationCatalogItem(*model.ApplicationCatalogItem, uint) error
+	DeleteApplicationCatalogItem(uint) error
+	ImportApplicationCatalogItems(uint, uint, uint, []model.ApplicationCatalogItem) ([]model.ApplicationCatalogInstallation, error)
 	ListApplicationEndpoints(uint) ([]model.ApplicationEndpoint, error)
 	GetApplicationEndpoint(uint, uint) (*model.ApplicationEndpoint, error)
 	CreateApplicationEndpoint(*model.ApplicationEndpoint) error
@@ -284,4 +292,25 @@ func (h *ApplicationHandler) CreateApplication(c *gin.Context) {
 		return
 	}
 	apiShared.Success(c, apiShared.ApplicationDTO(app))
+}
+
+func (h *ApplicationHandler) DeleteApplication(c *gin.Context) {
+	id, err := apiShared.ParseID(c.Param("id"))
+	if err != nil {
+		apiShared.BadRequest(c, "部署组件 ID 无效")
+		return
+	}
+	if err := h.applications.DeleteUnreleasedApplication(id); err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			apiShared.NotFound(c, "部署组件不存在")
+			return
+		}
+		if errors.Is(err, model.ErrApplicationRequiresUninstall) {
+			apiShared.Conflict(c, err.Error())
+			return
+		}
+		apiShared.DBError(c, err.Error())
+		return
+	}
+	apiShared.Success(c, gin.H{"deleted": true})
 }

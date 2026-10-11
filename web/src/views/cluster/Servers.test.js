@@ -63,7 +63,8 @@ describe('Servers view', () => {
   it('renders the server registry sections', () => {
     const wrapper = mount(Servers, { global: { stubs: { RouterLink: true } } })
     expect(wrapper.text()).toContain('服务器')
-    expect(wrapper.findAll('.section-tab')).toHaveLength(2)
+    expect(wrapper.findAll('.section-tab')).toHaveLength(3)
+    expect(wrapper.text()).toContain('组网')
     expect(wrapper.text()).not.toContain('网络诊断')
     expect(wrapper.find('.server-content').exists()).toBe(true)
     expect(wrapper.find('.section-tabs-actions').exists()).toBe(false)

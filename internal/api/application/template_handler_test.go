@@ -39,9 +39,12 @@ func TestApplicationHandlerReleasesFromSelectedDeploymentTemplateByVersion(t *te
 	if loaded.Code != http.StatusOK || !strings.Contains(loaded.Body.String(), "标准上线") || !strings.Contains(loaded.Body.String(), "\"revision\":1") {
 		t.Fatalf("unexpected template response: %s", loaded.Body.String())
 	}
-	canary := serve(r, newJSONRequest(http.MethodPost, "/api/applications/1/deployment-templates", gin.H{"name": "灰度配置", "enabled": true, "spec": spec}))
+	canary := serve(r, newJSONRequest(http.MethodPost, "/api/applications/1/deployment-templates", gin.H{"name": "灰度配置", "enabled": true, "default_version": "1.2.3", "spec": spec}))
 	if canary.Code != http.StatusOK {
 		t.Fatalf("create second template status = %d: %s", canary.Code, canary.Body.String())
+	}
+	if !strings.Contains(canary.Body.String(), "\"default_version\":\"1.2.3\"") {
+		t.Fatalf("default version missing from template response: %s", canary.Body.String())
 	}
 	canaryID := responseID(t, canary.Body.Bytes())
 	setDefault := serve(r, newJSONRequest(http.MethodPost, "/api/applications/1/deployment-templates/2/default", nil))
@@ -49,8 +52,40 @@ func TestApplicationHandlerReleasesFromSelectedDeploymentTemplateByVersion(t *te
 		t.Fatalf("set default template status = %d: %s", setDefault.Code, setDefault.Body.String())
 	}
 
-	release := serve(r, newJSONRequest(http.MethodPost, "/api/applications/1/releases", gin.H{"template_id": canaryID, "version": "1.2.3"}))
-	if release.Code != http.StatusOK || !strings.Contains(release.Body.String(), "order-api:1.2.3") || !strings.Contains(release.Body.String(), "\"template_id\":2") {
+	missingVersion := serve(r, newJSONRequest(http.MethodPost, "/api/applications/1/releases", gin.H{"template_id": 1}))
+	if missingVersion.Code == http.StatusOK || !strings.Contains(missingVersion.Body.String(), "请填写版本号") {
+		t.Fatalf("missing version should fail: %d %s", missingVersion.Code, missingVersion.Body.String())
+	}
+	release := serve(r, newJSONRequest(http.MethodPost, "/api/applications/1/releases", gin.H{"template_id": canaryID, "version": "1.2.4"}))
+	if release.Code != http.StatusOK || !strings.Contains(release.Body.String(), "order-api:1.2.4") || !strings.Contains(release.Body.String(), "\"template_id\":2") {
 		t.Fatalf("unexpected version release: %d %s", release.Code, release.Body.String())
+	}
+}
+
+func TestApplicationHandlerUsesTemplateDefaultVersionWhenReleaseVersionIsEmpty(t *testing.T) {
+	clientset := k8sfake.NewSimpleClientset(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "commerce-prod"}, Status: corev1.NamespaceStatus{Phase: corev1.NamespaceActive}})
+	r, s := setupApplicationRouter(&k8sclient.Client{Clientset: clientset})
+	if err := s.CreateProject(&model.Project{Name: "commerce", OwnerID: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CreateEnvironment(&model.Environment{ProjectID: 1, Name: "production", Namespace: "commerce-prod"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CreateApplication(&model.Application{ProjectID: 1, EnvironmentID: 1, Name: "order-api", WorkloadKind: "deployment", CreatedBy: 1}); err != nil {
+		t.Fatal(err)
+	}
+	spec := gin.H{
+		"image": "order-api", "container_port": 8080, "replicas": 1,
+		"resources": gin.H{"requests_cpu": "100m", "requests_memory": "128Mi", "limits_cpu": "500m", "limits_memory": "512Mi"},
+		"health":    gin.H{"readiness_enabled": false, "readiness_type": "http", "readiness_path": "/healthz", "liveness_enabled": false, "liveness_type": "http", "liveness_path": "/healthz"},
+		"service":   gin.H{"port": 80, "target_port": 8080},
+	}
+	template := serve(r, newJSONRequest(http.MethodPost, "/api/applications/1/deployment-templates", gin.H{"name": "标准上线", "enabled": true, "default_version": "2.3.4", "spec": spec}))
+	if template.Code != http.StatusOK {
+		t.Fatalf("create template: %d %s", template.Code, template.Body.String())
+	}
+	release := serve(r, newJSONRequest(http.MethodPost, "/api/applications/1/releases", gin.H{"template_id": responseID(t, template.Body.Bytes())}))
+	if release.Code != http.StatusOK || !strings.Contains(release.Body.String(), "order-api:2.3.4") {
+		t.Fatalf("unexpected default version release: %d %s", release.Code, release.Body.String())
 	}
 }

@@ -22,6 +22,39 @@ beforeEach(async () => {
 })
 
 describe('Applications view', () => {
+  it('switches workspace tabs across runtime, releases, configuration, and access', async () => {
+    const { api } = await import('../../api/index.js')
+    api.get.mockImplementation(path => {
+      if (path === '/projects') return Promise.resolve([{ id: 1, name: 'commerce', environments: [{ id: 2, name: 'production', cluster_id: 7, namespace: 'commerce-prod' }] }])
+      if (path.startsWith('/workspace/overview')) return Promise.resolve({
+        applications: [{ id: 3, name: 'order-api', runtime: { status: 'running', ready_pods: 1, total_pods: 1 }, endpoints: [{ domain: 'api.example.com', path: '/', service_port: 80, tls_enabled: true }] }],
+        releases: [{ id: 10, application_id: 3, application_name: 'order-api', version: '1.0.0', image: 'orders:1.0.0', status: 'succeeded', created_at: '2026-10-10T00:00:00Z' }],
+        recent_releases: [],
+      })
+      if (path === '/applications/3/deployment-templates') return Promise.resolve([{ id: 4, name: '生产模板', is_default: true, default_version: '1.0.0', spec: { image: 'orders', replicas: 2 } }])
+      return Promise.resolve([])
+    })
+    const wrapper = mount(Applications)
+    await flushPromises()
+
+    expect(wrapper.find('.overview-metrics').exists()).toBe(false)
+    expect(wrapper.findAll('[data-testid="workspace-list"]')).toHaveLength(1)
+    expect(wrapper.get('[data-testid="workspace-tab-runtime"]').attributes('aria-current')).toBe('page')
+    expect(api.get).not.toHaveBeenCalledWith('/applications/3/deployment-templates', expect.anything())
+    await wrapper.get('[data-testid="workspace-tab-releases"]').trigger('click')
+    expect(wrapper.findAll('[data-testid="workspace-list"]')).toHaveLength(1)
+    expect(wrapper.get('.workspace-count').text()).toBe('1 条记录')
+    expect(wrapper.text()).toContain('orders:1.0.0')
+    await wrapper.get('[data-testid="workspace-tab-config"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.findAll('[data-testid="workspace-list"]')).toHaveLength(1)
+    expect(wrapper.text()).toContain('生产模板')
+    await wrapper.get('[data-testid="workspace-tab-access"]').trigger('click')
+    expect(wrapper.findAll('[data-testid="workspace-list"]')).toHaveLength(1)
+    expect(wrapper.text()).toContain('api.example.com')
+    wrapper.unmount()
+  })
+
   it('shows a dismissible dialog when deleting an associated project fails', async () => {
     const { api } = await import('../../api/index.js')
     api.get.mockImplementation(path => path === '/projects' ? Promise.resolve([{ id: 1, name: '测试', slug: 'test', environments: [{ id: 2, name: 'production' }] }]) : Promise.resolve([]))
@@ -71,6 +104,23 @@ describe('Applications view', () => {
     wrapper.unmount()
   })
 
+  it('deletes an unreleased deployment component after confirmation', async () => {
+    const { api } = await import('../../api/index.js')
+    api.get.mockImplementation(path => {
+      if (path === '/projects') return Promise.resolve([{ id: 1, name: '测试', environments: [{ id: 2, name: '开发', cluster_id: 7, namespace: 'test-dev' }] }])
+      if (path.startsWith('/workspace/overview')) return Promise.resolve({ applications: [{ id: 9, name: 'order-api', runtime: { status: 'not_released' } }], domains: [], recent_releases: [] })
+      return Promise.resolve([])
+    })
+    const wrapper = mount(Applications)
+    await flushPromises()
+    await wrapper.get('[title="删除部署组件 order-api"]').trigger('click')
+    expect(wrapper.text()).toContain('其上线模板和商城导入关联也会删除')
+    await wrapper.get('[data-testid="confirm-dialog-confirm"]').trigger('click')
+    await flushPromises()
+    expect(api.delete).toHaveBeenCalledWith('/applications/9')
+    wrapper.unmount()
+  })
+
   it('keeps the latest workspace data when the route context changes during a request', async () => {
     let resolveFirstWorkspace
     const firstWorkspace = new Promise(resolve => { resolveFirstWorkspace = resolve })
@@ -105,15 +155,73 @@ describe('Applications view', () => {
     route.query.environment_id = '2'
   })
 
-  it('keeps the application entry free of a list frame when there is no data', async () => {
+  it('shows the workspace controls and empty state inside one list card', async () => {
     const wrapper = mount(Applications)
     await new Promise(resolve => setTimeout(resolve, 0))
 
     expect(wrapper.find('.page-title').text()).toBe('工作台')
     expect(wrapper.text()).not.toContain('暂无应用')
     expect(wrapper.text()).not.toContain('创建应用')
-    expect(wrapper.findAll('.page-actions > .btn')).toHaveLength(0)
-    expect(wrapper.find('.card').exists()).toBe(false)
+    expect(wrapper.findAll('[data-testid="workspace-list"]')).toHaveLength(1)
+    expect(wrapper.get('[data-testid="workspace-list"] .empty-state').text()).toContain('请选择项目与环境')
+  })
+
+  it('imports enabled catalog applications into the selected workspace environment', async () => {
+    const { api } = await import('../../api/index.js')
+    api.get.mockImplementation(path => {
+      if (path === '/projects') return Promise.resolve([{ id: 1, name: 'commerce', environments: [{ id: 2, name: 'production', cluster_id: 7, namespace: 'commerce-prod' }] }])
+      if (path === '/workspace/overview?project_id=1&environment_id=2') return Promise.resolve({ applications: [], domains: [], recent_releases: [] })
+      if (path === '/application-catalog') return Promise.resolve([
+        { id: 10, name: '订单系统', enabled: true, components: [{ name: 'API', application_name: 'orders-api', spec: { container_port: 8080 } }] },
+        { id: 11, name: '未启用', enabled: false, components: [] },
+      ])
+      return Promise.resolve([])
+    })
+    api.post.mockResolvedValue([{ components: [{}] }])
+    const wrapper = mount(Applications)
+    await flushPromises()
+
+    const workspaceCard = wrapper.get('[data-testid="workspace-list"]')
+    expect(workspaceCard.findAll('.workspace-toolbar-actions button').map(button => button.text())).toEqual(['从商城导入', '创建部署组件'])
+    await wrapper.findAll('button').find(button => button.text() === '从商城导入').trigger('click')
+    await flushPromises()
+    const modal = document.body.querySelector('.workspace-import-modal')
+    expect(modal.textContent).toContain('commerce · production · commerce-prod')
+    expect(modal.textContent).toContain('订单系统')
+    expect(modal.textContent).not.toContain('未启用')
+    modal.querySelector('input[type="checkbox"]').click()
+    await nextTick()
+    modal.querySelector('.btn-primary').click()
+    await flushPromises()
+
+    expect(api.post).toHaveBeenCalledWith('/application-catalog/import', { project_id: 1, environment_id: 2, item_ids: [10] })
+    expect(document.body.querySelector('.workspace-import-modal')).toBeNull()
+    expect(wrapper.find('.feedback-banner--success').exists()).toBe(false)
+    expect(document.body.querySelector('.error-notice')).toBeNull()
+    wrapper.unmount()
+  })
+
+  it('blocks catalog import when a component name is already used in the environment', async () => {
+    const { api } = await import('../../api/index.js')
+    api.get.mockImplementation(path => {
+      if (path === '/projects') return Promise.resolve([{ id: 1, name: 'commerce', environments: [{ id: 2, name: 'production', cluster_id: 7, namespace: 'commerce-prod' }] }])
+      if (path === '/workspace/overview?project_id=1&environment_id=2') return Promise.resolve({ applications: [{ id: 3, name: 'orders-api' }], domains: [], recent_releases: [] })
+      if (path === '/application-catalog') return Promise.resolve([{ id: 10, name: '订单系统', enabled: true, components: [{ name: 'API', application_name: 'orders-api', spec: { container_port: 8080 } }] }])
+      return Promise.resolve([])
+    })
+    const wrapper = mount(Applications)
+    await flushPromises()
+
+    await wrapper.findAll('button').find(button => button.text() === '从商城导入').trigger('click')
+    await flushPromises()
+    const modal = document.body.querySelector('.workspace-import-modal')
+    modal.querySelector('input[type="checkbox"]').click()
+    await nextTick()
+
+    expect(modal.textContent).toContain('名称冲突')
+    expect(modal.querySelector('.btn-primary').disabled).toBe(true)
+    expect(api.post).not.toHaveBeenCalledWith('/application-catalog/import', expect.anything())
+    wrapper.unmount()
   })
 
   it('shows project and environment management when opened from its secondary navigation item', async () => {
@@ -167,6 +275,9 @@ describe('Applications view', () => {
     expect(wrapper.findAll('.context-select')).toHaveLength(0)
     expect(wrapper.findAll('.workspace-picker')).toHaveLength(2)
     const [projectPicker, environmentPicker] = wrapper.findAll('.workspace-picker')
+    expect(wrapper.get('[data-testid="workspace-list"] .workspace-toolbar').exists()).toBe(true)
+    expect(projectPicker.get('.context-picker-label').text()).toBe('项目')
+    expect(environmentPicker.get('.context-picker-label').text()).toBe('环境')
     expect(projectPicker.get('.select-menu-trigger').text()).toContain('commerce')
     expect(environmentPicker.get('.select-menu-trigger').text()).toContain('production')
 
@@ -178,7 +289,7 @@ describe('Applications view', () => {
     wrapper.unmount()
   })
 
-  it('shows application runtime summary and opens only the endpoint in a new tab', async () => {
+  it('prioritizes application runtime and opens its detail from the workspace', async () => {
     const { api } = await import('../../api/index.js')
     api.get.mockImplementation(path => {
       if (path === '/projects') return Promise.resolve([{ id: 1, name: 'commerce', environments: [{ id: 2, name: 'production', namespace: 'commerce-prod' }] }])
@@ -190,11 +301,10 @@ describe('Applications view', () => {
 
     expect(wrapper.text()).toContain('运行中')
     expect(wrapper.text()).toContain('1.4.0')
-    const endpoint = wrapper.find('.endpoint-link')
-    expect(endpoint.attributes('href')).toBe('https://api.example.com')
-    expect(endpoint.attributes('target')).toBe('_blank')
-    expect(wrapper.text()).toContain('另有 1 个地址')
-    expect(wrapper.text()).toContain('2026')
+    expect(wrapper.findAll('.workspace-applications-table th').map(header => header.text())).toEqual(['部署组件', '运行状态', 'Pod 就绪', '运行版本', '最近发布', '操作'])
+    expect(wrapper.findAll('.workspace-applications-table tbody tr:first-child td').map(cell => cell.text()).slice(0, 3)).toEqual(['order-api', '运行中', '1/1'])
+    expect(wrapper.text()).toContain('查看运行')
+    expect(wrapper.text()).not.toContain('https://api.example.com')
   })
 
   it('loads selectable application templates for a release', async () => {
@@ -243,6 +353,30 @@ describe('Applications view', () => {
     await new Promise(resolve => setTimeout(resolve, 0))
 
     expect(api.post).toHaveBeenCalledWith('/applications/3/releases', { template_id: 8, version: '1.2.3' })
+    wrapper.unmount()
+  })
+
+  it('allows an empty version when the selected template has a default', async () => {
+    const { api } = await import('../../api/index.js')
+    api.get.mockImplementation(path => {
+      if (path === '/projects') return Promise.resolve([{ id: 1, name: 'commerce', environments: [{ id: 2, name: 'production', namespace: 'commerce-prod' }] }])
+      if (path === '/workspace/overview?project_id=1&environment_id=2') return Promise.resolve({ applications: [{ id: 3, name: 'order-api' }], domains: [], recent_releases: [] })
+      if (path === '/applications/3/deployment-templates') return Promise.resolve([{ id: 8, name: '默认配置', enabled: true, is_default: true, default_version: '2.3.4', revision: 1, spec: { image: 'example.com/order-api', service: { port: 80 } } }])
+      return Promise.resolve([])
+    })
+    api.post.mockResolvedValue({ id: 9 })
+    const wrapper = mount(Applications)
+    await flushPromises()
+    await wrapper.findAll('button').find(button => button.text() === '发布版本').trigger('click')
+    await flushPromises()
+
+    const modal = document.body.querySelector('.release-modal')
+    expect(modal.textContent).toContain('留空则使用模板默认版本 2.3.4')
+    expect(modal.querySelector('input[placeholder="2.3.4"]').required).toBe(false)
+    modal.querySelector('form').dispatchEvent(new Event('submit'))
+    await flushPromises()
+
+    expect(api.post).toHaveBeenCalledWith('/applications/3/releases', { template_id: 8, version: '' })
     wrapper.unmount()
   })
 

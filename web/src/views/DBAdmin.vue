@@ -1,6 +1,6 @@
 <template>
   <div>
-    <div class="page-header">
+    <div class="page-header sticky-page-header">
       <h1 class="page-title">数据管理</h1>
       <button class="btn btn-primary" @click="showAdd = true" :disabled="!currentTable">+ 新增记录</button>
     </div>

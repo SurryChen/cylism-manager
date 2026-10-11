@@ -10,6 +10,7 @@ import (
 )
 
 const accessCertificateUsageBackfillKey = "migration.access_certificate_usage.v1"
+const clusterTailscaleIPBackfillKey = "migration.cluster_tailscale_ip.v1"
 
 // backfillData applies idempotent data upgrades after the schema is ready.
 func (s *Store) backfillData() error {
@@ -28,7 +29,47 @@ func (s *Store) backfillData() error {
 	if err := s.backfillAccessCertificateUsage(); err != nil {
 		return err
 	}
+	if err := s.backfillClusterTailscaleIPs(); err != nil {
+		return err
+	}
 	return s.ReconcileEnvironmentNamespaceUniqueness()
+}
+
+func (s *Store) backfillClusterTailscaleIPs() error {
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		var marker model.SystemConfig
+		err := tx.Where("key = ?", clusterTailscaleIPBackfillKey).First(&marker).Error
+		if err == nil {
+			return nil
+		}
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+		var clusters []model.Cluster
+		if err := tx.Where("network_mode = ? AND control_server_id IS NOT NULL", "tailscale").Find(&clusters).Error; err != nil {
+			return err
+		}
+		for _, cluster := range clusters {
+			var server model.Server
+			if err := tx.First(&server, *cluster.ControlServerID).Error; err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					continue
+				}
+				return err
+			}
+			if cluster.ControlAddress == server.Host {
+				continue
+			}
+			updates := map[string]any{"control_address": server.Host}
+			if cluster.TailscaleIP == "" && cluster.ControlAddress != "" {
+				updates["tailscale_ip"] = cluster.ControlAddress
+			}
+			if err := tx.Model(&model.Cluster{}).Where("id = ?", cluster.ID).Updates(updates).Error; err != nil {
+				return err
+			}
+		}
+		return tx.Create(&model.SystemConfig{Key: clusterTailscaleIPBackfillKey, Value: "completed"}).Error
+	})
 }
 
 // Older databases did not record certificate usage. The latest non-revoked

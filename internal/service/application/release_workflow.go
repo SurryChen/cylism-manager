@@ -62,6 +62,9 @@ func (w *ReleaseWorkflow) CreateFromTemplate(ctx context.Context, app *model.App
 	}
 	spec.Secrets = secrets
 	spec.Version = strings.TrimSpace(version)
+	if spec.Version == "" {
+		spec.Version = template.DefaultVersion
+	}
 	spec.Image, err = imageWithVersion(spec.Image, spec.Version)
 	if err != nil {
 		return nil, err
@@ -311,6 +314,10 @@ func (w *ReleaseWorkflow) decryptTemplateSecrets(encrypted string) (map[string]s
 
 var releaseImageTagPattern = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$`)
 
+func ValidReleaseVersion(version string) bool {
+	return releaseImageTagPattern.MatchString(version)
+}
+
 func imageWithVersion(repository, version string) (string, error) {
 	repository = strings.Trim(strings.TrimSpace(repository), "/")
 	if repository == "" || strings.ContainsAny(repository, " \t\r\n") || strings.Contains(repository, "@") {
@@ -320,7 +327,7 @@ func imageWithVersion(repository, version string) (string, error) {
 		return "", fmt.Errorf("上线模板镜像路径不应包含 Tag，请在发布时填写版本号")
 	}
 	version = strings.TrimSpace(version)
-	if !releaseImageTagPattern.MatchString(version) {
+	if !ValidReleaseVersion(version) {
 		return "", fmt.Errorf("版本号必须是合法的镜像 Tag")
 	}
 	return repository + ":" + version, nil

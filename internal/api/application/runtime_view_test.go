@@ -100,7 +100,7 @@ func TestWorkspaceOverviewIncludesApplicationRuntimeSummary(t *testing.T) {
 	}
 
 	response := serve(r, newJSONRequest(http.MethodGet, "/api/workspace/overview?project_id=1&environment_id=1", nil))
-	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "\"status\":\"running\"") || !strings.Contains(response.Body.String(), "\"version\":\"1.4.0\"") || !strings.Contains(response.Body.String(), "https://browser.example.com") {
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "\"status\":\"running\"") || !strings.Contains(response.Body.String(), "\"version\":\"1.4.0\"") || !strings.Contains(response.Body.String(), "https://browser.example.com") || !strings.Contains(response.Body.String(), "\"releases\":[{") {
 		t.Fatalf("unexpected workspace response: %d %s", response.Code, response.Body.String())
 	}
 }

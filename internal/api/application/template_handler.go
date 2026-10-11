@@ -17,23 +17,25 @@ import (
 )
 
 type deploymentTemplateInfo struct {
-	ID            uint                           `json:"id"`
-	ApplicationID uint                           `json:"application_id"`
-	Name          string                         `json:"name"`
-	Description   string                         `json:"description"`
-	Enabled       bool                           `json:"enabled"`
-	IsDefault     bool                           `json:"is_default"`
-	Revision      uint                           `json:"revision"`
-	Spec          applicationservice.ReleaseSpec `json:"spec"`
-	UpdatedAt     time.Time                      `json:"updated_at"`
+	ID             uint                           `json:"id"`
+	ApplicationID  uint                           `json:"application_id"`
+	Name           string                         `json:"name"`
+	Description    string                         `json:"description"`
+	Enabled        bool                           `json:"enabled"`
+	DefaultVersion string                         `json:"default_version"`
+	IsDefault      bool                           `json:"is_default"`
+	Revision       uint                           `json:"revision"`
+	Spec           applicationservice.ReleaseSpec `json:"spec"`
+	UpdatedAt      time.Time                      `json:"updated_at"`
 }
 
 type deploymentTemplateRequest struct {
-	Name        string                         `json:"name"`
-	Description string                         `json:"description"`
-	Enabled     bool                           `json:"enabled"`
-	Revision    uint                           `json:"revision,omitempty"`
-	Spec        applicationservice.ReleaseSpec `json:"spec"`
+	Name           string                         `json:"name"`
+	Description    string                         `json:"description"`
+	Enabled        bool                           `json:"enabled"`
+	DefaultVersion string                         `json:"default_version"`
+	Revision       uint                           `json:"revision,omitempty"`
+	Spec           applicationservice.ReleaseSpec `json:"spec"`
 }
 
 func (h *ApplicationHandler) ListDeploymentTemplates(c *gin.Context) {
@@ -279,6 +281,10 @@ func (h *ApplicationHandler) templateFromRequest(ctx context.Context, app *model
 	if len([]rune(req.Name)) > 128 {
 		return nil, fmt.Errorf("模板名称不能超过 128 个字符")
 	}
+	defaultVersion := strings.TrimSpace(req.DefaultVersion)
+	if defaultVersion != "" && !applicationservice.ValidReleaseVersion(defaultVersion) {
+		return nil, fmt.Errorf("默认版本号必须是合法的镜像 Tag")
+	}
 	spec := req.Spec
 	applicationservice.NormalizeManagedKeys(&spec)
 	if strings.TrimSpace(spec.Version) != "" {
@@ -341,7 +347,7 @@ func (h *ApplicationHandler) templateFromRequest(ctx context.Context, app *model
 	if err != nil {
 		return nil, fmt.Errorf("保存上线模板失败: %w", err)
 	}
-	return &model.ApplicationDeploymentTemplate{ID: templateID, ApplicationID: app.ID, Name: strings.TrimSpace(req.Name), Description: strings.TrimSpace(req.Description), Enabled: req.Enabled, Spec: string(snapshot), EncryptedSecrets: encryptedSecrets}, nil
+	return &model.ApplicationDeploymentTemplate{ID: templateID, ApplicationID: app.ID, Name: strings.TrimSpace(req.Name), Description: strings.TrimSpace(req.Description), Enabled: req.Enabled, DefaultVersion: defaultVersion, Spec: string(snapshot), EncryptedSecrets: encryptedSecrets}, nil
 }
 
 func (h *ApplicationHandler) decryptTemplateSecrets(template *model.ApplicationDeploymentTemplate) (map[string]string, error) {
@@ -371,5 +377,5 @@ func deploymentTemplateFromModel(template *model.ApplicationDeploymentTemplate, 
 	if err := json.Unmarshal([]byte(template.Spec), &spec); err != nil {
 		return nil, err
 	}
-	return &deploymentTemplateInfo{ID: template.ID, ApplicationID: template.ApplicationID, Name: template.Name, Description: template.Description, Enabled: template.Enabled, IsDefault: defaultTemplateID != nil && *defaultTemplateID == template.ID, Revision: template.Revision, Spec: spec, UpdatedAt: template.UpdatedAt}, nil
+	return &deploymentTemplateInfo{ID: template.ID, ApplicationID: template.ApplicationID, Name: template.Name, Description: template.Description, Enabled: template.Enabled, DefaultVersion: template.DefaultVersion, IsDefault: defaultTemplateID != nil && *defaultTemplateID == template.ID, Revision: template.Revision, Spec: spec, UpdatedAt: template.UpdatedAt}, nil
 }

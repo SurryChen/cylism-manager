@@ -55,6 +55,8 @@ func setupApplicationRouter(clients ...*k8sclient.Client) (*gin.Engine, *store.S
 		applications.PUT("/:id/capabilities", h.UpdateCapabilities)
 		applications.PUT("/:id/workload-kind", h.UpdateWorkloadKind)
 		applications.GET("/:id/runtime", h.GetApplicationRuntime)
+		applications.GET("/:id/pods", h.ListApplicationPods)
+		applications.GET("/:id/pods/:pod/logs", h.GetApplicationPodLogs)
 		applications.GET("/:id/deployment-templates", h.ListDeploymentTemplates)
 		applications.POST("/:id/deployment-templates", h.CreateDeploymentTemplate)
 		applications.GET("/:id/deployment-templates/:templateID", h.GetDeploymentTemplate)

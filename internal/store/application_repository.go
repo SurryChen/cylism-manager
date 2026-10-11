@@ -184,6 +184,59 @@ func (s *Store) CreateApplication(application *model.Application) error {
 	return s.db.Create(application).Error
 }
 
+// DeleteUnreleasedApplication removes a draft component and its local configuration.
+// Released components need a separate uninstall workflow to remove cluster resources.
+func (s *Store) DeleteUnreleasedApplication(id uint) error {
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		var app model.Application
+		if err := tx.First(&app, id).Error; err != nil {
+			return err
+		}
+		var releases, endpoints int64
+		if err := tx.Model(&model.Release{}).Where("application_id = ?", id).Count(&releases).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&model.ApplicationEndpoint{}).Where("application_id = ?", id).Count(&endpoints).Error; err != nil {
+			return err
+		}
+		if releases != 0 || endpoints != 0 {
+			return model.ErrApplicationRequiresUninstall
+		}
+		var links []model.ApplicationCatalogInstallationComponent
+		if err := tx.Where("application_id = ?", id).Find(&links).Error; err != nil {
+			return err
+		}
+		for _, link := range links {
+			if err := tx.Delete(&link).Error; err != nil {
+				return err
+			}
+			var replacement model.ApplicationCatalogInstallationComponent
+			err := tx.Where("installation_id = ?", link.InstallationID).Order("id asc").First(&replacement).Error
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				if err := tx.Delete(&model.ApplicationCatalogInstallation{}, link.InstallationID).Error; err != nil {
+					return err
+				}
+			} else if err != nil {
+				return err
+			} else if link.IsEntry {
+				if err := tx.Model(&model.ApplicationCatalogInstallationComponent{}).Where("id = ?", replacement.ID).Update("is_entry", true).Error; err != nil {
+					return err
+				}
+				if err := tx.Model(&model.ApplicationCatalogInstallation{}).Where("id = ?", link.InstallationID).Update("entry_application_id", replacement.ApplicationID).Error; err != nil {
+					return err
+				}
+			}
+		}
+		if err := tx.Where("application_id = ?", id).Delete(&model.ApplicationDeploymentTemplate{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("application_id = ?", id).Delete(&model.ApplicationManagedFile{}).Error; err != nil {
+			return err
+		}
+		return tx.Delete(&app).Error
+	})
+}
+
 func (s *Store) GetApplication(id uint) (*model.Application, error) {
 	var application model.Application
 	err := s.db.Preload("Project.DefaultImageRegistry").Preload("Environment").Preload("Endpoints", func(db *gorm.DB) *gorm.DB { return db.Order("id asc") }).First(&application, id).Error

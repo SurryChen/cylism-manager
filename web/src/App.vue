@@ -89,7 +89,7 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Bot, Boxes, Check, Cloud, FileText, FolderKanban, HardDrive, LayoutDashboard, Layers3, LogOut, Menu, Orbit, PackagePlus, Palette, Server, Settings, Waypoints, X } from 'lucide-vue-next'
+import { Bot, Boxes, Check, Cloud, FileText, FolderKanban, HardDrive, LayoutDashboard, Layers3, LogOut, Menu, Orbit, PackagePlus, Palette, Store, Server, Settings, Waypoints, X } from 'lucide-vue-next'
 import { clearTokens } from './api/index.js'
 import { usePalette } from './composables/usePalette.js'
 import { useTransientScrollbarVisibility } from './composables/useTransientScrollbarVisibility.js'
@@ -122,6 +122,7 @@ const navGroups = computed(() => [
     to: '/applications',
     items: [
       { label: '工作台', to: '/applications', icon: PackagePlus },
+      { label: '应用商城', to: '/applications/catalog', icon: Store },
       { label: '项目与环境', to: '/applications/projects', icon: FolderKanban },
       { label: '镜像仓库', to: '/applications/registries', icon: Boxes },
     ],
@@ -206,6 +207,13 @@ function closePaletteMenuOnOutsideClick(event) {
   paletteMenuOpen.value = false
 }
 
+function updateStickyHeaderState() {
+  const header = document.querySelector('.app-content > * > .sticky-page-header')
+  if (!header) return
+  const topbarHeight = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--topbar-height')) || 0
+  header.classList.toggle('is-stuck', window.scrollY > 0 && header.getBoundingClientRect().top <= topbarHeight + 1)
+}
+
 watch(paletteMenuOpen, async (isOpen) => {
   if (isOpen) {
     await nextTick()
@@ -220,12 +228,22 @@ watch(paletteMenuOpen, async (isOpen) => {
 onMounted(() => {
   window.addEventListener('resize', updatePaletteMenuPosition)
   window.addEventListener('scroll', updatePaletteMenuPosition, true)
+  window.addEventListener('scroll', updateStickyHeaderState, { passive: true })
+  window.addEventListener('resize', updateStickyHeaderState)
+  updateStickyHeaderState()
+})
+
+watch(() => route.fullPath, async () => {
+  await nextTick()
+  requestAnimationFrame(updateStickyHeaderState)
 })
 
 onBeforeUnmount(() => {
   document.removeEventListener('click', closePaletteMenuOnOutsideClick)
   window.removeEventListener('resize', updatePaletteMenuPosition)
   window.removeEventListener('scroll', updatePaletteMenuPosition, true)
+  window.removeEventListener('scroll', updateStickyHeaderState)
+  window.removeEventListener('resize', updateStickyHeaderState)
 })
 
 function openMobileNav() { mobileNavOpen.value = true }

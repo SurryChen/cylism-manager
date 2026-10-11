@@ -47,7 +47,7 @@ describe('ApplicationDetails view', () => {
     })
     await new Promise(resolve => setTimeout(resolve, 0))
 
-    await wrapper.find('.page-header .btn-group .btn').trigger('click')
+    await wrapper.find('.runtime-toolbar .btn').trigger('click')
     await nextTick()
     expect(wrapper.find('.restart-modal').exists()).toBe(true)
     expect(api.post).not.toHaveBeenCalled()
@@ -155,7 +155,9 @@ describe('ApplicationDetails view', () => {
     })
     await new Promise(resolve => setTimeout(resolve, 0))
 
-    await wrapper.find('.page-header .btn-primary').trigger('click')
+    await wrapper.findAll('.section-tab').find(tab => tab.text() === '部署配置').trigger('click')
+    await wrapper.find('.detail-config-card .btn-primary').trigger('click')
+    await wrapper.get('input[placeholder="1.4.2"]').setValue('2.3.4')
     await wrapper.findAll('button').find(button => button.text().includes('添加命令')).trigger('click')
     const addArgument = wrapper.findAll('button').find(button => button.text().includes('添加参数'))
     await addArgument.trigger('click')
@@ -175,6 +177,7 @@ describe('ApplicationDetails view', () => {
     await wrapper.find('form').trigger('submit.prevent')
 
     expect(api.post).toHaveBeenCalledWith('/applications/1/deployment-templates', expect.objectContaining({
+      default_version: '2.3.4',
       spec: expect.objectContaining({
         command: ['/usr/bin/chromium-browser'],
         args: ['--no-sandbox', '--remote-debugging-port=9222'],
@@ -191,7 +194,8 @@ describe('ApplicationDetails view', () => {
     })
     await new Promise(resolve => setTimeout(resolve, 0))
 
-    await wrapper.find('.page-header .btn-primary').trigger('click')
+    await wrapper.findAll('.section-tab').find(tab => tab.text() === '部署配置').trigger('click')
+    await wrapper.find('.detail-config-card .btn-primary').trigger('click')
     expect(wrapper.findAll('.editor-section-heading h3').map(heading => heading.text())).toEqual(['基础信息', '服务部署', '配置与存储', '资源与健康', '服务网络'])
     expect(wrapper.find('.editor-actions .btn-primary').text()).toBe('保存模板')
     expect(wrapper.find('.editor-actions .btn-primary').attributes('form')).toBe('template-editor-form')
@@ -208,7 +212,8 @@ describe('ApplicationDetails view', () => {
     })
     await new Promise(resolve => setTimeout(resolve, 0))
 
-    await wrapper.find('.page-header .btn-primary').trigger('click')
+    await wrapper.findAll('.section-tab').find(tab => tab.text() === '部署配置').trigger('click')
+    await wrapper.find('.detail-config-card .btn-primary').trigger('click')
     const serviceType = wrapper.findAll('.editor-modal select').find(select => select.findAll('option').some(option => option.element.value === 'NodePort'))
     await serviceType.setValue('NodePort')
 
@@ -227,7 +232,8 @@ describe('ApplicationDetails view', () => {
     })
     await new Promise(resolve => setTimeout(resolve, 0))
 
-    await wrapper.find('.page-header .btn-primary').trigger('click')
+    await wrapper.findAll('.section-tab').find(tab => tab.text() === '部署配置').trigger('click')
+    await wrapper.find('.detail-config-card .btn-primary').trigger('click')
     const serviceType = wrapper.findAll('.editor-modal select').find(select => select.findAll('option').some(option => option.element.value === 'LoadBalancer'))
     await serviceType.setValue('LoadBalancer')
     const addPortButton = wrapper.findAll('button').find(button => button.text().includes('添加端口'))
@@ -273,7 +279,8 @@ describe('ApplicationDetails view', () => {
     })
     await new Promise(resolve => setTimeout(resolve, 0))
 
-    await wrapper.find('.page-header .btn-primary').trigger('click')
+    await wrapper.findAll('.section-tab').find(tab => tab.text() === '部署配置').trigger('click')
+    await wrapper.find('.detail-config-card .btn-primary').trigger('click')
     await wrapper.find('[aria-label="使用宿主机网络"]').setValue(true)
     await wrapper.find('form').trigger('submit.prevent')
 
@@ -292,7 +299,8 @@ describe('ApplicationDetails view', () => {
     })
     await new Promise(resolve => setTimeout(resolve, 0))
 
-    await wrapper.find('.page-header .btn-primary').trigger('click')
+    await wrapper.findAll('.section-tab').find(tab => tab.text() === '部署配置').trigger('click')
+    await wrapper.find('.detail-config-card .btn-primary').trigger('click')
     await wrapper.findAll('button').find(button => button.text().includes('添加变量')).trigger('click')
     const configItems = wrapper.findAll('.key-value-list')[0]
     await configItems.find('input').setValue('config.yaml')
@@ -326,7 +334,8 @@ describe('ApplicationDetails view', () => {
     })
     await new Promise(resolve => setTimeout(resolve, 0))
 
-    await wrapper.find('.page-header .btn-primary').trigger('click')
+    await wrapper.findAll('.section-tab').find(tab => tab.text() === '部署配置').trigger('click')
+    await wrapper.find('.detail-config-card .btn-primary').trigger('click')
     wrapper.vm.templateForm.secret_items.push({ key: 'config.yaml', value: 'listen: :8443\n', enabled: true, externally_managed: true })
     await nextTick()
     const addMountButtons = wrapper.findAll('button').filter(button => button.text().includes('添加挂载'))
@@ -361,8 +370,8 @@ describe('ApplicationDetails view', () => {
     })
     await new Promise(resolve => setTimeout(resolve, 0))
 
-    const endpointSection = wrapper.findAll('.detail-section').find(section => section.find('h2').text() === '对外域名')
-    await endpointSection.find('.section-heading .btn').trigger('click')
+    await wrapper.findAll('.section-tab').find(tab => tab.text() === '访问入口').trigger('click')
+    await wrapper.find('.detail-access-card .btn-primary').trigger('click')
     await wrapper.find('.modal .form-select').setValue('4')
     await wrapper.find('.modal .form-input').setValue('/v2')
     await wrapper.find('.modal form').trigger('submit.prevent')

@@ -14,6 +14,50 @@ var ErrClusterDeploymentConflict = errors.New("cluster deployment conflict")
 var ErrClusterHasNodes = errors.New("cluster has nodes or active tasks")
 var ErrClusterHasEnvironments = errors.New("cluster has application environments")
 
+// StartClusterNetworkMigration reserves the whole cluster without changing node ownership.
+func (s *Store) StartClusterNetworkMigration(clusterID uint) (*model.ClusterDeployment, error) {
+	task := &model.ClusterDeployment{ClusterID: clusterID, Operation: "network-migrate", Role: "cluster", NetworkMode: "tailscale", Status: "running"}
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		var cluster model.Cluster
+		if err := tx.First(&cluster, clusterID).Error; err != nil {
+			return err
+		}
+		if cluster.Distribution != "k3s" || cluster.Status != "ready" || cluster.ControlServerID == nil || cluster.NetworkMode == "tailscale" {
+			return ErrClusterDeploymentConflict
+		}
+		var running int64
+		if err := tx.Model(&model.ClusterDeployment{}).Where("cluster_id = ? AND status = ?", clusterID, "running").Count(&running).Error; err != nil {
+			return err
+		}
+		if running != 0 {
+			return ErrClusterDeploymentConflict
+		}
+		task.ServerID = *cluster.ControlServerID
+		return tx.Create(task).Error
+	})
+	return task, err
+}
+
+func (s *Store) FinishClusterNetworkMigration(task *model.ClusterDeployment, success bool, address string) error {
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		status := "failed"
+		if success {
+			status = "success"
+		}
+		updated := tx.Model(&model.ClusterDeployment{}).Where("id = ? AND status = ?", task.ID, "running").Update("status", status)
+		if updated.Error != nil {
+			return updated.Error
+		}
+		if updated.RowsAffected != 1 {
+			return ErrClusterDeploymentConflict
+		}
+		if success {
+			return tx.Model(&model.Cluster{}).Where("id = ?", task.ClusterID).Updates(map[string]any{"network_mode": "tailscale", "tailscale_ip": address}).Error
+		}
+		return nil
+	})
+}
+
 // StartClusterAgentOperation creates an agent maintenance task for the
 // cluster control plane. Agent operations do not change node ownership.
 func (s *Store) StartClusterAgentOperation(clusterID, serverID uint, operation string) (*model.ClusterDeployment, error) {
@@ -56,6 +100,57 @@ func (s *Store) FinishClusterAgentOperation(task *model.ClusterDeployment, succe
 		status = "success"
 	}
 	return s.db.Model(&model.ClusterDeployment{}).Where("id = ? AND status = ?", task.ID, "running").Update("status", status).Error
+}
+
+func (s *Store) StartClusterNodeRestart(clusterID, serverID uint) (*model.ClusterDeployment, error) {
+	task := &model.ClusterDeployment{ClusterID: clusterID, ServerID: serverID, Operation: "restart", Status: "running"}
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		var cluster model.Cluster
+		if err := tx.First(&cluster, clusterID).Error; err != nil {
+			return err
+		}
+		if cluster.Distribution != "k3s" || cluster.Status != "ready" || cluster.ControlServerID == nil {
+			return ErrClusterDeploymentConflict
+		}
+		var server model.Server
+		if err := tx.Where("id = ? AND cluster_id = ?", serverID, clusterID).First(&server).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrClusterDeploymentConflict
+			}
+			return err
+		}
+		if server.ClusterRole != "worker" && (server.ClusterRole != "control-plane" || *cluster.ControlServerID != serverID) {
+			return ErrClusterDeploymentConflict
+		}
+		if server.K8sNodeName == "" {
+			return ErrClusterDeploymentConflict
+		}
+		var running int64
+		if err := tx.Model(&model.ClusterDeployment{}).Where("cluster_id = ? AND status = ?", clusterID, "running").Count(&running).Error; err != nil {
+			return err
+		}
+		if running != 0 {
+			return ErrClusterDeploymentConflict
+		}
+		task.Role = server.ClusterRole
+		return tx.Create(task).Error
+	})
+	return task, err
+}
+
+func (s *Store) FinishClusterNodeRestart(task *model.ClusterDeployment, success bool) error {
+	status := "failed"
+	if success {
+		status = "success"
+	}
+	updated := s.db.Model(&model.ClusterDeployment{}).Where("id = ? AND status = ?", task.ID, "running").Update("status", status)
+	if updated.Error != nil {
+		return updated.Error
+	}
+	if updated.RowsAffected != 1 {
+		return ErrClusterDeploymentConflict
+	}
+	return nil
 }
 
 func (s *Store) ListClusters() ([]model.Cluster, error) {
@@ -130,14 +225,20 @@ func (s *Store) DeleteCluster(id uint) error {
 }
 
 // StartClusterDeployment atomically reserves a server and one active deployment.
-func (s *Store) StartClusterDeployment(clusterID, serverID uint, role, mirror, address string) (*model.ClusterDeployment, error) {
-	deployment := &model.ClusterDeployment{ClusterID: clusterID, ServerID: serverID, Operation: "deploy", Role: role, Mirror: mirror, Address: address, Status: "running"}
+func (s *Store) StartClusterDeployment(clusterID, serverID uint, role, mirror, address, networkMode string) (*model.ClusterDeployment, error) {
+	deployment := &model.ClusterDeployment{ClusterID: clusterID, ServerID: serverID, Operation: "deploy", Role: role, Mirror: mirror, Address: address, NetworkMode: networkMode, Status: "running"}
 	err := s.db.Transaction(func(tx *gorm.DB) error {
 		var cluster model.Cluster
 		if err := tx.First(&cluster, clusterID).Error; err != nil {
 			return err
 		}
 		if cluster.Distribution != "k3s" {
+			return ErrClusterDeploymentConflict
+		}
+		if networkMode != "public" && networkMode != "tailscale" {
+			return ErrClusterDeploymentConflict
+		}
+		if role == "worker" && cluster.NetworkMode != "" && cluster.NetworkMode != networkMode {
 			return ErrClusterDeploymentConflict
 		}
 		var server model.Server
@@ -296,7 +397,7 @@ func (s *Store) FinishClusterUninstall(task *model.ClusterDeployment, success bo
 			return err
 		}
 		if task.Role == "control-plane" {
-			return tx.Model(&model.Cluster{}).Where("id = ?", task.ClusterID).Updates(map[string]any{"status": "draft", "control_server_id": nil, "control_address": "", "encrypted_token": ""}).Error
+			return tx.Model(&model.Cluster{}).Where("id = ?", task.ClusterID).Updates(map[string]any{"status": "draft", "control_server_id": nil, "control_address": "", "tailscale_ip": "", "encrypted_token": ""}).Error
 		}
 		return nil
 	})
@@ -371,7 +472,15 @@ func (s *Store) FinishClusterDeployment(deployment *model.ClusterDeployment, suc
 			return err
 		}
 		if deployment.Role == "control-plane" {
-			return tx.Model(&model.Cluster{}).Where("id = ?", deployment.ClusterID).Updates(map[string]any{"status": "ready", "control_server_id": deployment.ServerID, "control_address": address, "encrypted_token": token}).Error
+			var server model.Server
+			if err := tx.First(&server, deployment.ServerID).Error; err != nil {
+				return err
+			}
+			tailscaleIP := ""
+			if deployment.NetworkMode == "tailscale" {
+				tailscaleIP = address
+			}
+			return tx.Model(&model.Cluster{}).Where("id = ?", deployment.ClusterID).Updates(map[string]any{"status": "ready", "control_server_id": deployment.ServerID, "control_address": server.Host, "tailscale_ip": tailscaleIP, "encrypted_token": token, "network_mode": deployment.NetworkMode}).Error
 		}
 		return nil
 	})
@@ -385,6 +494,30 @@ func (s *Store) RecoverInterruptedClusterDeployments() error {
 			return err
 		}
 		for _, task := range running {
+			if task.Operation == "restart" {
+				if err := tx.Model(&model.ClusterDeployment{}).Where("id = ?", task.ID).Update("status", "failed").Error; err != nil {
+					return err
+				}
+				if err := tx.Create(&model.ClusterDeploymentLog{DeploymentID: task.ID, Message: "API 服务重启，K3s 节点重启任务已中断；请检查节点服务和 Ready 状态"}).Error; err != nil {
+					return err
+				}
+				if err := tx.Create(&model.AuditLog{Action: "cluster.node_restart", ResourceType: "cluster", ResourceID: task.ClusterID, ActorType: model.AuditActorSystem, Source: model.AuditSourceSystem, Outcome: model.AuditOutcomeFailed, Summary: "K3s 节点重启任务已中断", OperationID: fmt.Sprintf("cluster-deployment-%d", task.ID), Detail: fmt.Sprintf(`{"deployment_id":%d,"server_id":%d}`, task.ID, task.ServerID)}).Error; err != nil {
+					return err
+				}
+				continue
+			}
+			if task.Operation == "network-migrate" {
+				if err := tx.Model(&model.ClusterDeployment{}).Where("id = ?", task.ID).Update("status", "failed").Error; err != nil {
+					return err
+				}
+				if err := tx.Create(&model.ClusterDeploymentLog{DeploymentID: task.ID, Message: "API 服务重启，组网迁移已中断；请核对各节点的 K3s 网络配置后再操作"}).Error; err != nil {
+					return err
+				}
+				if err := tx.Create(&model.AuditLog{Action: "cluster.network_migrate", ResourceType: "cluster", ResourceID: task.ClusterID, ActorType: model.AuditActorSystem, Source: model.AuditSourceSystem, Outcome: model.AuditOutcomeFailed, Summary: "API 服务重启，组网迁移任务已中断", OperationID: fmt.Sprintf("cluster-deployment-%d", task.ID), Detail: fmt.Sprintf(`{"deployment_id":%d,"server_id":%d}`, task.ID, task.ServerID)}).Error; err != nil {
+					return err
+				}
+				continue
+			}
 			if strings.HasPrefix(task.Operation, "agent-") {
 				if err := tx.Model(&model.ClusterDeployment{}).Where("id = ?", task.ID).Update("status", "failed").Error; err != nil {
 					return err

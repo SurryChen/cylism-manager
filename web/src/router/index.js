@@ -10,6 +10,8 @@ const Login = () => import('../views/Login.vue')
 const DBAdmin = () => import('../views/DBAdmin.vue')
 const SystemSettings = () => import('../views/settings/SystemSettings.vue')
 const Applications = () => import('../views/applications/Applications.vue')
+const ApplicationCatalog = () => import('../views/applications/ApplicationCatalog.vue')
+const ApplicationCatalogDetail = () => import('../views/applications/ApplicationCatalogDetail.vue')
 const ProjectEnvironments = () => import('../views/applications/ProjectEnvironments.vue')
 const ApplicationDetails = () => import('../views/applications/ApplicationDetails.vue')
 const ReleaseDetails = () => import('../views/applications/ReleaseDetails.vue')
@@ -34,6 +36,8 @@ const routes = [
   { path: '/cloud-services/domains', component: DomainManagement },
   { path: '/cloud-services/object-storage', component: ObjectStorage },
   { path: '/applications', component: Applications, props: { section: 'workspace' } },
+  { path: '/applications/catalog', component: ApplicationCatalog },
+  { path: '/applications/catalog/:catalogID', component: ApplicationCatalogDetail },
   { path: '/applications/projects', component: Applications, props: { section: 'projects' } },
   { path: '/applications/projects/:projectID', component: ProjectEnvironments, props: true },
   { path: '/applications/overview', redirect: '/applications' },
@@ -76,6 +80,9 @@ const routes = [
 const router = createRouter({
   history: createWebHashHistory(),
   routes,
+  scrollBehavior(_to, _from, savedPosition) {
+    return savedPosition || { top: 0 }
+  },
 })
 
 router.beforeEach((to, from, next) => {

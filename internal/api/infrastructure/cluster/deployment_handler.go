@@ -29,10 +29,15 @@ import (
 type clusterDeploymentStore interface {
 	GetCluster(uint) (*model.Cluster, error)
 	GetServer(uint) (*model.Server, error)
-	StartClusterDeployment(uint, uint, string, string, string) (*model.ClusterDeployment, error)
+	ListServers() ([]model.Server, error)
+	StartClusterNetworkMigration(uint) (*model.ClusterDeployment, error)
+	FinishClusterNetworkMigration(*model.ClusterDeployment, bool, string) error
+	StartClusterDeployment(uint, uint, string, string, string, string) (*model.ClusterDeployment, error)
 	StartClusterAdoption(uint, uint, string, string) (*model.ClusterDeployment, error)
 	StartClusterUninstall(uint, uint) (*model.ClusterDeployment, error)
 	FinishClusterUninstall(*model.ClusterDeployment, bool) error
+	StartClusterNodeRestart(uint, uint) (*model.ClusterDeployment, error)
+	FinishClusterNodeRestart(*model.ClusterDeployment, bool) error
 	GetClusterDeployment(uint, uint) (*model.ClusterDeployment, error)
 	ListClusterDeployments(uint, int, int) ([]model.ClusterDeployment, int64, error)
 	LatestClusterAgentDeployment(uint) (*model.ClusterDeployment, error)
@@ -156,7 +161,6 @@ func (h *DeploymentHandler) Adopt(c *gin.Context) {
 	var request struct {
 		ServerID uint   `json:"server_id"`
 		Role     string `json:"role"`
-		Address  string `json:"address"`
 	}
 	if err := c.ShouldBindJSON(&request); err != nil || request.ServerID == 0 {
 		apiShared.BadRequest(c, "请选择服务器")
@@ -179,11 +183,9 @@ func (h *DeploymentHandler) Adopt(c *gin.Context) {
 		apiShared.BadRequest(c, "请先补全服务器 SSH 信息")
 		return
 	}
-	address := strings.TrimSpace(request.Address)
+	address := ""
 	if request.Role == "control-plane" {
-		if address == "" {
-			address = server.Host
-		}
+		address = server.Host
 		if !validControlAddress(address) {
 			apiShared.BadRequest(c, "控制平面连接地址应为 IP 或域名，不含协议和端口")
 			return
@@ -373,10 +375,10 @@ func (h *DeploymentHandler) Start(c *gin.Context) {
 		return
 	}
 	var request struct {
-		ServerID uint   `json:"server_id"`
-		Role     string `json:"role"`
-		Mirror   string `json:"mirror"`
-		Address  string `json:"address"`
+		ServerID    uint   `json:"server_id"`
+		Role        string `json:"role"`
+		Mirror      string `json:"mirror"`
+		NetworkMode string `json:"network_mode"`
 	}
 	if err := c.ShouldBindJSON(&request); err != nil || request.ServerID == 0 {
 		apiShared.BadRequest(c, "请选择服务器")
@@ -390,7 +392,8 @@ func (h *DeploymentHandler) Start(c *gin.Context) {
 		apiShared.BadRequest(c, "安装源无效")
 		return
 	}
-	if _, err := h.store.GetCluster(clusterID); errors.Is(err, gorm.ErrRecordNotFound) {
+	cluster, err := h.store.GetCluster(clusterID)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		apiShared.NotFound(c, "集群不存在")
 		return
 	} else if err != nil {
@@ -410,7 +413,38 @@ func (h *DeploymentHandler) Start(c *gin.Context) {
 		apiShared.BadRequest(c, "请先补全服务器 SSH 信息")
 		return
 	}
-	address := strings.TrimSpace(request.Address)
+	networkMode := request.NetworkMode
+	if networkMode == "" {
+		networkMode = "public"
+	}
+	if networkMode != "public" && networkMode != "tailscale" {
+		apiShared.BadRequest(c, "节点通信网络无效")
+		return
+	}
+	if request.Role == "worker" && normalizeNetworkMode(cluster.NetworkMode) != networkMode {
+		apiShared.BadRequest(c, "工作节点必须使用集群现有的通信网络")
+		return
+	}
+	address := ""
+	if networkMode == "tailscale" {
+		status := inspectTailscale(c.Request.Context(), server, h.key)
+		if status.Status != "online" {
+			apiShared.BadRequest(c, "请先在服务器组网页确认该节点已加入 Tailscale")
+			return
+		}
+		if request.Role == "control-plane" {
+			address = status.IP
+		} else if cluster.TailscaleIP != "" {
+			command := "tailscale ping --c=1 --timeout=5s " + shellEscape(cluster.TailscaleIP)
+			if _, err := transport.SSHExecServerContext(c.Request.Context(), 10*time.Second, server, h.key, command); err != nil {
+				apiShared.BadRequest(c, "工作节点无法通过 Tailscale 访问控制平面")
+				return
+			}
+		} else {
+			apiShared.BadRequest(c, "控制平面 Tailscale IP 缺失，请先检查集群组网状态")
+			return
+		}
+	}
 	if request.Role == "control-plane" {
 		if address == "" {
 			address = server.Host
@@ -420,7 +454,7 @@ func (h *DeploymentHandler) Start(c *gin.Context) {
 			return
 		}
 	}
-	deployment, err := h.store.StartClusterDeployment(clusterID, request.ServerID, request.Role, request.Mirror, address)
+	deployment, err := h.store.StartClusterDeployment(clusterID, request.ServerID, request.Role, request.Mirror, address, networkMode)
 	if errors.Is(err, store.ErrClusterDeploymentConflict) {
 		apiShared.Conflict(c, "服务器已被占用、集群状态不允许部署，或已有部署正在进行")
 		return
@@ -708,6 +742,10 @@ func (h *DeploymentHandler) recordAudit(deployment *model.ClusterDeployment, out
 		action = "cluster.uninstall"
 	} else if deployment.Operation == "adopt" {
 		action = "cluster.adopt"
+	} else if deployment.Operation == "network-migrate" {
+		action = "cluster.network_migrate"
+	} else if deployment.Operation == "restart" {
+		action = "cluster.node_restart"
 	} else if strings.HasPrefix(deployment.Operation, "agent-") {
 		action = "cluster.agent"
 	}
@@ -736,8 +774,11 @@ func (h *DeploymentHandler) install(ctx context.Context, deployment *model.Clust
 			return "", "", "", fmt.Errorf("读取集群加入凭据失败")
 		}
 		address = cluster.ControlAddress
+		if deployment.NetworkMode == "tailscale" {
+			address = cluster.TailscaleIP
+		}
 		if address == "" {
-			return "", "", "", fmt.Errorf("控制平面地址缺失")
+			return "", "", "", fmt.Errorf("控制平面节点通信地址缺失")
 		}
 	} else {
 		address = deployment.Address
@@ -760,7 +801,18 @@ func (h *DeploymentHandler) install(ctx context.Context, deployment *model.Clust
 	if strings.TrimSpace(string(check)) == "active" {
 		return "", "", "", fmt.Errorf("目标机器上 %s 已运行，请先核对现有集群", service)
 	}
-	command := k3sInstallCommand(deployment.Role, deployment.Mirror, address, plainToken)
+	nodeIP := ""
+	if deployment.NetworkMode == "tailscale" {
+		status := inspectTailscale(ctx, server, h.key)
+		if status.Status != "online" {
+			return "", "", "", fmt.Errorf("节点 Tailscale 已离线，请先恢复组网")
+		}
+		nodeIP = status.IP
+		if deployment.Role == "control-plane" && nodeIP != address {
+			return "", "", "", fmt.Errorf("控制平面 Tailscale IP 已变化，请重新发起部署")
+		}
+	}
+	command := k3sInstallCommandForNetwork(deployment.Role, deployment.Mirror, address, plainToken, deployment.NetworkMode, nodeIP)
 	log("从" + mirrorLabel(deployment.Mirror) + "下载安装 K3s")
 	if err := h.streamInstall(ctx, server, command, plainToken, log); err != nil {
 		return "", "", "", err
@@ -850,6 +902,10 @@ func (h *DeploymentHandler) streamInstall(ctx context.Context, server *model.Ser
 }
 
 func k3sInstallCommand(role, mirror, address, token string) string {
+	return k3sInstallCommandForNetwork(role, mirror, address, token, "public", "")
+}
+
+func k3sInstallCommandForNetwork(role, mirror, address, token, networkMode, nodeIP string) string {
 	url := "https://get.k3s.io"
 	variables := ""
 	if mirror == "cn" {
@@ -858,11 +914,25 @@ func k3sInstallCommand(role, mirror, address, token string) string {
 	}
 	if role == "worker" {
 		variables += "K3S_URL=" + shellEscape("https://"+net.JoinHostPort(address, "6443")) + " K3S_TOKEN=" + shellEscape(token) + " "
+		if networkMode == "tailscale" {
+			variables += "INSTALL_K3S_EXEC=" + shellEscape("agent --node-ip "+nodeIP+" --flannel-iface tailscale0") + " "
+		}
 	} else {
-		variables += "INSTALL_K3S_EXEC=" + shellEscape("server --tls-san "+address) + " "
+		arguments := "server --tls-san " + address
+		if networkMode == "tailscale" {
+			arguments += " --node-ip " + nodeIP + " --advertise-address " + nodeIP + " --flannel-iface tailscale0"
+		}
+		variables += "INSTALL_K3S_EXEC=" + shellEscape(arguments) + " "
 	}
 	pipeline := "curl -sfL " + url + " | " + variables + "sh -"
 	return "if [ \"$(id -u)\" = 0 ]; then bash -o pipefail -c " + shellEscape(pipeline) + "; else bash -o pipefail -c " + shellEscape("curl -sfL "+url+" | sudo -n env "+variables+"sh -") + "; fi"
+}
+
+func normalizeNetworkMode(mode string) string {
+	if mode == "tailscale" {
+		return mode
+	}
+	return "public"
 }
 
 func roleLabel(role string) string {

@@ -92,9 +92,11 @@ type clusterSummary struct {
 	ID              uint      `json:"id"`
 	Name            string    `json:"name"`
 	Distribution    string    `json:"distribution"`
+	NetworkMode     string    `json:"network_mode"`
 	Status          string    `json:"status"`
 	ControlServerID *uint     `json:"control_server_id,omitempty"`
 	ControlAddress  string    `json:"control_address,omitempty"`
+	TailscaleIP     string    `json:"tailscale_ip,omitempty"`
 	CreatedAt       time.Time `json:"created_at"`
 }
 
@@ -104,9 +106,9 @@ func NewCatalogHandler(catalog ClusterCatalog) *CatalogHandler {
 
 func summarizeCluster(cluster *model.Cluster) clusterSummary {
 	return clusterSummary{
-		ID: cluster.ID, Name: cluster.Name, Distribution: cluster.Distribution,
+		ID: cluster.ID, Name: cluster.Name, Distribution: cluster.Distribution, NetworkMode: cluster.NetworkMode,
 		Status: cluster.Status, ControlServerID: cluster.ControlServerID,
-		ControlAddress: cluster.ControlAddress, CreatedAt: cluster.CreatedAt,
+		ControlAddress: cluster.ControlAddress, TailscaleIP: cluster.TailscaleIP, CreatedAt: cluster.CreatedAt,
 	}
 }
 

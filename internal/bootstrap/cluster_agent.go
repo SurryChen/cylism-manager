@@ -44,9 +44,8 @@ func (f *clusterAgentClientFactory) Client(ctx context.Context, clusterID uint) 
 	if err != nil {
 		return nil, fmt.Errorf("读取控制平面服务器失败: %w", err)
 	}
-	// Agent certificates are issued with the control address when one is
-	// configured, which is also the address used by the K3s join workflow.
-	// Older/adopted clusters may lack it, so fall back to the server host.
+	// The Agent endpoint remains the server address even when K3s nodes
+	// communicate over Tailscale.
 	endpoint := agentEndpoint(cluster.ControlAddress)
 	if endpoint == "" {
 		endpoint = agentEndpoint(server.Host)

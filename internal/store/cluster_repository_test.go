@@ -43,17 +43,17 @@ func TestClusterDeploymentReservesServerAndPersistsLogs(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := st.StartClusterDeployment(first.ID, worker.ID, "worker", "cn", ""); !errors.Is(err, ErrClusterDeploymentConflict) {
+	if _, err := st.StartClusterDeployment(first.ID, worker.ID, "worker", "cn", "", "public"); !errors.Is(err, ErrClusterDeploymentConflict) {
 		t.Fatalf("worker before control = %v", err)
 	}
-	task, err := st.StartClusterDeployment(first.ID, server.ID, "control-plane", "cn", "100.81.23.123")
+	task, err := st.StartClusterDeployment(first.ID, server.ID, "control-plane", "cn", "100.81.23.123", "public")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.StartClusterDeployment(second.ID, server.ID, "control-plane", "cn", "10.0.0.1"); !errors.Is(err, ErrClusterDeploymentConflict) {
+	if _, err := st.StartClusterDeployment(second.ID, server.ID, "control-plane", "cn", "10.0.0.1", "public"); !errors.Is(err, ErrClusterDeploymentConflict) {
 		t.Fatalf("same server in another cluster = %v", err)
 	}
-	if _, err := st.StartClusterDeployment(first.ID, worker.ID, "worker", "cn", ""); !errors.Is(err, ErrClusterDeploymentConflict) {
+	if _, err := st.StartClusterDeployment(first.ID, worker.ID, "worker", "cn", "", "public"); !errors.Is(err, ErrClusterDeploymentConflict) {
 		t.Fatalf("concurrent deployment = %v", err)
 	}
 	if err := st.AppendClusterDeploymentLog(task.ID, "安装中"); err != nil {
@@ -67,10 +67,10 @@ func TestClusterDeploymentReservesServerAndPersistsLogs(t *testing.T) {
 		t.Fatal(err)
 	}
 	cluster, err := st.GetCluster(first.ID)
-	if err != nil || cluster.Status != "ready" || cluster.ControlAddress != "100.81.23.123" || cluster.EncryptedToken != "encrypted-token" {
+	if err != nil || cluster.Status != "ready" || cluster.ControlAddress != server.Host || cluster.TailscaleIP != "" || cluster.EncryptedToken != "encrypted-token" {
 		t.Fatalf("cluster = %#v, %v", cluster, err)
 	}
-	workerTask, err := st.StartClusterDeployment(first.ID, worker.ID, "worker", "official", "")
+	workerTask, err := st.StartClusterDeployment(first.ID, worker.ID, "worker", "official", "", "public")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,6 +80,101 @@ func TestClusterDeploymentReservesServerAndPersistsLogs(t *testing.T) {
 	workerAfter, err := st.GetServer(worker.ID)
 	if err != nil || workerAfter.ClusterID != nil {
 		t.Fatalf("failed worker reservation = %#v, %v", workerAfter, err)
+	}
+}
+
+func TestClusterDeploymentKeepsTailscaleModeForWorkers(t *testing.T) {
+	st := setupTestDB(t)
+	cluster := model.Cluster{Name: "private", Distribution: "k3s", Status: "draft"}
+	control := model.Server{Name: "control", Host: "203.0.113.1"}
+	worker := model.Server{Name: "worker", Host: "203.0.113.2"}
+	for _, item := range []any{&cluster, &control, &worker} {
+		if err := st.DB().Create(item).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	task, err := st.StartClusterDeployment(cluster.ID, control.ID, "control-plane", "official", "100.81.23.123", "tailscale")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.FinishClusterDeployment(task, true, "encrypted-token", "100.81.23.123", "control"); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := st.GetCluster(cluster.ID)
+	if err != nil || stored.NetworkMode != "tailscale" || stored.ControlAddress != control.Host || stored.TailscaleIP != "100.81.23.123" {
+		t.Fatalf("cluster network mode = %#v, %v", stored, err)
+	}
+	if _, err := st.StartClusterDeployment(cluster.ID, worker.ID, "worker", "official", "", "public"); !errors.Is(err, ErrClusterDeploymentConflict) {
+		t.Fatalf("expected mode conflict, got %v", err)
+	}
+	if _, err := st.StartClusterDeployment(cluster.ID, worker.ID, "worker", "official", "", "tailscale"); err != nil {
+		t.Fatalf("tailscale worker reservation: %v", err)
+	}
+}
+
+func TestClusterNodeRestartTracksTaskWithoutChangingNodeOwnership(t *testing.T) {
+	st := setupTestDB(t)
+	cluster := model.Cluster{Name: "restart", Distribution: "k3s", Status: "ready"}
+	other := model.Cluster{Name: "other", Distribution: "k3s", Status: "ready"}
+	for _, item := range []*model.Cluster{&cluster, &other} {
+		if err := st.DB().Create(item).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	control := model.Server{Name: "control", Host: "203.0.113.1", ClusterID: &cluster.ID, ClusterRole: "control-plane", K8sNodeName: "control"}
+	worker := model.Server{Name: "worker", Host: "203.0.113.2", ClusterID: &cluster.ID, ClusterRole: "worker", K8sNodeName: "worker"}
+	for _, item := range []*model.Server{&control, &worker} {
+		if err := st.DB().Create(item).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := st.DB().Model(&cluster).Update("control_server_id", control.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.StartClusterNodeRestart(other.ID, worker.ID); !errors.Is(err, ErrClusterDeploymentConflict) {
+		t.Fatalf("cross-cluster restart: %v", err)
+	}
+	task, err := st.StartClusterNodeRestart(cluster.ID, worker.ID)
+	if err != nil || task.Role != "worker" || task.Operation != "restart" {
+		t.Fatalf("worker restart task: %#v, %v", task, err)
+	}
+	if _, err := st.StartClusterNodeRestart(cluster.ID, control.ID); !errors.Is(err, ErrClusterDeploymentConflict) {
+		t.Fatalf("parallel restart: %v", err)
+	}
+	if err := st.FinishClusterNodeRestart(task, false); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := st.GetClusterDeployment(cluster.ID, task.ID)
+	if err != nil || stored.Status != "failed" {
+		t.Fatalf("failed task: %#v, %v", stored, err)
+	}
+	controlTask, err := st.StartClusterNodeRestart(cluster.ID, control.ID)
+	if err != nil || controlTask.Role != "control-plane" {
+		t.Fatalf("control restart task: %#v, %v", controlTask, err)
+	}
+	if err := st.FinishClusterNodeRestart(controlTask, true); err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range []*model.Server{&control, &worker} {
+		got, err := st.GetServer(item.ID)
+		if err != nil || got.ClusterID == nil || *got.ClusterID != cluster.ID || got.ClusterRole != item.ClusterRole {
+			t.Fatalf("restart changed node ownership: %#v, %v", got, err)
+		}
+	}
+	interrupted, err := st.StartClusterNodeRestart(cluster.ID, worker.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.RecoverInterruptedClusterDeployments(); err != nil {
+		t.Fatal(err)
+	}
+	stored, err = st.GetClusterDeployment(cluster.ID, interrupted.ID)
+	if err != nil || stored.Status != "failed" {
+		t.Fatalf("interrupted restart: %#v, %v", stored, err)
+	}
+	got, err := st.GetServer(worker.ID)
+	if err != nil || got.ClusterID == nil || *got.ClusterID != cluster.ID {
+		t.Fatalf("interrupted restart changed ownership: %#v, %v", got, err)
 	}
 }
 
@@ -93,7 +188,7 @@ func TestRecoverInterruptedClusterDeployment(t *testing.T) {
 	if err := st.DB().Create(&server).Error; err != nil {
 		t.Fatal(err)
 	}
-	task, err := st.StartClusterDeployment(cluster.ID, server.ID, "control-plane", "official", server.Host)
+	task, err := st.StartClusterDeployment(cluster.ID, server.ID, "control-plane", "official", server.Host, "public")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +211,7 @@ func TestRecoverInterruptedClusterDeployment(t *testing.T) {
 
 func TestClusterDeleteRequiresAllNodesUninstalled(t *testing.T) {
 	st := setupTestDB(t)
-	cluster := model.Cluster{Name: "待删除", Distribution: "k3s", Status: "ready"}
+	cluster := model.Cluster{Name: "待删除", Distribution: "k3s", Status: "ready", NetworkMode: "tailscale", ControlAddress: "10.0.0.1", TailscaleIP: "100.81.23.123"}
 	if err := st.DB().Create(&cluster).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -158,7 +253,7 @@ func TestClusterDeleteRequiresAllNodesUninstalled(t *testing.T) {
 		t.Fatal(err)
 	}
 	updated, err := st.GetCluster(cluster.ID)
-	if err != nil || updated.Status != "draft" || updated.ControlServerID != nil || updated.EncryptedToken != "" {
+	if err != nil || updated.Status != "draft" || updated.ControlServerID != nil || updated.ControlAddress != "" || updated.TailscaleIP != "" || updated.EncryptedToken != "" {
 		t.Fatalf("cluster after uninstall = %#v, %v", updated, err)
 	}
 	if err := st.DeleteCluster(cluster.ID); err != nil {

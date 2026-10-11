@@ -48,6 +48,7 @@ type ApplicationManagementRepository interface {
 	CountEnvironmentApplications(uint) (int64, error)
 
 	CreateApplication(*model.Application) error
+	DeleteUnreleasedApplication(uint) error
 	UpdateApplication(*model.Application) error
 	ReplaceApplicationCapabilities(uint, []string) (*model.Application, error)
 	GetLatestSuccessfulRelease(uint) (*model.Release, error)
@@ -60,6 +61,13 @@ type ApplicationManagementRepository interface {
 	UpdateApplicationDeploymentTemplateIfRevision(*model.ApplicationDeploymentTemplate, uint) error
 	DeleteApplicationDeploymentTemplate(uint, uint) error
 	SetDefaultApplicationDeploymentTemplate(uint, uint) error
+	ListApplicationCatalogItems() ([]model.ApplicationCatalogItem, error)
+	ListApplicationCatalogInstallations(uint, uint) ([]model.ApplicationCatalogInstallation, error)
+	GetApplicationCatalogItem(uint) (*model.ApplicationCatalogItem, error)
+	CreateApplicationCatalogItem(*model.ApplicationCatalogItem) error
+	UpdateApplicationCatalogItem(*model.ApplicationCatalogItem, uint) error
+	DeleteApplicationCatalogItem(uint) error
+	ImportApplicationCatalogItems(uint, uint, uint, []model.ApplicationCatalogItem) ([]model.ApplicationCatalogInstallation, error)
 
 	ListApplicationEndpoints(uint) ([]model.ApplicationEndpoint, error)
 	GetApplicationEndpoint(uint, uint) (*model.ApplicationEndpoint, error)

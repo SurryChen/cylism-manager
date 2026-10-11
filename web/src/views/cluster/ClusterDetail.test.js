@@ -38,7 +38,7 @@ describe('ClusterDetail', () => {
 
     expect(get).toHaveBeenCalledWith('/clusters/9', expect.objectContaining({ signal: expect.any(AbortSignal) }))
     expect(wrapper.get('h1').text()).toBe('生产集群')
-    expect(wrapper.findAll('.section-tab').map(tab => tab.text())).toEqual(['拓扑', 'Agent 管理', '集群任务', '节点镜像源', '集群 DNS', 'Chart 仓库', '系统组件'])
+    expect(wrapper.findAll('.section-tab').map(tab => tab.text())).toEqual(['拓扑', '组网', 'Agent 管理', '集群任务', '节点镜像源', '集群 DNS', 'Chart 仓库', '系统组件'])
     expect(wrapper.get('.section-tab.is-active').text()).toBe('拓扑')
     expect(wrapper.text()).toContain('尚未部署 K3s 集群')
     expect(wrapper.find('#deployment-server').exists()).toBe(false)
@@ -57,6 +57,30 @@ describe('ClusterDetail', () => {
     wrapper.unmount()
   })
 
+  it('shows networking only for K3s and compares its node IP', async () => {
+    get.mockImplementation(path => {
+      if (path === '/clusters/9') return Promise.resolve({ ...cluster, network_mode: 'tailscale', control_server_id: 3 })
+      if (path === '/servers') return Promise.resolve([{ ...server, cluster_id: 9, cluster_role: 'control-plane', k8s_node_name: 'control' }])
+      if (path === '/nodes?cluster_id=9') return Promise.resolve([{ name: 'control', internal_ip: '100.81.23.123' }])
+      if (path === '/servers/3/tailscale') return Promise.resolve({ server_id: 3, status: 'online', ip: '100.81.23.123' })
+      return Promise.resolve([])
+    })
+    const wrapper = await mountDetail('9', '?tab=networking')
+    await flushPromises()
+    expect(wrapper.text()).toContain('部署网络：Tailscale')
+    expect(wrapper.text()).toContain('IP 一致')
+    wrapper.unmount()
+
+    get.mockImplementation(path => path === '/clusters/9'
+      ? Promise.resolve({ ...cluster, distribution: 'kubernetes' })
+      : Promise.resolve([]))
+    const kubernetes = await mountDetail('9', '?tab=networking')
+    await flushPromises()
+    expect(kubernetes.findAll('.section-tab').map(tab => tab.text())).not.toContain('组网')
+    expect(kubernetes.get('.section-tab.is-active').text()).toBe('拓扑')
+    kubernetes.unmount()
+  })
+
   it('shows agent connection details and operations in its own tab', async () => {
     get.mockImplementation(path => {
       if (path === '/clusters/9') return Promise.resolve({ ...cluster, control_server_id: 3, status: 'ready' })
@@ -66,7 +90,7 @@ describe('ClusterDetail', () => {
     post.mockResolvedValue({ id: 12, operation: 'agent-install', status: 'running' })
     const wrapper = await mountDetail()
     await flushPromises()
-    await wrapper.get('.section-tab:nth-child(2)').trigger('click')
+    await wrapper.findAll('.section-tab').find(tab => tab.text() === 'Agent 管理').trigger('click')
     await flushPromises()
     expect(wrapper.text()).toContain('0.0.0.0:9443')
     expect(wrapper.text()).toContain('127.0.0.1:6443')
@@ -115,11 +139,13 @@ describe('ClusterDetail', () => {
     await flushPromises()
     await wrapper.get('.cluster-deployment-toolbar .btn-primary').trigger('click')
     wrapper.findAllComponents(SelectMenu).find(menu => menu.props('id') === 'deployment-server').vm.$emit('update:modelValue', '3')
-    await wrapper.get('#deployment-address').setValue('100.81.23.123')
+    await flushPromises()
+    expect(wrapper.get('[role="dialog"]').text()).toContain('服务器地址')
+    expect(wrapper.get('[role="dialog"]').text()).toContain('10.0.0.3')
     await wrapper.get('[role="dialog"] .btn-primary').trigger('click')
     await flushPromises()
 
-    expect(post).toHaveBeenCalledWith('/clusters/9/deployments', { server_id: 3, role: 'control-plane', mirror: 'official', address: '100.81.23.123' })
+    expect(post).toHaveBeenCalledWith('/clusters/9/deployments', { server_id: 3, role: 'control-plane', mirror: 'official', network_mode: 'public' })
     expect(wrapper.vm.$route.query.tab).toBe('tasks')
     expect(wrapper.findAll('.data-table thead th').map(cell => cell.text())).toEqual(['任务', '服务器', '状态', '开始时间', '操作'])
     expect(wrapper.find('[role="log"]').exists()).toBe(false)
@@ -317,8 +343,40 @@ describe('ClusterDetail', () => {
     await flushPromises()
     await wrapper.get('[role="dialog"] .btn-primary').trigger('click')
     await flushPromises()
-    expect(post).toHaveBeenCalledWith('/clusters/9/adoptions', { server_id: 3, role: 'control-plane', address: '' })
+    expect(post).toHaveBeenCalledWith('/clusters/9/adoptions', { server_id: 3, role: 'control-plane' })
     wrapper.unmount()
+  })
+
+  it('offers K3s service restart for the control plane and workers', async () => {
+    get.mockImplementation(path => {
+      if (path === '/clusters/9') return Promise.resolve({ ...cluster, status: 'ready', control_server_id: 3 })
+      if (path === '/servers') return Promise.resolve([
+        { ...server, cluster_id: 9, cluster_role: 'control-plane', k8s_node_name: 'control' },
+        { id: 4, name: '工作节点', host: '10.0.0.4', cluster_id: 9, cluster_role: 'worker', k8s_node_name: 'worker' },
+      ])
+      if (path === '/clusters/9/deployments?limit=10&offset=0') return Promise.resolve({ items: [], total: 0 })
+      return Promise.resolve([])
+    })
+    post.mockResolvedValue({ id: 13, operation: 'restart', status: 'running' })
+    const wrapper = await mountDetail()
+    await flushPromises()
+    expect(wrapper.findAll('[title="重启 K3s 服务"]')).toHaveLength(2)
+    await wrapper.get('[aria-label="重启 节点一 的 K3s 服务"]').trigger('click')
+    expect(wrapper.get('[role="dialog"]').text()).toContain('k3s 服务')
+    await wrapper.get('[role="dialog"] .btn-primary').trigger('click')
+    await flushPromises()
+    expect(post).toHaveBeenCalledWith('/clusters/9/nodes/3/restart')
+    expect(wrapper.vm.$route.query.tab).toBe('tasks')
+    wrapper.unmount()
+
+    const workerView = await mountDetail()
+    await flushPromises()
+    await workerView.get('[aria-label="重启 工作节点 的 K3s 服务"]').trigger('click')
+    expect(workerView.get('[role="dialog"]').text()).toContain('k3s-agent 服务')
+    await workerView.get('[role="dialog"] .btn-primary').trigger('click')
+    await flushPromises()
+    expect(post).toHaveBeenCalledWith('/clusters/9/nodes/4/restart')
+    workerView.unmount()
   })
 
   it('shows adoption tasks distinctly from deployment tasks', async () => {

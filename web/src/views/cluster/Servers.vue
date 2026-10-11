@@ -1,5 +1,6 @@
 <template>
   <div>
+    <RouterLink v-if="returnToCluster" class="back-link" :to="returnToCluster"><ArrowLeft :size="16" />返回集群组网</RouterLink>
     <SectionTabsHeader title="服务器" :tabs="sections" :active-tab="activeSection" @select="activeSection = $event" />
 
     <main class="server-content">
@@ -41,6 +42,8 @@
       </div>
     </SurfaceCard>
     </template>
+
+    <ServerTailscale v-else-if="activeSection === 'tailscale'" :servers="servers" />
 
     <template v-else-if="activeSection === 'monitoring'">
       <SurfaceCard as="div" padding="none" class="resource-monitoring-card">
@@ -134,6 +137,7 @@
 
 <script setup>
 import { computed, ref, shallowRef, onMounted, onUnmounted, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import {
   createServer,
   deleteServer as deleteServerRequest,
@@ -148,19 +152,24 @@ import {
 import { useAsyncResource } from '../../composables/useAsyncResource.js'
 import { usePolling } from '../../composables/usePolling.js'
 import { formatClockTime as formatSampleTime } from '../../utils/formatters.js'
-import { ChartNoAxesColumnIncreasing, LoaderCircle, Pencil, Plus, RefreshCw, Terminal, Trash2, Unlink2 } from 'lucide-vue-next'
+import { ArrowLeft, ChartNoAxesColumnIncreasing, LoaderCircle, Pencil, Plus, RefreshCw, Terminal, Trash2, Unlink2 } from 'lucide-vue-next'
 import SectionTabsHeader from '../../components/SectionTabsHeader.vue'
 import SurfaceCard from '../../components/SurfaceCard.vue'
 import ErrorNoticeModal from '../../components/ErrorNoticeModal.vue'
 import ServerTerminal from './ServerTerminal.vue'
+import ServerTailscale from './ServerTailscale.vue'
 
 const serversResource = useAsyncResource(({ signal }) => getServers({ signal }), [])
 const servers = serversResource.data
 const serversLoading = serversResource.loading
 const serverListError = computed(() => serversResource.error.value?.message || '')
-const activeSection = ref('configuration')
+const route = useRoute()
+const activeSection = ref(route?.query?.tab === 'tailscale' ? 'tailscale' : 'configuration')
+const returnToCluster = computed(() => /^\/cluster\/\d+\?tab=networking$/.test(String(route?.query?.return || '')) ? route.query.return : '')
+watch(() => route?.query?.tab, tab => { if (tab === 'tailscale') activeSection.value = 'tailscale' })
 const sections = [
   { id: 'configuration', label: '基本配置' },
+  { id: 'tailscale', label: '组网' },
   { id: 'monitoring', label: '资源监控' },
 ]
 const resourceStatsResource = useAsyncResource(({ signal }) => getServerResourceStats({ signal }), [])
@@ -456,6 +465,8 @@ function resetForm() {
 </script>
 
 <style scoped>
+.back-link{display:inline-flex;align-items:center;gap:6px;margin-bottom:var(--space-16);color:var(--text-secondary);font-size:13px;text-decoration:none}
+.back-link:hover{color:var(--action-primary)}
 .modal-wide { max-width: 640px; }
 .section-copy {
   margin: 0;

@@ -68,8 +68,54 @@ export function getApplication(applicationID, options) {
   return api.get(`/applications/${segment(applicationID)}`, options)
 }
 
+export function getApplicationRuntime(applicationID, options) {
+  return api.get(`/applications/${segment(applicationID)}/runtime`, options)
+}
+
+export function getApplicationPods(applicationID, options) {
+  return api.get(`/applications/${segment(applicationID)}/pods`, options)
+}
+
+export function getApplicationPodLogs(applicationID, podName, { container, previous = false, tail = 200 }, options) {
+  const query = new URLSearchParams({ container, tail: String(tail) })
+  if (previous) query.set('previous', 'true')
+  return api.get(`/applications/${segment(applicationID)}/pods/${segment(podName)}/logs?${query}`, options)
+}
+
 export function getDeploymentTemplates(applicationID, options) {
   return api.get(`/applications/${segment(applicationID)}/deployment-templates`, options)
+}
+
+export function getApplicationCatalog(options) {
+  return api.get('/application-catalog', options)
+}
+
+export function getApplicationCatalogItem(id, options) {
+  return api.get(`/application-catalog/${segment(id)}`, options)
+}
+
+export function getApplicationCatalogInstallations(projectID, environmentID, options) {
+  return api.get(`/application-catalog/installations${queryString({ project_id: projectID, environment_id: environmentID })}`, options)
+}
+
+export function createApplicationCatalogItem(payload, options) {
+  return postRequest('/application-catalog', payload, options)
+}
+
+export function createApplicationCatalogFromEnvironment(payload, options) {
+  return postRequest('/application-catalog/from-environment', payload, options)
+}
+
+export function updateApplicationCatalogItem(id, payload, options) {
+  return putRequest(`/application-catalog/${segment(id)}`, payload, options)
+}
+
+export function deleteApplicationCatalogItem(id, options) {
+  return deleteRequest(`/application-catalog/${segment(id)}`, options)
+}
+
+export function importApplicationCatalogItems(payload, options) {
+  return postRequest('/application-catalog/import', payload, options)
 }
 
 export function getApplicationEndpoints(applicationID, options) {
@@ -86,6 +132,10 @@ export function getApplicationSecretResources(clusterID, namespace, options) {
 
 export function createApplication({ projectID, environmentID, name }, options) {
   return postRequest('/applications', { project_id: projectID, environment_id: environmentID, name }, options)
+}
+
+export function deleteApplication(applicationID, options) {
+  return deleteRequest(`/applications/${segment(applicationID)}`, options)
 }
 
 export function createProject(payload, options) {

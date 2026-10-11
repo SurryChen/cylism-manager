@@ -7,7 +7,8 @@ import (
 
 // migrateSchema creates and updates the current persistence schema.
 func migrateSchema(db *gorm.DB) error {
-	return db.AutoMigrate(
+	legacyCatalog := db.Migrator().HasTable(&model.ApplicationCatalogItem{}) && !db.Migrator().HasColumn(&model.ApplicationCatalogItem{}, "enabled")
+	if err := db.AutoMigrate(
 		&model.Cluster{}, &model.ClusterDeployment{}, &model.ClusterDeploymentLog{}, &model.AccessCA{}, &model.AccessCertificate{}, &model.Server{}, &model.Site{}, &model.Cert{}, &model.AuditLog{},
 		&model.OperationLog{}, &model.User{}, &model.TemporaryLoginToken{},
 		&model.SystemConfig{}, &model.RuntimeInstance{}, &model.AgentCapabilityGrant{},
@@ -15,7 +16,7 @@ func migrateSchema(db *gorm.DB) error {
 		&model.PlatformRelease{}, &model.PlatformWebhookNonce{}, &model.PlatformEndpoint{},
 		&model.Project{}, &model.Environment{}, &model.Application{},
 		&model.IntegrationSession{}, &model.ApplicationEndpoint{},
-		&model.ApplicationDeploymentTemplate{}, &model.ApplicationManagedFile{},
+		&model.ApplicationDeploymentTemplate{}, &model.ApplicationCatalogItem{}, &model.ApplicationCatalogInstallation{}, &model.ApplicationCatalogInstallationComponent{}, &model.ApplicationManagedFile{},
 		&model.ImageRegistry{}, &model.NodeRegistryMirror{}, &model.NodeRegistryMirrorNode{},
 		&model.ManagedOCIRegistry{}, &model.RegistryProxy{}, &model.ClusterDNSPolicy{},
 		&model.ChartRepository{}, &model.DNSCredential{}, &model.ManagedDomain{},
@@ -23,5 +24,11 @@ func migrateSchema(db *gorm.DB) error {
 		&model.Release{}, &model.ReleaseOperation{}, &model.PersistentVolumeMigration{},
 		&model.PersistentVolumeBackup{}, &model.HostDirectoryPVCImport{},
 		&model.SystemComponentConfig{},
-	)
+	); err != nil {
+		return err
+	}
+	if legacyCatalog {
+		return db.Model(&model.ApplicationCatalogItem{}).Where("1 = 1").Update("enabled", true).Error
+	}
+	return nil
 }

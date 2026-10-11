@@ -1,6 +1,6 @@
 <template>
   <div>
-    <div class="page-header"><div><h1 class="page-title">镜像仓库</h1><p class="page-subtitle">维护全局仓库、凭据、连通状态与项目授权</p></div><button class="btn btn-primary" @click="openCreate">+ 新建镜像仓库</button></div>
+    <div class="page-header sticky-page-header"><div><h1 class="page-title">镜像仓库</h1><p class="page-subtitle">维护全局仓库、凭据、连通状态与项目授权</p></div><button class="btn btn-primary" @click="openCreate">+ 新建镜像仓库</button></div>
     <div v-if="readError" class="k8s-banner k8s-banner-warn section-gap">{{ readError }}</div>
 
     <SurfaceCard v-if="loaded && registries.length > 0" as="div" class="section-gap"><div class="table-wrap"><table class="data-table"><thead><tr><th>名称</th><th>地址</th><th>验证镜像</th><th>认证</th><th>项目授权</th><th>状态</th><th>检测结果</th><th>操作</th></tr></thead><tbody>

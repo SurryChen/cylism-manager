@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
+	"errors"
 	"net"
 	"strconv"
 	"sync/atomic"
@@ -40,6 +41,25 @@ func TestSSHExecServerContextAuthenticatesWithStoredPassword(t *testing.T) {
 	}
 	if !passwordSeen.Load() {
 		t.Fatal("SSH password authentication was not attempted")
+	}
+}
+
+func TestSSHExecServerContextIdentifiesAuthenticationFailure(t *testing.T) {
+	listener, _ := passwordSSHServer(t, "server-password")
+	defer listener.Close()
+	address := listener.Addr().(*net.TCPAddr)
+	encryptionKey := []byte("01234567890123456789012345678901")
+	password, err := crypto.Encrypt(encryptionKey, "wrong-password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = SSHExecServerContext(context.Background(), time.Second, &model.Server{
+		Host: "127.0.0.1", SSHPort: address.Port, SSHUser: "root",
+		SSHAuthType: "password", SSHPassword: password,
+	}, encryptionKey, "echo ok")
+	var connectionError *SSHConnectionError
+	if !errors.As(err, &connectionError) {
+		t.Fatalf("expected SSHConnectionError, got %v", err)
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"sort"
 	"strings"
+	"time"
 
 	networkapi "github.com/cylism/cylism-manager/internal/api/infrastructure/network"
 	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
@@ -22,6 +23,17 @@ type workspaceApplicationInfo struct {
 	EndpointURL        string                  `json:"endpoint_url,omitempty"`
 	EndpointAccessMode string                  `json:"endpoint_access_mode,omitempty"`
 	EndpointCount      int                     `json:"endpoint_count"`
+}
+
+type workspaceReleaseSummary struct {
+	ID              uint      `json:"id"`
+	ApplicationID   uint      `json:"application_id"`
+	ApplicationName string    `json:"application_name"`
+	Sequence        uint      `json:"sequence"`
+	Version         string    `json:"version"`
+	Image           string    `json:"image"`
+	Status          string    `json:"status"`
+	CreatedAt       time.Time `json:"created_at"`
 }
 
 type applicationDiscoveryInfo struct {
@@ -202,6 +214,7 @@ func (h *ApplicationHandler) WorkspaceOverview(c *gin.Context) {
 	}
 	failedReleases := make([]workspaceRelease, 0)
 	recentReleases := make([]workspaceRelease, 0)
+	releaseSummaries := make([]workspaceReleaseSummary, 0)
 	applicationIDs := make([]uint, 0, len(applications))
 	for _, app := range applications {
 		applicationIDs = append(applicationIDs, app.ID)
@@ -213,6 +226,7 @@ func (h *ApplicationHandler) WorkspaceOverview(c *gin.Context) {
 			for _, release := range releases {
 				item := workspaceRelease{ReleaseView: *apiShared.ReleaseDTO(&release), ApplicationName: app.Name}
 				recentReleases = append(recentReleases, item)
+				releaseSummaries = append(releaseSummaries, workspaceReleaseSummary{ID: release.ID, ApplicationID: app.ID, ApplicationName: app.Name, Sequence: release.Sequence, Version: release.Version, Image: release.Image, Status: release.Status, CreatedAt: release.CreatedAt})
 				if release.Status == model.ReleaseStatusFailed {
 					failedReleases = append(failedReleases, item)
 				}
@@ -220,6 +234,7 @@ func (h *ApplicationHandler) WorkspaceOverview(c *gin.Context) {
 		}
 	}
 	sort.Slice(recentReleases, func(i, j int) bool { return recentReleases[i].CreatedAt.After(recentReleases[j].CreatedAt) })
+	sort.Slice(releaseSummaries, func(i, j int) bool { return releaseSummaries[i].CreatedAt.After(releaseSummaries[j].CreatedAt) })
 	if len(recentReleases) > 8 {
 		recentReleases = recentReleases[:8]
 	}
@@ -228,7 +243,7 @@ func (h *ApplicationHandler) WorkspaceOverview(c *gin.Context) {
 	for index := range domains {
 		domainInfos = append(domainInfos, networkapi.ManagedDomainInfoFor(c.Request.Context(), &domains[index], h.kubernetes, h.resources))
 	}
-	apiShared.Success(c, gin.H{"project": apiShared.ProjectDTO(project), "environment": apiShared.EnvironmentDTO(environment), "applications": workspaceApplications, "domains": domainInfos, "failed_releases": failedReleases, "recent_releases": recentReleases})
+	apiShared.Success(c, gin.H{"project": apiShared.ProjectDTO(project), "environment": apiShared.EnvironmentDTO(environment), "applications": workspaceApplications, "domains": domainInfos, "failed_releases": failedReleases, "recent_releases": recentReleases, "releases": releaseSummaries})
 }
 
 func (h *ApplicationHandler) workspaceApplicationInfos(ctx context.Context, namespace string, applications []model.Application, allReleases map[uint][]model.Release) []workspaceApplicationInfo {

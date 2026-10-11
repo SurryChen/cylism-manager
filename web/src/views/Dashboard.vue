@@ -1,6 +1,6 @@
 <template>
   <div class="dashboard-page">
-    <div class="page-header dashboard-header">
+    <div class="page-header dashboard-header sticky-page-header">
       <div class="dashboard-title-block">
         <h1 class="page-title">平台健康度</h1>
       </div>

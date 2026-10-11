@@ -28,8 +28,12 @@ export function uninstallClusterNode(clusterID, serverID) {
   return api.post(`/clusters/${encodeURIComponent(clusterID)}/nodes/${encodeURIComponent(serverID)}/uninstall`)
 }
 
-export function adoptClusterNode(clusterID, serverID, role, address) {
-  return api.post(`/clusters/${encodeURIComponent(clusterID)}/adoptions`, { server_id: Number(serverID), role, address })
+export function restartClusterNode(clusterID, serverID) {
+  return api.post(`/clusters/${encodeURIComponent(clusterID)}/nodes/${encodeURIComponent(serverID)}/restart`)
+}
+
+export function adoptClusterNode(clusterID, serverID, role) {
+  return api.post(`/clusters/${encodeURIComponent(clusterID)}/adoptions`, { server_id: Number(serverID), role })
 }
 
 export function getClusterDeployments(clusterID, { limit = 20, offset = 0 } = {}, options) {
@@ -40,10 +44,18 @@ export function getClusterDeploymentLogs(clusterID, deploymentID, after = 0, opt
   return api.get(`/clusters/${encodeURIComponent(clusterID)}/deployments/${encodeURIComponent(deploymentID)}/logs?after=${after}`, options)
 }
 
-export function startClusterDeployment(clusterID, serverID, role, mirror, address) {
-  return api.post(`/clusters/${encodeURIComponent(clusterID)}/deployments`, { server_id: Number(serverID), role, mirror, address })
+export function startClusterDeployment(clusterID, serverID, role, mirror, networkMode = 'public') {
+  return api.post(`/clusters/${encodeURIComponent(clusterID)}/deployments`, { server_id: Number(serverID), role, mirror, network_mode: networkMode })
 }
 
 export function startClusterAgentOperation(clusterID, serverID, operation) {
   return api.post(`/clusters/${encodeURIComponent(clusterID)}/agent-operations`, { server_id: Number(serverID), operation })
+}
+
+export function checkClusterNetworkMigration(clusterID, options) {
+  return api.get(`/clusters/${encodeURIComponent(clusterID)}/network-migration/precheck`, options)
+}
+
+export function startClusterNetworkMigration(clusterID) {
+  return api.post(`/clusters/${encodeURIComponent(clusterID)}/network-migration`, {})
 }

@@ -1,5 +1,5 @@
 <template>
-  <header class="page-header" data-header-variant="standard">
+  <header class="page-header" :class="{ 'sticky-page-header': sticky }" data-header-variant="standard">
     <div class="page-header-main">
       <button
         v-if="backTo"
@@ -24,6 +24,7 @@ defineProps({
   description: { type: String, default: '' },
   backTo: { type: [String, Object], default: null },
   backLabel: { type: String, default: '返回' },
+  sticky: { type: Boolean, default: false },
 })
 
 defineEmits(['back'])

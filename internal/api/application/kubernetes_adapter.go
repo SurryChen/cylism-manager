@@ -29,6 +29,8 @@ func NewNamespaceClient(client *k8sclient.Client) NamespaceClient {
 type KubernetesAdapter interface {
 	applicationservice.ResourceApplier
 	applicationservice.RuntimeReader
+	ListRuntimePodMetrics(context.Context, string) (map[string]k8sclient.RuntimePodUsage, error)
+	ReadRuntimePodLogs(context.Context, string, string, string, int64, bool) (string, error)
 	NamespaceClient
 	CertificateReader
 	SyncApplicationEndpoints(context.Context, applicationservice.ApplicationContext, []model.ApplicationEndpoint, int32) error
@@ -39,8 +41,12 @@ type KubernetesAdapter interface {
 }
 
 type kubernetesDependencies struct {
-	applier      applicationservice.ResourceApplier
-	runtime      applicationservice.RuntimeReader
+	applier    applicationservice.ResourceApplier
+	runtime    applicationservice.RuntimeReader
+	operations interface {
+		ListRuntimePodMetrics(context.Context, string) (map[string]k8sclient.RuntimePodUsage, error)
+		ReadRuntimePodLogs(context.Context, string, string, string, int64, bool) (string, error)
+	}
 	namespaces   NamespaceClient
 	certificates CertificateReader
 	endpoints    interface {
@@ -82,6 +88,12 @@ func (d *kubernetesDependencies) ListRuntimeStatefulSets(ctx context.Context, na
 func (d *kubernetesDependencies) ListRuntimePods(ctx context.Context, namespace, selector string) ([]corev1.Pod, error) {
 	return d.runtime.ListRuntimePods(ctx, namespace, selector)
 }
+func (d *kubernetesDependencies) ListRuntimePodMetrics(ctx context.Context, namespace string) (map[string]k8sclient.RuntimePodUsage, error) {
+	return d.operations.ListRuntimePodMetrics(ctx, namespace)
+}
+func (d *kubernetesDependencies) ReadRuntimePodLogs(ctx context.Context, namespace, pod, container string, tail int64, previous bool) (string, error) {
+	return d.operations.ReadRuntimePodLogs(ctx, namespace, pod, container, tail, previous)
+}
 func (d *kubernetesDependencies) GetNamespace(ctx context.Context, name string) (*corev1.Namespace, error) {
 	return d.namespaces.GetNamespace(ctx, name)
 }
@@ -116,7 +128,7 @@ func NewKubernetesAdapter(client *k8sclient.Client) KubernetesAdapter {
 	}
 	applier := applicationservice.NewKubernetesApplier(client)
 	return &kubernetesDependencies{
-		applier: applier, runtime: client, namespaces: client, certificates: client,
+		applier: applier, runtime: client, operations: client, namespaces: client, certificates: client,
 		endpoints: applier, inspector: applier, pvc: applier, migrator: applier,
 		available: true,
 	}

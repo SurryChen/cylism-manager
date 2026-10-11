@@ -1,7 +1,9 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import router from './index.js'
 
 describe('infrastructure route migration', () => {
+  beforeAll(() => vi.spyOn(window, 'scrollTo').mockImplementation(() => {}))
+  afterAll(() => vi.restoreAllMocks())
   beforeEach(() => localStorage.setItem('access_token', 'test-token'))
 
   it('loads page components on demand', () => {
@@ -11,6 +13,12 @@ describe('infrastructure route migration', () => {
     for (const route of componentRoutes) {
       expect(route.components.default).toEqual(expect.any(Function))
     }
+  })
+
+  it('starts new pages at the top and restores history positions', () => {
+    const scrollBehavior = router.options.scrollBehavior
+    expect(scrollBehavior({}, {}, null)).toEqual({ top: 0 })
+    expect(scrollBehavior({}, {}, { left: 0, top: 280 })).toEqual({ left: 0, top: 280 })
   })
 
   it.each([

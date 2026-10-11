@@ -34,8 +34,8 @@ func (h *ApplicationHandler) CreateRelease(c *gin.Context) {
 		return
 	}
 	version := strings.TrimSpace(req.Version)
-	if req.TemplateID == 0 || version == "" {
-		apiShared.ValidationError(c, "请选择上线模板并填写版本号")
+	if req.TemplateID == 0 {
+		apiShared.ValidationError(c, "请选择上线模板")
 		return
 	}
 	app, err := h.queries.GetApplication(applicationID)
@@ -44,12 +44,20 @@ func (h *ApplicationHandler) CreateRelease(c *gin.Context) {
 		return
 	}
 	template, err := h.resources.GetApplicationDeploymentTemplate(applicationID, req.TemplateID)
-	if errors.Is(err, gorm.ErrRecordNotFound) || !template.Enabled {
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		apiShared.ValidationError(c, "上线模板不存在或已停用")
 		return
 	}
 	if err != nil {
 		apiShared.DBError(c, err.Error())
+		return
+	}
+	if !template.Enabled {
+		apiShared.ValidationError(c, "上线模板不存在或已停用")
+		return
+	}
+	if version == "" && template.DefaultVersion == "" {
+		apiShared.ValidationError(c, "请填写版本号或先设置模板默认版本号")
 		return
 	}
 	workflow := h.releaseWorkflow()

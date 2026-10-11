@@ -12,6 +12,34 @@ export function getServerStats(serverID, options) {
   return api.get(`/servers/${serverID}/stats`, options)
 }
 
+export function getTailscaleStatuses(options) {
+  return api.get('/servers/tailscale', options)
+}
+
+export function getTailscaleStatus(serverID, options) {
+  return api.get(`${serverPath(serverID)}/tailscale`, options)
+}
+
+export function installTailscale(serverID) {
+  return post(`${serverPath(serverID)}/tailscale/install`)
+}
+
+export function joinTailscale(serverID, authKey) {
+  return post(`${serverPath(serverID)}/tailscale/join`, { auth_key: authKey })
+}
+
+export function leaveTailscale(serverID) {
+  return post(`${serverPath(serverID)}/tailscale/leave`)
+}
+
+export function checkTailscaleConnections() {
+  return post('/servers/tailscale/connections')
+}
+
+export function diagnoseTailscaleConnection(fromID, toID) {
+  return post('/servers/tailscale/connections/diagnose', { from_id: fromID, to_id: toID })
+}
+
 function serverPath(serverID) {
   return `/servers/${encodeURIComponent(serverID)}`
 }

@@ -78,13 +78,13 @@ func TestCatalogListReturnsStoredClusters(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.DB().Create(&model.Cluster{Name: "生产集群", Distribution: "k3s", Status: "draft"}).Error; err != nil {
+	if err := st.DB().Create(&model.Cluster{Name: "生产集群", Distribution: "k3s", NetworkMode: "tailscale", Status: "draft"}).Error; err != nil {
 		t.Fatal(err)
 	}
 	r := gin.New()
 	r.GET("/api/clusters", NewCatalogHandler(st).List)
 	response := serve(r, newJSONRequest(http.MethodGet, "/api/clusters", nil))
-	if response.Code != http.StatusOK || !containsAll(response.Body.String(), `"code":0`, `"name":"生产集群"`, `"distribution":"k3s"`, `"status":"draft"`) {
+	if response.Code != http.StatusOK || !containsAll(response.Body.String(), `"code":0`, `"name":"生产集群"`, `"distribution":"k3s"`, `"network_mode":"tailscale"`, `"status":"draft"`) {
 		t.Fatalf("cluster list = %d %s", response.Code, response.Body.String())
 	}
 }
@@ -120,7 +120,7 @@ func TestCatalogCreateAndGetLogicalCluster(t *testing.T) {
 	}
 
 	response = serve(r, newJSONRequest(http.MethodGet, "/api/clusters/1", nil))
-	if response.Code != http.StatusOK || !containsAll(response.Body.String(), `"name":"生产集群"`, `"status":"draft"`) {
+	if response.Code != http.StatusOK || !containsAll(response.Body.String(), `"name":"生产集群"`, `"network_mode":"public"`, `"status":"draft"`) {
 		t.Fatalf("get cluster = %d %s", response.Code, response.Body.String())
 	}
 	response = serve(r, newJSONRequest(http.MethodPost, "/api/clusters", map[string]any{"name": "生产集群", "distribution": "k3s"}))

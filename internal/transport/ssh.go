@@ -18,19 +18,25 @@ import (
 // SSHTimeout is the default bound for a single remote SSH command.
 const SSHTimeout = 15 * time.Second
 
+// SSHConnectionError identifies failures before the remote command starts.
+type SSHConnectionError struct{ Err error }
+
+func (e *SSHConnectionError) Error() string { return e.Err.Error() }
+func (e *SSHConnectionError) Unwrap() error { return e.Err }
+
 // SSHExecServerContext executes a remote command using the credential stored
 // for server. Credentials are passed directly to the Go SSH client, never to
 // a process argument, environment variable, or temporary key file.
 func SSHExecServerContext(parent context.Context, timeout time.Duration, server *model.Server, encKey []byte, command string) ([]byte, error) {
 	client, cleanup, err := newSSHClientContext(parent, timeout, server, encKey)
 	if err != nil {
-		return nil, err
+		return nil, &SSHConnectionError{Err: err}
 	}
 	defer cleanup()
 
 	session, err := client.NewSession()
 	if err != nil {
-		return nil, err
+		return nil, &SSHConnectionError{Err: err}
 	}
 	defer session.Close()
 	return session.CombinedOutput(command)

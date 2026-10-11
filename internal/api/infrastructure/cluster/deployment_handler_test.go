@@ -91,7 +91,7 @@ func TestDeploymentLogsAreScopedToCluster(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	task, err := st.StartClusterDeployment(first.ID, server.ID, "control-plane", "official", server.Host)
+	task, err := st.StartClusterDeployment(first.ID, server.ID, "control-plane", "official", server.Host, "public")
 	if err != nil {
 		t.Fatal(err)
 	}

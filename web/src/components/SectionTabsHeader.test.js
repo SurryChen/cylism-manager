@@ -24,6 +24,15 @@ describe('SectionTabsHeader', () => {
     expect(wrapper.get('nav').element.parentElement).toBe(wrapper.element)
     expect(wrapper.get('[data-testid="header-action"]').element.parentElement?.parentElement).toBe(wrapper.element)
     expect(wrapper.get('[data-testid="settings-security"]').attributes('aria-current')).toBe('page')
+    expect(wrapper.classes()).toContain('sticky-page-header')
+  })
+
+  it('allows detail pages to disable sticky positioning', () => {
+    const wrapper = mount(SectionTabsHeader, {
+      props: { title: '商城应用', tabs, activeTab: 'security', sticky: false },
+    })
+
+    expect(wrapper.classes()).not.toContain('sticky-page-header')
   })
 
   it('emits the selected local tab without creating route navigation', async () => {

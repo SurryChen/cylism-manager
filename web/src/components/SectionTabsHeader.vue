@@ -1,6 +1,6 @@
 <template>
-  <header class="section-tabs-header" data-header-variant="tabbed">
-    <h1 class="page-title">{{ title }}</h1>
+  <header class="section-tabs-header" :class="{ 'sticky-page-header': sticky }" data-header-variant="tabbed">
+    <slot name="title"><h1 class="page-title">{{ title }}</h1></slot>
     <nav class="section-tabs" :aria-label="title">
       <button
         v-for="tab in tabs"
@@ -24,13 +24,14 @@ defineProps({
   tabs: { type: Array, required: true },
   activeTab: { type: String, required: true },
   testIdPrefix: { type: String, default: '' },
+  sticky: { type: Boolean, default: true },
 })
 
 defineEmits(['select'])
 </script>
 
 <style scoped>
-.section-tabs-header { position: relative; display: flex; align-items: flex-end; gap: 34px; height: var(--tabbed-page-header-height); min-height: 0; }
+.section-tabs-header { display: flex; align-items: flex-end; gap: 34px; height: var(--tabbed-page-header-height); min-height: 0; }
 .section-tabs-header .page-title { margin: 0 0 23px; font-size: var(--tabbed-page-header-title-size); }
 .section-tabs { display: flex; align-items: flex-end; gap: 26px; margin-bottom: 12px; }
 .section-tab { position: relative; padding: 0 0 12px; border: 0; color: var(--text-secondary); background: transparent; font: inherit; font-size: 14px; cursor: pointer; transition: color var(--page-header-motion-duration) ease; }
