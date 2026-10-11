@@ -15,6 +15,7 @@ DELETE /api/cloud/connections/:id/object-storage/containers/:container
 DELETE /api/cloud/connections/:id/object-storage/containers/:container/object
 DELETE /api/cluster-dns
 DELETE /api/clusters/:id
+DELETE /api/clusters/:id/cross-services/:serviceID
 DELETE /api/clusters/:id/k8s/certs/:namespace/:name
 DELETE /api/clusters/:id/k8s/certs/dns-credentials/:id
 DELETE /api/clusters/:id/k8s/certs/issuers/:kind/:namespace/:name
@@ -112,6 +113,9 @@ GET /api/cluster-dns
 GET /api/clusters
 GET /api/clusters/:id
 GET /api/clusters/:id/agent-status
+GET /api/clusters/:id/cross-services
+GET /api/clusters/:id/cross-services/:serviceID/check
+GET /api/clusters/:id/cross-services/precheck
 GET /api/clusters/:id/deployments
 GET /api/clusters/:id/deployments/:deploymentID/logs
 GET /api/clusters/:id/k8s/certs
@@ -153,6 +157,7 @@ GET /api/clusters/:id/monitoring/query-range
 GET /api/clusters/:id/monitoring/status
 GET /api/clusters/:id/monitoring/targets
 GET /api/clusters/:id/network-migration/precheck
+GET /api/cross-cluster-services
 GET /api/dashboard
 GET /api/domains
 GET /api/domains/:id/operations
@@ -310,6 +315,7 @@ POST /api/cluster-dns/history/:revision/rollback
 POST /api/clusters
 POST /api/clusters/:id/adoptions
 POST /api/clusters/:id/agent-operations
+POST /api/clusters/:id/cross-services
 POST /api/clusters/:id/deployments
 POST /api/clusters/:id/k8s/certs
 POST /api/clusters/:id/k8s/certs/dns-credentials

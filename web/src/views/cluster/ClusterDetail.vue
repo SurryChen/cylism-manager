@@ -359,11 +359,13 @@ function roleLabel(role) { return role === 'control-plane' ? '部署控制平面
 function taskLabel(task) {
   if (task.operation === 'restart') return `重启${task.role === 'control-plane' ? '控制平面' : '工作节点'}`
   if (task.operation === 'network-migrate') return '迁移至 Tailscale'
+  if (task.operation === 'cross-create') return '发布跨集群服务'
+  if (task.operation === 'cross-delete') return '删除跨集群服务'
   const agentLabels = { 'agent-install': '部署 Agent', 'agent-upgrade': '升级 Agent', 'agent-restart': '重启 Agent', 'agent-stop': '停止 Agent', 'agent-uninstall': '卸载 Agent', 'agent-test': '测试 Agent 连接' }
   if (agentLabels[task.operation]) return agentLabels[task.operation]
   return task.operation === 'uninstall' ? `卸载${task.role === 'control-plane' ? '控制平面' : '工作节点'}` : task.operation === 'adopt' ? `纳管${task.role === 'control-plane' ? '控制平面' : '工作节点'}` : roleLabel(task.role)
 }
-function taskDescription(task) { return task.operation === 'restart' ? 'K3s 服务重启' : task.operation === 'network-migrate' ? 'K3s 集群组网' : task.operation?.startsWith('agent-') ? 'cluster-agent 运维' : `K3s ${task.operation === 'uninstall' ? '卸载' : task.operation === 'adopt' ? '纳管' : '部署'}` }
+function taskDescription(task) { return task.operation === 'restart' ? 'K3s 服务重启' : task.operation === 'network-migrate' ? 'K3s 集群组网' : task.operation?.startsWith('cross-') ? '跨集群服务' : task.operation?.startsWith('agent-') ? 'cluster-agent 运维' : `K3s ${task.operation === 'uninstall' ? '卸载' : task.operation === 'adopt' ? '纳管' : '部署'}` }
 function deploymentStatusLabel(status) { return ({ running: '执行中', success: '成功', failed: '失败' })[status] || status }
 function deploymentStatusClass(status) { return ({ running: 'badge-deploying', success: 'badge-online', failed: 'badge-danger' })[status] || 'badge-offline' }
 function serverDisplayLabel(server) {

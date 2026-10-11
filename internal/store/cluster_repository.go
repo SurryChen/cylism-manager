@@ -13,6 +13,7 @@ import (
 var ErrClusterDeploymentConflict = errors.New("cluster deployment conflict")
 var ErrClusterHasNodes = errors.New("cluster has nodes or active tasks")
 var ErrClusterHasEnvironments = errors.New("cluster has application environments")
+var ErrClusterHasCrossServices = errors.New("cluster has cross-cluster services")
 
 // StartClusterNetworkMigration reserves the whole cluster without changing node ownership.
 func (s *Store) StartClusterNetworkMigration(clusterID uint) (*model.ClusterDeployment, error) {
@@ -200,7 +201,7 @@ func (s *Store) DeleteCluster(id uint) error {
 		if err := tx.First(&cluster, id).Error; err != nil {
 			return err
 		}
-		var nodes, running, environments int64
+		var nodes, running, environments, crossServices int64
 		if err := tx.Model(&model.Server{}).Where("cluster_id = ?", id).Count(&nodes).Error; err != nil {
 			return err
 		}
@@ -215,6 +216,12 @@ func (s *Store) DeleteCluster(id uint) error {
 		}
 		if environments > 0 {
 			return ErrClusterHasEnvironments
+		}
+		if err := tx.Model(&model.CrossClusterService{}).Where("source_cluster_id = ? OR target_cluster_id = ?", id, id).Count(&crossServices).Error; err != nil {
+			return err
+		}
+		if crossServices > 0 {
+			return ErrClusterHasCrossServices
 		}
 		if err := tx.Model(&model.AccessCertificate{}).Where("cluster_id = ? AND revoked_at IS NULL", id).Updates(map[string]any{"revoked_at": time.Now().UTC(), "in_use": false}).Error; err != nil {
 			return err

@@ -60,25 +60,26 @@ type DeliveryDependencies struct {
 }
 
 type InfrastructureDependencies struct {
-	Network     *networkapi.NetworkHandler
-	Catalog     *clusterapi.CatalogHandler
-	AccessCert  *clusterapi.AccessCertificateHandler
-	Deployment  *clusterapi.DeploymentHandler
-	Server      *clusterapi.ServerHandler
-	Terminal    *clusterapi.ServerTerminalHandler
-	Site        *networkapi.SiteHandler
-	Operation   *systemapi.OperationHandler
-	Domain      *networkapi.DomainHandler
-	Node        *clusterapi.NodeHandler
-	NodeJoin    *clusterapi.NodeJoinProgressHandler
-	Ingress     *networkapi.IngressHandler
-	Certificate *networkapi.CertHandler
-	K8s         *kubernetesapi.K8sHandler
-	Platform    *kubernetesapi.ClusterPlatformHandler
-	Storage     *storageapi.StorageHandler
-	CRD         *kubernetesapi.CRDHandler
-	AuditLog    *systemapi.AuditHandler
-	DBAdmin     *systemapi.DBAdminHandler
+	Network      *networkapi.NetworkHandler
+	Catalog      *clusterapi.CatalogHandler
+	AccessCert   *clusterapi.AccessCertificateHandler
+	Deployment   *clusterapi.DeploymentHandler
+	CrossService *clusterapi.CrossServiceHandler
+	Server       *clusterapi.ServerHandler
+	Terminal     *clusterapi.ServerTerminalHandler
+	Site         *networkapi.SiteHandler
+	Operation    *systemapi.OperationHandler
+	Domain       *networkapi.DomainHandler
+	Node         *clusterapi.NodeHandler
+	NodeJoin     *clusterapi.NodeJoinProgressHandler
+	Ingress      *networkapi.IngressHandler
+	Certificate  *networkapi.CertHandler
+	K8s          *kubernetesapi.K8sHandler
+	Platform     *kubernetesapi.ClusterPlatformHandler
+	Storage      *storageapi.StorageHandler
+	CRD          *kubernetesapi.CRDHandler
+	AuditLog     *systemapi.AuditHandler
+	DBAdmin      *systemapi.DBAdminHandler
 }
 
 type SystemDependencies struct {
@@ -120,7 +121,7 @@ func RegisterRoutes(r *gin.Engine, deps RouteDependencies) {
 		registerApplicationRoutes(r, apiGroup, deps.Application.Handler, nil, deps.Auth.Audit, deps.Auth.AuditRepository)
 	}
 	infra := deps.Infrastructure
-	registerInfrastructureRoutes(apiGroup, infra.Catalog, infra.AccessCert, infra.Deployment, infra.Server, infra.Terminal, infra.Site,
+	registerInfrastructureRoutes(apiGroup, infra.Catalog, infra.AccessCert, infra.Deployment, infra.CrossService, infra.Server, infra.Terminal, infra.Site,
 		infra.Operation, infra.Domain, infra.Node, infra.NodeJoin, infra.Ingress, infra.Certificate,
 		infra.K8s, infra.Platform, infra.Storage, infra.Network, infra.CRD, infra.AuditLog, infra.DBAdmin)
 }

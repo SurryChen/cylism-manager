@@ -38,3 +38,23 @@ type ClusterDeploymentLog struct {
 	Message      string    `gorm:"type:text;not null" json:"message"`
 	CreatedAt    time.Time `json:"created_at"`
 }
+
+// CrossClusterService publishes one target Service to a source cluster over Tailscale.
+type CrossClusterService struct {
+	ID                uint      `gorm:"primaryKey" json:"id"`
+	SourceClusterID   uint      `gorm:"index;uniqueIndex:idx_cross_service_name;not null" json:"source_cluster_id"`
+	TargetClusterID   uint      `gorm:"index;not null" json:"target_cluster_id"`
+	SourceNamespace   string    `gorm:"size:63;uniqueIndex:idx_cross_service_name;not null" json:"source_namespace"`
+	SourceName        string    `gorm:"size:63;uniqueIndex:idx_cross_service_name;not null" json:"source_name"`
+	TargetNamespace   string    `gorm:"size:63;not null" json:"target_namespace"`
+	TargetName        string    `gorm:"size:63;not null" json:"target_name"`
+	TargetServicePort int32     `gorm:"not null" json:"target_service_port"`
+	SourcePort        int32     `gorm:"not null" json:"source_port"`
+	GatewayPort       int32     `gorm:"not null" json:"gateway_port"`
+	TargetServerID    uint      `gorm:"not null" json:"target_server_id"`
+	TailscaleIP       string    `gorm:"size:64;not null" json:"tailscale_ip"`
+	Status            string    `gorm:"size:16;not null" json:"status"`
+	LastError         string    `gorm:"type:text" json:"last_error,omitempty"`
+	CreatedAt         time.Time `json:"created_at"`
+	UpdatedAt         time.Time `json:"updated_at"`
+}

@@ -234,6 +234,10 @@ func (h *CatalogHandler) Delete(c *gin.Context) {
 		apiShared.Conflict(c, "集群仍被项目环境使用，请先删除相关环境")
 		return
 	}
+	if errors.Is(err, store.ErrClusterHasCrossServices) {
+		apiShared.Conflict(c, "请先删除与该集群有关的跨集群服务")
+		return
+	}
 	if err != nil {
 		apiShared.InternalError(c, "删除集群失败")
 		return

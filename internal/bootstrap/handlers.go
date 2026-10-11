@@ -124,7 +124,7 @@ func (c *Container) BuildRouteDependencies() api.RouteDependencies {
 			Proxy: proxy, Chart: deliveryapi.NewChartRepositoryHandler(c.Store), Cloud: cloud,
 		},
 		Infrastructure: api.InfrastructureDependencies{
-			Network: networkHandler, Catalog: clusterapi.NewCatalogHandler(c.Store).WithAgentClientFactory(agentFactory.Client), AccessCert: accessCertificates, Deployment: deployment, Server: clusterapi.NewServerHandler(key, clusterService),
+			Network: networkHandler, Catalog: clusterapi.NewCatalogHandler(c.Store).WithAgentClientFactory(agentFactory.Client), AccessCert: accessCertificates, Deployment: deployment, CrossService: clusterapi.NewCrossServiceHandler(c.Store, key, agentFactory.Client), Server: clusterapi.NewServerHandler(key, clusterService),
 			Terminal: clusterapi.NewServerTerminalHandler(c.Store, key).WithAudit(c.Store),
 			Site:     networkapi.NewSiteHandler(c.Store), Operation: systemapi.NewOperationHandler(c.Store),
 			Domain: networkapi.NewDomainHandlerWithDependencies(networkapi.NewDomainKubernetesAdapter(c.K8s), networkService).WithClusterClientFactory(agentFactory.Client).WithCloudDNS(cloudservice.NewService(c.Store, key, cloudservice.ProviderRegistry{"aliyun": aliyunprovider.NewProvider}), c.Store),

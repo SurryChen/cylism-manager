@@ -11,10 +11,12 @@ import SectionTabsHeader from '../../components/SectionTabsHeader.vue'
 import { useRoutedTab } from '../../composables/useRoutedTab.js'
 
 const ClusterList = defineAsyncComponent(() => import('./ClusterList.vue'))
+const CrossClusterServices = defineAsyncComponent(() => import('./CrossClusterServices.vue'))
 const AccessCertificates = defineAsyncComponent(() => import('./AccessCertificates.vue'))
 
 const tabs = [
   { id: 'list', label: '列表', component: ClusterList },
+  { id: 'cross-services', label: '跨集群服务', component: CrossClusterServices },
   { id: 'access-certificates', label: '访问证书', component: AccessCertificates },
 ]
 const { activeTab, selectTab } = useRoutedTab({ tabs, defaultTab: 'list', path: '/cluster' })

@@ -56,7 +56,7 @@ describe('Infrastructure aggregation hubs', () => {
 
   it('shows cluster records and access certificates in the hub', async () => {
     const wrapper = await mountHub(ClusterHub, '/cluster?tab=registry-mirrors')
-    expect(wrapper.findAll('[data-testid^="cluster-tab-"]').map(tab => tab.text())).toEqual(['列表', '访问证书'])
+    expect(wrapper.findAll('[data-testid^="cluster-tab-"]').map(tab => tab.text())).toEqual(['列表', '跨集群服务', '访问证书'])
   })
 
   it('places the cluster list first and selects it by default', async () => {

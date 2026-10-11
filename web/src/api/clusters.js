@@ -59,3 +59,27 @@ export function checkClusterNetworkMigration(clusterID, options) {
 export function startClusterNetworkMigration(clusterID) {
   return api.post(`/clusters/${encodeURIComponent(clusterID)}/network-migration`, {})
 }
+
+export function getCrossClusterServices(clusterID, options) {
+  return api.get(`/clusters/${encodeURIComponent(clusterID)}/cross-services`, options)
+}
+
+export function getAllCrossClusterServices(options) {
+  return api.get('/cross-cluster-services', options)
+}
+
+export function precheckCrossClusterService(clusterID, targetClusterID, options) {
+  return api.get(`/clusters/${encodeURIComponent(clusterID)}/cross-services/precheck?target_cluster_id=${encodeURIComponent(targetClusterID)}`, options)
+}
+
+export function createCrossClusterService(clusterID, payload) {
+  return api.post(`/clusters/${encodeURIComponent(clusterID)}/cross-services`, payload)
+}
+
+export function checkCrossClusterService(clusterID, serviceID) {
+  return api.get(`/clusters/${encodeURIComponent(clusterID)}/cross-services/${encodeURIComponent(serviceID)}/check`)
+}
+
+export function deleteCrossClusterService(clusterID, serviceID) {
+  return api.delete(`/clusters/${encodeURIComponent(clusterID)}/cross-services/${encodeURIComponent(serviceID)}`)
+}

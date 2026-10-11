@@ -13,7 +13,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func registerInfrastructureRoutes(apiGroup *gin.RouterGroup, catalog *clusterapi.CatalogHandler, accessCert *clusterapi.AccessCertificateHandler, deployment *clusterapi.DeploymentHandler, server *clusterapi.ServerHandler, terminal *clusterapi.ServerTerminalHandler, site *networkapi.SiteHandler, operations *systemapi.OperationHandler, domain *networkapi.DomainHandler, node *clusterapi.NodeHandler, join *clusterapi.NodeJoinProgressHandler, ingress *networkapi.IngressHandler, cert *networkapi.CertHandler, k8sHandler *kubernetesapi.K8sHandler, platform *kubernetesapi.ClusterPlatformHandler, storage *storageapi.StorageHandler, network *networkapi.NetworkHandler, crd *kubernetesapi.CRDHandler, audit *systemapi.AuditHandler, dbAdmin *systemapi.DBAdminHandler) {
+func registerInfrastructureRoutes(apiGroup *gin.RouterGroup, catalog *clusterapi.CatalogHandler, accessCert *clusterapi.AccessCertificateHandler, deployment *clusterapi.DeploymentHandler, crossService *clusterapi.CrossServiceHandler, server *clusterapi.ServerHandler, terminal *clusterapi.ServerTerminalHandler, site *networkapi.SiteHandler, operations *systemapi.OperationHandler, domain *networkapi.DomainHandler, node *clusterapi.NodeHandler, join *clusterapi.NodeJoinProgressHandler, ingress *networkapi.IngressHandler, cert *networkapi.CertHandler, k8sHandler *kubernetesapi.K8sHandler, platform *kubernetesapi.ClusterPlatformHandler, storage *storageapi.StorageHandler, network *networkapi.NetworkHandler, crd *kubernetesapi.CRDHandler, audit *systemapi.AuditHandler, dbAdmin *systemapi.DBAdminHandler) {
 	access := apiGroup.Group("/access-certificates")
 	access.GET("/ca", accessCert.CA)
 	access.POST("/ca", accessCert.InitializeCA)
@@ -38,6 +38,14 @@ func registerInfrastructureRoutes(apiGroup *gin.RouterGroup, catalog *clusterapi
 	apiGroup.GET("/clusters/:id/deployments/:deploymentID/logs", deployment.Logs)
 	apiGroup.POST("/clusters/:id/nodes/:serverID/uninstall", deployment.Uninstall)
 	apiGroup.POST("/clusters/:id/nodes/:serverID/restart", deployment.RestartNode)
+	if crossService != nil {
+		apiGroup.GET("/cross-cluster-services", crossService.ListAll)
+		apiGroup.GET("/clusters/:id/cross-services", crossService.List)
+		apiGroup.GET("/clusters/:id/cross-services/precheck", crossService.Precheck)
+		apiGroup.POST("/clusters/:id/cross-services", crossService.Create)
+		apiGroup.GET("/clusters/:id/cross-services/:serviceID/check", crossService.Check)
+		apiGroup.DELETE("/clusters/:id/cross-services/:serviceID", crossService.Delete)
+	}
 	servers := apiGroup.Group("/servers")
 	servers.POST("", server.Create)
 	servers.POST("/hostname", server.ResolveHostname)

@@ -9,7 +9,7 @@ import (
 func migrateSchema(db *gorm.DB) error {
 	legacyCatalog := db.Migrator().HasTable(&model.ApplicationCatalogItem{}) && !db.Migrator().HasColumn(&model.ApplicationCatalogItem{}, "enabled")
 	if err := db.AutoMigrate(
-		&model.Cluster{}, &model.ClusterDeployment{}, &model.ClusterDeploymentLog{}, &model.AccessCA{}, &model.AccessCertificate{}, &model.Server{}, &model.Site{}, &model.Cert{}, &model.AuditLog{},
+		&model.Cluster{}, &model.ClusterDeployment{}, &model.ClusterDeploymentLog{}, &model.CrossClusterService{}, &model.AccessCA{}, &model.AccessCertificate{}, &model.Server{}, &model.Site{}, &model.Cert{}, &model.AuditLog{},
 		&model.OperationLog{}, &model.User{}, &model.TemporaryLoginToken{},
 		&model.SystemConfig{}, &model.RuntimeInstance{}, &model.AgentCapabilityGrant{},
 		&model.AgentOperation{}, &model.AlertEvent{}, &model.AlertAutomationPolicy{},
