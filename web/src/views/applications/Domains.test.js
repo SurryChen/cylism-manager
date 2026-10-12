@@ -22,6 +22,17 @@ beforeEach(() => {
 })
 
 describe('Domains view', () => {
+  it('returns to the originating application tab', async () => {
+    route.query = { project_id: '1', environment_id: '2', application_id: '4', return_tab: 'access' }
+    const wrapper = mount(Domains)
+    await new Promise(resolve => setTimeout(resolve, 20))
+    expect(wrapper.find('.back-link').text()).toContain('返回应用')
+    await wrapper.find('.back-link').trigger('click')
+    expect(push).toHaveBeenCalledWith({ path: '/applications/4', query: { tab: 'access' } })
+    wrapper.unmount()
+    route.query = { project_id: '1', environment_id: '2' }
+  })
+
   it('renders managed certificate state', async () => {
     const wrapper = mount(Domains)
     await new Promise(resolve => setTimeout(resolve, 20))
@@ -30,6 +41,19 @@ describe('Domains view', () => {
     expect(wrapper.text()).toContain('已就绪')
     expect(wrapper.text()).toContain('cylism-domain-1-tls')
     expect(wrapper.text()).not.toContain('关联历史域名')
+  })
+
+  it('opens the selected domain signing process and preserves the application return path', async () => {
+    route.query = { project_id: '1', environment_id: '2', application_id: '4', return_tab: 'access' }
+    const wrapper = mount(Domains)
+    await new Promise(resolve => setTimeout(resolve, 20))
+    await wrapper.findAll('.action-cell .btn').find(button => button.text() === '查看签发过程').trigger('click')
+    expect(push).toHaveBeenCalledWith({
+      path: '/applications/domains/1/operations',
+      query: { project_id: '1', environment_id: '2', application_id: '4', return_tab: 'access', hostname: 'api.example.com' },
+    })
+    wrapper.unmount()
+    route.query = { project_id: '1', environment_id: '2' }
   })
 
   it('loads ready ClusterIssuers before creating a domain in the selected environment', async () => {

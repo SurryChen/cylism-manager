@@ -156,6 +156,7 @@ func TestKubernetesApplierWaitReadyReportsImagePullFailure(t *testing.T) {
 		&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "order-api", Namespace: "dev"}, Spec: appsv1.DeploymentSpec{Selector: &metav1.LabelSelector{MatchLabels: labels}}},
 		&corev1.Pod{
 			ObjectMeta: metav1.ObjectMeta{Name: "order-api-abc", Namespace: "dev", Labels: labels},
+			Spec:       corev1.PodSpec{NodeName: "worker-a"},
 			Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{{
 				Name:  "order-api",
 				State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "ImagePullBackOff", Message: "failed to pull image registry.example.com/order-api:1.2.3"}},
@@ -164,7 +165,7 @@ func TestKubernetesApplierWaitReadyReportsImagePullFailure(t *testing.T) {
 	)
 	applier := NewKubernetesApplier(&k8sclient.Client{Clientset: clientset})
 	err := applier.WaitReady(context.Background(), ApplicationContext{Namespace: "dev", ApplicationName: "order-api", ReleaseSequence: 2}, ReleaseSpec{Replicas: 1})
-	if err == nil || !strings.Contains(err.Error(), "ImagePullBackOff") || !strings.Contains(err.Error(), "order-api-abc") {
+	if err == nil || !strings.Contains(err.Error(), "ImagePullBackOff") || !strings.Contains(err.Error(), "order-api-abc") || !strings.Contains(err.Error(), "节点 worker-a") {
 		t.Fatalf("expected image pull diagnostic, got %v", err)
 	}
 }
@@ -262,23 +263,13 @@ func TestKubernetesApplierWaitReadyIgnoresFailedPodFromOlderRelease(t *testing.T
 	}
 }
 
-func TestKubernetesApplierVerifyImageRejectsInvalidReference(t *testing.T) {
+func TestKubernetesApplierValidateImageReference(t *testing.T) {
 	applier := NewKubernetesApplier(nil)
-	err := applier.VerifyImage(context.Background(), ReleaseSpec{Image: "invalid image reference"})
+	err := applier.ValidateImageReference(context.Background(), ReleaseSpec{Image: "invalid image reference"})
 	if err == nil || !strings.Contains(err.Error(), "镜像地址无效") {
 		t.Fatalf("expected invalid image reference failure, got %v", err)
 	}
-}
-
-func TestImageVerificationReferenceUsesNodeMirror(t *testing.T) {
-	ref, err := imageVerificationReference(ReleaseSpec{
-		Image:                     "zenika/alpine-chrome:124",
-		ImageVerificationEndpoint: "https://docker.1panel.live",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if ref.Name() != "docker.1panel.live/zenika/alpine-chrome:124" {
-		t.Fatalf("expected node mirror reference, got %q", ref.Name())
+	if err := applier.ValidateImageReference(context.Background(), ReleaseSpec{Image: "unreachable.invalid/team/api:1.0.0"}); err != nil {
+		t.Fatalf("valid reference should not require registry access: %v", err)
 	}
 }

@@ -65,7 +65,7 @@ func catalogResponse(item model.ApplicationCatalogItem) (catalogItemResponse, er
 	return catalogItemResponse{ApplicationCatalogItem: item, Components: components}, nil
 }
 
-func catalogItemFromRequest(req catalogItemRequest, allowLegacySingle ...bool) (*model.ApplicationCatalogItem, error) {
+func catalogItemFromRequest(req catalogItemRequest) (*model.ApplicationCatalogItem, error) {
 	name := strings.TrimSpace(req.Name)
 	if name == "" || len([]rune(name)) > 128 || len([]rune(req.Description)) > 512 {
 		return nil, fmt.Errorf("名称必填且不能超过 128 字，说明不能超过 512 字")
@@ -77,12 +77,8 @@ func catalogItemFromRequest(req catalogItemRequest, allowLegacySingle ...bool) (
 	if len(req.Components) == 0 && !req.Enabled {
 		return &model.ApplicationCatalogItem{Name: name, Slug: slug, Description: strings.TrimSpace(req.Description), ComponentsData: "[]", LegacySpec: "{}"}, nil
 	}
-	minimum := 1
-	if req.Enabled && (len(allowLegacySingle) == 0 || !allowLegacySingle[0]) {
-		minimum = 2
-	}
-	if len(req.Components) < minimum || len(req.Components) > 20 {
-		return nil, fmt.Errorf("启用商城应用至少需要 2 个部署组件，最多支持 20 个")
+	if len(req.Components) < 1 || len(req.Components) > 20 {
+		return nil, fmt.Errorf("商城应用需要 1 至 20 个部署组件")
 	}
 	seen := make(map[string]bool, len(req.Components))
 	stored := make([]model.ApplicationCatalogComponent, 0, len(req.Components))
@@ -334,7 +330,7 @@ func (h *ApplicationHandler) UpdateCatalogItem(c *gin.Context) {
 		apiShared.BadRequest(c, "商城模板定义或版本无效")
 		return
 	}
-	current, err := h.applications.GetApplicationCatalogItem(id)
+	_, err = h.applications.GetApplicationCatalogItem(id)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		apiShared.NotFound(c, "商城应用不存在")
 		return
@@ -343,12 +339,7 @@ func (h *ApplicationHandler) UpdateCatalogItem(c *gin.Context) {
 		apiShared.DBError(c, err.Error())
 		return
 	}
-	currentComponents, err := current.CatalogComponents()
-	if err != nil {
-		apiShared.DBError(c, "读取商城应用配置失败")
-		return
-	}
-	item, err := catalogItemFromRequest(req, current.Enabled && len(currentComponents) == 1)
+	item, err := catalogItemFromRequest(req)
 	if err != nil {
 		apiShared.ValidationError(c, err.Error())
 		return

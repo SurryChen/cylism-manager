@@ -9,11 +9,13 @@
     <SurfaceCard v-else-if="cluster && activeTab === 'topology'" class="cluster-detail-content" padding="none">
       <div class="cluster-deployment-toolbar"><strong>集群拓扑</strong><div v-if="cluster.distribution === 'k3s'" class="cluster-toolbar-actions"><button class="btn" type="button" :disabled="runningDeployment || topologyLoading" @click="openAdoption">{{ deploymentRole === 'control-plane' ? '纳管已有 K3s' : '纳管已有节点' }}</button><button class="btn btn-primary" type="button" :disabled="runningDeployment || topologyLoading" @click="openDeployment">{{ deploymentRole === 'control-plane' ? '部署 K3s' : '添加工作节点' }}</button></div><span v-else class="cell-secondary">K8s 部署暂未开放</span></div>
       <FeedbackBanner v-if="topologyError" class="topology-error" tone="warning" :message="topologyError" />
+      <FeedbackBanner v-if="nodeSchedulingError" class="topology-error" tone="warning" :message="nodeSchedulingError" />
       <div v-if="clusterNodes.length" class="cluster-topology" aria-label="集群拓扑">
         <div v-if="controlNode" class="topology-node topology-node--control">
           <span class="topology-node-icon"><ServerCog :size="20" /></span>
-          <div class="topology-node-copy"><span class="topology-node-role">控制平面</span><strong>{{ nodeDisplayName(controlNode) }}</strong><span v-if="nodeDisplayName(controlNode) !== controlNode.host" class="cell-secondary">{{ controlNode.host }}</span></div>
+          <div class="topology-node-copy"><span class="topology-node-role">控制平面</span><strong>{{ nodeDisplayName(controlNode) }}</strong><span v-if="nodeDisplayName(controlNode) !== controlNode.host" class="cell-secondary">{{ controlNode.host }}</span><span v-if="nodeScheduling[controlNode.k8s_node_name]" class="badge badge-warn topology-scheduling-badge">默认不调度</span></div>
           <div class="topology-node-actions">
+            <button v-if="controlNode.k8s_node_name" class="icon-button icon-button--table" type="button" title="节点调度设置" :aria-label="`设置 ${nodeDisplayName(controlNode)} 的调度`" @click="openScheduling(controlNode)"><Settings2 :size="14" /></button>
             <button class="icon-button icon-button--table" type="button" title="重启 K3s 服务" :aria-label="`重启 ${nodeDisplayName(controlNode)} 的 K3s 服务`" :disabled="runningDeployment || topologyLoading" @click="openRestart(controlNode)"><RefreshCw :size="14" /></button>
             <button class="icon-button icon-button--table" type="button" :title="workerNodes.length ? '请先卸载工作节点' : '卸载控制平面'" :aria-label="`卸载 ${nodeDisplayName(controlNode)}`" :disabled="workerNodes.length > 0 || runningDeployment" @click="openUninstall(controlNode)"><Trash2 :size="14" /></button>
           </div>
@@ -23,8 +25,9 @@
           <div class="topology-workers-heading">工作节点 <span>{{ workerNodes.length }}</span></div>
           <div class="topology-worker-list"><div v-for="server in workerNodes" :key="server.id" class="topology-node topology-node--worker">
             <span class="topology-node-icon"><Server :size="18" /></span>
-            <div class="topology-node-copy"><span class="topology-node-role">工作节点</span><strong>{{ nodeDisplayName(server) }}</strong><span v-if="nodeDisplayName(server) !== server.host" class="cell-secondary">{{ server.host }}</span></div>
+            <div class="topology-node-copy"><span class="topology-node-role">工作节点</span><strong>{{ nodeDisplayName(server) }}</strong><span v-if="nodeDisplayName(server) !== server.host" class="cell-secondary">{{ server.host }}</span><span v-if="nodeScheduling[server.k8s_node_name]" class="badge badge-warn topology-scheduling-badge">默认不调度</span></div>
             <div class="topology-node-actions">
+              <button v-if="server.k8s_node_name" class="icon-button icon-button--table" type="button" title="节点调度设置" :aria-label="`设置 ${nodeDisplayName(server)} 的调度`" @click="openScheduling(server)"><Settings2 :size="14" /></button>
               <button class="icon-button icon-button--table" type="button" title="重启 K3s 服务" :aria-label="`重启 ${nodeDisplayName(server)} 的 K3s 服务`" :disabled="runningDeployment || topologyLoading" @click="openRestart(server)"><RefreshCw :size="14" /></button>
               <button class="icon-button icon-button--table" type="button" :title="`卸载 ${nodeDisplayName(server)}`" :aria-label="`卸载 ${nodeDisplayName(server)}`" :disabled="runningDeployment" @click="openUninstall(server)"><Trash2 :size="14" /></button>
             </div>
@@ -67,6 +70,15 @@
       <p>将通过 SSH 重启“{{ nodeDisplayName(restartTarget || {}) }}”上的 {{ restartTarget?.cluster_role === 'control-plane' ? 'k3s' : 'k3s-agent' }} 服务，并等待节点恢复 Ready。{{ restartTarget?.cluster_role === 'control-plane' ? '期间 Kubernetes API 会短暂中断。' : '期间该节点上的工作负载可能短暂中断。' }}</p>
       <template #actions><button class="btn" type="button" :disabled="restarting" @click="closeRestart">取消</button><button class="btn btn-primary" type="button" :disabled="restarting" @click="confirmRestart">{{ restarting ? '启动中...' : '确认重启' }}</button></template>
     </BaseModal>
+    <BaseModal :open="Boolean(schedulingTarget)" :title="schedulingTarget ? `${nodeDisplayName(schedulingTarget)} · 调度设置` : '调度设置'" size="small" @close="closeScheduling">
+      <EmptyState v-if="schedulingLoading" variant="loading" message="读取节点设置中..." />
+      <template v-else>
+        <FeedbackBanner v-if="schedulingReadError" tone="warning" :message="schedulingReadError" />
+        <label v-else class="scheduling-option"><input v-model="schedulingForm" type="checkbox" /><span>默认不调度 Pod</span></label>
+        <p v-if="!schedulingReadError" class="deployment-hint">仅影响新 Pod，不会驱逐已运行的 Pod；该节点上的系统组件重新调度也可能受影响。</p>
+      </template>
+      <template #actions><button class="btn" type="button" :disabled="schedulingSaving" @click="closeScheduling">取消</button><button class="btn btn-primary" type="button" :disabled="schedulingLoading || schedulingSaving || Boolean(schedulingReadError) || schedulingForm === schedulingOriginal" @click="saveScheduling">{{ schedulingSaving ? '保存中...' : '保存' }}</button></template>
+    </BaseModal>
     <BaseModal :open="deploymentOpen" :title="deploymentRole === 'control-plane' ? '部署 K3s 控制平面' : '添加 K3s 工作节点'" :show-close="!submitting" :close-on-overlay="!submitting" :close-on-escape="!submitting" @close="closeDeployment">
       <div class="cluster-deployment-form">
         <div class="deployment-form-field"><label for="deployment-server">{{ deploymentRole === 'control-plane' ? '选择控制平面服务器' : '选择工作节点服务器' }}</label><SelectMenu id="deployment-server" v-model="selectedServerID" :options="serverOptions" placeholder="请选择已有服务器" aria-label="部署服务器" /></div>
@@ -86,8 +98,9 @@
 <script setup>
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { defineAsyncComponent } from 'vue'
-import { ArrowLeft, RefreshCw, Server, ServerCog, Trash2 } from 'lucide-vue-next'
+import { ArrowLeft, RefreshCw, Server, ServerCog, Settings2, Trash2 } from 'lucide-vue-next'
 import { adoptClusterNode, getCluster, getClusterDeploymentLogs, getClusterDeployments, restartClusterNode, startClusterDeployment, uninstallClusterNode } from '../../api/clusters.js'
+import { getClusterNodes, getNodeScheduling, updateNodeScheduling } from '../../api/cluster.js'
 import { getServers } from '../../api/servers.js'
 import { getTailscaleStatus } from '../../api/servers.js'
 import { useAsyncResource } from '../../composables/useAsyncResource.js'
@@ -162,6 +175,17 @@ const selectedTailscaleMessage = computed(() => {
 const logs = ref([])
 const topologyLoading = ref(false)
 const topologyError = ref('')
+const nodeScheduling = ref({})
+const nodeSchedulingError = ref('')
+const schedulingTarget = ref(null)
+const schedulingForm = ref(false)
+const schedulingOriginal = ref(false)
+const schedulingLoading = ref(false)
+const schedulingSaving = ref(false)
+const schedulingReadError = ref('')
+const schedulingOperationError = ref('')
+let schedulingRequestID = 0
+let nodeSchedulingLoadID = 0
 const logError = ref('')
 const submitError = ref('')
 const submitting = ref(false)
@@ -175,8 +199,8 @@ const uninstallError = ref('')
 const restartTarget = ref(null)
 const restartError = ref('')
 const restarting = ref(false)
-const operationError = computed(() => adoptError.value || uninstallError.value || restartError.value || submitError.value)
-function clearOperationErrors() { adoptError.value = ''; uninstallError.value = ''; restartError.value = ''; submitError.value = '' }
+const operationError = computed(() => adoptError.value || uninstallError.value || restartError.value || submitError.value || schedulingOperationError.value)
+function clearOperationErrors() { adoptError.value = ''; uninstallError.value = ''; restartError.value = ''; submitError.value = ''; schedulingOperationError.value = '' }
 const uninstalling = ref(false)
 let pollingTimer
 let topologyRequestID = 0
@@ -206,10 +230,15 @@ const scopedComponent = computed(() => tabs.value.find(item => item.id === activ
 watch(() => props.clusterID, async id => {
   stopPolling()
   topologyRequestID += 1
+  schedulingRequestID += 1
+  nodeSchedulingLoadID += 1
   logRequestID += 1
   topologyLoading.value = false
   cluster.value = null
   servers.value = []
+  nodeScheduling.value = {}
+  nodeSchedulingError.value = ''
+  schedulingTarget.value = null
   deployments.value = []
   latestDeployments.value = []
   taskRunning.value = false
@@ -238,7 +267,7 @@ watch(activeTab, tab => {
   }
 })
 
-onBeforeUnmount(() => { stopPolling(); topologyRequestID += 1; logRequestID += 1 })
+onBeforeUnmount(() => { stopPolling(); topologyRequestID += 1; logRequestID += 1; schedulingRequestID += 1; nodeSchedulingLoadID += 1 })
 
 function stopPolling() { if (pollingTimer) clearTimeout(pollingTimer); pollingTimer = undefined }
 function schedulePoll() { stopPolling(); if (activeTab.value === 'tasks' || runningDeployment.value) pollingTimer = setTimeout(() => { void loadTopology() }, activeTab.value === 'tasks' ? 5000 : 1500) }
@@ -260,6 +289,7 @@ async function loadTopology() {
     if (requestID !== topologyRequestID) return
     cluster.value = clusterResult
     servers.value = serverResult || []
+    if (activeTab.value === 'topology' && clusterNodes.value.some(server => server.k8s_node_name)) void loadNodeScheduling(requestedClusterID)
     deployments.value = deploymentResult?.items || []
     taskTotal.value = deploymentResult?.total || 0
     latestDeployments.value = deploymentResult?.latest_agent_task ? [deploymentResult.latest_agent_task] : []
@@ -272,6 +302,60 @@ async function loadTopology() {
     }
   } catch (err) { if (requestID === topologyRequestID) topologyError.value = err.message || '加载部署状态失败' }
   finally { if (requestID === topologyRequestID) { topologyLoading.value = false; schedulePoll() } }
+}
+
+async function loadNodeScheduling(clusterID) {
+  const requestID = ++nodeSchedulingLoadID
+  nodeSchedulingError.value = ''
+  try {
+    const nodes = await getClusterNodes(undefined, clusterID)
+    if (requestID !== nodeSchedulingLoadID || clusterID !== props.clusterID) return
+    nodeScheduling.value = Object.fromEntries((nodes || []).map(node => [node.name, Boolean(node.default_no_schedule)]))
+  } catch (err) {
+    if (requestID === nodeSchedulingLoadID) nodeSchedulingError.value = err.message || '读取节点调度状态失败'
+  }
+}
+
+async function openScheduling(server) {
+  const requestID = ++schedulingRequestID
+  schedulingTarget.value = server
+  schedulingLoading.value = true
+  schedulingReadError.value = ''
+  try {
+    const state = await getNodeScheduling(props.clusterID, server.k8s_node_name)
+    if (requestID !== schedulingRequestID) return
+    schedulingForm.value = schedulingOriginal.value = Boolean(state.default_no_schedule)
+  } catch (err) {
+    if (requestID === schedulingRequestID) schedulingReadError.value = err.message || '读取节点调度设置失败'
+  } finally {
+    if (requestID === schedulingRequestID) schedulingLoading.value = false
+  }
+}
+
+function closeScheduling() {
+  if (schedulingSaving.value) return
+  schedulingRequestID += 1
+  schedulingTarget.value = null
+}
+
+async function saveScheduling() {
+  if (!schedulingTarget.value || schedulingSaving.value || schedulingLoading.value || schedulingReadError.value) return
+  const nodeName = schedulingTarget.value.k8s_node_name
+  const clusterID = props.clusterID
+  schedulingSaving.value = true
+  schedulingOperationError.value = ''
+  try {
+    const state = await updateNodeScheduling(clusterID, nodeName, schedulingForm.value)
+    if (clusterID !== props.clusterID) return
+    nodeSchedulingLoadID += 1
+    nodeScheduling.value = { ...nodeScheduling.value, [nodeName]: Boolean(state.default_no_schedule) }
+    schedulingOriginal.value = Boolean(state.default_no_schedule)
+    schedulingTarget.value = null
+  } catch (err) {
+    if (clusterID === props.clusterID) schedulingOperationError.value = err.message || '保存节点调度设置失败'
+  } finally {
+    schedulingSaving.value = false
+  }
 }
 
 async function loadLogs() {
@@ -440,6 +524,8 @@ function statusClass(value) {
 .topology-node-role { color: var(--action-primary); font-size: 10px; font-weight: 700; }
 .topology-node-copy strong { color: var(--text-primary); font-size: 13px; line-height: 1.3; overflow-wrap: anywhere; }
 .topology-node-copy .cell-secondary { overflow-wrap: anywhere; }
+.topology-scheduling-badge { width: fit-content; }
+.scheduling-option { display: flex; align-items: center; gap: 8px; font-size: 13px; }
 .topology-node-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 6px; margin-left: auto; }
 .topology-node--worker { width: min(280px, 100%); }
 .topology-node--worker .topology-node-icon, .topology-node--worker .topology-node-role { color: var(--text-secondary); }

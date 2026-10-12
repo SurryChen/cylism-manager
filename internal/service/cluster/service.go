@@ -23,6 +23,8 @@ type NodeAdapter interface {
 	ListNodeInfosContext(context.Context) ([]k8s.NodeInfo, error)
 	GetNodeLabelsContext(context.Context, string) (*k8s.NodeLabels, error)
 	UpdateNodeLabelsContext(context.Context, string, map[string]string, []string) (*k8s.NodeLabels, error)
+	GetNodeSchedulingContext(context.Context, string) (*k8s.NodeScheduling, error)
+	SetNodeNoScheduleContext(context.Context, string, bool) (*k8s.NodeScheduling, error)
 	DrainPlanContext(context.Context, string) (*k8s.DrainPlan, error)
 	DrainNodeContext(context.Context, string, k8s.DrainOptions) (*k8s.DrainResult, error)
 	ForceDrainNodeContext(context.Context, string, k8s.ForceDrainOptions) (*k8s.DrainResult, error)

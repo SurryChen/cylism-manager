@@ -12,7 +12,6 @@ import (
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/repository"
 	registryservice "github.com/cylism/cylism-manager/internal/service/registry"
-	"github.com/google/go-containerregistry/pkg/name"
 )
 
 var (
@@ -211,15 +210,12 @@ func (w *ReleaseWorkflow) PrepareRuntimeSpec(app *model.Application, spec *Relea
 	if spec == nil {
 		return fmt.Errorf("发布定义无效")
 	}
-	if err := w.PrepareRegistrySpec(app, spec); err != nil {
-		return err
-	}
-	return w.prepareMirrorSpec(spec)
+	return w.PrepareRegistrySpec(app, spec)
 }
 
 // PrepareRegistrySpec applies the selected project registry and resolves its
 // runtime-only credential. Template editing uses this to persist a canonical
-// image name without triggering node-level verification selection.
+// image name.
 func (w *ReleaseWorkflow) PrepareRegistrySpec(app *model.Application, spec *ReleaseSpec) error {
 	if spec == nil {
 		return fmt.Errorf("发布定义无效")
@@ -248,48 +244,6 @@ func (w *ReleaseWorkflow) PrepareRegistrySpec(app *model.Application, spec *Rele
 			}
 			spec.RegistryCredential = credential
 		}
-	}
-	return nil
-}
-
-func (w *ReleaseWorkflow) prepareMirrorSpec(spec *ReleaseSpec) error {
-	spec.ImageVerificationEndpoint = ""
-	spec.ImageVerificationUsername = ""
-	spec.ImageVerificationCredential = ""
-	spec.ImageVerificationInsecureSkipVerify = false
-	if strings.TrimSpace(spec.NodeName) == "" {
-		return nil
-	}
-	ref, err := parseImageReference(spec.Image)
-	if err != nil {
-		return fmt.Errorf("镜像地址无效: %w", err)
-	}
-	mirrors, err := w.repository.ListNodeRegistryMirrors()
-	if err != nil {
-		return fmt.Errorf("读取节点镜像源失败: %w", err)
-	}
-	for _, mirror := range mirrors {
-		if !mirror.Enabled || !registryservice.SameRegistry(mirror.Registry, ref) || !mirrorAppliedToNode(mirror, spec.NodeName) {
-			continue
-		}
-		var endpoints []string
-		if err := json.Unmarshal([]byte(mirror.Endpoints), &endpoints); err != nil || len(endpoints) == 0 {
-			return fmt.Errorf("节点镜像源 %q 配置损坏", mirror.Name)
-		}
-		endpoint := strings.TrimSpace(endpoints[0])
-		if endpoint == "" {
-			return fmt.Errorf("节点镜像源 %q 未配置可用地址", mirror.Name)
-		}
-		spec.ImageVerificationEndpoint, spec.ImageVerificationUsername = endpoint, mirror.Username
-		spec.ImageVerificationInsecureSkipVerify = mirror.InsecureSkipVerify
-		if mirror.Username != "" {
-			credential, err := registryservice.DecryptCredential(w.encKey, mirror.Credential)
-			if err != nil {
-				return fmt.Errorf("读取节点镜像源 %q 凭据失败", mirror.Name)
-			}
-			spec.ImageVerificationCredential = credential
-		}
-		return nil
 	}
 	return nil
 }
@@ -343,23 +297,6 @@ func registryImageReference(endpoint, image string) (string, error) {
 		return image, nil
 	}
 	return prefix + image, nil
-}
-
-func parseImageReference(image string) (string, error) {
-	ref, err := name.ParseReference(strings.TrimSpace(image))
-	if err != nil {
-		return "", err
-	}
-	return ref.Context().RegistryStr(), nil
-}
-
-func mirrorAppliedToNode(mirror model.NodeRegistryMirror, nodeName string) bool {
-	for _, status := range mirror.NodeStatuses {
-		if status.Status == "success" && status.Server.K8sNodeName == nodeName {
-			return true
-		}
-	}
-	return false
 }
 
 func (w *ReleaseWorkflow) syncApplicationEndpoints(ctx context.Context, app *model.Application, service ServiceSpec) error {

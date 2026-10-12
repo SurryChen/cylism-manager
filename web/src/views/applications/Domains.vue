@@ -1,6 +1,6 @@
 <template>
   <div>
-    <button class="back-link" @click="backToWorkspace"><ArrowLeft :size="16" />返回工作台</button>
+    <button class="back-link" @click="backToWorkspace"><ArrowLeft :size="16" />{{ route.query.application_id ? '返回应用' : '返回工作台' }}</button>
     <SectionTabsHeader title="受管域名" :tabs="[{ id: 'domains', label: '域名' }]" active-tab="domains" />
     <FeedbackBanner v-if="readError" tone="warning" :message="readError" />
     <SurfaceCard padding="none">
@@ -11,7 +11,7 @@
           <td>{{ domain.namespace || '未绑定' }}</td><td>{{ domain.dns_addresses?.join('、') || '-' }}</td><td><span v-if="domain.cloud_connection_id" class="badge" :class="domain.dns_status === 'ready' ? 'badge-online' : 'badge-danger'">{{ domain.dns_status === 'ready' ? '已同步' : domain.dns_status === 'failed' ? '解析失败' : '待处理' }}</span><span v-else>-</span><small v-if="domain.dns_error" class="cell-secondary">{{ domain.dns_error }}</small></td><td>{{ domain.issuer_ref || '-' }}</td>
           <td><span class="badge" :class="certificateClass(domain)">{{ certificateLabel(domain) }}</span><small v-if="certificateReason(domain)" class="cell-secondary">{{ certificateReason(domain) }}</small></td>
           <td>{{ domain.tls_secret_name || '-' }}</td><td>{{ formatDate(domain.certificate?.renewal_time) }}</td><td>{{ domain.application_count || 0 }}</td>
-          <td class="action-cell"><div class="btn-group"><button v-if="domain.cloud_connection_id && domain.dns_status !== 'ready'" class="btn btn-sm" @click="retryDNS(domain)">重试解析</button><button v-if="domain.namespace && domain.certificate_ownership !== 'imported'" class="btn btn-sm" @click="retry(domain)">重试签发</button><button v-if="domain.certificate_name" class="btn btn-sm" @click="openOperations">到集群查看</button><button class="btn btn-sm" @click="openEdit(domain)">编辑</button><button class="btn btn-sm btn-danger" :disabled="domain.application_count > 0" @click="remove(domain)">删除</button></div></td>
+          <td class="action-cell"><div class="btn-group"><button v-if="domain.cloud_connection_id && domain.dns_status !== 'ready'" class="btn btn-sm" @click="retryDNS(domain)">重试解析</button><button v-if="domain.namespace && domain.certificate_ownership !== 'imported'" class="btn btn-sm" @click="retry(domain)">重试签发</button><button v-if="domain.certificate_name" class="btn btn-sm" @click="openOperations(domain)">查看签发过程</button><button class="btn btn-sm" @click="openEdit(domain)">编辑</button><button class="btn btn-sm btn-danger" :disabled="domain.application_count > 0" @click="remove(domain)">删除</button></div></td>
         </tr>
       </tbody></table></div>
       <EmptyState v-else :variant="loaded ? 'empty' : 'loading'" :message="loaded ? '暂无受管域名' : '加载中...'" />
@@ -95,12 +95,27 @@ async function openImport(){ actionError.value = ''; if (!currentEnvironment.val
 async function openEdit(domain){ actionError.value = ''; if (!domain.environment_id && !currentEnvironment.value) { actionError.value = '请先在顶部选择要重新绑定的项目与环境'; return } editing.value = domain; const targetID = domain.environment_id || environmentID.value; form.value = { hostname: domain.hostname, environment_id: targetID, issuer_ref: domain.issuer_ref || '', description: domain.description || '', enabled: domain.enabled, cloud_connection_id: domain.cloud_connection_id, dns_zone: domain.dns_zone, node_ids: [...(domain.dns_node_ids || [])] }; try { await Promise.all([loadOptions(environmentByID(targetID)), loadDNSOptions(targetID)]); modal.value = true } catch(e) { actionError.value = e.message || '加载签发前置条件失败' } }
 function close(){ modal.value = false; editing.value = null }
 function closeImport(){ importModal.value = false; importCandidates.value = [] }
-async function backToWorkspace(){ await router.push({ path: '/applications', query: { project_id: route.query.project_id, environment_id: route.query.environment_id } }) }
+async function backToWorkspace(){
+  const applicationID = Number(route.query.application_id)
+  if (Number.isSafeInteger(applicationID) && applicationID > 0) {
+    const tab = route.query.return_tab === 'config' ? 'config' : 'access'
+    await router.push({ path: `/applications/${applicationID}`, query: { tab } })
+    return
+  }
+  await router.push({ path: '/applications', query: { project_id: route.query.project_id, environment_id: route.query.environment_id } })
+}
 async function save(){ saving.value = true; actionError.value = ''; try { if(editing.value) await updateManagedDomain(editing.value.id, form.value); else await createManagedDomain({ ...form.value, hostname: `${form.value.prefix}.${form.value.dns_zone}` }); close(); await load() } catch(e) { actionError.value = e.message || '提交域名申请失败' } finally { saving.value = false } }
 async function importCertificate(){ saving.value = true; actionError.value = ''; try { const candidate = selectedImportCertificate.value; if (!candidate) throw new Error('请选择可导入域名'); const { candidate_key, ...input } = importForm.value; await importManagedDomainCertificate({ ...input, certificate_name: candidate.certificate.name, cloud_connection_id: candidate.cloud_connection_id, dns_zone: candidate.dns_zone }); closeImport(); await load() } catch(e) { actionError.value = e.message || '导入域名失败' } finally { saving.value = false } }
 async function retryDNS(domain){ actionError.value = ''; try { await retryManagedDomainDNS(domain.id); await load() } catch(e) { actionError.value = e.message || '同步域名解析失败' } }
 async function retry(domain){ actionError.value = ''; try { await retryManagedDomainCertificate(domain.id); await load() } catch(e) { actionError.value = e.message || '重新申请证书失败' } }
-function openOperations(){ router.push('/cluster?tab=list') }
+function openOperations(domain){
+  router.push({ path: `/applications/domains/${domain.id}/operations`, query: {
+    project_id: route.query.project_id,
+    environment_id: route.query.environment_id,
+    ...(route.query.application_id ? { application_id: route.query.application_id, return_tab: route.query.return_tab } : {}),
+    hostname: domain.hostname,
+  } })
+}
 async function remove(domain){ if(domain.application_count > 0) return; const suffix = domain.certificate_ownership === 'imported' ? '平台域名记录？原云 DNS 记录、Certificate 和 TLS Secret 会保留。' : '及其云 DNS 记录和 Certificate？'; if(!window.confirm(`删除受管域名 ${domain.hostname} ${suffix}`)) return; try { await deleteManagedDomain(domain.id); await load() } catch(e) { actionError.value = e.message || '删除受管域名失败' } }
 function certificateLabel(domain){ if(!domain.namespace) return '未绑定'; return domain.certificate?.status === 'Ready' ? '已就绪' : domain.certificate?.status === 'Failed' ? '签发失败' : '签发中' }
 function certificateClass(domain){ return certificateLabel(domain) === '已就绪' ? 'badge-online' : certificateLabel(domain) === '签发失败' ? 'badge-danger' : 'badge-deploying' }

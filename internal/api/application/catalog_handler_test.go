@@ -34,8 +34,11 @@ func TestCatalogItemRejectsEnvironmentSpecificSettings(t *testing.T) {
 		t.Fatal("catalog must reject an invalid default version")
 	}
 	base.Components[0].DefaultVersion = ""
-	if _, err := catalogItemFromRequest(catalogItemRequest{Name: base.Name, Slug: base.Slug, Enabled: true, EntryComponent: base.EntryComponent, Components: base.Components[:1]}); err == nil {
-		t.Fatal("catalog package must contain multiple components")
+	if _, err := catalogItemFromRequest(catalogItemRequest{Name: base.Name, Slug: base.Slug, Enabled: true, EntryComponent: base.EntryComponent, Components: base.Components[:1]}); err != nil {
+		t.Fatalf("catalog must accept one component: %v", err)
+	}
+	if _, err := catalogItemFromRequest(catalogItemRequest{Name: base.Name, Slug: base.Slug, Enabled: true}); err == nil {
+		t.Fatal("enabled catalog must contain a component")
 	}
 	base.Components[0].Spec.Config = map[string]string{"API_URL": "http://order-web:8080"}
 	if item, err := catalogItemFromRequest(base); err != nil {

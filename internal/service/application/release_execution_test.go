@@ -10,17 +10,17 @@ import (
 )
 
 type fakeApplier struct {
-	verifyErr    error
-	preflightErr error
-	applyErr     error
-	readyErr     error
-	verified     bool
-	applied      bool
+	validationErr error
+	preflightErr  error
+	applyErr      error
+	readyErr      error
+	validated     bool
+	applied       bool
 }
 
-func (a *fakeApplier) VerifyImage(context.Context, ReleaseSpec) error {
-	a.verified = true
-	return a.verifyErr
+func (a *fakeApplier) ValidateImageReference(context.Context, ReleaseSpec) error {
+	a.validated = true
+	return a.validationErr
 }
 func (a *fakeApplier) Preflight(context.Context, ApplicationContext, ReleaseSpec) error {
 	return a.preflightErr
@@ -101,7 +101,7 @@ func TestExecuteReleaseRecordsSuccessfulSteps(t *testing.T) {
 		t.Fatalf("ExecuteRelease: %v", err)
 	}
 	stored, err := st.GetRelease(release.ID)
-	if err != nil || stored.Status != model.ReleaseStatusSucceeded || !applier.verified || !applier.applied {
+	if err != nil || stored.Status != model.ReleaseStatusSucceeded || !applier.validated || !applier.applied {
 		t.Fatalf("expected succeeded release, got %+v err=%v", stored, err)
 	}
 	operations, err := st.ListReleaseOperations(release.ID)
@@ -114,23 +114,23 @@ func TestExecuteReleaseRecordsSuccessfulSteps(t *testing.T) {
 	}
 }
 
-func TestExecuteReleaseStopsBeforeApplyWhenImageVerificationFails(t *testing.T) {
+func TestExecuteReleaseStopsBeforeApplyWhenImageReferenceIsInvalid(t *testing.T) {
 	st, _ := store.New(":memory:")
 	app := createTestApplication(t, st)
-	applier := &fakeApplier{verifyErr: context.DeadlineExceeded}
+	applier := &fakeApplier{validationErr: context.DeadlineExceeded}
 	service := NewService(st, applier)
 	release, err := service.CreateRelease(context.Background(), app.ID, 1, validTestReleaseSpec())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := service.ExecuteRelease(context.Background(), release.ID, app, validTestReleaseSpec()); err == nil {
-		t.Fatal("expected image verification failure")
+		t.Fatal("expected image validation failure")
 	}
 	if applier.applied {
-		t.Fatal("image verification failure must prevent resource application")
+		t.Fatal("image validation failure must prevent resource application")
 	}
 	operations, err := st.ListReleaseOperations(release.ID)
-	if err != nil || len(operations) != 1 || operations[0].Step != "verify_image" || operations[0].Status != model.ReleaseOperationFailed {
+	if err != nil || len(operations) != 1 || operations[0].Step != "validate_image" || operations[0].Status != model.ReleaseOperationFailed {
 		t.Fatalf("unexpected operations: %+v err=%v", operations, err)
 	}
 }

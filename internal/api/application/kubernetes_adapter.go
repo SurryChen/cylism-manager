@@ -64,8 +64,8 @@ type kubernetesDependencies struct {
 	available bool
 }
 
-func (d *kubernetesDependencies) VerifyImage(ctx context.Context, spec applicationservice.ReleaseSpec) error {
-	return d.applier.VerifyImage(ctx, spec)
+func (d *kubernetesDependencies) ValidateImageReference(ctx context.Context, spec applicationservice.ReleaseSpec) error {
+	return d.applier.ValidateImageReference(ctx, spec)
 }
 func (d *kubernetesDependencies) Preflight(ctx context.Context, app applicationservice.ApplicationContext, spec applicationservice.ReleaseSpec) error {
 	return d.applier.Preflight(ctx, app, spec)

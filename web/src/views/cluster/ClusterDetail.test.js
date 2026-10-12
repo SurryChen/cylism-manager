@@ -4,8 +4,8 @@ import { createMemoryHistory, createRouter } from 'vue-router'
 import ClusterDetail from './ClusterDetail.vue'
 import SelectMenu from '../../components/SelectMenu.vue'
 
-const { get, post } = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn() }))
-vi.mock('../../api/index.js', () => ({ api: { get, post } }))
+const { get, post, patch } = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), patch: vi.fn() }))
+vi.mock('../../api/index.js', () => ({ api: { get, post, patch } }))
 
 async function mountDetail(clusterID = '9', query = '') {
   const router = createRouter({ history: createMemoryHistory(), routes: [
@@ -24,6 +24,7 @@ describe('ClusterDetail', () => {
   beforeEach(() => {
     get.mockReset()
     post.mockReset()
+    patch.mockReset()
     get.mockImplementation(path => {
       if (path.endsWith('/agent-status')) return Promise.resolve({ state: 'ready' })
       if (path === '/clusters/9') return Promise.resolve(cluster)
@@ -45,6 +46,28 @@ describe('ClusterDetail', () => {
     await wrapper.get('.cluster-deployment-toolbar .btn-primary').trigger('click')
     expect(wrapper.get('[role="dialog"]').text()).toContain('部署 K3s 控制平面')
     expect(wrapper.findComponent(SelectMenu).exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('sets the managed no-schedule taint through the selected cluster', async () => {
+    get.mockImplementation(path => {
+      if (path === '/clusters/9') return Promise.resolve({ ...cluster, control_server_id: 3 })
+      if (path === '/servers') return Promise.resolve([{ ...server, cluster_id: 9, cluster_role: 'control-plane', k8s_node_name: 'control' }])
+      if (path === '/nodes?cluster_id=9') return Promise.resolve([{ name: 'control', default_no_schedule: false }])
+      if (path === '/nodes/control/scheduling?cluster_id=9') return Promise.resolve({ name: 'control', default_no_schedule: false })
+      return Promise.resolve([])
+    })
+    patch.mockResolvedValue({ name: 'control', default_no_schedule: true })
+    const wrapper = await mountDetail()
+    await flushPromises()
+    await wrapper.get('[aria-label="设置 节点一 的调度"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('[role="dialog"] input[type="checkbox"]').setValue(true)
+    await wrapper.get('[role="dialog"] .btn-primary').trigger('click')
+    await flushPromises()
+    expect(patch).toHaveBeenCalledWith('/nodes/control/scheduling?cluster_id=9', { default_no_schedule: true })
+    expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
+    expect(wrapper.get('.topology-scheduling-badge').text()).toBe('默认不调度')
     wrapper.unmount()
   })
 

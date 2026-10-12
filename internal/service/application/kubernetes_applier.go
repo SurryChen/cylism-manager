@@ -2,10 +2,7 @@ package application
 
 import (
 	"context"
-	"crypto/tls"
 	"fmt"
-	"net/http"
-	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -13,9 +10,7 @@ import (
 
 	k8sclient "github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
-	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
-	"github.com/google/go-containerregistry/pkg/v1/remote"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
@@ -90,66 +85,13 @@ func NewKubernetesApplier(client *k8sclient.Client) *KubernetesApplier {
 	}
 }
 
-// VerifyImage confirms that the selected repository and tag can be resolved
-// before Kubernetes resources are changed. Node-level pulling is validated by
-// WaitReady after the Deployment is applied.
-func (a *KubernetesApplier) VerifyImage(ctx context.Context, spec ReleaseSpec) error {
-	ref, err := imageVerificationReference(spec)
-	if err != nil {
+// ValidateImageReference only checks syntax. The scheduled node verifies
+// registry access when Kubernetes pulls the image.
+func (a *KubernetesApplier) ValidateImageReference(_ context.Context, spec ReleaseSpec) error {
+	if _, err := name.ParseReference(strings.TrimSpace(spec.Image)); err != nil {
 		return fmt.Errorf("镜像地址无效: %w", err)
 	}
-	verifyCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
-	defer cancel()
-	options := []remote.Option{remote.WithContext(verifyCtx), remote.WithAuth(authn.Anonymous)}
-	if spec.ImageVerificationEndpoint != "" {
-		if spec.ImageVerificationUsername != "" {
-			options[1] = remote.WithAuth(authn.FromConfig(authn.AuthConfig{Username: spec.ImageVerificationUsername, Password: spec.ImageVerificationCredential}))
-		}
-		if spec.ImageVerificationInsecureSkipVerify {
-			transport := http.DefaultTransport.(*http.Transport).Clone()
-			transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
-			options = append(options, remote.WithTransport(transport))
-		}
-	} else {
-		switch strings.TrimSpace(spec.RegistryAuthType) {
-		case "", "anonymous":
-		case "token":
-			options[1] = remote.WithAuth(authn.FromConfig(authn.AuthConfig{RegistryToken: spec.RegistryCredential}))
-		default:
-			options[1] = remote.WithAuth(authn.FromConfig(authn.AuthConfig{Username: spec.RegistryUsername, Password: spec.RegistryCredential}))
-		}
-	}
-	if _, err := remote.Head(ref, options...); err != nil {
-		return fmt.Errorf("镜像版本 %q 不存在或不可访问: %s", spec.Image, redactReleaseDiagnostic(err.Error(), spec))
-	}
 	return nil
-}
-
-func imageVerificationReference(spec ReleaseSpec) (name.Reference, error) {
-	source, err := name.ParseReference(strings.TrimSpace(spec.Image))
-	if err != nil || strings.TrimSpace(spec.ImageVerificationEndpoint) == "" {
-		return source, err
-	}
-	target, err := url.ParseRequestURI(spec.ImageVerificationEndpoint)
-	if err != nil || target.Host == "" || (target.Scheme != "https" && target.Scheme != "http") || (target.Path != "" && target.Path != "/") {
-		return nil, fmt.Errorf("镜像代理地址无效")
-	}
-	options := []name.Option{}
-	if target.Scheme == "http" {
-		options = append(options, name.Insecure)
-	}
-	repository, err := name.NewRepository(target.Host+"/"+source.Context().RepositoryStr(), options...)
-	if err != nil {
-		return nil, err
-	}
-	switch reference := source.(type) {
-	case name.Tag:
-		return repository.Tag(reference.TagStr()), nil
-	case name.Digest:
-		return repository.Digest(reference.DigestStr()), nil
-	default:
-		return nil, fmt.Errorf("镜像引用格式无效")
-	}
 }
 
 func (a *KubernetesApplier) Preflight(ctx context.Context, application ApplicationContext, spec ReleaseSpec) error {
@@ -708,16 +650,17 @@ func (a *KubernetesApplier) deploymentFailureDiagnostic(ctx context.Context, app
 	if err != nil {
 		return "", false
 	}
-	podNames := make(map[string]struct{}, len(pods))
+	podNames := make(map[string]string, len(pods))
 	lastDiagnostic := ""
 	for _, pod := range pods {
-		podNames[pod.Name] = struct{}{}
+		podLabel := releasePodDiagnosticName(pod)
+		podNames[pod.Name] = podLabel
 		if pod.Status.Phase == corev1.PodFailed {
-			return redactReleaseDiagnostic(fmt.Sprintf("Pod %s 已失败: %s", pod.Name, pod.Status.Message), spec), true
+			return redactReleaseDiagnostic(fmt.Sprintf("%s 已失败: %s", podLabel, pod.Status.Message), spec), true
 		}
 		for _, status := range pod.Status.ContainerStatuses {
 			if waiting := status.State.Waiting; waiting != nil && waiting.Reason != "" {
-				diagnostic := fmt.Sprintf("Pod %s 的容器 %s: %s", pod.Name, status.Name, waiting.Reason)
+				diagnostic := fmt.Sprintf("%s 的容器 %s: %s", podLabel, status.Name, waiting.Reason)
 				if waiting.Message != "" {
 					diagnostic += ": " + waiting.Message
 				}
@@ -730,7 +673,7 @@ func (a *KubernetesApplier) deploymentFailureDiagnostic(ctx context.Context, app
 		}
 		for _, condition := range pod.Status.Conditions {
 			if condition.Type == corev1.PodScheduled && condition.Status == corev1.ConditionFalse && condition.Message != "" {
-				lastDiagnostic = redactReleaseDiagnostic(fmt.Sprintf("Pod %s 调度失败: %s", pod.Name, condition.Message), spec)
+				lastDiagnostic = redactReleaseDiagnostic(fmt.Sprintf("%s 调度失败: %s", podLabel, condition.Message), spec)
 			}
 		}
 	}
@@ -742,12 +685,20 @@ func (a *KubernetesApplier) deploymentFailureDiagnostic(ctx context.Context, app
 		if event.Type != corev1.EventTypeWarning || event.InvolvedObject.Kind != "Pod" {
 			continue
 		}
-		if _, exists := podNames[event.InvolvedObject.Name]; !exists || event.Message == "" {
+		podLabel, exists := podNames[event.InvolvedObject.Name]
+		if !exists || event.Message == "" {
 			continue
 		}
-		lastDiagnostic = redactReleaseDiagnostic(fmt.Sprintf("Pod %s: %s: %s", event.InvolvedObject.Name, event.Reason, event.Message), spec)
+		lastDiagnostic = redactReleaseDiagnostic(fmt.Sprintf("%s: %s: %s", podLabel, event.Reason, event.Message), spec)
 	}
 	return lastDiagnostic, false
+}
+
+func releasePodDiagnosticName(pod corev1.Pod) string {
+	if pod.Spec.NodeName == "" {
+		return "Pod " + pod.Name
+	}
+	return fmt.Sprintf("Pod %s（节点 %s）", pod.Name, pod.Spec.NodeName)
 }
 
 func terminalContainerWaitingReason(reason string) bool {
@@ -761,7 +712,7 @@ func terminalContainerWaitingReason(reason string) bool {
 
 func redactReleaseDiagnostic(detail string, spec ReleaseSpec) string {
 	detail = strings.TrimSpace(detail)
-	for _, credential := range []string{spec.RegistryCredential, spec.ImageVerificationCredential} {
+	for _, credential := range []string{spec.RegistryCredential} {
 		if credential = strings.TrimSpace(credential); credential != "" {
 			detail = strings.ReplaceAll(detail, credential, "[REDACTED]")
 		}

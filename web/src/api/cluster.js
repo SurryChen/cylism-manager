@@ -51,6 +51,14 @@ export function updateNodeLabels(nodeName, body, options) {
   return patch(`${nodePath(nodeName)}/labels`, body, options)
 }
 
+export function getNodeScheduling(clusterID, nodeName, options) {
+  return api.get(`${nodePath(nodeName)}/scheduling?cluster_id=${encodeURIComponent(clusterID)}`, options)
+}
+
+export function updateNodeScheduling(clusterID, nodeName, enabled, options) {
+  return patch(`${nodePath(nodeName)}/scheduling?cluster_id=${encodeURIComponent(clusterID)}`, { default_no_schedule: enabled }, options)
+}
+
 export function getNodeRemovalCheck(nodeName, options) {
   return api.get(`${nodePath(nodeName)}/removal-check`, options)
 }

@@ -12,7 +12,7 @@ import (
 
 // ResourceApplier is the Kubernetes capability required by release execution.
 type ResourceApplier interface {
-	VerifyImage(ctx context.Context, spec ReleaseSpec) error
+	ValidateImageReference(ctx context.Context, spec ReleaseSpec) error
 	Preflight(ctx context.Context, application ApplicationContext, spec ReleaseSpec) error
 	Apply(ctx context.Context, resources *RenderedResources) error
 	WaitReady(ctx context.Context, application ApplicationContext, spec ReleaseSpec) error
@@ -98,8 +98,8 @@ func (s *Service) executeRelease(ctx context.Context, releaseID uint, applicatio
 	if err := s.transition(release, model.ReleaseStatusValidating); err != nil {
 		return err
 	}
-	if err := s.runStep(releaseID, "verify_image", func() error { return s.applier.VerifyImage(ctx, spec) }); err != nil {
-		return s.failRelease(releaseID, "verify_image", err)
+	if err := s.runStep(releaseID, "validate_image", func() error { return s.applier.ValidateImageReference(ctx, spec) }); err != nil {
+		return s.failRelease(releaseID, "validate_image", err)
 	}
 	if err := s.runStep(releaseID, "preflight", func() error { return s.applier.Preflight(ctx, applicationContext, spec) }); err != nil {
 		return s.failRelease(releaseID, "preflight", err)

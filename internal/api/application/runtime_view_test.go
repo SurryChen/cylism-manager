@@ -1,6 +1,11 @@
 package applicationapi
 
 import (
+	"encoding/json"
+	"net/http"
+	"strings"
+	"testing"
+
 	k8sclient "github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/service/application"
@@ -9,9 +14,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
-	"net/http"
-	"strings"
-	"testing"
 )
 
 func TestApplicationHandlerDiscoversCapabilityAndSanitizedRuntime(t *testing.T) {
@@ -102,6 +104,55 @@ func TestWorkspaceOverviewIncludesApplicationRuntimeSummary(t *testing.T) {
 	response := serve(r, newJSONRequest(http.MethodGet, "/api/workspace/overview?project_id=1&environment_id=1", nil))
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "\"status\":\"running\"") || !strings.Contains(response.Body.String(), "\"version\":\"1.4.0\"") || !strings.Contains(response.Body.String(), "https://browser.example.com") || !strings.Contains(response.Body.String(), "\"releases\":[{") {
 		t.Fatalf("unexpected workspace response: %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestWorkspaceOverviewUsesPodsFromFailedReleaseThatLaterBecameReady(t *testing.T) {
+	clientset := k8sfake.NewSimpleClientset()
+	r, s := setupApplicationRouter(&k8sclient.Client{Clientset: clientset})
+	app := createApplicationForReleaseRuntimeTest(t, s)
+	failed := &model.Release{ApplicationID: app.ID, Sequence: 2, Version: "2.0.0", Image: "example.com/browser:2.0.0", DesiredSpec: "{}", Status: model.ReleaseStatusFailed, CreatedBy: 1}
+	if err := s.CreateRelease(failed); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := clientset.CoreV1().Pods(app.Environment.Namespace).Create(t.Context(), &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "browser-2", Namespace: app.Environment.Namespace, Labels: map[string]string{application.ManagedByLabel: application.ManagedByValue, application.ApplicationNameLabel: app.Name, application.ReleaseLabel: "2"}},
+		Status:     corev1.PodStatus{Phase: corev1.PodRunning, ContainerStatuses: []corev1.ContainerStatus{{Name: "browser", Ready: true}}},
+	}, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+
+	response := serve(r, newJSONRequest(http.MethodGet, "/api/workspace/overview?project_id=1&environment_id=1", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("workspace response: %d %s", response.Code, response.Body.String())
+	}
+	var payload struct {
+		Data struct {
+			Applications []struct {
+				ActiveRelease *struct {
+					Sequence uint   `json:"sequence"`
+					Version  string `json:"version"`
+				} `json:"active_release"`
+				LatestRelease *struct {
+					Status string `json:"status"`
+				} `json:"latest_release"`
+				Runtime struct {
+					Status    string `json:"status"`
+					ReadyPods int32  `json:"ready_pods"`
+					TotalPods int32  `json:"total_pods"`
+				} `json:"runtime"`
+			} `json:"applications"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if len(payload.Data.Applications) != 1 {
+		t.Fatalf("unexpected applications: %s", response.Body.String())
+	}
+	info := payload.Data.Applications[0]
+	if info.Runtime.Status != "running" || info.Runtime.ReadyPods != 1 || info.Runtime.TotalPods != 1 || info.ActiveRelease == nil || info.ActiveRelease.Sequence != 2 || info.ActiveRelease.Version != "2.0.0" || info.LatestRelease == nil || info.LatestRelease.Status != model.ReleaseStatusFailed {
+		t.Fatalf("workspace should show live pods and historical release failure: %s", response.Body.String())
 	}
 }
 

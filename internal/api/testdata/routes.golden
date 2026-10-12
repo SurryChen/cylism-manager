@@ -229,6 +229,7 @@ GET /api/nodes/:id/drain-plan
 GET /api/nodes/:id/join-progress
 GET /api/nodes/:id/labels
 GET /api/nodes/:id/removal-check
+GET /api/nodes/:id/scheduling
 GET /api/operations
 GET /api/platform/capabilities
 GET /api/platform/endpoint
@@ -272,6 +273,7 @@ PATCH /api/k8s/deployments/:namespace/:name/scale
 PATCH /api/k8s/namespaces/:name
 PATCH /api/k8s/statefulsets/:namespace/:name/scale
 PATCH /api/nodes/:id/labels
+PATCH /api/nodes/:id/scheduling
 PATCH /api/runtimes/:id/chat/sessions/:sid
 POST /api/access-certificates
 POST /api/access-certificates/:id/revoke

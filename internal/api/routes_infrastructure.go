@@ -94,6 +94,8 @@ func registerInfrastructureRoutes(apiGroup *gin.RouterGroup, catalog *clusterapi
 	nodes.GET("", node.ListNode)
 	nodes.GET("/:id/labels", node.GetLabels)
 	nodes.PATCH("/:id/labels", node.UpdateLabels)
+	nodes.GET("/:id/scheduling", node.GetScheduling)
+	nodes.PATCH("/:id/scheduling", node.UpdateScheduling)
 	nodes.GET("/:id/join-progress", join.JoinProgress)
 	nodes.GET("/:id/drain-plan", node.DrainPlan)
 	nodes.GET("/:id/removal-check", node.RemovalCheck)

@@ -71,6 +71,14 @@ func (f *fakeNodeAdapter) UpdateNodeLabelsContext(context.Context, string, map[s
 	return f.labels, nil
 }
 
+func (f *fakeNodeAdapter) GetNodeSchedulingContext(context.Context, string) (*k8s.NodeScheduling, error) {
+	return &k8s.NodeScheduling{Name: "worker-a"}, nil
+}
+
+func (f *fakeNodeAdapter) SetNodeNoScheduleContext(context.Context, string, bool) (*k8s.NodeScheduling, error) {
+	return &k8s.NodeScheduling{Name: "worker-a"}, nil
+}
+
 func (f *fakeNodeAdapter) DeleteNodeContext(_ context.Context, name string) error {
 	f.deletedNode = name
 	return nil

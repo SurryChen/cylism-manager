@@ -250,7 +250,7 @@ func (h *ApplicationHandler) workspaceApplicationInfos(ctx context.Context, name
 	podStates, runtimeAvailable := h.queries.WorkspacePodStates(ctx, h.kubernetes, namespace)
 	infos := make([]workspaceApplicationInfo, 0, len(applications))
 	for _, app := range applications {
-		var latest, active *model.Release
+		var latest, active, observed *model.Release
 		for index := range allReleases[app.ID] {
 			release := &allReleases[app.ID][index]
 			if latest == nil {
@@ -259,21 +259,24 @@ func (h *ApplicationHandler) workspaceApplicationInfos(ctx context.Context, name
 			if active == nil && release.Status == model.ReleaseStatusSucceeded {
 				active = release
 			}
+			if runtimeAvailable && podStates[applicationservice.WorkspacePodKey(app.Name, release.Sequence)].TotalPods > 0 && (observed == nil || release.Sequence > observed.Sequence) {
+				observed = release
+			}
 		}
 		runtime := workspaceRuntimeSummary{Status: "not_released"}
-		if latest != nil && releaseInProgress(latest.Status) {
-			runtime.Status = "deploying"
-		} else if active != nil {
-			if !runtimeAvailable {
+		if observed != nil {
+			active = observed
+			runtime = podStates[applicationservice.WorkspacePodKey(app.Name, observed.Sequence)]
+		}
+		if latest != nil {
+			switch {
+			case !runtimeAvailable:
 				runtime.Status = "unknown"
-			} else {
-				runtime = podStates[applicationservice.WorkspacePodKey(app.Name, active.Sequence)]
-				if runtime.Status == "" {
-					runtime.Status = "unavailable"
-				}
+			case releaseInProgress(latest.Status):
+				runtime.Status = "deploying"
+			case observed == nil:
+				runtime.Status = "unavailable"
 			}
-		} else if latest != nil {
-			runtime.Status = "unavailable"
 		}
 		infos = append(infos, workspaceApplicationInfo{ApplicationView: *apiShared.ApplicationDTO(&app), ActiveRelease: apiShared.ReleaseDTO(active), LatestRelease: apiShared.ReleaseDTO(latest), Runtime: runtime, EndpointURL: applicationEndpointURL(app), EndpointAccessMode: applicationEndpointAccessMode(app), EndpointCount: len(app.Endpoints)})
 	}

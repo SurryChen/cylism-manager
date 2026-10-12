@@ -24,6 +24,12 @@ func (fakeNodes) GetNodeLabelsContext(context.Context, string) (*k8s.NodeLabels,
 func (fakeNodes) UpdateNodeLabelsContext(context.Context, string, map[string]string, []string) (*k8s.NodeLabels, error) {
 	return &k8s.NodeLabels{Name: "worker-a", Labels: map[string]string{"team": "platform"}}, nil
 }
+func (fakeNodes) GetNodeSchedulingContext(context.Context, string) (*k8s.NodeScheduling, error) {
+	return &k8s.NodeScheduling{Name: "worker-a", DefaultNoSchedule: true}, nil
+}
+func (fakeNodes) SetNodeNoScheduleContext(_ context.Context, _ string, enabled bool) (*k8s.NodeScheduling, error) {
+	return &k8s.NodeScheduling{Name: "worker-a", DefaultNoSchedule: enabled}, nil
+}
 func (fakeNodes) DrainPlanContext(context.Context, string) (*k8s.DrainPlan, error) {
 	return &k8s.DrainPlan{NodeName: "worker-a"}, nil
 }
@@ -68,5 +74,38 @@ func TestNodeAdapterKeepsForceDrainConfirmationAtServiceBoundary(t *testing.T) {
 	r.ServeHTTP(response, request)
 	if response.Code != http.StatusBadRequest || !bytes.Contains(response.Body.Bytes(), []byte("请确认风险")) {
 		t.Fatalf("force-drain response = %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestNodeSchedulingUsesSelectedClusterAdapter(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	service := cluster.NewService(nil, fakeNodes{})
+	var selectedCluster uint
+	handler := NewNodeHandler(service).WithAdapterFactory(func(_ context.Context, clusterID uint) (cluster.NodeAdapter, error) {
+		selectedCluster = clusterID
+		return fakeNodes{}, nil
+	})
+	router := gin.New()
+	router.GET("/api/nodes/:id/scheduling", handler.GetScheduling)
+	router.PATCH("/api/nodes/:id/scheduling", handler.UpdateScheduling)
+
+	missingCluster := httptest.NewRecorder()
+	router.ServeHTTP(missingCluster, httptest.NewRequest(http.MethodGet, "/api/nodes/worker-a/scheduling", nil))
+	if missingCluster.Code != http.StatusBadRequest {
+		t.Fatalf("expected cluster ID to be required, got %d", missingCluster.Code)
+	}
+
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/nodes/worker-a/scheduling?cluster_id=9", nil))
+	if response.Code != http.StatusOK || selectedCluster != 9 || !bytes.Contains(response.Body.Bytes(), []byte(`"default_no_schedule":true`)) {
+		t.Fatalf("unexpected scheduling read: %d %s", response.Code, response.Body.String())
+	}
+
+	request := httptest.NewRequest(http.MethodPatch, "/api/nodes/worker-a/scheduling?cluster_id=9", bytes.NewBufferString(`{"default_no_schedule":false}`))
+	request.Header.Set("Content-Type", "application/json")
+	response = httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || !bytes.Contains(response.Body.Bytes(), []byte(`"default_no_schedule":false`)) {
+		t.Fatalf("unexpected scheduling update: %d %s", response.Code, response.Body.String())
 	}
 }

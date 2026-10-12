@@ -44,6 +44,7 @@ const routes = [
   { path: '/applications/releases', redirect: '/applications' },
   { path: '/applications/registries', component: ImageRegistries },
   { path: '/applications/domains', component: Domains },
+  { path: '/applications/domains/:domainID/operations', component: CertificateOperations },
   { path: '/applications/:applicationID/releases/:releaseID', component: ReleaseDetails, props: true },
   { path: '/applications/:applicationID', component: ApplicationDetails, props: true },
   { path: '/servers', component: Servers },

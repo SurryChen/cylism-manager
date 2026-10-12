@@ -6,6 +6,7 @@ import {
   getClusterDomainOptions,
   getDomainOptions,
   getManagedDomains,
+  getManagedDomainOperations,
   importManagedDomainCertificate,
   retryManagedDomainCertificate,
   updateManagedDomain,
@@ -26,6 +27,12 @@ describe('domains api', () => {
     expect(api.get).toHaveBeenCalledWith('/certs/issuers', options)
     getClusterDomainOptions(7, options)
     expect(api.get).toHaveBeenCalledWith('/clusters/7/k8s/certs/issuers', options)
+  })
+
+  it('loads the signing process for a managed domain', () => {
+    const options = { signal: new AbortController().signal }
+    getManagedDomainOperations('domain/1', options)
+    expect(api.get).toHaveBeenCalledWith('/domains/domain%2F1/operations', options)
   })
 
   it('owns managed domain mutations with encoded identifiers', () => {

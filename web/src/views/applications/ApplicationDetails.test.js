@@ -3,6 +3,9 @@ import { mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import ApplicationDetails from './ApplicationDetails.vue'
 
+const routerPush = vi.hoisted(() => vi.fn())
+vi.mock('vue-router', () => ({ useRouter: () => ({ push: routerPush }), useRoute: () => ({ query: {} }) }))
+
 vi.mock('../../api/index.js', () => ({
   api: {
     get: vi.fn(path => {
@@ -20,6 +23,25 @@ vi.mock('../../api/index.js', () => ({
 }))
 
 describe('ApplicationDetails view', () => {
+  it('opens domain management for the current application environment', async () => {
+    routerPush.mockClear()
+    const wrapper = mount(ApplicationDetails, {
+      props: { applicationID: '1' },
+      global: { stubs: { RouterLink: { template: '<a><slot /></a>' }, Teleport: true } },
+    })
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    await wrapper.findAll('.section-tab').find(tab => tab.text() === '访问入口').trigger('click')
+    await wrapper.find('.detail-heading-actions .btn:not(.btn-primary)').trigger('click')
+    expect(routerPush).toHaveBeenCalledWith({ path: '/applications/domains', query: {
+      project_id: 2, environment_id: 3, application_id: '1', return_tab: 'access',
+    } })
+
+    await wrapper.find('.detail-access-card .btn-primary').trigger('click')
+    await wrapper.find('.domain-management-link').trigger('click')
+    expect(routerPush).toHaveBeenCalledTimes(2)
+  })
+
   it('shows release history on a dedicated application drill-down page', async () => {
     const wrapper = mount(ApplicationDetails, {
       props: { applicationID: '1' },

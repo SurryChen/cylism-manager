@@ -44,19 +44,15 @@ type ReleaseSpec struct {
 	Args       []string `json:"args,omitempty"`
 	RegistryID uint     `json:"registry_id,omitempty"`
 	// 以下字段只在发布执行期存在，禁止写入 API 响应或发布快照。
-	RegistryEndpoint                    string            `json:"-"`
-	RegistryAuthType                    string            `json:"-"`
-	RegistryUsername                    string            `json:"-"`
-	RegistryCredential                  string            `json:"-"`
-	ImageVerificationEndpoint           string            `json:"-"`
-	ImageVerificationUsername           string            `json:"-"`
-	ImageVerificationCredential         string            `json:"-"`
-	ImageVerificationInsecureSkipVerify bool              `json:"-"`
-	ContainerPort                       int32             `json:"container_port"`
-	Replicas                            int32             `json:"replicas"`
-	Resources                           ResourceSpec      `json:"resources"`
-	Health                              HealthSpec        `json:"health"`
-	Config                              map[string]string `json:"config,omitempty"`
+	RegistryEndpoint   string            `json:"-"`
+	RegistryAuthType   string            `json:"-"`
+	RegistryUsername   string            `json:"-"`
+	RegistryCredential string            `json:"-"`
+	ContainerPort      int32             `json:"container_port"`
+	Replicas           int32             `json:"replicas"`
+	Resources          ResourceSpec      `json:"resources"`
+	Health             HealthSpec        `json:"health"`
+	Config             map[string]string `json:"config,omitempty"`
 	// ConfigDisabled keeps configured values in the template while preventing
 	// selected keys from being projected into the workload. Missing entries are enabled
 	// for backwards compatibility with existing templates.

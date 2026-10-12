@@ -28,4 +28,5 @@ export function createManagedDomain(body, options) { return post('/domains', bod
 export function updateManagedDomain(id, body, options) { return put(`/domains/${segment(id)}`, body, options) }
 export function importManagedDomainCertificate(body, options) { return post('/domains/import', body, options) }
 export function retryManagedDomainCertificate(id, options) { return post(`/domains/${segment(id)}/certificate`, undefined, options) }
+export function getManagedDomainOperations(id, options) { return api.get(`/domains/${segment(id)}/operations`, options) }
 export function deleteManagedDomain(id, options) { return remove(`/domains/${segment(id)}`, options) }

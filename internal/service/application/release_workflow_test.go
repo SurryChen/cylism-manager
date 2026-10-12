@@ -63,29 +63,17 @@ func TestReleaseWorkflowCreatesReleaseFromTemplateWithRuntimeCredentials(t *test
 	}
 }
 
-func TestReleaseWorkflowUsesNodeAppliedMirrorForImageVerification(t *testing.T) {
+func TestReleaseWorkflowPreparesFixedNodeWithoutMirror(t *testing.T) {
 	st, err := store.New(":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}
-	server := &model.Server{Name: "worker-a", Host: "10.0.0.11", ClusterRole: "worker", K8sNodeName: "worker-a"}
-	if err := st.CreateServer(server); err != nil {
-		t.Fatal(err)
-	}
-	mirror := &model.NodeRegistryMirror{Name: "docker-hub", Registry: "docker.io", Endpoints: `["https://docker.1panel.live"]`, Enabled: true}
-	if err := st.CreateNodeRegistryMirror(mirror); err != nil {
-		t.Fatal(err)
-	}
-	if err := st.UpsertNodeRegistryMirrorStatus(&model.NodeRegistryMirrorNode{MirrorID: mirror.ID, ServerID: server.ID, Status: "success"}); err != nil {
-		t.Fatal(err)
-	}
-
 	workflow := NewReleaseWorkflow(st, nil, &fakeApplier{})
 	spec := ReleaseSpec{Image: "zenika/alpine-chrome:124", NodeName: "worker-a"}
 	if err := workflow.PrepareRuntimeSpec(nil, &spec); err != nil {
 		t.Fatal(err)
 	}
-	if spec.ImageVerificationEndpoint != "https://docker.1panel.live" {
-		t.Fatalf("expected applied node mirror endpoint, got %+v", spec)
+	if spec.Image != "zenika/alpine-chrome:124" || spec.NodeName != "worker-a" {
+		t.Fatalf("runtime spec changed unexpectedly: %+v", spec)
 	}
 }

@@ -12,10 +12,12 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/validation"
+	"k8s.io/client-go/util/retry"
 )
 
 const mirrorPodAnnotation = "kubernetes.io/config.mirror"
 const nodeDrainAnnotation = "cylism.io/drained-at"
+const managedNoScheduleTaintKey = "cylism.io/default-no-schedule"
 
 const (
 	nodeFailureThreshold = 5 * time.Minute
@@ -27,19 +29,20 @@ const (
 
 // NodeInfo is the node summary shown in the cluster console.
 type NodeInfo struct {
-	Name            string `json:"name"`
-	Ready           bool   `json:"ready"`
-	Evicted         bool   `json:"evicted"`
-	Roles           string `json:"roles"`
-	Version         string `json:"version"`
-	InternalIP      string `json:"internal_ip"`
-	OS              string `json:"os"`
-	CPUCores        int64  `json:"cpu_cores"`
-	MemoryMB        int64  `json:"memory_mb"`
-	CreatedAt       string `json:"created_at"`
-	HealthState     string `json:"health_state"`
-	HealthReason    string `json:"health_reason,omitempty"`
-	LastHeartbeatAt string `json:"last_heartbeat_at,omitempty"`
+	Name              string `json:"name"`
+	Ready             bool   `json:"ready"`
+	Evicted           bool   `json:"evicted"`
+	DefaultNoSchedule bool   `json:"default_no_schedule"`
+	Roles             string `json:"roles"`
+	Version           string `json:"version"`
+	InternalIP        string `json:"internal_ip"`
+	OS                string `json:"os"`
+	CPUCores          int64  `json:"cpu_cores"`
+	MemoryMB          int64  `json:"memory_mb"`
+	CreatedAt         string `json:"created_at"`
+	HealthState       string `json:"health_state"`
+	HealthReason      string `json:"health_reason,omitempty"`
+	LastHeartbeatAt   string `json:"last_heartbeat_at,omitempty"`
 }
 
 // NodeLabels is the label state exposed by the cluster node management API.
@@ -47,6 +50,11 @@ type NodeLabels struct {
 	Name          string            `json:"name"`
 	Labels        map[string]string `json:"labels"`
 	ProtectedKeys []string          `json:"protected_keys"`
+}
+
+type NodeScheduling struct {
+	Name              string `json:"name"`
+	DefaultNoSchedule bool   `json:"default_no_schedule"`
 }
 
 // DrainPod describes a Pod affected by a drain preflight or execution.
@@ -140,6 +148,56 @@ func (c *Client) GetNodeLabelsContext(ctx context.Context, name string) (*NodeLa
 		return nil, fmt.Errorf("get node %s labels: %w", name, err)
 	}
 	return nodeLabels(node), nil
+}
+
+func (c *Client) GetNodeSchedulingContext(ctx context.Context, name string) (*NodeScheduling, error) {
+	node, err := c.Clientset.CoreV1().Nodes().Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("读取节点 %s 调度设置: %w", name, err)
+	}
+	return &NodeScheduling{Name: node.Name, DefaultNoSchedule: hasManagedNoScheduleTaint(node)}, nil
+}
+
+func (c *Client) SetNodeNoScheduleContext(ctx context.Context, name string, enabled bool) (*NodeScheduling, error) {
+	var result *NodeScheduling
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		node, err := c.Clientset.CoreV1().Nodes().Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+		if hasManagedNoScheduleTaint(node) == enabled {
+			result = &NodeScheduling{Name: node.Name, DefaultNoSchedule: enabled}
+			return nil
+		}
+		taints := make([]corev1.Taint, 0, len(node.Spec.Taints)+1)
+		for _, taint := range node.Spec.Taints {
+			if taint.Key != managedNoScheduleTaintKey || taint.Effect != corev1.TaintEffectNoSchedule {
+				taints = append(taints, taint)
+			}
+		}
+		if enabled {
+			taints = append(taints, corev1.Taint{Key: managedNoScheduleTaintKey, Value: "true", Effect: corev1.TaintEffectNoSchedule})
+		}
+		node.Spec.Taints = taints
+		updated, err := c.Clientset.CoreV1().Nodes().Update(ctx, node, metav1.UpdateOptions{})
+		if err == nil {
+			result = &NodeScheduling{Name: updated.Name, DefaultNoSchedule: enabled}
+		}
+		return err
+	})
+	if err != nil {
+		return nil, fmt.Errorf("更新节点 %s 调度设置: %w", name, err)
+	}
+	return result, nil
+}
+
+func hasManagedNoScheduleTaint(node *corev1.Node) bool {
+	for _, taint := range node.Spec.Taints {
+		if taint.Key == managedNoScheduleTaintKey && taint.Effect == corev1.TaintEffectNoSchedule {
+			return true
+		}
+	}
+	return false
 }
 
 // UpdateNodeLabels applies only validated custom labels. Kubernetes and K3s
@@ -461,6 +519,7 @@ func nodeToInfo(node *corev1.Node) NodeInfo {
 	health := nodeHealth(node, time.Now())
 	info.Ready = health.State == NodeHealthReady
 	info.Evicted = node.Spec.Unschedulable
+	info.DefaultNoSchedule = hasManagedNoScheduleTaint(node)
 	info.HealthState = health.State
 	info.HealthReason = health.Reason
 	info.LastHeartbeatAt = health.LastHeartbeatAt

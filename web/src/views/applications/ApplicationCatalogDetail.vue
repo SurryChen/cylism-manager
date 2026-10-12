@@ -62,7 +62,7 @@ function componentPayload(component) {
   return { name: component.name, application_name: component.applicationName, default_version: component.defaultVersion, spec: { image: component.image, container_port: component.port, replicas: component.replicas, resources: { requests_cpu: component.requestsCPU, requests_memory: component.requestsMemory, limits_cpu: component.limitsCPU, limits_memory: component.limitsMemory }, config: Object.fromEntries(component.configRows.map(row => [row.key, row.value])), health: { readiness_enabled: component.readinessEnabled, readiness_type: 'http', readiness_path: component.readinessPath, liveness_enabled: false, liveness_type: 'http', liveness_path: '/healthz' }, service: { type: 'ClusterIP', ports: [{ name: 'http', protocol: 'TCP', port: component.port, target_port: component.port }] }, endpoint: { exposure: 'cluster' } } }
 }
 function validateForm() {
-  if (form.value.enabled && form.value.components.length < 2 && !(item.value.enabled && item.value.components.length === 1 && form.value.components.length === 1)) { mutationError.value = '启用前请至少配置两个部署组件'; return false }
+  if (form.value.enabled && form.value.components.length === 0) { mutationError.value = '启用前请至少配置一个部署组件'; return false }
   const names = form.value.components.map(component => component.applicationName)
   const invalidIndex = form.value.components.findIndex(component => {
     const keys = component.configRows.map(row => row.key)

@@ -71,6 +71,20 @@ describe('ApplicationCatalog', () => {
     expect(mocks.update).not.toHaveBeenCalled()
   })
 
+  it('enables a catalog application with one configured component', async () => {
+    mocks.get.mockResolvedValue({ id: 7, name: 'Markdown 编辑器', slug: 'doocs-md', description: '', revision: 1, enabled: false, entry_component: 'doocs-md', components: [
+      { name: '编辑器', application_name: 'doocs-md', default_version: 'latest', spec: { image: 'docker.io/doocs/md', container_port: 80, replicas: 1, resources: { requests_cpu: '100m', requests_memory: '128Mi', limits_cpu: '500m', limits_memory: '512Mi' } } },
+    ] })
+    mocks.update.mockResolvedValue({ id: 7 })
+    const wrapper = mount(ApplicationCatalogDetail, { global: { stubs: { Teleport: true } } })
+    await flushPromises()
+    await wrapper.get('.detail-actions input[type="checkbox"]').setValue(true)
+    await wrapper.get('.detail-form').trigger('submit')
+    await flushPromises()
+
+    expect(mocks.update).toHaveBeenCalledWith(7, expect.objectContaining({ enabled: true, entry_component: 'doocs-md', components: [expect.objectContaining({ application_name: 'doocs-md' })] }))
+  })
+
   it('returns to the catalog list after saving', async () => {
     mocks.update.mockResolvedValue({ id: 7 })
     const wrapper = mount(ApplicationCatalogDetail, { global: { stubs: { Teleport: true } } })

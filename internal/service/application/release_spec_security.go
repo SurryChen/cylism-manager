@@ -10,10 +10,6 @@ func SanitizeReleaseSpec(spec ReleaseSpec) ReleaseSpec {
 	spec.RegistryAuthType = ""
 	spec.RegistryUsername = ""
 	spec.RegistryCredential = ""
-	spec.ImageVerificationEndpoint = ""
-	spec.ImageVerificationUsername = ""
-	spec.ImageVerificationCredential = ""
-	spec.ImageVerificationInsecureSkipVerify = false
 	sanitized := spec
 	sanitized.Config = cloneStringMap(spec.Config)
 	sanitized.Secrets = make(map[string]string, len(spec.Secrets))
