@@ -113,6 +113,52 @@ func TestDuplicateServerHostReturnsActionableMessage(t *testing.T) {
 	}
 }
 
+func TestServerProxyLifecycle(t *testing.T) {
+	r, st := newClusterTestRouter(t)
+	handler := NewServerHandler(make([]byte, 32), clusterservice.NewService(st, nil))
+	r.PUT("/api/servers/:id", handler.Update)
+	r.DELETE("/api/servers/:id", handler.Delete)
+	send := func(method, path, body string) *httptest.ResponseRecorder {
+		request := httptest.NewRequest(method, path, strings.NewReader(body))
+		if body != "" {
+			request.Header.Set("Content-Type", "application/json")
+		}
+		response := httptest.NewRecorder()
+		r.ServeHTTP(response, request)
+		return response
+	}
+	proxy := &model.Server{Name: "gateway", Host: "203.0.113.1"}
+	if err := st.CreateServer(proxy); err != nil {
+		t.Fatal(err)
+	}
+	response := send(http.MethodPost, "/api/servers", fmt.Sprintf(`{"name":"internal","host":"100.100.1.2","proxy_server_id":%d}`, proxy.ID))
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"proxy_server_name":"gateway"`) {
+		t.Fatalf("create proxy server = %d %s", response.Code, response.Body.String())
+	}
+	response = send(http.MethodGet, "/api/servers", "")
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"proxy_server_name":"gateway"`) {
+		t.Fatalf("list proxy server = %d %s", response.Code, response.Body.String())
+	}
+	response = send(http.MethodPut, "/api/servers/2", `{"name":"renamed"}`)
+	stored, err := st.GetServer(2)
+	if response.Code != http.StatusOK || err != nil || stored.ProxyServerID == nil || *stored.ProxyServerID != proxy.ID {
+		t.Fatalf("partial update lost proxy: response=%d %s, stored=%#v, err=%v", response.Code, response.Body.String(), stored, err)
+	}
+	response = send(http.MethodDelete, "/api/servers/1", "")
+	if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), "代理节点") {
+		t.Fatalf("delete active proxy = %d %s", response.Code, response.Body.String())
+	}
+	response = send(http.MethodPut, "/api/servers/1", `{"proxy_server_id":2}`)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("nested proxy = %d %s", response.Code, response.Body.String())
+	}
+	response = send(http.MethodPut, "/api/servers/2", `{"proxy_server_id":null}`)
+	stored, err = st.GetServer(2)
+	if response.Code != http.StatusOK || err != nil || stored.ProxyServerID != nil {
+		t.Fatalf("clear proxy = %d %s, stored=%#v, err=%v", response.Code, response.Body.String(), stored, err)
+	}
+}
+
 type recordingServerInspector struct {
 	server        *model.Server
 	hostname      string

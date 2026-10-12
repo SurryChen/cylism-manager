@@ -1,6 +1,7 @@
 package transport
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -40,6 +41,26 @@ func SSHExecServerContext(parent context.Context, timeout time.Duration, server 
 	}
 	defer session.Close()
 	return session.CombinedOutput(command)
+}
+
+// SSHExecServerOutputContext keeps stdout separate when a command returns structured data.
+func SSHExecServerOutputContext(parent context.Context, timeout time.Duration, server *model.Server, encKey []byte, command string) ([]byte, []byte, error) {
+	client, cleanup, err := newSSHClientContext(parent, timeout, server, encKey)
+	if err != nil {
+		return nil, nil, &SSHConnectionError{Err: err}
+	}
+	defer cleanup()
+
+	session, err := client.NewSession()
+	if err != nil {
+		return nil, nil, &SSHConnectionError{Err: err}
+	}
+	defer session.Close()
+	var stdout, stderr bytes.Buffer
+	session.Stdout = &stdout
+	session.Stderr = &stderr
+	err = session.Run(command)
+	return stdout.Bytes(), stderr.Bytes(), err
 }
 
 // SSHCommand is a started remote command with streaming standard I/O. It is
@@ -132,23 +153,48 @@ func newSSHClientContext(parent context.Context, timeout time.Duration, server *
 		return nil, nil, err
 	}
 	ctx, cancel := context.WithTimeout(parent, timeout)
+	defer cancel()
 	port := server.SSHPort
 	if port <= 0 {
 		port = 22
 	}
 	address := net.JoinHostPort(server.Host, strconv.Itoa(port))
-	connection, err := (&net.Dialer{}).DialContext(ctx, "tcp", address)
-	if err != nil {
-		cancel()
-		return nil, nil, err
+	var proxyClient *ssh.Client
+	var proxyCleanup func()
+	if server.ProxyServerID != nil {
+		if server.SSHProxy == nil || server.SSHProxy.ID != *server.ProxyServerID || server.SSHProxy.ProxyServerID != nil || server.SSHProxy.ID == server.ID {
+			return nil, nil, fmt.Errorf("SSH 代理节点不可用或不支持多级代理")
+		}
+		proxyClient, proxyCleanup, err = newSSHClientContext(parent, timeout, server.SSHProxy, encKey)
+		if err != nil {
+			return nil, nil, fmt.Errorf("连接 SSH 代理节点失败: %w", err)
+		}
 	}
+	var connection net.Conn
+	if proxyClient != nil {
+		stopDial := context.AfterFunc(ctx, func() { _ = proxyClient.Close() })
+		connection, err = proxyClient.Dial("tcp", address)
+		stopDial()
+	} else {
+		connection, err = (&net.Dialer{}).DialContext(ctx, "tcp", address)
+	}
+	if err != nil {
+		if proxyCleanup != nil {
+			proxyCleanup()
+		}
+		return nil, nil, fmt.Errorf("连接目标 %s 失败: %w", address, err)
+	}
+	stopHandshake := context.AfterFunc(ctx, func() { _ = connection.Close() })
+	defer stopHandshake()
 	if deadline, ok := ctx.Deadline(); ok {
 		_ = connection.SetDeadline(deadline)
 	}
 	clientConnection, channels, requests, err := ssh.NewClientConn(connection, address, config)
 	if err != nil {
 		_ = connection.Close()
-		cancel()
+		if proxyCleanup != nil {
+			proxyCleanup()
+		}
 		return nil, nil, err
 	}
 	_ = connection.SetDeadline(time.Time{})
@@ -156,7 +202,7 @@ func newSSHClientContext(parent context.Context, timeout time.Duration, server *
 	stop := make(chan struct{})
 	go func() {
 		select {
-		case <-ctx.Done():
+		case <-parent.Done():
 			_ = client.Close()
 		case <-stop:
 		}
@@ -164,9 +210,16 @@ func newSSHClientContext(parent context.Context, timeout time.Duration, server *
 	cleanup := func() {
 		close(stop)
 		_ = client.Close()
-		cancel()
+		if proxyCleanup != nil {
+			proxyCleanup()
+		}
 	}
 	return client, cleanup, nil
+}
+
+// NewSSHClientContext is shared by command, transfer, and terminal sessions.
+func NewSSHClientContext(parent context.Context, timeout time.Duration, server *model.Server, encKey []byte) (*ssh.Client, func(), error) {
+	return newSSHClientContext(parent, timeout, server, encKey)
 }
 
 func sshClientConfig(server *model.Server, encKey []byte) (*ssh.ClientConfig, error) {

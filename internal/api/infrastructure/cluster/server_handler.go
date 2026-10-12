@@ -3,14 +3,18 @@ package cluster
 import (
 	"crypto/md5"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"io"
+	"net"
+	"strconv"
 	"strings"
 
 	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 	"github.com/cylism/cylism-manager/internal/model"
 	crypto "github.com/cylism/cylism-manager/internal/security"
 	"github.com/cylism/cylism-manager/internal/service/cluster"
+	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
@@ -27,15 +31,50 @@ func NewServerHandler(encKey []byte, service *cluster.Service) *ServerHandler {
 }
 
 type createServerRequest struct {
-	Name             string `json:"name"`
-	Host             string `json:"host" binding:"required"`
-	Hostname         string `json:"hostname"`
-	SSHPort          int    `json:"ssh_port"`
-	SSHUser          string `json:"ssh_user"`
-	SSHAuthType      string `json:"ssh_auth_type"`
-	SSHPassword      string `json:"ssh_password"`
-	SSHKey           string `json:"ssh_key"`
-	SSHKeyPassphrase string `json:"ssh_key_passphrase"`
+	Name             string          `json:"name"`
+	Host             string          `json:"host" binding:"required"`
+	Hostname         string          `json:"hostname"`
+	SSHPort          int             `json:"ssh_port"`
+	SSHUser          string          `json:"ssh_user"`
+	SSHAuthType      string          `json:"ssh_auth_type"`
+	SSHPassword      string          `json:"ssh_password"`
+	SSHKey           string          `json:"ssh_key"`
+	SSHKeyPassphrase string          `json:"ssh_key_passphrase"`
+	ProxyServerID    json.RawMessage `json:"proxy_server_id"`
+}
+
+func parseProxyServerID(raw json.RawMessage) (*uint, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil, nil
+	}
+	value, err := strconv.ParseUint(string(raw), 10, 32)
+	if err != nil || value == 0 {
+		return nil, errors.New("代理节点 ID 无效")
+	}
+	id := uint(value)
+	return &id, nil
+}
+
+func (h *ServerHandler) setProxy(server *model.Server, proxyID *uint) error {
+	server.ProxyServerID, server.SSHProxy = nil, nil
+	if proxyID == nil || *proxyID == 0 {
+		return nil
+	}
+	if server.ID != 0 && *proxyID == server.ID {
+		return errors.New("服务器不能代理自身")
+	}
+	proxy, err := h.cluster.GetServer(*proxyID)
+	if err != nil {
+		return errors.New("所选代理节点不存在")
+	}
+	if proxy.ProxyServerID != nil {
+		return errors.New("代理节点必须使用直接访问")
+	}
+	if net.ParseIP(strings.TrimSpace(server.Host)) == nil {
+		return errors.New("代理访问的目标主机需要填写代理节点可连接的 IP")
+	}
+	server.ProxyServerID, server.SSHProxy = proxyID, proxy
+	return nil
 }
 
 func (h *ServerHandler) Create(c *gin.Context) {
@@ -71,6 +110,15 @@ func (h *ServerHandler) Create(c *gin.Context) {
 		Name: req.Name, Host: req.Host, Hostname: strings.TrimSpace(req.Hostname), SSHPort: req.SSHPort, SSHUser: req.SSHUser,
 		SSHAuthType: req.SSHAuthType, SSHPassword: password, SSHKey: key,
 		SSHKeyPassphrase: passphrase, SSHKeyHash: keyHash,
+	}
+	proxyID, err := parseProxyServerID(req.ProxyServerID)
+	if err != nil {
+		apiShared.BadRequest(c, err.Error())
+		return
+	}
+	if err := h.setProxy(server, proxyID); err != nil {
+		apiShared.BadRequest(c, err.Error())
+		return
 	}
 	if err := h.cluster.CreateServer(server); err != nil {
 		if existing, lookupErr := h.cluster.GetServerByHost(server.Host); lookupErr == nil && existing.ID != server.ID {
@@ -163,7 +211,34 @@ func (h *ServerHandler) Update(c *gin.Context) {
 	if value, ok := updates["hostname"].(string); ok {
 		server.Hostname = strings.TrimSpace(value)
 	}
+	if value, ok := updates["proxy_server_id"]; ok {
+		var proxyID *uint
+		if number, valid := value.(float64); valid {
+			if number <= 0 || number > float64(^uint32(0)) || number != float64(uint32(number)) {
+				apiShared.BadRequest(c, "代理节点 ID 无效")
+				return
+			}
+			id := uint(number)
+			proxyID = &id
+		} else if value != nil {
+			apiShared.BadRequest(c, "代理节点 ID 无效")
+			return
+		}
+		if err := h.setProxy(server, proxyID); err != nil {
+			apiShared.BadRequest(c, err.Error())
+			return
+		}
+	} else if server.ProxyServerID != nil {
+		if err := h.setProxy(server, server.ProxyServerID); err != nil {
+			apiShared.BadRequest(c, err.Error())
+			return
+		}
+	}
 	if err := h.cluster.UpdateServer(server); err != nil {
+		if errors.Is(err, store.ErrServerProxyInUse) {
+			apiShared.Conflict(c, err.Error())
+			return
+		}
 		if existing, lookupErr := h.cluster.GetServerByHost(server.Host); lookupErr == nil && existing.ID != server.ID {
 			apiShared.Conflict(c, "该主机已添加，请编辑已有服务器")
 			return
@@ -194,7 +269,7 @@ func (h *ServerHandler) ResolveHostname(c *gin.Context) {
 		return
 	}
 	if err := h.applyDraftConnection(server, req); err != nil {
-		apiShared.InternalError(c, err.Error())
+		apiShared.BadRequest(c, err.Error())
 		return
 	}
 	hostname, err := h.cluster.ServerHostnameContext(c.Request.Context(), server)
@@ -207,6 +282,15 @@ func (h *ServerHandler) ResolveHostname(c *gin.Context) {
 
 func (h *ServerHandler) applyDraftConnection(server *model.Server, req createServerRequest) error {
 	server.Host = strings.TrimSpace(req.Host)
+	if req.ProxyServerID != nil {
+		proxyID, err := parseProxyServerID(req.ProxyServerID)
+		if err != nil {
+			return err
+		}
+		if err := h.setProxy(server, proxyID); err != nil {
+			return err
+		}
+	}
 	server.SSHPort = req.SSHPort
 	server.SSHUser = req.SSHUser
 	server.SSHAuthType = req.SSHAuthType
@@ -235,6 +319,10 @@ func (h *ServerHandler) Delete(c *gin.Context) {
 	}
 	if err := h.cluster.DeleteServer(id); err != nil {
 		if errors.Is(err, cluster.ErrServerAssigned) {
+			apiShared.Conflict(c, err.Error())
+			return
+		}
+		if errors.Is(err, store.ErrServerProxyInUse) {
 			apiShared.Conflict(c, err.Error())
 			return
 		}
@@ -288,7 +376,7 @@ func (h *ServerHandler) Probe(c *gin.Context) {
 	}
 	if req.Host != "" {
 		if err := h.applyDraftConnection(server, req); err != nil {
-			apiShared.InternalError(c, err.Error())
+			apiShared.BadRequest(c, err.Error())
 			return
 		}
 	}

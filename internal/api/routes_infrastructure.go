@@ -34,6 +34,7 @@ func registerInfrastructureRoutes(apiGroup *gin.RouterGroup, catalog *clusterapi
 	apiGroup.POST("/clusters/:id/agent-operations", deployment.AgentOperation)
 	apiGroup.GET("/clusters/:id/network-migration/precheck", deployment.NetworkMigrationPrecheck)
 	apiGroup.POST("/clusters/:id/network-migration", deployment.StartNetworkMigration)
+	apiGroup.POST("/clusters/:id/network-migration/nodes/:serverID", deployment.StartNetworkNodeMigration)
 	apiGroup.GET("/clusters/:id/deployments", deployment.List)
 	apiGroup.GET("/clusters/:id/deployments/:deploymentID/logs", deployment.Logs)
 	apiGroup.POST("/clusters/:id/nodes/:serverID/uninstall", deployment.Uninstall)

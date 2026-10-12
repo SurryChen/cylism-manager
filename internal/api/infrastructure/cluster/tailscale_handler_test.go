@@ -111,6 +111,54 @@ func TestParseTailscaleStatus(t *testing.T) {
 	if status := parseTailscaleStatus(7, []byte(`{}`)); status.Status != "offline" {
 		t.Fatalf("expected offline status, got %#v", status)
 	}
+	for _, test := range []struct {
+		name      string
+		state     string
+		addresses []string
+		errorType string
+	}{
+		{"not logged in", "NeedsLogin", nil, "login_required"},
+		{"service stopped", "Stopped", nil, "not_running"},
+		{"missing IPv4", "Running", nil, "missing_ip"},
+		{"device offline", "Running", []string{"100.81.23.123"}, "device_offline"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			output, _ := json.Marshal(map[string]any{
+				"BackendState": test.state,
+				"Self":         map[string]any{"TailscaleIPs": test.addresses, "Online": false},
+			})
+			status := parseTailscaleStatus(7, output)
+			if status.Status != "offline" || status.ErrorType != test.errorType || status.Error == "" {
+				t.Fatalf("unexpected status: %#v", status)
+			}
+		})
+	}
+}
+
+func TestParseTailscaleStatusReportsNonJSONOutput(t *testing.T) {
+	status := parseTailscaleStatus(7, []byte("login banner\n{}"))
+	if status.ErrorType != "invalid_response" || !strings.Contains(status.Error, "标准输出不是有效 JSON") {
+		t.Fatalf("unexpected status: %#v", status)
+	}
+}
+
+func TestTailscaleCommandOutputIgnoresLoginBanner(t *testing.T) {
+	payload, found := tailscaleCommandOutput([]byte("welcome\n" + tailscaleStatusMarker + `{"BackendState":"NeedsLogin"}`))
+	if !found || string(payload) != `{"BackendState":"NeedsLogin"}` {
+		t.Fatalf("payload=%q, found=%t", payload, found)
+	}
+	if _, found := tailscaleCommandOutput([]byte("welcome\n")); found {
+		t.Fatal("expected missing command marker")
+	}
+}
+
+func TestTailscaleUnavailableMessage(t *testing.T) {
+	if got := tailscaleUnavailableMessage("所选服务器", tailscaleStatus{Status: "not_installed"}); got != "所选服务器未安装 Tailscale" {
+		t.Fatal(got)
+	}
+	if got := tailscaleUnavailableMessage("所选服务器", tailscaleStatus{Status: "unreachable", Error: "SSH 连接超时"}); got != "所选服务器：SSH 连接超时" {
+		t.Fatal(got)
+	}
 }
 
 func TestK3sTailscaleInstallCommandUsesPrivateNodeIP(t *testing.T) {

@@ -7,11 +7,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"regexp"
 	"strings"
 	"sync"
 	"time"
+
+	"gopkg.in/yaml.v3"
 
 	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 	"github.com/cylism/cylism-manager/internal/model"
@@ -22,14 +25,17 @@ import (
 )
 
 type networkMigrationNode struct {
-	ServerID uint   `json:"server_id"`
-	Name     string `json:"name"`
-	Role     string `json:"role"`
-	IP       string `json:"tailscale_ip,omitempty"`
-	Ready    bool   `json:"ready"`
-	Reason   string `json:"reason,omitempty"`
-	server   model.Server
-	start    string
+	ServerID  uint   `json:"server_id"`
+	Name      string `json:"name"`
+	Role      string `json:"role"`
+	IP        string `json:"tailscale_ip,omitempty"`
+	CurrentIP string `json:"current_ip,omitempty"`
+	Ready     bool   `json:"ready"`
+	Action    string `json:"action"`
+	Reason    string `json:"reason,omitempty"`
+	server    model.Server
+	start     string
+	backend   string
 }
 
 type networkMigrationCheck struct {
@@ -71,8 +77,8 @@ func (h *DeploymentHandler) StartNetworkMigration(c *gin.Context) {
 		apiShared.InternalError(c, "迁移预检失败")
 		return
 	}
-	if !check.Ready {
-		apiShared.BadRequest(c, "迁移预检未通过，请查看组网页的节点检查结果")
+	if !check.Ready || !allMigrationNodesConfigured(check.Nodes) {
+		apiShared.BadRequest(c, "仍有节点需要迁移或统一启动参数，请先完成逐节点操作")
 		return
 	}
 	task, err := h.store.StartClusterNetworkMigration(id)
@@ -89,7 +95,114 @@ func (h *DeploymentHandler) StartNetworkMigration(c *gin.Context) {
 	apiShared.Success(c, task)
 }
 
+func allMigrationNodesConfigured(nodes []networkMigrationNode) bool {
+	if len(nodes) == 0 {
+		return false
+	}
+	for _, node := range nodes {
+		if !node.Ready || node.Action != "skip" {
+			return false
+		}
+	}
+	return true
+}
+
+func (h *DeploymentHandler) StartNetworkNodeMigration(c *gin.Context) {
+	id, err := apiShared.ParsePositiveID(c.Param("id"))
+	if err != nil {
+		apiShared.BadRequest(c, "集群 ID 无效")
+		return
+	}
+	serverID, err := apiShared.ParsePositiveID(c.Param("serverID"))
+	if err != nil {
+		apiShared.BadRequest(c, "服务器 ID 无效")
+		return
+	}
+	check, err := h.checkNetworkMigration(c.Request.Context(), id)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		apiShared.NotFound(c, "集群不存在")
+		return
+	}
+	if err != nil {
+		apiShared.InternalError(c, "节点组网预检失败")
+		return
+	}
+	var selected *networkMigrationNode
+	var controlIP string
+	for i := range check.Nodes {
+		if check.Nodes[i].Role == "control-plane" {
+			controlIP = check.Nodes[i].IP
+		}
+		if check.Nodes[i].ServerID == serverID {
+			selected = &check.Nodes[i]
+		}
+	}
+	if selected == nil || !selected.Ready || (selected.Action != "migrate" && selected.Action != "normalize") || net.ParseIP(controlIP) == nil || selected.start == "" {
+		apiShared.BadRequest(c, "该节点当前不可操作，请重新预检并查看节点原因")
+		return
+	}
+	operation := "network-migrate-node"
+	if selected.Action == "normalize" {
+		operation = "network-normalize-node"
+	}
+	task, err := h.store.StartClusterNetworkNodeMigration(id, serverID, operation)
+	if errors.Is(err, store.ErrClusterDeploymentConflict) {
+		apiShared.Conflict(c, "集群状态已变化或有其他任务正在执行，请重新预检")
+		return
+	}
+	if err != nil {
+		apiShared.InternalError(c, "创建节点组网任务失败")
+		return
+	}
+	_ = h.recordAudit(task, model.AuditOutcomeAccepted, "K3s 节点组网任务已创建", apiShared.EnsureRequestID(c))
+	go h.runNetworkNodeMigration(task, *selected, check.Nodes, controlIP)
+	apiShared.Success(c, task)
+}
+
+func (h *DeploymentHandler) runNetworkNodeMigration(task *model.ClusterDeployment, node networkMigrationNode, nodes []networkMigrationNode, controlIP string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
+	defer cancel()
+	appendLog := func(message string) { _ = h.store.AppendClusterDeploymentLog(task.ID, message) }
+	appendLog("开始配置 " + node.Name + " 的 K3s Tailscale 启动参数")
+	var control model.Server
+	for _, candidate := range nodes {
+		if candidate.Role == "control-plane" {
+			control = candidate.server
+			break
+		}
+	}
+	err := h.applyNetworkMigration(ctx, node, controlIP, appendLog)
+	if err == nil {
+		appendLog("等待 " + node.Name + " 的 Kubernetes Node 恢复就绪")
+		err = h.waitMigrationNode(ctx, control, node, appendLog)
+	}
+	if err == nil {
+		var facts migrationConfig
+		facts, err = h.readMigrationConfig(ctx, &node)
+		if err == nil {
+			if reason := configuredTailscaleReason(facts, node.Role, node.IP, controlIP); reason != "" {
+				err = fmt.Errorf("重启后参数校验失败：%s", reason)
+			}
+		}
+	}
+	if err != nil {
+		appendLog("节点组网失败：" + err.Error() + "；尝试恢复原启动配置")
+		h.rollbackNetworkMigration([]networkMigrationNode{node}, appendLog)
+		_ = h.store.FinishClusterNetworkNodeMigration(task, false)
+		_ = h.recordAudit(task, model.AuditOutcomeFailed, "K3s 节点组网失败", "")
+		return
+	}
+	if err := h.store.FinishClusterNetworkNodeMigration(task, true); err != nil {
+		appendLog("节点已配置，但保存任务状态失败，请检查平台数据库")
+		_ = h.recordAudit(task, model.AuditOutcomeFailed, "保存节点组网状态失败", "")
+		return
+	}
+	appendLog(node.Name + " 已就绪，启动参数已确认；请重新预检其他节点")
+	_ = h.recordAudit(task, model.AuditOutcomeSucceeded, "K3s 节点组网成功", "")
+}
+
 func (h *DeploymentHandler) checkNetworkMigration(ctx context.Context, id uint) (*networkMigrationCheck, error) {
+	started := time.Now()
 	cluster, err := h.store.GetCluster(id)
 	if err != nil {
 		return nil, err
@@ -115,7 +228,7 @@ func (h *DeploymentHandler) checkNetworkMigration(ctx context.Context, id uint) 
 		if servers[i].ClusterRole == "control-plane" && servers[i].ID == *cluster.ControlServerID {
 			control = &servers[i]
 		}
-		result.Nodes = append(result.Nodes, networkMigrationNode{ServerID: servers[i].ID, Name: servers[i].Name, Role: servers[i].ClusterRole, server: servers[i]})
+		result.Nodes = append(result.Nodes, networkMigrationNode{ServerID: servers[i].ID, Name: servers[i].Name, Role: servers[i].ClusterRole, Action: "block", server: servers[i]})
 	}
 	if control == nil || len(result.Nodes) == 0 {
 		result.Message = "控制平面服务器未绑定，请先检查集群拓扑"
@@ -125,7 +238,7 @@ func (h *DeploymentHandler) checkNetworkMigration(ctx context.Context, id uint) 
 		IP    string
 		Ready bool
 	}
-	output, err := transport.SSHExecServerContext(ctx, 20*time.Second, control, h.key, privilegedCommand(control, "k3s kubectl get nodes -o json"))
+	output, err := h.execMigrationPrecheck(ctx, 20*time.Second, control, privilegedCommand(control, "k3s kubectl get nodes -o json"))
 	if err == nil {
 		kubeNodes, err = parseMigrationKubeNodes(output)
 	}
@@ -137,7 +250,23 @@ func (h *DeploymentHandler) checkNetworkMigration(ctx context.Context, id uint) 
 		result.Message = "Kubernetes 节点数与已纳管服务器数不一致，请先纳管全部节点"
 		return result, nil
 	}
+	nodesDone := time.Now()
+	controlStatus := h.inspectMigrationTailscale(ctx, control)
+	controlIP := ""
+	if controlStatus.Status == "online" && net.ParseIP(controlStatus.IP) != nil {
+		controlIP = controlStatus.IP
+	}
+	statuses := make([]tailscaleStatus, len(result.Nodes))
+	parallelMigrationChecks(len(result.Nodes), func(i int) {
+		if result.Nodes[i].ServerID == control.ID {
+			statuses[i] = controlStatus
+			return
+		}
+		statuses[i] = h.inspectMigrationTailscale(ctx, &result.Nodes[i].server)
+	})
+	statusesDone := time.Now()
 	seen := map[string]bool{}
+	var candidates []int
 	for i := range result.Nodes {
 		node := &result.Nodes[i]
 		if node.Role != "control-plane" && node.Role != "worker" {
@@ -148,7 +277,7 @@ func (h *DeploymentHandler) checkNetworkMigration(ctx context.Context, id uint) 
 			node.Reason = "仅支持单控制平面迁移"
 			continue
 		}
-		status := inspectTailscale(ctx, &node.server, h.key)
+		status := statuses[i]
 		if status.Status != "online" || net.ParseIP(status.IP) == nil {
 			node.Reason = "请先到服务器组网页安装并接入 Tailscale"
 			continue
@@ -168,43 +297,44 @@ func (h *DeploymentHandler) checkNetworkMigration(ctx context.Context, id uint) 
 			node.Reason = "K3s 节点不存在或未就绪"
 			continue
 		}
-		service := migrationService(node.Role)
-		command := privilegedCommand(&node.server, "systemctl is-active "+service+" && systemctl show -p FragmentPath --value "+service+" && systemctl show -p DropInPaths --value "+service+" && cat /etc/systemd/system/"+service+".service")
-		out, err := transport.SSHExecServerContext(ctx, 20*time.Second, &node.server, h.key, command)
-		if err != nil {
-			node.Reason = "无法读取 K3s 服务配置或缺少免密 sudo 权限"
-			continue
-		}
-		start, err := parseMigrationUnit(string(out), service, node.Role)
-		if err != nil {
-			node.Reason = err.Error()
-			continue
-		}
-		node.start = start
-		node.Ready = true
+		node.CurrentIP = current.IP
+		candidates = append(candidates, i)
 	}
-	controlIP := ""
-	for _, node := range result.Nodes {
-		if node.ServerID == control.ID {
-			controlIP = node.IP
-			break
+	parallelMigrationChecks(len(candidates), func(i int) {
+		h.checkMigrationNodeConfig(ctx, &result.Nodes[candidates[i]], controlIP)
+	})
+	configsDone := time.Now()
+	if controlIP != "" {
+		for _, node := range result.Nodes {
+			if node.Action == "skip" && node.backend != "" && node.backend != "vxlan" {
+				for i := range result.Nodes {
+					if result.Nodes[i].Action == "migrate" {
+						result.Nodes[i].Action = "block"
+						result.Nodes[i].Ready = false
+						result.Nodes[i].Reason = "已有节点使用不同的 Flannel 后端，需先核对跨节点 Pod 网络"
+					}
+				}
+				break
+			}
 		}
 	}
 	if controlIP != "" {
 		for i := range result.Nodes {
 			node := &result.Nodes[i]
-			if !node.Ready || node.Role != "worker" {
+			if !node.Ready || node.Role != "worker" || node.Action != "migrate" {
 				continue
 			}
-			_, err := transport.SSHExecServerContext(ctx, 15*time.Second, &node.server, h.key, "tailscale ping --c 1 "+controlIP+" >/dev/null && curl -ksS --connect-timeout 5 --max-time 8 -o /dev/null https://"+net.JoinHostPort(controlIP, "6443")+"/")
+			_, err := h.execMigrationPrecheck(ctx, 15*time.Second, &node.server, "tailscale ping --c 1 "+controlIP+" >/dev/null && curl -ksS --connect-timeout 5 --max-time 8 -o /dev/null https://"+net.JoinHostPort(controlIP, "6443")+"/")
 			if err != nil {
 				node.Ready = false
+				node.Action = "block"
 				node.Reason = "无法经 Tailscale 访问控制平面 K3s API（6443）"
 			}
 		}
 	}
 	result.Ready = len(result.Nodes) > 0
 	for _, node := range result.Nodes {
+		log.Printf("[cluster-network-migration] precheck cluster=%d server=%d node=%q k3s_ip=%q tailscale_ip=%q action=%q ready=%t reason=%q", id, node.ServerID, node.server.K8sNodeName, node.CurrentIP, node.IP, node.Action, node.Ready, node.Reason)
 		if !node.Ready {
 			result.Ready = false
 		}
@@ -212,7 +342,216 @@ func (h *DeploymentHandler) checkNetworkMigration(ctx context.Context, id uint) 
 	if !result.Ready {
 		result.Message = "请先处理未通过检查的节点，再重新预检"
 	}
+	finished := time.Now()
+	log.Printf("[cluster-network-migration] precheck timing cluster=%d nodes=%s tailscale=%s config=%s connectivity=%s total=%s", id, nodesDone.Sub(started), statusesDone.Sub(nodesDone), configsDone.Sub(statusesDone), finished.Sub(configsDone), finished.Sub(started))
 	return result, nil
+}
+
+func parallelMigrationChecks(count int, check func(int)) {
+	var wg sync.WaitGroup
+	slots := make(chan struct{}, 4)
+	for i := 0; i < count; i++ {
+		slots <- struct{}{}
+		wg.Add(1)
+		go func(index int) {
+			defer wg.Done()
+			defer func() { <-slots }()
+			check(index)
+		}(i)
+	}
+	wg.Wait()
+}
+
+func (h *DeploymentHandler) inspectMigrationTailscale(ctx context.Context, server *model.Server) tailscaleStatus {
+	checkCtx, cancel := context.WithTimeout(ctx, 12*time.Second)
+	defer cancel()
+	return inspectTailscale(checkCtx, server, h.key)
+}
+
+func (h *DeploymentHandler) execMigrationPrecheck(ctx context.Context, timeout time.Duration, server *model.Server, command string) ([]byte, error) {
+	checkCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	return transport.SSHExecServerContext(checkCtx, timeout, server, h.key, command)
+}
+
+func (h *DeploymentHandler) checkMigrationNodeConfig(ctx context.Context, node *networkMigrationNode, controlIP string) {
+	facts, err := h.readMigrationConfig(ctx, node)
+	if err != nil {
+		node.Reason = "无法核实 K3s 生效配置，请检查 SSH 与免密 sudo 权限"
+		return
+	}
+	log.Printf("[cluster-network-migration] config server=%d node=%q expected_ip=%q node_ip=%q flannel_iface=%q raw_mentions_node_ip=%t raw_mentions_flannel_iface=%t unknown_reason=%q", node.ServerID, node.server.K8sNodeName, node.IP, facts.values["node-ip"], facts.values["flannel-iface"], facts.rawMentionsNodeIP, facts.rawMentionsFlannelIface, facts.unknownReason)
+	node.backend = facts.values["flannel-backend"]
+	if node.CurrentIP == node.IP {
+		if reason := configuredTailscaleReason(facts, node.Role, node.IP, controlIP); reason == "" {
+			node.Action = "skip"
+			node.Ready = true
+			node.Reason = "K3s 已使用 Tailscale 地址及接口，无需重启"
+			return
+		} else if facts.unknownReason != "" || facts.hasNetworkSettings() {
+			node.Reason = reason
+			return
+		}
+	}
+	if facts.unknownReason != "" {
+		node.Reason = facts.unknownReason
+		return
+	}
+	if facts.values["server"] != "" && (node.Role != "worker" || facts.values["server"] != "https://"+net.JoinHostPort(controlIP, "6443")) {
+		node.Reason = "K3s 控制平面连接地址与目标 Tailscale 地址不一致"
+		return
+	}
+	if node.CurrentIP == "" || facts.hasNetworkSettings() {
+		node.Reason = "K3s 已有其他网络配置或节点 IP 不明，请核对后再迁移"
+		return
+	}
+	service := migrationService(node.Role)
+	command := privilegedCommand(&node.server, "systemctl is-active "+service+" && systemctl show -p FragmentPath --value "+service+" && systemctl show -p DropInPaths --value "+service+" && cat /etc/systemd/system/"+service+".service")
+	out, err := h.execMigrationPrecheck(ctx, 20*time.Second, &node.server, command)
+	if err != nil {
+		node.Reason = "无法读取 K3s 服务配置或缺少免密 sudo 权限"
+		return
+	}
+	start, err := parseMigrationUnit(string(out), service, node.Role)
+	if err != nil {
+		node.Reason = err.Error()
+		return
+	}
+	node.start = start
+	node.Action = "migrate"
+	if node.CurrentIP == node.IP {
+		node.Action = "normalize"
+		node.Reason = "节点 IP 已使用 Tailscale，需要统一 K3s 启动参数"
+	}
+	node.Ready = true
+}
+
+type migrationConfig struct {
+	values                  map[string]string
+	unknownReason           string
+	rawMentionsNodeIP       bool
+	rawMentionsFlannelIface bool
+}
+
+func (c migrationConfig) hasNetworkSettings() bool {
+	for _, key := range []string{"node-ip", "flannel-iface", "advertise-address", "flannel-backend"} {
+		if c.values[key] != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func configuredTailscaleReason(config migrationConfig, role, ip, controlIP string) string {
+	if config.unknownReason != "" {
+		return config.unknownReason
+	}
+	if config.values["node-ip"] != ip || config.values["flannel-iface"] != "tailscale0" {
+		return "节点 IP 与 Tailscale 一致，但无法确认 K3s 已完整使用 Tailscale 配置"
+	}
+	if role == "control-plane" && config.values["advertise-address"] != ip {
+		return "控制平面缺少对应的 Tailscale advertise-address"
+	}
+	if role == "worker" && (controlIP == "" || config.values["server"] != "https://"+net.JoinHostPort(controlIP, "6443")) {
+		return "工作节点连接地址不是控制平面的 Tailscale 地址"
+	}
+	return ""
+}
+
+func (h *DeploymentHandler) readMigrationConfig(ctx context.Context, node *networkMigrationNode) (migrationConfig, error) {
+	service := migrationService(node.Role)
+	// Only these known K3s files are read; unknown EnvironmentFile paths block migration.
+	command := "systemctl is-active " + service + " && systemctl cat " + service + " && printf '\n---CYLISM_ENV---\n' && " +
+		"for f in /etc/systemd/system/" + service + ".service.env /etc/default/" + service + " /etc/sysconfig/" + service + "; do if [ -f \"$f\" ]; then cat \"$f\"; printf '\n'; fi; done && " +
+		"printf '\n---CYLISM_YAML---\n' && for f in /etc/rancher/k3s/config.yaml /etc/rancher/k3s/config.yaml.d/*.yaml; do if [ -f \"$f\" ]; then cat \"$f\"; printf '\n---\n'; fi; done"
+	out, err := h.execMigrationPrecheck(ctx, 20*time.Second, &node.server, privilegedCommand(&node.server, command))
+	if err != nil {
+		return migrationConfig{}, err
+	}
+	return parseMigrationConfig(string(out))
+}
+
+var migrationFlagPattern = regexp.MustCompile(`(?:^|\s)['"]?--(node-ip|flannel-iface|advertise-address|server|flannel-backend)['"]?(?:=|\s+)['"]?([^\s'"\\]+)`)
+
+func parseMigrationConfig(output string) (migrationConfig, error) {
+	parts := strings.Split(output, "---CYLISM_ENV---")
+	if len(parts) != 2 {
+		return migrationConfig{}, fmt.Errorf("missing environment section")
+	}
+	remainder := strings.Split(parts[1], "---CYLISM_YAML---")
+	if len(remainder) != 2 {
+		return migrationConfig{}, fmt.Errorf("missing configuration section")
+	}
+	config := migrationConfig{values: map[string]string{}}
+	normalized := strings.ToLower(strings.ReplaceAll(output, "_", "-"))
+	config.rawMentionsNodeIP = strings.Contains(normalized, "node-ip")
+	config.rawMentionsFlannelIface = strings.Contains(normalized, "flannel-iface")
+	for _, document := range strings.Split(remainder[1], "\n---\n") {
+		if strings.TrimSpace(document) == "" {
+			continue
+		}
+		var values map[string]any
+		if err := yaml.Unmarshal([]byte(document), &values); err != nil {
+			config.unknownReason = "K3s YAML 配置无法解析，暂不支持自动迁移"
+			continue
+		}
+		for _, key := range []string{"node-ip", "flannel-iface", "advertise-address", "server", "flannel-backend"} {
+			if value, ok := values[key]; ok {
+				config.values[key] = fmt.Sprint(value)
+			}
+		}
+	}
+	for _, line := range strings.Split(remainder[0], "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "K3S_") || strings.HasPrefix(line, "'K3S_") || strings.HasPrefix(line, `"K3S_`) {
+			entry := strings.Trim(line, "'\"")
+			key, value, ok := strings.Cut(entry, "=")
+			if !ok {
+				config.unknownReason = "K3s 环境文件格式无法识别，暂不支持自动迁移"
+				continue
+			}
+			key = strings.ToLower(strings.ReplaceAll(strings.TrimPrefix(key, "K3S_"), "_", "-"))
+			if key == "url" {
+				key = "server"
+			}
+			if _, exists := config.values[key]; exists || key == "node-ip" || key == "flannel-iface" || key == "advertise-address" || key == "server" || key == "flannel-backend" {
+				config.values[key] = strings.Trim(value, "'\"")
+			}
+		}
+	}
+	unit := strings.ReplaceAll(parts[0], "\\\n", " ")
+	serviceLine := ""
+	for _, line := range strings.Split(unit, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "ExecStart=") {
+			serviceLine = strings.TrimSpace(strings.TrimPrefix(line, "ExecStart="))
+		}
+		if strings.HasPrefix(line, "Environment=") && strings.Contains(line, "K3S_") {
+			config.unknownReason = "K3s 使用了 systemd 内联环境变量，暂不支持自动迁移"
+		}
+		if strings.HasPrefix(line, "EnvironmentFile=") {
+			path := strings.TrimPrefix(strings.TrimPrefix(line, "EnvironmentFile="), "-")
+			if !knownK3sEnvironmentFile(path) {
+				config.unknownReason = "K3s 使用了自定义环境文件，暂不支持自动迁移"
+			}
+		}
+	}
+	if !migrationStartPattern.MatchString(serviceLine) {
+		config.unknownReason = "K3s 启动命令无法识别，暂不支持自动迁移"
+	}
+	for _, match := range migrationFlagPattern.FindAllStringSubmatch(serviceLine, -1) {
+		config.values[match[1]] = match[2]
+	}
+	return config, nil
+}
+
+func knownK3sEnvironmentFile(path string) bool {
+	switch path {
+	case "/etc/default/%N", "/etc/sysconfig/%N", "/etc/systemd/system/k3s.service.env", "/etc/systemd/system/k3s-agent.service.env", "/etc/default/k3s", "/etc/default/k3s-agent", "/etc/sysconfig/k3s", "/etc/sysconfig/k3s-agent":
+		return true
+	default:
+		return false
+	}
 }
 
 func migrationService(role string) string {
@@ -300,7 +639,7 @@ func parseMigrationKubeNodes(output []byte) (map[string]struct {
 			Ready bool
 		}{}
 		for _, address := range item.Status.Addresses {
-			if address.Type == "InternalIP" {
+			if address.Type == "InternalIP" && state.IP == "" {
 				state.IP = address.Address
 			}
 		}
@@ -315,51 +654,33 @@ func parseMigrationKubeNodes(output []byte) (map[string]struct {
 }
 
 func (h *DeploymentHandler) runNetworkMigration(task *model.ClusterDeployment, nodes []networkMigrationNode) {
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
-	defer cancel()
-	log := func(message string) { _ = h.store.AppendClusterDeploymentLog(task.ID, message) }
-	log("开始迁移 K3s 节点网络至 Tailscale")
-	var control networkMigrationNode
+	appendLog := func(message string) { _ = h.store.AppendClusterDeploymentLog(task.ID, message) }
+	appendLog("全部 K3s 节点已通过 Tailscale 配置检查，开始同步集群组网状态")
+	controlIP := ""
 	for _, node := range nodes {
+		if !node.Ready || node.Action != "skip" {
+			appendLog("节点配置状态已变化，请重新预检")
+			_ = h.store.FinishClusterNetworkMigration(task, false, "")
+			_ = h.recordAudit(task, model.AuditOutcomeFailed, "K3s 组网状态同步失败", "")
+			return
+		}
 		if node.Role == "control-plane" {
-			control = node
-			break
+			controlIP = node.IP
 		}
 	}
-	changed := make([]networkMigrationNode, 0, len(nodes))
-	ordered := []networkMigrationNode{control}
-	for _, node := range nodes {
-		if node.ServerID != control.ServerID {
-			ordered = append(ordered, node)
-		}
-	}
-	for _, node := range ordered {
-		log("配置 " + node.Name + " 的 K3s Tailscale 地址")
-		changed = append(changed, node)
-		if err := h.applyNetworkMigration(ctx, node, control.IP, log); err != nil {
-			log("节点配置失败：" + node.Name + "（" + err.Error() + "）；开始恢复已修改节点")
-			h.rollbackNetworkMigration(changed, log)
-			_ = h.store.FinishClusterNetworkMigration(task, false, "")
-			_ = h.recordAudit(task, model.AuditOutcomeFailed, "K3s 组网迁移失败", "")
-			return
-		}
-		log("等待 " + node.Name + " 在 Kubernetes 中以 Tailscale IP 就绪")
-		if err := h.waitMigrationNode(ctx, control.server, node, log); err != nil {
-			log("节点验证失败：" + node.Name + "（" + err.Error() + "）；开始恢复已修改节点")
-			h.rollbackNetworkMigration(changed, log)
-			_ = h.store.FinishClusterNetworkMigration(task, false, "")
-			_ = h.recordAudit(task, model.AuditOutcomeFailed, "K3s 组网迁移失败", "")
-			return
-		}
-		log(node.Name + " 已就绪，K3s 节点 IP 已切换至 " + node.IP)
-	}
-	if err := h.store.FinishClusterNetworkMigration(task, true, control.IP); err != nil {
-		log("节点已迁移，但保存集群状态失败，请检查平台数据库")
-		_ = h.recordAudit(task, model.AuditOutcomeFailed, "保存 K3s 组网迁移状态失败", "")
+	if net.ParseIP(controlIP) == nil {
+		appendLog("控制平面的 Tailscale IP 不可用")
+		_ = h.store.FinishClusterNetworkMigration(task, false, "")
+		_ = h.recordAudit(task, model.AuditOutcomeFailed, "K3s 组网状态同步失败", "")
 		return
 	}
-	log("所有节点迁移完成，已保存控制平面的 Tailscale IP")
-	_ = h.recordAudit(task, model.AuditOutcomeSucceeded, "K3s 组网迁移成功", "")
+	if err := h.store.FinishClusterNetworkMigration(task, true, controlIP); err != nil {
+		appendLog("保存集群组网状态失败，请检查平台数据库")
+		_ = h.recordAudit(task, model.AuditOutcomeFailed, "保存 K3s 组网状态失败", "")
+		return
+	}
+	appendLog("集群组网状态已同步，控制平面 Tailscale IP：" + controlIP)
+	_ = h.recordAudit(task, model.AuditOutcomeSucceeded, "K3s 组网状态同步成功", "")
 }
 
 func (h *DeploymentHandler) applyNetworkMigration(ctx context.Context, node networkMigrationNode, controlIP string, log func(string)) error {

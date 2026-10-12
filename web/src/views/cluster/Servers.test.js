@@ -152,6 +152,7 @@ describe('Servers view', () => {
       ssh_user: 'root',
       ssh_auth_type: 'password',
       hostname: 'worker-a',
+      proxy_server_id: null,
     })
     wrapper.unmount()
   })
@@ -173,6 +174,37 @@ describe('Servers view', () => {
     await wrapper.get('form').trigger('submit')
     await flush()
     expect(updateServer).toHaveBeenCalledWith(1, expect.objectContaining({ name: '', host: '10.0.0.1' }))
+    wrapper.unmount()
+  })
+
+  it('sends the selected gateway for proxied servers and clears it on direct access', async () => {
+    const existing = servers()
+    existing.push({ id: 3, name: 'office-host', host: '100.100.1.2', hostname: 'office-host', ssh_user: 'root', ssh_auth_type: 'password', ssh_port: 22, proxy_server_id: 1, proxy_server_name: 'test-srv', cluster_role: '', k8s_node_name: '' })
+    getServers.mockResolvedValue(existing)
+    const wrapper = mount(Servers, { global: { stubs: { RouterLink: true } } })
+    await flush()
+    expect(wrapper.text()).toContain('代理访问 · test-srv')
+    await wrapper.get('[title="编辑 office-host"]').trigger('click')
+    expect(wrapper.get('select[aria-label="连接方式"]').element.value).toBe('proxy')
+    expect(wrapper.get('select[aria-label="代理节点"]').element.value).toBe('1')
+    await wrapper.get('select[aria-label="连接方式"]').setValue('direct')
+    await wrapper.get('[title="自动获取机器名"]').trigger('click')
+    await flush()
+    await wrapper.get('form').trigger('submit')
+    await flush()
+    expect(updateServer).toHaveBeenCalledWith(3, expect.objectContaining({ proxy_server_id: null }))
+
+    await wrapper.get('[data-testid="add-server"]').trigger('click')
+    await wrapper.get('input[placeholder="192.168.1.100"]').setValue('100.100.1.3')
+    await wrapper.get('select[aria-label="连接方式"]').setValue('proxy')
+    await wrapper.get('select[aria-label="代理节点"]').setValue('1')
+    await wrapper.get('input[placeholder="输入密码"]').setValue('target-secret')
+    await wrapper.get('[title="自动获取机器名"]').trigger('click')
+    await flush()
+    expect(resolveServerHostname).toHaveBeenCalledWith(null, expect.objectContaining({ proxy_server_id: 1 }))
+    await wrapper.get('form').trigger('submit')
+    await flush()
+    expect(createServer).toHaveBeenCalledWith(expect.objectContaining({ proxy_server_id: 1, host: '100.100.1.3' }))
     wrapper.unmount()
   })
 

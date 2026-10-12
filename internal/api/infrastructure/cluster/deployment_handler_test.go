@@ -1,6 +1,7 @@
 package cluster
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -75,6 +76,22 @@ func TestK3sInstallCommandUsesSelectedSourceAndClusterCredentials(t *testing.T) 
 	}
 	if !validControlAddress("100.81.23.123") || !validControlAddress("control.example.internal") || validControlAddress("https://control.example") || validControlAddress("control.example:6443") {
 		t.Fatal("invalid control address validation")
+	}
+}
+
+func TestWorkerJoinAddressUsesStoredControlServerAddress(t *testing.T) {
+	st, err := store.New(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	control := &model.Server{Name: "control", Host: "43.139.193.176"}
+	if err := st.CreateServer(control); err != nil {
+		t.Fatal(err)
+	}
+	cluster := &model.Cluster{ControlServerID: &control.ID, ControlAddress: "100.81.23.123", NetworkMode: "public"}
+	address, err := NewDeploymentHandler(st, nil).workerJoinAddress(context.Background(), cluster, &model.Server{}, "server")
+	if err != nil || address != control.Host {
+		t.Fatalf("join address = %q, err = %v", address, err)
 	}
 }
 

@@ -1,6 +1,7 @@
 package cluster
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -49,16 +50,25 @@ type tailscaleDirectDiagnosis struct {
 	Findings   []string                `json:"findings"`
 }
 
+const tailscaleStatusMarker = "__CYLISM_TAILSCALE_STATUS__"
+
 func inspectTailscale(ctx context.Context, server *model.Server, key []byte) tailscaleStatus {
 	status := tailscaleStatus{ServerID: server.ID, Status: "unreachable"}
-	command := "if ! command -v tailscale >/dev/null 2>&1; then printf '__TAILSCALE_NOT_INSTALLED__'; else tailscale status --json; fi"
-	output, err := transport.SSHExecServerContext(ctx, 12*time.Second, server, key, command)
+	command := "printf '" + tailscaleStatusMarker + "'; if ! command -v tailscale >/dev/null 2>&1; then printf '__TAILSCALE_NOT_INSTALLED__'; else tailscale status --json; fi"
+	output, stderr, err := transport.SSHExecServerOutputContext(ctx, 12*time.Second, server, key, command)
 	if err != nil {
-		status.ErrorType, status.Error = tailscaleQueryError(err, output)
+		status.ErrorType, status.Error = tailscaleQueryError(err, append(stderr, output...))
+		return status
+	}
+	var found bool
+	output, found = tailscaleCommandOutput(output)
+	if !found {
+		status.ErrorType, status.Error = "invalid_response", "SSH 已连接，但未收到 Tailscale 状态输出标记，请检查服务器登录脚本"
 		return status
 	}
 	if strings.TrimSpace(string(output)) == "__TAILSCALE_NOT_INSTALLED__" {
 		status.Status = "not_installed"
+		status.ErrorType, status.Error = "not_installed", "SSH 已连接，但服务器未安装 Tailscale"
 		return status
 	}
 	if len(output) > 2*1024*1024 {
@@ -67,6 +77,21 @@ func inspectTailscale(ctx context.Context, server *model.Server, key []byte) tai
 		return status
 	}
 	return parseTailscaleStatus(server.ID, output)
+}
+
+func tailscaleCommandOutput(output []byte) ([]byte, bool) {
+	_, payload, found := bytes.Cut(output, []byte(tailscaleStatusMarker))
+	return payload, found
+}
+
+func tailscaleUnavailableMessage(serverLabel string, status tailscaleStatus) string {
+	if status.Status == "not_installed" {
+		return serverLabel + "未安装 Tailscale"
+	}
+	if status.Error != "" {
+		return serverLabel + "：" + status.Error
+	}
+	return serverLabel + "的 Tailscale 状态不可用"
 }
 
 func tailscaleQueryError(err error, output []byte) (string, string) {
@@ -104,7 +129,7 @@ func parseTailscaleStatus(serverID uint, output []byte) tailscaleStatus {
 	}
 	if err := json.Unmarshal(output, &result); err != nil {
 		status.ErrorType = "invalid_response"
-		status.Error = "无法解析组网状态"
+		status.Error = "SSH 已连接，但 tailscale status --json 的标准输出不是有效 JSON，请检查服务器登录脚本是否输出了额外内容"
 		return status
 	}
 	status.Status = "offline"
@@ -120,6 +145,21 @@ func parseTailscaleStatus(serverID uint, output []byte) tailscaleStatus {
 	}
 	if result.BackendState == "Running" && result.Self.Online && status.IP != "" {
 		status.Status = "online"
+		return status
+	}
+	switch result.BackendState {
+	case "NeedsLogin":
+		status.ErrorType, status.Error = "login_required", "Tailscale 已安装，但尚未登录组网"
+	case "Running":
+		if status.IP == "" {
+			status.ErrorType, status.Error = "missing_ip", "Tailscale 已运行，但没有可用的 IPv4 地址"
+		} else {
+			status.ErrorType, status.Error = "device_offline", "Tailscale 已运行，但此设备当前未在线"
+		}
+	case "Stopped", "Starting", "NoState":
+		status.ErrorType, status.Error = "not_running", "Tailscale 已安装，但当前未运行或仍在启动"
+	default:
+		status.ErrorType, status.Error = "unknown_state", "Tailscale 已安装，但无法确认当前组网状态"
 	}
 	return status
 }

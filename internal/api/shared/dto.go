@@ -9,23 +9,29 @@ import (
 // ServerView is the public representation of a managed server. Credentials,
 // encrypted material, and credential hashes are intentionally excluded.
 type ServerView struct {
-	ID          uint   `json:"id"`
-	Name        string `json:"name"`
-	Host        string `json:"host"`
-	Hostname    string `json:"hostname"`
-	SSHPort     int    `json:"ssh_port"`
-	SSHUser     string `json:"ssh_user"`
-	SSHAuthType string `json:"ssh_auth_type"`
-	ClusterRole string `json:"cluster_role"`
-	ClusterID   *uint  `json:"cluster_id,omitempty"`
-	K8sNodeName string `json:"k8s_node_name"`
+	ID              uint   `json:"id"`
+	Name            string `json:"name"`
+	Host            string `json:"host"`
+	Hostname        string `json:"hostname"`
+	SSHPort         int    `json:"ssh_port"`
+	SSHUser         string `json:"ssh_user"`
+	SSHAuthType     string `json:"ssh_auth_type"`
+	ProxyServerID   *uint  `json:"proxy_server_id,omitempty"`
+	ProxyServerName string `json:"proxy_server_name,omitempty"`
+	ClusterRole     string `json:"cluster_role"`
+	ClusterID       *uint  `json:"cluster_id,omitempty"`
+	K8sNodeName     string `json:"k8s_node_name"`
 }
 
 func ServerDTO(server *model.Server) *ServerView {
 	if server == nil {
 		return nil
 	}
-	return &ServerView{ID: server.ID, Name: server.Name, Host: server.Host, Hostname: server.Hostname, SSHPort: server.SSHPort, SSHUser: server.SSHUser, SSHAuthType: server.SSHAuthType, ClusterRole: server.ClusterRole, ClusterID: server.ClusterID, K8sNodeName: server.K8sNodeName}
+	view := &ServerView{ID: server.ID, Name: server.Name, Host: server.Host, Hostname: server.Hostname, SSHPort: server.SSHPort, SSHUser: server.SSHUser, SSHAuthType: server.SSHAuthType, ProxyServerID: server.ProxyServerID, ClusterRole: server.ClusterRole, ClusterID: server.ClusterID, K8sNodeName: server.K8sNodeName}
+	if server.SSHProxy != nil {
+		view.ProxyServerName = server.SSHProxy.Name
+	}
+	return view
 }
 
 func ServersDTO(servers []model.Server) []ServerView {

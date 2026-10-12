@@ -8,6 +8,8 @@ import (
 	"gorm.io/gorm"
 )
 
+var ErrServerProxyInUse = errors.New("该服务器仍被其他服务器用作代理节点")
+
 func (s *Store) GetActiveClusterDNSPolicy() (*model.ClusterDNSPolicy, error) {
 	var policy model.ClusterDNSPolicy
 	err := s.db.Where("active = ?", true).Order("revision desc").First(&policy).Error
@@ -77,12 +79,12 @@ func (s *Store) GetEnvironmentByID(environmentID uint) (*model.Environment, erro
 }
 
 func (s *Store) CreateServer(server *model.Server) error {
-	return s.db.Create(server).Error
+	return s.db.Omit("SSHProxy").Create(server).Error
 }
 
 func (s *Store) GetServer(id uint) (*model.Server, error) {
 	var server model.Server
-	err := s.db.First(&server, id).Error
+	err := s.db.Preload("SSHProxy").First(&server, id).Error
 	if err != nil {
 		return nil, err
 	}
@@ -91,18 +93,29 @@ func (s *Store) GetServer(id uint) (*model.Server, error) {
 
 func (s *Store) GetServerByHost(host string) (*model.Server, error) {
 	var server model.Server
-	err := s.db.Where("host = ?", host).First(&server).Error
+	err := s.db.Preload("SSHProxy").Where("host = ?", host).First(&server).Error
 	return &server, err
 }
 
 func (s *Store) ListServers() ([]model.Server, error) {
 	var servers []model.Server
-	err := s.db.Order("created_at desc").Find(&servers).Error
+	err := s.db.Preload("SSHProxy").Order("created_at desc").Find(&servers).Error
 	return servers, err
 }
 
 func (s *Store) UpdateServer(server *model.Server) error {
-	return s.db.Save(server).Error
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		if server.ProxyServerID != nil {
+			var count int64
+			if err := tx.Model(&model.Server{}).Where("proxy_server_id = ?", server.ID).Count(&count).Error; err != nil {
+				return err
+			}
+			if count > 0 {
+				return ErrServerProxyInUse
+			}
+		}
+		return tx.Omit("SSHProxy").Save(server).Error
+	})
 }
 
 func (s *Store) UnbindServersFromClusterNode(nodeName string) error {
@@ -115,7 +128,16 @@ func (s *Store) UnbindServersFromClusterNode(nodeName string) error {
 }
 
 func (s *Store) DeleteServer(id uint) error {
-	return s.db.Delete(&model.Server{}, id).Error
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		var count int64
+		if err := tx.Model(&model.Server{}).Where("proxy_server_id = ?", id).Count(&count).Error; err != nil {
+			return err
+		}
+		if count > 0 {
+			return ErrServerProxyInUse
+		}
+		return tx.Delete(&model.Server{}, id).Error
+	})
 }
 
 func (s *Store) CreateDNSCredential(credential *model.DNSCredential) error {

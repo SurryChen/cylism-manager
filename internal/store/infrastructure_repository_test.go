@@ -1,6 +1,7 @@
 package store
 
 import (
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -62,6 +63,35 @@ func TestServerCRUD(t *testing.T) {
 	_, err = s.GetServer(server.ID)
 	if err == nil {
 		t.Error("expected error after delete")
+	}
+}
+
+func TestServerProxyAssociationAndDeleteProtection(t *testing.T) {
+	s := setupTestDB(t)
+	proxy := &model.Server{Name: "gateway", Host: "203.0.113.1"}
+	if err := s.CreateServer(proxy); err != nil {
+		t.Fatal(err)
+	}
+	target := &model.Server{Name: "internal", Host: "100.100.1.2", ProxyServerID: &proxy.ID}
+	if err := s.CreateServer(target); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := s.GetServer(target.ID)
+	if err != nil || stored.SSHProxy == nil || stored.SSHProxy.ID != proxy.ID {
+		t.Fatalf("proxy association = %#v, err=%v", stored, err)
+	}
+	listed, err := s.ListServers()
+	if err != nil || len(listed) != 2 {
+		t.Fatalf("list = %#v, err=%v", listed, err)
+	}
+	if err := s.DeleteServer(proxy.ID); !errors.Is(err, ErrServerProxyInUse) {
+		t.Fatalf("delete proxy with dependents: %v", err)
+	}
+	if err := s.DeleteServer(target.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteServer(proxy.ID); err != nil {
+		t.Fatal(err)
 	}
 }
 

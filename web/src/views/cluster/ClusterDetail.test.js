@@ -154,6 +154,60 @@ describe('ClusterDetail', () => {
     wrapper.unmount()
   })
 
+  it('lets a K3s worker choose the control-plane IP used to join', async () => {
+    get.mockImplementation(path => {
+      if (path === '/clusters/9') return Promise.resolve({ ...cluster, status: 'ready', control_server_id: 3, control_address: '43.139.193.176', network_mode: 'public' })
+      if (path === '/servers') return Promise.resolve([
+        { ...server, host: '43.139.193.176', cluster_id: 9, cluster_role: 'control-plane' },
+        { id: 4, name: 'worker', host: '100.67.232.15', ssh_user: 'root', ssh_auth_type: 'password' },
+      ])
+      if (path === '/servers/3/tailscale' || path === '/servers/4/tailscale') return Promise.resolve({ status: 'online', ip: path.includes('/3/') ? '100.81.23.123' : '100.67.232.15' })
+      return Promise.resolve([])
+    })
+    post.mockResolvedValue({ id: 20, operation: 'deploy', status: 'running' })
+    const wrapper = await mountDetail()
+    await flushPromises()
+    await wrapper.get('.cluster-deployment-toolbar .btn-primary').trigger('click')
+    await flushPromises()
+    const addressMenu = wrapper.findAllComponents(SelectMenu).find(menu => menu.props('id') === 'deployment-join-address')
+    expect(addressMenu.props('options')).toEqual([
+      { value: 'server', label: '服务器 IP · 43.139.193.176', disabled: false },
+      { value: 'tailscale', label: 'Tailscale IP · 100.81.23.123', disabled: false },
+    ])
+    wrapper.findAllComponents(SelectMenu).find(menu => menu.props('id') === 'deployment-server').vm.$emit('update:modelValue', '4')
+    addressMenu.vm.$emit('update:modelValue', 'tailscale')
+    await flushPromises()
+    await wrapper.get('[role="dialog"] .btn-primary').trigger('click')
+    await flushPromises()
+    expect(post).toHaveBeenCalledWith('/clusters/9/deployments', {
+      server_id: 4, role: 'worker', mirror: 'official', network_mode: 'public', join_address_type: 'tailscale',
+    })
+    wrapper.unmount()
+  })
+
+  it('shows the worker Tailscale check failure returned by the API', async () => {
+    get.mockImplementation(path => {
+      if (path === '/clusters/9') return Promise.resolve({ ...cluster, status: 'ready', control_server_id: 3, network_mode: 'tailscale' })
+      if (path === '/servers') return Promise.resolve([
+        { ...server, cluster_id: 9, cluster_role: 'control-plane' },
+        { id: 4, name: 'worker', host: '10.0.0.4', ssh_user: 'root', ssh_auth_type: 'password' },
+      ])
+      if (path === '/servers/3/tailscale') return Promise.resolve({ status: 'online', ip: '100.81.23.123' })
+      if (path === '/servers/4/tailscale') return Promise.resolve({ status: 'unreachable', error_type: 'tailscale_daemon', error: 'SSH 已连接，Tailscale 已安装，但 tailscaled 服务未运行或不可用' })
+      return Promise.resolve([])
+    })
+    const wrapper = await mountDetail()
+    await flushPromises()
+    await wrapper.get('.cluster-deployment-toolbar .btn-primary').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[role="dialog"]').text()).toContain('请先选择服务器')
+    wrapper.findAllComponents(SelectMenu).find(menu => menu.props('id') === 'deployment-server').vm.$emit('update:modelValue', '4')
+    await flushPromises()
+    expect(wrapper.get('[role="dialog"]').text()).toContain('SSH 已连接，Tailscale 已安装，但 tailscaled 服务未运行或不可用')
+    expect(wrapper.get('[role="dialog"] .btn-primary').attributes('disabled')).toBeDefined()
+    wrapper.unmount()
+  })
+
   it('opens historical logs in a modal and closes it without changing the task list', async () => {
     get.mockImplementation(path => {
       if (path === '/clusters/9') return Promise.resolve(cluster)

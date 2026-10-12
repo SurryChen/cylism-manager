@@ -22,7 +22,7 @@ type ClusterDeployment struct {
 	ID          uint      `gorm:"primaryKey" json:"id"`
 	ClusterID   uint      `gorm:"index;not null" json:"cluster_id"`
 	ServerID    uint      `gorm:"index;not null" json:"server_id"`
-	Operation   string    `gorm:"size:16;not null;default:deploy" json:"operation"`
+	Operation   string    `gorm:"size:32;not null;default:deploy" json:"operation"`
 	Role        string    `gorm:"size:32;not null" json:"role"`
 	Mirror      string    `gorm:"size:16;not null" json:"mirror"`
 	NetworkMode string    `gorm:"size:16;not null;default:public" json:"network_mode"`

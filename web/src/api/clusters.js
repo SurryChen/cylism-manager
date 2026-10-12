@@ -44,8 +44,11 @@ export function getClusterDeploymentLogs(clusterID, deploymentID, after = 0, opt
   return api.get(`/clusters/${encodeURIComponent(clusterID)}/deployments/${encodeURIComponent(deploymentID)}/logs?after=${after}`, options)
 }
 
-export function startClusterDeployment(clusterID, serverID, role, mirror, networkMode = 'public') {
-  return api.post(`/clusters/${encodeURIComponent(clusterID)}/deployments`, { server_id: Number(serverID), role, mirror, network_mode: networkMode })
+export function startClusterDeployment(clusterID, serverID, role, mirror, networkMode = 'public', joinAddressType = '') {
+  return api.post(`/clusters/${encodeURIComponent(clusterID)}/deployments`, {
+    server_id: Number(serverID), role, mirror, network_mode: networkMode,
+    ...(role === 'worker' ? { join_address_type: joinAddressType } : {}),
+  })
 }
 
 export function startClusterAgentOperation(clusterID, serverID, operation) {
@@ -58,6 +61,10 @@ export function checkClusterNetworkMigration(clusterID, options) {
 
 export function startClusterNetworkMigration(clusterID) {
   return api.post(`/clusters/${encodeURIComponent(clusterID)}/network-migration`, {})
+}
+
+export function startClusterNetworkNodeMigration(clusterID, serverID) {
+  return api.post(`/clusters/${encodeURIComponent(clusterID)}/network-migration/nodes/${encodeURIComponent(serverID)}`, {})
 }
 
 export function getCrossClusterServices(clusterID, options) {

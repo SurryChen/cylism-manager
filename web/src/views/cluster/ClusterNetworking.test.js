@@ -1,13 +1,14 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import ClusterNetworking from './ClusterNetworking.vue'
-import { checkClusterNetworkMigration, startClusterNetworkMigration } from '../../api/clusters.js'
+import { checkClusterNetworkMigration, startClusterNetworkMigration, startClusterNetworkNodeMigration } from '../../api/clusters.js'
 import { getClusterNodes } from '../../api/cluster.js'
 
 vi.mock('../../api/cluster.js', () => ({ getClusterNodes: vi.fn().mockResolvedValue([]) }))
 vi.mock('../../api/clusters.js', () => ({
   checkClusterNetworkMigration: vi.fn(),
   startClusterNetworkMigration: vi.fn(),
+  startClusterNetworkNodeMigration: vi.fn(),
 }))
 
 afterEach(() => { document.body.innerHTML = ''; vi.clearAllMocks() })
@@ -54,21 +55,63 @@ describe('ClusterNetworking migration', () => {
     wrapper.unmount()
   })
 
-  it('starts the task only after a successful precheck and confirmation', async () => {
+  it('starts migration only for the selected node after confirmation', async () => {
     checkClusterNetworkMigration.mockResolvedValue({ ready: true, nodes: [
-      { server_id: 3, name: 'control', role: 'control-plane', ready: true, tailscale_ip: '100.81.23.123' },
+      { server_id: 3, name: 'control', role: 'control-plane', ready: true, action: 'skip', tailscale_ip: '100.81.23.123', current_ip: '100.81.23.123' },
+      { server_id: 4, name: 'worker', role: 'worker', ready: true, action: 'migrate', tailscale_ip: '100.67.232.15' },
     ] })
-    startClusterNetworkMigration.mockResolvedValue({ id: 12, operation: 'network-migrate' })
+    startClusterNetworkNodeMigration.mockResolvedValue({ id: 12, operation: 'network-migrate-node' })
     const wrapper = mount(ClusterNetworking, { props, global: { stubs: { ServerTailscale: tailscaleCardStub } } })
     await wrapper.get('.tailscale-card .tailscale-toolbar-actions .btn-primary').trigger('click')
     await flushPromises()
+    expect(wrapper.text()).toContain('K3s 节点 IP')
+    expect(wrapper.text()).toContain('100.81.23.123')
     expect(startClusterNetworkMigration).not.toHaveBeenCalled()
-    await wrapper.get('.network-migration-footer .btn-primary').trigger('click')
+    expect(wrapper.find('.network-migration-footer').exists()).toBe(false)
+    await wrapper.get('tbody tr:nth-child(2) button').trigger('click')
     await flushPromises()
+    expect(document.body.querySelector('.base-modal')?.textContent).toContain('worker')
+    expect(document.body.querySelector('.base-modal')?.textContent).toContain('k3s-agent')
+    document.body.querySelector('.base-modal .btn-primary').click()
+    await flushPromises()
+    expect(startClusterNetworkNodeMigration).toHaveBeenCalledWith('9', 4)
+    expect(startClusterNetworkMigration).not.toHaveBeenCalled()
+    expect(wrapper.emitted('operation-started')).toHaveLength(1)
+    wrapper.unmount()
+  })
+
+  it('offers parameter normalization for a node already using its Tailscale IP', async () => {
+    checkClusterNetworkMigration.mockResolvedValue({ ready: true, nodes: [
+      { server_id: 3, name: 'control', role: 'control-plane', ready: true, action: 'normalize', tailscale_ip: '100.81.23.123', current_ip: '100.81.23.123' },
+    ] })
+    startClusterNetworkNodeMigration.mockResolvedValue({ id: 13, operation: 'network-normalize-node' })
+    const wrapper = mount(ClusterNetworking, { props, global: { stubs: { ServerTailscale: tailscaleCardStub } } })
+    await wrapper.get('.tailscale-toolbar-actions button').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('tbody button').text()).toBe('统一启动参数')
+    expect(wrapper.find('.network-migration-footer').exists()).toBe(false)
+    await wrapper.get('tbody button').trigger('click')
+    expect(document.body.querySelector('.base-modal')?.textContent).toContain('k3s 服务')
+    document.body.querySelector('.base-modal .btn-primary').click()
+    await flushPromises()
+    expect(startClusterNetworkNodeMigration).toHaveBeenCalledWith('9', 3)
+    wrapper.unmount()
+  })
+
+  it('offers state sync when every node is already configured', async () => {
+    checkClusterNetworkMigration.mockResolvedValue({ ready: true, nodes: [
+      { server_id: 3, name: 'control', role: 'control-plane', ready: true, action: 'skip', tailscale_ip: '100.81.23.123' },
+    ] })
+    const wrapper = mount(ClusterNetworking, { props, global: { stubs: { ServerTailscale: tailscaleCardStub } } })
+    await wrapper.get('.tailscale-card .tailscale-toolbar-actions .btn-primary').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('已接入')
+    expect(wrapper.get('.network-migration-footer button').text()).toBe('同步组网状态')
+    await wrapper.get('.network-migration-footer button').trigger('click')
+    expect(document.body.querySelector('.base-modal')?.textContent).toContain('不修改或重启节点')
     document.body.querySelector('.base-modal .btn-primary').click()
     await flushPromises()
     expect(startClusterNetworkMigration).toHaveBeenCalledWith('9')
-    expect(wrapper.emitted('operation-started')).toHaveLength(1)
     wrapper.unmount()
   })
 })

@@ -141,6 +141,19 @@ describe('ServerTailscale', () => {
     wrapper.unmount()
   })
 
+  it('identifies a stopped Tailscale service and offers to start it', async () => {
+    getTailscaleStatus.mockResolvedValue({ server_id: 2, status: 'offline', error_type: 'not_running', error: 'Tailscale 已安装，但当前未运行或仍在启动' })
+    const wrapper = mount(ServerTailscale, { props: { servers: [{ id: 2, name: 'node', host: '203.0.113.2' }] } })
+    await flushPromises()
+    expect(wrapper.get('tbody tr td:nth-child(3)').text()).toBe('服务未运行')
+    await wrapper.get('[aria-label="管理 node 的组网"]').trigger('click')
+    const dialog = document.body.querySelector('.base-modal')
+    expect(dialog.textContent).toContain('Tailscale 已安装，但当前未运行或仍在启动')
+    expect(dialog.textContent).toContain('启动 Tailscale 服务')
+    expect(dialog.querySelector('#tailscale-auth-key')).toBeNull()
+    wrapper.unmount()
+  })
+
   it('shows relay connectivity and explains both endpoints on demand', async () => {
     getTailscaleStatus.mockImplementation(id => Promise.resolve({ server_id: id, status: 'online', ip: `100.64.0.${id}` }))
     checkTailscaleConnections.mockResolvedValue([

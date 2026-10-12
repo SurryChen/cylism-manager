@@ -59,6 +59,59 @@ func (s *Store) FinishClusterNetworkMigration(task *model.ClusterDeployment, suc
 	})
 }
 
+// StartClusterNetworkNodeMigration reserves one managed node and serializes it
+// with other cluster maintenance tasks. It does not change cluster network mode.
+func (s *Store) StartClusterNetworkNodeMigration(clusterID, serverID uint, operation string) (*model.ClusterDeployment, error) {
+	if operation != "network-migrate-node" && operation != "network-normalize-node" {
+		return nil, ErrClusterDeploymentConflict
+	}
+	task := &model.ClusterDeployment{ClusterID: clusterID, ServerID: serverID, Operation: operation, NetworkMode: "tailscale", Status: "running"}
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		var cluster model.Cluster
+		if err := tx.First(&cluster, clusterID).Error; err != nil {
+			return err
+		}
+		if cluster.Distribution != "k3s" || cluster.Status != "ready" || cluster.ControlServerID == nil || cluster.NetworkMode == "tailscale" {
+			return ErrClusterDeploymentConflict
+		}
+		var server model.Server
+		if err := tx.Where("id = ? AND cluster_id = ?", serverID, clusterID).First(&server).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrClusterDeploymentConflict
+			}
+			return err
+		}
+		if server.ClusterRole != "worker" && (server.ClusterRole != "control-plane" || *cluster.ControlServerID != serverID) {
+			return ErrClusterDeploymentConflict
+		}
+		var running int64
+		if err := tx.Model(&model.ClusterDeployment{}).Where("cluster_id = ? AND status = ?", clusterID, "running").Count(&running).Error; err != nil {
+			return err
+		}
+		if running != 0 {
+			return ErrClusterDeploymentConflict
+		}
+		task.Role = server.ClusterRole
+		return tx.Create(task).Error
+	})
+	return task, err
+}
+
+func (s *Store) FinishClusterNetworkNodeMigration(task *model.ClusterDeployment, success bool) error {
+	status := "failed"
+	if success {
+		status = "success"
+	}
+	updated := s.db.Model(&model.ClusterDeployment{}).Where("id = ? AND status = ?", task.ID, "running").Update("status", status)
+	if updated.Error != nil {
+		return updated.Error
+	}
+	if updated.RowsAffected != 1 {
+		return ErrClusterDeploymentConflict
+	}
+	return nil
+}
+
 // StartClusterAgentOperation creates an agent maintenance task for the
 // cluster control plane. Agent operations do not change node ownership.
 func (s *Store) StartClusterAgentOperation(clusterID, serverID uint, operation string) (*model.ClusterDeployment, error) {
@@ -513,11 +566,11 @@ func (s *Store) RecoverInterruptedClusterDeployments() error {
 				}
 				continue
 			}
-			if task.Operation == "network-migrate" {
+			if task.Operation == "network-migrate" || task.Operation == "network-migrate-node" || task.Operation == "network-normalize-node" {
 				if err := tx.Model(&model.ClusterDeployment{}).Where("id = ?", task.ID).Update("status", "failed").Error; err != nil {
 					return err
 				}
-				if err := tx.Create(&model.ClusterDeploymentLog{DeploymentID: task.ID, Message: "API 服务重启，组网迁移已中断；请核对各节点的 K3s 网络配置后再操作"}).Error; err != nil {
+				if err := tx.Create(&model.ClusterDeploymentLog{DeploymentID: task.ID, Message: "API 服务重启，组网任务已中断；请核对节点的 K3s 网络配置后重新预检"}).Error; err != nil {
 					return err
 				}
 				if err := tx.Create(&model.AuditLog{Action: "cluster.network_migrate", ResourceType: "cluster", ResourceID: task.ClusterID, ActorType: model.AuditActorSystem, Source: model.AuditSourceSystem, Outcome: model.AuditOutcomeFailed, Summary: "API 服务重启，组网迁移任务已中断", OperationID: fmt.Sprintf("cluster-deployment-%d", task.ID), Detail: fmt.Sprintf(`{"deployment_id":%d,"server_id":%d}`, task.ID, task.ServerID)}).Error; err != nil {

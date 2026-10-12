@@ -72,11 +72,12 @@
         <div class="deployment-form-field"><label for="deployment-server">{{ deploymentRole === 'control-plane' ? '选择控制平面服务器' : '选择工作节点服务器' }}</label><SelectMenu id="deployment-server" v-model="selectedServerID" :options="serverOptions" placeholder="请选择已有服务器" aria-label="部署服务器" /></div>
         <div class="deployment-form-field"><label for="deployment-network">节点通信网络</label><SelectMenu id="deployment-network" v-model="networkMode" :options="networkModeOptions" :disabled="deploymentRole === 'worker'" aria-label="节点通信网络" /></div>
         <div v-if="deploymentRole === 'control-plane' && selectedServer" class="deployment-form-field"><label>服务器地址</label><span>{{ selectedServer.host }}</span></div>
-        <div v-if="networkMode === 'tailscale'" class="deployment-form-field"><label>Tailscale IP</label><span>{{ selectedTailscaleLoading ? '正在检测...' : selectedTailscale?.status === 'online' ? selectedTailscale.ip : '所选服务器尚未加入组网' }}</span></div>
+        <div v-if="deploymentRole === 'worker'" class="deployment-form-field"><label for="deployment-join-address">控制平面连接地址</label><SelectMenu id="deployment-join-address" v-model="joinAddressType" :options="joinAddressOptions" aria-label="控制平面连接地址" /></div>
+        <div v-if="networkMode === 'tailscale' || (deploymentRole === 'worker' && joinAddressType === 'tailscale')" class="deployment-form-field"><label>{{ deploymentRole === 'worker' ? '工作节点 Tailscale IP' : 'Tailscale IP' }}</label><span>{{ selectedTailscaleMessage }}</span></div>
         <div class="deployment-form-field"><label for="deployment-mirror">安装源</label><SelectMenu id="deployment-mirror" v-model="mirror" :options="mirrorOptions" aria-label="安装源" /></div>
       </div>
       <p class="deployment-hint">将在选中的服务器上通过 SSH 安装 K3s。服务器只能归属一个集群。<RouterLink v-if="!serverOptions.length" to="/servers">前往添加服务器</RouterLink></p>
-      <template #actions><button class="btn" type="button" :disabled="submitting" @click="closeDeployment">取消</button><button class="btn btn-primary" type="button" :disabled="!selectedServerID || submitting || (networkMode === 'tailscale' && selectedTailscale?.status !== 'online')" @click="startDeployment">{{ submitting ? '启动中...' : deploymentRole === 'control-plane' ? '部署控制平面' : '添加工作节点' }}</button></template>
+      <template #actions><button class="btn" type="button" :disabled="submitting" @click="closeDeployment">取消</button><button class="btn btn-primary" type="button" :disabled="!selectedServerID || submitting || ((networkMode === 'tailscale' || (deploymentRole === 'worker' && joinAddressType === 'tailscale')) && selectedTailscale?.status !== 'online') || (deploymentRole === 'worker' && joinAddressType === 'tailscale' && (!controlTailscaleIP || controlTailscaleLoading))" @click="startDeployment">{{ submitting ? '启动中...' : deploymentRole === 'control-plane' ? '部署控制平面' : '添加工作节点' }}</button></template>
     </BaseModal>
     <ErrorNoticeModal :open="Boolean(operationError)" :message="operationError" teleport @close="clearOperationErrors" />
   </div>
@@ -140,8 +141,24 @@ const mirror = ref('official')
 const mirrorOptions = [{ value: 'official', label: '官方源' }, { value: 'cn', label: '国内镜像' }]
 const networkMode = ref('public')
 const networkModeOptions = [{ value: 'public', label: '公网' }, { value: 'tailscale', label: 'Tailscale' }]
+const joinAddressType = ref('server')
+const controlTailscale = ref(null)
+const controlTailscaleLoading = ref(false)
+const controlTailscaleIP = computed(() => controlTailscale.value?.status === 'online' ? controlTailscale.value.ip : '')
+const controlServerAddress = computed(() => controlNode.value?.host || cluster.value?.control_address || '')
+const joinAddressOptions = computed(() => [
+  { value: 'server', label: `服务器 IP · ${controlServerAddress.value || '未配置'}`, disabled: !controlServerAddress.value },
+  { value: 'tailscale', label: controlTailscaleIP.value ? `Tailscale IP · ${controlTailscaleIP.value}` : controlTailscaleLoading.value ? '正在检测 Tailscale IP' : 'Tailscale IP 不可用', disabled: !controlTailscaleIP.value },
+])
 const selectedTailscale = ref(null)
 const selectedTailscaleLoading = ref(false)
+const selectedTailscaleMessage = computed(() => {
+  if (!selectedServerID.value) return '请先选择服务器'
+  if (selectedTailscaleLoading.value) return '正在检测组网状态...'
+  if (selectedTailscale.value?.status === 'online') return selectedTailscale.value.ip
+  if (selectedTailscale.value?.status === 'not_installed') return '所选服务器未安装 Tailscale'
+  return selectedTailscale.value?.error || '无法确认所选服务器的组网状态'
+})
 const logs = ref([])
 const topologyLoading = ref(false)
 const topologyError = ref('')
@@ -170,14 +187,15 @@ const controlNode = computed(() => clusterNodes.value.find(server => server.clus
 const workerNodes = computed(() => clusterNodes.value.filter(server => server.cluster_role === 'worker'))
 const serverOptions = computed(() => servers.value.filter(server => !server.cluster_id && !server.cluster_role && !server.k8s_node_name).map(server => ({ value: String(server.id), label: serverDisplayLabel(server) })))
 const selectedServer = computed(() => servers.value.find(server => String(server.id) === selectedServerID.value))
-watch([selectedServerID, networkMode], async ([serverID, mode], _old, onCleanup) => {
+watch([selectedServerID, networkMode, joinAddressType], async ([serverID, mode, addressType], _old, onCleanup) => {
   selectedTailscale.value = null
-  if (!serverID || mode !== 'tailscale') return
+  selectedTailscaleLoading.value = false
+  if (!serverID || (mode !== 'tailscale' && addressType !== 'tailscale')) return
   let stale = false
   onCleanup(() => { stale = true })
   selectedTailscaleLoading.value = true
   try { const status = await getTailscaleStatus(serverID); if (!stale) selectedTailscale.value = status }
-  catch { if (!stale) selectedTailscale.value = { status: 'unreachable' } }
+  catch (error) { if (!stale) selectedTailscale.value = { status: 'unreachable', error: error?.message || '读取组网状态失败' } }
   finally { if (!stale) selectedTailscaleLoading.value = false }
 })
 const adoptSelectedServer = computed(() => servers.value.find(server => String(server.id) === adoptServerID.value))
@@ -320,7 +338,20 @@ async function handleAgentOperationStarted() {
   await selectTab('tasks')
   await loadTopology()
 }
-function openDeployment() { selectedServerID.value = ''; mirror.value = 'official'; networkMode.value = deploymentRole.value === 'worker' ? cluster.value?.network_mode || 'public' : 'public'; submitError.value = ''; deploymentOpen.value = true }
+async function openDeployment() {
+  selectedServerID.value = ''
+  mirror.value = 'official'
+  networkMode.value = deploymentRole.value === 'worker' ? cluster.value?.network_mode || 'public' : 'public'
+  joinAddressType.value = networkMode.value === 'tailscale' ? 'tailscale' : 'server'
+  controlTailscale.value = null
+  submitError.value = ''
+  deploymentOpen.value = true
+  if (deploymentRole.value !== 'worker' || !cluster.value?.control_server_id) return
+  controlTailscaleLoading.value = true
+  try { controlTailscale.value = await getTailscaleStatus(cluster.value.control_server_id) }
+  catch { controlTailscale.value = { status: 'unreachable' } }
+  finally { controlTailscaleLoading.value = false }
+}
 function closeDeployment() { if (!submitting.value) deploymentOpen.value = false }
 
 function openAdoption() { adoptServerID.value = ''; adoptError.value = ''; adoptionOpen.value = true }
@@ -345,7 +376,7 @@ async function startDeployment() {
   submitting.value = true
   submitError.value = ''
   try {
-    await startClusterDeployment(props.clusterID, selectedServerID.value, deploymentRole.value, mirror.value, networkMode.value)
+    await startClusterDeployment(props.clusterID, selectedServerID.value, deploymentRole.value, mirror.value, networkMode.value, joinAddressType.value)
     selectedServerID.value = ''
     closeLogs()
     deploymentOpen.value = false
@@ -358,14 +389,16 @@ async function startDeployment() {
 function roleLabel(role) { return role === 'control-plane' ? '部署控制平面' : '添加工作节点' }
 function taskLabel(task) {
   if (task.operation === 'restart') return `重启${task.role === 'control-plane' ? '控制平面' : '工作节点'}`
-  if (task.operation === 'network-migrate') return '迁移至 Tailscale'
+  if (task.operation === 'network-migrate') return '同步 Tailscale 组网状态'
+  if (task.operation === 'network-migrate-node') return '迁移节点至 Tailscale'
+  if (task.operation === 'network-normalize-node') return '统一 K3s 启动参数'
   if (task.operation === 'cross-create') return '发布跨集群服务'
   if (task.operation === 'cross-delete') return '删除跨集群服务'
   const agentLabels = { 'agent-install': '部署 Agent', 'agent-upgrade': '升级 Agent', 'agent-restart': '重启 Agent', 'agent-stop': '停止 Agent', 'agent-uninstall': '卸载 Agent', 'agent-test': '测试 Agent 连接' }
   if (agentLabels[task.operation]) return agentLabels[task.operation]
   return task.operation === 'uninstall' ? `卸载${task.role === 'control-plane' ? '控制平面' : '工作节点'}` : task.operation === 'adopt' ? `纳管${task.role === 'control-plane' ? '控制平面' : '工作节点'}` : roleLabel(task.role)
 }
-function taskDescription(task) { return task.operation === 'restart' ? 'K3s 服务重启' : task.operation === 'network-migrate' ? 'K3s 集群组网' : task.operation?.startsWith('cross-') ? '跨集群服务' : task.operation?.startsWith('agent-') ? 'cluster-agent 运维' : `K3s ${task.operation === 'uninstall' ? '卸载' : task.operation === 'adopt' ? '纳管' : '部署'}` }
+function taskDescription(task) { return task.operation === 'restart' ? 'K3s 服务重启' : task.operation === 'network-migrate' ? 'K3s 集群组网' : task.operation?.startsWith('network-') ? 'K3s 节点组网' : task.operation?.startsWith('cross-') ? '跨集群服务' : task.operation?.startsWith('agent-') ? 'cluster-agent 运维' : `K3s ${task.operation === 'uninstall' ? '卸载' : task.operation === 'adopt' ? '纳管' : '部署'}` }
 function deploymentStatusLabel(status) { return ({ running: '执行中', success: '成功', failed: '失败' })[status] || status }
 function deploymentStatusClass(status) { return ({ running: 'badge-deploying', success: 'badge-online', failed: 'badge-danger' })[status] || 'badge-offline' }
 function serverDisplayLabel(server) {

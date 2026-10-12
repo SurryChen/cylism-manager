@@ -39,10 +39,10 @@
       <div><span>设备名</span><strong>{{ selectedStatus?.device_name || '-' }}</strong></div>
     </div>
     <EmptyState v-if="pendingIDs.has(selectedServer?.id)" variant="loading" message="正在读取组网状态" />
-    <div v-else-if="selectedStatus?.status === 'not_installed' || selectedStatus?.error_type === 'tailscale_daemon'" class="tailscale-form">
+    <div v-else-if="selectedStatus?.status === 'not_installed' || selectedStatus?.error_type === 'tailscale_daemon' || selectedStatus?.error_type === 'not_running'" class="tailscale-form">
       <button class="btn btn-primary" :disabled="working" @click="install">{{ working ? (selectedStatus?.status === 'not_installed' ? '安装中...' : '启动中...') : (selectedStatus?.status === 'not_installed' ? '安装 Tailscale' : '启动 Tailscale 服务') }}</button>
     </div>
-    <form v-else-if="selectedStatus?.status === 'offline'" class="tailscale-form" @submit.prevent="join">
+    <form v-else-if="selectedStatus?.status === 'offline' && (!selectedStatus?.error_type || selectedStatus?.error_type === 'login_required')" class="tailscale-form" @submit.prevent="join">
       <label class="form-label" for="tailscale-auth-key">一次性授权密钥</label>
       <input id="tailscale-auth-key" v-model.trim="authKey" class="form-input" type="password" autocomplete="off" placeholder="tskey-auth-..." required />
       <button class="btn btn-primary" type="submit" :disabled="working || !authKey">{{ working ? '加入中...' : '加入网络' }}</button>
@@ -149,7 +149,10 @@ function statusLabel(status) {
       invalid_response: '状态响应异常',
     })[status.error_type] || '无法检测'
   }
-  return ({ online: '在线', offline: '待登录', not_installed: '未安装' })[status?.status] || '待检测'
+  if (status?.status === 'offline') {
+    return ({ login_required: '待登录', not_running: '服务未运行', missing_ip: '无 IPv4', device_offline: '设备离线', unknown_state: '状态异常' })[status.error_type] || '待登录'
+  }
+  return ({ online: '在线', not_installed: '未安装' })[status?.status] || '待检测'
 }
 function statusClass(status) { return status?.status === 'online' ? 'badge-online' : status?.status === 'unreachable' ? 'badge-danger' : 'badge-offline' }
 function refreshAll() { if (props.cluster) emit('refresh-nodes'); refresh() }

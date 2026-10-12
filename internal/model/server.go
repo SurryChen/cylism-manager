@@ -19,6 +19,8 @@ type Server struct {
 	SSHKey           string         `gorm:"type:text" json:"-"`
 	SSHKeyPassphrase string         `gorm:"type:text" json:"-"`
 	SSHKeyHash       string         `gorm:"size:64" json:"-"`
+	ProxyServerID    *uint          `gorm:"index" json:"proxy_server_id,omitempty"`
+	SSHProxy         *Server        `gorm:"foreignKey:ProxyServerID" json:"-"`
 	ClusterRole      string         `gorm:"size:32" json:"cluster_role"`
 	ClusterID        *uint          `gorm:"index" json:"cluster_id,omitempty"`
 	K8sNodeName      string         `gorm:"size:256" json:"k8s_node_name"`

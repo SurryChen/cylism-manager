@@ -86,3 +86,50 @@ func TestInterruptedNetworkMigrationDoesNotReleaseNodes(t *testing.T) {
 		t.Fatalf("task=%#v err=%v", stored, err)
 	}
 }
+
+func TestNetworkNodeMigrationDoesNotCommitClusterModeOrUnbindServer(t *testing.T) {
+	st, err := New(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cluster := model.Cluster{Name: "node-migration", Distribution: "k3s", Status: "ready", NetworkMode: "public"}
+	if err := st.DB().Create(&cluster).Error; err != nil {
+		t.Fatal(err)
+	}
+	server := model.Server{Name: "control", Host: "203.0.113.10", ClusterID: &cluster.ID, ClusterRole: "control-plane", K8sNodeName: "control"}
+	if err := st.DB().Create(&server).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := st.DB().Model(&cluster).Update("control_server_id", server.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	task, err := st.StartClusterNetworkNodeMigration(cluster.ID, server.ID, "network-normalize-node")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.StartClusterNetworkMigration(cluster.ID); !errors.Is(err, ErrClusterDeploymentConflict) {
+		t.Fatalf("concurrent cluster task: %v", err)
+	}
+	if err := st.FinishClusterNetworkNodeMigration(task, true); err != nil {
+		t.Fatal(err)
+	}
+	current, err := st.GetCluster(cluster.ID)
+	if err != nil || current.NetworkMode != "public" {
+		t.Fatalf("node task changed cluster mode: %#v %v", current, err)
+	}
+	task, err = st.StartClusterNetworkNodeMigration(cluster.ID, server.ID, "network-migrate-node")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.RecoverInterruptedClusterDeployments(); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := st.GetClusterDeployment(cluster.ID, task.ID)
+	if err != nil || stored.Status != "failed" {
+		t.Fatalf("interrupted task=%#v err=%v", stored, err)
+	}
+	owned, err := st.GetServer(server.ID)
+	if err != nil || owned.ClusterID == nil || *owned.ClusterID != cluster.ID {
+		t.Fatalf("interrupted task unbound node: %#v %v", owned, err)
+	}
+}

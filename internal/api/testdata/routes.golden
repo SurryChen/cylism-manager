@@ -336,6 +336,7 @@ POST /api/clusters/:id/monitoring/logs/install
 POST /api/clusters/:id/monitoring/logs/query
 POST /api/clusters/:id/monitoring/storage-migration
 POST /api/clusters/:id/network-migration
+POST /api/clusters/:id/network-migration/nodes/:serverID
 POST /api/clusters/:id/nodes/:serverID/restart
 POST /api/clusters/:id/nodes/:serverID/uninstall
 POST /api/domains

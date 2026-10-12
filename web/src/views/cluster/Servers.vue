@@ -18,13 +18,14 @@
         <table class="data-table">
           <thead>
             <tr>
-              <th>名称</th><th>主机</th><th>SSH 用户</th><th>认证方式</th><th>主机名</th><th class="action-cell">操作</th>
+              <th>名称</th><th>主机</th><th>连接方式</th><th>SSH 用户</th><th>认证方式</th><th>主机名</th><th class="action-cell">操作</th>
             </tr>
           </thead>
           <tbody>
             <tr v-for="srv in servers" :key="srv.id">
               <td>{{ srv.name }}</td>
               <td>{{ srv.host }}</td>
+              <td>{{ srv.proxy_server_id ? `代理访问 · ${srv.proxy_server_name || serverName(srv.proxy_server_id)}` : '直接访问' }}</td>
               <td>{{ srv.ssh_user || 'root' }}</td>
               <td>{{ srv.ssh_auth_type === 'key' ? '密钥' : '密码' }}</td>
               <td>{{ srv.hostname || '-' }}</td>
@@ -67,6 +68,8 @@
         <form @submit.prevent="addServer">
           <div class="form-group"><label class="form-label" for="server-name">名称</label><input id="server-name" v-model.trim="form.name" class="form-input" placeholder="留空使用主机 IP" /></div>
           <div class="form-group"><label class="form-label">主机</label><input v-model="form.host" class="form-input" placeholder="192.168.1.100" required /></div>
+          <div class="form-group"><label class="form-label">连接方式</label><SelectMenu v-model="form.connection_mode" :options="connectionModeOptions" aria-label="连接方式" /></div>
+          <div v-if="form.connection_mode === 'proxy'" class="form-group"><label class="form-label">代理节点</label><SelectMenu v-model="form.proxy_server_id" :options="proxyServerOptions" placeholder="选择可直接访问的服务器" aria-label="代理节点" /><span class="cell-secondary">主机请填写代理节点可连接的目标 IP 地址</span></div>
           <div class="form-row">
             <div class="form-group"><label class="form-label">SSH 端口</label><input v-model.number="form.ssh_port" class="form-input" type="number" placeholder="22" /></div>
             <div class="form-group"><label class="form-label">SSH 用户</label><input v-model="form.ssh_user" class="form-input" placeholder="root" /></div>
@@ -236,9 +239,13 @@ const chartOptions = {
 
 
 
-const emptyForm = () => ({ name: '', host: '', ssh_port: 22, ssh_user: 'root', ssh_auth_type: 'password', ssh_password: '', ssh_key: '', hostname: '' })
+const emptyForm = () => ({ name: '', host: '', connection_mode: 'direct', proxy_server_id: '', ssh_port: 22, ssh_user: 'root', ssh_auth_type: 'password', ssh_password: '', ssh_key: '', hostname: '' })
 const form = ref(emptyForm())
-const connectionSnapshot = (value) => JSON.stringify([value.host, value.ssh_port, value.ssh_user, value.ssh_auth_type, value.ssh_password, value.ssh_key])
+const connectionModeOptions = [{ value: 'direct', label: '直接访问' }, { value: 'proxy', label: '代理访问' }]
+const proxyServerOptions = computed(() => servers.value.filter(server => !server.proxy_server_id && server.id !== editingId.value).map(server => ({ value: String(server.id), label: `${server.name} (${server.host})` })))
+const connectionSnapshot = (value) => JSON.stringify([value.host, value.connection_mode, value.proxy_server_id, value.ssh_port, value.ssh_user, value.ssh_auth_type, value.ssh_password, value.ssh_key])
+function serverName(id) { return servers.value.find(server => server.id === id)?.name || `#${id}` }
+function connectionPayload(value) { const { connection_mode, ...details } = value; return { ...details, proxy_server_id: connection_mode === 'proxy' ? Number(value.proxy_server_id) || null : null } }
 let hostnameConnectionSnapshot = connectionSnapshot(form.value)
 watch(form, () => {
   probeResult.value = null
@@ -304,6 +311,10 @@ function syncResourcePolling() {
 async function addServer() {
   if (savingServer.value) return
   formError.value = ''
+  if (form.value.connection_mode === 'proxy' && !form.value.proxy_server_id) {
+    formError.value = '请选择代理节点'
+    return
+  }
   if (!form.value.hostname.trim()) {
     hostnameError.value = '请先点击“自动获取”获取机器名'
     return
@@ -315,14 +326,14 @@ async function addServer() {
   savingServer.value = true
   try {
     if (editingId.value) {
-      const { ssh_password, ssh_key, ...details } = form.value
+      const { ssh_password, ssh_key, ...details } = connectionPayload(form.value)
       await updateServer(editingId.value, {
         ...details,
         ...(ssh_password ? { ssh_password } : {}),
         ...(ssh_key ? { ssh_key } : {}),
       })
     } else {
-      await createServer(form.value)
+      await createServer(connectionPayload(form.value))
     }
     closeForm()
     await fetchServers()
@@ -336,6 +347,8 @@ function startEdit(srv) {
   const nextForm = {
     name: srv.name === srv.host ? '' : srv.name,
     host: srv.host,
+    connection_mode: srv.proxy_server_id ? 'proxy' : 'direct',
+    proxy_server_id: srv.proxy_server_id ? String(srv.proxy_server_id) : '',
     ssh_port: srv.ssh_port || 22,
     ssh_user: srv.ssh_user || 'root',
     ssh_auth_type: srv.ssh_auth_type || 'password',
@@ -362,9 +375,10 @@ function closeForm() {
 
 async function fetchHostname() {
   if (hostnameFetching.value || !form.value.host.trim() || !form.value.ssh_port) return
+  if (form.value.connection_mode === 'proxy' && !form.value.proxy_server_id) { hostnameError.value = '请先选择代理节点'; return }
   const id = editingId.value
-  const details = { ...form.value }
-  const snapshot = connectionSnapshot(details)
+  const details = connectionPayload(form.value)
+  const snapshot = connectionSnapshot(form.value)
   const token = ++hostnameRequestToken
   hostnameFetching.value = true
   hostnameError.value = ''
@@ -381,16 +395,17 @@ async function fetchHostname() {
 
 async function probeServer() {
   if (!editingId.value || probing.value) return
+  if (form.value.connection_mode === 'proxy' && !form.value.proxy_server_id) { probeResult.value = { reachable: false, error: '请先选择代理节点' }; return }
   const id = editingId.value
-  const details = { ...form.value }
-  const snapshot = JSON.stringify(details)
+  const details = connectionPayload(form.value)
+  const snapshot = connectionSnapshot(form.value)
   probeResult.value = null
   probing.value = true
   try {
     const result = await probeServerRequest(id, details)
-    if (showAdd.value && editingId.value === id && JSON.stringify(form.value) === snapshot) probeResult.value = result
+    if (showAdd.value && editingId.value === id && connectionSnapshot(form.value) === snapshot) probeResult.value = result
   } catch (e) {
-    if (showAdd.value && editingId.value === id && JSON.stringify(form.value) === snapshot) probeResult.value = { reachable: false, error: e.message }
+    if (showAdd.value && editingId.value === id && connectionSnapshot(form.value) === snapshot) probeResult.value = { reachable: false, error: e.message }
   } finally { probing.value = false }
 }
 
