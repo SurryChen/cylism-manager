@@ -34,6 +34,7 @@ func (r *fakeRepository) DeleteCloudConnection(uint) error { return nil }
 type fakeProvider struct {
 	deleteCalled bool
 	region       string
+	cors         ContainerCORS
 }
 
 func (p *fakeProvider) SetStorageRegion(region string) error { p.region = region; return nil }
@@ -68,6 +69,13 @@ func (p *fakeProvider) DownloadObject(context.Context, string, string) (ObjectDo
 	return ObjectDownload{}, nil
 }
 func (p *fakeProvider) DeleteObject(context.Context, string, string) error { return nil }
+func (p *fakeProvider) GetContainerCORS(context.Context, string) (ContainerCORS, error) {
+	return p.cors, nil
+}
+func (p *fakeProvider) SetContainerCORS(_ context.Context, _ string, config ContainerCORS) error {
+	p.cors = config
+	return nil
+}
 
 func newTestService(t *testing.T, connection *model.CloudConnection, provider *fakeProvider) *Service {
 	t.Helper()
@@ -115,6 +123,31 @@ func TestObjectStorageUsesRegionForEachOperation(t *testing.T) {
 	}
 	if _, err := service.ListObjects(context.Background(), 1, "assets", "", "", "cn-beijing"); err != nil || provider.region != "cn-beijing" {
 		t.Fatalf("list region = %q, err = %v", provider.region, err)
+	}
+}
+
+func TestContainerCORSReadsAndReplacesRulesInSelectedRegion(t *testing.T) {
+	provider := &fakeProvider{}
+	service := newTestService(t, &model.CloudConnection{ID: 1, Provider: "example"}, provider)
+	config := ContainerCORS{Rules: []ContainerCORSRule{
+		{AllowedOrigins: []string{"https://one.example"}, AllowedMethods: []string{"GET"}},
+		{AllowedOrigins: []string{"https://two.example"}, AllowedMethods: []string{"POST"}, AllowedHeaders: []string{"Content-Type"}},
+	}}
+	if err := service.SetContainerCORS(context.Background(), 1, "assets", "cn-guangzhou", config); err != nil {
+		t.Fatal(err)
+	}
+	if provider.region != "cn-guangzhou" || len(provider.cors.Rules) != 2 {
+		t.Fatalf("region = %q, rules = %d", provider.region, len(provider.cors.Rules))
+	}
+	got, err := service.GetContainerCORS(context.Background(), 1, "assets", "cn-guangzhou")
+	if err != nil || len(got.Rules) != 2 {
+		t.Fatalf("get cors = %#v, %v", got, err)
+	}
+	if err := service.SetContainerCORS(context.Background(), 1, "assets", "cn-guangzhou", ContainerCORS{Rules: []ContainerCORSRule{}}); err != nil || len(provider.cors.Rules) != 0 {
+		t.Fatalf("disable cors = %#v, %v", provider.cors, err)
+	}
+	if err := service.SetContainerCORS(context.Background(), 1, "assets", "cn-guangzhou", ContainerCORS{Rules: []ContainerCORSRule{{AllowedOrigins: []string{"*"}, AllowedMethods: []string{"OPTIONS"}}}}); err == nil {
+		t.Fatal("unsupported CORS method must be rejected")
 	}
 }
 

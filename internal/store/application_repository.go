@@ -230,6 +230,9 @@ func (s *Store) DeleteUnreleasedApplication(id uint) error {
 		if err := tx.Where("application_id = ?", id).Delete(&model.ApplicationDeploymentTemplate{}).Error; err != nil {
 			return err
 		}
+		if err := tx.Where("application_id = ?", id).Delete(&model.DatabaseBinding{}).Error; err != nil {
+			return err
+		}
 		if err := tx.Where("application_id = ?", id).Delete(&model.ApplicationManagedFile{}).Error; err != nil {
 			return err
 		}
@@ -301,6 +304,12 @@ func (s *Store) GetApplicationDeploymentTemplate(applicationID, templateID uint)
 	var template model.ApplicationDeploymentTemplate
 	err := s.db.Where("application_id = ? AND id = ?", applicationID, templateID).First(&template).Error
 	return &template, err
+}
+
+func (s *Store) GetDatabaseBindingForTemplate(templateID uint) (*model.DatabaseBinding, error) {
+	var binding model.DatabaseBinding
+	err := s.db.Where("template_id = ?", templateID).First(&binding).Error
+	return &binding, err
 }
 
 func (s *Store) GetDefaultApplicationDeploymentTemplate(applicationID uint) (*model.ApplicationDeploymentTemplate, error) {
@@ -383,6 +392,9 @@ func (s *Store) DeleteApplicationDeploymentTemplate(applicationID, templateID ui
 			return fmt.Errorf("该模板已有关联发布记录，无法删除")
 		}
 		if err := tx.Where("id = ? AND application_id = ?", templateID, applicationID).Delete(&model.ApplicationDeploymentTemplate{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("template_id = ?", templateID).Delete(&model.DatabaseBinding{}).Error; err != nil {
 			return err
 		}
 		return tx.Model(&model.Application{}).Where("id = ? AND default_deployment_template_id = ?", applicationID, templateID).Update("default_deployment_template_id", nil).Error

@@ -35,7 +35,7 @@ func TestRuntimePodMetricsUsesLiveMetricsAPI(t *testing.T) {
 			t.Errorf("unexpected metrics path: %s", r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"items":[{"metadata":{"name":"api-1"},"containers":[{"usage":{"cpu":"50m","memory":"64Mi"}},{"usage":{"cpu":"25m","memory":"32Mi"}}]}]}`))
+		_, _ = w.Write([]byte(`{"items":[{"metadata":{"name":"api-1"},"containers":[{"name":"mysql","usage":{"cpu":"50m","memory":"64Mi"}},{"name":"sidecar","usage":{"cpu":"25m","memory":"32Mi"}}]}]}`))
 	}))
 	defer server.Close()
 	client, err := NewClientFromRestConfig(&rest.Config{Host: server.URL})
@@ -45,5 +45,9 @@ func TestRuntimePodMetricsUsesLiveMetricsAPI(t *testing.T) {
 	metrics, err := client.ListRuntimePodMetrics(t.Context(), "demo")
 	if err != nil || metrics["api-1"].CPUMilli != 75 || metrics["api-1"].MemoryBytes != 96*1024*1024 {
 		t.Fatalf("unexpected pod metrics: %#v, %v", metrics, err)
+	}
+	containers := metrics["api-1"].Containers
+	if len(containers) != 2 || containers[0].Name != "mysql" || containers[0].CPUMilli != 50 || containers[0].MemoryBytes != 64*1024*1024 || containers[1].Name != "sidecar" || containers[1].CPUMilli != 25 || containers[1].MemoryBytes != 32*1024*1024 {
+		t.Fatalf("unexpected container metrics: %#v", containers)
 	}
 }

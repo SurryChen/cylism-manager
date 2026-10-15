@@ -78,6 +78,19 @@ type ContainerInput struct {
 	Versioning   string `json:"versioning,omitempty"`
 }
 
+type ContainerCORSRule struct {
+	AllowedOrigins []string `json:"allowed_origins"`
+	AllowedMethods []string `json:"allowed_methods"`
+	AllowedHeaders []string `json:"allowed_headers"`
+	ExposeHeaders  []string `json:"expose_headers"`
+	MaxAgeSeconds  int      `json:"max_age_seconds"`
+}
+
+type ContainerCORS struct {
+	Rules        []ContainerCORSRule `json:"rules"`
+	ResponseVary *bool               `json:"response_vary,omitempty"`
+}
+
 // Provider is a marker; adapters may implement one or both capability interfaces.
 type Provider interface{}
 
@@ -103,6 +116,11 @@ type ObjectStorageProvider interface {
 
 type StorageRegionProvider interface {
 	SetStorageRegion(string) error
+}
+
+type ContainerCORSProvider interface {
+	GetContainerCORS(context.Context, string) (ContainerCORS, error)
+	SetContainerCORS(context.Context, string, ContainerCORS) error
 }
 
 func setStorageRegion(provider ObjectStorageProvider, region string) error {
@@ -265,6 +283,65 @@ func (s *Service) UpdateContainer(ctx context.Context, id uint, name string, inp
 		return Container{}, err
 	}
 	return p.UpdateContainer(ctx, name, input)
+}
+func (s *Service) GetContainerCORS(ctx context.Context, id uint, name, region string) (ContainerCORS, error) {
+	if strings.TrimSpace(name) == "" {
+		return ContainerCORS{}, errors.New("容器名称必填")
+	}
+	_, storage, err := s.objectStorageProvider(id)
+	if err != nil {
+		return ContainerCORS{}, err
+	}
+	provider, ok := storage.(ContainerCORSProvider)
+	if !ok {
+		return ContainerCORS{}, errors.New("该云提供商暂不支持跨域配置")
+	}
+	if err := setStorageRegion(storage, region); err != nil {
+		return ContainerCORS{}, err
+	}
+	return provider.GetContainerCORS(ctx, name)
+}
+func (s *Service) SetContainerCORS(ctx context.Context, id uint, name, region string, config ContainerCORS) error {
+	if strings.TrimSpace(name) == "" {
+		return errors.New("容器名称必填")
+	}
+	if config.Rules == nil {
+		return errors.New("跨域规则必填；关闭跨域请提交空规则列表")
+	}
+	if len(config.Rules) > 10 {
+		return errors.New("跨域规则最多支持 10 条")
+	}
+	allowed := map[string]bool{"GET": true, "PUT": true, "POST": true, "DELETE": true, "HEAD": true}
+	for _, rule := range config.Rules {
+		if len(rule.AllowedOrigins) == 0 || len(rule.AllowedMethods) == 0 {
+			return errors.New("每条跨域规则都需要允许来源和请求方法")
+		}
+		if rule.MaxAgeSeconds < 0 || rule.MaxAgeSeconds > 86400 {
+			return errors.New("预检缓存时间必须在 0 到 86400 秒之间")
+		}
+		for _, origin := range rule.AllowedOrigins {
+			if strings.TrimSpace(origin) == "" {
+				return errors.New("允许来源不能为空")
+			}
+		}
+		for _, method := range rule.AllowedMethods {
+			if !allowed[method] {
+				return errors.New("跨域请求方法无效")
+			}
+		}
+	}
+	_, storage, err := s.objectStorageProvider(id)
+	if err != nil {
+		return err
+	}
+	provider, ok := storage.(ContainerCORSProvider)
+	if !ok {
+		return errors.New("该云提供商暂不支持跨域配置")
+	}
+	if err := setStorageRegion(storage, region); err != nil {
+		return err
+	}
+	return provider.SetContainerCORS(ctx, name, config)
 }
 func (s *Service) DeleteContainer(ctx context.Context, id uint, name string, confirmed bool, region string) error {
 	if !confirmed {

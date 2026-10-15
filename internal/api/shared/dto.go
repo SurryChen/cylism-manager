@@ -446,6 +446,9 @@ func ReleasesDTO(items []model.Release) []ReleaseView {
 
 type RegistryProxyView struct {
 	ID                      uint       `json:"id"`
+	ClusterID               uint       `json:"cluster_id"`
+	ManagementMode          string     `json:"management_mode"`
+	ImportedOutboundProxy   bool       `json:"imported_outbound_proxy"`
 	Name                    string     `json:"name"`
 	Registry                string     `json:"registry"`
 	UpstreamURL             string     `json:"upstream_url"`
@@ -816,7 +819,7 @@ func RegistryProxyDTO(p *model.RegistryProxy) *RegistryProxyView {
 	if p == nil {
 		return nil
 	}
-	return &RegistryProxyView{ID: p.ID, Name: p.Name, Registry: p.Registry, UpstreamURL: p.UpstreamURL, ResourceName: p.ResourceName, NodeName: p.NodeName, EndpointHost: p.EndpointHost, NodePort: p.NodePort, CacheLimitGi: p.CacheLimitGi, CleanupIntervalHours: p.CleanupIntervalHours, LastCleanupAt: p.LastCleanupAt, LastCheckedAt: p.LastCheckedAt, Status: p.Status, LastError: p.LastError, NoProxy: p.NoProxy, DNSServers: p.DNSServers, LastDiagnosticStatus: p.LastDiagnosticStatus, LastDiagnosticError: p.LastDiagnosticError, LastDiagnosticAt: p.LastDiagnosticAt, OutboundProxyConfigured: p.OutboundProxyConfigured, CreatedBy: p.CreatedBy, CreatedAt: p.CreatedAt, UpdatedAt: p.UpdatedAt}
+	return &RegistryProxyView{ID: p.ID, ClusterID: p.ClusterID, ManagementMode: p.ManagementMode, ImportedOutboundProxy: p.ImportedOutboundProxy, Name: p.Name, Registry: p.Registry, UpstreamURL: p.UpstreamURL, ResourceName: p.ResourceName, NodeName: p.NodeName, EndpointHost: p.EndpointHost, NodePort: p.NodePort, CacheLimitGi: p.CacheLimitGi, CleanupIntervalHours: p.CleanupIntervalHours, LastCleanupAt: p.LastCleanupAt, LastCheckedAt: p.LastCheckedAt, Status: p.Status, LastError: p.LastError, NoProxy: p.NoProxy, DNSServers: p.DNSServers, LastDiagnosticStatus: p.LastDiagnosticStatus, LastDiagnosticError: p.LastDiagnosticError, LastDiagnosticAt: p.LastDiagnosticAt, OutboundProxyConfigured: p.OutboundProxyConfigured, CreatedBy: p.CreatedBy, CreatedAt: p.CreatedAt, UpdatedAt: p.UpdatedAt}
 }
 
 func SiteDTO(s *model.Site) *SiteView {

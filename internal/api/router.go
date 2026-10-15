@@ -55,8 +55,10 @@ type DeliveryDependencies struct {
 	NodeMirrors *deliveryapi.NodeRegistryMirrorHandler
 	Managed     *deliveryapi.ManagedOCIRegistryHandler
 	Proxy       *deliveryapi.RegistryProxyHandler
+	ProxyRelay  *deliveryapi.RegistryProxyRelayHandler
 	Chart       *deliveryapi.ChartRepositoryHandler
 	Cloud       *cloudapi.Handler
+	Database    *cloudapi.DatabaseHandler
 }
 
 type InfrastructureDependencies struct {
@@ -107,7 +109,7 @@ func RegisterRoutes(r *gin.Engine, deps RouteDependencies) {
 	registerDashboardRoutes(apiGroup, deps.System.Dashboard)
 	registerDeliveryRoutes(r, apiGroup, deliveryRouteHandlers{
 		image: deps.Delivery.Image, nodeMirrors: deps.Delivery.NodeMirrors, managed: deps.Delivery.Managed,
-		proxy: deps.Delivery.Proxy, chart: deps.Delivery.Chart, cloud: deps.Delivery.Cloud, platform: deps.Delivery.Platform,
+		proxy: deps.Delivery.Proxy, proxyRelay: deps.Delivery.ProxyRelay, chart: deps.Delivery.Chart, cloud: deps.Delivery.Cloud, database: deps.Delivery.Database, platform: deps.Delivery.Platform,
 	})
 	registerMonitoringRoutes(apiGroup, deps.System.Monitoring)
 	registerLoggingRoutes(apiGroup, deps.System.Logging)

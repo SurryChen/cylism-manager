@@ -26,6 +26,8 @@ type DNSRecordPage = cloudservice.DNSRecordPage
 type DNSRecordInput = cloudservice.DNSRecordInput
 type Container = cloudservice.Container
 type ContainerInput = cloudservice.ContainerInput
+type ContainerCORS = cloudservice.ContainerCORS
+type ContainerCORSRule = cloudservice.ContainerCORSRule
 type Object = cloudservice.Object
 type ObjectPage = cloudservice.ObjectPage
 type ObjectDownload = cloudservice.ObjectDownload
@@ -227,6 +229,30 @@ func (p *aliyunProvider) UpdateContainer(ctx context.Context, name string, input
 		}
 	}
 	return Container{Name: name, Region: p.region, ACL: input.ACL, Versioning: input.Versioning}, nil
+}
+func (p *aliyunProvider) GetContainerCORS(ctx context.Context, name string) (ContainerCORS, error) {
+	result, err := p.oss.GetBucketCORS(name, oss.WithContext(ctx))
+	if err != nil {
+		if serviceErr, ok := err.(oss.ServiceError); ok && serviceErr.Code == "NoSuchCORSConfiguration" {
+			return ContainerCORS{Rules: []ContainerCORSRule{}}, nil
+		}
+		return ContainerCORS{}, err
+	}
+	config := ContainerCORS{Rules: make([]ContainerCORSRule, 0, len(result.CORSRules)), ResponseVary: result.ResponseVary}
+	for _, rule := range result.CORSRules {
+		config.Rules = append(config.Rules, ContainerCORSRule{AllowedOrigins: rule.AllowedOrigin, AllowedMethods: rule.AllowedMethod, AllowedHeaders: rule.AllowedHeader, ExposeHeaders: rule.ExposeHeader, MaxAgeSeconds: rule.MaxAgeSeconds})
+	}
+	return config, nil
+}
+func (p *aliyunProvider) SetContainerCORS(ctx context.Context, name string, config ContainerCORS) error {
+	if len(config.Rules) == 0 {
+		return p.oss.DeleteBucketCORS(name, oss.WithContext(ctx))
+	}
+	rules := make([]oss.CORSRule, 0, len(config.Rules))
+	for _, rule := range config.Rules {
+		rules = append(rules, oss.CORSRule{AllowedOrigin: rule.AllowedOrigins, AllowedMethod: rule.AllowedMethods, AllowedHeader: rule.AllowedHeaders, ExposeHeader: rule.ExposeHeaders, MaxAgeSeconds: rule.MaxAgeSeconds})
+	}
+	return p.oss.SetBucketCORSV2(name, oss.PutBucketCORS{CORSRules: rules, ResponseVary: config.ResponseVary}, oss.WithContext(ctx))
 }
 func (p *aliyunProvider) ContainerEmpty(ctx context.Context, name string) (bool, error) {
 	bucket, err := p.oss.Bucket(name)

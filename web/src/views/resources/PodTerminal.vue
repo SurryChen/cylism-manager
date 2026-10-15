@@ -1,9 +1,9 @@
 <template>
   <Teleport to="body">
     <div class="overlay pod-terminal-overlay">
-      <div class="pod-terminal-modal" role="dialog" aria-modal="true" aria-label="容器终端">
+      <div class="pod-terminal-modal" role="dialog" aria-modal="true" :aria-label="terminalTitle">
         <header class="pod-terminal-header">
-          <div><h2>容器终端</h2><p>{{ pod.namespace }} / {{ pod.name }}</p></div>
+          <div><h2>{{ terminalTitle }}</h2><p>{{ pod.namespace }} / {{ pod.name }}</p></div>
           <button class="icon-button" title="关闭终端" aria-label="关闭终端" @click="close"><X :size="17" /></button>
         </header>
 
@@ -14,7 +14,7 @@
         </div>
 
         <div v-else class="pod-terminal-body">
-          <div v-if="status === 'connecting'" class="terminal-placeholder">正在连接容器终端...</div>
+          <div v-if="status === 'connecting'" class="terminal-placeholder">正在连接{{ terminalTitle }}...</div>
           <div v-else-if="status === 'error'" class="terminal-placeholder terminal-error"><span>{{ error }}</span><button class="btn btn-sm btn-primary" @click="connect">重试</button></div>
           <div v-else-if="status === 'closed'" class="terminal-placeholder"><span>终端会话已断开</span><button class="btn btn-sm btn-primary" @click="connect">重新连接</button></div>
           <div ref="terminalEl" class="terminal-container" v-show="status === 'connected'"></div>
@@ -35,11 +35,13 @@ import { loadTerminalRuntime } from '../../utils/terminalRuntime.js'
 const props = defineProps({
   pod: { type: Object, required: true },
   clusterId: { type: String, default: '' },
+  mysqlClusterId: { type: String, default: '' },
 })
 const emit = defineEmits(['close'])
 
 const terminalEl = ref(null)
 const containers = computed(() => props.pod.containers || [])
+const terminalTitle = computed(() => props.mysqlClusterId ? '数据库终端' : '容器终端')
 const container = ref(containers.value.length === 1 ? containers.value[0] : '')
 const status = ref(containers.value.length === 1 ? 'connecting' : 'selecting')
 const error = ref('')
@@ -110,8 +112,11 @@ async function openTerminal() {
   const name = encodeURIComponent(props.pod.name)
   const selectedContainer = encodeURIComponent(container.value)
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
-  const resourcePath = props.clusterId ? `/api/clusters/${encodeURIComponent(props.clusterId)}/k8s` : '/api/k8s'
-  const ws = new WebSocket(`${protocol}//${location.host}${resourcePath}/pods/${namespace}/${name}/terminal?container=${selectedContainer}&token=${encodeURIComponent(token)}`)
+  const resourcePath = props.mysqlClusterId
+    ? `/api/cloud/mysql-clusters/${encodeURIComponent(props.mysqlClusterId)}/pods/${name}/terminal`
+    : `${props.clusterId ? `/api/clusters/${encodeURIComponent(props.clusterId)}/k8s` : '/api/k8s'}/pods/${namespace}/${name}/terminal`
+  const query = props.mysqlClusterId ? '' : `container=${selectedContainer}&`
+  const ws = new WebSocket(`${protocol}//${location.host}${resourcePath}?${query}token=${encodeURIComponent(token)}`)
   ws.binaryType = 'arraybuffer'
 
   ws.onopen = () => {

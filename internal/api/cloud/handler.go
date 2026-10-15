@@ -244,6 +244,36 @@ func (h *Handler) UpdateContainer(c *gin.Context) {
 	h.record(c, "cloud.object_storage.container.update", id, item.Name, model.AuditOutcomeSucceeded, "更新存储容器")
 	apiShared.Success(c, item)
 }
+func (h *Handler) GetContainerCORS(c *gin.Context) {
+	id, ok := connectionID(c)
+	if !ok {
+		return
+	}
+	config, err := h.service.GetContainerCORS(c.Request.Context(), id, c.Param("container"), c.Query("region"))
+	if err != nil {
+		providerError(c, err)
+		return
+	}
+	apiShared.Success(c, config)
+}
+func (h *Handler) SetContainerCORS(c *gin.Context) {
+	id, ok := connectionID(c)
+	if !ok {
+		return
+	}
+	var config cloudservice.ContainerCORS
+	if c.ShouldBindJSON(&config) != nil {
+		apiShared.BadRequest(c, "跨域配置无效")
+		return
+	}
+	if err := h.service.SetContainerCORS(c.Request.Context(), id, c.Param("container"), c.Query("region"), config); err != nil {
+		validation(c, err)
+		h.record(c, "cloud.object_storage.container.cors.update", id, c.Param("container"), model.AuditOutcomeFailed, "更新跨域配置失败")
+		return
+	}
+	h.record(c, "cloud.object_storage.container.cors.update", id, c.Param("container"), model.AuditOutcomeSucceeded, "更新跨域配置")
+	apiShared.Success(c, config)
+}
 func (h *Handler) DeleteContainer(c *gin.Context) {
 	id, ok := connectionID(c)
 	if !ok {

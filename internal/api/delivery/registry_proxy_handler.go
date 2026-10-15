@@ -2,7 +2,10 @@ package delivery
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -21,15 +24,17 @@ const registryProxyNamespace = "kube-system"
 const registryProxyName = "cylism-registry-proxy"
 
 type RegistryProxyHandler struct {
-	store       repository.RegistryProxyRepository
-	service     *registryservice.ProxyService
-	resources   k8sclient.RegistryProxyResourceReconciler
-	diagnostics k8sclient.RegistryProxyDiagnostics
-	reconciler  *registryservice.ProxyReconciler
-	encKey      []byte
+	store         repository.RegistryProxyRepository
+	service       *registryservice.ProxyService
+	resources     k8sclient.RegistryProxyResourceReconciler
+	diagnostics   k8sclient.RegistryProxyDiagnostics
+	reconciler    *registryservice.ProxyReconciler
+	encKey        []byte
+	clientFactory func(context.Context, uint) (*k8sclient.Client, error)
 }
 
 type registryProxyRequest struct {
+	ClusterID            uint     `json:"cluster_id"`
 	Name                 string   `json:"name"`
 	Registry             string   `json:"registry"`
 	UpstreamURL          string   `json:"upstream_url"`
@@ -47,12 +52,21 @@ type registryProxyRequest struct {
 
 func proxyInput(req registryProxyRequest) registryservice.ProxyInput {
 	return registryservice.ProxyInput{
-		Name: req.Name, Registry: req.Registry, UpstreamURL: req.UpstreamURL,
+		ClusterID: req.ClusterID,
+		Name:      req.Name, Registry: req.Registry, UpstreamURL: req.UpstreamURL,
 		NodeName: req.NodeName, EndpointHost: req.EndpointHost, NodePort: req.NodePort,
 		CacheLimitGi: req.CacheLimitGi, CleanupIntervalHours: req.CleanupIntervalHours,
 		HTTPProxy: req.HTTPProxy, HTTPSProxy: req.HTTPSProxy, NoProxy: req.NoProxy,
 		DNSServers: req.DNSServers, ClearOutboundProxy: req.ClearOutboundProxy,
 	}
+}
+
+type registryProxyImportRequest struct {
+	ClusterID    uint   `json:"cluster_id"`
+	Name         string `json:"name"`
+	ResourceName string `json:"resource_name"`
+	EndpointHost string `json:"endpoint_host"`
+	Registry     string `json:"registry"`
 }
 
 // NewRegistryProxyHandlerWithDependencies uses the service and adapters
@@ -65,6 +79,204 @@ func NewRegistryProxyHandlerWithDependencies(repo repository.RegistryProxyReposi
 func (h *RegistryProxyHandler) WithReconciler(reconciler *registryservice.ProxyReconciler) *RegistryProxyHandler {
 	h.reconciler = reconciler
 	return h
+}
+
+func (h *RegistryProxyHandler) WithClusterClientFactory(factory func(context.Context, uint) (*k8sclient.Client, error)) *RegistryProxyHandler {
+	h.clientFactory = factory
+	return h
+}
+
+func (h *RegistryProxyHandler) adapters(ctx context.Context, clusterID uint) (k8sclient.RegistryProxyResourceReconciler, k8sclient.RegistryProxyDiagnostics, error) {
+	if clusterID == 0 {
+		if !h.k8sReady() {
+			return nil, nil, errors.New("默认集群未连接")
+		}
+		return h.resources, h.diagnostics, nil
+	}
+	if h.clientFactory == nil {
+		return nil, nil, errors.New("集群 Agent 访问未配置")
+	}
+	client, err := h.clientFactory(ctx, clusterID)
+	if err != nil {
+		return nil, nil, err
+	}
+	adapter := k8sclient.NewRegistryProxyReconciler(client)
+	return adapter, adapter, nil
+}
+
+// ImportExisting registers an existing workload in observation mode. It never
+// applies or deletes Kubernetes resources.
+func (h *RegistryProxyHandler) ImportExisting(c *gin.Context) {
+	var req registryProxyImportRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		apiShared.BadRequest(c, "纳管信息无效")
+		return
+	}
+	req.Name, req.ResourceName, req.EndpointHost = strings.TrimSpace(req.Name), strings.TrimSpace(req.ResourceName), strings.TrimSpace(req.EndpointHost)
+	if req.ClusterID == 0 || req.Name == "" || len(req.Name) > 128 || len(req.ResourceName) > 128 || !validProxyResourceName(req.ResourceName) || !registryservice.PrivateOrSharedAddressIP(req.EndpointHost) {
+		apiShared.ValidationError(c, "请选择集群，并填写有效的代理名称、资源名和私网或共享入口 IP")
+		return
+	}
+	if h.clientFactory == nil {
+		apiShared.K8sUnavailable(c)
+		return
+	}
+	client, err := h.clientFactory(c.Request.Context(), req.ClusterID)
+	if err != nil {
+		apiShared.ValidationError(c, "读取目标集群失败: "+err.Error())
+		return
+	}
+	adapter := k8sclient.NewRegistryProxyReconciler(client)
+	snapshot, err := adapter.InspectExisting(c.Request.Context(), req.ResourceName)
+	if err != nil {
+		apiShared.ValidationError(c, err.Error())
+		return
+	}
+	upstream, err := url.Parse(snapshot.UpstreamURL)
+	if err != nil {
+		apiShared.ValidationError(c, "现有代理上游地址无效")
+		return
+	}
+	registry := registryservice.NormalizeRegistryHost(req.Registry)
+	if registry == "" {
+		registry = registryservice.NormalizeRegistryHost(upstream.Hostname())
+	}
+	if registry != registryservice.NormalizeRegistryHost(upstream.Hostname()) {
+		apiShared.ValidationError(c, "Registry 与现有代理的上游地址不匹配")
+		return
+	}
+	input := registryservice.ProxyInput{Name: req.Name, Registry: registry, UpstreamURL: snapshot.UpstreamURL, NodeName: snapshot.NodeName, EndpointHost: req.EndpointHost, NodePort: snapshot.NodePort, CacheLimitGi: snapshot.CacheLimitGi, CleanupIntervalHours: 24}
+	if err := registryservice.ValidateProxyInput(input); err != nil {
+		apiShared.ValidationError(c, "现有代理配置不符合平台要求: "+err.Error())
+		return
+	}
+	if err := adapter.EnsureNode(c.Request.Context(), snapshot.NodeName); err != nil {
+		apiShared.ValidationError(c, err.Error())
+		return
+	}
+	proxies, err := h.service.List()
+	if err != nil {
+		apiShared.DBError(c, "读取代理列表失败")
+		return
+	}
+	for _, existing := range proxies {
+		if existing.ClusterID == req.ClusterID && existing.ResourceName == req.ResourceName {
+			apiShared.ValidationError(c, "该集群的代理资源已纳管")
+			return
+		}
+		if existing.ClusterID == req.ClusterID && existing.NodePort == snapshot.NodePort {
+			apiShared.ValidationError(c, fmt.Sprintf("NodePort %d 已被镜像代理 %q 使用", snapshot.NodePort, existing.Name))
+			return
+		}
+	}
+	proxy := &model.RegistryProxy{ClusterID: req.ClusterID, ManagementMode: "observe", ImportedOutboundProxy: snapshot.OutboundProxyConfigured, Name: req.Name, Registry: registry, UpstreamURL: snapshot.UpstreamURL, ResourceName: req.ResourceName, NodeName: snapshot.NodeName, EndpointHost: req.EndpointHost, NodePort: snapshot.NodePort, CacheLimitGi: snapshot.CacheLimitGi, CleanupIntervalHours: 24, NoProxy: snapshot.NoProxy, Status: "deploying", CreatedBy: apiShared.UserID(c)}
+	if snapshot.Available {
+		proxy.Status = "ready"
+	}
+	if len(snapshot.DNSServers) > 0 {
+		encoded, _ := json.Marshal(snapshot.DNSServers)
+		proxy.DNSResolvers = string(encoded)
+	}
+	if err := h.service.Save(proxy); err != nil {
+		apiShared.DBError(c, "保存纳管记录失败")
+		return
+	}
+	h.redactProxy(proxy)
+	apiShared.Success(c, apiShared.RegistryProxyDTO(proxy))
+}
+
+func validProxyResourceName(name string) bool {
+	if name == "" || name[0] == '-' || name[len(name)-1] == '-' {
+		return false
+	}
+	for _, ch := range name {
+		if !(ch >= 'a' && ch <= 'z' || ch >= '0' && ch <= '9' || ch == '-') {
+			return false
+		}
+	}
+	return true
+}
+
+func (h *RegistryProxyHandler) TakeOver(c *gin.Context) {
+	var req struct {
+		HTTPProxy  string `json:"http_proxy"`
+		HTTPSProxy string `json:"https_proxy"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		apiShared.BadRequest(c, "接管信息无效")
+		return
+	}
+	proxy, err := h.proxyForRequest(c)
+	if err != nil {
+		apiShared.NotFound(c, "镜像代理不存在")
+		return
+	}
+	if proxy.ManagementMode != "observe" {
+		apiShared.ValidationError(c, "代理已经由平台管理")
+		return
+	}
+	resources, _, err := h.adapters(c.Request.Context(), proxy.ClusterID)
+	if err != nil {
+		apiShared.ValidationError(c, err.Error())
+		return
+	}
+	adapter, ok := resources.(*k8sclient.RegistryProxyReconciler)
+	if !ok {
+		apiShared.K8sUnavailable(c)
+		return
+	}
+	snapshot, err := adapter.InspectExisting(c.Request.Context(), proxy.ResourceName)
+	if err != nil || snapshot.NodePort != proxy.NodePort || snapshot.UpstreamURL != proxy.UpstreamURL || snapshot.NodeName != proxy.NodeName {
+		apiShared.ValidationError(c, "现有资源已变化，请核对后重新纳管")
+		return
+	}
+	if snapshot.OutboundProxyConfigured && (strings.TrimSpace(req.HTTPProxy) == "" || strings.TrimSpace(req.HTTPSProxy) == "") {
+		apiShared.ValidationError(c, "现有代理使用出网代理；接管前请重新录入 HTTP_PROXY 和 HTTPS_PROXY")
+		return
+	}
+	if err := h.service.TakeOver(proxy, req.HTTPProxy, req.HTTPSProxy); err != nil {
+		apiShared.ValidationError(c, err.Error())
+		return
+	}
+	h.redactProxy(proxy)
+	apiShared.Success(c, apiShared.RegistryProxyDTO(proxy))
+}
+
+func (h *RegistryProxyHandler) RemoveObservation(c *gin.Context) {
+	proxy, err := h.proxyForRequest(c)
+	if err != nil {
+		apiShared.NotFound(c, "镜像代理不存在")
+		return
+	}
+	if proxy.ManagementMode != "observe" {
+		apiShared.ValidationError(c, "只能取消观察中代理的纳管")
+		return
+	}
+	if relays, ok := h.store.(repository.RegistryProxyRelayRepository); ok {
+		items, err := relays.ListRegistryProxyRelays(proxy.ID)
+		if err != nil {
+			apiShared.DBError(c, "检查中转入口失败")
+			return
+		}
+		if len(items) > 0 {
+			apiShared.ValidationError(c, "请先移除关联的中转入口")
+			return
+		}
+		routes, err := relays.ListRegistryProxyNodeRoutes(proxy.ID)
+		if err != nil {
+			apiShared.DBError(c, "检查节点入口失败")
+			return
+		}
+		if len(routes) > 0 {
+			apiShared.ValidationError(c, "请先解除节点入口配置")
+			return
+		}
+	}
+	if err := h.store.DeleteRegistryProxy(proxy.ID); err != nil {
+		apiShared.DBError(c, "取消纳管失败")
+		return
+	}
+	apiShared.Success(c, nil)
 }
 
 // WithResourceReconciler replaces only mutating proxy convergence actions.
@@ -113,10 +325,6 @@ func (h *RegistryProxyHandler) List(c *gin.Context) {
 }
 
 func (h *RegistryProxyHandler) Deploy(c *gin.Context) {
-	if !h.k8sReady() {
-		apiShared.K8sUnavailable(c)
-		return
-	}
 	var req registryProxyRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		apiShared.BadRequest(c, "代理配置无效")
@@ -125,15 +333,6 @@ func (h *RegistryProxyHandler) Deploy(c *gin.Context) {
 	if isLegacyRegistryProxyRoute(c) {
 		applyDockerHubProxyDefaults(&req)
 	}
-	input := proxyInput(req)
-	if err := registryservice.ValidateProxyInput(input); err != nil {
-		apiShared.ValidationError(c, err.Error())
-		return
-	}
-	if err := h.resources.EnsureNode(c.Request.Context(), req.NodeName); err != nil {
-		apiShared.ValidationError(c, "部署节点不存在或未加入集群")
-		return
-	}
 	proxy, err := h.proxyForRequest(c)
 	if err != nil {
 		if c.Param("id") != "" {
@@ -141,6 +340,27 @@ func (h *RegistryProxyHandler) Deploy(c *gin.Context) {
 			return
 		}
 		proxy = &model.RegistryProxy{CreatedBy: apiShared.UserID(c)}
+	}
+	if proxy.ID != 0 {
+		if proxy.ManagementMode == "observe" {
+			apiShared.ValidationError(c, "观察中的代理不能修改配置，请先接管")
+			return
+		}
+		req.ClusterID = proxy.ClusterID
+	}
+	input := proxyInput(req)
+	if err := registryservice.ValidateProxyInput(input); err != nil {
+		apiShared.ValidationError(c, err.Error())
+		return
+	}
+	resources, _, err := h.adapters(c.Request.Context(), req.ClusterID)
+	if err != nil {
+		apiShared.ValidationError(c, err.Error())
+		return
+	}
+	if err := resources.EnsureNode(c.Request.Context(), req.NodeName); err != nil {
+		apiShared.ValidationError(c, "部署节点不存在或未加入集群")
+		return
 	}
 	proxy, err = h.service.PrepareDeployment(input, proxy, apiShared.UserID(c))
 	if err != nil {
@@ -157,7 +377,7 @@ func (h *RegistryProxyHandler) Deploy(c *gin.Context) {
 		apiShared.DBError(c, "保存代理配置失败")
 		return
 	}
-	if err := h.apply(c.Request.Context(), proxy); err != nil {
+	if err := h.apply(c.Request.Context(), resources, proxy); err != nil {
 		h.service.MarkFailed(proxy, err)
 		apiShared.ValidationError(c, "部署镜像代理失败: "+err.Error())
 		return
@@ -181,11 +401,20 @@ func applyDockerHubProxyDefaults(req *registryProxyRequest) {
 
 func (h *RegistryProxyHandler) Cleanup(c *gin.Context) {
 	proxy, err := h.proxyForRequest(c)
-	if err != nil || !h.k8sReady() {
-		apiShared.NotFound(c, "镜像代理不存在或集群未连接")
+	if err != nil {
+		apiShared.NotFound(c, "镜像代理不存在")
 		return
 	}
-	if err := h.clearCache(c.Request.Context(), proxy, "手动清理"); err != nil {
+	if proxy.ManagementMode == "observe" {
+		apiShared.ValidationError(c, "观察中的代理不能清理缓存，请先接管")
+		return
+	}
+	resources, _, err := h.adapters(c.Request.Context(), proxy.ClusterID)
+	if err != nil {
+		apiShared.ValidationError(c, err.Error())
+		return
+	}
+	if err := h.clearCache(c.Request.Context(), resources, proxy, "手动清理"); err != nil {
 		apiShared.ValidationError(c, err.Error())
 		return
 	}
@@ -196,12 +425,17 @@ func (h *RegistryProxyHandler) Cleanup(c *gin.Context) {
 // this managed proxy. It accepts no caller-controlled network target or argv.
 func (h *RegistryProxyHandler) Diagnose(c *gin.Context) {
 	proxy, err := h.proxyForRequest(c)
-	if err != nil || !h.k8sReady() {
-		apiShared.NotFound(c, "镜像代理不存在或集群未连接")
+	if err != nil {
+		apiShared.NotFound(c, "镜像代理不存在")
+		return
+	}
+	_, diagnostics, err := h.adapters(c.Request.Context(), proxy.ClusterID)
+	if err != nil {
+		apiShared.ValidationError(c, err.Error())
 		return
 	}
 	registryservice.NormalizeRegistryProxy(proxy)
-	diagnostic, err := h.diagnostics.DiagnoseUpstream(c.Request.Context(), proxy)
+	diagnostic, err := diagnostics.DiagnoseUpstream(c.Request.Context(), proxy)
 	if err != nil {
 		proxy.LastDiagnosticStatus = "diagnostic_failed"
 		proxy.LastDiagnosticError = "代理出网诊断失败"
@@ -224,13 +458,18 @@ func (h *RegistryProxyHandler) Diagnose(c *gin.Context) {
 
 // MigrateResourceName recreates the legacy Docker Hub resources using the per-instance naming scheme.
 func (h *RegistryProxyHandler) MigrateResourceName(c *gin.Context) {
-	if !h.k8sReady() {
-		apiShared.K8sUnavailable(c)
-		return
-	}
 	proxy, err := h.proxyForRequest(c)
 	if err != nil {
 		apiShared.NotFound(c, "镜像代理不存在")
+		return
+	}
+	if proxy.ManagementMode == "observe" {
+		apiShared.ValidationError(c, "观察中的代理不能迁移资源，请先接管")
+		return
+	}
+	resources, _, err := h.adapters(c.Request.Context(), proxy.ClusterID)
+	if err != nil {
+		apiShared.ValidationError(c, err.Error())
 		return
 	}
 	registryservice.NormalizeRegistryProxy(proxy)
@@ -246,7 +485,7 @@ func (h *RegistryProxyHandler) MigrateResourceName(c *gin.Context) {
 	}
 
 	ctx := c.Request.Context()
-	if err := h.resources.DeleteLegacyResources(ctx, legacyResourceName); err != nil {
+	if err := resources.DeleteLegacyResources(ctx, legacyResourceName); err != nil {
 		apiShared.ValidationError(c, err.Error())
 		return
 	}
@@ -255,7 +494,7 @@ func (h *RegistryProxyHandler) MigrateResourceName(c *gin.Context) {
 		apiShared.DBError(c, "保存迁移后的代理配置失败")
 		return
 	}
-	if err := h.apply(ctx, proxy); err != nil {
+	if err := h.apply(ctx, resources, proxy); err != nil {
 		proxy.Status, proxy.LastError = "failed", "使用新资源名重建失败: "+err.Error()
 		_ = h.store.SaveRegistryProxy(proxy)
 		apiShared.ValidationError(c, proxy.LastError)
@@ -269,21 +508,24 @@ func (h *RegistryProxyHandler) refreshStatus(ctx context.Context, proxy *model.R
 		_ = h.reconciler.Refresh(ctx, proxy)
 		return
 	}
-	if !h.k8sReady() {
+	resources, diagnostics, err := h.adapters(ctx, proxy.ClusterID)
+	if err != nil {
 		return
 	}
-	available, missing, err := h.diagnostics.DeploymentAvailable(ctx, proxy)
+	available, missing, err := diagnostics.DeploymentAvailable(ctx, proxy)
 	if missing {
 		proxy.Status, proxy.LastError = "missing", "代理 Deployment 不存在"
 	} else if err != nil {
 		proxy.Status, proxy.LastError = "failed", "读取代理状态失败: "+err.Error()
 	} else if available {
 		proxy.Status, proxy.LastError = "ready", ""
-		if proxy.LastCleanupAt == nil {
+		if proxy.ManagementMode == "observe" {
+			// Existing workloads are read only until explicitly taken over.
+		} else if proxy.LastCleanupAt == nil {
 			now := time.Now()
 			proxy.LastCleanupAt = &now
 		} else if time.Since(*proxy.LastCleanupAt) >= time.Duration(proxy.CleanupIntervalHours)*time.Hour {
-			_ = h.clearCache(ctx, proxy, "定期清理")
+			_ = h.clearCache(ctx, resources, proxy, "定期清理")
 		}
 	} else {
 		proxy.Status = "deploying"
@@ -300,8 +542,8 @@ func (h *RegistryProxyHandler) redactProxy(proxy *model.RegistryProxy) {
 	proxy.EncryptedHTTPSProxy = ""
 }
 
-func (h *RegistryProxyHandler) clearCache(ctx context.Context, proxy *model.RegistryProxy, reason string) error {
-	if err := h.resources.ClearCache(ctx, proxy); err != nil {
+func (h *RegistryProxyHandler) clearCache(ctx context.Context, resources k8sclient.RegistryProxyResourceReconciler, proxy *model.RegistryProxy, reason string) error {
+	if err := resources.ClearCache(ctx, proxy); err != nil {
 		return fmt.Errorf("%s失败: %w", reason, err)
 	}
 	now := time.Now()
@@ -309,12 +551,12 @@ func (h *RegistryProxyHandler) clearCache(ctx context.Context, proxy *model.Regi
 	return h.service.Save(proxy)
 }
 
-func (h *RegistryProxyHandler) apply(ctx context.Context, proxy *model.RegistryProxy) error {
+func (h *RegistryProxyHandler) apply(ctx context.Context, resources k8sclient.RegistryProxyResourceReconciler, proxy *model.RegistryProxy) error {
 	environment, err := h.service.ProxyEnvironment(proxy)
 	if err != nil {
 		return err
 	}
-	return h.resources.Apply(ctx, proxy, environment)
+	return resources.Apply(ctx, proxy, environment)
 }
 
 func (h *RegistryProxyHandler) k8sReady() bool {

@@ -8,8 +8,10 @@ const cloud = vi.hoisted(() => ({
   deleteCloudObject: vi.fn(),
   getCloudConnections: vi.fn(),
   getCloudContainers: vi.fn(),
+  getCloudContainerCORS: vi.fn(),
   getCloudObjects: vi.fn(),
   updateCloudContainer: vi.fn(),
+  updateCloudContainerCORS: vi.fn(),
   uploadCloudObject: vi.fn(),
   downloadCloudObjectURL: vi.fn(),
 }))
@@ -21,6 +23,8 @@ beforeEach(() => {
   cloud.getCloudConnections.mockResolvedValue([{ id: 8, name: '生产', provider: 'aliyun' }])
   cloud.getCloudContainers.mockResolvedValue([{ name: 'assets', region: 'cn-hangzhou', storage_class: 'Standard' }])
   cloud.getCloudObjects.mockResolvedValue({ objects: [{ key: 'logo.png', size: 10, last_modified: '2026-09-26T00:00:00Z' }] })
+  cloud.getCloudContainerCORS.mockResolvedValue({ rules: [] })
+  cloud.updateCloudContainerCORS.mockResolvedValue({})
   cloud.createCloudContainer.mockResolvedValue({})
   cloud.deleteCloudContainer.mockResolvedValue({})
   cloud.deleteCloudObject.mockResolvedValue({})
@@ -88,5 +92,36 @@ describe('ObjectStorage', () => {
 
     await wrapper.get('.object-modal .base-modal-close').trigger('click')
     expect(wrapper.find('.object-modal').exists()).toBe(false)
+  })
+
+  it('loads existing CORS rules and saves all of them for the bucket region', async () => {
+    cloud.getCloudContainerCORS.mockResolvedValue({ rules: [
+      { allowed_origins: ['https://one.example'], allowed_methods: ['GET'], allowed_headers: ['*'], expose_headers: [], max_age_seconds: 0 },
+      { allowed_origins: ['https://two.example'], allowed_methods: ['POST'], allowed_headers: ['Content-Type'], expose_headers: ['ETag'], max_age_seconds: 600 },
+    ] })
+    const wrapper = mount(ObjectStorage)
+    await flushPromises()
+    await wrapper.get('[data-testid=container-cors-assets]').trigger('click')
+    await flushPromises()
+    expect(cloud.getCloudContainerCORS).toHaveBeenCalledWith(8, 'assets', 'cn-hangzhou')
+    expect(wrapper.findAll('.cors-rule')).toHaveLength(2)
+    await wrapper.get('[data-testid=cors-save]').trigger('click')
+    await flushPromises()
+    expect(cloud.updateCloudContainerCORS).toHaveBeenCalledWith(8, 'assets', expect.objectContaining({ rules: [
+      expect.objectContaining({ allowed_origins: ['https://one.example'] }),
+      expect.objectContaining({ allowed_origins: ['https://two.example'], allowed_methods: ['POST'] }),
+    ] }), 'cn-hangzhou')
+  })
+
+  it('removes bucket CORS when access is disabled', async () => {
+    cloud.getCloudContainerCORS.mockResolvedValue({ rules: [{ allowed_origins: ['*'], allowed_methods: ['GET'] }] })
+    const wrapper = mount(ObjectStorage)
+    await flushPromises()
+    await wrapper.get('[data-testid=container-cors-assets]').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-testid=cors-enabled]').setValue(false)
+    await wrapper.get('[data-testid=cors-save]').trigger('click')
+    await flushPromises()
+    expect(cloud.updateCloudContainerCORS).toHaveBeenCalledWith(8, 'assets', expect.objectContaining({ rules: [] }), 'cn-hangzhou')
   })
 })

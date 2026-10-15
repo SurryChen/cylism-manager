@@ -55,6 +55,7 @@ type ApplicationManagementRepository interface {
 
 	ListApplicationDeploymentTemplates(uint) ([]model.ApplicationDeploymentTemplate, error)
 	GetApplicationDeploymentTemplate(uint, uint) (*model.ApplicationDeploymentTemplate, error)
+	GetDatabaseBindingForTemplate(uint) (*model.DatabaseBinding, error)
 	GetDefaultApplicationDeploymentTemplate(uint) (*model.ApplicationDeploymentTemplate, error)
 	CreateApplicationDeploymentTemplate(*model.ApplicationDeploymentTemplate, bool) error
 	UpdateApplicationDeploymentTemplate(*model.ApplicationDeploymentTemplate) error

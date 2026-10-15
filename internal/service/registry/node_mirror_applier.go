@@ -125,7 +125,8 @@ done
 if [ -z "$unit" ]; then echo "未找到 k3s.service 或 k3s-agent.service" >&2; exit 1; fi
 backup="${target}.cylism-sync.backup"
 tmp="${target}.cylism-sync.tmp"
-if $sudo_cmd test -f "$target"; then $sudo_cmd cp "$target" "$backup"; fi
+existed=0
+if $sudo_cmd test -f "$target"; then $sudo_cmd cp "$target" "$backup"; existed=1; fi
 $sudo_cmd mkdir -p /etc/rancher/k3s
 echo %q | base64 -d | $sudo_cmd tee "$tmp" >/dev/null
 $sudo_cmd chmod 600 "$tmp"
@@ -135,10 +136,12 @@ if ! $sudo_cmd systemctl restart "$unit"; then restart_failed=1; fi
 if ! $sudo_cmd systemctl is-active --quiet "$unit"; then restart_failed=1; fi
 if [ "$restart_failed" -ne 0 ]; then
   echo "服务重启失败，正在恢复旧配置: $unit" >&2
-  if $sudo_cmd test -f "$backup"; then
+  if [ "$existed" -eq 1 ]; then
     $sudo_cmd cp "$backup" "$target"
-    $sudo_cmd systemctl restart "$unit" || true
+  else
+    $sudo_cmd rm -f "$target"
   fi
+  $sudo_cmd systemctl restart "$unit" || true
   exit 1
 fi
 echo "配置已同步并重启: $unit"`, payload)

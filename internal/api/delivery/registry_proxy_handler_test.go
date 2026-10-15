@@ -17,7 +17,9 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
 )
 
@@ -97,6 +99,124 @@ func TestRegistryProxyListReturnsPersistedStatusSnapshot(t *testing.T) {
 	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/registry-proxies", nil))
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"status":"ready"`) {
 		t.Fatalf("list must return the persisted snapshot: %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestImportExistingRegistryProxyOnlyReadsSelectedCluster(t *testing.T) {
+	st, err := store.New(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := "legacy-registry-proxy"
+	cacheLimit := resource.MustParse("10Gi")
+	deployment := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: registryProxyNamespace}, Spec: appsv1.DeploymentSpec{Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": name}}, Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": name}}, Spec: corev1.PodSpec{NodeSelector: map[string]string{corev1.LabelHostname: "node-a"}, Volumes: []corev1.Volume{{Name: "cache", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{SizeLimit: &cacheLimit}}}}, Containers: []corev1.Container{{Name: "registry", Image: "registry:2.8", Env: []corev1.EnvVar{{Name: "REGISTRY_PROXY_REMOTEURL", Value: "https://registry-1.docker.io"}}}}}}}, Status: appsv1.DeploymentStatus{AvailableReplicas: 1}}
+	service := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: registryProxyNamespace}, Spec: corev1.ServiceSpec{Type: corev1.ServiceTypeNodePort, Selector: map[string]string{"app": name}, Ports: []corev1.ServicePort{{Port: 5000, TargetPort: intstr.FromInt(5000), NodePort: 30500}}}}
+	selected := k8sfake.NewSimpleClientset(deployment, service, &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node-a"}})
+	defaultClient := k8sfake.NewSimpleClientset()
+	defaultAdapter := k8sclient.NewRegistryProxyReconciler(&k8sclient.Client{Clientset: defaultClient})
+	handler := newTestRegistryProxyHandler(st, nil, defaultAdapter, defaultAdapter).WithClusterClientFactory(func(_ context.Context, clusterID uint) (*k8sclient.Client, error) {
+		if clusterID != 7 {
+			t.Fatalf("unexpected cluster id %d", clusterID)
+		}
+		return &k8sclient.Client{Clientset: selected}, nil
+	})
+	router := gin.New()
+	router.POST("/api/registry-proxies/import", handler.ImportExisting)
+	router.PUT("/api/registry-proxies/:id", handler.Deploy)
+	router.POST("/api/registry-proxies/:id/cleanup", handler.Cleanup)
+	router.POST("/api/registry-proxies/:id/take-over", handler.TakeOver)
+	mismatch := `{"cluster_id":7,"name":"错配代理","resource_name":"legacy-registry-proxy","endpoint_host":"100.76.53.48","registry":"ghcr.io"}`
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, rawJSONRequest(http.MethodPost, "/api/registry-proxies/import", mismatch))
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("mismatched registry accepted: %d %s", response.Code, response.Body.String())
+	}
+	payload := `{"cluster_id":7,"name":"Docker Hub 旧代理","resource_name":"legacy-registry-proxy","endpoint_host":"100.76.53.48","registry":"docker.io"}`
+	response = httptest.NewRecorder()
+	router.ServeHTTP(response, rawJSONRequest(http.MethodPost, "/api/registry-proxies/import", payload))
+	if response.Code != http.StatusOK {
+		t.Fatalf("import response: %d %s", response.Code, response.Body.String())
+	}
+	proxies, err := st.ListRegistryProxies()
+	if err != nil || len(proxies) != 1 || proxies[0].ClusterID != 7 || proxies[0].ManagementMode != "observe" || proxies[0].NodePort != 30500 {
+		t.Fatalf("unexpected imported proxy: %#v, %v", proxies, err)
+	}
+	response = httptest.NewRecorder()
+	router.ServeHTTP(response, rawJSONRequest(http.MethodPut, "/api/registry-proxies/"+strconv.Itoa(int(proxies[0].ID)), `{"name":"changed"}`))
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("observation allowed configuration: %d %s", response.Code, response.Body.String())
+	}
+	response = httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/registry-proxies/"+strconv.Itoa(int(proxies[0].ID))+"/cleanup", nil))
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("observation allowed cache cleanup: %d %s", response.Code, response.Body.String())
+	}
+	for _, action := range append(selected.Actions(), defaultClient.Actions()...) {
+		if action.GetVerb() != "get" {
+			t.Fatalf("import changed Kubernetes resources: %s %s", action.GetVerb(), action.GetResource().Resource)
+		}
+	}
+	response = httptest.NewRecorder()
+	router.ServeHTTP(response, rawJSONRequest(http.MethodPost, "/api/registry-proxies/import", payload))
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("duplicate import accepted: %d %s", response.Code, response.Body.String())
+	}
+	response = httptest.NewRecorder()
+	router.ServeHTTP(response, rawJSONRequest(http.MethodPost, "/api/registry-proxies/"+strconv.Itoa(int(proxies[0].ID))+"/take-over", `{}`))
+	if response.Code != http.StatusOK {
+		t.Fatalf("take over response: %d %s", response.Code, response.Body.String())
+	}
+	stored, err := st.GetRegistryProxyByID(proxies[0].ID)
+	if err != nil || stored.ManagementMode != "managed" {
+		t.Fatalf("take over state: %#v %v", stored, err)
+	}
+	for _, action := range selected.Actions() {
+		if action.GetVerb() != "get" {
+			t.Fatalf("take over changed Kubernetes resources: %s %s", action.GetVerb(), action.GetResource().Resource)
+		}
+	}
+}
+
+func TestImportExistingRegistryProxyRejectsUnrelatedService(t *testing.T) {
+	st, err := store.New(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	deployment := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "proxy", Namespace: registryProxyNamespace}, Spec: appsv1.DeploymentSpec{Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": "proxy"}}, Spec: corev1.PodSpec{NodeSelector: map[string]string{corev1.LabelHostname: "node-a"}, Containers: []corev1.Container{{Image: "registry:2.8", Env: []corev1.EnvVar{{Name: "REGISTRY_PROXY_REMOTEURL", Value: "https://registry-1.docker.io"}}}}}}}}
+	service := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "proxy", Namespace: registryProxyNamespace}, Spec: corev1.ServiceSpec{Type: corev1.ServiceTypeNodePort, Selector: map[string]string{"app": "unrelated"}, Ports: []corev1.ServicePort{{NodePort: 30500}}}}
+	clientset := k8sfake.NewSimpleClientset(deployment, service)
+	handler := newTestRegistryProxyHandler(st, nil, nil, nil).WithClusterClientFactory(func(context.Context, uint) (*k8sclient.Client, error) {
+		return &k8sclient.Client{Clientset: clientset}, nil
+	})
+	router := gin.New()
+	router.POST("/api/registry-proxies/import", handler.ImportExisting)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, rawJSONRequest(http.MethodPost, "/api/registry-proxies/import", `{"cluster_id":7,"name":"代理","resource_name":"proxy","endpoint_host":"100.76.53.48"}`))
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("unrelated resources accepted: %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestRemoveObservationDeletesOnlyDatabaseRecord(t *testing.T) {
+	st, err := store.New(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxy := &model.RegistryProxy{ClusterID: 7, ManagementMode: "observe", Name: "旧代理", ResourceName: "legacy-proxy", NodeName: "node-a", EndpointHost: "100.76.53.48", NodePort: 30500}
+	if err := st.SaveRegistryProxy(proxy); err != nil {
+		t.Fatal(err)
+	}
+	handler := newTestRegistryProxyHandler(st, nil, nil, nil)
+	router := gin.New()
+	router.DELETE("/api/registry-proxies/:id/observation", handler.RemoveObservation)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodDelete, "/api/registry-proxies/"+strconv.Itoa(int(proxy.ID))+"/observation", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("remove observation: %d %s", response.Code, response.Body.String())
+	}
+	proxies, err := st.ListRegistryProxies()
+	if err != nil || len(proxies) != 0 {
+		t.Fatalf("observation still saved: %#v %v", proxies, err)
 	}
 }
 

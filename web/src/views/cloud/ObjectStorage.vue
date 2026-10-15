@@ -33,7 +33,7 @@
                 <td class="cell-primary"><button class="link-button" :data-testid="'open-container-' + item.name" type="button" @click="openObjects(item)">{{ item.name }}</button></td>
                 <td class="cell-secondary">{{ item.region || '-' }}</td>
                 <td><span class="badge badge-offline">{{ item.storage_class || '-' }}</span></td>
-                <td class="action-cell"><div class="btn-group"><button class="btn btn-sm" type="button" @click="openContainer(item)"><Pencil :size="14" />编辑</button><button class="btn btn-sm btn-danger" type="button" @click="requestDeleteContainer(item)"><Trash2 :size="14" />删除</button></div></td>
+                <td class="action-cell"><div class="btn-group"><button class="btn btn-sm" type="button" @click="openContainer(item)"><Pencil :size="14" />编辑</button><button class="btn btn-sm" :data-testid="'container-cors-' + item.name" type="button" @click="openCORS(item)"><Globe2 :size="14" />跨域</button><button class="btn btn-sm btn-danger" type="button" @click="requestDeleteContainer(item)"><Trash2 :size="14" />删除</button></div></td>
               </tr>
             </tbody>
           </table>
@@ -49,6 +49,24 @@
         <div class="form-row"><label class="form-group"><span class="form-label">访问权限</span><SelectMenu v-model="containerForm.acl" class="form-select" aria-label="访问权限" :options="aclOptions" /></label><label class="form-group"><span class="form-label">版本控制</span><SelectMenu v-model="containerForm.versioning" class="form-select" aria-label="版本控制" :options="versioningOptions" /></label></div>
       </form>
       <template #actions><button class="btn" type="button" @click="closeContainerForm">取消</button><button class="btn btn-primary" data-testid="container-save" type="button" @click="saveContainer">保存</button></template>
+    </BaseModal>
+
+    <BaseModal :open="Boolean(corsContainer)" :title="`跨域访问 · ${corsContainer?.name || ''}`" size="large" @close="closeCORS">
+      <EmptyState v-if="corsLoading" variant="loading" message="正在读取跨域配置..." />
+      <div v-else class="cors-form">
+        <label class="cors-switch"><input v-model="corsEnabled" type="checkbox" data-testid="cors-enabled" @change="ensureCORSRule"><span>允许跨域访问</span></label>
+        <template v-if="corsEnabled">
+          <div v-for="(rule, index) in corsRules" :key="rule.key" class="cors-rule">
+            <div class="cors-rule-heading"><strong>规则 {{ index + 1 }}</strong><button class="icon-button" type="button" title="删除规则" aria-label="删除规则" @click="corsRules.splice(index, 1)"><Trash2 :size="15" /></button></div>
+            <label class="form-group"><span class="form-label">允许来源</span><textarea v-model="rule.origins" class="form-input cors-textarea" placeholder="https://example.com&#10;每行一个来源；* 表示允许所有来源" rows="2" /></label>
+            <div class="form-group"><span class="form-label">允许的方法</span><div class="cors-methods"><label v-for="method in corsMethods" :key="method"><input v-model="rule.methods" type="checkbox" :value="method">{{ method }}</label></div></div>
+            <div class="form-row"><label class="form-group"><span class="form-label">允许的请求头</span><input v-model.trim="rule.headers" class="form-input" placeholder="* 或以逗号分隔"></label><label class="form-group"><span class="form-label">暴露的响应头</span><input v-model.trim="rule.exposeHeaders" class="form-input" placeholder="以逗号分隔，可留空"></label></div>
+            <label class="form-group"><span class="form-label">预检缓存（秒）</span><input v-model.number="rule.maxAgeSeconds" class="form-input cors-age" type="number" min="0" max="86400"></label>
+          </div>
+          <button class="btn btn-sm" type="button" :disabled="corsRules.length >= 10" @click="addCORSRule"><Plus :size="14" />添加规则</button>
+        </template>
+      </div>
+      <template #actions><button class="btn" type="button" :disabled="corsSaving" @click="closeCORS">取消</button><button class="btn btn-primary" data-testid="cors-save" type="button" :disabled="corsLoading || corsSaving" @click="saveCORS">{{ corsSaving ? '保存中...' : '保存' }}</button></template>
     </BaseModal>
 
     <BaseModal :open="Boolean(container)" :title="`对象列表 · ${container}`" size="large" dialog-class="object-modal" @close="closeObjects">
@@ -76,8 +94,8 @@
 
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
-import { Download, Pencil, Plus, Trash2, Upload } from 'lucide-vue-next'
-import { createCloudContainer, deleteCloudContainer, deleteCloudObject, downloadCloudObjectURL, getCloudConnections, getCloudContainers, getCloudObjects, updateCloudContainer, uploadCloudObject } from '../../api/cloud-resources.js'
+import { Download, Globe2, Pencil, Plus, Trash2, Upload } from 'lucide-vue-next'
+import { createCloudContainer, deleteCloudContainer, deleteCloudObject, downloadCloudObjectURL, getCloudConnections, getCloudContainerCORS, getCloudContainers, getCloudObjects, updateCloudContainer, updateCloudContainerCORS, uploadCloudObject } from '../../api/cloud-resources.js'
 import BaseModal from '../../components/BaseModal.vue'
 import ConfirmDialog from '../../components/ConfirmDialog.vue'
 import EmptyState from '../../components/EmptyState.vue'
@@ -91,10 +109,13 @@ const pageTabs = [{ id: 'containers', label: '存储容器' }]
 const providerNames = { aliyun: '阿里云', tencent: '腾讯云', cloudcone: 'CloudCone' }
 const aclOptions = [{ value: 'private', label: 'private（私有）' }, { value: 'public-read', label: 'public-read（公开读）' }]
 const versioningOptions = [{ value: '', label: '不修改版本控制' }, { value: 'Enabled', label: 'Enabled（启用）' }, { value: 'Suspended', label: 'Suspended（暂停）' }]
+const corsMethods = ['GET', 'HEAD', 'POST', 'PUT', 'DELETE']
 const connections = ref([]); const connectionID = ref(0); const containers = ref([]); const container = ref(''); const prefix = ref(''); const objects = ref([])
 const loading = ref(true); const containersLoading = ref(false); const objectsLoading = ref(false); const error = ref(''); const objectsError = ref(''); const actionError = ref(''); const uploading = ref(false)
 let containersRequest = 0
 const containerFormOpen = ref(false); const editingContainer = ref(null); const confirmTarget = ref(null); const deleting = ref(false)
+const corsContainer = ref(null); const corsLoading = ref(false); const corsSaving = ref(false); const corsEnabled = ref(false); const corsRules = ref([]); const corsResponseVary = ref(null)
+let corsRequest = 0; let nextCORSRuleKey = 0
 const newContainer = () => ({ name: '', region: '', acl: 'private', versioning: '' }); const containerForm = reactive(newContainer())
 const connectionOptions = computed(() => connections.value.map(item => ({ value: item.id, label: item.name === providerNames[item.provider] ? providerNames[item.provider] : `${item.name} · ${providerNames[item.provider] || item.provider}` })))
 const containerRegion = computed(() => containers.value.find(item => item.name === container.value)?.region || '')
@@ -106,6 +127,38 @@ async function refresh() { loading.value = true; error.value = ''; try { connect
 async function loadContainers() { const request = ++containersRequest; container.value = ''; objects.value = []; containers.value = []; containersLoading.value = true; error.value = ''; try { const items = await getCloudContainers(connectionID.value); if (request === containersRequest) containers.value = items } catch (err) { if (request === containersRequest) error.value = err.message || '读取存储容器失败' } finally { if (request === containersRequest) containersLoading.value = false } }
 function openContainer(item) { editingContainer.value = item || null; Object.assign(containerForm, item ? { ...newContainer(), ...item } : newContainer()); containerFormOpen.value = true }
 function closeContainerForm() { if (!deleting.value) containerFormOpen.value = false }
+const splitCORSValues = value => value.split(/[\n,]/).map(part => part.trim()).filter(Boolean)
+const newCORSRule = (rule = {}) => ({ key: ++nextCORSRuleKey, origins: (rule.allowed_origins || []).join('\n'), methods: [...(rule.allowed_methods || ['GET', 'HEAD'])], headers: (rule.allowed_headers || ['*']).join(', '), exposeHeaders: (rule.expose_headers || []).join(', '), maxAgeSeconds: rule.max_age_seconds ?? 0 })
+function addCORSRule() { corsRules.value.push(newCORSRule()) }
+function ensureCORSRule() { if (corsEnabled.value && !corsRules.value.length) addCORSRule() }
+async function openCORS(item) {
+  const request = ++corsRequest
+  corsContainer.value = item; corsLoading.value = true; corsRules.value = []; corsEnabled.value = false
+  try {
+    const config = await getCloudContainerCORS(connectionID.value, item.name, item.region)
+    if (request !== corsRequest) return
+    corsRules.value = (config.rules || []).map(newCORSRule)
+    corsEnabled.value = corsRules.value.length > 0
+    corsResponseVary.value = config.response_vary ?? null
+  } catch (err) {
+    if (request !== corsRequest) return
+    corsContainer.value = null
+    actionError.value = err.message || '读取跨域配置失败'
+  } finally { if (request === corsRequest) corsLoading.value = false }
+}
+function closeCORS() { if (corsSaving.value) return; ++corsRequest; corsContainer.value = null }
+async function saveCORS() {
+  if (!corsContainer.value || corsSaving.value) return
+  if (corsEnabled.value && !corsRules.value.length) { actionError.value = '请至少添加一条跨域规则'; return }
+  const rules = corsEnabled.value ? corsRules.value.map(rule => ({ allowed_origins: splitCORSValues(rule.origins), allowed_methods: rule.methods, allowed_headers: splitCORSValues(rule.headers), expose_headers: splitCORSValues(rule.exposeHeaders), max_age_seconds: Number(rule.maxAgeSeconds) })) : []
+  if (rules.some(rule => !rule.allowed_origins.length || !rule.allowed_methods.length || !Number.isInteger(rule.max_age_seconds) || rule.max_age_seconds < 0 || rule.max_age_seconds > 86400)) { actionError.value = '请填写每条规则的来源、请求方法和有效的缓存时间'; return }
+  corsSaving.value = true
+  try {
+    const item = corsContainer.value
+    await updateCloudContainerCORS(connectionID.value, item.name, { rules, response_vary: corsResponseVary.value }, item.region)
+    corsContainer.value = null
+  } catch (err) { actionError.value = err.message || '保存跨域配置失败' } finally { corsSaving.value = false }
+}
 async function saveContainer() { if (!containerForm.name || (!editingContainer.value && !containerForm.region)) { actionError.value = '请完整填写容器名称和存储地域'; return }; try { if (editingContainer.value) await updateCloudContainer(connectionID.value, editingContainer.value.name, { ...containerForm }); else await createCloudContainer(connectionID.value, { ...containerForm }); containerFormOpen.value = false; await loadContainers() } catch (err) { actionError.value = err.message || '保存存储容器失败' } }
 function requestDeleteContainer(item) { confirmTarget.value = { type: 'container', item } }
 function requestDeleteObject(item) { confirmTarget.value = { type: 'object', item } }
@@ -130,7 +183,7 @@ onMounted(refresh)
 .storage-table-wrap, .object-table-wrap { padding: 0 var(--space-20); }
 .storage-table { min-width: 680px; }
 .object-table { min-width: 760px; }
-.action-cell { width: 180px; white-space: nowrap; text-align: right; }
+.action-cell { width: 260px; white-space: nowrap; text-align: right; }
 .action-cell .btn-group { flex-wrap: nowrap; justify-content: flex-end; }
 .objects-heading h2 { margin: 2px 0 0; color: var(--text-primary); font-size: 15px; }
 .eyebrow { color: var(--text-muted); font: 10px/1 var(--font-mono); letter-spacing: .08em; text-transform: uppercase; }
@@ -143,6 +196,15 @@ onMounted(refresh)
 .mono { font-family: var(--font-mono); overflow-wrap: anywhere; }
 .container-form { display: grid; gap: var(--space-12); }
 .container-form .form-group { margin: 0; }
+.cors-form { display: grid; gap: var(--space-12); }
+.cors-switch, .cors-methods, .cors-methods label, .cors-rule-heading { display: flex; align-items: center; gap: 8px; }
+.cors-switch { font-size: 13px; font-weight: 600; }
+.cors-rule { display: grid; gap: var(--space-12); padding: 12px 0; border-top: 1px solid var(--border-muted); }
+.cors-rule-heading { justify-content: space-between; font-size: 12px; }
+.cors-rule .form-group { margin: 0; }
+.cors-methods { flex-wrap: wrap; gap: 8px 16px; font-size: 12px; }
+.cors-textarea { min-height: 64px; resize: vertical; }
+.cors-age { width: 130px; }
 .objects-modal-content { min-width: 0; }
 .objects-modal-content .objects-toolbar { padding: 0 0 var(--space-16); }
 .objects-modal-content .object-table-wrap { padding: 0; }

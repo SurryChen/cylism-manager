@@ -8,6 +8,7 @@ import {
   getServerResourceStats,
   getServers,
   getServerStats,
+  getSingBoxStatus,
   probeServer,
   resolveServerHostname,
   unbindServer,
@@ -20,6 +21,11 @@ vi.mock('../../api/servers.js', () => ({
   getServerResourceStats: vi.fn(),
   getServers: vi.fn(),
   getServerStats: vi.fn(),
+  getSingBoxStatus: vi.fn(),
+  installSingBox: vi.fn(),
+  importSingBoxConfig: vi.fn(),
+  startSingBox: vi.fn(),
+  stopSingBox: vi.fn(),
   probeServer: vi.fn(),
   resolveServerHostname: vi.fn(),
   unbindServer: vi.fn(),
@@ -51,6 +57,7 @@ beforeEach(() => {
   getServers.mockResolvedValue(servers())
   getServerResourceStats.mockResolvedValue(resourceStats())
   getServerStats.mockResolvedValue({})
+  getSingBoxStatus.mockResolvedValue({ installed: false, configured: false, running: false })
   createServer.mockResolvedValue({})
   updateServer.mockResolvedValue({})
   deleteServer.mockResolvedValue({ message: 'ok' })
@@ -63,8 +70,10 @@ describe('Servers view', () => {
   it('renders the server registry sections', () => {
     const wrapper = mount(Servers, { global: { stubs: { RouterLink: true } } })
     expect(wrapper.text()).toContain('服务器')
-    expect(wrapper.findAll('.section-tab')).toHaveLength(3)
+    expect(wrapper.findAll('.section-tab')).toHaveLength(5)
     expect(wrapper.text()).toContain('组网')
+    expect(wrapper.text()).toContain('代理')
+    expect(wrapper.text()).toContain('网络测速')
     expect(wrapper.text()).not.toContain('网络诊断')
     expect(wrapper.find('.server-content').exists()).toBe(true)
     expect(wrapper.find('.section-tabs-actions').exists()).toBe(false)

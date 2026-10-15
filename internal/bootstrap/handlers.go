@@ -101,7 +101,18 @@ func (c *Container) BuildRouteDependencies() api.RouteDependencies {
 	cloud := cloudapi.NewHandler(cloudservice.NewService(c.Store, key, cloudservice.ProviderRegistry{"aliyun": aliyunprovider.NewProvider}), c.Store)
 	nodeMirrors := deliveryapi.NewNodeRegistryMirrorHandlerWithDependencies(key, nodeMirrorApplier.Apply, c.Services.RegistryMirror).WithActualConfigInspector(nodeRegistryConfigInspector).WithK3sRestarter(nodeK3sRestarter).WithConfigSyncer(nodeMirrorApplier).WithAudit(c.Store)
 	managed := deliveryapi.NewManagedOCIRegistryHandlerWithDependencies(c.Store, c.Adapters.Registry.ManagedResources, c.Adapters.Registry.ManagedStatus, nodeMirrorApplier.Apply, c.Services.RegistryManaged, c.Services.RegistryCatalog)
-	proxy := deliveryapi.NewRegistryProxyHandlerWithDependencies(c.Store, key, c.Adapters.Registry.ProxyResources, c.Adapters.Registry.ProxyDiagnostics, c.Services.RegistryProxy).WithReconciler(c.Services.RegistryProxyReconciler)
+	proxy := deliveryapi.NewRegistryProxyHandlerWithDependencies(c.Store, key, c.Adapters.Registry.ProxyResources, c.Adapters.Registry.ProxyDiagnostics, c.Services.RegistryProxy).WithReconciler(c.Services.RegistryProxyReconciler).WithClusterClientFactory(agentFactory.Client)
+	proxyRelay := deliveryapi.NewRegistryProxyRelayHandler(c.Store, registryservice.NewProxyRelayService(registrySSH))
+	if c.Services.RegistryProxyReconciler != nil {
+		c.Services.RegistryProxyReconciler.WithResolver(func(ctx context.Context, item *model.RegistryProxy) (registryservice.ProxyStatusReader, registryservice.ProxyCacheCleaner, error) {
+			client, err := agentFactory.Client(ctx, item.ClusterID)
+			if err != nil {
+				return nil, nil, err
+			}
+			adapter := k8s.NewRegistryProxyReconciler(client)
+			return adapter, adapter, nil
+		})
+	}
 	storageService := c.Services.Storage
 	pvcAdapter, pvcMigration, pvcWorkloads := storageapi.NewPVCAdapters(c.K8s)
 	storageHandler := storageapi.NewStorageHandlerWithDependencies(storageService, c.Store, key, pvcAdapter, pvcMigration, pvcWorkloads)
@@ -121,7 +132,8 @@ func (c *Container) BuildRouteDependencies() api.RouteDependencies {
 		},
 		Delivery: api.DeliveryDependencies{
 			Platform: platform, Image: image, NodeMirrors: nodeMirrors, Managed: managed,
-			Proxy: proxy, Chart: deliveryapi.NewChartRepositoryHandler(c.Store), Cloud: cloud,
+			Proxy: proxy, ProxyRelay: proxyRelay, Chart: deliveryapi.NewChartRepositoryHandler(c.Store), Cloud: cloud,
+			Database: cloudapi.NewDatabaseHandler(c.Store, key, agentFactory.Client).WithRegistryPullExecutor(registryPull),
 		},
 		Infrastructure: api.InfrastructureDependencies{
 			Network: networkHandler, Catalog: clusterapi.NewCatalogHandler(c.Store).WithAgentClientFactory(agentFactory.Client), AccessCert: accessCertificates, Deployment: deployment, CrossService: clusterapi.NewCrossServiceHandler(c.Store, key, agentFactory.Client), Server: clusterapi.NewServerHandler(key, clusterService),

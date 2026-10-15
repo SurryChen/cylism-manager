@@ -12,12 +12,44 @@ export function getServerStats(serverID, options) {
   return api.get(`/servers/${serverID}/stats`, options)
 }
 
+export function runServerSpeedTest(body, options) {
+  return post('/servers/speed-test', body, options)
+}
+
+export function getServerSpeedDependencies(serverID, options) {
+  return api.get(`${serverPath(serverID)}/speed-test/dependencies`, options)
+}
+
+export function installServerSpeedDependencies(serverID, options) {
+  return post(`${serverPath(serverID)}/speed-test/dependencies/install`, undefined, options)
+}
+
 export function getTailscaleStatuses(options) {
   return api.get('/servers/tailscale', options)
 }
 
 export function getTailscaleStatus(serverID, options) {
   return api.get(`${serverPath(serverID)}/tailscale`, options)
+}
+
+export function getSingBoxStatus(serverID, options) {
+  return api.get(`${serverPath(serverID)}/sing-box`, options)
+}
+
+export function installSingBox(serverID, egressServerID = null) {
+  return post(`${serverPath(serverID)}/sing-box/install`, egressServerID ? { egress_server_id: egressServerID } : {})
+}
+
+export function importSingBoxConfig(serverID, url) {
+  return post(`${serverPath(serverID)}/sing-box/import`, { url })
+}
+
+export function startSingBox(serverID) {
+  return post(`${serverPath(serverID)}/sing-box/start`)
+}
+
+export function stopSingBox(serverID) {
+  return post(`${serverPath(serverID)}/sing-box/stop`)
 }
 
 export function installTailscale(serverID) {

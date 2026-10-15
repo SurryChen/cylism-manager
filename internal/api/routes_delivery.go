@@ -11,8 +11,10 @@ type deliveryRouteHandlers struct {
 	nodeMirrors *delivery.NodeRegistryMirrorHandler
 	managed     *delivery.ManagedOCIRegistryHandler
 	proxy       *delivery.RegistryProxyHandler
+	proxyRelay  *delivery.RegistryProxyRelayHandler
 	chart       *delivery.ChartRepositoryHandler
 	cloud       *cloudapi.Handler
+	database    *cloudapi.DatabaseHandler
 	platform    *delivery.PlatformHandler
 }
 
@@ -63,10 +65,24 @@ func registerDeliveryRoutes(r *gin.Engine, apiGroup *gin.RouterGroup, h delivery
 	registryProxies := apiGroup.Group("/registry-proxies")
 	registryProxies.GET("", h.proxy.List)
 	registryProxies.POST("", h.proxy.Deploy)
+	registryProxies.POST("/import", h.proxy.ImportExisting)
 	registryProxies.PUT("/:id", h.proxy.Deploy)
+	registryProxies.POST("/:id/take-over", h.proxy.TakeOver)
+	registryProxies.DELETE("/:id/observation", h.proxy.RemoveObservation)
 	registryProxies.POST("/:id/cleanup", h.proxy.Cleanup)
 	registryProxies.POST("/:id/diagnose", h.proxy.Diagnose)
 	registryProxies.POST("/:id/migrate-resource-name", h.proxy.MigrateResourceName)
+	if h.proxyRelay != nil {
+		registryProxies.GET("/:id/relays", h.proxyRelay.List)
+		registryProxies.POST("/:id/relays", h.proxyRelay.Create)
+		registryProxies.POST("/:id/relays/:relayID/check", h.proxyRelay.Check)
+		registryProxies.POST("/:id/relays/:relayID/retry", h.proxyRelay.Retry)
+		registryProxies.DELETE("/:id/relays/:relayID", h.proxyRelay.Delete)
+		registryProxies.GET("/:id/node-routes", h.proxyRelay.ListRoutes)
+		registryProxies.PUT("/:id/node-routes/:serverID", h.proxyRelay.SwitchRoute)
+		registryProxies.POST("/:id/node-routes/:serverID/check", h.proxyRelay.CheckRoute)
+		registryProxies.DELETE("/:id/node-routes/:serverID", h.proxyRelay.ForgetRoute)
+	}
 
 	chartRepositories := apiGroup.Group("/chart-repositories")
 	chartRepositories.GET("", h.chart.List)
@@ -90,11 +106,56 @@ func registerDeliveryRoutes(r *gin.Engine, apiGroup *gin.RouterGroup, h delivery
 	connections.GET("/:id/object-storage/containers", h.cloud.ListContainers)
 	connections.POST("/:id/object-storage/containers", h.cloud.CreateContainer)
 	connections.PUT("/:id/object-storage/containers/:container", h.cloud.UpdateContainer)
+	connections.GET("/:id/object-storage/containers/:container/cors", h.cloud.GetContainerCORS)
+	connections.PUT("/:id/object-storage/containers/:container/cors", h.cloud.SetContainerCORS)
 	connections.DELETE("/:id/object-storage/containers/:container", h.cloud.DeleteContainer)
 	connections.GET("/:id/object-storage/containers/:container/objects", h.cloud.ListObjects)
 	connections.POST("/:id/object-storage/containers/:container/objects", h.cloud.UploadObject)
 	connections.GET("/:id/object-storage/containers/:container/object", h.cloud.DownloadObject)
 	connections.DELETE("/:id/object-storage/containers/:container/object", h.cloud.DeleteObject)
+
+	if h.database != nil {
+		mysqlClusters := apiGroup.Group("/cloud/mysql-clusters")
+		mysqlClusters.GET("", h.database.ListClusters)
+		mysqlClusters.POST("", h.database.CreateCluster)
+		mysqlClusters.GET("/:id", h.database.InspectCluster)
+		mysqlClusters.GET("/:id/nodes", h.database.ClusterNodes)
+		mysqlClusters.PUT("/:id/resource-pool", h.database.UpdateClusterResourcePool)
+		mysqlClusters.GET("/:id/runtime", h.database.MySQLClusterRuntime)
+		mysqlClusters.GET("/:id/config", h.database.MySQLClusterConfig)
+		mysqlClusters.PUT("/:id/config", h.database.UpdateMySQLClusterConfig)
+		mysqlClusters.POST("/:id/config/restart", h.database.RestartMySQLClusterForConfig)
+		mysqlClusters.GET("/:id/pods/:podName/terminal", h.database.MySQLClusterTerminal)
+		mysqlClusters.POST("/:id/preflight", h.database.PreflightCluster)
+		mysqlClusters.POST("/:id/pods/:podName/retry", h.database.RetryClusterPod)
+		mysqlClusters.POST("/:id/pods/:podName/pull-images", h.database.PullClusterPodImages)
+		mysqlClusters.GET("/:id/tasks", h.database.ListMySQLClusterTasks)
+		mysqlClusters.GET("/:id/tasks/:taskID/logs", h.database.MySQLClusterTaskLogs)
+		mysqlClusters.GET("/:id/operator", h.database.ClusterOperator)
+		mysqlClusters.POST("/:id/operator/install", h.database.InstallClusterOperator)
+		mysqlClusters.POST("/:id/operator/uninstall", h.database.UninstallClusterOperator)
+		mysqlClusters.POST("/:id/operator/cancel", h.database.CancelClusterOperator)
+		mysqlClusters.POST("/:id/primary", h.database.SwitchClusterPrimary)
+		mysqlClusters.POST("/:id/deployment/pause", h.database.PauseClusterDeployment)
+		mysqlClusters.GET("/:id/deployment/cleanup", h.database.ClusterCleanupState)
+		mysqlClusters.POST("/:id/deployment/cleanup", h.database.CleanupPausedCluster)
+		mysqlClusters.POST("/:id/deployment/retry-shutdown", h.database.RetryClusterShutdown)
+		mysqlClusters.PUT("/:id/topology", h.database.DeployCluster)
+		mysqlClusters.POST("/:id/instances", h.database.AddMySQLInstance)
+		mysqlClusters.POST("/:id/routers", h.database.AddMySQLRouter)
+		mysqlClusters.POST("/:id/routers/scale-down", h.database.RetireMySQLRouter)
+		mysqlClusters.POST("/:id/routers/repair-placement", h.database.RepairMySQLRouterPlacement)
+		mysqlClusters.DELETE("/:id", h.database.DeleteCluster)
+		databases := apiGroup.Group("/cloud/databases")
+		databases.GET("", h.database.List)
+		databases.POST("", h.database.Create)
+		databases.GET("/:id", h.database.Inspect)
+		databases.POST("/:id/reconcile", h.database.Reconcile)
+		databases.DELETE("/:id", h.database.Delete)
+		databases.GET("/:id/bindings", h.database.ListBindings)
+		databases.POST("/:id/bindings", h.database.Bind)
+		databases.DELETE("/:id/bindings/:bindingID", h.database.Unbind)
+	}
 
 	platform := apiGroup.Group("/platform")
 	platform.GET("/capabilities", h.platform.Capabilities)

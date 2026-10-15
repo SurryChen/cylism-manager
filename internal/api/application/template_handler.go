@@ -176,6 +176,17 @@ func (h *ApplicationHandler) UpdateDeploymentTemplate(c *gin.Context) {
 		apiShared.Conflict(c, fmt.Sprintf("模板版本冲突，当前版本为 %d", currentTemplate.Revision))
 		return
 	}
+	binding, err := h.applications.GetDatabaseBindingForTemplate(templateID)
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		apiShared.DBError(c, err.Error())
+		return
+	}
+	if err == nil {
+		if err := validateBoundDatabaseTemplate(currentTemplate, req.Spec, binding.Prefix); err != nil {
+			apiShared.ValidationError(c, err.Error())
+			return
+		}
+	}
 	template, err := h.templateFromRequest(c.Request.Context(), app, &req, templateID)
 	if err != nil {
 		apiShared.ValidationError(c, err.Error())
@@ -213,6 +224,34 @@ func (h *ApplicationHandler) UpdateDeploymentTemplate(c *gin.Context) {
 		return
 	}
 	apiShared.Success(c, info)
+}
+
+func validateBoundDatabaseTemplate(current *model.ApplicationDeploymentTemplate, next applicationservice.ReleaseSpec, prefix string) error {
+	var previous applicationservice.ReleaseSpec
+	if err := json.Unmarshal([]byte(current.Spec), &previous); err != nil {
+		return fmt.Errorf("读取已绑定的数据库配置失败: %w", err)
+	}
+	for _, suffix := range []string{"HOST", "PORT", "NAME", "USER"} {
+		key := prefix + "_" + suffix
+		if next.Config[key] != previous.Config[key] || containsString(next.ConfigDisabled, key) {
+			return fmt.Errorf("%s 由数据库绑定管理，请先解除绑定", key)
+		}
+	}
+	key := prefix + "_PASSWORD"
+	value, exists := next.Secrets[key]
+	if !exists || value != "" || containsString(next.SecretsDisabled, key) {
+		return fmt.Errorf("%s 由数据库绑定管理，请先解除绑定", key)
+	}
+	return nil
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
 }
 
 func (h *ApplicationHandler) DeleteDeploymentTemplate(c *gin.Context) {

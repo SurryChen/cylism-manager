@@ -60,7 +60,7 @@ describe('RegistryProxyWorkspace', () => {
     wrapper.unmount()
   })
 
-  it('uses the shared surface card for an empty Proxy workspace', async () => {
+  it('opens the deployment form from an empty Proxy workspace', async () => {
     api.get.mockResolvedValue([])
     const wrapper = mount(RegistryProxyWorkspace)
     await new Promise(resolve => setTimeout(resolve, 0))
@@ -69,6 +69,42 @@ describe('RegistryProxyWorkspace', () => {
     expect(emptyState.findComponent({ name: 'SurfaceCard' }).exists()).toBe(true)
     expect(emptyState.classes()).toContain('surface-card')
     expect(emptyState.text()).toContain('尚未部署 Registry Proxy')
+    await wrapper.get('[data-testid="create-registry-proxy"]').trigger('click')
+    expect(document.body.querySelector('.proxy-modal')?.textContent).toContain('部署 Registry Proxy')
+    wrapper.unmount()
+  })
+
+  it('imports an existing proxy in observation mode from a selected cluster', async () => {
+    api.get.mockImplementation(path => Promise.resolve(path === '/clusters' ? [{ id: 7, name: '国内' }] : []))
+    api.post.mockResolvedValue({})
+    const wrapper = mount(RegistryProxyWorkspace)
+    await new Promise(resolve => setTimeout(resolve, 0))
+    await wrapper.get('[data-testid="import-registry-proxy"]').trigger('click')
+    const form = document.body.querySelector('[data-testid="import-registry-proxy-form"]')
+    expect(form.textContent).toContain('国内')
+    const cluster = form.querySelector('select')
+    cluster.value = '7'
+    cluster.dispatchEvent(new Event('change', { bubbles: true }))
+    const inputs = form.querySelectorAll('input')
+    for (const [index, value] of [[0, 'Docker Hub 旧代理'], [1, 'legacy-registry-proxy'], [3, '100.76.53.48']]) {
+      inputs[index].value = value
+      inputs[index].dispatchEvent(new Event('input', { bubbles: true }))
+    }
+    form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(api.post).toHaveBeenCalledWith('/registry-proxies/import', expect.objectContaining({ cluster_id: 7, resource_name: 'legacy-registry-proxy', endpoint_host: '100.76.53.48' }))
+    wrapper.unmount()
+  })
+
+  it('shows observation controls without configuration or cleanup actions', async () => {
+    api.get.mockImplementation(path => Promise.resolve(path === '/clusters' ? [{ id: 7, name: '国内' }] : [{ id: 3, cluster_id: 7, management_mode: 'observe', name: '旧代理', registry: 'docker.io', resource_name: 'legacy-registry-proxy', endpoint_host: '100.76.53.48', node_port: 30500, node_name: 'node-a', cache_limit_gi: 10, cleanup_interval_hours: 24, status: 'ready' }]))
+    const wrapper = mount(RegistryProxyWorkspace)
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(wrapper.text()).toContain('观察中')
+    expect(wrapper.find('[data-testid="edit-registry-proxy-3"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="take-over-registry-proxy-3"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="remove-registry-proxy-observation-3"]').exists()).toBe(true)
+    expect(wrapper.find('.proxy-row-actions .btn-danger').exists()).toBe(false)
     wrapper.unmount()
   })
 

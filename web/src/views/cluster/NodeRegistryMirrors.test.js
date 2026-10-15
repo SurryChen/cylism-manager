@@ -100,4 +100,59 @@ describe('Node registry mirrors view', () => {
     expect(wrapper.text()).not.toContain('有差异')
     wrapper.unmount()
   })
+
+  it('previews only the selected registry change before importing a ready relay', async () => {
+    api.get.mockImplementation(path => Promise.resolve(
+      path === '/registry-proxies' ? [{ id: 21, cluster_id: 3, name: 'GHCR Proxy', registry: 'ghcr.io', endpoint_host: '100.76.53.48', node_port: 30501, status: 'ready' }] :
+      path === '/registry-proxies/21/relays' ? [{ id: 7, listen_ip: '100.67.232.15', listen_port: 31501, status: 'ready' }] : [
+        { id: 11, name: 'node-a', host: '10.0.0.11', cluster_id: 3, cluster_role: 'worker' },
+        { id: 12, name: 'node-b', host: '10.0.0.12', cluster_id: 3, cluster_role: 'worker' },
+      ]))
+    const original = [
+      { registry: 'docker.io', endpoints: ['https://docker.example.com'] },
+      { registry: 'ghcr.io', endpoints: ['http://old.example.com'], auth_configured: true, auth_username: 'robot' },
+    ]
+    api.post.mockResolvedValue({ nodes: [
+      { server_id: 11, name: 'node-a', state: 'matching', config_md5: 'same', actual: original },
+      { server_id: 12, name: 'node-b', state: 'matching', config_md5: 'same', actual: original },
+    ] })
+    const wrapper = mount(NodeRegistryMirrors, { props: { clusterId: 3 }, global: { stubs: { Teleport: true } } })
+    await flushPromises()
+    await wrapper.get('.workspace-actions .btn:not(.btn-primary)').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[role="dialog"]').text()).toContain('100.67.232.15:31501')
+    expect(wrapper.get('[role="dialog"]').text()).toContain('全部节点（配置一致）')
+    expect(api.put).not.toHaveBeenCalled()
+    await wrapper.get('[role="dialog"] .btn-primary').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[role="dialog"]').text()).toContain('确认导入代理镜像源')
+    expect(wrapper.get('[role="dialog"]').text()).toContain('http://old.example.com')
+    expect(wrapper.get('[role="dialog"]').text()).toContain('http://100.67.232.15:31501')
+    expect(wrapper.get('[role="dialog"]').text()).toContain('node-a、node-b')
+    expect(wrapper.find('.config-editor-row').exists()).toBe(false)
+    expect(api.put).not.toHaveBeenCalled()
+    await wrapper.get('[role="dialog"] .btn-primary').trigger('click')
+    await flushPromises()
+    expect(api.put).toHaveBeenCalledWith('/node-registry-mirrors/actual-config', expect.objectContaining({
+      cluster_id: 3, server_ids: [11, 12], configs: expect.arrayContaining([expect.objectContaining({ registry: 'ghcr.io', endpoints: ['http://100.67.232.15:31501'], auth_username: 'robot' }), expect.objectContaining({ registry: 'docker.io', endpoints: ['https://docker.example.com'] })]),
+    }))
+    expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('keeps the editor open when a node rejects the imported configuration', async () => {
+    api.get.mockImplementation(path => Promise.resolve(path === '/registry-proxies' ? [{ id: 21, cluster_id: 3, name: 'GHCR Proxy', registry: 'ghcr.io', endpoint_host: '100.76.53.48', node_port: 30501, status: 'ready' }] : path === '/registry-proxies/21/relays' ? [] : [{ id: 11, name: 'node-a', cluster_id: 3, cluster_role: 'worker' }]))
+    api.post.mockResolvedValue({ nodes: [{ server_id: 11, name: 'node-a', state: 'matching', config_md5: 'same', actual: [] }] })
+    api.put.mockResolvedValue({ results: [{ server_id: 11, status: 'failed', detail: 'K3s 重启失败' }] })
+    const wrapper = mount(NodeRegistryMirrors, { props: { clusterId: 3 }, global: { stubs: { Teleport: true } } })
+    await flushPromises()
+    await wrapper.get('.workspace-actions .btn:not(.btn-primary)').trigger('click')
+    await flushPromises()
+    await wrapper.get('[role="dialog"] .btn-primary').trigger('click')
+    await wrapper.get('[role="dialog"] .btn-primary').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[role="dialog"]').text()).toContain('node-a：K3s 重启失败')
+    expect(wrapper.get('[role="dialog"]').text()).toContain('确认导入代理镜像源')
+    wrapper.unmount()
+  })
 })

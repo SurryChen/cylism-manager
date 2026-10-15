@@ -27,6 +27,8 @@ const RuntimeManagement = () => import('../views/RuntimeManagement.vue')
 const ManagedOCIRegistries = () => import('../views/ManagedOCIRegistries.vue')
 const DomainManagement = () => import('../views/cloud/DomainManagement.vue')
 const ObjectStorage = () => import('../views/cloud/ObjectStorage.vue')
+const Databases = () => import('../views/cloud/Databases.vue')
+const MySQLClusterDetail = () => import('../views/cloud/MySQLClusterDetail.vue')
 
 const routes = [
   { path: '/login', component: Login, meta: { public: true } },
@@ -35,6 +37,8 @@ const routes = [
   { path: '/cloud-services/registry', component: ManagedOCIRegistries },
   { path: '/cloud-services/domains', component: DomainManagement },
   { path: '/cloud-services/object-storage', component: ObjectStorage },
+  { path: '/cloud-services/databases', component: Databases },
+  { path: '/cloud-services/databases/clusters/:id', component: MySQLClusterDetail, props: true },
   { path: '/applications', component: Applications, props: { section: 'workspace' } },
   { path: '/applications/catalog', component: ApplicationCatalog },
   { path: '/applications/catalog/:catalogID', component: ApplicationCatalogDetail },

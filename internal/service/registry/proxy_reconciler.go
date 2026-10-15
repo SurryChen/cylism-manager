@@ -28,16 +28,22 @@ type ProxyReconciler struct {
 	status  ProxyStatusReader
 	cleaner ProxyCacheCleaner
 	now     func() time.Time
+	resolve func(context.Context, *model.RegistryProxy) (ProxyStatusReader, ProxyCacheCleaner, error)
 }
 
 func NewProxyReconciler(service *ProxyService, status ProxyStatusReader, cleaner ProxyCacheCleaner) *ProxyReconciler {
 	return &ProxyReconciler{service: service, status: status, cleaner: cleaner, now: time.Now}
 }
 
+func (r *ProxyReconciler) WithResolver(resolve func(context.Context, *model.RegistryProxy) (ProxyStatusReader, ProxyCacheCleaner, error)) *ProxyReconciler {
+	r.resolve = resolve
+	return r
+}
+
 // Reconcile refreshes every saved proxy. A transient failure for one proxy is
 // returned to the task owner while later scheduled passes continue running.
 func (r *ProxyReconciler) Reconcile(ctx context.Context) error {
-	if r == nil || r.service == nil || r.status == nil || !r.status.Available() {
+	if r == nil || r.service == nil {
 		return nil
 	}
 	proxies, err := r.service.List()
@@ -55,21 +61,38 @@ func (r *ProxyReconciler) Reconcile(ctx context.Context) error {
 // Refresh applies the established Registry Proxy status rules to one proxy.
 // It is also used by the HTTP handler before returning a proxy to the browser.
 func (r *ProxyReconciler) Refresh(ctx context.Context, proxy *model.RegistryProxy) error {
-	if r == nil || proxy == nil || r.service == nil || r.status == nil || !r.status.Available() {
+	if r == nil || proxy == nil || r.service == nil {
 		return nil
 	}
-	available, missing, err := r.status.DeploymentAvailable(ctx, proxy)
+	status, cleaner := r.status, r.cleaner
+	if proxy.ClusterID != 0 {
+		if r.resolve == nil {
+			return fmt.Errorf("集群 %d 的代理客户端未配置", proxy.ClusterID)
+		}
+		var err error
+		status, cleaner, err = r.resolve(ctx, proxy)
+		if err != nil {
+			proxy.Status, proxy.LastError = "failed", "读取集群代理状态失败: "+err.Error()
+			return r.service.Save(proxy)
+		}
+	}
+	if status == nil || !status.Available() {
+		return nil
+	}
+	available, missing, err := status.DeploymentAvailable(ctx, proxy)
 	if missing {
 		proxy.Status, proxy.LastError = "missing", "代理 Deployment 不存在"
 	} else if err != nil {
 		proxy.Status, proxy.LastError = "failed", "读取代理状态失败: "+err.Error()
 	} else if available {
 		proxy.Status, proxy.LastError = "ready", ""
-		if proxy.LastCleanupAt == nil {
+		if proxy.ManagementMode == "observe" {
+			// Imported resources remain under their original controller until explicitly taken over.
+		} else if proxy.LastCleanupAt == nil {
 			now := r.nowTime()
 			proxy.LastCleanupAt = &now
-		} else if r.cleaner != nil && r.nowTime().Sub(*proxy.LastCleanupAt) >= time.Duration(proxy.CleanupIntervalHours)*time.Hour {
-			if clearErr := r.cleaner.ClearCache(ctx, proxy); clearErr == nil {
+		} else if cleaner != nil && r.nowTime().Sub(*proxy.LastCleanupAt) >= time.Duration(proxy.CleanupIntervalHours)*time.Hour {
+			if clearErr := cleaner.ClearCache(ctx, proxy); clearErr == nil {
 				now := r.nowTime()
 				proxy.LastCleanupAt, proxy.Status, proxy.LastError = &now, "deploying", "定期清理后等待新 Pod 就绪"
 			}

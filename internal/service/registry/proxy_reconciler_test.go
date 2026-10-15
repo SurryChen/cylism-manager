@@ -53,6 +53,25 @@ func TestProxyReconcilerRefreshesReadyProxyWithRequestContext(t *testing.T) {
 	}
 }
 
+func TestProxyReconcilerObservesImportedProxyWithoutDeletingPods(t *testing.T) {
+	past := time.Now().Add(-48 * time.Hour)
+	repo := &proxyRepositoryFake{proxies: []model.RegistryProxy{{ID: 9, ClusterID: 7, ManagementMode: "observe", CleanupIntervalHours: 1, LastCleanupAt: &past}}}
+	defaultAdapter := &proxyReconcilerAdapterFake{available: true, ready: false}
+	selectedAdapter := &proxyReconcilerAdapterFake{available: true, ready: true}
+	reconciler := NewProxyReconciler(NewProxyService(repo, nil), defaultAdapter, defaultAdapter).WithResolver(func(_ context.Context, proxy *model.RegistryProxy) (ProxyStatusReader, ProxyCacheCleaner, error) {
+		if proxy.ClusterID != 7 {
+			t.Fatalf("wrong cluster: %d", proxy.ClusterID)
+		}
+		return selectedAdapter, selectedAdapter, nil
+	})
+	if err := reconciler.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if repo.saved == nil || repo.saved.Status != "ready" || selectedAdapter.cleared != 0 || defaultAdapter.ctx != nil {
+		t.Fatalf("observation changed resources or used default cluster: %#v, selected=%d default=%#v", repo.saved, selectedAdapter.cleared, defaultAdapter.ctx)
+	}
+}
+
 func TestProxyReconcilerPersistsMissingAndDiagnosticFailure(t *testing.T) {
 	for name, adapter := range map[string]*proxyReconcilerAdapterFake{
 		"missing": {available: true, missing: true},

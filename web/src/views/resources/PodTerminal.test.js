@@ -1,10 +1,13 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import PodTerminal from './PodTerminal.vue'
+import { loadTerminalRuntime } from '../../utils/terminalRuntime.js'
 
 vi.mock('../../utils/terminalRuntime.js', () => ({
   loadTerminalRuntime: vi.fn(() => Promise.reject(new Error('终端组件加载失败'))),
 }))
+
+afterEach(() => { vi.unstubAllGlobals(); localStorage.removeItem('access_token') })
 
 describe('PodTerminal', () => {
   it('lets users choose a container before connecting', async () => {
@@ -40,6 +43,32 @@ describe('PodTerminal', () => {
 
     expect(wrapper.emitted('close')).toHaveLength(1)
     expect(document.body.style.overflow).toBe('auto')
+    wrapper.unmount()
+  })
+
+  it('connects a MySQL session through its cluster-specific endpoint', async () => {
+    const sockets = []
+    class FakeWebSocket {
+      constructor(url) { this.url = url; sockets.push(this) }
+      close() {}
+    }
+    vi.stubGlobal('WebSocket', FakeWebSocket)
+    vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} })
+    loadTerminalRuntime.mockResolvedValueOnce({
+      Terminal: class { loadAddon() {} open() {} dispose() {} },
+      FitAddon: class { fit() {} },
+      installTerminalClipboard: () => {},
+    })
+    localStorage.setItem('access_token', 'test-token')
+    const wrapper = mount(PodTerminal, {
+      props: { pod: { namespace: 'cylism-databases', name: 'mysql-1-0', containers: ['mysql'] }, mysqlClusterId: '1' },
+      global: { stubs: { Teleport: true } },
+    })
+    await flushPromises()
+    expect(wrapper.text()).toContain('数据库终端')
+    expect(sockets).toHaveLength(1)
+    expect(sockets[0].url).toContain('/api/cloud/mysql-clusters/1/pods/mysql-1-0/terminal?token=test-token')
+    expect(sockets[0].url).not.toContain('container=')
     wrapper.unmount()
   })
 })

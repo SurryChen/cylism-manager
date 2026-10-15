@@ -45,6 +45,8 @@
     </template>
 
     <ServerTailscale v-else-if="activeSection === 'tailscale'" :servers="servers" />
+    <ServerSingBox v-else-if="activeSection === 'proxy'" :servers="servers" />
+    <ServerSpeedTest v-else-if="activeSection === 'speed-test'" :servers="servers" />
 
     <template v-else-if="activeSection === 'monitoring'">
       <SurfaceCard as="div" padding="none" class="resource-monitoring-card">
@@ -161,18 +163,22 @@ import SurfaceCard from '../../components/SurfaceCard.vue'
 import ErrorNoticeModal from '../../components/ErrorNoticeModal.vue'
 import ServerTerminal from './ServerTerminal.vue'
 import ServerTailscale from './ServerTailscale.vue'
+import ServerSingBox from './ServerSingBox.vue'
+import ServerSpeedTest from './ServerSpeedTest.vue'
 
 const serversResource = useAsyncResource(({ signal }) => getServers({ signal }), [])
 const servers = serversResource.data
 const serversLoading = serversResource.loading
 const serverListError = computed(() => serversResource.error.value?.message || '')
 const route = useRoute()
-const activeSection = ref(route?.query?.tab === 'tailscale' ? 'tailscale' : 'configuration')
+const activeSection = ref(['tailscale', 'proxy', 'speed-test', 'monitoring'].includes(route?.query?.tab) ? route.query.tab : 'configuration')
 const returnToCluster = computed(() => /^\/cluster\/\d+\?tab=networking$/.test(String(route?.query?.return || '')) ? route.query.return : '')
-watch(() => route?.query?.tab, tab => { if (tab === 'tailscale') activeSection.value = 'tailscale' })
+watch(() => route?.query?.tab, tab => { if (['tailscale', 'proxy', 'speed-test', 'monitoring'].includes(tab)) activeSection.value = tab })
 const sections = [
   { id: 'configuration', label: '基本配置' },
   { id: 'tailscale', label: '组网' },
+  { id: 'proxy', label: '代理' },
+  { id: 'speed-test', label: '网络测速' },
   { id: 'monitoring', label: '资源监控' },
 ]
 const resourceStatsResource = useAsyncResource(({ signal }) => getServerResourceStats({ signal }), [])

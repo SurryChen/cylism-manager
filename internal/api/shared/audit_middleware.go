@@ -114,6 +114,8 @@ func catalogedAuditAction(method, path string) (string, string, bool) {
 		resourceType = "cluster_dns"
 	case strings.Contains(path, "/admin/tables"):
 		resourceType = "admin_record"
+	case strings.Contains(path, "/mysql-clusters"):
+		resourceType = "mysql_cluster"
 	case strings.Contains(path, "/environments"):
 		resourceType = "environment"
 	case strings.Contains(path, "/projects"):
@@ -144,8 +146,18 @@ func catalogedAuditAction(method, path string) (string, string, bool) {
 		return "", "", false
 	}
 	switch {
+	case strings.Contains(path, "/sing-box/import"):
+		operation = "import"
+	case strings.Contains(path, "/sing-box/start"):
+		operation = "start"
+	case strings.Contains(path, "/sing-box/stop"):
+		operation = "stop"
 	case strings.Contains(path, "/rollback"):
 		operation = "rollback"
+	case strings.Contains(path, "/deployment/pause"):
+		operation = "pause"
+	case strings.Contains(path, "/deployment/retry-shutdown"):
+		operation = "retry_shutdown"
 	case strings.Contains(path, "/restarts") || strings.Contains(path, "/restart"):
 		operation = "restart"
 	case strings.Contains(path, "/scale"):

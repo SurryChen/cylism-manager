@@ -12,8 +12,15 @@ import (
 )
 
 type RuntimePodUsage struct {
-	CPUMilli    int64 `json:"cpu_millicores"`
-	MemoryBytes int64 `json:"memory_bytes"`
+	CPUMilli    int64                   `json:"cpu_millicores"`
+	MemoryBytes int64                   `json:"memory_bytes"`
+	Containers  []RuntimeContainerUsage `json:"containers"`
+}
+
+type RuntimeContainerUsage struct {
+	Name        string `json:"name"`
+	CPUMilli    int64  `json:"cpu_millicores"`
+	MemoryBytes int64  `json:"memory_bytes"`
 }
 
 func (c *Client) ListRuntimePodMetrics(ctx context.Context, namespace string) (map[string]RuntimePodUsage, error) {
@@ -30,6 +37,7 @@ func (c *Client) ListRuntimePodMetrics(ctx context.Context, namespace string) (m
 				Name string `json:"name"`
 			} `json:"metadata"`
 			Containers []struct {
+				Name  string            `json:"name"`
 				Usage map[string]string `json:"usage"`
 			} `json:"containers"`
 		} `json:"items"`
@@ -41,14 +49,18 @@ func (c *Client) ListRuntimePodMetrics(ctx context.Context, namespace string) (m
 	for _, pod := range response.Items {
 		item := RuntimePodUsage{}
 		for _, container := range pod.Containers {
+			containerUsage := RuntimeContainerUsage{Name: container.Name}
 			cpu, cpuErr := resource.ParseQuantity(container.Usage["cpu"])
 			memory, memoryErr := resource.ParseQuantity(container.Usage["memory"])
 			if cpuErr == nil {
-				item.CPUMilli += cpu.MilliValue()
+				containerUsage.CPUMilli = cpu.MilliValue()
+				item.CPUMilli += containerUsage.CPUMilli
 			}
 			if memoryErr == nil {
-				item.MemoryBytes += memory.Value()
+				containerUsage.MemoryBytes = memory.Value()
+				item.MemoryBytes += containerUsage.MemoryBytes
 			}
+			item.Containers = append(item.Containers, containerUsage)
 		}
 		usage[pod.Metadata.Name] = item
 	}
