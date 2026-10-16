@@ -121,6 +121,9 @@ func TestKubernetesApplierPreflightRequiresActiveNamespace(t *testing.T) {
 	if err := applier.Preflight(context.Background(), application, ReleaseSpec{Endpoint: EndpointSpec{Exposure: ExposureCluster}}); err != nil {
 		t.Fatalf("expected active namespace preflight to pass: %v", err)
 	}
+	if err := applier.Preflight(context.Background(), application, ReleaseSpec{NodeName: "missing-node", Endpoint: EndpointSpec{Exposure: ExposureCluster}}); err == nil || !strings.Contains(err.Error(), "部署节点") {
+		t.Fatalf("expected missing deployment node to fail preflight: %v", err)
+	}
 }
 
 func TestKubernetesApplierPreflightValidatesFileMountSources(t *testing.T) {
@@ -147,6 +150,39 @@ func TestKubernetesApplierPreflightValidatesFileMountSources(t *testing.T) {
 	spec.FileMounts[0].Key = "missing.yaml"
 	if err := applier.Preflight(context.Background(), application, spec); err == nil || !strings.Contains(err.Error(), "missing.yaml") {
 		t.Fatalf("expected missing application ConfigMap key failure, got %v", err)
+	}
+}
+
+func TestKubernetesApplierValidatesExistingPVCAndPodOccupancy(t *testing.T) {
+	claim := &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{Name: "shared-data", Namespace: "dev"},
+		Status:     corev1.PersistentVolumeClaimStatus{Phase: corev1.ClaimBound},
+	}
+	other := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "old-service-0", Namespace: "dev"},
+		Spec:       corev1.PodSpec{Volumes: []corev1.Volume{{Name: "data", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: claim.Name}}}}},
+		Status:     corev1.PodStatus{Phase: corev1.PodRunning},
+	}
+	clientset := k8sfake.NewSimpleClientset(claim, other)
+	applier := NewKubernetesApplier(&k8sclient.Client{Clientset: clientset})
+	app := ApplicationContext{Namespace: "dev", ApplicationName: "new-service", EnvironmentID: 2}
+	spec := ReleaseSpec{Replicas: 1, Volumes: []VolumeMountSpec{{ClaimName: claim.Name, MountPath: "/data"}}}
+	if err := applier.ValidatePersistentVolumeClaims(context.Background(), app, spec); err == nil || !strings.Contains(err.Error(), "old-service-0") {
+		t.Fatalf("expected occupying Pod to block PVC: %v", err)
+	}
+	other.Labels = map[string]string{ApplicationNameLabel: app.ApplicationName, ManagedByLabel: ManagedByValue}
+	if _, err := clientset.CoreV1().Pods("dev").Update(context.Background(), other, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := applier.ValidatePersistentVolumeClaims(context.Background(), app, spec); err != nil {
+		t.Fatalf("same application should be allowed to reuse PVC: %v", err)
+	}
+	claim.Labels = map[string]string{k8sclient.ManagedByLabel: k8sclient.ManagedByValue, k8sclient.InfrastructureLabel: k8sclient.InfrastructureLoki}
+	if _, err := clientset.CoreV1().PersistentVolumeClaims("dev").Update(context.Background(), claim, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := applier.ValidatePersistentVolumeClaims(context.Background(), app, spec); err == nil || !strings.Contains(err.Error(), "基础设施") {
+		t.Fatalf("expected infrastructure claim to be rejected: %v", err)
 	}
 }
 

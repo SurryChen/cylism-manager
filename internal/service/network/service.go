@@ -494,6 +494,7 @@ func BuildManagedDomain(input DomainInput, current *model.ManagedDomain, environ
 		domain.ID, domain.CreatedAt, domain.CertificateOwnership = current.ID, current.CreatedAt, current.CertificateOwnership
 		domain.CloudConnectionID, domain.DNSZone, domain.DNSRecords, domain.DNSNodeIDs = current.CloudConnectionID, current.DNSZone, current.DNSRecords, current.DNSNodeIDs
 		domain.DNSStatus, domain.DNSError = current.DNSStatus, current.DNSError
+		domain.OriginalDNSRecords, domain.AdoptionStatus = current.OriginalDNSRecords, current.AdoptionStatus
 		if current.CertificateOwnership == "imported" {
 			domain.IssuerRef, domain.IssuerKind = current.IssuerRef, current.IssuerKind
 		}

@@ -12,8 +12,9 @@ import (
 )
 
 type fakeDomainCloud struct {
-	records []cloudservice.DNSRecord
-	creates int
+	records       []cloudservice.DNSRecord
+	creates       int
+	deleteFailure string
 }
 
 func (f *fakeDomainCloud) ListConnections() ([]model.CloudConnection, error) {
@@ -27,11 +28,14 @@ func (f *fakeDomainCloud) ListRecords(context.Context, uint, string, int, int) (
 }
 func (f *fakeDomainCloud) CreateRecord(_ context.Context, _ uint, _ string, input cloudservice.DNSRecordInput) (cloudservice.DNSRecord, error) {
 	f.creates++
-	record := cloudservice.DNSRecord{ID: fmt.Sprint(f.creates), RR: input.RR, Type: input.Type, Value: input.Value}
+	record := cloudservice.DNSRecord{ID: fmt.Sprint(f.creates), RR: input.RR, Type: input.Type, Value: input.Value, Line: input.Line, TTL: input.TTL}
 	f.records = append(f.records, record)
 	return record, nil
 }
 func (f *fakeDomainCloud) DeleteRecord(_ context.Context, _ uint, id string, _ bool) error {
+	if id == f.deleteFailure {
+		return fmt.Errorf("delete failed")
+	}
 	for index, record := range f.records {
 		if record.ID == id {
 			f.records = append(f.records[:index], f.records[index+1:]...)
@@ -118,5 +122,158 @@ func TestImportRequiresMatchingCloudARecord(t *testing.T) {
 	records, err := h.prepareImportDNS(context.Background(), environment, "api.example.com", 3, "example.com", []uint{2})
 	if err != nil || len(records) != 1 || records[0].ID != "existing" {
 		t.Fatalf("unexpected importable records: %#v, err=%v", records, err)
+	}
+}
+
+func TestAdoptedDomainCutoverAndRestorePreservesOriginalAddress(t *testing.T) {
+	st, err := store.New(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	clusterID := uint(7)
+	environment := &model.Environment{ProjectID: 1, Name: "prod", Namespace: "app-prod", ClusterID: clusterID}
+	if err := st.CreateEnvironment(environment); err != nil {
+		t.Fatal(err)
+	}
+	original := cloudservice.DNSRecord{ID: "old", RR: "api", Type: "A", Value: "203.0.113.33"}
+	cloud := &fakeDomainCloud{records: []cloudservice.DNSRecord{original}}
+	h := NewDomainHandlerWithDependencies(nil, networkservice.NewService(st, st)).WithCloudDNS(nil, fakeDomainServers{{ID: 2, Host: "203.0.113.12", ClusterID: &clusterID}})
+	h.cloud = cloud
+	domain := &model.ManagedDomain{Hostname: "api.example.com", EnvironmentID: environment.ID, CloudConnectionID: 3, DNSZone: "example.com", DNSNodeIDs: "[2]", OriginalDNSRecords: encodeDNSRecords([]cloudservice.DNSRecord{original}), AdoptionStatus: "staged"}
+	if err := st.CreateManagedDomain(domain); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.cutoverDNS(context.Background(), domain); err != nil {
+		t.Fatal(err)
+	}
+	if domain.AdoptionStatus != "active" || len(cloud.records) != 1 || cloud.records[0].Value != "203.0.113.12" {
+		t.Fatalf("cutover result: %#v, records=%#v", domain, cloud.records)
+	}
+	if err := h.restoreDNS(context.Background(), domain); err != nil {
+		t.Fatal(err)
+	}
+	if domain.AdoptionStatus != "restored" || len(cloud.records) != 1 || cloud.records[0].Value != original.Value || domain.DNSRecords != "[]" {
+		t.Fatalf("restore result: %#v, records=%#v", domain, cloud.records)
+	}
+	if err := h.cutoverDNS(context.Background(), domain); err != nil {
+		t.Fatal("cutover after restore:", err)
+	}
+}
+
+func TestAdoptedDomainCutoverReusesExistingTargetRecord(t *testing.T) {
+	st, err := store.New(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	clusterID := uint(7)
+	environment := &model.Environment{ProjectID: 1, Name: "prod", Namespace: "app-prod", ClusterID: clusterID}
+	if err := st.CreateEnvironment(environment); err != nil {
+		t.Fatal(err)
+	}
+	kept := cloudservice.DNSRecord{ID: "kept", RR: "api", Type: "A", Value: "203.0.113.12", Line: "default", TTL: 600}
+	removed := cloudservice.DNSRecord{ID: "removed", RR: "api", Type: "A", Value: "203.0.113.33", Line: "default", TTL: 600}
+	cloud := &fakeDomainCloud{records: []cloudservice.DNSRecord{kept, removed}}
+	h := NewDomainHandlerWithDependencies(nil, networkservice.NewService(st, st)).WithCloudDNS(nil, fakeDomainServers{{ID: 2, Host: kept.Value, ClusterID: &clusterID}})
+	h.cloud = cloud
+	domain := &model.ManagedDomain{Hostname: "api.example.com", EnvironmentID: environment.ID, CloudConnectionID: 3, DNSZone: "example.com", DNSNodeIDs: "[2]", OriginalDNSRecords: encodeDNSRecords(cloud.records), AdoptionStatus: "staged"}
+	if err := st.CreateManagedDomain(domain); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.cutoverDNS(context.Background(), domain); err != nil {
+		t.Fatal(err)
+	}
+	if domain.AdoptionStatus != "active" || cloud.creates != 0 || len(cloud.records) != 1 || cloud.records[0].ID != kept.ID {
+		t.Fatalf("cutover replaced an existing target: domain=%#v, records=%#v, creates=%d", domain, cloud.records, cloud.creates)
+	}
+	if err := h.restoreDNS(context.Background(), domain); err != nil {
+		t.Fatal(err)
+	}
+	if len(cloud.records) != 2 || cloud.records[0].ID != kept.ID {
+		t.Fatalf("restore lost original target record: %#v", cloud.records)
+	}
+}
+
+func TestAdoptedDomainRejectsExternalDNSChangeBeforeCutover(t *testing.T) {
+	st, err := store.New(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	clusterID := uint(7)
+	environment := &model.Environment{ProjectID: 1, Name: "prod", Namespace: "app-prod", ClusterID: clusterID}
+	if err := st.CreateEnvironment(environment); err != nil {
+		t.Fatal(err)
+	}
+	cloud := &fakeDomainCloud{records: []cloudservice.DNSRecord{{ID: "changed", RR: "api", Type: "A", Value: "203.0.113.40"}}}
+	h := NewDomainHandlerWithDependencies(nil, networkservice.NewService(st, st)).WithCloudDNS(nil, fakeDomainServers{{ID: 2, Host: "203.0.113.12", ClusterID: &clusterID}})
+	h.cloud = cloud
+	domain := &model.ManagedDomain{Hostname: "api.example.com", EnvironmentID: environment.ID, CloudConnectionID: 3, DNSZone: "example.com", DNSNodeIDs: "[2]", OriginalDNSRecords: `[{"id":"old","value":"203.0.113.33"}]`, AdoptionStatus: "staged"}
+	if err := h.cutoverDNS(context.Background(), domain); err == nil {
+		t.Fatal("expected external DNS change to block cutover")
+	}
+	if cloud.creates != 0 || len(cloud.records) != 1 {
+		t.Fatalf("external record was modified: %#v", cloud.records)
+	}
+}
+
+func TestAdoptedDomainRestoresAfterPartialCutover(t *testing.T) {
+	st, err := store.New(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	clusterID := uint(7)
+	environment := &model.Environment{ProjectID: 1, Name: "prod", Namespace: "app-prod", ClusterID: clusterID}
+	if err := st.CreateEnvironment(environment); err != nil {
+		t.Fatal(err)
+	}
+	original := cloudservice.DNSRecord{ID: "old", RR: "api", Type: "A", Value: "203.0.113.33", Line: "default", TTL: 600}
+	cloud := &fakeDomainCloud{records: []cloudservice.DNSRecord{original}, deleteFailure: "old"}
+	h := NewDomainHandlerWithDependencies(nil, networkservice.NewService(st, st)).WithCloudDNS(nil, fakeDomainServers{{ID: 2, Host: "203.0.113.12", ClusterID: &clusterID}})
+	h.cloud = cloud
+	domain := &model.ManagedDomain{Hostname: "api.example.com", EnvironmentID: environment.ID, CloudConnectionID: 3, DNSZone: "example.com", DNSNodeIDs: "[2]", OriginalDNSRecords: encodeDNSRecords([]cloudservice.DNSRecord{original}), AdoptionStatus: "staged"}
+	if err := st.CreateManagedDomain(domain); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.cutoverDNS(context.Background(), domain); err == nil {
+		t.Fatal("expected partial cutover to fail")
+	}
+	if domain.AdoptionStatus != "cutover_failed" || len(cloud.records) != 2 {
+		t.Fatalf("partial cutover state: %#v, records=%#v", domain, cloud.records)
+	}
+	cloud.deleteFailure = ""
+	if err := h.restoreDNS(context.Background(), domain); err != nil {
+		t.Fatal(err)
+	}
+	if domain.AdoptionStatus != "restored" || len(cloud.records) != 1 || cloud.records[0].ID != original.ID {
+		t.Fatalf("restore result: %#v, records=%#v", domain, cloud.records)
+	}
+}
+
+func TestAdoptedDomainRestoreRejectsExternalChangeToOwnedRecord(t *testing.T) {
+	st, err := store.New(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	clusterID := uint(7)
+	environment := &model.Environment{ProjectID: 1, Name: "prod", Namespace: "app-prod", ClusterID: clusterID}
+	if err := st.CreateEnvironment(environment); err != nil {
+		t.Fatal(err)
+	}
+	original := cloudservice.DNSRecord{ID: "old", RR: "api", Type: "A", Value: "203.0.113.33"}
+	cloud := &fakeDomainCloud{records: []cloudservice.DNSRecord{original}}
+	h := NewDomainHandlerWithDependencies(nil, networkservice.NewService(st, st)).WithCloudDNS(nil, fakeDomainServers{{ID: 2, Host: "203.0.113.12", ClusterID: &clusterID}})
+	h.cloud = cloud
+	domain := &model.ManagedDomain{Hostname: "api.example.com", EnvironmentID: environment.ID, CloudConnectionID: 3, DNSZone: "example.com", DNSNodeIDs: "[2]", OriginalDNSRecords: encodeDNSRecords([]cloudservice.DNSRecord{original}), AdoptionStatus: "staged"}
+	if err := st.CreateManagedDomain(domain); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.cutoverDNS(context.Background(), domain); err != nil {
+		t.Fatal(err)
+	}
+	cloud.records[0].Value = "203.0.113.99"
+	if err := h.restoreDNS(context.Background(), domain); err == nil {
+		t.Fatal("expected external change to block restore")
+	}
+	if len(cloud.records) != 1 || cloud.records[0].Value != "203.0.113.99" {
+		t.Fatalf("external record was modified: %#v", cloud.records)
 	}
 }

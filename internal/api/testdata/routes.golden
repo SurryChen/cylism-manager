@@ -181,6 +181,7 @@ GET /api/cross-cluster-services
 GET /api/dashboard
 GET /api/domains
 GET /api/domains/:id/operations
+GET /api/domains/adoptable-cloud-domains
 GET /api/domains/dns-options
 GET /api/domains/importable-certificates
 GET /api/domains/importable-cloud-domains
@@ -318,6 +319,7 @@ POST /api/applications/:id/deployment-templates/:templateID/default
 POST /api/applications/:id/endpoints
 POST /api/applications/:id/integration-handoffs
 POST /api/applications/:id/releases
+POST /api/applications/:id/releases/preflight
 POST /api/applications/:id/releases/:releaseID/retry
 POST /api/applications/:id/releases/:releaseID/rollback
 POST /api/applications/:id/restarts
@@ -386,7 +388,10 @@ POST /api/clusters/:id/nodes/:serverID/restart
 POST /api/clusters/:id/nodes/:serverID/uninstall
 POST /api/domains
 POST /api/domains/:id/certificate
+POST /api/domains/:id/cutover
 POST /api/domains/:id/dns
+POST /api/domains/:id/restore
+POST /api/domains/adopt
 POST /api/domains/import
 POST /api/image-registries
 POST /api/image-registries/:id/verify

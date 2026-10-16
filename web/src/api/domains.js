@@ -23,6 +23,10 @@ export function getClusterDomainOptions(clusterID, options) { return api.get(`/c
 export function getImportableCertificates(environmentID, options) { return api.get(`/domains/importable-certificates${queryString({ environment_id: environmentID })}`, options) }
 export function getDomainDNSOptions(environmentID, options) { return api.get(`/domains/dns-options${queryString({ environment_id: environmentID })}`, options) }
 export function getImportableCloudDomains(environmentID, options) { return api.get(`/domains/importable-cloud-domains${queryString({ environment_id: environmentID })}`, options) }
+export function getAdoptableCloudDomains(environmentID, options) { return api.get(`/domains/adoptable-cloud-domains${queryString({ environment_id: environmentID })}`, options) }
+export function adoptCloudDomain(body, options) { return post('/domains/adopt', body, options) }
+export function cutoverManagedDomain(id, options) { return post(`/domains/${segment(id)}/cutover`, undefined, options) }
+export function restoreManagedDomain(id, options) { return post(`/domains/${segment(id)}/restore`, undefined, options) }
 export function retryManagedDomainDNS(id, options) { return post(`/domains/${segment(id)}/dns`, undefined, options) }
 export function createManagedDomain(body, options) { return post('/domains', body, options) }
 export function updateManagedDomain(id, body, options) { return put(`/domains/${segment(id)}`, body, options) }

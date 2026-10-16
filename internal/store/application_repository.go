@@ -331,9 +331,16 @@ func (s *Store) ListApplicationDeploymentTemplates(applicationID uint) ([]model.
 
 func (s *Store) CreateApplicationDeploymentTemplate(template *model.ApplicationDeploymentTemplate, makeDefault bool) error {
 	return s.db.Transaction(func(tx *gorm.DB) error {
+		enabled := template.Enabled
 		template.Revision = 1
 		if err := tx.Create(template).Error; err != nil {
 			return err
+		}
+		if !enabled {
+			if err := tx.Model(template).Update("enabled", false).Error; err != nil {
+				return err
+			}
+			template.Enabled = false
 		}
 		if makeDefault {
 			return tx.Model(&model.Application{}).Where("id = ?", template.ApplicationID).Update("default_deployment_template_id", template.ID).Error

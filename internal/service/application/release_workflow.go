@@ -45,19 +45,29 @@ func NewReleaseWorkflow(repository repository.ReleaseWorkflowRepository, encKey 
 }
 
 func (w *ReleaseWorkflow) CreateFromTemplate(ctx context.Context, app *model.Application, template *model.ApplicationDeploymentTemplate, version string, userID uint) (*PreparedRelease, error) {
+	spec, err := w.PrepareTemplateSpec(app, template, version)
+	if err != nil {
+		return nil, err
+	}
+	return w.create(ctx, app, template, userID, spec)
+}
+
+// PrepareTemplateSpec resolves a template without creating a release. Callers
+// must not serialize the returned spec because it contains decrypted secrets.
+func (w *ReleaseWorkflow) PrepareTemplateSpec(app *model.Application, template *model.ApplicationDeploymentTemplate, version string) (ReleaseSpec, error) {
 	if app == nil || template == nil || !template.Enabled {
-		return nil, fmt.Errorf("上线模板不存在或已停用")
+		return ReleaseSpec{}, fmt.Errorf("上线模板不存在或已停用")
 	}
 	var spec ReleaseSpec
 	if err := json.Unmarshal([]byte(template.Spec), &spec); err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrReleaseTemplateRead, err)
+		return ReleaseSpec{}, fmt.Errorf("%w: %v", ErrReleaseTemplateRead, err)
 	}
 	secrets, err := w.decryptTemplateSecrets(template.EncryptedSecrets)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrReleaseSecretRead, err)
+		return ReleaseSpec{}, fmt.Errorf("%w: %v", ErrReleaseSecretRead, err)
 	}
 	if len(spec.Secrets) > 0 && len(secrets) == 0 {
-		return nil, fmt.Errorf("模板中的 Secret 尚未配置明文值")
+		return ReleaseSpec{}, fmt.Errorf("模板中的 Secret 尚未配置明文值")
 	}
 	spec.Secrets = secrets
 	spec.Version = strings.TrimSpace(version)
@@ -66,13 +76,13 @@ func (w *ReleaseWorkflow) CreateFromTemplate(ctx context.Context, app *model.App
 	}
 	spec.Image, err = imageWithVersion(spec.Image, spec.Version)
 	if err != nil {
-		return nil, err
+		return ReleaseSpec{}, err
 	}
 	if err := w.PrepareRuntimeSpec(app, &spec); err != nil {
-		return nil, err
+		return ReleaseSpec{}, err
 	}
 	spec.Endpoint = EndpointSpec{Exposure: ExposureCluster}
-	return w.create(ctx, app, template, userID, spec)
+	return spec, nil
 }
 
 func (w *ReleaseWorkflow) Restart(ctx context.Context, app *model.Application, userID uint) (*PreparedRelease, error) {
@@ -194,6 +204,9 @@ func (w *ReleaseWorkflow) SyncManagedFiles(app *model.Application, spec ReleaseS
 
 func (w *ReleaseWorkflow) create(ctx context.Context, app *model.Application, template *model.ApplicationDeploymentTemplate, userID uint, spec ReleaseSpec) (*PreparedRelease, error) {
 	service := NewService(w.repository, w.applier)
+	if err := service.preflightSubmission(ctx, app.ID, spec); err != nil {
+		return nil, err
+	}
 	release, err := service.CreateRelease(ctx, app.ID, userID, spec)
 	if err != nil {
 		return nil, err

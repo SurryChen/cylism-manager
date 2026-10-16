@@ -18,6 +18,7 @@
             </div>
           </div>
           <div class="workspace-toolbar-actions">
+            <span v-if="workspaceReady && workspaceOverview && activeWorkspaceTab === 'runtime'" class="workspace-count" title="依据 Pod 就绪状态汇总，未探测应用请求或域名连通性">组件就绪 {{ readyApplicationCount }}/{{ applications.length }}</span>
             <span v-if="workspaceReady && workspaceOverview" class="workspace-count">{{ workspaceCount }} 条记录</span>
             <template v-if="activeWorkspaceTab === 'runtime'">
               <button class="btn btn-sm" :disabled="!workspaceOverview" @click="openCatalogImport">从商城导入</button>
@@ -56,8 +57,8 @@
           <EmptyState v-else message="当前环境还没有部署组件" />
         </template>
         <template v-else>
-          <div v-if="applications.length" class="workspace-table-content"><div class="table-wrap workspace-applications-table-wrap"><table class="data-table workspace-applications-table"><thead><tr><th>部署组件</th><th>访问域名</th><th>路径</th><th>协议</th><th>Service 端口</th><th>操作</th></tr></thead><tbody>
-            <tr v-for="entry in workspaceEndpointRows" :key="entry.key"><td class="cell-primary">{{ entry.app.name }}</td><td>{{ entry.endpoint?.domain || '未配置' }}</td><td>{{ entry.endpoint?.path || '-' }}</td><td>{{ entry.endpoint ? (entry.endpoint.ingress_enabled === false ? entry.endpoint.protocol || 'TCP' : entry.endpoint.tls_enabled ? 'HTTPS' : 'HTTP') : '-' }}</td><td>{{ entry.endpoint?.service_port || '-' }}</td><td class="action-cell"><button class="btn btn-sm" @click="openApplicationTab(entry.app, 'access')">管理入口</button></td></tr>
+          <div v-if="applications.length" class="workspace-table-content"><div class="table-wrap workspace-applications-table-wrap"><table class="data-table workspace-applications-table"><thead><tr><th>部署组件</th><th>访问域名</th><th>用途</th><th>路径</th><th>协议</th><th>Service 端口</th><th>操作</th></tr></thead><tbody>
+            <tr v-for="entry in workspaceEndpointRows" :key="entry.key"><td class="cell-primary">{{ entry.app.name }}</td><td>{{ entry.endpoint?.domain || '未配置' }}</td><td><span v-if="entry.endpoint" class="badge" :class="entry.endpoint.ingress_enabled === false ? 'badge-offline' : 'badge-online'">{{ entry.endpoint.ingress_enabled === false ? '仅记录域名' : '启用 HTTP Ingress' }}</span><span v-else>-</span></td><td>{{ entry.endpoint?.path || '-' }}</td><td>{{ entry.endpoint ? (entry.endpoint.ingress_enabled === false ? entry.endpoint.protocol || 'TCP' : entry.endpoint.tls_enabled ? 'HTTPS' : 'HTTP') : '-' }}</td><td>{{ entry.endpoint?.service_port || '-' }}</td><td class="action-cell"><button class="btn btn-sm" @click="openApplicationTab(entry.app, 'access')">管理入口</button></td></tr>
           </tbody></table></div></div>
           <EmptyState v-else message="当前环境还没有部署组件" />
         </template>
@@ -124,10 +125,11 @@
 
     <Teleport to="body"><div v-if="releaseApp" class="overlay" @click.self="releaseApp = null"><div class="modal release-modal"><h2 class="modal-title">发布 {{ releaseApp.name }}</h2><form @submit.prevent="createRelease">
       <div v-if="releaseTemplates.length" class="form-group"><label class="form-label">上线模板</label><SelectMenu v-model.number="releaseForm.template_id" class="form-select" required><option v-for="template in releaseTemplates" :key="template.id" :value="template.id">{{ template.name }}{{ template.is_default ? '（默认）' : '' }}</option></SelectMenu></div>
-      <div v-if="selectedReleaseTemplate" class="template-summary"><span>模板 v{{ selectedReleaseTemplate.revision }}</span><strong>{{ selectedReleaseTemplate.spec.image }}</strong><small>{{ selectedReleaseTemplate.spec.replicas }} 副本 · Service {{ selectedReleaseTemplate.spec.service?.port }}</small></div>
+      <div v-if="selectedReleaseTemplate" class="template-summary"><span>模板 v{{ selectedReleaseTemplate.revision }}</span><strong>{{ selectedReleaseTemplate.spec.image }}</strong><small>{{ selectedReleaseTemplate.spec.replicas }} 副本 · Service {{ selectedReleaseTemplate.spec.service?.port }} · {{ selectedReleaseTemplate.spec.node_name || '自动调度' }}</small><small v-for="volume in selectedReleaseTemplate.spec.volumes || []" :key="volume.claim_name">PVC {{ volume.claim_name }} → {{ volume.mount_path }}</small><small v-for="mount in selectedReleaseTemplate.spec.file_mounts || []" :key="`${mount.source_type}-${mount.source_name}-${mount.key}`">{{ mount.source_type }} {{ mount.source_name || '当前应用' }} / {{ mount.key }}</small><small>提交时检查命名空间、存储与配置依赖；运行状态依据 Pod 就绪情况。</small></div>
       <p v-else class="template-intro">当前应用尚未配置上线模板，请先在应用详情中创建模板。</p>
       <div class="form-group"><label class="form-label">版本号</label><input v-model.trim="releaseForm.version" class="form-input" :required="!selectedReleaseTemplate?.default_version" :placeholder="selectedReleaseTemplate?.default_version || '1.4.2'" pattern="[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}" :disabled="!releaseTemplates.length" /><p class="form-hint">{{ selectedReleaseTemplate?.default_version ? `留空则使用模板默认版本 ${selectedReleaseTemplate.default_version}。` : '当前模板未设置默认版本号，请填写镜像版本号。' }}</p></div>
-      <div class="modal-actions"><button type="button" class="btn" @click="releaseApp = null">取消</button><button v-if="!releaseTemplates.length" type="button" class="btn btn-primary" @click="openTemplateManagement(releaseApp)">管理模板</button><button v-else class="btn btn-primary" :disabled="submitting">{{ submitting ? '提交中...' : '开始发布' }}</button></div>
+      <div v-if="releasePreflight" class="release-preflight"><div v-for="check in releasePreflight.checks" :key="check.name" class="release-preflight-row"><span class="badge" :class="check.ok ? 'badge-online' : 'badge-danger'">{{ check.ok ? '通过' : '待处理' }}</span><strong>{{ check.name }}</strong><span>{{ check.detail }}</span></div></div>
+      <div class="modal-actions"><button type="button" class="btn" @click="releaseApp = null">取消</button><button v-if="!releaseTemplates.length" type="button" class="btn btn-primary" @click="openTemplateManagement(releaseApp)">管理模板</button><template v-else><button type="button" class="btn" :disabled="submitting || preflightLoading" @click="checkRelease">{{ preflightLoading ? '检查中...' : '检查配置' }}</button><button class="btn btn-primary" :disabled="submitting || !releasePreflight?.ready">{{ submitting ? '提交中...' : '开始发布' }}</button></template></div>
     </form></div></div></Teleport>
     <ErrorNoticeModal :open="Boolean(mutationError)" :message="mutationError" teleport @close="mutationError = ''" />
   </div>
@@ -141,6 +143,7 @@ import {
   createApplication as createApplicationRequest,
   createProject,
   createRelease as createReleaseRequest,
+  preflightRelease,
   deleteApplication as deleteApplicationRequest,
   deleteProject as deleteProjectRequest,
   getApplicationCatalog,
@@ -182,6 +185,7 @@ const editingProject = ref(null)
 const projectDeleteTarget = ref(null)
 const deleteApplicationTarget = ref(null)
 const releaseApp = ref(null)
+const releasePreflight = ref(null), preflightLoading = ref(false)
 const releaseTemplates = ref([])
 const imageRegistries = ref([])
 const createForm = ref(newApplicationForm())
@@ -224,6 +228,7 @@ const catalogConflicts = computed(() => {
 const selectedReleaseTemplate = computed(() => releaseTemplates.value.find(template => template.id === releaseForm.value.template_id) || null)
 const workspaceReleases = computed(() => workspaceOverview.value?.releases || workspaceOverview.value?.recent_releases || [])
 const workspaceEndpointRows = computed(() => applications.value.flatMap(app => (app.endpoints?.length ? app.endpoints : [null]).map((endpoint, index) => ({ key: `${app.id}-${index}`, app, endpoint }))))
+const readyApplicationCount = computed(() => applications.value.filter(app => app.runtime?.status === 'running').length)
 const workspaceCount = computed(() => {
   if (activeWorkspaceTab.value === 'releases') return workspaceReleases.value.length
   if (activeWorkspaceTab.value === 'access') return workspaceEndpointRows.value.length
@@ -377,6 +382,7 @@ async function selectWorkspaceEnvironment(value) { await updateWorkspace(workspa
 
 async function openRelease(app) {
   readError.value = ''
+  releasePreflight.value = null
   releaseForm.value = newReleaseForm()
   releaseTemplates.value = []
   const result = await releaseTemplatesResource.refresh(app.id)
@@ -387,13 +393,15 @@ async function openRelease(app) {
   } else if (releaseTemplatesResource.error.value) readError.value = releaseTemplatesResource.error.value.message || '加载上线模板失败'
   releaseApp.value = app
 }
-async function createRelease() { mutationError.value = ''; if (!releaseForm.value.template_id || (!releaseForm.value.version && !selectedReleaseTemplate.value?.default_version)) { mutationError.value = '请选择上线模板并填写版本号，或设置模板默认版本号'; return } submitting.value = true; try { const applicationID = releaseApp.value.id; const release = await createReleaseRequest(applicationID, releaseForm.value); releaseApp.value = null; await router.push(`/applications/${applicationID}/releases/${release.id}`); fetchWorkspace() } catch (e) { mutationError.value = e.message || '创建发布失败' } finally { submitting.value = false } }
+async function checkRelease() { if (!releaseApp.value || !releaseForm.value.template_id) return; const appID = releaseApp.value.id; const payload = { ...releaseForm.value }; preflightLoading.value = true; mutationError.value = ''; releasePreflight.value = null; try { const result = await preflightRelease(appID, payload); if (releaseApp.value?.id === appID && payload.template_id === releaseForm.value.template_id && payload.version === releaseForm.value.version) releasePreflight.value = result } catch (e) { mutationError.value = e.message || '检查发布配置失败' } finally { preflightLoading.value = false } }
+async function createRelease() { mutationError.value = ''; if (!releasePreflight.value?.ready) { mutationError.value = '请先检查并修复发布配置'; return } if (!releaseForm.value.template_id || (!releaseForm.value.version && !selectedReleaseTemplate.value?.default_version)) { mutationError.value = '请选择上线模板并填写版本号，或设置模板默认版本号'; return } submitting.value = true; try { const applicationID = releaseApp.value.id; const release = await createReleaseRequest(applicationID, releaseForm.value); releaseApp.value = null; await router.push(`/applications/${applicationID}/releases/${release.id}`); fetchWorkspace() } catch (e) { mutationError.value = e.message || '创建发布失败' } finally { submitting.value = false } }
 async function openTemplateManagement(app) { releaseApp.value = null; await router.push(`/applications/${app.id}`) }
 async function openDetails(app) { await router.push(`/applications/${app.id}`) }
 async function openApplicationTab(app, tab) { await router.push({ path: `/applications/${app.id}`, query: { tab } }) }
 async function openReleaseDetails(release) { await router.push(`/applications/${release.application_id}/releases/${release.id}`) }
 
 watch(() => [props.section, route.query.project_id, route.query.environment_id], () => { showCatalogImport.value = false; workspaceTemplateLoadID++; workspaceTemplates.value = {}; workspaceTemplatesLoading.value = false; loadSection(props.section) }, { immediate: true })
+watch(() => [releaseForm.value.template_id, releaseForm.value.version], () => { releasePreflight.value = null })
 </script>
 
 <style scoped>
@@ -401,6 +409,7 @@ watch(() => [props.section, route.query.project_id, route.query.environment_id],
 .page-header { display:flex; align-items:flex-start; justify-content:space-between; gap:var(--space-16); }
 .page-subtitle { margin:var(--space-4) 0 0; color:var(--text-secondary); font-size:13px; }
 .release-modal { width:min(680px, calc(100vw - 32px)); }.template-summary{display:grid;gap:4px;margin-bottom:var(--space-16);padding:12px;border:1px solid var(--border-muted);border-radius:var(--radius-control);background:var(--surface-subtle)}.template-summary span,.template-summary small,.template-intro{color:var(--text-secondary);font-size:12px}.template-summary strong{overflow-wrap:anywhere;font-size:13px}.template-intro{margin:0 0 var(--space-16)}
+.release-preflight{display:grid;gap:6px;max-height:210px;overflow:auto;margin-bottom:var(--space-16)}.release-preflight-row{display:grid;grid-template-columns:auto 90px minmax(0,1fr);align-items:start;gap:8px;font-size:12px}.release-preflight-row span:last-child{overflow-wrap:anywhere;color:var(--text-secondary)}
 .compact-input { margin-top:6px; }.unit-input { display:grid; grid-template-columns:minmax(0, 1fr) 86px; gap:6px; }
 .check-row { display:flex; gap:8px; align-items:center; margin:var(--space-12) 0; color:var(--text-secondary); font-size:13px; }
 .workspace-import-modal { width: min(580px, 100%); }

@@ -225,6 +225,25 @@ func TestBuildManagedDomainNormalizesAndPreservesImportedCertificate(t *testing.
 	}
 }
 
+func TestBuildManagedDomainPreservesAdoptionStateOnEdit(t *testing.T) {
+	env := &model.Environment{ID: 7, Namespace: "production"}
+	current := &model.ManagedDomain{
+		ID: 9, Hostname: "api.example.com", EnvironmentID: 7, Namespace: "production",
+		IssuerRef: "prod", CloudConnectionID: 3, DNSZone: "example.com",
+		OriginalDNSRecords: `[{"id":"old","value":"203.0.113.10"}]`,
+		AdoptionStatus:     "staged", DNSStatus: "staged",
+	}
+	updated, err := BuildManagedDomain(DomainInput{
+		Hostname: current.Hostname, EnvironmentID: env.ID, IssuerRef: current.IssuerRef, Enabled: true,
+	}, current, env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.AdoptionStatus != current.AdoptionStatus || updated.OriginalDNSRecords != current.OriginalDNSRecords {
+		t.Fatalf("adoption state lost on edit: %#v", updated)
+	}
+}
+
 func TestValidateManagedDomainPrerequisites(t *testing.T) {
 	s := NewService(nil)
 	domain := &model.ManagedDomain{Namespace: "production", IssuerRef: "prod"}

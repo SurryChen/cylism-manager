@@ -34,6 +34,7 @@ type DomainKubernetesAdapter interface {
 	DeleteTLSSecret(context.Context, string, string) error
 	NamespaceExists(context.Context, string) (bool, error)
 	ListIssuersContext(context.Context) ([]k8s.IssuerInfo, error)
+	ReadyIngressEndpoint(context.Context, string, string) (bool, error)
 }
 
 type clientDomainAdapter struct{ client *k8s.Client }
@@ -65,6 +66,38 @@ func (a clientDomainAdapter) NamespaceExists(ctx context.Context, name string) (
 }
 func (a clientDomainAdapter) ListIssuersContext(ctx context.Context) ([]k8s.IssuerInfo, error) {
 	return a.client.ListIssuersContext(ctx)
+}
+
+func (a clientDomainAdapter) ReadyIngressEndpoint(ctx context.Context, namespace, hostname string) (bool, error) {
+	ingresses, err := a.client.Clientset.NetworkingV1().Ingresses(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return false, err
+	}
+	for _, ingress := range ingresses.Items {
+		for _, rule := range ingress.Spec.Rules {
+			if !strings.EqualFold(rule.Host, hostname) || rule.HTTP == nil {
+				continue
+			}
+			for _, path := range rule.HTTP.Paths {
+				if path.Backend.Service == nil {
+					continue
+				}
+				endpoints, err := a.client.Clientset.CoreV1().Endpoints(namespace).Get(ctx, path.Backend.Service.Name, metav1.GetOptions{})
+				if apierrors.IsNotFound(err) {
+					continue
+				}
+				if err != nil {
+					return false, err
+				}
+				for _, subset := range endpoints.Subsets {
+					if len(subset.Addresses) > 0 {
+						return true, nil
+					}
+				}
+			}
+		}
+	}
+	return false, nil
 }
 
 type domainRequest struct {
@@ -109,6 +142,8 @@ type ManagedDomainInfo struct {
 	DNSZone              string        `json:"dns_zone"`
 	DNSNodeIDs           []uint        `json:"dns_node_ids"`
 	DNSAddresses         []string      `json:"dns_addresses"`
+	OriginalDNSAddresses []string      `json:"original_dns_addresses"`
+	AdoptionStatus       string        `json:"adoption_status"`
 	DNSStatus            string        `json:"dns_status"`
 	DNSError             string        `json:"dns_error"`
 }
@@ -358,7 +393,9 @@ func (h *DomainHandler) ImportCertificate(c *gin.Context) {
 			apiShared.ValidationError(c, err.Error())
 			return
 		}
-		domain.DNSRecords = encodeDNSRecords(existingRecords)
+		domain.OriginalDNSRecords = encodeDNSRecords(existingRecords)
+		domain.DNSRecords = ""
+		domain.AdoptionStatus, domain.DNSStatus = "staged", "staged"
 	}
 	if existing == nil {
 		if err := h.network.CreateManagedDomain(domain); err != nil {
@@ -369,13 +406,7 @@ func (h *DomainHandler) ImportCertificate(c *gin.Context) {
 		apiShared.DBError(c, err.Error())
 		return
 	}
-	if h.cloud != nil {
-		if err := h.syncDNS(c.Request.Context(), domain); err != nil {
-			apiShared.SuccessWithMessage(c, h.DomainInfo(c.Request.Context(), domain), "域名已导入，但 DNS 解析更新失败，可在列表中重试："+err.Error())
-			return
-		}
-	}
-	apiShared.SuccessWithMessage(c, h.DomainInfo(c.Request.Context(), domain), "已接管现有证书，Certificate 与 TLS Secret 保持原样")
+	apiShared.SuccessWithMessage(c, h.DomainInfo(c.Request.Context(), domain), "已导入证书；原 DNS 解析未变，请绑定应用入口后切换解析")
 }
 
 func (h *DomainHandler) Update(c *gin.Context) {
@@ -387,6 +418,10 @@ func (h *DomainHandler) Update(c *gin.Context) {
 	current, err := h.network.GetManagedDomain(id)
 	if err != nil {
 		apiShared.NotFound(c, "域名不存在")
+		return
+	}
+	if current.AdoptionStatus == "cutover_failed" {
+		apiShared.Conflict(c, "解析切换未完成，请先恢复原解析")
 		return
 	}
 	var req domainRequest
@@ -421,6 +456,9 @@ func (h *DomainHandler) Update(c *gin.Context) {
 			apiShared.ValidationError(c, err.Error())
 			return
 		}
+		if domain.AdoptionStatus == "staged" || domain.AdoptionStatus == "restored" {
+			domain.DNSStatus = domain.AdoptionStatus
+		}
 	}
 	if !isImportedDomain(domain) {
 		if err := h.validateManagedDomainPrerequisites(c.Request.Context(), domain); err != nil {
@@ -433,7 +471,7 @@ func (h *DomainHandler) Update(c *gin.Context) {
 		apiShared.Conflict(c, "域名已存在")
 		return
 	}
-	if h.cloud != nil && domain.CloudConnectionID != 0 {
+	if h.cloud != nil && domain.CloudConnectionID != 0 && domain.AdoptionStatus != "staged" && domain.AdoptionStatus != "restored" {
 		if err := h.syncDNS(c.Request.Context(), domain); err != nil {
 			apiShared.SuccessWithMessage(c, h.DomainInfo(c.Request.Context(), domain), "域名已更新，但 DNS 解析更新失败，可重试："+err.Error())
 			return
@@ -527,6 +565,10 @@ func (h *DomainHandler) Delete(c *gin.Context) {
 		apiShared.Conflict(c, err.Error())
 		return
 	}
+	if domain.AdoptionStatus == "active" || domain.AdoptionStatus == "cutover_failed" {
+		apiShared.Conflict(c, "请先恢复原 DNS 解析，再删除接管的域名")
+		return
+	}
 	if !isImportedDomain(domain) && h.k8s != nil && domain.Namespace != "" && domain.CertificateName != "" {
 		if err := h.network.DeleteCertificateContext(c.Request.Context(), domain.Namespace, domain.CertificateName); err != nil && !apierrors.IsNotFound(err) {
 			apiShared.Error(c, http.StatusBadRequest, apiShared.CodeK8sAPIError, "删除域名证书: "+err.Error())
@@ -539,7 +581,7 @@ func (h *DomainHandler) Delete(c *gin.Context) {
 			}
 		}
 	}
-	if h.cloud != nil && domain.CloudConnectionID != 0 && !isImportedDomain(domain) {
+	if h.cloud != nil && domain.CloudConnectionID != 0 && !isImportedDomain(domain) && domain.AdoptionStatus == "" {
 		records := decodeDNSRecords(domain.DNSRecords)
 		for len(records) > 0 {
 			record := records[0]
@@ -613,10 +655,13 @@ func ManagedDomainInfoFor(ctx context.Context, domain *model.ManagedDomain, clie
 	if domain == nil {
 		return ManagedDomainInfo{}
 	}
-	view := ManagedDomainInfo{ID: domain.ID, Hostname: domain.Hostname, EnvironmentID: domain.EnvironmentID, Namespace: domain.Namespace, CertificateName: domain.CertificateName, TLSSecretName: domain.TLSSecretName, IssuerRef: domain.IssuerRef, IssuerKind: domain.IssuerKind, CertificateOwnership: domain.CertificateOwnership, CloudConnectionID: domain.CloudConnectionID, DNSZone: domain.DNSZone, DNSStatus: domain.DNSStatus, DNSError: domain.DNSError, Description: domain.Description, Enabled: domain.Enabled, CreatedAt: domain.CreatedAt, UpdatedAt: domain.UpdatedAt}
+	view := ManagedDomainInfo{ID: domain.ID, Hostname: domain.Hostname, EnvironmentID: domain.EnvironmentID, Namespace: domain.Namespace, CertificateName: domain.CertificateName, TLSSecretName: domain.TLSSecretName, IssuerRef: domain.IssuerRef, IssuerKind: domain.IssuerKind, CertificateOwnership: domain.CertificateOwnership, CloudConnectionID: domain.CloudConnectionID, DNSZone: domain.DNSZone, DNSStatus: domain.DNSStatus, DNSError: domain.DNSError, AdoptionStatus: domain.AdoptionStatus, Description: domain.Description, Enabled: domain.Enabled, CreatedAt: domain.CreatedAt, UpdatedAt: domain.UpdatedAt}
 	_ = json.Unmarshal([]byte(domain.DNSNodeIDs), &view.DNSNodeIDs)
 	for _, record := range decodeDNSRecords(domain.DNSRecords) {
 		view.DNSAddresses = append(view.DNSAddresses, record.Value)
+	}
+	for _, record := range decodeDNSRecords(domain.OriginalDNSRecords) {
+		view.OriginalDNSAddresses = append(view.OriginalDNSAddresses, record.Value)
 	}
 	if references != nil {
 		if count, err := references.CountApplicationEndpointsByDomain(domain.ID); err == nil {

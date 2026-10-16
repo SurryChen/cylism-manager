@@ -16,6 +16,20 @@ import (
 	k8sfake "k8s.io/client-go/kubernetes/fake"
 )
 
+func TestApplicationEndpointURLSkipsRecordedDomains(t *testing.T) {
+	app := model.Application{Endpoints: []model.ApplicationEndpoint{
+		{Domain: "record.example.com", IngressMode: "metadata", Path: "/"},
+		{Domain: "web.example.com", Path: "/app", TLSEnabled: true},
+	}}
+	if got := applicationEndpointURL(app); got != "https://web.example.com/app" {
+		t.Fatalf("unexpected endpoint URL: %q", got)
+	}
+	app.Endpoints = app.Endpoints[:1]
+	if got := applicationEndpointURL(app); got != "" {
+		t.Fatalf("record-only domain should not expose a URL: %q", got)
+	}
+}
+
 func TestApplicationHandlerDiscoversCapabilityAndSanitizedRuntime(t *testing.T) {
 	replicas := int32(2)
 	clientset := k8sfake.NewSimpleClientset()

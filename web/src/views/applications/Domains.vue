@@ -4,14 +4,14 @@
     <SectionTabsHeader title="受管域名" :tabs="[{ id: 'domains', label: '域名' }]" active-tab="domains" />
     <FeedbackBanner v-if="readError" tone="warning" :message="readError" />
     <SurfaceCard padding="none">
-      <div class="domain-toolbar"><button class="btn" @click="openImport">导入域名</button><button class="btn btn-primary" @click="openCreate">新建域名</button></div>
+      <div class="domain-toolbar"><button class="btn" @click="openAdopt">接管已有解析</button><button class="btn" @click="openImport">导入现有证书</button><button class="btn btn-primary" @click="openCreate">新建域名</button></div>
       <div v-if="loaded && domains.length" class="table-wrap domain-table"><table class="data-table"><thead><tr><th>域名</th><th>命名空间</th><th>解析地址</th><th>DNS</th><th>签发者</th><th>证书状态</th><th>TLS Secret</th><th>续期时间</th><th>入口</th><th></th></tr></thead><tbody>
         <tr v-for="domain in domains" :key="domain.id">
           <td class="cell-primary">{{ domain.hostname }}<small v-if="domain.certificate_ownership === 'imported'" class="cell-secondary">导入证书</small><small v-if="domain.description" class="cell-secondary">{{ domain.description }}</small></td>
-          <td>{{ domain.namespace || '未绑定' }}</td><td>{{ domain.dns_addresses?.join('、') || '-' }}</td><td><span v-if="domain.cloud_connection_id" class="badge" :class="domain.dns_status === 'ready' ? 'badge-online' : 'badge-danger'">{{ domain.dns_status === 'ready' ? '已同步' : domain.dns_status === 'failed' ? '解析失败' : '待处理' }}</span><span v-else>-</span><small v-if="domain.dns_error" class="cell-secondary">{{ domain.dns_error }}</small></td><td>{{ domain.issuer_ref || '-' }}</td>
+          <td>{{ domain.namespace || '未绑定' }}</td><td>{{ (domain.adoption_status === 'staged' || domain.adoption_status === 'restored' ? domain.original_dns_addresses : domain.dns_addresses)?.join('、') || '-' }}</td><td><span v-if="domain.cloud_connection_id" class="badge" :class="domain.dns_status === 'ready' ? 'badge-online' : 'badge-offline'">{{ adoptionLabel(domain) }}</span><span v-else>-</span><small v-if="domain.dns_error" class="cell-secondary">{{ domain.dns_error }}</small></td><td>{{ domain.issuer_ref || '-' }}</td>
           <td><span class="badge" :class="certificateClass(domain)">{{ certificateLabel(domain) }}</span><small v-if="certificateReason(domain)" class="cell-secondary">{{ certificateReason(domain) }}</small></td>
           <td>{{ domain.tls_secret_name || '-' }}</td><td>{{ formatDate(domain.certificate?.renewal_time) }}</td><td>{{ domain.application_count || 0 }}</td>
-          <td class="action-cell"><div class="btn-group"><button v-if="domain.cloud_connection_id && domain.dns_status !== 'ready'" class="btn btn-sm" @click="retryDNS(domain)">重试解析</button><button v-if="domain.namespace && domain.certificate_ownership !== 'imported'" class="btn btn-sm" @click="retry(domain)">重试签发</button><button v-if="domain.certificate_name" class="btn btn-sm" @click="openOperations(domain)">查看签发过程</button><button class="btn btn-sm" @click="openEdit(domain)">编辑</button><button class="btn btn-sm btn-danger" :disabled="domain.application_count > 0" @click="remove(domain)">删除</button></div></td>
+          <td class="action-cell"><div class="btn-group"><button v-if="domain.adoption_status === 'staged' || domain.adoption_status === 'restored'" class="btn btn-sm btn-primary" :title="domain.certificate?.status !== 'Ready' ? '等待目标证书就绪' : !domain.application_count ? '请先绑定应用入口' : '切换到目标节点'" :disabled="domain.certificate?.status !== 'Ready' || !domain.application_count" @click="confirmCutover = domain">切换解析</button><button v-if="domain.adoption_status === 'active' || domain.adoption_status === 'cutover_failed'" class="btn btn-sm" @click="confirmRestore = domain">恢复原解析</button><button v-if="domain.cloud_connection_id && domain.dns_status !== 'ready' && !domain.adoption_status" class="btn btn-sm" @click="retryDNS(domain)">重试解析</button><button v-if="domain.namespace && domain.certificate_ownership !== 'imported'" class="btn btn-sm" @click="retry(domain)">重试签发</button><button v-if="domain.certificate_name" class="btn btn-sm" @click="openOperations(domain)">查看签发过程</button><button class="btn btn-sm" @click="openEdit(domain)">编辑</button><button class="btn btn-sm btn-danger" :disabled="domain.application_count > 0 || domain.adoption_status === 'active' || domain.adoption_status === 'cutover_failed'" @click="remove(domain)">删除</button></div></td>
         </tr>
       </tbody></table></div>
       <EmptyState v-else :variant="loaded ? 'empty' : 'loading'" :message="loaded ? '暂无受管域名' : '加载中...'" />
@@ -37,9 +37,21 @@
       <div class="form-group"><label class="form-label">解析节点</label><div class="node-options"><label v-for="node in dnsNodes" :key="node.id" class="check-row"><input v-model="importForm.node_ids" type="checkbox" :value="node.id" />{{ node.name }} · {{ node.ip }}</label></div></div>
       <div class="form-group"><label class="form-label">说明</label><input v-model.trim="importForm.description" class="form-input" placeholder="导入已有证书" /></div>
       <label class="check-row"><input v-model="importForm.enabled" type="checkbox" /> 启用此域名</label>
-      <p class="form-hint">导入会将业务 A 记录同步到所选节点；原 Certificate 和 TLS Secret 保持不变。</p>
+      <p class="form-hint">导入后保留原 A 记录；Certificate 和 TLS Secret 保持不变。绑定目标应用入口后，再手动切换解析。</p>
       <div class="modal-actions"><button type="button" class="btn" @click="closeImport">取消</button><button class="btn btn-primary" :disabled="saving || !importForm.candidate_key || !importForm.node_ids.length">{{ saving ? '导入中...' : '确认导入' }}</button></div>
     </form></div></div>
+
+    <div v-if="adoptModal" class="overlay" @click.self="adoptModal = false"><div class="modal"><h2 class="modal-title">接管已有解析</h2><form @submit.prevent="submitAdoption">
+      <div class="form-group"><label class="form-label">已有 A 记录</label><SelectMenu v-model="adoptForm.candidate_key" required><option value="" disabled>选择云 DNS 中的域名</option><option v-for="item in adoptCandidates" :key="adoptionKey(item)" :value="adoptionKey(item)">{{ item.hostname }} · {{ item.addresses.join('、') }}</option></SelectMenu></div>
+      <div class="form-group"><label class="form-label">目标环境</label><input class="form-input" :value="`${currentEnvironment?.name || ''} · ${currentEnvironment?.namespace || ''}`" disabled /></div>
+      <div class="form-group"><label class="form-label">目标解析节点</label><div class="node-options"><label v-for="node in dnsNodes" :key="node.id" class="check-row"><input v-model="adoptForm.node_ids" type="checkbox" :value="node.id" />{{ node.name }} · {{ node.ip }}</label></div></div>
+      <div class="form-group"><label class="form-label">新证书签发者</label><SelectMenu v-model="adoptForm.issuer_ref" required><option value="" disabled>选择已就绪的 ClusterIssuer</option><option v-for="issuer in issuers" :key="issuer.name" :value="issuer.name">{{ issuer.name }}</option></SelectMenu></div>
+      <p class="form-hint">保存后会在目标命名空间申请证书，现有 DNS 解析保持不变。预先签发需要支持 DNS-01 的签发者；证书和应用入口就绪后，再手动切换解析。</p>
+      <div class="modal-actions"><button type="button" class="btn" @click="adoptModal = false">取消</button><button class="btn btn-primary" :disabled="saving || !adoptForm.candidate_key || !adoptForm.node_ids.length || !adoptForm.issuer_ref">{{ saving ? '保存中...' : '保存接管草稿' }}</button></div>
+    </form></div></div>
+
+    <ConfirmDialog :open="!!confirmCutover" title="切换域名解析" :message="confirmCutover ? `确认将 ${confirmCutover.hostname} 从 ${confirmCutover.original_dns_addresses?.join('、')} 切换到所选节点？请先确认目标应用已就绪。` : ''" confirm-text="切换解析" :busy="saving" @cancel="confirmCutover = null" @confirm="performCutover" />
+    <ConfirmDialog :open="!!confirmRestore" title="恢复原解析" :message="confirmRestore ? `将 ${confirmRestore.hostname} 恢复到接管前地址 ${confirmRestore.original_dns_addresses?.join('、')}。` : ''" confirm-text="恢复解析" :busy="saving" @cancel="confirmRestore = null" @confirm="performRestore" />
 
     <ErrorNoticeModal :open="Boolean(actionError)" :message="actionError" teleport @close="actionError = ''" />
   </div>
@@ -50,7 +62,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ArrowLeft } from 'lucide-vue-next'
 import { getProjects } from '../../api/applications.js'
-import { createManagedDomain, deleteManagedDomain, getClusterDomainOptions, getDomainOptions, getManagedDomains, importManagedDomainCertificate, retryManagedDomainCertificate, updateManagedDomain } from '../../api/domains.js'
+import { adoptCloudDomain, createManagedDomain, cutoverManagedDomain, deleteManagedDomain, getAdoptableCloudDomains, getClusterDomainOptions, getDomainOptions, getManagedDomains, importManagedDomainCertificate, restoreManagedDomain, retryManagedDomainCertificate, updateManagedDomain } from '../../api/domains.js'
 import { getDomainDNSOptions, getImportableCloudDomains, retryManagedDomainDNS } from '../../api/domains.js'
 import { useAsyncResource } from '../../composables/useAsyncResource.js'
 import { usePolling } from '../../composables/usePolling.js'
@@ -59,11 +71,13 @@ import SectionTabsHeader from '../../components/SectionTabsHeader.vue'
 import FeedbackBanner from '../../components/FeedbackBanner.vue'
 import EmptyState from '../../components/EmptyState.vue'
 import ErrorNoticeModal from '../../components/ErrorNoticeModal.vue'
+import ConfirmDialog from '../../components/ConfirmDialog.vue'
 import { formatDateTime as formatDate } from '../../utils/formatters.js'
 
 const router = useRouter()
 const route = useRoute()
 const domains = ref([]), projects = ref([]), allIssuers = ref([]), importCandidates = ref([]), loaded = ref(false), readError = ref(''), actionError = ref(''), modal = ref(false), importModal = ref(false), editing = ref(null), saving = ref(false)
+const adoptCandidates = ref([]), adoptModal = ref(false), adoptForm = ref({ candidate_key: '', node_ids: [], issuer_ref: '' }), confirmCutover = ref(null), confirmRestore = ref(null)
 const projectID = computed(() => Number(route.query.project_id) || 0)
 const environmentID = computed(() => Number(route.query.environment_id) || 0)
 const currentProject = computed(() => projects.value.find(project => project.id === projectID.value) || null)
@@ -87,11 +101,14 @@ const statusPolling = usePolling(load, { interval: 5000 })
 function blank(){ return { hostname: '', prefix: '', environment_id: environmentID.value, issuer_ref: '', description: '', enabled: true, cloud_connection_id: 0, dns_zone: '', node_ids: [] } }
 function blankImport(){ return { environment_id: environmentID.value, candidate_key: '', description: '', enabled: true, node_ids: dnsNodes.value?.map(node => node.id) || [] } }
 function candidateKey(item){ return `${item.cloud_connection_id}:${item.dns_zone}:${item.certificate.name}` }
+function adoptionKey(item){ return `${item.cloud_connection_id}:${item.dns_zone}:${item.hostname}` }
+function adoptionLabel(domain){ return ({ staged: '待切换', active: '已切换', restored: '已恢复', cutover_failed: '切换未完成' })[domain.adoption_status] || (domain.dns_status === 'ready' ? '已同步' : domain.dns_status === 'failed' ? '解析失败' : '待处理') }
 async function load(){ readError.value = ''; const result = await domainResource.refresh(); if (result) { domains.value = result.domainResult || []; projects.value = result.projectResult || [] } else if (domainResource.error.value) readError.value = domainResource.error.value.message || '加载受管域名失败'; loaded.value = true; syncStatusPolling() }
 async function loadOptions(environment = currentEnvironment.value){ allIssuers.value = environment?.cluster_id ? await getClusterDomainOptions(environment.cluster_id) || [] : await getDomainOptions() || [] }
 async function loadDNSOptions(id = environmentID.value){ const options = await getDomainDNSOptions(id); dnsConnections.value = options?.connections || []; dnsNodes.value = options?.nodes || [] }
 async function openCreate(){ actionError.value = ''; editing.value = null; if (!currentEnvironment.value) { actionError.value = '请先在顶部选择项目与环境'; return } form.value = blank(); try { await Promise.all([loadOptions(), loadDNSOptions()]); form.value.issuer_ref = issuers.value[0]?.name || ''; form.value.cloud_connection_id = dnsConnections.value[0]?.id || 0; form.value.node_ids = dnsNodes.value.map(node => node.id); modal.value = true } catch(e) { actionError.value = e.message || '加载签发前置条件失败' } }
 async function openImport(){ actionError.value = ''; if (!currentEnvironment.value) { actionError.value = '请先从工作台进入对应项目与环境'; return } try { await loadDNSOptions(); importCandidates.value = await getImportableCloudDomains(environmentID.value) || []; importForm.value = blankImport(); importModal.value = true } catch(e) { actionError.value = e.message || '加载可导入域名失败' } }
+async function openAdopt(){ actionError.value = ''; if (!currentEnvironment.value) { actionError.value = '请先选择项目与环境'; return } try { await Promise.all([loadDNSOptions(), loadOptions()]); adoptCandidates.value = await getAdoptableCloudDomains(environmentID.value) || []; adoptForm.value = { candidate_key: '', node_ids: dnsNodes.value.map(node => node.id), issuer_ref: issuers.value[0]?.name || '' }; adoptModal.value = true } catch(e) { actionError.value = e.message || '加载已有解析失败' } }
 async function openEdit(domain){ actionError.value = ''; if (!domain.environment_id && !currentEnvironment.value) { actionError.value = '请先在顶部选择要重新绑定的项目与环境'; return } editing.value = domain; const targetID = domain.environment_id || environmentID.value; form.value = { hostname: domain.hostname, environment_id: targetID, issuer_ref: domain.issuer_ref || '', description: domain.description || '', enabled: domain.enabled, cloud_connection_id: domain.cloud_connection_id, dns_zone: domain.dns_zone, node_ids: [...(domain.dns_node_ids || [])] }; try { await Promise.all([loadOptions(environmentByID(targetID)), loadDNSOptions(targetID)]); modal.value = true } catch(e) { actionError.value = e.message || '加载签发前置条件失败' } }
 function close(){ modal.value = false; editing.value = null }
 function closeImport(){ importModal.value = false; importCandidates.value = [] }
@@ -106,6 +123,9 @@ async function backToWorkspace(){
 }
 async function save(){ saving.value = true; actionError.value = ''; try { if(editing.value) await updateManagedDomain(editing.value.id, form.value); else await createManagedDomain({ ...form.value, hostname: `${form.value.prefix}.${form.value.dns_zone}` }); close(); await load() } catch(e) { actionError.value = e.message || '提交域名申请失败' } finally { saving.value = false } }
 async function importCertificate(){ saving.value = true; actionError.value = ''; try { const candidate = selectedImportCertificate.value; if (!candidate) throw new Error('请选择可导入域名'); const { candidate_key, ...input } = importForm.value; await importManagedDomainCertificate({ ...input, certificate_name: candidate.certificate.name, cloud_connection_id: candidate.cloud_connection_id, dns_zone: candidate.dns_zone }); closeImport(); await load() } catch(e) { actionError.value = e.message || '导入域名失败' } finally { saving.value = false } }
+async function submitAdoption(){ const candidate = adoptCandidates.value.find(item => adoptionKey(item) === adoptForm.value.candidate_key); if (!candidate) return; saving.value = true; actionError.value = ''; try { await adoptCloudDomain({ environment_id: environmentID.value, hostname: candidate.hostname, cloud_connection_id: candidate.cloud_connection_id, dns_zone: candidate.dns_zone, node_ids: adoptForm.value.node_ids, issuer_ref: adoptForm.value.issuer_ref }); adoptModal.value = false; await load() } catch(e) { actionError.value = e.message || '接管解析失败' } finally { saving.value = false } }
+async function performCutover(){ if (!confirmCutover.value) return; saving.value = true; actionError.value = ''; try { await cutoverManagedDomain(confirmCutover.value.id); confirmCutover.value = null; await load() } catch(e) { actionError.value = e.message || '切换解析失败'; await load() } finally { saving.value = false } }
+async function performRestore(){ if (!confirmRestore.value) return; saving.value = true; actionError.value = ''; try { await restoreManagedDomain(confirmRestore.value.id); confirmRestore.value = null; await load() } catch(e) { actionError.value = e.message || '恢复解析失败'; await load() } finally { saving.value = false } }
 async function retryDNS(domain){ actionError.value = ''; try { await retryManagedDomainDNS(domain.id); await load() } catch(e) { actionError.value = e.message || '同步域名解析失败' } }
 async function retry(domain){ actionError.value = ''; try { await retryManagedDomainCertificate(domain.id); await load() } catch(e) { actionError.value = e.message || '重新申请证书失败' } }
 function openOperations(domain){

@@ -33,6 +33,8 @@ type domainServerReader interface {
 type domainDNSRecord struct {
 	ID    string `json:"id"`
 	Value string `json:"value"`
+	Line  string `json:"line,omitempty"`
+	TTL   int64  `json:"ttl,omitempty"`
 }
 
 type domainDNSNode struct {
@@ -50,7 +52,7 @@ func decodeDNSRecords(raw string) []domainDNSRecord {
 func encodeDNSRecords(records []cloudservice.DNSRecord) string {
 	items := make([]domainDNSRecord, 0, len(records))
 	for _, record := range records {
-		items = append(items, domainDNSRecord{ID: record.ID, Value: record.Value})
+		items = append(items, domainDNSRecord{ID: record.ID, Value: record.Value, Line: record.Line, TTL: record.TTL})
 	}
 	data, _ := json.Marshal(items)
 	return string(data)
@@ -245,11 +247,24 @@ func (h *DomainHandler) prepareImportDNS(ctx context.Context, environment *model
 	if err != nil {
 		return nil, fmt.Errorf("读取云 DNS 记录失败: %w", err)
 	}
+	if hasCNAMEForHostname(records, temporary.DNSZone, hostname) {
+		return nil, fmt.Errorf("该域名同时存在 CNAME 记录，不能接管 A 记录")
+	}
 	matching := recordsForHostname(records, temporary.DNSZone, hostname)
 	if len(matching) == 0 {
 		return nil, fmt.Errorf("云 DNS 中不存在对应的 A 记录")
 	}
 	return matching, nil
+}
+
+func hasCNAMEForHostname(records []cloudservice.DNSRecord, zone, hostname string) bool {
+	rr := strings.TrimSuffix(hostname, "."+zone)
+	for _, record := range records {
+		if strings.EqualFold(record.RR, rr) && strings.EqualFold(record.Type, "CNAME") {
+			return true
+		}
+	}
+	return false
 }
 
 func (h *DomainHandler) ListImportableCloudDomains(c *gin.Context) {
@@ -350,6 +365,7 @@ func (h *DomainHandler) syncDNS(ctx context.Context, domain *model.ManagedDomain
 	}
 	rr := strings.TrimSuffix(domain.Hostname, "."+domain.DNSZone)
 	matching := recordsForHostname(records, domain.DNSZone, domain.Hostname)
+	ownedBeforeSync := decodeDNSRecords(domain.DNSRecords)
 	if len(decodeDNSRecords(domain.DNSRecords)) == 0 && len(matching) > 0 {
 		return h.failDNS(domain, fmt.Errorf("云 DNS 中已有该域名的 A 记录，请先从导入流程接管"))
 	}
@@ -383,7 +399,7 @@ func (h *DomainHandler) syncDNS(ctx context.Context, domain *model.ManagedDomain
 		}
 	}
 	owned := make(map[string]bool)
-	for _, record := range decodeDNSRecords(domain.DNSRecords) {
+	for _, record := range ownedBeforeSync {
 		owned[record.ID] = true
 	}
 	for _, record := range matching {
@@ -422,6 +438,10 @@ func (h *DomainHandler) RetryDNS(c *gin.Context) {
 	}
 	if domain.CloudConnectionID == 0 {
 		apiShared.ValidationError(c, "域名尚未绑定云 DNS")
+		return
+	}
+	if domain.AdoptionStatus == "staged" || domain.AdoptionStatus == "restored" || domain.AdoptionStatus == "cutover_failed" {
+		apiShared.ValidationError(c, "该域名尚未切换到当前环境，请使用切换解析操作")
 		return
 	}
 	if err := h.syncDNS(c.Request.Context(), domain); err != nil {

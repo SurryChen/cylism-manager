@@ -77,3 +77,29 @@ func TestReleaseWorkflowPreparesFixedNodeWithoutMirror(t *testing.T) {
 		t.Fatalf("runtime spec changed unexpectedly: %+v", spec)
 	}
 }
+
+func TestReleaseWorkflowRejectsMissingDependenciesBeforeCreatingRelease(t *testing.T) {
+	st, err := store.New(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	app := createTestApplication(t, st)
+	spec := validTestReleaseSpec()
+	spec.Image = "nginx"
+	templateSpec, err := json.Marshal(SanitizeReleaseSpec(spec))
+	if err != nil {
+		t.Fatal(err)
+	}
+	template := &model.ApplicationDeploymentTemplate{ApplicationID: app.ID, Enabled: true, DefaultVersion: "1.0.0", Spec: string(templateSpec)}
+	workflow := NewReleaseWorkflow(st, nil, &fakeApplier{preflightErr: context.DeadlineExceeded})
+	if _, err := workflow.CreateFromTemplate(context.Background(), app, template, "", 1); err == nil || !strings.Contains(err.Error(), "发布前检查失败") {
+		t.Fatalf("expected synchronous preflight error: %v", err)
+	}
+	releases, err := st.ListReleases(app.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(releases) != 0 {
+		t.Fatalf("preflight failure created %d release records", len(releases))
+	}
+}

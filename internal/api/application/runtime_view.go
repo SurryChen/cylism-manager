@@ -293,27 +293,32 @@ func releaseInProgress(status string) bool {
 }
 
 func applicationEndpointURL(app model.Application) string {
-	if len(app.Endpoints) == 0 || strings.TrimSpace(app.Endpoints[0].Domain) == "" {
-		return ""
+	for _, endpoint := range app.Endpoints {
+		if !endpointUsesIngress(endpoint) || strings.TrimSpace(endpoint.Domain) == "" || endpoint.AccessMode == model.ApplicationEndpointAccessProtectedConsole {
+			continue
+		}
+		scheme := "http"
+		if endpoint.TLSEnabled {
+			scheme = "https"
+		}
+		return scheme + "://" + endpoint.Domain + strings.TrimSpace(endpoint.Path)
 	}
-	endpoint := app.Endpoints[0]
-	if endpoint.AccessMode == model.ApplicationEndpointAccessProtectedConsole {
-		return ""
-	}
-	scheme := "http"
-	if endpoint.TLSEnabled {
-		scheme = "https"
-	}
-	return scheme + "://" + endpoint.Domain + strings.TrimSpace(endpoint.Path)
+	return ""
 }
 
 func applicationEndpointAccessMode(app model.Application) string {
-	if len(app.Endpoints) == 0 {
-		return ""
+	protected := false
+	for _, endpoint := range app.Endpoints {
+		if !endpointUsesIngress(endpoint) {
+			continue
+		}
+		if endpoint.AccessMode != model.ApplicationEndpointAccessProtectedConsole {
+			return model.ApplicationEndpointAccessPublic
+		}
+		protected = true
 	}
-	mode := app.Endpoints[0].AccessMode
-	if mode == "" {
-		return model.ApplicationEndpointAccessPublic
+	if protected {
+		return model.ApplicationEndpointAccessProtectedConsole
 	}
-	return mode
+	return ""
 }

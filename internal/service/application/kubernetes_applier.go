@@ -36,7 +36,8 @@ type ApplicationPreflightReader interface {
 	GetNode(context.Context, string) (*corev1.Node, error)
 	DetectIngressController(context.Context) (*k8sclient.IngressControllerStatus, error)
 	CheckCRD(context.Context, string) (bool, error)
-	GetManagedPVC(context.Context, string, string, uint) (*k8sclient.PersistentVolumeClaimInfo, error)
+	GetPVCInfo(context.Context, string, string) (*k8sclient.PersistentVolumeClaimInfo, error)
+	ListPods(context.Context, string) ([]corev1.Pod, error)
 }
 
 // ApplicationWorkloadController owns Deployment and StatefulSet mutations.
@@ -108,6 +109,11 @@ func (a *KubernetesApplier) Preflight(ctx context.Context, application Applicati
 	if namespace.Status.Phase != corev1.NamespaceActive {
 		return fmt.Errorf("环境命名空间 %q 未就绪", application.Namespace)
 	}
+	if spec.NodeName != "" {
+		if _, err := a.preflight.GetNode(ctx, spec.NodeName); err != nil {
+			return fmt.Errorf("检查部署节点 %q: %w", spec.NodeName, err)
+		}
+	}
 	if err := a.ValidatePersistentVolumeClaims(ctx, application, spec); err != nil {
 		return err
 	}
@@ -177,7 +183,7 @@ func (a *KubernetesApplier) ValidateFileMountSources(ctx context.Context, applic
 	return nil
 }
 
-// ValidatePersistentVolumeClaims validates platform-owned claims before a
+// ValidatePersistentVolumeClaims validates existing claims before a
 // template is saved or a release is applied. WFFC claims are allowed to remain
 // Pending when an explicit node is selected because the first Pod performs the
 // binding.
@@ -193,10 +199,35 @@ func (a *KubernetesApplier) ValidatePersistentVolumeClaims(ctx context.Context, 
 			return fmt.Errorf("检查部署节点 %q: %w", spec.NodeName, err)
 		}
 	}
+	pods, err := a.preflight.ListPods(ctx, application.Namespace)
+	if err != nil {
+		return fmt.Errorf("检查 PVC 占用情况: %w", err)
+	}
 	for _, volume := range spec.Volumes {
-		claim, err := a.preflight.GetManagedPVC(ctx, application.Namespace, volume.ClaimName, application.EnvironmentID)
+		claim, err := a.preflight.GetPVCInfo(ctx, application.Namespace, volume.ClaimName)
 		if err != nil {
-			return err
+			return fmt.Errorf("读取 PVC %q: %w", volume.ClaimName, err)
+		}
+		if claim.OwnerType == "infrastructure" || claim.ReadOnly {
+			return fmt.Errorf("PVC %q 属于基础设施组件，不能挂载到应用", volume.ClaimName)
+		}
+		if claim.Managed && claim.EnvironmentID != 0 && claim.EnvironmentID != application.EnvironmentID {
+			return fmt.Errorf("PVC %q 属于其他环境", volume.ClaimName)
+		}
+		for _, pod := range pods {
+			if pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed {
+				if pod.DeletionTimestamp == nil {
+					continue
+				}
+			}
+			if pod.Labels[ApplicationNameLabel] == application.ApplicationName && pod.Labels[ManagedByLabel] == ManagedByValue {
+				continue
+			}
+			for _, mounted := range pod.Spec.Volumes {
+				if mounted.PersistentVolumeClaim != nil && mounted.PersistentVolumeClaim.ClaimName == volume.ClaimName {
+					return fmt.Errorf("PVC %q 正被 Pod %q 挂载，请先停止原工作负载", volume.ClaimName, pod.Name)
+				}
+			}
 		}
 		switch claim.Phase {
 		case string(corev1.ClaimBound):

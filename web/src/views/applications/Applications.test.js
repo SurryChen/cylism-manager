@@ -27,7 +27,7 @@ describe('Applications view', () => {
     api.get.mockImplementation(path => {
       if (path === '/projects') return Promise.resolve([{ id: 1, name: 'commerce', environments: [{ id: 2, name: 'production', cluster_id: 7, namespace: 'commerce-prod' }] }])
       if (path.startsWith('/workspace/overview')) return Promise.resolve({
-        applications: [{ id: 3, name: 'order-api', runtime: { status: 'running', ready_pods: 1, total_pods: 1 }, endpoints: [{ domain: 'api.example.com', path: '/', service_port: 80, tls_enabled: true }] }],
+        applications: [{ id: 3, name: 'order-api', runtime: { status: 'running', ready_pods: 1, total_pods: 1 }, endpoints: [{ domain: 'api.example.com', path: '/', service_port: 80, tls_enabled: true }, { domain: 'record.example.com', path: '/', service_port: 80, ingress_enabled: false }] }],
         releases: [{ id: 10, application_id: 3, application_name: 'order-api', version: '1.0.0', image: 'orders:1.0.0', status: 'succeeded', created_at: '2026-10-10T00:00:00Z' }],
         recent_releases: [],
       })
@@ -40,6 +40,7 @@ describe('Applications view', () => {
     expect(wrapper.find('.overview-metrics').exists()).toBe(false)
     expect(wrapper.findAll('[data-testid="workspace-list"]')).toHaveLength(1)
     expect(wrapper.get('[data-testid="workspace-tab-runtime"]').attributes('aria-current')).toBe('page')
+    expect(wrapper.text()).toContain('组件就绪 1/1')
     expect(api.get).not.toHaveBeenCalledWith('/applications/3/deployment-templates', expect.anything())
     await wrapper.get('[data-testid="workspace-tab-releases"]').trigger('click')
     expect(wrapper.findAll('[data-testid="workspace-list"]')).toHaveLength(1)
@@ -52,6 +53,8 @@ describe('Applications view', () => {
     await wrapper.get('[data-testid="workspace-tab-access"]').trigger('click')
     expect(wrapper.findAll('[data-testid="workspace-list"]')).toHaveLength(1)
     expect(wrapper.text()).toContain('api.example.com')
+    expect(wrapper.text()).toContain('仅记录域名')
+    expect(wrapper.text()).toContain('启用 HTTP Ingress')
     wrapper.unmount()
   })
 
@@ -337,7 +340,7 @@ describe('Applications view', () => {
       if (path === '/applications/3/deployment-templates') return Promise.resolve([{ id: 8, name: '标准生产配置', enabled: true, is_default: true, revision: 2, spec: { image: 'harbor.example.com/commerce/order-api', replicas: 2, container_port: 8080, service: { port: 80 } } }])
       return Promise.resolve([])
     })
-    api.post.mockResolvedValue({ id: 9 })
+    api.post.mockImplementation(path => Promise.resolve(path.endsWith('/releases/preflight') ? { ready: true, checks: [{ name: '密钥', ok: true, detail: '已配置' }] } : { id: 9 }))
     const wrapper = mount(Applications)
     await new Promise(resolve => setTimeout(resolve, 0))
     await wrapper.findAll('button').find(button => button.text() === '发布版本').trigger('click')
@@ -349,6 +352,9 @@ describe('Applications view', () => {
     const version = releaseModal.querySelector('input[placeholder="1.4.2"]')
     version.value = '1.2.3'
     version.dispatchEvent(new Event('input'))
+    await flushPromises()
+    releaseModal.querySelectorAll('button').forEach(button => { if (button.textContent === '检查配置') button.click() })
+    await flushPromises()
     await releaseModal.querySelector('form').dispatchEvent(new Event('submit'))
     await new Promise(resolve => setTimeout(resolve, 0))
 
@@ -364,7 +370,7 @@ describe('Applications view', () => {
       if (path === '/applications/3/deployment-templates') return Promise.resolve([{ id: 8, name: '默认配置', enabled: true, is_default: true, default_version: '2.3.4', revision: 1, spec: { image: 'example.com/order-api', service: { port: 80 } } }])
       return Promise.resolve([])
     })
-    api.post.mockResolvedValue({ id: 9 })
+    api.post.mockImplementation(path => Promise.resolve(path.endsWith('/releases/preflight') ? { ready: true, checks: [] } : { id: 9 }))
     const wrapper = mount(Applications)
     await flushPromises()
     await wrapper.findAll('button').find(button => button.text() === '发布版本').trigger('click')
@@ -373,6 +379,8 @@ describe('Applications view', () => {
     const modal = document.body.querySelector('.release-modal')
     expect(modal.textContent).toContain('留空则使用模板默认版本 2.3.4')
     expect(modal.querySelector('input[placeholder="2.3.4"]').required).toBe(false)
+    modal.querySelectorAll('button').forEach(button => { if (button.textContent === '检查配置') button.click() })
+    await flushPromises()
     modal.querySelector('form').dispatchEvent(new Event('submit'))
     await flushPromises()
 

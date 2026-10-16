@@ -62,6 +62,38 @@ func TestApplicationHandlerReleasesFromSelectedDeploymentTemplateByVersion(t *te
 	}
 }
 
+func TestFirstDisabledDeploymentTemplateRemainsDisabledAndNotDefault(t *testing.T) {
+	clientset := k8sfake.NewSimpleClientset(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "commerce-prod"}, Status: corev1.NamespaceStatus{Phase: corev1.NamespaceActive}})
+	r, s := setupApplicationRouter(&k8sclient.Client{Clientset: clientset})
+	if err := s.CreateProject(&model.Project{Name: "commerce", OwnerID: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CreateEnvironment(&model.Environment{ProjectID: 1, Name: "production", Namespace: "commerce-prod"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CreateApplication(&model.Application{ProjectID: 1, EnvironmentID: 1, Name: "order-api", WorkloadKind: "deployment", CreatedBy: 1}); err != nil {
+		t.Fatal(err)
+	}
+	spec := gin.H{
+		"image": "order-api", "container_port": 8080, "replicas": 1,
+		"resources": gin.H{"requests_cpu": "100m", "requests_memory": "128Mi", "limits_cpu": "500m", "limits_memory": "512Mi"},
+		"health":    gin.H{"readiness_enabled": false},
+		"service":   gin.H{"port": 80, "target_port": 8080},
+	}
+	created := serve(r, newJSONRequest(http.MethodPost, "/api/applications/1/deployment-templates", gin.H{"name": "待切换", "enabled": false, "spec": spec}))
+	if created.Code != http.StatusOK || !strings.Contains(created.Body.String(), `"enabled":false`) || !strings.Contains(created.Body.String(), `"is_default":false`) {
+		t.Fatalf("disabled template was enabled or made default: %d %s", created.Code, created.Body.String())
+	}
+	app, err := s.GetApplication(1)
+	if err != nil || app.DefaultDeploymentTemplateID != nil {
+		t.Fatalf("disabled template became default: app=%+v err=%v", app, err)
+	}
+	blocked := serve(r, newJSONRequest(http.MethodPost, "/api/applications/1/releases", gin.H{"template_id": responseID(t, created.Body.Bytes()), "version": "1.0.0"}))
+	if blocked.Code == http.StatusOK {
+		t.Fatalf("disabled template was released: %s", blocked.Body.String())
+	}
+}
+
 func TestApplicationHandlerUsesTemplateDefaultVersionWhenReleaseVersionIsEmpty(t *testing.T) {
 	clientset := k8sfake.NewSimpleClientset(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "commerce-prod"}, Status: corev1.NamespaceStatus{Phase: corev1.NamespaceActive}})
 	r, s := setupApplicationRouter(&k8sclient.Client{Clientset: clientset})

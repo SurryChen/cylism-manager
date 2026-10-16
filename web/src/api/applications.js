@@ -170,6 +170,10 @@ export function createRelease(applicationID, payload, options) {
   return postRequest(`/applications/${segment(applicationID)}/releases`, payload, options)
 }
 
+export function preflightRelease(applicationID, payload, options) {
+  return postRequest(`/applications/${segment(applicationID)}/releases/preflight`, payload, options)
+}
+
 export function getApplicationRelease(applicationID, releaseID, options) {
   return api.get(`/applications/${segment(applicationID)}/releases/${segment(releaseID)}`, options)
 }

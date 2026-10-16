@@ -17,6 +17,7 @@ beforeEach(() => {
     if (path === '/projects') return Promise.resolve([{ id: 1, environments: [{ id: 2, name: 'production', namespace: 'production', cluster_id: 7 }] }])
     if (path === '/clusters/7/k8s/certs/issuers') return Promise.resolve([{ name: 'letsencrypt-prod', kind: 'ClusterIssuer', ready: true }])
     if (path === '/domains/dns-options?environment_id=2') return Promise.resolve({ connections: [{ id: 3, name: 'Cloud', zones: [{ name: 'example.com' }] }], nodes: [{ id: 5, name: 'node-a', ip: '203.0.113.5' }] })
+    if (path === '/domains/adoptable-cloud-domains?environment_id=2') return Promise.resolve([{ hostname: 'legacy.example.com', cloud_connection_id: 3, dns_zone: 'example.com', addresses: ['203.0.113.9'] }])
     return Promise.resolve([])
   })
 })
@@ -77,6 +78,21 @@ describe('Domains view', () => {
     await wrapper.get('.modal form').trigger('submit')
     await new Promise(resolve => setTimeout(resolve, 20))
     expect(api.post).toHaveBeenCalledWith('/domains', expect.objectContaining({ hostname: 'orders.example.com', cloud_connection_id: 3, dns_zone: 'example.com', node_ids: [5] }))
+  })
+
+  it('saves an adoption draft without triggering DNS cutover', async () => {
+    api.post.mockResolvedValue({})
+    const wrapper = mount(Domains)
+    await new Promise(resolve => setTimeout(resolve, 20))
+    await wrapper.findAll('.domain-toolbar button').find(button => button.text() === '接管已有解析').trigger('click')
+    await new Promise(resolve => setTimeout(resolve, 20))
+    const modal = wrapper.findAll('.modal').find(item => item.text().includes('接管已有解析'))
+    await modal.find('select').setValue('3:example.com:legacy.example.com')
+    await modal.find('form').trigger('submit')
+    await new Promise(resolve => setTimeout(resolve, 20))
+    expect(api.post).toHaveBeenCalledWith('/domains/adopt', expect.objectContaining({ hostname: 'legacy.example.com', environment_id: 2, node_ids: [5] }))
+    expect(api.post).not.toHaveBeenCalledWith('/domains/1/cutover')
+    wrapper.unmount()
   })
 
   it('shows transient certificate states as issuing and refreshes them', async () => {

@@ -55,6 +55,7 @@ func registerApplicationRoutes(r *gin.Engine, apiGroup *gin.RouterGroup, h *appl
 	applications.PUT("/:id/endpoints/:endpointID", h.HandleApplication((*applicationapi.ApplicationHandler).UpdateApplicationEndpoint))
 	applications.DELETE("/:id/endpoints/:endpointID", h.HandleApplication((*applicationapi.ApplicationHandler).DeleteApplicationEndpoint))
 	applications.POST("/:id/releases", h.HandleApplication((*applicationapi.ApplicationHandler).CreateRelease))
+	applications.POST("/:id/releases/preflight", h.HandleApplication((*applicationapi.ApplicationHandler).PreflightRelease))
 	applications.POST("/:id/restarts", h.HandleApplication((*applicationapi.ApplicationHandler).RestartApplication))
 	applications.GET("/:id/releases/:releaseID", h.HandleApplication((*applicationapi.ApplicationHandler).GetRelease))
 	applications.POST("/:id/releases/:releaseID/retry", h.HandleApplication((*applicationapi.ApplicationHandler).RetryRelease))

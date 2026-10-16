@@ -394,8 +394,11 @@ describe('ApplicationDetails view', () => {
 
     await wrapper.findAll('.section-tab').find(tab => tab.text() === '访问入口').trigger('click')
     await wrapper.find('.detail-access-card .btn-primary').trigger('click')
+    expect(wrapper.find('[aria-label="访问入口"].select-menu-native').element.value).toBe('record')
     await wrapper.find('.modal .form-select').setValue('4')
     await wrapper.find('.modal .form-input').setValue('/v2')
+    await wrapper.find('[aria-label="访问入口"].select-menu-native').setValue('ingress')
+    await wrapper.find('.modal .check-row input').setValue(true)
     await wrapper.find('.modal form').trigger('submit.prevent')
     expect(api.post).toHaveBeenCalledWith('/applications/1/endpoints', { domain_id: 4, path: '/v2', service_port: 80, protocol: 'TCP', tls_enabled: true, ingress_enabled: true, access_mode: 'public' })
 

@@ -99,6 +99,14 @@ func (s *QueryService) WorkspacePodStates(ctx context.Context, reader RuntimeRea
 	if err != nil {
 		return states, false
 	}
+	deployments, err := reader.ListRuntimeDeployments(ctx, namespace)
+	if err != nil {
+		return states, false
+	}
+	statefulSets, err := reader.ListRuntimeStatefulSets(ctx, namespace)
+	if err != nil {
+		return states, false
+	}
 	for _, pod := range pods {
 		applicationName, release := pod.Labels[ApplicationNameLabel], pod.Labels[ReleaseLabel]
 		sequence, err := strconv.ParseUint(release, 10, 64)
@@ -113,6 +121,30 @@ func (s *QueryService) WorkspacePodStates(ctx context.Context, reader RuntimeRea
 		}
 		states[key] = state
 	}
+	for _, deployment := range deployments {
+		sequence := releaseSequence(deployment.Annotations[ReleaseLabel])
+		if deployment.Labels[ManagedByLabel] != ManagedByValue || deployment.Labels[ApplicationNameLabel] == "" || sequence == 0 {
+			continue
+		}
+		key := WorkspacePodKey(deployment.Labels[ApplicationNameLabel], sequence)
+		state := states[key]
+		if desired := replicasValue(deployment.Spec.Replicas); desired > state.TotalPods {
+			state.TotalPods = desired
+		}
+		states[key] = state
+	}
+	for _, workload := range statefulSets {
+		sequence := releaseSequence(workload.Annotations[ReleaseLabel])
+		if workload.Labels[ManagedByLabel] != ManagedByValue || workload.Labels[ApplicationNameLabel] == "" || sequence == 0 {
+			continue
+		}
+		key := WorkspacePodKey(workload.Labels[ApplicationNameLabel], sequence)
+		state := states[key]
+		if desired := replicasValue(workload.Spec.Replicas); desired > state.TotalPods {
+			state.TotalPods = desired
+		}
+		states[key] = state
+	}
 	for key, state := range states {
 		if state.TotalPods > 0 && state.ReadyPods == state.TotalPods {
 			state.Status = "running"
@@ -122,6 +154,11 @@ func (s *QueryService) WorkspacePodStates(ctx context.Context, reader RuntimeRea
 		states[key] = state
 	}
 	return states, true
+}
+
+func releaseSequence(value string) uint {
+	sequence, _ := strconv.ParseUint(value, 10, 64)
+	return uint(sequence)
 }
 
 func WorkspacePodKey(applicationName string, sequence uint) string {

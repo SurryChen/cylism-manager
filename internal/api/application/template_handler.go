@@ -117,11 +117,12 @@ func (h *ApplicationHandler) CreateDeploymentTemplate(c *gin.Context) {
 		return
 	}
 	template.UpdatedBy = apiShared.UserID(c)
-	if err := h.applications.CreateApplicationDeploymentTemplate(template, app.DefaultDeploymentTemplateID == nil); err != nil {
+	makeDefault := app.DefaultDeploymentTemplateID == nil && template.Enabled
+	if err := h.applications.CreateApplicationDeploymentTemplate(template, makeDefault); err != nil {
 		apiShared.DBError(c, err.Error())
 		return
 	}
-	if app.DefaultDeploymentTemplateID == nil {
+	if makeDefault {
 		app.DefaultDeploymentTemplateID = &template.ID
 	}
 	if app.DefaultDeploymentTemplateID != nil && *app.DefaultDeploymentTemplateID == template.ID {
@@ -377,7 +378,7 @@ func (h *ApplicationHandler) templateFromRequest(ctx context.Context, app *model
 		if h.kubernetes == nil || !h.kubernetes.KubernetesAvailable() {
 			return nil, fmt.Errorf("K8s 集群未连接，无法验证 PVC")
 		}
-		applicationContext := applicationservice.ApplicationContext{EnvironmentID: app.Environment.ID, Namespace: app.Environment.Namespace}
+		applicationContext := applicationservice.ApplicationContext{EnvironmentID: app.Environment.ID, Namespace: app.Environment.Namespace, ApplicationName: app.Name}
 		if err := h.kubernetes.ValidatePersistentVolumeClaims(ctx, applicationContext, spec); err != nil {
 			return nil, err
 		}

@@ -68,6 +68,8 @@ type ManagedDomain struct {
 	CloudConnectionID    uint      `gorm:"index" json:"cloud_connection_id"`
 	DNSZone              string    `gorm:"size:253" json:"dns_zone"`
 	DNSRecords           string    `gorm:"type:text" json:"-"`
+	OriginalDNSRecords   string    `gorm:"type:text" json:"-"`
+	AdoptionStatus       string    `gorm:"size:16" json:"adoption_status"`
 	DNSNodeIDs           string    `gorm:"type:text" json:"-"`
 	DNSStatus            string    `gorm:"size:32" json:"dns_status"`
 	DNSError             string    `gorm:"size:512" json:"dns_error"`

@@ -72,7 +72,7 @@ type ReleaseSpec struct {
 	Endpoint          EndpointSpec      `json:"endpoint"`
 }
 
-// VolumeMountSpec describes a platform-managed PVC mounted into the main
+// VolumeMountSpec describes an existing PVC mounted into the main
 // application container. PVC lifecycle remains independent from releases.
 
 type VolumeMountSpec struct {

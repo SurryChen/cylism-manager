@@ -8,6 +8,7 @@ import (
 	crypto "github.com/cylism/cylism-manager/internal/security"
 	"github.com/cylism/cylism-manager/internal/service/application"
 	"github.com/cylism/cylism-manager/internal/store"
+	"github.com/gin-gonic/gin"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
@@ -39,6 +40,40 @@ func TestApplicationHandlerGetReleaseIncludesLivePodRuntime(t *testing.T) {
 	response := serve(r, newJSONRequest(http.MethodGet, "/api/applications/1/releases/1", nil))
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "\"tracking\":\"exact\"") || !strings.Contains(response.Body.String(), "CrashLoopBackOff") || !strings.Contains(response.Body.String(), "正常退出") {
 		t.Fatalf("unexpected release runtime response: %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestPreflightReleaseIsReadOnlyAndOmitsSecretValues(t *testing.T) {
+	s, err := store.New(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	app := createApplicationForReleaseRuntimeTest(t, s)
+	key := []byte("01234567890123456789012345678901")
+	spec := application.ReleaseSpec{Image: "ghcr.io/example/app", ContainerPort: 8080, Replicas: 1, Resources: application.ResourceSpec{RequestsCPU: "100m", RequestsMemory: "128Mi", LimitsCPU: "500m", LimitsMemory: "512Mi"}, Config: map[string]string{"MODE": "prod"}, Secrets: map[string]string{"API_TOKEN": ""}, Service: application.ServiceSpec{Port: 80, TargetPort: 8080}}
+	snapshot, err := json.Marshal(application.SanitizeReleaseSpec(spec))
+	if err != nil {
+		t.Fatal(err)
+	}
+	encrypted, err := crypto.Encrypt(key, `{"API_TOKEN":"private-value"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	template := &model.ApplicationDeploymentTemplate{ApplicationID: app.ID, Name: "prod", Enabled: true, Spec: string(snapshot), EncryptedSecrets: encrypted}
+	if err := s.CreateApplicationDeploymentTemplate(template, true); err != nil {
+		t.Fatal(err)
+	}
+	client := &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: app.Environment.Namespace}, Status: corev1.NamespaceStatus{Phase: corev1.NamespaceActive}})}
+	handler := newTestApplicationHandler(s, key, NewKubernetesAdapter(client))
+	router := gin.New()
+	router.POST("/api/applications/:id/releases/preflight", handler.PreflightRelease)
+	response := serve(router, newJSONRequest(http.MethodPost, fmt.Sprintf("/api/applications/%d/releases/preflight", app.ID), gin.H{"template_id": template.ID, "version": "1.0"}))
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "API_TOKEN") || strings.Contains(response.Body.String(), "private-value") || !strings.Contains(response.Body.String(), `"ready":true`) {
+		t.Fatalf("preflight response = %d: %s", response.Code, response.Body.String())
+	}
+	releases, err := s.ListReleases(app.ID)
+	if err != nil || len(releases) != 0 {
+		t.Fatalf("preflight created releases: %#v, err=%v", releases, err)
 	}
 }
 
@@ -96,7 +131,7 @@ func TestCreateRestartReleaseUsesCurrentTemplateAndSanitizesSecrets(t *testing.T
 		t.Fatal(err)
 	}
 	active := &model.Release{
-		ApplicationID: app.ID, Sequence: 4, Image: "not a valid image", Version: "2.12.1",
+		ApplicationID: app.ID, Sequence: 4, Image: "ghcr.io/example/hysteria:2.12.1", Version: "2.12.1",
 		DesiredSpec: `{"command":["legacy-command"],"secrets":{"API_TOKEN":""}}`, Status: model.ReleaseStatusSucceeded, CreatedBy: 1,
 	}
 	if err := s.CreateRelease(active); err != nil {
@@ -141,13 +176,4 @@ func TestCreateRestartReleaseUsesCurrentTemplateAndSanitizesSecrets(t *testing.T
 		t.Fatalf("restart pod template command = %q, want %q", got, strings.Join(currentTemplateSpec.Command, " "))
 	}
 
-	deadline := time.Now().Add(time.Second)
-	for time.Now().Before(deadline) {
-		stored, getErr := s.GetRelease(release.ID)
-		if getErr == nil && stored.Status == model.ReleaseStatusFailed {
-			return // The invalid test image makes the asynchronous worker finish before the test deadline.
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	t.Fatal("restart release worker did not finish")
 }

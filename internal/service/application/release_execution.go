@@ -136,6 +136,9 @@ func (s *Service) RetryRelease(ctx context.Context, releaseID, userID uint) (*mo
 	}
 	// Endpoints are current application state, not historical release state.
 	spec.Endpoint = EndpointSpec{Exposure: ExposureCluster}
+	if err := s.preflightSubmission(ctx, release.ApplicationID, spec); err != nil {
+		return nil, ReleaseSpec{}, err
+	}
 	retry, err := s.CreateRelease(ctx, release.ApplicationID, userID, spec)
 	if err == nil {
 		retry.TemplateID = release.TemplateID
@@ -171,6 +174,9 @@ func (s *Service) RollbackRelease(ctx context.Context, releaseID, userID uint) (
 	}
 	// Rolling back a workload must preserve domain bindings created later.
 	spec.Endpoint = EndpointSpec{Exposure: ExposureCluster}
+	if err := s.preflightSubmission(ctx, current.ApplicationID, spec); err != nil {
+		return nil, ReleaseSpec{}, err
+	}
 	rollback, err := s.CreateRelease(ctx, current.ApplicationID, userID, spec)
 	if err != nil {
 		return nil, ReleaseSpec{}, err
@@ -182,6 +188,23 @@ func (s *Service) RollbackRelease(ctx context.Context, releaseID, userID uint) (
 		return nil, ReleaseSpec{}, err
 	}
 	return rollback, spec, nil
+}
+
+func (s *Service) preflightSubmission(ctx context.Context, applicationID uint, spec ReleaseSpec) error {
+	if s.applier == nil {
+		return fmt.Errorf("Kubernetes 发布器未初始化")
+	}
+	app, err := s.repository.GetApplication(applicationID)
+	if err != nil {
+		return fmt.Errorf("读取应用: %w", err)
+	}
+	if err := s.applier.ValidateImageReference(ctx, spec); err != nil {
+		return err
+	}
+	if err := s.applier.Preflight(ctx, applicationContext(app, 0), spec); err != nil {
+		return fmt.Errorf("发布前检查失败: %w", err)
+	}
+	return nil
 }
 
 func (s *Service) runStep(releaseID uint, step string, run func() error) error {
