@@ -147,6 +147,7 @@ GET /api/clusters/:id/k8s/certs/issuers
 GET /api/clusters/:id/k8s/certs/status
 GET /api/clusters/:id/k8s/configmaps
 GET /api/clusters/:id/k8s/configmaps/:namespace/:name
+GET /api/clusters/:id/k8s/dashboard
 GET /api/clusters/:id/k8s/daemonsets
 GET /api/clusters/:id/k8s/deployments
 GET /api/clusters/:id/k8s/deployments/:namespace/:name/pods
@@ -179,6 +180,7 @@ GET /api/clusters/:id/monitoring/targets
 GET /api/clusters/:id/network-migration/precheck
 GET /api/cross-cluster-services
 GET /api/dashboard
+GET /api/dashboard/clusters
 GET /api/domains
 GET /api/domains/:id/operations
 GET /api/domains/adoptable-cloud-domains

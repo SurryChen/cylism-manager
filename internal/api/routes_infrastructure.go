@@ -24,6 +24,7 @@ func registerInfrastructureRoutes(apiGroup *gin.RouterGroup, catalog *clusterapi
 	access.POST("/:id/revoke", accessCert.Revoke)
 	access.DELETE("/:id", accessCert.Delete)
 	apiGroup.GET("/clusters", catalog.List)
+	apiGroup.GET("/dashboard/clusters", catalog.DashboardClusters)
 	apiGroup.POST("/clusters", catalog.Create)
 	apiGroup.GET("/clusters/:id", catalog.Get)
 	apiGroup.GET("/clusters/:id/agent-status", catalog.AgentStatus)
@@ -205,6 +206,7 @@ func registerClusterK8sRoutes(apiGroup *gin.RouterGroup, h *kubernetesapi.K8sHan
 		}
 	}
 	g.GET("/ingresses", bindNetwork((*networkapi.NetworkHandler).ListStandardIngresses))
+	g.GET("/dashboard", bind((*kubernetesapi.K8sHandler).Dashboard))
 	g.POST("/ingresses", bindNetwork((*networkapi.NetworkHandler).CreateStandardIngress))
 	g.DELETE("/ingresses/:namespace/:name", bindNetwork((*networkapi.NetworkHandler).DeleteStandardIngress))
 	g.GET("/ingress-controller", bindNetwork((*networkapi.NetworkHandler).StandardIngressController))

@@ -2,6 +2,7 @@ package cluster
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
@@ -12,6 +13,8 @@ import (
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/gin-gonic/gin"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
 	ktesting "k8s.io/client-go/testing"
@@ -51,6 +54,56 @@ func TestCatalogAgentStatusSeparatesMissingControlPlaneAndConnectionFailure(t *t
 	response = serve(r, newJSONRequest(http.MethodGet, path, nil))
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"state":"unreachable"`) {
 		t.Fatalf("unreachable = %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestDashboardClustersKeepsUnavailableClusterSeparate(t *testing.T) {
+	st, err := store.New(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	serverID := uint(1)
+	clusters := []model.Cluster{
+		{Name: "healthy", Distribution: "k3s", ControlServerID: &serverID},
+		{Name: "offline", Distribution: "k3s", ControlServerID: &serverID},
+		{Name: "pending", Distribution: "k3s"},
+	}
+	for i := range clusters {
+		if err := st.DB().Create(&clusters[i]).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	clientset := k8sfake.NewSimpleClientset(&corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{Name: "node-a"},
+		Status:     corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}}},
+	})
+	handler := NewCatalogHandler(st).WithAgentClientFactory(func(_ context.Context, id uint) (*k8s.Client, error) {
+		if id == clusters[1].ID {
+			return nil, errors.New("Agent unreachable")
+		}
+		return &k8s.Client{Clientset: clientset}, nil
+	})
+	r := gin.New()
+	r.GET("/api/dashboard/clusters", handler.DashboardClusters)
+	response := serve(r, newJSONRequest(http.MethodGet, "/api/dashboard/clusters", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("dashboard clusters = %d %s", response.Code, response.Body.String())
+	}
+	var body struct {
+		Data []dashboardCluster `json:"data"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	byID := make(map[uint]dashboardCluster, len(body.Data))
+	for _, row := range body.Data {
+		byID[row.ID] = row
+	}
+	if len(body.Data) != 3 || byID[clusters[0].ID].Health != "healthy" || byID[clusters[0].ID].Metrics["nodes_ready"] != float64(1) {
+		t.Fatalf("healthy cluster = %#v", body.Data)
+	}
+	if byID[clusters[1].ID].Health != "unavailable" || byID[clusters[1].ID].Error != "Agent unreachable" || byID[clusters[2].ID].Health != "pending" {
+		t.Fatalf("independent cluster states = %#v", body.Data)
 	}
 }
 
