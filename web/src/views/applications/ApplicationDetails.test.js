@@ -59,6 +59,40 @@ describe('ApplicationDetails view', () => {
     expect(wrapper.find('[aria-label="工作负载类型"].select-menu-native').element.value).toBe('deployment')
   })
 
+  it('refreshes release status while the history tab is open and stops after leaving it', async () => {
+    const { api } = await import('../../api/index.js')
+    const originalGet = api.get.getMockImplementation()
+    let status = 'draft'
+    api.get.mockImplementation((path, options) => path === '/applications/1'
+      ? Promise.resolve({ application: { id: 1, name: 'order-api' }, releases: [{ id: 3, sequence: 2, status }] })
+      : originalGet(path, options))
+    vi.useFakeTimers()
+    let wrapper
+    try {
+      wrapper = mount(ApplicationDetails, {
+        props: { applicationID: '1' },
+        global: { stubs: { RouterLink: { template: '<a><slot /></a>' }, Teleport: true } },
+      })
+      await vi.advanceTimersByTimeAsync(0)
+      await wrapper.findAll('.section-tab').find(tab => tab.text() === '发布记录').trigger('click')
+      await vi.advanceTimersByTimeAsync(0)
+      expect(wrapper.find('.detail-releases-card .badge').text()).toBe('draft')
+
+      status = 'succeeded'
+      await vi.advanceTimersByTimeAsync(5000)
+      expect(wrapper.find('.detail-releases-card .badge').text()).toBe('succeeded')
+
+      await wrapper.findAll('.section-tab').find(tab => tab.text() === '运行概览').trigger('click')
+      const requestCount = api.get.mock.calls.filter(([path]) => path === '/applications/1').length
+      await vi.advanceTimersByTimeAsync(5000)
+      expect(api.get.mock.calls.filter(([path]) => path === '/applications/1')).toHaveLength(requestCount)
+    } finally {
+      wrapper?.unmount()
+      vi.useRealTimers()
+      api.get.mockImplementation(originalGet)
+    }
+  })
+
   it('restarts the application from its latest successful release', async () => {
     const { api } = await import('../../api/index.js')
     api.post.mockReset()

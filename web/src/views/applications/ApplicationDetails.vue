@@ -81,7 +81,7 @@
 </template>
 
 <script setup>
-import { computed, defineComponent, h, ref, watch } from 'vue'
+import { computed, defineComponent, h, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ArrowLeft, Pencil, RefreshCw, Trash2 } from 'lucide-vue-next'
 import {
@@ -105,6 +105,7 @@ import {
 } from '../../api/applications.js'
 import { getManagedDomains } from '../../api/domains.js'
 import { useAsyncResource } from '../../composables/useAsyncResource.js'
+import { usePolling } from '../../composables/usePolling.js'
 import { getClusterPersistentVolumeInventory } from '../../api/storage.js'
 import { getClusterNodes, getClusterServers } from '../../api/cluster.js'
 import SurfaceCard from '../../components/SurfaceCard.vue'
@@ -177,6 +178,8 @@ const applicationResource = useAsyncResource(async ({ signal }) => {
   ])
   return { result, loadedTemplates, loadedEndpoints, loadedDomains, loadedRegistries, configmaps, secrets }
 }, null)
+const releaseHistoryResource = useAsyncResource(({ signal }) => getApplication(props.applicationID, { signal }), null)
+const releaseHistoryPolling = usePolling(refreshReleaseHistory, { interval: 5000 })
 const storageResource = useAsyncResource(({ signal }, clusterID, namespace) => Promise.all([
   getClusterPersistentVolumeInventory(clusterID, { namespace }, { signal }),
   getClusterNodes({ signal }, clusterID),
@@ -230,6 +233,8 @@ function templatePayload() { const form = templateForm.value; const service = { 
 function templateServiceSummary(service) { const ports = servicePortsFromSpec(service, 0); return `${service?.type || 'ClusterIP'} · ${ports.map(port => `${port.protocol} ${port.port}`).join(', ')}` }
 
 async function loadApplication() {
+  releaseHistoryPolling.stop()
+  releaseHistoryResource.cancel()
   readError.value = ''
   storageResourcesLoaded.value = false
   persistentVolumeClaims.value = []
@@ -250,6 +255,25 @@ async function loadApplication() {
   registries.value = loadedRegistries || []
   configResources.value = configmaps || []
   secretResources.value = secrets || []
+  syncReleaseHistoryPolling()
+}
+async function refreshReleaseHistory() {
+  const applicationID = props.applicationID
+  const result = await releaseHistoryResource.refresh()
+  if (result && activeTab.value === 'releases' && applicationID === props.applicationID) {
+    releases.value = result.releases || []
+    readError.value = ''
+  } else if (releaseHistoryResource.error.value && activeTab.value === 'releases') {
+    readError.value = releaseHistoryResource.error.value.message || '更新发布记录失败'
+  }
+}
+function syncReleaseHistoryPolling(immediate = false) {
+  if (activeTab.value === 'releases' && application.value && !document.hidden) {
+    releaseHistoryPolling.start({ immediate })
+  } else {
+    releaseHistoryPolling.stop()
+    releaseHistoryResource.cancel()
+  }
 }
 async function loadStorageResources() {
   if (storageResourcesLoaded.value || storageResourcesLoading.value || !application.value) return
@@ -318,6 +342,10 @@ async function saveEndpoint() { saving.value = true; mutationError.value = ''; t
 async function removeEndpoint(endpoint) { mutationError.value = ''; try { await deleteEndpoint(props.applicationID, endpoint.id); endpoints.value = endpoints.value.filter(item => item.id !== endpoint.id) } catch (e) { mutationError.value = e.message || '解绑域名失败' } }
 async function updateWorkloadKind() { if (!window.confirm('切换会先停止当前 Pod，再创建新的工作负载控制器。服务会短暂中断，是否继续？')) return; saving.value = true; mutationError.value = ''; try { application.value = await updateWorkloadKindRequest(props.applicationID, workloadKind.value) } catch (e) { mutationError.value = e.message || '迁移工作负载失败'; workloadKind.value = application.value?.workload_kind || 'deployment' } finally { saving.value = false } }
 watch(() => props.applicationID, loadApplication, { immediate: true })
+watch(activeTab, () => syncReleaseHistoryPolling(true))
+onMounted(() => document.addEventListener('visibilitychange', onVisibilityChange))
+onBeforeUnmount(() => document.removeEventListener('visibilitychange', onVisibilityChange))
+function onVisibilityChange() { syncReleaseHistoryPolling(true) }
 watch(() => endpointForm.value.protocol, protocol => { if (protocol === 'UDP') endpointForm.value.ingress_enabled = false })
 watch(hasTCPServicePort, hasTCP => { if (!hasTCP) { templateForm.value.health.readiness_enabled = false; templateForm.value.health.liveness_enabled = false } })
 watch(() => templateForm.value.volumes.length, count => { if (count) templateForm.value.replicas = 1 })
