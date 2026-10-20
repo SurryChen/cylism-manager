@@ -55,6 +55,9 @@ func registerApplicationRoutes(r *gin.Engine, apiGroup *gin.RouterGroup, h *appl
 	applications.PUT("/:id/endpoints/:endpointID", h.HandleApplication((*applicationapi.ApplicationHandler).UpdateApplicationEndpoint))
 	applications.DELETE("/:id/endpoints/:endpointID", h.HandleApplication((*applicationapi.ApplicationHandler).DeleteApplicationEndpoint))
 	applications.POST("/:id/releases", h.HandleApplication((*applicationapi.ApplicationHandler).CreateRelease))
+	applications.GET("/:id/deploy-webhook", h.DeployWebhookStatus)
+	applications.POST("/:id/deploy-webhook/secret", h.GenerateDeployWebhookSecret)
+	applications.DELETE("/:id/deploy-webhook", h.DisableDeployWebhook)
 	applications.POST("/:id/releases/preflight", h.HandleApplication((*applicationapi.ApplicationHandler).PreflightRelease))
 	applications.POST("/:id/restarts", h.HandleApplication((*applicationapi.ApplicationHandler).RestartApplication))
 	applications.GET("/:id/releases/:releaseID", h.HandleApplication((*applicationapi.ApplicationHandler).GetRelease))
@@ -74,6 +77,7 @@ func registerApplicationRoutes(r *gin.Engine, apiGroup *gin.RouterGroup, h *appl
 	sessions := r.Group("/api/integrations/sessions")
 	sessions.POST("/exchange", h.ExchangeIntegrationSession)
 	sessions.POST("/delegation", h.CreateIntegrationDelegation)
+	r.POST("/api/applications/:id/deployments", h.DeployWebhook)
 
 	apiGroup.GET("/workspace/overview", h.HandleWorkspace((*applicationapi.ApplicationHandler).WorkspaceOverview))
 }

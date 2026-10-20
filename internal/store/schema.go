@@ -15,7 +15,7 @@ func migrateSchema(db *gorm.DB) error {
 		&model.AgentOperation{}, &model.AlertEvent{}, &model.AlertAutomationPolicy{},
 		&model.PlatformRelease{}, &model.PlatformWebhookNonce{}, &model.PlatformEndpoint{},
 		&model.Project{}, &model.Environment{}, &model.Application{},
-		&model.IntegrationSession{}, &model.ApplicationEndpoint{},
+		&model.IntegrationSession{}, &model.ApplicationEndpoint{}, &model.ApplicationDeployWebhook{}, &model.ApplicationDeployWebhookNonce{},
 		&model.ApplicationDeploymentTemplate{}, &model.ApplicationCatalogItem{}, &model.ApplicationCatalogInstallation{}, &model.ApplicationCatalogInstallationComponent{}, &model.ApplicationManagedFile{},
 		&model.ImageRegistry{}, &model.NodeRegistryMirror{}, &model.NodeRegistryMirrorNode{},
 		&model.ManagedOCIRegistry{}, &model.RegistryProxy{}, &model.RegistryProxyRelay{}, &model.RegistryProxyNodeRoute{}, &model.ClusterDNSPolicy{},

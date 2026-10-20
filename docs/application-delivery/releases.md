@@ -19,6 +19,33 @@
 3. 在发布详情查看镜像、模板快照、执行状态与关联资源。
 4. 发布失败时根据状态和事件修正配置后重新发起，不要将同一次失败记录视为可编辑任务。
 
+## CI 自动发布回调
+
+在应用详情的“部署配置”中，为当前应用生成自动发布密钥并复制回调地址。密钥仅显示一次；轮换密钥或关闭入口后，旧密钥立即失效。回调始终使用该应用已启用的默认上线模板，调用方只能指定镜像版本号，不能更换镜像仓库或模板。
+
+CI 应在镜像推送完成后向 `POST /api/applications/{id}/deployments` 发送 JSON 请求体，例如 `{"version":"1.2.3"}`。请求头格式与平台自身的更新回调相同：
+
+- `X-Cylism-Timestamp`：当前 Unix 秒时间戳，允许偏差 5 分钟。
+- `X-Cylism-Nonce`：每次请求生成的 16 至 256 位随机字符串，不得重复使用。
+- `X-Cylism-Signature`：用应用密钥计算 `HMAC-SHA256(timestamp + "." + nonce + "." + 原始请求体)`，编码为小写十六进制。
+
+以下示例假设 CI 已将密钥保存为 `CYLISM_WEBHOOK_SECRET`，将回调地址保存为 `CYLISM_WEBHOOK_URL`：
+
+```sh
+body='{"version":"1.2.3"}'
+timestamp=$(date +%s)
+nonce=$(openssl rand -hex 16)
+signature=$(printf '%s.%s.%s' "$timestamp" "$nonce" "$body" | openssl dgst -sha256 -hmac "$CYLISM_WEBHOOK_SECRET" -hex | awk '{print $NF}')
+curl --fail-with-body -X POST "$CYLISM_WEBHOOK_URL" \
+  -H 'Content-Type: application/json' \
+  -H "X-Cylism-Timestamp: $timestamp" \
+  -H "X-Cylism-Nonce: $nonce" \
+  -H "X-Cylism-Signature: $signature" \
+  --data-binary "$body"
+```
+
+成功时返回 HTTP 202 和新发布记录。相同 nonce 的请求会被拒绝；重新触发发布时需要生成新的时间戳和 nonce。发布进度在“发布记录”中查看。
+
 <figure class="documentation-screenshot">
   <img src="../assets/screenshots/application-delivery/releases.png" alt="应用详情：域名、工作负载类型和上线模板" />
   <figcaption>应用详情：域名、工作负载类型和上线模板。正式的发布记录页面截图待后续补充。</figcaption>

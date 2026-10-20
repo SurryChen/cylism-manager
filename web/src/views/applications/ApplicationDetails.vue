@@ -31,6 +31,17 @@
       <div v-else class="empty-inline">尚未配置上线模板</div>
     </section>
 
+    <section v-if="application" class="detail-section deploy-webhook-section">
+      <div class="section-heading"><div><h2>自动发布回调</h2><p>使用默认上线模板和回调提交的镜像版本创建发布。</p></div><div class="detail-heading-actions"><span class="badge" :class="deployWebhookStatus?.configured ? 'badge-online' : 'badge-offline'">{{ deployWebhookStatus === null ? '读取中' : deployWebhookStatus.unavailable ? '读取失败' : deployWebhookStatus.configured ? '已启用' : '未启用' }}</span><button v-if="deployWebhookStatus?.unavailable" class="icon-button" type="button" title="重试读取" aria-label="重试读取" @click="loadDeployWebhookStatus"><RefreshCw :size="15" /></button><button v-else class="btn btn-sm" type="button" :disabled="webhookBusy || deployWebhookStatus === null" @click="showWebhookSecretModal = true">{{ deployWebhookStatus?.configured ? '轮换密钥' : '生成密钥' }}</button><button v-if="deployWebhookStatus?.configured" class="btn btn-sm btn-danger" type="button" :disabled="webhookBusy" @click="showWebhookDisableModal = true">关闭</button></div></div>
+      <div class="deploy-webhook-endpoint"><input class="form-input" aria-label="自动发布回调地址" readonly :value="deployWebhookURL" /><button class="icon-button" type="button" title="复制回调地址" aria-label="复制回调地址" @click="copyWebhookValue(deployWebhookURL)"><Copy :size="15" /></button></div>
+      <details class="deploy-webhook-example"><summary>CI 请求格式</summary><pre><code>POST {{ deployWebhookURL }}
+X-Cylism-Timestamp: Unix 秒
+X-Cylism-Nonce: 至少 16 位随机值
+X-Cylism-Signature: HMAC-SHA256(应用密钥, timestamp + "." + nonce + "." + 原始请求体) 的十六进制值
+
+{"version":"1.2.3"}</code></pre></details>
+    </section>
+
     <section v-if="application && templateDependencies.length" class="detail-section"><div class="section-heading"><div><h2>运行依赖</h2><p>模板引用的文件资源会在发布前再次验证。</p></div><button class="btn btn-sm" @click="openResourceManagement">管理资源</button></div><div class="dependency-list"><div v-for="dependency in templateDependencies" :key="dependency.id" class="dependency-row"><div><strong>{{ dependency.template }}</strong><small>{{ dependency.type }} · {{ dependency.name }} · {{ dependency.key }} → {{ dependency.path }}</small></div><span class="badge" :class="dependency.ready ? 'badge-online' : 'badge-danger'">{{ dependency.ready ? '可用' : '缺失' }}</span></div></div></section>
     </SurfaceCard>
 
@@ -49,6 +60,16 @@
       <div v-if="releases.length" class="table-wrap detail-table-wrap"><table class="data-table"><thead><tr><th>版本</th><th>镜像</th><th>模板</th><th>状态</th><th>时间</th></tr></thead><tbody><tr v-for="release in releases" :key="release.id" class="clickable" @click="openRelease(release)"><td class="cell-primary">{{ release.version || `Release #${release.sequence}` }}</td><td>{{ release.image }}</td><td>{{ templateName(release.template_id) || '-' }}</td><td><span class="badge" :class="releaseBadge(release.status)">{{ release.status }}</span></td><td>{{ formatTime(release.created_at) }}</td></tr></tbody></table></div>
       <EmptyState v-else message="暂无发布记录" />
     </SurfaceCard>
+
+    <BaseModal :open="showWebhookSecretModal" :title="generatedWebhookSecret ? '自动发布密钥' : '生成自动发布密钥'" size="small" teleport @close="closeWebhookSecretModal">
+      <template v-if="generatedWebhookSecret"><p>密钥仅显示本次。</p><code class="deploy-webhook-secret">{{ generatedWebhookSecret }}</code></template>
+      <p v-else>生成后，原有回调密钥将立即失效。</p>
+      <template #actions><button v-if="generatedWebhookSecret" class="btn btn-sm" type="button" @click="copyWebhookValue(generatedWebhookSecret)">复制密钥</button><button class="btn btn-sm btn-primary" type="button" :disabled="webhookBusy" @click="generatedWebhookSecret ? closeWebhookSecretModal() : generateWebhookSecret()">{{ generatedWebhookSecret ? '完成' : webhookBusy ? '生成中...' : '生成密钥' }}</button></template>
+    </BaseModal>
+    <BaseModal :open="showWebhookDisableModal" title="关闭自动发布回调" size="small" teleport @close="showWebhookDisableModal = false">
+      <p>关闭后，现有密钥将立即失效。</p>
+      <template #actions><button class="btn btn-sm" type="button" @click="showWebhookDisableModal = false">取消</button><button class="btn btn-sm btn-danger" type="button" :disabled="webhookBusy" @click="disableWebhook">{{ webhookBusy ? '关闭中...' : '确认关闭' }}</button></template>
+    </BaseModal>
 
     <Teleport to="body"><div v-if="showTemplateEditor" class="overlay" @click.self="closeTemplateEditor"><div class="modal editor-modal"><div class="editor-header"><div><h2 class="modal-title">{{ editingTemplate ? '编辑上线模板' : '新建上线模板' }}</h2><p>{{ templateEditorSummary }}</p></div><label class="check-row"><input v-model="templateForm.enabled" type="checkbox" /> 启用</label></div><div class="template-editor-layout"><form id="template-editor-form" class="template-editor-form" @submit.prevent="saveTemplate">
       <section id="template-basic" class="editor-section"><div class="editor-section-heading"><div><h3>基础信息</h3><p>模板标识与镜像来源。</p></div></div><div class="form-row"><div class="form-group"><label class="form-label">模板名称</label><input v-model.trim="templateForm.name" class="form-input" required placeholder="标准生产配置" /></div><div class="form-group"><label class="form-label">说明</label><input v-model.trim="templateForm.description" class="form-input" placeholder="2 副本、HTTP 就绪检查" /></div></div>
@@ -83,19 +104,22 @@
 <script setup>
 import { computed, defineComponent, h, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ArrowLeft, Pencil, RefreshCw, Trash2 } from 'lucide-vue-next'
+import { ArrowLeft, Copy, Pencil, RefreshCw, Trash2 } from 'lucide-vue-next'
 import {
   createDeploymentTemplate,
   createEndpoint,
   createIntegrationHandoff,
+  disableApplicationDeployWebhook,
   deleteDeploymentTemplate,
   deleteEndpoint,
   getApplication,
+  getApplicationDeployWebhook,
   getApplicationConfigResources,
   getApplicationEndpoints,
   getApplicationSecretResources,
   getDeploymentTemplates,
   getImageRegistries,
+  generateApplicationDeployWebhookSecret,
   restartApplication as restartApplicationRequest,
   saveApplicationCapabilities,
   setDefaultDeploymentTemplate,
@@ -109,6 +133,7 @@ import { usePolling } from '../../composables/usePolling.js'
 import { getClusterPersistentVolumeInventory } from '../../api/storage.js'
 import { getClusterNodes, getClusterServers } from '../../api/cluster.js'
 import SurfaceCard from '../../components/SurfaceCard.vue'
+import BaseModal from '../../components/BaseModal.vue'
 import EmptyState from '../../components/EmptyState.vue'
 import SectionTabsHeader from '../../components/SectionTabsHeader.vue'
 import ApplicationRuntime from './ApplicationRuntime.vue'
@@ -151,6 +176,13 @@ const readError = ref('')
 const mutationError = ref('')
 const saving = ref(false)
 const restarting = ref(false)
+const deployWebhookStatus = ref(null)
+const webhookBusy = ref(false)
+const showWebhookSecretModal = ref(false)
+const showWebhookDisableModal = ref(false)
+const generatedWebhookSecret = ref('')
+let deployWebhookStatusRequest = 0
+const deployWebhookURL = computed(() => `${window.location.origin}/api/applications/${encodeURIComponent(props.applicationID)}/deployments`)
 const showTemplateEditor = ref(false)
 const editingTemplate = ref(null)
 const showEndpointEditor = ref(false)
@@ -235,6 +267,11 @@ function templateServiceSummary(service) { const ports = servicePortsFromSpec(se
 async function loadApplication() {
   releaseHistoryPolling.stop()
   releaseHistoryResource.cancel()
+  deployWebhookStatusRequest += 1
+  deployWebhookStatus.value = null
+  generatedWebhookSecret.value = ''
+  showWebhookSecretModal.value = false
+  showWebhookDisableModal.value = false
   readError.value = ''
   storageResourcesLoaded.value = false
   persistentVolumeClaims.value = []
@@ -256,7 +293,28 @@ async function loadApplication() {
   configResources.value = configmaps || []
   secretResources.value = secrets || []
   syncReleaseHistoryPolling()
+  if (activeTab.value === 'config') void loadDeployWebhookStatus()
 }
+async function loadDeployWebhookStatus() {
+  const applicationID = props.applicationID
+  const request = ++deployWebhookStatusRequest
+  deployWebhookStatus.value = null
+  try { const status = await getApplicationDeployWebhook(applicationID); if (request === deployWebhookStatusRequest && applicationID === props.applicationID) deployWebhookStatus.value = status } catch (e) { if (request === deployWebhookStatusRequest && applicationID === props.applicationID) { deployWebhookStatus.value = { unavailable: true }; mutationError.value = e.message || '读取自动发布配置失败' } }
+}
+async function generateWebhookSecret() {
+  const applicationID = props.applicationID
+  deployWebhookStatusRequest += 1
+  webhookBusy.value = true
+  try { const result = await generateApplicationDeployWebhookSecret(applicationID); if (applicationID === props.applicationID) { generatedWebhookSecret.value = result.secret; deployWebhookStatus.value = { configured: true } } } catch (e) { if (applicationID === props.applicationID) mutationError.value = e.message || '生成自动发布密钥失败' } finally { webhookBusy.value = false }
+}
+async function disableWebhook() {
+  const applicationID = props.applicationID
+  deployWebhookStatusRequest += 1
+  webhookBusy.value = true
+  try { await disableApplicationDeployWebhook(applicationID); if (applicationID === props.applicationID) { deployWebhookStatus.value = { configured: false }; showWebhookDisableModal.value = false } } catch (e) { if (applicationID === props.applicationID) mutationError.value = e.message || '关闭自动发布失败' } finally { webhookBusy.value = false }
+}
+function closeWebhookSecretModal() { if (!webhookBusy.value) { generatedWebhookSecret.value = ''; showWebhookSecretModal.value = false } }
+async function copyWebhookValue(value) { try { await navigator.clipboard.writeText(value) } catch { mutationError.value = '复制失败，请手动复制' } }
 async function refreshReleaseHistory() {
   const applicationID = props.applicationID
   const result = await releaseHistoryResource.refresh()
@@ -343,6 +401,7 @@ async function removeEndpoint(endpoint) { mutationError.value = ''; try { await 
 async function updateWorkloadKind() { if (!window.confirm('切换会先停止当前 Pod，再创建新的工作负载控制器。服务会短暂中断，是否继续？')) return; saving.value = true; mutationError.value = ''; try { application.value = await updateWorkloadKindRequest(props.applicationID, workloadKind.value) } catch (e) { mutationError.value = e.message || '迁移工作负载失败'; workloadKind.value = application.value?.workload_kind || 'deployment' } finally { saving.value = false } }
 watch(() => props.applicationID, loadApplication, { immediate: true })
 watch(activeTab, () => syncReleaseHistoryPolling(true))
+watch(activeTab, tab => { if (tab === 'config' && application.value) void loadDeployWebhookStatus() })
 onMounted(() => document.addEventListener('visibilitychange', onVisibilityChange))
 onBeforeUnmount(() => document.removeEventListener('visibilitychange', onVisibilityChange))
 function onVisibilityChange() { syncReleaseHistoryPolling(true) }
@@ -383,5 +442,6 @@ watch(() => templateForm.value.volumes.map(volume => volume.claim_name).join(','
 .detail-table-wrap{padding:0 20px 12px}
 .detail-access-card .endpoint-row{border:0;border-bottom:1px solid var(--border-muted);border-radius:0;background:transparent;padding:12px 0}
 .detail-access-card .endpoint-row:last-child{border-bottom:0}
+.deploy-webhook-endpoint{display:flex;max-width:850px;align-items:center;gap:8px}.deploy-webhook-endpoint .form-input{min-width:0;font-family:var(--font-mono);font-size:12px}.deploy-webhook-endpoint .icon-button{flex:none}.deploy-webhook-example{margin-top:14px;color:var(--text-secondary);font-size:12px}.deploy-webhook-example summary{width:max-content;cursor:pointer}.deploy-webhook-example pre{max-width:850px;overflow-x:auto;margin:10px 0 0;padding:12px;border:1px solid var(--border-muted);border-radius:var(--radius-control);background:var(--surface-subtle);font:11px/1.6 var(--font-mono)}.deploy-webhook-secret{display:block;overflow-wrap:anywhere;padding:10px;border:1px solid var(--border-muted);border-radius:var(--radius-control);font:12px/1.5 var(--font-mono)}
 @media(max-width:640px){.detail-context{gap:10px}.page-header.detail-tabs-header{grid-template-columns:minmax(0,1fr);grid-template-rows:auto auto 46px;padding-top:10px}.detail-heading{grid-row:1}.detail-tabs-header :deep(.section-tabs-actions){grid-column:1;grid-row:2;justify-self:start}.detail-tabs-header :deep(.section-tabs){grid-row:3;width:100%;gap:22px}.detail-config-card .detail-section,.detail-access-card .detail-section{padding:16px 14px}.detail-card-toolbar{padding:12px 14px}.detail-table-wrap{padding:0 14px 10px}}
 </style>

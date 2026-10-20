@@ -32,7 +32,7 @@ describe('ApplicationDetails view', () => {
     await new Promise(resolve => setTimeout(resolve, 0))
 
     await wrapper.findAll('.section-tab').find(tab => tab.text() === '访问入口').trigger('click')
-    await wrapper.find('.detail-heading-actions .btn:not(.btn-primary)').trigger('click')
+    await wrapper.find('.detail-access-card .detail-heading-actions .btn:not(.btn-primary)').trigger('click')
     expect(routerPush).toHaveBeenCalledWith({ path: '/applications/domains', query: {
       project_id: 2, environment_id: 3, application_id: '1', return_tab: 'access',
     } })
@@ -57,6 +57,67 @@ describe('ApplicationDetails view', () => {
     expect(wrapper.text()).toContain('api.example.com')
     expect(wrapper.text()).toContain('admin.example.com')
     expect(wrapper.find('[aria-label="工作负载类型"].select-menu-native').element.value).toBe('deployment')
+  })
+
+  it('manages a per-application deploy webhook from deployment configuration', async () => {
+    const { api } = await import('../../api/index.js')
+    const originalGet = api.get.getMockImplementation()
+    api.get.mockImplementation((path, options) => path === '/applications/1/deploy-webhook'
+      ? Promise.resolve({ configured: false }) : originalGet(path, options))
+    api.post.mockReset()
+    api.post.mockResolvedValue({ secret: 'generated-secret' })
+    api.delete.mockReset()
+    api.delete.mockResolvedValue({ configured: false })
+    const wrapper = mount(ApplicationDetails, {
+      props: { applicationID: '1' },
+      global: { stubs: { RouterLink: { template: '<a><slot /></a>' }, Teleport: true } },
+    })
+    try {
+      await new Promise(resolve => setTimeout(resolve, 0))
+      await wrapper.findAll('.section-tab').find(tab => tab.text() === '部署配置').trigger('click')
+      await new Promise(resolve => setTimeout(resolve, 0))
+      expect(wrapper.find('.deploy-webhook-section .badge').text()).toBe('未启用')
+      expect(wrapper.find('[aria-label="自动发布回调地址"]').element.value).toContain('/api/applications/1/deployments')
+
+      await wrapper.find('.deploy-webhook-section .btn').trigger('click')
+      await wrapper.find('.base-modal-actions .btn-primary').trigger('click')
+      await new Promise(resolve => setTimeout(resolve, 0))
+      expect(api.post).toHaveBeenCalledWith('/applications/1/deploy-webhook/secret')
+      expect(wrapper.text()).toContain('generated-secret')
+      expect(wrapper.find('.deploy-webhook-section .badge').text()).toBe('已启用')
+
+      await wrapper.find('.base-modal-actions .btn-primary').trigger('click')
+      await wrapper.find('.deploy-webhook-section .btn-danger').trigger('click')
+      await wrapper.find('.base-modal-actions .btn-danger').trigger('click')
+      await new Promise(resolve => setTimeout(resolve, 0))
+      expect(api.delete).toHaveBeenCalledWith('/applications/1/deploy-webhook')
+      expect(wrapper.find('.deploy-webhook-section .badge').text()).toBe('未启用')
+    } finally {
+      wrapper.unmount()
+      api.get.mockImplementation(originalGet)
+    }
+  })
+
+  it('allows retrying when deploy webhook status cannot be loaded', async () => {
+    const { api } = await import('../../api/index.js')
+    const originalGet = api.get.getMockImplementation()
+    api.get.mockImplementation((path, options) => path === '/applications/1/deploy-webhook'
+      ? Promise.reject(new Error('API 路径不存在')) : originalGet(path, options))
+    const wrapper = mount(ApplicationDetails, {
+      props: { applicationID: '1' },
+      global: { stubs: { RouterLink: { template: '<a><slot /></a>' }, Teleport: true } },
+    })
+    try {
+      await new Promise(resolve => setTimeout(resolve, 0))
+      await wrapper.findAll('.section-tab').find(tab => tab.text() === '部署配置').trigger('click')
+      await new Promise(resolve => setTimeout(resolve, 0))
+      expect(wrapper.find('.deploy-webhook-section .badge').text()).toBe('读取失败')
+      expect(wrapper.find('.deploy-webhook-section [aria-label="重试读取"]').exists()).toBe(true)
+      expect(wrapper.find('.deploy-webhook-section .btn').exists()).toBe(false)
+    } finally {
+      wrapper.unmount()
+      api.get.mockImplementation(originalGet)
+    }
   })
 
   it('refreshes release status while the history tab is open and stops after leaving it', async () => {

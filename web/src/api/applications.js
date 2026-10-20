@@ -68,6 +68,18 @@ export function getApplication(applicationID, options) {
   return api.get(`/applications/${segment(applicationID)}`, options)
 }
 
+export function getApplicationDeployWebhook(applicationID, options) {
+  return api.get(`/applications/${segment(applicationID)}/deploy-webhook`, options)
+}
+
+export function generateApplicationDeployWebhookSecret(applicationID, options) {
+  return postRequest(`/applications/${segment(applicationID)}/deploy-webhook/secret`, undefined, options)
+}
+
+export function disableApplicationDeployWebhook(applicationID, options) {
+  return deleteRequest(`/applications/${segment(applicationID)}/deploy-webhook`, options)
+}
+
 export function getApplicationRuntime(applicationID, options) {
   return api.get(`/applications/${segment(applicationID)}/runtime`, options)
 }

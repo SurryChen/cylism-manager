@@ -2,6 +2,7 @@ DELETE /api/access-certificates/:id
 DELETE /api/admin/tables/:table/:id
 DELETE /api/application-catalog/:catalogID
 DELETE /api/applications/:id
+DELETE /api/applications/:id/deploy-webhook
 DELETE /api/applications/:id/deployment-templates/:templateID
 DELETE /api/applications/:id/endpoints/:endpointID
 DELETE /api/auth/temporary-tokens/:id
@@ -87,6 +88,7 @@ GET /api/application-catalog/:catalogID
 GET /api/application-catalog/installations
 GET /api/applications
 GET /api/applications/:id
+GET /api/applications/:id/deploy-webhook
 GET /api/applications/:id/deployment-templates
 GET /api/applications/:id/deployment-templates/:templateID
 GET /api/applications/:id/endpoints
@@ -316,8 +318,10 @@ POST /api/application-catalog/from-environment
 POST /api/application-catalog/import
 POST /api/applications
 POST /api/applications/:id/delegations
+POST /api/applications/:id/deploy-webhook/secret
 POST /api/applications/:id/deployment-templates
 POST /api/applications/:id/deployment-templates/:templateID/default
+POST /api/applications/:id/deployments
 POST /api/applications/:id/endpoints
 POST /api/applications/:id/integration-handoffs
 POST /api/applications/:id/releases

@@ -236,6 +236,12 @@ func (s *Store) DeleteUnreleasedApplication(id uint) error {
 		if err := tx.Where("application_id = ?", id).Delete(&model.ApplicationManagedFile{}).Error; err != nil {
 			return err
 		}
+		if err := tx.Where("application_id = ?", id).Delete(&model.ApplicationDeployWebhook{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("application_id = ?", id).Delete(&model.ApplicationDeployWebhookNonce{}).Error; err != nil {
+			return err
+		}
 		return tx.Delete(&app).Error
 	})
 }

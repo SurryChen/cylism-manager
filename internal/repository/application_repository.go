@@ -24,12 +24,20 @@ type ApplicationQueryRepository interface {
 	ListReleasesByApplications([]uint) (map[uint][]model.Release, error)
 }
 
+type ApplicationWebhookRepository interface {
+	GetApplicationDeployWebhook(uint) (*model.ApplicationDeployWebhook, error)
+	SaveApplicationDeployWebhook(*model.ApplicationDeployWebhook) error
+	DeleteApplicationDeployWebhook(uint) error
+	ConsumeApplicationDeployWebhookNonce(uint, string, time.Time) error
+}
+
 // ApplicationManagementRepository contains the application-owned persistence
 // operations used by project, environment, template, and endpoint handlers.
 // Cross-domain resources, such as image registries and managed domains, stay
 // outside this interface so their ownership remains explicit.
 type ApplicationManagementRepository interface {
 	ApplicationQueryRepository
+	ApplicationWebhookRepository
 
 	ListProjects() ([]model.Project, error)
 	CreateProject(*model.Project) error

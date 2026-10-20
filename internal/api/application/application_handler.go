@@ -41,6 +41,7 @@ type ApplicationHandler struct {
 // depending on release-state, integration-session, or domain persistence.
 type applicationManagementRepository interface {
 	repository.ApplicationQueryRepository
+	repository.ApplicationWebhookRepository
 	ListProjects() ([]model.Project, error)
 	CreateProject(*model.Project) error
 	UpdateProject(*model.Project) error
