@@ -39,4 +39,4 @@ RUN case "${CYLISM_CLI_VERSION}" in ""|*[!A-Za-z0-9._-]*) exit 1 ;; esac \
     && mkdir -p /data
 
 EXPOSE 8080
-CMD ["./cylism-manager"]
+CMD ["/app/cylism-manager"]

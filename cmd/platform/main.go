@@ -140,7 +140,7 @@ func main() {
 
 	// 注册路由
 	container.RegisterRoutes(r)
-	registerFrontendRoutes(r, "./web/dist")
+	registerFrontendRoutes(r, frontendDistDir())
 
 	// 启动服务器
 	addr := fmt.Sprintf("%s:%d",

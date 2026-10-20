@@ -2,12 +2,23 @@ package main
 
 import (
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 
 	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 	"github.com/gin-gonic/gin"
 )
+
+func frontendDistDir() string {
+	if dir := strings.TrimSpace(os.Getenv("CYLISM_WEB_DIST_DIR")); dir != "" {
+		return dir
+	}
+	if _, err := os.Stat("/app/web/dist/index.html"); err == nil {
+		return "/app/web/dist"
+	}
+	return "./web/dist"
+}
 
 func registerFrontendRoutes(r *gin.Engine, distDir string) {
 	r.Static("/assets", filepath.Join(distDir, "assets"))
