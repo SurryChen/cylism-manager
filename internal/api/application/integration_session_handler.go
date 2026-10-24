@@ -91,7 +91,7 @@ func (h *ApplicationHandler) createIntegrationHandoff(c *gin.Context) {
 		}
 		endpointURL = localURL.String()
 	}
-	actions := []string{"application:read", "configmap:read", "configmap:write", "application:restart"}
+	actions := []string{"application:read", "configmap:read", "configmap:write", "hysteria:read", "hysteria:write", "application:restart"}
 	now := time.Now()
 	code, err := randomOpaqueValue(32)
 	if err != nil {

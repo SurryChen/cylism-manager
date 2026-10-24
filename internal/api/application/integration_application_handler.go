@@ -94,7 +94,7 @@ func (h *ApplicationHandler) CreateDelegation(c *gin.Context) {
 		}
 	}
 	if len(req.Actions) == 0 {
-		req.Actions = []string{"application:read", "configmap:read", "configmap:write", "application:restart"}
+		req.Actions = []string{"application:read", "configmap:read", "configmap:write", "hysteria:read", "hysteria:write", "application:restart"}
 	}
 	if len(h.delegationSecret) == 0 {
 		apiShared.DBError(c, "委托签名未配置")

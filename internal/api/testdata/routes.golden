@@ -192,6 +192,8 @@ GET /api/domains/importable-cloud-domains
 GET /api/image-registries
 GET /api/integrations/applications/:id/configmaps
 GET /api/integrations/applications/:id/configmaps/:configMapID
+GET /api/integrations/applications/:id/hysteria/config
+GET /api/integrations/applications/:id/hysteria/users/:username/credential
 GET /api/integrations/applications/:id/releases/:releaseID
 GET /api/integrations/applications/:id/runtime
 GET /api/integrations/applications/discovery
@@ -520,6 +522,7 @@ PUT /api/clusters/:id/monitoring/logs/config
 PUT /api/domains/:id
 PUT /api/image-registries/:id
 PUT /api/integrations/applications/:id/configmaps/:configMapID
+PUT /api/integrations/applications/:id/hysteria/users/:username
 PUT /api/k8s/configmaps/:namespace/:name
 PUT /api/k8s/secrets/:namespace/:name
 PUT /api/k8s/services/:namespace/:name

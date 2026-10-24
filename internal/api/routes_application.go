@@ -71,6 +71,9 @@ func registerApplicationRoutes(r *gin.Engine, apiGroup *gin.RouterGroup, h *appl
 	integration.GET("/:id/configmaps", h.IntegrationListManagedConfigMaps)
 	integration.GET("/:id/configmaps/:configMapID", h.IntegrationGetManagedConfigMap)
 	integration.PUT("/:id/configmaps/:configMapID", h.HandleApplication((*applicationapi.ApplicationHandler).IntegrationReplaceManagedConfigMap))
+	integration.GET("/:id/hysteria/config", h.IntegrationHysteriaConfig)
+	integration.GET("/:id/hysteria/users/:username/credential", h.IntegrationHysteriaCredential)
+	integration.PUT("/:id/hysteria/users/:username", h.HandleApplication((*applicationapi.ApplicationHandler).IntegrationUpdateHysteriaUser))
 	integration.POST("/:id/restarts", h.HandleApplication((*applicationapi.ApplicationHandler).IntegrationRestartApplication))
 	integration.GET("/:id/releases/:releaseID", h.HandleApplication((*applicationapi.ApplicationHandler).IntegrationGetRelease))
 
