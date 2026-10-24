@@ -3,16 +3,19 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import ClusterStorage from './ClusterStorage.vue'
 
-const { getCluster, getAgentStatus, getInventory, getReferences, getUsage, getClasses, getNamespaces } = vi.hoisted(() => ({
+const { getCluster, getAgentStatus, getProjects, getInventory, getReferences, getUsage, getClasses, getNamespaces, adoptClaim } = vi.hoisted(() => ({
   getCluster: vi.fn(),
   getAgentStatus: vi.fn(),
+  getProjects: vi.fn(),
   getInventory: vi.fn(),
   getReferences: vi.fn(),
   getUsage: vi.fn(),
   getClasses: vi.fn(),
   getNamespaces: vi.fn(),
+  adoptClaim: vi.fn(),
 }))
 vi.mock('../../api/clusters.js', () => ({ getCluster, getClusterAgentStatus: getAgentStatus }))
+vi.mock('../../api/applications.js', () => ({ getProjects }))
 vi.mock('../../api/storage.js', () => ({
   getClusterPersistentVolumeInventory: getInventory,
   getClusterPersistentVolumeReferences: getReferences,
@@ -20,6 +23,7 @@ vi.mock('../../api/storage.js', () => ({
   getClusterStorageClasses: getClasses,
   getClusterStorageNamespaces: getNamespaces,
   createClusterPersistentVolumeClaim: vi.fn(),
+  adoptClusterPersistentVolumeClaim: adoptClaim,
   deleteClusterPersistentVolumeClaim: vi.fn(),
 }))
 
@@ -39,6 +43,8 @@ describe('ClusterStorage', () => {
     getCluster.mockResolvedValue({ id: 2, name: '生产集群' })
     getAgentStatus.mockResolvedValue({ state: 'ready' })
     getNamespaces.mockResolvedValue([{ name: 'default' }])
+    getProjects.mockResolvedValue([])
+    adoptClaim.mockResolvedValue({})
     getClasses.mockResolvedValue([{ name: 'local-path' }])
     getInventory.mockResolvedValue({ items: [{ namespace: 'default', name: 'data', managed: true, storage: '5Gi', phase: 'Bound' }], total: 1 })
     getReferences.mockResolvedValue([{ namespace: 'default', name: 'data', references: [] }])
@@ -74,5 +80,32 @@ describe('ClusterStorage', () => {
     expect(wrapper.text()).toContain('Agent 尚未安装或当前无法连接')
     expect(getNamespaces).not.toHaveBeenCalled()
     expect(getInventory).not.toHaveBeenCalled()
+  })
+
+  it('associates a legacy PVC with an environment in the selected cluster and namespace', async () => {
+    getInventory.mockResolvedValueOnce({ items: [{ namespace: 'project-self-app', name: 'trendradar-data', managed: true, storage: '5Gi', phase: 'Bound' }], total: 1 })
+      .mockResolvedValueOnce({ items: [{ namespace: 'project-self-app', name: 'trendradar-data', managed: true, environment_id: 2, storage: '5Gi', phase: 'Bound' }], total: 1 })
+    getProjects.mockResolvedValue([
+      { id: 1, name: '应用项目', environments: [
+        { id: 2, name: '生产', namespace: 'project-self-app', cluster_id: 2 },
+        { id: 3, name: '其他集群', namespace: 'project-self-app', cluster_id: 1 },
+        { id: 4, name: '其他命名空间', namespace: 'default', cluster_id: 2 },
+      ] },
+    ])
+    const wrapper = await mountStorage()
+    await flushPromises()
+
+    await wrapper.get('tbody .claim-actions .btn:first-child').trigger('click')
+    await flushPromises()
+    const modal = wrapper.findAll('.base-modal').find(item => item.text().includes('关联历史存储卷'))
+    expect(modal.get('.select-menu-native').findAll('option').map(option => option.text())).toEqual([
+      '选择匹配的项目环境', '应用项目 · 生产 · project-self-app',
+    ])
+    await modal.get('.select-menu-native').setValue('2')
+    await modal.get('.btn-primary').trigger('click')
+    await flushPromises()
+
+    expect(adoptClaim).toHaveBeenCalledWith('2', 'trendradar-data', { namespace: 'project-self-app', environment_id: 2 })
+    expect(wrapper.get('tbody .action-cell').text()).toBe('-')
   })
 })

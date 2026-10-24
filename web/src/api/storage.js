@@ -21,6 +21,7 @@ export function getClusterStorageClasses(clusterID, options) { return api.get(cl
 export function getClusterStorageNamespaces(clusterID, options) { return api.get(clusterStoragePath(clusterID, '/namespace-names'), options) }
 export function createClusterStorageNamespace(clusterID, name) { return api.post(clusterStoragePath(clusterID, '/namespaces'), { name }) }
 export function createClusterPersistentVolumeClaim(clusterID, body) { return api.post(clusterStoragePath(clusterID, '/persistent-volume-claims'), body) }
+export function adoptClusterPersistentVolumeClaim(clusterID, name, body) { return api.post(clusterStoragePath(clusterID, `/persistent-volume-claims/${encodeURIComponent(name)}/adopt`), body) }
 export function deleteClusterPersistentVolumeClaim(clusterID, name, body) { return api.delete(clusterStoragePath(clusterID, `/persistent-volume-claims/${encodeURIComponent(name)}`), body) }
 
 function queryPath(path, params = {}) {

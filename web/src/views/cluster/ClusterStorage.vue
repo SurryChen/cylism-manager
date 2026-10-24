@@ -31,7 +31,7 @@
               <td><span class="badge" :class="claim.phase === 'Bound' ? 'badge-online' : 'badge-deploying'">{{ claim.phase || 'Pending' }}</span></td>
               <td>{{ claim.bound_node || '-' }}</td>
               <td>{{ referenceCount(claim) }}</td>
-              <td class="action-cell"><button v-if="canDelete(claim)" class="btn btn-sm btn-danger" type="button" :disabled="referencesLoading || !referencesLoaded || referenceCount(claim) > 0" @click="deleteTarget = claim">删除</button><span v-else class="cell-secondary">-</span></td>
+              <td class="action-cell"><div v-if="canAdopt(claim) || canDelete(claim)" class="claim-actions"><button v-if="canAdopt(claim)" class="btn btn-sm" type="button" @click="openAdopt(claim)">关联环境</button><button v-if="canDelete(claim)" class="btn btn-sm btn-danger" type="button" :disabled="referencesLoading || !referencesLoaded || referenceCount(claim) > 0" @click="deleteTarget = claim">删除</button></div><span v-else class="cell-secondary">-</span></td>
             </tr>
           </tbody>
         </table>
@@ -49,6 +49,12 @@
       </form>
       <template #actions><button class="btn" :disabled="saving" @click="creating = false">取消</button><button class="btn btn-primary" type="submit" form="cluster-create-pvc" :disabled="saving || !form.namespace || !form.name || form.size < 1">{{ saving ? '创建中...' : '创建存储卷' }}</button></template>
     </BaseModal>
+    <BaseModal :open="Boolean(adoptTarget)" title="关联历史存储卷" @close="adoptTarget = null">
+      <p>将 {{ adoptTarget?.namespace }}/{{ adoptTarget?.name }} 关联到项目环境。此操作只补充归属标签，不会复制卷内数据。</p>
+      <div class="form-group"><label class="form-label" for="adopt-environment">项目环境</label><SelectMenu id="adopt-environment" v-model.number="adoptEnvironmentID" :disabled="environmentsLoading"><option :value="0" disabled>{{ environmentsLoading ? '正在读取环境' : '选择匹配的项目环境' }}</option><option v-for="environment in adoptableEnvironments" :key="environment.id" :value="environment.id">{{ environment.projectName }} · {{ environment.name }} · {{ environment.namespace }}</option></SelectMenu></div>
+      <p v-if="!environmentsLoading && !adoptableEnvironments.length" class="cell-secondary">当前集群和命名空间没有可关联的项目环境。</p>
+      <template #actions><button class="btn" :disabled="saving" @click="adoptTarget = null">取消</button><button class="btn btn-primary" :disabled="saving || !adoptEnvironmentID" @click="adoptClaim">{{ saving ? '关联中...' : '关联环境' }}</button></template>
+    </BaseModal>
     <BaseModal :open="Boolean(deleteTarget)" title="删除存储卷" @close="deleteTarget = null">
       <p>确定删除 {{ deleteTarget?.namespace }}/{{ deleteTarget?.name }} 吗？底层数据是否删除取决于 PV 的回收策略。</p>
       <template #actions><button class="btn" :disabled="saving" @click="deleteTarget = null">取消</button><button class="btn btn-danger" :disabled="saving" @click="removeClaim">确认删除</button></template>
@@ -60,8 +66,9 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
 import { ArrowLeft, RefreshCw } from 'lucide-vue-next'
+import { getProjects } from '../../api/applications.js'
 import { getCluster } from '../../api/clusters.js'
-import { createClusterPersistentVolumeClaim, deleteClusterPersistentVolumeClaim, getClusterPersistentVolumeInventory, getClusterPersistentVolumeReferences, getClusterPersistentVolumeUsage, getClusterStorageClasses, getClusterStorageNamespaces } from '../../api/storage.js'
+import { adoptClusterPersistentVolumeClaim, createClusterPersistentVolumeClaim, deleteClusterPersistentVolumeClaim, getClusterPersistentVolumeInventory, getClusterPersistentVolumeReferences, getClusterPersistentVolumeUsage, getClusterStorageClasses, getClusterStorageNamespaces } from '../../api/storage.js'
 import BaseModal from '../../components/BaseModal.vue'
 import ClusterAgentGate from '../../components/ClusterAgentGate.vue'
 import EmptyState from '../../components/EmptyState.vue'
@@ -78,6 +85,7 @@ const cluster = ref(null)
 const namespace = ref('')
 const namespaces = ref([])
 const storageClasses = ref([])
+const projects = ref([])
 const claims = ref([])
 const references = ref(new Map())
 const usage = ref(new Map())
@@ -93,12 +101,19 @@ const total = ref(0)
 const creating = ref(false)
 const saving = ref(false)
 const deleteTarget = ref(null)
+const adoptTarget = ref(null)
+const adoptEnvironmentID = ref(0)
+const environmentsLoading = ref(false)
 const form = ref({ namespace: '', name: '', size: 5, unit: 'Gi', storageClass: '' })
 const scope = computed(() => String(props.clusterID))
+const adoptableEnvironments = computed(() => projects.value.flatMap(project => (project.environments || [])
+  .filter(environment => String(environment.cluster_id) === scope.value && environment.namespace === adoptTarget.value?.namespace)
+  .map(environment => ({ ...environment, projectName: project.name }))))
 let requestSequence = 0
 
 watch(scope, async id => {
   cluster.value = null
+  adoptTarget.value = null
   namespace.value = ''
   page.value = 1
   loaded.value = false
@@ -162,6 +177,31 @@ async function loadClaims() {
 function referenceCount(claim) { return references.value.get(`${claim.namespace}/${claim.name}`)?.length || 0 }
 function usageFor(claim) { return usage.value.get(`${claim.namespace}/${claim.name}`) }
 function canDelete(claim) { return claim.managed && !claim.environment_id && claim.owner_type !== 'infrastructure' }
+function canAdopt(claim) { return claim.managed && !claim.environment_id && claim.owner_type !== 'infrastructure' }
+async function openAdopt(claim) {
+  adoptTarget.value = claim
+  adoptEnvironmentID.value = 0
+  environmentsLoading.value = true
+  actionError.value = ''
+  try {
+    const result = await getProjects()
+    if (adoptTarget.value !== claim) return
+    projects.value = result || []
+    adoptEnvironmentID.value = adoptableEnvironments.value[0]?.id || 0
+  } catch (err) { actionError.value = err.message || '加载项目环境失败' }
+  finally { if (adoptTarget.value === claim) environmentsLoading.value = false }
+}
+async function adoptClaim() {
+  if (!adoptTarget.value || !adoptEnvironmentID.value) return
+  saving.value = true
+  actionError.value = ''
+  try {
+    await adoptClusterPersistentVolumeClaim(scope.value, adoptTarget.value.name, { namespace: adoptTarget.value.namespace, environment_id: adoptEnvironmentID.value })
+    adoptTarget.value = null
+    await loadClaims()
+  } catch (err) { actionError.value = err.message || '关联存储卷环境失败' }
+  finally { saving.value = false }
+}
 function openCreate() { actionError.value = ''; form.value = { namespace: namespace.value || namespaces.value[0] || '', name: '', size: 5, unit: 'Gi', storageClass: '' }; creating.value = true }
 async function saveClaim() {
   saving.value = true
@@ -195,6 +235,7 @@ async function removeClaim() {
 .storage-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 62px; padding: 12px var(--space-20); }
 .namespace-select { width: 190px; }
 .toolbar-actions, .size-control, .pagination { display: flex; align-items: center; gap: 8px; }
+.claim-actions { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
 .size-control .form-input { flex: 1; min-width: 0; }
 .storage-content .table-wrap { padding: 0 var(--space-20) var(--space-12); }
 .pagination { justify-content: flex-end; padding: var(--space-12) var(--space-20); }

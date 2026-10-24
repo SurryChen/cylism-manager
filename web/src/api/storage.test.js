@@ -1,6 +1,7 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { api } from './index.js'
 import {
+  adoptClusterPersistentVolumeClaim,
   adoptPersistentVolumeClaim,
   cleanupPersistentVolumeMigration,
   createNamespace,
@@ -21,6 +22,7 @@ vi.mock('./index.js', () => ({
 }))
 
 describe('storage api', () => {
+  beforeEach(() => vi.clearAllMocks())
   it('loads a paginated persistent volume inventory with one signal', () => {
     const options = { signal: new AbortController().signal }
     getPersistentVolumeInventory({ page: 2, size: 20, namespace: 'default' }, options)
@@ -37,6 +39,12 @@ describe('storage api', () => {
     const options = { signal: new AbortController().signal }
     getPersistentVolumeReferences([{ namespace: 'default', name: 'data' }], options)
     expect(api.get).toHaveBeenCalledWith('/k8s/persistent-volume-claims/references?claim=default%2Fdata', options)
+  })
+
+  it('associates a PVC through its selected cluster', () => {
+    const body = { namespace: 'project-self-app', environment_id: 2 }
+    adoptClusterPersistentVolumeClaim(2, 'trendradar-data', body)
+    expect(api.post).toHaveBeenCalledWith('/clusters/2/k8s/persistent-volume-claims/trendradar-data/adopt', body)
   })
 
   it('uses the existing persistent volume mutation endpoints and forwards request options', () => {
