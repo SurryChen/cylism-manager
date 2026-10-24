@@ -28,6 +28,11 @@ type persistentVolumeClaimRequest struct {
 	ConfirmDataDelete bool   `json:"confirm_data_delete"`
 }
 
+type persistentVolumeClaimAdoptionRequest struct {
+	EnvironmentID uint   `json:"environment_id"`
+	Namespace     string `json:"namespace"`
+}
+
 type persistentVolumeClaimResponse struct {
 	k8sclient.PersistentVolumeClaimInfo
 	BoundNodeDisplayName string   `json:"bound_node_display_name,omitempty"`
@@ -84,6 +89,32 @@ func (h *StorageHandler) ListPersistentVolumeClaims(c *gin.Context) {
 	}
 	responses := h.pvcResponses(c.Request.Context(), claims[offset:end], false)
 	apiShared.Success(c, gin.H{"items": responses, "total": len(claims), "page": page, "size": size})
+}
+
+func (h *StorageHandler) AdoptPersistentVolumeClaim(c *gin.Context) {
+	if h == nil || h.pvc == nil || h.store == nil {
+		storageK8sUnavailable(c)
+		return
+	}
+	var request persistentVolumeClaimAdoptionRequest
+	if err := c.ShouldBindJSON(&request); err != nil || request.EnvironmentID == 0 || strings.TrimSpace(request.Namespace) == "" {
+		apiShared.BadRequest(c, "命名空间和环境必填")
+		return
+	}
+	environment, err := h.store.GetEnvironmentByID(request.EnvironmentID)
+	if err != nil {
+		apiShared.Error(c, http.StatusNotFound, apiShared.CodeNotFound, "环境不存在")
+		return
+	}
+	if environment.Namespace != strings.TrimSpace(request.Namespace) || (h.clusterID != 0 && environment.ClusterID != h.clusterID) {
+		apiShared.Error(c, http.StatusBadRequest, apiShared.CodeValidationFail, "环境与 PVC 的集群或命名空间不匹配")
+		return
+	}
+	if err := h.pvc.AdoptManagedPVCEnvironmentContext(c.Request.Context(), environment.Namespace, c.Param("name"), environment.ID); err != nil {
+		apiShared.Error(c, http.StatusBadRequest, apiShared.CodeValidationFail, err.Error())
+		return
+	}
+	apiShared.Success(c, gin.H{"name": c.Param("name"), "namespace": environment.Namespace, "environment_id": environment.ID})
 }
 
 // ListPersistentVolumeClaimReferences reads workload and template references

@@ -58,6 +58,35 @@ describe('PersistentVolumes view', () => {
     expect(wrapper.text()).toContain('外部创建')
   })
 
+  it('offers environment association for legacy managed PVCs and refreshes after association', async () => {
+    const { api } = await import('../../api/index.js')
+    let associated = false
+    api.get.mockImplementation(path => {
+      if (path.startsWith('/projects')) return Promise.resolve([{ id: 1, name: 'knowledge', environments: [{ id: 2, name: 'production', namespace: 'project-knowledge-prod' }] }])
+      if (path.startsWith('/k8s/persistent-volume-claims?')) return Promise.resolve({ items: [{ name: 'legacy-data', namespace: 'project-knowledge-prod', managed: true, environment_id: associated ? 2 : 0, owner_type: 'application', phase: 'Bound', is_local: true, bound_node: 'node-a' }], total: 1 })
+      if (path.startsWith('/k8s/persistent-volume-claims/references')) return Promise.resolve([])
+      if (path.startsWith('/k8s/persistent-volume-claims/usage')) return Promise.resolve([])
+      if (path === '/k8s/persistent-volume-migrations') return Promise.resolve([])
+      return Promise.resolve([])
+    })
+    api.post.mockImplementation(path => {
+      if (path.endsWith('/adopt')) associated = true
+      return Promise.resolve({})
+    })
+    const wrapper = mount(PersistentVolumes)
+    await settle()
+
+    await wrapper.findAll('button').find(button => button.text() === '关联环境').trigger('click')
+    expect(wrapper.text()).toContain('关联历史存储卷')
+    await wrapper.get('[data-testid="adopt-environment"]').setValue('2')
+    await wrapper.findAll('.btn-primary').at(-1).trigger('click')
+    await settle()
+
+    expect(api.post).toHaveBeenCalledWith('/k8s/persistent-volume-claims/legacy-data/adopt', { namespace: 'project-knowledge-prod', environment_id: 2 })
+    await wrapper.get('.claim-action-menu .icon-button').trigger('click')
+    expect(wrapper.text()).toContain('迁移')
+  })
+
   it('creates a PVC directly in the selected namespace', async () => {
     const { api } = await import('../../api/index.js')
     api.get.mockImplementation(mockInventory({ namespaces: [{ name: 'cylism-system' }, { name: 'default' }] }))

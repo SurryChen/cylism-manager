@@ -238,6 +238,45 @@ func (c *Client) GetPVCInfoContext(ctx context.Context, namespace, name string) 
 	return &info, nil
 }
 
+// AdoptManagedPVCEnvironmentContext associates a legacy platform-managed PVC
+// with its owning application environment without changing its data or spec.
+func (c *Client) AdoptManagedPVCEnvironmentContext(ctx context.Context, namespace, name string, environmentID uint) error {
+	if c == nil || c.Clientset == nil {
+		return fmt.Errorf("Kubernetes 存储客户端未初始化")
+	}
+	if ctx == nil {
+		return fmt.Errorf("Kubernetes 请求上下文不能为空")
+	}
+	if environmentID == 0 {
+		return fmt.Errorf("环境 ID 无效")
+	}
+	claims := c.Clientset.CoreV1().PersistentVolumeClaims(namespace)
+	claim, err := claims.Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("get persistentvolumeclaim %s/%s: %w", namespace, name, err)
+	}
+	if claim.Labels[ManagedByLabel] != ManagedByValue {
+		return fmt.Errorf("PVC %q 未由平台管理", name)
+	}
+	if owner := infrastructurePVCOwner(claim); owner != "" {
+		return fmt.Errorf("PVC %q 由基础设施组件管理，不能关联到应用环境", name)
+	}
+	if existing := claim.Labels[EnvironmentLabel]; existing != "" {
+		if existing == EnvironmentLabelValue(environmentID) {
+			return nil
+		}
+		return fmt.Errorf("PVC %q 已关联到其他环境", name)
+	}
+	if claim.Labels == nil {
+		claim.Labels = make(map[string]string)
+	}
+	claim.Labels[EnvironmentLabel] = EnvironmentLabelValue(environmentID)
+	if _, err := claims.Update(ctx, claim, metav1.UpdateOptions{}); err != nil {
+		return fmt.Errorf("associate persistentvolumeclaim with environment: %w", err)
+	}
+	return nil
+}
+
 func (c *Client) CreateManagedPVCContext(ctx context.Context, namespace string, environmentID uint, request PersistentVolumeClaimRequest) (*corev1.PersistentVolumeClaim, error) {
 	name := strings.TrimSpace(request.Name)
 	if name == "" || len(validation.IsDNS1123Label(name)) > 0 {

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { api } from './index.js'
 import {
+  adoptPersistentVolumeClaim,
   cleanupPersistentVolumeMigration,
   createNamespace,
   createPersistentVolumeBackup,
@@ -45,6 +46,7 @@ describe('storage api', () => {
 
     createNamespace(body, options)
     createPersistentVolumeClaim(body, options)
+    adoptPersistentVolumeClaim('legacy-data', body, options)
     createPersistentVolumeMigration(name, body, options)
     cleanupPersistentVolumeMigration('migration/a', options)
     createPersistentVolumeBackup(name, body, options)
@@ -55,11 +57,12 @@ describe('storage api', () => {
 
     expect(api.post).toHaveBeenNthCalledWith(1, '/k8s/namespaces', body, options)
     expect(api.post).toHaveBeenNthCalledWith(2, '/k8s/persistent-volume-claims', body, options)
-    expect(api.post).toHaveBeenNthCalledWith(3, '/k8s/persistent-volume-claims/data%2Fa/migrations', body, options)
-    expect(api.post).toHaveBeenNthCalledWith(4, '/k8s/persistent-volume-migrations/migration%2Fa/cleanup', undefined, options)
-    expect(api.post).toHaveBeenNthCalledWith(5, '/k8s/persistent-volume-claims/data%2Fa/backups', body, options)
-    expect(api.post).toHaveBeenNthCalledWith(6, '/k8s/persistent-volume-claims/data%2Fa/backups/backup%2Fa/restore', body, options)
-    expect(api.post).toHaveBeenNthCalledWith(7, '/k8s/persistent-volume-claims/data%2Fa/imports', body, options)
+    expect(api.post).toHaveBeenNthCalledWith(3, '/k8s/persistent-volume-claims/legacy-data/adopt', body, options)
+    expect(api.post).toHaveBeenNthCalledWith(4, '/k8s/persistent-volume-claims/data%2Fa/migrations', body, options)
+    expect(api.post).toHaveBeenNthCalledWith(5, '/k8s/persistent-volume-migrations/migration%2Fa/cleanup', undefined, options)
+    expect(api.post).toHaveBeenNthCalledWith(6, '/k8s/persistent-volume-claims/data%2Fa/backups', body, options)
+    expect(api.post).toHaveBeenNthCalledWith(7, '/k8s/persistent-volume-claims/data%2Fa/backups/backup%2Fa/restore', body, options)
+    expect(api.post).toHaveBeenNthCalledWith(8, '/k8s/persistent-volume-claims/data%2Fa/imports', body, options)
     expect(api.delete).toHaveBeenNthCalledWith(1, '/k8s/persistent-volume-claims/data%2Fa/imports/import%2Fa/backup', body, options)
     expect(api.delete).toHaveBeenNthCalledWith(2, '/k8s/persistent-volume-claims/data%2Fa', body, options)
   })

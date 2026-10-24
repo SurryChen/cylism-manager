@@ -70,6 +70,9 @@ func (f *fakeK8s) DeleteManagedPVCContext(ctx context.Context, ns, name string, 
 	}
 	return f.DeleteManagedPVC(ns, name, id)
 }
+func (f *fakeK8s) AdoptManagedPVCEnvironmentContext(ctx context.Context, _, _ string, _ uint) error {
+	return ctx.Err()
+}
 func (f *fakeK8s) ListStorageClasses() ([]k8sclient.StorageClassInfo, error) { return nil, nil }
 func (f *fakeK8s) ListStorageClassesContext(ctx context.Context) ([]k8sclient.StorageClassInfo, error) {
 	if err := ctx.Err(); err != nil {

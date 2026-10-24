@@ -149,8 +149,8 @@ GET /api/clusters/:id/k8s/certs/issuers
 GET /api/clusters/:id/k8s/certs/status
 GET /api/clusters/:id/k8s/configmaps
 GET /api/clusters/:id/k8s/configmaps/:namespace/:name
-GET /api/clusters/:id/k8s/dashboard
 GET /api/clusters/:id/k8s/daemonsets
+GET /api/clusters/:id/k8s/dashboard
 GET /api/clusters/:id/k8s/deployments
 GET /api/clusters/:id/k8s/deployments/:namespace/:name/pods
 GET /api/clusters/:id/k8s/deployments/:namespace/:name/revisions
@@ -325,9 +325,9 @@ POST /api/applications/:id/deployments
 POST /api/applications/:id/endpoints
 POST /api/applications/:id/integration-handoffs
 POST /api/applications/:id/releases
-POST /api/applications/:id/releases/preflight
 POST /api/applications/:id/releases/:releaseID/retry
 POST /api/applications/:id/releases/:releaseID/rollback
+POST /api/applications/:id/releases/preflight
 POST /api/applications/:id/restarts
 POST /api/auth/login
 POST /api/auth/refresh
@@ -380,6 +380,7 @@ POST /api/clusters/:id/k8s/deployments/:namespace/:name/rollback
 POST /api/clusters/:id/k8s/ingresses
 POST /api/clusters/:id/k8s/namespaces
 POST /api/clusters/:id/k8s/persistent-volume-claims
+POST /api/clusters/:id/k8s/persistent-volume-claims/:name/adopt
 POST /api/clusters/:id/k8s/secrets
 POST /api/clusters/:id/monitoring/alerts/install
 POST /api/clusters/:id/monitoring/alerts/silences
@@ -409,6 +410,7 @@ POST /api/k8s/deployments/:namespace/:name/rollback
 POST /api/k8s/ingresses
 POST /api/k8s/namespaces
 POST /api/k8s/persistent-volume-claims
+POST /api/k8s/persistent-volume-claims/:name/adopt
 POST /api/k8s/persistent-volume-claims/:name/backups
 POST /api/k8s/persistent-volume-claims/:name/backups/:backupID/restore
 POST /api/k8s/persistent-volume-claims/:name/imports

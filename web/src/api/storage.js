@@ -78,6 +78,10 @@ export function createPersistentVolumeClaim(body, options) {
   return post('/k8s/persistent-volume-claims', body, options)
 }
 
+export function adoptPersistentVolumeClaim(name, body, options) {
+  return post(`${claimPath(name)}/adopt`, body, options)
+}
+
 export function createPersistentVolumeMigration(name, body, options) {
   return post(`${claimPath(name)}/migrations`, body, options)
 }

@@ -48,6 +48,39 @@ func TestListManagedPVCsIncludesBoundNodeAndReclaimPolicy(t *testing.T) {
 	}
 }
 
+func TestAdoptManagedPVCEnvironmentOnlyAddsEnvironmentLabel(t *testing.T) {
+	claim := &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{Name: "legacy-data", Namespace: "project-a", Labels: map[string]string{ManagedByLabel: ManagedByValue, "app": "trendradar"}},
+		Spec:       corev1.PersistentVolumeClaimSpec{StorageClassName: stringPtr("local-path")},
+	}
+	client := &Client{Clientset: k8sfake.NewSimpleClientset(claim)}
+	if err := client.AdoptManagedPVCEnvironmentContext(context.Background(), "project-a", "legacy-data", 7); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := client.Clientset.CoreV1().PersistentVolumeClaims("project-a").Get(context.Background(), "legacy-data", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Labels[EnvironmentLabel] != EnvironmentLabelValue(7) || updated.Labels["app"] != "trendradar" || updated.Spec.StorageClassName == nil || *updated.Spec.StorageClassName != "local-path" {
+		t.Fatalf("adoption changed unexpected PVC fields: %#v", updated)
+	}
+	if err := client.AdoptManagedPVCEnvironmentContext(context.Background(), "project-a", "legacy-data", 8); err == nil {
+		t.Fatal("expected association to a different environment to fail")
+	}
+}
+
+func TestAdoptManagedPVCEnvironmentRejectsExternalAndInfrastructureClaims(t *testing.T) {
+	client := &Client{Clientset: k8sfake.NewSimpleClientset(
+		&corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: "external", Namespace: "project-a"}},
+		&corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: "metrics", Namespace: "project-a", Labels: map[string]string{ManagedByLabel: ManagedByValue, InfrastructureLabel: InfrastructureVictoriaMetrics}}},
+	)}
+	for _, name := range []string{"external", "metrics"} {
+		if err := client.AdoptManagedPVCEnvironmentContext(context.Background(), "project-a", name, 7); err == nil {
+			t.Fatalf("expected %s PVC adoption to fail", name)
+		}
+	}
+}
+
 func TestCreatePVCBindingPodPinsClaimToTargetNode(t *testing.T) {
 	client := &Client{Clientset: k8sfake.NewSimpleClientset()}
 	pod, err := client.CreatePVCBindingPodContext(context.Background(), "project-knowledge", "migration-1", "karakeep-data-migration-1", "storage-node-b", "registry.example.com/pause:3.10")

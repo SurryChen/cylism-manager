@@ -101,6 +101,9 @@ func (r clientPVCReconciler) CreateManagedPVCContext(ctx context.Context, ns str
 func (r clientPVCReconciler) DeleteManagedPVCContext(ctx context.Context, ns, name string, id uint) error {
 	return r.client.DeleteManagedPVCContext(ctx, ns, name, id)
 }
+func (r clientPVCReconciler) AdoptManagedPVCEnvironmentContext(ctx context.Context, ns, name string, id uint) error {
+	return r.client.AdoptManagedPVCEnvironmentContext(ctx, ns, name, id)
+}
 func (r clientPVCReconciler) ListStorageClassesContext(ctx context.Context) ([]k8sclient.StorageClassInfo, error) {
 	return r.client.ListStorageClassesContext(ctx)
 }

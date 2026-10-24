@@ -109,6 +109,56 @@ func TestPersistentVolumeClaimsAreScopedToEnvironment(t *testing.T) {
 	}
 }
 
+func TestAdoptPersistentVolumeClaimAssociatesLegacyManagedClaim(t *testing.T) {
+	st, err := store.New(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateProject(&model.Project{Name: "knowledge", OwnerID: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateEnvironment(&model.Environment{ProjectID: 1, Name: "production", Namespace: "project-knowledge-prod"}); err != nil {
+		t.Fatal(err)
+	}
+	client := &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(&corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{
+		Name: "legacy-data", Namespace: "project-knowledge-prod", Labels: map[string]string{k8sclient.ManagedByLabel: k8sclient.ManagedByValue},
+	}})}
+	pvc, migration, workloads := NewPVCAdapters(client)
+	h := NewStorageHandlerWithDependencies(storageservice.NewService(client, st, st), st, nil, pvc, migration, workloads)
+	r := gin.New()
+	r.POST("/api/k8s/persistent-volume-claims/:name/adopt", h.AdoptPersistentVolumeClaim)
+	response := serve(r, newJSONRequest(http.MethodPost, "/api/k8s/persistent-volume-claims/legacy-data/adopt", map[string]any{"namespace": "project-knowledge-prod", "environment_id": 1}))
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"environment_id":1`) {
+		t.Fatalf("unexpected adoption response: %d %s", response.Code, response.Body.String())
+	}
+	claim, err := client.GetPVCInfoContext(context.Background(), "project-knowledge-prod", "legacy-data")
+	if err != nil || claim.EnvironmentID != 1 {
+		t.Fatalf("expected PVC environment label to be persisted, claim=%#v err=%v", claim, err)
+	}
+}
+
+func TestAdoptPersistentVolumeClaimRejectsNamespaceMismatch(t *testing.T) {
+	st, err := store.New(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateProject(&model.Project{Name: "knowledge", OwnerID: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateEnvironment(&model.Environment{ProjectID: 1, Name: "production", Namespace: "project-knowledge-prod"}); err != nil {
+		t.Fatal(err)
+	}
+	client := &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset()}
+	pvc, migration, workloads := NewPVCAdapters(client)
+	h := NewStorageHandlerWithDependencies(storageservice.NewService(client, st, st), st, nil, pvc, migration, workloads)
+	r := gin.New()
+	r.POST("/claims/:name/adopt", h.AdoptPersistentVolumeClaim)
+	response := serve(r, newJSONRequest(http.MethodPost, "/claims/legacy-data/adopt", map[string]any{"namespace": "wrong-namespace", "environment_id": 1}))
+	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "不匹配") {
+		t.Fatalf("expected namespace mismatch to be rejected, got %d %s", response.Code, response.Body.String())
+	}
+}
+
 func TestPersistentVolumeClaimsListClusterInventoryWithoutEnvironment(t *testing.T) {
 	st, err := store.New(":memory:")
 	if err != nil {

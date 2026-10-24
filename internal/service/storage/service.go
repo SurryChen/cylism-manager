@@ -48,6 +48,7 @@ type PVCRepositoryAdapter interface {
 	GetManagedPVCContext(context.Context, string, string, uint) (*k8sclient.PersistentVolumeClaimInfo, error)
 	CreateManagedPVCContext(context.Context, string, uint, k8sclient.PersistentVolumeClaimRequest) (*corev1.PersistentVolumeClaim, error)
 	DeleteManagedPVCContext(context.Context, string, string, uint) error
+	AdoptManagedPVCEnvironmentContext(context.Context, string, string, uint) error
 	ListStorageClassesContext(context.Context) ([]k8sclient.StorageClassInfo, error)
 }
 
