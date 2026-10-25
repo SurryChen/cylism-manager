@@ -10,6 +10,7 @@ import (
 
 	"github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -18,6 +19,7 @@ import (
 
 const MyCNFRestartAnnotation = "cylism.io/mysql-config-revision"
 const mysqlResourceManagedAnnotation = "cylism.io/mysql-resources-managed"
+const mysqlExtraConfigHeader = "# Additional user configurations taken from spec.mycnf in InnoDBCluster.\n# Do not edit directly.\n"
 
 var mysqlConfigOptions = map[string]bool{
 	"innodb_buffer_pool_size":         true,
@@ -283,6 +285,9 @@ func RestartMySQLForConfig(ctx context.Context, client *k8s.Client, item *model.
 	if sts.Spec.Replicas == nil || *sts.Spec.Replicas < 1 {
 		return fmt.Errorf("MySQL 工作负载没有运行中的实例")
 	}
+	if sts.Spec.UpdateStrategy.Type == appsv1.OnDeleteStatefulSetStrategyType {
+		return fmt.Errorf("MySQL 工作负载使用 OnDelete 更新策略，无法自动滚动重启")
+	}
 	index := -1
 	for i := range sts.Spec.Template.Spec.Containers {
 		if sts.Spec.Template.Spec.Containers[i].Name == "mysql" {
@@ -322,11 +327,59 @@ func RestartMySQLForConfig(ctx context.Context, client *k8s.Client, item *model.
 		delete(container.Resources.Limits, corev1.ResourceMemory)
 		delete(sts.Spec.Template.Annotations, mysqlResourceManagedAnnotation)
 	}
+	if err := syncMySQLInitConfig(ctx, client, item, sts, value); err != nil {
+		return err
+	}
 	sts.Spec.Template.Annotations[MyCNFRestartAnnotation] = MyCNFRevision(value)
 	sts.Spec.Template.Annotations["cylism.io/mysql-config-restarted-at"] = time.Now().UTC().Format(time.RFC3339Nano)
+	if sts.Spec.UpdateStrategy.RollingUpdate == nil {
+		sts.Spec.UpdateStrategy.RollingUpdate = &appsv1.RollingUpdateStatefulSetStrategy{}
+	}
+	zero := int32(0)
+	sts.Spec.UpdateStrategy.RollingUpdate.Partition = &zero
 	_, err = sets.Update(ctx, sts, metav1.UpdateOptions{})
 	if err != nil {
 		return fmt.Errorf("提交 MySQL 滚动重启: %w", err)
+	}
+	return nil
+}
+
+func syncMySQLInitConfig(ctx context.Context, client *k8s.Client, item *model.MySQLCluster, sts *appsv1.StatefulSet, value string) error {
+	name := ""
+	for _, volume := range sts.Spec.Template.Spec.Volumes {
+		if volume.Name == "initconfdir" && volume.ConfigMap != nil {
+			name = volume.ConfigMap.Name
+			break
+		}
+	}
+	if name == "" {
+		return fmt.Errorf("MySQL 工作负载缺少初始化配置卷")
+	}
+	configMaps := client.Clientset.CoreV1().ConfigMaps(item.Namespace)
+	configMap, err := configMaps.Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("读取 MySQL 初始化配置: %w", err)
+	}
+	owned := false
+	for _, owner := range configMap.OwnerReferences {
+		if owner.Kind == "InnoDBCluster" && owner.Name == item.ResourceName {
+			owned = true
+			break
+		}
+	}
+	if !owned || configMap.Data == nil {
+		return fmt.Errorf("MySQL 初始化配置不属于该集群")
+	}
+	if _, exists := configMap.Data["99-extra.cnf"]; !exists {
+		return fmt.Errorf("MySQL 初始化配置缺少 99-extra.cnf")
+	}
+	content := mysqlExtraConfigHeader + value
+	if configMap.Data["99-extra.cnf"] == content {
+		return nil
+	}
+	configMap.Data["99-extra.cnf"] = content
+	if _, err := configMaps.Update(ctx, configMap, metav1.UpdateOptions{}); err != nil {
+		return fmt.Errorf("同步 MySQL 初始化配置: %w", err)
 	}
 	return nil
 }

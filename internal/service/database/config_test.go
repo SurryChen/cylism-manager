@@ -95,8 +95,8 @@ func TestMyCNFUpdateAndRestartPreserveCluster(t *testing.T) {
 	client := &k8s.Client{
 		DynamicClient: dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{innoDBClusterGVR: "InnoDBClusterList"}, object),
 		Clientset: k8sfake.NewSimpleClientset(&appsv1.StatefulSet{ObjectMeta: metav1.ObjectMeta{Name: item.ResourceName, Namespace: item.Namespace}, Spec: appsv1.StatefulSetSpec{
-			Replicas: int32ptr(1), Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "mysql"}, {Name: "sidecar"}}}},
-		}}),
+			Replicas: int32ptr(1), Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "mysql"}, {Name: "sidecar"}}, Volumes: []corev1.Volume{{Name: "initconfdir", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: item.ResourceName + "-initconf"}}}}}}},
+		}}, mysqlInitConfig(item)),
 	}
 	config := "[mysqld]\ninnodb_buffer_pool_size=128M\n"
 	if err := UpdateMyCNF(ctx, client, item, config); err != nil {
@@ -109,6 +109,10 @@ func TestMyCNFUpdateAndRestartPreserveCluster(t *testing.T) {
 	}
 	if err := RestartMySQLForConfig(ctx, client, item, config); err != nil {
 		t.Fatal(err)
+	}
+	initConfig, err := client.Clientset.CoreV1().ConfigMaps(item.Namespace).Get(ctx, item.ResourceName+"-initconf", metav1.GetOptions{})
+	if err != nil || initConfig.Data["99-extra.cnf"] != mysqlExtraConfigHeader+config {
+		t.Fatalf("initialization config = %v, %v", initConfig, err)
 	}
 	item.ConfigRestartRequired = false
 	_, pending, err = MyCNFState(ctx, client, item)
@@ -133,11 +137,12 @@ func TestRestartMySQLAppliesResourceLimitsToStatefulSet(t *testing.T) {
 	item := &model.MySQLCluster{ResourceName: "mysql-limits", Namespace: "mysql", DatabaseNodes: []string{"node-a"}, StorageSize: "10Gi", CPULimit: "1", MemoryLimit: "1Gi"}
 	object := ClusterObject(item)
 	original := &appsv1.StatefulSet{ObjectMeta: metav1.ObjectMeta{Name: item.ResourceName, Namespace: item.Namespace}, Spec: appsv1.StatefulSetSpec{
-		Replicas: int32ptr(1), Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "mysql"}, {Name: "sidecar"}}}},
+		Replicas: int32ptr(1), Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "mysql"}, {Name: "sidecar"}}, Volumes: []corev1.Volume{{Name: "initconfdir", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: item.ResourceName + "-initconf"}}}}}}},
+		UpdateStrategy: appsv1.StatefulSetUpdateStrategy{Type: appsv1.RollingUpdateStatefulSetStrategyType, RollingUpdate: &appsv1.RollingUpdateStatefulSetStrategy{Partition: int32ptr(1)}},
 	}}
 	client := &k8s.Client{
 		DynamicClient: dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{innoDBClusterGVR: "InnoDBClusterList"}, object),
-		Clientset:     k8sfake.NewSimpleClientset(original),
+		Clientset:     k8sfake.NewSimpleClientset(original, mysqlInitConfig(item)),
 	}
 	value := EffectiveMyCNF("", item.MemoryLimit)
 	if err := RestartMySQLForConfig(ctx, client, item, value); err != nil {
@@ -157,6 +162,13 @@ func TestRestartMySQLAppliesResourceLimitsToStatefulSet(t *testing.T) {
 	if updated.Spec.Template.Annotations[mysqlResourceManagedAnnotation] != "true" || updated.Spec.Template.Annotations[MyCNFRestartAnnotation] != MyCNFRevision(value) {
 		t.Fatalf("restart annotations = %v", updated.Spec.Template.Annotations)
 	}
+	if updated.Spec.UpdateStrategy.RollingUpdate.Partition == nil || *updated.Spec.UpdateStrategy.RollingUpdate.Partition != 0 {
+		t.Fatalf("rolling update remains partitioned: %v", updated.Spec.UpdateStrategy.RollingUpdate)
+	}
+	initConfig, err := client.Clientset.CoreV1().ConfigMaps(item.Namespace).Get(ctx, item.ResourceName+"-initconf", metav1.GetOptions{})
+	if err != nil || initConfig.Data["99-extra.cnf"] != mysqlExtraConfigHeader+value {
+		t.Fatalf("initialization config = %v, %v", initConfig, err)
+	}
 	item.CPULimit, item.MemoryLimit = "", ""
 	if err := RestartMySQLForConfig(ctx, client, item, ""); err != nil {
 		t.Fatal(err)
@@ -171,3 +183,13 @@ func TestRestartMySQLAppliesResourceLimitsToStatefulSet(t *testing.T) {
 }
 
 func int32ptr(value int32) *int32 { return &value }
+
+func mysqlInitConfig(item *model.MySQLCluster) *corev1.ConfigMap {
+	return &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: item.ResourceName + "-initconf", Namespace: item.Namespace,
+			OwnerReferences: []metav1.OwnerReference{{Kind: "InnoDBCluster", Name: item.ResourceName}},
+		},
+		Data: map[string]string{"99-extra.cnf": mysqlExtraConfigHeader},
+	}
+}
