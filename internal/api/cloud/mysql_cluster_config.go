@@ -15,7 +15,7 @@ func (h *DatabaseHandler) MySQLClusterConfig(c *gin.Context) {
 		return
 	}
 	if item.Status == "draft" || item.Status == "paused" {
-		apiShared.Success(c, gin.H{"mycnf": item.MyCNF, "restart_required": false})
+		apiShared.Success(c, gin.H{"mycnf": item.MyCNF, "effective_mycnf": database.EffectiveMyCNF(item.MyCNF, item.MemoryLimit), "cpu_limit": item.CPULimit, "memory_limit": item.MemoryLimit, "restart_required": false})
 		return
 	}
 	if h.client == nil {
@@ -32,7 +32,7 @@ func (h *DatabaseHandler) MySQLClusterConfig(c *gin.Context) {
 		apiShared.ValidationError(c, err.Error())
 		return
 	}
-	apiShared.Success(c, gin.H{"mycnf": value, "restart_required": pending})
+	apiShared.Success(c, gin.H{"mycnf": item.MyCNF, "effective_mycnf": value, "cpu_limit": item.CPULimit, "memory_limit": item.MemoryLimit, "restart_required": pending})
 }
 
 func (h *DatabaseHandler) UpdateMySQLClusterConfig(c *gin.Context) {
@@ -41,7 +41,9 @@ func (h *DatabaseHandler) UpdateMySQLClusterConfig(c *gin.Context) {
 		return
 	}
 	var req struct {
-		MyCNF string `json:"mycnf"`
+		MyCNF       string  `json:"mycnf"`
+		CPULimit    *string `json:"cpu_limit"`
+		MemoryLimit *string `json:"memory_limit"`
 	}
 	if c.ShouldBindJSON(&req) != nil {
 		apiShared.BadRequest(c, "MySQL 配置无效")
@@ -52,6 +54,18 @@ func (h *DatabaseHandler) UpdateMySQLClusterConfig(c *gin.Context) {
 		apiShared.ValidationError(c, err.Error())
 		return
 	}
+	cpu, memory := item.CPULimit, item.MemoryLimit
+	if req.CPULimit != nil || req.MemoryLimit != nil {
+		if req.CPULimit == nil || req.MemoryLimit == nil {
+			apiShared.ValidationError(c, "请同时设置 MySQL CPU 和内存上限")
+			return
+		}
+		cpu, memory, err = database.ValidateMySQLResources(*req.CPULimit, *req.MemoryLimit)
+		if err != nil {
+			apiShared.ValidationError(c, err.Error())
+			return
+		}
+	}
 	lockValue, _ := h.mysqlSyncLocks.LoadOrStore(item.ID, &sync.Mutex{})
 	lock := lockValue.(*sync.Mutex)
 	lock.Lock()
@@ -59,6 +73,9 @@ func (h *DatabaseHandler) UpdateMySQLClusterConfig(c *gin.Context) {
 	if err := h.store.DB().First(item, item.ID).Error; err != nil {
 		apiShared.DBError(c, err.Error())
 		return
+	}
+	if req.CPULimit == nil && req.MemoryLimit == nil {
+		cpu, memory = item.CPULimit, item.MemoryLimit
 	}
 	if item.Status != "draft" && item.Status != "ready" {
 		apiShared.ValidationError(c, "仅待部署或运行中的集群可修改 MySQL 配置")
@@ -83,17 +100,18 @@ func (h *DatabaseHandler) UpdateMySQLClusterConfig(c *gin.Context) {
 			apiShared.ValidationError(c, err.Error())
 			return
 		}
-		if err := database.UpdateMyCNF(c.Request.Context(), client, item, value); err != nil {
+		if err := database.UpdateMySQLSettings(c.Request.Context(), client, item, value, cpu, memory); err != nil {
 			apiShared.ValidationError(c, err.Error())
 			return
 		}
 	}
-	restartRequired := item.Status == "ready" && (item.ConfigRestartRequired || value != item.MyCNF)
-	if err := h.store.DB().Model(item).Updates(map[string]any{"my_cnf": value, "config_restart_required": restartRequired}).Error; err != nil {
+	restartRequired := item.Status == "ready" && (item.ConfigRestartRequired || value != item.MyCNF || cpu != item.CPULimit || memory != item.MemoryLimit)
+	if err := h.store.DB().Model(item).Updates(map[string]any{"my_cnf": value, "cpu_limit": cpu, "memory_limit": memory, "config_restart_required": restartRequired}).Error; err != nil {
 		apiShared.DBError(c, "Operator 配置已更新，但平台保存失败，请刷新后重试")
 		return
 	}
 	item.MyCNF = value
+	item.CPULimit, item.MemoryLimit = cpu, memory
 	item.ConfigRestartRequired = restartRequired
 	apiShared.Success(c, item)
 }
@@ -129,7 +147,7 @@ func (h *DatabaseHandler) RestartMySQLClusterForConfig(c *gin.Context) {
 		apiShared.ValidationError(c, err.Error())
 		return
 	}
-	if !pending || actual != item.MyCNF {
+	if !pending || actual != database.EffectiveMyCNF(item.MyCNF, item.MemoryLimit) {
 		apiShared.ValidationError(c, "MySQL 配置没有待应用的修改，或平台记录与 Operator 配置不一致")
 		return
 	}

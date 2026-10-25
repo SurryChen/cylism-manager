@@ -3,6 +3,7 @@ package database
 import (
 	"context"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/cylism/cylism-manager/internal/k8s"
@@ -101,6 +102,26 @@ func TestClusterObjectAllowsNoInitialRouter(t *testing.T) {
 	item.RouterInstances = nil
 	if count := RouterInstanceCount(item); count != 1 {
 		t.Fatalf("legacy router count = %d", count)
+	}
+}
+
+func TestClusterObjectIncludesMySQLResourceLimits(t *testing.T) {
+	item := &model.MySQLCluster{ResourceName: "mysql-small", Namespace: Namespace, DatabaseNodes: []string{"db-a"}, StorageSize: "10Gi", CPULimit: "1", MemoryLimit: "1Gi"}
+	object := ClusterObject(item)
+	containers, found, err := unstructured.NestedSlice(object.Object, "spec", "podSpec", "containers")
+	if err != nil || !found || len(containers) != 1 {
+		t.Fatalf("pod containers = %v, found=%v, err=%v", containers, found, err)
+	}
+	resources := containers[0].(map[string]any)["resources"].(map[string]any)
+	for _, kind := range []string{"requests", "limits"} {
+		values := resources[kind].(map[string]any)
+		if values["cpu"] != "1" || values["memory"] != "1Gi" {
+			t.Fatalf("%s = %v", kind, values)
+		}
+	}
+	config, _, _ := unstructured.NestedString(object.Object, "spec", "mycnf")
+	if !strings.Contains(config, "innodb_buffer_pool_size=256M") {
+		t.Fatalf("my.cnf = %q", config)
 	}
 }
 

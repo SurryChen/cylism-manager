@@ -32,6 +32,8 @@ func TestDraftMySQLConfigPersistsAndRejectsOperatorOptions(t *testing.T) {
 	}{
 		{`{"mycnf":"[mysqld]\ninnodb_buffer_pool_size=128M"}`, http.StatusOK},
 		{`{"mycnf":"[mysqld]\nperformance_schema=OFF"}`, http.StatusBadRequest},
+		{`{"mycnf":"","cpu_limit":"1","memory_limit":"512Mi"}`, http.StatusBadRequest},
+		{`{"mycnf":"","cpu_limit":"1","memory_limit":"1Gi"}`, http.StatusOK},
 	} {
 		request := httptest.NewRequest(http.MethodPut, "/1/config", strings.NewReader(tc.body))
 		request.Header.Set("Content-Type", "application/json")
@@ -44,12 +46,12 @@ func TestDraftMySQLConfigPersistsAndRejectsOperatorOptions(t *testing.T) {
 	if err := s.DB().First(&item, item.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if item.MyCNF != "[mysqld]\ninnodb_buffer_pool_size=128M\n" {
-		t.Fatalf("persisted config = %q", item.MyCNF)
+	if item.MyCNF != "" || item.CPULimit != "1" || item.MemoryLimit != "1Gi" {
+		t.Fatalf("persisted config = %q, cpu=%q, memory=%q", item.MyCNF, item.CPULimit, item.MemoryLimit)
 	}
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/1/config", nil))
-	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "innodb_buffer_pool_size=128M") {
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "innodb_buffer_pool_size=256M") {
 		t.Fatalf("config read status = %d, body = %s", response.Code, response.Body.String())
 	}
 }

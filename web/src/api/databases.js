@@ -11,7 +11,7 @@ export const getMySQLClusterNodes = id => api.get(`${clusterBase}/${segment(id)}
 export const updateMySQLClusterResourcePool = (id, databaseNodes) => api.put(`${clusterBase}/${segment(id)}/resource-pool`, { database_nodes: databaseNodes })
 export const getMySQLClusterRuntime = id => api.get(`${clusterBase}/${segment(id)}/runtime`)
 export const getMySQLClusterConfig = id => api.get(`${clusterBase}/${segment(id)}/config`)
-export const updateMySQLClusterConfig = (id, mycnf) => api.put(`${clusterBase}/${segment(id)}/config`, { mycnf })
+export const updateMySQLClusterConfig = (id, payload) => api.put(`${clusterBase}/${segment(id)}/config`, typeof payload === 'string' ? { mycnf: payload } : payload)
 export const restartMySQLClusterForConfig = id => api.post(`${clusterBase}/${segment(id)}/config/restart`, {})
 export const preflightMySQLCluster = (id, payload) => api.post(`${clusterBase}/${segment(id)}/preflight`, payload)
 export const retryMySQLClusterPod = (id, podName) => api.post(`${clusterBase}/${segment(id)}/pods/${segment(podName)}/retry`, {})

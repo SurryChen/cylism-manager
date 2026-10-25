@@ -300,6 +300,12 @@ func ClusterObject(item *model.MySQLCluster) *unstructured.Unstructured {
 	}
 	dbSpec := placement(item.DatabaseNodes)
 	dbSpec["tolerations"] = []any{map[string]any{"key": databaseNoScheduleTaintKey, "operator": "Equal", "value": "true", "effect": "NoSchedule"}}
+	if item.CPULimit != "" && item.MemoryLimit != "" {
+		dbSpec["containers"] = []any{map[string]any{"name": "mysql", "resources": map[string]any{
+			"requests": map[string]any{"cpu": item.CPULimit, "memory": item.MemoryLimit},
+			"limits":   map[string]any{"cpu": item.CPULimit, "memory": item.MemoryLimit},
+		}}}
+	}
 	routerSpec := placement(item.RouterNodes)
 	setAntiAffinity(dbSpec, item.ResourceName, "mysqld", true)
 	if len(item.RouterNodes) > 0 {
@@ -324,8 +330,8 @@ func ClusterObject(item *model.MySQLCluster) *unstructured.Unstructured {
 			"router":                     router,
 		},
 	}}
-	if item.MyCNF != "" {
-		object.Object["spec"].(map[string]any)["mycnf"] = item.MyCNF
+	if value := EffectiveMyCNF(item.MyCNF, item.MemoryLimit); value != "" {
+		object.Object["spec"].(map[string]any)["mycnf"] = value
 	}
 	return object
 }

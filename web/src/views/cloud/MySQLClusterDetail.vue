@@ -84,11 +84,17 @@
     <PodTerminal v-if="terminalPod" :pod="{ name: terminalPod.name, namespace: cluster.namespace, containers: ['mysql'] }" :mysql-cluster-id="id" @close="terminalPod = null" />
     <BaseModal :open="configOpen" title="MySQL 配置" size="large" teleport :show-close="!configSaving" :close-on-overlay="!configSaving" :close-on-escape="!configSaving" @close="configOpen = false">
       <div class="deploy-form">
-        <label class="form-group"><span class="form-label">my.cnf 附加配置</span><textarea v-model="configText" class="form-input mysql-config-editor mono" spellcheck="false" :disabled="configLoading || configSaving" aria-label="MySQL my.cnf 附加配置" placeholder="[mysqld]&#10;innodb_buffer_pool_size=128M&#10;innodb_log_buffer_size=64M"></textarea></label>
-        <p class="cell-secondary">支持内存及连接数相关参数。保存后需滚动重启 MySQL 实例才能生效；单实例重启期间连接会中断。</p>
+        <div class="mysql-resource-fields">
+          <label class="form-group"><span class="form-label">每实例 CPU 上限（核）</span><input v-model.number="configCPU" class="form-input" type="number" min="0.1" max="16" step="0.1" aria-label="每实例 CPU 上限" placeholder="例如 1"></label>
+          <label class="form-group"><span class="form-label">每实例内存上限（GiB）</span><input v-model.number="configMemoryGi" class="form-input" type="number" min="1" max="64" step="0.25" aria-label="每实例内存上限" placeholder="例如 1"></label>
+        </div>
+        <p class="cell-secondary">留空表示不限制 MySQL 容器。上限不包含 Operator sidecar 和 Router；设置 1 核、1 GiB 时将自动生成低内存参数。</p>
+        <label class="form-group"><span class="form-label">my.cnf 自定义配置</span><textarea v-model="configText" class="form-input mysql-config-editor mono" spellcheck="false" :disabled="configLoading || configSaving" aria-label="MySQL my.cnf 附加配置" placeholder="[mysqld]&#10;innodb_log_buffer_size=64M"></textarea></label>
+        <label v-if="configEffective && !configChanged" class="form-group"><span class="form-label">最终生效的 my.cnf</span><textarea class="form-input mysql-config-preview mono" :value="configEffective" readonly aria-label="最终生效的 MySQL 配置"></textarea></label>
+        <p class="cell-secondary">资源参数优先于同名自定义参数。运行中保存后需滚动重启；单实例重启期间连接会中断。</p>
         <p v-if="configRestartRequired" class="cell-secondary">配置已保存，等待滚动重启应用。</p>
       </div>
-      <template #actions><button class="btn" type="button" :disabled="configSaving" @click="configOpen = false">关闭</button><button v-if="configRestartRequired && cluster?.status === 'ready'" class="btn" type="button" :disabled="configSaving || configText !== configSaved" @click="openConfigRestartConfirmation">滚动重启</button><button class="btn btn-primary" type="button" :disabled="configSaving || configLoading || configText === configSaved" @click="saveMySQLConfig">{{ configSaving ? '保存中...' : '保存配置' }}</button></template>
+      <template #actions><button class="btn" type="button" :disabled="configSaving" @click="configOpen = false">关闭</button><button v-if="configRestartRequired && cluster?.status === 'ready'" class="btn" type="button" :disabled="configSaving || configChanged" @click="openConfigRestartConfirmation">滚动重启</button><button class="btn btn-primary" type="button" :disabled="configSaving || configLoading || !configChanged || !configResourcesValid" @click="saveMySQLConfig">{{ configSaving ? '保存中...' : '保存配置' }}</button></template>
     </BaseModal>
     <ConfirmDialog :open="configRestartOpen" title="滚动重启 MySQL" message="将按 StatefulSet 的滚动更新顺序重建 MySQL Pod，以应用已保存的配置。单实例集群会短暂不可用；已有连接可能中断。PVC 和集群资源会保留。" confirm-text="确认重启" busy-text="正在提交..." :busy="configRestarting" @confirm="restartMySQLConfig" @cancel="cancelConfigRestartConfirmation" />
     <BaseModal :open="connectionDetailsOpen" title="连接信息" size="large" teleport @close="connectionDetailsOpen = false">
@@ -207,6 +213,12 @@ const connectionDetailsOpen = ref(false)
 const terminalPod = ref(null)
 const configOpen = ref(false), configLoading = ref(false), configSaving = ref(false), configRestartOpen = ref(false), configRestarting = ref(false)
 const configText = ref(''), configSaved = ref(''), configRestartRequired = ref(false)
+const configCPU = ref(''), configMemoryGi = ref(''), savedCPU = ref(''), savedMemoryGi = ref(''), configEffective = ref('')
+const configChanged = computed(() => configText.value !== configSaved.value || configCPU.value !== savedCPU.value || configMemoryGi.value !== savedMemoryGi.value)
+const configResourcesValid = computed(() => (configCPU.value === '' && configMemoryGi.value === '') || (
+  Number.isFinite(configCPU.value) && configCPU.value >= 0.1 && configCPU.value <= 16 &&
+  Number.isFinite(configMemoryGi.value) && configMemoryGi.value >= 1 && configMemoryGi.value <= 64
+))
 const pullingPod = ref('')
 const scaling = ref('')
 const scaleConfirmation = ref('')
@@ -288,19 +300,29 @@ async function openMySQLConfig() {
     const result = await getMySQLClusterConfig(props.id)
     configText.value = result.mycnf || ''
     configSaved.value = configText.value
+    configCPU.value = result.cpu_limit ? (result.cpu_limit.endsWith('m') ? Number(result.cpu_limit.slice(0, -1)) / 1000 : Number(result.cpu_limit)) : ''
+    configMemoryGi.value = result.memory_limit ? (result.memory_limit.endsWith('Mi') ? Number(result.memory_limit.slice(0, -2)) / 1024 : Number(result.memory_limit.replace(/Gi$/, ''))) : ''
+    savedCPU.value = configCPU.value
+    savedMemoryGi.value = configMemoryGi.value
+    configEffective.value = result.effective_mycnf || ''
     configRestartRequired.value = Boolean(result.restart_required)
   } catch (failure) { configOpen.value = false; error.value = failure.message || '读取 MySQL 配置失败' }
   finally { configLoading.value = false }
 }
 async function saveMySQLConfig() {
-  if (configSaving.value || configLoading.value || configText.value === configSaved.value) return
+  if (configSaving.value || configLoading.value || !configChanged.value || !configResourcesValid.value) return
   configSaving.value = true
   try {
-    const item = await updateMySQLClusterConfig(props.id, configText.value)
+    const item = await updateMySQLClusterConfig(props.id, { mycnf: configText.value, cpu_limit: configCPU.value === '' ? '' : String(configCPU.value), memory_limit: configMemoryGi.value === '' ? '' : `${configMemoryGi.value}Gi` })
     setCluster(item)
     const result = await getMySQLClusterConfig(props.id)
     configText.value = result.mycnf || ''
     configSaved.value = configText.value
+    configCPU.value = result.cpu_limit ? (result.cpu_limit.endsWith('m') ? Number(result.cpu_limit.slice(0, -1)) / 1000 : Number(result.cpu_limit)) : ''
+    configMemoryGi.value = result.memory_limit ? (result.memory_limit.endsWith('Mi') ? Number(result.memory_limit.slice(0, -2)) / 1024 : Number(result.memory_limit.replace(/Gi$/, ''))) : ''
+    savedCPU.value = configCPU.value
+    savedMemoryGi.value = configMemoryGi.value
+    configEffective.value = result.effective_mycnf || ''
     configRestartRequired.value = Boolean(result.restart_required)
   } catch (failure) { error.value = failure.message || '保存 MySQL 配置失败' }
   finally { configSaving.value = false }
@@ -757,6 +779,9 @@ onBeforeUnmount(() => clearInterval(polling))
 .deploy-form .data-table { min-width: 550px; }
 .deploy-form input[type=checkbox] { accent-color: var(--action-primary); }
 .mysql-config-editor { display: block; width: 100%; min-height: 220px; resize: vertical; line-height: 1.5; }
+.mysql-config-preview { display: block; width: 100%; min-height: 190px; resize: vertical; line-height: 1.5; }
+.mysql-resource-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-12); }
+@media (max-width: 640px) { .mysql-resource-fields { grid-template-columns: 1fr; } }
 .resource-pool-table { max-height: min(48dvh, 400px); overflow: auto; }
 .resource-pool-table .data-table { min-width: 0; table-layout: fixed; }
 .resource-pool-table .data-table th:first-child { width: 48px; }

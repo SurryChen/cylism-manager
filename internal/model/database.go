@@ -53,6 +53,8 @@ type MySQLCluster struct {
 	StorageSize           string    `gorm:"size:32" json:"storage_size"`
 	StorageClass          string    `gorm:"size:128" json:"storage_class"`
 	MyCNF                 string    `gorm:"type:text" json:"mycnf"`
+	CPULimit              string    `gorm:"size:32" json:"cpu_limit"`
+	MemoryLimit           string    `gorm:"size:32" json:"memory_limit"`
 	ConfigRestartRequired bool      `gorm:"not null;default:false" json:"config_restart_required"`
 	EncryptedRoot         string    `gorm:"type:text" json:"-"`
 	Status                string    `gorm:"size:32;not null" json:"status"`
