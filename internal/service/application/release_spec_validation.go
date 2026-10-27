@@ -22,6 +22,9 @@ func ValidateReleaseSpec(spec ReleaseSpec) []ValidationIssue {
 	}
 	issues = append(issues, validateContainerArguments("command", spec.Command)...)
 	issues = append(issues, validateContainerArguments("args", spec.Args)...)
+	if spec.DNSNDots != nil && (*spec.DNSNDots < 0 || *spec.DNSNDots > 15) {
+		issues = append(issues, ValidationIssue{Field: "dns_ndots", Message: "DNS ndots 必须在 0 到 15 之间"})
+	}
 	if strings.TrimSpace(spec.NodeName) != "" && len(validation.IsDNS1123Subdomain(spec.NodeName)) > 0 {
 		issues = append(issues, ValidationIssue{Field: "node_name", Message: "部署节点名称无效"})
 	}

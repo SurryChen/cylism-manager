@@ -104,7 +104,9 @@ func TestCreateRestartReleaseUsesCurrentTemplateAndSanitizesSecrets(t *testing.T
 	app := createApplicationForReleaseRuntimeTest(t, s)
 	key := []byte("01234567890123456789012345678901")
 
+	ndots := 1
 	currentTemplateSpec := application.ReleaseSpec{
+		DNSNDots:      &ndots,
 		Image:         "ghcr.io/example/hysteria:template",
 		Command:       []string{"hysteria", "server", "-c", "/etc/hysteria/config.yaml"},
 		ContainerPort: 8443,
@@ -171,6 +173,9 @@ func TestCreateRestartReleaseUsesCurrentTemplateAndSanitizesSecrets(t *testing.T
 	}, snapshot)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if snapshot.DNSNDots == nil || *snapshot.DNSNDots != 1 || resources.Deployment.Spec.Template.Spec.DNSConfig == nil || *resources.Deployment.Spec.Template.Spec.DNSConfig.Options[0].Value != "1" {
+		t.Fatalf("restart did not apply current template DNS setting: %+v", snapshot)
 	}
 	if got := strings.Join(resources.Deployment.Spec.Template.Spec.Containers[0].Command, " "); got != strings.Join(currentTemplateSpec.Command, " ") {
 		t.Fatalf("restart pod template command = %q, want %q", got, strings.Join(currentTemplateSpec.Command, " "))

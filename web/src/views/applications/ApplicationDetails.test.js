@@ -56,6 +56,12 @@ describe('ApplicationDetails view', () => {
     expect(wrapper.text()).toContain('标准生产配置')
     expect(wrapper.text()).toContain('api.example.com')
     expect(wrapper.text()).toContain('admin.example.com')
+    expect(wrapper.find('.application-settings-section').exists()).toBe(false)
+    expect(wrapper.find('.section-tabs-actions [aria-label="应用设置"]').exists()).toBe(true)
+    expect(wrapper.find('.capability-list').exists()).toBe(false)
+    expect(wrapper.find('.detail-config-card > :first-child').classes()).toContain('template-section')
+    expect(wrapper.find('.deploy-webhook-details').attributes('open')).toBeUndefined()
+    await wrapper.find('[aria-label="应用设置"]').trigger('click')
     expect(wrapper.find('[aria-label="工作负载类型"].select-menu-native').element.value).toBe('deployment')
   })
 
@@ -183,14 +189,18 @@ describe('ApplicationDetails view', () => {
     })
     await new Promise(resolve => setTimeout(resolve, 0))
 
+    await wrapper.find('[aria-label="应用设置"]').trigger('click')
     expect(wrapper.find('.capability-list input').element.value).toBe('hysteria2')
     await wrapper.find('.capability-section .section-heading .btn').trigger('click')
     await wrapper.findAll('[aria-label="能力标签"]')[1].setValue('metrics')
-    await wrapper.find('.section-actions .btn').trigger('click')
+    await wrapper.find('.capability-section .base-modal-actions .btn-primary').trigger('click')
 
     expect(api.put).toHaveBeenCalledWith('/applications/1/capabilities', { capabilities: ['hysteria2', 'metrics'] })
     expect(api.put).not.toHaveBeenCalledWith(expect.stringContaining('deployment-templates'), expect.anything())
-    expect(wrapper.findAll('[aria-label="能力标签"]')).toHaveLength(2)
+    expect(wrapper.find('.capability-section').exists()).toBe(false)
+    await wrapper.find('[aria-label="应用设置"]').trigger('click')
+    expect(wrapper.findAll('[aria-label="能力标签"]').map(input => input.element.value)).toEqual(['hysteria2', 'metrics'])
+    wrapper.unmount()
   })
 
   it('allows an empty capability list and shows capability API errors', async () => {
@@ -203,8 +213,9 @@ describe('ApplicationDetails view', () => {
     })
     await new Promise(resolve => setTimeout(resolve, 0))
 
+    await wrapper.find('[aria-label="应用设置"]').trigger('click')
     await wrapper.find('.capability-row .icon-button').trigger('click')
-    await wrapper.find('.section-actions .btn').trigger('click')
+    await wrapper.find('.capability-section .base-modal-actions .btn-primary').trigger('click')
 
     expect(api.put).toHaveBeenCalledWith('/applications/1/capabilities', { capabilities: [] })
     expect(document.body.querySelector('.error-notice')?.textContent).toContain('能力标签格式无效')
@@ -322,6 +333,63 @@ describe('ApplicationDetails view', () => {
     expect(wrapper.text()).toContain('由集群负载均衡器分配外部地址，适用于 TCP 或 UDP 直出。')
   })
 
+  it('shows one template section at a time and preserves edits across sections', async () => {
+    const { api } = await import('../../api/index.js')
+    api.post.mockReset()
+    api.post.mockResolvedValue({})
+    const wrapper = mount(ApplicationDetails, {
+      props: { applicationID: '1' },
+      global: { stubs: { RouterLink: { template: '<a><slot /></a>' }, Teleport: true } },
+    })
+    try {
+      await new Promise(resolve => setTimeout(resolve, 0))
+      await wrapper.find('.detail-config-card .btn-primary').trigger('click')
+      const visibleSections = () => wrapper.findAll('.editor-section').filter(section => section.isVisible()).map(section => section.attributes('id'))
+      const selectSection = label => wrapper.findAll('.editor-nav button').find(button => button.text().includes(label)).trigger('click')
+      expect(visibleSections()).toEqual(['template-basic'])
+      await wrapper.find('[placeholder="标准生产配置"]').setValue('test-template')
+      await selectSection('配置与存储')
+      expect(visibleSections()).toEqual(['template-storage'])
+      expect(wrapper.findAll('#template-storage .editor-disclosure')).toHaveLength(5)
+      expect(wrapper.findAll('#template-storage .editor-disclosure').every(item => item.attributes('open') === undefined)).toBe(true)
+      await wrapper.findAll('#template-storage button').find(button => button.text() === '+ 添加变量').trigger('click')
+      await wrapper.find('#template-storage [placeholder="变量名或文件名"]').setValue('LOG_LEVEL')
+      await wrapper.find('#template-storage textarea').setValue('debug')
+      await selectSection('服务网络')
+      expect(visibleSections()).toEqual(['template-network'])
+      await wrapper.find('[aria-label="DNS 解析策略"].select-menu-native').setValue('1')
+      await selectSection('基础信息')
+      expect(wrapper.find('[placeholder="标准生产配置"]').element.value).toBe('test-template')
+      await wrapper.find('#template-editor-form').trigger('submit.prevent')
+      expect(api.post).toHaveBeenCalledWith('/applications/1/deployment-templates', expect.objectContaining({ name: 'test-template', spec: expect.objectContaining({ dns_ndots: 1, config: { LOG_LEVEL: 'debug' } }) }))
+    } finally { wrapper.unmount() }
+  })
+
+  it('reveals the section and disclosure containing an invalid required field', async () => {
+    const wrapper = mount(ApplicationDetails, {
+      props: { applicationID: '1' }, attachTo: document.body,
+      global: { stubs: { RouterLink: { template: '<a><slot /></a>' }, Teleport: true } },
+    })
+    try {
+      await new Promise(resolve => setTimeout(resolve, 0))
+      await wrapper.find('.detail-config-card .btn-primary').trigger('click')
+      const storage = wrapper.findAll('.editor-nav button').find(button => button.text().includes('配置与存储'))
+      await storage.trigger('click')
+      const mounts = wrapper.findAll('#template-storage .editor-disclosure').find(item => item.find('summary').text().includes('配置文件挂载'))
+      await mounts.find('.btn').trigger('click')
+      const field = wrapper.find('[placeholder="/etc/app/config.yaml"]')
+      const currentMounts = wrapper.findAll('#template-storage .editor-disclosure').find(item => item.find('summary').text().includes('配置文件挂载'))
+      currentMounts.element.open = false
+      await wrapper.findAll('.editor-nav button').find(button => button.text().includes('基础信息')).trigger('click')
+      expect(wrapper.find('#template-storage').isVisible()).toBe(false)
+      await field.trigger('invalid')
+      await nextTick()
+      expect(wrapper.find('#template-storage').isVisible()).toBe(true)
+      expect(wrapper.find('[placeholder="/etc/app/config.yaml"]').element.closest('details').open).toBe(true)
+      expect(wrapper.find('#template-storage').isVisible()).toBe(true)
+    } finally { wrapper.unmount() }
+  })
+
   it('keeps an automatic NodePort empty and explains HTTP Ingress setup for TCP ports', async () => {
     const wrapper = mount(ApplicationDetails, {
       props: { applicationID: '1' },
@@ -385,6 +453,95 @@ describe('ApplicationDetails view', () => {
         file_mounts: [{ source_type: 'secret', source_name: 'edge-tls', key: 'tls.crt', mount_path: '/run/app/tls/tls.crt' }],
       }),
     }))
+  })
+
+  it('discards canceled capability edits and migrates workloads only on confirmation', async () => {
+    const { api } = await import('../../api/index.js')
+    api.put.mockReset()
+    const wrapper = mount(ApplicationDetails, {
+      props: { applicationID: '1' },
+      global: { stubs: { RouterLink: { template: '<a><slot /></a>' }, Teleport: true } },
+    })
+    try {
+      await new Promise(resolve => setTimeout(resolve, 0))
+      await wrapper.find('[aria-label="应用设置"]').trigger('click')
+      await wrapper.find('[aria-label="能力标签"]').setValue('discard-me')
+      await wrapper.find('.capability-section .base-modal-actions .btn').trigger('click')
+      expect(api.put).not.toHaveBeenCalled()
+      await wrapper.find('[aria-label="应用设置"]').trigger('click')
+      expect(wrapper.find('[aria-label="能力标签"]').element.value).toBe('hysteria2')
+      await wrapper.find('.capability-section .base-modal-actions .btn').trigger('click')
+      await wrapper.find('[aria-label="应用设置"]').trigger('click')
+      expect(wrapper.find('[aria-label="修改工作负载类型"]').element.disabled).toBe(true)
+      await wrapper.find('[aria-label="工作负载类型"].select-menu-native').setValue('statefulset')
+      expect(api.put).not.toHaveBeenCalled()
+      await wrapper.find('[aria-label="修改工作负载类型"]').trigger('click')
+      expect(wrapper.find('.application-settings-modal').exists()).toBe(false)
+      expect(wrapper.find('.workload-migration-summary').text()).toBe('Deployment → StatefulSet')
+      expect(api.put).not.toHaveBeenCalled()
+      await wrapper.find('.workload-editor .base-modal-actions .btn').trigger('click')
+      expect(wrapper.find('.application-settings-modal').exists()).toBe(true)
+      expect(wrapper.find('[aria-label="工作负载类型"].select-menu-native').element.value).toBe('statefulset')
+      await wrapper.find('[aria-label="修改工作负载类型"]').trigger('click')
+      api.put.mockResolvedValue({ id: 1, name: 'order-api', workload_kind: 'statefulset' })
+      await wrapper.find('.workload-editor .btn-primary').trigger('click')
+      await nextTick()
+      expect(api.put).toHaveBeenCalledWith('/applications/1/workload-kind', { workload_kind: 'statefulset' })
+      expect(wrapper.find('.workload-editor').exists()).toBe(false)
+      expect(wrapper.find('.application-settings-modal').exists()).toBe(true)
+      expect(wrapper.find('[aria-label="工作负载类型"].select-menu-native').element.value).toBe('statefulset')
+      expect(wrapper.find('[aria-label="修改工作负载类型"]').element.disabled).toBe(true)
+    } finally { wrapper.unmount() }
+  })
+
+  it.each([['', undefined], ['1', 1]])('saves the selected DNS strategy %s on a new template', async (choice, expected) => {
+    const { api } = await import('../../api/index.js')
+    api.post.mockReset()
+    api.post.mockResolvedValue({})
+    const wrapper = mount(ApplicationDetails, {
+      props: { applicationID: '1' },
+      global: { stubs: { RouterLink: { template: '<a><slot /></a>' }, Teleport: true } },
+    })
+    try {
+      await new Promise(resolve => setTimeout(resolve, 0))
+      await wrapper.find('.detail-config-card .btn-primary').trigger('click')
+      const strategy = wrapper.find('[aria-label="DNS 解析策略"].select-menu-native')
+      expect(strategy.element.value).toBe('')
+      await strategy.setValue(choice)
+      await wrapper.find('#template-editor-form').trigger('submit.prevent')
+      const payload = api.post.mock.calls.find(([path]) => path === '/applications/1/deployment-templates')[1]
+      expect(payload.spec.dns_ndots).toBe(expected)
+      expect(Object.hasOwn(payload.spec, 'dns_ndots')).toBe(expected !== undefined)
+    } finally { wrapper.unmount() }
+  })
+
+  it.each([0, 1, 5])('preserves existing ndots=%s and allows returning to cluster defaults', async value => {
+    const { api } = await import('../../api/index.js')
+    const originalGet = api.get.getMockImplementation()
+    api.get.mockImplementation(async (path, options) => {
+      const result = await originalGet(path, options)
+      return path === '/applications/1/deployment-templates' ? result.map(item => ({ ...item, spec: { ...item.spec, dns_ndots: value } })) : result
+    })
+    api.put.mockReset()
+    api.put.mockResolvedValue({})
+    const wrapper = mount(ApplicationDetails, {
+      props: { applicationID: '1' },
+      global: { stubs: { RouterLink: { template: '<a><slot /></a>' }, Teleport: true } },
+    })
+    try {
+      await new Promise(resolve => setTimeout(resolve, 0))
+      const edit = () => wrapper.findAll('.template-section .btn').find(button => button.text() === '编辑').trigger('click')
+      await edit()
+      expect(wrapper.find('[aria-label="DNS 解析策略"].select-menu-native').element.value).toBe(String(value))
+      await wrapper.find('#template-editor-form').trigger('submit.prevent')
+      await new Promise(resolve => setTimeout(resolve, 0))
+      expect(api.put).toHaveBeenLastCalledWith('/applications/1/deployment-templates/4', expect.objectContaining({ spec: expect.objectContaining({ dns_ndots: value }) }))
+      await edit()
+      await wrapper.find('[aria-label="DNS 解析策略"].select-menu-native').setValue('')
+      await wrapper.find('#template-editor-form').trigger('submit.prevent')
+      const payload = api.put.mock.calls.at(-1)[1]
+      expect(Object.hasOwn(payload.spec, 'dns_ndots')).toBe(false)
+    } finally { wrapper.unmount(); api.get.mockImplementation(originalGet) }
   })
 
   it('serializes host networking from the deployment template', async () => {

@@ -63,13 +63,15 @@ type ReleaseSpec struct {
 	Secrets           map[string]string `json:"secrets,omitempty"`
 	SecretsDisabled   []string          `json:"secrets_disabled,omitempty"`
 	// SecretManagedKeys lists Secret keys that an external integration may edit.
-	SecretManagedKeys []string          `json:"secret_managed_keys,omitempty"`
-	NodeName          string            `json:"node_name,omitempty"`
-	HostNetwork       bool              `json:"host_network,omitempty"`
-	Volumes           []VolumeMountSpec `json:"volumes,omitempty"`
-	FileMounts        []FileMountSpec   `json:"file_mounts,omitempty"`
-	Service           ServiceSpec       `json:"service"`
-	Endpoint          EndpointSpec      `json:"endpoint"`
+	SecretManagedKeys []string `json:"secret_managed_keys,omitempty"`
+	NodeName          string   `json:"node_name,omitempty"`
+	HostNetwork       bool     `json:"host_network,omitempty"`
+	// DNSNDots overrides the resolver threshold; nil preserves cluster defaults.
+	DNSNDots   *int              `json:"dns_ndots,omitempty"`
+	Volumes    []VolumeMountSpec `json:"volumes,omitempty"`
+	FileMounts []FileMountSpec   `json:"file_mounts,omitempty"`
+	Service    ServiceSpec       `json:"service"`
+	Endpoint   EndpointSpec      `json:"endpoint"`
 }
 
 // VolumeMountSpec describes an existing PVC mounted into the main

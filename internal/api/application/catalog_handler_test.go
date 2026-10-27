@@ -196,6 +196,22 @@ func TestCatalogComponentFromTemplateRejectsNonPortableSettings(t *testing.T) {
 	if err != nil || component.Spec.Version != "" || component.Spec.RegistryID != 0 || component.Spec.Service.Type != "ClusterIP" || component.Spec.Service.Ports[0].NodePort != 0 || component.Spec.Endpoint.Exposure != "cluster" {
 		t.Fatalf("portable component: %+v err=%v", component, err)
 	}
+	ndots := 1
+	spec.DNSNDots = &ndots
+	snapshot, err = json.Marshal(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	template.Spec = string(snapshot)
+	if _, err := catalogComponentFromTemplate(app, template); err == nil {
+		t.Fatal("custom DNS must not be silently dropped by the catalog editor")
+	}
+	spec.DNSNDots = nil
+	snapshot, err = json.Marshal(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	template.Spec = string(snapshot)
 	template.EncryptedSecrets = "encrypted"
 	if _, err := catalogComponentFromTemplate(app, template); err == nil {
 		t.Fatal("template secrets must not be imported into catalog")

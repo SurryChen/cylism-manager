@@ -29,6 +29,8 @@ func TestReleaseWorkflowCreatesReleaseFromTemplateWithRuntimeCredentials(t *test
 		t.Fatal(err)
 	}
 	spec := validTestReleaseSpec()
+	ndots := 1
+	spec.DNSNDots = &ndots
 	spec.Image = "order-api"
 	spec.RegistryID = registry.ID
 	spec.Secrets = map[string]string{"API_TOKEN": ""}
@@ -57,6 +59,13 @@ func TestReleaseWorkflowCreatesReleaseFromTemplateWithRuntimeCredentials(t *test
 	}
 	if prepared.Spec.RegistryCredential != "registry-password" || prepared.Spec.Secrets["API_TOKEN"] != "template-secret" {
 		t.Fatalf("runtime credentials were not resolved: %#v", prepared.Spec)
+	}
+	var snapshot ReleaseSpec
+	if err := json.Unmarshal([]byte(prepared.Release.DesiredSpec), &snapshot); err != nil {
+		t.Fatal(err)
+	}
+	if prepared.Spec.DNSNDots == nil || *prepared.Spec.DNSNDots != 1 || snapshot.DNSNDots == nil || *snapshot.DNSNDots != 1 {
+		t.Fatalf("template release lost DNS setting: runtime=%+v snapshot=%+v", prepared.Spec.DNSNDots, snapshot.DNSNDots)
 	}
 	if strings.Contains(prepared.Release.DesiredSpec, "template-secret") || strings.Contains(prepared.Release.DesiredSpec, "registry-password") {
 		t.Fatalf("release snapshot leaked credentials: %s", prepared.Release.DesiredSpec)

@@ -13,6 +13,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"path"
+	"strconv"
 	"strings"
 )
 
@@ -91,6 +92,10 @@ func RenderResources(context ApplicationContext, spec ReleaseSpec) (*RenderedRes
 	container.VolumeMounts = append(container.VolumeMounts, fileVolumeMounts...)
 	replicas := spec.Replicas
 	podSpec := corev1.PodSpec{Containers: []corev1.Container{container}, Volumes: volumes}
+	if spec.DNSNDots != nil {
+		value := strconv.Itoa(*spec.DNSNDots)
+		podSpec.DNSConfig = &corev1.PodDNSConfig{Options: []corev1.PodDNSConfigOption{{Name: "ndots", Value: &value}}}
+	}
 	if spec.HostNetwork {
 		podSpec.HostNetwork = true
 		podSpec.DNSPolicy = corev1.DNSClusterFirstWithHostNet

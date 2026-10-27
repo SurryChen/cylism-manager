@@ -305,7 +305,7 @@ func catalogComponentFromTemplate(app model.Application, template model.Applicat
 	if err := json.Unmarshal([]byte(template.Spec), &spec); err != nil {
 		return catalogComponentRequest{}, fmt.Errorf("默认上线模板配置无效")
 	}
-	if len(spec.Secrets) != 0 || template.EncryptedSecrets != "" || len(spec.Volumes) != 0 || len(spec.FileMounts) != 0 || spec.NodeName != "" || spec.HostNetwork || len(spec.Command) != 0 || len(spec.Args) != 0 || len(spec.ConfigDisabled) != 0 || len(spec.ConfigManagedKeys) != 0 || spec.Health.LivenessEnabled || (spec.Health.ReadinessEnabled && spec.Health.ReadinessType != "" && spec.Health.ReadinessType != "http") {
+	if len(spec.Secrets) != 0 || template.EncryptedSecrets != "" || len(spec.Volumes) != 0 || len(spec.FileMounts) != 0 || spec.NodeName != "" || spec.HostNetwork || spec.DNSNDots != nil || len(spec.Command) != 0 || len(spec.Args) != 0 || len(spec.ConfigDisabled) != 0 || len(spec.ConfigManagedKeys) != 0 || spec.Health.LivenessEnabled || (spec.Health.ReadinessEnabled && spec.Health.ReadinessType != "" && spec.Health.ReadinessType != "http") {
 		return catalogComponentRequest{}, fmt.Errorf("默认上线模板包含商城暂不支持的专属配置，请先调整模板")
 	}
 	ports := spec.Service.PortSpecs()
