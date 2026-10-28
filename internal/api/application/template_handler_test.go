@@ -121,3 +121,42 @@ func TestApplicationHandlerUsesTemplateDefaultVersionWhenReleaseVersionIsEmpty(t
 		t.Fatalf("unexpected default version release: %d %s", release.Code, release.Body.String())
 	}
 }
+
+func TestTemplateInlineSensitiveFilesSurviveBlankEdit(t *testing.T) {
+	r, s := setupApplicationRouter()
+	createApplicationForReleaseRuntimeTest(t, s)
+	spec := gin.H{
+		"image": "order-api", "container_port": 8080, "replicas": 1,
+		"resources": gin.H{"requests_cpu": "100m", "requests_memory": "128Mi", "limits_cpu": "500m", "limits_memory": "512Mi"},
+		"service":   gin.H{"port": 80, "target_port": 8080},
+		"config":    gin.H{"config.yaml": "port: 8080"}, "config_file_keys": []string{"config.yaml"},
+		"secrets": gin.H{"env": "MYSQL_DSN=private"}, "secret_file_keys": []string{"env"},
+		"file_mounts": []gin.H{{"source_type": "application_secret", "key": "env", "mount_path": "/app/secrets/env"}},
+	}
+	created := serve(r, newJSONRequest(http.MethodPost, "/api/applications/1/deployment-templates", gin.H{"name": "default", "enabled": true, "spec": spec}))
+	if created.Code != http.StatusOK || strings.Contains(created.Body.String(), "MYSQL_DSN=private") || !strings.Contains(created.Body.String(), `"secret_file_keys":["env"]`) {
+		t.Fatalf("inline file save failed or leaked contents: %d %s", created.Code, created.Body.String())
+	}
+	spec["secrets"] = gin.H{"env": ""}
+	updated := serve(r, newJSONRequest(http.MethodPut, "/api/applications/1/deployment-templates/1", gin.H{"name": "default", "enabled": true, "revision": 1, "spec": spec}))
+	if updated.Code != http.StatusOK {
+		t.Fatalf("blank edit failed: %d %s", updated.Code, updated.Body.String())
+	}
+	template, err := s.GetApplicationDeploymentTemplate(1, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(template.Spec, "MYSQL_DSN=private") || !strings.Contains(template.Spec, `"config_file_keys":["config.yaml"]`) {
+		t.Fatal("stored snapshot lost metadata or leaked Secret")
+	}
+	h := newTestApplicationHandler(s, []byte("01234567890123456789012345678901"), nil)
+	values, err := h.decryptTemplateSecrets(template)
+	if err != nil || values["env"] != "MYSQL_DSN=private" {
+		t.Fatalf("blank edit did not retain encrypted content: %v", err)
+	}
+	spec["secrets"] = gin.H{"env": "", "new-file": ""}
+	invalid := serve(r, newJSONRequest(http.MethodPut, "/api/applications/1/deployment-templates/1", gin.H{"name": "default", "enabled": true, "revision": 2, "spec": spec}))
+	if invalid.Code == http.StatusOK || !strings.Contains(invalid.Body.String(), "new-file") {
+		t.Fatal("new sensitive file must require content")
+	}
+}

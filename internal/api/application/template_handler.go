@@ -234,13 +234,13 @@ func validateBoundDatabaseTemplate(current *model.ApplicationDeploymentTemplate,
 	}
 	for _, suffix := range []string{"HOST", "PORT", "NAME", "USER"} {
 		key := prefix + "_" + suffix
-		if next.Config[key] != previous.Config[key] || containsString(next.ConfigDisabled, key) {
+		if next.Config[key] != previous.Config[key] || containsString(next.ConfigDisabled, key) || containsString(next.ConfigFileKeys, key) {
 			return fmt.Errorf("%s 由数据库绑定管理，请先解除绑定", key)
 		}
 	}
 	key := prefix + "_PASSWORD"
 	value, exists := next.Secrets[key]
-	if !exists || value != "" || containsString(next.SecretsDisabled, key) {
+	if !exists || value != "" || containsString(next.SecretsDisabled, key) || containsString(next.SecretFileKeys, key) {
 		return fmt.Errorf("%s 由数据库绑定管理，请先解除绑定", key)
 	}
 	return nil
@@ -352,6 +352,8 @@ func (h *ApplicationHandler) templateFromRequest(ctx context.Context, app *model
 		for key, value := range spec.Secrets {
 			if strings.TrimSpace(value) != "" {
 				currentSecrets[key] = value
+			} else if strings.TrimSpace(currentSecrets[key]) == "" {
+				return nil, fmt.Errorf("请填写敏感配置 %s 的内容", key)
 			}
 		}
 		if len(currentSecrets) == 0 {

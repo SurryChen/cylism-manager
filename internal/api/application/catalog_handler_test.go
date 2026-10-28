@@ -196,6 +196,22 @@ func TestCatalogComponentFromTemplateRejectsNonPortableSettings(t *testing.T) {
 	if err != nil || component.Spec.Version != "" || component.Spec.RegistryID != 0 || component.Spec.Service.Type != "ClusterIP" || component.Spec.Service.Ports[0].NodePort != 0 || component.Spec.Endpoint.Exposure != "cluster" {
 		t.Fatalf("portable component: %+v err=%v", component, err)
 	}
+	for _, field := range []string{"config", "secret"} {
+		fileSpec := spec
+		if field == "config" {
+			fileSpec.ConfigFileKeys = []string{"env"}
+		} else {
+			fileSpec.SecretFileKeys = []string{"env"}
+		}
+		encoded, err := json.Marshal(fileSpec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		template.Spec = string(encoded)
+		if _, err := catalogComponentFromTemplate(app, template); err == nil {
+			t.Fatal("file-only settings must not be silently dropped by catalog import")
+		}
+	}
 	ndots := 1
 	spec.DNSNDots = &ndots
 	snapshot, err = json.Marshal(spec)

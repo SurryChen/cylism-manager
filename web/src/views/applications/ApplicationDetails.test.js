@@ -294,14 +294,15 @@ describe('ApplicationDetails view', () => {
     await valueLists[0].find('input').setValue('/usr/bin/chromium-browser')
     await valueLists[1].findAll('input')[0].setValue('--no-sandbox')
     await valueLists[1].findAll('input')[1].setValue('--remote-debugging-port=9222')
-    const addVariables = wrapper.findAll('button').filter(button => button.text().includes('添加变量'))
-    await addVariables[0].trigger('click')
-    await addVariables[1].trigger('click')
-    const keyValueLists = wrapper.findAll('.key-value-list')
-    await keyValueLists[0].findAll('input')[0].setValue('LOG_LEVEL')
-    await keyValueLists[0].find('textarea').setValue('debug')
-    await keyValueLists[1].findAll('input')[0].setValue('DATABASE_PASSWORD')
-    await keyValueLists[1].find('textarea').setValue('secret-value')
+    const addVariable = wrapper.findAll('button').find(button => button.text() === '添加变量')
+    await addVariable.trigger('click')
+    await addVariable.trigger('click')
+    const rows = wrapper.findAll('.environment-entry')
+    await rows[0].find('[aria-label="环境变量名称"]').setValue('LOG_LEVEL')
+    await rows[0].find('textarea').setValue('debug')
+    await rows[1].find('[aria-label="环境变量名称"]').setValue('DATABASE_PASSWORD')
+    await rows[1].find('textarea').setValue('secret-value')
+    await rows[1].find('select').setValue('application_secret')
     await wrapper.find('form').trigger('submit.prevent')
 
     expect(api.post).toHaveBeenCalledWith('/applications/1/deployment-templates', expect.objectContaining({
@@ -350,10 +351,10 @@ describe('ApplicationDetails view', () => {
       await wrapper.find('[placeholder="标准生产配置"]').setValue('test-template')
       await selectSection('配置与存储')
       expect(visibleSections()).toEqual(['template-storage'])
-      expect(wrapper.findAll('#template-storage .editor-disclosure')).toHaveLength(5)
+      expect(wrapper.findAll('#template-storage .editor-disclosure')).toHaveLength(4)
       expect(wrapper.findAll('#template-storage .editor-disclosure').every(item => item.attributes('open') === undefined)).toBe(true)
-      await wrapper.findAll('#template-storage button').find(button => button.text() === '+ 添加变量').trigger('click')
-      await wrapper.find('#template-storage [placeholder="变量名或文件名"]').setValue('LOG_LEVEL')
+      await wrapper.findAll('#template-storage button').find(button => button.text() === '添加变量').trigger('click')
+      await wrapper.find('#template-storage [aria-label="环境变量名称"]').setValue('LOG_LEVEL')
       await wrapper.find('#template-storage textarea').setValue('debug')
       await selectSection('服务网络')
       expect(visibleSections()).toEqual(['template-network'])
@@ -375,10 +376,10 @@ describe('ApplicationDetails view', () => {
       await wrapper.find('.detail-config-card .btn-primary').trigger('click')
       const storage = wrapper.findAll('.editor-nav button').find(button => button.text().includes('配置与存储'))
       await storage.trigger('click')
-      const mounts = wrapper.findAll('#template-storage .editor-disclosure').find(item => item.find('summary').text().includes('配置文件挂载'))
+      const mounts = wrapper.findAll('#template-storage .editor-disclosure').find(item => item.find('summary').text().includes('配置文件'))
       await mounts.find('.btn').trigger('click')
       const field = wrapper.find('[placeholder="/etc/app/config.yaml"]')
-      const currentMounts = wrapper.findAll('#template-storage .editor-disclosure').find(item => item.find('summary').text().includes('配置文件挂载'))
+      const currentMounts = wrapper.findAll('#template-storage .editor-disclosure').find(item => item.find('summary').text().includes('配置文件'))
       currentMounts.element.open = false
       await wrapper.findAll('.editor-nav button').find(button => button.text().includes('基础信息')).trigger('click')
       expect(wrapper.find('#template-storage').isVisible()).toBe(false)
@@ -430,9 +431,7 @@ describe('ApplicationDetails view', () => {
     await servicePorts[0].find('[aria-label="Target Port"]').setValue(443)
     await servicePorts[1].find('[aria-label="Service 端口名称"]').setValue('api')
     await servicePorts[1].find('[aria-label="Service 端口"]').setValue(8080)
-    const addButtons = wrapper.findAll('button').filter(button => button.text().includes('添加挂载'))
-    const addButton = addButtons[addButtons.length - 1]
-    await addButton.trigger('click')
+    await wrapper.findAll('button').find(button => button.text() === '添加文件').trigger('click')
     const fileRow = wrapper.find('.file-mount-row')
     const fileSelects = fileRow.findAll('select')
     await fileSelects[0].setValue('secret')
@@ -575,24 +574,16 @@ describe('ApplicationDetails view', () => {
 
     await wrapper.findAll('.section-tab').find(tab => tab.text() === '部署配置').trigger('click')
     await wrapper.find('.detail-config-card .btn-primary').trigger('click')
-    await wrapper.findAll('button').find(button => button.text().includes('添加变量')).trigger('click')
-    const configItems = wrapper.findAll('.key-value-list')[0]
-    await configItems.find('input').setValue('config.yaml')
-    await configItems.find('textarea').setValue('listen: :8080\n')
-    const addMountButtons = wrapper.findAll('button').filter(button => button.text().includes('添加挂载'))
-    await addMountButtons[addMountButtons.length - 1].trigger('click')
-    await nextTick()
+    await wrapper.findAll('button').find(button => button.text() === '添加文件').trigger('click')
     const fileRow = wrapper.find('.file-mount-row')
-    const fileSelects = fileRow.findAll('select')
-    expect(fileSelects[0].element.value).toBe('application_config')
-    expect(fileRow.find('[aria-label="文件来源资源"]').element.value).toBe('order-api-config')
-    await fileSelects[1].setValue('config.yaml')
-    await fileRow.find('[placeholder="/etc/app/config.yaml"]').setValue('/etc/app/config.yaml')
-    await nextTick()
+    await fileRow.find('[aria-label="文件名称"]').setValue('config.yaml')
+    await fileRow.find('[aria-label="文件内容"]').setValue('listen: :8080\n')
+    await fileRow.find('[aria-label="文件挂载路径"]').setValue('/etc/app/config.yaml')
     await wrapper.find('form').trigger('submit.prevent')
     expect(api.post).toHaveBeenCalledWith('/applications/1/deployment-templates', expect.objectContaining({
       spec: expect.objectContaining({
         config: { 'config.yaml': 'listen: :8080\n' },
+        config_file_keys: ['config.yaml'],
         file_mounts: [{ source_type: 'application_config', source_name: '', key: 'config.yaml', mount_path: '/etc/app/config.yaml' }],
       }),
     }))
@@ -610,24 +601,61 @@ describe('ApplicationDetails view', () => {
 
     await wrapper.findAll('.section-tab').find(tab => tab.text() === '部署配置').trigger('click')
     await wrapper.find('.detail-config-card .btn-primary').trigger('click')
-    wrapper.vm.templateForm.secret_items.push({ key: 'config.yaml', value: 'listen: :8443\n', enabled: true, externally_managed: true })
-    await nextTick()
-    const addMountButtons = wrapper.findAll('button').filter(button => button.text().includes('添加挂载'))
-    await addMountButtons[addMountButtons.length - 1].trigger('click')
+    await wrapper.findAll('button').find(button => button.text() === '添加文件').trigger('click')
     const fileRow = wrapper.find('.file-mount-row')
-    await fileRow.findAll('select')[0].setValue('application_secret')
-    await nextTick()
-    wrapper.vm.templateForm.file_mounts[0].key = 'config.yaml'
-    await fileRow.find('[placeholder="/etc/app/config.yaml"]').setValue('/etc/app/config.yaml')
+    await fileRow.find('[aria-label="文件来源类型"].select-menu-native').setValue('application_secret')
+    await fileRow.find('[aria-label="文件名称"]').setValue('config.yaml')
+    await fileRow.find('[aria-label="文件内容"]').setValue('listen: :8443\n')
+    wrapper.vm.templateForm.secret_items[0].externally_managed = true
+    await fileRow.find('[aria-label="文件挂载路径"]').setValue('/etc/app/config.yaml')
     await wrapper.find('form').trigger('submit.prevent')
 
     expect(api.post).toHaveBeenCalledWith('/applications/1/deployment-templates', expect.objectContaining({
       spec: expect.objectContaining({
         secrets: { 'config.yaml': 'listen: :8443\n' },
+        secret_file_keys: ['config.yaml'],
         secret_managed_keys: ['config.yaml'],
         file_mounts: [{ source_type: 'application_secret', source_name: '', key: 'config.yaml', mount_path: '/etc/app/config.yaml' }],
       }),
     }))
+  })
+
+  it('preserves file-only settings, hidden sensitive contents and external references on edit', async () => {
+    const { api } = await import('../../api/index.js')
+    const originalGet = api.get.getMockImplementation()
+    const fileMounts = [
+      { source_type: 'application_secret', source_name: '', key: 'env', mount_path: '/app/secrets/env' },
+      { source_type: 'secret', source_name: 'edge-tls', key: 'tls.key', mount_path: '/etc/tls/tls.key' },
+    ]
+    api.get.mockImplementation((path, options) => path === '/applications/1/deployment-templates' ? Promise.resolve([{ id: 4, name: 'default', enabled: true, revision: 2, spec: { image: 'app', replicas: 1, container_port: 8080, config: { LOG_LEVEL: 'info' }, secrets: { env: '' }, secret_file_keys: ['env'], file_mounts: fileMounts } }]) : originalGet(path, options))
+    api.put.mockReset()
+    api.put.mockResolvedValue({})
+    const wrapper = mount(ApplicationDetails, { props: { applicationID: '1' }, global: { stubs: { RouterLink: { template: '<a><slot /></a>' }, Teleport: true } } })
+    try {
+      await new Promise(resolve => setTimeout(resolve, 0))
+      await wrapper.find('.detail-config-card').findAll('button').find(button => button.text() === '编辑').trigger('click')
+      await wrapper.find('form').trigger('submit.prevent')
+      expect(api.put).toHaveBeenLastCalledWith('/applications/1/deployment-templates/4', expect.objectContaining({ spec: expect.objectContaining({ config: { LOG_LEVEL: 'info' }, secrets: { env: '' }, secret_file_keys: ['env'], file_mounts: fileMounts }) }))
+    } finally { api.get.mockImplementation(originalGet); wrapper.unmount() }
+  })
+
+  it('rejects duplicate configuration names and renaming a saved blank Secret', async () => {
+    const { api } = await import('../../api/index.js')
+    api.post.mockClear()
+    const wrapper = mount(ApplicationDetails, { props: { applicationID: '1' }, global: { stubs: { RouterLink: { template: '<a><slot /></a>' }, Teleport: true } } })
+    try {
+      await new Promise(resolve => setTimeout(resolve, 0))
+      await wrapper.find('.detail-config-card .btn-primary').trigger('click')
+      wrapper.vm.templateForm.config_items = [{ key: 'HOST', value: 'one' }, { key: 'HOST', value: 'two' }]
+      await wrapper.find('form').trigger('submit.prevent')
+      expect(wrapper.text()).toContain('配置名称 HOST 重复')
+      expect(api.post).not.toHaveBeenCalled()
+      wrapper.vm.templateForm.config_items = []
+      wrapper.vm.templateForm.secret_items = [{ key: 'renamed', value: '', original_key: 'env' }]
+      await wrapper.find('form').trigger('submit.prevent')
+      expect(wrapper.text()).toContain('请重新填写内容')
+      expect(api.post).not.toHaveBeenCalled()
+    } finally { wrapper.unmount() }
   })
 
   it('creates, edits, and unbinds individual endpoints', async () => {

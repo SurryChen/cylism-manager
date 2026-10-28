@@ -57,11 +57,14 @@ type ReleaseSpec struct {
 	// selected keys from being projected into the workload. Missing entries are enabled
 	// for backwards compatibility with existing templates.
 	ConfigDisabled []string `json:"config_disabled,omitempty"`
+	// File keys are stored in the generated resource but never injected as environment variables.
+	ConfigFileKeys []string `json:"config_file_keys,omitempty"`
 	// ConfigManagedKeys lists ConfigMap keys that an external integration may edit.
 	// An empty list only falls back to file_mounts[].managed for legacy templates.
 	ConfigManagedKeys []string          `json:"config_managed_keys,omitempty"`
 	Secrets           map[string]string `json:"secrets,omitempty"`
 	SecretsDisabled   []string          `json:"secrets_disabled,omitempty"`
+	SecretFileKeys    []string          `json:"secret_file_keys,omitempty"`
 	// SecretManagedKeys lists Secret keys that an external integration may edit.
 	SecretManagedKeys []string `json:"secret_managed_keys,omitempty"`
 	NodeName          string   `json:"node_name,omitempty"`

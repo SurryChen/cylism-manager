@@ -402,8 +402,10 @@ func (h *DatabaseHandler) Bind(c *gin.Context) {
 		if existing.ID != 0 && existing.Prefix != req.Prefix {
 			for _, suffix := range []string{"HOST", "PORT", "NAME", "USER"} {
 				delete(spec.Config, existing.Prefix+"_"+suffix)
+				spec.ConfigFileKeys = withoutKey(spec.ConfigFileKeys, existing.Prefix+"_"+suffix)
 			}
 			delete(spec.Secrets, existing.Prefix+"_PASSWORD")
+			spec.SecretFileKeys = withoutKey(spec.SecretFileKeys, existing.Prefix+"_PASSWORD")
 			delete(secrets, existing.Prefix+"_PASSWORD")
 		}
 		keys := map[string]string{"HOST": item.Host, "PORT": fmt.Sprint(item.Port), "NAME": item.DatabaseName, "USER": item.Username}
@@ -414,6 +416,7 @@ func (h *DatabaseHandler) Bind(c *gin.Context) {
 			}
 			spec.Config[key] = value
 			spec.ConfigDisabled = withoutKey(spec.ConfigDisabled, key)
+			spec.ConfigFileKeys = withoutKey(spec.ConfigFileKeys, key)
 		}
 		passwordKey := req.Prefix + "_PASSWORD"
 		if _, present := spec.Secrets[passwordKey]; present && (existing.ID == 0 || existing.Prefix != req.Prefix) {
@@ -421,6 +424,7 @@ func (h *DatabaseHandler) Bind(c *gin.Context) {
 		}
 		spec.Secrets[passwordKey] = ""
 		spec.SecretsDisabled = withoutKey(spec.SecretsDisabled, passwordKey)
+		spec.SecretFileKeys = withoutKey(spec.SecretFileKeys, passwordKey)
 		secrets[passwordKey] = password
 		encoded, err := json.Marshal(secrets)
 		if err != nil {
@@ -477,8 +481,10 @@ func (h *DatabaseHandler) Unbind(c *gin.Context) {
 		}
 		for _, suffix := range []string{"HOST", "PORT", "NAME", "USER"} {
 			delete(spec.Config, binding.Prefix+"_"+suffix)
+			spec.ConfigFileKeys = withoutKey(spec.ConfigFileKeys, binding.Prefix+"_"+suffix)
 		}
 		delete(spec.Secrets, binding.Prefix+"_PASSWORD")
+		spec.SecretFileKeys = withoutKey(spec.SecretFileKeys, binding.Prefix+"_PASSWORD")
 		if template.EncryptedSecrets != "" {
 			plain, err := security.Decrypt(h.key, template.EncryptedSecrets)
 			if err != nil {

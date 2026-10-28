@@ -75,12 +75,14 @@ func RenderResources(context ApplicationContext, spec ReleaseSpec) (*RenderedRes
 	if enabled, probeType := healthProbeEnabled(spec.Health.LivenessEnabled, spec.Health.LivenessType, spec.Health.LivenessPath); enabled {
 		container.LivenessProbe = healthProbe(probeType, spec.Health.LivenessPath, spec.ContainerPort)
 	}
-	if result.ConfigMap != nil {
-		container.EnvFrom = append(container.EnvFrom, corev1.EnvFromSource{ConfigMapRef: &corev1.ConfigMapEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: configName}}})
+	explicitEnvironment := len(spec.ConfigFileKeys)+len(spec.SecretFileKeys) > 0
+	configEnvironment := config
+	if explicitEnvironment {
+		// Preserve EnvFrom precedence: enabled Secret keys override ConfigMap keys.
+		configEnvironment = enabledStringMap(config, SortedSecretKeys(enabledStringMap(secrets, spec.SecretFileKeys)))
 	}
-	if len(secrets) > 0 {
-		container.EnvFrom = append(container.EnvFrom, corev1.EnvFromSource{SecretRef: &corev1.SecretEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: secretName}}})
-	}
+	renderEnvironment(&container, configName, configEnvironment, spec.ConfigFileKeys, false, explicitEnvironment)
+	renderEnvironment(&container, secretName, secrets, spec.SecretFileKeys, true, explicitEnvironment)
 	volumes := make([]corev1.Volume, 0, len(spec.Volumes)+len(spec.FileMounts))
 	for index, volume := range spec.Volumes {
 		name := fmt.Sprintf("pvc-%d", index)
@@ -148,6 +150,31 @@ func RenderResources(context ApplicationContext, spec ReleaseSpec) (*RenderedRes
 		result.Ingress = endpointIngress(context, spec.Endpoint, primaryTCPPort.Port)
 	}
 	return result, nil
+}
+
+func renderEnvironment(container *corev1.Container, name string, values map[string]string, fileKeys []string, secret, explicit bool) {
+	if len(values) == 0 {
+		return
+	}
+	if !explicit {
+		source := corev1.EnvFromSource{}
+		if secret {
+			source.SecretRef = &corev1.SecretEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: name}}
+		} else {
+			source.ConfigMapRef = &corev1.ConfigMapEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: name}}
+		}
+		container.EnvFrom = append(container.EnvFrom, source)
+		return
+	}
+	for _, key := range SortedSecretKeys(enabledStringMap(values, fileKeys)) {
+		source := &corev1.EnvVarSource{}
+		if secret {
+			source.SecretKeyRef = &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: name}, Key: key}
+		} else {
+			source.ConfigMapKeyRef = &corev1.ConfigMapKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: name}, Key: key}
+		}
+		container.Env = append(container.Env, corev1.EnvVar{Name: key, ValueFrom: source})
+	}
 }
 
 func renderContainerPorts(servicePorts []ServicePortSpec) []corev1.ContainerPort {

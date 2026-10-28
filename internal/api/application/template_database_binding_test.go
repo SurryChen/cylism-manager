@@ -34,6 +34,16 @@ func TestValidateBoundDatabaseTemplate(t *testing.T) {
 	if err := validateBoundDatabaseTemplate(current, changedPassword, "DATABASE"); err == nil {
 		t.Fatal("replaced database password accepted")
 	}
+	fileConfig := valid()
+	fileConfig.ConfigFileKeys = []string{"DATABASE_HOST"}
+	if err := validateBoundDatabaseTemplate(current, fileConfig, "DATABASE"); err == nil {
+		t.Fatal("file-only database host accepted")
+	}
+	fileSecret := valid()
+	fileSecret.SecretFileKeys = []string{"DATABASE_PASSWORD"}
+	if err := validateBoundDatabaseTemplate(current, fileSecret, "DATABASE"); err == nil {
+		t.Fatal("file-only database password accepted")
+	}
 	disabled := valid()
 	disabled.ConfigDisabled = []string{"DATABASE_HOST"}
 	if err := validateBoundDatabaseTemplate(current, disabled, "DATABASE"); err == nil {

@@ -114,9 +114,10 @@ func TestCreateRestartReleaseUsesCurrentTemplateAndSanitizesSecrets(t *testing.T
 		Resources: application.ResourceSpec{
 			RequestsCPU: "100m", RequestsMemory: "128Mi", LimitsCPU: "500m", LimitsMemory: "512Mi",
 		},
-		Secrets:  map[string]string{"API_TOKEN": ""},
-		Service:  application.ServiceSpec{Port: 8443, TargetPort: 8443, Protocol: application.ServiceProtocolUDP, Type: application.ServiceTypeLoadBalancer},
-		Endpoint: application.EndpointSpec{Exposure: application.ExposureCluster},
+		SecretFileKeys: []string{"API_TOKEN"},
+		Secrets:        map[string]string{"API_TOKEN": ""},
+		Service:        application.ServiceSpec{Port: 8443, TargetPort: 8443, Protocol: application.ServiceProtocolUDP, Type: application.ServiceTypeLoadBalancer},
+		Endpoint:       application.EndpointSpec{Exposure: application.ExposureCluster},
 	}
 	templateSnapshot, err := json.Marshal(application.SanitizeReleaseSpec(currentTemplateSpec))
 	if err != nil {
@@ -173,6 +174,9 @@ func TestCreateRestartReleaseUsesCurrentTemplateAndSanitizesSecrets(t *testing.T
 	}, snapshot)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if len(snapshot.SecretFileKeys) != 1 || snapshot.SecretFileKeys[0] != "API_TOKEN" || len(resources.Deployment.Spec.Template.Spec.Containers[0].EnvFrom) != 0 || len(resources.Deployment.Spec.Template.Spec.Containers[0].Env) != 0 {
+		t.Fatal("restart lost file-only Secret metadata or exposed it as an environment variable")
 	}
 	if snapshot.DNSNDots == nil || *snapshot.DNSNDots != 1 || resources.Deployment.Spec.Template.Spec.DNSConfig == nil || *resources.Deployment.Spec.Template.Spec.DNSConfig.Options[0].Value != "1" {
 		t.Fatalf("restart did not apply current template DNS setting: %+v", snapshot)
