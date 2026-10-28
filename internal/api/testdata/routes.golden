@@ -323,6 +323,7 @@ POST /api/applications/:id/delegations
 POST /api/applications/:id/deploy-webhook/secret
 POST /api/applications/:id/deployment-templates
 POST /api/applications/:id/deployment-templates/:templateID/default
+POST /api/applications/:id/deployment-templates/:templateID/files/inspect
 POST /api/applications/:id/deployments
 POST /api/applications/:id/endpoints
 POST /api/applications/:id/integration-handoffs

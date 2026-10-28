@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import ApplicationDetails from './ApplicationDetails.vue'
 
@@ -636,6 +636,54 @@ describe('ApplicationDetails view', () => {
       await wrapper.find('.detail-config-card').findAll('button').find(button => button.text() === '编辑').trigger('click')
       await wrapper.find('form').trigger('submit.prevent')
       expect(api.put).toHaveBeenLastCalledWith('/applications/1/deployment-templates/4', expect.objectContaining({ spec: expect.objectContaining({ config: { LOG_LEVEL: 'info' }, secrets: { env: '' }, secret_file_keys: ['env'], file_mounts: fileMounts }) }))
+    } finally { api.get.mockImplementation(originalGet); wrapper.unmount() }
+  })
+
+  it('submits only changed env settings and clears revealed content when the editor closes', async () => {
+    const { api } = await import('../../api/index.js')
+    const originalGet = api.get.getMockImplementation()
+    api.get.mockImplementation((path, options) => path === '/applications/1/deployment-templates' ? Promise.resolve([{
+      id: 4, name: 'default', enabled: true, revision: 2,
+      spec: { image: 'app', replicas: 1, container_port: 8080, secrets: { env: '', 'signing.pem': '' }, secret_file_keys: ['env', 'signing.pem'], file_mounts: [
+        { source_type: 'application_secret', key: 'env', mount_path: '/app/secrets/env' },
+        { source_type: 'application_secret', key: 'signing.pem', mount_path: '/app/secrets/signing.pem' },
+      ] },
+    }]) : originalGet(path, options))
+    api.post.mockReset().mockImplementation((path, body) => Promise.resolve(body.mode === 'content'
+      ? { revision: 2, content: 'EXAMPLE PRIVATE CONTENT' }
+      : { revision: 2, supported: true, fields: [{ line: 0, name: 'MYSQL_HOST' }, { line: 1, name: 'MYSQL_PASSWORD' }] }))
+    api.put.mockReset().mockResolvedValue({})
+    const wrapper = mount(ApplicationDetails, { props: { applicationID: '1' }, global: { stubs: { RouterLink: { template: '<a><slot /></a>' }, Teleport: true } } })
+    const edit = async () => {
+      await wrapper.find('.detail-config-card').findAll('button').find(button => button.text() === '编辑').trigger('click')
+      await flushPromises()
+    }
+    try {
+      await flushPromises()
+      await edit()
+      await wrapper.find('.file-mount-row > summary').trigger('click')
+      await flushPromises()
+      await wrapper.find('[aria-label="配置项 MYSQL_HOST 的值"]').setValue('new.svc')
+      await wrapper.find('#template-editor-form').trigger('submit.prevent')
+      await flushPromises()
+      expect(api.put).toHaveBeenLastCalledWith('/applications/1/deployment-templates/4', expect.objectContaining({
+        revision: 2,
+        secret_file_edits: [{ key: 'env', changes: [{ line: 0, name: 'MYSQL_HOST', value: 'new.svc' }] }],
+        spec: expect.objectContaining({ secrets: { env: '', 'signing.pem': '' } }),
+      }))
+      await edit()
+      const privateFile = wrapper.findAll('.file-mount-row')[1]
+      await privateFile.find('summary').trigger('click')
+      await flushPromises()
+      await privateFile.findAll('button').find(button => button.text() === '查看并编辑全文').trigger('click')
+      await wrapper.findAll('button').find(button => button.text() === '查看并编辑').trigger('click')
+      await flushPromises()
+      expect(wrapper.find('[aria-label="文件内容"]').element.value).toBe('EXAMPLE PRIVATE CONTENT')
+      await wrapper.find('.editor-actions').findAll('button').find(button => button.text() === '取消').trigger('click')
+      expect(wrapper.vm.templateForm.secret_items).toEqual([])
+      await edit()
+      expect(wrapper.find('[aria-label="文件内容"]').exists()).toBe(false)
+      expect(wrapper.vm.templateForm.secret_items.every(item => item.value === '' && !item.file_edit)).toBe(true)
     } finally { api.get.mockImplementation(originalGet); wrapper.unmount() }
   })
 

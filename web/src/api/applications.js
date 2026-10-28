@@ -214,6 +214,10 @@ export function updateDeploymentTemplate(applicationID, templateID, payload, opt
   return putRequest(`/applications/${segment(applicationID)}/deployment-templates/${segment(templateID)}`, payload, options)
 }
 
+export function inspectDeploymentTemplateFile(applicationID, templateID, payload, options) {
+  return postRequest(`/applications/${segment(applicationID)}/deployment-templates/${segment(templateID)}/files/inspect`, payload, options)
+}
+
 export function deleteDeploymentTemplate(applicationID, templateID, options) {
   return deleteRequest(`/applications/${segment(applicationID)}/deployment-templates/${segment(templateID)}`, options)
 }

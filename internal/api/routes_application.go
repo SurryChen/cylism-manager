@@ -47,6 +47,7 @@ func registerApplicationRoutes(r *gin.Engine, apiGroup *gin.RouterGroup, h *appl
 	applications.GET("/:id/deployment-templates", h.ListDeploymentTemplates)
 	applications.POST("/:id/deployment-templates", h.HandleApplication((*applicationapi.ApplicationHandler).CreateDeploymentTemplate))
 	applications.GET("/:id/deployment-templates/:templateID", h.GetDeploymentTemplate)
+	applications.POST("/:id/deployment-templates/:templateID/files/inspect", h.InspectDeploymentTemplateFile)
 	applications.PUT("/:id/deployment-templates/:templateID", h.HandleApplication((*applicationapi.ApplicationHandler).UpdateDeploymentTemplate))
 	applications.DELETE("/:id/deployment-templates/:templateID", h.DeleteDeploymentTemplate)
 	applications.POST("/:id/deployment-templates/:templateID/default", h.SetDefaultDeploymentTemplate)

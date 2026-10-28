@@ -30,12 +30,13 @@ type deploymentTemplateInfo struct {
 }
 
 type deploymentTemplateRequest struct {
-	Name           string                         `json:"name"`
-	Description    string                         `json:"description"`
-	Enabled        bool                           `json:"enabled"`
-	DefaultVersion string                         `json:"default_version"`
-	Revision       uint                           `json:"revision,omitempty"`
-	Spec           applicationservice.ReleaseSpec `json:"spec"`
+	Name            string                         `json:"name"`
+	Description     string                         `json:"description"`
+	Enabled         bool                           `json:"enabled"`
+	DefaultVersion  string                         `json:"default_version"`
+	Revision        uint                           `json:"revision,omitempty"`
+	Spec            applicationservice.ReleaseSpec `json:"spec"`
+	SecretFileEdits []templateSecretFileEdit       `json:"secret_file_edits,omitempty"`
 }
 
 func (h *ApplicationHandler) ListDeploymentTemplates(c *gin.Context) {
@@ -111,6 +112,10 @@ func (h *ApplicationHandler) CreateDeploymentTemplate(c *gin.Context) {
 		apiShared.BadRequest(c, "上线模板定义无效")
 		return
 	}
+	if len(req.SecretFileEdits) > 0 {
+		apiShared.ValidationError(c, "新模板请直接填写文件内容")
+		return
+	}
 	template, err := h.templateFromRequest(c.Request.Context(), app, &req, 0)
 	if err != nil {
 		apiShared.ValidationError(c, err.Error())
@@ -175,6 +180,10 @@ func (h *ApplicationHandler) UpdateDeploymentTemplate(c *gin.Context) {
 	}
 	if req.Revision != 0 && currentTemplate.Revision != req.Revision {
 		apiShared.Conflict(c, fmt.Sprintf("模板版本冲突，当前版本为 %d", currentTemplate.Revision))
+		return
+	}
+	if err := h.applyTemplateSecretFileEdits(currentTemplate, &req); err != nil {
+		apiShared.ValidationError(c, err.Error())
 		return
 	}
 	binding, err := h.applications.GetDatabaseBindingForTemplate(templateID)
