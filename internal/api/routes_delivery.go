@@ -122,6 +122,7 @@ func registerDeliveryRoutes(r *gin.Engine, apiGroup *gin.RouterGroup, h delivery
 		mysqlClusters.GET("/:id/nodes", h.database.ClusterNodes)
 		mysqlClusters.PUT("/:id/resource-pool", h.database.UpdateClusterResourcePool)
 		mysqlClusters.GET("/:id/runtime", h.database.MySQLClusterRuntime)
+		mysqlClusters.GET("/:id/roles", h.database.MySQLClusterRoles)
 		mysqlClusters.GET("/:id/config", h.database.MySQLClusterConfig)
 		mysqlClusters.PUT("/:id/config", h.database.UpdateMySQLClusterConfig)
 		mysqlClusters.POST("/:id/config/restart", h.database.RestartMySQLClusterForConfig)

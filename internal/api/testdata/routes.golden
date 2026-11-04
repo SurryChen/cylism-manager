@@ -127,6 +127,7 @@ GET /api/cloud/mysql-clusters/:id/deployment/cleanup
 GET /api/cloud/mysql-clusters/:id/nodes
 GET /api/cloud/mysql-clusters/:id/operator
 GET /api/cloud/mysql-clusters/:id/pods/:podName/terminal
+GET /api/cloud/mysql-clusters/:id/roles
 GET /api/cloud/mysql-clusters/:id/runtime
 GET /api/cloud/mysql-clusters/:id/tasks
 GET /api/cloud/mysql-clusters/:id/tasks/:taskID/logs

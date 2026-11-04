@@ -18,7 +18,7 @@ import (
 	"github.com/cylism/cylism-manager/internal/service/database"
 )
 
-func TestSwitchTargetRequiresReadySecondary(t *testing.T) {
+func TestSwitchTargetChecksReadinessWithoutTrustingRoleLabels(t *testing.T) {
 	pods := []database.ClusterPod{
 		{Name: "mysql-0", Component: "mysqld", DatabaseRole: "PRIMARY", NodeName: "node-a", Ready: true},
 		{Name: "mysql-1", Component: "mysqld", DatabaseRole: "SECONDARY", NodeName: "node-b", Ready: true},
@@ -29,10 +29,17 @@ func TestSwitchTargetRequiresReadySecondary(t *testing.T) {
 	if target, err := switchTarget(snapshot, "mysql-1"); err != nil || target.NodeName != "node-b" {
 		t.Fatalf("ready secondary rejected: target=%+v err=%v", target, err)
 	}
-	for _, name := range []string{"mysql-0", "mysql-2", "router-0", "unknown"} {
+	for _, name := range []string{"mysql-2", "router-0", "unknown"} {
 		if _, err := switchTarget(snapshot, name); err == nil {
 			t.Fatalf("ineligible target %s was accepted", name)
 		}
+	}
+	if _, err := switchTarget(snapshot, "mysql-0"); err != nil {
+		t.Fatalf("a PRIMARY label must not prevent a live role check: %v", err)
+	}
+	snapshot.Pods[1].DatabaseRole = ""
+	if _, err := switchTarget(snapshot, "mysql-1"); err != nil {
+		t.Fatalf("a missing label must not prevent a live role check: %v", err)
 	}
 	snapshot.Status = "starting"
 	if _, err := switchTarget(snapshot, "mysql-1"); err == nil || !strings.Contains(err.Error(), "尚未就绪") {

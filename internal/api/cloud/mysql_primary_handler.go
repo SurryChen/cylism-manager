@@ -32,9 +32,8 @@ func switchTarget(snapshot *database.ClusterSnapshot, name string) (database.Clu
 		if pod.Component != "mysqld" || !pod.Ready || pod.NodeName == "" {
 			return database.ClusterPod{}, fmt.Errorf("请选择已就绪的数据库副本实例")
 		}
-		if !strings.EqualFold(pod.DatabaseRole, "SECONDARY") {
-			return database.ClusterPod{}, fmt.Errorf("目标实例已不是副本，请刷新拓扑后重试")
-		}
+		// Role labels may lag after failover. Validate the live member role in
+		// MySQL Shell, including the already-primary idempotent case.
 		return pod, nil
 	}
 	return database.ClusterPod{}, fmt.Errorf("目标数据库实例不存在，请刷新拓扑后重试")
@@ -138,8 +137,8 @@ func (h *DatabaseHandler) runPrimarySwitchTask(taskID, clusterID uint, podName s
 		switch {
 		case errors.Is(changeErr, database.ErrPrimaryNotReady):
 			progress = "数据库成员尚未全部在线，暂不能切主"
-		case errors.Is(changeErr, database.ErrPrimaryNotSecondary):
-			progress = "目标实例已不是副本，请刷新拓扑后重试"
+		case errors.Is(changeErr, database.ErrPrimaryRoleUnknown):
+			progress = "无法确认目标实例的实时成员角色，请检查组复制状态"
 		default:
 			progress = "切换主实例失败：" + changeErr.Error() + "；请核对实际主实例后再重试"
 		}

@@ -136,7 +136,7 @@ func Snapshot(ctx context.Context, client *k8s.Client, item *model.MySQLCluster)
 				component = "mysqld"
 			}
 		}
-		entry := ClusterPod{Name: pod.Name, Component: component, DatabaseRole: pod.Labels["mysql.oracle.com/cluster-role"], NodeName: pod.Spec.NodeName, Phase: string(pod.Status.Phase), Images: []string{}, Claims: []string{}}
+		entry := ClusterPod{Name: pod.Name, Component: component, NodeName: pod.Spec.NodeName, Phase: string(pod.Status.Phase), Images: []string{}, Claims: []string{}}
 		if metric, ok := usage[pod.Name]; ok {
 			entry.CPUMilli, entry.MemoryBytes = &metric.CPUMilli, &metric.MemoryBytes
 			entry.Containers = metric.Containers

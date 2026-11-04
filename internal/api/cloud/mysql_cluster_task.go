@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"sync"
 	"time"
 
@@ -68,7 +67,7 @@ func (h *DatabaseHandler) syncMySQLTask(ctx context.Context, item *model.MySQLCl
 		item.Status = "starting"
 	}
 	if task.ID != 0 && snapshot.Status == "ready" && snapshot.Failure == "" && item.PreferredPrimaryNode != "" && !item.PrimaryConfigured {
-		preferredPod, preferredErr := database.PreferredPrimaryPod(item, snapshot.Pods)
+		_, preferredErr := database.PreferredPrimaryPod(item, snapshot.Pods)
 		if preferredErr != nil {
 			if err := h.store.DB().Model(item).Update("primary_configured", true).Error; err != nil {
 				return nil, err
@@ -78,14 +77,7 @@ func (h *DatabaseHandler) syncMySQLTask(ctx context.Context, item *model.MySQLCl
 				return nil, err
 			}
 		} else {
-			alreadyPrimary := false
-			for _, pod := range snapshot.Pods {
-				alreadyPrimary = alreadyPrimary || (pod.Name == preferredPod && strings.EqualFold(pod.DatabaseRole, "PRIMARY"))
-			}
-			var err error
-			if !alreadyPrimary {
-				err = database.ConfigurePreferredPrimary(ctx, client, item, snapshot.Pods)
-			}
+			err := database.ConfigurePreferredPrimary(ctx, client, item, snapshot.Pods)
 			if err != nil {
 				if errors.Is(err, database.ErrPrimaryNotReady) {
 					item.Status = "starting"
@@ -101,15 +93,6 @@ func (h *DatabaseHandler) syncMySQLTask(ctx context.Context, item *model.MySQLCl
 				item.PrimaryConfigured = true
 				if err := h.appendMySQLTaskLog(&task, "已将节点 "+item.PreferredPrimaryNode+" 上的实例设为初始主实例；后续故障由集群自动切换"); err != nil {
 					return nil, err
-				}
-				for i := range snapshot.Pods {
-					if snapshot.Pods[i].Component == "mysqld" {
-						if snapshot.Pods[i].NodeName == item.PreferredPrimaryNode {
-							snapshot.Pods[i].DatabaseRole = "PRIMARY"
-						} else {
-							snapshot.Pods[i].DatabaseRole = "SECONDARY"
-						}
-					}
 				}
 			}
 		}

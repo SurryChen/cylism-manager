@@ -4,7 +4,7 @@ import MySQLClusterDetail from './MySQLClusterDetail.vue'
 import { getClusters } from '../../api/clusters.js'
 
 const api = vi.hoisted(() => ({
-  getMySQLCluster: vi.fn(), getMySQLClusterNodes: vi.fn(), getMySQLClusterRuntime: vi.fn(),
+  getMySQLCluster: vi.fn(), getMySQLClusterNodes: vi.fn(), getMySQLClusterRuntime: vi.fn(), getMySQLClusterRoles: vi.fn(),
   getMySQLClusterConfig: vi.fn(), updateMySQLClusterConfig: vi.fn(), restartMySQLClusterForConfig: vi.fn(),
   updateMySQLClusterResourcePool: vi.fn(),
   getMySQLClusterTasks: vi.fn(), getMySQLClusterTaskLogs: vi.fn(), getMySQLOperator: vi.fn(),
@@ -26,6 +26,7 @@ beforeEach(() => {
   getClusters.mockResolvedValue([{ id: 2, name: '国内', distribution: 'k3s' }])
   vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
   api.getMySQLCluster.mockResolvedValue({ id: 1, name: '自用', cluster_id: 2, status: 'draft' })
+  api.getMySQLClusterRoles.mockResolvedValue([])
   api.getMySQLClusterNodes.mockResolvedValue([])
   api.getMySQLClusterConfig.mockResolvedValue({ mycnf: '', restart_required: false })
   api.getMySQLClusterTasks.mockResolvedValue(taskResult([]))
@@ -245,6 +246,8 @@ describe('MySQL manual switchover', () => {
     { name: 'mysql-2', node_name: 'node-c', component: 'mysqld', database_role: 'SECONDARY', ready: false },
   ]
 
+  beforeEach(() => { api.getMySQLClusterRoles.mockResolvedValue(pods.map(pod => ({ name: pod.name, database_role: pod.database_role }))) })
+
   it('opens a background task immediately and polls logs and verified topology', async () => {
     api.getMySQLCluster.mockResolvedValue({ id: 1, name: '自用', cluster_id: 2, status: 'ready', database_nodes: ['node-a', 'node-b', 'node-c'], router_nodes: ['node-a', 'node-b'] })
     api.getMySQLOperator.mockResolvedValue({ state: 'ready' })
@@ -268,8 +271,9 @@ describe('MySQL manual switchover', () => {
     expect(wrapper.find('[data-testid="confirm-dialog-confirm"]').exists()).toBe(false)
     expect(document.body.textContent).toContain('任务 #10 · 切换 MySQL 主实例')
     expect(document.body.textContent).toContain('正在检查目标副本')
-    // An accepted task has not yet changed the server's topology.
-    expect(wrapper.vm.runtime.pods[0].database_role).toBe('PRIMARY')
+    // An accepted task invalidates prior role observations.
+    expect(wrapper.vm.runtime.pods[0].database_role).toBe('')
+    api.getMySQLClusterRoles.mockResolvedValue([{ name: 'mysql-0', database_role: 'SECONDARY' }, { name: 'mysql-1', database_role: 'PRIMARY' }])
     api.getMySQLClusterTasks.mockResolvedValue(taskResult([{ ...task, status: 'success', last_progress: '已验证主实例' }]))
     api.getMySQLClusterTaskLogs.mockResolvedValue([{ id: 1, message: '正在检查目标副本' }, { id: 2, message: '已验证主实例' }])
     api.getMySQLClusterRuntime.mockResolvedValue({ status: 'ready', pods: [{ ...pods[0], database_role: 'SECONDARY' }, { ...pods[1], database_role: 'PRIMARY' }], online_instances: 2 })
@@ -287,7 +291,7 @@ describe('MySQL manual switchover', () => {
     api.getMySQLClusterTasks.mockResolvedValue(taskResult([{ id: 10, kind: 'switch_primary', status: 'running' }]))
     wrapper = mountPage()
     await flushPromises()
-    expect(wrapper.get('button[aria-label="将 mysql-1 切换为主实例"]').element.disabled).toBe(true)
+    expect(wrapper.find('button[aria-label="将 mysql-1 切换为主实例"]').exists()).toBe(false)
   })
 
   it('shows switch failures in the error modal', async () => {
@@ -305,8 +309,135 @@ describe('MySQL manual switchover', () => {
   })
 })
 
+describe('MySQL authoritative member roles', () => {
+  const pods = [
+    { name: 'mysql-0', component: 'mysqld', node_name: 'node-a', database_role: 'PRIMARY', ready: true, cpu_millicores: 12 },
+    { name: 'mysql-1', component: 'mysqld', node_name: 'node-b', database_role: 'SECONDARY', ready: true },
+  ]
+  const liveRoles = [{ name: 'mysql-0', database_role: 'SECONDARY' }, { name: 'mysql-1', database_role: 'PRIMARY' }]
+  beforeEach(() => {
+    api.getMySQLCluster.mockResolvedValue({ id: 1, name: '自用', cluster_id: 2, status: 'ready' })
+    api.getMySQLClusterRuntime.mockResolvedValue({ status: 'ready', pods })
+    api.getMySQLClusterRoles.mockResolvedValue(liveRoles)
+  })
+
+  it('uses live roles across topology, connection details and resources despite contradictory labels', async () => {
+    wrapper = mountPage()
+    await flushPromises()
+    const groups = wrapper.findAll('.topology-node')
+    expect(groups.find(group => group.text().includes('node-a')).text()).toContain('副本实例')
+    expect(groups.find(group => group.text().includes('node-b')).text()).toContain('主实例')
+    expect(wrapper.find('button[aria-label="将 mysql-0 切换为主实例"]').exists()).toBe(true)
+    expect(wrapper.find('button[aria-label="将 mysql-1 切换为主实例"]').exists()).toBe(false)
+    await wrapper.findAll('button').find(button => button.text() === '连接信息').trigger('click')
+    expect(document.body.textContent).toContain('mysql-0 · 副本实例')
+    expect(document.body.textContent).toContain('mysql-1 · 主实例')
+    await wrapper.findAll('.section-tab').find(button => button.text() === '部署资源').trigger('click')
+    const rows = wrapper.findAll('tbody tr')
+    expect(rows.find(row => row.text().includes('mysql-0')).text()).toContain('副本实例')
+    expect(rows.find(row => row.text().includes('mysql-1')).text()).toContain('主实例')
+  })
+
+  it('keeps resources and tasks updating while a single role request is pending', async () => {
+    let resolveRoles
+    api.getMySQLClusterRoles.mockReturnValue(new Promise(resolve => { resolveRoles = resolve }))
+    wrapper = mountPage()
+    await flushPromises()
+    expect(wrapper.text()).toContain('mysql-0')
+    expect(wrapper.text()).toContain('CPU 12 m')
+    expect(wrapper.text()).toContain('角色未确认')
+    expect(wrapper.findAll('button[title="设为主实例"]')).toHaveLength(0)
+    await vi.advanceTimersByTimeAsync(10000)
+    await flushPromises()
+    expect(api.getMySQLClusterRoles).toHaveBeenCalledTimes(1)
+    expect(api.getMySQLClusterRuntime).toHaveBeenCalledTimes(3)
+    expect(api.getMySQLClusterTasks).toHaveBeenCalledTimes(3)
+    resolveRoles(liveRoles)
+    await flushPromises()
+    expect(wrapper.find('button[aria-label="将 mysql-0 切换为主实例"]').exists()).toBe(true)
+  })
+
+  it('clears previously confirmed roles when a later query fails and recovers on the next poll', async () => {
+    wrapper = mountPage()
+    await flushPromises()
+    api.getMySQLClusterRoles.mockRejectedValueOnce(new Error('角色查询超时'))
+    await vi.advanceTimersByTimeAsync(5000)
+    await flushPromises()
+    expect(wrapper.text()).toContain('角色未确认')
+    expect(wrapper.findAll('button[title="设为主实例"]')).toHaveLength(0)
+    expect(wrapper.text()).toContain('CPU 12 m')
+    await vi.advanceTimersByTimeAsync(5000)
+    await flushPromises()
+    expect(wrapper.find('button[aria-label="将 mysql-0 切换为主实例"]').exists()).toBe(true)
+  })
+
+  it('rejects a confirmation if the live target has since become primary', async () => {
+    wrapper = mountPage()
+    await flushPromises()
+    await wrapper.get('button[aria-label="将 mysql-0 切换为主实例"]').trigger('click')
+    api.getMySQLClusterRoles.mockResolvedValue([{ name: 'mysql-0', database_role: 'PRIMARY' }, { name: 'mysql-1', database_role: 'SECONDARY' }])
+    await vi.advanceTimersByTimeAsync(5000)
+    await flushPromises()
+    await wrapper.get('[data-testid="confirm-dialog-confirm"]').trigger('click')
+    await flushPromises()
+    expect(api.switchMySQLClusterPrimary).not.toHaveBeenCalled()
+    expect(document.body.textContent).toContain('目标实例角色已变化或尚未确认')
+  })
+
+  it('discards a pre-switch response that arrives after a background switch starts', async () => {
+    wrapper = mountPage()
+    await flushPromises()
+    let resolveRoles
+    api.getMySQLClusterRoles.mockReturnValueOnce(new Promise(resolve => { resolveRoles = resolve }))
+    api.getMySQLClusterTasks.mockResolvedValue(taskResult([{ id: 12, kind: 'switch_primary', status: 'running' }]))
+    await vi.advanceTimersByTimeAsync(5000)
+    await flushPromises()
+    resolveRoles(liveRoles)
+    await flushPromises()
+    expect(wrapper.text()).toContain('角色未确认')
+    expect(wrapper.findAll('button[title="设为主实例"]')).toHaveLength(0)
+    api.getMySQLClusterTasks.mockResolvedValue(taskResult([{ id: 12, kind: 'switch_primary', status: 'success' }]))
+    await vi.advanceTimersByTimeAsync(5000)
+    await flushPromises()
+    expect(wrapper.find('button[aria-label="将 mysql-0 切换为主实例"]').exists()).toBe(true)
+  })
+
+  it('cancels a role query when navigating to another cluster and ignores its late response', async () => {
+    let resolveOldRoles
+    api.getMySQLClusterRoles.mockReturnValueOnce(new Promise(resolve => { resolveOldRoles = resolve }))
+    wrapper = mountPage()
+    await flushPromises()
+    const signal = api.getMySQLClusterRoles.mock.calls[0][1].signal
+    api.getMySQLCluster.mockResolvedValue({ id: 2, name: '另一个集群', cluster_id: 2, status: 'ready' })
+    api.getMySQLClusterRoles.mockResolvedValue([{ name: 'mysql-0', database_role: 'PRIMARY' }, { name: 'mysql-1', database_role: 'SECONDARY' }])
+    await wrapper.setProps({ id: '2' })
+    await flushPromises()
+    expect(signal.aborted).toBe(true)
+    resolveOldRoles(liveRoles)
+    await flushPromises()
+    expect(wrapper.find('button[aria-label="将 mysql-1 切换为主实例"]').exists()).toBe(true)
+    expect(wrapper.find('button[aria-label="将 mysql-0 切换为主实例"]').exists()).toBe(false)
+  })
+
+  it('expires old roles even when a later role request remains pending', async () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(100000)
+    try {
+      wrapper = mountPage()
+      await flushPromises()
+      expect(wrapper.findAll('button[title="设为主实例"]')).toHaveLength(1)
+      api.getMySQLClusterRoles.mockReturnValue(new Promise(() => {}))
+      now.mockReturnValue(131000)
+      await vi.advanceTimersByTimeAsync(5000)
+      await flushPromises()
+      expect(wrapper.text()).toContain('角色未确认')
+      expect(wrapper.findAll('button[title="设为主实例"]')).toHaveLength(0)
+    } finally { now.mockRestore() }
+  })
+})
+
 describe('MySQL incremental scaling', () => {
   it('adds a database instance, then shows the task', async () => {
+    api.getMySQLClusterRoles.mockResolvedValue([{ name: 'mysql-0', database_role: 'PRIMARY' }])
     const ready = { id: 1, name: '自用', cluster_id: 2, status: 'ready', database_instances: 1, database_nodes: ['node-a', 'node-b'], router_instances: 0, router_nodes: ['node-a'] }
     api.getMySQLCluster.mockResolvedValue(ready)
     api.getMySQLClusterNodes.mockResolvedValue([{ name: 'node-a', ready: true, database_allowed: true }, { name: 'node-b', ready: true, database_allowed: true }])
@@ -333,6 +464,7 @@ describe('MySQL incremental scaling', () => {
   })
 
   it('deploys the first Router with its own node selection and refreshes roles', async () => {
+    api.getMySQLClusterRoles.mockResolvedValueOnce([{ name: 'mysql-0', database_role: 'PRIMARY' }, { name: 'mysql-1', database_role: 'SECONDARY' }]).mockResolvedValue([{ name: 'mysql-0', database_role: 'SECONDARY' }, { name: 'mysql-1', database_role: 'PRIMARY' }])
     const ready = { id: 1, name: '自用', cluster_id: 2, status: 'ready', database_instances: 2, database_nodes: ['node-a', 'node-b'], router_instances: 0, router_nodes: [] }
     api.getMySQLCluster.mockResolvedValue(ready)
     api.getMySQLOperator.mockResolvedValue({ state: 'ready' })
@@ -591,6 +723,7 @@ describe('MySQL cluster detail loading', () => {
   })
 
   it('shows Router before MySQL and keeps connection addresses in the dialog', async () => {
+    api.getMySQLClusterRoles.mockResolvedValue([{ name: 'mysql-1-0', database_role: 'PRIMARY' }])
     api.getMySQLCluster.mockResolvedValue({ id: 1, name: '自用', cluster_id: 2, resource_name: 'mysql-1', namespace: 'cylism-databases', status: 'ready', database_instances: 1, router_instances: 1 })
     api.getMySQLOperator.mockResolvedValue({ state: 'ready' })
     api.getMySQLClusterRuntime.mockResolvedValue({ status: 'ready', online_instances: 1, router_ready: 1, router_read_write: 'mysql-1.cylism-databases.svc.cluster.local:6446', router_read_only: 'mysql-1.cylism-databases.svc.cluster.local:6447', pods: [
@@ -683,6 +816,7 @@ describe('MySQL cluster detail loading', () => {
   })
 
   it('keeps topology and tasks visible when the Operator status request times out', async () => {
+    api.getMySQLClusterRoles.mockResolvedValue([{ name: 'mysql-1-0', database_role: 'PRIMARY' }])
     api.getMySQLCluster.mockResolvedValue({ id: 1, name: '自用', cluster_id: 2, status: 'ready', database_instances: 1 })
     api.getMySQLOperator.mockRejectedValue(new Error('Operator 状态超时'))
     api.getMySQLClusterRuntime.mockResolvedValue({ status: 'ready', online_instances: 1, pods: [{ name: 'mysql-1-0', node_name: 'node-a', component: 'mysqld', ready: true, database_role: 'PRIMARY' }] })
@@ -697,6 +831,7 @@ describe('MySQL cluster detail loading', () => {
   })
 
   it('renders ready Pods before a slow Operator status request finishes', async () => {
+    api.getMySQLClusterRoles.mockResolvedValue([{ name: 'mysql-1-0', database_role: 'PRIMARY' }])
     api.getMySQLCluster.mockResolvedValue({ id: 1, name: '自用', cluster_id: 2, status: 'ready', database_instances: 1 })
     let failOperator
     api.getMySQLOperator.mockReturnValue(new Promise((resolve, reject) => { failOperator = reject }))
@@ -817,6 +952,7 @@ describe('MySQL Operator installation tasks', () => {
     await wrapper.findAll('button').find(button => button.text() === '检查安装状态').trigger('click')
     expect(document.body.textContent).toContain('正在检查安装状态...')
     expect(document.body.textContent).toContain('等待安装 Pod 拉取镜像')
+    api.getMySQLClusterRoles.mockResolvedValue([{ name: 'mysql-0', database_role: 'SECONDARY' }, { name: 'mysql-1', database_role: 'PRIMARY' }])
     api.getMySQLClusterTasks.mockResolvedValue(taskResult([{ ...task, status: 'success', last_progress: 'MySQL Operator 已就绪' }]))
     completeCheck({ state: 'ready', progress: 'MySQL Operator 已就绪' })
     await flushPromises()

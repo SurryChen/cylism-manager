@@ -34,10 +34,13 @@ try:
         sys.exit(2)
     session = mysqlsh.globals.shell.open_session({"scheme": "mysql", "host": request["host"], "port": 3306, "user": request["user"], "password": request["password"]})
     role = session.run_sql("SELECT MEMBER_ROLE FROM performance_schema.replication_group_members WHERE MEMBER_ID = @@server_uuid").fetch_one()
-    if request["require_secondary"] and (not role or role[0] != "SECONDARY"):
-        print("CYLISM_PRIMARY_NOT_SECONDARY")
+    # Pod role labels can lag behind a successful switchover or failover.
+    # Trust the target's live role and treat an already-primary target as an
+    # idempotent success, while rejecting an absent/unknown membership role.
+    if not role or role[0] not in ("PRIMARY", "SECONDARY"):
+        print("CYLISM_PRIMARY_ROLE_UNKNOWN")
         sys.exit(3)
-    if not role or role[0] != "PRIMARY":
+    if role[0] == "SECONDARY":
         cluster.set_primary_instance(request["endpoint"])
     # Verify the connected target's real role after the switch.
     role = session.run_sql("SELECT MEMBER_ROLE FROM performance_schema.replication_group_members WHERE MEMBER_ID = @@server_uuid").fetch_one()
@@ -51,7 +54,7 @@ except Exception:
 `
 
 var ErrPrimaryNotReady = errors.New("数据库成员尚未全部在线")
-var ErrPrimaryNotSecondary = errors.New("目标实例已不是副本")
+var ErrPrimaryRoleUnknown = errors.New("无法确认目标实例的数据库成员角色")
 
 func PreferredPrimaryPod(item *model.MySQLCluster, pods []ClusterPod) (string, error) {
 	for _, pod := range pods {
@@ -87,7 +90,7 @@ func configurePreferredPrimary(ctx context.Context, client *k8s.Client, item *mo
 	return fmt.Errorf("设置节点 %s 上的初始主实例失败，请检查成员同步状态和 Operator 到数据库的连接后重试部署", item.PreferredPrimaryNode)
 }
 
-func switchPrimaryPod(ctx context.Context, client *k8s.Client, item *model.MySQLCluster, name, nodeName string, requireSecondary bool, execute operatorCommand) error {
+func switchPrimaryPod(ctx context.Context, client *k8s.Client, item *model.MySQLCluster, name, nodeName string, requireReady bool, execute operatorCommand) error {
 	target, err := client.Clientset.CoreV1().Pods(item.Namespace).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
 		return err
@@ -98,7 +101,7 @@ func switchPrimaryPod(ctx context.Context, client *k8s.Client, item *model.MySQL
 	if target.Spec.NodeName != nodeName || target.DeletionTimestamp != nil {
 		return fmt.Errorf("目标实例的节点位置已变化，请刷新运行状态后重试")
 	}
-	if requireSecondary {
+	if requireReady {
 		ready := false
 		for _, condition := range target.Status.Conditions {
 			if condition.Type == corev1.PodReady && condition.Status == corev1.ConditionTrue {
@@ -110,28 +113,54 @@ func switchPrimaryPod(ctx context.Context, client *k8s.Client, item *model.MySQL
 			return fmt.Errorf("目标数据库副本尚未就绪")
 		}
 	}
-	if requireSecondary && target.Labels["mysql.oracle.com/cluster-role"] != "SECONDARY" {
-		return ErrPrimaryNotSecondary
-	}
 	if target.Status.PodIP == "" {
 		return fmt.Errorf("目标实例尚未分配 Pod IP")
 	}
+	operatorName, credentials, err := operatorAccess(ctx, client, item)
+	if err != nil {
+		return err
+	}
+	input, err := json.Marshal(map[string]any{"host": target.Status.PodIP, "endpoint": net.JoinHostPort(target.Status.PodIP, "3306"), "user": credentials["user"], "password": credentials["password"], "instances": DatabaseInstanceCount(item)})
+	if err != nil {
+		return err
+	}
+	return execute(ctx, client, operatorName, input)
+}
+
+func executeOperatorCommand(ctx context.Context, client *k8s.Client, operatorName string, input []byte) error {
+	stdout, err := executeOperatorScript(ctx, client, operatorName, input, configurePrimaryScript)
+	if strings.Contains(string(stdout), "CYLISM_PRIMARY_WAITING") {
+		return ErrPrimaryNotReady
+	}
+	if strings.Contains(string(stdout), "CYLISM_PRIMARY_ROLE_UNKNOWN") {
+		return ErrPrimaryRoleUnknown
+	}
+	if err != nil {
+		return fmt.Errorf("主实例配置命令未完成")
+	}
+	if !strings.Contains(string(stdout), "CYLISM_PRIMARY_CONFIGURED") {
+		return fmt.Errorf("未确认目标实例为主实例")
+	}
+	return nil
+}
+
+func operatorAccess(ctx context.Context, client *k8s.Client, item *model.MySQLCluster) (string, map[string]string, error) {
 	secret, err := client.Clientset.CoreV1().Secrets(item.Namespace).Get(ctx, item.ResourceName+"-root", metav1.GetOptions{})
 	if err != nil {
-		return fmt.Errorf("读取数据库管理凭据失败")
+		return "", nil, fmt.Errorf("读取数据库管理凭据失败")
 	}
 	if len(secret.Data["rootPassword"]) == 0 {
-		return fmt.Errorf("数据库管理凭据缺少密码")
+		return "", nil, fmt.Errorf("数据库管理凭据缺少密码")
 	}
 	operators, err := client.Clientset.CoreV1().Pods("mysql-operator").List(ctx, metav1.ListOptions{LabelSelector: "app.kubernetes.io/name=mysql-operator"})
 	if err != nil {
-		return err
+		return "", nil, err
 	}
 	// The official chart has used different label layouts across releases.
 	if len(operators.Items) == 0 {
 		operators, err = client.Clientset.CoreV1().Pods("mysql-operator").List(ctx, metav1.ListOptions{})
 		if err != nil {
-			return err
+			return "", nil, err
 		}
 	}
 	operatorName := ""
@@ -153,39 +182,30 @@ func switchPrimaryPod(ctx context.Context, client *k8s.Client, item *model.MySQL
 		}
 	}
 	if operatorName == "" {
-		return fmt.Errorf("没有就绪的 MySQL Operator Pod：%w", ErrPrimaryNotReady)
+		return "", nil, fmt.Errorf("没有就绪的 MySQL Operator Pod：%w", ErrPrimaryNotReady)
 	}
-	input, err := json.Marshal(map[string]any{"host": target.Status.PodIP, "endpoint": net.JoinHostPort(target.Status.PodIP, "3306"), "user": string(secret.Data["rootUser"]), "password": string(secret.Data["rootPassword"]), "instances": DatabaseInstanceCount(item), "require_secondary": requireSecondary})
-	if err != nil {
-		return err
+	user := string(secret.Data["rootUser"])
+	if user == "" {
+		user = "root"
 	}
-	return execute(ctx, client, operatorName, input)
+	return operatorName, map[string]string{"user": user, "password": string(secret.Data["rootPassword"])}, nil
 }
 
-func executeOperatorCommand(ctx context.Context, client *k8s.Client, operatorName string, input []byte) error {
+func executeOperatorScript(ctx context.Context, client *k8s.Client, operatorName string, input []byte, script string) ([]byte, error) {
 	if client.Config == nil || client.Clientset.CoreV1().RESTClient() == nil {
-		return fmt.Errorf("Kubernetes Pod 命令通道不可用")
+		return nil, fmt.Errorf("Kubernetes Pod 命令通道不可用")
 	}
-	request := client.Clientset.CoreV1().RESTClient().Post().Resource("pods").Namespace("mysql-operator").Name(operatorName).SubResource("exec").VersionedParams(&corev1.PodExecOptions{Container: "mysql-operator", Command: []string{"mysqlsh", "--py", "--execute", configurePrimaryScript}, Stdin: true, Stdout: true, Stderr: true}, scheme.ParameterCodec)
+	request := client.Clientset.CoreV1().RESTClient().Post().Resource("pods").Namespace("mysql-operator").Name(operatorName).SubResource("exec").VersionedParams(&corev1.PodExecOptions{Container: "mysql-operator", Command: []string{"mysqlsh", "--py", "--execute", script}, Stdin: true, Stdout: true, Stderr: true}, scheme.ParameterCodec)
 	executor, err := remotecommand.NewSPDYExecutor(client.Config, http.MethodPost, request.URL())
 	if err != nil {
-		return fmt.Errorf("建立主实例配置通道失败")
+		return nil, fmt.Errorf("建立 MySQL 查询通道失败")
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	var stdout, stderr bytes.Buffer
 	err = executor.StreamWithContext(ctx, remotecommand.StreamOptions{Stdin: bytes.NewReader(input), Stdout: &stdout, Stderr: &stderr})
-	if strings.Contains(stdout.String(), "CYLISM_PRIMARY_WAITING") {
-		return ErrPrimaryNotReady
-	}
-	if strings.Contains(stdout.String(), "CYLISM_PRIMARY_NOT_SECONDARY") {
-		return ErrPrimaryNotSecondary
-	}
 	if err != nil {
-		return fmt.Errorf("主实例配置命令未完成")
+		return stdout.Bytes(), fmt.Errorf("MySQL 命令未完成")
 	}
-	if !strings.Contains(stdout.String(), "CYLISM_PRIMARY_CONFIGURED") {
-		return fmt.Errorf("未确认初始主实例设置成功")
-	}
-	return nil
+	return stdout.Bytes(), nil
 }

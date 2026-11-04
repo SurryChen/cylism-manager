@@ -42,7 +42,7 @@
           <div class="topology-stage-heading"><span class="stage-icon"><Database :size="18" /></span><div><strong>MySQL 实例</strong><span class="cell-secondary">{{ runtime.online_instances || 0 }}/{{ cluster.database_instances || cluster.database_nodes?.length || 0 }} 就绪</span></div></div>
           <div class="topology-nodes">
             <article v-for="pod in databasePods" :key="pod.name" class="topology-node topology-node-database">
-              <div class="topology-node-identity"><span class="node-icon"><Database :size="18" /></span><strong>{{ pod.node_name || '等待调度' }}</strong><span class="badge" :class="pod.ready ? 'badge-online' : 'badge-offline'">{{ databaseRoleLabel(pod.database_role) }}</span><button v-if="pod.ready" class="icon-button icon-button--table" type="button" title="打开数据库终端" :aria-label="`打开 ${pod.name} 的数据库终端`" @click="terminalPod = pod"><SquareTerminal :size="14" /></button><button v-if="cluster.status === 'ready' && pod.ready && pod.database_role?.toUpperCase() === 'SECONDARY'" class="icon-button icon-button--table" type="button" title="设为主实例" :disabled="switchingPrimary || primarySwitchPending" :aria-label="`将 ${pod.name} 切换为主实例`" @click="switchTarget = pod"><ArrowUpCircle :size="14" /></button></div>
+              <div class="topology-node-identity"><span class="node-icon"><Database :size="18" /></span><strong>{{ pod.node_name || '等待调度' }}</strong><span class="badge" :class="pod.ready && pod.database_role ? 'badge-online' : 'badge-offline'">{{ databaseRoleLabel(pod.database_role) }}</span><button v-if="pod.ready" class="icon-button icon-button--table" type="button" title="打开数据库终端" :aria-label="`打开 ${pod.name} 的数据库终端`" @click="terminalPod = pod"><SquareTerminal :size="14" /></button><button v-if="cluster.status === 'ready' && pod.ready && pod.database_role?.toUpperCase() === 'SECONDARY'" class="icon-button icon-button--table" type="button" title="设为主实例" :disabled="switchingPrimary || primarySwitchPending" :aria-label="`将 ${pod.name} 切换为主实例`" @click="switchTarget = pod"><ArrowUpCircle :size="14" /></button></div>
               <span class="pod-name mono" :title="pod.name">{{ pod.name }}</span>
               <span class="topology-node-usage cell-secondary">{{ podUsageLabel(pod) }}</span>
               <span v-if="!pod.ready" class="cell-secondary">{{ pod.reason || pod.phase || '启动中' }}</span>
@@ -186,7 +186,7 @@ import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { ArrowDown, ArrowLeft, ArrowUpCircle, Database, RefreshCw, Server, Settings2, SquareTerminal, Trash2 } from 'lucide-vue-next'
 import { getClusters } from '../../api/clusters.js'
 import { formatBytes } from '../../utils/formatters.js'
-import { addMySQLClusterInstance, addMySQLClusterRouter, cancelMySQLOperator, cleanupMySQLCluster, deployMySQLCluster, getMySQLCluster, getMySQLClusterCleanup, getMySQLClusterConfig, getMySQLClusterNodes, getMySQLClusterRuntime, getMySQLClusterTaskLogs, getMySQLClusterTasks, getMySQLOperator, installMySQLOperator, pauseMySQLClusterDeployment, preflightMySQLCluster, pullMySQLClusterPodImages, repairMySQLClusterRouterPlacement, restartMySQLClusterForConfig, retireMySQLClusterRouter, retryMySQLClusterPod, retryMySQLClusterShutdown, switchMySQLClusterPrimary, uninstallMySQLOperator, updateMySQLClusterConfig, updateMySQLClusterResourcePool } from '../../api/databases.js'
+import { addMySQLClusterInstance, addMySQLClusterRouter, cancelMySQLOperator, cleanupMySQLCluster, deployMySQLCluster, getMySQLCluster, getMySQLClusterCleanup, getMySQLClusterConfig, getMySQLClusterNodes, getMySQLClusterRuntime, getMySQLClusterRoles, getMySQLClusterTaskLogs, getMySQLClusterTasks, getMySQLOperator, installMySQLOperator, pauseMySQLClusterDeployment, preflightMySQLCluster, pullMySQLClusterPodImages, repairMySQLClusterRouterPlacement, restartMySQLClusterForConfig, retireMySQLClusterRouter, retryMySQLClusterPod, retryMySQLClusterShutdown, switchMySQLClusterPrimary, uninstallMySQLOperator, updateMySQLClusterConfig, updateMySQLClusterResourcePool } from '../../api/databases.js'
 import BaseModal from '../../components/BaseModal.vue'
 import ConfirmDialog from '../../components/ConfirmDialog.vue'
 import EmptyState from '../../components/EmptyState.vue'
@@ -202,7 +202,17 @@ const taskPageSize = 10
 const taskOffset = ref(0), taskTotal = ref(0), tasksLoading = ref(false), uninstallTaskPending = ref(false)
 const taskPage = computed(() => Math.floor(taskOffset.value / taskPageSize) + 1)
 const taskPageCount = computed(() => Math.max(1, Math.ceil(taskTotal.value / taskPageSize)))
-const runtime = ref({ pods: [] }), selectedTask = ref(null)
+const runtimeSnapshot = ref({ pods: [] }), selectedTask = ref(null)
+const memberRoles = ref([]), rolesCheckedAt = ref(0), roleClock = ref(Date.now())
+const runtime = computed(() => ({
+  ...runtimeSnapshot.value,
+  pods: (runtimeSnapshot.value.pods || []).map(pod => ({
+    ...pod,
+    // Pod labels can be stale. Every view uses the same live membership result.
+    database_role: roleClock.value - rolesCheckedAt.value < 30000
+      ? memberRoles.value.find(member => member.name === pod.name)?.database_role || '' : '',
+  })),
+}))
 const loading = ref(true), refreshing = ref(false), saving = ref(false), installing = ref(false), deploymentOpen = ref(false), error = ref(''), operatorState = ref('checking')
 const checkingOperator = ref(false), operatorDetailsOpen = ref(false), operatorProgress = ref(''), operatorCanCancel = ref(false), cancelOpen = ref(false), cancelling = ref(false), logsLoading = ref(false)
 const operatorCanUninstall = ref(false), uninstallOpen = ref(false), uninstalling = ref(false)
@@ -264,10 +274,10 @@ const kubernetesClusterName = computed(() => kubernetesClusters.value.find(item 
 const routerPods = computed(() => (runtime.value.pods || []).filter(pod => pod.component === 'mysqlrouter'))
 const routerPlacementMismatch = computed(() => routerPods.value.some(pod => pod.node_name && !cluster.value?.router_nodes?.includes(pod.node_name)))
 const databasePods = computed(() => (runtime.value.pods || []).filter(pod => pod.component === 'mysqld'))
-const selectedResourcePod = computed(() => resourceDetails.value?.kind === 'pod' ? (runtime.value.pods || []).find(pod => pod.name === resourceDetails.value.item.name) || resourceDetails.value.item : null)
+const selectedResourcePod = computed(() => resourceDetails.value?.kind === 'pod' ? (runtime.value.pods || []).find(pod => pod.name === resourceDetails.value.item.name) || { ...resourceDetails.value.item, database_role: '' } : null)
 const available = node => node.database_allowed ?? (node.ready && !node.evicted)
 const routerAvailable = node => node.router_allowed ?? (node.ready && !node.evicted && !node.default_no_schedule)
-const databaseRoleLabel = value => ({ PRIMARY: '主实例', primary: '主实例', SECONDARY: '副本实例', secondary: '副本实例' }[value] || '角色确认中')
+const databaseRoleLabel = value => ({ PRIMARY: '主实例', primary: '主实例', SECONDARY: '副本实例', secondary: '副本实例' }[value] || '角色未确认')
 const uniqueImages = pod => [...new Set(pod.images || [])]
 const formatPodCPU = value => value == null ? '-' : `${value} m`
 const formatPodMemory = value => value == null ? '-' : formatBytes(value)
@@ -380,10 +390,11 @@ async function load() {
 }
 let refreshRequest
 async function refresh(silent = false) {
+  roleClock.value = Date.now()
   if (!cluster.value) return
   if (!refreshRequest) {
     refreshing.value = true
-    refreshRequest = refreshData().finally(() => { refreshing.value = false; refreshRequest = null })
+    refreshRequest = refreshData(undefined, silent).finally(() => { refreshing.value = false; refreshRequest = null })
   }
   return refreshRequest.catch(failure => { if (!silent) error.value = failure.message || '刷新 MySQL 集群失败' })
 }
@@ -423,9 +434,37 @@ function showLatestTasks() {
   activeTab.value = 'tasks'
   void loadTasks().catch(failure => { error.value = failure.message || '读取集群任务失败' })
 }
-async function refreshData(currentItem) {
+let rolesRequest, rolesController, rolesGeneration = 0
+function clearMemberRoles() {
+  rolesGeneration++
+  rolesController?.abort()
+  rolesController = null
+  rolesRequest = null
+  memberRoles.value = []
+  rolesCheckedAt.value = 0
+}
+function refreshMemberRoles(silent = false) {
+  roleClock.value = Date.now()
+  if (!cluster.value || ['draft', 'paused'].includes(cluster.value.status) || primarySwitchPending.value || switchingPrimary.value) return
+  if (rolesRequest) return
+  const clusterID = props.id, generation = rolesGeneration, requestedAt = Date.now()
+  rolesController = new AbortController()
+  rolesRequest = getMySQLClusterRoles(clusterID, { signal: rolesController.signal }).then(roles => {
+    if (clusterID !== props.id || generation !== rolesGeneration) return
+    memberRoles.value = roles
+    rolesCheckedAt.value = requestedAt
+    roleClock.value = Date.now()
+  }).catch(failure => {
+    if (clusterID !== props.id || generation !== rolesGeneration) return
+    memberRoles.value = []
+    rolesCheckedAt.value = 0
+    if (!silent) error.value = failure.message || '读取 MySQL 实时角色失败'
+  }).finally(() => { if (generation === rolesGeneration) rolesRequest = null })
+}
+async function refreshData(currentItem, silent = false) {
   const item = currentItem || await getMySQLCluster(props.id)
   setCluster(item)
+  refreshMemberRoles(silent)
   const results = await Promise.allSettled([
     getMySQLOperator(props.id).then(operator => {
       operatorState.value = operator.state
@@ -436,12 +475,12 @@ async function refreshData(currentItem) {
     (item.status === 'draft' ? Promise.resolve(null) : item.status === 'paused' ? getMySQLClusterCleanup(props.id) : getMySQLClusterRuntime(props.id)).then(snapshot => {
       if (item.status === 'paused') {
         cleanupState.value = snapshot
-        runtime.value = { pods: [] }
+        runtimeSnapshot.value = { pods: [] }
       } else if (item.status === 'draft') {
         cleanupState.value = null
-        runtime.value = { pods: [] }
+        runtimeSnapshot.value = { pods: [] }
       } else {
-        runtime.value = snapshot
+        runtimeSnapshot.value = snapshot
         item.status = snapshot.status
         item.online_instances = snapshot.online_instances
         item.router_ready = snapshot.router_ready
@@ -667,11 +706,18 @@ async function openLogs(task) {
 }
 function requestCancel() { closeLogs(); cancelOpen.value = true }
 async function switchPrimary() {
-  if (!switchTarget.value || switchingPrimary.value) return
+  if (!switchTarget.value || switchingPrimary.value || primarySwitchPending.value) return
+  const target = databasePods.value.find(pod => pod.name === switchTarget.value.name)
+  if (!target?.ready || target.database_role !== 'SECONDARY') {
+    switchTarget.value = null
+    error.value = '目标实例角色已变化或尚未确认，请刷新拓扑后重试'
+    return
+  }
   switchingPrimary.value = true
   try {
     const result = await switchMySQLClusterPrimary(props.id, switchTarget.value.name)
     switchTarget.value = null
+    clearMemberRoles()
     showLatestTasks()
     if (result.task) void openLogs(result.task)
     void refresh(true)
@@ -679,7 +725,7 @@ async function switchPrimary() {
     switchTarget.value = null
     error.value = failure.message || '切换主实例失败'
     await refresh()
-  } finally { switchingPrimary.value = false }
+  } finally { switchingPrimary.value = false; refreshMemberRoles() }
 }
 async function retryPod() {
   if (!retryTarget.value || retryingPod.value) return
@@ -700,9 +746,14 @@ async function pullPodImages(pod) {
 }
 function closeLogs() { selectedTask.value = null; operatorDetailsOpen.value = false }
 let polling
-watch(() => props.id, () => { clearInterval(polling); taskRequestID++; cluster.value = null; runtime.value = { pods: [], claims: [] }; cleanupState.value = null; tasks.value = []; taskOffset.value = 0; taskTotal.value = 0; tasksLoading.value = false; uninstallTaskPending.value = false; selectedTask.value = null; resourceDetails.value = null; connectionDetailsOpen.value = false; terminalPod.value = null; configOpen.value = false; configRestartOpen.value = false; scaleConfirmation.value = ''; routerDeploymentOpen.value = false; routerRepairOpen.value = false; routerRetireOpen.value = false; operatorDetailsOpen.value = false; cancelOpen.value = false; uninstallOpen.value = false; pauseOpen.value = false; retryShutdownOpen.value = false; cleanupOpen.value = false; switchTarget.value = null; retryTarget.value = null; activeTab.value = 'topology'; void load() }, { immediate: true })
+watch(() => props.id, () => { clearInterval(polling); clearMemberRoles(); taskRequestID++; cluster.value = null; runtimeSnapshot.value = { pods: [], claims: [] }; cleanupState.value = null; tasks.value = []; taskOffset.value = 0; taskTotal.value = 0; tasksLoading.value = false; uninstallTaskPending.value = false; selectedTask.value = null; resourceDetails.value = null; connectionDetailsOpen.value = false; terminalPod.value = null; configOpen.value = false; configRestartOpen.value = false; scaleConfirmation.value = ''; routerDeploymentOpen.value = false; routerRepairOpen.value = false; routerRetireOpen.value = false; operatorDetailsOpen.value = false; cancelOpen.value = false; uninstallOpen.value = false; pauseOpen.value = false; retryShutdownOpen.value = false; cleanupOpen.value = false; switchTarget.value = null; retryTarget.value = null; activeTab.value = 'topology'; void load() }, { immediate: true })
 watch([activeTab, () => cluster.value?.status, operatorState, operatorUninstallPending], () => { clearInterval(polling); if (cluster.value && (cluster.value.status !== 'draft' || ['installing', 'cancelling'].includes(operatorState.value) || operatorUninstallPending.value)) polling = setInterval(() => { void refresh(true) }, 5000) })
-onBeforeUnmount(() => clearInterval(polling))
+watch(primarySwitchPending, pending => {
+  clearMemberRoles()
+  if (!pending) refreshMemberRoles()
+})
+watch(() => cluster.value?.status, status => { if (['draft', 'paused'].includes(status)) clearMemberRoles() })
+onBeforeUnmount(() => { clearInterval(polling); clearMemberRoles() })
 </script>
 
 <style scoped>
