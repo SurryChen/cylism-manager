@@ -42,7 +42,7 @@ func (h *DatabaseHandler) RetireMySQLRouter(c *gin.Context) {
 		return
 	}
 	var running int64
-	if err := h.store.DB().Model(&model.MySQLClusterTask{}).Where("cluster_id = ? AND status = ? AND kind IN ?", item.ID, "running", []string{"deploy", "scale_database", "scale_router", "scale_router_down"}).Count(&running).Error; err != nil {
+	if err := h.store.DB().Model(&model.MySQLClusterTask{}).Where("cluster_id = ? AND status = ? AND kind IN ?", item.ID, "running", []string{"deploy", "scale_database", "scale_router", "scale_router_down", "switch_primary"}).Count(&running).Error; err != nil {
 		apiShared.DBError(c, err.Error())
 		return
 	}
@@ -149,6 +149,15 @@ func (h *DatabaseHandler) scaleMySQLCluster(c *gin.Context, component string) {
 	}
 	if item.Status != "ready" {
 		apiShared.ValidationError(c, "请等待当前 MySQL 集群任务完成后再追加实例")
+		return
+	}
+	var switching int64
+	if err := h.store.DB().Model(&model.MySQLClusterTask{}).Where("cluster_id = ? AND kind = ? AND status = ?", item.ID, "switch_primary", "running").Count(&switching).Error; err != nil {
+		apiShared.DBError(c, err.Error())
+		return
+	}
+	if switching > 0 {
+		apiShared.Conflict(c, "请等待切主任务完成后再操作集群")
 		return
 	}
 	var candidates []string

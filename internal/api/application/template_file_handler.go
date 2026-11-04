@@ -118,6 +118,78 @@ func (h *ApplicationHandler) InspectDeploymentTemplateFile(c *gin.Context) {
 	apiShared.Success(c, response)
 }
 
+// InspectDeploymentTemplateSecret returns one explicitly requested application
+// Secret value. Ordinary template responses remain sanitized; every reveal is
+// audited before the value is sent to the browser.
+func (h *ApplicationHandler) InspectDeploymentTemplateSecret(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
+	c.Header("Pragma", "no-cache")
+	if apiShared.UserID(c) == 0 {
+		apiShared.Unauthorized(c, "请使用平台管理账号查看敏感配置")
+		return
+	}
+	if _, delegated := c.Get("delegation"); delegated {
+		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"code": http.StatusForbidden, "message": "委托账号不能查看模板敏感配置"})
+		return
+	}
+	applicationID, err := apiShared.ParsePositiveID(c.Param("id"))
+	if err != nil {
+		apiShared.BadRequest(c, "应用 ID 无效")
+		return
+	}
+	templateID, err := apiShared.ParsePositiveID(c.Param("templateID"))
+	if err != nil {
+		apiShared.BadRequest(c, "模板 ID 无效")
+		return
+	}
+	var request struct {
+		Key      string `json:"key"`
+		Revision uint   `json:"revision"`
+	}
+	if err := c.ShouldBindJSON(&request); err != nil || strings.TrimSpace(request.Key) == "" {
+		apiShared.BadRequest(c, "敏感配置读取参数无效")
+		return
+	}
+	template, err := h.applications.GetApplicationDeploymentTemplate(applicationID, templateID)
+	if err != nil {
+		apiShared.NotFound(c, "上线模板不存在")
+		return
+	}
+	if request.Revision == 0 || request.Revision != template.Revision {
+		apiShared.Conflict(c, "模板版本已改变，请关闭编辑器后重新打开")
+		return
+	}
+	var spec applicationservice.ReleaseSpec
+	if err := json.Unmarshal([]byte(template.Spec), &spec); err != nil {
+		apiShared.DBError(c, "读取模板失败")
+		return
+	}
+	if _, exists := spec.Secrets[request.Key]; !exists {
+		apiShared.NotFound(c, "模板中不存在此敏感配置")
+		return
+	}
+	values, err := h.decryptTemplateSecrets(template)
+	if err != nil {
+		apiShared.DBError(c, "解密敏感配置失败")
+		return
+	}
+	value, exists := values[request.Key]
+	if !exists {
+		apiShared.NotFound(c, "敏感配置内容不存在")
+		return
+	}
+	if err := auditservice.NewService(h.audit).Record(auditservice.AuditEventInput{
+		Action: "application.template_secret.read", ResourceType: "application", ResourceID: applicationID,
+		Actor: apiShared.ActorFromContext(c), Source: model.AuditSourceAPI, Outcome: model.AuditOutcomeSucceeded,
+		Summary: "查看模板敏感配置", TargetName: template.Name + "/" + request.Key, RequestID: apiShared.EnsureRequestID(c),
+		Metadata: map[string]any{"template_id": templateID, "key": request.Key},
+	}); err != nil {
+		apiShared.DBError(c, "无法记录审计，未返回敏感配置")
+		return
+	}
+	apiShared.Success(c, gin.H{"key": request.Key, "revision": template.Revision, "value": value})
+}
+
 func templateHasSensitiveFile(spec applicationservice.ReleaseSpec, key string) bool {
 	if _, exists := spec.Secrets[key]; !exists {
 		return false

@@ -245,11 +245,16 @@ describe('MySQL manual switchover', () => {
     { name: 'mysql-2', node_name: 'node-c', component: 'mysqld', database_role: 'SECONDARY', ready: false },
   ]
 
-  it('confirms a ready secondary and updates the displayed primary', async () => {
+  it('opens a background task immediately and polls logs and verified topology', async () => {
     api.getMySQLCluster.mockResolvedValue({ id: 1, name: '自用', cluster_id: 2, status: 'ready', database_nodes: ['node-a', 'node-b', 'node-c'], router_nodes: ['node-a', 'node-b'] })
     api.getMySQLOperator.mockResolvedValue({ state: 'ready' })
     api.getMySQLClusterRuntime.mockResolvedValue({ status: 'ready', pods: pods.map(pod => ({ ...pod })), online_instances: 3, router_ready: 2 })
-    api.switchMySQLClusterPrimary.mockResolvedValue({ pod_name: 'mysql-1', task: { id: 10, kind: 'switch_primary', status: 'success' } })
+    const task = { id: 10, kind: 'switch_primary', status: 'running', last_progress: '正在检查目标副本' }
+    api.switchMySQLClusterPrimary.mockImplementation(async () => {
+      api.getMySQLClusterTasks.mockResolvedValue(taskResult([task]))
+      api.getMySQLClusterTaskLogs.mockResolvedValue([{ id: 1, message: '正在检查目标副本' }])
+      return { pod_name: 'mysql-1', task }
+    })
     wrapper = mountPage()
     await flushPromises()
     expect(wrapper.findAll('button[title="设为主实例"]')).toHaveLength(1)
@@ -259,9 +264,30 @@ describe('MySQL manual switchover', () => {
     await wrapper.get('[data-testid="confirm-dialog-confirm"]').trigger('click')
     await flushPromises()
     expect(api.switchMySQLClusterPrimary).toHaveBeenCalledWith('1', 'mysql-1')
-    expect(wrapper.get('button[aria-label="将 mysql-0 切换为主实例"]').exists()).toBe(true)
-    expect(wrapper.find('button[aria-label="将 mysql-1 切换为主实例"]').exists()).toBe(false)
+    expect(wrapper.get('.section-tab.is-active').text()).toBe('集群任务')
+    expect(wrapper.find('[data-testid="confirm-dialog-confirm"]').exists()).toBe(false)
+    expect(document.body.textContent).toContain('任务 #10 · 切换 MySQL 主实例')
+    expect(document.body.textContent).toContain('正在检查目标副本')
+    // An accepted task has not yet changed the server's topology.
+    expect(wrapper.vm.runtime.pods[0].database_role).toBe('PRIMARY')
+    api.getMySQLClusterTasks.mockResolvedValue(taskResult([{ ...task, status: 'success', last_progress: '已验证主实例' }]))
+    api.getMySQLClusterTaskLogs.mockResolvedValue([{ id: 1, message: '正在检查目标副本' }, { id: 2, message: '已验证主实例' }])
+    api.getMySQLClusterRuntime.mockResolvedValue({ status: 'ready', pods: [{ ...pods[0], database_role: 'SECONDARY' }, { ...pods[1], database_role: 'PRIMARY' }], online_instances: 2 })
+    await vi.advanceTimersByTimeAsync(5000)
+    await flushPromises()
+    expect(document.body.textContent).toContain('已验证主实例')
+    expect(wrapper.vm.runtime.pods[1].database_role).toBe('PRIMARY')
     expect(wrapper.text()).not.toContain('切换主实例失败')
+  })
+
+  it('disables switching when a background switch is already running after a reload', async () => {
+    api.getMySQLCluster.mockResolvedValue({ id: 1, name: '自用', cluster_id: 2, status: 'ready' })
+    api.getMySQLOperator.mockResolvedValue({ state: 'ready' })
+    api.getMySQLClusterRuntime.mockResolvedValue({ status: 'ready', pods })
+    api.getMySQLClusterTasks.mockResolvedValue(taskResult([{ id: 10, kind: 'switch_primary', status: 'running' }]))
+    wrapper = mountPage()
+    await flushPromises()
+    expect(wrapper.get('button[aria-label="将 mysql-1 切换为主实例"]').element.disabled).toBe(true)
   })
 
   it('shows switch failures in the error modal', async () => {

@@ -4,13 +4,14 @@
       <summary>环境变量 <small>{{ environmentItems.length ? `${environmentItems.length} 项` : '未配置' }}</small></summary>
       <div class="configuration-toolbar"><p class="form-hint">普通值和敏感值统一维护，敏感值加密保存。</p><button type="button" class="btn btn-sm" @click="addVariable">添加变量</button></div>
       <div v-if="environmentItems.length" class="environment-list">
-        <div v-for="({ item, source }, index) in environmentItems" :key="index" class="environment-entry">
+        <div v-for="{ item, source } in environmentItems" :key="itemID(item)" class="environment-entry">
           <div class="environment-row">
             <input v-model.trim="item.key" class="form-input" required aria-label="环境变量名称" placeholder="例如 DATABASE_HOST" />
             <SelectMenu :model-value="source" aria-label="变量存储方式" @update:model-value="changeVariableSource(item, source, $event)"><option value="application_config">普通值</option><option value="application_secret">敏感值</option></SelectMenu>
             <button type="button" class="icon-button" title="移除环境变量" aria-label="移除环境变量" @click="removeItem(item, source)"><Trash2 :size="15" /></button>
           </div>
-          <textarea v-model="item.value" class="form-input configuration-value" rows="2" aria-label="环境变量值" :placeholder="source === 'application_secret' && item.original_key ? '已保存敏感值；留空保留原值' : '变量值'"></textarea>
+          <SensitiveValueEditor v-if="source === 'application_secret'" :item="item" :application-id="applicationId" :template-id="templateId" :revision="revision" @error="emit('error', $event)" />
+          <textarea v-else v-model="item.value" class="form-input configuration-value" rows="2" aria-label="环境变量值" placeholder="变量值"></textarea>
           <details class="entry-options"><summary>更多设置</summary><label class="check-row"><input v-model="item.enabled" type="checkbox" /> 启用</label><label class="check-row"><input v-model="item.externally_managed" type="checkbox" /> 允许外部修改</label></details>
         </div>
       </div>
@@ -63,10 +64,17 @@ import BaseModal from '../../components/BaseModal.vue'
 import EmptyState from '../../components/EmptyState.vue'
 import SelectMenu from '../../components/SelectMenu.vue'
 import SensitiveFileEditor from './SensitiveFileEditor.vue'
+import SensitiveValueEditor from './SensitiveValueEditor.vue'
 
 const props = defineProps({ form: { type: Object, required: true }, configmaps: { type: Array, default: () => [] }, secrets: { type: Array, default: () => [] }, applicationId: { type: [String, Number], default: '' }, templateId: { type: [String, Number], default: '' }, revision: { type: Number, default: 0 } })
 const emit = defineEmits(['error'])
 let nextFileID = 0
+let nextItemID = 0
+const itemIDs = new WeakMap()
+function itemID(item) {
+  if (!itemIDs.has(item)) itemIDs.set(item, ++nextItemID)
+  return itemIDs.get(item)
+}
 const isApplicationSource = source => source === 'application_config' || source === 'application_secret'
 const itemsFor = source => source === 'application_secret' ? props.form.secret_items : props.form.config_items
 const entryFor = file => isApplicationSource(file.source_type) ? (itemsFor(file.source_type).find(item => item === file.entry) || itemsFor(file.source_type).find(item => item.key === file.key)) : null

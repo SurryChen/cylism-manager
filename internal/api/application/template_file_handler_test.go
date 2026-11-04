@@ -128,3 +128,53 @@ func TestTemplateFilePartialUpdateKeepsHiddenValuesAndChecksRevision(t *testing.
 		t.Fatal("raw and partial replacement cannot be mixed")
 	}
 }
+
+func TestTemplateSecretInspectionIsSelectedScopedAuditedAndUncached(t *testing.T) {
+	r, s := setupApplicationRouter()
+	createApplicationForReleaseRuntimeTest(t, s)
+	h := newTestApplicationHandler(s, []byte("01234567890123456789012345678901"), nil).WithAudit(s)
+	r.POST("/inspect-secret/:id/:templateID", func(c *gin.Context) { c.Set("user_id", uint(7)); h.InspectDeploymentTemplateSecret(c) })
+	r.POST("/anonymous-secret/:id/:templateID", h.InspectDeploymentTemplateSecret)
+	r.POST("/delegated-secret/:id/:templateID", func(c *gin.Context) {
+		c.Set("user_id", uint(7))
+		c.Set("delegation", true)
+		h.InspectDeploymentTemplateSecret(c)
+	})
+	spec := templateFileTestSpec("file-secret")
+	spec["secrets"].(gin.H)["MYSQL_DSN"] = "selected-secret"
+	spec["secrets"].(gin.H)["WECHAT_APP_SECRET"] = "other-secret"
+	created := serve(r, newJSONRequest(http.MethodPost, "/api/applications/1/deployment-templates", gin.H{"name": "default", "enabled": true, "spec": spec}))
+	if created.Code != 200 || strings.Contains(created.Body.String(), "selected-secret") || strings.Contains(created.Body.String(), "other-secret") {
+		t.Fatal("ordinary template response leaked values or creation failed")
+	}
+	body := gin.H{"key": "MYSQL_DSN", "revision": 1}
+	selected := serve(r, newJSONRequest(http.MethodPost, "/inspect-secret/1/1", body))
+	if selected.Code != 200 || !strings.Contains(selected.Body.String(), "selected-secret") || strings.Contains(selected.Body.String(), "other-secret") || strings.Contains(selected.Body.String(), "file-secret") || selected.Header().Get("Cache-Control") != "no-store" || selected.Header().Get("Pragma") != "no-cache" {
+		t.Fatal("selected secret reveal failed or disclosed other values")
+	}
+	logs, count, err := s.ListAuditLogsFiltered(model.AuditLogFilter{Action: "application.template_secret.read", Limit: 10})
+	if err != nil || count != 1 {
+		t.Fatalf("read audit missing: %d %v", count, err)
+	}
+	encoded, _ := json.Marshal(logs)
+	if strings.Contains(string(encoded), "selected-secret") || strings.Contains(string(encoded), "other-secret") {
+		t.Fatal("secret values leaked in audit")
+	}
+	for path, status := range map[string]int{"/anonymous-secret/1/1": 401, "/delegated-secret/1/1": 403, "/inspect-secret/2/1": 404, "/inspect-secret/1/2": 404} {
+		response := serve(r, newJSONRequest(http.MethodPost, path, body))
+		if response.Code != status || strings.Contains(response.Body.String(), "selected-secret") {
+			t.Fatalf("scope guard failed: %s %d", path, response.Code)
+		}
+	}
+	for _, invalid := range []gin.H{{"key": "missing", "revision": 1}, {"key": "MYSQL_DSN", "revision": 2}, {"key": "MYSQL_DSN"}} {
+		response := serve(r, newJSONRequest(http.MethodPost, "/inspect-secret/1/1", invalid))
+		if response.Code < 400 || strings.Contains(response.Body.String(), "selected-secret") {
+			t.Fatal("invalid request disclosed a value")
+		}
+	}
+	h.audit = failingTemplateFileAudit{}
+	response := serve(r, newJSONRequest(http.MethodPost, "/inspect-secret/1/1", body))
+	if response.Code != 500 || strings.Contains(response.Body.String(), "selected-secret") {
+		t.Fatal("audit failure did not block disclosure")
+	}
+}

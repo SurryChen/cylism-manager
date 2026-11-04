@@ -218,6 +218,10 @@ export function inspectDeploymentTemplateFile(applicationID, templateID, payload
   return postRequest(`/applications/${segment(applicationID)}/deployment-templates/${segment(templateID)}/files/inspect`, payload, options)
 }
 
+export function inspectDeploymentTemplateSecret(applicationID, templateID, payload, options) {
+  return postRequest(`/applications/${segment(applicationID)}/deployment-templates/${segment(templateID)}/secrets/inspect`, payload, options)
+}
+
 export function deleteDeploymentTemplate(applicationID, templateID, options) {
   return deleteRequest(`/applications/${segment(applicationID)}/deployment-templates/${segment(templateID)}`, options)
 }

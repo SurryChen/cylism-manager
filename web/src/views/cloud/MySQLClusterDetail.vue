@@ -42,7 +42,7 @@
           <div class="topology-stage-heading"><span class="stage-icon"><Database :size="18" /></span><div><strong>MySQL 实例</strong><span class="cell-secondary">{{ runtime.online_instances || 0 }}/{{ cluster.database_instances || cluster.database_nodes?.length || 0 }} 就绪</span></div></div>
           <div class="topology-nodes">
             <article v-for="pod in databasePods" :key="pod.name" class="topology-node topology-node-database">
-              <div class="topology-node-identity"><span class="node-icon"><Database :size="18" /></span><strong>{{ pod.node_name || '等待调度' }}</strong><span class="badge" :class="pod.ready ? 'badge-online' : 'badge-offline'">{{ databaseRoleLabel(pod.database_role) }}</span><button v-if="pod.ready" class="icon-button icon-button--table" type="button" title="打开数据库终端" :aria-label="`打开 ${pod.name} 的数据库终端`" @click="terminalPod = pod"><SquareTerminal :size="14" /></button><button v-if="cluster.status === 'ready' && pod.ready && pod.database_role?.toUpperCase() === 'SECONDARY'" class="icon-button icon-button--table" type="button" title="设为主实例" :disabled="switchingPrimary" :aria-label="`将 ${pod.name} 切换为主实例`" @click="switchTarget = pod"><ArrowUpCircle :size="14" /></button></div>
+              <div class="topology-node-identity"><span class="node-icon"><Database :size="18" /></span><strong>{{ pod.node_name || '等待调度' }}</strong><span class="badge" :class="pod.ready ? 'badge-online' : 'badge-offline'">{{ databaseRoleLabel(pod.database_role) }}</span><button v-if="pod.ready" class="icon-button icon-button--table" type="button" title="打开数据库终端" :aria-label="`打开 ${pod.name} 的数据库终端`" @click="terminalPod = pod"><SquareTerminal :size="14" /></button><button v-if="cluster.status === 'ready' && pod.ready && pod.database_role?.toUpperCase() === 'SECONDARY'" class="icon-button icon-button--table" type="button" title="设为主实例" :disabled="switchingPrimary || primarySwitchPending" :aria-label="`将 ${pod.name} 切换为主实例`" @click="switchTarget = pod"><ArrowUpCircle :size="14" /></button></div>
               <span class="pod-name mono" :title="pod.name">{{ pod.name }}</span>
               <span class="topology-node-usage cell-secondary">{{ podUsageLabel(pod) }}</span>
               <span v-if="!pod.ready" class="cell-secondary">{{ pod.reason || pod.phase || '启动中' }}</span>
@@ -173,7 +173,7 @@
     <ConfirmDialog :open="pauseOpen" :title="isScalingTask ? '撤回本次实例追加' : '暂停 MySQL 初次部署'" :message="isScalingTask ? `将${currentDeploymentTask?.kind === 'scale_database' ? ' MySQL' : ' Router'} 目标数量恢复到本次追加前。新实例会退出；已有实例、集群资源和 PVC 保留。若新实例已就绪，系统会拒绝撤回。` : '初次部署尚未完成。暂停后 Operator 会移除当前集群资源及数据库、Router 负载，现有连接会中断；PVC 暂时保留。'" :confirm-text="isScalingTask ? '确认撤回' : '暂停初次部署'" busy-text="正在处理..." :busy="pausing" @confirm="pauseDeployment" @cancel="pauseOpen = false" />
     <ConfirmDialog :open="retryShutdownOpen" title="重试 Operator 清理" message="将重启此 Kubernetes 集群共用的 MySQL Operator，以重新处理卡住的删除流程；其他 MySQL 集群的管理协调会短暂中断。目标集群的数据卷会保留。" confirm-text="重试清理" busy-text="正在重试..." :busy="retryingShutdown" @confirm="retryShutdown" @cancel="retryShutdownOpen = false" />
     <ConfirmDialog :open="cleanupOpen" :title="cleanupClaims ? '清理 MySQL 数据卷' : '清理 MySQL 残留负载'" :message="cleanupClaims ? `将删除 ${cluster?.resource_name} 的 ${cleanupState?.claims?.length || 0} 个 PVC，卷内数据库数据会永久丢失。请确认已有可恢复的备份。` : `将清理 ${cluster?.resource_name} 的残留工作负载和 Pod。数据卷会保留；待负载完全退出后可单独清理数据卷。`" :confirm-text="cleanupClaims ? '删除数据卷' : '清理负载'" busy-text="正在清理..." :busy="cleaning" @confirm="cleanupResources" @cancel="cleanupOpen = false" />
-    <ConfirmDialog :open="Boolean(switchTarget)" title="切换 MySQL 主实例" :message="`将 ${switchTarget?.node_name || ''} 上的 ${switchTarget?.name || ''} 切换为主实例。切换期间已有连接可能短暂中断，应用需重新连接。`" confirm-text="切换主实例" busy-text="正在切换..." confirm-tone="primary" :busy="switchingPrimary" @confirm="switchPrimary" @cancel="switchTarget = null" />
+    <ConfirmDialog :open="Boolean(switchTarget)" title="切换 MySQL 主实例" :message="`将 ${switchTarget?.node_name || ''} 上的 ${switchTarget?.name || ''} 切换为主实例。切换期间已有连接可能短暂中断，应用需重新连接。`" confirm-text="切换主实例" busy-text="正在创建任务..." confirm-tone="primary" :busy="switchingPrimary" @confirm="switchPrimary" @cancel="switchTarget = null" />
     <ConfirmDialog :open="Boolean(retryTarget)" title="重试异常 Pod" :message="`将删除异常 Pod ${retryTarget?.name || ''}，由原控制器在原有集群中重建；PVC 和已就绪实例不会删除。请先排除镜像、存储或节点故障。`" confirm-text="重建 Pod" busy-text="正在重建..." confirm-tone="primary" :busy="retryingPod" @confirm="retryPod" @cancel="retryTarget = null" />
     <ConfirmDialog :open="routerRepairOpen" title="修正 Router 调度" :message="`Router 当前运行在候选节点范围外。将按已保存的候选节点（${cluster?.router_nodes?.join('、') || '无'}）更新调度规则并滚动替换 Router Pod；替换期间连接可能短暂中断。`" confirm-text="修正调度" busy-text="正在提交..." confirm-tone="primary" :busy="repairingRouter" @confirm="repairRouterPlacement" @cancel="routerRepairOpen = false" />
     <ConfirmDialog :open="routerRetireOpen" title="清退 Router" :message="`将 Router 从 ${routerInstanceCount} 个缩减到 ${routerInstanceCount - 1} 个。Kubernetes 会决定终止哪个 Pod${routerInstanceCount === 1 ? '；这是最后一个 Router，读写入口将不可用' : '；该 Pod 上的连接可能中断'}。MySQL 实例和数据卷会保留。`" confirm-text="确认清退" busy-text="正在提交..." :busy="retiringRouter" @confirm="retireRouter" @cancel="routerRetireOpen = false" />
@@ -207,6 +207,7 @@ const loading = ref(true), refreshing = ref(false), saving = ref(false), install
 const checkingOperator = ref(false), operatorDetailsOpen = ref(false), operatorProgress = ref(''), operatorCanCancel = ref(false), cancelOpen = ref(false), cancelling = ref(false), logsLoading = ref(false)
 const operatorCanUninstall = ref(false), uninstallOpen = ref(false), uninstalling = ref(false)
 const switchTarget = ref(null), switchingPrimary = ref(false)
+const primarySwitchPending = computed(() => tasks.value.some(task => task.kind === 'switch_primary' && task.status === 'running') || (selectedTask.value?.kind === 'switch_primary' && selectedTask.value.status === 'running'))
 const retryTarget = ref(null), retryingPod = ref(false)
 const resourceDetails = ref(null)
 const connectionDetailsOpen = ref(false)
@@ -671,10 +672,9 @@ async function switchPrimary() {
   try {
     const result = await switchMySQLClusterPrimary(props.id, switchTarget.value.name)
     switchTarget.value = null
-    await refresh()
-    for (const pod of runtime.value.pods || []) {
-      if (pod.component === 'mysqld' && pod.ready) pod.database_role = pod.name === result.pod_name ? 'PRIMARY' : 'SECONDARY'
-    }
+    showLatestTasks()
+    if (result.task) void openLogs(result.task)
+    void refresh(true)
   } catch (failure) {
     switchTarget.value = null
     error.value = failure.message || '切换主实例失败'

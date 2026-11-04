@@ -158,6 +158,10 @@ func (h *DatabaseHandler) ListMySQLClusterTasks(c *gin.Context) {
 	if !ok {
 		return
 	}
+	if err := h.expirePrimarySwitchTasks(item.ID); err != nil {
+		apiShared.DBError(c, err.Error())
+		return
+	}
 	if h.client != nil {
 		if _, err := h.syncMySQLOperatorTask(c.Request.Context(), item, false); err != nil {
 			apiShared.ValidationError(c, "读取 Operator 安装进度失败："+err.Error())
