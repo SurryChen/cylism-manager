@@ -7,6 +7,7 @@ import (
 	migration "github.com/cylism/cylism-manager/internal/service/observability/migration"
 	"github.com/gin-gonic/gin"
 	"net/http"
+	"strconv"
 )
 
 func (h *MonitoringHandler) WithMigrations(service *migration.Service, clusterID uint) *MonitoringHandler {
@@ -30,6 +31,38 @@ func (h *MonitoringHandler) MigrateNode(c *gin.Context) {
 }
 func (h *LoggingHandler) MigrateNode(c *gin.Context) {
 	startComponentMigration(c, h.migrations, h.clusterID, k8s.InfrastructureLoki)
+}
+
+func (h *MonitoringHandler) ControlNodeMigration(c *gin.Context) {
+	controlComponentMigration(c, h.migrations, h.clusterID, k8s.InfrastructureVictoriaMetrics)
+}
+func (h *LoggingHandler) ControlNodeMigration(c *gin.Context) {
+	controlComponentMigration(c, h.migrations, h.clusterID, k8s.InfrastructureLoki)
+}
+
+func controlComponentMigration(c *gin.Context, s *migration.Service, clusterID uint, component string) {
+	if s == nil || clusterID == 0 {
+		apiShared.BadRequest(c, "请在指定集群的监控页面管理迁移")
+		return
+	}
+	id, err := strconv.ParseUint(c.Param("migrationID"), 10, 32)
+	if err != nil || id == 0 {
+		apiShared.BadRequest(c, "迁移任务 ID 无效")
+		return
+	}
+	var request struct {
+		Action string `json:"action"`
+	}
+	if err := c.ShouldBindJSON(&request); err != nil {
+		apiShared.BadRequest(c, "迁移操作参数无效")
+		return
+	}
+	item, err := s.Control(clusterID, component, uint(id), request.Action)
+	if err != nil {
+		apiShared.Conflict(c, err.Error())
+		return
+	}
+	c.JSON(http.StatusAccepted, apiShared.APIResponse{Code: apiShared.CodeSuccess, Message: "迁移操作已记录", Data: item})
 }
 
 func listComponentMigrations(c *gin.Context, s *migration.Service, clusterID uint, component string) {
@@ -73,7 +106,7 @@ func componentMigrationMutable(s *migration.Service, clusterID uint, component s
 	}
 	for _, item := range items {
 		switch item.Status {
-		case "succeeded", "failed", "rolled_back":
+		case "succeeded", "failed", "rolled_back", "canceled":
 		default:
 			return fmt.Errorf("组件迁移尚未结束，请先完成迁移或恢复任务")
 		}

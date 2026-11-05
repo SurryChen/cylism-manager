@@ -20,6 +20,23 @@ func TestObservabilityMigrationPersistsTaskAndSurvivesRecovery(t *testing.T) {
 	if err := st.CreateObservabilityMigration(&item); err != nil {
 		t.Fatal(err)
 	}
+	if err := st.SetObservabilityMigrationControl(item.ID, "pause", "pause requested"); err != nil {
+		t.Fatal(err)
+	}
+	item.Status = "paused"
+	if err := st.SaveObservabilityMigration(&item, "paused", false); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.UpdateObservabilityMigrationProgress(item.ID, 2000, 1000, 250); err != nil {
+		t.Fatal(err)
+	}
+	var checkpoint model.ObservabilityMigration
+	if err := st.DB().First(&checkpoint, item.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if checkpoint.Control != "pause" || checkpoint.BytesTotal != 2000 || checkpoint.BytesCopied != 1000 || checkpoint.BytesPerSecond != 250 || checkpoint.ProgressAt == nil {
+		t.Fatalf("control/progress checkpoint not persisted: %+v", checkpoint)
+	}
 	duplicate := item
 	duplicate.ID = 0
 	duplicate.TaskID = 0
@@ -47,7 +64,7 @@ func TestObservabilityMigrationPersistsTaskAndSurvivesRecovery(t *testing.T) {
 		t.Fatal(task.Status)
 	}
 	logs, err := st.ListClusterDeploymentLogs(item.TaskID, 0)
-	if err != nil || len(logs) != 2 || logs[1].Message != "ready" {
+	if err != nil || len(logs) != 4 || logs[3].Message != "ready" {
 		t.Fatal(logs, err)
 	}
 	active, err = st.ActiveObservabilityMigrations()

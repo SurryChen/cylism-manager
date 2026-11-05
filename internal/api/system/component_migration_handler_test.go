@@ -36,6 +36,26 @@ func (r *migrationRepository) ListObservabilityMigrations(uint, string) ([]model
 func (*migrationRepository) ActiveObservabilityMigrations() ([]model.ObservabilityMigration, error) {
 	return nil, nil
 }
+func (r *migrationRepository) GetObservabilityMigration(id uint) (*model.ObservabilityMigration, error) {
+	for _, item := range r.items {
+		if item.ID == id {
+			return &item, nil
+		}
+	}
+	return nil, context.Canceled
+}
+func (r *migrationRepository) SetObservabilityMigrationControl(id uint, control, _ string) error {
+	for i := range r.items {
+		if r.items[i].ID == id {
+			r.items[i].Control = control
+			return nil
+		}
+	}
+	return context.Canceled
+}
+func (*migrationRepository) UpdateObservabilityMigrationProgress(uint, int64, int64, int64) error {
+	return nil
+}
 
 type migrationAdapter struct{ migration.Adapter }
 

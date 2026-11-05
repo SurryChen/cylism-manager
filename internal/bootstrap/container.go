@@ -14,6 +14,7 @@ import (
 	authapi "github.com/cylism/cylism-manager/internal/api/auth"
 	systemapi "github.com/cylism/cylism-manager/internal/api/system"
 	"github.com/cylism/cylism-manager/internal/k8s"
+	"github.com/cylism/cylism-manager/internal/service/accesscert"
 	migration "github.com/cylism/cylism-manager/internal/service/observability/migration"
 	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/gin-gonic/gin"
@@ -137,6 +138,11 @@ func (c *Container) StartBackground(parent context.Context, config BackgroundCon
 		return nil
 	}
 	config = config.normalized()
+	// Background work starts before HTTP route composition in cmd/platform.
+	// Initialize this singleton now so its recovery loop is always registered.
+	if c.migrations == nil && c.Store != nil {
+		c.configureObservabilityMigrations(newClusterAgentClientFactory(c.Store, accesscert.NewService(c.Store, c.configEncryptionKey())))
+	}
 	c.backgroundMu.Lock()
 	defer c.backgroundMu.Unlock()
 	if c.background != nil {

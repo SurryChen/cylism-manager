@@ -22,6 +22,9 @@ type Repository interface {
 	SaveObservabilityMigration(*model.ObservabilityMigration, string, bool) error
 	ListObservabilityMigrations(uint, string) ([]model.ObservabilityMigration, error)
 	ActiveObservabilityMigrations() ([]model.ObservabilityMigration, error)
+	GetObservabilityMigration(uint) (*model.ObservabilityMigration, error)
+	SetObservabilityMigrationControl(uint, string, string) error
+	UpdateObservabilityMigrationProgress(uint, int64, int64, int64) error
 }
 
 type Adapter interface {
@@ -37,7 +40,7 @@ type Adapter interface {
 
 type Transfer interface {
 	Exec(context.Context, *model.Server, string) ([]byte, error)
-	Copy(context.Context, *model.Server, *model.Server, string, string) (int64, error)
+	Copy(context.Context, *model.Server, *model.Server, string, string, CopyControl) (int64, error)
 }
 
 type Service struct {
@@ -45,15 +48,19 @@ type Service struct {
 	adapter  func(context.Context, uint) (Adapter, error)
 	transfer Transfer
 	mu       sync.Mutex
-	running  map[uint]bool
+	running  map[uint]*migrationRun
 }
 
 func New(repo Repository, factory func(context.Context, uint) (Adapter, error), transfer Transfer) *Service {
-	return &Service{repo: repo, adapter: factory, transfer: transfer, running: map[uint]bool{}}
+	return &Service{repo: repo, adapter: factory, transfer: transfer, running: map[uint]*migrationRun{}}
 }
 
 func (s *Service) List(clusterID uint, component string) ([]model.ObservabilityMigration, error) {
-	return s.repo.ListObservabilityMigrations(clusterID, component)
+	items, err := s.repo.ListObservabilityMigrations(clusterID, component)
+	for i := range items {
+		s.capabilities(&items[i])
+	}
+	return items, err
 }
 
 func (s *Service) Start(ctx context.Context, clusterID uint, component, target string) (*model.ObservabilityMigration, error) {
@@ -129,22 +136,53 @@ func (s *Service) Recover(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
+		// A user-paused transfer must never be resumed or rolled back by polling.
+		if item.Control == "pause" && (item.Status == "copying" || item.Status == "paused") {
+			continue
+		}
 		s.launch(item)
 	}
 }
 
 func (s *Service) launch(item model.ObservabilityMigration) {
 	s.mu.Lock()
-	if s.running[item.ID] {
+	if s.running[item.ID] != nil {
 		s.mu.Unlock()
 		return
 	}
-	s.running[item.ID] = true
+	run := newMigrationRun(item.Control)
+	s.running[item.ID] = run
 	s.mu.Unlock()
-	go func() { defer func() { s.mu.Lock(); delete(s.running, item.ID); s.mu.Unlock() }(); s.run(&item) }()
+	go func() {
+		defer func() { s.mu.Lock(); delete(s.running, item.ID); s.mu.Unlock() }()
+		s.runControlled(&item, run)
+	}()
 }
 
 func (s *Service) checkpoint(item *model.ObservabilityMigration, status, message string, terminal bool) error {
+	for {
+		s.mu.Lock()
+		run := s.running[item.ID]
+		// Honor a pause accepted after the last stream read, before leaving the
+		// copying stage. Share the lock with Control so neither can bypass the other.
+		if status == "verifying" && run != nil {
+			run.mu.Lock()
+			paused := run.control == "pause"
+			run.mu.Unlock()
+			if paused {
+				s.mu.Unlock()
+				if err := run.Wait(run.ctx); err != nil {
+					return err
+				}
+				continue
+			}
+		}
+		break
+	}
+	defer s.mu.Unlock()
+	if run := s.running[item.ID]; status == "cutover" && run != nil && run.ctx.Err() != nil {
+		return context.Cause(run.ctx)
+	}
 	previousStatus, previousDetail := item.Status, item.Detail
 	item.Status, item.Detail = status, message
 	if err := s.repo.SaveObservabilityMigration(item, message, terminal); err != nil {
@@ -164,8 +202,14 @@ func (s *Service) recordWaiting(item *model.ObservabilityMigration, message stri
 }
 
 func (s *Service) run(item *model.ObservabilityMigration) {
-	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Minute)
-	defer cancel()
+	s.runControlled(item, newMigrationRun(item.Control))
+}
+
+func (s *Service) runControlled(item *model.ObservabilityMigration, run *migrationRun) {
+	// The process-owned worker has no wall-clock deadline. Bound individual
+	// readiness/connection waits and let the transfer detect missing progress.
+	ctx := run.ctx
+	defer run.cancel(nil)
 	a, err := s.adapter(ctx, item.ClusterID)
 	if err != nil {
 		s.recordWaiting(item, "等待集群连接恢复："+err.Error())
@@ -178,6 +222,15 @@ func (s *Service) run(item *model.ObservabilityMigration) {
 	}
 	if err = a.LockComponentMigration(ctx, item.Component, item.ID); err != nil {
 		s.recordWaiting(item, "等待迁移锁："+err.Error())
+		return
+	}
+	if item.Control == "cancel" {
+		if item.Status == "pending" || item.Status == "preflight" || item.Status == "provisioning_target" {
+			_ = a.DeletePVCBindingPodContext(ctx, "monitoring", "obs-"+strconv.FormatUint(uint64(item.ID), 10))
+			_ = s.finish(a, item, "canceled", "已取消迁移，源组件未停止；目标卷保留")
+		} else {
+			s.rollback(a, item, &snapshot, fmt.Errorf("用户取消迁移"))
+		}
 		return
 	}
 	if item.Status == "finalizing" {
@@ -195,9 +248,7 @@ func (s *Service) run(item *model.ObservabilityMigration) {
 		// If cutover was already healthy, keep the new store; rolling it back
 		// could discard data that arrived after the platform process stopped.
 		if item.Status == "waiting_ready" || item.Status == "succeeded" {
-			checkCtx, stop := context.WithTimeout(ctx, 5*time.Minute)
-			err = a.WaitComponentStorage(checkCtx, &snapshot, item.TargetNode, item.TargetPVC, true)
-			stop()
+			err = wait(ctx, a, &snapshot, item.TargetNode, item.TargetPVC, true)
 			if err == nil {
 				s.complete(a, item)
 				return
@@ -206,7 +257,10 @@ func (s *Service) run(item *model.ObservabilityMigration) {
 		s.rollback(a, item, &snapshot, fmt.Errorf("平台进程中断，按持久化快照恢复"))
 		return
 	}
-	if err = s.execute(ctx, a, item, &snapshot); err != nil {
+	if err = s.execute(ctx, a, item, &snapshot, run); err != nil {
+		if ctx.Err() != nil {
+			err = context.Cause(ctx)
+		}
 		if item.Status == "pending" || item.Status == "preflight" || item.Status == "provisioning_target" {
 			_ = a.DeletePVCBindingPodContext(ctx, "monitoring", "obs-"+strconv.FormatUint(uint64(item.ID), 10))
 			s.finish(a, item, "failed", "迁移失败，源组件未停止："+err.Error()+"；已创建的目标卷保留供检查")
@@ -216,7 +270,7 @@ func (s *Service) run(item *model.ObservabilityMigration) {
 	}
 }
 
-func (s *Service) execute(ctx context.Context, a Adapter, item *model.ObservabilityMigration, snapshot *k8s.ComponentStorageSnapshot) error {
+func (s *Service) execute(ctx context.Context, a Adapter, item *model.ObservabilityMigration, snapshot *k8s.ComponentStorageSnapshot, run *migrationRun) error {
 	if err := s.checkpoint(item, "preflight", "正在检查源/目标节点、SSH 与存储目录", false); err != nil {
 		return err
 	}
@@ -266,10 +320,29 @@ func (s *Service) execute(ctx context.Context, a Adapter, item *model.Observabil
 	if err = s.checkDisk(ctx, source, target, snapshot.Path, claim.LocalPath); err != nil {
 		return err
 	}
+	sizeOut, err := s.transfer.Exec(ctx, source, "sudo -n du -sb -- "+quote(snapshot.Path))
+	if err != nil {
+		return err
+	}
+	item.BytesTotal, err = parseNumber(sizeOut)
+	if err != nil {
+		return err
+	}
+	run.onPause = func(paused bool) error {
+		item.BytesCopied = run.copied.Load()
+		if paused {
+			item.Control = "pause"
+			return s.checkpoint(item, "paused", "传输已暂停，连接和已复制数据保留；源服务保持停写，可继续或取消并恢复源服务", false)
+		}
+		item.Control = ""
+		return s.checkpoint(item, "copying", "已继续传输，沿用当前连接和已传输数据", false)
+	}
 	if err = s.checkpoint(item, "copying", "正在流式复制数据，保留文件属主与权限", false); err != nil {
 		return err
 	}
-	item.BytesCopied, err = s.transfer.Copy(ctx, source, target, snapshot.Path, claim.LocalPath)
+	stopReporting := s.reportCopy(item, run)
+	item.BytesCopied, err = s.transfer.Copy(ctx, source, target, snapshot.Path, claim.LocalPath, run)
+	stopReporting()
 	if err != nil {
 		return err
 	}
@@ -312,7 +385,12 @@ func (s *Service) complete(a Adapter, item *model.ObservabilityMigration) {
 }
 
 func wait(ctx context.Context, a Adapter, snapshot *k8s.ComponentStorageSnapshot, node, pvc string, ready bool) error {
-	waitCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	timeout := 5 * time.Minute
+	if ready {
+		// The destination may need its first image pull over the same slow link.
+		timeout = 15 * time.Minute
+	}
+	waitCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	return a.WaitComponentStorage(waitCtx, snapshot, node, pvc, ready)
 }

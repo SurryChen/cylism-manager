@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/cylism/cylism-manager/internal/model"
 	"gorm.io/gorm"
+	"time"
 )
 
 func (s *Store) CreateObservabilityMigration(item *model.ObservabilityMigration) error {
@@ -41,7 +42,8 @@ func (s *Store) CreateObservabilityMigration(item *model.ObservabilityMigration)
 
 func (s *Store) SaveObservabilityMigration(item *model.ObservabilityMigration, message string, terminal bool) error {
 	return s.db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Save(item).Error; err != nil {
+		// Control requests and progress are written independently of stage changes.
+		if err := tx.Omit("Control", "CanPause", "CanResume", "CanCancel").Save(item).Error; err != nil {
 			return err
 		}
 		if err := tx.Create(&model.ClusterDeploymentLog{DeploymentID: item.TaskID, Message: message}).Error; err != nil {
@@ -66,6 +68,34 @@ func (s *Store) ListObservabilityMigrations(clusterID uint, component string) ([
 
 func (s *Store) ActiveObservabilityMigrations() ([]model.ObservabilityMigration, error) {
 	var items []model.ObservabilityMigration
-	err := s.db.Where("status NOT IN ?", []string{"succeeded", "failed", "rolled_back"}).Find(&items).Error
+	err := s.db.Where("status NOT IN ?", []string{"succeeded", "failed", "rolled_back", "canceled"}).Find(&items).Error
 	return items, err
+}
+
+func (s *Store) GetObservabilityMigration(id uint) (*model.ObservabilityMigration, error) {
+	var item model.ObservabilityMigration
+	if err := s.db.First(&item, id).Error; err != nil {
+		return nil, err
+	}
+	return &item, nil
+}
+
+func (s *Store) SetObservabilityMigrationControl(id uint, control, message string) error {
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&model.ObservabilityMigration{}).Where("id = ?", id).Update("control", control).Error; err != nil {
+			return err
+		}
+		var item model.ObservabilityMigration
+		if err := tx.First(&item, id).Error; err != nil {
+			return err
+		}
+		return tx.Create(&model.ClusterDeploymentLog{DeploymentID: item.TaskID, Message: message}).Error
+	})
+}
+
+func (s *Store) UpdateObservabilityMigrationProgress(id uint, total, copied, rate int64) error {
+	now := time.Now()
+	return s.db.Model(&model.ObservabilityMigration{}).Where("id = ? AND status IN ?", id, []string{"copying", "paused"}).Updates(map[string]interface{}{
+		"bytes_total": total, "bytes_copied": copied, "bytes_per_second": rate, "progress_at": now,
+	}).Error
 }
