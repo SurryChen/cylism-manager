@@ -41,6 +41,10 @@ func registerClusterObservabilityRoutes(apiGroup *gin.RouterGroup, factory clust
 	}
 	g.GET("/status", monitoring((*systemapi.MonitoringHandler).Status))
 	g.POST("/install", monitoring((*systemapi.MonitoringHandler).Install))
+	g.GET("/node-migrations", monitoring((*systemapi.MonitoringHandler).ListNodeMigrations))
+	g.POST("/node-migrations", monitoring((*systemapi.MonitoringHandler).MigrateNode))
+	g.POST("/logs/node-migrations", logging((*systemapi.LoggingHandler).MigrateNode))
+	g.GET("/logs/node-migrations", logging((*systemapi.LoggingHandler).ListNodeMigrations))
 	g.POST("/storage-migration", monitoring((*systemapi.MonitoringHandler).MigrateLegacyStorage))
 	g.DELETE("", monitoring((*systemapi.MonitoringHandler).Uninstall))
 	g.GET("/query", monitoring((*systemapi.MonitoringHandler).Query))

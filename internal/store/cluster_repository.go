@@ -554,6 +554,10 @@ func (s *Store) RecoverInterruptedClusterDeployments() error {
 			return err
 		}
 		for _, task := range running {
+			// Storage migrations own durable checkpoints and automatic recovery.
+			if task.Operation == "migrate-victoria-metrics" || task.Operation == "migrate-loki" {
+				continue
+			}
 			if task.Operation == "restart" {
 				if err := tx.Model(&model.ClusterDeployment{}).Where("id = ?", task.ID).Update("status", "failed").Error; err != nil {
 					return err

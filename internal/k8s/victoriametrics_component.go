@@ -44,6 +44,7 @@ const (
 // VictoriaMetricsConfig controls the platform-owned metrics store. DataPath is
 // populated only when reading a legacy hostPath deployment.
 type VictoriaMetricsConfig struct {
+	PVCName          string `json:"-"`
 	NodeName         string `json:"node_name"`
 	Storage          string `json:"storage,omitempty"`
 	StorageClassName string `json:"storage_class_name,omitempty"`
@@ -110,8 +111,11 @@ func (c *Client) VictoriaMetricsStatus() *VictoriaMetricsStatus {
 		status.StorageMode = VictoriaMetricsStorageHostPath
 	} else {
 		status.StorageMode = VictoriaMetricsStoragePVC
-		status.PVCName = victoriaMetricsPVCName
-		if claim, claimErr := c.Clientset.CoreV1().PersistentVolumeClaims(victoriaMetricsNamespace).Get(c.ctx, victoriaMetricsPVCName, metav1.GetOptions{}); claimErr == nil {
+		status.PVCName = config.PVCName
+		if status.PVCName == "" {
+			status.PVCName = victoriaMetricsPVCName
+		}
+		if claim, claimErr := c.Clientset.CoreV1().PersistentVolumeClaims(victoriaMetricsNamespace).Get(c.ctx, status.PVCName, metav1.GetOptions{}); claimErr == nil {
 			status.StorageClassName = valueOrEmpty(claim.Spec.StorageClassName)
 			if storage := claim.Spec.Resources.Requests.Storage(); storage != nil {
 				status.Storage = storage.String()
@@ -181,6 +185,9 @@ func (c *Client) installVictoriaMetrics(config VictoriaMetricsConfig) (*Victoria
 		return c.VictoriaMetricsStatus(), fmt.Errorf("Kubernetes 客户端未初始化")
 	}
 
+	if err := c.CheckComponentMigrationContext(c.ctx, InfrastructureVictoriaMetrics); err != nil {
+		return c.VictoriaMetricsStatus(), err
+	}
 	existing, err := c.Clientset.AppsV1().Deployments(victoriaMetricsNamespace).Get(c.ctx, victoriaMetricsName, metav1.GetOptions{})
 	if err != nil && !apierrors.IsNotFound(err) {
 		return c.VictoriaMetricsStatus(), fmt.Errorf("读取现有 VictoriaMetrics 配置失败: %w", err)
@@ -200,6 +207,7 @@ func (c *Client) installVictoriaMetrics(config VictoriaMetricsConfig) (*Victoria
 			config.NodeName = old.NodeName
 			config.Storage = old.Storage
 			config.StorageClassName = old.StorageClassName
+			config.PVCName = old.PVCName
 		}
 	} else if err := validateVictoriaMetricsPVCConfig(config); err != nil {
 		return c.VictoriaMetricsStatus(), err
@@ -251,6 +259,9 @@ func (c *Client) installVictoriaMetrics(config VictoriaMetricsConfig) (*Victoria
 func (c *Client) uninstallVictoriaMetrics() error {
 	if c == nil || c.Clientset == nil {
 		return fmt.Errorf("Kubernetes 客户端未初始化")
+	}
+	if err := c.CheckComponentMigrationContext(c.ctx, InfrastructureVictoriaMetrics); err != nil {
+		return err
 	}
 	for _, remove := range []func() error{
 		func() error {
@@ -360,8 +371,12 @@ func upsertVictoriaMetricsService(c *Client) error {
 }
 
 func upsertVictoriaMetricsPVC(c *Client, config VictoriaMetricsConfig) error {
+	claimName := config.PVCName
+	if claimName == "" {
+		claimName = victoriaMetricsPVCName
+	}
 	claims := c.Clientset.CoreV1().PersistentVolumeClaims(victoriaMetricsNamespace)
-	existing, err := claims.Get(c.ctx, victoriaMetricsPVCName, metav1.GetOptions{})
+	existing, err := claims.Get(c.ctx, claimName, metav1.GetOptions{})
 	if err == nil {
 		labels := infrastructurePVCLabels(InfrastructureVictoriaMetrics)
 		changed := false
@@ -389,7 +404,7 @@ func upsertVictoriaMetricsPVC(c *Client, config VictoriaMetricsConfig) error {
 		return fmt.Errorf("VictoriaMetrics 存储容量格式无效")
 	}
 	claim := &corev1.PersistentVolumeClaim{
-		ObjectMeta: metav1.ObjectMeta{Name: victoriaMetricsPVCName, Namespace: victoriaMetricsNamespace, Labels: infrastructurePVCLabels(InfrastructureVictoriaMetrics)},
+		ObjectMeta: metav1.ObjectMeta{Name: claimName, Namespace: victoriaMetricsNamespace, Labels: infrastructurePVCLabels(InfrastructureVictoriaMetrics)},
 		Spec: corev1.PersistentVolumeClaimSpec{
 			AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
 			Resources:   corev1.VolumeResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceStorage: storage}},
@@ -411,8 +426,12 @@ func upsertVictoriaMetricsPVC(c *Client, config VictoriaMetricsConfig) error {
 }
 
 func upsertVictoriaMetricsDeployment(c *Client, config VictoriaMetricsConfig) error {
+	claimName := config.PVCName
+	if claimName == "" {
+		claimName = victoriaMetricsPVCName
+	}
 	replicas := int32(1)
-	storageVolume := corev1.Volume{Name: "storage", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: victoriaMetricsPVCName}}}
+	storageVolume := corev1.Volume{Name: "storage", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: claimName}}}
 	if config.DataPath != "" {
 		hostPathType := corev1.HostPathDirectoryOrCreate
 		storageVolume = corev1.Volume{Name: "storage", VolumeSource: corev1.VolumeSource{HostPath: &corev1.HostPathVolumeSource{Path: config.DataPath, Type: &hostPathType}}}
@@ -534,6 +553,7 @@ func victoriaMetricsConfigFromDeployment(deployment *appsv1.Deployment) (Victori
 		}
 		if volume.Name == "storage" && volume.PersistentVolumeClaim != nil {
 			config.Storage = "managed"
+			config.PVCName = volume.PersistentVolumeClaim.ClaimName
 			break
 		}
 	}

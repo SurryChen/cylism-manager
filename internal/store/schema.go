@@ -24,6 +24,7 @@ func migrateSchema(db *gorm.DB) error {
 		&model.Release{}, &model.ReleaseOperation{}, &model.PersistentVolumeMigration{},
 		&model.PersistentVolumeBackup{}, &model.HostDirectoryPVCImport{},
 		&model.SystemComponentConfig{},
+		&model.ObservabilityMigration{},
 	); err != nil {
 		return err
 	}

@@ -56,11 +56,13 @@ func (c *Container) clusterObservability(ctx context.Context, clusterID uint, fa
 		Query: metrics.Query, Status: metricsReady, Component: client,
 		Consumers: monitoringservice.PVCConsumerReader{Pods: client},
 	})
+	monitoring.WithMigrations(c.migrations, clusterID)
 	logClient := loggingservice.HTTPClient{BaseURL: logsURL, Client: httpClient}
 	logging := systemapi.NewLoggingHandler(c.Store, systemapi.LoggingDependencies{
 		Query: logClient.Query, Ready: func(ctx context.Context) bool { return client.LoggingStatusContext(ctx).LokiReady >= 1 },
 		Component: client, FilterReader: client,
 	})
+	logging.WithMigrations(c.migrations, clusterID)
 	alertClient := &alertingservice.HTTPClient{BaseURL: func() string { return alertsURL }, Client: httpClient}
 	alertReady := func(ctx context.Context) bool {
 		return client.AlertingStatusContext(ctx).State == k8s.AlertingStateReady

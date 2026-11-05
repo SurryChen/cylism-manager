@@ -472,6 +472,8 @@ async function startDeployment() {
 
 function roleLabel(role) { return role === 'control-plane' ? '部署控制平面' : '添加工作节点' }
 function taskLabel(task) {
+  if (task.operation === 'migrate-victoria-metrics') return '迁移 VictoriaMetrics'
+  if (task.operation === 'migrate-loki') return '迁移 Loki'
   if (task.operation === 'restart') return `重启${task.role === 'control-plane' ? '控制平面' : '工作节点'}`
   if (task.operation === 'network-migrate') return '同步 Tailscale 组网状态'
   if (task.operation === 'network-migrate-node') return '迁移节点至 Tailscale'
@@ -482,7 +484,7 @@ function taskLabel(task) {
   if (agentLabels[task.operation]) return agentLabels[task.operation]
   return task.operation === 'uninstall' ? `卸载${task.role === 'control-plane' ? '控制平面' : '工作节点'}` : task.operation === 'adopt' ? `纳管${task.role === 'control-plane' ? '控制平面' : '工作节点'}` : roleLabel(task.role)
 }
-function taskDescription(task) { return task.operation === 'restart' ? 'K3s 服务重启' : task.operation === 'network-migrate' ? 'K3s 集群组网' : task.operation?.startsWith('network-') ? 'K3s 节点组网' : task.operation?.startsWith('cross-') ? '跨集群服务' : task.operation?.startsWith('agent-') ? 'cluster-agent 运维' : `K3s ${task.operation === 'uninstall' ? '卸载' : task.operation === 'adopt' ? '纳管' : '部署'}` }
+function taskDescription(task) { if (['migrate-victoria-metrics', 'migrate-loki'].includes(task.operation)) return '监控存储跨节点迁移'; return task.operation === 'restart' ? 'K3s 服务重启' : task.operation === 'network-migrate' ? 'K3s 集群组网' : task.operation?.startsWith('network-') ? 'K3s 节点组网' : task.operation?.startsWith('cross-') ? '跨集群服务' : task.operation?.startsWith('agent-') ? 'cluster-agent 运维' : `K3s ${task.operation === 'uninstall' ? '卸载' : task.operation === 'adopt' ? '纳管' : '部署'}` }
 function deploymentStatusLabel(status) { return ({ running: '执行中', success: '成功', failed: '失败' })[status] || status }
 function deploymentStatusClass(status) { return ({ running: 'badge-deploying', success: 'badge-online', failed: 'badge-danger' })[status] || 'badge-offline' }
 function serverDisplayLabel(server) {

@@ -14,6 +14,7 @@ import (
 	authapi "github.com/cylism/cylism-manager/internal/api/auth"
 	systemapi "github.com/cylism/cylism-manager/internal/api/system"
 	"github.com/cylism/cylism-manager/internal/k8s"
+	migration "github.com/cylism/cylism-manager/internal/service/observability/migration"
 	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/gin-gonic/gin"
 	"k8s.io/client-go/rest"
@@ -43,6 +44,7 @@ type Container struct {
 	encKey       []byte
 	backgroundMu sync.Mutex
 	background   *BackgroundTasks
+	migrations   *migration.Service
 }
 
 // BackgroundConfig controls Container-owned periodic work. A zero interval
@@ -143,6 +145,9 @@ func (c *Container) StartBackground(parent context.Context, config BackgroundCon
 	}
 	tasks := newBackgroundTasks(parent)
 	c.background = tasks
+	if c.migrations != nil {
+		tasks.Go(func(ctx context.Context) { runPeriodic(ctx, 30*time.Second, c.migrations.Recover) })
+	}
 
 	if c.InCluster && c.Services.PlatformRelease != nil {
 		tasks.Go(func(ctx context.Context) {

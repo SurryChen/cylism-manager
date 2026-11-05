@@ -10,6 +10,7 @@ import (
 
 	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 	"github.com/cylism/cylism-manager/internal/k8s"
+	migration "github.com/cylism/cylism-manager/internal/service/observability/migration"
 	monitoringservice "github.com/cylism/cylism-manager/internal/service/observability/monitoring"
 	"github.com/gin-gonic/gin"
 )
@@ -18,6 +19,8 @@ type monitoringQueryFunc func(context.Context, string, url.Values) (interface{},
 
 // MonitoringHandler manages the platform-owned VictoriaMetrics instance.
 type MonitoringHandler struct {
+	migrations   *migration.Service
+	clusterID    uint
 	query        monitoringQueryFunc
 	queryService *monitoringservice.QueryService
 	component    *monitoringservice.ComponentService
@@ -85,6 +88,10 @@ func (h *MonitoringHandler) Status(c *gin.Context) {
 }
 
 func (h *MonitoringHandler) Install(c *gin.Context) {
+	if err := componentMigrationMutable(h.migrations, h.clusterID, k8s.InfrastructureVictoriaMetrics); err != nil {
+		apiShared.Conflict(c, err.Error())
+		return
+	}
 	if h.component == nil {
 		apiShared.K8sUnavailable(c)
 		return
@@ -103,6 +110,10 @@ func (h *MonitoringHandler) Install(c *gin.Context) {
 }
 
 func (h *MonitoringHandler) Uninstall(c *gin.Context) {
+	if err := componentMigrationMutable(h.migrations, h.clusterID, k8s.InfrastructureVictoriaMetrics); err != nil {
+		apiShared.Conflict(c, err.Error())
+		return
+	}
 	if h.component == nil {
 		apiShared.K8sUnavailable(c)
 		return
@@ -115,6 +126,10 @@ func (h *MonitoringHandler) Uninstall(c *gin.Context) {
 }
 
 func (h *MonitoringHandler) MigrateLegacyStorage(c *gin.Context) {
+	if err := componentMigrationMutable(h.migrations, h.clusterID, k8s.InfrastructureVictoriaMetrics); err != nil {
+		apiShared.Conflict(c, err.Error())
+		return
+	}
 	if h.component == nil {
 		apiShared.K8sUnavailable(c)
 		return

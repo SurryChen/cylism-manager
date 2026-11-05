@@ -62,6 +62,7 @@ func (c *Container) BuildRouteDependencies() api.RouteDependencies {
 	clusterService := c.Services.Cluster
 	accessCertificates := clusterapi.NewAccessCertificateHandler(c.Store, key)
 	agentFactory := newClusterAgentClientFactory(c.Store, accessCertificates.Service())
+	c.configureObservabilityMigrations(agentFactory)
 	clusterDNS := networkapi.NewClusterDNSHandlerWithAdapter(c.Store, networkapi.NewClusterDNSAdapter(c.K8s)).WithAdapterFactory(func(ctx context.Context, clusterID uint) (networkapi.ClusterDNSAdapter, error) {
 		client, err := agentFactory.Client(ctx, clusterID)
 		if err != nil {

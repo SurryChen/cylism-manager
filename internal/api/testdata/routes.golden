@@ -175,7 +175,9 @@ GET /api/clusters/:id/monitoring/alerts/status
 GET /api/clusters/:id/monitoring/dashboard
 GET /api/clusters/:id/monitoring/disk-growth
 GET /api/clusters/:id/monitoring/logs/filters
+GET /api/clusters/:id/monitoring/logs/node-migrations
 GET /api/clusters/:id/monitoring/logs/status
+GET /api/clusters/:id/monitoring/node-migrations
 GET /api/clusters/:id/monitoring/query
 GET /api/clusters/:id/monitoring/query-range
 GET /api/clusters/:id/monitoring/status
@@ -392,7 +394,9 @@ POST /api/clusters/:id/monitoring/alerts/silences
 POST /api/clusters/:id/monitoring/alerts/test-notification
 POST /api/clusters/:id/monitoring/install
 POST /api/clusters/:id/monitoring/logs/install
+POST /api/clusters/:id/monitoring/logs/node-migrations
 POST /api/clusters/:id/monitoring/logs/query
+POST /api/clusters/:id/monitoring/node-migrations
 POST /api/clusters/:id/monitoring/storage-migration
 POST /api/clusters/:id/network-migration
 POST /api/clusters/:id/network-migration/nodes/:serverID

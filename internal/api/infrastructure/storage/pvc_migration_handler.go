@@ -1,11 +1,9 @@
 package storage
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -346,57 +344,7 @@ func (h *StorageHandler) checkMigrationTargetPath(ctx context.Context, server *m
 }
 
 func streamPVCData(parent context.Context, source, target *model.Server, sourcePath, targetPath string, encKey []byte) (int64, error) {
-	ctx, cancel := context.WithTimeout(parent, 30*time.Minute)
-	defer cancel()
-	sourceCommandText := "sudo -n tar --numeric-owner -C " + storageShellQuote(sourcePath) + " -cpf - ."
-	targetCommandText := "sudo -n mkdir -p " + storageShellQuote(targetPath) + " && sudo -n tar --numeric-owner -C " + storageShellQuote(targetPath) + " -xpf -"
-	var sourceErr, targetErr bytes.Buffer
-	targetCommand, err := transport.StartSSHCommandContext(ctx, 30*time.Minute, target, encKey, targetCommandText)
-	if err != nil {
-		return 0, err
-	}
-	defer targetCommand.Close()
-	sourceCommand, err := transport.StartSSHCommandContext(ctx, 30*time.Minute, source, encKey, sourceCommandText)
-	if err != nil {
-		return 0, err
-	}
-	defer sourceCommand.Close()
-	sourceStderrDone := make(chan struct{})
-	go func() {
-		_, _ = io.Copy(&sourceErr, sourceCommand.Stderr)
-		close(sourceStderrDone)
-	}()
-	targetStderrDone := make(chan struct{})
-	go func() {
-		_, _ = io.Copy(&targetErr, targetCommand.Stderr)
-		close(targetStderrDone)
-	}()
-	var copied atomic.Int64
-	copyErr := func() error {
-		_, err := io.Copy(targetCommand.Stdin, io.TeeReader(sourceCommand.Stdout, countWriter{count: &copied}))
-		closeErr := targetCommand.Stdin.Close()
-		if err != nil {
-			return err
-		}
-		return closeErr
-	}()
-	if copyErr != nil {
-		sourceCommand.Close()
-		targetCommand.Close()
-	}
-	// Wait for the target first: it owns the reader side of source stdout. Calling
-	// source Wait first can truncate a large tar stream.
-	targetRunErr := targetCommand.Wait()
-	if targetRunErr != nil {
-		sourceCommand.Close()
-	}
-	sourceRunErr := sourceCommand.Wait()
-	<-sourceStderrDone
-	<-targetStderrDone
-	if copyErr != nil || sourceRunErr != nil || targetRunErr != nil {
-		return copied.Load(), fmt.Errorf("存储卷数据复制失败（已传输 %d bytes）: 源=%s；目标=%s", copied.Load(), streamCommandFailure(sourceRunErr, sourceErr.String()), streamCommandFailure(targetRunErr, targetErr.String()))
-	}
-	return copied.Load(), nil
+	return transport.CopyDirectoryContext(parent, source, target, sourcePath, targetPath, encKey)
 }
 
 func streamCommandFailure(runErr error, output string) string {
