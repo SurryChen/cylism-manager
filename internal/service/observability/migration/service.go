@@ -364,9 +364,11 @@ func (s *Service) checkDisk(ctx context.Context, source, target *model.Server, s
 	if err != nil {
 		return err
 	}
-	out, err := s.transfer.Exec(ctx, target, "sudo -n test -d "+quote(targetPath)+" && test -z \"$(sudo -n find "+quote(targetPath)+" -mindepth 1 -maxdepth 1 -print -quit)\" && df -B1 --output=avail -- "+quote(targetPath))
+	// K3s storage parents may be root-only even when the PVC directory is writable.
+	// Run every filesystem probe as root, including df's traversal of that path.
+	out, err := s.transfer.Exec(ctx, target, "sudo -n test -d "+quote(targetPath)+" && test -z \"$(sudo -n find "+quote(targetPath)+" -mindepth 1 -maxdepth 1 -print -quit)\" && sudo -n df -B1 --output=avail -- "+quote(targetPath))
 	if err != nil {
-		return fmt.Errorf("目标目录非空或磁盘检查失败: %w", err)
+		return fmt.Errorf("目标目录非空或磁盘检查失败: %w；%s", err, strings.TrimSpace(string(out)))
 	}
 	available, err := parseNumber(out)
 	if err != nil {

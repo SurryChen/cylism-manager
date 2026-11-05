@@ -83,6 +83,7 @@ func (a *testAdapter) DeletePVCBindingPodContext(context.Context, string, string
 
 type testTransfer struct {
 	failExec, failCopy, badHash bool
+	protectedStorageParent      bool
 	calls                       []string
 }
 
@@ -95,6 +96,9 @@ func (t *testTransfer) Exec(_ context.Context, s *model.Server, command string) 
 		return []byte("1000 /source"), nil
 	}
 	if strings.Contains(command, "df -B1") {
+		if t.protectedStorageParent && !strings.Contains(command, "sudo -n df -B1") {
+			return []byte("df: /target: Permission denied"), errors.New("Process exited with status 1")
+		}
 		return []byte("Avail\n9999999999"), nil
 	}
 	if strings.Contains(command, "tar --sort") {
@@ -105,6 +109,14 @@ func (t *testTransfer) Exec(_ context.Context, s *model.Server, command string) 
 		return []byte(strings.Repeat(v, 64) + "  -\n"), nil
 	}
 	return nil, nil
+}
+func TestMigrationChecksDiskUnderProtectedStorageParent(t *testing.T) {
+	s, _, _, tr, item := fixture(k8s.InfrastructureVictoriaMetrics)
+	tr.protectedStorageParent = true
+	s.run(item)
+	if item.Status != "succeeded" {
+		t.Fatalf("root-only storage parent prevented migration: %s", item.Detail)
+	}
 }
 func (t *testTransfer) Copy(context.Context, *model.Server, *model.Server, string, string) (int64, error) {
 	t.calls = append(t.calls, "copy")
