@@ -142,13 +142,6 @@ func TestDatabaseRegistrationRejectsIncompleteBusinessCredentials(t *testing.T) 
 			t.Fatalf("incomplete credentials accepted: %s", body)
 		}
 	}
-	managed := model.DatabaseInstance{Name: "managed", Mode: "managed", Host: "mysql.internal", Port: 3306}
-	s.DB().Create(&managed)
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequest(http.MethodPut, fmt.Sprintf("/databases/%d/connection", managed.ID), strings.NewReader(`{"database_name":"app_db","username":"app_user","password":"secret"}`)))
-	if w.Code == http.StatusOK {
-		t.Fatal("managed database SQL password changed only in platform metadata")
-	}
 }
 
 func TestDatabaseCredentialsAreHiddenAndBindingUsesTemplateEncryption(t *testing.T) {

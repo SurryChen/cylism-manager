@@ -49,3 +49,11 @@ export const getDatabaseGateway = id => api.get(`${base}/${segment(id)}/gateway`
 export const configureDatabaseGateway = (id, payload) => api.put(`${base}/${segment(id)}/gateway`, payload)
 export const runDatabaseGatewayAction = (id, action) => api.post(`${base}/${segment(id)}/gateway/actions`, { action })
 export const getDatabaseGatewayTaskLogs = (id, taskID) => api.get(`${base}/${segment(id)}/gateway/tasks/${segment(taskID)}/logs`)
+
+export const getDatabaseExecutionNodes = clusterID => api.get(`${base}/execution-nodes?cluster_id=${segment(clusterID)}`)
+export const updateDatabaseAdmin = (id, payload) => api.put(`${base}/${segment(id)}/admin`, payload)
+export const createDatabaseOperation = payload => api.post(`${base}/operations`, payload)
+export const getDatabaseOperations = ({ resource = '', limit = 30, offset = 0 } = {}) => api.get(`${base}/operations?resource=${segment(resource)}&limit=${limit}&offset=${offset}`)
+export const getDatabaseOperation = id => api.get(`${base}/operations/${segment(id)}`)
+export const controlDatabaseOperation = (id, action) => api.post(`${base}/operations/${segment(id)}/actions`, { action })
+export const getDatabaseReplications = () => api.get(`${base}/replications`)

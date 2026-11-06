@@ -19,6 +19,11 @@ type DatabaseInstance struct {
 	DatabaseName      string           `gorm:"size:64;not null" json:"database_name"`
 	Username          string           `gorm:"size:64;not null" json:"username"`
 	EncryptedPassword string           `gorm:"type:text;not null" json:"-"`
+	AdminUsername     string           `gorm:"size:64" json:"admin_username,omitempty"`
+	EncryptedAdmin    string           `gorm:"type:text" json:"-"`
+	NodeName          string           `gorm:"size:253" json:"node_name,omitempty"`
+	CPULimit          string           `gorm:"size:32" json:"cpu_limit,omitempty"`
+	MemoryLimit       string           `gorm:"size:32" json:"memory_limit,omitempty"`
 	EncryptedRoot     string           `gorm:"type:text" json:"-"`
 	StorageSize       string           `gorm:"size:32" json:"storage_size,omitempty"`
 	StorageClass      string           `gorm:"size:128" json:"storage_class,omitempty"`
@@ -34,6 +39,8 @@ type DatabaseBinding struct {
 	InstanceID    uint      `gorm:"index;not null" json:"instance_id"`
 	TemplateID    uint      `gorm:"uniqueIndex;not null" json:"template_id"`
 	ApplicationID uint      `gorm:"index;not null" json:"application_id"`
+	DatabaseName  string    `gorm:"size:64" json:"database_name,omitempty"`
+	Username      string    `gorm:"size:64" json:"username,omitempty"`
 	Prefix        string    `gorm:"size:32;not null" json:"prefix"`
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at"`

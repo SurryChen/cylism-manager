@@ -5,7 +5,7 @@
       <SurfaceCard v-if="activeTab === 'clusters'" padding="none">
         <div class="database-toolbar">
           <span class="cell-secondary">{{ loading ? '读取中...' : `共 ${mysqlClusters.length} 个集群` }}</span>
-          <button class="btn btn-primary" type="button" @click="openClusterCreate"><Plus :size="16" />新增 MySQL 集群</button>
+          <div class="row-actions"><button class="btn" @click="openTasks()">数据库任务</button><button class="btn" @click="openCapabilities()">数据库操作</button><button class="btn btn-primary" type="button" @click="openClusterCreate"><Plus :size="16" />新增 MySQL 集群</button></div>
         </div>
         <EmptyState v-if="loading" variant="loading" message="正在读取 MySQL 集群..." />
         <EmptyState v-else-if="!mysqlClusters.length" message="暂无 MySQL 集群" />
@@ -24,35 +24,51 @@
       <SurfaceCard v-else padding="none">
         <div class="database-toolbar">
           <span class="cell-secondary">{{ loading ? '读取中...' : `共 ${instances.length} 个实例` }}</span>
-          <button class="btn btn-primary" type="button" @click="openCreate"><Plus :size="16" />接入已有 MySQL</button>
+          <div class="row-actions"><button class="btn" @click="openTasks()">数据库任务</button><button class="btn" type="button" @click="openCreate">接入已有 MySQL</button><button class="btn btn-primary" @click="openCapability('deploy')"><Plus :size="16" />部署 MySQL</button></div>
         </div>
         <EmptyState v-if="loading" variant="loading" message="正在读取数据库..." />
         <EmptyState v-else-if="!instances.length" message="暂无数据库实例" />
         <div v-else class="table-wrap table-inset">
           <table class="data-table database-table">
-            <thead><tr><th>实例</th><th>来源</th><th>集群</th><th>地址</th><th>业务数据库</th><th>状态</th><th class="actions">操作</th></tr></thead>
-            <tbody>
-              <tr v-for="item in instances" :key="item.id">
-                <td class="cell-primary">{{ item.name }}</td>
-                <td>{{ (item.private_gateway || item.connection_mode === 'gateway') ? '私网网关' : item.mode === 'managed' ? '集群部署' : '已有 MySQL' }}</td>
-                <td>{{ item.private_gateway ? clusterName(item.private_gateway.cluster_id) : item.mode === 'managed' ? clusterName(item.cluster_id) : '-' }}</td>
-                <td class="mono">{{ item.private_gateway?.service_host || item.host }}:{{ item.private_gateway ? 3306 : item.port }}<span v-if="item.private_gateway" class="cell-secondary">{{ item.host }}:{{ item.port }} · {{ gatewayStatusLabel(item.private_gateway.status) }}</span></td>
-                <td><span v-if="hasConnection(item)" class="mono">{{ item.database_name }}<span class="cell-secondary">{{ item.username }}</span></span><span v-else class="cell-secondary">未配置业务连接</span></td>
-                <td><button v-if="instanceError(item)" class="status-error" type="button" @click="actionError = instanceError(item)"><span class="badge badge-danger">异常</span></button><span v-else class="badge" :class="['ready', 'registered'].includes(instanceState(item)) ? 'badge-online' : 'badge-offline'">{{ statusLabel(instanceState(item)) }}</span></td>
-                <td class="actions"><div class="row-actions">
-                  <button v-if="item.mode === 'external'" class="btn btn-sm" type="button" @click="gatewayItem = item">私网网关</button>
-                  <button v-if="item.mode === 'external'" class="btn btn-sm" type="button" @click="openConnection(item)">业务连接</button>
-                  <button class="btn btn-sm" type="button" @click="openBindings(item)"><Link2 :size="14" />应用绑定</button>
-                  <button v-if="item.mode === 'managed'" class="icon-button" type="button" title="刷新状态" aria-label="刷新状态" @click="inspect(item)"><RefreshCw :size="15" /></button>
-                  <button v-if="item.mode === 'managed' && (item.status === 'error' || item.status === 'missing')" class="btn btn-sm" type="button" @click="reconcile(item)">重试部署</button>
-                  <button class="icon-button danger-icon" type="button" title="删除实例" aria-label="删除实例" @click="deletingItem = item"><Trash2 :size="15" /></button>
-                </div></td>
-              </tr>
-            </tbody>
+            <thead><tr><th>实例名称</th><th>管理方式</th><th>位置</th><th>状态</th><th class="actions">操作</th></tr></thead>
+            <tbody><tr v-for="item in instances" :key="item.id">
+              <td class="cell-primary">{{ item.name }}</td><td>{{ item.mode === 'managed' ? '独立 MySQL' : '已有 MySQL' }}</td>
+              <td>{{ item.mode === 'managed' ? item.node_name || clusterName(item.cluster_id) : item.private_gateway ? clusterName(item.private_gateway.cluster_id) : '外部实例' }}</td>
+              <td><button v-if="instanceError(item)" class="status-error" @click="actionError = instanceError(item)"><span class="badge badge-danger">异常</span></button><span v-else class="badge" :class="['ready', 'registered'].includes(instanceState(item)) ? 'badge-online' : 'badge-offline'">{{ statusLabel(instanceState(item)) }}</span></td>
+              <td class="actions"><button class="btn btn-sm" @click="openDetails(item)">查看与配置</button></td>
+            </tr></tbody>
           </table>
         </div>
       </SurfaceCard>
     </div>
+
+    <BaseModal :open="Boolean(detailItem)" :title="detailItem?.name || '实例详情'" size="large" teleport @close="detailItem = null">
+      <nav class="table-tabs detail-tabs" aria-label="实例详情"><button v-for="tab in detailTabs" :key="tab.id" class="tab-btn" :class="{ 'tab-active': detailTab === tab.id }" @click="detailTab = tab.id">{{ tab.label }}</button></nav>
+      <div v-if="detailItem" class="database-form">
+        <template v-if="detailTab === 'overview'">
+          <dl class="database-facts"><div><dt>管理方式</dt><dd>{{ detailItem.mode === 'managed' ? '独立 StatefulSet' : '外部 MySQL / RDS' }}</dd></div><div><dt>状态</dt><dd>{{ statusLabel(instanceState(detailItem)) }}</dd></div><div v-if="detailItem.mode === 'managed'"><dt>资源上限</dt><dd>{{ detailItem.cpu_limit || '2' }} 核 / {{ detailItem.memory_limit || '2Gi' }}</dd></div><div><dt>管理账号</dt><dd>{{ detailItem.mode === 'managed' ? '平台生成并加密保管' : detailItem.admin_username || '未配置' }}</dd></div></dl>
+          <div class="capability-actions"><button class="btn btn-sm" @click="openCapability('inspect', `instance:${detailItem.id}`)">检查实例</button><button class="btn btn-sm" @click="openCapability('migrate', `instance:${detailItem.id}`)">迁移数据</button><button class="btn btn-sm" @click="openCapability('replicate', `instance:${detailItem.id}`)">建立复制</button><button v-if="detailItem.mode === 'external'" class="btn btn-sm" @click="openAdmin(detailItem)">管理凭据</button><button v-if="detailItem.mode === 'managed'" class="btn btn-sm" @click="inspect(detailItem)">刷新部署状态</button><button v-if="detailItem.mode === 'managed' && ['error', 'missing'].includes(detailItem.status)" class="btn btn-sm" @click="reconcile(detailItem)">重试部署</button><button class="btn btn-sm" @click="openTasks(`instance:${detailItem.id}`)">查看任务</button><button class="icon-button danger-icon" title="删除实例" aria-label="删除实例" @click="deletingItem = detailItem"><Trash2 :size="15" /></button></div>
+        </template>
+        <template v-else-if="detailTab === 'network'">
+          <dl class="database-facts"><div><dt>实例地址</dt><dd class="mono">{{ detailItem.host }}:{{ detailItem.port }}</dd></div><div v-if="detailItem.private_gateway"><dt>私网 Service</dt><dd class="mono">{{ detailItem.private_gateway.service_host }}:3306</dd></div><div v-if="detailItem.private_gateway"><dt>网关检查</dt><dd>{{ gatewayStatusLabel(detailItem.private_gateway.status) }}</dd></div></dl>
+          <button v-if="detailItem.mode === 'external'" class="btn" @click="gatewayItem = detailItem; detailItem = null">私网网关</button>
+        </template>
+        <template v-else-if="detailTab === 'applications'">
+          <dl class="database-facts"><div><dt>默认业务连接</dt><dd>{{ hasConnection(detailItem) ? detailItem.database_name + ' / ' + detailItem.username : '未配置业务连接' }}</dd></div></dl>
+          <div class="capability-actions"><button class="btn" @click="openConnection(detailItem); detailItem = null">业务连接</button><button class="btn" @click="openBindings(detailItem); detailItem = null">应用绑定</button><button class="btn" @click="openCapability('switch', '', `instance:${detailItem.id}`)">切换应用连接</button></div>
+        </template>
+        <template v-else-if="detailTab === 'replication'">
+          <EmptyState v-if="relationsLoading" variant="loading" message="读取复制关系..." />
+          <EmptyState v-else-if="!detailRelations.length" message="暂无复制关系" />
+          <div v-for="relation in detailRelations" :key="relation.id" class="relation-row"><span>{{ resourceName(relation.source) }} → {{ resourceName(relation.target) }}<span class="cell-secondary">{{ relation.status === 'running' ? '建立时线程已运行，需检查当前状态' : relation.status === 'checking' ? '已创建通道，等待检查线程状态' : '最近一次检查异常' }}</span></span><div class="row-actions"><button class="btn btn-sm" @click="openCapability('replication_check', '', relation.target)">检查</button><button class="btn btn-sm" @click="openCapability('detach', '', relation.target)">解除复制</button></div></div>
+        </template>
+      </div>
+    </BaseModal>
+
+    <BaseModal :open="capabilitiesOpen" title="数据库操作" size="medium" teleport @close="capabilitiesOpen = false"><div class="capability-menu"><button v-for="item in capabilityOptions" :key="item.kind" class="btn" @click="capabilitiesOpen = false; openCapability(item.kind)">{{ item.label }}</button></div></BaseModal>
+    <BaseModal :open="Boolean(adminItem)" title="管理凭据" size="medium" teleport @close="closeAdmin"><div class="database-form"><p class="form-hint">填写实例上已存在的管理账号。用于明确发起的清单检查、迁移与复制任务，与业务账号分开；密码保存后加密保管，不回显。</p><label class="form-group"><span class="form-label">管理账号</span><input v-model.trim="adminForm.username" class="form-input" autocomplete="off"></label><label class="form-group"><span class="form-label">密码</span><input v-model="adminForm.password" class="form-input" type="password" autocomplete="new-password"></label></div><template #actions><button class="btn" :disabled="adminSaving" @click="closeAdmin">取消</button><button class="btn btn-primary" :disabled="adminSaving" @click="saveAdmin">{{ adminSaving ? '保存中...' : '保存管理凭据' }}</button></template></BaseModal>
+    <DatabaseCapabilityDialog :kind="capabilityKind" :source="capabilitySource" :target="capabilityTarget" :instances="instances" :mysql-clusters="mysqlClusters" :clusters="clusters" :relations="relations" @close="capabilityKind = ''" @created="capabilityCreated" />
+    <DatabaseTaskDialog :open="tasksOpen" :resource="tasksResource" :taskID="selectedTaskID" :resources="resources" :clusters="clusters" @close="tasksOpen = false; refreshInstances()" @updated="refreshInstances" />
 
     <BaseModal :open="clusterCreateOpen" title="新增 MySQL 集群" size="medium" teleport @close="clusterCreateOpen = false">
       <div class="database-form">
@@ -115,7 +131,9 @@ import { useRouter } from 'vue-router'
 import DatabaseGatewayDialog from './DatabaseGatewayDialog.vue'
 import { getApplications, getDeploymentTemplates } from '../../api/applications.js'
 import { getClusters } from '../../api/clusters.js'
-import { bindDatabase, createDatabase, createMySQLCluster, deleteDatabase, deleteMySQLCluster, getDatabaseBindings, getDatabases, getMySQLClusters, inspectDatabase, reconcileDatabase, unbindDatabase, updateDatabaseConnection } from '../../api/databases.js'
+import { bindDatabase, createDatabase, createMySQLCluster, deleteDatabase, deleteMySQLCluster, getDatabaseBindings, getDatabases, getMySQLClusters, inspectDatabase, reconcileDatabase, unbindDatabase, updateDatabaseConnection, updateDatabaseAdmin, getDatabaseReplications } from '../../api/databases.js'
+import DatabaseCapabilityDialog from './DatabaseCapabilityDialog.vue'
+import DatabaseTaskDialog from './DatabaseTaskDialog.vue'
 import BaseModal from '../../components/BaseModal.vue'
 import ConfirmDialog from '../../components/ConfirmDialog.vue'
 import EmptyState from '../../components/EmptyState.vue'
@@ -125,6 +143,24 @@ import SelectMenu from '../../components/SelectMenu.vue'
 import SurfaceCard from '../../components/SurfaceCard.vue'
 
 const router = useRouter()
+const detailItem = ref(null), detailTab = ref('overview'), relations = ref([]), relationsLoading = ref(false)
+const detailTabs = [{ id: 'overview', label: '概览' }, { id: 'network', label: '网络' }, { id: 'applications', label: '应用' }, { id: 'replication', label: '复制关系' }]
+const capabilityOptions = [{ kind: 'deploy', label: '部署独立 MySQL' }, { kind: 'inspect', label: '检查实例' }, { kind: 'migrate', label: '迁移数据' }, { kind: 'replicate', label: '建立复制' }, { kind: 'detach', label: '解除复制' }, { kind: 'replication_check', label: '检查复制' }, { kind: 'switch', label: '切换应用连接' }]
+const capabilitiesOpen = ref(false), capabilityKind = ref(''), capabilitySource = ref(''), capabilityTarget = ref('')
+const tasksOpen = ref(false), tasksResource = ref(''), selectedTaskID = ref(null)
+const adminItem = ref(null), adminSaving = ref(false), adminForm = reactive({ username: '', password: '' })
+const resources = computed(() => [...mysqlClusters.value.map(item => ({ ref: `cluster:${item.id}`, name: item.name })), ...instances.value.map(item => ({ ref: `instance:${item.id}`, name: item.name }))])
+const resourceName = value => resources.value.find(item => item.ref === value)?.name || value
+const detailRelations = computed(() => relations.value.filter(item => [item.source, item.target].includes(`instance:${detailItem.value?.id}`)))
+async function loadRelations() { relationsLoading.value = true; try { relations.value = await getDatabaseReplications() } catch (error) { actionError.value = error.message || '读取复制关系失败' } finally { relationsLoading.value = false } }
+function openDetails(item) { detailItem.value = item; detailTab.value = 'overview'; loadRelations() }
+function openCapabilities() { capabilitiesOpen.value = true; loadRelations() }
+function openCapability(kind, source = '', target = '') { if (['detach', 'replication_check'].includes(kind)) loadRelations(); detailItem.value = null; capabilitySource.value = source; capabilityTarget.value = target; capabilityKind.value = kind }
+function openTasks(resource = '', taskID = null) { detailItem.value = null; tasksResource.value = resource; selectedTaskID.value = taskID; tasksOpen.value = true }
+async function capabilityCreated(id) { capabilityKind.value = ''; await refreshInstances(); openTasks('', id) }
+function openAdmin(item) { adminItem.value = item; detailItem.value = null; adminForm.username = item.admin_username || ''; adminForm.password = '' }
+function closeAdmin() { if (adminSaving.value) return; adminForm.password = ''; adminItem.value = null }
+async function saveAdmin() { if (adminSaving.value || !adminItem.value) return; adminSaving.value = true; try { await updateDatabaseAdmin(adminItem.value.id, { ...adminForm }); adminForm.password = ''; adminItem.value = null; await refreshInstances() } catch (error) { actionError.value = error.message || '保存管理凭据失败' } finally { adminSaving.value = false } }
 const activeTab = ref('clusters')
 const gatewayItem = ref(null), connectionMode = ref('direct')
 const gatewayStatusLabel = state => ({ ready: '网络已验证', disabled: '已停用', degraded: '服务检查异常', error: '任务失败', pending: '待部署', checking: '测试中', disabling: '停用中' }[state] || '待检查')
@@ -188,8 +224,8 @@ async function saveConnection() {
   finally { connectionSaving.value = false }
 }
 async function inspect(item) { try { const latest = await inspectDatabase(item.id); Object.assign(item, latest) } catch (error) { actionError.value = error.message || '读取状态失败' } }
-async function reconcile(item) { try { const latest = await reconcileDatabase(item.id); Object.assign(item, latest) } catch (error) { actionError.value = error.message || '重试部署失败'; await load() } }
-async function remove() { if (!deletingItem.value) return; deleting.value = true; try { await deleteDatabase(deletingItem.value.id); deletingItem.value = null; await load() } catch (error) { actionError.value = error.message || '删除失败' } finally { deleting.value = false } }
+async function reconcile(item) { try { const latest = await reconcileDatabase(item.id); Object.assign(item, latest); openTasks(`instance:${item.id}`) } catch (error) { actionError.value = error.message || '重试部署失败'; await load() } }
+async function remove() { if (!deletingItem.value) return; deleting.value = true; try { await deleteDatabase(deletingItem.value.id); detailItem.value = null; deletingItem.value = null; await load() } catch (error) { actionError.value = error.message || '删除失败' } finally { deleting.value = false } }
 async function removeCluster() { if (!deletingCluster.value) return; deleting.value = true; try { await deleteMySQLCluster(deletingCluster.value.id); deletingCluster.value = null; await load() } catch (error) { actionError.value = error.message || '删除失败' } finally { deleting.value = false } }
 async function openBindings(item) {
   bindingItem.value = item; bindings.value = []; templates.value = []; Object.assign(bindingForm, { application_id: 0, template_id: 0, prefix: 'DATABASE' }); bindingsLoading.value = true
@@ -216,11 +252,15 @@ onMounted(load)
 </script>
 
 <style scoped>
+.database-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; margin: 4px 0 16px; }
+.database-facts div { min-width: 0; }.database-facts dt { color: var(--text-secondary); font-size: 11px; margin-bottom: 6px; }.database-facts dd { margin: 0; font-size: 13px; overflow-wrap: anywhere; }
+.detail-tabs { margin-bottom: 20px; }.capability-actions { display: flex; flex-wrap: wrap; gap: 8px; }.capability-menu { display: grid; gap: 10px; grid-template-columns: repeat(2, 1fr); }
+.relation-row { display: flex; justify-content: space-between; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--border-muted); font-size: 12px; }.relation-row .cell-secondary { display: block; margin-top: 6px; }
 .database-content { margin-top: var(--tabbed-page-content-gap); display: grid; gap: var(--space-16); }
 .database-toolbar { display: flex; align-items: center; justify-content: space-between; gap: var(--space-16); min-height: 66px; padding: 14px var(--space-20); }
 .table-inset { padding: 0 var(--space-20); }
 .database-table { min-width: 900px; }
-.database-table .actions { text-align: right; width: 320px; }
+.database-table .actions { text-align: right; width: 160px; }
 .row-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
 .mono { font-family: var(--font-mono); overflow-wrap: anywhere; }
 .danger-icon { color: var(--danger); }
@@ -235,6 +275,6 @@ onMounted(load)
 .binding-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 0; font-size: 12px; }
 .binding-row + .binding-row { border-top: 1px solid var(--border-muted); }
 .binding-row small { display: block; margin-top: 2px; }
-@media (max-width: 760px) { .database-toolbar { padding: 14px; }.table-inset { padding: 0 14px; } }
+@media (max-width: 760px) { .database-toolbar { align-items: stretch; flex-direction: column; }.database-toolbar .row-actions { flex-wrap: wrap; justify-content: flex-start; }.database-facts { grid-template-columns: 1fr; } .database-toolbar { padding: 14px; }.table-inset { padding: 0 14px; } }
 @media (max-width: 480px) { .database-form .form-row { flex-direction: column; }.database-form .form-row > .narrow { flex: 1; } }
 </style>

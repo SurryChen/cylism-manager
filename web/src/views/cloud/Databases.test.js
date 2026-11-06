@@ -3,7 +3,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import Databases from './Databases.vue'
 import SelectMenu from '../../components/SelectMenu.vue'
 
-const api = vi.hoisted(() => ({ getDatabases: vi.fn(), getMySQLClusters: vi.fn(), createDatabase: vi.fn(), updateDatabaseConnection: vi.fn(), getDatabaseBindings: vi.fn(), bindDatabase: vi.fn() }))
+const api = vi.hoisted(() => ({ getDatabases: vi.fn(), getMySQLClusters: vi.fn(), createDatabase: vi.fn(), updateDatabaseConnection: vi.fn(), getDatabaseBindings: vi.fn(), bindDatabase: vi.fn(), getDatabaseReplications: vi.fn() }))
 vi.mock('../../api/databases.js', async importOriginal => ({ ...await importOriginal(), ...api }))
 vi.mock('../../api/applications.js', () => ({ getApplications: vi.fn().mockResolvedValue([{ id: 13, name: 'app' }]), getDeploymentTemplates: vi.fn().mockResolvedValue([{ id: 101, name: '默认模板' }]) }))
 vi.mock('../../api/clusters.js', () => ({ getClusters: vi.fn().mockResolvedValue([]) }))
@@ -20,6 +20,10 @@ async function render(instance = endpoint) {
   await button(wrapper, '已有实例').trigger('click')
   return wrapper
 }
+async function openApplications(wrapper) {
+  await button(wrapper, '查看与配置').trigger('click'); await flushPromises()
+  await button(wrapper, '应用').trigger('click')
+}
 beforeEach(() => {
   vi.clearAllMocks()
   api.getMySQLClusters.mockResolvedValue([])
@@ -27,6 +31,7 @@ beforeEach(() => {
   api.updateDatabaseConnection.mockResolvedValue({ ...endpoint, database_name: 'app_db', username: 'app_user' })
   api.getDatabaseBindings.mockResolvedValue([])
   api.bindDatabase.mockResolvedValue({})
+  api.getDatabaseReplications.mockResolvedValue([])
 })
 afterEach(() => wrappers.splice(0).forEach(wrapper => wrapper.unmount()))
 
@@ -47,6 +52,7 @@ describe('external MySQL registration and business connection', () => {
 
   it('guides an unconfigured instance to business connection instead of allowing an empty binding', async () => {
     const wrapper = await render()
+    await openApplications(wrapper)
     expect(wrapper.text()).toContain('未配置业务连接')
     await button(wrapper, '应用绑定').trigger('click'); await flushPromises()
     expect(api.getDatabaseBindings).not.toHaveBeenCalled()
@@ -59,6 +65,7 @@ describe('external MySQL registration and business connection', () => {
 
   it('saves existing credentials separately, refreshes the row and clears the password on reopen', async () => {
     const wrapper = await render()
+    await openApplications(wrapper)
     await button(wrapper, '业务连接').trigger('click')
     await wrapper.get('[data-testid=connection-database]').setValue('app_db')
     await wrapper.get('[data-testid=connection-username]').setValue('app_user')
@@ -66,22 +73,26 @@ describe('external MySQL registration and business connection', () => {
     api.getDatabases.mockResolvedValue([{ ...endpoint, database_name: 'app_db', username: 'app_user' }])
     await wrapper.get('[data-testid=connection-save]').trigger('click'); await flushPromises()
     expect(api.updateDatabaseConnection).toHaveBeenCalledWith(1, { database_name: 'app_db', username: 'app_user', password: 'existing-password' })
-    expect(wrapper.text()).toContain('app_db')
     expect(api.createDatabase).not.toHaveBeenCalled()
+    await openApplications(wrapper)
+    expect(wrapper.text()).toContain('app_db')
     await button(wrapper, '业务连接').trigger('click')
     expect(wrapper.get('[data-testid=connection-password]').element.value).toBe('')
     await wrapper.get('[data-testid=connection-password]').setValue('discarded-password')
     await button(wrapper, '取消').trigger('click')
+    await openApplications(wrapper)
     await button(wrapper, '业务连接').trigger('click')
     expect(wrapper.get('[data-testid=connection-password]').element.value).toBe('')
   })
 
   it('keeps existing configured instances bindable and surfaces credential save errors', async () => {
     const wrapper = await render({ ...endpoint, database_name: 'app_db', username: 'app_user' })
+    await openApplications(wrapper)
     await button(wrapper, '应用绑定').trigger('click'); await flushPromises()
     expect(api.getDatabaseBindings).toHaveBeenCalledWith(1)
     expect(button(wrapper, '绑定到模板')).toBeDefined()
     await button(wrapper, '关闭').trigger('click')
+    await openApplications(wrapper)
     await button(wrapper, '业务连接').trigger('click')
     await wrapper.get('[data-testid=connection-password]').setValue('existing-password')
     api.updateDatabaseConnection.mockRejectedValue(new Error('业务连接仍被上线模板使用，请先解除绑定'))

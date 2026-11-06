@@ -7,6 +7,7 @@ import (
 	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/service/database/gateway"
+	"github.com/cylism/cylism-manager/internal/service/database/operations"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
@@ -47,6 +48,14 @@ func (h *DatabaseHandler) ConfigurePrivateGateway(c *gin.Context) {
 	if !ok {
 		return
 	}
+	if err := operations.AssertUnlocked(h.store.DB(), operations.Reference(instance.ID)); err != nil {
+		apiShared.Conflict(c, err.Error())
+		return
+	}
+	if err := operations.AssertNoReplication(h.store.DB(), operations.Reference(instance.ID)); err != nil {
+		apiShared.Conflict(c, err.Error())
+		return
+	}
 	if h.gateways == nil {
 		apiShared.ValidationError(c, "私网网关后台服务未配置")
 		return
@@ -76,6 +85,10 @@ func (h *DatabaseHandler) PrivateGatewayAction(c *gin.Context) {
 	if !ok {
 		return
 	}
+	if err := operations.AssertUnlocked(h.store.DB(), operations.Reference(instance.ID)); err != nil {
+		apiShared.Conflict(c, err.Error())
+		return
+	}
 	if h.gateways == nil {
 		apiShared.ValidationError(c, "私网网关后台服务未配置")
 		return
@@ -86,6 +99,12 @@ func (h *DatabaseHandler) PrivateGatewayAction(c *gin.Context) {
 	if c.ShouldBindJSON(&input) != nil {
 		apiShared.BadRequest(c, "网关操作无效")
 		return
+	}
+	if input.Action != "check" {
+		if err := operations.AssertNoReplication(h.store.DB(), operations.Reference(instance.ID)); err != nil {
+			apiShared.Conflict(c, err.Error())
+			return
+		}
 	}
 	task, err := h.gateways.Queue(instance.ID, input.Action)
 	if err != nil {

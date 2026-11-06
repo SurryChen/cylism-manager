@@ -122,6 +122,10 @@ GET /api/cloud/databases/:id
 GET /api/cloud/databases/:id/bindings
 GET /api/cloud/databases/:id/gateway
 GET /api/cloud/databases/:id/gateway/tasks/:taskID/logs
+GET /api/cloud/databases/execution-nodes
+GET /api/cloud/databases/operations
+GET /api/cloud/databases/operations/:taskID
+GET /api/cloud/databases/replications
 GET /api/cloud/mysql-clusters
 GET /api/cloud/mysql-clusters/:id
 GET /api/cloud/mysql-clusters/:id/config
@@ -357,6 +361,8 @@ POST /api/cloud/databases
 POST /api/cloud/databases/:id/bindings
 POST /api/cloud/databases/:id/gateway/actions
 POST /api/cloud/databases/:id/reconcile
+POST /api/cloud/databases/operations
+POST /api/cloud/databases/operations/:taskID/actions
 POST /api/cloud/mysql-clusters
 POST /api/cloud/mysql-clusters/:id/config/restart
 POST /api/cloud/mysql-clusters/:id/deployment/cleanup
@@ -521,6 +527,7 @@ PUT /api/cloud/connections/:id
 PUT /api/cloud/connections/:id/dns/records/:recordID
 PUT /api/cloud/connections/:id/object-storage/containers/:container
 PUT /api/cloud/connections/:id/object-storage/containers/:container/cors
+PUT /api/cloud/databases/:id/admin
 PUT /api/cloud/databases/:id/connection
 PUT /api/cloud/databases/:id/gateway
 PUT /api/cloud/mysql-clusters/:id/config

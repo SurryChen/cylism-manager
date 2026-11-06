@@ -11,6 +11,7 @@ import (
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/security"
 	database "github.com/cylism/cylism-manager/internal/service/database"
+	"github.com/cylism/cylism-manager/internal/service/database/operations"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -84,6 +85,12 @@ func (h *DatabaseHandler) getCluster(c *gin.Context) (*model.MySQLCluster, bool)
 	} else if err != nil {
 		apiShared.DBError(c, err.Error())
 		return nil, false
+	}
+	if c.Request.Method != "GET" {
+		if err := operations.AssertUnlocked(h.store.DB(), fmt.Sprintf("cluster:%d", item.ID)); err != nil {
+			apiShared.Conflict(c, err.Error())
+			return nil, false
+		}
 	}
 	return &item, true
 }

@@ -2,6 +2,7 @@ package database
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/cylism/cylism-manager/internal/k8s"
@@ -41,5 +42,38 @@ func TestApplyAndDeleteRetainsClaim(t *testing.T) {
 	}
 	if _, err := client.Clientset.CoreV1().PersistentVolumeClaims(Namespace).Get(ctx, PVCName(7), metav1.GetOptions{}); err != nil {
 		t.Fatalf("PVC should remain after deleting instance: %v", err)
+	}
+}
+
+func TestStandaloneEmptyMySQLUsesPlacementLimitsAndReplicationParameters(t *testing.T) {
+	ctx := context.Background()
+	client := &k8s.Client{Clientset: fake.NewSimpleClientset()}
+	instance := &model.DatabaseInstance{ID: 19, StorageSize: "10Gi", NodeName: "ubuntudev", CPULimit: "1", MemoryLimit: "1Gi"}
+	if err := Apply(ctx, client, instance, "generated-root", ""); err != nil {
+		t.Fatal(err)
+	}
+	set, err := client.Clientset.AppsV1().StatefulSets(Namespace).Get(ctx, ResourceName(instance.ID), metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pod := set.Spec.Template.Spec
+	container := pod.Containers[0]
+	if pod.NodeSelector[corev1.LabelHostname] != "ubuntudev" || container.Resources.Limits.Cpu().String() != "1" || container.Resources.Limits.Memory().String() != "1Gi" {
+		t.Fatal("placement or resource budget lost")
+	}
+	for _, env := range container.Env {
+		if env.Name == "MYSQL_DATABASE" || env.Name == "MYSQL_USER" || env.Name == "MYSQL_PASSWORD" {
+			t.Fatal("empty deployment invented business database credentials")
+		}
+	}
+	args := strings.Join(container.Args, " ")
+	for _, required := range []string{"--server-id=10019", "--gtid-mode=ON", "--log-bin=mysql-bin", "--innodb-buffer-pool-size="} {
+		if !strings.Contains(args, required) {
+			t.Fatalf("missing argument %s", required)
+		}
+	}
+	svc, err := client.Clientset.CoreV1().Services(Namespace).Get(ctx, ResourceName(instance.ID), metav1.GetOptions{})
+	if err != nil || svc.Spec.Type == corev1.ServiceTypeNodePort || svc.Spec.Type == corev1.ServiceTypeLoadBalancer {
+		t.Fatal("management connection must stay inside cluster Service")
 	}
 }

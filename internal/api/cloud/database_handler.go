@@ -18,6 +18,7 @@ import (
 	applicationservice "github.com/cylism/cylism-manager/internal/service/application"
 	database "github.com/cylism/cylism-manager/internal/service/database"
 	"github.com/cylism/cylism-manager/internal/service/database/gateway"
+	"github.com/cylism/cylism-manager/internal/service/database/operations"
 	registryservice "github.com/cylism/cylism-manager/internal/service/registry"
 	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/gin-gonic/gin"
@@ -32,6 +33,7 @@ type DatabaseHandler struct {
 	mysqlSyncLocks sync.Map
 	registryPull   registryservice.PullExecutor
 	gateways       *gateway.Service
+	operations     *operations.Service
 }
 
 func NewDatabaseHandler(s *store.Store, key []byte, client func(context.Context, uint) (*k8s.Client, error)) *DatabaseHandler {
@@ -56,6 +58,9 @@ type databaseRequest struct {
 	StorageSize    string `json:"storage_size"`
 	StorageClass   string `json:"storage_class"`
 	Image          string `json:"image"`
+	NodeName       string `json:"node_name"`
+	CPULimit       string `json:"cpu_limit"`
+	MemoryLimit    string `json:"memory_limit"`
 }
 
 var databaseIdentifier = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_]{0,63}$`)
@@ -118,7 +123,7 @@ func (h *DatabaseHandler) Create(c *gin.Context) {
 	// External endpoints can be registered and network-tested before a business
 	// database exists. Preserve complete credentials from older API clients.
 	hasConnection := req.DatabaseName != "" || req.Username != "" || req.Password != ""
-	if req.Mode == "managed" || hasConnection {
+	if hasConnection {
 		if err := validateDatabaseConnection(req.DatabaseName, req.Username, req.Password); err != nil {
 			apiShared.ValidationError(c, err.Error())
 			return
@@ -129,6 +134,19 @@ func (h *DatabaseHandler) Create(c *gin.Context) {
 		}
 	}
 	if req.Mode == "managed" {
+		if len(h.key) != 32 {
+			apiShared.ValidationError(c, "平台加密密钥未配置")
+			return
+		}
+		if req.CPULimit == "" && req.MemoryLimit == "" {
+			req.CPULimit, req.MemoryLimit = "1", "1Gi"
+		}
+		var err error
+		req.CPULimit, req.MemoryLimit, err = database.ValidateMySQLResources(req.CPULimit, req.MemoryLimit)
+		if err != nil {
+			apiShared.ValidationError(c, err.Error())
+			return
+		}
 		if req.ClusterID == 0 {
 			apiShared.ValidationError(c, "请选择集群")
 			return
@@ -170,7 +188,7 @@ func (h *DatabaseHandler) Create(c *gin.Context) {
 			return
 		}
 	}
-	item := model.DatabaseInstance{ConnectionMode: req.ConnectionMode, Name: req.Name, Mode: req.Mode, ClusterID: req.ClusterID, Host: req.Host, Port: req.Port, DatabaseName: req.DatabaseName, Username: req.Username, EncryptedPassword: encrypted, StorageSize: req.StorageSize, StorageClass: strings.TrimSpace(req.StorageClass), Image: strings.TrimSpace(req.Image), Status: "registered"}
+	item := model.DatabaseInstance{ConnectionMode: req.ConnectionMode, Name: req.Name, Mode: req.Mode, ClusterID: req.ClusterID, Host: req.Host, Port: req.Port, DatabaseName: req.DatabaseName, Username: req.Username, EncryptedPassword: encrypted, StorageSize: req.StorageSize, StorageClass: strings.TrimSpace(req.StorageClass), Image: strings.TrimSpace(req.Image), Status: "registered", NodeName: strings.TrimSpace(req.NodeName), CPULimit: req.CPULimit, MemoryLimit: req.MemoryLimit}
 	if req.Mode == "managed" {
 		root, err := randomPassword()
 		if err != nil {
@@ -184,24 +202,34 @@ func (h *DatabaseHandler) Create(c *gin.Context) {
 		}
 		item.Namespace, item.Port, item.Status = database.Namespace, 3306, "creating"
 	}
-	if err := h.store.DB().Create(&item).Error; err != nil {
-		apiShared.ValidationError(c, "数据库名称已存在或保存失败")
-		return
-	}
-	if item.Mode == "managed" {
-		item.ResourceName, item.Host = database.ResourceName(item.ID), database.ServiceHost(item.ID)
-		if err := h.store.DB().Model(&item).Updates(map[string]any{"resource_name": item.ResourceName, "host": item.Host}).Error; err != nil {
-			apiShared.DBError(c, err.Error())
+	if item.Mode == "managed" && h.operations != nil {
+		if err := h.validateStandaloneDeployment(c.Request.Context(), &item); err != nil {
+			apiShared.ValidationError(c, err.Error())
 			return
 		}
-		if err := h.apply(c.Request.Context(), &item); err != nil {
-			item.Status, item.LastError = "error", err.Error()
-			_ = h.store.DB().Model(&item).Updates(map[string]any{"status": item.Status, "last_error": item.LastError}).Error
-			apiShared.ValidationError(c, fmt.Sprintf("数据库部署失败，实例已保留，可在列表中重试：%v", err))
+		err := h.store.DB().Transaction(func(tx *gorm.DB) error {
+			if err := tx.Create(&item).Error; err != nil {
+				return err
+			}
+			item.ResourceName, item.Host = database.ResourceName(item.ID), database.ServiceHost(item.ID)
+			if err := tx.Save(&item).Error; err != nil {
+				return err
+			}
+			return h.operations.QueueDeployment(tx, &item)
+		})
+		if err != nil {
+			apiShared.ValidationError(c, "保存实例或创建部署任务失败："+err.Error())
 			return
 		}
-		item.Status = "starting"
-		_ = h.store.DB().Model(&item).Updates(map[string]any{"status": item.Status, "last_error": ""}).Error
+	} else {
+		if item.Mode == "managed" {
+			apiShared.ValidationError(c, "数据库后台任务服务未配置")
+			return
+		}
+		if err := h.store.DB().Create(&item).Error; err != nil {
+			apiShared.ValidationError(c, "数据库名称已存在或保存失败")
+			return
+		}
 	}
 	apiShared.Success(c, item)
 }
@@ -220,10 +248,7 @@ func (h *DatabaseHandler) UpdateConnection(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if item.Mode != "external" {
-		apiShared.ValidationError(c, "仅支持配置已有 MySQL 的业务连接")
-		return
-	}
+
 	var req struct {
 		DatabaseName string `json:"database_name"`
 		Username     string `json:"username"`
@@ -248,6 +273,9 @@ func (h *DatabaseHandler) UpdateConnection(c *gin.Context) {
 		return
 	}
 	err = h.store.DB().Transaction(func(tx *gorm.DB) error {
+		if err := operations.AssertUnlocked(tx, operations.Reference(item.ID)); err != nil {
+			return err
+		}
 		if err := tx.First(item, item.ID).Error; err != nil {
 			return err
 		}
@@ -321,14 +349,20 @@ func (h *DatabaseHandler) Reconcile(c *gin.Context) {
 		apiShared.ValidationError(c, "仅支持重新部署集群内 MySQL")
 		return
 	}
-	if err := h.apply(c.Request.Context(), item); err != nil {
-		item.Status, item.LastError = "error", err.Error()
-		_ = h.store.DB().Model(item).Updates(map[string]any{"status": item.Status, "last_error": item.LastError}).Error
+	if h.operations == nil {
+		apiShared.ValidationError(c, "数据库后台任务服务未配置")
+		return
+	}
+	err := h.store.DB().Transaction(func(tx *gorm.DB) error {
+		if err := operations.AssertUnlocked(tx, operations.Reference(item.ID)); err != nil {
+			return err
+		}
+		return h.operations.QueueDeployment(tx, item)
+	})
+	if err != nil {
 		apiShared.ValidationError(c, err.Error())
 		return
 	}
-	item.Status, item.LastError = "starting", ""
-	_ = h.store.DB().Model(item).Updates(map[string]any{"status": item.Status, "last_error": ""}).Error
 	apiShared.Success(c, item)
 }
 
@@ -366,6 +400,14 @@ func (h *DatabaseHandler) Delete(c *gin.Context) {
 	if !ok {
 		return
 	}
+	if err := operations.AssertUnlocked(h.store.DB(), operations.Reference(item.ID)); err != nil {
+		apiShared.Conflict(c, err.Error())
+		return
+	}
+	if err := operations.AssertNoReplication(h.store.DB(), operations.Reference(item.ID)); err != nil {
+		apiShared.Conflict(c, err.Error())
+		return
+	}
 	var count int64
 	if err := h.store.DB().Model(&model.DatabaseBinding{}).Where("instance_id = ?", item.ID).Count(&count).Error; err != nil {
 		apiShared.DBError(c, err.Error())
@@ -385,6 +427,7 @@ func (h *DatabaseHandler) Delete(c *gin.Context) {
 		apiShared.DBError(c, "读取私网网关失败")
 		return
 	}
+	var deleteClient *k8s.Client
 	if item.Mode == "managed" {
 		if h.client == nil {
 			apiShared.K8sUnavailable(c)
@@ -395,12 +438,20 @@ func (h *DatabaseHandler) Delete(c *gin.Context) {
 			apiShared.ValidationError(c, err.Error())
 			return
 		}
-		if err := database.Delete(c.Request.Context(), client, item); err != nil {
-			apiShared.ValidationError(c, err.Error())
-			return
-		}
+		deleteClient = client
 	}
 	if err := h.store.DB().Transaction(func(tx *gorm.DB) error {
+		if err := operations.AssertUnlocked(tx, operations.Reference(item.ID)); err != nil {
+			return err
+		}
+		if err := operations.AssertNoReplication(tx, operations.Reference(item.ID)); err != nil {
+			return err
+		}
+		// Acquire SQLite's write reservation before deleting Kubernetes resources.
+		// A task cannot acquire an instance lock between these checks and deletion.
+		if err := tx.Model(&model.DatabaseInstance{}).Where("id = ?", item.ID).UpdateColumn("id", item.ID).Error; err != nil {
+			return err
+		}
 		var currentBindings int64
 		if err := tx.Model(&model.DatabaseBinding{}).Where("instance_id = ?", item.ID).Count(&currentBindings).Error; err != nil {
 			return err
@@ -433,6 +484,11 @@ func (h *DatabaseHandler) Delete(c *gin.Context) {
 				return err
 			}
 			if err := tx.Delete(&privateGateway).Error; err != nil {
+				return err
+			}
+		}
+		if item.Mode == "managed" {
+			if err := database.Delete(c.Request.Context(), deleteClient, item); err != nil {
 				return err
 			}
 		}
@@ -471,7 +527,7 @@ func (h *DatabaseHandler) ListBindings(c *gin.Context) {
 		var template model.ApplicationDeploymentTemplate
 		_ = h.store.DB().First(&app, binding.ApplicationID).Error
 		_ = h.store.DB().First(&template, binding.TemplateID).Error
-		views = append(views, gin.H{"id": binding.ID, "instance_id": binding.InstanceID, "application_id": binding.ApplicationID, "application_name": app.Name, "template_id": binding.TemplateID, "template_name": template.Name, "prefix": binding.Prefix})
+		views = append(views, gin.H{"id": binding.ID, "instance_id": binding.InstanceID, "application_id": binding.ApplicationID, "application_name": app.Name, "template_id": binding.TemplateID, "template_name": template.Name, "prefix": binding.Prefix, "database_name": binding.DatabaseName, "username": binding.Username})
 	}
 	apiShared.Success(c, views)
 }
@@ -504,6 +560,9 @@ func (h *DatabaseHandler) Bind(c *gin.Context) {
 		return
 	}
 	err = h.store.DB().Transaction(func(tx *gorm.DB) error {
+		if err := operations.AssertUnlocked(tx, operations.Reference(item.ID), fmt.Sprintf("template:%d", req.TemplateID)); err != nil {
+			return err
+		}
 		var current model.DatabaseInstance
 		if err := tx.First(&current, item.ID).Error; err != nil {
 			return err
@@ -598,7 +657,7 @@ func (h *DatabaseHandler) Bind(c *gin.Context) {
 		if err := tx.Save(&template).Error; err != nil {
 			return err
 		}
-		binding := model.DatabaseBinding{ID: existing.ID, InstanceID: item.ID, TemplateID: template.ID, ApplicationID: app.ID, Prefix: req.Prefix}
+		binding := model.DatabaseBinding{ID: existing.ID, InstanceID: item.ID, TemplateID: template.ID, ApplicationID: app.ID, Prefix: req.Prefix, DatabaseName: current.DatabaseName, Username: current.Username}
 		if existing.ID != 0 {
 			binding.CreatedAt = existing.CreatedAt
 		}
@@ -624,6 +683,9 @@ func (h *DatabaseHandler) Unbind(c *gin.Context) {
 	err = h.store.DB().Transaction(func(tx *gorm.DB) error {
 		var binding model.DatabaseBinding
 		if err := tx.Where("id = ? AND instance_id = ?", bindingID, item.ID).First(&binding).Error; err != nil {
+			return err
+		}
+		if err := operations.AssertUnlocked(tx, operations.Reference(item.ID), fmt.Sprintf("template:%d", binding.TemplateID)); err != nil {
 			return err
 		}
 		var template model.ApplicationDeploymentTemplate
