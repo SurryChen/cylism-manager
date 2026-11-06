@@ -16,7 +16,7 @@
 
 - 选择能够访问 RDS 私网端点的服务器，通常为 RDS 同地域、同 VPC 的 ECS。平台实际检查 DNS、私网 IP 和 MySQL 握手，不通过云 API 推断 VPC 归属。
 - 网关已经加入 Tailscale，并配置相应的 Tailnet 访问策略；应用节点必须具有到网关的路由。
-- 网关使用 Linux、systemd、`/usr/bin/python3` 3.7+、`flock`、`install`、`base64`、`tailscale`；平台的 SSH 用户需要 root 或 `sudo -n` 权限。
+- 网关使用 Linux、systemd、Python 3.7+、`flock`、`install`、`base64`、`tailscale`；平台的 SSH 用户需要 root 或 `sudo -n` 权限。部署时先检查 `/usr/bin/python3`，再检查 `/usr/bin/python3.15` 至 `/usr/bin/python3.7`，选择符合要求的解释器。系统默认 Python 过旧时，可通过系统官方软件源并行安装较新版本，无需替换系统默认解释器；没有可用版本时，任务会在安装网关前明确失败。
 - RDS 需要允许网关在 VPC 内的实际来源地址；填写的是 **ECS 内网 IP**，不是它的 Tailscale IP。平台不会修改云安全组、RDS 白名单、账号或 Tailscale 路由。
 - 集群节点能拉取诊断镜像。默认 `python:3.12-alpine`，可改为包含 Python 3 的可信私有镜像。
 
@@ -46,7 +46,7 @@
 - 当前执行器按平台单实例部署设计；平台正常退出或进程崩溃后，下一次启动会重复检查并恢复未完成任务。操作可重复执行，远端部署和停用通过专属 `flock` 串行执行。
 - 不设置整项任务的总截止时间；SSH、DNS、单次连接和单个诊断 Pod 有局部超时，以免失联连接永久卡住队列。失败后保留配置、日志和已创建的 Service，修正条件后显式重新部署或测试。
 - 临时 Pod 在测试结束或取消时清理；进程硬崩溃遗留的诊断 Pod 在恢复测试前清理。不会清理其他工作负载。
-- 转发服务使用 `cylism-db-gateway-<ID>.service`，由 systemd 开机启动和异常重启。`Type=notify` 确保监听成功后才报告部署启动成功。配置和脚本位于 `/etc/cylism/cylism-db-gateway-<ID>/`，仅包含地址和来源限制。
+- 转发服务使用 `cylism-db-gateway-<ID>.service`，由 systemd 开机启动和异常重启。`Type=notify` 确保监听成功后才报告部署启动成功。配置和脚本位于 `/etc/cylism/cylism-db-gateway-<ID>/`，仅包含地址和来源限制；该目录的 `python3` 链接固定部署时选中的解释器，服务启动和健康检查共用它。旧版网关没有该链接时，健康检查会回退到系统解释器检测。
 - 后台约每分钟检查网关进程、Tailscale IP、本地监听端口和目标私网 DNS，不向数据库建立连接；“重新测试”重新执行各节点 Pod 验证。两种检查时间分别展示，后台检查不替代完整链路验证。
 - 停用会停止转发并取消开机启动，再移除平台拥有的 EndpointSlice 和 Service。网关脚本和无密码配置保留，便于再次启用。外部数据库、数据库账号和业务数据均保留。删除实例记录前必须先停用并解除应用绑定。
 
