@@ -37,6 +37,7 @@ export const deleteMySQLCluster = id => api.delete(`${clusterBase}/${segment(id)
 
 export const getDatabases = () => api.get(base)
 export const createDatabase = payload => api.post(base, payload)
+export const updateDatabaseConnection = (id, payload) => api.put(`${base}/${segment(id)}/connection`, payload)
 export const inspectDatabase = id => api.get(`${base}/${segment(id)}`)
 export const reconcileDatabase = id => api.post(`${base}/${segment(id)}/reconcile`, {})
 export const deleteDatabase = id => api.delete(`${base}/${segment(id)}`)

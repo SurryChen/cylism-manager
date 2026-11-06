@@ -521,6 +521,7 @@ PUT /api/cloud/connections/:id
 PUT /api/cloud/connections/:id/dns/records/:recordID
 PUT /api/cloud/connections/:id/object-storage/containers/:container
 PUT /api/cloud/connections/:id/object-storage/containers/:container/cors
+PUT /api/cloud/databases/:id/connection
 PUT /api/cloud/databases/:id/gateway
 PUT /api/cloud/mysql-clusters/:id/config
 PUT /api/cloud/mysql-clusters/:id/resource-pool

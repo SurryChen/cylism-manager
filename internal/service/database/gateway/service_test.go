@@ -43,6 +43,11 @@ func fixture(t *testing.T) (*Service, *model.DatabaseInstance, model.DatabaseGat
 
 func TestGatewayQueuesRecoversAndDisablesWithoutLosingHistory(t *testing.T) {
 	s, instance, input := fixture(t)
+	// Network-only registration has no business database, user or password.
+	instance.DatabaseName, instance.Username, instance.EncryptedPassword = "", "", ""
+	if err := s.store.DB().Model(instance).Updates(map[string]any{"database_name": "", "username": "", "encrypted_password": ""}).Error; err != nil {
+		t.Fatal(err)
+	}
 	executions := 0
 	s.exec = func(context.Context, time.Duration, *model.Server, string) ([]byte, error) {
 		executions++

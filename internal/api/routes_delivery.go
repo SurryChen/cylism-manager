@@ -151,6 +151,7 @@ func registerDeliveryRoutes(r *gin.Engine, apiGroup *gin.RouterGroup, h delivery
 		databases.GET("", h.database.List)
 		databases.POST("", h.database.Create)
 		databases.GET("/:id", h.database.Inspect)
+		databases.PUT("/:id/connection", h.database.UpdateConnection)
 		databases.POST("/:id/reconcile", h.database.Reconcile)
 		databases.DELETE("/:id", h.database.Delete)
 		databases.GET("/:id/gateway", h.database.GetPrivateGateway)

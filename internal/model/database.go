@@ -3,7 +3,8 @@ package model
 import "time"
 
 // DatabaseInstance describes either a MySQL service deployed by the platform
-// or an existing MySQL endpoint. Credentials are never serialized to clients.
+// or an existing MySQL endpoint. External endpoints may be registered before
+// business credentials are configured. Credentials are never serialized to clients.
 type DatabaseInstance struct {
 	ConnectionMode    string           `gorm:"size:16;not null;default:direct" json:"connection_mode"`
 	PrivateGateway    *DatabaseGateway `gorm:"-" json:"private_gateway,omitempty"`

@@ -96,12 +96,8 @@ func (h *DatabaseHandler) Create(c *gin.Context) {
 	req.Host = strings.TrimSpace(req.Host)
 	req.DatabaseName = strings.TrimSpace(req.DatabaseName)
 	req.Username = strings.TrimSpace(req.Username)
-	if req.Name == "" || len([]rune(req.Name)) > 128 || !databaseIdentifier.MatchString(req.DatabaseName) || !databaseIdentifier.MatchString(req.Username) || req.Password == "" {
-		apiShared.ValidationError(c, "请填写名称、数据库名、用户名和密码；数据库名及用户名只能包含英文字母、数字、下划线")
-		return
-	}
-	if len(h.key) != 32 {
-		apiShared.ValidationError(c, "平台加密密钥未配置")
+	if req.Name == "" || len([]rune(req.Name)) > 128 {
+		apiShared.ValidationError(c, "请填写实例名称，最多 128 个字符")
 		return
 	}
 	if req.Mode != "managed" && req.Mode != "external" {
@@ -118,6 +114,19 @@ func (h *DatabaseHandler) Create(c *gin.Context) {
 	if req.Mode == "external" && (req.Host == "" || req.Port < 1 || req.Port > 65535) {
 		apiShared.ValidationError(c, "请填写有效的数据库地址和端口")
 		return
+	}
+	// External endpoints can be registered and network-tested before a business
+	// database exists. Preserve complete credentials from older API clients.
+	hasConnection := req.DatabaseName != "" || req.Username != "" || req.Password != ""
+	if req.Mode == "managed" || hasConnection {
+		if err := validateDatabaseConnection(req.DatabaseName, req.Username, req.Password); err != nil {
+			apiShared.ValidationError(c, err.Error())
+			return
+		}
+		if len(h.key) != 32 {
+			apiShared.ValidationError(c, "平台加密密钥未配置")
+			return
+		}
 	}
 	if req.Mode == "managed" {
 		if req.ClusterID == 0 {
@@ -152,10 +161,14 @@ func (h *DatabaseHandler) Create(c *gin.Context) {
 			return
 		}
 	}
-	encrypted, err := security.Encrypt(h.key, req.Password)
-	if err != nil {
-		apiShared.DBError(c, "加密数据库密码失败")
-		return
+	var encrypted string
+	if req.Password != "" {
+		var err error
+		encrypted, err = security.Encrypt(h.key, req.Password)
+		if err != nil {
+			apiShared.DBError(c, "加密数据库密码失败")
+			return
+		}
 	}
 	item := model.DatabaseInstance{ConnectionMode: req.ConnectionMode, Name: req.Name, Mode: req.Mode, ClusterID: req.ClusterID, Host: req.Host, Port: req.Port, DatabaseName: req.DatabaseName, Username: req.Username, EncryptedPassword: encrypted, StorageSize: req.StorageSize, StorageClass: strings.TrimSpace(req.StorageClass), Image: strings.TrimSpace(req.Image), Status: "registered"}
 	if req.Mode == "managed" {
@@ -189,6 +202,68 @@ func (h *DatabaseHandler) Create(c *gin.Context) {
 		}
 		item.Status = "starting"
 		_ = h.store.DB().Model(&item).Updates(map[string]any{"status": item.Status, "last_error": ""}).Error
+	}
+	apiShared.Success(c, item)
+}
+
+func validateDatabaseConnection(name, username, password string) error {
+	if !databaseIdentifier.MatchString(name) || !databaseIdentifier.MatchString(username) || password == "" {
+		return fmt.Errorf("请填写数据库名、用户名和密码；数据库名及用户名只能包含英文字母、数字、下划线，并以字母开头")
+	}
+	return nil
+}
+
+// UpdateConnection saves existing business credentials; it never creates SQL
+// databases or users and does not change the endpoint or the private gateway.
+func (h *DatabaseHandler) UpdateConnection(c *gin.Context) {
+	item, ok := h.get(c)
+	if !ok {
+		return
+	}
+	if item.Mode != "external" {
+		apiShared.ValidationError(c, "仅支持配置已有 MySQL 的业务连接")
+		return
+	}
+	var req struct {
+		DatabaseName string `json:"database_name"`
+		Username     string `json:"username"`
+		Password     string `json:"password"`
+	}
+	if c.ShouldBindJSON(&req) != nil {
+		apiShared.BadRequest(c, "业务连接配置无效")
+		return
+	}
+	req.DatabaseName, req.Username = strings.TrimSpace(req.DatabaseName), strings.TrimSpace(req.Username)
+	if err := validateDatabaseConnection(req.DatabaseName, req.Username, req.Password); err != nil {
+		apiShared.ValidationError(c, err.Error())
+		return
+	}
+	if len(h.key) != 32 {
+		apiShared.ValidationError(c, "平台加密密钥未配置")
+		return
+	}
+	encrypted, err := security.Encrypt(h.key, req.Password)
+	if err != nil {
+		apiShared.DBError(c, "加密数据库密码失败")
+		return
+	}
+	err = h.store.DB().Transaction(func(tx *gorm.DB) error {
+		if err := tx.First(item, item.ID).Error; err != nil {
+			return err
+		}
+		var count int64
+		if err := tx.Model(&model.DatabaseBinding{}).Where("instance_id = ?", item.ID).Count(&count).Error; err != nil {
+			return err
+		}
+		if count > 0 {
+			return fmt.Errorf("业务连接仍被上线模板使用，请先解除绑定，再修改并重新绑定")
+		}
+		item.DatabaseName, item.Username, item.EncryptedPassword = req.DatabaseName, req.Username, encrypted
+		return tx.Model(item).Updates(map[string]any{"database_name": req.DatabaseName, "username": req.Username, "encrypted_password": encrypted}).Error
+	})
+	if err != nil {
+		apiShared.ValidationError(c, err.Error())
+		return
 	}
 	apiShared.Success(c, item)
 }
@@ -428,15 +503,17 @@ func (h *DatabaseHandler) Bind(c *gin.Context) {
 		apiShared.ValidationError(c, "应用与 MySQL 实例必须位于同一集群")
 		return
 	}
-	password, err := security.Decrypt(h.key, item.EncryptedPassword)
-	if err != nil {
-		apiShared.DBError(c, "读取数据库密码失败")
-		return
-	}
 	err = h.store.DB().Transaction(func(tx *gorm.DB) error {
 		var current model.DatabaseInstance
 		if err := tx.First(&current, item.ID).Error; err != nil {
 			return err
+		}
+		if current.DatabaseName == "" || current.Username == "" || current.EncryptedPassword == "" {
+			return fmt.Errorf("请先配置业务数据库、用户名和密码，再绑定应用")
+		}
+		password, err := security.Decrypt(h.key, current.EncryptedPassword)
+		if err != nil {
+			return fmt.Errorf("读取数据库密码失败")
 		}
 		host, port, err := h.privateGatewayBinding(tx, &current, app.Environment.ClusterID)
 		if err != nil {
@@ -486,7 +563,7 @@ func (h *DatabaseHandler) Bind(c *gin.Context) {
 			spec.SecretFileKeys = withoutKey(spec.SecretFileKeys, existing.Prefix+"_PASSWORD")
 			delete(secrets, existing.Prefix+"_PASSWORD")
 		}
-		keys := map[string]string{"HOST": host, "PORT": fmt.Sprint(port), "NAME": item.DatabaseName, "USER": item.Username}
+		keys := map[string]string{"HOST": host, "PORT": fmt.Sprint(port), "NAME": current.DatabaseName, "USER": current.Username}
 		for suffix, value := range keys {
 			key := req.Prefix + "_" + suffix
 			if old, present := spec.Config[key]; present && old != value && (existing.ID == 0 || existing.Prefix != req.Prefix) {

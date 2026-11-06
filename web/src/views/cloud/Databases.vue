@@ -37,10 +37,11 @@
                 <td>{{ (item.private_gateway || item.connection_mode === 'gateway') ? '私网网关' : item.mode === 'managed' ? '集群部署' : '已有 MySQL' }}</td>
                 <td>{{ item.private_gateway ? clusterName(item.private_gateway.cluster_id) : item.mode === 'managed' ? clusterName(item.cluster_id) : '-' }}</td>
                 <td class="mono">{{ item.private_gateway?.service_host || item.host }}:{{ item.private_gateway ? 3306 : item.port }}<span v-if="item.private_gateway" class="cell-secondary">{{ item.host }}:{{ item.port }} · {{ gatewayStatusLabel(item.private_gateway.status) }}</span></td>
-                <td class="mono">{{ item.database_name }}<span v-if="item.connection_mode === 'gateway' && !item.private_gateway" class="cell-secondary">待配置私网网关</span></td>
+                <td><span v-if="hasConnection(item)" class="mono">{{ item.database_name }}<span class="cell-secondary">{{ item.username }}</span></span><span v-else class="cell-secondary">未配置业务连接</span></td>
                 <td><button v-if="instanceError(item)" class="status-error" type="button" @click="actionError = instanceError(item)"><span class="badge badge-danger">异常</span></button><span v-else class="badge" :class="['ready', 'registered'].includes(instanceState(item)) ? 'badge-online' : 'badge-offline'">{{ statusLabel(instanceState(item)) }}</span></td>
                 <td class="actions"><div class="row-actions">
                   <button v-if="item.mode === 'external'" class="btn btn-sm" type="button" @click="gatewayItem = item">私网网关</button>
+                  <button v-if="item.mode === 'external'" class="btn btn-sm" type="button" @click="openConnection(item)">业务连接</button>
                   <button class="btn btn-sm" type="button" @click="openBindings(item)"><Link2 :size="14" />应用绑定</button>
                   <button v-if="item.mode === 'managed'" class="icon-button" type="button" title="刷新状态" aria-label="刷新状态" @click="inspect(item)"><RefreshCw :size="15" /></button>
                   <button v-if="item.mode === 'managed' && (item.status === 'error' || item.status === 'missing')" class="btn btn-sm" type="button" @click="reconcile(item)">重试部署</button>
@@ -64,16 +65,27 @@
     <BaseModal :open="createOpen" title="接入已有 MySQL" size="medium" teleport @close="createOpen = false">
       <form class="database-form" @submit.prevent="save">
         <label class="form-group"><span class="form-label">连接方式</span><SelectMenu v-model="connectionMode" aria-label="连接方式" :options="[{ value: 'direct', label: '直接连接已有地址' }, { value: 'gateway', label: '通过私网网关连接（下一步配置）' }]" /></label>
-        <label class="form-group"><span class="form-label">实例名称</span><input v-model.trim="form.name" class="form-input" required maxlength="128"></label>
-        <div class="form-row"><label class="form-group"><span class="form-label">地址</span><input v-model.trim="form.host" class="form-input" required placeholder="mysql.example.internal"></label><label class="form-group narrow"><span class="form-label">端口</span><input v-model.number="form.port" class="form-input" type="number" min="1" max="65535" required></label></div>
-        <div class="form-row"><label class="form-group"><span class="form-label">数据库名</span><input v-model.trim="form.database_name" class="form-input" required placeholder="app_db"></label><label class="form-group"><span class="form-label">业务用户名</span><input v-model.trim="form.username" class="form-input" required placeholder="app_user"></label></div>
-        <label class="form-group"><span class="form-label">业务密码</span><input v-model="form.password" class="form-input" type="password" autocomplete="new-password" required></label>
+        <label class="form-group"><span class="form-label">实例名称</span><input v-model.trim="form.name" data-testid="instance-name" class="form-input" required maxlength="128"></label>
+        <div class="form-row"><label class="form-group"><span class="form-label">地址</span><input v-model.trim="form.host" data-testid="instance-host" class="form-input" required placeholder="RDS 内网域名或已有 MySQL 地址"></label><label class="form-group narrow"><span class="form-label">端口</span><input v-model.number="form.port" class="form-input" type="number" min="1" max="65535" required></label></div>
+        <p class="form-hint">先登记实例和配置网络；应用需要使用时，再配置业务数据库和账号。</p>
       </form>
       <template #actions><button class="btn" type="button" :disabled="saving" @click="createOpen = false">取消</button><button class="btn btn-primary" type="button" :disabled="saving" @click="save">{{ saving ? '创建中...' : connectionMode === 'gateway' ? '下一步：配置网关' : '创建' }}</button></template>
     </BaseModal>
 
+    <BaseModal :open="Boolean(connectionItem)" :title="`业务连接 · ${connectionItem?.name || ''}`" size="medium" teleport @close="closeConnection">
+      <form class="database-form" @submit.prevent="saveConnection">
+        <p class="form-hint">填写已存在的数据库和账号，仅保存连接信息，不会在 MySQL 中创建数据库或账号。修改已绑定的连接前，请先解除应用绑定。</p>
+        <label class="form-group"><span class="form-label">数据库名</span><input v-model.trim="connectionForm.database_name" data-testid="connection-database" class="form-input" required maxlength="64" placeholder="app_db"></label>
+        <label class="form-group"><span class="form-label">业务用户名</span><input v-model.trim="connectionForm.username" data-testid="connection-username" class="form-input" required maxlength="64" placeholder="app_user"></label>
+        <label class="form-group"><span class="form-label">业务密码</span><input v-model="connectionForm.password" data-testid="connection-password" class="form-input" type="password" autocomplete="new-password" required placeholder="填写此账号的现有密码"></label>
+      </form>
+      <template #actions><button class="btn" type="button" :disabled="connectionSaving" @click="closeConnection">取消</button><button class="btn btn-primary" data-testid="connection-save" type="button" :disabled="connectionSaving" @click="saveConnection">{{ connectionSaving ? '保存中...' : '保存连接' }}</button></template>
+    </BaseModal>
+
     <BaseModal :open="Boolean(bindingItem)" :title="`应用绑定 · ${bindingItem?.name || ''}`" size="medium" teleport @close="bindingItem = null">
       <div class="database-form">
+        <template v-if="!hasConnection(bindingItem)"><p class="form-hint">实例已登记。绑定应用前，需要配置业务数据库、用户名和密码；私网网关可以先独立部署和验证。</p><button class="btn" type="button" @click="configureBeforeBinding">配置业务连接</button></template>
+        <template v-else>
         <p v-if="bindingItem?.private_gateway" class="form-hint">将绑定私网 Service；如应用启用 TLS，请将证书校验名称配置为 {{ bindingItem.host }}。应用需自行支持此配置。</p>
         <div v-if="bindingsLoading"><EmptyState variant="loading" message="正在读取绑定..." /></div>
         <div v-else-if="bindings.length" class="binding-list">
@@ -83,8 +95,9 @@
         <label class="form-group"><span class="form-label">应用</span><SelectMenu v-model.number="bindingForm.application_id" class="form-select" aria-label="应用" :options="applicationOptions" @change="loadTemplates" /></label>
         <label class="form-group"><span class="form-label">上线模板</span><SelectMenu v-model.number="bindingForm.template_id" class="form-select" aria-label="上线模板" :options="templateOptions" /></label>
         <label class="form-group"><span class="form-label">环境变量前缀</span><input v-model.trim="bindingForm.prefix" class="form-input" placeholder="DATABASE"></label>
+        </template>
       </div>
-      <template #actions><button class="btn" type="button" @click="bindingItem = null">关闭</button><button class="btn btn-primary" type="button" :disabled="bindingSaving || !bindingForm.template_id" @click="bind">{{ bindingSaving ? '绑定中...' : '绑定到模板' }}</button></template>
+      <template #actions><button class="btn" type="button" @click="bindingItem = null">关闭</button><button v-if="hasConnection(bindingItem)" class="btn btn-primary" type="button" :disabled="bindingSaving || !bindingForm.template_id" @click="bind">{{ bindingSaving ? '绑定中...' : '绑定到模板' }}</button></template>
     </BaseModal>
 
     <ConfirmDialog :open="Boolean(deletingItem)" title="删除数据库实例" :message="deletingItem?.mode === 'managed' ? `将停止并删除 ${deletingItem?.name} 的 MySQL 工作负载、Service 和 Secret。PVC 及其中数据会保留。` : `确定移除 ${deletingItem?.name} 的平台记录？不会删除外部数据库。`" confirm-text="删除" :busy="deleting" @close="deletingItem = null" @cancel="deletingItem = null" @confirm="remove" />
@@ -102,7 +115,7 @@ import { useRouter } from 'vue-router'
 import DatabaseGatewayDialog from './DatabaseGatewayDialog.vue'
 import { getApplications, getDeploymentTemplates } from '../../api/applications.js'
 import { getClusters } from '../../api/clusters.js'
-import { bindDatabase, createDatabase, createMySQLCluster, deleteDatabase, deleteMySQLCluster, getDatabaseBindings, getDatabases, getMySQLClusters, inspectDatabase, reconcileDatabase, unbindDatabase } from '../../api/databases.js'
+import { bindDatabase, createDatabase, createMySQLCluster, deleteDatabase, deleteMySQLCluster, getDatabaseBindings, getDatabases, getMySQLClusters, inspectDatabase, reconcileDatabase, unbindDatabase, updateDatabaseConnection } from '../../api/databases.js'
 import BaseModal from '../../components/BaseModal.vue'
 import ConfirmDialog from '../../components/ConfirmDialog.vue'
 import EmptyState from '../../components/EmptyState.vue'
@@ -121,8 +134,11 @@ const loading = ref(true), readError = ref(''), actionError = ref(''), createOpe
 const clusterCreateOpen = ref(false), deletingCluster = ref(null)
 const clusterForm = reactive({ name: '', cluster_id: 0 })
 const bindingItem = ref(null), bindingsLoading = ref(false), bindingSaving = ref(false), deletingItem = ref(null), deleting = ref(false), unbinding = ref(null)
-const emptyForm = () => ({ name: '', mode: 'managed', cluster_id: 0, host: '', port: 3306, database_name: '', username: '', password: '', storage_size: '10Gi', storage_class: '', image: 'mysql:8.4' })
+const emptyForm = () => ({ name: '', mode: 'external', host: '', port: 3306 })
 const form = reactive(emptyForm())
+const connectionItem = ref(null), connectionSaving = ref(false)
+const connectionForm = reactive({ database_name: '', username: '', password: '' })
+const hasConnection = item => Boolean(item?.database_name && item?.username)
 const bindingForm = reactive({ application_id: 0, template_id: 0, prefix: 'DATABASE' })
 const clusterOptions = computed(() => [{ value: 0, label: '选择集群' }, ...clusters.value.map(item => ({ value: item.id, label: item.name }))])
 const applicationOptions = computed(() => [{ value: 0, label: '选择应用' }, ...applications.value.filter(item => (!bindingItem.value?.private_gateway && bindingItem.value?.mode !== 'managed') || Number(item.environment?.cluster_id) === Number(bindingItem.value?.private_gateway?.cluster_id || bindingItem.value.cluster_id)).map(item => ({ value: item.id, label: `${item.project?.name || '项目'} / ${item.environment?.name || '环境'} / ${item.name}` }))])
@@ -154,11 +170,22 @@ async function saveCluster() {
 }
 async function save() {
   if (saving.value) return
-  if (!form.name || !form.database_name || !form.username || !form.password || (form.mode === 'managed' ? !form.cluster_id : !form.host)) { actionError.value = '请填写完整的数据库配置'; return }
+  if (!form.name || !form.host || !Number.isInteger(form.port) || form.port < 1 || form.port > 65535) { actionError.value = '请填写实例名称、有效的地址和端口'; return }
   saving.value = true
-  try { const item = await createDatabase({ ...form, connection_mode: connectionMode.value }); form.password = ''; createOpen.value = false; if (connectionMode.value === 'gateway') gatewayItem.value = item; await load() }
+  try { const item = await createDatabase({ ...form, connection_mode: connectionMode.value }); createOpen.value = false; if (connectionMode.value === 'gateway') gatewayItem.value = item; await load() }
   catch (error) { actionError.value = error.message || '创建数据库失败'; await load() }
   finally { saving.value = false }
+}
+function openConnection(item) { Object.assign(connectionForm, { database_name: item.database_name || '', username: item.username || '', password: '' }); connectionItem.value = item }
+function closeConnection() { if (connectionSaving.value) return; connectionForm.password = ''; connectionItem.value = null }
+function configureBeforeBinding() { const item = bindingItem.value; bindingItem.value = null; openConnection(item) }
+async function saveConnection() {
+  if (!connectionItem.value || connectionSaving.value) return
+  if (!connectionForm.database_name || !connectionForm.username || !connectionForm.password) { actionError.value = '请填写数据库名、用户名和密码'; return }
+  connectionSaving.value = true
+  try { await updateDatabaseConnection(connectionItem.value.id, { ...connectionForm }); connectionForm.password = ''; connectionItem.value = null; await refreshInstances() }
+  catch (error) { actionError.value = error.message || '保存业务连接失败' }
+  finally { connectionSaving.value = false }
 }
 async function inspect(item) { try { const latest = await inspectDatabase(item.id); Object.assign(item, latest) } catch (error) { actionError.value = error.message || '读取状态失败' } }
 async function reconcile(item) { try { const latest = await reconcileDatabase(item.id); Object.assign(item, latest) } catch (error) { actionError.value = error.message || '重试部署失败'; await load() } }
@@ -166,6 +193,7 @@ async function remove() { if (!deletingItem.value) return; deleting.value = true
 async function removeCluster() { if (!deletingCluster.value) return; deleting.value = true; try { await deleteMySQLCluster(deletingCluster.value.id); deletingCluster.value = null; await load() } catch (error) { actionError.value = error.message || '删除失败' } finally { deleting.value = false } }
 async function openBindings(item) {
   bindingItem.value = item; bindings.value = []; templates.value = []; Object.assign(bindingForm, { application_id: 0, template_id: 0, prefix: 'DATABASE' }); bindingsLoading.value = true
+  if (!hasConnection(item)) { bindingsLoading.value = false; return }
   try { bindings.value = await getDatabaseBindings(item.id) } catch (error) { actionError.value = error.message || '读取绑定失败' } finally { bindingsLoading.value = false }
 }
 async function loadTemplates() {
@@ -174,7 +202,7 @@ async function loadTemplates() {
   try { templates.value = await getDeploymentTemplates(bindingForm.application_id) } catch (error) { actionError.value = error.message || '读取上线模板失败' }
 }
 async function bind() {
-  if (!bindingItem.value || !bindingForm.template_id || bindingSaving.value) return
+  if (!hasConnection(bindingItem.value) || !bindingForm.template_id || bindingSaving.value) return
   bindingSaving.value = true
   try { await bindDatabase(bindingItem.value.id, { ...bindingForm }); bindings.value = await getDatabaseBindings(bindingItem.value.id) }
   catch (error) { actionError.value = error.message || '绑定失败' } finally { bindingSaving.value = false }
@@ -192,7 +220,7 @@ onMounted(load)
 .database-toolbar { display: flex; align-items: center; justify-content: space-between; gap: var(--space-16); min-height: 66px; padding: 14px var(--space-20); }
 .table-inset { padding: 0 var(--space-20); }
 .database-table { min-width: 900px; }
-.database-table .actions { text-align: right; width: 240px; }
+.database-table .actions { text-align: right; width: 320px; }
 .row-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
 .mono { font-family: var(--font-mono); overflow-wrap: anywhere; }
 .danger-icon { color: var(--danger); }
