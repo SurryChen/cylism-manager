@@ -20,7 +20,7 @@ func migrateSchema(db *gorm.DB) error {
 		&model.ImageRegistry{}, &model.NodeRegistryMirror{}, &model.NodeRegistryMirrorNode{},
 		&model.ManagedOCIRegistry{}, &model.RegistryProxy{}, &model.RegistryProxyRelay{}, &model.RegistryProxyNodeRoute{}, &model.ClusterDNSPolicy{},
 		&model.ChartRepository{}, &model.DNSCredential{}, &model.ManagedDomain{},
-		&model.CloudConnection{}, &model.DatabaseInstance{}, &model.DatabaseBinding{}, &model.MySQLCluster{}, &model.MySQLClusterTask{}, &model.MySQLClusterTaskLog{},
+		&model.CloudConnection{}, &model.DatabaseInstance{}, &model.DatabaseBinding{}, &model.DatabaseGateway{}, &model.DatabaseGatewayTask{}, &model.DatabaseGatewayTaskLog{}, &model.MySQLCluster{}, &model.MySQLClusterTask{}, &model.MySQLClusterTaskLog{},
 		&model.Release{}, &model.ReleaseOperation{}, &model.PersistentVolumeMigration{},
 		&model.PersistentVolumeBackup{}, &model.HostDirectoryPVCImport{},
 		&model.SystemComponentConfig{},

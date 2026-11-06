@@ -5,25 +5,27 @@ import "time"
 // DatabaseInstance describes either a MySQL service deployed by the platform
 // or an existing MySQL endpoint. Credentials are never serialized to clients.
 type DatabaseInstance struct {
-	ID                uint      `gorm:"primaryKey" json:"id"`
-	Name              string    `gorm:"size:128;uniqueIndex;not null" json:"name"`
-	Mode              string    `gorm:"size:16;not null" json:"mode"`
-	ClusterID         uint      `gorm:"index" json:"cluster_id"`
-	Namespace         string    `gorm:"size:63" json:"namespace"`
-	ResourceName      string    `gorm:"size:63" json:"resource_name"`
-	Host              string    `gorm:"size:255;not null" json:"host"`
-	Port              int       `gorm:"not null;default:3306" json:"port"`
-	DatabaseName      string    `gorm:"size:64;not null" json:"database_name"`
-	Username          string    `gorm:"size:64;not null" json:"username"`
-	EncryptedPassword string    `gorm:"type:text;not null" json:"-"`
-	EncryptedRoot     string    `gorm:"type:text" json:"-"`
-	StorageSize       string    `gorm:"size:32" json:"storage_size,omitempty"`
-	StorageClass      string    `gorm:"size:128" json:"storage_class,omitempty"`
-	Image             string    `gorm:"size:255" json:"image,omitempty"`
-	Status            string    `gorm:"size:32;not null" json:"status"`
-	LastError         string    `gorm:"type:text" json:"last_error,omitempty"`
-	CreatedAt         time.Time `json:"created_at"`
-	UpdatedAt         time.Time `json:"updated_at"`
+	ConnectionMode    string           `gorm:"size:16;not null;default:direct" json:"connection_mode"`
+	PrivateGateway    *DatabaseGateway `gorm:"-" json:"private_gateway,omitempty"`
+	ID                uint             `gorm:"primaryKey" json:"id"`
+	Name              string           `gorm:"size:128;uniqueIndex;not null" json:"name"`
+	Mode              string           `gorm:"size:16;not null" json:"mode"`
+	ClusterID         uint             `gorm:"index" json:"cluster_id"`
+	Namespace         string           `gorm:"size:63" json:"namespace"`
+	ResourceName      string           `gorm:"size:63" json:"resource_name"`
+	Host              string           `gorm:"size:255;not null" json:"host"`
+	Port              int              `gorm:"not null;default:3306" json:"port"`
+	DatabaseName      string           `gorm:"size:64;not null" json:"database_name"`
+	Username          string           `gorm:"size:64;not null" json:"username"`
+	EncryptedPassword string           `gorm:"type:text;not null" json:"-"`
+	EncryptedRoot     string           `gorm:"type:text" json:"-"`
+	StorageSize       string           `gorm:"size:32" json:"storage_size,omitempty"`
+	StorageClass      string           `gorm:"size:128" json:"storage_class,omitempty"`
+	Image             string           `gorm:"size:255" json:"image,omitempty"`
+	Status            string           `gorm:"size:32;not null" json:"status"`
+	LastError         string           `gorm:"type:text" json:"last_error,omitempty"`
+	CreatedAt         time.Time        `json:"created_at"`
+	UpdatedAt         time.Time        `json:"updated_at"`
 }
 
 type DatabaseBinding struct {

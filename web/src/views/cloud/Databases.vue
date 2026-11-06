@@ -34,12 +34,13 @@
             <tbody>
               <tr v-for="item in instances" :key="item.id">
                 <td class="cell-primary">{{ item.name }}</td>
-                <td>{{ item.mode === 'managed' ? '集群部署' : '已有 MySQL' }}</td>
-                <td>{{ item.mode === 'managed' ? (clusterName(item.cluster_id)) : '-' }}</td>
-                <td class="mono">{{ item.host }}:{{ item.port }}</td>
-                <td class="mono">{{ item.database_name }}</td>
-                <td><button v-if="item.status === 'error' && item.last_error" class="status-error" type="button" @click="actionError = item.last_error"><span class="badge badge-danger">失败</span></button><span v-else class="badge" :class="item.status === 'ready' || item.status === 'registered' ? 'badge-online' : 'badge-offline'">{{ statusLabel(item.status) }}</span></td>
+                <td>{{ (item.private_gateway || item.connection_mode === 'gateway') ? '私网网关' : item.mode === 'managed' ? '集群部署' : '已有 MySQL' }}</td>
+                <td>{{ item.private_gateway ? clusterName(item.private_gateway.cluster_id) : item.mode === 'managed' ? clusterName(item.cluster_id) : '-' }}</td>
+                <td class="mono">{{ item.private_gateway?.service_host || item.host }}:{{ item.private_gateway ? 3306 : item.port }}<span v-if="item.private_gateway" class="cell-secondary">{{ item.host }}:{{ item.port }} · {{ gatewayStatusLabel(item.private_gateway.status) }}</span></td>
+                <td class="mono">{{ item.database_name }}<span v-if="item.connection_mode === 'gateway' && !item.private_gateway" class="cell-secondary">待配置私网网关</span></td>
+                <td><button v-if="instanceError(item)" class="status-error" type="button" @click="actionError = instanceError(item)"><span class="badge badge-danger">异常</span></button><span v-else class="badge" :class="['ready', 'registered'].includes(instanceState(item)) ? 'badge-online' : 'badge-offline'">{{ statusLabel(instanceState(item)) }}</span></td>
                 <td class="actions"><div class="row-actions">
+                  <button v-if="item.mode === 'external'" class="btn btn-sm" type="button" @click="gatewayItem = item">私网网关</button>
                   <button class="btn btn-sm" type="button" @click="openBindings(item)"><Link2 :size="14" />应用绑定</button>
                   <button v-if="item.mode === 'managed'" class="icon-button" type="button" title="刷新状态" aria-label="刷新状态" @click="inspect(item)"><RefreshCw :size="15" /></button>
                   <button v-if="item.mode === 'managed' && (item.status === 'error' || item.status === 'missing')" class="btn btn-sm" type="button" @click="reconcile(item)">重试部署</button>
@@ -62,16 +63,18 @@
 
     <BaseModal :open="createOpen" title="接入已有 MySQL" size="medium" teleport @close="createOpen = false">
       <form class="database-form" @submit.prevent="save">
+        <label class="form-group"><span class="form-label">连接方式</span><SelectMenu v-model="connectionMode" aria-label="连接方式" :options="[{ value: 'direct', label: '直接连接已有地址' }, { value: 'gateway', label: '通过私网网关连接（下一步配置）' }]" /></label>
         <label class="form-group"><span class="form-label">实例名称</span><input v-model.trim="form.name" class="form-input" required maxlength="128"></label>
         <div class="form-row"><label class="form-group"><span class="form-label">地址</span><input v-model.trim="form.host" class="form-input" required placeholder="mysql.example.internal"></label><label class="form-group narrow"><span class="form-label">端口</span><input v-model.number="form.port" class="form-input" type="number" min="1" max="65535" required></label></div>
         <div class="form-row"><label class="form-group"><span class="form-label">数据库名</span><input v-model.trim="form.database_name" class="form-input" required placeholder="app_db"></label><label class="form-group"><span class="form-label">业务用户名</span><input v-model.trim="form.username" class="form-input" required placeholder="app_user"></label></div>
         <label class="form-group"><span class="form-label">业务密码</span><input v-model="form.password" class="form-input" type="password" autocomplete="new-password" required></label>
       </form>
-      <template #actions><button class="btn" type="button" :disabled="saving" @click="createOpen = false">取消</button><button class="btn btn-primary" type="button" :disabled="saving" @click="save">{{ saving ? '创建中...' : '创建' }}</button></template>
+      <template #actions><button class="btn" type="button" :disabled="saving" @click="createOpen = false">取消</button><button class="btn btn-primary" type="button" :disabled="saving" @click="save">{{ saving ? '创建中...' : connectionMode === 'gateway' ? '下一步：配置网关' : '创建' }}</button></template>
     </BaseModal>
 
     <BaseModal :open="Boolean(bindingItem)" :title="`应用绑定 · ${bindingItem?.name || ''}`" size="medium" teleport @close="bindingItem = null">
       <div class="database-form">
+        <p v-if="bindingItem?.private_gateway" class="form-hint">将绑定私网 Service；如应用启用 TLS，请将证书校验名称配置为 {{ bindingItem.host }}。应用需自行支持此配置。</p>
         <div v-if="bindingsLoading"><EmptyState variant="loading" message="正在读取绑定..." /></div>
         <div v-else-if="bindings.length" class="binding-list">
           <div v-for="binding in bindings" :key="binding.id" class="binding-row"><span>{{ binding.application_name || applicationName(binding.application_id) }} · {{ binding.template_name || `模板 ${binding.template_id}` }}<small class="cell-secondary">{{ binding.prefix }}_*</small></span><button class="icon-button danger-icon" type="button" title="解除绑定" aria-label="解除绑定" @click="unbinding = binding"><Unlink :size="15" /></button></div>
@@ -87,6 +90,7 @@
     <ConfirmDialog :open="Boolean(deletingItem)" title="删除数据库实例" :message="deletingItem?.mode === 'managed' ? `将停止并删除 ${deletingItem?.name} 的 MySQL 工作负载、Service 和 Secret。PVC 及其中数据会保留。` : `确定移除 ${deletingItem?.name} 的平台记录？不会删除外部数据库。`" confirm-text="删除" :busy="deleting" @close="deletingItem = null" @cancel="deletingItem = null" @confirm="remove" />
     <ConfirmDialog :open="Boolean(deletingCluster)" title="删除未部署集群" :message="`确定移除 ${deletingCluster?.name || ''} 的逻辑集群记录？`" confirm-text="删除" :busy="deleting" @close="deletingCluster = null" @cancel="deletingCluster = null" @confirm="removeCluster" />
     <ConfirmDialog :open="Boolean(unbinding)" title="解除数据库绑定" message="将从上线模板中移除数据库连接变量；已发布的应用需要重新发布才能生效。" confirm-text="解除绑定" @close="unbinding = null" @cancel="unbinding = null" @confirm="unbind" />
+    <DatabaseGatewayDialog :instance="gatewayItem" @close="gatewayItem = null" @updated="refreshInstances" />
     <ErrorNoticeModal :open="Boolean(readError || actionError)" :title="readError ? '读取数据库失败' : '操作失败'" :message="readError || actionError" teleport @close="readError = ''; actionError = ''" />
   </section>
 </template>
@@ -95,6 +99,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { Link2, Plus, RefreshCw, Trash2, Unlink } from 'lucide-vue-next'
 import { useRouter } from 'vue-router'
+import DatabaseGatewayDialog from './DatabaseGatewayDialog.vue'
 import { getApplications, getDeploymentTemplates } from '../../api/applications.js'
 import { getClusters } from '../../api/clusters.js'
 import { bindDatabase, createDatabase, createMySQLCluster, deleteDatabase, deleteMySQLCluster, getDatabaseBindings, getDatabases, getMySQLClusters, inspectDatabase, reconcileDatabase, unbindDatabase } from '../../api/databases.js'
@@ -108,6 +113,9 @@ import SurfaceCard from '../../components/SurfaceCard.vue'
 
 const router = useRouter()
 const activeTab = ref('clusters')
+const gatewayItem = ref(null), connectionMode = ref('direct')
+const gatewayStatusLabel = state => ({ ready: '网络已验证', disabled: '已停用', degraded: '服务检查异常', error: '任务失败', pending: '待部署', checking: '测试中', disabling: '停用中' }[state] || '待检查')
+async function refreshInstances() { try { instances.value = await getDatabases() } catch (error) { readError.value = error.message || '读取数据库失败' } }
 const instances = ref([]), mysqlClusters = ref([]), clusters = ref([]), applications = ref([]), templates = ref([]), bindings = ref([])
 const loading = ref(true), readError = ref(''), actionError = ref(''), createOpen = ref(false), saving = ref(false)
 const clusterCreateOpen = ref(false), deletingCluster = ref(null)
@@ -117,11 +125,13 @@ const emptyForm = () => ({ name: '', mode: 'managed', cluster_id: 0, host: '', p
 const form = reactive(emptyForm())
 const bindingForm = reactive({ application_id: 0, template_id: 0, prefix: 'DATABASE' })
 const clusterOptions = computed(() => [{ value: 0, label: '选择集群' }, ...clusters.value.map(item => ({ value: item.id, label: item.name }))])
-const applicationOptions = computed(() => [{ value: 0, label: '选择应用' }, ...applications.value.filter(item => bindingItem.value?.mode !== 'managed' || Number(item.environment?.cluster_id) === Number(bindingItem.value.cluster_id)).map(item => ({ value: item.id, label: `${item.project?.name || '项目'} / ${item.environment?.name || '环境'} / ${item.name}` }))])
+const applicationOptions = computed(() => [{ value: 0, label: '选择应用' }, ...applications.value.filter(item => (!bindingItem.value?.private_gateway && bindingItem.value?.mode !== 'managed') || Number(item.environment?.cluster_id) === Number(bindingItem.value?.private_gateway?.cluster_id || bindingItem.value.cluster_id)).map(item => ({ value: item.id, label: `${item.project?.name || '项目'} / ${item.environment?.name || '环境'} / ${item.name}` }))])
 const templateOptions = computed(() => [{ value: 0, label: '选择上线模板' }, ...templates.value.map(item => ({ value: item.id, label: item.name }))])
 const clusterName = id => clusters.value.find(item => Number(item.id) === Number(id))?.name || `集群 ${id}`
 const applicationName = id => applications.value.find(item => Number(item.id) === Number(id))?.name || `应用 ${id}`
-const statusLabel = value => ({ registered: '已登记', creating: '创建中', starting: '启动中', ready: '运行中', missing: '资源缺失', error: '失败' }[value] || '待检查')
+const instanceState = item => item.private_gateway?.status || (item.connection_mode === 'gateway' ? 'pending' : item.status)
+const instanceError = item => item.private_gateway?.last_error || (item.status === 'error' ? item.last_error : '')
+const statusLabel = value => ({ pending: '待配置网关', checking: '测试中', disabling: '停用中', disabled: '已停用', degraded: '检查异常', registered: '已登记', creating: '创建中', starting: '启动中', ready: '可用', missing: '资源缺失', error: '失败' }[value] || '待检查')
 const clusterStatusLabel = value => ({ draft: '待配置', starting: '部署中', ready: '运行中', missing: '资源缺失', error: '异常', paused: '已暂停' }[value] || '待检查')
 async function load() {
   loading.value = true; readError.value = ''
@@ -132,7 +142,7 @@ async function load() {
   if (failure) readError.value = failure.reason?.message || '读取数据库失败'
   loading.value = false
 }
-function openCreate() { Object.assign(form, emptyForm(), { mode: 'external' }); createOpen.value = true }
+function openCreate() { connectionMode.value = 'direct'; Object.assign(form, emptyForm(), { mode: 'external' }); createOpen.value = true }
 function openClusterCreate() { Object.assign(clusterForm, { name: '', cluster_id: 0 }); clusterCreateOpen.value = true }
 async function saveCluster() {
   if (saving.value) return
@@ -146,7 +156,7 @@ async function save() {
   if (saving.value) return
   if (!form.name || !form.database_name || !form.username || !form.password || (form.mode === 'managed' ? !form.cluster_id : !form.host)) { actionError.value = '请填写完整的数据库配置'; return }
   saving.value = true
-  try { await createDatabase({ ...form }); createOpen.value = false; await load() }
+  try { const item = await createDatabase({ ...form, connection_mode: connectionMode.value }); form.password = ''; createOpen.value = false; if (connectionMode.value === 'gateway') gatewayItem.value = item; await load() }
   catch (error) { actionError.value = error.message || '创建数据库失败'; await load() }
   finally { saving.value = false }
 }

@@ -43,3 +43,8 @@ export const deleteDatabase = id => api.delete(`${base}/${segment(id)}`)
 export const getDatabaseBindings = id => api.get(`${base}/${segment(id)}/bindings`)
 export const bindDatabase = (id, payload) => api.post(`${base}/${segment(id)}/bindings`, payload)
 export const unbindDatabase = (id, bindingID) => api.delete(`${base}/${segment(id)}/bindings/${segment(bindingID)}`)
+
+export const getDatabaseGateway = id => api.get(`${base}/${segment(id)}/gateway`)
+export const configureDatabaseGateway = (id, payload) => api.put(`${base}/${segment(id)}/gateway`, payload)
+export const runDatabaseGatewayAction = (id, action) => api.post(`${base}/${segment(id)}/gateway/actions`, { action })
+export const getDatabaseGatewayTaskLogs = (id, taskID) => api.get(`${base}/${segment(id)}/gateway/tasks/${segment(taskID)}/logs`)

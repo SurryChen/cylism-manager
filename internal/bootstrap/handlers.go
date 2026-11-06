@@ -22,6 +22,7 @@ import (
 	cloudservice "github.com/cylism/cylism-manager/internal/service/cloud"
 	aliyunprovider "github.com/cylism/cylism-manager/internal/service/cloud/providers/aliyun"
 	clusterpkg "github.com/cylism/cylism-manager/internal/service/cluster"
+	"github.com/cylism/cylism-manager/internal/service/database/gateway"
 	maintenance "github.com/cylism/cylism-manager/internal/service/maintenance"
 	networkservice "github.com/cylism/cylism-manager/internal/service/network"
 	alertingservice "github.com/cylism/cylism-manager/internal/service/observability/alerting"
@@ -63,6 +64,9 @@ func (c *Container) BuildRouteDependencies() api.RouteDependencies {
 	accessCertificates := clusterapi.NewAccessCertificateHandler(c.Store, key)
 	agentFactory := newClusterAgentClientFactory(c.Store, accessCertificates.Service())
 	c.configureObservabilityMigrations(agentFactory)
+	if c.databaseGateways == nil {
+		c.databaseGateways = gateway.New(c.Store, key, agentFactory.Client)
+	}
 	clusterDNS := networkapi.NewClusterDNSHandlerWithAdapter(c.Store, networkapi.NewClusterDNSAdapter(c.K8s)).WithAdapterFactory(func(ctx context.Context, clusterID uint) (networkapi.ClusterDNSAdapter, error) {
 		client, err := agentFactory.Client(ctx, clusterID)
 		if err != nil {
@@ -134,7 +138,7 @@ func (c *Container) BuildRouteDependencies() api.RouteDependencies {
 		Delivery: api.DeliveryDependencies{
 			Platform: platform, Image: image, NodeMirrors: nodeMirrors, Managed: managed,
 			Proxy: proxy, ProxyRelay: proxyRelay, Chart: deliveryapi.NewChartRepositoryHandler(c.Store), Cloud: cloud,
-			Database: cloudapi.NewDatabaseHandler(c.Store, key, agentFactory.Client).WithRegistryPullExecutor(registryPull),
+			Database: cloudapi.NewDatabaseHandler(c.Store, key, agentFactory.Client).WithRegistryPullExecutor(registryPull).WithPrivateGateways(c.databaseGateways),
 		},
 		Infrastructure: api.InfrastructureDependencies{
 			Network: networkHandler, Catalog: clusterapi.NewCatalogHandler(c.Store).WithAgentClientFactory(agentFactory.Client), AccessCert: accessCertificates, Deployment: deployment, CrossService: clusterapi.NewCrossServiceHandler(c.Store, key, agentFactory.Client), Server: clusterapi.NewServerHandler(key, clusterService),

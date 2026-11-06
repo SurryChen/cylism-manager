@@ -17,6 +17,7 @@ import (
 	"github.com/cylism/cylism-manager/internal/security"
 	applicationservice "github.com/cylism/cylism-manager/internal/service/application"
 	database "github.com/cylism/cylism-manager/internal/service/database"
+	"github.com/cylism/cylism-manager/internal/service/database/gateway"
 	registryservice "github.com/cylism/cylism-manager/internal/service/registry"
 	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/gin-gonic/gin"
@@ -30,6 +31,7 @@ type DatabaseHandler struct {
 	client         func(context.Context, uint) (*k8s.Client, error)
 	mysqlSyncLocks sync.Map
 	registryPull   registryservice.PullExecutor
+	gateways       *gateway.Service
 }
 
 func NewDatabaseHandler(s *store.Store, key []byte, client func(context.Context, uint) (*k8s.Client, error)) *DatabaseHandler {
@@ -42,17 +44,18 @@ func (h *DatabaseHandler) WithRegistryPullExecutor(executor registryservice.Pull
 }
 
 type databaseRequest struct {
-	Name         string `json:"name"`
-	Mode         string `json:"mode"`
-	ClusterID    uint   `json:"cluster_id"`
-	Host         string `json:"host"`
-	Port         int    `json:"port"`
-	DatabaseName string `json:"database_name"`
-	Username     string `json:"username"`
-	Password     string `json:"password"`
-	StorageSize  string `json:"storage_size"`
-	StorageClass string `json:"storage_class"`
-	Image        string `json:"image"`
+	ConnectionMode string `json:"connection_mode"`
+	Name           string `json:"name"`
+	Mode           string `json:"mode"`
+	ClusterID      uint   `json:"cluster_id"`
+	Host           string `json:"host"`
+	Port           int    `json:"port"`
+	DatabaseName   string `json:"database_name"`
+	Username       string `json:"username"`
+	Password       string `json:"password"`
+	StorageSize    string `json:"storage_size"`
+	StorageClass   string `json:"storage_class"`
+	Image          string `json:"image"`
 }
 
 var databaseIdentifier = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_]{0,63}$`)
@@ -66,6 +69,19 @@ func (h *DatabaseHandler) List(c *gin.Context) {
 	}
 	if items == nil {
 		items = []model.DatabaseInstance{}
+	}
+	var gateways []model.DatabaseGateway
+	if err := h.store.DB().Find(&gateways).Error; err != nil {
+		apiShared.DBError(c, "读取私网网关失败")
+		return
+	}
+	byInstance := map[uint]*model.DatabaseGateway{}
+	for i := range gateways {
+		gateways[i].ServiceHost = gateway.ServiceHost(gateways[i].ID)
+		byInstance[gateways[i].InstanceID] = &gateways[i]
+	}
+	for i := range items {
+		items[i].PrivateGateway = byInstance[items[i].ID]
 	}
 	apiShared.Success(c, items)
 }
@@ -90,6 +106,13 @@ func (h *DatabaseHandler) Create(c *gin.Context) {
 	}
 	if req.Mode != "managed" && req.Mode != "external" {
 		apiShared.ValidationError(c, "请选择部署到集群或接入已有 MySQL")
+		return
+	}
+	if req.ConnectionMode == "" {
+		req.ConnectionMode = "direct"
+	}
+	if req.ConnectionMode != "direct" && req.ConnectionMode != "gateway" || req.Mode == "managed" && req.ConnectionMode == "gateway" {
+		apiShared.ValidationError(c, "连接方式无效")
 		return
 	}
 	if req.Mode == "external" && (req.Host == "" || req.Port < 1 || req.Port > 65535) {
@@ -134,7 +157,7 @@ func (h *DatabaseHandler) Create(c *gin.Context) {
 		apiShared.DBError(c, "加密数据库密码失败")
 		return
 	}
-	item := model.DatabaseInstance{Name: req.Name, Mode: req.Mode, ClusterID: req.ClusterID, Host: req.Host, Port: req.Port, DatabaseName: req.DatabaseName, Username: req.Username, EncryptedPassword: encrypted, StorageSize: req.StorageSize, StorageClass: strings.TrimSpace(req.StorageClass), Image: strings.TrimSpace(req.Image), Status: "registered"}
+	item := model.DatabaseInstance{ConnectionMode: req.ConnectionMode, Name: req.Name, Mode: req.Mode, ClusterID: req.ClusterID, Host: req.Host, Port: req.Port, DatabaseName: req.DatabaseName, Username: req.Username, EncryptedPassword: encrypted, StorageSize: req.StorageSize, StorageClass: strings.TrimSpace(req.StorageClass), Image: strings.TrimSpace(req.Image), Status: "registered"}
 	if req.Mode == "managed" {
 		root, err := randomPassword()
 		if err != nil {
@@ -277,6 +300,16 @@ func (h *DatabaseHandler) Delete(c *gin.Context) {
 		apiShared.Conflict(c, "数据库仍被上线模板使用，请先解除绑定")
 		return
 	}
+	var privateGateway model.DatabaseGateway
+	if err := h.store.DB().Where("instance_id = ?", item.ID).First(&privateGateway).Error; err == nil {
+		if privateGateway.Status != "disabled" {
+			apiShared.Conflict(c, "请先在私网网关中停用转发并等待任务完成")
+			return
+		}
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		apiShared.DBError(c, "读取私网网关失败")
+		return
+	}
 	if item.Mode == "managed" {
 		if h.client == nil {
 			apiShared.K8sUnavailable(c)
@@ -292,7 +325,44 @@ func (h *DatabaseHandler) Delete(c *gin.Context) {
 			return
 		}
 	}
-	if err := h.store.DB().Delete(item).Error; err != nil {
+	if err := h.store.DB().Transaction(func(tx *gorm.DB) error {
+		var currentBindings int64
+		if err := tx.Model(&model.DatabaseBinding{}).Where("instance_id = ?", item.ID).Count(&currentBindings).Error; err != nil {
+			return err
+		}
+		if currentBindings > 0 {
+			return fmt.Errorf("数据库仍被应用绑定")
+		}
+		var currentGateway model.DatabaseGateway
+		if err := tx.Where("instance_id = ?", item.ID).First(&currentGateway).Error; err == nil {
+			privateGateway = currentGateway
+		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+		if privateGateway.ID != 0 {
+			if privateGateway.Status != "disabled" {
+				return fmt.Errorf("请先停用私网网关")
+			}
+			var active int64
+			if err := tx.Model(&model.DatabaseGatewayTask{}).Where("gateway_id = ? AND status IN ?", privateGateway.ID, []string{"queued", "running"}).Count(&active).Error; err != nil {
+				return err
+			}
+			if active > 0 {
+				return fmt.Errorf("网关任务尚未完成")
+			}
+			subquery := tx.Model(&model.DatabaseGatewayTask{}).Select("id").Where("gateway_id = ?", privateGateway.ID)
+			if err := tx.Where("task_id IN (?)", subquery).Delete(&model.DatabaseGatewayTaskLog{}).Error; err != nil {
+				return err
+			}
+			if err := tx.Where("gateway_id = ?", privateGateway.ID).Delete(&model.DatabaseGatewayTask{}).Error; err != nil {
+				return err
+			}
+			if err := tx.Delete(&privateGateway).Error; err != nil {
+				return err
+			}
+		}
+		return tx.Delete(item).Error
+	}); err != nil {
 		apiShared.DBError(c, err.Error())
 		return
 	}
@@ -364,12 +434,20 @@ func (h *DatabaseHandler) Bind(c *gin.Context) {
 		return
 	}
 	err = h.store.DB().Transaction(func(tx *gorm.DB) error {
+		var current model.DatabaseInstance
+		if err := tx.First(&current, item.ID).Error; err != nil {
+			return err
+		}
+		host, port, err := h.privateGatewayBinding(tx, &current, app.Environment.ClusterID)
+		if err != nil {
+			return err
+		}
 		var template model.ApplicationDeploymentTemplate
 		if err := tx.Where("id = ? AND application_id = ?", req.TemplateID, app.ID).First(&template).Error; err != nil {
 			return err
 		}
 		var existing model.DatabaseBinding
-		err := tx.Where("template_id = ?", req.TemplateID).First(&existing).Error
+		err = tx.Where("template_id = ?", req.TemplateID).First(&existing).Error
 		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 			return err
 		}
@@ -408,7 +486,7 @@ func (h *DatabaseHandler) Bind(c *gin.Context) {
 			spec.SecretFileKeys = withoutKey(spec.SecretFileKeys, existing.Prefix+"_PASSWORD")
 			delete(secrets, existing.Prefix+"_PASSWORD")
 		}
-		keys := map[string]string{"HOST": item.Host, "PORT": fmt.Sprint(item.Port), "NAME": item.DatabaseName, "USER": item.Username}
+		keys := map[string]string{"HOST": host, "PORT": fmt.Sprint(port), "NAME": item.DatabaseName, "USER": item.Username}
 		for suffix, value := range keys {
 			key := req.Prefix + "_" + suffix
 			if old, present := spec.Config[key]; present && old != value && (existing.ID == 0 || existing.Prefix != req.Prefix) {

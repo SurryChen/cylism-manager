@@ -15,6 +15,7 @@ import (
 	systemapi "github.com/cylism/cylism-manager/internal/api/system"
 	"github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/service/accesscert"
+	"github.com/cylism/cylism-manager/internal/service/database/gateway"
 	migration "github.com/cylism/cylism-manager/internal/service/observability/migration"
 	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/gin-gonic/gin"
@@ -34,18 +35,19 @@ type Config struct {
 
 // Container is the application dependency container.
 type Container struct {
-	Store        *store.Store
-	Repositories Repositories
-	K8s          *k8s.Client
-	InCluster    bool
-	Adapters     KubernetesAdapters
-	Services     Services
-	Auth         *authapi.AuthConfig
-	components   *systemapi.SystemComponentHandler
-	encKey       []byte
-	backgroundMu sync.Mutex
-	background   *BackgroundTasks
-	migrations   *migration.Service
+	Store            *store.Store
+	Repositories     Repositories
+	K8s              *k8s.Client
+	InCluster        bool
+	Adapters         KubernetesAdapters
+	Services         Services
+	Auth             *authapi.AuthConfig
+	components       *systemapi.SystemComponentHandler
+	encKey           []byte
+	backgroundMu     sync.Mutex
+	background       *BackgroundTasks
+	migrations       *migration.Service
+	databaseGateways *gateway.Service
 }
 
 // BackgroundConfig controls Container-owned periodic work. A zero interval
@@ -143,6 +145,10 @@ func (c *Container) StartBackground(parent context.Context, config BackgroundCon
 	if c.migrations == nil && c.Store != nil {
 		c.configureObservabilityMigrations(newClusterAgentClientFactory(c.Store, accesscert.NewService(c.Store, c.configEncryptionKey())))
 	}
+	if c.databaseGateways == nil && c.Store != nil {
+		factory := newClusterAgentClientFactory(c.Store, accesscert.NewService(c.Store, c.configEncryptionKey()))
+		c.databaseGateways = gateway.New(c.Store, c.configEncryptionKey(), factory.Client)
+	}
 	c.backgroundMu.Lock()
 	defer c.backgroundMu.Unlock()
 	if c.background != nil {
@@ -151,6 +157,9 @@ func (c *Container) StartBackground(parent context.Context, config BackgroundCon
 	}
 	tasks := newBackgroundTasks(parent)
 	c.background = tasks
+	if c.databaseGateways != nil {
+		tasks.Go(func(ctx context.Context) { runPeriodic(ctx, 5*time.Second, c.databaseGateways.Reconcile) })
+	}
 	if c.migrations != nil {
 		tasks.Go(func(ctx context.Context) { runPeriodic(ctx, 30*time.Second, c.migrations.Recover) })
 	}
