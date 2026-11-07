@@ -10,6 +10,7 @@ import (
 	"time"
 
 	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
+	"github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/transport"
 	"github.com/gin-gonic/gin"
@@ -91,13 +92,17 @@ func (h *DatabaseHandler) MySQLClusterTerminal(c *gin.Context) {
 		return
 	}
 
+	serveMySQLTerminal(c, client, pod.Namespace, pod.Name, "mysql", mysqlTerminalCommand, password)
+}
+
+func serveMySQLTerminal(c *gin.Context, client *k8s.Client, namespace, podName, container, command string, password []byte) {
 	conn, err := transport.WSUpgrade(c.Writer, c.Request)
 	if err != nil {
 		return
 	}
 	defer conn.Close()
-	request := client.Clientset.CoreV1().RESTClient().Post().Resource("pods").Namespace(item.Namespace).Name(pod.Name).SubResource("exec").VersionedParams(&corev1.PodExecOptions{
-		Container: "mysql", Command: []string{"/bin/sh", "-c", mysqlTerminalCommand}, Stdin: true, Stdout: true, Stderr: true, TTY: true,
+	request := client.Clientset.CoreV1().RESTClient().Post().Resource("pods").Namespace(namespace).Name(podName).SubResource("exec").VersionedParams(&corev1.PodExecOptions{
+		Container: container, Command: []string{"/bin/sh", "-c", command}, Stdin: true, Stdout: true, Stderr: true, TTY: true,
 	}, scheme.ParameterCodec)
 	streamConfig := rest.CopyConfig(client.Config)
 	streamConfig.Timeout = 0

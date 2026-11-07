@@ -42,13 +42,21 @@
       </SurfaceCard>
     </div>
 
-    <BaseModal :open="Boolean(detailItem)" :title="detailItem?.name || '实例详情'" size="large" teleport @close="detailItem = null">
+    <BaseModal :open="Boolean(detailItem)" :title="detailItem?.name || '实例详情'" size="large" dialog-class="database-detail-dialog" teleport @close="detailItem = null">
+      <div v-if="detailItem" class="instance-summary"><div class="instance-symbol"><Database :size="24" /></div><div class="instance-heading"><div class="instance-meta"><span class="badge" :class="detailItem.status === 'ready' || detailItem.status === 'registered' ? 'badge-online' : 'badge-offline'">{{ statusLabel(detailItem.status) }}</span><span>{{ detailItem.mode === 'managed' ? '独立 MySQL' : '外部 MySQL / RDS' }}</span><span v-if="detailItem.node_name">{{ detailItem.node_name }}</span></div><p class="mono" :title="detailItem.host + ':' + detailItem.port">{{ detailItem.host }}:{{ detailItem.port }}</p></div><button class="btn btn-primary btn-sm" @click="terminalItem = detailItem; detailItem = null"><TerminalSquare :size="15" />登录终端</button></div>
       <nav class="table-tabs detail-tabs" aria-label="实例详情"><button v-for="tab in detailTabs" :key="tab.id" class="tab-btn" :class="{ 'tab-active': detailTab === tab.id }" @click="detailTab = tab.id">{{ tab.label }}</button></nav>
       <div v-if="detailItem" class="database-form">
         <template v-if="detailTab === 'overview'">
-          <dl class="database-facts"><div><dt>管理方式</dt><dd>{{ detailItem.mode === 'managed' ? '独立 StatefulSet' : '外部 MySQL / RDS' }}</dd></div><div><dt>状态</dt><dd>{{ statusLabel(instanceState(detailItem)) }}</dd></div><div v-if="detailItem.mode === 'managed'"><dt>资源上限</dt><dd>{{ detailItem.cpu_limit || '2' }} 核 / {{ detailItem.memory_limit || '2Gi' }}</dd></div><div><dt>管理账号</dt><dd>{{ detailItem.mode === 'managed' ? '平台生成并加密保管' : detailItem.admin_username || '未配置' }}</dd></div></dl>
-          <div class="capability-actions"><button class="btn btn-sm" @click="openCapability('inspect', `instance:${detailItem.id}`)">检查实例</button><button class="btn btn-sm" @click="openCapability('migrate', `instance:${detailItem.id}`)">迁移数据</button><button class="btn btn-sm" @click="openCapability('replicate', `instance:${detailItem.id}`)">建立复制</button><button v-if="detailItem.mode === 'external'" class="btn btn-sm" @click="openAdmin(detailItem)">管理凭据</button><button v-if="detailItem.mode === 'managed'" class="btn btn-sm" @click="inspect(detailItem)">刷新部署状态</button><button v-if="detailItem.mode === 'managed' && ['error', 'missing'].includes(detailItem.status)" class="btn btn-sm" @click="reconcile(detailItem)">重试部署</button><button class="btn btn-sm" @click="openTasks(`instance:${detailItem.id}`)">查看任务</button><button class="icon-button danger-icon" title="删除实例" aria-label="删除实例" @click="deletingItem = detailItem"><Trash2 :size="15" /></button></div>
+          <dl class="database-facts overview-facts"><div><dt>管理账号</dt><dd>{{ detailItem.mode === 'managed' ? 'root · 平台保管' : detailItem.admin_username || '未配置' }}</dd></div><div><dt>网络连接</dt><dd>{{ detailItem.private_gateway ? '私网网关' : '直接连接' }}<button v-if="detailItem.private_gateway?.last_error" class="diagnostic-link" @click="actionError = detailItem.private_gateway.last_error">查看诊断</button></dd></div><div v-if="detailItem.mode === 'managed'"><dt>资源上限</dt><dd>{{ detailItem.cpu_limit || '2' }} 核 / {{ detailItem.memory_limit || '2Gi' }}</dd></div><div v-if="detailItem.mode === 'managed'"><dt>数据卷</dt><dd>{{ detailItem.storage_size || '—' }}</dd></div></dl>
+          <div class="instance-operation-list">
+            <button class="instance-operation" @click="openCapability('inspect', `instance:${detailItem.id}`)"><span><strong>检查实例</strong><span class="cell-secondary">读取版本、业务库与只读状态</span></span><ChevronRight :size="16" /></button>
+            <button class="instance-operation" @click="openCapability('migrate', `instance:${detailItem.id}`)"><span><strong>迁移数据</strong><span class="cell-secondary">选择目标实例，创建独立迁移任务</span></span><ChevronRight :size="16" /></button>
+            <button class="instance-operation" @click="openCapability('replicate', `instance:${detailItem.id}`)"><span><strong>建立复制</strong><span class="cell-secondary">初始化从库并持续同步</span></span><ChevronRight :size="16" /></button>
+            <button v-if="detailItem.mode === 'external'" class="instance-operation" @click="openAdmin(detailItem)"><span><strong>管理凭据</strong><span class="cell-secondary">更新平台保存的实例管理账号</span></span><ChevronRight :size="16" /></button>
+          </div>
+          <div class="detail-footer"><button class="btn btn-sm" @click="openTasks(`instance:${detailItem.id}`)">查看任务</button><button v-if="detailItem.mode === 'managed'" class="btn btn-sm" @click="inspect(detailItem)">刷新部署状态</button><button v-if="detailItem.mode === 'managed' && ['error', 'missing'].includes(detailItem.status)" class="btn btn-sm" @click="reconcile(detailItem)">重试部署</button><button class="icon-button danger-icon" title="删除实例" aria-label="删除实例" @click="deletingItem = detailItem"><Trash2 :size="15" /></button></div>
         </template>
+        <DatabaseMonitor v-else-if="detailTab === 'monitor'" :item="detailItem" @updated="updateDetail" />
         <template v-else-if="detailTab === 'network'">
           <dl class="database-facts"><div><dt>实例地址</dt><dd class="mono">{{ detailItem.host }}:{{ detailItem.port }}</dd></div><div v-if="detailItem.private_gateway"><dt>私网 Service</dt><dd class="mono">{{ detailItem.private_gateway.service_host }}:3306</dd></div><div v-if="detailItem.private_gateway"><dt>网关检查</dt><dd>{{ gatewayStatusLabel(detailItem.private_gateway.status) }}</dd></div></dl>
           <button v-if="detailItem.mode === 'external'" class="btn" @click="gatewayItem = detailItem; detailItem = null">私网网关</button>
@@ -65,6 +73,7 @@
       </div>
     </BaseModal>
 
+    <DatabaseTerminalDialog :instance="terminalItem" :clusters="clusters" @close="terminalItem = null" />
     <BaseModal :open="capabilitiesOpen" title="数据库操作" size="medium" teleport @close="capabilitiesOpen = false"><div class="capability-menu"><button v-for="item in capabilityOptions" :key="item.kind" class="btn" @click="capabilitiesOpen = false; openCapability(item.kind)">{{ item.label }}</button></div></BaseModal>
     <BaseModal :open="Boolean(adminItem)" title="管理凭据" size="medium" teleport @close="closeAdmin"><div class="database-form"><p class="form-hint">填写实例上已存在的管理账号。用于明确发起的清单检查、迁移与复制任务，与业务账号分开；密码保存后加密保管，不回显。</p><label class="form-group"><span class="form-label">管理账号</span><input v-model.trim="adminForm.username" class="form-input" autocomplete="off"></label><label class="form-group"><span class="form-label">密码</span><input v-model="adminForm.password" class="form-input" type="password" autocomplete="new-password"></label></div><template #actions><button class="btn" :disabled="adminSaving" @click="closeAdmin">取消</button><button class="btn btn-primary" :disabled="adminSaving" @click="saveAdmin">{{ adminSaving ? '保存中...' : '保存管理凭据' }}</button></template></BaseModal>
     <DatabaseCapabilityDialog :kind="capabilityKind" :source="capabilitySource" :target="capabilityTarget" :instances="instances" :mysql-clusters="mysqlClusters" :clusters="clusters" :relations="relations" @close="capabilityKind = ''" @created="capabilityCreated" />
@@ -126,8 +135,10 @@
 
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
-import { Link2, Plus, RefreshCw, Trash2, Unlink } from 'lucide-vue-next'
+import { ChevronRight, Database, Plus, TerminalSquare, Trash2, Unlink } from 'lucide-vue-next'
 import { useRouter } from 'vue-router'
+import DatabaseTerminalDialog from './DatabaseTerminalDialog.vue'
+import DatabaseMonitor from './DatabaseMonitor.vue'
 import DatabaseGatewayDialog from './DatabaseGatewayDialog.vue'
 import { getApplications, getDeploymentTemplates } from '../../api/applications.js'
 import { getClusters } from '../../api/clusters.js'
@@ -144,7 +155,8 @@ import SurfaceCard from '../../components/SurfaceCard.vue'
 
 const router = useRouter()
 const detailItem = ref(null), detailTab = ref('overview'), relations = ref([]), relationsLoading = ref(false)
-const detailTabs = [{ id: 'overview', label: '概览' }, { id: 'network', label: '网络' }, { id: 'applications', label: '应用' }, { id: 'replication', label: '复制关系' }]
+const terminalItem = ref(null)
+const detailTabs = computed(() => [{ id: 'overview', label: '概览' }, ...(detailItem.value?.mode === 'external' ? [{ id: 'monitor', label: '资源监控' }] : []), { id: 'network', label: '网络' }, { id: 'applications', label: '应用' }, { id: 'replication', label: '复制关系' }])
 const capabilityOptions = [{ kind: 'deploy', label: '部署独立 MySQL' }, { kind: 'inspect', label: '检查实例' }, { kind: 'migrate', label: '迁移数据' }, { kind: 'replicate', label: '建立复制' }, { kind: 'detach', label: '解除复制' }, { kind: 'replication_check', label: '检查复制' }, { kind: 'switch', label: '切换应用连接' }]
 const capabilitiesOpen = ref(false), capabilityKind = ref(''), capabilitySource = ref(''), capabilityTarget = ref('')
 const tasksOpen = ref(false), tasksResource = ref(''), selectedTaskID = ref(null)
@@ -153,6 +165,7 @@ const resources = computed(() => [...mysqlClusters.value.map(item => ({ ref: `cl
 const resourceName = value => resources.value.find(item => item.ref === value)?.name || value
 const detailRelations = computed(() => relations.value.filter(item => [item.source, item.target].includes(`instance:${detailItem.value?.id}`)))
 async function loadRelations() { relationsLoading.value = true; try { relations.value = await getDatabaseReplications() } catch (error) { actionError.value = error.message || '读取复制关系失败' } finally { relationsLoading.value = false } }
+function updateDetail(item) { Object.assign(detailItem.value, item); const row = instances.value.find(row => row.id === item.id); if (row) Object.assign(row, item) }
 function openDetails(item) { detailItem.value = item; detailTab.value = 'overview'; loadRelations() }
 function openCapabilities() { capabilitiesOpen.value = true; loadRelations() }
 function openCapability(kind, source = '', target = '') { if (['detach', 'replication_check'].includes(kind)) loadRelations(); detailItem.value = null; capabilitySource.value = source; capabilityTarget.value = target; capabilityKind.value = kind }
@@ -181,8 +194,8 @@ const applicationOptions = computed(() => [{ value: 0, label: '选择应用' }, 
 const templateOptions = computed(() => [{ value: 0, label: '选择上线模板' }, ...templates.value.map(item => ({ value: item.id, label: item.name }))])
 const clusterName = id => clusters.value.find(item => Number(item.id) === Number(id))?.name || `集群 ${id}`
 const applicationName = id => applications.value.find(item => Number(item.id) === Number(id))?.name || `应用 ${id}`
-const instanceState = item => item.private_gateway?.status || (item.connection_mode === 'gateway' ? 'pending' : item.status)
-const instanceError = item => item.private_gateway?.last_error || (item.status === 'error' ? item.last_error : '')
+const instanceState = item => item.status
+const instanceError = item => item.status === 'error' ? item.last_error : ''
 const statusLabel = value => ({ pending: '待配置网关', checking: '测试中', disabling: '停用中', disabled: '已停用', degraded: '检查异常', registered: '已登记', creating: '创建中', starting: '启动中', ready: '可用', missing: '资源缺失', error: '失败' }[value] || '待检查')
 const clusterStatusLabel = value => ({ draft: '待配置', starting: '部署中', ready: '运行中', missing: '资源缺失', error: '异常', paused: '已暂停' }[value] || '待检查')
 async function load() {
@@ -252,6 +265,9 @@ onMounted(load)
 </script>
 
 <style scoped>
+.instance-summary { display: flex; align-items: center; gap: 14px; padding-bottom: 20px; }.instance-symbol { display: grid; place-items: center; width: 48px; height: 48px; flex: 0 0 auto; border-radius: var(--radius-md); background: var(--surface-hover); color: var(--accent); }.instance-heading { flex: 1; min-width: 0; }.instance-heading p { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin: 8px 0 0; color: var(--text-secondary); font-size: 11px; }.instance-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; font-size: 11px; color: var(--text-secondary); }.overview-facts { padding-bottom: 16px; border-bottom: 1px solid var(--border-muted); }.instance-operation-list { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 0 20px; }.instance-operation { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 16px 0; border: 0; border-bottom: 1px solid var(--border-muted); background: transparent; color: var(--text-secondary); text-align: left; cursor: pointer; }.instance-operation:hover { color: var(--accent); }.instance-operation strong { display: block; color: var(--text-primary); font-size: 13px; font-weight: 500; margin-bottom: 5px; }.instance-operation .cell-secondary { font-size: 11px; line-height: 1.6; }.detail-footer { display: flex; align-items: center; gap: 8px; margin-top: 16px; }.detail-footer .danger-icon { margin-left: auto; }.diagnostic-link { margin-left: 8px; padding: 0; border: 0; background: transparent; color: var(--warning); font-size: 11px; cursor: pointer; }
+@media (max-width:640px) { .instance-summary { flex-wrap: wrap; }.instance-summary > .btn { margin-left: 62px; }.instance-operation-list { grid-template-columns: 1fr; }.detail-tabs { overflow-x: auto; flex-wrap: nowrap; } }
+
 .database-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; margin: 4px 0 16px; }
 .database-facts div { min-width: 0; }.database-facts dt { color: var(--text-secondary); font-size: 11px; margin-bottom: 6px; }.database-facts dd { margin: 0; font-size: 13px; overflow-wrap: anywhere; }
 .detail-tabs { margin-bottom: 20px; }.capability-actions { display: flex; flex-wrap: wrap; gap: 8px; }.capability-menu { display: grid; gap: 10px; grid-template-columns: repeat(2, 1fr); }

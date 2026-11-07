@@ -101,3 +101,15 @@ describe('external MySQL registration and business connection', () => {
     expect(wrapper.find('[data-testid=connection-password]').exists()).toBe(true)
   })
 })
+
+it('keeps gateway diagnostic failures separate from the registered database status', async () => {
+  const wrapper = await render({ ...endpoint, private_gateway: { status: 'error', last_error: 'node-a denied', cluster_id: 2 } })
+  expect(wrapper.text()).toContain('已登记')
+  expect(wrapper.text()).not.toContain('异常')
+  await button(wrapper, '查看与配置').trigger('click'); await flushPromises()
+  expect(wrapper.text()).toContain('登录终端')
+  expect(wrapper.text()).toContain('资源监控')
+  expect(wrapper.text()).toContain('查看诊断')
+  await button(wrapper, '查看诊断').trigger('click')
+  expect(wrapper.get('[role=alert]').text()).toContain('node-a denied')
+})

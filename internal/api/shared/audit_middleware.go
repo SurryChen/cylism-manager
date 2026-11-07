@@ -114,6 +114,8 @@ func catalogedAuditAction(method, path string) (string, string, bool) {
 		resourceType = "cluster_dns"
 	case strings.Contains(path, "/admin/tables"):
 		resourceType = "admin_record"
+	case strings.Contains(path, "/cloud/databases"):
+		resourceType = "database"
 	case strings.Contains(path, "/mysql-clusters"):
 		resourceType = "mysql_cluster"
 	case strings.Contains(path, "/environments"):
@@ -138,6 +140,9 @@ func catalogedAuditAction(method, path string) (string, string, bool) {
 		return "", "", false
 	}
 
+	if method == http.MethodGet && resourceType == "database" && strings.HasSuffix(path, "/terminal") {
+		return "database.terminal", resourceType, true
+	}
 	if method == http.MethodGet && resourceType == "secret" && strings.Contains(path, "/:namespace/:name") {
 		return "secret.read", resourceType, true
 	}

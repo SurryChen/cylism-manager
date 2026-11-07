@@ -71,4 +71,30 @@ describe('PodTerminal', () => {
     expect(sockets[0].url).not.toContain('container=')
     wrapper.unmount()
   })
+
+  it('requests a fresh database session when reconnecting after cleanup', async () => {
+    const sockets = []
+    vi.stubGlobal('WebSocket', class {
+      constructor(url) { this.url = url; sockets.push(this) }
+      close() {}
+    })
+    vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} })
+    loadTerminalRuntime.mockResolvedValueOnce({
+      Terminal: class { loadAddon() {} open() {} dispose() {} },
+      FitAddon: class { fit() {} },
+      installTerminalClipboard: () => {},
+    })
+    const wrapper = mount(PodTerminal, {
+      props: { pod: { namespace: 'RDS', name: 'dts', containers: ['mysql'] }, databaseSession: { instance_id: 2, id: 'one-use-session' } },
+      global: { stubs: { Teleport: true } },
+    })
+    await flushPromises()
+    expect(sockets[0].url).toContain('/api/cloud/databases/2/sessions/one-use-session/terminal')
+    sockets[0].onclose()
+    await flushPromises()
+    await wrapper.get('.terminal-placeholder button').trigger('click')
+    expect(wrapper.emitted('reconnect')).toHaveLength(1)
+    expect(sockets).toHaveLength(1)
+    wrapper.unmount()
+  })
 })

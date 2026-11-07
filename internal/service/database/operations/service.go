@@ -114,6 +114,9 @@ func (s *Service) Queue(ctx context.Context, req Request) (*model.DatabaseOperat
 	if req.Kind == "replicate" && (!identifier.MatchString(req.ReplicationUser) || req.ReplicationPassword == "") {
 		return nil, fmt.Errorf("请填写源库上已创建的复制账号和密码")
 	}
+	if req.Kind == "replicate" && len(req.ReplicationPassword) > 32 {
+		return nil, fmt.Errorf("MySQL 复制账号密码不能超过 32 字节，请使用专用复制账号")
+	}
 	if req.Kind == "switch" && (len(req.Connections) == 0 || len(req.Connections) > 50) {
 		return nil, fmt.Errorf("请选择 1–50 个已绑定的上线模板并填写目标业务连接")
 	}

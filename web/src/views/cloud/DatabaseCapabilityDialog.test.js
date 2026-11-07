@@ -26,6 +26,49 @@ beforeEach(() => {
 afterEach(() => wrappers.splice(0).forEach(wrapper => wrapper.unmount()))
 
 describe('independent database capabilities', () => {
+  it('shows validation errors above the form outside the page stacking context', async () => {
+    const host = document.createElement('div')
+    host.style.transform = 'translateZ(0)'
+    document.body.append(host)
+    const wrapper = mount(DatabaseCapabilityDialog, { props: { kind: 'migrate' }, attachTo: host })
+    try {
+      await document.body.querySelector('.modal-actions .btn-primary').click()
+      await flushPromises()
+      const overlays = [...document.body.querySelectorAll(':scope > .base-modal-overlay')]
+      expect(overlays).toHaveLength(2)
+      expect(overlays.at(-1).querySelector('[role="alert"]').textContent).toContain('请选择执行集群和节点')
+      const dialogs = overlays.map(overlay => overlay.querySelector('[role="dialog"]'))
+      expect(new Set(dialogs.map(dialog => dialog.getAttribute('aria-labelledby'))).size).toBe(2)
+      expect(host.querySelector('[role="alert"]')).toBeNull()
+      document.body.querySelector('[data-testid="dismiss-error-notice"]').click()
+      await flushPromises()
+      expect(document.body.querySelectorAll(':scope > .base-modal-overlay')).toHaveLength(1)
+      expect(api.createDatabaseOperation).not.toHaveBeenCalled()
+    } finally {
+      wrapper.unmount()
+      host.remove()
+    }
+  })
+
+  it('explains missing migration names and write-stop confirmation without submitting', async () => {
+    const wrapper = render('migrate', { source: 'instance:1', target: 'instance:2' })
+    await chooseNode(wrapper)
+    await button(wrapper, '创建后台任务').trigger('click'); await flushPromises()
+    expect(wrapper.get('[role="alert"]').text()).toContain('请填写需要迁移的业务数据库名')
+    await button(wrapper, '知道了').trigger('click')
+    await wrapper.get('input[placeholder="app_db, another_db（不包含系统库和账号）"]').setValue('cylism_account, cylism_bill')
+    await button(wrapper, '创建后台任务').trigger('click'); await flushPromises()
+    expect(wrapper.get('[role="alert"]').text()).toContain('请先停止所选源库的业务写入')
+    expect(api.createDatabaseOperation).not.toHaveBeenCalled()
+    await button(wrapper, '知道了').trigger('click')
+    await wrapper.get('input[type="checkbox"]').setValue(true)
+    api.createDatabaseOperation.mockRejectedValueOnce(new Error('目标已有同名数据库，拒绝覆盖'))
+    await button(wrapper, '创建后台任务').trigger('click'); await flushPromises()
+    expect(wrapper.get('[role="alert"]').text()).toContain('目标已有同名数据库，拒绝覆盖')
+    expect(api.createDatabaseOperation).toHaveBeenCalledWith(expect.objectContaining({ schemas: ['cylism_account', 'cylism_bill'], writes_stopped: true }))
+    expect(button(wrapper, '创建后台任务').attributes('disabled')).toBeUndefined()
+  })
+
   it('deploys an empty MySQL with an explicit node and budget without inventing a replica', async () => {
     const wrapper = render('deploy')
     await wrapper.get('input[maxlength="128"]').setValue('独立数据库')

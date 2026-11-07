@@ -16,6 +16,7 @@ DELETE /api/cloud/connections/:id/object-storage/containers/:container
 DELETE /api/cloud/connections/:id/object-storage/containers/:container/object
 DELETE /api/cloud/databases/:id
 DELETE /api/cloud/databases/:id/bindings/:bindingID
+DELETE /api/cloud/databases/:id/sessions/:sessionID
 DELETE /api/cloud/mysql-clusters/:id
 DELETE /api/cluster-dns
 DELETE /api/clusters/:id
@@ -122,6 +123,8 @@ GET /api/cloud/databases/:id
 GET /api/cloud/databases/:id/bindings
 GET /api/cloud/databases/:id/gateway
 GET /api/cloud/databases/:id/gateway/tasks/:taskID/logs
+GET /api/cloud/databases/:id/metrics
+GET /api/cloud/databases/:id/sessions/:sessionID/terminal
 GET /api/cloud/databases/execution-nodes
 GET /api/cloud/databases/operations
 GET /api/cloud/databases/operations/:taskID
@@ -361,6 +364,7 @@ POST /api/cloud/databases
 POST /api/cloud/databases/:id/bindings
 POST /api/cloud/databases/:id/gateway/actions
 POST /api/cloud/databases/:id/reconcile
+POST /api/cloud/databases/:id/sessions
 POST /api/cloud/databases/operations
 POST /api/cloud/databases/operations/:taskID/actions
 POST /api/cloud/mysql-clusters
@@ -530,6 +534,7 @@ PUT /api/cloud/connections/:id/object-storage/containers/:container/cors
 PUT /api/cloud/databases/:id/admin
 PUT /api/cloud/databases/:id/connection
 PUT /api/cloud/databases/:id/gateway
+PUT /api/cloud/databases/:id/monitor
 PUT /api/cloud/mysql-clusters/:id/config
 PUT /api/cloud/mysql-clusters/:id/resource-pool
 PUT /api/cloud/mysql-clusters/:id/topology

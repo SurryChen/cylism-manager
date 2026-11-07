@@ -6,6 +6,9 @@ import "time"
 // or an existing MySQL endpoint. External endpoints may be registered before
 // business credentials are configured. Credentials are never serialized to clients.
 type DatabaseInstance struct {
+	CloudConnectionID uint             `json:"cloud_connection_id,omitempty"`
+	CloudRegion       string           `gorm:"size:64" json:"cloud_region,omitempty"`
+	CloudInstanceID   string           `gorm:"size:128" json:"cloud_instance_id,omitempty"`
 	ConnectionMode    string           `gorm:"size:16;not null;default:direct" json:"connection_mode"`
 	PrivateGateway    *DatabaseGateway `gorm:"-" json:"private_gateway,omitempty"`
 	ID                uint             `gorm:"primaryKey" json:"id"`

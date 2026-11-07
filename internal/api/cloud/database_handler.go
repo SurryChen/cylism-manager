@@ -16,6 +16,7 @@ import (
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/security"
 	applicationservice "github.com/cylism/cylism-manager/internal/service/application"
+	cloudservice "github.com/cylism/cylism-manager/internal/service/cloud"
 	database "github.com/cylism/cylism-manager/internal/service/database"
 	"github.com/cylism/cylism-manager/internal/service/database/gateway"
 	"github.com/cylism/cylism-manager/internal/service/database/operations"
@@ -27,13 +28,15 @@ import (
 )
 
 type DatabaseHandler struct {
-	store          *store.Store
-	key            []byte
-	client         func(context.Context, uint) (*k8s.Client, error)
-	mysqlSyncLocks sync.Map
-	registryPull   registryservice.PullExecutor
-	gateways       *gateway.Service
-	operations     *operations.Service
+	store            *store.Store
+	key              []byte
+	client           func(context.Context, uint) (*k8s.Client, error)
+	mysqlSyncLocks   sync.Map
+	registryPull     registryservice.PullExecutor
+	gateways         *gateway.Service
+	operations       *operations.Service
+	cloudMetrics     *cloudservice.Service
+	databaseSessions sync.Map
 }
 
 func NewDatabaseHandler(s *store.Store, key []byte, client func(context.Context, uint) (*k8s.Client, error)) *DatabaseHandler {

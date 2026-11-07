@@ -77,3 +77,26 @@ func TestStandaloneEmptyMySQLUsesPlacementLimitsAndReplicationParameters(t *test
 		t.Fatal("management connection must stay inside cluster Service")
 	}
 }
+
+func TestRedeployPreservesStartupReplicationFilters(t *testing.T) {
+	ctx := context.Background()
+	client := &k8s.Client{Clientset: fake.NewSimpleClientset()}
+	instance := &model.DatabaseInstance{ID: 23, StorageSize: "10Gi"}
+	if err := Apply(ctx, client, instance, "root-secret", ""); err != nil {
+		t.Fatal(err)
+	}
+	sets := client.Clientset.AppsV1().StatefulSets(Namespace)
+	set, _ := sets.Get(ctx, ResourceName(23), metav1.GetOptions{})
+	set.Spec.Template.Spec.Containers[0].Args = append(set.Spec.Template.Spec.Containers[0].Args, "--replicate-do-db=business", "--replicate-wild-do-table=business.%", "--max-connections=9000")
+	if _, err := sets.Update(ctx, set, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := Apply(ctx, client, instance, "root-secret", ""); err != nil {
+		t.Fatal(err)
+	}
+	set, _ = sets.Get(ctx, ResourceName(23), metav1.GetOptions{})
+	args := strings.Join(set.Spec.Template.Spec.Containers[0].Args, " ")
+	if !strings.Contains(args, "--replicate-do-db=business") || !strings.Contains(args, "--replicate-wild-do-table=business.%") || strings.Contains(args, "--max-connections=9000") {
+		t.Fatalf("replication scope or generated resource tuning lost: %s", args)
+	}
+}

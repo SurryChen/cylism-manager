@@ -103,7 +103,7 @@ func TestGatewayQueuesRecoversAndDisablesWithoutLosingHistory(t *testing.T) {
 	}
 }
 
-func TestGatewayFailedProbeRequiresRetryAndPreservesServiceForDiagnosis(t *testing.T) {
+func TestGatewayFailedProbeIsDegradedAndPreservesServiceForDiagnosis(t *testing.T) {
 	s, instance, input := fixture(t)
 	config, err := s.Configure(instance, input)
 	if err != nil {
@@ -117,7 +117,7 @@ func TestGatewayFailedProbeRequiresRetryAndPreservesServiceForDiagnosis(t *testi
 	s.Reconcile(context.Background())
 	s.Reconcile(context.Background())
 	s.store.DB().First(config, config.ID)
-	if config.Status != "error" || !strings.Contains(config.LastError, "allowlist") || calls != 1 {
+	if config.Status != "degraded" || !strings.Contains(config.LastError, "allowlist") || calls != 1 {
 		t.Fatalf("failure was lost or retried without request: %+v calls=%d", config, calls)
 	}
 	if config.LastVerifiedAt != nil {
@@ -294,5 +294,21 @@ func TestGatewayCommandsHaveValidShellSyntax(t *testing.T) {
 		if output, err := command.CombinedOutput(); err != nil {
 			t.Fatalf("invalid shell: %s %v", output, err)
 		}
+	}
+}
+
+func TestGatewayForwarderFailureRemainsError(t *testing.T) {
+	s, instance, input := fixture(t)
+	config, err := s.Configure(instance, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.exec = func(context.Context, time.Duration, *model.Server, string) ([]byte, error) {
+		return nil, errors.New("systemd failed")
+	}
+	s.Reconcile(context.Background())
+	s.store.DB().First(config, config.ID)
+	if config.Status != "error" || config.LastVerifiedAt != nil {
+		t.Fatalf("real deployment failure misclassified: %+v", config)
 	}
 }

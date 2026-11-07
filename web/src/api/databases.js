@@ -57,3 +57,8 @@ export const getDatabaseOperations = ({ resource = '', limit = 30, offset = 0 } 
 export const getDatabaseOperation = id => api.get(`${base}/operations/${segment(id)}`)
 export const controlDatabaseOperation = (id, action) => api.post(`${base}/operations/${segment(id)}/actions`, { action })
 export const getDatabaseReplications = () => api.get(`${base}/replications`)
+
+export const configureDatabaseMonitor = (id, payload) => api.put(`${base}/${segment(id)}/monitor`, payload)
+export const getDatabaseMetrics = (id, hours = 1) => api.get(`${base}/${segment(id)}/metrics?hours=${segment(hours)}`)
+export const createDatabaseSession = (id, payload) => api.post(`${base}/${segment(id)}/sessions`, payload)
+export const deleteDatabaseSession = (id, sessionID) => api.delete(`${base}/${segment(id)}/sessions/${segment(sessionID)}`)

@@ -15,8 +15,8 @@
 
         <div v-else class="pod-terminal-body">
           <div v-if="status === 'connecting'" class="terminal-placeholder">正在连接{{ terminalTitle }}...</div>
-          <div v-else-if="status === 'error'" class="terminal-placeholder terminal-error"><span>{{ error }}</span><button class="btn btn-sm btn-primary" @click="connect">重试</button></div>
-          <div v-else-if="status === 'closed'" class="terminal-placeholder"><span>终端会话已断开</span><button class="btn btn-sm btn-primary" @click="connect">重新连接</button></div>
+          <div v-else-if="status === 'error'" class="terminal-placeholder terminal-error"><span>{{ error }}</span><button class="btn btn-sm btn-primary" @click="reconnect">重试</button></div>
+          <div v-else-if="status === 'closed'" class="terminal-placeholder"><span>终端会话已断开</span><button class="btn btn-sm btn-primary" @click="reconnect">重新连接</button></div>
           <div ref="terminalEl" class="terminal-container" v-show="status === 'connected'"></div>
         </div>
 
@@ -36,12 +36,13 @@ const props = defineProps({
   pod: { type: Object, required: true },
   clusterId: { type: String, default: '' },
   mysqlClusterId: { type: String, default: '' },
+  databaseSession: { type: Object, default: null },
 })
-const emit = defineEmits(['close'])
+const emit = defineEmits(['close', 'reconnect'])
 
 const terminalEl = ref(null)
 const containers = computed(() => props.pod.containers || [])
-const terminalTitle = computed(() => props.mysqlClusterId ? '数据库终端' : '容器终端')
+const terminalTitle = computed(() => (props.mysqlClusterId || props.databaseSession) ? '数据库终端' : '容器终端')
 const container = ref(containers.value.length === 1 ? containers.value[0] : '')
 const status = ref(containers.value.length === 1 ? 'connecting' : 'selecting')
 const error = ref('')
@@ -59,6 +60,11 @@ onMounted(() => {
 onBeforeUnmount(() => {
   disposeTerminal()
 })
+
+function reconnect() {
+  if (props.databaseSession) emit('reconnect')
+  else connect()
+}
 
 function connect() {
   if (!container.value) return
@@ -112,10 +118,12 @@ async function openTerminal() {
   const name = encodeURIComponent(props.pod.name)
   const selectedContainer = encodeURIComponent(container.value)
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
-  const resourcePath = props.mysqlClusterId
+  const resourcePath = props.databaseSession
+    ? `/api/cloud/databases/${encodeURIComponent(props.databaseSession.instance_id)}/sessions/${encodeURIComponent(props.databaseSession.id)}/terminal`
+    : props.mysqlClusterId
     ? `/api/cloud/mysql-clusters/${encodeURIComponent(props.mysqlClusterId)}/pods/${name}/terminal`
     : `${props.clusterId ? `/api/clusters/${encodeURIComponent(props.clusterId)}/k8s` : '/api/k8s'}/pods/${namespace}/${name}/terminal`
-  const query = props.mysqlClusterId ? '' : `container=${selectedContainer}&`
+  const query = (props.mysqlClusterId || props.databaseSession) ? '' : `container=${selectedContainer}&`
   const ws = new WebSocket(`${protocol}//${location.host}${resourcePath}?${query}token=${encodeURIComponent(token)}`)
   ws.binaryType = 'arraybuffer'
 

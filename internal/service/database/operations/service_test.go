@@ -60,6 +60,19 @@ func readTask(t *testing.T, s *Service, id uint) model.DatabaseOperation {
 	return task
 }
 
+func TestReplicationRejectsProtocolIncompatiblePasswordBeforeSnapshot(t *testing.T) {
+	s, _ := testService(t)
+	_, err := s.Queue(context.Background(), Request{Kind: "replicate", Source: "instance:1", Target: "instance:2", ClusterID: 1, NodeName: "worker", ReplicationUser: "replica", ReplicationPassword: strings.Repeat("x", 48)})
+	if err == nil || !strings.Contains(err.Error(), "32 字节") {
+		t.Fatalf("unsupported replication credential accepted: %v", err)
+	}
+	var count int64
+	s.store.DB().Model(&model.DatabaseOperation{}).Count(&count)
+	if count != 0 {
+		t.Fatal("created an initialization task for an unusable replication credential")
+	}
+}
+
 func TestPauseAtCheckpointAndRestartRecovery(t *testing.T) {
 	s, _ := testService(t)
 	task := seedTask(t, s, "migrate", 0)

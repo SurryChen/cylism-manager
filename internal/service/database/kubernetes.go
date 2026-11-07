@@ -95,7 +95,8 @@ func Apply(ctx context.Context, client *k8s.Client, instance *model.DatabaseInst
 			container.Args = append(container.Args, "--"+strings.ReplaceAll(key, "_", "-")+"="+value)
 		}
 	}
-	podSpec := corev1.PodSpec{Containers: []corev1.Container{container}, Tolerations: []corev1.Toleration{{Key: databaseNoScheduleTaintKey, Value: "true", Operator: corev1.TolerationOpEqual, Effect: corev1.TaintEffectNoSchedule}}}
+	ndots := "1"
+	podSpec := corev1.PodSpec{AutomountServiceAccountToken: func() *bool { v := false; return &v }(), DNSConfig: &corev1.PodDNSConfig{Options: []corev1.PodDNSConfigOption{{Name: "ndots", Value: &ndots}}}, Containers: []corev1.Container{container}, Tolerations: []corev1.Toleration{{Key: databaseNoScheduleTaintKey, Value: "true", Operator: corev1.TolerationOpEqual, Effect: corev1.TaintEffectNoSchedule}}}
 	if instance.NodeName != "" {
 		podSpec.NodeSelector = map[string]string{corev1.LabelHostname: instance.NodeName}
 	}
@@ -120,6 +121,16 @@ func Apply(ctx context.Context, client *k8s.Client, instance *model.DatabaseInst
 		stateful.Spec.VolumeClaimTemplates = existing.Spec.VolumeClaimTemplates
 		if len(existing.Spec.Template.Spec.Containers) > 0 && existing.Spec.Template.Spec.Containers[0].Image != stateful.Spec.Template.Spec.Containers[0].Image {
 			return fmt.Errorf("已有 MySQL 实例不支持通过部署任务更换镜像")
+		}
+		// CHANGE REPLICATION FILTER is not persistent. Keep configured startup
+		// filters when reconciling resources so a redeploy cannot widen replication.
+		if len(existing.Spec.Template.Spec.Containers) > 0 {
+			for _, arg := range existing.Spec.Template.Spec.Containers[0].Args {
+				key, _, ok := strings.Cut(arg, "=")
+				if ok && (key == "--replicate-do-db" || key == "--replicate-ignore-db" || key == "--replicate-do-table" || key == "--replicate-ignore-table" || key == "--replicate-wild-do-table" || key == "--replicate-wild-ignore-table" || key == "--replicate-rewrite-db") {
+					stateful.Spec.Template.Spec.Containers[0].Args = append(stateful.Spec.Template.Spec.Containers[0].Args, arg)
+				}
+			}
 		}
 		stateful.ResourceVersion = existing.ResourceVersion
 		if _, err = sets.Update(ctx, stateful, metav1.UpdateOptions{}); err != nil {

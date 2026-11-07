@@ -40,7 +40,7 @@
     </div>
     <template #actions><button class="btn" :disabled="saving" @click="close">取消</button><button class="btn btn-primary" :disabled="saving || nodesLoading" @click="submit">{{ saving ? '提交中...' : '创建后台任务' }}</button></template>
   </BaseModal>
-  <ErrorNoticeModal :open="Boolean(error)" :message="error" @close="error = ''" />
+  <ErrorNoticeModal :open="Boolean(error)" :message="error" teleport @close="error = ''" />
 </template>
 
 <script setup>
@@ -93,6 +93,8 @@ async function submit() {
   if (props.kind === 'deploy' && !form.name) { error.value = '请填写实例名称'; return }
   if (['inspect', 'migrate', 'replicate'].includes(props.kind) && !form.source) { error.value = '请选择源数据库'; return }
   if (!['deploy', 'inspect'].includes(props.kind) && !form.target) { error.value = '请选择目标数据库'; return }
+  if (props.kind === 'migrate' && !form.schemas.trim()) { error.value = '请填写需要迁移的业务数据库名，多个名称用逗号分隔'; return }
+  if (props.kind === 'migrate' && !form.writes_stopped) { error.value = '请先停止所选源库的业务写入，再确认保持停写至切换完成'; return }
   saving.value = true
   try {
     let result

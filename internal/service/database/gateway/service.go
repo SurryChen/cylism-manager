@@ -231,6 +231,10 @@ func (s *Service) run(ctx context.Context, task *model.DatabaseGatewayTask) {
 	s.finish(task, &gateway, err)
 }
 
+// probeFailure means the forwarder and Service were deployed successfully,
+// but an optional node diagnostic failed. Preserve that distinction.
+type probeFailure struct{ error }
+
 func (s *Service) finish(task *model.DatabaseGatewayTask, gateway *model.DatabaseGateway, failure error) {
 	status, state, message := "succeeded", "ready", "各可用节点 3/3 次网络验证通过；账号认证和 TLS 仍需应用配置验证"
 	if task.Kind == "disable" {
@@ -239,6 +243,10 @@ func (s *Service) finish(task *model.DatabaseGatewayTask, gateway *model.Databas
 	detail := ""
 	if failure != nil {
 		status, state, message, detail = "failed", "error", "任务失败："+failure.Error(), failure.Error()
+		var diagnostic probeFailure
+		if errors.As(failure, &diagnostic) {
+			status, state, message = "succeeded", "degraded", "网关已部署；部分节点诊断未通过："+failure.Error()
+		}
 	}
 	_ = s.store.DB().Transaction(func(tx *gorm.DB) error {
 		if gateway != nil {
@@ -313,7 +321,10 @@ func (s *Service) execute(ctx context.Context, task *model.DatabaseGatewayTask, 
 	if err := CleanupProbes(ctx, client, config); err != nil {
 		return err
 	}
-	return s.probe(ctx, client, config, log)
+	if err := s.probe(ctx, client, config, log); err != nil {
+		return probeFailure{err}
+	}
+	return nil
 }
 
 func commandError(stage string, output []byte, failure error) error {

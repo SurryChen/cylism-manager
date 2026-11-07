@@ -43,9 +43,8 @@
 </template>
 
 <script setup>
-import { onBeforeUnmount, watch } from 'vue'
+import { onBeforeUnmount, useId, watch } from 'vue'
 
-let modalID = 0
 const props = defineProps({
   open: { type: Boolean, default: false },
   title: { type: String, default: '' },
@@ -59,7 +58,7 @@ const props = defineProps({
   teleport: { type: Boolean, default: false },
 })
 const emit = defineEmits(['close'])
-const titleID = `base-modal-title-${++modalID}`
+const titleID = `base-modal-title-${useId()}`
 
 function handleOverlayClick() {
   if (props.closeOnOverlay) emit('close')
