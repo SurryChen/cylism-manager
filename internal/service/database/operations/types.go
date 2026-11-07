@@ -77,6 +77,8 @@ func Phases(kind string) []string {
 		return []string{"解除指定复制通道（保留只读与数据）"}
 	case "replication_check":
 		return []string{"检查复制线程与延迟"}
+	case "replication_discover":
+		return []string{"读取已有通道并核对源实例身份，登记复制关系"}
 	case "switch":
 		return []string{"验证目标业务连接", "更新所选上线模板（待发布生效）"}
 	}

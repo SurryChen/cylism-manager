@@ -1,6 +1,6 @@
 <template>
-  <header class="section-tabs-header" :class="{ 'sticky-page-header': sticky }" data-header-variant="tabbed">
-    <slot name="title"><h1 class="page-title">{{ title }}</h1></slot>
+  <header class="section-tabs-header" :class="{ 'sticky-page-header': sticky, 'section-tabs-header--compact': compact }" data-header-variant="tabbed">
+    <slot name="title"><h1 v-if="!compact" class="page-title">{{ title }}</h1></slot>
     <nav class="section-tabs" :aria-label="title">
       <button
         v-for="tab in tabs"
@@ -25,6 +25,7 @@ defineProps({
   activeTab: { type: String, required: true },
   testIdPrefix: { type: String, default: '' },
   sticky: { type: Boolean, default: true },
+  compact: { type: Boolean, default: false },
 })
 
 defineEmits(['select'])
@@ -40,6 +41,10 @@ defineEmits(['select'])
 .section-tab::after { position: absolute; right: 0; bottom: -1px; left: 0; height: 2px; background: var(--action-primary); content: ''; opacity: 0; transform: scaleX(0); transform-origin: center; transition: opacity var(--page-header-motion-duration) ease, transform var(--page-header-motion-duration) ease; }
 .section-tab.is-active::after { opacity: 1; transform: scaleX(1); }
 .section-tabs-actions { display: flex; margin-bottom: 20px; margin-left: auto; }
+.section-tabs-header--compact { position: relative; flex-shrink: 0; height: auto; border-bottom: 1px solid var(--border-muted); margin-bottom: var(--space-24); }
+.section-tabs-header--compact::after { display: none; }
+.section-tabs-header--compact .section-tabs { width: 100%; margin: 0; gap: 28px; overflow-x: auto; }
+.section-tabs-header--compact .section-tab { flex-shrink: 0; padding: 14px 0; white-space: nowrap; }
 @media (min-width: 641px) {
   .section-tabs-header::after { position: absolute; right: 0; bottom: 11px; left: 0; height: 1px; background: var(--border-muted); content: ''; pointer-events: none; }
 }

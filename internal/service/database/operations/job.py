@@ -43,10 +43,38 @@ def objects(session, selected):
     return {schema: {kind: [list(row) for row in session.run_sql(query, [schema]).fetch_all()] for kind, query in queries.items()} for schema in selected}
 
 def replica(session, channel):
-    # Channel names are generated exclusively by the platform, never user SQL.
-    result = session.run_sql("SHOW REPLICA STATUS FOR CHANNEL '" + channel + "'")
-    row = result.fetch_one()
-    return dict(zip(result.get_column_names(), row)) if row else None
+    return next((row for row in replica_channels(session) if row.get('Channel_Name', '') == channel), None)
+
+def replica_channels(session):
+    result = session.run_sql('SHOW REPLICA STATUS')
+    return [dict(zip(result.get_column_names(), row)) for row in result.fetch_all()]
+
+def replication_observation(session, row):
+    # No source credentials or raw SQL/error messages may enter task results.
+    return {'channel': row.get('Channel_Name', ''),
+            'io_running': row.get('Replica_IO_Running') == 'Yes',
+            'sql_running': row.get('Replica_SQL_Running') == 'Yes',
+            'lag_seconds': row.get('Seconds_Behind_Source'),
+            'io_errno': int(row.get('Last_IO_Errno') or 0),
+            'sql_errno': int(row.get('Last_SQL_Errno') or 0),
+            'read_only': bool(scalar(session, 'SELECT @@global.read_only')),
+            'super_read_only': bool(scalar(session, 'SELECT @@global.super_read_only')),
+            'schemas': row.get('Replicate_Do_DB', ''),
+            'tables': row.get('Replicate_Wild_Do_Table', '')}
+
+def discover_replication(source, target):
+    source_uuid = str(scalar(source, 'SELECT @@server_uuid'))
+    require(source_uuid != str(scalar(target, 'SELECT @@server_uuid')), 'same_server')
+    rows = replica_channels(target)
+    require(bool(rows), 'replication_missing')
+    # The platform currently models one upstream channel per target. Never
+    # silently adopt one channel of a multi-source replica.
+    require(len(rows) == 1, 'replication_multiple_channels')
+    row = rows[0]
+    require(str(row.get('Source_UUID', '')).lower() == source_uuid.lower(), 'replication_source_mismatch')
+    result = replication_observation(target, row)
+    result['source_verified'] = True
+    return result
 
 def progress():
     while not done.wait(15):
@@ -79,18 +107,20 @@ try:
             session = connect(ep)
             session.set_current_schema(conn['database'])
             session.run_sql('SELECT 1').fetch_one()
+    elif kind == 'replication_discover':
+        emit({'result': discover_replication(connect(req['source']), connect(req['target']))})
     elif kind in ('detach', 'replication_check'):
         session = connect(req['target'])
         row = replica(session, channel)
         if kind == 'detach':
             if row:
-                session.run_sql("STOP REPLICA FOR CHANNEL '" + channel + "'")
-                session.run_sql("RESET REPLICA ALL FOR CHANNEL '" + channel + "'")
+                session.run_sql("SET SESSION sql_mode = 'NO_BACKSLASH_ESCAPES'")
+                session.run_sql('STOP REPLICA FOR CHANNEL ' + quote_literal(channel))
+                session.run_sql('RESET REPLICA ALL FOR CHANNEL ' + quote_literal(channel))
             # No automatic promotion: detach leaves super_read_only in place.
         else:
             require(row is not None, 'replication_missing')
-            require(row['Replica_IO_Running'] == 'Yes' and row['Replica_SQL_Running'] == 'Yes', 'replication_not_running')
-            emit({'result': {'io_running': True, 'sql_running': True, 'lag_seconds': row.get('Seconds_Behind_Source')}})
+            emit({'result': replication_observation(session, row)})
     elif kind in ('migrate', 'replicate'):
         if phase == 0:
             source = connect(req['source']); target = connect(req['target'])
@@ -175,7 +205,7 @@ try:
                 require(row is not None, 'replication_missing')
                 require(not row.get('Last_IO_Errno') and not row.get('Last_SQL_Errno'), 'replication_thread_error')
                 if row['Replica_IO_Running'] == 'Yes' and row['Replica_SQL_Running'] == 'Yes':
-                    emit({'result': {'io_running': True, 'sql_running': True, 'lag_seconds': row.get('Seconds_Behind_Source')}})
+                    emit({'result': replication_observation(target, row)})
                     break
                 emit({'waiting': 'replication_connecting'})
                 time.sleep(5)

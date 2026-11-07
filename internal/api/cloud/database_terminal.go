@@ -18,6 +18,7 @@ import (
 	"github.com/cylism/cylism-manager/internal/security"
 	"github.com/cylism/cylism-manager/internal/service/database"
 	"github.com/cylism/cylism-manager/internal/service/database/gateway"
+	"github.com/cylism/cylism-manager/internal/transport"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 	batchv1 "k8s.io/api/batch/v1"
@@ -68,7 +69,7 @@ func databaseTerminalCredentials(item *model.DatabaseInstance, account string, k
 
 func shellArgument(value string) string { return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'" }
 func databaseClientCommand(session *databaseTerminalSession) string {
-	args := []string{"mysql", "--protocol=tcp", "--ssl-mode=REQUIRED", "--host=" + session.host, "--port=" + strconv.Itoa(session.port), "--user=" + session.Username}
+	args := []string{"mysql", "--protocol=tcp", "--ssl-mode=REQUIRED", "--connect-timeout=10", "--host=" + session.host, "--port=" + strconv.Itoa(session.port), "--user=" + session.Username}
 	if session.database != "" {
 		args = append(args, "--database="+session.database)
 	}
@@ -250,37 +251,68 @@ func (h *DatabaseHandler) DatabaseTerminal(c *gin.Context) {
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 90*time.Second)
 	defer cancel()
+	conn, err := transport.WSUpgrade(c.Writer, c.Request)
+	if err != nil {
+		return
+	}
+	defer conn.Close()
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
+	progress := ""
 	for {
+		nextProgress := "等待临时 MySQL 客户端调度到 " + session.NodeName
 		pods, e := client.Clientset.CoreV1().Pods(database.Namespace).List(ctx, metav1.ListOptions{LabelSelector: "cylism.io/database-session=" + session.ID})
 		if e != nil {
-			apiShared.ValidationError(c, "读取临时客户端状态失败")
+			writeMySQLTerminalError(conn, fmt.Errorf("读取临时客户端状态失败"))
 			return
 		}
 		for _, pod := range pods.Items {
 			if pod.Status.Phase == corev1.PodFailed || pod.Status.Phase == corev1.PodSucceeded {
-				apiShared.ValidationError(c, "临时客户端已退出，请重新打开")
+				writeMySQLTerminalError(conn, fmt.Errorf("临时客户端已退出，请重新打开"))
 				return
 			}
+			nextProgress = databaseClientProgress(&pod, session.NodeName)
 			if pod.Status.Phase == corev1.PodRunning && pod.DeletionTimestamp == nil {
 				for _, state := range pod.Status.ContainerStatuses {
 					if state.Name == "mysql" && state.Ready {
 						if bytes.ContainsAny(password, "\r\n") {
-							apiShared.ValidationError(c, "账号凭据格式无效")
+							writeMySQLTerminalError(conn, fmt.Errorf("账号凭据格式无效"))
 							return
 						}
-						serveMySQLTerminal(c, client, database.Namespace, pod.Name, "mysql", databaseClientCommand(session), password)
+						_ = conn.WriteJSON(gin.H{"type": "status", "detail": "客户端已就绪，正在建立 MySQL TLS 连接"})
+						serveMySQLTerminalConnection(c, conn, client, database.Namespace, pod.Name, "mysql", databaseClientCommand(session), password)
 						return
 					}
 				}
 			}
 		}
+		if progress != nextProgress {
+			progress = nextProgress
+			if conn.WriteJSON(gin.H{"type": "status", "detail": progress}) != nil {
+				return
+			}
+		}
 		select {
 		case <-ctx.Done():
-			apiShared.ValidationError(c, "等待临时客户端就绪超时，请检查所选节点的镜像拉取情况")
+			writeMySQLTerminalError(conn, fmt.Errorf("等待客户端就绪超时：%s；可更换执行节点后重试", progress))
 			return
 		case <-ticker.C:
 		}
 	}
+}
+
+func databaseClientProgress(pod *corev1.Pod, node string) string {
+	for _, state := range pod.Status.ContainerStatuses {
+		if state.Name == "mysql" && state.State.Waiting != nil {
+			switch state.State.Waiting.Reason {
+			case "ErrImagePull", "ImagePullBackOff":
+				return node + " 拉取 MySQL 客户端镜像失败（" + state.State.Waiting.Reason + "）"
+			case "ContainerCreating":
+				return node + " 正在准备客户端容器或拉取镜像"
+			default:
+				return node + " 客户端尚未就绪（" + state.State.Waiting.Reason + "）"
+			}
+		}
+	}
+	return "正在 " + node + " 准备临时 MySQL 客户端"
 }

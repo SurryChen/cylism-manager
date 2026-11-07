@@ -105,4 +105,14 @@ describe('independent database capabilities', () => {
     await wrapper.setProps({ relations: [{ source: 'instance:1', target: 'instance:2', status: 'running' }] })
     expect(menu(wrapper, '目标数据库').props('options')).toHaveLength(2)
   })
+
+  it('discovers existing replication without initialization settings or new credentials', async () => {
+    const wrapper = render('replication_discover', { source: 'instance:1', target: 'instance:2' })
+    await chooseNode(wrapper)
+    expect(wrapper.find('input[type=password]').exists()).toBe(false)
+    expect(wrapper.find('input[placeholder="10Gi"]').exists()).toBe(false)
+    await button(wrapper, '创建后台任务').trigger('click'); await flushPromises()
+    expect(api.createDatabaseOperation).toHaveBeenCalledWith({ kind: 'replication_discover', source: 'instance:1', target: 'instance:2', cluster_id: 1, node_name: 'ubuntudev', image: '' })
+    expect(api.createDatabase).not.toHaveBeenCalled()
+  })
 })

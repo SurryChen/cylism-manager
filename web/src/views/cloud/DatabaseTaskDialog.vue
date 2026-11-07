@@ -36,7 +36,7 @@ const props = defineProps({ open: Boolean, resource: { type: String, default: ''
 const emit = defineEmits(['close', 'updated'])
 const tasks = ref([]), total = ref(0), offset = ref(0), limit = 20, detail = ref(null), selected = ref(null), loading = ref(false), acting = ref(false), error = ref(''), confirmCancel = ref(false)
 let generation = 0, selectionGeneration = 0
-const kindLabel = kind => ({ deploy: '部署 MySQL', inspect: '检查实例', migrate: '迁移数据', replicate: '建立复制', detach: '解除复制', replication_check: '检查复制', switch: '更新应用连接模板' }[kind] || kind)
+const kindLabel = kind => ({ deploy: '部署 MySQL', inspect: '检查实例', migrate: '迁移数据', replicate: '建立复制', detach: '解除复制', replication_check: '检查复制', replication_discover: '发现已有复制', switch: '更新应用连接模板' }[kind] || kind)
 const statusLabel = task => ({ queued: '排队中', running: task.pause_requested ? '待暂停' : '执行中', paused: '已暂停', failed: '失败 · 待处理', succeeded: '已完成', cancelling: '终止中', cancelled: '已终止' }[task.status] || task.status)
 const resourceName = ref => !ref ? '—' : props.resources.find(item => item.ref === ref)?.name || ref
 const clusterName = id => props.clusters.find(item => item.id === id)?.name || `集群 ${id}`

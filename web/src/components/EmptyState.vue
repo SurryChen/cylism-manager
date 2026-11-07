@@ -2,6 +2,7 @@
   <div class="empty-state" :class="`empty-state--${variant}`">
     <span v-if="icon" class="empty-state-icon" aria-hidden="true">{{ icon }}</span>
     <span class="empty-state-message">{{ message }}</span>
+    <p v-if="description" class="empty-state-description">{{ description }}</p>
     <div v-if="$slots.action" class="empty-state-action">
       <slot name="action" />
     </div>
@@ -13,6 +14,7 @@ defineProps({
   message: { type: String, required: true },
   variant: { type: String, default: 'empty', validator: value => ['loading', 'empty', 'actionable'].includes(value) },
   icon: { type: String, default: '' },
+  description: { type: String, default: '' },
 })
 </script>
 
@@ -41,6 +43,7 @@ defineProps({
 .empty-state-message {
   font-size: 12px;
 }
+.empty-state-description { max-width: 440px; margin: 0; padding: 0 16px; font-size: 12px; line-height: 1.7; }
 
 .empty-state-action {
   margin-top: var(--space-8);

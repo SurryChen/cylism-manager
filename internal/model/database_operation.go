@@ -45,12 +45,19 @@ type DatabaseOperationLock struct {
 // A relation is recorded after channel creation, including an interrupted setup.
 // This is an asynchronous copy, not an automatic failover cluster or backup.
 type DatabaseReplication struct {
-	ID        uint      `gorm:"primaryKey" json:"id"`
-	Source    string    `gorm:"size:64;index;not null" json:"source"`
-	Target    string    `gorm:"size:64;uniqueIndex;not null" json:"target"`
-	Channel   string    `gorm:"size:64;not null" json:"channel"`
-	TaskID    uint      `gorm:"index" json:"task_id"`
-	Status    string    `gorm:"size:24;not null" json:"status"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID            uint       `gorm:"primaryKey" json:"id"`
+	Source        string     `gorm:"size:64;index;not null" json:"source"`
+	Target        string     `gorm:"size:64;uniqueIndex;not null" json:"target"`
+	Channel       string     `gorm:"size:64;not null" json:"channel"`
+	TaskID        uint       `gorm:"index" json:"task_id"`
+	Status        string     `gorm:"size:24;not null" json:"status"`
+	LastCheckedAt *time.Time `json:"last_checked_at,omitempty"`
+	IORunning     bool       `json:"io_running"`
+	SQLRunning    bool       `json:"sql_running"`
+	LagSeconds    *int64     `json:"lag_seconds"`
+	ReadOnly      bool       `json:"read_only"`
+	// The observation contains only allowlisted status and filter fields.
+	Observation string    `gorm:"type:text" json:"observation,omitempty"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }

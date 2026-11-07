@@ -271,6 +271,12 @@ func parseEvents(output []byte) (summary, result, reason string, done bool) {
 	return
 }
 func errorMessage(code string) string {
+	if code == "replication_source_mismatch" {
+		return "现有通道的源实例 UUID 与所选源库不一致，未登记；请核对源实例"
+	}
+	if code == "replication_multiple_channels" {
+		return "目标存在多个复制通道；当前仅支持单源复制，未登记也未修改任何通道"
+	}
 	if code == "local_infile_required" {
 		return "目标须开启 local_infile，MySQL Shell 才能导入快照；请在目标参数中启用后重新创建任务"
 	}

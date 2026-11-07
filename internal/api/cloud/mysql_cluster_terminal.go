@@ -101,6 +101,10 @@ func serveMySQLTerminal(c *gin.Context, client *k8s.Client, namespace, podName, 
 		return
 	}
 	defer conn.Close()
+	serveMySQLTerminalConnection(c, conn, client, namespace, podName, container, command, password)
+}
+
+func serveMySQLTerminalConnection(c *gin.Context, conn *transport.WSConn, client *k8s.Client, namespace, podName, container, command string, password []byte) {
 	request := client.Clientset.CoreV1().RESTClient().Post().Resource("pods").Namespace(namespace).Name(podName).SubResource("exec").VersionedParams(&corev1.PodExecOptions{
 		Container: container, Command: []string{"/bin/sh", "-c", command}, Stdin: true, Stdout: true, Stderr: true, TTY: true,
 	}, scheme.ParameterCodec)

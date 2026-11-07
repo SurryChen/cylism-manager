@@ -25,7 +25,8 @@
         <div class="form-row"><label class="form-group"><span class="form-label">源库复制账号</span><input v-model.trim="form.replication_user" class="form-input" autocomplete="off"></label><label class="form-group"><span class="form-label">复制账号密码</span><input v-model="form.replication_password" class="form-input" type="password" autocomplete="new-password"></label></div>
         <details class="execution-options"><summary>前置条件与复制范围</summary><p class="form-hint">两端需为同一版本系列。目标须为空、没有 GTID 历史或应用绑定。源库须开启 binlog/GTID，预先创建复制账号并允许目标访问。</p><p class="form-hint">初始化不复制系统账号；后续原生复制会执行源库 binlog 中的变更，账号与授权变更需按 MySQL 复制规则管理。此功能不提供自动故障切换。</p></details>
       </template>
-      <p v-if="kind === 'detach'" class="form-hint">只停止并删除平台建立的指定复制通道，保留两个实例和数据。目标保持只读；此操作不等同于切主。</p>
+      <p v-if="kind === 'replication_discover'" class="form-hint">读取目标已有复制通道，核对其源 UUID 与所选源实例一致后登记。不会初始化数据或修改复制通道，无需重新提供复制账号。</p>
+      <p v-if="kind === 'detach'" class="form-hint">只停止并删除已登记的指定复制通道，保留两个实例和数据。目标保持只读；此操作不等同于切主。</p>
       <p v-if="kind === 'inspect'" class="form-hint">在所选节点验证 TLS 管理连接，读取版本、业务库清单和只读状态，不要求所有节点检查通过。</p>
       <template v-if="kind === 'switch'">
         <p class="form-hint">只更新选中的已绑定上线模板。每个模板单独验证目标业务账号，保存后需到应用页面发布。迁移数据和创建账号分别执行。</p>
@@ -53,7 +54,7 @@ import EmptyState from '../../components/EmptyState.vue'
 
 const props = defineProps({ kind: { type: String, default: '' }, source: { type: String, default: '' }, target: { type: String, default: '' }, instances: { type: Array, default: () => [] }, mysqlClusters: { type: Array, default: () => [] }, clusters: { type: Array, default: () => [] }, relations: { type: Array, default: () => [] } })
 const emit = defineEmits(['close', 'created'])
-const labels = { deploy: '部署独立 MySQL', inspect: '检查实例', migrate: '迁移数据', replicate: '建立主从复制', detach: '解除复制', replication_check: '检查复制', switch: '切换应用连接' }
+const labels = { deploy: '部署独立 MySQL', inspect: '检查实例', migrate: '迁移数据', replicate: '建立主从复制', replication_discover: '发现并登记已有复制', detach: '解除复制', replication_check: '检查复制', switch: '切换应用连接' }
 const initial = () => ({ name: '', source: '', target: '', cluster_id: 0, node_name: '', storage_size: '10Gi', storage_class: '', resources: '1/1Gi', mysql_image: 'mysql:8.4', schemas: '', writes_stopped: false, replication_user: '', replication_password: '', image: '' })
 const form = reactive(initial()), nodes = ref([]), nodesLoading = ref(false), saving = ref(false), error = ref(''), bindingRows = ref([]), bindingsLoading = ref(false)
 let generation = 0, nodeGeneration = 0
@@ -61,7 +62,7 @@ const resourceOptions = [{ value: '1/1Gi', label: '1 核 / 1 GiB' }, { value: '2
 const sourceOptions = computed(() => [{ value: '', label: '选择源数据库' }, ...props.mysqlClusters.map(item => ({ value: `cluster:${item.id}`, label: `${item.name}（Operator 集群）` })), ...props.instances.map(item => ({ value: `instance:${item.id}`, label: item.name }))])
 const targetOptions = computed(() => [{ value: '', label: '选择目标数据库' }, ...props.instances.filter(item => {
   if (`instance:${item.id}` === form.source) return false
-  if (['replicate', 'detach', 'replication_check'].includes(props.kind) && item.mode !== 'managed') return false
+  if (['replicate', 'detach', 'replication_check', 'replication_discover'].includes(props.kind) && item.mode !== 'managed') return false
   if (['detach', 'replication_check'].includes(props.kind) && !props.relations.some(relation => relation.target === `instance:${item.id}`)) return false
   return true
 }).map(item => ({ value: `instance:${item.id}`, label: item.name }))])
@@ -83,15 +84,16 @@ watch(() => form.cluster_id, async id => {
   const current = ++nodeGeneration; form.node_name = ''; nodes.value = []; nodesLoading.value = false
   if (!props.kind || !id) return
   nodesLoading.value = true
-  try { const result = await getDatabaseExecutionNodes(id); if (current === nodeGeneration) nodes.value = result }
+  try { const result = await getDatabaseExecutionNodes(id); if (current === nodeGeneration) { nodes.value = result; if (props.kind === 'replication_discover') { const target = props.instances.find(item => `instance:${item.id}` === form.target); if (result.some(node => node.name === target?.node_name && node.database_allowed)) form.node_name = target.node_name } } }
   catch (cause) { if (current === nodeGeneration) error.value = cause.message || '读取节点失败' }
   finally { if (current === nodeGeneration) nodesLoading.value = false }
 })
+watch(() => [props.kind, form.target], () => { if (props.kind !== 'replication_discover') return; const target = props.instances.find(item => `instance:${item.id}` === form.target); if (target?.mode === 'managed') form.cluster_id = target.cluster_id })
 async function submit() {
   if (saving.value) return
   if (!form.cluster_id || !form.node_name) { error.value = '请选择执行集群和节点'; return }
   if (props.kind === 'deploy' && !form.name) { error.value = '请填写实例名称'; return }
-  if (['inspect', 'migrate', 'replicate'].includes(props.kind) && !form.source) { error.value = '请选择源数据库'; return }
+  if (['inspect', 'migrate', 'replicate', 'replication_discover'].includes(props.kind) && !form.source) { error.value = '请选择源数据库'; return }
   if (!['deploy', 'inspect'].includes(props.kind) && !form.target) { error.value = '请选择目标数据库'; return }
   if (props.kind === 'migrate' && !form.schemas.trim()) { error.value = '请填写需要迁移的业务数据库名，多个名称用逗号分隔'; return }
   if (props.kind === 'migrate' && !form.writes_stopped) { error.value = '请先停止所选源库的业务写入，再确认保持停写至切换完成'; return }
@@ -102,7 +104,7 @@ async function submit() {
       const [cpu_limit, memory_limit] = form.resources.split('/')
       result = await createDatabase({ name: form.name, mode: 'managed', cluster_id: Number(form.cluster_id), node_name: form.node_name, cpu_limit, memory_limit, storage_size: form.storage_size, storage_class: form.storage_class, image: form.mysql_image })
     } else {
-      const payload = { kind: props.kind, source: ['inspect', 'migrate', 'replicate'].includes(props.kind) ? form.source : '', target: form.target, cluster_id: Number(form.cluster_id), node_name: form.node_name, image: form.image }
+      const payload = { kind: props.kind, source: ['inspect', 'migrate', 'replicate', 'replication_discover'].includes(props.kind) ? form.source : '', target: form.target, cluster_id: Number(form.cluster_id), node_name: form.node_name, image: form.image }
       if (['migrate', 'replicate'].includes(props.kind)) Object.assign(payload, { storage_size: form.storage_size, storage_class: form.storage_class })
       if (props.kind === 'migrate') Object.assign(payload, { schemas: form.schemas.split(/[,，\s]+/).filter(Boolean), writes_stopped: form.writes_stopped })
       if (props.kind === 'replicate') Object.assign(payload, { replication_user: form.replication_user, replication_password: form.replication_password })

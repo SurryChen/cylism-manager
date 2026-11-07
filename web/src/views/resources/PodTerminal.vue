@@ -14,10 +14,9 @@
         </div>
 
         <div v-else class="pod-terminal-body">
-          <div v-if="status === 'connecting'" class="terminal-placeholder">正在连接{{ terminalTitle }}...</div>
-          <div v-else-if="status === 'error'" class="terminal-placeholder terminal-error"><span>{{ error }}</span><button class="btn btn-sm btn-primary" @click="reconnect">重试</button></div>
-          <div v-else-if="status === 'closed'" class="terminal-placeholder"><span>终端会话已断开</span><button class="btn btn-sm btn-primary" @click="reconnect">重新连接</button></div>
-          <div ref="terminalEl" class="terminal-container" v-show="status === 'connected'"></div>
+          <div v-if="status === 'connecting'" class="terminal-placeholder">{{ connectionMessage || `正在连接${terminalTitle}...` }}</div>
+          <div v-else-if="status === 'error' || status === 'closed'" class="terminal-notice" :class="{ 'terminal-error': status === 'error' }" role="status"><span>{{ status === 'error' ? error : '终端会话已断开' }}<small v-if="hasOutput">下方保留完整终端输出，可查看具体原因。</small></span><div class="terminal-notice-actions"><button v-if="databaseSession" class="btn" @click="$emit('configure')">更换节点或账号</button><button class="btn btn-primary" @click="reconnect">重新连接</button></div></div>
+          <div ref="terminalEl" class="terminal-container" :class="{ 'has-notice': status === 'error' || status === 'closed' }" v-show="status !== 'connecting' || hasOutput"></div>
         </div>
 
         <footer v-if="status !== 'selecting'" class="pod-terminal-footer"><span>{{ container }}</span><span :class="['terminal-state', `terminal-state-${status}`]">{{ statusLabel }}</span></footer>
@@ -38,7 +37,7 @@ const props = defineProps({
   mysqlClusterId: { type: String, default: '' },
   databaseSession: { type: Object, default: null },
 })
-const emit = defineEmits(['close', 'reconnect'])
+const emit = defineEmits(['close', 'reconnect', 'configure'])
 
 const terminalEl = ref(null)
 const containers = computed(() => props.pod.containers || [])
@@ -46,11 +45,14 @@ const terminalTitle = computed(() => (props.mysqlClusterId || props.databaseSess
 const container = ref(containers.value.length === 1 ? containers.value[0] : '')
 const status = ref(containers.value.length === 1 ? 'connecting' : 'selecting')
 const error = ref('')
+const hasOutput = ref(false)
+const connectionMessage = ref('')
 const statusLabel = computed(() => ({ connecting: '连接中', connected: '已连接', error: '连接失败', closed: '已断开' }[status.value] || ''))
 
 let terminal = null
 let websocket = null
 let resizeObserver = null
+let connectionGeneration = 0
 const bodyScrollLock = useBodyScrollLock(true)
 
 onMounted(() => {
@@ -71,10 +73,13 @@ function connect() {
   disposeTerminal()
   status.value = 'connecting'
   error.value = ''
-  nextTick(openTerminal)
+  hasOutput.value = false
+  connectionMessage.value = ''
+  const request = connectionGeneration
+  nextTick(() => openTerminal(request))
 }
 
-async function openTerminal() {
+async function openTerminal(request) {
   const element = terminalEl.value
   if (!element) {
     status.value = 'error'
@@ -86,10 +91,12 @@ async function openTerminal() {
   try {
     terminalRuntime = await loadTerminalRuntime()
   } catch (loadError) {
+    if (request !== connectionGeneration) return
     status.value = 'error'
     error.value = loadError?.message || '终端组件加载失败'
     return
   }
+  if (request !== connectionGeneration) return
   const { Terminal, FitAddon, installTerminalClipboard } = terminalRuntime
 
   const rootStyle = getComputedStyle(document.documentElement)
@@ -128,18 +135,21 @@ async function openTerminal() {
   ws.binaryType = 'arraybuffer'
 
   ws.onopen = () => {
-    status.value = 'connected'
+    status.value = props.databaseSession ? 'connecting' : 'connected'
     term.onData(data => {
       if (ws.readyState === WebSocket.OPEN) ws.send(data)
     })
   }
   ws.onmessage = event => {
     if (event.data instanceof ArrayBuffer) {
+      hasOutput.value = true
+      if (status.value === 'connecting') status.value = 'connected'
       term.write(new Uint8Array(event.data))
       return
     }
     try {
       const message = JSON.parse(event.data)
+      if (message.type === 'status') { connectionMessage.value = message.detail || ''; status.value = 'connecting' }
       if (message.type === 'error') {
         status.value = 'error'
         error.value = message.detail || '容器终端连接失败'
@@ -168,8 +178,9 @@ async function openTerminal() {
 }
 
 function disposeTerminal() {
+  connectionGeneration++
   if (resizeObserver) resizeObserver.disconnect()
-  if (websocket) websocket.close()
+  if (websocket) { websocket.onopen = websocket.onmessage = websocket.onclose = websocket.onerror = null; websocket.close() }
   if (terminal) terminal.dispose()
   resizeObserver = null
   websocket = null
@@ -194,13 +205,16 @@ function close() {
 .terminal-state-connecting { color: var(--warning); }
 .terminal-state-error { color: var(--danger); }
 .terminal-state-closed { color: var(--text-muted); }
-.pod-terminal-body { position: relative; min-height: 0; }
-.terminal-container { position: absolute; inset: 0; padding: 12px; background: var(--terminal-background); }
+.pod-terminal-body { display: flex; flex-direction: column; min-height: 0; background: var(--terminal-background); }
+.terminal-container { flex: 1; min-height: 0; padding: 12px; background: var(--terminal-background); }
+.terminal-notice { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 16px; background: var(--surface-raised); border-bottom: 1px solid var(--border-muted); color: var(--text-secondary); font-size: 13px; overflow-wrap: anywhere; }
+.terminal-notice small { display: block; margin-top: 6px; color: var(--text-secondary); font-size: 12px; }
+.terminal-notice-actions { display: flex; flex-shrink: 0; gap: 8px; }
 .terminal-container :deep(.xterm), .terminal-container :deep(.xterm-viewport) { height: 100%; }
 .terminal-container :deep(.xterm-viewport) { overflow-y: auto; }
 .terminal-placeholder { display: flex; height: 100%; align-items: center; justify-content: center; gap: 12px; padding: 24px; color: var(--text-secondary); font-size: 13px; }
 .terminal-error { color: var(--danger); }
 .container-picker { display: grid; align-content: center; gap: 16px; max-width: 420px; width: 100%; margin: auto; padding: 32px; }
 .container-picker p { margin: 0; color: var(--text-secondary); font-size: 13px; line-height: 1.6; }
-@media (max-width:640px) { .pod-terminal-modal { width: 100vw; height: 100dvh; border: 0; border-radius: 0; }.pod-terminal-header, .pod-terminal-footer { padding-right: 12px; padding-left: 12px; } }
+@media (max-width:640px) { .pod-terminal-modal { width: 100vw; height: 100dvh; border: 0; border-radius: 0; }.pod-terminal-header, .pod-terminal-footer { padding-right: 12px; padding-left: 12px; }.terminal-notice { align-items: flex-start; flex-direction: column; } }
 </style>

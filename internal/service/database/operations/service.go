@@ -81,8 +81,11 @@ func (s *Service) Queue(ctx context.Context, req Request) (*model.DatabaseOperat
 	if strings.ContainsAny(req.Image, " \t\r\n") {
 		return nil, fmt.Errorf("执行镜像无效")
 	}
-	if (req.Kind == "migrate" || req.Kind == "replicate") && req.Source == "" {
+	if (req.Kind == "migrate" || req.Kind == "replicate" || req.Kind == "replication_discover") && req.Source == "" {
 		return nil, fmt.Errorf("请选择源数据库")
+	}
+	if req.Kind == "replication_discover" && req.Source == req.Target {
+		return nil, fmt.Errorf("源与目标不能相同")
 	}
 	if req.Kind == "migrate" {
 		if !req.WritesStopped {
@@ -170,9 +173,19 @@ func (s *Service) Queue(ctx context.Context, req Request) (*model.DatabaseOperat
 			if e = tx.First(&target, id).Error; e != nil {
 				return e
 			}
-			if req.Kind == "replicate" || req.Kind == "detach" || req.Kind == "replication_check" {
+			if req.Kind == "replicate" || req.Kind == "detach" || req.Kind == "replication_check" || req.Kind == "replication_discover" {
 				if target.Mode != "managed" || target.ClusterID != req.ClusterID {
 					return fmt.Errorf("复制目标须为当前执行集群内的平台独立 MySQL，不能是 RDS 或 Operator 集群成员")
+				}
+			}
+			if req.Kind == "replication_discover" {
+				var relation model.DatabaseReplication
+				e := tx.Where("target = ?", req.Target).First(&relation).Error
+				if e != nil && !errors.Is(e, gorm.ErrRecordNotFound) {
+					return e
+				}
+				if e == nil && relation.Source != req.Source {
+					return fmt.Errorf("目标已登记其他源库的复制关系，请先核对")
 				}
 			}
 			if req.Kind == "replicate" || req.Kind == "migrate" {
@@ -539,6 +552,11 @@ func (s *Service) reconcile(ctx context.Context, task *model.DatabaseOperation) 
 		latest.Progress = ""
 		latest.Result = result
 		if latest.Phase >= len(Phases(latest.Kind)) {
+			if latest.Kind == "replication_discover" || latest.Kind == "replication_check" || (latest.Kind == "replicate" && result != "") {
+				if e := recordReplicationObservation(tx, &latest, result); e != nil {
+					return e
+				}
+			}
 			if latest.Kind == "replicate" {
 				if e := tx.Model(&model.DatabaseReplication{}).Where("target = ? AND task_id = ?", latest.Target, latest.ID).Update("status", "running").Error; e != nil {
 					return e
@@ -546,11 +564,6 @@ func (s *Service) reconcile(ctx context.Context, task *model.DatabaseOperation) 
 			}
 			if latest.Kind == "detach" {
 				if e := tx.Where("target = ?", latest.Target).Delete(&model.DatabaseReplication{}).Error; e != nil {
-					return e
-				}
-			}
-			if latest.Kind == "replication_check" {
-				if e := tx.Model(&model.DatabaseReplication{}).Where("target = ?", latest.Target).Update("status", "running").Error; e != nil {
 					return e
 				}
 			}
