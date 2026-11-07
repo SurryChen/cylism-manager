@@ -1,11 +1,13 @@
 package cloud
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 	"github.com/cylism/cylism-manager/internal/model"
@@ -40,6 +42,23 @@ func (h *DatabaseHandler) ListClusters(c *gin.Context) {
 	}
 	if items == nil {
 		items = []model.MySQLCluster{}
+	}
+	// A bounded best-effort refresh keeps one inaccessible Kubernetes cluster
+	// from hiding every database record in the list.
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+	defer cancel()
+	if h.client != nil {
+		for index := range items {
+			if ctx.Err() != nil {
+				break
+			}
+			if items[index].Status == "draft" || items[index].Status == "paused" {
+				continue
+			}
+			if _, err := h.syncMySQLTask(ctx, &items[index]); err != nil {
+				items[index].LastError = "运行状态读取失败：" + err.Error()
+			}
+		}
 	}
 	apiShared.Success(c, items)
 }
@@ -464,8 +483,7 @@ func (h *DatabaseHandler) InspectCluster(c *gin.Context) {
 	}
 	_, err := h.syncMySQLTask(c.Request.Context(), item)
 	if err != nil {
-		apiShared.ValidationError(c, err.Error())
-		return
+		item.LastError = "运行状态读取失败：" + err.Error()
 	}
 	apiShared.Success(c, item)
 }
@@ -475,13 +493,58 @@ func (h *DatabaseHandler) DeleteCluster(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if item.Status != "draft" {
-		apiShared.ValidationError(c, "已部署的 MySQL 集群需先完成数据备份和卸载，此处仅能删除未部署的记录")
-		return
-	}
-	if err := h.store.DB().Delete(item).Error; err != nil {
+	lockValue, _ := h.mysqlSyncLocks.LoadOrStore(item.ID, &sync.Mutex{})
+	lock := lockValue.(*sync.Mutex)
+	lock.Lock()
+	defer lock.Unlock()
+	if err := h.store.DB().First(item, item.ID).Error; err != nil {
 		apiShared.DBError(c, err.Error())
 		return
 	}
-	apiShared.Success(c, gin.H{"id": item.ID})
+	if item.Status != "draft" && item.Status != "paused" && item.Status != "stopped" && item.Status != "retired" && item.Status != "missing" {
+		apiShared.ValidationError(c, "请先停用并清退集群资源，再删除记录")
+		return
+	}
+	var running int64
+	if err := h.store.DB().Model(&model.MySQLClusterTask{}).Where("cluster_id = ? AND status IN ?", item.ID, []string{"running", "cancelling"}).Count(&running).Error; err != nil {
+		apiShared.DBError(c, err.Error())
+		return
+	}
+	if running > 0 {
+		apiShared.ValidationError(c, "集群仍有后台任务，不能删除记录")
+		return
+	}
+	if item.Status != "draft" {
+		if h.client == nil {
+			apiShared.K8sUnavailable(c)
+			return
+		}
+		client, err := h.client(c.Request.Context(), item.ClusterID)
+		if err == nil {
+			err = database.RemoveClusterRecordCheck(c.Request.Context(), client, item)
+		}
+		if err != nil {
+			apiShared.ValidationError(c, err.Error())
+			return
+		}
+	}
+	if err := h.store.DB().Transaction(func(tx *gorm.DB) error {
+		var taskIDs []uint
+		if err := tx.Model(&model.MySQLClusterTask{}).Where("cluster_id = ?", item.ID).Pluck("id", &taskIDs).Error; err != nil {
+			return err
+		}
+		if len(taskIDs) > 0 {
+			if err := tx.Where("task_id IN ?", taskIDs).Delete(&model.MySQLClusterTaskLog{}).Error; err != nil {
+				return err
+			}
+		}
+		if err := tx.Where("cluster_id = ?", item.ID).Delete(&model.MySQLClusterTask{}).Error; err != nil {
+			return err
+		}
+		return tx.Delete(item).Error
+	}); err != nil {
+		apiShared.DBError(c, err.Error())
+		return
+	}
+	apiShared.Success(c, gin.H{"id": item.ID, "data_volumes_retained": true})
 }

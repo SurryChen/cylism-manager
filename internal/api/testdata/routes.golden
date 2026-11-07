@@ -374,6 +374,7 @@ POST /api/cloud/mysql-clusters/:id/deployment/cleanup
 POST /api/cloud/mysql-clusters/:id/deployment/pause
 POST /api/cloud/mysql-clusters/:id/deployment/retry-shutdown
 POST /api/cloud/mysql-clusters/:id/instances
+POST /api/cloud/mysql-clusters/:id/lifecycle
 POST /api/cloud/mysql-clusters/:id/operator/cancel
 POST /api/cloud/mysql-clusters/:id/operator/install
 POST /api/cloud/mysql-clusters/:id/operator/uninstall

@@ -252,8 +252,8 @@ func (h *DatabaseHandler) CleanupPausedCluster(c *gin.Context) {
 		apiShared.DBError(c, err.Error())
 		return
 	}
-	if item.Status != "paused" {
-		apiShared.ValidationError(c, "只有已暂停的集群可以清理残留资源")
+	if item.Status != "paused" && item.Status != "retired" {
+		apiShared.ValidationError(c, "只有已暂停或已清退的集群可以清理残留资源")
 		return
 	}
 	var req struct {

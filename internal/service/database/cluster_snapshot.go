@@ -69,7 +69,6 @@ func Snapshot(ctx context.Context, client *k8s.Client, item *model.MySQLCluster)
 	snapshot := &ClusterSnapshot{Status: status, OnlineInstances: online, RouterReady: routers, Pods: []ClusterPod{}, Claims: []ClusterClaim{}}
 	if status == "missing" {
 		snapshot.Progress = "等待 MySQL Operator 创建集群资源"
-		return snapshot, nil
 	}
 	resource, err := client.DynamicClient.Resource(innoDBClusterGVR).Namespace(item.Namespace).Get(ctx, item.ResourceName, metav1.GetOptions{})
 	if err != nil && !apierrors.IsNotFound(err) {
@@ -159,7 +158,7 @@ func Snapshot(ctx context.Context, client *k8s.Client, item *model.MySQLCluster)
 			}
 		}
 		for _, condition := range pod.Status.Conditions {
-			if condition.Type == corev1.PodReady && condition.Status == corev1.ConditionTrue {
+			if condition.Type == corev1.PodReady && condition.Status == corev1.ConditionTrue && pod.DeletionTimestamp == nil {
 				entry.Ready = true
 			}
 		}
@@ -208,7 +207,7 @@ func Snapshot(ctx context.Context, client *k8s.Client, item *model.MySQLCluster)
 		}
 	}
 	for _, claim := range claims.Items {
-		if !usedClaims[claim.Name] && claim.Labels["mysql.oracle.com/cluster"] != item.ResourceName && !strings.Contains(claim.Name, item.ResourceName+"-") {
+		if !usedClaims[claim.Name] && claim.Labels["mysql.oracle.com/cluster"] != item.ResourceName && !strings.HasPrefix(claim.Name, "datadir-"+item.ResourceName+"-") && !strings.HasPrefix(claim.Name, "data-"+item.ResourceName+"-") {
 			continue
 		}
 		entry := ClusterClaim{Name: claim.Name, Phase: string(claim.Status.Phase), VolumeName: claim.Spec.VolumeName}
@@ -221,6 +220,11 @@ func Snapshot(ctx context.Context, client *k8s.Client, item *model.MySQLCluster)
 		snapshot.Claims = append(snapshot.Claims, entry)
 	}
 	sort.Slice(snapshot.Claims, func(i, j int) bool { return snapshot.Claims[i].Name < snapshot.Claims[j].Name })
+	if status == "stopped" {
+		snapshot.Failure = ""
+		snapshot.Progress = "集群已停用，数据卷保留"
+		return snapshot, nil
+	}
 	snapshot.Progress = fmt.Sprintf("数据库成员已就绪 %d/%d，Router 已就绪 %d/%d", online, DatabaseInstanceCount(item), routers, RouterInstanceCount(item))
 	if status == "ready" && len(snapshot.Pods) == 0 {
 		snapshot.Progress = "集群工作负载已就绪，尚未读取到对应的 Pod"

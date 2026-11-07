@@ -137,7 +137,8 @@ func PauseCluster(ctx context.Context, client *k8s.Client, item *model.MySQLClus
 		return fmt.Errorf("MySQL 集群资源不受平台管理，不能暂停")
 	}
 	policy := metav1.DeletePropagationBackground
-	if err := resource.Delete(ctx, item.ResourceName, metav1.DeleteOptions{PropagationPolicy: &policy}); err != nil && !apierrors.IsNotFound(err) {
+	uid := current.GetUID()
+	if err := resource.Delete(ctx, item.ResourceName, metav1.DeleteOptions{PropagationPolicy: &policy, Preconditions: &metav1.Preconditions{UID: &uid}}); err != nil && !apierrors.IsNotFound(err) {
 		return fmt.Errorf("停止 MySQL Operator 重试失败：%w", err)
 	}
 	return nil

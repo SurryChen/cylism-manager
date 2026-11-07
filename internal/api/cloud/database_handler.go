@@ -28,19 +28,23 @@ import (
 )
 
 type DatabaseHandler struct {
-	store            *store.Store
-	key              []byte
-	client           func(context.Context, uint) (*k8s.Client, error)
-	mysqlSyncLocks   sync.Map
-	registryPull     registryservice.PullExecutor
-	gateways         *gateway.Service
-	operations       *operations.Service
-	cloudMetrics     *cloudservice.Service
-	databaseSessions sync.Map
+	store                 *store.Store
+	key                   []byte
+	client                func(context.Context, uint) (*k8s.Client, error)
+	mysqlSyncLocks        sync.Map
+	mysqlLifecycleWorkers sync.Map
+	mysqlLifecycleLock    sync.Mutex
+	registryPull          registryservice.PullExecutor
+	gateways              *gateway.Service
+	operations            *operations.Service
+	cloudMetrics          *cloudservice.Service
+	databaseSessions      sync.Map
 }
 
 func NewDatabaseHandler(s *store.Store, key []byte, client func(context.Context, uint) (*k8s.Client, error)) *DatabaseHandler {
-	return &DatabaseHandler{store: s, key: key, client: client}
+	h := &DatabaseHandler{store: s, key: key, client: client}
+	h.recoverClusterLifecycles()
+	return h
 }
 
 func (h *DatabaseHandler) WithRegistryPullExecutor(executor registryservice.PullExecutor) *DatabaseHandler {

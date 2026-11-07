@@ -137,6 +137,7 @@ func registerDeliveryRoutes(r *gin.Engine, apiGroup *gin.RouterGroup, h delivery
 		mysqlClusters.POST("/:id/operator/uninstall", h.database.UninstallClusterOperator)
 		mysqlClusters.POST("/:id/operator/cancel", h.database.CancelClusterOperator)
 		mysqlClusters.POST("/:id/primary", h.database.SwitchClusterPrimary)
+		mysqlClusters.POST("/:id/lifecycle", h.database.ClusterLifecycle)
 		mysqlClusters.POST("/:id/deployment/pause", h.database.PauseClusterDeployment)
 		mysqlClusters.GET("/:id/deployment/cleanup", h.database.ClusterCleanupState)
 		mysqlClusters.POST("/:id/deployment/cleanup", h.database.CleanupPausedCluster)

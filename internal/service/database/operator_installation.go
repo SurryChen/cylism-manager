@@ -46,6 +46,10 @@ func OperatorInstallationStatus(ctx context.Context, client *k8s.Client) (*Opera
 		}
 		result.CanUninstall = len(clusters.Items) == 0
 	}
+	if state == "suspended" {
+		result.Progress = "MySQL Operator 已随集群停用；可通过恢复集群重新启用"
+		return result, nil
+	}
 	if state == "cancelling" {
 		result.Progress = "已请求中止安装，等待 Helm 清理安装资源"
 		return result, nil

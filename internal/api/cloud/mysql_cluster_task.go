@@ -62,6 +62,18 @@ func (h *DatabaseHandler) syncMySQLTask(ctx context.Context, item *model.MySQLCl
 		// attempt is explicitly requested; readiness alone cannot erase it.
 		snapshot.Failure = item.LastError
 	}
+	if lifecycleStatus(item.Status) || item.Status == "retired" {
+		snapshot.Status = item.Status
+		snapshot.Failure = ""
+		var lifecycleTask model.MySQLClusterTask
+		if err := h.store.DB().Where("cluster_id = ? AND kind IN ?", item.ID, []string{"stop", "resume", "retire"}).Order("id desc").Limit(1).Find(&lifecycleTask).Error; err != nil {
+			return nil, err
+		}
+		if lifecycleTask.LastProgress != "" {
+			snapshot.Progress = lifecycleTask.LastProgress
+		}
+		return snapshot, nil
+	}
 	item.Status, item.OnlineInstances, item.RouterReady = snapshot.Status, snapshot.OnlineInstances, snapshot.RouterReady
 	if task.ID != 0 && item.Status == "missing" {
 		item.Status = "starting"
@@ -97,10 +109,10 @@ func (h *DatabaseHandler) syncMySQLTask(ctx context.Context, item *model.MySQLCl
 			}
 		}
 	}
-	if snapshot.Failure != "" {
+	if snapshot.Failure != "" && item.Status != "stopped" {
 		item.Status, item.LastError = "error", snapshot.Failure
 		snapshot.Status = "error"
-	} else if item.Status == "ready" {
+	} else if item.Status == "ready" || item.Status == "stopped" {
 		item.LastError = ""
 	}
 	if err := h.store.DB().Model(item).Updates(map[string]any{"status": item.Status, "online_instances": item.OnlineInstances, "router_ready": item.RouterReady, "last_error": item.LastError}).Error; err != nil {

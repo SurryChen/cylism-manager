@@ -4,7 +4,7 @@ import MySQLClusterDetail from './MySQLClusterDetail.vue'
 import { getClusters } from '../../api/clusters.js'
 
 const api = vi.hoisted(() => ({
-  getMySQLCluster: vi.fn(), getMySQLClusterNodes: vi.fn(), getMySQLClusterRuntime: vi.fn(), getMySQLClusterRoles: vi.fn(),
+  runMySQLClusterLifecycle: vi.fn(), deleteMySQLCluster: vi.fn(), getMySQLCluster: vi.fn(), getMySQLClusterNodes: vi.fn(), getMySQLClusterRuntime: vi.fn(), getMySQLClusterRoles: vi.fn(),
   getMySQLClusterConfig: vi.fn(), updateMySQLClusterConfig: vi.fn(), restartMySQLClusterForConfig: vi.fn(),
   updateMySQLClusterResourcePool: vi.fn(),
   getMySQLClusterTasks: vi.fn(), getMySQLClusterTaskLogs: vi.fn(), getMySQLOperator: vi.fn(),
@@ -17,6 +17,8 @@ const api = vi.hoisted(() => ({
   addMySQLClusterInstance: vi.fn(), addMySQLClusterRouter: vi.fn(), repairMySQLClusterRouterPlacement: vi.fn(), retireMySQLClusterRouter: vi.fn(),
 }))
 vi.mock('../../api/databases.js', () => api)
+const navigate = vi.hoisted(() => vi.fn())
+vi.mock('vue-router', () => ({ useRouter: () => ({ push: navigate }) }))
 vi.mock('../../api/clusters.js', () => ({ getClusters: vi.fn().mockResolvedValue([{ id: 2, name: '国内', distribution: 'k3s' }]) }))
 
 let wrapper
@@ -1041,5 +1043,48 @@ describe('MySQL Operator installation tasks', () => {
     expect(deployButton().attributes('disabled')).toBeUndefined()
     expect(api.getMySQLClusterRuntime).not.toHaveBeenCalled()
     expect(wrapper.text()).toContain('尚未部署 MySQL 集群')
+  })
+})
+
+describe('MySQL cluster lifecycle', () => {
+  const stopped = { id: 1, name: '旧集群', cluster_id: 2, resource_name: 'cylism-mysql-cluster-1', status: 'stopped', database_instances: 2 }
+  it('shows stopped clusters and retained volumes without querying live roles', async () => {
+    api.getMySQLCluster.mockResolvedValue(stopped)
+    api.getMySQLOperator.mockResolvedValue({ state: 'suspended', progress: '已停用', can_cancel: false })
+    api.getMySQLClusterRuntime.mockResolvedValue({ status: 'stopped', pods: [], claims: [{ name: 'datadir-old-0', phase: 'Bound' }], progress: '集群已停用，数据卷保留' })
+    wrapper = mountPage(); await flushPromises()
+    expect(wrapper.text()).toContain('已停用')
+    expect(wrapper.findAll('button').map(button => button.text())).toContain('恢复集群')
+    expect(wrapper.findAll('button').map(button => button.text())).toContain('清退集群资源')
+    expect(api.getMySQLClusterRoles).not.toHaveBeenCalled()
+    await wrapper.findAll('button').find(button => button.text() === '部署资源').trigger('click')
+    expect(wrapper.text()).toContain('datadir-old-0')
+  })
+  it('requires an exact resource name before creating a retirement task', async () => {
+    api.getMySQLCluster.mockResolvedValue(stopped)
+    api.getMySQLOperator.mockResolvedValue({ state: 'suspended' })
+    api.getMySQLClusterRuntime.mockResolvedValue({ status: 'stopped', pods: [], claims: [] })
+    api.runMySQLClusterLifecycle.mockResolvedValue({ cluster: { ...stopped, status: 'retiring' }, task: { id: 21, kind: 'retire', status: 'running' } })
+    wrapper = mountPage(); await flushPromises()
+    await wrapper.findAll('button').find(button => button.text() === '清退集群资源').trigger('click'); await flushPromises()
+    const input = document.body.querySelector('input[aria-label="集群操作确认名称"]')
+    const confirm = () => [...document.body.querySelectorAll('button')].find(button => button.textContent === '清退集群资源')
+    expect(confirm().disabled).toBe(true)
+    input.value = stopped.resource_name; input.dispatchEvent(new Event('input', { bubbles: true })); await flushPromises()
+    expect(confirm().disabled).toBe(false)
+    confirm().click(); await flushPromises()
+    expect(api.runMySQLClusterLifecycle).toHaveBeenCalledWith('1', 'retire', stopped.resource_name)
+    expect(api.deleteMySQLCluster).not.toHaveBeenCalled()
+  })
+  it('allows deleting a retired record and returns to the database list', async () => {
+    api.getMySQLCluster.mockResolvedValue({ ...stopped, status: 'retired' })
+    api.getMySQLOperator.mockResolvedValue({ state: 'ready' })
+    api.deleteMySQLCluster.mockResolvedValue({ id: 1 })
+    wrapper = mountPage(); await flushPromises()
+    await wrapper.findAll('button').find(button => button.text() === '删除记录').trigger('click'); await flushPromises()
+    expect(api.deleteMySQLCluster).not.toHaveBeenCalled()
+    await wrapper.get('[data-testid="confirm-dialog-confirm"]').trigger('click'); await flushPromises()
+    expect(api.deleteMySQLCluster).toHaveBeenCalledWith('1')
+    expect(navigate).toHaveBeenCalledWith('/cloud-services/databases')
   })
 })

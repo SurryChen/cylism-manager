@@ -45,6 +45,9 @@ func OperatorState(ctx context.Context, client *k8s.Client) (string, error) {
 	}
 	deployment, err := client.Clientset.AppsV1().Deployments("mysql-operator").Get(ctx, "mysql-operator", metav1.GetOptions{})
 	deploymentExists := err == nil
+	if err == nil && deployment.Spec.Replicas != nil && *deployment.Spec.Replicas == 0 {
+		return "suspended", nil
+	}
 	if err == nil && deployment.Status.ReadyReplicas > 0 {
 		return "ready", nil
 	}
@@ -403,8 +406,10 @@ func ApplyCluster(ctx context.Context, client *k8s.Client, item *model.MySQLClus
 }
 
 func ClusterStatus(ctx context.Context, client *k8s.Client, item *model.MySQLCluster) (string, int, int, error) {
-	if err := CheckOperator(ctx, client, item.Namespace); err != nil {
+	if stopped, err := ClusterStopped(ctx, client, item); err != nil {
 		return "error", 0, 0, err
+	} else if stopped {
+		return "stopped", 0, 0, nil
 	}
 	_, err := client.DynamicClient.Resource(innoDBClusterGVR).Namespace(item.Namespace).Get(ctx, item.ResourceName, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
@@ -421,6 +426,9 @@ func ClusterStatus(ctx context.Context, client *k8s.Client, item *model.MySQLClu
 		return "error", 0, 0, err
 	}
 	online := int(stateful.Status.ReadyReplicas)
+	if stateful.Spec.Replicas != nil && *stateful.Spec.Replicas == 0 {
+		online = 0
+	}
 	routerReady := 0
 	deployments, err := client.Clientset.AppsV1().Deployments(item.Namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
@@ -428,7 +436,9 @@ func ClusterStatus(ctx context.Context, client *k8s.Client, item *model.MySQLClu
 	}
 	for _, deployment := range deployments.Items {
 		if (deployment.Labels["mysql.oracle.com/cluster"] == item.ResourceName || strings.HasPrefix(deployment.Name, item.ResourceName+"-")) && strings.Contains(deployment.Name, "router") {
-			routerReady += int(deployment.Status.ReadyReplicas)
+			if deployment.Spec.Replicas == nil || *deployment.Spec.Replicas > 0 {
+				routerReady += int(deployment.Status.ReadyReplicas)
+			}
 		}
 	}
 	if online >= DatabaseInstanceCount(item) && routerReady >= RouterInstanceCount(item) {

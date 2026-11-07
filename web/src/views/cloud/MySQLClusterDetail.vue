@@ -2,7 +2,7 @@
   <section class="mysql-detail">
     <router-link class="back-link" to="/cloud-services/databases"><ArrowLeft :size="16" />返回数据库列表</router-link>
     <SectionTabsHeader :title="cluster?.name || 'MySQL 集群'" :tabs="tabs" :active-tab="activeTab" @select="activeTab = $event">
-      <template v-if="cluster" #actions><span class="badge" :class="cluster.status === 'ready' ? 'badge-online' : 'badge-offline'">{{ cluster.status === 'paused' && cleanupState?.cluster_resource ? '暂停中' : statusLabel(cluster.status) }}</span></template>
+      <template v-if="cluster" #actions><span class="badge" :class="cluster.status === 'ready' ? 'badge-online' : 'badge-offline'">{{ ['paused', 'retired'].includes(cluster.status) && cleanupState?.cluster_resource ? '暂停中' : statusLabel(cluster.status) }}</span></template>
     </SectionTabsHeader>
     <SurfaceCard v-if="loading && !cluster" class="detail-content" padding="none"><EmptyState variant="loading" message="正在读取 MySQL 集群..." /></SurfaceCard>
     <SurfaceCard v-else-if="cluster && activeTab === 'topology'" class="detail-content" padding="none">
@@ -16,15 +16,19 @@
         <button v-if="operatorState === 'missing' && isK3s" class="btn" type="button" :disabled="installing" @click="installOperator">{{ installing ? '安装中...' : '安装 MySQL Operator' }}</button>
         <button v-if="operatorPending || operatorUninstallPending" class="btn" type="button" :disabled="checkingOperator" @click="refreshOperator">{{ checkingOperator ? '检查中...' : operatorUninstallPending ? '检查卸载状态' : '检查安装状态' }}</button>
         <button v-if="operatorCanCancel" class="btn" type="button" :disabled="cancelling" @click="requestCancel">中止安装</button>
+        <button v-if="['ready', 'stopping'].includes(cluster.status) || (cluster.status === 'error' && runtime.pods.length)" class="btn" type="button" :disabled="lifecyclePending" @click="openLifecycle('stop')">{{ cluster.status === 'stopping' ? '重试停用' : '停用集群' }}</button>
+        <button v-if="['stopped', 'resuming'].includes(cluster.status) || (cluster.status === 'stopping' && !lifecyclePending)" class="btn btn-primary" type="button" :disabled="lifecyclePending" @click="openLifecycle('resume')">{{ cluster.status === 'resuming' ? '重试恢复' : '恢复集群' }}</button>
+        <button v-if="['stopped', 'paused', 'missing', 'retiring'].includes(cluster.status)" class="btn btn-danger" type="button" :disabled="lifecyclePending" @click="openLifecycle('retire')">{{ cluster.status === 'retiring' ? '重试清退' : '清退集群资源' }}</button>
+        <button v-if="['draft', 'retired', 'missing'].includes(cluster.status) || (['paused', 'retired'].includes(cluster.status) && cleanupState && !cleanupState.cluster_resource && !hasResidualWorkloads)" class="btn btn-danger" type="button" :disabled="lifecyclePending" @click="deleteOpen = true">删除记录</button>
         <button v-if="canPauseDeployment" class="btn" type="button" :disabled="pausing" @click="pauseOpen = true">{{ isScalingTask ? '撤回本次追加' : '暂停初次部署' }}</button>
-        <button v-if="cluster.status === 'paused' && hasResidualWorkloads" class="btn" type="button" :disabled="cleaning || cleanupState?.cluster_resource" @click="cleanupClaims = false; cleanupOpen = true">清理残留负载</button>
-        <button v-if="cluster.status === 'paused' && cleanupState?.retry_available" class="btn" type="button" :disabled="retryingShutdown" @click="retryShutdownOpen = true">重试 Operator 清理</button>
-        <button v-if="cluster.status === 'paused' && cleanupState?.claims?.length && !hasResidualWorkloads && !cleanupState.cluster_resource" class="btn btn-danger" type="button" :disabled="cleaning" @click="cleanupClaims = true; cleanupOpen = true">清理数据卷</button>
+        <button v-if="['paused', 'retired'].includes(cluster.status) && hasResidualWorkloads" class="btn" type="button" :disabled="cleaning || cleanupState?.cluster_resource" @click="cleanupClaims = false; cleanupOpen = true">清理残留负载</button>
+        <button v-if="['paused', 'retired'].includes(cluster.status) && cleanupState?.retry_available" class="btn" type="button" :disabled="retryingShutdown" @click="retryShutdownOpen = true">重试 Operator 清理</button>
+        <button v-if="['paused', 'retired'].includes(cluster.status) && cleanupState?.claims?.length && !hasResidualWorkloads && !cleanupState.cluster_resource" class="btn btn-danger" type="button" :disabled="cleaning" @click="cleanupClaims = true; cleanupOpen = true">清理数据卷</button>
         <button v-if="editable" class="btn btn-primary" type="button" :disabled="saving || operatorState !== 'ready' || !cluster.database_nodes?.length" :title="!cluster.database_nodes?.length ? '请先添加资源池' : undefined" @click="openDeployment">部署 MySQL</button>
         <button v-if="canAddDatabase" class="btn btn-primary" type="button" :disabled="Boolean(scaling) || retiringRouter" @click="openDatabaseScaling">添加数据库实例</button>
         <button v-if="canAddRouter" class="btn" type="button" :disabled="Boolean(scaling) || retiringRouter" @click="routerInstanceCount === 0 ? openRouterDeployment() : (scaleConfirmation = 'router')">{{ routerInstanceCount === 0 ? '部署 Router' : '添加 Router' }}</button>
       </div></div>
-      <div v-if="cluster.status === 'draft' || cluster.status === 'paused' || (cluster.status === 'error' && !runtime.pods.length)" class="topology-empty"><EmptyState :message="cluster.status === 'paused' ? pausedMessage : cluster.status === 'draft' ? '尚未部署 MySQL 集群' : '暂无运行中的 MySQL Pod'" /></div>
+      <div v-if="cluster.status === 'draft' || ['paused', 'stopped', 'stopping', 'resuming', 'retiring', 'retired'].includes(cluster.status) || (cluster.status === 'error' && !runtime.pods.length)" class="topology-empty"><EmptyState :message="['paused', 'retired'].includes(cluster.status) ? pausedMessage : ['stopped', 'stopping', 'resuming', 'retiring'].includes(cluster.status) ? (cluster.last_error || runtime.progress || statusLabel(cluster.status)) : cluster.status === 'draft' ? '尚未部署 MySQL 集群' : '暂无运行中的 MySQL Pod'" /></div>
       <div v-else-if="runtime.pods.length" class="mysql-topology" aria-label="MySQL 运行拓扑">
         <section v-if="routerInstanceCount > 0 || routerPods.length" class="topology-stage" aria-label="Router 入口">
           <div class="topology-stage-heading"><span class="stage-icon"><Server :size="18" /></span><div><strong>Router</strong><span class="cell-secondary">{{ runtime.router_ready || 0 }}/{{ routerInstanceCount }} 就绪</span></div><div class="topology-stage-actions"><button v-if="routerPlacementMismatch && cluster.status === 'ready'" class="icon-button icon-button--table" type="button" title="修正 Router 调度" aria-label="修正 Router 调度" :disabled="repairingRouter || retiringRouter" @click="routerRepairOpen = true"><Settings2 :size="14" /></button><button v-if="canRetireRouter" class="icon-button icon-button--table" type="button" title="清退一个 Router 实例" aria-label="清退一个 Router 实例" :disabled="retiringRouter || repairingRouter || Boolean(scaling)" @click="routerRetireOpen = true"><Trash2 :size="14" /></button></div></div>
@@ -55,8 +59,8 @@
       <div v-else class="topology-empty"><EmptyState :message="runtime.progress || '正在等待 MySQL Operator 创建 Pod'" /></div>
     </SurfaceCard>
     <SurfaceCard v-else-if="cluster && activeTab === 'resources'" class="detail-content" padding="none">
-      <div class="detail-toolbar"><div class="toolbar-actions"><button class="icon-button" type="button" title="刷新部署资源" aria-label="刷新部署资源" :disabled="refreshing" @click="refresh()"><RefreshCw :size="16" /></button><span v-if="cluster.status !== 'draft' && cluster.status !== 'paused'" class="cell-secondary">数据库工作负载：{{ runtime.stateful_set_created ? '已创建' : '等待 Operator 创建' }}</span></div></div>
-      <EmptyState v-if="cluster.status === 'draft' || cluster.status === 'paused'" :message="cluster.status === 'paused' ? pausedMessage : '暂无部署资源'" />
+      <div class="detail-toolbar"><div class="toolbar-actions"><button class="icon-button" type="button" title="刷新部署资源" aria-label="刷新部署资源" :disabled="refreshing" @click="refresh()"><RefreshCw :size="16" /></button><span v-if="cluster.status !== 'draft' && !['paused', 'retired'].includes(cluster.status)" class="cell-secondary">数据库工作负载：{{ ['stopped', 'retired'].includes(cluster.status) ? statusLabel(cluster.status) : runtime.stateful_set_created ? '已创建' : '等待 Operator 创建' }}</span></div></div>
+      <EmptyState v-if="cluster.status === 'draft' || ['paused', 'retired'].includes(cluster.status)" :message="['paused', 'retired'].includes(cluster.status) ? pausedMessage : '暂无部署资源'" />
       <template v-else>
         <div class="table-wrap resource-table"><table class="data-table"><thead><tr><th>Pod</th><th>角色</th><th>实际节点</th><th>状态</th><th>CPU</th><th>内存</th><th>数据卷</th><th>操作</th></tr></thead><tbody>
           <tr v-for="pod in runtime.pods || []" :key="pod.name">
@@ -69,14 +73,14 @@
             <td><div v-if="pod.claims?.length" class="resource-claims"><button v-for="claimName in pod.claims" :key="claimName" class="resource-detail-button resource-claim" type="button" :title="claimName" :aria-label="`查看数据卷 ${claimName}`" @click="resourceDetails = { kind: 'claim', item: claimByName[claimName] || { name: claimName } }"><span class="badge" :class="claimByName[claimName]?.phase === 'Bound' ? 'badge-online' : 'badge-offline'">{{ claimByName[claimName]?.phase || '等待创建' }}</span><span>{{ claimByName[claimName]?.capacity || '查看 PVC' }}</span></button></div><span v-else class="cell-secondary">-</span></td>
             <td><div class="row-actions"><button class="btn btn-sm" type="button" :aria-label="`查看 ${pod.name} 的详情`" @click="resourceDetails = { kind: 'pod', item: pod }">详情</button><button v-if="canPullPodImage(pod)" class="btn btn-sm" type="button" title="在该节点拉取当前阻塞 Pod 启动的镜像" :disabled="Boolean(pullingPod) || retryingPod" @click="pullPodImages(pod)">{{ pullingPod === pod.name ? '拉取中...' : '节点拉取' }}</button><button v-if="pod.retryable" class="btn btn-sm" type="button" :disabled="Boolean(pullingPod) || retryingPod" @click="retryTarget = pod">重试</button></div></td>
           </tr>
-          <tr v-for="claim in unattachedClaims" :key="`claim-${claim.name}`"><td class="cell-secondary">Pod 尚未创建</td><td class="cell-secondary">-</td><td class="cell-secondary">-</td><td class="cell-secondary">-</td><td><button class="resource-detail-button resource-claim" type="button" :title="claim.name" :aria-label="`查看数据卷 ${claim.name}`" @click="resourceDetails = { kind: 'claim', item: claim }"><span class="badge" :class="claim.phase === 'Bound' ? 'badge-online' : 'badge-offline'">{{ claim.phase || '等待创建' }}</span><span>{{ claim.capacity || '查看 PVC' }}</span></button></td><td></td></tr>
-          <tr v-if="!runtime.pods?.length && !unattachedClaims.length"><td colspan="6" class="cell-secondary">Pod 和数据卷尚未创建</td></tr>
+          <tr v-for="claim in unattachedClaims" :key="`claim-${claim.name}`"><td class="mono resource-name" :title="claim.name">{{ claim.name }}</td><td class="cell-secondary">未挂载</td><td class="cell-secondary">-</td><td class="cell-secondary">-</td><td class="cell-secondary">-</td><td class="cell-secondary">-</td><td><button class="resource-detail-button resource-claim" type="button" :title="claim.name" :aria-label="`查看数据卷 ${claim.name}`" @click="resourceDetails = { kind: 'claim', item: claim }"><span class="badge" :class="claim.phase === 'Bound' ? 'badge-online' : 'badge-offline'">{{ claim.phase || '等待创建' }}</span><span>{{ claim.capacity || '查看 PVC' }}</span></button></td><td></td></tr>
+          <tr v-if="!runtime.pods?.length && !unattachedClaims.length"><td colspan="8" class="cell-secondary">Pod 和数据卷尚未创建</td></tr>
         </tbody></table></div>
       </template>
     </SurfaceCard>
     <SurfaceCard v-else-if="cluster" class="detail-content" padding="none">
       <div class="detail-toolbar"><div class="toolbar-actions"><button class="icon-button" type="button" title="刷新任务" aria-label="刷新任务" :disabled="refreshing" @click="refresh()"><RefreshCw :size="16" /></button></div></div>
-      <div v-if="cluster.status === 'paused' && cleanupState?.cluster_resource" class="shutdown-progress cell-secondary"><span>删除请求：{{ formatTime(cleanupState.deletion_started_at) }}</span><span>Finalizer：{{ cleanupState.finalizers?.join('、') || '无' }}</span><span>剩余工作负载 {{ cleanupState.workloads.length }} 个、Pod {{ cleanupState.pods.length }} 个</span></div>
+      <div v-if="['paused', 'retired'].includes(cluster.status) && cleanupState?.cluster_resource" class="shutdown-progress cell-secondary"><span>删除请求：{{ formatTime(cleanupState.deletion_started_at) }}</span><span>Finalizer：{{ cleanupState.finalizers?.join('、') || '无' }}</span><span>剩余工作负载 {{ cleanupState.workloads.length }} 个、Pod {{ cleanupState.pods.length }} 个</span></div>
       <div v-if="tasks.length" class="table-wrap task-table"><table class="data-table"><thead><tr><th>任务</th><th>状态</th><th>开始时间</th><th>操作</th></tr></thead><tbody><tr v-for="task in tasks" :key="task.id"><td>{{ taskLabel(task) }} #{{ task.id }}</td><td><span class="badge" :class="task.status === 'success' ? 'badge-online' : task.status === 'failed' ? 'badge-danger' : 'badge-offline'">{{ taskStatusLabel(task.status) }}</span></td><td>{{ formatTime(task.created_at) }}</td><td><button class="btn btn-sm" type="button" @click="openLogs(task)">查看日志</button></td></tr></tbody></table></div>
       <EmptyState v-else :variant="tasksLoading ? 'loading' : 'empty'" :message="tasksLoading ? '正在读取集群任务...' : '暂无集群任务'" />
       <div v-if="taskTotal > taskPageSize" class="pagination task-pagination"><button class="btn btn-sm" type="button" :disabled="taskOffset === 0 || tasksLoading" @click="changeTaskPage(-1)">上一页</button><span>{{ taskPage }} / {{ taskPageCount }} · 共 {{ taskTotal }} 条</span><button class="btn btn-sm" type="button" :disabled="taskOffset + taskPageSize >= taskTotal || tasksLoading" @click="changeTaskPage(1)">下一页</button></div>
@@ -177,16 +181,23 @@
     <ConfirmDialog :open="Boolean(retryTarget)" title="重试异常 Pod" :message="`将删除异常 Pod ${retryTarget?.name || ''}，由原控制器在原有集群中重建；PVC 和已就绪实例不会删除。请先排除镜像、存储或节点故障。`" confirm-text="重建 Pod" busy-text="正在重建..." confirm-tone="primary" :busy="retryingPod" @confirm="retryPod" @cancel="retryTarget = null" />
     <ConfirmDialog :open="routerRepairOpen" title="修正 Router 调度" :message="`Router 当前运行在候选节点范围外。将按已保存的候选节点（${cluster?.router_nodes?.join('、') || '无'}）更新调度规则并滚动替换 Router Pod；替换期间连接可能短暂中断。`" confirm-text="修正调度" busy-text="正在提交..." confirm-tone="primary" :busy="repairingRouter" @confirm="repairRouterPlacement" @cancel="routerRepairOpen = false" />
     <ConfirmDialog :open="routerRetireOpen" title="清退 Router" :message="`将 Router 从 ${routerInstanceCount} 个缩减到 ${routerInstanceCount - 1} 个。Kubernetes 会决定终止哪个 Pod${routerInstanceCount === 1 ? '；这是最后一个 Router，读写入口将不可用' : '；该 Pod 上的连接可能中断'}。MySQL 实例和数据卷会保留。`" confirm-text="确认清退" busy-text="正在提交..." :busy="retiringRouter" @confirm="retireRouter" @cancel="routerRetireOpen = false" />
+    <BaseModal :open="Boolean(lifecycleAction)" :title="lifecycleTitle" teleport :show-close="!lifecycleBusy" :close-on-overlay="!lifecycleBusy" :close-on-escape="!lifecycleBusy" @close="closeLifecycle">
+      <p>{{ lifecycleMessage }}</p>
+      <label class="form-group"><span class="form-label">输入资源名称 {{ cluster?.resource_name }} 以确认</span><input v-model="lifecycleConfirm" class="form-input" aria-label="集群操作确认名称" autocomplete="off" :disabled="lifecycleBusy"></label>
+      <template #actions><button class="btn" :disabled="lifecycleBusy" @click="closeLifecycle">取消</button><button class="btn" :class="lifecycleAction === 'resume' ? 'btn-primary' : 'btn-danger'" :disabled="lifecycleBusy || lifecycleConfirm !== cluster?.resource_name" @click="submitLifecycle">{{ lifecycleBusy ? '提交中...' : lifecycleTitle }}</button></template>
+    </BaseModal>
+    <ConfirmDialog :open="deleteOpen" title="删除集群记录" message="仅删除平台记录及其任务日志。服务器上的资源必须已经清退；保留的数据卷和根密钥不会被删除，删除记录后需在集群资源中自行管理。" confirm-text="删除记录" :busy="lifecycleBusy" @confirm="removeRecord" @cancel="deleteOpen = false" />
     <ErrorNoticeModal :open="Boolean(error)" title="MySQL 集群操作失败" :message="error" teleport @close="error = ''" />
   </section>
 </template>
 
 <script setup>
+import { useRouter } from 'vue-router'
 import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { ArrowDown, ArrowLeft, ArrowUpCircle, Database, RefreshCw, Server, Settings2, SquareTerminal, Trash2 } from 'lucide-vue-next'
 import { getClusters } from '../../api/clusters.js'
 import { formatBytes } from '../../utils/formatters.js'
-import { addMySQLClusterInstance, addMySQLClusterRouter, cancelMySQLOperator, cleanupMySQLCluster, deployMySQLCluster, getMySQLCluster, getMySQLClusterCleanup, getMySQLClusterConfig, getMySQLClusterNodes, getMySQLClusterRuntime, getMySQLClusterRoles, getMySQLClusterTaskLogs, getMySQLClusterTasks, getMySQLOperator, installMySQLOperator, pauseMySQLClusterDeployment, preflightMySQLCluster, pullMySQLClusterPodImages, repairMySQLClusterRouterPlacement, restartMySQLClusterForConfig, retireMySQLClusterRouter, retryMySQLClusterPod, retryMySQLClusterShutdown, switchMySQLClusterPrimary, uninstallMySQLOperator, updateMySQLClusterConfig, updateMySQLClusterResourcePool } from '../../api/databases.js'
+import { runMySQLClusterLifecycle, deleteMySQLCluster, addMySQLClusterInstance, addMySQLClusterRouter, cancelMySQLOperator, cleanupMySQLCluster, deployMySQLCluster, getMySQLCluster, getMySQLClusterCleanup, getMySQLClusterConfig, getMySQLClusterNodes, getMySQLClusterRuntime, getMySQLClusterRoles, getMySQLClusterTaskLogs, getMySQLClusterTasks, getMySQLOperator, installMySQLOperator, pauseMySQLClusterDeployment, preflightMySQLCluster, pullMySQLClusterPodImages, repairMySQLClusterRouterPlacement, restartMySQLClusterForConfig, retireMySQLClusterRouter, retryMySQLClusterPod, retryMySQLClusterShutdown, switchMySQLClusterPrimary, uninstallMySQLOperator, updateMySQLClusterConfig, updateMySQLClusterResourcePool } from '../../api/databases.js'
 import BaseModal from '../../components/BaseModal.vue'
 import ConfirmDialog from '../../components/ConfirmDialog.vue'
 import EmptyState from '../../components/EmptyState.vue'
@@ -195,6 +206,10 @@ import SectionTabsHeader from '../../components/SectionTabsHeader.vue'
 import SurfaceCard from '../../components/SurfaceCard.vue'
 import PodTerminal from '../resources/PodTerminal.vue'
 
+const router = useRouter()
+const lifecycleAction = ref(''), lifecycleConfirm = ref(''), lifecycleBusy = ref(false), deleteOpen = ref(false)
+const lifecycleTitle = computed(() => ({ stop: '停用集群', resume: '恢复集群', retire: '清退集群资源' }[lifecycleAction.value] || '集群操作'))
+const lifecycleMessage = computed(() => ({ stop: '将停止 MySQL 和 Router，保留原集群、凭据和数据卷。此操作会暂停共享 Operator，仅在其未管理其他集群时允许执行；独立 MySQL 不受影响。', resume: '将恢复原有 MySQL 和 Router 数量，继续使用原数据卷和凭据，并恢复 Operator。', retire: '将移除 InnoDBCluster 及其负载，保留数据卷和根密钥。清退后不能直接恢复原集群；完成后可删除平台记录。' }[lifecycleAction.value] || ''))
 const props = defineProps({ id: { type: String, required: true } })
 const tabs = [{ id: 'topology', label: '拓扑' }, { id: 'resources', label: '部署资源' }, { id: 'tasks', label: '集群任务' }]
 const activeTab = ref('topology'), cluster = ref(null), nodes = ref([]), kubernetesClusters = ref([]), tasks = ref([]), logs = ref([])
@@ -243,6 +258,7 @@ const pauseOpen = ref(false), pausing = ref(false)
 const retryShutdownOpen = ref(false), retryingShutdown = ref(false)
 const cleanupOpen = ref(false), cleanupClaims = ref(false), cleaning = ref(false), cleanupState = ref(null)
 const preflight = ref(null), preflightLoading = ref(false)
+const lifecyclePending = computed(() => tasks.value.some(task => ['stop', 'resume', 'retire'].includes(task.kind) && task.status === 'running') || lifecycleBusy.value)
 const operatorPending = computed(() => ['installing', 'failed', 'cancelling'].includes(operatorState.value))
 const operatorUninstallPending = computed(() => uninstallTaskPending.value)
 const form = reactive({ database_instances: 1, storage_size: '10Gi' })
@@ -255,9 +271,9 @@ const validRouterSelection = computed(() => routerSelection.value.length >= 1 &&
 const hasResidualResources = computed(() => Boolean(cleanupState.value?.cluster_resource || cleanupState.value?.workloads?.length || cleanupState.value?.pods?.length || cleanupState.value?.claims?.length))
 const hasResidualWorkloads = computed(() => Boolean(cleanupState.value?.workloads?.length || cleanupState.value?.pods?.length))
 const showOperatorUninstall = computed(() => isK3s.value && operatorCanUninstall.value && !operatorUninstallPending.value && (
-  cluster.value?.status === 'draft' || (cluster.value?.status === 'paused' && cleanupState.value && !cleanupState.value.cluster_resource && !hasResidualWorkloads.value)
+  ['draft', 'retired'].includes(cluster.value?.status) || (cluster.value?.status === 'paused' && cleanupState.value && !cleanupState.value.cluster_resource && !hasResidualWorkloads.value)
 ))
-const pausedMessage = computed(() => cleanupState.value?.cluster_resource ? `Operator 正在停止数据库负载${cleanupState.value.deletion_started_at ? `（删除请求：${formatTime(cleanupState.value.deletion_started_at)}）` : ''}；${cleanupState.value.retry_available ? '等待超时，可重试 Operator 清理' : cleanupState.value.recent_restart ? 'Operator 最近已重启，请等待清理结果' : '请等待资源退出'}` : hasResidualResources.value ? `待清理：${cleanupState.value.workloads.length} 个工作负载、${cleanupState.value.pods.length} 个 Pod、${cleanupState.value.claims.length} 个数据卷` : '部署已暂停，可重新部署')
+const pausedMessage = computed(() => cluster.value?.status === 'retired' ? `集群资源已清退，保留 ${cleanupState.value?.claims?.length || 0} 个数据卷。可删除平台记录。` : cleanupState.value?.cluster_resource ? `Operator 正在停止数据库负载${cleanupState.value.deletion_started_at ? `（删除请求：${formatTime(cleanupState.value.deletion_started_at)}）` : ''}；${cleanupState.value.retry_available ? '等待超时，可重试 Operator 清理' : cleanupState.value.recent_restart ? 'Operator 最近已重启，请等待清理结果' : '请等待资源退出'}` : hasResidualResources.value ? `待清理：${cleanupState.value.workloads.length} 个工作负载、${cleanupState.value.pods.length} 个 Pod、${cleanupState.value.claims.length} 个数据卷` : '部署已暂停，可重新部署')
 const editable = computed(() => ['draft', 'error', 'missing'].includes(cluster.value?.status) || (cluster.value?.status === 'paused' && cleanupState.value && !hasResidualResources.value))
 const resourcePoolEditable = computed(() => ['draft', 'paused', 'ready'].includes(cluster.value?.status))
 const validResourcePool = computed(() => resourcePoolSelection.value.length >= 1 && resourcePoolSelection.value.length <= 9 && resourcePoolSelection.value.every(name => nodes.value.some(node => node.name === name && available(node))))
@@ -295,14 +311,36 @@ const unattachedClaims = computed(() => {
   const attached = new Set((runtime.value.pods || []).flatMap(pod => pod.claims || []))
   return (runtime.value.claims || []).filter(claim => !attached.has(claim.name))
 })
-const statusLabel = value => ({ draft: '待部署', starting: '部署中', ready: '运行中', missing: '资源缺失', error: '异常', paused: '已暂停' }[value] || '待检查')
-const taskLabel = task => ({ install_operator: '安装 MySQL Operator', uninstall_operator: '卸载 MySQL Operator', switch_primary: '切换 MySQL 主实例', retry_shutdown: '重试 Operator 清理', scale_database: '添加数据库实例', scale_router: '部署 Router', scale_router_down: '清退 Router' }[task.kind] || '部署 MySQL')
+const statusLabel = value => ({ draft: '待部署', starting: '部署中', ready: '运行中', missing: '资源缺失', error: '异常', paused: '已暂停', stopped: '已停用', stopping: '停用中', resuming: '恢复中', retiring: '清退中', retired: '已清退', suspended: '已停用' }[value] || '待检查')
+const taskLabel = task => ({ stop: '停用 MySQL 集群', resume: '恢复 MySQL 集群', retire: '清退 MySQL 集群资源', install_operator: '安装 MySQL Operator', uninstall_operator: '卸载 MySQL Operator', switch_primary: '切换 MySQL 主实例', retry_shutdown: '重试 Operator 清理', scale_database: '添加数据库实例', scale_router: '部署 Router', scale_router_down: '清退 Router' }[task.kind] || '部署 MySQL')
 const taskStatusLabel = value => ({ running: '运行中', success: '成功', failed: '失败', paused: '已暂停', installing: '安装中', ready: '已就绪', missing: '未安装', cancelling: '正在中止', cancelled: '已中止', checking: '检查中' }[value] || value)
 const formatTime = value => value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '-'
 
 function setCluster(item) {
   cluster.value = item
   if (!deploymentOpen.value) Object.assign(form, { database_instances: item.database_instances || 1, storage_size: item.storage_size || '10Gi' })
+}
+function openLifecycle(action) { lifecycleConfirm.value = ''; lifecycleAction.value = action }
+function closeLifecycle() { if (!lifecycleBusy.value) { lifecycleAction.value = ''; lifecycleConfirm.value = '' } }
+async function submitLifecycle() {
+  if (lifecycleBusy.value || lifecycleConfirm.value !== cluster.value?.resource_name) return
+  lifecycleBusy.value = true
+  try {
+    const result = await runMySQLClusterLifecycle(props.id, lifecycleAction.value, lifecycleConfirm.value)
+    setCluster(result.cluster)
+    lifecycleAction.value = ''; lifecycleConfirm.value = ''
+    taskOffset.value = 0; activeTab.value = 'tasks'
+    await refresh()
+    if (result.task) await openLogs(result.task)
+  } catch (failure) { error.value = failure.message || '提交集群操作失败' }
+  finally { lifecycleBusy.value = false }
+}
+async function removeRecord() {
+  if (lifecycleBusy.value) return
+  lifecycleBusy.value = true
+  try { await deleteMySQLCluster(props.id); deleteOpen.value = false; await router.push('/cloud-services/databases') }
+  catch (failure) { error.value = failure.message || '删除集群记录失败' }
+  finally { lifecycleBusy.value = false }
 }
 async function openMySQLConfig() {
   configOpen.value = true
@@ -445,7 +483,7 @@ function clearMemberRoles() {
 }
 function refreshMemberRoles(silent = false) {
   roleClock.value = Date.now()
-  if (!cluster.value || ['draft', 'paused'].includes(cluster.value.status) || primarySwitchPending.value || switchingPrimary.value) return
+  if (!cluster.value || ['draft', 'paused', 'stopped', 'stopping', 'resuming', 'retiring', 'retired'].includes(cluster.value.status) || primarySwitchPending.value || switchingPrimary.value) return
   if (rolesRequest) return
   const clusterID = props.id, generation = rolesGeneration, requestedAt = Date.now()
   rolesController = new AbortController()
@@ -472,10 +510,10 @@ async function refreshData(currentItem, silent = false) {
       operatorCanCancel.value = Boolean(operator.can_cancel)
       operatorCanUninstall.value = Boolean(operator.can_uninstall)
     }),
-    (item.status === 'draft' ? Promise.resolve(null) : item.status === 'paused' ? getMySQLClusterCleanup(props.id) : getMySQLClusterRuntime(props.id)).then(snapshot => {
-      if (item.status === 'paused') {
+    (item.status === 'draft' ? Promise.resolve(null) : ['paused', 'retired'].includes(item.status) ? getMySQLClusterCleanup(props.id) : getMySQLClusterRuntime(props.id)).then(snapshot => {
+      if (['paused', 'retired'].includes(item.status)) {
         cleanupState.value = snapshot
-        runtimeSnapshot.value = { pods: [] }
+        runtimeSnapshot.value = { pods: [], claims: (snapshot.claims || []).map(name => ({ name, phase: '已保留' })) }
       } else if (item.status === 'draft') {
         cleanupState.value = null
         runtimeSnapshot.value = { pods: [] }
@@ -746,13 +784,13 @@ async function pullPodImages(pod) {
 }
 function closeLogs() { selectedTask.value = null; operatorDetailsOpen.value = false }
 let polling
-watch(() => props.id, () => { clearInterval(polling); clearMemberRoles(); taskRequestID++; cluster.value = null; runtimeSnapshot.value = { pods: [], claims: [] }; cleanupState.value = null; tasks.value = []; taskOffset.value = 0; taskTotal.value = 0; tasksLoading.value = false; uninstallTaskPending.value = false; selectedTask.value = null; resourceDetails.value = null; connectionDetailsOpen.value = false; terminalPod.value = null; configOpen.value = false; configRestartOpen.value = false; scaleConfirmation.value = ''; routerDeploymentOpen.value = false; routerRepairOpen.value = false; routerRetireOpen.value = false; operatorDetailsOpen.value = false; cancelOpen.value = false; uninstallOpen.value = false; pauseOpen.value = false; retryShutdownOpen.value = false; cleanupOpen.value = false; switchTarget.value = null; retryTarget.value = null; activeTab.value = 'topology'; void load() }, { immediate: true })
+watch(() => props.id, () => { clearInterval(polling); clearMemberRoles(); taskRequestID++; cluster.value = null; lifecycleAction.value = ''; lifecycleConfirm.value = ''; deleteOpen.value = false; runtimeSnapshot.value = { pods: [], claims: [] }; cleanupState.value = null; tasks.value = []; taskOffset.value = 0; taskTotal.value = 0; tasksLoading.value = false; uninstallTaskPending.value = false; selectedTask.value = null; resourceDetails.value = null; connectionDetailsOpen.value = false; terminalPod.value = null; configOpen.value = false; configRestartOpen.value = false; scaleConfirmation.value = ''; routerDeploymentOpen.value = false; routerRepairOpen.value = false; routerRetireOpen.value = false; operatorDetailsOpen.value = false; cancelOpen.value = false; uninstallOpen.value = false; pauseOpen.value = false; retryShutdownOpen.value = false; cleanupOpen.value = false; switchTarget.value = null; retryTarget.value = null; activeTab.value = 'topology'; void load() }, { immediate: true })
 watch([activeTab, () => cluster.value?.status, operatorState, operatorUninstallPending], () => { clearInterval(polling); if (cluster.value && (cluster.value.status !== 'draft' || ['installing', 'cancelling'].includes(operatorState.value) || operatorUninstallPending.value)) polling = setInterval(() => { void refresh(true) }, 5000) })
 watch(primarySwitchPending, pending => {
   clearMemberRoles()
   if (!pending) refreshMemberRoles()
 })
-watch(() => cluster.value?.status, status => { if (['draft', 'paused'].includes(status)) clearMemberRoles() })
+watch(() => cluster.value?.status, status => { if (['draft', 'paused', 'stopped', 'stopping', 'resuming', 'retiring', 'retired'].includes(status)) clearMemberRoles() })
 onBeforeUnmount(() => { clearInterval(polling); clearMemberRoles() })
 </script>
 

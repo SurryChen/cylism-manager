@@ -33,6 +33,7 @@ export const addMySQLClusterInstance = (id, data = {}) => api.post(`${clusterBas
 export const addMySQLClusterRouter = (id, data = {}) => api.post(`${clusterBase}/${segment(id)}/routers`, data)
 export const retireMySQLClusterRouter = id => api.post(`${clusterBase}/${segment(id)}/routers/scale-down`, {})
 export const repairMySQLClusterRouterPlacement = id => api.post(`${clusterBase}/${segment(id)}/routers/repair-placement`, {})
+export const runMySQLClusterLifecycle = (id, action, resourceName) => api.post(`${clusterBase}/${segment(id)}/lifecycle`, { action, confirm_resource_name: resourceName })
 export const deleteMySQLCluster = id => api.delete(`${clusterBase}/${segment(id)}`)
 
 export const getDatabases = () => api.get(base)

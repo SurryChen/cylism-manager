@@ -14,9 +14,9 @@
             <thead><tr><th>集群名称</th><th>Kubernetes 集群</th><th>数据库实例</th><th>Router 实例</th><th>状态</th><th class="actions">操作</th></tr></thead>
             <tbody><tr v-for="item in mysqlClusters" :key="item.id">
               <td class="cell-primary">{{ item.name }}</td><td>{{ clusterName(item.cluster_id) }}</td>
-              <td>{{ item.database_instances || item.database_nodes?.length || 0 }} <span class="cell-secondary">· {{ item.database_nodes?.length || 0 }} 台节点</span></td><td>{{ item.router_instances ?? item.router_nodes?.length ?? 0 }} <span v-if="item.router_nodes?.length" class="cell-secondary">· {{ item.router_nodes.length }} 台候选节点</span></td>
+              <td><span v-if="item.status !== 'draft'" title="就绪 / 配置">{{ item.online_instances || 0 }}/</span>{{ item.database_instances || item.database_nodes?.length || 0 }} <span class="cell-secondary">· {{ item.database_nodes?.length || 0 }} 台节点</span></td><td><span v-if="item.status !== 'draft'" title="就绪 / 配置">{{ item.router_ready || 0 }}/</span>{{ item.router_instances ?? item.router_nodes?.length ?? 0 }} <span v-if="item.router_nodes?.length" class="cell-secondary">· {{ item.router_nodes.length }} 台候选节点</span></td>
               <td><span class="badge" :class="item.status === 'ready' ? 'badge-online' : 'badge-offline'">{{ clusterStatusLabel(item.status) }}</span></td>
-              <td class="actions"><div class="row-actions"><button class="btn btn-sm" type="button" @click="router.push(`/cloud-services/databases/clusters/${item.id}`)">查看与配置</button><button v-if="item.status === 'draft'" class="icon-button danger-icon" type="button" title="删除未部署集群" aria-label="删除未部署集群" @click="deletingCluster = item"><Trash2 :size="15" /></button></div></td>
+              <td class="actions"><div class="row-actions"><button class="btn btn-sm" type="button" @click="router.push(`/cloud-services/databases/clusters/${item.id}`)">查看与配置</button><button v-if="['draft', 'paused', 'retired', 'missing'].includes(item.status)" class="icon-button danger-icon" type="button" title="删除集群记录" aria-label="删除集群记录" @click="deletingCluster = item"><Trash2 :size="15" /></button></div></td>
             </tr></tbody>
           </table>
         </div>
@@ -123,7 +123,7 @@
     </BaseModal>
 
     <ConfirmDialog :open="Boolean(deletingItem)" title="删除数据库实例" :message="deletingItem?.mode === 'managed' ? `将停止并删除 ${deletingItem?.name} 的 MySQL 工作负载、Service 和 Secret。PVC 及其中数据会保留。` : `确定移除 ${deletingItem?.name} 的平台记录？不会删除外部数据库。`" confirm-text="删除" :busy="deleting" @close="deletingItem = null" @cancel="deletingItem = null" @confirm="remove" />
-    <ConfirmDialog :open="Boolean(deletingCluster)" title="删除未部署集群" :message="`确定移除 ${deletingCluster?.name || ''} 的逻辑集群记录？`" confirm-text="删除" :busy="deleting" @close="deletingCluster = null" @cancel="deletingCluster = null" @confirm="removeCluster" />
+    <ConfirmDialog :open="Boolean(deletingCluster)" title="删除集群记录" :message="`确定移除 ${deletingCluster?.name || ''} 的平台记录及任务日志？服务器资源必须已经清退；保留的数据卷和根密钥不会删除。`" confirm-text="删除" :busy="deleting" @close="deletingCluster = null" @cancel="deletingCluster = null" @confirm="removeCluster" />
     <ConfirmDialog :open="Boolean(unbinding)" title="解除数据库绑定" message="将从上线模板中移除数据库连接变量；已发布的应用需要重新发布才能生效。" confirm-text="解除绑定" @close="unbinding = null" @cancel="unbinding = null" @confirm="unbind" />
     <DatabaseGatewayDialog :instance="gatewayItem" @close="gatewayItem = null" @updated="refreshInstances" />
     <ErrorNoticeModal :open="Boolean(readError || actionError)" :title="readError ? '读取数据库失败' : '操作失败'" :message="readError || actionError" teleport @close="readError = ''; actionError = ''" />
@@ -196,7 +196,7 @@ const applicationName = id => applications.value.find(item => Number(item.id) ==
 const instanceState = item => item.status
 const instanceError = item => item.status === 'error' ? item.last_error : ''
 const statusLabel = value => ({ pending: '待配置网关', checking: '测试中', disabling: '停用中', disabled: '已停用', degraded: '检查异常', registered: '已登记', creating: '创建中', starting: '启动中', ready: '可用', missing: '资源缺失', error: '失败' }[value] || '待检查')
-const clusterStatusLabel = value => ({ draft: '待配置', starting: '部署中', ready: '运行中', missing: '资源缺失', error: '异常', paused: '已暂停' }[value] || '待检查')
+const clusterStatusLabel = value => ({ draft: '待配置', starting: '部署中', ready: '运行中', missing: '资源缺失', error: '异常', paused: '已暂停', stopped: '已停用', stopping: '停用中', resuming: '恢复中', retiring: '清退中', retired: '已清退' }[value] || '待检查')
 async function load() {
   loading.value = true; readError.value = ''
   const results = await Promise.allSettled([getMySQLClusters(), getDatabases(), getClusters(), getApplications()])
