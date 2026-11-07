@@ -30,6 +30,8 @@ type SwitchConnection struct {
 }
 
 type Request struct {
+	CPULimit            string             `json:"cpu_limit,omitempty"`
+	MemoryLimit         string             `json:"memory_limit,omitempty"`
 	Kind                string             `json:"kind"`
 	Source              string             `json:"source"`
 	Target              string             `json:"target"`
@@ -65,6 +67,8 @@ type jobInput struct {
 
 func Phases(kind string) []string {
 	switch kind {
+	case "resize":
+		return []string{"更新资源上限与内存参数", "等待 MySQL 重启就绪"}
 	case "deploy":
 		return []string{"提交独立 MySQL 工作负载", "等待 MySQL 就绪"}
 	case "inspect":

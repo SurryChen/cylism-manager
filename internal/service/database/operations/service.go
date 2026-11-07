@@ -68,7 +68,7 @@ func AssertNoReplication(tx *gorm.DB, ref string) error {
 }
 
 func (s *Service) Queue(ctx context.Context, req Request) (*model.DatabaseOperation, error) {
-	if len(Phases(req.Kind)) == 0 || req.Kind == "deploy" {
+	if len(Phases(req.Kind)) == 0 || (req.Kind == "deploy" || req.Kind == "resize") {
 		return nil, fmt.Errorf("数据库操作类型无效")
 	}
 	if len(s.key) != 32 {
@@ -486,6 +486,9 @@ func (s *Service) reconcile(ctx context.Context, task *model.DatabaseOperation) 
 		message := "已终止；目标数据和迁移快照保留，复用目标前请检查部分导入或复制状态"
 		if task.Kind == "deploy" {
 			message = "已终止部署任务；已经创建的实例和数据卷保留，可刷新部署状态或重新部署"
+		}
+		if task.Kind == "resize" {
+			message = "已终止等待资源调整；已提交的资源和参数保留，不会回滚或停止实例。请查看运行状态后继续处理"
 		}
 		if task.Kind == "switch" && task.ConnectionsApplied {
 			message = "已终止任务；所选连接模板已经保存，请到应用页面核对并决定是否发布"

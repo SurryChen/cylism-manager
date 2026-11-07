@@ -48,7 +48,7 @@
       <div v-if="detailItem" class="database-form">
         <template v-if="detailTab === 'overview'">
           <div class="metadata-toolbar"><span class="cell-secondary">{{ metadataLoading ? '正在读取实例信息…' : `更新于 ${formatObservationTime(detailItem.metadata?.checked_at)}` }}</span><button class="icon-button" title="刷新实例信息" aria-label="刷新实例信息" :disabled="metadataLoading" @click="refreshMetadata"><RefreshCw :size="15" /></button></div>
-          <dl class="database-facts overview-facts"><div><dt>运行版本</dt><dd>{{ detailItem.metadata?.version || '尚未读取' }}<div v-if="detailItem.image" class="cell-secondary">镜像 {{ detailItem.image }}</div></dd></div><div><dt>读写模式</dt><dd>{{ detailItem.metadata ? (detailItem.metadata.read_only ? '只读' : '可写') : '尚未读取' }}</dd></div><div class="schema-fact"><dt>业务数据库</dt><dd>{{ detailItem.metadata ? (detailItem.metadata.schemas?.join('、') || '无业务库') : '尚未读取' }}</dd></div><div v-if="detailItem.mode === 'managed'"><dt>Pod 资源</dt><dd><a :href="podResourceLink(detailItem)" @click="detailItem = null">{{ detailItem.resource_name || `cylism-mysql-${detailItem.id}` }}-0 ↗</a></dd></div><div><dt>管理账号</dt><dd>{{ detailItem.mode === 'managed' ? 'root · 平台保管' : detailItem.admin_username || '未配置' }}</dd></div><div><dt>网络连接</dt><dd>{{ detailItem.private_gateway ? '私网网关' : '直接连接' }}<button v-if="detailItem.private_gateway?.last_error" class="diagnostic-link" @click="actionError = detailItem.private_gateway.last_error">查看诊断</button></dd></div><div v-if="detailItem.mode === 'managed'"><dt>资源上限</dt><dd>{{ detailItem.cpu_limit || '2' }} 核 / {{ detailItem.memory_limit || '2Gi' }}</dd></div><div v-if="detailItem.mode === 'managed'"><dt>数据卷</dt><dd>{{ detailItem.storage_size || '—' }}</dd></div></dl>
+          <dl class="database-facts overview-facts"><div><dt>运行版本</dt><dd>{{ detailItem.metadata?.version || '尚未读取' }}<div v-if="detailItem.image" class="cell-secondary">镜像 {{ detailItem.image }}</div></dd></div><div><dt>读写模式</dt><dd>{{ detailItem.metadata ? (detailItem.metadata.read_only ? '只读' : '可写') : '尚未读取' }}</dd></div><div class="schema-fact"><dt>业务数据库</dt><dd>{{ detailItem.metadata ? (detailItem.metadata.schemas?.join('、') || '无业务库') : '尚未读取' }}</dd></div><div v-if="detailItem.mode === 'managed'"><dt>Pod 资源</dt><dd><a :href="podResourceLink(detailItem)" @click="detailItem = null">{{ detailItem.resource_name || `cylism-mysql-${detailItem.id}` }}-0 ↗</a></dd></div><div><dt>管理账号</dt><dd>{{ detailItem.mode === 'managed' ? 'root · 平台保管' : detailItem.admin_username || '未配置' }}</dd></div><div><dt>网络连接</dt><dd>{{ detailItem.private_gateway ? '私网网关' : '直接连接' }}<button v-if="detailItem.private_gateway?.last_error" class="diagnostic-link" @click="actionError = detailItem.private_gateway.last_error">查看诊断</button></dd></div><div v-if="detailItem.mode === 'managed'"><dt>资源上限</dt><dd>{{ detailItem.cpu_limit || '2' }} 核 / {{ detailItem.memory_limit || '2Gi' }}<button class="diagnostic-link" @click="resourceItem = detailItem; detailItem = null">调整资源</button></dd></div><div v-if="detailItem.mode === 'managed'"><dt>数据卷</dt><dd>{{ detailItem.storage_size || '—' }}</dd></div></dl>
           <div class="instance-operation-list">
             <button class="instance-operation" @click="openCapability('migrate', `instance:${detailItem.id}`)"><span><strong>迁移数据</strong><span class="cell-secondary">选择目标实例，创建独立迁移任务</span></span><ChevronRight :size="16" /></button>
             <button class="instance-operation" @click="openCapability('replicate', `instance:${detailItem.id}`)"><span><strong>建立复制</strong><span class="cell-secondary">初始化从库并持续同步</span></span><ChevronRight :size="16" /></button>
@@ -56,6 +56,7 @@
           </div>
           <div class="detail-footer"><button class="btn btn-sm" @click="openTasks(`instance:${detailItem.id}`)">查看任务</button><button v-if="detailItem.mode === 'managed'" class="btn btn-sm" @click="inspect(detailItem)">刷新部署状态</button><button v-if="detailItem.mode === 'managed' && ['error', 'missing'].includes(detailItem.status)" class="btn btn-sm" @click="reconcile(detailItem)">重试部署</button><button class="icon-button danger-icon" title="删除实例" aria-label="删除实例" @click="deletingItem = detailItem"><Trash2 :size="15" /></button></div>
         </template>
+        <DatabaseInstanceMonitor v-else-if="detailTab === 'monitor' && detailItem.mode === 'managed'" :instance-id="detailItem.id" />
         <DatabaseMonitor v-else-if="detailTab === 'monitor'" :item="detailItem" @updated="updateDetail" />
         <template v-else-if="detailTab === 'network'">
           <dl class="database-facts"><div><dt>实例地址</dt><dd class="mono">{{ detailItem.host }}:{{ detailItem.port }}</dd></div><div v-if="detailItem.private_gateway"><dt>私网 Service</dt><dd class="mono">{{ detailItem.private_gateway.service_host }}:3306</dd></div><div v-if="detailItem.private_gateway"><dt>网关检查</dt><dd>{{ gatewayStatusLabel(detailItem.private_gateway.status) }}</dd></div></dl>
@@ -70,6 +71,7 @@
       </div>
     </BaseModal>
 
+    <DatabaseResourceDialog :instance="resourceItem" @close="resourceItem = null" @created="resourceItem = null; capabilityCreated($event)" />
     <DatabaseTerminalDialog :instance="terminalItem" :clusters="clusters" @close="terminalItem = null" />
     <BaseModal :open="capabilitiesOpen" title="数据库操作" size="medium" teleport @close="capabilitiesOpen = false"><div class="capability-menu"><button v-for="item in capabilityOptions" :key="item.kind" class="btn" @click="capabilitiesOpen = false; openCapability(item.kind)">{{ item.label }}</button></div></BaseModal>
     <BaseModal :open="Boolean(adminItem)" title="管理凭据" size="medium" teleport @close="closeAdmin"><div class="database-form"><p class="form-hint">填写实例上已存在的管理账号。用于明确发起的清单检查、迁移与复制任务，与业务账号分开；密码保存后加密保管，不回显。</p><label class="form-group"><span class="form-label">管理账号</span><input v-model.trim="adminForm.username" class="form-input" autocomplete="off"></label><label class="form-group"><span class="form-label">密码</span><input v-model="adminForm.password" class="form-input" type="password" autocomplete="new-password"></label></div><template #actions><button class="btn" :disabled="adminSaving" @click="closeAdmin">取消</button><button class="btn btn-primary" :disabled="adminSaving" @click="saveAdmin">{{ adminSaving ? '保存中...' : '保存管理凭据' }}</button></template></BaseModal>
@@ -136,6 +138,8 @@ import { ChevronRight, Database, Plus, RefreshCw, TerminalSquare, Trash2, Unlink
 import { useRouter } from 'vue-router'
 import DatabaseTerminalDialog from './DatabaseTerminalDialog.vue'
 import DatabaseMonitor from './DatabaseMonitor.vue'
+import DatabaseResourceDialog from './DatabaseResourceDialog.vue'
+import DatabaseInstanceMonitor from './DatabaseInstanceMonitor.vue'
 import DatabaseReplicationPanel from './DatabaseReplicationPanel.vue'
 import DatabaseApplicationsPanel from './DatabaseApplicationsPanel.vue'
 import DatabaseGatewayDialog from './DatabaseGatewayDialog.vue'
@@ -154,8 +158,8 @@ import SurfaceCard from '../../components/SurfaceCard.vue'
 
 const router = useRouter()
 const detailItem = ref(null), detailTab = ref('overview'), relations = ref([]), relationsLoading = ref(false)
-const terminalItem = ref(null)
-const detailTabs = computed(() => [{ id: 'overview', label: '概览' }, ...(detailItem.value?.mode === 'external' ? [{ id: 'monitor', label: '资源监控' }] : []), { id: 'network', label: '网络' }, { id: 'applications', label: '应用' }, { id: 'replication', label: '复制关系' }])
+const terminalItem = ref(null), resourceItem = ref(null)
+const detailTabs = computed(() => [{ id: 'overview', label: '概览' }, { id: 'monitor', label: '资源监控' }, { id: 'network', label: '网络' }, { id: 'applications', label: '应用' }, { id: 'replication', label: '复制关系' }])
 const capabilityOptions = [{ kind: 'deploy', label: '部署独立 MySQL' }, { kind: 'migrate', label: '迁移数据' }, { kind: 'replicate', label: '建立复制' }, { kind: 'detach', label: '解除复制' }, { kind: 'switch', label: '切换应用连接' }]
 const capabilitiesOpen = ref(false), capabilityKind = ref(''), capabilitySource = ref(''), capabilityTarget = ref('')
 const tasksOpen = ref(false), tasksResource = ref(''), selectedTaskID = ref(null)

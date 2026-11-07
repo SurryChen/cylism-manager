@@ -1,11 +1,14 @@
 package cloud
 
 import (
+	"context"
 	"strconv"
 	"strings"
+	"time"
 
 	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 	cloudservice "github.com/cylism/cylism-manager/internal/service/cloud"
+	"github.com/cylism/cylism-manager/internal/service/database"
 	"github.com/gin-gonic/gin"
 )
 
@@ -48,6 +51,26 @@ func (h *DatabaseHandler) ConfigureDatabaseMonitor(c *gin.Context) {
 func (h *DatabaseHandler) DatabaseMetrics(c *gin.Context) {
 	item, ok := h.get(c)
 	if !ok {
+		return
+	}
+	if item.Mode == "managed" {
+		if h.client == nil {
+			apiShared.K8sUnavailable(c)
+			return
+		}
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
+		defer cancel()
+		client, err := h.client(ctx, item.ClusterID)
+		if err != nil {
+			apiShared.ValidationError(c, err.Error())
+			return
+		}
+		usage, err := database.ReadInstanceUsage(ctx, client, item)
+		if err != nil {
+			apiShared.ValidationError(c, err.Error())
+			return
+		}
+		apiShared.Success(c, usage)
 		return
 	}
 	if h.cloudMetrics == nil || item.CloudConnectionID == 0 {

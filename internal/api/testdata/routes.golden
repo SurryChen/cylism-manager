@@ -540,6 +540,7 @@ PUT /api/cloud/databases/:id/admin
 PUT /api/cloud/databases/:id/connection
 PUT /api/cloud/databases/:id/gateway
 PUT /api/cloud/databases/:id/monitor
+PUT /api/cloud/databases/:id/resources
 PUT /api/cloud/mysql-clusters/:id/config
 PUT /api/cloud/mysql-clusters/:id/resource-pool
 PUT /api/cloud/mysql-clusters/:id/topology

@@ -145,3 +145,13 @@ it('keeps instance information available and links the exact pod without creatin
   expect(wrapper.text()).toContain('8.0.45')
   expect(api.createDatabaseOperation).not.toHaveBeenCalled()
 })
+
+it('offers resource adjustment and live monitoring for standalone instances', async () => {
+  const wrapper = await render({ ...endpoint, mode: 'managed', cluster_id: 2, node_name: 'ubuntudev', cpu_limit: '1', memory_limit: '1Gi' })
+  await button(wrapper, '查看与配置').trigger('click'); await flushPromises()
+  expect(button(wrapper, '资源监控')).toBeDefined()
+  await button(wrapper, '调整资源').trigger('click'); await flushPromises()
+  expect(wrapper.get('[aria-label="CPU 上限"]').element.value).toBe('1')
+  expect(wrapper.get('[aria-label="内存上限"]').element.value).toBe('1Gi')
+  expect(button(wrapper, '保存并重启')).toBeDefined()
+})

@@ -68,3 +68,5 @@ export const deleteDatabaseSession = (id, sessionID) => api.delete(`${base}/${se
 export const getDatabaseMetadata = id => api.get(`${base}/${segment(id)}/metadata`)
 export const refreshDatabaseMetadata = id => api.post(`${base}/${segment(id)}/metadata/refresh`, {})
 export const refreshDatabaseReplications = id => api.post(`${base}/${segment(id)}/replications/refresh`, {})
+
+export const updateDatabaseResources = (id, payload) => api.put(`${base}/${segment(id)}/resources`, payload)

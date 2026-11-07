@@ -45,6 +45,32 @@ func (s *Service) executePhase(ctx context.Context, task *model.DatabaseOperatio
 	if err != nil {
 		return false, "", err
 	}
+	if task.Kind == "resize" {
+		_, id, err := ParseReference(task.Target)
+		if err != nil {
+			return false, "", err
+		}
+		var item model.DatabaseInstance
+		if err = s.store.DB().First(&item, id).Error; err != nil {
+			return false, "", err
+		}
+		if task.Phase == 0 {
+			if err = database.ResizeInstance(ctx, client, &item, req.CPULimit, req.MemoryLimit, fmt.Sprint(task.ID)); err != nil {
+				return false, "", err
+			}
+			err = s.store.DB().Model(&item).Updates(map[string]any{"cpu_limit": req.CPULimit, "memory_limit": req.MemoryLimit, "status": "starting"}).Error
+			return true, "", err
+		}
+		ready, err := database.InstanceResizeReady(ctx, client, id, fmt.Sprint(task.ID))
+		if err != nil {
+			return false, "", err
+		}
+		if ready {
+			err = s.store.DB().Model(&item).Updates(map[string]any{"status": "ready", "last_error": ""}).Error
+		}
+		return ready, "等待新的 MySQL Pod 就绪；资源不足时请检查节点和 Pod 事件", err
+	}
+
 	if task.Kind == "deploy" {
 		_, id, err := ParseReference(task.Target)
 		if err != nil {
@@ -346,7 +372,7 @@ func errorMessage(code string) string {
 }
 
 func (s *Service) removeSecrets(ctx context.Context, task *model.DatabaseOperation) error {
-	if task.Kind == "deploy" {
+	if task.Kind == "deploy" || task.Kind == "resize" {
 		return nil
 	}
 	client, err := s.client(ctx, task.ClusterID)
@@ -367,6 +393,9 @@ func (s *Service) removeSecrets(ctx context.Context, task *model.DatabaseOperati
 	return secrets.Delete(ctx, secret.Name, metav1.DeleteOptions{})
 }
 func (s *Service) cleanupJobs(ctx context.Context, task *model.DatabaseOperation) error {
+	if task.Kind == "resize" {
+		return nil
+	}
 	if task.Kind == "deploy" {
 		client, err := s.client(ctx, task.ClusterID)
 		if err != nil {
@@ -471,7 +500,7 @@ func (s *Service) settleReplication(ctx context.Context, task *model.DatabaseOpe
 }
 
 func (s *Service) stopJobs(ctx context.Context, task *model.DatabaseOperation, keepAudit bool) error {
-	if task.Kind == "deploy" {
+	if task.Kind == "deploy" || task.Kind == "resize" {
 		return nil
 	}
 	client, err := s.client(ctx, task.ClusterID)

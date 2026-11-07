@@ -160,6 +160,7 @@ func registerDeliveryRoutes(r *gin.Engine, apiGroup *gin.RouterGroup, h delivery
 		databases.PUT("/:id/admin", h.database.UpdateDatabaseAdmin)
 		databases.PUT("/:id/monitor", h.database.ConfigureDatabaseMonitor)
 		databases.GET("/:id/metrics", h.database.DatabaseMetrics)
+		databases.PUT("/:id/resources", h.database.UpdateDatabaseResources)
 		databases.POST("/:id/sessions", h.database.CreateDatabaseSession)
 		databases.GET("/:id/sessions/:sessionID/terminal", h.database.DatabaseTerminal)
 		databases.DELETE("/:id/sessions/:sessionID", h.database.DeleteDatabaseSession)

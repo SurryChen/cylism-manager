@@ -24,7 +24,7 @@
       </template>
     </div>
   </BaseModal>
-  <Teleport to="body"><ConfirmDialog :open="confirmCancel" title="终止数据库任务" message="将停止执行 Pod 并核对已建立的复制通道，完成后释放资源锁。数据、实例和快照会保留；已建立的复制继续运行，可另行解除。初始化中断的目标需要检查后再使用。" confirm-text="终止任务" :busy="acting" @cancel="confirmCancel = false" @confirm="control('cancel')" /></Teleport>
+  <Teleport to="body"><ConfirmDialog :open="confirmCancel" title="终止数据库任务" :message="detail?.task.kind === 'resize' ? '终止任务会停止等待就绪，已经提交的资源和参数保留；不会回滚或停止实例。' : '将停止执行 Pod 并核对已建立的复制通道，完成后释放资源锁。数据、实例和快照会保留；已建立的复制继续运行，可另行解除。初始化中断的目标需要检查后再使用。'" confirm-text="终止任务" :busy="acting" @cancel="confirmCancel = false" @confirm="control('cancel')" /></Teleport>
   <ErrorNoticeModal :open="Boolean(error)" :message="error" teleport @close="error = ''" />
 </template>
 
@@ -45,7 +45,7 @@ const emit = defineEmits(['close', 'updated'])
 const tasks = ref([]), total = ref(0), offset = ref(0), limit = ref(10), status = ref(''), detail = ref(null), selected = ref(null), loading = ref(false), acting = ref(false), error = ref(''), confirmCancel = ref(false)
 let generation = 0, selectionGeneration = 0
 const statusOptions = [{ value: '', label: '全部状态' }, { value: 'queued', label: '排队中' }, { value: 'running', label: '执行中' }, { value: 'paused', label: '已暂停' }, { value: 'cancelling', label: '终止中' }, { value: 'succeeded', label: '已完成' }, { value: 'failed', label: '失败' }, { value: 'cancelled', label: '已终止' }]
-const kindLabel = kind => ({ deploy: '部署 MySQL', inspect: '检查实例', migrate: '迁移数据', replicate: '建立复制', detach: '解除复制', replication_check: '检查复制', replication_discover: '发现已有复制', switch: '更新应用连接模板' }[kind] || kind)
+const kindLabel = kind => ({ resize: '调整 MySQL 资源', deploy: '部署 MySQL', inspect: '检查实例', migrate: '迁移数据', replicate: '建立复制', detach: '解除复制', replication_check: '检查复制', replication_discover: '发现已有复制', switch: '更新应用连接模板' }[kind] || kind)
 const statusLabel = task => ({ queued: '排队中', running: task.pause_requested ? '待暂停' : '执行中', paused: '已暂停', failed: '失败 · 待处理', succeeded: '已完成', cancelling: '终止中', cancelled: '已终止' }[task.status] || task.status)
 const resourceName = ref => !ref ? '—' : props.resources.find(item => item.ref === ref)?.name || ref
 const clusterName = id => props.clusters.find(item => item.id === id)?.name || `集群 ${id}`
