@@ -3,7 +3,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import Databases from './Databases.vue'
 import SelectMenu from '../../components/SelectMenu.vue'
 
-const api = vi.hoisted(() => ({ getDatabases: vi.fn(), getMySQLClusters: vi.fn(), createDatabase: vi.fn(), updateDatabaseConnection: vi.fn(), getDatabaseBindings: vi.fn(), getDatabaseApplications: vi.fn(), bindDatabase: vi.fn(), getDatabaseReplications: vi.fn() }))
+const api = vi.hoisted(() => ({ getDatabases: vi.fn(), getMySQLClusters: vi.fn(), createDatabase: vi.fn(), updateDatabaseConnection: vi.fn(), getDatabaseBindings: vi.fn(), getDatabaseApplications: vi.fn(), bindDatabase: vi.fn(), getDatabaseReplications: vi.fn(), getDatabaseMetadata: vi.fn(), refreshDatabaseMetadata: vi.fn(), refreshDatabaseReplications: vi.fn(), createDatabaseOperation: vi.fn() }))
 vi.mock('../../api/databases.js', async importOriginal => ({ ...await importOriginal(), ...api }))
 vi.mock('../../api/applications.js', () => ({ getApplications: vi.fn().mockResolvedValue([{ id: 13, name: 'app' }]), getDeploymentTemplates: vi.fn().mockResolvedValue([{ id: 101, name: '默认模板' }]) }))
 vi.mock('../../api/clusters.js', () => ({ getClusters: vi.fn().mockResolvedValue([]) }))
@@ -26,6 +26,9 @@ async function openApplications(wrapper) {
 }
 beforeEach(() => {
   vi.clearAllMocks()
+  api.getDatabaseMetadata.mockResolvedValue({ metadata: { version: '8.0.44', read_only: true, schemas: ['app_db'], checked_at: '2026-11-07T01:00:00Z' } })
+  api.refreshDatabaseMetadata.mockResolvedValue({ metadata: { version: '8.0.45', read_only: true, schemas: ['app_db'], checked_at: '2026-11-07T02:00:00Z' } })
+  api.refreshDatabaseReplications.mockResolvedValue([])
   api.getMySQLClusters.mockResolvedValue([])
   api.createDatabase.mockResolvedValue({ ...endpoint })
   api.updateDatabaseConnection.mockResolvedValue({ ...endpoint, database_name: 'app_db', username: 'app_user' })
@@ -124,7 +127,21 @@ it('offers discovery without claiming that an unregistered replica does not exis
   expect(wrapper.text()).toContain('尚未登记复制关系')
   expect(wrapper.text()).toContain('不代表数据库没有运行复制')
   await button(wrapper, '发现已有复制').trigger('click'); await flushPromises()
-  expect(wrapper.text()).toContain('不会初始化数据或修改复制通道')
+  expect(api.refreshDatabaseReplications).toHaveBeenCalledWith(1)
+  expect(api.createDatabaseOperation).not.toHaveBeenCalled()
   expect(wrapper.findAll('input[type=password]')).toHaveLength(0)
-  expect(wrapper.getComponent({ name: 'DatabaseCapabilityDialog' }).props('source')).toBe('instance:1')
+  expect(wrapper.getComponent({ name: 'DatabaseCapabilityDialog' }).props('kind')).toBe('')
+})
+
+it('keeps instance information available and links the exact pod without creating inspection tasks', async () => {
+  const wrapper = await render({ ...endpoint, mode: 'managed', cluster_id: 2, namespace: 'db', resource_name: 'mysql-replica', image: 'mysql:8.0.44' })
+  await button(wrapper, '查看与配置').trigger('click'); await flushPromises()
+  expect(wrapper.text()).toContain('8.0.44')
+  expect(wrapper.text()).toContain('只读')
+  expect(wrapper.text()).toContain('app_db')
+  expect(wrapper.get('a[href*="pod=mysql-replica-0"]').attributes('href')).toBe('#/cluster/2/resources?tab=workloads&namespace=db&pod=mysql-replica-0')
+  expect(api.refreshDatabaseMetadata).not.toHaveBeenCalled()
+  await wrapper.get('[aria-label="刷新实例信息"]').trigger('click'); await flushPromises()
+  expect(wrapper.text()).toContain('8.0.45')
+  expect(api.createDatabaseOperation).not.toHaveBeenCalled()
 })

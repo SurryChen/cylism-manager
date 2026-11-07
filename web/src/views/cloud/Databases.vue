@@ -47,9 +47,9 @@
       <SectionTabsHeader title="实例详情" :tabs="detailTabs" :active-tab="detailTab" :sticky="false" compact @select="detailTab = $event" />
       <div v-if="detailItem" class="database-form">
         <template v-if="detailTab === 'overview'">
-          <dl class="database-facts overview-facts"><div><dt>管理账号</dt><dd>{{ detailItem.mode === 'managed' ? 'root · 平台保管' : detailItem.admin_username || '未配置' }}</dd></div><div><dt>网络连接</dt><dd>{{ detailItem.private_gateway ? '私网网关' : '直接连接' }}<button v-if="detailItem.private_gateway?.last_error" class="diagnostic-link" @click="actionError = detailItem.private_gateway.last_error">查看诊断</button></dd></div><div v-if="detailItem.mode === 'managed'"><dt>资源上限</dt><dd>{{ detailItem.cpu_limit || '2' }} 核 / {{ detailItem.memory_limit || '2Gi' }}</dd></div><div v-if="detailItem.mode === 'managed'"><dt>数据卷</dt><dd>{{ detailItem.storage_size || '—' }}</dd></div></dl>
+          <div class="metadata-toolbar"><span class="cell-secondary">{{ metadataLoading ? '正在读取实例信息…' : `更新于 ${formatObservationTime(detailItem.metadata?.checked_at)}` }}</span><button class="icon-button" title="刷新实例信息" aria-label="刷新实例信息" :disabled="metadataLoading" @click="refreshMetadata"><RefreshCw :size="15" /></button></div>
+          <dl class="database-facts overview-facts"><div><dt>运行版本</dt><dd>{{ detailItem.metadata?.version || '尚未读取' }}<div v-if="detailItem.image" class="cell-secondary">镜像 {{ detailItem.image }}</div></dd></div><div><dt>读写模式</dt><dd>{{ detailItem.metadata ? (detailItem.metadata.read_only ? '只读' : '可写') : '尚未读取' }}</dd></div><div class="schema-fact"><dt>业务数据库</dt><dd>{{ detailItem.metadata ? (detailItem.metadata.schemas?.join('、') || '无业务库') : '尚未读取' }}</dd></div><div v-if="detailItem.mode === 'managed'"><dt>Pod 资源</dt><dd><a :href="podResourceLink(detailItem)" @click="detailItem = null">{{ detailItem.resource_name || `cylism-mysql-${detailItem.id}` }}-0 ↗</a></dd></div><div><dt>管理账号</dt><dd>{{ detailItem.mode === 'managed' ? 'root · 平台保管' : detailItem.admin_username || '未配置' }}</dd></div><div><dt>网络连接</dt><dd>{{ detailItem.private_gateway ? '私网网关' : '直接连接' }}<button v-if="detailItem.private_gateway?.last_error" class="diagnostic-link" @click="actionError = detailItem.private_gateway.last_error">查看诊断</button></dd></div><div v-if="detailItem.mode === 'managed'"><dt>资源上限</dt><dd>{{ detailItem.cpu_limit || '2' }} 核 / {{ detailItem.memory_limit || '2Gi' }}</dd></div><div v-if="detailItem.mode === 'managed'"><dt>数据卷</dt><dd>{{ detailItem.storage_size || '—' }}</dd></div></dl>
           <div class="instance-operation-list">
-            <button class="instance-operation" @click="openCapability('inspect', `instance:${detailItem.id}`)"><span><strong>检查实例</strong><span class="cell-secondary">读取版本、业务库与只读状态</span></span><ChevronRight :size="16" /></button>
             <button class="instance-operation" @click="openCapability('migrate', `instance:${detailItem.id}`)"><span><strong>迁移数据</strong><span class="cell-secondary">选择目标实例，创建独立迁移任务</span></span><ChevronRight :size="16" /></button>
             <button class="instance-operation" @click="openCapability('replicate', `instance:${detailItem.id}`)"><span><strong>建立复制</strong><span class="cell-secondary">初始化从库并持续同步</span></span><ChevronRight :size="16" /></button>
             <button v-if="detailItem.mode === 'external'" class="instance-operation" @click="openAdmin(detailItem)"><span><strong>管理凭据</strong><span class="cell-secondary">更新平台保存的实例管理账号</span></span><ChevronRight :size="16" /></button>
@@ -66,7 +66,7 @@
           <dl class="database-facts"><div><dt>默认业务连接</dt><dd>{{ hasConnection(detailItem) ? detailItem.database_name + ' / ' + detailItem.username : '未配置业务连接' }}</dd></div></dl>
           <div class="capability-actions"><button class="btn" @click="openConnection(detailItem); detailItem = null">业务连接</button><button class="btn" @click="openBindings(detailItem); detailItem = null">应用绑定</button><button class="btn" @click="openCapability('switch', '', `instance:${detailItem.id}`)">切换应用连接</button></div>
         </template>
-        <DatabaseReplicationPanel v-else-if="detailTab === 'replication'" :relations="detailRelations" :resources="resources" :loading="relationsLoading" @discover="openDiscovery" @check="openCapability('replication_check', '', $event.target)" @detach="openCapability('detach', '', $event.target)" />
+        <DatabaseReplicationPanel v-else-if="detailTab === 'replication'" :relations="detailRelations" :resources="resources" :loading="relationsLoading" :refreshing="replicationRefreshing" @discover="refreshRelations" @check="refreshRelations" @detach="openCapability('detach', '', $event.target)" />
       </div>
     </BaseModal>
 
@@ -131,8 +131,8 @@
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref } from 'vue'
-import { ChevronRight, Database, Plus, TerminalSquare, Trash2, Unlink } from 'lucide-vue-next'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { ChevronRight, Database, Plus, RefreshCw, TerminalSquare, Trash2, Unlink } from 'lucide-vue-next'
 import { useRouter } from 'vue-router'
 import DatabaseTerminalDialog from './DatabaseTerminalDialog.vue'
 import DatabaseMonitor from './DatabaseMonitor.vue'
@@ -141,7 +141,7 @@ import DatabaseApplicationsPanel from './DatabaseApplicationsPanel.vue'
 import DatabaseGatewayDialog from './DatabaseGatewayDialog.vue'
 import { getApplications, getDeploymentTemplates } from '../../api/applications.js'
 import { getClusters } from '../../api/clusters.js'
-import { bindDatabase, createDatabase, createMySQLCluster, deleteDatabase, deleteMySQLCluster, getDatabaseBindings, getDatabases, getMySQLClusters, inspectDatabase, reconcileDatabase, unbindDatabase, updateDatabaseConnection, updateDatabaseAdmin, getDatabaseReplications } from '../../api/databases.js'
+import { bindDatabase, createDatabase, createMySQLCluster, deleteDatabase, deleteMySQLCluster, getDatabaseBindings, getDatabases, getMySQLClusters, inspectDatabase, reconcileDatabase, unbindDatabase, updateDatabaseConnection, updateDatabaseAdmin, getDatabaseReplications, getDatabaseMetadata, refreshDatabaseMetadata, refreshDatabaseReplications } from '../../api/databases.js'
 import DatabaseCapabilityDialog from './DatabaseCapabilityDialog.vue'
 import DatabaseTaskDialog from './DatabaseTaskDialog.vue'
 import BaseModal from '../../components/BaseModal.vue'
@@ -156,16 +156,53 @@ const router = useRouter()
 const detailItem = ref(null), detailTab = ref('overview'), relations = ref([]), relationsLoading = ref(false)
 const terminalItem = ref(null)
 const detailTabs = computed(() => [{ id: 'overview', label: '概览' }, ...(detailItem.value?.mode === 'external' ? [{ id: 'monitor', label: '资源监控' }] : []), { id: 'network', label: '网络' }, { id: 'applications', label: '应用' }, { id: 'replication', label: '复制关系' }])
-const capabilityOptions = [{ kind: 'deploy', label: '部署独立 MySQL' }, { kind: 'inspect', label: '检查实例' }, { kind: 'migrate', label: '迁移数据' }, { kind: 'replicate', label: '建立复制' }, { kind: 'replication_discover', label: '发现已有复制' }, { kind: 'detach', label: '解除复制' }, { kind: 'replication_check', label: '检查复制' }, { kind: 'switch', label: '切换应用连接' }]
+const capabilityOptions = [{ kind: 'deploy', label: '部署独立 MySQL' }, { kind: 'migrate', label: '迁移数据' }, { kind: 'replicate', label: '建立复制' }, { kind: 'detach', label: '解除复制' }, { kind: 'switch', label: '切换应用连接' }]
 const capabilitiesOpen = ref(false), capabilityKind = ref(''), capabilitySource = ref(''), capabilityTarget = ref('')
 const tasksOpen = ref(false), tasksResource = ref(''), selectedTaskID = ref(null)
 const adminItem = ref(null), adminSaving = ref(false), adminForm = reactive({ username: '', password: '' })
 const resources = computed(() => [...mysqlClusters.value.map(item => ({ ref: `cluster:${item.id}`, name: item.name, location: 'Operator 集群' })), ...instances.value.map(item => ({ ref: `instance:${item.id}`, name: item.name, location: item.mode === 'managed' ? item.node_name : '外部 MySQL / RDS' }))])
 const detailRelations = computed(() => relations.value.filter(item => [item.source, item.target].includes(`instance:${detailItem.value?.id}`)))
 async function loadRelations() { relationsLoading.value = true; try { relations.value = await getDatabaseReplications() } catch (error) { actionError.value = error.message || '读取复制关系失败' } finally { relationsLoading.value = false } }
-function openDiscovery() { const item = detailItem.value; const ref = `instance:${item.id}`; openCapability('replication_discover', item.mode === 'managed' ? '' : ref, item.mode === 'managed' ? ref : '') }
+
 function updateDetail(item) { Object.assign(detailItem.value, item); const row = instances.value.find(row => row.id === item.id); if (row) Object.assign(row, item) }
-function openDetails(item) { detailItem.value = item; detailTab.value = 'overview'; loadRelations() }
+const metadataLoading = ref(false), replicationRefreshing = ref(false)
+let detailGeneration = 0
+async function openDetails(item) {
+  const generation = ++detailGeneration
+  detailItem.value = item; detailTab.value = 'overview'; loadRelations()
+  metadataLoading.value = true
+  try {
+    let latest = await getDatabaseMetadata(item.id)
+    if (generation !== detailGeneration || detailItem.value?.id !== item.id) return
+    Object.assign(item, latest)
+    if (!item.metadata) {
+      latest = await refreshDatabaseMetadata(item.id)
+      if (generation === detailGeneration && detailItem.value?.id === item.id) Object.assign(item, latest)
+    }
+  } catch (error) { if (generation === detailGeneration && detailItem.value?.id === item.id) actionError.value = error.message || '读取实例信息失败' }
+  finally { if (generation === detailGeneration) metadataLoading.value = false }
+}
+async function refreshMetadata() {
+  if (!detailItem.value || metadataLoading.value) return
+  const item = detailItem.value
+  metadataLoading.value = true
+  try { const latest = await refreshDatabaseMetadata(item.id); Object.assign(item, latest) }
+  catch (error) { actionError.value = error.message || '刷新实例信息失败，已保留上次记录' }
+  finally { metadataLoading.value = false }
+}
+async function refreshRelations() {
+  if (!detailItem.value || replicationRefreshing.value) return
+  const item = detailItem.value
+  replicationRefreshing.value = true
+  try {
+    const latest = await refreshDatabaseReplications(item.id)
+    relations.value = [...relations.value.filter(row => row.source !== `instance:${item.id}` && row.target !== `instance:${item.id}`), ...latest]
+  } catch (error) { actionError.value = error.message || '刷新复制关系失败，已保留上次记录' }
+  finally { replicationRefreshing.value = false }
+}
+const formatObservationTime = value => value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '尚未读取'
+function podResourceLink(item) { const query = new URLSearchParams({ tab: 'workloads', namespace: item.namespace || 'cylism-databases', pod: `${item.resource_name || `cylism-mysql-${item.id}`}-0` }); return `#/cluster/${item.cluster_id}/resources?${query}` }
+watch(detailTab, async tab => { if (tab === 'replication' && detailItem.value) { await loadRelations(); if (!detailRelations.value.length) await refreshRelations() } })
 function openCapabilities() { capabilitiesOpen.value = true; loadRelations() }
 function openCapability(kind, source = '', target = '') { if (['detach', 'replication_check'].includes(kind)) loadRelations(); detailItem.value = null; capabilitySource.value = source; capabilityTarget.value = target; capabilityKind.value = kind }
 function openTasks(resource = '', taskID = null) { detailItem.value = null; tasksResource.value = resource; selectedTaskID.value = taskID; tasksOpen.value = true }
@@ -271,6 +308,7 @@ onMounted(load)
 .instance-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; font-size: 12px; color: var(--text-secondary); }
 .database-facts { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 24px; margin: 0; padding: 4px 0 24px; }
 .database-facts div { min-width: 0; }.database-facts dt { color: var(--text-secondary); font-size: 12px; margin-bottom: 8px; }.database-facts dd { margin: 0; font-size: 14px; overflow-wrap: anywhere; }
+.metadata-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; }.metadata-toolbar .cell-secondary { font-size: 12px; }.database-facts a { color: var(--action-primary); text-decoration: none; }.database-facts dd .cell-secondary { margin-top: 6px; font-size: 11px; }
 .overview-facts { border-bottom: 1px solid var(--border-muted); }
 .instance-operation-list { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); column-gap: 32px; }
 .instance-operation { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 20px 0; border: 0; border-bottom: 1px solid var(--border-muted); background: transparent; color: var(--text-secondary); text-align: left; cursor: pointer; }

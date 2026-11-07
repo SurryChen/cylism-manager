@@ -124,6 +124,7 @@ GET /api/cloud/databases/:id/applications
 GET /api/cloud/databases/:id/bindings
 GET /api/cloud/databases/:id/gateway
 GET /api/cloud/databases/:id/gateway/tasks/:taskID/logs
+GET /api/cloud/databases/:id/metadata
 GET /api/cloud/databases/:id/metrics
 GET /api/cloud/databases/:id/sessions/:sessionID/terminal
 GET /api/cloud/databases/execution-nodes
@@ -364,7 +365,9 @@ POST /api/cloud/connections/:id/object-storage/containers/:container/objects
 POST /api/cloud/databases
 POST /api/cloud/databases/:id/bindings
 POST /api/cloud/databases/:id/gateway/actions
+POST /api/cloud/databases/:id/metadata/refresh
 POST /api/cloud/databases/:id/reconcile
+POST /api/cloud/databases/:id/replications/refresh
 POST /api/cloud/databases/:id/sessions
 POST /api/cloud/databases/operations
 POST /api/cloud/databases/operations/:taskID/actions

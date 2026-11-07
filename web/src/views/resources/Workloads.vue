@@ -195,8 +195,9 @@
 </template>
 
 <script setup>
-import { computed, ref, onMounted, onErrorCaptured } from 'vue'
+import { computed, ref, watch, onMounted, onErrorCaptured } from 'vue'
 import { Filter, RefreshCw, RotateCcw, Search, SquareTerminal, X } from 'lucide-vue-next'
+import { useRoute } from 'vue-router'
 import * as legacyK8s from '../../api/kubernetes.js'
 import { useAsyncResource } from '../../composables/useAsyncResource.js'
 import OverflowTooltip from '../../components/OverflowTooltip.vue'
@@ -233,6 +234,7 @@ const imageSubmitting = ref(false)
 const rollbackSubmitting = ref(false)
 const expandedDeploy = ref('')
 const deployPods = ref({})
+const workloadRoute = useRoute()
 const podNamespaceFilter = ref('')
 const podNodeFilter = ref('')
 const podStatusFilter = ref('')
@@ -240,6 +242,10 @@ const podNameFilter = ref('')
 const podRestartsOnly = ref(false)
 const podFiltersOpen = ref(false)
 const terminalPod = ref(null)
+watch(() => [workloadRoute?.query?.namespace, workloadRoute?.query?.pod], ([namespace, pod]) => {
+  if (typeof namespace === 'string') podNamespaceFilter.value = namespace
+  if (typeof pod === 'string') { podNameFilter.value = pod; activeTab.value = 'pods' }
+}, { immediate: true })
 
 const scaleDialog = ref(null)
 const imageDialog = ref(null)

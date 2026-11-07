@@ -30,6 +30,7 @@ type Service struct {
 	execute func(context.Context, *model.DatabaseOperation, Request) (bool, string, error)
 	cleanup func(context.Context, *model.DatabaseOperation) error
 	settle  func(context.Context, *model.DatabaseOperation) (bool, error)
+	query   func(context.Context, *k8s.Client, string, string, *endpoint, string) ([]map[string]string, error)
 }
 
 func New(s *store.Store, key []byte, client ClientFactory) *Service {
@@ -37,6 +38,7 @@ func New(s *store.Store, key []byte, client ClientFactory) *Service {
 	service.execute = service.executePhase
 	service.cleanup = service.cleanupJobs
 	service.settle = service.settleReplication
+	service.query = queryMySQLPod
 	return service
 }
 
@@ -554,6 +556,11 @@ func (s *Service) reconcile(ctx context.Context, task *model.DatabaseOperation) 
 		latest.Progress = ""
 		latest.Result = result
 		if latest.Phase >= len(Phases(latest.Kind)) {
+			if latest.Kind == "inspect" {
+				if e := saveInspectionMetadata(tx, &latest); e != nil {
+					return e
+				}
+			}
 			if latest.Kind == "replication_discover" || latest.Kind == "replication_check" || (latest.Kind == "replicate" && result != "") {
 				if e := recordReplicationObservation(tx, &latest, result); e != nil {
 					return e

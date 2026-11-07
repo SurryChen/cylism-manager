@@ -47,3 +47,18 @@ describe('durable database task controls', () => {
     finish({}); await flushPromises()
   })
 })
+
+it('paginates tasks and replaces the list with a separate detail view', async () => {
+  api.getDatabaseOperations.mockResolvedValue({ items: [{ id: 7, kind: 'migrate', status: 'running' }], total: 24 })
+  const wrapper = mount(DatabaseTaskDialog, { props: { open: true }, global: { stubs: { Teleport: true } } }); wrappers.push(wrapper)
+  await flushPromises()
+  expect(api.getDatabaseOperations).toHaveBeenLastCalledWith({ resource: '', status: '', limit: 10, offset: 0 })
+  await button(wrapper, '下一页').trigger('click'); await flushPromises()
+  expect(api.getDatabaseOperations).toHaveBeenLastCalledWith({ resource: '', status: '', limit: 10, offset: 10 })
+  await button(wrapper, '查看').trigger('click'); await flushPromises()
+  expect(wrapper.find('.task-table').exists()).toBe(false)
+  expect(wrapper.text()).toContain('返回任务列表')
+  await button(wrapper, '返回任务列表').trigger('click'); await flushPromises()
+  expect(wrapper.find('.task-table').exists()).toBe(true)
+  expect(api.getDatabaseOperations).toHaveBeenLastCalledWith({ resource: '', status: '', limit: 10, offset: 10 })
+})

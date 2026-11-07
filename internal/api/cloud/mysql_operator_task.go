@@ -228,16 +228,20 @@ func (h *DatabaseHandler) syncMySQLOperatorUninstallTask(item *model.MySQLCluste
 		active = true
 		if installation.State == "missing" {
 			task.Status = "success"
-			task.LastProgress = "MySQL Operator 已卸载"
-			installation.Progress = task.LastProgress
+			installation.Progress = "MySQL Operator 已卸载"
 		} else {
+			if installation.State != "cancelling" {
+				installation.Progress = "正在卸载 MySQL Operator，等待 Helm 清理资源"
+			}
 			installation.State = "cancelling"
-			installation.Progress = "正在卸载 MySQL Operator，等待 Helm 清理资源"
 			installation.CanUninstall = false
-			return nil
+			installation.CanCancel = false
 		}
-		if err := tx.Create(&model.MySQLClusterTaskLog{TaskID: task.ID, Message: task.LastProgress}).Error; err != nil {
-			return err
+		if installation.Progress != task.LastProgress {
+			if err := tx.Create(&model.MySQLClusterTaskLog{TaskID: task.ID, Message: installation.Progress}).Error; err != nil {
+				return err
+			}
+			task.LastProgress = installation.Progress
 		}
 		return tx.Save(&task).Error
 	})

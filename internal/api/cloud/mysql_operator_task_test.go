@@ -10,6 +10,7 @@ import (
 
 	"github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
+	database "github.com/cylism/cylism-manager/internal/service/database"
 	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/gin-gonic/gin"
 	appsv1 "k8s.io/api/apps/v1"
@@ -307,7 +308,7 @@ func TestUninstallOperatorTracksHelmCleanup(t *testing.T) {
 	}
 	var logs []model.MySQLClusterTaskLog
 	h.store.DB().Where("task_id = ?", task.ID).Find(&logs)
-	if len(logs) != 2 {
+	if len(logs) != 3 {
 		t.Fatalf("uninstall logs: %+v", logs)
 	}
 }
@@ -385,5 +386,31 @@ func TestUninstallOperatorRejectsActiveClustersAndUnmanagedChart(t *testing.T) {
 				t.Fatalf("rejected uninstall created %d tasks", count)
 			}
 		})
+	}
+}
+
+func TestUninstallTaskPersistsCleanupProgressAndRecovers(t *testing.T) {
+	h, _, item := operatorTaskHandler(t, true)
+	task := model.MySQLClusterTask{ClusterID: item.ID, Kind: "uninstall_operator", Status: "running", LastProgress: "已请求卸载"}
+	if err := h.store.DB().Create(&task).Error; err != nil {
+		t.Fatal(err)
+	}
+	for _, progress := range []string{"卸载 Pod：ImagePullBackOff", "卸载 Pod：ImagePullBackOff", "Helm 卸载失败：BackoffLimitExceeded", "Helm 正在卸载 MySQL Operator"} {
+		installation := &database.OperatorInstallation{State: "cancelling", Progress: progress}
+		if active, err := h.syncMySQLOperatorUninstallTask(item, installation); err != nil || !active {
+			t.Fatalf("active=%v err=%v", active, err)
+		}
+	}
+	var count int64
+	h.store.DB().Model(&model.MySQLClusterTaskLog{}).Where("task_id = ?", task.ID).Count(&count)
+	if count != 3 {
+		t.Fatalf("duplicate or missing progress logs: %d", count)
+	}
+	if _, err := h.syncMySQLOperatorUninstallTask(item, &database.OperatorInstallation{State: "missing"}); err != nil {
+		t.Fatal(err)
+	}
+	h.store.DB().First(&task, task.ID)
+	if task.Status != "success" || task.LastProgress != "MySQL Operator 已卸载" {
+		t.Fatalf("task=%+v", task)
 	}
 }

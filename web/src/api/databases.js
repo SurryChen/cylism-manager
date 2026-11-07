@@ -55,7 +55,7 @@ export const getDatabaseGatewayTaskLogs = (id, taskID) => api.get(`${base}/${seg
 export const getDatabaseExecutionNodes = clusterID => api.get(`${base}/execution-nodes?cluster_id=${segment(clusterID)}`)
 export const updateDatabaseAdmin = (id, payload) => api.put(`${base}/${segment(id)}/admin`, payload)
 export const createDatabaseOperation = payload => api.post(`${base}/operations`, payload)
-export const getDatabaseOperations = ({ resource = '', limit = 30, offset = 0 } = {}) => api.get(`${base}/operations?resource=${segment(resource)}&limit=${limit}&offset=${offset}`)
+export const getDatabaseOperations = ({ resource = '', status = '', limit = 30, offset = 0 } = {}) => api.get(`${base}/operations?resource=${segment(resource)}&status=${segment(status)}&limit=${limit}&offset=${offset}`)
 export const getDatabaseOperation = id => api.get(`${base}/operations/${segment(id)}`)
 export const controlDatabaseOperation = (id, action) => api.post(`${base}/operations/${segment(id)}/actions`, { action })
 export const getDatabaseReplications = () => api.get(`${base}/replications`)
@@ -64,3 +64,7 @@ export const configureDatabaseMonitor = (id, payload) => api.put(`${base}/${segm
 export const getDatabaseMetrics = (id, hours = 1) => api.get(`${base}/${segment(id)}/metrics?hours=${segment(hours)}`)
 export const createDatabaseSession = (id, payload) => api.post(`${base}/${segment(id)}/sessions`, payload)
 export const deleteDatabaseSession = (id, sessionID) => api.delete(`${base}/${segment(id)}/sessions/${segment(sessionID)}`)
+
+export const getDatabaseMetadata = id => api.get(`${base}/${segment(id)}/metadata`)
+export const refreshDatabaseMetadata = id => api.post(`${base}/${segment(id)}/metadata/refresh`, {})
+export const refreshDatabaseReplications = id => api.post(`${base}/${segment(id)}/replications/refresh`, {})

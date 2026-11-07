@@ -6,35 +6,45 @@ import "time"
 // or an existing MySQL endpoint. External endpoints may be registered before
 // business credentials are configured. Credentials are never serialized to clients.
 type DatabaseInstance struct {
-	CloudConnectionID uint             `json:"cloud_connection_id,omitempty"`
-	CloudRegion       string           `gorm:"size:64" json:"cloud_region,omitempty"`
-	CloudInstanceID   string           `gorm:"size:128" json:"cloud_instance_id,omitempty"`
-	ConnectionMode    string           `gorm:"size:16;not null;default:direct" json:"connection_mode"`
-	PrivateGateway    *DatabaseGateway `gorm:"-" json:"private_gateway,omitempty"`
-	ID                uint             `gorm:"primaryKey" json:"id"`
-	Name              string           `gorm:"size:128;uniqueIndex;not null" json:"name"`
-	Mode              string           `gorm:"size:16;not null" json:"mode"`
-	ClusterID         uint             `gorm:"index" json:"cluster_id"`
-	Namespace         string           `gorm:"size:63" json:"namespace"`
-	ResourceName      string           `gorm:"size:63" json:"resource_name"`
-	Host              string           `gorm:"size:255;not null" json:"host"`
-	Port              int              `gorm:"not null;default:3306" json:"port"`
-	DatabaseName      string           `gorm:"size:64;not null" json:"database_name"`
-	Username          string           `gorm:"size:64;not null" json:"username"`
-	EncryptedPassword string           `gorm:"type:text;not null" json:"-"`
-	AdminUsername     string           `gorm:"size:64" json:"admin_username,omitempty"`
-	EncryptedAdmin    string           `gorm:"type:text" json:"-"`
-	NodeName          string           `gorm:"size:253" json:"node_name,omitempty"`
-	CPULimit          string           `gorm:"size:32" json:"cpu_limit,omitempty"`
-	MemoryLimit       string           `gorm:"size:32" json:"memory_limit,omitempty"`
-	EncryptedRoot     string           `gorm:"type:text" json:"-"`
-	StorageSize       string           `gorm:"size:32" json:"storage_size,omitempty"`
-	StorageClass      string           `gorm:"size:128" json:"storage_class,omitempty"`
-	Image             string           `gorm:"size:255" json:"image,omitempty"`
-	Status            string           `gorm:"size:32;not null" json:"status"`
-	LastError         string           `gorm:"type:text" json:"last_error,omitempty"`
-	CreatedAt         time.Time        `json:"created_at"`
-	UpdatedAt         time.Time        `json:"updated_at"`
+	Metadata          *DatabaseMetadata `gorm:"type:text;serializer:json" json:"metadata,omitempty"`
+	CloudConnectionID uint              `json:"cloud_connection_id,omitempty"`
+	CloudRegion       string            `gorm:"size:64" json:"cloud_region,omitempty"`
+	CloudInstanceID   string            `gorm:"size:128" json:"cloud_instance_id,omitempty"`
+	ConnectionMode    string            `gorm:"size:16;not null;default:direct" json:"connection_mode"`
+	PrivateGateway    *DatabaseGateway  `gorm:"-" json:"private_gateway,omitempty"`
+	ID                uint              `gorm:"primaryKey" json:"id"`
+	Name              string            `gorm:"size:128;uniqueIndex;not null" json:"name"`
+	Mode              string            `gorm:"size:16;not null" json:"mode"`
+	ClusterID         uint              `gorm:"index" json:"cluster_id"`
+	Namespace         string            `gorm:"size:63" json:"namespace"`
+	ResourceName      string            `gorm:"size:63" json:"resource_name"`
+	Host              string            `gorm:"size:255;not null" json:"host"`
+	Port              int               `gorm:"not null;default:3306" json:"port"`
+	DatabaseName      string            `gorm:"size:64;not null" json:"database_name"`
+	Username          string            `gorm:"size:64;not null" json:"username"`
+	EncryptedPassword string            `gorm:"type:text;not null" json:"-"`
+	AdminUsername     string            `gorm:"size:64" json:"admin_username,omitempty"`
+	EncryptedAdmin    string            `gorm:"type:text" json:"-"`
+	NodeName          string            `gorm:"size:253" json:"node_name,omitempty"`
+	CPULimit          string            `gorm:"size:32" json:"cpu_limit,omitempty"`
+	MemoryLimit       string            `gorm:"size:32" json:"memory_limit,omitempty"`
+	EncryptedRoot     string            `gorm:"type:text" json:"-"`
+	StorageSize       string            `gorm:"size:32" json:"storage_size,omitempty"`
+	StorageClass      string            `gorm:"size:128" json:"storage_class,omitempty"`
+	Image             string            `gorm:"size:255" json:"image,omitempty"`
+	Status            string            `gorm:"size:32;not null" json:"status"`
+	LastError         string            `gorm:"type:text" json:"last_error,omitempty"`
+	CreatedAt         time.Time         `json:"created_at"`
+	UpdatedAt         time.Time         `json:"updated_at"`
+}
+
+// DatabaseMetadata is a persisted observation, not a claim of current liveness.
+type DatabaseMetadata struct {
+	Version    string    `json:"version"`
+	ServerUUID string    `json:"server_uuid,omitempty"`
+	Schemas    []string  `json:"schemas"`
+	ReadOnly   bool      `json:"read_only"`
+	CheckedAt  time.Time `json:"checked_at"`
 }
 
 type DatabaseBinding struct {

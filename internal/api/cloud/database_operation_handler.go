@@ -144,6 +144,9 @@ func (h *DatabaseHandler) ListDatabaseOperations(c *gin.Context) {
 		}
 		query = query.Where("source = ? OR target = ?", ref, ref)
 	}
+	if status := c.Query("status"); status != "" {
+		query = query.Where("status = ?", status)
+	}
 	var total int64
 	if err := query.Count(&total).Error; err != nil {
 		apiShared.DBError(c, "读取任务数量失败")
