@@ -305,7 +305,7 @@ func RetireClusterStep(ctx context.Context, client *k8s.Client, item *model.MySQ
 		}
 		if suspended {
 			// No controller is available to release its finalizer. Only the
-			// known Kopf finalizer is removable, after rechecking all workloads
+			// known Oracle/Kopf finalizers are removable, after rechecking all workloads
 			// are at zero and no Pods exist. Unknown finalizers are never stripped.
 			if err := finalizeStoppedCluster(ctx, client, item); err != nil {
 				return false, "", err
@@ -472,18 +472,14 @@ func finalizeStoppedCluster(ctx context.Context, client *k8s.Client, item *model
 	if err != nil {
 		return err
 	}
-	stopped, err := ClusterStopped(ctx, client, item)
-	if err != nil {
-		return err
-	}
-	if !stopped {
-		return fmt.Errorf("仅允许在 Operator 停用、负载为零且无 Pod 时完成离线清退")
-	}
 	if current.GetDeletionTimestamp() == nil || current.GetLabels()[k8s.ManagedByLabel] != k8s.ManagedByValue {
 		return fmt.Errorf("集群尚未进入受管删除流程")
 	}
+	if err := validateOfflineFinalization(ctx, client, item); err != nil {
+		return err
+	}
 	for _, finalizer := range current.GetFinalizers() {
-		if finalizer != "kopf.zalando.org/KopfFinalizerMarker" {
+		if finalizer != "mysql.oracle.com/cluster" && finalizer != "kopf.zalando.org/KopfFinalizerMarker" {
 			return fmt.Errorf("集群仍有未知 finalizer %s，保留资源，请人工检查", finalizer)
 		}
 	}
@@ -493,4 +489,53 @@ func finalizeStoppedCluster(ctx context.Context, client *k8s.Client, item *model
 	current.SetFinalizers(nil)
 	_, err = resource.Update(ctx, current, metav1.UpdateOptions{})
 	return err
+}
+
+// Deletion may already have removed the main StatefulSet. Unlike stopped-state
+// discovery, finalization allows missing workloads but requires every remaining
+// controller to target zero replicas, including read replicas and labelled ones.
+func validateOfflineFinalization(ctx context.Context, client *k8s.Client, item *model.MySQLCluster) error {
+	suspended, err := operatorSuspended(ctx, client)
+	if err != nil {
+		return err
+	}
+	if !suspended {
+		return fmt.Errorf("MySQL Operator 未停用，不能离线清退")
+	}
+	quiesced, err := operatorQuiesced(ctx, client)
+	if err != nil {
+		return err
+	}
+	if !quiesced {
+		return fmt.Errorf("MySQL Operator 尚未退出，不能离线清退")
+	}
+	if err := exclusiveCluster(ctx, client, item); err != nil {
+		return err
+	}
+	state, err := InspectClusterCleanup(ctx, client, item)
+	if err != nil {
+		return err
+	}
+	if len(state.Pods) > 0 {
+		return fmt.Errorf("仍有数据库 Pod，不能离线清退")
+	}
+	sets, err := client.Clientset.AppsV1().StatefulSets(item.Namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return err
+	}
+	for _, set := range sets.Items {
+		if (clusterResourceName(set.Name, item.ResourceName) || set.Labels["mysql.oracle.com/cluster"] == item.ResourceName) && (set.Spec.Replicas == nil || *set.Spec.Replicas != 0) {
+			return fmt.Errorf("工作负载 %s 的目标副本尚未归零，不能离线清退", set.Name)
+		}
+	}
+	deployments, err := client.Clientset.AppsV1().Deployments(item.Namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return err
+	}
+	for _, deployment := range deployments.Items {
+		if (clusterResourceName(deployment.Name, item.ResourceName) || deployment.Labels["mysql.oracle.com/cluster"] == item.ResourceName) && (deployment.Spec.Replicas == nil || *deployment.Spec.Replicas != 0) {
+			return fmt.Errorf("工作负载 %s 的目标副本尚未归零，不能离线清退", deployment.Name)
+		}
+	}
+	return nil
 }

@@ -50,6 +50,6 @@ RDS 作为主库、独立 MySQL 作为从库时，复制账号应仅具有必要
 
 详情和运行资源读取不再依赖 Operator 就绪。平台会识别「Operator 副本为 0、MySQL/Router 目标副本为 0、无 Pod」的实际停用状态，不使用 CR 中过期的 ONLINE 状态。无法连接 Kubernetes 时仍保留记录展示，删除会拒绝继续。
 
-离线清退仅在 Operator 已暂停、负载副本为零且无 Pod 时释放已知的 Kopf finalizer；未知 finalizer 保留并报错。停用时只在容器均正常退出后释放已知的 Pod finalizer，不强制删除运行中的数据库。
+离线清退仅在 Operator 已暂停并完全退出、未管理其他集群、目标集群已进入受管删除流程、剩余负载副本为零且无 Pod 时，释放 Oracle 集群 finalizer `mysql.oracle.com/cluster` 和 Kopf finalizer `kopf.zalando.org/KopfFinalizerMarker`；未知 finalizer 保留并报错。部分负载已删除时允许继续清退。停用时只在容器均正常退出后释放已知的 Pod finalizer，不强制删除运行中的数据库。
 
 清理选择会保存到后台任务，Manager 重启后继续按原选择处理。后台先确认 InnoDBCluster、工作负载和 Pod 均已退出，再删除勾选的资源；同时清理两者时，等待 PVC 删除完成后才删除密钥。任务会等待资源实际消失后才标记成功。密钥清理仅匹配平台管理的根密钥或明确由该 InnoDBCluster 拥有的 Secret；页面只返回密钥名称，不返回密钥内容。

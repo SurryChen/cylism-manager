@@ -2,6 +2,8 @@ package database
 
 import (
 	"context"
+	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/cylism/cylism-manager/internal/k8s"
@@ -156,5 +158,137 @@ func TestStoppedDetectionWaitsForControllerToActuallyExit(t *testing.T) {
 	stopped, err := ClusterStopped(ctx, client, item)
 	if err != nil || stopped {
 		t.Fatalf("controller still running, stopped=%v err=%v", stopped, err)
+	}
+}
+
+func TestOfflineRetireAcceptsOracleAndKopfClusterFinalizers(t *testing.T) {
+	for _, finalizers := range [][]string{
+		{"mysql.oracle.com/cluster"},
+		{"kopf.zalando.org/KopfFinalizerMarker"},
+		{"mysql.oracle.com/cluster", "kopf.zalando.org/KopfFinalizerMarker"},
+	} {
+		t.Run(strings.Join(finalizers, "+"), func(t *testing.T) {
+			client, item := lifecycleFixture(t)
+			ctx := context.Background()
+			resource := client.DynamicClient.Resource(innoDBClusterGVR).Namespace(item.Namespace)
+			current, err := resource.Get(ctx, item.ResourceName, metav1.GetOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			now := metav1.Now()
+			current.SetDeletionTimestamp(&now)
+			current.SetFinalizers(finalizers)
+			if _, err := resource.Update(ctx, current, metav1.UpdateOptions{}); err != nil {
+				t.Fatal(err)
+			}
+			if err := finalizeStoppedCluster(ctx, client, item); err != nil {
+				t.Fatal(err)
+			}
+			current, err = resource.Get(ctx, item.ResourceName, metav1.GetOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(current.GetFinalizers()) != 0 {
+				t.Fatalf("known cluster finalizers retained: %v", current.GetFinalizers())
+			}
+			if _, err := client.Clientset.CoreV1().PersistentVolumeClaims(item.Namespace).Get(ctx, "datadir-"+item.ResourceName+"-0", metav1.GetOptions{}); err != nil {
+				t.Fatal("finalization deleted a data volume")
+			}
+		})
+	}
+}
+
+func TestOfflineRetireAllowsWorkloadsAlreadyRemoved(t *testing.T) {
+	client, item := lifecycleFixture(t)
+	ctx := context.Background()
+	resource := client.DynamicClient.Resource(innoDBClusterGVR).Namespace(item.Namespace)
+	current, _ := resource.Get(ctx, item.ResourceName, metav1.GetOptions{})
+	now := metav1.Now()
+	current.SetDeletionTimestamp(&now)
+	current.SetFinalizers([]string{"mysql.oracle.com/cluster"})
+	if _, err := resource.Update(ctx, current, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Clientset.AppsV1().StatefulSets(item.Namespace).Delete(ctx, item.ResourceName, metav1.DeleteOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Clientset.AppsV1().Deployments(item.Namespace).Delete(ctx, item.ResourceName+"-router", metav1.DeleteOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := finalizeStoppedCluster(ctx, client, item); err != nil {
+		t.Fatalf("partially completed cleanup cannot resume: %v", err)
+	}
+}
+
+func TestOfflineRetirePreservesFinalizersWhenUnsafe(t *testing.T) {
+	cases := []string{"not-deleting", "unmanaged", "unknown-finalizer", "database-pod", "operator-pod", "operator-running", "active-statefulset", "labelled-deployment", "other-cluster"}
+	for _, name := range cases {
+		t.Run(name, func(t *testing.T) {
+			client, item := lifecycleFixture(t)
+			ctx := context.Background()
+			resource := client.DynamicClient.Resource(innoDBClusterGVR).Namespace(item.Namespace)
+			current, _ := resource.Get(ctx, item.ResourceName, metav1.GetOptions{})
+			now := metav1.Now()
+			current.SetDeletionTimestamp(&now)
+			finalizers := []string{"mysql.oracle.com/cluster", "kopf.zalando.org/KopfFinalizerMarker"}
+			one := int32(1)
+			switch name {
+			case "not-deleting":
+				current.SetDeletionTimestamp(nil)
+			case "unmanaged":
+				current.SetLabels(nil)
+			case "unknown-finalizer":
+				finalizers = append(finalizers, "example.com/protect")
+			case "database-pod":
+				_, err := client.Clientset.CoreV1().Pods(item.Namespace).Create(ctx, &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: item.ResourceName + "-0", Namespace: item.Namespace}}, metav1.CreateOptions{})
+				if err != nil {
+					t.Fatal(err)
+				}
+			case "operator-pod":
+				_, err := client.Clientset.CoreV1().Pods("mysql-operator").Create(ctx, &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "mysql-operator-abc-123", Namespace: "mysql-operator"}, Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "operator"}}}}, metav1.CreateOptions{})
+				if err != nil {
+					t.Fatal(err)
+				}
+			case "operator-running":
+				operator, err := operatorDeployment(ctx, client)
+				if err != nil {
+					t.Fatal(err)
+				}
+				operator.Spec.Replicas = &one
+				if _, err := client.Clientset.AppsV1().Deployments(operator.Namespace).Update(ctx, operator, metav1.UpdateOptions{}); err != nil {
+					t.Fatal(err)
+				}
+			case "active-statefulset":
+				_, err := client.Clientset.AppsV1().StatefulSets(item.Namespace).Create(ctx, &appsv1.StatefulSet{ObjectMeta: metav1.ObjectMeta{Name: item.ResourceName + "-read-replica", Namespace: item.Namespace}, Spec: appsv1.StatefulSetSpec{Replicas: &one}}, metav1.CreateOptions{})
+				if err != nil {
+					t.Fatal(err)
+				}
+			case "labelled-deployment":
+				_, err := client.Clientset.AppsV1().Deployments(item.Namespace).Create(ctx, &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "custom-router", Namespace: item.Namespace, Labels: map[string]string{"mysql.oracle.com/cluster": item.ResourceName}}, Spec: appsv1.DeploymentSpec{Replicas: &one}}, metav1.CreateOptions{})
+				if err != nil {
+					t.Fatal(err)
+				}
+			case "other-cluster":
+				other := *item
+				other.ResourceName = "other-cluster"
+				if _, err := resource.Create(ctx, ClusterObject(&other), metav1.CreateOptions{}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			current.SetFinalizers(finalizers)
+			if _, err := resource.Update(ctx, current, metav1.UpdateOptions{}); err != nil {
+				t.Fatal(err)
+			}
+			if err := finalizeStoppedCluster(ctx, client, item); err == nil {
+				t.Fatal("unsafe finalizer removal allowed")
+			}
+			current, err := resource.Get(ctx, item.ResourceName, metav1.GetOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(current.GetFinalizers(), finalizers) {
+				t.Fatalf("finalizers changed on rejected cleanup: %v", current.GetFinalizers())
+			}
+		})
 	}
 }
