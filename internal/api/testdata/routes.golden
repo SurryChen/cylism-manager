@@ -120,6 +120,7 @@ GET /api/cloud/connections/:id/object-storage/containers/:container/objects
 GET /api/cloud/connections/:id/permissions
 GET /api/cloud/databases
 GET /api/cloud/databases/:id
+GET /api/cloud/databases/:id/applications
 GET /api/cloud/databases/:id/bindings
 GET /api/cloud/databases/:id/gateway
 GET /api/cloud/databases/:id/gateway/tasks/:taskID/logs
