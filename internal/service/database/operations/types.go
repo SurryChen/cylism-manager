@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-const DefaultImage = "container-registry.oracle.com/mysql/community-operator:8.4.9-2.1.11"
+const DefaultImage = "container-registry.oracle.com/mysql/community-operator:26.7.0-2.3.0"
 
 // References keep external instances separate from Operator-owned clusters.
 func ParseReference(value string) (string, uint, error) {

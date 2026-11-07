@@ -63,8 +63,12 @@ def replication_observation(session, row):
             'tables': row.get('Replicate_Wild_Do_Table', '')}
 
 def discover_replication(source, target):
+    global stage
+    stage = 'source_identity'
     source_uuid = str(scalar(source, 'SELECT @@server_uuid'))
+    stage = 'target_identity'
     require(source_uuid != str(scalar(target, 'SELECT @@server_uuid')), 'same_server')
+    stage = 'target_channels'
     rows = replica_channels(target)
     require(bool(rows), 'replication_missing')
     # The platform currently models one upstream channel per target. Never
@@ -72,6 +76,7 @@ def discover_replication(source, target):
     require(len(rows) == 1, 'replication_multiple_channels')
     row = rows[0]
     require(str(row.get('Source_UUID', '')).lower() == source_uuid.lower(), 'replication_source_mismatch')
+    stage = 'target_observation'
     result = replication_observation(target, row)
     result['source_verified'] = True
     return result
@@ -85,6 +90,8 @@ def quote_literal(value):
     # NO_BACKSLASH_ESCAPES is set for the control session below.
     return "'" + value.replace("'", "''") + "'"
 
+kind = ''
+stage = 'initialization'
 try:
     req = json.load(open('/run/task/input.json'))
     phase = int(os.environ['CYLISM_PHASE'])
@@ -108,7 +115,11 @@ try:
             session.set_current_schema(conn['database'])
             session.run_sql('SELECT 1').fetch_one()
     elif kind == 'replication_discover':
-        emit({'result': discover_replication(connect(req['source']), connect(req['target']))})
+        stage = 'source_connect'
+        source = connect(req['source'])
+        stage = 'target_connect'
+        target = connect(req['target'])
+        emit({'result': discover_replication(source, target)})
     elif kind in ('detach', 'replication_check'):
         session = connect(req['target'])
         row = replica(session, channel)
@@ -217,5 +228,9 @@ except BaseException as error:
     # Error codes and allowlisted rejection reasons are useful; raw SQL,
     # usernames/passwords and connector error messages never leave this process.
     code = error.code if isinstance(error, Rejected) else 'mysql_command_failed'
+    if kind == 'replication_discover' and code == 'mysql_command_failed':
+        errno = getattr(error, 'code', None)
+        errno = str(errno) if isinstance(errno, int) and 0 <= errno <= 9999 else '0'
+        code += '@' + stage + ':' + errno
     emit({'error': code})
     sys.exit(1)

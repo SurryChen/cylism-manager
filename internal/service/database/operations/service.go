@@ -331,9 +331,11 @@ func (s *Service) endpointAddress(tx *gorm.DB, item *model.DatabaseInstance, clu
 	if err != nil {
 		return "", 0, err
 	}
-	// An optional diagnostic on another node must not block this operation.
-	// A disabled, changing or pending gateway still cannot be used.
-	if gw.ClusterID != clusterID || (gw.Status != "ready" && gw.Status != "degraded") {
+	// Historical node diagnostics also used "error". Like the interactive
+	// terminal, try the configured Service from the explicitly selected node;
+	// its real TLS/database connection decides whether the task can proceed.
+	// Do not change gateway status, routing or access controls here.
+	if gw.ClusterID != clusterID || (gw.Status != "ready" && gw.Status != "degraded" && gw.Status != "error") {
 		return "", 0, fmt.Errorf("私网网关未部署到当前执行集群或已停用")
 	}
 	var count int64

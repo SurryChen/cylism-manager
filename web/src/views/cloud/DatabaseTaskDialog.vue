@@ -18,7 +18,7 @@
       </template>
     </div>
   </BaseModal>
-  <ConfirmDialog :open="confirmCancel" title="终止数据库任务" message="将停止执行 Pod 并核对已建立的复制通道，完成后释放资源锁。数据、实例和快照会保留；已建立的复制继续运行，可另行解除。初始化中断的目标需要检查后再使用。" confirm-text="终止任务" :busy="acting" @cancel="confirmCancel = false" @confirm="control('cancel')" />
+  <Teleport to="body"><ConfirmDialog :open="confirmCancel" title="终止数据库任务" message="将停止执行 Pod 并核对已建立的复制通道，完成后释放资源锁。数据、实例和快照会保留；已建立的复制继续运行，可另行解除。初始化中断的目标需要检查后再使用。" confirm-text="终止任务" :busy="acting" @cancel="confirmCancel = false" @confirm="control('cancel')" /></Teleport>
   <ErrorNoticeModal :open="Boolean(error)" :message="error" teleport @close="error = ''" />
 </template>
 

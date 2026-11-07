@@ -109,6 +109,10 @@ func (s *Service) executePhase(ctx context.Context, task *model.DatabaseOperatio
 	}
 	data, e := s.jobOutput(ctx, client, task, job)
 	if e != nil {
+		var pullErr *imagePullError
+		if errors.As(e, &pullErr) {
+			return false, pullErr.Error(), nil
+		}
 		return false, "读取阶段日志中；Job 状态将在下次检查", nil
 	}
 	summary, result, reason, completed := parseEvents(data)
@@ -228,10 +232,35 @@ func (s *Service) jobOutput(ctx context.Context, client *k8s.Client, task *model
 		if job.UID != "" && pod.Labels["controller-uid"] != string(job.UID) && pod.Labels["batch.kubernetes.io/controller-uid"] != string(job.UID) {
 			continue
 		}
+		if err := imagePullFailure(&pod); err != nil {
+			return nil, err
+		}
 		limit := int64(128 * 1024)
 		return client.Clientset.CoreV1().Pods(database.Namespace).GetLogs(pod.Name, &corev1.PodLogOptions{Container: "mysql-shell", LimitBytes: &limit}).DoRaw(ctx)
 	}
 	return nil, nil
+}
+
+type imagePullError struct {
+	image  string
+	reason string
+}
+
+func (e *imagePullError) Error() string {
+	return fmt.Sprintf("工具镜像 %s 拉取失败（%s）；请在执行选项指定可用镜像，终止当前任务后重试", e.image, e.reason)
+}
+
+func imagePullFailure(pod *corev1.Pod) error {
+	for _, container := range pod.Status.ContainerStatuses {
+		if container.Name != "mysql-shell" || container.State.Waiting == nil {
+			continue
+		}
+		reason := container.State.Waiting.Reason
+		if reason == "ErrImagePull" || reason == "ImagePullBackOff" {
+			return &imagePullError{image: container.Image, reason: reason}
+		}
+	}
+	return nil
 }
 
 type event struct {
@@ -271,6 +300,25 @@ func parseEvents(output []byte) (summary, result, reason string, done bool) {
 	return
 }
 func errorMessage(code string) string {
+	if detail, ok := strings.CutPrefix(code, "mysql_command_failed@"); ok {
+		stage, errno, _ := strings.Cut(detail, ":")
+		steps := map[string]string{
+			"source_connect": "连接源库", "target_connect": "连接从库",
+			"source_identity": "读取源库身份", "target_identity": "读取从库身份",
+			"target_channels": "读取从库复制通道", "target_observation": "读取从库只读和复制状态",
+		}
+		step := steps[stage]
+		if step == "" {
+			step = "初始化任务"
+		}
+		if errno == "1045" || errno == "1044" {
+			return step + "失败：MySQL 拒绝了账号或权限（错误码 " + errno + "）"
+		}
+		if errno != "" && errno != "0" {
+			return step + "失败（MySQL 错误码 " + errno + "）；请核对连接、权限及实例状态"
+		}
+		return step + "失败；请检查任务 Pod 状态和 MySQL Shell 兼容性（原始错误已隐藏）"
+	}
 	if code == "replication_source_mismatch" {
 		return "现有通道的源实例 UUID 与所选源库不一致，未登记；请核对源实例"
 	}
