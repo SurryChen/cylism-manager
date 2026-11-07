@@ -153,6 +153,10 @@ func buildJob(task *model.DatabaseOperation, req Request) *batchv1.Job {
 		volumes = append(volumes, corev1.Volume{Name: "work", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}})
 	}
 	mounts = append(mounts, corev1.VolumeMount{Name: "work", MountPath: "/work"})
+	// mysqlsh opens its log before running job.py, even with --log-level=none.
+	// Kubernetes creates this writable directory before starting the process.
+	volumes = append(volumes, corev1.Volume{Name: "mysqlsh-config", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}})
+	mounts = append(mounts, corev1.VolumeMount{Name: "mysqlsh-config", MountPath: "/run/mysqlsh"})
 	return &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: jobName(task), Namespace: database.Namespace, Labels: taskLabels(task.ID)}, Spec: batchv1.JobSpec{
 		BackoffLimit: &zero, // No automatic replay of partial database mutations.
 		// No ActiveDeadlineSeconds: long data copies are controlled by the user.
@@ -162,7 +166,7 @@ func buildJob(task *model.DatabaseOperation, req Request) *batchv1.Job {
 			Tolerations:     []corev1.Toleration{{Key: "cylism.io/default-no-schedule", Value: "true", Operator: corev1.TolerationOpEqual, Effect: corev1.TaintEffectNoSchedule}},
 			DNSConfig:       &corev1.PodDNSConfig{Options: []corev1.PodDNSConfigOption{{Name: "ndots", Value: ptr("1")}}},
 			SecurityContext: &corev1.PodSecurityContext{FSGroup: ptr(int64(27))}, Volumes: volumes,
-			Containers: []corev1.Container{{Name: "mysql-shell", Image: req.Image, Command: []string{"mysqlsh", "--quiet-start=2", "--log-level=none", "--py", "--file", "/run/task/job.py"}, Env: []corev1.EnvVar{{Name: "CYLISM_PHASE", Value: fmt.Sprint(task.Phase)}, {Name: "MYSQLSH_USER_CONFIG_HOME", Value: "/tmp/mysqlsh"}}, VolumeMounts: mounts,
+			Containers: []corev1.Container{{Name: "mysql-shell", Image: req.Image, Command: []string{"mysqlsh", "--quiet-start=2", "--log-level=none", "--py", "--file", "/run/task/job.py"}, Env: []corev1.EnvVar{{Name: "CYLISM_PHASE", Value: fmt.Sprint(task.Phase)}, {Name: "MYSQLSH_USER_CONFIG_HOME", Value: "/run/mysqlsh"}}, VolumeMounts: mounts,
 				Resources:       corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("100m"), corev1.ResourceMemory: resource.MustParse("256Mi")}, Limits: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("1"), corev1.ResourceMemory: resource.MustParse("1Gi")}},
 				SecurityContext: &corev1.SecurityContext{AllowPrivilegeEscalation: &no, Capabilities: &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}}},
 			}},

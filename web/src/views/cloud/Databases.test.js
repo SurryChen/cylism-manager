@@ -3,7 +3,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import Databases from './Databases.vue'
 import SelectMenu from '../../components/SelectMenu.vue'
 
-const api = vi.hoisted(() => ({ getDatabases: vi.fn(), getMySQLClusters: vi.fn(), createDatabase: vi.fn(), updateDatabaseConnection: vi.fn(), getDatabaseBindings: vi.fn(), bindDatabase: vi.fn(), getDatabaseReplications: vi.fn() }))
+const api = vi.hoisted(() => ({ getDatabases: vi.fn(), getMySQLClusters: vi.fn(), createDatabase: vi.fn(), updateDatabaseConnection: vi.fn(), getDatabaseBindings: vi.fn(), getDatabaseApplications: vi.fn(), bindDatabase: vi.fn(), getDatabaseReplications: vi.fn() }))
 vi.mock('../../api/databases.js', async importOriginal => ({ ...await importOriginal(), ...api }))
 vi.mock('../../api/applications.js', () => ({ getApplications: vi.fn().mockResolvedValue([{ id: 13, name: 'app' }]), getDeploymentTemplates: vi.fn().mockResolvedValue([{ id: 101, name: '默认模板' }]) }))
 vi.mock('../../api/clusters.js', () => ({ getClusters: vi.fn().mockResolvedValue([]) }))
@@ -32,6 +32,7 @@ beforeEach(() => {
   api.getDatabaseBindings.mockResolvedValue([])
   api.bindDatabase.mockResolvedValue({})
   api.getDatabaseReplications.mockResolvedValue([])
+  api.getDatabaseApplications.mockResolvedValue({ items: [], warnings: [] })
 })
 afterEach(() => wrappers.splice(0).forEach(wrapper => wrapper.unmount()))
 

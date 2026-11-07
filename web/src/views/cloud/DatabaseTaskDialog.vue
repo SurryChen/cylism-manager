@@ -12,7 +12,7 @@
         <p v-if="detail.task.progress" class="form-hint">{{ detail.task.progress }}</p>
         <p v-if="detail.task.last_error" class="task-error">{{ detail.task.last_error }}</p>
         <p v-if="detail.snapshot_pvc" class="form-hint">快照 PVC：<code>{{ detail.snapshot_pvc }}</code>（{{ clusterName(detail.task.cluster_id) }} / cylism-databases）。任务结束后保留，可在存储页确认不再需要后清理。</p>
-        <div v-if="result" class="task-result"><strong>执行结果</strong><template v-if="result.schemas"><p>业务数据库：{{ result.schemas.join('、') || '无' }}</p></template><p v-if="result.version">版本：{{ result.version }} · {{ result.read_only ? '只读' : '可写' }}</p><p v-if="result.io_running">复制接收 / 执行线程均运行；延迟：{{ result.lag_seconds == null ? '未知' : `${result.lag_seconds} 秒` }}。这是本次检查结果。</p><p v-if="result.application_switch_required">快照已导入，仍需配置账号、切换应用并验证。</p></div>
+        <div v-if="result" class="task-result"><strong>执行结果</strong><template v-if="result.schemas"><p>业务数据库：{{ schemaNames || '无' }}</p></template><p v-if="result.version">版本：{{ result.version }} · {{ result.read_only ? '只读' : '可写' }}</p><p v-if="typeof result.io_running === 'boolean'">复制接收线程：{{ result.io_running ? '运行中' : '未运行' }}；执行线程：{{ result.sql_running ? '运行中' : '未运行' }}；延迟：{{ result.lag_seconds == null ? '未知' : `${result.lag_seconds} 秒` }}。这是本次检查结果。</p><p v-if="result.application_switch_required">快照已导入，仍需配置账号、切换应用并验证。</p></div>
         <p v-else-if="detail.task.result && !detail.task.result.startsWith('{')" class="form-hint">{{ detail.task.result }}</p>
         <pre class="task-logs">{{ detail.logs.map(log => `${new Date(log.created_at).toLocaleString('zh-CN', { hour12: false })} ${log.message}`).join('\n') || '暂无阶段日志' }}</pre>
       </template>
@@ -41,6 +41,7 @@ const statusLabel = task => ({ queued: '排队中', running: task.pause_requeste
 const resourceName = ref => !ref ? '—' : props.resources.find(item => item.ref === ref)?.name || ref
 const clusterName = id => props.clusters.find(item => item.id === id)?.name || `集群 ${id}`
 const result = computed(() => { try { return JSON.parse(detail.value?.task.result || 'null') } catch { return null } })
+const schemaNames = computed(() => (Array.isArray(result.value?.schemas) ? result.value.schemas : String(result.value?.schemas || '').split(',')).filter(Boolean).join('、'))
 async function load() {
   if (!props.open || loading.value) return
   const current = generation; loading.value = true

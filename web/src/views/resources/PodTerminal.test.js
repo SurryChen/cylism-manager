@@ -46,6 +46,22 @@ describe('PodTerminal', () => {
     wrapper.unmount()
   })
 
+  it('closes the connected socket, terminal and resize observer', async () => {
+    const sockets = [], close = vi.fn(), dispose = vi.fn(), disconnect = vi.fn()
+    vi.stubGlobal('WebSocket', class { constructor() { sockets.push(this) } close = close })
+    vi.stubGlobal('ResizeObserver', class { observe() {} disconnect = disconnect })
+    loadTerminalRuntime.mockResolvedValueOnce({ Terminal: class { loadAddon() {} open() {} dispose = dispose }, FitAddon: class { fit() {} }, installTerminalClipboard() {} })
+    const wrapper = mount(PodTerminal, { props: { pod: { namespace: 'RDS', name: 'dts', containers: ['mysql'] }, databaseSession: { instance_id: 1, id: 'session' } }, global: { stubs: { Teleport: true } } })
+    await flushPromises()
+    await wrapper.get('button[aria-label="关闭终端"]').trigger('click')
+    expect(wrapper.emitted('close')).toHaveLength(1)
+    expect(close).toHaveBeenCalledOnce()
+    expect(dispose).toHaveBeenCalledOnce()
+    expect(disconnect).toHaveBeenCalledOnce()
+    expect(sockets[0].onmessage).toBeNull()
+    wrapper.unmount()
+  })
+
   it('connects a MySQL session through its cluster-specific endpoint', async () => {
     const sockets = []
     class FakeWebSocket {

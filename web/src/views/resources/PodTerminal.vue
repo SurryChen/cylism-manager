@@ -4,7 +4,7 @@
       <div class="pod-terminal-modal" role="dialog" aria-modal="true" :aria-label="terminalTitle">
         <header class="pod-terminal-header">
           <div><h2>{{ terminalTitle }}</h2><p>{{ pod.namespace }} / {{ pod.name }}</p></div>
-          <button class="icon-button" title="关闭终端" aria-label="关闭终端" @click="close"><X :size="17" /></button>
+          <button class="icon-button" type="button" title="关闭终端" aria-label="关闭终端" @click="close"><X :size="17" /></button>
         </header>
 
         <div v-if="status === 'selecting'" class="container-picker">
@@ -196,17 +196,19 @@ function close() {
 
 <style scoped>
 .pod-terminal-overlay { z-index: 1300; }
-.pod-terminal-modal { display: grid; width: min(980px, calc(100vw - 32px)); height: min(680px, calc(100dvh - 32px)); grid-template-rows: auto minmax(0, 1fr) auto; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-panel); background: var(--surface-raised); box-shadow: var(--shadow); }
+.pod-terminal-modal { display: grid; min-width: 0; width: min(980px, calc(100vw - 32px)); height: min(680px, calc(100dvh - 32px)); grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-panel); background: var(--surface-raised); box-shadow: var(--shadow); }
 .pod-terminal-header, .pod-terminal-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 16px; border-bottom: 1px solid var(--border-muted); }
+.pod-terminal-header > div { flex: 1; min-width: 0; }
+.pod-terminal-header .icon-button { flex: 0 0 auto; }
 .pod-terminal-header h2 { margin: 0; color: var(--text-primary); font-size: 15px; }
-.pod-terminal-header p { margin: 4px 0 0; color: var(--text-muted); font: 11px/1.2 var(--font-mono); }
+.pod-terminal-header p { margin: 4px 0 0; color: var(--text-muted); font: 11px/1.2 var(--font-mono); overflow-wrap: anywhere; }
 .pod-terminal-footer { min-height: 42px; border-top: 1px solid var(--border-muted); border-bottom: 0; color: var(--text-muted); font: 11px/1 var(--font-mono); }
 .terminal-state-connected { color: var(--success); }
 .terminal-state-connecting { color: var(--warning); }
 .terminal-state-error { color: var(--danger); }
 .terminal-state-closed { color: var(--text-muted); }
-.pod-terminal-body { display: flex; flex-direction: column; min-height: 0; background: var(--terminal-background); }
-.terminal-container { flex: 1; min-height: 0; padding: 12px; background: var(--terminal-background); }
+.pod-terminal-body { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; background: var(--terminal-background); }
+.terminal-container { flex: 1; min-width: 0; min-height: 0; overflow: hidden; padding: 12px; background: var(--terminal-background); }
 .terminal-notice { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 16px; background: var(--surface-raised); border-bottom: 1px solid var(--border-muted); color: var(--text-secondary); font-size: 13px; overflow-wrap: anywhere; }
 .terminal-notice small { display: block; margin-top: 6px; color: var(--text-secondary); font-size: 12px; }
 .terminal-notice-actions { display: flex; flex-shrink: 0; gap: 8px; }
@@ -216,5 +218,5 @@ function close() {
 .terminal-error { color: var(--danger); }
 .container-picker { display: grid; align-content: center; gap: 16px; max-width: 420px; width: 100%; margin: auto; padding: 32px; }
 .container-picker p { margin: 0; color: var(--text-secondary); font-size: 13px; line-height: 1.6; }
-@media (max-width:640px) { .pod-terminal-modal { width: 100vw; height: 100dvh; border: 0; border-radius: 0; }.pod-terminal-header, .pod-terminal-footer { padding-right: 12px; padding-left: 12px; }.terminal-notice { align-items: flex-start; flex-direction: column; } }
+@media (max-width:640px) { .pod-terminal-overlay { padding: 0; }.pod-terminal-modal { width: 100vw; height: 100dvh; border: 0; border-radius: 0; }.pod-terminal-header, .pod-terminal-footer { padding-right: 12px; padding-left: 12px; }.terminal-notice { align-items: flex-start; flex-direction: column; } }
 </style>

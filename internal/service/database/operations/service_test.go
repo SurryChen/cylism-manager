@@ -276,6 +276,32 @@ func TestJobHasDurableStorageAndNoAutomaticMutationReplay(t *testing.T) {
 	}
 }
 
+func TestMySQLShellConfigDirectoryExistsBeforeStartup(t *testing.T) {
+	for _, kind := range []string{"inspect", "migrate", "replicate", "replication_discover"} {
+		job := buildJob(&model.DatabaseOperation{ID: 17, Kind: kind}, Request{Image: DefaultImage})
+		pod := job.Spec.Template.Spec
+		container := pod.Containers[0]
+		configPath := ""
+		for _, env := range container.Env {
+			if env.Name == "MYSQLSH_USER_CONFIG_HOME" {
+				configPath = env.Value
+			}
+		}
+		writable := false
+		for _, mount := range container.VolumeMounts {
+			if mount.MountPath != configPath || mount.ReadOnly {
+				continue
+			}
+			for _, volume := range pod.Volumes {
+				writable = writable || volume.Name == mount.Name && volume.EmptyDir != nil
+			}
+		}
+		if configPath == "" || !writable || pod.SecurityContext.FSGroup == nil {
+			t.Fatalf("%s: mysqlsh must have a pre-created writable configuration directory", kind)
+		}
+	}
+}
+
 func TestRawSQLAndPasswordsNeverBecomeProgressOrErrors(t *testing.T) {
 	output := []byte("mysql://root:password@host\nCYLISM_EVENT:{\"error\":\"mysql://secret\"}\nCYLISM_EVENT:{\"progress_bytes\":1048576}\nCYLISM_EVENT:{\"done\":true}\n")
 	progress, result, reason, done := parseEvents(output)

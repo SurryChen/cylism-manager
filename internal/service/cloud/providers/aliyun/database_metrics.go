@@ -76,13 +76,28 @@ func parseRDSMetrics(raw []byte, instance string) (cloudservice.DatabaseMetrics,
 			if field == "" {
 				continue
 			}
-			label := labels[strings.ToLower(field)]
+			fieldName := strings.ToLower(field)
+			// RDS returns both cpu_usage/mem_usage and cpuusage/memusage.
+			label := labels[fieldName]
+			if label == "" {
+				for name, candidate := range labels {
+					if strings.ReplaceAll(name, "_", "") == strings.ReplaceAll(fieldName, "_", "") {
+						label = candidate
+						break
+					}
+				}
+			}
 			if label == "" {
 				label = field
 			}
 			unit := key.Unit
 			if len(units) == len(fields) {
 				unit = units[i]
+			}
+			// Numeric data types describe storage, not a display unit.
+			switch strings.ToLower(strings.TrimSpace(unit)) {
+			case "int", "integer", "float", "double":
+				unit = ""
 			}
 			series := cloudservice.DatabaseMetricSeries{Key: key.Key + "/" + field, Label: label, Unit: unit, Values: []cloudservice.DatabaseMetricPoint{}}
 			for _, sample := range key.Values.PerformanceValue {

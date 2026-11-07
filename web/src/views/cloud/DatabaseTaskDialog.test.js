@@ -15,6 +15,14 @@ beforeEach(() => {
 afterEach(() => wrappers.splice(0).forEach(wrapper => wrapper.unmount()))
 
 describe('durable database task controls', () => {
+  it.each([{ schemas: 'app,bill' }, { schemas: ['app', 'bill'] }])('renders discovered schemas $schemas and each replication thread accurately', async ({ schemas }) => {
+    api.getDatabaseOperation.mockResolvedValue({ task: { id: 7, kind: 'replication_discover', status: 'succeeded', phase: 1, result: JSON.stringify({ schemas, io_running: true, sql_running: false, lag_seconds: null }) }, phases: [], logs: [] })
+    const wrapper = mount(DatabaseTaskDialog, { props: { open: true, taskID: 7 }, global: { stubs: { Teleport: true } } }); wrappers.push(wrapper)
+    await flushPromises()
+    expect(wrapper.text()).toContain('业务数据库：app、bill')
+    expect(wrapper.text()).toContain('复制接收线程：运行中；执行线程：未运行；延迟：未知')
+  })
+
   it('loads the selected task and requests checkpoint pause', async () => {
     const wrapper = mount(DatabaseTaskDialog, { props: { open: true, taskID: 7 }, global: { stubs: { Teleport: true } } }); wrappers.push(wrapper)
     await flushPromises()

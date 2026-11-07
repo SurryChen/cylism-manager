@@ -25,3 +25,16 @@ func TestRDSMetricsEmptyAndInvalidResponses(t *testing.T) {
 		t.Fatalf("empty metrics should remain empty: %+v %v", result, err)
 	}
 }
+
+func TestRDSMetricsProviderFieldNamesAndNumericUnits(t *testing.T) {
+	result, err := parseRDSMetrics([]byte(`{"PerformanceKeys":{"PerformanceKey":[{"Key":"MySQL_MemCpuUsage","Unit":"%","ValueFormat":"cpuusage&memusage"},{"Key":"MySQL_QPSTPS","Unit":"int&int","ValueFormat":"qps&tps"}]}}`), "rm-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Series) != 4 || result.Series[0].Label != "CPU 使用率" || result.Series[1].Label != "内存使用率" || result.Series[0].Unit != "%" {
+		t.Fatalf("unexpected metric labels: %+v", result.Series)
+	}
+	if result.Series[2].Unit != "" || result.Series[3].Unit != "" {
+		t.Fatalf("numeric types must not be displayed as units: %+v", result.Series)
+	}
+}

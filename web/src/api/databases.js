@@ -42,6 +42,7 @@ export const inspectDatabase = id => api.get(`${base}/${segment(id)}`)
 export const reconcileDatabase = id => api.post(`${base}/${segment(id)}/reconcile`, {})
 export const deleteDatabase = id => api.delete(`${base}/${segment(id)}`)
 export const getDatabaseBindings = id => api.get(`${base}/${segment(id)}/bindings`)
+export const getDatabaseApplications = id => api.get(`${base}/${segment(id)}/applications`)
 export const bindDatabase = (id, payload) => api.post(`${base}/${segment(id)}/bindings`, payload)
 export const unbindDatabase = (id, bindingID) => api.delete(`${base}/${segment(id)}/bindings/${segment(bindingID)}`)
 

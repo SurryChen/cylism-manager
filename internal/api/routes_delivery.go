@@ -171,6 +171,7 @@ func registerDeliveryRoutes(r *gin.Engine, apiGroup *gin.RouterGroup, h delivery
 		databases.POST("/:id/gateway/actions", h.database.PrivateGatewayAction)
 		databases.GET("/:id/gateway/tasks/:taskID/logs", h.database.PrivateGatewayTaskLogs)
 		databases.GET("/:id/bindings", h.database.ListBindings)
+		databases.GET("/:id/applications", h.database.ListApplications)
 		databases.POST("/:id/bindings", h.database.Bind)
 		databases.DELETE("/:id/bindings/:bindingID", h.database.Unbind)
 	}

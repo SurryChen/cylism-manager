@@ -62,6 +62,7 @@
           <button v-if="detailItem.mode === 'external'" class="btn" @click="gatewayItem = detailItem; detailItem = null">私网网关</button>
         </template>
         <template v-else-if="detailTab === 'applications'">
+          <DatabaseApplicationsPanel :instance-id="detailItem.id" />
           <dl class="database-facts"><div><dt>默认业务连接</dt><dd>{{ hasConnection(detailItem) ? detailItem.database_name + ' / ' + detailItem.username : '未配置业务连接' }}</dd></div></dl>
           <div class="capability-actions"><button class="btn" @click="openConnection(detailItem); detailItem = null">业务连接</button><button class="btn" @click="openBindings(detailItem); detailItem = null">应用绑定</button><button class="btn" @click="openCapability('switch', '', `instance:${detailItem.id}`)">切换应用连接</button></div>
         </template>
@@ -136,6 +137,7 @@ import { useRouter } from 'vue-router'
 import DatabaseTerminalDialog from './DatabaseTerminalDialog.vue'
 import DatabaseMonitor from './DatabaseMonitor.vue'
 import DatabaseReplicationPanel from './DatabaseReplicationPanel.vue'
+import DatabaseApplicationsPanel from './DatabaseApplicationsPanel.vue'
 import DatabaseGatewayDialog from './DatabaseGatewayDialog.vue'
 import { getApplications, getDeploymentTemplates } from '../../api/applications.js'
 import { getClusters } from '../../api/clusters.js'
