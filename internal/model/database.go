@@ -80,14 +80,16 @@ type MySQLCluster struct {
 
 // MySQLClusterTask records a deployment attempt independently of the API process.
 type MySQLClusterTask struct {
-	ID           uint      `gorm:"primaryKey" json:"id"`
-	ClusterID    uint      `gorm:"index;not null" json:"cluster_id"`
-	Kind         string    `gorm:"size:32;not null;default:deploy" json:"kind"`
-	Status       string    `gorm:"size:16;not null" json:"status"`
-	LastProgress string    `gorm:"type:text" json:"last_progress,omitempty"`
-	LastWarning  string    `gorm:"type:text" json:"-"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	DeleteClaims  bool      `gorm:"not null;default:false" json:"delete_claims"`
+	DeleteSecrets bool      `gorm:"not null;default:false" json:"delete_secrets"`
+	ID            uint      `gorm:"primaryKey" json:"id"`
+	ClusterID     uint      `gorm:"index;not null" json:"cluster_id"`
+	Kind          string    `gorm:"size:32;not null;default:deploy" json:"kind"`
+	Status        string    `gorm:"size:16;not null" json:"status"`
+	LastProgress  string    `gorm:"type:text" json:"last_progress,omitempty"`
+	LastWarning   string    `gorm:"type:text" json:"-"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
 }
 
 type MySQLClusterTaskLog struct {

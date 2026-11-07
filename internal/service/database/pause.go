@@ -3,6 +3,7 @@ package database
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -26,10 +27,11 @@ type ClusterCleanupState struct {
 	Workloads         []string     `json:"workloads"`
 	Pods              []string     `json:"pods"`
 	Claims            []string     `json:"claims"`
+	Secrets           []string     `json:"secrets"`
 }
 
 func InspectClusterCleanup(ctx context.Context, client *k8s.Client, item *model.MySQLCluster) (*ClusterCleanupState, error) {
-	state := &ClusterCleanupState{Finalizers: []string{}, Workloads: []string{}, Pods: []string{}, Claims: []string{}}
+	state := &ClusterCleanupState{Finalizers: []string{}, Workloads: []string{}, Pods: []string{}, Claims: []string{}, Secrets: []string{}}
 	resource := client.DynamicClient.Resource(innoDBClusterGVR).Namespace(item.Namespace)
 	if cluster, err := resource.Get(ctx, item.ResourceName, metav1.GetOptions{}); err == nil {
 		state.ClusterResource = true
@@ -83,6 +85,17 @@ func InspectClusterCleanup(ctx context.Context, client *k8s.Client, item *model.
 			state.Claims = append(state.Claims, claim.Name)
 		}
 	}
+	secrets, err := client.Clientset.CoreV1().Secrets(item.Namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("检查数据库密钥失败：%w", err)
+	}
+	for _, secret := range secrets.Items {
+		if clusterOwnsSecret(secret, item) {
+			state.Secrets = append(state.Secrets, secret.Name)
+		}
+	}
+	sort.Strings(state.Claims)
+	sort.Strings(state.Secrets)
 	return state, nil
 }
 

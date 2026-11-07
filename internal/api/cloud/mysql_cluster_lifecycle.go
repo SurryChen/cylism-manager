@@ -26,9 +26,15 @@ func (h *DatabaseHandler) ClusterLifecycle(c *gin.Context) {
 	var req struct {
 		Action              string `json:"action"`
 		ConfirmResourceName string `json:"confirm_resource_name"`
+		DeleteClaims        bool   `json:"delete_claims"`
+		DeleteSecrets       bool   `json:"delete_secrets"`
 	}
 	if c.ShouldBindJSON(&req) != nil || req.ConfirmResourceName != item.ResourceName {
 		apiShared.ValidationError(c, "请输入集群资源名称以确认操作")
+		return
+	}
+	if req.Action != "retire" && (req.DeleteClaims || req.DeleteSecrets) {
+		apiShared.ValidationError(c, "仅清退操作可以清理数据卷或密钥")
 		return
 	}
 	target := map[string]string{"stop": "stopping", "resume": "resuming", "retire": "retiring"}[req.Action]
@@ -44,7 +50,7 @@ func (h *DatabaseHandler) ClusterLifecycle(c *gin.Context) {
 		apiShared.DBError(c, err.Error())
 		return
 	}
-	allowed := map[string][]string{"stop": {"ready", "error", "stopping"}, "resume": {"stopped", "resuming", "stopping"}, "retire": {"stopped", "paused", "missing", "retiring"}}
+	allowed := map[string][]string{"stop": {"ready", "error", "stopping"}, "resume": {"stopped", "resuming", "stopping"}, "retire": {"stopped", "paused", "missing", "retiring", "retired"}}
 	valid := false
 	for _, status := range allowed[req.Action] {
 		if status == item.Status {
@@ -77,7 +83,17 @@ func (h *DatabaseHandler) ClusterLifecycle(c *gin.Context) {
 		apiShared.ValidationError(c, err.Error())
 		return
 	}
-	task := model.MySQLClusterTask{ClusterID: item.ID, Kind: req.Action, Status: "running", LastProgress: map[string]string{"stop": "已创建停用任务，保留原集群和数据卷", "resume": "已创建恢复任务，沿用原集群配置、凭据和数据卷", "retire": "已创建清退任务，移除集群负载，保留数据卷和根密钥"}[req.Action]}
+	task := model.MySQLClusterTask{ClusterID: item.ID, Kind: req.Action, Status: "running", DeleteClaims: req.DeleteClaims, DeleteSecrets: req.DeleteSecrets, LastProgress: map[string]string{"stop": "已创建停用任务，保留原集群和数据卷", "resume": "已创建恢复任务，沿用原集群配置、凭据和数据卷", "retire": "已创建清退任务，移除集群负载，保留数据卷和根密钥"}[req.Action]}
+	if req.Action == "retire" {
+		claims, secrets := "保留", "保留"
+		if req.DeleteClaims {
+			claims = "清理"
+		}
+		if req.DeleteSecrets {
+			secrets = "清理"
+		}
+		task.LastProgress = fmt.Sprintf("已创建清退任务；数据卷：%s；密钥：%s。等待集群负载完全退出后处理", claims, secrets)
+	}
 	err = h.store.DB().Transaction(func(tx *gorm.DB) error {
 		if err := tx.Model(item).Updates(map[string]any{"status": target, "last_error": ""}).Error; err != nil {
 			return err
@@ -200,7 +216,10 @@ func (h *DatabaseHandler) clusterLifecycleStep(ctx context.Context, id uint) boo
 			}
 		case "retire":
 			done, progress, err = database.RetireClusterStep(ctx, client, &item)
-			if done {
+			if done && err == nil {
+				done, progress, err = database.CleanupRetainedClusterResources(ctx, client, &item, task.DeleteClaims, task.DeleteSecrets)
+			}
+			if done && err == nil {
 				nextStatus = "retired"
 			}
 		}
@@ -219,7 +238,11 @@ func (h *DatabaseHandler) clusterLifecycleStep(ctx context.Context, id uint) boo
 		item.OnlineInstances, item.RouterReady = 0, 0
 	}
 	dbErr := h.store.DB().Transaction(func(tx *gorm.DB) error {
-		if err := tx.Model(&item).Updates(map[string]any{"status": nextStatus, "last_error": item.LastError, "online_instances": item.OnlineInstances, "router_ready": item.RouterReady}).Error; err != nil {
+		updates := map[string]any{"status": nextStatus, "last_error": item.LastError, "online_instances": item.OnlineInstances, "router_ready": item.RouterReady}
+		if done && err == nil && task.Kind == "retire" && task.DeleteSecrets {
+			updates["encrypted_root"] = ""
+		}
+		if err := tx.Model(&item).Updates(updates).Error; err != nil {
 			return err
 		}
 		if progress != task.LastProgress {

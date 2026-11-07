@@ -188,3 +188,45 @@ func TestResumeTaskWaitsForActualReadyPods(t *testing.T) {
 		t.Fatalf("task=%+v", task)
 	}
 }
+
+func TestRetirementUsesPersistedCleanupOptions(t *testing.T) {
+	h, item := lifecycleHandler(t, "retiring", false)
+	h.store.DB().Model(item).Update("encrypted_root", "encrypted-credential")
+	client, _ := h.client(context.Background(), item.ClusterID)
+	root := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: item.ResourceName + "-root", Namespace: item.Namespace, Labels: map[string]string{k8s.ManagedByLabel: k8s.ManagedByValue}}}
+	client.Clientset.CoreV1().Secrets(item.Namespace).Create(context.Background(), root, metav1.CreateOptions{})
+	task := &model.MySQLClusterTask{ClusterID: item.ID, Kind: "retire", Status: "running", DeleteClaims: false, DeleteSecrets: true}
+	if err := h.store.DB().Create(task).Error; err != nil {
+		t.Fatal(err)
+	}
+	// Process a recovered task with only persisted state, without its HTTP request.
+	if !h.clusterLifecycleStep(context.Background(), item.ID) {
+		t.Fatal("cleanup task did not complete")
+	}
+	h.store.DB().First(item, item.ID)
+	h.store.DB().First(task, task.ID)
+	if item.Status != "retired" || item.EncryptedRoot != "" || task.Status != "success" || !task.DeleteSecrets || task.DeleteClaims {
+		t.Fatalf("unexpected persisted cleanup result: item=%+v task=%+v", item, task)
+	}
+	state, err := database.InspectClusterCleanup(context.Background(), client, item)
+	if err != nil || len(state.Claims) != 1 || len(state.Secrets) != 0 {
+		t.Fatalf("cleanup options not honored: %+v %v", state, err)
+	}
+}
+func TestLifecycleRejectsCleanupFlagsOutsideRetirement(t *testing.T) {
+	h, _ := lifecycleHandler(t, "ready", true)
+	router := gin.New()
+	router.POST("/:id/lifecycle", h.ClusterLifecycle)
+	request := httptest.NewRequest(http.MethodPost, "/1/lifecycle", strings.NewReader(`{"action":"stop","confirm_resource_name":"cylism-mysql-cluster-1","delete_secrets":true}`))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code == http.StatusOK {
+		t.Fatal("stop accepted destructive cleanup options")
+	}
+	var count int64
+	h.store.DB().Model(&model.MySQLClusterTask{}).Count(&count)
+	if count != 0 {
+		t.Fatal("invalid request created task")
+	}
+}
