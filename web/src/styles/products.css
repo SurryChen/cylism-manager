@@ -17,7 +17,7 @@
 .product-detail-list { display: grid; gap: var(--space-16); margin: 0; }
 .product-detail-list dt { font-size: 11px; color: var(--text-muted); margin-bottom: 5px; }
 .product-detail-list dd { margin: 0; color: var(--text-primary); font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; }
-.product-detail-list a, .product-table-card a { color: var(--action-primary); }
+.product-detail-list a:not(.btn), .product-detail-row a:not(.btn), .product-table-card a:not(.btn) { color: var(--action-primary); }
 .product-section-title { margin: 0 0 var(--space-16); font-size: 14px; }
 .product-detail-row { padding: 12px 0; border-bottom: 1px solid var(--border-muted); font-size: 13px; overflow-wrap: anywhere; }
 .product-detail-row:last-child { border-bottom: 0; }

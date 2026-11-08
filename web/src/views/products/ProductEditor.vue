@@ -1,5 +1,5 @@
 <template>
-  <BaseModal :open="open" :title="product?.id ? '编辑产品' : '创建产品'" size="large" :show-close="!busy" :close-on-overlay="!busy" :close-on-escape="!busy" @close="$emit('close')">
+  <BaseModal teleport :open="open" :title="product?.id ? '编辑产品' : '创建产品'" size="large" :show-close="!busy" :close-on-overlay="!busy" :close-on-escape="!busy" @close="$emit('close')">
     <SectionTabsHeader title="产品资料" compact :tabs="tabs" :active-tab="tab" @select="tab = $event" />
     <form :id="formID" @submit.prevent="$emit('save', form)">
       <fieldset :disabled="busy" class="product-editor-fields">
@@ -73,13 +73,13 @@ import SectionTabsHeader from '../../components/SectionTabsHeader.vue'
 import SelectMenu from '../../components/SelectMenu.vue'
 import { editableProduct, stages, platforms, channelStatuses, linkKinds } from './product-utils.js'
 
-const props = defineProps({ open: Boolean, busy: Boolean, product: { type: Object, default: null }, options: { type: Object, default: () => ({ projects: [], applications: [] }) } })
+const props = defineProps({ open: Boolean, busy: Boolean, initialTab: { type: String, default: 'basics' }, product: { type: Object, default: null }, options: { type: Object, default: () => ({ projects: [], applications: [] }) } })
 defineEmits(['close', 'save'])
 const formID = `product-form-${useId()}`
 const form = ref(editableProduct())
 const tab = ref('basics')
 const tabs = [{ id: 'basics', label: '基本信息' }, { id: 'links', label: '资料链接' }, { id: 'channels', label: '发行渠道' }, { id: 'resources', label: '运维关联' }, { id: 'showcase', label: '公开作品' }]
-watch(() => props.open, open => { if (open) { form.value = editableProduct(props.product || {}); tab.value = 'basics' } }, { immediate: true })
+watch(() => props.open, open => { if (open) { form.value = editableProduct(props.product || {}); tab.value = tabs.some(item => item.id === props.initialTab) ? props.initialTab : 'basics' } }, { immediate: true })
 function projectName(id) { return props.options.projects.find(item => item.id === id)?.name || `项目 #${id}` }
 </script>
 

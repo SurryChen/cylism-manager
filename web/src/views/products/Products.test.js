@@ -50,7 +50,7 @@ describe('personal products workflows', () => {
 
   it('edits channels and public metadata from a reactive product without modifying the loaded data', async () => {
     const product = reactive({ id: 7, name: 'App', channels: [{ id: 1, platform: 'web', publish_status: 'published', online_version: '1.0' }] })
-    const editor = mount(ProductEditor, { props: { open: true, product } })
+    const editor = mount(ProductEditor, { props: { open: true, product }, global: { stubs: { Teleport: true } } })
     await editor.findAll('.section-tab').find(button => button.text() === '发行渠道').trigger('click')
     const fields = editor.findAll('.product-form-grid input')
     await fields[2].setValue('2.0')
@@ -74,6 +74,24 @@ describe('personal products workflows', () => {
     await page.get('[data-testid="confirm-dialog-confirm"]').trigger('click')
     await flushPromises()
     expect(mocks.update).toHaveBeenCalledWith(7, expect.objectContaining({ stage: 'archived', project_ids: [2], channels: [expect.objectContaining({ id: 1, online_version: '1.0' })] }))
+    page.unmount()
+  })
+
+  it('opens channel management directly in the channel editor', async () => {
+    const page = mountPage(ProductDetail)
+    await flushPromises()
+    await page.findAll('.section-tab').find(button => button.text() === '发行渠道').trigger('click')
+    await page.findAll('button').find(button => button.text() === '管理渠道').trigger('click')
+    await flushPromises()
+    const editor = page.getComponent(ProductEditor)
+    expect(editor.get('.section-tab.is-active').text()).toBe('发行渠道')
+    expect(editor.find('[aria-label="发行平台"]').exists()).toBe(true)
+    expect(editor.find('[aria-label="产品名称"]').exists()).toBe(false)
+    await editor.findAll('button').find(button => button.text() === '取消').trigger('click')
+    await page.findAll('button').find(button => button.text() === '编辑产品').trigger('click')
+    await flushPromises()
+    expect(editor.get('.section-tab.is-active').text()).toBe('基本信息')
+    expect(editor.get('[aria-label="产品名称"]').element.value).toBe('离线工具')
     page.unmount()
   })
 
