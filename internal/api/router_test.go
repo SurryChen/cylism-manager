@@ -91,6 +91,23 @@ func TestRegisterRoutesDoesNotFallbackUnknownAPI(t *testing.T) {
 	}
 }
 
+func TestProductRoutesRequireAuthentication(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	container, err := bootstrap.NewContainer(bootstrap.Config{DBPath: "file:router-products?mode=memory&cache=shared", EncryptionKey: make([]byte, 32), JWTSecret: []byte("router-products-secret")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	api.RegisterRoutes(r, container.BuildRouteDependencies())
+	for _, route := range []struct{ method, path string }{{"GET", "/api/products"}, {"GET", "/api/products/1"}, {"GET", "/api/products/resource-options"}, {"POST", "/api/products"}, {"PUT", "/api/products/1"}} {
+		res := httptest.NewRecorder()
+		r.ServeHTTP(res, httptest.NewRequest(route.method, route.path, nil))
+		if res.Code != http.StatusUnauthorized {
+			t.Fatalf("%s %s: %d", route.method, route.path, res.Code)
+		}
+	}
+}
+
 func TestCloudPermissionRouteRequiresAuthentication(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()

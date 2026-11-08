@@ -2,6 +2,9 @@ import { createRouter, createWebHashHistory } from 'vue-router'
 import { getAccessToken } from '../api/index.js'
 
 const Dashboard = () => import('../views/Dashboard.vue')
+const PersonalWorkbench = () => import('../views/products/PersonalWorkbench.vue')
+const ProductCenter = () => import('../views/products/ProductCenter.vue')
+const ProductDetail = () => import('../views/products/ProductDetail.vue')
 const Servers = () => import('../views/cluster/Servers.vue')
 const CertificateOperations = () => import('../views/network/CertificateOperations.vue')
 const AuditLogs = () => import('../views/AuditLogs.vue')
@@ -33,6 +36,9 @@ const MySQLClusterDetail = () => import('../views/cloud/MySQLClusterDetail.vue')
 const routes = [
   { path: '/login', component: Login, meta: { public: true } },
   { path: '/', component: Dashboard },
+  { path: '/personal', component: PersonalWorkbench },
+  { path: '/products', component: ProductCenter },
+  { path: '/products/:id', component: ProductDetail },
   { path: '/cloud-services', redirect: '/cloud-services/registry' },
   { path: '/cloud-services/registry', component: ManagedOCIRegistries },
   { path: '/cloud-services/domains', component: DomainManagement },

@@ -162,7 +162,7 @@ describe('Applications view', () => {
     const wrapper = mount(Applications)
     await new Promise(resolve => setTimeout(resolve, 0))
 
-    expect(wrapper.find('.page-title').text()).toBe('工作台')
+    expect(wrapper.find('.page-title').text()).toBe('应用部署')
     expect(wrapper.text()).not.toContain('暂无应用')
     expect(wrapper.text()).not.toContain('创建应用')
     expect(wrapper.findAll('[data-testid="workspace-list"]')).toHaveLength(1)

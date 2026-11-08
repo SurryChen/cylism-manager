@@ -1,6 +1,6 @@
 <template>
   <div @click="closeWorkspacePicker" @keydown.esc="closeWorkspacePicker">
-    <SectionTabsHeader v-if="section === 'workspace'" title="工作台" :tabs="workspaceTabs" :active-tab="activeWorkspaceTab" test-id-prefix="workspace-tab" @select="selectWorkspaceTab" />
+    <SectionTabsHeader v-if="section === 'workspace'" title="应用部署" :tabs="workspaceTabs" :active-tab="activeWorkspaceTab" test-id-prefix="workspace-tab" @select="selectWorkspaceTab" />
     <PageHeader v-else :title="pageMeta.title" :description="pageMeta.subtitle" sticky><template #actions><button class="btn btn-primary" @click="showProjectModal = true">+ 新建项目</button></template></PageHeader>
     <FeedbackBanner v-if="readError" data-testid="applications-read-error" tone="warning" :message="readError" />
 
@@ -26,7 +26,7 @@
             </template>
           </div>
         </div>
-        <EmptyState v-if="!projectsLoaded || (workspaceReady && !workspaceOverview && !readError && workspaceEnvironment?.cluster_id !== 0)" variant="loading" message="正在读取工作台..." />
+        <EmptyState v-if="!projectsLoaded || (workspaceReady && !workspaceOverview && !readError && workspaceEnvironment?.cluster_id !== 0)" variant="loading" message="正在读取应用部署..." />
         <EmptyState v-else-if="workspaceEnvironment?.cluster_id === 0" variant="actionable" message="当前环境尚未绑定集群">
           <template #action><button class="btn btn-primary" @click="openProjectEnvironments(workspaceProject)">绑定集群</button></template>
         </EmptyState>
@@ -207,9 +207,9 @@ const releaseTemplatesResource = useAsyncResource(({ signal }, applicationID) =>
 let sectionLoadID = 0
 
 const pageMeta = computed(() => ({
-  workspace: { title: '工作台', subtitle: '当前项目与环境下的应用、发布和运行状态' },
+  workspace: { title: '应用部署', subtitle: '当前项目与环境下的应用、发布和运行状态' },
   projects: { title: '项目与环境', subtitle: '定义应用归属、部署环境和默认命名空间' },
-}[props.section] || { title: '工作台', subtitle: '当前项目与环境下的应用、发布和运行状态' }))
+}[props.section] || { title: '应用部署', subtitle: '当前项目与环境下的应用、发布和运行状态' }))
 
 const workspaceProjectID = computed(() => Number(route.query.project_id) || 0)
 const workspaceEnvironmentID = computed(() => Number(route.query.environment_id) || 0)
@@ -290,7 +290,7 @@ async function fetchWorkspace() {
     applications.value = result?.applications || []
     if (activeWorkspaceTab.value === 'config') loadWorkspaceTemplates()
   } else if (workspaceResource.error.value) {
-    readError.value = workspaceResource.error.value.message || '加载工作台失败'
+    readError.value = workspaceResource.error.value.message || '加载应用部署失败'
   }
   applicationsLoaded.value = true
 }

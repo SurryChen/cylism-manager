@@ -12,6 +12,7 @@ import (
 	kubernetesapi "github.com/cylism/cylism-manager/internal/api/infrastructure/kubernetes"
 	networkapi "github.com/cylism/cylism-manager/internal/api/infrastructure/network"
 	storageapi "github.com/cylism/cylism-manager/internal/api/infrastructure/storage"
+	productapi "github.com/cylism/cylism-manager/internal/api/product"
 	runtimeapi "github.com/cylism/cylism-manager/internal/api/runtime"
 	apisShared "github.com/cylism/cylism-manager/internal/api/shared"
 	systemapi "github.com/cylism/cylism-manager/internal/api/system"
@@ -136,6 +137,7 @@ func (c *Container) BuildRouteDependencies() api.RouteDependencies {
 			Handler:         authapi.NewAuthHandlerWithDependencies(c.Repositories.Users, c.Auth, c.Services.AuthTemporaryTokens).WithAudit(c.Store),
 		},
 		Application: api.ApplicationDependencies{Handler: applicationHandler},
+		Product:     productapi.NewHandler(c.Store),
 		RuntimeAgent: api.RuntimeAgentDependencies{
 			Artifact: artifact, Agent: agent, Runtime: runtimeHandler, AgentOp: agentOp,
 			Components: componentHandler, Network: networkHandler,

@@ -11,6 +11,7 @@ import (
 	kubernetesapi "github.com/cylism/cylism-manager/internal/api/infrastructure/kubernetes"
 	networkapi "github.com/cylism/cylism-manager/internal/api/infrastructure/network"
 	storageapi "github.com/cylism/cylism-manager/internal/api/infrastructure/storage"
+	productapi "github.com/cylism/cylism-manager/internal/api/product"
 	runtimeapi "github.com/cylism/cylism-manager/internal/api/runtime"
 	systemapi "github.com/cylism/cylism-manager/internal/api/system"
 	auditservice "github.com/cylism/cylism-manager/internal/service/audit"
@@ -21,6 +22,7 @@ import (
 // package only binds these already-created handlers; construction belongs to
 // internal/bootstrap.
 type RouteDependencies struct {
+	Product        *productapi.Handler
 	Auth           AuthDependencies
 	Application    ApplicationDependencies
 	RuntimeAgent   RuntimeAgentDependencies
@@ -105,6 +107,7 @@ func RegisterRoutes(r *gin.Engine, deps RouteDependencies) {
 	if deps.Auth.Audit != nil {
 		apiGroup.Use(deps.Auth.Audit)
 	}
+	registerProductRoutes(apiGroup, deps.Product)
 	registerRuntimeRoutes(apiGroup, deps.RuntimeAgent.Runtime, deps.RuntimeAgent.AgentOp, deps.RuntimeAgent.Components, deps.RuntimeAgent.Network)
 	registerDashboardRoutes(apiGroup, deps.System.Dashboard)
 	registerDeliveryRoutes(r, apiGroup, deliveryRouteHandlers{

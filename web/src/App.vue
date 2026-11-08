@@ -115,13 +115,14 @@ const palettes = [
 ]
 
 const navGroups = computed(() => [
-  { id: 'overview', label: '概览', to: '/', items: [{ label: '概览', to: '/', icon: LayoutDashboard }] },
+  { id: 'overview', label: '运维概览', to: '/', items: [{ label: '平台健康度', to: '/', icon: LayoutDashboard }] },
+  { id: 'personal', label: '个人', to: '/personal', items: [{ label: '个人工作台', to: '/personal', icon: LayoutDashboard }, { label: '产品中心', to: '/products', icon: FolderKanban }] },
   {
     id: 'applications',
     label: '应用',
     to: '/applications',
     items: [
-      { label: '工作台', to: '/applications', icon: PackagePlus },
+      { label: '应用部署', to: '/applications', icon: PackagePlus },
       { label: '应用商城', to: '/applications/catalog', icon: Store },
       { label: '项目与环境', to: '/applications/projects', icon: FolderKanban },
       { label: '镜像仓库', to: '/applications/registries', icon: Boxes },
