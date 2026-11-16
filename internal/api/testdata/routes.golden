@@ -194,6 +194,7 @@ GET /api/clusters/:id/monitoring/query-range
 GET /api/clusters/:id/monitoring/status
 GET /api/clusters/:id/monitoring/targets
 GET /api/clusters/:id/network-migration/precheck
+GET /api/clusters/:id/nodes/:serverID/removal-plan
 GET /api/cross-cluster-services
 GET /api/dashboard
 GET /api/dashboard/clusters
@@ -423,6 +424,7 @@ POST /api/clusters/:id/monitoring/node-migrations/:migrationID/control
 POST /api/clusters/:id/monitoring/storage-migration
 POST /api/clusters/:id/network-migration
 POST /api/clusters/:id/network-migration/nodes/:serverID
+POST /api/clusters/:id/nodes/:serverID/remove
 POST /api/clusters/:id/nodes/:serverID/restart
 POST /api/clusters/:id/nodes/:serverID/uninstall
 POST /api/domains

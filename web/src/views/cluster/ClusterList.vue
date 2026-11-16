@@ -193,7 +193,7 @@ function statusClass(value) {
 .cluster-list-toolbar { display: flex; align-items: center; justify-content: space-between; min-height: 62px; padding: 12px var(--space-20); }
 .cluster-list-actions { display: flex; align-items: center; gap: 8px; }
 .cluster-name-link { color: var(--text-primary); font-weight: 700; text-decoration: none; }
-.cluster-name-link:hover { color: var(--action-primary); text-decoration: underline; }
+.cluster-name-link:hover { color: var(--action-primary); }
 .cluster-name-link:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 .cluster-row-actions { display: flex; justify-content: flex-start; gap: 4px; }
 .data-table .cluster-action-heading { text-align: left; }

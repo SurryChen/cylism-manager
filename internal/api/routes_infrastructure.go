@@ -40,6 +40,8 @@ func registerInfrastructureRoutes(apiGroup *gin.RouterGroup, catalog *clusterapi
 	apiGroup.GET("/clusters/:id/deployments/:deploymentID/logs", deployment.Logs)
 	apiGroup.POST("/clusters/:id/nodes/:serverID/uninstall", deployment.Uninstall)
 	apiGroup.POST("/clusters/:id/nodes/:serverID/restart", deployment.RestartNode)
+	apiGroup.GET("/clusters/:id/nodes/:serverID/removal-plan", deployment.NodeRemovalPlan)
+	apiGroup.POST("/clusters/:id/nodes/:serverID/remove", deployment.RemoveNode)
 	if crossService != nil {
 		apiGroup.GET("/cross-cluster-services", crossService.ListAll)
 		apiGroup.GET("/clusters/:id/cross-services", crossService.List)

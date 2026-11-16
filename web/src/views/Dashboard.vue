@@ -226,7 +226,7 @@ function resourceLabel(type) { return ({ server: '服务器', site: '站点', ce
 .dashboard-resource-metric span { color: var(--text-muted); font-size: 11px; }
 .dashboard-resource-metric.dashboard-capacity strong { overflow: visible; font-size: 17px; text-overflow: clip; white-space: normal; }
 .panel-link { display: inline-flex; align-items: center; gap: 3px; color: var(--action-primary); font-size: 11px; text-decoration: none; white-space: nowrap; }
-.panel-link:hover { text-decoration: underline; }
+.panel-link:hover { color: var(--action-primary-hover); }
 .dashboard-lower-grid { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(220px, .8fr) minmax(220px, .8fr); gap: 16px; align-items: stretch; }
 .dashboard-trends-panel { display: flex; min-width: 0; min-height: 290px; flex-direction: column; }
 .dashboard-trend-title { display: flex; min-width: 0; align-items: center; gap: 12px; }

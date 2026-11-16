@@ -65,7 +65,6 @@ defineEmits(['back'])
 
 .page-header-back:hover {
   color: var(--action-primary-hover);
-  text-decoration: underline;
 }
 
 .page-header-actions {

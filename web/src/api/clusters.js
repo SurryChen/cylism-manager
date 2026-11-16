@@ -32,6 +32,14 @@ export function restartClusterNode(clusterID, serverID) {
   return api.post(`/clusters/${encodeURIComponent(clusterID)}/nodes/${encodeURIComponent(serverID)}/restart`)
 }
 
+export function getNodeRemovalPlan(clusterID, serverID, options) {
+  return api.get(`/clusters/${encodeURIComponent(clusterID)}/nodes/${encodeURIComponent(serverID)}/removal-plan`, options)
+}
+
+export function removeClusterNode(clusterID, serverID, payload) {
+  return api.post(`/clusters/${encodeURIComponent(clusterID)}/nodes/${encodeURIComponent(serverID)}/remove`, payload)
+}
+
 export function adoptClusterNode(clusterID, serverID, role) {
   return api.post(`/clusters/${encodeURIComponent(clusterID)}/adoptions`, { server_id: Number(serverID), role })
 }

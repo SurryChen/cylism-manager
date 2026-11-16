@@ -192,7 +192,7 @@ onMounted(refresh)
 .upload-button { position: relative; overflow: hidden; cursor: pointer; }
 .upload-button input { position: absolute; inset: 0; width: 100%; cursor: pointer; opacity: 0; }
 .link-button { padding: 0; border: 0; background: transparent; color: var(--action-primary); font: inherit; font-weight: 700; cursor: pointer; }
-.link-button:hover { text-decoration: underline; }
+.link-button:hover { color: var(--action-primary-hover); }
 .mono { font-family: var(--font-mono); overflow-wrap: anywhere; }
 .container-form { display: grid; gap: var(--space-12); }
 .container-form .form-group { margin: 0; }

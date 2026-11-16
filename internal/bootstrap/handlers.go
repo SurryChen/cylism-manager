@@ -129,6 +129,9 @@ func (c *Container) BuildRouteDependencies() api.RouteDependencies {
 	storageHandler := storageapi.NewStorageHandlerWithDependencies(storageService, c.Store, key, pvcAdapter, pvcMigration, pvcWorkloads)
 	storageHandler.ConfigureStorageExecutor()
 	deployment := clusterapi.NewDeploymentHandler(c.Store, key).WithAgentCertificateIssuer(accessCertificates.Service())
+	deployment.WithNodeRemovalClientFactory(func(ctx context.Context, clusterID uint) (clusterapi.NodeRemovalClient, error) {
+		return agentFactory.Client(ctx, clusterID)
+	})
 	return api.RouteDependencies{
 		Auth: api.AuthDependencies{
 			Config:          c.Auth,

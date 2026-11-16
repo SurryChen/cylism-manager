@@ -558,6 +558,18 @@ func (s *Store) RecoverInterruptedClusterDeployments() error {
 			if task.Operation == "migrate-victoria-metrics" || task.Operation == "migrate-loki" {
 				continue
 			}
+			if task.Operation == "remove" {
+				if err := tx.Model(&model.ClusterDeployment{}).Where("id = ?", task.ID).Update("status", "failed").Error; err != nil {
+					return err
+				}
+				if err := tx.Create(&model.ClusterDeploymentLog{DeploymentID: task.ID, Message: "API 服务重启，移出节点任务已中断；保留服务器绑定，请从节点入口重新检查并重试"}).Error; err != nil {
+					return err
+				}
+				if err := tx.Create(&model.AuditLog{Action: "cluster.node_remove", ResourceType: "cluster", ResourceID: task.ClusterID, ActorType: model.AuditActorSystem, Source: model.AuditSourceSystem, Outcome: model.AuditOutcomeFailed, Summary: "移出节点任务已中断", OperationID: fmt.Sprintf("cluster-deployment-%d", task.ID)}).Error; err != nil {
+					return err
+				}
+				continue
+			}
 			if task.Operation == "restart" {
 				if err := tx.Model(&model.ClusterDeployment{}).Where("id = ?", task.ID).Update("status", "failed").Error; err != nil {
 					return err

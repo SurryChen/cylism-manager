@@ -29,6 +29,7 @@
             <div class="topology-node-actions">
               <button v-if="server.k8s_node_name" class="icon-button icon-button--table" type="button" title="节点调度设置" :aria-label="`设置 ${nodeDisplayName(server)} 的调度`" @click="openScheduling(server)"><Settings2 :size="14" /></button>
               <button class="icon-button icon-button--table" type="button" title="重启 K3s 服务" :aria-label="`重启 ${nodeDisplayName(server)} 的 K3s 服务`" :disabled="runningDeployment || topologyLoading" @click="openRestart(server)"><RefreshCw :size="14" /></button>
+              <button v-if="cluster.distribution === 'k3s' && server.k8s_node_name" class="btn btn-sm" type="button" :aria-label="`移出 ${nodeDisplayName(server)}`" :disabled="runningDeployment || topologyLoading" @click="removalTarget = server">移出集群</button>
               <button class="icon-button icon-button--table" type="button" :title="`卸载 ${nodeDisplayName(server)}`" :aria-label="`卸载 ${nodeDisplayName(server)}`" :disabled="runningDeployment" @click="openUninstall(server)"><Trash2 :size="14" /></button>
             </div>
           </div></div>
@@ -40,7 +41,7 @@
     <SurfaceCard v-else-if="cluster && activeTab === 'tasks'" class="cluster-detail-content" padding="none">
       <div class="cluster-deployment-toolbar"><strong>集群任务</strong><button class="icon-button" type="button" title="刷新任务" aria-label="刷新任务" :disabled="topologyLoading" @click="loadTopology"><RefreshCw :size="15" :class="{ 'is-spinning': topologyLoading }" /></button></div>
       <FeedbackBanner v-if="topologyError" class="topology-error" tone="warning" :message="topologyError" />
-      <div v-if="deployments.length" class="table-wrap"><table class="data-table"><thead><tr><th>任务</th><th>服务器</th><th>状态</th><th>开始时间</th><th>操作</th></tr></thead><tbody><tr v-for="task in deployments" :key="task.id"><td><span class="cell-primary">#{{ task.id }} · {{ taskLabel(task) }}</span><span class="cell-secondary">{{ taskDescription(task) }}</span></td><td>{{ serverName(task.server_id) }}</td><td><span class="badge" :class="deploymentStatusClass(task.status)">{{ deploymentStatusLabel(task.status) }}</span></td><td>{{ formatTime(task.created_at) }}</td><td><button class="btn btn-sm" type="button" :aria-label="`查看任务 #${task.id} 日志`" aria-haspopup="dialog" @click="selectDeployment(task)">查看日志</button></td></tr></tbody></table></div>
+      <div v-if="deployments.length" class="table-wrap"><table class="data-table"><thead><tr><th>任务</th><th>服务器</th><th>状态</th><th>开始时间</th><th>操作</th></tr></thead><tbody><tr v-for="task in deployments" :key="task.id"><td><span class="cell-primary">#{{ task.id }} · {{ taskLabel(task) }}</span><span class="cell-secondary">{{ taskDescription(task) }}</span></td><td>{{ serverName(task.server_id) }}</td><td><span class="badge" :class="deploymentStatusClass(task.status)">{{ deploymentStatusLabel(task.status) }}</span></td><td>{{ formatTime(task.created_at) }}</td><td class="task-actions"><button class="btn btn-sm" type="button" :aria-label="`查看任务 #${task.id} 日志`" aria-haspopup="dialog" @click="selectDeployment(task)">查看日志</button><button v-if="retryRemovalServer(task)" class="btn btn-sm" type="button" :aria-label="`重新检查任务 #${task.id} 的节点`" :disabled="runningDeployment || topologyLoading" @click="removalTarget = retryRemovalServer(task)">重新检查</button></td></tr></tbody></table></div>
       <EmptyState v-else-if="!topologyLoading" message="暂无集群任务" />
       <div v-if="taskTotal" class="pagination task-pagination"><button class="btn btn-sm" type="button" :disabled="taskOffset === 0 || topologyLoading" @click="changeTaskPage(-1)">上一页</button><span>{{ taskPage }} / {{ taskPageCount }} · 共 {{ taskTotal }} 条</span><button class="btn btn-sm" type="button" :disabled="taskOffset + taskPageSize >= taskTotal || topologyLoading" @click="changeTaskPage(1)">下一页</button></div>
     </SurfaceCard>
@@ -91,6 +92,7 @@
       <p class="deployment-hint">将在选中的服务器上通过 SSH 安装 K3s。服务器只能归属一个集群。<RouterLink v-if="!serverOptions.length" to="/servers">前往添加服务器</RouterLink></p>
       <template #actions><button class="btn" type="button" :disabled="submitting" @click="closeDeployment">取消</button><button class="btn btn-primary" type="button" :disabled="!selectedServerID || submitting || ((networkMode === 'tailscale' || (deploymentRole === 'worker' && joinAddressType === 'tailscale')) && selectedTailscale?.status !== 'online') || (deploymentRole === 'worker' && joinAddressType === 'tailscale' && (!controlTailscaleIP || controlTailscaleLoading))" @click="startDeployment">{{ submitting ? '启动中...' : deploymentRole === 'control-plane' ? '部署控制平面' : '添加工作节点' }}</button></template>
     </BaseModal>
+    <NodeRemovalModal :cluster-id="props.clusterID" :server="removalTarget" @close="removalTarget = null" @started="handleAgentOperationStarted" />
     <ErrorNoticeModal :open="Boolean(operationError)" :message="operationError" teleport @close="clearOperationErrors" />
   </div>
 </template>
@@ -116,6 +118,7 @@ import { formatShortDateTime as formatTime } from '../../utils/formatters.js'
 import AgentManagement from './AgentManagement.vue'
 import ClusterAgentGate from '../../components/ClusterAgentGate.vue'
 import ClusterNetworking from './ClusterNetworking.vue'
+import NodeRemovalModal from './NodeRemovalModal.vue'
 
 const props = defineProps({ clusterID: { type: String, required: true } })
 const NodeRegistryMirrors = defineAsyncComponent(() => import('./NodeRegistryMirrors.vue'))
@@ -194,6 +197,7 @@ const adoptionOpen = ref(false)
 const adoptServerID = ref('')
 const adoptError = ref('')
 const adopting = ref(false)
+const removalTarget = ref(null)
 const uninstallTarget = ref(null)
 const uninstallError = ref('')
 const restartTarget = ref(null)
@@ -250,6 +254,7 @@ watch(() => props.clusterID, async id => {
   deploymentOpen.value = false
   adoptionOpen.value = false
   uninstallTarget.value = null
+  removalTarget.value = null
   restartTarget.value = null
   error.value = ''
   const result = await resource.refresh(id)
@@ -471,9 +476,11 @@ async function startDeployment() {
 }
 
 function roleLabel(role) { return role === 'control-plane' ? '部署控制平面' : '添加工作节点' }
+function retryRemovalServer(task) { return task.operation === 'remove' && task.status === 'failed' ? workerNodes.value.find(server => Number(server.id) === Number(task.server_id) && server.k8s_node_name === task.node_name) : null }
 function taskLabel(task) {
   if (task.operation === 'migrate-victoria-metrics') return '迁移 VictoriaMetrics'
   if (task.operation === 'migrate-loki') return '迁移 Loki'
+  if (task.operation === 'remove') return '移出工作节点'
   if (task.operation === 'restart') return `重启${task.role === 'control-plane' ? '控制平面' : '工作节点'}`
   if (task.operation === 'network-migrate') return '同步 Tailscale 组网状态'
   if (task.operation === 'network-migrate-node') return '迁移节点至 Tailscale'
@@ -484,7 +491,7 @@ function taskLabel(task) {
   if (agentLabels[task.operation]) return agentLabels[task.operation]
   return task.operation === 'uninstall' ? `卸载${task.role === 'control-plane' ? '控制平面' : '工作节点'}` : task.operation === 'adopt' ? `纳管${task.role === 'control-plane' ? '控制平面' : '工作节点'}` : roleLabel(task.role)
 }
-function taskDescription(task) { if (['migrate-victoria-metrics', 'migrate-loki'].includes(task.operation)) return '监控存储跨节点迁移'; return task.operation === 'restart' ? 'K3s 服务重启' : task.operation === 'network-migrate' ? 'K3s 集群组网' : task.operation?.startsWith('network-') ? 'K3s 节点组网' : task.operation?.startsWith('cross-') ? '跨集群服务' : task.operation?.startsWith('agent-') ? 'cluster-agent 运维' : `K3s ${task.operation === 'uninstall' ? '卸载' : task.operation === 'adopt' ? '纳管' : '部署'}` }
+function taskDescription(task) { if (task.operation === 'remove') return '排空、停用 K3s 并解除关联（保留数据）'; if (['migrate-victoria-metrics', 'migrate-loki'].includes(task.operation)) return '监控存储跨节点迁移'; return task.operation === 'restart' ? 'K3s 服务重启' : task.operation === 'network-migrate' ? 'K3s 集群组网' : task.operation?.startsWith('network-') ? 'K3s 节点组网' : task.operation?.startsWith('cross-') ? '跨集群服务' : task.operation?.startsWith('agent-') ? 'cluster-agent 运维' : `K3s ${task.operation === 'uninstall' ? '卸载' : task.operation === 'adopt' ? '纳管' : '部署'}` }
 function deploymentStatusLabel(status) { return ({ running: '执行中', success: '成功', failed: '失败' })[status] || status }
 function deploymentStatusClass(status) { return ({ running: 'badge-deploying', success: 'badge-online', failed: 'badge-danger' })[status] || 'badge-offline' }
 function serverDisplayLabel(server) {
@@ -529,7 +536,9 @@ function statusClass(value) {
 .topology-scheduling-badge { width: fit-content; }
 .scheduling-option { display: flex; align-items: center; gap: 8px; font-size: 13px; }
 .topology-node-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 6px; margin-left: auto; }
-.topology-node--worker { width: min(280px, 100%); }
+.topology-node--worker { width: min(320px, 100%); flex-wrap: wrap; }
+.topology-node--worker .topology-node-copy { flex: 1; }
+.topology-node--worker .topology-node-actions { width: 100%; }
 .topology-node--worker .topology-node-icon, .topology-node--worker .topology-node-role { color: var(--text-secondary); }
 .topology-branch { position: relative; width: 1px; height: 28px; background: var(--border); }
 .topology-branch::after { position: absolute; bottom: -3px; left: -3px; width: 7px; height: 7px; border-radius: 50%; background: var(--action-primary); content: ''; }
@@ -544,6 +553,7 @@ function statusClass(value) {
 .deployment-log-meta { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; color: var(--text-secondary); font-size: 12px; }
 .deployment-log-content { display: grid; gap: 12px; }
 .deployment-log { min-height: 180px; max-height: min(58dvh, 580px); overflow: auto; border: 1px solid var(--border-muted); border-radius: var(--radius-control); padding: 12px; background: var(--surface-subtle); color: var(--text-secondary); font: 11px/1.6 var(--font-mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+.task-actions .btn + .btn { margin-left: var(--space-8); }
 .task-pagination { padding: 0 var(--space-20) var(--space-16); color: var(--text-secondary); font-size: 12px; }
 @media (max-width: 640px) {
   .cluster-detail-content > .table-wrap { padding-right: 14px; padding-left: 14px; }

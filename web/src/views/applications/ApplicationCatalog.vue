@@ -186,7 +186,7 @@ onMounted(load)
 .catalog-table td:last-child .icon-button { margin-left: 5px; }
 .table-wrap { padding: 0 var(--space-20) var(--space-8); overflow-x: auto; }
 .catalog-name { border: 0; padding: 0; background: transparent; color: var(--action-primary); font: inherit; cursor: pointer; }
-.catalog-name:hover { text-decoration: underline; }
+.catalog-name:hover { color: var(--action-primary-hover); }
 .catalog-table td:first-child { white-space: nowrap; }
 .catalog-import { width: min(580px, 100%); }
 .catalog-import-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-bottom: 15px; }

@@ -1,6 +1,14 @@
 <template>
   <div class="product-page product-detail-page">
-    <SectionTabsHeader :title="product?.name || '产品详情'" :tabs="tabs" :active-tab="tab" @select="tab = $event"><template #actions><div class="product-actions"><router-link class="btn btn-sm" to="/products">返回产品中心</router-link><button v-if="product" class="btn btn-primary btn-sm" :disabled="busy || resource.loading.value" @click="openEditor()">编辑产品</button><button v-if="product && product.stage !== 'archived'" class="btn btn-sm" :disabled="busy || resource.loading.value" @click="archiveOpen = true">归档</button></div></template></SectionTabsHeader>
+    <SectionTabsHeader :title="product?.name || '产品详情'" :tabs="tabs" :active-tab="tab" @select="tab = $event">
+      <template #title>
+        <div class="product-detail-title">
+          <router-link class="icon-button" to="/products" title="返回产品中心" aria-label="返回产品中心"><ArrowLeft :size="16" aria-hidden="true" /></router-link>
+          <h1 class="page-title">{{ product?.name || '产品详情' }}</h1>
+        </div>
+      </template>
+      <template #actions><div class="product-actions"><button v-if="product" class="btn btn-primary btn-sm" :disabled="busy || resource.loading.value" @click="openEditor()">编辑产品</button><button v-if="product && product.stage !== 'archived'" class="btn btn-sm" :disabled="busy || resource.loading.value" @click="archiveOpen = true">归档</button></div></template>
+    </SectionTabsHeader>
     <EmptyState v-if="resource.loading.value" variant="loading" message="正在读取产品..." />
     <EmptyState v-else-if="resource.error.value || !product" message="产品不存在或暂时无法读取"><template #action><button class="btn btn-sm" @click="load">重试</button></template></EmptyState>
     <div v-else-if="tab === 'overview'" class="product-detail-content">
@@ -45,6 +53,7 @@
 
 <script setup>
 import { computed, ref, watch } from 'vue'
+import { ArrowLeft } from 'lucide-vue-next'
 import { useRoute } from 'vue-router'
 import { getProduct, getProductResourceOptions, updateProduct } from '../../api/products.js'
 import { useAsyncResource } from '../../composables/useAsyncResource.js'
@@ -74,7 +83,9 @@ watch(() => route.params.id, () => { resource.data.value = null; editorOpen.valu
 
 <style scoped>
 .product-detail-page > :deep(.section-tabs-header) { height: auto; min-height: var(--tabbed-page-header-height); flex-wrap: wrap; column-gap: var(--space-24); row-gap: 0; }
-.product-detail-page > :deep(.section-tabs-header .page-title) { flex: 1 1 240px; min-width: 0; overflow-wrap: anywhere; }
+.product-detail-title { display: flex; align-items: center; gap: var(--space-12); flex: 1 1 240px; min-width: 0; margin-bottom: 23px; }
+.product-detail-title .icon-button { flex-shrink: 0; }
+.product-detail-title .page-title { min-width: 0; margin: 0; font-size: var(--tabbed-page-header-title-size); overflow-wrap: anywhere; }
 .product-detail-page > :deep(.section-tabs-header .section-tabs), .product-detail-page > :deep(.section-tabs-header .section-tabs-actions) { flex-shrink: 0; }
 .product-detail-page > :deep(.section-tab) { white-space: nowrap; }
 .product-detail-content { display: grid; gap: var(--space-16); min-width: 0; }
@@ -82,7 +93,7 @@ watch(() => route.params.id, () => { resource.data.value = null; editorOpen.valu
 .product-channel-notes { max-width: 300px; white-space: pre-wrap; overflow-wrap: anywhere; }
 @media (max-width: 1200px) {
   .product-detail-page > :deep(.section-tabs-header) { align-items: flex-start; gap: var(--space-12); }
-  .product-detail-page > :deep(.section-tabs-header .page-title) { flex-basis: 100%; margin: 0; }
+  .product-detail-title { flex-basis: 100%; margin: 0; }
   .product-detail-page > :deep(.section-tabs-header .section-tabs-actions) { order: 1; margin: 0; }
   .product-detail-page > :deep(.section-tabs-header .section-tabs) { order: 2; width: 100%; min-width: 0; margin: 0 0 var(--space-12); overflow-x: auto; }
   .product-detail-page > :deep(.section-tab) { flex-shrink: 0; }

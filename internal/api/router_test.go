@@ -108,6 +108,23 @@ func TestProductRoutesRequireAuthentication(t *testing.T) {
 	}
 }
 
+func TestNodeRemovalRoutesRequireAuthentication(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	container, err := bootstrap.NewContainer(bootstrap.Config{DBPath: "file:router-removal?mode=memory&cache=shared", EncryptionKey: make([]byte, 32), JWTSecret: []byte("router-removal-secret")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	api.RegisterRoutes(router, container.BuildRouteDependencies())
+	for _, route := range []struct{ method, path string }{{"GET", "/api/clusters/1/nodes/2/removal-plan"}, {"POST", "/api/clusters/1/nodes/2/remove"}} {
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, httptest.NewRequest(route.method, route.path, nil))
+		if response.Code != http.StatusUnauthorized {
+			t.Fatalf("%s %s: %d", route.method, route.path, response.Code)
+		}
+	}
+}
+
 func TestCloudPermissionRouteRequiresAuthentication(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()

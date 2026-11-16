@@ -29,6 +29,10 @@ import (
 )
 
 type clusterDeploymentStore interface {
+	StartClusterNodeRemoval(uint, uint, *model.ClusterDeployment) (*model.ClusterDeployment, error)
+	FinishClusterNodeRemoval(*model.ClusterDeployment, bool) error
+	LatestClusterNodeRemoval(uint, uint) (*model.ClusterDeployment, error)
+	MarkClusterNodeRemovalStopped(uint) error
 	GetCluster(uint) (*model.Cluster, error)
 	GetServer(uint) (*model.Server, error)
 	ListServers() ([]model.Server, error)
@@ -353,14 +357,17 @@ func (h *DeploymentHandler) runUninstall(task *model.ClusterDeployment) {
 }
 
 type DeploymentHandler struct {
-	store           clusterDeploymentStore
-	key             []byte
-	agentIssuer     agentCertificateIssuer
-	agentBinaryPath string
+	removalClient       func(context.Context, uint) (NodeRemovalClient, error)
+	removalHost         NodeRemovalHost
+	removalPollInterval time.Duration
+	store               clusterDeploymentStore
+	key                 []byte
+	agentIssuer         agentCertificateIssuer
+	agentBinaryPath     string
 }
 
 func NewDeploymentHandler(st clusterDeploymentStore, key []byte) *DeploymentHandler {
-	return &DeploymentHandler{store: st, key: append([]byte(nil), key...), agentBinaryPath: os.Getenv("CYLISM_CLUSTER_AGENT_BINARY")}
+	return &DeploymentHandler{store: st, key: append([]byte(nil), key...), agentBinaryPath: os.Getenv("CYLISM_CLUSTER_AGENT_BINARY"), removalHost: &sshNodeRemovalHost{key: append([]byte(nil), key...), exec: transport.SSHExecServerContext}}
 }
 
 func (h *DeploymentHandler) WithAgentCertificateIssuer(issuer agentCertificateIssuer) *DeploymentHandler {
@@ -826,6 +833,8 @@ func (h *DeploymentHandler) recordAudit(deployment *model.ClusterDeployment, out
 		action = "cluster.network_migrate"
 	} else if deployment.Operation == "restart" {
 		action = "cluster.node_restart"
+	} else if deployment.Operation == "remove" {
+		action = "cluster.node_remove"
 	} else if strings.HasPrefix(deployment.Operation, "agent-") {
 		action = "cluster.agent"
 	}

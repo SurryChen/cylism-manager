@@ -469,4 +469,47 @@ describe('ClusterDetail', () => {
     expect(wrapper.get('.data-table tbody').text()).toContain('K3s 纳管')
     wrapper.unmount()
   })
+  it('offers removal only for a bound K3s worker and navigates to tasks after starting', async () => {
+    get.mockImplementation(path => {
+      if (path === '/clusters/9') return Promise.resolve({ ...cluster, status: 'ready', control_server_id: 3 })
+      if (path === '/servers') return Promise.resolve([
+        { ...server, cluster_id: 9, cluster_role: 'control-plane', k8s_node_name: 'control' },
+        { id: 4, name: '工作节点', cluster_id: 9, cluster_role: 'worker', k8s_node_name: 'worker' },
+      ])
+      if (path.endsWith('/removal-plan')) return Promise.resolve({ node_name: 'worker', node_uid: 'uid-1', can_start: true, drain: {} })
+      return Promise.resolve([])
+    })
+    post.mockResolvedValue({ id: 13, operation: 'remove', status: 'running' })
+    const wrapper = await mountDetail()
+    await flushPromises()
+    expect(wrapper.find('[aria-label="移出 节点一"]').exists()).toBe(false)
+    await wrapper.get('[aria-label="移出 工作节点"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('#removal-node-name').setValue('worker')
+    await wrapper.get('[role="dialog"] .btn-danger').trigger('click')
+    await flushPromises()
+    expect(post).toHaveBeenCalledWith('/clusters/9/nodes/4/remove', { confirm_node_name: 'worker', node_uid: 'uid-1', delete_empty_dir_data: false })
+    expect(wrapper.vm.$route.query.tab).toBe('tasks')
+    expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('offers a preflight retry for a failed removal task that still has its server binding', async () => {
+    get.mockImplementation(path => {
+      if (path === '/clusters/9') return Promise.resolve({ ...cluster, status: 'ready', control_server_id: 3 })
+      if (path === '/servers') return Promise.resolve([{ id: 4, name: '工作节点', cluster_id: 9, cluster_role: 'worker', k8s_node_name: 'worker' }])
+      if (path.includes('/deployments?')) return Promise.resolve({ items: [{ id: 13, operation: 'remove', status: 'failed', server_id: 4, node_name: 'worker' }], total: 1 })
+      if (path.endsWith('/removal-plan')) return Promise.resolve({ node_name: 'worker', node_uid: 'uid-1', can_start: true, node_missing: true })
+      return Promise.resolve([])
+    })
+    const wrapper = await mountDetail('9', '?tab=tasks')
+    await flushPromises()
+    expect(wrapper.text()).toContain('移出工作节点')
+    await wrapper.get('[aria-label="重新检查任务 #13 的节点"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[role="dialog"]').text()).toContain('节点对象已不存在')
+    expect(post).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
 })

@@ -860,7 +860,7 @@ onBeforeUnmount(() => { clearInterval(polling); clearMemberRoles() })
 .resource-claim { display: inline-flex; max-width: 100%; align-items: center; gap: 6px; overflow: hidden; text-align: left; }
 .resource-claim .badge { flex: none; text-decoration: none; }
 .resource-detail-button { border: 0; padding: 2px 0; background: none; color: var(--action-primary); font: inherit; cursor: pointer; white-space: nowrap; }
-.resource-detail-button:hover { text-decoration: underline; }
+.resource-detail-button:hover { color: var(--action-primary-hover); }
 .resource-table .badge { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .row-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .resource-modal-content { display: grid; gap: 16px; font-size: 12px; }

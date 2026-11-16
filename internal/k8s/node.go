@@ -11,6 +11,7 @@ import (
 	policyv1 "k8s.io/api/policy/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/client-go/util/retry"
 )
@@ -59,10 +60,11 @@ type NodeScheduling struct {
 
 // DrainPod describes a Pod affected by a drain preflight or execution.
 type DrainPod struct {
-	Namespace string `json:"namespace"`
-	Name      string `json:"name"`
-	OwnerKind string `json:"owner_kind,omitempty"`
-	Reason    string `json:"reason"`
+	UID       types.UID `json:"-"`
+	Namespace string    `json:"namespace"`
+	Name      string    `json:"name"`
+	OwnerKind string    `json:"owner_kind,omitempty"`
+	Reason    string    `json:"reason"`
 }
 
 // DrainPlan separates Pods that can be evicted from the ones requiring action.
@@ -315,6 +317,10 @@ func (c *Client) DrainPlanContext(ctx context.Context, name string) (*DrainPlan,
 // DrainNode cordons the node and submits PDB-aware eviction requests. It never
 // directly deletes Pods, so a PodDisruptionBudget can defer an unsafe disruption.
 func (c *Client) DrainNodeContext(ctx context.Context, name string, options DrainOptions) (*DrainResult, error) {
+	return c.drainNodeContext(ctx, name, options, "")
+}
+
+func (c *Client) drainNodeContext(ctx context.Context, name string, options DrainOptions, expectedUID types.UID) (*DrainResult, error) {
 	plan, err := c.DrainPlanContext(ctx, name)
 	if err != nil {
 		return nil, err
@@ -330,6 +336,9 @@ func (c *Client) DrainNodeContext(ctx context.Context, name string, options Drai
 	if err != nil {
 		return nil, fmt.Errorf("读取节点失败: %w", err)
 	}
+	if expectedUID != "" && (node.UID != expectedUID || isControlPlaneNode(node)) {
+		return nil, fmt.Errorf("节点身份或角色已变化，请重新检查")
+	}
 	if !node.Spec.Unschedulable {
 		node.Spec.Unschedulable = true
 	}
@@ -341,7 +350,11 @@ func (c *Client) DrainNodeContext(ctx context.Context, name string, options Drai
 	candidates := append(append([]DrainPod{}, plan.Evictable...), plan.RequiresEmptyDirConfirmation...)
 	result := &DrainResult{Plan: plan}
 	for _, item := range candidates {
-		err := c.Clientset.CoreV1().Pods(item.Namespace).EvictV1(ctx, &policyv1.Eviction{ObjectMeta: metav1.ObjectMeta{Name: item.Name, Namespace: item.Namespace}})
+		eviction := &policyv1.Eviction{ObjectMeta: metav1.ObjectMeta{Name: item.Name, Namespace: item.Namespace}}
+		if item.UID != "" {
+			eviction.DeleteOptions = &metav1.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &item.UID}}
+		}
+		err := c.Clientset.CoreV1().Pods(item.Namespace).EvictV1(ctx, eviction)
 		if err == nil {
 			result.Evicted = append(result.Evicted, item)
 			continue
@@ -472,7 +485,7 @@ func markNodeDrained(node *corev1.Node) {
 }
 
 func drainPod(pod *corev1.Pod) DrainPod {
-	item := DrainPod{Namespace: pod.Namespace, Name: pod.Name}
+	item := DrainPod{UID: pod.UID, Namespace: pod.Namespace, Name: pod.Name}
 	for _, owner := range pod.OwnerReferences {
 		if owner.Controller != nil && *owner.Controller {
 			item.OwnerKind = owner.Kind
