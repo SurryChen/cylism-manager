@@ -56,3 +56,7 @@ func (s *QueryService) ListReleases(applicationID uint) ([]model.Release, error)
 func (s *QueryService) ListReleasesByApplications(ids []uint) (map[uint][]model.Release, error) {
 	return s.repository.ListReleasesByApplications(ids)
 }
+
+func (s *QueryService) ListReleasesPage(ids []uint, limit, offset int) ([]model.Release, int64, error) {
+	return s.repository.ListReleasesPage(ids, limit, offset)
+}

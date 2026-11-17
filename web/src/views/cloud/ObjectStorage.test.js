@@ -75,7 +75,7 @@ describe('ObjectStorage', () => {
     await wrapper.get('[data-testid="object-delete-logo.png"]').trigger('click')
     await wrapper.get('[data-testid="confirm-dialog-confirm"]').trigger('click')
     await flushPromises()
-    expect(cloud.getCloudObjects).toHaveBeenCalledWith(8, 'assets', { prefix: '', region: 'cn-hangzhou' })
+    expect(cloud.getCloudObjects).toHaveBeenCalledWith(8, 'assets', expect.objectContaining({ prefix: '', region: 'cn-hangzhou', limit: 10, token: '' }), expect.objectContaining({ signal: expect.any(AbortSignal) }))
     expect(cloud.deleteCloudObject).toHaveBeenCalledWith(8, 'assets', { key: 'logo.png', confirm: true }, 'cn-hangzhou')
   })
 

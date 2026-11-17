@@ -4,6 +4,7 @@ import (
 	"github.com/cylism/cylism-manager/internal/model"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
+	"strings"
 )
 
 var ErrProductResourceAccess = model.ErrProductResourceAccess
@@ -12,6 +13,29 @@ func (s *Store) ListProducts(ownerID uint) ([]model.Product, error) {
 	products := []model.Product{}
 	err := s.db.Where("owner_id = ?", ownerID).Preload("Channels", func(db *gorm.DB) *gorm.DB { return db.Order("id asc") }).Order("updated_at desc, id desc").Find(&products).Error
 	return products, err
+}
+
+// ListProductsPage filters inside the owner scope before counting and loading channels.
+func (s *Store) ListProductsPage(ownerID uint, stage, scope, keyword string, limit, offset int) ([]model.Product, int64, error) {
+	query := s.db.Model(&model.Product{}).Where("owner_id = ?", ownerID)
+	if scope == "archived" {
+		query = query.Where("stage = ?", model.ProductStageArchived)
+	} else if scope == "current" {
+		query = query.Where("stage <> ?", model.ProductStageArchived)
+	}
+	if stage != "" {
+		query = query.Where("stage = ?", stage)
+	}
+	if keyword != "" {
+		query = query.Where("(instr(LOWER(name), ?) > 0 OR instr(LOWER(summary), ?) > 0 OR instr(LOWER(next_action), ?) > 0)", strings.ToLower(keyword), strings.ToLower(keyword), strings.ToLower(keyword))
+	}
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	items := []model.Product{}
+	err := query.Preload("Channels", func(db *gorm.DB) *gorm.DB { return db.Order("id asc") }).Order("updated_at desc, id desc").Limit(limit).Offset(offset).Find(&items).Error
+	return items, total, err
 }
 
 func (s *Store) GetProduct(ownerID, id uint) (*model.Product, error) {

@@ -49,6 +49,7 @@ func setupApplicationRouter(clients ...*k8sclient.Client) (*gin.Engine, *store.S
 	}
 	applications := r.Group("/api/applications")
 	{
+		applications.GET("/:id", h.GetApplication)
 		applications.GET("", h.ListApplications)
 		applications.GET("/discovery", h.DiscoverApplications)
 		applications.POST("", h.CreateApplication)
@@ -68,11 +69,13 @@ func setupApplicationRouter(clients ...*k8sclient.Client) (*gin.Engine, *store.S
 		applications.PUT("/:id/endpoints/:endpointID", h.UpdateApplicationEndpoint)
 		applications.DELETE("/:id/endpoints/:endpointID", h.DeleteApplicationEndpoint)
 		applications.POST("/:id/releases", h.CreateRelease)
+		applications.GET("/:id/releases", h.ListReleasePage)
 		applications.GET("/:id/releases/:releaseID", h.GetRelease)
 		applications.POST("/:id/integration-handoffs", h.CreateIntegrationHandoff)
 	}
 	workspace := r.Group("/api/workspace")
 	workspace.GET("/overview", h.WorkspaceOverview)
+	workspace.GET("/releases", h.WorkspaceReleasePage)
 	return r, s
 }
 

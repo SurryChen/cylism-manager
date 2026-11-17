@@ -57,6 +57,7 @@ func registerInfrastructureRoutes(apiGroup *gin.RouterGroup, catalog *clusterapi
 	servers.GET("/resource-stats", server.ResourceStats)
 	servers.GET("/tailscale", server.TailscaleStatuses)
 	servers.POST("/speed-test", server.SpeedTest)
+	servers.GET("/speed-test/history", server.SpeedTestHistory)
 	servers.POST("/tailscale/connections", server.TailscaleConnections)
 	servers.POST("/tailscale/connections/diagnose", server.TailscaleDiagnoseConnection)
 	servers.GET("/:id", server.Get)

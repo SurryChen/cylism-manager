@@ -68,3 +68,7 @@ func TestQueryServiceDelegatesReadModelOperations(t *testing.T) {
 		t.Fatalf("ListReleasesByApplications() = %#v, %v", grouped, err)
 	}
 }
+
+func (queryStoreStub) ListReleasesPage([]uint, int, int) ([]model.Release, int64, error) {
+	return []model.Release{}, 0, nil
+}

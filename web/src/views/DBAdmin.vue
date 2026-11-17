@@ -44,11 +44,7 @@
             </tbody>
           </table>
         </div>
-        <div class="pagination">
-          <button class="btn btn-sm" :disabled="page <= 1" @click="page--; fetchData()">上一页</button>
-          <span class="pagination-status">{{ page }} / {{ totalPages }}</span>
-          <button class="btn btn-sm" :disabled="page >= totalPages" @click="page++; fetchData()">下一页</button>
-        </div>
+        <PaginationControls :page="page" :page-size="size" :total="total" :loading="loading" @page-change="changePage" @page-size-change="changePageSize" />
       </div>
     </SurfaceCard>
 
@@ -87,6 +83,7 @@
 </template>
 
 <script setup>
+import PaginationControls from '../components/PaginationControls.vue'
 import { ref, computed, onMounted, reactive } from 'vue'
 import { createAdminTableRow, deleteAdminTableRow, getAdminTableRows, getAdminTables, updateAdminTableRow } from '../api/admin.js'
 import SurfaceCard from '../components/SurfaceCard.vue'
@@ -99,7 +96,7 @@ const columns = ref([])
 const rows = ref([])
 const loading = ref(false)
 const page = ref(1)
-const size = 20
+const size = ref(10)
 const total = ref(0)
 const readError = ref('')
 const actionError = ref('')
@@ -112,7 +109,7 @@ const formData = reactive({})
 const tablesResource = useAsyncResource(({ signal }) => getAdminTables({ signal }), { tables: [] })
 const rowsResource = useAsyncResource(({ signal }, table, query) => getAdminTableRows(table, query, { signal }), { columns: [], rows: [], total: 0 })
 
-const totalPages = computed(() => Math.max(1, Math.ceil(total.value / size)))
+let rowsRequest = 0
 const editableColumns = computed(() => columns.value.filter(c => !['id','created_at','updated_at','deleted_at'].includes(c)))
 
 const tableLabels = { servers:'服务器', sites:'站点', certs:'证书', audit_logs:'审计日志', operation_logs:'操作日志', users:'用户' }
@@ -128,6 +125,9 @@ async function loadTables() {
 }
 
 async function selectTable(name) {
+  rowsResource.cancel()
+  rows.value = []; columns.value = []; total.value = 0
+  closeForm(); deleteTarget.value = null
   currentTable.value = name
   page.value = 1
   sort.value = 'id'
@@ -135,12 +135,22 @@ async function selectTable(name) {
   await fetchData()
 }
 
-async function fetchData() {
+async function fetchData(requestedPage = page.value, requestedSize = size.value) {
   if (!currentTable.value) return
+  const request = ++rowsRequest
+  const table = currentTable.value
+  const query = { sort: sort.value, order: order.value }
   readError.value = ''
   loading.value = true
-  const data = await rowsResource.refresh(currentTable.value, { page: page.value, size, sort: sort.value, order: order.value })
+  let data = await rowsResource.refresh(table, { page: requestedPage, size: requestedSize, ...query })
+  if (request !== rowsRequest) return
+  if (data && requestedPage > Math.max(1, Math.ceil(data.total / requestedSize))) {
+    requestedPage = Math.max(1, Math.ceil(data.total / requestedSize))
+    data = await rowsResource.refresh(table, { page: requestedPage, size: requestedSize, ...query })
+  }
+  if (request !== rowsRequest) return
   if (data) {
+    page.value = requestedPage; size.value = requestedSize
     columns.value = data.columns || []
     rows.value = data.rows || []
     total.value = data.total || 0
@@ -150,6 +160,8 @@ async function fetchData() {
   loading.value = false
 }
 
+function changePage(value) { if (!loading.value) void fetchData(value) }
+function changePageSize(value) { if (!loading.value) void fetchData(1, value) }
 function setSort(col) {
   if (sort.value === col) {
     order.value = order.value === 'asc' ? 'desc' : 'asc'
@@ -157,7 +169,7 @@ function setSort(col) {
     sort.value = col
     order.value = 'asc'
   }
-  fetchData()
+  fetchData(1)
 }
 
 function formatCell(val) {

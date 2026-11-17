@@ -1,12 +1,13 @@
 <template>
   <section class="settings-section">
-    <SurfaceCard class="temporary-token-card">
+    <SurfaceCard class="temporary-token-card settings-list-card" padding="none">
       <div class="temporary-token-toolbar">
         <button class="btn btn-primary" type="button" data-testid="temporary-token-open-create" @click="openTemporaryTokenCreate">
           生成临时秘钥
         </button>
       </div>
-      <div v-if="temporaryTokens.length" class="table-wrap temporary-token-table">
+      <EmptyState v-if="tokensLoading" variant="loading" message="正在读取临时登录秘钥..." />
+      <div v-else-if="temporaryTokens.length" class="table-wrap temporary-token-table">
         <table class="data-table" aria-label="临时登录秘钥列表">
           <thead class="temporary-token-table-header">
             <tr>
@@ -18,7 +19,7 @@
             </tr>
           </thead>
           <tbody>
-            <tr v-for="item in temporaryTokens" :key="item.id" class="temporary-token-row">
+            <tr v-for="item in pagedTokens" :key="item.id" class="temporary-token-row">
               <td><span class="temporary-token-note">{{ item.label || '未命名秘钥' }}</span></td>
               <td><time class="temporary-token-date" :datetime="item.created_at">{{ formatDateTime(item.created_at) }}</time></td>
               <td><time class="temporary-token-date" :datetime="item.expires_at">{{ formatDateTime(item.expires_at) }}</time></td>
@@ -34,9 +35,10 @@
           </tbody>
         </table>
       </div>
-      <p v-if="temporaryTokensError" class="settings-copy endpoint-error">{{ temporaryTokensError }}</p>
-      <p v-else-if="temporaryTokens.length === 0" class="settings-copy temporary-token-empty">尚未生成临时登录秘钥。</p>
+      <EmptyState v-else message="尚未生成临时登录秘钥。" />
+      <PaginationControls :page="page" :page-size="pageSize" :total="total" :loading="tokensLoading || creatingTemporaryToken || !!revokingTemporaryToken" label="临时秘钥分页" @page-change="changePage" @page-size-change="changePageSize" />
     </SurfaceCard>
+    <ErrorNoticeModal :open="!!temporaryTokensError" :message="temporaryTokensError" @close="temporaryTokensError = ''" />
 
     <BaseModal
       :open="showTemporaryTokenCreate"
@@ -86,14 +88,19 @@
 </template>
 
 <script setup>
-import { onMounted, ref } from 'vue'
-import { createTemporaryToken as createTemporaryTokenRequest, deleteTemporaryToken, getTemporaryTokens } from '../../api/settings.js'
-import { useAsyncResource } from '../../composables/useAsyncResource.js'
+import { onMounted, ref, watch } from 'vue'
+import { createTemporaryToken as createTemporaryTokenRequest, deleteTemporaryToken, getTemporaryTokenPage } from '../../api/settings.js'
+import { usePaginatedResource } from '../../composables/usePaginatedResource.js'
 import { formatDateTime } from '../../utils/formatters.js'
 import BaseModal from '../../components/BaseModal.vue'
 import SurfaceCard from '../../components/SurfaceCard.vue'
+import SelectMenu from '../../components/SelectMenu.vue'
+import PaginationControls from '../../components/PaginationControls.vue'
+import EmptyState from '../../components/EmptyState.vue'
+import ErrorNoticeModal from '../../components/ErrorNoticeModal.vue'
 
-const temporaryTokens = ref([])
+const temporaryTokensResource = usePaginatedResource(getTemporaryTokenPage, 'items')
+const { items: temporaryTokens, page, pageSize, total, items: pagedTokens, changePage, changePageSize } = temporaryTokensResource
 const generatedTemporaryToken = ref('')
 const temporaryTokensError = ref('')
 const temporaryTokenCreateError = ref('')
@@ -101,7 +108,8 @@ const creatingTemporaryToken = ref(false)
 const revokingTemporaryToken = ref(0)
 const temporaryTokenForm = ref({ label: '', ttl_seconds: 3600 })
 const showTemporaryTokenCreate = ref(false)
-const temporaryTokensResource = useAsyncResource(({ signal }) => getTemporaryTokens({ signal }), [])
+const tokensLoading = temporaryTokensResource.loading
+watch(temporaryTokensResource.error, cause => { if (cause) temporaryTokensError.value = cause.message || '读取临时登录秘钥失败' })
 
 onMounted(() => {
   void refresh()
@@ -110,8 +118,7 @@ onMounted(() => {
 async function refresh() {
   temporaryTokensError.value = ''
   const result = await temporaryTokensResource.refresh()
-  if (result) temporaryTokens.value = result || []
-  else if (temporaryTokensResource.error.value) temporaryTokensError.value = temporaryTokensResource.error.value.message || '读取临时登录秘钥失败'
+  if (!result && temporaryTokensResource.error.value) temporaryTokensError.value = temporaryTokensResource.error.value.message || '读取临时登录秘钥失败'
 }
 
 async function createTemporaryToken() {
@@ -121,7 +128,7 @@ async function createTemporaryToken() {
     const result = await createTemporaryTokenRequest({ ...temporaryTokenForm.value })
     generatedTemporaryToken.value = result.token
     temporaryTokenForm.value.label = ''
-    await refresh()
+    await temporaryTokensResource.load()
   } catch (e) {
     temporaryTokenCreateError.value = e.message || '生成临时登录秘钥失败'
   } finally {

@@ -1,6 +1,6 @@
 <template>
   <section class="settings-section">
-    <SurfaceCard>
+    <SurfaceCard class="settings-list-card" padding="none">
       <div class="cloud-provider-toolbar">
         <button class="btn btn-primary" type="button" data-testid="cloud-provider-open-create" @click="openCreate">添加云提供商</button>
       </div>
@@ -13,9 +13,9 @@
           <span>操作</span>
         </header>
 
-        <p v-if="loading" class="cloud-provider-row cloud-provider-row--message">正在读取云连接...</p>
+        <EmptyState v-if="loading" variant="loading" message="正在读取云连接..." />
         <template v-else-if="connections.length">
-          <div v-for="item in connections" :key="item.id" class="cloud-provider-row" :data-testid="'cloud-provider-card-' + item.id">
+          <div v-for="item in pagedConnections" :key="item.id" class="cloud-provider-row" :data-testid="'cloud-provider-card-' + item.id">
             <span class="cloud-provider-name">{{ item.name }}</span>
             <span class="cloud-provider-value">{{ providerLabel(item.provider) }}</span>
             <span><span class="badge" :class="statusBadgeClass(item)">{{ connectionState(item) }}</span></span>
@@ -26,11 +26,12 @@
             </span>
           </div>
         </template>
-        <p v-else class="cloud-provider-row cloud-provider-row--message">还没有云提供商连接，添加后即可在域名管理和对象存储中使用对应服务。</p>
+        <EmptyState v-else message="还没有云提供商连接，添加后即可在域名管理和对象存储中使用对应服务。" />
       </div>
 
-      <p v-if="error" class="settings-copy endpoint-error">{{ error }}</p>
+      <PaginationControls :page="page" :page-size="pageSize" :total="total" :loading="loading || saving" label="云提供商分页" @page-change="changePage" @page-size-change="changePageSize" />
     </SurfaceCard>
+    <ErrorNoticeModal :open="!!error" :message="error" @close="error = ''" />
 
     <BaseModal :open="formOpen" :title="editing ? '编辑云连接' : '添加云连接'" size="medium" :show-close="!saving" :close-on-overlay="!saving" :close-on-escape="!saving" @close="closeForm">
       <form id="cloud-provider-form" class="cloud-provider-form" autocomplete="off" @submit.prevent="save">
@@ -99,14 +100,18 @@
 </template>
 
 <script setup>
-import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
-import { createCloudConnection, deleteCloudConnection, getCloudConnectionPermissions, getCloudConnections, getCloudProviders, updateCloudConnection } from '../../api/cloud-resources.js'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { createCloudConnection, deleteCloudConnection, getCloudConnectionPermissions, getCloudConnectionPage, getCloudProviders, updateCloudConnection } from '../../api/cloud-resources.js'
 import BaseModal from '../../components/BaseModal.vue'
 import SelectMenu from '../../components/SelectMenu.vue'
 import SurfaceCard from '../../components/SurfaceCard.vue'
+import PaginationControls from '../../components/PaginationControls.vue'
+import ErrorNoticeModal from '../../components/ErrorNoticeModal.vue'
+import EmptyState from '../../components/EmptyState.vue'
+import { usePaginatedResource } from '../../composables/usePaginatedResource.js'
 
-const connections = ref([])
-const loading = ref(true)
+const connectionResource = usePaginatedResource(getCloudConnectionPage, 'items')
+const { items: connections, items: pagedConnections, page, pageSize, total, changePage, changePageSize, loading } = connectionResource
 const saving = ref(false)
 const error = ref('')
 const formOpen = ref(false)
@@ -154,7 +159,8 @@ async function loadPermissions() {
     if (permissionController === controller) permissionLoading.value = false
   }
 }
-async function refresh() { loading.value = true; error.value = ''; try { connections.value = await getCloudConnections() } catch (err) { error.value = err.message || '读取云连接失败' } finally { loading.value = false } }
+async function refresh() { error.value = ''; await connectionResource.refresh() }
+watch(connectionResource.error, cause => { if (cause) error.value = cause.message || '读取云连接失败' })
 function clearValues(target) { Object.keys(target).forEach(key => delete target[key]) }
 function selectProvider() {
   clearValues(credentialValues)
@@ -173,7 +179,7 @@ async function save() {
     const body = { ...form, credentials: JSON.stringify(credentialValues), configuration: editing.value?.configuration || '{}' }
     if (editing.value && !Object.values(credentialValues).some(Boolean)) delete body.credentials
     if (editing.value) await updateCloudConnection(editing.value.id, body); else await createCloudConnection(body)
-    formOpen.value = false; await refresh()
+    formOpen.value = false; await connectionResource.load()
   } catch (err) { error.value = err.message || '保存云连接失败' } finally { saving.value = false }
 }
 async function remove(item) { if (!window.confirm('删除云连接 ' + item.name + '？')) return; try { await deleteCloudConnection(item.id); await refresh() } catch (err) { error.value = err.message || '删除云连接失败' } }

@@ -12,7 +12,7 @@ describe('Cloud resources api', () => {
     getCloudConnections(options)
     getCloudProviders(options)
     getCloudConnectionPermissions(7, options)
-    getCloudDNSRecords(7, 'example.com', options)
+    getCloudDNSRecords(7, 'example.com', {}, options)
     deleteCloudDNSRecord(7, 'record/1', { confirm: true }, options)
     getCloudContainers(7, options)
     updateCloudContainer(7, 'files/main', { acl: 'private' }, options)

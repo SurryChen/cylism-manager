@@ -27,7 +27,8 @@
           </tr></tbody>
         </table>
       </div>
-      <div v-if="activeTab === 'secrets' && secretContinue" class="secret-pagination"><button class="btn" type="button" :disabled="loadingTab" @click="loadMoreSecrets">{{ loadingTab ? '正在读取...' : '加载更多' }}</button></div>
+      <PaginationControls v-if="activeTab === 'configmaps'" :page="configPageNumber" :page-size="configPageSize" :total="configTotal" :loading="loadingTab" @page-change="configPage.changePage" @page-size-change="configPage.changePageSize" />
+      <CursorPaginationControls v-else :page="secretPageNumber" :page-size="secretPageSize" :count="secrets.length" :has-next="secretHasNext" :loading="loadingTab" @page-change="secretPage.changePage" @page-size-change="secretPage.changePageSize" />
     </TabbedWorkspaceCard>
 
     <BaseModal :open="showDetail" :title="detailTitle" size="large" @close="closeDetail">
@@ -54,9 +55,14 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { Pencil, Plus, RefreshCw, Trash2 } from 'lucide-vue-next'
 import * as legacyK8s from '../../api/kubernetes.js'
+import PaginationControls from '../../components/PaginationControls.vue'
+import CursorPaginationControls from '../../components/CursorPaginationControls.vue'
+import { usePaginatedResource } from '../../composables/usePaginatedResource.js'
+import { useCursorResource } from '../../composables/useCursorResource.js'
+import { getInventoryPage } from '../../api/list-pages.js'
 import { useAsyncResource } from '../../composables/useAsyncResource.js'
 import BaseModal from '../../components/BaseModal.vue'
 import EmptyState from '../../components/EmptyState.vue'
@@ -69,14 +75,16 @@ const { clusterId = '' } = defineProps({ clusterId: { type: String, default: '' 
 const { createConfigMap, createSecret, deleteConfigMap, deleteSecret, getConfigMap, getConfigMapsForNamespace, getNamespaceNames, getSecret, getSecretMetadataPage, updateConfigMap, updateSecret } = clusterId ? legacyK8s.createClusterKubernetesApi(clusterId) : legacyK8s
 
 const activeTab = ref('configmaps')
-const configmaps = ref([])
-const secrets = ref([])
+
+
 const namespaces = ref([])
 const secretNamespace = ref('')
-const secretContinue = ref('')
-const listResource = useAsyncResource(({ signal }, tab, continueToken = '') => tab === 'configmaps' ? getConfigMapsForNamespace('', { signal }) : getSecretMetadataPage(secretNamespace.value, { continueToken, signal }), null)
+const configPage = usePaginatedResource((query, options) => getInventoryPage(clusterId, 'configmaps', { ...query, usage: false }, options), 'items')
+const secretPage = useCursorResource(async (query, options) => { const result = await getSecretMetadataPage(query.namespace || '', { limit: query.limit, continueToken: query.token, ...options }); return { items: result.items, nextToken: result.continue } })
+const { items: configmaps, total: configTotal, page: configPageNumber, pageSize: configPageSize } = configPage
+const { items: secrets, page: secretPageNumber, pageSize: secretPageSize, hasNext: secretHasNext } = secretPage
 const detailResource = useAsyncResource(({ signal }, tab, namespace, name) => tab === 'configmaps' ? getConfigMap(namespace, name, { signal }) : getSecret(namespace, name, { signal }), null)
-const loadingTab = listResource.loading
+const loadingTab = computed(() => activeTab.value === 'configmaps' ? configPage.loading.value : secretPage.loading.value)
 const namespacesLoading = ref(false)
 const saving = ref(false)
 const listError = ref('')
@@ -90,7 +98,7 @@ const editing = ref(false)
 const resourceForm = ref(newResourceForm())
 
 const resources = computed(() => activeTab.value === 'configmaps' ? configmaps.value : secrets.value)
-const resourceCountLabel = computed(() => activeTab.value === 'secrets' ? `本页 ${resources.value.length} 条` : `${resources.value.length} 条`)
+const resourceCountLabel = computed(() => activeTab.value === 'secrets' ? `本页 ${resources.value.length} 条` : `${configTotal.value} 条`)
 const resourceKind = computed(() => activeTab.value === 'configmaps' ? 'ConfigMap' : 'Opaque Secret')
 const detailLoading = detailResource.loading
 const detailTitle = computed(() => selectedResource.value ? `${activeTab.value === 'configmaps' ? 'ConfigMap' : 'Secret'} · ${selectedResource.value.namespace}/${selectedResource.value.name}` : '配置详情')
@@ -121,23 +129,11 @@ async function selectTab(tab) {
   closeDetail()
   listError.value = ''
   if (tab === 'secrets') {
-    secretContinue.value = ''
-    secrets.value = []
     if (!namespaces.value.length && !namespacesLoading.value) void loadNamespaces()
-  }
-  const result = await listResource.refresh(tab)
-  if (!result) { if (listResource.error.value) listError.value = listResource.error.value.message || '加载失败，请检查集群连接'; return }
-  if (tab === 'configmaps') configmaps.value = result || []
-  else { secrets.value = result.items || []; secretContinue.value = result.continue || '' }
+    await secretPage.load({ namespace: secretNamespace.value })
+  } else await configPage.refresh()
 }
-async function loadMoreSecrets() {
-  if (!secretContinue.value || loadingTab.value) return
-  listError.value = ''
-  const result = await listResource.refresh('secrets', secretContinue.value)
-  if (!result) { if (listResource.error.value) listError.value = listResource.error.value.message || '加载失败，请检查集群连接'; return }
-  secrets.value = [...secrets.value, ...(result.items || [])]
-  secretContinue.value = result.continue || ''
-}
+watch([configPage.error, secretPage.error], causes => { const cause = causes.find(Boolean); if (cause) listError.value = cause.message || '读取配置失败' })
 async function openDetail(resource) {
   selectedResource.value = resource
   detail.value = null

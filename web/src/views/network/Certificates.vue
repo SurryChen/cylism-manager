@@ -36,7 +36,8 @@
           </table>
         </div>
         <div v-else class="empty-state certificate-empty"><FileCheck2 data-testid="certificate-empty-icon" :size="30" :stroke-width="1.5" /><span class="empty-text">尚未发现证书</span></div>
-      </SurfaceCard>
+      <PaginationControls :page="certPage" :page-size="certPageSize" :total="certTotal" :loading="certLoading" @page-change="changeCertPage" @page-size-change="changeCertPageSize" />
+    </SurfaceCard>
     </template>
 
     <BaseModal :open="showIssuanceConfig" :title="configView === 'form' ? (setupIssuer ? '编辑证书申请配置' : '新增证书申请配置') : '证书申请配置'" size="large" @close="showIssuanceConfig = false">
@@ -121,11 +122,16 @@ import OverflowTooltip from '../../components/OverflowTooltip.vue'
 import SelectMenu from '../../components/SelectMenu.vue'
 import SurfaceCard from '../../components/SurfaceCard.vue'
 import { createCertificate as createCertificateRequest, createDNSCredential, createIssuer, deleteCertificate as removeCertificate, deleteDNSCredential, deleteIssuer as removeIssuer, getCertificateIssuers, getCertificates, getCertificateStatus, getDNSCredentials, getDNSProviders, installCertificateManager, installDNSProvider, updateDNSCredential, updateIssuer } from '../../api/certificates.js'
+import PaginationControls from '../../components/PaginationControls.vue'
+import { usePaginatedResource } from '../../composables/usePaginatedResource.js'
+import { getCertificatePage } from '../../api/list-pages.js'
 import { useAsyncResource } from '../../composables/useAsyncResource.js'
 
 const router = useRouter()
 const props = defineProps({ clusterId: { type: [String, Number], required: true } })
-const certs = ref([])
+const certificatePage = usePaginatedResource((query, options) => getCertificatePage(props.clusterId, query, options), 'items')
+const { items: certs, total: certTotal, page: certPage, pageSize: certPageSize, loading: certLoading, changePage: changeCertPage, changePageSize: changeCertPageSize } = certificatePage
+watch(certificatePage.error, cause => { if (cause) mutationError.value = cause.message || '读取证书失败' })
 const issuers = ref([])
 const credentials = ref([])
 const providers = ref([])
@@ -167,12 +173,13 @@ const setupCredentials = computed(() => credentials.value.filter(credential => c
 const certificateResource = useAsyncResource(async ({ signal }) => {
   const [statusResult, certificatesResult] = await Promise.allSettled([
     getCertificateStatus({ signal }, props.clusterId),
-    getCertificates({ signal }, props.clusterId),
+    certificatePage.refresh(),
   ])
   if (statusResult.status === 'rejected') throw statusResult.reason
   const currentStatus = statusResult.value
   if (currentStatus?.state !== 'ready') return { status: currentStatus, certificates: null }
   if (certificatesResult.status === 'rejected') throw certificatesResult.reason
+  if (certificatePage.error.value) throw certificatePage.error.value
   return { status: currentStatus, certificates: certificatesResult.value }
 }, null)
 const issuersResource = useAsyncResource(({ signal }) => getCertificateIssuers({ signal }, props.clusterId), [])
@@ -199,7 +206,6 @@ async function refresh() {
   if (result) {
     status.value = result.status
     if (result.certificates) {
-      certs.value = result.certificates || []
       applyCreateQuery()
     }
   } else if (certificateResource.error.value) {

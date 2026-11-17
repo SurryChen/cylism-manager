@@ -125,3 +125,7 @@ func perform(router http.Handler, method, path, body string) *httptest.ResponseR
 	router.ServeHTTP(recorder, request)
 	return recorder
 }
+
+func (r *handlerRepository) ListCloudConnectionsPage(int, int) ([]model.CloudConnection, int64, error) {
+	return nil, 0, nil
+}

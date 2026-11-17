@@ -17,6 +17,21 @@
   gap: var(--space-12);
 }
 
+.settings-list-card > .temporary-token-toolbar,
+.settings-list-card > .cloud-provider-toolbar { padding: 14px var(--space-20); margin: 0; }
+.settings-list-card > .temporary-token-table,
+.settings-list-card > .cloud-provider-table,
+.settings-list-card > .platform-release-history-table { padding: 0 var(--space-20); }
+.settings-list-card > .empty-state { padding: var(--space-20); }
+.settings-list-card > .settings-list-note { padding: 0 var(--space-20) var(--space-12); }
+@media (max-width: 640px) {
+  .settings-list-card > .temporary-token-toolbar,
+  .settings-list-card > .cloud-provider-toolbar { padding: 12px 14px; }
+  .settings-list-card > .temporary-token-table,
+  .settings-list-card > .cloud-provider-table,
+  .settings-list-card > .platform-release-history-table { padding-right: 14px; padding-left: 14px; }
+}
+
 .settings-copy {
   margin: 0;
   color: var(--text-secondary);

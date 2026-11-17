@@ -77,14 +77,14 @@ describe('DomainManagement', () => {
     const wrapper = mount(DomainManagement)
     await flushPromises()
 
-    expect(wrapper.findAllComponents(SelectMenu)).toHaveLength(2)
+    expect(wrapper.findAllComponents(SelectMenu)).toHaveLength(3)
     const card = wrapper.get('[data-testid="domain-record-list"]')
     expect(card.get('[data-testid="domain-record-toolbar"] [data-testid="domain-record-create"]')).toBeTruthy()
     expect(card.get('.record-filters .select-menu-trigger').text()).toContain('生产 · 阿里云')
     expect(card.get('table.data-table').text()).toContain('1.2.3.4')
 
     await wrapper.get('[data-testid="domain-record-create"]').trigger('click')
-    expect(wrapper.findAllComponents(SelectMenu)).toHaveLength(3)
+    expect(wrapper.findAllComponents(SelectMenu)).toHaveLength(4)
   })
 
   it('shows a safe error dialog and retry state when DNS records cannot be read', async () => {

@@ -1,7 +1,7 @@
 <template>
   <div class="services-workspace">
     <TabbedWorkspaceCard>
-      <template #meta><span class="resource-count">{{ filteredServices.length }} 个服务</span></template>
+      <template #meta><span class="resource-count">{{ total }} 个服务</span></template>
       <template #actions>
         <div class="service-namespace-filter">
           <SelectMenu v-model="namespace" aria-label="筛选命名空间" placeholder="全部命名空间">
@@ -30,6 +30,7 @@
           </tr></tbody>
         </table>
       </div>
+      <PaginationControls :page="page" :page-size="pageSize" :total="total" :loading="loading" @page-change="changePage" @page-size-change="changePageSize" />
     </TabbedWorkspaceCard>
 
     <BaseModal :open="showEndpoints" :title="endpointTitle" size="large" @close="closeEndpoints">
@@ -51,10 +52,12 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { RefreshCw } from 'lucide-vue-next'
 import * as legacyK8s from '../../api/kubernetes.js'
-import { useAsyncResource } from '../../composables/useAsyncResource.js'
+import { usePaginatedResource } from '../../composables/usePaginatedResource.js'
+import { getInventoryPage } from '../../api/list-pages.js'
+import PaginationControls from '../../components/PaginationControls.vue'
 import BaseModal from '../../components/BaseModal.vue'
 import EmptyState from '../../components/EmptyState.vue'
 import ErrorNoticeModal from '../../components/ErrorNoticeModal.vue'
@@ -63,9 +66,9 @@ import SelectMenu from '../../components/SelectMenu.vue'
 import TabbedWorkspaceCard from '../../components/TabbedWorkspaceCard.vue'
 
 const { clusterId = '' } = defineProps({ clusterId: { type: String, default: '' } })
-const { getLightweightServiceDiscovery, getServiceEndpoints } = clusterId ? legacyK8s.createClusterKubernetesApi(clusterId) : legacyK8s
+const { getServiceEndpoints } = clusterId ? legacyK8s.createClusterKubernetesApi(clusterId) : legacyK8s
 
-const services = ref([])
+
 const namespace = ref('')
 const error = ref('')
 const selectedService = ref(null)
@@ -73,11 +76,12 @@ const showEndpoints = ref(false)
 const endpointSlices = ref([])
 const endpointLoading = ref(false)
 const endpointError = ref('')
-const servicesResource = useAsyncResource(({ signal }) => getLightweightServiceDiscovery('', { signal }), [])
-
-const loading = servicesResource.loading
-const namespaces = computed(() => [...new Set(services.value.map(item => item?.namespace).filter(Boolean))].sort())
-const filteredServices = computed(() => services.value.filter(item => item && (!namespace.value || item.namespace === namespace.value)))
+const servicesResource = usePaginatedResource((query, options) => getInventoryPage(clusterId, 'services', { ...query, endpoint_count: false }, options), 'items')
+const { items: services, total, page, pageSize, loading, changePage, changePageSize } = servicesResource
+const namespaces = computed(() => servicesResource.response.value?.namespaces || [])
+const filteredServices = services
+watch(namespace, () => servicesResource.load({ namespace: namespace.value }))
+watch(servicesResource.error, cause => { if (cause) error.value = cause.message || '加载失败，请检查集群连接' })
 const endpointTitle = computed(() => selectedService.value ? `服务端点 · ${selectedService.value.namespace}/${selectedService.value.name}` : '服务端点')
 
 onMounted(loadServices)
@@ -89,12 +93,7 @@ function formatSelector(selector) {
   return entries.length ? entries.map(([key, value]) => `${key}=${value}`).join(', ') : '-'
 }
 
-async function loadServices() {
-  error.value = ''
-  const result = await servicesResource.refresh()
-  if (result) services.value = result
-  else if (servicesResource.error.value) error.value = servicesResource.error.value.message || '加载失败，请检查集群连接'
-}
+async function loadServices() { error.value = ''; await servicesResource.refresh() }
 
 async function openEndpoints(service) {
   selectedService.value = service

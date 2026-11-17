@@ -33,11 +33,11 @@
           </div>
         </div>
         <p v-if="platformActionMessage" class="settings-copy platform-action-message">{{ platformActionMessage }}</p>
-        <p v-if="platformReadError" class="settings-copy endpoint-error">{{ platformReadError }}</p>
       </SurfaceCard>
 
-      <SurfaceCard class="platform-release-history-card">
-        <section v-if="platform.releases?.length" class="platform-release-history-table" aria-label="发布记录">
+      <SurfaceCard class="platform-release-history-card settings-list-card" padding="none">
+        <EmptyState v-if="releasesLoading && !platform.releases?.length" variant="loading" message="正在读取发布记录..." />
+        <section v-else-if="platform.releases?.length" class="platform-release-history-table" aria-label="发布记录" :aria-busy="releasesLoading">
           <header class="platform-release-history-header">
             <span>发布方式</span>
             <span>镜像 / Tag</span>
@@ -45,7 +45,7 @@
             <span>发布时间</span>
             <span>操作</span>
           </header>
-          <div v-for="release in platform.releases.slice(0, 5)" :key="release.id" class="platform-release-history-row">
+          <div v-for="release in platform.releases" :key="release.id" class="platform-release-history-row">
             <span>{{ release.source === 'github' ? 'GitHub' : release.source || '-' }}</span>
             <span class="platform-release-history-image"><code>{{ release.image || '-' }}</code><small v-if="release.commit_sha">提交 {{ release.commit_sha.slice(0, 12) }}</small></span>
             <span><span class="badge" :class="release.status === 'succeeded' ? 'badge-online' : release.status === 'failed' ? 'badge-danger' : 'badge-deploying'">{{ release.status || '-' }}</span></span>
@@ -55,9 +55,12 @@
             </button></span>
           </div>
         </section>
-        <p v-else class="settings-copy platform-release-history-empty">尚无发布记录。</p>
+        <EmptyState v-else message="尚无发布记录。" />
+        <PaginationControls :page="releasePage" :page-size="releasePageSize" :total="releasesTotal" :loading="releasesLoading || !!rollingBack" label="发布记录分页" @page-change="changeReleasePage" @page-size-change="changeReleasePageSize" />
+        <p v-if="releaseResponse && platform.releases_total == null" class="settings-copy settings-list-note">当前后端仅提供最近的发布记录；更新后端后可查看完整历史。</p>
       </SurfaceCard>
     </div>
+    <ErrorNoticeModal :open="!!releaseError" :message="releaseError?.message || '读取发布记录失败'" @close="releaseError = null" />
 
     <BaseModal :open="showManualUpdate" title="手动更新镜像" size="small" :show-close="!updatingPlatform" :close-on-overlay="!updatingPlatform" :close-on-escape="!updatingPlatform" @close="showManualUpdate = false">
       <form id="platform-manual-update-form" class="platform-release-form" @submit.prevent="manualPlatformUpdate">
@@ -117,32 +120,34 @@
 </template>
 
 <script setup>
-import { onMounted, ref } from 'vue'
-import { createPlatformRelease, generatePlatformWebhookSecret as generatePlatformWebhookSecretRequest, getPlatformCapabilities, getPlatformStatus, rollbackPlatformRelease as rollbackPlatformReleaseRequest, updatePlatformImagePrefix } from '../../api/settings.js'
+import { computed, onMounted, ref } from 'vue'
+import { createPlatformRelease, generatePlatformWebhookSecret as generatePlatformWebhookSecretRequest, getPlatformCapabilities, getPlatformReleasePage, rollbackPlatformRelease as rollbackPlatformReleaseRequest, updatePlatformImagePrefix } from '../../api/settings.js'
 import { useActionState } from '../../composables/useActionState.js'
-import { useAsyncResource } from '../../composables/useAsyncResource.js'
+import { usePaginatedResource } from '../../composables/usePaginatedResource.js'
 import { formatDateTime } from '../../utils/formatters.js'
 import BaseModal from '../../components/BaseModal.vue'
 import SurfaceCard from '../../components/SurfaceCard.vue'
 import EmptyState from '../../components/EmptyState.vue'
 import FeedbackBanner from '../../components/FeedbackBanner.vue'
+import PaginationControls from '../../components/PaginationControls.vue'
+import ErrorNoticeModal from '../../components/ErrorNoticeModal.vue'
 
 const capability = ref(null)
 const capabilityError = ref('')
 
-const platform = ref({ webhook_configured: false, image_prefix: '', deployment: null, releases: [] })
+const releasePagination = usePaginatedResource(getPlatformReleasePage, 'releases')
+const { response: releaseResponse, page: releasePage, pageSize: releasePageSize, total: releasesTotal, loading: releasesLoading, error: releaseError, changePage: changeReleasePage, changePageSize: changeReleasePageSize } = releasePagination
+const platform = computed(() => releaseResponse.value || { webhook_configured: false, image_prefix: '', deployment: null, releases: [] })
 const platformImagePrefix = ref('')
 const manualImage = ref('')
 const platformActionMessage = ref('')
 const platformActionError = ref('')
-const platformReadError = ref('')
 const generatedSecret = ref('')
 const rollingBack = ref(0)
 const platformPrefixDirty = ref(false)
 const showManualUpdate = ref(false)
 const showImagePrefixEdit = ref(false)
 const showWebhookSecret = ref(false)
-const platformResource = useAsyncResource(({ signal }) => getPlatformStatus({ signal }), null)
 const generateSecretAction = useActionState()
 const savePrefixAction = useActionState()
 const manualUpdateAction = useActionState()
@@ -155,7 +160,6 @@ onMounted(() => {
 })
 
 async function refresh({ syncForm = false } = {}) {
-  platformReadError.value = ''
   capabilityError.value = ''
   try {
     capability.value = await getPlatformCapabilities()
@@ -165,14 +169,10 @@ async function refresh({ syncForm = false } = {}) {
     return
   }
   if (!capability.value?.supported) return
-  const result = await platformResource.refresh()
+  const result = await releasePagination.load()
   if (!result) {
-    if (platformResource.error.value) {
-      platformReadError.value = platformResource.error.value.message || '读取平台发布状态失败'
-    }
     return
   }
-  platform.value = result
   if (syncForm || !platformPrefixDirty.value) {
     platformImagePrefix.value = platform.value.image_prefix || ''
     platformPrefixDirty.value = false

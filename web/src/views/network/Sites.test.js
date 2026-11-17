@@ -14,7 +14,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   sessionStorage.clear()
   api.get.mockImplementation(path => {
-    if (path === '/k8s/ingresses') return Promise.resolve(ingresses)
+    if (path.startsWith('/k8s/ingresses?')) { const ns = new URL(path, 'http://test').searchParams.get('namespace'); const items = ingresses.filter(item => !ns || item.namespace === ns); return Promise.resolve({ items, total: items.length, namespaces: ['default', 'production'] }) }
     return Promise.resolve({ type: 'Traefik', version: '3.7.4', running: true })
   })
 })
@@ -33,6 +33,7 @@ describe('Sites view', () => {
     const wrapper = mount(Sites)
     await flushPromises()
     await wrapper.get('[data-testid="ingress-namespace-filter"]').setValue('production')
+    await flushPromises()
 
     expect(wrapper.text()).toContain('api.example.com')
     expect(wrapper.text()).not.toContain('console.example.com')

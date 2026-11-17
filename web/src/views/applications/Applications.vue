@@ -47,6 +47,7 @@
             <tr v-for="release in workspaceReleases" :key="release.id"><td class="cell-primary">{{ release.application_name }}</td><td>{{ release.version || `#${release.sequence}` }}</td><td>{{ release.image || '-' }}</td><td><span :class="['badge', releaseBadge(release.status)]">{{ releaseLabel(release.status) }}</span></td><td>{{ formatWorkspaceTime(release.created_at) }}</td><td class="action-cell"><button class="btn btn-sm" @click="openReleaseDetails(release)">查看发布</button></td></tr>
           </tbody></table></div></div>
           <EmptyState v-else message="当前环境还没有发布记录" />
+          <PaginationControls :page="workspaceReleasePage" :page-size="workspaceReleasePageSize" :total="workspaceReleaseTotal" :loading="workspaceReleasesLoading" @page-change="changeWorkspaceReleasePage" @page-size-change="changeWorkspaceReleasePageSize" />
         </template>
         <template v-else-if="activeWorkspaceTab === 'config'">
           <FeedbackBanner v-if="workspaceTemplatesError" tone="warning" :message="workspaceTemplatesError" />
@@ -155,6 +156,9 @@ import {
   importApplicationCatalogItems,
   updateProject,
 } from '../../api/applications.js'
+import PaginationControls from '../../components/PaginationControls.vue'
+import { usePaginatedResource } from '../../composables/usePaginatedResource.js'
+import { getWorkspaceReleasePage } from '../../api/list-pages.js'
 import { useAsyncResource } from '../../composables/useAsyncResource.js'
 import ConfirmDialog from '../../components/ConfirmDialog.vue'
 import EmptyState from '../../components/EmptyState.vue'
@@ -202,7 +206,7 @@ const applicationsResource = useAsyncResource(({ signal }, scope = {}) => getApp
 const projectsResource = useAsyncResource(({ signal }) => getProjects({ signal }), [])
 const clustersResource = useAsyncResource(({ signal }) => getClusters({ signal }), [])
 const imageRegistriesResource = useAsyncResource(({ signal }, projectID) => getImageRegistries({ projectID }, { signal }), [])
-const workspaceResource = useAsyncResource(({ signal }, projectID, environmentID) => getWorkspace(projectID, environmentID, { signal }), null)
+const workspaceResource = useAsyncResource(({ signal }, projectID, environmentID) => getWorkspace(projectID, environmentID, { signal, omitReleases: true }), null)
 const releaseTemplatesResource = useAsyncResource(({ signal }, applicationID) => getDeploymentTemplates(applicationID, { signal }), [])
 let sectionLoadID = 0
 
@@ -226,17 +230,20 @@ const catalogConflicts = computed(() => {
   return names.filter((name, index) => existing.has(name) || names.indexOf(name) !== index)
 })
 const selectedReleaseTemplate = computed(() => releaseTemplates.value.find(template => template.id === releaseForm.value.template_id) || null)
-const workspaceReleases = computed(() => workspaceOverview.value?.releases || workspaceOverview.value?.recent_releases || [])
+const workspaceReleaseResource = usePaginatedResource(getWorkspaceReleasePage, 'items')
+const { items: workspaceReleases, total: workspaceReleaseTotal, page: workspaceReleasePage, pageSize: workspaceReleasePageSize, loading: workspaceReleasesLoading, changePage: changeWorkspaceReleasePage, changePageSize: changeWorkspaceReleasePageSize } = workspaceReleaseResource
+watch(workspaceReleaseResource.error, cause => { if (cause) readError.value = cause.message || '读取发布记录失败' })
+function loadWorkspaceReleases() { if (workspaceReady.value) return workspaceReleaseResource.load({ project_id: workspaceProjectID.value, environment_id: workspaceEnvironmentID.value }) }
 const workspaceEndpointRows = computed(() => applications.value.flatMap(app => (app.endpoints?.length ? app.endpoints : [null]).map((endpoint, index) => ({ key: `${app.id}-${index}`, app, endpoint }))))
 const readyApplicationCount = computed(() => applications.value.filter(app => app.runtime?.status === 'running').length)
 const workspaceCount = computed(() => {
-  if (activeWorkspaceTab.value === 'releases') return workspaceReleases.value.length
+  if (activeWorkspaceTab.value === 'releases') return workspaceReleaseTotal.value
   if (activeWorkspaceTab.value === 'access') return workspaceEndpointRows.value.length
   return applications.value.length
 })
 function defaultWorkspaceTemplate(applicationID) { const templates = workspaceTemplates.value[applicationID] || []; return templates.find(item => item.is_default) || templates.find(item => item.enabled) || templates[0] }
 function formatWorkspaceTime(value) { return value ? new Date(value).toLocaleString('zh-CN') : '-' }
-function selectWorkspaceTab(tab) { activeWorkspaceTab.value = tab; if (tab === 'config') loadWorkspaceTemplates() }
+function selectWorkspaceTab(tab) { activeWorkspaceTab.value = tab; if (tab === 'releases') void loadWorkspaceReleases(); if (tab === 'config') loadWorkspaceTemplates() }
 async function loadWorkspaceTemplates() {
   const loadID = ++workspaceTemplateLoadID
   const apps = [...applications.value]
@@ -287,6 +294,7 @@ async function fetchWorkspace() {
   const result = await workspaceResource.refresh(workspaceProjectID.value, workspaceEnvironmentID.value)
   if (result !== undefined) {
     workspaceOverview.value = result
+    if (activeWorkspaceTab.value === 'releases') void loadWorkspaceReleases()
     applications.value = result?.applications || []
     if (activeWorkspaceTab.value === 'config') loadWorkspaceTemplates()
   } else if (workspaceResource.error.value) {
@@ -400,7 +408,7 @@ async function openDetails(app) { await router.push(`/applications/${app.id}`) }
 async function openApplicationTab(app, tab) { await router.push({ path: `/applications/${app.id}`, query: { tab } }) }
 async function openReleaseDetails(release) { await router.push(`/applications/${release.application_id}/releases/${release.id}`) }
 
-watch(() => [props.section, route.query.project_id, route.query.environment_id], () => { showCatalogImport.value = false; workspaceTemplateLoadID++; workspaceTemplates.value = {}; workspaceTemplatesLoading.value = false; loadSection(props.section) }, { immediate: true })
+watch(() => [props.section, route.query.project_id, route.query.environment_id], () => { workspaceReleaseResource.reset(); showCatalogImport.value = false; workspaceTemplateLoadID++; workspaceTemplates.value = {}; workspaceTemplatesLoading.value = false; loadSection(props.section) }, { immediate: true })
 watch(() => [releaseForm.value.template_id, releaseForm.value.version], () => { releasePreflight.value = null })
 </script>
 

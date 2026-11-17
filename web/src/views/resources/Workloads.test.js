@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import Workloads from './Workloads.vue'
 import {
@@ -28,12 +28,22 @@ vi.mock('../../api/kubernetes.js', () => ({
   updateWorkloadImage: vi.fn(),
 }))
 
+vi.mock('../../api/list-pages.js', () => ({
+  getInventoryPage: vi.fn(async (_cluster, kind, query, options) => {
+    const loaders = { pods: getWorkloadPods, deployments: getWorkloadDeployments, statefulsets: getWorkloadStatefulSets, daemonsets: getWorkloadDaemonSets }
+    const all = await loaders[kind](options)
+    const items = all.filter(item => (!query.namespace || item.namespace === query.namespace) && (!query.node || item.node === query.node) && (!query.status || item.status === query.status) && (!query.keyword || item.name.includes(query.keyword)) && (!query.restarts_only || item.restarts > 0))
+    return { items: items.slice(query.offset, query.offset + query.limit), total: items.length, namespaces: [...new Set(all.map(item => item.namespace))], nodes: [...new Set(all.map(item => item.node).filter(Boolean))], statuses: [...new Set(all.map(item => item.status).filter(Boolean))] }
+  }),
+}))
+
 function flush() {
   return new Promise(resolve => setTimeout(resolve, 0))
 }
 
 async function selectWorkloadType(wrapper, value) {
   await wrapper.find('.workload-type-select .select-menu-native').setValue(value)
+  await flushPromises()
 }
 
 beforeEach(() => {
@@ -56,9 +66,9 @@ describe('Workloads view', () => {
     const wrapper = mount(Workloads)
     await flush()
 
-    expect(getWorkloadDeployments).toHaveBeenCalledWith(expect.objectContaining({ signal: expect.any(AbortSignal) }))
-    expect(getWorkloadStatefulSets).toHaveBeenCalledWith(expect.objectContaining({ signal: expect.any(AbortSignal) }))
-    expect(getWorkloadDaemonSets).toHaveBeenCalledWith(expect.objectContaining({ signal: expect.any(AbortSignal) }))
+    expect(getWorkloadDeployments).not.toHaveBeenCalled()
+    expect(getWorkloadStatefulSets).not.toHaveBeenCalled()
+    expect(getWorkloadDaemonSets).not.toHaveBeenCalled()
     expect(getWorkloadPods).toHaveBeenCalledWith(expect.objectContaining({ signal: expect.any(AbortSignal) }))
     expect(wrapper.findAll('.workload-type-select option').map(option => option.element.value)).toEqual(['', 'pods', 'deployments', 'statefulsets', 'daemonsets'])
     expect(wrapper.text()).toContain('暂无 Pod')
@@ -80,7 +90,7 @@ describe('Workloads view', () => {
     await flush()
 
     expect(wrapper.text()).toContain('api')
-    expect(wrapper.text()).toContain('Deployment 刷新失败')
+    expect(document.body.textContent).toContain('Deployment 刷新失败')
     wrapper.unmount()
   })
 
@@ -102,6 +112,7 @@ describe('Workloads view', () => {
     await wrapper.find('.pod-filter-status .select-menu-native').setValue('Running')
     await wrapper.find('.pod-restarts-filter input').setValue(true)
     await wrapper.find('.pod-search input').setValue('orders')
+    await flushPromises()
 
     expect(wrapper.text()).toContain('orders-api-1')
     expect(wrapper.text()).not.toContain('orders-worker-1')

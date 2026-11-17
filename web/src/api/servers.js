@@ -132,3 +132,5 @@ export function importServerToCluster(serverID, body, options) {
 export function unbindServer(serverID, options) {
   return post(`${serverPath(serverID)}/unbind`, undefined, options)
 }
+
+export function getServerSpeedTestHistory(query, options) { return api.get('/servers/speed-test/history?' + new URLSearchParams(query), options) }

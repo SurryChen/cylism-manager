@@ -28,7 +28,12 @@ const tabs = [
 ]
 const { activeTab, selectTab } = useRoutedTab({ tabs, defaultTab: 'security', path: '/settings/system' })
 const activeComponent = computed(() => tabs.find(tab => tab.id === activeTab.value)?.component || SystemSettingsSecurity)
-watch(activeTab, async () => {
+const visitedTabs = new Set([activeTab.value])
+watch(activeTab, async tab => {
+  const cached = visitedTabs.has(tab)
+  visitedTabs.add(tab)
+  // First visits load on mount; refresh only when returning to a cached tab.
+  if (!cached) return
   await nextTick()
   activeView.value?.refresh?.()
 })

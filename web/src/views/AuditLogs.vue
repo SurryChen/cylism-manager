@@ -8,7 +8,7 @@
         </div>
       </template>
     </SectionTabsHeader>
-    <FeedbackBanner v-if="error" tone="warning" :message="error" class="page-error" />
+    <ErrorNoticeModal :open="!!error" :message="error?.message || '加载审计日志失败'" title="读取审计日志失败" @close="error = null" />
 
     <SurfaceCard class="audit-card" padding="none">
       <div class="audit-table-toolbar">
@@ -36,9 +36,9 @@
         </div>
       </div>
 
-      <EmptyState v-if="loading" variant="loading" message="加载中..." />
+      <EmptyState v-if="loading && !logs.length" variant="loading" message="加载中..." />
       <EmptyState v-else-if="logs.length===0" icon="☰" message="暂无审计日志" />
-      <div v-else class="table-wrap">
+      <div v-else class="table-wrap" :aria-busy="loading">
         <table class="data-table audit-table">
           <thead>
             <tr><th>时间</th><th>结果</th><th>动作</th><th>目标</th><th>操作者</th><th>摘要</th></tr>
@@ -56,11 +56,7 @@
         </table>
       </div>
 
-      <div v-if="total > pageSize" class="pagination">
-        <button class="btn btn-sm" :disabled="offset===0" @click="prevPage">上一页</button>
-        <span class="pagination-status">{{ currentPage }} / {{ totalPages }}</span>
-        <button class="btn btn-sm" :disabled="offset + pageSize >= total" @click="nextPage">下一页</button>
-      </div>
+      <PaginationControls :page="currentPage" :page-size="pageSize" :total="total" :loading="loading" label="审计日志分页" @page-change="changePage" @page-size-change="changePageSize" />
     </SurfaceCard>
 
     <BaseModal :open="advancedOpen" title="筛选审计日志" size="small" dialog-class="audit-filter-modal" @close="closeAdvancedFilters">
@@ -128,19 +124,16 @@
 import { computed, onMounted, ref } from 'vue'
 import { Filter, RotateCcw, Search, X } from 'lucide-vue-next'
 import { getAuditLogs } from '../api/audit.js'
-import { useAsyncResource } from '../composables/useAsyncResource.js'
+import { usePaginatedResource } from '../composables/usePaginatedResource.js'
 import BaseModal from '../components/BaseModal.vue'
 import EmptyState from '../components/EmptyState.vue'
-import FeedbackBanner from '../components/FeedbackBanner.vue'
+import ErrorNoticeModal from '../components/ErrorNoticeModal.vue'
+import PaginationControls from '../components/PaginationControls.vue'
 import SectionTabsHeader from '../components/SectionTabsHeader.vue'
 import SelectMenu from '../components/SelectMenu.vue'
 import SurfaceCard from '../components/SurfaceCard.vue'
 import { formatShortDateTime as formatTime } from '../utils/formatters.js'
 
-const pageSize = 20
-const logs = ref([])
-const total = ref(0)
-const offset = ref(0)
 const filterType = ref('')
 const filterAction = ref('')
 const filterOutcome = ref('')
@@ -157,14 +150,11 @@ const draftActorType = ref('')
 const draftTargetName = ref('')
 const draftCreatedFrom = ref('')
 const draftCreatedTo = ref('')
-const auditResource = useAsyncResource(({ signal }, params) => getAuditLogs(params, { signal }), { data: [], total: 0 })
-const loading = auditResource.loading
-const error = ref('')
+const pagination = usePaginatedResource(getAuditLogs, 'data')
+const { items: logs, total, page: currentPage, pageSize, totalPages, loading, error, changePage, changePageSize } = pagination
 const selectedLog = ref(null)
 const pageTabs = [{ id: 'logs', label: '审计记录' }]
 
-const currentPage = computed(() => Math.floor(offset.value / pageSize) + 1)
-const totalPages = computed(() => Math.max(1, Math.ceil((total.value || 0) / pageSize)))
 const parsedDetail = computed(() => parseDetail(selectedLog.value?.detail))
 const resourceOptions = [
   { value: 'application', label: '应用' }, { value: 'workload', label: '工作负载' }, { value: 'server', label: '服务器' },
@@ -205,10 +195,10 @@ const activeFilters = computed(() => {
   return items
 })
 
-onMounted(() => { void loadLogs(true) })
+onMounted(() => { void loadLogs() })
 
 async function applyFilters() {
-  await loadLogs(true)
+  await loadLogs()
 }
 
 async function resetFilters() {
@@ -222,15 +212,11 @@ async function resetFilters() {
   filterCreatedFrom.value = ''
   filterCreatedTo.value = ''
   advancedOpen.value = false
-  await loadLogs(true)
+  await loadLogs()
 }
 
-async function loadLogs(resetOffset = false) {
-  if (resetOffset) offset.value = 0
-  error.value = ''
-  const result = await auditResource.refresh({
-    limit: pageSize,
-    offset: offset.value,
+async function loadLogs() {
+  await pagination.load({
     resourceType: filterType.value,
     action: filterAction.value,
     outcome: filterOutcome.value,
@@ -241,22 +227,6 @@ async function loadLogs(resetOffset = false) {
     createdFrom: filterCreatedFrom.value,
     createdTo: filterCreatedTo.value,
   })
-  if (!result) {
-    if (auditResource.error.value) error.value = auditResource.error.value.message || '加载审计日志失败'
-    return
-  }
-  logs.value = result.data || []
-  total.value = result.total || 0
-}
-
-async function prevPage() {
-  offset.value = Math.max(0, offset.value - pageSize)
-  await loadLogs(false)
-}
-
-async function nextPage() {
-  offset.value += pageSize
-  await loadLogs(false)
 }
 
 function openDetail(log) {
@@ -287,13 +257,13 @@ async function applyAdvancedFilters() {
   filterCreatedFrom.value = draftCreatedFrom.value
   filterCreatedTo.value = draftCreatedTo.value
   advancedOpen.value = false
-  await loadLogs(true)
+  await loadLogs()
 }
 
 function clearFilter(key) {
   const values = { keyword: keyword, outcome: filterOutcome, resourceType: filterType, source: filterSource, actorType: filterActorType, action: filterAction, targetName: filterTargetName, createdFrom: filterCreatedFrom, createdTo: filterCreatedTo }
   if (values[key]) values[key].value = ''
-  void loadLogs(true)
+  void loadLogs()
 }
 
 function actionLabel(a) {
@@ -425,7 +395,7 @@ function formatDetailValue(value) {
 .active-filters-label { color: var(--text-muted); font-size: 11px; }
 .audit-card > .empty-state { padding: var(--space-24); }
 .audit-card > .table-wrap { padding: 0 var(--space-20); }
-.audit-card > .pagination { padding: 0 var(--space-20) var(--space-16); }
+
 .audit-advanced-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 12px; }
 .audit-field-wide { grid-column: 1 / -1; }
 .audit-filter-modal { width: min(560px, calc(100vw - 32px)); }
@@ -521,7 +491,7 @@ function formatDetailValue(value) {
   .audit-reset { grid-column: 2; grid-row: 3; }
   .audit-table-toolbar { padding: 12px 14px; }
   .audit-card > .table-wrap { padding-right: 14px; padding-left: 14px; }
-  .audit-card > .pagination { padding-right: 14px; padding-left: 14px; }
+
 
   .audit-detail-grid {
     grid-template-columns: 1fr;

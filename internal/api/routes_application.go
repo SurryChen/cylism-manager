@@ -8,6 +8,7 @@ import (
 )
 
 func registerApplicationRoutes(r *gin.Engine, apiGroup *gin.RouterGroup, h *applicationapi.ApplicationHandler, jwtSecret []byte, audit gin.HandlerFunc, auditLogs auditservice.Repository) {
+	apiGroup.GET("/workspace/releases", h.WorkspaceReleasePage)
 	projects := apiGroup.Group("/projects")
 	projects.GET("", h.ListProjects)
 	projects.POST("", h.CreateProject)
@@ -56,6 +57,7 @@ func registerApplicationRoutes(r *gin.Engine, apiGroup *gin.RouterGroup, h *appl
 	applications.POST("/:id/endpoints", h.HandleApplication((*applicationapi.ApplicationHandler).CreateApplicationEndpoint))
 	applications.PUT("/:id/endpoints/:endpointID", h.HandleApplication((*applicationapi.ApplicationHandler).UpdateApplicationEndpoint))
 	applications.DELETE("/:id/endpoints/:endpointID", h.HandleApplication((*applicationapi.ApplicationHandler).DeleteApplicationEndpoint))
+	applications.GET("/:id/releases", h.ListReleasePage)
 	applications.POST("/:id/releases", h.HandleApplication((*applicationapi.ApplicationHandler).CreateRelease))
 	applications.GET("/:id/deploy-webhook", h.DeployWebhookStatus)
 	applications.POST("/:id/deploy-webhook/secret", h.GenerateDeployWebhookSecret)

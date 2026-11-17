@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 import ServerSpeedTest from './ServerSpeedTest.vue'
-import { getServerSpeedDependencies, installServerSpeedDependencies, runServerSpeedTest } from '../../api/servers.js'
+import { getServerSpeedTestHistory, getServerSpeedDependencies, installServerSpeedDependencies, runServerSpeedTest } from '../../api/servers.js'
 
 vi.mock('../../api/servers.js', () => ({
+  getServerSpeedTestHistory: vi.fn(),
   getServerSpeedDependencies: vi.fn(),
   installServerSpeedDependencies: vi.fn(),
   runServerSpeedTest: vi.fn(),
@@ -14,9 +15,11 @@ const servers = [
   { id: 2, name: '目标', host: '192.0.2.2' },
 ]
 
+let history
 beforeEach(() => {
   vi.resetAllMocks()
-  sessionStorage.removeItem('cylism.server-speed-test.results.v1')
+  history = []
+  getServerSpeedTestHistory.mockImplementation(async ({ limit, offset }) => { history = (await Promise.all(runServerSpeedTest.mock.results.filter(item => item.type === 'return').map(item => item.value))).filter(Boolean).reverse(); return { items: history.slice(offset, offset + limit), total: history.length } })
   getServerSpeedDependencies.mockImplementation(id => Promise.resolve({ server_id: Number(id), iperf3_installed: true, timeout_installed: true }))
 })
 
@@ -31,6 +34,8 @@ describe('ServerSpeedTest', () => {
       protocol: 'tcp', direction: 'forward', sender_mbps: 47.91, receiver_mbps: 45.29,
       retransmits: 0,
     })
+    const run = runServerSpeedTest.getMockImplementation()
+    runServerSpeedTest.mockImplementation(async (...args) => { const result = run ? await run(...args) : undefined; if (result) history.unshift(result); return result })
     const wrapper = mount(ServerSpeedTest, { props: { servers } })
     const selects = wrapper.findAll('select')
     await selects[0].setValue('1')
@@ -56,10 +61,11 @@ describe('ServerSpeedTest', () => {
     expect(rows[0].text()).toContain('5.66 MB/s')
     expect(rows[1].text()).toContain('0.091 MB/s')
     expect(wrapper.text()).toContain('2 条记录')
-    expect(JSON.parse(sessionStorage.getItem('cylism.server-speed-test.results.v1'))).toHaveLength(2)
+    expect(getServerSpeedTestHistory).toHaveBeenCalledWith({ limit: 10, offset: 0 }, expect.objectContaining({ signal: expect.any(AbortSignal) }))
     wrapper.unmount()
 
     const restored = mount(ServerSpeedTest, { props: { servers } })
+    await flushPromises()
     expect(restored.findAll('.speed-results-table tbody tr')).toHaveLength(2)
     restored.unmount()
   })

@@ -186,14 +186,16 @@ func (h *PlatformHandler) Status(c *gin.Context) {
 		apiShared.Error(c, http.StatusOK, apiShared.CodeK8sAPIError, err.Error())
 		return
 	}
-	releases, err := h.store.ListPlatformReleases(20)
+	// Preserve the existing status response and default window for older clients.
+	limit, offset := apiShared.LimitOffset(c, 20, 100)
+	releases, total, err := h.store.ListPlatformReleasesPage(limit, offset)
 	if err != nil {
 		apiShared.InternalError(c, "读取平台发布记录失败")
 		return
 	}
 	prefixes := h.release.ImagePrefixes()
 	_, configured := h.store.GetSystemConfig(platformservice.WebhookSecretConfigKey)
-	apiShared.Success(c, gin.H{"deployment": deployment, "releases": apiShared.PlatformReleasesDTO(releases), "image_prefix": strings.Join(prefixes, "\n"), "image_prefixes": prefixes, "webhook_configured": configured == nil})
+	apiShared.Success(c, gin.H{"deployment": deployment, "releases": apiShared.PlatformReleasesDTO(releases), "releases_total": total, "image_prefix": strings.Join(prefixes, "\n"), "image_prefixes": prefixes, "webhook_configured": configured == nil})
 }
 
 func (h *PlatformHandler) GenerateWebhookSecret(c *gin.Context) {

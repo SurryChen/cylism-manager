@@ -37,7 +37,7 @@
         </div>
       </div>
 
-      <div v-if="ingressesLoading" class="empty-state">
+      <div v-if="ingressesLoading && !ingresses.length" class="empty-state">
         <span class="empty-text">加载 Ingress 中...</span>
       </div>
       <div v-else-if="filteredIngresses.length === 0" class="empty-state">
@@ -71,6 +71,7 @@
           </tbody>
         </table>
       </div>
+      <PaginationControls :page="page" :page-size="pageSize" :total="total" :loading="ingressesLoading" @page-change="changePage" @page-size-change="changePageSize" />
     </SurfaceCard>
 
     <BaseModal :open="showAddIngress" title="添加 Ingress" @close="showAddIngress = false">
@@ -100,9 +101,12 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { RefreshCw } from 'lucide-vue-next'
 import { createIngress as createIngressRequest, deleteIngress, getIngressControllerStatus, getIngresses } from '../../api/sites.js'
+import PaginationControls from '../../components/PaginationControls.vue'
+import { usePaginatedResource } from '../../composables/usePaginatedResource.js'
+import { getInventoryPage } from '../../api/list-pages.js'
 import { useAsyncResource } from '../../composables/useAsyncResource.js'
 import BaseModal from '../../components/BaseModal.vue'
 import ErrorNoticeModal from '../../components/ErrorNoticeModal.vue'
@@ -115,21 +119,22 @@ const controllerStatusCacheKey = `cylism.ingress-controller.status.${props.clust
 const controllerStatusCacheTtl = 60 * 1000
 
 const controllerStatus = ref(getCachedControllerStatus()?.status || null)
-const ingresses = ref([])
+
 const filterNamespace = ref('')
-const ingressesLoading = ref(true)
+
 const readError = ref('')
 const actionError = ref('')
 const deleteIngressTarget = ref(null)
 const showAddIngress = ref(false)
 const ingressForm = ref(newIngressForm())
-const ingressesResource = useAsyncResource(({ signal }) => getIngresses({ signal }, props.clusterId), [])
+const ingressesResource = usePaginatedResource((query, options) => getInventoryPage(props.clusterId, 'ingresses', query, options), 'items')
+const { items: ingresses, total, page, pageSize, loading: ingressesLoading, changePage, changePageSize } = ingressesResource
+watch(filterNamespace, () => ingressesResource.load({ namespace: filterNamespace.value }))
+watch(ingressesResource.error, cause => { if (cause) readError.value = cause.message || '加载 Ingress 失败' })
 const controllerResource = useAsyncResource(({ signal }) => getIngressControllerStatus({ signal }, props.clusterId), null)
 
-const ingressNamespaces = computed(() => [...new Set(ingresses.value.map(ingress => ingress.namespace).filter(Boolean))].sort())
-const filteredIngresses = computed(() => (
-  filterNamespace.value ? ingresses.value.filter(ingress => ingress.namespace === filterNamespace.value) : ingresses.value
-))
+const ingressNamespaces = computed(() => ingressesResource.response.value?.namespaces || [])
+const filteredIngresses = ingresses
 const controllerSummary = computed(() => {
   if (!controllerStatus.value) return ''
   const { type, version, running } = controllerStatus.value
@@ -156,19 +161,7 @@ async function fetchControllerStatus() {
   }
 }
 
-async function fetchIngresses() {
-  ingressesLoading.value = true
-  readError.value = ''
-  try {
-    const result = await ingressesResource.refresh()
-    if (result !== undefined) ingresses.value = result || []
-    else throw ingressesResource.error.value || new Error('加载 Ingress 失败')
-  } catch (err) {
-    readError.value = err.message || '加载 Ingress 失败'
-  } finally {
-    ingressesLoading.value = false
-  }
-}
+async function fetchIngresses() { readError.value = ''; await ingressesResource.refresh() }
 
 function getCachedControllerStatus() {
   try {

@@ -31,7 +31,7 @@ describe('DB admin view', () => {
     await wrapper.get('.tab-btn').trigger('click')
     await new Promise(resolve => setTimeout(resolve, 0))
     await nextTick()
-    expect(api.get).toHaveBeenCalledWith('/admin/tables/users?page=1&size=20&sort=id&order=desc', expect.objectContaining({ signal: expect.any(AbortSignal) }))
+    expect(api.get).toHaveBeenCalledWith('/admin/tables/users?page=1&size=10&sort=id&order=desc', expect.objectContaining({ signal: expect.any(AbortSignal) }))
     expect(wrapper.text()).toContain('admin')
   })
 

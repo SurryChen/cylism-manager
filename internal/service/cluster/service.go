@@ -429,3 +429,10 @@ func (s *Service) RemoveNodeContext(ctx context.Context, name string) error {
 	}
 	return nil
 }
+
+func (s *Service) SaveServerSpeedTest(result *model.ServerSpeedTest) error {
+	return s.servers.SaveServerSpeedTest(result)
+}
+func (s *Service) ListServerSpeedTests(ownerID uint, limit, offset int) ([]model.ServerSpeedTest, int64, error) {
+	return s.servers.ListServerSpeedTests(ownerID, limit, offset)
+}

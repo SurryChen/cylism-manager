@@ -117,7 +117,9 @@ func (h *CertHandler) ListCerts(c *gin.Context) {
 		apiShared.Error(c, http.StatusOK, apiShared.CodeK8sAPIError, err.Error())
 		return
 	}
-	apiShared.Success(c, certs)
+	apiShared.ResourceListPage(c, certs, func(item k8s.CertInfo) apiShared.ResourceListKey {
+		return apiShared.ResourceListKey{Name: item.Name, Namespace: item.Namespace}
+	})
 }
 
 // CreateCert 创建 Certificate

@@ -394,7 +394,7 @@ func (h *K8sHandler) ListPods(c *gin.Context) {
 		apiShared.K8sUnavailable(c)
 		return
 	}
-	ns := c.Query("namespace")
+	ns := apiShared.InventoryNamespace(c)
 	pods, err := h.k8s.CoreV1().Pods(ns).List(c.Request.Context(), metav1.ListOptions{})
 	if err != nil {
 		apiShared.Error(c, http.StatusOK, apiShared.CodeK8sAPIError, err.Error())
@@ -433,7 +433,9 @@ func (h *K8sHandler) ListPods(c *gin.Context) {
 			Containers: containers,
 		})
 	}
-	apiShared.Success(c, result)
+	apiShared.ResourceListPage(c, result, func(item PodInfo) apiShared.ResourceListKey {
+		return apiShared.ResourceListKey{Name: item.Name, Namespace: item.Namespace, Node: item.Node, Status: item.Status, Restarts: item.Restarts}
+	})
 }
 
 // ==================== Deployment ====================
@@ -444,7 +446,7 @@ func (h *K8sHandler) ListDeployments(c *gin.Context) {
 		apiShared.K8sUnavailable(c)
 		return
 	}
-	ns := c.Query("namespace")
+	ns := apiShared.InventoryNamespace(c)
 	result, err := h.k8s.ListDeploymentsContext(c.Request.Context(), ns)
 	if err != nil {
 		apiShared.Error(c, http.StatusOK, apiShared.CodeK8sAPIError, err.Error())
@@ -453,7 +455,9 @@ func (h *K8sHandler) ListDeployments(c *gin.Context) {
 	if result == nil {
 		result = []k8sclient.DeploymentInfo{}
 	}
-	apiShared.Success(c, result)
+	apiShared.ResourceListPage(c, result, func(item k8sclient.DeploymentInfo) apiShared.ResourceListKey {
+		return apiShared.ResourceListKey{Name: item.Name, Namespace: item.Namespace}
+	})
 }
 
 // GetDeployment 获取 Deployment 详情
@@ -585,7 +589,7 @@ func (h *K8sHandler) ListStatefulSets(c *gin.Context) {
 		apiShared.K8sUnavailable(c)
 		return
 	}
-	ns := c.Query("namespace")
+	ns := apiShared.InventoryNamespace(c)
 	result, err := h.k8s.ListStatefulSetsContext(c.Request.Context(), ns)
 	if err != nil {
 		apiShared.Error(c, http.StatusOK, apiShared.CodeK8sAPIError, err.Error())
@@ -594,7 +598,9 @@ func (h *K8sHandler) ListStatefulSets(c *gin.Context) {
 	if result == nil {
 		result = []k8sclient.StatefulSetInfo{}
 	}
-	apiShared.Success(c, result)
+	apiShared.ResourceListPage(c, result, func(item k8sclient.StatefulSetInfo) apiShared.ResourceListKey {
+		return apiShared.ResourceListKey{Name: item.Name, Namespace: item.Namespace}
+	})
 }
 
 // GetStatefulSet 获取 StatefulSet 详情
@@ -645,7 +651,7 @@ func (h *K8sHandler) ListDaemonSets(c *gin.Context) {
 		apiShared.K8sUnavailable(c)
 		return
 	}
-	ns := c.Query("namespace")
+	ns := apiShared.InventoryNamespace(c)
 	result, err := h.k8s.ListDaemonSetsContext(c.Request.Context(), ns)
 	if err != nil {
 		apiShared.Error(c, http.StatusOK, apiShared.CodeK8sAPIError, err.Error())
@@ -654,7 +660,9 @@ func (h *K8sHandler) ListDaemonSets(c *gin.Context) {
 	if result == nil {
 		result = []k8sclient.DaemonSetInfo{}
 	}
-	apiShared.Success(c, result)
+	apiShared.ResourceListPage(c, result, func(item k8sclient.DaemonSetInfo) apiShared.ResourceListKey {
+		return apiShared.ResourceListKey{Name: item.Name, Namespace: item.Namespace}
+	})
 }
 
 // GetDaemonSet 获取 DaemonSet 详情
@@ -681,7 +689,7 @@ func (h *K8sHandler) ListServicesV2(c *gin.Context) {
 		apiShared.K8sUnavailable(c)
 		return
 	}
-	ns := c.Query("namespace")
+	ns := apiShared.InventoryNamespace(c)
 	if c.Query("endpoint_count") == "false" {
 		result, err := h.k8s.ListServicesMetadataContext(c.Request.Context(), ns)
 		if err != nil {
@@ -691,7 +699,9 @@ func (h *K8sHandler) ListServicesV2(c *gin.Context) {
 		if result == nil {
 			result = []k8sclient.ServiceInfo{}
 		}
-		apiShared.Success(c, result)
+		apiShared.ResourceListPage(c, result, func(item k8sclient.ServiceInfo) apiShared.ResourceListKey {
+			return apiShared.ResourceListKey{Name: item.Name, Namespace: item.Namespace}
+		})
 		return
 	}
 	result, err := h.k8s.ListServicesContext(c.Request.Context(), ns)
@@ -702,7 +712,9 @@ func (h *K8sHandler) ListServicesV2(c *gin.Context) {
 	if result == nil {
 		result = []k8sclient.ServiceEndpointInfo{}
 	}
-	apiShared.Success(c, result)
+	apiShared.ResourceListPage(c, result, func(item k8sclient.ServiceEndpointInfo) apiShared.ResourceListKey {
+		return apiShared.ResourceListKey{Name: item.Name, Namespace: item.Namespace}
+	})
 }
 
 // ==================== EndpointSlice ====================
@@ -734,7 +746,7 @@ func (h *K8sHandler) ListConfigMaps(c *gin.Context) {
 		apiShared.K8sUnavailable(c)
 		return
 	}
-	ns := c.Query("namespace")
+	ns := apiShared.InventoryNamespace(c)
 	var result []k8sclient.ConfigMapInfo
 	var err error
 	if c.Query("usage") == "false" {
@@ -749,7 +761,9 @@ func (h *K8sHandler) ListConfigMaps(c *gin.Context) {
 	if result == nil {
 		result = []k8sclient.ConfigMapInfo{}
 	}
-	apiShared.Success(c, result)
+	apiShared.ResourceListPage(c, result, func(item k8sclient.ConfigMapInfo) apiShared.ResourceListKey {
+		return apiShared.ResourceListKey{Name: item.Name, Namespace: item.Namespace}
+	})
 }
 
 // GetConfigMap 获取 ConfigMap 详情

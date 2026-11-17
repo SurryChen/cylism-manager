@@ -41,6 +41,16 @@ type confirmRequest struct {
 }
 
 func (h *Handler) ListConnections(c *gin.Context) {
+	if apiShared.PaginationRequested(c) {
+		limit, offset := apiShared.LimitOffset(c, 10, 100)
+		items, total, err := h.service.ListConnectionsPage(limit, offset)
+		if err != nil {
+			dbError(c, err)
+			return
+		}
+		apiShared.Success(c, gin.H{"items": items, "total": total, "limit": limit, "offset": offset})
+		return
+	}
 	items, err := h.service.ListConnections()
 	if err != nil {
 		dbError(c, err)
@@ -133,7 +143,13 @@ func (h *Handler) ListRecords(c *gin.Context) {
 		return
 	}
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	size, _ := strconv.Atoi(c.DefaultQuery("page_size", "100"))
+	size, _ := strconv.Atoi(c.DefaultQuery("page_size", "10"))
+	if page < 1 {
+		page = 1
+	}
+	if size < 1 || size > 100 {
+		size = 10
+	}
 	items, err := h.service.ListRecords(c.Request.Context(), id, c.Query("zone"), page, size)
 	if err != nil {
 		providerError(c, err)
@@ -295,7 +311,8 @@ func (h *Handler) ListObjects(c *gin.Context) {
 	if !ok {
 		return
 	}
-	items, err := h.service.ListObjects(c.Request.Context(), id, c.Param("container"), c.Query("prefix"), c.Query("token"), c.Query("region"))
+	limit, _ := apiShared.LimitOffset(c, 10, 100)
+	items, err := h.service.ListObjects(c.Request.Context(), id, c.Param("container"), c.Query("prefix"), c.Query("token"), c.Query("region"), limit)
 	if err != nil {
 		providerError(c, err)
 		return

@@ -73,10 +73,10 @@
       <div class="objects-modal-content" aria-labelledby="objects-title">
         <div class="objects-toolbar">
           <div class="objects-heading"><div><span class="eyebrow">对象存储</span><h2 id="objects-title">{{ container }}</h2></div></div>
-          <div class="objects-actions"><label class="prefix-field"><span class="sr-only">对象前缀</span><input v-model.trim="prefix" class="form-input" placeholder="按前缀筛选" @keydown.enter.prevent="loadObjects"></label><label class="btn btn-primary upload-button"><Upload :size="15" />上传文件<input type="file" @change="uploadObject"></label></div>
+          <div class="objects-actions"><label class="prefix-field"><span class="sr-only">对象前缀</span><input v-model.trim="prefix" class="form-input" placeholder="按前缀筛选" @keydown.enter.prevent="loadObjects()"></label><label class="btn btn-primary upload-button"><Upload :size="15" />上传文件<input type="file" @change="uploadObject"></label></div>
         </div>
         <FeedbackBanner v-if="objectsError" tone="warning" :message="objectsError" dismissible @dismiss="objectsError = ''" />
-        <EmptyState v-if="objectsLoading" variant="loading" message="正在读取对象..." />
+        <EmptyState v-if="objectsLoading && !objects.length" variant="loading" message="正在读取对象..." />
         <EmptyState v-else-if="!objects.length" message="当前前缀下没有对象" />
         <div v-else class="table-wrap object-table-wrap">
           <table class="data-table object-table">
@@ -84,6 +84,7 @@
             <tbody><tr v-for="item in objects" :key="item.key"><td class="mono cell-primary">{{ item.key }}</td><td>{{ formatSize(item.size) }}</td><td class="cell-secondary">{{ formatDate(item.last_modified) }}</td><td class="action-cell"><div class="btn-group"><a class="btn btn-sm" :href="downloadURL(item.key)"><Download :size="14" />下载</a><button class="btn btn-sm btn-danger" :data-testid="'object-delete-' + item.key" type="button" @click="requestDeleteObject(item)"><Trash2 :size="14" />删除</button></div></td></tr></tbody>
           </table>
         </div>
+        <CursorPaginationControls :page="objectPage" :page-size="objectPageSize" :count="objects.length" :has-next="objectHasNext" :loading="objectsLoading" @page-change="changeObjectPage" @page-size-change="changeObjectPageSize" />
       </div>
     </BaseModal>
 
@@ -93,7 +94,9 @@
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref } from 'vue'
+import CursorPaginationControls from '../../components/CursorPaginationControls.vue'
+import { useCursorResource } from '../../composables/useCursorResource.js'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { Download, Globe2, Pencil, Plus, Trash2, Upload } from 'lucide-vue-next'
 import { createCloudContainer, deleteCloudContainer, deleteCloudObject, downloadCloudObjectURL, getCloudConnections, getCloudContainerCORS, getCloudContainers, getCloudObjects, updateCloudContainer, updateCloudContainerCORS, uploadCloudObject } from '../../api/cloud-resources.js'
 import BaseModal from '../../components/BaseModal.vue'
@@ -110,8 +113,9 @@ const providerNames = { aliyun: '阿里云', tencent: '腾讯云', cloudcone: 'C
 const aclOptions = [{ value: 'private', label: 'private（私有）' }, { value: 'public-read', label: 'public-read（公开读）' }]
 const versioningOptions = [{ value: '', label: '不修改版本控制' }, { value: 'Enabled', label: 'Enabled（启用）' }, { value: 'Suspended', label: 'Suspended（暂停）' }]
 const corsMethods = ['GET', 'HEAD', 'POST', 'PUT', 'DELETE']
-const connections = ref([]); const connectionID = ref(0); const containers = ref([]); const container = ref(''); const prefix = ref(''); const objects = ref([])
-const loading = ref(true); const containersLoading = ref(false); const objectsLoading = ref(false); const error = ref(''); const objectsError = ref(''); const actionError = ref(''); const uploading = ref(false)
+const connections = ref([]); const connectionID = ref(0); const containers = ref([]); const container = ref(''); const prefix = ref(''); const objectResource = useCursorResource(async (query, options) => { const result = await getCloudObjects(query.connection, query.container, query, options); return { items: result.objects || [], nextToken: result.next_token } })
+const { items: objects, page: objectPage, pageSize: objectPageSize, hasNext: objectHasNext, loading: objectsLoading, changePage: changeObjectPage, changePageSize: changeObjectPageSize } = objectResource
+const loading = ref(true); const containersLoading = ref(false); const error = ref(''); const objectsError = ref(''); const actionError = ref(''); const uploading = ref(false)
 let containersRequest = 0
 const containerFormOpen = ref(false); const editingContainer = ref(null); const confirmTarget = ref(null); const deleting = ref(false)
 const corsContainer = ref(null); const corsLoading = ref(false); const corsSaving = ref(false); const corsEnabled = ref(false); const corsRules = ref([]); const corsResponseVary = ref(null)
@@ -124,7 +128,7 @@ const formatSize = size => { if (!size) return '0 B'; const units = ['B', 'KB', 
 const formatDate = value => value ? new Date(value).toLocaleString() : '-'
 
 async function refresh() { loading.value = true; error.value = ''; try { connections.value = await getCloudConnections(); connectionID.value = connections.value[0]?.id || 0 } catch (err) { error.value = err.message || '读取云连接失败' } finally { loading.value = false }; if (connectionID.value) void loadContainers() }
-async function loadContainers() { const request = ++containersRequest; container.value = ''; objects.value = []; containers.value = []; containersLoading.value = true; error.value = ''; try { const items = await getCloudContainers(connectionID.value); if (request === containersRequest) containers.value = items } catch (err) { if (request === containersRequest) error.value = err.message || '读取存储容器失败' } finally { if (request === containersRequest) containersLoading.value = false } }
+async function loadContainers() { const request = ++containersRequest; container.value = ''; objectResource.reset(); containers.value = []; containersLoading.value = true; error.value = ''; try { const items = await getCloudContainers(connectionID.value); if (request === containersRequest) containers.value = items } catch (err) { if (request === containersRequest) error.value = err.message || '读取存储容器失败' } finally { if (request === containersRequest) containersLoading.value = false } }
 function openContainer(item) { editingContainer.value = item || null; Object.assign(containerForm, item ? { ...newContainer(), ...item } : newContainer()); containerFormOpen.value = true }
 function closeContainerForm() { if (!deleting.value) containerFormOpen.value = false }
 const splitCORSValues = value => value.split(/[\n,]/).map(part => part.trim()).filter(Boolean)
@@ -163,9 +167,14 @@ async function saveContainer() { if (!containerForm.name || (!editingContainer.v
 function requestDeleteContainer(item) { confirmTarget.value = { type: 'container', item } }
 function requestDeleteObject(item) { confirmTarget.value = { type: 'object', item } }
 async function confirmDelete() { if (!confirmTarget.value) return; deleting.value = true; const target = confirmTarget.value; try { if (target.type === 'container') { await deleteCloudContainer(connectionID.value, target.item.name, { confirm: true }, target.item.region); if (container.value === target.item.name) closeObjects(); await loadContainers() } else { await deleteCloudObject(connectionID.value, container.value, { key: target.item.key, confirm: true }, containerRegion.value); await loadObjects() }; confirmTarget.value = null } catch (err) { actionError.value = err.message || (target.type === 'container' ? '删除存储容器失败' : '删除对象失败') } finally { deleting.value = false } }
-function closeObjects() { container.value = ''; prefix.value = ''; objects.value = []; objectsError.value = '' }
-async function openObjects(item) { container.value = item.name; prefix.value = ''; await loadObjects() }
-async function loadObjects() { if (!container.value) return; objectsLoading.value = true; objectsError.value = ''; try { objects.value = (await getCloudObjects(connectionID.value, container.value, { prefix: prefix.value, region: containerRegion.value })).objects || [] } catch (err) { objectsError.value = err.message || '读取对象失败' } finally { objectsLoading.value = false } }
+function closeObjects() { container.value = ''; prefix.value = ''; objectResource.reset(); objectsError.value = '' }
+async function openObjects(item) { objectResource.reset(); container.value = item.name; prefix.value = ''; await loadObjects() }
+async function loadObjects() {
+  if (!container.value) return
+  objectsError.value = ''
+  await objectResource.load({ connection: connectionID.value, container: container.value, prefix: prefix.value, region: containerRegion.value })
+}
+watch(objectResource.error, cause => { if (cause) { objectsError.value = cause.message || '读取对象失败'; actionError.value = objectsError.value } })
 async function uploadObject(event) { const file = event.target.files?.[0]; if (!file || !container.value || uploading.value) return; uploading.value = true; const form = new FormData(); form.append('file', file); form.append('key', prefix.value + file.name); try { await uploadCloudObject(connectionID.value, container.value, form, containerRegion.value); await loadObjects() } catch (err) { actionError.value = err.message || '上传对象失败' } finally { uploading.value = false; event.target.value = '' } }
 const downloadURL = key => downloadCloudObjectURL(connectionID.value, container.value, key, containerRegion.value)
 onMounted(refresh)

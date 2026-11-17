@@ -57,7 +57,8 @@ export function getImageRegistries({ projectID } = {}, options) {
 }
 
 export function getWorkspace(projectID, environmentID, options) {
-  return api.get(`/workspace/overview${queryString({ project_id: projectID, environment_id: environmentID })}`, options)
+  const { omitReleases, ...requestOptions } = options || {}
+  return api.get(`/workspace/overview${queryString({ project_id: projectID, environment_id: environmentID, releases: omitReleases ? 'false' : undefined })}`, options ? requestOptions : options)
 }
 
 export function getDomains({ unassigned = false } = {}, options) {
@@ -65,7 +66,8 @@ export function getDomains({ unassigned = false } = {}, options) {
 }
 
 export function getApplication(applicationID, options) {
-  return api.get(`/applications/${segment(applicationID)}`, options)
+  const { omitReleases, ...requestOptions } = options || {}
+  return api.get('/applications/' + segment(applicationID) + (omitReleases ? '?releases=false' : ''), options ? requestOptions : options)
 }
 
 export function getApplicationDeployWebhook(applicationID, options) {

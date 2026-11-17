@@ -84,7 +84,7 @@
       <div v-if="['paused', 'retired'].includes(cluster.status) && cleanupState?.cluster_resource" class="shutdown-progress cell-secondary"><span>删除请求：{{ formatTime(cleanupState.deletion_started_at) }}</span><span>Finalizer：{{ cleanupState.finalizers?.join('、') || '无' }}</span><span>剩余工作负载 {{ cleanupState.workloads.length }} 个、Pod {{ cleanupState.pods.length }} 个</span></div>
       <div v-if="tasks.length" class="table-wrap task-table"><table class="data-table"><thead><tr><th>任务</th><th>状态</th><th>开始时间</th><th>操作</th></tr></thead><tbody><tr v-for="task in tasks" :key="task.id"><td>{{ taskLabel(task) }} #{{ task.id }}</td><td><span class="badge" :class="task.status === 'success' ? 'badge-online' : task.status === 'failed' ? 'badge-danger' : 'badge-offline'">{{ taskStatusLabel(task.status) }}</span></td><td>{{ formatTime(task.created_at) }}</td><td><button class="btn btn-sm" type="button" @click="openLogs(task)">查看日志</button></td></tr></tbody></table></div>
       <EmptyState v-else :variant="tasksLoading ? 'loading' : 'empty'" :message="tasksLoading ? '正在读取集群任务...' : '暂无集群任务'" />
-      <div v-if="taskTotal > taskPageSize" class="pagination task-pagination"><button class="btn btn-sm" type="button" :disabled="taskOffset === 0 || tasksLoading" @click="changeTaskPage(-1)">上一页</button><span>{{ taskPage }} / {{ taskPageCount }} · 共 {{ taskTotal }} 条</span><button class="btn btn-sm" type="button" :disabled="taskOffset + taskPageSize >= taskTotal || tasksLoading" @click="changeTaskPage(1)">下一页</button></div>
+      <PaginationControls :page="taskPage" :page-size="taskPageSize" :total="taskTotal" :loading="tasksLoading" @page-change="changeTaskPage" @page-size-change="changeTaskPageSize" />
     </SurfaceCard>
     <PodTerminal v-if="terminalPod" :pod="{ name: terminalPod.name, namespace: cluster.namespace, containers: ['mysql'] }" :mysql-cluster-id="id" @close="terminalPod = null" />
     <BaseModal :open="configOpen" title="MySQL 配置" size="large" teleport :show-close="!configSaving" :close-on-overlay="!configSaving" :close-on-escape="!configSaving" @close="configOpen = false">
@@ -201,6 +201,7 @@
 </template>
 
 <script setup>
+import PaginationControls from '../../components/PaginationControls.vue'
 import { useRouter } from 'vue-router'
 import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { ArrowDown, ArrowLeft, ArrowUpCircle, Database, RefreshCw, Server, Settings2, SquareTerminal, Trash2 } from 'lucide-vue-next'
@@ -225,10 +226,10 @@ const lifecycleMessage = computed(() => ({ stop: '将停止 MySQL 和 Router，�
 const props = defineProps({ id: { type: String, required: true } })
 const tabs = [{ id: 'topology', label: '拓扑' }, { id: 'resources', label: '部署资源' }, { id: 'tasks', label: '集群任务' }]
 const activeTab = ref('topology'), cluster = ref(null), nodes = ref([]), kubernetesClusters = ref([]), tasks = ref([]), logs = ref([])
-const taskPageSize = 10
+const taskPageSize = ref(10)
 const taskOffset = ref(0), taskTotal = ref(0), tasksLoading = ref(false), uninstallTaskPending = ref(false)
-const taskPage = computed(() => Math.floor(taskOffset.value / taskPageSize) + 1)
-const taskPageCount = computed(() => Math.max(1, Math.ceil(taskTotal.value / taskPageSize)))
+const taskPage = computed(() => Math.floor(taskOffset.value / taskPageSize.value) + 1)
+const taskPageCount = computed(() => Math.max(1, Math.ceil(taskTotal.value / taskPageSize.value)))
 const runtimeSnapshot = ref({ pods: [] }), selectedTask = ref(null)
 const memberRoles = ref([]), rolesCheckedAt = ref(0), roleClock = ref(Date.now())
 const runtime = computed(() => ({
@@ -451,13 +452,16 @@ async function refresh(silent = false) {
   return refreshRequest.catch(failure => { if (!silent) error.value = failure.message || '刷新 MySQL 集群失败' })
 }
 let taskRequestID = 0
-async function loadTasks() {
+async function loadTasks(page = taskPage.value, size = taskPageSize.value) {
   const requestID = ++taskRequestID
   const clusterID = props.id
   tasksLoading.value = true
   try {
-    const result = await getMySQLClusterTasks(clusterID, { limit: taskPageSize, offset: taskOffset.value })
+    let result = await getMySQLClusterTasks(clusterID, { limit: size, offset: (page - 1) * size })
+    const lastPage = Math.max(1, Math.ceil((result.total || 0) / size))
+    if (page > lastPage) { page = lastPage; result = await getMySQLClusterTasks(clusterID, { limit: size, offset: (page - 1) * size }) }
     if (requestID !== taskRequestID || clusterID !== props.id) return
+    taskPageSize.value = size; taskOffset.value = (page - 1) * size
     tasks.value = result.items || []
     taskTotal.value = result.total || 0
     uninstallTaskPending.value = Boolean(result.operator_uninstall_pending)
@@ -472,14 +476,15 @@ async function loadTasks() {
     if (requestID === taskRequestID) tasksLoading.value = false
   }
 }
-async function changeTaskPage(direction) {
+async function changeTaskPage(page) {
   if (tasksLoading.value) return
-  const offset = taskOffset.value + direction * taskPageSize
-  if (offset < 0 || offset >= taskTotal.value) return
   closeLogs()
-  taskOffset.value = offset
-  try { await loadTasks() }
-  catch (failure) { error.value = failure.message || '读取集群任务失败' }
+  try { await loadTasks(page) } catch (failure) { error.value = failure.message || '读取集群任务失败' }
+}
+async function changeTaskPageSize(size) {
+  if (tasksLoading.value) return
+  closeLogs()
+  try { await loadTasks(1, size) } catch (failure) { error.value = failure.message || '读取集群任务失败' }
 }
 function showLatestTasks() {
   taskOffset.value = 0

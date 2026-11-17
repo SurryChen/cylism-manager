@@ -21,6 +21,7 @@ type ApplicationQueryRepository interface {
 	GetEnvironment(uint, uint) (*model.Environment, error)
 	ListApplications(...uint) ([]model.Application, error)
 	ListReleases(uint) ([]model.Release, error)
+	ListReleasesPage([]uint, int, int) ([]model.Release, int64, error)
 	ListReleasesByApplications([]uint) (map[uint][]model.Release, error)
 }
 

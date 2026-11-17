@@ -54,6 +54,16 @@ func (h *AuthHandler) ListTemporaryTokens(c *gin.Context) {
 		apiShared.InternalError(c, "临时登录秘钥不可用")
 		return
 	}
+	if apiShared.PaginationRequested(c) {
+		limit, offset := apiShared.LimitOffset(c, 10, 100)
+		items, total, err := h.temporaryTokens.ListPage(apiShared.UserID(c), limit, offset)
+		if err != nil {
+			apiShared.InternalError(c, "读取临时登录秘钥失败")
+			return
+		}
+		apiShared.Success(c, gin.H{"items": items, "total": total, "limit": limit, "offset": offset})
+		return
+	}
 	items, err := h.temporaryTokens.List(apiShared.UserID(c))
 	if err != nil {
 		apiShared.InternalError(c, "读取临时登录秘钥失败")

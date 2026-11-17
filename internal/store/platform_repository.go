@@ -47,6 +47,16 @@ func (s *Store) ListPlatformReleases(limit int) ([]model.PlatformRelease, error)
 	return releases, query.Find(&releases).Error
 }
 
+func (s *Store) ListPlatformReleasesPage(limit, offset int) ([]model.PlatformRelease, int64, error) {
+	var releases []model.PlatformRelease
+	var total int64
+	if err := s.db.Model(&model.PlatformRelease{}).Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	err := s.db.Order("id desc").Limit(limit).Offset(offset).Find(&releases).Error
+	return releases, total, err
+}
+
 func (s *Store) LatestIncompletePlatformRelease() (*model.PlatformRelease, error) {
 	var release model.PlatformRelease
 	err := s.db.Where("status IN ?", []string{"accepted", "applying", "waiting_ready"}).Order("id desc").First(&release).Error

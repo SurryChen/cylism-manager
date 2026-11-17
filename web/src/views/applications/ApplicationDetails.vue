@@ -7,8 +7,8 @@
     <div v-if="readError" data-testid="application-detail-read-error" class="k8s-banner k8s-banner-warn section-gap">{{ readError }}</div>
     <ErrorNoticeModal :open="Boolean(mutationError)" :message="mutationError" teleport @close="mutationError = ''" />
 
-    <ApplicationRuntime v-if="application && activeTab === 'runtime' && application.environment?.cluster_id" :application-id="applicationID" :cluster-id="application.environment.cluster_id" :releases="releases">
-      <template #actions><button class="btn btn-sm" :disabled="restarting || !releases.length" @click="openRestartConfirmation"><RefreshCw :size="14" :class="{ 'is-spinning': restarting }" />{{ restarting ? '重启中...' : '重启应用' }}</button></template>
+    <ApplicationRuntime v-if="application && activeTab === 'runtime' && application.environment?.cluster_id" :application-id="applicationID" :cluster-id="application.environment.cluster_id" :releases="runtimeReleases">
+      <template #actions><button class="btn btn-sm" :disabled="restarting || !releasesTotal" @click="openRestartConfirmation"><RefreshCw :size="14" :class="{ 'is-spinning': restarting }" />{{ restarting ? '重启中...' : '重启应用' }}</button></template>
     </ApplicationRuntime>
     <EmptyState v-else-if="application && activeTab === 'runtime'" message="当前环境尚未绑定集群" />
 
@@ -46,9 +46,10 @@ X-Cylism-Signature: HMAC-SHA256(应用密钥, timestamp + "." + nonce + "." + �
     </SurfaceCard>
 
     <SurfaceCard v-show="activeTab === 'releases' && application" as="div" padding="none" class="detail-tab-card detail-releases-card">
-      <div class="detail-card-toolbar"><span>发布记录</span><span class="detail-count">共 {{ releases.length }} 条</span></div>
+      <div class="detail-card-toolbar"><span>发布记录</span><span class="detail-count">共 {{ releasesTotal }} 条</span></div>
       <div v-if="releases.length" class="table-wrap detail-table-wrap"><table class="data-table"><thead><tr><th>版本</th><th>镜像</th><th>模板</th><th>状态</th><th>时间</th></tr></thead><tbody><tr v-for="release in releases" :key="release.id" class="clickable" @click="openRelease(release)"><td class="cell-primary">{{ release.version || `Release #${release.sequence}` }}</td><td>{{ release.image }}</td><td>{{ templateName(release.template_id) || '-' }}</td><td><span class="badge" :class="releaseBadge(release.status)">{{ release.status }}</span></td><td>{{ formatTime(release.created_at) }}</td></tr></tbody></table></div>
       <EmptyState v-else message="暂无发布记录" />
+    <PaginationControls :page="releasesPage" :page-size="releasesPageSize" :total="releasesTotal" :loading="releasesLoading" @page-change="changeReleasesPage" @page-size-change="changeReleasesPageSize" />
     </SurfaceCard>
 
     <BaseModal :open="showApplicationSettings && !showWorkloadEditor" title="应用设置" dialog-class="application-settings-modal capability-section" :close-on-overlay="!savingCapabilities" :close-on-escape="!savingCapabilities" @close="closeApplicationSettings">
@@ -137,6 +138,9 @@ import {
   updateWorkloadKind as updateWorkloadKindRequest,
 } from '../../api/applications.js'
 import { getManagedDomains } from '../../api/domains.js'
+import PaginationControls from '../../components/PaginationControls.vue'
+import { usePaginatedResource } from '../../composables/usePaginatedResource.js'
+import { getApplicationReleasePage } from '../../api/list-pages.js'
 import { useAsyncResource } from '../../composables/useAsyncResource.js'
 import { usePolling } from '../../composables/usePolling.js'
 import { getClusterPersistentVolumeInventory } from '../../api/storage.js'
@@ -171,7 +175,11 @@ const route = useRoute()
 const activeTab = ref(detailTabs.some(tab => tab.id === route?.query?.tab) ? route.query.tab : 'runtime')
 watch(() => route?.query?.tab, tab => { if (detailTabs.some(item => item.id === tab)) activeTab.value = tab })
 const application = ref(null)
-const releases = ref([])
+const activeRelease = ref(null)
+const runtimeReleases = computed(() => activeRelease.value ? [activeRelease.value] : [])
+const releaseHistoryResource = usePaginatedResource((query, options) => getApplicationReleasePage(query.applicationID, query, options), 'items')
+const { items: releases, total: releasesTotal, page: releasesPage, pageSize: releasesPageSize, loading: releasesLoading, changePage: changeReleasesPage, changePageSize: changeReleasesPageSize } = releaseHistoryResource
+watch(releaseHistoryResource.error, cause => { if (cause) readError.value = cause.message || '读取发布记录失败' })
 const templates = ref([])
 const endpoints = ref([])
 const domains = ref([])
@@ -212,7 +220,7 @@ const showWorkloadEditor = ref(false)
 const templateForm = ref(newTemplateForm())
 const endpointForm = ref(newEndpointForm())
 const applicationResource = useAsyncResource(async ({ signal }) => {
-  const result = await getApplication(props.applicationID, { signal })
+  const result = await getApplication(props.applicationID, { signal, omitReleases: true })
   const namespace = result.application?.environment?.namespace || ''
   const clusterID = result.application?.environment?.cluster_id
   const [loadedTemplates, loadedEndpoints, loadedDomains, loadedRegistries, configmaps, secrets] = await Promise.all([
@@ -225,7 +233,6 @@ const applicationResource = useAsyncResource(async ({ signal }) => {
   ])
   return { result, loadedTemplates, loadedEndpoints, loadedDomains, loadedRegistries, configmaps, secrets }
 }, null)
-const releaseHistoryResource = useAsyncResource(({ signal }) => getApplication(props.applicationID, { signal }), null)
 const releaseHistoryPolling = usePolling(refreshReleaseHistory, { interval: 5000 })
 const storageResource = useAsyncResource(({ signal }, clusterID, namespace) => Promise.all([
   getClusterPersistentVolumeInventory(clusterID, { namespace }, { signal }),
@@ -306,7 +313,11 @@ function managedKeys(items) { return items.filter(item => item.key.trim() && ite
 function templatePayload() { const form = templateForm.value; validateConfiguration(form); const service = { type: form.service.type, external_traffic_policy: form.service.type === 'ClusterIP' ? '' : form.service.external_traffic_policy, ports: form.service.ports.map(port => ({ name: port.name, port: port.port, target_port: port.target_port, protocol: port.protocol, node_port: form.service.type === 'NodePort' ? port.node_port || 0 : 0 })) }; const fileMounts = form.file_mounts.map(({ source_type, source_name, key, mount_path }) => ({ source_type, source_name, key, mount_path })); return { ...(editingTemplate.value ? { revision: editingTemplate.value.revision } : {}), name: form.name, description: form.description, enabled: form.enabled, default_version: form.default_version, ...(form.secret_items.some(item => item.file_edit?.changes?.length) ? { secret_file_edits: form.secret_items.filter(item => item.file_edit?.changes?.length).map(item => item.file_edit) } : {}), spec: { image: form.image, registry_id: form.registry_id, command: stringValues(form.command_items), args: stringValues(form.argument_items), container_port: form.container_port, replicas: form.replicas, node_name: form.node_name, host_network: form.host_network, ...(form.dns_ndots === '' ? {} : { dns_ndots: Number(form.dns_ndots) }), volumes: form.volumes, file_mounts: fileMounts, config: keyValueMap(form.config_items), config_disabled: disabledKeys(form.config_items), config_file_keys: fileOnlyKeys(form.config_items), config_managed_keys: managedKeys(form.config_items), secrets: keyValueMap(form.secret_items), secrets_disabled: disabledKeys(form.secret_items), secret_file_keys: fileOnlyKeys(form.secret_items), secret_managed_keys: managedKeys(form.secret_items), resources: { requests_cpu: `${form.resources.requests_cpu}${form.resources.requests_cpu_unit}`, requests_memory: `${form.resources.requests_memory}${form.resources.requests_memory_unit}`, limits_cpu: `${form.resources.limits_cpu}${form.resources.limits_cpu_unit}`, limits_memory: `${form.resources.limits_memory}${form.resources.limits_memory_unit}` }, health: hasTCPServicePort.value ? form.health : { ...form.health, readiness_enabled: false, liveness_enabled: false }, service } } }
 function templateServiceSummary(service) { const ports = servicePortsFromSpec(service, 0); return `${service?.type || 'ClusterIP'} · ${ports.map(port => `${port.protocol} ${port.port}`).join(', ')}` }
 
+let applicationLoadRequest = 0
 async function loadApplication() {
+  const request = ++applicationLoadRequest
+  const applicationID = props.applicationID
+  if (releaseHistoryResource.filters.value.applicationID !== applicationID) releaseHistoryResource.reset()
   closeTemplateEditor()
   releaseHistoryPolling.stop()
   releaseHistoryResource.cancel()
@@ -320,15 +331,18 @@ async function loadApplication() {
   persistentVolumeClaims.value = []
   clusterNodes.value = []
   const loaded = await applicationResource.refresh()
+  if (request !== applicationLoadRequest) return
   if (!loaded) {
     if (applicationResource.error.value) readError.value = applicationResource.error.value.message || '加载应用详情失败'
     return
   }
   const { result, loadedTemplates, loadedEndpoints, loadedDomains, loadedRegistries, configmaps, secrets } = loaded
   application.value = result.application
+  activeRelease.value = result.active_release || null
   capabilityItems.value = (result.application.capabilities || []).map(value => ({ value }))
   workloadKind.value = result.application.workload_kind || 'deployment'
-  releases.value = result.releases || []
+  await releaseHistoryResource.load({ applicationID })
+  if (request !== applicationLoadRequest) return
   templates.value = loadedTemplates || []
   endpoints.value = loadedEndpoints || []
   domains.value = loadedDomains || []
@@ -358,16 +372,7 @@ async function disableWebhook() {
 }
 function closeWebhookSecretModal() { if (!webhookBusy.value) { generatedWebhookSecret.value = ''; showWebhookSecretModal.value = false } }
 async function copyWebhookValue(value) { try { await navigator.clipboard.writeText(value) } catch { mutationError.value = '复制失败，请手动复制' } }
-async function refreshReleaseHistory() {
-  const applicationID = props.applicationID
-  const result = await releaseHistoryResource.refresh()
-  if (result && activeTab.value === 'releases' && applicationID === props.applicationID) {
-    releases.value = result.releases || []
-    readError.value = ''
-  } else if (releaseHistoryResource.error.value && activeTab.value === 'releases') {
-    readError.value = releaseHistoryResource.error.value.message || '更新发布记录失败'
-  }
-}
+async function refreshReleaseHistory() { if (!releasesLoading.value) await releaseHistoryResource.refresh() }
 function syncReleaseHistoryPolling(immediate = false) {
   if (activeTab.value === 'releases' && application.value && !document.hidden) {
     releaseHistoryPolling.start({ immediate })
@@ -460,7 +465,7 @@ function removeServicePort(index) { if (templateForm.value.service.ports.length 
 async function saveTemplate() { saving.value = true; mutationError.value = ''; try { const payload = templatePayload(); if (editingTemplate.value) await updateDeploymentTemplate(props.applicationID, editingTemplate.value.id, payload); else await createDeploymentTemplate(props.applicationID, payload); closeTemplateEditor(); await loadApplication() } catch (e) { mutationError.value = e.message || '保存上线模板失败' } finally { saving.value = false } }
 function openRestartConfirmation() { showRestartConfirmation.value = true }
 function closeRestartConfirmation() { if (!restarting.value) showRestartConfirmation.value = false }
-async function restartApplication() { restarting.value = true; mutationError.value = ''; try { const release = await restartApplicationRequest(props.applicationID); releases.value = [release, ...releases.value]; showRestartConfirmation.value = false } catch (e) { mutationError.value = e.message || '重启应用失败' } finally { restarting.value = false } }
+async function restartApplication() { restarting.value = true; mutationError.value = ''; try { const release = await restartApplicationRequest(props.applicationID); await releaseHistoryResource.load({ applicationID: props.applicationID }); showRestartConfirmation.value = false } catch (e) { mutationError.value = e.message || '重启应用失败' } finally { restarting.value = false } }
 async function setDefaultTemplate(template) { mutationError.value = ''; try { await setDefaultDeploymentTemplate(props.applicationID, template.id); await loadApplication() } catch (e) { mutationError.value = e.message || '设置默认模板失败' } }
 async function deleteTemplate(template) { mutationError.value = ''; try { await deleteDeploymentTemplate(props.applicationID, template.id); await loadApplication() } catch (e) { mutationError.value = e.message || '删除上线模板失败' } }
 function openEndpointEditor(endpoint = null) { editingEndpoint.value = endpoint; if (endpoint) { const selected = endpointServicePorts.value.find(port => port.port === endpoint.service_port); endpointForm.value = { domain_id: endpoint.domain_id, path: endpoint.path || '/', service_port: endpoint.service_port || selected?.port || 0, protocol: endpoint.protocol || selected?.protocol || 'TCP', tls_enabled: endpoint.tls_enabled, ingress_enabled: endpoint.ingress_enabled !== false && (endpoint.protocol || selected?.protocol || 'TCP') !== 'UDP', access_mode: endpoint.access_mode || 'public' } } else { const form = newEndpointForm(); const first = endpointServicePorts.value[0]; if (first) { form.service_port = first.port; form.protocol = first.protocol } endpointForm.value = form } showEndpointEditor.value = true }

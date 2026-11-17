@@ -96,6 +96,7 @@ GET /api/applications/:id/endpoints
 GET /api/applications/:id/managed-files
 GET /api/applications/:id/pods
 GET /api/applications/:id/pods/:pod/logs
+GET /api/applications/:id/releases
 GET /api/applications/:id/releases/:releaseID
 GET /api/applications/:id/runtime
 GET /api/applications/discovery
@@ -306,12 +307,14 @@ GET /api/servers/:id/stats
 GET /api/servers/:id/tailscale
 GET /api/servers/:id/terminal
 GET /api/servers/resource-stats
+GET /api/servers/speed-test/history
 GET /api/servers/tailscale
 GET /api/sites
 GET /api/sites/:id
 GET /api/system-components
 GET /api/system/crds
 GET /api/workspace/overview
+GET /api/workspace/releases
 GET /health
 GET /internal/runtime-tools/v1/cylism-cli/linux-amd64
 GET /internal/runtime-tools/v1/cylism-cli/linux-amd64/manifest

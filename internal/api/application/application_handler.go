@@ -212,8 +212,15 @@ func (h *ApplicationHandler) GetApplication(c *gin.Context) {
 		apiShared.NotFound(c, "应用不存在")
 		return
 	}
-	releases, _ := h.queries.ListReleases(id)
-	apiShared.Success(c, gin.H{"application": apiShared.ApplicationDTO(app), "releases": apiShared.ReleasesDTO(releases)})
+	var releases []model.Release
+	if c.Query("releases") != "false" {
+		releases, _ = h.queries.ListReleases(id)
+	}
+	activeRelease, activeErr := h.resources.GetLatestSuccessfulRelease(id)
+	if activeErr != nil {
+		activeRelease = nil
+	}
+	apiShared.Success(c, gin.H{"application": apiShared.ApplicationDTO(app), "releases": apiShared.ReleasesDTO(releases), "active_release": apiShared.ReleaseDTO(activeRelease)})
 }
 
 func (h *ApplicationHandler) UpdateWorkloadKind(c *gin.Context) {

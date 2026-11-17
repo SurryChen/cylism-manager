@@ -38,11 +38,11 @@
     </SurfaceCard>
     <ClusterNetworking v-else-if="cluster && activeTab === 'networking'" :cluster-id="props.clusterID" :cluster="cluster" :servers="clusterNodes" :task-running="taskRunning" class="cluster-detail-content" @operation-started="handleAgentOperationStarted" />
     <SurfaceCard v-else-if="cluster && activeTab === 'tasks'" class="cluster-detail-content" padding="none">
-      <div class="cluster-deployment-toolbar"><strong>集群任务</strong><button class="icon-button" type="button" title="刷新任务" aria-label="刷新任务" :disabled="topologyLoading" @click="loadTopology"><RefreshCw :size="15" :class="{ 'is-spinning': topologyLoading }" /></button></div>
+      <div class="cluster-deployment-toolbar"><strong>集群任务</strong><button class="icon-button" type="button" title="刷新任务" aria-label="刷新任务" :disabled="topologyLoading" @click="loadTopology()"><RefreshCw :size="15" :class="{ 'is-spinning': topologyLoading }" /></button></div>
       <FeedbackBanner v-if="topologyError" class="topology-error" tone="warning" :message="topologyError" />
       <div v-if="deployments.length" class="table-wrap"><table class="data-table"><thead><tr><th>任务</th><th>服务器</th><th>状态</th><th>开始时间</th><th>操作</th></tr></thead><tbody><tr v-for="task in deployments" :key="task.id"><td><span class="cell-primary">#{{ task.id }} · {{ taskLabel(task) }}</span><span class="cell-secondary">{{ taskDescription(task) }}</span></td><td>{{ serverName(task.server_id) }}</td><td><span class="badge" :class="deploymentStatusClass(task.status)">{{ deploymentStatusLabel(task.status) }}</span></td><td>{{ formatTime(task.created_at) }}</td><td class="task-actions"><button class="btn btn-sm" type="button" :aria-label="`查看任务 #${task.id} 日志`" aria-haspopup="dialog" @click="selectDeployment(task)">查看日志</button><button v-if="retryRemovalServer(task)" class="btn btn-sm" type="button" :aria-label="`重新检查任务 #${task.id} 的节点`" :disabled="runningDeployment || topologyLoading" @click="removalTarget = retryRemovalServer(task)">重新检查</button></td></tr></tbody></table></div>
       <EmptyState v-else-if="!topologyLoading" message="暂无集群任务" />
-      <div v-if="taskTotal" class="pagination task-pagination"><button class="btn btn-sm" type="button" :disabled="taskOffset === 0 || topologyLoading" @click="changeTaskPage(-1)">上一页</button><span>{{ taskPage }} / {{ taskPageCount }} · 共 {{ taskTotal }} 条</span><button class="btn btn-sm" type="button" :disabled="taskOffset + taskPageSize >= taskTotal || topologyLoading" @click="changeTaskPage(1)">下一页</button></div>
+      <PaginationControls :page="taskPage" :page-size="taskPageSize" :total="taskTotal" :loading="topologyLoading" @page-change="changeTaskPage" @page-size-change="changeTaskPageSize" />
     </SurfaceCard>
     <ClusterAgentGate v-else-if="cluster && agentRequiredTab" :key="`${props.clusterID}-${activeTab}`" :cluster-id="props.clusterID"><component :is="scopedComponent" :cluster-id="props.clusterID" class="cluster-detail-content cluster-scoped-view" /></ClusterAgentGate>
     <component v-else-if="cluster && scopedComponent" :is="scopedComponent" :cluster-id="props.clusterID" :cluster="cluster" :control-node="controlNode" :deployments="latestDeployments" :running-deployment="runningDeployment" class="cluster-detail-content cluster-scoped-view" @operation-started="handleAgentOperationStarted" />
@@ -97,6 +97,7 @@
 </template>
 
 <script setup>
+import PaginationControls from '../../components/PaginationControls.vue'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { defineAsyncComponent } from 'vue'
 import { ArrowLeft, LogOut, RefreshCw, Server, ServerCog, Settings2, Trash2 } from 'lucide-vue-next'
@@ -145,11 +146,11 @@ const servers = ref([])
 const deployments = ref([])
 const latestDeployments = ref([])
 const taskRunning = ref(false)
-const taskPageSize = 10
+const taskPageSize = ref(10)
 const taskOffset = ref(0)
 const taskTotal = ref(0)
-const taskPage = computed(() => Math.floor(taskOffset.value / taskPageSize) + 1)
-const taskPageCount = computed(() => Math.max(1, Math.ceil(taskTotal.value / taskPageSize)))
+const taskPage = computed(() => Math.floor(taskOffset.value / taskPageSize.value) + 1)
+const taskPageCount = computed(() => Math.max(1, Math.ceil(taskTotal.value / taskPageSize.value)))
 const selectedServerID = ref('')
 const selectedDeploymentID = ref('')
 const mirror = ref('official')
@@ -276,21 +277,23 @@ onBeforeUnmount(() => { stopPolling(); topologyRequestID += 1; logRequestID += 1
 function stopPolling() { if (pollingTimer) clearTimeout(pollingTimer); pollingTimer = undefined }
 function schedulePoll() { stopPolling(); if (activeTab.value === 'tasks' || runningDeployment.value) pollingTimer = setTimeout(() => { void loadTopology() }, activeTab.value === 'tasks' ? 5000 : 1500) }
 
-async function changeTaskPage(direction) {
-  closeLogs()
-  taskOffset.value = Math.max(0, taskOffset.value + direction * taskPageSize)
-  await loadTopology()
-}
+async function changeTaskPage(page) { closeLogs(); await loadTopology(page, taskPageSize.value) }
+async function changeTaskPageSize(size) { closeLogs(); await loadTopology(1, size) }
 
-async function loadTopology() {
+async function loadTopology(page = taskPage.value, size = taskPageSize.value) {
   if (!cluster.value || topologyLoading.value) return
   const requestedClusterID = props.clusterID
   const requestID = ++topologyRequestID
   topologyLoading.value = true
   topologyError.value = ''
   try {
-    const [clusterResult, serverResult, deploymentResult] = await Promise.all([getCluster(requestedClusterID), getServers(), getClusterDeployments(requestedClusterID, { limit: taskPageSize, offset: taskOffset.value })])
+    const [clusterResult, serverResult, initialDeploymentResult] = await Promise.all([getCluster(requestedClusterID), getServers(), getClusterDeployments(requestedClusterID, { limit: size, offset: (page - 1) * size })])
+    let deploymentResult = initialDeploymentResult
+    const lastPage = Math.max(1, Math.ceil((deploymentResult?.total || 0) / size))
+    if (page > lastPage) { page = lastPage; deploymentResult = await getClusterDeployments(requestedClusterID, { limit: size, offset: (page - 1) * size }) }
     if (requestID !== topologyRequestID) return
+    taskPageSize.value = size
+    taskOffset.value = (page - 1) * size
     cluster.value = clusterResult
     servers.value = serverResult || []
     if (activeTab.value === 'topology' && clusterNodes.value.some(server => server.k8s_node_name)) void loadNodeScheduling(requestedClusterID)

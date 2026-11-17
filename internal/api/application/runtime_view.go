@@ -215,6 +215,7 @@ func (h *ApplicationHandler) WorkspaceOverview(c *gin.Context) {
 	failedReleases := make([]workspaceRelease, 0)
 	recentReleases := make([]workspaceRelease, 0)
 	releaseSummaries := make([]workspaceReleaseSummary, 0)
+	includeReleaseHistory := c.Query("releases") != "false"
 	applicationIDs := make([]uint, 0, len(applications))
 	for _, app := range applications {
 		applicationIDs = append(applicationIDs, app.ID)
@@ -226,7 +227,9 @@ func (h *ApplicationHandler) WorkspaceOverview(c *gin.Context) {
 			for _, release := range releases {
 				item := workspaceRelease{ReleaseView: *apiShared.ReleaseDTO(&release), ApplicationName: app.Name}
 				recentReleases = append(recentReleases, item)
-				releaseSummaries = append(releaseSummaries, workspaceReleaseSummary{ID: release.ID, ApplicationID: app.ID, ApplicationName: app.Name, Sequence: release.Sequence, Version: release.Version, Image: release.Image, Status: release.Status, CreatedAt: release.CreatedAt})
+				if includeReleaseHistory {
+					releaseSummaries = append(releaseSummaries, workspaceReleaseSummary{ID: release.ID, ApplicationID: app.ID, ApplicationName: app.Name, Sequence: release.Sequence, Version: release.Version, Image: release.Image, Status: release.Status, CreatedAt: release.CreatedAt})
+				}
 				if release.Status == model.ReleaseStatusFailed {
 					failedReleases = append(failedReleases, item)
 				}

@@ -84,6 +84,7 @@
       <div class="drawer-palette"><span>界面配色</span><div class="palette-swatches"><button v-for="palette in palettes" :key="palette.id" :data-palette-option="palette.id" :class="['palette-swatch', `swatch-${palette.id}`, { 'is-selected': activePalette === palette.id }]" :aria-label="palette.name" @click="choosePalette(palette.id)"></button></div></div>
     </aside>
   </div>
+  <DocumentScrollbar />
 </template>
 
 <script setup>
@@ -93,6 +94,7 @@ import { Bot, Boxes, Check, Cloud, Database, FileText, FolderKanban, HardDrive, 
 import { clearTokens } from './api/index.js'
 import { usePalette } from './composables/usePalette.js'
 import { useTransientScrollbarVisibility } from './composables/useTransientScrollbarVisibility.js'
+import DocumentScrollbar from './components/DocumentScrollbar.vue'
 
 const router = useRouter()
 const route = useRoute()

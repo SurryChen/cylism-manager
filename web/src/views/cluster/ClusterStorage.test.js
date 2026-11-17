@@ -58,7 +58,7 @@ describe('ClusterStorage', () => {
     expect(wrapper.get('.section-tabs-header h1').text()).toBe('生产集群')
     expect(wrapper.get('.back-link').attributes('href')).toBe('/cluster?tab=list')
     expect(getNamespaces).toHaveBeenCalledWith('2')
-    expect(getInventory).toHaveBeenCalledWith('2', { page: 1, size: 20, namespace: '' })
+    expect(getInventory).toHaveBeenCalledWith('2', { page: 1, size: 10, namespace: '' })
     expect(getReferences).toHaveBeenCalledWith('2', expect.arrayContaining([expect.objectContaining({ name: 'data' })]))
     expect(wrapper.get('tbody tr').text()).toContain('data')
     expect(wrapper.get('tbody .btn-danger').attributes('disabled')).toBeUndefined()

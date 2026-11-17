@@ -11,7 +11,7 @@
           <option v-for="item in namespaces" :key="item" :value="item">{{ item }}</option>
         </SelectMenu>
         <div class="toolbar-actions">
-          <button class="icon-button" type="button" title="刷新存储卷" aria-label="刷新存储卷" :disabled="loading" @click="loadClaims"><RefreshCw :size="15" :class="{ 'is-spinning': loading }" /></button>
+          <button class="icon-button" type="button" title="刷新存储卷" aria-label="刷新存储卷" :disabled="loading" @click="loadClaims()"><RefreshCw :size="15" :class="{ 'is-spinning': loading }" /></button>
           <button class="btn btn-primary" type="button" :disabled="!cluster" @click="openCreate">创建存储卷</button>
         </div>
       </div>
@@ -36,7 +36,7 @@
           </tbody>
         </table>
       </div>
-      <div v-if="total > pageSize" class="pagination"><button class="btn btn-sm" :disabled="page <= 1 || loading" @click="page--">上一页</button><span>{{ page }} / {{ Math.ceil(total / pageSize) }}</span><button class="btn btn-sm" :disabled="page * pageSize >= total || loading" @click="page++">下一页</button></div>
+      <PaginationControls :page="page" :page-size="pageSize" :total="total" :loading="loading" @page-change="changePage" @page-size-change="changePageSize" />
     </SurfaceCard>
     </ClusterAgentGate>
 
@@ -64,6 +64,7 @@
 </template>
 
 <script setup>
+import PaginationControls from '../../components/PaginationControls.vue'
 import { computed, ref, watch } from 'vue'
 import { ArrowLeft, RefreshCw } from 'lucide-vue-next'
 import { getProjects } from '../../api/applications.js'
@@ -96,7 +97,7 @@ const loading = ref(false)
 const error = ref('')
 const actionError = ref('')
 const page = ref(1)
-const pageSize = 20
+const pageSize = ref(10)
 const total = ref(0)
 const creating = ref(false)
 const saving = ref(false)
@@ -135,20 +136,21 @@ async function loadStorage() {
     await loadClaims()
   } catch (err) { if (id === scope.value) { error.value = err.message || '加载存储卷失败'; loaded.value = true } }
 }
-watch(namespace, () => {
-  if (page.value !== 1) page.value = 1
-  else if (cluster.value) void loadClaims()
-})
-watch(page, () => { if (cluster.value) void loadClaims() })
+watch(namespace, () => { if (cluster.value) void loadClaims(1) })
+function changePage(value) { if (!loading.value) void loadClaims(value) }
+function changePageSize(value) { if (!loading.value) void loadClaims(1, value) }
 
-async function loadClaims() {
+async function loadClaims(requestedPage = page.value, size = pageSize.value) {
   const id = scope.value
   const request = ++requestSequence
   loading.value = true
   error.value = ''
   try {
-    const result = await getClusterPersistentVolumeInventory(id, { page: page.value, size: pageSize, namespace: namespace.value })
+    let result = await getClusterPersistentVolumeInventory(id, { page: requestedPage, size, namespace: namespace.value })
+    const lastPage = Math.max(1, Math.ceil((result.total || 0) / size))
+    if (requestedPage > lastPage) { requestedPage = lastPage; result = await getClusterPersistentVolumeInventory(id, { page: requestedPage, size, namespace: namespace.value }) }
     if (id !== scope.value || request !== requestSequence) return
+    page.value = requestedPage; pageSize.value = size
     claims.value = result.items || []
     total.value = result.total || 0
     loaded.value = true

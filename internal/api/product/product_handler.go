@@ -17,6 +17,7 @@ import (
 
 type Repository interface {
 	ListProducts(uint) ([]model.Product, error)
+	ListProductsPage(uint, string, string, string, int, int) ([]model.Product, int64, error)
 	GetProduct(uint, uint) (*model.Product, error)
 	SaveProduct(*model.Product, []uint, []uint) error
 	ProductResourceOptions(uint) ([]model.Project, []model.Application, error)
@@ -45,6 +46,16 @@ type productInput struct {
 
 func (h *Handler) List(c *gin.Context) {
 	if !authenticated(c) {
+		return
+	}
+	if shared.PaginationRequested(c) {
+		limit, offset := shared.LimitOffset(c, 10, 100)
+		items, total, err := h.repository.ListProductsPage(shared.UserID(c), c.Query("stage"), c.Query("scope"), strings.TrimSpace(c.Query("keyword")), limit, offset)
+		if err != nil {
+			shared.DBError(c, "读取产品失败")
+			return
+		}
+		shared.Success(c, gin.H{"items": items, "total": total, "limit": limit, "offset": offset})
 		return
 	}
 	products, err := h.repository.ListProducts(shared.UserID(c))

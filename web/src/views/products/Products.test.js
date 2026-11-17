@@ -6,13 +6,14 @@ import ProductCenter from './ProductCenter.vue'
 import ProductDetail from './ProductDetail.vue'
 import ProductEditor from './ProductEditor.vue'
 
-const mocks = vi.hoisted(() => ({ list: vi.fn(), get: vi.fn(), options: vi.fn(), create: vi.fn(), update: vi.fn(), push: vi.fn() }))
-vi.mock('../../api/products.js', () => ({ getProducts: mocks.list, getProduct: mocks.get, getProductResourceOptions: mocks.options, createProduct: mocks.create, updateProduct: mocks.update }))
+const mocks = vi.hoisted(() => ({ list: vi.fn(), page: vi.fn(), get: vi.fn(), options: vi.fn(), create: vi.fn(), update: vi.fn(), push: vi.fn() }))
+vi.mock('../../api/products.js', () => ({ getProducts: mocks.list, getProductPage: mocks.page, getProduct: mocks.get, getProductResourceOptions: mocks.options, createProduct: mocks.create, updateProduct: mocks.update }))
 vi.mock('vue-router', () => ({ useRoute: () => ({ params: { id: '7' } }), useRouter: () => ({ push: mocks.push }) }))
 const mountPage = component => mount(component, { global: { stubs: { RouterLink: { template: '<a><slot /></a>' }, Teleport: true } } })
 beforeEach(() => {
   vi.clearAllMocks()
   mocks.list.mockResolvedValue([])
+  mocks.page.mockResolvedValue({ items: [], total: 0 })
   mocks.options.mockResolvedValue({ projects: [], applications: [] })
   mocks.get.mockResolvedValue({ id: 7, name: '离线工具', stage: 'developing', channels: [{ id: 1, platform: 'google_play', publish_status: 'in_review', online_version: '1.0' }], projects: [{ id: 2, name: 'backend' }], applications: [] })
   mocks.create.mockResolvedValue({ id: 7 })
@@ -26,7 +27,7 @@ describe('personal products workflows', () => {
     await page.get('.product-primary').trigger('click')
     await flushPromises()
     await page.get('[aria-label="产品名称"]').setValue('离线工具')
-    await page.get('form').trigger('submit')
+    await page.getComponent(ProductEditor).get('form').trigger('submit')
     await flushPromises()
     expect(mocks.create).toHaveBeenCalledWith(expect.objectContaining({ name: '离线工具', stage: 'idea', project_ids: [], application_ids: [] }))
     expect(mocks.push).toHaveBeenCalledWith('/products/7')
@@ -40,7 +41,7 @@ describe('personal products workflows', () => {
     await page.get('.product-primary').trigger('click')
     await flushPromises()
     await page.get('[aria-label="产品名称"]').setValue('离线工具')
-    await page.get('form').trigger('submit')
+    await page.getComponent(ProductEditor).get('form').trigger('submit')
     await flushPromises()
     expect(page.text()).toContain('关联资源无权访问')
     expect(page.get('[aria-label="产品名称"]').element.value).toBe('离线工具')

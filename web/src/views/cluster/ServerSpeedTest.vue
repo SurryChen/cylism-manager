@@ -26,7 +26,7 @@
           </tr></tbody>
         </table>
       </div>
-      <div v-if="results.length > pageSize" class="speed-results-pagination"><button class="btn btn-sm" type="button" :disabled="page === 1" @click="page--">上一页</button><span>{{ page }} / {{ totalPages }}</span><button class="btn btn-sm" type="button" :disabled="page === totalPages" @click="page++">下一页</button></div>
+      <PaginationControls :page="page" :page-size="pageSize" :total="total" :loading="historyLoading" @page-change="changePage" @page-size-change="changePageSize" />
       <div v-if="!running && !results.length" class="speed-test-placeholder">{{ servers.length < 2 ? '至少需要两台服务器' : '暂无测速结果' }}</div>
     </section>
   </SurfaceCard>
@@ -46,18 +46,17 @@
 </template>
 
 <script setup>
-import { computed, onUnmounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { ArrowRight, Download, Gauge, LoaderCircle } from 'lucide-vue-next'
-import { getServerSpeedDependencies, installServerSpeedDependencies, runServerSpeedTest } from '../../api/servers.js'
+import { getServerSpeedTestHistory, getServerSpeedDependencies, installServerSpeedDependencies, runServerSpeedTest } from '../../api/servers.js'
+import PaginationControls from '../../components/PaginationControls.vue'
+import { usePaginatedResource } from '../../composables/usePaginatedResource.js'
 import BaseModal from '../../components/BaseModal.vue'
 import ErrorNoticeModal from '../../components/ErrorNoticeModal.vue'
 import SelectMenu from '../../components/SelectMenu.vue'
 import SurfaceCard from '../../components/SurfaceCard.vue'
 import { formatDateTime } from '../../utils/formatters.js'
 
-const resultsStorageKey = 'cylism.server-speed-test.results.v1'
-const maxResults = 100
-const pageSize = 10
 const props = defineProps({ servers: { type: Array, default: () => [] } })
 const sourceID = ref('')
 const targetID = ref('')
@@ -69,8 +68,8 @@ const running = ref(false)
 const installingID = ref(null)
 const installPromptOpen = ref(false)
 const installError = ref('')
-const results = ref(loadResults())
-const page = ref(1)
+const history = usePaginatedResource(getServerSpeedTestHistory, 'items')
+const { items: results, total, page, pageSize, loading: historyLoading, changePage, changePageSize } = history
 const error = ref('')
 const dependencies = ref({})
 const installElapsed = ref(0)
@@ -83,8 +82,7 @@ const selectedNodes = computed(() => [
 ].filter(node => node.id && props.servers.some(server => server.id === node.id)).map(node => ({ ...node, name: serverName(node.id) })))
 const canRun = computed(() => !busy.value && !installPromptOpen.value && selectedNodes.value.length === 2)
 const missingNodes = computed(() => selectedNodes.value.filter(node => !nodeReady(node)))
-const totalPages = computed(() => Math.ceil(results.value.length / pageSize))
-const pagedResults = computed(() => results.value.slice((page.value - 1) * pageSize, page.value * pageSize))
+const pagedResults = results
 const serverOptions = computed(() => props.servers.map(server => ({ value: String(server.id), label: server.name, description: server.host })))
 const targetOptions = computed(() => serverOptions.value.map(option => ({ ...option, disabled: option.value === sourceID.value })))
 const addressOptions = [
@@ -170,20 +168,9 @@ function formatMBps(value) {
   return `${(Math.round((megabytes + Number.EPSILON) * factor) / factor).toFixed(digits)} MB/s`
 }
 
-function loadResults() {
-  try {
-    const stored = JSON.parse(sessionStorage.getItem(resultsStorageKey) || '[]')
-    return Array.isArray(stored) ? stored.filter(entry => entry?.measuredAt && typeof entry?.protocol === 'string' && entry?.source_id && entry?.target_id).slice(0, maxResults) : []
-  } catch {
-    return []
-  }
-}
-
-function addResult(report) {
-  results.value = [{ ...report, measuredAt: new Date().toISOString() }, ...results.value].slice(0, maxResults)
-  page.value = 1
-  try { sessionStorage.setItem(resultsStorageKey, JSON.stringify(results.value)) } catch { /* Browser storage can be unavailable. */ }
-}
+async function addResult() { await history.load() }
+onMounted(() => history.load())
+watch(history.error, cause => { if (cause) error.value = cause.message || '读取测速记录失败' })
 
 async function runTest() {
   if (!canRun.value) return
@@ -217,7 +204,7 @@ async function executeTest() {
       direction: direction.value,
     })
     if (!report?.protocol || !report?.source_id || !report?.target_id) throw new Error('测速结果无效')
-    addResult(report)
+    await addResult()
   } catch (cause) {
     error.value = cause?.message || '测速失败'
   } finally {

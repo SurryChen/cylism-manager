@@ -33,9 +33,9 @@ beforeEach(() => {
   routerPush.mockClear()
   api.get.mockReset()
   api.get.mockImplementation(path => {
-    if (path === '/auth/temporary-tokens') return Promise.resolve([])
+    if (path.startsWith('/auth/temporary-tokens?')) return Promise.resolve({ items: [], total: 0 })
     if (path === '/platform/capabilities') return Promise.resolve({ in_cluster: true, supported: true })
-    if (path === '/platform/status') return Promise.resolve({ webhook_configured: true, image_prefix: 'registry.example.com/cylism-manager', deployment: { image: 'registry.example.com/cylism-manager:latest', ready_replicas: 1 }, releases: [{ id: 3, source: 'github', status: 'succeeded', image: 'registry.example.com/cylism-manager:latest', commit_sha: 'aabbccddeeff00112233445566778899', created_at: '2026-08-01T12:00:00Z' }] })
+    if (path.startsWith('/platform/status')) return Promise.resolve({ webhook_configured: true, image_prefix: 'registry.example.com/cylism-manager', deployment: { image: 'registry.example.com/cylism-manager:latest', ready_replicas: 1 }, releases: [{ id: 3, source: 'github', status: 'succeeded', image: 'registry.example.com/cylism-manager:latest', commit_sha: 'aabbccddeeff00112233445566778899', created_at: '2026-08-01T12:00:00Z' }] })
     if (path === '/platform/endpoint') return Promise.resolve({ endpoint: { hostname: 'console.example.com', certificate_name: 'console-example-com', enabled: true }, url: 'https://console.example.com', state: 'ready', ingress_ready: true, ingress: { namespace: 'default', name: 'cylism-ingress', ingress_class: 'traefik', hostname: 'console.example.com', path: '/', service_name: 'cylism-manager', service_port: '8080', tls_secret_name: 'console-example-com-tls' }, certificate: { name: 'console-example-com', status: 'Ready', expiry_date: '2026-10-01T12:00:00Z', renewal_time: '2026-09-01T12:00:00Z' } })
     if (path === '/certs') return Promise.resolve([{ name: 'console-example-com', namespace: 'default', status: 'Ready', domains: ['console.example.com'] }])
     return Promise.resolve({ initialized: true, ip: '100.88.0.1', online: true })
@@ -91,7 +91,7 @@ describe('SystemSettings view', () => {
     expect(wrapper.get('.platform-entry-card').findComponent({ name: 'SurfaceCard' }).exists()).toBe(true)
 
     await wrapper.get('[data-testid="system-settings-tab-release"]').trigger('click')
-    await nextTick()
+    await flushPromises()
     expect(wrapper.find('.workspace-header').exists()).toBe(false)
     expect(wrapper.findAll('.platform-release-layout > .surface-card')).toHaveLength(2)
     expect(wrapper.find('.platform-release-config-card .card-title').exists()).toBe(false)
@@ -102,6 +102,66 @@ describe('SystemSettings view', () => {
     expect(wrapper.get('.platform-release-history-header').text()).toContain('镜像 / Tag')
     expect(wrapper.text()).toContain('registry.example.com/cylism-manager:latest')
     expect(wrapper.get('.platform-release-config-card').findComponent({ name: 'SurfaceCard' }).exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('paginates temporary tokens and clamps the page after a refresh removes records', async () => {
+    let tokens = Array.from({ length: 25 }, (_, index) => ({ id: index + 1, label: '秘钥 ' + (index + 1), status: 'active' }))
+    api.get.mockImplementation(async path => { const params = new URLSearchParams(path.split('?')[1]); const offset = Number(params.get('offset')); const limit = Number(params.get('limit')); return path.startsWith('/auth/temporary-tokens?') ? { items: tokens.slice(offset, offset + limit), total: tokens.length } : {} })
+    const wrapper = mount(SystemSettingsSecurity)
+    await flushPromises()
+    expect(wrapper.findAll('.temporary-token-row')).toHaveLength(10)
+    await wrapper.get('[aria-label="末页"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.findAll('.temporary-token-row')).toHaveLength(5)
+    expect(wrapper.find('.temporary-token-row').text()).toContain('秘钥 21')
+    tokens = tokens.slice(0, 3)
+    await wrapper.vm.refresh()
+    expect(wrapper.findAll('.temporary-token-row')).toHaveLength(3)
+    expect(wrapper.get('.pagination-controls-status').text()).toBe('1 / 1 页')
+    await wrapper.get('select[aria-label="每页条数"]').setValue('20')
+    await flushPromises()
+    expect(wrapper.get('select[aria-label="每页条数"]').element.value).toBe('20')
+    wrapper.unmount()
+  })
+
+  it('paginates complete platform release history using server totals', async () => {
+    api.get.mockImplementation(async path => {
+      if (path === '/platform/capabilities') return { supported: true }
+      const params = new URLSearchParams(path.split('?')[1])
+      const offset = Number(params.get('offset'))
+      const limit = Number(params.get('limit'))
+      return { releases_total: 35, releases: Array.from({ length: Math.min(limit, 35 - offset) }, (_, index) => ({ id: offset + index + 1, image: 'image:' + (offset + index + 1), status: 'succeeded' })) }
+    })
+    const wrapper = mount(SystemSettingsRelease)
+    await flushPromises()
+    expect(wrapper.findAll('.platform-release-history-row')).toHaveLength(10)
+    expect(api.get.mock.lastCall[0]).toBe('/platform/status?limit=10&offset=0')
+    await wrapper.get('[aria-label="末页"]').trigger('click')
+    await flushPromises()
+    expect(api.get.mock.lastCall[0]).toBe('/platform/status?limit=10&offset=30')
+    expect(wrapper.findAll('.platform-release-history-row')).toHaveLength(5)
+    expect(wrapper.text()).toContain('image:31')
+    await wrapper.get('select[aria-label="每页条数"]').setValue('50')
+    await flushPromises()
+    expect(api.get.mock.lastCall[0]).toBe('/platform/status?limit=50&offset=0')
+    expect(wrapper.findAll('.platform-release-history-row')).toHaveLength(35)
+    expect(wrapper.text()).not.toContain('仅提供最近的发布记录')
+    wrapper.unmount()
+  })
+
+  it('identifies and locally paginates the recent release window from older backends', async () => {
+    api.get.mockImplementation(async path => path === '/platform/capabilities' ? { supported: true } : {
+      releases: Array.from({ length: 20 }, (_, index) => ({ id: index + 1, image: 'legacy:' + (index + 1) })),
+    })
+    const wrapper = mount(SystemSettingsRelease)
+    await flushPromises()
+    expect(wrapper.findAll('.platform-release-history-row')).toHaveLength(10)
+    expect(wrapper.text()).toContain('仅提供最近的发布记录')
+    await wrapper.get('[aria-label="下一页"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.findAll('.platform-release-history-row')).toHaveLength(10)
+    expect(wrapper.find('.platform-release-history-row').text()).toContain('legacy:11')
     wrapper.unmount()
   })
 
@@ -124,10 +184,10 @@ describe('SystemSettings view', () => {
   })
 
   it('renders temporary tokens as a compact list and only shows the empty state when no token exists', async () => {
-    api.get.mockResolvedValueOnce([
+    api.get.mockResolvedValueOnce({ items: [
       { id: 'revoked-1', label: '供应商临时访问', status: 'revoked', created_at: '2026-09-02T09:24:26Z', expires_at: '2026-09-09T09:24:26Z' },
       { id: 'active-2', label: '部署机器人', status: 'active', created_at: '2026-09-02T09:23:24Z', expires_at: '2026-09-09T09:23:24Z' },
-    ])
+    ], total: 2 })
     const wrapper = mount(SystemSettingsSecurity)
     await flushPromises()
 
@@ -205,13 +265,13 @@ describe('SystemSettings view', () => {
     let statusReads = 0
     api.get.mockImplementation((path, options) => {
       if (path === '/platform/capabilities') return Promise.resolve({ in_cluster: true, supported: true })
-      if (path === '/platform/status' && statusReads++ === 0) {
+      if (path.startsWith('/platform/status') && statusReads++ === 0) {
         return new Promise((resolve, reject) => {
           rejectInitialRequest = reject
           options.signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true })
         })
       }
-      if (path === '/platform/status') {
+      if (path.startsWith('/platform/status')) {
         return Promise.resolve({
           webhook_configured: true,
           image_prefix: 'registry.example.com/cylism-manager',
@@ -228,7 +288,7 @@ describe('SystemSettings view', () => {
     await nextTick()
 
     expect(rejectInitialRequest).toBeTypeOf('function')
-    expect(api.get.mock.calls.filter(([path]) => path === '/platform/status')).toHaveLength(2)
+    expect(api.get.mock.calls.filter(([path]) => path.startsWith('/platform/status'))).toHaveLength(2)
     expect(wrapper.text()).toContain('registry.example.com/cylism-manager:stable')
     expect(wrapper.text()).not.toContain('读取平台发布状态失败')
     wrapper.unmount()
@@ -299,7 +359,7 @@ describe('SystemSettings view', () => {
   it('shows a local error when the active settings read fails', async () => {
     api.get.mockImplementation(path => {
       if (path === '/platform/capabilities') return Promise.resolve({ in_cluster: true, supported: true })
-      if (path === '/platform/status') return Promise.reject(new Error('设置服务不可用'))
+      if (path.startsWith('/platform/status')) return Promise.reject(new Error('设置服务不可用'))
       return Promise.resolve({})
     })
     const wrapper = mount(SystemSettings, { global: { stubs: { Teleport: true } } })

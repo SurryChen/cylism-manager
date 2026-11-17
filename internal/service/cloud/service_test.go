@@ -59,7 +59,7 @@ func (p *fakeProvider) UpdateContainer(context.Context, string, ContainerInput) 
 }
 func (p *fakeProvider) ContainerEmpty(context.Context, string) (bool, error) { return true, nil }
 func (p *fakeProvider) DeleteContainer(context.Context, string) error        { return nil }
-func (p *fakeProvider) ListObjects(context.Context, string, string, string) (ObjectPage, error) {
+func (p *fakeProvider) ListObjects(context.Context, string, string, string, int) (ObjectPage, error) {
 	return ObjectPage{}, nil
 }
 func (p *fakeProvider) UploadObject(context.Context, string, string, io.Reader, int64, string) (Object, error) {
@@ -205,4 +205,8 @@ func TestInspectPermissionsReportsUnsupportedProvider(t *testing.T) {
 	if err != nil || result.Status != "unsupported" {
 		t.Fatalf("inspection = %#v, %v", result, err)
 	}
+}
+
+func (r *fakeRepository) ListCloudConnectionsPage(int, int) ([]model.CloudConnection, int64, error) {
+	return nil, 0, nil
 }

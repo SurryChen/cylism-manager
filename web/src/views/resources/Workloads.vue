@@ -1,6 +1,5 @@
 <template>
   <div>
-    <div v-if="error" class="k8s-banner k8s-banner-warn" style="margin-bottom:var(--space-16)">⚠ {{ error }}</div>
     <div v-if="detailError" class="k8s-banner k8s-banner-warn" style="margin-bottom:var(--space-16)">⚠ {{ detailError }}</div>
 
     <SurfaceCard as="section" class="workloads-card">
@@ -156,7 +155,9 @@
         </table>
       </div>
     </div>
+      <PaginationControls :page="page" :page-size="pageSize" :total="total" :loading="loading" @page-change="changePage" @page-size-change="changePageSize" />
     </SurfaceCard>
+    <ErrorNoticeModal :open="Boolean(error)" :message="error" teleport @close="error = ''" />
 
     <!-- Scale Dialog -->
     <div v-if="scaleDialog" class="modal-overlay" @click.self="scaleDialog = null">
@@ -199,6 +200,10 @@ import { computed, ref, watch, onMounted, onErrorCaptured } from 'vue'
 import { Filter, RefreshCw, RotateCcw, Search, SquareTerminal, X } from 'lucide-vue-next'
 import { useRoute } from 'vue-router'
 import * as legacyK8s from '../../api/kubernetes.js'
+import PaginationControls from '../../components/PaginationControls.vue'
+import ErrorNoticeModal from '../../components/ErrorNoticeModal.vue'
+import { usePaginatedResource } from '../../composables/usePaginatedResource.js'
+import { getInventoryPage } from '../../api/list-pages.js'
 import { useAsyncResource } from '../../composables/useAsyncResource.js'
 import OverflowTooltip from '../../components/OverflowTooltip.vue'
 import SelectMenu from '../../components/SelectMenu.vue'
@@ -209,18 +214,14 @@ const { clusterId = '' } = defineProps({ clusterId: { type: String, default: '' 
 const { getWorkloadDaemonSets, getWorkloadDeploymentPods, getWorkloadDeploymentRevisions, getWorkloadDeployments, getWorkloadPods, getWorkloadServers, getWorkloadStatefulSets, rollbackWorkload, scaleWorkload, updateWorkloadImage } = clusterId ? legacyK8s.createClusterKubernetesApi(clusterId) : legacyK8s
 
 const activeTab = ref('pods')
-const deployments = ref([])
-const statefulsets = ref([])
-const daemonsets = ref([])
-const pods = ref([])
+const inventoryItems = kind => computed(() => (inventoryResource.filters.value.kind || 'pods') === kind ? inventoryResource.items.value : [])
+const deployments = inventoryItems('deployments')
+const statefulsets = inventoryItems('statefulsets')
+const daemonsets = inventoryItems('daemonsets')
+const pods = inventoryItems('pods')
 const servers = ref([])
-const inventoryResource = useAsyncResource(async ({ signal }) => Promise.allSettled([
-  getWorkloadDeployments({ signal }),
-  getWorkloadStatefulSets({ signal }),
-  getWorkloadDaemonSets({ signal }),
-  getWorkloadPods({ signal }),
-  getWorkloadServers({ signal }),
-]), null)
+const inventoryResource = usePaginatedResource((query, options) => getInventoryPage(clusterId, query.kind || 'pods', query, options), 'items')
+const { total, page, pageSize, changePage, changePageSize } = inventoryResource
 const deploymentPodsResource = useAsyncResource(({ signal }, namespace, name) => getWorkloadDeploymentPods(namespace, name, { signal }), null)
 const revisionsResource = useAsyncResource(({ signal }, namespace, name) => getWorkloadDeploymentRevisions(namespace, name, { signal }), null)
 const loading = inventoryResource.loading
@@ -255,38 +256,20 @@ const safeDeployments = computed(() => (deployments.value || []).filter(d => d !
 const safeStatefulsets = computed(() => (statefulsets.value || []).filter(s => s != null))
 const safeDaemonsets = computed(() => (daemonsets.value || []).filter(d => d != null))
 const workloadTypeOptions = computed(() => [
-  { value: 'pods', label: `Pods（${pods.value.length}）` },
-  { value: 'deployments', label: `Deployments（${deployments.value.length}）` },
-  { value: 'statefulsets', label: `StatefulSets（${statefulsets.value.length}）` },
-  { value: 'daemonsets', label: `DaemonSets（${daemonsets.value.length}）` },
+  { value: 'pods', label: `Pods（${activeTab.value === 'pods' ? total.value : '—'}）` },
+  { value: 'deployments', label: `Deployments（${activeTab.value === 'deployments' ? total.value : '—'}）` },
+  { value: 'statefulsets', label: `StatefulSets（${activeTab.value === 'statefulsets' ? total.value : '—'}）` },
+  { value: 'daemonsets', label: `DaemonSets（${activeTab.value === 'daemonsets' ? total.value : '—'}）` },
 ])
 const serverNamesByNode = computed(() => new Map(
   (servers.value || [])
     .filter(server => server?.k8s_node_name && server?.name)
     .map(server => [server.k8s_node_name.toLowerCase(), server.name]),
 ))
-const podNamespaces = computed(() => [...new Set(
-  (pods.value || []).map(pod => pod?.namespace).filter(Boolean),
-)].sort())
-const podNodes = computed(() => [...new Set(
-  (pods.value || []).map(pod => pod?.node).filter(Boolean),
-)].map(node => ({ value: node, label: displayServerName(node) }))
-  .sort((a, b) => a.label.localeCompare(b.label, 'zh-CN')))
-const podStatuses = computed(() => [...new Set(
-  (pods.value || []).map(pod => pod?.status).filter(Boolean),
-)].sort())
-const safePods = computed(() => {
-  const query = podNameFilter.value.toLowerCase()
-  return (pods.value || []).filter(pod => {
-    if (!pod) return false
-    if (podNamespaceFilter.value && pod.namespace !== podNamespaceFilter.value) return false
-    if (podNodeFilter.value === '__unscheduled__' && pod.node) return false
-    if (podNodeFilter.value && podNodeFilter.value !== '__unscheduled__' && pod.node !== podNodeFilter.value) return false
-    if (podStatusFilter.value && pod.status !== podStatusFilter.value) return false
-    if (podRestartsOnly.value && Number(pod.restarts || 0) === 0) return false
-    return !query || pod.name?.toLowerCase().includes(query)
-  })
-})
+const podNamespaces = computed(() => inventoryResource.response.value?.namespaces || [])
+const podNodes = computed(() => (inventoryResource.response.value?.nodes || []).map(node => ({ value: node, label: displayServerName(node) })))
+const podStatuses = computed(() => inventoryResource.response.value?.statuses || [])
+const safePods = computed(() => pods.value.filter(Boolean))
 const hasPodFilters = computed(() => Boolean(
   podNamespaceFilter.value || podNodeFilter.value || podStatusFilter.value || podNameFilter.value || podRestartsOnly.value,
 ))
@@ -299,20 +282,17 @@ onErrorCaptured((err, instance, info) => {
   return false // 阻止向上冒泡
 })
 
+function inventoryFilters() {
+  return { kind: activeTab.value, ...(activeTab.value === 'pods' ? { namespace: podNamespaceFilter.value, node: podNodeFilter.value, status: podStatusFilter.value, keyword: podNameFilter.value, restarts_only: podRestartsOnly.value } : {}) }
+}
 async function fetchData() {
   error.value = ''
-  const result = await inventoryResource.refresh()
-  if (!result) return
-  const [deps, sts, ds, podList, serverList] = result
-    if (deps.status === 'fulfilled') deployments.value = deps.value || []
-    if (sts.status === 'fulfilled') statefulsets.value = sts.value || []
-    if (ds.status === 'fulfilled') daemonsets.value = ds.value || []
-    if (podList.status === 'fulfilled') pods.value = podList.value || []
-    if (serverList.status === 'fulfilled') servers.value = serverList.value || []
-    const failed = [deps, sts, ds, podList, serverList].filter(r => r.status === 'rejected')
-  if (failed.length > 0) error.value = failed.map(r => r.reason?.message || '未知错误').join('\n')
+  await inventoryResource.refresh()
+  try { servers.value = await getWorkloadServers() || [] } catch (cause) { error.value = cause.message || '读取服务器失败' }
 }
-onMounted(fetchData)
+watch(inventoryResource.error, cause => { if (cause) error.value = cause.message || '读取工作负载失败' })
+watch([activeTab, podNamespaceFilter, podNodeFilter, podStatusFilter, podNameFilter, podRestartsOnly], () => { void inventoryResource.load(inventoryFilters()) })
+onMounted(async () => { await inventoryResource.load(inventoryFilters()); try { servers.value = await getWorkloadServers() || [] } catch (cause) { error.value = cause.message || '读取服务器失败' } })
 
 function displayServerName(nodeName) {
   if (!nodeName) return '-'

@@ -157,3 +157,15 @@ func (s *Store) ListReleaseOperations(releaseID uint) ([]model.ReleaseOperation,
 	err := s.db.Where("release_id = ?", releaseID).Order("created_at asc").Find(&operations).Error
 	return operations, err
 }
+
+// ListReleasesPage returns a stable page across the explicitly authorized applications.
+func (s *Store) ListReleasesPage(applicationIDs []uint, limit, offset int) ([]model.Release, int64, error) {
+	items := []model.Release{}
+	query := s.db.Model(&model.Release{}).Where("application_id IN ?", applicationIDs)
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	err := query.Order("created_at desc, id desc").Limit(limit).Offset(offset).Find(&items).Error
+	return items, total, err
+}

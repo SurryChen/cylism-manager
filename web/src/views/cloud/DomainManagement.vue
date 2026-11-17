@@ -9,7 +9,7 @@
             <label class="record-filter"><span class="sr-only">域名</span><SelectMenu v-model="zone" class="form-select" aria-label="域名" :options="zoneOptions" placeholder="选择域名" :disabled="loadingZones || !zones.length" @change="loadRecords" /></label>
           </div>
           <div class="record-toolbar-actions">
-            <span v-if="zone && !loadingRecords && !recordsFailed" class="record-count">{{ records.length }} 条记录</span>
+            <span v-if="zone && !loadingRecords && !recordsFailed" class="record-count">{{ recordsTotal }} 条记录</span>
             <button type="button" class="btn btn-primary" :disabled="!zone || loadingRecords || recordsFailed" data-testid="domain-record-create" @click="openRecord()"><Plus :size="16" /> 新增记录</button>
           </div>
         </div>
@@ -24,7 +24,7 @@
           <template #action><button type="button" class="btn btn-sm" @click="loadZones">重试</button></template>
         </EmptyState>
         <EmptyState v-else-if="!zones.length" message="此云连接下暂无域名" />
-        <EmptyState v-else-if="loadingRecords" variant="loading" message="正在读取 DNS 记录..." />
+        <EmptyState v-else-if="loadingRecords && !records.length" variant="loading" message="正在读取 DNS 记录..." />
         <EmptyState v-else-if="recordsFailed" message="DNS 记录暂不可展示" data-testid="domain-record-error-state">
           <template #action><button type="button" class="btn btn-sm" data-testid="domain-record-retry" @click="loadRecords">重试</button></template>
         </EmptyState>
@@ -32,6 +32,7 @@
         <div v-else class="table-wrap"><table class="data-table record-table"><thead><tr><th>主机记录</th><th>类型</th><th>线路</th><th>记录值</th><th>TTL</th><th class="action-cell">操作</th></tr></thead><tbody>
           <tr v-for="item in records" :key="item.id"><td class="cell-primary">{{ item.rr }}</td><td>{{ item.type }}</td><td>{{ item.line }}</td><td class="mono">{{ item.value }}</td><td>{{ item.ttl }}</td><td class="action-cell"><button class="btn btn-sm" @click="openRecord(item)">编辑</button> <button class="btn btn-sm danger" :data-testid="'domain-record-delete-' + item.id" @click="removeRecord(item)">删除</button></td></tr>
         </tbody></table></div>
+        <PaginationControls v-if="zone && !zonesFailed" :page="recordsPage" :page-size="recordsPageSize" :total="recordsTotal" :loading="loadingRecords" @page-change="loadRecords" @page-size-change="changeRecordsPageSize" />
       </SurfaceCard>
     </div>
 
@@ -54,6 +55,7 @@
 </template>
 
 <script setup>
+import PaginationControls from '../../components/PaginationControls.vue'
 import { computed, onMounted, reactive, ref } from 'vue'
 import { Plus } from 'lucide-vue-next'
 import { createCloudDNSRecord, deleteCloudDNSRecord, getCloudConnections, getCloudDNSRecords, getCloudZones, updateCloudDNSRecord } from '../../api/cloud-resources.js'
@@ -81,6 +83,9 @@ const zones = ref([])
 const zone = ref('')
 const zoneOptions = computed(() => zones.value.map(item => ({ value: item.name, label: item.name })))
 const records = ref([])
+const recordsTotal = ref(0), recordsPage = ref(1), recordsPageSize = ref(10)
+let recordsRequest = 0, zonesRequest = 0
+let recordsScope = ''
 const loadingConnections = ref(true)
 const loadingZones = ref(false)
 const loadingRecords = ref(false)
@@ -123,6 +128,12 @@ async function refresh() {
 }
 
 async function loadZones() {
+  const request = ++zonesRequest
+  const connection = connectionID.value
+  ++recordsRequest
+  loadingRecords.value = false
+  recordsTotal.value = 0
+  recordsPage.value = 1
   zones.value = []
   zone.value = ''
   records.value = []
@@ -132,32 +143,45 @@ async function loadZones() {
   if (!connectionID.value) return
   loadingZones.value = true
   try {
-    zones.value = await getCloudZones(connectionID.value)
+    const items = await getCloudZones(connection)
+    if (request !== zonesRequest || connection !== connectionID.value) return
+    zones.value = items
     zone.value = zones.value[0]?.name || ''
     if (zone.value) void loadRecords()
   } catch (err) {
+    if (request !== zonesRequest) return
     zonesFailed.value = true
     showError(err, '读取域名失败', '读取域名失败，请稍后重试。')
   } finally {
-    loadingZones.value = false
+    if (request === zonesRequest) loadingZones.value = false
   }
 }
 
-async function loadRecords() {
-  records.value = []
+async function loadRecords(page = recordsPage.value, size = recordsPageSize.value) {
+  if (!Number.isInteger(page)) page = 1
+  const scope = connectionID.value + '/' + zone.value
+  if (scope !== recordsScope) { records.value = []; recordsTotal.value = 0; page = 1; recordsScope = scope }
+  const request = ++recordsRequest
   recordsFailed.value = false
   error.value = ''
   if (!zone.value) return
   loadingRecords.value = true
   try {
-    records.value = (await getCloudDNSRecords(connectionID.value, zone.value)).records || []
+    let result = await getCloudDNSRecords(connectionID.value, zone.value, { page, page_size: size })
+    const lastPage = Math.max(1, Math.ceil((result.total || 0) / size))
+    if (page > lastPage) { page = lastPage; result = await getCloudDNSRecords(connectionID.value, zone.value, { page, page_size: size }) }
+    if (request !== recordsRequest || scope !== connectionID.value + '/' + zone.value) return
+    records.value = result.records || []
+    recordsTotal.value = result.total ?? records.value.length
+    recordsPage.value = result.page || page
+    recordsPageSize.value = result.page_size || size
   } catch (err) {
-    recordsFailed.value = true
+    if (request !== recordsRequest) return
+    recordsFailed.value = !records.value.length
     showError(err, '读取 DNS 记录失败', '读取 DNS 记录失败，请稍后重试。')
-  } finally {
-    loadingRecords.value = false
-  }
+  } finally { if (request === recordsRequest) loadingRecords.value = false }
 }
+function changeRecordsPageSize(size) { return loadRecords(1, size) }
 
 function openRecord(record) {
   editing.value = record || null

@@ -101,7 +101,22 @@ func (h *ServerHandler) SpeedTest(c *gin.Context) {
 		apiShared.BadRequest(c, err.Error())
 		return
 	}
-	apiShared.Success(c, result)
+	record := &model.ServerSpeedTest{OwnerID: apiShared.UserID(c), SourceID: result.SourceID, TargetID: result.TargetID, TargetAddress: result.TargetAddress, Address: result.Address, Protocol: result.Protocol, Direction: result.Direction, SenderMbps: result.SenderMbps, ReceiverMbps: result.ReceiverMbps, Retransmits: result.Retransmits, LostPackets: result.LostPackets, TotalPackets: result.TotalPackets, LossPercent: result.LossPercent}
+	if err := h.cluster.SaveServerSpeedTest(record); err != nil {
+		apiShared.DBError(c, "测速已完成，但结果保存失败")
+		return
+	}
+	apiShared.Success(c, record)
+}
+
+func (h *ServerHandler) SpeedTestHistory(c *gin.Context) {
+	limit, offset := apiShared.LimitOffset(c, 10, 100)
+	items, total, err := h.cluster.ListServerSpeedTests(apiShared.UserID(c), limit, offset)
+	if err != nil {
+		apiShared.DBError(c, "读取测速记录失败")
+		return
+	}
+	apiShared.Success(c, gin.H{"items": items, "total": total, "limit": limit, "offset": offset})
 }
 
 func (h *ServerHandler) runSpeedTest(ctx context.Context, source, target *model.Server, address string, req speedTestRequest) (*speedTestResult, error) {

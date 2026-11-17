@@ -108,7 +108,7 @@ type ObjectStorageProvider interface {
 	UpdateContainer(context.Context, string, ContainerInput) (Container, error)
 	ContainerEmpty(context.Context, string) (bool, error)
 	DeleteContainer(context.Context, string) error
-	ListObjects(context.Context, string, string, string) (ObjectPage, error)
+	ListObjects(context.Context, string, string, string, int) (ObjectPage, error)
 	UploadObject(context.Context, string, string, io.Reader, int64, string) (Object, error)
 	DownloadObject(context.Context, string, string) (ObjectDownload, error)
 	DeleteObject(context.Context, string, string) error
@@ -363,7 +363,7 @@ func (s *Service) DeleteContainer(ctx context.Context, id uint, name string, con
 	}
 	return p.DeleteContainer(ctx, name)
 }
-func (s *Service) ListObjects(ctx context.Context, id uint, container, prefix, token, region string) (ObjectPage, error) {
+func (s *Service) ListObjects(ctx context.Context, id uint, container, prefix, token, region string, sizes ...int) (ObjectPage, error) {
 	_, p, err := s.objectStorageProvider(id)
 	if err != nil {
 		return ObjectPage{}, err
@@ -371,7 +371,11 @@ func (s *Service) ListObjects(ctx context.Context, id uint, container, prefix, t
 	if err := setStorageRegion(p, region); err != nil {
 		return ObjectPage{}, err
 	}
-	return p.ListObjects(ctx, container, prefix, token)
+	size := 10
+	if len(sizes) > 0 && sizes[0] > 0 {
+		size = min(sizes[0], 100)
+	}
+	return p.ListObjects(ctx, container, prefix, token, size)
 }
 func (s *Service) UploadObject(ctx context.Context, id uint, container, key string, body io.Reader, size int64, contentType, region string) (Object, error) {
 	if size < 0 || size > 1024*1024*1024 {
@@ -469,4 +473,8 @@ func safeProviderError(err error) error {
 		return nil
 	}
 	return errors.New(security.Truncate(security.Redact(strings.TrimSpace(err.Error())), 480))
+}
+
+func (s *Service) ListConnectionsPage(limit, offset int) ([]model.CloudConnection, int64, error) {
+	return s.repository.ListCloudConnectionsPage(limit, offset)
 }

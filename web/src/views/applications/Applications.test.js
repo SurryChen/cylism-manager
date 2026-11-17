@@ -26,6 +26,7 @@ describe('Applications view', () => {
     const { api } = await import('../../api/index.js')
     api.get.mockImplementation(path => {
       if (path === '/projects') return Promise.resolve([{ id: 1, name: 'commerce', environments: [{ id: 2, name: 'production', cluster_id: 7, namespace: 'commerce-prod' }] }])
+      if (path.startsWith('/workspace/releases?')) return Promise.resolve({ items: [{ id: 10, application_id: 3, application_name: 'order-api', version: '1.0.0', image: 'orders:1.0.0', status: 'succeeded', created_at: '2026-10-10T00:00:00Z' }], total: 1 })
       if (path.startsWith('/workspace/overview')) return Promise.resolve({
         applications: [{ id: 3, name: 'order-api', runtime: { status: 'running', ready_pods: 1, total_pods: 1 }, endpoints: [{ domain: 'api.example.com', path: '/', service_port: 80, tls_enabled: true }, { domain: 'record.example.com', path: '/', service_port: 80, ingress_enabled: false }] }],
         releases: [{ id: 10, application_id: 3, application_name: 'order-api', version: '1.0.0', image: 'orders:1.0.0', status: 'succeeded', created_at: '2026-10-10T00:00:00Z' }],
@@ -43,6 +44,7 @@ describe('Applications view', () => {
     expect(wrapper.text()).toContain('组件就绪 1/1')
     expect(api.get).not.toHaveBeenCalledWith('/applications/3/deployment-templates', expect.anything())
     await wrapper.get('[data-testid="workspace-tab-releases"]').trigger('click')
+    await flushPromises()
     expect(wrapper.findAll('[data-testid="workspace-list"]')).toHaveLength(1)
     expect(wrapper.get('.workspace-count').text()).toBe('1 条记录')
     expect(wrapper.text()).toContain('orders:1.0.0')
@@ -103,7 +105,7 @@ describe('Applications view', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('当前环境尚未绑定集群')
-    expect(api.get).not.toHaveBeenCalledWith('/workspace/overview?project_id=1&environment_id=2', expect.anything())
+    expect(api.get).not.toHaveBeenCalledWith('/workspace/overview?project_id=1&environment_id=2&releases=false', expect.anything())
     wrapper.unmount()
   })
 
@@ -135,8 +137,8 @@ describe('Applications view', () => {
         { id: 1, name: 'first-project', environments: [{ id: 2, name: 'first-env' }] },
         { id: 3, name: 'second-project', environments: [{ id: 4, name: 'second-env' }] },
       ])
-      if (path === '/workspace/overview?project_id=1&environment_id=2') return firstWorkspace
-      if (path === '/workspace/overview?project_id=3&environment_id=4') {
+      if (path === '/workspace/overview?project_id=1&environment_id=2&releases=false') return firstWorkspace
+      if (path === '/workspace/overview?project_id=3&environment_id=4&releases=false') {
         return Promise.resolve({ applications: [{ id: 2, name: 'new-api' }], domains: [], recent_releases: [] })
       }
       return Promise.resolve([])
@@ -173,7 +175,7 @@ describe('Applications view', () => {
     const { api } = await import('../../api/index.js')
     api.get.mockImplementation(path => {
       if (path === '/projects') return Promise.resolve([{ id: 1, name: 'commerce', environments: [{ id: 2, name: 'production', cluster_id: 7, namespace: 'commerce-prod' }] }])
-      if (path === '/workspace/overview?project_id=1&environment_id=2') return Promise.resolve({ applications: [], domains: [], recent_releases: [] })
+      if (path === '/workspace/overview?project_id=1&environment_id=2&releases=false') return Promise.resolve({ applications: [], domains: [], recent_releases: [] })
       if (path === '/application-catalog') return Promise.resolve([
         { id: 10, name: '订单系统', enabled: true, components: [{ name: 'API', application_name: 'orders-api', spec: { container_port: 8080 } }] },
         { id: 11, name: '未启用', enabled: false, components: [] },
@@ -208,7 +210,7 @@ describe('Applications view', () => {
     const { api } = await import('../../api/index.js')
     api.get.mockImplementation(path => {
       if (path === '/projects') return Promise.resolve([{ id: 1, name: 'commerce', environments: [{ id: 2, name: 'production', cluster_id: 7, namespace: 'commerce-prod' }] }])
-      if (path === '/workspace/overview?project_id=1&environment_id=2') return Promise.resolve({ applications: [{ id: 3, name: 'orders-api' }], domains: [], recent_releases: [] })
+      if (path === '/workspace/overview?project_id=1&environment_id=2&releases=false') return Promise.resolve({ applications: [{ id: 3, name: 'orders-api' }], domains: [], recent_releases: [] })
       if (path === '/application-catalog') return Promise.resolve([{ id: 10, name: '订单系统', enabled: true, components: [{ name: 'API', application_name: 'orders-api', spec: { container_port: 8080 } }] }])
       return Promise.resolve([])
     })
@@ -269,7 +271,7 @@ describe('Applications view', () => {
     const { api } = await import('../../api/index.js')
     api.get.mockImplementation((path) => {
       if (path === '/projects') return Promise.resolve([{ id: 1, name: 'commerce', environments: [{ id: 2, name: 'production', namespace: 'project-commerce-prod' }] }])
-      if (path === '/workspace/overview?project_id=1&environment_id=2') return Promise.resolve({ applications: [], domains: [], recent_releases: [], failed_releases: [] })
+      if (path === '/workspace/overview?project_id=1&environment_id=2&releases=false') return Promise.resolve({ applications: [], domains: [], recent_releases: [], failed_releases: [] })
       return Promise.resolve([])
     })
     const wrapper = mount(Applications)
@@ -296,7 +298,7 @@ describe('Applications view', () => {
     const { api } = await import('../../api/index.js')
     api.get.mockImplementation(path => {
       if (path === '/projects') return Promise.resolve([{ id: 1, name: 'commerce', environments: [{ id: 2, name: 'production', namespace: 'commerce-prod' }] }])
-      if (path === '/workspace/overview?project_id=1&environment_id=2') return Promise.resolve({ applications: [{ id: 3, name: 'order-api', workload_kind: 'deployment', endpoint_url: 'https://api.example.com', endpoint_count: 2, runtime: { status: 'running', ready_pods: 1, total_pods: 1 }, active_release: { version: '1.4.0' }, latest_release: { status: 'succeeded', created_at: '2026-08-03T10:00:00Z' } }], domains: [], recent_releases: [{ id: 9, application_id: 3, application_name: 'order-api', sequence: 4, image: 'order-api:1.4.0', status: 'succeeded', created_at: '2026-08-03T10:00:00Z' }] })
+      if (path === '/workspace/overview?project_id=1&environment_id=2&releases=false') return Promise.resolve({ applications: [{ id: 3, name: 'order-api', workload_kind: 'deployment', endpoint_url: 'https://api.example.com', endpoint_count: 2, runtime: { status: 'running', ready_pods: 1, total_pods: 1 }, active_release: { version: '1.4.0' }, latest_release: { status: 'succeeded', created_at: '2026-08-03T10:00:00Z' } }], domains: [], recent_releases: [{ id: 9, application_id: 3, application_name: 'order-api', sequence: 4, image: 'order-api:1.4.0', status: 'succeeded', created_at: '2026-08-03T10:00:00Z' }] })
       return Promise.resolve([])
     })
     const wrapper = mount(Applications)
@@ -314,7 +316,7 @@ describe('Applications view', () => {
     const { api } = await import('../../api/index.js')
     api.get.mockImplementation((path) => {
       if (path === '/projects') return Promise.resolve([{ id: 1, name: 'commerce', environments: [{ id: 2, name: 'production', namespace: 'commerce-prod' }] }])
-      if (path === '/workspace/overview?project_id=1&environment_id=2') return Promise.resolve({ applications: [{ id: 3, project_id: 1, environment_id: 2, name: 'order-api', project: { id: 1, name: 'commerce', default_image_registry_id: 12 }, environment: { name: 'production', namespace: 'commerce-prod' } }], domains: [], recent_releases: [], failed_releases: [] })
+      if (path === '/workspace/overview?project_id=1&environment_id=2&releases=false') return Promise.resolve({ applications: [{ id: 3, project_id: 1, environment_id: 2, name: 'order-api', project: { id: 1, name: 'commerce', default_image_registry_id: 12 }, environment: { name: 'production', namespace: 'commerce-prod' } }], domains: [], recent_releases: [], failed_releases: [] })
       if (path === '/applications/3/deployment-templates') return Promise.resolve([{ id: 8, name: '标准生产配置', enabled: true, is_default: true, revision: 1, spec: { image: 'harbor.example.com/commerce/order-api', replicas: 2, container_port: 8080, service: { port: 80 } } }])
       return Promise.resolve([])
     })
@@ -336,7 +338,7 @@ describe('Applications view', () => {
     const { api } = await import('../../api/index.js')
     api.get.mockImplementation((path) => {
       if (path === '/projects') return Promise.resolve([{ id: 1, name: 'commerce', environments: [{ id: 2, name: 'production', namespace: 'commerce-prod' }] }])
-      if (path === '/workspace/overview?project_id=1&environment_id=2') return Promise.resolve({ applications: [{ id: 3, project_id: 1, environment_id: 2, name: 'order-api', project: { id: 1, name: 'commerce' }, environment: { name: 'production', namespace: 'commerce-prod' } }], domains: [], recent_releases: [], failed_releases: [] })
+      if (path === '/workspace/overview?project_id=1&environment_id=2&releases=false') return Promise.resolve({ applications: [{ id: 3, project_id: 1, environment_id: 2, name: 'order-api', project: { id: 1, name: 'commerce' }, environment: { name: 'production', namespace: 'commerce-prod' } }], domains: [], recent_releases: [], failed_releases: [] })
       if (path === '/applications/3/deployment-templates') return Promise.resolve([{ id: 8, name: '标准生产配置', enabled: true, is_default: true, revision: 2, spec: { image: 'harbor.example.com/commerce/order-api', replicas: 2, container_port: 8080, service: { port: 80 } } }])
       return Promise.resolve([])
     })
@@ -366,7 +368,7 @@ describe('Applications view', () => {
     const { api } = await import('../../api/index.js')
     api.get.mockImplementation(path => {
       if (path === '/projects') return Promise.resolve([{ id: 1, name: 'commerce', environments: [{ id: 2, name: 'production', namespace: 'commerce-prod' }] }])
-      if (path === '/workspace/overview?project_id=1&environment_id=2') return Promise.resolve({ applications: [{ id: 3, name: 'order-api' }], domains: [], recent_releases: [] })
+      if (path === '/workspace/overview?project_id=1&environment_id=2&releases=false') return Promise.resolve({ applications: [{ id: 3, name: 'order-api' }], domains: [], recent_releases: [] })
       if (path === '/applications/3/deployment-templates') return Promise.resolve([{ id: 8, name: '默认配置', enabled: true, is_default: true, default_version: '2.3.4', revision: 1, spec: { image: 'example.com/order-api', service: { port: 80 } } }])
       return Promise.resolve([])
     })
@@ -392,7 +394,7 @@ describe('Applications view', () => {
     const { api } = await import('../../api/index.js')
     api.get.mockImplementation((path) => {
       if (path === '/projects') return Promise.resolve([{ id: 1, name: 'commerce', environments: [{ id: 2, name: 'production', namespace: 'commerce-prod' }] }])
-      if (path === '/workspace/overview?project_id=1&environment_id=2') return Promise.resolve({ applications: [{ id: 3, project_id: 1, environment_id: 2, name: 'order-api', project: { id: 1, name: 'commerce' }, environment: { name: 'production', namespace: 'commerce-prod' } }], domains: [], recent_releases: [], failed_releases: [] })
+      if (path === '/workspace/overview?project_id=1&environment_id=2&releases=false') return Promise.resolve({ applications: [{ id: 3, project_id: 1, environment_id: 2, name: 'order-api', project: { id: 1, name: 'commerce' }, environment: { name: 'production', namespace: 'commerce-prod' } }], domains: [], recent_releases: [], failed_releases: [] })
       if (path === '/applications/3/deployment-templates') return Promise.resolve([{ id: 8, name: '标准生产配置', enabled: true, is_default: true, revision: 1, spec: { image: 'harbor.example.com/commerce/order-api', replicas: 1, container_port: 8080, service: { port: 80 } } }])
       return Promise.resolve([])
     })

@@ -265,12 +265,12 @@ func (p *aliyunProvider) ContainerEmpty(ctx context.Context, name string) (bool,
 func (p *aliyunProvider) DeleteContainer(ctx context.Context, name string) error {
 	return p.oss.DeleteBucket(name, oss.WithContext(ctx))
 }
-func (p *aliyunProvider) ListObjects(ctx context.Context, bucketName, prefix, token string) (ObjectPage, error) {
+func (p *aliyunProvider) ListObjects(ctx context.Context, bucketName, prefix, token string, limit int) (ObjectPage, error) {
 	bucket, err := p.oss.Bucket(bucketName)
 	if err != nil {
 		return ObjectPage{}, err
 	}
-	page, err := bucket.ListObjectsV2(oss.Prefix(prefix), oss.ContinuationToken(token), oss.MaxKeys(100), oss.WithContext(ctx))
+	page, err := bucket.ListObjectsV2(oss.Prefix(prefix), oss.ContinuationToken(token), oss.MaxKeys(limit), oss.WithContext(ctx))
 	if err != nil {
 		return ObjectPage{}, err
 	}

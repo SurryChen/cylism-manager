@@ -9,7 +9,8 @@ vi.mock('vue-router', () => ({ useRouter: () => ({ push: routerPush }), useRoute
 vi.mock('../../api/index.js', () => ({
   api: {
     get: vi.fn(path => {
-      if (path === '/applications/1') return Promise.resolve({ application: { id: 1, project_id: 2, environment_id: 3, name: 'order-api', workload_kind: 'deployment', capabilities: ['hysteria2'], project: { name: 'commerce' }, environment: { name: 'production', cluster_id: 2, namespace: 'commerce-prod' } }, releases: [{ id: 3, sequence: 2, image: 'registry.example.com/order-api:2.0.0', status: 'succeeded' }] })
+      if (path === '/applications/1?releases=false') return Promise.resolve({ application: { id: 1, project_id: 2, environment_id: 3, name: 'order-api', workload_kind: 'deployment', capabilities: ['hysteria2'], project: { name: 'commerce' }, environment: { name: 'production', cluster_id: 2, namespace: 'commerce-prod' } }, releases: [{ id: 3, sequence: 2, image: 'registry.example.com/order-api:2.0.0', status: 'succeeded' }] })
+      if (path.startsWith('/applications/1/releases?')) return Promise.resolve({ items: [{ id: 3, sequence: 2, image: 'registry.example.com/order-api:2.0.0', status: 'succeeded' }], total: 1 })
       if (path === '/applications/1/deployment-templates') return Promise.resolve([{ id: 4, name: '标准生产配置', enabled: true, is_default: true, revision: 2, spec: { image: 'registry.example.com/order-api', replicas: 2, container_port: 8080, service: { port: 80 } } }])
       if (path === '/applications/1/endpoints') return Promise.resolve([{ id: 7, domain_id: 4, domain: 'api.example.com', path: '/', service_port: 80, tls_enabled: true, access_mode: 'protected_console' }, { id: 8, domain_id: 5, domain: 'admin.example.com', path: '/console', service_port: 80, tls_enabled: false, access_mode: 'public' }])
       if (path === '/domains?environment_id=3') return Promise.resolve([{ id: 4, hostname: 'api.example.com', enabled: true, certificate: { status: 'Ready' } }, { id: 5, hostname: 'admin.example.com', enabled: true, certificate: { status: 'Ready' } }])
@@ -130,8 +131,8 @@ describe('ApplicationDetails view', () => {
     const { api } = await import('../../api/index.js')
     const originalGet = api.get.getMockImplementation()
     let status = 'draft'
-    api.get.mockImplementation((path, options) => path === '/applications/1'
-      ? Promise.resolve({ application: { id: 1, name: 'order-api' }, releases: [{ id: 3, sequence: 2, status }] })
+    api.get.mockImplementation((path, options) => path.startsWith('/applications/1/releases?')
+      ? Promise.resolve({ items: [{ id: 3, sequence: 2, status }], total: 1 })
       : originalGet(path, options))
     vi.useFakeTimers()
     let wrapper
@@ -150,9 +151,9 @@ describe('ApplicationDetails view', () => {
       expect(wrapper.find('.detail-releases-card .badge').text()).toBe('succeeded')
 
       await wrapper.findAll('.section-tab').find(tab => tab.text() === '运行概览').trigger('click')
-      const requestCount = api.get.mock.calls.filter(([path]) => path === '/applications/1').length
+      const requestCount = api.get.mock.calls.filter(([path]) => path.startsWith('/applications/1/releases?')).length
       await vi.advanceTimersByTimeAsync(5000)
-      expect(api.get.mock.calls.filter(([path]) => path === '/applications/1')).toHaveLength(requestCount)
+      expect(api.get.mock.calls.filter(([path]) => path.startsWith('/applications/1/releases?'))).toHaveLength(requestCount)
     } finally {
       wrapper?.unmount()
       vi.useRealTimers()
@@ -268,7 +269,7 @@ describe('ApplicationDetails view', () => {
 
     await wrapper.find('.endpoint-row .btn').trigger('click')
     await wrapper.find('input[placeholder="http://localhost:5178"]').setValue('http://localhost:5178/console')
-    await wrapper.find('form').trigger('submit.prevent')
+    await wrapper.find('.modal form').trigger('submit.prevent')
     expect(api.post).toHaveBeenCalledWith('/applications/1/integration-handoffs', { endpoint_id: 7, redirect_url: 'http://localhost:5178/console' })
     expect(window.localStorage.getItem('cylism.protected-console.local-url:7')).toBe('http://localhost:5178/console')
     open.mockRestore()
@@ -303,7 +304,7 @@ describe('ApplicationDetails view', () => {
     await rows[1].find('[aria-label="环境变量名称"]').setValue('DATABASE_PASSWORD')
     await rows[1].find('textarea').setValue('secret-value')
     await rows[1].find('select').setValue('application_secret')
-    await wrapper.find('form').trigger('submit.prevent')
+    await wrapper.find('.modal form').trigger('submit.prevent')
 
     expect(api.post).toHaveBeenCalledWith('/applications/1/deployment-templates', expect.objectContaining({
       default_version: '2.3.4',
@@ -440,7 +441,7 @@ describe('ApplicationDetails view', () => {
     wrapper.vm.templateForm.file_mounts[0].key = 'tls.crt'
     await nextTick()
     await wrapper.find('.file-mount-row [placeholder="/etc/app/config.yaml"]').setValue('/run/app/tls/tls.crt')
-    await wrapper.find('form').trigger('submit.prevent')
+    await wrapper.find('.modal form').trigger('submit.prevent')
 
     expect(api.post).toHaveBeenCalledWith('/applications/1/deployment-templates', expect.objectContaining({
       spec: expect.objectContaining({
@@ -555,7 +556,7 @@ describe('ApplicationDetails view', () => {
     await wrapper.findAll('.section-tab').find(tab => tab.text() === '部署配置').trigger('click')
     await wrapper.find('.detail-config-card .btn-primary').trigger('click')
     await wrapper.find('[aria-label="使用宿主机网络"]').setValue(true)
-    await wrapper.find('form').trigger('submit.prevent')
+    await wrapper.find('.modal form').trigger('submit.prevent')
 
     expect(api.post).toHaveBeenCalledWith('/applications/1/deployment-templates', expect.objectContaining({
       spec: expect.objectContaining({ host_network: true }),
@@ -579,7 +580,7 @@ describe('ApplicationDetails view', () => {
     await fileRow.find('[aria-label="文件名称"]').setValue('config.yaml')
     await fileRow.find('[aria-label="文件内容"]').setValue('listen: :8080\n')
     await fileRow.find('[aria-label="文件挂载路径"]').setValue('/etc/app/config.yaml')
-    await wrapper.find('form').trigger('submit.prevent')
+    await wrapper.find('.modal form').trigger('submit.prevent')
     expect(api.post).toHaveBeenCalledWith('/applications/1/deployment-templates', expect.objectContaining({
       spec: expect.objectContaining({
         config: { 'config.yaml': 'listen: :8080\n' },
@@ -608,7 +609,7 @@ describe('ApplicationDetails view', () => {
     await fileRow.find('[aria-label="文件内容"]').setValue('listen: :8443\n')
     wrapper.vm.templateForm.secret_items[0].externally_managed = true
     await fileRow.find('[aria-label="文件挂载路径"]').setValue('/etc/app/config.yaml')
-    await wrapper.find('form').trigger('submit.prevent')
+    await wrapper.find('.modal form').trigger('submit.prevent')
 
     expect(api.post).toHaveBeenCalledWith('/applications/1/deployment-templates', expect.objectContaining({
       spec: expect.objectContaining({
@@ -634,7 +635,7 @@ describe('ApplicationDetails view', () => {
     try {
       await new Promise(resolve => setTimeout(resolve, 0))
       await wrapper.find('.detail-config-card').findAll('button').find(button => button.text() === '编辑').trigger('click')
-      await wrapper.find('form').trigger('submit.prevent')
+      await wrapper.find('.modal form').trigger('submit.prevent')
       expect(api.put).toHaveBeenLastCalledWith('/applications/1/deployment-templates/4', expect.objectContaining({ spec: expect.objectContaining({ config: { LOG_LEVEL: 'info' }, secrets: { env: '' }, secret_file_keys: ['env'], file_mounts: fileMounts }) }))
     } finally { api.get.mockImplementation(originalGet); wrapper.unmount() }
   })
@@ -695,12 +696,12 @@ describe('ApplicationDetails view', () => {
       await new Promise(resolve => setTimeout(resolve, 0))
       await wrapper.find('.detail-config-card .btn-primary').trigger('click')
       wrapper.vm.templateForm.config_items = [{ key: 'HOST', value: 'one' }, { key: 'HOST', value: 'two' }]
-      await wrapper.find('form').trigger('submit.prevent')
+      await wrapper.find('.modal form').trigger('submit.prevent')
       expect(wrapper.text()).toContain('配置名称 HOST 重复')
       expect(api.post).not.toHaveBeenCalled()
       wrapper.vm.templateForm.config_items = []
       wrapper.vm.templateForm.secret_items = [{ key: 'renamed', value: '', original_key: 'env' }]
-      await wrapper.find('form').trigger('submit.prevent')
+      await wrapper.find('.modal form').trigger('submit.prevent')
       expect(wrapper.text()).toContain('请重新填写内容')
       expect(api.post).not.toHaveBeenCalled()
     } finally { wrapper.unmount() }

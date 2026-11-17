@@ -9,6 +9,8 @@ import (
 
 // ServerRepository contains only the server records managed alongside cluster nodes.
 type ServerRepository interface {
+	SaveServerSpeedTest(*model.ServerSpeedTest) error
+	ListServerSpeedTests(uint, int, int) ([]model.ServerSpeedTest, int64, error)
 	CreateServer(*model.Server) error
 	GetServer(uint) (*model.Server, error)
 	GetServerByHost(string) (*model.Server, error)
@@ -142,6 +144,7 @@ type PlatformReleaseRepository interface {
 type PlatformEndpointRepository interface {
 	PlatformReleaseRepository
 	ListPlatformReleases(int) ([]model.PlatformRelease, error)
+	ListPlatformReleasesPage(int, int) ([]model.PlatformRelease, int64, error)
 	GetPlatformEndpoint() (*model.PlatformEndpoint, error)
 	SavePlatformEndpoint(*model.PlatformEndpoint) error
 	GetManagedDomainByHostname(string) (*model.ManagedDomain, error)

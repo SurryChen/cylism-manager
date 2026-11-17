@@ -5,7 +5,7 @@ import SystemSettingsCloudProviders from './SystemSettingsCloudProviders.vue'
 const cloud = vi.hoisted(() => ({
   createCloudConnection: vi.fn(),
   deleteCloudConnection: vi.fn(),
-  getCloudConnections: vi.fn(),
+  getCloudConnectionPage: vi.fn(),
   getCloudProviders: vi.fn(),
   getCloudConnectionPermissions: vi.fn(),
   updateCloudConnection: vi.fn(),
@@ -15,7 +15,7 @@ vi.mock('../../api/cloud-resources.js', () => cloud)
 
 beforeEach(() => {
   vi.clearAllMocks()
-  cloud.getCloudConnections.mockResolvedValue([{ id: 4, name: '生产连接', provider: 'aliyun', dns_enabled: true, object_storage_enabled: true, credential_configured: true }])
+  cloud.getCloudConnectionPage.mockResolvedValue({ items: [{ id: 4, name: '生产连接', provider: 'aliyun', dns_enabled: true, object_storage_enabled: true, credential_configured: true }], total: 1 })
   cloud.getCloudProviders.mockResolvedValue([
     { id: 'aliyun', name: '阿里云', description: 'Alibaba Cloud DNS 与 OSS', implemented: true, capabilities: ['dns', 'object_storage'], credential_fields: [{ key: 'access_key_id', label: 'AccessKey ID', type: 'text', required: true }, { key: 'access_key_secret', label: 'AccessKey Secret', type: 'password', required: true }], configuration_fields: [] },
     { id: 'tencent', name: '腾讯云', description: 'Tencent Cloud DNSPod 与 COS', implemented: false, capabilities: ['dns', 'object_storage'], credential_fields: [], configuration_fields: [] },
@@ -29,6 +29,23 @@ beforeEach(() => {
 })
 
 describe('SystemSettingsCloudProviders', () => {
+  it('paginates connections with ten rows by default and resets when resizing', async () => {
+    const items = Array.from({ length: 25 }, (_, index) => ({ id: index + 1, name: '连接 ' + (index + 1), provider: 'aliyun' }))
+    cloud.getCloudConnectionPage.mockImplementation(async ({ limit, offset }) => ({ items: items.slice(offset, offset + limit), total: items.length }))
+    const wrapper = mount(SystemSettingsCloudProviders)
+    await flushPromises()
+    expect(wrapper.findAll('[data-testid^="cloud-provider-card-"]')).toHaveLength(10)
+    await wrapper.get('[aria-label="末页"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.findAll('[data-testid^="cloud-provider-card-"]')).toHaveLength(5)
+    expect(wrapper.find('[data-testid="cloud-provider-card-21"]').exists()).toBe(true)
+    await wrapper.get('select[aria-label="每页条数"]').setValue('20')
+    await flushPromises()
+    expect(wrapper.findAll('[data-testid^="cloud-provider-card-"]')).toHaveLength(20)
+    expect(wrapper.get('.pagination-controls-status').text()).toBe('1 / 2 页')
+    wrapper.unmount()
+  })
+
   it('renders connections as settings rows and never renders saved credentials', async () => {
     const wrapper = mount(SystemSettingsCloudProviders)
     await flushPromises()
@@ -53,8 +70,7 @@ describe('SystemSettingsCloudProviders', () => {
     await wrapper.get('[data-testid=cloud-provider-open-create]').trigger('click')
     expect(wrapper.text()).not.toContain('默认地域')
     expect(wrapper.text()).not.toContain('连接配置')
-    const fields = wrapper.findAll('input.form-input')
-    await fields[0].setValue('测试连接')
+    await wrapper.get('#cloud-provider-name').setValue('测试连接')
     await wrapper.get('#cloud-provider-credential-access_key_id').setValue('id')
     await wrapper.get('#cloud-provider-credential-access_key_secret').setValue('secret')
     await wrapper.get('[data-testid=cloud-provider-save]').trigger('click')
@@ -69,7 +85,7 @@ describe('SystemSettingsCloudProviders', () => {
   })
 
   it('preserves legacy storage configuration when editing account credentials', async () => {
-    cloud.getCloudConnections.mockResolvedValue([{ id: 4, name: '生产连接', provider: 'aliyun', configuration: '{"region":"cn-guangzhou"}', credential_configured: true }])
+    cloud.getCloudConnectionPage.mockResolvedValue({ items: [{ id: 4, name: '生产连接', provider: 'aliyun', configuration: '{"region":"cn-guangzhou"}', credential_configured: true }], total: 1 })
     const wrapper = mount(SystemSettingsCloudProviders)
     await flushPromises()
 
@@ -82,7 +98,7 @@ describe('SystemSettingsCloudProviders', () => {
   })
 
   it('guides users to add a provider when no connection exists', async () => {
-    cloud.getCloudConnections.mockResolvedValue([])
+    cloud.getCloudConnectionPage.mockResolvedValue({ items: [], total: 0 })
     const wrapper = mount(SystemSettingsCloudProviders)
     await flushPromises()
 

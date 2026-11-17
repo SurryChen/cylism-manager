@@ -8,6 +8,7 @@ import {
   generatePlatformWebhookSecret,
   getPlatformEndpoint,
   getPlatformStatus,
+  getPlatformReleasePage,
   getTemporaryTokens,
   reconcilePlatformEndpoint,
   rollbackPlatformRelease,
@@ -30,6 +31,16 @@ describe('settings api', () => {
     expect(api.get).toHaveBeenNthCalledWith(1, '/platform/endpoint', options)
     expect(api.get).toHaveBeenNthCalledWith(2, '/platform/status', options)
     expect(api.get).toHaveBeenNthCalledWith(3, '/auth/temporary-tokens', options)
+  })
+
+  it('reads release pages with totals while retaining request options', async () => {
+    const options = { signal: new AbortController().signal }
+    api.get.mockResolvedValueOnce({ releases_total: 35, releases: [{ id: 25 }], deployment: { image: 'current' } })
+    const result = await getPlatformReleasePage({ limit: 10, offset: 20 }, options)
+    expect(api.get).toHaveBeenLastCalledWith('/platform/status?limit=10&offset=20', options)
+    expect(result.total).toBe(35)
+    expect(result.releases).toEqual([{ id: 25 }])
+    expect(result.deployment.image).toBe('current')
   })
 
   it('owns platform and temporary-token mutations with encoded identifiers', () => {
