@@ -235,6 +235,10 @@ func (h *ServerHandler) Update(c *gin.Context) {
 		}
 	}
 	if err := h.cluster.UpdateServer(server); err != nil {
+		if errors.Is(err, store.ErrClusterDeploymentConflict) {
+			apiShared.Conflict(c, "该服务器正在移出或清理 K3s，请等待任务结束后再编辑")
+			return
+		}
 		if errors.Is(err, store.ErrServerProxyInUse) {
 			apiShared.Conflict(c, err.Error())
 			return
@@ -318,6 +322,10 @@ func (h *ServerHandler) Delete(c *gin.Context) {
 		return
 	}
 	if err := h.cluster.DeleteServer(id); err != nil {
+		if errors.Is(err, store.ErrClusterDeploymentConflict) {
+			apiShared.Conflict(c, "该服务器正在执行集群任务，请等待任务结束后再删除")
+			return
+		}
 		if errors.Is(err, cluster.ErrServerAssigned) {
 			apiShared.Conflict(c, err.Error())
 			return

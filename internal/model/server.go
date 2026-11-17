@@ -24,6 +24,7 @@ type Server struct {
 	ClusterRole      string         `gorm:"size:32" json:"cluster_role"`
 	ClusterID        *uint          `gorm:"index" json:"cluster_id,omitempty"`
 	K8sNodeName      string         `gorm:"size:256" json:"k8s_node_name"`
+	K3sRemovalTaskID *uint          `gorm:"index" json:"k3s_removal_task_id,omitempty"`
 	CreatedAt        time.Time      `json:"created_at"`
 	UpdatedAt        time.Time      `json:"updated_at"`
 	DeletedAt        gorm.DeletedAt `gorm:"index" json:"-"`

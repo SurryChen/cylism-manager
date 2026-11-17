@@ -32,6 +32,7 @@
               <td class="action-cell">
                 <div class="btn-group action-cell">
                   <button class="icon-button icon-button--table" type="button" :title="`编辑 ${srv.name}`" :aria-label="`编辑 ${srv.name}`" @click="startEdit(srv)"><Pencil :size="14" /></button>
+                  <button v-if="!srv.cluster_id && srv.k3s_removal_task_id" class="icon-button icon-button--table" type="button" :title="`卸载 ${srv.name} 保留的 K3s`" :aria-label="`卸载 ${srv.name} 保留的 K3s`" @click="cleanupTarget = srv"><PackageMinus :size="14" /></button>
                   <button v-if="!srv.cluster_role && !srv.cluster_id" class="icon-button icon-button--table" type="button" :title="`删除 ${srv.name}`" :aria-label="`删除 ${srv.name}`" @click="confirmDelete(srv)"><Trash2 :size="14" /></button>
                   <button v-if="!srv.cluster_id && (srv.cluster_role || srv.k8s_node_name)" class="icon-button icon-button--table" type="button" :title="`解除 ${srv.name} 的集群绑定`" :aria-label="`解除 ${srv.name} 的集群绑定`" :disabled="unbindingId === srv.id" @click="unbindServer(srv)"><LoaderCircle v-if="unbindingId === srv.id" :size="14" class="is-spinning" /><Unlink2 v-else :size="14" /></button>
                   <button class="icon-button icon-button--table" type="button" :title="`打开 ${srv.name} 的终端`" :aria-label="`打开 ${srv.name} 的终端`" @click="openTerminal(srv.id)"><Terminal :size="14" /></button>
@@ -132,6 +133,7 @@
     </div>
 
     <ServerTerminal v-if="terminalServer" :server="terminalServer" @close="terminalServer = null" />
+    <ServerK3sCleanupModal :server="cleanupTarget" @close="cleanupTarget = null" @completed="fetchServers" />
 
     <div v-if="deleteTarget" class="overlay" @click.self="deleteTarget = null">
       <div class="modal"><h2 class="modal-title">删除服务器</h2><p class="modal-copy">确定删除 <strong>{{ deleteTarget.name }}</strong> 吗？</p><p v-if="deleteError" class="form-error">{{ deleteError }}</p><div class="modal-actions"><button class="btn" :disabled="deletingServer" @click="deleteTarget = null">取消</button><button class="btn btn-danger" :disabled="deletingServer" @click="deleteServer">{{ deletingServer ? '删除中...' : '确认删除' }}</button></div></div>
@@ -157,11 +159,12 @@ import {
 import { useAsyncResource } from '../../composables/useAsyncResource.js'
 import { usePolling } from '../../composables/usePolling.js'
 import { formatClockTime as formatSampleTime } from '../../utils/formatters.js'
-import { ArrowLeft, ChartNoAxesColumnIncreasing, LoaderCircle, Pencil, Plus, RefreshCw, Terminal, Trash2, Unlink2 } from 'lucide-vue-next'
+import { ArrowLeft, ChartNoAxesColumnIncreasing, LoaderCircle, PackageMinus, Pencil, Plus, RefreshCw, Terminal, Trash2, Unlink2 } from 'lucide-vue-next'
 import SectionTabsHeader from '../../components/SectionTabsHeader.vue'
 import SurfaceCard from '../../components/SurfaceCard.vue'
 import ErrorNoticeModal from '../../components/ErrorNoticeModal.vue'
 import ServerTerminal from './ServerTerminal.vue'
+import ServerK3sCleanupModal from './ServerK3sCleanupModal.vue'
 import ServerTailscale from './ServerTailscale.vue'
 import ServerSingBox from './ServerSingBox.vue'
 import ServerSpeedTest from './ServerSpeedTest.vue'
@@ -189,6 +192,7 @@ const resourceStatsUpdatedAt = ref('')
 const showAdd = ref(false)
 const editingId = ref(null)
 const deleteTarget = ref(null)
+const cleanupTarget = ref(null)
 const formError = ref('')
 const savingServer = ref(false)
 const deleteError = ref('')

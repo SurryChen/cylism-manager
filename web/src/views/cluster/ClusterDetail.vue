@@ -17,7 +17,7 @@
           <div class="topology-node-actions">
             <button v-if="controlNode.k8s_node_name" class="icon-button icon-button--table" type="button" title="节点调度设置" :aria-label="`设置 ${nodeDisplayName(controlNode)} 的调度`" @click="openScheduling(controlNode)"><Settings2 :size="14" /></button>
             <button class="icon-button icon-button--table" type="button" title="重启 K3s 服务" :aria-label="`重启 ${nodeDisplayName(controlNode)} 的 K3s 服务`" :disabled="runningDeployment || topologyLoading" @click="openRestart(controlNode)"><RefreshCw :size="14" /></button>
-            <button class="icon-button icon-button--table" type="button" :title="workerNodes.length ? '请先卸载工作节点' : '卸载控制平面'" :aria-label="`卸载 ${nodeDisplayName(controlNode)}`" :disabled="workerNodes.length > 0 || runningDeployment" @click="openUninstall(controlNode)"><Trash2 :size="14" /></button>
+            <button class="icon-button icon-button--table" type="button" :title="workerNodes.length ? '请先移出工作节点' : '卸载控制平面（删除本地集群数据）'" :aria-label="`卸载 ${nodeDisplayName(controlNode)}`" :disabled="workerNodes.length > 0 || runningDeployment" @click="openUninstall(controlNode)"><Trash2 :size="14" /></button>
           </div>
         </div>
         <div v-if="workerNodes.length" class="topology-branch" aria-hidden="true"><span /></div>
@@ -29,8 +29,7 @@
             <div class="topology-node-actions">
               <button v-if="server.k8s_node_name" class="icon-button icon-button--table" type="button" title="节点调度设置" :aria-label="`设置 ${nodeDisplayName(server)} 的调度`" @click="openScheduling(server)"><Settings2 :size="14" /></button>
               <button class="icon-button icon-button--table" type="button" title="重启 K3s 服务" :aria-label="`重启 ${nodeDisplayName(server)} 的 K3s 服务`" :disabled="runningDeployment || topologyLoading" @click="openRestart(server)"><RefreshCw :size="14" /></button>
-              <button v-if="cluster.distribution === 'k3s' && server.k8s_node_name" class="btn btn-sm" type="button" :aria-label="`移出 ${nodeDisplayName(server)}`" :disabled="runningDeployment || topologyLoading" @click="removalTarget = server">移出集群</button>
-              <button class="icon-button icon-button--table" type="button" :title="`卸载 ${nodeDisplayName(server)}`" :aria-label="`卸载 ${nodeDisplayName(server)}`" :disabled="runningDeployment" @click="openUninstall(server)"><Trash2 :size="14" /></button>
+              <button v-if="cluster.distribution === 'k3s' && server.k8s_node_name" class="icon-button icon-button--table" type="button" title="移出集群" :aria-label="`移出 ${nodeDisplayName(server)}`" aria-haspopup="dialog" :disabled="runningDeployment || topologyLoading" @click="removalTarget = server"><LogOut :size="14" aria-hidden="true" /></button>
             </div>
           </div></div>
         </div>
@@ -100,7 +99,7 @@
 <script setup>
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { defineAsyncComponent } from 'vue'
-import { ArrowLeft, RefreshCw, Server, ServerCog, Settings2, Trash2 } from 'lucide-vue-next'
+import { ArrowLeft, LogOut, RefreshCw, Server, ServerCog, Settings2, Trash2 } from 'lucide-vue-next'
 import { adoptClusterNode, getCluster, getClusterDeploymentLogs, getClusterDeployments, restartClusterNode, startClusterDeployment, uninstallClusterNode } from '../../api/clusters.js'
 import { getClusterNodes, getNodeScheduling, updateNodeScheduling } from '../../api/cluster.js'
 import { getServers } from '../../api/servers.js'
@@ -213,7 +212,7 @@ const deploymentRole = computed(() => cluster.value?.control_server_id ? 'worker
 const clusterNodes = computed(() => servers.value.filter(server => Number(server.cluster_id) === Number(props.clusterID) && server.cluster_role))
 const controlNode = computed(() => clusterNodes.value.find(server => server.cluster_role === 'control-plane'))
 const workerNodes = computed(() => clusterNodes.value.filter(server => server.cluster_role === 'worker'))
-const serverOptions = computed(() => servers.value.filter(server => !server.cluster_id && !server.cluster_role && !server.k8s_node_name).map(server => ({ value: String(server.id), label: serverDisplayLabel(server) })))
+const serverOptions = computed(() => servers.value.filter(server => !server.cluster_id && !server.cluster_role && !server.k8s_node_name && !server.k3s_removal_task_id).map(server => ({ value: String(server.id), label: serverDisplayLabel(server) })))
 const selectedServer = computed(() => servers.value.find(server => String(server.id) === selectedServerID.value))
 watch([selectedServerID, networkMode, joinAddressType], async ([serverID, mode, addressType], _old, onCleanup) => {
   selectedTailscale.value = null
@@ -481,6 +480,7 @@ function taskLabel(task) {
   if (task.operation === 'migrate-victoria-metrics') return '迁移 VictoriaMetrics'
   if (task.operation === 'migrate-loki') return '迁移 Loki'
   if (task.operation === 'remove') return '移出工作节点'
+  if (task.operation === 'cleanup') return '清理已移出节点'
   if (task.operation === 'restart') return `重启${task.role === 'control-plane' ? '控制平面' : '工作节点'}`
   if (task.operation === 'network-migrate') return '同步 Tailscale 组网状态'
   if (task.operation === 'network-migrate-node') return '迁移节点至 Tailscale'
@@ -491,7 +491,7 @@ function taskLabel(task) {
   if (agentLabels[task.operation]) return agentLabels[task.operation]
   return task.operation === 'uninstall' ? `卸载${task.role === 'control-plane' ? '控制平面' : '工作节点'}` : task.operation === 'adopt' ? `纳管${task.role === 'control-plane' ? '控制平面' : '工作节点'}` : roleLabel(task.role)
 }
-function taskDescription(task) { if (task.operation === 'remove') return '排空、停用 K3s 并解除关联（保留数据）'; if (['migrate-victoria-metrics', 'migrate-loki'].includes(task.operation)) return '监控存储跨节点迁移'; return task.operation === 'restart' ? 'K3s 服务重启' : task.operation === 'network-migrate' ? 'K3s 集群组网' : task.operation?.startsWith('network-') ? 'K3s 节点组网' : task.operation?.startsWith('cross-') ? '跨集群服务' : task.operation?.startsWith('agent-') ? 'cluster-agent 运维' : `K3s ${task.operation === 'uninstall' ? '卸载' : task.operation === 'adopt' ? '纳管' : '部署'}` }
+function taskDescription(task) { if (task.operation === 'remove') return task.uninstall_k3s ? '安全移出并卸载 K3s（清理本地数据）' : '安全移出（保留数据）'; if (task.operation === 'cleanup') return '卸载已移出节点的 K3s（清理本地数据）'; if (['migrate-victoria-metrics', 'migrate-loki'].includes(task.operation)) return '监控存储跨节点迁移'; return task.operation === 'restart' ? 'K3s 服务重启' : task.operation === 'network-migrate' ? 'K3s 集群组网' : task.operation?.startsWith('network-') ? 'K3s 节点组网' : task.operation?.startsWith('cross-') ? '跨集群服务' : task.operation?.startsWith('agent-') ? 'cluster-agent 运维' : `K3s ${task.operation === 'uninstall' ? '卸载' : task.operation === 'adopt' ? '纳管' : '部署'}` }
 function deploymentStatusLabel(status) { return ({ running: '执行中', success: '成功', failed: '失败' })[status] || status }
 function deploymentStatusClass(status) { return ({ running: 'badge-deploying', success: 'badge-online', failed: 'badge-danger' })[status] || 'badge-offline' }
 function serverDisplayLabel(server) {

@@ -324,6 +324,11 @@ func (s *Service) ListServersContext(ctx context.Context) ([]model.Server, error
 	}
 	for index := range servers {
 		server := &servers[index]
+		// Explicit cluster membership is owned by durable cluster tasks. A
+		// missing Node can be a removal checkpoint, not a stale legacy binding.
+		if server.ClusterID != nil {
+			continue
+		}
 		if server.ClusterRole == "" && server.K8sNodeName == "" {
 			continue
 		}

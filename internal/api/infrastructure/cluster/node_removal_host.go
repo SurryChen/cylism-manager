@@ -12,7 +12,7 @@ import (
 )
 
 // The host implementation only supports systemd workers using K3s's own
-// containerd. It never runs the uninstall/killall scripts or removes data.
+// containerd. Stop preserves data; Uninstall is a separate, explicit step.
 type sshNodeRemovalHost struct {
 	key  []byte
 	exec func(context.Context, time.Duration, *model.Server, []byte, string) ([]byte, error)
@@ -23,6 +23,16 @@ func removalHostCheckCommand(task *model.ClusterDeployment) string {
 test "$(cat /etc/machine-id)" = ` + shellEscape(task.NodeMachineID) + `
 test "$(systemctl show k3s -p LoadState --value)" = not-found
 test ! -d /var/lib/rancher/k3s/server/db
+`
+	if task.UninstallK3s && task.NodeStopped {
+		// A previous official uninstall may have finished before its checkpoint
+		// reached SQLite. Only accept a fully absent worker installation.
+		command += `if [ "$(systemctl show k3s-agent -p LoadState --value)" = not-found ] && [ ! -e /usr/local/bin/k3s-agent-uninstall.sh ] && [ ! -e /var/lib/rancher/k3s ] && [ ! -e /etc/rancher/k3s ] && [ ! -e /usr/local/bin/k3s ]; then
+` + removalNoContainersCommand + `exit 0
+fi
+`
+	}
+	command += `
 test "$(systemctl show k3s-agent -p LoadState --value)" = loaded
 command -v k3s >/dev/null
 # An active worker must expose K3s's private runtime; external CRI is unsupported.
@@ -36,6 +46,52 @@ case "$enabled" in disabled|masked) ;; *) exit 1 ;; esac
 `
 	}
 	return command
+}
+
+const removalNoContainersCommand = `processes=$(ps -eo args=)
+if printf '%s\n' "$processes" | awk '$1 ~ /(^|\/)containerd-shim/ && /\/run\/k3s\/containerd/ { found=1 } END { exit !found }'; then exit 1; fi
+`
+
+// Executed in one privileged shell: refuse active/enabled workers and control
+// planes even if the platform binding is stale.
+func removalHostUninstallCommand(task *model.ClusterDeployment) string {
+	return `set -eu
+test "$(cat /etc/machine-id)" = ` + shellEscape(task.NodeMachineID) + `
+test "$(systemctl show k3s -p LoadState --value)" = not-found
+test ! -e /var/lib/rancher/k3s/server
+test ! -e /usr/local/bin/k3s-uninstall.sh
+load=$(systemctl show k3s-agent -p LoadState --value || true)
+case "$load" in
+  loaded)
+    state=$(systemctl is-active k3s-agent || true)
+    case "$state" in inactive|failed) ;; *) exit 1 ;; esac
+    enabled=$(systemctl is-enabled k3s-agent || true)
+    case "$enabled" in disabled|masked) ;; *) exit 1 ;; esac
+    ;;
+  not-found) ;;
+  *) exit 1 ;;
+esac
+` + removalNoContainersCommand + `
+if [ -f /usr/local/bin/k3s-agent-uninstall.sh ]; then
+  /usr/local/bin/k3s-agent-uninstall.sh
+fi
+test "$(systemctl show k3s-agent -p LoadState --value)" = not-found
+test ! -e /usr/local/bin/k3s-agent-uninstall.sh
+test ! -e /usr/local/bin/k3s
+test ! -e /var/lib/rancher/k3s
+test ! -e /etc/rancher/k3s
+` + removalNoContainersCommand
+}
+
+func (h *sshNodeRemovalHost) Uninstall(ctx context.Context, server *model.Server, task *model.ClusterDeployment) error {
+	if !task.UninstallK3s || !task.NodeStopped || task.NodeMachineID == "" {
+		return fmt.Errorf("缺少显式卸载选择或安全停用记录，不能清理本地数据")
+	}
+	_, err := h.exec(ctx, 5*time.Minute, server, h.key, privilegedCommand(server, removalHostUninstallCommand(task)))
+	if err != nil {
+		return fmt.Errorf("卸载或结果核验失败；请核对 machine-id、K3s 服务及本地数据，已重新运行的节点不会被卸载")
+	}
+	return nil
 }
 
 func (h *sshNodeRemovalHost) Check(ctx context.Context, server *model.Server, task *model.ClusterDeployment) error {

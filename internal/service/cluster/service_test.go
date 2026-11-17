@@ -269,6 +269,30 @@ func TestServicePreservesServerBindingsWhenNodeLookupFails(t *testing.T) {
 	}
 }
 
+func TestServiceRetainsExplicitMembershipAfterNodeDisappears(t *testing.T) {
+	st, err := store.New(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	clusterID := uint(9)
+	server := &model.Server{Name: "worker", Host: "10.0.0.11", ClusterID: &clusterID, ClusterRole: "worker", K8sNodeName: "worker-a"}
+	if err := st.CreateServer(server); err != nil {
+		t.Fatal(err)
+	}
+	service := NewService(st, &fakeNodeAdapter{})
+	servers, err := service.ListServersContext(context.Background())
+	if err != nil || len(servers) != 1 {
+		t.Fatalf("list failed: %v %v", servers, err)
+	}
+	if servers[0].ClusterRole != "worker" || servers[0].K8sNodeName != "worker-a" || servers[0].ClusterID == nil {
+		t.Fatal("missing Node hid the removal retry entry")
+	}
+	stored, err := st.GetServer(server.ID)
+	if err != nil || stored.ClusterRole != "worker" || stored.K8sNodeName != "worker-a" {
+		t.Fatalf("membership was cleared: %#v %v", stored, err)
+	}
+}
+
 func TestServiceRunsServerInspectionThroughInjectedAdapter(t *testing.T) {
 	st, err := store.New(":memory:")
 	if err != nil {

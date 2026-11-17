@@ -63,6 +63,8 @@ func registerInfrastructureRoutes(apiGroup *gin.RouterGroup, catalog *clusterapi
 	servers.PUT("/:id", server.Update)
 	servers.DELETE("/:id", server.Delete)
 	servers.POST("/:id/unbind", server.Unbind)
+	servers.GET("/:id/k3s-cleanup", deployment.ServerK3sCleanupStatus)
+	servers.POST("/:id/k3s-cleanup", deployment.CleanupServerK3s)
 	servers.POST("/:id/probe", server.Probe)
 	servers.GET("/:id/speed-test/dependencies", server.SpeedDependencies)
 	servers.POST("/:id/speed-test/dependencies/install", server.InstallSpeedDependencies)

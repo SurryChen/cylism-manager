@@ -33,6 +33,11 @@ type clusterDeploymentStore interface {
 	FinishClusterNodeRemoval(*model.ClusterDeployment, bool) error
 	LatestClusterNodeRemoval(uint, uint) (*model.ClusterDeployment, error)
 	MarkClusterNodeRemovalStopped(uint) error
+	MarkClusterNodeUninstalled(uint) error
+	ServerK3sCleanupSource(uint) (*model.ClusterDeployment, error)
+	StartServerK3sCleanup(uint, uint) (*model.ClusterDeployment, error)
+	FinishServerK3sCleanup(*model.ClusterDeployment, bool) error
+	LatestServerK3sCleanup(uint) (*model.ClusterDeployment, error)
 	GetCluster(uint) (*model.Cluster, error)
 	GetServer(uint) (*model.Server, error)
 	ListServers() ([]model.Server, error)
@@ -76,13 +81,22 @@ func (h *DeploymentHandler) Uninstall(c *gin.Context) {
 		apiShared.BadRequest(c, "服务器 ID 无效")
 		return
 	}
+	server, err := h.store.GetServer(serverID)
+	if err != nil {
+		apiShared.NotFound(c, "服务器不存在")
+		return
+	}
+	if server.ClusterRole == "worker" {
+		apiShared.Conflict(c, "请使用移出集群，并按需选择同时卸载 K3s；工作节点不再支持直接卸载")
+		return
+	}
 	task, err := h.store.StartClusterUninstall(clusterID, serverID)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		apiShared.NotFound(c, "集群不存在")
 		return
 	}
 	if errors.Is(err, store.ErrClusterDeploymentConflict) {
-		apiShared.Conflict(c, "请先卸载工作节点，或等待当前任务结束；确认服务器属于该集群")
+		apiShared.Conflict(c, "请先移出工作节点，或等待当前任务结束；确认服务器属于该集群")
 		return
 	}
 	if err != nil {
@@ -835,15 +849,21 @@ func (h *DeploymentHandler) recordAudit(deployment *model.ClusterDeployment, out
 		action = "cluster.node_restart"
 	} else if deployment.Operation == "remove" {
 		action = "cluster.node_remove"
+	} else if deployment.Operation == "cleanup" {
+		action = "cluster.node_cleanup"
 	} else if strings.HasPrefix(deployment.Operation, "agent-") {
 		action = "cluster.agent"
 	}
+	resourceType, resourceID := "cluster", deployment.ClusterID
+	if deployment.Operation == "cleanup" {
+		resourceType, resourceID = "server", deployment.ServerID
+	}
 	return auditservice.NewService(h.store).Record(auditservice.AuditEventInput{
-		Action: action, ResourceType: "cluster", ResourceID: deployment.ClusterID,
+		Action: action, ResourceType: resourceType, ResourceID: resourceID,
 		Actor:  auditservice.Actor{Type: model.AuditActorSystem},
 		Source: model.AuditSourceAPI, Outcome: outcome, Summary: summary,
 		RequestID: requestID, OperationID: fmt.Sprintf("cluster-deployment-%d", deployment.ID),
-		Metadata: map[string]any{"deployment_id": deployment.ID, "server_id": deployment.ServerID, "role": deployment.Role, "mirror": deployment.Mirror, "operation": deployment.Operation},
+		Metadata: map[string]any{"deployment_id": deployment.ID, "server_id": deployment.ServerID, "role": deployment.Role, "mirror": deployment.Mirror, "operation": deployment.Operation, "uninstall_k3s": deployment.UninstallK3s},
 	})
 }
 

@@ -116,7 +116,7 @@ func TestNodeRemovalRoutesRequireAuthentication(t *testing.T) {
 		t.Fatal(err)
 	}
 	api.RegisterRoutes(router, container.BuildRouteDependencies())
-	for _, route := range []struct{ method, path string }{{"GET", "/api/clusters/1/nodes/2/removal-plan"}, {"POST", "/api/clusters/1/nodes/2/remove"}} {
+	for _, route := range []struct{ method, path string }{{"GET", "/api/clusters/1/nodes/2/removal-plan"}, {"POST", "/api/clusters/1/nodes/2/remove"}, {"GET", "/api/servers/2/k3s-cleanup"}, {"POST", "/api/servers/2/k3s-cleanup"}} {
 		response := httptest.NewRecorder()
 		router.ServeHTTP(response, httptest.NewRequest(route.method, route.path, nil))
 		if response.Code != http.StatusUnauthorized {

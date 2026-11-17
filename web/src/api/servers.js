@@ -4,6 +4,14 @@ export function getServers(options) {
   return api.get('/servers', options)
 }
 
+export function getServerK3sCleanup(serverID, options) {
+  return api.get(`/servers/${encodeURIComponent(serverID)}/k3s-cleanup`, options)
+}
+
+export function cleanupServerK3s(serverID, payload) {
+  return api.post(`/servers/${encodeURIComponent(serverID)}/k3s-cleanup`, payload)
+}
+
 export function getServerResourceStats(options) {
   return api.get('/servers/resource-stats', options)
 }

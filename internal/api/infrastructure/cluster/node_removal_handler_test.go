@@ -54,10 +54,16 @@ func (f *fakeRemovalClient) DeleteRemovalNodeContext(context.Context, string, st
 }
 
 type fakeRemovalHost struct {
-	client    *fakeRemovalClient
-	stopErr   error
-	checkErr  error
-	keepReady bool
+	client       *fakeRemovalClient
+	uninstallErr error
+	stopErr      error
+	checkErr     error
+	keepReady    bool
+}
+
+func (f *fakeRemovalHost) Uninstall(context.Context, *model.Server, *model.ClusterDeployment) error {
+	*f.client.events = append(*f.client.events, "uninstall")
+	return f.uninstallErr
 }
 
 func (f *fakeRemovalHost) Check(context.Context, *model.Server, *model.ClusterDeployment) error {

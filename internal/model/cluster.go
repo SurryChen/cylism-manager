@@ -19,22 +19,24 @@ type Cluster struct {
 
 // ClusterDeployment records a cluster operation and survives browser reloads.
 type ClusterDeployment struct {
-	NodeName      string    `gorm:"size:256" json:"node_name,omitempty"`
-	NodeUID       string    `gorm:"size:128" json:"node_uid,omitempty"`
-	NodeMachineID string    `gorm:"size:256" json:"-"`
-	NodePodCIDRs  string    `gorm:"type:text" json:"-"`
-	NodeStopped   bool      `gorm:"not null;default:false" json:"node_stopped,omitempty"`
-	ID            uint      `gorm:"primaryKey" json:"id"`
-	ClusterID     uint      `gorm:"index;not null" json:"cluster_id"`
-	ServerID      uint      `gorm:"index;not null" json:"server_id"`
-	Operation     string    `gorm:"size:32;not null;default:deploy" json:"operation"`
-	Role          string    `gorm:"size:32;not null" json:"role"`
-	Mirror        string    `gorm:"size:16;not null" json:"mirror"`
-	NetworkMode   string    `gorm:"size:16;not null;default:public" json:"network_mode"`
-	Address       string    `gorm:"size:256" json:"address,omitempty"`
-	Status        string    `gorm:"size:16;not null" json:"status"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	UninstallK3s    bool      `gorm:"not null;default:false" json:"uninstall_k3s"`
+	NodeUninstalled bool      `gorm:"not null;default:false" json:"node_uninstalled,omitempty"`
+	NodeName        string    `gorm:"size:256" json:"node_name,omitempty"`
+	NodeUID         string    `gorm:"size:128" json:"node_uid,omitempty"`
+	NodeMachineID   string    `gorm:"size:256" json:"-"`
+	NodePodCIDRs    string    `gorm:"type:text" json:"-"`
+	NodeStopped     bool      `gorm:"not null;default:false" json:"node_stopped,omitempty"`
+	ID              uint      `gorm:"primaryKey" json:"id"`
+	ClusterID       uint      `gorm:"index;not null" json:"cluster_id"`
+	ServerID        uint      `gorm:"index;not null" json:"server_id"`
+	Operation       string    `gorm:"size:32;not null;default:deploy" json:"operation"`
+	Role            string    `gorm:"size:32;not null" json:"role"`
+	Mirror          string    `gorm:"size:16;not null" json:"mirror"`
+	NetworkMode     string    `gorm:"size:16;not null;default:public" json:"network_mode"`
+	Address         string    `gorm:"size:256" json:"address,omitempty"`
+	Status          string    `gorm:"size:16;not null" json:"status"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
 }
 
 type ClusterDeploymentLog struct {

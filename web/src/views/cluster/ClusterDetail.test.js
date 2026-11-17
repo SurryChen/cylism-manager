@@ -375,24 +375,21 @@ describe('ClusterDetail', () => {
     wrapper.unmount()
   })
 
-  it('uninstalls workers before the control plane through a confirmed task', async () => {
+  it('keeps worker removal as the only exit and blocks control plane uninstall until workers leave', async () => {
     get.mockImplementation(path => {
       if (path === '/clusters/9') return Promise.resolve({ ...cluster, control_server_id: 3, status: 'ready' })
       if (path === '/servers') return Promise.resolve([
         { ...server, cluster_id: 9, cluster_role: 'control-plane' },
-        { id: 4, name: '工作节点', host: '10.0.0.4', cluster_id: 9, cluster_role: 'worker' },
+        { id: 4, name: '工作节点', host: '10.0.0.4', cluster_id: 9, cluster_role: 'worker', k8s_node_name: 'worker' },
       ])
       return Promise.resolve([])
     })
-    post.mockResolvedValueOnce({ id: 11, operation: 'uninstall', status: 'running' })
     const wrapper = await mountDetail()
     await flushPromises()
     expect(wrapper.get('[aria-label="卸载 节点一"]').attributes('disabled')).toBeDefined()
-    await wrapper.get('[aria-label="卸载 工作节点"]').trigger('click')
-    expect(wrapper.get('[role="dialog"]').text()).toContain('K3s 官方卸载脚本')
-    await wrapper.get('[role="dialog"] .btn-danger').trigger('click')
-    await flushPromises()
-    expect(post).toHaveBeenCalledWith('/clusters/9/nodes/4/uninstall')
+    expect(wrapper.find('[aria-label="卸载 工作节点"]').exists()).toBe(false)
+    expect(wrapper.get('[aria-label="移出 工作节点"]').classes()).toContain('icon-button')
+    expect(post).not.toHaveBeenCalled()
     wrapper.unmount()
   })
 
@@ -488,7 +485,7 @@ describe('ClusterDetail', () => {
     await wrapper.get('#removal-node-name').setValue('worker')
     await wrapper.get('[role="dialog"] .btn-danger').trigger('click')
     await flushPromises()
-    expect(post).toHaveBeenCalledWith('/clusters/9/nodes/4/remove', { confirm_node_name: 'worker', node_uid: 'uid-1', delete_empty_dir_data: false })
+    expect(post).toHaveBeenCalledWith('/clusters/9/nodes/4/remove', { confirm_node_name: 'worker', node_uid: 'uid-1', delete_empty_dir_data: false, uninstall_k3s: false })
     expect(wrapper.vm.$route.query.tab).toBe('tasks')
     expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
     wrapper.unmount()

@@ -105,6 +105,13 @@ func (s *Store) ListServers() ([]model.Server, error) {
 
 func (s *Store) UpdateServer(server *model.Server) error {
 	return s.db.Transaction(func(tx *gorm.DB) error {
+		var running int64
+		if err := tx.Model(&model.ClusterDeployment{}).Where("server_id = ? AND status = ? AND operation IN ?", server.ID, "running", []string{"remove", "cleanup"}).Count(&running).Error; err != nil {
+			return err
+		}
+		if running > 0 {
+			return ErrClusterDeploymentConflict
+		}
 		if server.ProxyServerID != nil {
 			var count int64
 			if err := tx.Model(&model.Server{}).Where("proxy_server_id = ?", server.ID).Count(&count).Error; err != nil {
@@ -114,7 +121,9 @@ func (s *Store) UpdateServer(server *model.Server) error {
 				return ErrServerProxyInUse
 			}
 		}
-		return tx.Omit("SSHProxy").Save(server).Error
+		// Cleanup state belongs to the task transaction, not a possibly stale
+		// server-edit form loaded before the task finished.
+		return tx.Omit("SSHProxy", "K3sRemovalTaskID").Save(server).Error
 	})
 }
 
@@ -130,6 +139,12 @@ func (s *Store) UnbindServersFromClusterNode(nodeName string) error {
 func (s *Store) DeleteServer(id uint) error {
 	return s.db.Transaction(func(tx *gorm.DB) error {
 		var count int64
+		if err := tx.Model(&model.ClusterDeployment{}).Where("server_id = ? AND status = ?", id, "running").Count(&count).Error; err != nil {
+			return err
+		}
+		if count > 0 {
+			return ErrClusterDeploymentConflict
+		}
 		if err := tx.Model(&model.Server{}).Where("proxy_server_id = ?", id).Count(&count).Error; err != nil {
 			return err
 		}

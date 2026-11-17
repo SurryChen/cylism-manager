@@ -305,7 +305,7 @@ func (s *Store) StartClusterDeployment(clusterID, serverID uint, role, mirror, a
 		if err := tx.First(&server, serverID).Error; err != nil {
 			return err
 		}
-		if server.ClusterID != nil || server.ClusterRole != "" || server.K8sNodeName != "" {
+		if server.ClusterID != nil || server.ClusterRole != "" || server.K8sNodeName != "" || server.K3sRemovalTaskID != nil {
 			return ErrClusterDeploymentConflict
 		}
 		var running int64
@@ -359,7 +359,7 @@ func (s *Store) StartClusterAdoption(clusterID, serverID uint, role, address str
 		if err := tx.First(&server, serverID).Error; err != nil {
 			return err
 		}
-		if server.ClusterID != nil || server.ClusterRole != "" || server.K8sNodeName != "" {
+		if server.ClusterID != nil || server.ClusterRole != "" || server.K8sNodeName != "" || server.K3sRemovalTaskID != nil {
 			return ErrClusterDeploymentConflict
 		}
 		var running int64
@@ -606,7 +606,11 @@ func (s *Store) RecoverInterruptedClusterDeployments() error {
 				}
 				continue
 			}
-			if task.Operation == "uninstall" {
+			if task.Operation == "uninstall" || task.Operation == "cleanup" {
+				action, resourceType, resourceID := "cluster.uninstall", "cluster", task.ClusterID
+				if task.Operation == "cleanup" {
+					action, resourceType, resourceID = "cluster.node_cleanup", "server", task.ServerID
+				}
 				if err := tx.Model(&model.ClusterDeployment{}).Where("id = ?", task.ID).Update("status", "failed").Error; err != nil {
 					return err
 				}
@@ -614,7 +618,7 @@ func (s *Store) RecoverInterruptedClusterDeployments() error {
 					return err
 				}
 				if err := tx.Create(&model.AuditLog{
-					Action: "cluster.uninstall", ResourceType: "cluster", ResourceID: task.ClusterID,
+					Action: action, ResourceType: resourceType, ResourceID: resourceID,
 					ActorType: model.AuditActorSystem, Source: model.AuditSourceSystem, Outcome: model.AuditOutcomeFailed,
 					Summary:     "API 服务重启，节点卸载任务已中断",
 					OperationID: fmt.Sprintf("cluster-deployment-%d", task.ID),

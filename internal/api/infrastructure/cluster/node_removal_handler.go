@@ -29,14 +29,16 @@ type NodeRemovalClient interface {
 type NodeRemovalHost interface {
 	Check(context.Context, *model.Server, *model.ClusterDeployment) error
 	Stop(context.Context, *model.Server, *model.ClusterDeployment) error
+	Uninstall(context.Context, *model.Server, *model.ClusterDeployment) error
 }
 
 type nodeRemovalPlan struct {
-	NodeName    string         `json:"node_name"`
-	NodeUID     string         `json:"node_uid"`
-	NodeMissing bool           `json:"node_missing"`
-	CanStart    bool           `json:"can_start"`
-	Drain       *k8s.DrainPlan `json:"drain"`
+	NodeName        string         `json:"node_name"`
+	NodeUID         string         `json:"node_uid"`
+	NodeMissing     bool           `json:"node_missing"`
+	NodeUninstalled bool           `json:"node_uninstalled"`
+	CanStart        bool           `json:"can_start"`
+	Drain           *k8s.DrainPlan `json:"drain"`
 }
 
 func (h *DeploymentHandler) WithNodeRemovalClientFactory(factory func(context.Context, uint) (NodeRemovalClient, error)) *DeploymentHandler {
@@ -111,7 +113,7 @@ func (h *DeploymentHandler) prepareRemoval(ctx context.Context, clusterID uint, 
 		if previous == nil || previous.Status != "failed" || !previous.NodeStopped || previous.NodeName != server.K8sNodeName || previous.NodeUID == "" || previous.NodeMachineID == "" {
 			return nil, nil, fmt.Errorf("集群中未找到节点，且没有可恢复的移出任务；请先核对服务器绑定")
 		}
-		return &nodeRemovalPlan{NodeName: previous.NodeName, NodeUID: previous.NodeUID, NodeMissing: true, CanStart: true}, previous, nil
+		return &nodeRemovalPlan{NodeName: previous.NodeName, NodeUID: previous.NodeUID, NodeMissing: true, NodeUninstalled: previous.NodeUninstalled, CanStart: true}, previous, nil
 	}
 	if err != nil {
 		return nil, nil, fmt.Errorf("读取 Kubernetes 节点失败")
@@ -158,6 +160,7 @@ func (h *DeploymentHandler) RemoveNode(c *gin.Context) {
 		ConfirmNodeName    string `json:"confirm_node_name"`
 		NodeUID            string `json:"node_uid"`
 		DeleteEmptyDirData bool   `json:"delete_empty_dir_data"`
+		UninstallK3s       bool   `json:"uninstall_k3s"`
 	}
 	if c.ShouldBindJSON(&request) != nil || request.ConfirmNodeName != server.K8sNodeName || request.NodeUID == "" {
 		apiShared.BadRequest(c, "请先检查节点并输入完整节点名确认")
@@ -182,6 +185,11 @@ func (h *DeploymentHandler) RemoveNode(c *gin.Context) {
 		apiShared.BadRequest(c, "请确认允许丢弃 emptyDir 临时数据")
 		return
 	}
+	if identity.NodeUninstalled && !request.UninstallK3s {
+		apiShared.Conflict(c, "上次任务已卸载 K3s，请保留清理选项以完成移出")
+		return
+	}
+	identity.UninstallK3s = request.UninstallK3s
 	task, err := h.store.StartClusterNodeRemoval(cluster.ID, server.ID, identity)
 	if errors.Is(err, store.ErrClusterDeploymentConflict) || errors.Is(err, gorm.ErrRecordNotFound) {
 		apiShared.Conflict(c, "无法创建移出任务，请确认节点归属并等待其他任务结束")
@@ -195,7 +203,7 @@ func (h *DeploymentHandler) RemoveNode(c *gin.Context) {
 		Action: "cluster.node_remove", ResourceType: "cluster", ResourceID: cluster.ID,
 		Actor: apiShared.ActorFromContext(c), Source: model.AuditSourceAPI, Outcome: model.AuditOutcomeAccepted,
 		Summary: "工作节点移出任务已创建", RequestID: apiShared.EnsureRequestID(c), OperationID: fmt.Sprintf("cluster-deployment-%d", task.ID),
-		Metadata: map[string]any{"server_id": server.ID, "node_name": task.NodeName, "delete_empty_dir_data": request.DeleteEmptyDirData},
+		Metadata: map[string]any{"server_id": server.ID, "node_name": task.NodeName, "delete_empty_dir_data": request.DeleteEmptyDirData, "uninstall_k3s": request.UninstallK3s},
 	})
 	if err != nil {
 		_ = h.store.FinishClusterNodeRemoval(task, false)
@@ -214,6 +222,9 @@ func (h *DeploymentHandler) runNodeRemoval(task *model.ClusterDeployment, option
 	defer cancel()
 	log := func(message string) { _ = h.store.AppendClusterDeploymentLog(task.ID, security.Redact(message)) }
 	err := h.removeWorker(ctx, task, options, log)
+	if err == nil && task.UninstallK3s {
+		err = h.uninstallRemovedWorker(ctx, task, log)
+	}
 	if err == nil {
 		err = h.store.FinishClusterNodeRemoval(task, true)
 	}
@@ -223,7 +234,11 @@ func (h *DeploymentHandler) runNodeRemoval(task *model.ClusterDeployment, option
 		_ = h.recordAudit(task, model.AuditOutcomeFailed, "工作节点移出失败", "")
 		return
 	}
-	log("工作节点已移出集群；本地 K3s 数据和服务器 SSH 记录已保留")
+	if task.UninstallK3s {
+		log("工作节点已安全移出并卸载 K3s；本地集群数据已清理，服务器 SSH 记录保留")
+	} else {
+		log("工作节点已移出集群；本地 K3s 数据保留，可从服务器管理继续卸载")
+	}
 	_ = h.recordAudit(task, model.AuditOutcomeSucceeded, "工作节点移出成功", "")
 }
 

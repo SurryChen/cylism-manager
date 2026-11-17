@@ -7,6 +7,7 @@ import {
   deleteServer,
   getServerResourceStats,
   getServers,
+  getServerK3sCleanup,
   getServerStats,
   getSingBoxStatus,
   probeServer,
@@ -17,6 +18,8 @@ import {
 
 vi.mock('../../api/servers.js', () => ({
   createServer: vi.fn(),
+  getServerK3sCleanup: vi.fn(),
+  cleanupServerK3s: vi.fn(),
   deleteServer: vi.fn(),
   getServerResourceStats: vi.fn(),
   getServers: vi.fn(),
@@ -67,6 +70,21 @@ beforeEach(() => {
 })
 
 describe('Servers view', () => {
+  it('offers later K3s cleanup only for an unbound server with a removal record', async () => {
+    getServers.mockResolvedValue([
+      { ...servers()[0], k3s_removal_task_id: 10 },
+      { ...servers()[1], cluster_id: 9, k3s_removal_task_id: 11 },
+    ])
+    getServerK3sCleanup.mockResolvedValue({ source: { id: 10, node_name: 'worker' }, task: null, logs: [] })
+    const wrapper = mount(Servers, { global: { stubs: { RouterLink: true } } })
+    await flush()
+    expect(wrapper.find('[aria-label="卸载 cluster-srv 保留的 K3s"]').exists()).toBe(false)
+    await wrapper.get('[aria-label="卸载 test-srv 保留的 K3s"]').trigger('click')
+    await flush()
+    expect(getServerK3sCleanup).toHaveBeenCalledWith(1, expect.objectContaining({ signal: expect.any(AbortSignal) }))
+    expect(wrapper.get('[role="dialog"]').text()).toContain('卸载保留的 K3s')
+    wrapper.unmount()
+  })
   it('renders the server registry sections', () => {
     const wrapper = mount(Servers, { global: { stubs: { RouterLink: true } } })
     expect(wrapper.text()).toContain('服务器')

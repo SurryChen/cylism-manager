@@ -299,6 +299,7 @@ GET /api/runtimes/:id/chat/sessions/:sid/messages
 GET /api/runtimes/catalog
 GET /api/servers
 GET /api/servers/:id
+GET /api/servers/:id/k3s-cleanup
 GET /api/servers/:id/sing-box
 GET /api/servers/:id/speed-test/dependencies
 GET /api/servers/:id/stats
@@ -512,6 +513,7 @@ POST /api/runtimes/:id/health-check
 POST /api/runtimes/:id/uninstall
 POST /api/servers
 POST /api/servers/:id/hostname
+POST /api/servers/:id/k3s-cleanup
 POST /api/servers/:id/precheck
 POST /api/servers/:id/probe
 POST /api/servers/:id/sing-box/import
