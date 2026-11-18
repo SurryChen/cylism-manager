@@ -210,8 +210,13 @@ GET /api/integrations/applications/:id/configmaps
 GET /api/integrations/applications/:id/configmaps/:configMapID
 GET /api/integrations/applications/:id/hysteria/config
 GET /api/integrations/applications/:id/hysteria/users/:username/credential
+GET /api/integrations/applications/:id/pods
+GET /api/integrations/applications/:id/pods/:pod/logs
+GET /api/integrations/applications/:id/releases
 GET /api/integrations/applications/:id/releases/:releaseID
 GET /api/integrations/applications/:id/runtime
+GET /api/integrations/applications/:id/vless/config
+GET /api/integrations/applications/:id/vless/users/:username/credential
 GET /api/integrations/applications/discovery
 GET /api/k8s/configmaps
 GET /api/k8s/configmaps/:namespace/:name
@@ -572,6 +577,7 @@ PUT /api/domains/:id
 PUT /api/image-registries/:id
 PUT /api/integrations/applications/:id/configmaps/:configMapID
 PUT /api/integrations/applications/:id/hysteria/users/:username
+PUT /api/integrations/applications/:id/vless/users/:username
 PUT /api/k8s/configmaps/:namespace/:name
 PUT /api/k8s/secrets/:namespace/:name
 PUT /api/k8s/services/:namespace/:name
