@@ -106,7 +106,7 @@ func (c *Container) BuildRouteDependencies() api.RouteDependencies {
 	})
 	// Integration delegations are verified by the route middleware with JWTSecret;
 	// keep the handler's signing key aligned with that verifier.
-	applicationHandler := applicationapi.NewApplicationHandlerWithDependencies(c.Store, c.Services.ApplicationQuery, key, applicationapi.NewKubernetesAdapter(c.K8s)).WithClusterClientFactory(agentFactory.Client).WithDelegationSecret(c.Auth.JWTSecret).WithAudit(c.Store)
+	applicationHandler := applicationapi.NewApplicationHandlerWithDependencies(c.Store, c.Services.ApplicationQuery, key, applicationapi.NewKubernetesAdapter(c.K8s)).WithClusterClientFactory(agentFactory.Client).WithServerAddressReader(c.Store).WithDelegationSecret(c.Auth.JWTSecret).WithAudit(c.Store)
 	image := deliveryapi.NewImageRegistryHandler(c.Store, key)
 	cloudResources := cloudservice.NewService(c.Store, key, cloudservice.ProviderRegistry{"aliyun": aliyunprovider.NewProvider})
 	cloud := cloudapi.NewHandler(cloudResources, c.Store)

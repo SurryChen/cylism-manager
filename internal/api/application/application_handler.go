@@ -22,6 +22,10 @@ type NamespaceClient interface {
 	CreateNamespace(context.Context, *corev1.Namespace) (*corev1.Namespace, error)
 }
 
+type applicationServerAddressReader interface {
+	ListServers() ([]model.Server, error)
+}
+
 type ApplicationHandler struct {
 	resources        applicationResourceRepository
 	applications     applicationManagementRepository
@@ -31,6 +35,7 @@ type ApplicationHandler struct {
 	delegationSecret []byte
 	kubernetes       KubernetesAdapter
 	clusterClient    func(context.Context, uint) (*k8s.Client, error)
+	serverAddresses  applicationServerAddressReader
 	workflow         *applicationservice.ReleaseService
 	workloads        *applicationservice.WorkloadService
 	audit            auditservice.Repository
@@ -101,6 +106,11 @@ type ApplicationHandlerDependencies interface {
 	applicationResourceRepository
 	applicationManagementRepository
 	repository.IntegrationSessionRepository
+}
+
+func (h *ApplicationHandler) WithServerAddressReader(reader applicationServerAddressReader) *ApplicationHandler {
+	h.serverAddresses = reader
+	return h
 }
 
 func (h *ApplicationHandler) WithDelegationSecret(secret []byte) *ApplicationHandler {
