@@ -60,3 +60,45 @@ func TestResourceListPageFiltersBeforePaginationAndKeepsFacets(t *testing.T) {
 		t.Fatalf("legacy array response: %s %v", w.Body.String(), err)
 	}
 }
+
+func TestListPageBoundsAndLegacyContract(t *testing.T) {
+	items := make([]int, 25)
+	for i := range items {
+		items[i] = i + 1
+	}
+	for _, tc := range []struct {
+		query                       string
+		count, first, limit, offset int
+	}{
+		{"limit=10&offset=20", 5, 21, 10, 20},
+		{"offset=10", 10, 11, 10, 10},
+		{"limit=1000&offset=-1", 25, 1, 100, 0},
+		{"limit=10&offset=99", 0, 0, 10, 99},
+	} {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest("GET", "/?"+tc.query, nil)
+		ListPage(c, items)
+		var response struct {
+			Data struct {
+				Items                []int
+				Total, Limit, Offset int
+			}
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+			t.Fatal(err)
+		}
+		d := response.Data
+		if d.Items == nil || len(d.Items) != tc.count || d.Total != 25 || d.Limit != tc.limit || d.Offset != tc.offset || (tc.count > 0 && d.Items[0] != tc.first) {
+			t.Fatalf("%s: %s", tc.query, w.Body.String())
+		}
+	}
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest("GET", "/", nil)
+	ListPage(c, items)
+	var legacy struct{ Data []int }
+	if err := json.Unmarshal(w.Body.Bytes(), &legacy); err != nil || len(legacy.Data) != 25 {
+		t.Fatalf("legacy response: %s", w.Body.String())
+	}
+}

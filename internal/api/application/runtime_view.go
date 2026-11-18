@@ -203,6 +203,10 @@ func (h *ApplicationHandler) WorkspaceOverview(c *gin.Context) {
 		apiShared.DBError(c, err.Error())
 		return
 	}
+	if apiShared.PaginationRequested(c) {
+		h.workspaceApplicationPage(c, environment.Namespace, applications)
+		return
+	}
 	domains, err := h.resources.ListManagedDomains(environmentID)
 	if err != nil {
 		apiShared.DBError(c, err.Error())

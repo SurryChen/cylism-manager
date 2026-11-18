@@ -22,3 +22,7 @@ export function inspectActualNodeRegistryConfiguration(payload, options) {
 export function syncNodeRegistryConfiguration(payload, options) { return post('/node-registry-mirrors/sync-actual-config', payload, options) }
 export function updateNodeRegistryConfiguration(payload, options) { return put('/node-registry-mirrors/actual-config', payload, options) }
 export function restartNodeK3sService(id, options) { return post(`/node-registry-mirrors/nodes/${encodeURIComponent(id)}/restart-k3s`, undefined, options) }
+
+export function inspectActualNodeRegistryConfigurationPage(payload, query, options) {
+  return post('/node-registry-mirrors/inspect-actual-config?' + new URLSearchParams(query), payload, options)
+}

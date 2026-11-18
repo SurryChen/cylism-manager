@@ -6,13 +6,15 @@ import ProductCenter from './ProductCenter.vue'
 import ProductDetail from './ProductDetail.vue'
 import ProductEditor from './ProductEditor.vue'
 
-const mocks = vi.hoisted(() => ({ list: vi.fn(), page: vi.fn(), get: vi.fn(), options: vi.fn(), create: vi.fn(), update: vi.fn(), push: vi.fn() }))
+const mocks = vi.hoisted(() => ({ list: vi.fn(), page: vi.fn(), get: vi.fn(), options: vi.fn(), create: vi.fn(), update: vi.fn(), push: vi.fn(), replace: vi.fn(), workbench: vi.fn() }))
 vi.mock('../../api/products.js', () => ({ getProducts: mocks.list, getProductPage: mocks.page, getProduct: mocks.get, getProductResourceOptions: mocks.options, createProduct: mocks.create, updateProduct: mocks.update }))
-vi.mock('vue-router', () => ({ useRoute: () => ({ params: { id: '7' } }), useRouter: () => ({ push: mocks.push }) }))
+vi.mock('../../api/product-lifecycle.js', () => ({ getProductWorkbench: mocks.workbench }))
+vi.mock('vue-router', () => ({ useRoute: () => ({ params: { id: '7' } }), useRouter: () => ({ push: mocks.push, replace: mocks.replace }) }))
 const mountPage = component => mount(component, { global: { stubs: { RouterLink: { template: '<a><slot /></a>' }, Teleport: true } } })
 beforeEach(() => {
   vi.clearAllMocks()
   mocks.list.mockResolvedValue([])
+  mocks.workbench.mockImplementation(async () => ({ products: await mocks.list(), tasks: [], versions: [], distributions: [] }))
   mocks.page.mockResolvedValue({ items: [], total: 0 })
   mocks.options.mockResolvedValue({ projects: [], applications: [] })
   mocks.get.mockResolvedValue({ id: 7, name: '离线工具', stage: 'developing', channels: [{ id: 1, platform: 'google_play', publish_status: 'in_review', online_version: '1.0' }], projects: [{ id: 2, name: 'backend' }], applications: [] })
@@ -82,6 +84,7 @@ describe('personal products workflows', () => {
     const page = mountPage(ProductDetail)
     await flushPromises()
     await page.findAll('.section-tab').find(button => button.text() === '发行渠道').trigger('click')
+    expect(mocks.replace).toHaveBeenCalledWith({ query: { tab: 'channels' } })
     await page.findAll('button').find(button => button.text() === '管理渠道').trigger('click')
     await flushPromises()
     const editor = page.getComponent(ProductEditor)

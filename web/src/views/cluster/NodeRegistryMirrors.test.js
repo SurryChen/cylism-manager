@@ -10,7 +10,7 @@ describe('Node registry mirrors view', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     api.get.mockResolvedValue([{ id: 11, name: 'node-a', host: '10.0.0.11', cluster_id: 3, cluster_role: 'worker' }])
-    api.post.mockResolvedValue({ inspected_at: '2026-10-04T00:00:00Z', nodes: [{ server_id: 11, name: 'node-a', state: 'matching', config_md5: 'abc123', actual: [{ registry: 'docker.io', endpoints: ['https://mirror.example.com'], auth_configured: true, auth_username: 'robot', insecure_skip_verify: false }] }] })
+    mockInspection({ inspected_at: '2026-10-04T00:00:00Z', nodes: [{ server_id: 11, name: 'node-a', state: 'matching', config_md5: 'abc123', actual: [{ registry: 'docker.io', endpoints: ['https://mirror.example.com'], auth_configured: true, auth_username: 'robot', insecure_skip_verify: false }] }] })
     api.put.mockResolvedValue({ results: [{ server_id: 11, status: 'success' }] })
   })
 
@@ -24,7 +24,7 @@ describe('Node registry mirrors view', () => {
     expect(wrapper.get('.node-registry-table').text()).not.toContain('个 Registry')
     expect(wrapper.text()).toContain('保存后会重启对应节点的 K3s 服务')
     expect(wrapper.get('.config-md5').text()).toBe('abc123')
-    expect(api.post).toHaveBeenCalledWith('/node-registry-mirrors/inspect-actual-config', { cluster_id: 3 })
+    expect(api.post).toHaveBeenCalledWith('/node-registry-mirrors/inspect-actual-config?cluster_id=3&limit=10&offset=0', { cluster_id: 3 }, expect.objectContaining({ signal: expect.any(AbortSignal) }))
     expect(wrapper.text()).not.toContain('管理 Registry Proxy')
     expect(wrapper.text()).not.toContain('查看节点配置')
     await wrapper.get('.row-actions .btn').trigger('click')
@@ -39,7 +39,7 @@ describe('Node registry mirrors view', () => {
       { id: 11, name: 'node-a', host: '10.0.0.11', cluster_id: 3, cluster_role: 'worker' },
       { id: 12, name: 'node-b', host: '10.0.0.12', cluster_id: 3, cluster_role: 'worker' },
     ])
-    api.post.mockResolvedValue({ nodes: [
+    mockInspection({ nodes: [
       { server_id: 11, name: 'node-a', state: 'matching', config_md5: 'same', actual: [{ registry: 'docker.io', endpoints: ['https://old.example.com'] }] },
       { server_id: 12, name: 'node-b', state: 'matching', config_md5: 'same', actual: [{ registry: 'docker.io', endpoints: ['https://old.example.com'] }] },
     ] })
@@ -65,7 +65,7 @@ describe('Node registry mirrors view', () => {
       { id: 11, name: 'node-a', host: '10.0.0.11', cluster_id: 3, cluster_role: 'control-plane' },
       { id: 12, name: 'node-b', host: '10.0.0.12', cluster_id: 3, cluster_role: 'worker' },
     ])
-    api.post.mockResolvedValue({ nodes: [{ server_id: 11, name: 'node-a', state: 'matching', config_md5: 'a', actual: [] }, { server_id: 12, name: 'node-b', state: 'drifted', config_md5: 'b', actual: [] }] })
+    mockInspection({ nodes: [{ server_id: 11, name: 'node-a', state: 'matching', config_md5: 'a', actual: [] }, { server_id: 12, name: 'node-b', state: 'drifted', config_md5: 'b', actual: [] }] })
     const wrapper = mount(NodeRegistryMirrors, { props: { clusterId: 3 }, global: { stubs: { Teleport: true } } })
     await flushPromises()
     await wrapper.findAll('.row-actions .btn-primary')[0].trigger('click')
@@ -81,7 +81,7 @@ describe('Node registry mirrors view', () => {
       { id: 11, name: 'node-a', host: '10.0.0.11', cluster_id: 3, cluster_role: 'worker' },
       { id: 12, name: 'node-b', host: '10.0.0.12', cluster_id: 3, cluster_role: 'worker' },
     ])
-    api.post.mockResolvedValue({ nodes: [
+    mockInspection({ nodes: [
       { server_id: 11, name: 'node-a', state: 'drifted', config_md5: 'same', actual: [
         { registry: 'docker.io', endpoints: ['https://docker.example.com'] },
         { registry: 'ghcr.io', endpoints: ['https://ghcr.example.com'] },
@@ -112,7 +112,7 @@ describe('Node registry mirrors view', () => {
       { registry: 'docker.io', endpoints: ['https://docker.example.com'] },
       { registry: 'ghcr.io', endpoints: ['http://old.example.com'], auth_configured: true, auth_username: 'robot' },
     ]
-    api.post.mockResolvedValue({ nodes: [
+    mockInspection({ nodes: [
       { server_id: 11, name: 'node-a', state: 'matching', config_md5: 'same', actual: original },
       { server_id: 12, name: 'node-b', state: 'matching', config_md5: 'same', actual: original },
     ] })
@@ -142,7 +142,7 @@ describe('Node registry mirrors view', () => {
 
   it('keeps the editor open when a node rejects the imported configuration', async () => {
     api.get.mockImplementation(path => Promise.resolve(path === '/registry-proxies' ? [{ id: 21, cluster_id: 3, name: 'GHCR Proxy', registry: 'ghcr.io', endpoint_host: '100.76.53.48', node_port: 30501, status: 'ready' }] : path === '/registry-proxies/21/relays' ? [] : [{ id: 11, name: 'node-a', cluster_id: 3, cluster_role: 'worker' }]))
-    api.post.mockResolvedValue({ nodes: [{ server_id: 11, name: 'node-a', state: 'matching', config_md5: 'same', actual: [] }] })
+    mockInspection({ nodes: [{ server_id: 11, name: 'node-a', state: 'matching', config_md5: 'same', actual: [] }] })
     api.put.mockResolvedValue({ results: [{ server_id: 11, status: 'failed', detail: 'K3s 重启失败' }] })
     const wrapper = mount(NodeRegistryMirrors, { props: { clusterId: 3 }, global: { stubs: { Teleport: true } } })
     await flushPromises()
@@ -156,3 +156,12 @@ describe('Node registry mirrors view', () => {
     wrapper.unmount()
   })
 })
+
+function mockInspection(inspection) {
+  api.post.mockImplementation(path => {
+    const query = new URL(path, 'http://localhost').searchParams
+    const nodes = inspection.nodes || []
+    const offset = Number(query.get('offset')) || 0, limit = Number(query.get('limit')) || 10
+    return Promise.resolve({ ...inspection, items: nodes.slice(offset, offset + limit), total: nodes.length, limit, offset })
+  })
+}

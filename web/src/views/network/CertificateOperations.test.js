@@ -92,3 +92,15 @@ describe('CertificateOperations view', () => {
     expect(requestOptions.signal.aborted).toBe(true)
   })
 })
+
+vi.mock('../../api/list-pages.js', async importOriginal => {
+  const original = await importOriginal()
+  const { api } = await import('../../api/index.js')
+  const { listPageFixture } = await import('../../test-support/list-page-fixture.js')
+  return { ...original, getListPage: async (path, query, options) => {
+    const filters = new URLSearchParams()
+    for (const key of ['environment_id', 'unassigned']) if (query[key]) filters.set(key, query[key])
+    const url = path + (filters.size ? '?' + filters : '')
+    return listPageFixture(await api.get(url, options), query)
+  } }
+})

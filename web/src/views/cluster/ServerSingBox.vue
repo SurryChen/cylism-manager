@@ -6,7 +6,7 @@
     </div>
     <EmptyState v-if="!servers.length" message="暂无服务器" />
     <div v-else class="table-wrap sing-box-table-wrap"><table class="data-table"><thead><tr><th>服务器</th><th>主机</th><th>sing-box</th><th>配置</th><th>运行状态</th><th class="action-cell">操作</th></tr></thead><tbody>
-      <tr v-for="server in servers" :key="server.id">
+      <tr v-for="server in serverRows" :key="server.id">
         <td>{{ server.name }}</td><td>{{ server.host }}</td>
         <td :title="statusFor(server.id)?.error || undefined">{{ pendingIDs.has(server.id) ? '检测中' : statusFor(server.id)?.error ? '检测失败' : statusFor(server.id)?.installed ? statusFor(server.id)?.version || '已安装' : '未安装' }}</td>
         <td>{{ statusFor(server.id)?.configured ? '已导入' : '-' }}</td>
@@ -14,7 +14,8 @@
         <td class="action-cell"><button class="icon-button icon-button--table" type="button" :title="`管理 ${server.name} 的代理`" :aria-label="`管理 ${server.name} 的代理`" @click="openManage(server)"><Settings2 :size="15" /></button></td>
       </tr>
     </tbody></table></div>
-  </SurfaceCard>
+  <ResourcePagination :resource="serverPage" label="服务器分页" />
+    </SurfaceCard>
 
   <BaseModal :open="Boolean(selectedServer)" :title="`代理 · ${selectedServer?.name || ''}`" teleport :show-close="!working" :close-on-overlay="!working" :close-on-escape="!working" @close="closeManage">
     <div class="sing-box-details">
@@ -48,6 +49,8 @@
 </template>
 
 <script setup>
+import ResourcePagination from '../../components/ResourcePagination.vue'
+import { useListPage } from '../../composables/useListPage.js'
 import { computed, ref, watch } from 'vue'
 import { Eye, EyeOff, RefreshCw, Settings2 } from 'lucide-vue-next'
 import { getSingBoxStatus, importSingBoxConfig, installSingBox, startSingBox, stopSingBox } from '../../api/servers.js'
@@ -79,6 +82,8 @@ const egressOptions = computed(() => [
 ])
 let generation = 0
 
+const serverRows = ref([]), pageError = ref('')
+const serverPage = useListPage('/servers', serverRows, pageError)
 function statusFor(id) { return statuses.value.get(id) }
 
 async function refreshOne(server, currentGeneration = generation) {
@@ -142,6 +147,7 @@ async function operate(action) {
 }
 
 watch(() => props.servers.map(server => server.id).join(','), () => { void refreshAll() }, { immediate: true })
+watch(() => props.servers.map(server => server.id).join(','), () => { void serverPage.refresh({ server_ids: props.servers.map(server => server.id).join(',') || 'none' }).catch(() => undefined) }, { immediate: true })
 </script>
 
 <style scoped>

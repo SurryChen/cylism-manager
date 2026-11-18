@@ -2,9 +2,10 @@
   <section class="proxy-workspace" data-testid="registry-proxy-workspace">
     <p v-if="error" class="form-error" role="alert">{{ error }}</p>
     <div v-if="loading" class="empty-state">正在读取 Registry Proxy...</div>
-    <SurfaceCard v-else-if="proxies.length" padding="none" class="proxy-list-card">
-      <div class="proxy-list-toolbar"><span class="proxy-list-count">{{ visibleProxies.length }} 个代理</span><SelectMenu v-model="selectedCluster" aria-label="筛选集群" class="form-select proxy-cluster-filter"><option value="all">全部集群</option><option value="0">当前平台集群</option><option v-for="cluster in clusters" :key="cluster.id" :value="String(cluster.id)">{{ cluster.name }}</option></SelectMenu><button class="btn" data-testid="import-registry-proxy" @click="openImport">纳管已有代理</button><button class="btn btn-primary" data-testid="create-registry-proxy" @click="openProxy()">部署代理</button></div>
+    <SurfaceCard v-else-if="proxies.length || selectedCluster !== 'all'" padding="none" class="proxy-list-card">
+      <div class="proxy-list-toolbar"><span class="proxy-list-count">{{ listPage.total.value }} 个代理</span><SelectMenu v-model="selectedCluster" aria-label="筛选集群" class="form-select proxy-cluster-filter"><option value="all">全部集群</option><option value="0">当前平台集群</option><option v-for="cluster in clusters" :key="cluster.id" :value="String(cluster.id)">{{ cluster.name }}</option></SelectMenu><button class="btn" data-testid="import-registry-proxy" @click="openImport">纳管已有代理</button><button class="btn btn-primary" data-testid="create-registry-proxy" @click="openProxy()">部署代理</button></div>
       <div class="table-wrap proxy-table-wrap"><table class="data-table proxy-table"><colgroup><col class="proxy-name-column" /><col class="proxy-registry-column" /><col class="proxy-upstream-column" /><col class="proxy-endpoint-column" /><col class="proxy-node-column" /><col class="proxy-cache-column" /><col class="proxy-status-column" /><col class="proxy-connectivity-column" /><col class="proxy-actions-column" /></colgroup><thead><tr><th>代理名称</th><th>Registry</th><th>上游</th><th>节点入口</th><th>部署节点</th><th>缓存策略</th><th>状态</th><th>连通性</th><th class="action-cell">操作</th></tr></thead><tbody><tr v-for="item in visibleProxies" :key="item.id"><td class="cell-primary"><OverflowTooltip class="proxy-cell-truncate" :text="item.name" /><span class="cell-secondary">{{ clusterName(item.cluster_id) }} · {{ item.management_mode === 'observe' ? '观察中' : '平台管理' }}</span></td><td><OverflowTooltip class="proxy-cell-truncate proxy-code-cell" :text="item.registry" /></td><td><OverflowTooltip class="proxy-cell-truncate" :text="item.upstream_url || '-'" /></td><td><OverflowTooltip class="proxy-cell-truncate proxy-code-cell" :text="endpoint(item)" /></td><td><OverflowTooltip class="proxy-cell-truncate" :text="item.node_name" /></td><td>{{ item.cache_limit_gi }} Gi · {{ item.cleanup_interval_hours }} 小时</td><td><span class="badge" :class="statusClass(item.status)" :title="item.last_error || proxyStatusLabel(item.status)">{{ proxyStatusLabel(item.status) }}</span></td><td><span class="badge proxy-connectivity" :class="diagnosticClass(item.last_diagnostic_status)" :title="diagnosticDetail(item)">{{ diagnosticStatusLabel(item.last_diagnostic_status) }}</span></td><td class="action-cell"><div class="proxy-row-actions"><button class="btn btn-sm" :data-testid="`registry-proxy-relays-${item.id}`" @click="openRelays(item)">中转服务</button><button v-if="isLegacyDockerHubProxy(item) && item.management_mode !== 'observe'" class="btn btn-sm" :disabled="migratingID === item.id" :data-testid="`migrate-registry-proxy-${item.id}`" @click="migrationTarget = item">{{ migratingID === item.id ? '迁移中...' : '迁移' }}</button><button class="btn btn-sm" :disabled="diagnosingID === item.id" @click="diagnoseProxy(item)">{{ diagnosingID === item.id ? '诊断中...' : '诊断' }}</button><template v-if="item.management_mode === 'observe'"><button class="btn btn-sm" :data-testid="`take-over-registry-proxy-${item.id}`" @click="takeOverTarget = item">接管</button><button class="btn btn-sm" :data-testid="`remove-registry-proxy-observation-${item.id}`" @click="removeTarget = item">取消纳管</button></template><template v-else><button class="btn btn-sm" :data-testid="`edit-registry-proxy-${item.id}`" @click="openProxy(item)">配置</button><button class="btn btn-sm btn-danger" :disabled="cleaningID === item.id" @click="cleanupProxy(item)">{{ cleaningID === item.id ? '清理中...' : '清理缓存' }}</button></template></div></td></tr></tbody></table></div>
+    <ResourcePagination :resource="listPage" label="镜像代理分页" />
     </SurfaceCard>
     <SurfaceCard v-else class="proxy-empty"><EmptyState message="尚未部署 Registry Proxy。可为 docker.io、registry.k8s.io 等需要加速的上游分别部署代理。" variant="actionable"><template #action><div class="proxy-empty-actions"><button class="btn" data-testid="import-registry-proxy" @click="openImport">纳管已有代理</button><button class="btn btn-primary" data-testid="create-registry-proxy" @click="openProxy()">部署代理</button></div></template></EmptyState></SurfaceCard>
 
@@ -18,8 +19,10 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue'
-import { getRegistryProxies, createRegistryProxy, importRegistryProxy, takeOverRegistryProxy, removeRegistryProxyObservation, updateRegistryProxy, diagnoseRegistryProxy, cleanupRegistryProxy, migrateRegistryProxy } from '../../api/registry-proxies.js'
+import ResourcePagination from '../../components/ResourcePagination.vue'
+import { useListPage } from '../../composables/useListPage.js'
+import { computed, onMounted, ref, watch } from 'vue'
+import { createRegistryProxy, importRegistryProxy, takeOverRegistryProxy, removeRegistryProxyObservation, updateRegistryProxy, diagnoseRegistryProxy, cleanupRegistryProxy, migrateRegistryProxy } from '../../api/registry-proxies.js'
 import { getClusters } from '../../api/clusters.js'
 import { getServers } from '../../api/servers.js'
 import { useAsyncResource } from '../../composables/useAsyncResource.js'
@@ -29,11 +32,10 @@ import SurfaceCard from '../../components/SurfaceCard.vue'
 import RegistryProxyRelayPanel from './RegistryProxyRelayPanel.vue'
 
 const proxies = ref([]); const servers = ref([]); const clusters = ref([]); const selectedCluster = ref('all'); const error = ref(''); const loading = ref(true); const showProxyModal = ref(false); const showImportModal = ref(false); const importForm = ref({ cluster_id: '', name: '', resource_name: '', registry: '', endpoint_host: '' }); const importing = ref(false); const takeOverTarget = ref(null); const takeOverHTTPProxy = ref(''); const takeOverHTTPSProxy = ref(''); const takingOver = ref(false); const removeTarget = ref(null); const removing = ref(false); const editingProxy = ref(null); const proxyForm = ref(blank()); const deploying = ref(false); const cleaningID = ref(null); const diagnosingID = ref(null); const migrationTarget = ref(null); const migratingID = ref(null); const dnsServersText = ref(''); const relayTarget = ref(null)
-const proxyResource = useAsyncResource(({ signal }) => getRegistryProxies({ signal }), [])
 const serverResource = useAsyncResource(({ signal }) => getServers({ signal }), [])
 const clusterResource = useAsyncResource(({ signal }) => getClusters({ signal }), [])
 const clusterServers = computed(() => servers.value.filter(server => server.cluster_role))
-const visibleProxies = computed(() => selectedCluster.value === 'all' ? proxies.value : proxies.value.filter(item => String(item.cluster_id || 0) === selectedCluster.value))
+const visibleProxies = computed(() => proxies.value)
 function clusterName(clusterID) { return clusters.value.find(item => item.id === clusterID)?.name || (clusterID ? `集群 #${clusterID}` : '当前平台集群') }
 function blank() { return { name: '', registry: 'docker.io', upstream_url: '', node_name: '', endpoint_host: '', node_port: 30500, cache_limit_gi: 10, cleanup_interval_hours: 24, dns_servers: [], http_proxy: '', https_proxy: '', no_proxy: '', clear_outbound_proxy: false } }
 function proxyStatusLabel(status) { return ({ ready: '就绪', deploying: '部署中', failed: '失败', missing: '缺失' })[status] || '未知' }
@@ -43,7 +45,8 @@ function diagnosticClass(status) { return status === 'healthy' ? 'badge-online' 
 function diagnosticDetail(item) { return item.last_diagnostic_error || diagnosticStatusLabel(item.last_diagnostic_status) }
 function endpoint(item) { return `${item.endpoint_host}:${item.node_port}` }
 function isLegacyDockerHubProxy(item) { return item.registry === 'docker.io' && item.resource_name === 'cylism-registry-proxy' }
-async function load() { loading.value = true; error.value = ''; const proxyResult = await proxyResource.refresh(); if (proxyResult !== undefined) proxies.value = proxyResult || []; else error.value = proxyResource.error.value?.message || '加载 Registry Proxy 失败'; loading.value = false }
+const listPage = useListPage('/registry-proxies', proxies, error)
+async function load() { loading.value = true; error.value = ''; try { await listPage.refresh({ cluster_id: selectedCluster.value === 'all' ? '' : selectedCluster.value }) } catch (cause) { error.value = cause.message || '加载 Registry Proxy 失败' } finally { loading.value = false } }
 async function loadServers() { const serverResult = await serverResource.refresh(); if (serverResult !== undefined) servers.value = serverResult || []; else error.value ||= serverResource.error.value?.message || '加载集群节点失败' }
 async function loadClusters() { const result = await clusterResource.refresh(); if (result !== undefined) clusters.value = result || []; else error.value ||= clusterResource.error.value?.message || '加载集群失败' }
 function openImport() { importForm.value = { cluster_id: '', name: '', resource_name: '', registry: '', endpoint_host: '' }; showImportModal.value = true; if (!clusters.value.length) void loadClusters() }
@@ -59,6 +62,7 @@ async function deployProxy() { deploying.value = true; error.value = ''; try { c
 async function cleanupProxy(item) { cleaningID.value = item.id; error.value = ''; try { await cleanupRegistryProxy(item.id); await load() } catch (err) { error.value = err.message || '清理代理缓存失败' } finally { cleaningID.value = null } }
 async function diagnoseProxy(item) { diagnosingID.value = item.id; error.value = ''; try { await diagnoseRegistryProxy(item.id); await load() } catch (err) { error.value = err.message || '代理出网诊断失败' } finally { diagnosingID.value = null } }
 async function migrateProxy() { if (!migrationTarget.value) return; const item = migrationTarget.value; migratingID.value = item.id; error.value = ''; try { await migrateRegistryProxy(item.id); migrationTarget.value = null; await load() } catch (err) { error.value = err.message || '迁移代理资源命名失败' } finally { migratingID.value = null } }
+watch(selectedCluster, load)
 onMounted(() => { void load(); void loadClusters() })
 </script>
 

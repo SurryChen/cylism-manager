@@ -1,6 +1,6 @@
 <template>
   <div class="product-page product-detail-page">
-    <SectionTabsHeader :title="product?.name || '产品详情'" :tabs="tabs" :active-tab="tab" @select="tab = $event">
+    <SectionTabsHeader :title="product?.name || '产品详情'" :tabs="tabs" :active-tab="tab" @select="selectTab">
       <template #title>
         <div class="product-detail-title">
           <router-link class="icon-button" to="/products" title="返回产品中心" aria-label="返回产品中心"><ArrowLeft :size="16" aria-hidden="true" /></router-link>
@@ -14,12 +14,13 @@
     <div v-else-if="tab === 'overview'" class="product-detail-content">
       <div class="product-detail-grid">
         <SurfaceCard><h2 class="product-section-title">产品资料</h2><dl class="product-detail-list"><div><dt>阶段</dt><dd><span class="badge" :class="stageClass(product.stage)">{{ labelFor(stages, product.stage) }}</span></dd></div><div><dt>标识</dt><dd><span class="product-mark"><img v-if="product.icon_url" :src="product.icon_url" alt="产品图标" referrerpolicy="no-referrer" /><template v-else>{{ product.identifier || product.name.slice(0, 1) }}</template></span><span v-if="product.icon_url && product.identifier" class="product-line">{{ product.identifier }}</span></dd></div><div><dt>简介</dt><dd>{{ product.summary || '暂无简介' }}</dd></div><div><dt>最近更新</dt><dd>{{ formatTime(product.updated_at) }}</dd></div></dl></SurfaceCard>
-        <SurfaceCard><h2 class="product-section-title">下一步行动</h2><dl class="product-detail-list"><div><dt>行动</dt><dd>{{ product.next_action || '尚未设置' }}</dd></div><div><dt>截止日期</dt><dd>{{ dateOnly(product.next_due_date) || '未设置' }}<span v-if="product.next_due_date" class="badge product-line" :class="dueClass(dueState(product.next_due_date))">{{ dueLabel(dueState(product.next_due_date)) }}</span></dd></div></dl></SurfaceCard>
+        <SurfaceCard><h2 class="product-section-title">研发与交付</h2><p class="product-muted">在事项中跟进需求和问题，在版本中组织本次迭代，再记录各渠道的发行进度。</p><div class="product-actions"><button class="btn btn-sm" @click="selectTab('tasks')">管理事项</button><button class="btn btn-sm" @click="selectTab('versions')">规划版本</button><button class="btn btn-sm" @click="selectTab('distributions')">跟进发行</button></div><dl v-if="product.next_action" class="product-detail-list"><div><dt>原下一步行动</dt><dd>{{ product.next_action }}</dd></div><div><dt>截止日期</dt><dd>{{ dateOnly(product.next_due_date) || '未设置' }}<span v-if="product.next_due_date" class="badge product-line" :class="dueClass(dueState(product.next_due_date))">{{ dueLabel(dueState(product.next_due_date)) }}</span></dd></div></dl></SurfaceCard>
       </div>
       <SurfaceCard><h2 class="product-section-title">资料链接</h2><EmptyState v-if="!product.links?.length" message="暂无代码仓库、设计稿或文档链接" /><div v-for="(link, index) in product.links" :key="index" class="product-detail-row"><span class="badge badge-offline">{{ labelFor(linkKinds, link.kind) }}</span> <a :href="link.url" target="_blank" rel="noopener noreferrer">{{ link.label || link.url }}</a></div></SurfaceCard>
     </div>
+    <ProductLifecycle v-else-if="['tasks', 'versions', 'distributions'].includes(tab)" :key="`${product.id}-${tab}`" :product="product" :kind="tab" :initial-version-id="taskVersionID" @changed="refreshProduct" @select-version="showVersionTasks" />
     <SurfaceCard v-else-if="tab === 'channels'" class="product-table-card" padding="none">
-      <div class="product-toolbar"><h2 class="product-section-title" style="margin: 0">发行渠道</h2><span class="product-muted">手工维护</span><button class="btn btn-sm product-primary" :disabled="busy" @click="openEditor('channels')">管理渠道</button></div>
+      <div class="product-toolbar"><h2 class="product-section-title" style="margin: 0">发行渠道</h2><span class="product-muted">平台资料 · 发行历史在「发行记录」中管理</span><button class="btn btn-sm product-primary" :disabled="busy" @click="openEditor('channels')">管理渠道</button></div>
       <EmptyState v-if="!product.channels?.length" message="尚未添加发行渠道" />
       <div v-else class="table-wrap"><table class="data-table"><thead><tr><th>平台 / 渠道</th><th>平台应用标识</th><th>版本 / 状态</th><th>链接</th><th>记录更新时间 / 备注</th></tr></thead><tbody><tr v-for="channel in product.channels" :key="channel.id">
         <td>{{ channel.name || labelFor(platforms, channel.platform) }}<span class="cell-secondary product-line">{{ labelFor(platforms, channel.platform) }}</span></td><td>{{ channel.app_identifier || '—' }}</td>
@@ -54,7 +55,7 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
 import { ArrowLeft } from 'lucide-vue-next'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { getProduct, getProductResourceOptions, updateProduct } from '../../api/products.js'
 import { useAsyncResource } from '../../composables/useAsyncResource.js'
 import SectionTabsHeader from '../../components/SectionTabsHeader.vue'
@@ -63,22 +64,33 @@ import EmptyState from '../../components/EmptyState.vue'
 import ErrorNoticeModal from '../../components/ErrorNoticeModal.vue'
 import ConfirmDialog from '../../components/ConfirmDialog.vue'
 import ProductEditor from './ProductEditor.vue'
+import ProductLifecycle from './ProductLifecycle.vue'
 import { stages, platforms, channelStatuses, linkKinds, labelFor, dateOnly, dueState, dueLabel, dueClass, stageClass, channelClass, editableProduct } from './product-utils.js'
 import { formatShortDateTime as formatTime } from '../../utils/formatters.js'
 import '../../styles/products.css'
 
 const route = useRoute()
+const router = useRouter()
 const resource = useAsyncResource(({ signal }, id) => getProduct(id, { signal }))
 const product = computed(() => resource.data.value)
 const relatedApplications = computed(() => product.value?.related_applications || product.value?.applications || [])
-const tabs = [{ id: 'overview', label: '资料与行动' }, { id: 'channels', label: '发行渠道' }, { id: 'resources', label: '运维关联' }, { id: 'showcase', label: '公开作品' }]
+const tabs = [{ id: 'overview', label: '总览' }, { id: 'tasks', label: '事项' }, { id: 'versions', label: '版本' }, { id: 'distributions', label: '发行记录' }, { id: 'channels', label: '发行渠道' }, { id: 'resources', label: '服务与资源' }, { id: 'showcase', label: '公开资料' }]
 const tab = ref('overview'), editorTab = ref('basics'), editorOpen = ref(false), archiveOpen = ref(false), busy = ref(false), error = ref('')
+const taskVersionID = ref('')
 const options = ref({ projects: [], applications: [] })
 async function load() { await resource.refresh(route.params.id); if (resource.error.value) error.value = resource.error.value.message }
+async function refreshProduct() {
+  const id = route.params.id
+  try { const updated = await getProduct(id); if (route.params.id === id) resource.data.value = updated }
+  catch (cause) { if (route.params.id === id) error.value = cause.message }
+}
+function selectTab(value) { tab.value = value; void router.replace({ query: { ...route.query, tab: value } }) }
+function showVersionTasks(id) { taskVersionID.value = id; selectTab('tasks') }
 async function openEditor(initialTab = 'basics') { busy.value = true; try { options.value = await getProductResourceOptions(); editorTab.value = initialTab; editorOpen.value = true } catch (e) { error.value = e.message } finally { busy.value = false } }
 async function save(payload) { busy.value = true; try { await updateProduct(product.value.id, payload); editorOpen.value = false; archiveOpen.value = false; await load() } catch (e) { error.value = e.message } finally { busy.value = false } }
 async function archive() { await save({ ...editableProduct(product.value), stage: 'archived' }) }
-watch(() => route.params.id, () => { resource.data.value = null; editorOpen.value = false; archiveOpen.value = false; tab.value = 'overview'; void load() }, { immediate: true })
+watch(() => route.params.id, () => { resource.data.value = null; editorOpen.value = false; archiveOpen.value = false; taskVersionID.value = ''; tab.value = tabs.some(item => item.id === route.query?.tab) ? route.query.tab : 'overview'; void load() }, { immediate: true })
+watch(() => route.query?.tab, value => { if (tabs.some(item => item.id === value)) tab.value = value })
 </script>
 
 <style scoped>

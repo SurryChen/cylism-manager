@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { flushPromises, mount } from '@vue/test-utils'
+import { flushPromises, mount as mountComponent } from '@vue/test-utils'
 import ServerTailscale from './ServerTailscale.vue'
 import { checkTailscaleConnections, diagnoseTailscaleConnection, getTailscaleStatus, getTailscaleStatuses, installTailscale, joinTailscale } from '../../api/servers.js'
 
@@ -89,7 +89,7 @@ describe('ServerTailscale', () => {
     wrapper.unmount()
   })
 
-  it('shows server rows immediately and updates each status as it arrives', async () => {
+  it('shows the loaded server page while statuses arrive independently', async () => {
     let resolveFirst
     let resolveSecond
     getTailscaleStatus.mockImplementation(id => new Promise(resolve => {
@@ -100,6 +100,7 @@ describe('ServerTailscale', () => {
       { id: 1, name: 'first', host: '203.0.113.1' },
       { id: 2, name: 'second', host: '203.0.113.2' },
     ] } })
+    await flushPromises()
     expect(wrapper.findAll('tbody tr')).toHaveLength(2)
     expect(wrapper.text()).toContain('0 / 2 台已检测')
     expect(wrapper.findAll('tbody tr')[0].text()).toContain('检测中')
@@ -215,3 +216,11 @@ describe('ServerTailscale', () => {
     wrapper.unmount()
   })
 })
+
+vi.mock('../../api/list-pages.js', () => ({ getListPage: vi.fn() }))
+import { getListPage } from '../../api/list-pages.js'
+import { listPageFixture } from '../../test-support/list-page-fixture.js'
+function mount(component, options) {
+  getListPage.mockImplementation((_path, query) => Promise.resolve(listPageFixture(options.props.servers, query)))
+  return mountComponent(component, options)
+}

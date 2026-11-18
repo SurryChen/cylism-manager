@@ -20,7 +20,7 @@ describe('RegistryProxyRelayPanel', () => {
     expect(modal.textContent).not.toContain('目标节点')
     expect(modal.textContent).not.toContain('切换入口')
     expect(modal.querySelector('a[href="/cluster/7?tab=registry-mirrors"]')).not.toBeNull()
-    expect(api.get).toHaveBeenCalledWith('/registry-proxies/2/relays')
+    expect(api.get).toHaveBeenCalledWith('/registry-proxies/2/relays', expect.objectContaining({ signal: expect.any(AbortSignal) }))
     expect(api.get).not.toHaveBeenCalledWith('/registry-proxies/2/node-routes')
     wrapper.unmount()
   })
@@ -32,7 +32,7 @@ describe('RegistryProxyRelayPanel', () => {
       props: { proxy: { id: 2, name: '镜像代理', registry: 'ghcr.io', cluster_id: 7 }, servers: [{ id: 8, name: '中转节点', host: '100.67.232.15' }] },
       global: { stubs: { RouterLink: { props: ['to'], template: '<a :href="to"><slot /></a>' } } },
     })
-    await vi.waitFor(() => expect(api.get).toHaveBeenCalledWith('/registry-proxies/2/relays'))
+    await vi.waitFor(() => expect(api.get).toHaveBeenCalledWith('/registry-proxies/2/relays', expect.objectContaining({ signal: expect.any(AbortSignal) })))
     const form = document.body.querySelector('.relay-deploy-form')
     const server = form.querySelector('select')
     server.value = '8'
@@ -48,4 +48,16 @@ describe('RegistryProxyRelayPanel', () => {
     await vi.waitFor(() => expect(api.post).toHaveBeenCalledWith('/registry-proxies/2/relays', { server_id: 8, listen_ip: '100.67.232.15', listen_port: 31501 }))
     wrapper.unmount()
   })
+})
+
+vi.mock('../../api/list-pages.js', async importOriginal => {
+  const original = await importOriginal()
+  const { api } = await import('../../api/index.js')
+  const { listPageFixture } = await import('../../test-support/list-page-fixture.js')
+  return { ...original, getListPage: async (path, query, options) => {
+    const filters = new URLSearchParams()
+    for (const key of ['environment_id', 'unassigned']) if (query[key]) filters.set(key, query[key])
+    const url = path + (filters.size ? '?' + filters : '')
+    return listPageFixture(await api.get(url, options), query)
+  } }
 })

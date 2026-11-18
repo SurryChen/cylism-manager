@@ -66,7 +66,7 @@ func (h *ApplicationHandler) ListEnvironments(c *gin.Context) {
 		}
 		_, environments[index].NamespaceConflict = conflictNamespaces[fmt.Sprintf("%d/%s", environments[index].ClusterID, environments[index].Namespace)]
 	}
-	apiShared.Success(c, apiShared.EnvironmentsDTO(environments))
+	apiShared.ListPage(c, apiShared.EnvironmentsDTO(environments))
 }
 
 func (h *ApplicationHandler) CreateEnvironment(c *gin.Context) {

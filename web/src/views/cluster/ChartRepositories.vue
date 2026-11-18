@@ -24,6 +24,7 @@
         </table>
       </div>
       <EmptyState v-else-if="loaded" message="还没有 Chart 仓库" />
+    <ResourcePagination :show-error="false" :resource="listPage" label="Chart 仓库分页" />
     </TabbedWorkspaceCard>
 
     <ErrorNoticeModal :open="Boolean(error)" title="Chart 仓库操作失败" :message="error" @close="dismissError" />
@@ -51,9 +52,11 @@
 </template>
 
 <script setup>
+import ResourcePagination from '../../components/ResourcePagination.vue'
+import { useListPage } from '../../composables/useListPage.js'
 import { onMounted, ref } from 'vue'
 import { RefreshCw } from 'lucide-vue-next'
-import { createChartRepository, deleteChartRepository, getChartRepositories, updateChartRepository, verifyChartRepository } from '../../api/chart-repositories.js'
+import { createChartRepository, deleteChartRepository, updateChartRepository, verifyChartRepository } from '../../api/chart-repositories.js'
 import EmptyState from '../../components/EmptyState.vue'
 import ErrorNoticeModal from '../../components/ErrorNoticeModal.vue'
 import TabbedWorkspaceCard from '../../components/TabbedWorkspaceCard.vue'
@@ -72,11 +75,12 @@ function blank() {
   return { name: '', endpoint: '', chart_name: 'cert-manager', chart_version: 'v1.16.3', enabled: true }
 }
 
+const listPage = useListPage('/chart-repositories', items, error)
 async function load() {
   loading.value = true
   error.value = ''
   try {
-    items.value = await getChartRepositories() || []
+    await listPage.refresh()
   } catch (err) {
     error.value = err.message || '加载 Chart 仓库失败'
   } finally {

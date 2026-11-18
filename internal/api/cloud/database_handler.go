@@ -75,7 +75,7 @@ var environmentPrefix = regexp.MustCompile(`^[A-Z][A-Z0-9_]{0,25}$`)
 
 func (h *DatabaseHandler) List(c *gin.Context) {
 	var items []model.DatabaseInstance
-	if err := h.store.DB().Order("created_at desc").Find(&items).Error; err != nil {
+	if err := h.store.DB().Order("created_at desc, id desc").Find(&items).Error; err != nil {
 		apiShared.DBError(c, err.Error())
 		return
 	}
@@ -95,7 +95,7 @@ func (h *DatabaseHandler) List(c *gin.Context) {
 	for i := range items {
 		items[i].PrivateGateway = byInstance[items[i].ID]
 	}
-	apiShared.Success(c, items)
+	apiShared.ListPage(c, items)
 }
 
 func (h *DatabaseHandler) Create(c *gin.Context) {

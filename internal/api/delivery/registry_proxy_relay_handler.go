@@ -55,7 +55,7 @@ func (h *RegistryProxyRelayHandler) List(c *gin.Context) {
 		apiShared.DBError(c, "读取中转入口失败")
 		return
 	}
-	apiShared.Success(c, relays)
+	apiShared.ListPage(c, relays)
 }
 
 func (h *RegistryProxyRelayHandler) Create(c *gin.Context) {

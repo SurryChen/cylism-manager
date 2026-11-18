@@ -257,7 +257,7 @@ func (h *CertHandler) ListOperations(c *gin.Context) {
 		apiShared.Error(c, http.StatusOK, apiShared.CodeK8sAPIError, err.Error())
 		return
 	}
-	apiShared.Success(c, operations)
+	apiShared.ListPage(c, operations)
 }
 
 type dnsCredentialRequest = DNSCredentialRequest

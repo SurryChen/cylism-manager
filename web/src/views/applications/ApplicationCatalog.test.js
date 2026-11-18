@@ -143,3 +143,12 @@ describe('ApplicationCatalog', () => {
     expect(mocks.push).toHaveBeenCalledWith('/applications/catalog/10')
   })
 })
+
+vi.mock('../../api/list-pages.js', async importOriginal => {
+ const original = await importOriginal()
+ const { listPageFixture } = await import('../../test-support/list-page-fixture.js')
+ return { ...original, getListPage: async (path, query, options) => {
+  const rows = await (async () => { const { getApplicationCatalog } = await import('../../api/applications.js'); return getApplicationCatalog(options) })()
+  return listPageFixture(rows, query)
+ } }
+})

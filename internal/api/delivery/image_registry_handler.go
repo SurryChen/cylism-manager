@@ -49,7 +49,7 @@ func (h *ImageRegistryHandler) List(c *gin.Context) {
 		apiShared.DBError(c, err.Error())
 		return
 	}
-	apiShared.Success(c, apiShared.ImageRegistriesDTO(registries))
+	apiShared.ListPage(c, apiShared.ImageRegistriesDTO(registries))
 }
 
 func (h *ImageRegistryHandler) Create(c *gin.Context) {

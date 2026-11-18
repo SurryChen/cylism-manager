@@ -99,7 +99,7 @@ func (s *Store) GetServerByHost(host string) (*model.Server, error) {
 
 func (s *Store) ListServers() ([]model.Server, error) {
 	var servers []model.Server
-	err := s.db.Preload("SSHProxy").Order("created_at desc").Find(&servers).Error
+	err := s.db.Preload("SSHProxy").Order("created_at desc, id desc").Find(&servers).Error
 	return servers, err
 }
 
@@ -161,7 +161,7 @@ func (s *Store) CreateDNSCredential(credential *model.DNSCredential) error {
 
 func (s *Store) ListDNSCredentials() ([]model.DNSCredential, error) {
 	var credentials []model.DNSCredential
-	err := s.db.Order("created_at desc").Find(&credentials).Error
+	err := s.db.Order("created_at desc, id desc").Find(&credentials).Error
 	for index := range credentials {
 		credentials[index].SecretConfigured = credentials[index].EncryptedValues != ""
 	}
@@ -197,7 +197,7 @@ type ClusterDNSCredentialStore struct {
 
 func (s *ClusterDNSCredentialStore) ListDNSCredentials() ([]model.DNSCredential, error) {
 	var credentials []model.DNSCredential
-	err := s.db.Where("cluster_id = ?", s.clusterID).Order("created_at desc").Find(&credentials).Error
+	err := s.db.Where("cluster_id = ?", s.clusterID).Order("created_at desc, id desc").Find(&credentials).Error
 	for index := range credentials {
 		credentials[index].SecretConfigured = credentials[index].EncryptedValues != ""
 	}
@@ -292,7 +292,7 @@ func (s *Store) GetPersistentVolumeMigration(id uint) (*model.PersistentVolumeMi
 
 func (s *Store) ListPersistentVolumeMigrations(environmentID uint) ([]model.PersistentVolumeMigration, error) {
 	var migrations []model.PersistentVolumeMigration
-	query := s.db.Order("created_at desc")
+	query := s.db.Order("created_at desc, id desc")
 	if environmentID != 0 {
 		query = query.Where("environment_id = ?", environmentID)
 	}
@@ -303,7 +303,7 @@ func (s *Store) ListPersistentVolumeMigrations(environmentID uint) ([]model.Pers
 func (s *Store) FindActivePVCMigration(environmentID uint, sourcePVCName string) (*model.PersistentVolumeMigration, error) {
 	var migration model.PersistentVolumeMigration
 	terminal := []string{model.PVCMigrationStatusSucceeded, model.PVCMigrationStatusFailed, model.PVCMigrationStatusRolledBack, model.PVCMigrationStatusCleaned}
-	err := s.db.Where("environment_id = ? AND source_pvc_name = ? AND status NOT IN ?", environmentID, sourcePVCName, terminal).Order("created_at desc").First(&migration).Error
+	err := s.db.Where("environment_id = ? AND source_pvc_name = ? AND status NOT IN ?", environmentID, sourcePVCName, terminal).Order("created_at desc, id desc").First(&migration).Error
 	return &migration, err
 }
 
@@ -329,7 +329,7 @@ func (s *Store) GetPersistentVolumeBackup(id uint) (*model.PersistentVolumeBacku
 
 func (s *Store) ListPersistentVolumeBackups(environmentID uint, pvcName string) ([]model.PersistentVolumeBackup, error) {
 	var backups []model.PersistentVolumeBackup
-	err := s.db.Where("environment_id = ? AND pvc_name = ?", environmentID, pvcName).Order("created_at desc").Find(&backups).Error
+	err := s.db.Where("environment_id = ? AND pvc_name = ?", environmentID, pvcName).Order("created_at desc, id desc").Find(&backups).Error
 	return backups, err
 }
 
@@ -349,13 +349,13 @@ func (s *Store) GetHostDirectoryPVCImport(id uint) (*model.HostDirectoryPVCImpor
 
 func (s *Store) ListHostDirectoryPVCImports(environmentID uint, pvcName string) ([]model.HostDirectoryPVCImport, error) {
 	var tasks []model.HostDirectoryPVCImport
-	err := s.db.Where("environment_id = ? AND pvc_name = ?", environmentID, pvcName).Order("created_at desc").Find(&tasks).Error
+	err := s.db.Where("environment_id = ? AND pvc_name = ?", environmentID, pvcName).Order("created_at desc, id desc").Find(&tasks).Error
 	return tasks, err
 }
 
 func (s *Store) FindActiveHostDirectoryPVCImport(environmentID uint, pvcName string) (*model.HostDirectoryPVCImport, error) {
 	var task model.HostDirectoryPVCImport
-	err := s.db.Where("environment_id = ? AND pvc_name = ? AND status NOT IN ?", environmentID, pvcName, []string{model.PVCImportStatusSucceeded, model.PVCImportStatusFailed}).Order("created_at desc").First(&task).Error
+	err := s.db.Where("environment_id = ? AND pvc_name = ? AND status NOT IN ?", environmentID, pvcName, []string{model.PVCImportStatusSucceeded, model.PVCImportStatusFailed}).Order("created_at desc, id desc").First(&task).Error
 	return &task, err
 }
 
@@ -386,13 +386,13 @@ func (s *Store) GetSite(id uint) (*model.Site, error) {
 
 func (s *Store) ListSites() ([]model.Site, error) {
 	var sites []model.Site
-	err := s.db.Preload("Cert").Order("created_at desc").Find(&sites).Error
+	err := s.db.Preload("Cert").Order("created_at desc, id desc").Find(&sites).Error
 	return sites, err
 }
 
 func (s *Store) ListSitesByServer(serverID uint) ([]model.Site, error) {
 	var sites []model.Site
-	err := s.db.Where("server_id = ?", serverID).Preload("Cert").Order("created_at desc").Find(&sites).Error
+	err := s.db.Where("server_id = ?", serverID).Preload("Cert").Order("created_at desc, id desc").Find(&sites).Error
 	return sites, err
 }
 

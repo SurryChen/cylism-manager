@@ -2,6 +2,7 @@ package delivery
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -281,4 +282,36 @@ func waitForNodeRegistryMirrorStatus(t *testing.T, s *store.Store, id uint, want
 
 func uintString(value uint) string {
 	return fmt.Sprintf("%d", value)
+}
+
+func TestNodeRegistryInspectionPageScopesBeforeSlicing(t *testing.T) {
+	r, s, h := setupNodeRegistryMirrorRouter()
+	clusterID := uint(9)
+	nodes := make([]registryservice.NodeRegistryConfigNode, 0)
+	for i := 1; i <= 14; i++ {
+		server := model.Server{Name: fmt.Sprintf("node-%d", i), Host: fmt.Sprintf("192.0.2.%d", i), ClusterID: &clusterID, ClusterRole: "worker"}
+		if i == 14 {
+			server.ClusterID = nil
+		}
+		if err := s.CreateServer(&server); err != nil {
+			t.Fatal(err)
+		}
+		nodes = append(nodes, registryservice.NodeRegistryConfigNode{ServerID: server.ID, Name: server.Name})
+	}
+	h.WithActualConfigInspector(inspectionReaderFunc(func(context.Context) (registryservice.NodeRegistryConfigInspection, error) {
+		return registryservice.NodeRegistryConfigInspection{Nodes: nodes}, nil
+	}))
+	response := serve(r, newJSONRequest(http.MethodPost, "/api/node-registry-mirrors/inspect-actual-config?limit=10&offset=10", gin.H{"cluster_id": clusterID}))
+	var payload struct {
+		Data struct {
+			Items, Nodes []registryservice.NodeRegistryConfigNode
+			Total        int
+		}
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != 200 || payload.Data.Total != 13 || len(payload.Data.Nodes) != 13 || len(payload.Data.Items) != 3 || payload.Data.Items[0].ServerID != 11 {
+		t.Fatalf("unexpected scope/page: %s", response.Body.String())
+	}
 }

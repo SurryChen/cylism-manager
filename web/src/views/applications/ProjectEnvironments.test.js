@@ -89,7 +89,7 @@ describe('ProjectEnvironments view', () => {
     expect(wrapper.get('input[disabled][value="project-commerce-production"]').exists()).toBe(true)
     await wrapper.get('input[placeholder="production"]').setValue('development')
     expect(wrapper.get('input[disabled][value="project-commerce-development"]').exists()).toBe(true)
-    await wrapper.get('form').trigger('submit')
+    await wrapper.get('.modal form').trigger('submit')
     expect(api.post).toHaveBeenCalledWith('/projects/1/environments', {
       name: 'development', cluster_id: 1,
     })
@@ -109,7 +109,7 @@ describe('ProjectEnvironments view', () => {
     await wrapper.findAll('button').find(button => button.text() === '编辑').trigger('click')
     expect(wrapper.get('input[placeholder="production"]').attributes('pattern')).toBeUndefined()
     expect(wrapper.get('input[disabled][value="legacy-prod"]').exists()).toBe(true)
-    await wrapper.get('form').trigger('submit')
+    await wrapper.get('.modal form').trigger('submit')
     expect(api.put).toHaveBeenCalledWith('/projects/1/environments/2', { name: '生产环境', cluster_id: 1 })
     wrapper.unmount()
   })
@@ -167,10 +167,22 @@ describe('ProjectEnvironments view', () => {
     const wrapper = mount(ProjectEnvironments, { props: { projectID: '1' }, global: { stubs: { RouterLink: { template: '<a><slot /></a>' } } } })
     await new Promise(resolve => setTimeout(resolve, 0))
     await wrapper.get('.page-header .btn-primary').trigger('click')
-    await wrapper.get('form').trigger('submit')
+    await wrapper.get('.modal form').trigger('submit')
     await new Promise(resolve => setTimeout(resolve, 0))
     expect(wrapper.find('.modal').exists()).toBe(true)
     expect(document.body.querySelector('.error-notice')?.textContent).toContain('命名空间已被占用')
     wrapper.unmount()
   })
+})
+
+vi.mock('../../api/list-pages.js', async importOriginal => {
+  const original = await importOriginal()
+  const { api } = await import('../../api/index.js')
+  const { listPageFixture } = await import('../../test-support/list-page-fixture.js')
+  return { ...original, getListPage: async (path, query, options) => {
+    const filters = new URLSearchParams()
+    for (const key of ['environment_id', 'unassigned']) if (query[key]) filters.set(key, query[key])
+    const url = path + (filters.size ? '?' + filters : '')
+    return listPageFixture(await api.get(url, options), query)
+  } }
 })

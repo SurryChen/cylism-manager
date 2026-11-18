@@ -207,7 +207,7 @@ func (h *DomainHandler) List(c *gin.Context) {
 		for index := range domains {
 			result = append(result, h.DomainInfo(c.Request.Context(), &domains[index]))
 		}
-		apiShared.Success(c, result)
+		apiShared.ListPage(c, result)
 		return
 	}
 	environmentID, err := apiShared.OptionalID(strings.TrimSpace(c.Query("environment_id")))
@@ -224,7 +224,7 @@ func (h *DomainHandler) List(c *gin.Context) {
 	for index := range domains {
 		result = append(result, h.DomainInfo(c.Request.Context(), &domains[index]))
 	}
-	apiShared.Success(c, result)
+	apiShared.ListPage(c, result)
 }
 
 func (h *DomainHandler) Create(c *gin.Context) {
@@ -536,7 +536,7 @@ func (h *DomainHandler) ListOperations(c *gin.Context) {
 		apiShared.Error(c, http.StatusBadRequest, apiShared.CodeK8sAPIError, err.Error())
 		return
 	}
-	apiShared.Success(c, operations)
+	apiShared.ListPage(c, operations)
 }
 
 func (h *DomainHandler) Delete(c *gin.Context) {

@@ -16,6 +16,7 @@ import (
 )
 
 type Repository interface {
+	LifecycleRepository
 	ListProducts(uint) ([]model.Product, error)
 	ListProductsPage(uint, string, string, string, int, int) ([]model.Product, int64, error)
 	GetProduct(uint, uint) (*model.Product, error)
@@ -155,6 +156,8 @@ func authenticated(c *gin.Context) bool {
 
 func respondError(c *gin.Context, err error) {
 	switch {
+	case errors.Is(err, model.ErrProductLifecycleConflict), errors.Is(err, model.ErrProductVersionName), errors.Is(err, model.ErrProductChannelInUse):
+		shared.Error(c, http.StatusConflict, shared.CodeConflict, err.Error())
 	case errors.Is(err, gorm.ErrRecordNotFound):
 		shared.NotFound(c, "产品不存在或无权访问")
 	case errors.Is(err, model.ErrProductResourceAccess):

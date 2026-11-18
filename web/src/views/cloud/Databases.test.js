@@ -155,3 +155,12 @@ it('offers resource adjustment and live monitoring for standalone instances', as
   expect(wrapper.get('[aria-label="内存上限"]').element.value).toBe('1Gi')
   expect(button(wrapper, '保存并重启')).toBeDefined()
 })
+
+vi.mock('../../api/list-pages.js', async importOriginal => {
+ const original = await importOriginal()
+ const { listPageFixture } = await import('../../test-support/list-page-fixture.js')
+ return { ...original, getListPage: async (path, query, options) => {
+  const rows = await (async () => { return path.includes('mysql-clusters') ? api.getMySQLClusters() : api.getDatabases() })()
+  return listPageFixture(rows, query)
+ } }
+})

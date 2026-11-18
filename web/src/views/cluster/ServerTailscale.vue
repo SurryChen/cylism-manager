@@ -12,7 +12,7 @@
     <div v-else class="table-wrap tailscale-table-wrap">
       <table class="data-table">
         <thead><tr><th>服务器</th><th>主机</th><th>组网状态</th><th>Tailscale IP</th><th v-if="cluster">K3s 节点 IP</th><th v-if="cluster">IP 对照</th><th v-else>设备名</th><th class="action-cell">操作</th></tr></thead>
-        <tbody><tr v-for="server in servers" :key="server.id">
+        <tbody><tr v-for="server in serverRows" :key="server.id">
           <td>{{ server.name }}</td>
           <td>{{ server.host }}</td>
           <td><span :class="['badge', statusClass(statusFor(server.id))]" :title="statusFor(server.id)?.error || undefined">{{ pendingIDs.has(server.id) ? '检测中' : statusLabel(statusFor(server.id)) }}</span></td>
@@ -25,7 +25,8 @@
       </table>
     </div>
     <slot name="footer" />
-  </SurfaceCard>
+  <ResourcePagination :resource="serverPage" label="服务器分页" />
+    </SurfaceCard>
 
   <BaseModal :open="Boolean(selectedNodeCheck)" title="IP 对照" size="small" teleport @close="selectedNodeCheck = null">
     <p>{{ selectedNodeCheck?.reason }}</p>
@@ -81,6 +82,8 @@
 </template>
 
 <script setup>
+import ResourcePagination from '../../components/ResourcePagination.vue'
+import { useListPage } from '../../composables/useListPage.js'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { Network, RefreshCw } from 'lucide-vue-next'
 import { checkTailscaleConnections, diagnoseTailscaleConnection, getTailscaleStatus, installTailscale, joinTailscale, leaveTailscale } from '../../api/servers.js'
@@ -112,6 +115,8 @@ const selectedStatus = computed(() => statusFor(selectedServer.value?.id))
 let refreshController
 let refreshGeneration = 0
 
+const serverRows = ref([]), pageError = ref('')
+const serverPage = useListPage('/servers', serverRows, pageError)
 function statusFor(id) { return statusMap.value.get(Number(id)) }
 function nodeFor(server) { return server.k8s_node_name ? props.nodeInfos.find(node => node.name?.toLowerCase() === server.k8s_node_name.toLowerCase()) : null }
 function nodeMatch(server) {
@@ -225,6 +230,7 @@ async function diagnose(item) {
 function closeConnections() { if (diagnosing.value) return; connectionsOpen.value = false; diagnosis.value = null }
 watch(() => props.servers, refresh, { immediate: true })
 onBeforeUnmount(() => { refreshGeneration++; refreshController?.abort() })
+watch(() => props.servers.map(server => server.id).join(','), () => { void serverPage.refresh({ server_ids: props.servers.map(server => server.id).join(',') || 'none' }).catch(() => undefined) }, { immediate: true })
 </script>
 
 <style scoped>

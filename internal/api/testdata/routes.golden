@@ -279,7 +279,11 @@ GET /api/platform/endpoint
 GET /api/platform/status
 GET /api/products
 GET /api/products/:id
+GET /api/products/:id/distributions/:recordID/events
+GET /api/products/:id/lifecycle-options
+GET /api/products/:id/lifecycle/:kind
 GET /api/products/resource-options
+GET /api/products/workbench
 GET /api/projects
 GET /api/projects/:projectID/environments
 GET /api/projects/environments/namespace-conflicts
@@ -488,6 +492,8 @@ POST /api/platform/releases
 POST /api/platform/releases/:id/rollback
 POST /api/platform/webhook-secret
 POST /api/products
+POST /api/products/:id/import-next-action
+POST /api/products/:id/lifecycle/:kind
 POST /api/projects
 POST /api/projects/:projectID/environments
 POST /api/projects/:projectID/environments/:environmentID/sync-namespace
@@ -578,6 +584,7 @@ PUT /api/node-registry-mirrors/actual-config
 PUT /api/platform/endpoint
 PUT /api/platform/image-prefix
 PUT /api/products/:id
+PUT /api/products/:id/lifecycle/:kind/:recordID
 PUT /api/projects/:projectID
 PUT /api/projects/:projectID/environments/:environmentID
 PUT /api/registry-proxies/:id

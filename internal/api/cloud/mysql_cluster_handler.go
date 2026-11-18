@@ -36,7 +36,7 @@ type mysqlClusterTopologyRequest struct {
 
 func (h *DatabaseHandler) ListClusters(c *gin.Context) {
 	var items []model.MySQLCluster
-	if err := h.store.DB().Order("created_at desc").Find(&items).Error; err != nil {
+	if err := h.store.DB().Order("created_at desc, id desc").Find(&items).Error; err != nil {
 		apiShared.DBError(c, err.Error())
 		return
 	}
@@ -60,7 +60,7 @@ func (h *DatabaseHandler) ListClusters(c *gin.Context) {
 			}
 		}
 	}
-	apiShared.Success(c, items)
+	apiShared.ListPage(c, items)
 }
 
 func (h *DatabaseHandler) CreateCluster(c *gin.Context) {

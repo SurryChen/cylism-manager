@@ -3,6 +3,7 @@ package cluster
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -306,5 +307,28 @@ func TestProbeServerUsesDraftConnectionWithoutSavingIt(t *testing.T) {
 	router.ServeHTTP(response, httptest.NewRequest(http.MethodPost, path, nil))
 	if response.Code != http.StatusOK || inspector.server.Host != "10.0.0.1" {
 		t.Fatalf("stored connection probe = %d, server = %#v", response.Code, inspector.server)
+	}
+}
+
+func TestServerPageFiltersBeforeSlicingAndSanitizesSecrets(t *testing.T) {
+	r, st := newClusterTestRouter(t)
+	for i := 1; i <= 24; i++ {
+		if err := st.CreateServer(&model.Server{Name: fmt.Sprintf("node-%02d", i), Host: fmt.Sprintf("192.0.2.%d", i), SSHPassword: "hidden-password"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	response := httptest.NewRecorder()
+	r.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/servers?server_ids=1,2,3&limit=2&offset=2", nil))
+	var payload struct {
+		Data struct {
+			Items []struct{ ID uint }
+			Total int
+		}
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != 200 || payload.Data.Total != 3 || len(payload.Data.Items) != 1 || payload.Data.Items[0].ID != 1 || strings.Contains(response.Body.String(), "hidden-password") {
+		t.Fatalf("unexpected scoped page: %s", response.Body.String())
 	}
 }

@@ -25,7 +25,7 @@
           <button class="btn btn-sm product-section-gap" type="button" :disabled="form.links.length >= 30" @click="form.links.push({ kind: 'repository', label: '', url: '' })">添加资料链接</button>
         </template>
         <template v-else-if="tab === 'channels'">
-          <p class="product-muted">手工维护平台资料和发行进度。保存会更新记录时间。</p>
+          <p class="product-muted">维护平台应用资料。已有发行历史的渠道，其版本和进度由发行记录汇总；暂停使用请设置「暂停发行」，保留历史。</p>
           <EmptyState v-if="!form.channels.length" message="还没有发行渠道" />
           <div v-for="(channel, index) in form.channels" :key="index" class="product-editor-row">
             <div class="product-actions"><strong>渠道 {{ index + 1 }}</strong><button class="icon-button" type="button" title="移除发行渠道" aria-label="移除发行渠道" @click="form.channels.splice(index, 1)"><Trash2 :size="15" /></button></div>

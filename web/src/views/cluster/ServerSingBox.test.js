@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { flushPromises, mount } from '@vue/test-utils'
+import { flushPromises, mount as mountComponent } from '@vue/test-utils'
 import ServerSingBox from './ServerSingBox.vue'
 import { getSingBoxStatus, importSingBoxConfig, installSingBox, startSingBox, stopSingBox } from '../../api/servers.js'
 
@@ -97,3 +97,11 @@ describe('ServerSingBox', () => {
     expect(document.body.textContent).toContain('接口不可用')
   })
 })
+
+vi.mock('../../api/list-pages.js', () => ({ getListPage: vi.fn() }))
+import { getListPage } from '../../api/list-pages.js'
+import { listPageFixture } from '../../test-support/list-page-fixture.js'
+function mount(component, options) {
+  getListPage.mockImplementation((_path, query) => Promise.resolve(listPageFixture(options.props.servers, query)))
+  return mountComponent(component, options)
+}

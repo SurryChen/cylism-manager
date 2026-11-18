@@ -197,7 +197,20 @@ func (h *CrossServiceHandler) List(c *gin.Context) {
 		apiShared.InternalError(c, "读取跨集群服务失败")
 		return
 	}
-	apiShared.Success(c, items)
+	if apiShared.PaginationRequested(c) {
+		filtered := items[:0]
+		for _, item := range items {
+			if value := c.Query("source_cluster_id"); value != "" && value != fmt.Sprint(item.SourceClusterID) {
+				continue
+			}
+			if value := c.Query("target_cluster_id"); value != "" && value != fmt.Sprint(item.TargetClusterID) {
+				continue
+			}
+			filtered = append(filtered, item)
+		}
+		items = filtered
+	}
+	apiShared.ListPage(c, items)
 }
 
 func (h *CrossServiceHandler) ListAll(c *gin.Context) {
@@ -206,7 +219,20 @@ func (h *CrossServiceHandler) ListAll(c *gin.Context) {
 		apiShared.InternalError(c, "读取跨集群服务失败")
 		return
 	}
-	apiShared.Success(c, items)
+	if apiShared.PaginationRequested(c) {
+		filtered := items[:0]
+		for _, item := range items {
+			if value := c.Query("source_cluster_id"); value != "" && value != fmt.Sprint(item.SourceClusterID) {
+				continue
+			}
+			if value := c.Query("target_cluster_id"); value != "" && value != fmt.Sprint(item.TargetClusterID) {
+				continue
+			}
+			filtered = append(filtered, item)
+		}
+		items = filtered
+	}
+	apiShared.ListPage(c, items)
 }
 
 type createCrossServiceRequest struct {

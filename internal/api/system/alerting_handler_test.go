@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -410,4 +411,39 @@ func newTestAlertingHandler(platformURL ...string) (*AlertingHandler, *fakeNotif
 		return client != nil && client.AlertingStatusContext(ctx).State == k8sclient.AlertingStateReady
 	}, Secrets: client, Sender: sender})
 	return h, sender
+}
+
+func (s *memoryAlertAutomationStore) ListAlertEventPage(limit, offset int) ([]model.AlertEvent, int64, error) {
+	events, err := s.ListAlertEvents(100)
+	start := min(offset, len(events))
+	return events[start:min(start+limit, len(events))], int64(len(events)), err
+}
+
+func TestAlertOverviewPaginationPreservesSeverityAndGlobalCounts(t *testing.T) {
+	handler, _ := newTestAlertingHandler()
+	handler.WithAlertmanager(func(_ context.Context, _, _ string, _ interface{}, output interface{}) error {
+		alerts := make([]alertingservice.Alert, 0)
+		for i := 0; i < 24; i++ {
+			severity := "warning"
+			if i >= 12 {
+				severity = "critical"
+			}
+			alerts = append(alerts, alertingservice.Alert{Fingerprint: fmt.Sprintf("%02d", i), Status: alertingservice.AlertStatus{State: "active"}, Labels: map[string]string{"severity": severity}})
+		}
+		*output.(*[]alertingservice.Alert) = alerts
+		return nil
+	}, func(context.Context) bool { return true })
+	response := serve(setupAlertingRouter(handler), newJSONRequest(http.MethodGet, "/api/monitoring/alerts/overview?limit=10&offset=10&view=active", nil))
+	var payload struct {
+		Data struct {
+			Items         []alertingservice.Alert
+			Total, Firing int
+		}
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != 200 || payload.Data.Total != 24 || payload.Data.Firing != 24 || len(payload.Data.Items) != 10 || payload.Data.Items[0].Fingerprint != "22" || payload.Data.Items[2].Fingerprint != "00" {
+		t.Fatalf("unexpected alert page: %s", response.Body.String())
+	}
 }

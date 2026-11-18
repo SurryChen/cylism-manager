@@ -6,7 +6,8 @@
         <p v-if="error" class="form-error" role="alert">{{ error }}</p>
         <div class="relay-section-heading"><h3>中转入口</h3><button class="icon-button" title="刷新中转服务" aria-label="刷新中转服务" @click="load"><RefreshCw :size="15" /></button></div>
         <div class="relay-table-wrap"><table class="data-table"><thead><tr><th>中转机器</th><th>镜像地址</th><th>状态</th><th>上次检查</th><th class="action-cell">操作</th></tr></thead><tbody><tr v-for="relay in relays" :key="relay.id"><td>{{ serverName(relay.server_id) }}</td><td><div class="relay-endpoint"><code class="relay-mono">{{ relayEndpoint(relay) }}</code><button class="icon-button" type="button" :title="`复制 ${relayEndpoint(relay)}`" :aria-label="`复制 ${relayEndpoint(relay)}`" @click="copyEndpoint(relay)"><Copy :size="14" /></button></div></td><td><span class="badge" :class="relay.status === 'ready' ? 'badge-online' : 'badge-danger'" :title="relay.last_error">{{ relay.status === 'ready' ? '就绪' : '异常' }}</span></td><td>{{ dateText(relay.last_checked_at) }}</td><td class="action-cell"><div class="relay-actions"><button v-if="relay.status === 'failed'" class="btn btn-sm" :disabled="Boolean(busy)" @click="retryRelay(relay)">重试</button><button class="btn btn-sm" :disabled="Boolean(busy)" @click="checkRelay(relay)">检查</button><button class="btn btn-sm btn-danger" :disabled="Boolean(busy)" @click="deleteTarget = relay">移除</button></div></td></tr><tr v-if="!relays.length"><td colspan="5" class="relay-empty">{{ loading ? '正在读取中转入口...' : '尚无中转入口' }}</td></tr></tbody></table></div>
-        <form class="relay-form relay-deploy-form" @submit.prevent="createRelay">
+        <ResourcePagination :resource="listPage" label="中转服务分页" />
+    <form class="relay-form relay-deploy-form" @submit.prevent="createRelay">
           <div class="relay-field relay-server-field"><label class="form-label" for="relay-server">中转机器</label><SelectMenu id="relay-server" v-model="relayForm.server_id" aria-label="中转机器" required><option value="" disabled>选择中转机器</option><option v-for="server in servers" :key="server.id" :value="String(server.id)">{{ server.name }} · {{ server.host }}</option></SelectMenu></div>
           <div class="relay-field relay-ip-field"><label class="form-label" for="relay-listen-ip">监听 IP</label><input id="relay-listen-ip" v-model.trim="relayForm.listen_ip" class="form-input" required inputmode="decimal" placeholder="例如 100.67.232.15" /></div>
           <div class="relay-field relay-port-field"><label class="form-label" for="relay-listen-port">端口</label><input id="relay-listen-port" v-model.number="relayForm.listen_port" class="form-input" required type="number" min="1024" max="65535" /></div>
@@ -20,9 +21,11 @@
 </template>
 
 <script setup>
+import ResourcePagination from '../../components/ResourcePagination.vue'
+import { useListPage } from '../../composables/useListPage.js'
 import { onMounted, ref } from 'vue'
 import { Copy, X, RefreshCw } from 'lucide-vue-next'
-import { getRegistryProxyRelays, createRegistryProxyRelay, checkRegistryProxyRelay, retryRegistryProxyRelay, deleteRegistryProxyRelay } from '../../api/registry-proxies.js'
+import { createRegistryProxyRelay, checkRegistryProxyRelay, retryRegistryProxyRelay, deleteRegistryProxyRelay } from '../../api/registry-proxies.js'
 
 const props = defineProps({ proxy: { type: Object, required: true }, servers: { type: Array, default: () => [] } })
 defineEmits(['close'])
@@ -36,7 +39,8 @@ function serverName(id) { return props.servers.find(server => server.id === id)?
 function dateText(value) { return value ? new Date(value).toLocaleString('zh-CN') : '-' }
 function relayEndpoint(relay) { return `http://${relay.listen_ip}:${relay.listen_port}` }
 async function copyEndpoint(relay) { try { await navigator.clipboard.writeText(relayEndpoint(relay)) } catch { error.value = '复制失败，请手动复制镜像地址' } }
-async function load() { loading.value = true; error.value = ''; try { relays.value = await getRegistryProxyRelays(props.proxy.id) || [] } catch (err) { error.value = err.message || '读取中转入口失败' } finally { loading.value = false } }
+const listPage = useListPage(() => '/registry-proxies/' + encodeURIComponent(props.proxy.id) + '/relays', relays, error)
+async function load() { loading.value = true; error.value = ''; try { await listPage.refresh() } catch (err) { error.value = err.message || '读取中转入口失败' } finally { loading.value = false } }
 async function createRelay() { busy.value = 'create'; error.value = ''; try { await createRegistryProxyRelay(props.proxy.id, { server_id: Number(relayForm.value.server_id), listen_ip: relayForm.value.listen_ip, listen_port: Number(relayForm.value.listen_port) }); relayForm.value = { server_id: '', listen_ip: '', listen_port: 31501 }; await load() } catch (err) { error.value = err.message || '部署中转失败' } finally { busy.value = '' } }
 async function checkRelay(relay) { busy.value = 'check'; error.value = ''; try { await checkRegistryProxyRelay(props.proxy.id, relay.id); await load() } catch (err) { error.value = err.message || '检查中转失败' } finally { busy.value = '' } }
 async function retryRelay(relay) { busy.value = 'retry'; error.value = ''; try { await retryRegistryProxyRelay(props.proxy.id, relay.id); await load() } catch (err) { const message = err.message || '重试中转失败'; await load(); error.value = message } finally { busy.value = '' } }

@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"strconv"
@@ -137,7 +138,21 @@ func (h *ServerHandler) List(c *gin.Context) {
 		apiShared.InternalError(c, err.Error())
 		return
 	}
-	apiShared.Success(c, apiShared.ServersDTO(servers))
+	views := apiShared.ServersDTO(servers)
+	if apiShared.PaginationRequested(c) && c.Query("server_ids") != "" {
+		allowed := map[string]bool{}
+		for _, id := range strings.Split(c.Query("server_ids"), ",") {
+			allowed[id] = true
+		}
+		filtered := views[:0]
+		for _, item := range views {
+			if allowed[fmt.Sprint(item.ID)] {
+				filtered = append(filtered, item)
+			}
+		}
+		views = filtered
+	}
+	apiShared.ListPage(c, views)
 }
 
 func (h *ServerHandler) Get(c *gin.Context) {

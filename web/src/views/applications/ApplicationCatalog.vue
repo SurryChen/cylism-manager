@@ -1,7 +1,7 @@
 <template>
   <div class="catalog-page">
     <SectionTabsHeader title="应用商城" :tabs="[{ id: 'catalog', label: '应用目录' }]" active-tab="catalog">
-      <template #actions><span class="catalog-count">共 {{ items.length }} 个应用</span></template>
+      <template #actions><span class="catalog-count">共 {{ listPage.total.value }} 个应用</span></template>
     </SectionTabsHeader>
     <FeedbackBanner v-if="readError" tone="warning" :message="readError" />
     <SurfaceCard padding="none">
@@ -19,6 +19,7 @@
           <tbody><tr v-for="item in items" :key="item.id"><td><button class="catalog-name" @click="openDetail(item)">{{ item.name }}</button></td><td>{{ item.components.length }} 个{{ item.components.length ? ` · ${item.components.map(component => component.name).join('、')}` : '' }}</td><td><span class="badge" :class="item.enabled ? 'badge-online' : 'badge-offline'">{{ item.enabled ? '已启用' : '未启用' }}</span></td><td>v{{ item.revision }}</td><td class="catalog-actions"><button class="icon-button" type="button" title="编辑商城应用" :aria-label="`编辑 ${item.name}`" @click="openDetail(item)"><Pencil :size="15" /></button><button class="icon-button" type="button" title="删除商城应用" :aria-label="`删除 ${item.name}`" @click="deleteTarget = item"><Trash2 :size="15" /></button></td></tr></tbody>
         </table>
       </div>
+    <ResourcePagination :resource="listPage" label="应用商城分页" />
     </SurfaceCard>
 
     <Teleport to="body"><div v-if="showCreate" class="overlay" @click.self="showCreate = false"><div class="modal"><h2 class="modal-title">新增商城应用</h2><form @submit.prevent="createItem">
@@ -54,10 +55,12 @@
 </template>
 
 <script setup>
+import ResourcePagination from '../../components/ResourcePagination.vue'
+import { useListPage } from '../../composables/useListPage.js'
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Pencil, Plus, Trash2 } from 'lucide-vue-next'
-import { createApplicationCatalogFromEnvironment, createApplicationCatalogItem, deleteApplicationCatalogItem, getApplicationCatalog, getApplications, getProjects } from '../../api/applications.js'
+import { createApplicationCatalogFromEnvironment, createApplicationCatalogItem, deleteApplicationCatalogItem, getApplications, getProjects } from '../../api/applications.js'
 import ConfirmDialog from '../../components/ConfirmDialog.vue'
 import EmptyState from '../../components/EmptyState.vue'
 import ErrorNoticeModal from '../../components/ErrorNoticeModal.vue'
@@ -94,11 +97,11 @@ const sourceEntryOptions = computed(() => sourceApplications.value.filter(app =>
 const validSourceSlug = computed(() => /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/.test(sourceForm.value.slug))
 
 function openDetail(item) { router.push(`/applications/catalog/${item.id}`) }
+const listPage = useListPage('/application-catalog', items, readError)
 async function load() {
   loading.value = true; readError.value = ''
   try {
-    const [catalog, projectList] = await Promise.all([getApplicationCatalog(), getProjects()])
-    items.value = catalog || []
+    const [catalog, projectList] = await Promise.all([listPage.refresh(), getProjects()])
     projects.value = projectList || []
   } catch (error) { readError.value = error.message || '加载应用商城失败' }
   finally { loading.value = false }

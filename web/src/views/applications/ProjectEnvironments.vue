@@ -7,8 +7,9 @@
     </div>
     <div v-if="readError" class="k8s-banner k8s-banner-warn section-gap">{{ readError }}</div>
     <div v-if="namespaceConflicts.length" class="k8s-banner k8s-banner-warn section-gap"><strong>命名空间迁移待处理</strong><span v-for="conflict in namespaceConflicts" :key="`${conflict.cluster_id}/${conflict.namespace}`">{{ clusterName(conflict.cluster_id) }} / {{ conflict.namespace }}：{{ conflict.environments.map(item => `项目 ${item.project_id} / ${item.name}`).join('、') }}</span></div>
-    <SurfaceCard v-if="showEnvironmentList" as="div">
+    <SurfaceCard v-if="showEnvironmentList" as="div" padding="none">
       <div class="table-wrap"><table class="data-table"><thead><tr><th>环境</th><th>集群</th><th>命名空间</th><th>状态</th><th>关联应用</th><th>操作</th></tr></thead><tbody><tr v-for="environment in environments" :key="environment.id"><td class="cell-primary">{{ environment.name }}</td><td>{{ clusterName(environment.cluster_id) }}</td><td>{{ environment.namespace }}</td><td><span class="badge" :class="namespaceStatusClass(environment.namespace_status)">{{ environment.cluster_id ? namespaceStatusLabel(environment.namespace_status) : '待绑定' }}</span></td><td>{{ environmentApplicationCount(environment.id) }}</td><td class="action-cell"><div class="btn-group"><button v-if="environment.cluster_id && needsNamespaceSync(environment)" class="icon-button" title="同步命名空间" :disabled="syncingEnvironmentID === environment.id" @click="syncNamespace(environment)"><RefreshCw :size="16" :class="{ 'is-spinning': syncingEnvironmentID === environment.id }" /></button><button class="btn btn-sm" :disabled="environmentHasApplications(environment.id) && !!environment.cluster_id" :title="environmentHasApplications(environment.id) && environment.cluster_id ? '已有应用时不可修改部署目标' : '编辑环境'" @click="openEnvironmentEditor(environment)">编辑</button><button class="btn btn-sm btn-danger" title="删除环境" @click="requestEnvironmentDelete(environment)">删除</button></div></td></tr></tbody></table></div>
+    <ResourcePagination :resource="listPage" label="项目环境分页" />
     </SurfaceCard>
 
     <div v-if="showEnvironmentModal" class="overlay" @click.self="closeEnvironmentModal"><div class="modal"><h2 class="modal-title">{{ editingEnvironment ? '编辑环境' : '新建环境' }}</h2><form @submit.prevent="saveEnvironment">
@@ -24,6 +25,8 @@
 </template>
 
 <script setup>
+import ResourcePagination from '../../components/ResourcePagination.vue'
+import { useListPage } from '../../composables/useListPage.js'
 import { computed, ref, watch } from 'vue'
 import { ArrowLeft, RefreshCw } from 'lucide-vue-next'
 import { createProjectEnvironment, deleteProjectEnvironment, getProjectEnvironmentResources, syncProjectEnvironmentNamespace, updateProjectEnvironment } from '../../api/applications.js'
@@ -58,6 +61,7 @@ function environmentApplicationCount(environmentID) { return applications.value.
 function environmentHasApplications(environmentID) { return environmentApplicationCount(environmentID) > 0 }
 function clusterName(clusterID) { return clusters.value.find(cluster => cluster.id === Number(clusterID))?.name || (clusterID ? `集群 #${clusterID}` : '未绑定') }
 
+const listPage = useListPage(() => '/projects/' + encodeURIComponent(props.projectID) + '/environments', environments, readError)
 async function loadProject() {
   const requestedProjectID = props.projectID
   readError.value = ''
@@ -72,7 +76,8 @@ async function loadProject() {
   applications.value = applicationList || []
   namespaceConflicts.value = conflicts || []
   if (!projects.value.some(item => String(item.id) === requestedProjectID)) return
-  environments.value = environmentList || []
+  await listPage.refresh({ project_id: requestedProjectID }).catch(() => undefined)
+  if (props.projectID !== requestedProjectID) return
   clusters.value = clusterList || []
   loadedProjectID.value = requestedProjectID
 }
@@ -104,7 +109,7 @@ function requestEnvironmentDelete(environment) { environmentDeleteTarget.value =
 async function deleteEnvironment() { if (!environmentDeleteTarget.value) return; submitting.value = true; actionError.value = ''; try { await deleteProjectEnvironment(props.projectID, environmentDeleteTarget.value.id); environmentDeleteTarget.value = null; await loadProject() } catch (e) { actionError.value = e.message || '删除环境失败' } finally { submitting.value = false } }
 async function syncNamespace(environment) { syncingEnvironmentID.value = environment.id; actionError.value = ''; try { const updated = await syncProjectEnvironmentNamespace(props.projectID, environment.id); const index = environments.value.findIndex(item => item.id === environment.id); if (index >= 0) environments.value[index] = updated } catch (e) { actionError.value = e.message || '同步命名空间失败' } finally { syncingEnvironmentID.value = null } }
 
-watch(() => props.projectID, loadProject, { immediate: true })
+watch(() => props.projectID, () => { listPage.reset(); environments.value = []; void loadProject() }, { immediate: true })
 </script>
 
 <style scoped>

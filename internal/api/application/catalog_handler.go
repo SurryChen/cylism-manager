@@ -154,7 +154,7 @@ func (h *ApplicationHandler) ListCatalogItems(c *gin.Context) {
 		}
 		result = append(result, response)
 	}
-	apiShared.Success(c, result)
+	apiShared.ListPage(c, result)
 }
 
 func (h *ApplicationHandler) GetCatalogItem(c *gin.Context) {

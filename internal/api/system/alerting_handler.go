@@ -2,8 +2,10 @@ package system
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 
@@ -211,6 +213,32 @@ func (h *AlertingHandler) Overview(c *gin.Context) {
 		apiShared.K8sAPIError(c, "读取 Alertmanager 告警失败: "+err.Error())
 		return
 	}
+	if apiShared.PaginationRequested(c) {
+		items := overview.Active
+		view := c.DefaultQuery("view", "active")
+		if view == "resolved" {
+			items = overview.Resolved
+		} else if view != "active" {
+			apiShared.BadRequest(c, "告警视图无效")
+			return
+		}
+		sort.SliceStable(items, func(i, j int) bool {
+			if view == "active" {
+				a, b := items[i].Labels["severity"] == "critical", items[j].Labels["severity"] == "critical"
+				if a != b {
+					return a
+				}
+			} else if !items[i].EndsAt.Equal(items[j].EndsAt) {
+				return items[i].EndsAt.After(items[j].EndsAt)
+			}
+			return alertListKey(items[i]) < alertListKey(items[j])
+		})
+		limit, offset := apiShared.LimitOffset(c, 10, 100)
+		start := min(offset, len(items))
+		page := append(make([]alertingservice.Alert, 0), items[start:min(start+limit, len(items))]...)
+		apiShared.Success(c, gin.H{"items": page, "total": len(items), "active_total": len(overview.Active), "resolved_total": len(overview.Resolved), "firing": overview.Firing, "silenced": overview.Silenced, "limit": limit, "offset": offset})
+		return
+	}
 	apiShared.Success(c, overview)
 }
 
@@ -370,6 +398,17 @@ func (h *AlertingHandler) UpdateAutomationPolicy(c *gin.Context) {
 }
 
 func (h *AlertingHandler) ListAutomationEvents(c *gin.Context) {
+	if apiShared.PaginationRequested(c) {
+		limit, offset := apiShared.LimitOffset(c, 10, 100)
+		events, total, err := h.workflow().ListEventPage(limit, offset)
+		if err != nil {
+			apiShared.DBError(c, "读取自动处置事件失败")
+			return
+		}
+		apiShared.Success(c, gin.H{"items": apiShared.AlertEventsDTO(events), "total": total, "limit": limit, "offset": offset})
+		return
+	}
+
 	events, err := h.workflow().ListEvents(30)
 	if err != nil {
 		apiShared.DBError(c, "读取告警自动化事件失败")
@@ -384,4 +423,12 @@ func normalizeAlertingPlatformURL(raw string) string {
 		return defaultAlertingPlatformURL + "/#/monitoring?tab=alerts"
 	}
 	return strings.TrimRight(parsed.Scheme+"://"+parsed.Host, "/") + "/#/monitoring?tab=alerts"
+}
+
+func alertListKey(alert alertingservice.Alert) string {
+	if alert.Fingerprint != "" {
+		return alert.Fingerprint
+	}
+	labels, _ := json.Marshal(alert.Labels)
+	return string(labels) + "|" + alert.StartsAt.UTC().Format(time.RFC3339Nano)
 }

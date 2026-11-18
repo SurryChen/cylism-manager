@@ -274,3 +274,14 @@ func (s *Store) DeleteExpiredOperationLogs(retentionDays int) error {
 	threshold := time.Now().AddDate(0, 0, -retentionDays)
 	return s.db.Where("created_at < ?", threshold).Delete(&model.OperationLog{}).Error
 }
+
+// ListAlertEventPage counts the full durable event history before paging.
+func (s *Store) ListAlertEventPage(limit, offset int) ([]model.AlertEvent, int64, error) {
+	var total int64
+	if err := s.db.Model(&model.AlertEvent{}).Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	items := make([]model.AlertEvent, 0)
+	err := s.db.Order("updated_at desc, id desc").Limit(limit).Offset(offset).Find(&items).Error
+	return items, total, err
+}

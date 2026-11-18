@@ -1,7 +1,7 @@
 <template>
   <SurfaceCard class="cluster-list-card" padding="none">
     <div class="cluster-list-toolbar">
-      <span class="cell-secondary">共 {{ clusters.length }} 个集群</span>
+      <span class="cell-secondary">共 {{ listPage.total.value }} 个集群</span>
       <div class="cluster-list-actions">
         <button class="icon-button" type="button" title="刷新集群列表" aria-label="刷新集群列表" :disabled="loading" @click="load">
           <RefreshCw :size="15" :class="{ 'is-spinning': loading }" />
@@ -36,7 +36,8 @@
         </tbody>
       </table>
     </div>
-  </SurfaceCard>
+  <ResourcePagination :resource="listPage" label="集群分页" />
+    </SurfaceCard>
   <BaseModal :open="creating" title="新建集群" size="small" @close="closeCreate">
     <form id="create-cluster-form" @submit.prevent="saveCluster">
       <div class="form-group">
@@ -69,11 +70,12 @@
 </template>
 
 <script setup>
+import ResourcePagination from '../../components/ResourcePagination.vue'
+import { useListPage } from '../../composables/useListPage.js'
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { Activity, ArrowRight, Boxes, HardDrive, Pencil, RefreshCw, Route, Trash2 } from 'lucide-vue-next'
-import { createCluster, deleteCluster, getClusters, updateCluster } from '../../api/clusters.js'
-import { useAsyncResource } from '../../composables/useAsyncResource.js'
+import { createCluster, deleteCluster, updateCluster } from '../../api/clusters.js'
 import BaseModal from '../../components/BaseModal.vue'
 import EmptyState from '../../components/EmptyState.vue'
 import ErrorNoticeModal from '../../components/ErrorNoticeModal.vue'
@@ -105,16 +107,15 @@ const actionError = computed(() => createError.value || editError.value || delet
 function clearActionErrors() { createError.value = ''; editError.value = ''; deleteError.value = '' }
 const deleting = ref(false)
 const router = useRouter()
-const resource = useAsyncResource(({ signal }) => getClusters({ signal }), [])
-const loading = resource.loading
+const loading = computed(() => listPage.loading.value)
 
 onMounted(() => { void load() })
 
+const listPage = useListPage('/clusters', clusters, error)
 async function load() {
   error.value = ''
-  const result = await resource.refresh()
-  if (result) clusters.value = result
-  else if (resource.error.value) error.value = resource.error.value.message || '加载集群列表失败'
+  const result = await listPage.refresh().catch(() => undefined)
+  if (!result && listPage.error.value) error.value = listPage.error.value.message || '加载集群列表失败'
   loaded.value = true
 }
 
@@ -170,7 +171,7 @@ async function confirmDelete() {
   try {
     const id = deletingCluster.value.id
     await deleteCluster(id)
-    clusters.value = clusters.value.filter(item => item.id !== id)
+    await load()
     deletingCluster.value = null
   } catch (err) { deleteError.value = err.message || '删除集群失败' }
   finally { deleting.value = false }

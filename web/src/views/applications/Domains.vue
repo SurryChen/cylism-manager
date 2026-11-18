@@ -15,6 +15,7 @@
         </tr>
       </tbody></table></div>
       <EmptyState v-else :variant="loaded ? 'empty' : 'loading'" :message="loaded ? '暂无受管域名' : '加载中...'" />
+    <ResourcePagination :resource="listPage" label="受管域名分页" />
     </SurfaceCard>
 
     <div v-if="modal" class="overlay" @click.self="close"><div class="modal"><h2 class="modal-title">{{ editing ? '编辑受管域名' : '新建域名' }}</h2><form @submit.prevent="save">
@@ -58,13 +59,14 @@
 </template>
 
 <script setup>
+import ResourcePagination from '../../components/ResourcePagination.vue'
+import { useListPage } from '../../composables/useListPage.js'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ArrowLeft } from 'lucide-vue-next'
 import { getProjects } from '../../api/applications.js'
-import { adoptCloudDomain, createManagedDomain, cutoverManagedDomain, deleteManagedDomain, getAdoptableCloudDomains, getClusterDomainOptions, getDomainOptions, getManagedDomains, importManagedDomainCertificate, restoreManagedDomain, retryManagedDomainCertificate, updateManagedDomain } from '../../api/domains.js'
+import { adoptCloudDomain, createManagedDomain, cutoverManagedDomain, deleteManagedDomain, getAdoptableCloudDomains, getClusterDomainOptions, getDomainOptions, importManagedDomainCertificate, restoreManagedDomain, retryManagedDomainCertificate, updateManagedDomain } from '../../api/domains.js'
 import { getDomainDNSOptions, getImportableCloudDomains, retryManagedDomainDNS } from '../../api/domains.js'
-import { useAsyncResource } from '../../composables/useAsyncResource.js'
 import { usePolling } from '../../composables/usePolling.js'
 import SurfaceCard from '../../components/SurfaceCard.vue'
 import SectionTabsHeader from '../../components/SectionTabsHeader.vue'
@@ -87,14 +89,6 @@ const dnsConnections = ref([]), dnsNodes = ref([])
 const form = ref(blank())
 const importForm = ref(blankImport())
 const createZones = computed(() => dnsConnections.value.find(connection => connection.id === form.value.cloud_connection_id)?.zones || [])
-const domainResource = useAsyncResource(async ({ signal }) => {
-  const unassigned = route.query.unassigned === 'true'
-  const [domainResult, projectResult] = await Promise.all([
-    getManagedDomains({ environmentID: environmentID.value || undefined, unassigned }, { signal }),
-    getProjects({ signal }),
-  ])
-  return { domainResult, projectResult }
-}, null)
 const issuers = computed(() => allIssuers.value.filter(issuer => issuer.kind === 'ClusterIssuer' && issuer.ready))
 const selectedImportCertificate = computed(() => importCandidates.value.find(item => candidateKey(item) === importForm.value.candidate_key) || null)
 const statusPolling = usePolling(load, { interval: 5000 })
@@ -103,7 +97,8 @@ function blankImport(){ return { environment_id: environmentID.value, candidate_
 function candidateKey(item){ return `${item.cloud_connection_id}:${item.dns_zone}:${item.certificate.name}` }
 function adoptionKey(item){ return `${item.cloud_connection_id}:${item.dns_zone}:${item.hostname}` }
 function adoptionLabel(domain){ return ({ staged: '待切换', active: '已切换', restored: '已恢复', cutover_failed: '切换未完成' })[domain.adoption_status] || (domain.dns_status === 'ready' ? '已同步' : domain.dns_status === 'failed' ? '解析失败' : '待处理') }
-async function load(){ readError.value = ''; const result = await domainResource.refresh(); if (result) { domains.value = result.domainResult || []; projects.value = result.projectResult || [] } else if (domainResource.error.value) readError.value = domainResource.error.value.message || '加载受管域名失败'; loaded.value = true; syncStatusPolling() }
+const listPage = useListPage('/domains', domains, readError)
+async function load(){ readError.value = ''; try { const [, projectList] = await Promise.all([listPage.refresh({ environment_id: environmentID.value || '', unassigned: route.query.unassigned === 'true' ? 'true' : '' }), getProjects()]); projects.value = projectList || [] } catch (error) { readError.value = error.message || '加载受管域名失败' } finally { loaded.value = true; syncStatusPolling() } }
 async function loadOptions(environment = currentEnvironment.value){ allIssuers.value = environment?.cluster_id ? await getClusterDomainOptions(environment.cluster_id) || [] : await getDomainOptions() || [] }
 async function loadDNSOptions(id = environmentID.value){ const options = await getDomainDNSOptions(id); dnsConnections.value = options?.connections || []; dnsNodes.value = options?.nodes || [] }
 async function openCreate(){ actionError.value = ''; editing.value = null; if (!currentEnvironment.value) { actionError.value = '请先在顶部选择项目与环境'; return } form.value = blank(); try { await Promise.all([loadOptions(), loadDNSOptions()]); form.value.issuer_ref = issuers.value[0]?.name || ''; form.value.cloud_connection_id = dnsConnections.value[0]?.id || 0; form.value.node_ids = dnsNodes.value.map(node => node.id); modal.value = true } catch(e) { actionError.value = e.message || '加载签发前置条件失败' } }
@@ -142,6 +137,7 @@ function certificateClass(domain){ return certificateLabel(domain) === '已就�
 function certificateReason(domain){ return domain.certificate?.reason || domain.certificate_error || '' }
 function shouldPollStatus(domain){ return domain.namespace && domain.certificate_ownership !== 'imported' && (domain.certificate?.status === 'Issuing' || domain.certificate_error === '证书尚未创建') }
 function syncStatusPolling(){ const pending = route.query.unassigned !== 'true' && domains.value.some(shouldPollStatus); if (pending) statusPolling.start(); else statusPolling.stop() }
+watch(domains, syncStatusPolling)
 onMounted(load)
 onBeforeUnmount(statusPolling.stop)
 watch(() => [route.query.project_id, route.query.environment_id, route.query.unassigned], load)

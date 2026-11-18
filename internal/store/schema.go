@@ -27,6 +27,8 @@ func migrateSchema(db *gorm.DB) error {
 		&model.SystemComponentConfig{},
 		&model.ObservabilityMigration{},
 		&model.Product{}, &model.ProductChannel{}, &model.ProductProject{}, &model.ProductApplication{},
+		&model.ProductTask{}, &model.ProductVersion{}, &model.ProductVersionDeployment{},
+		&model.ProductDistribution{}, &model.ProductDistributionEvent{},
 	); err != nil {
 		return err
 	}

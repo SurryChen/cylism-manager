@@ -5,7 +5,8 @@
     <FeedbackBanner v-if="error" class="node-registry-error" tone="warning" :message="error" />
     <EmptyState v-if="loading && !loaded" variant="loading" message="正在读取节点镜像源配置..." />
     <EmptyState v-else-if="loaded && !nodes.length" message="当前集群没有可读取的节点配置" />
-    <div v-else class="table-wrap"><table class="data-table node-registry-table"><thead><tr><th>节点</th><th>镜像源数量</th><th>配置 MD5</th><th>状态</th><th class="action-cell">操作</th></tr></thead><tbody><tr v-for="node in nodes" :key="node.server_id"><td class="node-cell"><span class="cell-primary">{{ node.name }}</span></td><td><span class="mirror-count">{{ node.actual?.length || 0 }}</span></td><td><code class="config-md5">{{ node.config_md5 || '-' }}</code></td><td><span class="badge" :class="nodeStateClass(displayState(node))" :title="node.state === 'drifted' && displayState(node) === 'matching' ? '节点之间配置一致，但与平台保存的期望规则不同' : undefined">{{ nodeStateLabel(displayState(node)) }}</span></td><td class="action-cell"><div class="row-actions"><button class="btn btn-sm" type="button" :disabled="saving" @click="openView(node)">查看配置</button><button class="btn btn-sm" type="button" :disabled="saving || node.state === 'unreachable'" @click="openEditNode(node)">编辑</button><button class="btn btn-sm btn-primary" type="button" :disabled="saving || node.state === 'unreachable'" @click="openSync(node)">同步到其他节点</button></div></td></tr></tbody></table></div>
+    <div v-else class="table-wrap"><table class="data-table node-registry-table"><thead><tr><th>节点</th><th>镜像源数量</th><th>配置 MD5</th><th>状态</th><th class="action-cell">操作</th></tr></thead><tbody><tr v-for="node in visibleNodes" :key="node.server_id"><td class="node-cell"><span class="cell-primary">{{ node.name }}</span></td><td><span class="mirror-count">{{ node.actual?.length || 0 }}</span></td><td><code class="config-md5">{{ node.config_md5 || '-' }}</code></td><td><span class="badge" :class="nodeStateClass(displayState(node))" :title="node.state === 'drifted' && displayState(node) === 'matching' ? '节点之间配置一致，但与平台保存的期望规则不同' : undefined">{{ nodeStateLabel(displayState(node)) }}</span></td><td class="action-cell"><div class="row-actions"><button class="btn btn-sm" type="button" :disabled="saving" @click="openView(node)">查看配置</button><button class="btn btn-sm" type="button" :disabled="saving || node.state === 'unreachable'" @click="openEditNode(node)">编辑</button><button class="btn btn-sm btn-primary" type="button" :disabled="saving || node.state === 'unreachable'" @click="openSync(node)">同步到其他节点</button></div></td></tr></tbody></table></div>
+  <ResourcePagination :resource="inspectionPage" label="节点镜像源分页" />
   </TabbedWorkspaceCard>
 
   <BaseModal :open="importOpen" :teleport="true" overlay-class="node-registry-modal-overlay" dialog-class="node-registry-import-modal" title="导入代理镜像源" @close="closeImport">
@@ -41,10 +42,13 @@
 </template>
 
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import ResourcePagination from '../../components/ResourcePagination.vue'
+import { usePaginatedResource } from '../../composables/usePaginatedResource.js'
+import { inspectActualNodeRegistryConfigurationPage } from '../../api/node-registry-mirrors.js'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RefreshCw } from 'lucide-vue-next'
 import { getServers } from '../../api/servers.js'
-import { inspectActualNodeRegistryConfiguration, syncNodeRegistryConfiguration, updateNodeRegistryConfiguration } from '../../api/node-registry-mirrors.js'
+import { syncNodeRegistryConfiguration, updateNodeRegistryConfiguration } from '../../api/node-registry-mirrors.js'
 import { getRegistryProxies, getRegistryProxyRelays } from '../../api/registry-proxies.js'
 import BaseModal from '../../components/BaseModal.vue'
 import EmptyState from '../../components/EmptyState.vue'
@@ -53,7 +57,7 @@ import SelectMenu from '../../components/SelectMenu.vue'
 import TabbedWorkspaceCard from '../../components/TabbedWorkspaceCard.vue'
 
 const props = defineProps({ clusterId: { type: [String, Number], default: '' } })
-const servers = ref([]); const inspection = ref(null); const loaded = ref(false); const loading = ref(false); const saving = ref(false); const error = ref(''); const actionError = ref(''); const viewTarget = ref(null); const editTarget = ref(null); const editAll = ref(false); const editConfigs = ref([]); const syncTarget = ref(null); const syncServerIDs = ref([]); let refreshTimer
+const servers = ref([]); const inspection = ref(null); const loaded = ref(false); const loading = ref(false); const saving = ref(false); const error = ref(''); const actionError = ref(''); const viewTarget = ref(null); const editTarget = ref(null); const editAll = ref(false); const editConfigs = ref([]); const syncTarget = ref(null); const syncServerIDs = ref([]); let loadGeneration = 0; let refreshTimer
 const importOpen = ref(false); const importLoading = ref(false); const importRelayLoading = ref(false); const importError = ref(''); const importProxies = ref([]); const importRelays = ref([]); const importProxyID = ref(''); const importEndpoint = ref(''); const importTargetID = ref(''); const importReview = ref(null)
 const clusterServerIDs = computed(() => new Set(servers.value.filter(server => Number(server.cluster_id) === Number(props.clusterId) && server.cluster_role).map(server => Number(server.id))))
 const nodes = computed(() => (inspection.value?.nodes || []).filter(node => !props.clusterId || clusterServerIDs.value.has(Number(node.server_id))))
@@ -69,7 +73,21 @@ const importEndpointOptions = computed(() => {
   return [...importRelays.value.filter(relay => relay.status === 'ready').map(relay => ({ value: `http://${relay.listen_ip}:${relay.listen_port}`, label: `中转 · ${relay.listen_ip}:${relay.listen_port}` })), { value: `http://${proxy.endpoint_host}:${proxy.node_port}`, label: `直达 · ${proxy.endpoint_host}:${proxy.node_port}` }]
 })
 
-async function load() { loading.value = true; error.value = ''; try { const [serverList, current] = await Promise.all([getServers(), inspectActualNodeRegistryConfiguration(props.clusterId ? { cluster_id: Number(props.clusterId) } : undefined)]); servers.value = serverList || []; inspection.value = current || { nodes: [] } } catch (err) { error.value = err.message || '读取节点镜像源配置失败' } finally { loaded.value = true; loading.value = false } }
+const inspectionPage = usePaginatedResource((query, options) => inspectActualNodeRegistryConfigurationPage(query.cluster_id ? { cluster_id: query.cluster_id } : undefined, query, options), 'items')
+const visibleNodes = inspectionPage.items
+watch(inspectionPage.response, result => { if (result) inspection.value = result })
+watch(inspectionPage.error, cause => { if (cause) error.value = cause.message || '读取节点配置失败' })
+async function load() {
+ const generation = ++loadGeneration
+ loading.value = true; error.value = ''
+ try {
+  const query = { cluster_id: Number(props.clusterId) || '' }
+  const sameScope = inspectionPage.filters.value.cluster_id === query.cluster_id
+  const [serverList] = await Promise.all([getServers(), sameScope ? inspectionPage.refresh() : inspectionPage.load(query)])
+  if (generation === loadGeneration) servers.value = serverList || []
+ } catch (err) { if (generation === loadGeneration) error.value = err.message || '读取节点镜像源配置失败' }
+ finally { if (generation === loadGeneration) { loaded.value = true; loading.value = false } }
+}
 function scheduleRefresh() { clearTimeout(refreshTimer); refreshTimer = setTimeout(async () => { await load(); scheduleRefresh() }, 15000) }
 function serverMeta(id) { const server = servers.value.find(item => Number(item.id) === Number(id)); return server ? `${server.cluster_role === 'control-plane' ? '控制平面' : '工作节点'} · ${server.host}` : `节点 #${id}` }
 function nodeStateLabel(state) { return { matching: '一致', missing: '缺失', drifted: '有差异', unsupported: '不支持', unreachable: '不可达', invalid: '配置无效' }[state] || '未知' }
@@ -95,6 +113,7 @@ async function saveConfig() { saving.value = true; actionError.value = ''; try {
 function openSync(node) { actionError.value = ''; syncTarget.value = node; syncServerIDs.value = [] }
 function closeSync() { if (saving.value) return; syncTarget.value = null; syncServerIDs.value = []; actionError.value = '' }
 async function syncConfig() { saving.value = true; actionError.value = ''; try { await syncNodeRegistryConfiguration({ cluster_id: Number(props.clusterId), source_server_id: syncTarget.value.server_id, target_server_ids: syncServerIDs.value }); closeSync(); await load() } catch (err) { actionError.value = err.message || '同步节点镜像源失败' } finally { saving.value = false } }
+watch(() => props.clusterId, () => { inspectionPage.reset(); inspection.value = null; void load() })
 onMounted(async () => { await load(); scheduleRefresh() }); onBeforeUnmount(() => clearTimeout(refreshTimer))
 </script>
 

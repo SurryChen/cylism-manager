@@ -125,3 +125,12 @@ describe('ObjectStorage', () => {
     expect(cloud.updateCloudContainerCORS).toHaveBeenCalledWith(8, 'assets', expect.objectContaining({ rules: [] }), 'cn-hangzhou')
   })
 })
+
+vi.mock('../../api/list-pages.js', async importOriginal => {
+ const original = await importOriginal()
+ const { listPageFixture } = await import('../../test-support/list-page-fixture.js')
+ return { ...original, getListPage: async (path, query, options) => {
+  const rows = await (async () => { const { getCloudContainers } = await import('../../api/cloud-resources.js'); return getCloudContainers(query.connection_id, options) })()
+  return listPageFixture(rows, query)
+ } }
+})

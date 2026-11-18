@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"strings"
+	"sync"
 	"time"
 
 	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
@@ -129,32 +130,46 @@ func (h *ServerHandler) runSpeedTest(ctx context.Context, source, target *model.
 			return nil, fmt.Errorf("%s 缺少测速工具，请在网络测速页面安装后重试", node.Name)
 		}
 	}
-	listener, err := transport.StartSSHCommandContext(ctx, 12*time.Second, target, h.encKey, fmt.Sprintf("timeout 30s iperf3 -s -1 -p %d", speedTestPort))
+	listener, err := transport.StartSSHCommandContext(ctx, 12*time.Second, target, h.encKey, speedListenerCommand(speedTestPort))
 	if err != nil {
 		return nil, fmt.Errorf("无法在目标服务器启动测速监听：%w", err)
 	}
-	defer listener.Close()
-	go io.Copy(io.Discard, listener.Stdout)
-	go io.Copy(io.Discard, listener.Stderr)
 	listenerDone := make(chan error, 1)
-	go func() { listenerDone <- listener.Wait() }()
-	select {
-	case <-listenerDone:
-		return nil, fmt.Errorf("目标服务器的测速端口 %d 无法监听，请检查端口是否被占用", speedTestPort)
-	case <-time.After(500 * time.Millisecond):
-	case <-ctx.Done():
-		return nil, ctx.Err()
+	defer stopSpeedListener(listener, listenerDone)
+	startup := newSpeedListenerOutput()
+	var streams sync.WaitGroup
+	streams.Add(2)
+	for _, stream := range []io.Reader{listener.Stdout, listener.Stderr} {
+		go func(reader io.Reader) {
+			defer streams.Done()
+			_, _ = io.Copy(startup, reader)
+		}(stream)
 	}
-	command := fmt.Sprintf("iperf3 -J -c %s -p %d -t 10", shellQuote(address), speedTestPort)
+	go func() {
+		streams.Wait()
+		listenerDone <- listener.Wait()
+		close(listenerDone)
+	}()
+	if err := waitSpeedListener(ctx, startup, listenerDone); err != nil {
+		return nil, err
+	}
+	command := fmt.Sprintf("iperf3 -J -c %s -p %d -t 10 --connect-timeout 5000", shellQuote(address), speedTestPort)
 	if req.Direction == "reverse" {
 		command += " -R"
 	}
 	if req.Protocol == "udp" {
 		command += " -u -b 1M -l 1000"
 	}
-	output, _, err := transport.SSHExecServerOutputContext(ctx, 12*time.Second, source, h.encKey, command)
+	command = "sh -c " + shellQuote("export LC_ALL=C; exec "+command)
+	output, stderr, err := transport.SSHExecServerOutputContext(ctx, 12*time.Second, source, h.encKey, command)
 	if err != nil {
-		return nil, fmt.Errorf("测速失败：请检查目标地址 %s 的节点间连通性，以及 TCP/UDP %d 的防火墙规则", address, speedTestPort)
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		if _, reportErr := parseSpeedTestOutput(output, req.Protocol); reportErr != nil && json.Valid(output) {
+			return nil, fmt.Errorf("测速失败：%w（目标 %s，控制连接使用 TCP %d，UDP 测速还需要 UDP %d）", reportErr, address, speedTestPort, speedTestPort)
+		}
+		return nil, fmt.Errorf("测速失败（目标 %s，TCP/UDP %d）：%s", address, speedTestPort, speedCommandDetail(stderr, err))
 	}
 	result, err := parseSpeedTestOutput(output, req.Protocol)
 	if err != nil {
@@ -164,6 +179,120 @@ func (h *ServerHandler) runSpeedTest(ctx context.Context, source, target *model.
 	result.TargetAddress, result.Address = address, req.Address
 	result.Protocol, result.Direction = req.Protocol, req.Direction
 	return result, nil
+}
+
+// Keep stdin open for the lifetime of this test. EOF (including SSH disconnect)
+// stops only this invocation's timeout supervisor, which forwards TERM to iperf3.
+// Never kill by port/name: an existing listener may belong to a system service.
+func speedListenerCommand(port int) string {
+	script := fmt.Sprintf(`export LC_ALL=C
+child=
+watcher=
+owner=$$
+cleanup() {
+  trap '' HUP INT TERM
+  if [ -n "$watcher" ]; then
+    kill -TERM "$watcher" 2>/dev/null || :
+    wait "$watcher" 2>/dev/null || :
+  fi
+  if [ -n "$child" ]; then
+    kill -TERM "$child" 2>/dev/null || :
+    wait "$child" 2>/dev/null || :
+  fi
+}
+trap cleanup EXIT
+trap 'exit 143' HUP INT TERM
+exec 3<&0
+timeout -k 2s 30s iperf3 -s -1 --forceflush -p %d </dev/null 3<&- &
+child=$!
+( IFS= read -r stop <&3 || :; kill -TERM "$owner" 2>/dev/null || : ) &
+watcher=$!
+wait "$child"
+status=$?
+child=
+exit "$status"
+`, port)
+	return "sh -c " + shellQuote(script)
+}
+
+func stopSpeedListener(listener *transport.SSHCommand, done <-chan error) {
+	// Allow the remote shell to reap its child before closing the SSH transport.
+	_ = listener.Stdin.Close()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+	}
+	listener.Close()
+}
+
+type speedListenerOutput struct {
+	mu     sync.Mutex
+	output string
+	ready  chan struct{}
+	failed chan struct{}
+}
+
+func newSpeedListenerOutput() *speedListenerOutput {
+	return &speedListenerOutput{ready: make(chan struct{}, 1), failed: make(chan struct{}, 1)}
+}
+
+func (s *speedListenerOutput) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.output += string(p)
+	if len(s.output) > 4096 {
+		s.output = s.output[len(s.output)-4096:]
+	}
+	if strings.Contains(s.output, "Server listening on") {
+		select {
+		case s.ready <- struct{}{}:
+		default:
+		}
+	}
+	if strings.Contains(s.output, "iperf3: error") {
+		select {
+		case s.failed <- struct{}{}:
+		default:
+		}
+	}
+	return len(p), nil
+}
+
+func (s *speedListenerOutput) detail(err error) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return speedCommandDetail([]byte(s.output), err)
+}
+
+func speedCommandDetail(output []byte, err error) string {
+	message := strings.TrimSpace(string(output))
+	if len(message) > 1000 {
+		message = message[len(message)-1000:]
+	}
+	if message == "" {
+		if err == nil {
+			return "未收到远端诊断输出"
+		}
+		return fmt.Sprint(err)
+	}
+	return message
+}
+
+func waitSpeedListener(ctx context.Context, output *speedListenerOutput, done <-chan error) error {
+	timer := time.NewTimer(5 * time.Second)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-output.failed:
+		return fmt.Errorf("目标服务器测速监听启动失败（TCP %d）：%s；若端口被占用，请检查 iperf3.service 等常驻服务", speedTestPort, output.detail(nil))
+	case err := <-done:
+		return fmt.Errorf("目标服务器测速监听提前退出（TCP %d）：%s", speedTestPort, output.detail(err))
+	case <-output.ready:
+		return nil
+	case <-timer.C:
+		return fmt.Errorf("等待目标服务器测速监听就绪超时（TCP %d）：%s", speedTestPort, output.detail(ctx.Err()))
+	}
 }
 
 func parseSpeedTestOutput(output []byte, protocol string) (*speedTestResult, error) {

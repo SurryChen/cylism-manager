@@ -26,8 +26,8 @@ describe('AccessCertificates', () => {
     api.initializeAccessCA.mockResolvedValue(ca)
     api.issueAccessCertificate.mockResolvedValue(cert)
     api.revokeAccessCertificate.mockResolvedValue(null)
-    api.getAccessCA.mockResolvedValueOnce(null).mockResolvedValueOnce(ca)
-    api.getAccessCertificates.mockResolvedValueOnce([]).mockResolvedValueOnce([{ ...cert, revoked_at: '2026-10-02T00:00:00Z' }])
+    api.getAccessCA.mockResolvedValue(ca).mockResolvedValueOnce(null)
+    api.getAccessCertificates.mockResolvedValueOnce([]).mockResolvedValueOnce([cert]).mockResolvedValueOnce([{ ...cert, revoked_at: '2026-10-02T00:00:00Z' }])
 
     const wrapper = mount(AccessCertificates)
     await flushPromises()
@@ -39,7 +39,7 @@ describe('AccessCertificates', () => {
     expect(wrapper.get('.access-cert-tooltip[data-tooltip*="CRL"]').attributes('data-tooltip')).toContain('已吊销')
 
     await wrapper.get('.access-cert-actions .btn-primary').trigger('click')
-    const menus = wrapper.findAllComponents(SelectMenu)
+    const menus = wrapper.findAllComponents(SelectMenu).filter(menu => !menu.props('options')?.some(item => item.value === 10))
     menus[0].vm.$emit('update:modelValue', '3')
     menus[1].vm.$emit('update:modelValue', 'platform_client')
     await wrapper.get('#issue-access-certificate').trigger('submit')
@@ -79,4 +79,13 @@ describe('AccessCertificates', () => {
     await flushPromises()
     expect(api.deleteAccessCertificate).toHaveBeenCalledWith(12)
   })
+})
+
+vi.mock('../../api/list-pages.js', async importOriginal => {
+ const original = await importOriginal()
+ const { listPageFixture } = await import('../../test-support/list-page-fixture.js')
+ return { ...original, getListPage: async (path, query, options) => {
+  const rows = await (async () => { const { getAccessCertificates } = await import('../../api/access-certificates.js'); return getAccessCertificates(options) })()
+  return listPageFixture(rows, query)
+ } }
 })

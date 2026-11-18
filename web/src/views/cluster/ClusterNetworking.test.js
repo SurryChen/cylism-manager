@@ -1,3 +1,4 @@
+import { listPageFixture } from '../../test-support/list-page-fixture.js'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import ClusterNetworking from './ClusterNetworking.vue'
@@ -115,3 +116,7 @@ describe('ClusterNetworking migration', () => {
     wrapper.unmount()
   })
 })
+
+vi.mock('../../api/list-pages.js', () => ({ getListPage: vi.fn(async (_path, query) => {
+  return listPageFixture(props.servers, query)
+}) }))

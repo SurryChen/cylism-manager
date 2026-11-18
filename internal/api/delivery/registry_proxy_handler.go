@@ -321,7 +321,16 @@ func (h *RegistryProxyHandler) List(c *gin.Context) {
 			views = append(views, *view)
 		}
 	}
-	apiShared.Success(c, views)
+	if apiShared.PaginationRequested(c) && c.Query("cluster_id") != "" {
+		filtered := views[:0]
+		for _, item := range views {
+			if fmt.Sprint(item.ClusterID) == c.Query("cluster_id") {
+				filtered = append(filtered, item)
+			}
+		}
+		views = filtered
+	}
+	apiShared.ListPage(c, views)
 }
 
 func (h *RegistryProxyHandler) Deploy(c *gin.Context) {

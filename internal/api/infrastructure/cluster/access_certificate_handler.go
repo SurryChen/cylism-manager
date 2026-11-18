@@ -65,7 +65,7 @@ func (h *AccessCertificateHandler) List(c *gin.Context) {
 		apiShared.DBError(c, "读取访问证书失败")
 		return
 	}
-	apiShared.Success(c, items)
+	apiShared.ListPage(c, items)
 }
 
 func (h *AccessCertificateHandler) Issue(c *gin.Context) {

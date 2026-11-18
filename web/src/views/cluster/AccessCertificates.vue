@@ -2,7 +2,7 @@
   <SurfaceCard class="access-cert-card" padding="none">
     <div class="access-cert-toolbar">
       <div class="access-cert-summary">
-        <span class="cell-secondary">共 {{ certificates.length }} 张证书</span>
+        <span class="cell-secondary">共 {{ listPage.total.value }} 张证书</span>
         <span v-if="ca" class="badge" :class="isExpired(ca.not_after) ? 'badge-danger' : 'badge-online'">{{ isExpired(ca.not_after) ? '访问 CA 已过期' : '访问 CA 有效' }}</span>
         <span v-else class="badge badge-offline">未创建访问 CA</span>
       </div>
@@ -40,7 +40,8 @@
         </tr></tbody>
       </table>
     </div>
-  </SurfaceCard>
+  <ResourcePagination :resource="listPage" label="访问证书分页" />
+    </SurfaceCard>
 
   <BaseModal :open="createCAOpen" title="创建访问 CA" size="small" @close="createCAOpen = false">
     <p>将生成平台与集群 Agent 使用的信任根。CA 私钥加密保存在平台数据库中。</p>
@@ -69,9 +70,11 @@
 </template>
 
 <script setup>
+import ResourcePagination from '../../components/ResourcePagination.vue'
+import { useListPage } from '../../composables/useListPage.js'
 import { computed, onMounted, ref } from 'vue'
 import { Download, RefreshCw, ShieldX, Trash2 } from 'lucide-vue-next'
-import { deleteAccessCertificate, getAccessCA, getAccessCertificatePEM, getAccessCertificates, getAccessCRL, initializeAccessCA, issueAccessCertificate, revokeAccessCertificate } from '../../api/access-certificates.js'
+import { deleteAccessCertificate, getAccessCA, getAccessCertificatePEM, getAccessCRL, initializeAccessCA, issueAccessCertificate, revokeAccessCertificate } from '../../api/access-certificates.js'
 import { getClusters } from '../../api/clusters.js'
 import BaseModal from '../../components/BaseModal.vue'
 import EmptyState from '../../components/EmptyState.vue'
@@ -99,13 +102,13 @@ const kindOptions = [{ value: 'agent_server', label: 'Agent 服务端' }, { valu
 
 onMounted(() => { void load() })
 
+const listPage = useListPage('/access-certificates', certificates, error)
 async function load() {
   loading.value = true
   error.value = ''
   try {
-    const [currentCA, items, clusterList] = await Promise.all([getAccessCA(), getAccessCertificates(), getClusters()])
+    const [currentCA, items, clusterList] = await Promise.all([getAccessCA(), listPage.refresh(), getClusters()])
     ca.value = currentCA
-    certificates.value = items || []
     clusters.value = clusterList || []
   } catch (err) { error.value = err.message || '加载访问证书失败' }
   finally { loaded.value = true; loading.value = false }
@@ -135,7 +138,7 @@ async function issue() {
   actionError.value = ''
   try {
     const item = await issueAccessCertificate({ cluster_id: Number(form.value.cluster_id), kind: form.value.kind, csr: form.value.kind === 'agent_server' ? form.value.csr : '' })
-    certificates.value.unshift(item)
+    await load()
     issueOpen.value = false
   } catch (err) { actionError.value = err.message || '签发证书失败' }
   finally { saving.value = false }

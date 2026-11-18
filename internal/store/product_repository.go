@@ -127,6 +127,19 @@ func (s *Store) SaveProduct(product *model.Product, projectIDs, applicationIDs [
 			return err
 		}
 		keep := []uint{0}
+		retained := []uint{0}
+		for _, channel := range product.Channels {
+			if channel.ID != 0 {
+				retained = append(retained, channel.ID)
+			}
+		}
+		var referenced int64
+		if err := tx.Model(&model.ProductDistribution{}).Where("product_id = ? AND channel_id NOT IN ?", product.ID, retained).Count(&referenced).Error; err != nil {
+			return err
+		}
+		if referenced > 0 {
+			return model.ErrProductChannelInUse
+		}
 		for i := range product.Channels {
 			channel := &product.Channels[i]
 			channel.ProductID = product.ID
@@ -138,6 +151,9 @@ func (s *Store) SaveProduct(product *model.Product, projectIDs, applicationIDs [
 				channel.CreatedAt = current.CreatedAt
 			}
 			if err := tx.Save(channel).Error; err != nil {
+				return err
+			}
+			if err := syncProductChannel(tx, channel); err != nil {
 				return err
 			}
 			keep = append(keep, channel.ID)

@@ -26,7 +26,7 @@
     <template v-else>
       <section class="alert-summary metric-grid section-gap">
         <article class="metric"><span>正在告警</span><strong :class="overview.firing ? 'is-danger' : ''">{{ overview.firing || 0 }}</strong><small>{{ overview.firing ? '需要优先处理' : '当前无触发告警' }}</small></article>
-        <article class="metric"><span>活跃告警</span><strong>{{ overview.active.length }}</strong><small>包含已静默告警</small></article>
+        <article class="metric"><span>活跃告警</span><strong>{{ activePage.total.value }}</strong><small>包含已静默告警</small></article>
         <article class="metric"><span>已静默</span><strong>{{ overview.silenced || 0 }}</strong><small>不会重复发送通知</small></article>
         <article class="metric"><span>通知渠道</span><strong><span class="badge" :class="status.notification_configured ? 'badge-online' : 'badge-offline'">{{ status.notification_configured ? '已配置' : '未配置' }}</span></strong><small>{{ status.node_name || '-' }}</small></article>
       </section>
@@ -62,23 +62,25 @@
             <span v-if="event.operation_id" class="badge badge-deploying">等待审批</span>
           </article>
         </div>
+        <ResourcePagination :resource="eventPage" label="自动处置事件分页" />
       </section>
 
       <section class="alert-section-heading section-gap"><div><h2>正在告警</h2><p>按严重程度排序，优先处理影响服务可用性的异常</p></div><div class="icon-actions"><button class="icon-button" title="刷新告警" aria-label="刷新告警" :disabled="loading" @click="refresh"><RefreshCw :size="16" :class="{ 'is-spinning': loading }" /></button><button class="icon-button" title="告警设置" aria-label="告警设置" @click="openSettings"><Settings2 :size="16" /></button></div></section>
 
       <p v-if="overviewError" class="form-error section-gap" role="alert">{{ overviewError }}</p>
 
-      <section v-if="overview.active.length" class="alert-list section-gap">
+      <section v-if="activePage.total.value" class="alert-list section-gap">
         <article v-for="alert in sortedAlerts" :key="alert.fingerprint || alertKey(alert)" class="alert-row" :class="severityClass(alert)">
           <div class="alert-severity"><BellRing :size="17" /><span class="badge" :class="severityBadge(alert)">{{ severityLabel(alert) }}</span></div>
           <div class="alert-copy"><strong>{{ alert.annotations?.summary || alert.labels?.alertname || '集群告警' }}</strong><small>{{ alertDescription(alert) }}</small><small v-if="alertCurrentValue(alert)" class="alert-reading"><span>当前值</span><strong>{{ alertCurrentValue(alert) }}</strong><span v-if="alertThreshold(alert)">阈值 {{ alertThreshold(alert) }}</span></small><small>开始于 {{ formatTime(alert.startsAt) }}</small></div>
           <div class="alert-actions"><button v-if="alertTarget(alert)" class="icon-button" title="查看关联资源" aria-label="查看关联资源" @click="navigate(alert)"><ArrowUpRight :size="16" /></button><button class="icon-button" title="静默告警" aria-label="静默告警" @click="openSilence(alert)"><VolumeX :size="16" /></button></div>
         </article>
+      <ResourcePagination :resource="activePage" label="活跃告警分页" />
       </section>
       <SurfaceCard v-else class="alerting-healthy section-gap"><CheckCircle2 :size="20" /><div><strong>所有告警均已恢复</strong><small>当前 {{ status.rules?.filter(rule => rule.enabled).length || 0 }} 条规则正在评估。</small></div></SurfaceCard>
 
-      <section v-if="overview.resolved.length" class="alert-section-heading section-gap"><div><h2>最近恢复</h2><p>仅保留 Alertmanager 当前可见的恢复事件</p></div></section>
-      <SurfaceCard v-if="overview.resolved.length" class="table-wrap alert-resolved"><table class="data-table"><thead><tr><th>告警</th><th>对象</th><th>恢复时间</th></tr></thead><tbody><tr v-for="alert in overview.resolved" :key="alert.fingerprint || alertKey(alert)"><td class="cell-primary">{{ alert.annotations?.summary || alert.labels?.alertname || '-' }}</td><td>{{ alertTarget(alert) || '-' }}</td><td>{{ formatTime(alert.endsAt) }}</td></tr></tbody></table></SurfaceCard>
+      <section v-if="resolvedPage.total.value" class="alert-section-heading section-gap"><div><h2>最近恢复</h2><p>仅保留 Alertmanager 当前可见的恢复事件</p></div></section>
+      <SurfaceCard v-if="resolvedPage.total.value" class="alert-resolved" padding="none"><div class="table-wrap"><table class="data-table"><thead><tr><th>告警</th><th>对象</th><th>恢复时间</th></tr></thead><tbody><tr v-for="alert in resolvedAlerts" :key="alert.fingerprint || alertKey(alert)"><td class="cell-primary">{{ alert.annotations?.summary || alert.labels?.alertname || '-' }}</td><td>{{ alertTarget(alert) || '-' }}</td><td>{{ formatTime(alert.endsAt) }}</td></tr></tbody></table></div><ResourcePagination :resource="resolvedPage" label="恢复告警分页" /></SurfaceCard>
     </template>
   </template>
 
@@ -128,6 +130,9 @@
 </template>
 
 <script setup>
+import ResourcePagination from '../../components/ResourcePagination.vue'
+import { useListPage } from '../../composables/useListPage.js'
+
 import { computed, onMounted, ref, watch } from 'vue'
 import DOMPurify from 'dompurify'
 import MarkdownIt from 'markdown-it'
@@ -136,9 +141,7 @@ import { ArrowUpRight, BellRing, Bot, CheckCircle2, RefreshCw, Settings2, Volume
 import { getRuntimes } from '../../api/runtimes.js'
 import {
   createAlertingSilence,
-  getAlertingAutomationEvents,
   getAlertingAutomationPolicy,
-  getAlertingOverview,
   getAlertingSilences,
   getAlertingStatus,
   installAlerting,
@@ -176,26 +179,29 @@ const automationSaving = ref(false)
 const automationNotice = ref(null)
 const automationPolicy = ref(blankAutomationPolicy())
 const automationEvents = ref([])
+const activeAlerts = ref([]), resolvedAlerts = ref([])
+const overviewPath = () => (props.clusterId ? '/clusters/' + encodeURIComponent(props.clusterId) : '') + '/monitoring/alerts/overview'
+const activePage = useListPage(overviewPath, activeAlerts, overviewError)
+const resolvedPage = useListPage(overviewPath, resolvedAlerts, overviewError)
+const eventPage = useListPage('/monitoring/alerts/automation-events', automationEvents, overviewError)
 const runtimes = ref([])
 const reportMarkdown = new MarkdownIt({ breaks: true, html: false, linkify: true }).use(taskLists, { enabled: true })
 const statusResource = useAsyncResource(({ signal }) => getAlertingStatus(requestOptions(signal)), null)
 const alertResource = useAsyncResource(async ({ signal }) => {
-  if (props.clusterId) return { overviewResult: await getAlertingOverview(requestOptions(signal)), policy: null, events: [], runtimeItems: [] }
-  const [overviewResult, policy, events, runtimeItems] = await Promise.all([
-    getAlertingOverview({ signal }),
-    getAlertingAutomationPolicy({ signal }),
-    getAlertingAutomationEvents({ signal }),
-    getRuntimes({ signal }),
-  ])
-  return { overviewResult, policy, events, runtimeItems }
+  const scope = { cluster_id: props.clusterId || '' }
+  const requests = [activePage.refresh({ ...scope, view: 'active' }), resolvedPage.refresh({ ...scope, view: 'resolved' })]
+  if (!props.clusterId) requests.push(eventPage.refresh(), getAlertingAutomationPolicy({ signal }), getRuntimes({ signal }))
+  const results = await Promise.all(requests)
+  return { overviewResult: activePage.response.value, policy: results[3], runtimeItems: results[4] }
 }, null)
 const loading = computed(() => statusResource.loading.value || alertResource.loading.value)
 
 const readyNodes = computed(() => props.nodes.filter(node => node.ready))
-const sortedAlerts = computed(() => [...overview.value.active].sort((left, right) => severityWeight(left) - severityWeight(right)))
+const sortedAlerts = activeAlerts
+watch(activePage.response, result => { if (result) overview.value = result })
 
 onMounted(() => { refresh() })
-watch(() => props.clusterId, () => { status.value = null; overview.value = { active: [], resolved: [], firing: 0, silenced: 0 }; void refresh() })
+watch(() => props.clusterId, () => { activePage.reset(); resolvedPage.reset(); eventPage.reset(); status.value = null; overview.value = { active: [], resolved: [], firing: 0, silenced: 0 }; void refresh() })
 
 async function refresh() {
   if (!props.monitoringReady) return
@@ -212,7 +218,6 @@ async function refresh() {
   if (result !== undefined) {
     overview.value = result.overviewResult || { active: [], resolved: [], firing: 0, silenced: 0 }
     automationPolicy.value = { ...blankAutomationPolicy(), ...result.policy }
-    automationEvents.value = Array.isArray(result.events) ? result.events : []
     runtimes.value = Array.isArray(result.runtimeItems) ? result.runtimeItems : []
   } else if (alertResource.error.value) overviewError.value = alertResource.error.value.message || '读取告警概览失败'
 }
@@ -221,7 +226,6 @@ function defaultNodeName() {
   return readyNodes.value.find(node => node.name !== props.metricsNodeName)?.name || readyNodes.value[0]?.name || ''
 }
 function displayNode(node) { return node.display_name || node.name }
-function severityWeight(alert) { return alert.labels?.severity === 'critical' ? 0 : 1 }
 function severityClass(alert) { return alert.labels?.severity === 'critical' ? 'is-critical' : 'is-warning' }
 function severityBadge(alert) { return alert.labels?.severity === 'critical' ? 'badge-danger' : 'badge-deploying' }
 function severityLabel(alert) { return alert.labels?.severity === 'critical' ? '严重' : '警告' }

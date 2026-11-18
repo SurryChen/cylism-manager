@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -247,11 +248,39 @@ func (h *NodeRegistryMirrorHandler) InspectActualConfig(c *gin.Context) {
 		apiShared.DBError(c, "检查节点实际 Registry 配置失败")
 		return
 	}
+	if request.ClusterID != 0 {
+		servers, listErr := h.service.ListServers()
+		if listErr != nil {
+			apiShared.DBError(c, "读取集群节点失败")
+			return
+		}
+		allowed := make(map[uint]bool)
+		for _, server := range servers {
+			if server.ClusterID != nil && *server.ClusterID == request.ClusterID {
+				allowed[server.ID] = true
+			}
+		}
+		nodes := inspection.Nodes[:0]
+		for _, node := range inspection.Nodes {
+			if allowed[node.ServerID] {
+				nodes = append(nodes, node)
+			}
+		}
+		inspection.Nodes = nodes
+	}
 	counts := map[string]int{}
 	for _, node := range inspection.Nodes {
 		counts[node.State]++
 	}
 	h.recordAudit(c, "registry.mirror.inspect-actual-config", nil, model.AuditOutcomeSucceeded, "检查节点实际 Registry 配置", map[string]any{"node_count": len(inspection.Nodes), "state_counts": counts})
+	if apiShared.PaginationRequested(c) {
+		limit, offset := apiShared.LimitOffset(c, 10, 100)
+		sort.SliceStable(inspection.Nodes, func(i, j int) bool { return inspection.Nodes[i].ServerID < inspection.Nodes[j].ServerID })
+		start := min(offset, len(inspection.Nodes))
+		// Full, credential-free nodes support MD5 comparisons and explicit bulk targets.
+		apiShared.Success(c, gin.H{"items": inspection.Nodes[start:min(start+limit, len(inspection.Nodes))], "total": len(inspection.Nodes), "nodes": inspection.Nodes, "inspected_at": inspection.InspectedAt, "limit": limit, "offset": offset})
+		return
+	}
 	apiShared.Success(c, inspection)
 }
 

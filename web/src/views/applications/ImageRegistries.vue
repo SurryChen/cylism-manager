@@ -5,7 +5,8 @@
 
     <SurfaceCard v-if="loaded && registries.length > 0" as="div" class="section-gap"><div class="table-wrap"><table class="data-table"><thead><tr><th>名称</th><th>地址</th><th>验证镜像</th><th>认证</th><th>项目授权</th><th>状态</th><th>检测结果</th><th>操作</th></tr></thead><tbody>
       <tr v-for="registry in registries" :key="registry.id"><td class="cell-primary">{{ registry.name }}</td><td>{{ registry.endpoint }}</td><td class="verification-image">{{ registry.verification_image || '-' }}</td><td><span>{{ authLabel(registry.auth_type) }}</span><small v-if="registry.credential_configured" class="credential-state">凭据已配置</small></td><td><span v-if="registry.projects?.length">{{ registry.projects.map(project => project.name).join('、') }}</span><span v-else>-</span></td><td><span class="badge" :class="registry.enabled ? 'badge-online' : 'badge-offline'">{{ registry.enabled ? '已启用' : '已停用' }}</span></td><td><div class="verification-result"><span class="badge" :class="verificationBadge(registry.last_verify_status)">{{ verificationLabel(registry.last_verify_status) }}</span><small v-if="registry.last_verified_at">{{ formatTime(registry.last_verified_at) }}</small><small v-if="registry.last_verify_error" class="verification-error">{{ registry.last_verify_error }}</small></div></td><td class="action-cell"><div class="btn-group"><button class="icon-button" title="检测镜像仓库" :aria-label="`检测 ${registry.name}`" :disabled="verifyingID === registry.id" @click="verifyRegistry(registry)"><RefreshCw :size="16" :class="{ 'is-spinning': verifyingID === registry.id }" /></button><button class="btn btn-sm" @click="openEdit(registry)">编辑</button><button class="btn btn-sm btn-danger" title="删除镜像仓库" @click="deleteTarget = registry">删除</button></div></td></tr>
-    </tbody></table></div></SurfaceCard>
+    </tbody></table></div><ResourcePagination :resource="listPage" label="镜像仓库分页" />
+    </SurfaceCard>
 
     <div v-if="showModal" class="overlay" @click.self="closeModal"><div class="modal registry-modal"><h2 class="modal-title">{{ editingRegistry ? '编辑镜像仓库' : '新建镜像仓库' }}</h2><form @submit.prevent="saveRegistry">
       <div class="form-group"><label class="form-label">名称</label><input v-model.trim="form.name" class="form-input" required placeholder="commerce-harbor" /></div>
@@ -24,10 +25,12 @@
 </template>
 
 <script setup>
+import ResourcePagination from '../../components/ResourcePagination.vue'
+import { useListPage } from '../../composables/useListPage.js'
 import { onMounted, ref } from 'vue'
+import { getProjects } from '../../api/applications.js'
 import { RefreshCw } from 'lucide-vue-next'
-import { createImageRegistry, deleteImageRegistry, getImageRegistryResources, updateImageRegistry, verifyImageRegistry } from '../../api/image-registries.js'
-import { useAsyncResource } from '../../composables/useAsyncResource.js'
+import { createImageRegistry, deleteImageRegistry, updateImageRegistry, verifyImageRegistry } from '../../api/image-registries.js'
 import SurfaceCard from '../../components/SurfaceCard.vue'
 import ErrorNoticeModal from '../../components/ErrorNoticeModal.vue'
 import { formatDateTime as formatTime } from '../../utils/formatters.js'
@@ -43,12 +46,12 @@ const editingRegistry = ref(null)
 const deleteTarget = ref(null)
 const verifyingID = ref(null)
 const form = ref(newRegistryForm())
-const registryResource = useAsyncResource(({ signal }) => getImageRegistryResources({ signal }), [[], []])
+const listPage = useListPage('/image-registries', registries, readError)
 function newRegistryForm() { return { name: '', endpoint: '', verification_image: '', auth_type: 'anonymous', username: '', credential: '', enabled: true, project_ids: [] } }
 function authLabel(type) { return type === 'basic' ? '账号密码' : type === 'token' ? 'Token' : '匿名访问' }
 function verificationLabel(status) { return status === 'succeeded' ? '连通' : status === 'failed' ? '检测失败' : '未检测' }
 function verificationBadge(status) { return status === 'succeeded' ? 'badge-online' : status === 'failed' ? 'badge-danger' : 'badge-offline' }
-async function fetchData() { readError.value = ''; const result = await registryResource.refresh(); if (result) { registries.value = result[0] || []; projects.value = result[1] || [] } else if (registryResource.error.value) readError.value = registryResource.error.value.message || '加载镜像仓库失败'; loaded.value = true }
+async function fetchData() { readError.value = ''; try { const [result, projectList] = await Promise.all([listPage.refresh(), getProjects()]); projects.value = projectList || [] } catch (error) { readError.value = error.message || '加载镜像仓库失败' } finally { loaded.value = true } }
 function openCreate() { editingRegistry.value = null; form.value = newRegistryForm(); showModal.value = true }
 function openEdit(registry) { editingRegistry.value = registry; form.value = { name: registry.name, endpoint: registry.endpoint, verification_image: registry.verification_image || '', auth_type: registry.auth_type, username: registry.username || '', credential: '', enabled: registry.enabled, project_ids: (registry.projects || []).map(project => project.id) }; showModal.value = true }
 function closeModal() { showModal.value = false; editingRegistry.value = null; form.value = newRegistryForm() }

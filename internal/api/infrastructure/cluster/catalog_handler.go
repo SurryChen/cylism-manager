@@ -122,7 +122,7 @@ func (h *CatalogHandler) List(c *gin.Context) {
 	for index := range clusters {
 		summaries = append(summaries, summarizeCluster(&clusters[index]))
 	}
-	apiShared.Success(c, summaries)
+	apiShared.ListPage(c, summaries)
 }
 
 func (h *CatalogHandler) Get(c *gin.Context) {

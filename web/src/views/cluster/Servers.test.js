@@ -153,7 +153,7 @@ describe('Servers view', () => {
 
     expect(wrapper.text()).toContain('SSH 认证失败')
     expect(wrapper.get('#server-hostname').element.value).toBe('cloudzone.cylism.com')
-    await wrapper.get('form').trigger('submit')
+    await wrapper.get('.modal form').trigger('submit')
     await flush()
 
     expect(wrapper.find('.modal').exists()).toBe(false)
@@ -169,7 +169,7 @@ describe('Servers view', () => {
     expect(wrapper.text()).toContain('编辑服务器')
     expect(wrapper.get('input[placeholder="留空保持原密码"]').element.value).toBe('')
     expect(wrapper.get('#server-name').element.value).toBe('cluster-srv')
-    await wrapper.get('form').trigger('submit')
+    await wrapper.get('.modal form').trigger('submit')
     await flush()
 
     expect(updateServer).toHaveBeenCalledWith(2, {
@@ -192,13 +192,13 @@ describe('Servers view', () => {
     await wrapper.get('input[placeholder="192.168.1.100"]').setValue('10.0.0.9')
     await wrapper.get('[title="自动获取机器名"]').trigger('click')
     await flush()
-    await wrapper.get('form').trigger('submit')
+    await wrapper.get('.modal form').trigger('submit')
     await flush()
     expect(createServer).toHaveBeenCalledWith(expect.objectContaining({ name: '应用服务器', host: '10.0.0.9' }))
 
     await wrapper.get('[title="编辑 test-srv"]').trigger('click')
     await wrapper.get('#server-name').setValue('')
-    await wrapper.get('form').trigger('submit')
+    await wrapper.get('.modal form').trigger('submit')
     await flush()
     expect(updateServer).toHaveBeenCalledWith(1, expect.objectContaining({ name: '', host: '10.0.0.1' }))
     wrapper.unmount()
@@ -217,7 +217,7 @@ describe('Servers view', () => {
     await wrapper.get('select[aria-label="连接方式"]').setValue('direct')
     await wrapper.get('[title="自动获取机器名"]').trigger('click')
     await flush()
-    await wrapper.get('form').trigger('submit')
+    await wrapper.get('.modal form').trigger('submit')
     await flush()
     expect(updateServer).toHaveBeenCalledWith(3, expect.objectContaining({ proxy_server_id: null }))
 
@@ -229,7 +229,7 @@ describe('Servers view', () => {
     await wrapper.get('[title="自动获取机器名"]').trigger('click')
     await flush()
     expect(resolveServerHostname).toHaveBeenCalledWith(null, expect.objectContaining({ proxy_server_id: 1 }))
-    await wrapper.get('form').trigger('submit')
+    await wrapper.get('.modal form').trigger('submit')
     await flush()
     expect(createServer).toHaveBeenCalledWith(expect.objectContaining({ proxy_server_id: 1, host: '100.100.1.3' }))
     wrapper.unmount()
@@ -241,7 +241,7 @@ describe('Servers view', () => {
     await wrapper.get('[data-testid="add-server"]').trigger('click')
     expect(wrapper.get('#server-name').element.value).toBe('')
     await wrapper.get('input[placeholder="192.168.1.100"]').setValue('10.0.0.9')
-    await wrapper.get('form').trigger('submit')
+    await wrapper.get('.modal form').trigger('submit')
     await flush()
 
     expect(wrapper.text()).toContain('请先点击“自动获取”获取机器名')
@@ -261,7 +261,7 @@ describe('Servers view', () => {
 
     expect(resolveServerHostname).toHaveBeenCalledWith(null, expect.objectContaining({ host: '10.0.0.9', ssh_password: 'secret' }))
     expect(wrapper.get('#server-hostname').element.value).toBe('cloudzone.cylism.com')
-    await wrapper.get('form').trigger('submit')
+    await wrapper.get('.modal form').trigger('submit')
     await flush()
     expect(createServer).toHaveBeenCalledWith(expect.objectContaining({ hostname: 'cloudzone.cylism.com' }))
     expect(resolveServerHostname).toHaveBeenCalledTimes(1)
@@ -275,7 +275,7 @@ describe('Servers view', () => {
     await wrapper.get('input[placeholder="192.168.1.100"]').setValue('10.0.0.1')
     await wrapper.get('[title="自动获取机器名"]').trigger('click')
     await flush()
-    await wrapper.get('form').trigger('submit')
+    await wrapper.get('.modal form').trigger('submit')
     await flush()
 
     expect(wrapper.text()).toContain('该主机已添加，请编辑已有服务器')
@@ -295,13 +295,13 @@ describe('Servers view', () => {
     expect(wrapper.get('#server-hostname').element.value).toBe('cloudzone.cylism.com')
     await wrapper.get('input[placeholder="留空保持原密码"]').setValue('new-secret')
     expect(wrapper.get('#server-hostname').element.value).toBe('')
-    await wrapper.get('form').trigger('submit')
+    await wrapper.get('.modal form').trigger('submit')
     await flush()
     expect(updateServer).not.toHaveBeenCalled()
     expect(wrapper.text()).toContain('请先点击“自动获取”获取机器名')
     await wrapper.get('[title="自动获取机器名"]').trigger('click')
     await flush()
-    await wrapper.get('form').trigger('submit')
+    await wrapper.get('.modal form').trigger('submit')
     await flush()
     expect(updateServer).toHaveBeenCalledWith(1, expect.objectContaining({ hostname: 'cloudzone.cylism.com', ssh_password: 'new-secret' }))
     expect(resolveServerHostname).toHaveBeenCalledTimes(2)
@@ -333,7 +333,7 @@ describe('Servers view', () => {
     await wrapper.get('input[placeholder="192.168.1.100"]').setValue('10.0.0.9')
     await wrapper.get('[title="自动获取机器名"]').trigger('click')
     await flush()
-    await wrapper.get('form').trigger('submit')
+    await wrapper.get('.modal form').trigger('submit')
     await flush()
 
     expect(wrapper.text()).toContain('SSH 凭据无效')
@@ -445,4 +445,13 @@ describe('Servers view', () => {
     expect(wrapper.text()).toContain('服务器列表刷新失败')
     wrapper.unmount()
   })
+})
+
+vi.mock('../../api/list-pages.js', async importOriginal => {
+ const original = await importOriginal()
+ const { listPageFixture } = await import('../../test-support/list-page-fixture.js')
+ return { ...original, getListPage: async (path, query, options) => {
+  const rows = await (async () => { return getServers.mock.results.at(-1)?.value || [] })()
+  return listPageFixture(rows, query)
+ } }
 })

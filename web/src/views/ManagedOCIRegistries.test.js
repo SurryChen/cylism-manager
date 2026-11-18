@@ -327,3 +327,10 @@ describe('ManagedOCIRegistries view', () => {
     wrapper.unmount()
   })
 })
+
+vi.mock('../api/list-pages.js', async importOriginal => {
+ const original = await importOriginal()
+ const { api } = await import('../api/index.js')
+ const { listPageFixture } = await import('../test-support/list-page-fixture.js')
+ return { ...original, getListPage: async (path, query, options) => listPageFixture(await api.get(path, options), query) }
+})

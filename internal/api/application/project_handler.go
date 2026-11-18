@@ -21,7 +21,7 @@ func (h *ApplicationHandler) ListProjects(c *gin.Context) {
 		apiShared.DBError(c, err.Error())
 		return
 	}
-	apiShared.Success(c, apiShared.ProjectsDTO(projects))
+	apiShared.ListPage(c, apiShared.ProjectsDTO(projects))
 }
 
 func (h *ApplicationHandler) CreateProject(c *gin.Context) {

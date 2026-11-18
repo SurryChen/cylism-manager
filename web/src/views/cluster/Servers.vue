@@ -22,7 +22,7 @@
             </tr>
           </thead>
           <tbody>
-            <tr v-for="srv in servers" :key="srv.id">
+            <tr v-for="srv in serverRows" :key="srv.id">
               <td>{{ srv.name }}</td>
               <td>{{ srv.host }}</td>
               <td>{{ srv.proxy_server_id ? `代理访问 · ${srv.proxy_server_name || serverName(srv.proxy_server_id)}` : '直接访问' }}</td>
@@ -42,6 +42,7 @@
           </tbody>
         </table>
       </div>
+    <ResourcePagination :resource="serverPage" label="服务器分页" />
     </SurfaceCard>
     </template>
 
@@ -58,8 +59,9 @@
         <div v-if="resourceStatsError" class="k8s-banner k8s-banner-warn">{{ resourceStatsError }}</div>
         <div v-if="servers.length === 0" class="empty-state"><span class="empty-icon">⬡</span><span class="empty-text">暂无服务器</span></div>
         <div v-else-if="resourceStatsLoading && !resourceStats.length" class="empty-state"><span class="empty-text">正在采集服务器资源...</span></div>
-        <div v-else class="table-wrap resource-table-wrap"><table class="data-table resource-table"><thead><tr><th>服务器</th><th>主机</th><th>采集状态</th><th>CPU</th><th>内存</th><th>磁盘 /</th><th>负载 (1 分钟)</th><th>运行时间</th><th class="action-cell">操作</th></tr></thead><tbody><tr v-for="srv in servers" :key="srv.id" class="resource-row"><td class="resource-server-name">{{ srv.name }}</td><td class="resource-server-host">{{ srv.host }}</td><td><span class="badge" :class="resourceStatusClass(resourceFor(srv.id))">{{ resourceStatusLabel(resourceFor(srv.id)) }}</span><small v-if="resourceFor(srv.id)?.error" class="resource-error">{{ resourceFor(srv.id).error }}</small></td><td><div class="resource-metric"><strong>{{ formatPercent(resourceFor(srv.id)?.cpu_percent) }}</strong><span class="resource-meter"><i :class="resourceLevelClass(resourceFor(srv.id)?.cpu_percent)" :style="{ width: `${metricPercent(resourceFor(srv.id)?.cpu_percent)}%` }" /></span></div></td><td><div class="resource-metric"><strong>{{ formatMB(resourceFor(srv.id)?.memory_used_mb) }} / {{ formatMB(resourceFor(srv.id)?.memory_total_mb) }}</strong><span class="resource-meter"><i :class="resourceLevelClass(memPercent(resourceFor(srv.id)))" :style="{ width: `${metricPercent(memPercent(resourceFor(srv.id)))}%` }" /></span></div></td><td><div class="resource-metric"><strong>{{ resourceFor(srv.id)?.disk_used_gb ?? '-' }} / {{ resourceFor(srv.id)?.disk_total_gb ?? '-' }} GB</strong><span class="resource-meter"><i :class="resourceLevelClass(diskPercent(resourceFor(srv.id)))" :style="{ width: `${metricPercent(diskPercent(resourceFor(srv.id)))}%` }" /></span></div></td><td>{{ formatLoad(resourceFor(srv.id)) }}</td><td>{{ formatUptime(resourceFor(srv.id)?.uptime) }}</td><td class="action-cell"><button class="icon-button icon-button--table" type="button" :data-testid="`view-resource-stats-${srv.id}`" :title="`查看 ${srv.name} 的资源详情`" :aria-label="`查看 ${srv.name} 的资源详情`" @click="openStats(srv.id)"><ChartNoAxesColumnIncreasing :size="14" /></button></td></tr></tbody></table></div>
-      </SurfaceCard>
+        <div v-else class="table-wrap resource-table-wrap"><table class="data-table resource-table"><thead><tr><th>服务器</th><th>主机</th><th>采集状态</th><th>CPU</th><th>内存</th><th>磁盘 /</th><th>负载 (1 分钟)</th><th>运行时间</th><th class="action-cell">操作</th></tr></thead><tbody><tr v-for="srv in serverRows" :key="srv.id" class="resource-row"><td class="resource-server-name">{{ srv.name }}</td><td class="resource-server-host">{{ srv.host }}</td><td><span class="badge" :class="resourceStatusClass(resourceFor(srv.id))">{{ resourceStatusLabel(resourceFor(srv.id)) }}</span><small v-if="resourceFor(srv.id)?.error" class="resource-error">{{ resourceFor(srv.id).error }}</small></td><td><div class="resource-metric"><strong>{{ formatPercent(resourceFor(srv.id)?.cpu_percent) }}</strong><span class="resource-meter"><i :class="resourceLevelClass(resourceFor(srv.id)?.cpu_percent)" :style="{ width: `${metricPercent(resourceFor(srv.id)?.cpu_percent)}%` }" /></span></div></td><td><div class="resource-metric"><strong>{{ formatMB(resourceFor(srv.id)?.memory_used_mb) }} / {{ formatMB(resourceFor(srv.id)?.memory_total_mb) }}</strong><span class="resource-meter"><i :class="resourceLevelClass(memPercent(resourceFor(srv.id)))" :style="{ width: `${metricPercent(memPercent(resourceFor(srv.id)))}%` }" /></span></div></td><td><div class="resource-metric"><strong>{{ resourceFor(srv.id)?.disk_used_gb ?? '-' }} / {{ resourceFor(srv.id)?.disk_total_gb ?? '-' }} GB</strong><span class="resource-meter"><i :class="resourceLevelClass(diskPercent(resourceFor(srv.id)))" :style="{ width: `${metricPercent(diskPercent(resourceFor(srv.id)))}%` }" /></span></div></td><td>{{ formatLoad(resourceFor(srv.id)) }}</td><td>{{ formatUptime(resourceFor(srv.id)?.uptime) }}</td><td class="action-cell"><button class="icon-button icon-button--table" type="button" :data-testid="`view-resource-stats-${srv.id}`" :title="`查看 ${srv.name} 的资源详情`" :aria-label="`查看 ${srv.name} 的资源详情`" @click="openStats(srv.id)"><ChartNoAxesColumnIncreasing :size="14" /></button></td></tr></tbody></table></div>
+      <ResourcePagination :resource="serverPage" label="服务器分页" />
+    </SurfaceCard>
     </template>
 
     </main>
@@ -143,6 +145,8 @@
 </template>
 
 <script setup>
+import ResourcePagination from '../../components/ResourcePagination.vue'
+import { useListPage } from '../../composables/useListPage.js'
 import { computed, ref, shallowRef, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import {
@@ -172,7 +176,7 @@ import ServerSpeedTest from './ServerSpeedTest.vue'
 const serversResource = useAsyncResource(({ signal }) => getServers({ signal }), [])
 const servers = serversResource.data
 const serversLoading = serversResource.loading
-const serverListError = computed(() => serversResource.error.value?.message || '')
+const serverListError = computed(() => pageError.value || serversResource.error.value?.message || '')
 const route = useRoute()
 const activeSection = ref(['tailscale', 'proxy', 'speed-test', 'monitoring'].includes(route?.query?.tab) ? route.query.tab : 'configuration')
 const returnToCluster = computed(() => /^\/cluster\/\d+\?tab=networking$/.test(String(route?.query?.return || '')) ? route.query.return : '')
@@ -280,8 +284,10 @@ watch(activeSection, (section) => {
   syncResourcePolling()
 })
 
+const serverRows = ref([]), pageError = ref('')
+const serverPage = useListPage('/servers', serverRows, pageError)
 async function fetchServers() {
-  await serversResource.refresh()
+  await Promise.all([serversResource.refresh(), serverPage.refresh().catch(() => undefined)])
 }
 
 function resourceFor(serverID) { return resourceStatsByServerID.value.get(Number(serverID)) || null }

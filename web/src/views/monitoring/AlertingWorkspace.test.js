@@ -175,3 +175,10 @@ describe('AlertingWorkspace', () => {
     expect(options.signal.aborted).toBe(true)
   })
 })
+
+vi.mock('../../api/list-pages.js', () => ({ getListPage: vi.fn(async (path, query) => {
+ const raw = await apiMocks.get(path, path.startsWith('/clusters/') ? { clusterID: path.split('/')[2] } : undefined)
+ const items = path.endsWith('/overview') ? raw?.[query.view] || [] : Array.isArray(raw) ? raw : []
+ const offset = query.offset || 0, limit = query.limit || 10
+ return { ...raw, items: items.slice(offset, offset + limit), total: items.length, active_total: raw?.active?.length || 0 }
+}) }))

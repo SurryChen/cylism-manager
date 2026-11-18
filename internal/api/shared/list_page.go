@@ -89,3 +89,16 @@ func ResourceListPage[T any](c *gin.Context, items []T, key func(T) ResourceList
 	}
 	Success(c, gin.H{"items": filtered[start:min(start+limit, len(filtered))], "total": len(filtered), "limit": limit, "offset": offset, "namespaces": keys(namespaces), "nodes": keys(nodes), "statuses": keys(statuses)})
 }
+
+// ListPage preserves legacy array responses and the caller's established order.
+// Callers must authorize and filter the complete scope before passing items.
+func ListPage[T any](c *gin.Context, items []T) {
+	if !PaginationRequested(c) {
+		Success(c, items)
+		return
+	}
+	limit, offset := LimitOffset(c, 10, 100)
+	start := min(offset, len(items))
+	page := append(make([]T, 0, min(limit, len(items)-start)), items[start:min(start+limit, len(items))]...)
+	Success(c, gin.H{"items": page, "total": len(items), "limit": limit, "offset": offset})
+}

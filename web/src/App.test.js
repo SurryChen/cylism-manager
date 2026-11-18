@@ -62,12 +62,12 @@ afterEach(() => {
 describe('Glass UI application shell', () => {
   it('separates personal product routes from deployment and operations navigation', async () => {
     const wrapper = await mountApp('/products/7')
-    expect(wrapper.get('[data-testid="primary-navigation"]').get('[aria-current="page"]').text()).toBe('个人')
+    expect(wrapper.get('[data-testid="primary-navigation"]').get('[aria-current="page"]').text()).toBe('产品')
     const navigation = wrapper.get('[data-testid="desktop-navigation"]')
-    expect(navigation.text()).toContain('个人工作台')
+    expect(navigation.text()).toContain('研发工作台')
     expect(navigation.get('.sidebar-link.is-active').text()).toBe('产品中心')
     await router.push('/personal')
-    expect(navigation.get('.sidebar-link.is-active').text()).toBe('个人工作台')
+    expect(navigation.get('.sidebar-link.is-active').text()).toBe('研发工作台')
   })
   it('does not render static environment or agent connection status', async () => {
     const wrapper = await mountApp('/servers')
@@ -157,7 +157,7 @@ describe('Glass UI application shell', () => {
     const wrapper = await mountApp('/applications/1')
     const navigation = wrapper.get('[data-testid="desktop-navigation"]')
 
-    expect(wrapper.get('[data-testid="primary-navigation"]').get('[aria-current="page"]').text()).toContain('应用')
+    expect(wrapper.get('[data-testid="primary-navigation"]').get('[aria-current="page"]').text()).toContain('部署与交付')
     expect(navigation.text()).toContain('项目与环境')
     expect(navigation.text()).toContain('镜像仓库')
     expect(navigation.text()).toContain('应用部署')
@@ -177,7 +177,7 @@ describe('Glass UI application shell', () => {
   it('keeps domain drill-down routes in the application navigation group', async () => {
     const wrapper = await mountApp('/applications/domains?project_id=1&environment_id=1')
 
-    expect(wrapper.get('[data-testid="primary-navigation"]').get('[aria-current="page"]').text()).toContain('应用')
+    expect(wrapper.get('[data-testid="primary-navigation"]').get('[aria-current="page"]').text()).toContain('部署与交付')
     expect(wrapper.get('[data-testid="desktop-navigation"]').get('.sidebar-link.is-active').text()).toContain('应用部署')
   })
 

@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"path"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -222,7 +223,15 @@ func (h *Handler) ListContainers(c *gin.Context) {
 		providerError(c, err)
 		return
 	}
-	apiShared.Success(c, items)
+	if apiShared.PaginationRequested(c) {
+		sort.SliceStable(items, func(i, j int) bool {
+			if items[i].Name != items[j].Name {
+				return items[i].Name < items[j].Name
+			}
+			return items[i].Region < items[j].Region
+		})
+	}
+	apiShared.ListPage(c, items)
 }
 func (h *Handler) CreateContainer(c *gin.Context) {
 	id, ok := connectionID(c)

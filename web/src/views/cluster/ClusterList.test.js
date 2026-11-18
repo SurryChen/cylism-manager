@@ -93,7 +93,7 @@ describe('ClusterList', () => {
     await wrapper.get('.cluster-list-actions .btn-primary').trigger('click')
     await wrapper.get('#cluster-name').setValue(' 生产集群 ')
     expect(wrapper.get('[role="dialog"] .btn-primary').attributes('disabled')).toBeDefined()
-    const typeMenu = wrapper.findComponent(SelectMenu)
+    const typeMenu = wrapper.findAllComponents(SelectMenu).find(menu => menu.props('options')?.some(item => item.value === 'k3s'))
     expect(typeMenu.props('options')).toEqual([
       { value: 'k3s', label: 'K3s', description: '当前支持' },
       { value: 'kubernetes', label: 'K8s', description: '暂未支持', disabled: true },
@@ -114,7 +114,7 @@ describe('ClusterList', () => {
 
     await wrapper.get('.cluster-list-actions .btn-primary').trigger('click')
     await wrapper.get('#cluster-name').setValue('生产集群')
-    wrapper.findComponent(SelectMenu).vm.$emit('update:modelValue', 'k3s')
+    wrapper.findAllComponents(SelectMenu).find(menu => menu.props('options')?.some(item => item.value === 'k3s')).vm.$emit('update:modelValue', 'k3s')
     await wrapper.get('#create-cluster-form').trigger('submit')
     await flushPromises()
 
@@ -140,4 +140,16 @@ describe('ClusterList', () => {
     expect(document.body.textContent).toContain('请先卸载集群中的全部节点')
     expect(wrapper.findAll('tbody tr')).toHaveLength(1)
   })
+})
+
+vi.mock('../../api/list-pages.js', async importOriginal => {
+  const original = await importOriginal()
+  const { api } = await import('../../api/index.js')
+  const { listPageFixture } = await import('../../test-support/list-page-fixture.js')
+  return { ...original, getListPage: async (path, query, options) => {
+    const filters = new URLSearchParams()
+    for (const key of ['environment_id', 'unassigned']) if (query[key]) filters.set(key, query[key])
+    const url = path + (filters.size ? '?' + filters : '')
+    return listPageFixture(await api.get(url, options), query)
+  } }
 })

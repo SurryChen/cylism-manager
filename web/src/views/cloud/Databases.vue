@@ -4,15 +4,15 @@
     <div class="database-content">
       <SurfaceCard v-if="activeTab === 'clusters'" padding="none">
         <div class="database-toolbar">
-          <span class="cell-secondary">{{ loading ? '读取中...' : `共 ${mysqlClusters.length} 个集群` }}</span>
+          <span class="cell-secondary">{{ loading ? '读取中...' : `共 ${clusterPage.total.value} 个集群` }}</span>
           <div class="row-actions"><button class="btn" @click="openTasks()">数据库任务</button><button class="btn" @click="openCapabilities()">数据库操作</button><button class="btn btn-primary" type="button" @click="openClusterCreate"><Plus :size="16" />新增 MySQL 集群</button></div>
         </div>
         <EmptyState v-if="loading" variant="loading" message="正在读取 MySQL 集群..." />
-        <EmptyState v-else-if="!mysqlClusters.length" message="暂无 MySQL 集群" />
+        <EmptyState v-else-if="!clusterRows.length" message="暂无 MySQL 集群" />
         <div v-else class="table-wrap table-inset">
           <table class="data-table database-table">
             <thead><tr><th>集群名称</th><th>Kubernetes 集群</th><th>数据库实例</th><th>Router 实例</th><th>状态</th><th class="actions">操作</th></tr></thead>
-            <tbody><tr v-for="item in mysqlClusters" :key="item.id">
+            <tbody><tr v-for="item in clusterRows" :key="item.id">
               <td class="cell-primary">{{ item.name }}</td><td>{{ clusterName(item.cluster_id) }}</td>
               <td><span v-if="item.status !== 'draft'" title="就绪 / 配置">{{ item.online_instances || 0 }}/</span>{{ item.database_instances || item.database_nodes?.length || 0 }} <span class="cell-secondary">· {{ item.database_nodes?.length || 0 }} 台节点</span></td><td><span v-if="item.status !== 'draft'" title="就绪 / 配置">{{ item.router_ready || 0 }}/</span>{{ item.router_instances ?? item.router_nodes?.length ?? 0 }} <span v-if="item.router_nodes?.length" class="cell-secondary">· {{ item.router_nodes.length }} 台候选节点</span></td>
               <td><span class="badge" :class="item.status === 'ready' ? 'badge-online' : 'badge-offline'">{{ clusterStatusLabel(item.status) }}</span></td>
@@ -20,18 +20,19 @@
             </tr></tbody>
           </table>
         </div>
-      </SurfaceCard>
+      <ResourcePagination :show-error="false" :resource="clusterPage" label="数据库集群分页" />
+    </SurfaceCard>
       <SurfaceCard v-else padding="none">
         <div class="database-toolbar">
-          <span class="cell-secondary">{{ loading ? '读取中...' : `共 ${instances.length} 个实例` }}</span>
+          <span class="cell-secondary">{{ loading ? '读取中...' : `共 ${instancePage.total.value} 个实例` }}</span>
           <div class="row-actions"><button class="btn" @click="openTasks()">数据库任务</button><button class="btn" type="button" @click="openCreate">接入已有 MySQL</button><button class="btn btn-primary" @click="openCapability('deploy')"><Plus :size="16" />部署 MySQL</button></div>
         </div>
         <EmptyState v-if="loading" variant="loading" message="正在读取数据库..." />
-        <EmptyState v-else-if="!instances.length" message="暂无数据库实例" />
+        <EmptyState v-else-if="!instanceRows.length" message="暂无数据库实例" />
         <div v-else class="table-wrap table-inset">
           <table class="data-table database-table">
             <thead><tr><th>实例名称</th><th>管理方式</th><th>位置</th><th>状态</th><th class="actions">操作</th></tr></thead>
-            <tbody><tr v-for="item in instances" :key="item.id">
+            <tbody><tr v-for="item in instanceRows" :key="item.id">
               <td class="cell-primary">{{ item.name }}</td><td>{{ item.mode === 'managed' ? '独立 MySQL' : '已有 MySQL' }}</td>
               <td>{{ item.mode === 'managed' ? item.node_name || clusterName(item.cluster_id) : item.private_gateway ? clusterName(item.private_gateway.cluster_id) : '外部实例' }}</td>
               <td><button v-if="instanceError(item)" class="status-error" @click="actionError = instanceError(item)"><span class="badge badge-danger">异常</span></button><span v-else class="badge" :class="['ready', 'registered'].includes(instanceState(item)) ? 'badge-online' : 'badge-offline'">{{ statusLabel(instanceState(item)) }}</span></td>
@@ -39,6 +40,7 @@
             </tr></tbody>
           </table>
         </div>
+      <ResourcePagination :show-error="false" :resource="instancePage" label="数据库实例分页" />
       </SurfaceCard>
     </div>
 
@@ -133,6 +135,8 @@
 </template>
 
 <script setup>
+import ResourcePagination from '../../components/ResourcePagination.vue'
+import { useListPage } from '../../composables/useListPage.js'
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ChevronRight, Database, Plus, RefreshCw, TerminalSquare, Trash2, Unlink } from 'lucide-vue-next'
 import { useRouter } from 'vue-router'
@@ -168,7 +172,7 @@ const resources = computed(() => [...mysqlClusters.value.map(item => ({ ref: `cl
 const detailRelations = computed(() => relations.value.filter(item => [item.source, item.target].includes(`instance:${detailItem.value?.id}`)))
 async function loadRelations() { relationsLoading.value = true; try { relations.value = await getDatabaseReplications() } catch (error) { actionError.value = error.message || '读取复制关系失败' } finally { relationsLoading.value = false } }
 
-function updateDetail(item) { Object.assign(detailItem.value, item); const row = instances.value.find(row => row.id === item.id); if (row) Object.assign(row, item) }
+function updateDetail(item) { Object.assign(detailItem.value, item); const row = instanceRows.value.find(row => row.id === item.id); if (row) Object.assign(row, item) }
 const metadataLoading = ref(false), replicationRefreshing = ref(false)
 let detailGeneration = 0
 async function openDetails(item) {
@@ -207,8 +211,8 @@ async function refreshRelations() {
 const formatObservationTime = value => value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '尚未读取'
 function podResourceLink(item) { const query = new URLSearchParams({ tab: 'workloads', namespace: item.namespace || 'cylism-databases', pod: `${item.resource_name || `cylism-mysql-${item.id}`}-0` }); return `#/cluster/${item.cluster_id}/resources?${query}` }
 watch(detailTab, async tab => { if (tab === 'replication' && detailItem.value) { await loadRelations(); if (!detailRelations.value.length) await refreshRelations() } })
-function openCapabilities() { capabilitiesOpen.value = true; loadRelations() }
-function openCapability(kind, source = '', target = '') { if (['detach', 'replication_check'].includes(kind)) loadRelations(); detailItem.value = null; capabilitySource.value = source; capabilityTarget.value = target; capabilityKind.value = kind }
+function openCapabilities() { capabilitiesOpen.value = true; void loadResourceCatalog(); loadRelations() }
+function openCapability(kind, source = '', target = '') { void loadResourceCatalog(); if (['detach', 'replication_check'].includes(kind)) loadRelations(); detailItem.value = null; capabilitySource.value = source; capabilityTarget.value = target; capabilityKind.value = kind }
 function openTasks(resource = '', taskID = null) { detailItem.value = null; tasksResource.value = resource; selectedTaskID.value = taskID; tasksOpen.value = true }
 async function capabilityCreated(id) { capabilityKind.value = ''; await refreshInstances(); openTasks('', id) }
 function openAdmin(item) { adminItem.value = item; detailItem.value = null; adminForm.username = item.admin_username || ''; adminForm.password = '' }
@@ -217,7 +221,7 @@ async function saveAdmin() { if (adminSaving.value || !adminItem.value) return; 
 const activeTab = ref('clusters')
 const gatewayItem = ref(null), connectionMode = ref('direct')
 const gatewayStatusLabel = state => ({ ready: '网络已验证', disabled: '已停用', degraded: '服务检查异常', error: '任务失败', pending: '待部署', checking: '测试中', disabling: '停用中' }[state] || '待检查')
-async function refreshInstances() { try { instances.value = await getDatabases(); await loadRelations() } catch (error) { readError.value = error.message || '读取数据库失败' } }
+async function refreshInstances() { try { await instancePage.refresh(); await loadRelations() } catch (error) { readError.value = error.message || '读取数据库失败' } }
 const instances = ref([]), mysqlClusters = ref([]), clusters = ref([]), applications = ref([]), templates = ref([]), bindings = ref([])
 const loading = ref(true), readError = ref(''), actionError = ref(''), createOpen = ref(false), saving = ref(false)
 const clusterCreateOpen = ref(false), deletingCluster = ref(null)
@@ -238,13 +242,20 @@ const instanceState = item => item.status
 const instanceError = item => item.status === 'error' ? item.last_error : ''
 const statusLabel = value => ({ pending: '待配置网关', checking: '测试中', disabling: '停用中', disabled: '已停用', degraded: '检查异常', registered: '已登记', creating: '创建中', starting: '启动中', ready: '可用', missing: '资源缺失', error: '失败' }[value] || '待检查')
 const clusterStatusLabel = value => ({ draft: '待配置', starting: '部署中', ready: '运行中', missing: '资源缺失', error: '异常', paused: '已暂停', stopped: '已停用', stopping: '停用中', resuming: '恢复中', retiring: '清退中', retired: '已清退' }[value] || '待检查')
+const clusterRows = ref([]), instanceRows = ref([])
+const instancePage = useListPage('/cloud/databases', instanceRows, readError)
+const clusterPage = useListPage('/cloud/mysql-clusters', clusterRows, readError)
+async function loadResourceCatalog() {
+  try { const [clusterItems, instanceItems] = await Promise.all([getMySQLClusters(), getDatabases()]); mysqlClusters.value = clusterItems || []; instances.value = instanceItems || [] } catch (error) { actionError.value = error.message || '读取数据库选项失败' }
+}
 async function load() {
   loading.value = true; readError.value = ''
-  const results = await Promise.allSettled([getMySQLClusters(), getDatabases(), getClusters(), getApplications()])
-  const targets = [mysqlClusters, instances, clusters, applications]
+  const results = await Promise.allSettled([getClusters(), getApplications()])
+  const targets = [clusters, applications]
   results.forEach((result, index) => { if (result.status === 'fulfilled') targets[index].value = result.value })
   const failure = results.find(result => result.status === 'rejected')
   if (failure) readError.value = failure.reason?.message || '读取数据库失败'
+  await Promise.all([clusterPage.refresh(), instancePage.refresh()]).catch(error => { readError.value = error.message || '读取数据库失败' })
   loading.value = false
 }
 function openCreate() { connectionMode.value = 'direct'; Object.assign(form, emptyForm(), { mode: 'external' }); createOpen.value = true }

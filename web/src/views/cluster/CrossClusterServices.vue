@@ -3,7 +3,7 @@
     <SurfaceCard padding="none">
       <div class="cross-toolbar">
         <div class="cross-filters">
-          <span class="cell-secondary">共 {{ items.length }} 条连接</span>
+          <span class="cell-secondary">共 {{ listPage.total.value }} 条连接</span>
           <SelectMenu v-model="sourceFilter" :options="sourceFilterOptions" aria-label="筛选来源集群" />
           <SelectMenu v-model="targetFilter" :options="targetFilterOptions" aria-label="筛选目标集群" />
         </div>
@@ -18,6 +18,7 @@
       </tbody></table></div>
       <EmptyState v-else-if="loading" variant="loading" message="正在读取跨集群服务" />
       <EmptyState v-else-if="!loadError" :message="items.length ? '没有符合条件的跨集群服务' : '暂无跨集群服务'" />
+    <ResourcePagination :resource="listPage" label="跨集群服务分页" />
     </SurfaceCard>
 
     <BaseModal :open="createOpen" title="新增跨集群访问" teleport :show-close="!saving" :close-on-overlay="!saving" :close-on-escape="!saving" @close="closeCreate">
@@ -39,9 +40,11 @@
 </template>
 
 <script setup>
+import ResourcePagination from '../../components/ResourcePagination.vue'
+import { useListPage } from '../../composables/useListPage.js'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { Activity, Plus, RefreshCw, Trash2 } from 'lucide-vue-next'
-import { checkCrossClusterService, createCrossClusterService, deleteCrossClusterService, getAllCrossClusterServices, getClusters, precheckCrossClusterService } from '../../api/clusters.js'
+import { checkCrossClusterService, createCrossClusterService, deleteCrossClusterService, getClusters, precheckCrossClusterService } from '../../api/clusters.js'
 import { createClusterKubernetesApi } from '../../api/kubernetes.js'
 import BaseModal from '../../components/BaseModal.vue'
 import EmptyState from '../../components/EmptyState.vue'
@@ -73,7 +76,7 @@ const readyClusterOptions = computed(() => clusters.value.filter(cluster => clus
 const targetClusterOptions = computed(() => readyClusterOptions.value.filter(cluster => cluster.value !== form.value.source_cluster_id))
 const sourceFilterOptions = computed(() => [{ value: '', label: '全部来源集群' }, ...clusters.value.map(cluster => ({ value: String(cluster.id), label: cluster.name }))])
 const targetFilterOptions = computed(() => [{ value: '', label: '全部目标集群' }, ...clusters.value.map(cluster => ({ value: String(cluster.id), label: cluster.name }))])
-const visibleItems = computed(() => items.value.filter(item => (!sourceFilter.value || String(item.source_cluster_id) === sourceFilter.value) && (!targetFilter.value || String(item.target_cluster_id) === targetFilter.value)))
+const visibleItems = computed(() => items.value)
 const sourceNamespaceOptions = computed(() => sourceNamespaces.value.map(item => ({ value: item.name, label: item.name })))
 const targetServiceOptions = computed(() => targetServices.value.filter(item => item.cluster_ip && item.cluster_ip !== 'None' && item.ports?.some(port => port.startsWith('TCP:'))).map(item => ({ value: `${item.namespace}/${item.name}`, label: `${item.namespace} / ${item.name}` })))
 const selectedService = computed(() => targetServices.value.find(item => `${item.namespace}/${item.name}` === form.value.target_service))
@@ -87,6 +90,7 @@ let optionRequestID = 0
 function emptyForm() { return { source_cluster_id: '', target_cluster_id: '', target_service: '', target_service_port: '', source_namespace: '', source_name: '', source_port: 0 } }
 function clusterName(id) { return clusters.value.find(cluster => Number(cluster.id) === Number(id))?.name || `集群 #${id}` }
 
+const listPage = useListPage('/cross-cluster-services', items, loadError)
 async function load() {
   loadController?.abort()
   const controller = new AbortController()
@@ -94,8 +98,8 @@ async function load() {
   loading.value = true
   loadError.value = ''
   try {
-    const [records, clusterList] = await Promise.all([getAllCrossClusterServices({ signal: controller.signal }), getClusters({ signal: controller.signal })])
-    if (!controller.signal.aborted) { items.value = records || []; clusters.value = clusterList || [] }
+    const [, clusterList] = await Promise.all([listPage.refresh({ source_cluster_id: sourceFilter.value, target_cluster_id: targetFilter.value }), getClusters({ signal: controller.signal })])
+    if (!controller.signal.aborted) { clusters.value = clusterList || [] }
   } catch (error) { if (!controller.signal.aborted) loadError.value = error.message || '读取跨集群服务失败' }
   finally { if (!controller.signal.aborted) loading.value = false }
 }
@@ -176,6 +180,7 @@ async function remove() {
   finally { busyID.value = 0 }
 }
 
+watch([sourceFilter, targetFilter], () => { void load() })
 void load()
 onBeforeUnmount(() => { loadController?.abort(); optionController?.abort(); namespaceController?.abort() })
 </script>

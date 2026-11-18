@@ -34,6 +34,7 @@ type SystemComponentRepository interface {
 type AlertAutomationRepository interface {
 	UpsertAlertEvent(*model.AlertEvent) (*model.AlertEvent, error)
 	ListAlertEvents(int) ([]model.AlertEvent, error)
+	ListAlertEventPage(int, int) ([]model.AlertEvent, int64, error)
 	UpdateAlertEvent(*model.AlertEvent) error
 	GetAlertAutomationPolicy() (*model.AlertAutomationPolicy, error)
 	SaveAlertAutomationPolicy(*model.AlertAutomationPolicy) error

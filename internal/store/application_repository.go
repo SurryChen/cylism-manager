@@ -17,7 +17,7 @@ func (s *Store) CreateProject(project *model.Project) error {
 
 func (s *Store) ListProjects() ([]model.Project, error) {
 	var projects []model.Project
-	err := s.db.Preload("Environments").Preload("DefaultImageRegistry").Order("created_at desc").Find(&projects).Error
+	err := s.db.Preload("Environments").Preload("DefaultImageRegistry").Order("created_at desc, id desc").Find(&projects).Error
 	return projects, err
 }
 
@@ -61,7 +61,7 @@ func (s *Store) CreateEnvironment(environment *model.Environment) error {
 
 func (s *Store) ListEnvironments(projectID uint) ([]model.Environment, error) {
 	var environments []model.Environment
-	err := s.db.Where("project_id = ?", projectID).Order("created_at asc").Find(&environments).Error
+	err := s.db.Where("project_id = ?", projectID).Order("created_at asc, id asc").Find(&environments).Error
 	return environments, err
 }
 
@@ -266,7 +266,7 @@ func (s *Store) GetApplicationByEnvironmentName(environmentID uint, name string)
 
 func (s *Store) ListApplications(scope ...uint) ([]model.Application, error) {
 	var applications []model.Application
-	query := s.db.Preload("Project.DefaultImageRegistry").Preload("Environment").Preload("Endpoints", func(db *gorm.DB) *gorm.DB { return db.Order("id asc") }).Order("created_at desc")
+	query := s.db.Preload("Project.DefaultImageRegistry").Preload("Environment").Preload("Endpoints", func(db *gorm.DB) *gorm.DB { return db.Order("id asc") }).Order("created_at desc, id desc")
 	if len(scope) > 0 && scope[0] != 0 {
 		query = query.Where("project_id = ?", scope[0])
 	}
@@ -331,7 +331,7 @@ func (s *Store) GetDefaultApplicationDeploymentTemplate(applicationID uint) (*mo
 
 func (s *Store) ListApplicationDeploymentTemplates(applicationID uint) ([]model.ApplicationDeploymentTemplate, error) {
 	var templates []model.ApplicationDeploymentTemplate
-	err := s.db.Where("application_id = ?", applicationID).Order("created_at asc").Find(&templates).Error
+	err := s.db.Where("application_id = ?", applicationID).Order("created_at asc, id asc").Find(&templates).Error
 	return templates, err
 }
 
