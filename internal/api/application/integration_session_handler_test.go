@@ -1,7 +1,10 @@
 package applicationapi
 
 import (
+	"encoding/json"
 	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -41,3 +44,54 @@ func TestCreateIntegrationDelegationAuditsDelegatedIssuance(t *testing.T) {
 }
 
 func stringPointer(value string) *string { return &value }
+
+func TestIntegrationSessionContextValidatesSessionAndReturnsScope(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db, err := store.New(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := newTestApplicationHandler(db, []byte("01234567890123456789012345678901"), nil)
+	router := gin.New()
+	router.GET("/context", h.IntegrationSessionContext)
+	for _, tc := range []struct {
+		token   string
+		expires time.Time
+		want    int
+	}{
+		{"active", time.Now().Add(time.Hour), http.StatusOK},
+		{"expired", time.Now().Add(-time.Hour), http.StatusUnauthorized},
+	} {
+		if err := db.CreateIntegrationSession(&model.IntegrationSession{HandoffCodeHash: tc.token + "-handoff", SessionTokenHash: stringPointer(opaqueHash(tc.token)), UserID: 7, ProjectID: 3, EnvironmentID: 5, ApplicationID: 11, ActionsData: "application:read,configmap:write", HandoffExpiresAt: time.Now(), ExpiresAt: tc.expires}); err != nil {
+			t.Fatal(err)
+		}
+		req := httptest.NewRequest(http.MethodGet, "/context", nil)
+		req.Header.Set("Authorization", "Bearer "+tc.token)
+		response := serve(router, req)
+		if response.Code != tc.want {
+			t.Fatalf("%s: status=%d body=%s", tc.token, response.Code, response.Body.String())
+		}
+		if tc.want == http.StatusOK {
+			var decoded map[string]any
+			if json.Unmarshal(response.Body.Bytes(), &decoded) != nil {
+				t.Fatal("invalid response")
+			}
+			data := decoded["data"].(map[string]any)
+			if data["user_id"] != float64(7) || data["project_id"] != float64(3) || data["environment_id"] != float64(5) || data["application_id"] != float64(11) {
+				t.Fatalf("wrong scope: %v", data)
+			}
+			if strings.Contains(response.Body.String(), opaqueHash(tc.token)) || strings.Contains(response.Body.String(), "handoff") {
+				t.Fatal("session credential leaked")
+			}
+		}
+	}
+	for _, token := range []string{"", "unknown"} {
+		req := httptest.NewRequest(http.MethodGet, "/context", nil)
+		if token != "" {
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
+		if got := serve(router, req).Code; got != http.StatusUnauthorized {
+			t.Fatalf("invalid session accepted: %d", got)
+		}
+	}
+}

@@ -217,6 +217,7 @@ GET /api/integrations/applications/:id/releases
 GET /api/integrations/applications/:id/releases/:releaseID
 GET /api/integrations/applications/:id/runtime
 GET /api/integrations/applications/discovery
+GET /api/integrations/sessions/context
 GET /api/k8s/configmaps
 GET /api/k8s/configmaps/:namespace/:name
 GET /api/k8s/daemonsets

@@ -88,6 +88,7 @@ func registerApplicationRoutes(r *gin.Engine, apiGroup *gin.RouterGroup, h *appl
 	sessions := r.Group("/api/integrations/sessions")
 	sessions.POST("/exchange", h.ExchangeIntegrationSession)
 	sessions.POST("/delegation", h.CreateIntegrationDelegation)
+	sessions.GET("/context", h.IntegrationSessionContext)
 	r.POST("/api/applications/:id/deployments", h.DeployWebhook)
 
 	apiGroup.GET("/workspace/overview", h.HandleWorkspace((*applicationapi.ApplicationHandler).WorkspaceOverview))
