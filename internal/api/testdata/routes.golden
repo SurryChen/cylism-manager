@@ -31,6 +31,7 @@ DELETE /api/clusters/:id/k8s/secrets/:namespace/:name
 DELETE /api/clusters/:id/monitoring
 DELETE /api/clusters/:id/monitoring/alerts
 DELETE /api/clusters/:id/monitoring/alerts/silences/:silenceID
+DELETE /api/clusters/:id/monitoring/alerts/suppression-rules/:ruleID
 DELETE /api/clusters/:id/monitoring/logs
 DELETE /api/domains/:id
 DELETE /api/image-registries/:id
@@ -47,6 +48,7 @@ DELETE /api/managed-oci-registries/:id/catalog/tags
 DELETE /api/monitoring
 DELETE /api/monitoring/alerts
 DELETE /api/monitoring/alerts/silences/:id
+DELETE /api/monitoring/alerts/suppression-rules/:ruleID
 DELETE /api/monitoring/logs
 DELETE /api/node-registry-mirrors/:id
 DELETE /api/nodes/:id
@@ -181,9 +183,11 @@ GET /api/clusters/:id/k8s/services
 GET /api/clusters/:id/k8s/services/:namespace/:name/endpoints
 GET /api/clusters/:id/k8s/statefulsets
 GET /api/clusters/:id/k8s/storage-classes
+GET /api/clusters/:id/monitoring/alerts/history
 GET /api/clusters/:id/monitoring/alerts/overview
 GET /api/clusters/:id/monitoring/alerts/silences
 GET /api/clusters/:id/monitoring/alerts/status
+GET /api/clusters/:id/monitoring/alerts/suppression-rules
 GET /api/clusters/:id/monitoring/dashboard
 GET /api/clusters/:id/monitoring/disk-growth
 GET /api/clusters/:id/monitoring/logs/filters
@@ -259,9 +263,11 @@ GET /api/managed-oci-registries/pvcs
 GET /api/managed-oci-registries/storage-preflight
 GET /api/monitoring/alerts/automation-events
 GET /api/monitoring/alerts/automation-policy
+GET /api/monitoring/alerts/history
 GET /api/monitoring/alerts/overview
 GET /api/monitoring/alerts/silences
 GET /api/monitoring/alerts/status
+GET /api/monitoring/alerts/suppression-rules
 GET /api/monitoring/dashboard
 GET /api/monitoring/disk-growth
 GET /api/monitoring/logs/filters
@@ -330,10 +336,12 @@ GET /internal/runtime-tools/v1/cylism-cli/linux-amd64/manifest
 PATCH /api/clusters/:id/k8s/deployments/:namespace/:name/image
 PATCH /api/clusters/:id/k8s/deployments/:namespace/:name/scale
 PATCH /api/clusters/:id/k8s/statefulsets/:namespace/:name/scale
+PATCH /api/clusters/:id/monitoring/alerts/suppression-rules/:ruleID/enabled
 PATCH /api/k8s/deployments/:namespace/:name/image
 PATCH /api/k8s/deployments/:namespace/:name/scale
 PATCH /api/k8s/namespaces/:name
 PATCH /api/k8s/statefulsets/:namespace/:name/scale
+PATCH /api/monitoring/alerts/suppression-rules/:ruleID/enabled
 PATCH /api/nodes/:id/labels
 PATCH /api/nodes/:id/scheduling
 PATCH /api/runtimes/:id/chat/sessions/:sid
@@ -427,6 +435,7 @@ POST /api/clusters/:id/k8s/secrets
 POST /api/clusters/:id/monitoring/alerts/install
 POST /api/clusters/:id/monitoring/alerts/notify
 POST /api/clusters/:id/monitoring/alerts/silences
+POST /api/clusters/:id/monitoring/alerts/suppression-rules
 POST /api/clusters/:id/monitoring/alerts/test-notification
 POST /api/clusters/:id/monitoring/install
 POST /api/clusters/:id/monitoring/logs/install
@@ -474,6 +483,7 @@ POST /api/managed-oci-registries/:id/repair
 POST /api/monitoring/alerts/install
 POST /api/monitoring/alerts/notify
 POST /api/monitoring/alerts/silences
+POST /api/monitoring/alerts/suppression-rules
 POST /api/monitoring/alerts/test-notification
 POST /api/monitoring/install
 POST /api/monitoring/logs/install
@@ -573,6 +583,7 @@ PUT /api/clusters/:id/k8s/certs/issuers/:kind/:namespace/:name
 PUT /api/clusters/:id/k8s/configmaps/:namespace/:name
 PUT /api/clusters/:id/k8s/secrets/:namespace/:name
 PUT /api/clusters/:id/monitoring/alerts/config
+PUT /api/clusters/:id/monitoring/alerts/suppression-rules/:ruleID
 PUT /api/clusters/:id/monitoring/logs/config
 PUT /api/domains/:id
 PUT /api/image-registries/:id
@@ -584,6 +595,7 @@ PUT /api/k8s/services/:namespace/:name
 PUT /api/managed-oci-registries/:id
 PUT /api/monitoring/alerts/automation-policy
 PUT /api/monitoring/alerts/config
+PUT /api/monitoring/alerts/suppression-rules/:ruleID
 PUT /api/monitoring/logs/config
 PUT /api/node-registry-mirrors/:id
 PUT /api/node-registry-mirrors/actual-config

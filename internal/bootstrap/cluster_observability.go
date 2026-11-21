@@ -67,7 +67,7 @@ func (c *Container) clusterObservability(ctx context.Context, clusterID uint, fa
 	alertReady := func(ctx context.Context) bool {
 		return client.AlertingStatusContext(ctx).State == k8s.AlertingStateReady
 	}
-	alerting := systemapi.NewAlertingHandler(c.Auth.PlatformURL).WithCluster(clusterID).WithDependencies(systemapi.AlertingDependencies{
+	alerting := systemapi.NewAlertingHandler(c.Auth.PlatformURL).WithCluster(clusterID).WithHistory(c.Store).WithSuppressionRules(c.Store).WithDependencies(systemapi.AlertingDependencies{
 		Alertmanager: alertClient.Request, Component: client, Ready: alertReady, Secrets: client,
 		Sender: alertingservice.DefaultNotificationSender{},
 	})

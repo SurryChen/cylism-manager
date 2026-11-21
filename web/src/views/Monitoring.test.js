@@ -44,6 +44,29 @@ beforeEach(() => {
 })
 
 describe('Monitoring view', () => {
+  it('shows durable alert history when the cluster Agent is unreachable', async () => {
+    apiMocks.get.mockImplementation(path => {
+      if (path.endsWith('/agent-status')) return Promise.resolve({ state: 'unreachable' })
+      if (path.includes('/monitoring/alerts/history?')) return Promise.resolve({ items: [{ id: 1, node_name: 'cloudcone', alert_name: 'NodeCPUHigh', summary: '离线前的 CPU 告警', status: 'resolved' }], total: 1 })
+      return Promise.resolve({ name: '自用' })
+    })
+    const { wrapper } = await mountMonitoring('/cluster/2/monitoring?tab=alerts')
+    await flushPromises()
+    expect(wrapper.text()).toContain('Agent 尚未安装或当前无法连接')
+    expect(wrapper.text()).toContain('离线前的 CPU 告警')
+    expect(apiMocks.get.mock.calls.some(([path]) => path.includes('/monitoring/alerts/history?'))).toBe(true)
+    expect(apiMocks.get.mock.calls.some(([path]) => path.endsWith('/monitoring/status'))).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('shows alert history when metrics have not been installed', async () => {
+    const { wrapper } = await mountMonitoring('/monitoring?tab=alerts')
+    await flushPromises()
+    expect(wrapper.text()).toContain('VictoriaMetrics 未安装')
+    expect(wrapper.text()).toContain('告警记录')
+    expect(apiMocks.get.mock.calls.some(([path]) => path.includes('/monitoring/alerts/history?'))).toBe(true)
+    wrapper.unmount()
+  })
   it('loads the selected cluster over its Agent-backed monitoring routes', async () => {
     apiMocks.get.mockImplementation(path => {
       if (path === '/clusters/2/agent-status') return Promise.resolve({ state: 'ready' })

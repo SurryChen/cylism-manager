@@ -22,3 +22,20 @@ export function createAlertingSilence(body, options) { return post(`${alertingPa
 export function saveAlertingAutomationPolicy(body, options) { return put('/monitoring/alerts/automation-policy', body, options) }
 export function testAlertingNotification(channel, options) { return post(`${alertingPath(options)}/test-notification?channel=${encodeURIComponent(channel)}`, {}, options) }
 export function saveAlertingConfig(body, options) { return put(`${alertingPath(options)}/config`, body, options) }
+
+export function getAlertSuppressionRules({ clusterID, node = '', status = '', limit = 10, offset = 0 } = {}, options) {
+  const params = new URLSearchParams({ node, status, limit: String(limit), offset: String(offset) })
+  return api.get(`${alertingPath({ clusterID })}/suppression-rules?${params}`, options)
+}
+export function createAlertSuppressionRule(body, options) { return post(`${alertingPath(options)}/suppression-rules`, body, options) }
+export function updateAlertSuppressionRule(id, body, options) { return put(`${alertingPath(options)}/suppression-rules/${encodeURIComponent(id)}`, body, options) }
+export function setAlertSuppressionEnabled(id, enabled, options) { return api.patch(`${alertingPath(options)}/suppression-rules/${encodeURIComponent(id)}/enabled`, { enabled }, options) }
+export function deleteAlertSuppressionRule(id, options) { return api.delete(`${alertingPath(options)}/suppression-rules/${encodeURIComponent(id)}`, undefined, options) }
+
+export function getAlertingHistory({ clusterID, limit = 10, offset = 0, view = 'history', node = '', alertName = '', days = '7', status = '' } = {}, options) {
+  const params = new URLSearchParams({ limit: String(limit), offset: String(offset), view, days: String(days) })
+  if (node) params.set('node', node)
+  if (alertName) params.set('alert_name', alertName)
+  if (status) params.set('status', status)
+  return api.get(`${alertingPath({ clusterID })}/history?${params}`, options)
+}

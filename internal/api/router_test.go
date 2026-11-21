@@ -108,6 +108,23 @@ func TestProductRoutesRequireAuthentication(t *testing.T) {
 	}
 }
 
+func TestAlertHistoryRoutesRequireAuthentication(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	container, err := bootstrap.NewContainer(bootstrap.Config{DBPath: ":memory:", EncryptionKey: make([]byte, 32), JWTSecret: []byte("router-history-secret")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	api.RegisterRoutes(r, container.BuildRouteDependencies())
+	for _, path := range []string{"/api/monitoring/alerts/history", "/api/clusters/2/monitoring/alerts/history?view=frequency", "/api/clusters/2/monitoring/alerts/suppression-rules", "/api/monitoring/alerts/suppression-rules"} {
+		res := httptest.NewRecorder()
+		r.ServeHTTP(res, httptest.NewRequest(http.MethodGet, path, nil))
+		if res.Code != http.StatusUnauthorized {
+			t.Fatalf("%s: %d", path, res.Code)
+		}
+	}
+}
+
 func TestNodeRemovalRoutesRequireAuthentication(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()

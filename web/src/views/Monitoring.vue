@@ -60,6 +60,8 @@
     </main>
     </ClusterAgentGate>
 
+    <AlertHistory v-if="activeTab === 'alerts'" :key="clusterID || 'legacy'" :cluster-id="clusterID" />
+
     <Teleport to="body">
       <div v-if="monitoringSettingsOpen" class="overlay monitoring-settings-overlay" @click.self="monitoringSettingsOpen = false">
         <aside class="monitoring-settings-drawer" aria-label="监控设置">
@@ -90,6 +92,7 @@ import FeedbackBanner from '../components/FeedbackBanner.vue'
 import SectionHeading from '../components/SectionHeading.vue'
 import SurfaceCard from '../components/SurfaceCard.vue'
 import AlertingWorkspace from './monitoring/AlertingWorkspace.vue'
+import AlertHistory from './monitoring/AlertHistory.vue'
 import DiskGrowthWorkspace from './monitoring/DiskGrowthWorkspace.vue'
 import LoggingWorkspace from './monitoring/LoggingWorkspace.vue'
 import ComponentMigration from './monitoring/ComponentMigration.vue'

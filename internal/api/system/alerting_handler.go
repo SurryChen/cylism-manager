@@ -3,10 +3,12 @@ package system
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -40,6 +42,8 @@ type AlertingHandler struct {
 	component       *alertingservice.ComponentService
 	ready           func(context.Context) bool
 	secrets         alertingservice.SecretReader
+	history         alertingservice.HistoryStore
+	suppression     alertingservice.SuppressionStore
 	sender          alertingservice.NotificationSender
 }
 
@@ -176,6 +180,53 @@ func (h *AlertingHandler) WithAutomationService(store repository.AlertAutomation
 	h.dispatcher = dispatcher
 	h.automation = service
 	return h
+}
+
+// WithHistory persists notifications independently of optional automation.
+func (h *AlertingHandler) WithHistory(store alertingservice.HistoryStore) *AlertingHandler {
+	h.history = store
+	return h
+}
+
+// History reads durable records without requiring a live Kubernetes connection.
+func (h *AlertingHandler) History(c *gin.Context) {
+	if h.history == nil {
+		apiShared.DBError(c, "告警历史存储不可用")
+		return
+	}
+	clusterID := h.clusterID
+	if id := c.Param("id"); id != "" {
+		value, err := strconv.ParseUint(id, 10, 32)
+		if err != nil || value == 0 {
+			apiShared.BadRequest(c, "集群 ID 无效")
+			return
+		}
+		clusterID = uint(value)
+	}
+	days, err := strconv.Atoi(c.DefaultQuery("days", "7"))
+	status, view := c.Query("status"), c.DefaultQuery("view", "history")
+	if err != nil || (days != 1 && days != 7 && days != 30) || (status != "" && status != "firing" && status != "resolved") || (view != "history" && view != "frequency") {
+		apiShared.ValidationError(c, "告警历史筛选条件无效")
+		return
+	}
+	limit, offset := apiShared.LimitOffset(c, 10, 100)
+	filter := model.AlertHistoryFilter{ClusterID: clusterID, Since: time.Now().UTC().Add(-time.Duration(days) * 24 * time.Hour),
+		NodeName: strings.TrimSpace(c.Query("node")), AlertName: strings.TrimSpace(c.Query("alert_name")), Status: status, Limit: limit, Offset: offset}
+	if view == "frequency" {
+		items, total, err := h.history.ListAlertFrequency(c.Request.Context(), filter)
+		if err != nil {
+			apiShared.DBError(c, "读取告警频次失败")
+			return
+		}
+		apiShared.Success(c, gin.H{"items": items, "total": total, "limit": limit, "offset": offset})
+		return
+	}
+	items, total, err := h.history.ListAlertHistory(c.Request.Context(), filter)
+	if err != nil {
+		apiShared.DBError(c, "读取告警历史失败")
+		return
+	}
+	apiShared.Success(c, gin.H{"items": items, "total": total, "limit": limit, "offset": offset})
 }
 
 func (h *AlertingHandler) workflow() *alertingservice.Workflow {
@@ -397,20 +448,38 @@ func (h *AlertingHandler) Notify(c *gin.Context) {
 		apiShared.BadRequest(c, "告警回调载荷无效")
 		return
 	}
+	var rules []model.AlertSuppressionRule
+	if h.suppression != nil {
+		var err error
+		rules, err = h.suppression.ActiveAlertSuppressionRules(c.Request.Context(), h.clusterID, time.Now().UTC())
+		if err != nil {
+			apiShared.DBError(c, "读取通知屏蔽规则失败")
+			return
+		}
+	}
+	servicePayload, deliveryPayload, suppressed := alertingservice.ApplyNotificationSuppression(servicePayload, rules, time.Now().UTC())
+	if err := alertingservice.RecordHistory(c.Request.Context(), h.history, h.clusterID, servicePayload); err != nil {
+		if errors.Is(err, alertingservice.ErrInvalidNotification) {
+			apiShared.BadRequest(c, "告警回调缺少告警名称或开始时间")
+			return
+		}
+		apiShared.DBError(c, "持久化告警历史失败")
+		return
+	}
 	if _, err := workflow.Persist(c.Request.Context(), servicePayload, false); err != nil {
 		apiShared.DBError(c, "持久化告警事件失败")
 		return
 	}
 	delivered := false
-	if notifications.Configured() {
-		if err := workflow.Send(c.Request.Context(), notifications, servicePayload); err != nil {
+	if notifications.Configured() && len(deliveryPayload.Alerts) > 0 {
+		if err := workflow.Send(c.Request.Context(), notifications, deliveryPayload); err != nil {
 			apiShared.K8sAPIError(c, "转发告警通知失败: "+err.Error())
 			return
 		}
 		delivered = true
 	}
 	workflow.RecordResolved(servicePayload)
-	apiShared.Success(c, gin.H{"delivered": delivered, "persisted": true})
+	apiShared.Success(c, gin.H{"delivered": delivered, "persisted": true, "suppressed": suppressed})
 }
 
 func (h *AlertingHandler) AutomationPolicy(c *gin.Context) {

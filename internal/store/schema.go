@@ -13,7 +13,7 @@ func migrateSchema(db *gorm.DB) error {
 		&model.Cluster{}, &model.ClusterDeployment{}, &model.ClusterDeploymentLog{}, &model.CrossClusterService{}, &model.AccessCA{}, &model.AccessCertificate{}, &model.Server{}, &model.ServerSpeedTest{}, &model.Site{}, &model.Cert{}, &model.AuditLog{},
 		&model.OperationLog{}, &model.User{}, &model.TemporaryLoginToken{},
 		&model.SystemConfig{}, &model.RuntimeInstance{}, &model.AgentCapabilityGrant{},
-		&model.AgentOperation{}, &model.AlertEvent{}, &model.AlertAutomationPolicy{},
+		&model.AgentOperation{}, &model.AlertEvent{}, &model.AlertHistory{}, &model.AlertSuppressionRule{}, &model.AlertAutomationPolicy{},
 		&model.PlatformRelease{}, &model.PlatformWebhookNonce{}, &model.PlatformEndpoint{},
 		&model.Project{}, &model.Environment{}, &model.Application{},
 		&model.IntegrationSession{}, &model.ApplicationEndpoint{}, &model.ApplicationDeployWebhook{}, &model.ApplicationDeployWebhookNonce{},

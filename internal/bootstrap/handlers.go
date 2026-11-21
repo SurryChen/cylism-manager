@@ -92,7 +92,7 @@ func (c *Container) BuildRouteDependencies() api.RouteDependencies {
 	alertingDeps.ComponentService = c.Services.AlertingComponent
 	alertingDeps.QueryService = c.Services.AlertingQuery
 	dispatcher := alertingservice.NewRuntimeDispatcher(c.Store, key, runtimepkg.BuiltinRegistry())
-	alertingHandler := systemapi.NewAlertingHandlerWithComposedDependencies(c.Auth.PlatformURL, alertingDeps, c.Store, c.Services.AlertingAutomation.WithDispatcher(dispatcher), dispatcher)
+	alertingHandler := systemapi.NewAlertingHandlerWithComposedDependencies(c.Auth.PlatformURL, alertingDeps, c.Store, c.Services.AlertingAutomation.WithDispatcher(dispatcher), dispatcher).WithHistory(c.Store).WithSuppressionRules(c.Store)
 	loggingDeps := c.Adapters.Logging
 	loggingDeps.QueryService = c.Services.LoggingQuery
 	loggingDeps.ComponentService = c.Services.LoggingComponent

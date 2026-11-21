@@ -25,6 +25,8 @@ func registerAlertingRoutes(r *gin.Engine, apiGroup *gin.RouterGroup, h *systema
 	g.PUT("/config", h.Update)
 	g.DELETE("", h.Uninstall)
 	g.GET("/overview", h.Overview)
+	g.GET("/history", h.History)
+	registerAlertSuppressionRoutes(g, h)
 	g.GET("/silences", h.ListSilences)
 	g.POST("/silences", h.CreateSilence)
 	g.DELETE("/silences/:id", h.DeleteSilence)
@@ -34,6 +36,15 @@ func registerAlertingRoutes(r *gin.Engine, apiGroup *gin.RouterGroup, h *systema
 	g.GET("/automation-events", h.ListAutomationEvents)
 	// Alertmanager calls this endpoint with its per-install bearer token.
 	r.POST("/api/monitoring/alerts/notify", h.Notify)
+}
+
+// These rules live in the platform DB and remain manageable with an offline Agent.
+func registerAlertSuppressionRoutes(g *gin.RouterGroup, h *systemapi.AlertingHandler) {
+	g.GET("/suppression-rules", h.ListSuppressionRules)
+	g.POST("/suppression-rules", h.SaveSuppressionRule)
+	g.PUT("/suppression-rules/:ruleID", h.SaveSuppressionRule)
+	g.PATCH("/suppression-rules/:ruleID/enabled", h.SetSuppressionEnabled)
+	g.DELETE("/suppression-rules/:ruleID", h.DeleteSuppressionRule)
 }
 
 func registerLoggingRoutes(apiGroup *gin.RouterGroup, h *systemapi.LoggingHandler) {

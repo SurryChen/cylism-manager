@@ -118,6 +118,8 @@ func RegisterRoutes(r *gin.Engine, deps RouteDependencies) {
 	registerLoggingRoutes(apiGroup, deps.System.Logging)
 	registerAlertingRoutes(r, apiGroup, deps.System.Alerting)
 	if deps.System.ClusterObservability != nil {
+		apiGroup.GET("/clusters/:id/monitoring/alerts/history", deps.System.Alerting.History)
+		registerAlertSuppressionRoutes(apiGroup.Group("/clusters/:id/monitoring/alerts"), deps.System.Alerting)
 		registerClusterObservabilityRoutes(r, apiGroup, deps.System.ClusterObservability)
 	}
 	if deps.Auth.Config != nil {

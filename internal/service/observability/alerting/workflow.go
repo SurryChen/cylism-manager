@@ -31,13 +31,14 @@ func (s *AlertStatus) UnmarshalJSON(data []byte) error {
 }
 
 type Alert struct {
-	Fingerprint  string            `json:"fingerprint,omitempty"`
-	Status       AlertStatus       `json:"status"`
-	Labels       map[string]string `json:"labels"`
-	Annotations  map[string]string `json:"annotations"`
-	StartsAt     time.Time         `json:"startsAt"`
-	EndsAt       time.Time         `json:"endsAt"`
-	GeneratorURL string            `json:"generatorURL,omitempty"`
+	Fingerprint            string            `json:"fingerprint,omitempty"`
+	Status                 AlertStatus       `json:"status"`
+	Labels                 map[string]string `json:"labels"`
+	Annotations            map[string]string `json:"annotations"`
+	StartsAt               time.Time         `json:"startsAt"`
+	EndsAt                 time.Time         `json:"endsAt"`
+	GeneratorURL           string            `json:"generatorURL,omitempty"`
+	NotificationSuppressed bool              `json:"-"`
 }
 type Overview struct {
 	Active   []Alert `json:"active"`
