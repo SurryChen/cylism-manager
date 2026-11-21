@@ -3,6 +3,7 @@ package system
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/url"
 	"sort"
@@ -28,6 +29,9 @@ type alertmanagerRequestFunc func(context.Context, string, string, interface{}, 
 type AlertingHandler struct {
 	alertmanager    alertmanagerRequestFunc
 	platformURL     string
+	publicURL       string
+	clusterID       uint
+	notifyURL       string
 	resolvedCache   *alertingservice.ResolvedCache
 	automationStore repository.AlertAutomationRepository
 	dispatcher      alertingservice.Dispatcher
@@ -73,10 +77,45 @@ type alertSilenceRequest struct {
 type alertMatcher = alertingservice.Matcher
 
 func NewAlertingHandler(platformURL string) *AlertingHandler {
+	publicURL := strings.TrimSpace(platformURL)
 	if platformURL == "" {
 		platformURL = defaultAlertingPlatformURL
 	}
-	return &AlertingHandler{resolvedCache: alertingservice.NewResolvedCache(12), platformURL: normalizeAlertingPlatformURL(platformURL)}
+	return &AlertingHandler{publicURL: publicURL, resolvedCache: alertingservice.NewResolvedCache(12), platformURL: normalizeAlertingPlatformURL(platformURL)}
+}
+
+// WithCluster binds callbacks and notification links to a single cluster. Only
+// the configured public URL is trusted; request headers cannot select a token destination.
+func (h *AlertingHandler) WithCluster(clusterID uint) *AlertingHandler {
+	h.clusterID = clusterID
+	parsed, err := url.Parse(h.publicURL)
+	if err == nil && (parsed.Scheme == "https" || parsed.Scheme == "http") && parsed.Hostname() != "" && parsed.User == nil {
+		base := parsed.Scheme + "://" + parsed.Host
+		h.notifyURL = fmt.Sprintf("%s/api/clusters/%d/monitoring/alerts/notify", base, clusterID)
+		h.platformURL = fmt.Sprintf("%s/#/cluster/%d/monitoring?tab=alerts", base, clusterID)
+	}
+	return h
+}
+
+func (h *AlertingHandler) notificationWarning(status *k8s.AlertingStatus) *k8s.AlertingStatus {
+	if h.clusterID != 0 && status != nil {
+		if h.notifyURL == "" {
+			status.NotificationWarning = "请配置平台公开访问地址 server.public_url（PUBLIC_URL），以接收当前集群的告警回调。"
+		} else if status.State != k8s.AlertingStateNotInstalled && status.NotifyURL != h.notifyURL {
+			status.NotificationWarning = "告警回调仍使用旧地址，请打开告警设置并保存一次，以启用当前集群的通知回调。"
+		}
+	}
+	return status
+}
+
+func (h *AlertingHandler) configureNotifyURL(c *gin.Context, config *k8s.AlertingConfig) bool {
+	// Callback destinations are server-owned, including for the legacy endpoint.
+	config.NotifyURL = h.notifyURL
+	if h.clusterID != 0 && h.notifyURL == "" {
+		apiShared.ValidationError(c, "请先配置平台公开访问地址 server.public_url（PUBLIC_URL）")
+		return false
+	}
+	return true
 }
 
 // NewAlertingHandlerWithComposedDependencies receives the query, component
@@ -152,7 +191,7 @@ func (h *AlertingHandler) Status(c *gin.Context) {
 		apiShared.K8sUnavailable(c)
 		return
 	}
-	apiShared.Success(c, h.component.Status(c.Request.Context()))
+	apiShared.Success(c, h.notificationWarning(h.component.Status(c.Request.Context())))
 }
 
 func (h *AlertingHandler) Install(c *gin.Context) {
@@ -163,6 +202,9 @@ func (h *AlertingHandler) Install(c *gin.Context) {
 	var config k8s.AlertingConfig
 	if err := c.ShouldBindJSON(&config); err != nil {
 		apiShared.BadRequest(c, "告警配置无效")
+		return
+	}
+	if !h.configureNotifyURL(c, &config) {
 		return
 	}
 	status, err := h.component.Install(c.Request.Context(), config)
@@ -181,6 +223,9 @@ func (h *AlertingHandler) Update(c *gin.Context) {
 	var config k8s.AlertingConfig
 	if err := c.ShouldBindJSON(&config); err != nil {
 		apiShared.BadRequest(c, "告警配置无效")
+		return
+	}
+	if !h.configureNotifyURL(c, &config) {
 		return
 	}
 	status, err := h.component.Update(c.Request.Context(), config)
@@ -330,7 +375,7 @@ func (h *AlertingHandler) TestNotification(c *gin.Context) {
 	apiShared.SuccessWithMessage(c, gin.H{"configured": true}, message)
 }
 
-// Notify receives Alertmanager's cluster-internal webhook. It deliberately does
+// Notify receives Alertmanager's authenticated webhook. It deliberately does
 // not use JWT because Alertmanager is not a browser client; the per-install token
 // mounted into Alertmanager authenticates this one endpoint instead.
 func (h *AlertingHandler) Notify(c *gin.Context) {

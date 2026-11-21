@@ -118,7 +118,7 @@ func RegisterRoutes(r *gin.Engine, deps RouteDependencies) {
 	registerLoggingRoutes(apiGroup, deps.System.Logging)
 	registerAlertingRoutes(r, apiGroup, deps.System.Alerting)
 	if deps.System.ClusterObservability != nil {
-		registerClusterObservabilityRoutes(apiGroup, deps.System.ClusterObservability)
+		registerClusterObservabilityRoutes(r, apiGroup, deps.System.ClusterObservability)
 	}
 	if deps.Auth.Config != nil {
 		registerApplicationRoutes(r, apiGroup, deps.Application.Handler, deps.Auth.Config.JWTSecret, deps.Auth.Audit, deps.Auth.AuditRepository)

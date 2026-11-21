@@ -425,6 +425,7 @@ POST /api/clusters/:id/k8s/persistent-volume-claims
 POST /api/clusters/:id/k8s/persistent-volume-claims/:name/adopt
 POST /api/clusters/:id/k8s/secrets
 POST /api/clusters/:id/monitoring/alerts/install
+POST /api/clusters/:id/monitoring/alerts/notify
 POST /api/clusters/:id/monitoring/alerts/silences
 POST /api/clusters/:id/monitoring/alerts/test-notification
 POST /api/clusters/:id/monitoring/install

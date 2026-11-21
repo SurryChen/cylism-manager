@@ -31,6 +31,20 @@ describe('AlertingWorkspace', () => {
     expect(apiMocks.get).toHaveBeenCalledWith('/clusters/2/monitoring/alerts/overview', expect.objectContaining({ clusterID: '2' }))
     expect(apiMocks.get.mock.calls.some(([path]) => path.includes('automation-policy'))).toBe(false)
     expect(wrapper.text()).not.toContain('自动处置')
+    expect(wrapper.text()).not.toContain('回调无法送达')
+    expect(wrapper.find('.feedback-banner').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('shows callback migration guidance returned by the server', async () => {
+    apiMocks.get.mockImplementation(path => {
+      if (path.endsWith('/status')) return Promise.resolve({ state: 'ready', notification_warning: '告警回调仍使用旧地址，请打开告警设置并保存一次' })
+      if (path.endsWith('/overview')) return Promise.resolve({ active: [], resolved: [] })
+      return Promise.resolve({})
+    })
+    const wrapper = mount(AlertingWorkspace, { props: { clusterId: '2', monitoringReady: true } })
+    await flushPromises()
+    expect(wrapper.text()).toContain('告警回调仍使用旧地址，请打开告警设置并保存一次')
     wrapper.unmount()
   })
 

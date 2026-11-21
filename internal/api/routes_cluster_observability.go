@@ -11,9 +11,8 @@ import (
 
 type clusterObservabilityFactory func(context.Context, uint) (*systemapi.MonitoringHandler, *systemapi.LoggingHandler, *systemapi.AlertingHandler, error)
 
-func registerClusterObservabilityRoutes(apiGroup *gin.RouterGroup, factory clusterObservabilityFactory) {
-	g := apiGroup.Group("/clusters/:id/monitoring")
-	g.Use(func(c *gin.Context) {
+func registerClusterObservabilityRoutes(r *gin.Engine, apiGroup *gin.RouterGroup, factory clusterObservabilityFactory) {
+	resolve := func(c *gin.Context) {
 		id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 		if err != nil || id == 0 {
 			apiShared.BadRequest(c, "集群 ID 无效")
@@ -29,6 +28,11 @@ func registerClusterObservabilityRoutes(apiGroup *gin.RouterGroup, factory clust
 		c.Set("clusterMonitoring", monitoring)
 		c.Set("clusterLogging", logging)
 		c.Set("clusterAlerting", alerting)
+	}
+	g := apiGroup.Group("/clusters/:id/monitoring", resolve)
+	// This public route uses the selected cluster's relay token, never browser JWT.
+	r.POST("/api/clusters/:id/monitoring/alerts/notify", resolve, func(c *gin.Context) {
+		c.MustGet("clusterAlerting").(*systemapi.AlertingHandler).Notify(c)
 	})
 	monitoring := func(fn func(*systemapi.MonitoringHandler, *gin.Context)) gin.HandlerFunc {
 		return func(c *gin.Context) { fn(c.MustGet("clusterMonitoring").(*systemapi.MonitoringHandler), c) }

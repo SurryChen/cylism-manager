@@ -447,3 +447,62 @@ func TestAlertOverviewPaginationPreservesSeverityAndGlobalCounts(t *testing.T) {
 		t.Fatalf("unexpected alert page: %s", response.Body.String())
 	}
 }
+
+type callbackComponent struct {
+	config k8sclient.AlertingConfig
+	status k8sclient.AlertingStatus
+}
+
+func (f *callbackComponent) AlertingStatusContext(context.Context) *k8sclient.AlertingStatus {
+	status := f.status
+	return &status
+}
+func (f *callbackComponent) InstallAlertingContext(_ context.Context, config k8sclient.AlertingConfig) (*k8sclient.AlertingStatus, error) {
+	f.config = config
+	f.status.NotifyURL = config.NotifyURL
+	return f.AlertingStatusContext(context.Background()), nil
+}
+func (f *callbackComponent) UpdateAlertingContext(ctx context.Context, config k8sclient.AlertingConfig) (*k8sclient.AlertingStatus, error) {
+	return f.InstallAlertingContext(ctx, config)
+}
+func (f *callbackComponent) UninstallAlertingContext(context.Context) error { return nil }
+
+func TestClusterAlertingUsesTrustedCallbackAndWarnsOnlyForOldConfig(t *testing.T) {
+	component := &callbackComponent{status: k8sclient.AlertingStatus{State: k8sclient.AlertingStateReady}}
+	handler := NewAlertingHandler("https://manager.example.com").WithCluster(2).WithDependencies(AlertingDependencies{Component: component})
+	router := setupAlertingRouter(handler)
+	response := serve(router, newJSONRequest(http.MethodGet, "/api/monitoring/alerts/status", nil))
+	if !strings.Contains(response.Body.String(), "旧地址") {
+		t.Fatalf("old installation needs migration guidance: %s", response.Body.String())
+	}
+	for _, method := range []string{http.MethodPost, http.MethodPut} {
+		path := "/api/monitoring/alerts/install"
+		if method == http.MethodPut {
+			path = "/api/monitoring/alerts/config"
+		}
+		request := newJSONRequest(method, path, gin.H{"node_name": "node-a", "notify_url": "https://attacker.example/steal-token"})
+		request.Header.Set("X-Forwarded-Host", "attacker.example")
+		response = serve(router, request)
+		if response.Code != http.StatusOK || component.config.NotifyURL != "https://manager.example.com/api/clusters/2/monitoring/alerts/notify" {
+			t.Fatalf("callback must come from server config: %#v, %s", component.config, response.Body.String())
+		}
+	}
+	response = serve(router, newJSONRequest(http.MethodGet, "/api/monitoring/alerts/status", nil))
+	if strings.Contains(response.Body.String(), "notification_warning") {
+		t.Fatalf("migrated cluster should not show warning: %s", response.Body.String())
+	}
+	if handler.platformURL != "https://manager.example.com/#/cluster/2/monitoring?tab=alerts" {
+		t.Fatalf("notification must link to selected cluster: %s", handler.platformURL)
+	}
+}
+
+func TestClusterAlertingRequiresConfiguredPublicURL(t *testing.T) {
+	for _, endpoint := range []string{"", "ftp://manager.example", "https://user:secret@manager.example"} {
+		component := &callbackComponent{status: k8sclient.AlertingStatus{State: k8sclient.AlertingStateReady}}
+		handler := NewAlertingHandler(endpoint).WithCluster(2).WithDependencies(AlertingDependencies{Component: component})
+		response := serve(setupAlertingRouter(handler), newJSONRequest(http.MethodPut, "/api/monitoring/alerts/config", gin.H{}))
+		if response.Code != http.StatusBadRequest || component.config.NotifyURL != "" || !strings.Contains(response.Body.String(), "PUBLIC_URL") {
+			t.Fatalf("must reject missing or invalid public URL %q: %s", endpoint, response.Body.String())
+		}
+	}
+}

@@ -1,5 +1,5 @@
 <template>
-  <FeedbackBanner v-if="clusterId" class="section-gap" tone="warning" message="平台不在当前集群内时，告警通知回调无法送达；告警查看和静默仍可使用。" />
+  <FeedbackBanner v-if="status?.notification_warning" class="section-gap" tone="warning" :message="status.notification_warning" />
   <section v-if="statusError" class="k8s-banner k8s-banner-warn section-gap" role="alert">{{ statusError }}</section>
 
   <SurfaceCard v-if="!monitoringReady" class="alerting-empty">
