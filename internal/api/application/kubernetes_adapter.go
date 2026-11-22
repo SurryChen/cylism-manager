@@ -2,6 +2,7 @@ package applicationapi
 
 import (
 	"context"
+	"fmt"
 
 	k8sclient "github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
@@ -72,6 +73,13 @@ func (d *kubernetesDependencies) Preflight(ctx context.Context, app applications
 }
 func (d *kubernetesDependencies) Apply(ctx context.Context, resources *applicationservice.RenderedResources) error {
 	return d.applier.Apply(ctx, resources)
+}
+func (d *kubernetesDependencies) RunMigration(ctx context.Context, app applicationservice.ApplicationContext, spec applicationservice.ReleaseSpec) (string, error) {
+	executor, ok := d.applier.(applicationservice.MigrationExecutor)
+	if !ok {
+		return "", fmt.Errorf("数据库迁移执行器未初始化")
+	}
+	return executor.RunMigration(ctx, app, spec)
 }
 func (d *kubernetesDependencies) WaitReady(ctx context.Context, app applicationservice.ApplicationContext, spec applicationservice.ReleaseSpec) error {
 	return d.applier.WaitReady(ctx, app, spec)

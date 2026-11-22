@@ -14,8 +14,9 @@ import (
 )
 
 type releaseRequest struct {
-	TemplateID uint   `json:"template_id"`
-	Version    string `json:"version"`
+	Migration  *applicationservice.MigrationRequest `json:"migration,omitempty"`
+	TemplateID uint                                 `json:"template_id"`
+	Version    string                               `json:"version"`
 }
 
 func (h *ApplicationHandler) CreateRelease(c *gin.Context) {
@@ -61,7 +62,7 @@ func (h *ApplicationHandler) CreateRelease(c *gin.Context) {
 		return
 	}
 	workflow := h.releaseWorkflow()
-	prepared, err := workflow.CreateFromTemplate(c.Request.Context(), app, template, version, apiShared.UserID(c))
+	prepared, err := workflow.CreateFromTemplate(c.Request.Context(), app, template, version, apiShared.UserID(c), req.Migration)
 	if err != nil {
 		if errors.Is(err, applicationservice.ErrReleaseTemplateRead) {
 			apiShared.DBError(c, "读取应用上线模板失败")

@@ -11,6 +11,7 @@ import (
 
 func ValidateReleaseSpec(spec ReleaseSpec) []ValidationIssue {
 	issues := make([]ValidationIssue, 0)
+	issues = append(issues, validateMigrationSpec(spec.Migration)...)
 	if strings.TrimSpace(spec.Image) == "" {
 		issues = append(issues, ValidationIssue{Field: "image", Message: "镜像不能为空"})
 	}

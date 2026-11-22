@@ -326,7 +326,7 @@ describe('ApplicationDetails view', () => {
 
     await wrapper.findAll('.section-tab').find(tab => tab.text() === '部署配置').trigger('click')
     await wrapper.find('.detail-config-card .btn-primary').trigger('click')
-    expect(wrapper.findAll('.editor-section-heading h3').map(heading => heading.text())).toEqual(['基础信息', '服务部署', '配置与存储', '资源与健康', '服务网络'])
+    expect(wrapper.findAll('.editor-section-heading h3').map(heading => heading.text())).toEqual(['基础信息', '服务部署', '配置与存储', '资源与健康', '数据库迁移', '服务网络'])
     expect(wrapper.find('.editor-actions .btn-primary').text()).toBe('保存模板')
     expect(wrapper.find('.editor-actions .btn-primary').attributes('form')).toBe('template-editor-form')
     expect(wrapper.text()).toContain('仅集群内访问；HTTP 服务可通过域名入口暴露。')

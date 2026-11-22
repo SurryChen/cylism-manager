@@ -54,7 +54,7 @@ func (s *Store) GetDashboardApplicationSummary() (*model.DashboardApplicationSum
 		switch release.Status {
 		case model.ReleaseStatusSucceeded:
 			summary.SuccessfulApplications++
-		case model.ReleaseStatusValidating, model.ReleaseStatusApplying, model.ReleaseStatusWaitingReady, model.ReleaseStatusVerifying, model.ReleaseStatusRollingBack:
+		case model.ReleaseStatusMigrating, model.ReleaseStatusValidating, model.ReleaseStatusApplying, model.ReleaseStatusWaitingReady, model.ReleaseStatusVerifying, model.ReleaseStatusRollingBack:
 			summary.ReleasingApplications++
 		case model.ReleaseStatusFailed, model.ReleaseStatusRolledBack:
 			summary.FailedApplications++

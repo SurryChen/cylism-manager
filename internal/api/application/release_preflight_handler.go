@@ -49,11 +49,14 @@ func (h *ApplicationHandler) PreflightRelease(c *gin.Context) {
 			checks = append(checks, releasePreflightCheck{Name: name, OK: true, Detail: detail})
 		}
 	}
-	spec, err := h.releaseWorkflow().PrepareTemplateSpec(app, template, strings.TrimSpace(req.Version))
+	spec, err := h.releaseWorkflow().PrepareTemplateSpec(app, template, strings.TrimSpace(req.Version), req.Migration)
 	if err != nil {
 		add("模板与密钥", err, "")
 		apiShared.Success(c, gin.H{"ready": false, "checks": checks})
 		return
+	}
+	if spec.Migration != nil && spec.Migration.Enabled {
+		add("数据库迁移", nil, fmt.Sprintf("目标 %s；超时 %d 秒。将在独立 Job 中校验 SQL 与历史，预检不会执行 SQL", spec.Migration.Target, spec.Migration.TimeoutSeconds))
 	}
 	configKeys := make([]string, 0, len(spec.Config))
 	disabledConfig := stringSet(spec.ConfigDisabled)

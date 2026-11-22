@@ -131,6 +131,7 @@
       <div v-if="selectedReleaseTemplate" class="template-summary"><span>模板 v{{ selectedReleaseTemplate.revision }}</span><strong>{{ selectedReleaseTemplate.spec.image }}</strong><small>{{ selectedReleaseTemplate.spec.replicas }} 副本 · Service {{ selectedReleaseTemplate.spec.service?.port }} · {{ selectedReleaseTemplate.spec.node_name || '自动调度' }}</small><small v-for="volume in selectedReleaseTemplate.spec.volumes || []" :key="volume.claim_name">PVC {{ volume.claim_name }} → {{ volume.mount_path }}</small><small v-for="mount in selectedReleaseTemplate.spec.file_mounts || []" :key="`${mount.source_type}-${mount.source_name}-${mount.key}`">{{ mount.source_type }} {{ mount.source_name || '当前应用' }} / {{ mount.key }}</small><small>提交时检查命名空间、存储与配置依赖；运行状态依据 Pod 就绪情况。</small></div>
       <p v-else class="template-intro">当前应用尚未配置上线模板，请先在应用详情中创建模板。</p>
       <div class="form-group"><label class="form-label">版本号</label><input v-model.trim="releaseForm.version" class="form-input" :required="!selectedReleaseTemplate?.default_version" :placeholder="selectedReleaseTemplate?.default_version || '1.4.2'" pattern="[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}" :disabled="!releaseTemplates.length" /><p class="form-hint">{{ selectedReleaseTemplate?.default_version ? `留空则使用模板默认版本 ${selectedReleaseTemplate.default_version}。` : '当前模板未设置默认版本号，请填写镜像版本号。' }}</p></div>
+      <label v-if="selectedReleaseTemplate?.spec?.migration?.enabled" class="form-group"><span class="form-label">数据库迁移目标</span><input v-model.trim="releaseForm.migration_target" class="form-input" required pattern="[0-9]{1,32}" maxlength="32" aria-label="数据库迁移目标" placeholder="202611220001" /><span class="form-hint">先迁移至此版本，再更新应用。已成功的脚本不会重复执行；失败会中止发布。</span></label>
       <div v-if="releasePreflight" class="release-preflight"><div v-for="check in releasePreflight.checks" :key="check.name" class="release-preflight-row"><span class="badge" :class="check.ok ? 'badge-online' : 'badge-danger'">{{ check.ok ? '通过' : '待处理' }}</span><strong>{{ check.name }}</strong><span>{{ check.detail }}</span></div></div>
       <div class="modal-actions"><button type="button" class="btn" @click="releaseApp = null">取消</button><button v-if="!releaseTemplates.length" type="button" class="btn btn-primary" @click="openTemplateManagement(releaseApp)">管理模板</button><template v-else><button type="button" class="btn" :disabled="submitting || preflightLoading" @click="checkRelease">{{ preflightLoading ? '检查中...' : '检查配置' }}</button><button class="btn btn-primary" :disabled="submitting || !releasePreflight?.ready">{{ submitting ? '提交中...' : '开始发布' }}</button></template></div>
     </form></div></div></Teleport>
@@ -139,6 +140,7 @@
 </template>
 
 <script setup>
+import { releasePayload } from './migration.js'
 import ResourcePagination from '../../components/ResourcePagination.vue'
 import { useListPage } from '../../composables/useListPage.js'
 import { computed, ref, watch } from 'vue'
@@ -268,9 +270,9 @@ async function loadWorkspaceTemplates() {
 }
 
 function newApplicationForm() { return { projectID: 0, environmentID: 0, applicationName: '' } }
-function newReleaseForm() { return { template_id: 0, version: '' } }
+function newReleaseForm() { return { template_id: 0, version: '', migration_target: '' } }
 function releaseBadge(status) { return status === 'succeeded' ? 'badge-online' : status === 'failed' ? 'badge-danger' : 'badge-offline' }
-function releaseLabel(status) { return status === 'succeeded' ? '成功' : status === 'failed' ? '失败' : '发布中' }
+function releaseLabel(status) { return status === 'succeeded' ? '成功' : status === 'failed' ? '失败' : status === 'migrating' ? '数据库迁移中' : '发布中' }
 function runtimeBadge(status) { return status === 'running' ? 'badge-online' : status === 'deploying' ? 'badge-deploying' : status === 'not_released' || status === 'unknown' ? 'badge-offline' : 'badge-danger' }
 function runtimeLabel(status) { return ({ running: '运行中', deploying: '发布中', degraded: '异常', unavailable: '不可用', not_released: '未发布', unknown: '未知' })[status] || '未知' }
 function applicationCount(projectID) { return applications.value.filter(app => app.project_id === projectID).length }
@@ -410,15 +412,15 @@ async function openRelease(app) {
   } else if (releaseTemplatesResource.error.value) readError.value = releaseTemplatesResource.error.value.message || '加载上线模板失败'
   releaseApp.value = app
 }
-async function checkRelease() { if (!releaseApp.value || !releaseForm.value.template_id) return; const appID = releaseApp.value.id; const payload = { ...releaseForm.value }; preflightLoading.value = true; mutationError.value = ''; releasePreflight.value = null; try { const result = await preflightRelease(appID, payload); if (releaseApp.value?.id === appID && payload.template_id === releaseForm.value.template_id && payload.version === releaseForm.value.version) releasePreflight.value = result } catch (e) { mutationError.value = e.message || '检查发布配置失败' } finally { preflightLoading.value = false } }
-async function createRelease() { mutationError.value = ''; if (!releasePreflight.value?.ready) { mutationError.value = '请先检查并修复发布配置'; return } if (!releaseForm.value.template_id || (!releaseForm.value.version && !selectedReleaseTemplate.value?.default_version)) { mutationError.value = '请选择上线模板并填写版本号，或设置模板默认版本号'; return } submitting.value = true; try { const applicationID = releaseApp.value.id; const release = await createReleaseRequest(applicationID, releaseForm.value); releaseApp.value = null; await router.push(`/applications/${applicationID}/releases/${release.id}`); fetchWorkspace() } catch (e) { mutationError.value = e.message || '创建发布失败' } finally { submitting.value = false } }
+async function checkRelease() { if (!releaseApp.value || !releaseForm.value.template_id) return; const appID = releaseApp.value.id; const payload = releasePayload(releaseForm.value, selectedReleaseTemplate.value); preflightLoading.value = true; mutationError.value = ''; releasePreflight.value = null; try { const result = await preflightRelease(appID, payload); if (releaseApp.value?.id === appID && payload.template_id === releaseForm.value.template_id && payload.version === releaseForm.value.version && (payload.migration?.target || '') === (selectedReleaseTemplate.value?.spec?.migration?.enabled ? releaseForm.value.migration_target : '')) releasePreflight.value = result } catch (e) { mutationError.value = e.message || '检查发布配置失败' } finally { preflightLoading.value = false } }
+async function createRelease() { mutationError.value = ''; if (!releasePreflight.value?.ready) { mutationError.value = '请先检查并修复发布配置'; return } if (!releaseForm.value.template_id || (!releaseForm.value.version && !selectedReleaseTemplate.value?.default_version)) { mutationError.value = '请选择上线模板并填写版本号，或设置模板默认版本号'; return } submitting.value = true; try { const applicationID = releaseApp.value.id; const release = await createReleaseRequest(applicationID, releasePayload(releaseForm.value, selectedReleaseTemplate.value)); releaseApp.value = null; await router.push(`/applications/${applicationID}/releases/${release.id}`); fetchWorkspace() } catch (e) { mutationError.value = e.message || '创建发布失败' } finally { submitting.value = false } }
 async function openTemplateManagement(app) { releaseApp.value = null; await router.push(`/applications/${app.id}`) }
 async function openDetails(app) { await router.push(`/applications/${app.id}`) }
 async function openApplicationTab(app, tab) { await router.push({ path: `/applications/${app.id}`, query: { tab } }) }
 async function openReleaseDetails(release) { await router.push(`/applications/${release.application_id}/releases/${release.id}`) }
 
 watch(() => [props.section, route.query.project_id, route.query.environment_id], () => { workspaceResource.reset(); workspaceOverview.value = null; applications.value = []; workspaceReleaseResource.reset(); showCatalogImport.value = false; workspaceTemplateLoadID++; workspaceTemplates.value = {}; workspaceTemplatesLoading.value = false; loadSection(props.section) }, { immediate: true })
-watch(() => [releaseForm.value.template_id, releaseForm.value.version], () => { releasePreflight.value = null })
+watch(() => [releaseForm.value.template_id, releaseForm.value.version, releaseForm.value.migration_target], () => { releasePreflight.value = null })
 </script>
 
 <style scoped>

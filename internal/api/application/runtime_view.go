@@ -292,7 +292,7 @@ func (h *ApplicationHandler) workspaceApplicationInfos(ctx context.Context, name
 
 func releaseInProgress(status string) bool {
 	switch status {
-	case model.ReleaseStatusDraft, model.ReleaseStatusValidating, model.ReleaseStatusApplying, model.ReleaseStatusWaitingReady, model.ReleaseStatusVerifying, model.ReleaseStatusRollingBack:
+	case model.ReleaseStatusDraft, model.ReleaseStatusValidating, model.ReleaseStatusMigrating, model.ReleaseStatusApplying, model.ReleaseStatusWaitingReady, model.ReleaseStatusVerifying, model.ReleaseStatusRollingBack:
 		return true
 	default:
 		return false

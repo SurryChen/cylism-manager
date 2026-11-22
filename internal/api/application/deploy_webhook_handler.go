@@ -17,6 +17,7 @@ import (
 	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 	"github.com/cylism/cylism-manager/internal/model"
 	crypto "github.com/cylism/cylism-manager/internal/security"
+	applicationservice "github.com/cylism/cylism-manager/internal/service/application"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
@@ -111,7 +112,8 @@ func (h *ApplicationHandler) DeployWebhook(c *gin.Context) {
 		return
 	}
 	var request struct {
-		Version string `json:"version"`
+		Version   string                               `json:"version"`
+		Migration *applicationservice.MigrationRequest `json:"migration,omitempty"`
 	}
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	decoder.DisallowUnknownFields()
@@ -143,7 +145,7 @@ func (h *ApplicationHandler) DeployWebhook(c *gin.Context) {
 		return
 	}
 	workflow := h.releaseWorkflow()
-	if _, err := workflow.PrepareTemplateSpec(app, template, request.Version); err != nil {
+	if _, err := workflow.PrepareTemplateSpec(app, template, request.Version, request.Migration); err != nil {
 		apiShared.ValidationError(c, err.Error())
 		return
 	}
@@ -151,7 +153,7 @@ func (h *ApplicationHandler) DeployWebhook(c *gin.Context) {
 		unauthorized()
 		return
 	}
-	prepared, err := workflow.CreateFromTemplate(c.Request.Context(), app, template, request.Version, 0)
+	prepared, err := workflow.CreateFromTemplate(c.Request.Context(), app, template, request.Version, 0, request.Migration)
 	if err != nil {
 		apiShared.ValidationError(c, err.Error())
 		return

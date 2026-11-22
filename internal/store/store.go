@@ -42,6 +42,9 @@ func New(dsn string) (*Store, error) {
 	if err := store.RecoverInterruptedClusterDeployments(); err != nil {
 		return nil, err
 	}
+	if err := store.RecoverInterruptedMigrationReleases(); err != nil {
+		return nil, err
+	}
 	return store, nil
 }
 

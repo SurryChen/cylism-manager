@@ -38,11 +38,12 @@ const (
 )
 
 type ReleaseSpec struct {
-	Image      string   `json:"image"`
-	Version    string   `json:"version,omitempty"`
-	Command    []string `json:"command,omitempty"`
-	Args       []string `json:"args,omitempty"`
-	RegistryID uint     `json:"registry_id,omitempty"`
+	Migration  *MigrationSpec `json:"migration,omitempty"`
+	Image      string         `json:"image"`
+	Version    string         `json:"version,omitempty"`
+	Command    []string       `json:"command,omitempty"`
+	Args       []string       `json:"args,omitempty"`
+	RegistryID uint           `json:"registry_id,omitempty"`
 	// 以下字段只在发布执行期存在，禁止写入 API 响应或发布快照。
 	RegistryEndpoint   string            `json:"-"`
 	RegistryAuthType   string            `json:"-"`
@@ -75,6 +76,21 @@ type ReleaseSpec struct {
 	FileMounts []FileMountSpec   `json:"file_mounts,omitempty"`
 	Service    ServiceSpec       `json:"service"`
 	Endpoint   EndpointSpec      `json:"endpoint"`
+}
+
+// MigrationSpec is template-owned configuration. Target is supplied for each
+// release; credentials remain in the existing encrypted template Secrets.
+type MigrationSpec struct {
+	Enabled        bool     `json:"enabled"`
+	Command        []string `json:"command,omitempty"`
+	Directory      string   `json:"directory,omitempty"`
+	DatabasePrefix string   `json:"database_prefix,omitempty"`
+	TimeoutSeconds int      `json:"timeout_seconds,omitempty"`
+	Target         string   `json:"target,omitempty"`
+}
+
+type MigrationRequest struct {
+	Target string `json:"target"`
 }
 
 // VolumeMountSpec describes an existing PVC mounted into the main

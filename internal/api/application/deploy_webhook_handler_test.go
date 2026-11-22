@@ -1,6 +1,7 @@
 package applicationapi
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
@@ -16,12 +17,16 @@ import (
 
 	"github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
+	crypto "github.com/cylism/cylism-manager/internal/security"
 	applicationservice "github.com/cylism/cylism-manager/internal/service/application"
 	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/gin-gonic/gin"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
+	k8stesting "k8s.io/client-go/testing"
 )
 
 func TestApplicationDeployWebhookSignsDefaultTemplateRelease(t *testing.T) {
@@ -120,4 +125,76 @@ func signedApplicationWebhookRequest(path, body string, timestamp int64, nonce, 
 	request.Header.Set("X-Cylism-Nonce", nonce)
 	request.Header.Set("X-Cylism-Signature", hex.EncodeToString(mac.Sum(nil)))
 	return request
+}
+
+func TestMigrationWebhookAndPreflightContract(t *testing.T) {
+	st, err := store.New(filepath.Join(t.TempDir(), "migration-webhook.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	app := createApplicationForReleaseRuntimeTest(t, st)
+	key := []byte("01234567890123456789012345678901")
+	spec := applicationservice.ReleaseSpec{Image: "ghcr.io/example/orders", ContainerPort: 8080, Replicas: 1, Resources: applicationservice.ResourceSpec{RequestsCPU: "100m", RequestsMemory: "128Mi", LimitsCPU: "500m", LimitsMemory: "512Mi"}, Service: applicationservice.ServiceSpec{Port: 80, TargetPort: 8080}, Config: map[string]string{"DATABASE_HOST": "mysql.internal", "DATABASE_NAME": "orders", "DATABASE_USER": "orders"}, Secrets: map[string]string{"DATABASE_PASSWORD": ""}, Migration: &applicationservice.MigrationSpec{Enabled: true, Command: []string{"/usr/local/bin/cylism-migrate"}, Directory: "/app/migrations", DatabasePrefix: "DATABASE", TimeoutSeconds: 30}}
+	snapshot, _ := json.Marshal(spec)
+	encrypted, _ := crypto.Encrypt(key, "{\"DATABASE_PASSWORD\":\"private-db-password\"}")
+	template := &model.ApplicationDeploymentTemplate{ApplicationID: app.ID, Name: "prod", Enabled: true, Spec: string(snapshot), EncryptedSecrets: encrypted}
+	if err = st.CreateApplicationDeploymentTemplate(template, true); err != nil {
+		t.Fatal(err)
+	}
+	client := k8sfake.NewSimpleClientset(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: app.Environment.Namespace}, Status: corev1.NamespaceStatus{Phase: corev1.NamespaceActive}})
+	client.PrependReactor("create", "jobs", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		job := action.(k8stesting.CreateAction).GetObject().(*batchv1.Job)
+		job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobFailed, Status: corev1.ConditionTrue}}
+		return false, nil, nil
+	})
+	handler := newTestApplicationHandler(st, key, NewKubernetesAdapter(&k8s.Client{Clientset: client}))
+	router := gin.New()
+	router.POST("/api/applications/:id/releases/preflight", handler.PreflightRelease)
+	router.POST("/api/applications/:id/deploy-webhook/secret", handler.GenerateDeployWebhookSecret)
+	router.POST("/api/applications/:id/deployments", handler.DeployWebhook)
+	generated := serve(router, newJSONRequest(http.MethodPost, fmt.Sprintf("/api/applications/%d/deploy-webhook/secret", app.ID), nil))
+	var response struct{ Data struct{ Secret string } }
+	if err = json.Unmarshal(generated.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	path := fmt.Sprintf("/api/applications/%d/deployments", app.ID)
+	for i, body := range []string{
+		"{\"version\":\"1.0\"}",
+		"{\"version\":\"1.0\",\"migration\":{\"target\":\"0\"}}",
+		"{\"version\":\"1.0\",\"migration\":{\"target\":\"1\",\"command\":[\"sh\"]}}",
+		"{\"version\":\"1.0\",\"migration\":{\"target\":\"1\",\"database\":\"other\"}}",
+	} {
+		res := serve(router, signedApplicationWebhookRequest(path, body, time.Now().Unix(), fmt.Sprintf("invalid-migration-%02d", i), response.Data.Secret))
+		if res.Code < 400 {
+			t.Fatalf("invalid migration accepted: %d %s", res.Code, res.Body.String())
+		}
+	}
+	payload := gin.H{"template_id": template.ID, "version": "1.0", "migration": gin.H{"target": "202611220001"}}
+	preflight := serve(router, newJSONRequest(http.MethodPost, fmt.Sprintf("/api/applications/%d/releases/preflight", app.ID), payload))
+	if preflight.Code != http.StatusOK || strings.Contains(preflight.Body.String(), "private-db-password") {
+		t.Fatalf("preflight: %d %s", preflight.Code, preflight.Body.String())
+	}
+	releases, _ := st.ListReleases(app.ID)
+	jobs, _ := client.BatchV1().Jobs(app.Environment.Namespace).List(context.Background(), metav1.ListOptions{})
+	if len(releases) != 0 || len(jobs.Items) != 0 {
+		t.Fatal("preflight changed cluster or release history")
+	}
+	body := "{\"version\":\"1.0\",\"migration\":{\"target\":\"202611220001\"}}"
+	accepted := serve(router, signedApplicationWebhookRequest(path, body, time.Now().Unix(), "valid-migration-nonce-123", response.Data.Secret))
+	if accepted.Code != http.StatusAccepted {
+		t.Fatalf("callback: %d %s", accepted.Code, accepted.Body.String())
+	}
+	releases, _ = st.ListReleases(app.ID)
+	if len(releases) != 1 || !strings.Contains(releases[0].DesiredSpec, "202611220001") || strings.Contains(releases[0].DesiredSpec, "private-db-password") {
+		t.Fatalf("unsafe snapshot: %+v", releases)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		release, _ := st.GetRelease(releases[0].ID)
+		if release.Status == model.ReleaseStatusFailed {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("failed migration Job did not stop release")
 }

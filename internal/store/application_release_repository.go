@@ -1,12 +1,46 @@
 package store
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/cylism/cylism-manager/internal/model"
 	"gorm.io/gorm"
 )
+
+// RecoverInterruptedMigrationReleases never replays SQL after a manager restart.
+// Kubernetes still owns the bounded Job; an explicit retry rechecks its ledger.
+func (s *Store) RecoverInterruptedMigrationReleases() error {
+	var releases []model.Release
+	if err := s.db.Where("status IN ?", []string{model.ReleaseStatusDraft, model.ReleaseStatusValidating, model.ReleaseStatusMigrating, model.ReleaseStatusApplying, model.ReleaseStatusWaitingReady}).Find(&releases).Error; err != nil {
+		return err
+	}
+	for _, release := range releases {
+		var spec struct{ Migration *struct{ Enabled bool } }
+		if json.Unmarshal([]byte(release.DesiredSpec), &spec) != nil || spec.Migration == nil || !spec.Migration.Enabled {
+			continue
+		}
+		now := time.Now()
+		detail := "平台重启导致发布中断，未自动重放 SQL。请先核实迁移 Job 和数据库状态，再显式重试；未完成的迁移会阻止后续发布。"
+		if err := s.db.Transaction(func(tx *gorm.DB) error {
+			if err := tx.Model(&model.Release{}).Where("id = ?", release.ID).Updates(map[string]interface{}{"status": model.ReleaseStatusFailed, "completed_at": now}).Error; err != nil {
+				return err
+			}
+			if err := tx.Model(&model.ReleaseOperation{}).Where("release_id = ? AND status = ?", release.ID, model.ReleaseOperationRunning).Updates(map[string]interface{}{"status": model.ReleaseOperationFailed, "completed_at": now, "detail": detail}).Error; err != nil {
+				return err
+			}
+			if err := tx.Create(&model.ReleaseOperation{ReleaseID: release.ID, Step: "interrupted", Status: model.ReleaseOperationFailed, Detail: detail, StartedAt: &now, CompletedAt: &now}).Error; err != nil {
+				return err
+			}
+			return tx.Create(&model.OperationLog{ResourceType: "release", ResourceID: release.ID, Step: "interrupted", Status: model.ReleaseOperationFailed, Detail: detail, CreatedAt: now}).Error
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
 func (s *Store) CreateRelease(release *model.Release) error {
 	return s.db.Create(release).Error

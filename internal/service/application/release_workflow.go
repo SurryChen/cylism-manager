@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
-	"time"
 
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/repository"
@@ -44,8 +43,8 @@ func NewReleaseWorkflow(repository repository.ReleaseWorkflowRepository, encKey 
 	return &ReleaseWorkflow{repository: repository, encKey: append([]byte(nil), encKey...), applier: applier}
 }
 
-func (w *ReleaseWorkflow) CreateFromTemplate(ctx context.Context, app *model.Application, template *model.ApplicationDeploymentTemplate, version string, userID uint) (*PreparedRelease, error) {
-	spec, err := w.PrepareTemplateSpec(app, template, version)
+func (w *ReleaseWorkflow) CreateFromTemplate(ctx context.Context, app *model.Application, template *model.ApplicationDeploymentTemplate, version string, userID uint, migration ...*MigrationRequest) (*PreparedRelease, error) {
+	spec, err := w.PrepareTemplateSpec(app, template, version, migration...)
 	if err != nil {
 		return nil, err
 	}
@@ -54,7 +53,7 @@ func (w *ReleaseWorkflow) CreateFromTemplate(ctx context.Context, app *model.App
 
 // PrepareTemplateSpec resolves a template without creating a release. Callers
 // must not serialize the returned spec because it contains decrypted secrets.
-func (w *ReleaseWorkflow) PrepareTemplateSpec(app *model.Application, template *model.ApplicationDeploymentTemplate, version string) (ReleaseSpec, error) {
+func (w *ReleaseWorkflow) PrepareTemplateSpec(app *model.Application, template *model.ApplicationDeploymentTemplate, version string, migration ...*MigrationRequest) (ReleaseSpec, error) {
 	if app == nil || template == nil || !template.Enabled {
 		return ReleaseSpec{}, fmt.Errorf("上线模板不存在或已停用")
 	}
@@ -70,6 +69,9 @@ func (w *ReleaseWorkflow) PrepareTemplateSpec(app *model.Application, template *
 		return ReleaseSpec{}, fmt.Errorf("模板中的 Secret 尚未配置明文值")
 	}
 	spec.Secrets = secrets
+	if err := bindMigrationRequest(&spec, migration...); err != nil {
+		return ReleaseSpec{}, err
+	}
 	spec.Version = strings.TrimSpace(version)
 	if spec.Version == "" {
 		spec.Version = template.DefaultVersion
@@ -79,6 +81,9 @@ func (w *ReleaseWorkflow) PrepareTemplateSpec(app *model.Application, template *
 		return ReleaseSpec{}, err
 	}
 	if err := w.PrepareRuntimeSpec(app, &spec); err != nil {
+		return ReleaseSpec{}, err
+	}
+	if err := validateMigrationConnection(spec); err != nil {
 		return ReleaseSpec{}, err
 	}
 	spec.Endpoint = EndpointSpec{Exposure: ExposureCluster}
@@ -104,6 +109,8 @@ func (w *ReleaseWorkflow) Restart(ctx context.Context, app *model.Application, u
 	}
 	spec.Secrets = secrets
 	spec.Image, spec.Version = active.Image, active.Version
+	// Restart never runs schema changes.
+	spec.Migration = nil
 	if err := w.PrepareRuntimeSpec(app, &spec); err != nil {
 		return nil, err
 	}
@@ -112,36 +119,122 @@ func (w *ReleaseWorkflow) Restart(ctx context.Context, app *model.Application, u
 }
 
 func (w *ReleaseWorkflow) Retry(ctx context.Context, releaseID, userID uint) (*PreparedRelease, error) {
-	service := NewService(w.repository, w.applier)
-	release, spec, err := service.RetryRelease(ctx, releaseID, userID)
+	source, err := w.repository.GetRelease(releaseID)
 	if err != nil {
 		return nil, err
 	}
-	app, err := w.repository.GetApplication(release.ApplicationID)
+	app, err := w.repository.GetApplication(source.ApplicationID)
 	if err != nil {
 		return nil, err
 	}
-	if err := w.PrepareRuntimeSpec(app, &spec); err != nil {
+	spec, err := releaseSpecFromSnapshot(source.DesiredSpec)
+	if err != nil {
+		return nil, err
+	}
+	if err = w.restoreSnapshotSecrets(source, &spec); err != nil {
+		return nil, err
+	}
+	if err = w.PrepareRuntimeSpec(app, &spec); err != nil {
+		return nil, err
+	}
+	if err = validateMigrationConnection(spec); err != nil {
 		return nil, err
 	}
 	spec.Endpoint = EndpointSpec{Exposure: ExposureCluster}
+	service := NewService(w.repository, w.applier)
+	if err = service.preflightSubmission(ctx, app.ID, spec); err != nil {
+		return nil, err
+	}
+	release, err := service.CreateRelease(ctx, app.ID, userID, spec)
+	if err != nil {
+		return nil, err
+	}
+	release.TemplateID, release.TemplateRevision = source.TemplateID, source.TemplateRevision
+	if err = w.repository.UpdateRelease(release); err != nil {
+		return nil, err
+	}
 	return &PreparedRelease{Release: release, Spec: spec, Service: service}, nil
 }
 
+func (w *ReleaseWorkflow) restoreSnapshotSecrets(source *model.Release, spec *ReleaseSpec) error {
+	if len(spec.Secrets) == 0 {
+		return nil
+	}
+	// A nondefault template may have supplied different credentials. Never
+	// silently substitute the current default template for the original one.
+	reader, ok := w.repository.(interface {
+		GetApplicationDeploymentTemplate(uint, uint) (*model.ApplicationDeploymentTemplate, error)
+	})
+	if !ok || source.TemplateID == nil {
+		return fmt.Errorf("历史发布缺少可恢复的模板密钥来源")
+	}
+	template, err := reader.GetApplicationDeploymentTemplate(source.ApplicationID, *source.TemplateID)
+	if err != nil {
+		return fmt.Errorf("读取历史模板密钥: %w", err)
+	}
+	values, err := w.decryptTemplateSecrets(template.EncryptedSecrets)
+	if err != nil {
+		return err
+	}
+	for key := range spec.Secrets {
+		value, ok := values[key]
+		if !ok || value == "" {
+			return fmt.Errorf("历史发布缺少密钥 %s", key)
+		}
+		spec.Secrets[key] = value
+	}
+	return nil
+}
+
 func (w *ReleaseWorkflow) Rollback(ctx context.Context, releaseID, userID uint) (*PreparedRelease, error) {
-	service := NewService(w.repository, w.applier)
-	release, spec, err := service.RollbackRelease(ctx, releaseID, userID)
+	current, err := w.repository.GetRelease(releaseID)
 	if err != nil {
 		return nil, err
 	}
-	app, err := w.repository.GetApplication(release.ApplicationID)
+	history, err := w.repository.ListReleases(current.ApplicationID)
 	if err != nil {
 		return nil, err
 	}
-	if err := w.PrepareRuntimeSpec(app, &spec); err != nil {
+	var source *model.Release
+	for i := range history {
+		if history[i].Sequence < current.Sequence && history[i].Status == model.ReleaseStatusSucceeded {
+			source = &history[i]
+			break
+		}
+	}
+	if source == nil {
+		return nil, fmt.Errorf("不存在可回滚的成功版本")
+	}
+	app, err := w.repository.GetApplication(current.ApplicationID)
+	if err != nil {
 		return nil, err
 	}
+	spec, err := releaseSpecFromSnapshot(source.DesiredSpec)
+	if err != nil {
+		return nil, err
+	}
+	if err = w.restoreSnapshotSecrets(source, &spec); err != nil {
+		return nil, err
+	}
+	// A workload rollback never rolls back the database schema.
+	spec.Migration = nil
 	spec.Endpoint = EndpointSpec{Exposure: ExposureCluster}
+	if err = w.PrepareRuntimeSpec(app, &spec); err != nil {
+		return nil, err
+	}
+	service := NewService(w.repository, w.applier)
+	if err = service.preflightSubmission(ctx, app.ID, spec); err != nil {
+		return nil, err
+	}
+	release, err := service.CreateRelease(ctx, app.ID, userID, spec)
+	if err != nil {
+		return nil, err
+	}
+	release.SourceReleaseID = &source.ID
+	release.TemplateID, release.TemplateRevision = source.TemplateID, source.TemplateRevision
+	if err = w.repository.UpdateRelease(release); err != nil {
+		return nil, err
+	}
 	return &PreparedRelease{Release: release, Spec: spec, Service: service}, nil
 }
 
@@ -155,7 +248,7 @@ func (w *ReleaseWorkflow) ExecuteAsync(parent context.Context, app *model.Applic
 		if parent == nil {
 			return
 		}
-		ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), 3*time.Minute)
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), releaseExecutionTimeout(prepared.Spec))
 		defer cancel()
 		_ = prepared.Service.ExecuteReleaseWithPostApply(ctx, prepared.Release.ID, app, prepared.Spec, func() error {
 			return w.syncApplicationEndpoints(ctx, app, prepared.Spec.Service)

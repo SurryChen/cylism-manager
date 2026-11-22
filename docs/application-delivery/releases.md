@@ -21,7 +21,7 @@
 
 ## 部署配置与 DNS
 
-模板编辑器按基础信息、服务部署、配置与存储、资源与健康、服务网络分区，每次只展示一个分区。切换分区保留未保存的输入，自定义启动方式和存储配置按需展开；保存时如有未填写的必填字段，会定位到对应分区。
+模板编辑器按基础信息、服务部署、配置与存储、资源与健康、数据库迁移、服务网络分区，每次只展示一个分区。切换分区保留未保存的输入，自定义启动方式和存储配置按需展开；保存时如有未填写的必填字段，会定位到对应分区。
 
 “部署配置”优先展示上线模板；工作负载类型和能力标签统一从应用标题右侧的“应用设置”入口编辑，工作负载迁移需单独确认。自动发布回调的地址与 CI 请求格式可展开查看；运行依赖存在缺失时自动展开。
 
@@ -69,9 +69,66 @@ network.public_host 只为明确指定节点的 hostNetwork 模板解析公网 I
 
 迁移时必须同时更新平台与调用方，旧 /hysteria/*、/vless/* 专属路由已移除。旧 ConfigMap 通用路由继续保留。重新从平台打开管理台以获得 secret:read / secret:write 授权，旧管理会话不会自动扩大权限。
 
+## 发布前数据库迁移（MySQL）
+
+在“部署配置 → 编辑上线模板 → 数据库迁移”启用迁移，填写镜像内命令、SQL 目录、数据库变量前缀和超时（30–3600 秒）。默认使用 `/usr/local/bin/cylism-migrate`、`/app/migrations`、`DATABASE` 和 600 秒。配置保存于现有模板 JSON，目标保存于发布快照；平台自身 SQLite 无需手工建表。
+
+启用后，每次手动发布和 CI 回调都必须声明 `migration.target`。没有新 SQL 时也声明镜像所需的当前目标，工具核实记录后不会重复执行。未启用迁移的模板保持原有发布方式，回调不能临时开启迁移。
+
+### 镜像与脚本
+
+应用镜像需要包含迁移工具和完整历史 SQL。可在本仓库构建与应用镜像架构一致的二进制，例如 Linux amd64：
+
+```sh
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o cylism-migrate ./cmd/cylism-migrate
+```
+
+在应用 Dockerfile 的最终阶段加入：
+
+```dockerfile
+COPY --chmod=0555 cylism-migrate /usr/local/bin/cylism-migrate
+COPY migrations/ /app/migrations/
+```
+
+平台自身镜像也在 `/usr/local/bin/cylism-migrate` 提供该工具。脚本文件按正整数版本排序：
+
+```text
+migrations/
+  202611220001_create_orders.sql
+  202611220002_add_order_status.sql
+  target
+```
+
+`target` 是供 CI 读取的普通文本文件，内容如 `202611220002`，工具只读取 `.sql`。版本最多 32 位；同一数字的不同写法（如 1 和 01）也不能重复。单个 SQL 文件最多 16 MiB，目录总计最多 64 MiB，拒绝符号链接。已上线脚本不可修改或删除，应以新增版本修正。脚本可包含多条普通 SQL；不支持 `DELIMITER` 等 mysql CLI 指令。不得切换数据库、修改迁移记录表或连接锁、改变会话事务状态。
+
+### 数据库配置
+
+在“配置与存储”提供环境变量（示例前缀 DATABASE）：
+
+- `DATABASE_HOST`、`DATABASE_NAME`、`DATABASE_USER`：必填。
+- `DATABASE_PORT`：可选，默认 3306。
+- `DATABASE_PASSWORD`：必填，使用敏感变量，沿用既有加密存储和 Kubernetes Secret。
+- `DATABASE_TLS`：可选，只接受 `true` 或省略；启用后使用系统信任根验证服务器证书。
+
+这些键不能设为“仅文件”。账号需要目标库、迁移记录表及脚本涉及对象的操作权限。平台不从回调接收连接串、密码或 SQL；`CYLISM_MIGRATION_*` 是保留变量。
+
+### 执行与恢复
+
+发布顺序为：镜像检查 → 资源预检 → 数据库迁移 Job → 更新应用 → 等待就绪。Job 使用本次发布相同镜像及节点、网络、资源设置，使用独立 ConfigMap/Secret，不提前修改运行中应用的配置，不挂载应用 PVC，不自动重启失败容器。结束 7 天后由 Kubernetes 清理 Job 及其专属配置。
+
+发布详情展示目标、执行步骤和最多 16 KiB 日志，模板敏感值会被遮蔽。自定义命令是受信任执行入口，应避免主动输出凭据，并自行遵循 `CYLISM_MIGRATION_TARGET`、`CYLISM_MIGRATION_DIR`、`CYLISM_MIGRATION_DATABASE_PREFIX` 环境变量。校验和、锁和 dirty 机制由内置工具提供，不会自动强加给其他工具。
+
+内置工具在目标 MySQL 库创建 `_cylism_schema_migrations`，保存版本、文件名、SHA-256、dirty 和开始/完成时间。同库迁移以连接锁互斥。先校验完整已应用历史，再执行尚未完成的 SQL；历史缺失、校验和变化、倒序补脚本、目标不存在和数据库版本高于目标均中止。同一应用的迁移发布不能被其他发布越过；旧迁移 Job 未结束时拒绝新迁移任务。
+
+MySQL DDL 可能部分生效，执行前会先持久保存 dirty。SQL 失败或中断后不会自动清除 dirty，也不会盲目重跑。维护者应检查日志、实际结构和记录表，在备份与明确执行进度的前提下修复到一致状态并确认记录，再重试发布。不要仅删除 dirty 记录来绕过保护。
+
+重试创建新发布，使用原镜像、目标和配置快照，并从原模板恢复需要的当前密钥；密钥丢失会在创建前报错。平台重启导致中断的迁移发布会标记失败并记录原因，不自动重放 SQL；核实旧 Job 已结束后显式重试。
+
+应用回滚与滚动重启不执行数据库迁移，也不撤销 SQL。迁移应向后兼容，以便旧应用仍可运行；删除列等不兼容变更应分阶段完成。备份和数据库恢复单独安排。
+
 ## CI 自动发布回调
 
-在应用详情的“部署配置”中，为当前应用生成自动发布密钥并复制回调地址。密钥仅显示一次；轮换密钥或关闭入口后，旧密钥立即失效。回调始终使用该应用已启用的默认上线模板，调用方只能指定镜像版本号，不能更换镜像仓库或模板。
+在应用详情的“部署配置”中，为当前应用生成自动发布密钥并复制回调地址。密钥仅显示一次；轮换密钥或关闭入口后，旧密钥立即失效。回调始终使用已启用的默认模板；调用方可指定镜像版本和已启用迁移的目标，不能更换镜像仓库、模板、数据库连接或命令。
 
 CI 应在镜像推送完成后向 `POST /api/applications/{id}/deployments` 发送 JSON 请求体，例如 `{"version":"1.2.3"}`。请求头格式与平台自身的更新回调相同：
 
@@ -94,7 +151,18 @@ curl --fail-with-body -X POST "$CYLISM_WEBHOOK_URL" \
   --data-binary "$body"
 ```
 
-成功时返回 HTTP 202 和新发布记录。相同 nonce 的请求会被拒绝；重新触发发布时需要生成新的时间戳和 nonce。发布进度在“发布记录”中查看。
+启用迁移时，从与镜像相同提交中的声明文件读取目标，在计算签名前构造完整请求体，例如：
+
+```sh
+version='1.2.3'
+target=$(tr -d '\r\n' < migrations/target)
+body=$(jq -cn --arg version "$version" --arg target "$target" '{version:$version,migration:{target:$target}}')
+# 对这个 body 计算签名，并按前述示例原样发送。
+```
+
+请求体示例：`{"version":"1.2.3","migration":{"target":"202611220002"}}`。目标必须为字符串。缺少目标、目标无效或额外提供执行命令/数据库参数均拒绝。预检只校验配置，不连接业务库或执行 SQL；SQL 校验在迁移 Job 中完成。
+
+成功时返回 HTTP 202 和新发布记录，表示接受任务，不代表迁移或应用已成功。相同 nonce 的请求会被拒绝；重新触发需要新的时间戳和 nonce。发布进度在“发布记录”中查看。
 
 <figure class="documentation-screenshot">
   <img src="../assets/screenshots/application-delivery/releases.png" alt="应用详情：域名、工作负载类型和上线模板" />

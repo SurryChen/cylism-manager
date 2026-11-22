@@ -24,7 +24,7 @@ describe('ReleaseDetails view', () => {
 
     expect(wrapper.find('.back-link').text()).toContain('返回 order-api')
     expect(wrapper.find('.page-title').text()).toBe('Release #2')
-    expect(wrapper.text()).toContain('wait_ready')
+    expect(wrapper.text()).toContain('等待应用就绪')
     expect(wrapper.text()).toContain('当前运行状态')
     expect(wrapper.text()).toContain('CrashLoopBackOff')
     expect(wrapper.text()).toContain('worker-a')

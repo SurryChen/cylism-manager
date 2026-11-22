@@ -377,6 +377,41 @@ describe('Applications view', () => {
     wrapper.unmount()
   })
 
+  it('includes the migration target in both preflight and release requests', async () => {
+    const { api } = await import('../../api/index.js')
+    api.get.mockImplementation((path) => {
+      if (path === '/projects') return Promise.resolve([{ id: 1, name: 'commerce', environments: [{ id: 2, name: 'production', namespace: 'commerce-prod' }] }])
+      if (path.startsWith('/workspace/overview?project_id=1&environment_id=2&')) return Promise.resolve(workspacePage(path, { applications: [{ id: 3, project_id: 1, environment_id: 2, name: 'order-api', project: { id: 1, name: 'commerce' }, environment: { name: 'production', namespace: 'commerce-prod' } }], domains: [], recent_releases: [], failed_releases: [] }))
+      if (path === '/applications/3/deployment-templates') return Promise.resolve([{ id: 8, name: '标准生产配置', enabled: true, is_default: true, revision: 2, spec: { migration: { enabled: true }, image: 'harbor.example.com/commerce/order-api', replicas: 2, container_port: 8080, service: { port: 80 } } }])
+      return Promise.resolve([])
+    })
+    api.post.mockImplementation(path => Promise.resolve(path.endsWith('/releases/preflight') ? { ready: true, checks: [{ name: '密钥', ok: true, detail: '已配置' }] } : { id: 9 }))
+    const wrapper = mount(Applications)
+    await new Promise(resolve => setTimeout(resolve, 0))
+    await wrapper.findAll('button').find(button => button.text() === '发布版本').trigger('click')
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    const releaseModal = document.body.querySelector('.release-modal')
+    expect(releaseModal.textContent).toContain('模板 v2')
+    expect(releaseModal.querySelector('input[type="number"]')).toBeNull()
+    const version = releaseModal.querySelector('input[placeholder="1.4.2"]')
+    const target = releaseModal.querySelector('[aria-label="数据库迁移目标"]')
+    expect(target.required).toBe(true)
+    target.value = '202611220001'
+    target.dispatchEvent(new Event('input'))
+    version.value = '1.2.3'
+    version.dispatchEvent(new Event('input'))
+    await flushPromises()
+    releaseModal.querySelectorAll('button').forEach(button => { if (button.textContent === '检查配置') button.click() })
+    await flushPromises()
+    await releaseModal.querySelector('form').dispatchEvent(new Event('submit'))
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    expect(api.post).toHaveBeenCalledWith('/applications/3/releases', { template_id: 8, version: '1.2.3', migration: { target: '202611220001' } })
+    expect(api.post).toHaveBeenCalledWith('/applications/3/releases/preflight', { template_id: 8, version: '1.2.3', migration: { target: '202611220001' } })
+    wrapper.unmount()
+  })
+
   it('allows an empty version when the selected template has a default', async () => {
     const { api } = await import('../../api/index.js')
     api.get.mockImplementation(path => {

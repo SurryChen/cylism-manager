@@ -335,6 +335,9 @@ func (h *ApplicationHandler) templateFromRequest(ctx context.Context, app *model
 		return nil, fmt.Errorf("默认版本号必须是合法的镜像 Tag")
 	}
 	spec := req.Spec
+	if spec.Migration != nil && spec.Migration.Target != "" {
+		return nil, fmt.Errorf("迁移目标属于发布参数，不能保存在上线模板中")
+	}
 	applicationservice.NormalizeManagedKeys(&spec)
 	if strings.TrimSpace(spec.Version) != "" {
 		return nil, fmt.Errorf("上线模板不应包含版本号")

@@ -16,9 +16,11 @@ import (
 	networkingv1 "k8s.io/api/networking/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/client-go/kubernetes"
 )
 
 type KubernetesApplier struct {
+	migrations       kubernetes.Interface
 	resources        ApplicationResourceApplier
 	preflight        ApplicationPreflightReader
 	workloads        ApplicationWorkloadController
@@ -76,7 +78,12 @@ type ApplicationResourceApplier interface {
 }
 
 func NewKubernetesApplier(client *k8sclient.Client) *KubernetesApplier {
+	var migrations kubernetes.Interface
+	if client != nil {
+		migrations = client.Clientset
+	}
 	return &KubernetesApplier{
+		migrations:       migrations,
 		resources:        k8sclient.NewApplicationResourceApplier(client),
 		preflight:        k8sclient.NewApplicationPreflightAdapter(client),
 		workloads:        k8sclient.NewApplicationWorkloadControllerAdapter(client),

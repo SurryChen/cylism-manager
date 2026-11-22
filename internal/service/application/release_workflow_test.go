@@ -112,3 +112,71 @@ func TestReleaseWorkflowRejectsMissingDependenciesBeforeCreatingRelease(t *testi
 		t.Fatalf("preflight failure created %d release records", len(releases))
 	}
 }
+
+func TestMigrationRetryAndRollbackRestoreOriginalTemplateSecrets(t *testing.T) {
+	st, err := store.New(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	app := createTestApplication(t, st)
+	key := []byte("01234567890123456789012345678901")
+	spec := testMigrationSpec()
+	spec.Image = "ghcr.io/example/orders"
+	snapshot, _ := json.Marshal(SanitizeReleaseSpec(spec))
+	encrypted, _ := crypto.Encrypt(key, "{\"DATABASE_PASSWORD\":\"original-secret\"}")
+	template := &model.ApplicationDeploymentTemplate{ApplicationID: app.ID, Name: "original", Enabled: true, Spec: string(snapshot), EncryptedSecrets: encrypted}
+	if err := st.CreateApplicationDeploymentTemplate(template, true); err != nil {
+		t.Fatal(err)
+	}
+	workflow := NewReleaseWorkflow(st, key, &fakeApplier{})
+	source, err := workflow.CreateFromTemplate(context.Background(), app, template, "1.0.0", 1, &MigrationRequest{Target: "202611220001"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	source.Release.Status = model.ReleaseStatusSucceeded
+	st.UpdateRelease(source.Release)
+	otherSecrets, _ := crypto.Encrypt(key, "{\"DATABASE_PASSWORD\":\"wrong-secret\"}")
+	other := &model.ApplicationDeploymentTemplate{ApplicationID: app.ID, Name: "new-default", Enabled: true, Spec: string(snapshot), EncryptedSecrets: otherSecrets}
+	if err = st.CreateApplicationDeploymentTemplate(other, true); err != nil {
+		t.Fatal(err)
+	}
+	retry, err := workflow.Retry(context.Background(), source.Release.ID, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if retry.Spec.Secrets["DATABASE_PASSWORD"] != "original-secret" || retry.Spec.Migration.Target != "202611220001" {
+		t.Fatal("retry changed source secrets or migration target")
+	}
+	retry.Release.Status = model.ReleaseStatusFailed
+	st.UpdateRelease(retry.Release)
+	rollback, err := workflow.Rollback(context.Background(), retry.Release.ID, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rollback.Spec.Secrets["DATABASE_PASSWORD"] != "original-secret" || rollback.Spec.Migration != nil {
+		t.Fatal("rollback changed secrets or replays SQL")
+	}
+	rollback.Release.Status = model.ReleaseStatusFailed
+	st.UpdateRelease(rollback.Release)
+	st.DB().Model(template).Update("encrypted_secrets", "")
+	before, _ := st.ListReleases(app.ID)
+	if _, err = workflow.Retry(context.Background(), source.Release.ID, 1); err == nil {
+		t.Fatal("missing credentials accepted")
+	}
+	after, _ := st.ListReleases(app.ID)
+	if len(before) != len(after) {
+		t.Fatal("failed secret restoration created orphan draft")
+	}
+}
+
+func TestMigrationReleaseCannotBeOvertaken(t *testing.T) {
+	st, _ := store.New(":memory:")
+	app := createTestApplication(t, st)
+	service := NewService(st, &fakeApplier{})
+	if _, err := service.CreateRelease(context.Background(), app.ID, 1, testMigrationSpec()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.CreateRelease(context.Background(), app.ID, 1, validTestReleaseSpec()); err == nil {
+		t.Fatal("workload overtook migration")
+	}
+}
