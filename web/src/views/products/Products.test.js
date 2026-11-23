@@ -11,7 +11,7 @@ vi.mock('../../api/products.js', () => ({ getProducts: mocks.list, getProductPag
 vi.mock('../../api/product-lifecycle.js', () => ({ getProductWorkbench: mocks.workbench }))
 vi.mock('vue-router', () => ({ useRoute: () => route, useRouter: () => ({ push: mocks.push, replace: mocks.replace }) }))
 const route = reactive({ params: { id: '7' }, query: {} })
-const mountPage = component => mount(component, { global: { stubs: { RouterLink: { template: '<a><slot /></a>' }, ProductLifecycle: { props: ['kind'], template: '<div class="lifecycle-stub" :data-kind="kind" />' }, Teleport: true } } })
+const mountPage = component => mount(component, { global: { stubs: { RouterLink: { props: ['to'], template: '<a :href="to"><slot /></a>' }, BaseModal: { props: ['open', 'title'], template: '<section v-if="open" class="base-modal"><h2>{{ title }}</h2><slot /><slot name="actions" /></section>' }, ProductLifecycle: { props: ['kind'], emits: ['show-channels'], template: '<div class="lifecycle-stub" :data-kind="kind"><button v-if="kind === \'distributions\'" @click="$emit(\'show-channels\')">发行渠道</button></div>' }, Teleport: true } } })
 beforeEach(() => {
   vi.clearAllMocks()
   route.params.id = '7'
@@ -143,19 +143,25 @@ describe('personal products workflows', () => {
     page.unmount()
   })
 
-  it('opens channel management directly in the channel editor', async () => {
+  it('shows only release records and opens channel details in a modal', async () => {
     const page = mountPage(ProductDetail)
     await flushPromises()
     await page.findAll('.section-tab').find(button => button.text() === '发行').trigger('click')
-    await page.findAll('.section-tab').find(button => button.text() === '发行渠道').trigger('click')
-    expect(mocks.replace).toHaveBeenCalledWith({ query: { tab: 'channels' } })
-    await page.findAll('button').find(button => button.text() === '管理渠道').trigger('click')
+    expect(page.findAll('.section-tab').map(button => button.text())).toEqual(['总览', '事项', '版本', '发行'])
+    expect(page.findAll('.lifecycle-stub').map(element => element.attributes('data-kind'))).toEqual(['distributions'])
+    expect(page.findAll('.base-modal')).toHaveLength(0)
+    await page.get('.lifecycle-stub button').trigger('click')
+    expect(page.get('.base-modal').text()).toContain('发行渠道')
+    expect(page.get('.base-modal').text()).toContain('Google Play')
+    expect(page.get('.base-modal').text()).toContain('线上 1.0')
+    await page.findAll('.base-modal button').find(button => button.text() === '管理渠道').trigger('click')
     await flushPromises()
     const editor = page.getComponent(ProductEditor)
     expect(editor.get('.section-tab.is-active').text()).toBe('发行渠道')
     expect(editor.find('[aria-label="发行平台"]').exists()).toBe(true)
     expect(editor.find('[aria-label="产品名称"]').exists()).toBe(false)
     await editor.findAll('button').find(button => button.text() === '取消').trigger('click')
+    await page.findAll('.base-modal button').find(button => button.text() === '关闭').trigger('click')
     await page.findAll('button').find(button => button.text() === '编辑基本信息').trigger('click')
     await flushPromises()
     expect(editor.findAll('.section-tab').map(button => button.text())).toEqual(['基本信息'])
@@ -222,6 +228,43 @@ describe('personal products workflows', () => {
     page.unmount()
   })
 
+  it.each([false, true])('keeps database guidance in the association editor without a permanent overview entry when platform linked is %s', async platformLinked => {
+    mocks.get.mockResolvedValue({ id: 7, name: 'App', stage: 'developing', platform_linked: platformLinked })
+    const page = mountPage(ProductDetail)
+    await flushPromises()
+    expect(page.find('a[href="/cloud-services/databases"]').exists()).toBe(false)
+    expect(page.text()).not.toContain('已有数据库绑定')
+    await page.findAll('button').find(button => button.text() === '管理关联').trigger('click')
+    await flushPromises()
+    const editor = page.getComponent(ProductEditor)
+    expect(editor.text()).toContain('数据库信息由关联项目或部署组件的数据库绑定自动汇总')
+    expect(editor.text()).toContain('登记或创建实例')
+    await editor.get('a[href="/cloud-services/databases"]').trigger('click')
+    expect(editor.props('open')).toBe(false)
+    expect(mocks.update).not.toHaveBeenCalled()
+    page.unmount()
+  })
+
+  it('shows existing database bindings after associating their application', async () => {
+    mocks.get.mockResolvedValueOnce({ id: 7, name: 'App', stage: 'developing' })
+      .mockResolvedValue({ id: 7, name: 'App', stage: 'developing', applications: [{ id: 4, name: 'api' }], database_resources: [{ instance_id: 8, name: 'App database', application_id: 4 }] })
+    mocks.options.mockResolvedValue({ projects: [], applications: [{ id: 4, name: 'api' }] })
+    const page = mountPage(ProductDetail)
+    await flushPromises()
+    await page.findAll('button').find(button => button.text() === '管理关联').trigger('click')
+    await flushPromises()
+    await page.getComponent(ProductEditor).get('input[type="checkbox"]').setValue(true)
+    await page.getComponent(ProductEditor).get('form').trigger('submit')
+    await flushPromises()
+    expect(mocks.update).toHaveBeenCalledWith(7, expect.objectContaining({ application_ids: [4] }))
+    expect(mocks.update.mock.calls[0][1]).not.toHaveProperty('database_resources')
+    expect(page.text()).toContain('已有数据库绑定')
+    expect(page.text()).toContain('App database')
+    expect(page.find('.product-resource-heading a[href="/cloud-services/databases"]').exists()).toBe(false)
+    expect(page.get('.product-table-card a[href="/cloud-services/databases"]').text()).toBe('数据库管理')
+    page.unmount()
+  })
+
   it.each([
     [{ public_bio: '公开介绍' }, '公开简介', '展示链接'],
     [{ public_url: 'https://example.com' }, '展示链接', '公开简介'],
@@ -259,7 +302,10 @@ describe('personal products workflows', () => {
     const page = mountPage(ProductDetail)
     await flushPromises()
     expect(page.find('.section-tabs-header .section-tab.is-active').text()).toBe(primaryTab === 'overview' ? '总览' : '发行')
-    if (legacyTab === 'channels') expect(page.findAll('.section-tab.is-active').map(button => button.text())).toEqual(['发行', '发行渠道'])
+    if (legacyTab === 'channels') {
+      expect(page.findAll('.section-tab.is-active').map(button => button.text())).toEqual(['发行'])
+      expect(page.get('.base-modal').text()).toContain('发行渠道')
+    }
     else expect(page.find('details').exists()).toBe(false)
     page.unmount()
   })

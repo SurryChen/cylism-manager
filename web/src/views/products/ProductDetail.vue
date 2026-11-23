@@ -53,19 +53,17 @@
       </SurfaceCard>
     </div>
     <ProductLifecycle v-else-if="['tasks', 'versions'].includes(tab)" :key="product.id + '-' + tab" :product="product" :kind="tab" :initial-version-id="taskVersionID" @changed="refreshProduct" @select-version="showVersionTasks" />
-    <div v-else-if="tab === 'distributions'" class="product-detail-content">
-      <SectionTabsHeader title="产品发行" compact :sticky="false" :tabs="distributionTabs" :active-tab="distributionTab" @select="selectDistributionTab" />
-      <ProductLifecycle v-if="distributionTab === 'records'" :key="product.id + '-distributions'" :product="product" kind="distributions" @changed="refreshProduct" />
-      <SurfaceCard v-else class="product-table-card" padding="none">
-        <div class="product-toolbar"><h2 class="product-section-title" style="margin: 0">发行渠道</h2><span class="product-muted">维护平台资料，版本与审核进度在发行记录中跟进</span><button class="btn btn-sm product-primary" :disabled="busy" @click="openEditor('channels')">管理渠道</button></div>
-        <EmptyState v-if="!product.channels?.length" message="尚未添加发行渠道" />
-        <div v-else class="table-wrap"><table class="data-table"><thead><tr><th>平台 / 渠道</th><th>平台应用标识</th><th>版本 / 状态</th><th>链接</th><th>记录更新时间 / 备注</th></tr></thead><tbody><tr v-for="channel in product.channels" :key="channel.id">
-          <td>{{ channel.name || labelFor(platforms, channel.platform) }}<span class="cell-secondary product-line">{{ labelFor(platforms, channel.platform) }}</span></td><td>{{ channel.app_identifier || '—' }}</td>
-          <td><span class="badge" :class="channelClass(channel.publish_status)">{{ labelFor(channelStatuses, channel.publish_status) }}</span><span class="product-line">线上 {{ channel.online_version || '—' }}</span><span class="cell-secondary product-line">待发布 {{ channel.pending_version || '—' }}</span></td>
-          <td><a v-if="channel.admin_url" :href="channel.admin_url" target="_blank" rel="noopener noreferrer">管理后台</a><a v-if="channel.public_url" class="product-line" :href="channel.public_url" target="_blank" rel="noopener noreferrer">公开访问 / 商店</a><span v-if="!channel.admin_url && !channel.public_url">—</span></td><td>{{ formatTime(channel.updated_at) }}<span class="cell-secondary product-line product-channel-notes">{{ channel.notes || '—' }}</span></td>
-        </tr></tbody></table></div>
-      </SurfaceCard>
-    </div>
+    <ProductLifecycle v-else-if="tab === 'distributions'" :key="product.id + '-distributions'" :product="product" kind="distributions" @changed="refreshProduct" @show-channels="channelsOpen = true" />
+    <BaseModal teleport :open="channelsOpen" title="发行渠道" size="large" @close="channelsOpen = false">
+      <p class="product-muted">维护平台标识和访问链接；渠道当前版本与审核进度由发行记录汇总。</p>
+      <EmptyState v-if="!product?.channels?.length" message="尚未添加发行渠道" />
+      <div v-else class="table-wrap"><table class="data-table"><thead><tr><th>平台 / 渠道</th><th>应用标识</th><th>版本 / 状态</th><th>链接</th></tr></thead><tbody><tr v-for="channel in product.channels" :key="channel.id">
+        <td>{{ channel.name || labelFor(platforms, channel.platform) }}<span class="cell-secondary product-line">{{ labelFor(platforms, channel.platform) }}</span></td><td>{{ channel.app_identifier || '—' }}</td>
+        <td><span class="badge" :class="channelClass(channel.publish_status)">{{ labelFor(channelStatuses, channel.publish_status) }}</span><span class="product-line">线上 {{ channel.online_version || '—' }}</span><span v-if="channel.pending_version" class="cell-secondary product-line">待发布 {{ channel.pending_version }}</span></td>
+        <td><a v-if="channel.admin_url" :href="channel.admin_url" target="_blank" rel="noopener noreferrer">管理后台</a><a v-if="channel.public_url" class="product-line" :href="channel.public_url" target="_blank" rel="noopener noreferrer">公开访问 / 商店</a><span v-if="!channel.admin_url && !channel.public_url">—</span></td>
+      </tr></tbody></table></div>
+      <template #actions><button class="btn" @click="channelsOpen = false">关闭</button><button class="btn btn-primary" :disabled="busy" @click="openEditor('channels')">管理渠道</button></template>
+    </BaseModal>
     <ProductEditor :open="editorOpen" :initial-tab="editorTab" :product="product" :busy="busy" :options="options" @close="editorOpen = false" @save="save" />
     <ConfirmDialog teleport :open="archiveOpen" title="归档产品" message="归档后产品将移入已归档列表，并退出活跃产品和行动汇总。已有部署资源不会被修改。可通过编辑产品恢复阶段。" confirm-text="归档" :busy="busy" @cancel="archiveOpen = false" @confirm="archive" />
     <ErrorNoticeModal :open="Boolean(error)" :message="error" teleport @close="error = ''" />
@@ -97,9 +95,7 @@ const relatedApplications = computed(() => product.value?.related_applications |
 const hasResourceDetails = computed(() => Boolean(product.value?.platform_linked || product.value?.projects?.length || relatedApplications.value.length || product.value?.database_resources?.length))
 const hasPublicDetails = computed(() => Boolean(product.value?.public_bio || product.value?.public_url))
 const tabs = [{ id: 'overview', label: '总览' }, { id: 'tasks', label: '事项' }, { id: 'versions', label: '版本' }, { id: 'distributions', label: '发行' }]
-const distributionTabs = [{ id: 'records', label: '发行记录' }, { id: 'channels', label: '发行渠道' }]
-const distributionTab = ref('records')
-const tab = ref('overview'), editorTab = ref('basics'), editorOpen = ref(false), archiveOpen = ref(false), busy = ref(false), error = ref('')
+const tab = ref('overview'), editorTab = ref('basics'), editorOpen = ref(false), channelsOpen = ref(false), archiveOpen = ref(false), busy = ref(false), error = ref('')
 const taskVersionID = ref('')
 const options = ref({ projects: [], applications: [] })
 async function load() { await resource.refresh(route.params.id); if (resource.error.value) error.value = resource.error.value.message }
@@ -109,16 +105,15 @@ async function refreshProduct() {
   catch (cause) { if (route.params.id === id) error.value = cause.message }
 }
 function applyRouteTab(value) {
-  if (value === 'channels') { tab.value = 'distributions'; distributionTab.value = 'channels'; return }
+  if (value === 'channels') { tab.value = 'distributions'; channelsOpen.value = true; return }
   if (value === 'resources' || value === 'showcase') {
     tab.value = 'overview'
     return
   }
   tab.value = tabs.some(item => item.id === value) ? value : 'overview'
-  if (tab.value === 'distributions') distributionTab.value = 'records'
+  if (tab.value !== 'distributions') channelsOpen.value = false
 }
 function selectTab(value) { applyRouteTab(value); void router.replace({ query: { ...route.query, tab: value } }) }
-function selectDistributionTab(value) { selectTab(value === 'channels' ? 'channels' : 'distributions') }
 function showVersionTasks(id) { taskVersionID.value = id; selectTab('tasks') }
 async function openEditor(initialTab = 'basics') {
   if (initialTab !== 'resources') { editorTab.value = initialTab; editorOpen.value = true; return }
@@ -128,7 +123,7 @@ async function openEditor(initialTab = 'basics') {
 }
 async function save(payload) { busy.value = true; try { await updateProduct(product.value.id, payload); editorOpen.value = false; archiveOpen.value = false; await load() } catch (e) { error.value = e.message } finally { busy.value = false } }
 async function archive() { await save({ ...editableProduct(product.value), stage: 'archived' }) }
-watch(() => route.params.id, () => { resource.data.value = null; editorOpen.value = false; archiveOpen.value = false; taskVersionID.value = ''; applyRouteTab(route.query?.tab); void load() }, { immediate: true })
+watch(() => route.params.id, () => { resource.data.value = null; editorOpen.value = false; channelsOpen.value = false; archiveOpen.value = false; taskVersionID.value = ''; applyRouteTab(route.query?.tab); void load() }, { immediate: true })
 watch(() => route.query?.tab, applyRouteTab)
 </script>
 

@@ -52,6 +52,9 @@
           <h3 class="product-section-title product-section-gap">指定部署组件（可选）</h3>
           <div v-if="options.applications.length" class="product-checklist"><label v-for="item in options.applications" :key="item.id"><input v-model="form.application_ids" type="checkbox" :value="item.id" />{{ projectName(item.project_id) }} / {{ item.name }} <span class="product-muted">环境 #{{ item.environment_id }}</span></label></div>
           <EmptyState v-else message="暂无可关联的部署组件" />
+          <h3 class="product-section-title product-section-gap">数据库资源</h3>
+          <p class="product-muted">数据库信息由关联项目或部署组件的数据库绑定自动汇总，无需在产品中重复填写。在数据库管理中登记或创建实例、配置业务连接并绑定应用后，总览会自动展示对应资源。</p>
+          <router-link class="btn btn-sm" to="/cloud-services/databases" @click="$emit('close')">数据库管理</router-link>
         </template>
         <div v-else class="product-form-grid">
           <p class="product-muted product-full-width">这些资料用于以后选择公开作品。第一版只保存资料，不会发布到个人主页。</p>
