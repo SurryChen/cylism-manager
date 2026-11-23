@@ -21,6 +21,8 @@ type Repository interface {
 	ListProductsPage(uint, string, string, string, int, int) ([]model.Product, int64, error)
 	GetProduct(uint, uint) (*model.Product, error)
 	SaveProduct(*model.Product, []uint, []uint) error
+	DeleteProduct(uint, uint) error
+	ClearProducts(uint) (int64, error)
 	ProductResourceOptions(uint) ([]model.Project, []model.Application, error)
 }
 
@@ -113,6 +115,42 @@ func (h *Handler) Options(c *gin.Context) {
 
 func (h *Handler) Create(c *gin.Context) { h.save(c, false) }
 func (h *Handler) Update(c *gin.Context) { h.save(c, true) }
+
+func (h *Handler) Delete(c *gin.Context) {
+	if !authenticated(c) {
+		return
+	}
+	id, err := shared.ParsePositiveID(c.Param("id"))
+	if err != nil {
+		shared.BadRequest(c, "产品 ID 无效")
+		return
+	}
+	if err := h.repository.DeleteProduct(shared.UserID(c), id); err != nil {
+		respondError(c, err)
+		return
+	}
+	shared.Success(c, gin.H{"deleted": 1})
+}
+
+func (h *Handler) Clear(c *gin.Context) {
+	if !authenticated(c) {
+		return
+	}
+	var input struct {
+		Confirmation string `json:"confirmation"`
+	}
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 1024)
+	if err := c.ShouldBindJSON(&input); err != nil || input.Confirmation != "删除全部产品" {
+		shared.ValidationError(c, "请输入“删除全部产品”确认清空")
+		return
+	}
+	deleted, err := h.repository.ClearProducts(shared.UserID(c))
+	if err != nil {
+		respondError(c, err)
+		return
+	}
+	shared.Success(c, gin.H{"deleted": deleted})
+}
 
 func (h *Handler) save(c *gin.Context, update bool) {
 	if !authenticated(c) {

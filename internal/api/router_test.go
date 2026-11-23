@@ -99,7 +99,7 @@ func TestProductRoutesRequireAuthentication(t *testing.T) {
 		t.Fatal(err)
 	}
 	api.RegisterRoutes(r, container.BuildRouteDependencies())
-	for _, route := range []struct{ method, path string }{{"GET", "/api/products"}, {"GET", "/api/products/1"}, {"GET", "/api/products/resource-options"}, {"POST", "/api/products"}, {"PUT", "/api/products/1"}} {
+	for _, route := range []struct{ method, path string }{{"GET", "/api/products"}, {"GET", "/api/products/1"}, {"GET", "/api/products/resource-options"}, {"POST", "/api/products"}, {"PUT", "/api/products/1"}, {"DELETE", "/api/products/1"}, {"POST", "/api/products/clear"}} {
 		res := httptest.NewRecorder()
 		r.ServeHTTP(res, httptest.NewRequest(route.method, route.path, nil))
 		if res.Code != http.StatusUnauthorized {

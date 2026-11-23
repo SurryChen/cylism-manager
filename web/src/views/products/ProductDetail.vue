@@ -7,7 +7,7 @@
           <h1 class="page-title">{{ product?.name || '产品详情' }}</h1>
         </div>
       </template>
-      <template #actions><div class="product-actions"><button v-if="product" class="btn btn-primary btn-sm" :disabled="busy || resource.loading.value" @click="openEditor()">编辑基本信息</button><button v-if="product && product.stage !== 'archived'" class="btn btn-sm" :disabled="busy || resource.loading.value" @click="archiveOpen = true">归档</button></div></template>
+      <template #actions><div class="product-actions"><button v-if="product" class="btn btn-primary btn-sm" :disabled="busy || resource.loading.value" @click="openEditor()">编辑基本信息</button><button v-if="product && product.stage !== 'archived'" class="btn btn-sm" :disabled="busy || resource.loading.value" @click="archiveOpen = true">归档</button><button v-if="product" class="icon-button" title="删除产品" aria-label="删除产品" :disabled="busy || resource.loading.value" @click="deleteTarget = product"><Trash2 :size="15" /></button></div></template>
     </SectionTabsHeader>
     <EmptyState v-if="resource.loading.value" variant="loading" message="正在读取产品..." />
     <EmptyState v-else-if="resource.error.value || !product" message="产品不存在或暂时无法读取"><template #action><button class="btn btn-sm" @click="load">重试</button></template></EmptyState>
@@ -66,15 +66,16 @@
     </BaseModal>
     <ProductEditor :open="editorOpen" :initial-tab="editorTab" :product="product" :busy="busy" :options="options" @close="editorOpen = false" @save="save" />
     <ConfirmDialog teleport :open="archiveOpen" title="归档产品" message="归档后产品将移入已归档列表，并退出活跃产品和行动汇总。已有部署资源不会被修改。可通过编辑产品恢复阶段。" confirm-text="归档" :busy="busy" @cancel="archiveOpen = false" @confirm="archive" />
+    <ProductDeleteDialog :open="Boolean(deleteTarget)" :product="deleteTarget" :busy="busy" @cancel="deleteTarget = null" @confirm="remove" />
     <ErrorNoticeModal :open="Boolean(error)" :message="error" teleport @close="error = ''" />
   </div>
 </template>
 
 <script setup>
 import { computed, ref, watch } from 'vue'
-import { ArrowLeft } from 'lucide-vue-next'
+import { ArrowLeft, Trash2 } from 'lucide-vue-next'
 import { useRoute, useRouter } from 'vue-router'
-import { getProduct, getProductResourceOptions, updateProduct } from '../../api/products.js'
+import { getProduct, getProductResourceOptions, updateProduct, deleteProduct } from '../../api/products.js'
 import { useAsyncResource } from '../../composables/useAsyncResource.js'
 import SectionTabsHeader from '../../components/SectionTabsHeader.vue'
 import SurfaceCard from '../../components/SurfaceCard.vue'
@@ -83,6 +84,7 @@ import ErrorNoticeModal from '../../components/ErrorNoticeModal.vue'
 import ConfirmDialog from '../../components/ConfirmDialog.vue'
 import ProductEditor from './ProductEditor.vue'
 import ProductLifecycle from './ProductLifecycle.vue'
+import ProductDeleteDialog from './ProductDeleteDialog.vue'
 import { stages, platforms, channelStatuses, linkKinds, labelFor, stageClass, channelClass, editableProduct } from './product-utils.js'
 import { formatShortDateTime as formatTime } from '../../utils/formatters.js'
 import '../../styles/products.css'
@@ -97,6 +99,7 @@ const hasPublicDetails = computed(() => Boolean(product.value?.public_bio || pro
 const tabs = [{ id: 'overview', label: '总览' }, { id: 'tasks', label: '事项' }, { id: 'versions', label: '版本' }, { id: 'distributions', label: '发行' }]
 const tab = ref('overview'), editorTab = ref('basics'), editorOpen = ref(false), channelsOpen = ref(false), archiveOpen = ref(false), busy = ref(false), error = ref('')
 const taskVersionID = ref('')
+const deleteTarget = ref(null)
 const options = ref({ projects: [], applications: [] })
 async function load() { await resource.refresh(route.params.id); if (resource.error.value) error.value = resource.error.value.message }
 async function refreshProduct() {
@@ -123,7 +126,14 @@ async function openEditor(initialTab = 'basics') {
 }
 async function save(payload) { busy.value = true; try { await updateProduct(product.value.id, payload); editorOpen.value = false; archiveOpen.value = false; await load() } catch (e) { error.value = e.message } finally { busy.value = false } }
 async function archive() { await save({ ...editableProduct(product.value), stage: 'archived' }) }
-watch(() => route.params.id, () => { resource.data.value = null; editorOpen.value = false; channelsOpen.value = false; archiveOpen.value = false; taskVersionID.value = ''; applyRouteTab(route.query?.tab); void load() }, { immediate: true })
+async function remove() {
+  if (busy.value || !deleteTarget.value) return
+  const id = deleteTarget.value.id
+  busy.value = true
+  try { await deleteProduct(id); deleteTarget.value = null; if (String(route.params.id) === String(id)) await router.push('/products') }
+  catch (cause) { error.value = cause.message } finally { busy.value = false }
+}
+watch(() => route.params.id, () => { resource.data.value = null; editorOpen.value = false; channelsOpen.value = false; archiveOpen.value = false; deleteTarget.value = null; taskVersionID.value = ''; applyRouteTab(route.query?.tab); void load() }, { immediate: true })
 watch(() => route.query?.tab, applyRouteTab)
 </script>
 
