@@ -41,8 +41,12 @@ describe('personal products workflows', () => {
     mocks.get.mockResolvedValue({ id: 7, name: 'Cylism Manager', stage: 'operating', platform_linked: true })
     const page = mountPage(ProductDetail)
     await flushPromises()
-    expect(page.find('.product-disclosure summary').text()).toContain('当前管理平台')
+    expect(page.find('.product-resource-heading').text()).toContain('当前管理平台')
     expect(page.text()).toContain('发布与更新')
+    expect(page.findAll('.product-table-card')).toHaveLength(1)
+    expect(page.text()).not.toContain('关联运维项目')
+    expect(page.text()).not.toContain('相关部署组件与访问入口')
+    expect(page.text()).not.toContain('已有数据库绑定')
     await page.findAll('button').find(button => button.text() === '编辑基本信息').trigger('click')
     await page.get('[aria-label="产品名称"]').setValue('Manager')
     await page.getComponent(ProductEditor).get('form').trigger('submit')
@@ -161,11 +165,16 @@ describe('personal products workflows', () => {
   })
 
   it('shows four primary tabs and opens links and optional settings in their own editors', async () => {
+    mocks.get.mockResolvedValue({ id: 7, name: 'App', stage: 'developing', projects: [{ id: 2, name: 'backend' }], links: [{ kind: 'repository', label: '源码', url: 'https://example.com/repo' }], public_bio: '公开介绍' })
     const page = mountPage(ProductDetail)
     await flushPromises()
     expect(page.findAll('.section-tab').map(button => button.text())).toEqual(['总览', '事项', '版本', '发行'])
     expect(page.text()).not.toContain('研发与交付')
-    expect(page.findAll('.product-disclosure').every(section => !section.element.open)).toBe(true)
+    expect(page.find('details').exists()).toBe(false)
+    expect(page.get('[aria-labelledby="product-resources-heading"]').isVisible()).toBe(true)
+    expect(page.text()).toContain('关联运维项目')
+    expect(page.text()).not.toContain('已有数据库绑定')
+    expect(page.text()).toContain('公开简介')
     for (const [buttonLabel, section] of [['管理链接', '资料链接'], ['编辑公开资料', '公开资料'], ['管理关联', '资源关联']]) {
       await page.findAll('button').find(button => button.text() === buttonLabel).trigger('click')
       await flushPromises()
@@ -178,13 +187,80 @@ describe('personal products workflows', () => {
     page.unmount()
   })
 
+  it.each([{}, { links: [], projects: [], applications: [], related_applications: [], database_resources: [], public_bio: '', public_url: '' }])('hides empty overview cards while keeping editors accessible: %j', async emptyFields => {
+    mocks.get.mockResolvedValue({ id: 7, name: 'App', stage: 'developing', ...emptyFields })
+    const page = mountPage(ProductDetail)
+    await flushPromises()
+    expect(page.findAll('.surface-card')).toHaveLength(1)
+    expect(page.findAll('.product-table-card')).toHaveLength(0)
+    expect(page.find('.product-resource-section .product-detail-content').exists()).toBe(false)
+    expect(page.find('.product-overview-summary').exists()).toBe(false)
+    for (const emptyMessage of ['未关联项目', '暂无关联部署组件', '相关组件暂无数据库绑定', '暂无代码仓库', '未填写']) expect(page.text()).not.toContain(emptyMessage)
+    for (const [buttonLabel, section] of [['添加资料链接', '资料链接'], ['添加公开资料', '公开资料'], ['管理关联', '资源关联']]) {
+      await page.findAll('button').find(button => button.text() === buttonLabel).trigger('click')
+      await flushPromises()
+      const editor = page.getComponent(ProductEditor)
+      expect(editor.get('.section-tab.is-active').text()).toBe(section)
+      await editor.findAll('button').find(button => button.text() === '取消').trigger('click')
+    }
+    page.unmount()
+  })
+
+  it.each([
+    [{ projects: [{ id: 2, name: 'backend', environments: [{ id: 3, name: 'production', namespace: 'backend-prod' }] }] }, '关联运维项目', 'backend-prod'],
+    [{ applications: [{ id: 4, name: 'api' }] }, '相关部署组件与访问入口', 'api'],
+    [{ related_applications: [{ id: 4, name: 'derived-api', endpoints: [{ id: 5, domain: 'app.example.com', service_port: 8080 }] }] }, '相关部署组件与访问入口', 'app.example.com'],
+    [{ database_resources: [{ instance_id: 8, name: 'App database', application_id: 4 }] }, '已有数据库绑定', 'App database'],
+  ])('shows only populated resource sections: %j', async (fields, heading, content) => {
+    mocks.get.mockResolvedValue({ id: 7, name: 'App', stage: 'operating', ...fields })
+    const page = mountPage(ProductDetail)
+    await flushPromises()
+    expect(page.findAll('.product-table-card')).toHaveLength(1)
+    expect(page.get('.product-table-card').text()).toContain(heading)
+    expect(page.get('.product-table-card').text()).toContain(content)
+    expect(page.find('details').exists()).toBe(false)
+    page.unmount()
+  })
+
+  it.each([
+    [{ public_bio: '公开介绍' }, '公开简介', '展示链接'],
+    [{ public_url: 'https://example.com' }, '展示链接', '公开简介'],
+  ])('shows existing public information without empty fields: %j', async (fields, shown, hidden) => {
+    mocks.get.mockResolvedValue({ id: 7, name: 'App', stage: 'operating', ...fields })
+    const page = mountPage(ProductDetail)
+    await flushPromises()
+    expect(page.get('.product-detail-list').text()).toContain(shown)
+    expect(page.get('.product-detail-list').text()).not.toContain(hidden)
+    expect(page.text()).not.toContain('未填写')
+    expect(page.text()).not.toContain('添加公开资料')
+    page.unmount()
+  })
+
+  it('reveals resource cards after saving associations from an empty overview', async () => {
+    mocks.get.mockResolvedValueOnce({ id: 7, name: 'App', stage: 'developing' })
+      .mockResolvedValue({ id: 7, name: 'App', stage: 'developing', platform_linked: true })
+    mocks.options.mockResolvedValue({ projects: [], applications: [], platform: { name: 'Cylism Manager（当前管理平台）' } })
+    const page = mountPage(ProductDetail)
+    await flushPromises()
+    expect(page.find('.product-table-card').exists()).toBe(false)
+    await page.findAll('button').find(button => button.text() === '管理关联').trigger('click')
+    await flushPromises()
+    await page.get('[aria-label="关联当前管理平台"]').setValue(true)
+    await page.getComponent(ProductEditor).get('form').trigger('submit')
+    await flushPromises()
+    expect(mocks.update).toHaveBeenCalledWith(7, expect.objectContaining({ platform_linked: true }))
+    expect(page.findAll('.product-table-card')).toHaveLength(1)
+    expect(page.get('.product-table-card').text()).toContain('当前管理平台')
+    page.unmount()
+  })
+
   it.each([['channels', 'distributions'], ['resources', 'overview'], ['showcase', 'overview']])('preserves existing %s deep links', async (legacyTab, primaryTab) => {
     route.query = { tab: legacyTab }
     const page = mountPage(ProductDetail)
     await flushPromises()
     expect(page.find('.section-tabs-header .section-tab.is-active').text()).toBe(primaryTab === 'overview' ? '总览' : '发行')
     if (legacyTab === 'channels') expect(page.findAll('.section-tab.is-active').map(button => button.text())).toEqual(['发行', '发行渠道'])
-    else expect(page.findAll('.product-disclosure')[legacyTab === 'resources' ? 0 : 1].element.open).toBe(true)
+    else expect(page.find('details').exists()).toBe(false)
     page.unmount()
   })
 
