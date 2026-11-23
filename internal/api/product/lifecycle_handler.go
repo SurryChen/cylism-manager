@@ -179,7 +179,7 @@ func (h *Handler) SaveLifecycle(c *gin.Context) {
 		}
 		input.ID, input.ProductID, input.CreatedAt, input.UpdatedAt = id, productID, time.Time{}, time.Time{}
 		input.Name = strings.TrimSpace(input.Name)
-		if !oneOf(input.Status, "planning", "developing", "testing", "releasing", "completed", "archived") || len(input.DeploymentIDs) > 100 {
+		if !oneOf(input.Status, "planning", "developing", "testing", "releasing", "completed", "archived") || len(input.DeploymentIDs)+len(input.PlatformReleaseIDs) > 100 {
 			shared.ValidationError(c, "版本状态无效或关联部署过多")
 			return
 		}

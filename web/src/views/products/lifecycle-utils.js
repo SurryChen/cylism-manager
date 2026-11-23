@@ -21,3 +21,6 @@ export function developmentSummary(data = {}, now = new Date()) {
     .sort((a, b) => (['blocked', 'rejected'].includes(a.status) ? 0 : a.status === 'in_review' ? 2 : 1) - (['blocked', 'rejected'].includes(b.status) ? 0 : b.status === 'in_review' ? 2 : 1))
   return { ...summary, actions, due: actions.filter(task => ['overdue', 'today', 'soon'].includes(dueState(task.due_date, now))), followups, waiting: followups.filter(record => record.status === 'in_review'), needsAction: followups.filter(record => record.status !== 'in_review'), versions: (data.versions || []).filter(version => activeIDs.has(version.product_id) && !['completed', 'archived'].includes(version.status)), unplanned: summary.active.filter(product => !actions.some(task => task.product_id === product.id)) }
 }
+
+export const deploymentCount = record => (record.deployment_ids?.length || 0) + (record.platform_release_ids?.length || 0)
+export const deploymentPath = record => record.source === 'platform' ? '/settings/system?tab=release' : '/applications/' + record.application_id + '/releases/' + record.id

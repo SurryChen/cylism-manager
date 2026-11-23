@@ -59,8 +59,12 @@ func (s *Store) ListProductVersions(ownerID, productID uint, f model.ProductLife
 	}
 	for i := range rows {
 		rows[i].DeploymentIDs = []uint{}
+		rows[i].PlatformReleaseIDs = []uint{}
 		err := s.productDeployments(ownerID, productID).Joins("JOIN product_version_deployments ON product_version_deployments.release_id = releases.id").Where("product_version_deployments.version_id = ?", rows[i].ID).Order("releases.id DESC").Pluck("releases.id", &rows[i].DeploymentIDs).Error
 		if err != nil {
+			return nil, 0, err
+		}
+		if err := s.productPlatformReleases(ownerID, productID).Joins("JOIN product_version_platform_releases ON product_version_platform_releases.release_id = platform_releases.id").Where("product_version_platform_releases.version_id = ?", rows[i].ID).Order("platform_releases.id DESC").Pluck("platform_releases.id", &rows[i].PlatformReleaseIDs).Error; err != nil {
 			return nil, 0, err
 		}
 	}
@@ -153,6 +157,17 @@ func (s *Store) SaveProductVersion(ownerID uint, version *model.ProductVersion) 
 			}
 			ids[id] = true
 		}
+		platformIDs := map[uint]bool{}
+		for _, id := range version.PlatformReleaseIDs {
+			var count int64
+			if err := (&Store{db: tx}).productPlatformReleases(ownerID, version.ProductID).Where("platform_releases.id = ?", id).Count(&count).Error; err != nil {
+				return err
+			}
+			if count != 1 {
+				return model.ErrProductResourceAccess
+			}
+			platformIDs[id] = true
+		}
 		if version.ID == 0 {
 			version.Revision = 1
 			if err := tx.Create(version).Error; err != nil {
@@ -181,6 +196,14 @@ func (s *Store) SaveProductVersion(ownerID uint, version *model.ProductVersion) 
 		}
 		for id := range ids {
 			if err := tx.Create(&model.ProductVersionDeployment{VersionID: version.ID, ReleaseID: id}).Error; err != nil {
+				return err
+			}
+		}
+		if err := tx.Where("version_id = ?", version.ID).Delete(&model.ProductVersionPlatformRelease{}).Error; err != nil {
+			return err
+		}
+		for id := range platformIDs {
+			if err := tx.Create(&model.ProductVersionPlatformRelease{VersionID: version.ID, ReleaseID: id}).Error; err != nil {
 				return err
 			}
 		}
@@ -295,26 +318,40 @@ func (s *Store) productDeployments(ownerID, productID uint) *gorm.DB {
 		Where("EXISTS (SELECT 1 FROM product_applications WHERE product_applications.product_id = ? AND product_applications.application_id = applications.id) OR EXISTS (SELECT 1 FROM product_projects WHERE product_projects.product_id = ? AND product_projects.project_id = applications.project_id)", productID, productID)
 }
 
+func (s *Store) productPlatformReleases(ownerID, productID uint) *gorm.DB {
+	return s.db.Model(&model.PlatformRelease{}).Where("EXISTS (SELECT 1 FROM products WHERE products.id = ? AND products.owner_id = ? AND products.platform_linked = ?)", productID, ownerID, true)
+}
+
 func (s *Store) ProductDeploymentPage(ownerID, productID uint, f model.ProductLifecycleFilter) ([]model.ProductDeploymentOption, int64, error) {
 	if err := ownedProduct(s.db, ownerID, productID); err != nil {
 		return nil, 0, err
 	}
 	q := s.productDeployments(ownerID, productID)
+	platform := s.productPlatformReleases(ownerID, productID)
 	if f.VersionID != 0 {
 		if err := lifecycleVersionAccess(s.db, productID, &f.VersionID); err != nil {
 			return nil, 0, err
 		}
 		q = q.Joins("JOIN product_version_deployments ON product_version_deployments.release_id = releases.id").Where("product_version_deployments.version_id = ?", f.VersionID)
+		platform = platform.Joins("JOIN product_version_platform_releases ON product_version_platform_releases.release_id = platform_releases.id").Where("product_version_platform_releases.version_id = ?", f.VersionID)
 	}
 	if f.Keyword != "" {
 		q = q.Where("instr(LOWER(applications.name || ' ' || releases.version), ?) > 0", strings.ToLower(f.Keyword))
+		platform = platform.Where("instr(LOWER('Cylism Manager 当前管理平台 ' || platform_releases.image), ?) > 0", strings.ToLower(f.Keyword))
 	}
+	if f.Status != "" {
+		q = q.Where("releases.status = ?", f.Status)
+		platform = platform.Where("platform_releases.status = ?", f.Status)
+	}
+	applications := q.Joins("LEFT JOIN environments ON environments.id = applications.environment_id").Select("'application' AS source, releases.id, releases.application_id, applications.name AS application_name, environments.name AS environment_name, releases.version, releases.status, releases.created_at")
+	updates := platform.Select("'platform' AS source, platform_releases.id, 0 AS application_id, 'Cylism Manager' AS application_name, '当前管理平台' AS environment_name, platform_releases.image AS version, platform_releases.status, platform_releases.created_at")
+	combined := s.db.Table("(? UNION ALL ?) AS deployments", applications, updates)
 	var count int64
-	if err := q.Count(&count).Error; err != nil {
+	if err := combined.Count(&count).Error; err != nil {
 		return nil, 0, err
 	}
 	rows := []model.ProductDeploymentOption{}
-	err := q.Joins("LEFT JOIN environments ON environments.id = applications.environment_id").Select("releases.id, releases.application_id, applications.name AS application_name, environments.name AS environment_name, releases.version, releases.status, releases.created_at").Order("releases.id DESC").Limit(f.Limit).Offset(f.Offset).Scan(&rows).Error
+	err := combined.Select("*").Order("created_at DESC, id DESC, source").Limit(f.Limit).Offset(f.Offset).Scan(&rows).Error
 	return rows, count, err
 }
 

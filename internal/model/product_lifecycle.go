@@ -27,25 +27,32 @@ type ProductTask struct {
 
 // ProductVersion groups an iteration; it is deliberately independent of container Releases.
 type ProductVersion struct {
-	ID            uint      `gorm:"primaryKey" json:"id"`
-	ProductID     uint      `gorm:"uniqueIndex:idx_product_version_name;not null" json:"product_id"`
-	Name          string    `gorm:"size:128;uniqueIndex:idx_product_version_name;not null" json:"name"`
-	Goal          string    `gorm:"size:1024" json:"goal"`
-	Acceptance    string    `gorm:"type:text" json:"acceptance"`
-	Status        string    `gorm:"size:24;index;not null" json:"status"`
-	TargetDate    string    `gorm:"size:10" json:"target_date"`
-	RepositoryURL string    `gorm:"size:1024" json:"repository_url"`
-	CommitSHA     string    `gorm:"size:128" json:"commit_sha"`
-	BuildURL      string    `gorm:"size:1024" json:"build_url"`
-	ArtifactURL   string    `gorm:"size:1024" json:"artifact_url"`
-	Notes         string    `gorm:"type:text" json:"notes"`
-	Revision      uint      `gorm:"not null;default:1" json:"revision"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
-	DeploymentIDs []uint    `gorm:"-" json:"deployment_ids"`
+	ID                 uint      `gorm:"primaryKey" json:"id"`
+	ProductID          uint      `gorm:"uniqueIndex:idx_product_version_name;not null" json:"product_id"`
+	Name               string    `gorm:"size:128;uniqueIndex:idx_product_version_name;not null" json:"name"`
+	Goal               string    `gorm:"size:1024" json:"goal"`
+	Acceptance         string    `gorm:"type:text" json:"acceptance"`
+	Status             string    `gorm:"size:24;index;not null" json:"status"`
+	TargetDate         string    `gorm:"size:10" json:"target_date"`
+	RepositoryURL      string    `gorm:"size:1024" json:"repository_url"`
+	CommitSHA          string    `gorm:"size:128" json:"commit_sha"`
+	BuildURL           string    `gorm:"size:1024" json:"build_url"`
+	ArtifactURL        string    `gorm:"size:1024" json:"artifact_url"`
+	Notes              string    `gorm:"type:text" json:"notes"`
+	Revision           uint      `gorm:"not null;default:1" json:"revision"`
+	CreatedAt          time.Time `json:"created_at"`
+	UpdatedAt          time.Time `json:"updated_at"`
+	DeploymentIDs      []uint    `gorm:"-" json:"deployment_ids"`
+	PlatformReleaseIDs []uint    `gorm:"-" json:"platform_release_ids"`
 }
 
 type ProductVersionDeployment struct {
+	VersionID uint `gorm:"primaryKey" json:"version_id"`
+	ReleaseID uint `gorm:"primaryKey" json:"release_id"`
+}
+
+// ProductVersionPlatformRelease keeps platform updates separate from application releases.
+type ProductVersionPlatformRelease struct {
 	VersionID uint `gorm:"primaryKey" json:"version_id"`
 	ReleaseID uint `gorm:"primaryKey" json:"release_id"`
 }
@@ -80,6 +87,7 @@ type ProductDistributionEvent struct {
 
 // ProductDeploymentOption never exposes desired specs, logs or credentials.
 type ProductDeploymentOption struct {
+	Source          string    `json:"source"`
 	ID              uint      `json:"id"`
 	ApplicationID   uint      `json:"application_id"`
 	ApplicationName string    `json:"application_name"`

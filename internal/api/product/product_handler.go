@@ -40,6 +40,7 @@ type productInput struct {
 	PublicBio      string                 `json:"public_bio"`
 	PublicURL      string                 `json:"public_url"`
 	PublicShowcase bool                   `json:"public_showcase"`
+	PlatformLinked bool                   `json:"platform_linked"`
 	Channels       []model.ProductChannel `json:"channels"`
 	ProjectIDs     []uint                 `json:"project_ids"`
 	ApplicationIDs []uint                 `json:"application_ids"`
@@ -107,7 +108,7 @@ func (h *Handler) Options(c *gin.Context) {
 	for _, a := range apps {
 		appOptions = append(appOptions, option{ID: a.ID, Name: a.Name, ProjectID: a.ProjectID, EnvironmentID: a.EnvironmentID})
 	}
-	shared.Success(c, gin.H{"projects": projectOptions, "applications": appOptions})
+	shared.Success(c, gin.H{"projects": projectOptions, "applications": appOptions, "platform": gin.H{"name": "Cylism Manager（当前管理平台）"}})
 }
 
 func (h *Handler) Create(c *gin.Context) { h.save(c, false) }
@@ -138,6 +139,7 @@ func (h *Handler) save(c *gin.Context, update bool) {
 		return
 	}
 	product.ID, product.OwnerID = id, shared.UserID(c)
+	product.PlatformLinked = input.PlatformLinked
 	if err := h.repository.SaveProduct(product, input.ProjectIDs, input.ApplicationIDs); err != nil {
 		respondError(c, err)
 		return

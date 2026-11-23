@@ -40,6 +40,7 @@ type Product struct {
 	PublicBio           string                    `gorm:"size:1024" json:"public_bio"`
 	PublicURL           string                    `gorm:"size:1024" json:"public_url"`
 	PublicShowcase      bool                      `gorm:"not null;default:false" json:"public_showcase"`
+	PlatformLinked      bool                      `gorm:"not null;default:false" json:"platform_linked"`
 	CreatedAt           time.Time                 `json:"created_at"`
 	UpdatedAt           time.Time                 `json:"updated_at"`
 	Channels            []ProductChannel          `gorm:"foreignKey:ProductID" json:"channels,omitempty"`

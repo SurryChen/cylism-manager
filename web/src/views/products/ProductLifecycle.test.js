@@ -3,6 +3,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { reactive } from 'vue'
 import ProductLifecycle from './ProductLifecycle.vue'
 import LifecycleEditor from './LifecycleEditor.vue'
+import { deploymentCount, deploymentPath } from './lifecycle-utils.js'
 const mocks = vi.hoisted(() => ({ page: vi.fn(), options: vi.fn(), save: vi.fn(), events: vi.fn(), import: vi.fn() }))
 vi.mock('../../api/product-lifecycle.js', () => ({ getLifecyclePage: mocks.page, getLifecycleOptions: mocks.options, saveLifecycleRecord: mocks.save, getDistributionEvents: mocks.events, importProductNextAction: mocks.import }))
 const product = { id: 7, name: 'App', channels: [{ id: 9, platform: 'app_store' }] }
@@ -15,6 +16,36 @@ beforeEach(() => {
  mocks.events.mockResolvedValue({ items: [{ id: 1, status: 'in_review', platform_version: '1.0', notes: 'original', created_at: '2026-11-17T00:00:00Z' }], total: 1 })
 })
 describe('product lifecycle workflows', () => {
+ it('keeps application and platform selections separate even when their IDs match', async () => {
+   mocks.page.mockResolvedValue({ items: [{ id: 1, source: 'application', application_name: 'API', version: '1.0' }, { id: 1, source: 'platform', application_name: 'Cylism Manager', version: 'manager:1.1' }], total: 2 })
+   const page = mount(LifecycleEditor, { props: { open: true, kind: 'versions', productId: 7 }, global: { stubs: { Teleport: true } } }); await flushPromises()
+   const checkboxes = page.findAll('input[type="checkbox"]')
+   await checkboxes[0].setValue(true)
+   await checkboxes[1].setValue(true)
+   expect(page.text()).toContain('已选择 2 条')
+   await page.get('form').trigger('submit')
+   expect(page.emitted('save')[0][0]).toMatchObject({ deployment_ids: [1], platform_release_ids: [1] })
+   await checkboxes[0].setValue(false)
+   await page.get('form').trigger('submit')
+   expect(page.emitted('save')[1][0]).toMatchObject({ deployment_ids: [], platform_release_ids: [1] })
+   await page.findAll('button').find(button => button.text() === '清空选择').trigger('click')
+   await page.get('form').trigger('submit')
+   expect(page.emitted('save')[2][0]).toMatchObject({ deployment_ids: [], platform_release_ids: [] })
+   expect(deploymentCount({ platform_release_ids: [1] })).toBe(1)
+   expect(deploymentPath({ source: 'platform', id: 1 })).toBe('/settings/system?tab=release')
+   expect(deploymentPath({ source: 'application', id: 1, application_id: 2 })).toBe('/applications/2/releases/1')
+   page.unmount()
+ })
+ it('opens platform-only version history and links to platform settings', async () => {
+   mocks.page.mockImplementation(async (_id, kind) => kind === 'versions' ? { items: [{ id: 8, name: '1.1', status: 'testing', platform_release_ids: [1] }], total: 1 } : { items: [{ id: 1, source: 'platform', application_name: 'Cylism Manager', version: 'manager:1.1' }], total: 1 })
+   const page = mountPage('versions'); await flushPromises()
+   const button = page.findAll('button').find(button => button.text() === '1 条记录')
+   expect(button.attributes('disabled')).toBeUndefined()
+   await button.trigger('click'); await flushPromises()
+   expect(mocks.page).toHaveBeenCalledWith(7, 'deployments', expect.objectContaining({ version_id: 8 }), expect.anything())
+   expect(page.text()).toContain('平台发布与更新')
+   page.unmount()
+ })
  it('creates a task and preserves entered fields on a failed save', async () => {
    const page = mountPage('tasks'); await flushPromises()
    await page.findAll('button').find(button => button.text() === '新增事项').trigger('click')
@@ -52,11 +83,11 @@ describe('product lifecycle workflows', () => {
    page.unmount()
  })
  it('edits a version without mutating reactive source and keeps hidden-page deployment selections', async () => {
-   const record = reactive({ id: 1, name: '1.0', status: 'testing', deployment_ids: [99] })
+   const record = reactive({ id: 1, name: '1.0', status: 'testing', deployment_ids: [99], platform_release_ids: [42] })
    const page = mount(LifecycleEditor, { props: { open: true, kind: 'versions', productId: 7, record }, global: { stubs: { Teleport: true } } }); await flushPromises()
    await page.get('[aria-label="版本名称"]').setValue('1.1')
    await page.get('form').trigger('submit')
-   expect(page.emitted('save')[0][0]).toMatchObject({ name: '1.1', deployment_ids: [99] })
+   expect(page.emitted('save')[0][0]).toMatchObject({ name: '1.1', deployment_ids: [99], platform_release_ids: [42] })
    expect(record.name).toBe('1.0')
    page.unmount()
  })

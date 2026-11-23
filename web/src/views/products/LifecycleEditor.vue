@@ -24,14 +24,14 @@
         <template v-if="kind === 'versions'">
           <label v-for="field in sourceFields" :key="field.key" class="form-group" :class="{ 'product-full-width': field.key !== 'commit_sha' }"><span class="form-label">{{ field.label }}</span><input v-model.trim="form[field.key]" class="form-input" :type="field.key === 'commit_sha' ? 'text' : 'url'" :maxlength="field.key === 'commit_sha' ? 128 : 1024" :aria-label="field.label" /></label>
           <div class="product-full-width">
-            <h3 class="product-section-title">关联容器部署记录（可选）</h3>
-            <p class="product-muted">仅列出此产品已关联项目或组件的部署；选择记录不会触发部署。App 和小程序可留空。</p>
+            <h3 class="product-section-title">关联部署与平台更新（可选）</h3>
+            <p class="product-muted">仅列出此产品关联的项目、组件或当前管理平台的记录；选择记录不会触发部署。App 和小程序可留空。</p>
             <input v-model.trim="deploymentKeyword" class="form-input" aria-label="搜索部署记录" placeholder="搜索组件或版本" />
             <EmptyState v-if="deployments.loading.value" variant="loading" message="正在读取部署记录..." />
             <EmptyState v-else-if="deployments.error.value" message="部署记录读取失败"><template #action><button type="button" class="btn btn-sm" @click="loadDeployments">重试</button></template></EmptyState>
-            <div v-else class="product-checklist"><label v-for="deployment in deployments.items.value" :key="deployment.id"><input v-model="form.deployment_ids" type="checkbox" :value="deployment.id" />{{ deployment.application_name }} · {{ deployment.environment_name || '未命名环境' }} · {{ deployment.version || `#${deployment.id}` }} · {{ deployment.status }}</label><span v-if="!deployments.total.value" class="product-muted">暂无可关联的部署记录</span></div>
+            <div v-else class="product-checklist"><label v-for="deployment in deployments.items.value" :key="`${deployment.source || 'application'}-${deployment.id}`"><input type="checkbox" :value="deployment.id" :checked="deploymentSelected(deployment)" @change="setDeploymentSelected(deployment, $event.target.checked)" />{{ deployment.application_name }} · {{ deployment.environment_name || '未命名环境' }} · {{ deployment.version || `#${deployment.id}` }} · {{ deployment.status }}</label><span v-if="!deployments.total.value" class="product-muted">暂无可关联的部署记录</span></div>
             <ResourcePagination :resource="deployments" label="可关联部署分页" />
-            <div class="product-actions"><span class="product-muted">已选择 {{ form.deployment_ids.length }} 条</span><button v-if="form.deployment_ids.length" type="button" class="btn btn-sm" @click="form.deployment_ids = []">清空选择</button></div>
+            <div class="product-actions"><span class="product-muted">已选择 {{ deploymentCount(form) }} 条</span><button v-if="deploymentCount(form)" type="button" class="btn btn-sm" @click="form.deployment_ids = []; form.platform_release_ids = []">清空选择</button></div>
           </div>
         </template>
         <label class="form-group product-full-width"><span class="form-label">{{ kind === 'tasks' ? '说明与处理结果' : '备注 / 发行说明' }}</span><textarea v-model="form[kind === 'tasks' ? 'details' : 'notes']" class="form-input" aria-label="记录说明" maxlength="8000" /></label>
@@ -49,7 +49,7 @@ import ResourcePagination from '../../components/ResourcePagination.vue'
 import { usePaginatedResource } from '../../composables/usePaginatedResource.js'
 import { getLifecyclePage } from '../../api/product-lifecycle.js'
 import { labelFor, platforms } from './product-utils.js'
-import { taskKinds, taskStatuses, priorities, versionStatuses, distributionStatuses } from './lifecycle-utils.js'
+import { taskKinds, taskStatuses, priorities, versionStatuses, distributionStatuses, deploymentCount } from './lifecycle-utils.js'
 const props = defineProps({ open: Boolean, busy: Boolean, kind: { type: String, required: true }, productId: { type: Number, required: true }, record: { type: Object, default: null }, versions: { type: Array, default: () => [] }, channels: { type: Array, default: () => [] } })
 const emit = defineEmits(['close', 'save', 'error'])
 const formID = `lifecycle-${useId()}`
@@ -59,14 +59,20 @@ const statuses = computed(() => ({ tasks: taskStatuses, versions: versionStatuse
 const dateField = computed(() => props.kind === 'tasks' ? 'due_date' : 'target_date')
 const sourceFields = [{ key: 'repository_url', label: '代码仓库链接' }, { key: 'commit_sha', label: '提交 SHA' }, { key: 'build_url', label: '构建记录链接' }, { key: 'artifact_url', label: '产物链接（不含访问密钥）' }]
 const deployments = usePaginatedResource((query, options) => getLifecyclePage(props.productId, 'deployments', query, options), 'items')
+function deploymentField(deployment) { return deployment.source === 'platform' ? 'platform_release_ids' : 'deployment_ids' }
+function deploymentSelected(deployment) { return form.value[deploymentField(deployment)]?.includes(deployment.id) }
+function setDeploymentSelected(deployment, selected) {
+  const field = deploymentField(deployment), ids = form.value[field] || []
+  form.value[field] = selected ? [...new Set([...ids, deployment.id])] : ids.filter(id => id !== deployment.id)
+}
 function loadDeployments() { return deployments.load({ keyword: deploymentKeyword.value }) }
 watch(deploymentKeyword, () => { if (props.open && props.kind === 'versions') void loadDeployments() })
 watch(() => props.open, open => {
   if (!open) { deployments.cancel(); return }
-  const defaults = props.kind === 'tasks' ? { title: '', kind: 'action', priority: 'normal', status: 'todo', version_id: '', due_date: '', details: '' } : props.kind === 'versions' ? { name: '', goal: '', acceptance: '', status: 'planning', target_date: '', repository_url: '', commit_sha: '', build_url: '', artifact_url: '', deployment_ids: [], notes: '' } : { channel_id: 0, version_id: '', platform_version: '', build_identifier: '', status: 'draft', notes: '' }
+  const defaults = props.kind === 'tasks' ? { title: '', kind: 'action', priority: 'normal', status: 'todo', version_id: '', due_date: '', details: '' } : props.kind === 'versions' ? { name: '', goal: '', acceptance: '', status: 'planning', target_date: '', repository_url: '', commit_sha: '', build_url: '', artifact_url: '', deployment_ids: [], platform_release_ids: [], notes: '' } : { channel_id: 0, version_id: '', platform_version: '', build_identifier: '', status: 'draft', notes: '' }
   form.value = { ...defaults, ...JSON.parse(JSON.stringify(props.record || {})) }
   if (props.kind !== 'versions') form.value.version_id ??= ''
-  if (props.kind === 'versions') { deployments.reset(); deploymentKeyword.value = ''; void loadDeployments() }
+  if (props.kind === 'versions') { form.value.deployment_ids ||= []; form.value.platform_release_ids ||= []; deployments.reset(); deploymentKeyword.value = ''; void loadDeployments() }
 }, { immediate: true })
 function submit() {
   if (props.kind === 'distributions' && (!form.value.version_id || !form.value.channel_id)) { emit('error', '请选择产品版本和发行渠道'); return }
