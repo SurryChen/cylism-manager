@@ -8,7 +8,8 @@
         <input v-model.trim="keyword" class="form-input product-search" :aria-label="`搜索${noun}`" :placeholder="`搜索${noun}`" />
         <SelectMenu v-model="status" class="product-stage-filter" aria-label="记录状态筛选"><option value="">全部状态</option><option v-for="item in statuses" :key="item.id" :value="item.id">{{ item.label }}</option></SelectMenu>
         <SelectMenu v-if="kind !== 'versions'" v-model="versionID" class="product-stage-filter" aria-label="记录版本筛选"><option value="">全部版本</option><option v-for="version in versions" :key="version.id" :value="version.id">{{ version.name }}</option></SelectMenu>
-        <button class="icon-button" title="重置筛选" aria-label="重置筛选" @click="keyword = ''; status = ''; versionID = ''"><RotateCcw :size="15" /></button>
+        <SelectMenu v-if="kind === 'distributions'" v-model="audience" class="product-stage-filter" aria-label="发行分类筛选"><option value="">全部发行</option><option v-for="item in distributionAudiences" :key="item.id" :value="item.id">{{ item.label }}</option></SelectMenu>
+        <button class="icon-button" title="重置筛选" aria-label="重置筛选" @click="keyword = ''; status = ''; versionID = ''; audience = ''"><RotateCcw :size="15" /></button>
         <button v-if="kind === 'distributions'" class="btn" @click="$emit('show-channels')">发行渠道</button>
         <button class="btn btn-primary product-primary" :disabled="busy || optionsLoading || Boolean(optionsError)" @click="openEditor()">新增{{ noun }}</button>
       </div>
@@ -33,8 +34,8 @@
           </tbody>
         </table>
         <table v-else class="data-table">
-          <thead><tr><th>产品版本</th><th>发行渠道</th><th>平台版本 / Build</th><th>状态</th><th>更新时间 / 备注</th><th>操作</th></tr></thead>
-          <tbody><tr v-for="row in resource.items.value" :key="row.id"><td>{{ versionName(row.version_id) }}</td><td>{{ channelName(row.channel_id) }}</td><td>{{ row.platform_version }}<span class="cell-secondary product-line">{{ row.build_identifier || '未填 Build 标识' }}</span></td><td><span class="badge" :class="lifecycleClass(row.status)">{{ labelFor(distributionStatuses, row.status) }}</span></td><td>{{ formatTime(row.updated_at) }}<span class="cell-secondary product-line lifecycle-description">{{ row.notes }}</span></td><td><div class="product-actions"><button class="icon-button" title="发行历史" aria-label="发行历史" @click="showHistory(row)"><History :size="15" /></button><button class="icon-button" title="编辑发行记录" aria-label="编辑发行记录" :disabled="busy || optionsLoading || Boolean(optionsError)" @click="openEditor(row)"><Pencil :size="15" /></button></div></td></tr></tbody>
+          <thead><tr><th>产品版本</th><th>发行渠道 / 分类</th><th>平台版本 / Build</th><th>状态</th><th>更新时间 / 备注</th><th>操作</th></tr></thead>
+          <tbody><tr v-for="row in resource.items.value" :key="row.id"><td>{{ versionName(row.version_id) }}</td><td>{{ channelName(row.channel_id) }}<span class="cell-secondary product-line">{{ audienceLabel(row.audience) }}</span></td><td>{{ row.platform_version }}<span class="cell-secondary product-line">{{ row.build_identifier || '未填 Build 标识' }}</span></td><td><span class="badge" :class="lifecycleClass(row.status)">{{ labelFor(distributionStatuses, row.status) }}</span></td><td>{{ formatTime(row.updated_at) }}<span class="cell-secondary product-line lifecycle-description">{{ row.notes }}</span></td><td><div class="product-actions"><button class="icon-button" title="发行历史" aria-label="发行历史" @click="showHistory(row)"><History :size="15" /></button><button class="icon-button" title="编辑发行记录" aria-label="编辑发行记录" :disabled="busy || optionsLoading || Boolean(optionsError)" @click="openEditor(row)"><Pencil :size="15" /></button></div></td></tr></tbody>
         </table>
       </div>
       <ResourcePagination :resource="resource" :label="`${noun}分页`" />
@@ -56,19 +57,20 @@
     <BaseModal teleport :open="Boolean(historyRecord)" title="发行状态历史" size="large" @close="historyRecord = null">
       <EmptyState v-if="history.loading.value" variant="loading" message="正在读取历史..." />
       <EmptyState v-else-if="history.error.value" message="历史读取失败"><template #action><button class="btn btn-sm" @click="history.refresh()">重试</button></template></EmptyState>
-      <div v-else class="table-wrap"><table class="data-table"><thead><tr><th>记录时间</th><th>状态</th><th>平台版本 / Build</th><th>备注</th></tr></thead><tbody><tr v-for="event in history.items.value" :key="event.id"><td>{{ formatTime(event.created_at) }}</td><td>{{ labelFor(distributionStatuses, event.status) }}</td><td>{{ event.platform_version }} / {{ event.build_identifier || '—' }}</td><td class="lifecycle-description">{{ event.notes || '—' }}</td></tr></tbody></table></div>
+      <div v-else class="table-wrap"><table class="data-table"><thead><tr><th>记录时间</th><th>状态</th><th>平台版本 / Build</th><th>备注</th></tr></thead><tbody><tr v-for="event in history.items.value" :key="event.id"><td>{{ formatTime(event.created_at) }}</td><td>{{ labelFor(distributionStatuses, event.status) }}<span class="cell-secondary product-line">{{ audienceLabel(event.audience) }}</span></td><td>{{ event.platform_version }} / {{ event.build_identifier || '—' }}</td><td class="lifecycle-description">{{ event.notes || '—' }}</td></tr></tbody></table></div>
       <ResourcePagination :resource="history" label="发行历史分页" />
     </BaseModal>
     <BaseModal teleport :open="Boolean(deploymentVersion)" title="关联部署记录" size="large" @close="deploymentVersion = null">
       <EmptyState v-if="deploymentRows.loading.value" variant="loading" message="正在读取部署..." />
       <EmptyState v-else-if="deploymentRows.error.value" message="部署读取失败"><template #action><button class="btn btn-sm" @click="deploymentRows.refresh()">重试</button></template></EmptyState>
-      <div v-else class="table-wrap"><table class="data-table"><thead><tr><th>组件 / 环境</th><th>版本</th><th>状态</th><th>入口</th></tr></thead><tbody><tr v-for="row in deploymentRows.items.value" :key="(row.source || 'application') + '-' + row.id"><td>{{ row.application_name }} · {{ row.environment_name || '—' }}</td><td>{{ row.version || `#${row.id}` }}</td><td>{{ row.status }}</td><td><router-link :to="deploymentPath(row)">{{ row.source === 'platform' ? '平台发布与更新' : '查看部署记录' }}</router-link></td></tr></tbody></table></div>
+      <div v-else class="table-wrap"><table class="data-table"><thead><tr><th>组件 / 环境</th><th>版本</th><th>状态</th><th>入口</th></tr></thead><tbody><tr v-for="row in deploymentRows.items.value" :key="(row.source || 'application') + '-' + row.id"><td>{{ row.application_name }} · {{ row.environment_name || '—' }}（{{ environmentKindLabel(row.environment_kind) }}）</td><td>{{ row.version || `#${row.id}` }}</td><td>{{ row.status }}</td><td><router-link :to="deploymentPath(row)">{{ row.source === 'platform' ? '平台发布与更新' : '查看部署记录' }}</router-link></td></tr></tbody></table></div>
       <ResourcePagination :resource="deploymentRows" label="关联部署分页" />
     </BaseModal>
     <ErrorNoticeModal :open="Boolean(error)" :message="error" teleport @close="error = ''" />
   </div>
 </template>
 <script setup>
+import { distributionAudiences, audienceLabel, environmentKindLabel } from './environment-utils.js'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { Eye, History, ListTodo, Pencil, RotateCcw } from 'lucide-vue-next'
 import SurfaceCard from '../../components/SurfaceCard.vue'
@@ -85,11 +87,12 @@ import { taskKinds, taskStatuses, priorities, versionStatuses, distributionStatu
 import { formatShortDateTime as formatTime } from '../../utils/formatters.js'
 const props = defineProps({ product: { type: Object, required: true }, kind: { type: String, required: true }, initialVersionId: { type: [Number, String], default: '' } })
 const emit = defineEmits(['changed', 'select-version', 'show-channels'])
+const audience = ref('')
 const keyword = ref(''), status = ref(''), versionID = ref(props.initialVersionId), versions = ref([]), optionsLoading = ref(false), optionsError = ref(''), busy = ref(false), error = ref(''), editorOpen = ref(false), editing = ref(null), historyRecord = ref(null), deploymentVersion = ref(null)
 const detailVersion = ref(null)
 const noun = computed(() => ({ tasks: '事项', versions: '版本', distributions: '发行记录' })[props.kind])
 const statuses = computed(() => ({ tasks: taskStatuses, versions: versionStatuses, distributions: distributionStatuses })[props.kind])
-const emptyMessage = computed(() => keyword.value || status.value || versionID.value ? '没有符合条件的记录' : props.kind === 'distributions' ? '暂无发行记录，请先创建产品版本并配置发行渠道' : `暂无${noun.value}，可先新增一条`)
+const emptyMessage = computed(() => keyword.value || status.value || versionID.value || audience.value ? '没有符合条件的记录' : props.kind === 'distributions' ? '暂无发行记录，请先创建产品版本并配置发行渠道' : `暂无${noun.value}，可先新增一条`)
 const resource = usePaginatedResource((query, options) => getLifecyclePage(props.product.id, props.kind, query, options), 'items')
 const history = usePaginatedResource((query, options) => getDistributionEvents(props.product.id, historyRecord.value.id, query, options), 'items')
 const deploymentRows = usePaginatedResource((query, options) => getLifecyclePage(props.product.id, 'deployments', { ...query, version_id: deploymentVersion.value.id }, options), 'items')
@@ -102,7 +105,7 @@ async function loadOptions() {
   catch (cause) { if (request === optionsRequest) { optionsError.value = cause.message; error.value = cause.message } }
   finally { if (request === optionsRequest) optionsLoading.value = false }
 }
-function load() { return resource.load({ keyword: keyword.value, status: status.value, ...(versionID.value && props.kind !== 'versions' ? { version_id: versionID.value } : {}) }) }
+function load() { return resource.load({ keyword: keyword.value, status: status.value, ...(props.kind === 'distributions' ? { audience: audience.value } : {}), ...(versionID.value && props.kind !== 'versions' ? { version_id: versionID.value } : {}) }) }
 function openEditor(row = null) {
   if (props.kind === 'distributions' && (!props.product.channels?.length || !versions.value.length)) { error.value = '请先在版本页新增产品版本，并在发行渠道页配置渠道'; return }
   editing.value = row; editorOpen.value = true
@@ -115,7 +118,7 @@ async function save(record) {
 async function importAction() { busy.value = true; try { await importProductNextAction(props.product.id); await resource.refresh(); emit('changed') } catch (cause) { error.value = cause.message } finally { busy.value = false } }
 function showHistory(row) { history.reset(); historyRecord.value = row; void history.load() }
 function showDeployments(row) { deploymentRows.reset(); deploymentVersion.value = row; void deploymentRows.load() }
-watch([keyword, status, versionID], load)
+watch([keyword, status, versionID, audience], load)
 watch(() => props.initialVersionId, value => { versionID.value = value })
 watch(() => [props.product.id, props.kind], () => { detailVersion.value = null; resource.reset(); void load(); void loadOptions() }, { immediate: true })
 onBeforeUnmount(() => { optionsRequest++; resource.cancel(); history.cancel(); deploymentRows.cancel() })

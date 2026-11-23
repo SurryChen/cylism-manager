@@ -1,42 +1,58 @@
 <template>
   <div>
-    <router-link class="back-link" to="/applications/projects"><ArrowLeft :size="16" />返回项目与环境</router-link>
-    <div class="page-header">
+    <router-link v-if="!embedded" class="back-link" to="/applications/projects"><ArrowLeft :size="16" />返回项目与环境</router-link>
+    <div v-if="!embedded" class="page-header">
       <div><h1 class="page-title">{{ project ? `${project.name} 的环境` : '项目环境' }}</h1><p class="page-subtitle">环境定义部署目标与默认命名空间</p></div>
       <button class="btn btn-primary" :disabled="!project" @click="openCreateEnvironment">+ 新建环境</button>
     </div>
-    <div v-if="readError" class="k8s-banner k8s-banner-warn section-gap">{{ readError }}</div>
+
     <div v-if="namespaceConflicts.length" class="k8s-banner k8s-banner-warn section-gap"><strong>命名空间迁移待处理</strong><span v-for="conflict in namespaceConflicts" :key="`${conflict.cluster_id}/${conflict.namespace}`">{{ clusterName(conflict.cluster_id) }} / {{ conflict.namespace }}：{{ conflict.environments.map(item => `项目 ${item.project_id} / ${item.name}`).join('、') }}</span></div>
-    <SurfaceCard v-if="showEnvironmentList" as="div" padding="none">
-      <div class="table-wrap"><table class="data-table"><thead><tr><th>环境</th><th>集群</th><th>命名空间</th><th>状态</th><th>关联应用</th><th>操作</th></tr></thead><tbody><tr v-for="environment in environments" :key="environment.id"><td class="cell-primary">{{ environment.name }}</td><td>{{ clusterName(environment.cluster_id) }}</td><td>{{ environment.namespace }}</td><td><span class="badge" :class="namespaceStatusClass(environment.namespace_status)">{{ environment.cluster_id ? namespaceStatusLabel(environment.namespace_status) : '待绑定' }}</span></td><td>{{ environmentApplicationCount(environment.id) }}</td><td class="action-cell"><div class="btn-group"><button v-if="environment.cluster_id && needsNamespaceSync(environment)" class="icon-button" title="同步命名空间" :disabled="syncingEnvironmentID === environment.id" @click="syncNamespace(environment)"><RefreshCw :size="16" :class="{ 'is-spinning': syncingEnvironmentID === environment.id }" /></button><button class="btn btn-sm" :disabled="environmentHasApplications(environment.id) && !!environment.cluster_id" :title="environmentHasApplications(environment.id) && environment.cluster_id ? '已有应用时不可修改部署目标' : '编辑环境'" @click="openEnvironmentEditor(environment)">编辑</button><button class="btn btn-sm btn-danger" title="删除环境" @click="requestEnvironmentDelete(environment)">删除</button></div></td></tr></tbody></table></div>
+    <SurfaceCard as="div" padding="none">
+      <div class="product-toolbar"><span class="cell-secondary">环境定义部署目标，部署成功后可在版本中关联记录。</span><button class="btn product-primary" :disabled="!project" @click="openProjectSettings">部署设置</button><button class="btn btn-primary" :disabled="!project" @click="openCreateEnvironment">新建环境</button></div>
+      <EmptyState v-if="projectEnvironmentResource.loading.value" variant="loading" message="正在读取环境..." />
+      <EmptyState v-else-if="!showEnvironmentList" message="暂无部署环境，需要部署时再创建" />
+      <div v-else class="table-wrap"><table class="data-table"><thead><tr><th>环境</th><th>分类</th><th>集群</th><th>命名空间</th><th>状态</th><th>关联应用</th><th>操作</th></tr></thead><tbody><tr v-for="environment in environments" :key="environment.id"><td class="cell-primary">{{ environment.name }}</td><td><span class="badge badge-offline">{{ environmentKindLabel(environment.kind) }}</span></td><td>{{ clusterName(environment.cluster_id) }}</td><td>{{ environment.namespace }}</td><td><span class="badge" :class="namespaceStatusClass(environment.namespace_status)">{{ environment.cluster_id ? namespaceStatusLabel(environment.namespace_status) : '待绑定' }}</span></td><td>{{ environmentApplicationCount(environment.id) }}</td><td class="action-cell"><div class="btn-group"><router-link class="btn btn-sm" :to="{ path: '/applications', query: { project_id: props.projectID, environment_id: environment.id } }">应用与部署</router-link><button v-if="environment.cluster_id && needsNamespaceSync(environment)" class="icon-button" title="同步命名空间" :disabled="syncingEnvironmentID === environment.id" @click="syncNamespace(environment)"><RefreshCw :size="16" :class="{ 'is-spinning': syncingEnvironmentID === environment.id }" /></button><button class="btn btn-sm" title="编辑环境" @click="openEnvironmentEditor(environment)">编辑</button><button class="btn btn-sm btn-danger" title="删除环境" @click="requestEnvironmentDelete(environment)">删除</button></div></td></tr></tbody></table></div>
     <ResourcePagination :resource="listPage" label="项目环境分页" />
     </SurfaceCard>
 
-    <div v-if="showEnvironmentModal" class="overlay" @click.self="closeEnvironmentModal"><div class="modal"><h2 class="modal-title">{{ editingEnvironment ? '编辑环境' : '新建环境' }}</h2><form @submit.prevent="saveEnvironment">
+    <BaseModal teleport :open="showEnvironmentModal" :title="editingEnvironment ? '编辑环境' : '新建环境'" @close="closeEnvironmentModal"><form id="project-environment-form" @submit.prevent="saveEnvironment">
+      <div class="form-group"><label class="form-label">环境分类</label><SelectMenu v-model="environmentForm.kind" aria-label="环境分类"><option v-for="item in environmentKinds" :key="item.id" :value="item.id">{{ item.label }}</option></SelectMenu></div>
       <div class="form-group"><label class="form-label">环境名称</label><input v-model.trim="environmentForm.name" class="form-input" required :pattern="editingEnvironment && environmentForm.name === editingEnvironment.name ? undefined : '[a-z0-9]([-a-z0-9]*[a-z0-9])?'" :maxlength="editingEnvironment && environmentForm.name === editingEnvironment.name ? undefined : Math.max(1, 54 - (project?.slug?.length || 0))" title="仅支持小写英文字母、数字和连字符" placeholder="production" :disabled="editingEnvironment && environmentHasApplications(editingEnvironment.id)" /></div>
       <div class="form-group"><label class="form-label">所属集群</label><SelectMenu v-model.number="environmentForm.cluster_id" class="form-select" :disabled="!!editingEnvironment?.cluster_id"><option :value="0" disabled>选择集群</option><option v-for="cluster in clusters" :key="cluster.id" :value="cluster.id">{{ cluster.name }}</option></SelectMenu></div>
       <div class="form-group"><label class="form-label">命名空间</label><input class="form-input" :value="namespacePreview" disabled /><p v-if="!project?.slug" class="form-hint">请先编辑项目，设置项目英文名。</p></div>
-      <div class="modal-actions"><button type="button" class="btn" @click="closeEnvironmentModal">取消</button><button class="btn btn-primary" :disabled="submitting">{{ submitting ? '保存中...' : editingEnvironment ? '保存' : '创建环境' }}</button></div>
-    </form></div></div>
+      </form><template #actions><button type="button" class="btn" @click="closeEnvironmentModal">取消</button><button form="project-environment-form" type="submit" class="btn btn-primary" :disabled="submitting">{{ submitting ? '保存中...' : editingEnvironment ? '保存' : '创建环境' }}</button></template></BaseModal>
 
-    <div v-if="environmentDeleteTarget" class="overlay" @click.self="environmentDeleteTarget = null"><div class="modal"><h2 class="modal-title">删除环境</h2><p class="confirm-copy">确认删除环境“{{ environmentDeleteTarget.name }}”吗？该操作不可撤销。</p><div class="modal-actions"><button class="btn" @click="environmentDeleteTarget = null">取消</button><button class="btn btn-danger" :disabled="submitting" @click="deleteEnvironment">删除</button></div></div></div>
+    <BaseModal teleport :open="settingsOpen" title="项目部署设置" @close="settingsOpen = false">
+      <form id="project-deployment-settings" @submit.prevent="saveProjectSettings">
+        <label class="form-group"><span class="form-label">项目英文名</span><input v-model.trim="settingsForm.slug" class="form-input" maxlength="40" pattern="[a-z0-9]([-a-z0-9]*[a-z0-9])?" :disabled="Boolean(environments.length)" required /></label>
+        <label class="form-group"><span class="form-label">默认镜像仓库</span><SelectMenu v-model="settingsForm.default_image_registry_id" aria-label="默认镜像仓库"><option :value="0">不设置</option><option v-for="registry in registries.filter(item => item.enabled)" :key="registry.id" :value="registry.id">{{ registry.name }}</option></SelectMenu></label>
+      </form>
+      <template #actions><button class="btn" @click="settingsOpen = false">取消</button><button form="project-deployment-settings" type="submit" class="btn btn-primary" :disabled="submitting">保存</button></template>
+    </BaseModal>
+    <ConfirmDialog teleport :open="Boolean(environmentDeleteTarget)" title="删除环境" :message="'确认删除环境“' + (environmentDeleteTarget?.name || '') + '”？'" :busy="submitting" @cancel="environmentDeleteTarget = null" @confirm="deleteEnvironment" />
     <ErrorNoticeModal :open="Boolean(actionError)" :message="actionError" teleport @close="actionError = ''" />
   </div>
 </template>
 
 <script setup>
+import BaseModal from '../../components/BaseModal.vue'
+import ConfirmDialog from '../../components/ConfirmDialog.vue'
+import EmptyState from '../../components/EmptyState.vue'
+import { environmentKinds, environmentKindLabel } from '../products/environment-utils.js'
 import ResourcePagination from '../../components/ResourcePagination.vue'
 import { useListPage } from '../../composables/useListPage.js'
 import { computed, ref, watch } from 'vue'
 import { ArrowLeft, RefreshCw } from 'lucide-vue-next'
-import { createProjectEnvironment, deleteProjectEnvironment, getProjectEnvironmentResources, syncProjectEnvironmentNamespace, updateProjectEnvironment } from '../../api/applications.js'
+import { getImageRegistries, updateProject, createProjectEnvironment, deleteProjectEnvironment, getProjectEnvironmentResources, syncProjectEnvironmentNamespace, updateProjectEnvironment } from '../../api/applications.js'
 import { getClusters } from '../../api/clusters.js'
 import { useAsyncResource } from '../../composables/useAsyncResource.js'
 import SurfaceCard from '../../components/SurfaceCard.vue'
 import ErrorNoticeModal from '../../components/ErrorNoticeModal.vue'
 import SelectMenu from '../../components/SelectMenu.vue'
 
-const props = defineProps({ projectID: { type: String, required: true } })
+const props = defineProps({ embedded: Boolean, projectID: { type: String, required: true } })
+const emit = defineEmits(['changed'])
+const settingsOpen = ref(false), settingsForm = ref({}), registries = ref([])
 const projects = ref([])
 const environments = ref([])
 const clusters = ref([])
@@ -49,7 +65,7 @@ const showEnvironmentModal = ref(false)
 const editingEnvironment = ref(null)
 const environmentDeleteTarget = ref(null)
 const submitting = ref(false)
-const environmentForm = ref({ name: 'production', cluster_id: 0 })
+const environmentForm = ref({ name: 'testing', kind: 'testing', cluster_id: 0 })
 const syncingEnvironmentID = ref(null)
 const projectEnvironmentResource = useAsyncResource(({ signal }, requestedProjectID) => Promise.all([getProjectEnvironmentResources(requestedProjectID, { signal }), getClusters({ signal })]), null)
 const project = computed(() => projects.value.find(item => String(item.id) === props.projectID))
@@ -85,9 +101,9 @@ async function loadProject() {
 function namespaceStatusLabel(status) { return status === 'active' ? '就绪' : status === 'missing' ? '缺失' : status === 'pending' ? '创建中' : status === 'terminating' ? '删除中' : '未检测' }
 function namespaceStatusClass(status) { return status === 'active' ? 'badge-online' : status === 'missing' ? 'badge-danger' : status === 'pending' || status === 'terminating' ? 'badge-deploying' : 'badge-offline' }
 function needsNamespaceSync(environment) { return environment.namespace_status === 'missing' || environment.namespace_status === 'pending' }
-function openCreateEnvironment() { editingEnvironment.value = null; environmentForm.value = { name: 'production', cluster_id: clusters.value.length === 1 ? clusters.value[0].id : 0 }; showEnvironmentModal.value = true }
-function openEnvironmentEditor(environment) { editingEnvironment.value = environment; environmentForm.value = { name: environment.name, cluster_id: environment.cluster_id || 0 }; showEnvironmentModal.value = true }
-function closeEnvironmentModal() { showEnvironmentModal.value = false; editingEnvironment.value = null; environmentForm.value = { name: 'production', cluster_id: 0 } }
+function openCreateEnvironment() { editingEnvironment.value = null; environmentForm.value = { name: 'testing', kind: 'testing', cluster_id: clusters.value.length === 1 ? clusters.value[0].id : 0 }; showEnvironmentModal.value = true }
+function openEnvironmentEditor(environment) { editingEnvironment.value = environment; environmentForm.value = { name: environment.name, kind: environment.kind || 'unclassified', cluster_id: environment.cluster_id || 0 }; showEnvironmentModal.value = true }
+function closeEnvironmentModal() { showEnvironmentModal.value = false; editingEnvironment.value = null; environmentForm.value = { name: 'testing', kind: 'testing', cluster_id: 0 } }
 async function saveEnvironment() {
   if (!project.value) return
 	if (!environmentForm.value.cluster_id) { actionError.value = '请选择所属集群'; return }
@@ -98,6 +114,7 @@ async function saveEnvironment() {
     if (isEditing) { await updateProjectEnvironment(props.projectID, editingEnvironment.value.id, environmentForm.value) } else { await createProjectEnvironment(props.projectID, environmentForm.value) }
     closeEnvironmentModal()
     await loadProject()
+    emit('changed')
   } catch (e) {
     actionError.value = e.message || (isEditing ? '更新环境失败' : '创建环境失败')
   } finally {
@@ -105,10 +122,28 @@ async function saveEnvironment() {
   }
 }
 
+async function openProjectSettings() {
+  try {
+    registries.value = await getImageRegistries({ projectID: props.projectID })
+    settingsForm.value = { slug: project.value.slug || '', default_image_registry_id: project.value.default_image_registry_id || 0 }
+    settingsOpen.value = true
+  } catch (cause) { actionError.value = cause.message }
+}
+async function saveProjectSettings() {
+  submitting.value = true
+  try {
+    await updateProject(props.projectID, { name: project.value.name, description: project.value.description, ...settingsForm.value })
+    settingsOpen.value = false
+    await loadProject()
+    emit('changed')
+  } catch (cause) { actionError.value = cause.message }
+  finally { submitting.value = false }
+}
 function requestEnvironmentDelete(environment) { environmentDeleteTarget.value = environment }
 async function deleteEnvironment() { if (!environmentDeleteTarget.value) return; submitting.value = true; actionError.value = ''; try { await deleteProjectEnvironment(props.projectID, environmentDeleteTarget.value.id); environmentDeleteTarget.value = null; await loadProject() } catch (e) { actionError.value = e.message || '删除环境失败' } finally { submitting.value = false } }
 async function syncNamespace(environment) { syncingEnvironmentID.value = environment.id; actionError.value = ''; try { const updated = await syncProjectEnvironmentNamespace(props.projectID, environment.id); const index = environments.value.findIndex(item => item.id === environment.id); if (index >= 0) environments.value[index] = updated } catch (e) { actionError.value = e.message || '同步命名空间失败' } finally { syncingEnvironmentID.value = null } }
 
+watch(readError, value => { if (value) actionError.value = value })
 watch(() => props.projectID, () => { listPage.reset(); environments.value = []; void loadProject() }, { immediate: true })
 </script>
 

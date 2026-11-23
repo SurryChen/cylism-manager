@@ -12,7 +12,12 @@ import (
 // CreateProject persists a project and leaves registry ownership to the
 // registry repository.
 func (s *Store) CreateProject(project *model.Project) error {
-	return s.db.Create(project).Error
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(project).Error; err != nil {
+			return err
+		}
+		return createProjectMetadata(tx, project)
+	})
 }
 
 func (s *Store) ListProjects() ([]model.Project, error) {
@@ -28,11 +33,41 @@ func (s *Store) GetProject(id uint) (*model.Project, error) {
 }
 
 func (s *Store) UpdateProject(project *model.Project) error {
-	return s.db.Save(project).Error
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Save(project).Error; err != nil {
+			return err
+		}
+		return tx.Model(&model.Product{}).Where("project_id = ?", project.ID).Updates(map[string]interface{}{"name": project.Name, "summary": project.Description, "owner_id": project.OwnerID}).Error
+	})
 }
 
 func (s *Store) DeleteProject(id uint) error {
-	return s.db.Delete(&model.Project{}, id).Error
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		var project model.Project
+		if err := tx.First(&project, id).Error; err != nil {
+			return err
+		}
+		for _, record := range []interface{}{&model.Environment{}, &model.Application{}} {
+			var count int64
+			if err := tx.Model(record).Where("project_id = ?", id).Count(&count).Error; err != nil {
+				return err
+			}
+			if count > 0 {
+				return model.ErrProjectWorkspaceConflict
+			}
+		}
+		var ids []uint
+		if err := tx.Model(&model.Product{}).Where("project_id = ?", id).Pluck("id", &ids).Error; err != nil {
+			return err
+		}
+		if _, err := deleteProducts(tx, project.OwnerID, ids); err != nil {
+			return err
+		}
+		if err := tx.Where("project_id = ?", id).Delete(&model.ProductProject{}).Error; err != nil {
+			return err
+		}
+		return tx.Delete(&project).Error
+	})
 }
 
 func (s *Store) CountProjectEnvironments(projectID uint) (int64, error) {

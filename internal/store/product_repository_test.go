@@ -13,10 +13,10 @@ func TestProductOwnershipAndAtomicAssociations(t *testing.T) {
 	s := setupTestDB(t)
 	project := model.Project{Name: "owned", OwnerID: 7}
 	other := model.Project{Name: "other", OwnerID: 8}
-	if err := s.CreateProject(&project); err != nil {
+	if err := s.DB().Create(&project).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := s.CreateProject(&other); err != nil {
+	if err := s.DB().Create(&other).Error; err != nil {
 		t.Fatal(err)
 	}
 	p := model.Product{OwnerID: 7, Name: "offline", Stage: model.ProductStageIdea, Links: []model.ProductLink{{Kind: "repository", URL: "https://example.com/repo"}}}
@@ -42,7 +42,7 @@ func TestProductOwnershipAndAtomicAssociations(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, err = s.GetProduct(7, p.ID)
-	if err != nil || len(got.Projects) != 1 {
+	if err != nil || len(got.Projects) != 2 {
 		t.Fatalf("linked product: %#v %v", got, err)
 	}
 	project.OwnerID = 8
@@ -50,7 +50,7 @@ func TestProductOwnershipAndAtomicAssociations(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, err = s.GetProduct(7, p.ID)
-	if err != nil || len(got.Projects) != 0 {
+	if err != nil || len(got.Projects) != 1 {
 		t.Fatalf("ownership must be rechecked on read: %#v %v", got, err)
 	}
 }
@@ -125,7 +125,7 @@ func TestProductMigrationPreservesDeploymentData(t *testing.T) {
 func TestProductDerivesResourcesWithoutCredentials(t *testing.T) {
 	s := setupTestDB(t)
 	project := model.Project{Name: "owned", OwnerID: 1}
-	if err := s.CreateProject(&project); err != nil {
+	if err := s.DB().Create(&project).Error; err != nil {
 		t.Fatal(err)
 	}
 	app := model.Application{ProjectID: project.ID, EnvironmentID: 1, Name: "api", CreatedBy: 1}
@@ -160,10 +160,10 @@ func TestProductDerivesResourcesWithoutCredentials(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, err = s.GetProduct(1, p.ID)
-	if err != nil || len(got.RelatedApplications) != 0 || len(got.DatabaseResources) != 0 {
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
 		t.Fatalf("revoked resources leaked: %#v %v", got, err)
 	}
-	if err := s.SaveProduct(&p, nil, []uint{app.ID}); !errors.Is(err, ErrProductResourceAccess) {
+	if err := s.SaveProduct(&p, nil, []uint{app.ID}); !errors.Is(err, gorm.ErrRecordNotFound) {
 		t.Fatalf("inaccessible component: %v", err)
 	}
 }

@@ -14,6 +14,9 @@ const clusterTailscaleIPBackfillKey = "migration.cluster_tailscale_ip.v1"
 
 // backfillData applies idempotent data upgrades after the schema is ready.
 func (s *Store) backfillData() error {
+	if err := s.backfillProjectWorkspaces(); err != nil {
+		return err
+	}
 	if err := s.backfillAuditLogs(); err != nil {
 		return err
 	}

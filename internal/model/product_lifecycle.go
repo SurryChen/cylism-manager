@@ -59,6 +59,7 @@ type ProductVersionPlatformRelease struct {
 
 // ProductDistribution is one channel submission; retries may be recorded separately.
 type ProductDistribution struct {
+	Audience        string    `gorm:"size:24;index;not null;default:unclassified" json:"audience"`
 	ID              uint      `gorm:"primaryKey" json:"id"`
 	ProductID       uint      `gorm:"index;not null" json:"product_id"`
 	VersionID       uint      `gorm:"index;not null" json:"version_id"`
@@ -74,6 +75,7 @@ type ProductDistribution struct {
 
 // ProductDistributionEvent is append-only, including the original submission snapshot.
 type ProductDistributionEvent struct {
+	Audience        string    `gorm:"size:24;not null;default:unclassified" json:"audience"`
 	BecamePublished bool      `gorm:"not null;default:false" json:"became_published"`
 	ID              uint      `gorm:"primaryKey" json:"id"`
 	DistributionID  uint      `gorm:"index;not null" json:"distribution_id"`
@@ -91,6 +93,7 @@ type ProductDeploymentOption struct {
 	ID              uint      `json:"id"`
 	ApplicationID   uint      `json:"application_id"`
 	ApplicationName string    `json:"application_name"`
+	EnvironmentKind string    `json:"environment_kind"`
 	EnvironmentName string    `json:"environment_name"`
 	Version         string    `json:"version"`
 	Status          string    `json:"status"`
@@ -98,6 +101,7 @@ type ProductDeploymentOption struct {
 }
 
 type ProductLifecycleFilter struct {
+	Audience  string
 	Status    string
 	Keyword   string
 	VersionID uint

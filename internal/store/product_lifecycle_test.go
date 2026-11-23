@@ -49,7 +49,7 @@ func TestProductLifecycleIsolationHistoryAndConcurrency(t *testing.T) {
 	if err := s.SaveProductTask(1, &stale); !errors.Is(err, model.ErrProductLifecycleConflict) {
 		t.Fatalf("lost update: %v", err)
 	}
-	record := model.ProductDistribution{ProductID: p.ID, VersionID: v.ID, ChannelID: other.Channels[0].ID, PlatformVersion: "1.0", Status: "in_review"}
+	record := model.ProductDistribution{Audience: "production", ProductID: p.ID, VersionID: v.ID, ChannelID: other.Channels[0].ID, PlatformVersion: "1.0", Status: "in_review"}
 	if err := s.SaveProductDistribution(1, &record); !errors.Is(err, model.ErrProductResourceAccess) {
 		t.Fatalf("foreign channel: %v", err)
 	}
@@ -73,7 +73,7 @@ func TestProductLifecycleIsolationHistoryAndConcurrency(t *testing.T) {
 	if _, _, err := s.ListProductDistributionEvents(2, p.ID, record.ID, model.ProductLifecycleFilter{Limit: 10}); !errors.Is(err, gorm.ErrRecordNotFound) {
 		t.Fatalf("history isolation: %v", err)
 	}
-	replacement := model.ProductDistribution{ProductID: p.ID, VersionID: v.ID, ChannelID: record.ChannelID, PlatformVersion: "1.0", BuildIdentifier: "2", Status: "in_review"}
+	replacement := model.ProductDistribution{Audience: "production", ProductID: p.ID, VersionID: v.ID, ChannelID: record.ChannelID, PlatformVersion: "1.0", BuildIdentifier: "2", Status: "in_review"}
 	if err := s.SaveProductDistribution(1, &replacement); err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +85,7 @@ func TestProductLifecycleIsolationHistoryAndConcurrency(t *testing.T) {
 	if err := s.SaveProductDistribution(1, &replacement); err != nil {
 		t.Fatal(err)
 	}
-	pending := model.ProductDistribution{ProductID: p.ID, VersionID: v.ID, ChannelID: record.ChannelID, PlatformVersion: "1.1", Status: "in_review"}
+	pending := model.ProductDistribution{Audience: "production", ProductID: p.ID, VersionID: v.ID, ChannelID: record.ChannelID, PlatformVersion: "1.1", Status: "in_review"}
 	if err := s.SaveProductDistribution(1, &pending); err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +118,7 @@ func TestHistoricalPublishedNotesDoNotReplaceCurrentOnlineVersion(t *testing.T) 
 	if err := s.SaveProductVersion(1, &v); err != nil {
 		t.Fatal(err)
 	}
-	older := model.ProductDistribution{ProductID: p.ID, VersionID: v.ID, ChannelID: p.Channels[0].ID, PlatformVersion: "1.0", Status: "published"}
+	older := model.ProductDistribution{Audience: "production", ProductID: p.ID, VersionID: v.ID, ChannelID: p.Channels[0].ID, PlatformVersion: "1.0", Status: "published"}
 	newer := older
 	newer.PlatformVersion = "1.1"
 	for _, record := range []*model.ProductDistribution{&older, &newer} {

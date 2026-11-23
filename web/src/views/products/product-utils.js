@@ -47,7 +47,7 @@ export function workbenchSummary(products, now = new Date()) {
 }
 export function editableProduct(product = {}) {
   return {
-    name: product.name || '', summary: product.summary || '', identifier: product.identifier || '', icon_url: product.icon_url || '',
+    project_slug: product.project_slug || '', name: product.name || '', summary: product.summary || '', identifier: product.identifier || '', icon_url: product.icon_url || '',
     stage: product.stage || 'idea', links: JSON.parse(JSON.stringify(product.links || [])), next_action: product.next_action || '',
     next_due_date: dateOnly(product.next_due_date), public_bio: product.public_bio || '', public_url: product.public_url || '',
     public_showcase: Boolean(product.public_showcase), channels: JSON.parse(JSON.stringify(product.channels || [])),

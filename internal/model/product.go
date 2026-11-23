@@ -5,6 +5,10 @@ import (
 	"time"
 )
 
+var ErrProjectIdentityConflict = errors.New("项目名称或英文名已存在")
+
+var ErrProjectWorkspaceConflict = errors.New("项目仍有关联环境或应用，请先处理部署资源，或归档项目")
+
 var ErrProductResourceAccess = errors.New("关联资源不存在或无权访问，请重新选择")
 
 const (
@@ -25,8 +29,10 @@ const (
 	ProductChannelOther             = "other"
 )
 
-// Product is a user-owned product record, independent from deployable applications.
+// Product stores lifecycle metadata for a canonical project. Legacy lifecycle IDs remain stable.
 type Product struct {
+	ProjectID           *uint                     `gorm:"uniqueIndex" json:"project_id,omitempty"`
+	ProjectSlug         string                    `gorm:"-" json:"project_slug"`
 	ID                  uint                      `gorm:"primaryKey" json:"id"`
 	OwnerID             uint                      `gorm:"index;not null" json:"owner_id"`
 	Name                string                    `gorm:"size:128;not null" json:"name"`

@@ -10,3 +10,6 @@ export const deleteProduct = id => api.delete(`/products/${segment(id)}`)
 export const clearProducts = confirmation => api.post('/products/clear', { confirmation })
 
 export const getProductPage = (query, options) => api.get('/products?' + new URLSearchParams(query), options)
+
+export const getProjectWorkspace = (id, options) => api.get('/projects/' + segment(id) + '/workspace', options)
+export const deleteProjectWorkspace = id => api.delete('/projects/' + segment(id) + '/workspace')

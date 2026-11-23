@@ -55,6 +55,7 @@ DELETE /api/nodes/:id
 DELETE /api/products/:id
 DELETE /api/projects/:projectID
 DELETE /api/projects/:projectID/environments/:environmentID
+DELETE /api/projects/:projectID/workspace
 DELETE /api/registry-proxies/:id/node-routes/:serverID
 DELETE /api/registry-proxies/:id/observation
 DELETE /api/registry-proxies/:id/relays/:relayID
@@ -298,6 +299,7 @@ GET /api/products/resource-options
 GET /api/products/workbench
 GET /api/projects
 GET /api/projects/:projectID/environments
+GET /api/projects/:projectID/workspace
 GET /api/projects/environments/namespace-conflicts
 GET /api/registry-proxies
 GET /api/registry-proxies/:id/node-routes

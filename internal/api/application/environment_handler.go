@@ -17,8 +17,9 @@ import (
 )
 
 type environmentRequest struct {
-	Name      string `json:"name"`
-	ClusterID uint   `json:"cluster_id"`
+	Kind      *string `json:"kind"`
+	Name      string  `json:"name"`
+	ClusterID uint    `json:"cluster_id"`
 }
 
 var namespaceSegmentPattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$`)
@@ -85,6 +86,14 @@ func (h *ApplicationHandler) CreateEnvironment(c *gin.Context) {
 		apiShared.BadRequest(c, "环境名称必填")
 		return
 	}
+	kind := "unclassified"
+	if req.Kind != nil {
+		kind = *req.Kind
+	}
+	if !validEnvironmentKind(kind) {
+		apiShared.ValidationError(c, "环境分类无效")
+		return
+	}
 	name := strings.TrimSpace(req.Name)
 	namespace, err := generatedEnvironmentNamespace(project, name)
 	if err != nil {
@@ -108,7 +117,7 @@ func (h *ApplicationHandler) CreateEnvironment(c *gin.Context) {
 		apiShared.ValidationError(c, err.Error())
 		return
 	}
-	environment := &model.Environment{ProjectID: projectID, ClusterID: req.ClusterID, Name: name, Namespace: namespace, NamespaceStatus: "active"}
+	environment := &model.Environment{Kind: kind, ProjectID: projectID, ClusterID: req.ClusterID, Name: name, Namespace: namespace, NamespaceStatus: "active"}
 	if err := h.applications.CreateEnvironment(environment); err != nil {
 		if handleEnvironmentNamespaceError(c, err) {
 			return
@@ -134,6 +143,13 @@ func (h *ApplicationHandler) UpdateEnvironment(c *gin.Context) {
 		apiShared.NotFound(c, "环境不存在")
 		return
 	}
+	if req.Kind != nil {
+		if !validEnvironmentKind(*req.Kind) {
+			apiShared.ValidationError(c, "环境分类无效")
+			return
+		}
+		environment.Kind = *req.Kind
+	}
 	name, namespace := strings.TrimSpace(req.Name), environment.Namespace
 	if name != environment.Name {
 		project, projectErr := h.queries.GetProject(projectID)
@@ -157,6 +173,14 @@ func (h *ApplicationHandler) UpdateEnvironment(c *gin.Context) {
 	}
 	if clusterID != environment.ClusterID && environment.ClusterID != 0 {
 		apiShared.Conflict(c, "环境已绑定集群，不能直接变更部署目标，请新建环境")
+		return
+	}
+	if name == environment.Name && namespace == environment.Namespace && clusterID == environment.ClusterID {
+		if err := h.applications.UpdateEnvironment(environment); err != nil {
+			apiShared.DBError(c, err.Error())
+			return
+		}
+		apiShared.Success(c, apiShared.EnvironmentDTO(environment))
 		return
 	}
 	scoped, scopeErr := h.forCluster(c.Request.Context(), clusterID)
@@ -365,4 +389,12 @@ func (h *ApplicationHandler) environmentRouteIDs(c *gin.Context) (uint, uint, bo
 		return 0, 0, false
 	}
 	return projectID, environmentID, true
+}
+
+func validEnvironmentKind(kind string) bool {
+	switch kind {
+	case "unclassified", "development", "testing", "staging", "production":
+		return true
+	}
+	return false
 }

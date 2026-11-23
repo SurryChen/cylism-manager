@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -31,6 +32,7 @@ type Handler struct{ repository Repository }
 func NewHandler(repository Repository) *Handler { return &Handler{repository: repository} }
 
 type productInput struct {
+	ProjectSlug    string                 `json:"project_slug"`
 	Name           string                 `json:"name"`
 	Summary        string                 `json:"summary"`
 	IconURL        string                 `json:"icon_url"`
@@ -178,6 +180,11 @@ func (h *Handler) save(c *gin.Context, update bool) {
 	}
 	product.ID, product.OwnerID = id, shared.UserID(c)
 	product.PlatformLinked = input.PlatformLinked
+	product.ProjectSlug = input.ProjectSlug
+	if input.ProjectSlug != "" && (len(input.ProjectSlug) > 40 || !regexp.MustCompile("^[a-z0-9]([a-z0-9-]*[a-z0-9])?$").MatchString(input.ProjectSlug)) {
+		shared.ValidationError(c, "项目英文名格式无效")
+		return
+	}
 	if err := h.repository.SaveProduct(product, input.ProjectIDs, input.ApplicationIDs); err != nil {
 		respondError(c, err)
 		return
@@ -196,7 +203,7 @@ func authenticated(c *gin.Context) bool {
 
 func respondError(c *gin.Context, err error) {
 	switch {
-	case errors.Is(err, model.ErrProductLifecycleConflict), errors.Is(err, model.ErrProductVersionName), errors.Is(err, model.ErrProductChannelInUse):
+	case errors.Is(err, model.ErrProjectIdentityConflict), errors.Is(err, model.ErrProjectWorkspaceConflict), errors.Is(err, model.ErrProductLifecycleConflict), errors.Is(err, model.ErrProductVersionName), errors.Is(err, model.ErrProductChannelInUse):
 		shared.Error(c, http.StatusConflict, shared.CodeConflict, err.Error())
 	case errors.Is(err, gorm.ErrRecordNotFound):
 		shared.NotFound(c, "产品不存在或无权访问")

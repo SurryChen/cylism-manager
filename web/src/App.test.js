@@ -62,10 +62,10 @@ afterEach(() => {
 describe('Glass UI application shell', () => {
   it('separates personal product routes from deployment and operations navigation', async () => {
     const wrapper = await mountApp('/products/7')
-    expect(wrapper.get('[data-testid="primary-navigation"]').get('[aria-current="page"]').text()).toBe('产品')
+    expect(wrapper.get('[data-testid="primary-navigation"]').get('[aria-current="page"]').text()).toBe('项目')
     const navigation = wrapper.get('[data-testid="desktop-navigation"]')
     expect(navigation.text()).toContain('研发工作台')
-    expect(navigation.get('.sidebar-link.is-active').text()).toBe('产品中心')
+    expect(navigation.get('.sidebar-link.is-active').text()).toBe('项目中心')
     await router.push('/personal')
     expect(navigation.get('.sidebar-link.is-active').text()).toBe('研发工作台')
   })
@@ -158,7 +158,7 @@ describe('Glass UI application shell', () => {
     const navigation = wrapper.get('[data-testid="desktop-navigation"]')
 
     expect(wrapper.get('[data-testid="primary-navigation"]').get('[aria-current="page"]').text()).toContain('部署与交付')
-    expect(navigation.text()).toContain('项目与环境')
+    expect(navigation.text()).not.toContain('项目与环境')
     expect(navigation.text()).toContain('镜像仓库')
     expect(navigation.text()).toContain('应用部署')
     expect(navigation.text()).not.toContain('全局概览')

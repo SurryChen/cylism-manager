@@ -118,7 +118,7 @@ const palettes = [
 
 const navGroups = computed(() => [
   { id: 'overview', label: '运维概览', to: '/', items: [{ label: '平台健康度', to: '/', icon: LayoutDashboard }] },
-  { id: 'personal', label: '产品', to: '/personal', items: [{ label: '研发工作台', to: '/personal', icon: LayoutDashboard }, { label: '产品中心', to: '/products', icon: FolderKanban }] },
+  { id: 'personal', label: '项目', to: '/personal', items: [{ label: '研发工作台', to: '/personal', icon: LayoutDashboard }, { label: '项目中心', to: '/projects', icon: FolderKanban }] },
   {
     id: 'applications',
     label: '部署与交付',
@@ -126,7 +126,6 @@ const navGroups = computed(() => [
     items: [
       { label: '应用部署', to: '/applications', icon: PackagePlus },
       { label: '应用商城', to: '/applications/catalog', icon: Store },
-      { label: '项目与环境', to: '/applications/projects', icon: FolderKanban },
       { label: '镜像仓库', to: '/applications/registries', icon: Boxes },
     ],
   },
@@ -179,6 +178,7 @@ function isNavItemActive(item) {
 }
 
 function matchesNavItem(item) {
+  if (item.to === '/projects' && route.path.startsWith('/products')) return true
   if (item.to === '/applications') {
     return route.path === item.to || route.path.startsWith('/applications/')
   }

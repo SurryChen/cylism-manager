@@ -76,6 +76,9 @@ func (s *Store) ListProductDistributions(ownerID, productID uint, f model.Produc
 		return nil, 0, err
 	}
 	q := lifecycleQuery(s.db, &model.ProductDistribution{}, productID, f)
+	if f.Audience != "" {
+		q = q.Where("audience = ?", f.Audience)
+	}
 	if f.Keyword != "" {
 		q = q.Where("instr(LOWER(platform_version), ?) > 0 OR instr(LOWER(build_identifier), ?) > 0", strings.ToLower(f.Keyword), strings.ToLower(f.Keyword))
 	}
@@ -212,6 +215,12 @@ func (s *Store) SaveProductVersion(ownerID uint, version *model.ProductVersion) 
 }
 
 func (s *Store) SaveProductDistribution(ownerID uint, record *model.ProductDistribution) error {
+	if record.Audience == "" {
+		record.Audience = "unclassified"
+	}
+	if record.Audience != "unclassified" && record.Audience != "testing" && record.Audience != "production" {
+		return model.ErrProductResourceAccess
+	}
 	return s.db.Transaction(func(tx *gorm.DB) error {
 		if err := ownedProduct(tx, ownerID, record.ProductID); err != nil {
 			return err
@@ -237,7 +246,7 @@ func (s *Store) SaveProductDistribution(ownerID uint, record *model.ProductDistr
 			if err := tx.Where("id = ? AND product_id = ?", record.ID, record.ProductID).First(&current).Error; err != nil {
 				return err
 			}
-			becamePublished = record.Status == "published" && (current.Status != "published" || current.PlatformVersion != record.PlatformVersion)
+			becamePublished = record.Status == "published" && (current.Status != "published" || current.PlatformVersion != record.PlatformVersion || current.Audience != record.Audience)
 			// A submission's identity is immutable; resubmission is a new record.
 			if current.ChannelID != record.ChannelID || current.VersionID != record.VersionID {
 				return model.ErrProductResourceAccess
@@ -255,7 +264,7 @@ func (s *Store) SaveProductDistribution(ownerID uint, record *model.ProductDistr
 				return model.ErrProductLifecycleConflict
 			}
 		}
-		event := model.ProductDistributionEvent{BecamePublished: becamePublished, DistributionID: record.ID, ActorID: ownerID, Status: record.Status, PlatformVersion: record.PlatformVersion, BuildIdentifier: record.BuildIdentifier, Notes: record.Notes}
+		event := model.ProductDistributionEvent{Audience: record.Audience, BecamePublished: becamePublished, DistributionID: record.ID, ActorID: ownerID, Status: record.Status, PlatformVersion: record.PlatformVersion, BuildIdentifier: record.BuildIdentifier, Notes: record.Notes}
 		if err := tx.Create(&event).Error; err != nil {
 			return err
 		}
@@ -265,9 +274,20 @@ func (s *Store) SaveProductDistribution(ownerID uint, record *model.ProductDistr
 
 func syncProductChannel(tx *gorm.DB, channel *model.ProductChannel) error {
 	var latest model.ProductDistribution
-	err := tx.Where("channel_id = ?", channel.ID).Order("id DESC").First(&latest).Error
+	err := tx.Where("channel_id = ? AND audience = ?", channel.ID, "production").Order("id DESC").First(&latest).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil
+		var count int64
+		if err := tx.Model(&model.ProductDistribution{}).Where("channel_id = ?", channel.ID).Count(&count).Error; err != nil {
+			return err
+		}
+		if count == 0 {
+			return nil
+		}
+		channel.OnlineVersion, channel.PendingVersion = "", ""
+		if channel.PublishStatus != "paused" {
+			channel.PublishStatus = "draft"
+		}
+		return tx.Model(channel).Select("publish_status", "pending_version", "online_version", "updated_at").Updates(channel).Error
 	}
 	if err != nil {
 		return err
@@ -285,10 +305,11 @@ func syncProductChannel(tx *gorm.DB, channel *model.ProductChannel) error {
 	}
 	// Latest recorded go-live event is authoritative even while the next submission is pending.
 	var published model.ProductDistributionEvent
-	err = tx.Joins("JOIN product_distributions ON product_distributions.id = product_distribution_events.distribution_id").Where("product_distributions.channel_id = ? AND product_distribution_events.became_published = ?", channel.ID, true).Order("product_distribution_events.id DESC").Select("product_distribution_events.*").First(&published).Error
+	err = tx.Joins("JOIN product_distributions ON product_distributions.id = product_distribution_events.distribution_id").Where("product_distributions.channel_id = ? AND product_distribution_events.became_published = ? AND product_distribution_events.audience = ? AND product_distributions.audience = 'production'", channel.ID, true, "production").Order("product_distribution_events.id DESC").Select("product_distribution_events.*").First(&published).Error
 	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 		return err
 	}
+	channel.OnlineVersion = ""
 	if err == nil {
 		channel.OnlineVersion = published.PlatformVersion
 	}
@@ -343,8 +364,8 @@ func (s *Store) ProductDeploymentPage(ownerID, productID uint, f model.ProductLi
 		q = q.Where("releases.status = ?", f.Status)
 		platform = platform.Where("platform_releases.status = ?", f.Status)
 	}
-	applications := q.Joins("LEFT JOIN environments ON environments.id = applications.environment_id").Select("'application' AS source, releases.id, releases.application_id, applications.name AS application_name, environments.name AS environment_name, releases.version, releases.status, releases.created_at")
-	updates := platform.Select("'platform' AS source, platform_releases.id, 0 AS application_id, 'Cylism Manager' AS application_name, '当前管理平台' AS environment_name, platform_releases.image AS version, platform_releases.status, platform_releases.created_at")
+	applications := q.Joins("LEFT JOIN environments ON environments.id = applications.environment_id").Select("'application' AS source, releases.id, releases.application_id, applications.name AS application_name, environments.name AS environment_name, environments.kind AS environment_kind, releases.version, releases.status, releases.created_at")
+	updates := platform.Select("'platform' AS source, platform_releases.id, 0 AS application_id, 'Cylism Manager' AS application_name, '当前管理平台' AS environment_name, 'unclassified' AS environment_kind, platform_releases.image AS version, platform_releases.status, platform_releases.created_at")
 	combined := s.db.Table("(? UNION ALL ?) AS deployments", applications, updates)
 	var count int64
 	if err := combined.Count(&count).Error; err != nil {

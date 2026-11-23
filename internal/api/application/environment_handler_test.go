@@ -2,6 +2,7 @@ package applicationapi
 
 import (
 	"context"
+	"fmt"
 	k8sclient "github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/store"
@@ -13,6 +14,46 @@ import (
 	"strings"
 	"testing"
 )
+
+func TestEnvironmentClassificationDoesNotRequireClusterConnection(t *testing.T) {
+	s, err := store.New(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	project := model.Project{Name: "offline classification", Slug: "offline", OwnerID: 1}
+	if err := s.CreateProject(&project); err != nil {
+		t.Fatal(err)
+	}
+	env := model.Environment{ProjectID: project.ID, ClusterID: 2, Name: "legacy", Namespace: "keep-existing-namespace"}
+	if err := s.CreateEnvironment(&env); err != nil {
+		t.Fatal(err)
+	}
+	h := newTestApplicationHandler(s, []byte("01234567890123456789012345678901"), nil)
+	h.WithClusterClientFactory(func(_ context.Context, _ uint) (*k8sclient.Client, error) {
+		t.Error("classification update must not connect to the cluster")
+		return nil, fmt.Errorf("offline")
+	})
+	r := gin.New()
+	r.PUT("/projects/:projectID/environments/:environmentID", h.UpdateEnvironment)
+	path := fmt.Sprintf("/projects/%d/environments/%d", project.ID, env.ID)
+	for _, kind := range []string{"testing", "production"} {
+		res := serve(r, newJSONRequest(http.MethodPut, path, gin.H{"name": env.Name, "kind": kind, "cluster_id": env.ClusterID}))
+		if res.Code != http.StatusOK || !strings.Contains(res.Body.String(), `"kind":"`+kind+`"`) {
+			t.Fatalf("classification: %d %s", res.Code, res.Body)
+		}
+	}
+	res := serve(r, newJSONRequest(http.MethodPut, path, gin.H{"name": env.Name}))
+	if res.Code != http.StatusOK || !strings.Contains(res.Body.String(), `"kind":"production"`) {
+		t.Fatalf("omitted classification changed: %d %s", res.Code, res.Body)
+	}
+	if res := serve(r, newJSONRequest(http.MethodPut, path, gin.H{"name": env.Name, "kind": "invalid"})); res.Code != http.StatusBadRequest {
+		t.Fatalf("invalid classification: %d %s", res.Code, res.Body)
+	}
+	stored, err := s.GetEnvironment(project.ID, env.ID)
+	if err != nil || stored.Kind != "production" || stored.Namespace != env.Namespace || stored.ClusterID != env.ClusterID {
+		t.Fatalf("deployment changed: %#v %v", stored, err)
+	}
+}
 
 func TestApplicationHandlerSyncsNamespaceThroughEnvironmentCluster(t *testing.T) {
 	platform := k8sfake.NewSimpleClientset()

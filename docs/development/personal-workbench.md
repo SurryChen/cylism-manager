@@ -1,39 +1,29 @@
-# 个人工作台与产品中心
+# 研发工作台与项目中心
 
-入口：顶部「个人」→「个人工作台」或「产品中心」。原应用工作台改名为「应用部署」，原首页继续显示「平台健康度」，URL 不变。
+入口为顶部「项目」→「研发工作台 / 项目中心」。使用流程见[项目研发与发行](../application-delivery/product-lifecycle.md)。
 
-## 模型边界
+## 数据边界
 
-- Product 是个人产品，可独立记录想法、离线 App 或尚未部署的产品。
-- Project 仍是运维项目；Environment 仍映射集群命名空间；Application 仍是部署组件；Release 仍是容器发布记录。
-- ProductChannel 记录平台发行资料，和容器 Release 没有自动状态映射。
-- `product_projects` / `product_applications` 只记录引用。归档、解除关联不会卸载或修改已有部署。
+- Project 是业务与部署边界；Product 作为一对一生命周期资料，使用可空唯一的 project_id 连接，保留旧版本、事项和发行 ID。
+- Environment 的 kind 保存 unclassified / development / testing / staging / production；旧环境默认待分类。
+- Application、Release 继续承载部署组件和真实发布。ProductVersion 组织迭代，可关联多次部署。
+- ProductDistribution、ProductDistributionEvent 保存 audience：unclassified / testing / production；正式渠道汇总只查询正式记录及正式发布快照。
+- 历史 product_projects / product_applications 引用继续保留，归档不会卸载或修改部署资源。
 
-产品可有多条仓库、设计、需求和技术文档链接；每个渠道手工维护标识、管理后台、公开地址、版本、审核/发布状态和备注。记录更新时间由服务端维护。通过编辑产品恢复已归档产品的阶段。
+## API
 
-运维关联仅允许当前 JWT 用户拥有的项目及其组件。详情会重新检查归属，并沿用项目环境、组件访问入口和数据库绑定；不复制资源资料或凭证。旧的无所有者项目不自动认领，需先明确归属。
+接口均位于 JWT /api 路由组：
 
-## 工作台口径
+- GET /projects/:projectID/workspace：按当前用户所有权读取项目生命周期资料。
+- DELETE /projects/:projectID/workspace：事务删除无环境、无应用的自有项目及生命周期资料。有部署资源时返回冲突，可归档。
+- 原 /products 列表、资料写入和 lifecycle 接口作为兼容接口保留；新页面使用 project_id 作为项目路由参数，生命周期操作继续使用稳定的 product ID。
+- 原 /projects 创建接口同步建立生命周期资料；原项目删除接口也会清理相应资料，并在存储层检查部署资源。
+- 发行列表接受 audience 筛选。环境写入接受 kind；省略时创建为待分类，更新时保留现有分类。
 
-活跃产品包括想法、开发中、运营中；暂停及归档产品不参与行动和发行关注汇总。截止日期按本地日历日期判断，临近范围为今天至未来 7 天（含）；无日期行动仍显示。发行关注状态包括待发布、审核中、审核通过、审核拒绝、发布受阻。所有发行资料均为手工记录，不代表平台实时状态。
+项目资料、事项和发行继续按 owner_id 隔离。关联只允许当前用户拥有的项目与组件，读取会重新检查归属，不返回资源连接凭证。项目所有权变更同步转移对应生命周期资料。原部署 API 的权限和资源边界继续适用。
 
-本版本不展示推测的运维健康。运维概览及组件详情继续承载运行状态。
+## 升级
 
-## API 与数据升级
+GORM 增量增加关系及分类字段，migration.project_workspaces.v1 在事务中执行数据关联和汇总清理，并记录完成标记。唯一、自有、未共用的历史项目可以被采用，歧义关系不迁移部署。旧渠道暂停状态保留，旧发行与环境等待人工分类。
 
-所有接口位于现有 JWT `/api` 路由组：
-
-- `GET /products`：当前用户全部产品（个人规模，前端筛选分页）。
-- `GET /products/:id`：产品详情和已校验权限的关联资源。
-- `GET /products/resource-options`：可关联的项目和组件元数据。
-- `POST /products`、`PUT /products/:id`：事务保存产品资料、完整渠道列表及关联 ID。
-
-日期输入使用 `YYYY-MM-DD`，响应为 UTC 零点时间，界面按日期部分显示。写入校验枚举、长度、URL 协议、关联归属和渠道归属；请求最多 256 KiB。每个产品最多 30 条资料链接和 30 个渠道。
-
-启动时 GORM AutoMigrate 仅增加 products、product_channels 和两张关联表；不修改既有部署表及发布流程。发布前沿用现有数据库备份流程。回退应用版本后可保留新增表，无须删除数据。
-
-## 公开作品边界
-
-`public_bio`、`public_url`、`public_showcase` 仅为未来展示预留；没有公开 API、自动导出或主页发布。未来应设计独立公开 DTO，逐项选择名称、展示标识、公开简介和展示链接等字段，禁止直接序列化 Product，也不要自动公开内部资料、渠道后台、待发布版本或资源关联。
-
-后续建议：先实现明确字段白名单和人工预览的公开作品导出，再考虑只读的平台发行状态同步。
+公开资料已从页面移除，public_bio、public_url、public_showcase 仅兼容历史数据，无公开 API 或自动导出。服务资源展示及常驻数据库入口不再出现在总览。

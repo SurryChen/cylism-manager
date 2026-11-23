@@ -28,6 +28,7 @@ type Project struct {
 
 // Environment maps a deployment target to a Kubernetes namespace.
 type Environment struct {
+	Kind              string    `gorm:"size:24;not null;default:unclassified" json:"kind"`
 	ID                uint      `gorm:"primaryKey" json:"id"`
 	ProjectID         uint      `gorm:"uniqueIndex:idx_project_environment;not null" json:"project_id"`
 	ClusterID         uint      `gorm:"index;not null;default:0" json:"cluster_id"`

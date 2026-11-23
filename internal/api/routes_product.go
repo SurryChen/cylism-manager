@@ -9,6 +9,8 @@ func registerProductRoutes(group *gin.RouterGroup, handler *productapi.Handler) 
 	if handler == nil {
 		return
 	}
+	group.GET("/projects/:projectID/workspace", handler.Workspace)
+	group.DELETE("/projects/:projectID/workspace", handler.DeleteWorkspace)
 	products := group.Group("/products")
 	products.GET("", handler.List)
 	products.POST("", handler.Create)

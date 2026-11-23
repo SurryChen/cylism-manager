@@ -243,6 +243,7 @@ type ProjectView struct {
 	DefaultImageRegistry   *ImageRegistryView `json:"default_image_registry,omitempty"`
 }
 type EnvironmentView struct {
+	Kind              string    `json:"kind"`
 	ID                uint      `json:"id"`
 	ProjectID         uint      `json:"project_id"`
 	ClusterID         uint      `json:"cluster_id"`
@@ -290,7 +291,7 @@ func EnvironmentDTO(e *model.Environment) *EnvironmentView {
 	if e == nil {
 		return nil
 	}
-	return &EnvironmentView{ID: e.ID, ProjectID: e.ProjectID, ClusterID: e.ClusterID, Name: e.Name, Namespace: e.Namespace, NamespaceStatus: e.NamespaceStatus, NamespaceConflict: e.NamespaceConflict, CreatedAt: e.CreatedAt, UpdatedAt: e.UpdatedAt}
+	return &EnvironmentView{Kind: e.Kind, ID: e.ID, ProjectID: e.ProjectID, ClusterID: e.ClusterID, Name: e.Name, Namespace: e.Namespace, NamespaceStatus: e.NamespaceStatus, NamespaceConflict: e.NamespaceConflict, CreatedAt: e.CreatedAt, UpdatedAt: e.UpdatedAt}
 }
 func EnvironmentsDTO(items []model.Environment) []EnvironmentView {
 	out := make([]EnvironmentView, 0, len(items))

@@ -78,7 +78,7 @@ func (h *Handler) ListLifecycle(c *gin.Context) {
 		return
 	}
 	limit, offset := shared.LimitOffset(c, 10, 100)
-	f := model.ProductLifecycleFilter{Status: c.Query("status"), Keyword: strings.TrimSpace(c.Query("keyword")), Limit: limit, Offset: offset}
+	f := model.ProductLifecycleFilter{Audience: c.Query("audience"), Status: c.Query("status"), Keyword: strings.TrimSpace(c.Query("keyword")), Limit: limit, Offset: offset}
 	if raw := c.Query("version_id"); raw != "" {
 		var err error
 		f.VersionID, err = shared.ParsePositiveID(raw)
@@ -216,6 +216,13 @@ func (h *Handler) SaveLifecycle(c *gin.Context) {
 		}
 		input.ID, input.ProductID, input.CreatedAt, input.UpdatedAt = id, productID, time.Time{}, time.Time{}
 		input.PlatformVersion = strings.TrimSpace(input.PlatformVersion)
+		if input.Audience == "" {
+			input.Audience = "unclassified"
+		}
+		if !oneOf(input.Audience, "unclassified", "testing", "production") {
+			shared.ValidationError(c, "发行分类无效")
+			return
+		}
 		if input.VersionID == 0 || input.ChannelID == 0 || !oneOf(input.Status, "draft", "preparing", "ready", "in_review", "approved", "published", "rejected", "blocked", "cancelled") {
 			shared.ValidationError(c, "请选择产品版本、发行渠道和有效状态")
 			return

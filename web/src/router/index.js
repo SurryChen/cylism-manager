@@ -15,7 +15,6 @@ const SystemSettings = () => import('../views/settings/SystemSettings.vue')
 const Applications = () => import('../views/applications/Applications.vue')
 const ApplicationCatalog = () => import('../views/applications/ApplicationCatalog.vue')
 const ApplicationCatalogDetail = () => import('../views/applications/ApplicationCatalogDetail.vue')
-const ProjectEnvironments = () => import('../views/applications/ProjectEnvironments.vue')
 const ApplicationDetails = () => import('../views/applications/ApplicationDetails.vue')
 const ReleaseDetails = () => import('../views/applications/ReleaseDetails.vue')
 const ImageRegistries = () => import('../views/applications/ImageRegistries.vue')
@@ -37,7 +36,9 @@ const routes = [
   { path: '/login', component: Login, meta: { public: true } },
   { path: '/', component: Dashboard },
   { path: '/personal', component: PersonalWorkbench },
-  { path: '/products', component: ProductCenter },
+  { path: '/projects', component: ProductCenter, props: { projectMode: true } },
+  { path: '/projects/:projectID', component: ProductDetail, props: { projectMode: true } },
+  { path: '/products', component: ProductCenter, props: { projectMode: true } },
   { path: '/products/:id', component: ProductDetail },
   { path: '/cloud-services', redirect: '/cloud-services/registry' },
   { path: '/cloud-services/registry', component: ManagedOCIRegistries },
@@ -48,8 +49,8 @@ const routes = [
   { path: '/applications', component: Applications, props: { section: 'workspace' } },
   { path: '/applications/catalog', component: ApplicationCatalog },
   { path: '/applications/catalog/:catalogID', component: ApplicationCatalogDetail },
-  { path: '/applications/projects', component: Applications, props: { section: 'projects' } },
-  { path: '/applications/projects/:projectID', component: ProjectEnvironments, props: true },
+  { path: '/applications/projects', redirect: '/projects' },
+  { path: '/applications/projects/:projectID', redirect: to => ({ path: '/projects/' + to.params.projectID, query: { ...to.query, tab: 'environments' } }) },
   { path: '/applications/overview', redirect: '/applications' },
   { path: '/applications/releases', redirect: '/applications' },
   { path: '/applications/registries', component: ImageRegistries },

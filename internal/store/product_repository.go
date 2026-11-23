@@ -43,6 +43,13 @@ func (s *Store) GetProduct(ownerID, id uint) (*model.Product, error) {
 	if err := s.db.Where("owner_id = ?", ownerID).Preload("Channels", func(db *gorm.DB) *gorm.DB { return db.Order("id asc") }).First(&product, id).Error; err != nil {
 		return nil, err
 	}
+	if product.ProjectID != nil {
+		var project model.Project
+		if err := s.db.Where("owner_id = ?", ownerID).First(&project, *product.ProjectID).Error; err != nil {
+			return nil, err
+		}
+		product.ProjectSlug = project.Slug
+	}
 	product.Projects = []model.Project{}
 	product.Applications = []model.Application{}
 	if err := s.db.Joins("JOIN product_projects ON product_projects.project_id = projects.id").Where("product_projects.product_id = ? AND projects.owner_id = ?", id, ownerID).Preload("Environments").Order("projects.id").Find(&product.Projects).Error; err != nil {
@@ -102,6 +109,7 @@ func (s *Store) SaveProduct(product *model.Product, projectIDs, applicationIDs [
 				return err
 			}
 			product.CreatedAt = current.CreatedAt
+			product.ProjectID = current.ProjectID
 		}
 		if err := validateProductResources(tx, product.OwnerID, projectIDs, applicationIDs); err != nil {
 			return err
@@ -123,6 +131,10 @@ func (s *Store) SaveProduct(product *model.Product, projectIDs, applicationIDs [
 				return ErrProductResourceAccess
 			}
 		}
+		if err := attachProductProject(tx, product, projectIDs); err != nil {
+			return err
+		}
+		projectIDs = append(projectIDs, *product.ProjectID)
 		if err := tx.Omit(clause.Associations).Save(product).Error; err != nil {
 			return err
 		}

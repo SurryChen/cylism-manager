@@ -11,7 +11,7 @@ import (
 func productDeletionFixture(t *testing.T, s *Store) (model.Product, []interface{}) {
 	t.Helper()
 	project := model.Project{Name: "preserved", OwnerID: 1}
-	if err := s.CreateProject(&project); err != nil {
+	if err := s.DB().Create(&project).Error; err != nil {
 		t.Fatal(err)
 	}
 	environment := model.Environment{ProjectID: project.ID, Name: "test", Namespace: "product-test"}
@@ -91,7 +91,11 @@ func TestProductDeletionCleansOwnedDataAndPreservesResources(t *testing.T) {
 			}
 			for _, record := range []interface{}{&model.ProductTask{}, &model.ProductVersion{}, &model.ProductDistribution{}, &model.ProductDistributionEvent{}, &model.ProductVersionDeployment{}, &model.ProductVersionPlatformRelease{}, &model.ProductProject{}, &model.ProductApplication{}} {
 				var count int64
-				if err := s.DB().Model(record).Count(&count).Error; err != nil || count != 0 {
+				query := s.DB().Model(record)
+				if _, ok := record.(*model.ProductProject); ok {
+					query = query.Where("product_id = ?", p.ID)
+				}
+				if err := query.Count(&count).Error; err != nil || count != 0 {
 					t.Fatalf("orphan %T: %d %v", record, count, err)
 				}
 			}
@@ -139,7 +143,11 @@ func TestProductDeletionRollsBackAllChildrenOnFailure(t *testing.T) {
 		}
 		for _, record := range []interface{}{&model.Product{}, &model.ProductTask{}, &model.ProductVersion{}, &model.ProductChannel{}, &model.ProductDistribution{}, &model.ProductDistributionEvent{}, &model.ProductVersionDeployment{}, &model.ProductVersionPlatformRelease{}, &model.ProductProject{}, &model.ProductApplication{}} {
 			var count int64
-			if err := s.DB().Model(record).Count(&count).Error; err != nil || count != 1 {
+			expected := int64(1)
+			if _, ok := record.(*model.ProductProject); ok {
+				expected = 2
+			}
+			if err := s.DB().Model(record).Count(&count).Error; err != nil || count != expected {
 				t.Fatalf("rollback lost %T: %d %v", record, count, err)
 			}
 		}

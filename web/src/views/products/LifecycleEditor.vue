@@ -13,7 +13,8 @@
           <label class="form-group product-full-width"><span class="form-label">验收项与验证结果</span><textarea v-model="form.acceptance" class="form-input" aria-label="验收项" maxlength="8000" placeholder="记录需要验证什么，以及实际验证结果" /></label>
         </template>
         <template v-else>
-          <p class="product-muted product-full-width">每条记录对应一次渠道发行。重新提交可新增记录，编辑会保留状态和备注历史。渠道当前进度按最近创建的发行记录汇总。</p>
+          <p class="product-muted product-full-width">每条记录对应一次渠道发行。重新提交可新增记录，编辑会保留状态和备注历史。正式渠道进度仅汇总正式发行，测试发行单独保留。</p>
+          <label class="form-group product-full-width"><span class="form-label">发行分类</span><SelectMenu v-model="form.audience" aria-label="发行分类"><option v-for="item in distributionAudiences" :key="item.id" :value="item.id">{{ item.label }}</option></SelectMenu></label>
           <label class="form-group"><span class="form-label">发行渠道 *</span><SelectMenu v-model="form.channel_id" aria-label="发行渠道" :disabled="Boolean(form.id)" required><option :value="0">请选择渠道</option><option v-for="channel in channels" :key="channel.id" :value="channel.id">{{ channel.name || labelFor(platforms, channel.platform) }}</option></SelectMenu></label>
           <label class="form-group"><span class="form-label">平台版本 *</span><input v-model.trim="form.platform_version" class="form-input" aria-label="平台版本" maxlength="128" required /></label>
           <label class="form-group product-full-width"><span class="form-label">Build 标识</span><input v-model.trim="form.build_identifier" class="form-input" aria-label="Build 标识" maxlength="128" placeholder="versionCode / CFBundleVersion / 小程序版本标识" /></label>
@@ -29,7 +30,7 @@
             <input v-model.trim="deploymentKeyword" class="form-input" aria-label="搜索部署记录" placeholder="搜索组件或版本" />
             <EmptyState v-if="deployments.loading.value" variant="loading" message="正在读取部署记录..." />
             <EmptyState v-else-if="deployments.error.value" message="部署记录读取失败"><template #action><button type="button" class="btn btn-sm" @click="loadDeployments">重试</button></template></EmptyState>
-            <div v-else class="product-checklist"><label v-for="deployment in deployments.items.value" :key="`${deployment.source || 'application'}-${deployment.id}`"><input type="checkbox" :value="deployment.id" :checked="deploymentSelected(deployment)" @change="setDeploymentSelected(deployment, $event.target.checked)" />{{ deployment.application_name }} · {{ deployment.environment_name || '未命名环境' }} · {{ deployment.version || `#${deployment.id}` }} · {{ deployment.status }}</label><span v-if="!deployments.total.value" class="product-muted">暂无可关联的部署记录</span></div>
+            <div v-else class="product-checklist"><label v-for="deployment in deployments.items.value" :key="`${deployment.source || 'application'}-${deployment.id}`"><input type="checkbox" :value="deployment.id" :checked="deploymentSelected(deployment)" @change="setDeploymentSelected(deployment, $event.target.checked)" />{{ deployment.application_name }} · {{ deployment.environment_name || '未命名环境' }}（{{ environmentKindLabel(deployment.environment_kind) }}） · {{ deployment.version || `#${deployment.id}` }} · {{ deployment.status }}</label><span v-if="!deployments.total.value" class="product-muted">暂无可关联的部署记录</span></div>
             <ResourcePagination :resource="deployments" label="可关联部署分页" />
             <div class="product-actions"><span class="product-muted">已选择 {{ deploymentCount(form) }} 条</span><button v-if="deploymentCount(form)" type="button" class="btn btn-sm" @click="form.deployment_ids = []; form.platform_release_ids = []">清空选择</button></div>
           </div>
@@ -41,6 +42,7 @@
   </BaseModal>
 </template>
 <script setup>
+import { distributionAudiences, environmentKindLabel } from './environment-utils.js'
 import { computed, ref, useId, watch } from 'vue'
 import BaseModal from '../../components/BaseModal.vue'
 import EmptyState from '../../components/EmptyState.vue'
@@ -69,7 +71,7 @@ function loadDeployments() { return deployments.load({ keyword: deploymentKeywor
 watch(deploymentKeyword, () => { if (props.open && props.kind === 'versions') void loadDeployments() })
 watch(() => props.open, open => {
   if (!open) { deployments.cancel(); return }
-  const defaults = props.kind === 'tasks' ? { title: '', kind: 'action', priority: 'normal', status: 'todo', version_id: '', due_date: '', details: '' } : props.kind === 'versions' ? { name: '', goal: '', acceptance: '', status: 'planning', target_date: '', repository_url: '', commit_sha: '', build_url: '', artifact_url: '', deployment_ids: [], platform_release_ids: [], notes: '' } : { channel_id: 0, version_id: '', platform_version: '', build_identifier: '', status: 'draft', notes: '' }
+  const defaults = props.kind === 'tasks' ? { title: '', kind: 'action', priority: 'normal', status: 'todo', version_id: '', due_date: '', details: '' } : props.kind === 'versions' ? { name: '', goal: '', acceptance: '', status: 'planning', target_date: '', repository_url: '', commit_sha: '', build_url: '', artifact_url: '', deployment_ids: [], platform_release_ids: [], notes: '' } : { audience: 'testing', channel_id: 0, version_id: '', platform_version: '', build_identifier: '', status: 'draft', notes: '' }
   form.value = { ...defaults, ...JSON.parse(JSON.stringify(props.record || {})) }
   if (props.kind !== 'versions') form.value.version_id ??= ''
   if (props.kind === 'versions') { form.value.deployment_ids ||= []; form.value.platform_release_ids ||= []; deployments.reset(); deploymentKeyword.value = ''; void loadDeployments() }
