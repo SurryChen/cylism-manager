@@ -44,6 +44,7 @@ type ProductVersion struct {
 	UpdatedAt          time.Time `json:"updated_at"`
 	DeploymentIDs      []uint    `gorm:"-" json:"deployment_ids"`
 	PlatformReleaseIDs []uint    `gorm:"-" json:"platform_release_ids"`
+	TaskIDs            []uint    `gorm:"-" json:"task_ids"`
 }
 
 type ProductVersionDeployment struct {
@@ -101,12 +102,13 @@ type ProductDeploymentOption struct {
 }
 
 type ProductLifecycleFilter struct {
-	Audience  string
-	Status    string
-	Keyword   string
-	VersionID uint
-	Limit     int
-	Offset    int
+	AssignableTasks bool
+	Audience        string
+	Status          string
+	Keyword         string
+	VersionID       uint
+	Limit           int
+	Offset          int
 }
 
 type ProductWorkbench struct {

@@ -53,6 +53,7 @@ DELETE /api/monitoring/logs
 DELETE /api/node-registry-mirrors/:id
 DELETE /api/nodes/:id
 DELETE /api/products/:id
+DELETE /api/products/:id/lifecycle/tasks/:recordID
 DELETE /api/projects/:projectID
 DELETE /api/projects/:projectID/environments/:environmentID
 DELETE /api/projects/:projectID/workspace

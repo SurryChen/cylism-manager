@@ -20,6 +20,7 @@ type LifecycleRepository interface {
 	ProductDeploymentPage(uint, uint, model.ProductLifecycleFilter) ([]model.ProductDeploymentOption, int64, error)
 	ProductVersionOptions(uint, uint) ([]model.ProductVersion, error)
 	SaveProductTask(uint, *model.ProductTask) error
+	DeleteProductTask(uint, uint, uint) error
 	SaveProductVersion(uint, *model.ProductVersion) error
 	SaveProductDistribution(uint, *model.ProductDistribution) error
 	ProductWorkbench(uint) (*model.ProductWorkbench, error)
@@ -96,6 +97,7 @@ func (h *Handler) ListLifecycle(c *gin.Context) {
 	var err error
 	switch kind {
 	case "tasks":
+		f.AssignableTasks = c.Query("assignable") == "true"
 		rows, count, err = h.repository.ListProductTasks(shared.UserID(c), id, f)
 	case "versions":
 		rows, count, err = h.repository.ListProductVersions(shared.UserID(c), id, f)
@@ -251,6 +253,23 @@ func (h *Handler) SaveLifecycle(c *gin.Context) {
 		return
 	}
 	shared.Success(c, result)
+}
+
+func (h *Handler) DeleteTask(c *gin.Context) {
+	id, ok := lifecycleID(c)
+	if !ok {
+		return
+	}
+	taskID, err := shared.ParsePositiveID(c.Param("recordID"))
+	if err != nil {
+		shared.BadRequest(c, "事项 ID 无效")
+		return
+	}
+	if err := h.repository.DeleteProductTask(shared.UserID(c), id, taskID); err != nil {
+		respondError(c, err)
+		return
+	}
+	shared.Success(c, nil)
 }
 
 func (h *Handler) DistributionEvents(c *gin.Context) {

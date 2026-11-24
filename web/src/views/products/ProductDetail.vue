@@ -72,7 +72,7 @@ const routeID = computed(() => props.projectMode ? route.params.projectID : rout
 const router = useRouter()
 const resource = useAsyncResource(({ signal }, id) => props.projectMode ? getProjectWorkspace(id, { signal }) : getProduct(id, { signal }))
 const product = computed(() => resource.data.value)
-const tabs = computed(() => [{ id: 'overview', label: '总览' }, { id: 'tasks', label: props.projectMode ? '需求与待办' : '事项' }, { id: 'versions', label: '版本' }, ...(props.projectMode ? [{ id: 'environments', label: '环境与部署' }] : []), { id: 'distributions', label: '发行' }])
+const tabs = computed(() => [{ id: 'overview', label: '总览' }, { id: 'tasks', label: props.projectMode ? '待办' : '事项' }, { id: 'versions', label: '版本' }, ...(props.projectMode ? [{ id: 'environments', label: '环境与部署' }] : []), { id: 'distributions', label: '发行' }])
 const tab = ref('overview'), editorTab = ref('basics'), editorOpen = ref(false), channelsOpen = ref(false), archiveOpen = ref(false), busy = ref(false), error = ref('')
 const taskVersionID = ref('')
 const deleteTarget = ref(null)

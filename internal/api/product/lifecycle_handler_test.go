@@ -35,6 +35,7 @@ func TestProductLifecycleAPIContracts(t *testing.T) {
 	r.GET("/products/:id/lifecycle/:kind", h.ListLifecycle)
 	r.POST("/products/:id/lifecycle/:kind", h.SaveLifecycle)
 	r.PUT("/products/:id/lifecycle/:kind/:recordID", h.SaveLifecycle)
+	r.DELETE("/products/:id/lifecycle/tasks/:recordID", h.DeleteTask)
 	r.GET("/products/:id/distributions/:recordID/events", h.DistributionEvents)
 	request := func(method, path, body, user string) *httptest.ResponseRecorder {
 		t.Helper()
@@ -102,4 +103,51 @@ func TestProductLifecycleAPIContracts(t *testing.T) {
 	if res := request("GET", "/products/workbench", "", "other"); res.Code != 200 || strings.Contains(res.Body.String(), "offline") {
 		t.Fatalf("workbench leak: %d %s", res.Code, res.Body)
 	}
+
+	t.Run("task selection and deletion", func(t *testing.T) {
+		tasks := fmt.Sprintf("/products/%d/lifecycle/tasks", p.ID)
+		versions := fmt.Sprintf("/products/%d/lifecycle/versions", p.ID)
+		res := request("POST", tasks, `{"title":"验收","kind":"action","status":"done","priority":"normal"}`, "owner")
+		var task struct{ Data model.ProductTask }
+		if err := json.Unmarshal(res.Body.Bytes(), &task); err != nil || res.Code != 200 || task.Data.ID == 0 {
+			t.Fatalf("create task: %d %s %v", res.Code, res.Body, err)
+		}
+		taskURL := fmt.Sprintf("%s/%d", tasks, task.Data.ID)
+		versionBody := fmt.Sprintf(`{"name":"2.0","status":"releasing","task_ids":[%d]}`, task.Data.ID)
+		res = request("POST", versions, versionBody, "owner")
+		var release struct{ Data model.ProductVersion }
+		if err := json.Unmarshal(res.Body.Bytes(), &release); err != nil || res.Code != 200 || len(release.Data.TaskIDs) != 1 {
+			t.Fatalf("assign task: %d %s %v", res.Code, res.Body, err)
+		}
+		if res := request("GET", tasks+"?assignable=true", "", "owner"); res.Code != 200 || !strings.Contains(res.Body.String(), `"total":0`) {
+			t.Fatalf("already assigned task offered for new version: %d %s", res.Code, res.Body)
+		}
+		candidates := fmt.Sprintf("%s?assignable=true&version_id=%d", tasks, release.Data.ID)
+		if res := request("GET", candidates, "", "owner"); res.Code != 200 || !strings.Contains(res.Body.String(), `"total":1`) {
+			t.Fatalf("assigned task missing from its version: %d %s", res.Code, res.Body)
+		}
+		otherVersionBody := fmt.Sprintf(`{"name":"3.0","status":"releasing","task_ids":[%d]}`, task.Data.ID)
+		if res := request("POST", versions, otherVersionBody, "owner"); res.Code != 409 {
+			t.Fatalf("another version could take the assigned task: %d %s", res.Code, res.Body)
+		}
+		for user, status := range map[string]int{"": 401, "other": 404} {
+			if res := request("DELETE", taskURL, "", user); res.Code != status {
+				t.Fatalf("delete authorization for %q: %d %s", user, res.Code, res.Body)
+			}
+		}
+		if res := request("DELETE", taskURL, "", "owner"); res.Code != 200 {
+			t.Fatalf("delete: %d %s", res.Code, res.Body)
+		}
+		if res := request("GET", candidates, "", "owner"); res.Code != 200 || !strings.Contains(res.Body.String(), `"total":0`) {
+			t.Fatalf("deleted task still visible: %d %s", res.Code, res.Body)
+		}
+		releaseURL := fmt.Sprintf("%s/%d", versions, release.Data.ID)
+		staleBody := fmt.Sprintf(`{"name":"2.0","status":"releasing","revision":%d}`, release.Data.Revision)
+		if res := request("PUT", releaseURL, staleBody, "owner"); res.Code != 409 {
+			t.Fatalf("deletion did not invalidate the stale version: %d %s", res.Code, res.Body)
+		}
+		if res := request("GET", versions, "", "owner"); res.Code != 200 || strings.Contains(res.Body.String(), fmt.Sprintf(`"task_ids":[%d]`, task.Data.ID)) {
+			t.Fatalf("version still reports a deleted task: %d %s", res.Code, res.Body)
+		}
+	})
 }

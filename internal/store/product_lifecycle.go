@@ -28,7 +28,14 @@ func (s *Store) ListProductTasks(ownerID, productID uint, f model.ProductLifecyc
 	if err := ownedProduct(s.db, ownerID, productID); err != nil {
 		return nil, 0, err
 	}
+	versionID := f.VersionID
+	if f.AssignableTasks {
+		f.VersionID = 0
+	}
 	q := lifecycleQuery(s.db, &model.ProductTask{}, productID, f)
+	if f.AssignableTasks {
+		q = q.Where("(version_id IS NULL OR version_id = ?)", versionID)
+	}
 	if f.Keyword != "" {
 		q = q.Where("instr(LOWER(title), ?) > 0", strings.ToLower(f.Keyword))
 	}
@@ -58,6 +65,10 @@ func (s *Store) ListProductVersions(ownerID, productID uint, f model.ProductLife
 		return nil, 0, err
 	}
 	for i := range rows {
+		rows[i].TaskIDs = []uint{}
+		if err := s.db.Model(&model.ProductTask{}).Where("product_id = ? AND version_id = ?", productID, rows[i].ID).Order("id").Pluck("id", &rows[i].TaskIDs).Error; err != nil {
+			return nil, 0, err
+		}
 		rows[i].DeploymentIDs = []uint{}
 		rows[i].PlatformReleaseIDs = []uint{}
 		err := s.productDeployments(ownerID, productID).Joins("JOIN product_version_deployments ON product_version_deployments.release_id = releases.id").Where("product_version_deployments.version_id = ?", rows[i].ID).Order("releases.id DESC").Pluck("releases.id", &rows[i].DeploymentIDs).Error
@@ -115,7 +126,10 @@ func (s *Store) SaveProductTask(ownerID uint, task *model.ProductTask) error {
 		}
 		if task.ID == 0 {
 			task.Revision = 1
-			return tx.Create(task).Error
+			if err := tx.Create(task).Error; err != nil {
+				return err
+			}
+			return bumpProductVersionRevisions(tx, task.ProductID, task.VersionID)
 		}
 		var current model.ProductTask
 		if err := tx.Where("id = ? AND product_id = ?", task.ID, task.ProductID).First(&current).Error; err != nil {
@@ -133,7 +147,48 @@ func (s *Store) SaveProductTask(ownerID uint, task *model.ProductTask) error {
 		if result.RowsAffected != 1 {
 			return model.ErrProductLifecycleConflict
 		}
+		if versionIDValue(current.VersionID) != versionIDValue(task.VersionID) {
+			return bumpProductVersionRevisions(tx, task.ProductID, current.VersionID, task.VersionID)
+		}
 		return nil
+	})
+}
+
+func versionIDValue(id *uint) uint {
+	if id == nil {
+		return 0
+	}
+	return *id
+}
+
+func bumpProductVersionRevisions(tx *gorm.DB, productID uint, versionIDs ...*uint) error {
+	ids := make([]uint, 0, len(versionIDs))
+	for _, id := range versionIDs {
+		if id != nil {
+			ids = append(ids, *id)
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	// The version editor saves the complete selection and must detect changes from the task list.
+	return tx.Model(&model.ProductVersion{}).Where("product_id = ? AND id IN ?", productID, ids).
+		UpdateColumn("revision", gorm.Expr("revision + 1")).Error
+}
+
+func (s *Store) DeleteProductTask(ownerID, productID, taskID uint) error {
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		if err := ownedProduct(tx, ownerID, productID); err != nil {
+			return err
+		}
+		var task model.ProductTask
+		if err := tx.Where("product_id = ? AND id = ?", productID, taskID).First(&task).Error; err != nil {
+			return err
+		}
+		if err := tx.Delete(&task).Error; err != nil {
+			return err
+		}
+		return bumpProductVersionRevisions(tx, productID, task.VersionID)
 	})
 }
 
@@ -194,6 +249,11 @@ func (s *Store) SaveProductVersion(ownerID uint, version *model.ProductVersion) 
 				return model.ErrProductLifecycleConflict
 			}
 		}
+		if version.TaskIDs != nil {
+			if err := saveProductVersionTasks(tx, version); err != nil {
+				return err
+			}
+		}
 		if err := tx.Where("version_id = ?", version.ID).Delete(&model.ProductVersionDeployment{}).Error; err != nil {
 			return err
 		}
@@ -212,6 +272,40 @@ func (s *Store) SaveProductVersion(ownerID uint, version *model.ProductVersion) 
 		}
 		return nil
 	})
+}
+
+func saveProductVersionTasks(tx *gorm.DB, version *model.ProductVersion) error {
+	tasks := func() *gorm.DB {
+		return tx.Model(&model.ProductTask{}).Where("product_id = ?", version.ProductID)
+	}
+	ids := make([]uint, 0, len(version.TaskIDs))
+	seen := make(map[uint]bool, len(version.TaskIDs))
+	for _, id := range version.TaskIDs {
+		if !seen[id] {
+			ids = append(ids, id)
+			seen[id] = true
+		}
+	}
+	removed := tasks().Where("version_id = ?", version.ID)
+	if len(ids) > 0 {
+		var available int64
+		if err := tasks().Where("id IN ? AND (version_id IS NULL OR version_id = ?)", ids, version.ID).Count(&available).Error; err != nil {
+			return err
+		}
+		if available != int64(len(ids)) {
+			return model.ErrProductLifecycleConflict
+		}
+		removed = removed.Where("id NOT IN ?", ids)
+		if err := tasks().Where("id IN ? AND version_id IS NULL", ids).
+			Updates(map[string]interface{}{"version_id": version.ID, "revision": gorm.Expr("revision + 1")}).Error; err != nil {
+			return err
+		}
+	}
+	if err := removed.Updates(map[string]interface{}{"version_id": nil, "revision": gorm.Expr("revision + 1")}).Error; err != nil {
+		return err
+	}
+	version.TaskIDs = ids
+	return nil
 }
 
 func (s *Store) SaveProductDistribution(ownerID uint, record *model.ProductDistribution) error {

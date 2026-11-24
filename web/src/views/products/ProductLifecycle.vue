@@ -11,7 +11,7 @@
         <SelectMenu v-if="kind === 'distributions'" v-model="audience" class="product-stage-filter" aria-label="发行分类筛选"><option value="">全部发行</option><option v-for="item in distributionAudiences" :key="item.id" :value="item.id">{{ item.label }}</option></SelectMenu>
         <button class="icon-button" title="重置筛选" aria-label="重置筛选" @click="keyword = ''; status = ''; versionID = ''; audience = ''"><RotateCcw :size="15" /></button>
         <button v-if="kind === 'distributions'" class="btn" @click="$emit('show-channels')">发行渠道</button>
-        <button class="btn btn-primary product-primary" :disabled="busy || optionsLoading || Boolean(optionsError)" @click="openEditor()">新增{{ noun }}</button>
+        <button class="btn btn-primary product-primary" :disabled="busy || (kind !== 'tasks' && (optionsLoading || Boolean(optionsError)))" @click="openEditor()">新增{{ noun }}</button>
       </div>
       <EmptyState v-if="optionsError" message="版本选项读取失败"><template #action><button class="btn btn-sm" @click="loadOptions">重试</button></template></EmptyState>
       <EmptyState v-else-if="resource.loading.value && !resource.items.value.length" variant="loading" message="正在读取记录..." />
@@ -20,7 +20,22 @@
       <div v-else class="table-wrap">
         <DataTable v-if="kind === 'tasks'">
           <thead><tr><th>事项 / 说明</th><th>类型 / 优先级</th><th>产品版本</th><th>状态</th><th>截止日期</th><TableActionCell header /></tr></thead>
-          <tbody><tr v-for="row in resource.items.value" :key="row.id"><td>{{ row.title }}<span class="cell-secondary product-line lifecycle-description">{{ row.details }}</span></td><td>{{ labelFor(taskKinds, row.kind) }} · {{ labelFor(priorities, row.priority) }}</td><td>{{ versionName(row.version_id) }}</td><td><span class="badge" :class="lifecycleClass(row.status)">{{ labelFor(taskStatuses, row.status) }}</span></td><td>{{ row.due_date || '—' }}<span v-if="row.due_date && !['done', 'cancelled'].includes(row.status)" class="badge product-line" :class="dueClass(dueState(row.due_date))">{{ dueLabel(dueState(row.due_date)) }}</span></td><TableActionCell><button class="icon-button" title="编辑事项" aria-label="编辑事项" :disabled="busy || optionsLoading || Boolean(optionsError)" @click="openEditor(row)"><Pencil :size="15" /></button></TableActionCell></tr></tbody>
+          <tbody>
+            <tr v-for="row in resource.items.value" :key="row.id">
+              <td class="lifecycle-task-cell">
+                {{ row.title }}
+                <OverflowTooltip v-if="row.details" :text="row.details" class="cell-secondary product-line lifecycle-task-description" />
+              </td>
+              <td>{{ labelFor(taskKinds, row.kind) }} · {{ labelFor(priorities, row.priority) }}</td>
+              <td>{{ versionName(row.version_id) }}</td>
+              <td><span class="badge" :class="lifecycleClass(row.status)">{{ labelFor(taskStatuses, row.status) }}</span></td>
+              <td>{{ row.due_date || '—' }}<span v-if="row.due_date && !['done', 'cancelled'].includes(row.status)" class="badge product-line" :class="dueClass(dueState(row.due_date))">{{ dueLabel(dueState(row.due_date)) }}</span></td>
+              <TableActionCell>
+                <button type="button" class="icon-button" title="编辑事项" aria-label="编辑事项" :disabled="busy || optionsLoading || Boolean(optionsError)" @click="openEditor(row)"><Pencil :size="15" /></button>
+                <button type="button" class="icon-button" title="删除事项" aria-label="删除事项" :disabled="busy" @click="taskToDelete = row"><Trash2 :size="15" /></button>
+              </TableActionCell>
+            </tr>
+          </tbody>
         </DataTable>
         <DataTable v-else-if="kind === 'versions'">
           <thead><tr><th>版本 / 目标</th><th>状态</th><th>关联部署</th><TableActionCell header /></tr></thead>
@@ -41,6 +56,7 @@
       <ResourcePagination :resource="resource" :label="`${noun}分页`" />
     </SurfaceCard>
     <LifecycleEditor :open="editorOpen" :busy="busy" :kind="kind" :record="editing" :product-id="product.id" :versions="versions" :channels="product.channels || []" @close="editorOpen = false" @save="save" @error="error = $event" />
+    <ConfirmDialog teleport :open="Boolean(taskToDelete)" title="删除事项" :message="`确认删除事项“${taskToDelete?.title || ''}”？`" :busy="busy" confirm-text="删除" @cancel="taskToDelete = null" @confirm="removeTask" />
     <BaseModal teleport :open="Boolean(detailVersion)" :title="`版本详情 · ${detailVersion?.name || ''}`" size="large" @close="detailVersion = null">
       <dl v-if="detailVersion" class="product-detail-list">
         <div><dt>状态</dt><dd><span class="badge" :class="lifecycleClass(detailVersion.status)">{{ labelFor(versionStatuses, detailVersion.status) }}</span></dd></div>
@@ -74,15 +90,17 @@ import DataTable from '../../components/DataTable.vue'
 import TableActionCell from '../../components/TableActionCell.vue'
 import { distributionAudiences, audienceLabel, environmentKindLabel } from './environment-utils.js'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
-import { Eye, History, ListTodo, Pencil, RotateCcw } from 'lucide-vue-next'
+import { Eye, History, ListTodo, Pencil, RotateCcw, Trash2 } from 'lucide-vue-next'
 import SurfaceCard from '../../components/SurfaceCard.vue'
 import EmptyState from '../../components/EmptyState.vue'
+import OverflowTooltip from '../../components/OverflowTooltip.vue'
 import SelectMenu from '../../components/SelectMenu.vue'
 import BaseModal from '../../components/BaseModal.vue'
+import ConfirmDialog from '../../components/ConfirmDialog.vue'
 import ResourcePagination from '../../components/ResourcePagination.vue'
 import ErrorNoticeModal from '../../components/ErrorNoticeModal.vue'
 import LifecycleEditor from './LifecycleEditor.vue'
-import { getLifecyclePage, getLifecycleOptions, getDistributionEvents, saveLifecycleRecord, importProductNextAction } from '../../api/product-lifecycle.js'
+import { getLifecyclePage, getLifecycleOptions, getDistributionEvents, saveLifecycleRecord, deleteProductTask, importProductNextAction } from '../../api/product-lifecycle.js'
 import { usePaginatedResource } from '../../composables/usePaginatedResource.js'
 import { labelFor, platforms, dateOnly, dueState, dueClass, dueLabel } from './product-utils.js'
 import { taskKinds, taskStatuses, priorities, versionStatuses, distributionStatuses, lifecycleClass, deploymentCount, deploymentPath } from './lifecycle-utils.js'
@@ -92,6 +110,7 @@ const emit = defineEmits(['changed', 'select-version', 'show-channels'])
 const audience = ref('')
 const keyword = ref(''), status = ref(''), versionID = ref(props.initialVersionId), versions = ref([]), optionsLoading = ref(false), optionsError = ref(''), busy = ref(false), error = ref(''), editorOpen = ref(false), editing = ref(null), historyRecord = ref(null), deploymentVersion = ref(null)
 const detailVersion = ref(null)
+const taskToDelete = ref(null)
 const noun = computed(() => ({ tasks: '事项', versions: '版本', distributions: '发行记录' })[props.kind])
 const statuses = computed(() => ({ tasks: taskStatuses, versions: versionStatuses, distributions: distributionStatuses })[props.kind])
 const emptyMessage = computed(() => keyword.value || status.value || versionID.value || audience.value ? '没有符合条件的记录' : props.kind === 'distributions' ? '暂无发行记录，请先创建产品版本并配置发行渠道' : `暂无${noun.value}，可先新增一条`)
@@ -117,17 +136,33 @@ async function save(record) {
   try { await saveLifecycleRecord(props.product.id, props.kind, record); editorOpen.value = false; await Promise.all([resource.refresh(), loadOptions()]); emit('changed') }
   catch (cause) { error.value = cause.message } finally { busy.value = false }
 }
+async function removeTask() {
+  if (busy.value || !taskToDelete.value) return
+  busy.value = true
+  try {
+    await deleteProductTask(props.product.id, taskToDelete.value.id)
+    taskToDelete.value = null
+    await resource.refresh()
+    emit('changed')
+  } catch (cause) {
+    error.value = cause.message
+  } finally {
+    busy.value = false
+  }
+}
 async function importAction() { busy.value = true; try { await importProductNextAction(props.product.id); await resource.refresh(); emit('changed') } catch (cause) { error.value = cause.message } finally { busy.value = false } }
 function showHistory(row) { history.reset(); historyRecord.value = row; void history.load() }
 function showDeployments(row) { deploymentRows.reset(); deploymentVersion.value = row; void deploymentRows.load() }
 watch([keyword, status, versionID, audience], load)
 watch(() => props.initialVersionId, value => { versionID.value = value })
-watch(() => [props.product.id, props.kind], () => { detailVersion.value = null; resource.reset(); void load(); void loadOptions() }, { immediate: true })
+watch(() => [props.product.id, props.kind], () => { detailVersion.value = null; taskToDelete.value = null; resource.reset(); void load(); void loadOptions() }, { immediate: true })
 onBeforeUnmount(() => { optionsRequest++; resource.cancel(); history.cancel(); deploymentRows.cancel() })
 </script>
 <style scoped>
 .product-detail-content { display: grid; gap: var(--space-16); min-width: 0; }
 .lifecycle-description { max-width: 320px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.lifecycle-task-cell { width: 50%; }
+.lifecycle-task-description { contain: inline-size; }
 .lifecycle-version-cell { width: 50%; max-width: 480px; overflow-wrap: anywhere; }
 .lifecycle-version-goal { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; white-space: pre-wrap; overflow-wrap: anywhere; }
 </style>

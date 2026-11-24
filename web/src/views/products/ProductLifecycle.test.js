@@ -4,8 +4,8 @@ import { reactive } from 'vue'
 import ProductLifecycle from './ProductLifecycle.vue'
 import LifecycleEditor from './LifecycleEditor.vue'
 import { deploymentCount, deploymentPath } from './lifecycle-utils.js'
-const mocks = vi.hoisted(() => ({ page: vi.fn(), options: vi.fn(), save: vi.fn(), events: vi.fn(), import: vi.fn() }))
-vi.mock('../../api/product-lifecycle.js', () => ({ getLifecyclePage: mocks.page, getLifecycleOptions: mocks.options, saveLifecycleRecord: mocks.save, getDistributionEvents: mocks.events, importProductNextAction: mocks.import }))
+const mocks = vi.hoisted(() => ({ page: vi.fn(), options: vi.fn(), save: vi.fn(), remove: vi.fn(), events: vi.fn(), import: vi.fn() }))
+vi.mock('../../api/product-lifecycle.js', () => ({ getLifecyclePage: mocks.page, getLifecycleOptions: mocks.options, saveLifecycleRecord: mocks.save, deleteProductTask: mocks.remove, getDistributionEvents: mocks.events, importProductNextAction: mocks.import }))
 const product = { id: 7, name: 'App', channels: [{ id: 9, platform: 'app_store' }] }
 const mountPage = kind => mount(ProductLifecycle, { props: { product, kind }, global: { stubs: { Teleport: true, RouterLink: { template: '<a><slot /></a>' } } } })
 beforeEach(() => {
@@ -13,6 +13,7 @@ beforeEach(() => {
  mocks.page.mockResolvedValue({ items: [], total: 0 })
  mocks.options.mockResolvedValue({ versions: [{ id: 3, name: '1.0' }] })
  mocks.save.mockResolvedValue({ id: 10 })
+ mocks.remove.mockResolvedValue(null)
  mocks.events.mockResolvedValue({ items: [{ id: 1, status: 'in_review', platform_version: '1.0', notes: 'original', created_at: '2026-11-17T00:00:00Z' }], total: 1 })
 })
 describe('product lifecycle workflows', () => {
@@ -25,9 +26,12 @@ describe('product lifecycle workflows', () => {
    expect(page.get('.data-table').exists()).toBe(true)
    page.unmount()
  })
- it('keeps version rows concise and preserves complete information in details and editing', async () => {
-   const record = { id: 8, name: 'dev-123456789abc', status: 'completed', goal: '简化产品版本列表', acceptance: '部署结果已验证', notes: '根据已有平台更新补录；原部署时间和镜像信息保留。', repository_url: 'https://example.com/repository', commit_sha: '123456789abcdef123456789abcdef123456789ab', build_url: 'https://example.com/build/8', artifact_url: 'https://example.com/artifact/8', platform_release_ids: [4] }
-   mocks.page.mockResolvedValue({ items: [record], total: 1 })
+ it('keeps version rows concise and preserves historical fields when editing', async () => {
+   const historicalFields = { goal: '简化产品版本列表', acceptance: '部署结果已验证', target_date: '2026-12-01', repository_url: 'https://example.com/repository', commit_sha: '123456789abcdef123456789abcdef123456789ab', build_url: 'https://example.com/build/8', artifact_url: 'https://example.com/artifact/8' }
+   const record = { id: 8, name: 'dev-123456789abc', status: 'completed', notes: '根据已有平台更新补录；原部署时间和镜像信息保留。', platform_release_ids: [4], ...historicalFields }
+   mocks.page.mockImplementation(async (_id, kind) => kind === 'versions'
+     ? { items: [record], total: 1 }
+     : { items: [], total: 0 })
    const page = mountPage('versions'); await flushPromises()
    const table = page.get('.data-table')
    expect(table.findAll('th').map(cell => cell.text())).toEqual(['版本 / 目标', '状态', '关联部署', '操作'])
@@ -37,14 +41,18 @@ describe('product lifecycle workflows', () => {
    const detail = page.get('.product-detail-list')
    for (const value of [record.name, record.acceptance, record.notes, record.commit_sha]) expect(page.text()).toContain(value)
    for (const url of [record.repository_url, record.build_url, record.artifact_url]) expect(detail.findAll('a').map(link => link.attributes('href'))).toContain(url)
-   expect(detail.text()).not.toContain('目标日期')
+   expect(detail.text()).toContain(record.target_date)
    expect(mocks.save).not.toHaveBeenCalled()
    await page.setProps({ product: { ...product, id: 9 } }); await flushPromises()
    expect(page.find('.product-detail-list').exists()).toBe(false)
    await page.get('[aria-label="编辑版本"]').trigger('click'); await flushPromises()
    const editor = page.getComponent(LifecycleEditor)
-   expect(editor.get('[aria-label="验收项"]').element.value).toBe(record.acceptance)
-   expect(editor.get('[aria-label="记录说明"]').element.value).toBe(record.notes)
+   expect(editor.get('input[required]').element.value).toBe(record.name)
+   expect(editor.get('[aria-label="版本说明"]').element.value).toBe(record.notes)
+   expect(editor.findAll('label.form-group').map(field => field.get('.form-label').text())).toEqual(['版本号 *', '状态', '版本说明（可选）'])
+   await editor.get('[aria-label="版本说明"]').setValue('更新版本说明')
+   await editor.get('form').trigger('submit'); await flushPromises()
+   expect(mocks.save).toHaveBeenCalledWith(9, 'versions', expect.objectContaining({ ...historicalFields, notes: '更新版本说明', platform_release_ids: [4] }))
    page.unmount()
  })
  it('omits empty version fields and retains planned dates and task navigation', async () => {
@@ -61,8 +69,14 @@ describe('product lifecycle workflows', () => {
    page.unmount()
  })
  it('keeps application and platform selections separate even when their IDs match', async () => {
-   mocks.page.mockResolvedValue({ items: [{ id: 1, source: 'application', application_name: 'API', version: '1.0' }, { id: 1, source: 'platform', application_name: 'Cylism Manager', version: 'manager:1.1' }], total: 2 })
+   mocks.page.mockImplementation(async (_id, kind) => kind === 'deployments'
+     ? { items: [{ id: 1, source: 'application', application_name: 'API', version: '1.0' }, { id: 1, source: 'platform', application_name: 'Cylism Manager', version: 'manager:1.1' }], total: 2 }
+     : { items: [], total: 0 })
    const page = mount(LifecycleEditor, { props: { open: true, kind: 'versions', productId: 7 }, global: { stubs: { Teleport: true } } }); await flushPromises()
+   expect(mocks.page).not.toHaveBeenCalledWith(7, 'deployments', expect.anything(), expect.anything())
+   const toggle = page.get('button[aria-controls][aria-expanded="false"]')
+   expect(toggle.text()).toBe('关联部署记录')
+   await toggle.trigger('click'); await flushPromises()
    const checkboxes = page.findAll('input[type="checkbox"]')
    await checkboxes[0].setValue(true)
    await checkboxes[1].setValue(true)
@@ -93,12 +107,25 @@ describe('product lifecycle workflows', () => {
  it('creates a task and preserves entered fields on a failed save', async () => {
    const page = mountPage('tasks'); await flushPromises()
    await page.findAll('button').find(button => button.text() === '新增事项').trigger('click')
+   expect(page.find('select[aria-label="关联产品版本"]').exists()).toBe(false)
    await page.get('[aria-label="事项标题"]').setValue('修复登录')
    mocks.save.mockRejectedValueOnce(new Error('记录已被更新'))
    await page.getComponent(LifecycleEditor).get('form').trigger('submit'); await flushPromises()
    expect(page.text()).toContain('记录已被更新')
    expect(page.get('[aria-label="事项标题"]').element.value).toBe('修复登录')
    expect(mocks.save).toHaveBeenCalledWith(7, 'tasks', expect.objectContaining({ title: '修复登录', status: 'todo', version_id: null }))
+   page.unmount()
+ })
+ it('shows task details in a tooltip and allows assigning a version when editing', async () => {
+   const task = { id: 8, title: '部署验证', details: '验证环境配置\n检查发布结果', kind: 'action', priority: 'normal', status: 'todo', version_id: null }
+   mocks.page.mockResolvedValue({ items: [task], total: 1 })
+   const page = mountPage('tasks'); await flushPromises()
+   expect(page.get('.overflow-tooltip-trigger').attributes('aria-label')).toBe(task.details)
+   await page.get('[aria-label="编辑事项"]').trigger('click')
+   expect(page.get('[aria-label="记录说明"]').element.value).toBe(task.details)
+   await page.get('select[aria-label="关联产品版本"]').setValue('3')
+   await page.getComponent(LifecycleEditor).get('form').trigger('submit'); await flushPromises()
+   expect(mocks.save).toHaveBeenCalledWith(7, 'tasks', expect.objectContaining({ id: 8, version_id: 3, details: task.details }))
    page.unmount()
  })
  it('uses backend pagination with default ten rows and supports changing pages', async () => {
@@ -108,6 +135,43 @@ describe('product lifecycle workflows', () => {
    await page.get('[aria-label="下一页"]').trigger('click'); await flushPromises()
    expect(mocks.page).toHaveBeenLastCalledWith(7, 'tasks', expect.objectContaining({ limit: 10, offset: 10 }), expect.anything())
    page.unmount()
+ })
+ it('deletes a task only after confirmation and refreshes the list', async () => {
+   mocks.page.mockResolvedValue({ items: [{ id: 8, title: '删除验证', kind: 'action', priority: 'normal', status: 'todo' }], total: 1 })
+   const page = mountPage('tasks'); await flushPromises()
+   await page.get('[aria-label="删除事项"]').trigger('click')
+   expect(page.text()).toContain('确认删除事项“删除验证”？')
+   await page.get('[data-testid="confirm-dialog-cancel"]').trigger('click')
+   expect(mocks.remove).not.toHaveBeenCalled()
+
+   await page.get('[aria-label="删除事项"]').trigger('click')
+   mocks.page.mockResolvedValueOnce({ items: [], total: 0 })
+   await page.get('[data-testid="confirm-dialog-confirm"]').trigger('click'); await flushPromises()
+   expect(mocks.remove).toHaveBeenCalledWith(7, 8)
+   expect(page.find('[aria-label="删除事项"]').exists()).toBe(false)
+   expect(page.emitted('changed')).toHaveLength(1)
+   page.unmount()
+ })
+ it('preserves the version task selection when searching and changing pages', async () => {
+   mocks.page.mockImplementation(async (_id, kind, query) => {
+     if (kind !== 'tasks') return { items: [], total: 0 }
+     const id = query.keyword ? 12 : query.offset ? 11 : 10
+     return { items: [{ id, title: query.keyword || '原事项', kind: 'action', status: 'done' }], total: query.keyword ? 1 : 11 }
+   })
+   const record = { id: 8, name: '1.0', status: 'releasing', task_ids: [10, 11] }
+   const editor = mount(LifecycleEditor, { props: { open: true, kind: 'versions', productId: 7, record }, global: { stubs: { Teleport: true } } })
+   await flushPromises()
+   expect(editor.get('.version-task-picker input[type="checkbox"]').element.checked).toBe(true)
+   await editor.get('.version-task-picker input[type="checkbox"]').setValue(false)
+   await editor.get('.version-task-picker [aria-label="下一页"]').trigger('click'); await flushPromises()
+   expect(editor.get('.version-task-picker input[type="checkbox"]').element.checked).toBe(true)
+   await editor.get('[aria-label="搜索可选事项"]').setValue('新事项'); await flushPromises()
+   expect(mocks.page).toHaveBeenCalledWith(7, 'tasks', expect.objectContaining({ assignable: true, version_id: 8, keyword: '新事项' }), expect.anything())
+   await editor.get('.version-task-picker input[type="checkbox"]').setValue(true)
+   await editor.get('form').trigger('submit')
+   expect(editor.emitted('save')[0][0].task_ids).toEqual([11, 12])
+   expect(record.task_ids).toEqual([10, 11])
+   editor.unmount()
  })
  it('requires versions and channels before creating a distribution', async () => {
    mocks.options.mockResolvedValue({ versions: [] })
@@ -129,7 +193,7 @@ describe('product lifecycle workflows', () => {
  it('edits a version without mutating reactive source and keeps hidden-page deployment selections', async () => {
    const record = reactive({ id: 1, name: '1.0', status: 'testing', deployment_ids: [99], platform_release_ids: [42] })
    const page = mount(LifecycleEditor, { props: { open: true, kind: 'versions', productId: 7, record }, global: { stubs: { Teleport: true } } }); await flushPromises()
-   await page.get('[aria-label="版本名称"]').setValue('1.1')
+   await page.get('input[required]').setValue('1.1')
    await page.get('form').trigger('submit')
    expect(page.emitted('save')[0][0]).toMatchObject({ name: '1.1', deployment_ids: [99], platform_release_ids: [42] })
    expect(record.name).toBe('1.0')
