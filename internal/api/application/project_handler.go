@@ -21,7 +21,16 @@ func (h *ApplicationHandler) ListProjects(c *gin.Context) {
 		apiShared.DBError(c, err.Error())
 		return
 	}
-	apiShared.ListPage(c, apiShared.ProjectsDTO(projects))
+	environments, err := h.applications.ListTransferredEnvironments(apiShared.UserID(c))
+	if err != nil {
+		apiShared.DBError(c, "读取应用运行环境失败")
+		return
+	}
+	views := apiShared.ProjectsDTO(projects)
+	for i := range views {
+		views[i].TransferredEnvironments = apiShared.EnvironmentsDTO(environments[views[i].ID])
+	}
+	apiShared.ListPage(c, views)
 }
 
 func (h *ApplicationHandler) CreateProject(c *gin.Context) {

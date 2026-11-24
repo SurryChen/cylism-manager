@@ -10,7 +10,8 @@
     <SurfaceCard as="div" class="product-table-card" padding="none">
       <div class="product-toolbar">
         <span class="cell-secondary">环境定义部署目标，部署成功后可在版本中关联记录。</span>
-        <button class="btn product-primary" :disabled="!project" @click="openProjectSettings">部署设置</button>
+        <router-link v-if="project?.transferred_environments?.length" class="btn product-primary" :to="{ path: '/applications', query: { project_id: props.projectID, environment_id: project.transferred_environments[0].id } }">查看应用</router-link>
+        <button class="btn" :class="{ 'product-primary': !project?.transferred_environments?.length }" :disabled="!project" @click="openProjectSettings">部署设置</button>
         <button class="btn btn-primary" :disabled="!project" @click="openCreateEnvironment">新建环境</button>
       </div>
       <EmptyState v-if="projectEnvironmentResource.loading.value" variant="loading" message="正在读取环境..." />
@@ -62,7 +63,7 @@
       <ResourcePagination :resource="listPage" label="项目环境分页" />
     </SurfaceCard>
 
-    <SurfaceCard v-if="transferredApplications.length" padding="none" class="product-table-card section-gap">
+    <SurfaceCard v-if="transferredApplications.length && !project?.transferred_environments?.length" padding="none" class="product-table-card section-gap">
       <div class="product-toolbar"><h2 class="product-section-title">迁入的应用</h2></div>
       <div class="table-wrap">
         <DataTable>
@@ -140,8 +141,8 @@ const showEnvironmentList = computed(() => loadedProjectID.value === props.proje
 const namespacePreview = computed(() => editingEnvironment.value && environmentForm.value.name === editingEnvironment.value.name
   ? editingEnvironment.value.namespace
   : project.value?.slug ? `project-${project.value.slug}-${environmentForm.value.name}` : '')
-function environmentApplicationCount(environmentID) { return applications.value.filter(application => application.environment_id === environmentID).length }
-function environmentHasApplications(environmentID) { return environmentApplicationCount(environmentID) > 0 }
+function environmentApplicationCount(environmentID) { return applications.value.filter(application => application.environment_id === environmentID && (!application.management_project_id || String(application.management_project_id) === props.projectID)).length }
+function environmentHasApplications(environmentID) { return applications.value.some(application => application.environment_id === environmentID) }
 function clusterName(clusterID) { return clusters.value.find(cluster => cluster.id === Number(clusterID))?.name || (clusterID ? `集群 #${clusterID}` : '未绑定') }
 
 const listPage = useListPage(() => '/projects/' + encodeURIComponent(props.projectID) + '/environments', environments, readError)

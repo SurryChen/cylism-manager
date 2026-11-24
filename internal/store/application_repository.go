@@ -26,6 +26,28 @@ func (s *Store) ListProjects() ([]model.Project, error) {
 	return projects, err
 }
 
+func (s *Store) ListTransferredEnvironments(ownerID uint) (map[uint][]model.Environment, error) {
+	type row struct {
+		ManagementProjectID uint
+		model.Environment
+	}
+	result := make(map[uint][]model.Environment)
+	if ownerID == 0 {
+		return result, nil
+	}
+	var rows []row
+	err := s.db.Table("applications").Select("DISTINCT applications.management_project_id, environments.*").
+		Joins("JOIN environments ON environments.id = applications.environment_id AND environments.project_id = applications.project_id").
+		Joins("JOIN projects origin ON origin.id = environments.project_id").
+		Joins("JOIN projects destination ON destination.id = applications.management_project_id").
+		Where("origin.owner_id = ? AND destination.owner_id = ? AND origin.id <> destination.id", ownerID, ownerID).
+		Order("environments.name, environments.id").Scan(&rows).Error
+	for _, row := range rows {
+		result[row.ManagementProjectID] = append(result[row.ManagementProjectID], row.Environment)
+	}
+	return result, err
+}
+
 func (s *Store) GetProject(id uint) (*model.Project, error) {
 	var project model.Project
 	err := s.db.Preload("Environments").Preload("DefaultImageRegistry").First(&project, id).Error

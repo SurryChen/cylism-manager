@@ -1,6 +1,6 @@
 <template>
   <div class="product-page">
-    <SectionTabsHeader title="研发工作台" :tabs="[{ id: 'overview', label: '总览' }]" active-tab="overview"><template #actions><div class="product-actions"><router-link class="btn btn-sm" to="/projects">项目中心</router-link><button class="icon-button" title="刷新工作台" aria-label="刷新工作台" :disabled="resource.loading.value" @click="load"><RefreshCw :size="15" /></button></div></template></SectionTabsHeader>
+    <SectionTabsHeader v-if="!embedded" title="研发工作台" :tabs="[{ id: 'overview', label: '总览' }]" active-tab="overview"><template #actions><div class="product-actions"><router-link class="btn btn-sm" to="/projects">项目中心</router-link><button class="icon-button" title="刷新工作台" aria-label="刷新工作台" :disabled="resource.loading.value" @click="load"><RefreshCw :size="15" /></button></div></template></SectionTabsHeader>
     <EmptyState v-if="resource.loading.value" variant="loading" message="正在读取工作台..." />
     <EmptyState v-else-if="resource.error.value" message="工作台读取失败"><template #action><button class="btn btn-sm" @click="load">重试</button></template></EmptyState>
     <div v-else class="product-workbench-content">
@@ -11,7 +11,7 @@
         <SurfaceCard class="product-stat"><strong :class="{ 'product-warning': summary.needsAction.length }">{{ summary.needsAction.length }}</strong><span>发行待处理 · {{ summary.waiting.length }} 项等待审核</span></SurfaceCard>
       </div>
       <SurfaceCard class="product-table-card" padding="none">
-        <div class="product-toolbar"><h2 class="product-workbench-heading">下一步行动</h2><SelectMenu v-model="actionFilter" aria-label="行动范围" class="product-stage-filter"><option value="all">全部行动</option><option value="due">临近与逾期</option><option value="blocked">受阻事项</option></SelectMenu></div>
+        <div class="product-toolbar"><h2 class="product-workbench-heading">下一步行动</h2><SelectMenu v-model="actionFilter" aria-label="行动范围" class="product-stage-filter"><option value="all">全部行动</option><option value="due">临近与逾期</option><option value="blocked">受阻事项</option></SelectMenu><button v-if="embedded" class="icon-button product-primary" title="刷新待办" aria-label="刷新待办" @click="load"><RefreshCw :size="15" /></button></div>
         <EmptyState v-if="!actions.length" :message="actionFilter === 'due' ? '暂无临近或逾期行动' : '暂无下一步行动，在项目详情中设置'" />
         <div v-else class="table-wrap"><DataTable><thead><tr><th>项目</th><th>事项 / 下一步行动</th><th>状态</th><th>截止日期</th></tr></thead><tbody><tr v-for="task in actionPage.pagedItems.value" :key="task.id"><td><router-link :to="{ path: projectPath(task.product_id), query: { tab: 'tasks' } }">{{ productName(task.product_id) }}</router-link></td><td>{{ task.title }}<span v-if="task.legacy" class="cell-secondary product-line">原下一步行动 · 可在事项页转为事项</span></td><td><span class="badge" :class="lifecycleClass(task.status)">{{ labelFor(taskStatuses, task.status) }}</span></td><td>{{ dateOnly(task.due_date) || '未设截止日期' }}<span v-if="task.due_date" class="badge product-line" :class="dueClass(dueState(task.due_date, now))">{{ dueLabel(dueState(task.due_date, now)) }}</span></td></tr></tbody></DataTable></div>
         <PaginationControls :page="actionPage.page.value" :page-size="actionPage.pageSize.value" :total="actionPage.total.value" @page-change="actionPage.changePage" @page-size-change="actionPage.changePageSize" />
@@ -51,6 +51,7 @@ import { dueState, dueLabel, dueClass, dateOnly, stages, platforms, labelFor } f
 import '../../styles/products.css'
 
 const resource = useAsyncResource(getProductWorkbench, {})
+defineProps({ embedded: Boolean })
 const error = ref(''), actionFilter = ref('all'), now = ref(new Date())
 const summary = computed(() => developmentSummary(resource.data.value || {}, now.value))
 const actions = computed(() => actionFilter.value === 'due' ? summary.value.due : actionFilter.value === 'blocked' ? summary.value.actions.filter(task => task.status === 'blocked') : summary.value.actions)

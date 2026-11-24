@@ -34,13 +34,8 @@ func (h *ApplicationHandler) WorkspaceReleasePage(c *gin.Context) {
 		apiShared.NotFound(c, "项目不存在")
 		return
 	}
-	if _, err := h.queries.ResolveEnvironment(projectID, environmentID); err != nil {
-		apiShared.BadRequest(c, "环境不属于所选项目")
-		return
-	}
-	apps, err := h.queries.ListApplications(projectID, environmentID)
-	if err != nil {
-		apiShared.DBError(c, "读取应用失败")
+	_, apps, _, ok := h.workspaceScope(c, projectID, environmentID)
+	if !ok {
 		return
 	}
 	ids := make([]uint, 0, len(apps))

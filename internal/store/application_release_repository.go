@@ -43,14 +43,26 @@ func (s *Store) RecoverInterruptedMigrationReleases() error {
 }
 
 func (s *Store) CreateRelease(release *model.Release) error {
-	return s.db.Create(release).Error
+	if release.ExpectedEnvironmentID == 0 {
+		return s.db.Create(release).Error
+	}
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		var app model.Application
+		if err := tx.Select("environment_id").First(&app, release.ApplicationID).Error; err != nil {
+			return err
+		}
+		if app.EnvironmentID != release.ExpectedEnvironmentID {
+			return model.ErrApplicationNamespaceMoveChanged
+		}
+		return tx.Create(release).Error
+	})
 }
 
 func (s *Store) UpdateApplication(application *model.Application) error {
 	if err := application.SetCapabilities(application.Capabilities); err != nil {
 		return err
 	}
-	return s.db.Omit("ManagementProjectID").Save(application).Error
+	return s.db.Omit("ManagementProjectID", "ProjectID", "EnvironmentID").Save(application).Error
 }
 
 func (s *Store) CreateApplicationManagedFile(file *model.ApplicationManagedFile) error {

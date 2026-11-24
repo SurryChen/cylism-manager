@@ -2,9 +2,10 @@
   <div @click="closeWorkspacePicker" @keydown.esc="closeWorkspacePicker">
     <SectionTabsHeader v-if="section === 'workspace'" title="应用部署" :tabs="workspaceTabs" :active-tab="activeWorkspaceTab" test-id-prefix="workspace-tab" @select="selectWorkspaceTab" />
     <PageHeader v-else :title="pageMeta.title" :description="pageMeta.subtitle" sticky><template #actions><button class="btn btn-primary" @click="showProjectModal = true">+ 新建项目</button></template></PageHeader>
-    <FeedbackBanner v-if="readError" data-testid="applications-read-error" tone="warning" :message="readError" />
+    <FeedbackBanner v-if="readError && !showRegistries" data-testid="applications-read-error" tone="warning" :message="readError" />
 
-    <template v-if="section === 'workspace'">
+    <ImageRegistries v-if="showRegistries" embedded />
+    <template v-else-if="section === 'workspace'">
       <SurfaceCard as="div" padding="none" class="workspace-list" data-testid="workspace-list">
         <div class="workspace-toolbar">
           <div class="workspace-context">
@@ -27,8 +28,7 @@
             <span v-if="workspaceReady && workspaceOverview && activeWorkspaceTab === 'runtime'" class="workspace-count" title="依据 Pod 就绪状态汇总，未探测应用请求或域名连通性">组件就绪 {{ readyApplicationCount }}/{{ workspaceOverview.applications_total }}</span>
             <span v-if="workspaceReady && workspaceOverview" class="workspace-count">{{ workspaceCount }} 条记录</span>
             <template v-if="activeWorkspaceTab === 'runtime'">
-              <button class="btn btn-sm" :disabled="!workspaceOverview" @click="openCatalogImport">从商城导入</button>
-              <button class="btn btn-sm btn-primary" :disabled="!workspaceOverview" @click="openCreateApplication">创建部署组件</button>
+              <button class="btn btn-sm btn-primary" @click="showCreateMenu = true">新建应用</button>
             </template>
           </div>
         </div>
@@ -46,7 +46,11 @@
                 <tr v-for="app in applications" :key="app.id" class="clickable" @click="openDetails(app)"><td class="cell-primary">{{ app.name }}</td><td><span class="badge" :class="runtimeBadge(app.runtime?.status)">{{ runtimeLabel(app.runtime?.status) }}</span></td><td>{{ app.runtime?.status === 'not_released' ? '-' : `${app.runtime?.ready_pods ?? 0}/${app.runtime?.total_pods ?? 0}` }}</td><td>{{ app.active_release?.version || '-' }}</td><td><span v-if="app.latest_release" :class="['badge', releaseBadge(app.latest_release.status)]">{{ releaseLabel(app.latest_release.status) }}</span><span v-else>-</span></td><TableActionCell @click.stop><div class="btn-group"><button class="btn btn-sm" @click="openDetails(app)">查看运行</button><button class="btn btn-sm" @click="openRelease(app)">发布版本</button><button v-if="!app.latest_release && !app.endpoint_count" class="btn btn-sm btn-danger" :title="`删除部署组件 ${app.name}`" @click="deleteApplicationTarget = app">删除</button></div></TableActionCell></tr>
               </tbody></DataTable></div>
             </div>
-            <EmptyState v-else-if="applicationsLoaded" message="当前项目与环境下还没有部署组件" />
+            <EmptyState v-else-if="applicationsLoaded" message="当前项目与环境下还没有部署组件">
+              <template v-if="transferredEnvironments.length && !workspaceUsesTransferredEnvironment" #action>
+                <button class="btn btn-sm" @click="selectWorkspaceEnvironment(transferredEnvironments[0].id)">查看项目在其他环境运行的应用</button>
+              </template>
+            </EmptyState>
           </template>
         <template v-else-if="activeWorkspaceTab === 'releases'">
           <div v-if="workspaceReleases.length" class="workspace-table-content"><div class="table-wrap workspace-applications-table-wrap"><DataTable class="workspace-applications-table"><thead><tr><th>部署组件</th><th>版本</th><th>镜像</th><th>状态</th><th>发布时间</th><TableActionCell header /></tr></thead><tbody>
@@ -89,16 +93,25 @@
       </SurfaceCard>
     </template>
 
+    <BaseModal teleport :open="showCreateMenu" title="新建应用" @close="showCreateMenu = false">
+      <p v-if="!canCreateInWorkspace" class="form-hint">选择该项目下已绑定集群的环境后，即可创建或导入应用。</p>
+      <template #actions>
+        <router-link class="btn" to="/applications/catalog" @click="showCreateMenu = false">管理应用模板</router-link>
+        <button class="btn" :disabled="!canCreateInWorkspace" @click="showCreateMenu = false; openCatalogImport()">从模板导入</button>
+        <button class="btn btn-primary" :disabled="!canCreateInWorkspace" @click="showCreateMenu = false; openCreateApplication()">手动创建</button>
+      </template>
+    </BaseModal>
+
     <div v-if="showCreate" class="overlay" @click.self="showCreate = false"><div class="modal"><h2 class="modal-title">创建应用</h2><form @submit.prevent="createApplication">
       <div class="form-group"><label class="form-label">部署目标</label><input class="form-input" :value="`${workspaceProject?.name || ''} · ${workspaceEnvironment?.name || ''} · ${clusterName(workspaceEnvironment?.cluster_id)} · ${workspaceEnvironment?.namespace || ''}`" disabled /></div>
       <div class="form-group"><label class="form-label">应用名</label><input v-model.trim="createForm.applicationName" class="form-input" required pattern="[a-z0-9]([-a-z0-9]*[a-z0-9])?" maxlength="63" title="仅支持小写字母、数字和连字符，且以字母或数字开头和结尾" placeholder="order-api" /><p class="form-hint">仅支持小写字母、数字和连字符，最长 63 位。</p></div>
       <div class="modal-actions"><button type="button" class="btn" @click="showCreate = false">取消</button><button class="btn btn-primary" :disabled="submitting">{{ submitting ? '创建中...' : '创建' }}</button></div>
     </form></div></div>
 
-    <Teleport to="body"><div v-if="showCatalogImport" class="overlay" @click.self="showCatalogImport = false"><div class="modal workspace-import-modal"><h2 class="modal-title">从商城导入</h2>
+    <Teleport to="body"><div v-if="showCatalogImport" class="overlay" @click.self="showCatalogImport = false"><div class="modal workspace-import-modal"><h2 class="modal-title">从模板导入</h2>
       <p class="workspace-import-target">{{ workspaceProject?.name }} · {{ workspaceEnvironment?.name }} · {{ workspaceEnvironment?.namespace }}</p>
       <EmptyState v-if="catalogLoading" variant="loading" message="加载中..." />
-      <EmptyState v-else-if="enabledCatalogItems.length === 0" message="商城中没有已启用的应用" />
+      <EmptyState v-else-if="enabledCatalogItems.length === 0" message="暂无已启用的应用模板" />
       <div v-else class="workspace-import-options"><label v-for="item in enabledCatalogItems" :key="item.id" class="workspace-import-option"><input v-model="selectedCatalogIDs" type="checkbox" :value="item.id" /><span>{{ item.name }}</span><span class="cell-secondary">{{ item.components.length }} 个组件</span></label></div>
       <div v-if="selectedCatalogItems.length" class="workspace-import-selection"><div v-for="item in selectedCatalogItems" :key="item.id" class="workspace-import-package"><strong>{{ item.name }}</strong><div v-for="component in item.components" :key="component.application_name" class="workspace-import-component"><span>{{ component.name }} <small>{{ component.application_name }}:{{ component.spec.container_port }}</small></span><span v-if="catalogConflicts.includes(component.application_name)" class="badge badge-danger">名称冲突</span><span v-else class="badge badge-online">将创建默认模板</span></div></div></div>
       <div class="modal-actions"><button class="btn" @click="showCatalogImport = false">取消</button><button class="btn btn-primary" :disabled="submitting || catalogLoading || selectedCatalogItems.length === 0 || catalogConflicts.length > 0" @click="importCatalogItems">{{ submitting ? '导入中...' : `确认导入（${selectedCatalogItems.length}）` }}</button></div>
@@ -180,6 +193,8 @@ import FeedbackBanner from '../../components/FeedbackBanner.vue'
 import PageHeader from '../../components/PageHeader.vue'
 import SectionTabsHeader from '../../components/SectionTabsHeader.vue'
 import SurfaceCard from '../../components/SurfaceCard.vue'
+import BaseModal from '../../components/BaseModal.vue'
+import ImageRegistries from './ImageRegistries.vue'
 
 const props = defineProps({ section: { type: String, default: 'workspace' } })
 const router = useRouter()
@@ -197,6 +212,7 @@ const readError = ref('')
 const mutationError = ref('')
 const submitting = ref(false)
 const showCreate = ref(false)
+const showCreateMenu = ref(false)
 const showProjectModal = ref(false)
 const editingProject = ref(null)
 const projectDeleteTarget = ref(null)
@@ -209,8 +225,9 @@ const createForm = ref(newApplicationForm())
 const projectForm = ref({ name: '', slug: '', description: '', defaultImageRegistryID: 0 })
 const releaseForm = ref(newReleaseForm())
 const workspaceOverview = ref(null)
-const workspaceTabs = [{ id: 'runtime', label: '运行概览' }, { id: 'releases', label: '发布记录' }, { id: 'config', label: '部署配置' }, { id: 'access', label: '访问入口' }]
+const workspaceTabs = [{ id: 'runtime', label: '运行概览' }, { id: 'releases', label: '发布记录' }, { id: 'config', label: '部署配置' }, { id: 'access', label: '访问入口' }, { id: 'registries', label: '镜像仓库' }]
 const activeWorkspaceTab = ref('runtime')
+const showRegistries = computed(() => props.section === 'workspace' && activeWorkspaceTab.value === 'registries')
 const workspaceTemplates = ref({})
 const workspaceTemplatesLoading = ref(false)
 const workspaceTemplatesError = ref('')
@@ -232,10 +249,20 @@ const pageMeta = computed(() => ({
 const workspaceProjectID = computed(() => Number(route.query.project_id) || 0)
 const workspaceEnvironmentID = computed(() => Number(route.query.environment_id) || 0)
 const workspaceProject = computed(() => projects.value.find(item => item.id === workspaceProjectID.value) || null)
-const workspaceEnvironment = computed(() => workspaceProject.value?.environments?.find(item => item.id === workspaceEnvironmentID.value) || null)
+const transferredEnvironments = computed(() => workspaceProject.value?.transferred_environments || [])
+const workspaceUsesTransferredEnvironment = computed(() => transferredEnvironments.value.some(item => item.id === workspaceEnvironmentID.value))
+const availableWorkspaceEnvironments = computed(() => [...(workspaceProject.value?.environments || []), ...transferredEnvironments.value])
+const workspaceEnvironment = computed(() => availableWorkspaceEnvironments.value.find(item => item.id === workspaceEnvironmentID.value) || null)
 const workspaceProjectOptions = computed(() => projects.value.map(project => ({ value: project.id, label: project.name, description: project.description || '未设置项目说明' })))
-const workspaceEnvironmentOptions = computed(() => (workspaceProject.value?.environments || []).map(environment => ({ value: environment.id, label: environment.name, triggerLabel: `${environment.name} · ${clusterName(environment.cluster_id)}`, description: `${clusterName(environment.cluster_id)} · ${environment.namespace}` })))
+const workspaceEnvironmentOptions = computed(() => availableWorkspaceEnvironments.value.map(environment => {
+  const origin = environment.project_id && environment.project_id !== workspaceProjectID.value
+    ? projects.value.find(project => project.id === environment.project_id)?.name
+    : null
+  const label = origin ? `${origin} / ${environment.name}` : environment.name
+  return { value: environment.id, label, triggerLabel: `${label} · ${clusterName(environment.cluster_id)}`, description: `${clusterName(environment.cluster_id)} · ${environment.namespace}` }
+}))
 const workspaceReady = computed(() => !!workspaceProject.value && !!workspaceEnvironment.value)
+const canCreateInWorkspace = computed(() => Boolean(workspaceOverview.value) && !workspaceUsesTransferredEnvironment.value)
 const workspaceEmptyMessage = computed(() => {
   if (!workspaceProject.value) return '请先选择项目与环境'
   if (!workspaceEnvironmentOptions.value.length) return '当前项目暂无部署环境'
@@ -268,7 +295,20 @@ watch(workspaceResource.response, response => {
 watch(workspaceResource.error, cause => { if (cause) readError.value = cause.message || '加载应用部署失败' })
 function defaultWorkspaceTemplate(applicationID) { const templates = workspaceTemplates.value[applicationID] || []; return templates.find(item => item.is_default) || templates.find(item => item.enabled) || templates[0] }
 function formatWorkspaceTime(value) { return value ? new Date(value).toLocaleString('zh-CN') : '-' }
-function selectWorkspaceTab(tab) { activeWorkspaceTab.value = tab; workspaceTemplateLoadID++; workspaceTemplatesLoading.value = false; if (tab === 'releases' && workspaceOverview.value) { workspaceResource.cancel(); void loadWorkspaceReleases() } else void fetchWorkspace() }
+function selectWorkspaceTab(tab) {
+  if (tab === 'registries' || route.query.tab === 'registries') {
+    void router.push({ path: '/applications', query: { ...route.query, tab } })
+    return
+  }
+  activeWorkspaceTab.value = tab
+  workspaceTemplateLoadID++
+  workspaceTemplatesLoading.value = false
+  if (!workspaceReady.value || workspaceEnvironment.value?.cluster_id === 0) return
+  if (tab === 'releases' && workspaceOverview.value) {
+    workspaceResource.cancel()
+    void loadWorkspaceReleases()
+  } else void fetchWorkspace()
+}
 async function loadWorkspaceTemplates() {
   const loadID = ++workspaceTemplateLoadID
   const apps = [...applications.value]
@@ -350,7 +390,7 @@ async function loadSection(section) {
   if (!workspaceProjectID.value) {
     const saved = JSON.parse(localStorage.getItem('cylism.application-workspace') || '{}')
     const savedProject = projects.value.find(project => project.id === Number(saved.project_id))
-    const savedEnvironment = savedProject?.environments?.find(environment => environment.id === Number(saved.environment_id))
+    const savedEnvironment = [...(savedProject?.environments || []), ...(savedProject?.transferred_environments || [])].find(environment => environment.id === Number(saved.environment_id))
     if (savedProject && savedEnvironment) {
       await updateWorkspace(savedProject.id, savedEnvironment.id)
       return
@@ -366,12 +406,12 @@ async function loadSection(section) {
 
 async function openCreateApplication() {
   mutationError.value = ''
-  if (!workspaceReady.value || workspaceEnvironment.value?.cluster_id === 0) { mutationError.value = '请先为环境绑定集群'; return }
+  if (!canCreateInWorkspace.value || !workspaceReady.value || workspaceEnvironment.value?.cluster_id === 0) { mutationError.value = '请选择该项目下已绑定集群的环境'; return }
   createForm.value = { projectID: workspaceProjectID.value, environmentID: workspaceEnvironmentID.value, applicationName: '' }
   showCreate.value = true
 }
 async function openCatalogImport() {
-  if (!workspaceReady.value || !workspaceEnvironment.value?.cluster_id) return
+  if (!canCreateInWorkspace.value || !workspaceReady.value || !workspaceEnvironment.value?.cluster_id) return
   mutationError.value = ''
   selectedCatalogIDs.value = []
   catalogItems.value = []
@@ -382,7 +422,7 @@ async function openCatalogImport() {
   finally { catalogLoading.value = false }
 }
 async function importCatalogItems() {
-  if (!workspaceReady.value || !selectedCatalogItems.value.length || catalogConflicts.value.length) return
+  if (!canCreateInWorkspace.value || !workspaceReady.value || !selectedCatalogItems.value.length || catalogConflicts.value.length) return
   submitting.value = true; mutationError.value = ''
   try {
     await importApplicationCatalogItems({ project_id: workspaceProjectID.value, environment_id: workspaceEnvironmentID.value, item_ids: selectedCatalogItems.value.map(item => item.id) })
@@ -410,7 +450,12 @@ async function openProjectEnvironments(project) {
   await router.push({ path: `/projects/${project.id}`, query: { tab: 'environments' } })
 }
 async function updateWorkspace(projectID, environmentID) { const query = {}; if (projectID) query.project_id = String(projectID); if (environmentID) query.environment_id = String(environmentID); if (projectID && environmentID) localStorage.setItem('cylism.application-workspace', JSON.stringify({ project_id: projectID, environment_id: environmentID })); await router.push({ path: '/applications', query }) }
-async function selectWorkspaceProject(value) { const projectID = Number(value) || 0; const project = projects.value.find(item => item.id === projectID); const environmentID = project?.environments?.length === 1 ? project.environments[0].id : 0; await updateWorkspace(projectID, environmentID) }
+async function selectWorkspaceProject(value) {
+  const projectID = Number(value) || 0
+  const project = projects.value.find(item => item.id === projectID)
+  const environments = [...(project?.environments || []), ...(project?.transferred_environments || [])]
+  await updateWorkspace(projectID, environments.length === 1 ? environments[0].id : 0)
+}
 async function selectWorkspaceEnvironment(value) { await updateWorkspace(workspaceProjectID.value, Number(value) || 0) }
 
 async function openRelease(app) {
@@ -433,7 +478,20 @@ async function openDetails(app) { await router.push(`/applications/${app.id}`) }
 async function openApplicationTab(app, tab) { await router.push({ path: `/applications/${app.id}`, query: { tab } }) }
 async function openReleaseDetails(release) { await router.push(`/applications/${release.application_id}/releases/${release.id}`) }
 
-watch(() => [props.section, route.query.project_id, route.query.environment_id], () => { workspaceResource.reset(); workspaceOverview.value = null; applications.value = []; workspaceReleaseResource.reset(); showCatalogImport.value = false; workspaceTemplateLoadID++; workspaceTemplates.value = {}; workspaceTemplatesLoading.value = false; loadSection(props.section) }, { immediate: true })
+watch(() => [props.section, route.query.project_id, route.query.environment_id, route.query.tab], ([, , , tab], previous) => {
+  if (!previous?.length || tab !== previous[3]) activeWorkspaceTab.value = workspaceTabs.some(item => item.id === tab) ? tab : 'runtime'
+  workspaceResource.reset()
+  workspaceOverview.value = null
+  applications.value = []
+  workspaceReleaseResource.reset()
+  showCatalogImport.value = false
+  showCreateMenu.value = false
+  workspaceTemplateLoadID++
+  workspaceTemplates.value = {}
+  workspaceTemplatesLoading.value = false
+  if (showRegistries.value) sectionLoadID++
+  else void loadSection(props.section)
+}, { immediate: true })
 watch(() => [releaseForm.value.template_id, releaseForm.value.version, releaseForm.value.migration_target], () => { releasePreflight.value = null })
 </script>
 

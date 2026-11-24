@@ -100,6 +100,7 @@ GET /api/applications/:id/deployment-templates
 GET /api/applications/:id/deployment-templates/:templateID
 GET /api/applications/:id/endpoints
 GET /api/applications/:id/managed-files
+GET /api/applications/:id/namespace-move
 GET /api/applications/:id/pods
 GET /api/applications/:id/pods/:pod/logs
 GET /api/applications/:id/project-transfer
@@ -568,6 +569,7 @@ PUT /api/application-catalog/:catalogID
 PUT /api/applications/:id/capabilities
 PUT /api/applications/:id/deployment-templates/:templateID
 PUT /api/applications/:id/endpoints/:endpointID
+PUT /api/applications/:id/namespace-move
 PUT /api/applications/:id/project-transfer
 PUT /api/applications/:id/workload-kind
 PUT /api/certs/dns-credentials/:id

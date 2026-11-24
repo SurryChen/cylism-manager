@@ -1,6 +1,7 @@
 <template>
   <div class="catalog-page">
-    <SectionTabsHeader title="应用商城" :tabs="[{ id: 'catalog', label: '应用目录' }]" active-tab="catalog">
+    <PageBackLink to="/applications">返回应用部署</PageBackLink>
+    <SectionTabsHeader title="应用模板" :tabs="[{ id: 'catalog', label: '模板列表' }]" active-tab="catalog">
       <template #actions><span class="catalog-count">共 {{ listPage.total.value }} 个应用</span></template>
     </SectionTabsHeader>
     <FeedbackBanner v-if="readError" tone="warning" :message="readError" />
@@ -8,11 +9,11 @@
       <div class="catalog-toolbar">
         <div class="catalog-toolbar-actions">
           <button class="btn" @click="openSourceImport">导入应用</button>
-          <button class="btn btn-primary" @click="showCreate = true"><Plus :size="15" />新增商城应用</button>
+          <button class="btn btn-primary" @click="showCreate = true"><Plus :size="15" />新建模板</button>
         </div>
       </div>
       <EmptyState v-if="loading" variant="loading" message="加载中..." />
-      <EmptyState v-else-if="items.length === 0" message="商城中还没有应用" />
+      <EmptyState v-else-if="items.length === 0" message="暂无应用模板" />
       <div v-else class="table-wrap">
         <DataTable class="catalog-table">
           <thead><tr><th>商城应用</th><th>部署组件</th><th>状态</th><th>配置版本</th><TableActionCell header /></tr></thead>
@@ -55,6 +56,7 @@
 </template>
 
 <script setup>
+import PageBackLink from '../../components/PageBackLink.vue'
 import DataTable from '../../components/DataTable.vue'
 import TableActionCell from '../../components/TableActionCell.vue'
 import ResourcePagination from '../../components/ResourcePagination.vue'

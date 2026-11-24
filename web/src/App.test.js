@@ -67,13 +67,14 @@ describe('Glass UI application shell', () => {
     expect(primaryNavigation.get('[aria-current="page"]').attributes('href')).toBe('#/projects')
     expect(primaryNavigation.text()).not.toContain('部署与交付')
     const navigation = wrapper.get('[data-testid="desktop-navigation"]')
-    const destinations = ['项目中心', '研发工作台', '应用部署', '应用商城', '镜像仓库']
+    const destinations = ['项目中心', '应用部署']
     expect(navigation.findAll('.sidebar-link').map(link => link.text())).toEqual(destinations)
     const mobileProjects = wrapper.get('[data-testid="mobile-navigation"] a[href="#/projects"]').element.parentElement
     expect([...mobileProjects.querySelectorAll('.sidebar-link')].map(link => link.textContent.trim())).toEqual(destinations)
     expect(navigation.get('.sidebar-link.is-active').text()).toBe('项目中心')
     await router.push('/personal')
-    expect(navigation.get('.sidebar-link.is-active').text()).toBe('研发工作台')
+    expect(router.currentRoute.value.fullPath).toBe('/projects?tab=workbench')
+    expect(navigation.get('.sidebar-link.is-active').text()).toBe('项目中心')
     await router.push('/applications?project_id=3&environment_id=2')
     expect(primaryNavigation.get('[aria-current="page"]').text()).toBe('项目')
     expect(navigation.findAll('.sidebar-link').map(link => link.text())).toEqual(destinations)
@@ -173,7 +174,7 @@ describe('Glass UI application shell', () => {
 
     expect(wrapper.get('[data-testid="primary-navigation"]').get('[aria-current="page"]').text()).toBe('项目')
     expect(navigation.text()).not.toContain('项目与环境')
-    expect(navigation.text()).toContain('镜像仓库')
+    expect(navigation.text()).not.toContain('镜像仓库')
     expect(navigation.text()).toContain('应用部署')
     expect(navigation.text()).not.toContain('全局概览')
     expect(navigation.text()).not.toContain('应用栈')

@@ -2,7 +2,6 @@ import { createRouter, createWebHashHistory } from 'vue-router'
 import { getAccessToken } from '../api/index.js'
 
 const Dashboard = () => import('../views/Dashboard.vue')
-const PersonalWorkbench = () => import('../views/products/PersonalWorkbench.vue')
 const ProductCenter = () => import('../views/products/ProductCenter.vue')
 const ProductDetail = () => import('../views/products/ProductDetail.vue')
 const Servers = () => import('../views/cluster/Servers.vue')
@@ -17,7 +16,6 @@ const ApplicationCatalog = () => import('../views/applications/ApplicationCatalo
 const ApplicationCatalogDetail = () => import('../views/applications/ApplicationCatalogDetail.vue')
 const ApplicationDetails = () => import('../views/applications/ApplicationDetails.vue')
 const ReleaseDetails = () => import('../views/applications/ReleaseDetails.vue')
-const ImageRegistries = () => import('../views/applications/ImageRegistries.vue')
 const Domains = () => import('../views/applications/Domains.vue')
 const Monitoring = () => import('../views/Monitoring.vue')
 const ClusterStorage = () => import('../views/cluster/ClusterStorage.vue')
@@ -35,7 +33,7 @@ const MySQLClusterDetail = () => import('../views/cloud/MySQLClusterDetail.vue')
 const routes = [
   { path: '/login', component: Login, meta: { public: true } },
   { path: '/', component: Dashboard },
-  { path: '/personal', component: PersonalWorkbench },
+  { path: '/personal', redirect: to => ({ path: '/projects', query: { ...to.query, tab: 'workbench' } }) },
   { path: '/projects', component: ProductCenter, props: { projectMode: true } },
   { path: '/projects/:projectID', component: ProductDetail, props: { projectMode: true } },
   { path: '/products', component: ProductCenter, props: { projectMode: true } },
@@ -53,7 +51,7 @@ const routes = [
   { path: '/applications/projects/:projectID', redirect: to => ({ path: '/projects/' + to.params.projectID, query: { ...to.query, tab: 'environments' } }) },
   { path: '/applications/overview', redirect: '/applications' },
   { path: '/applications/releases', redirect: '/applications' },
-  { path: '/applications/registries', component: ImageRegistries },
+  { path: '/applications/registries', redirect: to => ({ path: '/applications', query: { ...to.query, tab: 'registries' } }) },
   { path: '/applications/domains', component: Domains },
   { path: '/applications/domains/:domainID/operations', component: CertificateOperations },
   { path: '/applications/:applicationID/releases/:releaseID', component: ReleaseDetails, props: true },

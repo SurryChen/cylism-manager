@@ -43,6 +43,14 @@ export function transferApplicationProject(applicationID, fromProjectID, toProje
   return putRequest(`/applications/${segment(applicationID)}/project-transfer`, { from_project_id: fromProjectID, to_project_id: toProjectID })
 }
 
+export function getApplicationNamespaceMoveOptions(applicationID, options) {
+  return api.get(`/applications/${segment(applicationID)}/namespace-move`, options)
+}
+
+export function moveApplicationNamespace(applicationID, payload) {
+  return putRequest(`/applications/${segment(applicationID)}/namespace-move`, payload)
+}
+
 export function getProjectEnvironments(projectID, options) {
   return api.get(`/projects/${segment(projectID)}/environments`, options)
 }

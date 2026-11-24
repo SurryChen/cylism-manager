@@ -39,6 +39,8 @@ func registerApplicationRoutes(r *gin.Engine, apiGroup *gin.RouterGroup, h *appl
 	applications.GET("/:id", h.GetApplication)
 	applications.GET("/:id/project-transfer", h.ApplicationProjectTransferOptions)
 	applications.PUT("/:id/project-transfer", h.TransferApplicationProject)
+	applications.GET("/:id/namespace-move", h.ApplicationNamespaceMoveOptions)
+	applications.PUT("/:id/namespace-move", h.MoveApplicationNamespace)
 	applications.PUT("/:id/capabilities", h.UpdateCapabilities)
 	applications.GET("/:id/managed-files", h.ListManagedFiles)
 	applications.POST("/:id/delegations", h.CreateDelegation)
@@ -93,5 +95,5 @@ func registerApplicationRoutes(r *gin.Engine, apiGroup *gin.RouterGroup, h *appl
 	sessions.GET("/context", h.IntegrationSessionContext)
 	r.POST("/api/applications/:id/deployments", h.DeployWebhook)
 
-	apiGroup.GET("/workspace/overview", h.HandleWorkspace((*applicationapi.ApplicationHandler).WorkspaceOverview))
+	apiGroup.GET("/workspace/overview", h.WorkspaceOverview)
 }

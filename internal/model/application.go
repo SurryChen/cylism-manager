@@ -115,6 +115,17 @@ var ErrApplicationProjectChanged = errors.New("应用所属项目已变更，请
 var ErrApplicationTransferBusy = errors.New("应用有正在进行的发布，请在发布完成后重试")
 var ErrApplicationTransferTarget = errors.New("请选择有权限的当前项目")
 
+type ApplicationNamespaceMove struct {
+	ApplicationID       uint
+	SourceEnvironmentID uint
+	TargetEnvironmentID uint
+	ReleaseID           uint
+	OwnerID             uint
+	DomainIDs           []uint
+}
+
+var ErrApplicationNamespaceMoveChanged = errors.New("应用、环境或正在运行的版本已变更，请重新检查迁移")
+
 const (
 	ApplicationEndpointAccessPublic           = "public"
 	ApplicationEndpointAccessProtectedConsole = "protected_console"

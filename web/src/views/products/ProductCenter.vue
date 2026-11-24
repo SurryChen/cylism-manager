@@ -1,7 +1,8 @@
 <template>
   <div class="product-page">
-    <SectionTabsHeader :title="projectMode ? '项目中心' : '产品中心'" :tabs="tabs" :active-tab="tab" @select="selectTab"><template #actions><span class="product-muted">共 {{ total }} 个{{ projectMode ? '项目' : '产品' }}</span></template></SectionTabsHeader>
-    <SurfaceCard class="product-table-card" padding="none">
+    <SectionTabsHeader :title="projectMode ? '项目中心' : '产品中心'" :tabs="tabs" :active-tab="tab" @select="selectTab"><template #actions><span v-if="tab !== 'workbench'" class="product-muted">共 {{ total }} 个{{ projectMode ? '项目' : '产品' }}</span></template></SectionTabsHeader>
+    <PersonalWorkbench v-if="tab === 'workbench'" embedded />
+    <SurfaceCard v-else class="product-table-card" padding="none">
       <div class="product-toolbar">
         <input v-model.trim="keyword" class="form-input product-search" :aria-label="projectMode ? '搜索项目' : '搜索产品'" placeholder="搜索名称或简介" />
         <SelectMenu v-model="stage" class="product-stage-filter" aria-label="阶段筛选"><option value="">全部阶段</option><option v-for="item in visibleStages" :key="item.id" :value="item.id">{{ item.label }}</option></SelectMenu>
@@ -30,7 +31,7 @@
 import DataTable from '../../components/DataTable.vue'
 import TableActionCell from '../../components/TableActionCell.vue'
 import { computed, onMounted, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { RotateCcw, Trash2 } from 'lucide-vue-next'
 import { getProductPage, createProduct, deleteProduct, clearProducts, deleteProjectWorkspace } from '../../api/products.js'
 import { usePaginatedResource } from '../../composables/usePaginatedResource.js'
@@ -42,21 +43,41 @@ import SelectMenu from '../../components/SelectMenu.vue'
 import ErrorNoticeModal from '../../components/ErrorNoticeModal.vue'
 import ProductEditor from './ProductEditor.vue'
 import ProductDeleteDialog from './ProductDeleteDialog.vue'
+import PersonalWorkbench from './PersonalWorkbench.vue'
 import { stages, stageClass, labelFor } from './product-utils.js'
 import '../../styles/products.css'
 
 const props = defineProps({ projectMode: Boolean })
 const router = useRouter()
+const route = useRoute()
 function detailPath(product) { return props.projectMode ? '/projects/' + product.project_id : '/products/' + product.id }
 const resource = usePaginatedResource(getProductPage, 'items')
 const { items: rows, total, page, pageSize, loading, changePage, changePageSize } = resource
 const editorOpen = ref(false), busy = ref(false), error = ref('')
 const deleteTarget = ref(null), clearOpen = ref(false)
-const tab = ref('current'), keyword = ref(''), stage = ref('')
-const tabs = [{ id: 'current', label: props.projectMode ? '当前项目' : '当前产品' }, { id: 'archived', label: '已归档' }]
+const tabs = computed(() => [
+  { id: 'current', label: props.projectMode ? '当前项目' : '当前产品' },
+  { id: 'archived', label: '已归档' },
+  ...(props.projectMode ? [{ id: 'workbench', label: '跨项目待办' }] : []),
+])
+const tab = ref(routeTab()), keyword = ref(''), stage = ref('')
+function routeTab() {
+  return tabs.value.find(item => item.id === route.query?.tab)?.id || 'current'
+}
 const visibleStages = computed(() => stages.filter(item => tab.value === 'archived' ? item.id === 'archived' : item.id !== 'archived'))
-function selectTab(value) { tab.value = value; stage.value = '' }
-async function load() { await resource.load({ scope: tab.value, stage: stage.value, keyword: keyword.value }); if (resource.error.value) error.value = resource.error.value.message }
+function selectTab(value) {
+  tab.value = value
+  stage.value = ''
+  if (props.projectMode) void router.replace({ query: { ...route.query, tab: value === 'current' ? undefined : value } })
+}
+watch(() => [props.projectMode, route.query?.tab], () => { tab.value = routeTab(); stage.value = '' })
+async function load() {
+  if (tab.value === 'workbench') {
+    resource.cancel()
+    return
+  }
+  await resource.load({ scope: tab.value, stage: stage.value, keyword: keyword.value })
+}
 watch([tab, stage, keyword], load)
 watch(resource.error, cause => { if (cause) error.value = cause.message })
 function openCreate() { editorOpen.value = true }

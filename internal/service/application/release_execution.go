@@ -70,15 +70,16 @@ func (s *Service) CreateRelease(ctx context.Context, applicationID, userID uint,
 		registryID = &spec.RegistryID
 	}
 	release := &model.Release{
-		ApplicationID:      applicationID,
-		Sequence:           sequence,
-		Image:              spec.Image,
-		Version:            spec.Version,
-		ImageRegistryID:    registryID,
-		PodTrackingEnabled: true,
-		DesiredSpec:        string(snapshot),
-		Status:             model.ReleaseStatusDraft,
-		CreatedBy:          userID,
+		ExpectedEnvironmentID: application.EnvironmentID,
+		ApplicationID:         applicationID,
+		Sequence:              sequence,
+		Image:                 spec.Image,
+		Version:               spec.Version,
+		ImageRegistryID:       registryID,
+		PodTrackingEnabled:    true,
+		DesiredSpec:           string(snapshot),
+		Status:                model.ReleaseStatusDraft,
+		CreatedBy:             userID,
 	}
 	if err := s.repository.CreateRelease(release); err != nil {
 		return nil, fmt.Errorf("创建发布记录: %w", err)
@@ -99,6 +100,13 @@ func (s *Service) ExecuteReleaseWithPostApply(ctx context.Context, releaseID uin
 func (s *Service) executeRelease(ctx context.Context, releaseID uint, application *model.Application, spec ReleaseSpec, postApply func() error) error {
 	if s.applier == nil {
 		return s.failRelease(releaseID, "preflight", fmt.Errorf("Kubernetes 发布器未初始化"))
+	}
+	current, err := s.repository.GetApplication(application.ID)
+	if err != nil {
+		return s.failRelease(releaseID, "preflight", err)
+	}
+	if current.EnvironmentID != application.EnvironmentID {
+		return s.failRelease(releaseID, "preflight", model.ErrApplicationNamespaceMoveChanged)
 	}
 	release, err := s.repository.GetRelease(releaseID)
 	if err != nil {

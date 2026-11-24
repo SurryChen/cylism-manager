@@ -1,7 +1,7 @@
 <template>
   <div class="catalog-detail">
-    <PageBackLink @click="router.push('/applications/catalog')">返回应用商城</PageBackLink>
-    <SectionTabsHeader :title="item?.name || '商城应用'" :tabs="[{ id: 'config', label: '应用配置' }]" active-tab="config" :sticky="false">
+    <PageBackLink @click="router.push('/applications/catalog')">返回应用模板</PageBackLink>
+    <SectionTabsHeader :title="item?.name || '应用模板'" :tabs="[{ id: 'config', label: '模板配置' }]" active-tab="config" :sticky="false">
       <template #actions><span v-if="item" class="badge" :class="item.enabled ? 'badge-online' : 'badge-offline'">{{ item.enabled ? '已启用' : '未启用' }}</span></template>
     </SectionTabsHeader>
     <FeedbackBanner v-if="readError" tone="warning" :message="readError" />

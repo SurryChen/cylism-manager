@@ -231,16 +231,17 @@ func RuntimesDTO(items []model.RuntimeInstance) []RuntimeView {
 }
 
 type ProjectView struct {
-	ID                     uint               `json:"id"`
-	Name                   string             `json:"name"`
-	Slug                   string             `json:"slug"`
-	Description            string             `json:"description"`
-	DefaultImageRegistryID *uint              `json:"default_image_registry_id,omitempty"`
-	OwnerID                uint               `json:"owner_id"`
-	CreatedAt              time.Time          `json:"created_at"`
-	UpdatedAt              time.Time          `json:"updated_at"`
-	Environments           []EnvironmentView  `json:"environments,omitempty"`
-	DefaultImageRegistry   *ImageRegistryView `json:"default_image_registry,omitempty"`
+	ID                      uint               `json:"id"`
+	Name                    string             `json:"name"`
+	Slug                    string             `json:"slug"`
+	Description             string             `json:"description"`
+	DefaultImageRegistryID  *uint              `json:"default_image_registry_id,omitempty"`
+	OwnerID                 uint               `json:"owner_id"`
+	CreatedAt               time.Time          `json:"created_at"`
+	UpdatedAt               time.Time          `json:"updated_at"`
+	Environments            []EnvironmentView  `json:"environments,omitempty"`
+	TransferredEnvironments []EnvironmentView  `json:"transferred_environments,omitempty"`
+	DefaultImageRegistry    *ImageRegistryView `json:"default_image_registry,omitempty"`
 }
 type EnvironmentView struct {
 	Kind              string    `json:"kind"`

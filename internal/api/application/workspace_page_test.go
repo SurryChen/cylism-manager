@@ -4,15 +4,78 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 
 	k8sclient "github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/service/application"
+	"github.com/gin-gonic/gin"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
 )
+
+func TestWorkspaceShowsTransferredAppInItsOriginalEnvironment(t *testing.T) {
+	_, s := setupApplicationRouter()
+	app := createApplicationForReleaseRuntimeTest(t, s)
+	if err := s.DB().Model(&model.Project{}).Where("id = ?", app.ProjectID).Update("owner_id", 7).Error; err != nil {
+		t.Fatal(err)
+	}
+	target := model.Project{Name: "users", OwnerID: 7}
+	if err := s.CreateProject(&target); err != nil {
+		t.Fatal(err)
+	}
+	testing := model.Environment{ProjectID: target.ID, Name: "testing", Namespace: "users-testing"}
+	if err := s.CreateEnvironment(&testing); err != nil {
+		t.Fatal(err)
+	}
+	sibling := model.Application{ProjectID: app.ProjectID, EnvironmentID: app.EnvironmentID, Name: "sibling"}
+	if err := s.CreateApplication(&sibling); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CreateRelease(&model.Release{ApplicationID: app.ID, Sequence: 1, Version: "active-build", Status: model.ReleaseStatusSucceeded}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.TransferApplicationProject(model.ApplicationProjectTransfer{ApplicationID: app.ID, FromProjectID: app.ProjectID, ToProjectID: target.ID, OwnerID: 7}); err != nil {
+		t.Fatal(err)
+	}
+	h := newTestApplicationHandler(s, nil, nil)
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		owner := uint(7)
+		if c.Query("foreign") == "true" {
+			owner = 8
+		}
+		c.Set("user_id", owner)
+	})
+	router.GET("/projects", h.ListProjects)
+	router.GET("/overview", h.WorkspaceOverview)
+	router.GET("/releases", h.WorkspaceReleasePage)
+
+	projects := serve(router, newJSONRequest(http.MethodGet, "/projects", nil))
+	if projects.Code != 200 || !strings.Contains(projects.Body.String(), `"transferred_environments":[{`) || !strings.Contains(projects.Body.String(), app.Environment.Namespace) {
+		t.Fatalf("missing runtime environment option: %d %s", projects.Code, projects.Body)
+	}
+	for _, endpoint := range []string{"overview", "releases"} {
+		path := fmt.Sprintf("/%s?project_id=%d&environment_id=%d&limit=10", endpoint, target.ID, app.EnvironmentID)
+		response := serve(router, newJSONRequest(http.MethodGet, path, nil))
+		if response.Code != 200 || !strings.Contains(response.Body.String(), "active-build") || strings.Contains(response.Body.String(), sibling.Name) {
+			t.Fatalf("target workspace %s: %d %s", endpoint, response.Code, response.Body)
+		}
+		forbidden := serve(router, newJSONRequest(http.MethodGet, path+"&foreign=true", nil))
+		if forbidden.Code == 200 || strings.Contains(forbidden.Body.String(), "active-build") {
+			t.Fatalf("foreign workspace %s: %d %s", endpoint, forbidden.Code, forbidden.Body)
+		}
+	}
+	for _, scope := range [][2]uint{{app.ProjectID, app.EnvironmentID}, {target.ID, testing.ID}} {
+		path := fmt.Sprintf("/overview?project_id=%d&environment_id=%d&limit=10", scope[0], scope[1])
+		response := serve(router, newJSONRequest(http.MethodGet, path, nil))
+		if response.Code != 200 || strings.Contains(response.Body.String(), "active-build") {
+			t.Fatalf("unrelated workspace: %d %s", response.Code, response.Body)
+		}
+	}
+}
 
 func TestWorkspacePagesRetainFullSummaryAndScope(t *testing.T) {
 	client := k8sfake.NewSimpleClientset()

@@ -17,7 +17,7 @@ type workspaceEndpointRow struct {
 
 // Page after computing the environment-wide runtime summary. This preserves
 // live-pod release selection and keeps readiness independent of the current page.
-func (h *ApplicationHandler) workspaceApplicationPage(c *gin.Context, namespace string, applications []model.Application) {
+func (h *ApplicationHandler) workspaceApplicationPage(c *gin.Context, namespace string, applications []model.Application, names []string) {
 	view := c.DefaultQuery("view", "runtime")
 	if view != "runtime" && view != "config" && view != "access" {
 		apiShared.BadRequest(c, "应用部署视图无效")
@@ -30,10 +30,8 @@ func (h *ApplicationHandler) workspaceApplicationPage(c *gin.Context, namespace 
 		return applications[i].CreatedAt.After(applications[j].CreatedAt)
 	})
 	ids := make([]uint, 0, len(applications))
-	names := make([]string, 0, len(applications))
 	for _, app := range applications {
 		ids = append(ids, app.ID)
-		names = append(names, app.Name)
 	}
 	releases, err := h.queries.ListReleasesByApplications(ids)
 	if err != nil {
@@ -53,7 +51,7 @@ func (h *ApplicationHandler) workspaceApplicationPage(c *gin.Context, namespace 
 		}
 	}
 	limit, offset := apiShared.LimitOffset(c, 10, 100)
-	response := gin.H{"applications_total": len(infos), "ready_applications": ready, "application_names": names, "limit": limit, "offset": offset}
+	response := gin.H{"applications_total": len(infos), "ready_applications": ready, "application_names": append([]string{}, names...), "limit": limit, "offset": offset}
 	if view == "access" {
 		rows := make([]workspaceEndpointRow, 0)
 		for i, app := range applications {

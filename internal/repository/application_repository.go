@@ -41,6 +41,7 @@ type ApplicationManagementRepository interface {
 	ApplicationWebhookRepository
 
 	ListProjects() ([]model.Project, error)
+	ListTransferredEnvironments(uint) (map[uint][]model.Environment, error)
 	CreateProject(*model.Project) error
 	UpdateProject(*model.Project) error
 	DeleteProject(uint) error
@@ -59,6 +60,8 @@ type ApplicationManagementRepository interface {
 	CreateApplication(*model.Application) error
 	ListApplicationTransferProjects(uint) ([]model.Project, error)
 	TransferApplicationProject(model.ApplicationProjectTransfer) error
+	CheckApplicationNamespaceMove(model.ApplicationNamespaceMove) error
+	AdoptApplicationNamespace(model.ApplicationNamespaceMove) error
 	DeleteUnreleasedApplication(uint) error
 	UpdateApplication(*model.Application) error
 	ReplaceApplicationCapabilities(uint, []string) (*model.Application, error)

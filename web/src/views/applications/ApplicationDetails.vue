@@ -2,7 +2,7 @@
   <div>
     <SectionTabsHeader class="page-header detail-tabs-header" :title="application?.name || '应用详情'" :tabs="detailTabs" :active-tab="activeTab" @select="activeTab = $event">
       <template #title><div class="detail-heading"><div class="detail-context"><PageBackLink :to="managementProjectPath || '/applications'">{{ managementProjectPath ? '返回项目' : '返回工作台' }}</PageBackLink></div><h1 v-if="application || readError" class="page-title">{{ application?.name || '应用详情' }}</h1><div v-else class="detail-title-placeholder" aria-hidden="true"></div></div></template>
-      <template #actions><div v-if="application" class="detail-heading-actions"><button class="btn btn-sm" @click="openProjectTransfer">迁移到其他项目</button><button class="btn btn-sm" aria-label="应用设置" @click="openApplicationSettings"><Settings :size="14" />应用设置</button></div></template>
+      <template #actions><div v-if="application" class="detail-heading-actions"><button class="btn btn-sm" @click="openProjectTransfer">迁移到其他项目</button><button v-if="application.environment?.cluster_id" class="btn btn-sm" @click="showNamespaceMove = true">迁移运行环境</button><button class="btn btn-sm" aria-label="应用设置" @click="openApplicationSettings"><Settings :size="14" />应用设置</button></div></template>
     </SectionTabsHeader>
     <div v-if="readError" data-testid="application-detail-read-error" class="k8s-banner k8s-banner-warn section-gap">{{ readError }}</div>
     <ErrorNoticeModal :open="Boolean(mutationError)" :message="mutationError" teleport @close="mutationError = ''" />
@@ -55,6 +55,7 @@ X-Cylism-Signature: HMAC-SHA256(应用密钥, timestamp + "." + nonce + "." + �
     <PaginationControls :page="releasesPage" :page-size="releasesPageSize" :total="releasesTotal" :loading="releasesLoading" @page-change="changeReleasesPage" @page-size-change="changeReleasesPageSize" />
     </SurfaceCard>
 
+    <ApplicationNamespaceMoveDialog v-if="showNamespaceMove" :key="applicationID" :application-id="applicationID" @close="showNamespaceMove = false" @error="mutationError = $event" @adopted="finishNamespaceMove" />
     <BaseModal teleport :open="showProjectTransfer" title="迁移到其他项目" :show-close="!transferringProject" :close-on-overlay="!transferringProject" :close-on-escape="!transferringProject" @close="closeProjectTransfer">
       <EmptyState v-if="transferOptionsResource.loading.value" variant="loading" message="正在读取可迁移项目..." />
       <template v-else-if="transferOptions">
@@ -183,6 +184,7 @@ import OverflowTooltip from '../../components/OverflowTooltip.vue'
 import EmptyState from '../../components/EmptyState.vue'
 import SectionTabsHeader from '../../components/SectionTabsHeader.vue'
 import ApplicationRuntime from './ApplicationRuntime.vue'
+import ApplicationNamespaceMoveDialog from './ApplicationNamespaceMoveDialog.vue'
 import TemplateConfigurationEditor from './TemplateConfigurationEditor.vue'
 import ErrorNoticeModal from '../../components/ErrorNoticeModal.vue'
 import { formatDateTime as formatTime } from '../../utils/formatters.js'
@@ -212,6 +214,7 @@ const managementProjectPath = computed(() => application.value?.management_proje
 const transferOptionsResource = useAsyncResource(({ signal }, id) => getApplicationProjectTransferOptions(id, { signal }), null)
 const transferOptions = transferOptionsResource.data
 const showProjectTransfer = ref(false)
+const showNamespaceMove = ref(false)
 const transferTargetID = ref(0)
 const transferringProject = ref(false)
 const runtimeReleases = computed(() => activeRelease.value ? [activeRelease.value] : [])
@@ -353,6 +356,10 @@ function templatePayload() { const form = templateForm.value; validateConfigurat
 function templateServiceSummary(service) { const ports = servicePortsFromSpec(service, 0); return `${service?.type || 'ClusterIP'} · ${ports.map(port => `${port.protocol} ${port.port}`).join(', ')}` }
 
 let applicationLoadRequest = 0
+async function finishNamespaceMove(result) {
+  showNamespaceMove.value = false
+  await router.push({ path: '/applications', query: { project_id: result.project_id, environment_id: result.environment_id } })
+}
 async function openProjectTransfer() {
   transferTargetID.value = 0
   showProjectTransfer.value = true

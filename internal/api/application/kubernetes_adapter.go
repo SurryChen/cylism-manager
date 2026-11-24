@@ -42,9 +42,10 @@ type KubernetesAdapter interface {
 }
 
 type kubernetesDependencies struct {
-	applier    applicationservice.ResourceApplier
-	runtime    applicationservice.RuntimeReader
-	operations interface {
+	namespaceMover *k8sclient.Client
+	applier        applicationservice.ResourceApplier
+	runtime        applicationservice.RuntimeReader
+	operations     interface {
 		ListRuntimePodMetrics(context.Context, string) (map[string]k8sclient.RuntimePodUsage, error)
 		ReadRuntimePodLogs(context.Context, string, string, string, int64, bool) (string, error)
 	}
@@ -128,6 +129,14 @@ func (d *kubernetesDependencies) MigrateWorkloadKind(ctx context.Context, app ap
 }
 func (d *kubernetesDependencies) KubernetesAvailable() bool { return d.available }
 
+func (d *kubernetesDependencies) StageApplicationNamespace(ctx context.Context, move k8sclient.ApplicationNamespaceMove, prepare bool) (k8sclient.ApplicationNamespaceMoveStatus, error) {
+	return d.namespaceMover.StageApplicationNamespace(ctx, move, prepare)
+}
+
+func (d *kubernetesDependencies) CheckApplicationNamespaceRoutes(ctx context.Context, move k8sclient.ApplicationNamespaceMove, endpoints []model.ApplicationEndpoint) error {
+	return d.namespaceMover.CheckApplicationNamespaceRoutes(ctx, move, endpoints)
+}
+
 // NewKubernetesAdapter is the only application adapter factory that
 // accepts the concrete Kubernetes client. Handlers receive only the port.
 func NewKubernetesAdapter(client *k8sclient.Client) KubernetesAdapter {
@@ -136,7 +145,8 @@ func NewKubernetesAdapter(client *k8sclient.Client) KubernetesAdapter {
 	}
 	applier := applicationservice.NewKubernetesApplier(client)
 	return &kubernetesDependencies{
-		applier: applier, runtime: client, operations: client, namespaces: client, certificates: client,
+		namespaceMover: client,
+		applier:        applier, runtime: client, operations: client, namespaces: client, certificates: client,
 		endpoints: applier, inspector: applier, pvc: applier, migrator: applier,
 		available: true,
 	}

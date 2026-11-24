@@ -190,6 +190,35 @@ describe('Applications view', () => {
     wrapper.unmount()
   })
 
+  it('shows transferred applications in the target project using the original environment', async () => {
+    const { api } = await import('../../api/index.js')
+    const environment = { id: 2, project_id: 1, name: 'app', cluster_id: 7, namespace: 'project-self-app' }
+    route.query.project_id = '4'
+    api.get.mockImplementation(path => {
+      if (path === '/projects') return Promise.resolve([
+        { id: 1, name: '自用', environments: [environment] },
+        { id: 4, name: '用户中心', transferred_environments: [environment] },
+      ])
+      if (path.startsWith('/workspace/overview?project_id=4&environment_id=2&')) {
+        return Promise.resolve(workspacePage(path, { applications: [{ id: 13, name: 'cylism-account', active_release: { version: '1.4.2' } }] }))
+      }
+      return Promise.resolve([])
+    })
+    const wrapper = mount(Applications)
+    try {
+      await flushPromises()
+      expect(wrapper.text()).toContain('自用 / app')
+      expect(wrapper.text()).toContain('cylism-account')
+      expect(wrapper.text()).toContain('1.4.2')
+      await wrapper.findAll('button').find(button => button.text() === '新建应用').trigger('click')
+      const actions = [...document.body.querySelectorAll('.base-modal-actions button')]
+      expect(actions.find(button => button.textContent === '从模板导入').disabled).toBe(true)
+      expect(actions.find(button => button.textContent === '手动创建').disabled).toBe(true)
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
   it('imports enabled catalog applications into the selected workspace environment', async () => {
     const { api } = await import('../../api/index.js')
     api.get.mockImplementation(path => {
@@ -206,8 +235,9 @@ describe('Applications view', () => {
     await flushPromises()
 
     const workspaceCard = wrapper.get('[data-testid="workspace-list"]')
-    expect(workspaceCard.findAll('.workspace-toolbar-actions button').map(button => button.text())).toEqual(['管理项目环境', '从商城导入', '创建部署组件'])
-    await wrapper.findAll('button').find(button => button.text() === '从商城导入').trigger('click')
+    expect(workspaceCard.findAll('.workspace-toolbar-actions button').map(button => button.text())).toEqual(['管理项目环境', '新建应用'])
+    await wrapper.findAll('button').find(button => button.text() === '新建应用').trigger('click')
+    Array.from(document.body.querySelectorAll('.base-modal-actions button')).find(button => button.textContent === '从模板导入').click()
     await flushPromises()
     const modal = document.body.querySelector('.workspace-import-modal')
     expect(modal.textContent).toContain('commerce · production · commerce-prod')
@@ -236,7 +266,8 @@ describe('Applications view', () => {
     const wrapper = mount(Applications)
     await flushPromises()
 
-    await wrapper.findAll('button').find(button => button.text() === '从商城导入').trigger('click')
+    await wrapper.findAll('button').find(button => button.text() === '新建应用').trigger('click')
+    Array.from(document.body.querySelectorAll('.base-modal-actions button')).find(button => button.textContent === '从模板导入').click()
     await flushPromises()
     const modal = document.body.querySelector('.workspace-import-modal')
     modal.querySelector('input[type="checkbox"]').click()

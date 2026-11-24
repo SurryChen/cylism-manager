@@ -89,32 +89,6 @@ func (h *ApplicationHandler) HandleEnvironment(action func(*ApplicationHandler, 
 	}
 }
 
-func (h *ApplicationHandler) HandleWorkspace(action func(*ApplicationHandler, *gin.Context)) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		projectID, err := apiShared.ParseID(c.Query("project_id"))
-		if err != nil {
-			apiShared.BadRequest(c, "项目 ID 无效")
-			return
-		}
-		environmentID, err := apiShared.ParseID(c.Query("environment_id"))
-		if err != nil {
-			apiShared.BadRequest(c, "环境 ID 无效")
-			return
-		}
-		environment, err := h.queries.ResolveEnvironment(projectID, environmentID)
-		if err != nil {
-			apiShared.ValidationError(c, "环境不属于所选项目")
-			return
-		}
-		scoped, err := h.forCluster(c.Request.Context(), environment.ClusterID)
-		if err != nil {
-			apiShared.ValidationError(c, err.Error())
-			return
-		}
-		action(scoped, c)
-	}
-}
-
 func (h *ApplicationHandler) runtimeInfos(ctx context.Context, applications []model.Application, releases map[uint][]model.Release) map[uint]applicationservice.RuntimeInfo {
 	if h.clusterClient == nil {
 		return h.queries.ApplicationRuntimeInfos(ctx, h.kubernetes, applications, releases)

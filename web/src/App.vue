@@ -90,7 +90,7 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Bot, Boxes, Check, Cloud, Database, FileText, FolderKanban, HardDrive, LayoutDashboard, Layers3, LogOut, Menu, Orbit, PackagePlus, Palette, Store, Server, Settings, Waypoints, X } from 'lucide-vue-next'
+import { Bot, Check, Cloud, Database, FileText, FolderKanban, HardDrive, LayoutDashboard, Layers3, LogOut, Menu, Orbit, PackagePlus, Palette, Server, Settings, Waypoints, X } from 'lucide-vue-next'
 import { clearTokens } from './api/index.js'
 import { usePalette } from './composables/usePalette.js'
 import { useTransientScrollbarVisibility } from './composables/useTransientScrollbarVisibility.js'
@@ -124,10 +124,7 @@ const navGroups = computed(() => [
     to: '/projects',
     items: [
       { label: '项目中心', to: '/projects', icon: FolderKanban },
-      { label: '研发工作台', to: '/personal', icon: LayoutDashboard },
       { label: '应用部署', to: '/applications', icon: PackagePlus },
-      { label: '应用商城', to: '/applications/catalog', icon: Store },
-      { label: '镜像仓库', to: '/applications/registries', icon: Boxes },
     ],
   },
   {

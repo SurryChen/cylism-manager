@@ -193,24 +193,29 @@ func (h *ApplicationHandler) WorkspaceOverview(c *gin.Context) {
 		apiShared.NotFound(c, "项目不存在")
 		return
 	}
-	environment, err := h.queries.ResolveEnvironment(projectID, environmentID)
-	if err != nil {
-		apiShared.ValidationError(c, "环境不属于所选项目")
+	environment, applications, names, ok := h.workspaceScope(c, projectID, environmentID)
+	if !ok {
 		return
 	}
-	applications, err := h.queries.ListApplications(projectID, environmentID)
+	scoped, err := h.forCluster(c.Request.Context(), environment.ClusterID)
 	if err != nil {
-		apiShared.DBError(c, err.Error())
+		apiShared.ValidationError(c, err.Error())
 		return
 	}
 	if apiShared.PaginationRequested(c) {
-		h.workspaceApplicationPage(c, environment.Namespace, applications)
+		scoped.workspaceApplicationPage(c, environment.Namespace, applications, names)
 		return
 	}
-	domains, err := h.resources.ListManagedDomains(environmentID)
-	if err != nil {
-		apiShared.DBError(c, err.Error())
-		return
+	domainInfos := make([]networkapi.ManagedDomainInfo, 0)
+	if environment.ProjectID == projectID {
+		domains, err := h.resources.ListManagedDomains(environmentID)
+		if err != nil {
+			apiShared.DBError(c, err.Error())
+			return
+		}
+		for index := range domains {
+			domainInfos = append(domainInfos, networkapi.ManagedDomainInfoFor(c.Request.Context(), &domains[index], scoped.kubernetes, h.resources))
+		}
 	}
 	type workspaceRelease struct {
 		apiShared.ReleaseView
@@ -245,11 +250,7 @@ func (h *ApplicationHandler) WorkspaceOverview(c *gin.Context) {
 	if len(recentReleases) > 8 {
 		recentReleases = recentReleases[:8]
 	}
-	workspaceApplications := h.workspaceApplicationInfos(c.Request.Context(), environment.Namespace, applications, allReleases)
-	domainInfos := make([]networkapi.ManagedDomainInfo, 0, len(domains))
-	for index := range domains {
-		domainInfos = append(domainInfos, networkapi.ManagedDomainInfoFor(c.Request.Context(), &domains[index], h.kubernetes, h.resources))
-	}
+	workspaceApplications := scoped.workspaceApplicationInfos(c.Request.Context(), environment.Namespace, applications, allReleases)
 	apiShared.Success(c, gin.H{"project": apiShared.ProjectDTO(project), "environment": apiShared.EnvironmentDTO(environment), "applications": workspaceApplications, "domains": domainInfos, "failed_releases": failedReleases, "recent_releases": recentReleases, "releases": releaseSummaries})
 }
 

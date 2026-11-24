@@ -50,7 +50,7 @@ describe('ApplicationCatalog', () => {
     const wrapper = mount(ApplicationCatalog, { global: { stubs: { Teleport: true } } })
     await flushPromises()
     await wrapper.get('.catalog-toolbar .btn-primary').trigger('click')
-    expect(wrapper.text()).toContain('新增商城应用')
+    expect(wrapper.text()).toContain('新建模板')
     expect(wrapper.text()).not.toContain('镜像路径')
     const fields = wrapper.findAll('.modal .form-input')
     await fields[0].setValue('订单系统')

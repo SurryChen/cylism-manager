@@ -20,26 +20,27 @@ const (
 )
 
 type Release struct {
-	ID                 uint               `gorm:"primaryKey" json:"id"`
-	ApplicationID      uint               `gorm:"uniqueIndex:idx_application_sequence;not null" json:"application_id"`
-	Sequence           uint               `gorm:"uniqueIndex:idx_application_sequence;not null" json:"sequence"`
-	Image              string             `gorm:"size:512;not null" json:"image"`
-	Version            string             `gorm:"size:128" json:"version,omitempty"`
-	TemplateID         *uint              `gorm:"index" json:"template_id,omitempty"`
-	TemplateRevision   uint               `json:"template_revision,omitempty"`
-	ImageDigest        string             `gorm:"size:512" json:"image_digest"`
-	ImageRegistryID    *uint              `gorm:"index" json:"image_registry_id,omitempty"`
-	PodTrackingEnabled bool               `gorm:"default:false;not null" json:"pod_tracking_enabled"`
-	DesiredSpec        string             `gorm:"type:text;not null" json:"desired_spec"`
-	Status             string             `gorm:"size:32;index;not null" json:"status"`
-	SourceReleaseID    *uint              `gorm:"index" json:"source_release_id,omitempty"`
-	CreatedBy          uint               `gorm:"index;not null" json:"created_by"`
-	StartedAt          *time.Time         `json:"started_at,omitempty"`
-	CompletedAt        *time.Time         `json:"completed_at,omitempty"`
-	CreatedAt          time.Time          `json:"created_at"`
-	UpdatedAt          time.Time          `json:"updated_at"`
-	Operations         []ReleaseOperation `gorm:"foreignKey:ReleaseID" json:"operations,omitempty"`
-	Runtime            *ReleaseRuntime    `gorm:"-" json:"runtime,omitempty"`
+	ExpectedEnvironmentID uint               `gorm:"-" json:"-"`
+	ID                    uint               `gorm:"primaryKey" json:"id"`
+	ApplicationID         uint               `gorm:"uniqueIndex:idx_application_sequence;not null" json:"application_id"`
+	Sequence              uint               `gorm:"uniqueIndex:idx_application_sequence;not null" json:"sequence"`
+	Image                 string             `gorm:"size:512;not null" json:"image"`
+	Version               string             `gorm:"size:128" json:"version,omitempty"`
+	TemplateID            *uint              `gorm:"index" json:"template_id,omitempty"`
+	TemplateRevision      uint               `json:"template_revision,omitempty"`
+	ImageDigest           string             `gorm:"size:512" json:"image_digest"`
+	ImageRegistryID       *uint              `gorm:"index" json:"image_registry_id,omitempty"`
+	PodTrackingEnabled    bool               `gorm:"default:false;not null" json:"pod_tracking_enabled"`
+	DesiredSpec           string             `gorm:"type:text;not null" json:"desired_spec"`
+	Status                string             `gorm:"size:32;index;not null" json:"status"`
+	SourceReleaseID       *uint              `gorm:"index" json:"source_release_id,omitempty"`
+	CreatedBy             uint               `gorm:"index;not null" json:"created_by"`
+	StartedAt             *time.Time         `json:"started_at,omitempty"`
+	CompletedAt           *time.Time         `json:"completed_at,omitempty"`
+	CreatedAt             time.Time          `json:"created_at"`
+	UpdatedAt             time.Time          `json:"updated_at"`
+	Operations            []ReleaseOperation `gorm:"foreignKey:ReleaseID" json:"operations,omitempty"`
+	Runtime               *ReleaseRuntime    `gorm:"-" json:"runtime,omitempty"`
 }
 
 type ReleaseRuntime struct {
