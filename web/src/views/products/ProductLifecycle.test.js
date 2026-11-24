@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { flushPromises, mount } from '@vue/test-utils'
+import { DOMWrapper, flushPromises, mount } from '@vue/test-utils'
 import { reactive } from 'vue'
 import ProductLifecycle from './ProductLifecycle.vue'
 import LifecycleEditor from './LifecycleEditor.vue'
@@ -34,9 +34,9 @@ describe('product lifecycle workflows', () => {
      : { items: [], total: 0 })
    const page = mountPage('versions'); await flushPromises()
    const table = page.get('.data-table')
-   expect(table.findAll('th').map(cell => cell.text())).toEqual(['版本 / 目标', '状态', '关联部署', '操作'])
-   expect(table.text()).toContain(record.goal)
-   for (const value of [record.acceptance, record.notes, record.repository_url, record.commit_sha, '未设目标日期', '未填写验收项']) expect(table.text()).not.toContain(value)
+   expect(table.findAll('th').map(cell => cell.text())).toEqual(['版本 / 说明', '状态', '关联部署', '操作'])
+   expect(table.get('.lifecycle-version-preview').text()).toBe(record.notes)
+   for (const value of [record.acceptance, record.goal, record.repository_url, record.commit_sha, '未设目标日期', '未填写验收项']) expect(table.text()).not.toContain(value)
    await page.get('[aria-label="查看版本详情"]').trigger('click')
    const detail = page.get('.product-detail-list')
    for (const value of [record.name, record.acceptance, record.notes, record.commit_sha]) expect(page.text()).toContain(value)
@@ -59,7 +59,7 @@ describe('product lifecycle workflows', () => {
    mocks.page.mockResolvedValue({ items: [{ id: 8, name: '1.2', status: 'planning', target_date: '2026-12-01' }], total: 1 })
    const page = mountPage('versions'); await flushPromises()
    expect(page.get('.data-table').text()).toContain('目标 2026-12-01')
-   expect(page.find('.lifecycle-version-goal').exists()).toBe(false)
+   expect(page.find('.lifecycle-version-preview').exists()).toBe(false)
    expect(page.findAll('button').some(button => button.text() === '0 条记录')).toBe(false)
    await page.get('[aria-label="查看版本事项"]').trigger('click')
    expect(page.emitted('select-version')[0]).toEqual([8])
@@ -102,6 +102,26 @@ describe('product lifecycle workflows', () => {
    await button.trigger('click'); await flushPromises()
    expect(mocks.page).toHaveBeenCalledWith(7, 'deployments', expect.objectContaining({ version_id: 8 }), expect.anything())
    expect(page.text()).toContain('平台发布与更新')
+   await page.findAll('button').find(button => button.text() === '编辑关联').trigger('click'); await flushPromises()
+   expect(page.get('[aria-label="搜索部署记录"]').exists()).toBe(true)
+   page.unmount()
+ })
+ it('opens the deployment picker directly from an unlinked version', async () => {
+   const version = { id: 8, name: '1.1', goal: '历史目标', status: 'completed' }
+   mocks.page.mockImplementation(async (_id, kind) => {
+     if (kind === 'versions') return { items: [version], total: 1 }
+     if (kind === 'deployments') return { items: [{ id: 6, application_name: 'API', environment_kind: 'production' }], total: 1 }
+     return { items: [], total: 0 }
+   })
+   const page = mountPage('versions'); await flushPromises()
+   const table = page.get('.data-table')
+   expect(table.get('.lifecycle-version-preview').text()).toBe(version.goal)
+   await table.findAll('button').find(button => button.text() === '关联部署').trigger('click'); await flushPromises()
+   const editor = page.getComponent(LifecycleEditor)
+   expect(editor.get('[aria-label="搜索部署记录"]').exists()).toBe(true)
+   await editor.get('input[type="checkbox"]').setValue(true)
+   await editor.get('form').trigger('submit'); await flushPromises()
+   expect(mocks.save).toHaveBeenCalledWith(7, 'versions', expect.objectContaining({ id: 8, deployment_ids: [6] }))
    page.unmount()
  })
  it('creates a task and preserves entered fields on a failed save', async () => {
@@ -152,23 +172,38 @@ describe('product lifecycle workflows', () => {
    expect(page.emitted('changed')).toHaveLength(1)
    page.unmount()
  })
- it('preserves the version task selection when searching and changing pages', async () => {
+ it('uses a searchable multi-select and preserves selections across results', async () => {
    mocks.page.mockImplementation(async (_id, kind, query) => {
      if (kind !== 'tasks') return { items: [], total: 0 }
      const id = query.keyword ? 12 : query.offset ? 11 : 10
-     return { items: [{ id, title: query.keyword || '原事项', kind: 'action', status: 'done' }], total: query.keyword ? 1 : 11 }
+     return { items: [{ id, title: query.keyword || '原事项', kind: 'action', status: 'done' }], total: query.keyword ? 1 : 2 }
    })
    const record = { id: 8, name: '1.0', status: 'releasing', task_ids: [10, 11] }
-   const editor = mount(LifecycleEditor, { props: { open: true, kind: 'versions', productId: 7, record }, global: { stubs: { Teleport: true } } })
+   const editor = mount(LifecycleEditor, { props: { open: true, kind: 'versions', productId: 7, record }, attachTo: document.body })
    await flushPromises()
-   expect(editor.get('.version-task-picker input[type="checkbox"]').element.checked).toBe(true)
-   await editor.get('.version-task-picker input[type="checkbox"]').setValue(false)
-   await editor.get('.version-task-picker [aria-label="下一页"]').trigger('click'); await flushPromises()
-   expect(editor.get('.version-task-picker input[type="checkbox"]').element.checked).toBe(true)
-   await editor.get('[aria-label="搜索可选事项"]').setValue('新事项'); await flushPromises()
+   const body = new DOMWrapper(document.body)
+   expect(body.find('[aria-label="搜索可选事项"]').exists()).toBe(false)
+   const trigger = body.get('button[aria-label="纳入版本的事项，已选 2 项"]')
+   await trigger.trigger('click'); await flushPromises()
+   const list = body.get('[aria-multiselectable="true"]')
+   expect(list.get('[role="option"]').attributes('aria-selected')).toBe('true')
+   await list.get('[role="option"]').trigger('click')
+   Object.defineProperties(list.element, {
+     scrollTop: { value: 250, writable: true },
+     scrollHeight: { value: 450 },
+     clientHeight: { value: 200 },
+   })
+   list.element.dispatchEvent(new Event('scroll'))
+   await flushPromises()
+   expect(mocks.page).toHaveBeenCalledWith(7, 'tasks', expect.objectContaining({ offset: 1 }), expect.anything())
+   expect(list.findAll('[role="option"]').map(option => option.attributes('aria-selected'))).toEqual(['false', 'true'])
+   expect(body.find('[aria-label="可选事项分页"]').exists()).toBe(false)
+   await body.get('[aria-label="搜索可选事项"]').setValue('新事项'); await flushPromises()
    expect(mocks.page).toHaveBeenCalledWith(7, 'tasks', expect.objectContaining({ assignable: true, version_id: 8, keyword: '新事项' }), expect.anything())
-   await editor.get('.version-task-picker input[type="checkbox"]').setValue(true)
-   await editor.get('form').trigger('submit')
+   await list.get('[role="option"]').trigger('click')
+   await body.get('[aria-label="搜索可选事项"]').trigger('keydown', { key: 'Escape' })
+   expect(body.find('[aria-multiselectable="true"]').exists()).toBe(false)
+   await body.get('form').trigger('submit')
    expect(editor.emitted('save')[0][0].task_ids).toEqual([11, 12])
    expect(record.task_ids).toEqual([10, 11])
    editor.unmount()

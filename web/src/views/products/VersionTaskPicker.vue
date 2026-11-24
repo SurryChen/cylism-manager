@@ -1,55 +1,81 @@
 <template>
-  <section class="product-full-width version-task-picker" aria-label="纳入版本的事项">
-    <div class="version-task-toolbar">
-      <h3 class="product-section-title">纳入版本的事项</h3>
-      <span class="product-muted">已选 {{ selected.length }} 项</span>
-    </div>
-    <input v-model.trim="keyword" class="form-input" aria-label="搜索可选事项" placeholder="搜索事项标题" />
-    <EmptyState v-if="tasks.error.value" class="version-task-empty" message="事项读取失败">
-      <template #action><button type="button" class="btn btn-sm" @click="load">重试</button></template>
-    </EmptyState>
-    <EmptyState v-else-if="tasks.loading.value && !tasks.items.value.length" class="version-task-empty" variant="loading" message="正在读取事项…" />
-    <EmptyState v-else-if="!tasks.total.value" class="version-task-empty" :message="keyword ? '没有匹配的事项' : '暂无可选事项'" />
-    <div v-else class="product-checklist">
-      <label v-for="task in tasks.items.value" :key="task.id" class="version-task-option">
-        <input type="checkbox" :value="task.id" v-model="selected" />
-        <span>
-          <span class="cell-primary version-task-title">{{ task.title }}</span>
-          <span class="cell-secondary">{{ labelFor(taskKinds, task.kind) }} · {{ labelFor(taskStatuses, task.status) }}</span>
-        </span>
-      </label>
-    </div>
-    <ResourcePagination v-if="tasks.total.value" :resource="tasks" label="可选事项分页" :show-error="false" />
-  </section>
+  <div class="form-group product-full-width">
+    <label class="form-label" :for="id">纳入版本的事项</label>
+    <SelectMenu
+      :id="id"
+      v-model="selected"
+      v-model:search.trim="keyword"
+      multiple
+      searchable
+      :disabled="disabled"
+      :options="options"
+      :placeholder="selected.length ? `已选 ${selected.length} 项` : '选择事项'"
+      aria-label="纳入版本的事项"
+      search-label="搜索可选事项"
+      @open="loadFirstBatch"
+      @load-more="loadMore"
+    >
+      <template #feedback>
+        <button v-if="tasks.error.value" type="button" class="btn btn-sm" @click="load(tasks.data.value.offset)">事项读取失败，重试</button>
+        <div v-else-if="tasks.loading.value" class="task-picker-feedback" role="status">正在读取事项…</div>
+        <div v-else-if="!options.length" class="task-picker-feedback" role="status">{{ keyword ? '没有匹配的事项' : '暂无可选事项' }}</div>
+      </template>
+    </SelectMenu>
+  </div>
 </template>
 
 <script setup>
-import { onBeforeUnmount, ref, watch } from 'vue'
-import EmptyState from '../../components/EmptyState.vue'
-import ResourcePagination from '../../components/ResourcePagination.vue'
+import { computed, ref, useId, watch } from 'vue'
+import SelectMenu from '../../components/SelectMenu.vue'
 import { getLifecyclePage } from '../../api/product-lifecycle.js'
-import { usePaginatedResource } from '../../composables/usePaginatedResource.js'
+import { useAsyncResource } from '../../composables/useAsyncResource.js'
 import { taskKinds, taskStatuses } from './lifecycle-utils.js'
 import { labelFor } from './product-utils.js'
 
-const props = defineProps({ productId: { type: Number, required: true }, versionId: Number })
+const props = defineProps({ productId: { type: Number, required: true }, versionId: Number, disabled: Boolean })
 const selected = defineModel({ type: Array, required: true })
+const id = useId()
 const keyword = ref('')
-const tasks = usePaginatedResource((query, options) => getLifecyclePage(props.productId, 'tasks', query, options), 'items')
+const batchSize = 50
+const empty = { items: [], offset: 0, total: 0 }
+const tasks = useAsyncResource(async ({ signal }, offset) => {
+  const query = { assignable: true, keyword: keyword.value, limit: batchSize, offset }
+  if (props.versionId) query.version_id = props.versionId
+  const result = await getLifecyclePage(props.productId, 'tasks', query, { signal })
+  signal.throwIfAborted()
+  const items = result.items || []
+  const previous = offset ? tasks.data.value.items : []
+  return {
+    items: [...new Map([...previous, ...items].map(task => [task.id, task])).values()],
+    offset: offset + items.length,
+    total: items.length ? result.total : offset,
+  }
+}, empty)
 
-function load() {
-  return tasks.load({ assignable: true, keyword: keyword.value, ...(props.versionId ? { version_id: props.versionId } : {}) })
+const options = computed(() => tasks.data.value.items.map(task => ({
+  value: task.id,
+  label: task.title,
+  description: `${labelFor(taskKinds, task.kind)} · ${labelFor(taskStatuses, task.status)}`,
+})))
+
+function load(offset) {
+  return tasks.refresh(offset)
 }
 
-watch(() => [props.productId, props.versionId, keyword.value], load, { immediate: true })
-onBeforeUnmount(tasks.cancel)
+function loadFirstBatch() {
+  tasks.data.value = empty
+  return load(0)
+}
+
+function loadMore() {
+  if (!tasks.loading.value && !tasks.error.value && tasks.data.value.offset < tasks.data.value.total) {
+    return load(tasks.data.value.offset)
+  }
+}
+
+watch(() => [props.productId, props.versionId, keyword.value], loadFirstBatch)
 </script>
 
 <style scoped>
-.version-task-picker { min-width: 0; }
-.version-task-toolbar { display: flex; align-items: center; justify-content: space-between; gap: var(--space-8); margin-bottom: var(--space-8); }
-.version-task-toolbar h3 { margin: 0; }
-.version-task-empty { min-height: 0; padding: var(--space-12) 0; }
-.version-task-option { padding-block: var(--space-4); }
-.version-task-title { display: block; overflow-wrap: anywhere; }
+.task-picker-feedback { padding: var(--space-8); color: var(--text-muted); font-size: 12px; }
 </style>

@@ -38,12 +38,18 @@
           </tbody>
         </DataTable>
         <DataTable v-else-if="kind === 'versions'">
-          <thead><tr><th>版本 / 目标</th><th>状态</th><th>关联部署</th><TableActionCell header /></tr></thead>
+          <thead><tr><th>版本 / 说明</th><th>状态</th><th>关联部署</th><TableActionCell header /></tr></thead>
           <tbody>
             <tr v-for="row in resource.items.value" :key="row.id">
-              <td class="lifecycle-version-cell">{{ row.name }}<span v-if="row.goal" class="cell-secondary product-line lifecycle-version-goal">{{ row.goal }}</span></td>
+              <td class="lifecycle-version-cell">
+                {{ row.name }}
+                <OverflowTooltip v-if="row.notes || row.goal" :text="row.notes || row.goal" class="cell-secondary product-line lifecycle-version-preview" />
+              </td>
               <td><span class="badge" :class="lifecycleClass(row.status)">{{ labelFor(versionStatuses, row.status) }}</span><span v-if="row.target_date" class="cell-secondary product-line">目标 {{ row.target_date }}</span></td>
-              <td><button v-if="deploymentCount(row)" class="btn btn-sm" @click="showDeployments(row)">{{ deploymentCount(row) }} 条记录</button><span v-else class="cell-secondary">—</span></td>
+              <td>
+                <button v-if="deploymentCount(row)" type="button" class="btn btn-sm" @click="showDeployments(row)">{{ deploymentCount(row) }} 条记录</button>
+                <button v-else type="button" class="btn btn-sm" :disabled="busy" @click="openEditor(row, true)">关联部署</button>
+              </td>
               <TableActionCell><div class="btn-group"><button class="icon-button" title="查看版本详情" aria-label="查看版本详情" @click="detailVersion = row"><Eye :size="15" /></button><button class="icon-button" title="查看版本事项" aria-label="查看版本事项" @click="$emit('select-version', row.id)"><ListTodo :size="15" /></button><button class="icon-button" title="编辑版本" aria-label="编辑版本" :disabled="busy || optionsLoading || Boolean(optionsError)" @click="openEditor(row)"><Pencil :size="15" /></button></div></TableActionCell>
             </tr>
           </tbody>
@@ -55,7 +61,7 @@
       </div>
       <ResourcePagination :resource="resource" :label="`${noun}分页`" />
     </SurfaceCard>
-    <LifecycleEditor :open="editorOpen" :busy="busy" :kind="kind" :record="editing" :product-id="product.id" :versions="versions" :channels="product.channels || []" @close="editorOpen = false" @save="save" @error="error = $event" />
+    <LifecycleEditor :open="editorOpen" :busy="busy" :kind="kind" :record="editing" :product-id="product.id" :versions="versions" :channels="product.channels || []" :expand-deployments="editDeployments" @close="editorOpen = false" @save="save" @error="error = $event" />
     <ConfirmDialog teleport :open="Boolean(taskToDelete)" title="删除事项" :message="`确认删除事项“${taskToDelete?.title || ''}”？`" :busy="busy" confirm-text="删除" @cancel="taskToDelete = null" @confirm="removeTask" />
     <BaseModal teleport :open="Boolean(detailVersion)" :title="`版本详情 · ${detailVersion?.name || ''}`" size="large" @close="detailVersion = null">
       <dl v-if="detailVersion" class="product-detail-list">
@@ -63,7 +69,7 @@
         <div v-if="detailVersion.target_date"><dt>目标日期</dt><dd>{{ detailVersion.target_date }}</dd></div>
         <div v-if="detailVersion.goal"><dt>本次目标</dt><dd>{{ detailVersion.goal }}</dd></div>
         <div v-if="detailVersion.acceptance"><dt>验收项与验证结果</dt><dd>{{ detailVersion.acceptance }}</dd></div>
-        <div v-if="detailVersion.notes"><dt>备注 / 发行说明</dt><dd>{{ detailVersion.notes }}</dd></div>
+        <div v-if="detailVersion.notes"><dt>版本说明</dt><dd class="lifecycle-version-notes">{{ detailVersion.notes }}</dd></div>
         <div v-if="detailVersion.repository_url"><dt>代码仓库</dt><dd><a :href="detailVersion.repository_url" target="_blank" rel="noopener noreferrer">{{ detailVersion.repository_url }}</a></dd></div>
         <div v-if="detailVersion.commit_sha"><dt>提交 SHA</dt><dd>{{ detailVersion.commit_sha }}</dd></div>
         <div v-if="detailVersion.build_url"><dt>构建记录</dt><dd><a :href="detailVersion.build_url" target="_blank" rel="noopener noreferrer">{{ detailVersion.build_url }}</a></dd></div>
@@ -76,11 +82,14 @@
       <div v-else class="table-wrap"><DataTable><thead><tr><th>记录时间</th><th>状态</th><th>平台版本 / Build</th><th>备注</th></tr></thead><tbody><tr v-for="event in history.items.value" :key="event.id"><td>{{ formatTime(event.created_at) }}</td><td>{{ labelFor(distributionStatuses, event.status) }}<span class="cell-secondary product-line">{{ audienceLabel(event.audience) }}</span></td><td>{{ event.platform_version }} / {{ event.build_identifier || '—' }}</td><td class="lifecycle-description">{{ event.notes || '—' }}</td></tr></tbody></DataTable></div>
       <ResourcePagination :resource="history" label="发行历史分页" />
     </BaseModal>
-    <BaseModal teleport :open="Boolean(deploymentVersion)" title="关联部署记录" size="large" @close="deploymentVersion = null">
+    <BaseModal teleport :open="Boolean(deploymentVersion)" title="关联部署记录" size="large" @close="closeDeployments">
       <EmptyState v-if="deploymentRows.loading.value" variant="loading" message="正在读取部署..." />
       <EmptyState v-else-if="deploymentRows.error.value" message="部署读取失败"><template #action><button class="btn btn-sm" @click="deploymentRows.refresh()">重试</button></template></EmptyState>
       <div v-else class="table-wrap"><DataTable><thead><tr><th>组件 / 环境</th><th>版本</th><th>状态</th><th>入口</th></tr></thead><tbody><tr v-for="row in deploymentRows.items.value" :key="(row.source || 'application') + '-' + row.id"><td>{{ row.application_name }} · {{ row.environment_name || '—' }}（{{ environmentKindLabel(row.environment_kind) }}）</td><td>{{ row.version || `#${row.id}` }}</td><td>{{ row.status }}</td><td><router-link :to="deploymentPath(row)">{{ row.source === 'platform' ? '平台发布与更新' : '查看部署记录' }}</router-link></td></tr></tbody></DataTable></div>
       <ResourcePagination :resource="deploymentRows" label="关联部署分页" />
+      <template #actions>
+        <button type="button" class="btn" :disabled="busy" @click="editLinkedDeployments">编辑关联</button>
+      </template>
     </BaseModal>
     <ErrorNoticeModal :open="Boolean(error)" :message="error" teleport @close="error = ''" />
   </div>
@@ -110,6 +119,7 @@ const emit = defineEmits(['changed', 'select-version', 'show-channels'])
 const audience = ref('')
 const keyword = ref(''), status = ref(''), versionID = ref(props.initialVersionId), versions = ref([]), optionsLoading = ref(false), optionsError = ref(''), busy = ref(false), error = ref(''), editorOpen = ref(false), editing = ref(null), historyRecord = ref(null), deploymentVersion = ref(null)
 const detailVersion = ref(null)
+const editDeployments = ref(false)
 const taskToDelete = ref(null)
 const noun = computed(() => ({ tasks: '事项', versions: '版本', distributions: '发行记录' })[props.kind])
 const statuses = computed(() => ({ tasks: taskStatuses, versions: versionStatuses, distributions: distributionStatuses })[props.kind])
@@ -127,9 +137,11 @@ async function loadOptions() {
   finally { if (request === optionsRequest) optionsLoading.value = false }
 }
 function load() { return resource.load({ keyword: keyword.value, status: status.value, ...(props.kind === 'distributions' ? { audience: audience.value } : {}), ...(versionID.value && props.kind !== 'versions' ? { version_id: versionID.value } : {}) }) }
-function openEditor(row = null) {
+function openEditor(row = null, expandDeployments = false) {
   if (props.kind === 'distributions' && (!props.product.channels?.length || !versions.value.length)) { error.value = '请先在版本页新增产品版本，并在发行渠道页配置渠道'; return }
-  editing.value = row; editorOpen.value = true
+  editing.value = row
+  editDeployments.value = expandDeployments
+  editorOpen.value = true
 }
 async function save(record) {
   busy.value = true
@@ -153,6 +165,15 @@ async function removeTask() {
 async function importAction() { busy.value = true; try { await importProductNextAction(props.product.id); await resource.refresh(); emit('changed') } catch (cause) { error.value = cause.message } finally { busy.value = false } }
 function showHistory(row) { history.reset(); historyRecord.value = row; void history.load() }
 function showDeployments(row) { deploymentRows.reset(); deploymentVersion.value = row; void deploymentRows.load() }
+function closeDeployments() {
+  deploymentRows.reset()
+  deploymentVersion.value = null
+}
+function editLinkedDeployments() {
+  const row = deploymentVersion.value
+  closeDeployments()
+  openEditor(row, true)
+}
 watch([keyword, status, versionID, audience], load)
 watch(() => props.initialVersionId, value => { versionID.value = value })
 watch(() => [props.product.id, props.kind], () => { detailVersion.value = null; taskToDelete.value = null; resource.reset(); void load(); void loadOptions() }, { immediate: true })
@@ -164,5 +185,6 @@ onBeforeUnmount(() => { optionsRequest++; resource.cancel(); history.cancel(); d
 .lifecycle-task-cell { width: 50%; }
 .lifecycle-task-description { contain: inline-size; }
 .lifecycle-version-cell { width: 50%; max-width: 480px; overflow-wrap: anywhere; }
-.lifecycle-version-goal { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; white-space: pre-wrap; overflow-wrap: anywhere; }
+.lifecycle-version-preview { contain: inline-size; }
+.lifecycle-version-notes { white-space: pre-wrap; overflow-wrap: anywhere; }
 </style>

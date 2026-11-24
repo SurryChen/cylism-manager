@@ -32,6 +32,7 @@
             v-model="form.task_ids"
             :product-id="productId"
             :version-id="form.id"
+            :disabled="busy"
           />
         </template>
         <label class="form-group product-full-width">
@@ -47,7 +48,7 @@
             </div>
             <div v-show="deploymentsOpen" :id="deploymentPanelID" class="version-deployment-panel">
               <template v-if="deploymentsOpen">
-                <input v-model.trim="deploymentKeyword" class="form-input" aria-label="搜索部署记录" placeholder="搜索组件或版本" />
+                <input ref="deploymentSearch" v-model.trim="deploymentKeyword" class="form-input" aria-label="搜索部署记录" placeholder="搜索组件或版本" />
                 <EmptyState v-if="deployments.loading.value" variant="loading" message="正在读取部署记录..." />
                 <EmptyState v-else-if="deployments.error.value" message="部署记录读取失败"><template #action><button type="button" class="btn btn-sm" @click="loadDeployments">重试</button></template></EmptyState>
                 <div v-else class="product-checklist"><label v-for="deployment in deployments.items.value" :key="`${deployment.source || 'application'}-${deployment.id}`"><input type="checkbox" :value="deployment.id" :checked="deploymentSelected(deployment)" @change="setDeploymentSelected(deployment, $event.target.checked)" />{{ deployment.application_name }} · {{ deployment.environment_name || '未命名环境' }}（{{ environmentKindLabel(deployment.environment_kind) }}） · {{ deployment.version || `#${deployment.id}` }} · {{ deployment.status }}</label><span v-if="!deployments.total.value" class="product-muted">暂无可关联的部署记录</span></div>
@@ -63,7 +64,7 @@
 </template>
 <script setup>
 import { distributionAudiences, environmentKindLabel } from './environment-utils.js'
-import { computed, ref, useId, watch } from 'vue'
+import { computed, nextTick, ref, useId, watch } from 'vue'
 import BaseModal from '../../components/BaseModal.vue'
 import EmptyState from '../../components/EmptyState.vue'
 import SelectMenu from '../../components/SelectMenu.vue'
@@ -73,12 +74,13 @@ import { usePaginatedResource } from '../../composables/usePaginatedResource.js'
 import { getLifecyclePage } from '../../api/product-lifecycle.js'
 import { labelFor, platforms } from './product-utils.js'
 import { taskKinds, taskStatuses, priorities, versionStatuses, distributionStatuses, deploymentCount } from './lifecycle-utils.js'
-const props = defineProps({ open: Boolean, busy: Boolean, kind: { type: String, required: true }, productId: { type: Number, required: true }, record: { type: Object, default: null }, versions: { type: Array, default: () => [] }, channels: { type: Array, default: () => [] } })
+const props = defineProps({ open: Boolean, busy: Boolean, expandDeployments: Boolean, kind: { type: String, required: true }, productId: { type: Number, required: true }, record: { type: Object, default: null }, versions: { type: Array, default: () => [] }, channels: { type: Array, default: () => [] } })
 const emit = defineEmits(['close', 'save', 'error'])
 const formID = `lifecycle-${useId()}`
 const deploymentPanelID = `${formID}-deployments`
 const form = ref({})
 const deploymentsOpen = ref(false)
+const deploymentSearch = ref(null)
 const deploymentKeyword = ref('')
 const noun = computed(() => ({ tasks: '事项', versions: '版本', distributions: '发行记录' })[props.kind])
 const statuses = computed(() => ({ tasks: taskStatuses, versions: versionStatuses, distributions: distributionStatuses })[props.kind])
@@ -110,6 +112,8 @@ watch(() => props.open, open => {
     form.value.platform_release_ids ||= []
     deployments.reset()
     deploymentKeyword.value = ''
+    deploymentsOpen.value = props.expandDeployments
+    if (props.expandDeployments) void nextTick(() => deploymentSearch.value?.focus())
   }
 }, { immediate: true })
 function submit() {
