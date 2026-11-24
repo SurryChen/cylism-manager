@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/cylism/cylism-manager/internal/model"
@@ -61,14 +62,11 @@ func (w *ReleaseWorkflow) PrepareTemplateSpec(app *model.Application, template *
 	if err := json.Unmarshal([]byte(template.Spec), &spec); err != nil {
 		return ReleaseSpec{}, fmt.Errorf("%w: %v", ErrReleaseTemplateRead, err)
 	}
-	secrets, err := w.decryptTemplateSecrets(template.EncryptedSecrets)
+	secrets, err := w.activeTemplateSecrets(template, spec, app.Name)
 	if err != nil {
 		return ReleaseSpec{}, fmt.Errorf("%w: %v", ErrReleaseSecretRead, err)
 	}
-	if len(spec.Secrets) > 0 && len(secrets) == 0 {
-		return ReleaseSpec{}, fmt.Errorf("模板中的 Secret 尚未配置明文值")
-	}
-	spec.Secrets = secrets
+	setActiveTemplateSecrets(&spec, secrets)
 	if err := bindMigrationRequest(&spec, migration...); err != nil {
 		return ReleaseSpec{}, err
 	}
@@ -103,11 +101,11 @@ func (w *ReleaseWorkflow) Restart(ctx context.Context, app *model.Application, u
 	if err := json.Unmarshal([]byte(template.Spec), &spec); err != nil {
 		return nil, fmt.Errorf("读取上线模板失败")
 	}
-	secrets, err := w.decryptTemplateSecrets(template.EncryptedSecrets)
+	secrets, err := w.activeTemplateSecrets(template, spec, app.Name)
 	if err != nil {
 		return nil, fmt.Errorf("读取模板 Secret 失败")
 	}
-	spec.Secrets = secrets
+	setActiveTemplateSecrets(&spec, secrets)
 	spec.Image, spec.Version = active.Image, active.Version
 	// Restart never runs schema changes.
 	spec.Migration = nil
@@ -156,6 +154,36 @@ func (w *ReleaseWorkflow) Retry(ctx context.Context, releaseID, userID uint) (*P
 	return &PreparedRelease{Release: release, Spec: spec, Service: service}, nil
 }
 
+func (w *ReleaseWorkflow) activeTemplateSecrets(template *model.ApplicationDeploymentTemplate, spec ReleaseSpec, appName string) (map[string]string, error) {
+	values, err := w.decryptTemplateSecrets(template.EncryptedSecrets)
+	if err != nil {
+		return nil, err
+	}
+	for key := range values {
+		if !TemplateSecretReferenced(spec, appName, key) {
+			delete(values, key)
+		}
+	}
+	for key := range spec.Secrets {
+		if TemplateSecretReferenced(spec, appName, key) && values[key] == "" {
+			return nil, fmt.Errorf("敏感配置 %s 缺少保存的值", key)
+		}
+	}
+	return values, nil
+}
+
+func setActiveTemplateSecrets(spec *ReleaseSpec, values map[string]string) {
+	for key := range values {
+		if _, declared := spec.Secrets[key]; !declared {
+			spec.SecretFileKeys = appendUniqueKey(spec.SecretFileKeys, key)
+		}
+	}
+	spec.Secrets = values
+	spec.SecretFileKeys = slices.DeleteFunc(slices.Clone(spec.SecretFileKeys), func(key string) bool { _, ok := values[key]; return !ok })
+	spec.SecretsDisabled = slices.DeleteFunc(slices.Clone(spec.SecretsDisabled), func(key string) bool { _, ok := values[key]; return !ok })
+	spec.SecretManagedKeys = slices.DeleteFunc(slices.Clone(spec.SecretManagedKeys), func(key string) bool { _, ok := values[key]; return !ok })
+}
+
 func (w *ReleaseWorkflow) restoreSnapshotSecrets(source *model.Release, spec *ReleaseSpec) error {
 	if len(spec.Secrets) == 0 {
 		return nil
@@ -172,7 +200,15 @@ func (w *ReleaseWorkflow) restoreSnapshotSecrets(source *model.Release, spec *Re
 	if err != nil {
 		return fmt.Errorf("读取历史模板密钥: %w", err)
 	}
-	values, err := w.decryptTemplateSecrets(template.EncryptedSecrets)
+	app, err := w.repository.GetApplication(source.ApplicationID)
+	if err != nil {
+		return err
+	}
+	current, err := releaseSpecFromSnapshot(template.Spec)
+	if err != nil {
+		return err
+	}
+	values, err := w.activeTemplateSecrets(template, current, app.Name)
 	if err != nil {
 		return err
 	}
@@ -266,8 +302,19 @@ func (w *ReleaseWorkflow) SyncApplicationEndpoints(ctx context.Context, app *mod
 // SyncManagedFiles persists the ConfigMap and Secret keys that integrations
 // may edit. The template remains the source of desired content.
 func (w *ReleaseWorkflow) SyncManagedFiles(app *model.Application, spec ReleaseSpec, userID uint) error {
-	NormalizeManagedKeys(&spec)
 	bindings := make(map[string]struct{})
+	for _, file := range TemplateManagedFiles(app, spec, userID) {
+		bindings[file.BindingKey()] = struct{}{}
+		if err := w.repository.UpsertApplicationManagedFile(&file); err != nil {
+			return err
+		}
+	}
+	return w.repository.DisableApplicationManagedFilesNotIn(app.ID, bindings)
+}
+
+func TemplateManagedFiles(app *model.Application, spec ReleaseSpec, userID uint) []model.ApplicationManagedFile {
+	NormalizeManagedKeys(&spec)
+	var files []model.ApplicationManagedFile
 	for _, managed := range []struct {
 		keys   []string
 		kind   string
@@ -282,17 +329,16 @@ func (w *ReleaseWorkflow) SyncManagedFiles(app *model.Application, spec ReleaseS
 			if key == "" {
 				continue
 			}
-			bindings[managedFileBinding(managed.kind, managed.name, key)] = struct{}{}
-			file := &model.ApplicationManagedFile{
+			if managed.secret && !TemplateSecretReferenced(spec, app.Name, key) {
+				continue
+			}
+			files = append(files, model.ApplicationManagedFile{
 				ApplicationID: app.ID, ResourceKind: managed.kind, ResourceName: managed.name, Key: key,
 				MountPath: managedMountPath(spec, managed.secret, key), Format: "text", CreatedBy: userID, Enabled: true,
-			}
-			if err := w.repository.UpsertApplicationManagedFile(file); err != nil {
-				return err
-			}
+			})
 		}
 	}
-	return w.repository.DisableApplicationManagedFilesNotIn(app.ID, bindings)
+	return files
 }
 
 func (w *ReleaseWorkflow) create(ctx context.Context, app *model.Application, template *model.ApplicationDeploymentTemplate, userID uint, spec ReleaseSpec) (*PreparedRelease, error) {
@@ -531,8 +577,4 @@ func managedMountPath(spec ReleaseSpec, secret bool, key string) string {
 		}
 	}
 	return ""
-}
-
-func managedFileBinding(kind, name, key string) string {
-	return strings.Join([]string{kind, name, key}, "\x00")
 }

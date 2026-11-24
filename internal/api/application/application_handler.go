@@ -78,6 +78,7 @@ type applicationManagementRepository interface {
 	CreateApplicationDeploymentTemplate(*model.ApplicationDeploymentTemplate, bool) error
 	UpdateApplicationDeploymentTemplate(*model.ApplicationDeploymentTemplate) error
 	UpdateApplicationDeploymentTemplateIfRevision(*model.ApplicationDeploymentTemplate, uint) error
+	SaveDeploymentTemplateEdit(*model.ApplicationDeploymentTemplate, uint, []model.ApplicationManagedFile, *auditservice.AuditEventInput) error
 	DeleteApplicationDeploymentTemplate(uint, uint) error
 	SetDefaultApplicationDeploymentTemplate(uint, uint) error
 	ListApplicationCatalogItems() ([]model.ApplicationCatalogItem, error)

@@ -1,14 +1,27 @@
-import { describe, expect, it } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { describe, expect, it, vi } from 'vitest'
+import { flushPromises, mount } from '@vue/test-utils'
 import { reactive } from 'vue'
+import { getUnusedTemplateSecretKeys } from '../../api/applications.js'
 import TemplateConfigurationEditor from './TemplateConfigurationEditor.vue'
 
-function editor(overrides = {}) {
-  const form = reactive({ config_items: [], secret_items: [], file_mounts: [], ...overrides })
-  const wrapper = mount(TemplateConfigurationEditor, { props: { form } })
+vi.mock('../../api/applications.js', () => ({
+  getUnusedTemplateSecretKeys: vi.fn(),
+}))
+
+function editor(overrides = {}, props = {}) {
+  const form = reactive({ config_items: [], secret_items: [], file_mounts: [], delete_secret_keys: [], ...overrides })
+  const wrapper = mount(TemplateConfigurationEditor, { props: { form, ...props } })
   return { form, wrapper }
 }
 const addFile = wrapper => wrapper.findAll('button').find(button => button.text() === '添加文件').trigger('click')
+const clickButton = (wrapper, label) => wrapper.findAll('button').find(button => button.text() === label).trigger('click')
+const savedSecret = (key, file_only = true) => ({ key, original_key: key, value: '', enabled: true, file_only })
+const secretMount = (key, mount_path) => ({ source_type: 'application_secret', key, mount_path })
+
+async function removeFirstMount(wrapper) {
+  await wrapper.find('.file-settings-button').trigger('click')
+  await wrapper.find('[aria-label="移除配置文件"]').trigger('click')
+}
 
 describe('TemplateConfigurationEditor', () => {
   it('keeps file settings out of the default view and opens only one file at a time', async () => {
@@ -96,6 +109,79 @@ describe('TemplateConfigurationEditor', () => {
     expect(wrapper.emitted('error')[0][0]).toContain('同名配置')
     expect(form.file_mounts[0].source_type).toBe('application_config')
     expect(form.secret_items).toHaveLength(1)
+    wrapper.unmount()
+  })
+
+  it.each(['保留值', '删除值'])('confirms the last reference with %s', async choice => {
+    const key = 'client-secret'
+    const { form, wrapper } = editor({
+      secret_items: [savedSecret(key), savedSecret('MYSQL_DSN', false)],
+      file_mounts: [secretMount(key, '/a/key'), secretMount(key, '/b/key')],
+    })
+    await removeFirstMount(wrapper)
+    expect(form.file_mounts.map(file => file.mount_path)).toEqual(['/b/key'])
+    expect(form.delete_secret_keys).toEqual([])
+    expect(wrapper.text()).not.toContain('移除敏感配置')
+
+    await removeFirstMount(wrapper)
+    expect(wrapper.text()).toContain('最后一个引用')
+    await clickButton(wrapper, '取消')
+    expect(form.file_mounts).toHaveLength(1)
+    await removeFirstMount(wrapper)
+    await clickButton(wrapper, choice)
+    expect(form.file_mounts).toEqual([])
+    expect(form.delete_secret_keys).toEqual(choice === '删除值' ? [key] : [])
+    expect(form.secret_items.map(item => item.key)).toEqual(choice === '删除值' ? ['MYSQL_DSN'] : [key, 'MYSQL_DSN'])
+    expect(form.secret_items.find(item => item.key === 'MYSQL_DSN').value).toBe('')
+    expect(wrapper.findAll('.environment-entry')).toHaveLength(1)
+    wrapper.unmount()
+  })
+
+  it('preserves the environment reference when removing the only mount', async () => {
+    const { form, wrapper } = editor({
+      secret_items: [savedSecret('credential', false)],
+      file_mounts: [secretMount('credential', '/app/secret')],
+    })
+    await removeFirstMount(wrapper)
+    expect(form.file_mounts).toEqual([])
+    expect(form.secret_items).toEqual([savedSecret('credential', false)])
+    expect(form.delete_secret_keys).toEqual([])
+    expect(wrapper.findAll('.environment-entry')).toHaveLength(1)
+    wrapper.unmount()
+  })
+
+  it('queues and deselects historical keys without editing valid saved values', async () => {
+    getUnusedTemplateSecretKeys.mockResolvedValue({ revision: 3, unused_secret_keys: ['old-file', 'old-token', 'reused-key'] })
+    const { form, wrapper } = editor({
+      secret_items: [savedSecret('MYSQL_DSN', false), savedSecret('reused-key', false)],
+    }, { applicationId: 1, templateId: 2, revision: 3 })
+
+    await clickButton(wrapper, '清理无引用的敏感配置')
+    await flushPromises()
+    expect(getUnusedTemplateSecretKeys).toHaveBeenCalledWith(1, 2)
+    expect(wrapper.findAll('input[type=checkbox][value]').map(input => input.element.value)).toEqual(['old-file', 'old-token'])
+    await wrapper.find('input[value="old-token"]').setValue(true)
+    await clickButton(wrapper, '确认清理选项')
+    expect(form.delete_secret_keys).toEqual(['old-token'])
+    expect(form.secret_items).toEqual([savedSecret('MYSQL_DSN', false), savedSecret('reused-key', false)])
+
+    await clickButton(wrapper, '清理无引用的敏感配置')
+    await flushPromises()
+    expect(wrapper.find('input[value="old-token"]').element.checked).toBe(true)
+    await wrapper.find('input[value="old-token"]').setValue(false)
+    await clickButton(wrapper, '确认清理选项')
+    expect(form.delete_secret_keys).toEqual([])
+    wrapper.unmount()
+  })
+
+  it('rejects cleanup selections from a newer revision', async () => {
+    getUnusedTemplateSecretKeys.mockResolvedValue({ revision: 4, unused_secret_keys: ['old-key'] })
+    const { form, wrapper } = editor({}, { applicationId: 1, templateId: 2, revision: 3 })
+    await clickButton(wrapper, '清理无引用的敏感配置')
+    await flushPromises()
+    expect(wrapper.emitted('error')?.[0]).toEqual(['模板已更新，请重新打开后清理'])
+    expect(wrapper.find('input[value="old-key"]').exists()).toBe(false)
+    expect(form.delete_secret_keys).toEqual([])
     wrapper.unmount()
   })
 })

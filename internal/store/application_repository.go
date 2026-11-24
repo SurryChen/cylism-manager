@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/cylism/cylism-manager/internal/model"
+	auditservice "github.com/cylism/cylism-manager/internal/service/audit"
 	"gorm.io/gorm"
 )
 
@@ -431,17 +432,53 @@ func (s *Store) UpdateApplicationDeploymentTemplate(template *model.ApplicationD
 // the caller still has the revision it read. Template content is the
 // declarative source of truth for generated ConfigMaps.
 func (s *Store) UpdateApplicationDeploymentTemplateIfRevision(template *model.ApplicationDeploymentTemplate, expectedRevision uint) error {
-	return s.db.Transaction(func(tx *gorm.DB) error {
+	result := s.db.Model(template).
+		Where("application_id = ? AND revision = ?", template.ApplicationID, expectedRevision).
+		Select("Name", "Description", "Enabled", "DefaultVersion", "Spec", "EncryptedSecrets", "UpdatedBy", "Revision", "UpdatedAt").
+		Updates(map[string]any{
+			"Name": template.Name, "Description": template.Description, "Enabled": template.Enabled,
+			"DefaultVersion": template.DefaultVersion, "Spec": template.Spec, "EncryptedSecrets": template.EncryptedSecrets,
+			"UpdatedBy": template.UpdatedBy, "Revision": expectedRevision + 1,
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
 		var current model.ApplicationDeploymentTemplate
-		if err := tx.Where("id = ? AND application_id = ?", template.ID, template.ApplicationID).First(&current).Error; err != nil {
+		if err := s.db.Select("revision").Where("id = ? AND application_id = ?", template.ID, template.ApplicationID).First(&current).Error; err != nil {
 			return err
 		}
-		if current.Revision != expectedRevision {
-			return &model.TemplateRevisionConflictError{Current: current.Revision, Expected: expectedRevision}
+		return &model.TemplateRevisionConflictError{Current: current.Revision, Expected: expectedRevision}
+	}
+	return nil
+}
+
+func (s *Store) SaveDeploymentTemplateEdit(template *model.ApplicationDeploymentTemplate, revision uint, files []model.ApplicationManagedFile, event *auditservice.AuditEventInput) error {
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		store := &Store{db: tx}
+		if err := store.UpdateApplicationDeploymentTemplateIfRevision(template, revision); err != nil {
+			return err
 		}
-		template.CreatedAt = current.CreatedAt
-		template.Revision = current.Revision + 1
-		return tx.Save(template).Error
+		var app model.Application
+		if err := tx.Select("default_deployment_template_id").First(&app, template.ApplicationID).Error; err != nil {
+			return err
+		}
+		if app.DefaultDeploymentTemplateID != nil && *app.DefaultDeploymentTemplateID == template.ID {
+			bindings := make(map[string]struct{}, len(files))
+			for _, file := range files {
+				bindings[file.BindingKey()] = struct{}{}
+				if err := store.UpsertApplicationManagedFile(&file); err != nil {
+					return err
+				}
+			}
+			if err := store.DisableApplicationManagedFilesNotIn(template.ApplicationID, bindings); err != nil {
+				return err
+			}
+		}
+		if event != nil {
+			return auditservice.NewService(store).Record(*event)
+		}
+		return nil
 	})
 }
 

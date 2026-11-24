@@ -116,6 +116,10 @@ export function getDeploymentTemplates(applicationID, options) {
   return api.get(`/applications/${segment(applicationID)}/deployment-templates`, options)
 }
 
+export function getUnusedTemplateSecretKeys(applicationID, templateID, options) {
+  return api.get(`/applications/${segment(applicationID)}/deployment-templates/${segment(templateID)}?include_unused_secret_keys=true`, options)
+}
+
 export function getApplicationCatalog(options) {
   return api.get('/application-catalog', options)
 }

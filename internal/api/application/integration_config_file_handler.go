@@ -205,7 +205,7 @@ func (h *ApplicationHandler) IntegrationReplaceConfigFile(c *gin.Context) {
 	} else {
 		spec.Config[file.Key] = *req.Content
 	}
-	updated, err := h.templateFromRequest(c.Request.Context(), app, &deploymentTemplateRequest{Name: template.Name, Description: template.Description, Enabled: template.Enabled, DefaultVersion: template.DefaultVersion, Spec: spec}, template.ID)
+	updated, err := h.templateFromRequest(c.Request.Context(), app, &deploymentTemplateRequest{Name: template.Name, Description: template.Description, Enabled: template.Enabled, DefaultVersion: template.DefaultVersion, Spec: spec}, template)
 	if err != nil {
 		apiShared.ValidationError(c, err.Error())
 		return

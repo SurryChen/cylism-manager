@@ -368,6 +368,44 @@ describe('ApplicationDetails view', () => {
     expect(wrapper.text()).toContain('由集群负载均衡器分配外部地址，适用于 TCP 或 UDP 直出。')
   })
 
+  it('saves selected orphan keys with the template revision', async () => {
+    const { api } = await import('../../api/index.js')
+    const originalGet = api.get.getMockImplementation()
+    api.get.mockImplementation((path, options) => {
+      if (path === '/applications/1/deployment-templates/4?include_unused_secret_keys=true') {
+        return Promise.resolve({ revision: 2, unused_secret_keys: ['old-secret'] })
+      }
+      return originalGet(path, options)
+    })
+    api.put.mockClear()
+    const wrapper = mount(ApplicationDetails, {
+      props: { applicationID: '1' },
+      global: { stubs: { RouterLink: { template: '<a><slot /></a>' }, Teleport: true } },
+    })
+    const clickButton = label => wrapper.findAll('button').find(button => button.text() === label).trigger('click')
+    try {
+      await flushPromises()
+      await wrapper.findAll('.section-tab').find(tab => tab.text() === '部署配置').trigger('click')
+      await clickButton('编辑')
+      await wrapper.get('[aria-controls="template-storage"]').trigger('click')
+      await clickButton('清理无引用的敏感配置')
+      await flushPromises()
+      expect(api.get).toHaveBeenCalledWith('/applications/1/deployment-templates/4?include_unused_secret_keys=true', undefined)
+      await wrapper.get('input[value="old-secret"]').setValue(true)
+      await clickButton('确认清理选项')
+      expect(api.put).not.toHaveBeenCalled()
+      await wrapper.get('#template-editor-form').trigger('submit.prevent')
+      expect(api.put).toHaveBeenCalledWith('/applications/1/deployment-templates/4', expect.objectContaining({
+        revision: 2,
+        delete_secret_keys: ['old-secret'],
+      }))
+    } finally {
+      wrapper.unmount()
+      api.get.mockImplementation(originalGet)
+      api.put.mockClear()
+    }
+  })
+
   it('shows one template section at a time and preserves edits across sections', async () => {
     const { api } = await import('../../api/index.js')
     api.post.mockReset()

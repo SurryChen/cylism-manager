@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -12,6 +14,7 @@ import (
 	"github.com/cylism/cylism-manager/internal/model"
 	crypto "github.com/cylism/cylism-manager/internal/security"
 	applicationservice "github.com/cylism/cylism-manager/internal/service/application"
+	auditservice "github.com/cylism/cylism-manager/internal/service/audit"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
@@ -30,13 +33,15 @@ type deploymentTemplateInfo struct {
 }
 
 type deploymentTemplateRequest struct {
-	Name            string                         `json:"name"`
-	Description     string                         `json:"description"`
-	Enabled         bool                           `json:"enabled"`
-	DefaultVersion  string                         `json:"default_version"`
-	Revision        uint                           `json:"revision,omitempty"`
-	Spec            applicationservice.ReleaseSpec `json:"spec"`
-	SecretFileEdits []templateSecretFileEdit       `json:"secret_file_edits,omitempty"`
+	Name              string                         `json:"name"`
+	Description       string                         `json:"description"`
+	Enabled           bool                           `json:"enabled"`
+	DefaultVersion    string                         `json:"default_version"`
+	Revision          uint                           `json:"revision,omitempty"`
+	Spec              applicationservice.ReleaseSpec `json:"spec"`
+	SecretFileEdits   []templateSecretFileEdit       `json:"secret_file_edits,omitempty"`
+	DeleteSecretKeys  []string                       `json:"delete_secret_keys,omitempty"`
+	deletedSecretKeys []string
 }
 
 func (h *ApplicationHandler) ListDeploymentTemplates(c *gin.Context) {
@@ -93,7 +98,33 @@ func (h *ApplicationHandler) GetDeploymentTemplate(c *gin.Context) {
 		apiShared.DBError(c, "读取应用上线模板失败")
 		return
 	}
+	if c.Query("include_unused_secret_keys") == "true" {
+		if !canManageTemplateSecrets(c) {
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"code": http.StatusForbidden, "message": "请使用平台管理账号查看无引用的敏感配置"})
+			return
+		}
+		c.Header("Cache-Control", "no-store")
+		values, err := h.decryptTemplateSecrets(template)
+		if err != nil {
+			apiShared.DBError(c, "无法读取敏感配置清单")
+			return
+		}
+		unusedKeys := make([]string, 0)
+		for key := range values {
+			if !applicationservice.TemplateSecretReferenced(info.Spec, app.Name, key) {
+				unusedKeys = append(unusedKeys, key)
+			}
+		}
+		slices.Sort(unusedKeys)
+		apiShared.Success(c, gin.H{"revision": template.Revision, "unused_secret_keys": unusedKeys})
+		return
+	}
 	apiShared.Success(c, info)
+}
+
+func canManageTemplateSecrets(c *gin.Context) bool {
+	_, delegated := c.Get("delegation")
+	return apiShared.UserID(c) != 0 && !delegated
 }
 
 func (h *ApplicationHandler) CreateDeploymentTemplate(c *gin.Context) {
@@ -112,11 +143,11 @@ func (h *ApplicationHandler) CreateDeploymentTemplate(c *gin.Context) {
 		apiShared.BadRequest(c, "上线模板定义无效")
 		return
 	}
-	if len(req.SecretFileEdits) > 0 {
+	if len(req.SecretFileEdits) > 0 || len(req.DeleteSecretKeys) > 0 {
 		apiShared.ValidationError(c, "新模板请直接填写文件内容")
 		return
 	}
-	template, err := h.templateFromRequest(c.Request.Context(), app, &req, 0)
+	template, err := h.templateFromRequest(c.Request.Context(), app, &req, nil)
 	if err != nil {
 		apiShared.ValidationError(c, err.Error())
 		return
@@ -182,6 +213,10 @@ func (h *ApplicationHandler) UpdateDeploymentTemplate(c *gin.Context) {
 		apiShared.Conflict(c, fmt.Sprintf("模板版本冲突，当前版本为 %d", currentTemplate.Revision))
 		return
 	}
+	if len(req.DeleteSecretKeys) > 0 && req.Revision == 0 {
+		apiShared.Conflict(c, "删除敏感配置需要当前模板版本，请重新打开模板")
+		return
+	}
 	if err := h.applyTemplateSecretFileEdits(currentTemplate, &req); err != nil {
 		apiShared.ValidationError(c, err.Error())
 		return
@@ -197,19 +232,27 @@ func (h *ApplicationHandler) UpdateDeploymentTemplate(c *gin.Context) {
 			return
 		}
 	}
-	template, err := h.templateFromRequest(c.Request.Context(), app, &req, templateID)
+	template, err := h.templateFromRequest(c.Request.Context(), app, &req, currentTemplate)
 	if err != nil {
 		apiShared.ValidationError(c, err.Error())
 		return
 	}
 	template.UpdatedBy = apiShared.UserID(c)
-	var updateErr error
-	if req.Revision != 0 {
-		updateErr = h.applications.UpdateApplicationDeploymentTemplateIfRevision(template, req.Revision)
-	} else {
-		updateErr = h.applications.UpdateApplicationDeploymentTemplate(template)
+	files := applicationservice.TemplateManagedFiles(app, req.Spec, apiShared.UserID(c))
+	var event *auditservice.AuditEventInput
+	if len(req.deletedSecretKeys) > 0 {
+		if !canManageTemplateSecrets(c) {
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"code": http.StatusForbidden, "message": "请使用平台管理账号删除模板敏感配置"})
+			return
+		}
+		event = &auditservice.AuditEventInput{
+			Action: "application.template.delete-sensitive-keys", ResourceType: "application", ResourceID: applicationID,
+			Actor: apiShared.ActorFromContext(c), Source: model.AuditSourceAPI, Outcome: model.AuditOutcomeSucceeded,
+			Summary: "删除上线模板中的敏感配置", RequestID: apiShared.RequestID(c),
+			Metadata: map[string]any{"template_id": templateID, "deleted_keys": req.deletedSecretKeys},
+		}
 	}
-	if err := updateErr; err != nil {
+	if err := h.applications.SaveDeploymentTemplateEdit(template, currentTemplate.Revision, files, event); err != nil {
 		var conflict *model.TemplateRevisionConflictError
 		if errors.As(err, &conflict) {
 			apiShared.Conflict(c, conflict.Error())
@@ -219,14 +262,8 @@ func (h *ApplicationHandler) UpdateDeploymentTemplate(c *gin.Context) {
 			apiShared.NotFound(c, "上线模板不存在")
 			return
 		}
-		apiShared.DBError(c, err.Error())
+		apiShared.DBError(c, "保存上线模板失败")
 		return
-	}
-	if app.DefaultDeploymentTemplateID != nil && *app.DefaultDeploymentTemplateID == template.ID {
-		if err := h.releaseWorkflow().SyncManagedFiles(app, req.Spec, apiShared.UserID(c)); err != nil {
-			apiShared.DBError(c, "登记模板 ConfigMap 配置失败")
-			return
-		}
 	}
 	info, err := deploymentTemplateFromModel(template, app.DefaultDeploymentTemplateID)
 	if err != nil {
@@ -323,7 +360,7 @@ func (h *ApplicationHandler) SetDefaultDeploymentTemplate(c *gin.Context) {
 	apiShared.Success(c, gin.H{"id": templateID})
 }
 
-func (h *ApplicationHandler) templateFromRequest(ctx context.Context, app *model.Application, req *deploymentTemplateRequest, templateID uint) (*model.ApplicationDeploymentTemplate, error) {
+func (h *ApplicationHandler) templateFromRequest(ctx context.Context, app *model.Application, req *deploymentTemplateRequest, current *model.ApplicationDeploymentTemplate) (*model.ApplicationDeploymentTemplate, error) {
 	if strings.TrimSpace(req.Name) == "" {
 		return nil, fmt.Errorf("模板名称必填")
 	}
@@ -348,40 +385,9 @@ func (h *ApplicationHandler) templateFromRequest(ctx context.Context, app *model
 	if err := h.releaseWorkflow().PrepareRegistrySpec(app, &spec); err != nil {
 		return nil, err
 	}
-	encryptedSecrets := ""
-	if templateID != 0 {
-		current, err := h.applications.GetApplicationDeploymentTemplate(app.ID, templateID)
-		if err != nil {
-			return nil, fmt.Errorf("读取旧模板 Secret: %w", err)
-		}
-		encryptedSecrets = current.EncryptedSecrets
-	}
-	if len(spec.Secrets) > 0 {
-		currentSecrets, err := h.decryptTemplateSecretsByValue(encryptedSecrets)
-		if err != nil {
-			return nil, fmt.Errorf("读取旧模板 Secret: %w", err)
-		}
-		for key, value := range spec.Secrets {
-			if strings.TrimSpace(value) != "" {
-				currentSecrets[key] = value
-			} else if strings.TrimSpace(currentSecrets[key]) == "" {
-				return nil, fmt.Errorf("请填写敏感配置 %s 的内容", key)
-			}
-		}
-		if len(currentSecrets) == 0 {
-			return nil, fmt.Errorf("Secret 必须至少配置一个非空值")
-		}
-		payload, err := json.Marshal(currentSecrets)
-		if err != nil {
-			return nil, fmt.Errorf("编码模板 Secret: %w", err)
-		}
-		if len(h.encKey) == 0 {
-			return nil, fmt.Errorf("平台加密密钥未配置，无法保存 Secret")
-		}
-		encryptedSecrets, err = crypto.Encrypt(h.encKey, string(payload))
-		if err != nil {
-			return nil, fmt.Errorf("加密模板 Secret: %w", err)
-		}
+	encryptedSecrets, err := h.updateTemplateSecrets(app.Name, current, &spec, req)
+	if err != nil {
+		return nil, err
 	}
 	// Domain binding belongs to the application endpoint, never to a rollout template.
 	spec.Endpoint = applicationservice.EndpointSpec{Exposure: applicationservice.ExposureCluster}
@@ -401,11 +407,82 @@ func (h *ApplicationHandler) templateFromRequest(ctx context.Context, app *model
 	if err != nil {
 		return nil, fmt.Errorf("保存上线模板失败: %w", err)
 	}
-	return &model.ApplicationDeploymentTemplate{ID: templateID, ApplicationID: app.ID, Name: strings.TrimSpace(req.Name), Description: strings.TrimSpace(req.Description), Enabled: req.Enabled, DefaultVersion: defaultVersion, Spec: string(snapshot), EncryptedSecrets: encryptedSecrets}, nil
+	req.Spec = spec
+	template := &model.ApplicationDeploymentTemplate{ApplicationID: app.ID, Name: strings.TrimSpace(req.Name), Description: strings.TrimSpace(req.Description), Enabled: req.Enabled, DefaultVersion: defaultVersion, Spec: string(snapshot), EncryptedSecrets: encryptedSecrets}
+	if current != nil {
+		template.ID = current.ID
+		template.CreatedAt = current.CreatedAt
+	}
+	return template, nil
 }
 
 func (h *ApplicationHandler) decryptTemplateSecrets(template *model.ApplicationDeploymentTemplate) (map[string]string, error) {
 	return h.decryptTemplateSecretsByValue(template.EncryptedSecrets)
+}
+
+func (h *ApplicationHandler) updateTemplateSecrets(appName string, current *model.ApplicationDeploymentTemplate, spec *applicationservice.ReleaseSpec, req *deploymentTemplateRequest) (string, error) {
+	values := map[string]string{}
+	if current != nil {
+		var err error
+		values, err = h.decryptTemplateSecrets(current)
+		if err != nil {
+			return "", fmt.Errorf("读取旧模板敏感配置失败")
+		}
+	}
+	explicit := make(map[string]bool)
+	for _, key := range req.DeleteSecretKeys {
+		if explicit[key] || applicationservice.TemplateSecretReferenced(*spec, appName, key) {
+			return "", fmt.Errorf("敏感配置 %s 仍有引用或重复选择", key)
+		}
+		if _, exists := values[key]; !exists {
+			return "", fmt.Errorf("敏感配置 %s 已不存在，请重新打开模板", key)
+		}
+		explicit[key] = true
+	}
+	for key, value := range spec.Secrets {
+		if explicit[key] {
+			if value != "" {
+				return "", fmt.Errorf("不能同时修改和删除敏感配置 %s", key)
+			}
+			delete(spec.Secrets, key)
+			continue
+		}
+		if strings.TrimSpace(value) != "" {
+			values[key] = value
+		} else if strings.TrimSpace(values[key]) == "" {
+			return "", fmt.Errorf("请填写敏感配置 %s 的内容", key)
+		}
+	}
+	if current != nil {
+		var previous applicationservice.ReleaseSpec
+		if err := json.Unmarshal([]byte(current.Spec), &previous); err != nil {
+			return "", fmt.Errorf("读取旧模板定义失败")
+		}
+		for key := range previous.Secrets {
+			if _, kept := spec.Secrets[key]; !kept && !applicationservice.TemplateSecretReferenced(*spec, appName, key) {
+				explicit[key] = true
+			}
+		}
+	}
+	if len(explicit) > 0 && req.Revision == 0 {
+		return "", fmt.Errorf("删除敏感配置需要当前模板版本，请重新打开模板")
+	}
+	for key := range explicit {
+		delete(values, key)
+		req.deletedSecretKeys = append(req.deletedSecretKeys, key)
+	}
+	slices.Sort(req.deletedSecretKeys)
+	spec.SecretFileKeys = slices.DeleteFunc(spec.SecretFileKeys, func(key string) bool { return explicit[key] })
+	spec.SecretsDisabled = slices.DeleteFunc(spec.SecretsDisabled, func(key string) bool { return explicit[key] })
+	spec.SecretManagedKeys = slices.DeleteFunc(spec.SecretManagedKeys, func(key string) bool { return explicit[key] })
+	if len(values) == 0 {
+		return "", nil
+	}
+	payload, err := json.Marshal(values)
+	if err != nil {
+		return "", fmt.Errorf("编码模板敏感配置失败")
+	}
+	return crypto.Encrypt(h.encKey, string(payload))
 }
 
 func (h *ApplicationHandler) decryptTemplateSecretsByValue(encrypted string) (map[string]string, error) {

@@ -106,6 +106,29 @@ func (a *ApplicationResourceApplier) ApplyStatefulSet(ctx context.Context, desir
 	return err
 }
 
+func (a *ApplicationResourceApplier) ClearApplicationSecret(ctx context.Context, desired *corev1.Secret) error {
+	if err := a.ready(); err != nil {
+		return err
+	}
+	secrets := a.client.Clientset.CoreV1().Secrets(desired.Namespace)
+	existing, err := secrets.Get(ctx, desired.Name, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if ensureApplicationManaged(existing.Labels) != nil || existing.Type != desired.Type ||
+		existing.Labels["app.kubernetes.io/name"] == "" ||
+		existing.Labels["app.kubernetes.io/name"] != desired.Labels["app.kubernetes.io/name"] ||
+		len(existing.Data) == 0 {
+		return nil
+	}
+	existing.Data = nil
+	_, err = secrets.Update(ctx, existing, metav1.UpdateOptions{})
+	return err
+}
+
 func (a *ApplicationResourceApplier) ApplyService(ctx context.Context, desired *corev1.Service) error {
 	if err := a.ready(); err != nil {
 		return err

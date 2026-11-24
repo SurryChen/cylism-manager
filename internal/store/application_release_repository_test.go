@@ -1,11 +1,56 @@
 package store
 
 import (
+	"errors"
 	"path/filepath"
 	"testing"
 
 	"github.com/cylism/cylism-manager/internal/model"
 )
+
+func TestConcurrentDeploymentTemplateEditsSaveOnlyOneRevision(t *testing.T) {
+	s, err := New(filepath.Join(t.TempDir(), "templates.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	app := &model.Application{ProjectID: 1, EnvironmentID: 1, Name: "web", WorkloadKind: "deployment", CreatedBy: 1}
+	if err := s.CreateApplication(app); err != nil {
+		t.Fatal(err)
+	}
+	template := &model.ApplicationDeploymentTemplate{ApplicationID: app.ID, Name: "default", Enabled: true, Spec: "{}"}
+	if err := s.CreateApplicationDeploymentTemplate(template, true); err != nil {
+		t.Fatal(err)
+	}
+
+	start := make(chan struct{})
+	results := make(chan error, 2)
+	for _, name := range []string{"first", "second"} {
+		edit := *template
+		edit.Name = name
+		go func() {
+			<-start
+			results <- s.SaveDeploymentTemplateEdit(&edit, template.Revision, nil, nil)
+		}()
+	}
+	close(start)
+	var successes, conflicts int
+	for range 2 {
+		err := <-results
+		var conflict *model.TemplateRevisionConflictError
+		switch {
+		case err == nil:
+			successes++
+		case errors.As(err, &conflict) && conflict.Current == template.Revision+1:
+			conflicts++
+		default:
+			t.Fatalf("unexpected concurrent edit result: %v", err)
+		}
+	}
+	saved, err := s.GetApplicationDeploymentTemplate(app.ID, template.ID)
+	if err != nil || successes != 1 || conflicts != 1 || saved.Revision != template.Revision+1 {
+		t.Fatalf("concurrent edits: successes=%d, conflicts=%d, lookup error=%v", successes, conflicts, err)
+	}
+}
 
 func TestApplicationCapabilitiesPersistAndNormalize(t *testing.T) {
 	s := setupTestDB(t)

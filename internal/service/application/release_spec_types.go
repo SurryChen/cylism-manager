@@ -200,13 +200,14 @@ type ApplicationContext struct {
 }
 
 type RenderedResources struct {
-	ConfigMap       *corev1.ConfigMap
-	Secret          *corev1.Secret
-	ImagePullSecret *corev1.Secret
-	Deployment      *appsv1.Deployment
-	StatefulSet     *appsv1.StatefulSet
-	Service         *corev1.Service
-	Certificate     *unstructured.Unstructured
-	Ingress         *networkingv1.Ingress
-	SanitizedSpec   ReleaseSpec
+	ConfigMap              *corev1.ConfigMap
+	Secret                 *corev1.Secret
+	EmptyApplicationSecret *corev1.Secret
+	ImagePullSecret        *corev1.Secret
+	Deployment             *appsv1.Deployment
+	StatefulSet            *appsv1.StatefulSet
+	Service                *corev1.Service
+	Certificate            *unstructured.Unstructured
+	Ingress                *networkingv1.Ingress
+	SanitizedSpec          ReleaseSpec
 }

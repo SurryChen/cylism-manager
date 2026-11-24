@@ -1,9 +1,25 @@
 package application
 
 import (
+	"slices"
 	"sort"
 	"strings"
 )
+
+// TemplateSecretReferenced reports whether a saved value is declared as an
+// environment variable or referenced by a file mount of the generated Secret.
+func TemplateSecretReferenced(spec ReleaseSpec, appName, key string) bool {
+	if _, declared := spec.Secrets[key]; declared && !slices.Contains(spec.SecretFileKeys, key) {
+		return true
+	}
+	for _, mount := range spec.FileMounts {
+		if mount.Key == key && (mount.SourceType == FileMountSourceApplicationSecret ||
+			(mount.SourceType == FileMountSourceSecret && mount.SourceName == appName+"-secret")) {
+			return true
+		}
+	}
+	return false
+}
 
 func SanitizeReleaseSpec(spec ReleaseSpec) ReleaseSpec {
 	spec.RegistryEndpoint = ""

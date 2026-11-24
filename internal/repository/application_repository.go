@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/cylism/cylism-manager/internal/model"
+	auditservice "github.com/cylism/cylism-manager/internal/service/audit"
 	"github.com/cylism/cylism-manager/internal/store"
 )
 
@@ -74,6 +75,7 @@ type ApplicationManagementRepository interface {
 	CreateApplicationDeploymentTemplate(*model.ApplicationDeploymentTemplate, bool) error
 	UpdateApplicationDeploymentTemplate(*model.ApplicationDeploymentTemplate) error
 	UpdateApplicationDeploymentTemplateIfRevision(*model.ApplicationDeploymentTemplate, uint) error
+	SaveDeploymentTemplateEdit(*model.ApplicationDeploymentTemplate, uint, []model.ApplicationManagedFile, *auditservice.AuditEventInput) error
 	DeleteApplicationDeploymentTemplate(uint, uint) error
 	SetDefaultApplicationDeploymentTemplate(uint, uint) error
 	ListApplicationCatalogItems() ([]model.ApplicationCatalogItem, error)

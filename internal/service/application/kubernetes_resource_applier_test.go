@@ -26,6 +26,9 @@ func (f *fakeApplicationResourceApplier) ApplyConfigMap(context.Context, *corev1
 func (f *fakeApplicationResourceApplier) ApplySecret(context.Context, *corev1.Secret) error {
 	return f.record("secret")
 }
+func (f *fakeApplicationResourceApplier) ClearApplicationSecret(context.Context, *corev1.Secret) error {
+	return f.record("clear application secret")
+}
 func (f *fakeApplicationResourceApplier) ApplyDeployment(context.Context, *appsv1.Deployment) error {
 	return f.record("deployment")
 }
@@ -61,6 +64,28 @@ func TestKubernetesApplierApplyDelegatesResourcesInDependencyOrder(t *testing.T)
 		if fake.calls[i] != want[i] {
 			t.Fatalf("calls = %#v, want %#v", fake.calls, want)
 		}
+	}
+}
+
+func TestKubernetesApplierClearsEmptyApplicationSecretAfterWorkloadUpdate(t *testing.T) {
+	fake := &fakeApplicationResourceApplier{}
+	applier := &KubernetesApplier{resources: fake}
+	spec := validTestReleaseSpec()
+	spec.Secrets = nil
+	resources, err := RenderResources(ApplicationContext{
+		ApplicationName: "web", ProjectName: "project", EnvironmentName: "test", Namespace: "apps",
+	}, spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resources.Secret != nil || resources.EmptyApplicationSecret == nil {
+		t.Fatal("the generated Secret should be cleared when it has no keys")
+	}
+	if err := applier.Apply(context.Background(), resources); err != nil {
+		t.Fatal(err)
+	}
+	if len(fake.calls) == 0 || fake.calls[len(fake.calls)-1] != "clear application secret" {
+		t.Fatalf("resource calls = %v", fake.calls)
 	}
 }
 

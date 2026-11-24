@@ -70,6 +70,7 @@ type ReleaseDiagnosticsReader interface {
 type ApplicationResourceApplier interface {
 	ApplyConfigMap(context.Context, *corev1.ConfigMap) error
 	ApplySecret(context.Context, *corev1.Secret) error
+	ClearApplicationSecret(context.Context, *corev1.Secret) error
 	ApplyDeployment(context.Context, *appsv1.Deployment) error
 	ApplyStatefulSet(context.Context, *appsv1.StatefulSet) error
 	ApplyService(context.Context, *corev1.Service) error
@@ -160,6 +161,12 @@ func (a *KubernetesApplier) ValidateFileMountSources(ctx context.Context, applic
 				return fmt.Errorf("当前应用 Secret 不包含键 %q", fileMount.Key)
 			}
 		case FileMountSourceSecret:
+			if fileMount.SourceName == application.ApplicationName+"-secret" && hasSecretValues(secrets) {
+				if _, ok := secrets[fileMount.Key]; !ok {
+					return fmt.Errorf("当前应用 Secret 不包含键 %q", fileMount.Key)
+				}
+				continue
+			}
 			secret, err := a.preflight.GetSecret(ctx, application.Namespace, fileMount.SourceName)
 			if apierrors.IsNotFound(err) {
 				return fmt.Errorf("文件挂载 Secret %q 不存在", fileMount.SourceName)
@@ -293,6 +300,9 @@ func (a *KubernetesApplier) Apply(ctx context.Context, resources *RenderedResour
 		if err := a.resources.ApplyIngress(ctx, resources.Ingress); err != nil {
 			return err
 		}
+	}
+	if resources.EmptyApplicationSecret != nil {
+		return a.resources.ClearApplicationSecret(ctx, resources.EmptyApplicationSecret)
 	}
 	return nil
 }

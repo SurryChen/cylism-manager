@@ -246,6 +246,10 @@ type ApplicationManagedFile struct {
 	UpdatedAt     time.Time `json:"updated_at"`
 }
 
+func (f ApplicationManagedFile) BindingKey() string {
+	return strings.Join([]string{f.ResourceKind, f.ResourceName, f.Key}, "\x00")
+}
+
 // IntegrationSession is the server-side authority for an external integration.
 type IntegrationSession struct {
 	ID               uint       `gorm:"primaryKey" json:"id"`

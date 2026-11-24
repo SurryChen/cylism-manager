@@ -13,6 +13,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"path"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -48,6 +49,10 @@ func RenderResources(context ApplicationContext, spec ReleaseSpec) (*RenderedRes
 		if hasSecretValues(secrets) {
 			result.Secret = &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: secretName, Namespace: context.Namespace, Labels: labels}, Type: corev1.SecretTypeOpaque, StringData: secrets}
 		}
+	} else if !slices.ContainsFunc(spec.FileMounts, func(mount FileMountSpec) bool {
+		return mount.SourceType == FileMountSourceSecret && mount.SourceName == secretName
+	}) {
+		result.EmptyApplicationSecret = &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: secretName, Namespace: context.Namespace, Labels: labels}, Type: corev1.SecretTypeOpaque}
 	}
 	if spec.RegistryID != 0 && spec.RegistryAuthType != "" && spec.RegistryAuthType != "anonymous" {
 		pullSecret, err := imagePullSecret(context, labels, spec)

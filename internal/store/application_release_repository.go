@@ -3,7 +3,6 @@ package store
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"time"
 
 	"github.com/cylism/cylism-manager/internal/model"
@@ -111,8 +110,7 @@ func (s *Store) DisableApplicationManagedFilesNotIn(applicationID uint, bindings
 		return err
 	}
 	for _, file := range files {
-		binding := fmt.Sprintf("%s\x00%s\x00%s", file.ResourceKind, file.ResourceName, file.Key)
-		if _, keep := bindings[binding]; keep {
+		if _, keep := bindings[file.BindingKey()]; keep {
 			continue
 		}
 		if err := s.db.Model(&model.ApplicationManagedFile{}).Where("id = ?", file.ID).Update("enabled", false).Error; err != nil {

@@ -115,6 +115,7 @@ func TestCreateRestartReleaseUsesCurrentTemplateAndSanitizesSecrets(t *testing.T
 			RequestsCPU: "100m", RequestsMemory: "128Mi", LimitsCPU: "500m", LimitsMemory: "512Mi",
 		},
 		SecretFileKeys: []string{"API_TOKEN"},
+		FileMounts:     []application.FileMountSpec{{SourceType: application.FileMountSourceApplicationSecret, Key: "API_TOKEN", MountPath: "/etc/secrets/API_TOKEN"}},
 		Secrets:        map[string]string{"API_TOKEN": ""},
 		Service:        application.ServiceSpec{Port: 8443, TargetPort: 8443, Protocol: application.ServiceProtocolUDP, Type: application.ServiceTypeLoadBalancer},
 		Endpoint:       application.EndpointSpec{Exposure: application.ExposureCluster},

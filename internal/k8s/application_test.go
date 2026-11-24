@@ -75,6 +75,44 @@ func TestApplicationResourceApplierRejectsUnmanagedExistingResource(t *testing.T
 	}
 }
 
+func TestClearApplicationSecretOnlyClearsOwnedOpaqueSecret(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		managedBy string
+		appName   string
+		kind      corev1.SecretType
+		clears    bool
+	}{
+		{"generated", ManagedByValue, "web", corev1.SecretTypeOpaque, true},
+		{"external", "external", "web", corev1.SecretTypeOpaque, false},
+		{"other application", ManagedByValue, "other", corev1.SecretTypeOpaque, false},
+		{"TLS", ManagedByValue, "web", corev1.SecretTypeTLS, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			secret := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Name: "web-secret", Namespace: "apps", Labels: map[string]string{
+					ManagedByLabel: tc.managedBy, "app.kubernetes.io/name": tc.appName,
+				}},
+				Type: tc.kind,
+				Data: map[string][]byte{"fixture": []byte("old")},
+			}
+			client := &Client{Clientset: k8sfake.NewSimpleClientset(secret)}
+			desired := secret.DeepCopy()
+			desired.Type = corev1.SecretTypeOpaque
+			desired.Labels["app.kubernetes.io/name"] = "web"
+			applier := NewApplicationResourceApplier(client)
+			if err := applier.ClearApplicationSecret(ctx, desired); err != nil {
+				t.Fatal(err)
+			}
+			got, err := client.Clientset.CoreV1().Secrets("apps").Get(ctx, secret.Name, metav1.GetOptions{})
+			if err != nil || (len(got.Data) == 0) != tc.clears {
+				t.Fatalf("unexpected cleanup result for %s: %v", tc.name, err)
+			}
+		})
+	}
+}
+
 func TestApplicationResourceApplierCertificateUsesDynamicClient(t *testing.T) {
 	listKinds := map[schema.GroupVersionResource]string{applicationCertificateGVR: "CertificateList"}
 	client := &Client{Clientset: k8sfake.NewSimpleClientset(), DynamicClient: dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), listKinds)}

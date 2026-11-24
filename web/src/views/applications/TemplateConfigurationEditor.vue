@@ -8,7 +8,7 @@
           <div class="environment-row">
             <input v-model.trim="item.key" class="form-input" required aria-label="环境变量名称" placeholder="例如 DATABASE_HOST" />
             <SelectMenu :model-value="source" aria-label="变量存储方式" @update:model-value="changeVariableSource(item, source, $event)"><option value="application_config">普通值</option><option value="application_secret">敏感值</option></SelectMenu>
-            <button type="button" class="icon-button" title="移除环境变量" aria-label="移除环境变量" @click="removeItem(item, source)"><Trash2 :size="15" /></button>
+            <button type="button" class="icon-button" title="移除环境变量" aria-label="移除环境变量" @click="removeVariable(item, source)"><Trash2 :size="15" /></button>
           </div>
           <SensitiveValueEditor v-if="source === 'application_secret'" :item="item" :application-id="applicationId" :template-id="templateId" :revision="revision" @error="emit('error', $event)" />
           <textarea v-else v-model="item.value" class="form-input configuration-value" rows="2" aria-label="环境变量值" placeholder="变量值"></textarea>
@@ -35,9 +35,9 @@
             </template>
             <template v-else>
               <label class="form-label">已有资源</label>
-              <SelectMenu v-model="file.source_name" aria-label="文件来源资源" required @change="file.key = ''"><option value="" disabled>选择资源</option><option v-for="resource in resourcesFor(file.source_type)" :key="resource.name" :value="resource.name">{{ resource.name }}</option></SelectMenu>
+              <SelectMenu :model-value="file.source_name" aria-label="文件来源资源" required @update:model-value="changeFileResource(file, $event)"><option value="" disabled>选择资源</option><option v-for="resource in resourcesFor(file.source_type)" :key="resource.name" :value="resource.name">{{ resource.name }}</option></SelectMenu>
               <label class="form-label">资源 Key</label>
-              <SelectMenu v-model="file.key" aria-label="文件来源键" required><option value="" disabled>选择 Key</option><option v-for="key in keysFor(file)" :key="key" :value="key">{{ key }}</option></SelectMenu>
+              <SelectMenu :model-value="file.key" aria-label="文件来源键" required @update:model-value="changeFileKey(file, $event)"><option value="" disabled>选择 Key</option><option v-for="key in keysFor(file)" :key="key" :value="key">{{ key }}</option></SelectMenu>
             </template>
             <template v-if="!isApplicationSource(file.source_type)"><label class="form-label">容器内文件路径</label><input v-model.trim="file.mount_path" class="form-input" required aria-label="文件挂载路径" placeholder="/etc/app/config.yaml" /></template>
             <details v-if="entryFor(file)" class="entry-options"><summary>更多设置</summary><label class="check-row"><input :checked="!entryFor(file).file_only" type="checkbox" aria-label="同时注入环境变量" @change="entryFor(file).file_only = !$event.target.checked" /> 同时注入环境变量</label><label class="check-row"><input v-model="entryFor(file).externally_managed" type="checkbox" /> 允许外部修改</label></details>
@@ -54,20 +54,52 @@
       </div>
       <EmptyState v-else class="configuration-empty" message="尚未配置文件" />
     </details>
+    <div v-if="templateId" class="configuration-toolbar">
+      <button type="button" class="btn btn-sm" :disabled="loadingUnused" @click="inspectUnused">清理无引用的敏感配置</button>
+      <span v-if="deleteKeys.length" class="form-hint">已标记删除 {{ deleteKeys.length }} 项，保存模板后生效。</span>
+    </div>
+    <BaseModal :open="Boolean(pendingRemoval)" title="移除敏感配置" size="small" @close="pendingRemoval = null">
+      <p v-if="pendingRemoval">移除 {{ pendingRemoval.item.key }} 的最后一个引用。保存时是否同时删除加密值？</p>
+      <p class="form-hint">{{ historyHint }}</p>
+      <template #actions>
+        <button type="button" class="btn" @click="pendingRemoval = null">取消</button>
+        <button type="button" class="btn" @click="finishRemoval(false)">保留值</button>
+        <button type="button" class="btn btn-danger" @click="finishRemoval(true)">删除值</button>
+      </template>
+    </BaseModal>
+    <BaseModal :open="showUnused" title="清理无引用的敏感配置" size="medium" @close="showUnused = false">
+      <p class="form-hint">{{ historyHint }}</p>
+      <EmptyState v-if="!unusedKeys.length" message="没有无引用的敏感配置" />
+      <label v-for="key in unusedKeys" :key="key" class="check-row">
+        <input v-model="selectedUnused" type="checkbox" :value="key" /> <span>{{ key }} · 无环境变量或文件挂载引用</span>
+      </label>
+      <template #actions>
+        <button type="button" class="btn" @click="showUnused = false">关闭</button>
+        <button type="button" class="btn btn-danger" :disabled="!unusedKeys.length" @click="markUnusedForDeletion">确认清理选项</button>
+      </template>
+    </BaseModal>
   </div>
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { Settings2, Trash2 } from 'lucide-vue-next'
 import BaseModal from '../../components/BaseModal.vue'
 import EmptyState from '../../components/EmptyState.vue'
 import SelectMenu from '../../components/SelectMenu.vue'
 import SensitiveFileEditor from './SensitiveFileEditor.vue'
 import SensitiveValueEditor from './SensitiveValueEditor.vue'
+import { getUnusedTemplateSecretKeys } from '../../api/applications.js'
 
-const props = defineProps({ form: { type: Object, required: true }, configmaps: { type: Array, default: () => [] }, secrets: { type: Array, default: () => [] }, applicationId: { type: [String, Number], default: '' }, templateId: { type: [String, Number], default: '' }, revision: { type: Number, default: 0 } })
+const props = defineProps({ form: { type: Object, required: true }, configmaps: { type: Array, default: () => [] }, secrets: { type: Array, default: () => [] }, applicationId: { type: [String, Number], default: '' }, applicationName: { type: String, default: '' }, templateId: { type: [String, Number], default: '' }, revision: { type: Number, default: 0 } })
 const emit = defineEmits(['error'])
+const historyHint = '保存后仅清理当前模板中的值。历史发布仍保留脱敏的键名，依赖该值的旧发布可能无法重试或回滚。'
+const pendingRemoval = ref(null)
+const loadingUnused = ref(false)
+const showUnused = ref(false)
+const unusedKeys = ref([])
+const selectedUnused = ref([])
+const deleteKeys = computed(() => props.form.delete_secret_keys || [])
 let nextFileID = 0
 let nextItemID = 0
 const itemIDs = new WeakMap()
@@ -80,7 +112,48 @@ const itemsFor = source => source === 'application_secret' ? props.form.secret_i
 const entryFor = file => isApplicationSource(file.source_type) ? (itemsFor(file.source_type).find(item => item === file.entry) || itemsFor(file.source_type).find(item => item.key === file.key)) : null
 const resourcesFor = source => source === 'secret' ? props.secrets : props.configmaps
 const keysFor = file => resourcesFor(file.source_type).find(resource => resource.name === file.source_name)?.keys || []
-const environmentItems = computed(() => ['application_config', 'application_secret'].flatMap(source => itemsFor(source).filter(item => !props.form.file_mounts.some(file => file.source_type === source && entryFor(file) === item)).map(item => ({ item, source }))))
+const environmentItems = computed(() => ['application_config', 'application_secret'].flatMap(source => itemsFor(source).filter(item => (source !== 'application_secret' || !item.file_only) && !props.form.file_mounts.some(file => file.source_type === source && entryFor(file) === item)).map(item => ({ item, source }))))
+
+function referencesSecret(file, key) {
+  return file.key === key && (file.source_type === 'application_secret' || (file.source_type === 'secret' && file.source_name === `${props.applicationName}-secret`))
+}
+function queueDeletion(key) { props.form.delete_secret_keys = [...new Set([...deleteKeys.value, key])] }
+function removeVariable(item, source) {
+  if (source !== 'application_secret' || !item.original_key) { removeItem(item, source); return }
+  if (props.form.file_mounts.some(file => referencesSecret(file, item.key))) { item.file_only = true; return }
+  pendingRemoval.value = { item, apply: () => { item.file_only = true } }
+}
+function finishRemoval(deleteValue) {
+  const { item, apply } = pendingRemoval.value
+  pendingRemoval.value = null
+  apply()
+  if (deleteValue) {
+    removeItem(item, 'application_secret')
+    queueDeletion(item.original_key)
+  }
+}
+async function inspectUnused() {
+  const form = props.form
+  loadingUnused.value = true
+  try {
+    const template = await getUnusedTemplateSecretKeys(props.applicationId, props.templateId)
+    if (props.form !== form) return
+    if (template.revision !== props.revision) throw new Error('模板已更新，请重新打开后清理')
+    unusedKeys.value = (template.unused_secret_keys || []).filter(key => deleteKeys.value.includes(key) ||
+      (!form.secret_items.some(item => item.key === key && (!item.file_only || item.value)) &&
+       !form.file_mounts.some(file => referencesSecret(file, key))))
+    selectedUnused.value = unusedKeys.value.filter(key => deleteKeys.value.includes(key))
+    showUnused.value = true
+  } catch (error) {
+    if (props.form === form) emit('error', error.message || '读取无引用的敏感配置失败')
+  } finally {
+    loadingUnused.value = false
+  }
+}
+function markUnusedForDeletion() {
+  props.form.delete_secret_keys = [...deleteKeys.value.filter(key => !unusedKeys.value.includes(key)), ...selectedUnused.value]
+  showUnused.value = false
+}
 
 function toggleFile(file) { const open = !file.expanded; for (const other of props.form.file_mounts) other.expanded = false; file.expanded = open }
 function openFileSettings(file) { for (const other of props.form.file_mounts) { other.expanded = other === file; other.settings_open = other === file } }
@@ -103,12 +176,34 @@ function addFile() {
   openFileSettings(props.form.file_mounts.at(-1))
 }
 function removeUnusedFileEntry(item, source) {
+  if (source === 'application_secret' && item?.original_key) return
   if (item?.file_only && !props.form.file_mounts.some(file => file.source_type === source && entryFor(file) === item)) removeItem(item, source)
 }
+function changeMountReference(file, apply) {
+  const secret = props.form.secret_items.find(item => referencesSecret(file, item.key))
+  if (secret?.original_key && secret.file_only && !props.form.file_mounts.some(other => other !== file && referencesSecret(other, secret.key))) {
+    pendingRemoval.value = { item: secret, apply }
+  } else {
+    apply()
+  }
+}
 function removeFile(file) {
-  const item = entryFor(file)
-  props.form.file_mounts.splice(props.form.file_mounts.indexOf(file), 1)
-  removeUnusedFileEntry(item, file.source_type)
+  changeMountReference(file, () => {
+    const item = entryFor(file)
+    props.form.file_mounts.splice(props.form.file_mounts.indexOf(file), 1)
+    removeUnusedFileEntry(item, file.source_type)
+  })
+}
+function changeFileResource(file, name) {
+  if (file.source_name === name) return
+  changeMountReference(file, () => {
+    file.source_name = name
+    file.key = ''
+  })
+}
+function changeFileKey(file, key) {
+  if (file.key === key) return
+  changeMountReference(file, () => { file.key = key })
 }
 function renameFile(file, key) {
   const item = entryFor(file)
@@ -130,16 +225,18 @@ function changeFileSource(file, next) {
   const previous = entryFor(file)
   if (isApplicationSource(next) && file.key && itemsFor(next).some(item => item.key === file.key)) { emit('error', '目标存储中已存在同名配置，请先修改文件名称'); return }
   if (previous?.original_key && source === 'application_secret' && next === 'application_config' && !previous.value) { emit('error', '敏感文件不会读取为普通文件，请重新填写内容后再切换存储方式'); return }
-  file.source_type = next
-  file.source_name = ''
-  file.entry = null
-  if (isApplicationSource(next)) {
-    const item = { ...newItem(true), key: previous?.key || '', value: previous?.value || '' }
-    itemsFor(next).push(item)
-    file.entry = itemsFor(next).at(-1)
-    file.key = item.key
-  } else file.key = ''
-  removeUnusedFileEntry(previous, source)
+  changeMountReference(file, () => {
+    file.source_type = next
+    file.source_name = ''
+    file.entry = null
+    if (isApplicationSource(next)) {
+      const item = { ...newItem(true), key: previous?.key || '', value: previous?.value || '' }
+      itemsFor(next).push(item)
+      file.entry = itemsFor(next).at(-1)
+      file.key = item.key
+    } else file.key = ''
+    removeUnusedFileEntry(previous, source)
+  })
 }
 </script>
 
