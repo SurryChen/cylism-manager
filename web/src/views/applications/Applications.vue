@@ -18,6 +18,12 @@
             </div>
           </div>
           <div class="workspace-toolbar-actions">
+            <button
+              v-if="workspaceProject && workspaceEnvironment?.cluster_id !== 0"
+              type="button"
+              class="btn btn-sm"
+              @click="openProjectEnvironments(workspaceProject)"
+            >管理项目环境</button>
             <span v-if="workspaceReady && workspaceOverview && activeWorkspaceTab === 'runtime'" class="workspace-count" title="依据 Pod 就绪状态汇总，未探测应用请求或域名连通性">组件就绪 {{ readyApplicationCount }}/{{ workspaceOverview.applications_total }}</span>
             <span v-if="workspaceReady && workspaceOverview" class="workspace-count">{{ workspaceCount }} 条记录</span>
             <template v-if="activeWorkspaceTab === 'runtime'">
@@ -30,8 +36,8 @@
         <EmptyState v-else-if="workspaceEnvironment?.cluster_id === 0" variant="actionable" message="当前环境尚未绑定集群">
           <template #action><button class="btn btn-primary" @click="openProjectEnvironments(workspaceProject)">绑定集群</button></template>
         </EmptyState>
-        <EmptyState v-else-if="!workspaceReady" variant="actionable" message="请选择项目与环境，或先创建部署目标">
-          <template #action><button class="btn btn-primary" @click="openProjectManagement">创建项目与环境</button></template>
+        <EmptyState v-else-if="!workspaceReady" variant="actionable" :message="workspaceEmptyMessage">
+          <template v-if="!workspaceProject" #action><router-link class="btn btn-primary" to="/projects">打开项目中心</router-link></template>
         </EmptyState>
         <template v-else-if="workspaceOverview">
           <template v-if="activeWorkspaceTab === 'runtime'">
@@ -228,6 +234,11 @@ const workspaceEnvironment = computed(() => workspaceProject.value?.environments
 const workspaceProjectOptions = computed(() => projects.value.map(project => ({ value: project.id, label: project.name, description: project.description || '未设置项目说明' })))
 const workspaceEnvironmentOptions = computed(() => (workspaceProject.value?.environments || []).map(environment => ({ value: environment.id, label: environment.name, triggerLabel: `${environment.name} · ${clusterName(environment.cluster_id)}`, description: `${clusterName(environment.cluster_id)} · ${environment.namespace}` })))
 const workspaceReady = computed(() => !!workspaceProject.value && !!workspaceEnvironment.value)
+const workspaceEmptyMessage = computed(() => {
+  if (!workspaceProject.value) return '请先选择项目与环境'
+  if (!workspaceEnvironmentOptions.value.length) return '当前项目暂无部署环境'
+  return '请选择部署环境'
+})
 const enabledCatalogItems = computed(() => catalogItems.value.filter(item => item.enabled))
 const selectedCatalogItems = computed(() => enabledCatalogItems.value.filter(item => selectedCatalogIDs.value.includes(item.id)))
 const catalogConflicts = computed(() => {
@@ -393,8 +404,9 @@ function closeProjectModal() { showProjectModal.value = false; editingProject.va
 async function saveProject() { const isEditing = !!editingProject.value; submitting.value = true; mutationError.value = ''; try { const payload = { name: projectForm.value.name, slug: projectForm.value.slug, description: projectForm.value.description, ...(isEditing ? { default_image_registry_id: projectForm.value.defaultImageRegistryID } : {}) }; if (isEditing) await updateProject(editingProject.value.id, payload); else await createProject(payload); closeProjectModal(); await Promise.all([fetchProjects(), fetchApplications()]) } catch (e) { mutationError.value = e.message || (isEditing ? '更新项目失败' : '创建项目失败') } finally { submitting.value = false } }
 function requestProjectDelete(project) { projectDeleteTarget.value = project }
 async function deleteProject() { if (!projectDeleteTarget.value) return; submitting.value = true; mutationError.value = ''; try { await deleteProjectRequest(projectDeleteTarget.value.id); projectDeleteTarget.value = null; await Promise.all([fetchProjects(), fetchApplications()]) } catch (e) { mutationError.value = e.message || '删除项目失败' } finally { submitting.value = false } }
-async function openProjectEnvironments(project) { await router.push(`/applications/projects/${project.id}`) }
-async function openProjectManagement() { await router.push('/applications/projects') }
+async function openProjectEnvironments(project) {
+  await router.push({ path: `/projects/${project.id}`, query: { tab: 'environments' } })
+}
 async function updateWorkspace(projectID, environmentID) { const query = {}; if (projectID) query.project_id = String(projectID); if (environmentID) query.environment_id = String(environmentID); if (projectID && environmentID) localStorage.setItem('cylism.application-workspace', JSON.stringify({ project_id: projectID, environment_id: environmentID })); await router.push({ path: '/applications', query }) }
 async function selectWorkspaceProject(value) { const projectID = Number(value) || 0; const project = projects.value.find(item => item.id === projectID); const environmentID = project?.environments?.length === 1 ? project.environments[0].id : 0; await updateWorkspace(projectID, environmentID) }
 async function selectWorkspaceEnvironment(value) { await updateWorkspace(workspaceProjectID.value, Number(value) || 0) }

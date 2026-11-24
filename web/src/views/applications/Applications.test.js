@@ -7,12 +7,14 @@ vi.mock('../../api/index.js', () => ({
   api: { get: vi.fn().mockResolvedValue([]), post: vi.fn().mockResolvedValue({ id: 1 }), delete: vi.fn().mockResolvedValue({}) }
 }))
 const route = reactive({ query: { project_id: '1', environment_id: '2' } })
-vi.mock('vue-router', () => ({ useRouter: () => ({ push: vi.fn() }), useRoute: () => route }))
+const push = vi.fn()
+vi.mock('vue-router', () => ({ useRouter: () => ({ push }), useRoute: () => route }))
 
 beforeEach(async () => {
   const { api } = await import('../../api/index.js')
   route.query.project_id = '1'
   route.query.environment_id = '2'
+  push.mockClear()
   api.get.mockReset()
   api.get.mockResolvedValue([])
   api.post.mockReset()
@@ -54,6 +56,8 @@ describe('Applications view', () => {
     expect(wrapper.findAll('[data-testid="workspace-list"]')).toHaveLength(1)
     expect(wrapper.get('[data-testid="workspace-tab-runtime"]').attributes('aria-current')).toBe('page')
     expect(wrapper.text()).toContain('组件就绪 1/1')
+    await wrapper.findAll('button').find(button => button.text() === '管理项目环境').trigger('click')
+    expect(push).toHaveBeenCalledWith({ path: '/projects/1', query: { tab: 'environments' } })
     expect(api.get).not.toHaveBeenCalledWith('/applications/3/deployment-templates', expect.anything())
     await wrapper.get('[data-testid="workspace-tab-releases"]').trigger('click')
     await flushPromises()
@@ -174,14 +178,16 @@ describe('Applications view', () => {
   })
 
   it('shows the workspace controls and empty state inside one list card', async () => {
-    const wrapper = mount(Applications)
+    const wrapper = mount(Applications, { global: { stubs: { RouterLink: { props: ['to'], template: '<a :href="to"><slot /></a>' } } } })
     await new Promise(resolve => setTimeout(resolve, 0))
 
     expect(wrapper.find('.page-title').text()).toBe('应用部署')
     expect(wrapper.text()).not.toContain('暂无应用')
     expect(wrapper.text()).not.toContain('创建应用')
     expect(wrapper.findAll('[data-testid="workspace-list"]')).toHaveLength(1)
-    expect(wrapper.get('[data-testid="workspace-list"] .empty-state').text()).toContain('请选择项目与环境')
+    expect(wrapper.get('[data-testid="workspace-list"] .empty-state').text()).toContain('请先选择项目与环境')
+    expect(wrapper.get('[data-testid="workspace-list"] a[href="/projects"]').text()).toBe('打开项目中心')
+    wrapper.unmount()
   })
 
   it('imports enabled catalog applications into the selected workspace environment', async () => {
@@ -200,7 +206,7 @@ describe('Applications view', () => {
     await flushPromises()
 
     const workspaceCard = wrapper.get('[data-testid="workspace-list"]')
-    expect(workspaceCard.findAll('.workspace-toolbar-actions button').map(button => button.text())).toEqual(['从商城导入', '创建部署组件'])
+    expect(workspaceCard.findAll('.workspace-toolbar-actions button').map(button => button.text())).toEqual(['管理项目环境', '从商城导入', '创建部署组件'])
     await wrapper.findAll('button').find(button => button.text() === '从商城导入').trigger('click')
     await flushPromises()
     const modal = document.body.querySelector('.workspace-import-modal')
