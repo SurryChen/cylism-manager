@@ -22,27 +22,27 @@
       <div v-else-if="rows.length === 0" class="empty-state"><span class="empty-text">暂无数据</span></div>
       <div v-else>
         <div class="table-wrap">
-          <table class="data-table">
+          <DataTable>
             <thead>
               <tr>
                 <th v-for="col in columns" :key="col" class="sortable-header" @click="setSort(col)">
                   {{ col }} {{ sort === col ? (order === 'asc' ? '↑' : '↓') : '' }}
                 </th>
-                <th>操作</th>
+                <TableActionCell header />
               </tr>
             </thead>
             <tbody>
               <tr v-for="row in rows" :key="row.id || Math.random()">
                 <td v-for="col in columns" :key="col">{{ formatCell(row[col]) }}</td>
-                <td>
+                <TableActionCell>
                   <div class="btn-group">
                     <button class="btn btn-sm" @click="editRow(row)">编辑</button>
                     <button class="btn btn-sm btn-danger" @click="confirmDel(row)">删除</button>
                   </div>
-                </td>
+                </TableActionCell>
               </tr>
             </tbody>
-          </table>
+          </DataTable>
         </div>
         <PaginationControls :page="page" :page-size="size" :total="total" :loading="loading" @page-change="changePage" @page-size-change="changePageSize" />
       </div>
@@ -83,6 +83,8 @@
 </template>
 
 <script setup>
+import DataTable from '../components/DataTable.vue'
+import TableActionCell from '../components/TableActionCell.vue'
 import PaginationControls from '../components/PaginationControls.vue'
 import { ref, computed, onMounted, reactive } from 'vue'
 import { createAdminTableRow, deleteAdminTableRow, getAdminTableRows, getAdminTables, updateAdminTableRow } from '../api/admin.js'

@@ -1,6 +1,6 @@
 <template>
   <div class="catalog-detail">
-    <button class="back-link" type="button" @click="router.push('/applications/catalog')"><ArrowLeft :size="15" />返回应用商城</button>
+    <PageBackLink @click="router.push('/applications/catalog')">返回应用商城</PageBackLink>
     <SectionTabsHeader :title="item?.name || '商城应用'" :tabs="[{ id: 'config', label: '应用配置' }]" active-tab="config" :sticky="false">
       <template #actions><span v-if="item" class="badge" :class="item.enabled ? 'badge-online' : 'badge-offline'">{{ item.enabled ? '已启用' : '未启用' }}</span></template>
     </SectionTabsHeader>
@@ -29,7 +29,8 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ArrowLeft, Plus, Trash2 } from 'lucide-vue-next'
+import { Plus, Trash2 } from 'lucide-vue-next'
+import PageBackLink from '../../components/PageBackLink.vue'
 import { getApplicationCatalogItem, updateApplicationCatalogItem } from '../../api/applications.js'
 import EmptyState from '../../components/EmptyState.vue'
 import ErrorNoticeModal from '../../components/ErrorNoticeModal.vue'
@@ -96,7 +97,6 @@ watch(() => route.params.catalogID, load, { immediate: true })
 
 <style scoped>
 .catalog-detail { display: grid; gap: var(--space-4); }
-.back-link { display: inline-flex; width: max-content; align-items: center; gap: 6px; border: 0; padding: 0; background: transparent; color: var(--action-primary); font: inherit; font-size: 12px; cursor: pointer; }
 .detail-form { padding: 0 var(--space-20); }
 .detail-section { padding: var(--space-20) 0; border-bottom: 1px solid var(--border-muted); }
 .detail-section h2 { margin: 0 0 14px; color: var(--text-primary); font-size: 15px; }

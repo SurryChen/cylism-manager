@@ -18,9 +18,9 @@
         </div>
 
         <div v-if="certs.length" class="table-wrap certificate-table-wrap">
-          <table class="data-table certificate-table">
-            <colgroup><col class="certificate-name-column" /><col class="certificate-namespace-column" /><col class="certificate-domains-column" /><col class="certificate-issuer-column" /><col class="certificate-secret-column" /><col class="certificate-renewal-column" /><col class="certificate-status-column" /><col class="certificate-actions-column" /></colgroup>
-            <thead><tr><th>名称</th><th>命名空间</th><th>域名</th><th>签发者</th><th>TLS Secret</th><th>续期时间</th><th>状态</th><th class="action-cell">操作</th></tr></thead>
+          <DataTable class="certificate-table">
+            <colgroup><col class="certificate-name-column" /><col class="certificate-namespace-column" /><col class="certificate-domains-column" /><col class="certificate-issuer-column" /><col class="certificate-secret-column" /><col class="certificate-renewal-column" /><col class="certificate-status-column" /><col /></colgroup>
+            <thead><tr><th>名称</th><th>命名空间</th><th>域名</th><th>签发者</th><th>TLS Secret</th><th>续期时间</th><th>状态</th><TableActionCell header /></tr></thead>
             <tbody>
               <tr v-for="cert in certs" :key="cert.namespace + '/' + cert.name">
                 <td class="cell-primary"><OverflowTooltip :text="cert.name" /></td>
@@ -30,10 +30,10 @@
                 <td><OverflowTooltip :text="cert.secret_name || '-'" /></td>
                 <td>{{ formatDate(cert.renewal_time) }}</td>
                 <td><span class="badge" :class="cert.status === 'Ready' ? 'badge-online' : cert.status === 'Failed' ? 'badge-danger' : 'badge-deploying'">{{ certificateStatusLabel(cert.status) }}</span></td>
-                <td class="action-cell"><div class="certificate-row-actions"><button class="btn btn-sm" @click="router.push(`/cluster/${clusterId}/network/certificates/${encodeURIComponent(cert.namespace)}/${encodeURIComponent(cert.name)}`)">签发过程</button><button class="btn btn-sm btn-danger" @click="deleteCertificate(cert)">删除</button></div></td>
+                <TableActionCell><div class="certificate-row-actions"><button class="btn btn-sm" @click="router.push(`/cluster/${clusterId}/network/certificates/${encodeURIComponent(cert.namespace)}/${encodeURIComponent(cert.name)}`)">签发过程</button><button class="btn btn-sm btn-danger" @click="deleteCertificate(cert)">删除</button></div></TableActionCell>
               </tr>
             </tbody>
-          </table>
+          </DataTable>
         </div>
         <div v-else class="empty-state certificate-empty"><FileCheck2 data-testid="certificate-empty-icon" :size="30" :stroke-width="1.5" /><span class="empty-text">尚未发现证书</span></div>
       <PaginationControls :page="certPage" :page-size="certPageSize" :total="certTotal" :loading="certLoading" @page-change="changeCertPage" @page-size-change="changeCertPageSize" />
@@ -46,7 +46,7 @@
       <template v-else-if="configView === 'list'">
         <div class="setup-existing">
           <div class="setup-existing-heading"><span class="section-count">{{ issuers.length }} 项</span><button type="button" class="btn btn-primary" data-testid="add-issuer-setup" @click="startNewSetup">新增</button></div>
-          <div v-if="issuers.length" class="table-wrap setup-table-wrap"><table class="data-table setup-table"><thead><tr><th>名称</th><th>类型</th><th>验证方式</th><th>状态</th><th class="action-cell">操作</th></tr></thead><tbody><tr v-for="issuer in issuers" :key="issuerKey(issuer)"><td class="cell-primary"><OverflowTooltip :text="issuer.name" /></td><td>{{ issuer.namespace || '集群级' }}</td><td>{{ issuerModeLabel(issuer.mode) }}</td><td><span class="badge" :class="issuer.ready ? 'badge-online' : 'badge-offline'">{{ issuer.ready ? '可用' : '不可用' }}</span></td><td class="action-cell"><div class="certificate-row-actions"><button v-if="canEditSetupIssuer(issuer)" type="button" class="btn btn-sm" @click="selectSetupIssuer(issuer)">编辑</button><button v-else-if="canManageIssuer(issuer) && ['self_signed', 'acme_http01', 'acme_dns01'].includes(issuer.mode)" type="button" class="btn btn-sm" @click="openIssuer(issuer)">编辑</button><button v-if="canManageIssuer(issuer)" type="button" class="btn btn-sm btn-danger" @click="pendingIssuerDelete = issuer">删除</button><span v-else class="cell-secondary">组件管理</span></div></td></tr></tbody></table></div>
+          <div v-if="issuers.length" class="table-wrap setup-table-wrap"><DataTable class="setup-table"><thead><tr><th>名称</th><th>类型</th><th>验证方式</th><th>状态</th><TableActionCell header /></tr></thead><tbody><tr v-for="issuer in issuers" :key="issuerKey(issuer)"><td class="cell-primary"><OverflowTooltip :text="issuer.name" /></td><td>{{ issuer.namespace || '集群级' }}</td><td>{{ issuerModeLabel(issuer.mode) }}</td><td><span class="badge" :class="issuer.ready ? 'badge-online' : 'badge-offline'">{{ issuer.ready ? '可用' : '不可用' }}</span></td><TableActionCell><div class="certificate-row-actions"><button v-if="canEditSetupIssuer(issuer)" type="button" class="btn btn-sm" @click="selectSetupIssuer(issuer)">编辑</button><button v-else-if="canManageIssuer(issuer) && ['self_signed', 'acme_http01', 'acme_dns01'].includes(issuer.mode)" type="button" class="btn btn-sm" @click="openIssuer(issuer)">编辑</button><button v-if="canManageIssuer(issuer)" type="button" class="btn btn-sm btn-danger" @click="pendingIssuerDelete = issuer">删除</button><span v-else class="cell-secondary">组件管理</span></div></TableActionCell></tr></tbody></DataTable></div>
           <div v-else class="setup-existing-empty">尚无证书申请配置</div>
         </div>
         <button type="button" class="advanced-toggle" @click="configView = 'advanced'">高级设置</button>
@@ -77,14 +77,14 @@
       <div v-if="configView === 'advanced' && !configLoading && !configError && issuanceConfigTab === 'issuers'" class="issuance-config-content">
         <div class="config-toolbar"><span class="section-count">{{ issuers.length }} 项</span><button class="btn btn-primary" @click="openIssuer()">+ 新增签发者</button></div>
         <div v-if="issuersLoading" class="empty-state config-empty"><span class="empty-text">正在读取签发者...</span></div>
-        <div v-else-if="issuers.length" class="table-wrap"><table class="data-table"><thead><tr><th>名称</th><th>模式</th><th>Provider</th><th>类型</th><th>状态</th><th class="action-cell">操作</th></tr></thead><tbody><tr v-for="issuer in issuers" :key="issuerKey(issuer)"><td class="cell-primary"><OverflowTooltip :text="issuer.name" /><small class="cell-secondary">{{ issuer.namespace || '集群级' }}</small></td><td>{{ issuerModeLabel(issuer.mode) }}</td><td><OverflowTooltip :text="providerName(issuer.dns_provider)" /></td><td>{{ issuer.kind }}</td><td><span class="badge" :class="issuer.ready ? 'badge-online' : 'badge-danger'">{{ issuer.ready ? '就绪' : '不可用' }}</span><small v-if="issuer.reason" class="cell-secondary">{{ issuer.reason }}</small></td><td class="action-cell"><div class="certificate-row-actions"><button v-if="canManageIssuer(issuer)" class="btn btn-sm" @click="openIssuer(issuer)">编辑</button><button v-if="canManageIssuer(issuer)" class="btn btn-sm btn-danger" @click="deleteIssuer(issuer)">删除</button><span v-else class="cell-secondary">组件管理</span></div></td></tr></tbody></table></div>
+        <div v-else-if="issuers.length" class="table-wrap"><DataTable><thead><tr><th>名称</th><th>模式</th><th>Provider</th><th>类型</th><th>状态</th><TableActionCell header /></tr></thead><tbody><tr v-for="issuer in issuers" :key="issuerKey(issuer)"><td class="cell-primary"><OverflowTooltip :text="issuer.name" /><small class="cell-secondary">{{ issuer.namespace || '集群级' }}</small></td><td>{{ issuerModeLabel(issuer.mode) }}</td><td><OverflowTooltip :text="providerName(issuer.dns_provider)" /></td><td>{{ issuer.kind }}</td><td><span class="badge" :class="issuer.ready ? 'badge-online' : 'badge-danger'">{{ issuer.ready ? '就绪' : '不可用' }}</span><small v-if="issuer.reason" class="cell-secondary">{{ issuer.reason }}</small></td><TableActionCell><div class="certificate-row-actions"><button v-if="canManageIssuer(issuer)" class="btn btn-sm" @click="openIssuer(issuer)">编辑</button><button v-if="canManageIssuer(issuer)" class="btn btn-sm btn-danger" @click="deleteIssuer(issuer)">删除</button><span v-else class="cell-secondary">组件管理</span></div></TableActionCell></tr></tbody></DataTable></div>
         <div v-else class="empty-state config-empty"><span class="empty-text">尚未配置签发者</span></div>
       </div>
 
       <div v-else-if="configView === 'advanced' && !configLoading && !configError && issuanceConfigTab === 'credentials'" class="issuance-config-content">
         <div class="config-toolbar"><span class="section-count">{{ credentials.length }} 项</span><button class="btn btn-primary" @click="openCredential()">+ 新增 DNS 凭据</button></div>
         <div v-if="credentialsLoading" class="empty-state config-empty"><span class="empty-text">正在读取 DNS 凭据...</span></div>
-        <div v-else-if="credentials.length" class="table-wrap"><table class="data-table"><thead><tr><th>名称</th><th>Provider</th><th>命名空间</th><th>已配置字段</th><th>状态</th><th class="action-cell">操作</th></tr></thead><tbody><tr v-for="credential in credentials" :key="credential.id"><td class="cell-primary"><OverflowTooltip :text="credential.name" /></td><td><OverflowTooltip :text="providerName(credential.provider)" /></td><td><OverflowTooltip :text="credential.namespace" /></td><td><OverflowTooltip :text="configuredFieldLabels(credential).join('、') || '-'" /></td><td><span class="badge" :class="credential.enabled ? 'badge-online' : 'badge-offline'">{{ credential.enabled ? '启用' : '停用' }}</span></td><td class="action-cell"><div class="certificate-row-actions"><button class="btn btn-sm" @click="openCredential(credential)">编辑</button><button class="btn btn-sm btn-danger" @click="deleteCredential(credential)">删除</button></div></td></tr></tbody></table></div>
+        <div v-else-if="credentials.length" class="table-wrap"><DataTable><thead><tr><th>名称</th><th>Provider</th><th>命名空间</th><th>已配置字段</th><th>状态</th><TableActionCell header /></tr></thead><tbody><tr v-for="credential in credentials" :key="credential.id"><td class="cell-primary"><OverflowTooltip :text="credential.name" /></td><td><OverflowTooltip :text="providerName(credential.provider)" /></td><td><OverflowTooltip :text="credential.namespace" /></td><td><OverflowTooltip :text="configuredFieldLabels(credential).join('、') || '-'" /></td><td><span class="badge" :class="credential.enabled ? 'badge-online' : 'badge-offline'">{{ credential.enabled ? '启用' : '停用' }}</span></td><TableActionCell><div class="certificate-row-actions"><button class="btn btn-sm" @click="openCredential(credential)">编辑</button><button class="btn btn-sm btn-danger" @click="deleteCredential(credential)">删除</button></div></TableActionCell></tr></tbody></DataTable></div>
         <div v-else class="empty-state config-empty"><span class="empty-text">尚未配置 DNS 凭据</span></div>
       </div>
 
@@ -112,6 +112,8 @@
 </template>
 
 <script setup>
+import DataTable from '../../components/DataTable.vue'
+import TableActionCell from '../../components/TableActionCell.vue'
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { FileCheck2 } from 'lucide-vue-next'
@@ -325,16 +327,14 @@ function newCredential() { return { name: '', provider: providers.value[0]?.id |
 .certificate-toolbar, .config-toolbar { display: flex; min-height: 62px; align-items: center; justify-content: flex-end; gap: var(--space-12); padding: 12px var(--space-16); }
 .certificate-toolbar-actions, .certificate-row-actions, .provider-row-actions { display: flex; align-items: center; justify-content: flex-end; gap: 6px; white-space: nowrap; }
 .certificate-table-wrap { padding: 0 var(--space-16); }
-.certificate-table { min-width: 1040px; table-layout: fixed; }
-.certificate-name-column { width: 150px; }.certificate-namespace-column { width: 130px; }.certificate-domains-column { width: 200px; }.certificate-issuer-column { width: 150px; }.certificate-secret-column { width: 150px; }.certificate-renewal-column { width: 142px; }.certificate-status-column { width: 84px; }.certificate-actions-column { width: 150px; }
-.certificate-empty { min-height: 170px; }
+.certificate-table { min-width: 1040px; }
+.certificate-name-column { width: 150px; }.certificate-namespace-column { width: 130px; }.certificate-domains-column { width: 200px; }.certificate-issuer-column { width: 150px; }.certificate-secret-column { width: 150px; }.certificate-renewal-column { width: 142px; }.certificate-status-column { width: 84px; }.certificate-empty { min-height: 170px; }
 .setup-load-error { display: grid; justify-items: start; gap: var(--space-12); }
 .setup-load-error .k8s-banner { margin: 0; }
 .setup-existing-heading { display: flex; min-height: 42px; align-items: center; justify-content: space-between; margin-bottom: var(--space-8); font-size: 12px; }
 .setup-existing-heading .section-count { color: var(--text-secondary); font-weight: 400; }
 .setup-table-wrap { max-height: min(48dvh, 380px); overflow: auto; }
 .setup-table { min-width: 600px; }
-.setup-table .action-cell { width: 130px; }
 .setup-existing-empty { padding: var(--space-20) 0; color: var(--text-secondary); font-size: 12px; text-align: center; }
 .certificate-setup { display: grid; gap: var(--space-12); }
 .certificate-setup .form-group { margin: 0; }

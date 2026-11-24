@@ -11,13 +11,13 @@
       <EmptyState v-if="loading && !rows.length" variant="loading" :message="projectMode ? '正在读取项目...' : '正在读取产品...'" />
       <EmptyState v-else-if="resource.error.value" :message="projectMode ? '项目读取失败' : '产品读取失败'"><template #action><button class="btn btn-sm" @click="load">重试</button></template></EmptyState>
       <EmptyState v-else-if="!total" :message="projectMode ? (tab === 'archived' ? '暂无已归档项目' : '暂无项目，可先记录一个想法') : (tab === 'archived' ? '暂无已归档产品' : '暂无产品，可先记录一个想法')" />
-      <div v-else class="table-wrap"><table class="data-table"><thead><tr><th>{{ projectMode ? '项目' : '产品' }}</th><th>阶段</th><th>发行渠道</th><th>操作</th></tr></thead><tbody>
+      <div v-else class="table-wrap"><DataTable><thead><tr><th>{{ projectMode ? '项目' : '产品' }}</th><th>阶段</th><th>发行渠道</th><TableActionCell header /></tr></thead><tbody>
         <tr v-for="product in rows" :key="product.id">
           <td><div class="product-title-cell"><span class="product-mark"><img v-if="product.icon_url" :src="product.icon_url" alt="" referrerpolicy="no-referrer" @error="$event.target.style.display = 'none'" /><template v-else>{{ product.name.slice(0, 1) }}</template></span><div><router-link :to="detailPath(product)">{{ product.name }}</router-link><span class="cell-secondary product-line">{{ product.summary || '暂无简介' }}</span></div></div></td>
           <td><span class="badge" :class="stageClass(product.stage)">{{ labelFor(stages, product.stage) }}</span></td>
-          <td>{{ product.channels?.length || 0 }} 个</td><td><div class="product-actions"><router-link class="btn btn-sm" :to="detailPath(product)">查看详情</router-link><button class="icon-button" :title="`删除${projectMode ? '项目' : '产品'}：${product.name}`" :aria-label="`删除${projectMode ? '项目' : '产品'}：${product.name}`" :disabled="busy" @click="deleteTarget = product"><Trash2 :size="15" /></button></div></td>
+          <td>{{ product.channels?.length || 0 }} 个</td><TableActionCell><div class="btn-group"><router-link class="btn btn-sm" :to="detailPath(product)">查看详情</router-link><button class="icon-button" :title="`删除${projectMode ? '项目' : '产品'}：${product.name}`" :aria-label="`删除${projectMode ? '项目' : '产品'}：${product.name}`" :disabled="busy" @click="deleteTarget = product"><Trash2 :size="15" /></button></div></TableActionCell>
         </tr>
-      </tbody></table></div>
+      </tbody></DataTable></div>
       <PaginationControls :page="page" :page-size="pageSize" :total="total" :loading="loading" @page-change="changePage" @page-size-change="changePageSize" />
     </SurfaceCard>
     <ProductEditor :project-mode="projectMode" :open="editorOpen" :busy="busy" @close="editorOpen = false" @save="save" />
@@ -27,6 +27,8 @@
 </template>
 
 <script setup>
+import DataTable from '../../components/DataTable.vue'
+import TableActionCell from '../../components/TableActionCell.vue'
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { RotateCcw, Trash2 } from 'lucide-vue-next'

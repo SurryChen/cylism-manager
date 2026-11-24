@@ -5,15 +5,15 @@
       <button class="icon-button" type="button" title="刷新代理状态" aria-label="刷新代理状态" :disabled="refreshing" @click="refreshAll"><RefreshCw :size="16" :class="{ 'is-spinning': refreshing }" /></button>
     </div>
     <EmptyState v-if="!servers.length" message="暂无服务器" />
-    <div v-else class="table-wrap sing-box-table-wrap"><table class="data-table"><thead><tr><th>服务器</th><th>主机</th><th>sing-box</th><th>配置</th><th>运行状态</th><th class="action-cell">操作</th></tr></thead><tbody>
+    <div v-else class="table-wrap sing-box-table-wrap"><DataTable><thead><tr><th>服务器</th><th>主机</th><th>sing-box</th><th>配置</th><th>运行状态</th><TableActionCell header /></tr></thead><tbody>
       <tr v-for="server in serverRows" :key="server.id">
         <td>{{ server.name }}</td><td>{{ server.host }}</td>
         <td :title="statusFor(server.id)?.error || undefined">{{ pendingIDs.has(server.id) ? '检测中' : statusFor(server.id)?.error ? '检测失败' : statusFor(server.id)?.installed ? statusFor(server.id)?.version || '已安装' : '未安装' }}</td>
         <td>{{ statusFor(server.id)?.configured ? '已导入' : '-' }}</td>
         <td><span class="badge" :class="statusFor(server.id)?.running ? 'badge-online' : 'badge-offline'">{{ pendingIDs.has(server.id) ? '检测中' : statusFor(server.id)?.error ? '无法检测' : statusFor(server.id)?.running ? '运行中' : '未运行' }}</span></td>
-        <td class="action-cell"><button class="icon-button icon-button--table" type="button" :title="`管理 ${server.name} 的代理`" :aria-label="`管理 ${server.name} 的代理`" @click="openManage(server)"><Settings2 :size="15" /></button></td>
+        <TableActionCell><button class="icon-button icon-button--table" type="button" :title="`管理 ${server.name} 的代理`" :aria-label="`管理 ${server.name} 的代理`" @click="openManage(server)"><Settings2 :size="15" /></button></TableActionCell>
       </tr>
-    </tbody></table></div>
+    </tbody></DataTable></div>
   <ResourcePagination :resource="serverPage" label="服务器分页" />
     </SurfaceCard>
 
@@ -49,6 +49,8 @@
 </template>
 
 <script setup>
+import DataTable from '../../components/DataTable.vue'
+import TableActionCell from '../../components/TableActionCell.vue'
 import ResourcePagination from '../../components/ResourcePagination.vue'
 import { useListPage } from '../../composables/useListPage.js'
 import { computed, ref, watch } from 'vue'

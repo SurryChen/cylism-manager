@@ -7,10 +7,10 @@
       </template>
       <template v-if="loaded">
         <div v-if="data.pods?.length" class="table-wrap">
-          <table class="data-table dns-pod-table">
+          <DataTable class="dns-pod-table">
             <thead><tr><th>Pod</th><th>节点</th><th>Pod IP</th><th>状态</th></tr></thead>
             <tbody><tr v-for="pod in data.pods" :key="pod.name"><td class="cell-primary">{{ pod.name }}</td><td>{{ pod.node || '-' }}</td><td>{{ pod.ip || '-' }}</td><td><span class="badge" :class="pod.ready ? 'badge-online' : 'badge-danger'">{{ pod.ready ? '就绪' : '未就绪' }}</span></td></tr></tbody>
-          </table>
+          </DataTable>
         </div>
         <EmptyState v-else message="未发现 CoreDNS Pod" />
       </template>
@@ -19,18 +19,18 @@
 
     <TabbedWorkspaceCard v-if="loaded && data.history?.length" class="dns-workspace dns-history-workspace">
       <div class="table-wrap">
-        <table class="data-table dns-history-table">
-          <thead><tr><th>版本</th><th>DNS 上游</th><th>创建时间</th><th>状态</th><th>操作</th></tr></thead>
+        <DataTable class="dns-history-table">
+          <thead><tr><th>版本</th><th>DNS 上游</th><th>创建时间</th><th>状态</th><TableActionCell header /></tr></thead>
           <tbody>
             <tr v-for="policy in data.history" :key="policy.revision">
               <td class="cell-primary">版本 {{ policy.revision }}</td>
               <td><span class="dns-upstream-value" :title="policy.resolvers?.join('，') || '继承宿主机 DNS'">{{ policy.resolvers?.join('，') || '继承宿主机 DNS' }}</span></td>
               <td>{{ formatTime(policy.created_at) }}</td>
               <td><span class="badge" :class="policy.revision === data.active_policy?.revision ? 'badge-online' : 'badge-offline'">{{ policy.revision === data.active_policy?.revision ? '当前' : '历史' }}</span></td>
-              <td><button class="btn btn-sm" :disabled="saving || policy.revision === data.active_policy?.revision" @click="rollback(policy)">{{ policy.revision === data.active_policy?.revision ? '当前版本' : '回滚' }}</button></td>
+              <TableActionCell><button class="btn btn-sm" :disabled="saving || policy.revision === data.active_policy?.revision" @click="rollback(policy)">{{ policy.revision === data.active_policy?.revision ? '当前版本' : '回滚' }}</button></TableActionCell>
             </tr>
           </tbody>
-        </table>
+        </DataTable>
       </div>
     </TabbedWorkspaceCard>
 
@@ -71,6 +71,8 @@
 </template>
 
 <script setup>
+import DataTable from '../../components/DataTable.vue'
+import TableActionCell from '../../components/TableActionCell.vue'
 import { computed, onMounted, ref } from 'vue'
 import { RefreshCw } from 'lucide-vue-next'
 import { deleteClusterDNS, getClusterDNS, rollbackClusterDNS, updateClusterDNS } from '../../api/cluster-dns.js'

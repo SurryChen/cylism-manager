@@ -1,6 +1,6 @@
 <template>
   <div>
-    <RouterLink v-if="returnToCluster" class="back-link" :to="returnToCluster"><ArrowLeft :size="16" />返回集群组网</RouterLink>
+    <PageBackLink v-if="returnToCluster" :to="returnToCluster">返回集群组网</PageBackLink>
     <SectionTabsHeader title="服务器" :tabs="sections" :active-tab="activeSection" @select="activeSection = $event" />
 
     <main class="server-content">
@@ -15,10 +15,10 @@
         <span class="empty-icon">⬡</span><span class="empty-text">暂无服务器</span>
       </div>
       <div v-else class="table-wrap server-table-wrap">
-        <table class="data-table">
+        <DataTable>
           <thead>
             <tr>
-              <th>名称</th><th>主机</th><th>连接方式</th><th>SSH 用户</th><th>认证方式</th><th>主机名</th><th class="action-cell">操作</th>
+              <th>名称</th><th>主机</th><th>连接方式</th><th>SSH 用户</th><th>认证方式</th><th>主机名</th><TableActionCell header />
             </tr>
           </thead>
           <tbody>
@@ -29,18 +29,18 @@
               <td>{{ srv.ssh_user || 'root' }}</td>
               <td>{{ srv.ssh_auth_type === 'key' ? '密钥' : '密码' }}</td>
               <td>{{ srv.hostname || '-' }}</td>
-              <td class="action-cell">
-                <div class="btn-group action-cell">
+              <TableActionCell>
+                <div class="btn-group">
                   <button class="icon-button icon-button--table" type="button" :title="`编辑 ${srv.name}`" :aria-label="`编辑 ${srv.name}`" @click="startEdit(srv)"><Pencil :size="14" /></button>
                   <button v-if="!srv.cluster_id && srv.k3s_removal_task_id" class="icon-button icon-button--table" type="button" :title="`卸载 ${srv.name} 保留的 K3s`" :aria-label="`卸载 ${srv.name} 保留的 K3s`" @click="cleanupTarget = srv"><PackageMinus :size="14" /></button>
                   <button v-if="!srv.cluster_role && !srv.cluster_id" class="icon-button icon-button--table" type="button" :title="`删除 ${srv.name}`" :aria-label="`删除 ${srv.name}`" @click="confirmDelete(srv)"><Trash2 :size="14" /></button>
                   <button v-if="!srv.cluster_id && (srv.cluster_role || srv.k8s_node_name)" class="icon-button icon-button--table" type="button" :title="`解除 ${srv.name} 的集群绑定`" :aria-label="`解除 ${srv.name} 的集群绑定`" :disabled="unbindingId === srv.id" @click="unbindServer(srv)"><LoaderCircle v-if="unbindingId === srv.id" :size="14" class="is-spinning" /><Unlink2 v-else :size="14" /></button>
                   <button class="icon-button icon-button--table" type="button" :title="`打开 ${srv.name} 的终端`" :aria-label="`打开 ${srv.name} 的终端`" @click="openTerminal(srv.id)"><Terminal :size="14" /></button>
                 </div>
-              </td>
+              </TableActionCell>
             </tr>
           </tbody>
-        </table>
+        </DataTable>
       </div>
     <ResourcePagination :resource="serverPage" label="服务器分页" />
     </SurfaceCard>
@@ -59,7 +59,7 @@
         <div v-if="resourceStatsError" class="k8s-banner k8s-banner-warn">{{ resourceStatsError }}</div>
         <div v-if="servers.length === 0" class="empty-state"><span class="empty-icon">⬡</span><span class="empty-text">暂无服务器</span></div>
         <div v-else-if="resourceStatsLoading && !resourceStats.length" class="empty-state"><span class="empty-text">正在采集服务器资源...</span></div>
-        <div v-else class="table-wrap resource-table-wrap"><table class="data-table resource-table"><thead><tr><th>服务器</th><th>主机</th><th>采集状态</th><th>CPU</th><th>内存</th><th>磁盘 /</th><th>负载 (1 分钟)</th><th>运行时间</th><th class="action-cell">操作</th></tr></thead><tbody><tr v-for="srv in serverRows" :key="srv.id" class="resource-row"><td class="resource-server-name">{{ srv.name }}</td><td class="resource-server-host">{{ srv.host }}</td><td><span class="badge" :class="resourceStatusClass(resourceFor(srv.id))">{{ resourceStatusLabel(resourceFor(srv.id)) }}</span><small v-if="resourceFor(srv.id)?.error" class="resource-error">{{ resourceFor(srv.id).error }}</small></td><td><div class="resource-metric"><strong>{{ formatPercent(resourceFor(srv.id)?.cpu_percent) }}</strong><span class="resource-meter"><i :class="resourceLevelClass(resourceFor(srv.id)?.cpu_percent)" :style="{ width: `${metricPercent(resourceFor(srv.id)?.cpu_percent)}%` }" /></span></div></td><td><div class="resource-metric"><strong>{{ formatMB(resourceFor(srv.id)?.memory_used_mb) }} / {{ formatMB(resourceFor(srv.id)?.memory_total_mb) }}</strong><span class="resource-meter"><i :class="resourceLevelClass(memPercent(resourceFor(srv.id)))" :style="{ width: `${metricPercent(memPercent(resourceFor(srv.id)))}%` }" /></span></div></td><td><div class="resource-metric"><strong>{{ resourceFor(srv.id)?.disk_used_gb ?? '-' }} / {{ resourceFor(srv.id)?.disk_total_gb ?? '-' }} GB</strong><span class="resource-meter"><i :class="resourceLevelClass(diskPercent(resourceFor(srv.id)))" :style="{ width: `${metricPercent(diskPercent(resourceFor(srv.id)))}%` }" /></span></div></td><td>{{ formatLoad(resourceFor(srv.id)) }}</td><td>{{ formatUptime(resourceFor(srv.id)?.uptime) }}</td><td class="action-cell"><button class="icon-button icon-button--table" type="button" :data-testid="`view-resource-stats-${srv.id}`" :title="`查看 ${srv.name} 的资源详情`" :aria-label="`查看 ${srv.name} 的资源详情`" @click="openStats(srv.id)"><ChartNoAxesColumnIncreasing :size="14" /></button></td></tr></tbody></table></div>
+        <div v-else class="table-wrap resource-table-wrap"><DataTable class="resource-table"><thead><tr><th>服务器</th><th>主机</th><th>采集状态</th><th>CPU</th><th>内存</th><th>磁盘 /</th><th>负载 (1 分钟)</th><th>运行时间</th><TableActionCell header /></tr></thead><tbody><tr v-for="srv in serverRows" :key="srv.id" class="resource-row"><td class="resource-server-name">{{ srv.name }}</td><td class="resource-server-host">{{ srv.host }}</td><td><span class="badge" :class="resourceStatusClass(resourceFor(srv.id))">{{ resourceStatusLabel(resourceFor(srv.id)) }}</span><small v-if="resourceFor(srv.id)?.error" class="resource-error">{{ resourceFor(srv.id).error }}</small></td><td><div class="resource-metric"><strong>{{ formatPercent(resourceFor(srv.id)?.cpu_percent) }}</strong><span class="resource-meter"><i :class="resourceLevelClass(resourceFor(srv.id)?.cpu_percent)" :style="{ width: `${metricPercent(resourceFor(srv.id)?.cpu_percent)}%` }" /></span></div></td><td><div class="resource-metric"><strong>{{ formatMB(resourceFor(srv.id)?.memory_used_mb) }} / {{ formatMB(resourceFor(srv.id)?.memory_total_mb) }}</strong><span class="resource-meter"><i :class="resourceLevelClass(memPercent(resourceFor(srv.id)))" :style="{ width: `${metricPercent(memPercent(resourceFor(srv.id)))}%` }" /></span></div></td><td><div class="resource-metric"><strong>{{ resourceFor(srv.id)?.disk_used_gb ?? '-' }} / {{ resourceFor(srv.id)?.disk_total_gb ?? '-' }} GB</strong><span class="resource-meter"><i :class="resourceLevelClass(diskPercent(resourceFor(srv.id)))" :style="{ width: `${metricPercent(diskPercent(resourceFor(srv.id)))}%` }" /></span></div></td><td>{{ formatLoad(resourceFor(srv.id)) }}</td><td>{{ formatUptime(resourceFor(srv.id)?.uptime) }}</td><TableActionCell><button class="icon-button icon-button--table" type="button" :data-testid="`view-resource-stats-${srv.id}`" :title="`查看 ${srv.name} 的资源详情`" :aria-label="`查看 ${srv.name} 的资源详情`" @click="openStats(srv.id)"><ChartNoAxesColumnIncreasing :size="14" /></button></TableActionCell></tr></tbody></DataTable></div>
       <ResourcePagination :resource="serverPage" label="服务器分页" />
     </SurfaceCard>
     </template>
@@ -145,6 +145,8 @@
 </template>
 
 <script setup>
+import DataTable from '../../components/DataTable.vue'
+import TableActionCell from '../../components/TableActionCell.vue'
 import ResourcePagination from '../../components/ResourcePagination.vue'
 import { useListPage } from '../../composables/useListPage.js'
 import { computed, ref, shallowRef, onMounted, onUnmounted, watch } from 'vue'
@@ -163,7 +165,8 @@ import {
 import { useAsyncResource } from '../../composables/useAsyncResource.js'
 import { usePolling } from '../../composables/usePolling.js'
 import { formatClockTime as formatSampleTime } from '../../utils/formatters.js'
-import { ArrowLeft, ChartNoAxesColumnIncreasing, LoaderCircle, PackageMinus, Pencil, Plus, RefreshCw, Terminal, Trash2, Unlink2 } from 'lucide-vue-next'
+import { ChartNoAxesColumnIncreasing, LoaderCircle, PackageMinus, Pencil, Plus, RefreshCw, Terminal, Trash2, Unlink2 } from 'lucide-vue-next'
+import PageBackLink from '../../components/PageBackLink.vue'
 import SectionTabsHeader from '../../components/SectionTabsHeader.vue'
 import SurfaceCard from '../../components/SurfaceCard.vue'
 import ErrorNoticeModal from '../../components/ErrorNoticeModal.vue'
@@ -496,8 +499,6 @@ function resetForm() {
 </script>
 
 <style scoped>
-.back-link{display:inline-flex;align-items:center;gap:6px;margin-bottom:var(--space-16);color:var(--text-secondary);font-size:13px;text-decoration:none}
-.back-link:hover{color:var(--action-primary)}
 .modal-wide { max-width: 640px; }
 .section-copy {
   margin: 0;

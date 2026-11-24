@@ -45,7 +45,7 @@
         <span class="empty-text">暂无标准 Ingress</span>
       </div>
       <div v-else class="table-wrap ingress-table-wrap">
-        <table class="data-table ingress-table">
+        <DataTable class="ingress-table">
           <colgroup>
             <col class="ingress-name-column" />
             <col class="ingress-namespace-column" />
@@ -54,9 +54,9 @@
             <col class="ingress-tls-column" />
             <col class="ingress-controller-column" />
             <col class="ingress-age-column" />
-            <col class="ingress-actions-column" />
+            <col />
           </colgroup>
-          <thead><tr><th>名称</th><th>命名空间</th><th>Host</th><th>路径 → Service</th><th>TLS</th><th>Controller</th><th>年龄</th><th class="action-cell">操作</th></tr></thead>
+          <thead><tr><th>名称</th><th>命名空间</th><th>Host</th><th>路径 → Service</th><th>TLS</th><th>Controller</th><th>年龄</th><TableActionCell header /></tr></thead>
           <tbody>
             <tr v-for="ingress in filteredIngresses" :key="ingress.namespace + '/' + ingress.name">
               <td class="cell-primary"><OverflowTooltip :text="ingress.name" /></td>
@@ -66,10 +66,10 @@
               <td><OverflowTooltip :text="(ingress.tls || []).join(', ') || '-'" /></td>
               <td><OverflowTooltip :text="ingress.controller || '默认'" /></td>
               <td>{{ ingress.age }}</td>
-              <td class="action-cell"><button class="btn btn-sm btn-danger" @click="confirmDeleteIngress(ingress)">删除</button></td>
+              <TableActionCell><button class="btn btn-sm btn-danger" @click="confirmDeleteIngress(ingress)">删除</button></TableActionCell>
             </tr>
           </tbody>
-        </table>
+        </DataTable>
       </div>
       <PaginationControls :page="page" :page-size="pageSize" :total="total" :loading="ingressesLoading" @page-change="changePage" @page-size-change="changePageSize" />
     </SurfaceCard>
@@ -101,6 +101,8 @@
 </template>
 
 <script setup>
+import DataTable from '../../components/DataTable.vue'
+import TableActionCell from '../../components/TableActionCell.vue'
 import { computed, onMounted, ref, watch } from 'vue'
 import { RefreshCw } from 'lucide-vue-next'
 import { createIngress as createIngressRequest, deleteIngress, getIngressControllerStatus, getIngresses } from '../../api/sites.js'
@@ -222,9 +224,8 @@ async function createIngress() {
 .ingress-filter-control { width: 156px; flex: 0 0 156px; }
 .ingress-filter-control :deep(.select-menu) { width: 100%; }
 .ingress-table-wrap { padding: 0 var(--space-16); }
-.ingress-table { min-width: 940px; table-layout: fixed; }
-.ingress-name-column { width: 150px; }.ingress-namespace-column { width: 130px; }.ingress-host-column { width: 180px; }.ingress-path-column { width: 210px; }.ingress-tls-column { width: 150px; }.ingress-controller-column { width: 110px; }.ingress-age-column { width: 88px; }.ingress-actions-column { width: 72px; }
-.is-spinning { animation: spin .8s linear infinite; }
+.ingress-table { min-width: 940px; }
+.ingress-name-column { width: 150px; }.ingress-namespace-column { width: 130px; }.ingress-host-column { width: 180px; }.ingress-path-column { width: 210px; }.ingress-tls-column { width: 150px; }.ingress-controller-column { width: 110px; }.ingress-age-column { width: 88px; }.is-spinning { animation: spin .8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 @media (max-width: 640px) { .ingress-toolbar { align-items: stretch; flex-direction: column; }.ingress-toolbar-actions { width: 100%; }.ingress-filter-control { min-width: 0; flex: 1; width: auto; } }
 </style>

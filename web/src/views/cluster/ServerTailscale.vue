@@ -10,8 +10,8 @@
     </div>
     <EmptyState v-if="!servers.length" :message="cluster ? '当前集群暂无节点' : '暂无服务器'" />
     <div v-else class="table-wrap tailscale-table-wrap">
-      <table class="data-table">
-        <thead><tr><th>服务器</th><th>主机</th><th>组网状态</th><th>Tailscale IP</th><th v-if="cluster">K3s 节点 IP</th><th v-if="cluster">IP 对照</th><th v-else>设备名</th><th class="action-cell">操作</th></tr></thead>
+      <DataTable>
+        <thead><tr><th>服务器</th><th>主机</th><th>组网状态</th><th>Tailscale IP</th><th v-if="cluster">K3s 节点 IP</th><th v-if="cluster">IP 对照</th><th v-else>设备名</th><TableActionCell header /></tr></thead>
         <tbody><tr v-for="server in serverRows" :key="server.id">
           <td>{{ server.name }}</td>
           <td>{{ server.host }}</td>
@@ -20,9 +20,9 @@
           <td v-if="cluster">{{ nodeFor(server)?.internal_ip || '-' }}</td>
           <td v-if="cluster"><button type="button" class="badge tailscale-check" :class="nodeMatch(server).className" :title="nodeMatch(server).reason" :aria-label="`${server.name}：${nodeMatch(server).label}，查看原因`" @click="selectedNodeCheck = nodeMatch(server)">{{ nodeMatch(server).label }}</button></td>
           <td v-else>{{ statusFor(server.id)?.device_name || '-' }}</td>
-          <td class="action-cell"><RouterLink v-if="cluster" class="icon-button icon-button--table" :to="{ path: '/servers', query: { tab: 'tailscale', return: `/cluster/${cluster.id}?tab=networking` } }" :title="`前往服务器组网管理 ${server.name}`" :aria-label="`前往服务器组网管理 ${server.name}`"><Network :size="15" /></RouterLink><button v-else class="icon-button icon-button--table" type="button" :title="`管理 ${server.name} 的组网`" :aria-label="`管理 ${server.name} 的组网`" @click="openManage(server)"><Network :size="15" /></button></td>
+          <TableActionCell><RouterLink v-if="cluster" class="icon-button icon-button--table" :to="{ path: '/servers', query: { tab: 'tailscale', return: `/cluster/${cluster.id}?tab=networking` } }" :title="`前往服务器组网管理 ${server.name}`" :aria-label="`前往服务器组网管理 ${server.name}`"><Network :size="15" /></RouterLink><button v-else class="icon-button icon-button--table" type="button" :title="`管理 ${server.name} 的组网`" :aria-label="`管理 ${server.name} 的组网`" @click="openManage(server)"><Network :size="15" /></button></TableActionCell>
         </tr></tbody>
-      </table>
+      </DataTable>
     </div>
     <slot name="footer" />
   <ResourcePagination :resource="serverPage" label="服务器分页" />
@@ -70,18 +70,20 @@
       </div>
       <p v-if="diagnosis.connection.error" class="tailscale-error">{{ diagnosis.connection.error }}</p>
       <h3>两端网络检测</h3>
-      <div class="table-wrap"><table class="data-table"><thead><tr><th>服务器</th><th>出站 UDP</th><th>NAT 映射</th><th>检测结果</th></tr></thead><tbody><tr v-for="node in diagnosis.nodes" :key="node.server_id"><td>{{ nameFor(node.server_id) }}</td><td>{{ networkBoolean(node.udp, '可用', '不可用') }}</td><td>{{ networkBoolean(node.mapping_varies_by_dest_ip, '随目标变化', '稳定') }}</td><td>{{ node.error || '-' }}</td></tr></tbody></table></div>
+      <div class="table-wrap"><DataTable><thead><tr><th>服务器</th><th>出站 UDP</th><th>NAT 映射</th><th>检测结果</th></tr></thead><tbody><tr v-for="node in diagnosis.nodes" :key="node.server_id"><td>{{ nameFor(node.server_id) }}</td><td>{{ networkBoolean(node.udp, '可用', '不可用') }}</td><td>{{ networkBoolean(node.mapping_varies_by_dest_ip, '随目标变化', '稳定') }}</td><td>{{ node.error || '-' }}</td></tr></tbody></DataTable></div>
       <h3>排查线索</h3>
       <ul class="connection-findings"><li v-for="finding in diagnosis.findings" :key="finding">{{ finding }}</li></ul>
     </div>
     <EmptyState v-else-if="!connections.length" message="暂无检测结果" />
-    <div v-else class="table-wrap"><table class="data-table"><thead><tr><th>来源</th><th>目标</th><th>结果</th><th>连接方式</th><th>原因</th><th class="action-cell">操作</th></tr></thead><tbody><tr v-for="item in connections" :key="`${item.from_id}-${item.to_id}`"><td>{{ nameFor(item.from_id) }}</td><td>{{ nameFor(item.to_id) }}</td><td><span :class="['badge', connectionBadge(item)]">{{ connectionResult(item) }}</span></td><td>{{ connectionPath(item) }}</td><td>{{ item.error || '-' }}</td><td class="action-cell"><button v-if="item.path === 'relay' || item.path === 'inconclusive'" class="btn btn-sm" type="button" @click="diagnose(item)">分析连接</button></td></tr></tbody></table></div>
+    <div v-else class="table-wrap"><DataTable><thead><tr><th>来源</th><th>目标</th><th>结果</th><th>连接方式</th><th>原因</th><TableActionCell header /></tr></thead><tbody><tr v-for="item in connections" :key="`${item.from_id}-${item.to_id}`"><td>{{ nameFor(item.from_id) }}</td><td>{{ nameFor(item.to_id) }}</td><td><span :class="['badge', connectionBadge(item)]">{{ connectionResult(item) }}</span></td><td>{{ connectionPath(item) }}</td><td>{{ item.error || '-' }}</td><TableActionCell><button v-if="item.path === 'relay' || item.path === 'inconclusive'" class="btn btn-sm" type="button" @click="diagnose(item)">分析连接</button></TableActionCell></tr></tbody></DataTable></div>
     <template #actions><button v-if="diagnosis" class="btn" @click="diagnosis = null">返回列表</button><button class="btn" :disabled="diagnosing" @click="closeConnections">关闭</button></template>
   </BaseModal>
   <ErrorNoticeModal :open="Boolean(operationError)" :message="operationError" teleport @close="operationError = ''" />
 </template>
 
 <script setup>
+import DataTable from '../../components/DataTable.vue'
+import TableActionCell from '../../components/TableActionCell.vue'
 import ResourcePagination from '../../components/ResourcePagination.vue'
 import { useListPage } from '../../composables/useListPage.js'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
@@ -237,7 +239,6 @@ watch(() => props.servers.map(server => server.id).join(','), () => { void serve
 .tailscale-toolbar,.tailscale-toolbar-actions{display:flex;align-items:center;gap:8px}
 .tailscale-toolbar{min-height:62px;justify-content:space-between;padding:12px 20px}
 .tailscale-table-wrap{padding:0 20px 12px}
-.tailscale-table-wrap th:last-child,.tailscale-table-wrap td:last-child{text-align:right}
 .tailscale-check{border:0;cursor:pointer}.tailscale-check:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
 .tailscale-detail{display:grid;gap:0}
 .tailscale-detail>div{display:grid;grid-template-columns:130px minmax(0,1fr);gap:12px;padding:10px 0;border-bottom:1px solid var(--border-muted);font-size:12px}

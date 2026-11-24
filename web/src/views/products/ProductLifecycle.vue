@@ -18,25 +18,25 @@
       <EmptyState v-else-if="resource.error.value" message="记录读取失败"><template #action><button class="btn btn-sm" @click="load">重试</button></template></EmptyState>
       <EmptyState v-else-if="!resource.total.value" :message="emptyMessage" />
       <div v-else class="table-wrap">
-        <table v-if="kind === 'tasks'" class="data-table">
-          <thead><tr><th>事项 / 说明</th><th>类型 / 优先级</th><th>产品版本</th><th>状态</th><th>截止日期</th><th>操作</th></tr></thead>
-          <tbody><tr v-for="row in resource.items.value" :key="row.id"><td>{{ row.title }}<span class="cell-secondary product-line lifecycle-description">{{ row.details }}</span></td><td>{{ labelFor(taskKinds, row.kind) }} · {{ labelFor(priorities, row.priority) }}</td><td>{{ versionName(row.version_id) }}</td><td><span class="badge" :class="lifecycleClass(row.status)">{{ labelFor(taskStatuses, row.status) }}</span></td><td>{{ row.due_date || '—' }}<span v-if="row.due_date && !['done', 'cancelled'].includes(row.status)" class="badge product-line" :class="dueClass(dueState(row.due_date))">{{ dueLabel(dueState(row.due_date)) }}</span></td><td><button class="icon-button" title="编辑事项" aria-label="编辑事项" :disabled="busy || optionsLoading || Boolean(optionsError)" @click="openEditor(row)"><Pencil :size="15" /></button></td></tr></tbody>
-        </table>
-        <table v-else-if="kind === 'versions'" class="data-table">
-          <thead><tr><th>版本 / 目标</th><th>状态</th><th>关联部署</th><th>操作</th></tr></thead>
+        <DataTable v-if="kind === 'tasks'">
+          <thead><tr><th>事项 / 说明</th><th>类型 / 优先级</th><th>产品版本</th><th>状态</th><th>截止日期</th><TableActionCell header /></tr></thead>
+          <tbody><tr v-for="row in resource.items.value" :key="row.id"><td>{{ row.title }}<span class="cell-secondary product-line lifecycle-description">{{ row.details }}</span></td><td>{{ labelFor(taskKinds, row.kind) }} · {{ labelFor(priorities, row.priority) }}</td><td>{{ versionName(row.version_id) }}</td><td><span class="badge" :class="lifecycleClass(row.status)">{{ labelFor(taskStatuses, row.status) }}</span></td><td>{{ row.due_date || '—' }}<span v-if="row.due_date && !['done', 'cancelled'].includes(row.status)" class="badge product-line" :class="dueClass(dueState(row.due_date))">{{ dueLabel(dueState(row.due_date)) }}</span></td><TableActionCell><button class="icon-button" title="编辑事项" aria-label="编辑事项" :disabled="busy || optionsLoading || Boolean(optionsError)" @click="openEditor(row)"><Pencil :size="15" /></button></TableActionCell></tr></tbody>
+        </DataTable>
+        <DataTable v-else-if="kind === 'versions'">
+          <thead><tr><th>版本 / 目标</th><th>状态</th><th>关联部署</th><TableActionCell header /></tr></thead>
           <tbody>
             <tr v-for="row in resource.items.value" :key="row.id">
               <td class="lifecycle-version-cell">{{ row.name }}<span v-if="row.goal" class="cell-secondary product-line lifecycle-version-goal">{{ row.goal }}</span></td>
               <td><span class="badge" :class="lifecycleClass(row.status)">{{ labelFor(versionStatuses, row.status) }}</span><span v-if="row.target_date" class="cell-secondary product-line">目标 {{ row.target_date }}</span></td>
               <td><button v-if="deploymentCount(row)" class="btn btn-sm" @click="showDeployments(row)">{{ deploymentCount(row) }} 条记录</button><span v-else class="cell-secondary">—</span></td>
-              <td><div class="product-actions"><button class="icon-button" title="查看版本详情" aria-label="查看版本详情" @click="detailVersion = row"><Eye :size="15" /></button><button class="icon-button" title="查看版本事项" aria-label="查看版本事项" @click="$emit('select-version', row.id)"><ListTodo :size="15" /></button><button class="icon-button" title="编辑版本" aria-label="编辑版本" :disabled="busy || optionsLoading || Boolean(optionsError)" @click="openEditor(row)"><Pencil :size="15" /></button></div></td>
+              <TableActionCell><div class="btn-group"><button class="icon-button" title="查看版本详情" aria-label="查看版本详情" @click="detailVersion = row"><Eye :size="15" /></button><button class="icon-button" title="查看版本事项" aria-label="查看版本事项" @click="$emit('select-version', row.id)"><ListTodo :size="15" /></button><button class="icon-button" title="编辑版本" aria-label="编辑版本" :disabled="busy || optionsLoading || Boolean(optionsError)" @click="openEditor(row)"><Pencil :size="15" /></button></div></TableActionCell>
             </tr>
           </tbody>
-        </table>
-        <table v-else class="data-table">
-          <thead><tr><th>产品版本</th><th>发行渠道 / 分类</th><th>平台版本 / Build</th><th>状态</th><th>更新时间 / 备注</th><th>操作</th></tr></thead>
-          <tbody><tr v-for="row in resource.items.value" :key="row.id"><td>{{ versionName(row.version_id) }}</td><td>{{ channelName(row.channel_id) }}<span class="cell-secondary product-line">{{ audienceLabel(row.audience) }}</span></td><td>{{ row.platform_version }}<span class="cell-secondary product-line">{{ row.build_identifier || '未填 Build 标识' }}</span></td><td><span class="badge" :class="lifecycleClass(row.status)">{{ labelFor(distributionStatuses, row.status) }}</span></td><td>{{ formatTime(row.updated_at) }}<span class="cell-secondary product-line lifecycle-description">{{ row.notes }}</span></td><td><div class="product-actions"><button class="icon-button" title="发行历史" aria-label="发行历史" @click="showHistory(row)"><History :size="15" /></button><button class="icon-button" title="编辑发行记录" aria-label="编辑发行记录" :disabled="busy || optionsLoading || Boolean(optionsError)" @click="openEditor(row)"><Pencil :size="15" /></button></div></td></tr></tbody>
-        </table>
+        </DataTable>
+        <DataTable v-else>
+          <thead><tr><th>产品版本</th><th>发行渠道 / 分类</th><th>平台版本 / Build</th><th>状态</th><th>更新时间 / 备注</th><TableActionCell header /></tr></thead>
+          <tbody><tr v-for="row in resource.items.value" :key="row.id"><td>{{ versionName(row.version_id) }}</td><td>{{ channelName(row.channel_id) }}<span class="cell-secondary product-line">{{ audienceLabel(row.audience) }}</span></td><td>{{ row.platform_version }}<span class="cell-secondary product-line">{{ row.build_identifier || '未填 Build 标识' }}</span></td><td><span class="badge" :class="lifecycleClass(row.status)">{{ labelFor(distributionStatuses, row.status) }}</span></td><td>{{ formatTime(row.updated_at) }}<span class="cell-secondary product-line lifecycle-description">{{ row.notes }}</span></td><TableActionCell><div class="btn-group"><button class="icon-button" title="发行历史" aria-label="发行历史" @click="showHistory(row)"><History :size="15" /></button><button class="icon-button" title="编辑发行记录" aria-label="编辑发行记录" :disabled="busy || optionsLoading || Boolean(optionsError)" @click="openEditor(row)"><Pencil :size="15" /></button></div></TableActionCell></tr></tbody>
+        </DataTable>
       </div>
       <ResourcePagination :resource="resource" :label="`${noun}分页`" />
     </SurfaceCard>
@@ -57,19 +57,21 @@
     <BaseModal teleport :open="Boolean(historyRecord)" title="发行状态历史" size="large" @close="historyRecord = null">
       <EmptyState v-if="history.loading.value" variant="loading" message="正在读取历史..." />
       <EmptyState v-else-if="history.error.value" message="历史读取失败"><template #action><button class="btn btn-sm" @click="history.refresh()">重试</button></template></EmptyState>
-      <div v-else class="table-wrap"><table class="data-table"><thead><tr><th>记录时间</th><th>状态</th><th>平台版本 / Build</th><th>备注</th></tr></thead><tbody><tr v-for="event in history.items.value" :key="event.id"><td>{{ formatTime(event.created_at) }}</td><td>{{ labelFor(distributionStatuses, event.status) }}<span class="cell-secondary product-line">{{ audienceLabel(event.audience) }}</span></td><td>{{ event.platform_version }} / {{ event.build_identifier || '—' }}</td><td class="lifecycle-description">{{ event.notes || '—' }}</td></tr></tbody></table></div>
+      <div v-else class="table-wrap"><DataTable><thead><tr><th>记录时间</th><th>状态</th><th>平台版本 / Build</th><th>备注</th></tr></thead><tbody><tr v-for="event in history.items.value" :key="event.id"><td>{{ formatTime(event.created_at) }}</td><td>{{ labelFor(distributionStatuses, event.status) }}<span class="cell-secondary product-line">{{ audienceLabel(event.audience) }}</span></td><td>{{ event.platform_version }} / {{ event.build_identifier || '—' }}</td><td class="lifecycle-description">{{ event.notes || '—' }}</td></tr></tbody></DataTable></div>
       <ResourcePagination :resource="history" label="发行历史分页" />
     </BaseModal>
     <BaseModal teleport :open="Boolean(deploymentVersion)" title="关联部署记录" size="large" @close="deploymentVersion = null">
       <EmptyState v-if="deploymentRows.loading.value" variant="loading" message="正在读取部署..." />
       <EmptyState v-else-if="deploymentRows.error.value" message="部署读取失败"><template #action><button class="btn btn-sm" @click="deploymentRows.refresh()">重试</button></template></EmptyState>
-      <div v-else class="table-wrap"><table class="data-table"><thead><tr><th>组件 / 环境</th><th>版本</th><th>状态</th><th>入口</th></tr></thead><tbody><tr v-for="row in deploymentRows.items.value" :key="(row.source || 'application') + '-' + row.id"><td>{{ row.application_name }} · {{ row.environment_name || '—' }}（{{ environmentKindLabel(row.environment_kind) }}）</td><td>{{ row.version || `#${row.id}` }}</td><td>{{ row.status }}</td><td><router-link :to="deploymentPath(row)">{{ row.source === 'platform' ? '平台发布与更新' : '查看部署记录' }}</router-link></td></tr></tbody></table></div>
+      <div v-else class="table-wrap"><DataTable><thead><tr><th>组件 / 环境</th><th>版本</th><th>状态</th><th>入口</th></tr></thead><tbody><tr v-for="row in deploymentRows.items.value" :key="(row.source || 'application') + '-' + row.id"><td>{{ row.application_name }} · {{ row.environment_name || '—' }}（{{ environmentKindLabel(row.environment_kind) }}）</td><td>{{ row.version || `#${row.id}` }}</td><td>{{ row.status }}</td><td><router-link :to="deploymentPath(row)">{{ row.source === 'platform' ? '平台发布与更新' : '查看部署记录' }}</router-link></td></tr></tbody></DataTable></div>
       <ResourcePagination :resource="deploymentRows" label="关联部署分页" />
     </BaseModal>
     <ErrorNoticeModal :open="Boolean(error)" :message="error" teleport @close="error = ''" />
   </div>
 </template>
 <script setup>
+import DataTable from '../../components/DataTable.vue'
+import TableActionCell from '../../components/TableActionCell.vue'
 import { distributionAudiences, audienceLabel, environmentKindLabel } from './environment-utils.js'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { Eye, History, ListTodo, Pencil, RotateCcw } from 'lucide-vue-next'

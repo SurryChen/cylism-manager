@@ -21,9 +21,9 @@
         <span class="empty-icon">⬡</span><span class="empty-text">暂无 Deployment</span>
       </div>
       <div v-else class="table-wrap">
-        <table class="data-table deployment-table">
-          <colgroup><col class="deployment-name-column" /><col class="deployment-namespace-column" /><col class="deployment-replicas-column" /><col class="deployment-image-column" /><col class="deployment-mounts-column" /><col class="deployment-cpu-column" /><col class="deployment-memory-column" /><col class="deployment-age-column" /><col class="deployment-actions-column" /></colgroup>
-          <thead><tr><th>名称</th><th>命名空间</th><th>副本</th><th>镜像</th><th>挂载</th><th>CPU</th><th>内存</th><th>年龄</th><th></th></tr></thead>
+        <DataTable class="deployment-table">
+          <colgroup><col class="deployment-name-column" /><col class="deployment-namespace-column" /><col class="deployment-replicas-column" /><col class="deployment-image-column" /><col class="deployment-mounts-column" /><col class="deployment-cpu-column" /><col class="deployment-memory-column" /><col class="deployment-age-column" /><col /></colgroup>
+          <thead><tr><th>名称</th><th>命名空间</th><th>副本</th><th>镜像</th><th>挂载</th><th>CPU</th><th>内存</th><th>年龄</th><TableActionCell header /></tr></thead>
           <tbody>
             <template v-for="d in safeDeployments" :key="d.namespace + '/' + d.name">
               <tr @click="toggleDeployExpand(d)" class="clickable">
@@ -32,13 +32,13 @@
                 <td><OverflowTooltip class="deployment-image" :text="d.images?.[0] || '-'" /></td>
                 <td><OverflowTooltip class="deployment-mounts" :text="formatVolumeMounts(d.volume_mounts)" /></td>
                 <td>{{ d.cpu || '-' }}</td><td>{{ d.memory || '-' }}</td><td>{{ d.age }}</td>
-                <td>
-                  <div class="btn-group action-cell deployment-row-actions" @click.stop>
+                <TableActionCell>
+                  <div class="btn-group" @click.stop>
                     <button class="btn btn-sm" @click="openScaleDialog(d)">扩缩</button>
                     <button class="btn btn-sm" @click="openImageDialog(d)">镜像</button>
                     <button class="btn btn-sm" @click="openRollbackDialog(d)">回滚</button>
                   </div>
-                </td>
+                </TableActionCell>
               </tr>
               <!-- expanded pods -->
               <template v-if="expandedDeploy === d.namespace + '/' + d.name">
@@ -50,7 +50,7 @@
               </template>
             </template>
           </tbody>
-        </table>
+        </DataTable>
       </div>
     </div>
 
@@ -86,8 +86,8 @@
         <span class="empty-icon">⌕</span><span class="empty-text">没有匹配筛选条件的 Pod</span>
       </div>
       <div v-else class="table-wrap">
-        <table class="data-table">
-          <thead><tr><th>实例</th><th>命名空间</th><th>状态</th><th>所在服务器</th><th>重启</th><th>年龄</th><th></th></tr></thead>
+        <DataTable>
+          <thead><tr><th>实例</th><th>命名空间</th><th>状态</th><th>所在服务器</th><th>重启</th><th>年龄</th><TableActionCell header /></tr></thead>
           <tbody>
             <tr v-for="pod in safePods" :key="pod.namespace + '/' + pod.name" class="pod-list-row">
               <td class="cell-primary">{{ pod.name }}<small>{{ pod.ip || '未分配 Pod IP' }}</small></td>
@@ -99,10 +99,10 @@
               </td>
               <td><span :class="Number(pod.restarts || 0) > 0 ? 'restart-warning' : ''">{{ pod.restarts }}</span></td>
               <td>{{ pod.age || '-' }}</td>
-              <td class="action-cell"><button class="icon-button pod-terminal-action" :disabled="!canOpenPodTerminal(pod)" :title="canOpenPodTerminal(pod) ? '打开容器终端' : '仅运行中且包含普通容器的 Pod 可打开终端'" :aria-label="`打开 ${pod.name} 的容器终端`" @click="openPodTerminal(pod)"><SquareTerminal :size="16" /></button></td>
+              <TableActionCell><button class="icon-button pod-terminal-action" :disabled="!canOpenPodTerminal(pod)" :title="canOpenPodTerminal(pod) ? '打开容器终端' : '仅运行中且包含普通容器的 Pod 可打开终端'" :aria-label="`打开 ${pod.name} 的容器终端`" @click="openPodTerminal(pod)"><SquareTerminal :size="16" /></button></TableActionCell>
             </tr>
           </tbody>
-        </table>
+        </DataTable>
       </div>
     </div>
 
@@ -114,8 +114,8 @@
         <span class="empty-icon">⬡</span><span class="empty-text">暂无 StatefulSet</span>
       </div>
       <div v-else class="table-wrap">
-        <table class="data-table">
-          <thead><tr><th>名称</th><th>命名空间</th><th>副本</th><th>镜像</th><th>挂载</th><th>年龄</th><th></th></tr></thead>
+        <DataTable>
+          <thead><tr><th>名称</th><th>命名空间</th><th>副本</th><th>镜像</th><th>挂载</th><th>年龄</th><TableActionCell header /></tr></thead>
           <tbody>
             <tr v-for="s in safeStatefulsets" :key="s.namespace + '/' + s.name">
               <td class="cell-primary">{{ s.name }}</td><td>{{ s.namespace }}</td>
@@ -130,10 +130,10 @@
                 <span v-else>-</span>
               </td>
               <td>{{ s.age }}</td>
-              <td><div class="btn-group action-cell"><button class="btn btn-sm" @click="openStsScaleDialog(s)">扩缩</button></div></td>
+              <TableActionCell><div class="btn-group"><button class="btn btn-sm" @click="openStsScaleDialog(s)">扩缩</button></div></TableActionCell>
             </tr>
           </tbody>
-        </table>
+        </DataTable>
       </div>
     </div>
 
@@ -143,7 +143,7 @@
         <span class="empty-icon">⬡</span><span class="empty-text">暂无 DaemonSet</span>
       </div>
       <div v-else class="table-wrap">
-        <table class="data-table">
+        <DataTable>
           <thead><tr><th>名称</th><th>命名空间</th><th>就绪/期望</th><th>镜像</th><th>节点选择器</th><th>年龄</th></tr></thead>
           <tbody>
             <tr v-for="d in safeDaemonsets" :key="d.namespace + '/' + d.name">
@@ -152,7 +152,7 @@
               <td>{{ d.images?.[0] || '-' }}</td><td>{{ Object.entries(d.node_selector || {}).map(([k,v]) => `${k}=${v}`).join(', ') || '-' }}</td><td>{{ d.age }}</td>
             </tr>
           </tbody>
-        </table>
+        </DataTable>
       </div>
     </div>
       <PaginationControls :page="page" :page-size="pageSize" :total="total" :loading="loading" @page-change="changePage" @page-size-change="changePageSize" />
@@ -184,10 +184,10 @@
     <div v-if="rollbackDialog" class="modal-overlay" @click.self="rollbackDialog = null">
       <div class="modal"><div class="modal-body">
         <h3>回滚: {{ rollbackDialog.name }}</h3>
-        <div class="table-wrap" style="margin:var(--space-12) 0"><table class="data-table">
-          <thead><tr><th>版本</th><th>镜像</th><th>时间</th><th></th></tr></thead>
-          <tbody><tr v-for="r in rollbackDialog.revisions" :key="r.revision"><td>{{ r.revision }}</td><td>{{ r.image }}</td><td>{{ r.age }}</td><td><button class="btn btn-sm" :disabled="rollbackSubmitting" @click="doRollback(r.revision)">{{ rollbackSubmitting ? '提交中...' : '回滚到此' }}</button></td></tr></tbody>
-        </table></div>
+        <div class="table-wrap" style="margin:var(--space-12) 0"><DataTable>
+          <thead><tr><th>版本</th><th>镜像</th><th>时间</th><TableActionCell header /></tr></thead>
+          <tbody><tr v-for="r in rollbackDialog.revisions" :key="r.revision"><td>{{ r.revision }}</td><td>{{ r.image }}</td><td>{{ r.age }}</td><TableActionCell><button class="btn btn-sm" :disabled="rollbackSubmitting" @click="doRollback(r.revision)">{{ rollbackSubmitting ? '提交中...' : '回滚到此' }}</button></TableActionCell></tr></tbody>
+        </DataTable></div>
         <p v-if="rollbackError" class="form-error" role="alert">{{ rollbackError }}</p>
         <button class="btn" :disabled="rollbackSubmitting" @click="rollbackDialog = null">取消</button>
       </div></div>
@@ -196,6 +196,8 @@
 </template>
 
 <script setup>
+import DataTable from '../../components/DataTable.vue'
+import TableActionCell from '../../components/TableActionCell.vue'
 import { computed, ref, watch, onMounted, onErrorCaptured } from 'vue'
 import { Filter, RefreshCw, RotateCcw, Search, SquareTerminal, X } from 'lucide-vue-next'
 import { useRoute } from 'vue-router'
@@ -439,11 +441,9 @@ function openStsScaleDialog(s) {
 .workloads-toolbar { display: flex; align-items: center; justify-content: space-between; gap: var(--space-16); margin-bottom: var(--space-16); }
 .workload-type-select { width: min(250px, 100%); }
 .workloads-toolbar-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin-left: auto; }
-.deployment-table { min-width: 1250px; table-layout: fixed; }
-.deployment-name-column { width: 170px; }.deployment-namespace-column { width: 130px; }.deployment-replicas-column { width: 70px; }.deployment-image-column { width: 330px; }.deployment-mounts-column { width: 210px; }.deployment-cpu-column { width: 55px; }.deployment-memory-column { width: 60px; }.deployment-age-column { width: 65px; }.deployment-actions-column { width: 160px; }
-.deployment-table td { white-space: nowrap; }
+.deployment-table { min-width: 1250px; }
+.deployment-name-column { width: 170px; }.deployment-namespace-column { width: 130px; }.deployment-replicas-column { width: 70px; }.deployment-image-column { width: 330px; }.deployment-mounts-column { width: 210px; }.deployment-cpu-column { width: 55px; }.deployment-memory-column { width: 60px; }.deployment-age-column { width: 65px; }.deployment-table td { white-space: nowrap; }
 .deployment-image, .deployment-mounts { font: 11px/1.45 var(--font-mono); }
-.deployment-row-actions { min-width: 160px; flex-wrap: nowrap; }
 .clickable { cursor: pointer; }
 .pod-row td { padding: 4px 12px; border-bottom: 0; background: var(--surface-subtle); }
 .pod-subrow { display: flex; align-items: center; gap: 8px; padding: 6px 0; font-size: 11px; color: var(--text-secondary); }

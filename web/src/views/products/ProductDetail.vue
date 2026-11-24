@@ -3,7 +3,9 @@
     <SectionTabsHeader :title="product?.name || (projectMode ? '项目详情' : '产品详情')" :tabs="tabs" :active-tab="tab" @select="selectTab">
       <template #title>
         <div class="product-detail-title">
-          <router-link class="icon-button" :to="projectMode ? '/projects' : '/products'" :title="projectMode ? '返回项目中心' : '返回产品中心'" :aria-label="projectMode ? '返回项目中心' : '返回产品中心'"><ArrowLeft :size="16" aria-hidden="true" /></router-link>
+          <PageBackLink :to="projectMode ? '/projects' : '/products'">
+            {{ projectMode ? '返回项目中心' : '返回产品中心' }}
+          </PageBackLink>
           <h1 class="page-title">{{ product?.name || (projectMode ? '项目详情' : '产品详情') }}</h1>
         </div>
       </template>
@@ -28,11 +30,11 @@
     <BaseModal teleport :open="channelsOpen" title="发行渠道" size="large" @close="channelsOpen = false">
       <p class="product-muted">维护平台标识和访问链接；渠道当前版本与审核进度由发行记录汇总。</p>
       <EmptyState v-if="!product?.channels?.length" message="尚未添加发行渠道" />
-      <div v-else class="table-wrap"><table class="data-table"><thead><tr><th>平台 / 渠道</th><th>应用标识</th><th>版本 / 状态</th><th>链接</th></tr></thead><tbody><tr v-for="channel in product.channels" :key="channel.id">
+      <div v-else class="table-wrap"><DataTable><thead><tr><th>平台 / 渠道</th><th>应用标识</th><th>版本 / 状态</th><th>链接</th></tr></thead><tbody><tr v-for="channel in product.channels" :key="channel.id">
         <td>{{ channel.name || labelFor(platforms, channel.platform) }}<span class="cell-secondary product-line">{{ labelFor(platforms, channel.platform) }}</span></td><td>{{ channel.app_identifier || '—' }}</td>
         <td><span class="badge" :class="channelClass(channel.publish_status)">{{ labelFor(channelStatuses, channel.publish_status) }}</span><span class="product-line">正式线上 {{ channel.online_version || '—' }}</span><span v-if="channel.pending_version" class="cell-secondary product-line">正式待发布 {{ channel.pending_version }}</span></td>
         <td><a v-if="channel.admin_url" :href="channel.admin_url" target="_blank" rel="noopener noreferrer">管理后台</a><a v-if="channel.public_url" class="product-line" :href="channel.public_url" target="_blank" rel="noopener noreferrer">公开访问 / 商店</a><span v-if="!channel.admin_url && !channel.public_url">—</span></td>
-      </tr></tbody></table></div>
+      </tr></tbody></DataTable></div>
       <template #actions><button class="btn" @click="channelsOpen = false">关闭</button><button class="btn btn-primary" :disabled="busy" @click="openEditor('channels')">管理渠道</button></template>
     </BaseModal>
     <ProductEditor :project-mode="projectMode" :open="editorOpen" :initial-tab="editorTab" :product="product" :busy="busy" @close="editorOpen = false" @save="save" />
@@ -43,11 +45,13 @@
 </template>
 
 <script setup>
+import DataTable from '../../components/DataTable.vue'
 import { computed, ref, watch } from 'vue'
-import { ArrowLeft, Trash2 } from 'lucide-vue-next'
+import { Trash2 } from 'lucide-vue-next'
 import { useRoute, useRouter } from 'vue-router'
 import { getProduct, updateProduct, deleteProduct, getProjectWorkspace, deleteProjectWorkspace } from '../../api/products.js'
 import { useAsyncResource } from '../../composables/useAsyncResource.js'
+import PageBackLink from '../../components/PageBackLink.vue'
 import SectionTabsHeader from '../../components/SectionTabsHeader.vue'
 import SurfaceCard from '../../components/SurfaceCard.vue'
 import EmptyState from '../../components/EmptyState.vue'
@@ -103,8 +107,7 @@ watch(() => route.query?.tab, applyRouteTab)
 
 <style scoped>
 .product-detail-page > :deep(.section-tabs-header) { height: auto; min-height: var(--tabbed-page-header-height); flex-wrap: wrap; column-gap: var(--space-24); row-gap: 0; }
-.product-detail-title { display: flex; align-items: center; gap: var(--space-12); flex: 1 1 240px; min-width: 0; margin-bottom: 23px; }
-.product-detail-title .icon-button { flex-shrink: 0; }
+.product-detail-title { display: flex; flex: 1 1 240px; flex-direction: column; align-items: flex-start; min-width: 0; margin-bottom: 23px; }
 .product-detail-title .page-title { min-width: 0; margin: 0; font-size: var(--tabbed-page-header-title-size); overflow-wrap: anywhere; }
 .product-detail-page > :deep(.section-tabs-header .section-tabs), .product-detail-page > :deep(.section-tabs-header .section-tabs-actions) { flex-shrink: 0; }
 .product-detail-page > :deep(.section-tab) { white-space: nowrap; }

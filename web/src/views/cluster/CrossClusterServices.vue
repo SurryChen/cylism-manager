@@ -13,9 +13,9 @@
         </div>
       </div>
       <FeedbackBanner v-if="loadError" class="cross-error" tone="warning" :message="loadError" />
-      <div v-if="visibleItems.length" class="table-wrap cross-table-wrap"><table class="data-table"><thead><tr><th>来源集群</th><th>访问名称</th><th>目标集群</th><th>目标 Service</th><th>端口</th><th>状态</th><th class="action-cell">操作</th></tr></thead><tbody>
-        <tr v-for="item in visibleItems" :key="item.id"><td>{{ clusterName(item.source_cluster_id) }}</td><td>{{ item.source_name }}.{{ item.source_namespace }}.svc.cluster.local</td><td>{{ clusterName(item.target_cluster_id) }}</td><td>{{ item.target_namespace }}/{{ item.target_name }}</td><td>{{ item.source_port }} → {{ item.target_service_port }}</td><td><span class="badge" :class="item.status === 'active' ? 'badge-online' : 'badge-danger'">{{ item.status === 'active' ? '已配置' : '配置失败' }}</span><span v-if="checks[item.id]" class="cell-secondary">{{ checks[item.id].message }}</span><span v-else-if="item.last_error" class="cell-secondary">{{ item.last_error }}</span></td><td class="action-cell"><div class="cross-actions"><button class="icon-button icon-button--table" type="button" :title="`检测 ${item.source_name}`" :aria-label="`检测 ${item.source_name}`" :disabled="busyID === item.id" @click="check(item)"><Activity :size="14" /></button><button class="icon-button icon-button--table" type="button" :title="`删除 ${item.source_name}`" :aria-label="`删除 ${item.source_name}`" :disabled="busyID === item.id" @click="deleteTarget = item"><Trash2 :size="14" /></button></div></td></tr>
-      </tbody></table></div>
+      <div v-if="visibleItems.length" class="table-wrap cross-table-wrap"><DataTable><thead><tr><th>来源集群</th><th>访问名称</th><th>目标集群</th><th>目标 Service</th><th>端口</th><th>状态</th><TableActionCell header /></tr></thead><tbody>
+        <tr v-for="item in visibleItems" :key="item.id"><td>{{ clusterName(item.source_cluster_id) }}</td><td>{{ item.source_name }}.{{ item.source_namespace }}.svc.cluster.local</td><td>{{ clusterName(item.target_cluster_id) }}</td><td>{{ item.target_namespace }}/{{ item.target_name }}</td><td>{{ item.source_port }} → {{ item.target_service_port }}</td><td><span class="badge" :class="item.status === 'active' ? 'badge-online' : 'badge-danger'">{{ item.status === 'active' ? '已配置' : '配置失败' }}</span><span v-if="checks[item.id]" class="cell-secondary">{{ checks[item.id].message }}</span><span v-else-if="item.last_error" class="cell-secondary">{{ item.last_error }}</span></td><TableActionCell><div class="cross-actions"><button class="icon-button icon-button--table" type="button" :title="`检测 ${item.source_name}`" :aria-label="`检测 ${item.source_name}`" :disabled="busyID === item.id" @click="check(item)"><Activity :size="14" /></button><button class="icon-button icon-button--table" type="button" :title="`删除 ${item.source_name}`" :aria-label="`删除 ${item.source_name}`" :disabled="busyID === item.id" @click="deleteTarget = item"><Trash2 :size="14" /></button></div></TableActionCell></tr>
+      </tbody></DataTable></div>
       <EmptyState v-else-if="loading" variant="loading" message="正在读取跨集群服务" />
       <EmptyState v-else-if="!loadError" :message="items.length ? '没有符合条件的跨集群服务' : '暂无跨集群服务'" />
     <ResourcePagination :resource="listPage" label="跨集群服务分页" />
@@ -40,6 +40,8 @@
 </template>
 
 <script setup>
+import DataTable from '../../components/DataTable.vue'
+import TableActionCell from '../../components/TableActionCell.vue'
 import ResourcePagination from '../../components/ResourcePagination.vue'
 import { useListPage } from '../../composables/useListPage.js'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'

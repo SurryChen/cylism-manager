@@ -1,6 +1,6 @@
 <template>
   <div class="cluster-storage-page">
-    <RouterLink class="back-link" to="/cluster?tab=list"><ArrowLeft :size="16" />返回集群列表</RouterLink>
+    <PageBackLink to="/cluster?tab=list">返回集群列表</PageBackLink>
     <SectionTabsHeader :title="cluster?.name || '存储卷'" :tabs="tabs" active-tab="claims" test-id-prefix="storage-tab" />
     <FeedbackBanner v-if="error" class="storage-error" tone="warning" :message="error" />
     <ClusterAgentGate v-if="cluster" :cluster-id="clusterID" @ready="loadStorage">
@@ -18,8 +18,8 @@
       <EmptyState v-if="!loaded" variant="loading" message="正在读取存储卷" />
       <EmptyState v-else-if="!claims.length" message="暂无存储卷" />
       <div v-else class="table-wrap">
-        <table class="data-table">
-          <thead><tr><th>存储卷</th><th>命名空间</th><th>归属</th><th>容量</th><th>已用空间</th><th>StorageClass</th><th>状态</th><th>绑定节点</th><th>引用</th><th class="action-cell">操作</th></tr></thead>
+        <DataTable>
+          <thead><tr><th>存储卷</th><th>命名空间</th><th>归属</th><th>容量</th><th>已用空间</th><th>StorageClass</th><th>状态</th><th>绑定节点</th><th>引用</th><TableActionCell header /></tr></thead>
           <tbody>
             <tr v-for="claim in claims" :key="`${claim.namespace}/${claim.name}`">
               <td class="cell-primary">{{ claim.name }}</td>
@@ -31,10 +31,10 @@
               <td><span class="badge" :class="claim.phase === 'Bound' ? 'badge-online' : 'badge-deploying'">{{ claim.phase || 'Pending' }}</span></td>
               <td>{{ claim.bound_node || '-' }}</td>
               <td>{{ referenceCount(claim) }}</td>
-              <td class="action-cell"><div v-if="canAdopt(claim) || canDelete(claim)" class="claim-actions"><button v-if="canAdopt(claim)" class="btn btn-sm" type="button" @click="openAdopt(claim)">关联环境</button><button v-if="canDelete(claim)" class="btn btn-sm btn-danger" type="button" :disabled="referencesLoading || !referencesLoaded || referenceCount(claim) > 0" @click="deleteTarget = claim">删除</button></div><span v-else class="cell-secondary">-</span></td>
+              <TableActionCell><div v-if="canAdopt(claim) || canDelete(claim)" class="claim-actions"><button v-if="canAdopt(claim)" class="btn btn-sm" type="button" @click="openAdopt(claim)">关联环境</button><button v-if="canDelete(claim)" class="btn btn-sm btn-danger" type="button" :disabled="referencesLoading || !referencesLoaded || referenceCount(claim) > 0" @click="deleteTarget = claim">删除</button></div><span v-else class="cell-secondary">-</span></TableActionCell>
             </tr>
           </tbody>
-        </table>
+        </DataTable>
       </div>
       <PaginationControls :page="page" :page-size="pageSize" :total="total" :loading="loading" @page-change="changePage" @page-size-change="changePageSize" />
     </SurfaceCard>
@@ -64,9 +64,12 @@
 </template>
 
 <script setup>
+import DataTable from '../../components/DataTable.vue'
+import TableActionCell from '../../components/TableActionCell.vue'
 import PaginationControls from '../../components/PaginationControls.vue'
 import { computed, ref, watch } from 'vue'
-import { ArrowLeft, RefreshCw } from 'lucide-vue-next'
+import { RefreshCw } from 'lucide-vue-next'
+import PageBackLink from '../../components/PageBackLink.vue'
 import { getProjects } from '../../api/applications.js'
 import { getCluster } from '../../api/clusters.js'
 import { adoptClusterPersistentVolumeClaim, createClusterPersistentVolumeClaim, deleteClusterPersistentVolumeClaim, getClusterPersistentVolumeInventory, getClusterPersistentVolumeReferences, getClusterPersistentVolumeUsage, getClusterStorageClasses, getClusterStorageNamespaces } from '../../api/storage.js'
@@ -230,8 +233,6 @@ async function removeClaim() {
 
 <style scoped>
 .cluster-storage-page { min-width: 0; }
-.back-link { display: inline-flex; align-items: center; gap: 6px; margin-bottom: var(--space-16); color: var(--text-secondary); font-size: 13px; font-weight: 600; text-decoration: none; }
-.back-link:hover { color: var(--action-primary); }
 .storage-content { margin-top: var(--tabbed-page-content-gap); }
 .storage-error { margin-top: var(--space-12); }
 .storage-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 62px; padding: 12px var(--space-20); }

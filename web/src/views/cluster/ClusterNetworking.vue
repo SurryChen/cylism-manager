@@ -6,7 +6,7 @@
       </template>
       <template v-if="check" #footer>
         <div class="network-migration-results">
-          <div v-if="check.nodes?.length" class="table-wrap"><table class="data-table"><thead><tr><th>服务器</th><th>角色</th><th>Tailscale IP</th><th>K3s 节点 IP</th><th>预检</th><th class="action-cell">操作</th></tr></thead><tbody><tr v-for="item in check.nodes" :key="item.server_id"><td>{{ item.name }}</td><td>{{ item.role === 'control-plane' ? '控制平面' : '工作节点' }}</td><td>{{ item.tailscale_ip || '-' }}</td><td>{{ item.current_ip || '-' }}</td><td><span class="badge" :class="item.action === 'skip' ? 'badge-online' : 'badge-warn'" :title="item.reason || ''">{{ item.action === 'skip' ? '已接入' : item.action === 'migrate' ? '需要迁移' : item.action === 'normalize' ? '待统一参数' : item.reason || '待核实' }}</span></td><td class="action-cell"><button v-if="item.ready && (item.action === 'migrate' || item.action === 'normalize')" class="btn btn-sm" type="button" :disabled="starting || taskRunning" @click="selectedNode = item; confirmOpen = true">{{ item.action === 'migrate' ? '迁移节点' : '统一启动参数' }}</button><RouterLink v-else-if="!item.ready && item.reason?.includes('安装并接入 Tailscale')" class="btn btn-sm" :to="serverNetworkLink">配置组网</RouterLink></td></tr></tbody></table></div>
+          <div v-if="check.nodes?.length" class="table-wrap"><DataTable><thead><tr><th>服务器</th><th>角色</th><th>Tailscale IP</th><th>K3s 节点 IP</th><th>预检</th><TableActionCell header /></tr></thead><tbody><tr v-for="item in check.nodes" :key="item.server_id"><td>{{ item.name }}</td><td>{{ item.role === 'control-plane' ? '控制平面' : '工作节点' }}</td><td>{{ item.tailscale_ip || '-' }}</td><td>{{ item.current_ip || '-' }}</td><td><span class="badge" :class="item.action === 'skip' ? 'badge-online' : 'badge-warn'" :title="item.reason || ''">{{ item.action === 'skip' ? '已接入' : item.action === 'migrate' ? '需要迁移' : item.action === 'normalize' ? '待统一参数' : item.reason || '待核实' }}</span></td><TableActionCell><button v-if="item.ready && (item.action === 'migrate' || item.action === 'normalize')" class="btn btn-sm" type="button" :disabled="starting || taskRunning" @click="selectedNode = item; confirmOpen = true">{{ item.action === 'migrate' ? '迁移节点' : '统一启动参数' }}</button><RouterLink v-else-if="!item.ready && item.reason?.includes('安装并接入 Tailscale')" class="btn btn-sm" :to="serverNetworkLink">配置组网</RouterLink></TableActionCell></tr></tbody></DataTable></div>
           <div v-if="allNodesConfigured" class="network-migration-footer"><button class="btn btn-primary" type="button" :disabled="starting || taskRunning" @click="selectedNode = null; confirmOpen = true">同步组网状态</button></div>
         </div>
       </template>
@@ -21,6 +21,8 @@
 </template>
 
 <script setup>
+import DataTable from '../../components/DataTable.vue'
+import TableActionCell from '../../components/TableActionCell.vue'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { getClusterNodes } from '../../api/cluster.js'
 import { checkClusterNetworkMigration, startClusterNetworkMigration, startClusterNetworkNodeMigration } from '../../api/clusters.js'
@@ -113,7 +115,6 @@ onBeforeUnmount(() => controller?.abort())
 .cluster-networking{display:grid;gap:16px}
 .network-migration-results{padding:0 20px 16px}
 .network-migration-results .table-wrap{margin-top:12px}
-.network-migration-results th:last-child,.network-migration-results td:last-child{text-align:right}
 .network-migration-footer{display:flex;justify-content:flex-end;padding-top:14px}
 @media(max-width:640px){.network-migration-results{padding:0 14px 14px}}
 </style>

@@ -106,6 +106,6 @@ describe('ClusterStorage', () => {
     await flushPromises()
 
     expect(adoptClaim).toHaveBeenCalledWith('2', 'trendradar-data', { namespace: 'project-self-app', environment_id: 2 })
-    expect(wrapper.get('tbody .action-cell').text()).toBe('-')
+    expect(wrapper.get('tbody .table-action-column').text()).toBe('-')
   })
 })

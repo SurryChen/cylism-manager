@@ -26,17 +26,17 @@
         <EmptyState v-if="containersLoading" variant="loading" message="正在读取存储容器..." />
         <EmptyState v-else-if="!containers.length" message="当前云连接下暂无存储容器" />
         <div v-else class="table-wrap storage-table-wrap">
-          <table class="data-table storage-table">
-            <thead><tr><th>名称</th><th>区域</th><th>存储类型</th><th class="action-cell">操作</th></tr></thead>
+          <DataTable class="storage-table">
+            <thead><tr><th>名称</th><th>区域</th><th>存储类型</th><TableActionCell header /></tr></thead>
             <tbody>
               <tr v-for="item in containers" :key="item.name">
                 <td class="cell-primary"><button class="link-button" :data-testid="'open-container-' + item.name" type="button" @click="openObjects(item)">{{ item.name }}</button></td>
                 <td class="cell-secondary">{{ item.region || '-' }}</td>
                 <td><span class="badge badge-offline">{{ item.storage_class || '-' }}</span></td>
-                <td class="action-cell"><div class="btn-group"><button class="btn btn-sm" type="button" @click="openContainer(item)"><Pencil :size="14" />编辑</button><button class="btn btn-sm" :data-testid="'container-cors-' + item.name" type="button" @click="openCORS(item)"><Globe2 :size="14" />跨域</button><button class="btn btn-sm btn-danger" type="button" @click="requestDeleteContainer(item)"><Trash2 :size="14" />删除</button></div></td>
+                <TableActionCell><div class="btn-group"><button class="btn btn-sm" type="button" @click="openContainer(item)"><Pencil :size="14" />编辑</button><button class="btn btn-sm" :data-testid="'container-cors-' + item.name" type="button" @click="openCORS(item)"><Globe2 :size="14" />跨域</button><button class="btn btn-sm btn-danger" type="button" @click="requestDeleteContainer(item)"><Trash2 :size="14" />删除</button></div></TableActionCell>
               </tr>
             </tbody>
-          </table>
+          </DataTable>
         </div>
 
       <ResourcePagination :resource="containerPage" label="存储容器分页" />
@@ -80,10 +80,10 @@
         <EmptyState v-if="objectsLoading && !objects.length" variant="loading" message="正在读取对象..." />
         <EmptyState v-else-if="!objects.length" message="当前前缀下没有对象" />
         <div v-else class="table-wrap object-table-wrap">
-          <table class="data-table object-table">
-            <thead><tr><th>对象</th><th>大小</th><th>更新时间</th><th class="action-cell">操作</th></tr></thead>
-            <tbody><tr v-for="item in objects" :key="item.key"><td class="mono cell-primary">{{ item.key }}</td><td>{{ formatSize(item.size) }}</td><td class="cell-secondary">{{ formatDate(item.last_modified) }}</td><td class="action-cell"><div class="btn-group"><a class="btn btn-sm" :href="downloadURL(item.key)"><Download :size="14" />下载</a><button class="btn btn-sm btn-danger" :data-testid="'object-delete-' + item.key" type="button" @click="requestDeleteObject(item)"><Trash2 :size="14" />删除</button></div></td></tr></tbody>
-          </table>
+          <DataTable class="object-table">
+            <thead><tr><th>对象</th><th>大小</th><th>更新时间</th><TableActionCell header /></tr></thead>
+            <tbody><tr v-for="item in objects" :key="item.key"><td class="mono cell-primary">{{ item.key }}</td><td>{{ formatSize(item.size) }}</td><td class="cell-secondary">{{ formatDate(item.last_modified) }}</td><TableActionCell><div class="btn-group"><a class="btn btn-sm" :href="downloadURL(item.key)"><Download :size="14" />下载</a><button class="btn btn-sm btn-danger" :data-testid="'object-delete-' + item.key" type="button" @click="requestDeleteObject(item)"><Trash2 :size="14" />删除</button></div></TableActionCell></tr></tbody>
+          </DataTable>
         </div>
         <CursorPaginationControls :page="objectPage" :page-size="objectPageSize" :count="objects.length" :has-next="objectHasNext" :loading="objectsLoading" @page-change="changeObjectPage" @page-size-change="changeObjectPageSize" />
       </div>
@@ -95,6 +95,8 @@
 </template>
 
 <script setup>
+import DataTable from '../../components/DataTable.vue'
+import TableActionCell from '../../components/TableActionCell.vue'
 import ResourcePagination from '../../components/ResourcePagination.vue'
 import { useListPage } from '../../composables/useListPage.js'
 import CursorPaginationControls from '../../components/CursorPaginationControls.vue'
@@ -197,8 +199,6 @@ onMounted(refresh)
 .storage-table-wrap, .object-table-wrap { padding: 0 var(--space-20); }
 .storage-table { min-width: 680px; }
 .object-table { min-width: 760px; }
-.action-cell { width: 260px; white-space: nowrap; text-align: right; }
-.action-cell .btn-group { flex-wrap: nowrap; justify-content: flex-end; }
 .objects-heading h2 { margin: 2px 0 0; color: var(--text-primary); font-size: 15px; }
 .eyebrow { color: var(--text-muted); font: 10px/1 var(--font-mono); letter-spacing: .08em; text-transform: uppercase; }
 .prefix-field { width: min(240px, 34vw); }

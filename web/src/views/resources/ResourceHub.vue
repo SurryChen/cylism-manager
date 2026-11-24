@@ -1,6 +1,6 @@
 <template>
   <div class="cluster-resources-page">
-    <RouterLink class="back-link" to="/cluster?tab=list"><ArrowLeft :size="16" />返回集群列表</RouterLink>
+    <PageBackLink to="/cluster?tab=list">返回集群列表</PageBackLink>
     <SectionTabsHeader :title="cluster?.name || 'Kubernetes 资源'" :tabs="tabs" :active-tab="activeTab" test-id-prefix="resource-tab" @select="selectTab" />
     <FeedbackBanner v-if="error" tone="warning" :message="error" />
     <SurfaceCard v-if="loading && !cluster" class="resources-content" padding="none"><EmptyState variant="loading" message="加载中..." /></SurfaceCard>
@@ -10,7 +10,7 @@
 
 <script setup>
 import { computed, defineAsyncComponent, ref, watch } from 'vue'
-import { ArrowLeft } from 'lucide-vue-next'
+import PageBackLink from '../../components/PageBackLink.vue'
 import { getCluster } from '../../api/clusters.js'
 import { useAsyncResource } from '../../composables/useAsyncResource.js'
 import { useRoutedTab } from '../../composables/useRoutedTab.js'
@@ -50,9 +50,6 @@ watch(() => props.clusterID, async id => {
 
 <style scoped>
 .cluster-resources-page { min-width: 0; }
-.back-link { display: inline-flex; width: fit-content; align-items: center; gap: 6px; margin-bottom: var(--space-16); color: var(--text-secondary); font-size: 13px; font-weight: 600; text-decoration: none; }
-.back-link:hover { color: var(--action-primary); }
-.back-link:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
 .resources-content { margin-top: var(--tabbed-page-content-gap); }
 .resources-content :deep(.page-header) { margin-top: var(--space-20); margin-bottom: var(--space-12); }
 .resources-content :deep(.page-title) { font-size: 18px; }

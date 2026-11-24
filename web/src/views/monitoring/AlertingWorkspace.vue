@@ -80,7 +80,7 @@
       <SurfaceCard v-else class="alerting-healthy section-gap"><CheckCircle2 :size="20" /><div><strong>所有告警均已恢复</strong><small>当前 {{ status.rules?.filter(rule => rule.enabled).length || 0 }} 条规则正在评估。</small></div></SurfaceCard>
 
       <section v-if="resolvedPage.total.value" class="alert-section-heading section-gap"><div><h2>最近恢复</h2><p>仅保留 Alertmanager 当前可见的恢复事件</p></div></section>
-      <SurfaceCard v-if="resolvedPage.total.value" class="alert-resolved" padding="none"><div class="table-wrap"><table class="data-table"><thead><tr><th>告警</th><th>对象</th><th>恢复时间</th></tr></thead><tbody><tr v-for="alert in resolvedAlerts" :key="alert.fingerprint || alertKey(alert)"><td class="cell-primary">{{ alert.annotations?.summary || alert.labels?.alertname || '-' }}</td><td>{{ alertTarget(alert) || '-' }}</td><td>{{ formatTime(alert.endsAt) }}</td></tr></tbody></table></div><ResourcePagination :resource="resolvedPage" label="恢复告警分页" /></SurfaceCard>
+      <SurfaceCard v-if="resolvedPage.total.value" class="alert-resolved" padding="none"><div class="table-wrap"><DataTable><thead><tr><th>告警</th><th>对象</th><th>恢复时间</th></tr></thead><tbody><tr v-for="alert in resolvedAlerts" :key="alert.fingerprint || alertKey(alert)"><td class="cell-primary">{{ alert.annotations?.summary || alert.labels?.alertname || '-' }}</td><td>{{ alertTarget(alert) || '-' }}</td><td>{{ formatTime(alert.endsAt) }}</td></tr></tbody></DataTable></div><ResourcePagination :resource="resolvedPage" label="恢复告警分页" /></SurfaceCard>
     </template>
   </template>
 
@@ -130,6 +130,7 @@
 </template>
 
 <script setup>
+import DataTable from '../../components/DataTable.vue'
 import ResourcePagination from '../../components/ResourcePagination.vue'
 import { useListPage } from '../../composables/useListPage.js'
 

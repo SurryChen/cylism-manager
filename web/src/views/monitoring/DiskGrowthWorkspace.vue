@@ -19,6 +19,7 @@
 </template>
 
 <script setup>
+import DataTable from '../../components/DataTable.vue'
 import { computed, defineComponent, h, onMounted, ref, watch } from 'vue'
 import { RefreshCw } from 'lucide-vue-next'
 import { getDiskGrowth } from '../../api/monitoring.js'
@@ -46,14 +47,14 @@ const readyNodes = computed(() => props.nodes.filter(item => item.ready))
 const GrowthTable = defineComponent({
   props: { rows: { type: Array, required: true }, kind: String, empty: { type: String, required: true } },
   setup(tableProps) {
-    return () => tableProps.rows.length ? h('div', { class: 'table-wrap' }, [h('table', { class: 'data-table disk-growth-table' }, [
+    return () => tableProps.rows.length ? h('div', { class: 'table-wrap' }, [h(DataTable, { class: 'disk-growth-table' }, { default: () => [
       h('thead', [h('tr', tableProps.kind === 'pvc'
         ? [h('th', '命名空间'), h('th', 'PVC / 当前使用者'), h('th', '节点'), h('th', '增加量')]
         : [h('th', '节点'), h('th', '挂载点'), h('th', '增加量')])]),
       h('tbody', tableProps.rows.map(row => h('tr', { key: `${tableProps.kind || 'mount'}/${row.node || ''}/${row.namespace || ''}/${row.pvc || row.pod || row.mount_point || ''}/${row.container || ''}/${row.growth_bytes || 0}` }, tableProps.kind === 'pvc'
         ? [h('td', row.namespace || '-'), h('td', [h('strong', { class: 'cell-primary' }, row.pvc || '-'), row.consumers?.length ? h('small', { class: 'disk-growth-meta' }, `使用者: ${row.consumers.join('、')}`) : h('small', { class: 'disk-growth-meta' }, '当前未挂载')]), h('td', row.node || '-'), h('td', formatBytes(row.growth_bytes))]
         : [h('td', row.node || '-'), h('td', { class: 'cell-primary' }, row.mount_point || '-'), h('td', formatBytes(row.growth_bytes))]
-      )))])]) : h('div', { class: 'empty-inline' }, tableProps.empty)
+      )))] })]) : h('div', { class: 'empty-inline' }, tableProps.empty)
   },
 })
 

@@ -14,10 +14,10 @@
       <EmptyState v-if="loading" variant="loading" message="加载中..." />
       <EmptyState v-else-if="items.length === 0" message="商城中还没有应用" />
       <div v-else class="table-wrap">
-        <table class="data-table catalog-table">
-          <thead><tr><th>商城应用</th><th>部署组件</th><th>状态</th><th>配置版本</th><th class="catalog-actions">操作</th></tr></thead>
-          <tbody><tr v-for="item in items" :key="item.id"><td><button class="catalog-name" @click="openDetail(item)">{{ item.name }}</button></td><td>{{ item.components.length }} 个{{ item.components.length ? ` · ${item.components.map(component => component.name).join('、')}` : '' }}</td><td><span class="badge" :class="item.enabled ? 'badge-online' : 'badge-offline'">{{ item.enabled ? '已启用' : '未启用' }}</span></td><td>v{{ item.revision }}</td><td class="catalog-actions"><button class="icon-button" type="button" title="编辑商城应用" :aria-label="`编辑 ${item.name}`" @click="openDetail(item)"><Pencil :size="15" /></button><button class="icon-button" type="button" title="删除商城应用" :aria-label="`删除 ${item.name}`" @click="deleteTarget = item"><Trash2 :size="15" /></button></td></tr></tbody>
-        </table>
+        <DataTable class="catalog-table">
+          <thead><tr><th>商城应用</th><th>部署组件</th><th>状态</th><th>配置版本</th><TableActionCell header /></tr></thead>
+          <tbody><tr v-for="item in items" :key="item.id"><td><button class="catalog-name" @click="openDetail(item)">{{ item.name }}</button></td><td>{{ item.components.length }} 个{{ item.components.length ? ` · ${item.components.map(component => component.name).join('、')}` : '' }}</td><td><span class="badge" :class="item.enabled ? 'badge-online' : 'badge-offline'">{{ item.enabled ? '已启用' : '未启用' }}</span></td><td>v{{ item.revision }}</td><TableActionCell><button class="icon-button" type="button" title="编辑商城应用" :aria-label="`编辑 ${item.name}`" @click="openDetail(item)"><Pencil :size="15" /></button><button class="icon-button" type="button" title="删除商城应用" :aria-label="`删除 ${item.name}`" @click="deleteTarget = item"><Trash2 :size="15" /></button></TableActionCell></tr></tbody>
+        </DataTable>
       </div>
     <ResourcePagination :resource="listPage" label="应用商城分页" />
     </SurfaceCard>
@@ -55,6 +55,8 @@
 </template>
 
 <script setup>
+import DataTable from '../../components/DataTable.vue'
+import TableActionCell from '../../components/TableActionCell.vue'
 import ResourcePagination from '../../components/ResourcePagination.vue'
 import { useListPage } from '../../composables/useListPage.js'
 import { computed, onMounted, ref } from 'vue'
@@ -185,8 +187,6 @@ onMounted(load)
 .catalog-toolbar, .catalog-toolbar-actions { display: flex; align-items: center; gap: 8px; }
 .catalog-toolbar { justify-content: flex-end; padding: 14px var(--space-20); }
 .catalog-table { min-width: 850px; }
-.catalog-table th:last-child, .catalog-table td:last-child { text-align: right; white-space: nowrap; }
-.catalog-table td:last-child .icon-button { margin-left: 5px; }
 .table-wrap { padding: 0 var(--space-20) var(--space-8); overflow-x: auto; }
 .catalog-name { border: 0; padding: 0; background: transparent; color: var(--action-primary); font: inherit; cursor: pointer; }
 .catalog-name:hover { color: var(--action-primary-hover); }

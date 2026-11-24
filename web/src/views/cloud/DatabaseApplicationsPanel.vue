@@ -9,7 +9,7 @@
     <template v-else>
       <EmptyState v-if="!rows.length" message="未识别到应用连接" description="识别环境变量、MySQL 连接串及挂载的 YAML、JSON、dotenv 配置；未匹配不代表没有应用使用此实例。" />
       <div v-else class="applications-table">
-        <table class="data-table">
+        <DataTable>
           <thead><tr><th>应用 / 模板</th><th>数据库 / 账号</th><th>关联方式</th><th>配置来源</th></tr></thead>
           <tbody><tr v-for="(row, index) in rows" :key="`${row.template_id}-${index}`">
             <td><a :href="`#/applications/${row.application_id}?tab=config`">{{ row.application_name }}</a><div class="cell-secondary">{{ row.template_name }}</div></td>
@@ -17,7 +17,7 @@
             <td><span class="badge" :class="row.binding_id ? 'badge-online' : 'badge-offline'">{{ row.binding_id ? '已绑定' : '配置识别' }}</span></td>
             <td><div v-for="source in row.sources" :key="source" class="cell-secondary connection-source">{{ source }}</div></td>
           </tr></tbody>
-        </table>
+        </DataTable>
       </div>
       <button v-if="warnings.length" class="btn btn-sm" type="button" @click="error = warnings.join('\n')">{{ warnings.length }} 项配置未完整识别 · 查看原因</button>
     </template>
@@ -26,6 +26,7 @@
 </template>
 
 <script setup>
+import DataTable from '../../components/DataTable.vue'
 import { ref, watch } from 'vue'
 import { RefreshCw } from 'lucide-vue-next'
 import { getDatabaseApplications } from '../../api/databases.js'

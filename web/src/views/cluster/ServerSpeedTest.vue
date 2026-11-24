@@ -14,7 +14,7 @@
       <div class="speed-section-heading"><h2>测速结果</h2><span v-if="results.length" class="cell-secondary">{{ results.length === maxResults ? '最近 ' : '' }}{{ results.length }} 条记录</span></div>
       <div v-if="running" class="speed-test-placeholder speed-progress"><LoaderCircle :size="16" class="is-spinning" />正在测试节点间传输</div>
       <div v-if="results.length" class="table-wrap speed-results-table-wrap">
-        <table class="data-table speed-results-table">
+        <DataTable class="speed-results-table">
           <thead><tr><th>时间</th><th>传输方向</th><th>连接方式</th><th>发送速率</th><th>接收速率</th><th>传输质量</th></tr></thead>
           <tbody><tr v-for="(entry, index) in pagedResults" :key="`${entry.measuredAt}-${index}`">
             <td class="speed-result-time">{{ formatDateTime(entry.measuredAt) }}</td>
@@ -24,7 +24,7 @@
             <td class="speed-result-received" data-label="接收速率"><strong>{{ formatMBps(entry.receiver_mbps) }}</strong></td>
             <td class="speed-result-quality">{{ entry.protocol === 'tcp' ? `重传 ${entry.retransmits} 次` : `丢包 ${entry.lost_packets} / ${entry.total_packets} (${Number(entry.loss_percent).toFixed(1)}%)` }}</td>
           </tr></tbody>
-        </table>
+        </DataTable>
       </div>
       <PaginationControls :page="page" :page-size="pageSize" :total="total" :loading="historyLoading" @page-change="changePage" @page-size-change="changePageSize" />
       <div v-if="!running && !results.length" class="speed-test-placeholder">{{ servers.length < 2 ? '至少需要两台服务器' : '暂无测速结果' }}</div>
@@ -46,6 +46,7 @@
 </template>
 
 <script setup>
+import DataTable from '../../components/DataTable.vue'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { ArrowRight, Download, Gauge, LoaderCircle } from 'lucide-vue-next'
 import { getServerSpeedTestHistory, getServerSpeedDependencies, installServerSpeedDependencies, runServerSpeedTest } from '../../api/servers.js'

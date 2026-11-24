@@ -48,7 +48,7 @@ describe('Domains view', () => {
     route.query = { project_id: '1', environment_id: '2', application_id: '4', return_tab: 'access' }
     const wrapper = mount(Domains)
     await new Promise(resolve => setTimeout(resolve, 20))
-    await wrapper.findAll('.action-cell .btn').find(button => button.text() === '查看签发过程').trigger('click')
+    await wrapper.findAll('.table-action-column .btn').find(button => button.text() === '查看签发过程').trigger('click')
     expect(push).toHaveBeenCalledWith({
       path: '/applications/domains/1/operations',
       query: { project_id: '1', environment_id: '2', application_id: '4', return_tab: 'access', hostname: 'api.example.com' },

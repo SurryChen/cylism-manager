@@ -4,7 +4,7 @@
       <div class="task-toolbar"><span class="cell-secondary">{{ resource ? '当前资源的任务' : '全部任务' }} · {{ total }} 条</span><div class="task-buttons"><SelectMenu v-model="status" :disabled="loading" aria-label="任务状态" :options="statusOptions" @update:model-value="load(1)" /><button class="icon-button" title="刷新任务" aria-label="刷新任务" :disabled="loading" @click="load()"><RefreshCw :size="15" /></button></div></div>
       <EmptyState v-if="loading && !tasks.length" variant="loading" message="正在读取任务..." />
       <EmptyState v-else-if="!tasks.length" message="暂无数据库任务" />
-      <div v-else class="table-wrap task-table-wrap"><table class="data-table task-table"><thead><tr><th>任务</th><th>源 → 目标</th><th>阶段</th><th>状态</th><th></th></tr></thead><tbody><tr v-for="task in tasks" :key="task.id"><td>#{{ task.id }} · {{ kindLabel(task.kind) }}</td><td><div class="task-cell" :title="resourceName(task.source) + ' → ' + resourceName(task.target)">{{ resourceName(task.source) }} → {{ resourceName(task.target) }}</div></td><td><div class="task-cell" :title="task.phase_name">{{ task.phase_name || '等待执行' }}</div></td><td><span class="badge" :class="task.status === 'succeeded' ? 'badge-online' : task.status === 'failed' ? 'badge-danger' : 'badge-offline'">{{ statusLabel(task) }}</span></td><td><button class="btn btn-sm" @click="select(task.id)">查看</button></td></tr></tbody></table></div>
+      <div v-else class="table-wrap task-table-wrap"><DataTable class="task-table"><thead><tr><th>任务</th><th>源 → 目标</th><th>阶段</th><th>状态</th><TableActionCell header /></tr></thead><tbody><tr v-for="task in tasks" :key="task.id"><td>#{{ task.id }} · {{ kindLabel(task.kind) }}</td><td><div class="task-cell" :title="resourceName(task.source) + ' → ' + resourceName(task.target)">{{ resourceName(task.source) }} → {{ resourceName(task.target) }}</div></td><td><div class="task-cell" :title="task.phase_name">{{ task.phase_name || '等待执行' }}</div></td><td><span class="badge" :class="task.status === 'succeeded' ? 'badge-online' : task.status === 'failed' ? 'badge-danger' : 'badge-offline'">{{ statusLabel(task) }}</span></td><TableActionCell><button class="btn btn-sm" @click="select(task.id)">查看</button></TableActionCell></tr></tbody></DataTable></div>
       <PaginationControls :page="currentPage" :page-size="limit" :total="total" :loading="loading" @page-change="changePage" @page-size-change="changePageSize" />
     </SurfaceCard>
   </BaseModal>
@@ -29,6 +29,8 @@
 </template>
 
 <script setup>
+import DataTable from '../../components/DataTable.vue'
+import TableActionCell from '../../components/TableActionCell.vue'
 import PaginationControls from '../../components/PaginationControls.vue'
 import { computed, ref, watch } from 'vue'
 import { ArrowLeft, RefreshCw } from 'lucide-vue-next'
@@ -93,7 +95,7 @@ watch(() => [props.open, props.resource, props.taskID], ([open]) => {
 <style scoped>
 .tasks-layout { display: grid; gap: var(--space-16); }
 .task-toolbar, .detail-heading, .task-buttons { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.task-table { min-width: 660px; table-layout: fixed; }.task-table th:first-child { width: 155px; }.task-table th:nth-last-child(2) { width: 100px; }.task-table th:last-child { width: 70px; }.task-cell { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.task-toolbar, .task-pagination { padding: 14px 20px; }.task-table-wrap { padding: 0 20px; }.task-pagination { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; border-top: 1px solid var(--border-muted); }.task-pagination > .task-buttons { margin-left: auto; }.detail-navigation { justify-content: space-between; }.task-pagination :deep(.select-menu) { width: 125px; }
+.task-table { min-width: 660px; }.task-table th:first-child { width: 155px; }.task-table th:nth-last-child(2) { width: 100px; }.task-cell { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.task-toolbar, .task-pagination { padding: 14px 20px; }.task-table-wrap { padding: 0 20px; }.task-pagination { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; border-top: 1px solid var(--border-muted); }.task-pagination > .task-buttons { margin-left: auto; }.detail-navigation { justify-content: space-between; }.task-pagination :deep(.select-menu) { width: 125px; }
 .detail-heading { padding-top: 16px; border-top: 1px solid var(--border-muted); font-size: 13px; }
 .phase-list { list-style: none; display: grid; gap: 10px; padding: 0; margin: 0; color: var(--text-secondary); font-size: 12px; }
 .phase-list li { display: flex; gap: 10px; align-items: center; }

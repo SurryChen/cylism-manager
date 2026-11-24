@@ -25,9 +25,9 @@
       <EmptyState v-if="loading && !operations.length" variant="loading" message="加载中..." />
       <EmptyState v-else-if="operations.length === 0" message="暂无操作历史" />
       <div v-else class="table-wrap" :aria-busy="loading">
-        <table class="data-table"><thead><tr><th>时间</th><th>流程 / 资源</th><th>步骤</th><th>状态</th><th>详情</th></tr></thead>
+        <DataTable><thead><tr><th>时间</th><th>流程 / 资源</th><th>步骤</th><th>状态</th><th>详情</th></tr></thead>
           <tbody><tr v-for="operation in operations" :key="operation.id"><td>{{ formatTime(operation.created_at) }}</td><td>{{ resourceLabel(operation.resource_type) }} #{{ operation.resource_id }}</td><td>{{ operation.step }}</td><td><span class="badge" :class="statusClass(operation.status)">{{ statusLabel(operation.status) }}</span></td><td class="cell-secondary">{{ operation.detail || '-' }}</td></tr></tbody>
-        </table>
+        </DataTable>
       </div>
       <PaginationControls :page="currentPage" :page-size="pageSize" :total="total" :loading="loading" label="操作历史分页" @page-change="changePage" @page-size-change="changePageSize" />
     </SurfaceCard>
@@ -35,6 +35,7 @@
 </template>
 
 <script setup>
+import DataTable from '../components/DataTable.vue'
 import { onMounted, ref } from 'vue'
 import { RotateCcw, Search } from 'lucide-vue-next'
 import { getOperations } from '../api/operations.js'
@@ -83,8 +84,7 @@ function statusClass(value) { return ({ running: 'badge-deploying', success: 'ba
 .operation-filters :deep(.select-menu-trigger) { min-height: 36px; }
 .operation-reset { width: 34px; height: 34px; }
 .operation-card > .empty-state { padding: var(--space-24); }
-.operation-card > .table-wrap { padding: 0 var(--space-20); }
 
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
-@media (max-width: 760px) { .operation-table-toolbar { padding: 12px 14px; }.operation-filters { grid-template-columns: 1fr; }.operation-card > .table-wrap { padding-right: 14px; padding-left: 14px; } }
+@media (max-width: 760px) { .operation-table-toolbar { padding: 12px 14px; }.operation-filters { grid-template-columns: 1fr; } }
 </style>

@@ -7,9 +7,9 @@
         </button>
       </template>
       <div class="table-wrap">
-        <table class="data-table system-component-table">
+        <DataTable class="system-component-table">
           <thead>
-            <tr><th>组件</th><th>命名空间</th><th>控制方式</th><th>运行状态</th><th>配置状态</th><th>操作</th></tr>
+            <tr><th>组件</th><th>命名空间</th><th>控制方式</th><th>运行状态</th><th>配置状态</th><TableActionCell header /></tr>
           </thead>
           <tbody>
             <tr v-for="item in items" :key="item.chart_name">
@@ -43,15 +43,15 @@
               <td>
                 <span class="badge" :class="configBadgeClass(item)" :title="configurationDetail(item)">{{ configBadgeText(item) }}</span>
               </td>
-              <td>
+              <TableActionCell>
                 <div class="btn-group">
                   <button class="btn btn-sm" :disabled="!canConfigure(item)" @click="edit(item)">配置</button>
                   <button class="btn btn-sm btn-danger" :disabled="!item.has_config || !canRestore(item)" @click="revert(item)">恢复默认</button>
                 </div>
-              </td>
+              </TableActionCell>
             </tr>
           </tbody>
-        </table>
+        </DataTable>
       </div>
     </TabbedWorkspaceCard>
 
@@ -120,6 +120,8 @@
 </template>
 
 <script setup>
+import DataTable from '../../components/DataTable.vue'
+import TableActionCell from '../../components/TableActionCell.vue'
 import { computed, onMounted, ref } from 'vue'
 import { RefreshCw } from 'lucide-vue-next'
 import { getClusterNodes, getSystemComponents, revertSystemComponent, updateSystemComponent } from '../../api/system-components.js'

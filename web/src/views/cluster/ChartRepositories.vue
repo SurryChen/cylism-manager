@@ -8,8 +8,8 @@
         <button class="btn btn-primary" @click="openCreate">新建 Chart 仓库</button>
       </template>
       <div v-if="loaded && items.length" class="table-wrap">
-        <table class="data-table">
-          <thead><tr><th>名称</th><th>仓库地址</th><th>Chart</th><th>版本</th><th>状态</th><th>检测</th><th>操作</th></tr></thead>
+        <DataTable>
+          <thead><tr><th>名称</th><th>仓库地址</th><th>Chart</th><th>版本</th><th>状态</th><th>检测</th><TableActionCell header /></tr></thead>
           <tbody>
             <tr v-for="item in items" :key="item.id">
               <td class="cell-primary">{{ item.name }}</td>
@@ -18,10 +18,10 @@
               <td>{{ item.chart_version }}</td>
               <td><span class="badge" :class="item.enabled ? 'badge-online' : 'badge-offline'">{{ item.enabled ? '已启用' : '已停用' }}</span></td>
               <td><span class="badge" :class="item.last_verify_status === 'succeeded' ? 'badge-online' : item.last_verify_status === 'failed' ? 'badge-danger' : 'badge-offline'" :title="item.last_verify_error || ''">{{ item.last_verify_status === 'succeeded' ? '可用' : item.last_verify_status === 'failed' ? '失败' : '未检测' }}</span></td>
-              <td><div class="btn-group"><button class="btn btn-sm" @click="verify(item)">检测</button><button class="btn btn-sm" @click="edit(item)">编辑</button><button class="btn btn-sm btn-danger" @click="target = item">删除</button></div></td>
+              <TableActionCell><div class="btn-group"><button class="btn btn-sm" @click="verify(item)">检测</button><button class="btn btn-sm" @click="edit(item)">编辑</button><button class="btn btn-sm btn-danger" @click="target = item">删除</button></div></TableActionCell>
             </tr>
           </tbody>
-        </table>
+        </DataTable>
       </div>
       <EmptyState v-else-if="loaded" message="还没有 Chart 仓库" />
     <ResourcePagination :show-error="false" :resource="listPage" label="Chart 仓库分页" />
@@ -52,6 +52,8 @@
 </template>
 
 <script setup>
+import DataTable from '../../components/DataTable.vue'
+import TableActionCell from '../../components/TableActionCell.vue'
 import ResourcePagination from '../../components/ResourcePagination.vue'
 import { useListPage } from '../../composables/useListPage.js'
 import { onMounted, ref } from 'vue'

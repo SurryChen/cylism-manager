@@ -17,8 +17,8 @@
       <EmptyState v-if="loading && !services.length" message="正在读取 Service..." variant="loading" />
       <EmptyState v-else-if="!filteredServices.length" :message="namespace ? '当前命名空间暂无 Service' : '暂无 Service'" />
       <div v-else class="table-wrap service-table-wrap">
-        <table class="data-table service-table">
-          <thead><tr><th>名称</th><th>命名空间</th><th>类型</th><th>Cluster IP</th><th>端口</th><th>年龄</th><th class="action-cell">操作</th></tr></thead>
+        <DataTable class="service-table">
+          <thead><tr><th>名称</th><th>命名空间</th><th>类型</th><th>Cluster IP</th><th>端口</th><th>年龄</th><TableActionCell header /></tr></thead>
           <tbody><tr v-for="service in filteredServices" :key="serviceKey(service)">
             <td class="cell-primary"><OverflowTooltip class="service-cell-truncate" :text="service.name || '-'" /></td>
             <td><OverflowTooltip class="service-cell-truncate" :text="service.namespace || '-'" /></td>
@@ -26,9 +26,9 @@
             <td><OverflowTooltip class="service-cell-truncate service-code-cell" :text="service.cluster_ip || '-'" /></td>
             <td><OverflowTooltip class="service-cell-truncate service-code-cell" :text="formatPorts(service.ports)" /></td>
             <td>{{ service.age || '-' }}</td>
-            <td class="action-cell"><button class="btn btn-sm" type="button" :data-testid="`view-service-endpoints-${serviceKey(service)}`" @click="openEndpoints(service)">查看端点</button></td>
+            <TableActionCell><button class="btn btn-sm" type="button" :data-testid="`view-service-endpoints-${serviceKey(service)}`" @click="openEndpoints(service)">查看端点</button></TableActionCell>
           </tr></tbody>
-        </table>
+        </DataTable>
       </div>
       <PaginationControls :page="page" :page-size="pageSize" :total="total" :loading="loading" @page-change="changePage" @page-size-change="changePageSize" />
     </TabbedWorkspaceCard>
@@ -41,9 +41,9 @@
         <div v-else-if="!endpointSlices.length" class="endpoint-empty">该服务暂无可用端点</div>
         <section v-for="slice in endpointSlices" v-else :key="slice.name" class="endpoint-slice">
           <div class="endpoint-slice-heading"><strong>{{ slice.name || 'EndpointSlice' }}</strong><span>{{ slice.address_type || '-' }}</span></div>
-          <div class="table-wrap endpoint-table-wrap"><table class="data-table endpoint-table"><thead><tr><th>IP</th><th>节点</th><th>Pod</th><th>端口</th><th>状态</th></tr></thead><tbody>
+          <div class="table-wrap endpoint-table-wrap"><DataTable class="endpoint-table"><thead><tr><th>IP</th><th>节点</th><th>Pod</th><th>端口</th><th>状态</th></tr></thead><tbody>
             <tr v-for="endpoint in slice.endpoints || []" :key="endpoint.ip || endpoint.pod_name"><td class="cell-primary"><OverflowTooltip class="service-cell-truncate service-code-cell" :text="endpoint.ip || '-'" /></td><td><OverflowTooltip class="service-cell-truncate" :text="endpoint.node || '-'" /></td><td><OverflowTooltip class="service-cell-truncate" :text="endpoint.pod_name || '-'" /></td><td>{{ endpoint.port || '-' }}</td><td><span class="badge" :class="endpoint.ready ? 'badge-online' : 'badge-danger'">{{ endpoint.ready ? 'Ready' : 'NotReady' }}</span></td></tr>
-          </tbody></table></div>
+          </tbody></DataTable></div>
         </section>
       </div>
     </BaseModal>
@@ -52,6 +52,8 @@
 </template>
 
 <script setup>
+import DataTable from '../../components/DataTable.vue'
+import TableActionCell from '../../components/TableActionCell.vue'
 import { computed, onMounted, ref, watch } from 'vue'
 import { RefreshCw } from 'lucide-vue-next'
 import * as legacyK8s from '../../api/kubernetes.js'
@@ -121,6 +123,6 @@ function closeEndpoints() {
 <style scoped>
 .resource-count { color: var(--text-secondary); font-size: 12px; font-variant-numeric: tabular-nums; }
 .service-namespace-filter { width: 156px; flex: 0 0 156px; }.service-namespace-filter :deep(.select-menu) { width: 100%; }
-.service-table { min-width: 920px; table-layout: fixed; }.service-cell-truncate { max-width: 170px; }.service-code-cell { color: var(--text-secondary); font-family: var(--font-mono); font-size: 11px; }.action-cell { white-space: nowrap; }.service-detail { display: grid; gap: var(--space-16); }.service-detail-field { display: grid; grid-template-columns: 84px minmax(0, 1fr); gap: var(--space-12); align-items: start; color: var(--text-secondary); font-size: 12px; }.service-detail-field > span { color: var(--text-muted); font-weight: 700; }.service-selector { color: var(--text-primary); font-family: var(--font-mono); font-size: 11px; }.endpoint-empty { padding: var(--space-24) 0; color: var(--text-muted); font-size: 12px; text-align: center; }.endpoint-error { color: var(--danger); }.endpoint-slice { display: grid; gap: var(--space-8); }.endpoint-slice-heading { display: flex; align-items: baseline; gap: var(--space-8); color: var(--text-secondary); font-size: 11px; }.endpoint-slice-heading strong { color: var(--text-primary); font-size: 12px; }.endpoint-table-wrap { padding: 0; }.endpoint-table { min-width: 560px; table-layout: fixed; }
+.service-table { min-width: 920px; }.service-cell-truncate { max-width: 170px; }.service-code-cell { color: var(--text-secondary); font-family: var(--font-mono); font-size: 11px; }.service-detail { display: grid; gap: var(--space-16); }.service-detail-field { display: grid; grid-template-columns: 84px minmax(0, 1fr); gap: var(--space-12); align-items: start; color: var(--text-secondary); font-size: 12px; }.service-detail-field > span { color: var(--text-muted); font-weight: 700; }.service-selector { color: var(--text-primary); font-family: var(--font-mono); font-size: 11px; }.endpoint-empty { padding: var(--space-24) 0; color: var(--text-muted); font-size: 12px; text-align: center; }.endpoint-error { color: var(--danger); }.endpoint-slice { display: grid; gap: var(--space-8); }.endpoint-slice-heading { display: flex; align-items: baseline; gap: var(--space-8); color: var(--text-secondary); font-size: 11px; }.endpoint-slice-heading strong { color: var(--text-primary); font-size: 12px; }.endpoint-table-wrap { padding: 0; }.endpoint-table { min-width: 560px; table-layout: fixed; }
 @media (max-width: 640px) { .service-namespace-filter { width: min(100%, 220px); flex-basis: min(100%, 220px); }.service-detail-field { grid-template-columns: 1fr; gap: 4px; } }
 </style>

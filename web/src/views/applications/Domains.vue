@@ -1,19 +1,19 @@
 <template>
   <div>
-    <button class="back-link" @click="backToWorkspace"><ArrowLeft :size="16" />{{ route.query.application_id ? '返回应用' : '返回工作台' }}</button>
+    <PageBackLink @click="backToWorkspace">{{ route.query.application_id ? '返回应用' : '返回工作台' }}</PageBackLink>
     <SectionTabsHeader title="受管域名" :tabs="[{ id: 'domains', label: '域名' }]" active-tab="domains" />
     <FeedbackBanner v-if="readError" tone="warning" :message="readError" />
     <SurfaceCard padding="none">
       <div class="domain-toolbar"><button class="btn" @click="openAdopt">接管已有解析</button><button class="btn" @click="openImport">导入现有证书</button><button class="btn btn-primary" @click="openCreate">新建域名</button></div>
-      <div v-if="loaded && domains.length" class="table-wrap domain-table"><table class="data-table"><thead><tr><th>域名</th><th>命名空间</th><th>解析地址</th><th>DNS</th><th>签发者</th><th>证书状态</th><th>TLS Secret</th><th>续期时间</th><th>入口</th><th></th></tr></thead><tbody>
+      <div v-if="loaded && domains.length" class="table-wrap domain-table"><DataTable><thead><tr><th>域名</th><th>命名空间</th><th>解析地址</th><th>DNS</th><th>签发者</th><th>证书状态</th><th>TLS Secret</th><th>续期时间</th><th>入口</th><TableActionCell header /></tr></thead><tbody>
         <tr v-for="domain in domains" :key="domain.id">
           <td class="cell-primary">{{ domain.hostname }}<small v-if="domain.certificate_ownership === 'imported'" class="cell-secondary">导入证书</small><small v-if="domain.description" class="cell-secondary">{{ domain.description }}</small></td>
           <td>{{ domain.namespace || '未绑定' }}</td><td>{{ (domain.adoption_status === 'staged' || domain.adoption_status === 'restored' ? domain.original_dns_addresses : domain.dns_addresses)?.join('、') || '-' }}</td><td><span v-if="domain.cloud_connection_id" class="badge" :class="domain.dns_status === 'ready' ? 'badge-online' : 'badge-offline'">{{ adoptionLabel(domain) }}</span><span v-else>-</span><small v-if="domain.dns_error" class="cell-secondary">{{ domain.dns_error }}</small></td><td>{{ domain.issuer_ref || '-' }}</td>
           <td><span class="badge" :class="certificateClass(domain)">{{ certificateLabel(domain) }}</span><small v-if="certificateReason(domain)" class="cell-secondary">{{ certificateReason(domain) }}</small></td>
           <td>{{ domain.tls_secret_name || '-' }}</td><td>{{ formatDate(domain.certificate?.renewal_time) }}</td><td>{{ domain.application_count || 0 }}</td>
-          <td class="action-cell"><div class="btn-group"><button v-if="domain.adoption_status === 'staged' || domain.adoption_status === 'restored'" class="btn btn-sm btn-primary" :title="domain.certificate?.status !== 'Ready' ? '等待目标证书就绪' : !domain.application_count ? '请先绑定应用入口' : '切换到目标节点'" :disabled="domain.certificate?.status !== 'Ready' || !domain.application_count" @click="confirmCutover = domain">切换解析</button><button v-if="domain.adoption_status === 'active' || domain.adoption_status === 'cutover_failed'" class="btn btn-sm" @click="confirmRestore = domain">恢复原解析</button><button v-if="domain.cloud_connection_id && domain.dns_status !== 'ready' && !domain.adoption_status" class="btn btn-sm" @click="retryDNS(domain)">重试解析</button><button v-if="domain.namespace && domain.certificate_ownership !== 'imported'" class="btn btn-sm" @click="retry(domain)">重试签发</button><button v-if="domain.certificate_name" class="btn btn-sm" @click="openOperations(domain)">查看签发过程</button><button class="btn btn-sm" @click="openEdit(domain)">编辑</button><button class="btn btn-sm btn-danger" :disabled="domain.application_count > 0 || domain.adoption_status === 'active' || domain.adoption_status === 'cutover_failed'" @click="remove(domain)">删除</button></div></td>
+          <TableActionCell><div class="btn-group"><button v-if="domain.adoption_status === 'staged' || domain.adoption_status === 'restored'" class="btn btn-sm btn-primary" :title="domain.certificate?.status !== 'Ready' ? '等待目标证书就绪' : !domain.application_count ? '请先绑定应用入口' : '切换到目标节点'" :disabled="domain.certificate?.status !== 'Ready' || !domain.application_count" @click="confirmCutover = domain">切换解析</button><button v-if="domain.adoption_status === 'active' || domain.adoption_status === 'cutover_failed'" class="btn btn-sm" @click="confirmRestore = domain">恢复原解析</button><button v-if="domain.cloud_connection_id && domain.dns_status !== 'ready' && !domain.adoption_status" class="btn btn-sm" @click="retryDNS(domain)">重试解析</button><button v-if="domain.namespace && domain.certificate_ownership !== 'imported'" class="btn btn-sm" @click="retry(domain)">重试签发</button><button v-if="domain.certificate_name" class="btn btn-sm" @click="openOperations(domain)">查看签发过程</button><button class="btn btn-sm" @click="openEdit(domain)">编辑</button><button class="btn btn-sm btn-danger" :disabled="domain.application_count > 0 || domain.adoption_status === 'active' || domain.adoption_status === 'cutover_failed'" @click="remove(domain)">删除</button></div></TableActionCell>
         </tr>
-      </tbody></table></div>
+      </tbody></DataTable></div>
       <EmptyState v-else :variant="loaded ? 'empty' : 'loading'" :message="loaded ? '暂无受管域名' : '加载中...'" />
     <ResourcePagination :resource="listPage" label="受管域名分页" />
     </SurfaceCard>
@@ -59,11 +59,13 @@
 </template>
 
 <script setup>
+import DataTable from '../../components/DataTable.vue'
+import TableActionCell from '../../components/TableActionCell.vue'
 import ResourcePagination from '../../components/ResourcePagination.vue'
 import { useListPage } from '../../composables/useListPage.js'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ArrowLeft } from 'lucide-vue-next'
+import PageBackLink from '../../components/PageBackLink.vue'
 import { getProjects } from '../../api/applications.js'
 import { adoptCloudDomain, createManagedDomain, cutoverManagedDomain, deleteManagedDomain, getAdoptableCloudDomains, getClusterDomainOptions, getDomainOptions, importManagedDomainCertificate, restoreManagedDomain, retryManagedDomainCertificate, updateManagedDomain } from '../../api/domains.js'
 import { getDomainDNSOptions, getImportableCloudDomains, retryManagedDomainDNS } from '../../api/domains.js'
@@ -145,5 +147,5 @@ watch(() => form.value.cloud_connection_id, () => { form.value.dns_zone = create
 </script>
 
 <style scoped>
-.back-link{display:inline-flex;align-items:center;gap:6px;margin:0 0 var(--space-16);padding:0;border:0;background:transparent;color:var(--text-secondary);font:inherit;font-size:13px;font-weight:600;cursor:pointer}.back-link:hover{color:var(--action-primary)}.back-link:focus-visible{outline:2px solid var(--focus);outline-offset:3px}.domain-toolbar{display:flex;justify-content:flex-end;gap:8px;padding:14px 20px}.domain-table{padding:0 20px}.cell-secondary,.form-hint{margin:var(--space-4) 0;color:var(--text-secondary);font-size:12px}.cell-secondary{display:block;max-width:180px;overflow-wrap:anywhere}.check-row{display:flex;gap:8px;align-items:center;color:var(--text-secondary);font-size:13px}.node-options{display:grid;gap:8px;max-height:150px;overflow:auto;padding:10px;border:1px solid var(--border-muted);border-radius:var(--radius-control)}.certificate-preview{display:grid;gap:4px;padding:10px;border:1px solid var(--border-muted);border-radius:var(--radius-control);background:var(--surface-subtle);color:var(--text-primary);font-size:12px}.certificate-preview small{color:var(--text-secondary)}@media(max-width:640px){.domain-toolbar{flex-wrap:wrap;padding:12px 14px}.domain-toolbar .btn{flex:1 1 auto}.domain-table{padding:0 14px}}
+.domain-toolbar{display:flex;justify-content:flex-end;gap:8px;padding:14px 20px}.domain-table{padding:0 20px}.cell-secondary,.form-hint{margin:var(--space-4) 0;color:var(--text-secondary);font-size:12px}.cell-secondary{display:block;max-width:180px;overflow-wrap:anywhere}.check-row{display:flex;gap:8px;align-items:center;color:var(--text-secondary);font-size:13px}.node-options{display:grid;gap:8px;max-height:150px;overflow:auto;padding:10px;border:1px solid var(--border-muted);border-radius:var(--radius-control)}.certificate-preview{display:grid;gap:4px;padding:10px;border:1px solid var(--border-muted);border-radius:var(--radius-control);background:var(--surface-subtle);color:var(--text-primary);font-size:12px}.certificate-preview small{color:var(--text-secondary)}@media(max-width:640px){.domain-toolbar{flex-wrap:wrap;padding:12px 14px}.domain-toolbar .btn{flex:1 1 auto}.domain-table{padding:0 14px}}
 </style>

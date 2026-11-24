@@ -8,14 +8,14 @@
       </div>
       <EmptyState v-if="tokensLoading" variant="loading" message="正在读取临时登录秘钥..." />
       <div v-else-if="temporaryTokens.length" class="table-wrap temporary-token-table">
-        <table class="data-table" aria-label="临时登录秘钥列表">
+        <DataTable aria-label="临时登录秘钥列表">
           <thead class="temporary-token-table-header">
             <tr>
               <th>备注</th>
               <th>创建时间</th>
               <th>到期时间</th>
               <th>生效状态</th>
-              <th>操作</th>
+              <TableActionCell header />
             </tr>
           </thead>
           <tbody>
@@ -26,14 +26,14 @@
               <td><span class="badge" :class="item.status === 'active' ? 'badge-online' : item.status === 'expired' ? 'badge-offline' : 'badge-danger'">
                 {{ item.status === 'active' ? '生效中' : item.status === 'expired' ? '已过期' : '已撤销' }}
               </span></td>
-              <td class="temporary-token-action">
+              <TableActionCell class="temporary-token-action">
                 <button class="btn btn-sm btn-danger" :disabled="item.status !== 'active' || revokingTemporaryToken === item.id" @click="revokeTemporaryToken(item)">
                   {{ revokingTemporaryToken === item.id ? '撤销中...' : '撤销' }}
                 </button>
-              </td>
+              </TableActionCell>
             </tr>
           </tbody>
-        </table>
+        </DataTable>
       </div>
       <EmptyState v-else message="尚未生成临时登录秘钥。" />
       <PaginationControls :page="page" :page-size="pageSize" :total="total" :loading="tokensLoading || creatingTemporaryToken || !!revokingTemporaryToken" label="临时秘钥分页" @page-change="changePage" @page-size-change="changePageSize" />
@@ -88,6 +88,8 @@
 </template>
 
 <script setup>
+import DataTable from '../../components/DataTable.vue'
+import TableActionCell from '../../components/TableActionCell.vue'
 import { onMounted, ref, watch } from 'vue'
 import { createTemporaryToken as createTemporaryTokenRequest, deleteTemporaryToken, getTemporaryTokenPage } from '../../api/settings.js'
 import { usePaginatedResource } from '../../composables/usePaginatedResource.js'

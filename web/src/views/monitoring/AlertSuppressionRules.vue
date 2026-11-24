@@ -10,17 +10,17 @@
     <EmptyState v-if="loading && !items.length" variant="loading" message="正在读取屏蔽规则..." />
     <EmptyState v-else-if="!items.length" message="暂无屏蔽规则" description="指定节点和告警类型，可临时或长期停止通知。" />
     <div v-else class="table-wrap" :aria-busy="loading">
-      <table class="data-table">
-        <thead><tr><th>规则</th><th>节点</th><th>告警类型</th><th>状态</th><th>有效期</th><th>操作</th></tr></thead>
+      <DataTable>
+        <thead><tr><th>规则</th><th>节点</th><th>告警类型</th><th>状态</th><th>有效期</th><TableActionCell header /></tr></thead>
         <tbody><tr v-for="rule in items" :key="rule.id">
           <td><span class="cell-primary">{{ rule.name }}</span><span v-if="rule.comment" class="cell-secondary suppression-detail">{{ rule.comment }}</span></td>
           <td>{{ rule.node_name || '全部节点' }}</td>
           <td>{{ rule.alert_names?.length ? rule.alert_names.map(alertRuleLabel).join('、') : '全部类型' }}</td>
           <td><span class="badge" :class="ruleState(rule) === '生效中' ? 'badge-online' : 'badge-offline'">{{ ruleState(rule) }}</span></td>
           <td>{{ rule.ends_at ? formatTime(rule.ends_at) : '长期' }}<span v-if="rule.ends_at" class="cell-secondary suppression-detail">到期自动恢复通知</span></td>
-          <td><div class="suppression-actions"><button class="btn btn-sm" :disabled="busy" @click="open(rule)">编辑</button><button class="btn btn-sm" :disabled="busy || (!rule.enabled && expired(rule))" @click="toggle(rule)">{{ rule.enabled ? '停用' : '启用' }}</button><button class="icon-button" :disabled="busy" :title="`删除规则：${rule.name}`" :aria-label="`删除规则：${rule.name}`" @click="deleting = rule"><Trash2 :size="15" /></button></div></td>
+          <TableActionCell><div class="suppression-actions"><button class="btn btn-sm" :disabled="busy" @click="open(rule)">编辑</button><button class="btn btn-sm" :disabled="busy || (!rule.enabled && expired(rule))" @click="toggle(rule)">{{ rule.enabled ? '停用' : '启用' }}</button><button class="icon-button" :disabled="busy" :title="`删除规则：${rule.name}`" :aria-label="`删除规则：${rule.name}`" @click="deleting = rule"><Trash2 :size="15" /></button></div></TableActionCell>
         </tr></tbody>
-      </table>
+      </DataTable>
     </div>
     <PaginationControls :page="page" :page-size="pageSize" :total="total" :loading="loading" label="屏蔽规则分页" @page-change="changePage" @page-size-change="changePageSize" />
     <p class="suppression-note">节点与类型同时设置时需同时命中；勾选的多种类型满足任意一种即可。只停止平台飞书和邮件通知，实时告警、历史记录和自动处置继续运行。停用或到期后，从下一次告警回调恢复通知。</p>
@@ -42,6 +42,8 @@
 </template>
 
 <script setup>
+import DataTable from '../../components/DataTable.vue'
+import TableActionCell from '../../components/TableActionCell.vue'
 import { computed, ref, watch } from 'vue'
 import { Plus, RotateCcw, Trash2 } from 'lucide-vue-next'
 import { getAlertSuppressionRules, createAlertSuppressionRule, updateAlertSuppressionRule, setAlertSuppressionEnabled, deleteAlertSuppressionRule } from '../../api/alerting.js'

@@ -24,21 +24,21 @@
     <EmptyState v-if="!loaded" variant="loading" message="加载中..." />
     <EmptyState v-else-if="!certificates.length && !error" message="暂无访问证书" />
     <div v-else-if="certificates.length" class="table-wrap">
-      <table class="data-table">
-        <thead><tr><th>集群</th><th>用途</th><th>身份 / 地址</th><th>状态</th><th>到期时间</th><th class="action-cell">操作</th></tr></thead>
+      <DataTable>
+        <thead><tr><th>集群</th><th>用途</th><th>身份 / 地址</th><th>状态</th><th>到期时间</th><TableActionCell header /></tr></thead>
         <tbody><tr v-for="item in certificates" :key="item.id">
           <td class="cell-primary">{{ clusterName(item.cluster_id) }}</td>
           <td>{{ item.kind === 'agent_server' ? 'Agent 服务端' : '平台客户端' }}</td>
           <td><span>{{ item.endpoint || item.subject }}</span><span class="cell-secondary">{{ item.fingerprint.slice(0, 16) }}...</span></td>
           <td><span class="badge" :class="statusClass(item)">{{ statusLabel(item) }}</span></td>
           <td>{{ formatTime(item.not_after) }}</td>
-          <td class="action-cell"><div class="access-cert-row-actions">
+          <TableActionCell><div class="access-cert-row-actions">
             <button class="icon-button icon-button--table" type="button" :title="`下载证书 #${item.id}`" :aria-label="`下载证书 #${item.id}`" @click="downloadCertificate(item)"><Download :size="14" /></button>
             <button v-if="!item.revoked_at" class="icon-button icon-button--table" type="button" :disabled="item.in_use" :title="item.in_use ? '使用中的证书不能吊销' : `吊销证书 #${item.id}`" :aria-label="item.in_use ? '使用中的证书不能吊销' : `吊销证书 #${item.id}`" @click="openRevoke(item)"><ShieldX :size="14" /></button>
             <button v-if="!item.in_use" class="icon-button icon-button--table" type="button" :title="`删除未使用证书 #${item.id}`" :aria-label="`删除未使用证书 #${item.id}`" @click="openDelete(item)"><Trash2 :size="14" /></button>
-          </div></td>
+          </div></TableActionCell>
         </tr></tbody>
-      </table>
+      </DataTable>
     </div>
   <ResourcePagination :resource="listPage" label="访问证书分页" />
     </SurfaceCard>
@@ -70,6 +70,8 @@
 </template>
 
 <script setup>
+import DataTable from '../../components/DataTable.vue'
+import TableActionCell from '../../components/TableActionCell.vue'
 import ResourcePagination from '../../components/ResourcePagination.vue'
 import { useListPage } from '../../composables/useListPage.js'
 import { computed, onMounted, ref } from 'vue'

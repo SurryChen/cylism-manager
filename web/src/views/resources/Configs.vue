@@ -17,15 +17,15 @@
       <EmptyState v-if="loadingTab && !resources.length" message="正在读取配置..." variant="loading" />
       <EmptyState v-else-if="!resources.length" :message="`暂无 ${activeTab === 'configmaps' ? 'ConfigMap' : 'Secret'}`" />
       <div v-else class="table-wrap config-table-wrap">
-        <table class="data-table config-table">
-          <thead><tr><th>名称</th><th>命名空间</th><th v-if="activeTab === 'configmaps'">键数量</th><th>年龄</th><th class="action-cell">操作</th></tr></thead>
+        <DataTable class="config-table">
+          <thead><tr><th>名称</th><th>命名空间</th><th v-if="activeTab === 'configmaps'">键数量</th><th>年龄</th><TableActionCell header /></tr></thead>
           <tbody><tr v-for="resource in resources" :key="resourceKey(resource)">
             <td class="cell-primary"><OverflowTooltip class="config-cell-truncate" :text="resource.name || '-'" /></td>
             <td><OverflowTooltip class="config-cell-truncate" :text="resource.namespace || '-'" /></td>
             <td v-if="activeTab === 'configmaps'">{{ keyCount(resource) }}</td><td>{{ resource.age || '-' }}</td>
-            <td class="action-cell"><div class="config-row-actions"><button class="btn btn-sm" type="button" :data-testid="`view-config-resource-${resourceKey(resource)}`" @click="openDetail(resource)">查看</button><button class="icon-button" type="button" title="编辑资源" aria-label="编辑资源" @click="openEdit(resource)"><Pencil :size="16" /></button><button class="icon-button danger" type="button" title="删除资源" aria-label="删除资源" @click="removeResource(resource)"><Trash2 :size="16" /></button></div></td>
+            <TableActionCell><div class="config-row-actions"><button class="btn btn-sm" type="button" :data-testid="`view-config-resource-${resourceKey(resource)}`" @click="openDetail(resource)">查看</button><button class="icon-button" type="button" title="编辑资源" aria-label="编辑资源" @click="openEdit(resource)"><Pencil :size="16" /></button><button class="icon-button danger" type="button" title="删除资源" aria-label="删除资源" @click="removeResource(resource)"><Trash2 :size="16" /></button></div></TableActionCell>
           </tr></tbody>
-        </table>
+        </DataTable>
       </div>
       <PaginationControls v-if="activeTab === 'configmaps'" :page="configPageNumber" :page-size="configPageSize" :total="configTotal" :loading="loadingTab" @page-change="configPage.changePage" @page-size-change="configPage.changePageSize" />
       <CursorPaginationControls v-else :page="secretPageNumber" :page-size="secretPageSize" :count="secrets.length" :has-next="secretHasNext" :loading="loadingTab" @page-change="secretPage.changePage" @page-size-change="secretPage.changePageSize" />
@@ -36,8 +36,8 @@
         <div v-if="detailLoading" class="detail-empty">正在读取配置详情...</div>
         <template v-else>
           <section v-if="activeTab === 'secrets'" class="detail-section secret-summary"><h3>基本信息</h3><dl><div><dt>类型</dt><dd>{{ detail?.type || '-' }}</dd></div><div><dt>键数量</dt><dd>{{ detailItems.length }}</dd></div></dl></section>
-          <section class="detail-section"><h3>数据项</h3><div class="table-wrap detail-table-wrap"><table class="data-table detail-table"><thead><tr><th>键</th><th>值</th></tr></thead><tbody><tr v-for="item in detailItems" :key="item.key"><td class="cell-primary"><OverflowTooltip class="detail-cell" :text="item.key" /></td><td><OverflowTooltip class="detail-cell detail-code" :text="item.value" /></td></tr><tr v-if="!detailItems.length"><td colspan="2" class="detail-empty-cell">暂无数据项</td></tr></tbody></table></div></section>
-          <section class="detail-section"><h3>引用工作负载</h3><div v-if="references.length" class="table-wrap detail-table-wrap"><table class="data-table detail-table"><thead><tr><th>类型</th><th>名称</th><th>命名空间</th></tr></thead><tbody><tr v-for="reference in references" :key="`${reference.kind}/${reference.namespace}/${reference.name}`"><td>{{ reference.kind || '-' }}</td><td class="cell-primary"><OverflowTooltip class="detail-cell" :text="reference.name || '-'" /></td><td><OverflowTooltip class="detail-cell" :text="reference.namespace || selectedResource.namespace || '-'" /></td></tr></tbody></table></div><p v-else class="detail-empty-copy">暂无工作负载引用</p></section>
+          <section class="detail-section"><h3>数据项</h3><div class="table-wrap detail-table-wrap"><DataTable class="detail-table"><thead><tr><th>键</th><th>值</th></tr></thead><tbody><tr v-for="item in detailItems" :key="item.key"><td class="cell-primary"><OverflowTooltip class="detail-cell" :text="item.key" /></td><td><OverflowTooltip class="detail-cell detail-code" :text="item.value" /></td></tr><tr v-if="!detailItems.length"><td colspan="2" class="detail-empty-cell">暂无数据项</td></tr></tbody></DataTable></div></section>
+          <section class="detail-section"><h3>引用工作负载</h3><div v-if="references.length" class="table-wrap detail-table-wrap"><DataTable class="detail-table"><thead><tr><th>类型</th><th>名称</th><th>命名空间</th></tr></thead><tbody><tr v-for="reference in references" :key="`${reference.kind}/${reference.namespace}/${reference.name}`"><td>{{ reference.kind || '-' }}</td><td class="cell-primary"><OverflowTooltip class="detail-cell" :text="reference.name || '-'" /></td><td><OverflowTooltip class="detail-cell" :text="reference.namespace || selectedResource.namespace || '-'" /></td></tr></tbody></DataTable></div><p v-else class="detail-empty-copy">暂无工作负载引用</p></section>
         </template>
       </div>
     </BaseModal>
@@ -55,6 +55,8 @@
 </template>
 
 <script setup>
+import DataTable from '../../components/DataTable.vue'
+import TableActionCell from '../../components/TableActionCell.vue'
 import { computed, onMounted, ref, watch } from 'vue'
 import { Pencil, Plus, RefreshCw, Trash2 } from 'lucide-vue-next'
 import * as legacyK8s from '../../api/kubernetes.js'
@@ -202,9 +204,8 @@ async function removeResource(resource) {
 .resource-count { color: var(--text-secondary); font-size: 12px; font-variant-numeric: tabular-nums; }
 .secret-namespace-filter { width: 156px; flex: 0 0 156px; }
 .secret-namespace-filter :deep(.select-menu) { width: 100%; }
-.config-table { min-width: 760px; table-layout: fixed; }
+.config-table { min-width: 760px; }
 .config-cell-truncate { max-width: 180px; }
-.action-cell { white-space: nowrap; }
 .config-row-actions { display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
 .icon-button.danger:not(:disabled) { color: var(--danger); }
 .config-detail { display: grid; gap: var(--space-20); }
@@ -225,5 +226,5 @@ async function removeResource(resource) {
 .key-value-list { display: grid; gap: 8px; }
 .key-value-row { display: grid; grid-template-columns: minmax(0, .8fr) minmax(0, 1.4fr) 30px; gap: 8px; padding: 8px; border: 1px solid var(--border-muted); border-radius: var(--radius-control); background: var(--surface-subtle); }
 .secret-pagination { display: flex; justify-content: center; padding-top: var(--space-16); }
-@media(max-width:640px) { .secret-namespace-filter { width: min(100%, 220px); flex-basis: min(100%, 220px); }.config-row-actions { justify-content:flex-start; }.key-value-row { grid-template-columns:1fr 1fr 30px; } }
+@media(max-width:640px) { .secret-namespace-filter { width: min(100%, 220px); flex-basis: min(100%, 220px); }.key-value-row { grid-template-columns:1fr 1fr 30px; } }
 </style>

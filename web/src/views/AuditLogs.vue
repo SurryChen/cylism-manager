@@ -39,7 +39,7 @@
       <EmptyState v-if="loading && !logs.length" variant="loading" message="加载中..." />
       <EmptyState v-else-if="logs.length===0" icon="☰" message="暂无审计日志" />
       <div v-else class="table-wrap" :aria-busy="loading">
-        <table class="data-table audit-table">
+        <DataTable class="audit-table">
           <thead>
             <tr><th>时间</th><th>结果</th><th>动作</th><th>目标</th><th>操作者</th><th>摘要</th></tr>
           </thead>
@@ -53,7 +53,7 @@
               <td class="cell-secondary">{{ log.summary || legacySummary(log) }}</td>
             </tr>
           </tbody>
-        </table>
+        </DataTable>
       </div>
 
       <PaginationControls :page="currentPage" :page-size="pageSize" :total="total" :loading="loading" label="审计日志分页" @page-change="changePage" @page-size-change="changePageSize" />
@@ -121,6 +121,7 @@
 </template>
 
 <script setup>
+import DataTable from '../components/DataTable.vue'
 import { computed, onMounted, ref } from 'vue'
 import { Filter, RotateCcw, Search, X } from 'lucide-vue-next'
 import { getAuditLogs } from '../api/audit.js'

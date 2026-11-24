@@ -14,8 +14,8 @@
       <EmptyState v-if="!loaded && !error" variant="loading" message="正在读取运行状态" />
       <EmptyState v-else-if="loaded && !pods.length" :message="runtime?.status === 'not_released' ? '尚未发布，当前没有 Pod' : '当前没有关联的 Pod'" />
       <div v-else-if="loaded" class="table-wrap runtime-table-wrap">
-        <table class="data-table runtime-pods-table">
-          <thead><tr><th>Pod</th><th>状态</th><th>节点</th><th>重启</th><th>CPU</th><th>内存</th><th>操作</th></tr></thead>
+        <DataTable class="runtime-pods-table">
+          <thead><tr><th>Pod</th><th>状态</th><th>节点</th><th>重启</th><th>CPU</th><th>内存</th><TableActionCell header /></tr></thead>
           <tbody><tr v-for="pod in pods" :key="pod.name">
             <td class="cell-primary">{{ pod.name }}</td>
             <td><span :class="['badge', pod.ready ? 'badge-online' : 'badge-danger']">{{ pod.ready ? '运行中' : pod.reason || pod.phase || '未知' }}</span></td>
@@ -23,12 +23,12 @@
             <td>{{ pod.restarts }}</td>
             <td>{{ formatCPU(pod.cpu_millicores) }}</td>
             <td>{{ formatMemory(pod.memory_bytes) }}</td>
-            <td class="action-cell"><div class="pod-actions">
+            <TableActionCell><div class="pod-actions">
               <button class="icon-button" title="查看日志" :aria-label="`查看 ${pod.name} 的日志`" :disabled="!pod.containers?.length" @click="openLogs(pod)"><ScrollText :size="16" /></button>
               <button class="icon-button" :title="pod.phase === 'Running' ? '进入容器终端' : '仅运行中的 Pod 可进入终端'" :aria-label="`进入 ${pod.name} 的容器终端`" :disabled="pod.phase !== 'Running' || !pod.containers?.length" @click="terminalPod = pod"><SquareTerminal :size="16" /></button>
-            </div></td>
+            </div></TableActionCell>
           </tr></tbody>
-        </table>
+        </DataTable>
       </div>
     </SurfaceCard>
 
@@ -47,6 +47,8 @@
 </template>
 
 <script setup>
+import DataTable from '../../components/DataTable.vue'
+import TableActionCell from '../../components/TableActionCell.vue'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RefreshCw, ScrollText, SquareTerminal, X } from 'lucide-vue-next'
 import { getApplicationPodLogs, getApplicationPods, getApplicationRuntime } from '../../api/applications.js'
@@ -136,7 +138,6 @@ onBeforeUnmount(() => { clearInterval(runtimeTimer); clearInterval(logTimer); lo
 .runtime-actions{flex:none;gap:8px}
 .runtime-metrics-note{color:var(--text-muted)}
 .runtime-table-wrap{padding:0 20px 12px}.runtime-pods-table{min-width:760px}
-.runtime-pods-table th:last-child,.runtime-pods-table td:last-child{text-align:right}
 .pod-actions{justify-content:flex-end;gap:4px}
 .pod-log-modal{width:min(980px,calc(100vw - 32px));max-height:calc(100vh - 48px);display:flex;flex-direction:column}
 .log-header{justify-content:space-between}.log-header p{margin:3px 0 0;color:var(--text-secondary);font-size:12px}

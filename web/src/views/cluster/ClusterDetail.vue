@@ -1,6 +1,6 @@
 <template>
   <div class="cluster-detail-page">
-    <RouterLink class="back-link" to="/cluster?tab=list"><ArrowLeft :size="16" />返回集群列表</RouterLink>
+    <PageBackLink to="/cluster?tab=list">返回集群列表</PageBackLink>
     <SectionTabsHeader :title="cluster?.name || '集群详情'" :tabs="tabs" :active-tab="activeTab" @select="selectTab">
       <template v-if="cluster" #actions><span class="badge" :class="statusClass(cluster.status)">{{ statusLabel(cluster.status) }}</span></template>
     </SectionTabsHeader>
@@ -40,7 +40,7 @@
     <SurfaceCard v-else-if="cluster && activeTab === 'tasks'" class="cluster-detail-content" padding="none">
       <div class="cluster-deployment-toolbar"><strong>集群任务</strong><button class="icon-button" type="button" title="刷新任务" aria-label="刷新任务" :disabled="topologyLoading" @click="loadTopology()"><RefreshCw :size="15" :class="{ 'is-spinning': topologyLoading }" /></button></div>
       <FeedbackBanner v-if="topologyError" class="topology-error" tone="warning" :message="topologyError" />
-      <div v-if="deployments.length" class="table-wrap"><table class="data-table"><thead><tr><th>任务</th><th>服务器</th><th>状态</th><th>开始时间</th><th>操作</th></tr></thead><tbody><tr v-for="task in deployments" :key="task.id"><td><span class="cell-primary">#{{ task.id }} · {{ taskLabel(task) }}</span><span class="cell-secondary">{{ taskDescription(task) }}</span></td><td>{{ serverName(task.server_id) }}</td><td><span class="badge" :class="deploymentStatusClass(task.status)">{{ deploymentStatusLabel(task.status) }}</span></td><td>{{ formatTime(task.created_at) }}</td><td class="task-actions"><button class="btn btn-sm" type="button" :aria-label="`查看任务 #${task.id} 日志`" aria-haspopup="dialog" @click="selectDeployment(task)">查看日志</button><button v-if="retryRemovalServer(task)" class="btn btn-sm" type="button" :aria-label="`重新检查任务 #${task.id} 的节点`" :disabled="runningDeployment || topologyLoading" @click="removalTarget = retryRemovalServer(task)">重新检查</button></td></tr></tbody></table></div>
+      <div v-if="deployments.length" class="table-wrap"><DataTable><thead><tr><th>任务</th><th>服务器</th><th>状态</th><th>开始时间</th><TableActionCell header /></tr></thead><tbody><tr v-for="task in deployments" :key="task.id"><td><span class="cell-primary">#{{ task.id }} · {{ taskLabel(task) }}</span><span class="cell-secondary">{{ taskDescription(task) }}</span></td><td>{{ serverName(task.server_id) }}</td><td><span class="badge" :class="deploymentStatusClass(task.status)">{{ deploymentStatusLabel(task.status) }}</span></td><td>{{ formatTime(task.created_at) }}</td><TableActionCell class="task-actions"><button class="btn btn-sm" type="button" :aria-label="`查看任务 #${task.id} 日志`" aria-haspopup="dialog" @click="selectDeployment(task)">查看日志</button><button v-if="retryRemovalServer(task)" class="btn btn-sm" type="button" :aria-label="`重新检查任务 #${task.id} 的节点`" :disabled="runningDeployment || topologyLoading" @click="removalTarget = retryRemovalServer(task)">重新检查</button></TableActionCell></tr></tbody></DataTable></div>
       <EmptyState v-else-if="!topologyLoading" message="暂无集群任务" />
       <PaginationControls :page="taskPage" :page-size="taskPageSize" :total="taskTotal" :loading="topologyLoading" @page-change="changeTaskPage" @page-size-change="changeTaskPageSize" />
     </SurfaceCard>
@@ -97,10 +97,13 @@
 </template>
 
 <script setup>
+import DataTable from '../../components/DataTable.vue'
+import TableActionCell from '../../components/TableActionCell.vue'
 import PaginationControls from '../../components/PaginationControls.vue'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { defineAsyncComponent } from 'vue'
-import { ArrowLeft, LogOut, RefreshCw, Server, ServerCog, Settings2, Trash2 } from 'lucide-vue-next'
+import { LogOut, RefreshCw, Server, ServerCog, Settings2, Trash2 } from 'lucide-vue-next'
+import PageBackLink from '../../components/PageBackLink.vue'
 import { adoptClusterNode, getCluster, getClusterDeploymentLogs, getClusterDeployments, restartClusterNode, startClusterDeployment, uninstallClusterNode } from '../../api/clusters.js'
 import { getClusterNodes, getNodeScheduling, updateNodeScheduling } from '../../api/cluster.js'
 import { getServers } from '../../api/servers.js'
@@ -517,9 +520,6 @@ function statusClass(value) {
 
 <style scoped>
 .cluster-detail-page { min-width: 0; }
-.back-link { display: inline-flex; width: fit-content; align-items: center; gap: 6px; margin-bottom: var(--space-16); color: var(--text-secondary); font-size: 13px; font-weight: 600; text-decoration: none; }
-.back-link:hover { color: var(--action-primary); }
-.back-link:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
 .cluster-detail-content { display: block; margin-top: var(--tabbed-page-content-gap); }
 .cluster-detail-content > .table-wrap { overflow-x: auto; padding: var(--space-12) var(--space-20); }
 .cluster-detail-content .data-table { min-width: 680px; }

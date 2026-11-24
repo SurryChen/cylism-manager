@@ -29,9 +29,9 @@
           <template #action><button type="button" class="btn btn-sm" data-testid="domain-record-retry" @click="loadRecords">重试</button></template>
         </EmptyState>
         <EmptyState v-else-if="!records.length" message="暂无 DNS 记录" />
-        <div v-else class="table-wrap"><table class="data-table record-table"><thead><tr><th>主机记录</th><th>类型</th><th>线路</th><th>记录值</th><th>TTL</th><th class="action-cell">操作</th></tr></thead><tbody>
-          <tr v-for="item in records" :key="item.id"><td class="cell-primary">{{ item.rr }}</td><td>{{ item.type }}</td><td>{{ item.line }}</td><td class="mono">{{ item.value }}</td><td>{{ item.ttl }}</td><td class="action-cell"><button class="btn btn-sm" @click="openRecord(item)">编辑</button> <button class="btn btn-sm danger" :data-testid="'domain-record-delete-' + item.id" @click="removeRecord(item)">删除</button></td></tr>
-        </tbody></table></div>
+        <div v-else class="table-wrap"><DataTable class="record-table"><thead><tr><th>主机记录</th><th>类型</th><th>线路</th><th>记录值</th><th>TTL</th><TableActionCell header /></tr></thead><tbody>
+          <tr v-for="item in records" :key="item.id"><td class="cell-primary">{{ item.rr }}</td><td>{{ item.type }}</td><td>{{ item.line }}</td><td class="mono">{{ item.value }}</td><td>{{ item.ttl }}</td><TableActionCell><button class="btn btn-sm" @click="openRecord(item)">编辑</button> <button class="btn btn-sm danger" :data-testid="'domain-record-delete-' + item.id" @click="removeRecord(item)">删除</button></TableActionCell></tr>
+        </tbody></DataTable></div>
         <PaginationControls v-if="zone && !zonesFailed" :page="recordsPage" :page-size="recordsPageSize" :total="recordsTotal" :loading="loadingRecords" @page-change="loadRecords" @page-size-change="changeRecordsPageSize" />
       </SurfaceCard>
     </div>
@@ -55,6 +55,8 @@
 </template>
 
 <script setup>
+import DataTable from '../../components/DataTable.vue'
+import TableActionCell from '../../components/TableActionCell.vue'
 import PaginationControls from '../../components/PaginationControls.vue'
 import { computed, onMounted, reactive, ref } from 'vue'
 import { Plus } from 'lucide-vue-next'
@@ -228,9 +230,7 @@ onMounted(refresh)
 .record-count { color: var(--text-secondary); font-size: 12px; white-space: nowrap; }
 .record-list > .table-wrap { padding: 0 var(--space-16); }
 .record-table { min-width: 680px; }
-.record-table th:last-child, .record-table td:last-child { width: 1%; }
 .mono { font-family: var(--font-mono); overflow-wrap: anywhere; }
-.action-cell { white-space: nowrap; }
 .danger { color: var(--danger); }
 .record-empty { display: flex; min-height: 190px; align-items: center; justify-content: center; padding: var(--space-16); color: var(--text-muted); font-size: 12px; text-align: center; }
 .record-form { display: grid; gap: var(--space-12); }

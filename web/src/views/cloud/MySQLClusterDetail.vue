@@ -1,6 +1,6 @@
 <template>
   <section class="mysql-detail">
-    <router-link class="back-link" to="/cloud-services/databases"><ArrowLeft :size="16" />返回数据库列表</router-link>
+    <PageBackLink to="/cloud-services/databases">返回数据库列表</PageBackLink>
     <SectionTabsHeader :title="cluster?.name || 'MySQL 集群'" :tabs="tabs" :active-tab="activeTab" @select="activeTab = $event">
       <template v-if="cluster" #actions><span class="badge" :class="cluster.status === 'ready' ? 'badge-online' : 'badge-offline'">{{ ['paused', 'retired'].includes(cluster.status) && cleanupState?.cluster_resource ? '暂停中' : statusLabel(cluster.status) }}</span></template>
     </SectionTabsHeader>
@@ -63,7 +63,7 @@
       <div class="detail-toolbar"><div class="toolbar-actions"><button class="icon-button" type="button" title="刷新部署资源" aria-label="刷新部署资源" :disabled="refreshing" @click="refresh()"><RefreshCw :size="16" /></button><span v-if="cluster.status !== 'draft' && !['paused', 'retired'].includes(cluster.status)" class="cell-secondary">数据库工作负载：{{ ['stopped', 'retired'].includes(cluster.status) ? statusLabel(cluster.status) : runtime.stateful_set_created ? '已创建' : '等待 Operator 创建' }}</span></div></div>
       <EmptyState v-if="cluster.status === 'draft' || ['paused', 'retired'].includes(cluster.status)" :message="['paused', 'retired'].includes(cluster.status) ? pausedMessage : '暂无部署资源'" />
       <template v-else>
-        <div class="table-wrap resource-table"><table class="data-table"><thead><tr><th>Pod</th><th>角色</th><th>实际节点</th><th>状态</th><th>CPU</th><th>内存</th><th>数据卷</th><th>操作</th></tr></thead><tbody>
+        <div class="table-wrap resource-table"><DataTable><thead><tr><th>Pod</th><th>角色</th><th>实际节点</th><th>状态</th><th>CPU</th><th>内存</th><th>数据卷</th><TableActionCell header /></tr></thead><tbody>
           <tr v-for="pod in runtime.pods || []" :key="pod.name">
             <td class="mono resource-name" :title="pod.name">{{ pod.name }}</td>
             <td>{{ pod.component === 'mysqld' ? databaseRoleLabel(pod.database_role) : 'Router' }}</td>
@@ -72,17 +72,17 @@
             <td>{{ formatPodCPU(pod.cpu_millicores) }}</td>
             <td>{{ formatPodMemory(pod.memory_bytes) }}</td>
             <td><div v-if="pod.claims?.length" class="resource-claims"><button v-for="claimName in pod.claims" :key="claimName" class="resource-detail-button resource-claim" type="button" :title="claimName" :aria-label="`查看数据卷 ${claimName}`" @click="resourceDetails = { kind: 'claim', item: claimByName[claimName] || { name: claimName } }"><span class="badge" :class="claimByName[claimName]?.phase === 'Bound' ? 'badge-online' : 'badge-offline'">{{ claimByName[claimName]?.phase || '等待创建' }}</span><span>{{ claimByName[claimName]?.capacity || '查看 PVC' }}</span></button></div><span v-else class="cell-secondary">-</span></td>
-            <td><div class="row-actions"><button class="btn btn-sm" type="button" :aria-label="`查看 ${pod.name} 的详情`" @click="resourceDetails = { kind: 'pod', item: pod }">详情</button><button v-if="canPullPodImage(pod)" class="btn btn-sm" type="button" title="在该节点拉取当前阻塞 Pod 启动的镜像" :disabled="Boolean(pullingPod) || retryingPod" @click="pullPodImages(pod)">{{ pullingPod === pod.name ? '拉取中...' : '节点拉取' }}</button><button v-if="pod.retryable" class="btn btn-sm" type="button" :disabled="Boolean(pullingPod) || retryingPod" @click="retryTarget = pod">重试</button></div></td>
+            <TableActionCell><div class="row-actions"><button class="btn btn-sm" type="button" :aria-label="`查看 ${pod.name} 的详情`" @click="resourceDetails = { kind: 'pod', item: pod }">详情</button><button v-if="canPullPodImage(pod)" class="btn btn-sm" type="button" title="在该节点拉取当前阻塞 Pod 启动的镜像" :disabled="Boolean(pullingPod) || retryingPod" @click="pullPodImages(pod)">{{ pullingPod === pod.name ? '拉取中...' : '节点拉取' }}</button><button v-if="pod.retryable" class="btn btn-sm" type="button" :disabled="Boolean(pullingPod) || retryingPod" @click="retryTarget = pod">重试</button></div></TableActionCell>
           </tr>
-          <tr v-for="claim in unattachedClaims" :key="`claim-${claim.name}`"><td class="mono resource-name" :title="claim.name">{{ claim.name }}</td><td class="cell-secondary">未挂载</td><td class="cell-secondary">-</td><td class="cell-secondary">-</td><td class="cell-secondary">-</td><td class="cell-secondary">-</td><td><button class="resource-detail-button resource-claim" type="button" :title="claim.name" :aria-label="`查看数据卷 ${claim.name}`" @click="resourceDetails = { kind: 'claim', item: claim }"><span class="badge" :class="claim.phase === 'Bound' ? 'badge-online' : 'badge-offline'">{{ claim.phase || '等待创建' }}</span><span>{{ claim.capacity || '查看 PVC' }}</span></button></td><td></td></tr>
+          <tr v-for="claim in unattachedClaims" :key="`claim-${claim.name}`"><td class="mono resource-name" :title="claim.name">{{ claim.name }}</td><td class="cell-secondary">未挂载</td><td class="cell-secondary">-</td><td class="cell-secondary">-</td><td class="cell-secondary">-</td><td class="cell-secondary">-</td><td><button class="resource-detail-button resource-claim" type="button" :title="claim.name" :aria-label="`查看数据卷 ${claim.name}`" @click="resourceDetails = { kind: 'claim', item: claim }"><span class="badge" :class="claim.phase === 'Bound' ? 'badge-online' : 'badge-offline'">{{ claim.phase || '等待创建' }}</span><span>{{ claim.capacity || '查看 PVC' }}</span></button></td><TableActionCell /></tr>
           <tr v-if="!runtime.pods?.length && !unattachedClaims.length"><td colspan="8" class="cell-secondary">Pod 和数据卷尚未创建</td></tr>
-        </tbody></table></div>
+        </tbody></DataTable></div>
       </template>
     </SurfaceCard>
     <SurfaceCard v-else-if="cluster" class="detail-content" padding="none">
       <div class="detail-toolbar"><div class="toolbar-actions"><button class="icon-button" type="button" title="刷新任务" aria-label="刷新任务" :disabled="refreshing" @click="refresh()"><RefreshCw :size="16" /></button></div></div>
       <div v-if="['paused', 'retired'].includes(cluster.status) && cleanupState?.cluster_resource" class="shutdown-progress cell-secondary"><span>删除请求：{{ formatTime(cleanupState.deletion_started_at) }}</span><span>Finalizer：{{ cleanupState.finalizers?.join('、') || '无' }}</span><span>剩余工作负载 {{ cleanupState.workloads.length }} 个、Pod {{ cleanupState.pods.length }} 个</span></div>
-      <div v-if="tasks.length" class="table-wrap task-table"><table class="data-table"><thead><tr><th>任务</th><th>状态</th><th>开始时间</th><th>操作</th></tr></thead><tbody><tr v-for="task in tasks" :key="task.id"><td>{{ taskLabel(task) }} #{{ task.id }}</td><td><span class="badge" :class="task.status === 'success' ? 'badge-online' : task.status === 'failed' ? 'badge-danger' : 'badge-offline'">{{ taskStatusLabel(task.status) }}</span></td><td>{{ formatTime(task.created_at) }}</td><td><button class="btn btn-sm" type="button" @click="openLogs(task)">查看日志</button></td></tr></tbody></table></div>
+      <div v-if="tasks.length" class="table-wrap task-table"><DataTable><thead><tr><th>任务</th><th>状态</th><th>开始时间</th><TableActionCell header /></tr></thead><tbody><tr v-for="task in tasks" :key="task.id"><td>{{ taskLabel(task) }} #{{ task.id }}</td><td><span class="badge" :class="task.status === 'success' ? 'badge-online' : task.status === 'failed' ? 'badge-danger' : 'badge-offline'">{{ taskStatusLabel(task.status) }}</span></td><td>{{ formatTime(task.created_at) }}</td><TableActionCell><button class="btn btn-sm" type="button" @click="openLogs(task)">查看日志</button></TableActionCell></tr></tbody></DataTable></div>
       <EmptyState v-else :variant="tasksLoading ? 'loading' : 'empty'" :message="tasksLoading ? '正在读取集群任务...' : '暂无集群任务'" />
       <PaginationControls :page="taskPage" :page-size="taskPageSize" :total="taskTotal" :loading="tasksLoading" @page-change="changeTaskPage" @page-size-change="changeTaskPageSize" />
     </SurfaceCard>
@@ -113,7 +113,7 @@
       <div class="deploy-form">
         <div class="node-picker-heading"><strong>可调度节点</strong><span class="cell-secondary">已选择 {{ resourcePoolSelection.length }} 台</span></div>
         <EmptyState v-if="resourcePoolLoading" variant="loading" message="正在读取节点..." />
-        <div v-else class="table-wrap resource-pool-table"><table class="data-table"><thead><tr><th>选择</th><th>节点 / IP</th><th>调度状态</th></tr></thead><tbody><tr v-for="node in nodes" :key="node.name"><td><input v-model="resourcePoolSelection" type="checkbox" :value="node.name" :disabled="!resourcePoolEditable || !available(node) || (!resourcePoolSelection.includes(node.name) && resourcePoolSelection.length >= 9)" :aria-label="`${node.internal_ip || node.name} 加入资源池`"></td><td class="resource-pool-node"><strong>{{ node.name }}</strong><span class="mono cell-secondary">{{ node.internal_ip || '-' }}</span></td><td><span class="badge" :class="available(node) ? 'badge-online' : 'badge-offline'">{{ node.blocked_reason || (node.default_no_schedule ? '数据库可调度' : '可调度') }}</span></td></tr><tr v-if="!nodes.length"><td colspan="3">暂无节点</td></tr></tbody></table></div>
+        <div v-else class="table-wrap resource-pool-table"><DataTable><thead><tr><th>选择</th><th>节点 / IP</th><th>调度状态</th></tr></thead><tbody><tr v-for="node in nodes" :key="node.name"><td><input v-model="resourcePoolSelection" type="checkbox" :value="node.name" :disabled="!resourcePoolEditable || !available(node) || (!resourcePoolSelection.includes(node.name) && resourcePoolSelection.length >= 9)" :aria-label="`${node.internal_ip || node.name} 加入资源池`"></td><td class="resource-pool-node"><strong>{{ node.name }}</strong><span class="mono cell-secondary">{{ node.internal_ip || '-' }}</span></td><td><span class="badge" :class="available(node) ? 'badge-online' : 'badge-offline'">{{ node.blocked_reason || (node.default_no_schedule ? '数据库可调度' : '可调度') }}</span></td></tr><tr v-if="!nodes.length"><td colspan="3">暂无节点</td></tr></tbody></DataTable></div>
         <p v-if="cluster.status === 'ready'" class="cell-secondary">保存后，新建或重建的实例使用更新后的节点范围；现有实例不会迁移。承载实例或数据卷的节点不能直接移出资源池。</p>
         <p v-else-if="!resourcePoolEditable" class="cell-secondary">请等待当前集群任务完成后再修改资源池。</p>
         <p v-else class="cell-secondary">资源池限定数据库实例可调度的节点。保存不会启动、停止或迁移现有实例；下次部署时生效。</p>
@@ -126,7 +126,7 @@
         <label class="form-group"><span class="form-label">每个实例的数据存储大小</span><input v-model.trim="form.storage_size" class="form-input" placeholder="例如 10Gi" aria-label="每个数据库实例的容量"></label>
         <div class="node-picker-heading"><strong>本次 MySQL 候选节点</strong><span class="cell-secondary">已选择 {{ deploymentSelection.length }} 台</span></div>
         <EmptyState v-if="deploymentNodesLoading" variant="loading" message="正在读取资源池节点..." />
-        <div v-else class="table-wrap"><table class="data-table"><thead><tr><th>选择</th><th>节点</th><th>地址</th><th>调度状态</th></tr></thead><tbody><tr v-for="node in databasePoolNodes" :key="node.name"><td><input v-model="deploymentSelection" type="checkbox" :value="node.name" :disabled="!available(node)" :aria-label="`${node.name} 作为本次 MySQL 候选节点`"></td><td>{{ node.name }}</td><td class="mono">{{ node.internal_ip || '-' }}</td><td class="cell-secondary">{{ node.blocked_reason || (available(node) ? '可调度' : '不可调度') }}</td></tr><tr v-if="!databasePoolNodes.length"><td colspan="4" class="cell-secondary">资源池内暂无可选节点</td></tr></tbody></table></div>
+        <div v-else class="table-wrap"><DataTable><thead><tr><th>选择</th><th>节点</th><th>地址</th><th>调度状态</th></tr></thead><tbody><tr v-for="node in databasePoolNodes" :key="node.name"><td><input v-model="deploymentSelection" type="checkbox" :value="node.name" :disabled="!available(node)" :aria-label="`${node.name} 作为本次 MySQL 候选节点`"></td><td>{{ node.name }}</td><td class="mono">{{ node.internal_ip || '-' }}</td><td class="cell-secondary">{{ node.blocked_reason || (available(node) ? '可调度' : '不可调度') }}</td></tr><tr v-if="!databasePoolNodes.length"><td colspan="4" class="cell-secondary">资源池内暂无可选节点</td></tr></tbody></DataTable></div>
         <div class="deployment-context"><span>资源池 {{ cluster.database_nodes?.length || 0 }} 台节点</span><span v-if="preflight?.storage_class">存储类型 {{ preflight.storage_class }}</span></div>
         <p v-if="sharedDatabaseNode" class="cell-secondary">{{ form.database_instances }} 个实例将共享 {{ deploymentSelection.length }} 台节点；单台节点故障可能使集群失去多数派。</p>
         <div class="preflight-heading"><strong>部署前检查</strong><button class="icon-button" type="button" title="重新检查" aria-label="重新检查" :disabled="preflightLoading || !canDeploy" @click="runPreflight"><RefreshCw :size="15" /></button></div>
@@ -138,7 +138,7 @@
     <BaseModal :open="scaleConfirmation !== ''" :title="scaleConfirmation === 'database' ? '添加数据库实例' : '添加 Router'" size="large" teleport :show-close="!scaling" :close-on-overlay="!scaling" :close-on-escape="!scaling" @close="scaleConfirmation = ''">
       <div class="deploy-form">
         <p>本次追加 1 个{{ scaleConfirmation === 'database' ? ' MySQL 实例' : ' Router' }}，总数从 {{ scaleConfirmation === 'database' ? cluster.database_instances : routerInstanceCount }} 个增加到 {{ (scaleConfirmation === 'database' ? cluster.database_instances : routerInstanceCount) + 1 }} 个。</p>
-        <template v-if="scaleConfirmation === 'database'"><div class="node-picker-heading"><strong>本次 MySQL 候选节点</strong><span class="cell-secondary">已选择 {{ scaleSelection.length }} 台</span></div><EmptyState v-if="scaleNodesLoading" variant="loading" message="正在读取资源池节点..." /><div v-else class="table-wrap"><table class="data-table"><thead><tr><th>选择</th><th>节点</th><th>地址</th><th>调度状态</th></tr></thead><tbody><tr v-for="node in databasePoolNodes" :key="node.name"><td><input v-model="scaleSelection" type="checkbox" :value="node.name" :disabled="!available(node)" :aria-label="`${node.name} 作为新增 MySQL 实例候选节点`"></td><td>{{ node.name }}</td><td class="mono">{{ node.internal_ip || '-' }}</td><td class="cell-secondary">{{ node.blocked_reason || (available(node) ? '可调度' : '不可调度') }}</td></tr><tr v-if="!databasePoolNodes.length"><td colspan="4" class="cell-secondary">资源池内暂无可选节点</td></tr></tbody></table></div><p class="cell-secondary">新实例沿用现有存储配置（{{ cluster.storage_size || '未设置容量' }}）；现有实例不会迁移。</p></template>
+        <template v-if="scaleConfirmation === 'database'"><div class="node-picker-heading"><strong>本次 MySQL 候选节点</strong><span class="cell-secondary">已选择 {{ scaleSelection.length }} 台</span></div><EmptyState v-if="scaleNodesLoading" variant="loading" message="正在读取资源池节点..." /><div v-else class="table-wrap"><DataTable><thead><tr><th>选择</th><th>节点</th><th>地址</th><th>调度状态</th></tr></thead><tbody><tr v-for="node in databasePoolNodes" :key="node.name"><td><input v-model="scaleSelection" type="checkbox" :value="node.name" :disabled="!available(node)" :aria-label="`${node.name} 作为新增 MySQL 实例候选节点`"></td><td>{{ node.name }}</td><td class="mono">{{ node.internal_ip || '-' }}</td><td class="cell-secondary">{{ node.blocked_reason || (available(node) ? '可调度' : '不可调度') }}</td></tr><tr v-if="!databasePoolNodes.length"><td colspan="4" class="cell-secondary">资源池内暂无可选节点</td></tr></tbody></DataTable></div><p class="cell-secondary">新实例沿用现有存储配置（{{ cluster.storage_size || '未设置容量' }}）；现有实例不会迁移。</p></template>
         <p v-else class="cell-secondary">Router 候选节点：{{ cluster.router_nodes?.join('、') || '未配置' }}</p>
       </div>
       <template #actions><button class="btn" type="button" :disabled="Boolean(scaling)" @click="scaleConfirmation = ''">取消</button><button class="btn btn-primary" type="button" :disabled="Boolean(scaling) || (scaleConfirmation === 'database' && (scaleNodesLoading || !validScaleSelection))" @click="addInstance(scaleConfirmation)">{{ scaling ? '提交中...' : '确认追加' }}</button></template>
@@ -146,7 +146,7 @@
     <BaseModal :open="routerDeploymentOpen" title="部署 Router" size="large" teleport :show-close="!scaling" :close-on-overlay="!scaling" :close-on-escape="!scaling" @close="routerDeploymentOpen = false">
       <div class="node-picker-heading"><strong>选择 Router 候选节点</strong><span class="cell-secondary">已选择 {{ routerSelection.length }} 台，至少 1 台</span></div>
       <EmptyState v-if="routerDeploymentLoading" variant="loading" message="正在读取节点..." />
-      <div v-else class="table-wrap"><table class="data-table"><thead><tr><th>选择</th><th>节点</th><th>地址</th><th>调度说明</th></tr></thead><tbody><tr v-for="node in routerPoolNodes" :key="node.name"><td><input v-model="routerSelection" type="checkbox" :value="node.name" :disabled="!routerAvailable(node) || (!routerSelection.includes(node.name) && routerSelection.length >= 9)" :aria-label="`${node.name} 部署 Router`"></td><td>{{ node.name }}</td><td class="mono">{{ node.internal_ip || '-' }}</td><td class="cell-secondary">{{ node.router_blocked_reason || (routerAvailable(node) ? '可部署 Router' : '不可部署 Router') }}</td></tr><tr v-if="!routerPoolNodes.length"><td colspan="4" class="cell-secondary">资源池内暂无候选节点，请先编辑资源池</td></tr></tbody></table></div>
+      <div v-else class="table-wrap"><DataTable><thead><tr><th>选择</th><th>节点</th><th>地址</th><th>调度说明</th></tr></thead><tbody><tr v-for="node in routerPoolNodes" :key="node.name"><td><input v-model="routerSelection" type="checkbox" :value="node.name" :disabled="!routerAvailable(node) || (!routerSelection.includes(node.name) && routerSelection.length >= 9)" :aria-label="`${node.name} 部署 Router`"></td><td>{{ node.name }}</td><td class="mono">{{ node.internal_ip || '-' }}</td><td class="cell-secondary">{{ node.router_blocked_reason || (routerAvailable(node) ? '可部署 Router' : '不可部署 Router') }}</td></tr><tr v-if="!routerPoolNodes.length"><td colspan="4" class="cell-secondary">资源池内暂无候选节点，请先编辑资源池</td></tr></tbody></DataTable></div>
       <p class="cell-secondary">本次部署 1 个 Router，Kubernetes 将在资源池内的所选节点中调度。</p>
       <template #actions><button class="btn" type="button" :disabled="Boolean(scaling)" @click="routerDeploymentOpen = false">取消</button><button class="btn btn-primary" type="button" :disabled="Boolean(scaling) || routerDeploymentLoading || !validRouterSelection" @click="deployRouter">{{ scaling === 'router' ? '提交中...' : '确认部署' }}</button></template>
     </BaseModal>
@@ -201,10 +201,13 @@
 </template>
 
 <script setup>
+import DataTable from '../../components/DataTable.vue'
+import TableActionCell from '../../components/TableActionCell.vue'
 import PaginationControls from '../../components/PaginationControls.vue'
 import { useRouter } from 'vue-router'
 import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
-import { ArrowDown, ArrowLeft, ArrowUpCircle, Database, RefreshCw, Server, Settings2, SquareTerminal, Trash2 } from 'lucide-vue-next'
+import { ArrowDown, ArrowUpCircle, Database, RefreshCw, Server, Settings2, SquareTerminal, Trash2 } from 'lucide-vue-next'
+import PageBackLink from '../../components/PageBackLink.vue'
 import { getClusters } from '../../api/clusters.js'
 import { formatBytes } from '../../utils/formatters.js'
 import { runMySQLClusterLifecycle, deleteMySQLCluster, addMySQLClusterInstance, addMySQLClusterRouter, cancelMySQLOperator, cleanupMySQLCluster, deployMySQLCluster, getMySQLCluster, getMySQLClusterCleanup, getMySQLClusterConfig, getMySQLClusterNodes, getMySQLClusterRuntime, getMySQLClusterRoles, getMySQLClusterTaskLogs, getMySQLClusterTasks, getMySQLOperator, installMySQLOperator, pauseMySQLClusterDeployment, preflightMySQLCluster, pullMySQLClusterPodImages, repairMySQLClusterRouterPlacement, restartMySQLClusterForConfig, retireMySQLClusterRouter, retryMySQLClusterPod, retryMySQLClusterShutdown, switchMySQLClusterPrimary, uninstallMySQLOperator, updateMySQLClusterConfig, updateMySQLClusterResourcePool } from '../../api/databases.js'
@@ -816,8 +819,6 @@ onBeforeUnmount(() => { clearInterval(polling); clearMemberRoles() })
 <style scoped>
 .mysql-detail { min-width: 0; }
 .task-progress { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px; margin-bottom: var(--space-12); color: var(--text-secondary); font-size: 12px; overflow-wrap: anywhere; }
-.back-link { display: inline-flex; width: fit-content; align-items: center; gap: 6px; margin-bottom: var(--space-16); color: var(--text-secondary); font-size: 13px; font-weight: 600; text-decoration: none; }
-.back-link:hover { color: var(--action-primary); }
 .detail-content { margin-top: var(--tabbed-page-content-gap); }
 .detail-toolbar { display: flex; min-height: 62px; align-items: center; flex-wrap: wrap; gap: 12px; padding: 12px var(--space-20); }
 .toolbar-actions { display: flex; align-items: center; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-left: auto; }
@@ -849,7 +850,7 @@ onBeforeUnmount(() => { clearInterval(polling); clearMemberRoles() })
 .mono { font-family: var(--font-mono); }
 .preflight-heading strong { font-size: 12px; }
 .resource-table { padding: 12px var(--space-20) 14px; overflow-x: auto; }
-.resource-table .data-table { min-width: 1120px; table-layout: fixed; }
+.resource-table .data-table { min-width: 1120px; }
 .resource-table .data-table td { height: 48px; }
 .resource-table .data-table th:first-child { width: 24%; }
 .resource-table .data-table th:nth-child(2) { width: 11%; }
@@ -858,9 +859,8 @@ onBeforeUnmount(() => { clearInterval(polling); clearMemberRoles() })
 .resource-table .data-table th:nth-child(5) { width: 8%; }
 .resource-table .data-table th:nth-child(6) { width: 9%; }
 .resource-table .data-table th:nth-child(7) { width: 14%; }
-.resource-table .data-table th:nth-child(8) { width: 11%; }
 .resource-table .data-table td { overflow: hidden; }
-.resource-name, .resource-node { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.resource-name, .resource-node { max-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .resource-claims { display: grid; gap: 4px; }
 .resource-claim { display: inline-flex; max-width: 100%; align-items: center; gap: 6px; overflow: hidden; text-align: left; }
 .resource-claim .badge { flex: none; text-decoration: none; }

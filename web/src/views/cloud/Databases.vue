@@ -10,15 +10,15 @@
         <EmptyState v-if="loading" variant="loading" message="正在读取 MySQL 集群..." />
         <EmptyState v-else-if="!clusterRows.length" message="暂无 MySQL 集群" />
         <div v-else class="table-wrap table-inset">
-          <table class="data-table database-table">
-            <thead><tr><th>集群名称</th><th>Kubernetes 集群</th><th>数据库实例</th><th>Router 实例</th><th>状态</th><th class="actions">操作</th></tr></thead>
+          <DataTable class="database-table">
+            <thead><tr><th>集群名称</th><th>Kubernetes 集群</th><th>数据库实例</th><th>Router 实例</th><th>状态</th><TableActionCell header /></tr></thead>
             <tbody><tr v-for="item in clusterRows" :key="item.id">
               <td class="cell-primary">{{ item.name }}</td><td>{{ clusterName(item.cluster_id) }}</td>
               <td><span v-if="item.status !== 'draft'" title="就绪 / 配置">{{ item.online_instances || 0 }}/</span>{{ item.database_instances || item.database_nodes?.length || 0 }} <span class="cell-secondary">· {{ item.database_nodes?.length || 0 }} 台节点</span></td><td><span v-if="item.status !== 'draft'" title="就绪 / 配置">{{ item.router_ready || 0 }}/</span>{{ item.router_instances ?? item.router_nodes?.length ?? 0 }} <span v-if="item.router_nodes?.length" class="cell-secondary">· {{ item.router_nodes.length }} 台候选节点</span></td>
               <td><span class="badge" :class="item.status === 'ready' ? 'badge-online' : 'badge-offline'">{{ clusterStatusLabel(item.status) }}</span></td>
-              <td class="actions"><div class="row-actions"><button class="btn btn-sm" type="button" @click="router.push(`/cloud-services/databases/clusters/${item.id}`)">查看与配置</button><button v-if="['draft', 'paused', 'retired', 'missing'].includes(item.status)" class="icon-button danger-icon" type="button" title="删除集群记录" aria-label="删除集群记录" @click="deletingCluster = item"><Trash2 :size="15" /></button></div></td>
+              <TableActionCell><div class="row-actions"><button class="btn btn-sm" type="button" @click="router.push(`/cloud-services/databases/clusters/${item.id}`)">查看与配置</button><button v-if="['draft', 'paused', 'retired', 'missing'].includes(item.status)" class="icon-button danger-icon" type="button" title="删除集群记录" aria-label="删除集群记录" @click="deletingCluster = item"><Trash2 :size="15" /></button></div></TableActionCell>
             </tr></tbody>
-          </table>
+          </DataTable>
         </div>
       <ResourcePagination :show-error="false" :resource="clusterPage" label="数据库集群分页" />
     </SurfaceCard>
@@ -30,15 +30,15 @@
         <EmptyState v-if="loading" variant="loading" message="正在读取数据库..." />
         <EmptyState v-else-if="!instanceRows.length" message="暂无数据库实例" />
         <div v-else class="table-wrap table-inset">
-          <table class="data-table database-table">
-            <thead><tr><th>实例名称</th><th>管理方式</th><th>位置</th><th>状态</th><th class="actions">操作</th></tr></thead>
+          <DataTable class="database-table">
+            <thead><tr><th>实例名称</th><th>管理方式</th><th>位置</th><th>状态</th><TableActionCell header /></tr></thead>
             <tbody><tr v-for="item in instanceRows" :key="item.id">
               <td class="cell-primary">{{ item.name }}</td><td>{{ item.mode === 'managed' ? '独立 MySQL' : '已有 MySQL' }}</td>
               <td>{{ item.mode === 'managed' ? item.node_name || clusterName(item.cluster_id) : item.private_gateway ? clusterName(item.private_gateway.cluster_id) : '外部实例' }}</td>
               <td><button v-if="instanceError(item)" class="status-error" @click="actionError = instanceError(item)"><span class="badge badge-danger">异常</span></button><span v-else class="badge" :class="['ready', 'registered'].includes(instanceState(item)) ? 'badge-online' : 'badge-offline'">{{ statusLabel(instanceState(item)) }}</span></td>
-              <td class="actions"><button class="btn btn-sm" @click="openDetails(item)">查看与配置</button></td>
+              <TableActionCell><button class="btn btn-sm" @click="openDetails(item)">查看与配置</button></TableActionCell>
             </tr></tbody>
-          </table>
+          </DataTable>
         </div>
       <ResourcePagination :show-error="false" :resource="instancePage" label="数据库实例分页" />
       </SurfaceCard>
@@ -135,6 +135,8 @@
 </template>
 
 <script setup>
+import DataTable from '../../components/DataTable.vue'
+import TableActionCell from '../../components/TableActionCell.vue'
 import ResourcePagination from '../../components/ResourcePagination.vue'
 import { useListPage } from '../../composables/useListPage.js'
 import { computed, onMounted, reactive, ref, watch } from 'vue'
@@ -337,7 +339,6 @@ onMounted(load)
 .database-toolbar { display: flex; align-items: center; justify-content: space-between; gap: var(--space-16); min-height: 66px; padding: 14px var(--space-20); }
 .table-inset { padding: 0 var(--space-20); }
 .database-table { min-width: 900px; }
-.database-table .actions { text-align: right; width: 160px; }
 .row-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
 .mono { font-family: var(--font-mono); overflow-wrap: anywhere; }
 .danger-icon { color: var(--danger); }
