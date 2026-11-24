@@ -94,7 +94,7 @@ func (h *ApplicationHandler) CreateDelegation(c *gin.Context) {
 		}
 	}
 	if len(req.Actions) == 0 {
-		req.Actions = []string{"application:read", "configmap:read", "configmap:write", "application:restart"}
+		req.Actions = []string{"application:read", "application:logs", "configmap:read", "configmap:write", "secret:read", "secret:write", "application:restart"}
 	}
 	if len(h.delegationSecret) == 0 {
 		apiShared.DBError(c, "委托签名未配置")
@@ -144,7 +144,7 @@ func (h *ApplicationHandler) IntegrationDiscoverApplications(c *gin.Context) {
 		apiShared.DBError(c, err.Error())
 		return
 	}
-	runtimes := h.queries.ApplicationRuntimeInfos(c.Request.Context(), h.kubernetes, filtered, releases)
+	runtimes := h.runtimeInfos(c.Request.Context(), filtered, releases)
 	infos := make([]applicationDiscoveryInfo, 0, len(filtered))
 	for _, app := range filtered {
 		infos = append(infos, applicationDiscoveryInfoFromModel(app, runtimes[app.ID]))
@@ -162,7 +162,7 @@ func (h *ApplicationHandler) IntegrationGetApplicationRuntime(c *gin.Context) {
 		apiShared.DBError(c, err.Error())
 		return
 	}
-	apiShared.Success(c, h.queries.ApplicationRuntimeInfos(c.Request.Context(), h.kubernetes, []model.Application{*app}, map[uint][]model.Release{app.ID: releases})[app.ID])
+	apiShared.Success(c, h.runtimeInfos(c.Request.Context(), []model.Application{*app}, map[uint][]model.Release{app.ID: releases})[app.ID])
 }
 
 func (h *ApplicationHandler) IntegrationListManagedConfigMaps(c *gin.Context) {
@@ -277,7 +277,7 @@ func (h *ApplicationHandler) IntegrationReplaceManagedConfigMap(c *gin.Context) 
 		return
 	}
 	spec.Config[file.Key] = req.Content
-	updated, err := h.templateFromRequest(c.Request.Context(), app, &deploymentTemplateRequest{Name: template.Name, Description: template.Description, Enabled: template.Enabled, Spec: spec}, template.ID)
+	updated, err := h.templateFromRequest(c.Request.Context(), app, &deploymentTemplateRequest{Name: template.Name, Description: template.Description, Enabled: template.Enabled, DefaultVersion: template.DefaultVersion, Spec: spec}, template.ID)
 	if err != nil {
 		apiShared.ValidationError(c, err.Error())
 		return

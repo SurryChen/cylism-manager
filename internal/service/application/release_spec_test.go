@@ -467,3 +467,71 @@ func TestRenderResourcesAddsImagePullSecretForPrivateRegistry(t *testing.T) {
 		t.Fatalf("registry credentials must not be stored in the snapshot: %+v", resources.SanitizedSpec)
 	}
 }
+
+func TestRenderResourcesSeparatesFilesFromEnvironment(t *testing.T) {
+	for _, kind := range []string{WorkloadKindDeployment, WorkloadKindStatefulSet} {
+		t.Run(kind, func(t *testing.T) {
+			spec := validTestReleaseSpec()
+			spec.Config = map[string]string{"config.yaml": "port: 8080", "LOG_LEVEL": "info", "SHARED": "plain", "FILE_SECRET": "environment", "DISABLED": "off"}
+			spec.ConfigDisabled = []string{"DISABLED"}
+			spec.ConfigFileKeys = []string{"config.yaml"}
+			spec.Secrets = map[string]string{"env": "MYSQL_DSN=private", "PASSWORD": "private", "SHARED": "secret", "FILE_SECRET": "file"}
+			spec.SecretFileKeys = []string{"env", "FILE_SECRET"}
+			spec.FileMounts = []FileMountSpec{
+				{SourceType: FileMountSourceApplicationConfig, Key: "config.yaml", MountPath: "/etc/app/config.yaml"},
+				{SourceType: FileMountSourceApplicationSecret, Key: "env", MountPath: "/app/secrets/env"},
+			}
+			resources, err := RenderResources(ApplicationContext{ProjectName: "p", EnvironmentName: "e", ApplicationName: "app", Namespace: "ns", WorkloadKind: kind}, spec)
+			if err != nil {
+				t.Fatal(err)
+			}
+			pod := resources.Deployment
+			var container corev1.Container
+			if kind == WorkloadKindStatefulSet {
+				container = resources.StatefulSet.Spec.Template.Spec.Containers[0]
+			} else {
+				container = pod.Spec.Template.Spec.Containers[0]
+			}
+			if len(container.EnvFrom) != 0 {
+				t.Fatal("file keys must not leak through EnvFrom")
+			}
+			env := map[string]corev1.EnvVar{}
+			for _, variable := range container.Env {
+				env[variable.Name] = variable
+			}
+			if len(env) != 4 || env["PASSWORD"].ValueFrom.SecretKeyRef == nil || env["SHARED"].ValueFrom.SecretKeyRef == nil || env["FILE_SECRET"].ValueFrom.ConfigMapKeyRef == nil || env["LOG_LEVEL"].ValueFrom.ConfigMapKeyRef == nil {
+				t.Fatalf("incorrect environment: %#v", container.Env)
+			}
+			if resources.ConfigMap.Data["config.yaml"] != "port: 8080" || resources.Secret.StringData["env"] != "MYSQL_DSN=private" || len(container.VolumeMounts) != 2 {
+				t.Fatal("file data or mounts lost")
+			}
+			if resources.SanitizedSpec.Secrets["env"] != "" || len(resources.SanitizedSpec.SecretFileKeys) != 2 {
+				t.Fatal("snapshot must redact contents and retain file metadata")
+			}
+		})
+	}
+}
+
+func TestValidateReleaseSpecFileKeys(t *testing.T) {
+	for _, field := range []string{"config_file_keys", "secret_file_keys"} {
+		for _, keys := range [][]string{{"missing"}, {"env", "env"}} {
+			spec := validTestReleaseSpec()
+			spec.Config = map[string]string{"env": "value"}
+			spec.Secrets = map[string]string{"env": "value"}
+			if field == "config_file_keys" {
+				spec.ConfigFileKeys = keys
+			} else {
+				spec.SecretFileKeys = keys
+			}
+			found := false
+			for _, issue := range ValidateReleaseSpec(spec) {
+				if issue.Field == field {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatalf("expected %s validation for %v", field, keys)
+			}
+		}
+	}
+}

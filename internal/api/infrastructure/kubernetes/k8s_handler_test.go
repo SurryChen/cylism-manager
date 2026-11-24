@@ -1,7 +1,9 @@
 package kubernetes
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -15,13 +17,48 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
+	metadatafake "k8s.io/client-go/metadata/fake"
 )
 
 type resourceReferenceFake struct{ references []model.ResourceReference }
 
 func (f resourceReferenceFake) ListResourceReferences(namespace, sourceType, sourceName string) ([]model.ResourceReference, error) {
 	return f.references, nil
+}
+
+type clusterResourceReferenceFake struct{ resourceReferenceFake }
+
+func (f clusterResourceReferenceFake) ListResourceReferencesForCluster(clusterID uint, namespace, sourceType, sourceName string) ([]model.ResourceReference, error) {
+	if clusterID == 1 {
+		return f.references, nil
+	}
+	return nil, nil
+}
+
+func TestClusterResourceReferencesUseSelectedCluster(t *testing.T) {
+	reference := model.ResourceReference{ApplicationID: 1, ApplicationName: "orders"}
+	h := NewK8sHandlerWithAdapter(nil, clusterResourceReferenceFake{resourceReferenceFake{references: []model.ResourceReference{reference}}}, nil, nil)
+	h.WithClusterClientFactory(func(context.Context, uint) (*k8sclient.Client, error) {
+		return &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset()}, nil
+	})
+	first, err := h.ForCluster(t.Context(), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := h.ForCluster(t.Context(), 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstReferenced, err := first.resourceIsReferenced("commerce", "configmap", "shared")
+	if err != nil || !firstReferenced {
+		t.Fatalf("cluster 1 reference = %t, err=%v", firstReferenced, err)
+	}
+	secondReferenced, err := second.resourceIsReferenced("commerce", "configmap", "shared")
+	if err != nil || secondReferenced {
+		t.Fatalf("cluster 2 reference = %t, err=%v", secondReferenced, err)
+	}
 }
 
 func setupK8sTestRouter(clients ...*k8sclient.Client) *gin.Engine {
@@ -75,6 +112,40 @@ func setupK8sTestRouter(clients ...*k8sclient.Client) *gin.Engine {
 		g.GET("/ingress-controller", h.GetIngressController)
 	}
 	return r
+}
+
+func TestClusterHandlerUsesOnlySelectedAgentClient(t *testing.T) {
+	platform := &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "platform-pod", Namespace: "default"}})}
+	first := &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "first-pod", Namespace: "default"}})}
+	second := &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "second-pod", Namespace: "default"}})}
+	h := NewK8sHandlerWithAdapter(NewK8sResourceAdapter(platform), nil, nil, nil).WithClusterClientFactory(func(_ context.Context, id uint) (*k8sclient.Client, error) {
+		switch id {
+		case 1:
+			return first, nil
+		case 2:
+			return second, nil
+		default:
+			return nil, fmt.Errorf("集群不存在")
+		}
+	})
+	for _, tc := range []struct {
+		id   uint
+		want string
+	}{{1, "first-pod"}, {2, "second-pod"}} {
+		scoped, err := h.ForCluster(context.Background(), tc.id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		r := gin.New()
+		r.GET("/pods", scoped.ListPods)
+		response := serve(r, httptest.NewRequest(http.MethodGet, "/pods", nil))
+		if !strings.Contains(response.Body.String(), tc.want) || strings.Contains(response.Body.String(), "platform-pod") {
+			t.Fatalf("cluster %d returned wrong pods: %s", tc.id, response.Body.String())
+		}
+	}
+	if _, err := h.ForCluster(context.Background(), 3); err == nil {
+		t.Fatal("missing cluster must not fall back to platform client")
+	}
 }
 
 func jsonBody(obj interface{}) io.Reader {
@@ -194,6 +265,50 @@ func TestDashboardUsesLightweightClusterLists(t *testing.T) {
 		if action.GetResource().Resource == "endpointslices" || action.GetResource().Resource == "endpoints" {
 			t.Fatalf("dashboard must not query service endpoints: %#v", action)
 		}
+	}
+}
+
+func TestLightweightServiceListSkipsEndpointLookups(t *testing.T) {
+	client := &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(
+		&corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "web", Namespace: "default"}, Spec: corev1.ServiceSpec{ClusterIP: "10.43.0.10"}},
+	)}
+
+	response := serve(setupK8sTestRouter(client), httptest.NewRequest(http.MethodGet, "/api/k8s/services?endpoint_count=false", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", response.Code, response.Body.String())
+	}
+	if strings.Contains(response.Body.String(), "endpoint_count") {
+		t.Fatalf("lightweight response must not include endpoint_count: %s", response.Body.String())
+	}
+	for _, action := range client.Clientset.(*k8sfake.Clientset).Actions() {
+		if action.GetResource().Resource == "endpointslices" || action.GetResource().Resource == "endpoints" {
+			t.Fatalf("lightweight service list must not query endpoints: %#v", action)
+		}
+	}
+}
+
+func TestSecretMetadataListUsesPagedMetadataResponse(t *testing.T) {
+	metadataScheme := metadatafake.NewTestScheme()
+	metadataScheme.AddKnownTypeWithName(schema.GroupVersionKind{Version: "v1", Kind: "Secret"}, &metav1.PartialObjectMetadata{})
+	metadataClient := metadatafake.NewSimpleMetadataClient(metadataScheme, &metav1.PartialObjectMetadata{
+		TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: "Secret"},
+		ObjectMeta: metav1.ObjectMeta{Name: "db-password", Namespace: "apps"},
+	})
+	typedClient := k8sfake.NewSimpleClientset(&corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "db-password", Namespace: "apps"},
+		Data:       map[string][]byte{"password": []byte("must-not-be-returned")},
+	})
+	client := &k8sclient.Client{Clientset: typedClient, MetadataClient: metadataClient}
+
+	response := serve(setupK8sTestRouter(client), httptest.NewRequest(http.MethodGet, "/api/k8s/secrets?namespace=apps&metadata=true&limit=50", nil))
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"items":[{"name":"db-password","namespace":"apps"`) {
+		t.Fatalf("unexpected metadata response: %s", response.Body.String())
+	}
+	if strings.Contains(response.Body.String(), "must-not-be-returned") || strings.Contains(response.Body.String(), `"type":`) || strings.Contains(response.Body.String(), `"keys":`) {
+		t.Fatalf("metadata response exposed Secret details: %s", response.Body.String())
+	}
+	if actions := typedClient.Actions(); len(actions) != 0 {
+		t.Fatalf("metadata endpoint must not use typed Secret API: %#v", actions)
 	}
 }
 

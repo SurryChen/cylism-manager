@@ -79,6 +79,21 @@ func TestQueryServiceWorkspacePodStatesCountsReadyPods(t *testing.T) {
 	}
 }
 
+func TestQueryServiceWorkspacePodStatesIncludesMissingReplicas(t *testing.T) {
+	replicas := int32(2)
+	client := &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(
+		workspacePod("api-ready", "demo", "api", "4", corev1.PodRunning, true),
+		&appsv1.Deployment{
+			ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "demo", Labels: map[string]string{ManagedByLabel: ManagedByValue, ApplicationNameLabel: "api"}, Annotations: map[string]string{ReleaseLabel: "4"}},
+			Spec:       appsv1.DeploymentSpec{Replicas: &replicas},
+		},
+	)}
+	states, available := NewQueryService(queryStoreStub{}).WorkspacePodStates(context.Background(), client, "demo")
+	if !available || states[WorkspacePodKey("api", 4)].Status != "degraded" || states[WorkspacePodKey("api", 4)].ReadyPods != 1 || states[WorkspacePodKey("api", 4)].TotalPods != 2 {
+		t.Fatalf("missing replica was not reflected in runtime: %+v, available=%t", states, available)
+	}
+}
+
 func workspacePod(name, namespace, applicationName, release string, phase corev1.PodPhase, ready bool) *corev1.Pod {
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace, Labels: map[string]string{

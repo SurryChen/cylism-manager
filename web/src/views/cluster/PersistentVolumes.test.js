@@ -10,8 +10,9 @@ function mockInventory(overrides = {}) {
   return path => {
     if (path === '/projects') return Promise.resolve([{ id: 1, name: 'knowledge', environments: [{ id: 2, name: 'production', namespace: 'project-knowledge-prod' }] }])
     if (path === '/k8s/namespace-names') return Promise.resolve(overrides.namespaces || [{ name: 'default' }, { name: 'project-knowledge-prod' }])
-    if (path === '/k8s/persistent-volume-claims') return Promise.resolve(overrides.claims || [])
-    if (path === '/k8s/persistent-volume-claims/usage') return Promise.resolve(overrides.usage || [])
+    if (path.startsWith('/k8s/persistent-volume-claims?')) return Promise.resolve({ items: overrides.claims || [], total: (overrides.claims || []).length })
+	if (path.startsWith('/k8s/persistent-volume-claims/references')) return Promise.resolve(overrides.references || [])
+    if (path.startsWith('/k8s/persistent-volume-claims/usage')) return Promise.resolve(overrides.usage || [])
     if (path === '/k8s/storage-classes') return Promise.resolve([{ name: 'local-path', is_default: true, volume_binding_mode: 'WaitForFirstConsumer' }])
     if (path === '/k8s/persistent-volume-migrations') return Promise.resolve([])
     if (path === '/nodes') return Promise.resolve([])
@@ -24,10 +25,25 @@ function mockInventory(overrides = {}) {
 async function settle() { await new Promise(resolve => setTimeout(resolve, 0)) }
 
 describe('PersistentVolumes view', () => {
-  it('uses the shared section title bar', () => {
+  it('uses the shared single-tab page header', () => {
     const wrapper = mount(PersistentVolumes)
-    expect(wrapper.get('.section-page-header').find('h1').text()).toBe('存储卷')
-    expect(wrapper.find('.section-page-header .page-subtitle').exists()).toBe(false)
+    expect(wrapper.get('.section-tabs-header').find('h1').text()).toBe('存储卷')
+    expect(wrapper.findAll('.section-tab')).toHaveLength(1)
+    expect(wrapper.get('.section-tab').text()).toBe('存储卷')
+    expect(wrapper.get('.section-tab').classes()).toContain('is-active')
+    expect(wrapper.find('.storage-workspace').exists()).toBe(true)
+    expect(wrapper.find('thead').text()).not.toContain('数据回收')
+  })
+
+  it('keeps secondary filters in a compact toolbar popover', async () => {
+    const wrapper = mount(PersistentVolumes)
+
+    expect(wrapper.find('[data-testid="storage-open-filters"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="storage-phase-filter"]').exists()).toBe(false)
+    await wrapper.get('[data-testid="storage-open-filters"]').trigger('click')
+    expect(wrapper.find('[data-testid="storage-phase-filter"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="storage-class-filter"]').exists()).toBe(true)
+    expect(wrapper.find('.base-modal').exists()).toBe(false)
   })
 
   it('loads the cluster PVC inventory without requiring an application environment', async () => {
@@ -36,9 +52,39 @@ describe('PersistentVolumes view', () => {
     const wrapper = mount(PersistentVolumes)
     await settle()
 
-    expect(api.get).toHaveBeenCalledWith('/k8s/persistent-volume-claims', expect.objectContaining({ signal: expect.any(AbortSignal) }))
+    expect(api.get).toHaveBeenCalledWith('/k8s/persistent-volume-claims?page=1&size=20', expect.objectContaining({ signal: expect.any(AbortSignal) }))
+	    expect(api.get).toHaveBeenCalledWith('/k8s/persistent-volume-claims/references?claim=default%2Fmanual-data', expect.objectContaining({ signal: expect.any(AbortSignal) }))
     expect(wrapper.text()).toContain('manual-data')
     expect(wrapper.text()).toContain('外部创建')
+  })
+
+  it('offers environment association for legacy managed PVCs and refreshes after association', async () => {
+    const { api } = await import('../../api/index.js')
+    let associated = false
+    api.get.mockImplementation(path => {
+      if (path.startsWith('/projects')) return Promise.resolve([{ id: 1, name: 'knowledge', environments: [{ id: 2, name: 'production', namespace: 'project-knowledge-prod' }] }])
+      if (path.startsWith('/k8s/persistent-volume-claims?')) return Promise.resolve({ items: [{ name: 'legacy-data', namespace: 'project-knowledge-prod', managed: true, environment_id: associated ? 2 : 0, owner_type: 'application', phase: 'Bound', is_local: true, bound_node: 'node-a' }], total: 1 })
+      if (path.startsWith('/k8s/persistent-volume-claims/references')) return Promise.resolve([])
+      if (path.startsWith('/k8s/persistent-volume-claims/usage')) return Promise.resolve([])
+      if (path === '/k8s/persistent-volume-migrations') return Promise.resolve([])
+      return Promise.resolve([])
+    })
+    api.post.mockImplementation(path => {
+      if (path.endsWith('/adopt')) associated = true
+      return Promise.resolve({})
+    })
+    const wrapper = mount(PersistentVolumes)
+    await settle()
+
+    await wrapper.findAll('button').find(button => button.text() === '关联环境').trigger('click')
+    expect(wrapper.text()).toContain('关联历史存储卷')
+    await wrapper.get('[data-testid="adopt-environment"]').setValue('2')
+    await wrapper.findAll('.btn-primary').at(-1).trigger('click')
+    await settle()
+
+    expect(api.post).toHaveBeenCalledWith('/k8s/persistent-volume-claims/legacy-data/adopt', { namespace: 'project-knowledge-prod', environment_id: 2 })
+    await wrapper.get('.claim-action-menu .icon-button').trigger('click')
+    expect(wrapper.text()).toContain('迁移')
   })
 
   it('creates a PVC directly in the selected namespace', async () => {
@@ -49,6 +95,7 @@ describe('PersistentVolumes view', () => {
     await settle()
 
     await wrapper.get('.btn-primary').trigger('click')
+    await settle()
     await wrapper.get('[data-testid="storage-create-namespace"]').setValue('default')
     await wrapper.get('input[placeholder="karakeep-data"]').setValue('karakeep-data')
     await wrapper.get('[data-testid="storage-capacity-value"]').setValue('8')
@@ -93,7 +140,7 @@ describe('PersistentVolumes view', () => {
     window.location.hash = ''
   })
 
-  it('uses project and environment as optional filters', async () => {
+  it('sends project and environment filters to the PVC inventory endpoint', async () => {
     const { api } = await import('../../api/index.js')
     api.get.mockImplementation(mockInventory({ claims: [
       { name: 'manual-data', namespace: 'default', managed: false, phase: 'Bound' },
@@ -105,11 +152,10 @@ describe('PersistentVolumes view', () => {
     expect(wrapper.text()).toContain('manual-data')
     await wrapper.get('[data-testid="storage-project-filter"]').setValue('1')
     await settle()
-    expect(wrapper.text()).not.toContain('manual-data')
-    expect(wrapper.text()).toContain('app-data')
+    expect(api.get).toHaveBeenCalledWith('/k8s/persistent-volume-claims?page=1&size=20&project_id=1', expect.objectContaining({ signal: expect.any(AbortSignal) }))
     await wrapper.get('[data-testid="storage-environment-filter"]').setValue('2')
     await settle()
-    expect(wrapper.text()).toContain('production')
+    expect(api.get).toHaveBeenCalledWith('/k8s/persistent-volume-claims?page=1&size=20&project_id=1&environment_id=2', expect.objectContaining({ signal: expect.any(AbortSignal) }))
   })
 
   it('keeps host-directory import limited to a managed environment claim', async () => {
@@ -122,7 +168,9 @@ describe('PersistentVolumes view', () => {
     const wrapper = mount(PersistentVolumes)
     await settle()
 
+    await wrapper.get('[aria-label="更多存储卷操作"]').trigger('click')
     await wrapper.get('[data-testid="open-directory-import"]').trigger('click')
+    await settle()
     await wrapper.get('[data-testid="import-source-server"]').setValue('8')
     await wrapper.get('[data-testid="import-source-path"]').setValue('/data/legacy/karakeep')
     await wrapper.get('[data-testid="import-confirm-replace"]').setValue(true)
@@ -131,6 +179,22 @@ describe('PersistentVolumes view', () => {
     expect(api.post).toHaveBeenCalledWith('/k8s/persistent-volume-claims/karakeep-data/imports', {
       environment_id: 2, source_server_id: 8, source_path: '/data/legacy/karakeep', confirm_data_replace: true,
     })
+  })
+
+  it('keeps managed volume actions compact until the more menu is opened', async () => {
+    const { api } = await import('../../api/index.js')
+    api.get.mockImplementation(mockInventory({
+      claims: [{ name: 'karakeep-data', namespace: 'project-knowledge-prod', managed: true, environment_id: 2, phase: 'Bound', is_local: true, bound_node: 'node-a' }],
+    }))
+    const wrapper = mount(PersistentVolumes)
+    await settle()
+
+    expect(wrapper.get('.claim-actions').text()).toBe('备份')
+    expect(wrapper.find('[data-testid="open-directory-import"]').exists()).toBe(false)
+    await wrapper.get('[aria-label="更多存储卷操作"]').trigger('click')
+    expect(wrapper.get('.claim-action-menu-items').text()).toContain('迁移')
+    expect(wrapper.get('.claim-action-menu-items').text()).toContain('导入目录')
+    expect(wrapper.get('.claim-action-menu-items').text()).toContain('删除')
   })
 
   it('keeps the directory import form open when starting an import fails', async () => {
@@ -142,13 +206,15 @@ describe('PersistentVolumes view', () => {
     api.post.mockRejectedValueOnce(new Error('源目录不可访问'))
     const wrapper = mount(PersistentVolumes)
     await settle()
+    await wrapper.get('[aria-label="更多存储卷操作"]').trigger('click')
     await wrapper.get('[data-testid="open-directory-import"]').trigger('click')
+    await settle()
     await wrapper.get('[data-testid="import-source-server"]').setValue('8')
     await wrapper.get('[data-testid="import-source-path"]').setValue('/data/legacy/karakeep')
     await wrapper.get('.import-form').trigger('submit')
     await settle()
 
-    expect(wrapper.text()).toContain('源目录不可访问')
+    expect(document.body.querySelector('.error-notice')?.textContent).toContain('源目录不可访问')
     expect(wrapper.get('[data-testid="import-source-path"]').exists()).toBe(true)
     wrapper.unmount()
   })
@@ -168,6 +234,7 @@ describe('PersistentVolumes view', () => {
     })
     const wrapper = mount(PersistentVolumes)
     await settle()
+    await wrapper.get('[aria-label="更多存储卷操作"]').trigger('click')
     await wrapper.get('[data-testid="open-directory-import"]').trigger('click')
     await settle()
     wrapper.unmount()
@@ -182,7 +249,7 @@ describe('PersistentVolumes view', () => {
     await settle()
 
     expect(wrapper.text()).toContain('基础设施')
-    expect(wrapper.text()).toContain('VictoriaMetrics')
+    expect(wrapper.get('[title="VictoriaMetrics"]').exists()).toBe(true)
     expect(wrapper.text()).toContain('查看监控')
     expect(wrapper.find('[title="删除存储卷"]').exists()).toBe(false)
     expect(wrapper.get('.monitoring-link').classes()).toContain('monitoring-link')
@@ -196,7 +263,7 @@ describe('PersistentVolumes view', () => {
 
     const link = wrapper.get('.monitoring-link')
     expect(link.text()).toBe('查看制品库')
-    expect(link.attributes('href')).toBe('#/delivery/registry')
+    expect(link.attributes('href')).toBe('#/cloud-services/registry')
   })
 
   it('loads local PVC usage without blocking the inventory', async () => {
@@ -209,8 +276,9 @@ describe('PersistentVolumes view', () => {
     await settle()
     await settle()
 
-    expect(api.get).toHaveBeenCalledWith('/k8s/persistent-volume-claims/usage', expect.objectContaining({ signal: expect.any(AbortSignal) }))
+    expect(api.get).toHaveBeenCalledWith('/k8s/persistent-volume-claims/usage?claim=project-knowledge-prod%2Fkarakeep-data', expect.objectContaining({ signal: expect.any(AbortSignal) }))
     expect(wrapper.text()).toContain('1.0 GiB')
-    expect(wrapper.text()).toContain('20% / 请求容量')
+    expect(wrapper.text()).not.toContain('请求容量')
+    expect(wrapper.get('[title="已用 1.0 GiB / 5.0 GiB（20%）"]').exists()).toBe(true)
   })
 })

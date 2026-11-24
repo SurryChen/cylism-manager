@@ -20,6 +20,9 @@ func TestNewClient_WithFakeConfig(t *testing.T) {
 	if client.DynamicClient == nil {
 		t.Fatal("expected non-nil dynamic client")
 	}
+	if client.MetadataClient == nil {
+		t.Fatal("expected non-nil metadata client")
+	}
 }
 
 func TestCheckCRD_NotFound(t *testing.T) {

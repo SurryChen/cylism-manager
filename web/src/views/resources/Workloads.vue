@@ -1,42 +1,44 @@
 <template>
   <div>
-    <div class="page-header">
-      <h1 class="page-title">工作负载</h1>
-      <button class="icon-button" title="刷新工作负载" aria-label="刷新工作负载" :disabled="loading" @click="fetchData"><RefreshCw :size="16" :class="{ 'is-spinning': loading }" /></button>
-    </div>
-    <div v-if="error" class="k8s-banner k8s-banner-warn" style="margin-bottom:var(--space-16)">⚠ {{ error }}</div>
     <div v-if="detailError" class="k8s-banner k8s-banner-warn" style="margin-bottom:var(--space-16)">⚠ {{ detailError }}</div>
 
-    <nav class="resource-switcher section-gap" aria-label="工作负载资源类型">
-      <button :class="['resource-tab', { 'resource-tab-active': activeTab === 'pods' }]" :aria-selected="activeTab === 'pods'" @click="selectTab('pods')"><Box :size="16" /><span>Pods<small>实例</small></span><strong>{{ pods.length }}</strong></button>
-      <button :class="['resource-tab', { 'resource-tab-active': activeTab === 'deployments' }]" :aria-selected="activeTab === 'deployments'" @click="selectTab('deployments')"><Layers3 :size="16" /><span>Deployments<small>无状态服务</small></span><strong>{{ deployments.length }}</strong></button>
-      <button :class="['resource-tab', { 'resource-tab-active': activeTab === 'statefulsets' }]" :aria-selected="activeTab === 'statefulsets'" @click="selectTab('statefulsets')"><Database :size="16" /><span>StatefulSets<small>有状态服务</small></span><strong>{{ statefulsets.length }}</strong></button>
-      <button :class="['resource-tab', { 'resource-tab-active': activeTab === 'daemonsets' }]" :aria-selected="activeTab === 'daemonsets'" @click="selectTab('daemonsets')"><Network :size="16" /><span>DaemonSets<small>节点服务</small></span><strong>{{ daemonsets.length }}</strong></button>
-    </nav>
+    <SurfaceCard as="section" class="workloads-card">
+      <div class="workloads-toolbar">
+        <SelectMenu v-model="activeTab" class="workload-type-select" aria-label="资源类型" :options="workloadTypeOptions" @change="selectTab" />
+        <div class="workloads-toolbar-actions">
+          <template v-if="activeTab === 'pods'">
+            <label class="pod-search"><Search :size="16" /><span class="sr-only">搜索 Pod 名称</span><input v-model.trim="podNameFilter" placeholder="搜索 Pod 名称" aria-label="搜索 Pod 名称" /></label>
+            <button :class="['btn btn-sm pod-filter-trigger', { 'is-active': podFiltersOpen || hasPodFilters }]" :aria-expanded="podFiltersOpen" @click="podFiltersOpen = !podFiltersOpen"><Filter :size="15" />筛选<span v-if="activePodFilterCount" class="filter-count">{{ activePodFilterCount }}</span></button>
+            <button v-if="hasPodFilters" class="icon-button" title="重置 Pod 筛选" aria-label="重置 Pod 筛选" @click="resetPodFilters"><RotateCcw :size="15" /></button>
+          </template>
+          <button class="icon-button" title="刷新工作负载" aria-label="刷新工作负载" :disabled="loading" @click="fetchData"><RefreshCw :size="16" :class="{ 'is-spinning': loading }" /></button>
+        </div>
+      </div>
 
     <!-- Deployments -->
-    <SurfaceCard v-if="activeTab === 'deployments'" as="div">
+    <div v-if="activeTab === 'deployments'" class="workload-table-region">
       <div v-if="deployments.length === 0" class="empty-state">
         <span class="empty-icon">⬡</span><span class="empty-text">暂无 Deployment</span>
       </div>
       <div v-else class="table-wrap">
-        <table class="data-table">
-          <thead><tr><th>名称</th><th>命名空间</th><th>副本</th><th>镜像</th><th>挂载</th><th>CPU</th><th>内存</th><th>年龄</th><th></th></tr></thead>
+        <DataTable class="deployment-table">
+          <colgroup><col class="deployment-name-column" /><col class="deployment-namespace-column" /><col class="deployment-replicas-column" /><col class="deployment-image-column" /><col class="deployment-mounts-column" /><col class="deployment-cpu-column" /><col class="deployment-memory-column" /><col class="deployment-age-column" /><col /></colgroup>
+          <thead><tr><th>名称</th><th>命名空间</th><th>副本</th><th>镜像</th><th>挂载</th><th>CPU</th><th>内存</th><th>年龄</th><TableActionCell header /></tr></thead>
           <tbody>
             <template v-for="d in safeDeployments" :key="d.namespace + '/' + d.name">
               <tr @click="toggleDeployExpand(d)" class="clickable">
-                <td class="cell-primary">{{ d.name }}</td><td>{{ d.namespace }}</td>
+                <td class="cell-primary"><OverflowTooltip :text="d.name" /></td><td><OverflowTooltip :text="d.namespace" /></td>
                 <td><span :class="d.ready === d.replicas ? 'status-success' : 'status-warning'">{{ d.ready }}/{{ d.replicas }}</span></td>
-                <td>{{ d.images?.[0] || '-' }}</td>
-                <td><div v-if="d.volume_mounts?.length" class="volume-mount-list"><span v-for="mount in d.volume_mounts" :key="`${mount.claim_name}-${mount.mount_path}`" class="volume-mount">{{ mount.claim_name }} -> {{ mount.mount_path }}</span></div><span v-else>-</span></td>
+                <td><OverflowTooltip class="deployment-image" :text="d.images?.[0] || '-'" /></td>
+                <td><OverflowTooltip class="deployment-mounts" :text="formatVolumeMounts(d.volume_mounts)" /></td>
                 <td>{{ d.cpu || '-' }}</td><td>{{ d.memory || '-' }}</td><td>{{ d.age }}</td>
-                <td>
-                  <div class="btn-group action-cell" @click.stop>
+                <TableActionCell>
+                  <div class="btn-group" @click.stop>
                     <button class="btn btn-sm" @click="openScaleDialog(d)">扩缩</button>
                     <button class="btn btn-sm" @click="openImageDialog(d)">镜像</button>
                     <button class="btn btn-sm" @click="openRollbackDialog(d)">回滚</button>
                   </div>
-                </td>
+                </TableActionCell>
               </tr>
               <!-- expanded pods -->
               <template v-if="expandedDeploy === d.namespace + '/' + d.name">
@@ -48,20 +50,12 @@
               </template>
             </template>
           </tbody>
-        </table>
+        </DataTable>
       </div>
-    </SurfaceCard>
+    </div>
 
     <!-- Pods -->
-    <SurfaceCard v-if="activeTab === 'pods'" as="div">
-      <div class="pod-list-header">
-        <div><h2>Pod 实例</h2><p>查看实例运行状态、所在服务器与重启情况</p></div>
-        <div class="pod-list-tools">
-          <label class="pod-search"><Search :size="16" /><span class="sr-only">搜索 Pod 名称</span><input v-model.trim="podNameFilter" placeholder="搜索 Pod 名称" aria-label="搜索 Pod 名称" /></label>
-          <button :class="['btn btn-sm pod-filter-trigger', { 'is-active': podFiltersOpen || hasPodFilters }]" :aria-expanded="podFiltersOpen" @click="podFiltersOpen = !podFiltersOpen"><Filter :size="15" />筛选<span v-if="activePodFilterCount" class="filter-count">{{ activePodFilterCount }}</span></button>
-          <button v-if="hasPodFilters" class="icon-button" title="重置 Pod 筛选" aria-label="重置 Pod 筛选" @click="resetPodFilters"><RotateCcw :size="15" /></button>
-        </div>
-      </div>
+    <div v-if="activeTab === 'pods'" class="workload-table-region">
       <div v-if="podFiltersOpen" class="pod-filter-panel">
         <div class="filter-control">
           <label class="form-label" for="pod-filter-namespace">命名空间</label>
@@ -85,7 +79,6 @@
         <button v-if="podNameFilter" class="filter-chip" @click="clearPodFilter('name')">名称: {{ podNameFilter }}<X :size="13" /></button>
         <button v-if="podRestartsOnly" class="filter-chip" @click="clearPodFilter('restarts')">已重启<X :size="13" /></button>
       </div>
-      <div v-if="pods.length > 0" class="pod-result-summary">显示 <strong>{{ safePods.length }}</strong> / {{ pods.length }} 个 Pod</div>
       <div v-if="pods.length === 0" class="empty-state">
         <span class="empty-icon">⬡</span><span class="empty-text">暂无 Pod</span>
       </div>
@@ -93,8 +86,8 @@
         <span class="empty-icon">⌕</span><span class="empty-text">没有匹配筛选条件的 Pod</span>
       </div>
       <div v-else class="table-wrap">
-        <table class="data-table">
-          <thead><tr><th>实例</th><th>命名空间</th><th>状态</th><th>所在服务器</th><th>重启</th><th>年龄</th><th></th></tr></thead>
+        <DataTable>
+          <thead><tr><th>实例</th><th>命名空间</th><th>状态</th><th>所在服务器</th><th>重启</th><th>年龄</th><TableActionCell header /></tr></thead>
           <tbody>
             <tr v-for="pod in safePods" :key="pod.namespace + '/' + pod.name" class="pod-list-row">
               <td class="cell-primary">{{ pod.name }}<small>{{ pod.ip || '未分配 Pod IP' }}</small></td>
@@ -106,23 +99,23 @@
               </td>
               <td><span :class="Number(pod.restarts || 0) > 0 ? 'restart-warning' : ''">{{ pod.restarts }}</span></td>
               <td>{{ pod.age || '-' }}</td>
-              <td class="action-cell"><button class="icon-button pod-terminal-action" :disabled="!canOpenPodTerminal(pod)" :title="canOpenPodTerminal(pod) ? '打开容器终端' : '仅运行中且包含普通容器的 Pod 可打开终端'" :aria-label="`打开 ${pod.name} 的容器终端`" @click="openPodTerminal(pod)"><SquareTerminal :size="16" /></button></td>
+              <TableActionCell><button class="icon-button pod-terminal-action" :disabled="!canOpenPodTerminal(pod)" :title="canOpenPodTerminal(pod) ? '打开容器终端' : '仅运行中且包含普通容器的 Pod 可打开终端'" :aria-label="`打开 ${pod.name} 的容器终端`" @click="openPodTerminal(pod)"><SquareTerminal :size="16" /></button></TableActionCell>
             </tr>
           </tbody>
-        </table>
+        </DataTable>
       </div>
-    </SurfaceCard>
+    </div>
 
-    <PodTerminal v-if="terminalPod" :pod="terminalPod" @close="terminalPod = null" />
+    <PodTerminal v-if="terminalPod" :pod="terminalPod" :cluster-id="clusterId" @close="terminalPod = null" />
 
     <!-- StatefulSets -->
-    <SurfaceCard v-if="activeTab === 'statefulsets'" as="div">
+    <div v-if="activeTab === 'statefulsets'" class="workload-table-region">
       <div v-if="statefulsets.length === 0" class="empty-state">
         <span class="empty-icon">⬡</span><span class="empty-text">暂无 StatefulSet</span>
       </div>
       <div v-else class="table-wrap">
-        <table class="data-table">
-          <thead><tr><th>名称</th><th>命名空间</th><th>副本</th><th>镜像</th><th>挂载</th><th>年龄</th><th></th></tr></thead>
+        <DataTable>
+          <thead><tr><th>名称</th><th>命名空间</th><th>副本</th><th>镜像</th><th>挂载</th><th>年龄</th><TableActionCell header /></tr></thead>
           <tbody>
             <tr v-for="s in safeStatefulsets" :key="s.namespace + '/' + s.name">
               <td class="cell-primary">{{ s.name }}</td><td>{{ s.namespace }}</td>
@@ -137,20 +130,20 @@
                 <span v-else>-</span>
               </td>
               <td>{{ s.age }}</td>
-              <td><div class="btn-group action-cell"><button class="btn btn-sm" @click="openStsScaleDialog(s)">扩缩</button></div></td>
+              <TableActionCell><div class="btn-group"><button class="btn btn-sm" @click="openStsScaleDialog(s)">扩缩</button></div></TableActionCell>
             </tr>
           </tbody>
-        </table>
+        </DataTable>
       </div>
-    </SurfaceCard>
+    </div>
 
     <!-- DaemonSets -->
-    <SurfaceCard v-if="activeTab === 'daemonsets'" as="div">
+    <div v-if="activeTab === 'daemonsets'" class="workload-table-region">
       <div v-if="daemonsets.length === 0" class="empty-state">
         <span class="empty-icon">⬡</span><span class="empty-text">暂无 DaemonSet</span>
       </div>
       <div v-else class="table-wrap">
-        <table class="data-table">
+        <DataTable>
           <thead><tr><th>名称</th><th>命名空间</th><th>就绪/期望</th><th>镜像</th><th>节点选择器</th><th>年龄</th></tr></thead>
           <tbody>
             <tr v-for="d in safeDaemonsets" :key="d.namespace + '/' + d.name">
@@ -159,9 +152,12 @@
               <td>{{ d.images?.[0] || '-' }}</td><td>{{ Object.entries(d.node_selector || {}).map(([k,v]) => `${k}=${v}`).join(', ') || '-' }}</td><td>{{ d.age }}</td>
             </tr>
           </tbody>
-        </table>
+        </DataTable>
       </div>
+    </div>
+      <PaginationControls :page="page" :page-size="pageSize" :total="total" :loading="loading" @page-change="changePage" @page-size-change="changePageSize" />
     </SurfaceCard>
+    <ErrorNoticeModal :open="Boolean(error)" :message="error" teleport @close="error = ''" />
 
     <!-- Scale Dialog -->
     <div v-if="scaleDialog" class="modal-overlay" @click.self="scaleDialog = null">
@@ -188,10 +184,10 @@
     <div v-if="rollbackDialog" class="modal-overlay" @click.self="rollbackDialog = null">
       <div class="modal"><div class="modal-body">
         <h3>回滚: {{ rollbackDialog.name }}</h3>
-        <div class="table-wrap" style="margin:var(--space-12) 0"><table class="data-table">
-          <thead><tr><th>版本</th><th>镜像</th><th>时间</th><th></th></tr></thead>
-          <tbody><tr v-for="r in rollbackDialog.revisions" :key="r.revision"><td>{{ r.revision }}</td><td>{{ r.image }}</td><td>{{ r.age }}</td><td><button class="btn btn-sm" :disabled="rollbackSubmitting" @click="doRollback(r.revision)">{{ rollbackSubmitting ? '提交中...' : '回滚到此' }}</button></td></tr></tbody>
-        </table></div>
+        <div class="table-wrap" style="margin:var(--space-12) 0"><DataTable>
+          <thead><tr><th>版本</th><th>镜像</th><th>时间</th><TableActionCell header /></tr></thead>
+          <tbody><tr v-for="r in rollbackDialog.revisions" :key="r.revision"><td>{{ r.revision }}</td><td>{{ r.image }}</td><td>{{ r.age }}</td><TableActionCell><button class="btn btn-sm" :disabled="rollbackSubmitting" @click="doRollback(r.revision)">{{ rollbackSubmitting ? '提交中...' : '回滚到此' }}</button></TableActionCell></tr></tbody>
+        </DataTable></div>
         <p v-if="rollbackError" class="form-error" role="alert">{{ rollbackError }}</p>
         <button class="btn" :disabled="rollbackSubmitting" @click="rollbackDialog = null">取消</button>
       </div></div>
@@ -200,26 +196,34 @@
 </template>
 
 <script setup>
-import { computed, ref, onMounted, onErrorCaptured } from 'vue'
-import { Box, Database, Filter, Layers3, Network, RefreshCw, RotateCcw, Search, SquareTerminal, X } from 'lucide-vue-next'
-import { getWorkloadDaemonSets, getWorkloadDeploymentPods, getWorkloadDeploymentRevisions, getWorkloadDeployments, getWorkloadPods, getWorkloadServers, getWorkloadStatefulSets, rollbackWorkload, scaleWorkload, updateWorkloadImage } from '../../api/kubernetes.js'
+import DataTable from '../../components/DataTable.vue'
+import TableActionCell from '../../components/TableActionCell.vue'
+import { computed, ref, watch, onMounted, onErrorCaptured } from 'vue'
+import { Filter, RefreshCw, RotateCcw, Search, SquareTerminal, X } from 'lucide-vue-next'
+import { useRoute } from 'vue-router'
+import * as legacyK8s from '../../api/kubernetes.js'
+import PaginationControls from '../../components/PaginationControls.vue'
+import ErrorNoticeModal from '../../components/ErrorNoticeModal.vue'
+import { usePaginatedResource } from '../../composables/usePaginatedResource.js'
+import { getInventoryPage } from '../../api/list-pages.js'
 import { useAsyncResource } from '../../composables/useAsyncResource.js'
+import OverflowTooltip from '../../components/OverflowTooltip.vue'
+import SelectMenu from '../../components/SelectMenu.vue'
 import SurfaceCard from '../../components/SurfaceCard.vue'
 import PodTerminal from './PodTerminal.vue'
 
+const { clusterId = '' } = defineProps({ clusterId: { type: String, default: '' } })
+const { getWorkloadDaemonSets, getWorkloadDeploymentPods, getWorkloadDeploymentRevisions, getWorkloadDeployments, getWorkloadPods, getWorkloadServers, getWorkloadStatefulSets, rollbackWorkload, scaleWorkload, updateWorkloadImage } = clusterId ? legacyK8s.createClusterKubernetesApi(clusterId) : legacyK8s
+
 const activeTab = ref('pods')
-const deployments = ref([])
-const statefulsets = ref([])
-const daemonsets = ref([])
-const pods = ref([])
+const inventoryItems = kind => computed(() => (inventoryResource.filters.value.kind || 'pods') === kind ? inventoryResource.items.value : [])
+const deployments = inventoryItems('deployments')
+const statefulsets = inventoryItems('statefulsets')
+const daemonsets = inventoryItems('daemonsets')
+const pods = inventoryItems('pods')
 const servers = ref([])
-const inventoryResource = useAsyncResource(async ({ signal }) => Promise.allSettled([
-  getWorkloadDeployments({ signal }),
-  getWorkloadStatefulSets({ signal }),
-  getWorkloadDaemonSets({ signal }),
-  getWorkloadPods({ signal }),
-  getWorkloadServers({ signal }),
-]), null)
+const inventoryResource = usePaginatedResource((query, options) => getInventoryPage(clusterId, query.kind || 'pods', query, options), 'items')
+const { total, page, pageSize, changePage, changePageSize } = inventoryResource
 const deploymentPodsResource = useAsyncResource(({ signal }, namespace, name) => getWorkloadDeploymentPods(namespace, name, { signal }), null)
 const revisionsResource = useAsyncResource(({ signal }, namespace, name) => getWorkloadDeploymentRevisions(namespace, name, { signal }), null)
 const loading = inventoryResource.loading
@@ -233,6 +237,7 @@ const imageSubmitting = ref(false)
 const rollbackSubmitting = ref(false)
 const expandedDeploy = ref('')
 const deployPods = ref({})
+const workloadRoute = useRoute()
 const podNamespaceFilter = ref('')
 const podNodeFilter = ref('')
 const podStatusFilter = ref('')
@@ -240,6 +245,10 @@ const podNameFilter = ref('')
 const podRestartsOnly = ref(false)
 const podFiltersOpen = ref(false)
 const terminalPod = ref(null)
+watch(() => [workloadRoute?.query?.namespace, workloadRoute?.query?.pod], ([namespace, pod]) => {
+  if (typeof namespace === 'string') podNamespaceFilter.value = namespace
+  if (typeof pod === 'string') { podNameFilter.value = pod; activeTab.value = 'pods' }
+}, { immediate: true })
 
 const scaleDialog = ref(null)
 const imageDialog = ref(null)
@@ -248,33 +257,21 @@ const rollbackDialog = ref(null)
 const safeDeployments = computed(() => (deployments.value || []).filter(d => d != null))
 const safeStatefulsets = computed(() => (statefulsets.value || []).filter(s => s != null))
 const safeDaemonsets = computed(() => (daemonsets.value || []).filter(d => d != null))
+const workloadTypeOptions = computed(() => [
+  { value: 'pods', label: `Pods（${activeTab.value === 'pods' ? total.value : '—'}）` },
+  { value: 'deployments', label: `Deployments（${activeTab.value === 'deployments' ? total.value : '—'}）` },
+  { value: 'statefulsets', label: `StatefulSets（${activeTab.value === 'statefulsets' ? total.value : '—'}）` },
+  { value: 'daemonsets', label: `DaemonSets（${activeTab.value === 'daemonsets' ? total.value : '—'}）` },
+])
 const serverNamesByNode = computed(() => new Map(
   (servers.value || [])
     .filter(server => server?.k8s_node_name && server?.name)
     .map(server => [server.k8s_node_name.toLowerCase(), server.name]),
 ))
-const podNamespaces = computed(() => [...new Set(
-  (pods.value || []).map(pod => pod?.namespace).filter(Boolean),
-)].sort())
-const podNodes = computed(() => [...new Set(
-  (pods.value || []).map(pod => pod?.node).filter(Boolean),
-)].map(node => ({ value: node, label: displayServerName(node) }))
-  .sort((a, b) => a.label.localeCompare(b.label, 'zh-CN')))
-const podStatuses = computed(() => [...new Set(
-  (pods.value || []).map(pod => pod?.status).filter(Boolean),
-)].sort())
-const safePods = computed(() => {
-  const query = podNameFilter.value.toLowerCase()
-  return (pods.value || []).filter(pod => {
-    if (!pod) return false
-    if (podNamespaceFilter.value && pod.namespace !== podNamespaceFilter.value) return false
-    if (podNodeFilter.value === '__unscheduled__' && pod.node) return false
-    if (podNodeFilter.value && podNodeFilter.value !== '__unscheduled__' && pod.node !== podNodeFilter.value) return false
-    if (podStatusFilter.value && pod.status !== podStatusFilter.value) return false
-    if (podRestartsOnly.value && Number(pod.restarts || 0) === 0) return false
-    return !query || pod.name?.toLowerCase().includes(query)
-  })
-})
+const podNamespaces = computed(() => inventoryResource.response.value?.namespaces || [])
+const podNodes = computed(() => (inventoryResource.response.value?.nodes || []).map(node => ({ value: node, label: displayServerName(node) })))
+const podStatuses = computed(() => inventoryResource.response.value?.statuses || [])
+const safePods = computed(() => pods.value.filter(Boolean))
 const hasPodFilters = computed(() => Boolean(
   podNamespaceFilter.value || podNodeFilter.value || podStatusFilter.value || podNameFilter.value || podRestartsOnly.value,
 ))
@@ -287,20 +284,17 @@ onErrorCaptured((err, instance, info) => {
   return false // 阻止向上冒泡
 })
 
+function inventoryFilters() {
+  return { kind: activeTab.value, ...(activeTab.value === 'pods' ? { namespace: podNamespaceFilter.value, node: podNodeFilter.value, status: podStatusFilter.value, keyword: podNameFilter.value, restarts_only: podRestartsOnly.value } : {}) }
+}
 async function fetchData() {
   error.value = ''
-  const result = await inventoryResource.refresh()
-  if (!result) return
-  const [deps, sts, ds, podList, serverList] = result
-    if (deps.status === 'fulfilled') deployments.value = deps.value || []
-    if (sts.status === 'fulfilled') statefulsets.value = sts.value || []
-    if (ds.status === 'fulfilled') daemonsets.value = ds.value || []
-    if (podList.status === 'fulfilled') pods.value = podList.value || []
-    if (serverList.status === 'fulfilled') servers.value = serverList.value || []
-    const failed = [deps, sts, ds, podList, serverList].filter(r => r.status === 'rejected')
-  if (failed.length > 0) error.value = failed.map(r => r.reason?.message || '未知错误').join('\n')
+  await inventoryResource.refresh()
+  try { servers.value = await getWorkloadServers() || [] } catch (cause) { error.value = cause.message || '读取服务器失败' }
 }
-onMounted(fetchData)
+watch(inventoryResource.error, cause => { if (cause) error.value = cause.message || '读取工作负载失败' })
+watch([activeTab, podNamespaceFilter, podNodeFilter, podStatusFilter, podNameFilter, podRestartsOnly], () => { void inventoryResource.load(inventoryFilters()) })
+onMounted(async () => { await inventoryResource.load(inventoryFilters()); try { servers.value = await getWorkloadServers() || [] } catch (cause) { error.value = cause.message || '读取服务器失败' } })
 
 function displayServerName(nodeName) {
   if (!nodeName) return '-'
@@ -309,6 +303,11 @@ function displayServerName(nodeName) {
 
 function hasMappedServer(nodeName) {
   return Boolean(nodeName && serverNamesByNode.value.has(nodeName.toLowerCase()))
+}
+
+function formatVolumeMounts(mounts) {
+  if (!mounts?.length) return '-'
+  return mounts.map(mount => `${mount.claim_name} -> ${mount.mount_path}`).join('；')
 }
 
 function podStatusClass(status) {
@@ -439,23 +438,24 @@ function openStsScaleDialog(s) {
 </script>
 
 <style scoped>
-.page-header { align-items: center; }
-.resource-switcher { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; padding-bottom: var(--space-16); border-bottom: 1px solid var(--border-muted); }
-.resource-tab { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; min-height: 64px; padding: 10px 12px; border: 1px solid transparent; border-radius: var(--radius-control); background: transparent; color: var(--text-secondary); text-align: left; cursor: pointer; transition: background .18s ease, border-color .18s ease, color .18s ease; }
-.resource-tab:hover { background: var(--surface-subtle); color: var(--text-primary); }.resource-tab-active { border-color: var(--border); background: var(--surface-raised); color: var(--action-primary); box-shadow: var(--shadow-soft); }.resource-tab span { display: grid; gap: 3px; min-width: 0; font-size: 12px; font-weight: 700; }.resource-tab small { overflow: hidden; color: var(--text-muted); font-size: 10px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }.resource-tab strong { display: grid; min-width: 24px; min-height: 24px; place-items: center; border-radius: 50%; background: var(--surface-subtle); color: var(--text-secondary); font: 11px/1 var(--font-mono); }.resource-tab-active strong { background: var(--action-primary); color: var(--action-contrast); }
+.workloads-toolbar { display: flex; align-items: center; justify-content: space-between; gap: var(--space-16); margin-bottom: var(--space-16); }
+.workload-type-select { width: min(250px, 100%); }
+.workloads-toolbar-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin-left: auto; }
+.deployment-table { min-width: 1250px; }
+.deployment-name-column { width: 170px; }.deployment-namespace-column { width: 130px; }.deployment-replicas-column { width: 70px; }.deployment-image-column { width: 330px; }.deployment-mounts-column { width: 210px; }.deployment-cpu-column { width: 55px; }.deployment-memory-column { width: 60px; }.deployment-age-column { width: 65px; }.deployment-table td { white-space: nowrap; }
+.deployment-image, .deployment-mounts { font: 11px/1.45 var(--font-mono); }
 .clickable { cursor: pointer; }
 .pod-row td { padding: 4px 12px; border-bottom: 0; background: var(--surface-subtle); }
 .pod-subrow { display: flex; align-items: center; gap: 8px; padding: 6px 0; font-size: 11px; color: var(--text-secondary); }
 .pod-subrow .badge { font-size: 9px; }
 .node-name { display: block; margin-top: 3px; color: var(--text-muted); font-size: 10px; font-family: var(--font-mono); }
-.pod-list-header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-16); margin-bottom: var(--space-16); }.pod-list-header h2 { margin: 0; color: var(--text-primary); font-size: 15px; }.pod-list-header p { margin: 5px 0 0; color: var(--text-secondary); font-size: 12px; }.pod-list-tools { display: flex; align-items: center; gap: 8px; }.pod-search { display: flex; width: min(260px, 28vw); min-width: 180px; align-items: center; gap: 8px; min-height: 34px; padding: 0 10px; border: 1px solid var(--border-muted); border-radius: var(--radius-control); background: var(--surface-input); color: var(--text-muted); }.pod-search:focus-within { border-color: var(--focus); outline: 2px solid var(--focus); outline-offset: 2px; }.pod-search input { width: 100%; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--text-primary); font: inherit; font-size: 12px; }.pod-search input::placeholder { color: var(--text-muted); }.pod-filter-trigger { gap: 5px; }.pod-filter-trigger.is-active { border-color: var(--action-primary); color: var(--action-primary); }.filter-count { display: grid; min-width: 16px; height: 16px; place-items: center; border-radius: 50%; background: var(--action-primary); color: var(--action-contrast); font: 9px/1 var(--font-mono); }
-.pod-filter-panel { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) auto; align-items: end; gap: var(--space-12); margin-bottom: var(--space-12); padding: var(--space-16); border: 1px solid var(--border-muted); border-radius: var(--radius-control); background: var(--surface-subtle); }.pod-filter-panel .form-label { margin-bottom: 6px; }.pod-restarts-filter { min-height: 38px; white-space: nowrap; }.active-filters { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-bottom: var(--space-12); color: var(--text-muted); font-size: 11px; }.filter-chip { display: inline-flex; align-items: center; gap: 4px; padding: 4px 6px 4px 8px; border: 1px solid var(--border-muted); border-radius: var(--radius-control); background: var(--surface-subtle); color: var(--text-secondary); font-size: 11px; cursor: pointer; }.filter-chip:hover { border-color: var(--action-primary); color: var(--action-primary); }.pod-result-summary { margin-bottom: var(--space-8); color: var(--text-muted); font-size: 11px; }.pod-result-summary strong { color: var(--text-secondary); font-family: var(--font-mono); }
+.pod-search { display: flex; width: min(260px, 28vw); min-width: 180px; align-items: center; gap: 8px; min-height: 34px; padding: 0 10px; border: 1px solid var(--border-muted); border-radius: var(--radius-control); background: var(--surface-input); color: var(--text-muted); }.pod-search:focus-within { border-color: var(--focus); outline: 2px solid var(--focus); outline-offset: 2px; }.pod-search input { width: 100%; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--text-primary); font: inherit; font-size: 12px; }.pod-search input::placeholder { color: var(--text-muted); }.pod-filter-trigger { gap: 5px; }.pod-filter-trigger.is-active { border-color: var(--action-primary); color: var(--action-primary); }.filter-count { display: grid; min-width: 16px; height: 16px; place-items: center; border-radius: 50%; background: var(--action-primary); color: var(--action-contrast); font: 9px/1 var(--font-mono); }
+.pod-filter-panel { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) auto; align-items: end; gap: var(--space-12); margin-bottom: var(--space-12); padding: var(--space-16); border: 1px solid var(--border-muted); border-radius: var(--radius-control); background: var(--surface-subtle); }.pod-filter-panel .form-label { margin-bottom: 6px; }.pod-restarts-filter { min-height: 38px; white-space: nowrap; }.active-filters { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-bottom: var(--space-12); color: var(--text-muted); font-size: 11px; }.filter-chip { display: inline-flex; align-items: center; gap: 4px; padding: 4px 6px 4px 8px; border: 1px solid var(--border-muted); border-radius: var(--radius-control); background: var(--surface-subtle); color: var(--text-secondary); font-size: 11px; cursor: pointer; }.filter-chip:hover { border-color: var(--action-primary); color: var(--action-primary); }
 .pod-filter-empty { min-height: 150px; }
 .pod-list-row .cell-primary small { display: block; margin-top: 3px; color: var(--text-muted); font: 10px/1 var(--font-mono); }.server-name { color: var(--text-primary); font-weight: 600; }.restart-warning { color: var(--warning); font-weight: 700; }.pod-terminal-action { width: 30px; height: 30px; }.is-spinning { animation: spin .8s linear infinite; }@keyframes spin { to { transform: rotate(360deg); } }.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
-.volume-mount-list { display: grid; gap: 4px; min-width: 180px; max-width: 300px; }.volume-mount { overflow-wrap: anywhere; color: var(--text-secondary); font: 11px/1.45 var(--font-mono); }
 .modal-overlay { position: fixed; z-index: 200; inset: 0; display: flex; align-items: center; justify-content: center; background: var(--overlay); backdrop-filter: blur(3px); }
 .modal { min-width: 380px; max-width: 520px; padding: var(--space-20); border: 1px solid var(--border); border-radius: var(--radius-panel); background: var(--surface-raised); box-shadow: var(--shadow); }
 .modal-body h3 { margin: 0 0 var(--space-12); color: var(--text-primary); font-size: 15px; }
-@media (max-width: 780px) { .resource-switcher { grid-template-columns: repeat(2, minmax(0, 1fr)); }.pod-list-header { align-items: stretch; flex-direction: column; }.pod-list-tools { flex-wrap: wrap; }.pod-search { width: 100%; max-width: none; }.pod-filter-panel { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-@media (max-width: 640px) { .resource-tab { min-height: 54px; gap: 7px; padding: 8px; }.resource-tab small { display: none; }.pod-filter-panel { grid-template-columns: 1fr; }.pod-restarts-filter { min-height: auto; } }
+@media (max-width: 780px) { .workloads-toolbar { align-items: stretch; flex-direction: column; }.workloads-toolbar-actions { flex-wrap: wrap; margin-left: 0; }.pod-search { width: 100%; max-width: none; }.pod-filter-panel { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 640px) { .workloads-toolbar-actions { justify-content: stretch; }.pod-search { flex: 1 1 100%; }.pod-filter-panel { grid-template-columns: 1fr; }.pod-restarts-filter { min-height: auto; } }
 </style>

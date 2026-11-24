@@ -9,21 +9,31 @@ import (
 // ServerView is the public representation of a managed server. Credentials,
 // encrypted material, and credential hashes are intentionally excluded.
 type ServerView struct {
-	ID          uint   `json:"id"`
-	Name        string `json:"name"`
-	Host        string `json:"host"`
-	SSHPort     int    `json:"ssh_port"`
-	SSHUser     string `json:"ssh_user"`
-	SSHAuthType string `json:"ssh_auth_type"`
-	ClusterRole string `json:"cluster_role"`
-	K8sNodeName string `json:"k8s_node_name"`
+	ID               uint   `json:"id"`
+	Name             string `json:"name"`
+	Host             string `json:"host"`
+	Hostname         string `json:"hostname"`
+	SSHPort          int    `json:"ssh_port"`
+	SSHUser          string `json:"ssh_user"`
+	SSHAuthType      string `json:"ssh_auth_type"`
+	ProxyServerID    *uint  `json:"proxy_server_id,omitempty"`
+	ProxyServerName  string `json:"proxy_server_name,omitempty"`
+	ClusterRole      string `json:"cluster_role"`
+	ClusterID        *uint  `json:"cluster_id,omitempty"`
+	K8sNodeName      string `json:"k8s_node_name"`
+	K3sRemovalTaskID *uint  `json:"k3s_removal_task_id,omitempty"`
 }
 
 func ServerDTO(server *model.Server) *ServerView {
 	if server == nil {
 		return nil
 	}
-	return &ServerView{ID: server.ID, Name: server.Name, Host: server.Host, SSHPort: server.SSHPort, SSHUser: server.SSHUser, SSHAuthType: server.SSHAuthType, ClusterRole: server.ClusterRole, K8sNodeName: server.K8sNodeName}
+	view := &ServerView{ID: server.ID, Name: server.Name, Host: server.Host, Hostname: server.Hostname, SSHPort: server.SSHPort, SSHUser: server.SSHUser, SSHAuthType: server.SSHAuthType, ProxyServerID: server.ProxyServerID, ClusterRole: server.ClusterRole, ClusterID: server.ClusterID, K8sNodeName: server.K8sNodeName}
+	view.K3sRemovalTaskID = server.K3sRemovalTaskID
+	if server.SSHProxy != nil {
+		view.ProxyServerName = server.SSHProxy.Name
+	}
+	return view
 }
 
 func ServersDTO(servers []model.Server) []ServerView {
@@ -223,6 +233,7 @@ func RuntimesDTO(items []model.RuntimeInstance) []RuntimeView {
 type ProjectView struct {
 	ID                     uint               `json:"id"`
 	Name                   string             `json:"name"`
+	Slug                   string             `json:"slug"`
 	Description            string             `json:"description"`
 	DefaultImageRegistryID *uint              `json:"default_image_registry_id,omitempty"`
 	OwnerID                uint               `json:"owner_id"`
@@ -232,8 +243,10 @@ type ProjectView struct {
 	DefaultImageRegistry   *ImageRegistryView `json:"default_image_registry,omitempty"`
 }
 type EnvironmentView struct {
+	Kind              string    `json:"kind"`
 	ID                uint      `json:"id"`
 	ProjectID         uint      `json:"project_id"`
+	ClusterID         uint      `json:"cluster_id"`
 	Name              string    `json:"name"`
 	Namespace         string    `json:"namespace"`
 	NamespaceStatus   string    `json:"namespace_status,omitempty"`
@@ -278,7 +291,7 @@ func EnvironmentDTO(e *model.Environment) *EnvironmentView {
 	if e == nil {
 		return nil
 	}
-	return &EnvironmentView{ID: e.ID, ProjectID: e.ProjectID, Name: e.Name, Namespace: e.Namespace, NamespaceStatus: e.NamespaceStatus, NamespaceConflict: e.NamespaceConflict, CreatedAt: e.CreatedAt, UpdatedAt: e.UpdatedAt}
+	return &EnvironmentView{Kind: e.Kind, ID: e.ID, ProjectID: e.ProjectID, ClusterID: e.ClusterID, Name: e.Name, Namespace: e.Namespace, NamespaceStatus: e.NamespaceStatus, NamespaceConflict: e.NamespaceConflict, CreatedAt: e.CreatedAt, UpdatedAt: e.UpdatedAt}
 }
 func EnvironmentsDTO(items []model.Environment) []EnvironmentView {
 	out := make([]EnvironmentView, 0, len(items))
@@ -291,7 +304,7 @@ func ProjectDTO(p *model.Project) *ProjectView {
 	if p == nil {
 		return nil
 	}
-	v := &ProjectView{ID: p.ID, Name: p.Name, Description: p.Description, DefaultImageRegistryID: p.DefaultImageRegistryID, OwnerID: p.OwnerID, CreatedAt: p.CreatedAt, UpdatedAt: p.UpdatedAt}
+	v := &ProjectView{ID: p.ID, Name: p.Name, Slug: p.Slug, Description: p.Description, DefaultImageRegistryID: p.DefaultImageRegistryID, OwnerID: p.OwnerID, CreatedAt: p.CreatedAt, UpdatedAt: p.UpdatedAt}
 	if len(p.Environments) > 0 {
 		v.Environments = EnvironmentsDTO(p.Environments)
 	}
@@ -436,6 +449,9 @@ func ReleasesDTO(items []model.Release) []ReleaseView {
 
 type RegistryProxyView struct {
 	ID                      uint       `json:"id"`
+	ClusterID               uint       `json:"cluster_id"`
+	ManagementMode          string     `json:"management_mode"`
+	ImportedOutboundProxy   bool       `json:"imported_outbound_proxy"`
 	Name                    string     `json:"name"`
 	Registry                string     `json:"registry"`
 	UpstreamURL             string     `json:"upstream_url"`
@@ -806,7 +822,7 @@ func RegistryProxyDTO(p *model.RegistryProxy) *RegistryProxyView {
 	if p == nil {
 		return nil
 	}
-	return &RegistryProxyView{ID: p.ID, Name: p.Name, Registry: p.Registry, UpstreamURL: p.UpstreamURL, ResourceName: p.ResourceName, NodeName: p.NodeName, EndpointHost: p.EndpointHost, NodePort: p.NodePort, CacheLimitGi: p.CacheLimitGi, CleanupIntervalHours: p.CleanupIntervalHours, LastCleanupAt: p.LastCleanupAt, LastCheckedAt: p.LastCheckedAt, Status: p.Status, LastError: p.LastError, NoProxy: p.NoProxy, DNSServers: p.DNSServers, LastDiagnosticStatus: p.LastDiagnosticStatus, LastDiagnosticError: p.LastDiagnosticError, LastDiagnosticAt: p.LastDiagnosticAt, OutboundProxyConfigured: p.OutboundProxyConfigured, CreatedBy: p.CreatedBy, CreatedAt: p.CreatedAt, UpdatedAt: p.UpdatedAt}
+	return &RegistryProxyView{ID: p.ID, ClusterID: p.ClusterID, ManagementMode: p.ManagementMode, ImportedOutboundProxy: p.ImportedOutboundProxy, Name: p.Name, Registry: p.Registry, UpstreamURL: p.UpstreamURL, ResourceName: p.ResourceName, NodeName: p.NodeName, EndpointHost: p.EndpointHost, NodePort: p.NodePort, CacheLimitGi: p.CacheLimitGi, CleanupIntervalHours: p.CleanupIntervalHours, LastCleanupAt: p.LastCleanupAt, LastCheckedAt: p.LastCheckedAt, Status: p.Status, LastError: p.LastError, NoProxy: p.NoProxy, DNSServers: p.DNSServers, LastDiagnosticStatus: p.LastDiagnosticStatus, LastDiagnosticError: p.LastDiagnosticError, LastDiagnosticAt: p.LastDiagnosticAt, OutboundProxyConfigured: p.OutboundProxyConfigured, CreatedBy: p.CreatedBy, CreatedAt: p.CreatedAt, UpdatedAt: p.UpdatedAt}
 }
 
 func SiteDTO(s *model.Site) *SiteView {

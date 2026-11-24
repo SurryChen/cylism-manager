@@ -1,175 +1,105 @@
 <template>
   <div>
-    <SectionTabsHeader title="服务器" :tabs="sections" :active-tab="activeSection" @select="activeSection = $event">
-      <template #actions>
-        <button class="icon-button" title="刷新服务器列表" aria-label="刷新服务器列表" :disabled="serversLoading" @click="fetchServers"><RefreshCw :size="16" :class="{ 'is-spinning': serversLoading }" /></button>
-        <button class="btn btn-primary" @click="showAdd = true">+ 添加服务器</button>
-      </template>
-    </SectionTabsHeader>
+    <PageBackLink v-if="returnToCluster" :to="returnToCluster">返回集群组网</PageBackLink>
+    <SectionTabsHeader title="服务器" :tabs="sections" :active-tab="activeSection" @select="activeSection = $event" />
 
     <main class="server-content">
     <div v-if="serverListError" class="k8s-banner k8s-banner-warn section-gap">{{ serverListError }}</div>
     <template v-if="activeSection === 'configuration'">
-    <SurfaceCard as="div" class="section-gap">
-      <p class="section-copy">
-        这里维护服务器台账、SSH 凭据与连通性。集群节点已经拆分到“集群节点”页面统一查看与操作。
-      </p>
-    </SurfaceCard>
-
-    <SurfaceCard as="div">
+    <SurfaceCard as="div" padding="none" class="server-configuration-card">
+      <div class="server-list-toolbar">
+        <button class="icon-button" title="刷新服务器列表" aria-label="刷新服务器列表" :disabled="serversLoading" @click="fetchServers"><RefreshCw :size="16" :class="{ 'is-spinning': serversLoading }" /></button>
+        <button data-testid="add-server" class="btn btn-primary" @click="showAdd = true"><Plus :size="16" /> 添加服务器</button>
+      </div>
       <div v-if="servers.length === 0" class="empty-state">
         <span class="empty-icon">⬡</span><span class="empty-text">暂无服务器</span>
       </div>
-      <div v-else class="table-wrap">
-        <table class="data-table">
+      <div v-else class="table-wrap server-table-wrap">
+        <DataTable>
           <thead>
             <tr>
-              <th>名称</th><th>主机</th><th>SSH 用户</th><th>认证方式</th><th>SSH 连通</th><th>集群状态</th><th>节点名</th><th></th>
+              <th>名称</th><th>主机</th><th>连接方式</th><th>SSH 用户</th><th>认证方式</th><th>主机名</th><TableActionCell header />
             </tr>
           </thead>
           <tbody>
-            <tr v-for="srv in servers" :key="srv.id">
-              <td class="cell-primary">{{ srv.name }}</td>
+            <tr v-for="srv in serverRows" :key="srv.id">
+              <td>{{ srv.name }}</td>
               <td>{{ srv.host }}</td>
+              <td>{{ srv.proxy_server_id ? `代理访问 · ${srv.proxy_server_name || serverName(srv.proxy_server_id)}` : '直接访问' }}</td>
               <td>{{ srv.ssh_user || 'root' }}</td>
               <td>{{ srv.ssh_auth_type === 'key' ? '密钥' : '密码' }}</td>
-              <td>
-                <button class="btn btn-sm" @click="probeServer(srv.id)" :disabled="probingId === srv.id">
-                  {{ probingId === srv.id ? '...' : '🔍' }}
-                </button>
-              </td>
-
-              <td>
-                <span class="badge" :class="srv.cluster_role ? 'badge-online' : 'badge-offline'">
-                  {{ srv.cluster_role ? '已在集群' : '未加入' }}
-                </span>
-              </td>
-              <td>{{ srv.k8s_node_name || '-' }}</td>
-              <td>
-                <div class="btn-group action-cell">
-                  <button v-if="!srv.cluster_role" class="btn btn-sm" @click="startImport(srv.id)">导入集群</button>
-                  <button v-if="!srv.cluster_role" class="btn btn-sm" @click="startEdit(srv)">编辑</button>
-                  <button v-if="!srv.cluster_role" class="btn btn-sm btn-danger" @click="confirmDelete(srv)">删除</button>
-                  <button v-if="srv.cluster_role || srv.k8s_node_name" class="btn btn-sm btn-danger" :disabled="unbindingId === srv.id" @click="unbindServer(srv)">{{ unbindingId === srv.id ? '解绑中...' : '解除绑定' }}</button>
-                  <button class="btn btn-sm" @click="openTerminal(srv.id)">💻</button>
+              <td>{{ srv.hostname || '-' }}</td>
+              <TableActionCell>
+                <div class="btn-group">
+                  <button class="icon-button icon-button--table" type="button" :title="`编辑 ${srv.name}`" :aria-label="`编辑 ${srv.name}`" @click="startEdit(srv)"><Pencil :size="14" /></button>
+                  <button v-if="!srv.cluster_id && srv.k3s_removal_task_id" class="icon-button icon-button--table" type="button" :title="`卸载 ${srv.name} 保留的 K3s`" :aria-label="`卸载 ${srv.name} 保留的 K3s`" @click="cleanupTarget = srv"><PackageMinus :size="14" /></button>
+                  <button v-if="!srv.cluster_role && !srv.cluster_id" class="icon-button icon-button--table" type="button" :title="`删除 ${srv.name}`" :aria-label="`删除 ${srv.name}`" @click="confirmDelete(srv)"><Trash2 :size="14" /></button>
+                  <button v-if="!srv.cluster_id && (srv.cluster_role || srv.k8s_node_name)" class="icon-button icon-button--table" type="button" :title="`解除 ${srv.name} 的集群绑定`" :aria-label="`解除 ${srv.name} 的集群绑定`" :disabled="unbindingId === srv.id" @click="unbindServer(srv)"><LoaderCircle v-if="unbindingId === srv.id" :size="14" class="is-spinning" /><Unlink2 v-else :size="14" /></button>
+                  <button class="icon-button icon-button--table" type="button" :title="`打开 ${srv.name} 的终端`" :aria-label="`打开 ${srv.name} 的终端`" @click="openTerminal(srv.id)"><Terminal :size="14" /></button>
                 </div>
-              </td>
+              </TableActionCell>
             </tr>
           </tbody>
-        </table>
+        </DataTable>
       </div>
+    <ResourcePagination :resource="serverPage" label="服务器分页" />
     </SurfaceCard>
-    <div v-if="unbindError" class="k8s-banner k8s-banner-warn section-gap">{{ unbindError }}</div>
     </template>
+
+    <ServerTailscale v-else-if="activeSection === 'tailscale'" :servers="servers" />
+    <ServerSingBox v-else-if="activeSection === 'proxy'" :servers="servers" />
+    <ServerSpeedTest v-else-if="activeSection === 'speed-test'" :servers="servers" />
 
     <template v-else-if="activeSection === 'monitoring'">
-      <SurfaceCard class="resource-overview section-gap">
-        <div><h2 class="resource-overview-title">资源概览</h2><p class="resource-overview-meta">{{ resourceSamplingLabel }}</p></div>
-        <div class="btn-group"><button class="icon-button" title="刷新资源数据" aria-label="刷新资源数据" :disabled="resourceStatsLoading" @click="refreshResourceStats"><RefreshCw :size="16" :class="{ 'is-spinning': resourceStatsLoading }" /></button></div>
-      </SurfaceCard>
-      <div v-if="servers.length === 0" class="empty-state"><span class="empty-icon">⬡</span><span class="empty-text">暂无服务器</span></div>
-      <SurfaceCard v-else as="div">
-        <div v-if="resourceStatsError" class="k8s-banner k8s-banner-warn section-gap">{{ resourceStatsError }}</div>
-        <div v-if="resourceStatsLoading && !resourceStats.length" class="empty-state"><span class="empty-text">正在采集服务器资源...</span></div>
-        <div v-else class="table-wrap"><table class="data-table resource-table"><thead><tr><th>服务器</th><th>采集状态</th><th>CPU</th><th>内存</th><th>磁盘 /</th><th>负载</th><th>运行时间</th><th>采样时间</th></tr></thead><tbody><tr v-for="srv in servers" :key="srv.id" class="resource-row" @click="openStats(srv.id)"><td class="cell-primary">{{ srv.name }}<small class="cell-secondary">{{ srv.host }}</small></td><td><span class="badge" :class="resourceStatusClass(resourceFor(srv.id))">{{ resourceStatusLabel(resourceFor(srv.id)) }}</span><small v-if="resourceFor(srv.id)?.error" class="resource-error">{{ resourceFor(srv.id).error }}</small></td><td><div class="resource-metric"><strong>{{ formatPercent(resourceFor(srv.id)?.cpu_percent) }}</strong><span class="resource-meter"><i :class="resourceLevelClass(resourceFor(srv.id)?.cpu_percent)" :style="{ width: `${metricPercent(resourceFor(srv.id)?.cpu_percent)}%` }" /></span></div></td><td><div class="resource-metric"><strong>{{ formatMB(resourceFor(srv.id)?.memory_used_mb) }} / {{ formatMB(resourceFor(srv.id)?.memory_total_mb) }}</strong><span class="resource-meter"><i :class="resourceLevelClass(memPercent(resourceFor(srv.id)))" :style="{ width: `${metricPercent(memPercent(resourceFor(srv.id)))}%` }" /></span></div></td><td><div class="resource-metric"><strong>{{ resourceFor(srv.id)?.disk_used_gb ?? '-' }} / {{ resourceFor(srv.id)?.disk_total_gb ?? '-' }} GB</strong><span class="resource-meter"><i :class="resourceLevelClass(diskPercent(resourceFor(srv.id)))" :style="{ width: `${metricPercent(diskPercent(resourceFor(srv.id)))}%` }" /></span></div></td><td>{{ formatLoad(resourceFor(srv.id)) }}</td><td>{{ resourceFor(srv.id)?.uptime || '-' }}</td><td>{{ formatSampleTime(resourceFor(srv.id)?.sampled_at) }}</td></tr></tbody></table></div>
-      </SurfaceCard>
+      <SurfaceCard as="div" padding="none" class="resource-monitoring-card">
+        <div class="resource-monitoring-toolbar">
+          <span class="resource-monitoring-meta">{{ resourceSamplingLabel }}</span>
+          <button class="icon-button" title="刷新资源数据" aria-label="刷新资源数据" :disabled="resourceStatsLoading" @click="refreshResourceStats"><RefreshCw :size="16" :class="{ 'is-spinning': resourceStatsLoading }" /></button>
+        </div>
+        <div v-if="resourceStatsError" class="k8s-banner k8s-banner-warn">{{ resourceStatsError }}</div>
+        <div v-if="servers.length === 0" class="empty-state"><span class="empty-icon">⬡</span><span class="empty-text">暂无服务器</span></div>
+        <div v-else-if="resourceStatsLoading && !resourceStats.length" class="empty-state"><span class="empty-text">正在采集服务器资源...</span></div>
+        <div v-else class="table-wrap resource-table-wrap"><DataTable class="resource-table"><thead><tr><th>服务器</th><th>主机</th><th>采集状态</th><th>CPU</th><th>内存</th><th>磁盘 /</th><th>负载 (1 分钟)</th><th>运行时间</th><TableActionCell header /></tr></thead><tbody><tr v-for="srv in serverRows" :key="srv.id" class="resource-row"><td class="resource-server-name">{{ srv.name }}</td><td class="resource-server-host">{{ srv.host }}</td><td><span class="badge" :class="resourceStatusClass(resourceFor(srv.id))">{{ resourceStatusLabel(resourceFor(srv.id)) }}</span><small v-if="resourceFor(srv.id)?.error" class="resource-error">{{ resourceFor(srv.id).error }}</small></td><td><div class="resource-metric"><strong>{{ formatPercent(resourceFor(srv.id)?.cpu_percent) }}</strong><span class="resource-meter"><i :class="resourceLevelClass(resourceFor(srv.id)?.cpu_percent)" :style="{ width: `${metricPercent(resourceFor(srv.id)?.cpu_percent)}%` }" /></span></div></td><td><div class="resource-metric"><strong>{{ formatMB(resourceFor(srv.id)?.memory_used_mb) }} / {{ formatMB(resourceFor(srv.id)?.memory_total_mb) }}</strong><span class="resource-meter"><i :class="resourceLevelClass(memPercent(resourceFor(srv.id)))" :style="{ width: `${metricPercent(memPercent(resourceFor(srv.id)))}%` }" /></span></div></td><td><div class="resource-metric"><strong>{{ resourceFor(srv.id)?.disk_used_gb ?? '-' }} / {{ resourceFor(srv.id)?.disk_total_gb ?? '-' }} GB</strong><span class="resource-meter"><i :class="resourceLevelClass(diskPercent(resourceFor(srv.id)))" :style="{ width: `${metricPercent(diskPercent(resourceFor(srv.id)))}%` }" /></span></div></td><td>{{ formatLoad(resourceFor(srv.id)) }}</td><td>{{ formatUptime(resourceFor(srv.id)?.uptime) }}</td><TableActionCell><button class="icon-button icon-button--table" type="button" :data-testid="`view-resource-stats-${srv.id}`" :title="`查看 ${srv.name} 的资源详情`" :aria-label="`查看 ${srv.name} 的资源详情`" @click="openStats(srv.id)"><ChartNoAxesColumnIncreasing :size="14" /></button></TableActionCell></tr></tbody></DataTable></div>
+      <ResourcePagination :resource="serverPage" label="服务器分页" />
+    </SurfaceCard>
     </template>
 
-    <template v-else>
-      <SurfaceCard class="network-overview section-gap">
-        <h2 class="network-overview-title">K3s VPN 兼容性</h2>
-        <button class="icon-button" title="刷新网络诊断" aria-label="刷新网络诊断" :disabled="networkDiagnosticsLoading" @click="refreshNetworkDiagnostics"><RefreshCw :size="16" :class="{ 'is-spinning': networkDiagnosticsLoading }" /></button>
-      </SurfaceCard>
-      <div v-if="networkDiagnosticsError" class="k8s-banner k8s-banner-warn section-gap">{{ networkDiagnosticsError }}，已保留上次成功结果</div>
-      <div v-if="networkDiagnosticsLoading && !networkDiagnostics.servers.length" class="empty-state"><span class="empty-text">正在采集网络状态...</span></div>
-      <div v-else-if="!networkDiagnostics.servers.length" class="empty-state"><span class="empty-icon">⬡</span><span class="empty-text">暂无诊断结果</span></div>
-      <SurfaceCard v-else class="section-gap network-table-card">
-        <div class="table-wrap"><table class="data-table network-table"><thead><tr><th>服务器</th><th>K3s 单元</th><th>VPN 兼容</th><th>服务商</th><th>采集状态</th></tr></thead><tbody><tr v-for="diagnostic in networkDiagnostics.servers" :key="diagnostic.server_id"><td class="cell-primary">{{ diagnostic.name }}</td><td>{{ diagnostic.k8s_unit || '-' }}</td><td><span class="badge" :class="vpnCompatibilityClass(diagnostic)">{{ vpnCompatibilityLabel(diagnostic) }}</span></td><td>{{ vpnProviderLabel(diagnostic.k3s_vpn?.provider) }}</td><td><span class="badge" :class="diagnosticStatusClass(diagnostic)">{{ diagnosticStatusLabel(diagnostic) }}</span></td></tr></tbody></table></div>
-      </SurfaceCard>
-    </template>
     </main>
 
     <!-- Add Server modal -->
-    <div v-if="showAdd" class="overlay" @click.self="showAdd = false">
+    <div v-if="showAdd" class="overlay" @click.self="closeForm">
       <div class="modal">
         <h2 class="modal-title">{{ editingId ? '编辑服务器' : '添加服务器' }}</h2>
         <form @submit.prevent="addServer">
-          <div class="form-row">
-            <div class="form-group"><label class="form-label">名称</label><input v-model="form.name" class="form-input" placeholder="我的服务器" required /></div>
-            <div class="form-group"><label class="form-label">主机</label><input v-model="form.host" class="form-input" placeholder="192.168.1.100" required /></div>
-          </div>
+          <div class="form-group"><label class="form-label" for="server-name">名称</label><input id="server-name" v-model.trim="form.name" class="form-input" placeholder="留空使用主机 IP" /></div>
+          <div class="form-group"><label class="form-label">主机</label><input v-model="form.host" class="form-input" placeholder="192.168.1.100" required /></div>
+          <div class="form-group"><label class="form-label">连接方式</label><SelectMenu v-model="form.connection_mode" :options="connectionModeOptions" aria-label="连接方式" /></div>
+          <div v-if="form.connection_mode === 'proxy'" class="form-group"><label class="form-label">代理节点</label><SelectMenu v-model="form.proxy_server_id" :options="proxyServerOptions" placeholder="选择可直接访问的服务器" aria-label="代理节点" /><span class="cell-secondary">主机请填写代理节点可连接的目标 IP 地址</span></div>
           <div class="form-row">
             <div class="form-group"><label class="form-label">SSH 端口</label><input v-model.number="form.ssh_port" class="form-input" type="number" placeholder="22" /></div>
             <div class="form-group"><label class="form-label">SSH 用户</label><input v-model="form.ssh_user" class="form-input" placeholder="root" /></div>
           </div>
           <div class="form-group"><label class="form-label">认证方式</label><SelectMenu v-model="form.ssh_auth_type" class="form-select"><option value="password">密码</option><option value="key">密钥</option></SelectMenu></div>
-          <div class="form-group" v-if="form.ssh_auth_type === 'password'"><label class="form-label">SSH 密码</label><input v-model="form.ssh_password" class="form-input" type="password" placeholder="输入密码" /></div>
-          <div class="form-group" v-if="form.ssh_auth_type === 'key'"><label class="form-label">SSH 密钥</label><textarea v-model="form.ssh_key" class="form-input textarea-input" placeholder="粘贴私钥内容" /></div>
+          <div class="form-group" v-if="form.ssh_auth_type === 'password'"><label class="form-label">SSH 密码</label><input v-model="form.ssh_password" class="form-input" type="password" :placeholder="editingId ? '留空保持原密码' : '输入密码'" /></div>
+          <div class="form-group" v-if="form.ssh_auth_type === 'key'"><label class="form-label">SSH 密钥</label><textarea v-model="form.ssh_key" class="form-input textarea-input" :placeholder="editingId ? '留空保持原密钥' : '粘贴私钥内容'" /></div>
+          <div class="form-group">
+            <label class="form-label" for="server-hostname">机器名</label>
+            <div class="hostname-form-row">
+              <input id="server-hostname" :value="form.hostname" class="form-input" placeholder="点击自动获取" readonly />
+              <button type="button" class="btn" title="自动获取机器名" aria-label="自动获取机器名" :disabled="hostnameFetching || savingServer || !form.host.trim() || !form.ssh_port" @click="fetchHostname"><RefreshCw :size="15" :class="{ 'is-spinning': hostnameFetching }" />{{ hostnameFetching ? '获取中...' : '自动获取' }}</button>
+            </div>
+            <p v-if="hostnameError" class="form-error" role="status">{{ hostnameError }}</p>
+          </div>
+          <div v-if="editingId" class="server-probe">
+            <button type="button" class="btn btn-sm" :disabled="probing || savingServer || !form.host.trim() || !form.ssh_port" @click="probeServer">{{ probing ? '检测中...' : '测试连接' }}</button>
+            <span v-if="probeResult" class="server-probe-result" :class="probeResult.reachable ? 'status-success' : 'status-warning'" role="status">{{ probeResult.reachable ? `连接成功 (${probeResult.latency_ms}ms)` : `连接失败：${probeResult.error || 'SSH 不可达'}` }}</span>
+          </div>
           <p v-if="formError" class="form-error">{{ formError }}</p>
-          <div class="modal-actions"><button type="button" class="btn" :disabled="savingServer" @click="closeForm">取消</button><button type="submit" class="btn btn-primary" :disabled="savingServer">{{ savingServer ? '保存中...' : (editingId ? '保存修改' : '确认添加') }}</button></div>
+          <div class="modal-actions"><button type="button" class="btn" :disabled="savingServer" @click="closeForm">取消</button><button type="submit" class="btn btn-primary" :disabled="savingServer || hostnameFetching">{{ savingServer ? '保存中...' : (editingId ? '保存修改' : '确认添加') }}</button></div>
         </form>
       </div>
     </div>
 
-    <!-- SSH probe result modal -->
-    <div v-if="probeResult" class="overlay" @click.self="probeResult = null">
-      <div class="modal">
-        <h2 class="modal-title">SSH 连通性检测</h2>
-        <div class="detail-grid">
-          <span class="detail-label">主机：</span><span>{{ probeResult.host }}</span>
-          <span class="detail-label">结果：</span>
-          <span>
-            <span v-if="probeResult.reachable" class="badge badge-online">✅ 在线 ({{ probeResult.latency_ms }}ms)</span>
-            <span v-else class="badge badge-danger">✗ 不可达</span>
-          </span>
-          <span v-if="!probeResult.reachable" class="detail-label">错误：</span>
-          <span v-if="!probeResult.reachable">{{ probeResult.error }}</span>
-        </div>
-        <div class="modal-actions"><button class="btn" @click="probeResult = null">关闭</button></div>
-      </div>
-    </div>
-
-    <!-- Import modal -->
-    <div v-if="importState" class="overlay">
-      <div class="modal modal-wide">
-        <h2 class="modal-title">导入集群 - {{ importServer?.name }}</h2>
-        <!-- Step 1: 检测中 -->
-        <div v-if="importState.phase === 'detecting'">
-          <p style="margin-bottom:16px;color:var(--text-secondary)">正在通过 SSH 连接服务器并匹配集群节点...</p>
-          <div class="modal-actions">
-            <button class="btn" @click="importState = null">取消</button>
-          </div>
-        </div>
-        <!-- Step 2: 确认 -->
-        <div v-if="importState.phase === 'confirm'">
-          <table style="width:100%;margin-bottom:16px;font-size:13px">
-            <tbody>
-              <tr><td style="color:var(--text-secondary);padding:6px 0">服务器</td><td>{{ importServer?.name }}</td></tr>
-              <tr><td style="color:var(--text-secondary);padding:6px 0">主机名</td><td>{{ importState.info?.hostname }}</td></tr>
-              <tr><td style="color:var(--text-secondary);padding:6px 0">集群节点</td><td>{{ importState.info?.node_name }}</td></tr>
-              <tr><td style="color:var(--text-secondary);padding:6px 0">角色</td><td><span class="badge" :class="importState.info?.role === 'control-plane' ? 'badge-online' : 'badge-offline'">{{ importState.info?.role }}</span></td></tr>
-              <tr><td style="color:var(--text-secondary);padding:6px 0">版本</td><td>{{ importState.info?.version }}</td></tr>
-              <tr><td style="color:var(--text-secondary);padding:6px 0">内网 IP</td><td>{{ importState.info?.internal_ip }}</td></tr>
-              <tr><td style="color:var(--text-secondary);padding:6px 0">操作系统</td><td>{{ importState.info?.os }}</td></tr>
-            </tbody>
-          </table>
-          <div class="modal-actions">
-            <button class="btn" @click="importState = null">取消</button>
-            <button class="btn btn-primary" :disabled="importSubmitting" @click="doConfirmImport">{{ importSubmitting ? '导入中...' : '确认导入' }}</button>
-          </div>
-        </div>
-        <!-- Error -->
-        <div v-if="importState.phase === 'error'">
-          <p style="color:var(--color-danger);margin-bottom:16px">{{ importState.error }}</p>
-          <div class="modal-actions">
-            <button class="btn" @click="importState = null">关闭</button>
-            <button class="btn btn-primary" @click="startImport(importServer.id)">重试</button>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    
     <!-- Stats modal -->
     <div v-if="statsServer" class="overlay" @click.self="statsServer = null">
       <div class="modal modal-wide">
@@ -205,74 +135,82 @@
     </div>
 
     <ServerTerminal v-if="terminalServer" :server="terminalServer" @close="terminalServer = null" />
+    <ServerK3sCleanupModal :server="cleanupTarget" @close="cleanupTarget = null" @completed="fetchServers" />
 
     <div v-if="deleteTarget" class="overlay" @click.self="deleteTarget = null">
       <div class="modal"><h2 class="modal-title">删除服务器</h2><p class="modal-copy">确定删除 <strong>{{ deleteTarget.name }}</strong> 吗？</p><p v-if="deleteError" class="form-error">{{ deleteError }}</p><div class="modal-actions"><button class="btn" :disabled="deletingServer" @click="deleteTarget = null">取消</button><button class="btn btn-danger" :disabled="deletingServer" @click="deleteServer">{{ deletingServer ? '删除中...' : '确认删除' }}</button></div></div>
     </div>
+    <ErrorNoticeModal :open="Boolean(unbindError)" :message="unbindError" teleport @close="unbindError = ''" />
   </div>
 </template>
 
 <script setup>
+import DataTable from '../../components/DataTable.vue'
+import TableActionCell from '../../components/TableActionCell.vue'
+import ResourcePagination from '../../components/ResourcePagination.vue'
+import { useListPage } from '../../composables/useListPage.js'
 import { computed, ref, shallowRef, onMounted, onUnmounted, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import {
   createServer,
   deleteServer as deleteServerRequest,
-  getServerNetworkDiagnostics,
   getServerResourceStats,
   getServers,
   getServerStats,
-  importServerToCluster,
-  preimportServer,
   probeServer as probeServerRequest,
+  resolveServerHostname,
   unbindServer as unbindServerRequest,
   updateServer,
 } from '../../api/servers.js'
 import { useAsyncResource } from '../../composables/useAsyncResource.js'
 import { usePolling } from '../../composables/usePolling.js'
 import { formatClockTime as formatSampleTime } from '../../utils/formatters.js'
-import { RefreshCw } from 'lucide-vue-next'
+import { ChartNoAxesColumnIncreasing, LoaderCircle, PackageMinus, Pencil, Plus, RefreshCw, Terminal, Trash2, Unlink2 } from 'lucide-vue-next'
+import PageBackLink from '../../components/PageBackLink.vue'
 import SectionTabsHeader from '../../components/SectionTabsHeader.vue'
 import SurfaceCard from '../../components/SurfaceCard.vue'
+import ErrorNoticeModal from '../../components/ErrorNoticeModal.vue'
 import ServerTerminal from './ServerTerminal.vue'
+import ServerK3sCleanupModal from './ServerK3sCleanupModal.vue'
+import ServerTailscale from './ServerTailscale.vue'
+import ServerSingBox from './ServerSingBox.vue'
+import ServerSpeedTest from './ServerSpeedTest.vue'
 
 const serversResource = useAsyncResource(({ signal }) => getServers({ signal }), [])
 const servers = serversResource.data
 const serversLoading = serversResource.loading
-const serverListError = computed(() => serversResource.error.value?.message || '')
-const activeSection = ref('configuration')
+const serverListError = computed(() => pageError.value || serversResource.error.value?.message || '')
+const route = useRoute()
+const activeSection = ref(['tailscale', 'proxy', 'speed-test', 'monitoring'].includes(route?.query?.tab) ? route.query.tab : 'configuration')
+const returnToCluster = computed(() => /^\/cluster\/\d+\?tab=networking$/.test(String(route?.query?.return || '')) ? route.query.return : '')
+watch(() => route?.query?.tab, tab => { if (['tailscale', 'proxy', 'speed-test', 'monitoring'].includes(tab)) activeSection.value = tab })
 const sections = [
   { id: 'configuration', label: '基本配置' },
+  { id: 'tailscale', label: '组网' },
+  { id: 'proxy', label: '代理' },
+  { id: 'speed-test', label: '网络测速' },
   { id: 'monitoring', label: '资源监控' },
-  { id: 'network-diagnostics', label: '网络诊断' },
 ]
 const resourceStatsResource = useAsyncResource(({ signal }) => getServerResourceStats({ signal }), [])
 const resourceStats = resourceStatsResource.data
 const resourceStatsLoading = resourceStatsResource.loading
 const resourceStatsError = computed(() => resourceStatsResource.error.value ? '资源数据刷新失败，已保留上次成功结果' : '')
 const resourceStatsUpdatedAt = ref('')
-const networkDiagnosticsResource = useAsyncResource(async ({ signal }) => {
-  const result = await getServerNetworkDiagnostics({ signal })
-  return {
-    servers: Array.isArray(result?.servers) ? result.servers : [],
-  }
-}, { servers: [] })
-const networkDiagnostics = networkDiagnosticsResource.data
-const networkDiagnosticsLoading = networkDiagnosticsResource.loading
-const networkDiagnosticsError = computed(() => networkDiagnosticsResource.error.value ? '网络诊断请求失败' : '')
 const showAdd = ref(false)
 const editingId = ref(null)
 const deleteTarget = ref(null)
+const cleanupTarget = ref(null)
 const formError = ref('')
 const savingServer = ref(false)
 const deleteError = ref('')
 const deletingServer = ref(false)
 const unbindError = ref('')
-const probingId = ref(null)
+const probing = ref(false)
+const hostnameFetching = ref(false)
+const hostnameError = ref('')
+let hostnameRequestToken = 0
 const unbindingId = ref(null)
 const probeResult = ref(null)
-const importState = ref(null)
-const importServer = ref(null)
-const importSubmitting = ref(false)
 const statsServer = ref(null)
 const DoughnutComponent = shallowRef(null)
 const chartLoadError = ref('')
@@ -318,7 +256,23 @@ const chartOptions = {
 
 
 
-const form = ref({ name: '', host: '', ssh_port: 22, ssh_user: 'root', ssh_auth_type: 'password', ssh_password: '', ssh_key: '' })
+const emptyForm = () => ({ name: '', host: '', connection_mode: 'direct', proxy_server_id: '', ssh_port: 22, ssh_user: 'root', ssh_auth_type: 'password', ssh_password: '', ssh_key: '', hostname: '' })
+const form = ref(emptyForm())
+const connectionModeOptions = [{ value: 'direct', label: '直接访问' }, { value: 'proxy', label: '代理访问' }]
+const proxyServerOptions = computed(() => servers.value.filter(server => !server.proxy_server_id && server.id !== editingId.value).map(server => ({ value: String(server.id), label: `${server.name} (${server.host})` })))
+const connectionSnapshot = (value) => JSON.stringify([value.host, value.connection_mode, value.proxy_server_id, value.ssh_port, value.ssh_user, value.ssh_auth_type, value.ssh_password, value.ssh_key])
+function serverName(id) { return servers.value.find(server => server.id === id)?.name || `#${id}` }
+function connectionPayload(value) { const { connection_mode, ...details } = value; return { ...details, proxy_server_id: connection_mode === 'proxy' ? Number(value.proxy_server_id) || null : null } }
+let hostnameConnectionSnapshot = connectionSnapshot(form.value)
+watch(form, () => {
+  probeResult.value = null
+  const current = connectionSnapshot(form.value)
+  if (current !== hostnameConnectionSnapshot) {
+    hostnameConnectionSnapshot = current
+    form.value.hostname = ''
+    hostnameError.value = ''
+  }
+}, { deep: true })
 
 onMounted(() => {
   fetchServers()
@@ -331,10 +285,13 @@ onUnmounted(() => {
 
 watch(activeSection, (section) => {
   syncResourcePolling()
-  if (section === 'network-diagnostics') refreshNetworkDiagnostics()
 })
 
-async function fetchServers() { await serversResource.refresh() }
+const serverRows = ref([]), pageError = ref('')
+const serverPage = useListPage('/servers', serverRows, pageError)
+async function fetchServers() {
+  await Promise.all([serversResource.refresh(), serverPage.refresh().catch(() => undefined)])
+}
 
 function resourceFor(serverID) { return resourceStatsByServerID.value.get(Number(serverID)) || null }
 function metricPercent(value) { return Math.min(100, Math.max(0, Number(value) || 0)) }
@@ -343,22 +300,22 @@ function resourceLevelClass(value) { const percent = metricPercent(value); retur
 function resourceStatusClass(stats) { return stats?.status === 'ready' ? 'badge-online' : stats?.status === 'unreachable' ? 'badge-danger' : 'badge-deploying' }
 function resourceStatusLabel(stats) { return stats?.status === 'ready' ? '已采集' : stats?.status === 'unreachable' ? '不可达' : '等待采集' }
 function formatLoad(stats) { if (!stats?.load_1m && stats?.load_1m !== 0) return '-'; const cores = Number(stats.cpu_cores) || 0; return cores ? `${Number(stats.load_1m).toFixed(2)} / ${cores} 核` : Number(stats.load_1m).toFixed(2) }
+function formatUptime(value) {
+  if (!value) return '-'
+  const labels = { week: '周', day: '天', hour: '小时', minute: '分钟' }
+  const parts = []
+  for (const match of String(value).matchAll(/(\d+)\s*(weeks?|days?|hours?|minutes?)/gi)) {
+    const unit = match[2].replace(/s$/i, '')
+    if (labels[unit]) parts.push(`${match[1]}${labels[unit]}`)
+  }
+  return parts.length ? parts.slice(0, 2).join('') : value
+}
 async function refreshResourceStats() {
   const result = await resourceStatsResource.refresh()
   if (result !== undefined) {
     resourceStatsUpdatedAt.value = new Date().toISOString()
   }
 }
-
-async function refreshNetworkDiagnostics() {
-  await networkDiagnosticsResource.refresh()
-}
-
-function vpnCompatibilityLabel(diagnostic) { return diagnostic.k3s_vpn?.configured ? '已配置' : '未配置' }
-function vpnCompatibilityClass(diagnostic) { return diagnostic.error_code ? 'badge-danger' : diagnostic.k3s_vpn?.configured ? 'badge-online' : 'badge-offline' }
-function vpnProviderLabel(provider) { return ({ tailscale: 'Tailscale', other: '其他兼容服务', unknown: '已配置（未识别）' })[provider] || '-' }
-function diagnosticStatusLabel(diagnostic) { return diagnostic.error_code ? '采集失败' : '已采集' }
-function diagnosticStatusClass(diagnostic) { return diagnostic.error_code ? 'badge-danger' : 'badge-online' }
 
 function stopResourcePolling() {
   resourcePolling.stop()
@@ -373,12 +330,29 @@ function syncResourcePolling() {
 async function addServer() {
   if (savingServer.value) return
   formError.value = ''
+  if (form.value.connection_mode === 'proxy' && !form.value.proxy_server_id) {
+    formError.value = '请选择代理节点'
+    return
+  }
+  if (!form.value.hostname.trim()) {
+    hostnameError.value = '请先点击“自动获取”获取机器名'
+    return
+  }
+  if (servers.value.some(server => server.host === form.value.host.trim() && server.id !== editingId.value)) {
+    formError.value = '该主机已添加，请编辑已有服务器'
+    return
+  }
   savingServer.value = true
   try {
     if (editingId.value) {
-      await updateServer(editingId.value, form.value)
+      const { ssh_password, ssh_key, ...details } = connectionPayload(form.value)
+      await updateServer(editingId.value, {
+        ...details,
+        ...(ssh_password ? { ssh_password } : {}),
+        ...(ssh_key ? { ssh_key } : {}),
+      })
     } else {
-      await createServer(form.value)
+      await createServer(connectionPayload(form.value))
     }
     closeForm()
     await fetchServers()
@@ -388,68 +362,70 @@ async function addServer() {
 
 function startEdit(srv) {
   editingId.value = srv.id
-  form.value = {
-    name: srv.name,
+  probeResult.value = null
+  const nextForm = {
+    name: srv.name === srv.host ? '' : srv.name,
     host: srv.host,
+    connection_mode: srv.proxy_server_id ? 'proxy' : 'direct',
+    proxy_server_id: srv.proxy_server_id ? String(srv.proxy_server_id) : '',
     ssh_port: srv.ssh_port || 22,
     ssh_user: srv.ssh_user || 'root',
     ssh_auth_type: srv.ssh_auth_type || 'password',
     ssh_password: '',
     ssh_key: '',
+    hostname: srv.hostname || '',
   }
+  hostnameConnectionSnapshot = connectionSnapshot(nextForm)
+  form.value = nextForm
+  hostnameError.value = ''
   showAdd.value = true
 }
 
 function closeForm() {
+  hostnameRequestToken++
+  hostnameFetching.value = false
   showAdd.value = false
   editingId.value = null
+  probeResult.value = null
   formError.value = ''
+  hostnameError.value = ''
   resetForm()
 }
 
-async function probeServer(id) {
-  probingId.value = id
+async function fetchHostname() {
+  if (hostnameFetching.value || !form.value.host.trim() || !form.value.ssh_port) return
+  if (form.value.connection_mode === 'proxy' && !form.value.proxy_server_id) { hostnameError.value = '请先选择代理节点'; return }
+  const id = editingId.value
+  const details = connectionPayload(form.value)
+  const snapshot = connectionSnapshot(form.value)
+  const token = ++hostnameRequestToken
+  hostnameFetching.value = true
+  hostnameError.value = ''
+  formError.value = ''
   try {
-    const srv = servers.value.find(s => s.id === id)
-    const result = await probeServerRequest(id)
-    probeResult.value = { host: srv?.host || '', ...result }
-  } catch (e) { probeResult.value = { host: '', reachable: false, error: e.message } }
-  probingId.value = null
-}
-
-async function startImport(id) {
-  const srv = servers.value.find(s => s.id === id)
-  if (!srv) return
-  importServer.value = srv
-  importState.value = { phase: 'detecting' }
-
-  try {
-    const result = await preimportServer(id)
-    importState.value = { phase: 'confirm', info: result }
-  } catch (e) {
-    importState.value = { phase: 'error', error: e.message || '预检失败' }
-  }
-}
-
-async function doConfirmImport() {
-  if (importSubmitting.value) return
-  const info = importState.value.info
-  if (!info) return
-  importState.value.phase = 'detecting'
-  importSubmitting.value = true
-  try {
-    await importServerToCluster(importServer.value.id, {
-      hostname: info.node_name,
-      role: info.role,
-    })
-    importState.value = null
-    importServer.value = null
-    await fetchServers()
-  } catch (e) {
-    importState.value = { phase: 'error', error: e.message || '导入失败' }
+    const result = await resolveServerHostname(id, details)
+    if (token === hostnameRequestToken && showAdd.value && editingId.value === id && connectionSnapshot(form.value) === snapshot) form.value.hostname = result.hostname
+  } catch (error) {
+    if (token === hostnameRequestToken && showAdd.value && editingId.value === id && connectionSnapshot(form.value) === snapshot) hostnameError.value = error.message || '获取机器名失败'
   } finally {
-    importSubmitting.value = false
+    if (token === hostnameRequestToken) hostnameFetching.value = false
   }
+}
+
+async function probeServer() {
+  if (!editingId.value || probing.value) return
+  if (form.value.connection_mode === 'proxy' && !form.value.proxy_server_id) { probeResult.value = { reachable: false, error: '请先选择代理节点' }; return }
+  const id = editingId.value
+  const details = connectionPayload(form.value)
+  const snapshot = connectionSnapshot(form.value)
+  probeResult.value = null
+  probing.value = true
+  try {
+    const result = await probeServerRequest(id, details)
+    if (showAdd.value && editingId.value === id && connectionSnapshot(form.value) === snapshot) probeResult.value = result
+  } catch (e) {
+    if (showAdd.value && editingId.value === id && connectionSnapshot(form.value) === snapshot) probeResult.value = { reachable: false, error: e.message }
+  } finally { probing.value = false }
 }
 
 function confirmDelete(srv) { deleteTarget.value = srv; deleteError.value = '' }
@@ -515,7 +491,11 @@ function formatMB(mb) {
   return mb + ' MB'
 }
 
-function resetForm() { form.value = { name: '', host: '', ssh_port: 22, ssh_user: 'root', ssh_auth_type: 'password', ssh_password: '', ssh_key: '' } }
+function resetForm() {
+  const nextForm = emptyForm()
+  hostnameConnectionSnapshot = connectionSnapshot(nextForm)
+  form.value = nextForm
+}
 </script>
 
 <style scoped>
@@ -558,17 +538,23 @@ function resetForm() { form.value = { name: '', host: '', ssh_port: 22, ssh_user
   font-size: 12px;
   color: var(--text-secondary);
 }
-.server-content { margin-top: var(--space-20); }
-.resource-overview { display: flex; align-items: center; justify-content: space-between; gap: var(--space-16); }
-.resource-overview-title { margin: 0; color: var(--text-primary); font-size: 16px; }
-.resource-overview-meta { margin: 4px 0 0; color: var(--text-muted); font-size: 11px; }
-.network-overview { display: flex; align-items: center; justify-content: space-between; gap: var(--space-16); }
-.network-overview-title { margin: 0; color: var(--text-primary); font-size: 16px; }
-.network-table-card { margin-top: var(--space-16); }
-.network-table td { white-space: nowrap; }
-.resource-row { cursor: pointer; }
-.resource-row:hover { background: var(--surface-hover); }
-.resource-metric { display: grid; min-width: 130px; gap: 6px; }
+.server-content { margin-top: var(--tabbed-page-content-gap); }
+.server-list-toolbar { display: flex; min-height: 62px; align-items: center; justify-content: flex-end; gap: var(--space-8); padding: 12px var(--space-16); }
+.server-table-wrap { padding: 0 var(--space-16); }
+.hostname-form-row { display: flex; align-items: center; gap: var(--space-8); }
+.hostname-form-row .form-input { flex: 1; min-width: 0; }
+.hostname-form-row .btn { flex: none; }
+@media (max-width: 480px) { .hostname-form-row { flex-wrap: wrap; } .hostname-form-row .btn { width: 100%; justify-content: center; } }
+.server-probe { display: flex; align-items: center; gap: var(--space-12); flex-wrap: wrap; margin-top: var(--space-12); }
+.server-probe-result { font-size: 12px; overflow-wrap: anywhere; }
+.resource-monitoring-toolbar { display: flex; min-height: 62px; align-items: center; justify-content: flex-end; gap: var(--space-8); padding: 12px var(--space-16); }
+.resource-monitoring-meta { color: var(--text-muted); font-size: 11px; }
+.resource-monitoring-card > .k8s-banner { margin: 0 var(--space-16) var(--space-12); }
+.resource-table-wrap { padding: 0 var(--space-16); }
+.resource-table td { padding-top: 10px; padding-bottom: 10px; }
+.resource-server-name, .resource-server-host { white-space: nowrap; }
+.resource-server-host { color: var(--text-secondary); font-size: 11px; }
+.resource-metric { display: grid; min-width: 130px; gap: 4px; }
 .resource-metric strong { color: var(--text-secondary); font-size: 11px; font-weight: 600; white-space: nowrap; }
 .resource-meter { display: block; width: 100%; height: 4px; overflow: hidden; border-radius: 2px; background: var(--surface-subtle); }
 .resource-meter i { display: block; height: 100%; border-radius: inherit; background: var(--success); }
@@ -576,8 +562,7 @@ function resetForm() { form.value = { name: '', host: '', ssh_port: 22, ssh_user
 .resource-meter i.is-danger { background: var(--danger); }
 .resource-error { display: block; max-width: 170px; margin-top: 3px; overflow: hidden; color: var(--danger); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 @media (max-width: 640px) {
-  .resource-overview { align-items: flex-start; }
-  .network-overview { align-items: flex-start; }
+  .resource-monitoring-toolbar { align-items: flex-end; flex-direction: column; }
   .resource-metric { min-width: 116px; }
 }
 

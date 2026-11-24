@@ -32,7 +32,7 @@ func (h *ChartRepositoryHandler) List(c *gin.Context) {
 		apiShared.Error(c, 500, apiShared.CodeDBError, "读取 Chart 仓库失败")
 		return
 	}
-	apiShared.Success(c, apiShared.ChartRepositoriesDTO(items))
+	apiShared.ListPage(c, apiShared.ChartRepositoriesDTO(items))
 }
 func (h *ChartRepositoryHandler) Create(c *gin.Context) {
 	var r chartRepositoryRequest

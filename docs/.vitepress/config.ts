@@ -36,6 +36,7 @@ export default defineConfig({
     ],
     sidebar: {
       '/application-delivery/': [{ text: '应用交付', items: [
+        { text: '产品研发与发行', link: '/application-delivery/product-lifecycle' },
         { text: '项目与环境', link: '/application-delivery/projects-and-environments' },
         { text: '应用工作台', link: '/application-delivery/application-workspace' },
         { text: '发布与版本记录', link: '/application-delivery/releases' },

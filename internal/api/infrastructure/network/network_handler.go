@@ -20,7 +20,7 @@ type NetworkHandler struct {
 }
 
 func (h *NetworkHandler) ListStandardIngresses(c *gin.Context) {
-	result, err := h.Service.ListStandardIngressesContext(c.Request.Context(), c.Query("namespace"))
+	result, err := h.Service.ListStandardIngressesContext(c.Request.Context(), apiShared.InventoryNamespace(c))
 	if err != nil {
 		apiShared.Error(c, http.StatusOK, apiShared.CodeK8sAPIError, err.Error())
 		return
@@ -28,7 +28,9 @@ func (h *NetworkHandler) ListStandardIngresses(c *gin.Context) {
 	if result == nil {
 		result = []k8sclient.IngressStdInfo{}
 	}
-	apiShared.Success(c, result)
+	apiShared.ResourceListPage(c, result, func(item k8sclient.IngressStdInfo) apiShared.ResourceListKey {
+		return apiShared.ResourceListKey{Name: item.Name, Namespace: item.Namespace}
+	})
 }
 
 func (h *NetworkHandler) GetStandardIngress(c *gin.Context) {
@@ -81,4 +83,8 @@ func (h *NetworkHandler) StandardIngressController(c *gin.Context) {
 func NewNetworkHandler(service *networkservice.Service, h NetworkHandler) *NetworkHandler {
 	h.Service = service
 	return &h
+}
+
+func (h *NetworkHandler) ForCluster(client *k8sclient.Client) *NetworkHandler {
+	return &NetworkHandler{Service: networkservice.NewService(nil).WithStandardIngressAdapter(client)}
 }

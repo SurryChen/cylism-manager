@@ -218,7 +218,7 @@ func (h *StorageHandler) executePersistentVolumeRestore(parent context.Context, 
 		}
 	}
 	clear := "sudo -n find " + storageShellQuote(claim.LocalPath) + " -mindepth 1 -maxdepth 1 -exec rm -rf {} +"
-	if out, err := transport.SSHExecContext(ctx, 30*time.Second, append(transport.BuildSSHArgs(source, h.encKey, source.Host), clear)); err != nil {
+	if out, err := transport.SSHExecServerContext(ctx, 30*time.Second, source, h.encKey, clear); err != nil {
 		h.restoreBackupReplicas(ctx, environment.Namespace, replicas)
 		h.failPersistentVolumeRestore(backup, fmt.Errorf("清空目标 PVC 失败: %s", strings.TrimSpace(string(out))))
 		return

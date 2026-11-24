@@ -6,10 +6,12 @@ import { api } from '../../api/index.js'
 
 vi.mock('../../api/index.js', () => ({ api: { get: vi.fn() } }))
 const routeParams = reactive({ namespace: 'production', name: 'api-cert' })
+const routeQuery = reactive({})
+const push = vi.fn()
 let mountedWrapper
 vi.mock('vue-router', () => ({
-  useRoute: () => ({ params: routeParams }),
-  useRouter: () => ({ push: vi.fn() }),
+  useRoute: () => ({ params: routeParams, query: routeQuery }),
+  useRouter: () => ({ push }),
 }))
 
 describe('CertificateOperations view', () => {
@@ -18,6 +20,8 @@ describe('CertificateOperations view', () => {
     api.get.mockReset()
     routeParams.namespace = 'production'
     routeParams.name = 'api-cert'
+    delete routeParams.domainID
+    for (const key of Object.keys(routeQuery)) delete routeQuery[key]
   })
   afterEach(() => mountedWrapper?.unmount())
 
@@ -28,6 +32,26 @@ describe('CertificateOperations view', () => {
     expect(api.get).toHaveBeenCalledWith('/certs/production/api-cert/operations', expect.objectContaining({ signal: expect.any(AbortSignal) }))
     expect(wrapper.text()).toContain('RecordNotFound')
     expect(wrapper.text()).toContain('DNS-01')
+  })
+
+  it('loads domain operations, refreshes them, and returns to the originating domain list', async () => {
+    routeParams.domainID = '1'
+    Object.assign(routeQuery, { hostname: 'api.example.com', project_id: '2', environment_id: '3', application_id: '4', return_tab: 'access' })
+    api.get.mockResolvedValueOnce([]).mockResolvedValueOnce([{ kind: 'Order', name: 'api-cert-1', status: 'Pending' }])
+    const wrapper = mountedWrapper = mount(CertificateOperations)
+    await flushPromises()
+
+    expect(api.get).toHaveBeenCalledWith('/domains/1/operations', expect.objectContaining({ signal: expect.any(AbortSignal) }))
+    expect(wrapper.text()).toContain('证书尚未生成签发过程资源')
+    await wrapper.find('.detail-title-row .btn').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('api-cert-1')
+    expect(api.get).toHaveBeenCalledTimes(2)
+
+    await wrapper.find('.back-link').trigger('click')
+    expect(push).toHaveBeenCalledWith({ path: '/applications/domains', query: {
+      project_id: '2', environment_id: '3', application_id: '4', return_tab: 'access',
+    } })
   })
 
   it('commits only the latest route response', async () => {
@@ -67,4 +91,16 @@ describe('CertificateOperations view', () => {
     wrapper.unmount()
     expect(requestOptions.signal.aborted).toBe(true)
   })
+})
+
+vi.mock('../../api/list-pages.js', async importOriginal => {
+  const original = await importOriginal()
+  const { api } = await import('../../api/index.js')
+  const { listPageFixture } = await import('../../test-support/list-page-fixture.js')
+  return { ...original, getListPage: async (path, query, options) => {
+    const filters = new URLSearchParams()
+    for (const key of ['environment_id', 'unassigned']) if (query[key]) filters.set(key, query[key])
+    const url = path + (filters.size ? '?' + filters : '')
+    return listPageFixture(await api.get(url, options), query)
+  } }
 })

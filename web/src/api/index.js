@@ -73,7 +73,8 @@ async function unwrapResponse(res) {
 
 // 请求拦截
 async function request(path, options = {}) {
-  const headers = { 'Content-Type': 'application/json', ...options.headers }
+  const isFormData = typeof FormData !== 'undefined' && options.body instanceof FormData
+  const headers = { ...(isFormData ? {} : { 'Content-Type': 'application/json' }), ...options.headers }
 
   const token = getAccessToken()
   if (token) headers['Authorization'] = `Bearer ${token}`
@@ -99,6 +100,7 @@ export const api = {
   put: (path, body, options = {}) => request(path, { ...options, method: 'PUT', body: JSON.stringify(body) }),
   patch: (path, body, options = {}) => request(path, { ...options, method: 'PATCH', body: JSON.stringify(body) }),
   delete: (path, body, options = {}) => request(path, { ...options, method: 'DELETE', ...(body === undefined ? {} : { body: JSON.stringify(body) }) }),
+  upload: (path, body, options = {}) => request(path, { ...options, method: 'POST', body }),
 }
 
 export { getAccessToken, getRefreshToken, setTokens, clearTokens }

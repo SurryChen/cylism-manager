@@ -8,16 +8,21 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// ServiceEndpointInfo Service + Endpoint 汇总信息
+// ServiceInfo Service 列表和详情共享的元数据。
+type ServiceInfo struct {
+	Name      string            `json:"name"`
+	Namespace string            `json:"namespace"`
+	Type      string            `json:"type"`
+	ClusterIP string            `json:"cluster_ip"`
+	Ports     []string          `json:"ports"`
+	Selector  map[string]string `json:"selector"`
+	Age       string            `json:"age"`
+}
+
+// ServiceEndpointInfo Service + Endpoint 汇总信息。
 type ServiceEndpointInfo struct {
-	Name          string            `json:"name"`
-	Namespace     string            `json:"namespace"`
-	Type          string            `json:"type"`
-	ClusterIP     string            `json:"cluster_ip"`
-	Ports         []string          `json:"ports"`
-	EndpointCount int               `json:"endpoint_count"`
-	Selector      map[string]string `json:"selector"`
-	Age           string            `json:"age"`
+	ServiceInfo
+	EndpointCount int `json:"endpoint_count"`
 }
 
 // EndpointSliceInfo EndpointSlice 展示信息
@@ -56,6 +61,26 @@ func (c *Client) ListServicesContext(ctx context.Context, ns string) ([]ServiceE
 		// Try to get endpoint count from EndpointSlices or Endpoints
 		info.EndpointCount = c.countServiceEndpointsContext(ctx, s.Namespace, s.Name)
 		result = append(result, info)
+	}
+	return result, nil
+}
+
+// ListServicesMetadataContext lists Service metadata without endpoint lookups.
+func (c *Client) ListServicesMetadataContext(ctx context.Context, ns string) ([]ServiceInfo, error) {
+	var list *corev1.ServiceList
+	var err error
+	if ns == "" {
+		list, err = c.Clientset.CoreV1().Services("").List(ctx, metav1.ListOptions{})
+	} else {
+		list, err = c.Clientset.CoreV1().Services(ns).List(ctx, metav1.ListOptions{})
+	}
+	if err != nil {
+		return nil, fmt.Errorf("list services: %w", err)
+	}
+
+	result := make([]ServiceInfo, 0, len(list.Items))
+	for _, service := range list.Items {
+		result = append(result, serviceToInfo(&service))
 	}
 	return result, nil
 }
@@ -172,6 +197,10 @@ func (c *Client) countServiceEndpointsContext(ctx context.Context, ns, name stri
 }
 
 func serviceToEndpointInfo(s *corev1.Service) ServiceEndpointInfo {
+	return ServiceEndpointInfo{ServiceInfo: serviceToInfo(s)}
+}
+
+func serviceToInfo(s *corev1.Service) ServiceInfo {
 	ports := make([]string, 0, len(s.Spec.Ports))
 	for _, p := range s.Spec.Ports {
 		ports = append(ports, fmt.Sprintf("%s:%d", p.Protocol, p.Port))
@@ -180,7 +209,7 @@ func serviceToEndpointInfo(s *corev1.Service) ServiceEndpointInfo {
 	for k, v := range s.Spec.Selector {
 		selector[k] = v
 	}
-	return ServiceEndpointInfo{
+	return ServiceInfo{
 		Name:      s.Name,
 		Namespace: s.Namespace,
 		Type:      string(s.Spec.Type),

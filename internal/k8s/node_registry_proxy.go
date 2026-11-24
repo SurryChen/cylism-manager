@@ -19,6 +19,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/remotecommand"
@@ -44,6 +45,91 @@ type RegistryProxyDiagnostics interface {
 	Available() bool
 	DeploymentAvailable(context.Context, *model.RegistryProxy) (bool, bool, error)
 	DiagnoseUpstream(context.Context, *model.RegistryProxy) (RegistryProxyDiagnostic, error)
+}
+
+type RegistryProxySnapshot struct {
+	UpstreamURL             string
+	NodeName                string
+	NodePort                int32
+	CacheLimitGi            int32
+	DNSServers              []string
+	NoProxy                 string
+	OutboundProxyConfigured bool
+	Available               bool
+}
+
+// InspectExisting reads a proxy without changing its Deployment, Service or Pods.
+func (r *RegistryProxyReconciler) InspectExisting(ctx context.Context, resourceName string) (*RegistryProxySnapshot, error) {
+	if !r.Available() {
+		return nil, errors.New("Kubernetes 集群未连接")
+	}
+	deployment, err := r.client.Clientset.AppsV1().Deployments(RegistryProxyNamespace).Get(ctx, resourceName, metav1.GetOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("读取代理 Deployment 失败: %w", err)
+	}
+	service, err := r.client.Clientset.CoreV1().Services(RegistryProxyNamespace).Get(ctx, resourceName, metav1.GetOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("读取代理 Service 失败: %w", err)
+	}
+	if service.Spec.Type != corev1.ServiceTypeNodePort || len(service.Spec.Ports) != 1 || service.Spec.Ports[0].NodePort == 0 {
+		return nil, errors.New("现有 Service 不是单端口 NodePort 代理")
+	}
+	if service.Spec.Ports[0].Port != 5000 || service.Spec.Ports[0].TargetPort.IntVal != 5000 {
+		return nil, errors.New("现有 Service 端口映射与平台代理不一致")
+	}
+	if len(service.Spec.Selector) == 0 || len(deployment.Spec.Template.Spec.Containers) != 1 {
+		return nil, errors.New("现有资源不是单容器 Registry 代理")
+	}
+	if deployment.Spec.Selector == nil || len(deployment.Spec.Selector.MatchLabels) == 0 || len(deployment.Spec.Selector.MatchExpressions) != 0 {
+		return nil, errors.New("Deployment 缺少安全的 Pod 选择器")
+	}
+	for key, value := range deployment.Spec.Selector.MatchLabels {
+		if deployment.Spec.Template.Labels[key] != value {
+			return nil, errors.New("Deployment 选择器未指向自身 Pod")
+		}
+	}
+	for key, value := range service.Spec.Selector {
+		if deployment.Spec.Template.Labels[key] != value {
+			return nil, errors.New("Service 未指向该 Deployment 的 Pod")
+		}
+	}
+	container := deployment.Spec.Template.Spec.Containers[0]
+	if !strings.HasPrefix(container.Image, "registry:") && !strings.Contains(container.Image, "/registry:") && !strings.Contains(container.Image, "/registry@") {
+		return nil, errors.New("Deployment 容器不是 Registry 镜像")
+	}
+	snapshot := &RegistryProxySnapshot{NodeName: deployment.Spec.Template.Spec.NodeSelector[corev1.LabelHostname], NodePort: service.Spec.Ports[0].NodePort, CacheLimitGi: 10, Available: deployment.Status.AvailableReplicas > 0}
+	for _, env := range container.Env {
+		switch env.Name {
+		case "REGISTRY_PROXY_REMOTEURL":
+			if env.ValueFrom != nil {
+				return nil, errors.New("无法验证引用 Secret 的代理上游地址")
+			}
+			snapshot.UpstreamURL = env.Value
+		case "HTTP_PROXY", "HTTPS_PROXY":
+			snapshot.OutboundProxyConfigured = true
+		case "NO_PROXY":
+			if env.ValueFrom == nil {
+				snapshot.NoProxy = env.Value
+			}
+		}
+	}
+	if snapshot.UpstreamURL == "" || snapshot.NodeName == "" {
+		return nil, errors.New("Deployment 缺少上游地址或固定节点配置")
+	}
+	if deployment.Spec.Template.Spec.DNSConfig != nil {
+		snapshot.DNSServers = append(snapshot.DNSServers, deployment.Spec.Template.Spec.DNSConfig.Nameservers...)
+	}
+	foundCache := false
+	for _, volume := range deployment.Spec.Template.Spec.Volumes {
+		if volume.Name == "cache" && volume.EmptyDir != nil && volume.EmptyDir.SizeLimit != nil {
+			snapshot.CacheLimitGi = int32(volume.EmptyDir.SizeLimit.Value() / (1 << 30))
+			foundCache = true
+		}
+	}
+	if !foundCache {
+		return nil, errors.New("现有代理未使用带容量上限的临时缓存")
+	}
+	return snapshot, nil
 }
 
 var _ RegistryProxyResourceReconciler = (*RegistryProxyReconciler)(nil)
@@ -124,7 +210,22 @@ func (r *RegistryProxyReconciler) ClearCache(ctx context.Context, proxy *model.R
 	if !r.Available() {
 		return errors.New("Kubernetes 集群未连接")
 	}
-	return r.client.Clientset.CoreV1().Pods(RegistryProxyNamespace).DeleteCollection(ctx, metav1.DeleteOptions{}, metav1.ListOptions{LabelSelector: "app.kubernetes.io/name=" + registryProxyResourceName(proxy)})
+	selector, err := r.podSelector(ctx, proxy)
+	if err != nil {
+		return err
+	}
+	return r.client.Clientset.CoreV1().Pods(RegistryProxyNamespace).DeleteCollection(ctx, metav1.DeleteOptions{}, metav1.ListOptions{LabelSelector: selector})
+}
+
+func (r *RegistryProxyReconciler) podSelector(ctx context.Context, proxy *model.RegistryProxy) (string, error) {
+	deployment, err := r.client.Clientset.AppsV1().Deployments(RegistryProxyNamespace).Get(ctx, registryProxyResourceName(proxy), metav1.GetOptions{})
+	if err != nil {
+		return "", err
+	}
+	if deployment.Spec.Selector == nil || len(deployment.Spec.Selector.MatchLabels) == 0 || len(deployment.Spec.Selector.MatchExpressions) != 0 {
+		return "", errors.New("代理 Deployment 缺少安全的 Pod 选择器")
+	}
+	return labels.SelectorFromSet(deployment.Spec.Selector.MatchLabels).String(), nil
 }
 
 func (r *RegistryProxyReconciler) DeploymentAvailable(ctx context.Context, proxy *model.RegistryProxy) (bool, bool, error) {
@@ -161,7 +262,11 @@ func (r *RegistryProxyReconciler) DiagnoseUpstream(ctx context.Context, proxy *m
 	if !r.Available() || r.client.Config == nil {
 		return RegistryProxyDiagnostic{}, errors.New("Kubernetes exec unavailable")
 	}
-	pods, err := r.client.Clientset.CoreV1().Pods(RegistryProxyNamespace).List(ctx, metav1.ListOptions{LabelSelector: "app.kubernetes.io/name=" + registryProxyResourceName(proxy)})
+	selector, err := r.podSelector(ctx, proxy)
+	if err != nil {
+		return RegistryProxyDiagnostic{}, err
+	}
+	pods, err := r.client.Clientset.CoreV1().Pods(RegistryProxyNamespace).List(ctx, metav1.ListOptions{LabelSelector: selector})
 	if err != nil {
 		return RegistryProxyDiagnostic{}, err
 	}

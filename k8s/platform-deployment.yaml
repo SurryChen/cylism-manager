@@ -31,10 +31,6 @@ spec:
         - name: data
           persistentVolumeClaim:
             claimName: cylism-manager-data
-        - name: ssh-key
-          secret:
-            secretName: cylism-ssh-key
-            defaultMode: 0600
       containers:
         - name: platform
           imagePullPolicy: Always
@@ -44,9 +40,6 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /data
-            - name: ssh-key
-              mountPath: /root/.ssh
-              readOnly: true
           resources:
             requests:
               memory: "256Mi"
@@ -184,7 +177,7 @@ rules:
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   - apiGroups: ["discovery.k8s.io"]
     resources: ["endpointslices"]
-    verbs: ["get", "list", "watch"]
+    verbs: ["get", "list", "watch", "create", "update", "delete"]
   - apiGroups: ["traefik.io"]
     resources: ["ingressroutes"]
     verbs: ["get", "list", "create", "update", "delete"]

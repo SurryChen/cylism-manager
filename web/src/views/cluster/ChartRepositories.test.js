@@ -17,10 +17,10 @@ describe('ChartRepositories view', () => {
   it('creates a chart repository through the named contract', async () => {
     const wrapper = mount(ChartRepositories)
     await flushPromises()
-    await wrapper.get('.page-header .btn-primary').trigger('click')
+    await wrapper.get('.tabbed-workspace-actions .btn-primary').trigger('click')
     await wrapper.get('input[placeholder="jetstack"]').setValue('jetstack')
     await wrapper.get('input[placeholder="https://charts.jetstack.io"]').setValue('https://charts.jetstack.io')
-    await wrapper.get('form').trigger('submit')
+    await wrapper.get('.modal form').trigger('submit')
     await flushPromises()
     expect(api.post).toHaveBeenCalledWith('/chart-repositories', {
       name: 'jetstack', endpoint: 'https://charts.jetstack.io', chart_name: 'cert-manager', chart_version: 'v1.16.3', enabled: true,
@@ -31,13 +31,26 @@ describe('ChartRepositories view', () => {
     api.post.mockRejectedValueOnce(new Error('Chart 仓库不可达'))
     const wrapper = mount(ChartRepositories)
     await flushPromises()
-    await wrapper.get('.page-header .btn-primary').trigger('click')
+    await wrapper.get('.tabbed-workspace-actions .btn-primary').trigger('click')
     await wrapper.get('input[placeholder="jetstack"]').setValue('jetstack')
     await wrapper.get('input[placeholder="https://charts.jetstack.io"]').setValue('https://charts.jetstack.io')
-    await wrapper.get('form').trigger('submit')
+    await wrapper.get('.modal form').trigger('submit')
     await flushPromises()
     expect(wrapper.find('.modal').exists()).toBe(true)
     expect(wrapper.get('input[placeholder="jetstack"]').element.value).toBe('jetstack')
     expect(wrapper.text()).toContain('Chart 仓库不可达')
+    expect(wrapper.get('[role="dialog"]').text()).toContain('Chart 仓库不可达')
   })
+})
+
+vi.mock('../../api/list-pages.js', async importOriginal => {
+  const original = await importOriginal()
+  const { api } = await import('../../api/index.js')
+  const { listPageFixture } = await import('../../test-support/list-page-fixture.js')
+  return { ...original, getListPage: async (path, query, options) => {
+    const filters = new URLSearchParams()
+    for (const key of ['environment_id', 'unassigned']) if (query[key]) filters.set(key, query[key])
+    const url = path + (filters.size ? '?' + filters : '')
+    return listPageFixture(await api.get(url, options), query)
+  } }
 })

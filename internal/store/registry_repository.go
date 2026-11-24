@@ -66,7 +66,7 @@ func (s *Store) GetManagedOCIRegistryByEndpoint(endpoint string) (*model.Managed
 
 func (s *Store) ListManagedOCIRegistries() ([]model.ManagedOCIRegistry, error) {
 	var registries []model.ManagedOCIRegistry
-	err := s.db.Order("created_at desc").Find(&registries).Error
+	err := s.db.Order("created_at desc, id desc").Find(&registries).Error
 	for i := range registries {
 		registries[i].CredentialConfigured = registries[i].EncryptedCredential != ""
 	}
@@ -94,7 +94,7 @@ func (s *Store) CountManagedOCIRegistryReferences(registryID uint) (releases, pr
 
 func (s *Store) ListImageRegistries(projectID uint) ([]model.ImageRegistry, error) {
 	var registries []model.ImageRegistry
-	query := s.db.Preload("Projects").Order("created_at desc")
+	query := s.db.Preload("Projects").Order("created_at desc, id desc")
 	if projectID != 0 {
 		query = query.Joins("JOIN image_registry_projects ON image_registry_projects.image_registry_id = image_registries.id").Where("image_registry_projects.project_id = ?", projectID)
 	}
@@ -128,7 +128,7 @@ func (s *Store) GetNodeRegistryMirrorByRegistry(registry string) (*model.NodeReg
 }
 func (s *Store) ListNodeRegistryMirrors() ([]model.NodeRegistryMirror, error) {
 	var mirrors []model.NodeRegistryMirror
-	err := s.db.Preload("NodeStatuses.Server").Order("created_at desc").Find(&mirrors).Error
+	err := s.db.Preload("NodeStatuses.Server").Order("created_at desc, id desc").Find(&mirrors).Error
 	for i := range mirrors {
 		mirrors[i].CredentialConfigured = mirrors[i].Credential != ""
 	}
@@ -154,7 +154,7 @@ func (s *Store) UpsertNodeRegistryMirrorStatus(status *model.NodeRegistryMirrorN
 
 func (s *Store) GetRegistryProxy() (*model.RegistryProxy, error) {
 	var proxy model.RegistryProxy
-	err := s.db.Order("id asc").First(&proxy).Error
+	err := s.db.Where("cluster_id = ?", 0).Order("id asc").First(&proxy).Error
 	return &proxy, err
 }
 func (s *Store) GetRegistryProxyByID(id uint) (*model.RegistryProxy, error) {
@@ -164,17 +164,48 @@ func (s *Store) GetRegistryProxyByID(id uint) (*model.RegistryProxy, error) {
 }
 func (s *Store) ListRegistryProxies() ([]model.RegistryProxy, error) {
 	var proxies []model.RegistryProxy
-	err := s.db.Order("created_at asc").Find(&proxies).Error
+	err := s.db.Order("created_at asc, id asc").Find(&proxies).Error
 	return proxies, err
 }
 func (s *Store) SaveRegistryProxy(proxy *model.RegistryProxy) error { return s.db.Save(proxy).Error }
+func (s *Store) DeleteRegistryProxy(id uint) error {
+	return s.db.Delete(&model.RegistryProxy{}, id).Error
+}
+
+func (s *Store) ListRegistryProxyRelays(proxyID uint) ([]model.RegistryProxyRelay, error) {
+	var relays []model.RegistryProxyRelay
+	err := s.db.Where("proxy_id = ?", proxyID).Order("id asc").Find(&relays).Error
+	return relays, err
+}
+func (s *Store) GetRegistryProxyRelay(id uint) (*model.RegistryProxyRelay, error) {
+	var relay model.RegistryProxyRelay
+	err := s.db.First(&relay, id).Error
+	return &relay, err
+}
+func (s *Store) SaveRegistryProxyRelay(relay *model.RegistryProxyRelay) error {
+	return s.db.Save(relay).Error
+}
+func (s *Store) DeleteRegistryProxyRelay(id uint) error {
+	return s.db.Delete(&model.RegistryProxyRelay{}, id).Error
+}
+func (s *Store) ListRegistryProxyNodeRoutes(proxyID uint) ([]model.RegistryProxyNodeRoute, error) {
+	var routes []model.RegistryProxyNodeRoute
+	err := s.db.Where("proxy_id = ?", proxyID).Order("server_id asc").Find(&routes).Error
+	return routes, err
+}
+func (s *Store) SaveRegistryProxyNodeRoute(route *model.RegistryProxyNodeRoute) error {
+	return s.db.Where("proxy_id = ? AND server_id = ?", route.ProxyID, route.ServerID).Assign(route).FirstOrCreate(&model.RegistryProxyNodeRoute{}).Error
+}
+func (s *Store) DeleteRegistryProxyNodeRoute(proxyID, serverID uint) error {
+	return s.db.Where("proxy_id = ? AND server_id = ?", proxyID, serverID).Delete(&model.RegistryProxyNodeRoute{}).Error
+}
 
 func (s *Store) CreateChartRepository(repository *model.ChartRepository) error {
 	return s.db.Create(repository).Error
 }
 func (s *Store) ListChartRepositories() ([]model.ChartRepository, error) {
 	var repositories []model.ChartRepository
-	err := s.db.Order("created_at desc").Find(&repositories).Error
+	err := s.db.Order("created_at desc, id desc").Find(&repositories).Error
 	return repositories, err
 }
 func (s *Store) GetChartRepository(id uint) (*model.ChartRepository, error) {

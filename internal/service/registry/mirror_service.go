@@ -64,6 +64,10 @@ func (s *MirrorService) List() ([]model.NodeRegistryMirror, error) {
 	return mirrors, nil
 }
 
+func (s *MirrorService) ListServers() ([]model.Server, error) {
+	return s.repository.ListServers()
+}
+
 func (s *MirrorService) Get(id uint) (*model.NodeRegistryMirror, error) {
 	mirror, err := s.repository.GetNodeRegistryMirror(id)
 	if err != nil {

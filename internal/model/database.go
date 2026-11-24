@@ -1,0 +1,110 @@
+package model
+
+import "time"
+
+// DatabaseInstance describes either a MySQL service deployed by the platform
+// or an existing MySQL endpoint. External endpoints may be registered before
+// business credentials are configured. Credentials are never serialized to clients.
+type DatabaseInstance struct {
+	Metadata          *DatabaseMetadata `gorm:"type:text;serializer:json" json:"metadata,omitempty"`
+	CloudConnectionID uint              `json:"cloud_connection_id,omitempty"`
+	CloudRegion       string            `gorm:"size:64" json:"cloud_region,omitempty"`
+	CloudInstanceID   string            `gorm:"size:128" json:"cloud_instance_id,omitempty"`
+	ConnectionMode    string            `gorm:"size:16;not null;default:direct" json:"connection_mode"`
+	PrivateGateway    *DatabaseGateway  `gorm:"-" json:"private_gateway,omitempty"`
+	ID                uint              `gorm:"primaryKey" json:"id"`
+	Name              string            `gorm:"size:128;uniqueIndex;not null" json:"name"`
+	Mode              string            `gorm:"size:16;not null" json:"mode"`
+	ClusterID         uint              `gorm:"index" json:"cluster_id"`
+	Namespace         string            `gorm:"size:63" json:"namespace"`
+	ResourceName      string            `gorm:"size:63" json:"resource_name"`
+	Host              string            `gorm:"size:255;not null" json:"host"`
+	Port              int               `gorm:"not null;default:3306" json:"port"`
+	DatabaseName      string            `gorm:"size:64;not null" json:"database_name"`
+	Username          string            `gorm:"size:64;not null" json:"username"`
+	EncryptedPassword string            `gorm:"type:text;not null" json:"-"`
+	AdminUsername     string            `gorm:"size:64" json:"admin_username,omitempty"`
+	EncryptedAdmin    string            `gorm:"type:text" json:"-"`
+	NodeName          string            `gorm:"size:253" json:"node_name,omitempty"`
+	CPULimit          string            `gorm:"size:32" json:"cpu_limit,omitempty"`
+	MemoryLimit       string            `gorm:"size:32" json:"memory_limit,omitempty"`
+	EncryptedRoot     string            `gorm:"type:text" json:"-"`
+	StorageSize       string            `gorm:"size:32" json:"storage_size,omitempty"`
+	StorageClass      string            `gorm:"size:128" json:"storage_class,omitempty"`
+	Image             string            `gorm:"size:255" json:"image,omitempty"`
+	Status            string            `gorm:"size:32;not null" json:"status"`
+	LastError         string            `gorm:"type:text" json:"last_error,omitempty"`
+	CreatedAt         time.Time         `json:"created_at"`
+	UpdatedAt         time.Time         `json:"updated_at"`
+}
+
+// DatabaseMetadata is a persisted observation, not a claim of current liveness.
+type DatabaseMetadata struct {
+	Version    string    `json:"version"`
+	ServerUUID string    `json:"server_uuid,omitempty"`
+	Schemas    []string  `json:"schemas"`
+	ReadOnly   bool      `json:"read_only"`
+	CheckedAt  time.Time `json:"checked_at"`
+}
+
+type DatabaseBinding struct {
+	ID            uint      `gorm:"primaryKey" json:"id"`
+	InstanceID    uint      `gorm:"index;not null" json:"instance_id"`
+	TemplateID    uint      `gorm:"uniqueIndex;not null" json:"template_id"`
+	ApplicationID uint      `gorm:"index;not null" json:"application_id"`
+	DatabaseName  string    `gorm:"size:64" json:"database_name,omitempty"`
+	Username      string    `gorm:"size:64" json:"username,omitempty"`
+	Prefix        string    `gorm:"size:32;not null" json:"prefix"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
+}
+
+// MySQLCluster is a logical InnoDB Cluster managed by MySQL Operator.
+// Node selections constrain placement; the primary role can move after failover.
+type MySQLCluster struct {
+	ID                    uint      `gorm:"primaryKey" json:"id"`
+	Name                  string    `gorm:"size:128;uniqueIndex;not null" json:"name"`
+	ClusterID             uint      `gorm:"index;not null" json:"cluster_id"`
+	Namespace             string    `gorm:"size:63;not null" json:"namespace"`
+	ResourceName          string    `gorm:"size:63" json:"resource_name"`
+	DatabaseNodes         []string  `gorm:"type:text;serializer:json" json:"database_nodes"`
+	DatabaseInstances     int       `json:"database_instances"`
+	RouterNodes           []string  `gorm:"type:text;serializer:json" json:"router_nodes"`
+	RouterInstances       *int      `json:"router_instances"`
+	PreferredPrimaryNode  string    `gorm:"size:253" json:"preferred_primary_node"`
+	PrimaryConfigured     bool      `gorm:"not null;default:false" json:"primary_configured"`
+	StorageSize           string    `gorm:"size:32" json:"storage_size"`
+	StorageClass          string    `gorm:"size:128" json:"storage_class"`
+	MyCNF                 string    `gorm:"type:text" json:"mycnf"`
+	CPULimit              string    `gorm:"size:32" json:"cpu_limit"`
+	MemoryLimit           string    `gorm:"size:32" json:"memory_limit"`
+	ConfigRestartRequired bool      `gorm:"not null;default:false" json:"config_restart_required"`
+	EncryptedRoot         string    `gorm:"type:text" json:"-"`
+	Status                string    `gorm:"size:32;not null" json:"status"`
+	LastError             string    `gorm:"type:text" json:"last_error,omitempty"`
+	OnlineInstances       int       `json:"online_instances"`
+	RouterReady           int       `json:"router_ready"`
+	CreatedAt             time.Time `json:"created_at"`
+	UpdatedAt             time.Time `json:"updated_at"`
+}
+
+// MySQLClusterTask records a deployment attempt independently of the API process.
+type MySQLClusterTask struct {
+	DeleteClaims  bool      `gorm:"not null;default:false" json:"delete_claims"`
+	DeleteSecrets bool      `gorm:"not null;default:false" json:"delete_secrets"`
+	ID            uint      `gorm:"primaryKey" json:"id"`
+	ClusterID     uint      `gorm:"index;not null" json:"cluster_id"`
+	Kind          string    `gorm:"size:32;not null;default:deploy" json:"kind"`
+	Status        string    `gorm:"size:16;not null" json:"status"`
+	LastProgress  string    `gorm:"type:text" json:"last_progress,omitempty"`
+	LastWarning   string    `gorm:"type:text" json:"-"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
+}
+
+type MySQLClusterTaskLog struct {
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	TaskID    uint      `gorm:"index;not null" json:"task_id"`
+	Message   string    `gorm:"type:text;not null" json:"message"`
+	CreatedAt time.Time `json:"created_at"`
+}

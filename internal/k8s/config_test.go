@@ -8,7 +8,9 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
+	metadatafake "k8s.io/client-go/metadata/fake"
 	k8stesting "k8s.io/client-go/testing"
 )
 
@@ -60,6 +62,7 @@ func TestConfigMethods_Exist(t *testing.T) {
 	_ = client.ListConfigMapsContext
 	_ = client.GetConfigMapContext
 	_ = client.ListSecretsContext
+	_ = client.ListSecretsMetadataPageContext
 	_ = client.GetSecretContext
 	_ = client.GetSecretDataContext
 	_ = client.CreateConfigMapContext
@@ -68,6 +71,36 @@ func TestConfigMethods_Exist(t *testing.T) {
 	_ = client.CreateOpaqueSecretContext
 	_ = client.UpdateOpaqueSecretContext
 	_ = client.DeleteOpaqueSecretContext
+}
+
+func TestListSecretsMetadataPageDoesNotReadSecretData(t *testing.T) {
+	metadataScheme := metadatafake.NewTestScheme()
+	metadataScheme.AddKnownTypeWithName(schema.GroupVersionKind{Version: "v1", Kind: "Secret"}, &metav1.PartialObjectMetadata{})
+	metadataClient := metadatafake.NewSimpleMetadataClient(metadataScheme,
+		&metav1.PartialObjectMetadata{TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Secret"}, ObjectMeta: metav1.ObjectMeta{Name: "db-password", Namespace: "apps"}},
+		&metav1.PartialObjectMetadata{TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Secret"}, ObjectMeta: metav1.ObjectMeta{Name: "tls", Namespace: "system"}},
+	)
+	typedClient := k8sfake.NewSimpleClientset(&corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "db-password", Namespace: "apps"},
+		Data:       map[string][]byte{"password": []byte("must-not-be-listed")},
+	})
+	client := &Client{Clientset: typedClient, MetadataClient: metadataClient}
+
+	page, err := client.ListSecretsMetadataPageContext(context.Background(), "apps", 50, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Items) != 1 || page.Items[0].Name != "db-password" || page.Items[0].Namespace != "apps" {
+		t.Fatalf("unexpected metadata page: %#v", page)
+	}
+	if actions := typedClient.Actions(); len(actions) != 0 {
+		t.Fatalf("metadata inventory must not call typed Secret API: %#v", actions)
+	}
+	for _, action := range metadataClient.Actions() {
+		if action.GetResource() != (schema.GroupVersionResource{Version: "v1", Resource: "secrets"}) || action.GetNamespace() != "apps" {
+			t.Fatalf("unexpected metadata request: %#v", action)
+		}
+	}
 }
 
 func TestGetSecretDataContextReturnsIndependentSecretData(t *testing.T) {

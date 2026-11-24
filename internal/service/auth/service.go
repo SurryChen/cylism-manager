@@ -137,3 +137,16 @@ func toView(item model.TemporaryLoginToken, now time.Time) TemporaryTokenView {
 	}
 	return TemporaryTokenView{ID: item.ID, Label: item.Label, ExpiresAt: item.ExpiresAt, RevokedAt: item.RevokedAt, LastUsedAt: item.LastUsedAt, CreatedAt: item.CreatedAt, Status: status}
 }
+
+func (s *TemporaryTokenService) ListPage(userID uint, limit, offset int) ([]TemporaryTokenView, int64, error) {
+	items, total, err := s.tokens.ListTemporaryLoginTokensPage(userID, limit, offset)
+	if err != nil {
+		return nil, 0, err
+	}
+	result := make([]TemporaryTokenView, 0, len(items))
+	now := time.Now().UTC()
+	for _, item := range items {
+		result = append(result, toView(item, now))
+	}
+	return result, total, nil
+}

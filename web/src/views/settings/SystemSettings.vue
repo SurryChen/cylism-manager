@@ -11,12 +11,12 @@
 </template>
 
 <script setup>
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import SectionTabsHeader from '../../components/SectionTabsHeader.vue'
 import SystemSettingsSecurity from './SystemSettingsSecurity.vue'
 import SystemSettingsEntry from './SystemSettingsEntry.vue'
 import SystemSettingsRelease from './SystemSettingsRelease.vue'
-import { usePolling } from '../../composables/usePolling.js'
+import SystemSettingsCloudProviders from './SystemSettingsCloudProviders.vue'
 import { useRoutedTab } from '../../composables/useRoutedTab.js'
 
 const activeView = ref(null)
@@ -24,18 +24,16 @@ const tabs = [
   { id: 'security', label: '安全与访问', component: SystemSettingsSecurity },
   { id: 'entry', label: '平台入口', component: SystemSettingsEntry },
   { id: 'release', label: '发布与更新', component: SystemSettingsRelease },
+  { id: 'cloud', label: '云提供商', component: SystemSettingsCloudProviders },
 ]
 const { activeTab, selectTab } = useRoutedTab({ tabs, defaultTab: 'security', path: '/settings/system' })
 const activeComponent = computed(() => tabs.find(tab => tab.id === activeTab.value)?.component || SystemSettingsSecurity)
-const refreshPolling = usePolling(() => activeView.value?.refresh?.(), { interval: 15000 })
-
-onMounted(() => {
-  refreshPolling.start()
-})
-
-onBeforeUnmount(refreshPolling.stop)
-
-watch(activeTab, async () => {
+const visitedTabs = new Set([activeTab.value])
+watch(activeTab, async tab => {
+  const cached = visitedTabs.has(tab)
+  visitedTabs.add(tab)
+  // First visits load on mount; refresh only when returning to a cached tab.
+  if (!cached) return
   await nextTick()
   activeView.value?.refresh?.()
 })

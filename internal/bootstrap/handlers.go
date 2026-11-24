@@ -6,18 +6,27 @@ import (
 	agentapi "github.com/cylism/cylism-manager/internal/api/agent"
 	applicationapi "github.com/cylism/cylism-manager/internal/api/application"
 	authapi "github.com/cylism/cylism-manager/internal/api/auth"
+	cloudapi "github.com/cylism/cylism-manager/internal/api/cloud"
 	deliveryapi "github.com/cylism/cylism-manager/internal/api/delivery"
 	clusterapi "github.com/cylism/cylism-manager/internal/api/infrastructure/cluster"
 	kubernetesapi "github.com/cylism/cylism-manager/internal/api/infrastructure/kubernetes"
 	networkapi "github.com/cylism/cylism-manager/internal/api/infrastructure/network"
 	storageapi "github.com/cylism/cylism-manager/internal/api/infrastructure/storage"
+	productapi "github.com/cylism/cylism-manager/internal/api/product"
 	runtimeapi "github.com/cylism/cylism-manager/internal/api/runtime"
 	apisShared "github.com/cylism/cylism-manager/internal/api/shared"
 	systemapi "github.com/cylism/cylism-manager/internal/api/system"
+	"github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
 	runtimepkg "github.com/cylism/cylism-manager/internal/runtime"
 	runtimeidentity "github.com/cylism/cylism-manager/internal/runtime/identity"
+	cloudservice "github.com/cylism/cylism-manager/internal/service/cloud"
+	aliyunprovider "github.com/cylism/cylism-manager/internal/service/cloud/providers/aliyun"
+	clusterpkg "github.com/cylism/cylism-manager/internal/service/cluster"
+	"github.com/cylism/cylism-manager/internal/service/database/gateway"
+	"github.com/cylism/cylism-manager/internal/service/database/operations"
 	maintenance "github.com/cylism/cylism-manager/internal/service/maintenance"
+	networkservice "github.com/cylism/cylism-manager/internal/service/network"
 	alertingservice "github.com/cylism/cylism-manager/internal/service/observability/alerting"
 	monitoringservice "github.com/cylism/cylism-manager/internal/service/observability/monitoring"
 	registryservice "github.com/cylism/cylism-manager/internal/service/registry"
@@ -38,23 +47,38 @@ func (c *Container) BuildRouteDependencies() api.RouteDependencies {
 	}
 	agentAdapter := agentapi.NewKubernetesAdapter(c.K8s)
 	maintenanceSSH := maintenance.SSHExecutorFunc(func(ctx context.Context, timeout time.Duration, server *model.Server, command string) ([]byte, error) {
-		return transport.SSHExecContext(ctx, timeout, append(transport.BuildSSHArgs(server, key, server.Host), command))
+		return transport.SSHExecServerContext(ctx, timeout, server, key, command)
 	})
 	diskInspection := maintenance.NewDiskInspectionService(maintenanceSSH)
 	cleanup := maintenance.NewCleanupService(maintenanceSSH)
 	registrySSH := registryservice.SSHExecutorFunc(maintenanceSSH)
 	registryVerifier := registryservice.NewNodeVerifierService(registrySSH)
 	registryPull := registryservice.NewNodePullService(registrySSH)
-	nodeMirrorApplier := registryservice.NewNodeMirrorApplier(registrySSH)
+	nodeMirrorApplier := registryservice.NewNodeMirrorApplierWithRepository(registrySSH, c.Repositories.Mirror)
 	nodeRegistryConfigInspector := registryservice.NewNodeRegistryConfigInspector(c.Repositories.Mirror, registrySSH)
 	nodeK3sRestarter := registryservice.NewNodeK3sServiceRestarter(c.Repositories.Mirror, registrySSH)
 	agent := agentapi.NewAgentHandlerWithKubernetesAdapter(c.Store, agentAdapter, authenticator).WithMonitoringDiskGrowth(monitoring).WithRegistryVerifier(registryVerifier).WithMaintenanceInspector(diskInspection)
 	agentOp := agentapi.NewAgentOperationHandlerWithKubernetesAdapter(c.Store, agentAdapter).WithRegistryPullExecutor(registryPull).WithMaintenanceCleanupExecutor(cleanup)
 	runtimeHandler := runtimeapi.NewRuntimeHandlerWithDependencies(c.Store, key, c.Services.RuntimeManager, c.Services.RuntimeRegistry)
-	platform := deliveryapi.NewPlatformHandlerWithDependencies(c.Store, deliveryapi.NewPlatformKubernetesAdapter(c.K8s), c.Services.PlatformRelease)
+	platform := deliveryapi.NewPlatformHandlerWithDependencies(c.Store, deliveryapi.NewPlatformKubernetesAdapter(c.K8s), c.Services.PlatformRelease).WithInCluster(c.InCluster)
 	networkService := c.Services.Network
 	clusterService := c.Services.Cluster
-	clusterDNS := networkapi.NewClusterDNSHandlerWithAdapter(c.Store, networkapi.NewClusterDNSAdapter(c.K8s))
+	accessCertificates := clusterapi.NewAccessCertificateHandler(c.Store, key)
+	agentFactory := newClusterAgentClientFactory(c.Store, accessCertificates.Service())
+	c.configureObservabilityMigrations(agentFactory)
+	if c.databaseGateways == nil {
+		c.databaseGateways = gateway.New(c.Store, key, agentFactory.Client)
+	}
+	if c.databaseOperations == nil {
+		c.databaseOperations = operations.New(c.Store, key, agentFactory.Client)
+	}
+	clusterDNS := networkapi.NewClusterDNSHandlerWithAdapter(c.Store, networkapi.NewClusterDNSAdapter(c.K8s)).WithAdapterFactory(func(ctx context.Context, clusterID uint) (networkapi.ClusterDNSAdapter, error) {
+		client, err := agentFactory.Client(ctx, clusterID)
+		if err != nil {
+			return nil, err
+		}
+		return networkapi.NewClusterDNSAdapter(client), nil
+	})
 	ingress := networkapi.NewIngressHandler(networkService)
 	nodeJoin := clusterapi.NewNodeJoinProgressHandler(c.Store, key, clusterapi.NewNodeJoinAdapter(c.K8s)).WithPlatformReader(c.K8s)
 	networkHandler := networkapi.NewNetworkHandler(networkService, networkapi.NetworkHandler{
@@ -68,22 +92,46 @@ func (c *Container) BuildRouteDependencies() api.RouteDependencies {
 	alertingDeps.ComponentService = c.Services.AlertingComponent
 	alertingDeps.QueryService = c.Services.AlertingQuery
 	dispatcher := alertingservice.NewRuntimeDispatcher(c.Store, key, runtimepkg.BuiltinRegistry())
-	alertingHandler := systemapi.NewAlertingHandlerWithComposedDependencies(c.Auth.PlatformURL, alertingDeps, c.Store, c.Services.AlertingAutomation.WithDispatcher(dispatcher), dispatcher)
+	alertingHandler := systemapi.NewAlertingHandlerWithComposedDependencies(c.Auth.PlatformURL, alertingDeps, c.Store, c.Services.AlertingAutomation.WithDispatcher(dispatcher), dispatcher).WithHistory(c.Store).WithSuppressionRules(c.Store)
 	loggingDeps := c.Adapters.Logging
 	loggingDeps.QueryService = c.Services.LoggingQuery
 	loggingDeps.ComponentService = c.Services.LoggingComponent
 	loggingHandler := systemapi.NewLoggingHandlerWithComposedDependencies(c.Store, loggingDeps)
+	componentHandler := c.componentHandler().WithAdapterFactory(func(ctx context.Context, clusterID uint) (systemapi.SystemComponentAdapter, error) {
+		client, err := agentFactory.Client(ctx, clusterID)
+		if err != nil {
+			return nil, err
+		}
+		return k8s.SystemComponentKubernetesAdapter{Client: client}, nil
+	})
 	// Integration delegations are verified by the route middleware with JWTSecret;
 	// keep the handler's signing key aligned with that verifier.
-	applicationHandler := applicationapi.NewApplicationHandlerWithDependencies(c.Store, c.Services.ApplicationQuery, key, applicationapi.NewKubernetesAdapter(c.K8s)).WithDelegationSecret(c.Auth.JWTSecret).WithAudit(c.Store)
+	applicationHandler := applicationapi.NewApplicationHandlerWithDependencies(c.Store, c.Services.ApplicationQuery, key, applicationapi.NewKubernetesAdapter(c.K8s)).WithClusterClientFactory(agentFactory.Client).WithServerAddressReader(c.Store).WithDelegationSecret(c.Auth.JWTSecret).WithAudit(c.Store)
 	image := deliveryapi.NewImageRegistryHandler(c.Store, key)
-	nodeMirrors := deliveryapi.NewNodeRegistryMirrorHandlerWithDependencies(key, nodeMirrorApplier.Apply, c.Services.RegistryMirror).WithActualConfigInspector(nodeRegistryConfigInspector).WithK3sRestarter(nodeK3sRestarter).WithAudit(c.Store)
+	cloudResources := cloudservice.NewService(c.Store, key, cloudservice.ProviderRegistry{"aliyun": aliyunprovider.NewProvider})
+	cloud := cloudapi.NewHandler(cloudResources, c.Store)
+	nodeMirrors := deliveryapi.NewNodeRegistryMirrorHandlerWithDependencies(key, nodeMirrorApplier.Apply, c.Services.RegistryMirror).WithActualConfigInspector(nodeRegistryConfigInspector).WithK3sRestarter(nodeK3sRestarter).WithConfigSyncer(nodeMirrorApplier).WithAudit(c.Store)
 	managed := deliveryapi.NewManagedOCIRegistryHandlerWithDependencies(c.Store, c.Adapters.Registry.ManagedResources, c.Adapters.Registry.ManagedStatus, nodeMirrorApplier.Apply, c.Services.RegistryManaged, c.Services.RegistryCatalog)
-	proxy := deliveryapi.NewRegistryProxyHandlerWithDependencies(c.Store, key, c.Adapters.Registry.ProxyResources, c.Adapters.Registry.ProxyDiagnostics, c.Services.RegistryProxy).WithReconciler(c.Services.RegistryProxyReconciler)
+	proxy := deliveryapi.NewRegistryProxyHandlerWithDependencies(c.Store, key, c.Adapters.Registry.ProxyResources, c.Adapters.Registry.ProxyDiagnostics, c.Services.RegistryProxy).WithReconciler(c.Services.RegistryProxyReconciler).WithClusterClientFactory(agentFactory.Client)
+	proxyRelay := deliveryapi.NewRegistryProxyRelayHandler(c.Store, registryservice.NewProxyRelayService(registrySSH))
+	if c.Services.RegistryProxyReconciler != nil {
+		c.Services.RegistryProxyReconciler.WithResolver(func(ctx context.Context, item *model.RegistryProxy) (registryservice.ProxyStatusReader, registryservice.ProxyCacheCleaner, error) {
+			client, err := agentFactory.Client(ctx, item.ClusterID)
+			if err != nil {
+				return nil, nil, err
+			}
+			adapter := k8s.NewRegistryProxyReconciler(client)
+			return adapter, adapter, nil
+		})
+	}
 	storageService := c.Services.Storage
 	pvcAdapter, pvcMigration, pvcWorkloads := storageapi.NewPVCAdapters(c.K8s)
 	storageHandler := storageapi.NewStorageHandlerWithDependencies(storageService, c.Store, key, pvcAdapter, pvcMigration, pvcWorkloads)
 	storageHandler.ConfigureStorageExecutor()
+	deployment := clusterapi.NewDeploymentHandler(c.Store, key).WithAgentCertificateIssuer(accessCertificates.Service())
+	deployment.WithNodeRemovalClientFactory(func(ctx context.Context, clusterID uint) (clusterapi.NodeRemovalClient, error) {
+		return agentFactory.Client(ctx, clusterID)
+	})
 	return api.RouteDependencies{
 		Auth: api.AuthDependencies{
 			Config:          c.Auth,
@@ -92,30 +140,42 @@ func (c *Container) BuildRouteDependencies() api.RouteDependencies {
 			Handler:         authapi.NewAuthHandlerWithDependencies(c.Repositories.Users, c.Auth, c.Services.AuthTemporaryTokens).WithAudit(c.Store),
 		},
 		Application: api.ApplicationDependencies{Handler: applicationHandler},
+		Product:     productapi.NewHandler(c.Store),
 		RuntimeAgent: api.RuntimeAgentDependencies{
 			Artifact: artifact, Agent: agent, Runtime: runtimeHandler, AgentOp: agentOp,
-			Components: c.componentHandler(), Network: networkHandler,
+			Components: componentHandler, Network: networkHandler,
 		},
 		Delivery: api.DeliveryDependencies{
 			Platform: platform, Image: image, NodeMirrors: nodeMirrors, Managed: managed,
-			Proxy: proxy, Chart: deliveryapi.NewChartRepositoryHandler(c.Store),
+			Proxy: proxy, ProxyRelay: proxyRelay, Chart: deliveryapi.NewChartRepositoryHandler(c.Store), Cloud: cloud,
+			Database: cloudapi.NewDatabaseHandler(c.Store, key, agentFactory.Client).WithRegistryPullExecutor(registryPull).WithPrivateGateways(c.databaseGateways).WithOperations(c.databaseOperations).WithCloudMetrics(cloudResources),
 		},
 		Infrastructure: api.InfrastructureDependencies{
-			Network: networkHandler, Server: clusterapi.NewServerHandler(key, clusterService),
-			NetworkDiag: clusterapi.NewServerNetworkDiagnosticsHandler(c.Store, key),
-			Terminal:    clusterapi.NewServerTerminalHandler(c.Store, key).WithAudit(c.Store),
-			Site:        networkapi.NewSiteHandler(c.Store), Operation: systemapi.NewOperationHandler(c.Store),
-			Domain: networkapi.NewDomainHandlerWithDependencies(networkapi.NewDomainKubernetesAdapter(c.K8s), networkService),
-			Node:   clusterapi.NewNodeHandler(clusterService), NodeJoin: nodeJoin, Ingress: ingress,
-			Certificate: networkapi.NewCertHandlerWithComposedDependencies(c.Store, key, networkService, networkapi.NewCertificateKubernetesAdapter(c.K8s)),
-			K8s:         kubernetesapi.NewK8sHandlerWithAdapterAndEncryption(c.Store, storageService, key, kubernetesapi.NewK8sResourceAdapter(c.K8s), c.Store),
-			Platform:    kubernetesapi.NewClusterPlatformHandler(c.K8s),
-			Storage:     storageHandler,
-			CRD: kubernetesapi.NewCRDHandler(), AuditLog: systemapi.NewAuditHandler(c.Store), DBAdmin: systemapi.NewDBAdminHandler(c.Store),
+			Network: networkHandler, Catalog: clusterapi.NewCatalogHandler(c.Store).WithAgentClientFactory(agentFactory.Client), AccessCert: accessCertificates, Deployment: deployment, CrossService: clusterapi.NewCrossServiceHandler(c.Store, key, agentFactory.Client), Server: clusterapi.NewServerHandler(key, clusterService),
+			Terminal: clusterapi.NewServerTerminalHandler(c.Store, key).WithAudit(c.Store),
+			Site:     networkapi.NewSiteHandler(c.Store), Operation: systemapi.NewOperationHandler(c.Store),
+			Domain: networkapi.NewDomainHandlerWithDependencies(networkapi.NewDomainKubernetesAdapter(c.K8s), networkService).WithClusterClientFactory(agentFactory.Client).WithCloudDNS(cloudservice.NewService(c.Store, key, cloudservice.ProviderRegistry{"aliyun": aliyunprovider.NewProvider}), c.Store),
+			Node: clusterapi.NewNodeHandler(clusterService).WithAdapterFactory(func(ctx context.Context, clusterID uint) (clusterpkg.NodeAdapter, error) {
+				client, err := agentFactory.Client(ctx, clusterID)
+				if err != nil {
+					return nil, err
+				}
+				return client, nil
+			}), NodeJoin: nodeJoin, Ingress: ingress,
+			Certificate: networkapi.NewCertHandlerWithComposedDependencies(c.Store, key, networkService, networkapi.NewCertificateKubernetesAdapter(c.K8s)).WithClusterCredentialStoreFactory(func(clusterID uint) networkservice.DNSCredentialStore {
+				return c.Store.ClusterDNSCredentials(clusterID)
+			}),
+			K8s:      kubernetesapi.NewK8sHandlerWithAdapterAndEncryption(c.Store, storageService, key, kubernetesapi.NewK8sResourceAdapter(c.K8s), c.Store).WithClusterClientFactory(agentFactory.Client),
+			Platform: kubernetesapi.NewClusterPlatformHandler(c.K8s),
+			Storage:  storageHandler,
+			CRD:      kubernetesapi.NewCRDHandler(), AuditLog: systemapi.NewAuditHandler(c.Store), DBAdmin: systemapi.NewDBAdminHandler(c.Store),
 		},
 		System: api.SystemDependencies{
 			Dashboard: systemapi.NewDashboardHandler(c.Store), Monitoring: monitoringHandler,
 			Alerting: alertingHandler, Logging: loggingHandler,
+			ClusterObservability: func(ctx context.Context, clusterID uint) (*systemapi.MonitoringHandler, *systemapi.LoggingHandler, *systemapi.AlertingHandler, error) {
+				return c.clusterObservability(ctx, clusterID, agentFactory)
+			},
 		},
 	}
 }

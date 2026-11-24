@@ -22,11 +22,12 @@
       <article class="metric"><span>日志保留</span><strong>{{ status.retention_days || '-' }} 天</strong><small>{{ status.storage || '-' }}{{ status.storage_class_name ? ` · ${status.storage_class_name}` : '' }}</small></article>
     </section>
 
-    <SurfaceCard v-if="!logsAvailable" class="logging-wait section-gap"><div class="empty-state"><span class="empty-icon">◌</span><span class="empty-text">{{ status.message || '等待 Loki 存储实例就绪' }}</span></div><div class="modal-actions status-actions"><button class="icon-button" data-testid="logging-settings" title="日志设置" aria-label="日志设置" @click="openSettings"><Settings2 :size="16" /></button><button class="btn" :disabled="loading" @click="refresh">重新检测</button></div></SurfaceCard>
+    <section class="logging-section-heading section-gap"><div><h2>日志检索</h2><p>按容器标准输出检索。日志不会在打开页面时自动加载。</p></div><div class="icon-actions"><ComponentMigration v-if="clusterId" :cluster-id="clusterId" component="loki" :current-node="status.node_name" :nodes="nodes" :disabled="saving || uninstalling" @busy="nodeMigrating = $event" @changed="refresh" /><button class="icon-button" :disabled="nodeMigrating" data-testid="logging-settings" title="日志设置" aria-label="日志设置" @click="openSettings"><Settings2 :size="16" /></button><button class="icon-button" title="刷新日志状态与筛选项" aria-label="刷新日志状态与筛选项" :disabled="loading" @click="refresh"><RefreshCw :size="16" :class="{ 'is-spinning': loading }" /></button></div></section>
+    <SurfaceCard v-if="!logsAvailable" class="logging-wait section-gap"><div class="empty-state"><span class="empty-icon">◌</span><span class="empty-text">{{ status.message || '等待 Loki 存储实例就绪' }}</span></div></SurfaceCard>
 
     <template v-else>
       <div v-if="status.state === 'degraded'" class="k8s-banner k8s-banner-warn section-gap">{{ status.message }}</div>
-      <section class="logging-section-heading section-gap"><div><h2>日志检索</h2><p>按容器标准输出检索。日志不会在打开页面时自动加载。</p></div><div class="icon-actions"><button class="icon-button" data-testid="logging-settings" title="日志设置" aria-label="日志设置" @click="openSettings"><Settings2 :size="16" /></button><button class="icon-button" title="刷新日志状态与筛选项" aria-label="刷新日志状态与筛选项" :disabled="loading" @click="refresh"><RefreshCw :size="16" :class="{ 'is-spinning': loading }" /></button></div></section>
+
 
       <SurfaceCard as="div" class="logging-query section-gap"><form class="logging-query" @submit.prevent="queryLogs">
         <p v-if="filterError" class="form-error">{{ filterError }}</p>
@@ -35,9 +36,9 @@
           <label v-if="queryForm.range === 'custom'" class="form-group"><span class="form-label">开始时间</span><input v-model="queryForm.start_time" class="form-input" data-testid="log-start-time" type="datetime-local" step="1" required /></label>
           <label v-if="queryForm.range === 'custom'" class="form-group"><span class="form-label">结束时间</span><input v-model="queryForm.end_time" class="form-input" data-testid="log-end-time" type="datetime-local" step="1" required /></label>
           <label class="form-group"><span class="form-label">返回条数</span><SelectMenu v-model.number="queryForm.limit" class="form-select" data-testid="log-result-limit"><option :value="50">50 条</option><option :value="100">100 条</option><option :value="200">200 条</option><option :value="500">500 条</option></SelectMenu></label>
-          <label class="form-group"><span class="form-label">项目</span><SelectMenu v-model.number="queryForm.project_id" class="form-select"><option :value="0">全部项目</option><option v-for="project in projects" :key="project.id" :value="project.id">{{ project.name }}</option></SelectMenu></label>
-          <label class="form-group"><span class="form-label">环境</span><SelectMenu v-model.number="queryForm.environment_id" class="form-select"><option :value="0">全部环境</option><option v-for="environment in scopedEnvironments" :key="environment.id" :value="environment.id">{{ environment.name }}</option></SelectMenu></label>
-          <label class="form-group"><span class="form-label">应用</span><SelectMenu v-model.number="queryForm.application_id" class="form-select"><option :value="0">全部应用</option><option v-for="application in scopedApplications" :key="application.id" :value="application.id">{{ application.name }}</option></SelectMenu></label>
+          <label v-if="!clusterId" class="form-group"><span class="form-label">项目</span><SelectMenu v-model.number="queryForm.project_id" class="form-select"><option :value="0">全部项目</option><option v-for="project in projects" :key="project.id" :value="project.id">{{ project.name }}</option></SelectMenu></label>
+          <label v-if="!clusterId" class="form-group"><span class="form-label">环境</span><SelectMenu v-model.number="queryForm.environment_id" class="form-select"><option :value="0">全部环境</option><option v-for="environment in scopedEnvironments" :key="environment.id" :value="environment.id">{{ environment.name }}</option></SelectMenu></label>
+          <label v-if="!clusterId" class="form-group"><span class="form-label">应用</span><SelectMenu v-model.number="queryForm.application_id" class="form-select"><option :value="0">全部应用</option><option v-for="application in scopedApplications" :key="application.id" :value="application.id">{{ application.name }}</option></SelectMenu></label>
           <label class="form-group"><span class="form-label">命名空间</span><SelectMenu v-model="queryForm.namespace" class="form-select"><option value="">全部命名空间</option><option v-for="namespace in namespaceOptions" :key="namespace" :value="namespace">{{ namespace }}</option></SelectMenu></label>
           <label class="form-group"><span class="form-label">Pod</span><SelectMenu v-model="queryForm.pod" class="form-select"><option value="">全部 Pod</option><option v-for="pod in scopedPods" :key="`${pod.namespace}/${pod.name}`" :value="pod.name">{{ pod.name }}</option></SelectMenu></label>
           <label class="form-group"><span class="form-label">容器</span><SelectMenu v-model="queryForm.container" class="form-select"><option value="">全部容器</option><option v-for="container in containerOptions" :key="container" :value="container">{{ container }}</option></SelectMenu></label>
@@ -54,13 +55,14 @@
   </template>
 
   <Teleport to="body">
-    <div v-if="settingsOpen" class="overlay logging-settings-overlay" @click.self="settingsOpen = false"><form class="modal logging-settings-modal" @submit.prevent="saveSettings"><header class="drawer-header"><div><h2>日志设置</h2><p>调整日志保留策略，不会直接修改系统管理的存储卷。</p></div><button class="icon-button" type="button" title="关闭日志设置" aria-label="关闭日志设置" @click="settingsOpen = false"><X :size="16" /></button></header><section class="drawer-section"><div class="settings-field"><span>数据节点</span><strong>{{ status?.node_name || '-' }}</strong></div><div class="settings-field"><span>系统存储卷</span><strong class="metric-code">{{ status?.pvc_name || 'cylism-loki-data' }}</strong><small>{{ status?.storage || '-' }}</small></div><label class="form-group settings-retention"><span class="form-label">日志保留天数</span><input v-model.number="settingsForm.retention_days" class="form-input" type="number" min="1" max="365" required /><span class="form-hint">超过新保留周期的日志由 Loki 后台自动清理。</span></label></section><p v-if="settingsError" class="form-error" role="alert">{{ settingsError }}</p><footer class="drawer-footer"><button class="btn" type="button" @click="settingsOpen = false">取消</button><button class="btn btn-primary" :disabled="saving">{{ saving ? '保存中...' : '保存设置' }}</button></footer></form></div>
+    <div v-if="settingsOpen" class="overlay logging-settings-overlay" @click.self="settingsOpen = false"><form class="modal logging-settings-modal" @submit.prevent="saveSettings"><header class="drawer-header"><div><h2>日志设置</h2><p>调整日志保留策略，不会直接修改系统管理的存储卷。</p></div><button class="icon-button" type="button" title="关闭日志设置" aria-label="关闭日志设置" @click="settingsOpen = false"><X :size="16" /></button></header><section class="drawer-section"><div class="settings-field"><span>数据节点</span><strong>{{ status?.node_name || '-' }}</strong></div><div class="settings-field"><span>系统存储卷</span><strong class="metric-code">{{ status?.pvc_name || 'cylism-loki-data' }}</strong><small>{{ status?.storage || '-' }}</small></div><label class="form-group settings-retention"><span class="form-label">日志保留天数</span><input v-model.number="settingsForm.retention_days" class="form-input" type="number" min="1" max="365" required /><span class="form-hint">超过新保留周期的日志由 Loki 后台自动清理。</span></label></section><p v-if="settingsError" class="form-error" role="alert">{{ settingsError }}</p><footer class="drawer-footer"><button class="btn" type="button" @click="settingsOpen = false">取消</button><button class="btn btn-primary" :disabled="saving || nodeMigrating">{{ saving ? '保存中...' : '保存设置' }}</button></footer></form></div>
   </Teleport>
 
-  <div v-if="confirmUninstall" class="overlay" @click.self="confirmUninstall = false"><div class="modal logging-uninstall-modal"><h2 class="modal-title">卸载日志采集</h2><p class="confirm-copy">将删除 Loki、Alloy 与采集配置，但保留 <code>cylism-loki-data</code> 中已有日志。</p><p v-if="uninstallError" class="form-error" role="alert">{{ uninstallError }}</p><div class="modal-actions"><button class="btn" @click="confirmUninstall = false">取消</button><button class="btn btn-danger" :disabled="uninstalling" @click="uninstall">{{ uninstalling ? '卸载中...' : '确认卸载' }}</button></div></div></div>
+  <div v-if="confirmUninstall" class="overlay" @click.self="confirmUninstall = false"><div class="modal logging-uninstall-modal"><h2 class="modal-title">卸载日志采集</h2><p class="confirm-copy">将删除 Loki、Alloy 与采集配置，但保留 <code>{{ status?.pvc_name || 'cylism-loki-data' }}</code> 中已有日志。</p><p v-if="uninstallError" class="form-error" role="alert">{{ uninstallError }}</p><div class="modal-actions"><button class="btn" @click="confirmUninstall = false">取消</button><button class="btn btn-danger" :disabled="uninstalling || nodeMigrating" @click="uninstall">{{ uninstalling ? '卸载中...' : '确认卸载' }}</button></div></div></div>
 </template>
 
 <script setup>
+import ComponentMigration from './ComponentMigration.vue'
 import { computed, onMounted, ref, watch } from 'vue'
 import { RefreshCw, Settings2, X } from 'lucide-vue-next'
 import { getApplications, getProjects } from '../../api/applications.js'
@@ -69,7 +71,8 @@ import { useAsyncResource } from '../../composables/useAsyncResource.js'
 import SurfaceCard from '../../components/SurfaceCard.vue'
 import { formatDateTime as formatTime } from '../../utils/formatters.js'
 
-const props = defineProps({ nodes: { type: Array, default: () => [] }, storageClasses: { type: Array, default: () => [] } })
+const props = defineProps({ clusterId: { type: String, default: '' }, nodes: { type: Array, default: () => [] }, storageClasses: { type: Array, default: () => [] } })
+const requestOptions = signal => props.clusterId ? { clusterID: props.clusterId, ...(signal ? { signal } : {}) } : signal ? { signal } : undefined
 
 const status = ref(null)
 const statusError = ref('')
@@ -84,6 +87,7 @@ const querying = ref(false)
 const saving = ref(false)
 const uninstalling = ref(false)
 const settingsOpen = ref(false)
+const nodeMigrating = ref(false)
 const confirmUninstall = ref(false)
 const queried = ref(false)
 const hasMore = ref(false)
@@ -94,12 +98,12 @@ const projects = ref([])
 const installForm = ref({ node_name: '', storage: '10Gi', storage_class_name: '', retention_days: 14 })
 const settingsForm = ref({ retention_days: 14 })
 const queryForm = ref({ range: '1h', start_time: '', end_time: '', limit: 200, keyword: '', project_id: 0, environment_id: 0, application_id: 0, namespace: '', pod: '', container: '', node: '' })
-const statusResource = useAsyncResource(({ signal }) => getLoggingStatus({ signal }), null)
+const statusResource = useAsyncResource(({ signal }) => getLoggingStatus(requestOptions(signal)), null)
 const filtersResource = useAsyncResource(async ({ signal }) => {
-  const [filters, apps, projectList] = await Promise.all([getLoggingFilters({ signal }), getApplications({}, { signal }), getProjects({ signal })])
+  const [filters, apps, projectList] = await Promise.all([getLoggingFilters(requestOptions(signal)), props.clusterId ? [] : getApplications({}, { signal }), props.clusterId ? [] : getProjects({ signal })])
   return { filters, apps, projectList }
 }, null)
-const queryResource = useAsyncResource(({ signal }, payload) => requestLogs(payload, { signal }), null)
+const queryResource = useAsyncResource(({ signal }, payload) => requestLogs(payload, requestOptions(signal)), null)
 
 const readyNodes = computed(() => props.nodes.filter(node => node.ready))
 const logsAvailable = computed(() => Number(status.value?.loki_ready) > 0)
@@ -126,6 +130,7 @@ const containerOptions = computed(() => {
 })
 
 onMounted(refresh)
+watch(() => props.clusterId, () => { status.value = null; lines.value = []; queried.value = false; void refresh() })
 
 watch(() => queryForm.value.project_id, () => { queryForm.value.environment_id = 0; queryForm.value.application_id = 0 })
 watch(() => queryForm.value.environment_id, () => { queryForm.value.application_id = 0 })
@@ -163,7 +168,7 @@ async function loadFilters() {
 async function install() {
   installing.value = true
   installError.value = ''
-  try { status.value = await installLogging(installForm.value); await refresh() } catch (e) { installError.value = e.message || '启用日志采集失败' } finally { installing.value = false }
+  try { status.value = await installLogging(installForm.value, requestOptions()); await refresh() } catch (e) { installError.value = e.message || '启用日志采集失败' } finally { installing.value = false }
 }
 
 async function queryLogs() {
@@ -202,12 +207,12 @@ function openSettings() { settingsForm.value = { retention_days: status.value?.r
 async function saveSettings() {
   saving.value = true
   settingsError.value = ''
-  try { status.value = await saveLoggingConfig({ node_name: status.value.node_name, retention_days: settingsForm.value.retention_days }); settingsOpen.value = false; await refresh() } catch (e) { settingsError.value = e.message || '保存日志设置失败' } finally { saving.value = false }
+  try { status.value = await saveLoggingConfig({ node_name: status.value.node_name, retention_days: settingsForm.value.retention_days }, requestOptions()); settingsOpen.value = false; await refresh() } catch (e) { settingsError.value = e.message || '保存日志设置失败' } finally { saving.value = false }
 }
 async function uninstall() {
   uninstalling.value = true
   uninstallError.value = ''
-  try { await uninstallLogging(); confirmUninstall.value = false; lines.value = []; queried.value = false; await refresh() } catch (e) { uninstallError.value = e.message || '卸载日志采集失败' } finally { uninstalling.value = false }
+  try { await uninstallLogging(requestOptions()); confirmUninstall.value = false; lines.value = []; queried.value = false; await refresh() } catch (e) { uninstallError.value = e.message || '卸载日志采集失败' } finally { uninstalling.value = false }
 }
 function lineContext(labels = {}) { return [labels.namespace, labels.pod, labels.container].filter(Boolean).join(' / ') || '容器日志' }
 </script>

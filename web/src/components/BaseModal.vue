@@ -1,6 +1,22 @@
 <template>
+  <template v-if="teleport">
+    <Teleport to="body">
+      <div v-if="open" v-bind="$attrs" class="overlay base-modal-overlay" :class="overlayClass" @click.self="handleOverlayClick">
+        <section class="modal base-modal" :class="[`base-modal--${size}`, dialogClass]" role="dialog" aria-modal="true" :aria-labelledby="title && !$slots.header ? titleID : undefined" :aria-label="title && $slots.header ? title : (title ? undefined : ariaLabel)">
+          <header v-if="title || $slots.header" class="base-modal-header">
+            <slot name="header"><h2 :id="titleID" class="modal-title">{{ title }}</h2></slot>
+            <button v-if="showClose" type="button" class="icon-button base-modal-close" aria-label="关闭" @click="emit('close')">×</button>
+          </header>
+          <button v-else-if="showClose" type="button" class="icon-button base-modal-close base-modal-close--standalone" aria-label="关闭" @click="emit('close')">×</button>
+          <div class="base-modal-body"><slot /></div>
+          <footer v-if="$slots.actions" class="modal-actions base-modal-actions"><slot name="actions" /></footer>
+        </section>
+      </div>
+    </Teleport>
+  </template>
   <div
-    v-if="open"
+    v-else-if="open"
+    v-bind="$attrs"
     class="overlay base-modal-overlay"
     :class="overlayClass"
     @click.self="handleOverlayClick"
@@ -17,39 +33,18 @@
         <slot name="header">
           <h2 :id="titleID" class="modal-title">{{ title }}</h2>
         </slot>
-        <button
-          v-if="showClose"
-          type="button"
-          class="icon-button base-modal-close"
-          aria-label="关闭"
-          @click="emit('close')"
-        >
-          ×
-        </button>
+        <button v-if="showClose" type="button" class="icon-button base-modal-close" aria-label="关闭" @click="emit('close')">×</button>
       </header>
-      <button
-        v-else-if="showClose"
-        type="button"
-        class="icon-button base-modal-close base-modal-close--standalone"
-        aria-label="关闭"
-        @click="emit('close')"
-      >
-        ×
-      </button>
-      <div class="base-modal-body">
-        <slot />
-      </div>
-      <footer v-if="$slots.actions" class="modal-actions base-modal-actions">
-        <slot name="actions" />
-      </footer>
+      <button v-else-if="showClose" type="button" class="icon-button base-modal-close base-modal-close--standalone" aria-label="关闭" @click="emit('close')">×</button>
+      <div class="base-modal-body"><slot /></div>
+      <footer v-if="$slots.actions" class="modal-actions base-modal-actions"><slot name="actions" /></footer>
     </section>
   </div>
 </template>
 
 <script setup>
-import { onBeforeUnmount, watch } from 'vue'
+import { onBeforeUnmount, useId, watch } from 'vue'
 
-let modalID = 0
 const props = defineProps({
   open: { type: Boolean, default: false },
   title: { type: String, default: '' },
@@ -60,9 +55,10 @@ const props = defineProps({
   closeOnEscape: { type: Boolean, default: true },
   overlayClass: { type: [String, Array, Object], default: '' },
   dialogClass: { type: [String, Array, Object], default: '' },
+  teleport: { type: Boolean, default: false },
 })
 const emit = defineEmits(['close'])
-const titleID = `base-modal-title-${++modalID}`
+const titleID = `base-modal-title-${useId()}`
 
 function handleOverlayClick() {
   if (props.closeOnOverlay) emit('close')
@@ -79,6 +75,7 @@ watch(() => props.open, open => {
 
 onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 </script>
+
 
 <style scoped>
 .base-modal-overlay {
@@ -116,8 +113,10 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 
 .base-modal-body {
   min-width: 0;
+  min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
+  padding: var(--space-4);
 }
 
 .base-modal-close {

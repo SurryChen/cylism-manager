@@ -4,6 +4,7 @@ import "time"
 
 const (
 	ReleaseStatusDraft        = "draft"
+	ReleaseStatusMigrating    = "migrating"
 	ReleaseStatusValidating   = "validating"
 	ReleaseStatusApplying     = "applying"
 	ReleaseStatusWaitingReady = "waiting_ready"
@@ -86,7 +87,7 @@ type ReleaseOperation struct {
 
 func IsReleaseStatusValid(status string) bool {
 	switch status {
-	case ReleaseStatusDraft, ReleaseStatusValidating, ReleaseStatusApplying, ReleaseStatusWaitingReady,
+	case ReleaseStatusDraft, ReleaseStatusValidating, ReleaseStatusMigrating, ReleaseStatusApplying, ReleaseStatusWaitingReady,
 		ReleaseStatusVerifying, ReleaseStatusSucceeded, ReleaseStatusFailed, ReleaseStatusRollingBack, ReleaseStatusRolledBack:
 		return true
 	default:

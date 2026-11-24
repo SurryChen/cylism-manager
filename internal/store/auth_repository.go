@@ -46,3 +46,14 @@ func (s *Store) MarkTemporaryLoginTokenUsed(hash string, usedAt time.Time) error
 func (s *Store) RevokeTemporaryLoginToken(userID, tokenID uint, revokedAt time.Time) error {
 	return s.db.Model(&model.TemporaryLoginToken{}).Where("id = ? AND created_by = ? AND revoked_at IS NULL", tokenID, userID).Update("revoked_at", revokedAt).Error
 }
+
+func (s *Store) ListTemporaryLoginTokensPage(userID uint, limit, offset int) ([]model.TemporaryLoginToken, int64, error) {
+	query := s.db.Model(&model.TemporaryLoginToken{}).Where("created_by = ?", userID)
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	items := []model.TemporaryLoginToken{}
+	err := query.Order("id desc").Limit(limit).Offset(offset).Find(&items).Error
+	return items, total, err
+}

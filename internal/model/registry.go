@@ -112,6 +112,9 @@ type ManagedRegistryContentReference struct {
 
 type RegistryProxy struct {
 	ID                      uint       `gorm:"primaryKey" json:"id"`
+	ClusterID               uint       `gorm:"index;not null;default:0" json:"cluster_id"`
+	ManagementMode          string     `gorm:"size:16;not null;default:managed" json:"management_mode"`
+	ImportedOutboundProxy   bool       `gorm:"not null;default:false" json:"imported_outbound_proxy"`
 	Name                    string     `gorm:"size:128" json:"name"`
 	Registry                string     `gorm:"size:256" json:"registry"`
 	UpstreamURL             string     `gorm:"size:512" json:"upstream_url"`
@@ -137,6 +140,32 @@ type RegistryProxy struct {
 	CreatedBy               uint       `gorm:"index;not null" json:"created_by"`
 	CreatedAt               time.Time  `json:"created_at"`
 	UpdatedAt               time.Time  `json:"updated_at"`
+}
+
+// RegistryProxyRelay is a platform-owned HAProxy TCP forwarding service.
+type RegistryProxyRelay struct {
+	ID            uint       `gorm:"primaryKey" json:"id"`
+	ProxyID       uint       `gorm:"index;not null" json:"proxy_id"`
+	ServerID      uint       `gorm:"uniqueIndex:idx_relay_server_port;not null" json:"server_id"`
+	ListenIP      string     `gorm:"size:45;not null" json:"listen_ip"`
+	ListenPort    int        `gorm:"uniqueIndex:idx_relay_server_port;not null" json:"listen_port"`
+	Status        string     `gorm:"size:32;not null" json:"status"`
+	LastError     string     `gorm:"size:512" json:"last_error,omitempty"`
+	LastCheckedAt *time.Time `json:"last_checked_at,omitempty"`
+	CreatedAt     time.Time  `json:"created_at"`
+	UpdatedAt     time.Time  `json:"updated_at"`
+}
+
+// RegistryProxyNodeRoute tracks the last verified endpoint applied to a node.
+type RegistryProxyNodeRoute struct {
+	ID            uint       `gorm:"primaryKey" json:"id"`
+	ProxyID       uint       `gorm:"uniqueIndex:idx_proxy_route_node;not null" json:"proxy_id"`
+	ServerID      uint       `gorm:"uniqueIndex:idx_proxy_route_node;not null" json:"server_id"`
+	Endpoint      string     `gorm:"size:256;not null" json:"endpoint"`
+	Status        string     `gorm:"size:32;not null" json:"status"`
+	LastError     string     `gorm:"size:512" json:"last_error,omitempty"`
+	LastCheckedAt *time.Time `json:"last_checked_at,omitempty"`
+	UpdatedAt     time.Time  `json:"updated_at"`
 }
 
 // ClusterDNSPolicy stores the platform-managed external CoreDNS forward

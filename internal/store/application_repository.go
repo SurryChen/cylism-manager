@@ -12,12 +12,17 @@ import (
 // CreateProject persists a project and leaves registry ownership to the
 // registry repository.
 func (s *Store) CreateProject(project *model.Project) error {
-	return s.db.Create(project).Error
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(project).Error; err != nil {
+			return err
+		}
+		return createProjectMetadata(tx, project)
+	})
 }
 
 func (s *Store) ListProjects() ([]model.Project, error) {
 	var projects []model.Project
-	err := s.db.Preload("Environments").Preload("DefaultImageRegistry").Order("created_at desc").Find(&projects).Error
+	err := s.db.Preload("Environments").Preload("DefaultImageRegistry").Order("created_at desc, id desc").Find(&projects).Error
 	return projects, err
 }
 
@@ -28,11 +33,41 @@ func (s *Store) GetProject(id uint) (*model.Project, error) {
 }
 
 func (s *Store) UpdateProject(project *model.Project) error {
-	return s.db.Save(project).Error
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Save(project).Error; err != nil {
+			return err
+		}
+		return tx.Model(&model.Product{}).Where("project_id = ?", project.ID).Updates(map[string]interface{}{"name": project.Name, "summary": project.Description, "owner_id": project.OwnerID}).Error
+	})
 }
 
 func (s *Store) DeleteProject(id uint) error {
-	return s.db.Delete(&model.Project{}, id).Error
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		var project model.Project
+		if err := tx.First(&project, id).Error; err != nil {
+			return err
+		}
+		for _, record := range []interface{}{&model.Environment{}, &model.Application{}} {
+			var count int64
+			if err := tx.Model(record).Where("project_id = ?", id).Count(&count).Error; err != nil {
+				return err
+			}
+			if count > 0 {
+				return model.ErrProjectWorkspaceConflict
+			}
+		}
+		var ids []uint
+		if err := tx.Model(&model.Product{}).Where("project_id = ?", id).Pluck("id", &ids).Error; err != nil {
+			return err
+		}
+		if _, err := deleteProducts(tx, project.OwnerID, ids); err != nil {
+			return err
+		}
+		if err := tx.Where("project_id = ?", id).Delete(&model.ProductProject{}).Error; err != nil {
+			return err
+		}
+		return tx.Delete(&project).Error
+	})
 }
 
 func (s *Store) CountProjectEnvironments(projectID uint) (int64, error) {
@@ -52,7 +87,7 @@ func (s *Store) CreateEnvironment(environment *model.Environment) error {
 		return errors.New("environment is required")
 	}
 	return s.db.Transaction(func(tx *gorm.DB) error {
-		if err := ensureNamespaceAvailable(tx, environment.Namespace, 0); err != nil {
+		if err := ensureNamespaceAvailable(tx, environment.ClusterID, environment.Namespace, 0); err != nil {
 			return err
 		}
 		return tx.Create(environment).Error
@@ -61,7 +96,7 @@ func (s *Store) CreateEnvironment(environment *model.Environment) error {
 
 func (s *Store) ListEnvironments(projectID uint) ([]model.Environment, error) {
 	var environments []model.Environment
-	err := s.db.Where("project_id = ?", projectID).Order("created_at asc").Find(&environments).Error
+	err := s.db.Where("project_id = ?", projectID).Order("created_at asc, id asc").Find(&environments).Error
 	return environments, err
 }
 
@@ -76,7 +111,7 @@ func (s *Store) UpdateEnvironment(environment *model.Environment) error {
 		return errors.New("environment is required")
 	}
 	err := s.db.Transaction(func(tx *gorm.DB) error {
-		if err := ensureNamespaceAvailable(tx, environment.Namespace, environment.ID); err != nil {
+		if err := ensureNamespaceAvailable(tx, environment.ClusterID, environment.Namespace, environment.ID); err != nil {
 			return err
 		}
 		return tx.Save(environment).Error
@@ -95,18 +130,22 @@ func (s *Store) DeleteEnvironment(id uint) error {
 }
 
 // EnsureNamespaceAvailable validates an intended namespace binding before Kubernetes is mutated.
-func (s *Store) EnsureNamespaceAvailable(namespace string, excludeEnvironmentID uint) error {
-	return ensureNamespaceAvailable(s.db, namespace, excludeEnvironmentID)
+func (s *Store) EnsureNamespaceAvailable(namespace string, excludeEnvironmentID uint, clusterID ...uint) error {
+	var id uint
+	if len(clusterID) > 0 {
+		id = clusterID[0]
+	}
+	return ensureNamespaceAvailable(s.db, id, namespace, excludeEnvironmentID)
 }
 
-func ensureNamespaceAvailable(db *gorm.DB, namespace string, excludeEnvironmentID uint) error {
+func ensureNamespaceAvailable(db *gorm.DB, clusterID uint, namespace string, excludeEnvironmentID uint) error {
 	var existing model.Environment
-	query := db.Where("namespace = ?", namespace)
+	query := db.Where("cluster_id = ? AND namespace = ?", clusterID, namespace)
 	if excludeEnvironmentID != 0 {
 		query = query.Where("id <> ?", excludeEnvironmentID)
 	}
 	if err := query.Order("id asc").First(&existing).Error; err == nil {
-		return &model.NamespaceConflictError{Namespace: namespace, EnvironmentID: existing.ID, ProjectID: existing.ProjectID}
+		return &model.NamespaceConflictError{ClusterID: clusterID, Namespace: namespace, EnvironmentID: existing.ID, ProjectID: existing.ProjectID}
 	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return err
 	}
@@ -115,34 +154,41 @@ func ensureNamespaceAvailable(db *gorm.DB, namespace string, excludeEnvironmentI
 
 // ListEnvironmentNamespaceConflicts returns duplicate legacy namespace bindings.
 func (s *Store) ListEnvironmentNamespaceConflicts() ([]model.NamespaceConflict, error) {
-	type duplicate struct{ Namespace string }
+	type duplicate struct {
+		ClusterID uint
+		Namespace string
+	}
 	var duplicates []duplicate
 	if err := s.db.Model(&model.Environment{}).
-		Select("namespace").
+		Select("cluster_id, namespace").
 		Where("namespace <> ''").
-		Group("namespace").
+		Group("cluster_id, namespace").
 		Having("COUNT(*) > 1").
-		Order("namespace asc").
+		Order("cluster_id asc, namespace asc").
 		Find(&duplicates).Error; err != nil {
 		return nil, err
 	}
 	conflicts := make([]model.NamespaceConflict, 0, len(duplicates))
 	for _, duplicate := range duplicates {
 		var environments []model.Environment
-		if err := s.db.Where("namespace = ?", duplicate.Namespace).Order("project_id asc, id asc").Find(&environments).Error; err != nil {
+		if err := s.db.Where("cluster_id = ? AND namespace = ?", duplicate.ClusterID, duplicate.Namespace).Order("project_id asc, id asc").Find(&environments).Error; err != nil {
 			return nil, err
 		}
 		for index := range environments {
 			environments[index].NamespaceConflict = true
 		}
-		conflicts = append(conflicts, model.NamespaceConflict{Namespace: duplicate.Namespace, Environments: environments})
+		conflicts = append(conflicts, model.NamespaceConflict{ClusterID: duplicate.ClusterID, Namespace: duplicate.Namespace, Environments: environments})
 	}
 	return conflicts, nil
 }
 
-func (s *Store) IsEnvironmentNamespaceConflicted(namespace string) (bool, error) {
+func (s *Store) IsEnvironmentNamespaceConflicted(namespace string, clusterID ...uint) (bool, error) {
+	var id uint
+	if len(clusterID) > 0 {
+		id = clusterID[0]
+	}
 	var count int64
-	if err := s.db.Model(&model.Environment{}).Where("namespace = ?", namespace).Count(&count).Error; err != nil {
+	if err := s.db.Model(&model.Environment{}).Where("cluster_id = ? AND namespace = ?", id, namespace).Count(&count).Error; err != nil {
 		return false, err
 	}
 	return count > 1, nil
@@ -150,11 +196,14 @@ func (s *Store) IsEnvironmentNamespaceConflicted(namespace string) (bool, error)
 
 // ReconcileEnvironmentNamespaceUniqueness creates the database backstop only after legacy duplicates are resolved.
 func (s *Store) ReconcileEnvironmentNamespaceUniqueness() error {
+	if err := s.db.Exec("DROP INDEX IF EXISTS idx_environments_namespace_unique").Error; err != nil {
+		return err
+	}
 	conflicts, err := s.ListEnvironmentNamespaceConflicts()
 	if err != nil || len(conflicts) > 0 {
 		return err
 	}
-	return s.db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_environments_namespace_unique ON environments(namespace)").Error
+	return s.db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_environments_cluster_namespace_unique ON environments(cluster_id, namespace)").Error
 }
 
 func (s *Store) CountEnvironmentApplications(environmentID uint) (int64, error) {
@@ -168,6 +217,68 @@ func (s *Store) CreateApplication(application *model.Application) error {
 		return err
 	}
 	return s.db.Create(application).Error
+}
+
+// DeleteUnreleasedApplication removes a draft component and its local configuration.
+// Released components need a separate uninstall workflow to remove cluster resources.
+func (s *Store) DeleteUnreleasedApplication(id uint) error {
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		var app model.Application
+		if err := tx.First(&app, id).Error; err != nil {
+			return err
+		}
+		var releases, endpoints int64
+		if err := tx.Model(&model.Release{}).Where("application_id = ?", id).Count(&releases).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&model.ApplicationEndpoint{}).Where("application_id = ?", id).Count(&endpoints).Error; err != nil {
+			return err
+		}
+		if releases != 0 || endpoints != 0 {
+			return model.ErrApplicationRequiresUninstall
+		}
+		var links []model.ApplicationCatalogInstallationComponent
+		if err := tx.Where("application_id = ?", id).Find(&links).Error; err != nil {
+			return err
+		}
+		for _, link := range links {
+			if err := tx.Delete(&link).Error; err != nil {
+				return err
+			}
+			var replacement model.ApplicationCatalogInstallationComponent
+			err := tx.Where("installation_id = ?", link.InstallationID).Order("id asc").First(&replacement).Error
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				if err := tx.Delete(&model.ApplicationCatalogInstallation{}, link.InstallationID).Error; err != nil {
+					return err
+				}
+			} else if err != nil {
+				return err
+			} else if link.IsEntry {
+				if err := tx.Model(&model.ApplicationCatalogInstallationComponent{}).Where("id = ?", replacement.ID).Update("is_entry", true).Error; err != nil {
+					return err
+				}
+				if err := tx.Model(&model.ApplicationCatalogInstallation{}).Where("id = ?", link.InstallationID).Update("entry_application_id", replacement.ApplicationID).Error; err != nil {
+					return err
+				}
+			}
+		}
+		if err := tx.Where("application_id = ?", id).Delete(&model.ApplicationDeploymentTemplate{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("application_id = ?", id).Delete(&model.DatabaseBinding{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("application_id = ?", id).Delete(&model.ApplicationManagedFile{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("application_id = ?", id).Delete(&model.ApplicationDeployWebhook{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("application_id = ?", id).Delete(&model.ApplicationDeployWebhookNonce{}).Error; err != nil {
+			return err
+		}
+		return tx.Delete(&app).Error
+	})
 }
 
 func (s *Store) GetApplication(id uint) (*model.Application, error) {
@@ -190,7 +301,7 @@ func (s *Store) GetApplicationByEnvironmentName(environmentID uint, name string)
 
 func (s *Store) ListApplications(scope ...uint) ([]model.Application, error) {
 	var applications []model.Application
-	query := s.db.Preload("Project.DefaultImageRegistry").Preload("Environment").Preload("Endpoints", func(db *gorm.DB) *gorm.DB { return db.Order("id asc") }).Order("created_at desc")
+	query := s.db.Preload("Project.DefaultImageRegistry").Preload("Environment").Preload("Endpoints", func(db *gorm.DB) *gorm.DB { return db.Order("id asc") }).Order("created_at desc, id desc")
 	if len(scope) > 0 && scope[0] != 0 {
 		query = query.Where("project_id = ?", scope[0])
 	}
@@ -236,6 +347,12 @@ func (s *Store) GetApplicationDeploymentTemplate(applicationID, templateID uint)
 	return &template, err
 }
 
+func (s *Store) GetDatabaseBindingForTemplate(templateID uint) (*model.DatabaseBinding, error) {
+	var binding model.DatabaseBinding
+	err := s.db.Where("template_id = ?", templateID).First(&binding).Error
+	return &binding, err
+}
+
 func (s *Store) GetDefaultApplicationDeploymentTemplate(applicationID uint) (*model.ApplicationDeploymentTemplate, error) {
 	var application model.Application
 	if err := s.db.First(&application, applicationID).Error; err != nil {
@@ -249,15 +366,22 @@ func (s *Store) GetDefaultApplicationDeploymentTemplate(applicationID uint) (*mo
 
 func (s *Store) ListApplicationDeploymentTemplates(applicationID uint) ([]model.ApplicationDeploymentTemplate, error) {
 	var templates []model.ApplicationDeploymentTemplate
-	err := s.db.Where("application_id = ?", applicationID).Order("created_at asc").Find(&templates).Error
+	err := s.db.Where("application_id = ?", applicationID).Order("created_at asc, id asc").Find(&templates).Error
 	return templates, err
 }
 
 func (s *Store) CreateApplicationDeploymentTemplate(template *model.ApplicationDeploymentTemplate, makeDefault bool) error {
 	return s.db.Transaction(func(tx *gorm.DB) error {
+		enabled := template.Enabled
 		template.Revision = 1
 		if err := tx.Create(template).Error; err != nil {
 			return err
+		}
+		if !enabled {
+			if err := tx.Model(template).Update("enabled", false).Error; err != nil {
+				return err
+			}
+			template.Enabled = false
 		}
 		if makeDefault {
 			return tx.Model(&model.Application{}).Where("id = ?", template.ApplicationID).Update("default_deployment_template_id", template.ID).Error
@@ -318,6 +442,9 @@ func (s *Store) DeleteApplicationDeploymentTemplate(applicationID, templateID ui
 		if err := tx.Where("id = ? AND application_id = ?", templateID, applicationID).Delete(&model.ApplicationDeploymentTemplate{}).Error; err != nil {
 			return err
 		}
+		if err := tx.Where("template_id = ?", templateID).Delete(&model.DatabaseBinding{}).Error; err != nil {
+			return err
+		}
 		return tx.Model(&model.Application{}).Where("id = ? AND default_deployment_template_id = ?", applicationID, templateID).Update("default_deployment_template_id", nil).Error
 	})
 }
@@ -350,6 +477,14 @@ type fileMountReferenceSpec struct {
 // ListResourceReferences finds application templates and releases that mount
 // a named resource in the requested environment.
 func (s *Store) ListResourceReferences(namespace, sourceType, sourceName string) ([]model.ResourceReference, error) {
+	return s.listResourceReferences(nil, namespace, sourceType, sourceName)
+}
+
+func (s *Store) ListResourceReferencesForCluster(clusterID uint, namespace, sourceType, sourceName string) ([]model.ResourceReference, error) {
+	return s.listResourceReferences(&clusterID, namespace, sourceType, sourceName)
+}
+
+func (s *Store) listResourceReferences(clusterID *uint, namespace, sourceType, sourceName string) ([]model.ResourceReference, error) {
 	var applications []model.Application
 	if err := s.db.Preload("Environment").Find(&applications).Error; err != nil {
 		return nil, err
@@ -357,7 +492,7 @@ func (s *Store) ListResourceReferences(namespace, sourceType, sourceName string)
 	applicationByID := make(map[uint]model.Application)
 	applicationIDs := make([]uint, 0, len(applications))
 	for _, app := range applications {
-		if app.Environment.Namespace == namespace {
+		if app.Environment.Namespace == namespace && (clusterID == nil || app.Environment.ClusterID == *clusterID) {
 			applicationByID[app.ID] = app
 			applicationIDs = append(applicationIDs, app.ID)
 		}

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import AuditLogs from './AuditLogs.vue'
+import PaginationControls from '../components/PaginationControls.vue'
 
 const apiMocks = vi.hoisted(() => ({ get: vi.fn() }))
 vi.mock('../api/index.js', () => ({ api: apiMocks }))
@@ -40,7 +41,13 @@ describe('AuditLogs', () => {
     expect(wrapper.text()).toContain('审计日志')
     expect(wrapper.findAll('h1')).toHaveLength(1)
     expect(wrapper.find('.section-tabs-header').exists()).toBe(true)
+    expect(wrapper.find('.workspace-header').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="audit-open-filters"]').classes()).not.toContain('btn-sm')
+    expect(wrapper.get('[data-testid="audit-apply-filters"]').classes()).not.toContain('btn-sm')
     expect(wrapper.get('.audit-card').findComponent({ name: 'SurfaceCard' }).exists()).toBe(true)
+    expect(wrapper.get('.audit-card').classes()).toContain('surface-card--padding-none')
+    expect(wrapper.find('.audit-table-toolbar').exists()).toBe(true)
+    expect(wrapper.find('.audit-filter-panel').exists()).toBe(false)
     expect(wrapper.get('[data-testid="audit-page-logs"]').text()).toBe('审计记录')
     expect(wrapper.text()).toContain('console.example.com')
     expect(wrapper.text()).toContain('发布平台版本')
@@ -88,5 +95,34 @@ describe('AuditLogs', () => {
 
     expect(wrapper.text()).toContain('操作者：Agent')
     expect(apiMocks.get.mock.calls.some(([path]) => path.includes('actor_type=agent') && path.includes('created_from=2026-09-01') && path.includes('created_to=2026-09-08'))).toBe(true)
+  })
+
+  it('uses ten rows initially, keeps applied filters on page changes and resets when resizing', async () => {
+    apiMocks.get.mockImplementation(async path => {
+      const params = new URLSearchParams(path.split('?')[1])
+      const offset = Number(params.get('offset'))
+      return { data: [{ id: offset + 1, resource_type: 'site', resource_id: offset + 1, action: 'create' }], total: 35 }
+    })
+    const wrapper = mount(AuditLogs)
+    await flushPromises()
+    expect(apiMocks.get.mock.lastCall[0]).toBe('/audit-logs?limit=10&offset=0')
+    await wrapper.get('.audit-search').setValue('applied')
+    await wrapper.get('[data-testid="audit-apply-filters"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('.audit-search').setValue('draft')
+    await wrapper.get('[aria-label="下一页"]').trigger('click')
+    await flushPromises()
+    expect(apiMocks.get.mock.lastCall[0]).toBe('/audit-logs?limit=10&offset=10&keyword=applied')
+    expect(wrapper.getComponent(PaginationControls).props('page')).toBe(2)
+    await wrapper.get('select[aria-label="每页条数"]').setValue('20')
+    await flushPromises()
+    expect(apiMocks.get.mock.lastCall[0]).toBe('/audit-logs?limit=20&offset=0&keyword=applied')
+    expect(wrapper.getComponent(PaginationControls).props('page')).toBe(1)
+    await wrapper.get('[aria-label="下一页"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-testid="audit-apply-filters"]').trigger('click')
+    await flushPromises()
+    expect(apiMocks.get.mock.lastCall[0]).toBe('/audit-logs?limit=20&offset=0&keyword=draft')
+    wrapper.unmount()
   })
 })

@@ -1,8 +1,17 @@
 import { api } from './index.js'
 
 export function getPlatformEndpoint(options) { return api.get('/platform/endpoint', options) }
+export function getPlatformCapabilities(options) { return api.get('/platform/capabilities', options) }
 export function getPlatformCertificates(options) { return api.get('/certs', options) }
 export function getPlatformStatus(options) { return api.get('/platform/status', options) }
+export async function getPlatformReleasePage({ limit = 10, offset = 0 } = {}, options) {
+  const result = await api.get('/platform/status?' + new URLSearchParams({ limit, offset }), options)
+  // Older backends return only a recent window and ignore pagination parameters.
+  // Paginate that window locally and let the view clearly identify the limitation.
+  const legacy = result.releases_total == null
+  const releases = result.releases || []
+  return { ...result, total: legacy ? releases.length : result.releases_total, releases: legacy ? releases.slice(offset, offset + limit) : releases }
+}
 export function getTemporaryTokens(options) { return api.get('/auth/temporary-tokens', options) }
 
 function post(path, body, options) {
@@ -24,3 +33,5 @@ export function createPlatformRelease(body, options) { return post('/platform/re
 export function rollbackPlatformRelease(releaseID, options) {
   return post(`/platform/releases/${encodeURIComponent(releaseID)}/rollback`, undefined, options)
 }
+
+export function getTemporaryTokenPage(query, options) { return api.get('/auth/temporary-tokens?' + new URLSearchParams(query), options) }

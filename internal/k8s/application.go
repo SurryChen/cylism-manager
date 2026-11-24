@@ -302,6 +302,14 @@ func (a *ApplicationPreflightAdapter) CheckCRD(ctx context.Context, name string)
 	return a.client.CheckCRDContext(ctx, name)
 }
 
-func (a *ApplicationPreflightAdapter) GetManagedPVC(ctx context.Context, ns, name string, id uint) (*PersistentVolumeClaimInfo, error) {
-	return a.client.GetManagedPVCContext(ctx, ns, name, id)
+func (a *ApplicationPreflightAdapter) GetPVCInfo(ctx context.Context, ns, name string) (*PersistentVolumeClaimInfo, error) {
+	return a.client.GetPVCInfoContext(ctx, ns, name)
+}
+
+func (a *ApplicationPreflightAdapter) ListPods(ctx context.Context, ns string) ([]corev1.Pod, error) {
+	list, err := a.client.Clientset.CoreV1().Pods(ns).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+	return list.Items, nil
 }

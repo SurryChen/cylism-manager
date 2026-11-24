@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"time"
 
 	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 	k8sclient "github.com/cylism/cylism-manager/internal/k8s"
+	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/repository"
 	storageservice "github.com/cylism/cylism-manager/internal/service/storage"
 	corev1 "k8s.io/api/core/v1"
@@ -29,6 +31,21 @@ type K8sHandler struct {
 	k8s                K8sResourceAdapter
 	storageService     *storageservice.Service
 	dashboardSummary   *DashboardSummaryService
+	clusterClient      func(context.Context, uint) (*k8sclient.Client, error)
+	scopedClient       *k8sclient.Client
+}
+
+type clusterResourceReferenceRepository interface {
+	ListResourceReferencesForCluster(uint, string, string, string) ([]model.ResourceReference, error)
+}
+
+type scopedResourceReferences struct {
+	repository clusterResourceReferenceRepository
+	clusterID  uint
+}
+
+func (s scopedResourceReferences) ListResourceReferences(namespace, sourceType, name string) ([]model.ResourceReference, error) {
+	return s.repository.ListResourceReferencesForCluster(s.clusterID, namespace, sourceType, name)
 }
 
 // K8sResourceAdapter is the resource capability consumed by this HTTP API.
@@ -41,6 +58,7 @@ type K8sResourceAdapter interface {
 	ListNodeInfosContext(context.Context) ([]k8sclient.NodeInfo, error)
 	ListDeploymentsContext(context.Context, string) ([]k8sclient.DeploymentInfo, error)
 	ListServicesContext(context.Context, string) ([]k8sclient.ServiceEndpointInfo, error)
+	ListServicesMetadataContext(context.Context, string) ([]k8sclient.ServiceInfo, error)
 	ListDeploymentPodsContext(context.Context, string, string) ([]k8sclient.PodRef, error)
 	GetDeploymentContext(context.Context, string, string) (*k8sclient.DeploymentInfo, error)
 	ListDeploymentRevisionsContext(context.Context, string, string) ([]k8sclient.RevisionInfo, error)
@@ -60,6 +78,7 @@ type K8sResourceAdapter interface {
 	UpdateConfigMapContext(context.Context, k8sclient.ConfigMapMutation) (*k8sclient.ConfigMapDetail, error)
 	DeleteConfigMapContext(context.Context, string, string) error
 	ListSecretsMetadataContext(context.Context, string) ([]k8sclient.SecretInfo, error)
+	ListSecretsMetadataPageContext(context.Context, string, int64, string) (k8sclient.SecretMetadataPage, error)
 	ListSecretsContext(context.Context, string) ([]k8sclient.SecretInfo, error)
 	GetSecretContext(context.Context, string, string) (*k8sclient.SecretDetail, error)
 	CreateOpaqueSecretContext(context.Context, k8sclient.OpaqueSecretMutation) (*k8sclient.SecretInfo, error)
@@ -101,6 +120,34 @@ func NewK8sHandlerWithAdapterAndEncryption(references repository.ResourceReferen
 // StorageService exposes the composed storage service to the infrastructure
 // router; callers must still use the service API rather than handler helpers.
 func (h *K8sHandler) StorageService() *storageservice.Service { return h.storageService }
+
+// WithClusterClientFactory enables request-scoped resource access through a cluster Agent.
+func (h *K8sHandler) WithClusterClientFactory(factory func(context.Context, uint) (*k8sclient.Client, error)) *K8sHandler {
+	h.clusterClient = factory
+	return h
+}
+
+func (h *K8sHandler) ForCluster(ctx context.Context, clusterID uint) (*K8sHandler, error) {
+	if h.clusterClient == nil {
+		return nil, fmt.Errorf("集群 Agent 访问未配置")
+	}
+	client, err := h.clusterClient(ctx, clusterID)
+	if err != nil {
+		return nil, err
+	}
+	scoped := *h
+	scoped.scopedClient = client
+	scoped.k8s = NewK8sResourceAdapter(client)
+	if references, ok := h.resourceReferences.(clusterResourceReferenceRepository); ok {
+		scoped.resourceReferences = scopedResourceReferences{repository: references, clusterID: clusterID}
+	} else {
+		scoped.resourceReferences = nil
+	}
+	scoped.dashboardSummary = NewDashboardSummaryService(scoped.k8s, 5*time.Second)
+	return &scoped, nil
+}
+
+func (h *K8sHandler) ClusterClient() *k8sclient.Client { return h.scopedClient }
 
 type NamespaceSummary struct {
 	Name             string            `json:"name"`
@@ -347,7 +394,7 @@ func (h *K8sHandler) ListPods(c *gin.Context) {
 		apiShared.K8sUnavailable(c)
 		return
 	}
-	ns := c.Query("namespace")
+	ns := apiShared.InventoryNamespace(c)
 	pods, err := h.k8s.CoreV1().Pods(ns).List(c.Request.Context(), metav1.ListOptions{})
 	if err != nil {
 		apiShared.Error(c, http.StatusOK, apiShared.CodeK8sAPIError, err.Error())
@@ -386,7 +433,9 @@ func (h *K8sHandler) ListPods(c *gin.Context) {
 			Containers: containers,
 		})
 	}
-	apiShared.Success(c, result)
+	apiShared.ResourceListPage(c, result, func(item PodInfo) apiShared.ResourceListKey {
+		return apiShared.ResourceListKey{Name: item.Name, Namespace: item.Namespace, Node: item.Node, Status: item.Status, Restarts: item.Restarts}
+	})
 }
 
 // ==================== Deployment ====================
@@ -397,7 +446,7 @@ func (h *K8sHandler) ListDeployments(c *gin.Context) {
 		apiShared.K8sUnavailable(c)
 		return
 	}
-	ns := c.Query("namespace")
+	ns := apiShared.InventoryNamespace(c)
 	result, err := h.k8s.ListDeploymentsContext(c.Request.Context(), ns)
 	if err != nil {
 		apiShared.Error(c, http.StatusOK, apiShared.CodeK8sAPIError, err.Error())
@@ -406,7 +455,9 @@ func (h *K8sHandler) ListDeployments(c *gin.Context) {
 	if result == nil {
 		result = []k8sclient.DeploymentInfo{}
 	}
-	apiShared.Success(c, result)
+	apiShared.ResourceListPage(c, result, func(item k8sclient.DeploymentInfo) apiShared.ResourceListKey {
+		return apiShared.ResourceListKey{Name: item.Name, Namespace: item.Namespace}
+	})
 }
 
 // GetDeployment 获取 Deployment 详情
@@ -538,7 +589,7 @@ func (h *K8sHandler) ListStatefulSets(c *gin.Context) {
 		apiShared.K8sUnavailable(c)
 		return
 	}
-	ns := c.Query("namespace")
+	ns := apiShared.InventoryNamespace(c)
 	result, err := h.k8s.ListStatefulSetsContext(c.Request.Context(), ns)
 	if err != nil {
 		apiShared.Error(c, http.StatusOK, apiShared.CodeK8sAPIError, err.Error())
@@ -547,7 +598,9 @@ func (h *K8sHandler) ListStatefulSets(c *gin.Context) {
 	if result == nil {
 		result = []k8sclient.StatefulSetInfo{}
 	}
-	apiShared.Success(c, result)
+	apiShared.ResourceListPage(c, result, func(item k8sclient.StatefulSetInfo) apiShared.ResourceListKey {
+		return apiShared.ResourceListKey{Name: item.Name, Namespace: item.Namespace}
+	})
 }
 
 // GetStatefulSet 获取 StatefulSet 详情
@@ -598,7 +651,7 @@ func (h *K8sHandler) ListDaemonSets(c *gin.Context) {
 		apiShared.K8sUnavailable(c)
 		return
 	}
-	ns := c.Query("namespace")
+	ns := apiShared.InventoryNamespace(c)
 	result, err := h.k8s.ListDaemonSetsContext(c.Request.Context(), ns)
 	if err != nil {
 		apiShared.Error(c, http.StatusOK, apiShared.CodeK8sAPIError, err.Error())
@@ -607,7 +660,9 @@ func (h *K8sHandler) ListDaemonSets(c *gin.Context) {
 	if result == nil {
 		result = []k8sclient.DaemonSetInfo{}
 	}
-	apiShared.Success(c, result)
+	apiShared.ResourceListPage(c, result, func(item k8sclient.DaemonSetInfo) apiShared.ResourceListKey {
+		return apiShared.ResourceListKey{Name: item.Name, Namespace: item.Namespace}
+	})
 }
 
 // GetDaemonSet 获取 DaemonSet 详情
@@ -634,7 +689,21 @@ func (h *K8sHandler) ListServicesV2(c *gin.Context) {
 		apiShared.K8sUnavailable(c)
 		return
 	}
-	ns := c.Query("namespace")
+	ns := apiShared.InventoryNamespace(c)
+	if c.Query("endpoint_count") == "false" {
+		result, err := h.k8s.ListServicesMetadataContext(c.Request.Context(), ns)
+		if err != nil {
+			apiShared.Error(c, http.StatusOK, apiShared.CodeK8sAPIError, err.Error())
+			return
+		}
+		if result == nil {
+			result = []k8sclient.ServiceInfo{}
+		}
+		apiShared.ResourceListPage(c, result, func(item k8sclient.ServiceInfo) apiShared.ResourceListKey {
+			return apiShared.ResourceListKey{Name: item.Name, Namespace: item.Namespace}
+		})
+		return
+	}
 	result, err := h.k8s.ListServicesContext(c.Request.Context(), ns)
 	if err != nil {
 		apiShared.Error(c, http.StatusOK, apiShared.CodeK8sAPIError, err.Error())
@@ -643,7 +712,9 @@ func (h *K8sHandler) ListServicesV2(c *gin.Context) {
 	if result == nil {
 		result = []k8sclient.ServiceEndpointInfo{}
 	}
-	apiShared.Success(c, result)
+	apiShared.ResourceListPage(c, result, func(item k8sclient.ServiceEndpointInfo) apiShared.ResourceListKey {
+		return apiShared.ResourceListKey{Name: item.Name, Namespace: item.Namespace}
+	})
 }
 
 // ==================== EndpointSlice ====================
@@ -675,7 +746,7 @@ func (h *K8sHandler) ListConfigMaps(c *gin.Context) {
 		apiShared.K8sUnavailable(c)
 		return
 	}
-	ns := c.Query("namespace")
+	ns := apiShared.InventoryNamespace(c)
 	var result []k8sclient.ConfigMapInfo
 	var err error
 	if c.Query("usage") == "false" {
@@ -690,7 +761,9 @@ func (h *K8sHandler) ListConfigMaps(c *gin.Context) {
 	if result == nil {
 		result = []k8sclient.ConfigMapInfo{}
 	}
-	apiShared.Success(c, result)
+	apiShared.ResourceListPage(c, result, func(item k8sclient.ConfigMapInfo) apiShared.ResourceListKey {
+		return apiShared.ResourceListKey{Name: item.Name, Namespace: item.Namespace}
+	})
 }
 
 // GetConfigMap 获取 ConfigMap 详情
@@ -795,6 +868,31 @@ func (h *K8sHandler) ListSecrets(c *gin.Context) {
 		return
 	}
 	ns := c.Query("namespace")
+	if c.Query("metadata") == "true" {
+		limit := int64(50)
+		if rawLimit := c.Query("limit"); rawLimit != "" {
+			parsed, parseErr := strconv.ParseInt(rawLimit, 10, 64)
+			if parseErr != nil || parsed < 1 {
+				apiShared.Error(c, http.StatusBadRequest, apiShared.CodeBadRequest, "limit 必须是正整数")
+				return
+			}
+			if parsed < 200 {
+				limit = parsed
+			} else {
+				limit = 200
+			}
+		}
+		page, err := h.k8s.ListSecretsMetadataPageContext(c.Request.Context(), ns, limit, c.Query("continue"))
+		if err != nil {
+			apiShared.Error(c, http.StatusOK, apiShared.CodeK8sAPIError, err.Error())
+			return
+		}
+		if page.Items == nil {
+			page.Items = []k8sclient.SecretMetadataInfo{}
+		}
+		apiShared.Success(c, page)
+		return
+	}
 	var result []k8sclient.SecretInfo
 	var err error
 	if c.Query("usage") == "false" {

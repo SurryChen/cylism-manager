@@ -20,6 +20,7 @@ type Workflow struct {
 	Store      interface {
 		EventStore
 		ListAlertEvents(int) ([]model.AlertEvent, error)
+		ListAlertEventPage(int, int) ([]model.AlertEvent, int64, error)
 	}
 	Dispatcher  Dispatcher
 	Cache       *ResolvedCache
@@ -217,4 +218,11 @@ func (w *Workflow) SendTest(ctx context.Context, secrets NotificationSecrets, pa
 
 func TestPayload(platformURL string, now time.Time) AlertNotification {
 	return AlertNotification{Status: "firing", Alerts: []Alert{{Status: AlertStatus{State: "firing"}, Labels: map[string]string{"alertname": "CylismAlertingTest", "node": "示例节点", "severity": "warning"}, Annotations: map[string]string{"summary": "测试消息使用真实告警的完整卡片布局", "description": "模拟节点根磁盘使用率超过阈值", "rule_name": "节点根磁盘使用率过高（测试）", "current_value": "92.4%", "threshold": "85%", "duration": "10 分钟"}, StartsAt: now.UTC()}}, PlatformURL: platformURL}
+}
+
+func (w *Workflow) ListEventPage(limit, offset int) ([]model.AlertEvent, int64, error) {
+	if w == nil || w.Store == nil {
+		return nil, 0, fmt.Errorf("告警自动化不可用")
+	}
+	return w.Store.ListAlertEventPage(limit, offset)
 }

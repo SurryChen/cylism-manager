@@ -8,6 +8,7 @@ import (
 	crypto "github.com/cylism/cylism-manager/internal/security"
 	"github.com/cylism/cylism-manager/internal/service/application"
 	"github.com/cylism/cylism-manager/internal/store"
+	"github.com/gin-gonic/gin"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
@@ -42,6 +43,40 @@ func TestApplicationHandlerGetReleaseIncludesLivePodRuntime(t *testing.T) {
 	}
 }
 
+func TestPreflightReleaseIsReadOnlyAndOmitsSecretValues(t *testing.T) {
+	s, err := store.New(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	app := createApplicationForReleaseRuntimeTest(t, s)
+	key := []byte("01234567890123456789012345678901")
+	spec := application.ReleaseSpec{Image: "ghcr.io/example/app", ContainerPort: 8080, Replicas: 1, Resources: application.ResourceSpec{RequestsCPU: "100m", RequestsMemory: "128Mi", LimitsCPU: "500m", LimitsMemory: "512Mi"}, Config: map[string]string{"MODE": "prod"}, Secrets: map[string]string{"API_TOKEN": ""}, Service: application.ServiceSpec{Port: 80, TargetPort: 8080}}
+	snapshot, err := json.Marshal(application.SanitizeReleaseSpec(spec))
+	if err != nil {
+		t.Fatal(err)
+	}
+	encrypted, err := crypto.Encrypt(key, `{"API_TOKEN":"private-value"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	template := &model.ApplicationDeploymentTemplate{ApplicationID: app.ID, Name: "prod", Enabled: true, Spec: string(snapshot), EncryptedSecrets: encrypted}
+	if err := s.CreateApplicationDeploymentTemplate(template, true); err != nil {
+		t.Fatal(err)
+	}
+	client := &k8sclient.Client{Clientset: k8sfake.NewSimpleClientset(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: app.Environment.Namespace}, Status: corev1.NamespaceStatus{Phase: corev1.NamespaceActive}})}
+	handler := newTestApplicationHandler(s, key, NewKubernetesAdapter(client))
+	router := gin.New()
+	router.POST("/api/applications/:id/releases/preflight", handler.PreflightRelease)
+	response := serve(router, newJSONRequest(http.MethodPost, fmt.Sprintf("/api/applications/%d/releases/preflight", app.ID), gin.H{"template_id": template.ID, "version": "1.0"}))
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "API_TOKEN") || strings.Contains(response.Body.String(), "private-value") || !strings.Contains(response.Body.String(), `"ready":true`) {
+		t.Fatalf("preflight response = %d: %s", response.Code, response.Body.String())
+	}
+	releases, err := s.ListReleases(app.ID)
+	if err != nil || len(releases) != 0 {
+		t.Fatalf("preflight created releases: %#v, err=%v", releases, err)
+	}
+}
+
 func TestApplicationHandlerGetReleaseMarksLegacyReleaseAsUntracked(t *testing.T) {
 	r, s := setupApplicationRouter()
 	app := createApplicationForReleaseRuntimeTest(t, s)
@@ -69,7 +104,9 @@ func TestCreateRestartReleaseUsesCurrentTemplateAndSanitizesSecrets(t *testing.T
 	app := createApplicationForReleaseRuntimeTest(t, s)
 	key := []byte("01234567890123456789012345678901")
 
+	ndots := 1
 	currentTemplateSpec := application.ReleaseSpec{
+		DNSNDots:      &ndots,
 		Image:         "ghcr.io/example/hysteria:template",
 		Command:       []string{"hysteria", "server", "-c", "/etc/hysteria/config.yaml"},
 		ContainerPort: 8443,
@@ -77,9 +114,10 @@ func TestCreateRestartReleaseUsesCurrentTemplateAndSanitizesSecrets(t *testing.T
 		Resources: application.ResourceSpec{
 			RequestsCPU: "100m", RequestsMemory: "128Mi", LimitsCPU: "500m", LimitsMemory: "512Mi",
 		},
-		Secrets:  map[string]string{"API_TOKEN": ""},
-		Service:  application.ServiceSpec{Port: 8443, TargetPort: 8443, Protocol: application.ServiceProtocolUDP, Type: application.ServiceTypeLoadBalancer},
-		Endpoint: application.EndpointSpec{Exposure: application.ExposureCluster},
+		SecretFileKeys: []string{"API_TOKEN"},
+		Secrets:        map[string]string{"API_TOKEN": ""},
+		Service:        application.ServiceSpec{Port: 8443, TargetPort: 8443, Protocol: application.ServiceProtocolUDP, Type: application.ServiceTypeLoadBalancer},
+		Endpoint:       application.EndpointSpec{Exposure: application.ExposureCluster},
 	}
 	templateSnapshot, err := json.Marshal(application.SanitizeReleaseSpec(currentTemplateSpec))
 	if err != nil {
@@ -96,7 +134,7 @@ func TestCreateRestartReleaseUsesCurrentTemplateAndSanitizesSecrets(t *testing.T
 		t.Fatal(err)
 	}
 	active := &model.Release{
-		ApplicationID: app.ID, Sequence: 4, Image: "not a valid image", Version: "2.12.1",
+		ApplicationID: app.ID, Sequence: 4, Image: "ghcr.io/example/hysteria:2.12.1", Version: "2.12.1",
 		DesiredSpec: `{"command":["legacy-command"],"secrets":{"API_TOKEN":""}}`, Status: model.ReleaseStatusSucceeded, CreatedBy: 1,
 	}
 	if err := s.CreateRelease(active); err != nil {
@@ -137,17 +175,14 @@ func TestCreateRestartReleaseUsesCurrentTemplateAndSanitizesSecrets(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
+	if len(snapshot.SecretFileKeys) != 1 || snapshot.SecretFileKeys[0] != "API_TOKEN" || len(resources.Deployment.Spec.Template.Spec.Containers[0].EnvFrom) != 0 || len(resources.Deployment.Spec.Template.Spec.Containers[0].Env) != 0 {
+		t.Fatal("restart lost file-only Secret metadata or exposed it as an environment variable")
+	}
+	if snapshot.DNSNDots == nil || *snapshot.DNSNDots != 1 || resources.Deployment.Spec.Template.Spec.DNSConfig == nil || *resources.Deployment.Spec.Template.Spec.DNSConfig.Options[0].Value != "1" {
+		t.Fatalf("restart did not apply current template DNS setting: %+v", snapshot)
+	}
 	if got := strings.Join(resources.Deployment.Spec.Template.Spec.Containers[0].Command, " "); got != strings.Join(currentTemplateSpec.Command, " ") {
 		t.Fatalf("restart pod template command = %q, want %q", got, strings.Join(currentTemplateSpec.Command, " "))
 	}
 
-	deadline := time.Now().Add(time.Second)
-	for time.Now().Before(deadline) {
-		stored, getErr := s.GetRelease(release.ID)
-		if getErr == nil && stored.Status == model.ReleaseStatusFailed {
-			return // The invalid test image makes the asynchronous worker finish before the test deadline.
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	t.Fatal("restart release worker did not finish")
 }

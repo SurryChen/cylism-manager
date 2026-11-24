@@ -90,9 +90,6 @@ func (h *ManagedOCIRegistryHandler) List(c *gin.Context) {
 		apiShared.DBError(c, "读取受管制品库失败")
 		return
 	}
-	for i := range registries {
-		h.refreshStatus(c.Request.Context(), &registries[i])
-	}
 	views := make([]apiShared.ManagedOCIRegistryView, 0, len(registries))
 	for i := range registries {
 		if view := apiShared.ManagedOCIRegistryDTO(&registries[i]); view != nil {
@@ -100,6 +97,23 @@ func (h *ManagedOCIRegistryHandler) List(c *gin.Context) {
 		}
 	}
 	apiShared.Success(c, views)
+}
+
+// RefreshStatus performs an on-demand live check. Regular list reads return
+// the status maintained by the background reconciler instead.
+func (h *ManagedOCIRegistryHandler) RefreshStatus(c *gin.Context) {
+	id, err := apiShared.ParseID(c.Param("id"))
+	if err != nil {
+		apiShared.BadRequest(c, "制品库 ID 无效")
+		return
+	}
+	registry, err := h.service.Get(id)
+	if err != nil {
+		apiShared.NotFound(c, "受管制品库不存在")
+		return
+	}
+	h.refreshStatus(c.Request.Context(), registry)
+	apiShared.Success(c, apiShared.ManagedOCIRegistryDTO(registry))
 }
 
 func (h *ManagedOCIRegistryHandler) Get(c *gin.Context) {

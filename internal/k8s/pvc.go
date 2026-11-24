@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -61,6 +62,14 @@ type PersistentVolumeClaimInfo struct {
 	ReclaimPolicy        string   `json:"reclaim_policy,omitempty"`
 	WaitForFirstConsumer bool     `json:"wait_for_first_consumer"`
 	CreationTimestamp    string   `json:"created_at,omitempty"`
+}
+
+// PersistentVolumeClaimReference identifies a claim without requiring a
+// cluster-wide inventory read. It is used by the usage collector, which only
+// needs the rows currently rendered in the UI.
+type PersistentVolumeClaimReference struct {
+	Namespace string
+	Name      string
 }
 
 type StorageClassInfo struct {
@@ -148,6 +157,41 @@ func (c *Client) ListPVCsContext(ctx context.Context, namespace string) ([]Persi
 	return result, nil
 }
 
+// ListPVCUsageInfosContext resolves only the PVC/PV pairs requested by the
+// caller. StorageClass metadata is deliberately omitted because it is not
+// needed to collect local directory usage.
+func (c *Client) ListPVCUsageInfosContext(ctx context.Context, references []PersistentVolumeClaimReference) ([]PersistentVolumeClaimInfo, error) {
+	if c == nil || c.Clientset == nil {
+		return nil, fmt.Errorf("Kubernetes 存储客户端未初始化")
+	}
+	if ctx == nil {
+		return nil, fmt.Errorf("Kubernetes 请求上下文不能为空")
+	}
+	result := make([]PersistentVolumeClaimInfo, 0, len(references))
+	for _, reference := range references {
+		namespace, name := strings.TrimSpace(reference.Namespace), strings.TrimSpace(reference.Name)
+		if namespace == "" || name == "" {
+			continue
+		}
+		claim, err := c.Clientset.CoreV1().PersistentVolumeClaims(namespace).Get(ctx, name, metav1.GetOptions{})
+		if apierrors.IsNotFound(err) {
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("get persistentvolumeclaim %s/%s: %w", namespace, name, err)
+		}
+		var volume *corev1.PersistentVolume
+		if claim.Spec.VolumeName != "" {
+			volume, err = c.Clientset.CoreV1().PersistentVolumes().Get(ctx, claim.Spec.VolumeName, metav1.GetOptions{})
+			if err != nil && !apierrors.IsNotFound(err) {
+				return nil, fmt.Errorf("get persistentvolume %s: %w", claim.Spec.VolumeName, err)
+			}
+		}
+		result = append(result, pvcInfoFromResources(claim, nil, volume))
+	}
+	return result, nil
+}
+
 // GetManagedPVCContext resolves platform-owned PVC state using a caller-owned
 // timeout/cancellation boundary.
 func (c *Client) GetManagedPVCContext(ctx context.Context, namespace, name string, environmentID uint) (*PersistentVolumeClaimInfo, error) {
@@ -192,6 +236,45 @@ func (c *Client) GetPVCInfoContext(ctx context.Context, namespace, name string) 
 		return nil, err
 	}
 	return &info, nil
+}
+
+// AdoptManagedPVCEnvironmentContext associates a legacy platform-managed PVC
+// with its owning application environment without changing its data or spec.
+func (c *Client) AdoptManagedPVCEnvironmentContext(ctx context.Context, namespace, name string, environmentID uint) error {
+	if c == nil || c.Clientset == nil {
+		return fmt.Errorf("Kubernetes 存储客户端未初始化")
+	}
+	if ctx == nil {
+		return fmt.Errorf("Kubernetes 请求上下文不能为空")
+	}
+	if environmentID == 0 {
+		return fmt.Errorf("环境 ID 无效")
+	}
+	claims := c.Clientset.CoreV1().PersistentVolumeClaims(namespace)
+	claim, err := claims.Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("get persistentvolumeclaim %s/%s: %w", namespace, name, err)
+	}
+	if claim.Labels[ManagedByLabel] != ManagedByValue {
+		return fmt.Errorf("PVC %q 未由平台管理", name)
+	}
+	if owner := infrastructurePVCOwner(claim); owner != "" {
+		return fmt.Errorf("PVC %q 由基础设施组件管理，不能关联到应用环境", name)
+	}
+	if existing := claim.Labels[EnvironmentLabel]; existing != "" {
+		if existing == EnvironmentLabelValue(environmentID) {
+			return nil
+		}
+		return fmt.Errorf("PVC %q 已关联到其他环境", name)
+	}
+	if claim.Labels == nil {
+		claim.Labels = make(map[string]string)
+	}
+	claim.Labels[EnvironmentLabel] = EnvironmentLabelValue(environmentID)
+	if _, err := claims.Update(ctx, claim, metav1.UpdateOptions{}); err != nil {
+		return fmt.Errorf("associate persistentvolumeclaim with environment: %w", err)
+	}
+	return nil
 }
 
 func (c *Client) CreateManagedPVCContext(ctx context.Context, namespace string, environmentID uint, request PersistentVolumeClaimRequest) (*corev1.PersistentVolumeClaim, error) {
@@ -430,17 +513,32 @@ func (c *Client) pvcInfos(ctx context.Context, claims []corev1.PersistentVolumeC
 	if len(claims) == 0 {
 		return []PersistentVolumeClaimInfo{}, nil
 	}
-	storageClasses, err := c.Clientset.StorageV1().StorageClasses().List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("list storageclasses: %w", err)
+	var (
+		storageClasses    *storagev1.StorageClassList
+		volumes           *corev1.PersistentVolumeList
+		storageClassesErr error
+		volumesErr        error
+		waitGroup         sync.WaitGroup
+	)
+	waitGroup.Add(2)
+	go func() {
+		defer waitGroup.Done()
+		storageClasses, storageClassesErr = c.Clientset.StorageV1().StorageClasses().List(ctx, metav1.ListOptions{})
+	}()
+	go func() {
+		defer waitGroup.Done()
+		volumes, volumesErr = c.Clientset.CoreV1().PersistentVolumes().List(ctx, metav1.ListOptions{})
+	}()
+	waitGroup.Wait()
+	if storageClassesErr != nil {
+		return nil, fmt.Errorf("list storageclasses: %w", storageClassesErr)
+	}
+	if volumesErr != nil {
+		return nil, fmt.Errorf("list persistentvolumes: %w", volumesErr)
 	}
 	classesByName := make(map[string]*storagev1.StorageClass, len(storageClasses.Items))
 	for index := range storageClasses.Items {
 		classesByName[storageClasses.Items[index].Name] = &storageClasses.Items[index]
-	}
-	volumes, err := c.Clientset.CoreV1().PersistentVolumes().List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("list persistentvolumes: %w", err)
 	}
 	volumesByName := make(map[string]*corev1.PersistentVolume, len(volumes.Items))
 	for index := range volumes.Items {

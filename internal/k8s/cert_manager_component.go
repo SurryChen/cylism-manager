@@ -3,6 +3,7 @@ package k8s
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -132,18 +133,18 @@ func (c *Client) CertManagerStatusContext(ctx context.Context) *CertManagerStatu
 		return status
 	}
 
-	var err error
-	status.CertificateCRD, err = c.CheckCRDContext(ctx, "certificates.cert-manager.io")
-	if err != nil {
-		return certManagerStatusForError(status, "检查 Certificate CRD", err)
-	}
-	status.IssuerCRD, err = c.CheckCRDContext(ctx, "issuers.cert-manager.io")
-	if err != nil {
-		return certManagerStatusForError(status, "检查 Issuer CRD", err)
-	}
-	status.ClusterIssuerCRD, err = c.CheckCRDContext(ctx, "clusterissuers.cert-manager.io")
-	if err != nil {
-		return certManagerStatusForError(status, "检查 ClusterIssuer CRD", err)
+	crdChecks := concurrentCertManagerChecks([]func() (bool, error){
+		func() (bool, error) { return c.CheckCRDContext(ctx, "certificates.cert-manager.io") },
+		func() (bool, error) { return c.CheckCRDContext(ctx, "issuers.cert-manager.io") },
+		func() (bool, error) { return c.CheckCRDContext(ctx, "clusterissuers.cert-manager.io") },
+	})
+	status.CertificateCRD = crdChecks[0].value
+	status.IssuerCRD = crdChecks[1].value
+	status.ClusterIssuerCRD = crdChecks[2].value
+	for index, action := range []string{"检查 Certificate CRD", "检查 Issuer CRD", "检查 ClusterIssuer CRD"} {
+		if crdChecks[index].err != nil {
+			return certManagerStatusForError(status, action, crdChecks[index].err)
+		}
 	}
 	if !status.CertificateCRD || !status.IssuerCRD || !status.ClusterIssuerCRD {
 		status.InstallerAvailable = c.helmChartInstallerAvailableContext(ctx)
@@ -166,9 +167,14 @@ func (c *Client) CertManagerStatusContext(ctx context.Context) *CertManagerStatu
 	if err := c.checkCertManagerAccessContext(ctx); err != nil {
 		return certManagerStatusForError(status, "验证 cert-manager 访问权限", err)
 	}
-	status.ControllerReady = deploymentReady(ctx, c, certManagerHelmName)
-	status.WebhookReady = deploymentReady(ctx, c, certManagerHelmName+"-webhook")
-	status.CAInjectorReady = deploymentReady(ctx, c, certManagerHelmName+"-cainjector")
+	componentChecks := concurrentCertManagerChecks([]func() (bool, error){
+		func() (bool, error) { return deploymentReady(ctx, c, certManagerHelmName), nil },
+		func() (bool, error) { return deploymentReady(ctx, c, certManagerHelmName+"-webhook"), nil },
+		func() (bool, error) { return deploymentReady(ctx, c, certManagerHelmName+"-cainjector"), nil },
+	})
+	status.ControllerReady = componentChecks[0].value
+	status.WebhookReady = componentChecks[1].value
+	status.CAInjectorReady = componentChecks[2].value
 	if !status.ControllerReady || !status.WebhookReady || !status.CAInjectorReady {
 		if exists, failed, detail := c.certManagerHelmChartStateContext(ctx); exists && !failed {
 			status.State = CertManagerStateInstalling
@@ -256,20 +262,47 @@ func (c *Client) checkCertManagerAccessContext(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	for _, resource := range []struct {
+	resources := []struct {
 		gvr        schema.GroupVersionResource
 		namespaced bool
-	}{{certGVR, true}, {issuerGVR, true}, {clusterIssuerGVR, false}, {certificateRequestGVR, true}, {orderGVR, true}, {challengeGVR, true}} {
-		if resource.namespaced {
-			_, err = dynamicClient.Resource(resource.gvr).Namespace("").List(ctx, metav1.ListOptions{Limit: 1})
-		} else {
-			_, err = dynamicClient.Resource(resource.gvr).List(ctx, metav1.ListOptions{Limit: 1})
-		}
-		if err != nil {
-			return err
+	}{{certGVR, true}, {issuerGVR, true}, {clusterIssuerGVR, false}, {certificateRequestGVR, true}, {orderGVR, true}, {challengeGVR, true}}
+	checks := make([]func() (bool, error), 0, len(resources))
+	for _, resource := range resources {
+		resource := resource
+		checks = append(checks, func() (bool, error) {
+			if resource.namespaced {
+				_, err := dynamicClient.Resource(resource.gvr).Namespace("").List(ctx, metav1.ListOptions{Limit: 1})
+				return false, err
+			}
+			_, err := dynamicClient.Resource(resource.gvr).List(ctx, metav1.ListOptions{Limit: 1})
+			return false, err
+		})
+	}
+	for _, result := range concurrentCertManagerChecks(checks) {
+		if result.err != nil {
+			return result.err
 		}
 	}
 	return nil
+}
+
+type certManagerCheckResult struct {
+	value bool
+	err   error
+}
+
+func concurrentCertManagerChecks(checks []func() (bool, error)) []certManagerCheckResult {
+	results := make([]certManagerCheckResult, len(checks))
+	var waitGroup sync.WaitGroup
+	for index, check := range checks {
+		waitGroup.Add(1)
+		go func(index int, check func() (bool, error)) {
+			defer waitGroup.Done()
+			results[index].value, results[index].err = check()
+		}(index, check)
+	}
+	waitGroup.Wait()
+	return results
 }
 
 func deploymentReady(ctx context.Context, c *Client, name string) bool {

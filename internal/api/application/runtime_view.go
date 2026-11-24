@@ -4,6 +4,7 @@ import (
 	"context"
 	"sort"
 	"strings"
+	"time"
 
 	networkapi "github.com/cylism/cylism-manager/internal/api/infrastructure/network"
 	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
@@ -24,6 +25,17 @@ type workspaceApplicationInfo struct {
 	EndpointCount      int                     `json:"endpoint_count"`
 }
 
+type workspaceReleaseSummary struct {
+	ID              uint      `json:"id"`
+	ApplicationID   uint      `json:"application_id"`
+	ApplicationName string    `json:"application_name"`
+	Sequence        uint      `json:"sequence"`
+	Version         string    `json:"version"`
+	Image           string    `json:"image"`
+	Status          string    `json:"status"`
+	CreatedAt       time.Time `json:"created_at"`
+}
+
 type applicationDiscoveryInfo struct {
 	ID            uint                        `json:"id"`
 	ProjectID     uint                        `json:"project_id"`
@@ -38,6 +50,7 @@ type applicationDiscoveryInfo struct {
 
 type applicationEnvironmentInfo struct {
 	ID        uint   `json:"id"`
+	ClusterID uint   `json:"cluster_id"`
 	Name      string `json:"name"`
 	Namespace string `json:"namespace"`
 }
@@ -103,7 +116,7 @@ func (h *ApplicationHandler) DiscoverApplications(c *gin.Context) {
 		apiShared.DBError(c, err.Error())
 		return
 	}
-	runtimes := h.queries.ApplicationRuntimeInfos(c.Request.Context(), h.kubernetes, applications, releases)
+	runtimes := h.runtimeInfos(c.Request.Context(), applications, releases)
 	infos := make([]applicationDiscoveryInfo, 0, len(applications))
 	for _, app := range applications {
 		infos = append(infos, applicationDiscoveryInfoFromModel(app, runtimes[app.ID]))
@@ -127,7 +140,7 @@ func (h *ApplicationHandler) GetApplicationRuntime(c *gin.Context) {
 		apiShared.DBError(c, err.Error())
 		return
 	}
-	runtime := h.queries.ApplicationRuntimeInfos(c.Request.Context(), h.kubernetes, []model.Application{*app}, map[uint][]model.Release{applicationID: releases})[applicationID]
+	runtime := h.runtimeInfos(c.Request.Context(), []model.Application{*app}, map[uint][]model.Release{applicationID: releases})[applicationID]
 	apiShared.Success(c, runtime)
 }
 
@@ -160,7 +173,7 @@ func applicationDiscoveryInfoFromModel(app model.Application, runtime applicatio
 	capabilities := append([]string{}, app.Capabilities...)
 	return applicationDiscoveryInfo{
 		ID: app.ID, ProjectID: app.ProjectID, EnvironmentID: app.EnvironmentID, Name: app.Name, WorkloadKind: app.WorkloadKind, Capabilities: capabilities,
-		Environment: applicationEnvironmentInfo{ID: app.Environment.ID, Name: app.Environment.Name, Namespace: app.Environment.Namespace}, Endpoints: endpoints, Runtime: runtime,
+		Environment: applicationEnvironmentInfo{ID: app.Environment.ID, ClusterID: app.Environment.ClusterID, Name: app.Environment.Name, Namespace: app.Environment.Namespace}, Endpoints: endpoints, Runtime: runtime,
 	}
 }
 
@@ -190,6 +203,10 @@ func (h *ApplicationHandler) WorkspaceOverview(c *gin.Context) {
 		apiShared.DBError(c, err.Error())
 		return
 	}
+	if apiShared.PaginationRequested(c) {
+		h.workspaceApplicationPage(c, environment.Namespace, applications)
+		return
+	}
 	domains, err := h.resources.ListManagedDomains(environmentID)
 	if err != nil {
 		apiShared.DBError(c, err.Error())
@@ -201,6 +218,8 @@ func (h *ApplicationHandler) WorkspaceOverview(c *gin.Context) {
 	}
 	failedReleases := make([]workspaceRelease, 0)
 	recentReleases := make([]workspaceRelease, 0)
+	releaseSummaries := make([]workspaceReleaseSummary, 0)
+	includeReleaseHistory := c.Query("releases") != "false"
 	applicationIDs := make([]uint, 0, len(applications))
 	for _, app := range applications {
 		applicationIDs = append(applicationIDs, app.ID)
@@ -212,6 +231,9 @@ func (h *ApplicationHandler) WorkspaceOverview(c *gin.Context) {
 			for _, release := range releases {
 				item := workspaceRelease{ReleaseView: *apiShared.ReleaseDTO(&release), ApplicationName: app.Name}
 				recentReleases = append(recentReleases, item)
+				if includeReleaseHistory {
+					releaseSummaries = append(releaseSummaries, workspaceReleaseSummary{ID: release.ID, ApplicationID: app.ID, ApplicationName: app.Name, Sequence: release.Sequence, Version: release.Version, Image: release.Image, Status: release.Status, CreatedAt: release.CreatedAt})
+				}
 				if release.Status == model.ReleaseStatusFailed {
 					failedReleases = append(failedReleases, item)
 				}
@@ -219,6 +241,7 @@ func (h *ApplicationHandler) WorkspaceOverview(c *gin.Context) {
 		}
 	}
 	sort.Slice(recentReleases, func(i, j int) bool { return recentReleases[i].CreatedAt.After(recentReleases[j].CreatedAt) })
+	sort.Slice(releaseSummaries, func(i, j int) bool { return releaseSummaries[i].CreatedAt.After(releaseSummaries[j].CreatedAt) })
 	if len(recentReleases) > 8 {
 		recentReleases = recentReleases[:8]
 	}
@@ -227,14 +250,14 @@ func (h *ApplicationHandler) WorkspaceOverview(c *gin.Context) {
 	for index := range domains {
 		domainInfos = append(domainInfos, networkapi.ManagedDomainInfoFor(c.Request.Context(), &domains[index], h.kubernetes, h.resources))
 	}
-	apiShared.Success(c, gin.H{"project": apiShared.ProjectDTO(project), "environment": apiShared.EnvironmentDTO(environment), "applications": workspaceApplications, "domains": domainInfos, "failed_releases": failedReleases, "recent_releases": recentReleases})
+	apiShared.Success(c, gin.H{"project": apiShared.ProjectDTO(project), "environment": apiShared.EnvironmentDTO(environment), "applications": workspaceApplications, "domains": domainInfos, "failed_releases": failedReleases, "recent_releases": recentReleases, "releases": releaseSummaries})
 }
 
 func (h *ApplicationHandler) workspaceApplicationInfos(ctx context.Context, namespace string, applications []model.Application, allReleases map[uint][]model.Release) []workspaceApplicationInfo {
 	podStates, runtimeAvailable := h.queries.WorkspacePodStates(ctx, h.kubernetes, namespace)
 	infos := make([]workspaceApplicationInfo, 0, len(applications))
 	for _, app := range applications {
-		var latest, active *model.Release
+		var latest, active, observed *model.Release
 		for index := range allReleases[app.ID] {
 			release := &allReleases[app.ID][index]
 			if latest == nil {
@@ -243,21 +266,24 @@ func (h *ApplicationHandler) workspaceApplicationInfos(ctx context.Context, name
 			if active == nil && release.Status == model.ReleaseStatusSucceeded {
 				active = release
 			}
+			if runtimeAvailable && podStates[applicationservice.WorkspacePodKey(app.Name, release.Sequence)].TotalPods > 0 && (observed == nil || release.Sequence > observed.Sequence) {
+				observed = release
+			}
 		}
 		runtime := workspaceRuntimeSummary{Status: "not_released"}
-		if latest != nil && releaseInProgress(latest.Status) {
-			runtime.Status = "deploying"
-		} else if active != nil {
-			if !runtimeAvailable {
+		if observed != nil {
+			active = observed
+			runtime = podStates[applicationservice.WorkspacePodKey(app.Name, observed.Sequence)]
+		}
+		if latest != nil {
+			switch {
+			case !runtimeAvailable:
 				runtime.Status = "unknown"
-			} else {
-				runtime = podStates[applicationservice.WorkspacePodKey(app.Name, active.Sequence)]
-				if runtime.Status == "" {
-					runtime.Status = "unavailable"
-				}
+			case releaseInProgress(latest.Status):
+				runtime.Status = "deploying"
+			case observed == nil:
+				runtime.Status = "unavailable"
 			}
-		} else if latest != nil {
-			runtime.Status = "unavailable"
 		}
 		infos = append(infos, workspaceApplicationInfo{ApplicationView: *apiShared.ApplicationDTO(&app), ActiveRelease: apiShared.ReleaseDTO(active), LatestRelease: apiShared.ReleaseDTO(latest), Runtime: runtime, EndpointURL: applicationEndpointURL(app), EndpointAccessMode: applicationEndpointAccessMode(app), EndpointCount: len(app.Endpoints)})
 	}
@@ -266,7 +292,7 @@ func (h *ApplicationHandler) workspaceApplicationInfos(ctx context.Context, name
 
 func releaseInProgress(status string) bool {
 	switch status {
-	case model.ReleaseStatusDraft, model.ReleaseStatusValidating, model.ReleaseStatusApplying, model.ReleaseStatusWaitingReady, model.ReleaseStatusVerifying, model.ReleaseStatusRollingBack:
+	case model.ReleaseStatusDraft, model.ReleaseStatusValidating, model.ReleaseStatusMigrating, model.ReleaseStatusApplying, model.ReleaseStatusWaitingReady, model.ReleaseStatusVerifying, model.ReleaseStatusRollingBack:
 		return true
 	default:
 		return false
@@ -274,27 +300,32 @@ func releaseInProgress(status string) bool {
 }
 
 func applicationEndpointURL(app model.Application) string {
-	if len(app.Endpoints) == 0 || strings.TrimSpace(app.Endpoints[0].Domain) == "" {
-		return ""
+	for _, endpoint := range app.Endpoints {
+		if !endpointUsesIngress(endpoint) || strings.TrimSpace(endpoint.Domain) == "" || endpoint.AccessMode == model.ApplicationEndpointAccessProtectedConsole {
+			continue
+		}
+		scheme := "http"
+		if endpoint.TLSEnabled {
+			scheme = "https"
+		}
+		return scheme + "://" + endpoint.Domain + strings.TrimSpace(endpoint.Path)
 	}
-	endpoint := app.Endpoints[0]
-	if endpoint.AccessMode == model.ApplicationEndpointAccessProtectedConsole {
-		return ""
-	}
-	scheme := "http"
-	if endpoint.TLSEnabled {
-		scheme = "https"
-	}
-	return scheme + "://" + endpoint.Domain + strings.TrimSpace(endpoint.Path)
+	return ""
 }
 
 func applicationEndpointAccessMode(app model.Application) string {
-	if len(app.Endpoints) == 0 {
-		return ""
+	protected := false
+	for _, endpoint := range app.Endpoints {
+		if !endpointUsesIngress(endpoint) {
+			continue
+		}
+		if endpoint.AccessMode != model.ApplicationEndpointAccessProtectedConsole {
+			return model.ApplicationEndpointAccessPublic
+		}
+		protected = true
 	}
-	mode := app.Endpoints[0].AccessMode
-	if mode == "" {
-		return model.ApplicationEndpointAccessPublic
+	if protected {
+		return model.ApplicationEndpointAccessProtectedConsole
 	}
-	return mode
+	return ""
 }

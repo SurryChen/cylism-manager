@@ -1,6 +1,8 @@
 package store
 
 import (
+	"context"
+	"database/sql"
 	"path/filepath"
 	"testing"
 	"time"
@@ -43,6 +45,41 @@ func setupTestDB(t *testing.T) *Store {
 		t.Fatalf("failed to create store: %v", err)
 	}
 	return s
+}
+
+func TestSQLitePragmasApplyToPooledConnections(t *testing.T) {
+	st, err := New(filepath.Join(t.TempDir(), "store.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqlDB, err := st.DB().DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sqlDB.Close()
+	first, err := sqlDB.Conn(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer first.Close()
+	second, err := sqlDB.Conn(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer second.Close()
+	for _, conn := range []*sql.Conn{first, second} {
+		var timeout int
+		var mode string
+		if err := conn.QueryRowContext(context.Background(), "PRAGMA busy_timeout").Scan(&timeout); err != nil {
+			t.Fatal(err)
+		}
+		if err := conn.QueryRowContext(context.Background(), "PRAGMA journal_mode").Scan(&mode); err != nil {
+			t.Fatal(err)
+		}
+		if timeout != 5000 || mode != "wal" {
+			t.Fatalf("SQLite pragmas: busy_timeout=%d journal_mode=%s", timeout, mode)
+		}
+	}
 }
 
 func TestManagedOCIRegistryMigrationRemovesLegacyDataPathColumn(t *testing.T) {

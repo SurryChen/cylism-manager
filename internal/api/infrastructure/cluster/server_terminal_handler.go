@@ -1,15 +1,14 @@
 package cluster
 
 import (
+	"context"
 	"encoding/json"
-	"fmt"
 	"log"
 	"time"
 
 	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/repository"
-	crypto "github.com/cylism/cylism-manager/internal/security"
 	auditservice "github.com/cylism/cylism-manager/internal/service/audit"
 	"github.com/cylism/cylism-manager/internal/transport"
 	"github.com/gin-gonic/gin"
@@ -48,41 +47,12 @@ func (h *ServerTerminalHandler) Terminal(c *gin.Context) {
 	}
 	defer conn.Close()
 
-	port := server.SSHPort
-	if port == 0 {
-		port = 22
-	}
-	sshConfig := &ssh.ClientConfig{User: server.SSHUser, HostKeyCallback: ssh.InsecureIgnoreHostKey(), Timeout: 10 * time.Second}
-	if server.SSHAuthType == "key" && server.SSHKey != "" {
-		decKey, decryptErr := crypto.Decrypt(h.encKey, server.SSHKey)
-		if decryptErr != nil {
-			log.Printf("[terminal] key decrypt failed for server=%d: %v", server.ID, decryptErr)
-			return
-		}
-		signer, parseErr := ssh.ParsePrivateKey([]byte(decKey))
-		if parseErr != nil {
-			log.Printf("[terminal] key parse failed for server=%d: %v", server.ID, parseErr)
-			return
-		}
-		sshConfig.Auth = []ssh.AuthMethod{ssh.PublicKeys(signer)}
-	} else if server.SSHAuthType == "password" && server.SSHPassword != "" {
-		password, decryptErr := crypto.Decrypt(h.encKey, server.SSHPassword)
-		if decryptErr != nil {
-			log.Printf("[terminal] password decrypt failed for server=%d: %v", server.ID, decryptErr)
-			return
-		}
-		sshConfig.Auth = []ssh.AuthMethod{ssh.Password(password)}
-	} else {
-		log.Printf("[terminal] no auth method for server=%d", server.ID)
-		return
-	}
-
-	client, err := ssh.Dial("tcp", fmt.Sprintf("%s:%d", server.Host, port), sshConfig)
+	client, cleanup, err := transport.NewSSHClientContext(context.Background(), 15*time.Second, server, h.encKey)
 	if err != nil {
 		log.Printf("[terminal] dial failed for server=%d: %v", server.ID, err)
 		return
 	}
-	defer client.Close()
+	defer cleanup()
 	session, err := client.NewSession()
 	if err != nil {
 		return

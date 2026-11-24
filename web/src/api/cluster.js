@@ -1,6 +1,9 @@
 import { api } from './index.js'
 
-export function getClusterNodes(options) { return api.get('/nodes', options) }
+export function getClusterNodes(options, clusterID) {
+  const path = clusterID === undefined || clusterID === null || clusterID === '' ? '/nodes' : `/nodes?cluster_id=${encodeURIComponent(clusterID)}`
+  return api.get(path, options)
+}
 export function getClusterServers(options) { return api.get('/servers', options) }
 export function getClusterPlatform(options) { return api.get('/k8s/platform', options) }
 export function getClusterInventory(options) {
@@ -46,6 +49,14 @@ export function getNodeLabels(nodeName, options) {
 
 export function updateNodeLabels(nodeName, body, options) {
   return patch(`${nodePath(nodeName)}/labels`, body, options)
+}
+
+export function getNodeScheduling(clusterID, nodeName, options) {
+  return api.get(`${nodePath(nodeName)}/scheduling?cluster_id=${encodeURIComponent(clusterID)}`, options)
+}
+
+export function updateNodeScheduling(clusterID, nodeName, enabled, options) {
+  return patch(`${nodePath(nodeName)}/scheduling?cluster_id=${encodeURIComponent(clusterID)}`, { default_no_schedule: enabled }, options)
 }
 
 export function getNodeRemovalCheck(nodeName, options) {

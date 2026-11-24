@@ -35,6 +35,7 @@ func (f *proxyRepositoryFake) SaveRegistryProxy(proxy *model.RegistryProxy) erro
 	f.saved = &copy
 	return nil
 }
+func (f *proxyRepositoryFake) DeleteRegistryProxy(uint) error { return nil }
 
 func TestProxyServicePersistsThroughRepositoryContract(t *testing.T) {
 	repository := &proxyRepositoryFake{}

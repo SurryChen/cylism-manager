@@ -24,9 +24,16 @@ describe('PageHeader', () => {
   it('does not render optional content when it is not provided', () => {
     const wrapper = mount(PageHeader, { props: { title: '概览' } })
 
+    expect(wrapper.classes()).not.toContain('sticky-page-header')
     expect(wrapper.find('.page-header-description').exists()).toBe(false)
     expect(wrapper.find('.page-header-actions').exists()).toBe(false)
     expect(wrapper.find('.page-header-back').exists()).toBe(false)
+  })
+
+  it('only enables sticky positioning when requested', () => {
+    const wrapper = mount(PageHeader, { props: { title: '工作台', sticky: true } })
+
+    expect(wrapper.classes()).toContain('sticky-page-header')
   })
 
   it('emits back with the configured destination', async () => {

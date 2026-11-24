@@ -19,7 +19,6 @@ const legacyCardConsumers = [
   'views/applications/ProjectEnvironments.vue',
   'views/applications/ReleaseDetails.vue',
   'views/cluster/ChartRepositories.vue',
-  'views/cluster/Cluster.vue',
   'views/cluster/ClusterDNS.vue',
   'views/cluster/PersistentVolumes.vue',
   'views/cluster/Servers.vue',
@@ -61,6 +60,29 @@ afterEach(() => {
 })
 
 describe('Glass UI application shell', () => {
+  it('shows project and deployment pages in one desktop and mobile navigation group', async () => {
+    const wrapper = await mountApp('/products/7')
+    const primaryNavigation = wrapper.get('[data-testid="primary-navigation"]')
+    expect(primaryNavigation.get('[aria-current="page"]').text()).toBe('项目')
+    expect(primaryNavigation.get('[aria-current="page"]').attributes('href')).toBe('#/projects')
+    expect(primaryNavigation.text()).not.toContain('部署与交付')
+    const navigation = wrapper.get('[data-testid="desktop-navigation"]')
+    const destinations = ['项目中心', '研发工作台', '应用部署', '应用商城', '镜像仓库']
+    expect(navigation.findAll('.sidebar-link').map(link => link.text())).toEqual(destinations)
+    const mobileProjects = wrapper.get('[data-testid="mobile-navigation"] a[href="#/projects"]').element.parentElement
+    expect([...mobileProjects.querySelectorAll('.sidebar-link')].map(link => link.textContent.trim())).toEqual(destinations)
+    expect(navigation.get('.sidebar-link.is-active').text()).toBe('项目中心')
+    await router.push('/personal')
+    expect(navigation.get('.sidebar-link.is-active').text()).toBe('研发工作台')
+    await router.push('/applications?project_id=3&environment_id=2')
+    expect(primaryNavigation.get('[aria-current="page"]').text()).toBe('项目')
+    expect(navigation.findAll('.sidebar-link').map(link => link.text())).toEqual(destinations)
+    expect(navigation.get('.sidebar-link.is-active').text()).toBe('应用部署')
+    await router.push('/applications/projects/3')
+    expect(router.currentRoute.value.fullPath).toBe('/projects/3?tab=environments')
+    expect(navigation.get('.sidebar-link.is-active').text()).toBe('项目中心')
+    wrapper.unmount()
+  })
   it('does not render static environment or agent connection status', async () => {
     const wrapper = await mountApp('/servers')
 
@@ -82,6 +104,25 @@ describe('Glass UI application shell', () => {
     expect(wrapper.get('.app-workspace').classes()).toContain('app-workspace--wide')
   })
 
+  it('places the Registry workspace in the cloud services sidebar and removes delivery from top navigation', async () => {
+    const wrapper = await mountApp('/cloud-services/registry')
+
+    expect(wrapper.get('[data-testid="primary-navigation"]').get('[aria-current="page"]').text()).toContain('云服务')
+    expect(wrapper.get('[data-testid="primary-navigation"]').text()).not.toContain('交付中心')
+    expect(wrapper.get('[data-testid="desktop-navigation"]').get('.sidebar-link.is-active').text()).toContain('制品库')
+    expect(wrapper.get('.app-workspace').classes()).not.toContain('app-workspace--wide')
+  })
+
+  it('places the Agent assistant in cloud services navigation', async () => {
+    const wrapper = await mountApp('/runtimes')
+    const navigation = wrapper.get('[data-testid="desktop-navigation"]')
+
+    expect(wrapper.get('[data-testid="primary-navigation"]').get('[aria-current="page"]').text()).toContain('云服务')
+    expect(navigation.get('.sidebar-link.is-active').text()).toContain('Agent 助手')
+    expect(navigation.text()).not.toContain('服务器')
+    expect(wrapper.get('[data-testid="mobile-navigation"]').text()).toContain('Agent 助手')
+  })
+
   it('shows infrastructure secondary navigation for infrastructure routes while preserving all mobile destinations', async () => {
     const wrapper = await mountApp('/servers')
     const navigation = wrapper.get('[data-testid="desktop-navigation"]')
@@ -91,11 +132,10 @@ describe('Glass UI application shell', () => {
     expect(navigation.find('.sidebar-context').exists()).toBe(false)
     expect(navigation.text()).toContain('服务器')
     expect(navigation.text()).toContain('集群')
-    expect(navigation.text()).toContain('Kubernetes 资源')
-    expect(navigation.text()).toContain('网络访问')
-    expect(navigation.text()).toContain('存储')
-    expect(navigation.text()).toContain('监控')
-    expect(navigation.text()).toContain('Agent 助手')
+    expect(navigation.text()).not.toContain('网络访问')
+    expect(navigation.text()).not.toContain('存储卷')
+    expect(navigation.text()).not.toContain('监控')
+    expect(navigation.text()).not.toContain('Agent 助手')
     expect(navigation.text()).not.toContain('节点镜像源')
     expect(navigation.text()).not.toContain('Chart 仓库')
     expect(navigation.text()).not.toContain('工作负载')
@@ -131,20 +171,28 @@ describe('Glass UI application shell', () => {
     const wrapper = await mountApp('/applications/1')
     const navigation = wrapper.get('[data-testid="desktop-navigation"]')
 
-    expect(wrapper.get('[data-testid="primary-navigation"]').get('[aria-current="page"]').text()).toContain('应用')
-    expect(navigation.text()).toContain('项目与环境')
+    expect(wrapper.get('[data-testid="primary-navigation"]').get('[aria-current="page"]').text()).toBe('项目')
+    expect(navigation.text()).not.toContain('项目与环境')
     expect(navigation.text()).toContain('镜像仓库')
-    expect(navigation.text()).toContain('工作台')
-    expect(navigation.text()).toContain('全局概览')
+    expect(navigation.text()).toContain('应用部署')
+    expect(navigation.text()).not.toContain('全局概览')
     expect(navigation.text()).not.toContain('应用栈')
-    expect(navigation.get('.sidebar-link.is-active').text()).toContain('工作台')
+    expect(navigation.get('.sidebar-link.is-active').text()).toContain('应用部署')
+  })
+
+  it('redirects retired application overview routes to the workspace', async () => {
+    await mountApp('/applications/overview')
+    expect(router.currentRoute.value.path).toBe('/applications')
+
+    await router.push('/applications/releases')
+    expect(router.currentRoute.value.path).toBe('/applications')
   })
 
   it('keeps domain drill-down routes in the application navigation group', async () => {
     const wrapper = await mountApp('/applications/domains?project_id=1&environment_id=1')
 
-    expect(wrapper.get('[data-testid="primary-navigation"]').get('[aria-current="page"]').text()).toContain('应用')
-    expect(wrapper.get('[data-testid="desktop-navigation"]').get('.sidebar-link.is-active').text()).toContain('工作台')
+    expect(wrapper.get('[data-testid="primary-navigation"]').get('[aria-current="page"]').text()).toBe('项目')
+    expect(wrapper.get('[data-testid="desktop-navigation"]').get('.sidebar-link.is-active').text()).toContain('应用部署')
   })
 
   it('renders the palette menu at the document root and applies a selected swatch', async () => {

@@ -5,35 +5,37 @@ set -Eeuo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MANIFEST="${MANIFEST:-$ROOT_DIR/k8s/platform-deployment.yaml}"
 DEFAULT_IMAGE="${CYLISM_DEFAULT_IMAGE:-ghcr.io/surrychen/cylism-manager:latest}"
-NAMESPACE="${NAMESPACE:-default}"
+NAMESPACE="${NAMESPACE:-cylism-system}"
 DEPLOYMENT="${DEPLOYMENT:-cylism-manager}"
 CONTAINER="${CONTAINER:-platform}"
+ACTION="install"
 IMAGE="${CYLISM_IMAGE:-}"
 NODE_NAME="${CYLISM_NODE_NAME:-}"
-SSH_KEY_PATH="${CYLISM_SSH_KEY_PATH:-${HOME:-}/.ssh/id_ed25519}"
-IMAGE_PULL_SECRET="${CYLISM_IMAGE_PULL_SECRET:-}"
-GHCR_USERNAME="${CYLISM_GHCR_USERNAME:-}"
-GHCR_TOKEN="${CYLISM_GHCR_TOKEN:-}"
-CONFIGURE_GHCR_PULL_SECRET="${CYLISM_CONFIGURE_GHCR_PULL_SECRET:-}"
+HTTPS_IP="${CYLISM_HTTPS_IP:-}"
 VERIFY_IMAGE_PULL="${CYLISM_VERIFY_IMAGE_PULL:-}"
 BACKUP_DIR="${CYLISM_BACKUP_DIR:-}"
 SKIP_BACKUP="${CYLISM_SKIP_BACKUP:-}"
+PURGE_DATA="${CYLISM_PURGE_DATA:-}"
+ASSUME_YES="${CYLISM_ASSUME_YES:-}"
+
+case "${1:-}" in
+  install) ACTION="install"; shift ;;
+  uninstall|remove) ACTION="uninstall"; shift ;;
+esac
 
 usage() {
   cat <<'EOF'
-Usage: scripts/deploy-platform.sh [options]
-  --image IMAGE              Image reference (prompted if omitted)
-  --namespace NAME           Kubernetes namespace (default: default)
+Usage: scripts/deploy-platform.sh [install|uninstall] [options]
+  --image IMAGE              Public image reference (default: ghcr.io/surrychen/cylism-manager:latest)
+  --namespace NAME           Kubernetes namespace (default: cylism-system)
   --node NAME                Node selector for a fresh deployment
-  --ssh-key PATH             SSH private key used by the Manager
-  --image-pull-secret NAME   Existing imagePullSecret name
-  --ghcr-username NAME       GitHub username for private GHCR image pulls
-  --ghcr-token TOKEN         GitHub token for private GHCR image pulls
-  --configure-ghcr-pull      Create/reuse an imagePullSecret for private GHCR
-  --verify-image-pull        Verify Kubernetes can pull the target image first
+  --https-ip IP              Create a temporary self-signed HTTPS Ingress for this IP
+  --verify-image-pull        Verify Kubernetes can pull the public image first
   --backup-dir DIR           Save pre-deploy resource backups under DIR
   --skip-backup              Do not create pre-deploy resource backups
-  --manifest PATH            Kubernetes manifest path
+  --purge-data               With uninstall, also delete the PVC and cylism-secret
+  --yes                      Skip uninstall confirmation
+  --manifest PATH            Kubernetes manifest path (install only)
   -h, --help                 Show this help
 
 Existing cylism-secret values are reused. Missing values are generated or
@@ -51,24 +53,28 @@ while [ "$#" -gt 0 ]; do
     --image) IMAGE="${2:?--image 需要参数}"; shift 2 ;;
     --namespace) NAMESPACE="${2:?--namespace 需要参数}"; shift 2 ;;
     --node) NODE_NAME="${2:?--node 需要参数}"; shift 2 ;;
-    --ssh-key) SSH_KEY_PATH="${2:?--ssh-key 需要参数}"; shift 2 ;;
-    --image-pull-secret) IMAGE_PULL_SECRET="${2:?--image-pull-secret 需要参数}"; shift 2 ;;
-    --ghcr-username) GHCR_USERNAME="${2:?--ghcr-username 需要参数}"; shift 2 ;;
-    --ghcr-token) GHCR_TOKEN="${2:?--ghcr-token 需要参数}"; shift 2 ;;
-    --configure-ghcr-pull) CONFIGURE_GHCR_PULL_SECRET="true"; shift ;;
+    --https-ip) HTTPS_IP="${2:?--https-ip 需要参数}"; shift 2 ;;
     --verify-image-pull) VERIFY_IMAGE_PULL="true"; shift ;;
     --backup-dir) BACKUP_DIR="${2:?--backup-dir 需要参数}"; shift 2 ;;
     --skip-backup) SKIP_BACKUP="true"; shift ;;
+    --purge-data) PURGE_DATA="true"; shift ;;
+    --yes) ASSUME_YES="true"; shift ;;
     --manifest) MANIFEST="${2:?--manifest 需要参数}"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) die "未知参数: $1（使用 --help 查看用法）" ;;
   esac
 done
 
-need_cmd base64
-need_cmd openssl
-need_cmd curl
-[ -f "$MANIFEST" ] || die "找不到 Kubernetes 清单: $MANIFEST"
+if [ "$ACTION" = "install" ] && [ -z "$HTTPS_IP" ]; then
+  read -r -p "请输入 HTTPS 访问的服务器公网 IPv4（回车跳过）: " HTTPS_IP
+fi
+
+if [ "$ACTION" = "install" ]; then
+  need_cmd base64
+  need_cmd openssl
+  need_cmd curl
+  [ -f "$MANIFEST" ] || die "找不到 Kubernetes 清单: $MANIFEST"
+fi
 
 probe_kubectl() {
   "$@" get nodes >/dev/null 2>&1
@@ -134,7 +140,98 @@ select_kubectl() {
 select_kubectl
 k() { "${KUBECTL[@]}" "$@"; }
 echo "使用 Kubernetes 命令: ${KUBECTL[*]}"
-k get namespace "$NAMESPACE" >/dev/null 2>&1 || k create namespace "$NAMESPACE" >/dev/null
+if [ "$ACTION" = "install" ]; then
+  k get namespace "$NAMESPACE" >/dev/null 2>&1 || k create namespace "$NAMESPACE" >/dev/null
+fi
+
+configure_https_ingress() {
+  [ -n "$HTTPS_IP" ] || return 0
+  [[ "$HTTPS_IP" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || die "--https-ip 必须是 IPv4 地址"
+  IFS='.' read -r -a ip_octets <<< "$HTTPS_IP"
+  for octet in "${ip_octets[@]}"; do
+    [ "$octet" -le 255 ] || die "--https-ip 不是有效的 IPv4 地址: $HTTPS_IP"
+  done
+  k -n kube-system get service traefik >/dev/null 2>&1 || die "未检测到 K3s Traefik，无法创建 HTTPS 入口"
+  traefik_https_port="$(k -n kube-system get service traefik -o jsonpath='{.spec.ports[?(@.port==443)].port}' 2>/dev/null || true)"
+  [ "$traefik_https_port" = "443" ] || die "Traefik Service 未暴露 443 端口"
+
+  local tls_dir
+  tls_dir="$(mktemp -d)"
+  openssl req -x509 -nodes -newkey rsa:2048 -days 30 \
+    -keyout "$tls_dir/tls.key" \
+    -out "$tls_dir/tls.crt" \
+    -subj "/CN=$HTTPS_IP" \
+    -addext "subjectAltName = IP:$HTTPS_IP" >/dev/null 2>&1
+  k -n "$NAMESPACE" create secret tls cylism-manager-tls \
+    --cert="$tls_dir/tls.crt" --key="$tls_dir/tls.key" \
+    --dry-run=client -o yaml | k apply -f - >/dev/null
+  rm -rf "$tls_dir"
+
+  cat <<EOF | k -n "$NAMESPACE" apply -f - >/dev/null
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: cylism-manager
+spec:
+  ingressClassName: traefik
+  tls:
+    - secretName: cylism-manager-tls
+  rules:
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: cylism-manager
+                port:
+                  number: 8080
+EOF
+  echo "已配置临时 HTTPS 入口: https://$HTTPS_IP（自签证书有效期 30 天）"
+}
+
+uninstall_platform() {
+  if ! k get namespace "$NAMESPACE" >/dev/null 2>&1; then
+    echo "命名空间 $NAMESPACE 不存在，无需卸载。"
+    return 0
+  fi
+  if [[ ! "$ASSUME_YES" =~ ^([Yy]|true|TRUE|1)$ ]]; then
+    read -r -p "确认卸载 Cylism Manager（默认保留 PVC 和核心 Secret）？[y/N] " answer
+    [[ "$answer" =~ ^([Yy]|yes|YES)$ ]] || die "已取消卸载。"
+  fi
+
+  echo "清理 $NAMESPACE 中的 Manager 资源..."
+  k -n "$NAMESPACE" delete \
+    deployment/"$DEPLOYMENT" \
+    service/"$DEPLOYMENT" \
+    ingress/"$DEPLOYMENT" \
+    serviceaccount/"$DEPLOYMENT" \
+    role/"$DEPLOYMENT" \
+    rolebinding/"$DEPLOYMENT" \
+    configmap/cylism-config \
+    secret/cylism-manager-tls \
+    secret/cylism-ssh-key \
+    --ignore-not-found >/dev/null
+  k delete \
+    clusterrolebinding/cylism-manager \
+    clusterrole/cylism-manager \
+    clusterrolebinding/cylism-alidns-webhook-solver \
+    clusterrole/cylism-alidns-webhook-solver \
+    --ignore-not-found >/dev/null
+
+  if [[ "$PURGE_DATA" =~ ^([Yy]|true|TRUE|1)$ ]]; then
+    echo "删除 PVC 和核心 Secret..."
+    k -n "$NAMESPACE" delete pvc/cylism-manager-data secret/cylism-secret --ignore-not-found >/dev/null
+  else
+    echo "已保留 PVC cylism-manager-data 和 Secret cylism-secret。"
+  fi
+  echo "卸载完成；命名空间 $NAMESPACE 未删除。"
+}
+
+if [ "$ACTION" = "uninstall" ]; then
+  uninstall_platform
+  exit 0
+fi
 
 backup_if_exists() {
   local resource="$1"
@@ -170,10 +267,6 @@ create_predeploy_backup() {
   backup_if_exists rolebinding "$DEPLOYMENT" "rolebinding-$DEPLOYMENT.yaml"
   backup_if_exists configmap cylism-config "configmap-cylism-config.yaml"
   backup_secret_keys_if_exists cylism-secret "secret-cylism-secret-keys.txt"
-  backup_secret_keys_if_exists cylism-ssh-key "secret-cylism-ssh-key-keys.txt"
-  if [ -n "$IMAGE_PULL_SECRET" ]; then
-    backup_secret_keys_if_exists "$IMAGE_PULL_SECRET" "secret-$IMAGE_PULL_SECRET-keys.txt"
-  fi
   echo "部署前备份目录: $BACKUP_DIR"
   echo "Secret 仅备份 key 名称，不导出敏感值。"
 }
@@ -209,26 +302,12 @@ is_cylism_ghcr_image() {
     *) return 1 ;;
   esac
 }
-image_uses_ghcr() {
-  case "$1" in
-    ghcr.io/*) return 0 ;;
-    *) return 1 ;;
-  esac
-}
 verify_image_pull() {
-  [[ "$VERIFY_IMAGE_PULL" =~ ^([Yy]|true|TRUE|1)$ ]] || return
+  [[ "$VERIFY_IMAGE_PULL" =~ ^([Yy]|true|TRUE|1)$ ]] || return 0
   local check_pod="cylism-image-pull-check-$(date +%s)-$$"
-  local overrides=''
-  if [ -n "$IMAGE_PULL_SECRET" ]; then
-    overrides="{\"spec\":{\"imagePullSecrets\":[{\"name\":\"$IMAGE_PULL_SECRET\"}]}}"
-  fi
 
   echo "验证 Kubernetes 是否可以拉取镜像: $IMAGE"
-  if [ -n "$overrides" ]; then
-    k -n "$NAMESPACE" run "$check_pod" --image="$IMAGE" --restart=Never --overrides="$overrides" --command -- sh -c 'sleep 5' >/dev/null
-  else
-    k -n "$NAMESPACE" run "$check_pod" --image="$IMAGE" --restart=Never --command -- sh -c 'sleep 5' >/dev/null
-  fi
+  k -n "$NAMESPACE" run "$check_pod" --image="$IMAGE" --restart=Never --command -- sh -c 'sleep 5' >/dev/null
 
   local i image_id waiting_reason waiting_message
   for i in $(seq 1 30); do
@@ -294,24 +373,25 @@ read_config() {
   k -n "$NAMESPACE" get configmap cylism-config -o "jsonpath={.data['$1']}" 2>/dev/null || true
 }
 public_url="$(read_config public-url)"
-if [ -z "$public_url" ]; then read -r -p "公开访问地址（可留空）: " public_url; fi
+if [ -z "$public_url" ]; then
+  if [ -n "$HTTPS_IP" ]; then
+    public_url="https://$HTTPS_IP"
+    echo "使用 HTTPS 公开访问地址: $public_url"
+  else
+    read -r -p "公开访问地址（可留空）: " public_url
+  fi
+fi
 admin_user="$(read_config admin-user)"; admin_user="${admin_user:-admin}"
 access_ttl="$(read_config access-token-ttl)"; access_ttl="${access_ttl:-7200}"
 refresh_ttl="$(read_config refresh-token-ttl)"; refresh_ttl="${refresh_ttl:-604800}"
 retention_days="$(read_config operation-log-retention-days)"; retention_days="${retention_days:-30}"
-{
-  echo 'apiVersion: v1'
-  echo 'kind: ConfigMap'
-  echo 'metadata:'
-  echo '  name: cylism-config'
-  printf '  namespace: %s\n' "$NAMESPACE"
-  echo 'data:'
-  printf '  admin-user: %s\n' "$admin_user"
-  printf '  public-url: %s\n' "$public_url"
-  printf '  access-token-ttl: %s\n' "$access_ttl"
-  printf '  refresh-token-ttl: %s\n' "$refresh_ttl"
-  printf '  operation-log-retention-days: %s\n' "$retention_days"
-} | k apply -f - >/dev/null
+k -n "$NAMESPACE" create configmap cylism-config \
+  --from-literal="admin-user=$admin_user" \
+  --from-literal="public-url=$public_url" \
+  --from-literal="access-token-ttl=$access_ttl" \
+  --from-literal="refresh-token-ttl=$refresh_ttl" \
+  --from-literal="operation-log-retention-days=$retention_days" \
+  --dry-run=client -o yaml | k apply -f - >/dev/null
 
 current_image=""
 if [ -z "$IMAGE" ]; then
@@ -330,56 +410,15 @@ if [ -z "$IMAGE" ]; then
 fi
 [ -n "$IMAGE" ] || die "镜像地址不能为空"
 
-if [ -z "$IMAGE_PULL_SECRET" ] && image_uses_ghcr "$IMAGE"; then
-  existing_pull_secret="$(k -n "$NAMESPACE" get deployment "$DEPLOYMENT" -o jsonpath='{.spec.template.spec.imagePullSecrets[0].name}' 2>/dev/null || true)"
-  IMAGE_PULL_SECRET="$existing_pull_secret"
-  if [ -z "$IMAGE_PULL_SECRET" ]; then
-    configure_answer="$CONFIGURE_GHCR_PULL_SECRET"
-    if [ -z "$configure_answer" ]; then
-      read -r -p "GHCR 镜像如果是私有，需要 imagePullSecret。是否现在配置？[y/N] " configure_answer
-    fi
-    if [[ "$configure_answer" =~ ^([Yy]|true|TRUE|1)$ ]]; then
-      IMAGE_PULL_SECRET="${CYLISM_IMAGE_PULL_SECRET_NAME:-ghcr-pull-secret}"
-      if k -n "$NAMESPACE" get secret "$IMAGE_PULL_SECRET" >/dev/null 2>&1; then
-        echo "复用现有 imagePullSecret: $IMAGE_PULL_SECRET"
-      else
-        [ -n "$GHCR_USERNAME" ] || read -r -p "GitHub 用户名: " GHCR_USERNAME
-        if [ -z "$GHCR_TOKEN" ]; then
-          read -r -s -p "GitHub Token（需要 read:packages 权限，不会回显）: " GHCR_TOKEN; echo
-        fi
-        [ -n "$GHCR_USERNAME" ] || die "GitHub 用户名不能为空"
-        [ -n "$GHCR_TOKEN" ] || die "GitHub Token 不能为空"
-        k -n "$NAMESPACE" create secret docker-registry "$IMAGE_PULL_SECRET" \
-          --docker-server=ghcr.io \
-          --docker-username="$GHCR_USERNAME" \
-          --docker-password="$GHCR_TOKEN" \
-          --dry-run=client -o yaml | k apply -f - >/dev/null
-        echo "已创建 imagePullSecret: $IMAGE_PULL_SECRET"
-      fi
-    else
-      echo "未配置 imagePullSecret；GHCR 镜像需要设置为 Public，或后续 Pod 可能无法拉取镜像。"
-    fi
-  else
-    echo "复用现有 imagePullSecret: $IMAGE_PULL_SECRET"
-  fi
-fi
-
 verify_image_pull
-
-if ! k -n "$NAMESPACE" get secret cylism-ssh-key >/dev/null 2>&1; then
-  [ -f "$SSH_KEY_PATH" ] || die "找不到 SSH 私钥 $SSH_KEY_PATH，请使用 --ssh-key 指定路径"
-  echo "创建 cylism-ssh-key（仅首次执行）..."
-  k -n "$NAMESPACE" create secret generic cylism-ssh-key --from-file=id_ed25519="$SSH_KEY_PATH" --dry-run=client -o yaml | k apply -f - >/dev/null
-else
-  echo "复用现有 cylism-ssh-key。"
-fi
 
 echo "应用 Kubernetes 清单..."
 k -n "$NAMESPACE" apply -f "$MANIFEST" >/dev/null
+# The static manifest is namespace-agnostic, but ClusterRoleBinding subjects
+# are cluster-scoped and must follow the selected deployment namespace.
+k patch clusterrolebinding cylism-manager --type merge \
+  -p "{\"subjects\":[{\"kind\":\"ServiceAccount\",\"name\":\"cylism-manager\",\"namespace\":\"$NAMESPACE\"}]}" >/dev/null
 k -n "$NAMESPACE" set image "deployment/$DEPLOYMENT" "$CONTAINER=$IMAGE" >/dev/null
-if [ -n "$IMAGE_PULL_SECRET" ]; then
-  k -n "$NAMESPACE" patch deployment "$DEPLOYMENT" --type merge -p "{\"spec\":{\"template\":{\"spec\":{\"imagePullSecrets\":[{\"name\":\"$IMAGE_PULL_SECRET\"}]}}}}" >/dev/null
-fi
 
 if [ -z "$NODE_NAME" ]; then NODE_NAME="$(k -n "$NAMESPACE" get deployment "$DEPLOYMENT" -o jsonpath='{.spec.template.spec.nodeSelector.kubernetes\.io/hostname}' 2>/dev/null || true)"; fi
 if [ -z "$NODE_NAME" ]; then
@@ -395,6 +434,7 @@ k -n "$NAMESPACE" rollout restart "deployment/$DEPLOYMENT" >/dev/null
 
 echo "等待 $DEPLOYMENT rollout..."
 k -n "$NAMESPACE" rollout status "deployment/$DEPLOYMENT" --timeout=180s
+configure_https_ingress
 echo "部署完成: $IMAGE"
 echo "管理员用户名: $admin_user（已有数据库不会因本次部署改变密码）"
 echo "命名空间: $NAMESPACE"
@@ -402,7 +442,6 @@ echo "Deployment: $DEPLOYMENT"
 echo "容器: $CONTAINER"
 echo "配置来源: cylism-secret / cylism-config"
 echo "数据库路径: /data/cylism.db"
-echo "imagePullSecret: ${IMAGE_PULL_SECRET:-未配置}"
 echo "节点选择: ${NODE_NAME:-未设置}"
 if [[ ! "$SKIP_BACKUP" =~ ^([Yy]|true|TRUE|1)$ ]]; then
   echo "部署前备份目录: $BACKUP_DIR"

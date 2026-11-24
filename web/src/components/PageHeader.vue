@@ -1,14 +1,13 @@
 <template>
-  <header class="page-header" data-header-variant="standard">
+  <header class="page-header" :class="{ 'sticky-page-header': sticky }" data-header-variant="standard">
     <div class="page-header-main">
-      <button
+      <PageBackLink
         v-if="backTo"
-        type="button"
         class="page-header-back"
         @click="$emit('back', backTo)"
       >
         {{ backLabel }}
-      </button>
+      </PageBackLink>
       <h1 class="page-title">{{ title }}</h1>
       <p v-if="description" class="page-header-description">{{ description }}</p>
     </div>
@@ -19,11 +18,14 @@
 </template>
 
 <script setup>
+import PageBackLink from './PageBackLink.vue'
+
 defineProps({
   title: { type: String, required: true },
   description: { type: String, default: '' },
   backTo: { type: [String, Object], default: null },
   backLabel: { type: String, default: '返回' },
+  sticky: { type: Boolean, default: false },
 })
 
 defineEmits(['back'])
@@ -48,23 +50,6 @@ defineEmits(['back'])
   color: var(--text-secondary);
   font-size: 13px;
   line-height: 1.5;
-}
-
-.page-header-back {
-  display: block;
-  margin: 0 0 var(--space-8);
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--action-primary);
-  font: inherit;
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.page-header-back:hover {
-  color: var(--action-primary-hover);
-  text-decoration: underline;
 }
 
 .page-header-actions {

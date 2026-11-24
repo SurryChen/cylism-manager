@@ -6,14 +6,16 @@ import (
 
 func TestServiceEndpointInfo_FieldsComplete(t *testing.T) {
 	s := ServiceEndpointInfo{
-		Name:          "myservice",
-		Namespace:     "default",
-		Type:          "ClusterIP",
-		ClusterIP:     "10.43.1.25",
-		Ports:         []string{"TCP:80"},
+		ServiceInfo: ServiceInfo{
+			Name:      "myservice",
+			Namespace: "default",
+			Type:      "ClusterIP",
+			ClusterIP: "10.43.1.25",
+			Ports:     []string{"TCP:80"},
+			Selector:  map[string]string{"app": "web"},
+			Age:       "5d",
+		},
 		EndpointCount: 3,
-		Selector:      map[string]string{"app": "web"},
-		Age:           "5d",
 	}
 	if s.EndpointCount != 3 {
 		t.Errorf("expected 3 endpoints, got %d", s.EndpointCount)

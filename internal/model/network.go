@@ -29,6 +29,7 @@ type LocationConfig struct {
 // ClusterDNSPolicy stores a versioned cluster DNS resolver policy.
 type ClusterDNSPolicy struct {
 	ID        uint      `gorm:"primaryKey" json:"id"`
+	ClusterID uint      `gorm:"index;not null;default:0" json:"cluster_id"`
 	Resolvers string    `gorm:"type:text;not null" json:"resolvers"`
 	Revision  uint      `gorm:"uniqueIndex;not null" json:"revision"`
 	Active    bool      `gorm:"not null;default:true" json:"active"`
@@ -39,7 +40,8 @@ type ClusterDNSPolicy struct {
 // DNSCredential stores encrypted provider credentials for DNS challenges.
 type DNSCredential struct {
 	ID               uint      `gorm:"primaryKey" json:"id"`
-	Name             string    `gorm:"size:128;uniqueIndex;not null" json:"name"`
+	ClusterID        uint      `gorm:"uniqueIndex:idx_dns_credential_cluster_name;not null;default:0" json:"cluster_id"`
+	Name             string    `gorm:"size:128;uniqueIndex:idx_dns_credential_cluster_name;not null" json:"name"`
 	Provider         string    `gorm:"size:32;not null" json:"provider"`
 	Namespace        string    `gorm:"size:128;not null" json:"namespace"`
 	EncryptedValues  string    `gorm:"type:text" json:"-"`
@@ -63,6 +65,14 @@ type ManagedDomain struct {
 	IssuerRef            string    `gorm:"size:128" json:"issuer_ref"`
 	IssuerKind           string    `gorm:"size:32;default:ClusterIssuer" json:"issuer_kind"`
 	CertificateOwnership string    `gorm:"size:16;default:managed;not null" json:"certificate_ownership"`
+	CloudConnectionID    uint      `gorm:"index" json:"cloud_connection_id"`
+	DNSZone              string    `gorm:"size:253" json:"dns_zone"`
+	DNSRecords           string    `gorm:"type:text" json:"-"`
+	OriginalDNSRecords   string    `gorm:"type:text" json:"-"`
+	AdoptionStatus       string    `gorm:"size:16" json:"adoption_status"`
+	DNSNodeIDs           string    `gorm:"type:text" json:"-"`
+	DNSStatus            string    `gorm:"size:32" json:"dns_status"`
+	DNSError             string    `gorm:"size:512" json:"dns_error"`
 	Description          string    `gorm:"size:512" json:"description"`
 	Enabled              bool      `gorm:"default:true;not null" json:"enabled"`
 	CreatedAt            time.Time `json:"created_at"`

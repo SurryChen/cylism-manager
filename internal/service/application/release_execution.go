@@ -12,7 +12,7 @@ import (
 
 // ResourceApplier is the Kubernetes capability required by release execution.
 type ResourceApplier interface {
-	VerifyImage(ctx context.Context, spec ReleaseSpec) error
+	ValidateImageReference(ctx context.Context, spec ReleaseSpec) error
 	Preflight(ctx context.Context, application ApplicationContext, spec ReleaseSpec) error
 	Apply(ctx context.Context, resources *RenderedResources) error
 	WaitReady(ctx context.Context, application ApplicationContext, spec ReleaseSpec) error
@@ -28,6 +28,9 @@ func NewService(repository repository.ReleaseRepository, applier ResourceApplier
 }
 
 func (s *Service) CreateRelease(ctx context.Context, applicationID, userID uint, spec ReleaseSpec) (*model.Release, error) {
+	if spec.Migration != nil && spec.Migration.Enabled && spec.Migration.Target == "" {
+		return nil, fmt.Errorf("请提供数据库迁移目标版本")
+	}
 	application, err := s.repository.GetApplication(applicationID)
 	if err != nil {
 		return nil, fmt.Errorf("读取应用: %w", err)
@@ -38,6 +41,17 @@ func (s *Service) CreateRelease(ctx context.Context, applicationID, userID uint,
 	releases, err := s.repository.ListReleases(applicationID)
 	if err != nil {
 		return nil, fmt.Errorf("读取发布历史: %w", err)
+	}
+	// The unique application/sequence index closes simultaneous-create races.
+	// A workload must never overtake an active migration release.
+	for _, active := range releases {
+		if active.Status == model.ReleaseStatusSucceeded || active.Status == model.ReleaseStatusFailed || active.Status == model.ReleaseStatusRolledBack {
+			continue
+		}
+		previous, parseErr := releaseSpecFromSnapshot(active.DesiredSpec)
+		if (spec.Migration != nil && spec.Migration.Enabled) || (parseErr == nil && previous.Migration != nil && previous.Migration.Enabled) {
+			return nil, fmt.Errorf("应用存在未完成的发布 #%d，请等待完成后再发布", active.Sequence)
+		}
 	}
 	sequence := uint(1)
 	if len(releases) > 0 {
@@ -98,11 +112,25 @@ func (s *Service) executeRelease(ctx context.Context, releaseID uint, applicatio
 	if err := s.transition(release, model.ReleaseStatusValidating); err != nil {
 		return err
 	}
-	if err := s.runStep(releaseID, "verify_image", func() error { return s.applier.VerifyImage(ctx, spec) }); err != nil {
-		return s.failRelease(releaseID, "verify_image", err)
+	if err := s.runStep(releaseID, "validate_image", func() error { return s.applier.ValidateImageReference(ctx, spec) }); err != nil {
+		return s.failRelease(releaseID, "validate_image", err)
 	}
 	if err := s.runStep(releaseID, "preflight", func() error { return s.applier.Preflight(ctx, applicationContext, spec) }); err != nil {
 		return s.failRelease(releaseID, "preflight", err)
+	}
+	if spec.Migration != nil && spec.Migration.Enabled && spec.Migration.Target != "" {
+		if err := s.transition(release, model.ReleaseStatusMigrating); err != nil {
+			return err
+		}
+		if err := s.runStepWithDetail(releaseID, "database_migration", func() (string, error) {
+			executor, ok := s.applier.(MigrationExecutor)
+			if !ok {
+				return "", fmt.Errorf("Kubernetes 发布器不支持数据库迁移")
+			}
+			return executor.RunMigration(ctx, applicationContext, spec)
+		}); err != nil {
+			return s.failRelease(releaseID, "database_migration", err)
+		}
 	}
 	if err := s.transition(release, model.ReleaseStatusApplying); err != nil {
 		return err
@@ -136,6 +164,9 @@ func (s *Service) RetryRelease(ctx context.Context, releaseID, userID uint) (*mo
 	}
 	// Endpoints are current application state, not historical release state.
 	spec.Endpoint = EndpointSpec{Exposure: ExposureCluster}
+	if err := s.preflightSubmission(ctx, release.ApplicationID, spec); err != nil {
+		return nil, ReleaseSpec{}, err
+	}
 	retry, err := s.CreateRelease(ctx, release.ApplicationID, userID, spec)
 	if err == nil {
 		retry.TemplateID = release.TemplateID
@@ -170,7 +201,12 @@ func (s *Service) RollbackRelease(ctx context.Context, releaseID, userID uint) (
 		return nil, ReleaseSpec{}, err
 	}
 	// Rolling back a workload must preserve domain bindings created later.
+	// Database schema is never rolled backwards or replayed here.
+	spec.Migration = nil
 	spec.Endpoint = EndpointSpec{Exposure: ExposureCluster}
+	if err := s.preflightSubmission(ctx, current.ApplicationID, spec); err != nil {
+		return nil, ReleaseSpec{}, err
+	}
 	rollback, err := s.CreateRelease(ctx, current.ApplicationID, userID, spec)
 	if err != nil {
 		return nil, ReleaseSpec{}, err
@@ -184,7 +220,28 @@ func (s *Service) RollbackRelease(ctx context.Context, releaseID, userID uint) (
 	return rollback, spec, nil
 }
 
+func (s *Service) preflightSubmission(ctx context.Context, applicationID uint, spec ReleaseSpec) error {
+	if s.applier == nil {
+		return fmt.Errorf("Kubernetes 发布器未初始化")
+	}
+	app, err := s.repository.GetApplication(applicationID)
+	if err != nil {
+		return fmt.Errorf("读取应用: %w", err)
+	}
+	if err := s.applier.ValidateImageReference(ctx, spec); err != nil {
+		return err
+	}
+	if err := s.applier.Preflight(ctx, applicationContext(app, 0), spec); err != nil {
+		return fmt.Errorf("发布前检查失败: %w", err)
+	}
+	return nil
+}
+
 func (s *Service) runStep(releaseID uint, step string, run func() error) error {
+	return s.runStepWithDetail(releaseID, step, func() (string, error) { return "", run() })
+}
+
+func (s *Service) runStepWithDetail(releaseID uint, step string, run func() (string, error)) error {
 	now := time.Now()
 	operation := &model.ReleaseOperation{ReleaseID: releaseID, Step: step, Status: model.ReleaseOperationRunning, StartedAt: &now}
 	if err := s.repository.CreateReleaseOperation(operation); err != nil {
@@ -194,7 +251,8 @@ func (s *Service) runStep(releaseID uint, step string, run func() error) error {
 	if err := s.repository.CreateOperationLog(operationLog); err != nil {
 		return err
 	}
-	err := run()
+	detail, err := run()
+	operation.Detail = detail
 	completedAt := time.Now()
 	operation.CompletedAt = &completedAt
 	if err != nil {

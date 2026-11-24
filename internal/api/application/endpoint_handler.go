@@ -316,7 +316,7 @@ func (h *ApplicationHandler) prepareApplicationEndpoint(ctx context.Context, app
 		ingressMode = "metadata"
 	}
 	endpoint := &model.ApplicationEndpoint{ApplicationID: app.ID, DomainID: domain.ID, Exposure: applicationservice.ExposurePublic, Domain: domain.Hostname, Path: path, TLSEnabled: req.TLSEnabled, IngressEnabled: ingressEnabled, IngressMode: ingressMode, IssuerRef: domain.IssuerRef, AccessMode: accessMode}
-	if !endpoint.TLSEnabled {
+	if !ingressEnabled || !endpoint.TLSEnabled {
 		return endpoint, nil
 	}
 	if domain.CertificateName == "" || domain.TLSSecretName == "" {

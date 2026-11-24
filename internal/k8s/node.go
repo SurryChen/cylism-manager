@@ -11,11 +11,14 @@ import (
 	policyv1 "k8s.io/api/policy/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/validation"
+	"k8s.io/client-go/util/retry"
 )
 
 const mirrorPodAnnotation = "kubernetes.io/config.mirror"
 const nodeDrainAnnotation = "cylism.io/drained-at"
+const managedNoScheduleTaintKey = "cylism.io/default-no-schedule"
 
 const (
 	nodeFailureThreshold = 5 * time.Minute
@@ -27,19 +30,20 @@ const (
 
 // NodeInfo is the node summary shown in the cluster console.
 type NodeInfo struct {
-	Name            string `json:"name"`
-	Ready           bool   `json:"ready"`
-	Evicted         bool   `json:"evicted"`
-	Roles           string `json:"roles"`
-	Version         string `json:"version"`
-	InternalIP      string `json:"internal_ip"`
-	OS              string `json:"os"`
-	CPUCores        int64  `json:"cpu_cores"`
-	MemoryMB        int64  `json:"memory_mb"`
-	CreatedAt       string `json:"created_at"`
-	HealthState     string `json:"health_state"`
-	HealthReason    string `json:"health_reason,omitempty"`
-	LastHeartbeatAt string `json:"last_heartbeat_at,omitempty"`
+	Name              string `json:"name"`
+	Ready             bool   `json:"ready"`
+	Evicted           bool   `json:"evicted"`
+	DefaultNoSchedule bool   `json:"default_no_schedule"`
+	Roles             string `json:"roles"`
+	Version           string `json:"version"`
+	InternalIP        string `json:"internal_ip"`
+	OS                string `json:"os"`
+	CPUCores          int64  `json:"cpu_cores"`
+	MemoryMB          int64  `json:"memory_mb"`
+	CreatedAt         string `json:"created_at"`
+	HealthState       string `json:"health_state"`
+	HealthReason      string `json:"health_reason,omitempty"`
+	LastHeartbeatAt   string `json:"last_heartbeat_at,omitempty"`
 }
 
 // NodeLabels is the label state exposed by the cluster node management API.
@@ -49,12 +53,18 @@ type NodeLabels struct {
 	ProtectedKeys []string          `json:"protected_keys"`
 }
 
+type NodeScheduling struct {
+	Name              string `json:"name"`
+	DefaultNoSchedule bool   `json:"default_no_schedule"`
+}
+
 // DrainPod describes a Pod affected by a drain preflight or execution.
 type DrainPod struct {
-	Namespace string `json:"namespace"`
-	Name      string `json:"name"`
-	OwnerKind string `json:"owner_kind,omitempty"`
-	Reason    string `json:"reason"`
+	UID       types.UID `json:"-"`
+	Namespace string    `json:"namespace"`
+	Name      string    `json:"name"`
+	OwnerKind string    `json:"owner_kind,omitempty"`
+	Reason    string    `json:"reason"`
 }
 
 // DrainPlan separates Pods that can be evicted from the ones requiring action.
@@ -140,6 +150,56 @@ func (c *Client) GetNodeLabelsContext(ctx context.Context, name string) (*NodeLa
 		return nil, fmt.Errorf("get node %s labels: %w", name, err)
 	}
 	return nodeLabels(node), nil
+}
+
+func (c *Client) GetNodeSchedulingContext(ctx context.Context, name string) (*NodeScheduling, error) {
+	node, err := c.Clientset.CoreV1().Nodes().Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("读取节点 %s 调度设置: %w", name, err)
+	}
+	return &NodeScheduling{Name: node.Name, DefaultNoSchedule: hasManagedNoScheduleTaint(node)}, nil
+}
+
+func (c *Client) SetNodeNoScheduleContext(ctx context.Context, name string, enabled bool) (*NodeScheduling, error) {
+	var result *NodeScheduling
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		node, err := c.Clientset.CoreV1().Nodes().Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+		if hasManagedNoScheduleTaint(node) == enabled {
+			result = &NodeScheduling{Name: node.Name, DefaultNoSchedule: enabled}
+			return nil
+		}
+		taints := make([]corev1.Taint, 0, len(node.Spec.Taints)+1)
+		for _, taint := range node.Spec.Taints {
+			if taint.Key != managedNoScheduleTaintKey || taint.Effect != corev1.TaintEffectNoSchedule {
+				taints = append(taints, taint)
+			}
+		}
+		if enabled {
+			taints = append(taints, corev1.Taint{Key: managedNoScheduleTaintKey, Value: "true", Effect: corev1.TaintEffectNoSchedule})
+		}
+		node.Spec.Taints = taints
+		updated, err := c.Clientset.CoreV1().Nodes().Update(ctx, node, metav1.UpdateOptions{})
+		if err == nil {
+			result = &NodeScheduling{Name: updated.Name, DefaultNoSchedule: enabled}
+		}
+		return err
+	})
+	if err != nil {
+		return nil, fmt.Errorf("更新节点 %s 调度设置: %w", name, err)
+	}
+	return result, nil
+}
+
+func hasManagedNoScheduleTaint(node *corev1.Node) bool {
+	for _, taint := range node.Spec.Taints {
+		if taint.Key == managedNoScheduleTaintKey && taint.Effect == corev1.TaintEffectNoSchedule {
+			return true
+		}
+	}
+	return false
 }
 
 // UpdateNodeLabels applies only validated custom labels. Kubernetes and K3s
@@ -257,6 +317,10 @@ func (c *Client) DrainPlanContext(ctx context.Context, name string) (*DrainPlan,
 // DrainNode cordons the node and submits PDB-aware eviction requests. It never
 // directly deletes Pods, so a PodDisruptionBudget can defer an unsafe disruption.
 func (c *Client) DrainNodeContext(ctx context.Context, name string, options DrainOptions) (*DrainResult, error) {
+	return c.drainNodeContext(ctx, name, options, "")
+}
+
+func (c *Client) drainNodeContext(ctx context.Context, name string, options DrainOptions, expectedUID types.UID) (*DrainResult, error) {
 	plan, err := c.DrainPlanContext(ctx, name)
 	if err != nil {
 		return nil, err
@@ -272,6 +336,9 @@ func (c *Client) DrainNodeContext(ctx context.Context, name string, options Drai
 	if err != nil {
 		return nil, fmt.Errorf("读取节点失败: %w", err)
 	}
+	if expectedUID != "" && (node.UID != expectedUID || isControlPlaneNode(node)) {
+		return nil, fmt.Errorf("节点身份或角色已变化，请重新检查")
+	}
 	if !node.Spec.Unschedulable {
 		node.Spec.Unschedulable = true
 	}
@@ -283,7 +350,11 @@ func (c *Client) DrainNodeContext(ctx context.Context, name string, options Drai
 	candidates := append(append([]DrainPod{}, plan.Evictable...), plan.RequiresEmptyDirConfirmation...)
 	result := &DrainResult{Plan: plan}
 	for _, item := range candidates {
-		err := c.Clientset.CoreV1().Pods(item.Namespace).EvictV1(ctx, &policyv1.Eviction{ObjectMeta: metav1.ObjectMeta{Name: item.Name, Namespace: item.Namespace}})
+		eviction := &policyv1.Eviction{ObjectMeta: metav1.ObjectMeta{Name: item.Name, Namespace: item.Namespace}}
+		if item.UID != "" {
+			eviction.DeleteOptions = &metav1.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &item.UID}}
+		}
+		err := c.Clientset.CoreV1().Pods(item.Namespace).EvictV1(ctx, eviction)
 		if err == nil {
 			result.Evicted = append(result.Evicted, item)
 			continue
@@ -414,7 +485,7 @@ func markNodeDrained(node *corev1.Node) {
 }
 
 func drainPod(pod *corev1.Pod) DrainPod {
-	item := DrainPod{Namespace: pod.Namespace, Name: pod.Name}
+	item := DrainPod{UID: pod.UID, Namespace: pod.Namespace, Name: pod.Name}
 	for _, owner := range pod.OwnerReferences {
 		if owner.Controller != nil && *owner.Controller {
 			item.OwnerKind = owner.Kind
@@ -461,6 +532,7 @@ func nodeToInfo(node *corev1.Node) NodeInfo {
 	health := nodeHealth(node, time.Now())
 	info.Ready = health.State == NodeHealthReady
 	info.Evicted = node.Spec.Unschedulable
+	info.DefaultNoSchedule = hasManagedNoScheduleTaint(node)
 	info.HealthState = health.State
 	info.HealthReason = health.Reason
 	info.LastHeartbeatAt = health.LastHeartbeatAt

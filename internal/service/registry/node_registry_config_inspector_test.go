@@ -58,6 +58,9 @@ func TestNodeRegistryConfigInspectorSanitizesAndMatchesConfig(t *testing.T) {
 	if got := result.Nodes[0].Actual[0].Endpoints; len(got) != 1 || got[0] != "https://mirror.example.com" {
 		t.Fatalf("unsafe endpoints: %#v", got)
 	}
+	if got := result.Nodes[0].Actual[0].AuthUsername; got != "robot" {
+		t.Fatalf("auth username was not retained safely: %q", got)
+	}
 	if strings.Contains(command, "secret") || !strings.Contains(command, "/etc/rancher/k3s/registries.yaml") || strings.Contains(command, "user:") {
 		t.Fatalf("unexpected read command: %q", command)
 	}
@@ -72,7 +75,7 @@ func TestNodeRegistryConfigInspectorClassifiesMissingDriftAndUnsupported(t *test
 		servers: []model.Server{
 			{ID: 1, Name: "missing", ClusterRole: "worker", SSHAuthType: "key", SSHKey: "key"},
 			{ID: 2, Name: "drifted", ClusterRole: "worker", SSHAuthType: "key", SSHKey: "key"},
-			{ID: 3, Name: "unsupported", ClusterRole: "worker", SSHAuthType: "password"},
+			{ID: 3, Name: "password-node", ClusterRole: "worker", SSHAuthType: "password", SSHPassword: "encrypted-password"},
 			{ID: 4, Name: "standalone", SSHAuthType: "key", SSHKey: "key"},
 		},
 	}
@@ -88,7 +91,7 @@ func TestNodeRegistryConfigInspectorClassifiesMissingDriftAndUnsupported(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	if calls != 2 || len(result.Nodes) != 3 {
+	if calls != 3 || len(result.Nodes) != 3 {
 		t.Fatalf("calls=%d nodes=%#v", calls, result.Nodes)
 	}
 	if result.Nodes[0].State != NodeRegistryConfigStateMissing {
@@ -97,8 +100,8 @@ func TestNodeRegistryConfigInspectorClassifiesMissingDriftAndUnsupported(t *test
 	if result.Nodes[1].State != NodeRegistryConfigStateDrifted || len(result.Nodes[1].Extra) != 1 || len(result.Nodes[1].Changed) != 1 {
 		t.Fatalf("drifted node: %#v", result.Nodes[1])
 	}
-	if result.Nodes[2].State != NodeRegistryConfigStateUnsupported {
-		t.Fatalf("unsupported node: %#v", result.Nodes[2])
+	if result.Nodes[2].State != NodeRegistryConfigStateDrifted {
+		t.Fatalf("password node: %#v", result.Nodes[2])
 	}
 }
 

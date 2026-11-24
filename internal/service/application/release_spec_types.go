@@ -38,45 +38,62 @@ const (
 )
 
 type ReleaseSpec struct {
-	Image      string   `json:"image"`
-	Version    string   `json:"version,omitempty"`
-	Command    []string `json:"command,omitempty"`
-	Args       []string `json:"args,omitempty"`
-	RegistryID uint     `json:"registry_id,omitempty"`
+	Migration  *MigrationSpec `json:"migration,omitempty"`
+	Image      string         `json:"image"`
+	Version    string         `json:"version,omitempty"`
+	Command    []string       `json:"command,omitempty"`
+	Args       []string       `json:"args,omitempty"`
+	RegistryID uint           `json:"registry_id,omitempty"`
 	// 以下字段只在发布执行期存在，禁止写入 API 响应或发布快照。
-	RegistryEndpoint                    string            `json:"-"`
-	RegistryAuthType                    string            `json:"-"`
-	RegistryUsername                    string            `json:"-"`
-	RegistryCredential                  string            `json:"-"`
-	ImageVerificationEndpoint           string            `json:"-"`
-	ImageVerificationUsername           string            `json:"-"`
-	ImageVerificationCredential         string            `json:"-"`
-	ImageVerificationInsecureSkipVerify bool              `json:"-"`
-	ContainerPort                       int32             `json:"container_port"`
-	Replicas                            int32             `json:"replicas"`
-	Resources                           ResourceSpec      `json:"resources"`
-	Health                              HealthSpec        `json:"health"`
-	Config                              map[string]string `json:"config,omitempty"`
+	RegistryEndpoint   string            `json:"-"`
+	RegistryAuthType   string            `json:"-"`
+	RegistryUsername   string            `json:"-"`
+	RegistryCredential string            `json:"-"`
+	ContainerPort      int32             `json:"container_port"`
+	Replicas           int32             `json:"replicas"`
+	Resources          ResourceSpec      `json:"resources"`
+	Health             HealthSpec        `json:"health"`
+	Config             map[string]string `json:"config,omitempty"`
 	// ConfigDisabled keeps configured values in the template while preventing
 	// selected keys from being projected into the workload. Missing entries are enabled
 	// for backwards compatibility with existing templates.
 	ConfigDisabled []string `json:"config_disabled,omitempty"`
+	// File keys are stored in the generated resource but never injected as environment variables.
+	ConfigFileKeys []string `json:"config_file_keys,omitempty"`
 	// ConfigManagedKeys lists ConfigMap keys that an external integration may edit.
 	// An empty list only falls back to file_mounts[].managed for legacy templates.
 	ConfigManagedKeys []string          `json:"config_managed_keys,omitempty"`
 	Secrets           map[string]string `json:"secrets,omitempty"`
 	SecretsDisabled   []string          `json:"secrets_disabled,omitempty"`
+	SecretFileKeys    []string          `json:"secret_file_keys,omitempty"`
 	// SecretManagedKeys lists Secret keys that an external integration may edit.
-	SecretManagedKeys []string          `json:"secret_managed_keys,omitempty"`
-	NodeName          string            `json:"node_name,omitempty"`
-	HostNetwork       bool              `json:"host_network,omitempty"`
-	Volumes           []VolumeMountSpec `json:"volumes,omitempty"`
-	FileMounts        []FileMountSpec   `json:"file_mounts,omitempty"`
-	Service           ServiceSpec       `json:"service"`
-	Endpoint          EndpointSpec      `json:"endpoint"`
+	SecretManagedKeys []string `json:"secret_managed_keys,omitempty"`
+	NodeName          string   `json:"node_name,omitempty"`
+	HostNetwork       bool     `json:"host_network,omitempty"`
+	// DNSNDots overrides the resolver threshold; nil preserves cluster defaults.
+	DNSNDots   *int              `json:"dns_ndots,omitempty"`
+	Volumes    []VolumeMountSpec `json:"volumes,omitempty"`
+	FileMounts []FileMountSpec   `json:"file_mounts,omitempty"`
+	Service    ServiceSpec       `json:"service"`
+	Endpoint   EndpointSpec      `json:"endpoint"`
 }
 
-// VolumeMountSpec describes a platform-managed PVC mounted into the main
+// MigrationSpec is template-owned configuration. Target is supplied for each
+// release; credentials remain in the existing encrypted template Secrets.
+type MigrationSpec struct {
+	Enabled        bool     `json:"enabled"`
+	Command        []string `json:"command,omitempty"`
+	Directory      string   `json:"directory,omitempty"`
+	DatabasePrefix string   `json:"database_prefix,omitempty"`
+	TimeoutSeconds int      `json:"timeout_seconds,omitempty"`
+	Target         string   `json:"target,omitempty"`
+}
+
+type MigrationRequest struct {
+	Target string `json:"target"`
+}
+
+// VolumeMountSpec describes an existing PVC mounted into the main
 // application container. PVC lifecycle remains independent from releases.
 
 type VolumeMountSpec struct {

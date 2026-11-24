@@ -18,6 +18,7 @@ type UserRepository interface {
 type TemporaryLoginTokenRepository interface {
 	CreateTemporaryLoginToken(*model.TemporaryLoginToken) error
 	ListTemporaryLoginTokens(uint) ([]model.TemporaryLoginToken, error)
+	ListTemporaryLoginTokensPage(uint, int, int) ([]model.TemporaryLoginToken, int64, error)
 	FindActiveTemporaryLoginToken(string, time.Time) (*model.TemporaryLoginToken, error)
 	MarkTemporaryLoginTokenUsed(string, time.Time) error
 	RevokeTemporaryLoginToken(uint, uint, time.Time) error

@@ -4,10 +4,8 @@ import dns from 'node:dns'
 import { Agent as HttpsAgent } from 'node:https'
 import lintCssTokensPlugin from './vite-plugin-lint-css.js'
 
-// cylism.crazycoding.top 的 DNS 记录当前指向阿里云备案拦截节点，
-// 通过自定义 lookup 固定解析到真实服务器 IP，域名本身保持不变
-// （SNI / Host 头 / 证书校验都还是 cylism.crazycoding.top）。
-const FIXED_IP = '149.13.91.192'
+// 连接指定远端时，将该域名解析到固定 IP，保留原域名用于 TLS 校验。
+const FIXED_IP = '8.148.243.141'
 
 const lookup = (hostname, options, callback) => {
   if (hostname === 'cylism.crazycoding.top') {
@@ -25,7 +23,7 @@ const fixedIpAgent = new HttpsAgent({ lookup })
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
-  const proxyTarget = env.VITE_API_PROXY_TARGET || 'https://cylism.crazycoding.top'
+  const proxyTarget = env.VITE_API_PROXY_TARGET || 'http://127.0.0.1:8080'
   const targetURL = new URL(proxyTarget)
   const proxy = {
     target: proxyTarget,

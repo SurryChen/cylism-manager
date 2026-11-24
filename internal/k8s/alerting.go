@@ -33,6 +33,7 @@ const (
 	alertingConfigName      = "cylism-alerting-config"
 	alertmanagerConfigName  = "cylism-alertmanager-config"
 	alertingSecretName      = "cylism-alerting-secret"
+	defaultAlertNotifyURL   = "http://cylism-manager.default.svc:8080/api/monitoring/alerts/notify"
 	alertmanagerImage       = "quay.io/prometheus/alertmanager:v0.28.1"
 	vmalertImage            = "victoriametrics/vmalert:v1.115.0"
 	kubeStateMetricsImage   = "registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.15.0"
@@ -41,6 +42,7 @@ const (
 // AlertingConfig contains the installation node, optional notification channel and managed rules.
 // The webhook URL is accepted on write only and is never returned from the API.
 type AlertingConfig struct {
+	NotifyURL          string                  `json:"notify_url,omitempty"`
 	NodeName           string                  `json:"node_name"`
 	FeishuWebhookURL   string                  `json:"feishu_webhook_url,omitempty"`
 	Email              EmailConfig             `json:"email,omitempty"`
@@ -77,6 +79,8 @@ type AlertNotificationPolicy struct {
 }
 
 type AlertingStatus struct {
+	NotifyURL              string                  `json:"notify_url,omitempty"`
+	NotificationWarning    string                  `json:"notification_warning,omitempty"`
 	State                  string                  `json:"state"`
 	Message                string                  `json:"message"`
 	NodeName               string                  `json:"node_name,omitempty"`
@@ -91,6 +95,7 @@ type AlertingStatus struct {
 }
 
 type alertingSettings struct {
+	NotifyURL          string                  `json:"notify_url,omitempty"`
 	NodeName           string                  `json:"node_name"`
 	NotificationPolicy AlertNotificationPolicy `json:"notification_policy"`
 	Rules              []AlertRuleConfig       `json:"rules"`
@@ -140,6 +145,7 @@ func (c *Client) AlertingStatus() *AlertingStatus {
 		status.KubeStateMetricsReady = deployment.Status.AvailableReplicas
 	}
 	if settings, getErr := c.alertingSettings(); getErr == nil {
+		status.NotifyURL = alertNotifyURL(settings.NotifyURL)
 		status.NotificationPolicy = settings.NotificationPolicy
 		status.Rules = settings.Rules
 	}
@@ -222,6 +228,9 @@ func (c *Client) updateAlerting(config AlertingConfig) (*AlertingStatus, error) 
 		return c.AlertingStatus(), fmt.Errorf("告警尚未安装")
 	}
 	config.NodeName = existing.NodeName
+	if config.NotifyURL == "" {
+		config.NotifyURL = existing.NotifyURL
+	}
 	return c.installAlerting(config)
 }
 
@@ -301,7 +310,12 @@ func normalizeAlertingConfig(config AlertingConfig) (alertingSettings, error) {
 	if err != nil {
 		return alertingSettings{}, err
 	}
-	settings := alertingSettings{NodeName: strings.TrimSpace(config.NodeName), NotificationPolicy: notificationPolicy, Rules: mergeAlertRules(config.Rules)}
+	notifyURL := alertNotifyURL(config.NotifyURL)
+	parsed, parseErr := url.Parse(notifyURL)
+	if parseErr != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Hostname() == "" || parsed.User != nil || parsed.Fragment != "" || parsed.RawQuery != "" {
+		return alertingSettings{}, fmt.Errorf("告警回调地址必须为有效的 HTTP 或 HTTPS URL")
+	}
+	settings := alertingSettings{NotifyURL: notifyURL, NodeName: strings.TrimSpace(config.NodeName), NotificationPolicy: notificationPolicy, Rules: mergeAlertRules(config.Rules)}
 	if settings.NodeName == "" {
 		return settings, fmt.Errorf("请选择告警节点")
 	}
@@ -469,7 +483,7 @@ func (c *Client) upsertAlertingResources(settings alertingSettings) error {
 	if err := upsertNamedConfigMap(c, &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: alertingRulesConfigName, Namespace: victoriaMetricsNamespace, Labels: alertingLabels("vmalert")}, Data: map[string]string{"alerts.yml": renderAlertRules(settings.Rules)}}); err != nil {
 		return err
 	}
-	if err := upsertNamedConfigMap(c, &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: alertmanagerConfigName, Namespace: victoriaMetricsNamespace, Labels: alertingLabels("alertmanager")}, Data: map[string]string{"alertmanager.yml": renderAlertmanagerConfig(settings.NotificationPolicy)}}); err != nil {
+	if err := upsertNamedConfigMap(c, &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: alertmanagerConfigName, Namespace: victoriaMetricsNamespace, Labels: alertingLabels("alertmanager")}, Data: map[string]string{"alertmanager.yml": renderAlertmanagerConfig(settings.NotificationPolicy, settings.NotifyURL)}}); err != nil {
 		return err
 	}
 	if err := upsertAlertmanagerPVC(c); err != nil {
@@ -484,7 +498,7 @@ func (c *Client) upsertAlertingResources(settings alertingSettings) error {
 	if err := upsertKubeStateMetricsDeployment(c); err != nil {
 		return err
 	}
-	if err := upsertAlertmanagerDeployment(c, settings.NodeName); err != nil {
+	if err := upsertAlertmanagerDeployment(c, settings); err != nil {
 		return err
 	}
 	return upsertVMAlertDeployment(c, settings.Rules)
@@ -563,9 +577,10 @@ func upsertKubeStateMetricsDeployment(c *Client) error {
 	return upsertAlertingDeployment(c, deployment)
 }
 
-func upsertAlertmanagerDeployment(c *Client, nodeName string) error {
+func upsertAlertmanagerDeployment(c *Client, settings alertingSettings) error {
+	configHash := sha256.Sum256([]byte(renderAlertmanagerConfig(settings.NotificationPolicy, settings.NotifyURL)))
 	replicas := int32(1)
-	deployment := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: alertmanagerName, Namespace: victoriaMetricsNamespace, Labels: alertmanagerLabels()}, Spec: appsv1.DeploymentSpec{Replicas: &replicas, Selector: &metav1.LabelSelector{MatchLabels: alertmanagerLabels()}, Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: alertmanagerLabels()}, Spec: corev1.PodSpec{NodeSelector: map[string]string{corev1.LabelHostname: nodeName}, Volumes: []corev1.Volume{
+	deployment := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: alertmanagerName, Namespace: victoriaMetricsNamespace, Labels: alertmanagerLabels()}, Spec: appsv1.DeploymentSpec{Replicas: &replicas, Selector: &metav1.LabelSelector{MatchLabels: alertmanagerLabels()}, Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: alertmanagerLabels(), Annotations: map[string]string{"cylism.io/alertmanager-config-hash": fmt.Sprintf("%x", configHash)}}, Spec: corev1.PodSpec{NodeSelector: map[string]string{corev1.LabelHostname: settings.NodeName}, Volumes: []corev1.Volume{
 		{Name: "data", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: alertmanagerName + "-data"}}},
 		{Name: "config", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: alertmanagerConfigName}}}},
 		{Name: "secret", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: alertingSecretName}}},
@@ -630,7 +645,15 @@ func AlertmanagerServiceURL() string {
 	return alertmanagerServiceURL()
 }
 
-func renderAlertmanagerConfig(policy AlertNotificationPolicy) string {
+func alertNotifyURL(raw string) string {
+	if raw = strings.TrimSpace(raw); raw != "" {
+		return raw
+	}
+	return defaultAlertNotifyURL
+}
+
+func renderAlertmanagerConfig(policy AlertNotificationPolicy, notifyURL string) string {
+	endpoint := alertNotifyURL(notifyURL)
 	return fmt.Sprintf(`global:
   resolve_timeout: 5m
 route:
@@ -642,13 +665,13 @@ route:
 receivers:
   - name: cylism-feishu
     webhook_configs:
-      - url: http://cylism-manager.default.svc:8080/api/monitoring/alerts/notify
+      - url: %s
         send_resolved: true
         http_config:
           authorization:
             type: Bearer
             credentials_file: /etc/alertmanager/secrets/relay-token
-`, policy.GroupWaitSeconds, policy.GroupIntervalMinutes, policy.RepeatIntervalMinutes)
+`, policy.GroupWaitSeconds, policy.GroupIntervalMinutes, policy.RepeatIntervalMinutes, quoteYAML(endpoint))
 }
 
 func renderAlertRules(rules []AlertRuleConfig) string {

@@ -9,11 +9,15 @@ import (
 )
 
 func TestServerDTODoesNotExposeCredentials(t *testing.T) {
-	view := ServerDTO(&model.Server{ID: 7, Name: "node-a", Host: "10.0.0.7", SSHPassword: "secret", SSHKey: "private-key", SSHKeyPassphrase: "passphrase", SSHKeyHash: "hash"})
+	removalTaskID := uint(12)
+	view := ServerDTO(&model.Server{ID: 7, Name: "node-a", Host: "10.0.0.7", SSHPassword: "secret", SSHKey: "private-key", SSHKeyPassphrase: "passphrase", SSHKeyHash: "hash", K3sRemovalTaskID: &removalTaskID})
 	if view == nil || view.ID != 7 || view.Host != "10.0.0.7" {
 		t.Fatalf("unexpected server view: %+v", view)
 	}
 	encoded := string(mustJSON(view))
+	if view.K3sRemovalTaskID == nil || *view.K3sRemovalTaskID != removalTaskID {
+		t.Fatal("cleanup entry was dropped from server DTO")
+	}
 	for _, secret := range []string{"secret", "private-key", "passphrase", "hash"} {
 		if strings.Contains(encoded, secret) {
 			t.Fatalf("server DTO leaked %q: %s", secret, encoded)

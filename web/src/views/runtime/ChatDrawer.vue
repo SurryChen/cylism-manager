@@ -576,7 +576,8 @@ onBeforeUnmount(() => {
 .chat-markdown :deep(h1), .chat-markdown :deep(h2), .chat-markdown :deep(h3) { margin: 12px 0 6px; color: var(--text-primary); font-size: 1em; }
 .chat-markdown :deep(ul), .chat-markdown :deep(ol) { margin: 6px 0; padding-left: 20px; }
 .chat-markdown :deep(li + li) { margin-top: 2px; }
-.chat-markdown :deep(a) { color: var(--link); text-decoration: underline; }
+.chat-markdown :deep(a) { color: var(--link); }
+.chat-markdown :deep(a:hover) { color: var(--action-primary-hover); }
 .chat-message.is-user .chat-markdown :deep(a), .chat-message.is-user .chat-markdown :deep(h1), .chat-message.is-user .chat-markdown :deep(h2), .chat-message.is-user .chat-markdown :deep(h3) { color: var(--action-contrast); }
 .chat-markdown :deep(code) { padding: 1px 4px; border-radius: 3px; background: var(--surface-subtle); font-family: var(--font-mono); font-size: .9em; }
 .chat-markdown :deep(pre) { overflow-x: auto; margin: 8px 0; padding: 10px; border: 1px solid var(--border-muted); border-radius: var(--radius-control); background: var(--surface-input); }
@@ -586,7 +587,7 @@ onBeforeUnmount(() => {
 .chat-markdown :deep(th), .chat-markdown :deep(td) { padding: 4px 6px; border: 1px solid var(--border-muted); text-align: left; }
 .chat-cursor { display: inline-block; width: 2px; height: 1em; margin-left: 2px; vertical-align: -0.15em; background: var(--action-primary); animation: chat-blink 1s steps(2, start) infinite; }
 .chat-message-state { display: block; margin-top: 4px; color: var(--text-muted); font-size: 11px; }
-.chat-retry { margin-top: 8px; border: 0; border-bottom: 1px solid currentColor; padding: 0; background: transparent; color: var(--action-primary); font: inherit; font-size: 12px; cursor: pointer; }
+.chat-retry { margin-top: 8px; border: 0; padding: 0; background: transparent; color: var(--action-primary); font: inherit; font-size: 12px; cursor: pointer; }
 @keyframes chat-blink { to { visibility: hidden; } }
 .chat-error { margin-top: 8px; padding: 9px 11px; border-radius: var(--radius-control); background: var(--danger-surface); color: var(--danger); font-size: 12px; }
 .chat-input-bar { display: flex; align-items: flex-end; gap: 8px; padding: 12px 22px 18px; border-top: 1px solid var(--border-muted); }
@@ -607,7 +608,7 @@ onBeforeUnmount(() => {
 .chat-approval-actions { display: flex; flex: 0 0 auto; gap: 6px; }
 .chat-approval-history { align-items: flex-start; }
 .chat-operation-error-toggle { justify-self: start; border: 0; padding: 0; background: transparent; color: var(--action-primary); font: inherit; font-size: 11px; cursor: pointer; }
-.chat-operation-error-toggle:hover { text-decoration: underline; }
+.chat-operation-error-toggle:hover, .chat-retry:hover { color: var(--action-primary-hover); }
 .chat-operation-error-detail { width: 100%; max-height: 180px; box-sizing: border-box; overflow: auto; margin: 2px 0 0; padding: 8px; border: 1px solid var(--danger); border-radius: var(--radius-control); background: var(--danger-surface); color: var(--text-primary); font-family: var(--font-mono); font-size: 11px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
 .chat-operation-status { flex: 0 0 auto; border: 1px solid var(--border-muted); border-radius: 999px; padding: 3px 7px; color: var(--text-secondary); font-size: 11px; }
 .chat-operation-status.is-succeeded { border-color: var(--success); color: var(--success); }

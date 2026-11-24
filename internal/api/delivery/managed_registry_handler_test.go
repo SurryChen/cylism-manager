@@ -112,6 +112,7 @@ func setupManagedOCIRegistryRouterWithHandler(t *testing.T) (*gin.Engine, *store
 	r := gin.New()
 	group := r.Group("/api/managed-oci-registries")
 	group.GET("", h.List)
+	group.POST("/:id/refresh-status", h.RefreshStatus)
 	group.GET("/storage-preflight", h.StoragePreflight)
 	group.GET("/pvcs", h.ListEligiblePVCs)
 	group.GET("/certificates", h.ListMatchingCertificates)
@@ -158,6 +159,32 @@ func TestManagedOCIRegistryUpdatePersistsVerificationImageForOwnedMirror(t *test
 	mirror, err := s.GetNodeRegistryMirror(*registry.NodeRegistryMirrorID)
 	if err != nil || mirror.VerificationImage != registry.VerificationImage {
 		t.Fatalf("owned node mirror verification image not updated: %#v %v", mirror, err)
+	}
+}
+
+func TestManagedOCIRegistryListUsesPersistedStatusUntilExplicitRefresh(t *testing.T) {
+	r, s := setupManagedOCIRegistryRouter(t)
+	created := serve(r, newJSONRequest(http.MethodPost, "/api/managed-oci-registries", managedRegistryPayload()))
+	if created.Code != http.StatusOK {
+		t.Fatal(created.Body.String())
+	}
+	registry, err := s.GetManagedOCIRegistry(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry.Status, registry.LastError = "ready", ""
+	if err := s.UpdateManagedOCIRegistry(registry); err != nil {
+		t.Fatal(err)
+	}
+
+	listed := serve(r, newJSONRequest(http.MethodGet, "/api/managed-oci-registries", nil))
+	if listed.Code != http.StatusOK || !strings.Contains(listed.Body.String(), `"status":"ready"`) {
+		t.Fatalf("list must return the persisted snapshot: %d %s", listed.Code, listed.Body.String())
+	}
+
+	refreshed := serve(r, newJSONRequest(http.MethodPost, "/api/managed-oci-registries/1/refresh-status", nil))
+	if refreshed.Code != http.StatusOK || !strings.Contains(refreshed.Body.String(), `"status":"pending"`) {
+		t.Fatalf("explicit refresh must perform a live check: %d %s", refreshed.Code, refreshed.Body.String())
 	}
 }
 

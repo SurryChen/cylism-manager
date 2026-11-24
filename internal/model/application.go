@@ -2,6 +2,7 @@ package model
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"sort"
@@ -9,10 +10,13 @@ import (
 	"time"
 )
 
+var ErrApplicationRequiresUninstall = errors.New("已有发布记录或访问入口，请先卸载集群资源")
+
 // Project is the business and authorization boundary for applications.
 type Project struct {
 	ID                     uint           `gorm:"primaryKey" json:"id"`
 	Name                   string         `gorm:"size:128;uniqueIndex;not null" json:"name"`
+	Slug                   string         `gorm:"size:40;uniqueIndex:idx_projects_slug,where:slug <> ''" json:"slug"`
 	Description            string         `gorm:"size:512" json:"description"`
 	DefaultImageRegistryID *uint          `gorm:"index" json:"default_image_registry_id,omitempty"`
 	OwnerID                uint           `gorm:"index;not null" json:"owner_id"`
@@ -24,8 +28,10 @@ type Project struct {
 
 // Environment maps a deployment target to a Kubernetes namespace.
 type Environment struct {
+	Kind              string    `gorm:"size:24;not null;default:unclassified" json:"kind"`
 	ID                uint      `gorm:"primaryKey" json:"id"`
 	ProjectID         uint      `gorm:"uniqueIndex:idx_project_environment;not null" json:"project_id"`
+	ClusterID         uint      `gorm:"index;not null;default:0" json:"cluster_id"`
 	Name              string    `gorm:"size:64;uniqueIndex:idx_project_environment;not null" json:"name"`
 	Namespace         string    `gorm:"size:128;not null" json:"namespace"`
 	NamespaceStatus   string    `gorm:"-" json:"namespace_status,omitempty"`
@@ -44,17 +50,19 @@ type ResourceReference struct {
 
 // NamespaceConflictError indicates that another environment already owns a Namespace.
 type NamespaceConflictError struct {
+	ClusterID     uint
 	Namespace     string
 	EnvironmentID uint
 	ProjectID     uint
 }
 
 func (e *NamespaceConflictError) Error() string {
-	return fmt.Sprintf("命名空间 %q 已被项目 %d 的环境 %d 绑定", e.Namespace, e.ProjectID, e.EnvironmentID)
+	return fmt.Sprintf("集群 %d 的命名空间 %q 已被项目 %d 的环境 %d 绑定", e.ClusterID, e.Namespace, e.ProjectID, e.EnvironmentID)
 }
 
 // NamespaceConflict groups legacy duplicate bindings for an operator-directed migration.
 type NamespaceConflict struct {
+	ClusterID    uint          `json:"cluster_id"`
 	Namespace    string        `json:"namespace"`
 	Environments []Environment `json:"environments"`
 }
@@ -118,12 +126,77 @@ type ApplicationDeploymentTemplate struct {
 	Name             string    `gorm:"size:128;uniqueIndex:idx_application_deployment_template_name;not null" json:"name"`
 	Description      string    `gorm:"size:512" json:"description"`
 	Enabled          bool      `gorm:"default:true;not null" json:"enabled"`
+	DefaultVersion   string    `gorm:"size:128" json:"default_version"`
 	Spec             string    `gorm:"type:text;not null" json:"spec"`
 	EncryptedSecrets string    `gorm:"type:text" json:"-"`
 	Revision         uint      `gorm:"not null" json:"revision"`
 	UpdatedBy        uint      `gorm:"index" json:"updated_by"`
 	CreatedAt        time.Time `json:"created_at"`
 	UpdatedAt        time.Time `json:"updated_at"`
+}
+
+// ApplicationCatalogItem is a reusable package made of deployment components.
+type ApplicationCatalogItem struct {
+	ID             uint      `gorm:"primaryKey" json:"id"`
+	Name           string    `gorm:"size:128;not null" json:"name"`
+	Slug           string    `gorm:"column:application_name;size:63;uniqueIndex;not null" json:"slug"`
+	Description    string    `gorm:"size:512" json:"description"`
+	Revision       uint      `gorm:"not null;default:1" json:"revision"`
+	Enabled        bool      `gorm:"not null;default:false" json:"enabled"`
+	EntryComponent string    `gorm:"size:63" json:"entry_component"`
+	ComponentsData string    `gorm:"column:components;type:text" json:"-"`
+	LegacySpec     string    `gorm:"column:spec;type:text;not null" json:"-"`
+	CreatedBy      uint      `gorm:"index;not null" json:"created_by"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
+}
+
+type ApplicationCatalogComponent struct {
+	Name            string          `json:"name"`
+	ApplicationName string          `json:"application_name"`
+	DefaultVersion  string          `json:"default_version,omitempty"`
+	Spec            json.RawMessage `json:"spec"`
+}
+
+func (item ApplicationCatalogItem) CatalogComponents() ([]ApplicationCatalogComponent, error) {
+	if item.ComponentsData != "" {
+		var components []ApplicationCatalogComponent
+		if err := json.Unmarshal([]byte(item.ComponentsData), &components); err != nil {
+			return nil, err
+		}
+		return components, nil
+	}
+	// Entries created before packages existed remain importable as one component.
+	return []ApplicationCatalogComponent{{Name: item.Name, ApplicationName: item.Slug, Spec: json.RawMessage(item.LegacySpec)}}, nil
+}
+
+func (item ApplicationCatalogItem) CatalogEntryComponent() string {
+	if item.EntryComponent != "" {
+		return item.EntryComponent
+	}
+	return item.Slug
+}
+
+// ApplicationCatalogInstallation keeps the imported package identity after its
+// components become ordinary project applications.
+type ApplicationCatalogInstallation struct {
+	ID                 uint                                      `gorm:"primaryKey" json:"id"`
+	CatalogItemID      uint                                      `gorm:"index;not null" json:"catalog_item_id"`
+	CatalogRevision    uint                                      `gorm:"not null" json:"catalog_revision"`
+	Name               string                                    `gorm:"size:128;not null" json:"name"`
+	ProjectID          uint                                      `gorm:"index;not null" json:"project_id"`
+	EnvironmentID      uint                                      `gorm:"index;not null" json:"environment_id"`
+	EntryApplicationID uint                                      `gorm:"index;not null" json:"entry_application_id"`
+	CreatedAt          time.Time                                 `json:"created_at"`
+	Components         []ApplicationCatalogInstallationComponent `gorm:"-" json:"components"`
+}
+
+type ApplicationCatalogInstallationComponent struct {
+	ID             uint   `gorm:"primaryKey" json:"id"`
+	InstallationID uint   `gorm:"index;not null" json:"installation_id"`
+	ApplicationID  uint   `gorm:"index;not null" json:"application_id"`
+	Name           string `gorm:"size:128;not null" json:"name"`
+	IsEntry        bool   `json:"is_entry"`
 }
 
 // ApplicationManagedFile identifies a ConfigMap key exposed through an application template.

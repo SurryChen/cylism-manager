@@ -1,6 +1,7 @@
 package store
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -140,5 +141,27 @@ func TestSystemComponentConfigCRUD(t *testing.T) {
 	}
 	if _, err := s.GetSystemComponentConfig("coredns"); err != gorm.ErrRecordNotFound {
 		t.Fatalf("expected record not found, got %v", err)
+	}
+}
+
+func TestAlertEventPageCountsBeyondLegacyWindow(t *testing.T) {
+	s, err := New(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stamp := time.Now().UTC()
+	for i := 1; i <= 45; i++ {
+		event := model.AlertEvent{Fingerprint: fmt.Sprintf("event-%d", i), AlertName: "NodeDown", UpdatedAt: stamp}
+		if err := s.DB().Create(&event).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	items, total, err := s.ListAlertEventPage(10, 40)
+	if err != nil || total != 45 || len(items) != 5 || items[0].ID != 5 || items[4].ID != 1 {
+		t.Fatalf("last page: %#v total=%d err=%v", items, total, err)
+	}
+	items, total, err = s.ListAlertEventPage(10, 50)
+	if err != nil || total != 45 || items == nil || len(items) != 0 {
+		t.Fatalf("empty page: %#v total=%d err=%v", items, total, err)
 	}
 }

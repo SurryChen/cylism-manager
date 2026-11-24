@@ -20,6 +20,7 @@ const DefaultRegistryProxyResourceName = "cylism-registry-proxy"
 // ProxyInput is the transport-independent proxy configuration accepted by the
 // Registry service. It deliberately excludes database and HTTP state.
 type ProxyInput struct {
+	ClusterID            uint
 	Name                 string
 	Registry             string
 	UpstreamURL          string
@@ -89,7 +90,7 @@ func (s *ProxyService) PrepareDeployment(input ProxyInput, current *model.Regist
 	if current != nil {
 		proxyID = current.ID
 	}
-	if err := s.validateNodePortAvailable(proxyID, input.NodePort); err != nil {
+	if err := s.validateNodePortAvailable(proxyID, input.ClusterID, input.NodePort); err != nil {
 		return nil, err
 	}
 	if current == nil {
@@ -98,6 +99,8 @@ func (s *ProxyService) PrepareDeployment(input ProxyInput, current *model.Regist
 		NormalizeRegistryProxy(current)
 	}
 	current.Name = strings.TrimSpace(input.Name)
+	current.ClusterID = input.ClusterID
+	current.ManagementMode = "managed"
 	current.Registry = NormalizeRegistryHost(input.Registry)
 	current.UpstreamURL = NormalizedProxyUpstream(input)
 	current.NodeName = strings.TrimSpace(input.NodeName)
@@ -135,6 +138,16 @@ func (s *ProxyService) MarkFailed(proxy *model.RegistryProxy, cause error) {
 }
 
 func (s *ProxyService) Save(proxy *model.RegistryProxy) error {
+	return s.repository.SaveRegistryProxy(proxy)
+}
+
+func (s *ProxyService) TakeOver(proxy *model.RegistryProxy, httpProxy, httpsProxy string) error {
+	if err := s.setOutboundProxy(proxy, ProxyInput{HTTPProxy: httpProxy, HTTPSProxy: httpsProxy}); err != nil {
+		return err
+	}
+	proxy.ManagementMode = "managed"
+	proxy.ImportedOutboundProxy = false
+	proxy.LastError = ""
 	return s.repository.SaveRegistryProxy(proxy)
 }
 
@@ -214,13 +227,13 @@ func (s *ProxyService) setOutboundProxy(proxy *model.RegistryProxy, input ProxyI
 	return nil
 }
 
-func (s *ProxyService) validateNodePortAvailable(proxyID uint, nodePort int32) error {
+func (s *ProxyService) validateNodePortAvailable(proxyID, clusterID uint, nodePort int32) error {
 	proxies, err := s.repository.ListRegistryProxies()
 	if err != nil {
 		return fmt.Errorf("读取现有镜像代理失败: %w", err)
 	}
 	for _, existing := range proxies {
-		if existing.ID != proxyID && existing.NodePort == nodePort {
+		if existing.ID != proxyID && existing.ClusterID == clusterID && existing.NodePort == nodePort {
 			return fmt.Errorf("NodePort %d 已被镜像代理 %q 使用", nodePort, existing.Name)
 		}
 	}

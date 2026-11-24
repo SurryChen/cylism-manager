@@ -127,7 +127,7 @@ func TestApplicationHandlerRejectsHTTPIngressBindingForUDPService(t *testing.T) 
 	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "UDP Service 不支持 HTTP Ingress") {
 		t.Fatalf("expected UDP Ingress rejection, got %d %s", response.Code, response.Body.String())
 	}
-	metadata := serve(r, newJSONRequest(http.MethodPost, "/api/applications/1/endpoints", gin.H{"domain_id": 1, "path": "/", "tls_enabled": false, "ingress_enabled": false}))
+	metadata := serve(r, newJSONRequest(http.MethodPost, "/api/applications/1/endpoints", gin.H{"domain_id": 1, "path": "/", "tls_enabled": true, "ingress_enabled": false}))
 	if metadata.Code != http.StatusOK || !strings.Contains(metadata.Body.String(), `"ingress_enabled":false`) {
 		t.Fatalf("expected metadata-only UDP binding, got %d %s", metadata.Code, metadata.Body.String())
 	}

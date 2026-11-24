@@ -7,6 +7,11 @@ import (
 
 // cleanupLegacySchema removes schema from features retired by the application.
 func cleanupLegacySchema(db *gorm.DB) error {
+	if db.Migrator().HasIndex(&model.Server{}, "idx_servers_host") {
+		if err := db.Migrator().DropIndex(&model.Server{}, "idx_servers_host"); err != nil {
+			return err
+		}
+	}
 	if db.Migrator().HasIndex(&model.ApplicationDeploymentTemplate{}, "idx_application_deployment_templates_application_id") {
 		if err := db.Migrator().DropIndex(&model.ApplicationDeploymentTemplate{}, "idx_application_deployment_templates_application_id"); err != nil {
 			return err

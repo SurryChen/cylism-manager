@@ -24,6 +24,15 @@ describe('SectionTabsHeader', () => {
     expect(wrapper.get('nav').element.parentElement).toBe(wrapper.element)
     expect(wrapper.get('[data-testid="header-action"]').element.parentElement?.parentElement).toBe(wrapper.element)
     expect(wrapper.get('[data-testid="settings-security"]').attributes('aria-current')).toBe('page')
+    expect(wrapper.classes()).toContain('sticky-page-header')
+  })
+
+  it('allows detail pages to disable sticky positioning', () => {
+    const wrapper = mount(SectionTabsHeader, {
+      props: { title: '商城应用', tabs, activeTab: 'security', sticky: false },
+    })
+
+    expect(wrapper.classes()).not.toContain('sticky-page-header')
   })
 
   it('emits the selected local tab without creating route navigation', async () => {
@@ -41,6 +50,7 @@ describe('SectionTabsHeader', () => {
     expect(themeCss).toContain('--page-header-height: 64px')
     expect(themeCss).toContain('--tabbed-page-header-title-size: var(--page-header-title-size)')
     expect(themeCss).toContain('--tabbed-page-header-content-offset: var(--page-header-content-offset)')
+    expect(themeCss).toContain('--tabbed-page-content-gap: var(--space-4)')
     expect(sectionTabsSource).toContain('height: var(--tabbed-page-header-height)')
     expect(sectionTabsSource).toContain('margin: 0 0 23px; font-size: var(--tabbed-page-header-title-size)')
     expect(sectionTabsSource).toContain('bottom: 11px; left: 0; height: 1px')

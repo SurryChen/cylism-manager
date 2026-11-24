@@ -4,6 +4,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	k8sclient "github.com/cylism/cylism-manager/internal/k8s"
+	"github.com/cylism/cylism-manager/internal/model"
 	crypto "github.com/cylism/cylism-manager/internal/security"
 	platformservice "github.com/cylism/cylism-manager/internal/service/platform"
 	"github.com/cylism/cylism-manager/internal/store"
@@ -21,6 +23,52 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
 )
+
+func TestPlatformStatusPaginatesReleasesAndPreservesDefaultWindow(t *testing.T) {
+	s, err := store.New(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 105; i++ {
+		if err := s.CreatePlatformRelease(&model.PlatformRelease{Source: "manual", Image: "registry.example.com/cylism-manager:test", Status: "succeeded"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	handler := newTestPlatformHandler(s, []byte("01234567890123456789012345678901"), platformTestClient())
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.GET("/api/platform/status", handler.Status)
+	for _, test := range []struct {
+		query string
+		count int
+		first uint
+	}{
+		{"", 20, 105},
+		{"?limit=10&offset=100", 5, 5},
+		{"?limit=1000&offset=-1", 100, 105},
+		{"?limit=invalid&offset=invalid", 20, 105},
+		{"?limit=10&offset=200", 0, 0},
+	} {
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/platform/status"+test.query, nil))
+		var body struct {
+			Code int
+			Data struct {
+				Releases      []model.PlatformRelease
+				ReleasesTotal int64 `json:"releases_total"`
+			}
+		}
+		if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		if response.Code != http.StatusOK || body.Code != 0 || body.Data.ReleasesTotal != 105 || len(body.Data.Releases) != test.count {
+			t.Fatalf("query %q: %d %s", test.query, response.Code, response.Body.String())
+		}
+		if len(body.Data.Releases) > 0 && body.Data.Releases[0].ID != test.first {
+			t.Fatalf("query %q: first ID=%d, want %d", test.query, body.Data.Releases[0].ID, test.first)
+		}
+	}
+}
 
 func TestPlatformWebhookAcceptsSignedTagAndRejectsReplay(t *testing.T) {
 	client := platformTestClient()
@@ -74,6 +122,41 @@ func TestPlatformWebhookRejectsInvalidSignature(t *testing.T) {
 	router.ServeHTTP(response, request)
 	if response.Code != http.StatusUnauthorized {
 		t.Fatalf("expected unauthorized signature, got %d: %s", response.Code, response.Body.String())
+	}
+}
+
+func TestPlatformOutsideClusterRejectsOperationsBeforeKubernetesAccess(t *testing.T) {
+	handler := newTestPlatformHandler(nil, []byte("01234567890123456789012345678901"), nil).WithInCluster(false)
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	platform := router.Group("/api/platform")
+	platform.GET("/capabilities", handler.Capabilities)
+	platform.Use(handler.RequireInCluster)
+	platform.GET("/status", handler.Status)
+	platform.GET("/endpoint", handler.EndpointStatus)
+	platform.POST("/releases", handler.ManualUpdate)
+	platform.PUT("/endpoint", handler.UpdateEndpoint)
+	router.POST("/api/platform/deployments", handler.Webhook)
+
+	for _, tc := range []struct {
+		method, path string
+		status       int
+	}{
+		{http.MethodGet, "/api/platform/capabilities", http.StatusOK},
+		{http.MethodGet, "/api/platform/status", http.StatusNotImplemented},
+		{http.MethodGet, "/api/platform/endpoint", http.StatusNotImplemented},
+		{http.MethodPost, "/api/platform/releases", http.StatusNotImplemented},
+		{http.MethodPut, "/api/platform/endpoint", http.StatusNotImplemented},
+		{http.MethodPost, "/api/platform/deployments", http.StatusNotImplemented},
+	} {
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, httptest.NewRequest(tc.method, tc.path, nil))
+		if response.Code != tc.status {
+			t.Errorf("%s %s: got %d, want %d: %s", tc.method, tc.path, response.Code, tc.status, response.Body.String())
+		}
+		if tc.status == http.StatusNotImplemented && !strings.Contains(response.Body.String(), platformOutsideClusterMessage) {
+			t.Errorf("%s %s: missing unsupported reason: %s", tc.method, tc.path, response.Body.String())
+		}
 	}
 }
 

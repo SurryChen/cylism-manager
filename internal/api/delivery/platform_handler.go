@@ -20,10 +20,13 @@ import (
 )
 
 type PlatformHandler struct {
-	store   repository.PlatformEndpointRepository
-	client  platformKubernetes
-	release *platformservice.ReleaseService
+	store     repository.PlatformEndpointRepository
+	client    platformKubernetes
+	release   *platformservice.ReleaseService
+	inCluster bool
 }
+
+const platformOutsideClusterMessage = "平台未部署在 Kubernetes 集群内，暂不支持平台入口配置及发布与更新"
 
 // PlatformKubernetesAdapter is the narrow Kubernetes port required by the
 // platform delivery handler. Bootstrap creates the concrete implementation.
@@ -85,8 +88,32 @@ func NewPlatformHandlerWithDependencies(s repository.PlatformEndpointRepository,
 	return &PlatformHandler{store: s, client: client, release: release}
 }
 
+func (h *PlatformHandler) WithInCluster(inCluster bool) *PlatformHandler {
+	h.inCluster = inCluster
+	return h
+}
+
+func (h *PlatformHandler) Capabilities(c *gin.Context) {
+	reason := ""
+	if !h.inCluster {
+		reason = platformOutsideClusterMessage
+	}
+	apiShared.Success(c, gin.H{"in_cluster": h.inCluster, "supported": h.inCluster, "reason": reason})
+}
+
+func (h *PlatformHandler) RequireInCluster(c *gin.Context) {
+	if !h.inCluster {
+		apiShared.Error(c, http.StatusNotImplemented, apiShared.CodeK8sUnavailable, platformOutsideClusterMessage)
+		c.Abort()
+	}
+}
+
 // Webhook accepts authenticated platform image deployment requests.
 func (h *PlatformHandler) Webhook(c *gin.Context) {
+	if !h.inCluster {
+		h.RequireInCluster(c)
+		return
+	}
 	if h.store == nil {
 		apiShared.Unauthorized(c, "部署签名无效或已过期")
 		return
@@ -159,14 +186,16 @@ func (h *PlatformHandler) Status(c *gin.Context) {
 		apiShared.Error(c, http.StatusOK, apiShared.CodeK8sAPIError, err.Error())
 		return
 	}
-	releases, err := h.store.ListPlatformReleases(20)
+	// Preserve the existing status response and default window for older clients.
+	limit, offset := apiShared.LimitOffset(c, 20, 100)
+	releases, total, err := h.store.ListPlatformReleasesPage(limit, offset)
 	if err != nil {
 		apiShared.InternalError(c, "读取平台发布记录失败")
 		return
 	}
 	prefixes := h.release.ImagePrefixes()
 	_, configured := h.store.GetSystemConfig(platformservice.WebhookSecretConfigKey)
-	apiShared.Success(c, gin.H{"deployment": deployment, "releases": apiShared.PlatformReleasesDTO(releases), "image_prefix": strings.Join(prefixes, "\n"), "image_prefixes": prefixes, "webhook_configured": configured == nil})
+	apiShared.Success(c, gin.H{"deployment": deployment, "releases": apiShared.PlatformReleasesDTO(releases), "releases_total": total, "image_prefix": strings.Join(prefixes, "\n"), "image_prefixes": prefixes, "webhook_configured": configured == nil})
 }
 
 func (h *PlatformHandler) GenerateWebhookSecret(c *gin.Context) {

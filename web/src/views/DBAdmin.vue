@@ -1,10 +1,10 @@
 <template>
   <div>
-    <div class="page-header">
+    <div class="page-header sticky-page-header">
       <h1 class="page-title">数据管理</h1>
       <button class="btn btn-primary" @click="showAdd = true" :disabled="!currentTable">+ 新增记录</button>
     </div>
-    <div v-if="error" class="k8s-banner k8s-banner-warn section-gap">{{ error }}</div>
+    <div v-if="readError" class="k8s-banner k8s-banner-warn section-gap">{{ readError }}</div>
 
     <SurfaceCard as="div" class="section-gap">
       <div class="table-tabs">
@@ -22,33 +22,29 @@
       <div v-else-if="rows.length === 0" class="empty-state"><span class="empty-text">暂无数据</span></div>
       <div v-else>
         <div class="table-wrap">
-          <table class="data-table">
+          <DataTable>
             <thead>
               <tr>
                 <th v-for="col in columns" :key="col" class="sortable-header" @click="setSort(col)">
                   {{ col }} {{ sort === col ? (order === 'asc' ? '↑' : '↓') : '' }}
                 </th>
-                <th>操作</th>
+                <TableActionCell header />
               </tr>
             </thead>
             <tbody>
               <tr v-for="row in rows" :key="row.id || Math.random()">
                 <td v-for="col in columns" :key="col">{{ formatCell(row[col]) }}</td>
-                <td>
+                <TableActionCell>
                   <div class="btn-group">
                     <button class="btn btn-sm" @click="editRow(row)">编辑</button>
                     <button class="btn btn-sm btn-danger" @click="confirmDel(row)">删除</button>
                   </div>
-                </td>
+                </TableActionCell>
               </tr>
             </tbody>
-          </table>
+          </DataTable>
         </div>
-        <div class="pagination">
-          <button class="btn btn-sm" :disabled="page <= 1" @click="page--; fetchData()">上一页</button>
-          <span class="pagination-status">{{ page }} / {{ totalPages }}</span>
-          <button class="btn btn-sm" :disabled="page >= totalPages" @click="page++; fetchData()">下一页</button>
-        </div>
+        <PaginationControls :page="page" :page-size="size" :total="total" :loading="loading" @page-change="changePage" @page-size-change="changePageSize" />
       </div>
     </SurfaceCard>
 
@@ -82,13 +78,18 @@
         </div>
       </div>
     </div>
+    <ErrorNoticeModal :open="Boolean(actionError)" :message="actionError" teleport @close="actionError = ''" />
   </div>
 </template>
 
 <script setup>
+import DataTable from '../components/DataTable.vue'
+import TableActionCell from '../components/TableActionCell.vue'
+import PaginationControls from '../components/PaginationControls.vue'
 import { ref, computed, onMounted, reactive } from 'vue'
 import { createAdminTableRow, deleteAdminTableRow, getAdminTableRows, getAdminTables, updateAdminTableRow } from '../api/admin.js'
 import SurfaceCard from '../components/SurfaceCard.vue'
+import ErrorNoticeModal from '../components/ErrorNoticeModal.vue'
 import { useAsyncResource } from '../composables/useAsyncResource.js'
 
 const tables = ref([])
@@ -97,9 +98,10 @@ const columns = ref([])
 const rows = ref([])
 const loading = ref(false)
 const page = ref(1)
-const size = 20
+const size = ref(10)
 const total = ref(0)
-const error = ref('')
+const readError = ref('')
+const actionError = ref('')
 const sort = ref('id')
 const order = ref('desc')
 const showAdd = ref(false)
@@ -109,7 +111,7 @@ const formData = reactive({})
 const tablesResource = useAsyncResource(({ signal }) => getAdminTables({ signal }), { tables: [] })
 const rowsResource = useAsyncResource(({ signal }, table, query) => getAdminTableRows(table, query, { signal }), { columns: [], rows: [], total: 0 })
 
-const totalPages = computed(() => Math.max(1, Math.ceil(total.value / size)))
+let rowsRequest = 0
 const editableColumns = computed(() => columns.value.filter(c => !['id','created_at','updated_at','deleted_at'].includes(c)))
 
 const tableLabels = { servers:'服务器', sites:'站点', certs:'证书', audit_logs:'审计日志', operation_logs:'操作日志', users:'用户' }
@@ -118,13 +120,16 @@ function tableLabel(t) { return tableLabels[t] || t }
 onMounted(loadTables)
 
 async function loadTables() {
-  error.value = ''
+  readError.value = ''
   const data = await tablesResource.refresh()
   if (data) tables.value = data.tables || []
-  else if (tablesResource.error.value) error.value = tablesResource.error.value.message || '加载数据表失败'
+  else if (tablesResource.error.value) readError.value = tablesResource.error.value.message || '加载数据表失败'
 }
 
 async function selectTable(name) {
+  rowsResource.cancel()
+  rows.value = []; columns.value = []; total.value = 0
+  closeForm(); deleteTarget.value = null
   currentTable.value = name
   page.value = 1
   sort.value = 'id'
@@ -132,21 +137,33 @@ async function selectTable(name) {
   await fetchData()
 }
 
-async function fetchData() {
+async function fetchData(requestedPage = page.value, requestedSize = size.value) {
   if (!currentTable.value) return
-  error.value = ''
+  const request = ++rowsRequest
+  const table = currentTable.value
+  const query = { sort: sort.value, order: order.value }
+  readError.value = ''
   loading.value = true
-  const data = await rowsResource.refresh(currentTable.value, { page: page.value, size, sort: sort.value, order: order.value })
+  let data = await rowsResource.refresh(table, { page: requestedPage, size: requestedSize, ...query })
+  if (request !== rowsRequest) return
+  if (data && requestedPage > Math.max(1, Math.ceil(data.total / requestedSize))) {
+    requestedPage = Math.max(1, Math.ceil(data.total / requestedSize))
+    data = await rowsResource.refresh(table, { page: requestedPage, size: requestedSize, ...query })
+  }
+  if (request !== rowsRequest) return
   if (data) {
+    page.value = requestedPage; size.value = requestedSize
     columns.value = data.columns || []
     rows.value = data.rows || []
     total.value = data.total || 0
   } else if (rowsResource.error.value) {
-    error.value = rowsResource.error.value.message || '加载数据失败'
+    readError.value = rowsResource.error.value.message || '加载数据失败'
   }
   loading.value = false
 }
 
+function changePage(value) { if (!loading.value) void fetchData(value) }
+function changePageSize(value) { if (!loading.value) void fetchData(1, value) }
 function setSort(col) {
   if (sort.value === col) {
     order.value = order.value === 'asc' ? 'desc' : 'asc'
@@ -154,7 +171,7 @@ function setSort(col) {
     sort.value = col
     order.value = 'asc'
   }
-  fetchData()
+  fetchData(1)
 }
 
 function formatCell(val) {
@@ -186,7 +203,7 @@ async function submitForm() {
     }
     closeForm()
     fetchData()
-  } catch (e) { error.value = e.message || '保存记录失败' }
+  } catch (e) { actionError.value = e.message || '保存记录失败' }
 }
 
 function confirmDel(row) { deleteTarget.value = row }
@@ -196,6 +213,6 @@ async function doDelete() {
     await deleteAdminTableRow(currentTable.value, deleteTarget.value.id)
     deleteTarget.value = null
     fetchData()
-  } catch (e) { error.value = e.message || '删除记录失败' }
+  } catch (e) { actionError.value = e.message || '删除记录失败' }
 }
 </script>

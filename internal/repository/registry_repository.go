@@ -51,6 +51,17 @@ type RegistryProxyRepository interface {
 	GetRegistryProxyByID(uint) (*model.RegistryProxy, error)
 	ListRegistryProxies() ([]model.RegistryProxy, error)
 	SaveRegistryProxy(*model.RegistryProxy) error
+	DeleteRegistryProxy(uint) error
+}
+
+type RegistryProxyRelayRepository interface {
+	ListRegistryProxyRelays(uint) ([]model.RegistryProxyRelay, error)
+	GetRegistryProxyRelay(uint) (*model.RegistryProxyRelay, error)
+	SaveRegistryProxyRelay(*model.RegistryProxyRelay) error
+	DeleteRegistryProxyRelay(uint) error
+	ListRegistryProxyNodeRoutes(uint) ([]model.RegistryProxyNodeRoute, error)
+	SaveRegistryProxyNodeRoute(*model.RegistryProxyNodeRoute) error
+	DeleteRegistryProxyNodeRoute(uint, uint) error
 }
 
 // ImageRegistryRepository owns externally configured image Registry records.
@@ -80,6 +91,7 @@ var (
 	_ ManagedRegistryRepository    = (*store.Store)(nil)
 	_ NodeRegistryMirrorRepository = (*store.Store)(nil)
 	_ RegistryProxyRepository      = (*store.Store)(nil)
+	_ RegistryProxyRelayRepository = (*store.Store)(nil)
 	_ ImageRegistryRepository      = (*store.Store)(nil)
 	_ ChartRepositoryRepository    = (*store.Store)(nil)
 )

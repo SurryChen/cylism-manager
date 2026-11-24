@@ -97,7 +97,6 @@ func (h *NodeJoinProgressHandler) JoinProgress(c *gin.Context) {
 			index++
 			_ = send(step, label, transport.WSStatusFailed, detail)
 		}
-		sshArgs := transport.BuildSSHArgs(server, h.encKey, server.Host)
 		checks := []struct{ name, label, command string }{
 			{"ssh_connect", "SSH 连接", "echo ok"},
 			{"root_privilege", "Root 权限", "id -u"},
@@ -113,7 +112,7 @@ func (h *NodeJoinProgressHandler) JoinProgress(c *gin.Context) {
 			if !send(check.name, check.label, transport.WSStatusRunning, "检测中...") {
 				return
 			}
-			out, runErr := transport.SSHExecContext(ctx, nodeJoinSSHTimeout, append(sshArgs, check.command))
+			out, runErr := transport.SSHExecServerContext(ctx, nodeJoinSSHTimeout, server, h.encKey, check.command)
 			result := strings.TrimSpace(string(out))
 			if runErr != nil {
 				fail(check.name, check.label, fmt.Sprintf("失败: %v", runErr))
@@ -156,7 +155,7 @@ func (h *NodeJoinProgressHandler) JoinProgress(c *gin.Context) {
 			return
 		}
 		install := k3sAgentInstallCommand(controlIP, token)
-		if out, installErr := transport.SSHExecContext(ctx, 180*time.Second, append(sshArgs, install)); installErr != nil {
+		if out, installErr := transport.SSHExecServerContext(ctx, 180*time.Second, server, h.encKey, install); installErr != nil {
 			fail("install_k3s_agent", "安装 k3s-agent", fmt.Sprintf("失败: %v — %s", installErr, out))
 			return
 		}
@@ -168,7 +167,7 @@ func (h *NodeJoinProgressHandler) JoinProgress(c *gin.Context) {
 		if !send("start_service", "启动服务", transport.WSStatusRunning, "等待 k3s-agent 启动...") {
 			return
 		}
-		if out, serviceErr := transport.SSHExecContext(ctx, 30*time.Second, append(sshArgs, "systemctl is-active k3s-agent")); serviceErr != nil {
+		if out, serviceErr := transport.SSHExecServerContext(ctx, 30*time.Second, server, h.encKey, "systemctl is-active k3s-agent"); serviceErr != nil {
 			fail("start_service", "启动服务", fmt.Sprintf("失败: %s", out))
 			return
 		}
@@ -204,7 +203,7 @@ func (h *NodeJoinProgressHandler) JoinProgress(c *gin.Context) {
 			return
 		}
 		server.ClusterRole = "worker"
-		if hostname, hostErr := transport.SSHExecContext(ctx, 10*time.Second, append(sshArgs, "hostname")); hostErr == nil {
+		if hostname, hostErr := transport.SSHExecServerContext(ctx, 10*time.Second, server, h.encKey, "hostname"); hostErr == nil {
 			server.K8sNodeName = strings.TrimSpace(string(hostname))
 		}
 		_ = h.store.UpdateServer(server)

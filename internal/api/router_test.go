@@ -90,3 +90,88 @@ func TestRegisterRoutesDoesNotFallbackUnknownAPI(t *testing.T) {
 		t.Fatalf("status = %d, want 404", resp.Code)
 	}
 }
+
+func TestProductRoutesRequireAuthentication(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	container, err := bootstrap.NewContainer(bootstrap.Config{DBPath: "file:router-products?mode=memory&cache=shared", EncryptionKey: make([]byte, 32), JWTSecret: []byte("router-products-secret")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	api.RegisterRoutes(r, container.BuildRouteDependencies())
+	for _, route := range []struct{ method, path string }{{"GET", "/api/products"}, {"GET", "/api/products/1"}, {"GET", "/api/products/resource-options"}, {"POST", "/api/products"}, {"PUT", "/api/products/1"}, {"DELETE", "/api/products/1"}, {"POST", "/api/products/clear"}} {
+		res := httptest.NewRecorder()
+		r.ServeHTTP(res, httptest.NewRequest(route.method, route.path, nil))
+		if res.Code != http.StatusUnauthorized {
+			t.Fatalf("%s %s: %d", route.method, route.path, res.Code)
+		}
+	}
+}
+
+func TestAlertHistoryRoutesRequireAuthentication(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	container, err := bootstrap.NewContainer(bootstrap.Config{DBPath: ":memory:", EncryptionKey: make([]byte, 32), JWTSecret: []byte("router-history-secret")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	api.RegisterRoutes(r, container.BuildRouteDependencies())
+	for _, path := range []string{"/api/monitoring/alerts/history", "/api/clusters/2/monitoring/alerts/history?view=frequency", "/api/clusters/2/monitoring/alerts/suppression-rules", "/api/monitoring/alerts/suppression-rules"} {
+		res := httptest.NewRecorder()
+		r.ServeHTTP(res, httptest.NewRequest(http.MethodGet, path, nil))
+		if res.Code != http.StatusUnauthorized {
+			t.Fatalf("%s: %d", path, res.Code)
+		}
+	}
+}
+
+func TestNodeRemovalRoutesRequireAuthentication(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	container, err := bootstrap.NewContainer(bootstrap.Config{DBPath: "file:router-removal?mode=memory&cache=shared", EncryptionKey: make([]byte, 32), JWTSecret: []byte("router-removal-secret")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	api.RegisterRoutes(router, container.BuildRouteDependencies())
+	for _, route := range []struct{ method, path string }{{"GET", "/api/clusters/1/nodes/2/removal-plan"}, {"POST", "/api/clusters/1/nodes/2/remove"}, {"GET", "/api/servers/2/k3s-cleanup"}, {"POST", "/api/servers/2/k3s-cleanup"}} {
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, httptest.NewRequest(route.method, route.path, nil))
+		if response.Code != http.StatusUnauthorized {
+			t.Fatalf("%s %s: %d", route.method, route.path, response.Code)
+		}
+	}
+}
+
+func TestCloudPermissionRouteRequiresAuthentication(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	container, err := bootstrap.NewContainer(bootstrap.Config{DBPath: "file:router-cloud-permissions?mode=memory&cache=shared", EncryptionKey: make([]byte, 32), JWTSecret: []byte("router-cloud-permissions-secret")})
+	if err != nil {
+		t.Fatalf("create container: %v", err)
+	}
+	api.RegisterRoutes(r, container.BuildRouteDependencies())
+	req := httptest.NewRequest(http.MethodGet, "/api/cloud/connections/1/permissions", nil)
+	resp := httptest.NewRecorder()
+	r.ServeHTTP(resp, req)
+	if resp.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401: %s", resp.Code, resp.Body.String())
+	}
+}
+
+func TestAccessCertificateRoutesRequireAuthentication(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	container, err := bootstrap.NewContainer(bootstrap.Config{DBPath: "file:router-access-certificates?mode=memory&cache=shared", EncryptionKey: make([]byte, 32), JWTSecret: []byte("router-access-certificates-secret")})
+	if err != nil {
+		t.Fatalf("create container: %v", err)
+	}
+	api.RegisterRoutes(r, container.BuildRouteDependencies())
+	for _, path := range []string{"/api/access-certificates", "/api/access-certificates/ca"} {
+		request := httptest.NewRequest(http.MethodPost, path, nil)
+		response := httptest.NewRecorder()
+		r.ServeHTTP(response, request)
+		if response.Code != http.StatusUnauthorized {
+			t.Fatalf("%s = %d, want 401", path, response.Code)
+		}
+	}
+}

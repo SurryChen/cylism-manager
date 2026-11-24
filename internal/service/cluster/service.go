@@ -14,6 +14,7 @@ import (
 )
 
 var ErrNodeBindingCleanup = errors.New("节点已从集群移除，但解除服务器绑定失败")
+var ErrServerAssigned = errors.New("服务器已归属集群，不能直接删除或解除绑定")
 
 // NodeAdapter is the cluster-resource boundary used by server and node
 // workflows. The production adapter is the K8s client; tests provide a small
@@ -22,6 +23,8 @@ type NodeAdapter interface {
 	ListNodeInfosContext(context.Context) ([]k8s.NodeInfo, error)
 	GetNodeLabelsContext(context.Context, string) (*k8s.NodeLabels, error)
 	UpdateNodeLabelsContext(context.Context, string, map[string]string, []string) (*k8s.NodeLabels, error)
+	GetNodeSchedulingContext(context.Context, string) (*k8s.NodeScheduling, error)
+	SetNodeNoScheduleContext(context.Context, string, bool) (*k8s.NodeScheduling, error)
 	DrainPlanContext(context.Context, string) (*k8s.DrainPlan, error)
 	DrainNodeContext(context.Context, string, k8s.DrainOptions) (*k8s.DrainResult, error)
 	ForceDrainNodeContext(context.Context, string, k8s.ForceDrainOptions) (*k8s.DrainResult, error)
@@ -116,11 +119,22 @@ func (s *Service) GetServer(id uint) (*model.Server, error) {
 	return s.servers.GetServer(id)
 }
 
+func (s *Service) GetServerByHost(host string) (*model.Server, error) {
+	return s.servers.GetServerByHost(host)
+}
+
 func (s *Service) UpdateServer(server *model.Server) error {
 	return s.servers.UpdateServer(server)
 }
 
 func (s *Service) DeleteServer(id uint) error {
+	server, err := s.servers.GetServer(id)
+	if err != nil {
+		return err
+	}
+	if server.ClusterID != nil {
+		return ErrServerAssigned
+	}
 	return s.servers.DeleteServer(id)
 }
 
@@ -130,6 +144,9 @@ func (s *Service) UnbindServer(id uint) (*model.Server, error) {
 	server, err := s.servers.GetServer(id)
 	if err != nil {
 		return nil, err
+	}
+	if server.ClusterID != nil {
+		return nil, ErrServerAssigned
 	}
 	server.ClusterRole = ""
 	server.K8sNodeName = ""
@@ -144,6 +161,11 @@ func (s *Service) ProbeServerContext(ctx context.Context, id uint) (*ProbeResult
 	if err != nil {
 		return nil, err
 	}
+	return s.ProbeServerConfigContext(ctx, server)
+}
+
+// ProbeServerConfigContext checks connection details without persisting them.
+func (s *Service) ProbeServerConfigContext(ctx context.Context, server *model.Server) (*ProbeResult, error) {
 	if s.inspector == nil {
 		return nil, fmt.Errorf("服务器检查器未配置")
 	}
@@ -154,6 +176,17 @@ func (s *Service) ProbeServerContext(ctx context.Context, id uint) (*ProbeResult
 		Error:     errorMessage,
 		LatencyMS: time.Since(startedAt).Milliseconds(),
 	}, nil
+}
+
+func (s *Service) ServerHostnameContext(ctx context.Context, server *model.Server) (string, error) {
+	if s.importer == nil {
+		return "", fmt.Errorf("服务器主机名检查器未配置")
+	}
+	hostname, err := s.importer.Hostname(ctx, server)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(hostname), nil
 }
 
 func (s *Service) PrecheckServerContext(ctx context.Context, id uint) (*PrecheckResult, error) {
@@ -291,6 +324,11 @@ func (s *Service) ListServersContext(ctx context.Context) ([]model.Server, error
 	}
 	for index := range servers {
 		server := &servers[index]
+		// Explicit cluster membership is owned by durable cluster tasks. A
+		// missing Node can be a removal checkpoint, not a stale legacy binding.
+		if server.ClusterID != nil {
+			continue
+		}
 		if server.ClusterRole == "" && server.K8sNodeName == "" {
 			continue
 		}
@@ -390,4 +428,11 @@ func (s *Service) RemoveNodeContext(ctx context.Context, name string) error {
 		return fmt.Errorf("%w: %v", ErrNodeBindingCleanup, err)
 	}
 	return nil
+}
+
+func (s *Service) SaveServerSpeedTest(result *model.ServerSpeedTest) error {
+	return s.servers.SaveServerSpeedTest(result)
+}
+func (s *Service) ListServerSpeedTests(ownerID uint, limit, offset int) ([]model.ServerSpeedTest, int64, error) {
+	return s.servers.ListServerSpeedTests(ownerID, limit, offset)
 }

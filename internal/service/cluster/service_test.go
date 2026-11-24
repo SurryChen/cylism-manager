@@ -71,6 +71,14 @@ func (f *fakeNodeAdapter) UpdateNodeLabelsContext(context.Context, string, map[s
 	return f.labels, nil
 }
 
+func (f *fakeNodeAdapter) GetNodeSchedulingContext(context.Context, string) (*k8s.NodeScheduling, error) {
+	return &k8s.NodeScheduling{Name: "worker-a"}, nil
+}
+
+func (f *fakeNodeAdapter) SetNodeNoScheduleContext(context.Context, string, bool) (*k8s.NodeScheduling, error) {
+	return &k8s.NodeScheduling{Name: "worker-a"}, nil
+}
+
 func (f *fakeNodeAdapter) DeleteNodeContext(_ context.Context, name string) error {
 	f.deletedNode = name
 	return nil
@@ -258,6 +266,30 @@ func TestServicePreservesServerBindingsWhenNodeLookupFails(t *testing.T) {
 	}
 	if stored.K8sNodeName != "worker-a" {
 		t.Fatalf("transient lookup cleared binding: %#v", stored)
+	}
+}
+
+func TestServiceRetainsExplicitMembershipAfterNodeDisappears(t *testing.T) {
+	st, err := store.New(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	clusterID := uint(9)
+	server := &model.Server{Name: "worker", Host: "10.0.0.11", ClusterID: &clusterID, ClusterRole: "worker", K8sNodeName: "worker-a"}
+	if err := st.CreateServer(server); err != nil {
+		t.Fatal(err)
+	}
+	service := NewService(st, &fakeNodeAdapter{})
+	servers, err := service.ListServersContext(context.Background())
+	if err != nil || len(servers) != 1 {
+		t.Fatalf("list failed: %v %v", servers, err)
+	}
+	if servers[0].ClusterRole != "worker" || servers[0].K8sNodeName != "worker-a" || servers[0].ClusterID == nil {
+		t.Fatal("missing Node hid the removal retry entry")
+	}
+	stored, err := st.GetServer(server.ID)
+	if err != nil || stored.ClusterRole != "worker" || stored.K8sNodeName != "worker-a" {
+		t.Fatalf("membership was cleared: %#v %v", stored, err)
 	}
 }
 

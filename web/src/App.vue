@@ -84,15 +84,17 @@
       <div class="drawer-palette"><span>界面配色</span><div class="palette-swatches"><button v-for="palette in palettes" :key="palette.id" :data-palette-option="palette.id" :class="['palette-swatch', `swatch-${palette.id}`, { 'is-selected': activePalette === palette.id }]" :aria-label="palette.name" @click="choosePalette(palette.id)"></button></div></div>
     </aside>
   </div>
+  <DocumentScrollbar />
 </template>
 
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Activity, Bot, Boxes, Check, FileText, FolderKanban, HardDrive, History, LayoutDashboard, Layers3, LogOut, Menu, Orbit, PackagePlus, Palette, Route, Server, Settings, Waypoints, X } from 'lucide-vue-next'
+import { Bot, Boxes, Check, Cloud, Database, FileText, FolderKanban, HardDrive, LayoutDashboard, Layers3, LogOut, Menu, Orbit, PackagePlus, Palette, Store, Server, Settings, Waypoints, X } from 'lucide-vue-next'
 import { clearTokens } from './api/index.js'
 import { usePalette } from './composables/usePalette.js'
 import { useTransientScrollbarVisibility } from './composables/useTransientScrollbarVisibility.js'
+import DocumentScrollbar from './components/DocumentScrollbar.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -115,16 +117,29 @@ const palettes = [
 ]
 
 const navGroups = computed(() => [
-  { id: 'overview', label: '概览', to: '/', items: [{ label: '概览', to: '/', icon: LayoutDashboard }] },
+  { id: 'overview', label: '运维概览', to: '/', items: [{ label: '平台健康度', to: '/', icon: LayoutDashboard }] },
   {
-    id: 'applications',
-    label: '应用',
-    to: '/applications',
+    id: 'projects',
+    label: '项目',
+    to: '/projects',
     items: [
-      { label: '工作台', to: '/applications', icon: PackagePlus },
-      { label: '项目与环境', to: '/applications/projects', icon: FolderKanban },
+      { label: '项目中心', to: '/projects', icon: FolderKanban },
+      { label: '研发工作台', to: '/personal', icon: LayoutDashboard },
+      { label: '应用部署', to: '/applications', icon: PackagePlus },
+      { label: '应用商城', to: '/applications/catalog', icon: Store },
       { label: '镜像仓库', to: '/applications/registries', icon: Boxes },
-      { label: '全局概览', to: '/applications/overview', icon: History },
+    ],
+  },
+  {
+    id: 'cloud-services',
+    label: '云服务',
+    to: '/cloud-services/registry',
+    items: [
+      { label: '制品库', to: '/cloud-services/registry', icon: Cloud },
+      { label: '域名管理', to: '/cloud-services/domains', icon: Waypoints },
+      { label: '对象存储', to: '/cloud-services/object-storage', icon: HardDrive },
+      { label: '数据库', to: '/cloud-services/databases', icon: Database },
+      { label: 'Agent 助手', to: '/runtimes', icon: Bot },
     ],
   },
   {
@@ -134,19 +149,6 @@ const navGroups = computed(() => [
     items: [
       { label: '服务器', to: '/servers', icon: Server },
       { label: '集群', to: '/cluster', icon: Waypoints },
-      { label: 'Kubernetes 资源', to: '/resources', icon: Boxes },
-      { label: '网络访问', to: '/network', icon: Route },
-      { label: '存储', to: '/storage', icon: HardDrive },
-      { label: '监控', to: '/monitoring', icon: Activity },
-      { label: 'Agent 助手', to: '/runtimes', icon: Bot },
-    ],
-  },
-  {
-    id: 'delivery',
-    label: '交付中心',
-    to: '/delivery/registry',
-    items: [
-      { label: '制品库', to: '/delivery/registry', icon: Boxes },
     ],
   },
   {
@@ -177,6 +179,7 @@ function isNavItemActive(item) {
 }
 
 function matchesNavItem(item) {
+  if (item.to === '/projects' && route.path.startsWith('/products')) return true
   if (item.to === '/applications') {
     return route.path === item.to || route.path.startsWith('/applications/')
   }
@@ -209,6 +212,13 @@ function closePaletteMenuOnOutsideClick(event) {
   paletteMenuOpen.value = false
 }
 
+function updateStickyHeaderState() {
+  const header = document.querySelector('.app-content > * > .sticky-page-header')
+  if (!header) return
+  const topbarHeight = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--topbar-height')) || 0
+  header.classList.toggle('is-stuck', window.scrollY > 0 && header.getBoundingClientRect().top <= topbarHeight + 1)
+}
+
 watch(paletteMenuOpen, async (isOpen) => {
   if (isOpen) {
     await nextTick()
@@ -223,12 +233,22 @@ watch(paletteMenuOpen, async (isOpen) => {
 onMounted(() => {
   window.addEventListener('resize', updatePaletteMenuPosition)
   window.addEventListener('scroll', updatePaletteMenuPosition, true)
+  window.addEventListener('scroll', updateStickyHeaderState, { passive: true })
+  window.addEventListener('resize', updateStickyHeaderState)
+  updateStickyHeaderState()
+})
+
+watch(() => route.fullPath, async () => {
+  await nextTick()
+  requestAnimationFrame(updateStickyHeaderState)
 })
 
 onBeforeUnmount(() => {
   document.removeEventListener('click', closePaletteMenuOnOutsideClick)
   window.removeEventListener('resize', updatePaletteMenuPosition)
   window.removeEventListener('scroll', updatePaletteMenuPosition, true)
+  window.removeEventListener('scroll', updateStickyHeaderState)
+  window.removeEventListener('resize', updateStickyHeaderState)
 })
 
 function openMobileNav() { mobileNavOpen.value = true }

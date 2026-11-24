@@ -43,10 +43,12 @@ func ValidateBackupRoot(value string) (string, error) {
 // Keeping this interface narrow makes PVC workflows testable without a live cluster.
 type PVCRepositoryAdapter interface {
 	ListPVCsContext(context.Context, string) ([]k8sclient.PersistentVolumeClaimInfo, error)
+	ListPVCUsageInfosContext(context.Context, []k8sclient.PersistentVolumeClaimReference) ([]k8sclient.PersistentVolumeClaimInfo, error)
 	ListManagedPVCsContext(context.Context, string, uint) ([]k8sclient.PersistentVolumeClaimInfo, error)
 	GetManagedPVCContext(context.Context, string, string, uint) (*k8sclient.PersistentVolumeClaimInfo, error)
 	CreateManagedPVCContext(context.Context, string, uint, k8sclient.PersistentVolumeClaimRequest) (*corev1.PersistentVolumeClaim, error)
 	DeleteManagedPVCContext(context.Context, string, string, uint) error
+	AdoptManagedPVCEnvironmentContext(context.Context, string, string, uint) error
 	ListStorageClassesContext(context.Context) ([]k8sclient.StorageClassInfo, error)
 }
 

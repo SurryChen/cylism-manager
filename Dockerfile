@@ -9,6 +9,7 @@ COPY . .
 ARG TARGETOS=linux
 ARG TARGETARCH=amd64
 RUN CGO_ENABLED=0 go build -o /cylism-manager ./cmd/platform/
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -ldflags="-s -w" -o /cylism-migrate ./cmd/cylism-migrate/
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -ldflags="-s -w" -o /cylism-cli ./cmd/cylism-cli/
 
 FROM node:22-alpine AS web-builder
@@ -23,6 +24,7 @@ RUN apk --no-cache add ca-certificates curl openssh
 
 WORKDIR /app
 COPY --from=builder /cylism-manager .
+COPY --from=builder /cylism-migrate /usr/local/bin/cylism-migrate
 COPY --from=builder /cylism-cli /usr/local/lib/cylism/runtime-tools/cylism-cli
 COPY --from=web-builder /web/dist ./web/dist
 COPY config/ ./config/
@@ -39,4 +41,4 @@ RUN case "${CYLISM_CLI_VERSION}" in ""|*[!A-Za-z0-9._-]*) exit 1 ;; esac \
     && mkdir -p /data
 
 EXPOSE 8080
-CMD ["./cylism-manager"]
+CMD ["/app/cylism-manager"]

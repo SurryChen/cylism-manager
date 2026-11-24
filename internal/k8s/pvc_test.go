@@ -2,15 +2,21 @@ package k8s
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/kubernetes"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
+	"k8s.io/client-go/rest"
 	k8stesting "k8s.io/client-go/testing"
 )
 
@@ -39,6 +45,39 @@ func TestListManagedPVCsIncludesBoundNodeAndReclaimPolicy(t *testing.T) {
 	}
 	if info.BoundNode != "storage-node-a" || info.LocalPath != "/var/lib/rancher/k3s/storage/pvc-001" || !info.IsLocal || info.ReclaimPolicy != string(corev1.PersistentVolumeReclaimDelete) || !info.WaitForFirstConsumer {
 		t.Fatalf("expected node, reclaim policy and binding mode, got %#v", info)
+	}
+}
+
+func TestAdoptManagedPVCEnvironmentOnlyAddsEnvironmentLabel(t *testing.T) {
+	claim := &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{Name: "legacy-data", Namespace: "project-a", Labels: map[string]string{ManagedByLabel: ManagedByValue, "app": "trendradar"}},
+		Spec:       corev1.PersistentVolumeClaimSpec{StorageClassName: stringPtr("local-path")},
+	}
+	client := &Client{Clientset: k8sfake.NewSimpleClientset(claim)}
+	if err := client.AdoptManagedPVCEnvironmentContext(context.Background(), "project-a", "legacy-data", 7); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := client.Clientset.CoreV1().PersistentVolumeClaims("project-a").Get(context.Background(), "legacy-data", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Labels[EnvironmentLabel] != EnvironmentLabelValue(7) || updated.Labels["app"] != "trendradar" || updated.Spec.StorageClassName == nil || *updated.Spec.StorageClassName != "local-path" {
+		t.Fatalf("adoption changed unexpected PVC fields: %#v", updated)
+	}
+	if err := client.AdoptManagedPVCEnvironmentContext(context.Background(), "project-a", "legacy-data", 8); err == nil {
+		t.Fatal("expected association to a different environment to fail")
+	}
+}
+
+func TestAdoptManagedPVCEnvironmentRejectsExternalAndInfrastructureClaims(t *testing.T) {
+	client := &Client{Clientset: k8sfake.NewSimpleClientset(
+		&corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: "external", Namespace: "project-a"}},
+		&corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: "metrics", Namespace: "project-a", Labels: map[string]string{ManagedByLabel: ManagedByValue, InfrastructureLabel: InfrastructureVictoriaMetrics}}},
+	)}
+	for _, name := range []string{"external", "metrics"} {
+		if err := client.AdoptManagedPVCEnvironmentContext(context.Background(), "project-a", name, 7); err == nil {
+			t.Fatalf("expected %s PVC adoption to fail", name)
+		}
 	}
 }
 
@@ -124,6 +163,70 @@ func TestListPVCsBatchesPersistentVolumeAndStorageClassLookups(t *testing.T) {
 	}
 	if getCalls != 0 {
 		t.Fatalf("expected inventory to use list calls rather than per-PVC gets, got %d gets", getCalls)
+	}
+}
+
+func TestListPVCsLoadsPersistentVolumesAndStorageClassesConcurrently(t *testing.T) {
+	started := make(chan string, 2)
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/persistentvolumeclaims":
+			_ = json.NewEncoder(w).Encode(&corev1.PersistentVolumeClaimList{Items: []corev1.PersistentVolumeClaim{{ObjectMeta: metav1.ObjectMeta{Name: "one", Namespace: "default"}}}})
+		case "/api/v1/persistentvolumes":
+			started <- r.URL.Path
+			<-release
+			_ = json.NewEncoder(w).Encode(&corev1.PersistentVolumeList{})
+		case "/apis/storage.k8s.io/v1/storageclasses":
+			started <- r.URL.Path
+			<-release
+			_ = json.NewEncoder(w).Encode(&storagev1.StorageClassList{})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	clientset, err := kubernetes.NewForConfig(&rest.Config{Host: server.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := (&Client{Clientset: clientset}).ListPVCsContext(context.Background(), "")
+		done <- err
+	}()
+	for range 2 {
+		select {
+		case <-started:
+		case <-time.After(time.Second):
+			close(release)
+			t.Fatal("expected PersistentVolume and StorageClass list requests to run concurrently")
+		}
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestListPVCUsageInfosReadsOnlyRequestedPVCPairs(t *testing.T) {
+	clientset := k8sfake.NewSimpleClientset(
+		&corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: "one", Namespace: "default"}, Spec: corev1.PersistentVolumeClaimSpec{VolumeName: "pv-one"}},
+		&corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: "other", Namespace: "default"}, Spec: corev1.PersistentVolumeClaimSpec{VolumeName: "pv-other"}},
+		&corev1.PersistentVolume{ObjectMeta: metav1.ObjectMeta{Name: "pv-one"}},
+		&corev1.PersistentVolume{ObjectMeta: metav1.ObjectMeta{Name: "pv-other"}},
+	)
+	listCalls := 0
+	clientset.PrependReactor("list", "persistentvolumeclaims", func(k8stesting.Action) (bool, runtime.Object, error) { listCalls++; return false, nil, nil })
+	clientset.PrependReactor("list", "persistentvolumes", func(k8stesting.Action) (bool, runtime.Object, error) { listCalls++; return false, nil, nil })
+	infos, err := (&Client{Clientset: clientset}).ListPVCUsageInfosContext(context.Background(), []PersistentVolumeClaimReference{{Namespace: "default", Name: "one"}})
+	if err != nil || len(infos) != 1 || infos[0].Name != "one" {
+		t.Fatalf("unexpected targeted usage info: %#v err=%v", infos, err)
+	}
+	if listCalls != 0 {
+		t.Fatalf("expected targeted usage lookup to avoid inventory lists, got %d", listCalls)
 	}
 }
 

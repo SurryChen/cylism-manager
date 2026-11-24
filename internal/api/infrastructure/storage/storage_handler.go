@@ -25,6 +25,15 @@ type StorageHandler struct {
 	workloads PVCWorkloadReader
 	encKey    []byte
 	Service   *storage.Service
+	clusterID uint
+}
+
+// ForCluster uses only the selected Agent's Kubernetes client. Application
+// environments and durable jobs have no cluster identity yet.
+func (h *StorageHandler) ForCluster(client *k8sclient.Client, clusterID uint) *StorageHandler {
+	pvc, migration, workloads := NewPVCAdapters(client)
+	return &StorageHandler{clusterID: clusterID, store: h.store, encKey: h.encKey, pvc: pvc, migration: migration, workloads: workloads,
+		Service: storage.NewService(pvc, nil)}
 }
 
 // PVCRepositoryAdapter owns PVC CRUD and StorageClass queries. It is also the
@@ -77,6 +86,9 @@ func NewPVCAdapters(client *k8sclient.Client) (PVCRepositoryAdapter, PVCMigratio
 func (r clientPVCReconciler) ListPVCsContext(ctx context.Context, ns string) ([]k8sclient.PersistentVolumeClaimInfo, error) {
 	return r.client.ListPVCsContext(ctx, ns)
 }
+func (r clientPVCReconciler) ListPVCUsageInfosContext(ctx context.Context, references []k8sclient.PersistentVolumeClaimReference) ([]k8sclient.PersistentVolumeClaimInfo, error) {
+	return r.client.ListPVCUsageInfosContext(ctx, references)
+}
 func (r clientPVCReconciler) ListManagedPVCsContext(ctx context.Context, ns string, id uint) ([]k8sclient.PersistentVolumeClaimInfo, error) {
 	return r.client.ListManagedPVCsContext(ctx, ns, id)
 }
@@ -88,6 +100,9 @@ func (r clientPVCReconciler) CreateManagedPVCContext(ctx context.Context, ns str
 }
 func (r clientPVCReconciler) DeleteManagedPVCContext(ctx context.Context, ns, name string, id uint) error {
 	return r.client.DeleteManagedPVCContext(ctx, ns, name, id)
+}
+func (r clientPVCReconciler) AdoptManagedPVCEnvironmentContext(ctx context.Context, ns, name string, id uint) error {
+	return r.client.AdoptManagedPVCEnvironmentContext(ctx, ns, name, id)
 }
 func (r clientPVCReconciler) ListStorageClassesContext(ctx context.Context) ([]k8sclient.StorageClassInfo, error) {
 	return r.client.ListStorageClassesContext(ctx)

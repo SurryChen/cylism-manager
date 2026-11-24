@@ -114,7 +114,7 @@ func TestInstallAlertingStoresSMTPSettingsOnlyInSecret(t *testing.T) {
 }
 
 func TestRenderAlertmanagerConfigUsesNotificationPolicy(t *testing.T) {
-	config := renderAlertmanagerConfig(AlertNotificationPolicy{GroupWaitSeconds: 45, GroupIntervalMinutes: 8, RepeatIntervalMinutes: 360})
+	config := renderAlertmanagerConfig(AlertNotificationPolicy{GroupWaitSeconds: 45, GroupIntervalMinutes: 8, RepeatIntervalMinutes: 360}, "")
 	for _, expected := range []string{"group_wait: 45s", "group_interval: 8m", "repeat_interval: 360m"} {
 		if !strings.Contains(config, expected) {
 			t.Fatalf("expected %q in Alertmanager config: %s", expected, config)
@@ -177,4 +177,54 @@ func alertingReadyClient() *Client {
 		&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: victoriaMetricsName, Namespace: victoriaMetricsNamespace}, Status: appsv1.DeploymentStatus{AvailableReplicas: 1}},
 		&appsv1.DaemonSet{ObjectMeta: metav1.ObjectMeta{Name: nodeExporterName, Namespace: victoriaMetricsNamespace}, Status: appsv1.DaemonSetStatus{DesiredNumberScheduled: 1, NumberAvailable: 1}},
 	)}
+}
+
+func TestAlertingCallbackMigrationPreservesSecretsAndRollsDeployment(t *testing.T) {
+	client := alertingReadyClient()
+	if _, err := client.InstallAlertingContext(t.Context(), AlertingConfig{NodeName: "node-b", FeishuWebhookURL: "https://open.feishu.cn/open-apis/bot/v2/hook/example"}); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := client.Clientset.AppsV1().Deployments(victoriaMetricsNamespace).Get(t.Context(), alertmanagerName, metav1.GetOptions{})
+	secretBefore, _ := client.Clientset.CoreV1().Secrets(victoriaMetricsNamespace).Get(t.Context(), alertingSecretName, metav1.GetOptions{})
+	endpoint := "https://manager.example.com/api/clusters/2/monitoring/alerts/notify"
+	status, err := client.UpdateAlertingContext(t.Context(), AlertingConfig{NotifyURL: endpoint})
+	if err != nil || status.NotifyURL != endpoint || !status.FeishuConfigured {
+		t.Fatalf("migration status = %#v, %v", status, err)
+	}
+	config, _ := client.Clientset.CoreV1().ConfigMaps(victoriaMetricsNamespace).Get(t.Context(), alertmanagerConfigName, metav1.GetOptions{})
+	if !strings.Contains(config.Data["alertmanager.yml"], quoteYAML(endpoint)) || strings.Contains(config.Data["alertmanager.yml"], defaultAlertNotifyURL) {
+		t.Fatalf("callback was not migrated: %s", config.Data["alertmanager.yml"])
+	}
+	after, _ := client.Clientset.AppsV1().Deployments(victoriaMetricsNamespace).Get(t.Context(), alertmanagerName, metav1.GetOptions{})
+	const hashKey = "cylism.io/alertmanager-config-hash"
+	if before.Spec.Template.Annotations[hashKey] == after.Spec.Template.Annotations[hashKey] {
+		t.Fatal("changing callback must roll Alertmanager to load the config")
+	}
+	secretAfter, _ := client.Clientset.CoreV1().Secrets(victoriaMetricsNamespace).Get(t.Context(), alertingSecretName, metav1.GetOptions{})
+	for _, key := range []string{"relay-token", "feishu-webhook-url"} {
+		if string(secretBefore.Data[key]) != string(secretAfter.Data[key]) {
+			t.Fatalf("migration changed %s", key)
+		}
+	}
+	// Older callers that omit the callback must preserve the migrated destination.
+	status, err = client.UpdateAlertingContext(t.Context(), AlertingConfig{NotificationPolicy: AlertNotificationPolicy{GroupWaitSeconds: 45}})
+	if err != nil || status.NotifyURL != endpoint {
+		t.Fatalf("callback was lost during settings update: %#v, %v", status, err)
+	}
+	updated, _ := client.Clientset.AppsV1().Deployments(victoriaMetricsNamespace).Get(t.Context(), alertmanagerName, metav1.GetOptions{})
+	if updated.Spec.Template.Annotations[hashKey] == after.Spec.Template.Annotations[hashKey] {
+		t.Fatal("changing notification timing must also reload Alertmanager")
+	}
+}
+
+func TestNormalizeAlertingCallbackURL(t *testing.T) {
+	for _, endpoint := range []string{"ftp://example.com/notify", "https://user:password@example.com/notify", "https:///notify", "https://example.com/notify#fragment", "https://example.com/notify?token=secret"} {
+		if _, err := normalizeAlertingConfig(AlertingConfig{NodeName: "node-b", NotifyURL: endpoint}); err == nil {
+			t.Errorf("accepted invalid callback %q", endpoint)
+		}
+	}
+	settings, err := normalizeAlertingConfig(AlertingConfig{NodeName: "node-b"})
+	if err != nil || settings.NotifyURL != defaultAlertNotifyURL {
+		t.Fatalf("legacy default lost: %#v, %v", settings, err)
+	}
 }

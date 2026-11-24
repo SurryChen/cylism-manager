@@ -20,6 +20,34 @@ beforeEach(() => {
 })
 
 describe('AlertingWorkspace', () => {
+  it('loads cluster alerts without querying the global automation policy', async () => {
+    apiMocks.get.mockImplementation(path => {
+      if (path === '/clusters/2/monitoring/alerts/status') return Promise.resolve({ state: 'ready', rules: [] })
+      if (path === '/clusters/2/monitoring/alerts/overview') return Promise.resolve({ active: [], resolved: [], firing: 0, silenced: 0 })
+      return Promise.resolve({})
+    })
+    const wrapper = mount(AlertingWorkspace, { props: { clusterId: '2', monitoringReady: true, nodes: [] } })
+    await flushPromises()
+    expect(apiMocks.get).toHaveBeenCalledWith('/clusters/2/monitoring/alerts/overview', expect.objectContaining({ clusterID: '2' }))
+    expect(apiMocks.get.mock.calls.some(([path]) => path.includes('automation-policy'))).toBe(false)
+    expect(wrapper.text()).not.toContain('自动处置')
+    expect(wrapper.text()).not.toContain('回调无法送达')
+    expect(wrapper.find('.feedback-banner').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('shows callback migration guidance returned by the server', async () => {
+    apiMocks.get.mockImplementation(path => {
+      if (path.endsWith('/status')) return Promise.resolve({ state: 'ready', notification_warning: '告警回调仍使用旧地址，请打开告警设置并保存一次' })
+      if (path.endsWith('/overview')) return Promise.resolve({ active: [], resolved: [] })
+      return Promise.resolve({})
+    })
+    const wrapper = mount(AlertingWorkspace, { props: { clusterId: '2', monitoringReady: true } })
+    await flushPromises()
+    expect(wrapper.text()).toContain('告警回调仍使用旧地址，请打开告警设置并保存一次')
+    wrapper.unmount()
+  })
+
   it('guides the user to install alerting when it is not installed', async () => {
     apiMocks.get.mockResolvedValue({ state: 'not_installed', message: '尚未启用集群告警' })
     const wrapper = mount(AlertingWorkspace, { props: { nodes: [{ name: 'node-a', ready: true }], monitoringReady: true, metricsNodeName: 'node-b' } })
@@ -161,3 +189,10 @@ describe('AlertingWorkspace', () => {
     expect(options.signal.aborted).toBe(true)
   })
 })
+
+vi.mock('../../api/list-pages.js', () => ({ getListPage: vi.fn(async (path, query) => {
+ const raw = await apiMocks.get(path, path.startsWith('/clusters/') ? { clusterID: path.split('/')[2] } : undefined)
+ const items = path.endsWith('/overview') ? raw?.[query.view] || [] : Array.isArray(raw) ? raw : []
+ const offset = query.offset || 0, limit = query.limit || 10
+ return { ...raw, items: items.slice(offset, offset + limit), total: items.length, active_total: raw?.active?.length || 0 }
+}) }))

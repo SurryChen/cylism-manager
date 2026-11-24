@@ -2,7 +2,9 @@ package system
 
 import (
 	"context"
+	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -13,11 +15,17 @@ import (
 )
 
 type SystemComponentHandler struct {
-	configs     repository.SystemComponentRepository
-	adapter     SystemComponentAdapter
-	listService *systemcomponentservice.ComponentListService
-	service     *systemcomponentservice.ComponentService
+	configs        repository.SystemComponentRepository
+	adapter        SystemComponentAdapter
+	listService    *systemcomponentservice.ComponentListService
+	service        *systemcomponentservice.ComponentService
+	adapterFactory SystemComponentAdapterFactory
 }
+
+// SystemComponentAdapterFactory resolves a Kubernetes adapter for a logical
+// cluster. Requests without cluster_id retain the existing local-cluster
+// behavior for non-cluster-scoped pages and background reconciliation.
+type SystemComponentAdapterFactory func(context.Context, uint) (SystemComponentAdapter, error)
 
 // SystemComponentAdapter is the service boundary used by the HTTP handler.
 // The concrete Kubernetes implementation lives in internal/k8s.
@@ -37,17 +45,47 @@ func (h *SystemComponentHandler) WithAdapter(adapter SystemComponentAdapter) *Sy
 	return h
 }
 
+func (h *SystemComponentHandler) WithAdapterFactory(factory SystemComponentAdapterFactory) *SystemComponentHandler {
+	h.adapterFactory = factory
+	return h
+}
+
+func (h *SystemComponentHandler) scopedDependencies(c *gin.Context) (*systemcomponentservice.ComponentService, *systemcomponentservice.ComponentListService, error) {
+	value := strings.TrimSpace(c.Query("cluster_id"))
+	if value == "" {
+		return h.service, h.listService, nil
+	}
+	id, err := strconv.ParseUint(value, 10, 32)
+	if err != nil || id == 0 {
+		return nil, nil, fmt.Errorf("集群 ID 无效")
+	}
+	if h.adapterFactory == nil {
+		return nil, nil, fmt.Errorf("集群 Agent 访问未配置")
+	}
+	adapter, err := h.adapterFactory(c.Request.Context(), uint(id))
+	if err != nil {
+		return nil, nil, err
+	}
+	list := &systemcomponentservice.ComponentListService{Repo: h.configs, Adapter: adapter}
+	return systemcomponentservice.NewComponentService(h.configs, adapter, list), list, nil
+}
+
 type systemComponentUpdateRequest struct {
 	ValuesContent      string  `json:"values_content"`
 	TraefikReadTimeout *string `json:"traefik_read_timeout"`
 }
 
 func (h *SystemComponentHandler) List(c *gin.Context) {
-	if h.listService == nil {
+	service, list, err := h.scopedDependencies(c)
+	if err != nil {
+		apiShared.Error(c, http.StatusBadGateway, apiShared.CodeK8sAPIError, err.Error())
+		return
+	}
+	if list == nil || service == nil {
 		apiShared.Error(c, http.StatusServiceUnavailable, apiShared.CodeK8sUnavailable, "Kubernetes 集群未连接")
 		return
 	}
-	result, err := h.listService.List(c.Request.Context())
+	result, err := list.List(c.Request.Context())
 	if err != nil {
 		apiShared.Error(c, http.StatusServiceUnavailable, apiShared.CodeK8sUnavailable, err.Error())
 		return
@@ -56,6 +94,11 @@ func (h *SystemComponentHandler) List(c *gin.Context) {
 }
 
 func (h *SystemComponentHandler) Update(c *gin.Context) {
+	service, _, err := h.scopedDependencies(c)
+	if err != nil {
+		apiShared.Error(c, http.StatusBadGateway, apiShared.CodeK8sAPIError, err.Error())
+		return
+	}
 	chart := strings.TrimSpace(c.Param("chart"))
 	var req systemComponentUpdateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -66,7 +109,7 @@ func (h *SystemComponentHandler) Update(c *gin.Context) {
 	if req.TraefikReadTimeout != nil {
 		timeout = *req.TraefikReadTimeout
 	}
-	result, err := h.service.Update(c.Request.Context(), chart, req.ValuesContent, timeout, apiShared.UserID(c))
+	result, err := service.Update(c.Request.Context(), chart, req.ValuesContent, timeout, apiShared.UserID(c))
 	if err != nil {
 		status, code := workflowHTTPError(err)
 		apiShared.Error(c, status, code, err.Error())
@@ -93,8 +136,13 @@ func workflowHTTPError(err error) (int, int) {
 }
 
 func (h *SystemComponentHandler) Revert(c *gin.Context) {
+	service, _, err := h.scopedDependencies(c)
+	if err != nil {
+		apiShared.Error(c, http.StatusBadGateway, apiShared.CodeK8sAPIError, err.Error())
+		return
+	}
 	chart := strings.TrimSpace(c.Param("chart"))
-	revertErr := h.service.Revert(c.Request.Context(), chart)
+	revertErr := service.Revert(c.Request.Context(), chart)
 	if revertErr != nil {
 		status, code := workflowHTTPError(revertErr)
 		apiShared.Error(c, status, code, "恢复系统组件默认配置失败: "+revertErr.Error())

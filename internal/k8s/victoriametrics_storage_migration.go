@@ -17,6 +17,9 @@ func (c *Client) startVictoriaMetricsHostPathMigration(request VictoriaMetricsMi
 	if c == nil || c.Clientset == nil {
 		return c.VictoriaMetricsStatus(), fmt.Errorf("Kubernetes 客户端未初始化")
 	}
+	if err := c.CheckComponentMigrationContext(c.ctx, InfrastructureVictoriaMetrics); err != nil {
+		return c.VictoriaMetricsStatus(), err
+	}
 	if err := validateVictoriaMetricsPVCConfig(VictoriaMetricsConfig{NodeName: "migration", Storage: request.Storage}); err != nil {
 		return c.VictoriaMetricsStatus(), err
 	}

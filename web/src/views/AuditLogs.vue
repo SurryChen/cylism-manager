@@ -8,10 +8,10 @@
         </div>
       </template>
     </SectionTabsHeader>
-    <FeedbackBanner v-if="error" tone="warning" :message="error" class="page-error" />
+    <ErrorNoticeModal :open="!!error" :message="error?.message || '加载审计日志失败'" title="读取审计日志失败" @close="error = null" />
 
-    <SurfaceCard class="audit-card">
-      <div class="audit-filter-panel">
+    <SurfaceCard class="audit-card" padding="none">
+      <div class="audit-table-toolbar">
         <div class="audit-primary-filters">
           <label class="audit-search-field">
             <Search :size="15" aria-hidden="true" />
@@ -26,8 +26,8 @@
             <span class="sr-only">资源</span>
             <SelectMenu v-model="filterType" :options="resourceOptions" placeholder="全部资源" aria-label="资源" />
           </label>
-          <button class="btn btn-sm audit-filter-trigger" :class="{ 'is-active': advancedOpen || activeAdvancedCount }" type="button" data-testid="audit-open-filters" :aria-expanded="advancedOpen" @click="openAdvancedFilters"><Filter :size="15" />筛选<span v-if="activeAdvancedCount" class="filter-count">{{ activeAdvancedCount }}</span></button>
-          <button data-testid="audit-apply-filters" class="btn btn-sm btn-primary" type="button" @click="applyFilters">应用</button>
+          <button class="btn audit-filter-trigger" :class="{ 'is-active': advancedOpen || activeAdvancedCount }" type="button" data-testid="audit-open-filters" :aria-expanded="advancedOpen" @click="openAdvancedFilters"><Filter :size="15" />筛选<span v-if="activeAdvancedCount" class="filter-count">{{ activeAdvancedCount }}</span></button>
+          <button data-testid="audit-apply-filters" class="btn btn-primary" type="button" @click="applyFilters">应用</button>
           <button data-testid="audit-reset-filters" class="icon-button audit-reset" type="button" title="重置筛选" aria-label="重置筛选" @click="resetFilters"><RotateCcw :size="15" /></button>
         </div>
         <div v-if="activeFilters.length" class="active-filters audit-active-filters">
@@ -36,10 +36,10 @@
         </div>
       </div>
 
-      <EmptyState v-if="loading" variant="loading" message="加载中..." />
+      <EmptyState v-if="loading && !logs.length" variant="loading" message="加载中..." />
       <EmptyState v-else-if="logs.length===0" icon="☰" message="暂无审计日志" />
-      <div v-else class="table-wrap">
-        <table class="data-table audit-table">
+      <div v-else class="table-wrap" :aria-busy="loading">
+        <DataTable class="audit-table">
           <thead>
             <tr><th>时间</th><th>结果</th><th>动作</th><th>目标</th><th>操作者</th><th>摘要</th></tr>
           </thead>
@@ -53,14 +53,10 @@
               <td class="cell-secondary">{{ log.summary || legacySummary(log) }}</td>
             </tr>
           </tbody>
-        </table>
+        </DataTable>
       </div>
 
-      <div v-if="total > pageSize" class="pagination">
-        <button class="btn btn-sm" :disabled="offset===0" @click="prevPage">上一页</button>
-        <span class="pagination-status">{{ currentPage }} / {{ totalPages }}</span>
-        <button class="btn btn-sm" :disabled="offset + pageSize >= total" @click="nextPage">下一页</button>
-      </div>
+      <PaginationControls :page="currentPage" :page-size="pageSize" :total="total" :loading="loading" label="审计日志分页" @page-change="changePage" @page-size-change="changePageSize" />
     </SurfaceCard>
 
     <BaseModal :open="advancedOpen" title="筛选审计日志" size="small" dialog-class="audit-filter-modal" @close="closeAdvancedFilters">
@@ -125,22 +121,20 @@
 </template>
 
 <script setup>
+import DataTable from '../components/DataTable.vue'
 import { computed, onMounted, ref } from 'vue'
 import { Filter, RotateCcw, Search, X } from 'lucide-vue-next'
 import { getAuditLogs } from '../api/audit.js'
-import { useAsyncResource } from '../composables/useAsyncResource.js'
+import { usePaginatedResource } from '../composables/usePaginatedResource.js'
 import BaseModal from '../components/BaseModal.vue'
 import EmptyState from '../components/EmptyState.vue'
-import FeedbackBanner from '../components/FeedbackBanner.vue'
+import ErrorNoticeModal from '../components/ErrorNoticeModal.vue'
+import PaginationControls from '../components/PaginationControls.vue'
 import SectionTabsHeader from '../components/SectionTabsHeader.vue'
 import SelectMenu from '../components/SelectMenu.vue'
 import SurfaceCard from '../components/SurfaceCard.vue'
 import { formatShortDateTime as formatTime } from '../utils/formatters.js'
 
-const pageSize = 20
-const logs = ref([])
-const total = ref(0)
-const offset = ref(0)
 const filterType = ref('')
 const filterAction = ref('')
 const filterOutcome = ref('')
@@ -157,14 +151,11 @@ const draftActorType = ref('')
 const draftTargetName = ref('')
 const draftCreatedFrom = ref('')
 const draftCreatedTo = ref('')
-const auditResource = useAsyncResource(({ signal }, params) => getAuditLogs(params, { signal }), { data: [], total: 0 })
-const loading = auditResource.loading
-const error = ref('')
+const pagination = usePaginatedResource(getAuditLogs, 'data')
+const { items: logs, total, page: currentPage, pageSize, totalPages, loading, error, changePage, changePageSize } = pagination
 const selectedLog = ref(null)
 const pageTabs = [{ id: 'logs', label: '审计记录' }]
 
-const currentPage = computed(() => Math.floor(offset.value / pageSize) + 1)
-const totalPages = computed(() => Math.max(1, Math.ceil((total.value || 0) / pageSize)))
 const parsedDetail = computed(() => parseDetail(selectedLog.value?.detail))
 const resourceOptions = [
   { value: 'application', label: '应用' }, { value: 'workload', label: '工作负载' }, { value: 'server', label: '服务器' },
@@ -205,10 +196,10 @@ const activeFilters = computed(() => {
   return items
 })
 
-onMounted(() => { void loadLogs(true) })
+onMounted(() => { void loadLogs() })
 
 async function applyFilters() {
-  await loadLogs(true)
+  await loadLogs()
 }
 
 async function resetFilters() {
@@ -222,15 +213,11 @@ async function resetFilters() {
   filterCreatedFrom.value = ''
   filterCreatedTo.value = ''
   advancedOpen.value = false
-  await loadLogs(true)
+  await loadLogs()
 }
 
-async function loadLogs(resetOffset = false) {
-  if (resetOffset) offset.value = 0
-  error.value = ''
-  const result = await auditResource.refresh({
-    limit: pageSize,
-    offset: offset.value,
+async function loadLogs() {
+  await pagination.load({
     resourceType: filterType.value,
     action: filterAction.value,
     outcome: filterOutcome.value,
@@ -241,22 +228,6 @@ async function loadLogs(resetOffset = false) {
     createdFrom: filterCreatedFrom.value,
     createdTo: filterCreatedTo.value,
   })
-  if (!result) {
-    if (auditResource.error.value) error.value = auditResource.error.value.message || '加载审计日志失败'
-    return
-  }
-  logs.value = result.data || []
-  total.value = result.total || 0
-}
-
-async function prevPage() {
-  offset.value = Math.max(0, offset.value - pageSize)
-  await loadLogs(false)
-}
-
-async function nextPage() {
-  offset.value += pageSize
-  await loadLogs(false)
 }
 
 function openDetail(log) {
@@ -287,13 +258,13 @@ async function applyAdvancedFilters() {
   filterCreatedFrom.value = draftCreatedFrom.value
   filterCreatedTo.value = draftCreatedTo.value
   advancedOpen.value = false
-  await loadLogs(true)
+  await loadLogs()
 }
 
 function clearFilter(key) {
   const values = { keyword: keyword, outcome: filterOutcome, resourceType: filterType, source: filterSource, actorType: filterActorType, action: filterAction, targetName: filterTargetName, createdFrom: filterCreatedFrom, createdTo: filterCreatedTo }
   if (values[key]) values[key].value = ''
-  void loadLogs(true)
+  void loadLogs()
 }
 
 function actionLabel(a) {
@@ -349,7 +320,7 @@ function formatDetailValue(value) {
 <style scoped>
 .audit-page {
   display: grid;
-  gap: var(--space-4);
+  gap: var(--tabbed-page-content-gap);
 }
 
 /* Keep labels available to assistive technology without adding visual layout noise. */
@@ -388,23 +359,19 @@ function formatDetailValue(value) {
 }
 
 .audit-card {
-  display: grid;
-  gap: var(--space-16);
+  display: block;
 }
 
-.audit-filter-panel {
+.audit-table-toolbar {
   display: grid;
   gap: 10px;
-  padding: 14px;
-  border: 1px solid var(--border-muted);
-  border-radius: var(--radius-control);
-  background: var(--surface-subtle);
+  padding: 14px var(--space-20);
 }
 
-.audit-primary-filters { display: grid; grid-template-columns: minmax(220px, 1fr) 130px 150px auto auto 34px; gap: 8px; align-items: center; }
-.audit-search-field { display: flex; min-width: 0; align-items: center; gap: 8px; min-height: 36px; padding: 0 10px; border-radius: var(--radius-control); background: transparent; color: var(--text-muted); }
+.audit-primary-filters { display: grid; grid-template-columns: minmax(220px, 1fr) 130px 150px auto auto var(--button-height); gap: 8px; align-items: center; }
+.audit-search-field { display: flex; min-width: 0; align-items: center; gap: 8px; min-height: var(--button-height); padding: 0 10px; border-radius: var(--radius-control); background: transparent; color: var(--text-muted); }
 .audit-search-field:focus-within { color: var(--action-primary); }
-.audit-search-field .audit-search { flex: 1; min-width: 0; min-height: 36px; padding: 7px 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; outline: 0; }
+.audit-search-field .audit-search { flex: 1; min-width: 0; min-height: var(--button-height); padding: 7px 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; outline: 0; }
 .audit-search-field .audit-search:focus, .audit-search-field .audit-search:focus-visible { box-shadow: none; outline: 0; }
 
 .audit-filter-group {
@@ -419,14 +386,17 @@ function formatDetailValue(value) {
   border-radius: 10px;
 }
 
-.audit-filter-group :deep(.select-menu-trigger) { min-height: 36px; }
+.audit-filter-group :deep(.select-menu-trigger) { min-height: var(--button-height); }
 
 .audit-filter-trigger { display: inline-flex; align-items: center; justify-content: center; gap: 6px; white-space: nowrap; }
 .audit-filter-trigger.is-active { border-color: var(--action-primary); color: var(--action-primary); }
 .filter-count { display: inline-grid; min-width: 17px; height: 17px; place-items: center; padding: 0 4px; border-radius: 99px; background: var(--action-primary); color: var(--surface); font-size: 10px; }
-.audit-reset { width: 34px; height: 34px; }
+.audit-reset { width: var(--button-height); height: var(--button-height); }
 .audit-active-filters { margin: 10px 0 0; }
 .active-filters-label { color: var(--text-muted); font-size: 11px; }
+.audit-card > .empty-state { padding: var(--space-24); }
+.audit-card > .table-wrap { padding: 0 var(--space-20); }
+
 .audit-advanced-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 12px; }
 .audit-field-wide { grid-column: 1 / -1; }
 .audit-filter-modal { width: min(560px, calc(100vw - 32px)); }
@@ -514,12 +484,15 @@ function formatDetailValue(value) {
     flex-direction: column;
   }
 
-  .audit-primary-filters { grid-template-columns: minmax(0, 1fr) 34px; }
+  .audit-primary-filters { grid-template-columns: minmax(0, 1fr) var(--button-height); }
   .audit-search-field { grid-column: 1 / -1; }
   .audit-primary-filters .audit-filter-group { min-width: 0; }
   .audit-primary-filters .audit-filter-trigger { grid-column: 1; }
   .audit-primary-filters .btn-primary { grid-column: 2; grid-row: 2; padding: 0 8px; }
   .audit-reset { grid-column: 2; grid-row: 3; }
+  .audit-table-toolbar { padding: 12px 14px; }
+  .audit-card > .table-wrap { padding-right: 14px; padding-left: 14px; }
+
 
   .audit-detail-grid {
     grid-template-columns: 1fr;

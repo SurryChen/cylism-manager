@@ -45,12 +45,10 @@ Cylism Manager 是一个用于管理 Linux 服务器、Kubernetes 集群和自�
 git clone https://github.com/SurryChen/cylism-manager.git
 cd cylism-manager
 
-bash scripts/deploy-platform.sh \
-  --image ghcr.io/surrychen/cylism-manager:latest \
-  --namespace cylism-system \
-  --ssh-key ~/.ssh/id_ed25519 \
-  --verify-image-pull
+bash scripts/deploy-platform.sh
 ```
+
+脚本默认使用 GHCR 镜像和 `cylism-system` 命名空间，并交互询问 HTTPS IP。输入 IP 后会通过 K3s Traefik 创建一个 30 天有效的临时自签 HTTPS 入口；也可以执行 `bash scripts/deploy-platform.sh uninstall` 清理部署资源。PVC 和 `cylism-secret` 默认保留，使用 `--purge-data` 才会删除。
 
 ### Helm Chart
 
@@ -62,8 +60,7 @@ helm upgrade --install cylism-manager charts/cylism-manager \
   --create-namespace \
   --set image.repository=ghcr.io/surrychen/cylism-manager \
   --set image.tag=latest \
-  --set secrets.existingSecret=cylism-secret \
-  --set ssh.existingSecret=cylism-ssh-key
+  --set secrets.existingSecret=cylism-secret
 ```
 
 ## 运行说明
@@ -76,12 +73,14 @@ helm upgrade --install cylism-manager charts/cylism-manager \
 需要 Go 1.25+、Node.js 24+ 和 npm。根据改动范围，可以额外使用 Docker、Helm、Python 3.10+ 或 Kubernetes 测试集群。
 
 ```bash
-go test ./...
-go run ./cmd/platform
-
-npm --prefix web ci
-npm --prefix web run dev
+scripts/local-dev.sh api
+# 另开一个终端
+scripts/local-dev.sh web
 ```
+
+脚本在缺少本地配置时创建 `config/config.yaml` 和本地 SQLite 数据目录，Web 依赖缺失时运行 `npm ci`。已有配置和数据库不会被覆盖。API 默认监听 `127.0.0.1:8080`，Web 默认将 `/api` 代理到该地址；两条命令都在前台运行。首次登录用户名为 `admin`，密码见本地配置的 `auth.admin_password`。
+
+只准备环境可运行 `scripts/local-dev.sh init`。Web 连接远端 API 时使用 `scripts/local-dev.sh web --remote https://example.com`。不连接 Kubernetes 时，集群功能会降级。
 
 完整验证命令和 OpenSpec 变更流程见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 

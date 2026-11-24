@@ -1,27 +1,49 @@
 <template>
-  <div><div class="detail-header"><button class="back-link" @click="router.push('/network?tab=certificates')"><ArrowLeft :size="16" /> 返回证书</button><div><h1 class="page-title">{{ name }}</h1><p class="page-subtitle">查看 CertificateRequest、Order 与 Challenge 的实际签发状态</p></div></div><div v-if="error" class="k8s-banner k8s-banner-warn section-gap">{{ error }}</div><SurfaceCard v-if="loaded && operations.length"><div class="table-wrap"><table class="data-table"><thead><tr><th>资源</th><th>名称</th><th>域名</th><th>挑战</th><th>状态</th><th>原因</th><th>创建时间</th></tr></thead><tbody><tr v-for="item in operations" :key="item.kind + item.name"><td class="cell-primary">{{ item.kind }}</td><td>{{ item.name }}</td><td>{{ item.domain || '-' }}</td><td>{{ item.type || '-' }}</td><td><span class="badge" :class="statusClass(item.status)">{{ item.status }}</span></td><td>{{ item.reason || '-' }}</td><td>{{ item.created_at || '-' }}</td></tr></tbody></table></div></SurfaceCard><div v-else-if="loaded && !error" class="empty-state"><FileSearch :size="30" :stroke-width="1.5" /><span class="empty-text">证书尚未生成签发过程资源</span></div></div>
+  <div>
+    <div class="detail-header">
+      <PageBackLink @click="goBack">{{ route.params.domainID ? '返回受管域名' : '返回证书' }}</PageBackLink>
+      <div class="detail-title-row"><h1 class="page-title">{{ name }}</h1><button class="btn btn-sm" :disabled="loading" @click="loadOperations"><RefreshCw :size="14" />{{ loading ? '刷新中...' : '刷新' }}</button></div>
+    </div>
+    <FeedbackBanner v-if="error" tone="warning" :message="error" />
+    <SurfaceCard v-if="loaded" padding="none"><EmptyState v-if="!operations.length && !error" message="证书尚未生成签发过程资源" /><div v-else class="table-wrap"><DataTable><thead><tr><th>资源</th><th>名称</th><th>域名</th><th>挑战</th><th>状态</th><th>原因</th><th>创建时间</th></tr></thead><tbody><tr v-for="item in operations" :key="item.kind + item.name"><td class="cell-primary">{{ item.kind }}</td><td>{{ item.name }}</td><td>{{ item.domain || '-' }}</td><td>{{ item.type || '-' }}</td><td><span class="badge" :class="statusClass(item.status)">{{ item.status }}</span></td><td>{{ item.reason || '-' }}</td><td>{{ item.created_at || '-' }}</td></tr></tbody></DataTable></div><ResourcePagination :resource="listPage" label="证书签发记录分页" />
+    </SurfaceCard>
+    <EmptyState v-else-if="!loaded" variant="loading" message="加载中..." />
+  </div>
 </template>
 <script setup>
+import DataTable from '../../components/DataTable.vue'
+import ResourcePagination from '../../components/ResourcePagination.vue'
+import { useListPage } from '../../composables/useListPage.js'
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ArrowLeft, FileSearch } from 'lucide-vue-next'
-import { getCertificateOperations } from '../../api/certificates.js'
-import { useAsyncResource } from '../../composables/useAsyncResource.js'
+import { RefreshCw } from 'lucide-vue-next'
+import PageBackLink from '../../components/PageBackLink.vue'
 import SurfaceCard from '../../components/SurfaceCard.vue'
-const route = useRoute(), router = useRouter(), operations = ref([]), loaded = ref(false), error = ref('')
-const name = computed(() => route.params.name || '')
+import EmptyState from '../../components/EmptyState.vue'
+import FeedbackBanner from '../../components/FeedbackBanner.vue'
+const route = useRoute(), router = useRouter(), operations = ref([]), loaded = ref(false), loading = ref(false), error = ref('')
+const name = computed(() => route.params.domainID ? route.query?.hostname || '域名签发过程' : route.params.name || '')
 function statusClass(status) { return String(status).toLowerCase() === 'valid' || status === 'Ready' ? 'badge-online' : String(status).toLowerCase() === 'invalid' || status === 'Failed' ? 'badge-danger' : 'badge-deploying' }
-const operationResource = useAsyncResource(({ signal }, namespace, certificateName) => getCertificateOperations(namespace, certificateName, { signal }), [])
-const operationKey = computed(() => `${route.params.namespace || ''}/${route.params.name || ''}`)
-watch(operationKey, async () => {
+const operationKey = computed(() => route.params.domainID ? `domain/${route.params.domainID}` : `${route.params.clusterID || ''}/${route.params.namespace || ''}/${route.params.name || ''}`)
+function goBack() {
+  if (route.params.domainID) {
+    const query = Object.fromEntries(['project_id', 'environment_id', 'application_id', 'return_tab'].filter(key => route.query?.[key]).map(key => [key, route.query[key]]))
+    router.push({ path: '/applications/domains', query })
+    return
+  }
+  router.push(`/cluster/${route.params.clusterID}/network?tab=certificates`)
+}
+const listPage = useListPage(() => route.params.domainID ? '/domains/' + encodeURIComponent(route.params.domainID) + '/operations' : (route.params.clusterID ? '/clusters/' + encodeURIComponent(route.params.clusterID) + '/k8s/certs/' : '/certs/') + encodeURIComponent(route.params.namespace) + '/' + encodeURIComponent(route.params.name) + '/operations', operations, error)
+async function loadOperations() {
   const requestKey = operationKey.value
-  loaded.value = false
+  loading.value = true
   error.value = ''
-  const result = await operationResource.refresh(route.params.namespace, route.params.name)
+  const result = await listPage.refresh({ scope: operationKey.value }).catch(() => undefined)
   if (requestKey !== operationKey.value) return
-  if (result) operations.value = Array.isArray(result) ? result : []
-  else if (operationResource.error.value) error.value = operationResource.error.value.message || '加载签发过程失败'
+  if (!result && listPage.error.value) error.value = listPage.error.value.message || '加载签发过程失败'
   loaded.value = true
-}, { immediate: true })
+  loading.value = false
+}
+watch(operationKey, () => { operations.value = []; loaded.value = false; loadOperations() }, { immediate: true })
 </script>
-<style scoped>.detail-header{display:flex;flex-direction:column;gap:var(--space-12)}.back-link{display:inline-flex;width:max-content;align-items:center;gap:6px;border:0;background:transparent;color:var(--text-secondary);cursor:pointer;font:inherit;padding:0}.back-link:hover{color:var(--accent)}.page-subtitle{margin:var(--space-4) 0;color:var(--text-secondary);font-size:13px}</style>
+<style scoped>.detail-header{display:flex;flex-direction:column;margin-bottom:var(--space-16)}.detail-title-row{display:flex;align-items:center;justify-content:space-between;gap:var(--space-12)}.detail-title-row .page-title{min-width:0;overflow-wrap:anywhere}</style>

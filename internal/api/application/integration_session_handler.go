@@ -91,7 +91,7 @@ func (h *ApplicationHandler) createIntegrationHandoff(c *gin.Context) {
 		}
 		endpointURL = localURL.String()
 	}
-	actions := []string{"application:read", "configmap:read", "configmap:write", "application:restart"}
+	actions := []string{"application:read", "application:logs", "configmap:read", "configmap:write", "secret:read", "secret:write", "application:restart"}
 	now := time.Now()
 	code, err := randomOpaqueValue(32)
 	if err != nil {
@@ -175,6 +175,26 @@ func (h *ApplicationHandler) ExchangeIntegrationSession(c *gin.Context) {
 
 func (h *ApplicationHandler) CreateIntegrationDelegation(c *gin.Context) {
 	h.createIntegrationDelegation(c)
+}
+
+// IntegrationSessionContext exposes only the verified identity and scope of a
+// live integration session. Integrations must never infer ownership from input.
+func (h *ApplicationHandler) IntegrationSessionContext(c *gin.Context) {
+	token := bearerValue(c)
+	if token == "" {
+		apiShared.Unauthorized(c, "未提供管理会话")
+		return
+	}
+	session, err := h.sessions.GetActiveIntegrationSession(opaqueHash(token), time.Now())
+	if err != nil {
+		apiShared.Unauthorized(c, "管理会话无效或已过期")
+		return
+	}
+	apiShared.Success(c, gin.H{
+		"user_id": session.UserID, "project_id": session.ProjectID,
+		"environment_id": session.EnvironmentID, "application_id": session.ApplicationID,
+		"actions": strings.Split(session.ActionsData, ","), "expires_at": session.ExpiresAt,
+	})
 }
 
 type integrationDelegationRequest struct {

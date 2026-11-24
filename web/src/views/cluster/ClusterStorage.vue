@@ -1,0 +1,248 @@
+<template>
+  <div class="cluster-storage-page">
+    <PageBackLink to="/cluster?tab=list">返回集群列表</PageBackLink>
+    <SectionTabsHeader :title="cluster?.name || '存储卷'" :tabs="tabs" active-tab="claims" test-id-prefix="storage-tab" />
+    <FeedbackBanner v-if="error" class="storage-error" tone="warning" :message="error" />
+    <ClusterAgentGate v-if="cluster" :cluster-id="clusterID" @ready="loadStorage">
+    <SurfaceCard class="storage-content" padding="none">
+      <div class="storage-toolbar">
+        <SelectMenu v-model="namespace" class="namespace-select" aria-label="命名空间">
+          <option value="">全部命名空间</option>
+          <option v-for="item in namespaces" :key="item" :value="item">{{ item }}</option>
+        </SelectMenu>
+        <div class="toolbar-actions">
+          <button class="icon-button" type="button" title="刷新存储卷" aria-label="刷新存储卷" :disabled="loading" @click="loadClaims()"><RefreshCw :size="15" :class="{ 'is-spinning': loading }" /></button>
+          <button class="btn btn-primary" type="button" :disabled="!cluster" @click="openCreate">创建存储卷</button>
+        </div>
+      </div>
+      <EmptyState v-if="!loaded" variant="loading" message="正在读取存储卷" />
+      <EmptyState v-else-if="!claims.length" message="暂无存储卷" />
+      <div v-else class="table-wrap">
+        <DataTable>
+          <thead><tr><th>存储卷</th><th>命名空间</th><th>归属</th><th>容量</th><th>已用空间</th><th>StorageClass</th><th>状态</th><th>绑定节点</th><th>引用</th><TableActionCell header /></tr></thead>
+          <tbody>
+            <tr v-for="claim in claims" :key="`${claim.namespace}/${claim.name}`">
+              <td class="cell-primary">{{ claim.name }}</td>
+              <td>{{ claim.namespace }}</td>
+              <td><span class="badge" :class="claim.managed ? 'badge-online' : 'badge-offline'">{{ claim.managed ? '平台托管' : '外部创建' }}</span></td>
+              <td>{{ claim.storage || '-' }}</td>
+              <td :title="usageFor(claim)?.message || ''">{{ usageFor(claim)?.status === 'available' ? formatBytes(usageFor(claim).used_bytes) : usageFor(claim)?.message || '读取中...' }}</td>
+              <td>{{ claim.storage_class_name || '默认' }}</td>
+              <td><span class="badge" :class="claim.phase === 'Bound' ? 'badge-online' : 'badge-deploying'">{{ claim.phase || 'Pending' }}</span></td>
+              <td>{{ claim.bound_node || '-' }}</td>
+              <td>{{ referenceCount(claim) }}</td>
+              <TableActionCell><div v-if="canAdopt(claim) || canDelete(claim)" class="claim-actions"><button v-if="canAdopt(claim)" class="btn btn-sm" type="button" @click="openAdopt(claim)">关联环境</button><button v-if="canDelete(claim)" class="btn btn-sm btn-danger" type="button" :disabled="referencesLoading || !referencesLoaded || referenceCount(claim) > 0" @click="deleteTarget = claim">删除</button></div><span v-else class="cell-secondary">-</span></TableActionCell>
+            </tr>
+          </tbody>
+        </DataTable>
+      </div>
+      <PaginationControls :page="page" :page-size="pageSize" :total="total" :loading="loading" @page-change="changePage" @page-size-change="changePageSize" />
+    </SurfaceCard>
+    </ClusterAgentGate>
+
+    <BaseModal :open="creating" title="创建存储卷" @close="creating = false">
+      <form id="cluster-create-pvc" @submit.prevent="saveClaim">
+        <div class="form-group"><label class="form-label" for="pvc-namespace">命名空间</label><SelectMenu id="pvc-namespace" v-model="form.namespace" required><option value="" disabled>选择命名空间</option><option v-for="item in namespaces" :key="item" :value="item">{{ item }}</option></SelectMenu></div>
+        <div class="form-group"><label class="form-label" for="pvc-name">名称</label><input id="pvc-name" v-model.trim="form.name" class="form-input" required pattern="[a-z0-9]([-a-z0-9]*[a-z0-9])?" /></div>
+        <div class="form-group"><label class="form-label" for="pvc-size">容量</label><div class="size-control"><input id="pvc-size" v-model.number="form.size" type="number" min="1" class="form-input" required /><SelectMenu v-model="form.unit" aria-label="容量单位"><option value="Mi">Mi</option><option value="Gi">Gi</option><option value="Ti">Ti</option></SelectMenu></div></div>
+        <div class="form-group"><label class="form-label" for="pvc-class">StorageClass</label><SelectMenu id="pvc-class" v-model="form.storageClass"><option value="">使用默认 StorageClass</option><option v-for="item in storageClasses" :key="item.name" :value="item.name">{{ item.name }}</option></SelectMenu></div>
+      </form>
+      <template #actions><button class="btn" :disabled="saving" @click="creating = false">取消</button><button class="btn btn-primary" type="submit" form="cluster-create-pvc" :disabled="saving || !form.namespace || !form.name || form.size < 1">{{ saving ? '创建中...' : '创建存储卷' }}</button></template>
+    </BaseModal>
+    <BaseModal :open="Boolean(adoptTarget)" title="关联历史存储卷" @close="adoptTarget = null">
+      <p>将 {{ adoptTarget?.namespace }}/{{ adoptTarget?.name }} 关联到项目环境。此操作只补充归属标签，不会复制卷内数据。</p>
+      <div class="form-group"><label class="form-label" for="adopt-environment">项目环境</label><SelectMenu id="adopt-environment" v-model.number="adoptEnvironmentID" :disabled="environmentsLoading"><option :value="0" disabled>{{ environmentsLoading ? '正在读取环境' : '选择匹配的项目环境' }}</option><option v-for="environment in adoptableEnvironments" :key="environment.id" :value="environment.id">{{ environment.projectName }} · {{ environment.name }} · {{ environment.namespace }}</option></SelectMenu></div>
+      <p v-if="!environmentsLoading && !adoptableEnvironments.length" class="cell-secondary">当前集群和命名空间没有可关联的项目环境。</p>
+      <template #actions><button class="btn" :disabled="saving" @click="adoptTarget = null">取消</button><button class="btn btn-primary" :disabled="saving || !adoptEnvironmentID" @click="adoptClaim">{{ saving ? '关联中...' : '关联环境' }}</button></template>
+    </BaseModal>
+    <BaseModal :open="Boolean(deleteTarget)" title="删除存储卷" @close="deleteTarget = null">
+      <p>确定删除 {{ deleteTarget?.namespace }}/{{ deleteTarget?.name }} 吗？底层数据是否删除取决于 PV 的回收策略。</p>
+      <template #actions><button class="btn" :disabled="saving" @click="deleteTarget = null">取消</button><button class="btn btn-danger" :disabled="saving" @click="removeClaim">确认删除</button></template>
+    </BaseModal>
+    <ErrorNoticeModal :open="Boolean(actionError)" :message="actionError" teleport @close="actionError = ''" />
+  </div>
+</template>
+
+<script setup>
+import DataTable from '../../components/DataTable.vue'
+import TableActionCell from '../../components/TableActionCell.vue'
+import PaginationControls from '../../components/PaginationControls.vue'
+import { computed, ref, watch } from 'vue'
+import { RefreshCw } from 'lucide-vue-next'
+import PageBackLink from '../../components/PageBackLink.vue'
+import { getProjects } from '../../api/applications.js'
+import { getCluster } from '../../api/clusters.js'
+import { adoptClusterPersistentVolumeClaim, createClusterPersistentVolumeClaim, deleteClusterPersistentVolumeClaim, getClusterPersistentVolumeInventory, getClusterPersistentVolumeReferences, getClusterPersistentVolumeUsage, getClusterStorageClasses, getClusterStorageNamespaces } from '../../api/storage.js'
+import BaseModal from '../../components/BaseModal.vue'
+import ClusterAgentGate from '../../components/ClusterAgentGate.vue'
+import EmptyState from '../../components/EmptyState.vue'
+import ErrorNoticeModal from '../../components/ErrorNoticeModal.vue'
+import FeedbackBanner from '../../components/FeedbackBanner.vue'
+import SectionTabsHeader from '../../components/SectionTabsHeader.vue'
+import SelectMenu from '../../components/SelectMenu.vue'
+import SurfaceCard from '../../components/SurfaceCard.vue'
+import { formatBytes } from '../../utils/formatters.js'
+
+const props = defineProps({ clusterID: { type: String, required: true } })
+const tabs = [{ id: 'claims', label: '存储卷' }]
+const cluster = ref(null)
+const namespace = ref('')
+const namespaces = ref([])
+const storageClasses = ref([])
+const projects = ref([])
+const claims = ref([])
+const references = ref(new Map())
+const usage = ref(new Map())
+const referencesLoading = ref(false)
+const referencesLoaded = ref(false)
+const loaded = ref(false)
+const loading = ref(false)
+const error = ref('')
+const actionError = ref('')
+const page = ref(1)
+const pageSize = ref(10)
+const total = ref(0)
+const creating = ref(false)
+const saving = ref(false)
+const deleteTarget = ref(null)
+const adoptTarget = ref(null)
+const adoptEnvironmentID = ref(0)
+const environmentsLoading = ref(false)
+const form = ref({ namespace: '', name: '', size: 5, unit: 'Gi', storageClass: '' })
+const scope = computed(() => String(props.clusterID))
+const adoptableEnvironments = computed(() => projects.value.flatMap(project => (project.environments || [])
+  .filter(environment => String(environment.cluster_id) === scope.value && environment.namespace === adoptTarget.value?.namespace)
+  .map(environment => ({ ...environment, projectName: project.name }))))
+let requestSequence = 0
+
+watch(scope, async id => {
+  cluster.value = null
+  adoptTarget.value = null
+  namespace.value = ''
+  page.value = 1
+  loaded.value = false
+  error.value = ''
+  try {
+    const selectedCluster = await getCluster(id)
+    if (id !== scope.value) return
+    cluster.value = selectedCluster
+  } catch (err) { if (id === scope.value) { error.value = err.message || '加载集群失败'; loaded.value = true } }
+}, { immediate: true })
+
+async function loadStorage() {
+  const id = scope.value
+  try {
+    const [names, classes] = await Promise.all([getClusterStorageNamespaces(id), getClusterStorageClasses(id)])
+    if (id !== scope.value) return
+    namespaces.value = (names || []).map(item => typeof item === 'string' ? item : item.name).filter(Boolean).sort()
+    storageClasses.value = classes || []
+    await loadClaims()
+  } catch (err) { if (id === scope.value) { error.value = err.message || '加载存储卷失败'; loaded.value = true } }
+}
+watch(namespace, () => { if (cluster.value) void loadClaims(1) })
+function changePage(value) { if (!loading.value) void loadClaims(value) }
+function changePageSize(value) { if (!loading.value) void loadClaims(1, value) }
+
+async function loadClaims(requestedPage = page.value, size = pageSize.value) {
+  const id = scope.value
+  const request = ++requestSequence
+  loading.value = true
+  error.value = ''
+  try {
+    let result = await getClusterPersistentVolumeInventory(id, { page: requestedPage, size, namespace: namespace.value })
+    const lastPage = Math.max(1, Math.ceil((result.total || 0) / size))
+    if (requestedPage > lastPage) { requestedPage = lastPage; result = await getClusterPersistentVolumeInventory(id, { page: requestedPage, size, namespace: namespace.value }) }
+    if (id !== scope.value || request !== requestSequence) return
+    page.value = requestedPage; pageSize.value = size
+    claims.value = result.items || []
+    total.value = result.total || 0
+    loaded.value = true
+    references.value = new Map()
+    referencesLoaded.value = false
+    usage.value = new Map()
+    if (!claims.value.length) { referencesLoaded.value = true; return }
+    referencesLoading.value = true
+    try {
+      const [referenceResult, usageResult] = await Promise.allSettled([
+        getClusterPersistentVolumeReferences(id, claims.value),
+        getClusterPersistentVolumeUsage(id, claims.value),
+      ])
+      if (id !== scope.value || request !== requestSequence) return
+      if (referenceResult.status === 'fulfilled') {
+        references.value = new Map((referenceResult.value || []).map(item => [`${item.namespace}/${item.name}`, item.references || []]))
+        referencesLoaded.value = true
+      }
+      else error.value = referenceResult.reason?.message || '读取存储卷引用失败'
+      if (usageResult.status === 'fulfilled') usage.value = new Map((usageResult.value || []).map(item => [`${item.namespace}/${item.name}`, item]))
+    } catch (err) { if (id === scope.value) error.value = err.message || '读取存储卷详情失败' }
+    finally { if (request === requestSequence) referencesLoading.value = false }
+  } catch (err) { if (id === scope.value && request === requestSequence) { error.value = err.message || '加载存储卷失败'; loaded.value = true } }
+  finally { if (id === scope.value && request === requestSequence) loading.value = false }
+}
+function referenceCount(claim) { return references.value.get(`${claim.namespace}/${claim.name}`)?.length || 0 }
+function usageFor(claim) { return usage.value.get(`${claim.namespace}/${claim.name}`) }
+function canDelete(claim) { return claim.managed && !claim.environment_id && claim.owner_type !== 'infrastructure' }
+function canAdopt(claim) { return claim.managed && !claim.environment_id && claim.owner_type !== 'infrastructure' }
+async function openAdopt(claim) {
+  adoptTarget.value = claim
+  adoptEnvironmentID.value = 0
+  environmentsLoading.value = true
+  actionError.value = ''
+  try {
+    const result = await getProjects()
+    if (adoptTarget.value !== claim) return
+    projects.value = result || []
+    adoptEnvironmentID.value = adoptableEnvironments.value[0]?.id || 0
+  } catch (err) { actionError.value = err.message || '加载项目环境失败' }
+  finally { if (adoptTarget.value === claim) environmentsLoading.value = false }
+}
+async function adoptClaim() {
+  if (!adoptTarget.value || !adoptEnvironmentID.value) return
+  saving.value = true
+  actionError.value = ''
+  try {
+    await adoptClusterPersistentVolumeClaim(scope.value, adoptTarget.value.name, { namespace: adoptTarget.value.namespace, environment_id: adoptEnvironmentID.value })
+    adoptTarget.value = null
+    await loadClaims()
+  } catch (err) { actionError.value = err.message || '关联存储卷环境失败' }
+  finally { saving.value = false }
+}
+function openCreate() { actionError.value = ''; form.value = { namespace: namespace.value || namespaces.value[0] || '', name: '', size: 5, unit: 'Gi', storageClass: '' }; creating.value = true }
+async function saveClaim() {
+  saving.value = true
+  actionError.value = ''
+  try {
+    await createClusterPersistentVolumeClaim(scope.value, { namespace: form.value.namespace, name: form.value.name, storage: `${form.value.size}${form.value.unit}`, storage_class_name: form.value.storageClass })
+    creating.value = false
+    await loadClaims()
+  } catch (err) { actionError.value = err.message || '创建存储卷失败' }
+  finally { saving.value = false }
+}
+async function removeClaim() {
+  if (!deleteTarget.value) return
+  saving.value = true
+  actionError.value = ''
+  try {
+    await deleteClusterPersistentVolumeClaim(scope.value, deleteTarget.value.name, { namespace: deleteTarget.value.namespace, confirm_data_delete: true })
+    deleteTarget.value = null
+    await loadClaims()
+  } catch (err) { actionError.value = err.message || '删除存储卷失败' }
+  finally { saving.value = false }
+}
+</script>
+
+<style scoped>
+.cluster-storage-page { min-width: 0; }
+.storage-content { margin-top: var(--tabbed-page-content-gap); }
+.storage-error { margin-top: var(--space-12); }
+.storage-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 62px; padding: 12px var(--space-20); }
+.namespace-select { width: 190px; }
+.toolbar-actions, .size-control, .pagination { display: flex; align-items: center; gap: 8px; }
+.claim-actions { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
+.size-control .form-input { flex: 1; min-width: 0; }
+.storage-content .table-wrap { padding: 0 var(--space-20) var(--space-12); }
+.pagination { justify-content: flex-end; padding: var(--space-12) var(--space-20); }
+.is-spinning { animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (max-width: 640px) { .storage-toolbar { padding: 12px 14px; }.namespace-select { width: min(45%, 190px); }.storage-content .table-wrap { padding: 0 14px 12px; } }
+</style>

@@ -86,6 +86,9 @@ func ResolveRegistry(registry string, mirrors []model.NodeRegistryMirror, proxie
 	}
 	for i := range proxies {
 		proxy := &proxies[i]
+		if proxy.ClusterID != 0 {
+			continue
+		}
 		if NormalizeRegistryHost(proxy.Registry) == registry && proxy.EndpointHost != "" && proxy.NodePort > 0 {
 			return RegistryConfig{Registry: registry, Endpoints: []string{SafeEndpoint("http://" + proxy.EndpointHost + fmt.Sprintf(":%d", proxy.NodePort))}, Proxy: proxy}, true
 		}

@@ -2,76 +2,37 @@
 
 ## Purpose
 TBD - created by archiving change tailscale-network-diagnostics. Update Purpose after archive.
+
 ## Requirements
-### Requirement: Detect K3s Tailscale mode from active configuration
 
-The system SHALL determine a server's K3s Tailscale mode from its active K3s service and standard K3s configuration, without inferring the mode from an IP range.
+### Requirement: Detect active K3s VPN integration safely
 
-#### Scenario: Active K3s Server uses embedded Tailscale
+The system SHALL perform K3s VPN compatibility detection only for a server with an active `k3s` or `k3s-agent` unit and only when that active unit or standard K3s configuration declares a supported VPN marker.
 
-- **WHEN** the active `k3s` service has `--vpn-auth`, `--vpn-auth-file`, `K3S_VPN_AUTH`, or `K3S_VPN_AUTH_FILE`, or the standard K3s configuration contains the equivalent VPN key
-- **THEN** the system SHALL report `k3s_embedded_tailscale` and the active unit name
-- **AND THEN** it SHALL NOT return the matching option value, join key, Auth Key, environment value, or configuration-file content
+#### Scenario: Active K3s VPN configuration is detected
 
-#### Scenario: Tailscale is external to K3s
+- **WHEN** an active K3s unit or standard K3s configuration declares `vpn-auth`, `vpn-auth-file`, `K3S_VPN_AUTH`, or `K3S_VPN_AUTH_FILE`
+- **THEN** the system SHALL return that K3s VPN integration is configured, the active unit name, and a safe provider classification of `tailscale`, `other`, or `unknown`
+- **AND THEN** it SHALL NOT return an option value, join key, Auth Key, environment value, configuration-file content, or raw command output
 
-- **WHEN** Tailscale is installed or online on a server but the active K3s service and K3s configuration have no embedded VPN marker
-- **THEN** the system SHALL report `external_tailscale`
+#### Scenario: No active K3s VPN configuration exists
 
-#### Scenario: Inactive unit has stale VPN configuration
+- **WHEN** the server is not running an active K3s unit, or its active K3s configuration has no supported VPN marker
+- **THEN** the system SHALL return that K3s VPN integration is not configured
+- **AND THEN** it SHALL NOT execute a Tailscale command or return Tailnet, NAT, DERP, peer, or endpoint data
 
-- **WHEN** an inactive K3s unit has a VPN marker but the active K3s unit and K3s configuration do not
-- **THEN** the system SHALL NOT classify the server as `k3s_embedded_tailscale` solely because of the inactive unit
+### Requirement: Present K3s VPN compatibility without network mutation
 
-### Requirement: Collect bounded Tailscale local-network evidence
+The server-management page SHALL present K3s VPN integration status only for results that report active K3s VPN configuration and SHALL keep the diagnostic read-only.
 
-The system SHALL collect structured, bounded Tailscale local state from registered servers that have the Tailscale CLI available.
+#### Scenario: Mixed server inventory
 
-#### Scenario: Collect online Tailnet state
+- **WHEN** a diagnostic response contains K3s VPN-integrated, standard K3s, Kubernetes, or unavailable servers
+- **THEN** the page SHALL show K3s VPN information only for the integrated entries and normal server state for the others
+- **AND THEN** a failed collection SHALL not hide successfully collected entries
 
-- **WHEN** a registered server has an online Tailscale instance
-- **THEN** the system SHALL report installation state, online state, Tailnet IP, UDP availability, NAT mapping behavior, and nearest DERP region when available
-- **AND THEN** it SHALL not return complete Tailscale status JSON, peer metadata, Auth Keys, or public endpoint addresses
-
-#### Scenario: Per-node probe failure
-
-- **WHEN** SSH, K3s, or Tailscale collection fails or exceeds its fixed timeout for one server
-- **THEN** the system SHALL return an `unknown` result and a sanitized error category for that server
-- **AND THEN** it SHALL continue collecting eligible results from other registered servers
-
-### Requirement: Diagnose actual Tailnet peer paths
-
-The system SHALL probe only eligible, registered Tailnet peers and classify each directed connection by its current Tailscale path.
-
-#### Scenario: Direct UDP path
-
-- **WHEN** a bounded Tailscale ping from one registered node to another reports a direct endpoint path
-- **THEN** the system SHALL report the link path as `direct` and include the measured latency when available
-- **AND THEN** it SHALL not disclose the endpoint address or port
-
-#### Scenario: DERP relay path
-
-- **WHEN** a bounded Tailscale ping reports a DERP relay path
-- **THEN** the system SHALL report the link path as `derp` and include the DERP region and measured latency when available
-
-#### Scenario: Unreachable peer
-
-- **WHEN** a bounded Tailscale ping has no successful response before its deadline
-- **THEN** the system SHALL report the link path as `unreachable` without attempting a user-specified host or address
-
-### Requirement: Present network diagnostics in server management
-
-The server-management page SHALL provide a deliberate network-diagnostics view for refreshing and inspecting current K3s/Tailscale mode and node-pair paths.
-
-#### Scenario: Mixed network topology
-
-- **WHEN** the diagnostic result contains embedded Tailscale, external Tailscale, and unknown servers, along with direct or DERP links
-- **THEN** the page SHALL show the network mode per server and the path classification per directed link
-- **AND THEN** a failed node or link SHALL not hide successful results
-
-#### Scenario: No automatic network mutation
+#### Scenario: User refreshes compatibility diagnostics
 
 - **WHEN** an administrator opens or refreshes network diagnostics
-- **THEN** the system SHALL only perform read-only diagnostics
-- **AND THEN** it SHALL NOT change K3s, Tailscale, firewall, routing, or node configuration
-
+- **THEN** the system SHALL perform only fixed, bounded, read-only checks
+- **AND THEN** it SHALL NOT install or configure Tailscale, change K3s, firewall, routing, or node configuration

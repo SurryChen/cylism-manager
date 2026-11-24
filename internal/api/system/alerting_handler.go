@@ -2,8 +2,13 @@ package system
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -26,6 +31,9 @@ type alertmanagerRequestFunc func(context.Context, string, string, interface{}, 
 type AlertingHandler struct {
 	alertmanager    alertmanagerRequestFunc
 	platformURL     string
+	publicURL       string
+	clusterID       uint
+	notifyURL       string
 	resolvedCache   *alertingservice.ResolvedCache
 	automationStore repository.AlertAutomationRepository
 	dispatcher      alertingservice.Dispatcher
@@ -34,6 +42,8 @@ type AlertingHandler struct {
 	component       *alertingservice.ComponentService
 	ready           func(context.Context) bool
 	secrets         alertingservice.SecretReader
+	history         alertingservice.HistoryStore
+	suppression     alertingservice.SuppressionStore
 	sender          alertingservice.NotificationSender
 }
 
@@ -71,10 +81,45 @@ type alertSilenceRequest struct {
 type alertMatcher = alertingservice.Matcher
 
 func NewAlertingHandler(platformURL string) *AlertingHandler {
+	publicURL := strings.TrimSpace(platformURL)
 	if platformURL == "" {
 		platformURL = defaultAlertingPlatformURL
 	}
-	return &AlertingHandler{resolvedCache: alertingservice.NewResolvedCache(12), platformURL: normalizeAlertingPlatformURL(platformURL)}
+	return &AlertingHandler{publicURL: publicURL, resolvedCache: alertingservice.NewResolvedCache(12), platformURL: normalizeAlertingPlatformURL(platformURL)}
+}
+
+// WithCluster binds callbacks and notification links to a single cluster. Only
+// the configured public URL is trusted; request headers cannot select a token destination.
+func (h *AlertingHandler) WithCluster(clusterID uint) *AlertingHandler {
+	h.clusterID = clusterID
+	parsed, err := url.Parse(h.publicURL)
+	if err == nil && (parsed.Scheme == "https" || parsed.Scheme == "http") && parsed.Hostname() != "" && parsed.User == nil {
+		base := parsed.Scheme + "://" + parsed.Host
+		h.notifyURL = fmt.Sprintf("%s/api/clusters/%d/monitoring/alerts/notify", base, clusterID)
+		h.platformURL = fmt.Sprintf("%s/#/cluster/%d/monitoring?tab=alerts", base, clusterID)
+	}
+	return h
+}
+
+func (h *AlertingHandler) notificationWarning(status *k8s.AlertingStatus) *k8s.AlertingStatus {
+	if h.clusterID != 0 && status != nil {
+		if h.notifyURL == "" {
+			status.NotificationWarning = "请配置平台公开访问地址 server.public_url（PUBLIC_URL），以接收当前集群的告警回调。"
+		} else if status.State != k8s.AlertingStateNotInstalled && status.NotifyURL != h.notifyURL {
+			status.NotificationWarning = "告警回调仍使用旧地址，请打开告警设置并保存一次，以启用当前集群的通知回调。"
+		}
+	}
+	return status
+}
+
+func (h *AlertingHandler) configureNotifyURL(c *gin.Context, config *k8s.AlertingConfig) bool {
+	// Callback destinations are server-owned, including for the legacy endpoint.
+	config.NotifyURL = h.notifyURL
+	if h.clusterID != 0 && h.notifyURL == "" {
+		apiShared.ValidationError(c, "请先配置平台公开访问地址 server.public_url（PUBLIC_URL）")
+		return false
+	}
+	return true
 }
 
 // NewAlertingHandlerWithComposedDependencies receives the query, component
@@ -137,6 +182,53 @@ func (h *AlertingHandler) WithAutomationService(store repository.AlertAutomation
 	return h
 }
 
+// WithHistory persists notifications independently of optional automation.
+func (h *AlertingHandler) WithHistory(store alertingservice.HistoryStore) *AlertingHandler {
+	h.history = store
+	return h
+}
+
+// History reads durable records without requiring a live Kubernetes connection.
+func (h *AlertingHandler) History(c *gin.Context) {
+	if h.history == nil {
+		apiShared.DBError(c, "告警历史存储不可用")
+		return
+	}
+	clusterID := h.clusterID
+	if id := c.Param("id"); id != "" {
+		value, err := strconv.ParseUint(id, 10, 32)
+		if err != nil || value == 0 {
+			apiShared.BadRequest(c, "集群 ID 无效")
+			return
+		}
+		clusterID = uint(value)
+	}
+	days, err := strconv.Atoi(c.DefaultQuery("days", "7"))
+	status, view := c.Query("status"), c.DefaultQuery("view", "history")
+	if err != nil || (days != 1 && days != 7 && days != 30) || (status != "" && status != "firing" && status != "resolved") || (view != "history" && view != "frequency") {
+		apiShared.ValidationError(c, "告警历史筛选条件无效")
+		return
+	}
+	limit, offset := apiShared.LimitOffset(c, 10, 100)
+	filter := model.AlertHistoryFilter{ClusterID: clusterID, Since: time.Now().UTC().Add(-time.Duration(days) * 24 * time.Hour),
+		NodeName: strings.TrimSpace(c.Query("node")), AlertName: strings.TrimSpace(c.Query("alert_name")), Status: status, Limit: limit, Offset: offset}
+	if view == "frequency" {
+		items, total, err := h.history.ListAlertFrequency(c.Request.Context(), filter)
+		if err != nil {
+			apiShared.DBError(c, "读取告警频次失败")
+			return
+		}
+		apiShared.Success(c, gin.H{"items": items, "total": total, "limit": limit, "offset": offset})
+		return
+	}
+	items, total, err := h.history.ListAlertHistory(c.Request.Context(), filter)
+	if err != nil {
+		apiShared.DBError(c, "读取告警历史失败")
+		return
+	}
+	apiShared.Success(c, gin.H{"items": items, "total": total, "limit": limit, "offset": offset})
+}
+
 func (h *AlertingHandler) workflow() *alertingservice.Workflow {
 	return &alertingservice.Workflow{
 		Client: alertingservice.NewClient(alertingservice.RequestFunc(h.alertmanager)), Query: h.queryService, Ready: h.ready,
@@ -150,7 +242,7 @@ func (h *AlertingHandler) Status(c *gin.Context) {
 		apiShared.K8sUnavailable(c)
 		return
 	}
-	apiShared.Success(c, h.component.Status(c.Request.Context()))
+	apiShared.Success(c, h.notificationWarning(h.component.Status(c.Request.Context())))
 }
 
 func (h *AlertingHandler) Install(c *gin.Context) {
@@ -161,6 +253,9 @@ func (h *AlertingHandler) Install(c *gin.Context) {
 	var config k8s.AlertingConfig
 	if err := c.ShouldBindJSON(&config); err != nil {
 		apiShared.BadRequest(c, "告警配置无效")
+		return
+	}
+	if !h.configureNotifyURL(c, &config) {
 		return
 	}
 	status, err := h.component.Install(c.Request.Context(), config)
@@ -179,6 +274,9 @@ func (h *AlertingHandler) Update(c *gin.Context) {
 	var config k8s.AlertingConfig
 	if err := c.ShouldBindJSON(&config); err != nil {
 		apiShared.BadRequest(c, "告警配置无效")
+		return
+	}
+	if !h.configureNotifyURL(c, &config) {
 		return
 	}
 	status, err := h.component.Update(c.Request.Context(), config)
@@ -209,6 +307,32 @@ func (h *AlertingHandler) Overview(c *gin.Context) {
 	overview, err := h.workflow().Overview(c.Request.Context())
 	if err != nil {
 		apiShared.K8sAPIError(c, "读取 Alertmanager 告警失败: "+err.Error())
+		return
+	}
+	if apiShared.PaginationRequested(c) {
+		items := overview.Active
+		view := c.DefaultQuery("view", "active")
+		if view == "resolved" {
+			items = overview.Resolved
+		} else if view != "active" {
+			apiShared.BadRequest(c, "告警视图无效")
+			return
+		}
+		sort.SliceStable(items, func(i, j int) bool {
+			if view == "active" {
+				a, b := items[i].Labels["severity"] == "critical", items[j].Labels["severity"] == "critical"
+				if a != b {
+					return a
+				}
+			} else if !items[i].EndsAt.Equal(items[j].EndsAt) {
+				return items[i].EndsAt.After(items[j].EndsAt)
+			}
+			return alertListKey(items[i]) < alertListKey(items[j])
+		})
+		limit, offset := apiShared.LimitOffset(c, 10, 100)
+		start := min(offset, len(items))
+		page := append(make([]alertingservice.Alert, 0), items[start:min(start+limit, len(items))]...)
+		apiShared.Success(c, gin.H{"items": page, "total": len(items), "active_total": len(overview.Active), "resolved_total": len(overview.Resolved), "firing": overview.Firing, "silenced": overview.Silenced, "limit": limit, "offset": offset})
 		return
 	}
 	apiShared.Success(c, overview)
@@ -259,6 +383,9 @@ func (h *AlertingHandler) DeleteSilence(c *gin.Context) {
 		return
 	}
 	id := strings.TrimSpace(c.Param("id"))
+	if silenceID := strings.TrimSpace(c.Param("silenceID")); silenceID != "" {
+		id = silenceID
+	}
 	if id == "" || len(id) > 128 {
 		apiShared.ValidationError(c, "静默 ID 无效")
 		return
@@ -299,7 +426,7 @@ func (h *AlertingHandler) TestNotification(c *gin.Context) {
 	apiShared.SuccessWithMessage(c, gin.H{"configured": true}, message)
 }
 
-// Notify receives Alertmanager's cluster-internal webhook. It deliberately does
+// Notify receives Alertmanager's authenticated webhook. It deliberately does
 // not use JWT because Alertmanager is not a browser client; the per-install token
 // mounted into Alertmanager authenticates this one endpoint instead.
 func (h *AlertingHandler) Notify(c *gin.Context) {
@@ -321,20 +448,38 @@ func (h *AlertingHandler) Notify(c *gin.Context) {
 		apiShared.BadRequest(c, "告警回调载荷无效")
 		return
 	}
+	var rules []model.AlertSuppressionRule
+	if h.suppression != nil {
+		var err error
+		rules, err = h.suppression.ActiveAlertSuppressionRules(c.Request.Context(), h.clusterID, time.Now().UTC())
+		if err != nil {
+			apiShared.DBError(c, "读取通知屏蔽规则失败")
+			return
+		}
+	}
+	servicePayload, deliveryPayload, suppressed := alertingservice.ApplyNotificationSuppression(servicePayload, rules, time.Now().UTC())
+	if err := alertingservice.RecordHistory(c.Request.Context(), h.history, h.clusterID, servicePayload); err != nil {
+		if errors.Is(err, alertingservice.ErrInvalidNotification) {
+			apiShared.BadRequest(c, "告警回调缺少告警名称或开始时间")
+			return
+		}
+		apiShared.DBError(c, "持久化告警历史失败")
+		return
+	}
 	if _, err := workflow.Persist(c.Request.Context(), servicePayload, false); err != nil {
 		apiShared.DBError(c, "持久化告警事件失败")
 		return
 	}
 	delivered := false
-	if notifications.Configured() {
-		if err := workflow.Send(c.Request.Context(), notifications, servicePayload); err != nil {
+	if notifications.Configured() && len(deliveryPayload.Alerts) > 0 {
+		if err := workflow.Send(c.Request.Context(), notifications, deliveryPayload); err != nil {
 			apiShared.K8sAPIError(c, "转发告警通知失败: "+err.Error())
 			return
 		}
 		delivered = true
 	}
 	workflow.RecordResolved(servicePayload)
-	apiShared.Success(c, gin.H{"delivered": delivered, "persisted": true})
+	apiShared.Success(c, gin.H{"delivered": delivered, "persisted": true, "suppressed": suppressed})
 }
 
 func (h *AlertingHandler) AutomationPolicy(c *gin.Context) {
@@ -367,6 +512,17 @@ func (h *AlertingHandler) UpdateAutomationPolicy(c *gin.Context) {
 }
 
 func (h *AlertingHandler) ListAutomationEvents(c *gin.Context) {
+	if apiShared.PaginationRequested(c) {
+		limit, offset := apiShared.LimitOffset(c, 10, 100)
+		events, total, err := h.workflow().ListEventPage(limit, offset)
+		if err != nil {
+			apiShared.DBError(c, "读取自动处置事件失败")
+			return
+		}
+		apiShared.Success(c, gin.H{"items": apiShared.AlertEventsDTO(events), "total": total, "limit": limit, "offset": offset})
+		return
+	}
+
 	events, err := h.workflow().ListEvents(30)
 	if err != nil {
 		apiShared.DBError(c, "读取告警自动化事件失败")
@@ -381,4 +537,12 @@ func normalizeAlertingPlatformURL(raw string) string {
 		return defaultAlertingPlatformURL + "/#/monitoring?tab=alerts"
 	}
 	return strings.TrimRight(parsed.Scheme+"://"+parsed.Host, "/") + "/#/monitoring?tab=alerts"
+}
+
+func alertListKey(alert alertingservice.Alert) string {
+	if alert.Fingerprint != "" {
+		return alert.Fingerprint
+	}
+	labels, _ := json.Marshal(alert.Labels)
+	return string(labels) + "|" + alert.StartsAt.UTC().Format(time.RFC3339Nano)
 }

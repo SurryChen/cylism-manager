@@ -7,10 +7,12 @@ import {
   getClusterPlatform,
   getNodeDrainPlan,
   getNodeLabels,
+  getNodeScheduling,
   getNodeRemovalCheck,
   rejoinNode,
   removeClusterNode,
   updateNodeLabels,
+  updateNodeScheduling,
 } from './cluster.js'
 
 vi.mock('./index.js', () => ({
@@ -55,5 +57,13 @@ describe('cluster api', () => {
     expect(api.patch).toHaveBeenCalledWith('/nodes/node%2Fa/labels', body, options)
     expect(api.get).toHaveBeenNthCalledWith(3, '/nodes/node%2Fa/removal-check', options)
     expect(api.delete).toHaveBeenCalledWith('/nodes/node%2Fa', undefined, options)
+  })
+
+  it('scopes node scheduling reads and updates to a cluster', () => {
+    const options = { signal: new AbortController().signal }
+    getNodeScheduling(9, 'node/a', options)
+    updateNodeScheduling(9, 'node/a', true, options)
+    expect(api.get).toHaveBeenCalledWith('/nodes/node%2Fa/scheduling?cluster_id=9', options)
+    expect(api.patch).toHaveBeenCalledWith('/nodes/node%2Fa/scheduling?cluster_id=9', { default_no_schedule: true }, options)
   })
 })

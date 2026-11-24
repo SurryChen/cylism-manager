@@ -32,6 +32,7 @@ const (
 
 // LoggingConfig controls the platform-owned Loki data store and container log collector.
 type LoggingConfig struct {
+	PVCName          string `json:"-"`
 	NodeName         string `json:"node_name"`
 	Storage          string `json:"storage"`
 	StorageClassName string `json:"storage_class_name,omitempty"`
@@ -77,8 +78,8 @@ func (c *Client) LoggingStatus() *LoggingStatus {
 	if raw := strings.TrimSpace(loki.Annotations[loggingRetentionAnnotation]); raw != "" {
 		status.RetentionDays, _ = strconv.Atoi(raw)
 	}
-	status.PVCName = lokiPVCName
-	if claim, claimErr := c.Clientset.CoreV1().PersistentVolumeClaims(victoriaMetricsNamespace).Get(c.ctx, lokiPVCName, metav1.GetOptions{}); claimErr == nil {
+	status.PVCName = componentPVCName(loki.Spec.Template.Spec.Volumes, "data", lokiPVCName)
+	if claim, claimErr := c.Clientset.CoreV1().PersistentVolumeClaims(victoriaMetricsNamespace).Get(c.ctx, status.PVCName, metav1.GetOptions{}); claimErr == nil {
 		status.Storage = claim.Spec.Resources.Requests.Storage().String()
 		if claim.Spec.StorageClassName != nil {
 			status.StorageClass = *claim.Spec.StorageClassName
@@ -135,6 +136,9 @@ func (c *Client) installLogging(config LoggingConfig) (*LoggingStatus, error) {
 	if err := normalizeLoggingConfig(&config); err != nil {
 		return c.LoggingStatus(), err
 	}
+	if err := c.CheckComponentMigrationContext(c.ctx, InfrastructureLoki); err != nil {
+		return c.LoggingStatus(), err
+	}
 	existing, err := c.Clientset.AppsV1().StatefulSets(victoriaMetricsNamespace).Get(c.ctx, lokiName, metav1.GetOptions{})
 	if err != nil && !apierrors.IsNotFound(err) {
 		return c.LoggingStatus(), fmt.Errorf("读取 Loki 配置失败: %w", err)
@@ -145,6 +149,7 @@ func (c *Client) installLogging(config LoggingConfig) (*LoggingStatus, error) {
 			return c.LoggingStatus(), fmt.Errorf("已安装日志存储的数据节点不能直接修改；当前数据仍绑定在 %s", oldNode)
 		}
 		config.NodeName = oldNode
+		config.PVCName = componentPVCName(existing.Spec.Template.Spec.Volumes, "data", lokiPVCName)
 		config.Storage = ""
 		config.StorageClassName = ""
 	}
@@ -183,6 +188,9 @@ func (c *Client) installLogging(config LoggingConfig) (*LoggingStatus, error) {
 func (c *Client) uninstallLogging() error {
 	if c == nil || c.Clientset == nil {
 		return fmt.Errorf("Kubernetes 客户端未初始化")
+	}
+	if err := c.CheckComponentMigrationContext(c.ctx, InfrastructureLoki); err != nil {
+		return err
 	}
 	resources := []func() error{
 		func() error {
@@ -252,8 +260,12 @@ func ensureAlloyAccess(c *Client) error {
 }
 
 func upsertLokiPVC(c *Client, config LoggingConfig) error {
+	claimName := config.PVCName
+	if claimName == "" {
+		claimName = lokiPVCName
+	}
 	claims := c.Clientset.CoreV1().PersistentVolumeClaims(victoriaMetricsNamespace)
-	existing, err := claims.Get(c.ctx, lokiPVCName, metav1.GetOptions{})
+	existing, err := claims.Get(c.ctx, claimName, metav1.GetOptions{})
 	if err == nil {
 		labels := existing.Labels
 		if labels == nil {
@@ -278,7 +290,7 @@ func upsertLokiPVC(c *Client, config LoggingConfig) error {
 	if parseErr != nil || storage.Sign() <= 0 {
 		return fmt.Errorf("日志存储容量格式无效")
 	}
-	claim := &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: lokiPVCName, Namespace: victoriaMetricsNamespace, Labels: infrastructurePVCLabels(InfrastructureLoki)}, Spec: corev1.PersistentVolumeClaimSpec{AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce}, Resources: corev1.VolumeResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceStorage: storage}}}}
+	claim := &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: claimName, Namespace: victoriaMetricsNamespace, Labels: infrastructurePVCLabels(InfrastructureLoki)}, Spec: corev1.PersistentVolumeClaimSpec{AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce}, Resources: corev1.VolumeResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceStorage: storage}}}}
 	if config.StorageClassName != "" {
 		claim.Spec.StorageClassName = &config.StorageClassName
 	}
@@ -316,6 +328,10 @@ func upsertLokiService(c *Client) error {
 }
 
 func upsertLokiStatefulSet(c *Client, config LoggingConfig) error {
+	claimName := config.PVCName
+	if claimName == "" {
+		claimName = lokiPVCName
+	}
 	replicas := int32(1)
 	statefulSet := &appsv1.StatefulSet{ObjectMeta: metav1.ObjectMeta{Name: lokiName, Namespace: victoriaMetricsNamespace, Labels: lokiLabels(), Annotations: map[string]string{loggingRetentionAnnotation: strconv.Itoa(config.RetentionDays)}}, Spec: appsv1.StatefulSetSpec{
 		ServiceName: lokiName,
@@ -324,7 +340,7 @@ func upsertLokiStatefulSet(c *Client, config LoggingConfig) error {
 		Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: lokiLabels()}, Spec: corev1.PodSpec{
 			NodeSelector: map[string]string{corev1.LabelHostname: config.NodeName},
 			Volumes: []corev1.Volume{
-				{Name: "data", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: lokiPVCName}}},
+				{Name: "data", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: claimName}}},
 				{Name: "config", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: loggingConfigName}}}},
 			},
 			Containers: []corev1.Container{{
@@ -514,4 +530,13 @@ loki.write "default" {
   }
 }
 `
+}
+
+func componentPVCName(volumes []corev1.Volume, name, fallback string) string {
+	for _, volume := range volumes {
+		if volume.Name == name && volume.PersistentVolumeClaim != nil {
+			return volume.PersistentVolumeClaim.ClaimName
+		}
+	}
+	return fallback
 }

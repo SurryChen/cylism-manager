@@ -12,7 +12,7 @@
 | `jwt-secret` | JWT 签名密钥，应使用随机高熵值。 |
 | `admin-password` | 初始管理员密码。 |
 
-SSH 私钥单独存放在默认名为 `cylism-ssh-key` 的 Secret 中，并以只读方式挂载到 Manager Pod。限制拥有读取 Secret 权限的主体数量。
+服务器 SSH 凭据由服务器记录单独加密保存；纯 Kubernetes/K3s 部署不需要额外的全局 SSH Secret。限制拥有读取凭据和 Secret 权限的主体数量。
 
 ## ConfigMap 配置
 

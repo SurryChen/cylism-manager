@@ -1,14 +1,17 @@
 package api
 
 import (
+	"context"
 	agentapi "github.com/cylism/cylism-manager/internal/api/agent"
 	applicationapi "github.com/cylism/cylism-manager/internal/api/application"
 	authapi "github.com/cylism/cylism-manager/internal/api/auth"
+	cloudapi "github.com/cylism/cylism-manager/internal/api/cloud"
 	deliveryapi "github.com/cylism/cylism-manager/internal/api/delivery"
 	clusterapi "github.com/cylism/cylism-manager/internal/api/infrastructure/cluster"
 	kubernetesapi "github.com/cylism/cylism-manager/internal/api/infrastructure/kubernetes"
 	networkapi "github.com/cylism/cylism-manager/internal/api/infrastructure/network"
 	storageapi "github.com/cylism/cylism-manager/internal/api/infrastructure/storage"
+	productapi "github.com/cylism/cylism-manager/internal/api/product"
 	runtimeapi "github.com/cylism/cylism-manager/internal/api/runtime"
 	systemapi "github.com/cylism/cylism-manager/internal/api/system"
 	auditservice "github.com/cylism/cylism-manager/internal/service/audit"
@@ -19,6 +22,7 @@ import (
 // package only binds these already-created handlers; construction belongs to
 // internal/bootstrap.
 type RouteDependencies struct {
+	Product        *productapi.Handler
 	Auth           AuthDependencies
 	Application    ApplicationDependencies
 	RuntimeAgent   RuntimeAgentDependencies
@@ -53,34 +57,41 @@ type DeliveryDependencies struct {
 	NodeMirrors *deliveryapi.NodeRegistryMirrorHandler
 	Managed     *deliveryapi.ManagedOCIRegistryHandler
 	Proxy       *deliveryapi.RegistryProxyHandler
+	ProxyRelay  *deliveryapi.RegistryProxyRelayHandler
 	Chart       *deliveryapi.ChartRepositoryHandler
+	Cloud       *cloudapi.Handler
+	Database    *cloudapi.DatabaseHandler
 }
 
 type InfrastructureDependencies struct {
-	Network     *networkapi.NetworkHandler
-	Server      *clusterapi.ServerHandler
-	NetworkDiag *clusterapi.ServerNetworkDiagnosticsHandler
-	Terminal    *clusterapi.ServerTerminalHandler
-	Site        *networkapi.SiteHandler
-	Operation   *systemapi.OperationHandler
-	Domain      *networkapi.DomainHandler
-	Node        *clusterapi.NodeHandler
-	NodeJoin    *clusterapi.NodeJoinProgressHandler
-	Ingress     *networkapi.IngressHandler
-	Certificate *networkapi.CertHandler
-	K8s         *kubernetesapi.K8sHandler
-	Platform    *kubernetesapi.ClusterPlatformHandler
-	Storage     *storageapi.StorageHandler
-	CRD         *kubernetesapi.CRDHandler
-	AuditLog    *systemapi.AuditHandler
-	DBAdmin     *systemapi.DBAdminHandler
+	Network      *networkapi.NetworkHandler
+	Catalog      *clusterapi.CatalogHandler
+	AccessCert   *clusterapi.AccessCertificateHandler
+	Deployment   *clusterapi.DeploymentHandler
+	CrossService *clusterapi.CrossServiceHandler
+	Server       *clusterapi.ServerHandler
+	Terminal     *clusterapi.ServerTerminalHandler
+	Site         *networkapi.SiteHandler
+	Operation    *systemapi.OperationHandler
+	Domain       *networkapi.DomainHandler
+	Node         *clusterapi.NodeHandler
+	NodeJoin     *clusterapi.NodeJoinProgressHandler
+	Ingress      *networkapi.IngressHandler
+	Certificate  *networkapi.CertHandler
+	K8s          *kubernetesapi.K8sHandler
+	Platform     *kubernetesapi.ClusterPlatformHandler
+	Storage      *storageapi.StorageHandler
+	CRD          *kubernetesapi.CRDHandler
+	AuditLog     *systemapi.AuditHandler
+	DBAdmin      *systemapi.DBAdminHandler
 }
 
 type SystemDependencies struct {
-	Dashboard  *systemapi.DashboardHandler
-	Monitoring *systemapi.MonitoringHandler
-	Alerting   *systemapi.AlertingHandler
-	Logging    *systemapi.LoggingHandler
+	Dashboard            *systemapi.DashboardHandler
+	Monitoring           *systemapi.MonitoringHandler
+	Alerting             *systemapi.AlertingHandler
+	Logging              *systemapi.LoggingHandler
+	ClusterObservability func(context.Context, uint) (*systemapi.MonitoringHandler, *systemapi.LoggingHandler, *systemapi.AlertingHandler, error)
 }
 
 // RegisterRoutes binds all HTTP/WebSocket routes using the fully composed
@@ -96,22 +107,28 @@ func RegisterRoutes(r *gin.Engine, deps RouteDependencies) {
 	if deps.Auth.Audit != nil {
 		apiGroup.Use(deps.Auth.Audit)
 	}
+	registerProductRoutes(apiGroup, deps.Product)
 	registerRuntimeRoutes(apiGroup, deps.RuntimeAgent.Runtime, deps.RuntimeAgent.AgentOp, deps.RuntimeAgent.Components, deps.RuntimeAgent.Network)
 	registerDashboardRoutes(apiGroup, deps.System.Dashboard)
 	registerDeliveryRoutes(r, apiGroup, deliveryRouteHandlers{
 		image: deps.Delivery.Image, nodeMirrors: deps.Delivery.NodeMirrors, managed: deps.Delivery.Managed,
-		proxy: deps.Delivery.Proxy, chart: deps.Delivery.Chart, platform: deps.Delivery.Platform,
+		proxy: deps.Delivery.Proxy, proxyRelay: deps.Delivery.ProxyRelay, chart: deps.Delivery.Chart, cloud: deps.Delivery.Cloud, database: deps.Delivery.Database, platform: deps.Delivery.Platform,
 	})
 	registerMonitoringRoutes(apiGroup, deps.System.Monitoring)
 	registerLoggingRoutes(apiGroup, deps.System.Logging)
 	registerAlertingRoutes(r, apiGroup, deps.System.Alerting)
+	if deps.System.ClusterObservability != nil {
+		apiGroup.GET("/clusters/:id/monitoring/alerts/history", deps.System.Alerting.History)
+		registerAlertSuppressionRoutes(apiGroup.Group("/clusters/:id/monitoring/alerts"), deps.System.Alerting)
+		registerClusterObservabilityRoutes(r, apiGroup, deps.System.ClusterObservability)
+	}
 	if deps.Auth.Config != nil {
 		registerApplicationRoutes(r, apiGroup, deps.Application.Handler, deps.Auth.Config.JWTSecret, deps.Auth.Audit, deps.Auth.AuditRepository)
 	} else {
 		registerApplicationRoutes(r, apiGroup, deps.Application.Handler, nil, deps.Auth.Audit, deps.Auth.AuditRepository)
 	}
 	infra := deps.Infrastructure
-	registerInfrastructureRoutes(apiGroup, infra.Server, infra.NetworkDiag, infra.Terminal, infra.Site,
+	registerInfrastructureRoutes(apiGroup, infra.Catalog, infra.AccessCert, infra.Deployment, infra.CrossService, infra.Server, infra.Terminal, infra.Site,
 		infra.Operation, infra.Domain, infra.Node, infra.NodeJoin, infra.Ingress, infra.Certificate,
 		infra.K8s, infra.Platform, infra.Storage, infra.Network, infra.CRD, infra.AuditLog, infra.DBAdmin)
 }

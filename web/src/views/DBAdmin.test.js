@@ -31,7 +31,7 @@ describe('DB admin view', () => {
     await wrapper.get('.tab-btn').trigger('click')
     await new Promise(resolve => setTimeout(resolve, 0))
     await nextTick()
-    expect(api.get).toHaveBeenCalledWith('/admin/tables/users?page=1&size=20&sort=id&order=desc', expect.objectContaining({ signal: expect.any(AbortSignal) }))
+    expect(api.get).toHaveBeenCalledWith('/admin/tables/users?page=1&size=10&sort=id&order=desc', expect.objectContaining({ signal: expect.any(AbortSignal) }))
     expect(wrapper.text()).toContain('admin')
   })
 
@@ -56,7 +56,7 @@ describe('DB admin view', () => {
     await wrapper.get('.modal form').trigger('submit')
     await nextTick()
 
-    expect(wrapper.text()).toContain('write failed')
+    expect(document.body.querySelector('[role="alert"]')?.textContent).toContain('write failed')
     expect(wrapper.find('.modal').exists()).toBe(true)
     expect(wrapper.get('.modal input[placeholder="name"]').element.value).toBe('edited value')
   })
@@ -71,7 +71,7 @@ describe('DB admin view', () => {
     await wrapper.findAll('.modal .btn').find(button => button.text() === '确认删除').trigger('click')
     await nextTick()
 
-    expect(wrapper.text()).toContain('delete failed')
+    expect([...document.body.querySelectorAll('[role="alert"]')].some(alert => alert.textContent.includes('delete failed'))).toBe(true)
     expect(wrapper.find('.modal').text()).toContain('ID 为 1')
     expect(wrapper.text()).toContain('admin')
   })

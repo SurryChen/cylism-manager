@@ -1,19 +1,24 @@
 <template>
   <div>
-    <SectionTabsHeader title="集群监控" :tabs="tabs" :active-tab="activeTab" test-id-prefix="monitoring-tab" @select="selectTab">
+    <PageBackLink to="/cluster?tab=list">返回集群列表</PageBackLink>
+    <SectionTabsHeader :title="clusterName || '集群监控'" :tabs="tabs" :active-tab="activeTab" test-id-prefix="monitoring-tab" @select="selectTab">
       <template #actions>
-        <div v-if="status?.state !== 'not_installed'" class="btn-group">
-          <button class="icon-button" title="监控设置" aria-label="监控设置" @click="openMonitoringSettings"><Settings2 :size="16" /></button>
+        <div v-if="activeTab !== 'logs' && agentAvailable && loaded && status && status.state !== 'not_installed'" class="btn-group">
+          <ComponentMigration v-if="clusterID && status.storage_mode !== 'host_path'" :cluster-id="clusterID" component="victoria-metrics" :current-node="status.node_name" :nodes="nodes" :disabled="monitoringSettingsSaving || uninstalling" @busy="nodeMigrating = $event" @changed="refresh" />
+          <button :disabled="nodeMigrating" class="icon-button" title="监控设置" aria-label="监控设置" @click="openMonitoringSettings"><Settings2 :size="16" /></button>
           <button class="btn" @click="refresh">刷新</button>
-          <button class="btn btn-danger" @click="confirmUninstall = true">卸载</button>
+          <button :disabled="nodeMigrating" class="btn btn-danger" @click="confirmUninstall = true">卸载</button>
         </div>
       </template>
     </SectionTabsHeader>
 
+    <ClusterAgentGate :key="`${clusterID}-${activeTab}`" :cluster-id="clusterID" @ready="handleAgentReady">
     <main class="monitoring-content">
       <FeedbackBanner v-if="error" tone="warning" :message="error" class="section-gap" />
 
-      <SurfaceCard v-if="loaded && status?.state === 'not_installed'" class="monitoring-install-card">
+      <LoggingWorkspace v-if="loaded && activeTab === 'logs'" :cluster-id="clusterID" :nodes="nodes" :storage-classes="storageClasses" />
+
+      <SurfaceCard v-else-if="loaded && status?.state === 'not_installed'" class="monitoring-install-card">
         <template #header><div><h2 class="card-title">VictoriaMetrics 未安装</h2><p class="status-copy">选择数据节点和容量后，平台将创建并管理专用存储卷及节点采集组件。</p></div></template><template #actions><span class="badge badge-offline">未安装</span></template>
         <form class="install-form" @submit.prevent="install">
           <div class="form-group"><label class="form-label">数据节点</label><SelectMenu v-model="form.node_name" class="form-select" required><option value="" disabled>选择就绪节点</option><option v-for="node in readyNodes" :key="node.name" :value="node.name">{{ displayNode(node) }}</option></SelectMenu><p class="form-hint">将使用 kubernetes.io/hostname 标签约束 VictoriaMetrics 到所选节点。</p></div>
@@ -49,17 +54,19 @@
           <section class="monitoring-workload-grid"><SurfaceCard as="article"><template #header><div><h2 class="card-title">CPU 使用最高</h2><p class="status-copy">最近 5 分钟平均</p></div></template><WorkloadTable :rows="workloads.cpu" unit="m" :loading="workloadsLoading" /></SurfaceCard><SurfaceCard as="article"><template #header><div><h2 class="card-title">内存使用最高</h2><p class="status-copy">工作集内存</p></div></template><WorkloadTable :rows="workloads.memory" unit="MiB" :loading="workloadsLoading" /></SurfaceCard></section>
         </template>
 
-        <DiskGrowthWorkspace v-else-if="activeTab === 'disk'" :nodes="nodes" />
-        <LoggingWorkspace v-else-if="activeTab === 'logs'" :nodes="nodes" :storage-classes="storageClasses" />
-        <AlertingWorkspace v-else-if="activeTab === 'alerts'" :nodes="nodes" :monitoring-ready="metricsAvailable" :metrics-node-name="status.node_name" @navigate="navigateFromAlert" />
+        <DiskGrowthWorkspace v-else-if="activeTab === 'disk'" :cluster-id="clusterID" :nodes="nodes" />
+        <AlertingWorkspace v-else-if="activeTab === 'alerts'" :cluster-id="clusterID" :nodes="nodes" :monitoring-ready="metricsAvailable" :metrics-node-name="status.node_name" @navigate="navigateFromAlert" />
       </template>
     </main>
+    </ClusterAgentGate>
+
+    <AlertHistory v-if="activeTab === 'alerts'" :key="clusterID || 'legacy'" :cluster-id="clusterID" />
 
     <Teleport to="body">
       <div v-if="monitoringSettingsOpen" class="overlay monitoring-settings-overlay" @click.self="monitoringSettingsOpen = false">
         <aside class="monitoring-settings-drawer" aria-label="监控设置">
           <header class="drawer-header"><div><h2>监控设置</h2><p>更新指标保留策略与检查采集状态</p></div><button class="icon-button" title="关闭监控设置" aria-label="关闭监控设置" @click="monitoringSettingsOpen = false"><X :size="16" /></button></header>
-          <section class="drawer-section"><div class="drawer-section-heading"><div><h3>运行配置</h3><p>{{ status?.storage_mode === 'host_path' ? '当前为旧宿主机目录存储。迁移会短暂停止监控并保留原目录。' : '平台自动管理监控 PVC，通用存储页面只读展示。' }}</p></div></div><div class="settings-field"><span>数据节点</span><strong>{{ nodeDisplayName(status?.node_name) || '-' }}</strong><small>{{ status?.node_name || '-' }}</small></div><div v-if="status?.storage_mode === 'host_path'" class="settings-field"><span>旧数据目录</span><strong class="metric-code">{{ status?.data_path || '-' }}</strong></div><div v-else class="settings-field"><span>系统存储卷</span><strong class="metric-code">{{ status?.pvc_name || '-' }}</strong><small>{{ status?.storage || '-' }}{{ status?.storage_class_name ? ` · ${status.storage_class_name}` : '' }}</small></div><label class="form-group settings-retention"><span class="form-label">指标保留天数</span><input v-model.number="settingsForm.retention_days" class="form-input" type="number" min="1" max="365" required /><span class="form-hint">修改后 VictoriaMetrics 会滚动更新，超出新保留周期的数据将被自动清理。</span></label><div v-if="status?.storage_mode === 'host_path'" class="migration-settings"><p v-if="status?.storage_migration" class="form-hint">{{ status.storage_migration.message }}</p><div v-else class="form-row"><label class="form-group"><span class="form-label">迁移 PVC 容量</span><input v-model.trim="migrationForm.storage" class="form-input" placeholder="10Gi" /></label><label class="form-group"><span class="form-label">StorageClass</span><SelectMenu v-model="migrationForm.storage_class_name" class="form-select"><option value="">使用集群默认 StorageClass</option><option v-for="item in storageClasses" :key="item.name" :value="item.name">{{ item.name }}{{ item.is_default ? '（默认）' : '' }}</option></SelectMenu></label></div><button v-if="!status?.storage_migration" class="btn btn-danger" :disabled="migrating || !migrationForm.storage" @click="migrateLegacyStorage">{{ migrating ? '迁移中...' : '迁移到系统 PVC' }}</button></div><div class="drawer-actions"><button class="btn btn-primary" data-testid="save-monitoring-config" :disabled="monitoringSettingsSaving || !validRetentionDays" @click="saveMonitoringConfig">{{ monitoringSettingsSaving ? '保存中...' : '保存运行配置' }}</button></div></section>
+          <section class="drawer-section"><div class="drawer-section-heading"><div><h3>运行配置</h3><p>{{ status?.storage_mode === 'host_path' ? '当前为旧宿主机目录存储。迁移会短暂停止监控并保留原目录。' : '平台自动管理监控 PVC，通用存储页面只读展示。' }}</p></div></div><div class="settings-field"><span>数据节点</span><strong>{{ nodeDisplayName(status?.node_name) || '-' }}</strong><small>{{ status?.node_name || '-' }}</small></div><div v-if="status?.storage_mode === 'host_path'" class="settings-field"><span>旧数据目录</span><strong class="metric-code">{{ status?.data_path || '-' }}</strong></div><div v-else class="settings-field"><span>系统存储卷</span><strong class="metric-code">{{ status?.pvc_name || '-' }}</strong><small>{{ status?.storage || '-' }}{{ status?.storage_class_name ? ` · ${status.storage_class_name}` : '' }}</small></div><label class="form-group settings-retention"><span class="form-label">指标保留天数</span><input v-model.number="settingsForm.retention_days" class="form-input" type="number" min="1" max="365" required /><span class="form-hint">修改后 VictoriaMetrics 会滚动更新，超出新保留周期的数据将被自动清理。</span></label><div v-if="status?.storage_mode === 'host_path'" class="migration-settings"><p v-if="status?.storage_migration" class="form-hint">{{ status.storage_migration.message }}</p><div v-else class="form-row"><label class="form-group"><span class="form-label">迁移 PVC 容量</span><input v-model.trim="migrationForm.storage" class="form-input" placeholder="10Gi" /></label><label class="form-group"><span class="form-label">StorageClass</span><SelectMenu v-model="migrationForm.storage_class_name" class="form-select"><option value="">使用集群默认 StorageClass</option><option v-for="item in storageClasses" :key="item.name" :value="item.name">{{ item.name }}{{ item.is_default ? '（默认）' : '' }}</option></SelectMenu></label></div><button v-if="!status?.storage_migration" class="btn btn-danger" :disabled="migrating || !migrationForm.storage" @click="migrateLegacyStorage">{{ migrating ? '迁移中...' : '迁移到系统 PVC' }}</button></div><div class="drawer-actions"><button class="btn btn-primary" data-testid="save-monitoring-config" :disabled="nodeMigrating || monitoringSettingsSaving || !validRetentionDays" @click="saveMonitoringConfig">{{ monitoringSettingsSaving ? '保存中...' : '保存运行配置' }}</button></div></section>
           <section class="drawer-section"><div class="drawer-section-heading"><div><h3>采集目标</h3><p>节点、容器与 node-exporter</p></div><span class="badge" :class="targetSummary.failed ? 'badge-danger' : 'badge-online'">{{ targetSummary.active }} 个在线</span></div><div v-if="targetsLoading" class="empty-inline">正在读取采集状态...</div><div v-else-if="targetRows.length" class="target-list"><div v-for="target in targetRows" :key="target.key" class="target-row"><span><strong>{{ target.job }}</strong><small>{{ target.instance }}</small></span><span class="badge" :class="target.health === 'up' ? 'badge-online' : 'badge-danger'">{{ target.health === 'up' ? '正常' : '异常' }}</span></div></div><div v-else class="empty-inline">等待首次指标采集</div></section>
           <section class="drawer-section"><div class="drawer-section-heading"><div><h3>采集配置</h3><p>趋势图需要按节点标签采集</p></div></div><p class="diagnostic-copy">同步后约 1 分钟开始出现按节点拆分的趋势数据。</p><button class="btn" :disabled="syncing" @click="syncConfiguration">{{ syncing ? '同步中...' : '同步采集配置' }}</button></section>
           <section class="drawer-section"><div class="drawer-section-heading"><div><h3>高级查询</h3><p>PromQL</p></div></div><div class="query-presets"><button v-for="preset in presets" :key="preset.query" class="btn btn-sm" @click="runQuery(preset.query)">{{ preset.label }}</button></div><form class="query-form" @submit.prevent="runQuery(query)"><input v-model.trim="query" class="form-input" placeholder="up" maxlength="2048" /><button class="btn btn-primary" :disabled="querying || !query">{{ querying ? '查询中...' : '查询' }}</button></form><pre v-if="queryResult" class="query-result">{{ queryResult }}</pre><div v-else class="empty-inline">输入 PromQL 查询监控原始指标</div></section>
@@ -67,24 +74,29 @@
       </div>
     </Teleport>
 
-    <div v-if="confirmUninstall" class="overlay" @click.self="confirmUninstall = false"><div class="modal"><h2 class="modal-title">卸载 VictoriaMetrics</h2><p class="confirm-copy">将删除监控工作负载和采集配置，但不会删除{{ status?.storage_mode === 'host_path' ? '旧数据目录' : '系统管理 PVC' }}。</p><div class="modal-actions"><button class="btn" @click="confirmUninstall = false">取消</button><button class="btn btn-danger" :disabled="uninstalling" @click="uninstall">{{ uninstalling ? '卸载中...' : '确认卸载' }}</button></div></div></div>
+    <div v-if="confirmUninstall" class="overlay" @click.self="confirmUninstall = false"><div class="modal"><h2 class="modal-title">卸载 VictoriaMetrics</h2><p class="confirm-copy">将删除监控工作负载和采集配置，但不会删除{{ status?.storage_mode === 'host_path' ? '旧数据目录' : '系统管理 PVC' }}。</p><div class="modal-actions"><button class="btn" @click="confirmUninstall = false">取消</button><button class="btn btn-danger" :disabled="nodeMigrating || uninstalling" @click="uninstall">{{ uninstalling ? '卸载中...' : '确认卸载' }}</button></div></div></div>
   </div>
 </template>
 
 <script setup>
 import { computed, defineComponent, h, onMounted, onUnmounted, ref, watch } from 'vue'
 import { ChevronDown, RefreshCw, Settings2, X } from 'lucide-vue-next'
+import PageBackLink from '../components/PageBackLink.vue'
+import { getCluster } from '../api/clusters.js'
 import { getMonitoringDashboard, getMonitoringNodes, getMonitoringStatus, getMonitoringTargets, getStorageClasses, installMonitoring, migrateMonitoringStorage, queryMonitoring, uninstallMonitoring } from '../api/monitoring.js'
 import { useAsyncResource } from '../composables/useAsyncResource.js'
 import { usePolling } from '../composables/usePolling.js'
 import { useRoutedTab } from '../composables/useRoutedTab.js'
 import EmptyState from '../components/EmptyState.vue'
+import ClusterAgentGate from '../components/ClusterAgentGate.vue'
 import FeedbackBanner from '../components/FeedbackBanner.vue'
 import SectionHeading from '../components/SectionHeading.vue'
 import SurfaceCard from '../components/SurfaceCard.vue'
 import AlertingWorkspace from './monitoring/AlertingWorkspace.vue'
+import AlertHistory from './monitoring/AlertHistory.vue'
 import DiskGrowthWorkspace from './monitoring/DiskGrowthWorkspace.vue'
 import LoggingWorkspace from './monitoring/LoggingWorkspace.vue'
+import ComponentMigration from './monitoring/ComponentMigration.vue'
 import MetricTrendChart from './monitoring/MetricTrendChart.vue'
 import SectionTabsHeader from '../components/SectionTabsHeader.vue'
 
@@ -95,12 +107,16 @@ const tabs = [
   { id: 'logs', label: '日志' },
   { id: 'alerts', label: '告警' },
 ]
+const props = defineProps({ clusterID: { type: String, default: '' } })
+const requestOptions = signal => props.clusterID ? { clusterID: props.clusterID, ...(signal ? { signal } : {}) } : signal ? { signal } : undefined
 const trendRanges = ['1h', '6h', '24h', '7d']
 const status = ref(null)
+const clusterName = ref('')
 const nodes = ref([])
 const storageClasses = ref([])
-const { activeTab, selectTab } = useRoutedTab({ tabs, defaultTab: 'overview', path: '/monitoring' })
+const { activeTab, selectTab } = useRoutedTab({ tabs, defaultTab: 'overview' })
 const loaded = ref(false)
+const agentAvailable = ref(!props.clusterID)
 const statusError = ref('')
 const trendError = ref('')
 const queryError = ref('')
@@ -114,6 +130,7 @@ const targets = ref(null)
 const monitoringSettingsOpen = ref(false)
 const monitoringSettingsSaving = ref(false)
 const migrating = ref(false)
+const nodeMigrating = ref(false)
 const nodeFilterOpen = ref(false)
 const query = ref('')
 const queryResult = ref('')
@@ -126,20 +143,20 @@ const form = ref({ node_name: '', storage: '10Gi', storage_class_name: '', reten
 const settingsForm = ref({ retention_days: 14 })
 const migrationForm = ref({ storage: '10Gi', storage_class_name: '' })
 const monitoringStateResource = useAsyncResource(({ signal }) => Promise.all([
-  getMonitoringStatus({ signal }),
-  getMonitoringNodes({ signal }),
-  getStorageClasses({ signal }),
+  getMonitoringStatus(requestOptions(signal)),
+  getMonitoringNodes(requestOptions(signal)),
+  getStorageClasses(requestOptions(signal)),
 ]), null)
-const monitoringTargetsResource = useAsyncResource(({ signal }) => getMonitoringTargets({ signal }))
-const monitoringTrendsResource = useAsyncResource(({ signal }, range) => getMonitoringDashboard(range, { signal }))
+const monitoringTargetsResource = useAsyncResource(({ signal }) => getMonitoringTargets(requestOptions(signal)))
+const monitoringTrendsResource = useAsyncResource(({ signal }, range) => getMonitoringDashboard(range, requestOptions(signal)))
 const monitoringWorkloadsResource = useAsyncResource(async ({ signal }) => {
   const [cpu, memory] = await Promise.all([
-    queryMonitoring('topk(12, sum by (namespace, pod) (rate(container_cpu_usage_seconds_total{container!="",image!=""}[5m])) * 1000)', { signal }),
-    queryMonitoring('topk(12, sum by (namespace, pod) (container_memory_working_set_bytes{container!="",image!=""}) / 1024 / 1024)', { signal }),
+    queryMonitoring('topk(12, sum by (namespace, pod) (rate(container_cpu_usage_seconds_total{container!="",image!=""}[5m])) * 1000)', requestOptions(signal)),
+    queryMonitoring('topk(12, sum by (namespace, pod) (container_memory_working_set_bytes{container!="",image!=""}) / 1024 / 1024)', requestOptions(signal)),
   ])
   return { cpu, memory }
 })
-const monitoringQueryResource = useAsyncResource(({ signal }, queryText) => queryMonitoring(queryText, { signal }))
+const monitoringQueryResource = useAsyncResource(({ signal }, queryText) => queryMonitoring(queryText, requestOptions(signal)))
 const targetsLoading = monitoringTargetsResource.loading
 const trendsLoading = monitoringTrendsResource.loading
 const workloadsLoading = monitoringWorkloadsResource.loading
@@ -195,19 +212,48 @@ const RangePicker = defineComponent({
 const WorkloadTable = defineComponent({
   props: { rows: { type: Array, required: true }, unit: { type: String, required: true }, loading: Boolean },
   setup(props) {
-    return () => props.loading ? h('div', { class: 'empty-inline' }, '正在读取工作负载指标...') : props.rows.length ? h('div', { class: 'table-wrap' }, [h('table', { class: 'data-table' }, [h('thead', [h('tr', [h('th', '命名空间'), h('th', 'Pod'), h('th', '当前值')])]), h('tbody', props.rows.map(row => h('tr', { key: `${row.namespace}/${row.pod}` }, [h('td', row.namespace), h('td', { class: 'cell-primary' }, row.pod), h('td', `${row.value.toFixed(props.unit === 'm' ? 0 : 1)} ${props.unit}`)])))])]) : h('div', { class: 'empty-inline' }, '暂未采集到容器资源指标')
+    return () => props.loading ? h('div', { class: 'empty-inline' }, '正在读取工作负载指标...') : props.rows.length ? h('div', { class: 'table-wrap' }, [h(DataTable, null, { default: () => [h('thead', [h('tr', [h('th', '命名空间'), h('th', 'Pod'), h('th', '当前值')])]), h('tbody', props.rows.map(row => h('tr', { key: `${row.namespace}/${row.pod}` }, [h('td', row.namespace), h('td', { class: 'cell-primary' }, row.pod), h('td', `${row.value.toFixed(props.unit === 'm' ? 0 : 1)} ${props.unit}`)])))] })]) : h('div', { class: 'empty-inline' }, '暂未采集到容器资源指标')
   },
 })
 
 onMounted(async () => {
-  await refresh()
+  if (props.clusterID) void loadClusterName(props.clusterID)
 })
+watch(() => props.clusterID, () => {
+  clusterName.value = ''
+  if (props.clusterID) void loadClusterName(props.clusterID)
+  monitoringStateResource.cancel()
+  monitoringTargetsResource.cancel()
+  monitoringTrendsResource.cancel()
+  monitoringWorkloadsResource.cancel()
+  monitoringQueryResource.cancel()
+  status.value = null
+  nodes.value = []
+  storageClasses.value = []
+  loaded.value = false
+  targets.value = null
+  nodeTrends.value = { cpu: [], memory: [], disk: [], network: [] }
+  workloads.value = { cpu: [], memory: [] }
+})
+
+async function loadClusterName(id) {
+  try {
+    const cluster = await getCluster(id)
+    if (id === props.clusterID) clusterName.value = cluster?.name || ''
+  } catch { /* Monitoring remains usable when cluster metadata is unavailable. */ }
+}
 onUnmounted(migrationPolling.stop)
 watch([activeTab, trendRange], async () => {
   if (activeTab.value !== 'overview') monitoringTrendsResource.cancel()
   if (activeTab.value !== 'workloads') monitoringWorkloadsResource.cancel()
-  if (metricsAvailable.value) await loadActiveData()
+  if (!props.clusterID && metricsAvailable.value) await loadActiveData()
 })
+watch([() => props.clusterID, activeTab], () => { agentAvailable.value = !props.clusterID })
+
+function handleAgentReady() {
+  agentAvailable.value = true
+  void refresh()
+}
 
 async function refresh() {
   statusError.value = ''
@@ -238,20 +284,20 @@ function nodeDisplayName(name) { return nodes.value.find(node => node.name === n
 async function install() {
   installing.value = true
   mutationError.value = ''
-  try { status.value = await installMonitoring(form.value); await refresh() } catch (e) { mutationError.value = e.message || '安装 VictoriaMetrics 失败' } finally { installing.value = false }
+  try { status.value = await installMonitoring(form.value, requestOptions()); await refresh() } catch (e) { mutationError.value = e.message || '安装 VictoriaMetrics 失败' } finally { installing.value = false }
 }
 
 async function uninstall() {
   uninstalling.value = true
   mutationError.value = ''
-  try { await uninstallMonitoring(); confirmUninstall.value = false; targets.value = null; queryResult.value = ''; await refresh() } catch (e) { mutationError.value = e.message || '卸载 VictoriaMetrics 失败' } finally { uninstalling.value = false }
+  try { await uninstallMonitoring(requestOptions()); confirmUninstall.value = false; targets.value = null; queryResult.value = ''; await refresh() } catch (e) { mutationError.value = e.message || '卸载 VictoriaMetrics 失败' } finally { uninstalling.value = false }
 }
 
 async function syncConfiguration() {
   syncing.value = true
   mutationError.value = ''
   try {
-    await installMonitoring({ node_name: status.value.node_name, retention_days: status.value.retention_days })
+    await installMonitoring({ node_name: status.value.node_name, retention_days: status.value.retention_days }, requestOptions())
     await refresh()
   } catch (e) { mutationError.value = e.message || '同步采集配置失败' } finally { syncing.value = false }
 }
@@ -271,7 +317,7 @@ async function saveMonitoringConfig() {
     await installMonitoring({
       node_name: status.value.node_name,
       retention_days: settingsForm.value.retention_days,
-    })
+    }, requestOptions())
     monitoringSettingsOpen.value = false
     await refresh()
   } catch (e) { mutationError.value = e.message || '更新监控运行配置失败' } finally { monitoringSettingsSaving.value = false }
@@ -283,7 +329,7 @@ async function migrateLegacyStorage() {
   migrating.value = true
   mutationError.value = ''
   try {
-    status.value = await migrateMonitoringStorage(migrationForm.value)
+    status.value = await migrateMonitoringStorage(migrationForm.value, requestOptions())
     await refresh()
   } catch (e) { mutationError.value = e.message || '迁移 VictoriaMetrics 存储失败' } finally { migrating.value = false }
 }

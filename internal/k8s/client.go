@@ -14,15 +14,17 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/metadata"
 	"k8s.io/client-go/rest"
 )
 
 // Client K8s 客户端封装
 type Client struct {
-	Clientset     kubernetes.Interface
-	DynamicClient dynamic.Interface
-	Config        *rest.Config
-	ctx           context.Context
+	Clientset      kubernetes.Interface
+	DynamicClient  dynamic.Interface
+	MetadataClient metadata.Interface
+	Config         *rest.Config
+	ctx            context.Context
 
 	ingressControllerMu          sync.Mutex
 	ingressControllerCache       *IngressControllerStatus
@@ -123,12 +125,25 @@ func newClientFromRestConfig(config *rest.Config) (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create dynamic client: %w", err)
 	}
+	metadataClient, err := metadata.NewForConfig(config)
+	if err != nil {
+		return nil, fmt.Errorf("create metadata client: %w", err)
+	}
 
 	return &Client{
-		Clientset:     clientset,
-		DynamicClient: dynamicClient,
-		Config:        config,
+		Clientset:      clientset,
+		DynamicClient:  dynamicClient,
+		MetadataClient: metadataClient,
+		Config:         config,
 	}, nil
+}
+
+// NewClientFromRestConfig builds a typed, dynamic and metadata Kubernetes
+// client from an already prepared REST configuration. Cluster-agent access
+// uses this entry point so callers can provide a per-cluster mTLS transport
+// without changing the process-wide local client.
+func NewClientFromRestConfig(config *rest.Config) (*Client, error) {
+	return newClientFromRestConfig(config)
 }
 
 // withContext returns an isolated client view carrying the caller's
@@ -158,6 +173,19 @@ func (c *Client) dynamicClient() (dynamic.Interface, error) {
 		return nil, fmt.Errorf("Kubernetes dynamic client 未初始化")
 	}
 	return dynamic.NewForConfig(c.Config)
+}
+
+func (c *Client) metadataClient() (metadata.Interface, error) {
+	if c == nil {
+		return nil, fmt.Errorf("Kubernetes metadata 客户端未初始化")
+	}
+	if c.MetadataClient != nil {
+		return c.MetadataClient, nil
+	}
+	if c.Config == nil {
+		return nil, fmt.Errorf("Kubernetes metadata 客户端未初始化")
+	}
+	return metadata.NewForConfig(c.Config)
 }
 
 // CheckCRDContext checks a CRD using the caller's cancellation boundary.

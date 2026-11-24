@@ -9,8 +9,11 @@ import (
 
 // ServerRepository contains only the server records managed alongside cluster nodes.
 type ServerRepository interface {
+	SaveServerSpeedTest(*model.ServerSpeedTest) error
+	ListServerSpeedTests(uint, int, int) ([]model.ServerSpeedTest, int64, error)
 	CreateServer(*model.Server) error
 	GetServer(uint) (*model.Server, error)
+	GetServerByHost(string) (*model.Server, error)
 	ListServers() ([]model.Server, error)
 	UpdateServer(*model.Server) error
 	DeleteServer(uint) error
@@ -38,6 +41,12 @@ type ClusterDNSRepository interface {
 	CreateClusterDNSPolicy(*model.ClusterDNSPolicy) error
 }
 
+type ClusterScopedDNSRepository interface {
+	GetActiveClusterDNSPolicyForCluster(uint) (*model.ClusterDNSPolicy, error)
+	ListClusterDNSPoliciesForCluster(uint, int) ([]model.ClusterDNSPolicy, error)
+	CreateClusterDNSPolicyForCluster(*model.ClusterDNSPolicy, uint) error
+}
+
 // SiteRepository owns legacy server-backed site and certificate records.
 type SiteRepository interface {
 	CreateSite(*model.Site) error
@@ -61,7 +70,6 @@ type NetworkRepository interface {
 	GetManagedDomainByHostname(string) (*model.ManagedDomain, error)
 	ListManagedDomains(...uint) ([]model.ManagedDomain, error)
 	ListUnassignedManagedDomains() ([]model.ManagedDomain, error)
-	ListClaimableManagedDomains(string) ([]model.ManagedDomain, error)
 	CreateManagedDomain(*model.ManagedDomain) error
 	UpdateManagedDomain(*model.ManagedDomain) error
 	DeleteManagedDomain(uint) error
@@ -136,6 +144,7 @@ type PlatformReleaseRepository interface {
 type PlatformEndpointRepository interface {
 	PlatformReleaseRepository
 	ListPlatformReleases(int) ([]model.PlatformRelease, error)
+	ListPlatformReleasesPage(int, int) ([]model.PlatformRelease, int64, error)
 	GetPlatformEndpoint() (*model.PlatformEndpoint, error)
 	SavePlatformEndpoint(*model.PlatformEndpoint) error
 	GetManagedDomainByHostname(string) (*model.ManagedDomain, error)

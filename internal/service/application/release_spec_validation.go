@@ -11,6 +11,7 @@ import (
 
 func ValidateReleaseSpec(spec ReleaseSpec) []ValidationIssue {
 	issues := make([]ValidationIssue, 0)
+	issues = append(issues, validateMigrationSpec(spec.Migration)...)
 	if strings.TrimSpace(spec.Image) == "" {
 		issues = append(issues, ValidationIssue{Field: "image", Message: "镜像不能为空"})
 	}
@@ -22,6 +23,9 @@ func ValidateReleaseSpec(spec ReleaseSpec) []ValidationIssue {
 	}
 	issues = append(issues, validateContainerArguments("command", spec.Command)...)
 	issues = append(issues, validateContainerArguments("args", spec.Args)...)
+	if spec.DNSNDots != nil && (*spec.DNSNDots < 0 || *spec.DNSNDots > 15) {
+		issues = append(issues, ValidationIssue{Field: "dns_ndots", Message: "DNS ndots 必须在 0 到 15 之间"})
+	}
 	if strings.TrimSpace(spec.NodeName) != "" && len(validation.IsDNS1123Subdomain(spec.NodeName)) > 0 {
 		issues = append(issues, ValidationIssue{Field: "node_name", Message: "部署节点名称无效"})
 	}
@@ -52,6 +56,8 @@ func ValidateReleaseSpec(spec ReleaseSpec) []ValidationIssue {
 	issues = append(issues, validateFileMounts(spec.FileMounts, enabledStringMap(spec.Config, spec.ConfigDisabled), enabledStringMap(spec.Secrets, spec.SecretsDisabled))...)
 	issues = append(issues, validateManagedKeys("config_managed_keys", spec.ConfigManagedKeys, spec.Config, spec.ConfigDisabled)...)
 	issues = append(issues, validateManagedKeys("secret_managed_keys", spec.SecretManagedKeys, spec.Secrets, spec.SecretsDisabled)...)
+	issues = append(issues, validateFileKeys("config_file_keys", spec.ConfigFileKeys, spec.Config)...)
+	issues = append(issues, validateFileKeys("secret_file_keys", spec.SecretFileKeys, spec.Secrets)...)
 	parseQuantity := func(field, value string) *resource.Quantity {
 		quantity, err := resource.ParseQuantity(value)
 		if err != nil || strings.TrimSpace(value) == "" {
@@ -129,6 +135,19 @@ func ValidateReleaseSpec(spec ReleaseSpec) []ValidationIssue {
 		}
 	default:
 		issues = append(issues, ValidationIssue{Field: "endpoint.exposure", Message: "暴露模式必须为 cluster、tailnet 或 public"})
+	}
+	return issues
+}
+
+func validateFileKeys(field string, keys []string, values map[string]string) []ValidationIssue {
+	var issues []ValidationIssue
+	seen := make(map[string]bool)
+	for _, key := range keys {
+		_, exists := values[key]
+		if !exists || seen[key] {
+			issues = append(issues, ValidationIssue{Field: field, Message: "文件键必须存在且不能重复"})
+		}
+		seen[key] = true
 	}
 	return issues
 }

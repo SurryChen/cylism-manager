@@ -67,3 +67,8 @@ func TestWorkflowRejectsInvalidNotification(t *testing.T) {
 		t.Fatal("expected invalid notification error")
 	}
 }
+
+func (f *workflowStoreFake) ListAlertEventPage(limit, offset int) ([]model.AlertEvent, int64, error) {
+	start := min(offset, len(f.events))
+	return f.events[start:min(start+limit, len(f.events))], int64(len(f.events)), nil
+}

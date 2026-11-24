@@ -121,6 +121,9 @@ func TestKubernetesApplierPreflightRequiresActiveNamespace(t *testing.T) {
 	if err := applier.Preflight(context.Background(), application, ReleaseSpec{Endpoint: EndpointSpec{Exposure: ExposureCluster}}); err != nil {
 		t.Fatalf("expected active namespace preflight to pass: %v", err)
 	}
+	if err := applier.Preflight(context.Background(), application, ReleaseSpec{NodeName: "missing-node", Endpoint: EndpointSpec{Exposure: ExposureCluster}}); err == nil || !strings.Contains(err.Error(), "部署节点") {
+		t.Fatalf("expected missing deployment node to fail preflight: %v", err)
+	}
 }
 
 func TestKubernetesApplierPreflightValidatesFileMountSources(t *testing.T) {
@@ -150,12 +153,46 @@ func TestKubernetesApplierPreflightValidatesFileMountSources(t *testing.T) {
 	}
 }
 
+func TestKubernetesApplierValidatesExistingPVCAndPodOccupancy(t *testing.T) {
+	claim := &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{Name: "shared-data", Namespace: "dev"},
+		Status:     corev1.PersistentVolumeClaimStatus{Phase: corev1.ClaimBound},
+	}
+	other := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "old-service-0", Namespace: "dev"},
+		Spec:       corev1.PodSpec{Volumes: []corev1.Volume{{Name: "data", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: claim.Name}}}}},
+		Status:     corev1.PodStatus{Phase: corev1.PodRunning},
+	}
+	clientset := k8sfake.NewSimpleClientset(claim, other)
+	applier := NewKubernetesApplier(&k8sclient.Client{Clientset: clientset})
+	app := ApplicationContext{Namespace: "dev", ApplicationName: "new-service", EnvironmentID: 2}
+	spec := ReleaseSpec{Replicas: 1, Volumes: []VolumeMountSpec{{ClaimName: claim.Name, MountPath: "/data"}}}
+	if err := applier.ValidatePersistentVolumeClaims(context.Background(), app, spec); err == nil || !strings.Contains(err.Error(), "old-service-0") {
+		t.Fatalf("expected occupying Pod to block PVC: %v", err)
+	}
+	other.Labels = map[string]string{ApplicationNameLabel: app.ApplicationName, ManagedByLabel: ManagedByValue}
+	if _, err := clientset.CoreV1().Pods("dev").Update(context.Background(), other, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := applier.ValidatePersistentVolumeClaims(context.Background(), app, spec); err != nil {
+		t.Fatalf("same application should be allowed to reuse PVC: %v", err)
+	}
+	claim.Labels = map[string]string{k8sclient.ManagedByLabel: k8sclient.ManagedByValue, k8sclient.InfrastructureLabel: k8sclient.InfrastructureLoki}
+	if _, err := clientset.CoreV1().PersistentVolumeClaims("dev").Update(context.Background(), claim, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := applier.ValidatePersistentVolumeClaims(context.Background(), app, spec); err == nil || !strings.Contains(err.Error(), "基础设施") {
+		t.Fatalf("expected infrastructure claim to be rejected: %v", err)
+	}
+}
+
 func TestKubernetesApplierWaitReadyReportsImagePullFailure(t *testing.T) {
 	labels := map[string]string{ApplicationNameLabel: "order-api", ReleaseLabel: "2"}
 	clientset := k8sfake.NewSimpleClientset(
 		&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "order-api", Namespace: "dev"}, Spec: appsv1.DeploymentSpec{Selector: &metav1.LabelSelector{MatchLabels: labels}}},
 		&corev1.Pod{
 			ObjectMeta: metav1.ObjectMeta{Name: "order-api-abc", Namespace: "dev", Labels: labels},
+			Spec:       corev1.PodSpec{NodeName: "worker-a"},
 			Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{{
 				Name:  "order-api",
 				State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "ImagePullBackOff", Message: "failed to pull image registry.example.com/order-api:1.2.3"}},
@@ -164,7 +201,7 @@ func TestKubernetesApplierWaitReadyReportsImagePullFailure(t *testing.T) {
 	)
 	applier := NewKubernetesApplier(&k8sclient.Client{Clientset: clientset})
 	err := applier.WaitReady(context.Background(), ApplicationContext{Namespace: "dev", ApplicationName: "order-api", ReleaseSequence: 2}, ReleaseSpec{Replicas: 1})
-	if err == nil || !strings.Contains(err.Error(), "ImagePullBackOff") || !strings.Contains(err.Error(), "order-api-abc") {
+	if err == nil || !strings.Contains(err.Error(), "ImagePullBackOff") || !strings.Contains(err.Error(), "order-api-abc") || !strings.Contains(err.Error(), "节点 worker-a") {
 		t.Fatalf("expected image pull diagnostic, got %v", err)
 	}
 }
@@ -262,23 +299,13 @@ func TestKubernetesApplierWaitReadyIgnoresFailedPodFromOlderRelease(t *testing.T
 	}
 }
 
-func TestKubernetesApplierVerifyImageRejectsInvalidReference(t *testing.T) {
+func TestKubernetesApplierValidateImageReference(t *testing.T) {
 	applier := NewKubernetesApplier(nil)
-	err := applier.VerifyImage(context.Background(), ReleaseSpec{Image: "invalid image reference"})
+	err := applier.ValidateImageReference(context.Background(), ReleaseSpec{Image: "invalid image reference"})
 	if err == nil || !strings.Contains(err.Error(), "镜像地址无效") {
 		t.Fatalf("expected invalid image reference failure, got %v", err)
 	}
-}
-
-func TestImageVerificationReferenceUsesNodeMirror(t *testing.T) {
-	ref, err := imageVerificationReference(ReleaseSpec{
-		Image:                     "zenika/alpine-chrome:124",
-		ImageVerificationEndpoint: "https://docker.1panel.live",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if ref.Name() != "docker.1panel.live/zenika/alpine-chrome:124" {
-		t.Fatalf("expected node mirror reference, got %q", ref.Name())
+	if err := applier.ValidateImageReference(context.Background(), ReleaseSpec{Image: "unreachable.invalid/team/api:1.0.0"}); err != nil {
+		t.Fatalf("valid reference should not require registry access: %v", err)
 	}
 }

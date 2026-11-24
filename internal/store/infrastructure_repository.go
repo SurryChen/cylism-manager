@@ -8,6 +8,8 @@ import (
 	"gorm.io/gorm"
 )
 
+var ErrServerProxyInUse = errors.New("该服务器仍被其他服务器用作代理节点")
+
 func (s *Store) GetActiveClusterDNSPolicy() (*model.ClusterDNSPolicy, error) {
 	var policy model.ClusterDNSPolicy
 	err := s.db.Where("active = ?", true).Order("revision desc").First(&policy).Error
@@ -37,6 +39,37 @@ func (s *Store) CreateClusterDNSPolicy(policy *model.ClusterDNSPolicy) error {
 	})
 }
 
+func (s *Store) GetActiveClusterDNSPolicyForCluster(clusterID uint) (*model.ClusterDNSPolicy, error) {
+	var policy model.ClusterDNSPolicy
+	err := s.db.Where("cluster_id = ? AND active = ?", clusterID, true).Order("revision desc").First(&policy).Error
+	return &policy, err
+}
+
+func (s *Store) ListClusterDNSPoliciesForCluster(clusterID uint, limit int) ([]model.ClusterDNSPolicy, error) {
+	if limit < 1 || limit > 50 {
+		limit = 20
+	}
+	var policies []model.ClusterDNSPolicy
+	err := s.db.Where("cluster_id = ?", clusterID).Order("revision desc").Limit(limit).Find(&policies).Error
+	return policies, err
+}
+
+func (s *Store) CreateClusterDNSPolicyForCluster(policy *model.ClusterDNSPolicy, clusterID uint) error {
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		var maxRevision uint
+		// Revision remains globally unique for compatibility with existing
+		// databases; policies are still active and listed per cluster.
+		if err := tx.Model(&model.ClusterDNSPolicy{}).Select("COALESCE(MAX(revision), 0)").Scan(&maxRevision).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&model.ClusterDNSPolicy{}).Where("cluster_id = ? AND active = ?", clusterID, true).Update("active", false).Error; err != nil {
+			return err
+		}
+		policy.ClusterID, policy.Revision, policy.Active = clusterID, maxRevision+1, true
+		return tx.Create(policy).Error
+	})
+}
+
 // GetEnvironmentByID is shared infrastructure read state: PVC, domain and
 // certificate workflows need the namespace but do not own Environment writes.
 func (s *Store) GetEnvironmentByID(environmentID uint) (*model.Environment, error) {
@@ -46,12 +79,12 @@ func (s *Store) GetEnvironmentByID(environmentID uint) (*model.Environment, erro
 }
 
 func (s *Store) CreateServer(server *model.Server) error {
-	return s.db.Create(server).Error
+	return s.db.Omit("SSHProxy").Create(server).Error
 }
 
 func (s *Store) GetServer(id uint) (*model.Server, error) {
 	var server model.Server
-	err := s.db.First(&server, id).Error
+	err := s.db.Preload("SSHProxy").First(&server, id).Error
 	if err != nil {
 		return nil, err
 	}
@@ -60,23 +93,43 @@ func (s *Store) GetServer(id uint) (*model.Server, error) {
 
 func (s *Store) GetServerByHost(host string) (*model.Server, error) {
 	var server model.Server
-	err := s.db.Where("host = ?", host).First(&server).Error
+	err := s.db.Preload("SSHProxy").Where("host = ?", host).First(&server).Error
 	return &server, err
 }
 
 func (s *Store) ListServers() ([]model.Server, error) {
 	var servers []model.Server
-	err := s.db.Order("created_at desc").Find(&servers).Error
+	err := s.db.Preload("SSHProxy").Order("created_at desc, id desc").Find(&servers).Error
 	return servers, err
 }
 
 func (s *Store) UpdateServer(server *model.Server) error {
-	return s.db.Save(server).Error
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		var running int64
+		if err := tx.Model(&model.ClusterDeployment{}).Where("server_id = ? AND status = ? AND operation IN ?", server.ID, "running", []string{"remove", "cleanup"}).Count(&running).Error; err != nil {
+			return err
+		}
+		if running > 0 {
+			return ErrClusterDeploymentConflict
+		}
+		if server.ProxyServerID != nil {
+			var count int64
+			if err := tx.Model(&model.Server{}).Where("proxy_server_id = ?", server.ID).Count(&count).Error; err != nil {
+				return err
+			}
+			if count > 0 {
+				return ErrServerProxyInUse
+			}
+		}
+		// Cleanup state belongs to the task transaction, not a possibly stale
+		// server-edit form loaded before the task finished.
+		return tx.Omit("SSHProxy", "K3sRemovalTaskID").Save(server).Error
+	})
 }
 
 func (s *Store) UnbindServersFromClusterNode(nodeName string) error {
 	return s.db.Model(&model.Server{}).
-		Where("k8s_node_name = ?", nodeName).
+		Where("k8s_node_name = ? AND cluster_id IS NULL", nodeName).
 		Updates(map[string]interface{}{
 			"cluster_role":  "",
 			"k8s_node_name": "",
@@ -84,7 +137,22 @@ func (s *Store) UnbindServersFromClusterNode(nodeName string) error {
 }
 
 func (s *Store) DeleteServer(id uint) error {
-	return s.db.Delete(&model.Server{}, id).Error
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		var count int64
+		if err := tx.Model(&model.ClusterDeployment{}).Where("server_id = ? AND status = ?", id, "running").Count(&count).Error; err != nil {
+			return err
+		}
+		if count > 0 {
+			return ErrClusterDeploymentConflict
+		}
+		if err := tx.Model(&model.Server{}).Where("proxy_server_id = ?", id).Count(&count).Error; err != nil {
+			return err
+		}
+		if count > 0 {
+			return ErrServerProxyInUse
+		}
+		return tx.Delete(&model.Server{}, id).Error
+	})
 }
 
 func (s *Store) CreateDNSCredential(credential *model.DNSCredential) error {
@@ -93,7 +161,7 @@ func (s *Store) CreateDNSCredential(credential *model.DNSCredential) error {
 
 func (s *Store) ListDNSCredentials() ([]model.DNSCredential, error) {
 	var credentials []model.DNSCredential
-	err := s.db.Order("created_at desc").Find(&credentials).Error
+	err := s.db.Order("created_at desc, id desc").Find(&credentials).Error
 	for index := range credentials {
 		credentials[index].SecretConfigured = credentials[index].EncryptedValues != ""
 	}
@@ -117,6 +185,61 @@ func (s *Store) DeleteDNSCredential(id uint) error {
 	return s.db.Delete(&model.DNSCredential{}, id).Error
 }
 
+// ClusterDNSCredentials keeps credentials for one cluster separate from legacy records.
+func (s *Store) ClusterDNSCredentials(clusterID uint) *ClusterDNSCredentialStore {
+	return &ClusterDNSCredentialStore{db: s.db, clusterID: clusterID}
+}
+
+type ClusterDNSCredentialStore struct {
+	db        *gorm.DB
+	clusterID uint
+}
+
+func (s *ClusterDNSCredentialStore) ListDNSCredentials() ([]model.DNSCredential, error) {
+	var credentials []model.DNSCredential
+	err := s.db.Where("cluster_id = ?", s.clusterID).Order("created_at desc, id desc").Find(&credentials).Error
+	for index := range credentials {
+		credentials[index].SecretConfigured = credentials[index].EncryptedValues != ""
+	}
+	return credentials, err
+}
+
+func (s *ClusterDNSCredentialStore) GetDNSCredential(id uint) (*model.DNSCredential, error) {
+	var credential model.DNSCredential
+	if err := s.db.Where("cluster_id = ?", s.clusterID).First(&credential, id).Error; err != nil {
+		return nil, err
+	}
+	credential.SecretConfigured = credential.EncryptedValues != ""
+	return &credential, nil
+}
+
+func (s *ClusterDNSCredentialStore) CreateDNSCredential(credential *model.DNSCredential) error {
+	credential.ClusterID = s.clusterID
+	return s.db.Create(credential).Error
+}
+
+func (s *ClusterDNSCredentialStore) UpdateDNSCredential(credential *model.DNSCredential) error {
+	if credential.ClusterID != s.clusterID {
+		return gorm.ErrRecordNotFound
+	}
+	result := s.db.Model(&model.DNSCredential{}).Where("id = ? AND cluster_id = ?", credential.ID, s.clusterID).Updates(map[string]interface{}{
+		"name": credential.Name, "provider": credential.Provider, "namespace": credential.Namespace,
+		"encrypted_values": credential.EncryptedValues, "secret_name": credential.SecretName,
+		"enabled": credential.Enabled,
+	})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
+}
+
+func (s *ClusterDNSCredentialStore) DeleteDNSCredential(id uint) error {
+	return s.db.Where("id = ? AND cluster_id = ?", id, s.clusterID).Delete(&model.DNSCredential{}).Error
+}
+
 func (s *Store) CreateManagedDomain(domain *model.ManagedDomain) error {
 	return s.db.Create(domain).Error
 }
@@ -134,12 +257,6 @@ func (s *Store) ListManagedDomains(environmentID ...uint) ([]model.ManagedDomain
 func (s *Store) ListUnassignedManagedDomains() ([]model.ManagedDomain, error) {
 	var domains []model.ManagedDomain
 	err := s.db.Where("environment_id = 0").Order("hostname asc").Find(&domains).Error
-	return domains, err
-}
-
-func (s *Store) ListClaimableManagedDomains(namespace string) ([]model.ManagedDomain, error) {
-	var domains []model.ManagedDomain
-	err := s.db.Where("environment_id = 0 AND namespace = ?", namespace).Order("hostname asc").Find(&domains).Error
 	return domains, err
 }
 
@@ -175,7 +292,7 @@ func (s *Store) GetPersistentVolumeMigration(id uint) (*model.PersistentVolumeMi
 
 func (s *Store) ListPersistentVolumeMigrations(environmentID uint) ([]model.PersistentVolumeMigration, error) {
 	var migrations []model.PersistentVolumeMigration
-	query := s.db.Order("created_at desc")
+	query := s.db.Order("created_at desc, id desc")
 	if environmentID != 0 {
 		query = query.Where("environment_id = ?", environmentID)
 	}
@@ -186,7 +303,7 @@ func (s *Store) ListPersistentVolumeMigrations(environmentID uint) ([]model.Pers
 func (s *Store) FindActivePVCMigration(environmentID uint, sourcePVCName string) (*model.PersistentVolumeMigration, error) {
 	var migration model.PersistentVolumeMigration
 	terminal := []string{model.PVCMigrationStatusSucceeded, model.PVCMigrationStatusFailed, model.PVCMigrationStatusRolledBack, model.PVCMigrationStatusCleaned}
-	err := s.db.Where("environment_id = ? AND source_pvc_name = ? AND status NOT IN ?", environmentID, sourcePVCName, terminal).Order("created_at desc").First(&migration).Error
+	err := s.db.Where("environment_id = ? AND source_pvc_name = ? AND status NOT IN ?", environmentID, sourcePVCName, terminal).Order("created_at desc, id desc").First(&migration).Error
 	return &migration, err
 }
 
@@ -212,7 +329,7 @@ func (s *Store) GetPersistentVolumeBackup(id uint) (*model.PersistentVolumeBacku
 
 func (s *Store) ListPersistentVolumeBackups(environmentID uint, pvcName string) ([]model.PersistentVolumeBackup, error) {
 	var backups []model.PersistentVolumeBackup
-	err := s.db.Where("environment_id = ? AND pvc_name = ?", environmentID, pvcName).Order("created_at desc").Find(&backups).Error
+	err := s.db.Where("environment_id = ? AND pvc_name = ?", environmentID, pvcName).Order("created_at desc, id desc").Find(&backups).Error
 	return backups, err
 }
 
@@ -232,13 +349,13 @@ func (s *Store) GetHostDirectoryPVCImport(id uint) (*model.HostDirectoryPVCImpor
 
 func (s *Store) ListHostDirectoryPVCImports(environmentID uint, pvcName string) ([]model.HostDirectoryPVCImport, error) {
 	var tasks []model.HostDirectoryPVCImport
-	err := s.db.Where("environment_id = ? AND pvc_name = ?", environmentID, pvcName).Order("created_at desc").Find(&tasks).Error
+	err := s.db.Where("environment_id = ? AND pvc_name = ?", environmentID, pvcName).Order("created_at desc, id desc").Find(&tasks).Error
 	return tasks, err
 }
 
 func (s *Store) FindActiveHostDirectoryPVCImport(environmentID uint, pvcName string) (*model.HostDirectoryPVCImport, error) {
 	var task model.HostDirectoryPVCImport
-	err := s.db.Where("environment_id = ? AND pvc_name = ? AND status NOT IN ?", environmentID, pvcName, []string{model.PVCImportStatusSucceeded, model.PVCImportStatusFailed}).Order("created_at desc").First(&task).Error
+	err := s.db.Where("environment_id = ? AND pvc_name = ? AND status NOT IN ?", environmentID, pvcName, []string{model.PVCImportStatusSucceeded, model.PVCImportStatusFailed}).Order("created_at desc, id desc").First(&task).Error
 	return &task, err
 }
 
@@ -269,13 +386,13 @@ func (s *Store) GetSite(id uint) (*model.Site, error) {
 
 func (s *Store) ListSites() ([]model.Site, error) {
 	var sites []model.Site
-	err := s.db.Preload("Cert").Order("created_at desc").Find(&sites).Error
+	err := s.db.Preload("Cert").Order("created_at desc, id desc").Find(&sites).Error
 	return sites, err
 }
 
 func (s *Store) ListSitesByServer(serverID uint) ([]model.Site, error) {
 	var sites []model.Site
-	err := s.db.Where("server_id = ?", serverID).Preload("Cert").Order("created_at desc").Find(&sites).Error
+	err := s.db.Where("server_id = ?", serverID).Preload("Cert").Order("created_at desc, id desc").Find(&sites).Error
 	return sites, err
 }
 

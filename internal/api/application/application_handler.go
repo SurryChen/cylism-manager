@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	apiShared "github.com/cylism/cylism-manager/internal/api/shared"
+	"github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/repository"
 	applicationservice "github.com/cylism/cylism-manager/internal/service/application"
@@ -21,6 +22,10 @@ type NamespaceClient interface {
 	CreateNamespace(context.Context, *corev1.Namespace) (*corev1.Namespace, error)
 }
 
+type applicationServerAddressReader interface {
+	ListServers() ([]model.Server, error)
+}
+
 type ApplicationHandler struct {
 	resources        applicationResourceRepository
 	applications     applicationManagementRepository
@@ -29,6 +34,8 @@ type ApplicationHandler struct {
 	encKey           []byte
 	delegationSecret []byte
 	kubernetes       KubernetesAdapter
+	clusterClient    func(context.Context, uint) (*k8s.Client, error)
+	serverAddresses  applicationServerAddressReader
 	workflow         *applicationservice.ReleaseService
 	workloads        *applicationservice.WorkloadService
 	audit            auditservice.Repository
@@ -39,6 +46,7 @@ type ApplicationHandler struct {
 // depending on release-state, integration-session, or domain persistence.
 type applicationManagementRepository interface {
 	repository.ApplicationQueryRepository
+	repository.ApplicationWebhookRepository
 	ListProjects() ([]model.Project, error)
 	CreateProject(*model.Project) error
 	UpdateProject(*model.Project) error
@@ -49,22 +57,31 @@ type applicationManagementRepository interface {
 	CreateEnvironment(*model.Environment) error
 	UpdateEnvironment(*model.Environment) error
 	DeleteEnvironment(uint) error
-	EnsureNamespaceAvailable(string, uint) error
+	EnsureNamespaceAvailable(string, uint, ...uint) error
 	ListEnvironmentNamespaceConflicts() ([]model.NamespaceConflict, error)
-	IsEnvironmentNamespaceConflicted(string) (bool, error)
+	IsEnvironmentNamespaceConflicted(string, ...uint) (bool, error)
 	CountEnvironmentApplications(uint) (int64, error)
 	CreateApplication(*model.Application) error
+	DeleteUnreleasedApplication(uint) error
 	UpdateApplication(*model.Application) error
 	ReplaceApplicationCapabilities(uint, []string) (*model.Application, error)
 	GetLatestSuccessfulRelease(uint) (*model.Release, error)
 	ListApplicationDeploymentTemplates(uint) ([]model.ApplicationDeploymentTemplate, error)
 	GetApplicationDeploymentTemplate(uint, uint) (*model.ApplicationDeploymentTemplate, error)
+	GetDatabaseBindingForTemplate(uint) (*model.DatabaseBinding, error)
 	GetDefaultApplicationDeploymentTemplate(uint) (*model.ApplicationDeploymentTemplate, error)
 	CreateApplicationDeploymentTemplate(*model.ApplicationDeploymentTemplate, bool) error
 	UpdateApplicationDeploymentTemplate(*model.ApplicationDeploymentTemplate) error
 	UpdateApplicationDeploymentTemplateIfRevision(*model.ApplicationDeploymentTemplate, uint) error
 	DeleteApplicationDeploymentTemplate(uint, uint) error
 	SetDefaultApplicationDeploymentTemplate(uint, uint) error
+	ListApplicationCatalogItems() ([]model.ApplicationCatalogItem, error)
+	ListApplicationCatalogInstallations(uint, uint) ([]model.ApplicationCatalogInstallation, error)
+	GetApplicationCatalogItem(uint) (*model.ApplicationCatalogItem, error)
+	CreateApplicationCatalogItem(*model.ApplicationCatalogItem) error
+	UpdateApplicationCatalogItem(*model.ApplicationCatalogItem, uint) error
+	DeleteApplicationCatalogItem(uint) error
+	ImportApplicationCatalogItems(uint, uint, uint, []model.ApplicationCatalogItem) ([]model.ApplicationCatalogInstallation, error)
 	ListApplicationEndpoints(uint) ([]model.ApplicationEndpoint, error)
 	GetApplicationEndpoint(uint, uint) (*model.ApplicationEndpoint, error)
 	CreateApplicationEndpoint(*model.ApplicationEndpoint) error
@@ -89,6 +106,11 @@ type ApplicationHandlerDependencies interface {
 	applicationResourceRepository
 	applicationManagementRepository
 	repository.IntegrationSessionRepository
+}
+
+func (h *ApplicationHandler) WithServerAddressReader(reader applicationServerAddressReader) *ApplicationHandler {
+	h.serverAddresses = reader
+	return h
 }
 
 func (h *ApplicationHandler) WithDelegationSecret(secret []byte) *ApplicationHandler {
@@ -200,8 +222,15 @@ func (h *ApplicationHandler) GetApplication(c *gin.Context) {
 		apiShared.NotFound(c, "应用不存在")
 		return
 	}
-	releases, _ := h.queries.ListReleases(id)
-	apiShared.Success(c, gin.H{"application": apiShared.ApplicationDTO(app), "releases": apiShared.ReleasesDTO(releases)})
+	var releases []model.Release
+	if c.Query("releases") != "false" {
+		releases, _ = h.queries.ListReleases(id)
+	}
+	activeRelease, activeErr := h.resources.GetLatestSuccessfulRelease(id)
+	if activeErr != nil {
+		activeRelease = nil
+	}
+	apiShared.Success(c, gin.H{"application": apiShared.ApplicationDTO(app), "releases": apiShared.ReleasesDTO(releases), "active_release": apiShared.ReleaseDTO(activeRelease)})
 }
 
 func (h *ApplicationHandler) UpdateWorkloadKind(c *gin.Context) {
@@ -268,7 +297,11 @@ func (h *ApplicationHandler) CreateApplication(c *gin.Context) {
 		apiShared.ValidationError(c, "环境不属于所选项目")
 		return
 	}
-	if err := h.applications.EnsureNamespaceAvailable(environment.Namespace, environment.ID); err != nil {
+	if h.clusterClient != nil && environment.ClusterID == 0 {
+		apiShared.ValidationError(c, "环境尚未绑定集群")
+		return
+	}
+	if err := h.applications.EnsureNamespaceAvailable(environment.Namespace, environment.ID, environment.ClusterID); err != nil {
 		apiShared.Conflict(c, "环境命名空间存在冲突，请先完成迁移")
 		return
 	}
@@ -278,4 +311,25 @@ func (h *ApplicationHandler) CreateApplication(c *gin.Context) {
 		return
 	}
 	apiShared.Success(c, apiShared.ApplicationDTO(app))
+}
+
+func (h *ApplicationHandler) DeleteApplication(c *gin.Context) {
+	id, err := apiShared.ParseID(c.Param("id"))
+	if err != nil {
+		apiShared.BadRequest(c, "部署组件 ID 无效")
+		return
+	}
+	if err := h.applications.DeleteUnreleasedApplication(id); err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			apiShared.NotFound(c, "部署组件不存在")
+			return
+		}
+		if errors.Is(err, model.ErrApplicationRequiresUninstall) {
+			apiShared.Conflict(c, err.Error())
+			return
+		}
+		apiShared.DBError(c, err.Error())
+		return
+	}
+	apiShared.Success(c, gin.H{"deleted": true})
 }

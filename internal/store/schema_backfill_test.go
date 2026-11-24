@@ -83,3 +83,37 @@ func TestBackfillRuntimeVersionsFromImageTags(t *testing.T) {
 		t.Fatalf("explicit version must be preserved, got %q", c.RuntimeVersion)
 	}
 }
+
+func TestBackfillClusterTailscaleIPsRestoresServerAddress(t *testing.T) {
+	s, err := New(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := model.Server{Name: "control", Host: "203.0.113.10"}
+	if err := s.DB().Create(&server).Error; err != nil {
+		t.Fatal(err)
+	}
+	legacy := model.Cluster{Name: "legacy-tailscale", Distribution: "k3s", Status: "ready", NetworkMode: "tailscale", ControlServerID: &server.ID, ControlAddress: "100.81.23.123"}
+	public := model.Cluster{Name: "public", Distribution: "k3s", Status: "ready", NetworkMode: "public", ControlServerID: &server.ID, ControlAddress: "198.51.100.20"}
+	for _, cluster := range []*model.Cluster{&legacy, &public} {
+		if err := s.DB().Create(cluster).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.DB().Where("key = ?", clusterTailscaleIPBackfillKey).Delete(&model.SystemConfig{}).Error; err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if err := s.backfillClusterTailscaleIPs(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := s.GetCluster(legacy.ID)
+	if err != nil || got.ControlAddress != server.Host || got.TailscaleIP != "100.81.23.123" {
+		t.Fatalf("legacy cluster = %#v, %v", got, err)
+	}
+	got, err = s.GetCluster(public.ID)
+	if err != nil || got.ControlAddress != "198.51.100.20" || got.TailscaleIP != "" {
+		t.Fatalf("public cluster = %#v, %v", got, err)
+	}
+}

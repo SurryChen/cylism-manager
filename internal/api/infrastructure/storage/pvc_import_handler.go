@@ -88,13 +88,9 @@ func (h *StorageHandler) CreateHostDirectoryPVCImport(c *gin.Context) {
 		apiShared.NotFound(c, "源服务器不存在")
 		return
 	}
-	if source.SSHAuthType != "key" {
-		apiShared.ValidationError(c, "源服务器必须使用 SSH 密钥认证")
-		return
-	}
 	target, err := h.serverForK8sNode(claim.BoundNode)
-	if err != nil || target.SSHAuthType != "key" {
-		apiShared.ValidationError(c, "PVC 绑定节点必须关联使用 SSH 密钥认证的服务器")
+	if err != nil {
+		apiShared.ValidationError(c, "PVC 绑定节点必须关联平台注册服务器")
 		return
 	}
 	if source.ID == target.ID && storageservice.HostDirectoryImportPathsOverlap(sourcePath, claim.LocalPath) {
@@ -317,16 +313,11 @@ func (h *StorageHandler) preflightHostDirectoryPVCImport(ctx context.Context, ta
 	if err != nil {
 		return nil, nil, nil, nil, false, err
 	}
-	for _, server := range []*model.Server{source, target} {
-		if server.SSHAuthType != "key" {
-			return nil, nil, nil, nil, false, fmt.Errorf("服务器 %q 必须使用 SSH 密钥认证", server.Name)
-		}
-	}
-	if out, err := transport.SSHExecContext(ctx, 20*time.Second, append(transport.BuildSSHArgs(source, h.encKey, source.Host), "sudo -n test -d "+storageShellQuote(task.SourcePath)+" && command -v tar >/dev/null && command -v sha256sum >/dev/null")); err != nil {
+	if out, err := transport.SSHExecServerContext(ctx, 20*time.Second, source, h.encKey, "sudo -n test -d "+storageShellQuote(task.SourcePath)+" && command -v tar >/dev/null && command -v sha256sum >/dev/null"); err != nil {
 		return nil, nil, nil, nil, false, fmt.Errorf("源目录或工具预检失败: %s", strings.TrimSpace(string(out)))
 	}
 	command := "sudo -n test -d " + storageShellQuote(task.TargetPath) + " && command -v tar >/dev/null && command -v sha256sum >/dev/null && if sudo -n find " + storageShellQuote(task.TargetPath) + " -mindepth 1 -maxdepth 1 -print -quit | grep -q .; then echo nonempty; else echo empty; fi"
-	out, err := transport.SSHExecContext(ctx, 20*time.Second, append(transport.BuildSSHArgs(target, h.encKey, target.Host), command))
+	out, err := transport.SSHExecServerContext(ctx, 20*time.Second, target, h.encKey, command)
 	if err != nil {
 		return nil, nil, nil, nil, false, fmt.Errorf("目标 PVC 或工具预检失败: %s", strings.TrimSpace(string(out)))
 	}
@@ -380,7 +371,7 @@ func (h *StorageHandler) restorePVCImportWorkloads(ctx context.Context, namespac
 
 func (h *StorageHandler) createHostDirectoryImportArchive(ctx context.Context, server *model.Server, sourcePath, archivePath string) (string, error) {
 	command := "sudo -n mkdir -p " + storageShellQuote(path.Dir(archivePath)) + " && sudo -n rm -f " + storageShellQuote(archivePath) + " && sudo -n tar --numeric-owner -C " + storageShellQuote(sourcePath) + " -czf " + storageShellQuote(archivePath) + " . && sudo -n sha256sum " + storageShellQuote(archivePath) + " | awk '{print $1}'"
-	out, err := transport.SSHExecContext(ctx, 30*time.Minute, append(transport.BuildSSHArgs(server, h.encKey, server.Host), command))
+	out, err := transport.SSHExecServerContext(ctx, 30*time.Minute, server, h.encKey, command)
 	if err != nil {
 		return "", fmt.Errorf("创建本地备份失败: %s", strings.TrimSpace(string(out)))
 	}
@@ -393,7 +384,7 @@ func (h *StorageHandler) createHostDirectoryImportArchive(ctx context.Context, s
 
 func (h *StorageHandler) hostDirectoryContentChecksum(ctx context.Context, server *model.Server, directory string) (string, error) {
 	command := "LC_ALL=C sudo -n tar --sort=name --numeric-owner --mtime='UTC 1970-01-01' -C " + storageShellQuote(directory) + " -cf - . | sha256sum | awk '{print $1}'"
-	out, err := transport.SSHExecContext(ctx, 30*time.Minute, append(transport.BuildSSHArgs(server, h.encKey, server.Host), command))
+	out, err := transport.SSHExecServerContext(ctx, 30*time.Minute, server, h.encKey, command)
 	if err != nil {
 		return "", fmt.Errorf("计算目录校验摘要失败: %s", strings.TrimSpace(string(out)))
 	}
@@ -406,7 +397,7 @@ func (h *StorageHandler) hostDirectoryContentChecksum(ctx context.Context, serve
 
 func (h *StorageHandler) clearHostDirectoryImportTarget(ctx context.Context, server *model.Server, targetPath string) error {
 	command := "sudo -n find " + storageShellQuote(targetPath) + " -mindepth 1 -maxdepth 1 -exec rm -rf {} +"
-	out, err := transport.SSHExecContext(ctx, 30*time.Second, append(transport.BuildSSHArgs(server, h.encKey, server.Host), command))
+	out, err := transport.SSHExecServerContext(ctx, 30*time.Second, server, h.encKey, command)
 	if err != nil {
 		return fmt.Errorf("清空目标 PVC 失败: %s", strings.TrimSpace(string(out)))
 	}
@@ -418,7 +409,7 @@ func (h *StorageHandler) rollbackHostDirectoryImportTarget(ctx context.Context, 
 		return
 	}
 	command := "sudo -n find " + storageShellQuote(task.TargetPath) + " -mindepth 1 -maxdepth 1 -exec rm -rf {} + && sudo -n tar -xzf " + storageShellQuote(task.TargetBackupPath) + " -C " + storageShellQuote(task.TargetPath)
-	_, _ = transport.SSHExecContext(ctx, 30*time.Minute, append(transport.BuildSSHArgs(target, h.encKey, target.Host), command))
+	_, _ = transport.SSHExecServerContext(ctx, 30*time.Minute, target, h.encKey, command)
 }
 
 func (h *StorageHandler) failHostDirectoryPVCImport(ctx context.Context, task *model.HostDirectoryPVCImport, cause error, replicas map[string]int32) {
@@ -435,7 +426,7 @@ func (h *StorageHandler) deleteHostDirectoryImportArchive(ctx context.Context, s
 	if !strings.HasPrefix(cleaned, hostDirectoryImportBackupRoot+"/") || !strings.HasSuffix(cleaned, ".tar.gz") {
 		return fmt.Errorf("备份路径不属于平台管理目录")
 	}
-	out, err := transport.SSHExecContext(ctx, 30*time.Second, append(transport.BuildSSHArgs(server, h.encKey, server.Host), "sudo -n rm -f "+storageShellQuote(cleaned)))
+	out, err := transport.SSHExecServerContext(ctx, 30*time.Second, server, h.encKey, "sudo -n rm -f "+storageShellQuote(cleaned))
 	if err != nil {
 		return fmt.Errorf("删除本地备份失败: %s", strings.TrimSpace(string(out)))
 	}

@@ -1,12 +1,9 @@
 package storage
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
-	"os/exec"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -325,11 +322,11 @@ func (h *StorageHandler) preflightMigration(ctx context.Context, environment *mo
 			target = &servers[index]
 		}
 	}
-	if source == nil || target == nil || source.SSHAuthType != "key" || target.SSHAuthType != "key" {
-		return nil, nil, nil, fmt.Errorf("源节点和目标节点必须绑定使用 SSH 密钥认证的平台注册服务器")
+	if source == nil || target == nil {
+		return nil, nil, nil, fmt.Errorf("源节点和目标节点必须绑定平台注册服务器")
 	}
 	for _, server := range []*model.Server{source, target} {
-		out, err := transport.SSHExecContext(ctx, 20*time.Second, append(transport.BuildSSHArgs(server, h.encKey, server.Host), "sudo -n true && command -v tar >/dev/null"))
+		out, err := transport.SSHExecServerContext(ctx, 20*time.Second, server, h.encKey, "sudo -n true && command -v tar >/dev/null")
 		if err != nil {
 			return nil, nil, nil, fmt.Errorf("服务器 %q 的 sudo 或 tar 预检失败: %s", server.Name, strings.TrimSpace(string(out)))
 		}
@@ -339,7 +336,7 @@ func (h *StorageHandler) preflightMigration(ctx context.Context, environment *mo
 
 func (h *StorageHandler) checkMigrationTargetPath(ctx context.Context, server *model.Server, path string) error {
 	command := "sudo -n test -d " + storageShellQuote(path) + " && df -Pk " + storageShellQuote(path) + " >/dev/null"
-	out, err := transport.SSHExecContext(ctx, 20*time.Second, append(transport.BuildSSHArgs(server, h.encKey, server.Host), command))
+	out, err := transport.SSHExecServerContext(ctx, 20*time.Second, server, h.encKey, command)
 	if err != nil {
 		return fmt.Errorf("目标节点目录或磁盘预检失败: %s", strings.TrimSpace(string(out)))
 	}
@@ -347,39 +344,7 @@ func (h *StorageHandler) checkMigrationTargetPath(ctx context.Context, server *m
 }
 
 func streamPVCData(parent context.Context, source, target *model.Server, sourcePath, targetPath string, encKey []byte) (int64, error) {
-	ctx, cancel := context.WithTimeout(parent, 30*time.Minute)
-	defer cancel()
-	sourceArgs := append(transport.BuildSSHArgs(source, encKey, source.Host), "sudo -n tar --numeric-owner -C "+storageShellQuote(sourcePath)+" -cpf - .")
-	targetArgs := append(transport.BuildSSHArgs(target, encKey, target.Host), "sudo -n mkdir -p "+storageShellQuote(targetPath)+" && sudo -n tar --numeric-owner -C "+storageShellQuote(targetPath)+" -xpf -")
-	sourceCommand := exec.CommandContext(ctx, "ssh", sourceArgs...)
-	targetCommand := exec.CommandContext(ctx, "ssh", targetArgs...)
-	var sourceErr, targetErr bytes.Buffer
-	sourceCommand.Stderr = &sourceErr
-	targetCommand.Stderr = &targetErr
-	reader, err := sourceCommand.StdoutPipe()
-	if err != nil {
-		return 0, err
-	}
-	var copied atomic.Int64
-	targetCommand.Stdin = io.TeeReader(reader, countWriter{count: &copied})
-	if err := targetCommand.Start(); err != nil {
-		return 0, err
-	}
-	if err := sourceCommand.Start(); err != nil {
-		_ = targetCommand.Process.Kill()
-		return 0, err
-	}
-	// Wait for the target first: it owns the reader side of source stdout. Calling
-	// source Wait first closes StdoutPipe and can truncate a large tar stream.
-	targetRunErr := targetCommand.Wait()
-	if targetRunErr != nil && sourceCommand.Process != nil {
-		_ = sourceCommand.Process.Kill()
-	}
-	sourceRunErr := sourceCommand.Wait()
-	if sourceRunErr != nil || targetRunErr != nil {
-		return copied.Load(), fmt.Errorf("存储卷数据复制失败（已传输 %d bytes）: 源=%s；目标=%s", copied.Load(), streamCommandFailure(sourceRunErr, sourceErr.String()), streamCommandFailure(targetRunErr, targetErr.String()))
-	}
-	return copied.Load(), nil
+	return transport.CopyDirectoryContext(parent, source, target, sourcePath, targetPath, encKey)
 }
 
 func streamCommandFailure(runErr error, output string) string {

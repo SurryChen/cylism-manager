@@ -1,6 +1,8 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { api } from './index.js'
 import {
+  adoptClusterPersistentVolumeClaim,
+  adoptPersistentVolumeClaim,
   cleanupPersistentVolumeMigration,
   createNamespace,
   createPersistentVolumeBackup,
@@ -10,6 +12,7 @@ import {
   deletePersistentVolumeClaim,
   deletePersistentVolumeImportBackup,
   getPersistentVolumeInventory,
+	getPersistentVolumeReferences,
   getPersistentVolumeUsage,
   restorePersistentVolumeBackup,
 } from './storage.js'
@@ -19,21 +22,29 @@ vi.mock('./index.js', () => ({
 }))
 
 describe('storage api', () => {
-  it('loads the complete persistent volume inventory with one signal', () => {
+  beforeEach(() => vi.clearAllMocks())
+  it('loads a paginated persistent volume inventory with one signal', () => {
     const options = { signal: new AbortController().signal }
-    getPersistentVolumeInventory(options)
-    expect(api.get).toHaveBeenNthCalledWith(1, '/k8s/persistent-volume-claims', options)
-    expect(api.get).toHaveBeenNthCalledWith(2, '/k8s/storage-classes', options)
-    expect(api.get).toHaveBeenNthCalledWith(3, '/k8s/persistent-volume-migrations', options)
-    expect(api.get).toHaveBeenNthCalledWith(4, '/nodes', options)
-    expect(api.get).toHaveBeenNthCalledWith(5, '/servers', options)
-    expect(api.get).toHaveBeenNthCalledWith(6, '/k8s/namespace-names', options)
+    getPersistentVolumeInventory({ page: 2, size: 20, namespace: 'default' }, options)
+    expect(api.get).toHaveBeenCalledWith('/k8s/persistent-volume-claims?page=2&size=20&namespace=default', options)
   })
 
-  it('forwards options to usage requests', () => {
+  it('loads usage only for the displayed persistent volumes', () => {
     const options = { signal: new AbortController().signal }
-    getPersistentVolumeUsage(options)
-    expect(api.get).toHaveBeenCalledWith('/k8s/persistent-volume-claims/usage', options)
+    getPersistentVolumeUsage([{ namespace: 'default', name: 'data' }], options)
+    expect(api.get).toHaveBeenCalledWith('/k8s/persistent-volume-claims/usage?claim=default%2Fdata', options)
+  })
+
+  it('loads references only for the displayed persistent volumes', () => {
+    const options = { signal: new AbortController().signal }
+    getPersistentVolumeReferences([{ namespace: 'default', name: 'data' }], options)
+    expect(api.get).toHaveBeenCalledWith('/k8s/persistent-volume-claims/references?claim=default%2Fdata', options)
+  })
+
+  it('associates a PVC through its selected cluster', () => {
+    const body = { namespace: 'project-self-app', environment_id: 2 }
+    adoptClusterPersistentVolumeClaim(2, 'trendradar-data', body)
+    expect(api.post).toHaveBeenCalledWith('/clusters/2/k8s/persistent-volume-claims/trendradar-data/adopt', body)
   })
 
   it('uses the existing persistent volume mutation endpoints and forwards request options', () => {
@@ -43,6 +54,7 @@ describe('storage api', () => {
 
     createNamespace(body, options)
     createPersistentVolumeClaim(body, options)
+    adoptPersistentVolumeClaim('legacy-data', body, options)
     createPersistentVolumeMigration(name, body, options)
     cleanupPersistentVolumeMigration('migration/a', options)
     createPersistentVolumeBackup(name, body, options)
@@ -53,11 +65,12 @@ describe('storage api', () => {
 
     expect(api.post).toHaveBeenNthCalledWith(1, '/k8s/namespaces', body, options)
     expect(api.post).toHaveBeenNthCalledWith(2, '/k8s/persistent-volume-claims', body, options)
-    expect(api.post).toHaveBeenNthCalledWith(3, '/k8s/persistent-volume-claims/data%2Fa/migrations', body, options)
-    expect(api.post).toHaveBeenNthCalledWith(4, '/k8s/persistent-volume-migrations/migration%2Fa/cleanup', undefined, options)
-    expect(api.post).toHaveBeenNthCalledWith(5, '/k8s/persistent-volume-claims/data%2Fa/backups', body, options)
-    expect(api.post).toHaveBeenNthCalledWith(6, '/k8s/persistent-volume-claims/data%2Fa/backups/backup%2Fa/restore', body, options)
-    expect(api.post).toHaveBeenNthCalledWith(7, '/k8s/persistent-volume-claims/data%2Fa/imports', body, options)
+    expect(api.post).toHaveBeenNthCalledWith(3, '/k8s/persistent-volume-claims/legacy-data/adopt', body, options)
+    expect(api.post).toHaveBeenNthCalledWith(4, '/k8s/persistent-volume-claims/data%2Fa/migrations', body, options)
+    expect(api.post).toHaveBeenNthCalledWith(5, '/k8s/persistent-volume-migrations/migration%2Fa/cleanup', undefined, options)
+    expect(api.post).toHaveBeenNthCalledWith(6, '/k8s/persistent-volume-claims/data%2Fa/backups', body, options)
+    expect(api.post).toHaveBeenNthCalledWith(7, '/k8s/persistent-volume-claims/data%2Fa/backups/backup%2Fa/restore', body, options)
+    expect(api.post).toHaveBeenNthCalledWith(8, '/k8s/persistent-volume-claims/data%2Fa/imports', body, options)
     expect(api.delete).toHaveBeenNthCalledWith(1, '/k8s/persistent-volume-claims/data%2Fa/imports/import%2Fa/backup', body, options)
     expect(api.delete).toHaveBeenNthCalledWith(2, '/k8s/persistent-volume-claims/data%2Fa', body, options)
   })

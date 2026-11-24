@@ -12,6 +12,7 @@ import (
 	"github.com/cylism/cylism-manager/internal/k8s"
 	"github.com/cylism/cylism-manager/internal/repository"
 	loggingservice "github.com/cylism/cylism-manager/internal/service/observability/logging"
+	migration "github.com/cylism/cylism-manager/internal/service/observability/migration"
 	"github.com/gin-gonic/gin"
 )
 
@@ -36,6 +37,8 @@ func loggingQueryAdapter(fn lokiQueryFunc) loggingservice.QueryFunc {
 
 // LoggingHandler manages the platform-owned logging resources and proxies bounded queries.
 type LoggingHandler struct {
+	migrations   *migration.Service
+	clusterID    uint
 	scope        repository.LoggingScopeRepository
 	query        lokiQueryFunc
 	now          func() time.Time
@@ -176,6 +179,10 @@ func (h *LoggingHandler) Update(c *gin.Context) {
 }
 
 func (h *LoggingHandler) applyConfig(c *gin.Context, message string) {
+	if err := componentMigrationMutable(h.migrations, h.clusterID, k8s.InfrastructureLoki); err != nil {
+		apiShared.Conflict(c, err.Error())
+		return
+	}
 	if h.component == nil {
 		apiShared.K8sUnavailable(c)
 		return
@@ -194,6 +201,10 @@ func (h *LoggingHandler) applyConfig(c *gin.Context, message string) {
 }
 
 func (h *LoggingHandler) Uninstall(c *gin.Context) {
+	if err := componentMigrationMutable(h.migrations, h.clusterID, k8s.InfrastructureLoki); err != nil {
+		apiShared.Conflict(c, err.Error())
+		return
+	}
 	if h.component == nil {
 		apiShared.K8sUnavailable(c)
 		return

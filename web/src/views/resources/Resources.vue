@@ -1,6 +1,6 @@
 <template>
   <div>
-    <div class="page-header">
+    <div class="page-header sticky-page-header">
       <h1 class="page-title">资源浏览</h1>
     </div>
 
@@ -29,7 +29,7 @@
         <span class="empty-icon">▤</span><span class="empty-text">暂无 Pod</span>
       </div>
       <div v-else class="table-wrap">
-        <table class="data-table">
+        <DataTable>
           <thead><tr><th>名称</th><th>命名空间</th><th>状态</th><th>节点</th><th>IP</th><th>重启</th><th>年龄</th></tr></thead>
           <tbody>
             <tr v-for="p in pods" :key="p.namespace+'/'+p.name">
@@ -42,7 +42,7 @@
               <td>{{ p.age || '-' }}</td>
             </tr>
           </tbody>
-        </table>
+        </DataTable>
       </div>
     </SurfaceCard>
 
@@ -52,8 +52,8 @@
         <span class="empty-icon">◎</span><span class="empty-text">暂无 Service</span>
       </div>
       <div v-else class="table-wrap">
-        <table class="data-table">
-          <thead><tr><th>名称</th><th>命名空间</th><th>ClusterIP</th><th>类型</th><th>端口</th><th></th></tr></thead>
+        <DataTable>
+          <thead><tr><th>名称</th><th>命名空间</th><th>ClusterIP</th><th>类型</th><th>端口</th><TableActionCell header /></tr></thead>
           <tbody>
             <tr v-for="s in services" :key="s.namespace+'/'+s.name">
               <td class="cell-primary">{{ s.name }}</td>
@@ -61,12 +61,12 @@
               <td>{{ s.cluster_ip || '-' }}</td>
               <td>{{ s.type }}</td>
               <td>{{ s.ports?.join(', ') || '-' }}</td>
-              <td>
+              <TableActionCell>
                 <button class="btn btn-sm" @click="viewService(s)">详情</button>
-              </td>
+              </TableActionCell>
             </tr>
           </tbody>
-        </table>
+        </DataTable>
       </div>
     </SurfaceCard>
 
@@ -76,7 +76,7 @@
         <span class="empty-icon">▥</span><span class="empty-text">暂无 Deployment</span>
       </div>
       <div v-else class="table-wrap">
-        <table class="data-table">
+        <DataTable>
           <thead><tr><th>名称</th><th>命名空间</th><th>副本</th><th>就绪</th><th>镜像</th></tr></thead>
           <tbody>
             <tr v-for="d in deployments" :key="d.namespace+'/'+d.name">
@@ -87,7 +87,7 @@
               <td class="cell-secondary">{{ d.images?.join(', ') }}</td>
             </tr>
           </tbody>
-        </table>
+        </DataTable>
       </div>
     </SurfaceCard>
 
@@ -112,6 +112,8 @@
 </template>
 
 <script setup>
+import DataTable from '../../components/DataTable.vue'
+import TableActionCell from '../../components/TableActionCell.vue'
 import { ref, onMounted, computed, watch } from 'vue'
 import { getResourceInventory, getResourceService } from '../../api/kubernetes.js'
 import { useAsyncResource } from '../../composables/useAsyncResource.js'

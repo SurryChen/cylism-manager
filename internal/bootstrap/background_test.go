@@ -47,3 +47,22 @@ func TestContainerStartBackgroundStopsExistingTasks(t *testing.T) {
 	second.Stop()
 	second.Wait()
 }
+
+func TestBackgroundInitializesMigrationRecoveryBeforeRoutes(t *testing.T) {
+	db, err := NewRepositories(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	container := &Container{Store: db}
+	tasks := container.StartBackground(context.Background(), BackgroundConfig{})
+	defer func() { tasks.Stop(); tasks.Wait() }()
+	if container.migrations == nil {
+		t.Fatal("background startup omitted migration recovery before route composition")
+	}
+	service := container.migrations
+	// Later route composition must reuse the same service and running-task guard.
+	container.configureObservabilityMigrations(nil)
+	if container.migrations != service {
+		t.Fatal("route composition replaced the service used by recovery")
+	}
+}

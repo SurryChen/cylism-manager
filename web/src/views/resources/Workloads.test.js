@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import Workloads from './Workloads.vue'
 import {
@@ -28,8 +28,22 @@ vi.mock('../../api/kubernetes.js', () => ({
   updateWorkloadImage: vi.fn(),
 }))
 
+vi.mock('../../api/list-pages.js', () => ({
+  getInventoryPage: vi.fn(async (_cluster, kind, query, options) => {
+    const loaders = { pods: getWorkloadPods, deployments: getWorkloadDeployments, statefulsets: getWorkloadStatefulSets, daemonsets: getWorkloadDaemonSets }
+    const all = await loaders[kind](options)
+    const items = all.filter(item => (!query.namespace || item.namespace === query.namespace) && (!query.node || item.node === query.node) && (!query.status || item.status === query.status) && (!query.keyword || item.name.includes(query.keyword)) && (!query.restarts_only || item.restarts > 0))
+    return { items: items.slice(query.offset, query.offset + query.limit), total: items.length, namespaces: [...new Set(all.map(item => item.namespace))], nodes: [...new Set(all.map(item => item.node).filter(Boolean))], statuses: [...new Set(all.map(item => item.status).filter(Boolean))] }
+  }),
+}))
+
 function flush() {
   return new Promise(resolve => setTimeout(resolve, 0))
+}
+
+async function selectWorkloadType(wrapper, value) {
+  await wrapper.find('.workload-type-select .select-menu-native').setValue(value)
+  await flushPromises()
 }
 
 beforeEach(() => {
@@ -52,11 +66,11 @@ describe('Workloads view', () => {
     const wrapper = mount(Workloads)
     await flush()
 
-    expect(getWorkloadDeployments).toHaveBeenCalledWith(expect.objectContaining({ signal: expect.any(AbortSignal) }))
-    expect(getWorkloadStatefulSets).toHaveBeenCalledWith(expect.objectContaining({ signal: expect.any(AbortSignal) }))
-    expect(getWorkloadDaemonSets).toHaveBeenCalledWith(expect.objectContaining({ signal: expect.any(AbortSignal) }))
+    expect(getWorkloadDeployments).not.toHaveBeenCalled()
+    expect(getWorkloadStatefulSets).not.toHaveBeenCalled()
+    expect(getWorkloadDaemonSets).not.toHaveBeenCalled()
     expect(getWorkloadPods).toHaveBeenCalledWith(expect.objectContaining({ signal: expect.any(AbortSignal) }))
-    expect(wrapper.findAll('.resource-tab')).toHaveLength(4)
+    expect(wrapper.findAll('.workload-type-select option').map(option => option.element.value)).toEqual(['', 'pods', 'deployments', 'statefulsets', 'daemonsets'])
     expect(wrapper.text()).toContain('暂无 Pod')
     wrapper.unmount()
   })
@@ -66,15 +80,17 @@ describe('Workloads view', () => {
     const wrapper = mount(Workloads)
     await flush()
     await flush()
-    await wrapper.findAll('.resource-tab')[1].trigger('click')
+    await selectWorkloadType(wrapper, 'deployments')
     expect(wrapper.text()).toContain('api')
+    expect(wrapper.find('.deployment-table').exists()).toBe(true)
+    expect(wrapper.find('.deployment-table td.table-action-column .table-action-buttons').exists()).toBe(true)
 
     getWorkloadDeployments.mockRejectedValueOnce(new Error('Deployment 刷新失败'))
     await wrapper.find('.icon-button[title="刷新工作负载"]').trigger('click')
     await flush()
 
     expect(wrapper.text()).toContain('api')
-    expect(wrapper.text()).toContain('Deployment 刷新失败')
+    expect(document.body.textContent).toContain('Deployment 刷新失败')
     wrapper.unmount()
   })
 
@@ -96,6 +112,7 @@ describe('Workloads view', () => {
     await wrapper.find('.pod-filter-status .select-menu-native').setValue('Running')
     await wrapper.find('.pod-restarts-filter input').setValue(true)
     await wrapper.find('.pod-search input').setValue('orders')
+    await flushPromises()
 
     expect(wrapper.text()).toContain('orders-api-1')
     expect(wrapper.text()).not.toContain('orders-worker-1')
@@ -114,7 +131,7 @@ describe('Workloads view', () => {
     getWorkloadDeploymentPods.mockImplementation((_namespace, name) => name === 'first' ? first : Promise.resolve([{ name: 'second-pod', status: 'Running', node: 'worker' }]))
     const wrapper = mount(Workloads)
     await flush()
-    await wrapper.findAll('.resource-tab')[1].trigger('click')
+    await selectWorkloadType(wrapper, 'deployments')
     const rows = wrapper.findAll('tbody > tr').filter(row => row.classes('clickable'))
     await rows[0].trigger('click')
     await rows[1].trigger('click')
@@ -132,8 +149,8 @@ describe('Workloads view', () => {
     scaleWorkload.mockRejectedValueOnce(new Error('扩缩容被拒绝'))
     const wrapper = mount(Workloads)
     await flush()
-    await wrapper.findAll('.resource-tab')[1].trigger('click')
-    await wrapper.find('.action-cell .btn').trigger('click')
+    await selectWorkloadType(wrapper, 'deployments')
+    await wrapper.find('.table-action-column .btn').trigger('click')
     await wrapper.find('.modal .btn-primary').trigger('click')
     await flush()
 
@@ -147,8 +164,8 @@ describe('Workloads view', () => {
     getWorkloadDeployments.mockResolvedValue([{ name: 'api', namespace: 'default', replicas: 1, ready: 1, images: ['nginx:1.0'] }])
     const wrapper = mount(Workloads)
     await flush()
-    await wrapper.findAll('.resource-tab')[1].trigger('click')
-    await wrapper.find('.action-cell .btn').trigger('click')
+    await selectWorkloadType(wrapper, 'deployments')
+    await wrapper.find('.table-action-column .btn').trigger('click')
     await wrapper.find('.modal .btn-primary').trigger('click')
     await flush()
     await flush()
@@ -164,8 +181,8 @@ describe('Workloads view', () => {
     updateWorkloadImage.mockRejectedValueOnce(new Error('镜像地址无效'))
     const wrapper = mount(Workloads)
     await flush()
-    await wrapper.findAll('.resource-tab')[1].trigger('click')
-    await wrapper.find('.action-cell .btn:nth-child(2)').trigger('click')
+    await selectWorkloadType(wrapper, 'deployments')
+    await wrapper.find('.table-action-column .btn:nth-child(2)').trigger('click')
     await wrapper.find('.modal .btn-primary').trigger('click')
     await flush()
 
@@ -180,8 +197,8 @@ describe('Workloads view', () => {
     rollbackWorkload.mockRejectedValueOnce(new Error('回滚失败'))
     const wrapper = mount(Workloads)
     await flush()
-    await wrapper.findAll('.resource-tab')[1].trigger('click')
-    await wrapper.find('.action-cell .btn:nth-child(3)').trigger('click')
+    await selectWorkloadType(wrapper, 'deployments')
+    await wrapper.find('.table-action-column .btn:nth-child(3)').trigger('click')
     await flush()
     await wrapper.find('.modal .btn-sm').trigger('click')
     await flush()
@@ -201,7 +218,7 @@ describe('Workloads view', () => {
     })
     const wrapper = mount(Workloads)
     await flush()
-    await wrapper.findAll('.resource-tab')[1].trigger('click')
+    await selectWorkloadType(wrapper, 'deployments')
     await wrapper.find('tbody > tr.clickable').trigger('click')
     wrapper.unmount()
     resolveDetails([{ name: 'api-pod', status: 'Running', node: 'worker' }])

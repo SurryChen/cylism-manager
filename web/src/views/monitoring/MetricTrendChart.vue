@@ -2,7 +2,7 @@
   <SurfaceCard as="article" class="metric-trend-chart">
     <template #header>
       <div>
-        <h2 class="card-title">{{ title }}</h2>
+        <slot name="title"><h2 class="card-title">{{ title }}</h2></slot>
         <p v-if="subtitle" class="metric-trend-subtitle">{{ subtitle }}</p>
       </div>
     </template>

@@ -17,23 +17,26 @@ import (
 )
 
 type deploymentTemplateInfo struct {
-	ID            uint                           `json:"id"`
-	ApplicationID uint                           `json:"application_id"`
-	Name          string                         `json:"name"`
-	Description   string                         `json:"description"`
-	Enabled       bool                           `json:"enabled"`
-	IsDefault     bool                           `json:"is_default"`
-	Revision      uint                           `json:"revision"`
-	Spec          applicationservice.ReleaseSpec `json:"spec"`
-	UpdatedAt     time.Time                      `json:"updated_at"`
+	ID             uint                           `json:"id"`
+	ApplicationID  uint                           `json:"application_id"`
+	Name           string                         `json:"name"`
+	Description    string                         `json:"description"`
+	Enabled        bool                           `json:"enabled"`
+	DefaultVersion string                         `json:"default_version"`
+	IsDefault      bool                           `json:"is_default"`
+	Revision       uint                           `json:"revision"`
+	Spec           applicationservice.ReleaseSpec `json:"spec"`
+	UpdatedAt      time.Time                      `json:"updated_at"`
 }
 
 type deploymentTemplateRequest struct {
-	Name        string                         `json:"name"`
-	Description string                         `json:"description"`
-	Enabled     bool                           `json:"enabled"`
-	Revision    uint                           `json:"revision,omitempty"`
-	Spec        applicationservice.ReleaseSpec `json:"spec"`
+	Name            string                         `json:"name"`
+	Description     string                         `json:"description"`
+	Enabled         bool                           `json:"enabled"`
+	DefaultVersion  string                         `json:"default_version"`
+	Revision        uint                           `json:"revision,omitempty"`
+	Spec            applicationservice.ReleaseSpec `json:"spec"`
+	SecretFileEdits []templateSecretFileEdit       `json:"secret_file_edits,omitempty"`
 }
 
 func (h *ApplicationHandler) ListDeploymentTemplates(c *gin.Context) {
@@ -109,17 +112,22 @@ func (h *ApplicationHandler) CreateDeploymentTemplate(c *gin.Context) {
 		apiShared.BadRequest(c, "上线模板定义无效")
 		return
 	}
+	if len(req.SecretFileEdits) > 0 {
+		apiShared.ValidationError(c, "新模板请直接填写文件内容")
+		return
+	}
 	template, err := h.templateFromRequest(c.Request.Context(), app, &req, 0)
 	if err != nil {
 		apiShared.ValidationError(c, err.Error())
 		return
 	}
 	template.UpdatedBy = apiShared.UserID(c)
-	if err := h.applications.CreateApplicationDeploymentTemplate(template, app.DefaultDeploymentTemplateID == nil); err != nil {
+	makeDefault := app.DefaultDeploymentTemplateID == nil && template.Enabled
+	if err := h.applications.CreateApplicationDeploymentTemplate(template, makeDefault); err != nil {
 		apiShared.DBError(c, err.Error())
 		return
 	}
-	if app.DefaultDeploymentTemplateID == nil {
+	if makeDefault {
 		app.DefaultDeploymentTemplateID = &template.ID
 	}
 	if app.DefaultDeploymentTemplateID != nil && *app.DefaultDeploymentTemplateID == template.ID {
@@ -174,6 +182,21 @@ func (h *ApplicationHandler) UpdateDeploymentTemplate(c *gin.Context) {
 		apiShared.Conflict(c, fmt.Sprintf("模板版本冲突，当前版本为 %d", currentTemplate.Revision))
 		return
 	}
+	if err := h.applyTemplateSecretFileEdits(currentTemplate, &req); err != nil {
+		apiShared.ValidationError(c, err.Error())
+		return
+	}
+	binding, err := h.applications.GetDatabaseBindingForTemplate(templateID)
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		apiShared.DBError(c, err.Error())
+		return
+	}
+	if err == nil {
+		if err := validateBoundDatabaseTemplate(currentTemplate, req.Spec, binding.Prefix); err != nil {
+			apiShared.ValidationError(c, err.Error())
+			return
+		}
+	}
 	template, err := h.templateFromRequest(c.Request.Context(), app, &req, templateID)
 	if err != nil {
 		apiShared.ValidationError(c, err.Error())
@@ -211,6 +234,34 @@ func (h *ApplicationHandler) UpdateDeploymentTemplate(c *gin.Context) {
 		return
 	}
 	apiShared.Success(c, info)
+}
+
+func validateBoundDatabaseTemplate(current *model.ApplicationDeploymentTemplate, next applicationservice.ReleaseSpec, prefix string) error {
+	var previous applicationservice.ReleaseSpec
+	if err := json.Unmarshal([]byte(current.Spec), &previous); err != nil {
+		return fmt.Errorf("读取已绑定的数据库配置失败: %w", err)
+	}
+	for _, suffix := range []string{"HOST", "PORT", "NAME", "USER"} {
+		key := prefix + "_" + suffix
+		if next.Config[key] != previous.Config[key] || containsString(next.ConfigDisabled, key) || containsString(next.ConfigFileKeys, key) {
+			return fmt.Errorf("%s 由数据库绑定管理，请先解除绑定", key)
+		}
+	}
+	key := prefix + "_PASSWORD"
+	value, exists := next.Secrets[key]
+	if !exists || value != "" || containsString(next.SecretsDisabled, key) || containsString(next.SecretFileKeys, key) {
+		return fmt.Errorf("%s 由数据库绑定管理，请先解除绑定", key)
+	}
+	return nil
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
 }
 
 func (h *ApplicationHandler) DeleteDeploymentTemplate(c *gin.Context) {
@@ -279,7 +330,14 @@ func (h *ApplicationHandler) templateFromRequest(ctx context.Context, app *model
 	if len([]rune(req.Name)) > 128 {
 		return nil, fmt.Errorf("模板名称不能超过 128 个字符")
 	}
+	defaultVersion := strings.TrimSpace(req.DefaultVersion)
+	if defaultVersion != "" && !applicationservice.ValidReleaseVersion(defaultVersion) {
+		return nil, fmt.Errorf("默认版本号必须是合法的镜像 Tag")
+	}
 	spec := req.Spec
+	if spec.Migration != nil && spec.Migration.Target != "" {
+		return nil, fmt.Errorf("迁移目标属于发布参数，不能保存在上线模板中")
+	}
 	applicationservice.NormalizeManagedKeys(&spec)
 	if strings.TrimSpace(spec.Version) != "" {
 		return nil, fmt.Errorf("上线模板不应包含版本号")
@@ -306,6 +364,8 @@ func (h *ApplicationHandler) templateFromRequest(ctx context.Context, app *model
 		for key, value := range spec.Secrets {
 			if strings.TrimSpace(value) != "" {
 				currentSecrets[key] = value
+			} else if strings.TrimSpace(currentSecrets[key]) == "" {
+				return nil, fmt.Errorf("请填写敏感配置 %s 的内容", key)
 			}
 		}
 		if len(currentSecrets) == 0 {
@@ -332,7 +392,7 @@ func (h *ApplicationHandler) templateFromRequest(ctx context.Context, app *model
 		if h.kubernetes == nil || !h.kubernetes.KubernetesAvailable() {
 			return nil, fmt.Errorf("K8s 集群未连接，无法验证 PVC")
 		}
-		applicationContext := applicationservice.ApplicationContext{EnvironmentID: app.Environment.ID, Namespace: app.Environment.Namespace}
+		applicationContext := applicationservice.ApplicationContext{EnvironmentID: app.Environment.ID, Namespace: app.Environment.Namespace, ApplicationName: app.Name}
 		if err := h.kubernetes.ValidatePersistentVolumeClaims(ctx, applicationContext, spec); err != nil {
 			return nil, err
 		}
@@ -341,7 +401,7 @@ func (h *ApplicationHandler) templateFromRequest(ctx context.Context, app *model
 	if err != nil {
 		return nil, fmt.Errorf("保存上线模板失败: %w", err)
 	}
-	return &model.ApplicationDeploymentTemplate{ID: templateID, ApplicationID: app.ID, Name: strings.TrimSpace(req.Name), Description: strings.TrimSpace(req.Description), Enabled: req.Enabled, Spec: string(snapshot), EncryptedSecrets: encryptedSecrets}, nil
+	return &model.ApplicationDeploymentTemplate{ID: templateID, ApplicationID: app.ID, Name: strings.TrimSpace(req.Name), Description: strings.TrimSpace(req.Description), Enabled: req.Enabled, DefaultVersion: defaultVersion, Spec: string(snapshot), EncryptedSecrets: encryptedSecrets}, nil
 }
 
 func (h *ApplicationHandler) decryptTemplateSecrets(template *model.ApplicationDeploymentTemplate) (map[string]string, error) {
@@ -371,5 +431,5 @@ func deploymentTemplateFromModel(template *model.ApplicationDeploymentTemplate, 
 	if err := json.Unmarshal([]byte(template.Spec), &spec); err != nil {
 		return nil, err
 	}
-	return &deploymentTemplateInfo{ID: template.ID, ApplicationID: template.ApplicationID, Name: template.Name, Description: template.Description, Enabled: template.Enabled, IsDefault: defaultTemplateID != nil && *defaultTemplateID == template.ID, Revision: template.Revision, Spec: spec, UpdatedAt: template.UpdatedAt}, nil
+	return &deploymentTemplateInfo{ID: template.ID, ApplicationID: template.ApplicationID, Name: template.Name, Description: template.Description, Enabled: template.Enabled, DefaultVersion: template.DefaultVersion, IsDefault: defaultTemplateID != nil && *defaultTemplateID == template.ID, Revision: template.Revision, Spec: spec, UpdatedAt: template.UpdatedAt}, nil
 }

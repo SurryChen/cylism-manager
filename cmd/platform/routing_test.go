@@ -52,3 +52,31 @@ func TestRegisterFrontendRoutesKeepsSPAFallbackForBrowserRoutes(t *testing.T) {
 		t.Fatalf("browser fallback = %d %q", resp.Code, resp.Body.String())
 	}
 }
+
+func TestFrontendDistDirOverrideDoesNotDependOnWorkingDirectory(t *testing.T) {
+	originalDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dist := t.TempDir()
+	t.Setenv("CYLISM_WEB_DIST_DIR", dist)
+	if err := os.WriteFile(filepath.Join(dist, "index.html"), []byte("new frontend"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	// Restore the process working directory before other tests run.
+	t.Cleanup(func() {
+		if err := os.Chdir(originalDir); err != nil {
+			t.Errorf("restore working directory: %v", err)
+		}
+	})
+	r := gin.New()
+	registerFrontendRoutes(r, frontendDistDir())
+	resp := httptest.NewRecorder()
+	r.ServeHTTP(resp, httptest.NewRequest(http.MethodGet, "/", nil))
+	if resp.Code != http.StatusOK || resp.Body.String() != "new frontend" {
+		t.Fatalf("frontend = %d %q", resp.Code, resp.Body.String())
+	}
+}

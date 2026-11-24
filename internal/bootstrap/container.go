@@ -14,8 +14,13 @@ import (
 	authapi "github.com/cylism/cylism-manager/internal/api/auth"
 	systemapi "github.com/cylism/cylism-manager/internal/api/system"
 	"github.com/cylism/cylism-manager/internal/k8s"
+	"github.com/cylism/cylism-manager/internal/service/accesscert"
+	"github.com/cylism/cylism-manager/internal/service/database/gateway"
+	"github.com/cylism/cylism-manager/internal/service/database/operations"
+	migration "github.com/cylism/cylism-manager/internal/service/observability/migration"
 	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/gin-gonic/gin"
+	"k8s.io/client-go/rest"
 )
 
 // Config contains process-level dependencies and authentication settings.
@@ -31,16 +36,20 @@ type Config struct {
 
 // Container is the application dependency container.
 type Container struct {
-	Store        *store.Store
-	Repositories Repositories
-	K8s          *k8s.Client
-	Adapters     KubernetesAdapters
-	Services     Services
-	Auth         *authapi.AuthConfig
-	components   *systemapi.SystemComponentHandler
-	encKey       []byte
-	backgroundMu sync.Mutex
-	background   *BackgroundTasks
+	Store              *store.Store
+	Repositories       Repositories
+	K8s                *k8s.Client
+	InCluster          bool
+	Adapters           KubernetesAdapters
+	Services           Services
+	Auth               *authapi.AuthConfig
+	components         *systemapi.SystemComponentHandler
+	encKey             []byte
+	backgroundMu       sync.Mutex
+	background         *BackgroundTasks
+	migrations         *migration.Service
+	databaseGateways   *gateway.Service
+	databaseOperations *operations.Service
 }
 
 // BackgroundConfig controls Container-owned periodic work. A zero interval
@@ -49,6 +58,7 @@ type BackgroundConfig struct {
 	OperationLogRetentionDays        int
 	OperationLogCleanupInterval      time.Duration
 	PlatformReconcileInterval        time.Duration
+	ManagedRegistryReconcileInterval time.Duration
 	RegistryProxyReconcileInterval   time.Duration
 	SystemComponentReconcileInterval time.Duration
 }
@@ -63,6 +73,9 @@ func (c BackgroundConfig) normalized() BackgroundConfig {
 	if c.RegistryProxyReconcileInterval <= 0 {
 		c.RegistryProxyReconcileInterval = time.Minute
 	}
+	if c.ManagedRegistryReconcileInterval <= 0 {
+		c.ManagedRegistryReconcileInterval = time.Minute
+	}
 	if c.SystemComponentReconcileInterval <= 0 {
 		c.SystemComponentReconcileInterval = 5 * time.Minute
 	}
@@ -76,6 +89,7 @@ func NewContainer(cfg Config) (*Container, error) {
 	if err != nil {
 		return nil, err
 	}
+	_, inClusterErr := rest.InClusterConfig()
 	client, err := NewKubernetesClient()
 	if err != nil {
 		log.Printf("WARNING: K8s 客户端不可用: %v（集群相关功能将降级）", err)
@@ -85,6 +99,7 @@ func NewContainer(cfg Config) (*Container, error) {
 		Store:        db,
 		Repositories: repos,
 		K8s:          client,
+		InCluster:    inClusterErr == nil,
 		Adapters:     BuildKubernetesAdapters(client),
 		encKey:       append([]byte(nil), cfg.EncryptionKey...),
 		Auth: &authapi.AuthConfig{
@@ -127,6 +142,19 @@ func (c *Container) StartBackground(parent context.Context, config BackgroundCon
 		return nil
 	}
 	config = config.normalized()
+	// Background work starts before HTTP route composition in cmd/platform.
+	// Initialize this singleton now so its recovery loop is always registered.
+	if c.migrations == nil && c.Store != nil {
+		c.configureObservabilityMigrations(newClusterAgentClientFactory(c.Store, accesscert.NewService(c.Store, c.configEncryptionKey())))
+	}
+	if c.databaseGateways == nil && c.Store != nil {
+		factory := newClusterAgentClientFactory(c.Store, accesscert.NewService(c.Store, c.configEncryptionKey()))
+		c.databaseGateways = gateway.New(c.Store, c.configEncryptionKey(), factory.Client)
+	}
+	if c.databaseOperations == nil && c.Store != nil {
+		factory := newClusterAgentClientFactory(c.Store, accesscert.NewService(c.Store, c.configEncryptionKey()))
+		c.databaseOperations = operations.New(c.Store, c.configEncryptionKey(), factory.Client)
+	}
 	c.backgroundMu.Lock()
 	defer c.backgroundMu.Unlock()
 	if c.background != nil {
@@ -135,8 +163,17 @@ func (c *Container) StartBackground(parent context.Context, config BackgroundCon
 	}
 	tasks := newBackgroundTasks(parent)
 	c.background = tasks
+	if c.databaseOperations != nil {
+		tasks.Go(func(ctx context.Context) { runPeriodic(ctx, 5*time.Second, c.databaseOperations.Reconcile) })
+	}
+	if c.databaseGateways != nil {
+		tasks.Go(func(ctx context.Context) { runPeriodic(ctx, 5*time.Second, c.databaseGateways.Reconcile) })
+	}
+	if c.migrations != nil {
+		tasks.Go(func(ctx context.Context) { runPeriodic(ctx, 30*time.Second, c.migrations.Recover) })
+	}
 
-	if c.Services.PlatformRelease != nil {
+	if c.InCluster && c.Services.PlatformRelease != nil {
 		tasks.Go(func(ctx context.Context) {
 			runPeriodic(ctx, config.PlatformReconcileInterval, func(ctx context.Context) {
 				c.Services.PlatformRelease.ReconcileLatest(ctx)
@@ -148,6 +185,15 @@ func (c *Container) StartBackground(parent context.Context, config BackgroundCon
 			runPeriodic(ctx, config.RegistryProxyReconcileInterval, func(ctx context.Context) {
 				if err := c.Services.RegistryProxyReconciler.Reconcile(ctx); err != nil {
 					log.Printf("镜像代理后台协调失败: %v", err)
+				}
+			})
+		})
+	}
+	if c.Services.RegistryManagedStatus != nil {
+		tasks.Go(func(ctx context.Context) {
+			runPeriodic(ctx, config.ManagedRegistryReconcileInterval, func(ctx context.Context) {
+				if err := c.Services.RegistryManagedStatus.Reconcile(ctx); err != nil {
+					log.Printf("受管制品库后台状态同步失败: %v", err)
 				}
 			})
 		})

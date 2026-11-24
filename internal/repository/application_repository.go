@@ -21,7 +21,15 @@ type ApplicationQueryRepository interface {
 	GetEnvironment(uint, uint) (*model.Environment, error)
 	ListApplications(...uint) ([]model.Application, error)
 	ListReleases(uint) ([]model.Release, error)
+	ListReleasesPage([]uint, int, int) ([]model.Release, int64, error)
 	ListReleasesByApplications([]uint) (map[uint][]model.Release, error)
+}
+
+type ApplicationWebhookRepository interface {
+	GetApplicationDeployWebhook(uint) (*model.ApplicationDeployWebhook, error)
+	SaveApplicationDeployWebhook(*model.ApplicationDeployWebhook) error
+	DeleteApplicationDeployWebhook(uint) error
+	ConsumeApplicationDeployWebhookNonce(uint, string, time.Time) error
 }
 
 // ApplicationManagementRepository contains the application-owned persistence
@@ -30,6 +38,7 @@ type ApplicationQueryRepository interface {
 // outside this interface so their ownership remains explicit.
 type ApplicationManagementRepository interface {
 	ApplicationQueryRepository
+	ApplicationWebhookRepository
 
 	ListProjects() ([]model.Project, error)
 	CreateProject(*model.Project) error
@@ -42,24 +51,33 @@ type ApplicationManagementRepository interface {
 	CreateEnvironment(*model.Environment) error
 	UpdateEnvironment(*model.Environment) error
 	DeleteEnvironment(uint) error
-	EnsureNamespaceAvailable(string, uint) error
+	EnsureNamespaceAvailable(string, uint, ...uint) error
 	ListEnvironmentNamespaceConflicts() ([]model.NamespaceConflict, error)
-	IsEnvironmentNamespaceConflicted(string) (bool, error)
+	IsEnvironmentNamespaceConflicted(string, ...uint) (bool, error)
 	CountEnvironmentApplications(uint) (int64, error)
 
 	CreateApplication(*model.Application) error
+	DeleteUnreleasedApplication(uint) error
 	UpdateApplication(*model.Application) error
 	ReplaceApplicationCapabilities(uint, []string) (*model.Application, error)
 	GetLatestSuccessfulRelease(uint) (*model.Release, error)
 
 	ListApplicationDeploymentTemplates(uint) ([]model.ApplicationDeploymentTemplate, error)
 	GetApplicationDeploymentTemplate(uint, uint) (*model.ApplicationDeploymentTemplate, error)
+	GetDatabaseBindingForTemplate(uint) (*model.DatabaseBinding, error)
 	GetDefaultApplicationDeploymentTemplate(uint) (*model.ApplicationDeploymentTemplate, error)
 	CreateApplicationDeploymentTemplate(*model.ApplicationDeploymentTemplate, bool) error
 	UpdateApplicationDeploymentTemplate(*model.ApplicationDeploymentTemplate) error
 	UpdateApplicationDeploymentTemplateIfRevision(*model.ApplicationDeploymentTemplate, uint) error
 	DeleteApplicationDeploymentTemplate(uint, uint) error
 	SetDefaultApplicationDeploymentTemplate(uint, uint) error
+	ListApplicationCatalogItems() ([]model.ApplicationCatalogItem, error)
+	ListApplicationCatalogInstallations(uint, uint) ([]model.ApplicationCatalogInstallation, error)
+	GetApplicationCatalogItem(uint) (*model.ApplicationCatalogItem, error)
+	CreateApplicationCatalogItem(*model.ApplicationCatalogItem) error
+	UpdateApplicationCatalogItem(*model.ApplicationCatalogItem, uint) error
+	DeleteApplicationCatalogItem(uint) error
+	ImportApplicationCatalogItems(uint, uint, uint, []model.ApplicationCatalogItem) ([]model.ApplicationCatalogInstallation, error)
 
 	ListApplicationEndpoints(uint) ([]model.ApplicationEndpoint, error)
 	GetApplicationEndpoint(uint, uint) (*model.ApplicationEndpoint, error)

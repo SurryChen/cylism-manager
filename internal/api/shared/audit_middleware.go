@@ -67,11 +67,13 @@ func EnsureRequestID(c *gin.Context) string {
 
 func catalogedAuditAction(method, path string) (string, string, bool) {
 	// These paths write their own richer semantic event.
-	if strings.Contains(path, "/node-registry-mirrors") || strings.Contains(path, "/agent-capability-grants") || strings.Contains(path, "/managed-oci-registries/:id/catalog") {
+	if strings.Contains(path, "/node-registry-mirrors") || strings.Contains(path, "/agent-capability-grants") || strings.Contains(path, "/managed-oci-registries/:id/catalog") || strings.HasSuffix(path, "/deployment-templates/:templateID/files/inspect") || strings.HasSuffix(path, "/deployment-templates/:templateID/secrets/inspect") {
 		return "", "", false
 	}
 	resourceType := ""
 	switch {
+	case strings.Contains(path, "/access-certificates"):
+		resourceType = "access_certificate"
 	case strings.Contains(path, "/monitoring/alerts"):
 		resourceType = "alerting"
 	case strings.Contains(path, "/monitoring/logs"):
@@ -112,6 +114,10 @@ func catalogedAuditAction(method, path string) (string, string, bool) {
 		resourceType = "cluster_dns"
 	case strings.Contains(path, "/admin/tables"):
 		resourceType = "admin_record"
+	case strings.Contains(path, "/cloud/databases"):
+		resourceType = "database"
+	case strings.Contains(path, "/mysql-clusters"):
+		resourceType = "mysql_cluster"
 	case strings.Contains(path, "/environments"):
 		resourceType = "environment"
 	case strings.Contains(path, "/projects"):
@@ -120,6 +126,8 @@ func catalogedAuditAction(method, path string) (string, string, bool) {
 		resourceType = "application"
 	case strings.Contains(path, "/servers"):
 		resourceType = "server"
+	case strings.Contains(path, "/clusters"):
+		resourceType = "cluster"
 	case strings.Contains(path, "/sites"):
 		resourceType = "site"
 	case strings.Contains(path, "/domains"):
@@ -132,6 +140,9 @@ func catalogedAuditAction(method, path string) (string, string, bool) {
 		return "", "", false
 	}
 
+	if method == http.MethodGet && resourceType == "database" && strings.HasSuffix(path, "/terminal") {
+		return "database.terminal", resourceType, true
+	}
 	if method == http.MethodGet && resourceType == "secret" && strings.Contains(path, "/:namespace/:name") {
 		return "secret.read", resourceType, true
 	}
@@ -140,8 +151,18 @@ func catalogedAuditAction(method, path string) (string, string, bool) {
 		return "", "", false
 	}
 	switch {
+	case strings.Contains(path, "/sing-box/import"):
+		operation = "import"
+	case strings.Contains(path, "/sing-box/start"):
+		operation = "start"
+	case strings.Contains(path, "/sing-box/stop"):
+		operation = "stop"
 	case strings.Contains(path, "/rollback"):
 		operation = "rollback"
+	case strings.Contains(path, "/deployment/pause"):
+		operation = "pause"
+	case strings.Contains(path, "/deployment/retry-shutdown"):
+		operation = "retry_shutdown"
 	case strings.Contains(path, "/restarts") || strings.Contains(path, "/restart"):
 		operation = "restart"
 	case strings.Contains(path, "/scale"):
@@ -166,6 +187,8 @@ func catalogedAuditAction(method, path string) (string, string, bool) {
 		operation = "restore"
 	case strings.Contains(path, "/backup"):
 		operation = "backup"
+	case strings.Contains(path, "/revoke"):
+		operation = "revoke"
 	case strings.Contains(path, "/releases"):
 		operation = "release"
 	case strings.Contains(path, "/deploy"):

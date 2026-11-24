@@ -118,6 +118,45 @@ func TestNodeInfoMarksCordonedNodeAsEvicted(t *testing.T) {
 	}
 }
 
+func TestSetNodeNoSchedulePreservesOtherTaints(t *testing.T) {
+	node := readyNode("worker-a", false)
+	other := corev1.Taint{Key: "example.com/dedicated", Value: "data", Effect: corev1.TaintEffectNoExecute}
+	node.Spec.Taints = []corev1.Taint{other}
+	clientset := k8sfake.NewSimpleClientset(node)
+	client := &Client{Clientset: clientset}
+
+	state, err := client.SetNodeNoScheduleContext(context.Background(), node.Name, true)
+	if err != nil || !state.DefaultNoSchedule {
+		t.Fatalf("enable no-schedule: %#v %v", state, err)
+	}
+	state, err = client.SetNodeNoScheduleContext(context.Background(), node.Name, true)
+	if err != nil || !state.DefaultNoSchedule {
+		t.Fatalf("repeat enable no-schedule: %#v %v", state, err)
+	}
+	updated, err := clientset.CoreV1().Nodes().Get(context.Background(), node.Name, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(updated.Spec.Taints) != 2 || updated.Spec.Taints[0] != other || !nodeToInfo(updated).DefaultNoSchedule {
+		t.Fatalf("unexpected taints after enable: %#v %v", updated.Spec.Taints, err)
+	}
+	state, err = client.GetNodeSchedulingContext(context.Background(), node.Name)
+	if err != nil || !state.DefaultNoSchedule {
+		t.Fatalf("read no-schedule: %#v %v", state, err)
+	}
+	state, err = client.SetNodeNoScheduleContext(context.Background(), node.Name, false)
+	if err != nil || state.DefaultNoSchedule {
+		t.Fatalf("disable no-schedule: %#v %v", state, err)
+	}
+	updated, err = clientset.CoreV1().Nodes().Get(context.Background(), node.Name, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(updated.Spec.Taints) != 1 || updated.Spec.Taints[0] != other || nodeToInfo(updated).DefaultNoSchedule {
+		t.Fatalf("unexpected taints after disable: %#v %v", updated.Spec.Taints, err)
+	}
+}
+
 func TestUpdateNodeLabelsOnlyChangesValidCustomLabels(t *testing.T) {
 	clientset := k8sfake.NewSimpleClientset(&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "worker-a", Labels: map[string]string{
 		corev1.LabelHostname:                    "worker-a",
