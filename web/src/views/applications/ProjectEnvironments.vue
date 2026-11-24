@@ -62,6 +62,23 @@
       <ResourcePagination :resource="listPage" label="项目环境分页" />
     </SurfaceCard>
 
+    <SurfaceCard v-if="transferredApplications.length" padding="none" class="product-table-card section-gap">
+      <div class="product-toolbar"><h2 class="product-section-title">迁入的应用</h2></div>
+      <div class="table-wrap">
+        <DataTable>
+          <thead><tr><th>应用</th><th>运行环境</th><th>运行版本</th><TableActionCell header /></tr></thead>
+          <tbody>
+            <tr v-for="app in transferredApplications" :key="app.id">
+              <td class="cell-primary">{{ app.name }}</td>
+              <td><router-link :to="{ path: '/applications', query: { project_id: app.deployment_project_id, environment_id: app.environment_id } }">{{ app.deployment_project }} / {{ app.environment }}</router-link><div class="cell-secondary">{{ app.namespace }}</div></td>
+              <td><router-link v-if="app.active_release_id" :to="`/applications/${app.id}/releases/${app.active_release_id}`">{{ app.active_version || `#${app.active_release_id}` }}</router-link><span v-else>—</span></td>
+              <TableActionCell><router-link class="btn btn-sm" :to="`/applications/${app.id}`">查看运行</router-link></TableActionCell>
+            </tr>
+          </tbody>
+        </DataTable>
+      </div>
+    </SurfaceCard>
+
     <BaseModal teleport :open="showEnvironmentModal" :title="editingEnvironment ? '编辑环境' : '新建环境'" @close="closeEnvironmentModal"><form id="project-environment-form" @submit.prevent="saveEnvironment">
       <div class="form-group"><label class="form-label">环境分类</label><SelectMenu v-model="environmentForm.kind" aria-label="环境分类"><option v-for="item in environmentKinds" :key="item.id" :value="item.id">{{ item.label }}</option></SelectMenu></div>
       <div class="form-group"><label class="form-label">环境名称</label><input v-model.trim="environmentForm.name" class="form-input" required :pattern="editingEnvironment && environmentForm.name === editingEnvironment.name ? undefined : '[a-z0-9]([-a-z0-9]*[a-z0-9])?'" :maxlength="editingEnvironment && environmentForm.name === editingEnvironment.name ? undefined : Math.max(1, 54 - (project?.slug?.length || 0))" title="仅支持小写英文字母、数字和连字符" placeholder="production" :disabled="editingEnvironment && environmentHasApplications(editingEnvironment.id)" /></div>
@@ -100,7 +117,7 @@ import SurfaceCard from '../../components/SurfaceCard.vue'
 import ErrorNoticeModal from '../../components/ErrorNoticeModal.vue'
 import SelectMenu from '../../components/SelectMenu.vue'
 
-const props = defineProps({ embedded: Boolean, projectID: { type: String, required: true } })
+const props = defineProps({ embedded: Boolean, projectID: { type: String, required: true }, transferredApplications: { type: Array, default: () => [] } })
 const emit = defineEmits(['changed'])
 const settingsOpen = ref(false), settingsForm = ref({}), registries = ref([])
 const projects = ref([])

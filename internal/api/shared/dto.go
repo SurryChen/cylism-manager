@@ -274,6 +274,7 @@ type ApplicationEndpointView struct {
 type ApplicationView struct {
 	ID                          uint                      `json:"id"`
 	ProjectID                   uint                      `json:"project_id"`
+	ManagementProjectID         *uint                     `json:"management_project_id,omitempty"`
 	EnvironmentID               uint                      `json:"environment_id"`
 	Name                        string                    `json:"name"`
 	WorkloadKind                string                    `json:"workload_kind"`
@@ -325,7 +326,7 @@ func ApplicationDTO(a *model.Application) *ApplicationView {
 	if a == nil {
 		return nil
 	}
-	v := &ApplicationView{ID: a.ID, ProjectID: a.ProjectID, EnvironmentID: a.EnvironmentID, Name: a.Name, WorkloadKind: a.WorkloadKind, Capabilities: a.Capabilities, DefaultDeploymentTemplateID: a.DefaultDeploymentTemplateID, CreatedBy: a.CreatedBy, CreatedAt: a.CreatedAt, UpdatedAt: a.UpdatedAt}
+	v := &ApplicationView{ID: a.ID, ProjectID: a.ProjectID, ManagementProjectID: a.ManagementProjectID, EnvironmentID: a.EnvironmentID, Name: a.Name, WorkloadKind: a.WorkloadKind, Capabilities: a.Capabilities, DefaultDeploymentTemplateID: a.DefaultDeploymentTemplateID, CreatedBy: a.CreatedBy, CreatedAt: a.CreatedAt, UpdatedAt: a.UpdatedAt}
 	if a.Project.ID != 0 {
 		v.Project = ProjectDTO(&a.Project)
 	}

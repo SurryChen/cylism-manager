@@ -124,7 +124,11 @@ function setDeploymentSelected(deployment, selected) {
   const field = deploymentField(deployment), ids = form.value[field] || []
   form.value[field] = selected ? [...new Set([...ids, deployment.id])] : ids.filter(id => id !== deployment.id)
 }
-function loadDeployments() { return deployments.load({ keyword: deploymentKeyword.value }) }
+function loadDeployments() {
+  const query = { keyword: deploymentKeyword.value }
+  if (props.record?.id) Object.assign(query, { version_id: props.record.id, include_available: true })
+  return deployments.load(query)
+}
 watch([deploymentsOpen, deploymentKeyword], ([expanded]) => {
   if (expanded) void loadDeployments()
 })

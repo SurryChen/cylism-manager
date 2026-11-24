@@ -24,6 +24,39 @@ vi.mock('../../api/index.js', () => ({
 }))
 
 describe('ApplicationDetails view', () => {
+  it('previews the original deployment and transfers ownership to the selected project', async () => {
+    const { api } = await import('../../api/index.js')
+    const originalGet = api.get.getMockImplementation()
+    api.get.mockImplementation(async (path, options) => {
+      if (path === '/applications/1/project-transfer') return { current_project: { id: 2, name: '自用' }, targets: [{ id: 4, name: '用户中心' }] }
+      const result = await originalGet(path, options)
+      return path === '/applications/1?releases=false' ? { ...result, active_release: { id: 3, version: '2.0.0' } } : result
+    })
+    api.put.mockResolvedValueOnce({ project_id: 4 })
+    const wrapper = mount(ApplicationDetails, {
+      props: { applicationID: '1' },
+      global: { stubs: { RouterLink: { template: '<a><slot /></a>' }, Teleport: true } },
+    })
+    try {
+      await flushPromises()
+      await wrapper.findAll('button').find(button => button.text() === '迁移到其他项目').trigger('click')
+      await flushPromises()
+      expect(wrapper.text()).toContain('继续在 commerce-prod 运行')
+      expect(wrapper.text()).toContain('当前部署版本 2.0.0')
+      expect(wrapper.get('.base-modal-actions .btn-primary').attributes('disabled')).toBeDefined()
+      await wrapper.get('select[aria-label="目标项目"]').setValue('4')
+      await wrapper.get('.base-modal-actions .btn-primary').trigger('click')
+      await flushPromises()
+      expect(api.put).toHaveBeenCalledWith('/applications/1/project-transfer', { from_project_id: 2, to_project_id: 4 })
+      expect(routerPush).toHaveBeenCalledWith({ path: '/projects/4', query: { tab: 'environments' } })
+    } finally {
+      wrapper.unmount()
+      api.get.mockImplementation(originalGet)
+      api.put.mockClear()
+      routerPush.mockClear()
+    }
+  })
+
   it('opens domain management for the current application environment', async () => {
     routerPush.mockClear()
     const wrapper = mount(ApplicationDetails, {

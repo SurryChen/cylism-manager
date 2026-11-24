@@ -92,7 +92,7 @@ func (s *Store) ListProductVersions(ownerID, productID uint, f model.ProductLife
 		}
 		rows[i].DeploymentIDs = []uint{}
 		rows[i].PlatformReleaseIDs = []uint{}
-		err := s.productDeployments(ownerID, productID).Joins("JOIN product_version_deployments ON product_version_deployments.release_id = releases.id").Where("product_version_deployments.version_id = ?", rows[i].ID).Order("releases.id DESC").Pluck("releases.id", &rows[i].DeploymentIDs).Error
+		err := s.productDeployments(ownerID, productID, rows[i].ID).Joins("JOIN product_version_deployments ON product_version_deployments.release_id = releases.id").Where("product_version_deployments.version_id = ?", rows[i].ID).Order("releases.id DESC").Pluck("releases.id", &rows[i].DeploymentIDs).Error
 		if err != nil {
 			return nil, 0, err
 		}
@@ -302,7 +302,7 @@ func (s *Store) SaveProductVersion(ownerID uint, version *model.ProductVersion) 
 		ids := map[uint]bool{}
 		for _, id := range version.DeploymentIDs {
 			var count int64
-			if err := (&Store{db: tx}).productDeployments(ownerID, version.ProductID).Where("releases.id = ?", id).Count(&count).Error; err != nil {
+			if err := (&Store{db: tx}).productDeployments(ownerID, version.ProductID, version.ID).Where("releases.id = ?", id).Count(&count).Error; err != nil {
 				return err
 			}
 			if count != 1 {
@@ -553,9 +553,15 @@ func (s *Store) ListProductDistributionEvents(ownerID, productID, distributionID
 	return rows, count, err
 }
 
-func (s *Store) productDeployments(ownerID, productID uint) *gorm.DB {
+func (s *Store) productDeployments(ownerID, productID, versionID uint) *gorm.DB {
+	scope := s.db.Where("EXISTS (SELECT 1 FROM product_applications WHERE product_applications.product_id = ? AND product_applications.application_id = applications.id)", productID).
+		Or("EXISTS (SELECT 1 FROM product_projects WHERE product_projects.product_id = ? AND product_projects.project_id = "+applicationOwningProject+")", productID)
+	if versionID != 0 {
+		// Preserve existing version links even after an application's project changes.
+		scope = scope.Or("EXISTS (SELECT 1 FROM product_version_deployments pvd JOIN product_versions pv ON pv.id = pvd.version_id WHERE pv.product_id = ? AND pvd.version_id = ? AND pvd.release_id = releases.id)", productID, versionID)
+	}
 	return s.db.Model(&model.Release{}).Joins("JOIN applications ON applications.id = releases.application_id").Joins("JOIN projects ON projects.id = applications.project_id").Where("projects.owner_id = ?", ownerID).
-		Where("EXISTS (SELECT 1 FROM product_applications WHERE product_applications.product_id = ? AND product_applications.application_id = applications.id) OR EXISTS (SELECT 1 FROM product_projects WHERE product_projects.product_id = ? AND product_projects.project_id = applications.project_id)", productID, productID)
+		Where(scope)
 }
 
 func (s *Store) productPlatformReleases(ownerID, productID uint) *gorm.DB {
@@ -566,14 +572,16 @@ func (s *Store) ProductDeploymentPage(ownerID, productID uint, f model.ProductLi
 	if err := ownedProduct(s.db, ownerID, productID); err != nil {
 		return nil, 0, err
 	}
-	q := s.productDeployments(ownerID, productID)
+	q := s.productDeployments(ownerID, productID, f.VersionID)
 	platform := s.productPlatformReleases(ownerID, productID)
 	if f.VersionID != 0 {
 		if err := lifecycleVersionAccess(s.db, productID, &f.VersionID); err != nil {
 			return nil, 0, err
 		}
-		q = q.Joins("JOIN product_version_deployments ON product_version_deployments.release_id = releases.id").Where("product_version_deployments.version_id = ?", f.VersionID)
-		platform = platform.Joins("JOIN product_version_platform_releases ON product_version_platform_releases.release_id = platform_releases.id").Where("product_version_platform_releases.version_id = ?", f.VersionID)
+		if !f.IncludeVersionDeployments {
+			q = q.Joins("JOIN product_version_deployments ON product_version_deployments.release_id = releases.id").Where("product_version_deployments.version_id = ?", f.VersionID)
+			platform = platform.Joins("JOIN product_version_platform_releases ON product_version_platform_releases.release_id = platform_releases.id").Where("product_version_platform_releases.version_id = ?", f.VersionID)
+		}
 	}
 	if f.Keyword != "" {
 		q = q.Where("instr(LOWER(applications.name || ' ' || releases.version), ?) > 0", strings.ToLower(f.Keyword))

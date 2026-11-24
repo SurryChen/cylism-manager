@@ -60,7 +60,7 @@ func (s *Store) GetProduct(ownerID, id uint) (*model.Product, error) {
 	}
 	product.RelatedApplications = append([]model.Application(nil), product.Applications...)
 	var projectApps []model.Application
-	if err := s.db.Joins("JOIN product_projects ON product_projects.project_id = applications.project_id").Joins("JOIN projects ON projects.id = applications.project_id").Where("product_projects.product_id = ? AND projects.owner_id = ?", id, ownerID).Preload("Environment").Preload("Endpoints").Order("applications.id").Find(&projectApps).Error; err != nil {
+	if err := s.db.Joins("JOIN product_projects ON product_projects.project_id = "+applicationOwningProject).Joins("JOIN projects ON projects.id = applications.project_id").Where("product_projects.product_id = ? AND projects.owner_id = ?", id, ownerID).Preload("Environment").Preload("Endpoints").Order("applications.id").Find(&projectApps).Error; err != nil {
 		return nil, err
 	}
 	seen := make(map[uint]bool, len(product.RelatedApplications))

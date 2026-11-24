@@ -50,7 +50,7 @@ func (s *Store) UpdateApplication(application *model.Application) error {
 	if err := application.SetCapabilities(application.Capabilities); err != nil {
 		return err
 	}
-	return s.db.Save(application).Error
+	return s.db.Omit("ManagementProjectID").Save(application).Error
 }
 
 func (s *Store) CreateApplicationManagedFile(file *model.ApplicationManagedFile) error {

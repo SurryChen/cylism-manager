@@ -120,14 +120,15 @@ type ProductDeploymentOption struct {
 }
 
 type ProductLifecycleFilter struct {
-	AssignableTasks bool
-	Audience        string
-	Status          string
-	Keyword         string
-	VersionID       uint
-	ReleaseUnitID   *uint
-	Limit           int
-	Offset          int
+	AssignableTasks           bool
+	Audience                  string
+	Status                    string
+	Keyword                   string
+	VersionID                 uint
+	IncludeVersionDeployments bool
+	ReleaseUnitID             *uint
+	Limit                     int
+	Offset                    int
 }
 
 type ProductWorkbench struct {

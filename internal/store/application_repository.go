@@ -47,14 +47,17 @@ func (s *Store) DeleteProject(id uint) error {
 		if err := tx.First(&project, id).Error; err != nil {
 			return err
 		}
-		for _, record := range []interface{}{&model.Environment{}, &model.Application{}} {
-			var count int64
-			if err := tx.Model(record).Where("project_id = ?", id).Count(&count).Error; err != nil {
-				return err
-			}
-			if count > 0 {
-				return model.ErrProjectWorkspaceConflict
-			}
+		store := &Store{db: tx}
+		environments, err := store.CountProjectEnvironments(id)
+		if err != nil {
+			return err
+		}
+		applications, err := store.CountProjectApplications(id)
+		if err != nil {
+			return err
+		}
+		if environments > 0 || applications > 0 {
+			return model.ErrProjectWorkspaceConflict
 		}
 		var ids []uint
 		if err := tx.Model(&model.Product{}).Where("project_id = ?", id).Pluck("id", &ids).Error; err != nil {
@@ -78,7 +81,7 @@ func (s *Store) CountProjectEnvironments(projectID uint) (int64, error) {
 
 func (s *Store) CountProjectApplications(projectID uint) (int64, error) {
 	var count int64
-	err := s.db.Model(&model.Application{}).Where("project_id = ?", projectID).Count(&count).Error
+	err := s.db.Model(&model.Application{}).Where("project_id = ? OR management_project_id = ?", projectID, projectID).Count(&count).Error
 	return count, err
 }
 

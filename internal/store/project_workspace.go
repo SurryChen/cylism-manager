@@ -159,7 +159,22 @@ func (s *Store) GetProjectWorkspace(ownerID, projectID uint) (*model.Product, er
 	if err := s.db.Where("owner_id = ? AND project_id = ?", ownerID, projectID).First(&product).Error; err != nil {
 		return nil, err
 	}
-	return s.GetProduct(ownerID, product.ID)
+	workspace, err := s.GetProduct(ownerID, product.ID)
+	if err != nil {
+		return nil, err
+	}
+	latestRelease := s.db.Table("releases").Select("id").Where("application_id = applications.id AND status = ?", model.ReleaseStatusSucceeded).Order("sequence DESC").Limit(1)
+	err = s.db.Table("applications").
+		Select("applications.id, applications.name, projects.name AS deployment_project, projects.id AS deployment_project_id, environments.name AS environment, environments.id AS environment_id, environments.namespace, COALESCE(releases.version, '') AS active_version, COALESCE(releases.id, 0) AS active_release_id").
+		Joins("JOIN projects ON projects.id = applications.project_id").
+		Joins("JOIN environments ON environments.id = applications.environment_id").
+		Joins("LEFT JOIN releases ON releases.id = (?)", latestRelease).
+		Where("applications.management_project_id = ? AND projects.owner_id = ?", projectID, ownerID).
+		Order("applications.name, applications.id").Scan(&workspace.TransferredApplications).Error
+	if err != nil {
+		return nil, err
+	}
+	return workspace, nil
 }
 
 func (s *Store) DeleteProjectWorkspace(ownerID, projectID uint) error {

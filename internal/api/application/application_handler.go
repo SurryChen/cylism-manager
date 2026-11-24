@@ -62,6 +62,8 @@ type applicationManagementRepository interface {
 	IsEnvironmentNamespaceConflicted(string, ...uint) (bool, error)
 	CountEnvironmentApplications(uint) (int64, error)
 	CreateApplication(*model.Application) error
+	ListApplicationTransferProjects(uint) ([]model.Project, error)
+	TransferApplicationProject(model.ApplicationProjectTransfer) error
 	DeleteUnreleasedApplication(uint) error
 	UpdateApplication(*model.Application) error
 	ReplaceApplicationCapabilities(uint, []string) (*model.Application, error)

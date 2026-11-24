@@ -31,30 +31,43 @@ const (
 
 // Product stores lifecycle metadata for a canonical project. Legacy lifecycle IDs remain stable.
 type Product struct {
-	ProjectID           *uint                     `gorm:"uniqueIndex" json:"project_id,omitempty"`
-	ProjectSlug         string                    `gorm:"-" json:"project_slug"`
-	ID                  uint                      `gorm:"primaryKey" json:"id"`
-	OwnerID             uint                      `gorm:"index;not null" json:"owner_id"`
-	Name                string                    `gorm:"size:128;not null" json:"name"`
-	Summary             string                    `gorm:"size:1024" json:"summary"`
-	IconURL             string                    `gorm:"size:1024" json:"icon_url"`
-	Identifier          string                    `gorm:"size:32" json:"identifier"`
-	Stage               string                    `gorm:"size:24;index;not null;default:idea" json:"stage"`
-	Links               []ProductLink             `gorm:"type:text;serializer:json" json:"links"`
-	NextAction          string                    `gorm:"size:512" json:"next_action"`
-	NextDueDate         *time.Time                `json:"next_due_date,omitempty"`
-	PublicBio           string                    `gorm:"size:1024" json:"public_bio"`
-	PublicURL           string                    `gorm:"size:1024" json:"public_url"`
-	PublicShowcase      bool                      `gorm:"not null;default:false" json:"public_showcase"`
-	PlatformLinked      bool                      `gorm:"not null;default:false" json:"platform_linked"`
-	CreatedAt           time.Time                 `json:"created_at"`
-	UpdatedAt           time.Time                 `json:"updated_at"`
-	Channels            []ProductChannel          `gorm:"foreignKey:ProductID" json:"channels,omitempty"`
-	ReleaseUnits        []ProductReleaseUnit      `gorm:"foreignKey:ProductID" json:"release_units,omitempty"`
-	Projects            []Project                 `gorm:"-" json:"projects"`
-	Applications        []Application             `gorm:"-" json:"applications"`
-	RelatedApplications []Application             `gorm:"-" json:"related_applications"`
-	DatabaseResources   []ProductDatabaseResource `gorm:"-" json:"database_resources"`
+	ProjectID               *uint                           `gorm:"uniqueIndex" json:"project_id,omitempty"`
+	ProjectSlug             string                          `gorm:"-" json:"project_slug"`
+	ID                      uint                            `gorm:"primaryKey" json:"id"`
+	OwnerID                 uint                            `gorm:"index;not null" json:"owner_id"`
+	Name                    string                          `gorm:"size:128;not null" json:"name"`
+	Summary                 string                          `gorm:"size:1024" json:"summary"`
+	IconURL                 string                          `gorm:"size:1024" json:"icon_url"`
+	Identifier              string                          `gorm:"size:32" json:"identifier"`
+	Stage                   string                          `gorm:"size:24;index;not null;default:idea" json:"stage"`
+	Links                   []ProductLink                   `gorm:"type:text;serializer:json" json:"links"`
+	NextAction              string                          `gorm:"size:512" json:"next_action"`
+	NextDueDate             *time.Time                      `json:"next_due_date,omitempty"`
+	PublicBio               string                          `gorm:"size:1024" json:"public_bio"`
+	PublicURL               string                          `gorm:"size:1024" json:"public_url"`
+	PublicShowcase          bool                            `gorm:"not null;default:false" json:"public_showcase"`
+	PlatformLinked          bool                            `gorm:"not null;default:false" json:"platform_linked"`
+	CreatedAt               time.Time                       `json:"created_at"`
+	UpdatedAt               time.Time                       `json:"updated_at"`
+	Channels                []ProductChannel                `gorm:"foreignKey:ProductID" json:"channels,omitempty"`
+	ReleaseUnits            []ProductReleaseUnit            `gorm:"foreignKey:ProductID" json:"release_units,omitempty"`
+	Projects                []Project                       `gorm:"-" json:"projects"`
+	Applications            []Application                   `gorm:"-" json:"applications"`
+	RelatedApplications     []Application                   `gorm:"-" json:"related_applications"`
+	TransferredApplications []ProjectTransferredApplication `gorm:"-" json:"transferred_applications,omitempty"`
+	DatabaseResources       []ProductDatabaseResource       `gorm:"-" json:"database_resources"`
+}
+
+type ProjectTransferredApplication struct {
+	ID                  uint   `json:"id"`
+	Name                string `json:"name"`
+	DeploymentProject   string `json:"deployment_project"`
+	DeploymentProjectID uint   `json:"deployment_project_id"`
+	Environment         string `json:"environment"`
+	EnvironmentID       uint   `json:"environment_id"`
+	Namespace           string `json:"namespace"`
+	ActiveVersion       string `json:"active_version"`
+	ActiveReleaseID     uint   `json:"active_release_id"`
 }
 
 // ProductDatabaseResource exposes binding metadata without connection credentials.

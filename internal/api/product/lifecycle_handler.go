@@ -118,6 +118,7 @@ func (h *Handler) ListLifecycle(c *gin.Context) {
 	case "distributions":
 		rows, count, err = h.repository.ListProductDistributions(shared.UserID(c), id, f)
 	case "deployments":
+		f.IncludeVersionDeployments = c.Query("include_available") == "true"
 		rows, count, err = h.repository.ProductDeploymentPage(shared.UserID(c), id, f)
 	default:
 		shared.NotFound(c, "列表不存在")

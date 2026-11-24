@@ -79,8 +79,10 @@ func (e *TemplateRevisionConflictError) Error() string {
 
 // Application is a platform-managed stateless service.
 type Application struct {
-	ID                          uint                  `gorm:"primaryKey" json:"id"`
-	ProjectID                   uint                  `gorm:"index;not null" json:"project_id"`
+	ID        uint `gorm:"primaryKey" json:"id"`
+	ProjectID uint `gorm:"index;not null" json:"project_id"`
+	// ManagementProjectID changes project workspace ownership without changing the deployment project.
+	ManagementProjectID         *uint                 `gorm:"index" json:"management_project_id,omitempty"`
 	EnvironmentID               uint                  `gorm:"uniqueIndex:idx_environment_application;not null" json:"environment_id"`
 	Name                        string                `gorm:"size:128;uniqueIndex:idx_environment_application;not null" json:"name"`
 	WorkloadKind                string                `gorm:"size:32;default:deployment;not null" json:"workload_kind"`
@@ -94,6 +96,24 @@ type Application struct {
 	Environment                 Environment           `gorm:"foreignKey:EnvironmentID" json:"environment,omitempty"`
 	Endpoints                   []ApplicationEndpoint `gorm:"foreignKey:ApplicationID" json:"endpoints,omitempty"`
 }
+
+func (a Application) OwningProjectID() uint {
+	if a.ManagementProjectID != nil {
+		return *a.ManagementProjectID
+	}
+	return a.ProjectID
+}
+
+type ApplicationProjectTransfer struct {
+	ApplicationID uint
+	FromProjectID uint
+	ToProjectID   uint
+	OwnerID       uint
+}
+
+var ErrApplicationProjectChanged = errors.New("应用所属项目已变更，请重新打开迁移窗口")
+var ErrApplicationTransferBusy = errors.New("应用有正在进行的发布，请在发布完成后重试")
+var ErrApplicationTransferTarget = errors.New("请选择有权限的当前项目")
 
 const (
 	ApplicationEndpointAccessPublic           = "public"

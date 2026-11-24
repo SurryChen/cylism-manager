@@ -1,8 +1,8 @@
 <template>
   <div>
     <SectionTabsHeader class="page-header detail-tabs-header" :title="application?.name || '应用详情'" :tabs="detailTabs" :active-tab="activeTab" @select="activeTab = $event">
-      <template #title><div class="detail-heading"><div class="detail-context"><PageBackLink to="/applications">返回工作台</PageBackLink></div><h1 v-if="application || readError" class="page-title">{{ application?.name || '应用详情' }}</h1><div v-else class="detail-title-placeholder" aria-hidden="true"></div></div></template>
-      <template #actions><button v-if="application" class="btn btn-sm" aria-label="应用设置" @click="openApplicationSettings"><Settings :size="14" />应用设置</button></template>
+      <template #title><div class="detail-heading"><div class="detail-context"><PageBackLink :to="managementProjectPath || '/applications'">{{ managementProjectPath ? '返回项目' : '返回工作台' }}</PageBackLink></div><h1 v-if="application || readError" class="page-title">{{ application?.name || '应用详情' }}</h1><div v-else class="detail-title-placeholder" aria-hidden="true"></div></div></template>
+      <template #actions><div v-if="application" class="detail-heading-actions"><button class="btn btn-sm" @click="openProjectTransfer">迁移到其他项目</button><button class="btn btn-sm" aria-label="应用设置" @click="openApplicationSettings"><Settings :size="14" />应用设置</button></div></template>
     </SectionTabsHeader>
     <div v-if="readError" data-testid="application-detail-read-error" class="k8s-banner k8s-banner-warn section-gap">{{ readError }}</div>
     <ErrorNoticeModal :open="Boolean(mutationError)" :message="mutationError" teleport @close="mutationError = ''" />
@@ -54,6 +54,27 @@ X-Cylism-Signature: HMAC-SHA256(应用密钥, timestamp + "." + nonce + "." + �
       <EmptyState v-else message="暂无发布记录" />
     <PaginationControls :page="releasesPage" :page-size="releasesPageSize" :total="releasesTotal" :loading="releasesLoading" @page-change="changeReleasesPage" @page-size-change="changeReleasesPageSize" />
     </SurfaceCard>
+
+    <BaseModal teleport :open="showProjectTransfer" title="迁移到其他项目" :show-close="!transferringProject" :close-on-overlay="!transferringProject" :close-on-escape="!transferringProject" @close="closeProjectTransfer">
+      <EmptyState v-if="transferOptionsResource.loading.value" variant="loading" message="正在读取可迁移项目..." />
+      <template v-else-if="transferOptions">
+        <p>{{ application?.name }} · {{ transferOptions.current_project.name }}</p>
+        <p class="form-hint">继续在 {{ application?.environment?.namespace || application?.environment?.name }} 运行。保留发布历史和自动发布回调，迁移无需重启。</p>
+        <p v-if="activeRelease" class="form-hint">当前部署版本 {{ activeRelease.version || `#${activeRelease.sequence}` }}</p>
+        <div v-if="transferOptions.targets.length" class="form-group">
+          <label class="form-label">目标项目</label>
+          <SelectMenu v-model="transferTargetID" aria-label="目标项目" :disabled="transferringProject">
+            <option :value="0" disabled>选择目标项目</option>
+            <option v-for="project in transferOptions.targets" :key="project.id" :value="project.id">{{ project.name }}</option>
+          </SelectMenu>
+        </div>
+        <EmptyState v-else message="暂无其他可迁移的项目" />
+      </template>
+      <template #actions>
+        <button class="btn" :disabled="transferringProject" @click="closeProjectTransfer">取消</button>
+        <button class="btn btn-primary" :disabled="!transferTargetID || transferringProject" @click="submitProjectTransfer">{{ transferringProject ? '迁移中...' : '确认迁移' }}</button>
+      </template>
+    </BaseModal>
 
     <BaseModal :open="showApplicationSettings && !showWorkloadEditor" title="应用设置" dialog-class="application-settings-modal capability-section" :close-on-overlay="!savingCapabilities" :close-on-escape="!savingCapabilities" @close="closeApplicationSettings">
       <section class="application-setting-group">
@@ -132,6 +153,7 @@ import {
   deleteDeploymentTemplate,
   deleteEndpoint,
   getApplication,
+  getApplicationProjectTransferOptions,
   getApplicationDeployWebhook,
   getApplicationConfigResources,
   getApplicationEndpoints,
@@ -142,6 +164,7 @@ import {
   restartApplication as restartApplicationRequest,
   saveApplicationCapabilities,
   setDefaultDeploymentTemplate,
+  transferApplicationProject,
   updateDeploymentTemplate,
   updateEndpoint,
   updateWorkloadKind as updateWorkloadKindRequest,
@@ -185,6 +208,12 @@ const activeTab = ref(detailTabs.some(tab => tab.id === route?.query?.tab) ? rou
 watch(() => route?.query?.tab, tab => { if (detailTabs.some(item => item.id === tab)) activeTab.value = tab })
 const application = ref(null)
 const activeRelease = ref(null)
+const managementProjectPath = computed(() => application.value?.management_project_id ? `/projects/${application.value.management_project_id}?tab=environments` : '')
+const transferOptionsResource = useAsyncResource(({ signal }, id) => getApplicationProjectTransferOptions(id, { signal }), null)
+const transferOptions = transferOptionsResource.data
+const showProjectTransfer = ref(false)
+const transferTargetID = ref(0)
+const transferringProject = ref(false)
 const runtimeReleases = computed(() => activeRelease.value ? [activeRelease.value] : [])
 const releaseHistoryResource = usePaginatedResource((query, options) => getApplicationReleasePage(query.applicationID, query, options), 'items')
 const { items: releases, total: releasesTotal, page: releasesPage, pageSize: releasesPageSize, loading: releasesLoading, changePage: changeReleasesPage, changePageSize: changeReleasesPageSize } = releaseHistoryResource
@@ -324,9 +353,48 @@ function templatePayload() { const form = templateForm.value; validateConfigurat
 function templateServiceSummary(service) { const ports = servicePortsFromSpec(service, 0); return `${service?.type || 'ClusterIP'} · ${ports.map(port => `${port.protocol} ${port.port}`).join(', ')}` }
 
 let applicationLoadRequest = 0
+async function openProjectTransfer() {
+  transferTargetID.value = 0
+  showProjectTransfer.value = true
+  const result = await transferOptionsResource.refresh(props.applicationID)
+  const error = transferOptionsResource.error.value
+  if (showProjectTransfer.value && !result && error) {
+    closeProjectTransfer()
+    mutationError.value = error.message || '读取可迁移项目失败'
+  }
+}
+
+function closeProjectTransfer() {
+  if (transferringProject.value) return
+  showProjectTransfer.value = false
+  transferOptionsResource.cancel()
+  transferOptions.value = null
+}
+
+async function submitProjectTransfer() {
+  if (!transferOptions.value || !transferTargetID.value || transferringProject.value) return
+  transferringProject.value = true
+  const applicationID = props.applicationID
+  try {
+    const result = await transferApplicationProject(applicationID, transferOptions.value.current_project.id, transferTargetID.value)
+    if (applicationID !== props.applicationID) return
+    showProjectTransfer.value = false
+    application.value = { ...application.value, management_project_id: result.project_id === application.value.project_id ? null : result.project_id }
+    await router.push({ path: `/projects/${result.project_id}`, query: { tab: 'environments' } })
+  } catch (error) {
+    if (applicationID === props.applicationID) {
+      showProjectTransfer.value = false
+      mutationError.value = error.message || '迁移应用失败'
+    }
+  } finally {
+    transferringProject.value = false
+  }
+}
+
 async function loadApplication() {
   const request = ++applicationLoadRequest
   const applicationID = props.applicationID
+  closeProjectTransfer()
   if (releaseHistoryResource.filters.value.applicationID !== applicationID) releaseHistoryResource.reset()
   closeTemplateEditor()
   releaseHistoryPolling.stop()

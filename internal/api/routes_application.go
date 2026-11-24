@@ -37,6 +37,8 @@ func registerApplicationRoutes(r *gin.Engine, apiGroup *gin.RouterGroup, h *appl
 	applications.POST("", h.CreateApplication)
 	applications.DELETE("/:id", h.DeleteApplication)
 	applications.GET("/:id", h.GetApplication)
+	applications.GET("/:id/project-transfer", h.ApplicationProjectTransferOptions)
+	applications.PUT("/:id/project-transfer", h.TransferApplicationProject)
 	applications.PUT("/:id/capabilities", h.UpdateCapabilities)
 	applications.GET("/:id/managed-files", h.ListManagedFiles)
 	applications.POST("/:id/delegations", h.CreateDelegation)

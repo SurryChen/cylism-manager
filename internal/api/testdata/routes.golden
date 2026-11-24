@@ -102,6 +102,7 @@ GET /api/applications/:id/endpoints
 GET /api/applications/:id/managed-files
 GET /api/applications/:id/pods
 GET /api/applications/:id/pods/:pod/logs
+GET /api/applications/:id/project-transfer
 GET /api/applications/:id/releases
 GET /api/applications/:id/releases/:releaseID
 GET /api/applications/:id/runtime
@@ -567,6 +568,7 @@ PUT /api/application-catalog/:catalogID
 PUT /api/applications/:id/capabilities
 PUT /api/applications/:id/deployment-templates/:templateID
 PUT /api/applications/:id/endpoints/:endpointID
+PUT /api/applications/:id/project-transfer
 PUT /api/applications/:id/workload-kind
 PUT /api/certs/dns-credentials/:id
 PUT /api/certs/issuers/:kind/:namespace/:name

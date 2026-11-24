@@ -24,7 +24,7 @@
         <div v-for="(link, index) in product.links" :key="index" class="product-detail-row"><span class="badge badge-offline">{{ labelFor(linkKinds, link.kind) }}</span> <a :href="link.url" target="_blank" rel="noopener noreferrer">{{ link.label || link.url }}</a></div>
       </SurfaceCard>
     </div>
-    <ProjectEnvironments v-else-if="tab === 'environments' && product.project_id" :project-i-d="String(product.project_id)" embedded @changed="refreshProduct" />
+    <ProjectEnvironments v-else-if="tab === 'environments' && product.project_id" :project-i-d="String(product.project_id)" :transferred-applications="product.transferred_applications" embedded @changed="refreshProduct" />
     <ProductLifecycle v-else-if="['tasks', 'versions', 'distributions'].includes(tab)" :key="product.id + '-' + tab" :product="product" :kind="tab" :initial-version-id="lifecycleVersionID" @changed="refreshProduct" @select-version="id => showVersionRecords('tasks', id)" @select-distributions="id => showVersionRecords('distributions', id)" @show-channels="channelsOpen = true" @update-release-units="updateReleaseUnits" />
     <BaseModal teleport :open="channelsOpen" title="发行渠道" size="large" @close="channelsOpen = false">
       <p class="product-muted">维护平台标识和访问链接；渠道当前版本与审核进度由发行记录汇总。</p>

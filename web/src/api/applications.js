@@ -35,6 +35,14 @@ export function getProjects(options) {
   return api.get('/projects', options)
 }
 
+export function getApplicationProjectTransferOptions(applicationID, options) {
+  return api.get(`/applications/${segment(applicationID)}/project-transfer`, options)
+}
+
+export function transferApplicationProject(applicationID, fromProjectID, toProjectID) {
+  return putRequest(`/applications/${segment(applicationID)}/project-transfer`, { from_project_id: fromProjectID, to_project_id: toProjectID })
+}
+
 export function getProjectEnvironments(projectID, options) {
   return api.get(`/projects/${segment(projectID)}/environments`, options)
 }
