@@ -26,10 +26,13 @@ func migrateSchema(db *gorm.DB) error {
 		&model.PersistentVolumeBackup{}, &model.HostDirectoryPVCImport{},
 		&model.SystemComponentConfig{},
 		&model.ObservabilityMigration{},
-		&model.Product{}, &model.ProductChannel{}, &model.ProductProject{}, &model.ProductApplication{},
-		&model.ProductTask{}, &model.ProductVersion{}, &model.ProductVersionDeployment{}, &model.ProductVersionPlatformRelease{},
+		&model.Product{}, &model.ProductChannel{}, &model.ProductProject{}, &model.ProductApplication{}, &model.ProductReleaseUnit{},
+		&model.ProductTask{}, &model.ProductVersion{}, &model.ProductVersionTask{}, &model.ProductVersionDeployment{}, &model.ProductVersionPlatformRelease{},
 		&model.ProductDistribution{}, &model.ProductDistributionEvent{},
 	); err != nil {
+		return err
+	}
+	if err := db.Exec("DROP INDEX IF EXISTS idx_product_version_name").Error; err != nil {
 		return err
 	}
 	if legacyRemoval {

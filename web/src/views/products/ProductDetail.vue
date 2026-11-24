@@ -25,13 +25,12 @@
       </SurfaceCard>
     </div>
     <ProjectEnvironments v-else-if="tab === 'environments' && product.project_id" :project-i-d="String(product.project_id)" embedded @changed="refreshProduct" />
-    <ProductLifecycle v-else-if="['tasks', 'versions'].includes(tab)" :key="product.id + '-' + tab" :product="product" :kind="tab" :initial-version-id="taskVersionID" @changed="refreshProduct" @select-version="showVersionTasks" />
-    <ProductLifecycle v-else-if="tab === 'distributions'" :key="product.id + '-distributions'" :product="product" kind="distributions" @changed="refreshProduct" @show-channels="channelsOpen = true" />
+    <ProductLifecycle v-else-if="['tasks', 'versions', 'distributions'].includes(tab)" :key="product.id + '-' + tab" :product="product" :kind="tab" :initial-version-id="lifecycleVersionID" @changed="refreshProduct" @select-version="id => showVersionRecords('tasks', id)" @select-distributions="id => showVersionRecords('distributions', id)" @show-channels="channelsOpen = true" @update-release-units="updateReleaseUnits" />
     <BaseModal teleport :open="channelsOpen" title="发行渠道" size="large" @close="channelsOpen = false">
       <p class="product-muted">维护平台标识和访问链接；渠道当前版本与审核进度由发行记录汇总。</p>
       <EmptyState v-if="!product?.channels?.length" message="尚未添加发行渠道" />
       <div v-else class="table-wrap"><DataTable><thead><tr><th>平台 / 渠道</th><th>应用标识</th><th>版本 / 状态</th><th>链接</th></tr></thead><tbody><tr v-for="channel in product.channels" :key="channel.id">
-        <td>{{ channel.name || labelFor(platforms, channel.platform) }}<span class="cell-secondary product-line">{{ labelFor(platforms, channel.platform) }}</span></td><td>{{ channel.app_identifier || '—' }}</td>
+        <td>{{ channel.name || labelFor(platforms, channel.platform) }}<span class="cell-secondary product-line">{{ labelFor(platforms, channel.platform) }}<template v-if="product.release_units?.length"> · {{ channel.release_unit_id == null ? '不限发布端' : releaseUnitName(product.release_units, channel.release_unit_id) }}</template></span></td><td>{{ channel.app_identifier || '—' }}</td>
         <td><span class="badge" :class="channelClass(channel.publish_status)">{{ labelFor(channelStatuses, channel.publish_status) }}</span><span class="product-line">正式线上 {{ channel.online_version || '—' }}</span><span v-if="channel.pending_version" class="cell-secondary product-line">正式待发布 {{ channel.pending_version }}</span></td>
         <td><a v-if="channel.admin_url" :href="channel.admin_url" target="_blank" rel="noopener noreferrer">管理后台</a><a v-if="channel.public_url" class="product-line" :href="channel.public_url" target="_blank" rel="noopener noreferrer">公开访问 / 商店</a><span v-if="!channel.admin_url && !channel.public_url">—</span></td>
       </tr></tbody></DataTable></div>
@@ -60,6 +59,7 @@ import ConfirmDialog from '../../components/ConfirmDialog.vue'
 import BaseModal from '../../components/BaseModal.vue'
 import ProjectEnvironments from '../applications/ProjectEnvironments.vue'
 import ProductEditor from './ProductEditor.vue'
+import { releaseUnitName } from './lifecycle-utils.js'
 import ProductLifecycle from './ProductLifecycle.vue'
 import ProductDeleteDialog from './ProductDeleteDialog.vue'
 import { stages, platforms, channelStatuses, linkKinds, labelFor, stageClass, channelClass, editableProduct } from './product-utils.js'
@@ -74,7 +74,7 @@ const resource = useAsyncResource(({ signal }, id) => props.projectMode ? getPro
 const product = computed(() => resource.data.value)
 const tabs = computed(() => [{ id: 'overview', label: '总览' }, { id: 'tasks', label: props.projectMode ? '待办' : '事项' }, { id: 'versions', label: '版本' }, ...(props.projectMode ? [{ id: 'environments', label: '环境与部署' }] : []), { id: 'distributions', label: '发行' }])
 const tab = ref('overview'), editorTab = ref('basics'), editorOpen = ref(false), channelsOpen = ref(false), archiveOpen = ref(false), busy = ref(false), error = ref('')
-const taskVersionID = ref('')
+const lifecycleVersionID = ref('')
 const deleteTarget = ref(null)
 async function load() { await resource.refresh(routeID.value); if (resource.error.value) error.value = resource.error.value.message
   if (!props.projectMode && product.value?.project_id) await router.replace({ path: '/projects/' + product.value.project_id, query: route.query })
@@ -89,8 +89,15 @@ function applyRouteTab(value) {
   tab.value = tabs.value.some(item => item.id === value) ? value : 'overview'
   if (tab.value !== 'distributions') channelsOpen.value = false
 }
-function selectTab(value) { applyRouteTab(value); void router.replace({ query: { ...route.query, tab: value } }) }
-function showVersionTasks(id) { taskVersionID.value = id; selectTab('tasks') }
+function selectTab(value) { showVersionRecords(value, '') }
+function showVersionRecords(value, id) {
+  lifecycleVersionID.value = id
+  applyRouteTab(value)
+  void router.replace({ query: { ...route.query, tab: value } })
+}
+function updateReleaseUnits(units) {
+  resource.data.value = { ...product.value, release_units: units }
+}
 function openEditor(initialTab = 'basics') { channelsOpen.value = false; editorTab.value = initialTab; editorOpen.value = true }
 async function save(payload) { busy.value = true; try { await updateProduct(product.value.id, payload); editorOpen.value = false; archiveOpen.value = false; await load() } catch (e) { error.value = e.message } finally { busy.value = false } }
 async function archive() { await save({ ...editableProduct(product.value), stage: 'archived' }) }
@@ -101,7 +108,7 @@ async function remove() {
   try { if (props.projectMode) await deleteProjectWorkspace(product.value.project_id); else await deleteProduct(id); deleteTarget.value = null; await router.push(props.projectMode ? '/projects' : '/products') }
   catch (cause) { error.value = cause.message } finally { busy.value = false }
 }
-watch(() => [props.projectMode, routeID.value], () => { resource.data.value = null; editorOpen.value = false; channelsOpen.value = false; archiveOpen.value = false; deleteTarget.value = null; taskVersionID.value = ''; applyRouteTab(route.query?.tab); void load() }, { immediate: true })
+watch(() => [props.projectMode, routeID.value], () => { resource.data.value = null; editorOpen.value = false; channelsOpen.value = false; archiveOpen.value = false; deleteTarget.value = null; lifecycleVersionID.value = ''; applyRouteTab(route.query?.tab); void load() }, { immediate: true })
 watch(() => route.query?.tab, applyRouteTab)
 </script>
 

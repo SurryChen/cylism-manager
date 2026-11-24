@@ -20,7 +20,8 @@ describe('product lifecycle workflows', () => {
  it('opens channel details from the release-record toolbar without changing the list', async () => {
    mocks.page.mockResolvedValue({ items: [{ id: 4, version_id: 3, channel_id: 9, platform_version: '1.0', status: 'published' }], total: 1 })
    const page = mountPage('distributions'); await flushPromises()
-   expect(page.get('.data-table').findAll('th').map(cell => cell.text())).toEqual(['产品版本', '发行渠道 / 分类', '平台版本 / Build', '状态', '更新时间 / 备注', '操作'])
+   expect(page.get('.data-table').findAll('th').map(cell => cell.text())).toEqual(['产品版本', '发行渠道 / 分类', '状态', '更新时间 / 备注', '操作'])
+   expect(page.get('.data-table tbody td').text()).toBe('1.0')
    await page.findAll('button').find(button => button.text() === '发行渠道').trigger('click')
    expect(page.emitted('show-channels')).toHaveLength(1)
    expect(page.get('.data-table').exists()).toBe(true)
@@ -34,8 +35,10 @@ describe('product lifecycle workflows', () => {
      : { items: [], total: 0 })
    const page = mountPage('versions'); await flushPromises()
    const table = page.get('.data-table')
-   expect(table.findAll('th').map(cell => cell.text())).toEqual(['版本 / 说明', '状态', '关联部署', '操作'])
-   expect(table.get('.lifecycle-version-preview').text()).toBe(record.notes)
+   expect(table.findAll('th').map(cell => cell.text())).toEqual(['版本', '说明', '发版日期', '关联部署', '操作'])
+   const cells = table.findAll('tbody td')
+   expect(cells[0].text()).toBe(record.name)
+   expect(cells[1].get('.overflow-tooltip-trigger--multiline').text()).toBe(record.notes)
    for (const value of [record.acceptance, record.goal, record.repository_url, record.commit_sha, '未设目标日期', '未填写验收项']) expect(table.text()).not.toContain(value)
    await page.get('[aria-label="查看版本详情"]').trigger('click')
    const detail = page.get('.product-detail-list')
@@ -49,7 +52,7 @@ describe('product lifecycle workflows', () => {
    const editor = page.getComponent(LifecycleEditor)
    expect(editor.get('input[required]').element.value).toBe(record.name)
    expect(editor.get('[aria-label="版本说明"]').element.value).toBe(record.notes)
-   expect(editor.findAll('label.form-group').map(field => field.get('.form-label').text())).toEqual(['版本号 *', '状态', '版本说明（可选）'])
+   expect(editor.findAll('label.form-group').map(field => field.get('.form-label').text())).toEqual(['版本号 *', '正式发版日期（历史记录可留空）', '版本说明（可选）'])
    await editor.get('[aria-label="版本说明"]').setValue('更新版本说明')
    await editor.get('form').trigger('submit'); await flushPromises()
    expect(mocks.save).toHaveBeenCalledWith(9, 'versions', expect.objectContaining({ ...historicalFields, notes: '更新版本说明', platform_release_ids: [4] }))
@@ -58,14 +61,14 @@ describe('product lifecycle workflows', () => {
  it('omits empty version fields and retains planned dates and task navigation', async () => {
    mocks.page.mockResolvedValue({ items: [{ id: 8, name: '1.2', status: 'planning', target_date: '2026-12-01' }], total: 1 })
    const page = mountPage('versions'); await flushPromises()
-   expect(page.get('.data-table').text()).toContain('目标 2026-12-01')
+   expect(page.get('.data-table').text()).not.toContain('2026-12-01')
    expect(page.find('.lifecycle-version-preview').exists()).toBe(false)
    expect(page.findAll('button').some(button => button.text() === '0 条记录')).toBe(false)
    await page.get('[aria-label="查看版本事项"]').trigger('click')
    expect(page.emitted('select-version')[0]).toEqual([8])
    await page.get('[aria-label="查看版本详情"]').trigger('click')
    expect(page.get('.product-detail-list').text()).toContain('2026-12-01')
-   expect(page.get('.product-detail-list').findAll('dt').map(item => item.text())).toEqual(['状态', '目标日期'])
+   expect(page.get('.product-detail-list').findAll('dt').map(item => item.text())).toEqual(['历史状态', '目标日期'])
    page.unmount()
  })
  it('keeps application and platform selections separate even when their IDs match', async () => {
@@ -136,17 +139,26 @@ describe('product lifecycle workflows', () => {
    expect(mocks.save).toHaveBeenCalledWith(7, 'tasks', expect.objectContaining({ title: '修复登录', status: 'todo', version_id: null }))
    page.unmount()
  })
- it('shows task details in a tooltip and allows assigning a version when editing', async () => {
-   const task = { id: 8, title: '部署验证', details: '验证环境配置\n检查发布结果', kind: 'action', priority: 'normal', status: 'todo', version_id: null }
+ it('shows task details and allows linking multiple releases when editing', async () => {
+   const task = { id: 8, title: '部署验证', details: '验证环境配置\n检查发布结果', kind: 'action', priority: 'normal', status: 'todo', version_ids: [3] }
    mocks.page.mockResolvedValue({ items: [task], total: 1 })
-   const page = mountPage('tasks'); await flushPromises()
-   expect(page.get('.overflow-tooltip-trigger').attributes('aria-label')).toBe(task.details)
-   await page.get('[aria-label="编辑事项"]').trigger('click')
-   expect(page.get('[aria-label="记录说明"]').element.value).toBe(task.details)
-   await page.get('select[aria-label="关联产品版本"]').setValue('3')
-   await page.getComponent(LifecycleEditor).get('form').trigger('submit'); await flushPromises()
-   expect(mocks.save).toHaveBeenCalledWith(7, 'tasks', expect.objectContaining({ id: 8, version_id: 3, details: task.details }))
-   page.unmount()
+   mocks.options.mockResolvedValue({ versions: [{ id: 3, name: '1.0' }, { id: 5, name: '2.0' }] })
+   const page = mount(ProductLifecycle, { props: { product, kind: 'tasks' }, attachTo: document.body })
+   await flushPromises()
+   const body = new DOMWrapper(document.body)
+   try {
+     expect(page.get('.overflow-tooltip-trigger').attributes('aria-label')).toBe(task.details)
+     await page.get('[aria-label="编辑事项"]').trigger('click')
+     expect(body.get('[aria-label="记录说明"]').element.value).toBe(task.details)
+     await body.get('button[aria-label="关联发版，已选 1 个版本"]').trigger('click')
+     const options = body.findAll('[role="option"]')
+     expect(options.map(option => option.attributes('aria-selected'))).toEqual(['true', 'false'])
+     await options[1].trigger('click')
+     await body.get('form[id^="lifecycle-"]').trigger('submit'); await flushPromises()
+     expect(mocks.save).toHaveBeenCalledWith(7, 'tasks', expect.objectContaining({ id: 8, version_ids: [3, 5], details: task.details }))
+   } finally {
+     page.unmount()
+   }
  })
  it('uses backend pagination with default ten rows and supports changing pages', async () => {
    mocks.page.mockImplementation(async (_id, _kind, query) => ({ items: [{ id: Number(query.offset) + 1, title: 'task', status: 'todo', kind: 'action', priority: 'normal' }], total: 25 }))
@@ -208,12 +220,15 @@ describe('product lifecycle workflows', () => {
    expect(record.task_ids).toEqual([10, 11])
    editor.unmount()
  })
- it('requires versions and channels before creating a distribution', async () => {
+ it('records a channel submission before its formal version exists', async () => {
    mocks.options.mockResolvedValue({ versions: [] })
    const page = mountPage('distributions'); await flushPromises()
    await page.findAll('button').find(button => button.text() === '新增发行记录').trigger('click')
-   expect(page.text()).toContain('请先在版本页新增产品版本')
-   expect(page.find('[aria-label="平台版本"]').exists()).toBe(false)
+   const editor = page.getComponent(LifecycleEditor)
+   await editor.get('select[aria-label="发行渠道"]').setValue('9')
+   await editor.get('input[placeholder="例如 2.8.1"]').setValue('2.8.1-rc.1')
+   await editor.get('form').trigger('submit'); await flushPromises()
+   expect(mocks.save).toHaveBeenCalledWith(7, 'distributions', expect.objectContaining({ version_id: 0, platform_version: '2.8.1-rc.1' }))
    page.unmount()
  })
  it('shows append-only distribution history', async () => {
@@ -238,18 +253,40 @@ describe('product lifecycle workflows', () => {
 
 
 describe('distribution audience', () => {
+ it('offers only the channel release unit when linking a formal version', async () => {
+   const channels = [{ id: 9, name: 'Google Play', release_unit_id: 1 }]
+   const releaseUnits = [{ id: 1, name: 'Android' }, { id: 2, name: '桌面端' }]
+   const versions = [{ id: 3, name: '1.0', release_unit_id: 1 }, { id: 4, name: '1.0', release_unit_id: 2 }]
+   const record = { id: 8, channel_id: 9, version_id: 0, platform_version: '1.0', status: 'in_review' }
+   const page = mount(LifecycleEditor, {
+     props: { open: true, kind: 'distributions', productId: 7, channels, releaseUnits, versions, record },
+     global: { stubs: { Teleport: true } },
+   })
+   const select = page.get('select[aria-label="关联产品版本"]')
+   expect(select.findAll('option').map(option => option.text())).toEqual(['暂不关联', 'Android · 1.0'])
+   await select.setValue('3')
+   await page.get('form').trigger('submit')
+   expect(page.emitted('save')[0][0]).toMatchObject({ id: 8, channel_id: 9, version_id: 3, status: 'in_review' })
+   page.unmount()
+ })
  it('defaults new distributions to testing and preserves unclassified history when editing', async () => {
    const page = mount(LifecycleEditor, { props: { open: true, kind: 'distributions', productId: 7, channels: product.channels, versions: [{ id: 3, name: '1.0' }] }, global: { stubs: { Teleport: true } } })
    await flushPromises()
    expect(page.get('select[aria-label="发行分类"]').element.value).toBe('testing')
    await page.get('select[aria-label="发行渠道"]').setValue('9')
    await page.get('select[aria-label="关联产品版本"]').setValue('3')
-   await page.get('[aria-label="平台版本"]').setValue('1.0-beta')
+   const toggle = page.findAll('button').find(button => button.text() === '渠道版本与构建标识')
+   expect(toggle.attributes('aria-expanded')).toBe('false')
    await page.get('form').trigger('submit')
-   expect(page.emitted('save')[0][0]).toMatchObject({ audience: 'testing', version_id: 3, channel_id: 9 })
+   expect(page.emitted('save')[0][0]).toMatchObject({ audience: 'testing', version_id: 3, channel_id: 9, platform_version: '' })
+   await toggle.trigger('click')
+   await page.get('input[placeholder="1.0"]').setValue('1.0-beta')
+   await page.get('form').trigger('submit')
+   expect(page.emitted('save')[1][0]).toMatchObject({ version_id: 3, platform_version: '1.0-beta' })
    await page.setProps({ open: false })
    await page.setProps({ open: true, record: { id: 4, audience: 'unclassified', version_id: 3, channel_id: 9, platform_version: 'old', status: 'published' } })
    expect(page.get('select[aria-label="发行分类"]').element.value).toBe('unclassified')
+   expect(page.get('input[placeholder="1.0"]').element.value).toBe('old')
    page.unmount()
  })
  it('filters distributions by audience and resets it with the other filters', async () => {

@@ -3,6 +3,7 @@ package productapi
 import (
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -23,6 +24,8 @@ type LifecycleRepository interface {
 	DeleteProductTask(uint, uint, uint) error
 	SaveProductVersion(uint, *model.ProductVersion) error
 	SaveProductDistribution(uint, *model.ProductDistribution) error
+	SaveProductReleaseUnit(uint, *model.ProductReleaseUnit) error
+	DeleteProductReleaseUnit(uint, uint, uint) error
 	ProductWorkbench(uint) (*model.ProductWorkbench, error)
 	ImportProductNextAction(uint, uint) (*model.ProductTask, error)
 }
@@ -62,13 +65,15 @@ func (h *Handler) LifecycleOptions(c *gin.Context) {
 		return
 	}
 	type option struct {
-		ID     uint   `json:"id"`
-		Name   string `json:"name"`
-		Status string `json:"status"`
+		ID            uint   `json:"id"`
+		Name          string `json:"name"`
+		Status        string `json:"status"`
+		ReleaseUnitID uint   `json:"release_unit_id"`
+		ReleasedOn    string `json:"released_on"`
 	}
 	options := []option{}
 	for _, row := range rows {
-		options = append(options, option{row.ID, row.Name, row.Status})
+		options = append(options, option{row.ID, row.Name, row.Status, row.ReleaseUnitID, row.ReleasedOn})
 	}
 	shared.Success(c, gin.H{"versions": options})
 }
@@ -89,6 +94,15 @@ func (h *Handler) ListLifecycle(c *gin.Context) {
 		}
 	}
 	kind := c.Param("kind")
+	if raw := c.Query("release_unit_id"); raw != "" {
+		value, err := strconv.ParseUint(raw, 10, strconv.IntSize)
+		if err != nil {
+			shared.BadRequest(c, "发布端 ID 无效")
+			return
+		}
+		unitID := uint(value)
+		f.ReleaseUnitID = &unitID
+	}
 	if kind == "versions" {
 		f.VersionID = 0
 	}
@@ -150,6 +164,20 @@ func (h *Handler) SaveLifecycle(c *gin.Context) {
 	var err error
 	validation := true
 	switch c.Param("kind") {
+	case "release-units":
+		var input model.ProductReleaseUnit
+		if c.ShouldBindJSON(&input) != nil {
+			shared.BadRequest(c, "发布端格式无效")
+			return
+		}
+		input.ID, input.ProductID = id, productID
+		input.Name = strings.TrimSpace(input.Name)
+		err = lifecycleText(input.Name, 128, true)
+		if err == nil {
+			validation = false
+			err = h.repository.SaveProductReleaseUnit(shared.UserID(c), &input)
+		}
+		result = &input
 	case "tasks":
 		var input model.ProductTask
 		if c.ShouldBindJSON(&input) != nil {
@@ -174,13 +202,24 @@ func (h *Handler) SaveLifecycle(c *gin.Context) {
 		}
 		result = &input
 	case "versions":
-		var input model.ProductVersion
-		if c.ShouldBindJSON(&input) != nil {
+		var payload struct {
+			model.ProductVersion
+			ReleaseUnitID *uint `json:"release_unit_id"`
+		}
+		if c.ShouldBindJSON(&payload) != nil {
 			shared.BadRequest(c, "版本格式无效")
 			return
 		}
+		input := payload.ProductVersion
+		input.KeepReleaseUnit = payload.ReleaseUnitID == nil
+		if payload.ReleaseUnitID != nil {
+			input.ReleaseUnitID = *payload.ReleaseUnitID
+		}
 		input.ID, input.ProductID, input.CreatedAt, input.UpdatedAt = id, productID, time.Time{}, time.Time{}
 		input.Name = strings.TrimSpace(input.Name)
+		if input.ReleasedOn != "" {
+			input.Status = "completed"
+		}
 		if !oneOf(input.Status, "planning", "developing", "testing", "releasing", "completed", "archived") || len(input.DeploymentIDs)+len(input.PlatformReleaseIDs) > 100 {
 			shared.ValidationError(c, "版本状态无效或关联部署过多")
 			return
@@ -196,6 +235,9 @@ func (h *Handler) SaveLifecycle(c *gin.Context) {
 		}
 		if err == nil {
 			err = lifecycleDate(input.TargetDate)
+		}
+		if err == nil {
+			err = lifecycleDate(input.ReleasedOn)
 		}
 		for _, url := range []string{input.RepositoryURL, input.BuildURL, input.ArtifactURL} {
 			if err == nil {
@@ -225,11 +267,15 @@ func (h *Handler) SaveLifecycle(c *gin.Context) {
 			shared.ValidationError(c, "发行分类无效")
 			return
 		}
-		if input.VersionID == 0 || input.ChannelID == 0 || !oneOf(input.Status, "draft", "preparing", "ready", "in_review", "approved", "published", "rejected", "blocked", "cancelled") {
-			shared.ValidationError(c, "请选择产品版本、发行渠道和有效状态")
+		if input.ChannelID == 0 || !oneOf(input.Status, "draft", "preparing", "ready", "in_review", "approved", "published", "rejected", "blocked", "cancelled") {
+			shared.ValidationError(c, "请选择发行渠道和有效状态")
 			return
 		}
-		if err = lifecycleText(input.PlatformVersion, 128, true); err == nil {
+		if input.VersionID == 0 && input.PlatformVersion == "" {
+			shared.ValidationError(c, "请选择正式版本，或填写渠道版本号")
+			return
+		}
+		if err = lifecycleText(input.PlatformVersion, 128, false); err == nil {
 			err = lifecycleText(input.BuildIdentifier, 128, false)
 		}
 		if err == nil {
@@ -266,6 +312,23 @@ func (h *Handler) DeleteTask(c *gin.Context) {
 		return
 	}
 	if err := h.repository.DeleteProductTask(shared.UserID(c), id, taskID); err != nil {
+		respondError(c, err)
+		return
+	}
+	shared.Success(c, nil)
+}
+
+func (h *Handler) DeleteReleaseUnit(c *gin.Context) {
+	id, ok := lifecycleID(c)
+	if !ok {
+		return
+	}
+	unitID, err := shared.ParsePositiveID(c.Param("recordID"))
+	if err != nil {
+		shared.BadRequest(c, "发布端 ID 无效")
+		return
+	}
+	if err := h.repository.DeleteProductReleaseUnit(shared.UserID(c), id, unitID); err != nil {
 		respondError(c, err)
 		return
 	}

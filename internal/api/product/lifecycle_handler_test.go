@@ -73,10 +73,10 @@ func TestProductLifecycleAPIContracts(t *testing.T) {
 	if err := json.Unmarshal(versionRes.Body.Bytes(), &version); err != nil || versionRes.Code != 200 || version.Data.ProductID != p.ID {
 		t.Fatalf("version: %s %v", versionRes.Body, err)
 	}
-	body := fmt.Sprintf("{\"version_id\":%d,\"channel_id\":%d,\"platform_version\":\"1.0\",\"status\":\"in_review\"}", version.Data.ID, p.Channels[0].ID)
+	body := fmt.Sprintf("{\"version_id\":%d,\"channel_id\":%d,\"status\":\"in_review\"}", version.Data.ID, p.Channels[0].ID)
 	res := request("POST", fmt.Sprintf("/products/%d/lifecycle/distributions", p.ID), body, "owner")
 	var distribution struct{ Data model.ProductDistribution }
-	if err := json.Unmarshal(res.Body.Bytes(), &distribution); err != nil || res.Code != 200 {
+	if err := json.Unmarshal(res.Body.Bytes(), &distribution); err != nil || res.Code != 200 || distribution.Data.PlatformVersion != "1.0" {
 		t.Fatalf("distribution: %s %v", res.Body, err)
 	}
 	historyURL := fmt.Sprintf("/products/%d/distributions/%d/events", p.ID, distribution.Data.ID)
@@ -119,16 +119,29 @@ func TestProductLifecycleAPIContracts(t *testing.T) {
 		if err := json.Unmarshal(res.Body.Bytes(), &release); err != nil || res.Code != 200 || len(release.Data.TaskIDs) != 1 {
 			t.Fatalf("assign task: %d %s %v", res.Code, res.Body, err)
 		}
-		if res := request("GET", tasks+"?assignable=true", "", "owner"); res.Code != 200 || !strings.Contains(res.Body.String(), `"total":0`) {
-			t.Fatalf("already assigned task offered for new version: %d %s", res.Code, res.Body)
+		if res := request("GET", tasks+"?assignable=true", "", "owner"); res.Code != 200 || !strings.Contains(res.Body.String(), `"total":1`) {
+			t.Fatalf("shared task missing from the release picker: %d %s", res.Code, res.Body)
 		}
 		candidates := fmt.Sprintf("%s?assignable=true&version_id=%d", tasks, release.Data.ID)
 		if res := request("GET", candidates, "", "owner"); res.Code != 200 || !strings.Contains(res.Body.String(), `"total":1`) {
 			t.Fatalf("assigned task missing from its version: %d %s", res.Code, res.Body)
 		}
-		otherVersionBody := fmt.Sprintf(`{"name":"3.0","status":"releasing","task_ids":[%d]}`, task.Data.ID)
-		if res := request("POST", versions, otherVersionBody, "owner"); res.Code != 409 {
-			t.Fatalf("another version could take the assigned task: %d %s", res.Code, res.Body)
+		var unit struct{ Data model.ProductReleaseUnit }
+		res = request("POST", fmt.Sprintf("/products/%d/lifecycle/release-units", p.ID), `{"name":"Android"}`, "owner")
+		if err := json.Unmarshal(res.Body.Bytes(), &unit); err != nil || res.Code != 200 || unit.Data.ID == 0 {
+			t.Fatalf("create release unit: %d %s %v", res.Code, res.Body, err)
+		}
+		otherVersionBody := fmt.Sprintf(`{"name":"2.0","released_on":"2026-11-24","release_unit_id":%d,"task_ids":[%d]}`, unit.Data.ID, task.Data.ID)
+		var secondRelease struct{ Data model.ProductVersion }
+		res = request("POST", versions, otherVersionBody, "owner")
+		if err := json.Unmarshal(res.Body.Bytes(), &secondRelease); err != nil || res.Code != 200 || secondRelease.Data.Status != "completed" {
+			t.Fatalf("second release: %d %s %v", res.Code, res.Body, err)
+		}
+		for _, id := range []uint{release.Data.ID, secondRelease.Data.ID} {
+			path := fmt.Sprintf("%s?version_id=%d", tasks, id)
+			if res := request("GET", path, "", "owner"); res.Code != 200 || !strings.Contains(res.Body.String(), `"total":1`) {
+				t.Fatalf("task missing from release %d: %d %s", id, res.Code, res.Body)
+			}
 		}
 		for user, status := range map[string]int{"": 401, "other": 404} {
 			if res := request("DELETE", taskURL, "", user); res.Code != status {

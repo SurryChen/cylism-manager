@@ -8,5 +8,6 @@ export const saveLifecycleRecord = (id, kind, record) => record.id
   ? api.put(`${base(id)}/lifecycle/${segment(kind)}/${segment(record.id)}`, record)
   : api.post(`${base(id)}/lifecycle/${segment(kind)}`, record)
 export const deleteProductTask = (id, taskID) => api.delete(`${base(id)}/lifecycle/tasks/${segment(taskID)}`)
+export const deleteReleaseUnit = (id, unitID) => api.delete(`${base(id)}/lifecycle/release-units/${segment(unitID)}`)
 export const getDistributionEvents = (id, recordID, query, options) => api.get(`${base(id)}/distributions/${segment(recordID)}/events?${new URLSearchParams(query)}`, options)
 export const importProductNextAction = id => api.post(`${base(id)}/import-next-action`, {})

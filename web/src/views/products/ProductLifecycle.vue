@@ -6,10 +6,12 @@
     <SurfaceCard class="product-table-card" padding="none">
       <div class="product-toolbar">
         <input v-model.trim="keyword" class="form-input product-search" :aria-label="`搜索${noun}`" :placeholder="`搜索${noun}`" />
-        <SelectMenu v-model="status" class="product-stage-filter" aria-label="记录状态筛选"><option value="">全部状态</option><option v-for="item in statuses" :key="item.id" :value="item.id">{{ item.label }}</option></SelectMenu>
-        <SelectMenu v-if="kind !== 'versions'" v-model="versionID" class="product-stage-filter" aria-label="记录版本筛选"><option value="">全部版本</option><option v-for="version in versions" :key="version.id" :value="version.id">{{ version.name }}</option></SelectMenu>
+        <SelectMenu v-if="kind !== 'versions'" v-model="status" class="product-stage-filter" aria-label="记录状态筛选"><option value="">全部状态</option><option v-for="item in statuses" :key="item.id" :value="item.id">{{ item.label }}</option></SelectMenu>
+        <SelectMenu v-if="kind !== 'tasks' && releaseUnits.length" v-model="unitID" class="product-stage-filter" aria-label="按发布端筛选"><option value="">全部发布端</option><option :value="0">项目默认</option><option v-for="unit in releaseUnits" :key="unit.id" :value="unit.id">{{ unit.name }}</option></SelectMenu>
+        <SelectMenu v-if="kind !== 'versions'" v-model="versionID" class="product-stage-filter" aria-label="记录版本筛选"><option value="">全部版本</option><option v-for="version in filteredVersionOptions" :key="version.id" :value="version.id">{{ versionLabel(releaseUnits, version) }}</option></SelectMenu>
         <SelectMenu v-if="kind === 'distributions'" v-model="audience" class="product-stage-filter" aria-label="发行分类筛选"><option value="">全部发行</option><option v-for="item in distributionAudiences" :key="item.id" :value="item.id">{{ item.label }}</option></SelectMenu>
-        <button class="icon-button" title="重置筛选" aria-label="重置筛选" @click="keyword = ''; status = ''; versionID = ''; audience = ''"><RotateCcw :size="15" /></button>
+        <button class="icon-button" title="重置筛选" aria-label="重置筛选" @click="keyword = ''; status = ''; versionID = ''; audience = ''; unitID = ''"><RotateCcw :size="15" /></button>
+        <button v-if="kind === 'versions'" class="btn" type="button" @click="unitsOpen = true">管理发布端</button>
         <button v-if="kind === 'distributions'" class="btn" @click="$emit('show-channels')">发行渠道</button>
         <button class="btn btn-primary product-primary" :disabled="busy || (kind !== 'tasks' && (optionsLoading || Boolean(optionsError)))" @click="openEditor()">新增{{ noun }}</button>
       </div>
@@ -19,7 +21,7 @@
       <EmptyState v-else-if="!resource.total.value" :message="emptyMessage" />
       <div v-else class="table-wrap">
         <DataTable v-if="kind === 'tasks'">
-          <thead><tr><th>事项 / 说明</th><th>类型 / 优先级</th><th>产品版本</th><th>状态</th><th>截止日期</th><TableActionCell header /></tr></thead>
+          <thead><tr><th>事项 / 说明</th><th>类型 / 优先级</th><th>关联发版</th><th>状态</th><th>截止日期</th><TableActionCell header /></tr></thead>
           <tbody>
             <tr v-for="row in resource.items.value" :key="row.id">
               <td class="lifecycle-task-cell">
@@ -27,7 +29,10 @@
                 <OverflowTooltip v-if="row.details" :text="row.details" class="cell-secondary product-line lifecycle-task-description" />
               </td>
               <td>{{ labelFor(taskKinds, row.kind) }} · {{ labelFor(priorities, row.priority) }}</td>
-              <td>{{ versionName(row.version_id) }}</td>
+              <td>
+                <span v-for="id in taskVersionIDs(row)" :key="id" class="task-release-label">{{ versionName(id) }}</span>
+                <span v-if="!taskVersionIDs(row).length" class="cell-secondary">—</span>
+              </td>
               <td><span class="badge" :class="lifecycleClass(row.status)">{{ labelFor(taskStatuses, row.status) }}</span></td>
               <td>{{ row.due_date || '—' }}<span v-if="row.due_date && !['done', 'cancelled'].includes(row.status)" class="badge product-line" :class="dueClass(dueState(row.due_date))">{{ dueLabel(dueState(row.due_date)) }}</span></td>
               <TableActionCell>
@@ -38,34 +43,57 @@
           </tbody>
         </DataTable>
         <DataTable v-else-if="kind === 'versions'">
-          <thead><tr><th>版本 / 说明</th><th>状态</th><th>关联部署</th><TableActionCell header /></tr></thead>
+          <thead><tr><th>版本</th><th v-if="releaseUnits.length">发布端</th><th>说明</th><th>发版日期</th><th>关联部署</th><TableActionCell header /></tr></thead>
           <tbody>
             <tr v-for="row in resource.items.value" :key="row.id">
-              <td class="lifecycle-version-cell">
-                {{ row.name }}
-                <OverflowTooltip v-if="row.notes || row.goal" :text="row.notes || row.goal" class="cell-secondary product-line lifecycle-version-preview" />
+              <td class="lifecycle-version-cell">{{ row.name }}</td>
+              <td v-if="releaseUnits.length">{{ releaseUnitName(releaseUnits, row.release_unit_id) }}</td>
+              <td class="lifecycle-version-description">
+                <OverflowTooltip v-if="row.notes || row.goal" :text="row.notes || row.goal" multiline class="cell-secondary lifecycle-version-preview" />
+                <span v-else class="cell-secondary">—</span>
               </td>
-              <td><span class="badge" :class="lifecycleClass(row.status)">{{ labelFor(versionStatuses, row.status) }}</span><span v-if="row.target_date" class="cell-secondary product-line">目标 {{ row.target_date }}</span></td>
+              <td>{{ row.released_on || '—' }}</td>
               <td>
                 <button v-if="deploymentCount(row)" type="button" class="btn btn-sm" @click="showDeployments(row)">{{ deploymentCount(row) }} 条记录</button>
                 <button v-else type="button" class="btn btn-sm" :disabled="busy" @click="openEditor(row, true)">关联部署</button>
               </td>
-              <TableActionCell><div class="btn-group"><button class="icon-button" title="查看版本详情" aria-label="查看版本详情" @click="detailVersion = row"><Eye :size="15" /></button><button class="icon-button" title="查看版本事项" aria-label="查看版本事项" @click="$emit('select-version', row.id)"><ListTodo :size="15" /></button><button class="icon-button" title="编辑版本" aria-label="编辑版本" :disabled="busy || optionsLoading || Boolean(optionsError)" @click="openEditor(row)"><Pencil :size="15" /></button></div></TableActionCell>
+              <TableActionCell>
+                <button class="icon-button" title="查看版本详情" aria-label="查看版本详情" @click="detailVersion = row"><Eye :size="15" /></button>
+                <button class="icon-button" title="查看版本事项" aria-label="查看版本事项" @click="$emit('select-version', row.id)"><ListTodo :size="15" /></button>
+                <button v-if="product.channels?.length" class="icon-button" title="查看版本发行记录" aria-label="查看版本发行记录" @click="$emit('select-distributions', row.id)"><Package :size="15" /></button>
+                <button class="icon-button" title="编辑版本" aria-label="编辑版本" :disabled="busy || optionsLoading || Boolean(optionsError)" @click="openEditor(row)"><Pencil :size="15" /></button>
+              </TableActionCell>
             </tr>
           </tbody>
         </DataTable>
         <DataTable v-else>
-          <thead><tr><th>产品版本</th><th>发行渠道 / 分类</th><th>平台版本 / Build</th><th>状态</th><th>更新时间 / 备注</th><TableActionCell header /></tr></thead>
-          <tbody><tr v-for="row in resource.items.value" :key="row.id"><td>{{ versionName(row.version_id) }}</td><td>{{ channelName(row.channel_id) }}<span class="cell-secondary product-line">{{ audienceLabel(row.audience) }}</span></td><td>{{ row.platform_version }}<span class="cell-secondary product-line">{{ row.build_identifier || '未填 Build 标识' }}</span></td><td><span class="badge" :class="lifecycleClass(row.status)">{{ labelFor(distributionStatuses, row.status) }}</span></td><td>{{ formatTime(row.updated_at) }}<span class="cell-secondary product-line lifecycle-description">{{ row.notes }}</span></td><TableActionCell><div class="btn-group"><button class="icon-button" title="发行历史" aria-label="发行历史" @click="showHistory(row)"><History :size="15" /></button><button class="icon-button" title="编辑发行记录" aria-label="编辑发行记录" :disabled="busy || optionsLoading || Boolean(optionsError)" @click="openEditor(row)"><Pencil :size="15" /></button></div></TableActionCell></tr></tbody>
+          <thead><tr><th>产品版本</th><th>发行渠道 / 分类</th><th>状态</th><th>更新时间 / 备注</th><TableActionCell header /></tr></thead>
+          <tbody>
+            <tr v-for="row in resource.items.value" :key="row.id">
+              <td>
+                {{ row.version_id ? versionName(row.version_id) : row.platform_version }}
+                <span v-if="row.version_id && row.platform_version && row.platform_version !== versionRecord(row.version_id)?.name" class="cell-secondary product-line">渠道版本 {{ row.platform_version }}</span>
+                <span v-if="!row.version_id" class="cell-secondary product-line">未关联正式版本</span>
+                <span v-if="row.build_identifier" class="cell-secondary product-line">构建 {{ row.build_identifier }}</span>
+              </td>
+              <td>{{ channelName(row.channel_id) }}<span class="cell-secondary product-line">{{ audienceLabel(row.audience) }}</span></td>
+              <td><span class="badge" :class="lifecycleClass(row.status)">{{ labelFor(distributionStatuses, row.status) }}</span></td>
+              <td>{{ formatTime(row.updated_at) }}<span class="cell-secondary product-line lifecycle-description">{{ row.notes }}</span></td>
+              <TableActionCell><div class="btn-group"><button class="icon-button" title="发行历史" aria-label="发行历史" @click="showHistory(row)"><History :size="15" /></button><button class="icon-button" title="编辑发行记录" aria-label="编辑发行记录" :disabled="busy || optionsLoading || Boolean(optionsError)" @click="openEditor(row)"><Pencil :size="15" /></button></div></TableActionCell>
+            </tr>
+          </tbody>
         </DataTable>
       </div>
       <ResourcePagination :resource="resource" :label="`${noun}分页`" />
     </SurfaceCard>
-    <LifecycleEditor :open="editorOpen" :busy="busy" :kind="kind" :record="editing" :product-id="product.id" :versions="versions" :channels="product.channels || []" :expand-deployments="editDeployments" @close="editorOpen = false" @save="save" @error="error = $event" />
+    <LifecycleEditor :open="editorOpen" :busy="busy" :kind="kind" :record="editing" :product-id="product.id" :versions="versions" :channels="product.channels || []" :release-units="releaseUnits" :expand-deployments="editDeployments" @close="editorOpen = false" @save="save" @error="error = $event" />
+    <ReleaseUnitManager v-if="kind === 'versions'" :open="unitsOpen" :product="product" @close="unitsOpen = false" @updated="updateUnits" @error="error = $event" />
     <ConfirmDialog teleport :open="Boolean(taskToDelete)" title="删除事项" :message="`确认删除事项“${taskToDelete?.title || ''}”？`" :busy="busy" confirm-text="删除" @cancel="taskToDelete = null" @confirm="removeTask" />
     <BaseModal teleport :open="Boolean(detailVersion)" :title="`版本详情 · ${detailVersion?.name || ''}`" size="large" @close="detailVersion = null">
       <dl v-if="detailVersion" class="product-detail-list">
-        <div><dt>状态</dt><dd><span class="badge" :class="lifecycleClass(detailVersion.status)">{{ labelFor(versionStatuses, detailVersion.status) }}</span></dd></div>
+        <div v-if="releaseUnits.length"><dt>发布端</dt><dd>{{ releaseUnitName(releaseUnits, detailVersion.release_unit_id) }}</dd></div>
+        <div v-if="detailVersion.released_on"><dt>正式发版日期</dt><dd>{{ detailVersion.released_on }}</dd></div>
+        <div v-else-if="detailVersion.status"><dt>历史状态</dt><dd>{{ labelFor(versionStatuses, detailVersion.status) }}</dd></div>
         <div v-if="detailVersion.target_date"><dt>目标日期</dt><dd>{{ detailVersion.target_date }}</dd></div>
         <div v-if="detailVersion.goal"><dt>本次目标</dt><dd>{{ detailVersion.goal }}</dd></div>
         <div v-if="detailVersion.acceptance"><dt>验收项与验证结果</dt><dd>{{ detailVersion.acceptance }}</dd></div>
@@ -99,7 +127,7 @@ import DataTable from '../../components/DataTable.vue'
 import TableActionCell from '../../components/TableActionCell.vue'
 import { distributionAudiences, audienceLabel, environmentKindLabel } from './environment-utils.js'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
-import { Eye, History, ListTodo, Pencil, RotateCcw, Trash2 } from 'lucide-vue-next'
+import { Eye, History, ListTodo, Package, Pencil, RotateCcw, Trash2 } from 'lucide-vue-next'
 import SurfaceCard from '../../components/SurfaceCard.vue'
 import EmptyState from '../../components/EmptyState.vue'
 import OverflowTooltip from '../../components/OverflowTooltip.vue'
@@ -109,25 +137,32 @@ import ConfirmDialog from '../../components/ConfirmDialog.vue'
 import ResourcePagination from '../../components/ResourcePagination.vue'
 import ErrorNoticeModal from '../../components/ErrorNoticeModal.vue'
 import LifecycleEditor from './LifecycleEditor.vue'
+import ReleaseUnitManager from './ReleaseUnitManager.vue'
 import { getLifecyclePage, getLifecycleOptions, getDistributionEvents, saveLifecycleRecord, deleteProductTask, importProductNextAction } from '../../api/product-lifecycle.js'
 import { usePaginatedResource } from '../../composables/usePaginatedResource.js'
 import { labelFor, platforms, dateOnly, dueState, dueClass, dueLabel } from './product-utils.js'
-import { taskKinds, taskStatuses, priorities, versionStatuses, distributionStatuses, lifecycleClass, deploymentCount, deploymentPath } from './lifecycle-utils.js'
+import { taskKinds, taskStatuses, priorities, versionStatuses, distributionStatuses, lifecycleClass, deploymentCount, deploymentPath, releaseUnitName, versionLabel } from './lifecycle-utils.js'
 import { formatShortDateTime as formatTime } from '../../utils/formatters.js'
 const props = defineProps({ product: { type: Object, required: true }, kind: { type: String, required: true }, initialVersionId: { type: [Number, String], default: '' } })
-const emit = defineEmits(['changed', 'select-version', 'show-channels'])
+const emit = defineEmits(['changed', 'select-version', 'select-distributions', 'show-channels', 'update-release-units'])
 const audience = ref('')
+const unitID = ref('')
+const unitsOpen = ref(false)
+const releaseUnits = computed(() => props.product.release_units || [])
 const keyword = ref(''), status = ref(''), versionID = ref(props.initialVersionId), versions = ref([]), optionsLoading = ref(false), optionsError = ref(''), busy = ref(false), error = ref(''), editorOpen = ref(false), editing = ref(null), historyRecord = ref(null), deploymentVersion = ref(null)
 const detailVersion = ref(null)
 const editDeployments = ref(false)
 const taskToDelete = ref(null)
 const noun = computed(() => ({ tasks: '事项', versions: '版本', distributions: '发行记录' })[props.kind])
 const statuses = computed(() => ({ tasks: taskStatuses, versions: versionStatuses, distributions: distributionStatuses })[props.kind])
-const emptyMessage = computed(() => keyword.value || status.value || versionID.value || audience.value ? '没有符合条件的记录' : props.kind === 'distributions' ? '暂无发行记录，请先创建产品版本并配置发行渠道' : `暂无${noun.value}，可先新增一条`)
+const emptyMessage = computed(() => keyword.value || status.value || versionID.value || audience.value || unitID.value !== '' ? '没有符合条件的记录' : props.kind === 'distributions' ? '暂无发行记录' : `暂无${noun.value}，可先新增一条`)
 const resource = usePaginatedResource((query, options) => getLifecyclePage(props.product.id, props.kind, query, options), 'items')
 const history = usePaginatedResource((query, options) => getDistributionEvents(props.product.id, historyRecord.value.id, query, options), 'items')
 const deploymentRows = usePaginatedResource((query, options) => getLifecyclePage(props.product.id, 'deployments', { ...query, version_id: deploymentVersion.value.id }, options), 'items')
-const versionName = id => versions.value.find(version => version.id === id)?.name || (id ? `版本 #${id}` : '未安排版本')
+const versionRecord = id => versions.value.find(version => version.id === id)
+const versionName = id => versionRecord(id) ? versionLabel(releaseUnits.value, versionRecord(id)) : `版本 #${id}`
+const taskVersionIDs = row => row.version_ids || (row.version_id ? [row.version_id] : [])
+const filteredVersionOptions = computed(() => versions.value.filter(version => unitID.value === '' || (version.release_unit_id ?? 0) === unitID.value))
 const channelName = id => { const channel = props.product.channels?.find(item => item.id === id); return channel ? channel.name || labelFor(platforms, channel.platform) : `渠道 #${id}` }
 let optionsRequest = 0
 async function loadOptions() {
@@ -136,12 +171,16 @@ async function loadOptions() {
   catch (cause) { if (request === optionsRequest) { optionsError.value = cause.message; error.value = cause.message } }
   finally { if (request === optionsRequest) optionsLoading.value = false }
 }
-function load() { return resource.load({ keyword: keyword.value, status: status.value, ...(props.kind === 'distributions' ? { audience: audience.value } : {}), ...(versionID.value && props.kind !== 'versions' ? { version_id: versionID.value } : {}) }) }
+function load() { return resource.load({ keyword: keyword.value, status: status.value, ...(props.kind === 'distributions' ? { audience: audience.value } : {}), ...(versionID.value && props.kind !== 'versions' ? { version_id: versionID.value } : {}), ...(unitID.value !== '' ? { release_unit_id: unitID.value } : {}) }) }
 function openEditor(row = null, expandDeployments = false) {
-  if (props.kind === 'distributions' && (!props.product.channels?.length || !versions.value.length)) { error.value = '请先在版本页新增产品版本，并在发行渠道页配置渠道'; return }
+  if (props.kind === 'distributions' && !props.product.channels?.length) { error.value = '请先配置发行渠道'; return }
   editing.value = row
   editDeployments.value = expandDeployments
   editorOpen.value = true
+}
+function updateUnits(units) {
+  if (unitID.value && !units.some(unit => unit.id === unitID.value)) unitID.value = ''
+  emit('update-release-units', units)
 }
 async function save(record) {
   busy.value = true
@@ -174,7 +213,8 @@ function editLinkedDeployments() {
   closeDeployments()
   openEditor(row, true)
 }
-watch([keyword, status, versionID, audience], load)
+watch(unitID, () => { if (versionID.value && !filteredVersionOptions.value.some(version => version.id === versionID.value)) versionID.value = '' })
+watch([keyword, status, versionID, audience, unitID], load)
 watch(() => props.initialVersionId, value => { versionID.value = value })
 watch(() => [props.product.id, props.kind], () => { detailVersion.value = null; taskToDelete.value = null; resource.reset(); void load(); void loadOptions() }, { immediate: true })
 onBeforeUnmount(() => { optionsRequest++; resource.cancel(); history.cancel(); deploymentRows.cancel() })
@@ -184,7 +224,9 @@ onBeforeUnmount(() => { optionsRequest++; resource.cancel(); history.cancel(); d
 .lifecycle-description { max-width: 320px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .lifecycle-task-cell { width: 50%; }
 .lifecycle-task-description { contain: inline-size; }
-.lifecycle-version-cell { width: 50%; max-width: 480px; overflow-wrap: anywhere; }
+.task-release-label { display: block; }
+.lifecycle-version-cell { max-width: 240px; overflow-wrap: anywhere; }
+.lifecycle-version-description { width: 55%; min-width: 160px; }
 .lifecycle-version-preview { contain: inline-size; }
 .lifecycle-version-notes { white-space: pre-wrap; overflow-wrap: anywhere; }
 </style>

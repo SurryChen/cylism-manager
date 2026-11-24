@@ -203,7 +203,7 @@ func authenticated(c *gin.Context) bool {
 
 func respondError(c *gin.Context, err error) {
 	switch {
-	case errors.Is(err, model.ErrProjectIdentityConflict), errors.Is(err, model.ErrProjectWorkspaceConflict), errors.Is(err, model.ErrProductLifecycleConflict), errors.Is(err, model.ErrProductVersionName), errors.Is(err, model.ErrProductChannelInUse):
+	case errors.Is(err, model.ErrProjectIdentityConflict), errors.Is(err, model.ErrProjectWorkspaceConflict), errors.Is(err, model.ErrProductLifecycleConflict), errors.Is(err, model.ErrProductVersionName), errors.Is(err, model.ErrProductChannelInUse), errors.Is(err, model.ErrProductReleaseUnitName), errors.Is(err, model.ErrProductReleaseUnitInUse), errors.Is(err, model.ErrProductChannelReleaseUnit):
 		shared.Error(c, http.StatusConflict, shared.CodeConflict, err.Error())
 	case errors.Is(err, gorm.ErrRecordNotFound):
 		shared.NotFound(c, "产品不存在或无权访问")

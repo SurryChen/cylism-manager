@@ -48,13 +48,13 @@ func deleteProducts(tx *gorm.DB, ownerID uint, ids []uint) (int64, error) {
 	if err := tx.Where("distribution_id IN (?)", distributions).Delete(&model.ProductDistributionEvent{}).Error; err != nil {
 		return 0, err
 	}
-	for _, link := range []interface{}{&model.ProductVersionDeployment{}, &model.ProductVersionPlatformRelease{}} {
+	for _, link := range []interface{}{&model.ProductVersionTask{}, &model.ProductVersionDeployment{}, &model.ProductVersionPlatformRelease{}} {
 		versions := tx.Model(&model.ProductVersion{}).Select("id").Where("product_id IN ?", ids)
 		if err := tx.Where("version_id IN (?)", versions).Delete(link).Error; err != nil {
 			return 0, err
 		}
 	}
-	for _, record := range []interface{}{&model.ProductTask{}, &model.ProductDistribution{}, &model.ProductVersion{}, &model.ProductChannel{}, &model.ProductProject{}, &model.ProductApplication{}} {
+	for _, record := range []interface{}{&model.ProductTask{}, &model.ProductDistribution{}, &model.ProductVersion{}, &model.ProductChannel{}, &model.ProductReleaseUnit{}, &model.ProductProject{}, &model.ProductApplication{}} {
 		if err := tx.Where("product_id IN ?", ids).Delete(record).Error; err != nil {
 			return 0, err
 		}

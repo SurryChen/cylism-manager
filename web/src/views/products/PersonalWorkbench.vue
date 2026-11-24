@@ -19,14 +19,8 @@
       <SurfaceCard class="product-table-card" padding="none">
         <div class="product-toolbar"><h2 class="product-workbench-heading">发行跟进</h2><span class="product-muted">手工记录 · 待处理 {{ summary.needsAction.length }} 项 / 等待审核 {{ summary.waiting.length }} 项</span></div>
         <EmptyState v-if="!summary.followups.length" message="暂无需要跟进的发行" />
-        <div v-else class="table-wrap"><DataTable><thead><tr><th>项目 / 渠道</th><th>状态</th><th>平台版本</th><th>建议下一步</th></tr></thead><tbody><tr v-for="record in distributionPage.pagedItems.value" :key="record.id"><td><router-link :to="{ path: projectPath(record.product_id), query: { tab: record.legacy ? 'channels' : 'distributions' } }">{{ productName(record.product_id) }}</router-link><span class="cell-secondary product-line">{{ channelName(record) }}</span></td><td><span class="badge" :class="lifecycleClass(record.status)">{{ labelFor(distributionStatuses, record.status) }}</span></td><td>{{ record.platform_version || '—' }}</td><td>{{ nextStep(record.status) }}</td></tr></tbody></DataTable></div>
+        <div v-else class="table-wrap"><DataTable><thead><tr><th>项目 / 渠道</th><th>状态</th><th>渠道版本</th><th>建议下一步</th></tr></thead><tbody><tr v-for="record in distributionPage.pagedItems.value" :key="record.id"><td><router-link :to="{ path: projectPath(record.product_id), query: { tab: record.legacy ? 'channels' : 'distributions' } }">{{ productName(record.product_id) }}</router-link><span class="cell-secondary product-line">{{ channelName(record) }}</span></td><td><span class="badge" :class="lifecycleClass(record.status)">{{ labelFor(distributionStatuses, record.status) }}</span></td><td>{{ record.platform_version || '—' }}</td><td>{{ nextStep(record.status) }}</td></tr></tbody></DataTable></div>
         <PaginationControls :page="distributionPage.page.value" :page-size="distributionPage.pageSize.value" :total="distributionPage.total.value" @page-change="distributionPage.changePage" @page-size-change="distributionPage.changePageSize" />
-      </SurfaceCard>
-      <SurfaceCard class="product-table-card" padding="none">
-        <div class="product-toolbar"><h2 class="product-workbench-heading">当前迭代</h2><span class="product-muted">{{ summary.versions.length }} 个进行中版本 · 完成状态由你确认</span></div>
-        <EmptyState v-if="!summary.versions.length" message="暂无进行中的产品版本，可进入产品的版本页规划迭代" />
-        <div v-else class="table-wrap"><DataTable><thead><tr><th>项目 / 版本</th><th>目标</th><th>状态</th><th>目标日期</th></tr></thead><tbody><tr v-for="version in versionPage.pagedItems.value" :key="version.id"><td><router-link :to="{ path: projectPath(version.product_id), query: { tab: 'versions' } }">{{ productName(version.product_id) }} · {{ version.name }}</router-link></td><td>{{ version.goal || '未填写目标' }}</td><td><span class="badge" :class="lifecycleClass(version.status)">{{ labelFor(versionStatuses, version.status) }}</span></td><td>{{ version.target_date || '—' }}</td></tr></tbody></DataTable></div>
-        <PaginationControls :page="versionPage.page.value" :page-size="versionPage.pageSize.value" :total="versionPage.total.value" @page-change="versionPage.changePage" @page-size-change="versionPage.changePageSize" />
       </SurfaceCard>
       <SurfaceCard class="product-table-card" padding="none">
         <div class="product-toolbar"><h2 class="product-workbench-heading">规划提醒</h2><span class="product-muted">{{ summary.unplanned.length }} 个活跃项目尚无待办行动</span><router-link class="btn btn-sm product-primary" to="/projects">全部项目</router-link></div>
@@ -44,7 +38,7 @@ import DataTable from '../../components/DataTable.vue'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RefreshCw } from 'lucide-vue-next'
 import { getProductWorkbench } from '../../api/product-lifecycle.js'
-import { developmentSummary, taskStatuses, versionStatuses, distributionStatuses, lifecycleClass } from './lifecycle-utils.js'
+import { developmentSummary, taskStatuses, distributionStatuses, lifecycleClass } from './lifecycle-utils.js'
 import { useAsyncResource } from '../../composables/useAsyncResource.js'
 import { usePagination } from '../../composables/usePagination.js'
 import PaginationControls from '../../components/PaginationControls.vue'
@@ -66,7 +60,6 @@ function channelName(record) { const channel = summary.value.active.find(product
 const nextStep = status => ({ rejected: '查看拒绝原因，修正后新增提交记录', blocked: '检查并处理备注中的阻塞原因', approved: '确认发布条件并安排上线', ready: '完成检查后提交或发布', in_review: '等待平台结果，有变化时更新记录' })[status] || '查看发行记录'
 const actionPage = usePagination(actions)
 const distributionPage = usePagination(computed(() => summary.value.followups))
-const versionPage = usePagination(computed(() => summary.value.versions))
 const planningPage = usePagination(computed(() => summary.value.unplanned))
 watch(actionFilter, () => actionPage.changePage(1))
 let timer

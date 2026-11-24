@@ -17,6 +17,9 @@ func (s *Store) backfillData() error {
 	if err := s.backfillProjectWorkspaces(); err != nil {
 		return err
 	}
+	if err := s.backfillProductVersionTasks(); err != nil {
+		return err
+	}
 	if err := s.backfillAuditLogs(); err != nil {
 		return err
 	}
@@ -36,6 +39,26 @@ func (s *Store) backfillData() error {
 		return err
 	}
 	return s.ReconcileEnvironmentNamespaceUniqueness()
+}
+
+func (s *Store) backfillProductVersionTasks() error {
+	const key = "migration.product_version_tasks.v1"
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		var count int64
+		if err := tx.Model(&model.SystemConfig{}).Where("key = ?", key).Count(&count).Error; err != nil {
+			return err
+		}
+		if count != 0 {
+			return nil
+		}
+		if err := tx.Exec(`INSERT INTO product_version_tasks (version_id, task_id)
+			SELECT v.id, t.id FROM product_tasks t JOIN product_versions v
+			ON v.id = t.version_id AND v.product_id = t.product_id
+			WHERE t.version_id IS NOT NULL ON CONFLICT DO NOTHING`).Error; err != nil {
+			return err
+		}
+		return tx.Create(&model.SystemConfig{Key: key, Value: "completed"}).Error
+	})
 }
 
 func (s *Store) backfillClusterTailscaleIPs() error {

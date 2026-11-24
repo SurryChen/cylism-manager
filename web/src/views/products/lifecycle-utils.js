@@ -23,4 +23,6 @@ export function developmentSummary(data = {}, now = new Date()) {
 }
 
 export const deploymentCount = record => (record.deployment_ids?.length || 0) + (record.platform_release_ids?.length || 0)
+export const releaseUnitName = (units, id) => units.find(unit => unit.id === id)?.name || '项目默认'
+export const versionLabel = (units, version) => units.length ? `${releaseUnitName(units, version.release_unit_id)} · ${version.name}` : version.name
 export const deploymentPath = record => record.source === 'platform' ? '/settings/system?tab=release' : '/applications/' + record.application_id + '/releases/' + record.id

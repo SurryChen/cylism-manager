@@ -31,6 +31,14 @@
             <div class="product-form-grid">
               <label class="form-group"><span class="form-label">平台</span><SelectMenu v-model="channel.platform" aria-label="发行平台"><option v-for="item in platforms" :key="item.id" :value="item.id">{{ item.label }}</option></SelectMenu></label>
               <label class="form-group"><span class="form-label">渠道名称</span><input v-model="channel.name" class="form-input" maxlength="128" placeholder="例如：微信正式版" /></label>
+              <label v-if="product?.release_units?.length" class="form-group">
+                <span class="form-label">发布端</span>
+                <SelectMenu :model-value="channel.release_unit_id ?? ''" aria-label="渠道发布端" @update:model-value="channel.release_unit_id = $event === '' ? null : Number($event)">
+                  <option value="">不限发布端</option>
+                  <option :value="0">项目默认</option>
+                  <option v-for="unit in product.release_units" :key="unit.id" :value="unit.id">{{ unit.name }}</option>
+                </SelectMenu>
+              </label>
               <label class="form-group"><span class="form-label">平台应用标识</span><input v-model="channel.app_identifier" class="form-input" maxlength="256" placeholder="App ID / 包名 / Bundle ID" /></label>
               <label class="product-full-width product-muted"><input type="checkbox" :checked="channel.publish_status === 'paused'" aria-label="暂停发行" @change="setChannelPaused(channel, $event.target.checked)" /> 暂停发行</label>
               <label class="form-group product-full-width"><span class="form-label">管理后台链接</span><input v-model.trim="channel.admin_url" class="form-input" type="url" placeholder="https://" /></label>

@@ -7,29 +7,41 @@ import (
 
 var ErrProductLifecycleConflict = errors.New("记录已被更新，请刷新后重试")
 var ErrProductChannelInUse = errors.New("渠道已有发行历史，不能移除；可将渠道设为暂停发行")
-var ErrProductVersionName = errors.New("该产品已有同名版本")
+var ErrProductVersionName = errors.New("该发布端已有同名版本")
+var ErrProductReleaseUnitName = errors.New("该项目已有同名发布端")
+var ErrProductReleaseUnitInUse = errors.New("该发布端已关联版本或渠道")
+var ErrProductChannelReleaseUnit = errors.New("发行渠道与版本所属的发布端不一致")
+
+type ProductReleaseUnit struct {
+	ID        uint   `gorm:"primaryKey" json:"id"`
+	ProductID uint   `gorm:"uniqueIndex:idx_product_release_unit_name;not null" json:"product_id"`
+	Name      string `gorm:"size:128;uniqueIndex:idx_product_release_unit_name;not null" json:"name"`
+}
 
 // ProductTask is a lightweight requirement, defect or action. Versions are optional.
 type ProductTask struct {
-	ID        uint      `gorm:"primaryKey" json:"id"`
-	ProductID uint      `gorm:"index;not null" json:"product_id"`
-	VersionID *uint     `gorm:"index" json:"version_id"`
-	Title     string    `gorm:"size:512;not null" json:"title"`
-	Kind      string    `gorm:"size:24;not null" json:"kind"`
-	Status    string    `gorm:"size:24;index;not null" json:"status"`
-	Priority  string    `gorm:"size:16;not null" json:"priority"`
-	Details   string    `gorm:"type:text" json:"details"`
-	DueDate   string    `gorm:"size:10" json:"due_date"`
-	Revision  uint      `gorm:"not null;default:1" json:"revision"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID         uint      `gorm:"primaryKey" json:"id"`
+	ProductID  uint      `gorm:"index;not null" json:"product_id"`
+	VersionID  *uint     `gorm:"index" json:"version_id"`
+	VersionIDs []uint    `gorm:"-" json:"version_ids"`
+	Title      string    `gorm:"size:512;not null" json:"title"`
+	Kind       string    `gorm:"size:24;not null" json:"kind"`
+	Status     string    `gorm:"size:24;index;not null" json:"status"`
+	Priority   string    `gorm:"size:16;not null" json:"priority"`
+	Details    string    `gorm:"type:text" json:"details"`
+	DueDate    string    `gorm:"size:10" json:"due_date"`
+	Revision   uint      `gorm:"not null;default:1" json:"revision"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
 }
 
-// ProductVersion groups an iteration; it is deliberately independent of container Releases.
+// ProductVersion records a formal release of a product's release unit.
 type ProductVersion struct {
 	ID                 uint      `gorm:"primaryKey" json:"id"`
-	ProductID          uint      `gorm:"uniqueIndex:idx_product_version_name;not null" json:"product_id"`
-	Name               string    `gorm:"size:128;uniqueIndex:idx_product_version_name;not null" json:"name"`
+	ProductID          uint      `gorm:"uniqueIndex:idx_product_unit_version;not null" json:"product_id"`
+	ReleaseUnitID      uint      `gorm:"uniqueIndex:idx_product_unit_version;not null;default:0" json:"release_unit_id"`
+	Name               string    `gorm:"size:128;uniqueIndex:idx_product_unit_version;not null" json:"name"`
+	ReleasedOn         string    `gorm:"size:10" json:"released_on"`
 	Goal               string    `gorm:"size:1024" json:"goal"`
 	Acceptance         string    `gorm:"type:text" json:"acceptance"`
 	Status             string    `gorm:"size:24;index;not null" json:"status"`
@@ -45,6 +57,12 @@ type ProductVersion struct {
 	DeploymentIDs      []uint    `gorm:"-" json:"deployment_ids"`
 	PlatformReleaseIDs []uint    `gorm:"-" json:"platform_release_ids"`
 	TaskIDs            []uint    `gorm:"-" json:"task_ids"`
+	KeepReleaseUnit    bool      `gorm:"-" json:"-"`
+}
+
+type ProductVersionTask struct {
+	VersionID uint `gorm:"primaryKey" json:"version_id"`
+	TaskID    uint `gorm:"primaryKey;index" json:"task_id"`
 }
 
 type ProductVersionDeployment struct {
@@ -107,6 +125,7 @@ type ProductLifecycleFilter struct {
 	Status          string
 	Keyword         string
 	VersionID       uint
+	ReleaseUnitID   *uint
 	Limit           int
 	Offset          int
 }

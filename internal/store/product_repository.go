@@ -40,7 +40,7 @@ func (s *Store) ListProductsPage(ownerID uint, stage, scope, keyword string, lim
 
 func (s *Store) GetProduct(ownerID, id uint) (*model.Product, error) {
 	var product model.Product
-	if err := s.db.Where("owner_id = ?", ownerID).Preload("Channels", func(db *gorm.DB) *gorm.DB { return db.Order("id asc") }).First(&product, id).Error; err != nil {
+	if err := s.db.Where("owner_id = ?", ownerID).Preload("ReleaseUnits", func(db *gorm.DB) *gorm.DB { return db.Order("name, id") }).Preload("Channels", func(db *gorm.DB) *gorm.DB { return db.Order("id asc") }).First(&product, id).Error; err != nil {
 		return nil, err
 	}
 	if product.ProjectID != nil {
@@ -155,6 +155,11 @@ func (s *Store) SaveProduct(product *model.Product, projectIDs, applicationIDs [
 		for i := range product.Channels {
 			channel := &product.Channels[i]
 			channel.ProductID = product.ID
+			if channel.ReleaseUnitID != nil {
+				if err := productReleaseUnitAccess(tx, product.ID, *channel.ReleaseUnitID); err != nil {
+					return err
+				}
+			}
 			if channel.ID != 0 {
 				var current model.ProductChannel
 				if err := tx.First(&current, channel.ID).Error; err != nil {

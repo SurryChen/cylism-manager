@@ -17,6 +17,91 @@ func lifecycleProduct(t *testing.T, s *Store, owner uint, name string) model.Pro
 	}
 	return p
 }
+
+func TestProductReleaseUnitChannelAndVersionHistory(t *testing.T) {
+	s := setupTestDB(t)
+	product := lifecycleProduct(t, s, 1, "multi-platform")
+	android := model.ProductReleaseUnit{ProductID: product.ID, Name: "Android"}
+	desktop := model.ProductReleaseUnit{ProductID: product.ID, Name: "Desktop"}
+	for _, unit := range []*model.ProductReleaseUnit{&android, &desktop} {
+		if err := s.SaveProductReleaseUnit(1, unit); err != nil {
+			t.Fatal(err)
+		}
+	}
+	product.Channels[0].ReleaseUnitID = &android.ID
+	if err := s.SaveProduct(&product, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	channel := product.Channels[0]
+	distribution := model.ProductDistribution{ProductID: product.ID, ChannelID: channel.ID, PlatformVersion: "2.8.1", Status: "in_review", Audience: "production"}
+	if err := s.SaveProductDistribution(1, &distribution); err != nil {
+		t.Fatal(err)
+	}
+	androidVersion := model.ProductVersion{ProductID: product.ID, ReleaseUnitID: android.ID, Name: "2.8.1", ReleasedOn: "2026-11-24"}
+	desktopVersion := model.ProductVersion{ProductID: product.ID, ReleaseUnitID: desktop.ID, Name: "2.8.1", ReleasedOn: "2026-11-24"}
+	for _, version := range []*model.ProductVersion{&androidVersion, &desktopVersion} {
+		if err := s.SaveProductVersion(1, version); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.DeleteProductReleaseUnit(1, product.ID, android.ID); !errors.Is(err, model.ErrProductReleaseUnitInUse) {
+		t.Fatalf("delete linked unit: %v", err)
+	}
+	distribution.VersionID = desktopVersion.ID
+	if err := s.SaveProductDistribution(1, &distribution); !errors.Is(err, model.ErrProductChannelReleaseUnit) {
+		t.Fatalf("linked to incompatible version: %v", err)
+	}
+	distribution.VersionID = androidVersion.ID
+	distribution.PlatformVersion = ""
+	distribution.Status = "published"
+	if err := s.SaveProductDistribution(1, &distribution); err != nil || distribution.PlatformVersion != androidVersion.Name {
+		t.Fatalf("attach released version: %#v, %v", distribution, err)
+	}
+	rows, total, err := s.ListProductDistributions(1, product.ID, model.ProductLifecycleFilter{ReleaseUnitID: &android.ID, Limit: 10})
+	if err != nil || total != 1 || rows[0].VersionID != androidVersion.ID {
+		t.Fatalf("filter by release unit: %#v %d %v", rows, total, err)
+	}
+	events, total, err := s.ListProductDistributionEvents(1, product.ID, distribution.ID, model.ProductLifecycleFilter{Limit: 10})
+	if err != nil || total != 2 || events[1].Status != "in_review" {
+		t.Fatalf("issuance history: %#v %d %v", events, total, err)
+	}
+}
+
+func TestProductVersionTaskMigrationPreservesLegacyAssociation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "product-version-tasks.db")
+	s, err := New(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := lifecycleProduct(t, s, 1, "legacy")
+	version := model.ProductVersion{ProductID: p.ID, Name: "1.0", Status: "completed"}
+	if err := s.SaveProductVersion(1, &version); err != nil {
+		t.Fatal(err)
+	}
+	task := model.ProductTask{ProductID: p.ID, VersionID: &version.ID, Title: "Legacy", Kind: "action", Status: "done", Priority: "normal"}
+	if err := s.db.Create(&task).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := s.db.Where("key = ?", "migration.product_version_tasks.v1").Delete(&model.SystemConfig{}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := s.db.Exec("CREATE UNIQUE INDEX idx_product_version_name ON product_versions(product_id, name)").Error; err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		upgraded, err := New(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if upgraded.db.Migrator().HasIndex(&model.ProductVersion{}, "idx_product_version_name") {
+			t.Fatal("legacy uniqueness index was retained")
+		}
+		rows, total, err := upgraded.ListProductTasks(1, p.ID, model.ProductLifecycleFilter{VersionID: version.ID, Limit: 10})
+		if err != nil || total != 1 || rows[0].ID != task.ID || len(rows[0].VersionIDs) != 1 || rows[0].VersionIDs[0] != version.ID {
+			t.Fatalf("migrated task: %#v %d %v", rows, total, err)
+		}
+	}
+}
 func TestProductLifecycleIsolationHistoryAndConcurrency(t *testing.T) {
 	s := setupTestDB(t)
 	p := lifecycleProduct(t, s, 1, "offline")

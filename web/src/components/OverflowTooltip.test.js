@@ -27,4 +27,27 @@ describe('OverflowTooltip', () => {
     expect(document.body.querySelector('.overflow-tooltip-content')).toBeNull()
     wrapper.unmount()
   })
+
+  it('shows the complete multiline value when its preview is clipped vertically', async () => {
+    const text = '第一行\n第二行\n第三行'
+    const wrapper = mount(OverflowTooltip, { props: { text, multiline: true }, attachTo: document.body })
+    const preview = wrapper.get('.overflow-tooltip-trigger--multiline')
+    Object.defineProperties(preview.element, {
+      clientWidth: { value: 200 },
+      scrollWidth: { value: 200 },
+      clientHeight: { value: 32 },
+      scrollHeight: { value: 48 },
+    })
+
+    await preview.trigger('mouseenter')
+    const tooltip = document.body.querySelector('.overflow-tooltip-content--multiline')
+    expect(tooltip?.textContent).toBe(text)
+
+    await preview.trigger('mouseleave')
+    tooltip.dispatchEvent(new MouseEvent('mouseenter'))
+    tooltip.dispatchEvent(new MouseEvent('mouseleave'))
+    await nextTick()
+    expect(document.body.querySelector('.overflow-tooltip-content')).toBeNull()
+    wrapper.unmount()
+  })
 })

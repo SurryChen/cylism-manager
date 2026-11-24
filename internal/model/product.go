@@ -50,6 +50,7 @@ type Product struct {
 	CreatedAt           time.Time                 `json:"created_at"`
 	UpdatedAt           time.Time                 `json:"updated_at"`
 	Channels            []ProductChannel          `gorm:"foreignKey:ProductID" json:"channels,omitempty"`
+	ReleaseUnits        []ProductReleaseUnit      `gorm:"foreignKey:ProductID" json:"release_units,omitempty"`
 	Projects            []Project                 `gorm:"-" json:"projects"`
 	Applications        []Application             `gorm:"-" json:"applications"`
 	RelatedApplications []Application             `gorm:"-" json:"related_applications"`
@@ -72,6 +73,7 @@ type ProductLink struct {
 type ProductChannel struct {
 	ID             uint      `gorm:"primaryKey" json:"id"`
 	ProductID      uint      `gorm:"index;not null" json:"product_id"`
+	ReleaseUnitID  *uint     `gorm:"index" json:"release_unit_id"`
 	Platform       string    `gorm:"size:32;not null" json:"platform"`
 	Name           string    `gorm:"size:128" json:"name"`
 	AppIdentifier  string    `gorm:"size:256" json:"app_identifier"`
