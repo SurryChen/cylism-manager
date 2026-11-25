@@ -231,7 +231,7 @@ func (c *Client) SwitchApplicationNamespaceMaintenanceRoutes(ctx context.Context
 	if targetErr != nil && !apierrors.IsNotFound(targetErr) {
 		return targetErr
 	}
-	if targetErr == nil && (checkNamespaceMoveResource(current, nil, marker) != nil || namespaceMoveHash(current.Spec) != namespaceMoveHash(original.Spec) || !sameNamespaceMoveIngressAnnotations(current.Annotations, original.Annotations)) {
+	if targetErr == nil && (checkNamespaceMoveResource(current, nil, marker) != nil || !sameNamespaceMoveTargetIngressSpec(current.Spec, original.Spec) || !sameNamespaceMoveIngressAnnotations(current.Annotations, original.Annotations)) {
 		return fmt.Errorf("目标 Ingress 已变更或同名占用")
 	}
 	if !switchRoutes {
@@ -264,4 +264,13 @@ func sameNamespaceMoveIngressAnnotations(current, expected map[string]string) bo
 	expected = maps.Clone(expected)
 	delete(expected, applicationMoveAnnotation)
 	return maps.Equal(current, expected)
+}
+
+// Kubernetes may fill in the default IngressClass when creating a route that
+// was originally created without one. Check every explicitly configured field.
+func sameNamespaceMoveTargetIngressSpec(current, original networkingv1.IngressSpec) bool {
+	if original.IngressClassName == nil {
+		current.IngressClassName = nil
+	}
+	return equality.Semantic.DeepEqual(current, original)
 }

@@ -59,12 +59,13 @@ func TestNamespaceMaintenanceCopiesLocalVolumeAfterSourceStops(t *testing.T) {
 			}}
 	}
 	oldClaim, newClaim := claim("old", "old-volume"), claim("new", "new-volume")
+	oldClaim.Labels = nil
 	binding := storagev1.VolumeBindingWaitForFirstConsumer
 	service := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Namespace: "old", Name: move.Name, UID: "source-service", Labels: workloadLabels},
 		Spec: corev1.ServiceSpec{Type: corev1.ServiceTypeClusterIP, Selector: selector, Ports: []corev1.ServicePort{{Port: 443, Protocol: corev1.ProtocolUDP}}}}
 	secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Namespace: "old", Name: "app-secret", UID: "source-secret"},
 		Type: corev1.SecretTypeOpaque, Data: map[string][]byte{"key": []byte("test-value")}}
-	clientset := fake.NewSimpleClientset(source, newPod("old", source.UID, digest), service, secret, oldClaim, volume(oldClaim, "/storage/old"),
+	clientset := fake.NewSimpleClientset(source, newPod("old", source.UID, digest), service, secret, oldClaim, volume(oldClaim, "/storage/pvc-old-claim"),
 		&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: node, Labels: map[string]string{corev1.LabelHostname: node}},
 			Status: corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}}}},
 		&storagev1.StorageClass{ObjectMeta: metav1.ObjectMeta{Name: class}, Provisioner: "rancher.io/local-path", VolumeBindingMode: &binding})
@@ -85,7 +86,7 @@ func TestNamespaceMaintenanceCopiesLocalVolumeAfterSourceStops(t *testing.T) {
 	}
 	checks, copies := 0, 0
 	copyVolume := func(ctx context.Context, from, to string, copy bool) error {
-		if from != "/storage/old" || to != "/storage/new" {
+		if from != "/storage/pvc-old-claim" || to != "/storage/new" {
 			t.Fatalf("wrong copy paths %q -> %q", from, to)
 		}
 		if copy {
@@ -156,10 +157,21 @@ func TestNamespaceMaintenanceRouteCutoverCanResume(t *testing.T) {
 	ctx := t.Context()
 	plan := &ApplicationNamespaceMaintenancePlan{Ingress: string(namespaceMoveJSON(t, route))}
 	move := ApplicationNamespaceMove{SourceNamespace: "old", TargetNamespace: "new", Name: "service"}
-	for range 2 {
-		if err := client.SwitchApplicationNamespaceMaintenanceRoutes(ctx, move, plan, "1", nil, true); err != nil {
-			t.Fatal(err)
-		}
+	if err := client.SwitchApplicationNamespaceMaintenanceRoutes(ctx, move, plan, "1", nil, true); err != nil {
+		t.Fatal(err)
+	}
+	ingresses := client.Clientset.NetworkingV1().Ingresses("new")
+	target, err := ingresses.Get(ctx, route.Name, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	class := "traefik"
+	target.Spec.IngressClassName = &class
+	if _, err := ingresses.Update(ctx, target, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.SwitchApplicationNamespaceMaintenanceRoutes(ctx, move, plan, "1", nil, true); err != nil {
+		t.Fatal(err)
 	}
 	if _, err := client.Clientset.NetworkingV1().Ingresses("old").Get(ctx, route.Name, metav1.GetOptions{}); !apierrors.IsNotFound(err) {
 		t.Fatalf("source route still exists: %v", err)

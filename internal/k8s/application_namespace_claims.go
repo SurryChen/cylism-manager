@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path"
 	"slices"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -62,7 +63,12 @@ func (c *Client) planNamespaceMoveClaims(ctx context.Context, move ApplicationNa
 		if err != nil {
 			return err
 		}
-		if !isManagedPVC(claim, move.SourceEnvironmentID) || info.ReadOnly || !info.IsLocal || !info.WaitForFirstConsumer ||
+		// Older deployments may have provisioned the claim before environment
+		// labels were introduced. Require exclusive use by the current app.
+		legacy := !info.Managed && claim.Labels[ManagedByLabel] == "" && claim.Labels[EnvironmentLabel] == "" &&
+			claim.Labels[InfrastructureLabel] == "" && len(claim.OwnerReferences) == 0 &&
+			strings.Contains(path.Base(info.LocalPath), string(claim.UID))
+		if (!isManagedPVC(claim, move.SourceEnvironmentID) && !legacy) || info.ReadOnly || !info.IsLocal || !info.WaitForFirstConsumer ||
 			info.Phase != string(corev1.ClaimBound) || info.BoundNode == "" || !path.IsAbs(info.LocalPath) || info.LocalPath == "/" ||
 			!slices.Equal(claim.Spec.AccessModes, []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce}) ||
 			(claim.Spec.VolumeMode != nil && *claim.Spec.VolumeMode != corev1.PersistentVolumeFilesystem) {
@@ -79,8 +85,10 @@ func (c *Client) planNamespaceMoveClaims(ctx context.Context, move ApplicationNa
 			return fmt.Errorf("应用的数据卷或宿主机端口位于不同节点")
 		}
 		for _, pod := range pods {
-			if pod.Spec.NodeName != info.BoundNode {
-				return fmt.Errorf("源 Pod 未运行在数据卷所在节点")
+			if pod.Spec.NodeName != info.BoundNode || !slices.ContainsFunc(pod.Spec.Volumes, func(volume corev1.Volume) bool {
+				return volume.PersistentVolumeClaim != nil && volume.PersistentVolumeClaim.ClaimName == name
+			}) {
+				return fmt.Errorf("源 Pod 未使用预检的数据卷或未运行在卷所在节点")
 			}
 		}
 		plan.Node = info.BoundNode
