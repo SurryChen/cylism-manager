@@ -3,6 +3,7 @@ package store
 import (
 	"fmt"
 	"slices"
+	"strings"
 
 	"github.com/cylism/cylism-manager/internal/model"
 	"gorm.io/gorm"
@@ -72,6 +73,13 @@ func (s *Store) AdoptApplicationNamespace(move model.ApplicationNamespaceMove) e
 		if err != nil || app.EnvironmentID == target.ID {
 			return err
 		}
+		domains, err := (&Store{db: tx}).planApplicationNamespaceMoveDomains(app, target)
+		if err != nil {
+			return err
+		}
+		if !slices.Equal(domains, move.DomainIDs) {
+			return model.ErrApplicationNamespaceMoveChanged
+		}
 		if move.MaintenanceID == 0 {
 			if err := ensureNoNamespaceMaintenance(tx, app.ID); err != nil {
 				return err
@@ -93,24 +101,7 @@ func (s *Store) AdoptApplicationNamespace(move model.ApplicationNamespaceMove) e
 		if result.RowsAffected != 1 {
 			return model.ErrApplicationNamespaceMoveChanged
 		}
-		var domains []uint
-		if err := tx.Model(&model.ApplicationEndpoint{}).Distinct().Where("application_id = ? AND domain_id <> 0", app.ID).Pluck("domain_id", &domains).Error; err != nil {
-			return err
-		}
-		if len(domains) != len(move.DomainIDs) {
-			return model.ErrApplicationNamespaceMoveChanged
-		}
 		for _, id := range move.DomainIDs {
-			if !slices.Contains(domains, id) {
-				return model.ErrApplicationNamespaceMoveChanged
-			}
-			var count int64
-			if err := tx.Model(&model.ApplicationEndpoint{}).Where("domain_id = ? AND application_id <> ?", id, app.ID).Count(&count).Error; err != nil {
-				return err
-			}
-			if count != 0 {
-				return fmt.Errorf("应用入口使用共享域名，需要先迁移其共享路由")
-			}
 			result := tx.Model(&model.ManagedDomain{}).Where("id = ? AND environment_id = ?", id, app.EnvironmentID).
 				Updates(map[string]interface{}{"environment_id": target.ID, "namespace": target.Namespace})
 			if result.Error != nil {
@@ -122,4 +113,74 @@ func (s *Store) AdoptApplicationNamespace(move model.ApplicationNamespaceMove) e
 		}
 		return nil
 	})
+}
+
+// PlanApplicationNamespaceMoveDomains moves a shared domain with its sole HTTP
+// ingress. Metadata-only bindings keep their ID and can follow independently.
+func (s *Store) PlanApplicationNamespaceMoveDomains(move model.ApplicationNamespaceMove) ([]uint, error) {
+	app, target, err := s.checkApplicationNamespaceMove(move)
+	if err != nil {
+		return nil, err
+	}
+	return s.planApplicationNamespaceMoveDomains(app, target)
+}
+
+func (s *Store) planApplicationNamespaceMoveDomains(app *model.Application, target *model.Environment) ([]uint, error) {
+	var domains []uint
+	for _, endpoint := range app.Endpoints {
+		if endpoint.DomainID != 0 && !slices.Contains(domains, endpoint.DomainID) {
+			domains = append(domains, endpoint.DomainID)
+		}
+	}
+	slices.Sort(domains)
+	var transfer []uint
+	for _, id := range domains {
+		domain, err := s.GetManagedDomain(id)
+		if err != nil {
+			return nil, err
+		}
+		var bindings []struct {
+			ApplicationID uint
+			EnvironmentID uint
+			ProjectID     uint
+			Mode          string
+		}
+		if err := s.db.Table("application_endpoints").
+			Select("application_endpoints.application_id, applications.environment_id, "+applicationOwningProject+" AS project_id, application_endpoints.ingress_mode AS mode").
+			Joins("JOIN applications ON applications.id = application_endpoints.application_id").
+			Where("application_endpoints.domain_id = ?", id).Scan(&bindings).Error; err != nil {
+			return nil, err
+		}
+		var ingressOwner uint
+		otherAtSource := false
+		for _, binding := range bindings {
+			if binding.ProjectID != target.ProjectID || (binding.EnvironmentID != app.EnvironmentID && binding.EnvironmentID != target.ID) {
+				return nil, fmt.Errorf("域名 %s 还关联其他项目或运行环境的应用", domain.Hostname)
+			}
+			if binding.ApplicationID != app.ID && binding.EnvironmentID == app.EnvironmentID {
+				otherAtSource = true
+			}
+			if strings.EqualFold(strings.TrimSpace(binding.Mode), "metadata") {
+				continue
+			}
+			if ingressOwner != 0 && ingressOwner != binding.ApplicationID {
+				return nil, fmt.Errorf("域名 %s 有多个 Ingress 应用，需要一同切换路由", domain.Hostname)
+			}
+			ingressOwner = binding.ApplicationID
+			if binding.EnvironmentID != domain.EnvironmentID {
+				return nil, fmt.Errorf("域名 %s 的归属与 Ingress 环境不一致", domain.Hostname)
+			}
+		}
+		switch domain.EnvironmentID {
+		case target.ID:
+			continue
+		case app.EnvironmentID:
+			if ingressOwner == app.ID || (ingressOwner == 0 && !otherAtSource) {
+				transfer = append(transfer, id)
+			}
+		default:
+			return nil, fmt.Errorf("域名 %s 的归属与迁移环境不一致", domain.Hostname)
+		}
+	}
+	return transfer, nil
 }

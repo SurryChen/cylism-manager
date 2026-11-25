@@ -45,6 +45,40 @@ func TestAdoptApplicationNamespaceAfterProjectTransfer(t *testing.T) {
 	if err := s.CreateApplicationEndpoint(&model.ApplicationEndpoint{ApplicationID: app.ID, DomainID: domain.ID, Domain: domain.Hostname, ServicePort: 80}); err != nil {
 		t.Fatal(err)
 	}
+	metadata := model.Application{Name: "udp", ProjectID: source.ID, EnvironmentID: origin.ID, ManagementProjectID: &target.ID}
+	if err := s.CreateApplication(&metadata); err != nil {
+		t.Fatal(err)
+	}
+	metadataRelease := model.Release{ApplicationID: metadata.ID, Sequence: 1, Status: model.ReleaseStatusSucceeded}
+	if err := s.CreateRelease(&metadataRelease); err != nil {
+		t.Fatal(err)
+	}
+	metadataEndpoint := &model.ApplicationEndpoint{ApplicationID: metadata.ID, DomainID: domain.ID, Domain: domain.Hostname, ServicePort: 443, Protocol: "UDP"}
+	if err := s.CreateApplicationEndpoint(metadataEndpoint); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.PlanApplicationNamespaceMoveDomains(move); err == nil {
+		t.Fatal("accepted a second Ingress application for a shared domain")
+	}
+	metadataEndpoint.IngressMode = "metadata"
+	if err := s.UpdateApplicationEndpoint(metadataEndpoint); err != nil {
+		t.Fatal(err)
+	}
+	metadataMove := move
+	metadataMove.ApplicationID, metadataMove.ReleaseID = metadata.ID, metadataRelease.ID
+	if ids, err := s.PlanApplicationNamespaceMoveDomains(metadataMove); err != nil || len(ids) != 0 {
+		t.Fatalf("metadata binding must keep the domain with its Ingress: %v, %v", ids, err)
+	}
+	if err := s.AdoptApplicationNamespace(metadataMove); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.GetManagedDomain(domain.ID); err != nil || got.EnvironmentID != origin.ID {
+		t.Fatalf("migrating a metadata binding moved its Ingress domain: %+v, %v", got, err)
+	}
+	if ids, err := s.PlanApplicationNamespaceMoveDomains(move); err != nil || len(ids) != 1 || ids[0] != domain.ID {
+		t.Fatalf("Ingress owner should take its shared domain: %v, %v", ids, err)
+	}
+
 	if err := s.AdoptApplicationNamespace(move); !errors.Is(err, model.ErrApplicationNamespaceMoveChanged) {
 		t.Fatalf("accepted an unverified domain: %v", err)
 	}

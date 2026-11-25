@@ -193,31 +193,11 @@ func (h *ApplicationHandler) MoveApplicationNamespace(c *gin.Context) {
 }
 
 func (h *ApplicationHandler) namespaceMoveDependencies(app *model.Application, target *model.Environment, release *model.Release, move *model.ApplicationNamespaceMove) error {
-	seen := make(map[uint]bool)
-	for _, endpoint := range app.Endpoints {
-		if endpoint.DomainID == 0 || seen[endpoint.DomainID] {
-			continue
-		}
-		domain, err := h.resources.GetManagedDomain(endpoint.DomainID)
-		if err != nil || domain.EnvironmentID != app.EnvironmentID {
-			return fmt.Errorf("入口域名的归属与源环境不一致")
-		}
-		count, err := h.resources.CountApplicationEndpointsByDomain(endpoint.DomainID)
-		if err != nil {
-			return err
-		}
-		var owned int64
-		for _, binding := range app.Endpoints {
-			if binding.DomainID == endpoint.DomainID {
-				owned++
-			}
-		}
-		if count != owned {
-			return fmt.Errorf("应用入口使用共享域名，需要先迁移其共享路由")
-		}
-		seen[endpoint.DomainID] = true
-		move.DomainIDs = append(move.DomainIDs, endpoint.DomainID)
+	domains, err := h.applications.PlanApplicationNamespaceMoveDomains(*move)
+	if err != nil {
+		return err
 	}
+	move.DomainIDs = domains
 	registries := map[uint]bool{}
 	if release.ImageRegistryID != nil {
 		registries[*release.ImageRegistryID] = true
