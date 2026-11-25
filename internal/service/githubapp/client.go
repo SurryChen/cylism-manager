@@ -59,9 +59,10 @@ type Installation struct {
 }
 
 type Repository struct {
-	ID       int64  `json:"id"`
-	FullName string `json:"full_name"`
-	Private  bool   `json:"private"`
+	ID         int64  `json:"id"`
+	FullName   string `json:"full_name"`
+	Private    bool   `json:"private"`
+	Visibility string `json:"visibility,omitempty"`
 }
 
 type Revision struct {
@@ -72,8 +73,10 @@ type Revision struct {
 
 type HTTPError int
 type RequestError string
+type PublicRepositoryError string
 
-func (e RequestError) Error() string { return string(e) }
+func (e RequestError) Error() string          { return string(e) }
+func (e PublicRepositoryError) Error() string { return string(e) }
 
 type InvalidRevision string
 
@@ -83,8 +86,10 @@ func (e HTTPError) Error() string {
 	switch int(e) {
 	case http.StatusUnauthorized:
 		return "GitHub App 凭据无效或已撤销"
-	case http.StatusForbidden, http.StatusTooManyRequests:
+	case http.StatusForbidden:
 		return "GitHub 拒绝访问，请检查安装权限或稍后重试"
+	case http.StatusTooManyRequests:
+		return "已达到 GitHub API 请求限制，请稍后重试"
 	case http.StatusNotFound:
 		return "GitHub 资源不存在，或安装未授权访问"
 	case http.StatusUnprocessableEntity:
@@ -220,6 +225,61 @@ func (c *Client) Repositories(ctx context.Context, appToken string, installation
 
 var validRepository = regexp.MustCompile(`^[A-Za-z0-9-]+/[A-Za-z0-9_.-]+$`)
 
+func validRepositoryName(name string) bool {
+	return validRepository.MatchString(name) && !strings.HasSuffix(name, "/.") && !strings.HasSuffix(name, "/..")
+}
+
+func publicRepositoryName(input string) (string, error) {
+	name := strings.TrimSpace(input)
+	if strings.Contains(name, "://") {
+		parsed, err := url.Parse(name)
+		if err != nil || parsed.Scheme != "https" || !strings.EqualFold(parsed.Host, "github.com") ||
+			parsed.User != nil || parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" {
+			return "", PublicRepositoryError("请输入 GitHub 公开仓库链接或 owner/repo")
+		}
+		name = strings.TrimPrefix(parsed.EscapedPath(), "/")
+	}
+	name = strings.TrimSuffix(strings.TrimSuffix(name, "/"), ".git")
+	if !validRepositoryName(name) {
+		return "", PublicRepositoryError("请输入 GitHub 公开仓库链接或 owner/repo")
+	}
+	return name, nil
+}
+
+func (c *Client) FindPublicRepository(ctx context.Context, input string) (Repository, error) {
+	name, err := publicRepositoryName(input)
+	if err != nil {
+		return Repository{}, err
+	}
+	return c.publicRepository(ctx, "/repos/"+name, 0)
+}
+
+func (c *Client) OpenPublicRepository(ctx context.Context, repoID int64) (*RepositorySession, error) {
+	repository, err := c.publicRepository(ctx, "/repositories/"+strconv.FormatInt(repoID, 10), repoID)
+	if err != nil {
+		return nil, err
+	}
+	return &RepositorySession{client: c, Repository: repository}, nil
+}
+
+func (c *Client) publicRepository(ctx context.Context, path string, repoID int64) (Repository, error) {
+	var repository Repository
+	_, err := c.request(ctx, http.MethodGet, path, "", nil, &repository)
+	if err != nil {
+		if errors.Is(err, HTTPError(http.StatusNotFound)) {
+			return Repository{}, PublicRepositoryError("GitHub 公开仓库不存在或已无法公开访问")
+		}
+		return Repository{}, err
+	}
+	if repository.Private || repository.Visibility != "public" {
+		return Repository{}, PublicRepositoryError("该 GitHub 仓库未公开")
+	}
+	if repository.ID <= 0 || (repoID != 0 && repository.ID != repoID) || !validRepositoryName(repository.FullName) {
+		return Repository{}, RequestError("GitHub 返回了无效的仓库信息")
+	}
+	return repository, nil
+}
+
 type RepositorySession struct {
 	client     *Client
 	token      string
@@ -236,7 +296,7 @@ func (c *Client) OpenRepository(ctx context.Context, appToken string, installati
 	if err != nil {
 		return nil, err
 	}
-	if repository.ID != repoID || !validRepository.MatchString(repository.FullName) || strings.HasSuffix(repository.FullName, "/.") || strings.HasSuffix(repository.FullName, "/..") {
+	if repository.ID != repoID || !validRepositoryName(repository.FullName) {
 		return nil, RequestError("GitHub 返回了无效的仓库信息")
 	}
 	return &RepositorySession{client: c, token: token, Repository: repository}, nil

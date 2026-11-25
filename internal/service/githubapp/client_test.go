@@ -35,6 +35,66 @@ func TestConvertManifest(t *testing.T) {
 	}
 }
 
+func TestPublicRepositoryReadsWithoutCredentials(t *testing.T) {
+	client := NewClient()
+	visibility := "public"
+	calls := 0
+	sha := strings.Repeat("a", 40)
+	client.http.Transport = testTransport(func(req *http.Request) (*http.Response, error) {
+		calls++
+		if req.Method != http.MethodGet || req.URL.Host != "api.github.com" || req.Header.Get("Authorization") != "" {
+			t.Fatalf("unexpected public GitHub request: %s %s", req.Method, req.URL)
+		}
+		var body string
+		switch req.URL.Path {
+		case "/repos/upstream/tool", "/repositories/55":
+			body = `{"id":55,"full_name":"Upstream/Tool","private":false,"visibility":"` + visibility + `"}`
+		case "/repos/Upstream/Tool/tags":
+			body = `[{"name":"v1","commit":{"sha":"` + sha + `"}}]`
+		case "/repos/Upstream/Tool/git/ref/tags/v1":
+			body = `{"object":{"type":"commit","sha":"` + sha + `"}}`
+		case "/repos/Upstream/Tool/commits/" + sha:
+			body = `{"sha":"` + sha + `"}`
+		default:
+			t.Fatalf("unexpected public GitHub path: %s", req.URL.Path)
+		}
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body))}, nil
+	})
+	ctx := context.Background()
+	for _, input := range []string{"upstream/tool", "https://github.com/upstream/tool.git/"} {
+		repo, err := client.FindPublicRepository(ctx, input)
+		if err != nil || repo.ID != 55 || repo.FullName != "Upstream/Tool" {
+			t.Fatalf("lookup %q: %+v, %v", input, repo, err)
+		}
+	}
+	session, err := client.OpenPublicRepository(ctx, 55)
+	if err != nil {
+		t.Fatal(err)
+	}
+	revisions, _, err := session.Revisions(ctx, "tags", 1)
+	if err != nil || len(revisions) != 1 || revisions[0].Tag != "v1" {
+		t.Fatalf("public tags: %+v, %v", revisions, err)
+	}
+	resolved, err := session.Resolve(ctx, "v1", sha)
+	if err != nil || resolved.SHA != sha {
+		t.Fatalf("pin public tag: %+v, %v", resolved, err)
+	}
+	visibility = "internal"
+	var invalid PublicRepositoryError
+	if _, err := client.OpenPublicRepository(ctx, 55); !errors.As(err, &invalid) {
+		t.Fatalf("accepted a non-public binding: %v", err)
+	}
+	before := calls
+	for _, input := range []string{"https://github.com.example.org/org/repo", "https://github.com/org/repo/tree/main", "https://github.com/org/%2e%2e", "org/.."} {
+		if _, err := client.FindPublicRepository(ctx, input); !errors.As(err, &invalid) {
+			t.Fatalf("accepted %q: %v", input, err)
+		}
+	}
+	if calls != before {
+		t.Fatal("contacted GitHub for an invalid repository address")
+	}
+}
+
 func TestRepositoryTokenScopeAndAnnotatedTag(t *testing.T) {
 	sha := strings.Repeat("a", 40)
 	tagObject := strings.Repeat("b", 40)

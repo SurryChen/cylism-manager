@@ -44,6 +44,9 @@ type ProductGitHubRepository struct {
 
 func (ProductGitHubRepository) TableName() string { return "product_github_repositories" }
 
+// Public bindings have no app credentials or installation.
+func (r ProductGitHubRepository) IsPublic() bool { return r.AppID == 0 && r.InstallationID == 0 }
+
 // ProductGitHubSource saves the resolved commit independently of the current
 // installation, repository bindings, deployment environment, and tag position.
 type ProductGitHubSource struct {

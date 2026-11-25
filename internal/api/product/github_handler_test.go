@@ -1,6 +1,8 @@
 package productapi
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -8,9 +10,66 @@ import (
 	"testing"
 
 	"github.com/cylism/cylism-manager/internal/model"
+	"github.com/cylism/cylism-manager/internal/service/githubapp"
 	"github.com/cylism/cylism-manager/internal/store"
 	"github.com/gin-gonic/gin"
 )
+
+type publicGitHubClient struct {
+	githubClient
+}
+
+func (publicGitHubClient) FindPublicRepository(_ context.Context, input string) (githubapp.Repository, error) {
+	if input != "https://github.com/external/tool" {
+		return githubapp.Repository{}, githubapp.PublicRepositoryError("GitHub 公开仓库不存在或已无法公开访问")
+	}
+	return githubapp.Repository{ID: 55, FullName: "external/tool", Visibility: "public"}, nil
+}
+
+func TestBindPublicGitHubRepositoryWithoutInstallation(t *testing.T) {
+	repo, err := store.New(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	product := model.Product{OwnerID: 1, Name: "Product", Stage: "developing"}
+	if err := repo.SaveProduct(&product, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	h := NewHandler(repo).WithGitHub(repo, nil, "")
+	h.github.client = publicGitHubClient{}
+	router := gin.New()
+	router.POST("/products/:id", func(c *gin.Context) {
+		c.Set("user_id", uint(1))
+		h.BindGitHubRepository(c)
+	})
+	post := func(body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/products/%d", product.ID), strings.NewReader(body))
+		res := httptest.NewRecorder()
+		router.ServeHTTP(res, req)
+		return res
+	}
+	if res := post(`{"component":"External","public_repository":"missing/tool"}`); res.Code != http.StatusBadRequest {
+		t.Fatalf("missing or private repository was accepted: %d %s", res.Code, res.Body)
+	}
+	if res := post(`{"component":"External","public_repository":"https://github.com/external/tool","installation_id":2}`); res.Code != http.StatusBadRequest {
+		t.Fatalf("ambiguous binding was accepted: %d %s", res.Code, res.Body)
+	}
+	result := post(`{"component":"External","public_repository":"https://github.com/external/tool"}`)
+	var payload struct{ Data model.ProductGitHubRepository }
+	if err := json.Unmarshal(result.Body.Bytes(), &payload); err != nil || result.Code != http.StatusOK {
+		t.Fatalf("public repository binding failed: %d %s", result.Code, result.Body)
+	}
+	binding, err := repo.ProductGitHubRepository(1, product.ID, payload.Data.ID)
+	if err != nil || !binding.IsPublic() || binding.RepositoryID != 55 || binding.Repository != "external/tool" {
+		t.Fatalf("public binding was not persisted: %+v, %v", binding, err)
+	}
+	version := model.ProductVersion{ProductID: product.ID, Name: "1", GitHubSources: []model.ProductGitHubSource{{
+		BindingID: binding.ID, Component: binding.Component, Repository: binding.Repository, RepositoryID: binding.RepositoryID, Tag: "v1", SHA: strings.Repeat("a", 40),
+	}}}
+	if err := repo.SaveProductVersion(1, &version); err != nil {
+		t.Fatalf("public source required an installation at save time: %v", err)
+	}
+}
 
 func TestGitHubConnectionAndVersionSourceOwnership(t *testing.T) {
 	repo, err := store.New(":memory:")

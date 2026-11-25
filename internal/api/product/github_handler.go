@@ -42,6 +42,8 @@ type githubClient interface {
 	Installations(context.Context, string, int) ([]githubapp.Installation, bool, error)
 	Repositories(context.Context, string, int64, int) ([]githubapp.Repository, bool, error)
 	OpenRepository(context.Context, string, int64, int64) (*githubapp.RepositorySession, error)
+	FindPublicRepository(context.Context, string) (githubapp.Repository, error)
+	OpenPublicRepository(context.Context, int64) (*githubapp.RepositorySession, error)
 }
 
 func (h *Handler) WithGitHub(repository GitHubRepository, key []byte, publicURL string) *Handler {
@@ -104,11 +106,14 @@ func (g *githubIntegration) token(ownerID uint) (model.GitHubConnection, string,
 func githubError(c *gin.Context, err error) {
 	var remote githubapp.HTTPError
 	var request githubapp.RequestError
+	var public githubapp.PublicRepositoryError
 	switch {
-	case errors.Is(err, model.ErrGitHubNotConfigured):
+	case errors.Is(err, model.ErrGitHubNotConfigured), errors.Is(err, errGitHubBindingAppChanged):
 		shared.Error(c, http.StatusConflict, shared.CodeConflict, err.Error())
 	case errors.As(err, &remote), errors.As(err, &request):
 		shared.Error(c, http.StatusBadGateway, shared.CodeBadRequest, err.Error())
+	case errors.As(err, &public):
+		shared.ValidationError(c, err.Error())
 	default:
 		respondError(c, err)
 	}
@@ -199,13 +204,23 @@ func (h *Handler) BindGitHubRepository(c *gin.Context) {
 	ownerID := shared.UserID(c)
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 8<<10)
 	var input struct {
-		ReleaseUnitID  uint   `json:"release_unit_id"`
-		Component      string `json:"component"`
-		InstallationID int64  `json:"installation_id"`
-		RepositoryID   int64  `json:"repository_id"`
+		ReleaseUnitID    uint   `json:"release_unit_id"`
+		Component        string `json:"component"`
+		InstallationID   int64  `json:"installation_id"`
+		RepositoryID     int64  `json:"repository_id"`
+		PublicRepository string `json:"public_repository"`
 	}
-	if c.ShouldBindJSON(&input) != nil || input.InstallationID <= 0 || input.RepositoryID <= 0 {
-		shared.BadRequest(c, "请选择 GitHub 安装和仓库")
+	if c.ShouldBindJSON(&input) != nil {
+		shared.BadRequest(c, "GitHub 仓库绑定格式无效")
+		return
+	}
+	input.PublicRepository = strings.TrimSpace(input.PublicRepository)
+	if input.PublicRepository == "" && (input.InstallationID <= 0 || input.RepositoryID <= 0) {
+		shared.BadRequest(c, "请选择已授权仓库，或填写公开仓库地址")
+		return
+	}
+	if input.PublicRepository != "" && (input.InstallationID != 0 || input.RepositoryID != 0) {
+		shared.BadRequest(c, "请选择一种仓库来源")
 		return
 	}
 	input.Component = strings.TrimSpace(input.Component)
@@ -222,20 +237,32 @@ func (h *Handler) BindGitHubRepository(c *gin.Context) {
 		respondError(c, model.ErrProductResourceAccess)
 		return
 	}
-	connection, token, err := h.github.token(ownerID)
+	binding := model.ProductGitHubRepository{
+		ProductID: productID, ReleaseUnitID: input.ReleaseUnitID, Component: input.Component,
+		InstallationID: input.InstallationID,
+	}
+	ctx := c.Request.Context()
+	var repository githubapp.Repository
+	if input.PublicRepository != "" {
+		repository, err = h.github.client.FindPublicRepository(ctx, input.PublicRepository)
+	} else {
+		connection, token, tokenErr := h.github.token(ownerID)
+		if tokenErr != nil {
+			githubError(c, tokenErr)
+			return
+		}
+		binding.AppID = connection.AppID
+		var session *githubapp.RepositorySession
+		session, err = h.github.client.OpenRepository(ctx, token, input.InstallationID, input.RepositoryID)
+		if err == nil {
+			repository = session.Repository
+		}
+	}
 	if err != nil {
 		githubError(c, err)
 		return
 	}
-	session, err := h.github.client.OpenRepository(c.Request.Context(), token, input.InstallationID, input.RepositoryID)
-	if err != nil {
-		shared.Error(c, http.StatusBadGateway, shared.CodeBadRequest, err.Error())
-		return
-	}
-	binding := model.ProductGitHubRepository{
-		ProductID: productID, ReleaseUnitID: input.ReleaseUnitID, Component: input.Component, AppID: connection.AppID,
-		InstallationID: input.InstallationID, RepositoryID: session.Repository.ID, Repository: session.Repository.FullName,
-	}
+	binding.RepositoryID, binding.Repository = repository.ID, repository.FullName
 	if err := h.github.repository.SaveProductGitHubRepository(ownerID, &binding); err != nil {
 		githubError(c, err)
 		return
@@ -292,18 +319,9 @@ func (h *Handler) GitHubRevisions(c *gin.Context) {
 		respondError(c, err)
 		return
 	}
-	connection, token, err := h.github.token(ownerID)
+	session, err := h.github.openBinding(c.Request.Context(), ownerID, binding)
 	if err != nil {
 		githubError(c, err)
-		return
-	}
-	if binding.AppID != connection.AppID {
-		shared.Error(c, http.StatusConflict, shared.CodeConflict, "该绑定属于之前的 GitHub App，请重新绑定仓库")
-		return
-	}
-	session, err := h.github.client.OpenRepository(c.Request.Context(), token, binding.InstallationID, binding.RepositoryID)
-	if err != nil {
-		shared.Error(c, http.StatusBadGateway, shared.CodeBadRequest, err.Error())
 		return
 	}
 	items, more, err := session.Revisions(c.Request.Context(), kind, page)
@@ -313,6 +331,22 @@ func (h *Handler) GitHubRevisions(c *gin.Context) {
 	}
 	shared.Success(c, gin.H{"items": items, "has_more": more})
 }
+
+func (g *githubIntegration) openBinding(ctx context.Context, ownerID uint, binding model.ProductGitHubRepository) (*githubapp.RepositorySession, error) {
+	if binding.IsPublic() {
+		return g.client.OpenPublicRepository(ctx, binding.RepositoryID)
+	}
+	connection, token, err := g.token(ownerID)
+	if err != nil {
+		return nil, err
+	}
+	if binding.AppID != connection.AppID {
+		return nil, errGitHubBindingAppChanged
+	}
+	return g.client.OpenRepository(ctx, token, binding.InstallationID, binding.RepositoryID)
+}
+
+var errGitHubBindingAppChanged = errors.New("该绑定属于之前的 GitHub App，请重新绑定仓库")
 
 type githubSourceError string
 
@@ -365,8 +399,6 @@ func resolveGitHubSources(ctx context.Context, g *githubIntegration, ownerID uin
 			version.ReleaseUnitID = current.ReleaseUnitID
 		}
 	}
-	var connection model.GitHubConnection
-	var token string
 	components := make(map[string]bool, len(inputs))
 	for _, input := range inputs {
 		if input.BindingID == 0 || len(input.Tag) > 512 || len(input.SHA) > 40 {
@@ -386,16 +418,7 @@ func resolveGitHubSources(ctx context.Context, g *githubIntegration, ownerID uin
 			if binding.ReleaseUnitID != version.ReleaseUnitID {
 				return githubSourceError("请选择当前发布端绑定的仓库")
 			}
-			if token == "" {
-				connection, token, err = g.token(ownerID)
-				if err != nil {
-					return err
-				}
-			}
-			if binding.AppID != connection.AppID {
-				return githubSourceError("该绑定属于之前的 GitHub App，请重新绑定仓库")
-			}
-			session, err := g.client.OpenRepository(ctx, token, binding.InstallationID, binding.RepositoryID)
+			session, err := g.openBinding(ctx, ownerID, binding)
 			if err != nil {
 				return err
 			}

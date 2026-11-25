@@ -100,12 +100,14 @@ func (s *Store) SaveProductGitHubRepository(ownerID uint, binding *model.Product
 		if err := productReleaseUnitAccess(tx, binding.ProductID, binding.ReleaseUnitID); err != nil {
 			return err
 		}
-		connection, err := (&Store{db: tx}).GitHubConnection(ownerID)
-		if err != nil {
-			return err
-		}
-		if connection.AppID != binding.AppID {
-			return model.ErrProductLifecycleConflict
+		if !binding.IsPublic() {
+			connection, err := (&Store{db: tx}).GitHubConnection(ownerID)
+			if err != nil {
+				return err
+			}
+			if connection.AppID != binding.AppID {
+				return model.ErrProductLifecycleConflict
+			}
 		}
 		result := tx.Clauses(clause.OnConflict{
 			Columns:   []clause.Column{{Name: "product_id"}, {Name: "release_unit_id"}, {Name: "component"}},
@@ -151,8 +153,8 @@ func validateVersionGitHubSources(tx *gorm.DB, ownerID uint, version, current *m
 		}
 		var count int64
 		err := tx.Model(&model.ProductGitHubRepository{}).
-			Joins("JOIN github_connections ON github_connections.app_id = product_github_repositories.app_id AND github_connections.owner_id = ?", ownerID).
 			Where("id = ? AND product_id = ? AND release_unit_id = ? AND repository_id = ? AND component = ?", source.BindingID, version.ProductID, version.ReleaseUnitID, source.RepositoryID, source.Component).
+			Where("(app_id = 0 AND installation_id = 0) OR EXISTS (SELECT 1 FROM github_connections WHERE owner_id = ? AND app_id = product_github_repositories.app_id)", ownerID).
 			Count(&count).Error
 		if err != nil {
 			return err

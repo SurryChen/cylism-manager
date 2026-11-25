@@ -4,9 +4,9 @@ import { reactive } from 'vue'
 import ProductLifecycle from './ProductLifecycle.vue'
 import LifecycleEditor from './LifecycleEditor.vue'
 import { deploymentCount, deploymentPath } from './lifecycle-utils.js'
-const mocks = vi.hoisted(() => ({ page: vi.fn(), options: vi.fn(), save: vi.fn(), remove: vi.fn(), events: vi.fn(), import: vi.fn(), bindings: vi.fn(), revisions: vi.fn() }))
+const mocks = vi.hoisted(() => ({ page: vi.fn(), options: vi.fn(), save: vi.fn(), remove: vi.fn(), events: vi.fn(), import: vi.fn(), bindings: vi.fn(), revisions: vi.fn(), connection: vi.fn(), bind: vi.fn() }))
 vi.mock('../../api/product-lifecycle.js', () => ({ getLifecyclePage: mocks.page, getLifecycleOptions: mocks.options, saveLifecycleRecord: mocks.save, deleteProductTask: mocks.remove, getDistributionEvents: mocks.events, importProductNextAction: mocks.import }))
-vi.mock('../../api/github.js', () => ({ getGitHubBindings: mocks.bindings, getGitHubRevisions: mocks.revisions }))
+vi.mock('../../api/github.js', () => ({ getGitHubBindings: mocks.bindings, getGitHubRevisions: mocks.revisions, getGitHubConnection: mocks.connection, bindGitHubRepository: mocks.bind }))
 const product = { id: 7, name: 'App', channels: [{ id: 9, platform: 'app_store' }] }
 const mountPage = kind => mount(ProductLifecycle, { props: { product, kind }, global: { stubs: { Teleport: true, RouterLink: { template: '<a><slot /></a>' } } } })
 beforeEach(() => {
@@ -18,6 +18,26 @@ beforeEach(() => {
  mocks.events.mockResolvedValue({ items: [{ id: 1, status: 'in_review', platform_version: '1.0', notes: 'original', created_at: '2026-11-17T00:00:00Z' }], total: 1 })
 })
 describe('product lifecycle workflows', () => {
+ it('binds an external public GitHub repository without a connected app', async () => {
+   mocks.bindings.mockResolvedValue([])
+   mocks.connection.mockResolvedValue(null)
+   mocks.bind.mockResolvedValue({ id: 8, release_unit_id: 0, component: '依赖', installation_id: 0, repository: 'upstream/tool' })
+   const page = mountPage('versions')
+   try {
+     await flushPromises()
+     await page.findAll('button').find(button => button.text() === 'GitHub 仓库').trigger('click')
+     await flushPromises()
+     await page.get('select[aria-label="仓库来源"]').setValue('public')
+     await page.get('input[placeholder="例如 API、管理台"]').setValue('依赖')
+     await page.get('input[aria-label="公开仓库地址"]').setValue('upstream/tool')
+     await page.get('#product-github-binding').trigger('submit')
+     await flushPromises()
+     expect(mocks.bind).toHaveBeenCalledWith(7, { release_unit_id: 0, component: '依赖', public_repository: 'upstream/tool' })
+     expect(page.get('[aria-label="已绑定的 GitHub 仓库"]').text()).toContain('upstream/tool')
+   } finally {
+     page.unmount()
+   }
+ })
  it('opens channel details from the release-record toolbar without changing the list', async () => {
    mocks.page.mockResolvedValue({ items: [{ id: 4, version_id: 3, channel_id: 9, platform_version: '1.0', status: 'published' }], total: 1 })
    const page = mountPage('distributions'); await flushPromises()
