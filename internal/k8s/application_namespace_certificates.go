@@ -2,8 +2,10 @@ package k8s
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -73,4 +75,34 @@ func (c *Client) PrepareApplicationNamespaceCertificates(ctx context.Context, mo
 		}
 	}
 	return nil
+}
+
+// Reuse a shared TLS secret only when both namespaces have a Certificate with
+// the same definition and cert-manager has issued the target pair.
+func (c *Client) reusableNamespaceMoveTLS(ctx context.Context, move ApplicationNamespaceMove, secret *corev1.Secret) bool {
+	name := move.CertificatesBySecret[secret.Name]
+	if name == "" || secret.Namespace != move.TargetNamespace || secret.DeletionTimestamp != nil ||
+		secret.Labels[ManagedByLabel] != ManagedByValue || secret.Labels[EnvironmentLabel] != EnvironmentLabelValue(move.TargetEnvironmentID) ||
+		secret.Annotations[applicationMoveAnnotation] == "" || secret.Type != corev1.SecretTypeTLS {
+		return false
+	}
+	if _, err := tls.X509KeyPair(secret.Data[corev1.TLSCertKey], secret.Data[corev1.TLSPrivateKeyKey]); err != nil {
+		return false
+	}
+	client, err := c.dynamicClient()
+	if err != nil {
+		return false
+	}
+	certificates := client.Resource(applicationCertificateStatusGVR)
+	source, err := certificates.Namespace(move.SourceNamespace).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return false
+	}
+	target, err := certificates.Namespace(move.TargetNamespace).Get(ctx, name, metav1.GetOptions{})
+	if err != nil || target.GetLabels()[ManagedByLabel] != ManagedByValue || target.GetAnnotations()[applicationMoveAnnotation] == "" ||
+		namespaceMoveHash(source.Object["spec"]) != namespaceMoveHash(target.Object["spec"]) {
+		return false
+	}
+	info := certToInfo(target)
+	return info.Status == "Ready" && info.SecretName == secret.Name
 }

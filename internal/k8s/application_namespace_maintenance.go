@@ -55,8 +55,11 @@ func (c *Client) CheckApplicationNamespaceMaintenance(ctx context.Context, move 
 		}
 	}
 	for _, name := range plan.Secrets {
-		if err := check(core.Secrets(move.TargetNamespace).Get(ctx, name, metav1.GetOptions{})); err != nil {
-			return err
+		obj, err := core.Secrets(move.TargetNamespace).Get(ctx, name, metav1.GetOptions{})
+		if err := check(obj, err); err != nil {
+			if obj == nil || !c.reusableNamespaceMoveTLS(ctx, move, obj) {
+				return err
+			}
 		}
 	}
 	return nil

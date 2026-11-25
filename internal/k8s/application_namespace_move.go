@@ -24,6 +24,7 @@ const applicationMoveAnnotation = "cylism.io/namespace-move"
 type ApplicationNamespaceMove struct {
 	ApplicationID, SourceSequence, SourceProjectID, SourceEnvironmentID, TargetProjectID, TargetEnvironmentID uint
 	Name, SourceNamespace, TargetNamespace                                                                    string
+	CertificatesBySecret                                                                                      map[string]string
 }
 
 type ApplicationNamespaceMoveStatus struct {

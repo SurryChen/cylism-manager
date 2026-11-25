@@ -134,6 +134,22 @@ func (h *ApplicationHandler) MoveApplicationNamespace(c *gin.Context) {
 	runtime := k8s.ApplicationNamespaceMove{ApplicationID: app.ID, Name: app.Name, SourceSequence: release.Sequence,
 		SourceProjectID: app.ProjectID, SourceEnvironmentID: app.EnvironmentID, SourceNamespace: app.Environment.Namespace, TargetProjectID: target.ProjectID,
 		TargetNamespace: target.Namespace, TargetEnvironmentID: target.ID}
+	runtime.CertificatesBySecret = make(map[string]string)
+	if input.Action != "restore" && input.Action != "cancel" {
+		for _, endpoint := range app.Endpoints {
+			if !endpoint.TLSEnabled || endpoint.DomainID == 0 {
+				continue
+			}
+			domain, err := h.resources.GetManagedDomain(endpoint.DomainID)
+			if err != nil {
+				apiShared.Conflict(c, "读取迁移入口证书失败")
+				return
+			}
+			if domain.CertificateName != "" && domain.TLSSecretName != "" {
+				runtime.CertificatesBySecret[domain.TLSSecretName] = domain.CertificateName
+			}
+		}
+	}
 	if task != nil && input.Action == "prepare" {
 		apiShared.Conflict(c, model.ErrApplicationNamespaceMaintenanceActive.Error())
 		return

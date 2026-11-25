@@ -178,7 +178,7 @@ func (c *Client) prepareNamespaceMoveResources(ctx context.Context, move Applica
 		if apierrors.IsNotFound(err) && create {
 			current, err = target.Create(ctx, &corev1.Secret{ObjectMeta: meta(obj.Name), Type: obj.Type, Data: obj.Data, Immutable: obj.Immutable}, metav1.CreateOptions{})
 		}
-		if err != nil || checkNamespaceMoveResource(current, err, marker) != nil ||
+		if err != nil || (checkNamespaceMoveResource(current, err, marker) != nil && !c.reusableNamespaceMoveTLS(ctx, move, current)) ||
 			current.Type != obj.Type || (obj.Type == corev1.SecretTypeTLS && !namespaceMoveTLSSecretReady(current)) ||
 			(obj.Type != corev1.SecretTypeTLS && !maps.EqualFunc(current.Data, obj.Data, slices.Equal[[]byte])) {
 			return fmt.Errorf("目标 Secret %s 缺失、已变更或同名占用", obj.Name)
