@@ -2,9 +2,10 @@ package store
 
 import (
 	"fmt"
+	"slices"
+
 	"github.com/cylism/cylism-manager/internal/model"
 	"gorm.io/gorm"
-	"slices"
 )
 
 // CheckApplicationNamespaceMove keeps project ownership and physical scope
@@ -70,6 +71,19 @@ func (s *Store) AdoptApplicationNamespace(move model.ApplicationNamespaceMove) e
 		app, target, err := (&Store{db: tx}).checkApplicationNamespaceMove(move)
 		if err != nil || app.EnvironmentID == target.ID {
 			return err
+		}
+		if move.MaintenanceID == 0 {
+			if err := ensureNoNamespaceMaintenance(tx, app.ID); err != nil {
+				return err
+			}
+		} else {
+			result := tx.Where("id = ? AND application_id = ? AND target_environment_id = ? AND phase = ?", move.MaintenanceID, app.ID, target.ID, model.NamespaceMoveRouted).Delete(&model.ApplicationNamespaceMaintenance{})
+			if result.Error != nil {
+				return result.Error
+			}
+			if result.RowsAffected != 1 {
+				return model.ErrApplicationNamespaceMoveChanged
+			}
 		}
 		result := tx.Model(&model.Application{}).Where("id = ? AND environment_id = ? AND "+applicationOwningProject+" = ?", app.ID, move.SourceEnvironmentID, target.ProjectID).
 			Updates(map[string]interface{}{"project_id": target.ProjectID, "environment_id": target.ID, "management_project_id": nil})

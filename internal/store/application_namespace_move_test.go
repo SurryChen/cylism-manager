@@ -49,8 +49,34 @@ func TestAdoptApplicationNamespaceAfterProjectTransfer(t *testing.T) {
 		t.Fatalf("accepted an unverified domain: %v", err)
 	}
 	move.DomainIDs = []uint{domain.ID}
+	task, err := s.BeginApplicationNamespaceMaintenance(move, "{}")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.BeginApplicationNamespaceMaintenance(move, "{}"); err == nil {
+		t.Fatal("accepted a concurrent migration")
+	}
+	if err := s.CreateRelease(&model.Release{ApplicationID: app.ID, Sequence: 2, ExpectedEnvironmentID: origin.ID}); !errors.Is(err, model.ErrApplicationNamespaceMaintenanceActive) {
+		t.Fatalf("accepted a concurrent release: %v", err)
+	}
+	if err := s.DeleteEnvironment(destination.ID); !errors.Is(err, model.ErrApplicationNamespaceMaintenanceActive) {
+		t.Fatalf("accepted deletion of the target environment: %v", err)
+	}
+	if err := s.AdoptApplicationNamespace(move); !errors.Is(err, model.ErrApplicationNamespaceMaintenanceActive) {
+		t.Fatalf("accepted adoption outside the maintenance flow: %v", err)
+	}
+	move.MaintenanceID = task.ID
+	if err := s.AdoptApplicationNamespace(move); !errors.Is(err, model.ErrApplicationNamespaceMoveChanged) {
+		t.Fatalf("accepted adoption before route verification: %v", err)
+	}
+	if err := s.UpdateApplicationNamespaceMaintenance(task, model.NamespaceMoveRouted, ""); err != nil {
+		t.Fatal(err)
+	}
 	if err := s.AdoptApplicationNamespace(move); err != nil {
 		t.Fatal(err)
+	}
+	if active, err := s.GetApplicationNamespaceMaintenance(app.ID); err != nil || active != nil {
+		t.Fatalf("adoption left an active maintenance checkpoint: %+v, %v", active, err)
 	}
 	got, err := s.GetApplication(app.ID)
 	if err != nil || got.EnvironmentID != destination.ID || got.ProjectID != target.ID || got.ManagementProjectID != nil {

@@ -63,7 +63,12 @@ func (h *ApplicationHandler) ApplicationNamespaceMoveOptions(c *gin.Context) {
 	if err != nil {
 		release = nil
 	}
-	apiShared.Success(c, gin.H{"project_name": project.Name, "source": apiShared.EnvironmentDTO(&app.Environment), "targets": apiShared.EnvironmentsDTO(targets), "release": apiShared.ReleaseDTO(release)})
+	maintenance, err := h.applications.GetApplicationNamespaceMaintenance(app.ID)
+	if err != nil {
+		apiShared.DBError(c, "读取迁移状态失败")
+		return
+	}
+	apiShared.Success(c, gin.H{"maintenance": maintenance, "project_name": project.Name, "source": apiShared.EnvironmentDTO(&app.Environment), "targets": apiShared.EnvironmentsDTO(targets), "release": apiShared.ReleaseDTO(release)})
 }
 
 func (h *ApplicationHandler) MoveApplicationNamespace(c *gin.Context) {
@@ -75,7 +80,8 @@ func (h *ApplicationHandler) MoveApplicationNamespace(c *gin.Context) {
 		SourceEnvironmentID uint   `json:"source_environment_id" binding:"required"`
 		TargetEnvironmentID uint   `json:"target_environment_id" binding:"required"`
 		ReleaseID           uint   `json:"release_id" binding:"required"`
-		Action              string `json:"action" binding:"required,oneof=check prepare adopt"`
+		Action              string `json:"action" binding:"required,oneof=check prepare adopt prepare_maintenance start switch restore cancel"`
+		Maintenance         bool   `json:"maintenance"`
 		Confirmed           bool   `json:"confirmed"`
 	}
 	if c.ShouldBindJSON(&input) != nil || input.SourceEnvironmentID == input.TargetEnvironmentID ||
@@ -93,8 +99,9 @@ func (h *ApplicationHandler) MoveApplicationNamespace(c *gin.Context) {
 		apiShared.Success(c, gin.H{"adopted": true, "environment_id": app.EnvironmentID, "project_id": app.ProjectID})
 		return
 	}
-	if app.WorkloadKind != "" && app.WorkloadKind != applicationservice.WorkloadKindDeployment {
-		apiShared.ValidationError(c, "当前仅支持无状态 Deployment")
+	task, err := h.applications.GetApplicationNamespaceMaintenance(app.ID)
+	if err != nil {
+		apiShared.DBError(c, "读取迁移状态失败")
 		return
 	}
 	target, err := h.queries.ResolveEnvironment(app.OwningProjectID(), move.TargetEnvironmentID)
@@ -107,9 +114,11 @@ func (h *ApplicationHandler) MoveApplicationNamespace(c *gin.Context) {
 		apiShared.Conflict(c, "源发布记录已变更")
 		return
 	}
-	if err := h.namespaceMoveDependencies(app, target, release, &move); err != nil {
-		apiShared.ValidationError(c, err.Error())
-		return
+	if input.Action != "restore" && input.Action != "cancel" {
+		if err := h.namespaceMoveDependencies(app, target, release, &move); err != nil {
+			apiShared.ValidationError(c, err.Error())
+			return
+		}
 	}
 	scoped, err := h.forCluster(c.Request.Context(), target.ClusterID)
 	if err != nil {
@@ -123,10 +132,29 @@ func (h *ApplicationHandler) MoveApplicationNamespace(c *gin.Context) {
 	}
 	ctx := c.Request.Context()
 	runtime := k8s.ApplicationNamespaceMove{ApplicationID: app.ID, Name: app.Name, SourceSequence: release.Sequence,
-		SourceProjectID: app.ProjectID, SourceNamespace: app.Environment.Namespace, TargetProjectID: target.ProjectID,
+		SourceProjectID: app.ProjectID, SourceEnvironmentID: app.EnvironmentID, SourceNamespace: app.Environment.Namespace, TargetProjectID: target.ProjectID,
 		TargetNamespace: target.Namespace, TargetEnvironmentID: target.ID}
+	if task != nil && input.Action == "prepare" {
+		apiShared.Conflict(c, model.ErrApplicationNamespaceMaintenanceActive.Error())
+		return
+	}
+	if task != nil || input.Maintenance || (input.Action != "check" && input.Action != "prepare" && input.Action != "adopt") || (app.WorkloadKind != "" && app.WorkloadKind != applicationservice.WorkloadKindDeployment) {
+		scoped.handleNamespaceMaintenance(c, app, move, runtime, task, input.Action)
+		return
+	}
+	if input.Action != "check" {
+		unlock, ok := h.acquireApplicationRuntimeMutation(c, app.ID)
+		if !ok {
+			return
+		}
+		defer unlock()
+	}
 	status, err := mover.StageApplicationNamespace(ctx, runtime, input.Action == "prepare")
 	if err != nil {
+		if errors.Is(err, k8s.ErrNamespaceMoveNeedsMaintenance) && input.Action == "check" {
+			scoped.handleNamespaceMaintenance(c, app, move, runtime, nil, input.Action)
+			return
+		}
 		apiShared.Conflict(c, err.Error())
 		return
 	}

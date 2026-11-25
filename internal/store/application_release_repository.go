@@ -42,10 +42,13 @@ func (s *Store) RecoverInterruptedMigrationReleases() error {
 }
 
 func (s *Store) CreateRelease(release *model.Release) error {
-	if release.ExpectedEnvironmentID == 0 {
-		return s.db.Create(release).Error
-	}
 	return s.db.Transaction(func(tx *gorm.DB) error {
+		if err := ensureNoNamespaceMaintenance(tx, release.ApplicationID); err != nil {
+			return err
+		}
+		if release.ExpectedEnvironmentID == 0 {
+			return tx.Create(release).Error
+		}
 		var app model.Application
 		if err := tx.Select("environment_id").First(&app, release.ApplicationID).Error; err != nil {
 			return err

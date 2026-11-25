@@ -62,6 +62,11 @@ func (h *ApplicationHandler) CreateApplicationEndpoint(c *gin.Context) {
 		apiShared.BadRequest(c, "应用 ID 无效")
 		return
 	}
+	unlock, ok := h.acquireApplicationRuntimeMutation(c, applicationID)
+	if !ok {
+		return
+	}
+	defer unlock()
 	app, err := h.queries.GetApplication(applicationID)
 	if err != nil {
 		apiShared.NotFound(c, "应用不存在")
@@ -122,6 +127,11 @@ func (h *ApplicationHandler) UpdateApplicationEndpoint(c *gin.Context) {
 		apiShared.BadRequest(c, "入口 ID 无效")
 		return
 	}
+	unlock, ok := h.acquireApplicationRuntimeMutation(c, applicationID)
+	if !ok {
+		return
+	}
+	defer unlock()
 	app, err := h.queries.GetApplication(applicationID)
 	if err != nil {
 		apiShared.NotFound(c, "应用不存在")
@@ -197,6 +207,11 @@ func (h *ApplicationHandler) DeleteApplicationEndpoint(c *gin.Context) {
 		apiShared.BadRequest(c, "入口 ID 无效")
 		return
 	}
+	unlock, ok := h.acquireApplicationRuntimeMutation(c, applicationID)
+	if !ok {
+		return
+	}
+	defer unlock()
 	app, err := h.queries.GetApplication(applicationID)
 	if err != nil {
 		apiShared.NotFound(c, "应用不存在")

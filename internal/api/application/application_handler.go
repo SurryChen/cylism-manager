@@ -67,6 +67,10 @@ type applicationManagementRepository interface {
 	TransferApplicationProject(model.ApplicationProjectTransfer) error
 	CheckApplicationNamespaceMove(model.ApplicationNamespaceMove) error
 	AdoptApplicationNamespace(model.ApplicationNamespaceMove) error
+	GetApplicationNamespaceMaintenance(uint) (*model.ApplicationNamespaceMaintenance, error)
+	BeginApplicationNamespaceMaintenance(model.ApplicationNamespaceMove, string) (*model.ApplicationNamespaceMaintenance, error)
+	UpdateApplicationNamespaceMaintenance(*model.ApplicationNamespaceMaintenance, string, string) error
+	CancelApplicationNamespaceMaintenance(*model.ApplicationNamespaceMaintenance) error
 	DeleteUnreleasedApplication(uint) error
 	UpdateApplication(*model.Application) error
 	ReplaceApplicationCapabilities(uint, []string) (*model.Application, error)
@@ -259,6 +263,11 @@ func (h *ApplicationHandler) UpdateWorkloadKind(c *gin.Context) {
 		apiShared.ValidationError(c, "工作负载类型必须为 Deployment 或 StatefulSet")
 		return
 	}
+	unlock, ok := h.acquireApplicationRuntimeMutation(c, applicationID)
+	if !ok {
+		return
+	}
+	defer unlock()
 	app, err := h.queries.GetApplication(applicationID)
 	if err != nil {
 		apiShared.NotFound(c, "应用不存在")

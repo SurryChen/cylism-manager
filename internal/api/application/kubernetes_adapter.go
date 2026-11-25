@@ -151,3 +151,7 @@ func NewKubernetesAdapter(client *k8sclient.Client) KubernetesAdapter {
 		available: true,
 	}
 }
+
+func (d *kubernetesDependencies) namespaceMaintenance() namespaceMaintenanceMover {
+	return d.namespaceMover
+}

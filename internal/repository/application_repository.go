@@ -63,6 +63,10 @@ type ApplicationManagementRepository interface {
 	TransferApplicationProject(model.ApplicationProjectTransfer) error
 	CheckApplicationNamespaceMove(model.ApplicationNamespaceMove) error
 	AdoptApplicationNamespace(model.ApplicationNamespaceMove) error
+	GetApplicationNamespaceMaintenance(uint) (*model.ApplicationNamespaceMaintenance, error)
+	BeginApplicationNamespaceMaintenance(model.ApplicationNamespaceMove, string) (*model.ApplicationNamespaceMaintenance, error)
+	UpdateApplicationNamespaceMaintenance(*model.ApplicationNamespaceMaintenance, string, string) error
+	CancelApplicationNamespaceMaintenance(*model.ApplicationNamespaceMaintenance) error
 	DeleteUnreleasedApplication(uint) error
 	UpdateApplication(*model.Application) error
 	ReplaceApplicationCapabilities(uint, []string) (*model.Application, error)

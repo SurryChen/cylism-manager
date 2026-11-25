@@ -2,6 +2,7 @@ package k8s
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -10,16 +11,19 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 )
 
+var ErrNamespaceMoveNeedsMaintenance = errors.New("应用需要维护窗口迁移")
+
 const applicationMoveAnnotation = "cylism.io/namespace-move"
 
 type ApplicationNamespaceMove struct {
-	ApplicationID, SourceSequence, SourceProjectID, TargetProjectID, TargetEnvironmentID uint
-	Name, SourceNamespace, TargetNamespace                                               string
+	ApplicationID, SourceSequence, SourceProjectID, SourceEnvironmentID, TargetProjectID, TargetEnvironmentID uint
+	Name, SourceNamespace, TargetNamespace                                                                    string
 }
 
 type ApplicationNamespaceMoveStatus struct {
@@ -177,13 +181,27 @@ func (c *Client) CheckApplicationNamespaceRoutes(ctx context.Context, move Appli
 	if !apierrors.IsNotFound(err) {
 		return err
 	}
+	var ingress *networkingv1.Ingress
 	for _, endpoint := range endpoints {
 		if endpoint.IngressMode == "metadata" || (endpoint.Exposure != "" && endpoint.Exposure != "public") {
 			continue
 		}
-		ingress, err := c.Clientset.NetworkingV1().Ingresses(move.TargetNamespace).Get(ctx, move.Name, metav1.GetOptions{})
+		ingress, err = c.Clientset.NetworkingV1().Ingresses(move.TargetNamespace).Get(ctx, move.Name, metav1.GetOptions{})
 		if err != nil {
 			return fmt.Errorf("读取目标 Ingress: %w", err)
+		}
+		break
+	}
+	return c.validateNamespaceMoveIngress(ingress, endpoints)
+}
+
+func (c *Client) validateNamespaceMoveIngress(ingress *networkingv1.Ingress, endpoints []model.ApplicationEndpoint) error {
+	for _, endpoint := range endpoints {
+		if endpoint.IngressMode == "metadata" || (endpoint.Exposure != "" && endpoint.Exposure != "public") {
+			continue
+		}
+		if ingress == nil {
+			return fmt.Errorf("缺少应用 Ingress")
 		}
 		if err := ensureApplicationManaged(ingress.Labels); err != nil {
 			return err
@@ -198,7 +216,7 @@ func (c *Client) CheckApplicationNamespaceRoutes(ctx context.Context, move Appli
 				continue
 			}
 			for _, route := range rule.HTTP.Paths {
-				if route.Path == path && route.Backend.Service != nil && route.Backend.Service.Name == move.Name &&
+				if route.Path == path && route.Backend.Service != nil && route.Backend.Service.Name == ingress.Name &&
 					route.Backend.Service.Port.Number == endpoint.ServicePort {
 					found = true
 				}
@@ -254,26 +272,26 @@ func validateNamespaceMoveDeployment(deployment *appsv1.Deployment) error {
 	pod := deployment.Spec.Template.Spec
 	if pod.HostNetwork || pod.HostPID || pod.HostIPC || deployment.Spec.Paused || len(pod.Containers) != 1 ||
 		(pod.ServiceAccountName != "" && pod.ServiceAccountName != "default") || len(pod.InitContainers) != 0 {
-		return fmt.Errorf("源 Deployment 的运行配置不支持并行启动")
+		return fmt.Errorf("%w: 源 Deployment 的运行配置不支持并行启动", ErrNamespaceMoveNeedsMaintenance)
 	}
 	for _, volume := range pod.Volumes {
 		if volume.PersistentVolumeClaim != nil || volume.Ephemeral != nil || volume.HostPath != nil || volume.CSI != nil {
-			return fmt.Errorf("应用使用需要单独迁移的数据卷")
+			return fmt.Errorf("%w: 应用使用需要单独迁移的数据卷", ErrNamespaceMoveNeedsMaintenance)
 		}
 	}
 	for _, container := range append(append([]corev1.Container{}, pod.Containers...), pod.InitContainers...) {
 		if container.SecurityContext != nil && container.SecurityContext.Privileged != nil && *container.SecurityContext.Privileged {
-			return fmt.Errorf("应用使用特权容器，需要单独迁移")
+			return fmt.Errorf("%w: 应用使用特权容器，需要单独迁移", ErrNamespaceMoveNeedsMaintenance)
 		}
 		for _, port := range container.Ports {
 			if port.HostPort != 0 {
-				return fmt.Errorf("应用占用宿主机端口，无法安全并行启动")
+				return fmt.Errorf("%w: 应用占用宿主机端口，无法安全并行启动", ErrNamespaceMoveNeedsMaintenance)
 			}
 		}
 	}
 	for _, container := range pod.Containers {
 		if container.ReadinessProbe == nil {
-			return fmt.Errorf("请先为应用配置有效的就绪探针")
+			return fmt.Errorf("%w: 请先为应用配置有效的就绪探针", ErrNamespaceMoveNeedsMaintenance)
 		}
 	}
 	if !namespaceMoveDeploymentReady(deployment) {

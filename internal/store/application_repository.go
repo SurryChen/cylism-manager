@@ -137,6 +137,15 @@ func (s *Store) UpdateEnvironment(environment *model.Environment) error {
 		return errors.New("environment is required")
 	}
 	err := s.db.Transaction(func(tx *gorm.DB) error {
+		var current model.Environment
+		if err := tx.First(&current, environment.ID).Error; err != nil {
+			return err
+		}
+		if current.Namespace != environment.Namespace || current.ClusterID != environment.ClusterID {
+			if err := ensureNoEnvironmentNamespaceMaintenance(tx, environment.ID); err != nil {
+				return err
+			}
+		}
 		if err := ensureNamespaceAvailable(tx, environment.ClusterID, environment.Namespace, environment.ID); err != nil {
 			return err
 		}
@@ -149,7 +158,12 @@ func (s *Store) UpdateEnvironment(environment *model.Environment) error {
 }
 
 func (s *Store) DeleteEnvironment(id uint) error {
-	if err := s.db.Delete(&model.Environment{}, id).Error; err != nil {
+	if err := s.db.Transaction(func(tx *gorm.DB) error {
+		if err := ensureNoEnvironmentNamespaceMaintenance(tx, id); err != nil {
+			return err
+		}
+		return tx.Delete(&model.Environment{}, id).Error
+	}); err != nil {
 		return err
 	}
 	return s.ReconcileEnvironmentNamespaceUniqueness()

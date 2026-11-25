@@ -122,6 +122,7 @@ type ApplicationNamespaceMove struct {
 	ReleaseID           uint
 	OwnerID             uint
 	DomainIDs           []uint
+	MaintenanceID       uint
 }
 
 var ErrApplicationNamespaceMoveChanged = errors.New("应用、环境或正在运行的版本已变更，请重新检查迁移")

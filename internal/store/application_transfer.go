@@ -39,6 +39,9 @@ func (s *Store) TransferApplicationProject(move model.ApplicationProjectTransfer
 		if owningProjectID == move.ToProjectID {
 			return nil
 		}
+		if err := ensureNoNamespaceMaintenance(tx, app.ID); err != nil {
+			return err
+		}
 		if owningProjectID != move.FromProjectID {
 			return model.ErrApplicationProjectChanged
 		}
