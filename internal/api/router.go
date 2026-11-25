@@ -99,6 +99,10 @@ type SystemDependencies struct {
 func RegisterRoutes(r *gin.Engine, deps RouteDependencies) {
 	registerPublicRoutes(r, deps.RuntimeAgent.Artifact, deps.RuntimeAgent.Agent)
 	registerAuthRoutes(r, deps.Auth.Handler, deps.Auth.Config)
+	if deps.Product != nil {
+		r.GET(productapi.GitHubManifestCallbackPath, deps.Product.GitHubManifestCallback)
+		r.GET(productapi.GitHubInstallationReturnPath, productapi.GitHubInstallationReturn)
+	}
 
 	apiGroup := r.Group("/api")
 	if deps.Auth.Config != nil {

@@ -292,6 +292,9 @@ func (s *Store) SaveProductVersion(ownerID uint, version *model.ProductVersion) 
 		if err := productReleaseUnitAccess(tx, version.ProductID, version.ReleaseUnitID); err != nil {
 			return err
 		}
+		if err := validateVersionGitHubSources(tx, ownerID, version, &current); err != nil {
+			return err
+		}
 		var duplicate int64
 		if err := tx.Model(&model.ProductVersion{}).Where("product_id = ? AND release_unit_id = ? AND name = ? AND id <> ?", version.ProductID, version.ReleaseUnitID, version.Name, version.ID).Count(&duplicate).Error; err != nil {
 			return err

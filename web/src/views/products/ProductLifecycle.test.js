@@ -4,8 +4,9 @@ import { reactive } from 'vue'
 import ProductLifecycle from './ProductLifecycle.vue'
 import LifecycleEditor from './LifecycleEditor.vue'
 import { deploymentCount, deploymentPath } from './lifecycle-utils.js'
-const mocks = vi.hoisted(() => ({ page: vi.fn(), options: vi.fn(), save: vi.fn(), remove: vi.fn(), events: vi.fn(), import: vi.fn() }))
+const mocks = vi.hoisted(() => ({ page: vi.fn(), options: vi.fn(), save: vi.fn(), remove: vi.fn(), events: vi.fn(), import: vi.fn(), bindings: vi.fn(), revisions: vi.fn() }))
 vi.mock('../../api/product-lifecycle.js', () => ({ getLifecyclePage: mocks.page, getLifecycleOptions: mocks.options, saveLifecycleRecord: mocks.save, deleteProductTask: mocks.remove, getDistributionEvents: mocks.events, importProductNextAction: mocks.import }))
+vi.mock('../../api/github.js', () => ({ getGitHubBindings: mocks.bindings, getGitHubRevisions: mocks.revisions }))
 const product = { id: 7, name: 'App', channels: [{ id: 9, platform: 'app_store' }] }
 const mountPage = kind => mount(ProductLifecycle, { props: { product, kind }, global: { stubs: { Teleport: true, RouterLink: { template: '<a><slot /></a>' } } } })
 beforeEach(() => {
@@ -77,7 +78,7 @@ describe('product lifecycle workflows', () => {
      : { items: [], total: 0 })
    const page = mount(LifecycleEditor, { props: { open: true, kind: 'versions', productId: 7 }, global: { stubs: { Teleport: true } } }); await flushPromises()
    expect(mocks.page).not.toHaveBeenCalledWith(7, 'deployments', expect.anything(), expect.anything())
-   const toggle = page.get('button[aria-controls][aria-expanded="false"]')
+   const toggle = page.findAll('button').find(button => button.text() === '关联部署记录')
    expect(toggle.text()).toBe('关联部署记录')
    await toggle.trigger('click'); await flushPromises()
    const checkboxes = page.findAll('input[type="checkbox"]')
@@ -96,6 +97,42 @@ describe('product lifecycle workflows', () => {
    expect(deploymentPath({ source: 'platform', id: 1 })).toBe('/settings/system?tab=release')
    expect(deploymentPath({ source: 'application', id: 1, application_id: 2 })).toBe('/applications/2/releases/1')
    page.unmount()
+ })
+ it('selects separate GitHub revisions for each component on the selected release unit', async () => {
+   const apiSHA = 'a'.repeat(40)
+   const webSHA = 'b'.repeat(40)
+   mocks.bindings.mockResolvedValue([
+     { id: 1, release_unit_id: 2, component: 'API', repository: 'example/api' },
+     { id: 2, release_unit_id: 2, component: 'Web', repository: 'example/web' },
+     { id: 3, release_unit_id: 0, component: 'Default', repository: 'example/other' },
+   ])
+   mocks.revisions.mockImplementation(async (_product, id) => ({ items: [id === 1 ? { tag: 'api/v2', sha: apiSHA } : { tag: 'web/v3', sha: webSHA }], has_more: false }))
+   const page = mount(LifecycleEditor, {
+     props: { open: true, kind: 'versions', productId: 7, releaseUnits: [{ id: 2, name: 'Web' }] },
+     attachTo: document.body,
+     global: { stubs: { Teleport: true } },
+   })
+   try {
+     await page.findAll('button').find(button => button.text() === '关联 GitHub 版本').trigger('click')
+     await flushPromises()
+     expect(page.text()).not.toContain('example/other')
+     for (const [index, tag] of ['api/v2', 'web/v3'].entries()) {
+       const menu = page.findAll('button[aria-label="GitHub Tag"]')[0]
+       await menu.trigger('click')
+       await flushPromises()
+       expect(mocks.revisions).toHaveBeenCalledWith(7, index + 1, 'tags', 1, expect.anything())
+       const options = new DOMWrapper(document.body).findAll('button[role="option"]')
+       expect(options.map(option => option.text())).toContainEqual(expect.stringContaining(tag))
+       await options.find(option => option.text().includes(tag)).trigger('click')
+     }
+     await page.get('form').trigger('submit')
+     expect(page.emitted('save')[0][0].github_sources).toEqual([
+       { binding_id: 1, component: 'API', repository: 'example/api', tag: 'api/v2', sha: apiSHA },
+       { binding_id: 2, component: 'Web', repository: 'example/web', tag: 'web/v3', sha: webSHA },
+     ])
+   } finally {
+     page.unmount()
+   }
  })
  it('opens platform-only version history and links to platform settings', async () => {
    mocks.page.mockImplementation(async (_id, kind) => kind === 'versions' ? { items: [{ id: 8, name: '1.1', status: 'testing', platform_release_ids: [1] }], total: 1 } : { items: [{ id: 1, source: 'platform', application_name: 'Cylism Manager', version: 'manager:1.1' }], total: 1 })

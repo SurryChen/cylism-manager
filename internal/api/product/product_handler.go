@@ -27,7 +27,10 @@ type Repository interface {
 	ProductResourceOptions(uint) ([]model.Project, []model.Application, error)
 }
 
-type Handler struct{ repository Repository }
+type Handler struct {
+	repository Repository
+	github     *githubIntegration
+}
 
 func NewHandler(repository Repository) *Handler { return &Handler{repository: repository} }
 
@@ -203,7 +206,7 @@ func authenticated(c *gin.Context) bool {
 
 func respondError(c *gin.Context, err error) {
 	switch {
-	case errors.Is(err, model.ErrProjectIdentityConflict), errors.Is(err, model.ErrProjectWorkspaceConflict), errors.Is(err, model.ErrProductLifecycleConflict), errors.Is(err, model.ErrProductVersionName), errors.Is(err, model.ErrProductChannelInUse), errors.Is(err, model.ErrProductReleaseUnitName), errors.Is(err, model.ErrProductReleaseUnitInUse), errors.Is(err, model.ErrProductChannelReleaseUnit):
+	case errors.Is(err, model.ErrProjectIdentityConflict), errors.Is(err, model.ErrProjectWorkspaceConflict), errors.Is(err, model.ErrProductLifecycleConflict), errors.Is(err, model.ErrProductVersionName), errors.Is(err, model.ErrProductChannelInUse), errors.Is(err, model.ErrProductReleaseUnitName), errors.Is(err, model.ErrProductReleaseUnitInUse), errors.Is(err, model.ErrProductChannelReleaseUnit), errors.Is(err, model.ErrGitHubComponentExists):
 		shared.Error(c, http.StatusConflict, shared.CodeConflict, err.Error())
 	case errors.Is(err, gorm.ErrRecordNotFound):
 		shared.NotFound(c, "产品不存在或无权访问")

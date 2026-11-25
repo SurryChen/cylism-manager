@@ -9,7 +9,7 @@ var ErrProductLifecycleConflict = errors.New("记录已被更新，请刷新后�
 var ErrProductChannelInUse = errors.New("渠道已有发行历史，不能移除；可将渠道设为暂停发行")
 var ErrProductVersionName = errors.New("该发布端已有同名版本")
 var ErrProductReleaseUnitName = errors.New("该项目已有同名发布端")
-var ErrProductReleaseUnitInUse = errors.New("该发布端已关联版本或渠道")
+var ErrProductReleaseUnitInUse = errors.New("该发布端已关联版本、渠道或 GitHub 仓库")
 var ErrProductChannelReleaseUnit = errors.New("发行渠道与版本所属的发布端不一致")
 
 type ProductReleaseUnit struct {
@@ -37,27 +37,28 @@ type ProductTask struct {
 
 // ProductVersion records a formal release of a product's release unit.
 type ProductVersion struct {
-	ID                 uint      `gorm:"primaryKey" json:"id"`
-	ProductID          uint      `gorm:"uniqueIndex:idx_product_unit_version;not null" json:"product_id"`
-	ReleaseUnitID      uint      `gorm:"uniqueIndex:idx_product_unit_version;not null;default:0" json:"release_unit_id"`
-	Name               string    `gorm:"size:128;uniqueIndex:idx_product_unit_version;not null" json:"name"`
-	ReleasedOn         string    `gorm:"size:10" json:"released_on"`
-	Goal               string    `gorm:"size:1024" json:"goal"`
-	Acceptance         string    `gorm:"type:text" json:"acceptance"`
-	Status             string    `gorm:"size:24;index;not null" json:"status"`
-	TargetDate         string    `gorm:"size:10" json:"target_date"`
-	RepositoryURL      string    `gorm:"size:1024" json:"repository_url"`
-	CommitSHA          string    `gorm:"size:128" json:"commit_sha"`
-	BuildURL           string    `gorm:"size:1024" json:"build_url"`
-	ArtifactURL        string    `gorm:"size:1024" json:"artifact_url"`
-	Notes              string    `gorm:"type:text" json:"notes"`
-	Revision           uint      `gorm:"not null;default:1" json:"revision"`
-	CreatedAt          time.Time `json:"created_at"`
-	UpdatedAt          time.Time `json:"updated_at"`
-	DeploymentIDs      []uint    `gorm:"-" json:"deployment_ids"`
-	PlatformReleaseIDs []uint    `gorm:"-" json:"platform_release_ids"`
-	TaskIDs            []uint    `gorm:"-" json:"task_ids"`
-	KeepReleaseUnit    bool      `gorm:"-" json:"-"`
+	ID                 uint                  `gorm:"primaryKey" json:"id"`
+	ProductID          uint                  `gorm:"uniqueIndex:idx_product_unit_version;not null" json:"product_id"`
+	ReleaseUnitID      uint                  `gorm:"uniqueIndex:idx_product_unit_version;not null;default:0" json:"release_unit_id"`
+	Name               string                `gorm:"size:128;uniqueIndex:idx_product_unit_version;not null" json:"name"`
+	ReleasedOn         string                `gorm:"size:10" json:"released_on"`
+	Goal               string                `gorm:"size:1024" json:"goal"`
+	Acceptance         string                `gorm:"type:text" json:"acceptance"`
+	Status             string                `gorm:"size:24;index;not null" json:"status"`
+	TargetDate         string                `gorm:"size:10" json:"target_date"`
+	RepositoryURL      string                `gorm:"size:1024" json:"repository_url"`
+	CommitSHA          string                `gorm:"size:128" json:"commit_sha"`
+	GitHubSources      []ProductGitHubSource `gorm:"column:github_sources;serializer:json;type:text" json:"github_sources"`
+	BuildURL           string                `gorm:"size:1024" json:"build_url"`
+	ArtifactURL        string                `gorm:"size:1024" json:"artifact_url"`
+	Notes              string                `gorm:"type:text" json:"notes"`
+	Revision           uint                  `gorm:"not null;default:1" json:"revision"`
+	CreatedAt          time.Time             `json:"created_at"`
+	UpdatedAt          time.Time             `json:"updated_at"`
+	DeploymentIDs      []uint                `gorm:"-" json:"deployment_ids"`
+	PlatformReleaseIDs []uint                `gorm:"-" json:"platform_release_ids"`
+	TaskIDs            []uint                `gorm:"-" json:"task_ids"`
+	KeepReleaseUnit    bool                  `gorm:"-" json:"-"`
 }
 
 type ProductVersionTask struct {

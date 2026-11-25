@@ -38,6 +38,7 @@ beforeEach(() => {
     if (path.startsWith('/platform/status')) return Promise.resolve({ webhook_configured: true, image_prefix: 'registry.example.com/cylism-manager', deployment: { image: 'registry.example.com/cylism-manager:latest', ready_replicas: 1 }, releases: [{ id: 3, source: 'github', status: 'succeeded', image: 'registry.example.com/cylism-manager:latest', commit_sha: 'aabbccddeeff00112233445566778899', created_at: '2026-08-01T12:00:00Z' }] })
     if (path === '/platform/endpoint') return Promise.resolve({ endpoint: { hostname: 'console.example.com', certificate_name: 'console-example-com', enabled: true }, url: 'https://console.example.com', state: 'ready', ingress_ready: true, ingress: { namespace: 'default', name: 'cylism-ingress', ingress_class: 'traefik', hostname: 'console.example.com', path: '/', service_name: 'cylism-manager', service_port: '8080', tls_secret_name: 'console-example-com-tls' }, certificate: { name: 'console-example-com', status: 'Ready', expiry_date: '2026-10-01T12:00:00Z', renewal_time: '2026-09-01T12:00:00Z' } })
     if (path === '/certs') return Promise.resolve([{ name: 'console-example-com', namespace: 'default', status: 'Ready', domains: ['console.example.com'] }])
+    if (path === '/settings/github') return Promise.resolve(null)
     return Promise.resolve({ initialized: true, ip: '100.88.0.1', online: true })
   })
   api.post.mockClear()
@@ -46,6 +47,30 @@ beforeEach(() => {
 })
 
 describe('SystemSettings view', () => {
+  it('opens GitHub registration from settings without asking for credentials', async () => {
+    route.query.tab = 'github'
+    const action = 'https://github.com/settings/apps/new?state=test-state'
+    const manifest = { name: 'Cylism Manager', public: false }
+    api.post.mockResolvedValueOnce({ action, manifest })
+    const submit = vi.spyOn(HTMLFormElement.prototype, 'submit').mockImplementation(() => {})
+    const wrapper = mount(SystemSettings, { global: { stubs: { Teleport: true } } })
+    try {
+      await flushPromises()
+      await wrapper.findAll('button').find(button => button.text() === '连接 GitHub').trigger('click')
+      expect(wrapper.find('input[type="file"]').exists()).toBe(false)
+      await wrapper.get('#github-connection-form').trigger('submit')
+      await flushPromises()
+      expect(api.post).toHaveBeenCalledWith('/settings/github/manifest', { organization: '' })
+      const form = wrapper.get('form[method="post"]')
+      expect(form.attributes('action')).toBe(action)
+      expect(JSON.parse(form.get('[name="manifest"]').element.value)).toEqual(manifest)
+      expect(submit).toHaveBeenCalledOnce()
+    } finally {
+      wrapper.unmount()
+      submit.mockRestore()
+    }
+  })
+
   it('loads settings without starting a periodic refresh', async () => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
     const wrapper = mount(SystemSettings, { global: { stubs: { Teleport: true } } })

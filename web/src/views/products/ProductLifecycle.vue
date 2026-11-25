@@ -12,6 +12,7 @@
         <SelectMenu v-if="kind === 'distributions'" v-model="audience" class="product-stage-filter" aria-label="发行分类筛选"><option value="">全部发行</option><option v-for="item in distributionAudiences" :key="item.id" :value="item.id">{{ item.label }}</option></SelectMenu>
         <button class="icon-button" title="重置筛选" aria-label="重置筛选" @click="keyword = ''; status = ''; versionID = ''; audience = ''; unitID = ''"><RotateCcw :size="15" /></button>
         <button v-if="kind === 'versions'" class="btn" type="button" @click="unitsOpen = true">管理发布端</button>
+        <button v-if="kind === 'versions'" class="btn" type="button" @click="repositoriesOpen = true">GitHub 仓库</button>
         <button v-if="kind === 'distributions'" class="btn" @click="$emit('show-channels')">发行渠道</button>
         <button class="btn btn-primary product-primary" :disabled="busy || (kind !== 'tasks' && (optionsLoading || Boolean(optionsError)))" @click="openEditor()">新增{{ noun }}</button>
       </div>
@@ -88,6 +89,7 @@
     </SurfaceCard>
     <LifecycleEditor :open="editorOpen" :busy="busy" :kind="kind" :record="editing" :product-id="product.id" :versions="versions" :channels="product.channels || []" :release-units="releaseUnits" :expand-deployments="editDeployments" @close="editorOpen = false" @save="save" @error="error = $event" />
     <ReleaseUnitManager v-if="kind === 'versions'" :open="unitsOpen" :product="product" @close="unitsOpen = false" @updated="updateUnits" @error="error = $event" />
+    <ProductGitHubRepositories v-if="kind === 'versions' && repositoriesOpen" :open="repositoriesOpen" :product-id="product.id" :units="releaseUnits" @close="repositoriesOpen = false" />
     <ConfirmDialog teleport :open="Boolean(taskToDelete)" title="删除事项" :message="`确认删除事项“${taskToDelete?.title || ''}”？`" :busy="busy" confirm-text="删除" @cancel="taskToDelete = null" @confirm="removeTask" />
     <BaseModal teleport :open="Boolean(detailVersion)" :title="`版本详情 · ${detailVersion?.name || ''}`" size="large" @close="detailVersion = null">
       <dl v-if="detailVersion" class="product-detail-list">
@@ -100,6 +102,10 @@
         <div v-if="detailVersion.notes"><dt>版本说明</dt><dd class="lifecycle-version-notes">{{ detailVersion.notes }}</dd></div>
         <div v-if="detailVersion.repository_url"><dt>代码仓库</dt><dd><a :href="detailVersion.repository_url" target="_blank" rel="noopener noreferrer">{{ detailVersion.repository_url }}</a></dd></div>
         <div v-if="detailVersion.commit_sha"><dt>提交 SHA</dt><dd>{{ detailVersion.commit_sha }}</dd></div>
+        <div v-for="source in detailVersion.github_sources" :key="source.binding_id">
+          <dt>{{ source.component }}</dt>
+          <dd><a :href="`https://github.com/${source.repository}/commit/${source.sha}`" target="_blank" rel="noopener noreferrer">{{ source.repository }}</a><div class="cell-secondary"><code>{{ source.tag ? `${source.tag} · ` : '' }}{{ source.sha }}</code></div></dd>
+        </div>
         <div v-if="detailVersion.build_url"><dt>构建记录</dt><dd><a :href="detailVersion.build_url" target="_blank" rel="noopener noreferrer">{{ detailVersion.build_url }}</a></dd></div>
         <div v-if="detailVersion.artifact_url"><dt>构建产物</dt><dd><a :href="detailVersion.artifact_url" target="_blank" rel="noopener noreferrer">{{ detailVersion.artifact_url }}</a></dd></div>
       </dl>
@@ -138,6 +144,7 @@ import ResourcePagination from '../../components/ResourcePagination.vue'
 import ErrorNoticeModal from '../../components/ErrorNoticeModal.vue'
 import LifecycleEditor from './LifecycleEditor.vue'
 import ReleaseUnitManager from './ReleaseUnitManager.vue'
+import ProductGitHubRepositories from './ProductGitHubRepositories.vue'
 import { getLifecyclePage, getLifecycleOptions, getDistributionEvents, saveLifecycleRecord, deleteProductTask, importProductNextAction } from '../../api/product-lifecycle.js'
 import { usePaginatedResource } from '../../composables/usePaginatedResource.js'
 import { labelFor, platforms, dateOnly, dueState, dueClass, dueLabel } from './product-utils.js'
@@ -148,6 +155,7 @@ const emit = defineEmits(['changed', 'select-version', 'select-distributions', '
 const audience = ref('')
 const unitID = ref('')
 const unitsOpen = ref(false)
+const repositoriesOpen = ref(false)
 const releaseUnits = computed(() => props.product.release_units || [])
 const keyword = ref(''), status = ref(''), versionID = ref(props.initialVersionId), versions = ref([]), optionsLoading = ref(false), optionsError = ref(''), busy = ref(false), error = ref(''), editorOpen = ref(false), editing = ref(null), historyRecord = ref(null), deploymentVersion = ref(null)
 const detailVersion = ref(null)
@@ -216,7 +224,7 @@ function editLinkedDeployments() {
 watch(unitID, () => { if (versionID.value && !filteredVersionOptions.value.some(version => version.id === versionID.value)) versionID.value = '' })
 watch([keyword, status, versionID, audience, unitID], load)
 watch(() => props.initialVersionId, value => { versionID.value = value })
-watch(() => [props.product.id, props.kind], () => { detailVersion.value = null; taskToDelete.value = null; resource.reset(); void load(); void loadOptions() }, { immediate: true })
+watch(() => [props.product.id, props.kind], () => { detailVersion.value = null; taskToDelete.value = null; repositoriesOpen.value = false; resource.reset(); void load(); void loadOptions() }, { immediate: true })
 onBeforeUnmount(() => { optionsRequest++; resource.cancel(); history.cancel(); deploymentRows.cancel() })
 </script>
 <style scoped>

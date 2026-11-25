@@ -29,6 +29,7 @@ func migrateSchema(db *gorm.DB) error {
 		&model.Product{}, &model.ProductChannel{}, &model.ProductProject{}, &model.ProductApplication{}, &model.ProductReleaseUnit{},
 		&model.ProductTask{}, &model.ProductVersion{}, &model.ProductVersionTask{}, &model.ProductVersionDeployment{}, &model.ProductVersionPlatformRelease{},
 		&model.ProductDistribution{}, &model.ProductDistributionEvent{},
+		&model.GitHubConnection{}, &model.GitHubRegistration{}, &model.ProductGitHubRepository{},
 	); err != nil {
 		return err
 	}

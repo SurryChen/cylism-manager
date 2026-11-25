@@ -21,7 +21,7 @@
 | 键 | 说明 |
 | --- | --- |
 | `admin-user` | 初始管理员用户名，默认 `admin`。 |
-| `public-url` | 告警或外部链接使用的平台公开访问地址。 |
+| `public-url` | 告警链接和 GitHub App 授权回跳使用的平台公开 HTTPS 地址。 |
 | `access-token-ttl` | 访问令牌有效期，单位秒，默认 `7200`。 |
 | `refresh-token-ttl` | 刷新令牌有效期，单位秒，默认 `604800`。 |
 | `operation-log-retention-days` | 操作日志保留天数，默认 `30`。 |

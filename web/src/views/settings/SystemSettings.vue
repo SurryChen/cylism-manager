@@ -17,6 +17,7 @@ import SystemSettingsSecurity from './SystemSettingsSecurity.vue'
 import SystemSettingsEntry from './SystemSettingsEntry.vue'
 import SystemSettingsRelease from './SystemSettingsRelease.vue'
 import SystemSettingsCloudProviders from './SystemSettingsCloudProviders.vue'
+import SystemSettingsGitHub from './SystemSettingsGitHub.vue'
 import { useRoutedTab } from '../../composables/useRoutedTab.js'
 
 const activeView = ref(null)
@@ -25,6 +26,7 @@ const tabs = [
   { id: 'entry', label: '平台入口', component: SystemSettingsEntry },
   { id: 'release', label: '发布与更新', component: SystemSettingsRelease },
   { id: 'cloud', label: '云提供商', component: SystemSettingsCloudProviders },
+  { id: 'github', label: 'GitHub', component: SystemSettingsGitHub },
 ]
 const { activeTab, selectTab } = useRoutedTab({ tabs, defaultTab: 'security', path: '/settings/system' })
 const activeComponent = computed(() => tabs.find(tab => tab.id === activeTab.value)?.component || SystemSettingsSecurity)

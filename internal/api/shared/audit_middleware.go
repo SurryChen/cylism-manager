@@ -72,6 +72,8 @@ func catalogedAuditAction(method, path string) (string, string, bool) {
 	}
 	resourceType := ""
 	switch {
+	case path == "/api/settings/github" || path == "/api/settings/github/manifest" || strings.Contains(path, "/github/repositories"):
+		resourceType = "github_integration"
 	case strings.Contains(path, "/access-certificates"):
 		resourceType = "access_certificate"
 	case strings.Contains(path, "/monitoring/alerts"):

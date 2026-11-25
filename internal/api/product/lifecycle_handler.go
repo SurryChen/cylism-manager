@@ -205,7 +205,8 @@ func (h *Handler) SaveLifecycle(c *gin.Context) {
 	case "versions":
 		var payload struct {
 			model.ProductVersion
-			ReleaseUnitID *uint `json:"release_unit_id"`
+			ReleaseUnitID *uint               `json:"release_unit_id"`
+			GitHubSources []githubSourceInput `json:"github_sources"`
 		}
 		if c.ShouldBindJSON(&payload) != nil {
 			shared.BadRequest(c, "版本格式无效")
@@ -246,6 +247,12 @@ func (h *Handler) SaveLifecycle(c *gin.Context) {
 			}
 			if err == nil {
 				err = validateURL(url)
+			}
+		}
+		if err == nil {
+			if sourceErr := resolveGitHubSources(c.Request.Context(), h.github, shared.UserID(c), &input, payload.GitHubSources); sourceErr != nil {
+				respondGitHubSourceError(c, sourceErr)
+				return
 			}
 		}
 		if err == nil {

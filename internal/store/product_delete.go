@@ -54,7 +54,7 @@ func deleteProducts(tx *gorm.DB, ownerID uint, ids []uint) (int64, error) {
 			return 0, err
 		}
 	}
-	for _, record := range []interface{}{&model.ProductTask{}, &model.ProductDistribution{}, &model.ProductVersion{}, &model.ProductChannel{}, &model.ProductReleaseUnit{}, &model.ProductProject{}, &model.ProductApplication{}} {
+	for _, record := range []interface{}{&model.ProductTask{}, &model.ProductDistribution{}, &model.ProductVersion{}, &model.ProductChannel{}, &model.ProductGitHubRepository{}, &model.ProductReleaseUnit{}, &model.ProductProject{}, &model.ProductApplication{}} {
 		if err := tx.Where("product_id IN ?", ids).Delete(record).Error; err != nil {
 			return 0, err
 		}

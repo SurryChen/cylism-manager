@@ -140,7 +140,7 @@ func (c *Container) BuildRouteDependencies() api.RouteDependencies {
 			Handler:         authapi.NewAuthHandlerWithDependencies(c.Repositories.Users, c.Auth, c.Services.AuthTemporaryTokens).WithAudit(c.Store),
 		},
 		Application: api.ApplicationDependencies{Handler: applicationHandler},
-		Product:     productapi.NewHandler(c.Store),
+		Product:     productapi.NewHandler(c.Store).WithGitHub(c.Store, key, c.Auth.PlatformURL),
 		RuntimeAgent: api.RuntimeAgentDependencies{
 			Artifact: artifact, Agent: agent, Runtime: runtimeHandler, AgentOp: agentOp,
 			Components: componentHandler, Network: networkHandler,

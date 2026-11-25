@@ -62,6 +62,15 @@
         <template v-if="kind === 'versions'">
           <div class="product-full-width">
             <div class="product-actions">
+              <button type="button" class="btn btn-sm" :aria-expanded="githubOpen" :aria-controls="githubPanelID" @click="githubOpen = !githubOpen">关联 GitHub 版本</button>
+              <span v-if="form.github_sources?.length" class="product-muted">已关联 {{ form.github_sources.length }} 个组件</span>
+            </div>
+            <div v-if="githubOpen && open" :id="githubPanelID" class="lifecycle-extra-panel">
+              <VersionGitHubPicker v-model="form.github_sources" :product-id="productId" :release-unit-id="form.release_unit_id" :disabled="busy" @error="$emit('error', $event)" />
+            </div>
+          </div>
+          <div class="product-full-width">
+            <div class="product-actions">
               <button type="button" class="btn btn-sm" :aria-expanded="deploymentsOpen" :aria-controls="deploymentPanelID" @click="deploymentsOpen = !deploymentsOpen">关联部署记录</button>
               <span v-if="deploymentCount(form)" class="product-muted">已选择 {{ deploymentCount(form) }} 条</span>
               <button v-if="deploymentsOpen && deploymentCount(form)" type="button" class="btn btn-sm" @click="form.deployment_ids = []; form.platform_release_ids = []">清空选择</button>
@@ -90,6 +99,7 @@ import EmptyState from '../../components/EmptyState.vue'
 import SelectMenu from '../../components/SelectMenu.vue'
 import ResourcePagination from '../../components/ResourcePagination.vue'
 import VersionTaskPicker from './VersionTaskPicker.vue'
+import VersionGitHubPicker from './VersionGitHubPicker.vue'
 import { usePaginatedResource } from '../../composables/usePaginatedResource.js'
 import { getLifecyclePage } from '../../api/product-lifecycle.js'
 import { labelFor, localDate, platforms } from './product-utils.js'
@@ -98,6 +108,7 @@ const props = defineProps({ open: Boolean, busy: Boolean, expandDeployments: Boo
 const emit = defineEmits(['close', 'save', 'error'])
 const formID = `lifecycle-${useId()}`
 const deploymentPanelID = `${formID}-deployments`
+const githubPanelID = `${formID}-github`
 const channelFieldsID = `${formID}-channel-version`
 const taskVersionsID = `${formID}-task-versions`
 const form = ref({})
@@ -112,6 +123,7 @@ const channelVersions = computed(() => {
   return props.versions.filter(version => unitID == null || (version.release_unit_id ?? 0) === unitID || version.id === props.record?.version_id)
 })
 const deploymentsOpen = ref(false)
+const githubOpen = ref(false)
 const deploymentSearch = ref(null)
 const deploymentKeyword = ref('')
 const noun = computed(() => ({ tasks: '事项', versions: '版本', distributions: '发行记录' })[props.kind])
@@ -134,6 +146,7 @@ watch([deploymentsOpen, deploymentKeyword], ([expanded]) => {
 })
 watch(() => props.open, open => {
   deploymentsOpen.value = false
+  githubOpen.value = false
   versionKeyword.value = ''
   if (!open) { deployments.cancel(); return }
   const defaults = {
@@ -148,6 +161,7 @@ watch(() => props.open, open => {
     channelFieldsOpen.value = Boolean(form.value.build_identifier || (form.value.platform_version && form.value.platform_version !== selectedVersionName.value))
   }
   if (props.kind === 'versions') {
+    form.value.github_sources ||= []
     form.value.task_ids ||= []
     form.value.deployment_ids ||= []
     form.value.platform_release_ids ||= []

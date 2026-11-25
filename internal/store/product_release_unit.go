@@ -49,7 +49,7 @@ func (s *Store) DeleteProductReleaseUnit(ownerID, productID, unitID uint) error 
 		if err := productReleaseUnitAccess(tx, productID, unitID); err != nil {
 			return err
 		}
-		for _, table := range []any{&model.ProductVersion{}, &model.ProductChannel{}} {
+		for _, table := range []any{&model.ProductVersion{}, &model.ProductChannel{}, &model.ProductGitHubRepository{}} {
 			var count int64
 			if err := tx.Model(table).Where("product_id = ? AND release_unit_id = ?", productID, unitID).Count(&count).Error; err != nil {
 				return err

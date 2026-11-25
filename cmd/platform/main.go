@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	productapi "github.com/cylism/cylism-manager/internal/api/product"
 	"github.com/cylism/cylism-manager/internal/bootstrap"
 	"github.com/cylism/cylism-manager/internal/model"
 	"github.com/cylism/cylism-manager/internal/service/auth"
@@ -136,7 +137,8 @@ func main() {
 
 	// 配置 Gin
 	gin.SetMode(gin.ReleaseMode)
-	r := gin.Default()
+	r := gin.New()
+	r.Use(gin.LoggerWithConfig(gin.LoggerConfig{SkipPaths: []string{productapi.GitHubManifestCallbackPath}}), gin.Recovery())
 
 	// 注册路由
 	container.RegisterRoutes(r)

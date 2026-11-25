@@ -53,6 +53,7 @@ DELETE /api/monitoring/logs
 DELETE /api/node-registry-mirrors/:id
 DELETE /api/nodes/:id
 DELETE /api/products/:id
+DELETE /api/products/:id/github/repositories/:bindingID
 DELETE /api/products/:id/lifecycle/release-units/:recordID
 DELETE /api/products/:id/lifecycle/tasks/:recordID
 DELETE /api/projects/:projectID
@@ -64,6 +65,7 @@ DELETE /api/registry-proxies/:id/relays/:relayID
 DELETE /api/routes/:namespace/:name
 DELETE /api/runtimes/:id/chat/sessions/:sid
 DELETE /api/servers/:id
+DELETE /api/settings/github
 DELETE /api/sites/:id
 GET /api/access-certificates
 GET /api/access-certificates/:id
@@ -297,6 +299,8 @@ GET /api/platform/status
 GET /api/products
 GET /api/products/:id
 GET /api/products/:id/distributions/:recordID/events
+GET /api/products/:id/github/repositories
+GET /api/products/:id/github/repositories/:bindingID/revisions
 GET /api/products/:id/lifecycle-options
 GET /api/products/:id/lifecycle/:kind
 GET /api/products/resource-options
@@ -331,6 +335,11 @@ GET /api/servers/:id/terminal
 GET /api/servers/resource-stats
 GET /api/servers/speed-test/history
 GET /api/servers/tailscale
+GET /api/settings/github
+GET /api/settings/github/install/return
+GET /api/settings/github/installations
+GET /api/settings/github/installations/:installationID/repositories
+GET /api/settings/github/manifest/callback
 GET /api/sites
 GET /api/sites/:id
 GET /api/system-components
@@ -515,6 +524,7 @@ POST /api/platform/releases
 POST /api/platform/releases/:id/rollback
 POST /api/platform/webhook-secret
 POST /api/products
+POST /api/products/:id/github/repositories
 POST /api/products/:id/import-next-action
 POST /api/products/:id/lifecycle/:kind
 POST /api/products/clear
@@ -562,6 +572,7 @@ POST /api/servers/hostname
 POST /api/servers/speed-test
 POST /api/servers/tailscale/connections
 POST /api/servers/tailscale/connections/diagnose
+POST /api/settings/github/manifest
 POST /api/sites
 POST /api/system-components/:chart/revert
 PUT /api/admin/tables/:table/:id
