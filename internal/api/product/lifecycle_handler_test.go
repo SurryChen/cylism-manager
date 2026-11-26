@@ -47,6 +47,76 @@ func TestProductLifecycleAPIContracts(t *testing.T) {
 		r.ServeHTTP(res, req)
 		return res
 	}
+	t.Run("distribution environment and deployment contracts", func(t *testing.T) {
+		project := model.Project{OwnerID: 1, Name: "release project", Slug: "release-project"}
+		if err := s.DB().Create(&project).Error; err != nil {
+			t.Fatal(err)
+		}
+		environment := model.Environment{ProjectID: project.ID, Name: "testing", Kind: "testing", Namespace: "release-testing"}
+		if err := s.DB().Create(&environment).Error; err != nil {
+			t.Fatal(err)
+		}
+		application := model.Application{ProjectID: project.ID, EnvironmentID: environment.ID, Name: "api", CreatedBy: 1}
+		if err := s.CreateApplication(&application); err != nil {
+			t.Fatal(err)
+		}
+		product := model.Product{OwnerID: 1, Name: "environment-linked", Channels: []model.ProductChannel{{Platform: "web", PublishStatus: "draft"}}}
+		if err := s.SaveProduct(&product, []uint{project.ID}, nil); err != nil {
+			t.Fatal(err)
+		}
+		release := model.Release{ApplicationID: application.ID, Sequence: 1, Image: "api:1.0", DesiredSpec: "{}", Status: model.ReleaseStatusSucceeded, CreatedBy: 1}
+		if err := s.DB().Create(&release).Error; err != nil {
+			t.Fatal(err)
+		}
+		decode := func(res *httptest.ResponseRecorder, data any) {
+			t.Helper()
+			if res.Code != 200 || json.Unmarshal(res.Body.Bytes(), data) != nil {
+				t.Fatalf("request failed: %d %s", res.Code, res.Body)
+			}
+		}
+		base := fmt.Sprintf("/products/%d/lifecycle/", product.ID)
+		body := fmt.Sprintf(`{"channel_id":%d,"platform_version":"1.0","status":"preparing","environment_id":%d,"deployment_ids":[%d]}`, product.Channels[0].ID, environment.ID, release.ID)
+		var saved struct{ Data model.ProductDistribution }
+		decode(request("POST", base+"distributions", body, "owner"), &saved)
+		if saved.Data.EnvironmentID != environment.ID || len(saved.Data.DeploymentIDs) != 1 || saved.Data.DeploymentIDs[0] != release.ID {
+			t.Fatalf("missing saved associations: %+v", saved.Data)
+		}
+		var list struct {
+			Data struct{ Items []model.ProductDistribution }
+		}
+		decode(request("GET", fmt.Sprintf("%sdistributions?environment_id=%d", base, environment.ID), "", "owner"), &list)
+		if len(list.Data.Items) != 1 || list.Data.Items[0].EnvironmentName != environment.Name || len(list.Data.Items[0].DeploymentIDs) != 1 || list.Data.Items[0].DeploymentIDs[0] != release.ID {
+			t.Fatalf("missing listed associations: %+v", list.Data.Items)
+		}
+		for _, kind := range []string{"distributions", "deployments"} {
+			for _, value := range []string{"invalid", "-1", "0"} {
+				res := request("GET", base+kind+"?environment_id="+value, "", "owner")
+				if res.Code != 400 {
+					t.Fatalf("invalid environment filter %s %q: %d %s", kind, value, res.Code, res.Body)
+				}
+			}
+		}
+		url := fmt.Sprintf("%sdistributions/%d", base, saved.Data.ID)
+		legacy := fmt.Sprintf(`{"channel_id":%d,"platform_version":"1.0","status":"ready","revision":%d}`, product.Channels[0].ID, saved.Data.Revision)
+		decode(request("PUT", url, legacy, "owner"), &saved)
+		if saved.Data.EnvironmentID != environment.ID || len(saved.Data.DeploymentIDs) != 1 || saved.Data.DeploymentIDs[0] != release.ID {
+			t.Fatalf("legacy client removed associations: %+v", saved.Data)
+		}
+		clear := fmt.Sprintf(`{"channel_id":%d,"platform_version":"1.0","status":"ready","revision":%d,"environment_id":0,"deployment_ids":[]}`, product.Channels[0].ID, saved.Data.Revision)
+		decode(request("PUT", url, clear, "owner"), &saved)
+		if saved.Data.EnvironmentID != 0 || len(saved.Data.DeploymentIDs) != 0 {
+			t.Fatalf("explicit clear kept associations: %+v", saved.Data)
+		}
+		var history struct {
+			Data struct {
+				Items []model.ProductDistributionEvent
+			}
+		}
+		decode(request("GET", fmt.Sprintf("/products/%d/distributions/%d/events", product.ID, saved.Data.ID), "", "owner"), &history)
+		if len(history.Data.Items) != 3 || history.Data.Items[0].EnvironmentID != 0 || history.Data.Items[2].EnvironmentName != environment.Name || len(history.Data.Items[2].DeploymentIDs) != 1 || history.Data.Items[2].DeploymentIDs[0] != release.ID {
+			t.Fatalf("history did not preserve environment snapshots: %+v", history.Data.Items)
+		}
+	})
 	t.Run("groups preserve tasks and legacy updates", func(t *testing.T) {
 		product := model.Product{OwnerID: 1, Name: "board"}
 		if err := s.SaveProduct(&product, nil, nil); err != nil {

@@ -122,6 +122,9 @@ func (s *Store) ListProductDistributions(ownerID, productID uint, f model.Produc
 	if f.Audience != "" {
 		q = q.Where("audience = ?", f.Audience)
 	}
+	if f.EnvironmentID != nil {
+		q = q.Where("environment_id = ?", *f.EnvironmentID)
+	}
 	if f.Keyword != "" {
 		keyword := strings.ToLower(f.Keyword)
 		versions := s.db.Model(&model.ProductVersion{}).Select("id").Where("product_id = ? AND instr(LOWER(name), ?) > 0", productID, keyword)
@@ -133,7 +136,45 @@ func (s *Store) ListProductDistributions(ownerID, productID uint, f model.Produc
 	}
 	rows := []model.ProductDistribution{}
 	err := q.Order("id DESC").Limit(f.Limit).Offset(f.Offset).Find(&rows).Error
-	return rows, count, err
+	if err != nil || len(rows) == 0 {
+		return rows, count, err
+	}
+	environmentIDs := make([]uint, 0, len(rows))
+	for _, row := range rows {
+		if row.EnvironmentID != 0 {
+			environmentIDs = append(environmentIDs, row.EnvironmentID)
+		}
+	}
+	if len(environmentIDs) > 0 {
+		var environments []model.Environment
+		if err := s.db.Where("id IN ?", environmentIDs).Find(&environments).Error; err != nil {
+			return nil, 0, err
+		}
+		names := make(map[uint]string, len(environments))
+		for _, environment := range environments {
+			names[environment.ID] = environment.Name
+		}
+		for i := range rows {
+			rows[i].EnvironmentName = names[rows[i].EnvironmentID]
+		}
+	}
+	return rows, count, nil
+}
+
+func productEnvironmentAccess(tx *gorm.DB, ownerID, productID, environmentID uint) error {
+	var count int64
+	err := tx.Table("environments").
+		Joins("JOIN projects ON projects.id = environments.project_id").
+		Where("environments.id = ? AND projects.owner_id = ?", environmentID, ownerID).
+		Where("(EXISTS (SELECT 1 FROM products p WHERE p.id = ? AND p.project_id = environments.project_id) OR EXISTS (SELECT 1 FROM product_projects pp WHERE pp.product_id = ? AND pp.project_id = environments.project_id) OR EXISTS (SELECT 1 FROM product_applications pa JOIN applications a ON a.id = pa.application_id WHERE pa.product_id = ? AND a.environment_id = environments.id))", productID, productID, productID).
+		Count(&count).Error
+	if err != nil {
+		return err
+	}
+	if count != 1 {
+		return model.ErrProductResourceAccess
+	}
+	return nil
 }
 
 func lifecycleVersionAccess(tx *gorm.DB, productID uint, versionID *uint) error {
@@ -456,6 +497,51 @@ func (s *Store) SaveProductDistribution(ownerID uint, record *model.ProductDistr
 		if record.PlatformVersion == "" {
 			record.PlatformVersion = version.Name
 		}
+		var current model.ProductDistribution
+		if record.ID != 0 {
+			if err := tx.Where("id = ? AND product_id = ?", record.ID, record.ProductID).First(&current).Error; err != nil {
+				return err
+			}
+			if record.KeepEnvironment {
+				record.EnvironmentID = current.EnvironmentID
+			}
+			if record.KeepDeployments {
+				record.DeploymentIDs = append([]uint(nil), current.DeploymentIDs...)
+			}
+		}
+		if record.EnvironmentID == 0 && len(record.DeploymentIDs) > 0 {
+			return model.ErrProductResourceAccess
+		}
+		if record.EnvironmentID != 0 {
+			if err := productEnvironmentAccess(tx, ownerID, record.ProductID, record.EnvironmentID); err != nil {
+				return err
+			}
+			if len(record.DeploymentIDs) > 0 {
+				ids := append([]uint(nil), record.DeploymentIDs...)
+				slices.Sort(ids)
+				ids = slices.Compact(ids)
+				if len(ids) != len(record.DeploymentIDs) {
+					return model.ErrProductResourceAccess
+				}
+				q := tx.Model(&model.Release{}).
+					Joins("JOIN applications ON applications.id = releases.application_id").
+					Joins("JOIN projects ON projects.id = applications.project_id").
+					Where("projects.owner_id = ? AND applications.environment_id = ?", ownerID, record.EnvironmentID)
+				applications := tx.Model(&model.ProductApplication{}).Select("application_id").Where("product_id = ?", record.ProductID)
+				projects := tx.Model(&model.ProductProject{}).Select("project_id").Where("product_id = ?", record.ProductID)
+				q = q.Where("(applications.id IN (?) OR applications.project_id IN (?) OR EXISTS (SELECT 1 FROM products p WHERE p.id = ? AND p.project_id = applications.project_id))", applications, projects, record.ProductID)
+				var count int64
+				if err := q.Where("releases.id IN ?", ids).Distinct("releases.id").Count(&count).Error; err != nil {
+					return err
+				}
+				if count != int64(len(ids)) {
+					return model.ErrProductResourceAccess
+				}
+				record.DeploymentIDs = ids
+			}
+		} else {
+			record.DeploymentIDs = []uint{}
+		}
 		becamePublished := record.Status == "published"
 		var channel model.ProductChannel
 		if err := tx.Where("id = ? AND product_id = ?", record.ChannelID, record.ProductID).First(&channel).Error; err != nil {
@@ -473,10 +559,6 @@ func (s *Store) SaveProductDistribution(ownerID uint, record *model.ProductDistr
 				return err
 			}
 		} else {
-			var current model.ProductDistribution
-			if err := tx.Where("id = ? AND product_id = ?", record.ID, record.ProductID).First(&current).Error; err != nil {
-				return err
-			}
 			becamePublished = record.Status == "published" && (current.Status != "published" || current.PlatformVersion != record.PlatformVersion || current.Audience != record.Audience)
 			// A submission's identity is immutable; resubmission is a new record.
 			if current.ChannelID != record.ChannelID || (current.VersionID != 0 && current.VersionID != record.VersionID) {
@@ -498,7 +580,15 @@ func (s *Store) SaveProductDistribution(ownerID uint, record *model.ProductDistr
 				return model.ErrProductLifecycleConflict
 			}
 		}
-		event := model.ProductDistributionEvent{Audience: record.Audience, BecamePublished: becamePublished, DistributionID: record.ID, ActorID: ownerID, Status: record.Status, PlatformVersion: record.PlatformVersion, BuildIdentifier: record.BuildIdentifier, Notes: record.Notes}
+		environmentName := ""
+		if record.EnvironmentID != 0 {
+			var environment model.Environment
+			if err := tx.Select("name").First(&environment, record.EnvironmentID).Error; err != nil {
+				return err
+			}
+			environmentName = environment.Name
+		}
+		event := model.ProductDistributionEvent{Audience: record.Audience, BecamePublished: becamePublished, DistributionID: record.ID, EnvironmentID: record.EnvironmentID, EnvironmentName: environmentName, DeploymentIDs: append([]uint(nil), record.DeploymentIDs...), ActorID: ownerID, Status: record.Status, PlatformVersion: record.PlatformVersion, BuildIdentifier: record.BuildIdentifier, Notes: record.Notes}
 		if err := tx.Create(&event).Error; err != nil {
 			return err
 		}
@@ -589,6 +679,13 @@ func (s *Store) ProductDeploymentPage(ownerID, productID uint, f model.ProductLi
 	}
 	q := s.productDeployments(ownerID, productID, f.VersionID)
 	platform := s.productPlatformReleases(ownerID, productID)
+	if f.EnvironmentID != nil {
+		if err := productEnvironmentAccess(s.db, ownerID, productID, *f.EnvironmentID); err != nil {
+			return nil, 0, err
+		}
+		q = q.Where("applications.environment_id = ?", *f.EnvironmentID)
+		platform = platform.Where("1 = 0")
+	}
 	if f.VersionID != 0 {
 		if err := lifecycleVersionAccess(s.db, productID, &f.VersionID); err != nil {
 			return nil, 0, err

@@ -19,7 +19,7 @@
           </SelectMenu>
         </div>
         <template v-if="kind === 'distributions'">
-          <label class="form-group"><span class="form-label">发行渠道 *</span><SelectMenu v-model="form.channel_id" aria-label="发行渠道" :disabled="Boolean(form.id)" @change="form.version_id = ''"><option :value="0">请选择渠道</option><option v-for="channel in channels" :key="channel.id" :value="channel.id">{{ channel.name || labelFor(platforms, channel.platform) }}</option></SelectMenu></label>
+          <label class="form-group"><span class="form-label">发行渠道 *</span><SelectMenu v-model="form.channel_id" aria-label="发行渠道" :disabled="Boolean(form.id)" @change="form.version_id = ''"><option :value="0">请选择渠道</option><option v-for="channel in channels" :key="channel.id" :value="channel.id">{{ channelOptionLabel(channel) }}</option></SelectMenu></label>
           <label class="form-group">
             <span class="form-label">关联正式版本</span>
             <SelectMenu v-model="form.version_id" aria-label="关联产品版本" :disabled="Boolean(record?.version_id) || !form.channel_id">
@@ -28,6 +28,24 @@
             </SelectMenu>
           </label>
           <label class="form-group"><span class="form-label">发行分类</span><SelectMenu v-model="form.audience" aria-label="发行分类"><option v-for="item in distributionAudiences" :key="item.id" :value="item.id">{{ item.label }}</option></SelectMenu></label>
+          <label class="form-group"><span class="form-label">部署环境（可选）</span><SelectMenu :model-value="form.environment_id || 0" aria-label="发行部署环境" @update:model-value="setEnvironment"><option :value="0">暂不关联环境</option><option v-for="environment in environments" :key="environment.id" :value="environment.id">{{ environment.project_name }} · {{ environment.name }}（{{ environmentKindLabel(environment.kind) }}）</option></SelectMenu></label>
+          <div v-if="form.environment_id" class="product-full-width version-association">
+            <button type="button" class="version-association-toggle" aria-label="关联环境部署" :aria-expanded="deploymentsOpen" :aria-controls="deploymentPanelID" @click="deploymentsOpen = !deploymentsOpen">
+              <span>关联该环境的部署组件</span>
+              <span v-if="form.deployment_ids?.length" class="cell-secondary">已选择 {{ form.deployment_ids.length }} 个组件</span>
+              <ChevronDown :size="15" aria-hidden="true" />
+            </button>
+            <div v-if="deploymentsOpen" :id="deploymentPanelID" class="version-association-body">
+              <div class="version-deployment-tools">
+                <input ref="deploymentSearch" v-model.trim="deploymentKeyword" class="form-input" aria-label="搜索环境部署" placeholder="搜索组件或版本" />
+                <button v-if="form.deployment_ids?.length" type="button" class="btn" @click="form.deployment_ids = []">清空选择</button>
+              </div>
+              <EmptyState v-if="deployments.loading.value" variant="loading" message="正在读取该环境的部署记录..." />
+              <EmptyState v-else-if="deployments.error.value" message="部署记录读取失败"><template #action><button type="button" class="btn btn-sm" @click="loadDeployments">重试</button></template></EmptyState>
+              <div v-else class="product-checklist"><label v-for="deployment in deployments.items.value" :key="deployment.id"><input type="checkbox" :value="deployment.id" :checked="deploymentSelected(deployment)" @change="setDeploymentSelected(deployment, $event.target.checked)" />{{ deployment.application_name }} · {{ deployment.version || `#${deployment.id}` }} · {{ deployment.status }}</label><span v-if="!deployments.total.value" class="product-muted">该环境暂无可关联的部署记录，可先保存发行计划，部署后再补关联。</span></div>
+              <ResourcePagination v-if="deployments.total.value" :resource="deployments" label="环境部署分页" :show-error="false" hide-single-page />
+            </div>
+          </div>
         </template>
         <label v-if="kind !== 'versions'" class="form-group"><span class="form-label">状态</span><SelectMenu v-model="form.status" aria-label="记录状态"><option v-for="item in statuses" :key="item.id" :value="item.id">{{ item.label }}</option></SelectMenu></label>
         <label v-if="kind === 'tasks' && taskGroups.length" class="form-group">
@@ -118,7 +136,7 @@ import { usePaginatedResource } from '../../composables/usePaginatedResource.js'
 import { getLifecyclePage } from '../../api/product-lifecycle.js'
 import { labelFor, localDate, platforms } from './product-utils.js'
 import { taskKinds, taskStatuses, priorities, distributionStatuses, deploymentCount, versionLabel } from './lifecycle-utils.js'
-const props = defineProps({ open: Boolean, busy: Boolean, expandDeployments: Boolean, kind: { type: String, required: true }, productId: { type: Number, required: true }, record: { type: Object, default: null }, versions: { type: Array, default: () => [] }, channels: { type: Array, default: () => [] }, releaseUnits: { type: Array, default: () => [] }, groups: { type: Array, default: () => [] } })
+const props = defineProps({ open: Boolean, busy: Boolean, expandDeployments: Boolean, kind: { type: String, required: true }, productId: { type: Number, required: true }, record: { type: Object, default: null }, versions: { type: Array, default: () => [] }, channels: { type: Array, default: () => [] }, releaseUnits: { type: Array, default: () => [] }, environments: { type: Array, default: () => [] }, groups: { type: Array, default: () => [] } })
 const taskGroups = computed(() => props.groups || [])
 const emit = defineEmits(['close', 'save', 'remove', 'error'])
 const formID = `lifecycle-${useId()}`
@@ -141,6 +159,10 @@ const deploymentsOpen = ref(false)
 const githubOpen = ref(false)
 const deploymentSearch = ref(null)
 const deploymentKeyword = ref('')
+function channelOptionLabel(channel) {
+  const platform = labelFor(platforms, channel.platform)
+  return channel.name && channel.name !== platform ? platform + ' · ' + channel.name : platform
+}
 const noun = computed(() => ({ tasks: '事项', versions: '版本', distributions: '发行记录' })[props.kind])
 const statuses = computed(() => props.kind === 'tasks' ? taskStatuses : distributionStatuses)
 const descriptionLabel = computed(() => ({ tasks: '说明与处理结果', versions: '版本说明（可选）', distributions: '备注 / 发行说明' })[props.kind])
@@ -153,11 +175,22 @@ function setDeploymentSelected(deployment, selected) {
 }
 function loadDeployments() {
   const query = { keyword: deploymentKeyword.value }
-  if (props.record?.id) Object.assign(query, { version_id: props.record.id, include_available: true })
+  if (props.kind === 'distributions') {
+    if (!form.value.environment_id) return deployments.reset()
+    Object.assign(query, { environment_id: form.value.environment_id })
+  } else if (props.record?.id) Object.assign(query, { version_id: props.record.id, include_available: true })
   return deployments.load(query)
 }
-watch([deploymentsOpen, deploymentKeyword], ([expanded]) => {
-  if (expanded) void loadDeployments()
+function setEnvironment(value) {
+  const environmentID = Number(value) || 0
+  if (environmentID === form.value.environment_id) return
+  form.value.environment_id = environmentID
+  form.value.deployment_ids = []
+  deploymentKeyword.value = ''
+  deployments.reset()
+}
+watch([deploymentsOpen, deploymentKeyword, () => form.value.environment_id], ([expanded, , environmentID]) => {
+  if (expanded && (props.kind !== 'distributions' || environmentID)) void loadDeployments()
 })
 watch(() => props.open, open => {
   deploymentsOpen.value = false
@@ -167,7 +200,7 @@ watch(() => props.open, open => {
   const defaults = {
     tasks: { title: '', kind: 'action', priority: 'normal', status: 'todo', version_id: '', due_date: '', details: '' },
     versions: { name: '', released_on: props.record ? '' : localDate(), release_unit_id: props.record ? 0 : props.releaseUnits.length < 2 ? (props.releaseUnits[0]?.id || 0) : '', notes: '' },
-    distributions: { audience: 'testing', channel_id: 0, version_id: '', platform_version: '', build_identifier: '', status: 'draft', notes: '' },
+    distributions: { audience: 'testing', channel_id: 0, version_id: '', environment_id: 0, deployment_ids: [], platform_version: '', build_identifier: '', status: 'draft', notes: '' },
   }[props.kind]
   form.value = { ...defaults, ...JSON.parse(JSON.stringify(props.record || {})) }
   if (props.kind !== 'versions') form.value.version_id ??= ''
@@ -176,7 +209,11 @@ watch(() => props.open, open => {
     if (taskGroups.value.length) form.value.group_id ??= 0
   }
   if (props.kind === 'distributions') {
+    form.value.deployment_ids ||= []
     channelFieldsOpen.value = Boolean(form.value.build_identifier || (form.value.platform_version && form.value.platform_version !== selectedVersionName.value))
+    deployments.reset()
+    deploymentKeyword.value = ''
+    deploymentsOpen.value = false
   }
   if (props.kind === 'versions') {
     form.value.github_sources ||= []
@@ -201,7 +238,7 @@ function submit() {
   emit('save', {
     ...form.value,
     ...(props.kind === 'tasks' ? { version_id: form.value.version_ids[0] ?? null } : {}),
-    ...(props.kind === 'distributions' ? { version_id: Number(form.value.version_id), channel_id: Number(form.value.channel_id) } : {}),
+    ...(props.kind === 'distributions' ? { version_id: Number(form.value.version_id), channel_id: Number(form.value.channel_id), environment_id: Number(form.value.environment_id || 0), deployment_ids: form.value.deployment_ids || [] } : {}),
   })
 }
 </script>

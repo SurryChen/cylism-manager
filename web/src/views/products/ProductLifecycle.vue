@@ -75,16 +75,28 @@
           </tbody>
         </DataTable>
         <DataTable v-else>
-          <thead><tr><th>产品版本</th><th>发行渠道 / 分类</th><th>状态</th><th>更新时间 / 备注</th><TableActionCell header /></tr></thead>
+          <thead><tr><th>发行渠道</th><th>产品版本</th><th>发行分类</th><th>部署环境 / 组件</th><th>状态</th><th>更新时间 / 备注</th><TableActionCell header /></tr></thead>
           <tbody>
             <tr v-for="row in resource.items.value" :key="row.id">
-              <td>
+              <td class="distribution-channel-cell">
+                <span class="cell-primary distribution-channel-name">{{ channelName(row.channel_id) }}</span>
+                <span v-if="channelRecord(row.channel_id)?.name && channelRecord(row.channel_id).name !== channelName(row.channel_id)" class="cell-secondary product-line">{{ channelRecord(row.channel_id).name }}</span>
+                <span v-if="releaseUnits.length && channelRecord(row.channel_id)?.release_unit_id != null" class="cell-secondary product-line">{{ releaseUnitName(releaseUnits, channelRecord(row.channel_id).release_unit_id) }}</span>
+                <span v-if="channelRecord(row.channel_id)?.app_identifier" class="cell-secondary product-line distribution-channel-identifier">应用标识 {{ channelRecord(row.channel_id).app_identifier }}</span>
+                <a v-if="channelRecord(row.channel_id)?.public_url" class="distribution-channel-link" :href="channelRecord(row.channel_id).public_url" :title="channelRecord(row.channel_id).public_url" target="_blank" rel="noopener noreferrer"><ExternalLink :size="12" aria-hidden="true" /><span>{{ channelRecord(row.channel_id).public_url }}</span></a>
+                <a v-if="channelRecord(row.channel_id)?.admin_url" class="distribution-channel-link" :href="channelRecord(row.channel_id).admin_url" :title="channelRecord(row.channel_id).admin_url" target="_blank" rel="noopener noreferrer"><ExternalLink :size="12" aria-hidden="true" /><span>管理后台</span></a>
+              </td>
+              <td class="distribution-version-cell">
                 {{ row.version_id ? versionName(row.version_id) : row.platform_version }}
                 <span v-if="row.version_id && row.platform_version && row.platform_version !== versionRecord(row.version_id)?.name" class="cell-secondary product-line">渠道版本 {{ row.platform_version }}</span>
                 <span v-if="!row.version_id" class="cell-secondary product-line">未关联正式版本</span>
                 <span v-if="row.build_identifier" class="cell-secondary product-line">构建 {{ row.build_identifier }}</span>
               </td>
-              <td>{{ channelName(row.channel_id) }}<span class="cell-secondary product-line">{{ audienceLabel(row.audience) }}</span></td>
+              <td class="distribution-audience-cell">{{ audienceLabel(row.audience) }}</td>
+              <td class="distribution-environment-cell">
+                <span>{{ row.environment_name || '未关联环境' }}</span>
+                <span class="cell-secondary product-line">{{ row.environment_id ? row.deployment_ids?.length ? `${row.deployment_ids.length} 个部署组件` : '尚未关联部署组件' : '环境待定' }}</span>
+              </td>
               <td><span class="badge" :class="lifecycleClass(row.status)">{{ labelFor(distributionStatuses, row.status) }}</span></td>
               <td>{{ formatTime(row.updated_at) }}<span class="cell-secondary product-line lifecycle-description">{{ row.notes }}</span></td>
               <TableActionCell><div class="btn-group"><button class="icon-button" title="发行历史" aria-label="发行历史" @click="showHistory(row)"><History :size="15" /></button><button class="icon-button" title="编辑发行记录" aria-label="编辑发行记录" :disabled="busy || optionsLoading || Boolean(optionsError)" @click="openEditor(row)"><Pencil :size="15" /></button></div></TableActionCell>
@@ -95,7 +107,7 @@
       <div v-if="recordCountOnly && resource.total.value" class="lifecycle-list-count cell-secondary" :class="{ 'version-list-count': kind === 'versions' }" aria-live="polite">共 {{ resource.total.value }} 条</div>
       <ResourcePagination :resource="resource" :label="`${noun}分页`" :hide-single-page="kind === 'tasks' || recordCountOnly" />
     </SurfaceCard>
-    <LifecycleEditor :open="editorOpen" :busy="busy" :kind="kind" :record="editing" :product-id="product.id" :versions="versions" :channels="product.channels || []" :release-units="releaseUnits" :groups="taskGroups || []" :expand-deployments="editDeployments" @close="editorOpen = false" @save="save" @remove="confirmTaskRemoval" @error="error = $event" />
+    <LifecycleEditor :open="editorOpen" :busy="busy" :kind="kind" :record="editing" :product-id="product.id" :versions="versions" :channels="product.channels || []" :release-units="releaseUnits" :environments="environments" :groups="taskGroups || []" :expand-deployments="editDeployments" @close="editorOpen = false" @save="save" @remove="confirmTaskRemoval" @error="error = $event" />
     <ReleaseUnitManager v-if="kind === 'versions'" :open="unitsOpen" :product="product" @close="unitsOpen = false" @updated="updateUnits" @error="error = $event" />
     <ProductGitHubRepositories v-if="kind === 'versions' && repositoriesOpen" :open="repositoriesOpen" :product-id="product.id" :units="releaseUnits" @close="repositoriesOpen = false" />
     <ConfirmDialog teleport :open="Boolean(taskToDelete)" title="删除事项" :message="`确认删除事项“${taskToDelete?.title || ''}”？`" :busy="busy" confirm-text="删除" @cancel="taskToDelete = null" @confirm="removeTask" />
@@ -132,7 +144,7 @@
     <BaseModal teleport :open="Boolean(historyRecord)" title="发行状态历史" size="large" @close="historyRecord = null">
       <EmptyState v-if="history.loading.value" variant="loading" message="正在读取历史..." />
       <EmptyState v-else-if="history.error.value" message="历史读取失败"><template #action><button class="btn btn-sm" @click="history.refresh()">重试</button></template></EmptyState>
-      <div v-else class="table-wrap"><DataTable><thead><tr><th>记录时间</th><th>状态</th><th>平台版本 / Build</th><th>备注</th></tr></thead><tbody><tr v-for="event in history.items.value" :key="event.id"><td>{{ formatTime(event.created_at) }}</td><td>{{ labelFor(distributionStatuses, event.status) }}<span class="cell-secondary product-line">{{ audienceLabel(event.audience) }}</span></td><td>{{ event.platform_version }} / {{ event.build_identifier || '—' }}</td><td class="lifecycle-description">{{ event.notes || '—' }}</td></tr></tbody></DataTable></div>
+      <div v-else class="table-wrap"><DataTable><thead><tr><th>记录时间</th><th>状态</th><th>环境 / 部署</th><th>平台版本 / Build</th><th>备注</th></tr></thead><tbody><tr v-for="event in history.items.value" :key="event.id"><td>{{ formatTime(event.created_at) }}</td><td>{{ labelFor(distributionStatuses, event.status) }}<span class="cell-secondary product-line">{{ audienceLabel(event.audience) }}</span></td><td>{{ event.environment_name || '—' }}<span v-if="event.deployment_ids?.length" class="cell-secondary product-line">{{ event.deployment_ids.length }} 个部署组件</span></td><td>{{ event.platform_version }} / {{ event.build_identifier || '—' }}</td><td class="lifecycle-description">{{ event.notes || '—' }}</td></tr></tbody></DataTable></div>
       <ResourcePagination :resource="history" label="发行历史分页" />
     </BaseModal>
     <BaseModal teleport :open="Boolean(deploymentVersion)" title="关联部署记录" size="large" @close="closeDeployments">
@@ -152,7 +164,7 @@ import DataTable from '../../components/DataTable.vue'
 import TableActionCell from '../../components/TableActionCell.vue'
 import { distributionAudiences, audienceLabel, environmentKindLabel } from './environment-utils.js'
 import { computed, onBeforeUnmount, ref, useId, watch } from 'vue'
-import { Columns3, Filter, History, ListTodo, Pencil, Plus, RotateCcw, Settings } from 'lucide-vue-next'
+import { Columns3, ExternalLink, Filter, History, ListTodo, Pencil, Plus, RotateCcw, Settings } from 'lucide-vue-next'
 import SurfaceCard from '../../components/SurfaceCard.vue'
 import EmptyState from '../../components/EmptyState.vue'
 import OverflowTooltip from '../../components/OverflowTooltip.vue'
@@ -182,6 +194,7 @@ const versionSettings = ref(null)
 const distributionFiltersID = `distribution-filters-${useId()}`
 const distributionFiltersOpen = ref(Boolean(props.initialVersionId))
 const releaseUnits = computed(() => props.product.release_units || [])
+const environments = computed(() => (props.product.projects || []).flatMap(project => (project.environments || []).map(environment => ({ ...environment, project_name: project.name }))))
 const keyword = ref(''), status = ref(''), versionID = ref(props.initialVersionId), versions = ref([]), optionsLoading = ref(false), optionsError = ref(''), busy = ref(false), error = ref(''), editorOpen = ref(false), editing = ref(null), historyRecord = ref(null), deploymentVersion = ref(null)
 const detailVersion = ref(null)
 const editDeployments = ref(false)
@@ -208,7 +221,8 @@ const versionName = id => versionRecord(id) ? versionLabel(releaseUnits.value, v
 const taskVersionIDs = row => row.version_ids || (row.version_id ? [row.version_id] : [])
 const taskGroupName = id => taskGroups.value?.find(group => group.id === id)?.name || ''
 const filteredVersionOptions = computed(() => versions.value.filter(version => unitID.value === '' || (version.release_unit_id ?? 0) === unitID.value))
-const channelName = id => { const channel = props.product.channels?.find(item => item.id === id); return channel ? channel.name || labelFor(platforms, channel.platform) : `渠道 #${id}` }
+const channelRecord = id => props.product.channels?.find(item => item.id === id)
+const channelName = id => { const channel = channelRecord(id); return channel ? labelFor(platforms, channel.platform) || channel.name : `渠道 #${id}` }
 let optionsRequest = 0
 async function loadOptions() {
   const request = ++optionsRequest; optionsLoading.value = true; optionsError.value = ''
@@ -335,7 +349,18 @@ function editLinkedDeployments() {
 watch(unitID, () => { if (versionID.value && !filteredVersionOptions.value.some(version => version.id === versionID.value)) versionID.value = '' })
 watch([keyword, status, versionID, audience, unitID], load)
 watch(() => props.initialVersionId, value => { versionID.value = value; if (value) { taskView.value = 'list'; distributionFiltersOpen.value = true } })
-watch(() => [props.product.id, props.kind], () => { detailVersion.value = null; taskToDelete.value = null; repositoriesOpen.value = false; resource.reset(); void load(); void loadOptions() }, { immediate: true })
+watch([() => props.product.id, () => props.kind], () => { detailVersion.value = null; taskToDelete.value = null; repositoriesOpen.value = false; resource.reset(); void load(); void loadOptions() }, { immediate: true })
+let missingChannelRefresh = ''
+watch(() => {
+  if (props.kind !== 'distributions') return ''
+  const missing = [...new Set(resource.items.value.map(row => row.channel_id).filter(id => !channelRecord(id)))].sort((a, b) => a - b)
+  return missing.length ? [props.product.id, ...missing].join(':') : ''
+}, key => {
+  if (!key) { missingChannelRefresh = ''; return }
+  if (key === missingChannelRefresh) return
+  missingChannelRefresh = key
+  emit('changed')
+})
 onBeforeUnmount(() => { optionsRequest++; resource.cancel(); history.cancel(); deploymentRows.cancel() })
 </script>
 <style scoped>
@@ -361,6 +386,16 @@ onBeforeUnmount(() => { optionsRequest++; resource.cancel(); history.cancel(); d
 .lifecycle-version-notes { white-space: pre-wrap; overflow-wrap: anywhere; }
 .version-toolbar-actions { display: flex; flex: none; align-items: center; justify-content: flex-end; gap: var(--space-8); margin-inline-start: auto; }
 .distribution-list-card .product-toolbar { flex-direction: row; flex-wrap: wrap; }
+.distribution-list-card .data-table { min-width: 840px; }
+.distribution-channel-cell { min-width: 200px; max-width: 300px; }
+.distribution-version-cell, .distribution-audience-cell { white-space: nowrap; }
+.distribution-environment-cell { min-width: 132px; }
+.distribution-channel-name, .distribution-channel-identifier { overflow-wrap: anywhere; }
+.distribution-channel-link { display: flex; align-items: center; gap: var(--space-4); width: fit-content; max-width: 100%; margin-top: var(--space-4); color: var(--action-primary-hover); font-size: 11px; text-decoration: none; }
+.distribution-channel-link svg { flex-shrink: 0; }
+.distribution-channel-link span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.distribution-channel-link:hover { text-decoration: underline; }
+.distribution-channel-link:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 .distribution-list-card .product-search { flex: 1 1 160px; min-width: 0; width: auto; max-width: 320px; }
 .distribution-toolbar-actions { display: flex; align-items: center; gap: var(--space-8); margin-inline-start: auto; }
 .distribution-filter-toggle[aria-expanded="true"] { border-color: var(--action-primary); background: var(--surface-hover); }

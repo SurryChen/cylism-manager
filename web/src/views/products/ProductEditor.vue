@@ -29,7 +29,8 @@
           <div v-for="(channel, index) in form.channels" :key="channel" class="product-editor-row channel-editor-row">
             <div class="product-actions channel-heading">
               <div class="channel-heading-label">
-                <strong>{{ channel.name || labelFor(platforms, channel.platform) }}</strong>
+                <strong>{{ labelFor(platforms, channel.platform) }}</strong>
+                <span v-if="channel.name && channel.name !== labelFor(platforms, channel.platform)" class="cell-secondary">{{ channel.name }}</span>
                 <span v-if="channel.id" class="badge" :class="channelClass(channel.publish_status)">{{ labelFor(channelStatuses, channel.publish_status) }}</span>
                 <span v-if="channel.online_version" class="cell-secondary">线上 {{ channel.online_version }}</span>
                 <span v-if="channel.pending_version" class="cell-secondary">待发布 {{ channel.pending_version }}</span>
@@ -37,8 +38,8 @@
               <button class="icon-button" type="button" title="移除发行渠道" aria-label="移除发行渠道" @click="form.channels.splice(index, 1)"><Trash2 :size="15" /></button>
             </div>
             <div class="product-form-grid">
-              <label class="form-group"><span class="form-label">平台</span><SelectMenu v-model="channel.platform" aria-label="发行平台"><option v-for="item in platforms" :key="item.id" :value="item.id">{{ item.label }}</option></SelectMenu></label>
-              <label class="form-group"><span class="form-label">渠道名称（可选）</span><input v-model.trim="channel.name" class="form-input" aria-label="渠道名称" maxlength="128" :placeholder="labelFor(platforms, channel.platform)" /></label>
+              <label class="form-group"><span class="form-label">发行渠道</span><SelectMenu v-model="channel.platform" aria-label="发行平台"><option v-for="item in platforms" :key="item.id" :value="item.id">{{ item.label }}</option></SelectMenu></label>
+              <label class="form-group"><span class="form-label">备注名称（可选）</span><input v-model.trim="channel.name" class="form-input" aria-label="渠道名称" maxlength="128" placeholder="用于区分同一平台的不同入口" /></label>
               <label class="form-group product-full-width"><span class="form-label">访问或商店链接（可选）</span><input v-model.trim="channel.public_url" class="form-input" aria-label="访问或商店链接" type="url" placeholder="https://" /></label>
               <label v-if="product?.release_units?.length" class="form-group product-full-width">
                 <span class="form-label">发布端</span>

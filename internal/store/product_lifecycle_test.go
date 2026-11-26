@@ -225,6 +225,103 @@ func TestHistoricalPublishedNotesDoNotReplaceCurrentOnlineVersion(t *testing.T) 
 	}
 }
 
+func TestProductDistributionKeepsEnvironmentAndDeploymentAssociations(t *testing.T) {
+	s := setupTestDB(t)
+	product := lifecycleProduct(t, s, 1, "environment-linked")
+	project := model.Project{OwnerID: 1, Name: "distribution deploy project", Slug: "distribution-deploy"}
+	if err := s.DB().Create(&project).Error; err != nil {
+		t.Fatal(err)
+	}
+	testingEnvironment := model.Environment{ProjectID: project.ID, Name: "testing", Kind: "testing", Namespace: "distribution-testing"}
+	productionEnvironment := model.Environment{ProjectID: project.ID, Name: "production", Kind: "production", Namespace: "distribution-production"}
+	for _, environment := range []*model.Environment{&testingEnvironment, &productionEnvironment} {
+		if err := s.DB().Create(environment).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	application := model.Application{ProjectID: project.ID, EnvironmentID: testingEnvironment.ID, Name: "api", CreatedBy: 1}
+	if err := s.CreateApplication(&application); err != nil {
+		t.Fatal(err)
+	}
+	productionApplication := model.Application{ProjectID: project.ID, EnvironmentID: productionEnvironment.ID, Name: "api", CreatedBy: 1}
+	if err := s.CreateApplication(&productionApplication); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveProduct(&product, []uint{project.ID}, []uint{application.ID, productionApplication.ID}); err != nil {
+		t.Fatal(err)
+	}
+	testingRelease := model.Release{ApplicationID: application.ID, Sequence: 1, Image: "api:1.0", DesiredSpec: "{}", Status: model.ReleaseStatusSucceeded, CreatedBy: 1}
+	productionRelease := model.Release{ApplicationID: productionApplication.ID, Sequence: 1, Image: "api:1.0", DesiredSpec: "{}", Status: model.ReleaseStatusSucceeded, CreatedBy: 1}
+	for _, release := range []*model.Release{&testingRelease, &productionRelease} {
+		if err := s.DB().Create(release).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	version := model.ProductVersion{ProductID: product.ID, Name: "1.0.0-rc.1"}
+	if err := s.SaveProductVersion(1, &version); err != nil {
+		t.Fatal(err)
+	}
+	distribution := model.ProductDistribution{
+		ProductID: product.ID, VersionID: version.ID, ChannelID: product.Channels[0].ID,
+		EnvironmentID: testingEnvironment.ID, DeploymentIDs: []uint{testingRelease.ID},
+		Audience: "testing", PlatformVersion: "1.0.0-rc.1", Status: "preparing",
+	}
+	if err := s.SaveProductDistribution(1, &distribution); err != nil {
+		t.Fatal(err)
+	}
+	rows, total, err := s.ListProductDistributions(1, product.ID, model.ProductLifecycleFilter{Limit: 10})
+	if err != nil || total != 1 || len(rows) != 1 || rows[0].EnvironmentName != "testing" || len(rows[0].DeploymentIDs) != 1 || rows[0].DeploymentIDs[0] != testingRelease.ID {
+		t.Fatalf("distribution environment associations: %#v %d %v", rows, total, err)
+	}
+	deployments, count, err := s.ProductDeploymentPage(1, product.ID, model.ProductLifecycleFilter{EnvironmentID: &testingEnvironment.ID, Limit: 10})
+	if err != nil || count != 1 || len(deployments) != 1 || deployments[0].ID != testingRelease.ID || deployments[0].EnvironmentKind != "testing" {
+		t.Fatalf("filtered environment deployments: %#v %d %v", deployments, count, err)
+	}
+	if _, _, err := s.ProductDeploymentPage(1, product.ID, model.ProductLifecycleFilter{EnvironmentID: func() *uint { id := uint(999); return &id }(), Limit: 10}); !errors.Is(err, model.ErrProductResourceAccess) {
+		t.Fatalf("foreign environment deployment list: %v", err)
+	}
+	events, count, err := s.ListProductDistributionEvents(1, product.ID, distribution.ID, model.ProductLifecycleFilter{Limit: 10})
+	if err != nil || count != 1 || events[0].EnvironmentID != testingEnvironment.ID || events[0].EnvironmentName != testingEnvironment.Name || len(events[0].DeploymentIDs) != 1 || events[0].DeploymentIDs[0] != testingRelease.ID {
+		t.Fatalf("distribution event snapshot: %#v %d %v", events, count, err)
+	}
+	distribution.Notes = "legacy client update"
+	distribution.KeepEnvironment, distribution.KeepDeployments = true, true
+	if err := s.SaveProductDistribution(1, &distribution); err != nil {
+		t.Fatalf("legacy update removed associations: %v", err)
+	}
+	if distribution.EnvironmentID != testingEnvironment.ID || len(distribution.DeploymentIDs) != 1 || distribution.DeploymentIDs[0] != testingRelease.ID {
+		t.Fatalf("legacy update changed deployment associations: %#v", distribution)
+	}
+	distribution.KeepEnvironment, distribution.KeepDeployments = false, false
+	distribution.EnvironmentID = testingEnvironment.ID
+	distribution.DeploymentIDs = []uint{productionRelease.ID}
+	if err := s.SaveProductDistribution(1, &distribution); !errors.Is(err, model.ErrProductResourceAccess) {
+		t.Fatalf("deployment from another environment was accepted: %v", err)
+	}
+	distribution.EnvironmentID = 0
+	distribution.DeploymentIDs = []uint{testingRelease.ID}
+	if err := s.SaveProductDistribution(1, &distribution); !errors.Is(err, model.ErrProductResourceAccess) {
+		t.Fatalf("deployment without environment was accepted: %v", err)
+	}
+	foreignProject := model.Project{OwnerID: 1, Name: "unlinked deploy project"}
+	if err := s.DB().Create(&foreignProject).Error; err != nil {
+		t.Fatal(err)
+	}
+	foreignEnvironment := model.Environment{ProjectID: foreignProject.ID, Name: "other", Namespace: "unlinked-other"}
+	if err := s.DB().Create(&foreignEnvironment).Error; err != nil {
+		t.Fatal(err)
+	}
+	distribution.EnvironmentID = foreignEnvironment.ID
+	distribution.DeploymentIDs = []uint{}
+	if err := s.SaveProductDistribution(1, &distribution); !errors.Is(err, model.ErrProductResourceAccess) {
+		t.Fatalf("unlinked environment was accepted: %v", err)
+	}
+	var saved model.ProductDistribution
+	if err := s.DB().First(&saved, distribution.ID).Error; err != nil || saved.EnvironmentID != testingEnvironment.ID || len(saved.DeploymentIDs) != 1 || saved.DeploymentIDs[0] != testingRelease.ID {
+		t.Fatalf("failed updates changed stored associations: %#v %v", saved, err)
+	}
+}
+
 func TestProductVersionDeploymentOwnershipAndPagination(t *testing.T) {
 	s := setupTestDB(t)
 	p := lifecycleProduct(t, s, 1, "app")

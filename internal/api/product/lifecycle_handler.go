@@ -111,6 +111,14 @@ func (h *Handler) ListLifecycle(c *gin.Context) {
 		unitID := uint(value)
 		f.ReleaseUnitID = &unitID
 	}
+	if raw := c.Query("environment_id"); raw != "" {
+		value, err := shared.ParsePositiveID(raw)
+		if err != nil {
+			shared.BadRequest(c, "环境 ID 无效")
+			return
+		}
+		f.EnvironmentID = &value
+	}
 	if kind == "versions" {
 		f.VersionID = 0
 	}
@@ -307,10 +315,23 @@ func (h *Handler) SaveLifecycle(c *gin.Context) {
 		}
 		result = &input
 	case "distributions":
-		var input model.ProductDistribution
-		if c.ShouldBindJSON(&input) != nil {
+		var payload struct {
+			model.ProductDistribution
+			EnvironmentID *uint   `json:"environment_id"`
+			DeploymentIDs *[]uint `json:"deployment_ids"`
+		}
+		if c.ShouldBindJSON(&payload) != nil {
 			shared.BadRequest(c, "发行记录格式无效")
 			return
+		}
+		input := payload.ProductDistribution
+		input.KeepEnvironment = payload.EnvironmentID == nil
+		if payload.EnvironmentID != nil {
+			input.EnvironmentID = *payload.EnvironmentID
+		}
+		input.KeepDeployments = payload.DeploymentIDs == nil
+		if payload.DeploymentIDs != nil {
+			input.DeploymentIDs = *payload.DeploymentIDs
 		}
 		input.ID, input.ProductID, input.CreatedAt, input.UpdatedAt = id, productID, time.Time{}, time.Time{}
 		input.PlatformVersion = strings.TrimSpace(input.PlatformVersion)
@@ -321,7 +342,7 @@ func (h *Handler) SaveLifecycle(c *gin.Context) {
 			shared.ValidationError(c, "发行分类无效")
 			return
 		}
-		if input.ChannelID == 0 || !oneOf(input.Status, "draft", "preparing", "ready", "in_review", "approved", "published", "rejected", "blocked", "cancelled") {
+		if input.ChannelID == 0 || !oneOf(input.Status, "draft", "preparing", "ready", "in_review", "approved", "published", "rejected", "blocked", "cancelled") || len(input.DeploymentIDs) > 100 {
 			shared.ValidationError(c, "请选择发行渠道和有效状态")
 			return
 		}

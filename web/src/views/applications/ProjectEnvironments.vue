@@ -22,7 +22,8 @@
           <thead>
             <tr>
               <th>环境</th>
-              <th>部署位置</th>
+              <th>集群</th>
+              <th>命名空间</th>
               <th>命名空间状态</th>
               <th>关联应用</th>
               <TableActionCell header />
@@ -36,7 +37,8 @@
                   <span class="badge badge-offline">{{ environmentKindLabel(environment.kind) }}</span>
                 </div>
               </td>
-              <td><span>{{ clusterName(environment.cluster_id) }}</span><span class="cell-secondary product-line environment-namespace">{{ environment.namespace }}</span></td>
+              <td>{{ clusterName(environment.cluster_id) }}</td>
+              <td class="environment-namespace">{{ environment.namespace }}</td>
               <td>
                 <div class="environment-namespace-state">
                 <span class="badge" :class="namespaceStatusClass(environment.namespace_status)">

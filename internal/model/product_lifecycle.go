@@ -93,6 +93,11 @@ type ProductDistribution struct {
 	ProductID       uint      `gorm:"index;not null" json:"product_id"`
 	VersionID       uint      `gorm:"index;not null" json:"version_id"`
 	ChannelID       uint      `gorm:"index;not null" json:"channel_id"`
+	EnvironmentID   uint      `gorm:"index;not null;default:0" json:"environment_id"`
+	EnvironmentName string    `gorm:"-" json:"environment_name,omitempty"`
+	DeploymentIDs   []uint    `gorm:"serializer:json;type:text" json:"deployment_ids"`
+	KeepEnvironment bool      `gorm:"-" json:"-"`
+	KeepDeployments bool      `gorm:"-" json:"-"`
 	PlatformVersion string    `gorm:"size:128;not null" json:"platform_version"`
 	BuildIdentifier string    `gorm:"size:128" json:"build_identifier"`
 	Status          string    `gorm:"size:24;index;not null" json:"status"`
@@ -108,6 +113,9 @@ type ProductDistributionEvent struct {
 	BecamePublished bool      `gorm:"not null;default:false" json:"became_published"`
 	ID              uint      `gorm:"primaryKey" json:"id"`
 	DistributionID  uint      `gorm:"index;not null" json:"distribution_id"`
+	EnvironmentID   uint      `gorm:"not null;default:0" json:"environment_id"`
+	EnvironmentName string    `gorm:"size:64" json:"environment_name"`
+	DeploymentIDs   []uint    `gorm:"serializer:json;type:text" json:"deployment_ids"`
 	ActorID         uint      `json:"actor_id"`
 	Status          string    `gorm:"size:24" json:"status"`
 	PlatformVersion string    `gorm:"size:128" json:"platform_version"`
@@ -137,6 +145,7 @@ type ProductLifecycleFilter struct {
 	VersionID                 uint
 	IncludeVersionDeployments bool
 	ReleaseUnitID             *uint
+	EnvironmentID             *uint
 	TaskGroupID               *uint
 	OpenTasksOnly             bool
 	Limit                     int
